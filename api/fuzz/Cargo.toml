@@ -1,0 +1,230 @@
+# Copyright (C) Microsoft Corporation. All rights reserved.
+
+[package]
+name = "mcr_fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+mcr_api = { workspace = true, features = ["fuzzing"] }
+mcr_ddi.workspace = true
+mcr_ddi_mock.workspace = true
+mcr_ddi_nix.workspace = true
+mcr_ddi_sim = { workspace = true, features = ["fuzzing"] }
+mcr_ddi_types = { workspace = true, features = ["fuzzing"] }
+mcr_ddi_win.workspace = true
+cfg-if.workspace = true
+session_parameter_encryption.workspace = true
+uuid.workspace = true
+rand.workspace = true
+
+# dependencies for fuzzing
+arbitrary = { workspace = true, optional = true }
+
+tracing = "0.1"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+openssl.workspace = true
+libfuzzer-sys.workspace = true
+arbitrary.workspace = true
+
+[features]
+default = ["fuzzing"]
+mock = ["mcr_api/mock", "mcr_ddi/mock"]
+use-openssl = ["mcr_api/use-openssl", "mcr_ddi/use-openssl"]
+use-symcrypt = ["mcr_api/use-symcrypt", "mcr_ddi/use-symcrypt"]
+fuzzing = []
+
+[[bin]]
+name = "fuzz_app_ops"
+path = "fuzz_targets/ddi/fuzz_app_ops.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_cmd_reqs"
+path = "fuzz_targets/ddi/fuzz_cmd_reqs.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_decoder"
+path = "fuzz_targets/ddi/fuzz_decoder.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_dispatcher"
+path = "fuzz_targets/ddi/fuzz_dispatcher.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_dispatcher_aes_fp"
+path = "fuzz_targets/ddi/fuzz_dispatcher_aes_fp.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_api_open_app_session"
+path = "fuzz_targets/api/fuzz_api_open_app_session.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_api_open_key"
+path = "fuzz_targets/api/fuzz_api_open_key.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_api_delete_key"
+path = "fuzz_targets/api/fuzz_api_delete_key.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_api_export_public_key"
+path = "fuzz_targets/api/fuzz_api_export_public_key.rs"
+test = false
+doc = false
+bench = false
+
+
+
+[[bin]]
+name = "fuzz_api_rsa_unwrap"
+path = "fuzz_targets/api/fuzz_api_rsa_unwrap.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_api_rsa_encrypt"
+path = "fuzz_targets/api/fuzz_api_rsa_encrypt.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_api_rsa_decrypt"
+path = "fuzz_targets/api/fuzz_api_rsa_decrypt.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_api_rsa_sign"
+path = "fuzz_targets/api/fuzz_api_rsa_sign.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_api_rsa_verify"
+path = "fuzz_targets/api/fuzz_api_rsa_verify.rs"
+test = false
+doc = false
+bench = false
+
+
+[[bin]]
+name = "fuzz_api_ecc_generate"
+path = "fuzz_targets/api/fuzz_api_ecc_generate.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_api_ecc_sign"
+path = "fuzz_targets/api/fuzz_api_ecc_sign.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_api_ecc_verify"
+path = "fuzz_targets/api/fuzz_api_ecc_verify.rs"
+test = false
+doc = false
+bench = false
+
+
+[[bin]]
+name = "fuzz_api_aes_generate"
+path = "fuzz_targets/api/fuzz_api_aes_generate.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_api_aes_encrypt_decrypt"
+path = "fuzz_targets/api/fuzz_api_aes_encrypt_decrypt.rs"
+test = false
+doc = false
+bench = false
+
+
+[[bin]]
+name = "fuzz_api_aes_gcm_encrypt_decrypt"
+path = "fuzz_targets/api/fuzz_api_aes_gcm_encrypt_decrypt.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_api_aes_xts_encrypt_decrypt"
+path = "fuzz_targets/api/fuzz_api_aes_xts_encrypt_decrypt.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_api_ecdh_key_exchange"
+path = "fuzz_targets/api/fuzz_api_ecdh_key_exchange.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_api_hkdf_derive"
+path = "fuzz_targets/api/fuzz_api_hkdf_derive.rs"
+test = false
+doc = false
+bench = false
+
+
+[[bin]]
+name = "fuzz_api_kbkdf_counter_hmac_derive"
+path = "fuzz_targets/api/fuzz_api_kbkdf_counter_hmac_derive.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_api_hmac"
+path = "fuzz_targets/api/fuzz_api_hmac.rs"
+test = false
+doc = false
+bench = false
+
+
+[[bin]]
+name = "fuzz_api_attest_key"
+path = "fuzz_targets/api/fuzz_api_attest_key.rs"
+test = false
+doc = false
+bench = false
+

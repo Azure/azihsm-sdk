@@ -1,0 +1,16 @@
+# Copyright (C) Microsoft Corporation. All rights reserved.
+
+[package]
+name = "api-interface"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+mcr_api.workspace = true
+openssl-rust.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tracing-attributes.workspace = true
+
+[build-dependencies]
+bindgen.workspace = true

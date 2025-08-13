@@ -1,0 +1,16 @@
+# Copyright (C) Microsoft Corporation. All rights reserved.
+
+[package]
+name = "mbor_diag"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap.workspace = true
+mcr_ddi_mbor = { workspace = true, features = ["array", "pre_encode", "post_decode"] }
+
+[dev-dependencies]
+mcr_ddi_types = { workspace = true, features = ["array", "pre_encode", "post_decode"] }
+
+[lints]
+workspace = true

@@ -1,0 +1,59 @@
+error: Missing field `id` at major
+ --> tests/compile_tests/02-struct-invalid.rs:6:10
+  |
+6 | #[derive(Ddi)]
+  |          ^^^
+  |
+  = note: this error originates in the derive macro `Ddi` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: deriving `mcr-ddi-derive::Ddi` for a `struct` with unit fields is not supported
+  --> tests/compile_tests/02-struct-invalid.rs:12:10
+   |
+12 | #[derive(Ddi)]
+   |          ^^^
+   |
+   = note: this error originates in the derive macro `Ddi` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: Invalid struct field type. Only Path, Array and Reference are supported.
+  --> tests/compile_tests/02-struct-invalid.rs:20:12
+   |
+20 |     field: [u8],
+   |            ^^^^
+
+error: Invalid array type. Only u8 is supported.
+  --> tests/compile_tests/02-struct-invalid.rs:27:13
+   |
+27 |     field: [u32; 10],
+   |             ^^^
+
+error: Invalid field id. Expected 1 instead of 2.
+  --> tests/compile_tests/02-struct-invalid.rs:37:5
+   |
+37 |     field1: u32,
+   |     ^^^^^^
+
+error: Unknown field: `map`
+  --> tests/compile_tests/02-struct-invalid.rs:48:7
+   |
+48 | #[ddi(map)]
+   |       ^^^
+
+error: Missing field `enumeration`
+  --> tests/compile_tests/02-struct-invalid.rs:47:10
+   |
+47 | #[derive(Ddi)]
+   |          ^^^
+   |
+   = note: this error originates in the derive macro `Ddi` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: Invalid array type. Only u8 is supported.
+  --> tests/compile_tests/02-struct-invalid.rs:55:20
+   |
+55 |     field: Option<[u32; 10]>,
+   |                    ^^^
+
+error: Invalid struct field type. Only Path, Array and Reference are supported.
+  --> tests/compile_tests/02-struct-invalid.rs:62:12
+   |
+62 |     field: &'a [u8],
+   |            ^

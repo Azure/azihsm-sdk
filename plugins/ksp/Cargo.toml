@@ -1,0 +1,78 @@
+# Copyright (C) Microsoft Corporation. All rights reserved.
+
+[package]
+name = "azihsmksp"
+# version is replaced using cargo set-version in pipeline
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[build-dependencies]
+winres = "0.1.12"
+
+[dependencies]
+lazy_static = "1.4.0"
+scopeguard = "1.2.0"
+widestring = "1.1.0"
+win_etw_macros = "0.1.9"
+win_etw_metadata = "0.1.2"
+win_etw_provider = "0.1.9"
+winapi = "0.3.9"
+windows-targets = "0.52.5"
+mcr_api = { path = "../../api/lib", default-features = false }
+crypto = { path = "../../api/support/crypto" }
+uuid = { version = "1.3.1", features = ["v4"] }
+enum-as-inner = { version = "0.6.0" }
+parking_lot = "0.12.3"
+rand = { version = "0.8.5" }
+p256 = { version = "0.13.2", features = ["pkcs8"] }
+p384 = { version = "0.13.0", features = ["pkcs8"] }
+p521 = { version = "0.13.3", features = ["pkcs8"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
+
+[dev-dependencies]
+openssl = { version = "0.10.57", features = ["vendored"] }
+
+[dependencies.windows]
+version = "0.58.0"
+features = [
+    "Win32_Foundation",
+    "Win32_System_SystemServices",
+    "Win32_Security",
+    "Win32_Security_Cryptography",
+]
+
+[package.metadata.winres]
+OriginalFilename = "azihsmksp.dll"
+FileDescription = "Microsoft(R) Azure Integrated HSM Key Storage Provider"
+LegalCopyright = "Copyright 2024 Microsoft(R) Corporation Inc"
+
+[features]
+default = ["disable-fp"]
+mock = ["mcr_api/mock"]
+use-openssl = ["mcr_api/use-openssl"]
+use-symcrypt = ["mcr_api/use-symcrypt"]
+table-4 = ["mcr_api/table-4"]
+table-64 = ["mcr_api/table-64"]
+
+# Disable AES fast path options (AES-GCM and AES-XTS)
+# Task# 33628660
+disable-fp = []
+
+# This feature, when enabled, will have the KSP DLL (`azihsmksp.dll`) expose all
+# of the functions in its NCrypt function table.
+#
+# This is useful for development & testing scenarios where we want to directly
+# invoke the DLL's function interface, rather than go through the NCrypt API.
+# For example: it is used by the KSP fuzzing tests when building with the
+# `direct-invoke-dll` feature.
+#
+# This is also convenient for debugging with the Windows Debugger; by exposing
+# these symbols, breakpoints can be set on these exposed functions.
+#
+# This feature should only be used in development and testing scenarios; it
+# should not be used when building a release version of the KSP DLL.
+expose-symbols = []

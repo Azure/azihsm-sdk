@@ -1,0 +1,2 @@
+# Introduction
+The Azure Integrated HSM Key Storage Provider (AZIHSM-KSP) securely manages cryptographic keys and interfaces with the system's Cryptography API: Next Generation (CNG). This document provides details on the architecture, supported algorithms, key management, and integration.

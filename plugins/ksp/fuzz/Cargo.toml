@@ -1,0 +1,170 @@
+[package]
+name = "azihsmksp-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+
+# =============================== Dependencies =============================== #
+[dependencies]
+# Fuzzing dependencies:
+arbitrary =     { version = "1.3.2", features = ["derive"] }
+libfuzzer-sys = { version = "0.4", features = ["arbitrary-derive"] }
+rand =          { version = "0.8.5" }
+widestring =    { version = "1.2.0" }
+winapi =        { version = "0.3.9" }
+
+# Other dependencies
+walkdir =       { version = "2.5.0", optional = true }
+libloading =    { version = "0.8", optional = true }
+
+# We only want to build the AZIHSM KSP DLL if the `build_azihsmksp_dll` feature
+# is enabled (which should only be the case for the `build_azihsmksp_dll` binary.
+# All other binaries are fuzzing targets, which use different MSVC build
+# arguments that would conflict if we were to build them at the same time as
+# `azihsmksp.dll`. (See `fuzz_targets/build_azihsmksp_dll.rs` for an explanation.)
+[dependencies.azihsmksp]
+path = ".."
+optional = true
+features = [
+    "mock",
+    "use-symcrypt",
+    "table-4",
+    "expose-symbols",
+]
+
+# Windows dependencies:
+[dependencies.windows]
+version = "0.58.0"
+features = [
+    "Win32",                        # allows use of `windows::Win32`
+    "Win32_Security",               # allows use of `windows::Win32::Security`
+    "Win32_Security_Cryptography"   # allows use of `windows::Win32::Security::Cryptography`
+]
+
+
+# ================================= Features ================================= #
+[features]
+build_azihsmksp_dll = [
+    "dep:azihsmksp",
+    "dep:walkdir",
+]
+
+# By default, the KSP fuzzing tests go through the Windows NCrypt API to invoke
+# the KSP DLL. This is the interface the user will go through.
+#
+# This feature allows for the fuzzing tests to directly load and call the DLL's
+# functions, rather than going through NCrypt. We implemented this for a few
+# reasons:
+#
+# 1. The OneFuzz containers we submit these fuzzing tests to (for continuous
+#    fuzzing) don't allow the KSP DLL to be registered as a CNG Storage Provider
+#    (due to security policies). (Meaning, we cannot access it through the
+#    NCrypt API.) So, this was born out of necessity.
+# 2. Additionally, even though calling the DLL directly does not simulate
+#    user/customer scenarios, it does provide a much more direct line of sight
+#    for fuzzing. With NCrypt acting as the middle man, it may do some filtering
+#    or argument handling that we can avoid by calling the DLL directly.
+direct-invoke-dll = [
+    "dep:walkdir",
+    "dep:libloading",
+]
+
+
+# ============================= Fuzzing Binaries ============================= #
+# Special "dummy" fuzzing target used to build an instrumented `azihsmksp.dll`.
+[[bin]]
+name = "build_azihsmksp_dll"
+path = "fuzz_targets/build_azihsmksp_dll.rs"
+required-features = ["build_azihsmksp_dll"]
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_ksp_open_close_provider"
+path = "fuzz_targets/fuzz_ksp_open_close_provider.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_ksp_open_close_key"
+path = "fuzz_targets/fuzz_ksp_open_close_key.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_ksp_create_delete_key"
+path = "fuzz_targets/fuzz_ksp_create_delete_key.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_ksp_create_open_close_delete_key"
+path = "fuzz_targets/fuzz_ksp_create_open_close_delete_key.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_ksp_get_provider_property"
+path = "fuzz_targets/fuzz_ksp_get_provider_property.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_ksp_get_set_key_property"
+path = "fuzz_targets/fuzz_ksp_get_set_key_property.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_ksp_encrypt"
+path = "fuzz_targets/fuzz_ksp_encrypt.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_ksp_decrypt"
+path = "fuzz_targets/fuzz_ksp_decrypt.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_ksp_import_export_key"
+path = "fuzz_targets/fuzz_ksp_import_export_key.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_ksp_sign_verify_hash"
+path = "fuzz_targets/fuzz_ksp_sign_verify_hash.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_ksp_generate_delete_secret"
+path = "fuzz_targets/fuzz_ksp_generate_delete_secret.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_ksp_create_claim"
+path = "fuzz_targets/fuzz_ksp_create_claim.rs"
+test = false
+doc = false
+bench = false
+

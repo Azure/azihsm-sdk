@@ -1,0 +1,193 @@
+# Copyright (C) Microsoft Corporation. All rights reserved.
+
+[workspace]
+
+resolver = "2"
+
+members = [
+    "ddi/lib",
+    "ddi/mock",
+    "ddi/nix",
+    "ddi/serde/derive",
+    "ddi/serde/mbor",
+    "ddi/serde/types",
+    "ddi/sim",
+    "ddi/win",
+    "lib",
+    "fuzz",
+    "tools/get_device_info",
+    "tools/mbor_diag",
+    "tools/mcr_api_perf",
+    "tools/mcr_perf",
+    "support/rsa_padding",
+]
+
+[workspace.dependencies]
+
+# internal crates
+mcr_api = { path = "lib" }
+mcr_ddi = { path = "ddi/lib" }
+mcr_ddi_mock = { path = "ddi/mock" }
+mcr_ddi_nix = { path = "ddi/nix" }
+mcr_ddi_derive = { path = "ddi/serde/derive" }
+mcr_ddi_mbor = { path = "ddi/serde/mbor" }
+mcr_ddi_types = { path = "ddi/serde/types", features = [
+    "array",
+    "pre_encode",
+    "post_decode",
+] }
+mcr_ddi_sim = { path = "ddi/sim" }
+mcr_ddi_win = { path = "ddi/win" }
+rsa_padding = { path = "support/rsa_padding" }
+
+crypto = { path = "support/crypto" }
+session_parameter_encryption = { path = "support/session_parameter_encryption" }
+test_with_tracing = { path = "support/test_with_tracing" }
+test_with_tracing_macro = { path = "support/test_with_tracing/test_with_tracing_macro" }
+
+# public crates from crates.io
+# NOTE: these should match versions in hvlite\Cargo.toml. If crate versions are updated,
+# we should test building serde\ and sim\ folders with hvlite
+bitfield-struct = "0.5"
+hex = "0.4"
+cfg-if = "1"
+circular-queue = "0.2.6"
+clap = { version = "4.5.4", features = ["derive", "string"] }
+darling = "0.20.11"
+glob = "0.3"
+indicatif = "0.17.8"
+libc = "0.2"
+log = "0.4"
+minicbor = { version = "0.19.1", features = ["derive", "std"] }
+nix = "0.26"
+open-enum = "0.3.0"
+openssl = { version = "0.10.68"}
+openssl-sys = "0.9"
+parking_lot = "0.12"
+paste = "1.0.12"
+proc-macro2 = "1.0.82"
+quantogram = "0.4.4"
+quote = "1.0"
+rand = "0.8"
+rand_distr = "0.4.3"
+rstest = "0.18.2"
+syn = "2"
+thiserror = "1.0"
+trybuild = { version = "1.0.82", features = ["diff"] }
+chrono = "0.4.31"
+uuid = { version = "1.3.1", features = ["v4"] }
+winapi = { version = "0.3", features = [
+    "errhandlingapi",
+    "fileapi",
+    "handleapi",
+    "ioapiset",
+    "minwindef",
+    "setupapi",
+    "synchapi",
+    "winbase",
+    "winerror",
+    "winioctl",
+    "winnt",
+    "winuser",
+] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
+tracing-attributes = "0.1.26"
+zerocopy = { version = "0.7.35", features = ["derive"] }
+libfuzzer-sys = { version = "0.4.0", features = ["arbitrary-derive"] }
+arbitrary = { version = "1", features = ["derive"] }
+spki = "0.7.3"
+sec1 = { version = "0.7.3", features = ["pkcs8"] }
+pem-rfc7468 = "0.7.0"
+pkcs1 = { version = "0.7.5", features = ["alloc"], default-features = false }
+pkcs8 = "0.10.2"
+symcrypt = { version = "0.5.0", features = ["sha1", "pkcs1-encrypt-decrypt"] }
+generic-array = { version = "0.14.7" }
+
+# Causes the project to link with the Spectre-mitigated CRT and libs.
+msvc_spectre_libs = { version = "0.1", features = ["error"] }
+
+[workspace.lints.rust]
+future_incompatible = { level = "deny", priority = -1 }
+nonstandard_style = { level = "deny", priority = -1 }
+rust_2018_idioms = { level = "deny", priority = -1 }
+
+# Code that needs unsafe should opt-in via a module-scoped allow.
+unsafe_code = "deny"
+unsafe_op_in_unsafe_fn = "warn"
+
+[workspace.lints.clippy]
+await_holding_lock = "warn"
+dbg_macro = "warn"
+debug_assert_with_mut_call = "warn"
+filter_map_next = "warn"
+fn_params_excessive_bools = "warn"
+imprecise_flops = "warn"
+inefficient_to_string = "warn"
+linkedlist = "warn"
+lossy_float_literal = "warn"
+macro_use_imports = "warn"
+match_on_vec_items = "warn"
+needless_continue = "warn"
+option_option = "warn"
+ref_option_ref = "warn"
+rest_pat_in_fully_bound_structs = "warn"
+string_to_string = "warn"
+suboptimal_flops = "warn"
+undocumented_unsafe_blocks = "warn"
+unnecessary_box_returns = "warn"
+
+# Possible future additions:
+#
+# useful, but _very_ tedious to fix
+#   doc_markdown = "warn"
+# will be useful to weed-out stubbed codepaths in production
+#   todo = "warn"
+#   unimplemented = "warn"
+# useful, but will require a follow-up PR to enable
+#   map_err_ignore = "warn"
+# useful, but requires a follow-up PR to enable
+#   unused_self = "warn"
+
+# Nested if / else if statements can be easier to read than an equivalent
+# flattened statements.
+collapsible_else_if = "allow"
+collapsible_if = "allow"
+# There are types where it makes sense to define the length, but it can never
+# be empty. This lint is reasonable for container-like data-structures, but
+# makes less sense for hardware-backed data structures.
+len_without_is_empty = "allow"
+# While it's generally a good idea to derive / implement `Default` when
+# appropriate, there are many types in the HvLite codebase where a type has a
+# `new()` method, but no sensible "Default".
+new_without_default = "allow"
+# This is the #1 most commonly ignored lint for a reason (at least according
+# to [this famous issue](https://github.com/rust-lang/rust-clippy/issues/5418)
+# on the clippy GitHub repo)! There are plenty of perfectly reasonable
+# functions that require a large number of non-optional arguments,
+# particularly when working with low-level hardware APIs.
+too_many_arguments = "allow"
+# This is a heuristic based lint that isn't always appropriate. While it's
+# often a good to decompose complex types into more digestible chunks, there
+# are many cases where a one-off complex type is required, and suppressing
+# this lint will simply add line-noise.
+type_complexity = "allow"
+# This lint attempts to simplify usages of if let usage in a loop where only
+# one variant type is used. While somewhat useful, its suggestions can lead to
+# throwing away potentially useful error information in non-obvious ways.
+manual_flatten = "allow"
+# This lint warns about comparing boolean values in an `assert_eq!` statement when `assert!`
+# could be used instead. While shorter, the explicit comparison can be more obvious to read
+# in certain cases than unary operators with `assert!`.
+bool_assert_comparison = "allow"
+# This lint suggests collapsing Box::new(Foo::default()) into Box::default(). We often
+# prefer to specify types completely for local code clarity's sake.
+box_default = "allow"
+# This lint is purely style, and we are ok with inlined and uninlined format args.
+uninlined_format_args = "allow"
+# Needed for bitflags 1.x compatibility. Remove when we update to bitflags 2.x
+bad_bit_mask = "allow"
+# Besides the misleading name (this lint also triggers on arrays), we believe that it
+# doesn't provide value. If a developer gets their type wrong they'll notice and fix it.
+# Sometimes you do want a list of a single range.
+single_range_in_vec_init = "allow"

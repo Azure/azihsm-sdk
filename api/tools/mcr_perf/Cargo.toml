@@ -1,0 +1,47 @@
+# Copyright (C) Microsoft Corporation. All rights reserved.
+
+[package]
+name = "mcr_perf"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+cfg-if.workspace = true
+circular-queue.workspace = true
+clap.workspace = true
+crypto.workspace = true
+glob.workspace = true
+indicatif.workspace = true
+mcr_ddi.workspace = true
+mcr_ddi_mbor.workspace = true
+mcr_ddi_mock = { workspace = true, optional = true }
+mcr_ddi_nix.workspace = true
+mcr_ddi_sim.workspace = true
+mcr_ddi_types.workspace = true
+mcr_ddi_win.workspace = true
+nix.workspace = true
+open-enum.workspace = true
+parking_lot.workspace = true
+quantogram.workspace = true
+rand.workspace = true
+rand_distr.workspace = true
+rsa_padding.workspace = true
+session_parameter_encryption.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+zerocopy.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+openssl.workspace = true
+
+[features]
+default = []
+mock = ["mcr_ddi_mock"]
+use-openssl = ["crypto/use-openssl", "mcr_ddi_mock/use-openssl", "mcr_ddi_sim/use-openssl"]
+use-symcrypt = ["crypto/use-symcrypt", "mcr_ddi_mock/use-symcrypt", "mcr_ddi_sim/use-symcrypt"]
+table-4 = ["mcr_ddi_mock/table-4"]
+table-64 = ["mcr_ddi_mock/table-64"]
+
+[lints]
+workspace = true

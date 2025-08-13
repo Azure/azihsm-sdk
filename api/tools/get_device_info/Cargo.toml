@@ -1,0 +1,23 @@
+# Copyright (C) Microsoft Corporation. All rights reserved.
+
+[package]
+name = "get_device_info"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+cfg-if.workspace = true
+mcr_ddi.workspace = true
+mcr_ddi_mock = { workspace = true, optional = true }
+mcr_ddi_nix.workspace = true
+mcr_ddi_types.workspace = true
+mcr_ddi_win.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = []
+mock = ["mcr_ddi_mock"]
+use-openssl = ["mcr_ddi_mock/use-openssl"]
+use-symcrypt = ["mcr_ddi_mock/use-symcrypt"]

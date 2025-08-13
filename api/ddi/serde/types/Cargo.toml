@@ -1,0 +1,40 @@
+# Copyright (c) Microsoft Corporation. All rights reserved.
+
+[package]
+name = "mcr_ddi_types"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+mcr_ddi_derive.workspace = true
+mcr_ddi_mbor.workspace = true
+open-enum.workspace = true
+paste.workspace = true
+
+# dependencies for fuzzing
+arbitrary = { workspace = true, optional = true }
+
+# dependencies for pre_encode and/or post_decode
+tracing = { workspace = true, optional = true }
+spki = { workspace = true, optional = true }
+sec1 = { workspace = true, optional = true }
+pkcs1 = { workspace = true, optional = true }
+
+# generic-array needed by sec1::EncodedPoint and sec1 does not export.
+generic-array = { workspace = true, optional = true }
+
+[dev-dependencies]
+minicbor.workspace = true
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+openssl.workspace = true
+
+[lib]
+doctest = false
+
+[features]
+fuzzing = ["arbitrary", "mcr_ddi_mbor/fuzzing"]
+array = ["mcr_ddi_mbor/array"]
+pre_encode = ["featuregroup-crypto", "tracing", "mcr_ddi_mbor/pre_encode"]
+post_decode = ["featuregroup-crypto", "tracing", "mcr_ddi_mbor/post_decode"]
+featuregroup-crypto = ["spki", "sec1", "pkcs1", "generic-array"]

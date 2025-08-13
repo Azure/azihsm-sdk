@@ -1,0 +1,438 @@
+{
+    "ConfigVersion": 3,
+    "Entries":
+    [
+        {
+            "JobNotificationEmail": "MartichorasOnefuzz@microsoft.com",
+            "Skip": false,
+            "Fuzzer":
+            {
+                "$type": "libfuzzer",
+                "FuzzingHarnessExecutableName": "fuzz_ksp_open_close_provider.exe",
+                "FuzzingTargetBinaries": ["fuzz_ksp_open_close_provider.exe"],
+                "FuzzingEntrypoint": "LLVMFuzzerTestOneInput"
+            },
+            "OneFuzzJobs":
+            [
+                {
+                    "ProjectName": "Martichoras",
+                    "TargetName": "fuzz_ksp_open_close_provider"
+                }
+            ],
+            "JobDependencies":
+            [
+                "fuzz_ksp_open_close_provider.exe",
+                "fuzz_ksp_open_close_provider.pdb",
+                "symcrypt.dll",
+                "azihsmksp.dll",
+                "azihsmksp.pdb",
+                "*asan*.dll",
+                "setup.ps1"
+            ],
+            "AdoTemplate":
+            {
+                "Org": "msazure",
+                "Project": "One",
+                "AssignedTo": "connorshugg@microsoft.com",
+                "AreaPath": "One\\Azure Compute\\OneFleet Node\\Azure Confidential Compute\\Device Attestation and Storage",
+                "IterationPath": "One"
+            }
+        },
+        {
+            "JobNotificationEmail": "MartichorasOnefuzz@microsoft.com",
+            "Skip": false,
+            "Fuzzer":
+            {
+                "$type": "libfuzzer",
+                "FuzzingHarnessExecutableName": "fuzz_ksp_open_close_key.exe",
+                "FuzzingTargetBinaries": ["fuzz_ksp_open_close_key.exe"],
+                "FuzzingEntrypoint": "LLVMFuzzerTestOneInput"
+            },
+            "OneFuzzJobs":
+            [
+                {
+                    "ProjectName": "Martichoras",
+                    "TargetName": "fuzz_ksp_open_close_key"
+                }
+            ],
+            "JobDependencies":
+            [
+                "fuzz_ksp_open_close_key.exe",
+                "fuzz_ksp_open_close_key.pdb",
+                "symcrypt.dll",
+                "azihsmksp.dll",
+                "azihsmksp.pdb",
+                "*asan*.dll",
+                "setup.ps1"
+            ],
+            "AdoTemplate":
+            {
+                "Org": "msazure",
+                "Project": "One",
+                "AssignedTo": "connorshugg@microsoft.com",
+                "AreaPath": "One\\Azure Compute\\OneFleet Node\\Azure Confidential Compute\\Device Attestation and Storage",
+                "IterationPath": "One"
+            }
+        },
+        {
+            "JobNotificationEmail": "MartichorasOnefuzz@microsoft.com",
+            "Skip": false,
+            "Fuzzer":
+            {
+                "$type": "libfuzzer",
+                "FuzzingHarnessExecutableName": "fuzz_ksp_create_delete_key.exe",
+                "FuzzingTargetBinaries": ["fuzz_ksp_create_delete_key.exe"],
+                "FuzzingEntrypoint": "LLVMFuzzerTestOneInput"
+            },
+            "OneFuzzJobs":
+            [
+                {
+                    "ProjectName": "Martichoras",
+                    "TargetName": "fuzz_ksp_create_delete_key"
+                }
+            ],
+            "JobDependencies":
+            [
+                "fuzz_ksp_create_delete_key.exe",
+                "fuzz_ksp_create_delete_key.pdb",
+                "symcrypt.dll",
+                "azihsmksp.dll",
+                "azihsmksp.pdb",
+                "*asan*.dll",
+                "setup.ps1"
+            ],
+            "AdoTemplate":
+            {
+                "Org": "msazure",
+                "Project": "One",
+                "AssignedTo": "connorshugg@microsoft.com",
+                "AreaPath": "One\\Azure Compute\\OneFleet Node\\Azure Confidential Compute\\Device Attestation and Storage",
+                "IterationPath": "One"
+            }
+        },
+        {
+            "JobNotificationEmail": "MartichorasOnefuzz@microsoft.com",
+            "Skip": false,
+            "Fuzzer":
+            {
+                "$type": "libfuzzer",
+                "FuzzingHarnessExecutableName": "fuzz_ksp_create_open_close_delete_key.exe",
+                "FuzzingTargetBinaries": ["fuzz_ksp_create_open_close_delete_key.exe"],
+                "FuzzingEntrypoint": "LLVMFuzzerTestOneInput"
+            },
+            "OneFuzzJobs":
+            [
+                {
+                    "ProjectName": "Martichoras",
+                    "TargetName": "fuzz_ksp_create_open_close_delete_key"
+                }
+            ],
+            "JobDependencies":
+            [
+                "fuzz_ksp_create_open_close_delete_key.exe",
+                "fuzz_ksp_create_open_close_delete_key.pdb",
+                "symcrypt.dll",
+                "azihsmksp.dll",
+                "azihsmksp.pdb",
+                "*asan*.dll",
+                "setup.ps1"
+            ],
+            "AdoTemplate":
+            {
+                "Org": "msazure",
+                "Project": "One",
+                "AssignedTo": "connorshugg@microsoft.com",
+                "AreaPath": "One\\Azure Compute\\OneFleet Node\\Azure Confidential Compute\\Device Attestation and Storage",
+                "IterationPath": "One"
+            }
+        },
+        {
+            "JobNotificationEmail": "MartichorasOnefuzz@microsoft.com",
+            "Skip": false,
+            "Fuzzer":
+            {
+                "$type": "libfuzzer",
+                "FuzzingHarnessExecutableName": "fuzz_ksp_get_provider_property.exe",
+                "FuzzingTargetBinaries": ["fuzz_ksp_get_provider_property.exe"],
+                "FuzzingEntrypoint": "LLVMFuzzerTestOneInput"
+            },
+            "OneFuzzJobs":
+            [
+                {
+                    "ProjectName": "Martichoras",
+                    "TargetName": "fuzz_ksp_get_provider_property"
+                }
+            ],
+            "JobDependencies":
+            [
+                "fuzz_ksp_get_provider_property.exe",
+                "fuzz_ksp_get_provider_property.pdb",
+                "symcrypt.dll",
+                "azihsmksp.dll",
+                "azihsmksp.pdb",
+                "*asan*.dll",
+                "setup.ps1"
+            ],
+            "AdoTemplate":
+            {
+                "Org": "msazure",
+                "Project": "One",
+                "AssignedTo": "connorshugg@microsoft.com",
+                "AreaPath": "One\\Azure Compute\\OneFleet Node\\Azure Confidential Compute\\Device Attestation and Storage",
+                "IterationPath": "One"
+            }
+        },
+        {
+            "JobNotificationEmail": "MartichorasOnefuzz@microsoft.com",
+            "Skip": false,
+            "Fuzzer":
+            {
+                "$type": "libfuzzer",
+                "FuzzingHarnessExecutableName": "fuzz_ksp_get_set_key_property.exe",
+                "FuzzingTargetBinaries": ["fuzz_ksp_get_set_key_property.exe"],
+                "FuzzingEntrypoint": "LLVMFuzzerTestOneInput"
+            },
+            "OneFuzzJobs":
+            [
+                {
+                    "ProjectName": "Martichoras",
+                    "TargetName": "fuzz_ksp_get_set_key_property"
+                }
+            ],
+            "JobDependencies":
+            [
+                "fuzz_ksp_get_set_key_property.exe",
+                "fuzz_ksp_get_set_key_property.pdb",
+                "symcrypt.dll",
+                "azihsmksp.dll",
+                "azihsmksp.pdb",
+                "*asan*.dll",
+                "setup.ps1"
+            ],
+            "AdoTemplate":
+            {
+                "Org": "msazure",
+                "Project": "One",
+                "AssignedTo": "connorshugg@microsoft.com",
+                "AreaPath": "One\\Azure Compute\\OneFleet Node\\Azure Confidential Compute\\Device Attestation and Storage",
+                "IterationPath": "One"
+            }
+        },
+        {
+            "JobNotificationEmail": "MartichorasOnefuzz@microsoft.com",
+            "Skip": false,
+            "Fuzzer":
+            {
+                "$type": "libfuzzer",
+                "FuzzingHarnessExecutableName": "fuzz_ksp_encrypt.exe",
+                "FuzzingTargetBinaries": ["fuzz_ksp_encrypt.exe"],
+                "FuzzingEntrypoint": "LLVMFuzzerTestOneInput"
+            },
+            "OneFuzzJobs":
+            [
+                {
+                    "ProjectName": "Martichoras",
+                    "TargetName": "fuzz_ksp_encrypt"
+                }
+            ],
+            "JobDependencies":
+            [
+                "fuzz_ksp_encrypt.exe",
+                "fuzz_ksp_encrypt.pdb",
+                "symcrypt.dll",
+                "azihsmksp.dll",
+                "azihsmksp.pdb",
+                "*asan*.dll",
+                "setup.ps1"
+            ],
+            "AdoTemplate":
+            {
+                "Org": "msazure",
+                "Project": "One",
+                "AssignedTo": "connorshugg@microsoft.com",
+                "AreaPath": "One\\Azure Compute\\OneFleet Node\\Azure Confidential Compute\\Device Attestation and Storage",
+                "IterationPath": "One"
+            }
+        },
+        {
+            "JobNotificationEmail": "MartichorasOnefuzz@microsoft.com",
+            "Skip": false,
+            "Fuzzer":
+            {
+                "$type": "libfuzzer",
+                "FuzzingHarnessExecutableName": "fuzz_ksp_decrypt.exe",
+                "FuzzingTargetBinaries": ["fuzz_ksp_decrypt.exe"],
+                "FuzzingEntrypoint": "LLVMFuzzerTestOneInput"
+            },
+            "OneFuzzJobs":
+            [
+                {
+                    "ProjectName": "Martichoras",
+                    "TargetName": "fuzz_ksp_decrypt"
+                }
+            ],
+            "JobDependencies":
+            [
+                "fuzz_ksp_decrypt.exe",
+                "fuzz_ksp_decrypt.pdb",
+                "symcrypt.dll",
+                "azihsmksp.dll",
+                "azihsmksp.pdb",
+                "*asan*.dll",
+                "setup.ps1"
+            ],
+            "AdoTemplate":
+            {
+                "Org": "msazure",
+                "Project": "One",
+                "AssignedTo": "connorshugg@microsoft.com",
+                "AreaPath": "One\\Azure Compute\\OneFleet Node\\Azure Confidential Compute\\Device Attestation and Storage",
+                "IterationPath": "One"
+            }
+        },
+        {
+            "JobNotificationEmail": "MartichorasOnefuzz@microsoft.com",
+            "Skip": false,
+            "Fuzzer":
+            {
+                "$type": "libfuzzer",
+                "FuzzingHarnessExecutableName": "fuzz_ksp_import_export_key.exe",
+                "FuzzingTargetBinaries": ["fuzz_ksp_import_export_key.exe"],
+                "FuzzingEntrypoint": "LLVMFuzzerTestOneInput"
+            },
+            "OneFuzzJobs":
+            [
+                {
+                    "ProjectName": "Martichoras",
+                    "TargetName": "fuzz_ksp_import_export_key"
+                }
+            ],
+            "JobDependencies":
+            [
+                "fuzz_ksp_import_export_key.exe",
+                "fuzz_ksp_import_export_key.pdb",
+                "symcrypt.dll",
+                "azihsmksp.dll",
+                "azihsmksp.pdb",
+                "*asan*.dll",
+                "setup.ps1"
+            ],
+            "AdoTemplate":
+            {
+                "Org": "msazure",
+                "Project": "One",
+                "AssignedTo": "connorshugg@microsoft.com",
+                "AreaPath": "One\\Azure Compute\\OneFleet Node\\Azure Confidential Compute\\Device Attestation and Storage",
+                "IterationPath": "One"
+            }
+        },
+        {
+            "JobNotificationEmail": "MartichorasOnefuzz@microsoft.com",
+            "Skip": false,
+            "Fuzzer":
+            {
+                "$type": "libfuzzer",
+                "FuzzingHarnessExecutableName": "fuzz_ksp_sign_verify_hash.exe",
+                "FuzzingTargetBinaries": ["fuzz_ksp_sign_verify_hash.exe"],
+                "FuzzingEntrypoint": "LLVMFuzzerTestOneInput"
+            },
+            "OneFuzzJobs":
+            [
+                {
+                    "ProjectName": "Martichoras",
+                    "TargetName": "fuzz_ksp_sign_verify_hash"
+                }
+            ],
+            "JobDependencies":
+            [
+                "fuzz_ksp_sign_verify_hash.exe",
+                "fuzz_ksp_sign_verify_hash.pdb",
+                "symcrypt.dll",
+                "azihsmksp.dll",
+                "azihsmksp.pdb",
+                "*asan*.dll",
+                "setup.ps1"
+            ],
+            "AdoTemplate":
+            {
+                "Org": "msazure",
+                "Project": "One",
+                "AssignedTo": "connorshugg@microsoft.com",
+                "AreaPath": "One\\Azure Compute\\OneFleet Node\\Azure Confidential Compute\\Device Attestation and Storage",
+                "IterationPath": "One"
+            }
+        },
+        {
+            "JobNotificationEmail": "MartichorasOnefuzz@microsoft.com",
+            "Skip": false,
+            "Fuzzer":
+            {
+                "$type": "libfuzzer",
+                "FuzzingHarnessExecutableName": "fuzz_ksp_generate_delete_secret.exe",
+                "FuzzingTargetBinaries": ["fuzz_ksp_generate_delete_secret.exe"],
+                "FuzzingEntrypoint": "LLVMFuzzerTestOneInput"
+            },
+            "OneFuzzJobs":
+            [
+                {
+                    "ProjectName": "Martichoras",
+                    "TargetName": "fuzz_ksp_generate_delete_secret"
+                }
+            ],
+            "JobDependencies":
+            [
+                "fuzz_ksp_generate_delete_secret.exe",
+                "fuzz_ksp_generate_delete_secret.pdb",
+                "symcrypt.dll",
+                "azihsmksp.dll",
+                "azihsmksp.pdb",
+                "*asan*.dll",
+                "setup.ps1"
+            ],
+            "AdoTemplate":
+            {
+                "Org": "msazure",
+                "Project": "One",
+                "AssignedTo": "connorshugg@microsoft.com",
+                "AreaPath": "One\\Azure Compute\\OneFleet Node\\Azure Confidential Compute\\Device Attestation and Storage",
+                "IterationPath": "One"
+            }
+        },
+        {
+            "JobNotificationEmail": "MartichorasOnefuzz@microsoft.com",
+            "Skip": false,
+            "Fuzzer":
+            {
+                "$type": "libfuzzer",
+                "FuzzingHarnessExecutableName": "fuzz_ksp_create_claim.exe",
+                "FuzzingTargetBinaries": ["fuzz_ksp_create_claim.exe"],
+                "FuzzingEntrypoint": "LLVMFuzzerTestOneInput"
+            },
+            "OneFuzzJobs":
+            [
+                {
+                    "ProjectName": "Martichoras",
+                    "TargetName": "fuzz_ksp_create_claim"
+                }
+            ],
+            "JobDependencies":
+            [
+                "fuzz_ksp_create_claim.exe",
+                "fuzz_ksp_create_claim.pdb",
+                "symcrypt.dll",
+                "azihsmksp.dll",
+                "azihsmksp.pdb",
+                "*asan*.dll",
+                "setup.ps1"
+            ],
+            "AdoTemplate":
+            {
+                "Org": "msazure",
+                "Project": "One",
+                "AssignedTo": "connorshugg@microsoft.com",
+                "AreaPath": "One\\Azure Compute\\OneFleet Node\\Azure Confidential Compute\\Device Attestation and Storage",
+                "IterationPath": "One"
+            }
+        }
+    ]
+}

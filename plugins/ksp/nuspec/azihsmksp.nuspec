@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2010/07/nuspec.xsd">
+    <metadata>
+        <id>martichoras.ksp.plugin.x86_64</id>
+        <!-- The version number here is not used as it is automatically incremented by Azure Pipelines -->
+        <version>0.0.0.18</version>
+        <description>Microsoft AzIHSM KSP plugin package</description>
+        <authors>Microsoft</authors>
+        <repository type="git" url="https://msazure.visualstudio.com/One/_git/Martichoras"/>
+        <copyright>Copyright (C) Microsoft. All rights reserved.</copyright>
+    </metadata>
+    <files>
+        <file src="x64\Release\azihsmksp.dll" />
+        <file src="x64\Release\azihsmksp.pdb" />
+        <file src="symcrypt\dll\symcrypt.dll" target="symcrypt.dll" />
+        <file src="symcrypt\dll\symcrypt.pdb" target="symcrypt.pdb" />
+        <file src="symcrypt\LICENSE" target="symcrypt\LICENSE" />
+        <file src="symcrypt\NOTICE" target="symcrypt\NOTICE" />
+        <file src="symcrypt\README.md" target="symcrypt\README.md" />
+        <file src="Azihsmkspinstall.ps1" />
+        <file src="Azihsmkspverify.ps1" />
+        <file src="_manifest\spdx_2.2\*" target="_manifest\spdx_2.2\" />
+    </files>
+</package>

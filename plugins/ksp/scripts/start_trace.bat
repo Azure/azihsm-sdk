@@ -1,0 +1,1 @@
+tracelog.exe -start KSPTrace -guid guid.ctl -matchanykw 0xFFFFFFFF -level 255  -f "ksp.etl" -rt -kd -b 200000

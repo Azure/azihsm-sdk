@@ -1,0 +1,53 @@
+name: Rust
+
+on:
+  push:
+    branches: [ "users/v-davidz/initial_staging" ]
+  pull_request:
+    branches: [ "users/v-davidz/initial_staging" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build_ubuntu:
+
+    runs-on: ubuntu-${{ vars.UBUNTU_VER }}
+
+    defaults:
+      run:
+        working-directory: api
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install Symcrypt
+      run: sudo bash ./install-symcrypt.sh ${{ vars.UBUNTU_VER }}
+      working-directory: .github/workflows/scripts
+    - name: Install Linux dependencies
+      run: sudo apt-get -y install build-essential nghttp2 libnghttp2-dev libssl-dev
+    - name: Build
+      run: cargo build --features use-openssl
+    - name: Run tests
+      run: cargo test --features mock,testhooks,use-openssl -- --test-threads=1
+
+  build_windows:
+
+    runs-on: windows-latest
+
+    defaults:
+      run:
+        working-directory: api
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install Symcrypt
+      run: |
+        .\install-symcrypt.ps1
+        $libpath = Join-Path -Path ([System.Environment]::GetFolderPath("LocalApplicationData")) -ChildPath "symcrypt\dll"
+        "SYMCRYPT_LIB_PATH=$libpath" >> $env:GITHUB_ENV
+      working-directory: .github/workflows/scripts
+      shell: pwsh
+    - name: Build
+      run: cargo build --features use-symcrypt
+    - name: Run tests
+      run: cargo test --features mock,testhooks,use-symcrypt -- --test-threads=1

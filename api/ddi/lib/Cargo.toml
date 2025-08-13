@@ -1,0 +1,46 @@
+# Copyright (C) Microsoft Corporation. All rights reserved.
+
+[package]
+name = "mcr_ddi"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+doctest = false
+test = false
+
+[dependencies]
+mcr_ddi_types.workspace = true
+minicbor.workspace = true
+thiserror.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+nix.workspace = true
+
+[dev-dependencies]
+cfg-if.workspace = true
+crypto.workspace = true
+mcr_ddi_mbor.workspace = true
+mcr_ddi_mock.workspace = true
+mcr_ddi_nix.workspace = true
+mcr_ddi_sim.workspace = true
+mcr_ddi_win.workspace = true
+parking_lot.workspace = true
+rsa_padding.workspace = true
+test_with_tracing.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+chrono.workspace = true
+session_parameter_encryption.workspace = true
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+openssl.workspace = true
+
+[features]
+default = []
+mock = []
+use-openssl = ["crypto/use-openssl", "mcr_ddi_sim/use-openssl"]
+use-symcrypt = ["crypto/use-symcrypt", "mcr_ddi_sim/use-symcrypt"]
+
+[lints]
+workspace = true

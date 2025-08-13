@@ -1,0 +1,29 @@
+# Copyright (C) Microsoft Corporation. All rights reserved.
+
+[package]
+name = "mcr_api_perf"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+circular-queue.workspace = true
+clap.workspace = true
+indicatif.workspace = true
+mcr_api.workspace = true
+parking_lot.workspace = true
+quantogram.workspace = true
+rand.workspace = true
+rand_distr.workspace = true
+uuid.workspace = true
+
+[features]
+default = ["testhooks"]
+mock = ["mcr_api/mock"]
+use-openssl = ["mcr_api/use-openssl"]
+use-symcrypt = ["mcr_api/use-symcrypt"]
+table-4 = ["mcr_api/table-4"]
+table-64 = ["mcr_api/table-64"]
+testhooks = ["mcr_api/testhooks"]
+
+[lints]
+workspace = true
