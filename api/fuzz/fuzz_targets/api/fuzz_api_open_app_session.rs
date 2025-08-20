@@ -1,3 +1,5 @@
+// Copyright (C) Microsoft Corporation. All rights reserved.
+
 #![cfg_attr(target_os = "linux", no_main)]
 
 #[cfg(target_os = "linux")]

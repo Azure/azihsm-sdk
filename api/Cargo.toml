@@ -20,6 +20,7 @@ members = [
     "tools/mcr_api_perf",
     "tools/mcr_perf",
     "support/rsa_padding",
+    "xtask",
 ]
 
 [workspace.dependencies]
@@ -48,12 +49,14 @@ test_with_tracing_macro = { path = "support/test_with_tracing/test_with_tracing_
 # public crates from crates.io
 # NOTE: these should match versions in hvlite\Cargo.toml. If crate versions are updated,
 # we should test building serde\ and sim\ folders with hvlite
+anyhow = "1.0"
 bitfield-struct = "0.5"
 hex = "0.4"
 cfg-if = "1"
 circular-queue = "0.2.6"
 clap = { version = "4.5.4", features = ["derive", "string"] }
 darling = "0.20.11"
+env_logger = "0.11.8"
 glob = "0.3"
 indicatif = "0.17.8"
 libc = "0.2"
@@ -103,6 +106,7 @@ pkcs1 = { version = "0.7.5", features = ["alloc"], default-features = false }
 pkcs8 = "0.10.2"
 symcrypt = { version = "0.5.0", features = ["sha1", "pkcs1-encrypt-decrypt"] }
 generic-array = { version = "0.14.7" }
+xshell = "0.2.7"
 
 # Causes the project to link with the Spectre-mitigated CRT and libs.
 msvc_spectre_libs = { version = "0.1", features = ["error"] }

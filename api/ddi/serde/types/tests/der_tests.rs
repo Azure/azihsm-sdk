@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft Corporation. All rights reserved.
+// Copyright (C) Microsoft Corporation. All rights reserved.
 
 // TODO: Currently restricting tests to Linux as openssl use is disallowed on Windows
 // and causes S360 issues. Need to find a good way to run these tests on Windows.

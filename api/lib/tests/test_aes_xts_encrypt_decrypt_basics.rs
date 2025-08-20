@@ -98,7 +98,7 @@ fn test_aes_xts_decrypt_after_session_close() {
         );
         assert!(result.is_ok(), "result {:?}", result);
         let encrypted_data = result.unwrap();
-        assert_eq!(encrypted_data.data.len(), data_len as usize);
+        assert_eq!(encrypted_data.data.len(), data_len);
         assert_ne!(data, encrypted_data.data);
 
         let result = app_session.close_session();
@@ -217,7 +217,7 @@ fn test_aes_xts_encrypt_invalid_keyhandle() {
 
         assert!(result.is_ok(), "result {:?}", result);
         let encrypted_data = result.unwrap();
-        assert_eq!(encrypted_data.data.len(), data_len as usize);
+        assert_eq!(encrypted_data.data.len(), data_len);
         assert_ne!(data, encrypted_data.data);
     });
 }
@@ -263,7 +263,7 @@ fn test_aes_xts_decrypt_invalid_keyhandle() {
         );
         assert!(result.is_ok(), "result {:?}", result);
         let encrypted_data = result.unwrap();
-        assert_eq!(encrypted_data.data.len(), data_len as usize);
+        assert_eq!(encrypted_data.data.len(), data_len);
         assert_ne!(data, encrypted_data.data);
 
         let result = app_session.ecc_generate(
@@ -381,7 +381,7 @@ fn test_aes_xts_decrypt_with_nonmatching_handle() {
         );
         assert!(result.is_ok(), "result {:?}", result);
         let encrypted_data = result.unwrap();
-        assert_eq!(encrypted_data.data.len(), data_len as usize);
+        assert_eq!(encrypted_data.data.len(), data_len);
         assert_ne!(data, encrypted_data.data);
 
         let result = app_session.aes_generate(
@@ -575,7 +575,7 @@ fn test_aes_xts_decrypt_deleted_keyhandles() {
         );
         assert!(result.is_ok(), "result {:?}", result);
         let encrypted_data = result.unwrap();
-        assert_eq!(encrypted_data.data.len(), data_len as usize);
+        assert_eq!(encrypted_data.data.len(), data_len);
         assert_ne!(data, encrypted_data.data);
 
         let result = app_session.delete_key(&aes_key1_handle);
@@ -707,7 +707,7 @@ fn test_aes_xts_encrypt_decrypt_aes_nobulk() {
         );
         assert!(result.is_ok(), "result {:?}", result);
         let encrypted_data = result.unwrap();
-        assert_eq!(encrypted_data.data.len(), data_len as usize);
+        assert_eq!(encrypted_data.data.len(), data_len);
         assert_ne!(data, encrypted_data.data);
 
         let decrypted_result = app_session.aes_xts_encrypt_decrypt(

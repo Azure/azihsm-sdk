@@ -58,7 +58,7 @@ fn test_aes_xts_encrypt_decrypt() {
         );
         assert!(result.is_ok(), "result {:?}", result);
         let encrypted_data = result.unwrap();
-        assert_eq!(encrypted_data.data.len(), data_len as usize);
+        assert_eq!(encrypted_data.data.len(), data_len);
         assert_ne!(data, encrypted_data.data);
 
         let decrypted_result = app_session.aes_xts_encrypt_decrypt(
@@ -123,7 +123,7 @@ fn test_aes_xts_corrupt() {
         );
         assert!(result.is_ok(), "result {:?}", result);
         let mut encrypted_data = result.unwrap();
-        assert_eq!(encrypted_data.data.len(), data_len as usize);
+        assert_eq!(encrypted_data.data.len(), data_len);
         assert_ne!(data, encrypted_data.data);
 
         /* modify byte 9.
@@ -195,7 +195,7 @@ fn test_aes_xts_switch_keys() {
         );
         assert!(result.is_ok(), "result {:?}", result);
         let encrypted_data = result.unwrap();
-        assert_eq!(encrypted_data.data.len(), data_len as usize);
+        assert_eq!(encrypted_data.data.len(), data_len);
         assert_ne!(data, encrypted_data.data);
 
         let decrypted_result = app_session.aes_xts_encrypt_decrypt(
@@ -259,7 +259,7 @@ fn test_aes_xts_invalid_keys() {
         );
         assert!(result.is_ok(), "result {:?}", result);
         let encrypted_data = result.unwrap();
-        assert_eq!(encrypted_data.data.len(), data_len as usize);
+        assert_eq!(encrypted_data.data.len(), data_len);
         assert_ne!(data, encrypted_data.data);
 
         let result = app_session.delete_key(&aes_key1_handle);
@@ -330,7 +330,7 @@ fn test_aes_xts_invalid_tweak_value() {
         );
         assert!(result.is_ok(), "result {:?}", result);
         let encrypted_data = result.unwrap();
-        assert_eq!(encrypted_data.data.len(), data_len as usize);
+        assert_eq!(encrypted_data.data.len(), data_len);
         assert_ne!(data, encrypted_data.data);
 
         tweak[0] += 1;

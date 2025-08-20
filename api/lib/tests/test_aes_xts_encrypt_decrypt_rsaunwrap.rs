@@ -47,7 +47,7 @@ fn test_aes_xts_encrypt_decrypt_rsaunwrap() {
         );
         assert!(result.is_ok(), "result {:?}", result);
         let encrypted_data = result.unwrap();
-        assert_eq!(encrypted_data.data.len(), data_len as usize);
+        assert_eq!(encrypted_data.data.len(), data_len);
         assert_ne!(data, encrypted_data.data);
 
         let decrypted_result = app_session.aes_xts_encrypt_decrypt(
@@ -102,7 +102,7 @@ fn test_aes_xts_tampered_data_rsaunwrap() {
         );
         assert!(result.is_ok(), "result {:?}", result);
         let encrypted_data = result.unwrap();
-        assert_eq!(encrypted_data.data.len(), data_len as usize);
+        assert_eq!(encrypted_data.data.len(), data_len);
         assert_ne!(data, encrypted_data.data);
 
         let mut tampered_data = encrypted_data.data.clone();
@@ -168,7 +168,7 @@ fn test_aes_xts_tampered_tweak_value_rsaunwrap() {
         );
         assert!(result.is_ok(), "result {:?}", result);
         let encrypted_data = result.unwrap();
-        assert_eq!(encrypted_data.data.len(), data_len as usize);
+        assert_eq!(encrypted_data.data.len(), data_len);
         assert_ne!(data, encrypted_data.data);
 
         tweak[0] += 1;
@@ -224,7 +224,7 @@ fn test_aes_xts_encrypt_decrypt_multi_times_rsaunwrap() {
         );
         assert!(result.is_ok(), "result {:?}", result);
         let encrypted_data = result.unwrap();
-        assert_eq!(encrypted_data.data.len(), data_len as usize);
+        assert_eq!(encrypted_data.data.len(), data_len);
         assert_ne!(data, encrypted_data.data);
 
         let decrypted_result = app_session.aes_xts_encrypt_decrypt(
@@ -254,7 +254,7 @@ fn test_aes_xts_encrypt_decrypt_multi_times_rsaunwrap() {
         );
         assert!(result.is_ok(), "result {:?}", result);
         let encrypted_data = result.unwrap();
-        assert_eq!(encrypted_data.data.len(), data_len as usize);
+        assert_eq!(encrypted_data.data.len(), data_len);
         assert_ne!(data, encrypted_data.data);
 
         let decrypted_result = app_session.aes_xts_encrypt_decrypt(
@@ -310,7 +310,7 @@ fn test_aes_xts_encrypt_data_size_rsaunwrap() {
         );
         assert!(result.is_ok(), "result {:?}", result);
         let encrypted_data = result.unwrap();
-        assert_eq!(encrypted_data.data.len(), data_len as usize);
+        assert_eq!(encrypted_data.data.len(), data_len);
         assert_ne!(data, encrypted_data.data);
 
         //size 512 allowed,  smaller than data size
@@ -489,7 +489,7 @@ fn test_aes_xts_encrypt_data_size_rsaunwrap() {
         );
         assert!(result.is_ok(), "result {:?}", result);
         let encrypted_data = result.unwrap();
-        assert_eq!(encrypted_data.data.len(), data_len as usize);
+        assert_eq!(encrypted_data.data.len(), data_len);
         assert_ne!(data, encrypted_data.data);
 
         //size > 16
@@ -507,7 +507,7 @@ fn test_aes_xts_encrypt_data_size_rsaunwrap() {
         );
         assert!(result.is_ok(), "result {:?}", result);
         let encrypted_data = result.unwrap();
-        assert_eq!(encrypted_data.data.len(), data_len as usize);
+        assert_eq!(encrypted_data.data.len(), data_len);
         assert_ne!(data, encrypted_data.data);
 
         //size is odd
@@ -525,7 +525,7 @@ fn test_aes_xts_encrypt_data_size_rsaunwrap() {
         );
         assert!(result.is_ok(), "result {:?}", result);
         let encrypted_data = result.unwrap();
-        assert_eq!(encrypted_data.data.len(), data_len as usize);
+        assert_eq!(encrypted_data.data.len(), data_len);
         assert_ne!(data, encrypted_data.data);
 
         //big size
@@ -543,7 +543,7 @@ fn test_aes_xts_encrypt_data_size_rsaunwrap() {
         );
         assert!(result.is_ok(), "result {:?}", result);
         let encrypted_data = result.unwrap();
-        assert_eq!(encrypted_data.data.len(), data_len as usize);
+        assert_eq!(encrypted_data.data.len(), data_len);
         assert_ne!(data, encrypted_data.data);
     });
 }
@@ -585,7 +585,7 @@ fn test_aes_xts_decrypt_data_size_rsaunwrap() {
         );
         assert!(result.is_ok(), "result {:?}", result);
         let encrypted_data = result.unwrap();
-        assert_eq!(encrypted_data.data.len(), data_len as usize);
+        assert_eq!(encrypted_data.data.len(), data_len);
         assert_ne!(data, encrypted_data.data);
 
         // len 512 but samller than original data,
@@ -616,7 +616,7 @@ fn test_aes_xts_decrypt_data_size_rsaunwrap() {
         );
         assert!(result.is_ok(), "result {:?}", result);
         let encrypted_data = result.unwrap();
-        assert_eq!(encrypted_data.data.len(), data_len as usize);
+        assert_eq!(encrypted_data.data.len(), data_len);
         assert_ne!(data, encrypted_data.data);
 
         // len 512 but larger than original data,
@@ -647,7 +647,7 @@ fn test_aes_xts_decrypt_data_size_rsaunwrap() {
         );
         assert!(result.is_ok(), "result {:?}", result);
         let encrypted_data = result.unwrap();
-        assert_eq!(encrypted_data.data.len(), data_len as usize);
+        assert_eq!(encrypted_data.data.len(), data_len);
         assert_ne!(data, encrypted_data.data);
 
         let decrypted_result = app_session.aes_xts_encrypt_decrypt(
@@ -677,7 +677,7 @@ fn test_aes_xts_decrypt_data_size_rsaunwrap() {
         );
         assert!(result.is_ok(), "result {:?}", result);
         let encrypted_data = result.unwrap();
-        assert_eq!(encrypted_data.data.len(), data_len as usize);
+        assert_eq!(encrypted_data.data.len(), data_len);
         assert_ne!(data, encrypted_data.data);
 
         let decrypted_result = app_session.aes_xts_encrypt_decrypt(
@@ -708,7 +708,7 @@ fn test_aes_xts_decrypt_data_size_rsaunwrap() {
         );
         assert!(result.is_ok(), "result {:?}", result);
         let encrypted_data = result.unwrap();
-        assert_eq!(encrypted_data.data.len(), data_len as usize);
+        assert_eq!(encrypted_data.data.len(), data_len);
         assert_ne!(data, encrypted_data.data);
 
         let decrypted_result = app_session.aes_xts_encrypt_decrypt(
@@ -740,7 +740,7 @@ fn test_aes_xts_decrypt_data_size_rsaunwrap() {
         );
         assert!(result.is_ok(), "result {:?}", result);
         let encrypted_data = result.unwrap();
-        assert_eq!(encrypted_data.data.len(), data_len as usize);
+        assert_eq!(encrypted_data.data.len(), data_len);
         assert_ne!(data, encrypted_data.data);
 
         let decrypted_result = app_session.aes_xts_encrypt_decrypt(
@@ -768,7 +768,7 @@ fn test_aes_xts_decrypt_data_size_rsaunwrap() {
         );
         assert!(result.is_ok(), "result {:?}", result);
         let encrypted_data = result.unwrap();
-        assert_eq!(encrypted_data.data.len(), data_len as usize);
+        assert_eq!(encrypted_data.data.len(), data_len);
         assert_ne!(data, encrypted_data.data);
 
         // len 2056, not allowed size, not the data len either
@@ -981,7 +981,7 @@ fn test_aes_xts_decrypt_mismatched_datalen_rsaunwrap() {
         );
         assert!(result.is_ok(), "result {:?}", result);
         let encrypted_data = result.unwrap();
-        assert_eq!(encrypted_data.data.len(), data_len as usize);
+        assert_eq!(encrypted_data.data.len(), data_len);
         assert_ne!(data, encrypted_data.data);
 
         //len < data size
@@ -1053,7 +1053,7 @@ fn test_aes_xts_switch_keys_rsaunwrap() {
         );
         assert!(result.is_ok(), "result {:?}", result);
         let encrypted_data = result.unwrap();
-        assert_eq!(encrypted_data.data.len(), data_len as usize);
+        assert_eq!(encrypted_data.data.len(), data_len);
         assert_ne!(data, encrypted_data.data);
 
         let decrypted_result = app_session.aes_xts_encrypt_decrypt(

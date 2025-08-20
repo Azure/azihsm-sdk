@@ -8,12 +8,12 @@ mod sanitize;
 use core::panic;
 use std::io::*;
 
+use clap::*;
+
 use crate::cli::*;
 use crate::logger::*;
 use crate::print::*;
 use crate::sanitize::*;
-
-use clap::*;
 
 fn main() {
     let cli_args = CliArgs::parse();

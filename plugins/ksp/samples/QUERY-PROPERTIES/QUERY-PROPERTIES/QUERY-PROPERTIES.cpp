@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft Corporation. All rights reserved.
+// Copyright (C) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
 // This sample demonstrates querying the properties that AziHSM exposes to user:

@@ -3,9 +3,10 @@
 // Import the macro from the self_test module
 mod common;
 
+use std::env;
+
 use mcr_ddi::*;
 use mcr_ddi_types::*;
-use std::env;
 use test_with_tracing::test;
 
 use crate::common::*;

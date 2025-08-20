@@ -310,7 +310,7 @@ Write comments in the sample's code to explain processes, function calls, variab
 Because these samples will be open to the public, every source code file should have the following copyright at the top:
 
 ```cpp
-// Copyright (c) Microsoft Corporation. All rights reserved.
+// Copyright (C) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 ```
 This is the same copyright message seen in the [OpenEnclave repository](https://github.com/openenclave/openenclave), and other Microsoft repositories that use the MIT license.

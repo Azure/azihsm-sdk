@@ -2,10 +2,10 @@
 
 use std::fmt::Write;
 
+use mcr_ddi_mbor::*;
+
 use crate::cli::*;
 use crate::logger::*;
-
-use mcr_ddi_mbor::*;
 
 pub fn print_converted_data(logger: &mut dyn Logger, to: To, input: &[u8]) {
     if to == To::Debug {
@@ -391,9 +391,11 @@ fn hex_encode(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use mcr_ddi_types::*;
     use std::fmt::Arguments;
+
+    use mcr_ddi_types::*;
+
+    use super::*;
 
     #[derive(Default)]
     struct DummyLogger(Vec<String>);

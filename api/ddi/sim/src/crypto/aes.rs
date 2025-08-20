@@ -1405,7 +1405,8 @@ mod tests {
     #[test]
     fn test_openssl_wrap_pad_compatibility() {
         use openssl::cipher::Cipher;
-        use openssl::cipher_ctx::{CipherCtx, CipherCtxFlags};
+        use openssl::cipher_ctx::CipherCtx;
+        use openssl::cipher_ctx::CipherCtxFlags;
 
         let wrapping_key =
             hex::decode("aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899")
@@ -1441,7 +1442,8 @@ mod tests {
     #[test]
     fn test_openssl_unwrap_pad_compatibility() {
         use openssl::cipher::Cipher;
-        use openssl::cipher_ctx::{CipherCtx, CipherCtxFlags};
+        use openssl::cipher_ctx::CipherCtx;
+        use openssl::cipher_ctx::CipherCtxFlags;
 
         let wrapping_key =
             hex::decode("00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff")
