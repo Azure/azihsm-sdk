@@ -5,8 +5,6 @@
 
 //! Xtask to run various repo-specific clippy checks
 
-use std::env;
-
 use clap::Parser;
 use xshell::cmd;
 
@@ -24,11 +22,10 @@ impl Xtask for Clippy {
 
         let sh = xshell::Shell::new()?;
         let rust_toolchain = sh.var("RUST_TOOLCHAIN").map(|s| format!("+{s}")).ok();
-        let crypto = if env::consts::OS == "windows" {
-            String::from("use-symcrypt")
-        } else {
-            String::from("use-openssl")
-        };
+        #[cfg(target_os = "windows")]
+        let crypto = String::from("use-symcrypt");
+        #[cfg(not(target_os = "windows"))]
+        let crypto = String::from("use-openssl");
 
         cmd!(
             sh,
