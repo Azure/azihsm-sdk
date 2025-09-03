@@ -2,9 +2,9 @@ name: Rust
 
 on:
   push:
-    branches: [ "users/v-davidz/initial_staging" ]
+    branches: [ main ]
   pull_request:
-    branches: [ "users/v-davidz/initial_staging" ]
+    branches: [ main ]
 
 env:
   CARGO_TERM_COLOR: always
