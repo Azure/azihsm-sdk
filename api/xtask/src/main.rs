@@ -21,6 +21,7 @@ mod copyright;
 mod fmt;
 mod precheck;
 mod test;
+mod nextest;
 
 /// Common context passed into every Xtask
 #[derive(Clone)]
@@ -55,6 +56,7 @@ enum Commands {
     Copyright(copyright::Copyright),
     Fmt(fmt::Fmt),
     Test(test::Test),
+	Nextest(nextest::Nextest),
 }
 
 fn main() {
@@ -87,5 +89,6 @@ fn try_main() -> anyhow::Result<()> {
         Commands::Fmt(task) => task.run(ctx),
         Commands::Precheck(task) => task.run(ctx),
         Commands::Test(task) => task.run(ctx),
+		Commands::Nextest(task) => task.run(ctx),
     }
 }

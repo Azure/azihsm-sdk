@@ -5,58 +5,42 @@
 
 //! Xtask to run various repo-specific clippy checks
 
-use std::path::PathBuf;
-
 use clap::Parser;
-use xshell::cmd;
+use xshell::{cmd, Shell};
 
 use crate::Xtask;
 use crate::XtaskCtx;
 
 /// Xtask to run various repo-specific clippy checks
 #[derive(Parser)]
-#[clap(about = "Run build")]
-pub struct Build {
-	/// Whether to include --tests argument
-	#[clap(long)]
-	pub tests: bool,
-	
-	/// Whether to include --all-targets argument
-	#[clap(long)]
-	pub all_targets: bool,
-	
-	/// Whether to include --release argument
-	#[clap(long)]
-	pub release: bool,
-	
-	/// Features to include in build
+#[clap(about = "Run nextest")]
+pub struct Nextest {
+	/// Features to include in nextest run
     #[clap(long)]
 	pub features: Option<String>,
 	
-	/// Package to build
+	/// Package argument to run nextest command with
     #[clap(long)]
 	pub package: Option<String>,
+	
+	/// Whether to include --no-default-features
+	#[clap(long)]
+	pub no_default_features: bool,
 }
 
-impl Xtask for Build {
+impl Xtask for Nextest {
     fn run(self, _ctx: XtaskCtx) -> anyhow::Result<()> {
-        log::trace!("running build");
+        log::trace!("running nextest");
 
-        let sh = xshell::Shell::new()?;
+        let sh = Shell::new()?;
         let rust_toolchain = sh.var("RUST_TOOLCHAIN").map(|s| format!("+{s}")).ok();
-        #[cfg(target_os = "windows")]
+		#[cfg(target_os = "windows")]
         let crypto = String::from("use-symcrypt");
         #[cfg(not(target_os = "windows"))]
         let crypto = String::from("use-openssl");
-        let mut target_dir = PathBuf::new();
-        target_dir.push("target");
-        target_dir.push("xtask");
 		
 		// convert xtask parameters into cargo command arguments
 		let mut command_args = Vec::new();
-		(self.tests).then(|| { command_args.push("--tests"); });
-		(self.all_targets).then(|| { command_args.push("--all-targets"); });
-		(self.release).then(|| { command_args.push("--release"); });
 		command_args.push("--features");
 		let features = format!(
 			"{}{}{}",
@@ -68,17 +52,16 @@ impl Xtask for Build {
 		(self.package.is_some()).then(|| { command_args.push("--package"); });
 		let package_val = self.package.clone().unwrap_or("".to_string());
 		(self.package.is_some()).then(|| { command_args.push(&package_val); });
-		command_args.push("--target-dir");
-		command_args.push(target_dir.to_str().unwrap());
+		(self.no_default_features).then(|| { command_args.push("--no-default-features"); });
 		
 		cmd!(
             sh,
-            "cargo {rust_toolchain...} build {command_args...}"
+            "cargo {rust_toolchain...} nextest run {command_args...}"
         )
 		.quiet()
-        .run()?;
+		.run()?;
 
-        log::trace!("done build");
+        log::trace!("done nextest");
         Ok(())
     }
 }
