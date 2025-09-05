@@ -19,8 +19,15 @@ mod clippy;
 pub mod common;
 mod copyright;
 mod fmt;
+mod install_cargo_nextest;
+mod install_clippy;
+mod install_fmt;
+mod install_symcrypt;
+mod job_windows;
+mod mcr_perf;
 mod nextest;
 mod precheck;
+mod setup;
 mod test;
 
 /// Common context passed into every Xtask
@@ -57,6 +64,13 @@ enum Commands {
     Fmt(fmt::Fmt),
     Test(test::Test),
     Nextest(nextest::Nextest),
+    InstallSymcrypt(install_symcrypt::InstallSymcrypt),
+    InstallCargoNextest(install_cargo_nextest::InstallCargoNextest),
+    InstallClippy(install_clippy::InstallClippy),
+    InstallFmt(install_fmt::InstallFmt),
+    Setup(setup::Setup),
+    McrPerf(mcr_perf::McrPerf),
+    JobWindows(job_windows::JobWindows),
 }
 
 fn main() {
@@ -90,5 +104,12 @@ fn try_main() -> anyhow::Result<()> {
         Commands::Precheck(task) => task.run(ctx),
         Commands::Test(task) => task.run(ctx),
         Commands::Nextest(task) => task.run(ctx),
+        Commands::InstallSymcrypt(task) => task.run(ctx),
+        Commands::InstallCargoNextest(task) => task.run(ctx),
+        Commands::InstallClippy(task) => task.run(ctx),
+        Commands::InstallFmt(task) => task.run(ctx),
+        Commands::Setup(task) => task.run(ctx),
+        Commands::McrPerf(task) => task.run(ctx),
+        Commands::JobWindows(task) => task.run(ctx),
     }
 }
