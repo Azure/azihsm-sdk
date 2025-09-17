@@ -3,7 +3,7 @@
 #![warn(missing_docs)]
 #![forbid(unsafe_code)]
 
-//! Xtask to run create directories
+//! Xtask to install cargo-nextest
 
 use clap::Parser;
 use xshell::cmd;
@@ -12,9 +12,9 @@ use xshell::Shell;
 use crate::Xtask;
 use crate::XtaskCtx;
 
-/// Xtask to run create directories
+/// Xtask to install cargo-nextest
 #[derive(Parser)]
-#[clap(about = "Install cargo nextest")]
+#[clap(about = "Install cargo-nextest")]
 pub struct InstallCargoNextest {}
 
 impl Xtask for InstallCargoNextest {

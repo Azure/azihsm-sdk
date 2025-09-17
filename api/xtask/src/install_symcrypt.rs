@@ -15,7 +15,11 @@ use crate::XtaskCtx;
 /// Xtask to run install symcrypt
 #[derive(Parser)]
 #[clap(about = "Install symcrypt")]
-pub struct InstallSymcrypt {}
+pub struct InstallSymcrypt {
+    /// Ubuntu version to install symcrypt for
+    #[clap(long)]
+    pub ubuntu_version: Option<String>,
+}
 
 impl Xtask for InstallSymcrypt {
     fn run(self, _ctx: XtaskCtx) -> anyhow::Result<()> {
@@ -31,12 +35,23 @@ impl Xtask for InstallSymcrypt {
         .quiet()
         .run()?;
         #[cfg(not(target_os = "windows"))]
-        cmd!(
-            sh,
-            "powershell -File ../.github/workflows/scripts/install-symcrypt.sh"
-        )
-        .quiet()
-        .run()?;
+        {
+            cmd!(
+                sh,
+                "chmod +x ../.github/workflows/scripts/install-symcrypt.sh"
+            )
+            .quiet()
+            .run()?;
+
+            let ubuntu_version = self.ubuntu_version.unwrap_or("22.04".to_string());
+
+            cmd!(
+                sh,
+                "../.github/workflows/scripts/install-symcrypt.sh {ubuntu_version}"
+            )
+            .quiet()
+            .run()?;
+        }
 
         log::trace!("done install symcrypt");
         Ok(())

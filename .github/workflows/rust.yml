@@ -10,9 +10,12 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build_ubuntu:
+  job_ubuntu:
 
     runs-on: ubuntu-${{ vars.UBUNTU_VER }}
+    
+    env:
+      UBUNTU_VER: ${{ vars.UBUNTU_VER }}
 
     defaults:
       run:
@@ -20,15 +23,10 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
-    - name: Install Symcrypt
-      run: sudo bash ./install-symcrypt.sh ${{ vars.UBUNTU_VER }}
-      working-directory: .github/workflows/scripts
     - name: Install Linux dependencies
       run: sudo apt-get -y install build-essential nghttp2 libnghttp2-dev libssl-dev
-    - name: Build
-      run: cargo build --features use-openssl
-    - name: Run tests
-      run: cargo test --features mock,testhooks,use-openssl -- --test-threads=1
+    - name: Run job
+      run: cargo xtask job-main
 
   job_windows:
 
@@ -44,4 +42,4 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Run job
-      run: cargo xtask job-windows
+      run: cargo xtask job-main

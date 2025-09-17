@@ -3,30 +3,40 @@
 #![warn(missing_docs)]
 #![forbid(unsafe_code)]
 
-//! Xtask to run job: Windows
+//! Xtask to run job: Main
 
 use clap::Parser;
 
 use crate::build;
+use crate::clean;
 use crate::clippy;
 use crate::fmt;
+#[cfg(not(target_os = "windows"))]
+use crate::fuzz;
+#[cfg(not(target_os = "windows"))]
+use crate::install_cargo_fuzz;
 use crate::mcr_perf;
 use crate::nextest;
 use crate::setup;
 use crate::Xtask;
 use crate::XtaskCtx;
 
-/// Xtask to run job: Windows
+/// Xtask to run job: Main
 #[derive(Parser)]
-#[clap(about = "Run job: Windows")]
-pub struct JobWindows {}
+#[clap(about = "Run job: Main")]
+pub struct JobMain {}
 
-impl Xtask for JobWindows {
+impl Xtask for JobMain {
     fn run(self, ctx: XtaskCtx) -> anyhow::Result<()> {
-        log::trace!("running job: Windows");
+        log::trace!("running job: Main");
 
         // Run Setup
-        let setup = setup::Setup {};
+        let setup = setup::Setup {
+            #[cfg(target_os = "windows")]
+            ubuntu_version: None,
+            #[cfg(not(target_os = "windows"))]
+            ubuntu_version: std::env::var("UBUNTU_VER").ok(),
+        };
         setup.run(ctx.clone())?;
 
         // Run Clippy
@@ -44,6 +54,10 @@ impl Xtask for JobWindows {
         let mut cwd = ctx.root.clone();
         cwd.extend(["ddi", "lib", "tests"]);
         std::env::set_current_dir(cwd.as_path())?;
+        let clean_mcr_ddi_tests = clean::Clean {};
+        clean_mcr_ddi_tests.run(ctx.clone())?;
+        #[cfg(not(target_os = "windows"))]
+        std::env::set_var("RUSTFLAGS", "-D warnings");
         let build_mcr_ddi_tests = build::Build {
             tests: true,
             all_targets: false,
@@ -57,6 +71,10 @@ impl Xtask for JobWindows {
         cwd = ctx.root.clone();
         cwd.extend(["lib", "tests"]);
         std::env::set_current_dir(cwd.as_path())?;
+        let clean_mcr_api_tests = clean::Clean {};
+        clean_mcr_api_tests.run(ctx.clone())?;
+        #[cfg(not(target_os = "windows"))]
+        std::env::set_var("RUSTFLAGS", "-D warnings");
         let build_mcr_api_tests = build::Build {
             tests: true,
             all_targets: false,
@@ -67,6 +85,10 @@ impl Xtask for JobWindows {
         build_mcr_api_tests.run(ctx.clone())?;
 
         // Build mcr_api_hook tests
+        let clean_mcr_api_hook_tests = clean::Clean {};
+        clean_mcr_api_hook_tests.run(ctx.clone())?;
+        #[cfg(not(target_os = "windows"))]
+        std::env::set_var("RUSTFLAGS", "-D warnings");
         let build_mcr_api_hook_tests = build::Build {
             tests: true,
             all_targets: false,
@@ -79,6 +101,8 @@ impl Xtask for JobWindows {
         // Cargo build release
         cwd = ctx.root.clone();
         std::env::set_current_dir(cwd.as_path())?;
+        #[cfg(not(target_os = "windows"))]
+        std::env::set_var("RUSTFLAGS", "-D warnings");
         let build_release = build::Build {
             tests: false,
             all_targets: true,
@@ -89,27 +113,69 @@ impl Xtask for JobWindows {
         build_release.run(ctx.clone())?;
 
         // Cargo test mock 1 table
+        #[cfg(not(target_os = "windows"))]
+        std::env::set_var("RUSTFLAGS", "-D warnings");
         let test_mock_1_table = nextest::Nextest {
             features: Some("mock,testhooks".to_string()),
             package: None,
             no_default_features: false,
+            exclude_os_crypto: false,
         };
         test_mock_1_table.run(ctx.clone())?;
 
         // Cargo test crypto package with symcrypt
         let test_crypto_package = nextest::Nextest {
-            features: None,
+            features: Some("use-symcrypt".to_string()),
             package: Some("crypto".to_string()),
             no_default_features: false,
+            exclude_os_crypto: true,
         };
         test_crypto_package.run(ctx.clone())?;
 
         let test_mcr_api_package = nextest::Nextest {
-            features: Some("mock".to_string()),
+            features: Some("mock,use-symcrypt".to_string()),
             package: Some("mcr_api".to_string()),
             no_default_features: true,
+            exclude_os_crypto: true,
         };
         test_mcr_api_package.run(ctx.clone())?;
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            // Cargo fuzz
+            let install_cargo_fuzz = install_cargo_fuzz::InstallCargoFuzz {};
+            install_cargo_fuzz.run(ctx.clone())?;
+
+            let build_mock_testhooks = build::Build {
+                tests: false,
+                all_targets: false,
+                release: false,
+                features: Some("mock,testhooks".to_string()),
+                package: None,
+            };
+            build_mock_testhooks.run(ctx.clone())?;
+
+            let cargo_fuzz = fuzz::Fuzz {};
+            cargo_fuzz.run(ctx.clone())?;
+
+            // Cargo test mock 4 tables
+            let test_mock_4_table = nextest::Nextest {
+                features: Some("mock,use-symcrypt,testhooks,table-4".to_string()),
+                package: None,
+                no_default_features: false,
+                exclude_os_crypto: true,
+            };
+            test_mock_4_table.run(ctx.clone())?;
+
+            // Cargo test mock 64 tables
+            let test_mock_64_table = nextest::Nextest {
+                features: Some("mock,testhooks,table-64".to_string()),
+                package: None,
+                no_default_features: false,
+                exclude_os_crypto: false,
+            };
+            test_mock_64_table.run(ctx.clone())?;
+        }
 
         // Cargo build mock perf
         let build_mock_perf = build::Build {
@@ -149,7 +215,7 @@ impl Xtask for JobWindows {
         };
         mock_perf_test_aes_cbc_128_encrypt.run(ctx.clone())?;
 
-        log::trace!("done job: Windows");
+        log::trace!("done job: Main");
         Ok(())
     }
 }

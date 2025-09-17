@@ -27,6 +27,10 @@ pub struct Nextest {
     /// Whether to include --no-default-features
     #[clap(long)]
     pub no_default_features: bool,
+
+    /// Whether to exclude OS-specific cryptographic library in features (use-symcrypt on Windows, use-openssl on Linux)
+    #[clap(long)]
+    pub exclude_os_crypto: bool,
 }
 
 impl Xtask for Nextest {
@@ -42,14 +46,19 @@ impl Xtask for Nextest {
 
         // convert xtask parameters into cargo command arguments
         let mut command_args = Vec::new();
-        command_args.push("--features");
-        let features = format!(
-            "{}{}{}",
-            crypto,
-            if self.features.is_some() { "," } else { "" },
-            self.features.unwrap_or("".to_string())
-        );
-        command_args.push(features.as_str());
+        let mut features_vec = Vec::new();
+        if !self.exclude_os_crypto {
+            features_vec.push(crypto);
+        }
+        if self.features.is_some() {
+            features_vec.push(self.features.unwrap_or("".to_string()));
+        }
+        let features_val;
+        if !features_vec.is_empty() {
+            command_args.push("--features");
+            features_val = features_vec.join(",");
+            command_args.push(&features_val);
+        }
         if self.package.is_some() {
             command_args.push("--package");
         }

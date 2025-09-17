@@ -15,15 +15,18 @@ use clap::Parser;
 use clap::Subcommand;
 
 mod build;
+mod clean;
 mod clippy;
 pub mod common;
 mod copyright;
 mod fmt;
+mod fuzz;
+mod install_cargo_fuzz;
 mod install_cargo_nextest;
 mod install_clippy;
 mod install_fmt;
 mod install_symcrypt;
-mod job_windows;
+mod job_main;
 mod mcr_perf;
 mod nextest;
 mod precheck;
@@ -59,18 +62,21 @@ struct Cli {
 enum Commands {
     Build(build::Build),
     Precheck(precheck::Precheck),
+    Clean(clean::Clean),
     Clippy(clippy::Clippy),
     Copyright(copyright::Copyright),
     Fmt(fmt::Fmt),
+    Fuzz(fuzz::Fuzz),
     Test(test::Test),
     Nextest(nextest::Nextest),
     InstallSymcrypt(install_symcrypt::InstallSymcrypt),
+    InstallCargoFuzz(install_cargo_fuzz::InstallCargoFuzz),
     InstallCargoNextest(install_cargo_nextest::InstallCargoNextest),
     InstallClippy(install_clippy::InstallClippy),
     InstallFmt(install_fmt::InstallFmt),
     Setup(setup::Setup),
     McrPerf(mcr_perf::McrPerf),
-    JobWindows(job_windows::JobWindows),
+    JobMain(job_main::JobMain),
 }
 
 fn main() {
@@ -98,18 +104,21 @@ fn try_main() -> anyhow::Result<()> {
 
     match cli.command {
         Commands::Build(task) => task.run(ctx),
+        Commands::Clean(task) => task.run(ctx),
         Commands::Clippy(task) => task.run(ctx),
         Commands::Copyright(task) => task.run(ctx),
         Commands::Fmt(task) => task.run(ctx),
+        Commands::Fuzz(task) => task.run(ctx),
         Commands::Precheck(task) => task.run(ctx),
         Commands::Test(task) => task.run(ctx),
         Commands::Nextest(task) => task.run(ctx),
         Commands::InstallSymcrypt(task) => task.run(ctx),
+        Commands::InstallCargoFuzz(task) => task.run(ctx),
         Commands::InstallCargoNextest(task) => task.run(ctx),
         Commands::InstallClippy(task) => task.run(ctx),
         Commands::InstallFmt(task) => task.run(ctx),
         Commands::Setup(task) => task.run(ctx),
         Commands::McrPerf(task) => task.run(ctx),
-        Commands::JobWindows(task) => task.run(ctx),
+        Commands::JobMain(task) => task.run(ctx),
     }
 }

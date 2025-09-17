@@ -17,14 +17,20 @@ use crate::XtaskCtx;
 /// Xtask to run various repo-specific checks
 #[derive(Parser)]
 #[clap(about = "Install all dependencies needed for project")]
-pub struct Setup {}
+pub struct Setup {
+    /// Ubuntu version to install symcrypt for
+    #[clap(long)]
+    pub ubuntu_version: Option<String>,
+}
 
 impl Xtask for Setup {
     fn run(self, ctx: XtaskCtx) -> anyhow::Result<()> {
         log::trace!("running setup");
 
         // Run Install SymCrypt
-        let install_symcrypt = install_symcrypt::InstallSymcrypt {};
+        let install_symcrypt = install_symcrypt::InstallSymcrypt {
+            ubuntu_version: self.ubuntu_version,
+        };
         install_symcrypt.run(ctx.clone())?;
 
         // Run Install Cargo nextest
