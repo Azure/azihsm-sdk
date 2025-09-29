@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use api_interface::REPORT_DATA_SIZE;
-use mcr_api::*;
+use mcr_api_resilient::*;
 use openssl_rust::safeapi::error::*;
 use openssl_rust::NID_X9_62_prime256v1 as NID_EC_P256;
 use openssl_rust::NID_secp384r1 as NID_EC_P384;

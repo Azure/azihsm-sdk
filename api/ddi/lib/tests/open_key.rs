@@ -3,7 +3,6 @@
 mod common;
 
 use mcr_ddi::*;
-use mcr_ddi_mbor::MborByteArray;
 use mcr_ddi_types::*;
 use test_with_tracing::test;
 
@@ -99,28 +98,15 @@ fn test_open_key_no_key_tag() {
         common_setup,
         common_cleanup,
         |dev, _ddi, _path, session_id| {
-            let mut der = [0u8; 3072];
-            der[..TEST_RSA_2K_PRIVATE_KEY.len()].copy_from_slice(&TEST_RSA_2K_PRIVATE_KEY);
-            let req = DdiDerKeyImportCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::DerKeyImport,
-                    sess_id: Some(session_id),
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiDerKeyImportReq {
-                    der: MborByteArray::new(der, TEST_RSA_2K_PRIVATE_KEY.len())
-                        .expect("failed to create byte array"),
-                    key_class: DdiKeyClass::Rsa,
-                    key_tag: None,
-                    key_properties: helper_key_properties(
-                        DdiKeyUsage::EncryptDecrypt,
-                        DdiKeyAvailability::App,
-                    ),
-                },
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = rsa_secure_import_key(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                &TEST_RSA_2K_PRIVATE_KEY,
+                DdiKeyClass::Rsa,
+                DdiKeyUsage::EncryptDecrypt,
+                None,
+            );
             assert!(resp.is_ok(), "resp {:?}", resp);
 
             let resp = helper_open_key(

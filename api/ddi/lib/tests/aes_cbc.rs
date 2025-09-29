@@ -100,22 +100,15 @@ fn test_aes_cbc_encrypt_decrypt_malformed_ddi() {
             }
 
             {
-                let req = DdiRsaModExpCmdReq {
-                    hdr: DdiReqHdr {
-                        op: DdiOp::AesEncryptDecrypt,
-                        sess_id: Some(session_id),
-                        rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                    },
-                    data: DdiRsaModExpReq {
-                        key_id: 0x1,
-                        y: MborByteArray::from_slice(&[0x1; 32])
-                            .expect("failed to create byte array"),
-                        op_type: DdiRsaOpType::Sign,
-                    },
-                    ext: None,
-                };
-                let mut cookie = None;
-                let resp = dev.exec_op(&req, &mut cookie);
+                let resp = helper_rsa_mod_exp_op(
+                    dev,
+                    DdiOp::AesEncryptDecrypt,
+                    Some(session_id),
+                    Some(DdiApiRev { major: 1, minor: 0 }),
+                    0x1,
+                    MborByteArray::from_slice(&[0x1; 32]).expect("failed to create byte array"),
+                    DdiRsaOpType::Sign,
+                );
 
                 assert!(resp.is_err(), "resp {:?}", resp);
                 assert!(matches!(
@@ -123,22 +116,15 @@ fn test_aes_cbc_encrypt_decrypt_malformed_ddi() {
                     DdiError::DdiStatus(DdiStatus::DdiDecodeFailed)
                 ));
 
-                let req = DdiRsaModExpCmdReq {
-                    hdr: DdiReqHdr {
-                        op: DdiOp::AesEncryptDecrypt,
-                        sess_id: Some(session_id),
-                        rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                    },
-                    data: DdiRsaModExpReq {
-                        key_id: 0x1,
-                        y: MborByteArray::from_slice(&[0x1; 32])
-                            .expect("failed to create byte array"),
-                        op_type: DdiRsaOpType::Sign,
-                    },
-                    ext: None,
-                };
-                let mut cookie = None;
-                let resp = dev.exec_op(&req, &mut cookie);
+                let resp = helper_rsa_mod_exp_op(
+                    dev,
+                    DdiOp::AesEncryptDecrypt,
+                    Some(session_id),
+                    Some(DdiApiRev { major: 1, minor: 0 }),
+                    0x1,
+                    MborByteArray::from_slice(&[0x1; 32]).expect("failed to create byte array"),
+                    DdiRsaOpType::Sign,
+                );
 
                 assert!(resp.is_err(), "resp {:?}", resp);
                 assert!(matches!(
@@ -311,7 +297,7 @@ fn test_aes_cbc_encrypt_decrypt_incorrect_permissions() {
 
             assert!(resp.is_err(), "resp {:?}", resp);
 
-            let key_props = helper_key_properties(DdiKeyUsage::WrapUnwrap, DdiKeyAvailability::App);
+            let key_props = helper_key_properties(DdiKeyUsage::Unwrap, DdiKeyAvailability::App);
 
             let resp = helper_aes_generate(
                 dev,

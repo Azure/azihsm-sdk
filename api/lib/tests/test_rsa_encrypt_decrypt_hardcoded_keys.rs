@@ -3,7 +3,11 @@
 mod common;
 
 #[cfg(feature = "testhooks")]
+#[cfg(not(feature = "resilient"))]
 use mcr_api::*;
+#[cfg(feature = "testhooks")]
+#[cfg(feature = "resilient")]
+use mcr_api_resilient::*;
 #[cfg(feature = "testhooks")]
 use test_with_tracing::test;
 

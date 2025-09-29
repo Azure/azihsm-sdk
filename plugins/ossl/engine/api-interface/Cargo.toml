@@ -6,7 +6,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-mcr_api.workspace = true
+mcr_api_resilient.workspace = true
 openssl-rust.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

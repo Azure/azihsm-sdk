@@ -8,28 +8,13 @@ use test_with_tracing::test;
 
 use crate::common::*;
 
-fn create_get_rng_request(session_id: Option<u16>, rng_len: u8) -> DdiGetRngGenerateCmdReq {
-    DdiGetRngGenerateCmdReq {
-        hdr: DdiReqHdr {
-            op: DdiOp::GetRandomNumber,
-            sess_id: session_id,
-            rev: Some(DdiApiRev { major: 1, minor: 0 }),
-        },
-        data: DdiGetRngGenerateReq { rng_len },
-        ext: None,
-    }
-}
-
 #[test]
 fn test_get_rng_invalid_session() {
     ddi_dev_test(
         common_setup,
         common_cleanup,
         |dev, _ddi, _path, _session_id| {
-            let req = create_get_rng_request(Some(0x5), 32u8);
-            let mut cookie = None;
-
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_get_rng(dev, Some(0x5), Some(DdiApiRev { major: 1, minor: 0 }), 32u8);
 
             // Validate error for incorrect session.
             assert!(resp.is_err(), "resp {:?}", resp);
@@ -51,10 +36,7 @@ fn test_get_rng_no_session() {
         common_setup,
         common_cleanup,
         |dev, _ddi, _path, _session_id| {
-            let req = create_get_rng_request(None, 32u8);
-            let mut cookie = None;
-
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_get_rng(dev, None, Some(DdiApiRev { major: 1, minor: 0 }), 32u8);
 
             // Validate error for no session.
             assert!(resp.is_err(), "resp {:?}", resp);
@@ -78,11 +60,12 @@ fn test_get_rng_smaller_than_max() {
         |dev, _ddi, _path, session_id| {
             let rng_len = 32u8;
 
-            let req = create_get_rng_request(Some(session_id), rng_len);
-            let mut cookie = None;
-
-            // Get the first random number
-            let resp_1 = dev.exec_op(&req, &mut cookie);
+            let resp_1 = helper_get_rng(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                rng_len,
+            );
 
             if let Err(err) = &resp_1 {
                 if is_unsupported_cmd(err) {
@@ -98,8 +81,12 @@ fn test_get_rng_smaller_than_max() {
             assert_eq!(resp_1.rng_number.len(), rng_len as usize);
 
             // Get the second random number
-            let resp_2 = dev.exec_op(&req, &mut cookie);
-
+            let resp_2 = helper_get_rng(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                rng_len,
+            );
             // Extract the response
             let resp_2 = resp_2.unwrap();
             let resp_2 = resp_2.data;
@@ -121,11 +108,13 @@ fn test_get_rng_equal_to_max() {
         |dev, _ddi, _path, session_id| {
             let rng_len = 64u8;
 
-            let req = create_get_rng_request(Some(session_id), rng_len);
-            let mut cookie = None;
-
+            let resp_1 = helper_get_rng(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                rng_len,
+            );
             // Get the first random number
-            let resp_1 = dev.exec_op(&req, &mut cookie);
 
             if let Err(err) = &resp_1 {
                 if is_unsupported_cmd(err) {
@@ -141,8 +130,12 @@ fn test_get_rng_equal_to_max() {
             assert_eq!(resp_1.rng_number.len(), rng_len as usize);
 
             // Get the second random number
-            let resp_2 = dev.exec_op(&req, &mut cookie);
-
+            let resp_2 = helper_get_rng(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                rng_len,
+            );
             // Extract the response
             let resp_2 = resp_2.unwrap();
             let resp_2 = resp_2.data;
@@ -164,10 +157,12 @@ fn test_get_rng_greater_than_max() {
         |dev, _ddi, _path, session_id| {
             let rng_len = 65u8;
 
-            let req = create_get_rng_request(Some(session_id), rng_len);
-            let mut cookie = None;
-
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_get_rng(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                rng_len,
+            );
 
             if let Err(err) = &resp {
                 if is_unsupported_cmd(err) {

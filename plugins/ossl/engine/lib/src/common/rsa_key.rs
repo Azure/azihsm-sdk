@@ -5,7 +5,7 @@ use std::ffi::c_uint;
 use std::sync::Arc;
 
 use api_interface::REPORT_DATA_SIZE;
-use mcr_api::*;
+use mcr_api_resilient::*;
 use openssl_rust::safeapi::error::*;
 use openssl_rust::RSA_PKCS1_PADDING;
 use openssl_rust::RSA_PKCS1_PSS_PADDING;

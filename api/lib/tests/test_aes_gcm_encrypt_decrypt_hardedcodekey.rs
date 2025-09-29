@@ -3,7 +3,11 @@
 mod common;
 
 #[cfg(feature = "testhooks")]
+#[cfg(not(feature = "resilient"))]
 use mcr_api::*;
+#[cfg(feature = "testhooks")]
+#[cfg(feature = "resilient")]
+use mcr_api_resilient::*;
 #[cfg(feature = "testhooks")]
 use test_with_tracing::test;
 
@@ -23,10 +27,10 @@ fn test_aes_gcm_encrypt_decrypt_hardcodedkey() {
     api_test(common_setup, common_cleanup, |device, _path| {
         let app_session = common_open_app_session(device);
 
-        let aes_key = generate_aes(KeyType::AesBulk256);
+        let aes_key = generate_aes(KeyType::AesGcmBulk256Unapproved);
         let result = app_session.import_key(
             aes_key.to_vec(),
-            KeyClass::AesBulk,
+            KeyClass::AesGcmBulkUnapproved,
             None,
             KeyProperties {
                 key_usage: KeyUsage::EncryptDecrypt,
@@ -75,10 +79,10 @@ fn test_aes_gcm_tampered_data_hardcodedkey() {
     api_test(common_setup, common_cleanup, |device, _path| {
         let app_session = common_open_app_session(device);
 
-        let aes_key = generate_aes(KeyType::AesBulk256);
+        let aes_key = generate_aes(KeyType::AesGcmBulk256Unapproved);
         let result = app_session.import_key(
             aes_key.to_vec(),
-            KeyClass::AesBulk,
+            KeyClass::AesGcmBulkUnapproved,
             None,
             KeyProperties {
                 key_usage: KeyUsage::EncryptDecrypt,
@@ -129,10 +133,10 @@ fn test_aes_gcm_encrypt_decrypt_multi_times_hardcodedkey() {
     api_test(common_setup, common_cleanup, |device, _path| {
         let app_session = common_open_app_session(device);
 
-        let aes_key = generate_aes(KeyType::AesBulk256);
+        let aes_key = generate_aes(KeyType::AesGcmBulk256Unapproved);
         let result = app_session.import_key(
             aes_key.to_vec(),
-            KeyClass::AesBulk,
+            KeyClass::AesGcmBulkUnapproved,
             None,
             KeyProperties {
                 key_usage: KeyUsage::EncryptDecrypt,
@@ -212,10 +216,10 @@ fn test_aes_gcm_encrypt_data_size_hardcodedkey() {
     api_test(common_setup, common_cleanup, |device, _path| {
         let app_session = common_open_app_session(device);
 
-        let aes_key = generate_aes(KeyType::AesBulk256);
+        let aes_key = generate_aes(KeyType::AesGcmBulk256Unapproved);
         let result = app_session.import_key(
             aes_key.to_vec(),
-            KeyClass::AesBulk,
+            KeyClass::AesGcmBulkUnapproved,
             None,
             KeyProperties {
                 key_usage: KeyUsage::EncryptDecrypt,
@@ -399,10 +403,10 @@ fn test_aes_gcm_decrypt_data_size_hardcodedkey() {
     api_test(common_setup, common_cleanup, |device, _path| {
         let app_session = common_open_app_session(device);
 
-        let aes_key = generate_aes(KeyType::AesBulk256);
+        let aes_key = generate_aes(KeyType::AesGcmBulk256Unapproved);
         let result = app_session.import_key(
             aes_key.to_vec(),
-            KeyClass::AesBulk,
+            KeyClass::AesGcmBulkUnapproved,
             None,
             KeyProperties {
                 key_usage: KeyUsage::EncryptDecrypt,
@@ -504,10 +508,10 @@ fn test_aes_gcm_invalid_or_mismatched_aad() {
     api_test(common_setup, common_cleanup, |device, _path| {
         let app_session = common_open_app_session(device);
 
-        let aes_key = generate_aes(KeyType::AesBulk256);
+        let aes_key = generate_aes(KeyType::AesGcmBulk256Unapproved);
         let result = app_session.import_key(
             aes_key.to_vec(),
-            KeyClass::AesBulk,
+            KeyClass::AesGcmBulkUnapproved,
             None,
             KeyProperties {
                 key_usage: KeyUsage::EncryptDecrypt,
@@ -620,10 +624,10 @@ fn test_aes_gcm_mismatched_iv_hardcodedkey() {
     api_test(common_setup, common_cleanup, |device, _path| {
         let app_session = common_open_app_session(device);
 
-        let aes_key = generate_aes(KeyType::AesBulk256);
+        let aes_key = generate_aes(KeyType::AesGcmBulk256Unapproved);
         let result = app_session.import_key(
             aes_key.to_vec(),
-            KeyClass::AesBulk,
+            KeyClass::AesGcmBulkUnapproved,
             None,
             KeyProperties {
                 key_usage: KeyUsage::EncryptDecrypt,

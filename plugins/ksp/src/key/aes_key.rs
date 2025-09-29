@@ -3,16 +3,16 @@
 use std::mem;
 use std::sync::Arc;
 
-use mcr_api::AesKeySize;
-use mcr_api::AesMode;
-use mcr_api::DigestKind;
-use mcr_api::HsmKeyHandle;
-use mcr_api::HsmSession;
-use mcr_api::KeyAvailability;
-use mcr_api::KeyClass;
-use mcr_api::KeyProperties;
-use mcr_api::KeyType;
-use mcr_api::KeyUsage;
+use mcr_api_resilient::AesKeySize;
+use mcr_api_resilient::AesMode;
+use mcr_api_resilient::DigestKind;
+use mcr_api_resilient::HsmKeyHandle;
+use mcr_api_resilient::HsmSession;
+use mcr_api_resilient::KeyAvailability;
+use mcr_api_resilient::KeyClass;
+use mcr_api_resilient::KeyProperties;
+use mcr_api_resilient::KeyType;
+use mcr_api_resilient::KeyUsage;
 use parking_lot::RwLock;
 use winapi::shared::winerror::ERROR_INVALID_DATA;
 use winapi::shared::winerror::ERROR_INVALID_STATE;
@@ -206,7 +206,7 @@ impl AesKey {
                     #[cfg(not(feature = "disable-fp"))]
                     {
                         self.set_encryption_mode(AesEncryptionMode::GCM);
-                        self.set_key_class(KeyClass::AesBulk)?;
+                        self.set_key_class(KeyClass::AesGcmBulkUnapproved)?;
                     }
                     #[cfg(feature = "disable-fp")]
                     {
@@ -287,7 +287,11 @@ impl AesKey {
                     (KeyType::Aes128, KeyClass::Aes) => self.set_key_length(128),
                     (KeyType::Aes192, KeyClass::Aes) => self.set_key_length(192),
                     (KeyType::Aes256, KeyClass::Aes) => self.set_key_length(256),
-                    (KeyType::AesBulk256, KeyClass::AesBulk) => self.set_key_length(256),
+                    (KeyType::AesXtsBulk256, KeyClass::AesXtsBulk) => self.set_key_length(256),
+                    (KeyType::AesGcmBulk256, KeyClass::AesGcmBulk) => self.set_key_length(256),
+                    (KeyType::AesGcmBulk256Unapproved, KeyClass::AesGcmBulkUnapproved) => {
+                        self.set_key_length(256)
+                    }
                     _ => {
                         tracing::error!(
                         "Mismatch between key type set by caller and the key type returned by the HSM. \
@@ -745,11 +749,11 @@ impl AesKeyInner {
                     tracing::error!("Aes Encryption Mode - GCM: Invalid key length: should be 256");
                     Err(HRESULT(E_INVALIDARG))?;
                 }
-                AesKeySize::AesBulk256
+                AesKeySize::AesGcmBulk256Unapproved
             }
             #[cfg(not(feature = "disable-fp"))]
             Some(AesEncryptionMode::XTS) => match self.key_length {
-                Some(512) => AesKeySize::AesBulk256,
+                Some(512) => AesKeySize::AesXtsBulk256,
                 _ => {
                     tracing::error!("Aes Encryption Mode - XTS: Invalid key length: should be 512");
                     return Err(HRESULT(E_INVALIDARG));

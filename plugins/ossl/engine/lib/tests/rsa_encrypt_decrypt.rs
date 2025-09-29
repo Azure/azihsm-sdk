@@ -10,8 +10,8 @@ use common::import_key_wrapped;
 use common::TEST_RSA_2K_PRIVATE_KEY;
 use common::TEST_RSA_3K_PRIVATE_KEY;
 use common::TEST_RSA_4K_PRIVATE_KEY;
-use mcr_api::DigestKind;
-use mcr_api::KeyUsage;
+use mcr_api_resilient::DigestKind;
+use mcr_api_resilient::KeyUsage;
 use openssl_rust::safeapi::rsa::RsaKey;
 
 #[test]

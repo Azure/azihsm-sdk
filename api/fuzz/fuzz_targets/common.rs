@@ -4,6 +4,8 @@ use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
 use libfuzzer_sys::arbitrary::Unstructured;
 use mcr_ddi::*;
+use mcr_ddi_mbor::MborByteArray;
+use mcr_ddi_sim::crypto::rand::rand_bytes;
 use mcr_ddi_types::*;
 use rand::prelude::*;
 use session_parameter_encryption::DeviceCredentialEncryptionKey;
@@ -67,6 +69,26 @@ pub fn set_device_kind(dev: &mut <DdiTest as Ddi>::Dev) {
 }
 
 #[allow(dead_code)]
+pub fn helper_init_bk3(
+    dev: &<DdiTest as Ddi>::Dev,
+    bk3: Vec<u8>,
+) -> Result<DdiInitBk3CmdResp, DdiError> {
+    let req = DdiInitBk3CmdReq {
+        hdr: DdiReqHdr {
+            op: DdiOp::InitBk3,
+            sess_id: None,
+            rev: Some(DdiApiRev { major: 1, minor: 0 }),
+        },
+        data: DdiInitBk3Req {
+            bk3: MborByteArray::from_slice(&bk3).expect("failed to create byte array"),
+        },
+        ext: None,
+    };
+    let mut cookie = None;
+    dev.exec_op(&req, &mut cookie)
+}
+
+#[allow(dead_code)]
 pub fn helper_common_get_establish_cred_encryption_key_no_unwrap(
     dev: &mut <DdiTest as Ddi>::Dev,
 ) -> Result<DdiGetEstablishCredEncryptionKeyCmdResp, DdiError> {
@@ -110,8 +132,12 @@ pub fn helper_common_establish_credential_no_unwrap(
         .create_credential_key_from_der(&TEST_ECC_384_PRIVATE_KEY)
         .unwrap();
     let ddi_encrypted_credential = establish_cred_encryption_key
-        .encrypt(id, pin, nonce)
+        .encrypt_establish_credential(id, pin, nonce)
         .unwrap();
+
+    let mut bk3 = vec![0u8; 48];
+    rand_bytes(&mut bk3).unwrap();
+    let masked_bk3 = helper_init_bk3(dev, bk3).unwrap().data.masked_bk3;
 
     let req = DdiEstablishCredentialCmdReq {
         hdr: DdiReqHdr {
@@ -122,6 +148,10 @@ pub fn helper_common_establish_credential_no_unwrap(
         data: DdiEstablishCredentialReq {
             encrypted_credential: ddi_encrypted_credential,
             pub_key: ddi_public_key,
+            masked_bk3,
+            bmk: MborByteArray::from_slice(&[]).expect("Failed to create empty BMK"),
+            masked_unwrapping_key: MborByteArray::from_slice(&[])
+                .expect("Failed to create empty masked unwrapping key"),
         },
         ext: None,
     };
@@ -148,8 +178,12 @@ pub fn helper_common_establish_credential(
         .create_credential_key_from_der(&TEST_ECC_384_PRIVATE_KEY)
         .unwrap();
     let ddi_encrypted_credential = establish_cred_encryption_key
-        .encrypt(id, pin, nonce)
+        .encrypt_establish_credential(id, pin, nonce)
         .unwrap();
+
+    let mut bk3 = vec![0u8; 48];
+    rand_bytes(&mut bk3).unwrap();
+    let masked_bk3 = helper_init_bk3(dev, bk3).unwrap().data.masked_bk3;
 
     let req = DdiEstablishCredentialCmdReq {
         hdr: DdiReqHdr {
@@ -160,6 +194,10 @@ pub fn helper_common_establish_credential(
         data: DdiEstablishCredentialReq {
             encrypted_credential: ddi_encrypted_credential,
             pub_key: ddi_public_key,
+            masked_bk3,
+            bmk: MborByteArray::from_slice(&[]).expect("Failed to create empty BMK"),
+            masked_unwrapping_key: MborByteArray::from_slice(&[])
+                .expect("Failed to create empty masked unwrapping key"),
         },
         ext: None,
     };
@@ -174,7 +212,7 @@ pub fn encrypt_userid_pin_for_establish_cred(
     dev: &<DdiTest as Ddi>::Dev,
     id: [u8; 16],
     pin: [u8; 16],
-) -> (DdiEncryptedCredential, DdiDerPublicKey) {
+) -> (DdiEncryptedEstablishCredential, DdiDerPublicKey) {
     let req = DdiGetEstablishCredEncryptionKeyCmdReq {
         hdr: DdiReqHdr {
             op: DdiOp::GetEstablishCredEncryptionKey,
@@ -195,7 +233,7 @@ pub fn encrypt_userid_pin_for_establish_cred(
         .create_credential_key_from_der(&TEST_ECC_384_PRIVATE_KEY)
         .unwrap();
     let ddi_encrypted_credential = establish_cred_encryption_key
-        .encrypt(id, pin, nonce)
+        .encrypt_establish_credential(id, pin, nonce)
         .unwrap();
 
     (ddi_encrypted_credential, ddi_public_key)
@@ -206,7 +244,7 @@ pub fn encrypt_userid_pin_for_open_session(
     dev: &<DdiTest as Ddi>::Dev,
     id: [u8; 16],
     pin: [u8; 16],
-) -> (DdiEncryptedCredential, DdiDerPublicKey) {
+) -> (DdiEncryptedSessionCredential, DdiDerPublicKey) {
     let req = DdiGetSessionEncryptionKeyCmdReq {
         hdr: DdiReqHdr {
             op: DdiOp::GetSessionEncryptionKey,
@@ -226,8 +264,9 @@ pub fn encrypt_userid_pin_for_open_session(
     let (establish_cred_encryption_key, ddi_public_key) = param_encryption_key
         .create_credential_key_from_der(&TEST_ECC_384_PRIVATE_KEY)
         .unwrap();
+    let seed = [2; 48];
     let ddi_encrypted_credential = establish_cred_encryption_key
-        .encrypt(id, pin, nonce)
+        .encrypt_session_credential(id, pin, seed, nonce)
         .unwrap();
 
     (ddi_encrypted_credential, ddi_public_key)
@@ -299,7 +338,8 @@ pub enum TestDdiReqs {
     DeleteKey,
     OpenKey,
     AttestKey,
-    GetCollateral,
+    GetCertChainInfo,
+    GetCertificate,
     RsaModExp,
     RsaUnwrap,
     GetUnwrappingKey,
@@ -330,7 +370,8 @@ pub enum TestDdiReqData {
     DeleteKey,
     OpenKey,
     AttestKey,
-    GetCollateral,
+    GetCertChainInfo,
+    GetCertificate,
     RsaModExp,
     RsaUnwrap,
     GetUnwrappingKey,
@@ -359,17 +400,18 @@ impl From<u32> for TestDdiReqData {
             4 => TestDdiReqData::DeleteKey,
             5 => TestDdiReqData::OpenKey,
             6 => TestDdiReqData::AttestKey,
-            7 => TestDdiReqData::GetCollateral,
-            8 => TestDdiReqData::RsaModExp,
-            9 => TestDdiReqData::RsaUnwrap,
-            10 => TestDdiReqData::GetUnwrappingKey,
-            11 => TestDdiReqData::EccGenerateKeyPair,
-            12 => TestDdiReqData::EccSign,
-            13 => TestDdiReqData::AesGenerateKey,
-            14 => TestDdiReqData::AesEncryptDecrypt,
-            15 => TestDdiReqData::EcdhKeyExchange,
-            16 => TestDdiReqData::HkdfDerive,
-            17 => TestDdiReqData::KbkdfCounterHmacDerive,
+            7 => TestDdiReqData::GetCertChainInfo,
+            8 => TestDdiReqData::GetCertificate,
+            9 => TestDdiReqData::RsaModExp,
+            10 => TestDdiReqData::RsaUnwrap,
+            11 => TestDdiReqData::GetUnwrappingKey,
+            12 => TestDdiReqData::EccGenerateKeyPair,
+            13 => TestDdiReqData::EccSign,
+            14 => TestDdiReqData::AesGenerateKey,
+            15 => TestDdiReqData::AesEncryptDecrypt,
+            16 => TestDdiReqData::EcdhKeyExchange,
+            17 => TestDdiReqData::HkdfDerive,
+            18 => TestDdiReqData::KbkdfCounterHmacDerive,
             _ => panic!("Invalid value for TestDdiReqData enum"),
         }
     }
@@ -440,8 +482,11 @@ pub fn get_rand_ddi_request(hdr: DdiReqHdr, seed: u64) -> Result<Vec<u8>, String
         TestDdiReqData::DeleteKey => get_rand_ddi_request_helper!(DdiDeleteKeyReq, rng, hdr),
         TestDdiReqData::OpenKey => get_rand_ddi_request_helper!(DdiOpenKeyReq, rng, hdr),
         TestDdiReqData::AttestKey => get_rand_ddi_request_helper!(DdiAttestKeyReq, rng, hdr),
-        TestDdiReqData::GetCollateral => {
-            get_rand_ddi_request_helper!(DdiGetCollateralReq, rng, hdr)
+        TestDdiReqData::GetCertChainInfo => {
+            get_rand_ddi_request_helper!(DdiGetCertChainInfoReq, rng, hdr)
+        }
+        TestDdiReqData::GetCertificate => {
+            get_rand_ddi_request_helper!(DdiGetCertificateReq, rng, hdr)
         }
         TestDdiReqData::RsaModExp => get_rand_ddi_request_helper!(DdiRsaModExpReq, rng, hdr),
         TestDdiReqData::RsaUnwrap => get_rand_ddi_request_helper!(DdiRsaUnwrapReq, rng, hdr),
@@ -672,8 +717,14 @@ pub fn fuzz_cmd_reqs(reqs: Vec<TestDdiReqs>, rand_seed: u64) {
                     let _ = dev.exec_op(&cmdreq, &mut cookie);
                 }
             }
-            TestDdiReqs::GetCollateral => {
-                let cmdreq_result = get_rand_ddi_request_cmd!(DdiGetCollateralCmdReq, rng);
+            TestDdiReqs::GetCertChainInfo => {
+                let cmdreq_result = get_rand_ddi_request_cmd!(DdiGetCertChainInfoCmdReq, rng);
+                if let Some(cmdreq) = cmdreq_result {
+                    let _ = dev.exec_op(&cmdreq, &mut cookie);
+                }
+            }
+            TestDdiReqs::GetCertificate => {
+                let cmdreq_result = get_rand_ddi_request_cmd!(DdiGetCertificateCmdReq, rng);
                 if let Some(cmdreq) = cmdreq_result {
                     let _ = dev.exec_op(&cmdreq, &mut cookie);
                 }

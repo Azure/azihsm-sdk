@@ -29,7 +29,9 @@ pub fn helper_kbkdf_derive(
             context,
             key_type,
             key_tag,
-            key_properties,
+            key_properties: key_properties
+                .try_into()
+                .map_err(|_| DdiError::InvalidParameter)?,
         },
         ext: None,
     };

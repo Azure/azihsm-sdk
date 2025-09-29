@@ -26,8 +26,12 @@ fn test_skip_ios() {
             assert!(resp.is_ok(), "{:?}", resp);
 
             set_device_kind(dev);
-            let (encrypted_credential, pub_key) =
-                encrypt_userid_pin_for_open_session(dev, TEST_CRED_ID, TEST_CRED_PIN);
+            let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                dev,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                TEST_SESSION_SEED,
+            );
 
             let resp = helper_open_session(
                 dev,
@@ -97,8 +101,12 @@ fn test_skip_ios_followed_by_get_api_rev() {
             assert!(resp.is_ok(), "{:?}", resp);
 
             set_device_kind(dev);
-            let (encrypted_credential, pub_key) =
-                encrypt_userid_pin_for_open_session(dev, TEST_CRED_ID, TEST_CRED_PIN);
+            let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                dev,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                TEST_SESSION_SEED,
+            );
 
             let resp = helper_open_session(
                 dev,
@@ -191,8 +199,12 @@ fn test_skip_ios_followed_by_get_api_rev_for_20_seconds() {
             assert!(resp.is_ok(), "{:?}", resp);
 
             set_device_kind(dev);
-            let (encrypted_credential, pub_key) =
-                encrypt_userid_pin_for_open_session(dev, TEST_CRED_ID, TEST_CRED_PIN);
+            let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                dev,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                TEST_SESSION_SEED,
+            );
 
             let resp = helper_open_session(
                 dev,

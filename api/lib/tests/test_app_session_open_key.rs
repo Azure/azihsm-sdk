@@ -1,7 +1,10 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
 
 mod common;
+#[cfg(not(feature = "resilient"))]
 use mcr_api::*;
+#[cfg(feature = "resilient")]
+use mcr_api_resilient::*;
 use test_with_tracing::test;
 
 #[cfg(feature = "testhooks")]
@@ -591,7 +594,7 @@ fn test_open_key_aesbulk() {
         let key_tag = 0x7727;
 
         let result = app_session.aes_generate(
-            AesKeySize::AesBulk256,
+            AesKeySize::AesGcmBulk256Unapproved,
             Some(key_tag),
             KeyProperties {
                 key_usage: KeyUsage::EncryptDecrypt,

@@ -142,6 +142,10 @@ pub enum HsmError {
     #[error("session not found")]
     SessionNotFound,
 
+    /// Session needs renegotiation
+    #[error("session needs renegotiation")]
+    SessionNeedsRenegotiation,
+
     /// Invalid vault manager credentials
     #[error("invalid vault manager credentials")]
     InvalidVaultManagerCredentials,
@@ -388,9 +392,13 @@ pub enum HsmError {
     #[error("Cannot delete internal keys")]
     CannotDeleteInternalKeys,
 
-    /// Failed to Get Collateral
-    #[error("fail to get collateral")]
-    GetCollateralError,
+    /// Failed to Get Certificate
+    #[error("fail to get certificate")]
+    GetCertificateError,
+
+    /// Certificate hash mismatch
+    #[error("certificate hash mismatch")]
+    CertificateHashMismatch,
 
     /// Device not ready
     #[error("Device not ready")]
@@ -808,6 +816,62 @@ pub enum HsmError {
     #[error("Masked key decode failed")]
     MaskedKeyDecodeFailed,
 
+    /// Reset Device error
+    #[error("Reset device error")]
+    ResetDeviceError(u32),
+
+    /// Partition failed to restore after live migration
+    #[error("Partition failed to restore after live migration")]
+    RestorePartitionFailed,
+
+    /// Output buffer too small
+    #[error("Output buffer too small")]
+    OutputBufferTooSmall,
+
+    /// Invalid key length
+    #[error("Invalid key length")]
+    InvalidKeyLength,
+
+    /// Invalid algorithm
+    #[error("Invalid algorithm")]
+    InvalidAlgorithm,
+
+    /// Metadata encoding failed
+    #[error("Metadata encoding failed")]
+    MetadataEncodeFailed,
+
+    /// Metadata decoding failed
+    #[error("Metadata decoding failed")]
+    MetadataDecodeFailed,
+
+    /// MBOR encoding failed
+    #[error("MBOR encoding failed")]
+    MborEncodeFailed,
+
+    /// Disk access failed
+    #[error("Access for app data on disk failed")]
+    DiskAccessFailed,
+
+    /// Sealed BK3 not present
+    #[error("Sealed BK3 not present")]
+    SealedBk3NotPresent,
+
+    /// Partition is already provisioned
+    #[error("Partition is already provisioned")]
+    PartitionAlreadyProvisioned,
+
+    /// Credentials need to be established before opening a session
+    #[error("Credentials are not established")]
+    CredentialsNotEstablished,
+
+    /// Alias key was invalid
+    #[error("Invalid Alias Key")]
+    InvalidAliasKey,
+
+    /// Invalid Partition Id Private Key
+    #[error("Invalid Partition Id Private Key")]
+    InvalidPartIdPrivKeyInternalError,
+
     /// Unknown error
     #[error("unknown error")]
     UnknownError,
@@ -911,7 +975,7 @@ impl HsmError {
             HsmError::DeviceInfoIoctlInvalidData => -189,
             HsmError::PendingKeyGeneration => -190,
             HsmError::CannotDeleteInternalKeys => -191,
-            HsmError::GetCollateralError => -192,
+            HsmError::GetCertificateError => -192,
             HsmError::DeviceNotReady => -193,
             HsmError::SoftAesReqSendFailed => -194,
             HsmError::HmacError => -195,
@@ -1018,6 +1082,22 @@ impl HsmError {
             HsmError::MaskedKeyPreEncodeFailed => -296,
             HsmError::MaskedKeyEncodeFailed => -297,
             HsmError::MaskedKeyDecodeFailed => -298,
+            HsmError::SessionNeedsRenegotiation => -299,
+            HsmError::RestorePartitionFailed => -300,
+            HsmError::OutputBufferTooSmall => -301,
+            HsmError::InvalidKeyLength => -302,
+            HsmError::InvalidAlgorithm => -303,
+            HsmError::MetadataEncodeFailed => -304,
+            HsmError::MetadataDecodeFailed => -305,
+            HsmError::MborEncodeFailed => -306,
+            HsmError::ResetDeviceError(_) => -307,
+            HsmError::DiskAccessFailed => -308,
+            HsmError::SealedBk3NotPresent => -309,
+            HsmError::PartitionAlreadyProvisioned => -310,
+            HsmError::CredentialsNotEstablished => -311,
+            HsmError::InvalidAliasKey => -312,
+            HsmError::InvalidPartIdPrivKeyInternalError => -313,
+            HsmError::CertificateHashMismatch => -314,
             HsmError::UnknownError => -999,
         }
     }
@@ -1049,6 +1129,10 @@ impl From<DdiError> for HsmError {
                 DdiStatus::SessionNotExpected => HsmError::SessionNotExpected,
                 DdiStatus::SessionExpected => HsmError::SessionExpected,
                 DdiStatus::SessionNotFound => HsmError::SessionNotFound,
+                DdiStatus::SessionNeedsRenegotiation => HsmError::SessionNeedsRenegotiation,
+                DdiStatus::SealedBk3NotPresent => HsmError::SealedBk3NotPresent,
+                DdiStatus::PartitionAlreadyProvisioned => HsmError::PartitionAlreadyProvisioned,
+                DdiStatus::InvalidPartitionIdContent => HsmError::InvalidPartIdPrivKeyInternalError,
                 DdiStatus::CannotUseDefaultCredentials => HsmError::CannotUseDefaultCredentials,
                 DdiStatus::InvalidManagerCredentials => HsmError::InvalidVaultManagerCredentials,
                 DdiStatus::InvalidAppCredentials => HsmError::InvalidAppCredentials,
@@ -1279,6 +1363,7 @@ impl From<DdiError> for HsmError {
                 DdiStatus::MaskedKeyEncodeFailed => HsmError::MaskedKeyEncodeFailed,
                 DdiStatus::MaskedKeyInvalidLength => HsmError::MaskedKeyInvalidLength,
                 DdiStatus::MaskedKeyPreEncodeFailed => HsmError::MaskedKeyPreEncodeFailed,
+                DdiStatus::CredentialsNotEstablished => HsmError::CredentialsNotEstablished,
                 _ => HsmError::UnknownError,
             },
             #[cfg(target_os = "linux")]
@@ -1294,6 +1379,7 @@ impl From<DdiError> for HsmError {
                 DriverError::IoAbortInProgress => HsmError::IoError,
                 DriverError::IoAborted => HsmError::IoError,
             },
+            DdiError::ResetDeviceError(err_code) => HsmError::ResetDeviceError(err_code),
         }
     }
 }

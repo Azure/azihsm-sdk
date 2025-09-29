@@ -1,7 +1,7 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
 
 use lazy_static::*;
-use mcr_api::EccCurve;
+use mcr_api_resilient::EccCurve;
 use winapi::ctypes::c_void;
 use windows::core::*;
 use windows::Win32::Foundation::*;
@@ -1629,7 +1629,7 @@ extern "system" fn azihsm_free_buffer(pvinput: *mut c_void) -> HRESULT {
             return S_OK;
         }
 
-        let result = unsafe { free(pvinput as *mut std::ffi::c_void) };
+        let result = unsafe { free(pvinput) };
 
         match result {
             Ok(_) => {

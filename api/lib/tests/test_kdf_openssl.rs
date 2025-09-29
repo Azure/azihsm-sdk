@@ -2,7 +2,10 @@
 
 mod common;
 
+#[cfg(not(feature = "resilient"))]
 use mcr_api::*;
+#[cfg(feature = "resilient")]
+use mcr_api_resilient::*;
 use test_with_tracing::test;
 
 use crate::common::*;
@@ -457,7 +460,7 @@ fn test_ecdh_hkdf_hmac_tag(
     let data = generate_random_vector(128);
 
     // Generate tag on device
-    let result = app_session.hmac(hmac_key1, data.clone());
+    let result = app_session.hmac(&hmac_key1, data.clone());
     assert!(result.is_ok(), "{:?}", result);
     let hmac_tag1 = result.unwrap();
 

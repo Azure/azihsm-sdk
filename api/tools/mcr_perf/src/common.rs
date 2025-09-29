@@ -30,7 +30,8 @@ pub(crate) fn helper_cleanup(device_path: String) -> DdiResult<()> {
         helper_common_establish_credential_no_unwrap(&mut dev_cleanup, TEST_CRED_ID, TEST_CRED_PIN);
 
     let (app_sess_id, _) =
-        helper_open_app_session(&dev_cleanup, TEST_CRED_ID, TEST_CRED_PIN).unwrap();
+        helper_open_app_session(&dev_cleanup, TEST_CRED_ID, TEST_CRED_PIN, TEST_SESSION_SEED)
+            .unwrap();
 
     let keys_to_delete = [
         KEY_TAG_ECC_SIGN_256,
@@ -45,8 +46,9 @@ pub(crate) fn helper_cleanup(device_path: String) -> DdiResult<()> {
         KEY_TAG_AES_CBC_128,
         KEY_TAG_AES_CBC_192,
         KEY_TAG_AES_CBC_256,
-        KEY_TAG_AES_BULK_256,
-        KEY_TAG_AES_BULK_256_2,
+        KEY_TAG_AES_GCM_BULK_256,
+        KEY_TAG_AES_XTS_BULK_256,
+        KEY_TAG_AES_XTS_BULK_256_2,
         KEY_TAG_ECC_DERIVE_256,
         KEY_TAG_ECC_DERIVE_384,
         KEY_TAG_ECC_DERIVE_521,
@@ -112,6 +114,25 @@ pub fn helper_common_get_establish_cred_encryption_key(
     resp.unwrap()
 }
 
+fn helper_init_bk3(
+    dev: &<DdiTest as Ddi>::Dev,
+    bk3: &[u8; 48],
+) -> Result<DdiInitBk3CmdResp, DdiError> {
+    let req = DdiInitBk3CmdReq {
+        hdr: DdiReqHdr {
+            op: DdiOp::InitBk3,
+            sess_id: None,
+            rev: Some(DdiApiRev { major: 1, minor: 0 }),
+        },
+        data: DdiInitBk3Req {
+            bk3: MborByteArray::from_slice(bk3).expect("failed to create byte array"),
+        },
+        ext: None,
+    };
+    let mut cookie = None;
+    dev.exec_op(&req, &mut cookie)
+}
+
 #[allow(dead_code)]
 pub fn helper_common_establish_credential_no_unwrap(
     dev: &mut <DdiTest as Ddi>::Dev,
@@ -129,9 +150,13 @@ pub fn helper_common_establish_credential_no_unwrap(
         .create_credential_key_from_der(&TEST_ECC_384_PRIVATE_KEY)
         .unwrap();
     let ddi_encrypted_credential = establish_cred_encryption_key
-        .encrypt(id, pin, nonce)
+        .encrypt_establish_credential(id, pin, nonce)
         .unwrap();
 
+    let masked_bk3 = helper_init_bk3(dev, &TEST_BK3)
+        .expect("Failed to initialize masked BK3")
+        .data
+        .masked_bk3;
     let req = DdiEstablishCredentialCmdReq {
         hdr: DdiReqHdr {
             op: DdiOp::EstablishCredential,
@@ -141,6 +166,10 @@ pub fn helper_common_establish_credential_no_unwrap(
         data: DdiEstablishCredentialReq {
             encrypted_credential: ddi_encrypted_credential,
             pub_key: ddi_public_key,
+            masked_bk3,
+            bmk: MborByteArray::from_slice(&[]).expect("Failed to create empty BMK"),
+            masked_unwrapping_key: MborByteArray::from_slice(&[])
+                .expect("Failed to create empty masked unwrapping key"),
         },
         ext: None,
     };
@@ -167,7 +196,7 @@ pub fn helper_common_establish_credential(
         .create_credential_key_from_der(&TEST_ECC_384_PRIVATE_KEY)
         .unwrap();
     let ddi_encrypted_credential = establish_cred_encryption_key
-        .encrypt(id, pin, nonce)
+        .encrypt_establish_credential(id, pin, nonce)
         .unwrap();
 
     let req = DdiEstablishCredentialCmdReq {
@@ -179,6 +208,10 @@ pub fn helper_common_establish_credential(
         data: DdiEstablishCredentialReq {
             encrypted_credential: ddi_encrypted_credential,
             pub_key: ddi_public_key,
+            masked_bk3: MborByteArray::from_slice(&[]).expect("Failed to create empty masked BK3"),
+            bmk: MborByteArray::from_slice(&[]).expect("Failed to create empty BMK"),
+            masked_unwrapping_key: MborByteArray::from_slice(&[])
+                .expect("Failed to create empty masked unwrapping key"),
         },
         ext: None,
     };
@@ -193,7 +226,7 @@ pub fn encrypt_userid_pin_for_establish_cred(
     dev: &<DdiTest as Ddi>::Dev,
     id: [u8; 16],
     pin: [u8; 16],
-) -> (DdiEncryptedCredential, DdiDerPublicKey) {
+) -> (DdiEncryptedEstablishCredential, DdiDerPublicKey) {
     let req = DdiGetEstablishCredEncryptionKeyCmdReq {
         hdr: DdiReqHdr {
             op: DdiOp::GetEstablishCredEncryptionKey,
@@ -214,7 +247,7 @@ pub fn encrypt_userid_pin_for_establish_cred(
         .create_credential_key_from_der(&TEST_ECC_384_PRIVATE_KEY)
         .unwrap();
     let ddi_encrypted_credential = establish_cred_encryption_key
-        .encrypt(id, pin, nonce)
+        .encrypt_establish_credential(id, pin, nonce)
         .unwrap();
 
     (ddi_encrypted_credential, ddi_public_key)
@@ -225,7 +258,8 @@ pub fn encrypt_userid_pin_for_open_session(
     dev: &<DdiTest as Ddi>::Dev,
     id: [u8; 16],
     pin: [u8; 16],
-) -> (DdiEncryptedCredential, DdiDerPublicKey) {
+    seed: [u8; 48],
+) -> (DdiEncryptedSessionCredential, DdiDerPublicKey) {
     let req = DdiGetSessionEncryptionKeyCmdReq {
         hdr: DdiReqHdr {
             op: DdiOp::GetSessionEncryptionKey,
@@ -246,7 +280,7 @@ pub fn encrypt_userid_pin_for_open_session(
         .create_credential_key_from_der(&TEST_ECC_384_PRIVATE_KEY)
         .unwrap();
     let ddi_encrypted_credential = establish_cred_encryption_key
-        .encrypt(id, pin, nonce)
+        .encrypt_session_credential(id, pin, seed, nonce)
         .unwrap();
 
     (ddi_encrypted_credential, ddi_public_key)
@@ -344,17 +378,24 @@ pub(crate) fn helper_create_keys_for_mix(
     let (_, key_id_aes_bulk_256_option) = helper_create_aes_key(
         dev,
         app_sess_id,
-        DdiAesKeySize::AesBulk256,
-        Some(KEY_TAG_AES_BULK_256),
+        DdiAesKeySize::AesGcmBulk256Unapproved,
+        Some(KEY_TAG_AES_GCM_BULK_256),
     )?;
-    let key_id_aes_bulk_256 = key_id_aes_bulk_256_option.unwrap();
+    let key_id_aes_gcm_bulk_256 = key_id_aes_bulk_256_option.unwrap();
+    let (_, key_id_aes_bulk_256_option) = helper_create_aes_key(
+        dev,
+        app_sess_id,
+        DdiAesKeySize::AesXtsBulk256,
+        Some(KEY_TAG_AES_XTS_BULK_256),
+    )?;
+    let key_id_aes_xts_bulk_256 = key_id_aes_bulk_256_option.unwrap();
     let (_, key_id_aes_bulk_256_2_option) = helper_create_aes_key(
         dev,
         app_sess_id,
-        DdiAesKeySize::AesBulk256,
-        Some(KEY_TAG_AES_BULK_256_2),
+        DdiAesKeySize::AesXtsBulk256,
+        Some(KEY_TAG_AES_XTS_BULK_256_2),
     )?;
-    let key_id_aes_bulk_256_2 = key_id_aes_bulk_256_2_option.unwrap();
+    let key_id_aes_xts_bulk_256_2 = key_id_aes_bulk_256_2_option.unwrap();
     let key_id_ecc_derive_256 = helper_create_ecc_key(
         dev,
         app_sess_id,
@@ -411,7 +452,7 @@ pub(crate) fn helper_create_keys_for_mix(
         dev,
         app_sess_id,
         short_app_id,
-        key_id_aes_bulk_256,
+        key_id_aes_gcm_bulk_256,
         DdiAesOp::Encrypt,
         vec![100u8; 1024 * 4],
         [0x3; 12],
@@ -425,7 +466,7 @@ pub(crate) fn helper_create_keys_for_mix(
         dev,
         app_sess_id,
         short_app_id,
-        key_id_aes_bulk_256,
+        key_id_aes_gcm_bulk_256,
         DdiAesOp::Encrypt,
         vec![100u8; 1024 * 1024 * 16 - 32], // - 32 because we have AAD of 32
         [0x3; 12],
@@ -489,8 +530,9 @@ pub(crate) fn helper_create_keys_for_mix(
         tag_gcm_4k,
         encrypted_data_gcm_16m: Some(encrypted_data_gcm_16m),
         tag_gcm_16m,
-        key_id_aes_bulk_256,
-        key_id_aes_bulk_256_2,
+        key_id_aes_gcm_bulk_256,
+        key_id_aes_xts_bulk_256,
+        key_id_aes_xts_bulk_256_2,
         wrapped_blob_ecc_sign_256,
         wrapped_blob_ecc_sign_384,
         wrapped_blob_ecc_sign_521,
@@ -514,7 +556,9 @@ pub(crate) fn local_generate_aes(key_type: DdiKeyType) -> Vec<u8> {
         DdiKeyType::Aes128 => 16,
         DdiKeyType::Aes192 => 24,
         DdiKeyType::Aes256 => 32,
-        DdiKeyType::AesBulk256 => 32,
+        DdiKeyType::AesXtsBulk256 => 32,
+        DdiKeyType::AesGcmBulk256 => 32,
+        DdiKeyType::AesGcmBulk256Unapproved => 32,
         _ => 32,
     };
 
@@ -606,7 +650,9 @@ pub(crate) fn local_helper_generate_wrapped_data_blob(
             local_generate_aes(key_type)
         }
 
-        DdiKeyType::AesBulk256 => local_generate_aes(key_type),
+        DdiKeyType::AesXtsBulk256
+        | DdiKeyType::AesGcmBulk256
+        | DdiKeyType::AesGcmBulk256Unapproved => local_generate_aes(key_type),
 
         DdiKeyType::Ecc384Private
         | DdiKeyType::Ecc256Private

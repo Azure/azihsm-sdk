@@ -2,7 +2,10 @@
 
 mod common;
 
+#[cfg(not(feature = "resilient"))]
 use mcr_api::*;
+#[cfg(feature = "resilient")]
+use mcr_api_resilient::*;
 use test_with_tracing::test;
 
 use crate::common::*;
@@ -83,7 +86,7 @@ fn test_hmac256() {
 
         let data = generate_random_vector(128);
 
-        let result = app_session.hmac(hmac_key, data.clone());
+        let result = app_session.hmac(&hmac_key, data.clone());
         assert!(result.is_ok(), "result {:?}", result);
         let hmac_tag = result.unwrap();
 
@@ -101,14 +104,14 @@ fn test_hmac256_tampered() {
 
         let data = generate_random_vector(128);
 
-        let result = app_session.hmac(hmac_key.clone(), data.clone());
+        let result = app_session.hmac(&hmac_key, data.clone());
         assert!(result.is_ok(), "result {:?}", result);
         let hmac_tag = result.unwrap();
 
         let mut tampered_data = data.clone();
         tampered_data[0] = tampered_data[0].wrapping_add(0x1);
 
-        let result = app_session.hmac(hmac_key, tampered_data.clone());
+        let result = app_session.hmac(&hmac_key, tampered_data.clone());
         assert!(result.is_ok(), "result {:?}", result);
 
         let tampered_tag = result.unwrap();
@@ -126,16 +129,16 @@ fn test_hmac256_multi_times() {
 
         let data = generate_random_vector(128);
 
-        let result = app_session.hmac(hmac_key.clone(), data.clone());
+        let result = app_session.hmac(&hmac_key, data.clone());
         assert!(result.is_ok(), "result {:?}", result);
         let hmac_tag = result.unwrap();
         assert_ne!(hmac_tag, data);
 
-        let result = app_session.hmac(hmac_key.clone(), data.clone());
+        let result = app_session.hmac(&hmac_key, data.clone());
         assert!(result.is_ok(), "result {:?}", result);
         assert_eq!(hmac_tag, result.unwrap());
 
-        let result = app_session.hmac(hmac_key, data.clone());
+        let result = app_session.hmac(&hmac_key, data.clone());
         assert!(result.is_ok(), "result {:?}", result);
         assert_eq!(hmac_tag, result.unwrap());
     })
@@ -150,20 +153,20 @@ fn test_hmac256_keysize_mismatch() {
 
         let data = generate_random_vector(128);
 
-        let result = app_session.hmac(hmac_key, data.clone());
+        let result = app_session.hmac(&hmac_key, data.clone());
         assert!(result.is_ok(), "result {:?}", result);
         let hmac_tag = result.unwrap();
         assert_ne!(hmac_tag, data);
 
         let hmac_384_key = create_hmac_key(&app_session, KeyType::HmacSha384);
 
-        let result = app_session.hmac(hmac_384_key, data.clone());
+        let result = app_session.hmac(&hmac_384_key, data.clone());
         assert!(result.is_ok(), "result {:?}", result);
         assert_ne!(hmac_tag[..32], result.unwrap()[..32]);
 
         let hmac_512_key = create_hmac_key(&app_session, KeyType::HmacSha512);
 
-        let result = app_session.hmac(hmac_512_key, data.clone());
+        let result = app_session.hmac(&hmac_512_key, data.clone());
         assert!(result.is_ok(), "result {:?}", result);
         assert_ne!(hmac_tag[..32], result.unwrap()[..32]);
     })
@@ -178,14 +181,14 @@ fn test_hmac256_msgsize_mismatch() {
 
         let data = generate_random_vector(128);
 
-        let result = app_session.hmac(hmac_key.clone(), data.clone());
+        let result = app_session.hmac(&hmac_key, data.clone());
         assert!(result.is_ok(), "result {:?}", result);
         let hmac_tag = result.unwrap();
 
         assert_ne!(data, hmac_tag);
         assert_eq!(hmac_tag.len(), 32);
 
-        let result = app_session.hmac(hmac_key, data[..16].to_vec());
+        let result = app_session.hmac(&hmac_key, data[..16].to_vec());
         assert!(result.is_ok(), "result {:?}", result);
         let new_tag = result.unwrap();
 
@@ -203,7 +206,7 @@ fn test_hmac384() {
 
         let data = generate_random_vector(128);
 
-        let result = app_session.hmac(hmac_key, data.clone());
+        let result = app_session.hmac(&hmac_key, data.clone());
         assert!(result.is_ok(), "result {:?}", result);
         let hmac_tag = result.unwrap();
 
@@ -221,14 +224,14 @@ fn test_hmac384_tampered() {
 
         let data = generate_random_vector(128);
 
-        let result = app_session.hmac(hmac_key.clone(), data.clone());
+        let result = app_session.hmac(&hmac_key, data.clone());
         assert!(result.is_ok(), "result {:?}", result);
         let hmac_tag = result.unwrap();
 
         let mut tampered_data = data.clone();
         tampered_data[0] = tampered_data[0].wrapping_add(0x1);
 
-        let result = app_session.hmac(hmac_key, tampered_data.clone());
+        let result = app_session.hmac(&hmac_key, tampered_data.clone());
         assert!(result.is_ok(), "result {:?}", result);
 
         let tampered_tag = result.unwrap();
@@ -246,16 +249,16 @@ fn test_hmac384_multi_times() {
 
         let data = generate_random_vector(128);
 
-        let result = app_session.hmac(hmac_key.clone(), data.clone());
+        let result = app_session.hmac(&hmac_key, data.clone());
         assert!(result.is_ok(), "result {:?}", result);
         let hmac_tag = result.unwrap();
         assert_ne!(hmac_tag, data);
 
-        let result = app_session.hmac(hmac_key.clone(), data.clone());
+        let result = app_session.hmac(&hmac_key, data.clone());
         assert!(result.is_ok(), "result {:?}", result);
         assert_eq!(hmac_tag, result.unwrap());
 
-        let result = app_session.hmac(hmac_key, data.clone());
+        let result = app_session.hmac(&hmac_key, data.clone());
         assert!(result.is_ok(), "result {:?}", result);
         assert_eq!(hmac_tag, result.unwrap());
     })
@@ -270,20 +273,20 @@ fn test_hmac384_size_mismatch() {
 
         let data = generate_random_vector(128);
 
-        let result = app_session.hmac(hmac_key, data.clone());
+        let result = app_session.hmac(&hmac_key, data.clone());
         assert!(result.is_ok(), "result {:?}", result);
         let hmac_tag = result.unwrap();
         assert_ne!(hmac_tag, data);
 
         let hmac_256_key = create_hmac_key(&app_session, KeyType::HmacSha256);
 
-        let result = app_session.hmac(hmac_256_key, data.clone());
+        let result = app_session.hmac(&hmac_256_key, data.clone());
         assert!(result.is_ok(), "result {:?}", result);
         assert_ne!(hmac_tag[..32], result.unwrap()[..32]);
 
         let hmac_512_key = create_hmac_key(&app_session, KeyType::HmacSha512);
 
-        let result = app_session.hmac(hmac_512_key, data.clone());
+        let result = app_session.hmac(&hmac_512_key, data.clone());
         assert!(result.is_ok(), "result {:?}", result);
         assert_ne!(hmac_tag[..32], result.unwrap()[..32]);
     })
@@ -298,14 +301,14 @@ fn test_hmac384_msgsize_mismatch() {
 
         let data = generate_random_vector(128);
 
-        let result = app_session.hmac(hmac_key.clone(), data.clone());
+        let result = app_session.hmac(&hmac_key, data.clone());
         assert!(result.is_ok(), "result {:?}", result);
         let hmac_tag = result.unwrap();
 
         assert_ne!(data, hmac_tag);
         assert_eq!(hmac_tag.len(), 48);
 
-        let result = app_session.hmac(hmac_key, data[..16].to_vec());
+        let result = app_session.hmac(&hmac_key, data[..16].to_vec());
         assert!(result.is_ok(), "result {:?}", result);
         let new_tag = result.unwrap();
 
@@ -323,7 +326,7 @@ fn test_hmac512() {
 
         let data = generate_random_vector(128);
 
-        let result = app_session.hmac(hmac_key, data.clone());
+        let result = app_session.hmac(&hmac_key, data.clone());
         assert!(result.is_ok(), "result {:?}", result);
         let hmac_tag = result.unwrap();
 
@@ -341,14 +344,14 @@ fn test_hmac512_tampered() {
 
         let data = generate_random_vector(128);
 
-        let result = app_session.hmac(hmac_key.clone(), data.clone());
+        let result = app_session.hmac(&hmac_key, data.clone());
         assert!(result.is_ok(), "result {:?}", result);
         let hmac_tag = result.unwrap();
 
         let mut tampered_data = data.clone();
         tampered_data[0] = tampered_data[0].wrapping_add(0x1);
 
-        let result = app_session.hmac(hmac_key, tampered_data.clone());
+        let result = app_session.hmac(&hmac_key, tampered_data.clone());
         assert!(result.is_ok(), "result {:?}", result);
 
         let tampered_tag = result.unwrap();
@@ -366,16 +369,16 @@ fn test_hmac512_multi_times() {
 
         let data = generate_random_vector(128);
 
-        let result = app_session.hmac(hmac_key.clone(), data.clone());
+        let result = app_session.hmac(&hmac_key, data.clone());
         assert!(result.is_ok(), "result {:?}", result);
         let hmac_tag = result.unwrap();
         assert_ne!(hmac_tag, data);
 
-        let result = app_session.hmac(hmac_key.clone(), data.clone());
+        let result = app_session.hmac(&hmac_key, data.clone());
         assert!(result.is_ok(), "result {:?}", result);
         assert_eq!(hmac_tag, result.unwrap());
 
-        let result = app_session.hmac(hmac_key, data.clone());
+        let result = app_session.hmac(&hmac_key, data.clone());
         assert!(result.is_ok(), "result {:?}", result);
         assert_eq!(hmac_tag, result.unwrap());
     })
@@ -390,20 +393,20 @@ fn test_hmac512_size_mismatch() {
 
         let data = generate_random_vector(128);
 
-        let result = app_session.hmac(hmac_key, data.clone());
+        let result = app_session.hmac(&hmac_key, data.clone());
         assert!(result.is_ok(), "result {:?}", result);
         let hmac_tag = result.unwrap();
         assert_ne!(hmac_tag, data);
 
         let hmac_256_key = create_hmac_key(&app_session, KeyType::HmacSha256);
 
-        let result = app_session.hmac(hmac_256_key, data.clone());
+        let result = app_session.hmac(&hmac_256_key, data.clone());
         assert!(result.is_ok(), "result {:?}", result);
         assert_ne!(hmac_tag[..32], result.unwrap()[..32]);
 
         let hmac_384_key = create_hmac_key(&app_session, KeyType::HmacSha384);
 
-        let result = app_session.hmac(hmac_384_key, data.clone());
+        let result = app_session.hmac(&hmac_384_key, data.clone());
         assert!(result.is_ok(), "result {:?}", result);
         assert_ne!(hmac_tag[..32], result.unwrap()[..32]);
     })
@@ -418,14 +421,14 @@ fn test_hmac512_msgsize_mismatch() {
 
         let data = generate_random_vector(128);
 
-        let result = app_session.hmac(hmac_key.clone(), data.clone());
+        let result = app_session.hmac(&hmac_key, data.clone());
         assert!(result.is_ok(), "result {:?}", result);
         let hmac_tag = result.unwrap();
 
         assert_ne!(data, hmac_tag);
         assert_eq!(hmac_tag.len(), 64);
 
-        let result = app_session.hmac(hmac_key, data[..16].to_vec());
+        let result = app_session.hmac(&hmac_key, data[..16].to_vec());
         assert!(result.is_ok(), "result {:?}", result);
         let new_tag = result.unwrap();
 

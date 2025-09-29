@@ -2,7 +2,10 @@
 
 mod common;
 
+#[cfg(not(feature = "resilient"))]
 use mcr_api::*;
+#[cfg(feature = "resilient")]
+use mcr_api_resilient::*;
 use test_with_tracing::test;
 
 use crate::common::*;
@@ -333,7 +336,7 @@ fn test_aes_encrypt_with_aesbulk256() {
         let app_session = common_open_app_session(device);
 
         let result = app_session.aes_generate(
-            AesKeySize::AesBulk256,
+            AesKeySize::AesGcmBulk256Unapproved,
             None,
             KeyProperties {
                 key_usage: KeyUsage::EncryptDecrypt,
@@ -366,7 +369,7 @@ fn test_aes_gcm_encrypt_after_session_close() {
         let mut app_session = common_open_app_session(device);
 
         let result = app_session.aes_generate(
-            AesKeySize::AesBulk256,
+            AesKeySize::AesGcmBulk256Unapproved,
             None,
             KeyProperties {
                 key_usage: KeyUsage::EncryptDecrypt,
@@ -399,7 +402,7 @@ fn test_aes_gcm_decrypt_after_session_close() {
         let mut app_session = common_open_app_session(device);
 
         let result = app_session.aes_generate(
-            AesKeySize::AesBulk256,
+            AesKeySize::AesGcmBulk256Unapproved,
             None,
             KeyProperties {
                 key_usage: KeyUsage::EncryptDecrypt,
@@ -578,7 +581,7 @@ fn test_gcm_encrypt_with_aes_decrypt() {
         let app_session = common_open_app_session(device);
 
         let result = app_session.aes_generate(
-            AesKeySize::AesBulk256,
+            AesKeySize::AesGcmBulk256Unapproved,
             None,
             KeyProperties {
                 key_usage: KeyUsage::EncryptDecrypt,

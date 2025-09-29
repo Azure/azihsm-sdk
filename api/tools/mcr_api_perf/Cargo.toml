@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 circular-queue.workspace = true
 clap.workspace = true
+crypto.workspace = true
 indicatif.workspace = true
 mcr_api.workspace = true
 parking_lot.workspace = true

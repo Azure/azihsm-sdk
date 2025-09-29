@@ -129,7 +129,7 @@ pub struct DdiRsaUnwrapReq {
 
     /// Key Properties
     #[ddi(id = 7)]
-    pub key_properties: DdiKeyProperties,
+    pub key_properties: DdiTargetKeyProperties,
 }
 
 impl DdiRsaUnwrapReq {

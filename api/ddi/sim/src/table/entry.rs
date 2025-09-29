@@ -35,8 +35,14 @@ pub enum KeyClass {
     /// AES
     Aes,
 
-    /// AES Bulk
-    AesBulk,
+    /// AES XTS Bulk
+    AesXtsBulk,
+
+    /// AES GCM Bulk
+    AesGcmBulk,
+
+    /// AES GCM Bulk Unapproved
+    AesGcmBulkUnapproved,
 
     /// ECC Private
     EccPrivate,
@@ -50,7 +56,9 @@ impl TryFrom<DdiKeyClass> for KeyClass {
             DdiKeyClass::Rsa => Ok(KeyClass::RsaPrivate),
             DdiKeyClass::RsaCrt => Ok(KeyClass::RsaCrtPrivate),
             DdiKeyClass::Aes => Ok(KeyClass::Aes),
-            DdiKeyClass::AesBulk => Ok(KeyClass::AesBulk),
+            DdiKeyClass::AesXtsBulk => Ok(KeyClass::AesXtsBulk),
+            DdiKeyClass::AesGcmBulk => Ok(KeyClass::AesGcmBulk),
+            DdiKeyClass::AesGcmBulkUnapproved => Ok(KeyClass::AesGcmBulkUnapproved),
             DdiKeyClass::Ecc => Ok(KeyClass::EccPrivate),
             _ => Err(ManticoreError::InvalidArgument),
         }
@@ -64,15 +72,18 @@ impl KeyClass {
             (self, usage),
             (
                 KeyClass::RsaPrivate,
-                DdiKeyUsage::SignVerify | DdiKeyUsage::EncryptDecrypt | DdiKeyUsage::WrapUnwrap,
+                DdiKeyUsage::SignVerify | DdiKeyUsage::EncryptDecrypt | DdiKeyUsage::Unwrap,
             ) | (
                 KeyClass::RsaCrtPrivate,
-                DdiKeyUsage::SignVerify | DdiKeyUsage::EncryptDecrypt | DdiKeyUsage::WrapUnwrap,
+                DdiKeyUsage::SignVerify | DdiKeyUsage::EncryptDecrypt | DdiKeyUsage::Unwrap,
             ) | (
                 KeyClass::EccPrivate,
                 DdiKeyUsage::SignVerify | DdiKeyUsage::Derive,
             ) | (
-                KeyClass::Aes | KeyClass::AesBulk,
+                KeyClass::Aes
+                    | KeyClass::AesXtsBulk
+                    | KeyClass::AesGcmBulk
+                    | KeyClass::AesGcmBulkUnapproved,
                 DdiKeyUsage::EncryptDecrypt,
             )
         )
@@ -136,8 +147,17 @@ pub enum Kind {
     /// AES 256-bit Key.
     Aes256,
 
-    /// AES Bulk 256-bit Key.
-    AesBulk256,
+    /// AES XTS Bulk 256-bit Key.
+    AesXtsBulk256,
+
+    /// AES GCM Bulk 256-bit Key.
+    AesGcmBulk256,
+
+    /// AES GCM Bulk 256-bit Key Unapproved.
+    AesGcmBulk256Unapproved,
+
+    /// Aes 256 + HMAC 384
+    AesHmac640,
 
     /// 256-bit Secret from key exchange
     Secret256,
@@ -184,7 +204,10 @@ impl TryFrom<u8> for Kind {
             x if x == Kind::Aes128 as u8 => Ok(Kind::Aes128),
             x if x == Kind::Aes192 as u8 => Ok(Kind::Aes192),
             x if x == Kind::Aes256 as u8 => Ok(Kind::Aes256),
-            x if x == Kind::AesBulk256 as u8 => Ok(Kind::AesBulk256),
+            x if x == Kind::AesXtsBulk256 as u8 => Ok(Kind::AesXtsBulk256),
+            x if x == Kind::AesGcmBulk256 as u8 => Ok(Kind::AesGcmBulk256),
+            x if x == Kind::AesGcmBulk256Unapproved as u8 => Ok(Kind::AesGcmBulk256Unapproved),
+            x if x == Kind::AesHmac640 as u8 => Ok(Kind::AesHmac640),
             x if x == Kind::Secret256 as u8 => Ok(Kind::Secret256),
             x if x == Kind::Secret384 as u8 => Ok(Kind::Secret384),
             x if x == Kind::Secret521 as u8 => Ok(Kind::Secret521),
@@ -217,21 +240,25 @@ impl TryFrom<DdiKeyType> for Kind {
             DdiKeyType::Aes128 => Ok(Kind::Aes128),
             DdiKeyType::Aes192 => Ok(Kind::Aes192),
             DdiKeyType::Aes256 => Ok(Kind::Aes256),
-            DdiKeyType::AesBulk256 => Ok(Kind::AesBulk256),
+            DdiKeyType::AesXtsBulk256 => Ok(Kind::AesXtsBulk256),
+            DdiKeyType::AesGcmBulk256 => Ok(Kind::AesGcmBulk256),
+            DdiKeyType::AesGcmBulk256Unapproved => Ok(Kind::AesGcmBulk256Unapproved),
             DdiKeyType::Secret256 => Ok(Kind::Secret256),
             DdiKeyType::Secret384 => Ok(Kind::Secret384),
             DdiKeyType::Secret521 => Ok(Kind::Secret521),
             DdiKeyType::HmacSha256 => Ok(Kind::HmacSha256),
             DdiKeyType::HmacSha384 => Ok(Kind::HmacSha384),
             DdiKeyType::HmacSha512 => Ok(Kind::HmacSha512),
-            _ => Err(ManticoreError::InvalidArgument),
+            _ => Err(ManticoreError::InvalidKeyType),
         }
     }
 }
 
-impl From<Kind> for DdiKeyType {
-    fn from(value: Kind) -> Self {
-        match value {
+impl TryFrom<Kind> for DdiKeyType {
+    type Error = ManticoreError;
+
+    fn try_from(value: Kind) -> Result<Self, Self::Error> {
+        let key_type = match value {
             Kind::Rsa2kPublic => DdiKeyType::Rsa2kPublic,
             Kind::Rsa3kPublic => DdiKeyType::Rsa3kPublic,
             Kind::Rsa4kPublic => DdiKeyType::Rsa4kPublic,
@@ -250,15 +277,19 @@ impl From<Kind> for DdiKeyType {
             Kind::Aes128 => DdiKeyType::Aes128,
             Kind::Aes192 => DdiKeyType::Aes192,
             Kind::Aes256 => DdiKeyType::Aes256,
-            Kind::AesBulk256 => DdiKeyType::AesBulk256,
+            Kind::AesXtsBulk256 => DdiKeyType::AesXtsBulk256,
+            Kind::AesGcmBulk256 => DdiKeyType::AesGcmBulk256,
+            Kind::AesGcmBulk256Unapproved => DdiKeyType::AesGcmBulk256Unapproved,
             Kind::Secret256 => DdiKeyType::Secret256,
             Kind::Secret384 => DdiKeyType::Secret384,
             Kind::Secret521 => DdiKeyType::Secret521,
-            Kind::Session => todo!(),
             Kind::HmacSha256 => DdiKeyType::HmacSha256,
             Kind::HmacSha384 => DdiKeyType::HmacSha384,
             Kind::HmacSha512 => DdiKeyType::HmacSha512,
-        }
+            _ => Err(ManticoreError::InvalidKeyType)?,
+        };
+
+        Ok(key_type)
     }
 }
 
@@ -283,7 +314,9 @@ impl TryFrom<DdiAesKeySize> for Kind {
             DdiAesKeySize::Aes128 => Ok(Kind::Aes128),
             DdiAesKeySize::Aes192 => Ok(Kind::Aes192),
             DdiAesKeySize::Aes256 => Ok(Kind::Aes256),
-            DdiAesKeySize::AesBulk256 => Ok(Kind::AesBulk256),
+            DdiAesKeySize::AesXtsBulk256 => Ok(Kind::AesXtsBulk256),
+            DdiAesKeySize::AesGcmBulk256 => Ok(Kind::AesGcmBulk256),
+            DdiAesKeySize::AesGcmBulk256Unapproved => Ok(Kind::AesGcmBulk256Unapproved),
             _ => Err(ManticoreError::InvalidArgument),
         }
     }
@@ -315,7 +348,9 @@ impl From<AesKeySize> for Kind {
             AesKeySize::Aes128 => Kind::Aes128,
             AesKeySize::Aes192 => Kind::Aes192,
             AesKeySize::Aes256 => Kind::Aes256,
-            AesKeySize::AesBulk256 => Kind::AesBulk256,
+            AesKeySize::AesXtsBulk256 => Kind::AesXtsBulk256,
+            AesKeySize::AesGcmBulk256 => Kind::AesGcmBulk256,
+            AesKeySize::AesGcmBulk256Unapproved => Kind::AesGcmBulk256Unapproved,
         }
     }
 }
@@ -349,11 +384,54 @@ impl Kind {
             Kind::Aes192 => 24,
             Kind::Aes256 => 32,
             // In physical manticore, AesBulk256 is just a forwarding key of 2 bytes into the bulk vault.
-            Kind::AesBulk256 => 2,
+            Kind::AesXtsBulk256 | Kind::AesGcmBulk256 | Kind::AesGcmBulk256Unapproved => 2,
+            Kind::AesHmac640 => 80,
             Kind::Secret256 => 32,
             Kind::Secret384 => 48,
             Kind::Secret521 => 66,
             // In physical manticore, Session is of 8 bytes containing the API Revision.
+            Kind::Session => 8,
+            Kind::HmacSha256 => 32,
+            Kind::HmacSha384 => 48,
+            Kind::HmacSha512 => 64,
+        }
+    }
+
+    /// Returns the size of the key in bytes when serialized.
+    /// for DDI wire protocol validation purposes.
+    pub fn serde_size(&self) -> usize {
+        match self {
+            // Public keys remain the same as raw size for now
+            Kind::Rsa2kPublic => 260,
+            Kind::Rsa3kPublic => 388,
+            Kind::Rsa4kPublic => 516,
+            Kind::Ecc256Public => 64,
+            Kind::Ecc384Public => 96,
+            Kind::Ecc521Public => 136,
+
+            // Private keys in BCrypt format have additional overhead for non-CRT keys
+            // For CRT keys, we are not serializing params for CRT, so their sizes are the same as non-CRT.
+            Kind::Rsa2kPrivate => 539, // BCrypt  size for RSA 2K (was 516)
+            Kind::Rsa3kPrivate => 795, // BCrypt  size for RSA 3K (was 772 raw)
+            Kind::Rsa4kPrivate => 1051, // BCrypt  size for RSA 4K (was 1028)
+            Kind::Rsa2kPrivateCrt => 539, // Not using CRT, same as Rsa2kPrivate
+            Kind::Rsa3kPrivateCrt => 795, // Same as Rsa3kPrivate
+            Kind::Rsa4kPrivateCrt => 1051, // Same as Rsa4kPrivate
+
+            // ECC private keys have significant PKCS#8 DER overhead
+            Kind::Ecc256Private => 138, // DER size for P-256 (was 32 raw)
+            Kind::Ecc384Private => 185, // DER size for P-384 (was 48 raw)
+            Kind::Ecc521Private => 241, // DER size for P-521 (was 68 raw)
+
+            // Symmetric keys and others remain the same as raw size
+            Kind::Aes128 => 16,
+            Kind::Aes192 => 24,
+            Kind::Aes256 => 32,
+            Kind::AesXtsBulk256 | Kind::AesGcmBulk256 | Kind::AesGcmBulk256Unapproved => 32,
+            Kind::AesHmac640 => 80,
+            Kind::Secret256 => 32,
+            Kind::Secret384 => 48,
+            Kind::Secret521 => 66,
             Kind::Session => 8,
             Kind::HmacSha256 => 32,
             Kind::HmacSha384 => 48,
@@ -367,13 +445,13 @@ impl Kind {
             (self, usage),
             (
                 Kind::Rsa2kPublic | Kind::Rsa3kPublic | Kind::Rsa4kPublic,
-                DdiKeyUsage::SignVerify | DdiKeyUsage::EncryptDecrypt | DdiKeyUsage::WrapUnwrap,
+                DdiKeyUsage::SignVerify | DdiKeyUsage::EncryptDecrypt | DdiKeyUsage::Unwrap,
             ) | (
                 Kind::Rsa2kPrivate | Kind::Rsa3kPrivate | Kind::Rsa4kPrivate,
-                DdiKeyUsage::SignVerify | DdiKeyUsage::EncryptDecrypt | DdiKeyUsage::WrapUnwrap,
+                DdiKeyUsage::SignVerify | DdiKeyUsage::EncryptDecrypt | DdiKeyUsage::Unwrap,
             ) | (
                 Kind::Rsa2kPrivateCrt | Kind::Rsa3kPrivateCrt | Kind::Rsa4kPrivateCrt,
-                DdiKeyUsage::SignVerify | DdiKeyUsage::EncryptDecrypt | DdiKeyUsage::WrapUnwrap,
+                DdiKeyUsage::SignVerify | DdiKeyUsage::EncryptDecrypt | DdiKeyUsage::Unwrap,
             ) | (
                 Kind::Ecc256Private | Kind::Ecc384Private | Kind::Ecc521Private,
                 DdiKeyUsage::SignVerify | DdiKeyUsage::Derive,
@@ -381,7 +459,12 @@ impl Kind {
                 Kind::Ecc256Public | Kind::Ecc384Public | Kind::Ecc521Public,
                 DdiKeyUsage::SignVerify | DdiKeyUsage::Derive,
             ) | (
-                Kind::Aes128 | Kind::Aes192 | Kind::Aes256 | Kind::AesBulk256,
+                Kind::Aes128
+                    | Kind::Aes192
+                    | Kind::Aes256
+                    | Kind::AesXtsBulk256
+                    | Kind::AesGcmBulk256
+                    | Kind::AesGcmBulk256Unapproved,
                 DdiKeyUsage::EncryptDecrypt,
             ) | (
                 Kind::Secret256 | Kind::Secret384 | Kind::Secret521,
@@ -389,7 +472,7 @@ impl Kind {
             ) | (
                 Kind::HmacSha256 | Kind::HmacSha384 | Kind::HmacSha512,
                 DdiKeyUsage::SignVerify,
-            )
+            ) | (Kind::AesHmac640, DdiKeyUsage::EncryptDecrypt)
         )
     }
 
@@ -412,6 +495,13 @@ impl Kind {
             Kind::Ecc521Public | Kind::Ecc521Private => Ok(Kind::Ecc521Public),
             _ => Err(ManticoreError::InvalidKeyType),
         }
+    }
+
+    pub fn is_bulk_key(&self) -> bool {
+        matches!(
+            self,
+            Kind::AesXtsBulk256 | Kind::AesGcmBulk256 | Kind::AesGcmBulk256Unapproved
+        )
     }
 }
 
@@ -564,12 +654,12 @@ impl Entry {
         self.inner.read().key()
     }
 
-    /// Returns the sess_id key for the Entry
+    /// Returns the physical sess_id key for the Entry
     ///
     /// # Returns
     /// * App session ID that owns this Entry.
-    pub(crate) fn sess_id(&self) -> Option<u16> {
-        self.inner.read().sess_id()
+    pub(crate) fn physical_sess_id(&self) -> Option<u16> {
+        self.inner.read().physical_sess_id()
     }
 
     pub(crate) fn key_tag(&self) -> Option<u16> {
@@ -716,7 +806,7 @@ impl EntryInner {
         self.key.clone()
     }
 
-    fn sess_id(&self) -> Option<u16> {
+    fn physical_sess_id(&self) -> Option<u16> {
         if self.flags.session_only() {
             Some(self.sess_id_or_key_tag)
         } else {
@@ -820,7 +910,7 @@ mod tests {
         println!("Kind {:?}", kind.clone());
         println!("Entry {:?}", entry);
         println!("key = {:?}", entry.key());
-        println!("app_session_id = {:?}", entry.sess_id());
+        println!("app_session_id (physical) = {:?}", entry.physical_sess_id());
     }
 
     #[test]

@@ -8,17 +8,17 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use lazy_static::lazy_static;
-use mcr_api::AesMode;
-use mcr_api::DigestKind;
-use mcr_api::EccCurve;
-use mcr_api::HsmApiRevision;
-use mcr_api::HsmApiRevisionRange;
-use mcr_api::HsmAppCredentials;
-use mcr_api::HsmDevice;
-use mcr_api::HsmSession;
-use mcr_api::KeyType;
-use mcr_api::ManticoreCollateral;
-use mcr_api::RsaSignaturePadding;
+use mcr_api_resilient::AesMode;
+use mcr_api_resilient::DigestKind;
+use mcr_api_resilient::EccCurve;
+use mcr_api_resilient::HsmApiRevision;
+use mcr_api_resilient::HsmApiRevisionRange;
+use mcr_api_resilient::HsmAppCredentials;
+use mcr_api_resilient::HsmDevice;
+use mcr_api_resilient::HsmSession;
+use mcr_api_resilient::KeyType;
+use mcr_api_resilient::ManticoreCertificate;
+use mcr_api_resilient::RsaSignaturePadding;
 use p256::pkcs8::DecodePublicKey;
 use parking_lot::RwLock;
 use uuid::Uuid;
@@ -1366,42 +1366,42 @@ impl Provider {
                     tracing::error!("Failed to get app session");
                     HRESULT(E_UNEXPECTED)
                 })?;
-                let collateral = match app_session.get_collateral() {
-                    Ok(collateral) => collateral,
+                let certificate = match app_session.get_certificate() {
+                    Ok(certificate) => certificate,
                     Err(err) => {
-                        tracing::error!("Failed to get collateral: {:?}", err);
+                        tracing::error!("Failed to get certificate: {:?}", err);
                         Err(HRESULT(E_UNEXPECTED))?
                     }
                 };
 
-                // Take physical AZIHSM's cert chain as collateral
-                // Or take virtual AZIHSM's ak cert as collateral (TODO: till virtual AZIHSM collateral support is added)
-                let collateral = match collateral {
-                    ManticoreCollateral::PhysicalManticore(cert_chain) => cert_chain,
-                    ManticoreCollateral::VirtualManticore { ak_cert, .. } => {
-                        // TODO: for virtual AZIHSM, collateral support is pending
+                // Take physical AZIHSM's cert chain as certificate
+                // Or take virtual AZIHSM's ak cert as certificate (TODO: till virtual AZIHSM certificate support is added)
+                let certificate = match certificate {
+                    ManticoreCertificate::PhysicalManticore(cert_chain) => cert_chain,
+                    ManticoreCertificate::VirtualManticore { ak_cert, .. } => {
+                        // TODO: for virtual AZIHSM, certificate support is pending
                         // Currently it only populates ak_cert
                         ak_cert
                     }
                 };
 
                 if value.is_empty() {
-                    // If the output buffer is empty, return double the length of the collateral.
+                    // If the output buffer is empty, return double the length of the certificate.
                     // This ensures that the caller allocates a sufficiently large buffer for subsequent calls,
-                    // accounting for potential variations in the length of the collateral between calls.
-                    *result = 2 * collateral.len() as u32;
-                    tracing::warn!("Value is empty, returning collateral length: {}", *result);
+                    // accounting for potential variations in the length of the certificate between calls.
+                    *result = 2 * certificate.len() as u32;
+                    tracing::warn!("Value is empty, returning certificate length: {}", *result);
                     return Ok(());
-                } else if value.len() < collateral.len() {
+                } else if value.len() < certificate.len() {
                     tracing::error!(
-                        "Buffer too small for collateral: expected: {}, actual: {}",
-                        collateral.len(),
+                        "Buffer too small for certificate: expected: {}, actual: {}",
+                        certificate.len(),
                         value.len()
                     );
                     Err(HRESULT(NTE_BUFFER_TOO_SMALL))?;
                 }
-                value[..collateral.len()].copy_from_slice(&collateral);
-                *result = collateral.len() as u32;
+                value[..certificate.len()].copy_from_slice(&certificate);
+                *result = certificate.len() as u32;
             }
             ProviderPropertyIdentifier::AziHsmMaxKeyCount => {
                 let size_u32 = std::mem::size_of::<u32>();

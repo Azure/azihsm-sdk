@@ -3,21 +3,66 @@
 use std::thread;
 
 use crypto::rand::rand_bytes;
+#[cfg(not(feature = "resilient"))]
 use mcr_api::DigestKind;
+#[cfg(not(feature = "resilient"))]
 use mcr_api::HsmApiRevision;
+#[cfg(not(feature = "resilient"))]
 use mcr_api::HsmAppCredentials;
+#[cfg(not(feature = "resilient"))]
 use mcr_api::HsmDevice;
+#[cfg(not(feature = "resilient"))]
 use mcr_api::HsmError;
+#[cfg(not(feature = "resilient"))]
 use mcr_api::HsmKeyHandle;
+#[cfg(not(feature = "resilient"))]
 use mcr_api::HsmResult;
+#[cfg(not(feature = "resilient"))]
 use mcr_api::HsmSession;
+#[cfg(not(feature = "resilient"))]
 use mcr_api::KeyAvailability;
+#[cfg(not(feature = "resilient"))]
 use mcr_api::KeyClass;
+#[cfg(not(feature = "resilient"))]
 use mcr_api::KeyProperties;
+#[cfg(not(feature = "resilient"))]
 use mcr_api::KeyType;
+#[cfg(not(feature = "resilient"))]
 use mcr_api::KeyUsage;
+#[cfg(not(feature = "resilient"))]
 use mcr_api::RsaCryptoPadding;
+#[cfg(not(feature = "resilient"))]
 use mcr_api::RsaUnwrapParams;
+#[cfg(feature = "resilient")]
+use mcr_api_resilient::DigestKind;
+#[cfg(feature = "resilient")]
+use mcr_api_resilient::HsmApiRevision;
+#[cfg(feature = "resilient")]
+use mcr_api_resilient::HsmAppCredentials;
+#[cfg(feature = "resilient")]
+use mcr_api_resilient::HsmDevice;
+#[cfg(feature = "resilient")]
+use mcr_api_resilient::HsmError;
+#[cfg(feature = "resilient")]
+use mcr_api_resilient::HsmKeyHandle;
+#[cfg(feature = "resilient")]
+use mcr_api_resilient::HsmResult;
+#[cfg(feature = "resilient")]
+use mcr_api_resilient::HsmSession;
+#[cfg(feature = "resilient")]
+use mcr_api_resilient::KeyAvailability;
+#[cfg(feature = "resilient")]
+use mcr_api_resilient::KeyClass;
+#[cfg(feature = "resilient")]
+use mcr_api_resilient::KeyProperties;
+#[cfg(feature = "resilient")]
+use mcr_api_resilient::KeyType;
+#[cfg(feature = "resilient")]
+use mcr_api_resilient::KeyUsage;
+#[cfg(feature = "resilient")]
+use mcr_api_resilient::RsaCryptoPadding;
+#[cfg(feature = "resilient")]
+use mcr_api_resilient::RsaUnwrapParams;
 use mcr_ddi_sim::crypto::aes::*;
 use mcr_ddi_sim::crypto::ecc::*;
 use mcr_ddi_sim::crypto::hmac::HmacOp;
@@ -908,8 +953,18 @@ pub(crate) fn rsa_unwrap_from_wrap_data(
             generate_aes(key_type)
         }
 
-        KeyType::AesBulk256 => {
-            key_class = KeyClass::AesBulk;
+        KeyType::AesXtsBulk256 => {
+            key_class = KeyClass::AesXtsBulk;
+            generate_aes(key_type)
+        }
+
+        KeyType::AesGcmBulk256 => {
+            key_class = KeyClass::AesGcmBulk;
+            generate_aes(key_type)
+        }
+
+        KeyType::AesGcmBulk256Unapproved => {
+            key_class = KeyClass::AesGcmBulkUnapproved;
             generate_aes(key_type)
         }
 
@@ -952,7 +1007,7 @@ pub(crate) fn generate_aes(key_type: KeyType) -> Vec<u8> {
         KeyType::Aes128 => 16,
         KeyType::Aes192 => 24,
         KeyType::Aes256 => 32,
-        KeyType::AesBulk256 => 32,
+        KeyType::AesXtsBulk256 | KeyType::AesGcmBulk256 | KeyType::AesGcmBulk256Unapproved => 32,
         _ => 32,
     };
 
@@ -1170,7 +1225,10 @@ pub fn common_setup(_device: &HsmDevice, path: &str) {
     // Establish credential can only happen once so it could fail
     // in future instances so ignore error
     let api_rev = device.get_api_revision_range().max;
-    let resp = device.establish_credential(api_rev, TEST_APP_CREDENTIALS);
+    let mut bk3 = [0u8; 48];
+    let _ = rand_bytes(&mut bk3);
+    let masked_bk3 = device.init_bk3(api_rev, &bk3).unwrap();
+    let resp = device.establish_credential(api_rev, TEST_APP_CREDENTIALS, masked_bk3, None, None);
     if let Err(resp) = resp {
         println!("establish credential failed with {}. Ignoring since establish credential can only be done once and may have happened before", resp);
     } else {
@@ -1184,7 +1242,8 @@ pub fn common_setup(_device: &HsmDevice, path: &str) {
     // Establish credential can only happen once so it could fail
     // in future instances so ignore error
     let api_rev = device.get_api_revision_range().max;
-    let resp = device.establish_credential(api_rev, TEST_APP_CREDENTIALS);
+    let masked_bk3 = device.init_bk3(api_rev, &bk3).unwrap();
+    let resp = device.establish_credential(api_rev, TEST_APP_CREDENTIALS, masked_bk3, None, None);
     assert!(
         resp.is_ok(),
         "Establish Credential response err: {:?}",
@@ -1205,4 +1264,29 @@ pub fn common_open_app_session(device: &HsmDevice) -> HsmSession {
     assert!(result.is_ok(), "result {:?}", result);
 
     result.unwrap()
+}
+
+// Helper to establish credential; returns masked bk3
+#[cfg(test)]
+#[allow(dead_code)]
+pub fn common_establish_credential(device: &HsmDevice, bk3: &[u8]) -> Vec<u8> {
+    // Establish credential can only happen once so it could fail
+    // in future instances so ignore error
+    let api_rev = device.get_api_revision_range().max;
+    let masked_bk3 = device.init_bk3(api_rev, bk3).unwrap();
+    let resp = device.establish_credential(
+        api_rev,
+        TEST_APP_CREDENTIALS,
+        masked_bk3.clone(),
+        None,
+        None,
+    );
+    assert!(
+        resp.is_ok(),
+        "Establish Credential response err: {:?}",
+        resp
+    );
+
+    println!("establish credential succeeded");
+    masked_bk3
 }

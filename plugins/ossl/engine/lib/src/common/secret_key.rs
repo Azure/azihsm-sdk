@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use mcr_api::KeyType;
+use mcr_api_resilient::KeyType;
 use openssl_rust::safeapi::error::*;
 use openssl_rust::NID_X9_62_prime256v1;
 use openssl_rust::NID_secp384r1;

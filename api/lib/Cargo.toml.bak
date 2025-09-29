@@ -1,0 +1,58 @@
+# Copyright (C) Microsoft Corporation. All rights reserved.
+
+[package]
+name = "mcr_api"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+doctest = false
+test = false
+
+[dependencies]
+cfg-if.workspace = true
+crypto.workspace = true
+mcr_ddi.workspace = true
+mcr_ddi_mbor.workspace = true
+mcr_ddi_mock = { workspace = true, optional = true }
+mcr_ddi_nix.workspace = true
+mcr_ddi_types.workspace = true
+mcr_ddi_win.workspace = true
+nix.workspace = true
+parking_lot.workspace = true
+rsa_padding.workspace = true
+session_parameter_encryption.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+tracing.workspace = true
+
+# dependencies for fuzzing
+arbitrary = { workspace = true, optional = true }
+
+[dev-dependencies]
+mcr_ddi_sim.workspace = true
+rand.workspace = true
+sec1.workspace = true
+spki.workspace = true
+symcrypt.workspace = true
+test_with_tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+openssl.workspace = true
+
+[features]
+default = []
+mock = ["mcr_ddi_mock"]
+use-openssl = ["crypto/use-openssl", "mcr_ddi_mock/use-openssl", "mcr_ddi_sim/use-openssl"]
+use-symcrypt = ["crypto/use-symcrypt", "mcr_ddi_mock/use-symcrypt", "mcr_ddi_sim/use-symcrypt"]
+testhooks = []
+table-4 = ["mcr_ddi_mock/table-4"]
+table-64 = ["mcr_ddi_mock/table-64"]
+fuzzing = ["arbitrary"]
+
+# This feature determines whether tests exercise `mcr_api` or `mcr_api_resilient`
+resilient = []
+
+[lints]
+workspace = true

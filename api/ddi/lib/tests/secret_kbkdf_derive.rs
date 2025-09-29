@@ -1080,7 +1080,7 @@ fn test_secret_kbkdf_aes_gcm_secret256() {
             let hash_algorithm = DdiHashAlgorithm::Sha256;
             let label_vec = "label".as_bytes().to_vec();
             let context_vec = "context".as_bytes().to_vec();
-            let key_type = DdiKeyType::AesBulk256;
+            let key_type = DdiKeyType::AesGcmBulk256Unapproved;
             let key_tag = None;
             let key_properties =
                 helper_key_properties(DdiKeyUsage::EncryptDecrypt, DdiKeyAvailability::App);
@@ -1117,7 +1117,7 @@ fn test_secret_kbkdf_aes_gcm_secret384() {
             let hash_algorithm = DdiHashAlgorithm::Sha256;
             let label_vec = "label".as_bytes().to_vec();
             let context_vec = "context".as_bytes().to_vec();
-            let key_type = DdiKeyType::AesBulk256;
+            let key_type = DdiKeyType::AesGcmBulk256Unapproved;
             let key_tag = None;
             let key_properties =
                 helper_key_properties(DdiKeyUsage::EncryptDecrypt, DdiKeyAvailability::App);
@@ -1154,7 +1154,7 @@ fn test_secret_kbkdf_aes_gcm_secret521() {
             let hash_algorithm = DdiHashAlgorithm::Sha256;
             let label_vec = "label".as_bytes().to_vec();
             let context_vec = "context".as_bytes().to_vec();
-            let key_type = DdiKeyType::AesBulk256;
+            let key_type = DdiKeyType::AesGcmBulk256Unapproved;
             let key_tag = None;
             let key_properties =
                 helper_key_properties(DdiKeyUsage::EncryptDecrypt, DdiKeyAvailability::App);
@@ -1191,7 +1191,7 @@ fn test_secret_kbkdf_aes_xts_secret256() {
             let hash_algorithm = DdiHashAlgorithm::Sha256;
             let label_vec = "label".as_bytes().to_vec();
             let context_vec = "context".as_bytes().to_vec();
-            let key_type = DdiKeyType::AesBulk256;
+            let key_type = DdiKeyType::AesXtsBulk256;
             let key_tag = None;
             let key_properties =
                 helper_key_properties(DdiKeyUsage::EncryptDecrypt, DdiKeyAvailability::App);
@@ -1228,7 +1228,7 @@ fn test_secret_kbkdf_aes_xts_secret384() {
             let hash_algorithm = DdiHashAlgorithm::Sha256;
             let label_vec = "label".as_bytes().to_vec();
             let context_vec = "context".as_bytes().to_vec();
-            let key_type = DdiKeyType::AesBulk256;
+            let key_type = DdiKeyType::AesXtsBulk256;
             let key_tag = None;
             let key_properties =
                 helper_key_properties(DdiKeyUsage::EncryptDecrypt, DdiKeyAvailability::App);
@@ -1265,7 +1265,7 @@ fn test_secret_kbkdf_aes_xts_secret521() {
             let hash_algorithm = DdiHashAlgorithm::Sha256;
             let label_vec = "label".as_bytes().to_vec();
             let context_vec = "context".as_bytes().to_vec();
-            let key_type = DdiKeyType::AesBulk256;
+            let key_type = DdiKeyType::AesXtsBulk256;
             let key_tag = None;
             let key_properties =
                 helper_key_properties(DdiKeyUsage::EncryptDecrypt, DdiKeyAvailability::App);
@@ -1427,40 +1427,26 @@ fn test_secret_kbkdf_aes_hmac_helper(
     let encrypted_msg = resp.data.msg;
 
     // Generate HMAC tag with hmac key 1
-    let req = DdiHmacCmdReq {
-        hdr: DdiReqHdr {
-            op: DdiOp::Hmac,
-            sess_id: Some(session_id),
-            rev: Some(DdiApiRev { major: 1, minor: 0 }),
-        },
-        data: DdiHmacReq {
-            key_id: hmac_key_id1,
-            msg: encrypted_msg,
-        },
-        ext: None,
-    };
-    let mut cookie = None;
-    let resp = dev.exec_op(&req, &mut cookie);
+    let resp = helper_hmac(
+        dev,
+        Some(session_id),
+        Some(DdiApiRev { major: 1, minor: 0 }),
+        hmac_key_id1,
+        encrypted_msg,
+    );
 
     assert!(resp.is_ok(), "resp {:?}", resp);
     let resp = resp.unwrap();
     let tag = resp.data.tag;
 
     // Generate HMAC tag with hmac key 2 and confirm is same
-    let req = DdiHmacCmdReq {
-        hdr: DdiReqHdr {
-            op: DdiOp::Hmac,
-            sess_id: Some(session_id),
-            rev: Some(DdiApiRev { major: 1, minor: 0 }),
-        },
-        data: DdiHmacReq {
-            key_id: hmac_key_id2,
-            msg: encrypted_msg,
-        },
-        ext: None,
-    };
-    let mut cookie = None;
-    let resp = dev.exec_op(&req, &mut cookie);
+    let resp = helper_hmac(
+        dev,
+        Some(session_id),
+        Some(DdiApiRev { major: 1, minor: 0 }),
+        hmac_key_id2,
+        encrypted_msg,
+    );
 
     assert!(resp.is_ok(), "resp {:?}", resp);
     let resp = resp.unwrap();
@@ -1610,7 +1596,7 @@ fn test_kbkdf_derive_aesbulk256_with_rollback_error() {
             let hash_algorithm = DdiHashAlgorithm::Sha256;
             let label = None;
             let context = None;
-            let key_type = DdiKeyType::AesBulk256;
+            let key_type = DdiKeyType::AesGcmBulk256Unapproved;
             let key_tag = Some(3354);
             let key_properties =
                 helper_key_properties(DdiKeyUsage::EncryptDecrypt, DdiKeyAvailability::App);
@@ -1654,7 +1640,7 @@ fn test_kbkdf_derive_aesbulk256_with_rollback_after_exhaust_keys() {
             let hash_algorithm = DdiHashAlgorithm::Sha256;
             let label = None;
             let context = None;
-            let key_type = DdiKeyType::AesBulk256;
+            let key_type = DdiKeyType::AesGcmBulk256Unapproved;
             let key_properties =
                 helper_key_properties(DdiKeyUsage::EncryptDecrypt, DdiKeyAvailability::App);
 
@@ -1771,7 +1757,7 @@ fn test_kbkdf_derive_aesbulk256_with_rollback_error_after_dma_out() {
             let hash_algorithm = DdiHashAlgorithm::Sha256;
             let label = None;
             let context = None;
-            let key_type = DdiKeyType::AesBulk256;
+            let key_type = DdiKeyType::AesGcmBulk256Unapproved;
             let key_properties =
                 helper_key_properties(DdiKeyUsage::EncryptDecrypt, DdiKeyAvailability::App);
 
@@ -1814,7 +1800,7 @@ fn test_kbkdf_derive_aesbulk256_with_rollback_error_after_dma_out_after_exhaust_
             let hash_algorithm = DdiHashAlgorithm::Sha256;
             let label = None;
             let context = None;
-            let key_type = DdiKeyType::AesBulk256;
+            let key_type = DdiKeyType::AesGcmBulk256Unapproved;
             let key_properties =
                 helper_key_properties(DdiKeyUsage::EncryptDecrypt, DdiKeyAvailability::App);
 
@@ -1931,7 +1917,7 @@ fn test_kbkdf_derive_aesbulk256_with_rollback_error_after_dma_end() {
             let hash_algorithm = DdiHashAlgorithm::Sha256;
             let label = None;
             let context = None;
-            let key_type = DdiKeyType::AesBulk256;
+            let key_type = DdiKeyType::AesGcmBulk256Unapproved;
             let key_tag = Some(3354);
             let key_properties =
                 helper_key_properties(DdiKeyUsage::EncryptDecrypt, DdiKeyAvailability::App);
@@ -1975,7 +1961,7 @@ fn test_kbkdf_derive_aesbulk256_with_rollback_error_after_dma_end_after_exhaust_
             let hash_algorithm = DdiHashAlgorithm::Sha256;
             let label = None;
             let context = None;
-            let key_type = DdiKeyType::AesBulk256;
+            let key_type = DdiKeyType::AesGcmBulk256Unapproved;
             let key_properties =
                 helper_key_properties(DdiKeyUsage::EncryptDecrypt, DdiKeyAvailability::App);
 
@@ -2069,6 +2055,143 @@ fn test_kbkdf_derive_aesbulk256_with_rollback_error_after_dma_end_after_exhaust_
             }
 
             close_app_session(dev, session_id);
+        },
+    );
+}
+
+// Unmask the masked key returned in a DdiKbkdfCounterHmacDeriveResp
+// And see if it can be used normally
+#[test]
+fn test_secret_kbkdf_and_unmask() {
+    ddi_dev_test(
+        common_setup,
+        common_cleanup,
+        |dev, _ddi, _path, session_id| {
+            // Run this test only for Mock device
+            if get_device_kind(dev) != DdiDeviceKind::Virtual {
+                println!("Unmask key Not supported for Physical Device.");
+                return;
+            }
+
+            let hash_algorithm = DdiHashAlgorithm::Sha256;
+            let label = Some("label".as_bytes().to_vec());
+            let context = Some("context".as_bytes().to_vec());
+            let key_type = DdiKeyType::Aes256;
+            let key_tag = None;
+            let key_properties =
+                helper_key_properties(DdiKeyUsage::EncryptDecrypt, DdiKeyAvailability::App);
+
+            let (secret_key_id1, secret_key_id2) =
+                create_ecdh_secrets(session_id, dev, DdiKeyType::Secret256);
+
+            let label = {
+                if let Some(label_vec) = label {
+                    let mut label_array = [0u8; 256];
+                    label_array[..label_vec.len()].copy_from_slice(&label_vec);
+                    Some(
+                        MborByteArray::new(label_array, label_vec.len())
+                            .expect("failed to create byte array"),
+                    )
+                } else {
+                    None
+                }
+            };
+            let context = {
+                if let Some(context_vec) = context {
+                    let mut context_array = [0u8; 256];
+                    context_array[..context_vec.len()].copy_from_slice(&context_vec);
+                    Some(
+                        MborByteArray::new(context_array, context_vec.len())
+                            .expect("failed to create byte array"),
+                    )
+                } else {
+                    None
+                }
+            };
+
+            // Derive from first secret key
+            let resp = helper_kbkdf_derive(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                secret_key_id1,
+                hash_algorithm,
+                label,
+                context,
+                key_type,
+                key_tag,
+                key_properties,
+            );
+
+            assert!(resp.is_ok(), "resp {:?}", resp);
+            let resp = resp.unwrap();
+            let derived_key_id1 = resp.data.key_id;
+            let masked_key = resp.data.masked_key;
+
+            // Unmask this key
+            let resp = helper_unmask_key(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                masked_key,
+            );
+            assert!(resp.is_ok(), "resp {:?}", resp);
+            let unmasked_derived_key_id1 = resp.unwrap().data.key_id;
+            assert_ne!(unmasked_derived_key_id1, derived_key_id1);
+
+            // Derive from second secret key
+            let resp = helper_kbkdf_derive(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                secret_key_id2,
+                hash_algorithm,
+                label,
+                context,
+                key_type,
+                None,
+                key_properties,
+            );
+
+            assert!(resp.is_ok(), "resp {:?}", resp);
+            let resp = resp.unwrap();
+            let derived_key_id2 = resp.data.key_id;
+
+            // Encrypt message with secret key 1
+            let raw_msg = [1u8; 512];
+            let msg_len = raw_msg.len();
+            let mut msg = [0u8; 1024];
+            msg[..msg_len].clone_from_slice(&raw_msg);
+
+            let resp = helper_aes_encrypt_decrypt(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                unmasked_derived_key_id1,
+                DdiAesOp::Encrypt,
+                MborByteArray::new([0x1; 1024], msg_len).expect("failed to create byte array"),
+                MborByteArray::new([0x0; 16], 16).expect("failed to create byte array"),
+            );
+
+            assert!(resp.is_ok(), "resp {:?}", resp);
+            let resp = resp.unwrap();
+
+            // Decrypt with key 2 and confirm message is same
+            let resp = helper_aes_encrypt_decrypt(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                derived_key_id2,
+                DdiAesOp::Decrypt,
+                resp.data.msg,
+                MborByteArray::new([0x0; 16], 16).expect("failed to create byte array"),
+            );
+
+            assert!(resp.is_ok(), "resp {:?}", resp);
+            let resp = resp.unwrap();
+
+            assert_eq!(resp.data.msg.data_take(), msg);
+            assert_eq!(resp.data.msg.len(), msg_len);
         },
     );
 }

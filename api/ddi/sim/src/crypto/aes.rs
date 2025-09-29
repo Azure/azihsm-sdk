@@ -5,12 +5,6 @@
 #[cfg(all(feature = "use-openssl", feature = "use-symcrypt"))]
 compile_error!("OpenSSL and non-OpenSSL cannot be enabled at the same time.");
 
-#[cfg(feature = "use-symcrypt")]
-use aes_crate::cipher::generic_array::GenericArray;
-#[cfg(feature = "use-symcrypt")]
-use aes_crate::cipher::KeyInit;
-#[cfg(feature = "use-symcrypt")]
-use aes_crate::Aes256;
 #[cfg(feature = "fuzzing")]
 use arbitrary::Arbitrary;
 use mcr_ddi_types::DdiAesKeySize;
@@ -37,10 +31,12 @@ use symcrypt::cipher::BlockCipherType;
 use symcrypt::gcm::GcmExpandedKey;
 #[cfg(feature = "use-symcrypt")]
 use symcrypt::symcrypt_random;
-#[cfg(feature = "use-symcrypt")]
-use xts_mode::Xts128;
 
+#[cfg(feature = "use-symcrypt")]
+use crate::crypto::cng::*;
 use crate::errors::ManticoreError;
+use crate::mask::KeySerialization;
+use crate::table::entry::Kind;
 
 /// The size of an AES GCM tag.
 const AES_GCM_TAG_SIZE: usize = 16;
@@ -101,8 +97,14 @@ pub enum AesKeySize {
     /// 256-bit key.
     Aes256,
 
-    /// Bulk 256-bit key.
-    AesBulk256,
+    /// Bulk XTS 256-bit key.
+    AesXtsBulk256,
+
+    /// Bulk GCM 256-bit key.
+    AesGcmBulk256,
+
+    /// Bulk GCM 256-bit Unapproved key.
+    AesGcmBulk256Unapproved,
 }
 
 impl TryFrom<DdiAesKeySize> for AesKeySize {
@@ -113,9 +115,25 @@ impl TryFrom<DdiAesKeySize> for AesKeySize {
             DdiAesKeySize::Aes128 => Ok(AesKeySize::Aes128),
             DdiAesKeySize::Aes192 => Ok(AesKeySize::Aes192),
             DdiAesKeySize::Aes256 => Ok(AesKeySize::Aes256),
-            DdiAesKeySize::AesBulk256 => Ok(AesKeySize::AesBulk256),
+            DdiAesKeySize::AesXtsBulk256 => Ok(AesKeySize::AesXtsBulk256),
+            DdiAesKeySize::AesGcmBulk256 => Ok(AesKeySize::AesGcmBulk256),
+            DdiAesKeySize::AesGcmBulk256Unapproved => Ok(AesKeySize::AesGcmBulk256Unapproved),
             _ => Err(ManticoreError::InvalidArgument),
         }
+    }
+}
+
+impl AesKeySize {
+    /// Check if the key size is a bulk key type.
+    ///
+    /// Returns `true` if the key size is one of the bulk key types, otherwise returns `false`.
+    pub fn is_bulk_key(&self) -> bool {
+        matches!(
+            self,
+            AesKeySize::AesXtsBulk256
+                | AesKeySize::AesGcmBulk256
+                | AesKeySize::AesGcmBulk256Unapproved
+        )
     }
 }
 
@@ -174,7 +192,7 @@ pub trait AesOp {
         Self: Sized;
 
     /// Create a `AesKey` instance from a raw bulk key.
-    fn from_bulk_bytes(bytes: &[u8]) -> Result<Self, ManticoreError>
+    fn from_bulk_bytes(bytes: &[u8], size: AesKeySize) -> Result<Self, ManticoreError>
     where
         Self: Sized;
 
@@ -251,6 +269,27 @@ pub struct AesKey {
     size: AesKeySize,
 }
 
+impl KeySerialization<AesKey> for AesKey {
+    fn serialize(&self) -> Result<Vec<u8>, ManticoreError> {
+        Ok(self.key.clone())
+    }
+
+    fn deserialize(raw: &[u8], expected_type: Kind) -> Result<AesKey, ManticoreError> {
+        match expected_type {
+            Kind::Aes128 | Kind::Aes192 | Kind::Aes256 => AesKey::from_bytes(raw),
+            Kind::AesXtsBulk256 => AesKey::from_bulk_bytes(raw, AesKeySize::AesXtsBulk256),
+            Kind::AesGcmBulk256 => AesKey::from_bulk_bytes(raw, AesKeySize::AesGcmBulk256),
+            Kind::AesGcmBulk256Unapproved => {
+                AesKey::from_bulk_bytes(raw, AesKeySize::AesGcmBulk256Unapproved)
+            }
+            _ => {
+                tracing::error!(error=?ManticoreError::DerAndKeyTypeMismatch, ?expected_type, "Expected type should be AES when deserializing masked key for AesKey");
+                Err(ManticoreError::DerAndKeyTypeMismatch)
+            }
+        }
+    }
+}
+
 #[cfg(feature = "use-openssl")]
 /// Generate an AES key.
 pub fn generate_aes(key_size: AesKeySize) -> Result<AesKey, ManticoreError> {
@@ -258,7 +297,9 @@ pub fn generate_aes(key_size: AesKeySize) -> Result<AesKey, ManticoreError> {
         AesKeySize::Aes128 => 16,
         AesKeySize::Aes192 => 24,
         AesKeySize::Aes256 => 32,
-        AesKeySize::AesBulk256 => 32,
+        AesKeySize::AesXtsBulk256 => 32,
+        AesKeySize::AesGcmBulk256 => 32,
+        AesKeySize::AesGcmBulk256Unapproved => 32,
     };
 
     let mut buf = [0u8; 32];
@@ -281,7 +322,9 @@ pub fn generate_aes(key_size: AesKeySize) -> Result<AesKey, ManticoreError> {
         AesKeySize::Aes128 => 16,
         AesKeySize::Aes192 => 24,
         AesKeySize::Aes256 => 32,
-        AesKeySize::AesBulk256 => 32,
+        AesKeySize::AesXtsBulk256 => 32,
+        AesKeySize::AesGcmBulk256 => 32,
+        AesKeySize::AesGcmBulk256Unapproved => 32,
     };
     let mut buf = [0u8; 32];
     let buf_slice = &mut buf[..buf_len];
@@ -460,17 +503,17 @@ impl AesOp for AesKey {
     ///
     /// # Arguments
     /// * `bytes` - The raw bulk key.
+    /// * `size` - The type of bulk key.
     ///
     /// # Returns
     /// * `AesKey` - The created instance.
     ///
     /// # Errors
     /// * `ManticoreError::InvalidArgument` - If the raw key has invalid size.
-    fn from_bulk_bytes(bytes: &[u8]) -> Result<Self, ManticoreError> {
-        let size = match bytes.len() {
-            32 => AesKeySize::AesBulk256,
-            _ => Err(ManticoreError::AesInvalidKeyLength)?,
-        };
+    fn from_bulk_bytes(bytes: &[u8], size: AesKeySize) -> Result<Self, ManticoreError> {
+        if bytes.len() != 32 {
+            Err(ManticoreError::AesInvalidKeyLength)?
+        }
 
         Ok(Self {
             key: bytes.to_vec(),
@@ -804,33 +847,60 @@ impl AesOp for AesKey {
         plaintext_buffers: &[Vec<u8>],
         encrypted_buffers: &mut [Vec<u8>],
     ) -> Result<FPAesXtsEncryptDecryptResult, ManticoreError> {
-        // TODO: when symcrypt-rust supports XTS, replace this with symcrypt
-
         if self.key == key2.key {
             Err(ManticoreError::AesEncryptError)?;
         }
-        let cipher1 = Aes256::new(GenericArray::from_slice(&self.key));
-        let cipher2 = Aes256::new(GenericArray::from_slice(&key2.key));
-        let xts = Xts128::<Aes256>::new(cipher1, cipher2);
 
-        let mut buffer: Vec<u8> = plaintext_buffers.iter().flatten().copied().collect();
-        if buffer.len() < 16 {
+        // Create algorithm handle for this operation
+        let alg_handle = CngAlgoHandle::new()?;
+
+        // Create key handles for this operation
+        let key1_handle = CngKeyHandle::new(alg_handle.handle(), &self.key)?;
+        let key2_handle = CngKeyHandle::new(alg_handle.handle(), &key2.key)?;
+
+        if dul % 16 != 0 {
             Err(ManticoreError::AesEncryptError)?;
         }
-        xts.encrypt_area(&mut buffer, dul, 0, |_| tweak);
 
-        let mut encrypted_size = 0usize;
-        for (chunk, encrypted_buffer) in buffer
-            .as_slice()
-            .chunks(buffer.len().div_ceil(encrypted_buffers.len()))
+        let mut total_processed = 0;
+
+        for (i, (plaintext, encrypted)) in plaintext_buffers
+            .iter()
             .zip(encrypted_buffers.iter_mut())
+            .enumerate()
         {
-            *encrypted_buffer = chunk.to_vec();
-            encrypted_size += chunk.len();
-        }
+            if plaintext.len() < 16 || plaintext.len() % 16 != 0 {
+                Err(ManticoreError::AesEncryptError)?;
+            }
 
+            // Calculate tweak for this buffer (using dul as data unit length and buffer index)
+            let mut buffer_tweak = tweak;
+            let tweak_increment = (i * dul / 16) as u64; // Increment based on data unit position
+
+            // Add the increment to the tweak (treating it as a little-endian counter)
+            let mut carry = tweak_increment;
+            for byte in buffer_tweak.iter_mut() {
+                let sum = *byte as u64 + carry;
+                *byte = sum as u8;
+                carry = sum >> 8;
+                if carry == 0 {
+                    break;
+                }
+            }
+
+            encrypted.resize(plaintext.len(), 0);
+            encrypt_single_buffer(
+                key1_handle.handle(),
+                key2_handle.handle(),
+                plaintext,
+                &buffer_tweak,
+                encrypted,
+            )?;
+
+            total_processed += plaintext.len();
+        }
         Ok(FPAesXtsEncryptDecryptResult {
-            final_size: encrypted_size,
+            final_size: total_processed,
         })
     }
 
@@ -887,29 +957,57 @@ impl AesOp for AesKey {
         encrypted_buffers: &[Vec<u8>],
         cleartext_buffers: &mut [Vec<u8>],
     ) -> Result<FPAesXtsEncryptDecryptResult, ManticoreError> {
-        // TODO: when symcrypt-rust supports XTS, replace this
-        let cipher1 = Aes256::new(GenericArray::from_slice(&self.key));
-        let cipher2 = Aes256::new(GenericArray::from_slice(&key2.key));
-        let xts = Xts128::<Aes256>::new(cipher1, cipher2);
+        // Create algorithm handle for this operation
+        let alg_handle = CngAlgoHandle::new()?;
 
-        let mut buffer: Vec<u8> = encrypted_buffers.iter().flatten().copied().collect();
-        if buffer.len() < 16 {
+        // Create key handles for this operation
+        let key1_handle = CngKeyHandle::new(alg_handle.handle(), &self.key)?;
+        let key2_handle = CngKeyHandle::new(alg_handle.handle(), &key2.key)?;
+
+        let mut total_processed = 0;
+
+        if dul % 16 != 0 {
             Err(ManticoreError::AesDecryptError)?;
         }
-        xts.decrypt_area(&mut buffer, dul, 0, |_| tweak);
 
-        let mut decrypted_size = 0usize;
-        for (chunk, cleartext_buffer) in buffer
-            .as_slice()
-            .chunks(buffer.len().div_ceil(cleartext_buffers.len()))
+        for (i, (encrypted, cleartext)) in encrypted_buffers
+            .iter()
             .zip(cleartext_buffers.iter_mut())
+            .enumerate()
         {
-            *cleartext_buffer = chunk.to_vec();
-            decrypted_size += chunk.len();
+            if encrypted.len() < 16 || encrypted.len() % 16 != 0 {
+                Err(ManticoreError::AesDecryptError)?;
+            }
+
+            // Calculate tweak for this buffer (using dul as data unit length and buffer index)
+            let mut buffer_tweak = tweak;
+            let tweak_increment = (i * dul / 16) as u64; // Increment based on data unit position
+
+            // Add the increment to the tweak (treating it as a little-endian counter)
+            let mut carry = tweak_increment;
+            for byte in buffer_tweak.iter_mut() {
+                let sum = *byte as u64 + carry;
+                *byte = sum as u8;
+                carry = sum >> 8;
+                if carry == 0 {
+                    break;
+                }
+            }
+
+            cleartext.resize(encrypted.len(), 0);
+            decrypt_single_buffer(
+                key1_handle.handle(),
+                key2_handle.handle(),
+                encrypted,
+                &buffer_tweak,
+                cleartext,
+            )?;
+
+            total_processed += encrypted.len();
         }
 
         Ok(FPAesXtsEncryptDecryptResult {
-            final_size: decrypted_size,
+            final_size: total_processed,
         })
     }
 
@@ -1105,13 +1203,13 @@ impl AesOp for AesKey {
         };
         let aes_cbc = AesExpandedKey::new(&self.key).map_err(|symcrypt_error_stack| {
             tracing::error!(?symcrypt_error_stack);
-            ManticoreError::AesEncryptError
+            ManticoreError::AesDecryptError
         })?;
         aes_cbc
             .aes_cbc_decrypt(&mut chaining_value, data, &mut plain_text)
             .map_err(|symcrypt_error_stack| {
                 tracing::error!(?symcrypt_error_stack);
-                ManticoreError::AesEncryptError
+                ManticoreError::AesDecryptError
             })?;
         let iv = Some(chaining_value.to_vec());
         Ok(AesDecryptResult { plain_text, iv })
@@ -1227,14 +1325,116 @@ mod tests {
         cipher: &'a str,
     }
 
+    #[cfg(target_os = "windows")]
+    fn test_cng_aes_xts(plaintext_size: usize, dul: usize) {
+        use rand::Rng;
+        // Generate random keys
+        let key1 = AesKey::from_bytes(&rand::thread_rng().gen::<[u8; 32]>()).unwrap();
+        let key2 = AesKey::from_bytes(&rand::thread_rng().gen::<[u8; 32]>()).unwrap();
+
+        // Generate random plaintext
+        let mut plaintext = vec![0u8; plaintext_size];
+        rand::thread_rng().fill(&mut plaintext[..]);
+
+        // Prepare buffers
+        let tweak = [0x01; 16];
+        let split_vector_into_chunks = |original_vec: Vec<u8>, chunk_size: usize| -> Vec<Vec<u8>> {
+            original_vec
+                .chunks(chunk_size) // Split the vector into chunks
+                .map(|chunk| chunk.to_vec()) // Convert each chunk into a Vec<u8>
+                .collect() // Collect the chunks into a Vec<Vec<u8>>
+        };
+
+        let chunk_len = plaintext.len();
+        let plaintext_buffers = split_vector_into_chunks(plaintext, chunk_len);
+        let mut encrypted_buffers: Vec<Vec<u8>> = plaintext_buffers
+            .iter()
+            .map(|inner| vec![0; inner.len()])
+            .collect();
+        let mut decrypted_buffers: Vec<Vec<u8>> = plaintext_buffers
+            .iter()
+            .map(|inner| vec![0; inner.len()])
+            .collect();
+
+        // Encrypt
+        let enc_result = key1.aes_xts_encrypt_mb(
+            key2.clone(),
+            dul,
+            tweak,
+            &plaintext_buffers,
+            &mut encrypted_buffers,
+        );
+        assert!(
+            enc_result.is_ok(),
+            "Encryption failed: {:?}",
+            enc_result.err()
+        );
+
+        // Decrypt
+        let dec_result =
+            key1.aes_xts_decrypt_mb(key2, dul, tweak, &encrypted_buffers, &mut decrypted_buffers);
+        assert!(dec_result.is_ok());
+
+        let plaintext_buf = plaintext_buffers.into_iter().flatten().collect::<Vec<u8>>();
+
+        let decrypted_buf: Vec<u8> = decrypted_buffers.into_iter().flatten().collect();
+
+        // Compare
+        assert_eq!(plaintext_buf, decrypted_buf);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_xts_encrypt_decrypt_roundtrip() {
+        test_cng_aes_xts(528, 512);
+        test_cng_aes_xts(544, 4096);
+        test_cng_aes_xts(1024, 512);
+        test_cng_aes_xts(16, 4096);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    #[should_panic]
+    fn test_xts_encrypt_decrypt_unaligned_data_527_dul_512() {
+        test_cng_aes_xts(527, 512);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    #[should_panic]
+    fn test_xts_encrypt_decrypt_invalid_data_15_dul_4096() {
+        test_cng_aes_xts(15, 4096);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    #[should_panic]
+    fn test_xts_encrypt_decrypt_unaligned_data_17_dul_4096() {
+        test_cng_aes_xts(17, 4096);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    #[should_panic]
+    fn test_xts_encrypt_decrypt_unaligned_data_17_dul_17() {
+        test_cng_aes_xts(17, 17);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    #[should_panic]
+    fn test_xts_encrypt_decrypt_unaligned_data_544_dul_17() {
+        test_cng_aes_xts(544, 17);
+    }
+
     fn test_aes(params: AesTestParam<'_>) {
         let key = hex::decode(params.key).unwrap();
         let iv = hex::decode(params.iv).unwrap();
         let plain = hex::decode(params.plain).unwrap();
         let cipher = hex::decode(params.cipher).unwrap();
 
-        let result = if params.size == AesKeySize::AesBulk256 {
-            AesKey::from_bulk_bytes(&key)
+        let result = if params.size.is_bulk_key() {
+            AesKey::from_bulk_bytes(&key, params.size)
         } else {
             AesKey::from_bytes(&key)
         };

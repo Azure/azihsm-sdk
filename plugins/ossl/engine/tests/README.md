@@ -7,8 +7,9 @@ $ cd bld_engine_tests
 $ cmake -G Ninja -DCMAKE_BUILD_TYPE=Debug -B . -S ..
 $ ninja
 ```
-The executable `AZIHSMEngineTests` will be created in the `bld_engine_tests/tests` folder.
-Change `Debug` or `Release` build as needed.
+ The executable `AZIHSMEngineTests` will be created in the `bld_engine_tests/tests` folder.
+Change `Debug` or `Release` build as needed.<br>
+By default, tests that require `AZISHM` support for `AES_256_GCM` and `AES_256_XTS` are skipped. To enable these tests, set the options `AZIHSM_GCM=ON` and `AZIHSM_XTS=ON` during the build process. Ensure the Engine is built with these features enabled.
 
 # Running Catch2 Functional Tests
 Run the tests using the following command:

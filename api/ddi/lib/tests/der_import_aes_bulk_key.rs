@@ -4,50 +4,9 @@ mod common;
 
 use crypto::rand::rand_bytes;
 use mcr_ddi::*;
-use mcr_ddi_mbor::MborByteArray;
 use mcr_ddi_types::*;
 
 use crate::common::*;
-
-/// Import a AES bulk key in DER encoded format to the device
-///
-/// # Arguments
-///
-/// * `dev` - Device to use for the operation.
-/// * `session_id` - Session ID to use for the operation.
-/// * `der` - DER encoded data to import.
-/// * `key_tag` - Key tag to use when stoting the unwrapped key in the device.
-///
-/// # Returns
-///
-/// * `DdiResult<T::OpResp>` - Response of the operation.
-fn der_import_aes_bulk_key(
-    dev: &mut <DdiTest as Ddi>::Dev,
-    session_id: u16,
-    der: [u8; 3072],
-    key_tag: u16,
-) -> Result<DdiDerKeyImportCmdResp, DdiError> {
-    let req = DdiDerKeyImportCmdReq {
-        hdr: DdiReqHdr {
-            op: DdiOp::DerKeyImport,
-            sess_id: Some(session_id),
-            rev: Some(DdiApiRev { major: 1, minor: 0 }),
-        },
-        data: DdiDerKeyImportReq {
-            der: MborByteArray::new(der, 32).expect("failed to create byte array"),
-            key_class: DdiKeyClass::AesBulk,
-            key_tag: Some(key_tag),
-            key_properties: helper_key_properties(
-                DdiKeyUsage::EncryptDecrypt,
-                DdiKeyAvailability::App,
-            ),
-        },
-        ext: None,
-    };
-    let mut cookie = None;
-
-    dev.exec_op(&req, &mut cookie)
-}
 
 #[test]
 fn test_der_import_aes_bulk_key_with_rollback_error() {
@@ -70,10 +29,17 @@ fn test_der_import_aes_bulk_key_with_rollback_error() {
             let buf = &mut buf;
             let _ = rand_bytes(buf);
 
-            let mut der = [0u8; 3072];
-            der[..buf.len()].copy_from_slice(buf);
-
-            match der_import_aes_bulk_key(dev, session_id, der, 1) {
+            match helper_der_import_aes_bulk_key(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                1,
+                DdiKeyClass::AesGcmBulkUnapproved,
+                buf,
+            ) {
+                Err(DdiError::DdiStatus(DdiStatus::UnsupportedCmd)) => {
+                    println!("Firmware is not built with mcr_test_hooks.")
+                }
                 Err(DdiError::DdiStatus(DdiStatus::InvalidKeyType)) => (),
                 Err(err) => panic!("Unexpected error code: {:?}", err),
                 Ok(_) => panic!("Unexpected success response"),
@@ -105,7 +71,18 @@ fn test_der_import_aes_bulk_key_with_rollback_error_after_exhaust_keys() {
 
             let mut key_id = 0;
             loop {
-                match der_import_aes_bulk_key(dev, session_id, der, key_tag) {
+                match helper_der_import_aes_bulk_key(
+                    dev,
+                    Some(session_id),
+                    Some(DdiApiRev { major: 1, minor: 0 }),
+                    key_tag,
+                    DdiKeyClass::AesGcmBulkUnapproved,
+                    buf,
+                ) {
+                    Err(DdiError::DdiStatus(DdiStatus::UnsupportedCmd)) => {
+                        println!("Firmware is not built with mcr_test_hooks.");
+                        return;
+                    }
                     Err(DdiError::DdiStatus(DdiStatus::ReachedMaxAesBulkKeys)) => break,
                     Err(err) => panic!("Unexpected error code: {:?}", err),
                     Ok(val) => key_id = val.data.key_id,
@@ -128,18 +105,53 @@ fn test_der_import_aes_bulk_key_with_rollback_error_after_exhaust_keys() {
                 return;
             }
 
-            match der_import_aes_bulk_key(dev, session_id, der, 3354) {
+            match helper_der_import_aes_bulk_key(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                3354,
+                DdiKeyClass::AesGcmBulkUnapproved,
+                buf,
+            ) {
+                Err(DdiError::DdiStatus(DdiStatus::UnsupportedCmd)) => {
+                    println!("Firmware is not built with mcr_test_hooks.")
+                }
                 Err(DdiError::DdiStatus(DdiStatus::InvalidKeyType)) => (),
                 Err(err) => panic!("Unexpected error code: {:?}", err),
                 Ok(_) => panic!("Unexpected success response"),
             }
 
             // DerImport the key to see it completes successfully
-            let resp = der_import_aes_bulk_key(dev, session_id, der, 3355);
+            let resp = helper_der_import_aes_bulk_key(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                3355,
+                DdiKeyClass::AesGcmBulkUnapproved,
+                buf,
+            );
+
+            if let Err(err) = &resp {
+                if firmware_not_built_with_test_hooks(err) {
+                    println!("Firmware is not built with mcr_test_hooks.");
+                    return;
+                }
+            }
+
             assert!(resp.is_ok(), "{:?}", resp);
 
             // Unwrap one extra key to see if it fails
-            match der_import_aes_bulk_key(dev, session_id, der, 3356) {
+            match helper_der_import_aes_bulk_key(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                3356,
+                DdiKeyClass::AesGcmBulkUnapproved,
+                buf,
+            ) {
+                Err(DdiError::DdiStatus(DdiStatus::UnsupportedCmd)) => {
+                    println!("Firmware is not built with mcr_test_hooks.")
+                }
                 Err(DdiError::DdiStatus(DdiStatus::ReachedMaxAesBulkKeys)) => (),
                 Err(err) => panic!("Unexpected error code: {:?}", err),
                 Ok(_) => panic!("Unexpected success response"),
@@ -169,10 +181,17 @@ fn test_der_import_aes_bulk_key_with_rollback_error_after_dma_out() {
             let buf = &mut buf;
             let _ = rand_bytes(buf);
 
-            let mut der = [0u8; 3072];
-            der[..buf.len()].copy_from_slice(buf);
-
-            match der_import_aes_bulk_key(dev, session_id, der, 1) {
+            match helper_der_import_aes_bulk_key(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                1,
+                DdiKeyClass::AesGcmBulkUnapproved,
+                buf,
+            ) {
+                Err(DdiError::DdiStatus(DdiStatus::UnsupportedCmd)) => {
+                    println!("Firmware is not built with mcr_test_hooks.")
+                }
                 Err(DdiError::DdiError(201)) => (),
                 Err(err) => panic!("Unexpected error code: {:?}", err),
                 Ok(_) => panic!("Unexpected success response"),
@@ -197,14 +216,22 @@ fn test_der_import_aes_bulk_key_with_rollback_error_after_dma_out_after_exhaust_
             let buf = &mut buf;
             let _ = rand_bytes(buf);
 
-            let mut der = [0u8; 3072];
-            der[..buf.len()].copy_from_slice(buf);
-
             let mut key_tag: u16 = 0x1;
 
             let mut key_id = 0;
             loop {
-                match der_import_aes_bulk_key(dev, session_id, der, key_tag) {
+                match helper_der_import_aes_bulk_key(
+                    dev,
+                    Some(session_id),
+                    Some(DdiApiRev { major: 1, minor: 0 }),
+                    key_tag,
+                    DdiKeyClass::AesGcmBulkUnapproved,
+                    buf,
+                ) {
+                    Err(DdiError::DdiStatus(DdiStatus::UnsupportedCmd)) => {
+                        println!("Firmware is not built with mcr_test_hooks.");
+                        return;
+                    }
                     Err(DdiError::DdiStatus(DdiStatus::ReachedMaxAesBulkKeys)) => break,
                     Err(err) => panic!("Unexpected error code: {:?}", err),
                     Ok(val) => key_id = val.data.key_id,
@@ -228,18 +255,53 @@ fn test_der_import_aes_bulk_key_with_rollback_error_after_dma_out_after_exhaust_
             }
 
             // DerImport the key with test action set to fail and see it fails
-            match der_import_aes_bulk_key(dev, session_id, der, 3354) {
+            match helper_der_import_aes_bulk_key(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                3354,
+                DdiKeyClass::AesGcmBulkUnapproved,
+                buf,
+            ) {
+                Err(DdiError::DdiStatus(DdiStatus::UnsupportedCmd)) => {
+                    println!("Firmware is not built with mcr_test_hooks.")
+                }
                 Err(DdiError::DdiError(201)) => (),
                 Err(err) => panic!("Unexpected error code: {:?}", err),
                 Ok(_) => panic!("Unexpected success response"),
             }
 
             // Unwrap the key to see it completes successfully
-            let resp = der_import_aes_bulk_key(dev, session_id, der, 3355);
+            let resp = helper_der_import_aes_bulk_key(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                3355,
+                DdiKeyClass::AesGcmBulkUnapproved,
+                buf,
+            );
+
+            if let Err(err) = &resp {
+                if firmware_not_built_with_test_hooks(err) {
+                    println!("Firmware is not built with mcr_test_hooks.");
+                    return;
+                }
+            }
+
             assert!(resp.is_ok(), "{:?}", resp);
 
             // Unwrap one extra key to see if it fails
-            match der_import_aes_bulk_key(dev, session_id, der, 3354) {
+            match helper_der_import_aes_bulk_key(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                3354,
+                DdiKeyClass::AesGcmBulkUnapproved,
+                buf,
+            ) {
+                Err(DdiError::DdiStatus(DdiStatus::UnsupportedCmd)) => {
+                    println!("Firmware is not built with mcr_test_hooks.")
+                }
                 Err(DdiError::DdiStatus(DdiStatus::ReachedMaxAesBulkKeys)) => (),
                 Err(err) => panic!("Unexpected error code: {:?}", err),
                 Ok(_) => panic!("Unexpected success response"),
@@ -269,10 +331,17 @@ fn test_der_import_aes_bulk_key_with_rollback_error_after_dma_end() {
             let buf = &mut buf;
             let _ = rand_bytes(buf);
 
-            let mut der = [0u8; 3072];
-            der[..buf.len()].copy_from_slice(buf);
-
-            match der_import_aes_bulk_key(dev, session_id, der, 3354) {
+            match helper_der_import_aes_bulk_key(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                3354,
+                DdiKeyClass::AesGcmBulkUnapproved,
+                buf,
+            ) {
+                Err(DdiError::DdiStatus(DdiStatus::UnsupportedCmd)) => {
+                    println!("Firmware is not built with mcr_test_hooks.")
+                }
                 Err(DdiError::DdiError(198)) => (),
                 Err(err) => panic!("Unexpected error code: {:?}", err),
                 Ok(_) => panic!("Unexpected success response"),
@@ -297,14 +366,22 @@ fn test_der_import_aes_bulk_key_with_rollback_error_after_dma_end_after_exhaust_
             let buf = &mut buf;
             let _ = rand_bytes(buf);
 
-            let mut der = [0u8; 3072];
-            der[..buf.len()].copy_from_slice(buf);
-
             let mut key_tag: u16 = 0x1;
 
             let mut key_id = 0;
             loop {
-                match der_import_aes_bulk_key(dev, session_id, der, key_tag) {
+                match helper_der_import_aes_bulk_key(
+                    dev,
+                    Some(session_id),
+                    Some(DdiApiRev { major: 1, minor: 0 }),
+                    key_tag,
+                    DdiKeyClass::AesGcmBulkUnapproved,
+                    buf,
+                ) {
+                    Err(DdiError::DdiStatus(DdiStatus::UnsupportedCmd)) => {
+                        println!("Firmware is not built with mcr_test_hooks.");
+                        return;
+                    }
                     Err(DdiError::DdiStatus(DdiStatus::ReachedMaxAesBulkKeys)) => break,
                     Err(err) => panic!("Unexpected error code: {:?}", err),
                     Ok(val) => key_id = val.data.key_id,
@@ -328,18 +405,53 @@ fn test_der_import_aes_bulk_key_with_rollback_error_after_dma_end_after_exhaust_
             }
 
             // Unwrap the key with test action set to fail and see it fails
-            match der_import_aes_bulk_key(dev, session_id, der, 3354) {
+            match helper_der_import_aes_bulk_key(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                3354,
+                DdiKeyClass::AesGcmBulkUnapproved,
+                buf,
+            ) {
+                Err(DdiError::DdiStatus(DdiStatus::UnsupportedCmd)) => {
+                    println!("Firmware is not built with mcr_test_hooks.")
+                }
                 Err(DdiError::DdiError(198)) => (),
                 Err(err) => panic!("Unexpected error code: {:?}", err),
                 Ok(_) => panic!("Unexpected success response"),
             }
 
             // Unwrap the key to see it completes successfully
-            let resp = der_import_aes_bulk_key(dev, session_id, der, 3355);
+            let resp = helper_der_import_aes_bulk_key(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                3355,
+                DdiKeyClass::AesGcmBulkUnapproved,
+                buf,
+            );
+
+            if let Err(err) = &resp {
+                if firmware_not_built_with_test_hooks(err) {
+                    println!("Firmware is not built with mcr_test_hooks.");
+                    return;
+                }
+            }
+
             assert!(resp.is_ok(), "{:?}", resp);
 
             // Unwrap one extra key to see if it fails
-            match der_import_aes_bulk_key(dev, session_id, der, 3356) {
+            match helper_der_import_aes_bulk_key(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                3356,
+                DdiKeyClass::AesGcmBulkUnapproved,
+                buf,
+            ) {
+                Err(DdiError::DdiStatus(DdiStatus::UnsupportedCmd)) => {
+                    println!("Firmware is not built with mcr_test_hooks.")
+                }
                 Err(DdiError::DdiStatus(DdiStatus::ReachedMaxAesBulkKeys)) => (),
                 Err(err) => panic!("Unexpected error code: {:?}", err),
                 Ok(_) => panic!("Unexpected success response"),

@@ -1,7 +1,10 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
 
 mod common;
+#[cfg(not(feature = "resilient"))]
 use mcr_api::*;
+#[cfg(feature = "resilient")]
+use mcr_api_resilient::*;
 use test_with_tracing::test;
 
 #[cfg(feature = "testhooks")]
@@ -237,7 +240,7 @@ fn test_close_session_exhaust_session_keys_aes_bulk256() {
         let mut key_count_round1 = 0;
         loop {
             let result = app_session.aes_generate(
-                AesKeySize::AesBulk256,
+                AesKeySize::AesXtsBulk256,
                 None,
                 KeyProperties {
                     key_usage: KeyUsage::EncryptDecrypt,
@@ -271,7 +274,7 @@ fn test_close_session_exhaust_session_keys_aes_bulk256() {
         let mut key_count_round2 = 0;
         loop {
             let result = app_session.aes_generate(
-                AesKeySize::AesBulk256,
+                AesKeySize::AesXtsBulk256,
                 None,
                 KeyProperties {
                     key_usage: KeyUsage::EncryptDecrypt,
@@ -307,7 +310,7 @@ fn test_close_session_exhaust_app_keys_aes_bulk256() {
         let mut key_count_round1 = 0;
         loop {
             let result = app_session.aes_generate(
-                AesKeySize::AesBulk256,
+                AesKeySize::AesXtsBulk256,
                 None,
                 KeyProperties {
                     key_usage: KeyUsage::EncryptDecrypt,
@@ -343,7 +346,7 @@ fn test_close_session_exhaust_app_keys_aes_bulk256() {
         let mut key_count_round2 = 0;
         loop {
             let result = app_session.aes_generate(
-                AesKeySize::AesBulk256,
+                AesKeySize::AesXtsBulk256,
                 None,
                 KeyProperties {
                     key_usage: KeyUsage::EncryptDecrypt,
@@ -375,7 +378,7 @@ fn test_close_session_exhaust_app_keys_aes_bulk256() {
         let mut key_count_round3 = 0;
         loop {
             let result = app_session.aes_generate(
-                AesKeySize::AesBulk256,
+                AesKeySize::AesXtsBulk256,
                 None,
                 KeyProperties {
                     key_usage: KeyUsage::EncryptDecrypt,

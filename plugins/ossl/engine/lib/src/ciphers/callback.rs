@@ -1,9 +1,9 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
 
 use engine_common::handle_table::Handle;
-use mcr_api::DigestKind;
-use mcr_api::KeyAvailability;
-use mcr_api::KeyUsage;
+use mcr_api_resilient::DigestKind;
+use mcr_api_resilient::KeyAvailability;
+use mcr_api_resilient::KeyUsage;
 use openssl_rust::safeapi::error::*;
 use openssl_rust::safeapi::evp_cipher::callback::*;
 use openssl_rust::safeapi::evp_cipher::ctx::EvpCipherCtx;
@@ -35,8 +35,12 @@ pub(crate) fn aes_import_key(
     key_name: Option<u16>,
 ) -> OpenSSLResult<()> {
     let aes_type = AesType::from_nid(ctx.nid())?;
-    let key_class = aes_type.hsm_key_class();
 
+    // Avoid unused variable warning for wrapped_blob2 if xts is not enabled
+    #[cfg(not(feature = "xts"))]
+    let _ = &wrapped_blob2;
+
+    let key_class = aes_type.hsm_key_class();
     let key_container1 = HsmKeyContainer::unwrap_key(
         wrapped_blob.to_vec(),
         key_class,
@@ -46,7 +50,9 @@ pub(crate) fn aes_import_key(
         key_name,
     )?;
 
-    let key_container2 = if aes_type == AesType::Aes256Xts {
+    // Only create key_container2 for AES-256-XTS
+    #[cfg(feature = "xts")]
+    let key_container2 = if matches!(aes_type, AesType::Aes256Xts) {
         let wrapped_blob2 = wrapped_blob2.ok_or(OpenSSLError::InvalidKeyData)?;
         Some(HsmKeyContainer::unwrap_key(
             wrapped_blob2.to_vec(),
@@ -59,6 +65,8 @@ pub(crate) fn aes_import_key(
     } else {
         None
     };
+    #[cfg(not(feature = "xts"))]
+    let key_container2 = None;
 
     let aes_key_ctx = AesKey::from_imported_key(aes_type, key_container1, key_container2)?;
     let handle = ENGINE_KEY_HANDLE_TABLE.insert_key(Key::Aes(aes_key_ctx));
@@ -186,6 +194,7 @@ pub fn aes_cbc_do_cipher_cb(ctx: &EvpCipherCtx, in_data: Vec<u8>) -> OpenSSLResu
 /// # Returns
 /// * `OpenSSLResult<Option<Vec<u8>>>` - The output buffer is returned on success or an error
 /// * If the input data is AAD, the output buffer is None
+#[cfg(feature = "gcm")]
 pub fn aes_gcm_do_cipher_cb(
     ctx: &EvpCipherCtx,
     in_data: Vec<u8>,
@@ -207,6 +216,7 @@ pub fn aes_gcm_do_cipher_cb(
 ///
 /// # Returns
 /// * `OpenSSLResult<Vec<u8>>` - The output buffer is returned on success or an error
+#[cfg(feature = "xts")]
 pub fn aes_xts_do_cipher_cb(ctx: &EvpCipherCtx, in_data: Vec<u8>) -> OpenSSLResult<Vec<u8>> {
     let key_handle = ctx.get_cipher_data()?;
     let enc = ctx.is_encrypting();
@@ -287,7 +297,9 @@ mod test {
         assert!(validate_ctx_init(AesType::Aes128Cbc).is_ok());
         assert!(validate_ctx_init(AesType::Aes192Cbc).is_ok());
         assert!(validate_ctx_init(AesType::Aes256Cbc).is_ok());
+        #[cfg(feature = "gcm")]
         assert!(validate_ctx_init(AesType::Aes256Gcm).is_ok());
+        #[cfg(feature = "xts")]
         assert!(validate_ctx_init(AesType::Aes256Xts).is_ok());
     }
 
@@ -296,7 +308,9 @@ mod test {
         assert!(validate_ctx_init_with_iv(AesType::Aes128Cbc).is_ok());
         assert!(validate_ctx_init_with_iv(AesType::Aes192Cbc).is_ok());
         assert!(validate_ctx_init_with_iv(AesType::Aes256Cbc).is_ok());
+        #[cfg(feature = "gcm")]
         assert!(validate_ctx_init_with_iv(AesType::Aes256Gcm).is_ok());
+        #[cfg(feature = "xts")]
         assert!(validate_ctx_init_with_iv(AesType::Aes256Xts).is_ok());
     }
 
@@ -305,7 +319,9 @@ mod test {
         assert!(validate_ctx_keygen_multi(AesType::Aes128Cbc).is_ok());
         assert!(validate_ctx_keygen_multi(AesType::Aes192Cbc).is_ok());
         assert!(validate_ctx_keygen_multi(AesType::Aes256Cbc).is_ok());
+        #[cfg(feature = "gcm")]
         assert!(validate_ctx_keygen_multi(AesType::Aes256Gcm).is_ok());
+        #[cfg(feature = "xts")]
         assert!(validate_ctx_keygen_multi(AesType::Aes256Xts).is_ok());
     }
 
@@ -314,7 +330,9 @@ mod test {
         assert!(validate_ctx_keygen_init(AesType::Aes128Cbc).is_ok());
         assert!(validate_ctx_keygen_init(AesType::Aes192Cbc).is_ok());
         assert!(validate_ctx_keygen_init(AesType::Aes256Cbc).is_ok());
+        #[cfg(feature = "gcm")]
         assert!(validate_ctx_keygen_init(AesType::Aes256Gcm).is_ok());
+        #[cfg(feature = "xts")]
         assert!(validate_ctx_keygen_init(AesType::Aes256Xts).is_ok());
     }
 
@@ -323,7 +341,9 @@ mod test {
         assert!(validate_ctx_keygen_init_multi(AesType::Aes128Cbc).is_ok());
         assert!(validate_ctx_keygen_init_multi(AesType::Aes192Cbc).is_ok());
         assert!(validate_ctx_keygen_init_multi(AesType::Aes256Cbc).is_ok());
+        #[cfg(feature = "gcm")]
         assert!(validate_ctx_keygen_init_multi(AesType::Aes256Gcm).is_ok());
+        #[cfg(feature = "xts")]
         assert!(validate_ctx_keygen_init_multi(AesType::Aes256Xts).is_ok());
     }
 
@@ -332,7 +352,9 @@ mod test {
         assert!(validate_ctx_keygen_init_deleted_key(AesType::Aes128Cbc).is_ok());
         assert!(validate_ctx_keygen_init_deleted_key(AesType::Aes192Cbc).is_ok());
         assert!(validate_ctx_keygen_init_deleted_key(AesType::Aes256Cbc).is_ok());
+        #[cfg(feature = "gcm")]
         assert!(validate_ctx_keygen_init_deleted_key(AesType::Aes256Gcm).is_ok());
+        #[cfg(feature = "xts")]
         assert!(validate_ctx_keygen_init_deleted_key(AesType::Aes256Xts).is_ok());
     }
 
@@ -341,7 +363,9 @@ mod test {
         assert!(validate_ctx_copy(AesType::Aes128Cbc).is_ok());
         assert!(validate_ctx_copy(AesType::Aes192Cbc).is_ok());
         assert!(validate_ctx_copy(AesType::Aes256Cbc).is_ok());
+        #[cfg(feature = "gcm")]
         assert!(validate_ctx_copy(AesType::Aes256Gcm).is_ok());
+        #[cfg(feature = "xts")]
         assert!(validate_ctx_copy(AesType::Aes256Xts).is_ok());
     }
 
@@ -387,16 +411,19 @@ mod test {
         assert!(validate_ctx_aes_cbc_cipher_invalid_key(AesType::Aes256Cbc).is_ok());
     }
 
+    #[cfg(feature = "gcm")]
     #[test]
     fn test_cipher_ctx_aes_gcm_cipher_no_aad() {
         assert!(validate_ctx_aes_gcm_cipher(false).is_ok());
     }
 
+    #[cfg(feature = "gcm")]
     #[test]
     fn test_cipher_ctx_aes_gcm_cipher_with_aad() {
         assert!(validate_ctx_aes_gcm_cipher(true).is_ok());
     }
 
+    #[cfg(feature = "gcm")]
     #[test]
     fn test_cipher_ctx_aes_gcm_ctrl() {
         let engine = load_engine();
@@ -452,6 +479,7 @@ mod test {
         assert!(result.is_err(), "result {:?}", result);
     }
 
+    #[cfg(feature = "xts")]
     #[test]
     fn test_cipher_ctx_aes_xts_cipher() {
         assert!(validate_ctx_aes_xts_cipher().is_ok());
@@ -899,6 +927,7 @@ mod test {
         Ok(())
     }
 
+    #[cfg(feature = "gcm")]
     fn validate_ctx_aes_gcm_cipher(aad: bool) -> TestResult<()> {
         let mut rng = thread_rng();
         let engine = load_engine();
@@ -944,6 +973,7 @@ mod test {
         Ok(())
     }
 
+    #[cfg(feature = "xts")]
     fn validate_ctx_aes_xts_cipher() -> TestResult<()> {
         let mut rng = thread_rng();
         let engine = load_engine();

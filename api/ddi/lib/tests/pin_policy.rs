@@ -61,8 +61,12 @@ where
 
 fn open_session_and_assert_failure(dev: &<DdiTest as Ddi>::Dev, expected_error: &DdiError) {
     // Encrypt with alternate cred pin for open session
-    let (encrypted_credential, pub_key) =
-        encrypt_userid_pin_for_open_session(dev, TEST_CRED_ID, TEST_CRED_PIN_ALT);
+    let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+        dev,
+        TEST_CRED_ID,
+        TEST_CRED_PIN_ALT,
+        TEST_SESSION_SEED,
+    );
 
     // Check if the device is still locked out
     let resp = helper_open_session(
@@ -100,7 +104,7 @@ fn open_valid_session(device_path: String) {
 
     // Encrypt with valid cred pin for open session
     let (encrypted_credential, pub_key) =
-        encrypt_userid_pin_for_open_session(&dev, TEST_CRED_ID, TEST_CRED_PIN);
+        encrypt_userid_pin_for_open_session(&dev, TEST_CRED_ID, TEST_CRED_PIN, TEST_SESSION_SEED);
 
     // Open session
     let resp = helper_open_session(
@@ -315,8 +319,12 @@ fn test_pin_policy_invalid_pin() {
             assert!(resp.is_ok(), "{:?}", resp);
 
             // Encrypt with alternate cred pin for open session
-            let (encrypted_credential, pub_key) =
-                encrypt_userid_pin_for_open_session(dev, TEST_CRED_ID, TEST_CRED_PIN_ALT);
+            let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                dev,
+                TEST_CRED_ID,
+                TEST_CRED_PIN_ALT,
+                TEST_SESSION_SEED,
+            );
 
             // Open session
             let resp = helper_open_session(

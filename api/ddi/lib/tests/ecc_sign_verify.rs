@@ -15,29 +15,25 @@ fn test_ecc_sign_no_session() {
         common_setup,
         common_cleanup,
         |dev, _ddi, _path, session_id| {
-            let (private_key_id, _pub_key) =
-                ecc_gen_key_mcr(dev, DdiEccCurve::P256, session_id, DdiKeyUsage::SignVerify);
+            let (private_key_id, _pub_key, _) = ecc_gen_key_mcr(
+                dev,
+                DdiEccCurve::P256,
+                None,
+                Some(session_id),
+                DdiKeyUsage::SignVerify,
+            );
 
             let digest = [1u8; 96];
             let digest_len = 20;
 
-            let req = DdiEccSignCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::EccSign,
-                    sess_id: None,
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiEccSignReq {
-                    key_id: private_key_id,
-                    digest: MborByteArray::new(digest, digest_len)
-                        .expect("failed to create byte array"),
-                    digest_algo: DdiHashAlgorithm::Sha256,
-                },
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
-
+            let resp = helper_ecc_sign(
+                dev,
+                None,
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                private_key_id,
+                MborByteArray::new(digest, digest_len).expect("failed to create byte array"),
+                DdiHashAlgorithm::Sha256,
+            );
             assert!(resp.is_err(), "resp {:?}", resp);
 
             assert!(matches!(
@@ -54,28 +50,25 @@ fn test_ecc_sign_incorrect_session_id() {
         common_setup,
         common_cleanup,
         |dev, _ddi, _path, session_id| {
-            let (private_key_id, _pub_key) =
-                ecc_gen_key_mcr(dev, DdiEccCurve::P256, session_id, DdiKeyUsage::SignVerify);
+            let (private_key_id, _pub_key, _) = ecc_gen_key_mcr(
+                dev,
+                DdiEccCurve::P256,
+                None,
+                Some(session_id),
+                DdiKeyUsage::SignVerify,
+            );
 
             let digest = [1u8; 96];
             let digest_len = 20;
 
-            let req = DdiEccSignCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::EccSign,
-                    sess_id: Some(20),
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiEccSignReq {
-                    key_id: private_key_id,
-                    digest: MborByteArray::new(digest, digest_len)
-                        .expect("failed to create byte array"),
-                    digest_algo: DdiHashAlgorithm::Sha256,
-                },
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_ecc_sign(
+                dev,
+                Some(20),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                private_key_id,
+                MborByteArray::new(digest, digest_len).expect("failed to create byte array"),
+                DdiHashAlgorithm::Sha256,
+            );
 
             assert!(resp.is_err(), "resp {:?}", resp);
 
@@ -112,22 +105,14 @@ fn test_ecc_sign_incorrect_key_type() {
             let digest = [1u8; 96];
             let digest_len = 20;
 
-            let req = DdiEccSignCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::EccSign,
-                    sess_id: Some(session_id),
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiEccSignReq {
-                    key_id: resp.data.key_id,
-                    digest: MborByteArray::new(digest, digest_len)
-                        .expect("failed to create byte array"),
-                    digest_algo: DdiHashAlgorithm::Sha256,
-                },
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_ecc_sign(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                resp.data.key_id,
+                MborByteArray::new(digest, digest_len).expect("failed to create byte array"),
+                DdiHashAlgorithm::Sha256,
+            );
 
             assert!(resp.is_err(), "resp {:?}", resp);
         },
@@ -140,28 +125,25 @@ fn test_ecc_sign_incorrect_usage() {
         common_setup,
         common_cleanup,
         |dev, _ddi, _path, session_id| {
-            let (private_key_id, _pub_key) =
-                ecc_gen_key_mcr(dev, DdiEccCurve::P256, session_id, DdiKeyUsage::Derive);
+            let (private_key_id, _pub_key, _) = ecc_gen_key_mcr(
+                dev,
+                DdiEccCurve::P256,
+                None,
+                Some(session_id),
+                DdiKeyUsage::Derive,
+            );
 
             let digest = [1u8; 96];
             let digest_len = 20;
 
-            let req = DdiEccSignCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::EccSign,
-                    sess_id: Some(session_id),
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiEccSignReq {
-                    key_id: private_key_id,
-                    digest: MborByteArray::new(digest, digest_len)
-                        .expect("failed to create byte array"),
-                    digest_algo: DdiHashAlgorithm::Sha256,
-                },
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_ecc_sign(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                private_key_id,
+                MborByteArray::new(digest, digest_len).expect("failed to create byte array"),
+                DdiHashAlgorithm::Sha256,
+            );
 
             assert!(resp.is_err(), "resp {:?}", resp);
         },
@@ -174,28 +156,25 @@ fn test_ecc_sign_verify() {
         common_setup,
         common_cleanup,
         |dev, _ddi, _path, session_id| {
-            let (private_key_id, pub_key) =
-                ecc_gen_key_mcr(dev, DdiEccCurve::P256, session_id, DdiKeyUsage::SignVerify);
+            let (private_key_id, pub_key, _) = ecc_gen_key_mcr(
+                dev,
+                DdiEccCurve::P256,
+                None,
+                Some(session_id),
+                DdiKeyUsage::SignVerify,
+            );
 
             let digest = [1u8; 96];
             let digest_len = 20;
 
-            let req = DdiEccSignCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::EccSign,
-                    sess_id: Some(session_id),
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiEccSignReq {
-                    key_id: private_key_id,
-                    digest: MborByteArray::new(digest, digest_len)
-                        .expect("failed to create byte array"),
-                    digest_algo: DdiHashAlgorithm::Sha256,
-                },
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_ecc_sign(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                private_key_id,
+                MborByteArray::new(digest, digest_len).expect("failed to create byte array"),
+                DdiHashAlgorithm::Sha256,
+            );
 
             assert!(resp.is_ok(), "resp {:?}", resp);
             let resp = resp.unwrap();

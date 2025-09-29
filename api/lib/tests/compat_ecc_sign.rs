@@ -1,7 +1,11 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
+
 mod common;
 
+#[cfg(not(feature = "resilient"))]
 use mcr_api::*;
+#[cfg(feature = "resilient")]
+use mcr_api_resilient::*;
 use test_with_tracing::test;
 
 use crate::common::*;
@@ -41,6 +45,7 @@ fn unwrap_raw_key_into_device(
     )
 }
 
+#[cfg(target_os = "windows")]
 fn ecc_raw_pub_key_from_der(der: &[u8]) -> Vec<u8> {
     use sec1::der::Decode;
 
@@ -90,7 +95,7 @@ fn test_api_compat_ecc_sign_256() {
             assert!(result.is_ok(), "result {:?}", result);
         }
 
-        // Compat test 2: ECC Verify using OpenSSL
+        // Compat test 2: ECC Verify using OpenSSL for Linux
         #[cfg(target_os = "linux")]
         {
             let ecc = openssl::ec::EcKey::public_key_from_der(&pub_key_der).unwrap();
@@ -115,7 +120,8 @@ fn test_api_compat_ecc_sign_256() {
             assert!(result, "result {:?}", result);
         }
 
-        // Compat test 3: ECC Verify using symcrypt
+        // Compat test 3: ECC Verify using symcrypt for Windows
+        #[cfg(target_os = "windows")]
         {
             let raw_pub_key = ecc_raw_pub_key_from_der(&pub_key_der);
 

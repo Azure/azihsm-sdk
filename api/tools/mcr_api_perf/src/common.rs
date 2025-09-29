@@ -1,5 +1,7 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
 
+use crypto::rand::rand_bytes;
+
 use super::*;
 
 pub(crate) fn helper_print_banner() {
@@ -19,7 +21,10 @@ pub(crate) fn helper_setup(device_path: String) -> HsmResult<()> {
     let device = HsmDevice::open(&device_path)?;
     let api_rev = device.get_api_revision_range().max;
 
-    let _ = device.establish_credential(api_rev, TEST_APP_CREDENTIALS);
+    let mut bk3 = [0u8; 48];
+    let _ = rand_bytes(&mut bk3);
+    let masked_bk3 = device.init_bk3(api_rev, &bk3).unwrap();
+    let _ = device.establish_credential(api_rev, TEST_APP_CREDENTIALS, masked_bk3, None, None);
 
     Ok(())
 }
@@ -49,7 +54,10 @@ pub(crate) fn helper_cleanup(device_path: String) -> HsmResult<()> {
     let device = HsmDevice::open(&device_path)?;
     let api_rev = device.get_api_revision_range().max;
 
-    let _ = device.establish_credential(api_rev, TEST_APP_CREDENTIALS);
+    let mut bk3 = [0u8; 48];
+    let _ = rand_bytes(&mut bk3);
+    let masked_bk3 = device.init_bk3(api_rev, &bk3).unwrap();
+    let _ = device.establish_credential(api_rev, TEST_APP_CREDENTIALS, masked_bk3, None, None);
 
     let app_session = helper_open_session(
         &device,

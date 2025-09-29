@@ -8,6 +8,8 @@ compile_error!("OpenSSL and non-OpenSSL cannot be enabled at the same time.");
 #[cfg(feature = "use-openssl")]
 use openssl;
 #[cfg(feature = "use-openssl")]
+use openssl::bn::BigNum;
+#[cfg(feature = "use-openssl")]
 use openssl::md::Md;
 #[cfg(feature = "use-openssl")]
 use openssl::pkey::PKey;
@@ -17,6 +19,8 @@ use openssl::pkey::Private;
 use openssl::pkey::Public;
 #[cfg(feature = "use-openssl")]
 use openssl::pkey_ctx::PkeyCtx;
+#[cfg(feature = "use-openssl")]
+use openssl::rsa::RsaPrivateKeyBuilder;
 #[cfg(feature = "use-openssl")]
 use openssl::sign::RsaPssSaltlen;
 #[cfg(feature = "use-symcrypt")]
@@ -38,6 +42,7 @@ use symcrypt::rsa::RsaKeyUsage;
 
 use crate::crypto::sha::HashAlgorithm;
 use crate::errors::ManticoreError;
+use crate::mask::KeySerialization;
 use crate::table::entry::Kind;
 
 #[cfg(feature = "use-symcrypt")]
@@ -360,6 +365,114 @@ impl Clone for RsaPrivateKey {
     }
 }
 
+/// For serializing RSA private key
+/// We use BCrypt format: BCRYPT_RSAKEY_BLOB as the output to reduce output size
+/// See https://learn.microsoft.com/en-us/windows/win32/api/bcrypt/ns-bcrypt-bcrypt_rsakey_blob
+const BCRYPT_RSAKEY_BLOB_MAGIC: u32 = 843141970;
+
+impl KeySerialization<RsaPrivateKey> for RsaPrivateKey {
+    fn serialize(&self) -> Result<Vec<u8>, ManticoreError> {
+        let bit_length: u32 = match self.size() {
+            RsaKeySize::Rsa2048 => 2048,
+            RsaKeySize::Rsa3072 => 3072,
+            RsaKeySize::Rsa4096 => 4096,
+        };
+        let public_exp = self.public_exponent()?;
+        let modulus = self.modulus()?;
+        let primes = self.primes()?;
+
+        // Size = header size + sum of element sizes
+        let total_size = 24 + public_exp.len() + modulus.len() + primes.0.len() + primes.1.len();
+
+        let mut buffer = vec![0u8; total_size];
+
+        // Populate header fields
+        // Use native endianness
+        buffer[0..4].copy_from_slice(&BCRYPT_RSAKEY_BLOB_MAGIC.to_ne_bytes());
+        buffer[4..8].copy_from_slice(&bit_length.to_ne_bytes());
+        buffer[8..12].copy_from_slice(&(public_exp.len() as u32).to_ne_bytes());
+        buffer[12..16].copy_from_slice(&(modulus.len() as u32).to_ne_bytes());
+        buffer[16..20].copy_from_slice(&(primes.0.len() as u32).to_ne_bytes());
+        buffer[20..24].copy_from_slice(&(primes.1.len() as u32).to_ne_bytes());
+
+        // Populate data
+        // Assume big endianness
+        let mut idx = 24;
+        buffer[idx..idx + public_exp.len()].copy_from_slice(&public_exp);
+        idx += public_exp.len();
+        buffer[idx..idx + modulus.len()].copy_from_slice(&modulus);
+        idx += modulus.len();
+        buffer[idx..idx + primes.0.len()].copy_from_slice(&primes.0);
+        idx += primes.0.len();
+        buffer[idx..idx + primes.1.len()].copy_from_slice(&primes.1);
+
+        Ok(buffer)
+    }
+
+    fn deserialize(blob: &[u8], expected_type: Kind) -> Result<RsaPrivateKey, ManticoreError> {
+        const ERR: ManticoreError = ManticoreError::RsaFromDerError;
+
+        // Parse u32 from 4 bytes
+        fn parse_u32(data: &[u8]) -> Result<u32, ManticoreError> {
+            // Assume native endianness
+            Ok(u32::from_ne_bytes(data.try_into().map_err(|_| ERR)?))
+        }
+
+        let size = blob.len();
+        if size <= 24 {
+            tracing::debug!(err = ?ERR, size, "header size mismatch");
+            Err(ERR)?
+        }
+
+        // Check magic
+        let actual_magic = parse_u32(&blob[..4])?;
+        if actual_magic != BCRYPT_RSAKEY_BLOB_MAGIC {
+            tracing::debug!(err = ?ERR, actual_magic, "magic mismatch");
+            Err(ERR)?
+        }
+
+        // Extract header
+        let bit_length = parse_u32(&blob[4..8])?;
+
+        // Check expected type
+        match (bit_length, expected_type) {
+            (2048, Kind::Rsa2kPrivate | Kind::Rsa2kPrivateCrt)
+            | (3072, Kind::Rsa3kPrivate | Kind::Rsa3kPrivateCrt)
+            | (4096, Kind::Rsa4kPrivate | Kind::Rsa4kPrivateCrt) => {}
+            _ => {
+                tracing::debug!(err = ?ERR, bit_length, ?expected_type, "type mismatch");
+                Err(ManticoreError::DerAndKeyTypeMismatch)?
+            }
+        }
+
+        let len_public_exp = parse_u32(&blob[8..12])?;
+        let len_modulus = parse_u32(&blob[12..16])?;
+        let len_prime1 = parse_u32(&blob[16..20])?;
+        let len_prime2 = parse_u32(&blob[20..24])?;
+
+        let expected_size = 24 + len_public_exp + len_modulus + len_prime1 + len_prime2;
+        if (expected_size as usize) != size {
+            tracing::debug!(err = ?ERR, expected_size, size, "data size mismatch");
+            Err(ERR)?
+        }
+
+        // Extract data
+        let idx = 24;
+        let public_exp = &blob[idx..idx + len_public_exp as usize];
+        let idx = idx + len_public_exp as usize;
+
+        let modulus = &blob[idx..idx + len_modulus as usize];
+        let idx = idx + len_modulus as usize;
+
+        let prime1 = &blob[idx..idx + len_prime1 as usize];
+        let idx = idx + len_prime1 as usize;
+
+        let prime2 = &blob[idx..idx + len_prime2 as usize];
+
+        RsaPrivateKey::create_key(public_exp, modulus, prime1, prime2, expected_type)
+    }
+}
+
 #[cfg(feature = "use-symcrypt")]
 impl Clone for RsaPublicKey {
     fn clone(&self) -> Self {
@@ -657,6 +770,170 @@ impl RsaOp<RsaPrivateKey> for RsaPrivateKey {
 
     fn size(&self) -> RsaKeySize {
         self.size
+    }
+}
+
+#[cfg(feature = "use-openssl")]
+impl RsaPrivateKey {
+    /// Export the Prime1 and Prime2 of the RSA Private key
+    fn primes(&self) -> Result<(Vec<u8>, Vec<u8>), ManticoreError> {
+        let rsa = self.handle.rsa().map_err(|openssl_error_stack| {
+            tracing::error!(?openssl_error_stack);
+            ManticoreError::RsaGetPublicExponentError
+        })?;
+        let prime1 = rsa.p().ok_or(ManticoreError::RsaGetPublicExponentError)?;
+        let prime2 = rsa.q().ok_or(ManticoreError::RsaGetPublicExponentError)?;
+
+        Ok((prime1.to_vec(), prime2.to_vec()))
+    }
+
+    // Create RSA Private key using OpenSSL
+    // All numbers assume big endian
+    fn create_key(
+        public_exp: &[u8],
+        modulus: &[u8],
+        prime1: &[u8],
+        prime2: &[u8],
+        expected_type: Kind,
+    ) -> Result<Self, ManticoreError> {
+        fn wrapper(
+            public_exp: &[u8],
+            modulus: &[u8],
+            prime1: &[u8],
+            prime2: &[u8],
+        ) -> Result<PKey<Private>, openssl::error::ErrorStack> {
+            let public_exp = BigNum::from_slice(public_exp)?;
+            let modulus = BigNum::from_slice(modulus)?;
+            let p = BigNum::from_slice(prime1)?;
+            let q = BigNum::from_slice(prime2)?;
+
+            // Compute private exponent d
+            // d = e^(-1) mod ((p-1)*(q-1))
+            let d = {
+                let mut ctx = openssl::bn::BigNumContext::new()?;
+                let one = BigNum::from_u32(1)?;
+
+                let mut p1 = BigNum::new()?;
+                p1.checked_sub(&p, &one)?;
+
+                let mut p2 = BigNum::new()?;
+                p2.checked_sub(&q, &one)?;
+
+                let mut phi = BigNum::new()?;
+                phi.checked_mul(&p1, &p2, &mut ctx)?;
+
+                let mut d = BigNum::new()?;
+                d.mod_inverse(&public_exp, &phi, &mut ctx)?;
+
+                d
+            };
+
+            let rsa_key = RsaPrivateKeyBuilder::new(modulus, public_exp, d)?
+                .set_factors(p, q)?
+                .build();
+
+            let pkey = PKey::from_rsa(rsa_key)?;
+            Ok(pkey)
+        }
+
+        let pkey = wrapper(public_exp, modulus, prime1, prime2).map_err(|error| {
+            tracing::error!(
+                ?error,
+                "Failed to create RsaPrivateKey from raw components."
+            );
+            ManticoreError::RsaFromDerError
+        })?;
+
+        let key_size = pkey.bits().try_into()?;
+        match expected_type {
+            Kind::Rsa2kPrivate | Kind::Rsa2kPrivateCrt => {
+                if key_size != RsaKeySize::Rsa2048 {
+                    Err(ManticoreError::DerAndKeyTypeMismatch)?
+                }
+            }
+            Kind::Rsa3kPrivate | Kind::Rsa3kPrivateCrt => {
+                if key_size != RsaKeySize::Rsa3072 {
+                    Err(ManticoreError::DerAndKeyTypeMismatch)?
+                }
+            }
+            Kind::Rsa4kPrivate | Kind::Rsa4kPrivateCrt => {
+                if key_size != RsaKeySize::Rsa4096 {
+                    Err(ManticoreError::DerAndKeyTypeMismatch)?
+                }
+            }
+            _ => Err(ManticoreError::DerAndKeyTypeMismatch)?,
+        }
+
+        Ok(RsaPrivateKey {
+            handle: pkey,
+            size: key_size,
+        })
+    }
+}
+
+#[cfg(feature = "use-symcrypt")]
+impl RsaPrivateKey {
+    /// Export the Prime1 and Prime2 of the RSA Private key
+    fn primes(&self) -> Result<(Vec<u8>, Vec<u8>), ManticoreError> {
+        let blob = self
+            .handle
+            .export_key_pair_blob()
+            .map_err(|symcrypt_error_stack| {
+                tracing::error!(?symcrypt_error_stack);
+                ManticoreError::RsaGetPublicExponentError
+            })?;
+        Ok((blob.p, blob.q))
+    }
+
+    fn create_key(
+        public_exp: &[u8],
+        modulus: &[u8],
+        prime1: &[u8],
+        prime2: &[u8],
+        expected_type: Kind,
+    ) -> Result<Self, ManticoreError> {
+        // Assume big endian
+        let symcrypt_key = RsaKey::set_key_pair(
+            modulus,
+            public_exp,
+            prime1,
+            prime2,
+            RsaKeyUsage::SignAndEncrypt,
+        )
+        .map_err(|error_stack| {
+            tracing::error!(?error_stack);
+            ManticoreError::RsaFromDerError
+        })?;
+
+        match expected_type {
+            Kind::Rsa2kPrivate | Kind::Rsa2kPrivateCrt => {
+                if symcrypt_key.get_size_of_modulus() != 256 {
+                    Err(ManticoreError::DerAndKeyTypeMismatch)?
+                }
+            }
+            Kind::Rsa3kPrivate | Kind::Rsa3kPrivateCrt => {
+                if symcrypt_key.get_size_of_modulus() != 384 {
+                    Err(ManticoreError::DerAndKeyTypeMismatch)?
+                }
+            }
+            Kind::Rsa4kPrivate | Kind::Rsa4kPrivateCrt => {
+                if symcrypt_key.get_size_of_modulus() != 512 {
+                    Err(ManticoreError::DerAndKeyTypeMismatch)?
+                }
+            }
+            _ => Err(ManticoreError::DerAndKeyTypeMismatch)?,
+        }
+        let key_size = match symcrypt_key.get_size_of_modulus() {
+            256 => RsaKeySize::Rsa2048,
+            384 => RsaKeySize::Rsa3072,
+            512 => RsaKeySize::Rsa4096,
+            _ => Err(ManticoreError::RsaInvalidKeyLength)?,
+        };
+
+        Ok(RsaPrivateKey {
+            handle: symcrypt_key,
+            size: key_size,
+        })
     }
 }
 

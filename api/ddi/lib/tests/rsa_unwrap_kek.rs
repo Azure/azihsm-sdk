@@ -2,7 +2,6 @@
 
 mod common;
 
-use mcr_ddi::*;
 use mcr_ddi_mbor::MborByteArray;
 use mcr_ddi_types::*;
 
@@ -19,7 +18,7 @@ fn test_rsa_unwrap_rsa_kek_32() {
                 return;
             }
 
-            let (unwrap_key_id, unwrap_pub_key_der) = get_unwrapping_key(dev, session_id);
+            let (unwrap_key_id, unwrap_pub_key_der, _) = get_unwrapping_key(dev, session_id);
 
             let rsa_3k_private_wrapped = wrap_data_with_aes_key(
                 unwrap_pub_key_der,
@@ -32,23 +31,15 @@ fn test_rsa_unwrap_rsa_kek_32() {
 
             let der_len = rsa_3k_private_wrapped.len();
 
-            let req = DdiRsaUnwrapKekCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::RsaUnwrapKek,
-                    sess_id: Some(session_id),
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiRsaUnwrapKekReq {
-                    key_id: unwrap_key_id,
-                    wrapped_blob: MborByteArray::new(der, der_len)
-                        .expect("failed to create byte array"),
-                    wrapped_blob_padding: DdiRsaCryptoPadding::Oaep,
-                    wrapped_blob_hash_algorithm: DdiHashAlgorithm::Sha1,
-                },
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_rsa_unwrap_kek(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                unwrap_key_id,
+                MborByteArray::new(der, der_len).expect("failed to create byte array"),
+                DdiRsaCryptoPadding::Oaep,
+                DdiHashAlgorithm::Sha256,
+            );
 
             if let Err(err) = &resp {
                 if is_unsupported_cmd(err) {
@@ -76,7 +67,7 @@ fn test_rsa_unwrap_rsa_kek_16() {
                 return;
             }
 
-            let (unwrap_key_id, unwrap_pub_key_der) = get_unwrapping_key(dev, session_id);
+            let (unwrap_key_id, unwrap_pub_key_der, _) = get_unwrapping_key(dev, session_id);
 
             let rsa_3k_private_wrapped = wrap_data_with_aes_key(
                 unwrap_pub_key_der,
@@ -89,23 +80,15 @@ fn test_rsa_unwrap_rsa_kek_16() {
 
             let der_len = rsa_3k_private_wrapped.len();
 
-            let req = DdiRsaUnwrapKekCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::RsaUnwrapKek,
-                    sess_id: Some(session_id),
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiRsaUnwrapKekReq {
-                    key_id: unwrap_key_id,
-                    wrapped_blob: MborByteArray::new(der, der_len)
-                        .expect("failed to create byte array"),
-                    wrapped_blob_padding: DdiRsaCryptoPadding::Oaep,
-                    wrapped_blob_hash_algorithm: DdiHashAlgorithm::Sha1,
-                },
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_rsa_unwrap_kek(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                unwrap_key_id,
+                MborByteArray::new(der, der_len).expect("failed to create byte array"),
+                DdiRsaCryptoPadding::Oaep,
+                DdiHashAlgorithm::Sha256,
+            );
 
             if let Err(err) = &resp {
                 if is_unsupported_cmd(err) {
@@ -133,7 +116,7 @@ fn test_rsa_unwrap_rsa_kek_24() {
                 return;
             }
 
-            let (unwrap_key_id, unwrap_pub_key_der) = get_unwrapping_key(dev, session_id);
+            let (unwrap_key_id, unwrap_pub_key_der, _) = get_unwrapping_key(dev, session_id);
 
             let rsa_3k_private_wrapped = wrap_data_with_aes_key(
                 unwrap_pub_key_der,
@@ -146,23 +129,15 @@ fn test_rsa_unwrap_rsa_kek_24() {
 
             let der_len = rsa_3k_private_wrapped.len();
 
-            let req = DdiRsaUnwrapKekCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::RsaUnwrapKek,
-                    sess_id: Some(session_id),
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiRsaUnwrapKekReq {
-                    key_id: unwrap_key_id,
-                    wrapped_blob: MborByteArray::new(der, der_len)
-                        .expect("failed to create byte array"),
-                    wrapped_blob_padding: DdiRsaCryptoPadding::Oaep,
-                    wrapped_blob_hash_algorithm: DdiHashAlgorithm::Sha1,
-                },
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_rsa_unwrap_kek(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                unwrap_key_id,
+                MborByteArray::new(der, der_len).expect("failed to create byte array"),
+                DdiRsaCryptoPadding::Oaep,
+                DdiHashAlgorithm::Sha256,
+            );
 
             if let Err(err) = &resp {
                 if is_unsupported_cmd(err) {

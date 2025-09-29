@@ -16,18 +16,23 @@ mod error;
 mod establish_credential;
 mod get_api_rev;
 mod get_cert;
-mod get_collateral;
 mod get_device_info;
 mod get_establish_cred_encryption_key;
+mod get_sealed_bk3;
 mod get_session_encryption_key;
 mod get_unwrapping_key;
 mod hmac;
+mod init_bk3;
 mod mask;
+mod masked_key;
+mod metadata;
 mod open_key;
 mod open_session;
+mod provision_part;
 mod reopen_session;
 mod rsa;
 mod sessctrl;
+mod set_sealed_bk3;
 mod test_ops;
 
 pub use aes::*;
@@ -44,21 +49,26 @@ pub use error::*;
 pub use establish_credential::*;
 pub use get_api_rev::*;
 pub use get_cert::*;
-pub use get_collateral::*;
 pub use get_device_info::*;
 pub use get_establish_cred_encryption_key::*;
+pub use get_sealed_bk3::*;
 pub use get_session_encryption_key::*;
 pub use get_unwrapping_key::*;
 pub use hmac::*;
+pub use init_bk3::*;
 pub use mask::*;
+pub use masked_key::*;
 use mcr_ddi_derive::Ddi;
 use mcr_ddi_mbor::*;
+pub use metadata::*;
 use open_enum::open_enum;
 pub use open_key::*;
 pub use open_session::*;
+pub use provision_part::*;
 pub use reopen_session::*;
 pub use rsa::*;
 pub use sessctrl::*;
+pub use set_sealed_bk3::*;
 pub use test_ops::*;
 
 /// Maximum key label length
@@ -92,9 +102,6 @@ pub enum DdiOp {
 
     /// Generate attestation report for key
     AttestKey = 1016,
-
-    /// Get collateral
-    GetCollateral = 1017,
 
     /// RSA Modular Exponentiation
     RsaModExp = 1031,
@@ -158,6 +165,18 @@ pub enum DdiOp {
 
     /// Re-open Session
     ReopenSession = 1110,
+
+    /// Init BK3
+    InitBk3 = 1111,
+
+    /// Get Sealed BK3
+    GetSealedBk3 = 1112,
+
+    /// Set Sealed BK3
+    SetSealedBk3 = 1113,
+
+    /// Provision Part
+    ProvisionPart = 1114,
 
     // Test only opcodes below
     /// Reset function to default state for testing
@@ -756,6 +775,66 @@ pub enum DdiStatus {
 
     /// Masked key decode failed
     MaskedKeyDecodeFailed = 141557953,
+
+    /// Invalid Algorithm
+    InvalidAlgorithm = 141557954,
+
+    /// Insufficient Buffer
+    InsufficientBuffer = 141557955,
+
+    /// Invalid Key Length
+    InvalidKeyLength = 141557956,
+
+    /// Metadata Encode Error
+    MetadataEncodeFailed = 141557957,
+
+    /// Metadata Decode Error
+    MetadataDecodeFailed = 141557958,
+
+    /// Session needs to be renegotiated after migration
+    SessionNeedsRenegotiation = 141557959,
+
+    /// BK Boot generation failed
+    BkBootGenerationFailed = 141557960,
+
+    /// Masking BK3 failed
+    MaskingBk3Failed = 141557961,
+
+    /// Unmasking BK3 failed
+    UnmaskingBk3Failed = 141557962,
+
+    /// Masking BK Boot failed
+    MaskingBkBootFailed = 141557963,
+
+    /// Unmasking BK Boot failed
+    UnmaskingBkBootFailed = 141557964,
+
+    /// Masked BK Boot not present
+    MaskedBkBootNotPresent = 141557965,
+
+    /// Sealed BK3 too large
+    SealedBk3TooLarge = 141557966,
+
+    /// Partition already provisioned.
+    PartitionAlreadyProvisioned = 141557967,
+
+    /// Sealed BK3 not present
+    SealedBk3NotPresent = 141557968,
+
+    /// Credentials haven't been established; cannot open session
+    CredentialsNotEstablished = 141557969,
+
+    /// Invalid Alias Key
+    InvalidAliasKey = 141557970,
+
+    /// Do not allow external call to unmask unwrapping key
+    UnmaskUnwrappingKeyNotAllowed = 141557971,
+
+    /// Invalid Partition Id content in memory
+    InvalidPartitionIdContent = 141557972,
+
+    /// Partition not provisioned
+    PartitionNotProvisioned = 141557973,
 }
 
 /// DDI Key Class
@@ -774,11 +853,17 @@ pub enum DdiKeyClass {
     /// AES
     Aes = 3,
 
-    /// AES Bulk
-    AesBulk = 4,
+    /// AES XTS Bulk
+    AesXtsBulk = 4,
+
+    /// AES GCM Bulk
+    AesGcmBulk = 5,
+
+    /// AES GCM Bulk Unapproved
+    AesGcmBulkUnapproved = 6,
 
     /// ECC
-    Ecc = 5,
+    Ecc = 7,
 }
 
 /// DDI Key Type
@@ -824,44 +909,56 @@ pub enum DdiKeyType {
     /// AES 256-bit Key
     Aes256 = 12,
 
-    /// AES Bulk 256-bit Key
-    AesBulk256 = 13,
+    /// AES XTS Bulk 256-bit Key
+    AesXtsBulk256 = 13,
+
+    /// AES GCM Bulk 256-bit Key
+    AesGcmBulk256 = 14,
+
+    /// AES GCM Bulk 256-bit Unapproved Key
+    AesGcmBulk256Unapproved = 15,
 
     /// 256-bit Secret to use in derivation
-    Secret256 = 14,
+    Secret256 = 16,
 
     /// 384-bit Secret to use in derivation
-    Secret384 = 15,
+    Secret384 = 17,
 
     /// 521-bit Secret to use in derivation
-    Secret521 = 16,
+    Secret521 = 18,
 
     /// RSA 2048-bit Public Key.
-    Rsa2kPublic = 17,
+    Rsa2kPublic = 19,
 
     /// RSA 3072-bit Public Key.
-    Rsa3kPublic = 18,
+    Rsa3kPublic = 20,
 
     /// RSA 4096-bit Public Key.
-    Rsa4kPublic = 19,
+    Rsa4kPublic = 21,
 
     /// ECC 256 Public Key
-    Ecc256Public = 20,
+    Ecc256Public = 22,
 
     /// ECC 384 Public Key
-    Ecc384Public = 21,
+    Ecc384Public = 23,
 
     /// ECC 521 Public Key
-    Ecc521Public = 22,
+    Ecc521Public = 24,
 
     /// HMAC 256 Key
-    HmacSha256 = 23,
+    HmacSha256 = 25,
 
     /// HMAC 384 Key
-    HmacSha384 = 24,
+    HmacSha384 = 26,
 
     /// HMAC 512 Key
-    HmacSha512 = 25,
+    HmacSha512 = 27,
+
+    /// AES CBC 256 HMAC 384 Key
+    AesCbc256Hmac384 = 28,
+
+    /// KBKDF-SHA384 Secret key
+    KbKdfSecretSha384 = 29,
 }
 
 /// DDI Session Kind Enumeration
@@ -885,7 +982,10 @@ impl From<DdiOp> for DdiSessionKind {
             | DdiOp::GetEstablishCredEncryptionKey
             | DdiOp::EstablishCredential
             | DdiOp::GetSessionEncryptionKey
-            | DdiOp::OpenSession => DdiSessionKind::None,
+            | DdiOp::OpenSession
+            | DdiOp::InitBk3
+            | DdiOp::GetSealedBk3
+            | DdiOp::SetSealedBk3 => DdiSessionKind::None,
 
             _ => DdiSessionKind::User,
         }
@@ -1065,8 +1165,8 @@ pub enum DdiKeyUsage {
     /// The key may be used for encryption and decryption
     EncryptDecrypt = 2,
 
-    /// The key may be used for wrapping and unwrapping
-    WrapUnwrap = 3,
+    /// The key may be used for unwrapping
+    Unwrap = 3,
 
     /// The key may be used for ECDH or key derivation. This flag is invalid for RSA/AES key types.
     Derive = 4,
@@ -1088,6 +1188,20 @@ pub enum DdiKeyAvailability {
 
 /// DDI Key Properties Structure
 #[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
+#[derive(Debug, Ddi, Clone, Copy, PartialEq, Eq)]
+#[ddi(map)]
+pub struct DdiTargetKeyProperties {
+    /// Key Metadata
+    #[ddi(id = 1)]
+    pub key_metadata: DdiTargetKeyMetadata,
+
+    /// Key label
+    #[ddi(id = 2)]
+    pub key_label: MborByteArray<DDI_MAX_KEY_LABEL_LENGTH>,
+}
+
+/// DDI Key Properties Structure
+#[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
 #[derive(Debug, Ddi, Copy, Clone, PartialEq, Eq)]
 #[ddi(map)]
 pub struct DdiKeyProperties {
@@ -1102,6 +1216,64 @@ pub struct DdiKeyProperties {
     /// Key label
     #[ddi(id = 3)]
     pub key_label: MborByteArray<DDI_MAX_KEY_LABEL_LENGTH>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DdiTypeError {
+    InvalidArgument,
+}
+
+impl TryFrom<DdiKeyProperties> for DdiTargetKeyProperties {
+    type Error = DdiTypeError;
+
+    fn try_from(props: DdiKeyProperties) -> Result<Self, Self::Error> {
+        let mut key_metadata = DdiTargetKeyMetadata::default();
+        if props.key_availability == DdiKeyAvailability::Session {
+            key_metadata.set_session(true);
+        }
+        match props.key_usage {
+            DdiKeyUsage::EncryptDecrypt => {
+                key_metadata.set_encrypt(true);
+                key_metadata.set_decrypt(true);
+            }
+            DdiKeyUsage::SignVerify => {
+                key_metadata.set_sign(true);
+                key_metadata.set_verify(true);
+            }
+            DdiKeyUsage::Unwrap => {
+                key_metadata.set_unwrap(true);
+            }
+            DdiKeyUsage::Derive => {
+                key_metadata.set_derive(true);
+            }
+            _ => return Err(DdiTypeError::InvalidArgument),
+        }
+
+        Ok(Self {
+            key_metadata,
+            key_label: props.key_label,
+        })
+    }
+}
+
+impl TryFrom<DdiTargetKeyProperties> for DdiKeyProperties {
+    type Error = DdiTypeError;
+
+    fn try_from(props: DdiTargetKeyProperties) -> Result<Self, Self::Error> {
+        let key_usage = props.key_metadata.try_into()?;
+
+        let key_availability = if props.key_metadata.session() {
+            DdiKeyAvailability::Session
+        } else {
+            DdiKeyAvailability::App
+        };
+
+        Ok(Self {
+            key_usage,
+            key_availability,
+            key_label: props.key_label,
+        })
+    }
 }
 
 /// Enumeration of all DDI device kind

@@ -2,7 +2,10 @@
 
 mod common;
 
+#[cfg(not(feature = "resilient"))]
 use mcr_api::*;
+#[cfg(feature = "resilient")]
+use mcr_api_resilient::*;
 use test_with_tracing::test;
 
 use crate::common::*;
@@ -20,7 +23,7 @@ fn test_aes_gcm_encrypt_decrypt() {
         let app_session = common_open_app_session(device);
 
         let result = app_session.aes_generate(
-            AesKeySize::AesBulk256,
+            AesKeySize::AesGcmBulk256Unapproved,
             None,
             KeyProperties {
                 key_usage: KeyUsage::EncryptDecrypt,
@@ -69,7 +72,7 @@ fn test_aes_gcm_tampered_data() {
         let app_session = common_open_app_session(device);
 
         let result = app_session.aes_generate(
-            AesKeySize::AesBulk256,
+            AesKeySize::AesGcmBulk256Unapproved,
             None,
             KeyProperties {
                 key_usage: KeyUsage::EncryptDecrypt,
@@ -120,7 +123,7 @@ fn test_aes_gcm_encrypt_decrypt_multi_times() {
         let app_session = common_open_app_session(device);
 
         let result = app_session.aes_generate(
-            AesKeySize::AesBulk256,
+            AesKeySize::AesGcmBulk256Unapproved,
             None,
             KeyProperties {
                 key_usage: KeyUsage::EncryptDecrypt,
@@ -200,7 +203,7 @@ fn test_aes_gcm_encrypt_data_size() {
         let app_session = common_open_app_session(device);
 
         let result = app_session.aes_generate(
-            AesKeySize::AesBulk256,
+            AesKeySize::AesGcmBulk256Unapproved,
             None,
             KeyProperties {
                 key_usage: KeyUsage::EncryptDecrypt,
@@ -384,7 +387,7 @@ fn test_aes_gcm_decrypt_data_size() {
         let app_session = common_open_app_session(device);
 
         let result = app_session.aes_generate(
-            AesKeySize::AesBulk256,
+            AesKeySize::AesGcmBulk256Unapproved,
             None,
             KeyProperties {
                 key_usage: KeyUsage::EncryptDecrypt,
@@ -487,7 +490,7 @@ fn test_aes_gcm_invalid_or_mismatched_aad() {
         let app_session = common_open_app_session(device);
 
         let result = app_session.aes_generate(
-            AesKeySize::AesBulk256,
+            AesKeySize::AesGcmBulk256Unapproved,
             None,
             KeyProperties {
                 key_usage: KeyUsage::EncryptDecrypt,
@@ -600,7 +603,7 @@ fn test_aes_gcm_mismatched_iv() {
         let app_session = common_open_app_session(device);
 
         let result = app_session.aes_generate(
-            AesKeySize::AesBulk256,
+            AesKeySize::AesGcmBulk256Unapproved,
             None,
             KeyProperties {
                 key_usage: KeyUsage::EncryptDecrypt,
@@ -649,7 +652,7 @@ fn test_aes_fpgcm_decrypt_invalid_mismatched_tag() {
         let app_session = common_open_app_session(device);
 
         let result = app_session.aes_generate(
-            AesKeySize::AesBulk256,
+            AesKeySize::AesGcmBulk256Unapproved,
             None,
             KeyProperties {
                 key_usage: KeyUsage::EncryptDecrypt,
@@ -746,7 +749,7 @@ fn test_aesbulk256_aesgen_encrypt_decrypt() {
 
 
     let result = app_session.aes_generate(
-        AesKeySize::AesBulk256,
+        AesKeySize::AesGcmBulk256Unapproved,
         None,
         KeyProperties {
             key_usage: KeyUsage::EncryptDecrypt,
@@ -791,7 +794,7 @@ fn test_aesbulk256_aesgen_encrypt_decrypt_tampered_encrypted_data() {
         let app_session = common_open_app_session(device);
 
     let result = app_session.aes_generate(
-        AesKeySize::AesBulk256,
+        AesKeySize::AesGcmBulk256Unapproved,
         None,
         KeyProperties {
             key_usage: KeyUsage::EncryptDecrypt,
@@ -842,7 +845,7 @@ fn test_aesbulk256_aesgen_encrypt_decrypt_multi_times() {
 
 
     let result = app_session.aes_generate(
-        AesKeySize::AesBulk256,
+        AesKeySize::AesGcmBulk256Unapproved,
         None,
         KeyProperties {
             key_usage: KeyUsage::EncryptDecrypt,
@@ -915,7 +918,7 @@ fn test_aesbulk256_aesgen_encrypt_data_size() {
 
 
     let result = app_session.aes_generate(
-        AesKeySize::AesBulk256,
+        AesKeySize::AesGcmBulk256Unapproved,
         None,
         KeyProperties {
             key_usage: KeyUsage::EncryptDecrypt,
@@ -1044,7 +1047,7 @@ fn test_aesbulk256_aesgen_decrypt_data_size() {
 
 
     let result = app_session.aes_generate(
-        AesKeySize::AesBulk256,
+        AesKeySize::AesGcmBulk256Unapproved,
         None,
         KeyProperties {
             key_usage: KeyUsage::EncryptDecrypt,
@@ -1182,7 +1185,7 @@ fn test_aesbulk256_aesgen_encrypt_decrypt_keysize_type_mismatch() {
 
 
     let result = app_session.aes_generate(
-        AesKeySize::AesBulk256,
+        AesKeySize::AesGcmBulk256Unapproved,
         None,
         KeyProperties {
             key_usage: KeyUsage::EncryptDecrypt,
@@ -1207,7 +1210,7 @@ fn test_aesbulk256_aesgen_encrypt_decrypt_keysize_type_mismatch() {
     assert_ne!(data, encrypted_data.data);
 
     let result = app_session.aes_generate(
-        AesKeySize::Aes256,
+        AesKeySize::AesGcmBulk256Unapproved,
         None,
         KeyProperties {
             key_usage: KeyUsage::EncryptDecrypt,

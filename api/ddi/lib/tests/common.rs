@@ -12,6 +12,7 @@ use crypto::ecc::EccPrivateKey;
 use crypto::ecc::EccPrivateOp;
 use crypto::ecc::EccPublicKey;
 use crypto::ecc::EccPublicOp;
+use crypto::rand::rand_bytes;
 use crypto::rsa::RsaOp;
 use crypto::rsa::RsaPublicKey;
 use crypto::rsa::RsaPublicOp;
@@ -21,10 +22,21 @@ use crypto::CryptoKeyKind;
 use crypto::CryptoRsaCryptoPadding;
 use crypto::CryptoRsaSignaturePadding;
 pub use helpers::*;
+use mcr_ddi::Ddi;
 use mcr_ddi::*;
 use mcr_ddi_mbor::MborByteArray;
 use mcr_ddi_sim::crypto::aes::AesOp;
 use mcr_ddi_types::*;
+#[cfg(target_os = "linux")]
+use openssl::error::ErrorStack;
+#[cfg(target_os = "linux")]
+use openssl::stack::Stack;
+#[cfg(target_os = "linux")]
+use openssl::x509::store::X509StoreBuilder;
+#[cfg(target_os = "linux")]
+use openssl::x509::X509StoreContext;
+#[cfg(target_os = "linux")]
+use openssl::x509::X509;
 use session_parameter_encryption::DeviceCredentialEncryptionKey;
 
 // All the constants in this file are used by tests but for some reason clippy still thinks they
@@ -40,6 +52,13 @@ pub(crate) const TEST_CRED_ID: [u8; 16] = [
 // DB3DC77F-C22E-4300-80D4-1B31B6F04800
 pub(crate) const TEST_CRED_PIN: [u8; 16] = [
     0xDB, 0x3D, 0xC7, 0x7F, 0xC2, 0x2E, 0x43, 0x00, 0x80, 0xD4, 0x1B, 0x31, 0xB6, 0xF0, 0x48, 0x00,
+];
+
+#[allow(dead_code)]
+pub(crate) const TEST_SESSION_SEED: [u8; 48] = [
+    0xe5, 0x1b, 0x8b, 0x4b, 0xa7, 0x94, 0xc7, 0xc8, 0xa2, 0x32, 0x84, 0xec, 0xad, 0x2b, 0x6a, 0xc,
+    0x37, 0xe8, 0x6a, 0x63, 0x6a, 0x9f, 0x43, 0x20, 0x95, 0xe1, 0x24, 0xd0, 0x85, 0x12, 0xe2, 0x12,
+    0x95, 0x14, 0xaa, 0x0f, 0x6b, 0x05, 0x40, 0x71, 0xbf, 0x63, 0xa5, 0x87, 0xa6, 0x25, 0x70, 0x81,
 ];
 
 #[allow(dead_code)]
@@ -91,6 +110,13 @@ pub(crate) const TEST_APP_1_PIN: [u8; 16] = [0x2; 16];
 pub const COMMON_SESS_ID1: u16 = 0;
 
 #[allow(dead_code)]
+pub(crate) const HARD_CODED_BK3: [u8; 48] = [
+    0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54, 0x32, 0x10,
+    0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00,
+    0x0F, 0x1E, 0x2D, 0x3C, 0x4B, 0x5A, 0x69, 0x78, 0x87, 0x96, 0xA5, 0xB4, 0xC3, 0xD2, 0xE1, 0xF0,
+];
+
+#[allow(dead_code)]
 pub fn common_setup(dev: &mut <DdiTest as Ddi>::Dev, ddi: &DdiTest, path: &str) -> u16 {
     common_cleanup(dev, ddi, path, None);
 
@@ -102,8 +128,12 @@ pub fn common_setup(dev: &mut <DdiTest as Ddi>::Dev, ddi: &DdiTest, path: &str) 
     let _ =
         helper_common_establish_credential_no_unwrap(&mut setup_dev, TEST_CRED_ID, TEST_CRED_PIN);
 
-    let (encrypted_credential, pub_key) =
-        encrypt_userid_pin_for_open_session(&setup_dev, TEST_CRED_ID, TEST_CRED_PIN);
+    let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+        &setup_dev,
+        TEST_CRED_ID,
+        TEST_CRED_PIN,
+        TEST_SESSION_SEED,
+    );
 
     let resp = helper_open_session(
         dev,
@@ -117,6 +147,7 @@ pub fn common_setup(dev: &mut <DdiTest as Ddi>::Dev, ddi: &DdiTest, path: &str) 
     let resp = resp.unwrap();
 
     assert!(resp.hdr.sess_id.is_some());
+
     resp.hdr.sess_id.unwrap()
 }
 
@@ -142,8 +173,12 @@ pub fn common_cleanup(
     let _ =
         helper_common_establish_credential_no_unwrap(&mut cleanup_dev, TEST_CRED_ID, TEST_CRED_PIN);
 
-    let (encrypted_credential, pub_key) =
-        encrypt_userid_pin_for_open_session(&cleanup_dev, TEST_CRED_ID, TEST_CRED_PIN);
+    let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+        &cleanup_dev,
+        TEST_CRED_ID,
+        TEST_CRED_PIN,
+        TEST_SESSION_SEED,
+    );
 
     let resp = helper_open_session(
         &cleanup_dev,
@@ -158,46 +193,172 @@ pub fn common_cleanup(
 
     let sess_id = resp.data.sess_id;
 
-    let req = DdiResetFunctionCmdReq {
-        hdr: DdiReqHdr {
-            op: DdiOp::ResetFunction,
-            sess_id: Some(sess_id),
-            rev: Some(DdiApiRev { major: 1, minor: 0 }),
-        },
-        data: DdiResetFunctionReq {},
-        ext: None,
-    };
-    let mut cookie = None;
-    let resp = cleanup_dev.exec_op(&req, &mut cookie);
+    let resp = helper_reset_function(
+        &cleanup_dev,
+        Some(sess_id),
+        Some(DdiApiRev { major: 1, minor: 0 }),
+    );
 
     assert!(resp.is_ok(), "resp {:?}", resp);
+}
+
+/// Helper function to verify the certificate chain
+/// Using OpenSSL
+/// Return the public key of the leaf cert (Attestation public key)
+/// First element of cert chain should be the root cert
+#[allow(dead_code)]
+#[cfg(target_os = "linux")]
+pub fn helper_verify_cert_chain(collaterals: &[Vec<u8>]) -> Result<bool, ErrorStack> {
+    tracing::debug!(len = ?collaterals.len(), "Verifying Certificate Chain");
+    // 1. Convert each byte array to X509 cert
+    let collaterals: Vec<X509> = collaterals
+        .iter()
+        .map(|collateral| X509::from_der(collateral).unwrap())
+        .collect();
+
+    // 2. Build a Store that holds root CA
+    let mut store_builder = X509StoreBuilder::new()?;
+    store_builder.add_cert(collaterals.first().unwrap().clone())?;
+    let store = store_builder.build();
+
+    // 3. Build a Stack that holds intermediate certs
+    let mut cert_chain = Stack::new().unwrap();
+    // Skip first (CA Cert) and last cert in the chain
+    for cert in &collaterals[1..(collaterals.len() - 1)] {
+        tracing::debug!(?cert, "Adding cert to chain");
+        cert_chain.push(cert.clone())?;
+    }
+
+    // 4. Build a Context to verify the leaf cert
+    let mut store_ctx = X509StoreContext::new()?;
+    let result = store_ctx.init(&store, collaterals.last().unwrap(), &cert_chain, |ctx| {
+        ctx.verify_cert()
+    });
+
+    tracing::debug!(?result, "Certificate Chain verification complete");
+
+    result
 }
 
 #[allow(dead_code)]
-pub fn helper_common_get_establish_cred_encryption_key_no_unwrap(
-    dev: &mut <DdiTest as Ddi>::Dev,
-) -> Result<DdiGetEstablishCredEncryptionKeyCmdResp, DdiError> {
-    let req = DdiGetEstablishCredEncryptionKeyCmdReq {
-        hdr: DdiReqHdr {
-            op: DdiOp::GetEstablishCredEncryptionKey,
-            sess_id: None,
-            rev: Some(DdiApiRev { major: 1, minor: 0 }),
-        },
-        data: DdiGetEstablishCredEncryptionKeyReq {},
-        ext: None,
-    };
+#[cfg(target_os = "linux")]
+pub fn helper_get_partition_id_pub_key(dev: &mut <DdiTest as Ddi>::Dev) -> Vec<u8> {
+    let result = helper_get_cert_chain_info(dev);
+    assert!(result.is_ok(), "result {:?}", result);
+    let resp = result.unwrap();
 
-    let mut cookie = None;
+    let num_certs = resp.data.num_certs;
 
-    dev.exec_op(&req, &mut cookie)
+    // The leaf certificate is the partition ID cert
+    let result = helper_get_certificate(dev, num_certs - 1);
+    assert!(result.is_ok(), "result {:?}", result);
+    let resp = result.unwrap();
+
+    let cert_der = resp.data.certificate.as_slice();
+
+    // Verify the leaf cert with the cert chain to ensure it is valid
+    assert!(
+        helper_verify_leaf_cert(dev, cert_der).is_ok(),
+        "Leaf cert verification failed"
+    );
+
+    // Parse the DER certificate
+    let x509 = X509::from_der(cert_der).unwrap();
+    let pubkey = x509.public_key().unwrap();
+    pubkey.public_key_to_der().unwrap()
 }
 
-pub fn helper_common_get_establish_cred_encryption_key(
+#[allow(dead_code)]
+#[cfg(target_os = "linux")]
+pub fn helper_key_signature_verification(
     dev: &mut <DdiTest as Ddi>::Dev,
-) -> DdiGetEstablishCredEncryptionKeyCmdResp {
-    let resp = helper_common_get_establish_cred_encryption_key_no_unwrap(dev);
-    assert!(resp.is_ok(), "resp {:?}", resp);
-    resp.unwrap()
+    pub_key_der: &[u8],
+    signature: &[u8],
+) -> bool {
+    let result = EccPublicKey::from_der(pub_key_der, Some(CryptoKeyKind::Ecc384Public));
+    assert!(result.is_ok(), "result {:?}", result);
+    let ecc_pub = result.unwrap();
+
+    let result = ecc_pub.coordinates();
+    assert!(result.is_ok(), "result {:?}", result);
+    let (expected_x, expected_y) = result.unwrap();
+
+    // OpenSSL strips leading zeros from X and Y coordinates, so we have to pad them back
+    let mut x_array = [0u8; 48];
+    let mut y_array = [0u8; 48];
+    x_array[48 - expected_x.len()..48].copy_from_slice(&expected_x);
+    y_array[48 - expected_y.len()..48].copy_from_slice(&expected_y);
+
+    // flip the endianness to little endian before getting the digest
+    x_array.reverse();
+    y_array.reverse();
+
+    // create the raw public key by concatenating X and Y
+    let raw_pub_key = [x_array.to_vec(), y_array.to_vec()].concat();
+
+    // get the digest of the raw public key
+    let digest = crypto_sha384(raw_pub_key.as_slice());
+    let digest_len = digest.len();
+
+    // extract the partition ID public key from the certificate
+    let part_id_pub_key = helper_get_partition_id_pub_key(dev);
+
+    // verify the signature using the partition ID public key
+    let pkey = EccPublicKey::from_der(
+        part_id_pub_key.as_slice(),
+        Some(CryptoKeyKind::Ecc384Public),
+    )
+    .unwrap();
+    pkey.verify(&digest[..digest_len], signature).is_ok()
+}
+
+#[allow(dead_code)]
+pub fn helper_get_cert_chain_info_data(dev: &mut <DdiTest as Ddi>::Dev) -> (u8, [u8; 32]) {
+    let result = helper_get_cert_chain_info(dev);
+    assert!(result.is_ok(), "result {:?}", result);
+    let resp = result.unwrap();
+    let num_certs = resp.data.num_certs;
+    let thumbprint = resp.data.thumbprint.data_take();
+
+    (num_certs, thumbprint)
+}
+
+#[allow(dead_code)]
+#[cfg(target_os = "linux")]
+pub fn helper_verify_leaf_cert(
+    dev: &mut <DdiTest as Ddi>::Dev,
+    leaf_cert: &[u8],
+) -> Result<bool, ErrorStack> {
+    tracing::debug!("Getting certificate chain");
+    // Gets the cert chain
+    // 1. Gets the number of certs in the cert chain using DDI command GetCertChainInfo command
+    // 2. Gets all certs in the cert chain using DDI command GetCertificate where
+    //    cert id is 0 to num_certs - 1.
+    // 3. Gets the partition id cert using DDI command GetCertificate which is the last cert in the chain
+
+    let result = helper_get_cert_chain_info(dev);
+    assert!(result.is_ok(), "result {:?}", result);
+
+    let resp = result.unwrap();
+    let num_certs = resp.data.num_certs;
+
+    let mut cert_chain: Vec<Vec<u8>> = Vec::with_capacity(num_certs as usize);
+    for i in 0..num_certs - 1 {
+        let result = helper_get_certificate(dev, i);
+        assert!(result.is_ok(), "result {:?}", result);
+
+        let resp = result.unwrap();
+        let der = &resp.data.certificate.as_slice();
+        print!("cert DER {:?}", der);
+
+        cert_chain.push(der.to_vec());
+    }
+
+    cert_chain.push(leaf_cert.to_vec());
+
+    tracing::debug!(len = cert_chain.len(), "Done getting cert chain");
+
+    helper_verify_cert_chain(&cert_chain)
 }
 
 #[allow(dead_code)]
@@ -207,7 +368,11 @@ pub fn helper_common_establish_credential_no_unwrap(
     pin: [u8; 16],
 ) -> Result<(), DdiError> {
     // Get establish credential encryption key
-    let resp = helper_common_get_establish_cred_encryption_key_no_unwrap(dev)?;
+    let resp = helper_get_establish_cred_encryption_key(
+        dev,
+        None,
+        Some(DdiApiRev { major: 1, minor: 0 }),
+    )?;
 
     // Establish credential
     let nonce = resp.data.nonce;
@@ -217,25 +382,134 @@ pub fn helper_common_establish_credential_no_unwrap(
         .create_credential_key_from_der(&TEST_ECC_384_PRIVATE_KEY)
         .unwrap();
     let ddi_encrypted_credential = establish_cred_encryption_key
-        .encrypt(id, pin, nonce)
+        .encrypt_establish_credential(id, pin, nonce)
         .unwrap();
 
-    let req = DdiEstablishCredentialCmdReq {
-        hdr: DdiReqHdr {
-            op: DdiOp::EstablishCredential,
-            sess_id: None,
-            rev: Some(DdiApiRev { major: 1, minor: 0 }),
-        },
-        data: DdiEstablishCredentialReq {
-            encrypted_credential: ddi_encrypted_credential,
-            pub_key: ddi_public_key,
-        },
-        ext: None,
-    };
-    let mut cookie = None;
-    let _ = dev.exec_op(&req, &mut cookie)?;
+    let mut bk3 = vec![0u8; 48];
+    rand_bytes(&mut bk3).unwrap();
+    let masked_bk3 = helper_init_bk3(dev, bk3).unwrap().data.masked_bk3;
+
+    let _ = helper_establish_credential(
+        dev,
+        None,
+        Some(DdiApiRev { major: 1, minor: 0 }),
+        ddi_encrypted_credential,
+        ddi_public_key,
+        masked_bk3,
+        MborByteArray::from_slice(&[]).expect("Failed to create empty BMK"),
+        MborByteArray::from_slice(&[]).expect("Failed to create empty masked unwrapping key"),
+    )?;
 
     Ok(())
+}
+
+#[allow(dead_code)]
+pub fn helper_common_establish_credential_with_bmk(
+    dev: &mut <DdiTest as Ddi>::Dev,
+    id: [u8; 16],
+    pin: [u8; 16],
+    masked_bk3: MborByteArray<1024>,
+    bmk: MborByteArray<1024>,
+    unwrapping_key: MborByteArray<1024>,
+) -> MborByteArray<1024> {
+    // Get establish credential encryption key
+    let resp =
+        helper_get_establish_cred_encryption_key(dev, None, Some(DdiApiRev { major: 1, minor: 0 }))
+            .unwrap();
+
+    // Establish credential
+    let nonce = resp.data.nonce;
+    let param_encryption_key =
+        DeviceCredentialEncryptionKey::new(&resp.data.pub_key, nonce).unwrap();
+    let (establish_cred_encryption_key, ddi_public_key) = param_encryption_key
+        .create_credential_key_from_der(&TEST_ECC_384_PRIVATE_KEY)
+        .unwrap();
+    let ddi_encrypted_credential = establish_cred_encryption_key
+        .encrypt_establish_credential(id, pin, nonce)
+        .unwrap();
+
+    let resp = helper_establish_credential(
+        dev,
+        None,
+        Some(DdiApiRev { major: 1, minor: 0 }),
+        ddi_encrypted_credential,
+        ddi_public_key,
+        masked_bk3,
+        bmk,
+        unwrapping_key,
+    );
+
+    resp.unwrap().data.bmk
+}
+
+#[derive(Clone, Copy)]
+#[allow(dead_code)]
+pub struct LMSetupResult {
+    pub session_id: u16,
+    pub masked_bk3: MborByteArray<1024>,
+    pub partition_bmk: MborByteArray<1024>,
+    pub session_bmk: MborByteArray<1024>,
+    pub random_seed: [u8; 48],
+}
+
+// This setup will use the similar flow of the common_setup but return a collection of re-usable variables for LM purpose
+#[allow(dead_code)]
+pub fn common_setup_for_lm(
+    dev: &mut <DdiTest as Ddi>::Dev,
+    ddi: &DdiTest,
+    path: &str,
+) -> LMSetupResult {
+    common_cleanup(dev, ddi, path, None);
+
+    let mut setup_dev = ddi.open_dev(path).unwrap();
+
+    // Set Device Kind
+    set_device_kind(&mut setup_dev);
+
+    let mut bk3 = vec![0u8; 48];
+    rand_bytes(&mut bk3).unwrap();
+
+    let masked_bk3 = helper_init_bk3(&setup_dev, bk3).unwrap().data.masked_bk3;
+
+    let mut random_seed = vec![0u8; 48];
+    rand_bytes(&mut random_seed).unwrap();
+
+    // This is used for initial setup from fresh so all the option fields are empty
+    let bmk = helper_common_establish_credential_with_bmk(
+        &mut setup_dev,
+        TEST_CRED_ID,
+        TEST_CRED_PIN,
+        masked_bk3,
+        MborByteArray::from_slice(&[]).expect("Failed to create empty BMK"),
+        MborByteArray::from_slice(&[]).expect("Failed to create empty masked unwrapping key"),
+    );
+
+    let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+        &setup_dev,
+        TEST_CRED_ID,
+        TEST_CRED_PIN,
+        random_seed.as_slice().try_into().unwrap(),
+    );
+
+    let resp = helper_open_session(
+        dev,
+        None,
+        Some(DdiApiRev { major: 1, minor: 0 }),
+        encrypted_credential,
+        pub_key,
+    );
+    assert!(resp.is_ok(), "resp {:?}", resp);
+
+    let resp = resp.unwrap();
+    assert!(resp.hdr.sess_id.is_some());
+
+    LMSetupResult {
+        session_id: resp.hdr.sess_id.unwrap(),
+        masked_bk3,
+        partition_bmk: bmk,
+        session_bmk: resp.data.bmk_session,
+        random_seed: random_seed.as_slice().try_into().unwrap(),
+    }
 }
 
 #[allow(dead_code)]
@@ -245,7 +519,12 @@ pub fn helper_common_establish_credential(
     pin: [u8; 16],
 ) {
     // Get establish credential encryption key
-    let resp = helper_common_get_establish_cred_encryption_key(dev);
+
+    let resp =
+        helper_get_establish_cred_encryption_key(dev, None, Some(DdiApiRev { major: 1, minor: 0 }));
+
+    assert!(resp.is_ok(), "resp {:?}", resp);
+    let resp = resp.unwrap();
 
     // Establish credential
     let nonce = resp.data.nonce;
@@ -255,41 +534,31 @@ pub fn helper_common_establish_credential(
         .create_credential_key_from_der(&TEST_ECC_384_PRIVATE_KEY)
         .unwrap();
     let ddi_encrypted_credential = establish_cred_encryption_key
-        .encrypt(id, pin, nonce)
+        .encrypt_establish_credential(id, pin, nonce)
         .unwrap();
 
-    let req = DdiEstablishCredentialCmdReq {
-        hdr: DdiReqHdr {
-            op: DdiOp::EstablishCredential,
-            sess_id: None,
-            rev: Some(DdiApiRev { major: 1, minor: 0 }),
-        },
-        data: DdiEstablishCredentialReq {
-            encrypted_credential: ddi_encrypted_credential,
-            pub_key: ddi_public_key,
-        },
-        ext: None,
-    };
-    let mut cookie = None;
-    let resp = dev.exec_op(&req, &mut cookie);
+    let mut bk3 = vec![0u8; 48];
+    rand_bytes(&mut bk3).unwrap();
+    let masked_bk3 = helper_init_bk3(dev, bk3).unwrap().data.masked_bk3;
+
+    let resp = helper_establish_credential(
+        dev,
+        None,
+        Some(DdiApiRev { major: 1, minor: 0 }),
+        ddi_encrypted_credential,
+        ddi_public_key,
+        masked_bk3,
+        MborByteArray::from_slice(&[]).expect("Failed to create empty BMK"),
+        MborByteArray::from_slice(&[]).expect("Failed to create empty masked unwrapping key"),
+    );
     assert!(resp.is_ok(), "resp {:?}", resp);
     resp.unwrap();
 }
 
 #[allow(unused)]
 pub fn get_device_info(ddi: &DdiTest, path: &str) -> DdiGetDeviceInfoResp {
-    let req = DdiGetDeviceInfoCmdReq {
-        hdr: DdiReqHdr {
-            op: DdiOp::GetDeviceInfo,
-            sess_id: None,
-            rev: Some(DdiApiRev { major: 1, minor: 0 }),
-        },
-        data: DdiGetDeviceInfoReq {},
-        ext: None,
-    };
-    let mut cookie = None;
     let dev = open_dev_and_set_device_kind(ddi, path);
-    let resp = dev.exec_op(&req, &mut cookie);
+    let resp = helper_get_device_info(&dev, None, Some(DdiApiRev { major: 1, minor: 0 }));
 
     assert!(resp.is_ok(), "resp {:?}", resp);
 
@@ -300,17 +569,7 @@ pub fn get_device_info(ddi: &DdiTest, path: &str) -> DdiGetDeviceInfoResp {
 
 #[allow(unused)]
 pub fn get_device_kind(dev: &mut <DdiTest as Ddi>::Dev) -> DdiDeviceKind {
-    let req = DdiGetDeviceInfoCmdReq {
-        hdr: DdiReqHdr {
-            op: DdiOp::GetDeviceInfo,
-            sess_id: None,
-            rev: Some(DdiApiRev { major: 1, minor: 0 }),
-        },
-        data: DdiGetDeviceInfoReq {},
-        ext: None,
-    };
-    let mut cookie = None;
-    let resp = dev.exec_op(&req, &mut cookie).unwrap();
+    let resp = helper_get_device_info(dev, None, Some(DdiApiRev { major: 1, minor: 0 })).unwrap();
 
     resp.data.kind
 }
@@ -327,20 +586,10 @@ pub fn encrypt_userid_pin_for_establish_cred(
     dev: &<DdiTest as Ddi>::Dev,
     id: [u8; 16],
     pin: [u8; 16],
-) -> (DdiEncryptedCredential, DdiDerPublicKey) {
-    let req = DdiGetEstablishCredEncryptionKeyCmdReq {
-        hdr: DdiReqHdr {
-            op: DdiOp::GetEstablishCredEncryptionKey,
-            sess_id: None,
-            rev: Some(DdiApiRev { major: 1, minor: 0 }),
-        },
-        data: DdiGetEstablishCredEncryptionKeyReq {},
-        ext: None,
-    };
-
-    let mut cookie = None;
-
-    let resp = dev.exec_op(&req, &mut cookie).unwrap();
+) -> (DdiEncryptedEstablishCredential, DdiDerPublicKey) {
+    let resp =
+        helper_get_establish_cred_encryption_key(dev, None, Some(DdiApiRev { major: 1, minor: 0 }))
+            .unwrap();
     let nonce = resp.data.nonce;
     let param_encryption_key =
         DeviceCredentialEncryptionKey::new(&resp.data.pub_key, nonce).unwrap();
@@ -348,7 +597,7 @@ pub fn encrypt_userid_pin_for_establish_cred(
         .create_credential_key_from_der(&TEST_ECC_384_PRIVATE_KEY)
         .unwrap();
     let ddi_encrypted_credential = establish_cred_encryption_key
-        .encrypt(id, pin, nonce)
+        .encrypt_establish_credential(id, pin, nonce)
         .unwrap();
 
     (ddi_encrypted_credential, ddi_public_key)
@@ -359,20 +608,10 @@ pub fn encrypt_userid_pin_for_open_session(
     dev: &<DdiTest as Ddi>::Dev,
     id: [u8; 16],
     pin: [u8; 16],
-) -> (DdiEncryptedCredential, DdiDerPublicKey) {
-    let req = DdiGetSessionEncryptionKeyCmdReq {
-        hdr: DdiReqHdr {
-            op: DdiOp::GetSessionEncryptionKey,
-            sess_id: None,
-            rev: Some(DdiApiRev { major: 1, minor: 0 }),
-        },
-        data: DdiGetSessionEncryptionKeyReq {},
-        ext: None,
-    };
-
-    let mut cookie = None;
-
-    let resp = dev.exec_op(&req, &mut cookie).unwrap();
+    seed: [u8; 48],
+) -> (DdiEncryptedSessionCredential, DdiDerPublicKey) {
+    let resp = helper_get_session_encryption_key(dev, None, Some(DdiApiRev { major: 1, minor: 0 }))
+        .unwrap();
     let nonce = resp.data.nonce;
     let param_encryption_key =
         DeviceCredentialEncryptionKey::new(&resp.data.pub_key, nonce).unwrap();
@@ -380,10 +619,29 @@ pub fn encrypt_userid_pin_for_open_session(
         .create_credential_key_from_der(&TEST_ECC_384_PRIVATE_KEY)
         .unwrap();
     let ddi_encrypted_credential = establish_cred_encryption_key
-        .encrypt(id, pin, nonce)
+        .encrypt_session_credential(id, pin, seed, nonce)
         .unwrap();
 
     (ddi_encrypted_credential, ddi_public_key)
+}
+
+#[allow(unused)]
+pub fn encrypt_userid_pin_for_open_session_no_unwrap(
+    dev: &<DdiTest as Ddi>::Dev,
+    id: [u8; 16],
+    pin: [u8; 16],
+    seed: [u8; 48],
+) -> Result<(DdiEncryptedSessionCredential, DdiDerPublicKey), Box<dyn std::error::Error>> {
+    let resp =
+        helper_get_session_encryption_key(dev, None, Some(DdiApiRev { major: 1, minor: 0 }))?;
+    let nonce = resp.data.nonce;
+    let param_encryption_key = DeviceCredentialEncryptionKey::new(&resp.data.pub_key, nonce)?;
+    let (establish_cred_encryption_key, ddi_public_key) =
+        param_encryption_key.create_credential_key_from_der(&TEST_ECC_384_PRIVATE_KEY)?;
+    let ddi_encrypted_credential =
+        establish_cred_encryption_key.encrypt_session_credential(id, pin, seed, nonce)?;
+
+    Ok((ddi_encrypted_credential, ddi_public_key))
 }
 
 #[allow(unused)]
@@ -391,19 +649,8 @@ pub fn encrypt_pin_for_change_pin(
     dev: &<DdiTest as Ddi>::Dev,
     pin: [u8; 16],
 ) -> (DdiEncryptedPin, DdiDerPublicKey) {
-    let req = DdiGetSessionEncryptionKeyCmdReq {
-        hdr: DdiReqHdr {
-            op: DdiOp::GetSessionEncryptionKey,
-            sess_id: None,
-            rev: Some(DdiApiRev { major: 1, minor: 0 }),
-        },
-        data: DdiGetSessionEncryptionKeyReq {},
-        ext: None,
-    };
-
-    let mut cookie = None;
-
-    let resp = dev.exec_op(&req, &mut cookie).unwrap();
+    let resp = helper_get_session_encryption_key(dev, None, Some(DdiApiRev { major: 1, minor: 0 }))
+        .unwrap();
     let nonce = resp.data.nonce;
     let param_encryption_key =
         DeviceCredentialEncryptionKey::new(&resp.data.pub_key, nonce).unwrap();
@@ -423,40 +670,27 @@ pub fn store_rsa_keys_no_crt(
     sess_id: u16,
     key_usage: DdiKeyUsage,
     rsa_key_size_in_k: u8,
-) -> (DdiDerPublicKey, u16) {
-    let mut der = [0u8; 3072];
-    let der_len: usize;
-    let key_class = DdiKeyClass::Rsa;
-
-    if rsa_key_size_in_k == 2 {
-        der[..TEST_RSA_2K_PRIVATE_KEY.len()].copy_from_slice(&TEST_RSA_2K_PRIVATE_KEY);
-        der_len = TEST_RSA_2K_PRIVATE_KEY.len();
+    key_tag: Option<u16>,
+) -> (DdiDerPublicKey, u16, MborByteArray<3072>) {
+    let rsa_priv_key = if rsa_key_size_in_k == 2 {
+        TEST_RSA_2K_PRIVATE_KEY.as_slice()
     } else if rsa_key_size_in_k == 3 {
-        der[..TEST_RSA_3K_PRIVATE_KEY.len()].copy_from_slice(&TEST_RSA_3K_PRIVATE_KEY);
-        der_len = TEST_RSA_3K_PRIVATE_KEY.len();
+        TEST_RSA_3K_PRIVATE_KEY.as_slice()
     } else if rsa_key_size_in_k == 4 {
-        der[..TEST_RSA_4K_PRIVATE_KEY.len()].copy_from_slice(&TEST_RSA_4K_PRIVATE_KEY);
-        der_len = TEST_RSA_4K_PRIVATE_KEY.len();
+        TEST_RSA_4K_PRIVATE_KEY.as_slice()
     } else {
         panic!("Invalid RSA key size");
-    }
-
-    let req = DdiDerKeyImportCmdReq {
-        hdr: DdiReqHdr {
-            op: DdiOp::DerKeyImport,
-            sess_id: Some(sess_id),
-            rev: Some(DdiApiRev { major: 1, minor: 0 }),
-        },
-        data: DdiDerKeyImportReq {
-            der: MborByteArray::new(der, der_len).expect("failed to create byte array"),
-            key_class,
-            key_tag: None,
-            key_properties: helper_key_properties(key_usage, DdiKeyAvailability::App),
-        },
-        ext: None,
     };
-    let mut cookie = None;
-    let resp = dev.exec_op(&req, &mut cookie);
+
+    let resp = rsa_secure_import_key(
+        dev,
+        Some(sess_id),
+        Some(DdiApiRev { major: 1, minor: 0 }),
+        rsa_priv_key,
+        DdiKeyClass::Rsa,
+        key_usage,
+        key_tag,
+    );
 
     assert!(resp.is_ok(), "resp {:?}", resp);
 
@@ -465,7 +699,7 @@ pub fn store_rsa_keys_no_crt(
     let key_id_rsa_priv = resp.data.key_id;
     let key_rsa_pub = resp.data.pub_key.unwrap();
 
-    (key_rsa_pub, key_id_rsa_priv)
+    (key_rsa_pub, key_id_rsa_priv, resp.data.masked_key)
 }
 
 #[allow(unused)]
@@ -474,40 +708,27 @@ pub fn store_rsa_keys_crt(
     sess_id: u16,
     key_usage: DdiKeyUsage,
     rsa_key_size_in_k: u8,
-) -> (DdiDerPublicKey, u16) {
-    let mut der = [0u8; 3072];
-    let der_len: usize;
-    let key_class = DdiKeyClass::RsaCrt;
-
-    if rsa_key_size_in_k == 2 {
-        der[..TEST_RSA_2K_PRIVATE_KEY.len()].copy_from_slice(&TEST_RSA_2K_PRIVATE_KEY);
-        der_len = TEST_RSA_2K_PRIVATE_KEY.len();
+    key_tag: Option<u16>,
+) -> (DdiDerPublicKey, u16, MborByteArray<3072>) {
+    let rsa_priv_key = if rsa_key_size_in_k == 2 {
+        TEST_RSA_2K_PRIVATE_KEY.as_slice()
     } else if rsa_key_size_in_k == 3 {
-        der[..TEST_RSA_3K_PRIVATE_KEY.len()].copy_from_slice(&TEST_RSA_3K_PRIVATE_KEY);
-        der_len = TEST_RSA_3K_PRIVATE_KEY.len();
+        TEST_RSA_3K_PRIVATE_KEY.as_slice()
     } else if rsa_key_size_in_k == 4 {
-        der[..TEST_RSA_4K_PRIVATE_KEY.len()].copy_from_slice(&TEST_RSA_4K_PRIVATE_KEY);
-        der_len = TEST_RSA_4K_PRIVATE_KEY.len();
+        TEST_RSA_4K_PRIVATE_KEY.as_slice()
     } else {
         panic!("Invalid RSA key size");
-    }
-
-    let req = DdiDerKeyImportCmdReq {
-        hdr: DdiReqHdr {
-            op: DdiOp::DerKeyImport,
-            sess_id: Some(sess_id),
-            rev: Some(DdiApiRev { major: 1, minor: 0 }),
-        },
-        data: DdiDerKeyImportReq {
-            der: MborByteArray::new(der, der_len).expect("failed to create byte array"),
-            key_class,
-            key_tag: None,
-            key_properties: helper_key_properties(key_usage, DdiKeyAvailability::App),
-        },
-        ext: None,
     };
-    let mut cookie = None;
-    let resp = dev.exec_op(&req, &mut cookie);
+
+    let resp = rsa_secure_import_key(
+        dev,
+        Some(sess_id),
+        Some(DdiApiRev { major: 1, minor: 0 }),
+        rsa_priv_key,
+        DdiKeyClass::Rsa,
+        key_usage,
+        key_tag,
+    );
 
     assert!(resp.is_ok(), "resp {:?}", resp);
 
@@ -516,32 +737,20 @@ pub fn store_rsa_keys_crt(
     let key_id_rsa_priv_crt = resp.data.key_id;
     let key_rsa_pub = resp.data.pub_key.unwrap();
 
-    (key_rsa_pub, key_id_rsa_priv_crt)
+    (key_rsa_pub, key_id_rsa_priv_crt, resp.data.masked_key)
 }
 
 #[allow(dead_code)]
 pub fn store_aes_keys(dev: &mut <DdiTest as Ddi>::Dev, sess_id: u16) -> u16 {
-    let mut der = [0u8; 3072];
-    der[..TEST_AES_256.len()].copy_from_slice(&TEST_AES_256);
-    let req = DdiDerKeyImportCmdReq {
-        hdr: DdiReqHdr {
-            op: DdiOp::DerKeyImport,
-            sess_id: Some(sess_id),
-            rev: Some(DdiApiRev { major: 1, minor: 0 }),
-        },
-        data: DdiDerKeyImportReq {
-            der: MborByteArray::new(der, TEST_AES_256.len()).expect("failed to create byte array"),
-            key_class: DdiKeyClass::Aes,
-            key_tag: None,
-            key_properties: helper_key_properties(
-                DdiKeyUsage::EncryptDecrypt,
-                DdiKeyAvailability::App,
-            ),
-        },
-        ext: None,
-    };
-    let mut cookie = None;
-    let resp = dev.exec_op(&req, &mut cookie);
+    let resp = rsa_secure_import_key(
+        dev,
+        Some(sess_id),
+        Some(DdiApiRev { major: 1, minor: 0 }),
+        &TEST_AES_256,
+        DdiKeyClass::Aes,
+        DdiKeyUsage::EncryptDecrypt,
+        None,
+    );
     assert!(resp.is_ok(), "resp {:?}", resp);
     let resp = resp.unwrap();
 
@@ -553,17 +762,18 @@ pub fn store_aes_keys(dev: &mut <DdiTest as Ddi>::Dev, sess_id: u16) -> u16 {
 pub fn ecc_gen_key_mcr(
     dev: &mut <DdiTest as Ddi>::Dev,
     curve: DdiEccCurve,
-    session_id: u16,
+    key_tag: Option<u16>,
+    session_id: Option<u16>,
     key_usage: DdiKeyUsage,
-) -> (u16, DdiDerPublicKey) {
+) -> (u16, DdiDerPublicKey, MborByteArray<3072>) {
     let key_props = helper_key_properties(key_usage, DdiKeyAvailability::App);
 
     let resp = helper_ecc_generate_key_pair(
         dev,
-        Some(session_id),
+        session_id,
         Some(DdiApiRev { major: 1, minor: 0 }),
         curve,
-        None,
+        key_tag,
         key_props,
     );
 
@@ -572,30 +782,27 @@ pub fn ecc_gen_key_mcr(
 
     assert!(resp.data.pub_key.is_some());
 
-    (resp.data.private_key_id, resp.data.pub_key.unwrap())
+    (
+        resp.data.private_key_id,
+        resp.data.pub_key.unwrap(),
+        resp.data.masked_key,
+    )
 }
 
 /// Helper to perform the get unwrapping command execution using mcr device.
 #[allow(unused)]
-pub fn get_unwrapping_key(dev: &mut <DdiTest as Ddi>::Dev, sess_id: u16) -> (u16, Vec<u8>) {
-    let req = DdiGetUnwrappingKeyCmdReq {
-        hdr: DdiReqHdr {
-            op: DdiOp::GetUnwrappingKey,
-            sess_id: Some(sess_id),
-            rev: Some(DdiApiRev { major: 1, minor: 0 }),
-        },
-        data: DdiGetUnwrappingKeyReq {},
-        ext: None,
-    };
-    let mut cookie = None;
-
+pub fn get_unwrapping_key(
+    dev: &mut <DdiTest as Ddi>::Dev,
+    sess_id: u16,
+) -> (u16, Vec<u8>, MborByteArray<1024>) {
     // If key is not found, re-check for key once every 5 seconds for up to 30 minutes.
     let mut timeout_s = 30 * 60;
     let interval_s = 5;
     loop {
         assert!(timeout_s > 0, "Unwrapping key generation took too long");
 
-        let resp = dev.exec_op(&req, &mut cookie);
+        let resp =
+            helper_get_unwrapping_key(dev, Some(sess_id), Some(DdiApiRev { major: 1, minor: 0 }));
 
         if let Err(err) = resp {
             assert!(
@@ -614,10 +821,12 @@ pub fn get_unwrapping_key(dev: &mut <DdiTest as Ddi>::Dev, sess_id: u16) -> (u16
         }
         assert!(resp.is_ok(), "resp {:?}", resp);
         let resp = resp.unwrap();
+        assert!(!resp.data.masked_key.is_empty());
 
         return (
             resp.data.key_id,
-            resp.data.pub_key.der.data()[..resp.data.pub_key.der.len()].to_vec(),
+            resp.data.pub_key.der.as_slice().to_vec(),
+            resp.data.masked_key,
         );
     }
 }
@@ -941,15 +1150,20 @@ pub fn generate_aes_bulk_256_key(
     dev: &<DdiTest as Ddi>::Dev,
     app_sess_id: &u16,
     key_tag: Option<u16>,
+    aes_key_size: DdiAesKeySize,
 ) -> Result<DdiAesGenerateKeyCmdResp, DdiError> {
     // generate AES 256 bulk key
     let key_props = helper_key_properties(DdiKeyUsage::EncryptDecrypt, DdiKeyAvailability::App);
+
+    if !aes_key_size.is_bulk_key() {
+        panic!("aes_key_size is not a bulk key size");
+    }
 
     helper_aes_generate(
         dev,
         Some(*app_sess_id),
         Some(DdiApiRev { major: 1, minor: 0 }),
-        DdiAesKeySize::AesBulk256,
+        aes_key_size,
         key_tag,
         key_props,
     )
@@ -975,7 +1189,7 @@ pub fn set_test_action(ddi: &DdiTest, path: &str, action: DdiTestAction) -> bool
     let _ = helper_common_establish_credential_no_unwrap(&mut dev, TEST_CRED_ID, TEST_CRED_PIN);
 
     let (encrypted_credential, pub_key) =
-        encrypt_userid_pin_for_open_session(&dev, TEST_CRED_ID, TEST_CRED_PIN);
+        encrypt_userid_pin_for_open_session(&dev, TEST_CRED_ID, TEST_CRED_PIN, TEST_SESSION_SEED);
 
     let resp = helper_open_session(
         &dev,
@@ -1038,7 +1252,7 @@ pub fn reopen_session_with_short_app_id(
     set_device_kind(dev);
 
     let (encrypted_credential, pub_key) =
-        encrypt_userid_pin_for_open_session(dev, TEST_CRED_ID, TEST_CRED_PIN);
+        encrypt_userid_pin_for_open_session(dev, TEST_CRED_ID, TEST_CRED_PIN, TEST_SESSION_SEED);
 
     let resp = helper_open_session(
         dev,
@@ -1078,6 +1292,17 @@ pub fn crypto_sha512(data: &[u8]) -> Vec<u8> {
 pub fn is_unsupported_cmd(err: &DdiError) -> bool {
     if let DdiError::DdiStatus(DdiStatus::UnsupportedCmd) = err {
         println!("Firmware is not built with fips_validation_hooks.");
+        true
+    } else {
+        false
+    }
+}
+
+/// Helper to check if firmware was not build with mcr_test_hooks
+#[allow(dead_code)]
+pub fn firmware_not_built_with_test_hooks(err: &DdiError) -> bool {
+    if let DdiError::DdiStatus(DdiStatus::UnsupportedCmd) = err {
+        println!("Firmware is not built with mcr_test_hooks.");
         true
     } else {
         false
@@ -1878,18 +2103,7 @@ pub fn open_dev_and_set_device_kind(ddi: &DdiTest, path: &str) -> <DdiTest as Dd
 #[cfg(test)]
 #[allow(dead_code)]
 pub fn is_fips_approved_module(dev: &mut <DdiTest as Ddi>::Dev) -> bool {
-    let req = DdiGetDeviceInfoCmdReq {
-        hdr: DdiReqHdr {
-            op: DdiOp::GetDeviceInfo,
-            sess_id: None,
-            rev: Some(DdiApiRev { major: 1, minor: 0 }),
-        },
-        data: DdiGetDeviceInfoReq {},
-        ext: None,
-    };
-
-    let mut cookie = None;
-    let resp = dev.exec_op(&req, &mut cookie).unwrap();
+    let resp = helper_get_device_info(dev, None, Some(DdiApiRev { major: 1, minor: 0 })).unwrap();
     assert_eq!(resp.hdr.op, DdiOp::GetDeviceInfo);
     assert!(resp.hdr.rev.is_some());
     assert!(resp.hdr.sess_id.is_none());

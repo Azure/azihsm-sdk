@@ -247,20 +247,25 @@ impl TableInner {
 
         entry.set_disabled();
 
-        tracing::debug!(index, sess_id = ?entry.sess_id(), key_tag = ?entry.key_tag(), "Entry removed");
+        tracing::debug!(index, sess_id = ?entry.physical_sess_id(), key_tag = ?entry.key_tag(), "Entry removed");
         self.used_bytes -= entry.size();
         self.entries[index as usize] = None;
         Ok(())
     }
 
-    fn remove_all_session_only_keys(&mut self, app_session_id: u16) -> Result<u16, ManticoreError> {
+    fn remove_all_session_only_keys(
+        &mut self,
+        app_physical_sess_id: u16,
+    ) -> Result<u16, ManticoreError> {
         let indexes: Vec<u8> = self
             .entries
             .iter()
             .enumerate()
             .filter_map(|(i, e)| {
                 if let Some(entry) = e {
-                    if entry.session_only() && entry.sess_id() == Some(app_session_id) {
+                    if entry.session_only()
+                        && entry.physical_sess_id() == Some(app_physical_sess_id)
+                    {
                         return Some(i as u8);
                     }
                 }

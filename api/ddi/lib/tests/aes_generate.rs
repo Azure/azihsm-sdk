@@ -32,22 +32,15 @@ fn test_aes_generate_malformed_ddi() {
             }
 
             {
-                let req = DdiRsaModExpCmdReq {
-                    hdr: DdiReqHdr {
-                        op: DdiOp::AesGenerateKey,
-                        sess_id: Some(session_id),
-                        rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                    },
-                    data: DdiRsaModExpReq {
-                        key_id: 0x1,
-                        y: MborByteArray::from_slice(&[0x1; 32])
-                            .expect("failed to create byte array"),
-                        op_type: DdiRsaOpType::Sign,
-                    },
-                    ext: None,
-                };
-                let mut cookie = None;
-                let resp = dev.exec_op(&req, &mut cookie);
+                let resp = helper_rsa_mod_exp_op(
+                    dev,
+                    DdiOp::AesGenerateKey,
+                    Some(session_id),
+                    Some(DdiApiRev { major: 1, minor: 0 }),
+                    0x1,
+                    MborByteArray::from_slice(&[0x1; 32]).expect("failed to create byte array"),
+                    DdiRsaOpType::Sign,
+                );
 
                 assert!(resp.is_err(), "resp {:?}", resp);
                 assert!(matches!(
@@ -209,7 +202,7 @@ fn test_aes_generate() {
 }
 
 #[test]
-fn test_aes_bulk_generate_with_rollback_error() {
+fn test_aes_xts_bulk_generate_with_rollback_error() {
     ddi_dev_test(
         common_setup,
         common_cleanup,
@@ -231,8 +224,12 @@ fn test_aes_bulk_generate_with_rollback_error() {
                 return;
             }
 
-            let (encrypted_credential, pub_key) =
-                encrypt_userid_pin_for_open_session(dev, TEST_CRED_ID, TEST_CRED_PIN);
+            let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                dev,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                TEST_SESSION_SEED,
+            );
 
             let resp = helper_open_session(
                 dev,
@@ -245,7 +242,12 @@ fn test_aes_bulk_generate_with_rollback_error() {
             let resp = resp.unwrap();
             let app_sess_id = resp.data.sess_id;
 
-            match generate_aes_bulk_256_key(dev, &app_sess_id, Some(3354)) {
+            match generate_aes_bulk_256_key(
+                dev,
+                &app_sess_id,
+                Some(3354),
+                DdiAesKeySize::AesXtsBulk256,
+            ) {
                 Err(DdiError::DdiStatus(DdiStatus::InvalidKeyType)) => (),
                 Err(err) => panic!("Unexpected error code: {:?}", err),
                 Ok(_) => panic!("Unexpected success response"),
@@ -262,7 +264,7 @@ fn test_aes_bulk_generate_with_rollback_error() {
 }
 
 #[test]
-fn test_aes_bulk_generate_with_rollback_after_exhaust_keys() {
+fn test_aes_bulk_mixed_generate_with_rollback_after_exhaust_keys() {
     ddi_dev_test(
         common_setup,
         common_cleanup,
@@ -276,7 +278,12 @@ fn test_aes_bulk_generate_with_rollback_after_exhaust_keys() {
             let mut key_id = 0;
             // Exhaust the key vault with App keys
             loop {
-                match generate_aes_bulk_256_key(dev, &session_id, Some(key_tag)) {
+                match generate_aes_bulk_256_key(
+                    dev,
+                    &session_id,
+                    Some(key_tag),
+                    DdiAesKeySize::AesGcmBulk256Unapproved,
+                ) {
                     Err(DdiError::DdiStatus(DdiStatus::ReachedMaxAesBulkKeys)) => break,
                     Err(err) => panic!("Unexpected error code: {:?}", err),
                     Ok(val) => key_id = val.data.key_id,
@@ -306,8 +313,12 @@ fn test_aes_bulk_generate_with_rollback_after_exhaust_keys() {
                 return;
             }
 
-            let (encrypted_credential, pub_key) =
-                encrypt_userid_pin_for_open_session(dev, TEST_CRED_ID, TEST_CRED_PIN);
+            let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                dev,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                TEST_SESSION_SEED,
+            );
 
             let resp = helper_open_session(
                 dev,
@@ -322,16 +333,31 @@ fn test_aes_bulk_generate_with_rollback_after_exhaust_keys() {
             let resp = resp.unwrap();
             let app_sess_id = resp.data.sess_id;
 
-            match generate_aes_bulk_256_key(dev, &app_sess_id, Some(3354)) {
+            match generate_aes_bulk_256_key(
+                dev,
+                &app_sess_id,
+                Some(3354),
+                DdiAesKeySize::AesXtsBulk256,
+            ) {
                 Err(DdiError::DdiStatus(DdiStatus::InvalidKeyType)) => (),
                 Err(err) => panic!("Unexpected error code: {:?}", err),
                 Ok(_) => panic!("Unexpected success response"),
             }
 
-            let resp = generate_aes_bulk_256_key(dev, &app_sess_id, Some(3355));
+            let resp = generate_aes_bulk_256_key(
+                dev,
+                &app_sess_id,
+                Some(3355),
+                DdiAesKeySize::AesGcmBulk256Unapproved,
+            );
             assert!(resp.is_ok(), "resp: {:?}", resp);
 
-            match generate_aes_bulk_256_key(dev, &app_sess_id, Some(3356)) {
+            match generate_aes_bulk_256_key(
+                dev,
+                &app_sess_id,
+                Some(3356),
+                DdiAesKeySize::AesGcmBulk256Unapproved,
+            ) {
                 Err(DdiError::DdiStatus(DdiStatus::ReachedMaxAesBulkKeys)) => (),
                 Err(err) => panic!("Unexpected error code: {:?}", err),
                 Ok(_) => panic!("Unexpected success response"),
@@ -348,7 +374,7 @@ fn test_aes_bulk_generate_with_rollback_after_exhaust_keys() {
 }
 
 #[test]
-fn test_aes_bulk_generate_with_rollback_error_after_dma_out() {
+fn test_aes_xts_bulk_generate_with_rollback_error_after_dma_out() {
     ddi_dev_test(
         common_setup,
         common_cleanup,
@@ -370,8 +396,12 @@ fn test_aes_bulk_generate_with_rollback_error_after_dma_out() {
                 return;
             }
 
-            let (encrypted_credential, pub_key) =
-                encrypt_userid_pin_for_open_session(dev, TEST_CRED_ID, TEST_CRED_PIN);
+            let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                dev,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                TEST_SESSION_SEED,
+            );
 
             let resp = helper_open_session(
                 dev,
@@ -386,7 +416,12 @@ fn test_aes_bulk_generate_with_rollback_error_after_dma_out() {
             let resp = resp.unwrap();
             let app_sess_id = resp.data.sess_id;
 
-            match generate_aes_bulk_256_key(dev, &app_sess_id, Some(3354)) {
+            match generate_aes_bulk_256_key(
+                dev,
+                &app_sess_id,
+                Some(3354),
+                DdiAesKeySize::AesXtsBulk256,
+            ) {
                 Err(DdiError::DdiError(201)) => (),
                 Err(err) => panic!("Unexpected error code: {:?}", err),
                 Ok(_) => panic!("Unexpected success response"),
@@ -403,7 +438,7 @@ fn test_aes_bulk_generate_with_rollback_error_after_dma_out() {
 }
 
 #[test]
-fn test_aes_bulk_generate_with_rollback_error_after_dma_out_after_exhaust_keys() {
+fn test_aes_bulk_mixed_generate_with_rollback_error_after_dma_out_after_exhaust_keys() {
     ddi_dev_test(
         common_setup,
         common_cleanup,
@@ -417,7 +452,12 @@ fn test_aes_bulk_generate_with_rollback_error_after_dma_out_after_exhaust_keys()
             let mut key_id = 0;
             // Exhaust the key vault with App keys
             loop {
-                match generate_aes_bulk_256_key(dev, &session_id, Some(key_tag)) {
+                match generate_aes_bulk_256_key(
+                    dev,
+                    &session_id,
+                    Some(key_tag),
+                    DdiAesKeySize::AesGcmBulk256Unapproved,
+                ) {
                     Err(DdiError::DdiStatus(DdiStatus::ReachedMaxAesBulkKeys)) => break,
                     Err(err) => panic!("Unexpected error code: {:?}", err),
                     Ok(val) => key_id = val.data.key_id,
@@ -447,8 +487,12 @@ fn test_aes_bulk_generate_with_rollback_error_after_dma_out_after_exhaust_keys()
                 return;
             }
 
-            let (encrypted_credential, pub_key) =
-                encrypt_userid_pin_for_open_session(dev, TEST_CRED_ID, TEST_CRED_PIN);
+            let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                dev,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                TEST_SESSION_SEED,
+            );
 
             let resp = helper_open_session(
                 dev,
@@ -463,16 +507,31 @@ fn test_aes_bulk_generate_with_rollback_error_after_dma_out_after_exhaust_keys()
             let resp = resp.unwrap();
             let app_sess_id = resp.data.sess_id;
 
-            match generate_aes_bulk_256_key(dev, &app_sess_id, Some(3354)) {
+            match generate_aes_bulk_256_key(
+                dev,
+                &app_sess_id,
+                Some(3354),
+                DdiAesKeySize::AesXtsBulk256,
+            ) {
                 Err(DdiError::DdiError(201)) => (),
                 Err(err) => panic!("Unexpected error code: {:?}", err),
                 Ok(_) => panic!("Unexpected success response"),
             }
 
-            let resp = generate_aes_bulk_256_key(dev, &app_sess_id, Some(3355));
+            let resp = generate_aes_bulk_256_key(
+                dev,
+                &app_sess_id,
+                Some(3355),
+                DdiAesKeySize::AesGcmBulk256Unapproved,
+            );
             assert!(resp.is_ok(), "resp: {:?}", resp);
 
-            match generate_aes_bulk_256_key(dev, &app_sess_id, Some(3356)) {
+            match generate_aes_bulk_256_key(
+                dev,
+                &app_sess_id,
+                Some(3356),
+                DdiAesKeySize::AesGcmBulk256Unapproved,
+            ) {
                 Err(DdiError::DdiStatus(DdiStatus::ReachedMaxAesBulkKeys)) => (),
                 Err(err) => panic!("Unexpected error code: {:?}", err),
                 Ok(_) => panic!("Unexpected success response"),
@@ -489,7 +548,7 @@ fn test_aes_bulk_generate_with_rollback_error_after_dma_out_after_exhaust_keys()
 }
 
 #[test]
-fn test_aes_bulk_generate_with_rollback_error_after_dma_end() {
+fn test_aes_xts_bulk_generate_with_rollback_error_after_dma_end() {
     ddi_dev_test(
         common_setup,
         common_cleanup,
@@ -511,8 +570,12 @@ fn test_aes_bulk_generate_with_rollback_error_after_dma_end() {
                 return;
             }
 
-            let (encrypted_credential, pub_key) =
-                encrypt_userid_pin_for_open_session(dev, TEST_CRED_ID, TEST_CRED_PIN);
+            let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                dev,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                TEST_SESSION_SEED,
+            );
 
             let resp = helper_open_session(
                 dev,
@@ -527,7 +590,12 @@ fn test_aes_bulk_generate_with_rollback_error_after_dma_end() {
             let resp = resp.unwrap();
             let app_sess_id = resp.data.sess_id;
 
-            match generate_aes_bulk_256_key(dev, &app_sess_id, Some(3354)) {
+            match generate_aes_bulk_256_key(
+                dev,
+                &app_sess_id,
+                Some(3354),
+                DdiAesKeySize::AesXtsBulk256,
+            ) {
                 Err(DdiError::DdiError(198)) => (),
                 Err(err) => panic!("Unexpected error code: {:?}", err),
                 Ok(_) => panic!("Unexpected success response"),
@@ -544,7 +612,7 @@ fn test_aes_bulk_generate_with_rollback_error_after_dma_end() {
 }
 
 #[test]
-fn test_aes_bulk_generate_with_rollback_error_after_dma_end_after_exhaust_keys() {
+fn test_aes_bulk_mixed_generate_with_rollback_error_after_dma_end_after_exhaust_keys() {
     ddi_dev_test(
         common_setup,
         common_cleanup,
@@ -558,7 +626,12 @@ fn test_aes_bulk_generate_with_rollback_error_after_dma_end_after_exhaust_keys()
             let mut key_id = 0;
             // Exhaust the key vault with App keys
             loop {
-                match generate_aes_bulk_256_key(dev, &session_id, Some(key_tag)) {
+                match generate_aes_bulk_256_key(
+                    dev,
+                    &session_id,
+                    Some(key_tag),
+                    DdiAesKeySize::AesGcmBulk256Unapproved,
+                ) {
                     Err(DdiError::DdiStatus(DdiStatus::ReachedMaxAesBulkKeys)) => break,
                     Err(err) => panic!("Unexpected error code: {:?}", err),
                     Ok(val) => key_id = val.data.key_id,
@@ -588,8 +661,12 @@ fn test_aes_bulk_generate_with_rollback_error_after_dma_end_after_exhaust_keys()
                 return;
             }
 
-            let (encrypted_credential, pub_key) =
-                encrypt_userid_pin_for_open_session(dev, TEST_CRED_ID, TEST_CRED_PIN);
+            let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                dev,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                TEST_SESSION_SEED,
+            );
 
             let resp = helper_open_session(
                 dev,
@@ -604,16 +681,31 @@ fn test_aes_bulk_generate_with_rollback_error_after_dma_end_after_exhaust_keys()
             let resp = resp.unwrap();
             let app_sess_id = resp.data.sess_id;
 
-            match generate_aes_bulk_256_key(dev, &app_sess_id, Some(3354)) {
+            match generate_aes_bulk_256_key(
+                dev,
+                &app_sess_id,
+                Some(3354),
+                DdiAesKeySize::AesXtsBulk256,
+            ) {
                 Err(DdiError::DdiError(198)) => (),
                 Err(err) => panic!("Unexpected error code: {:?}", err),
                 Ok(_) => panic!("Unexpected success response"),
             }
 
-            let resp = generate_aes_bulk_256_key(dev, &app_sess_id, Some(3355));
+            let resp = generate_aes_bulk_256_key(
+                dev,
+                &app_sess_id,
+                Some(3355),
+                DdiAesKeySize::AesGcmBulk256Unapproved,
+            );
             assert!(resp.is_ok(), "resp: {:?}", resp);
 
-            match generate_aes_bulk_256_key(dev, &app_sess_id, Some(3356)) {
+            match generate_aes_bulk_256_key(
+                dev,
+                &app_sess_id,
+                Some(3356),
+                DdiAesKeySize::AesGcmBulk256Unapproved,
+            ) {
                 Err(DdiError::DdiStatus(DdiStatus::ReachedMaxAesBulkKeys)) => (),
                 Err(err) => panic!("Unexpected error code: {:?}", err),
                 Ok(_) => panic!("Unexpected success response"),
@@ -625,6 +717,163 @@ fn test_aes_bulk_generate_with_rollback_error_after_dma_end_after_exhaust_keys()
                 Some(DdiApiRev { major: 1, minor: 0 }),
             );
             assert!(resp.is_ok(), "{:?}", resp);
+        },
+    );
+}
+
+// Unmask the key in DdiAesGenerateKeyResp
+#[test]
+fn test_aes_generate_and_unmask() {
+    ddi_dev_test(
+        common_setup,
+        common_cleanup,
+        |dev, _ddi, _path, session_id| {
+            // Run this test only for Mock device
+            if get_device_kind(dev) != DdiDeviceKind::Virtual {
+                println!("Unmask key Not supported for Physical Device.");
+                return;
+            }
+
+            let key_props =
+                helper_key_properties(DdiKeyUsage::EncryptDecrypt, DdiKeyAvailability::App);
+
+            let resp = helper_aes_generate(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                DdiAesKeySize::Aes128,
+                None,
+                key_props,
+            );
+
+            assert!(resp.is_ok(), "resp {:?}", resp);
+            let data = resp.unwrap().data;
+
+            let original_key_id = data.key_id;
+
+            let masked_key = data.masked_key;
+            assert!(!masked_key.is_empty());
+
+            // Import/unmask the key
+            let resp = helper_unmask_key(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                masked_key,
+            );
+            assert!(resp.is_ok(), "resp {:?}", resp);
+            let data = resp.unwrap().data;
+            let unmasked_key_id = data.key_id;
+            assert_ne!(unmasked_key_id, original_key_id);
+
+            // Use the two keys to AES encrypt/decrypt
+            let raw_msg = [1u8; 512];
+            let msg_len = raw_msg.len();
+            let mut msg = [0u8; 1024];
+            msg[..msg_len].clone_from_slice(&raw_msg);
+
+            let resp = helper_aes_encrypt_decrypt(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                original_key_id,
+                DdiAesOp::Encrypt,
+                MborByteArray::new([0x1; 1024], msg_len).expect("failed to create byte array"),
+                MborByteArray::new([0x0; 16], 16).expect("failed to create byte array"),
+            );
+
+            assert!(resp.is_ok(), "resp {:?}", resp);
+            let resp = resp.unwrap();
+
+            let resp = helper_aes_encrypt_decrypt(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                unmasked_key_id,
+                DdiAesOp::Decrypt,
+                MborByteArray::new(resp.data.msg.data_take(), resp.data.msg.len())
+                    .expect("failed to create byte array"),
+                MborByteArray::new([0x0; 16], 16).expect("failed to create byte array"),
+            );
+
+            assert!(resp.is_ok(), "resp {:?}", resp);
+            let resp = resp.unwrap();
+
+            assert_eq!(resp.data.msg.data_take(), msg);
+            assert_eq!(resp.data.msg.len(), msg_len);
+        },
+    );
+}
+
+#[test]
+fn test_aes_generate_and_unmask_tampered() {
+    ddi_dev_test(
+        common_setup,
+        common_cleanup,
+        |dev, _ddi, _path, session_id| {
+            // Run this test only for Mock device
+            if get_device_kind(dev) != DdiDeviceKind::Virtual {
+                println!("Unmask key Not supported for Physical Device.");
+                return;
+            }
+
+            let key_props =
+                helper_key_properties(DdiKeyUsage::EncryptDecrypt, DdiKeyAvailability::App);
+
+            let resp = helper_aes_generate(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                DdiAesKeySize::Aes128,
+                None,
+                key_props,
+            );
+
+            assert!(resp.is_ok(), "resp {:?}", resp);
+            let data = resp.unwrap().data;
+
+            // Tamper
+            {
+                let mut masked_key = data.masked_key;
+
+                masked_key.data_mut()[0] = masked_key.data_mut()[0].wrapping_add(1);
+
+                // Import/unmask the key
+                let resp = helper_unmask_key(
+                    dev,
+                    Some(session_id),
+                    Some(DdiApiRev { major: 1, minor: 0 }),
+                    masked_key,
+                );
+
+                assert!(resp.is_err(), "resp {:?}", resp);
+                assert!(matches!(
+                    resp.unwrap_err(),
+                    DdiError::DdiStatus(DdiStatus::MaskedKeyDecodeFailed)
+                ));
+            }
+
+            // Truncate
+            {
+                let masked_key = data.masked_key;
+                let data = masked_key.data_take();
+                let masked_key =
+                    MborByteArray::new(data, data.len() / 10).expect("failed to create byte array");
+
+                // Import/unmask the key
+                let resp = helper_unmask_key(
+                    dev,
+                    Some(session_id),
+                    Some(DdiApiRev { major: 1, minor: 0 }),
+                    masked_key,
+                );
+
+                assert!(resp.is_err(), "resp {:?}", resp);
+                assert!(matches!(
+                    resp.unwrap_err(),
+                    DdiError::DdiStatus(DdiStatus::MaskedKeyDecodeFailed)
+                ));
+            }
         },
     );
 }

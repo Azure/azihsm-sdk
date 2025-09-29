@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use engine_common::handle_table::Handle;
-use mcr_api::*;
+use mcr_api_resilient::*;
 use openssl_rust::safeapi::error::*;
 use openssl_rust::safeapi::evp_pkey::callback::hkdf::*;
 use parking_lot::RwLock;
@@ -122,10 +122,16 @@ impl HkdfData {
 
     pub fn set_key_type(&self, aes_type: AesType) -> OpenSSLResult<()> {
         match aes_type {
-            cbc_mode!() | AesType::Aes256Gcm => {
+            cbc_mode!() => {
                 self.0.write().key_type = Some(aes_type);
                 Ok(())
             }
+            #[cfg(feature = "gcm")]
+            AesType::Aes256Gcm => {
+                self.0.write().key_type = Some(aes_type);
+                Ok(())
+            }
+            #[cfg(feature = "xts")]
             _ => Err(OpenSSLError::HkdfUnsupportedKeyType(aes_type.nid()))?,
         }
     }

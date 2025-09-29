@@ -24,6 +24,26 @@ fn test_ddiop_to_sessioncontrolkind() {
         Into::<SessionControlKind>::into(DdiOp::GetSessionEncryptionKey),
         SessionControlKind::NoSession
     );
+    assert_eq!(
+        Into::<SessionControlKind>::into(DdiOp::GetCertChainInfo),
+        SessionControlKind::NoSession
+    );
+    assert_eq!(
+        Into::<SessionControlKind>::into(DdiOp::GetCertificate),
+        SessionControlKind::NoSession
+    );
+    assert_eq!(
+        Into::<SessionControlKind>::into(DdiOp::InitBk3),
+        SessionControlKind::NoSession
+    );
+    assert_eq!(
+        Into::<SessionControlKind>::into(DdiOp::GetSealedBk3),
+        SessionControlKind::NoSession
+    );
+    assert_eq!(
+        Into::<SessionControlKind>::into(DdiOp::SetSealedBk3),
+        SessionControlKind::NoSession
+    );
 
     assert_eq!(
         Into::<SessionControlKind>::into(DdiOp::OpenSession),
@@ -53,10 +73,6 @@ fn test_ddiop_to_sessioncontrolkind() {
     );
     assert_eq!(
         Into::<SessionControlKind>::into(DdiOp::AttestKey),
-        SessionControlKind::InSession
-    );
-    assert_eq!(
-        Into::<SessionControlKind>::into(DdiOp::GetCollateral),
         SessionControlKind::InSession
     );
     assert_eq!(
@@ -101,6 +117,10 @@ fn test_ddiop_to_sessioncontrolkind() {
     );
     assert_eq!(
         Into::<SessionControlKind>::into(DdiOp::ChangePin),
+        SessionControlKind::InSession
+    );
+    assert_eq!(
+        Into::<SessionControlKind>::into(DdiOp::ProvisionPart),
         SessionControlKind::InSession
     );
 }

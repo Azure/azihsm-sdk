@@ -3,7 +3,11 @@
 mod common;
 
 #[cfg(feature = "testhooks")]
+#[cfg(not(feature = "resilient"))]
 use mcr_api::*;
+#[cfg(feature = "testhooks")]
+#[cfg(feature = "resilient")]
+use mcr_api_resilient::*;
 #[cfg(feature = "testhooks")]
 use test_with_tracing::test;
 
@@ -29,7 +33,7 @@ fn test_rsa_unwrap_after_close_session() {
             KeyClass::Rsa,
             None,
             KeyProperties {
-                key_usage: KeyUsage::WrapUnwrap,
+                key_usage: KeyUsage::Unwrap,
                 key_availability: KeyAvailability::Session,
             },
         );
@@ -82,7 +86,7 @@ fn test_rsa_unwrap_multiple_times() {
             KeyClass::Rsa,
             None,
             KeyProperties {
-                key_usage: KeyUsage::WrapUnwrap,
+                key_usage: KeyUsage::Unwrap,
                 key_availability: KeyAvailability::Session,
             },
         );
@@ -144,7 +148,7 @@ fn test_rsa_unwrap_non_rsa_imported_key() {
             KeyClass::Ecc,
             None,
             KeyProperties {
-                key_usage: KeyUsage::WrapUnwrap,
+                key_usage: KeyUsage::Unwrap,
                 key_availability: KeyAvailability::Session,
             },
         );
@@ -194,7 +198,7 @@ fn test_rsa_unwrap() {
             KeyClass::Rsa,
             None,
             KeyProperties {
-                key_usage: KeyUsage::WrapUnwrap,
+                key_usage: KeyUsage::Unwrap,
                 key_availability: KeyAvailability::Session,
             },
         );
@@ -245,7 +249,7 @@ fn test_rsa_unwrap_mismtached_unwrap_key_type() {
             KeyClass::Rsa,
             None,
             KeyProperties {
-                key_usage: KeyUsage::WrapUnwrap,
+                key_usage: KeyUsage::Unwrap,
                 key_availability: KeyAvailability::Session,
             },
         );
@@ -294,7 +298,7 @@ fn test_rsa_unwrap_tampered_wrapped_blob() {
             KeyClass::Rsa,
             None,
             KeyProperties {
-                key_usage: KeyUsage::WrapUnwrap,
+                key_usage: KeyUsage::Unwrap,
                 key_availability: KeyAvailability::Session,
             },
         );
@@ -345,7 +349,7 @@ fn test_rsa_unwrap_non_sha1() {
             KeyClass::Rsa,
             None,
             KeyProperties {
-                key_usage: KeyUsage::WrapUnwrap,
+                key_usage: KeyUsage::Unwrap,
                 key_availability: KeyAvailability::Session,
             },
         );

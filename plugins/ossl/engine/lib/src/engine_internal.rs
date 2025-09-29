@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use lazy_static::lazy_static;
-use mcr_api::*;
+use mcr_api_resilient::*;
 use openssl_rust::safeapi::error::*;
 use parking_lot::RwLock;
 use uuid::Uuid;

@@ -31,6 +31,7 @@ arbitrary = { workspace = true, optional = true }
 
 [dev-dependencies]
 mcr_ddi_sim.workspace = true
+mcr_api_resilient.workspace = true
 rand.workspace = true
 sec1.workspace = true
 spki.workspace = true
@@ -46,10 +47,13 @@ default = []
 mock = ["mcr_ddi_mock"]
 use-openssl = ["crypto/use-openssl", "mcr_ddi_mock/use-openssl", "mcr_ddi_sim/use-openssl"]
 use-symcrypt = ["crypto/use-symcrypt", "mcr_ddi_mock/use-symcrypt", "mcr_ddi_sim/use-symcrypt"]
-testhooks = []
+testhooks = ["mcr_api_resilient/testhooks"]
 table-4 = ["mcr_ddi_mock/table-4"]
 table-64 = ["mcr_ddi_mock/table-64"]
 fuzzing = ["arbitrary"]
+
+# This feature determines whether tests exercise `mcr_api` or `mcr_api_resilient`
+resilient = []
 
 [lints]
 workspace = true

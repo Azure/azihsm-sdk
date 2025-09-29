@@ -2,14 +2,14 @@
 use std::mem;
 use std::sync::Arc;
 
-use mcr_api::DigestKind;
-use mcr_api::HsmKeyHandle;
-use mcr_api::HsmSession;
-use mcr_api::KeyClass;
-use mcr_api::KeyType;
-use mcr_api::KeyUsage;
-use mcr_api::RsaCryptoPadding;
-use mcr_api::RsaSignaturePadding;
+use mcr_api_resilient::DigestKind;
+use mcr_api_resilient::HsmKeyHandle;
+use mcr_api_resilient::HsmSession;
+use mcr_api_resilient::KeyClass;
+use mcr_api_resilient::KeyType;
+use mcr_api_resilient::KeyUsage;
+use mcr_api_resilient::RsaCryptoPadding;
+use mcr_api_resilient::RsaSignaturePadding;
 use parking_lot::RwLock;
 use winapi::shared::winerror::ERROR_INVALID_DATA;
 use winapi::shared::winerror::ERROR_INVALID_STATE;
@@ -378,7 +378,7 @@ impl RsaKey {
                 } else if (key_usage & NCRYPT_ALLOW_SIGNING_FLAG) != 0 {
                     self.set_key_usage(KeyUsage::SignVerify)?;
                 } else if (key_usage & NCRYPT_ALLOW_KEY_IMPORT_FLAG) != 0 {
-                    self.set_key_usage(KeyUsage::WrapUnwrap)?;
+                    self.set_key_usage(KeyUsage::Unwrap)?;
                 } else {
                     tracing::error!("Invalid KeyUsage value");
                     Err(HRESULT(E_INVALIDARG))?;
@@ -447,7 +447,7 @@ impl RsaKey {
                 let key_usage = match self.key_usage() {
                     Some(KeyUsage::EncryptDecrypt) => NCRYPT_ALLOW_DECRYPT_FLAG,
                     Some(KeyUsage::SignVerify) => NCRYPT_ALLOW_SIGNING_FLAG,
-                    Some(KeyUsage::WrapUnwrap) => NCRYPT_ALLOW_KEY_IMPORT_FLAG,
+                    Some(KeyUsage::Unwrap) => NCRYPT_ALLOW_KEY_IMPORT_FLAG,
                     _ => {
                         tracing::error!("Key usage is not set");
                         Err(HRESULT::from_win32(ERROR_INVALID_STATE))?

@@ -1,7 +1,7 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
 
 use api_interface::REPORT_DATA_SIZE;
-use mcr_api::*;
+use mcr_api_resilient::*;
 use openssl_rust::safeapi::error::OpenSSLResult;
 
 use crate::engine_internal::*;

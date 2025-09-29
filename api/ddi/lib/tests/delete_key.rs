@@ -123,7 +123,7 @@ fn test_delete_key_unwrapping_key() {
         common_setup,
         common_cleanup,
         |dev, _ddi, _path, session_id| {
-            let (unwrapping_key_id, _) = get_unwrapping_key(dev, session_id);
+            let (unwrapping_key_id, _, _) = get_unwrapping_key(dev, session_id);
 
             let resp = helper_delete_key(
                 dev,
@@ -220,27 +220,15 @@ fn test_import_delete_aesbulk256_key() {
             let max_keys = get_device_info(ddi, path).tables as u16 * 7;
             let mut key_ids = vec![];
             for i in 0..max_keys {
-                let mut der = [0u8; 3072];
-                der[..TEST_RSA_2K_PRIVATE_KEY.len()].copy_from_slice(&TEST_RSA_2K_PRIVATE_KEY);
-                let req = DdiDerKeyImportCmdReq {
-                    hdr: DdiReqHdr {
-                        op: DdiOp::DerKeyImport,
-                        sess_id: Some(session_id),
-                        rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                    },
-                    data: DdiDerKeyImportReq {
-                        der: MborByteArray::new(der, 32).expect("failed to create byte array"),
-                        key_class: DdiKeyClass::AesBulk,
-                        key_tag: Some(i + 1),
-                        key_properties: helper_key_properties(
-                            DdiKeyUsage::EncryptDecrypt,
-                            DdiKeyAvailability::App,
-                        ),
-                    },
-                    ext: None,
-                };
-                let mut cookie = None;
-                let resp = dev.exec_op(&req, &mut cookie);
+                let resp = rsa_secure_import_key(
+                    dev,
+                    Some(session_id),
+                    Some(DdiApiRev { major: 1, minor: 0 }),
+                    &TEST_RSA_2K_PRIVATE_KEY,
+                    DdiKeyClass::Rsa,
+                    DdiKeyUsage::EncryptDecrypt,
+                    Some(i + 1),
+                );
                 assert!(resp.is_ok(), "resp {:?}", resp);
                 key_ids.push(resp.unwrap().data.key_id);
             }

@@ -3,7 +3,7 @@
 #![warn(missing_docs)]
 #![forbid(unsafe_code)]
 
-//! Xtask to run various repo-specific clippy checks
+//! Xtask to run build
 
 use std::path::PathBuf;
 
@@ -13,10 +13,30 @@ use xshell::cmd;
 use crate::Xtask;
 use crate::XtaskCtx;
 
-/// Xtask to run various repo-specific clippy checks
+/// Xtask to run build
 #[derive(Parser)]
 #[clap(about = "Run build")]
-pub struct Build {}
+pub struct Build {
+    /// Whether to include --tests argument
+    #[clap(long)]
+    pub tests: bool,
+
+    /// Whether to include --all-targets argument
+    #[clap(long)]
+    pub all_targets: bool,
+
+    /// Whether to include --release argument
+    #[clap(long)]
+    pub release: bool,
+
+    /// Features to include in build
+    #[clap(long)]
+    pub features: Option<String>,
+
+    /// Package to build
+    #[clap(long)]
+    pub package: Option<String>,
+}
 
 impl Xtask for Build {
     fn run(self, _ctx: XtaskCtx) -> anyhow::Result<()> {
@@ -32,12 +52,38 @@ impl Xtask for Build {
         target_dir.push("target");
         target_dir.push("xtask");
 
-        cmd!(
-            sh,
-            "cargo {rust_toolchain...} build --features {crypto} --target-dir {target_dir}"
-        )
-        .quiet()
-        .run()?;
+        // convert xtask parameters into cargo command arguments
+        let mut command_args = Vec::new();
+        if self.tests {
+            command_args.push("--tests");
+        }
+        if self.all_targets {
+            command_args.push("--all-targets");
+        }
+        if self.release {
+            command_args.push("--release");
+        }
+        command_args.push("--features");
+        let features = format!(
+            "{}{}{}",
+            crypto,
+            if self.features.is_some() { "," } else { "" },
+            self.features.unwrap_or("".to_string())
+        );
+        command_args.push(features.as_str());
+        if self.package.is_some() {
+            command_args.push("--package");
+        }
+        let package_val = self.package.clone().unwrap_or("".to_string());
+        if self.package.is_some() {
+            command_args.push(&package_val);
+        }
+        command_args.push("--target-dir");
+        command_args.push(target_dir.to_str().unwrap());
+
+        cmd!(sh, "cargo {rust_toolchain...} build {command_args...}")
+            .quiet()
+            .run()?;
 
         log::trace!("done build");
         Ok(())

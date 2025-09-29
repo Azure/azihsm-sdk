@@ -129,7 +129,9 @@ mod tests {
     use openssl_rust::NID_aes_128_cbc;
     use openssl_rust::NID_aes_192_cbc;
     use openssl_rust::NID_aes_256_cbc;
+    #[cfg(feature = "gcm")]
     use openssl_rust::NID_aes_256_gcm;
+    #[cfg(feature = "xts")]
     use openssl_rust::NID_aes_256_xts;
     use openssl_rust::NID_sha1;
     use openssl_rust::NID_sha256;
@@ -287,10 +289,17 @@ mod tests {
         assert!(hkdf_ctrl_cb(ctx_ptr, HkdfCtrlOp::SetKeyType(NID_aes_256_cbc as i32)).is_ok());
         assert!(hkdf_data.key_type() == Some(AesType::Aes256Cbc));
 
-        assert!(hkdf_ctrl_cb(ctx_ptr, HkdfCtrlOp::SetKeyType(NID_aes_256_gcm as i32)).is_ok());
-        assert!(hkdf_data.key_type() == Some(AesType::Aes256Gcm));
+        #[cfg(feature = "gcm")]
+        {
+            assert!(hkdf_ctrl_cb(ctx_ptr, HkdfCtrlOp::SetKeyType(NID_aes_256_gcm as i32)).is_ok());
+            assert!(hkdf_data.key_type() == Some(AesType::Aes256Gcm));
+        }
 
-        assert!(hkdf_ctrl_cb(ctx_ptr, HkdfCtrlOp::SetKeyType(NID_aes_256_xts as i32)).is_err());
+        #[cfg(feature = "xts")]
+        {
+            assert!(hkdf_ctrl_cb(ctx_ptr, HkdfCtrlOp::SetKeyType(NID_aes_256_xts as i32)).is_err());
+        }
+
         assert!(hkdf_ctrl_cb(ctx_ptr, HkdfCtrlOp::SetKeyType(0)).is_err());
 
         cleanup_pkey_ctx(ctx_ptr);

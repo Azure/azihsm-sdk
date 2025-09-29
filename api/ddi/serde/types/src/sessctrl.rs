@@ -50,7 +50,10 @@ impl From<DdiOp> for SessionControlKind {
             | DdiOp::GetCertificate
             | DdiOp::GetEstablishCredEncryptionKey
             | DdiOp::EstablishCredential
-            | DdiOp::GetSessionEncryptionKey => SessionControlKind::NoSession,
+            | DdiOp::GetSessionEncryptionKey
+            | DdiOp::InitBk3
+            | DdiOp::GetSealedBk3
+            | DdiOp::SetSealedBk3 => SessionControlKind::NoSession,
 
             DdiOp::OpenSession => SessionControlKind::Open,
 

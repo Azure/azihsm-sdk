@@ -22,7 +22,7 @@ mod consts;
 mod delete_key;
 mod derive;
 mod ecc;
-mod get_collateral;
+mod get_certificate;
 mod no_session;
 mod open_key;
 mod post_process;
@@ -59,7 +59,7 @@ use crate::consts::*;
 use crate::delete_key::*;
 use crate::derive::*;
 use crate::ecc::*;
-use crate::get_collateral::*;
+use crate::get_certificate::*;
 use crate::no_session::*;
 use crate::open_key::*;
 use crate::post_process::*;
@@ -236,16 +236,16 @@ struct PerfMixRatios {
     /// Ratio of secret 521 rsa_unwrap delete operation
     rsa_unwrap_secret_521_and_delete: u16,
 
-    /// Ratio of AES-CBC 192 OpenKey  operations
+    /// Ratio of AES-CBC 192 OpenKey operations
     aes_cbc_192_open_key: u16,
 
-    /// Ratio of AES Bulk 256 OpenKey  operations
-    aes_bulk_256_open_key: u16,
+    /// Ratio of AES XTS Bulk 256 OpenKey operations
+    aes_xts_bulk_256_open_key: u16,
 
-    /// Ratio of RSA 4K No CRT OpenKey  operations
+    /// Ratio of RSA 4K No CRT OpenKey operations
     rsa_4k_open_key: u16,
 
-    /// Ratio of RSA 4K CRT OpenKey  operations
+    /// Ratio of RSA 4K CRT OpenKey operations
     rsa_4k_crt_open_key: u16,
 
     /// Ratio of ECC 521 OpenKey operations
@@ -269,8 +269,8 @@ struct PerfMixRatios {
     /// Ratio of App Create and Delete operations
     create_app_and_delete: u16,
 
-    /// Ratio of Get Collateral operations
-    get_collateral: u16,
+    /// Ratio of Get Certificate Chain operations
+    get_cert_chain: u16,
 
     /// Ratio of Get Unwrapping Key operations
     get_unwrapping_key: u16,
@@ -317,11 +317,14 @@ struct PerfMixKeys {
     /// Key ID for AES-CBC 256
     key_id_aes_cbc_256: u16,
 
-    /// Key ID for first key of type AES Bulk 256
-    key_id_aes_bulk_256: u16,
+    /// Key ID for AES GCM Bulk 256
+    key_id_aes_gcm_bulk_256: u16,
 
-    /// Key ID for second key of type AES Bulk 256
-    key_id_aes_bulk_256_2: u16,
+    /// Key ID for first key of type AES XTS Bulk 256
+    key_id_aes_xts_bulk_256: u16,
+
+    /// Key ID for second key of type AES XTS Bulk 256
+    key_id_aes_xts_bulk_256_2: u16,
 
     /// Key ID for ECDH 256
     key_id_ecc_derive_256: u16,
@@ -489,7 +492,7 @@ impl From<PerfMix> for PerfMixRatios {
                 rsa_unwrap_secret_384_and_delete: args.rsa_unwrap_secret_384_and_delete,
                 rsa_unwrap_secret_521_and_delete: args.rsa_unwrap_secret_521_and_delete,
                 aes_cbc_192_open_key: args.aes_cbc_192_open_key,
-                aes_bulk_256_open_key: args.aes_bulk_256_open_key,
+                aes_xts_bulk_256_open_key: args.aes_xts_bulk_256_open_key,
                 rsa_4k_open_key: args.rsa_4k_open_key,
                 rsa_4k_crt_open_key: args.rsa_4k_crt_open_key,
                 ecc_521_open_key: args.ecc_521_open_key,
@@ -499,7 +502,7 @@ impl From<PerfMix> for PerfMixRatios {
                 open_manager_session_and_close: args.open_manager_session_and_close,
                 open_app_session_and_close: args.open_app_session_and_close,
                 create_app_and_delete: args.create_app_and_delete,
-                get_collateral: args.get_collateral,
+                get_cert_chain: args.get_cert_chain,
                 get_unwrapping_key: args.get_unwrapping_key,
                 get_device_info: args.get_device_info,
             },
@@ -560,7 +563,7 @@ impl From<PerfMix> for PerfMixRatios {
                     rsa_unwrap_secret_384_and_delete: 0,
                     rsa_unwrap_secret_521_and_delete: 0,
                     aes_cbc_192_open_key: 0,
-                    aes_bulk_256_open_key: 0,
+                    aes_xts_bulk_256_open_key: 0,
                     rsa_4k_open_key: 0,
                     rsa_4k_crt_open_key: 0,
                     ecc_521_open_key: 0,
@@ -570,7 +573,7 @@ impl From<PerfMix> for PerfMixRatios {
                     open_manager_session_and_close: 0,
                     open_app_session_and_close: 0,
                     create_app_and_delete: 0,
-                    get_collateral: 0,
+                    get_cert_chain: 0,
                     get_unwrapping_key: 0,
                     get_device_info: 0,
                 },
@@ -630,7 +633,7 @@ impl From<PerfMix> for PerfMixRatios {
                     rsa_unwrap_secret_384_and_delete: 100,
                     rsa_unwrap_secret_521_and_delete: 100,
                     aes_cbc_192_open_key: 100,
-                    aes_bulk_256_open_key: 100,
+                    aes_xts_bulk_256_open_key: 100,
                     rsa_4k_open_key: 100,
                     rsa_4k_crt_open_key: 100,
                     ecc_521_open_key: 100,
@@ -640,7 +643,7 @@ impl From<PerfMix> for PerfMixRatios {
                     open_manager_session_and_close: 0, // 0 because this must be tested solo
                     open_app_session_and_close: 0,     // 0 because this must be tested solo
                     create_app_and_delete: 0,          // 0 because this must be tested solo
-                    get_collateral: 100,
+                    get_cert_chain: 100,
                     get_unwrapping_key: 100,
                     get_device_info: 100,
                 },
@@ -701,9 +704,13 @@ fn command_perf(perf_args: PerfArgs) {
         helper_set_device_kind(&mut dev).unwrap();
     }
 
-    let (app_sess_id, short_app_id) =
-        helper_open_app_session(&dev_with_shared_session.read(), TEST_CRED_ID, TEST_CRED_PIN)
-            .unwrap();
+    let (app_sess_id, short_app_id) = helper_open_app_session(
+        &dev_with_shared_session.read(),
+        TEST_CRED_ID,
+        TEST_CRED_PIN,
+        TEST_SESSION_SEED,
+    )
+    .unwrap();
 
     let mix_keys = if perf_args.skip_key_create {
         PerfMixKeys {
@@ -719,8 +726,9 @@ fn command_perf(perf_args: PerfArgs) {
             key_id_aes_cbc_128: 0xffff,
             key_id_aes_cbc_192: 0xffff,
             key_id_aes_cbc_256: 0xffff,
-            key_id_aes_bulk_256: 0xffff,
-            key_id_aes_bulk_256_2: 0xffff,
+            key_id_aes_gcm_bulk_256: 0xffff,
+            key_id_aes_xts_bulk_256: 0xffff,
+            key_id_aes_xts_bulk_256_2: 0xffff,
             key_id_ecc_derive_256: 0xffff,
             key_id_ecc_derive_384: 0xffff,
             key_id_ecc_derive_521: 0xffff,
@@ -920,7 +928,8 @@ fn command_perf(perf_args: PerfArgs) {
         let mut dev = ddi.open_dev(selected_device).unwrap();
         helper_set_device_kind(&mut dev).unwrap();
 
-        let (session_id, _) = helper_open_app_session(&dev, TEST_CRED_ID, TEST_CRED_PIN).unwrap();
+        let (session_id, _) =
+            helper_open_app_session(&dev, TEST_CRED_ID, TEST_CRED_PIN, TEST_SESSION_SEED).unwrap();
 
         let mut chunk_id = 0;
 
@@ -1028,7 +1037,13 @@ fn perf_test_thread(
     {
         (app_sess_id, short_app_id)
     } else if !perf_mix_args.skip_app_session_create {
-        helper_open_app_session(&dev_with_session.read(), TEST_CRED_ID, TEST_CRED_PIN).unwrap()
+        helper_open_app_session(
+            &dev_with_session.read(),
+            TEST_CRED_ID,
+            TEST_CRED_PIN,
+            TEST_SESSION_SEED,
+        )
+        .unwrap()
     } else {
         (0xffff, 0xff)
     };
@@ -1243,8 +1258,8 @@ fn perf_test_thread(
             perf_mix_args.ratios.aes_cbc_192_open_key,
         ),
         (
-            "aes_bulk_256_open_key",
-            perf_mix_args.ratios.aes_bulk_256_open_key,
+            "aes_xts_bulk_256_open_key",
+            perf_mix_args.ratios.aes_xts_bulk_256_open_key,
         ),
         ("rsa_4k_open_key", perf_mix_args.ratios.rsa_4k_open_key),
         (
@@ -1273,7 +1288,7 @@ fn perf_test_thread(
             "create_app_and_delete",
             perf_mix_args.ratios.create_app_and_delete,
         ),
-        ("get_collateral", perf_mix_args.ratios.get_collateral),
+        ("get_cert_chain", perf_mix_args.ratios.get_cert_chain),
         (
             "get_unwrapping_key",
             perf_mix_args.ratios.get_unwrapping_key,
@@ -1423,7 +1438,7 @@ fn perf_test_thread(
                     &dev_with_session.read(),
                     app_sess_id,
                     short_app_id,
-                    perf_mix_args.keys.key_id_aes_bulk_256,
+                    perf_mix_args.keys.key_id_aes_gcm_bulk_256,
                     DdiAesOp::Encrypt,
                     vec![100u8; 1024 * 4],
                     [0x3; 12],
@@ -1438,7 +1453,7 @@ fn perf_test_thread(
                     &dev_with_session.read(),
                     app_sess_id,
                     short_app_id,
-                    perf_mix_args.keys.key_id_aes_bulk_256,
+                    perf_mix_args.keys.key_id_aes_gcm_bulk_256,
                     DdiAesOp::Encrypt,
                     vec![100u8; 1024 * 1024 * 16 - 32], // - 32 because we have AAD of 32
                     [0x3; 12],
@@ -1453,7 +1468,7 @@ fn perf_test_thread(
                     &dev_with_session.read(),
                     app_sess_id,
                     short_app_id,
-                    perf_mix_args.keys.key_id_aes_bulk_256,
+                    perf_mix_args.keys.key_id_aes_gcm_bulk_256,
                     DdiAesOp::Decrypt,
                     perf_mix_args.keys.encrypted_data_gcm_4k.unwrap().to_vec(),
                     [0x3; 12],
@@ -1468,7 +1483,7 @@ fn perf_test_thread(
                     &dev_with_session.read(),
                     app_sess_id,
                     short_app_id,
-                    perf_mix_args.keys.key_id_aes_bulk_256,
+                    perf_mix_args.keys.key_id_aes_gcm_bulk_256,
                     DdiAesOp::Decrypt,
                     perf_mix_args
                         .keys
@@ -1486,8 +1501,8 @@ fn perf_test_thread(
                 &dev_with_session.read(),
                 app_sess_id,
                 short_app_id,
-                perf_mix_args.keys.key_id_aes_bulk_256,
-                perf_mix_args.keys.key_id_aes_bulk_256_2,
+                perf_mix_args.keys.key_id_aes_xts_bulk_256,
+                perf_mix_args.keys.key_id_aes_xts_bulk_256_2,
                 DdiAesOp::Encrypt,
                 vec![100u8; 1024 * 4],
                 1024 * 4,
@@ -1498,8 +1513,8 @@ fn perf_test_thread(
                 &dev_with_session.read(),
                 app_sess_id,
                 short_app_id,
-                perf_mix_args.keys.key_id_aes_bulk_256,
-                perf_mix_args.keys.key_id_aes_bulk_256_2,
+                perf_mix_args.keys.key_id_aes_xts_bulk_256,
+                perf_mix_args.keys.key_id_aes_xts_bulk_256_2,
                 DdiAesOp::Encrypt,
                 vec![100u8; 1024 * 1024 * 16],
                 1024 * 4,
@@ -1509,8 +1524,8 @@ fn perf_test_thread(
                 &dev_with_session.read(),
                 app_sess_id,
                 short_app_id,
-                perf_mix_args.keys.key_id_aes_bulk_256,
-                perf_mix_args.keys.key_id_aes_bulk_256_2,
+                perf_mix_args.keys.key_id_aes_xts_bulk_256,
+                perf_mix_args.keys.key_id_aes_xts_bulk_256_2,
                 DdiAesOp::Decrypt,
                 vec![100u8; 1024 * 4],
                 1024 * 4,
@@ -1521,8 +1536,8 @@ fn perf_test_thread(
                 &dev_with_session.read(),
                 app_sess_id,
                 short_app_id,
-                perf_mix_args.keys.key_id_aes_bulk_256,
-                perf_mix_args.keys.key_id_aes_bulk_256_2,
+                perf_mix_args.keys.key_id_aes_xts_bulk_256,
+                perf_mix_args.keys.key_id_aes_xts_bulk_256_2,
                 DdiAesOp::Decrypt,
                 vec![100u8; 1024 * 1024 * 16],
                 1024 * 4,
@@ -1811,9 +1826,11 @@ fn perf_test_thread(
                 helper_open_key(&dev_with_session.read(), app_sess_id, KEY_TAG_AES_CBC_192)
             }
 
-            "aes_bulk_256_open_key" => {
-                helper_open_key(&dev_with_session.read(), app_sess_id, KEY_TAG_AES_BULK_256)
-            }
+            "aes_xts_bulk_256_open_key" => helper_open_key(
+                &dev_with_session.read(),
+                app_sess_id,
+                KEY_TAG_AES_XTS_BULK_256,
+            ),
 
             "rsa_4k_open_key" => helper_open_key(
                 &dev_with_session.read(),
@@ -1853,9 +1870,10 @@ fn perf_test_thread(
                 &dev_without_session.read(),
                 TEST_CRED_ID,
                 TEST_CRED_PIN,
+                TEST_SESSION_SEED,
             ),
 
-            "get_collateral" => helper_get_collateral(&dev_with_session.read(), app_sess_id),
+            "get_cert_chain" => helper_get_certificate(&dev_with_session.read()),
 
             "get_unwrapping_key" => {
                 helper_get_unwrapping_key(&dev_with_session.read(), app_sess_id).map(|_| ())

@@ -1,5 +1,5 @@
 
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation. All rights reserved.
 
 #include "AziHsmTestEngine.hpp"
 #include "AziHsmCiphers.hpp"
@@ -41,7 +41,7 @@ TEST_CASE("AZIHSM AES XTS Ciphers", "[AziHsmAesXts]")
     REQUIRE(e != nullptr);
 
     const EVP_CIPHER *cipher;
-
+#ifdef AZIHSM_XTS
     SECTION("Test AES-XTS init ctx with deleted key")
     {
         // Allocate CTX
@@ -301,4 +301,28 @@ TEST_CASE("AZIHSM AES XTS Ciphers", "[AziHsmAesXts]")
         REQUIRE(aes_ctx.decrypt(cipher_data.data(), cipher_data.size(), nullptr, recovered_data) == 1);
         REQUIRE(std::memcmp(plain_data.data(), recovered_data.data(), plain_data.size()) == 0);
     }
+#else
+    SECTION("Test AES-XTS Encrypt/Decrypt with builtin implementation")
+    {
+        // Allocate CTX
+        AziHsmAesCipherCtx aes_ctx = AziHsmAesCipherCtx();
+
+        std::vector<unsigned char> iv(16);
+        REQUIRE(RAND_bytes(iv.data(), 16) == 1);
+
+        REQUIRE(aes_ctx.init(nullptr, NID_aes_256_xts, 1, nullptr, iv.data()) == 1);
+        REQUIRE(aes_ctx.keygen(1) == 1);
+
+        // Padding is enabled. So account for an extra block size in the data
+        std::vector<unsigned char> plain_data(64 * 1024);
+        std::vector<unsigned char> cipher_data;
+        std::vector<unsigned char> recovered_data;
+        REQUIRE(RAND_bytes(plain_data.data(), plain_data.size()) == 1);
+
+        REQUIRE(aes_ctx.encrypt(plain_data.data(), plain_data.size(), iv.data(), cipher_data) == 1);
+        REQUIRE(aes_ctx.decrypt(cipher_data.data(), cipher_data.size(), iv.data(), recovered_data) == 1);
+        REQUIRE(std::memcmp(plain_data.data(), recovered_data.data(), plain_data.size()) == 0);
+    }
+
+#endif
 }

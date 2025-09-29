@@ -1,11 +1,15 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
+
 // Test code for Fast path aes gcm and xts encryption and decryption
 // flows
 // Applicable to device and mock
 
 mod common;
 
+#[cfg(not(feature = "resilient"))]
 use mcr_api::*;
+#[cfg(feature = "resilient")]
+use mcr_api_resilient::*;
 use test_with_tracing::test;
 
 use crate::common::*;
@@ -16,7 +20,7 @@ fn test_aes_xts_encrypt_after_session_close() {
         let mut app_session = common_open_app_session(device);
 
         let result = app_session.aes_generate(
-            AesKeySize::AesBulk256,
+            AesKeySize::AesXtsBulk256,
             None,
             KeyProperties {
                 key_usage: KeyUsage::EncryptDecrypt,
@@ -27,7 +31,7 @@ fn test_aes_xts_encrypt_after_session_close() {
         let aes_key1_handle = result.unwrap();
 
         let result = app_session.aes_generate(
-            AesKeySize::AesBulk256,
+            AesKeySize::AesXtsBulk256,
             None,
             KeyProperties {
                 key_usage: KeyUsage::EncryptDecrypt,
@@ -63,7 +67,7 @@ fn test_aes_xts_decrypt_after_session_close() {
         let mut app_session = common_open_app_session(device);
 
         let result = app_session.aes_generate(
-            AesKeySize::AesBulk256,
+            AesKeySize::AesXtsBulk256,
             None,
             KeyProperties {
                 key_usage: KeyUsage::EncryptDecrypt,
@@ -74,7 +78,7 @@ fn test_aes_xts_decrypt_after_session_close() {
         let aes_key1_handle = result.unwrap();
 
         let result = app_session.aes_generate(
-            AesKeySize::AesBulk256,
+            AesKeySize::AesXtsBulk256,
             None,
             KeyProperties {
                 key_usage: KeyUsage::EncryptDecrypt,
@@ -122,7 +126,7 @@ fn test_aes_xts_encrypt_invalid_keyhandle() {
         let app_session = common_open_app_session(device);
 
         let result = app_session.aes_generate(
-            AesKeySize::AesBulk256,
+            AesKeySize::AesXtsBulk256,
             None,
             KeyProperties {
                 key_usage: KeyUsage::EncryptDecrypt,
@@ -133,7 +137,7 @@ fn test_aes_xts_encrypt_invalid_keyhandle() {
         let aes_key1_handle = result.unwrap();
 
         let result = app_session.aes_generate(
-            AesKeySize::AesBulk256,
+            AesKeySize::AesXtsBulk256,
             None,
             KeyProperties {
                 key_usage: KeyUsage::EncryptDecrypt,
@@ -228,7 +232,7 @@ fn test_aes_xts_decrypt_invalid_keyhandle() {
         let app_session = common_open_app_session(device);
 
         let result = app_session.aes_generate(
-            AesKeySize::AesBulk256,
+            AesKeySize::AesXtsBulk256,
             None,
             KeyProperties {
                 key_usage: KeyUsage::EncryptDecrypt,
@@ -239,7 +243,7 @@ fn test_aes_xts_decrypt_invalid_keyhandle() {
         let aes_key1_handle = result.unwrap();
 
         let result = app_session.aes_generate(
-            AesKeySize::AesBulk256,
+            AesKeySize::AesXtsBulk256,
             None,
             KeyProperties {
                 key_usage: KeyUsage::EncryptDecrypt,
@@ -346,7 +350,7 @@ fn test_aes_xts_decrypt_with_nonmatching_handle() {
         let app_session = common_open_app_session(device);
 
         let result = app_session.aes_generate(
-            AesKeySize::AesBulk256,
+            AesKeySize::AesXtsBulk256,
             None,
             KeyProperties {
                 key_usage: KeyUsage::EncryptDecrypt,
@@ -357,7 +361,7 @@ fn test_aes_xts_decrypt_with_nonmatching_handle() {
         let aes_key1_handle = result.unwrap();
 
         let result = app_session.aes_generate(
-            AesKeySize::AesBulk256,
+            AesKeySize::AesXtsBulk256,
             None,
             KeyProperties {
                 key_usage: KeyUsage::EncryptDecrypt,
@@ -385,7 +389,7 @@ fn test_aes_xts_decrypt_with_nonmatching_handle() {
         assert_ne!(data, encrypted_data.data);
 
         let result = app_session.aes_generate(
-            AesKeySize::AesBulk256,
+            AesKeySize::AesXtsBulk256,
             None,
             KeyProperties {
                 key_usage: KeyUsage::EncryptDecrypt,
@@ -417,7 +421,7 @@ fn test_aes_xts_encrypt_decrypt_different_keyavailability() {
         let app_session = common_open_app_session(device);
 
         let result = app_session.aes_generate(
-            AesKeySize::AesBulk256,
+            AesKeySize::AesXtsBulk256,
             None,
             KeyProperties {
                 key_usage: KeyUsage::EncryptDecrypt,
@@ -428,7 +432,7 @@ fn test_aes_xts_encrypt_decrypt_different_keyavailability() {
         let aes_key1_handle = result.unwrap();
 
         let result = app_session.aes_generate(
-            AesKeySize::AesBulk256,
+            AesKeySize::AesXtsBulk256,
             None,
             KeyProperties {
                 key_usage: KeyUsage::EncryptDecrypt,
@@ -484,7 +488,7 @@ fn test_aes_xts_encrypt_deleted_keyhandles() {
         let app_session = common_open_app_session(device);
 
         let result = app_session.aes_generate(
-            AesKeySize::AesBulk256,
+            AesKeySize::AesXtsBulk256,
             None,
             KeyProperties {
                 key_usage: KeyUsage::EncryptDecrypt,
@@ -495,7 +499,7 @@ fn test_aes_xts_encrypt_deleted_keyhandles() {
         let aes_key1_handle = result.unwrap();
 
         let result = app_session.aes_generate(
-            AesKeySize::AesBulk256,
+            AesKeySize::AesXtsBulk256,
             None,
             KeyProperties {
                 key_usage: KeyUsage::EncryptDecrypt,
@@ -540,7 +544,7 @@ fn test_aes_xts_decrypt_deleted_keyhandles() {
         let app_session = common_open_app_session(device);
 
         let result = app_session.aes_generate(
-            AesKeySize::AesBulk256,
+            AesKeySize::AesXtsBulk256,
             None,
             KeyProperties {
                 key_usage: KeyUsage::EncryptDecrypt,
@@ -551,7 +555,7 @@ fn test_aes_xts_decrypt_deleted_keyhandles() {
         let aes_key1_handle = result.unwrap();
 
         let result = app_session.aes_generate(
-            AesKeySize::AesBulk256,
+            AesKeySize::AesXtsBulk256,
             None,
             KeyProperties {
                 key_usage: KeyUsage::EncryptDecrypt,
@@ -609,7 +613,7 @@ fn test_aes_xts_encrypt_decrypt_aes_nobulk() {
         let app_session = common_open_app_session(device);
 
         let result = app_session.aes_generate(
-            AesKeySize::AesBulk256,
+            AesKeySize::AesXtsBulk256,
             None,
             KeyProperties {
                 key_usage: KeyUsage::EncryptDecrypt,
@@ -620,7 +624,7 @@ fn test_aes_xts_encrypt_decrypt_aes_nobulk() {
         let aes_key1_handle = result.unwrap();
 
         let result = app_session.aes_generate(
-            AesKeySize::AesBulk256,
+            AesKeySize::AesXtsBulk256,
             None,
             KeyProperties {
                 key_usage: KeyUsage::EncryptDecrypt,

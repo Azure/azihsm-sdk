@@ -1,4 +1,5 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
+
 #![cfg_attr(target_os = "linux", no_main)]
 
 #[cfg(target_os = "linux")]
@@ -39,7 +40,7 @@ fuzz_target!(|input: AesXtsEncryptDecryptInput| {
             if input.use_valid_keyhandle1 {
                 let result = rsa_unwrap_from_wrap_data(
                     &app_session,
-                    KeyType::AesBulk256,
+                    KeyType::AesXtsBulk256,
                     input.digest_kind,
                     KeyUsage::EncryptDecrypt,
                 );
@@ -53,7 +54,7 @@ fuzz_target!(|input: AesXtsEncryptDecryptInput| {
             if input.use_valid_keyhandle2 {
                 let result = rsa_unwrap_from_wrap_data(
                     &app_session,
-                    KeyType::AesBulk256,
+                    KeyType::AesXtsBulk256,
                     input.digest_kind,
                     KeyUsage::EncryptDecrypt,
                 );

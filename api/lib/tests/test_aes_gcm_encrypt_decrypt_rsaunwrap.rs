@@ -2,7 +2,10 @@
 
 mod common;
 
+#[cfg(not(feature = "resilient"))]
 use mcr_api::*;
+#[cfg(feature = "resilient")]
+use mcr_api_resilient::*;
 use test_with_tracing::test;
 
 use crate::common::*;
@@ -21,7 +24,7 @@ fn test_aes_gcm_encrypt_decrypt_rsaunwrap() {
 
         let result = rsa_unwrap_from_wrap_data(
             &app_session,
-            KeyType::AesBulk256,
+            KeyType::AesGcmBulk256Unapproved,
             DigestKind::Sha1,
             KeyUsage::EncryptDecrypt,
         );
@@ -72,7 +75,7 @@ fn test_aes_gcm_tampered_data_rsaunwrap() {
 
         let result = rsa_unwrap_from_wrap_data(
             &app_session,
-            KeyType::AesBulk256,
+            KeyType::AesGcmBulk256Unapproved,
             DigestKind::Sha1,
             KeyUsage::EncryptDecrypt,
         );
@@ -124,7 +127,7 @@ fn test_aes_gcm_encrypt_decrypt_multi_times_rsaunwrap() {
 
         let result = rsa_unwrap_from_wrap_data(
             &app_session,
-            KeyType::AesBulk256,
+            KeyType::AesGcmBulk256Unapproved,
             DigestKind::Sha1,
             KeyUsage::EncryptDecrypt,
         );
@@ -205,7 +208,7 @@ fn test_aes_gcm_encrypt_data_size_rsaunwrap() {
 
         let result = rsa_unwrap_from_wrap_data(
             &app_session,
-            KeyType::AesBulk256,
+            KeyType::AesGcmBulk256Unapproved,
             DigestKind::Sha1,
             KeyUsage::EncryptDecrypt,
         );
@@ -390,7 +393,7 @@ fn test_aes_gcm_decrypt_data_size_rsaunwrap() {
 
         let result = rsa_unwrap_from_wrap_data(
             &app_session,
-            KeyType::AesBulk256,
+            KeyType::AesGcmBulk256Unapproved,
             DigestKind::Sha1,
             KeyUsage::EncryptDecrypt,
         );
@@ -493,7 +496,7 @@ fn test_aes_gcm_invalid_or_mismatched_aad() {
 
         let result = rsa_unwrap_from_wrap_data(
             &app_session,
-            KeyType::AesBulk256,
+            KeyType::AesGcmBulk256Unapproved,
             DigestKind::Sha1,
             KeyUsage::EncryptDecrypt,
         );
@@ -607,7 +610,7 @@ fn test_aes_gcm_mismatched_iv_rsaunwrap() {
 
         let result = rsa_unwrap_from_wrap_data(
             &app_session,
-            KeyType::AesBulk256,
+            KeyType::AesGcmBulk256Unapproved,
             DigestKind::Sha1,
             KeyUsage::EncryptDecrypt,
         );
@@ -657,7 +660,7 @@ fn test_aes_fpgcm_decrypt_invalid_mismatched_tag_rsaunwrap() {
 
         let result = rsa_unwrap_from_wrap_data(
             &app_session,
-            KeyType::AesBulk256,
+            KeyType::AesGcmBulk256Unapproved,
             DigestKind::Sha1,
             KeyUsage::EncryptDecrypt,
         );

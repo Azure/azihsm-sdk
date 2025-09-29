@@ -68,8 +68,12 @@ fn test_aes_gcm_encrypt_decrypt_thread_fn(
     let mut short_app_id = None;
 
     for _ in 0..max_attempts {
-        let (encrypted_credential, pub_key) =
-            encrypt_userid_pin_for_open_session(&dev, TEST_CRED_ID, TEST_CRED_PIN);
+        let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+            &dev,
+            TEST_CRED_ID,
+            TEST_CRED_PIN,
+            TEST_SESSION_SEED,
+        );
 
         let resp = helper_open_session(
             &dev,
@@ -107,7 +111,12 @@ fn test_aes_gcm_encrypt_decrypt_thread_fn(
 
     thread::sleep(std::time::Duration::from_secs(1));
 
-    let resp = generate_aes_bulk_256_key(&dev, &app_sess_id, None);
+    let resp = generate_aes_bulk_256_key(
+        &dev,
+        &app_sess_id,
+        None,
+        DdiAesKeySize::AesGcmBulk256Unapproved,
+    );
     assert!(resp.is_ok(), "resp: {:?}", resp);
     let resp = resp.unwrap();
 

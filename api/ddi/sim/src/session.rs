@@ -1,6 +1,6 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
 
-//! Manage a [Function] and its vaults.
+//! Manage a [Function](crate::function::Function) and its vaults.
 
 use std::sync::Arc;
 use std::sync::Weak;
@@ -13,15 +13,14 @@ use uuid::Uuid;
 use crate::attestation::*;
 use crate::credentials::EncryptedPin;
 use crate::crypto::aes::*;
+use crate::crypto::aeshmac::AesHmacKey;
+use crate::crypto::aeshmac::AesHmacOp;
 use crate::crypto::ecc::*;
 use crate::crypto::hmac::*;
 use crate::crypto::rsa::*;
 use crate::crypto::secret::*;
 use crate::crypto::sha::*;
 use crate::errors::ManticoreError;
-// Make Function visible in scope for use in documentation links.
-#[allow(unused)]
-use crate::function::Function;
 use crate::function::FunctionState;
 use crate::function::FunctionStateWeak;
 use crate::report::TAGGED_COSE_SIGN1_OBJECT_MAX_SIZE;
@@ -68,6 +67,7 @@ impl UserSession {
         short_app_id: u8,
         state: FunctionStateWeak,
         vault: VaultWeak,
+        masking_key: AesHmacKey,
     ) -> Self {
         Self {
             inner: Arc::new(RwLock::new(UserSessionInner::new(
@@ -77,6 +77,7 @@ impl UserSession {
                 short_app_id,
                 state,
                 vault,
+                masking_key,
             ))),
         }
     }
@@ -98,54 +99,6 @@ impl UserSession {
     #[allow(unused)]
     fn as_weak(&self) -> AppSessionWeak {
         AppSessionWeak::new(Arc::downgrade(&self.inner))
-    }
-
-    /// Prepare to close the session managed by the [AppSession] instance.
-    ///
-    /// # Returns
-    /// * `()`
-    ///
-    /// # Errors
-    /// * [ManticoreError::SessionNotFound] if the session has been closed.
-    /// * [ManticoreError::VaultNotFound] if the vault has been deleted.
-    /// * [ManticoreError::FunctionNotFound] if the [Function] instance has been dropped.
-    ///
-    /// # Behavior
-    /// * This is a helper method to be used in [Function]'s close session implementation.
-    pub fn prepare_close_session(&self) -> Result<(), ManticoreError> {
-        let mut locked_inner = self.inner.write();
-
-        locked_inner.set_disabled();
-
-        let strong_count = self.strong_count();
-
-        // One reference is held in the FunctionState and one reference is the object that called this method.
-        if strong_count > 2 {
-            tracing::error!(error = ?ManticoreError::CannotCloseSessionInUse, strong_count, "Cannot close AppSession with strong_count > 2");
-            Err(ManticoreError::CannotCloseSessionInUse)?
-        }
-
-        locked_inner.close_session_core()
-    }
-
-    /// Prepare to lazy close the session managed by the [AppSession] instance.
-    ///
-    /// # Returns
-    /// * `()`
-    ///
-    /// # Errors
-    /// * [ManticoreError::SessionNotFound] if the session has been closed.
-    /// * [ManticoreError::VaultNotFound] if the vault has been deleted.
-    /// * [ManticoreError::FunctionNotFound] if the [Function] instance has been dropped.
-    ///
-    /// # Behavior
-    /// * This is a helper method to be used in [Function]'s lazy close session implementation.
-    pub fn prepare_lazy_close_session(&self) -> Result<(), ManticoreError> {
-        let mut locked_inner = self.inner.write();
-
-        locked_inner.set_disabled();
-
-        locked_inner.close_session_core()
     }
 
     /// Generate an attestation report for the given key num
@@ -171,12 +124,6 @@ impl UserSession {
         report_data: &[u8; 128],
     ) -> Result<([u8; TAGGED_COSE_SIGN1_OBJECT_MAX_SIZE], usize), ManticoreError> {
         self.inner.read().attest_key(key_num, report_data)
-    }
-
-    /// Get collateral
-    #[instrument(skip_all, fields(sess_id = self.id()))]
-    pub fn get_collateral(&self) -> Result<Vec<u8>, ManticoreError> {
-        self.inner.read().get_collateral()
     }
 
     /// Change the PIN of the user.
@@ -231,6 +178,25 @@ impl UserSession {
         self.inner
             .read()
             .import_key(key_buf, key_class, flags, key_tag)
+    }
+
+    /// Mask a key
+    /// Which involves serializing the entry (metadata + encrypted crypto key), then generate HMAC/Signature.
+    /// This allows an internal key to be stored externally in a secure manner.
+    ///
+    /// # Arguments
+    /// * `entry`: The Entry to be masked.
+    ///
+    /// # Returns
+    /// * [MaskedKeyIntermediate] - The masked key intermediate structure containing the masked key data.
+    #[instrument(skip_all, fields(sess_id = self.id()))]
+    pub(crate) fn mask_key(&self, entry: &Entry) -> Result<Vec<u8>, ManticoreError> {
+        self.inner.read().mask_key(entry)
+    }
+
+    #[instrument(skip_all, fields(sess_id = self.id()))]
+    pub(crate) fn unmask_key(&self, masked_key: &[u8]) -> Result<u16, ManticoreError> {
+        self.inner.read().unmask_key(masked_key)
     }
 
     /// Perform a RSA private key operation.
@@ -553,19 +519,6 @@ impl UserSession {
             destination_buffers,
         )
     }
-
-    /// Returns the strong reference count of the AppSession.
-    ///
-    /// # Returns
-    /// * Strong reference count of the AppSession.
-    ///
-    /// # Safety
-    /// This method by itself is safe, but using it correctly requires extra care.
-    /// Another thread can change the strong count at any time, including potentially
-    /// between calling this method and acting on the result.
-    fn strong_count(&self) -> usize {
-        Arc::strong_count(&self.inner)
-    }
 }
 
 /// Bitfield used to store the current status of the [AppSession].
@@ -593,6 +546,7 @@ struct UserSessionInner {
     vault: VaultWeak,
     flags: AppSessionFlags,
     launch_id: Uuid,
+    masking_key: AesHmacKey,
 }
 
 impl UserSessionInner {
@@ -603,6 +557,7 @@ impl UserSessionInner {
         short_app_id: u8,
         state: FunctionStateWeak,
         vault: VaultWeak,
+        masking_key: AesHmacKey,
     ) -> Self {
         Self {
             id,
@@ -613,6 +568,7 @@ impl UserSessionInner {
             vault,
             flags: AppSessionFlags::default(),
             launch_id: Uuid::from_u128(0), // Default launch ID is 0, which means no launch ID is set.
+            masking_key,
         }
     }
 
@@ -640,16 +596,6 @@ impl UserSessionInner {
         self.state.upgrade().ok_or(ManticoreError::FunctionNotFound)
     }
 
-    // Core operations involved with closing a session.
-    // Handles everything other than removing the session itself from Function's state.
-    fn close_session_core(&mut self) -> Result<(), ManticoreError> {
-        tracing::debug!(sess_id = self.id(), "AppSessionInner::close_session_core");
-        self.set_disabled();
-        self.get_vault()?.remove_session_only_keys(self.id)?;
-        self.flags.set_closed(true);
-        Ok(())
-    }
-
     fn attest_key(
         &self,
         key_num: u16,
@@ -669,6 +615,10 @@ impl UserSessionInner {
             Key::EccPublic(key) => CoseKey::from_ecc_public(&key),
             Key::Aes(_) => {
                 tracing::error!(error = ?ManticoreError::InvalidKeyType, "Key to be attested cannot be an AES key");
+                Err(ManticoreError::InvalidKeyType)
+            }
+            Key::AesHmac(_) => {
+                tracing::error!(error = ?ManticoreError::InvalidKeyType, "Key to be attested cannot be an AES-HMAC key");
                 Err(ManticoreError::InvalidKeyType)
             }
             Key::Secret(_) => {
@@ -717,21 +667,17 @@ impl UserSessionInner {
         }
     }
 
-    fn get_collateral(&self) -> Result<Vec<u8>, ManticoreError> {
-        // Retrieve Attestation private Key to derive pub key from (TEST-only)
-        // TODO: Return the AK cert and TEE report
+    // Serialize Entry, encrypt the crypto key portion, and generate HMAC/Signature
+    fn mask_key(&self, entry: &Entry) -> Result<Vec<u8>, ManticoreError> {
         let function_state = self.get_function_state()?;
-        let attestation_key_num = function_state.get_attestation_key_num()?;
-        let attestation_key = self.get_key_entry(attestation_key_num)?;
 
-        if let Key::EccPrivate(key) = attestation_key.key() {
-            // TEST-ONLY: create a X509 certificate from the ecc private key for now.
-            let collateral = key.create_pub_key_cert()?;
-            Ok(collateral)
-        } else {
-            // Throw error if key type if not EccPrivateKey
-            Err(ManticoreError::EccInvalidKeyType)?
-        }
+        function_state.mask_vault_entry(entry, Some(self.id()), Some(&self.masking_key))
+    }
+
+    fn unmask_key(&self, blob: &[u8]) -> Result<u16, ManticoreError> {
+        let function_state = self.get_function_state()?;
+
+        function_state.unmask_and_import_key(blob, self.id(), self.app_id, Some(&self.masking_key))
     }
 
     fn change_pin(
@@ -768,7 +714,7 @@ impl UserSessionInner {
         flags: EntryFlags,
         key_tag: Option<u16>,
     ) -> Result<u16, ManticoreError> {
-        tracing::debug!(key_class = ?key_class, key_tag, "import_key");
+        tracing::debug!(?key_class, ?key_tag, "import_key");
         let vault = self.get_vault()?;
 
         let (key, kind) = match key_class {
@@ -800,8 +746,23 @@ impl UserSessionInner {
                 (Key::Aes(aes_key), kind)
             }
 
-            KeyClass::AesBulk => {
-                let aes_key = AesKey::from_bulk_bytes(key_buf)?;
+            KeyClass::AesXtsBulk => {
+                let aes_key = AesKey::from_bulk_bytes(key_buf, AesKeySize::AesXtsBulk256)?;
+                let kind = aes_key.size().into();
+
+                (Key::Aes(aes_key), kind)
+            }
+
+            KeyClass::AesGcmBulk => {
+                let aes_key = AesKey::from_bulk_bytes(key_buf, AesKeySize::AesGcmBulk256)?;
+                let kind = aes_key.size().into();
+
+                (Key::Aes(aes_key), kind)
+            }
+
+            KeyClass::AesGcmBulkUnapproved => {
+                let aes_key =
+                    AesKey::from_bulk_bytes(key_buf, AesKeySize::AesGcmBulk256Unapproved)?;
                 let kind = aes_key.size().into();
 
                 (Key::Aes(aes_key), kind)
@@ -848,12 +809,13 @@ impl UserSessionInner {
             Err(ManticoreError::InvalidPermissions)?
         }
 
-        let sess_id = entry.sess_id();
-        tracing::trace!(entry_sess_id = sess_id);
+        let physical_sess_id = entry.physical_sess_id();
+        tracing::trace!(entry_sess_id = physical_sess_id);
 
         if entry.flags().session_only() {
             // For session_only key, the session id must match.
-            if Some(self.id) != sess_id {
+            let target_session_id = vault.get_target_session_id(self.id).ok();
+            if target_session_id != physical_sess_id {
                 tracing::error!(error = ?ManticoreError::InvalidPermissions, "Session_only key cannot be accessed from another session");
                 Err(ManticoreError::InvalidPermissions)?
             }
@@ -1166,7 +1128,18 @@ impl UserSessionInner {
                     Kind::Aes128 | Kind::Aes192 | Kind::Aes256 => {
                         Key::Aes(AesKey::from_bytes(&derived_bytes)?)
                     }
-                    Kind::AesBulk256 => Key::Aes(AesKey::from_bulk_bytes(&derived_bytes)?),
+                    Kind::AesXtsBulk256 => Key::Aes(AesKey::from_bulk_bytes(
+                        &derived_bytes,
+                        AesKeySize::AesXtsBulk256,
+                    )?),
+                    Kind::AesGcmBulk256 => Key::Aes(AesKey::from_bulk_bytes(
+                        &derived_bytes,
+                        AesKeySize::AesGcmBulk256,
+                    )?),
+                    Kind::AesGcmBulk256Unapproved => Key::Aes(AesKey::from_bulk_bytes(
+                        &derived_bytes,
+                        AesKeySize::AesGcmBulk256Unapproved,
+                    )?),
                     Kind::Secret256 | Kind::Secret384 | Kind::Secret521 => {
                         Key::Secret(SecretKey::from_bytes(&derived_bytes)?)
                     }
@@ -1256,7 +1229,18 @@ impl UserSessionInner {
                     Kind::Aes128 | Kind::Aes192 | Kind::Aes256 => {
                         Key::Aes(AesKey::from_bytes(&derived_bytes)?)
                     }
-                    Kind::AesBulk256 => Key::Aes(AesKey::from_bulk_bytes(&derived_bytes)?),
+                    Kind::AesXtsBulk256 => Key::Aes(AesKey::from_bulk_bytes(
+                        &derived_bytes,
+                        AesKeySize::AesXtsBulk256,
+                    )?),
+                    Kind::AesGcmBulk256 => Key::Aes(AesKey::from_bulk_bytes(
+                        &derived_bytes,
+                        AesKeySize::AesGcmBulk256,
+                    )?),
+                    Kind::AesGcmBulk256Unapproved => Key::Aes(AesKey::from_bulk_bytes(
+                        &derived_bytes,
+                        AesKeySize::AesGcmBulk256Unapproved,
+                    )?),
                     Kind::Secret256 | Kind::Secret384 | Kind::Secret521 => {
                         Key::Secret(SecretKey::from_bytes(&derived_bytes)?)
                     }
@@ -1348,7 +1332,9 @@ impl UserSessionInner {
             AesKeySize::Aes128 => Kind::Aes128,
             AesKeySize::Aes192 => Kind::Aes192,
             AesKeySize::Aes256 => Kind::Aes256,
-            AesKeySize::AesBulk256 => Kind::AesBulk256,
+            AesKeySize::AesXtsBulk256 => Kind::AesXtsBulk256,
+            AesKeySize::AesGcmBulk256 => Kind::AesGcmBulk256,
+            AesKeySize::AesGcmBulk256Unapproved => Kind::AesGcmBulk256Unapproved,
         };
 
         let key_num = vault.add_key(
@@ -1424,6 +1410,24 @@ impl UserSessionInner {
                 }
             }
 
+            // The masking key can also do AES Encrypt/Decrypt (HMAC384 only)
+            (Key::AesHmac(key), Kind::AesHmac640) => match mode {
+                AesMode::Encrypt => {
+                    let result = key.encrypt(data, AesAlgo::Cbc, Some(iv))?;
+                    Ok(AesEncryptDecryptResult {
+                        data: result.cipher_text,
+                        iv: result.iv.unwrap_or([0; 16].to_vec()), // or is not possible due to previous conditions
+                    })
+                }
+                AesMode::Decrypt => {
+                    let result = key.decrypt(data, AesAlgo::Cbc, Some(iv))?;
+                    Ok(AesEncryptDecryptResult {
+                        data: result.plain_text,
+                        iv: result.iv.unwrap_or([0; 16].to_vec()), // or is not possible due to previous conditions
+                    })
+                }
+            },
+
             _ => {
                 tracing::error!(error = ?ManticoreError::AesInvalidKeyType, key_num, "Key type is not AES");
                 Err(ManticoreError::AesInvalidKeyType)
@@ -1449,13 +1453,13 @@ impl UserSessionInner {
             Err(ManticoreError::InvalidPermissions)?
         }
 
-        if entry.kind() != Kind::AesBulk256 {
-            tracing::error!(error = ?ManticoreError::AesInvalidKeyType, "AES GCM: Key type is not AES Bulk");
+        if entry.kind() != Kind::AesGcmBulk256 && entry.kind() != Kind::AesGcmBulk256Unapproved {
+            tracing::error!(error = ?ManticoreError::AesInvalidKeyType, "AES GCM: Key type is not AES GCM Bulk type");
             Err(ManticoreError::AesInvalidKeyType)?
         }
 
-        match (entry.key(), entry.kind()) {
-            (Key::Aes(key), Kind::AesBulk256) => {
+        match entry.key() {
+            Key::Aes(key) => {
                 if mode == AesMode::Encrypt {
                     let result = key.aes_gcm_encrypt_mb(
                         &source_buffers,
@@ -1506,7 +1510,7 @@ impl UserSessionInner {
             Err(ManticoreError::InvalidPermissions)?
         }
 
-        if key1_entry.kind() != Kind::AesBulk256 {
+        if key1_entry.kind() != Kind::AesXtsBulk256 {
             tracing::error!(error = ?ManticoreError::AesInvalidKeyType, "Key1 type is not AES Bulk");
             Err(ManticoreError::AesInvalidKeyType)?
         }
@@ -1516,7 +1520,7 @@ impl UserSessionInner {
             Err(ManticoreError::InvalidPermissions)?
         }
 
-        if key2_entry.kind() != Kind::AesBulk256 {
+        if key2_entry.kind() != Kind::AesXtsBulk256 {
             tracing::error!(error = ?ManticoreError::AesInvalidKeyType, "Key2 type is not AES Bulk");
             Err(ManticoreError::AesInvalidKeyType)?
         }
@@ -1555,10 +1559,6 @@ impl UserSessionInner {
                 Err(ManticoreError::AesInvalidKeyType)
             }
         }
-    }
-
-    fn set_disabled(&mut self) {
-        self.flags.set_disabled(true);
     }
 }
 
@@ -1779,17 +1779,18 @@ mod tests {
         let vault = function_state.get_vault(DEFAULT_VAULT_ID).unwrap();
 
         // Open an app session.
-        let (session_id, _) =
-            helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
-        let app_session = function.get_user_session(session_id, false).unwrap();
+        let session = helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
+        let app_session = function
+            .get_user_session(session.session_id, false)
+            .unwrap();
 
         drop(app_session);
 
         // Close the session.
-        assert!(function.close_user_session(session_id).is_ok());
+        assert!(function.close_user_session(session.session_id).is_ok());
 
         // Check that the session has been removed.
-        assert!(vault.get_key_entry(session_id).is_err());
+        assert!(vault.get_session_entry(session.session_id).is_err());
     }
 
     #[test]
@@ -1801,8 +1802,9 @@ mod tests {
         let vault = function_state.get_vault(DEFAULT_VAULT_ID).unwrap();
 
         // Open an app session.
-        let (session_id, _) =
+        let session_result =
             helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
+        let session_id = session_result.session_id;
         let app_session = function.get_user_session(session_id, false).unwrap();
         drop(app_session);
 
@@ -1823,32 +1825,34 @@ mod tests {
         let vault = function_state.get_vault(DEFAULT_VAULT_ID).unwrap();
 
         // Open an app session.
-        let (session_id1, _) =
+        let session_result =
             helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
-        let app_session1 = function.get_user_session(session_id1, false).unwrap();
+        let session1 = session_result.session_id;
+        let app_session1 = function.get_user_session(session1, false).unwrap();
 
-        let (session_id2, _) =
+        let session_result =
             helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
-        let app_session2 = function.get_user_session(session_id2, false).unwrap();
+        let session2 = session_result.session_id;
+        let app_session2 = function.get_user_session(session2, false).unwrap();
 
         drop(app_session1);
 
         // Close the first session.
-        assert!(function.close_user_session(session_id1).is_ok());
+        assert!(function.close_user_session(session1).is_ok());
 
         // Check that the session has been removed.
-        assert!(function.get_user_session(session_id1, false).is_err());
+        assert!(function.get_user_session(session1, false).is_err());
 
         // The second session must exist.
-        assert!(function.get_user_session(session_id2, false).is_ok());
+        assert!(function.get_user_session(session2, false).is_ok());
 
         drop(app_session2);
 
         // Close the second session.
-        assert!(function.close_user_session(session_id2).is_ok());
+        assert!(function.close_user_session(session2).is_ok());
 
         // Check that the session has been removed.
-        assert!(function.get_user_session(session_id2, false).is_err());
+        assert!(function.get_user_session(session2, false).is_err());
     }
 
     #[test]
@@ -1860,8 +1864,9 @@ mod tests {
         let vault = function_state.get_vault(DEFAULT_VAULT_ID).unwrap();
 
         // Open an app session.
-        let (session_id, _) =
+        let session_result =
             helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
+        let session_id = session_result.session_id;
         let app_session = function.get_user_session(session_id, false).unwrap();
 
         drop(app_session);
@@ -1872,11 +1877,11 @@ mod tests {
         // Open and close enough sessions so that the id is reused.
         let mut another_app_session_with_same_id = None;
         for _i in 0..3 {
-            let (another_session_id, _) =
+            let another_session =
                 helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
 
-            if another_session_id == session_id {
-                another_app_session_with_same_id = Some(another_session_id);
+            if another_session.session_id == session_id {
+                another_app_session_with_same_id = Some(another_session.session_id);
                 break;
             }
         }
@@ -1903,8 +1908,9 @@ mod tests {
         let vault = function_state.get_vault(DEFAULT_VAULT_ID).unwrap();
 
         // Open an app session.
-        let (session_id, _) =
+        let session_result =
             helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
+        let session_id = session_result.session_id;
         let app_session = function.get_user_session(session_id, false).unwrap();
 
         // Create some app keys.
@@ -1937,8 +1943,9 @@ mod tests {
         let vault = function_state.get_vault(DEFAULT_VAULT_ID).unwrap();
 
         // Open an app session.
-        let (session_id, _) =
+        let session_result =
             helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
+        let session_id = session_result.session_id;
         let app_session = function.get_user_session(session_id, false).unwrap();
 
         // Create some session_only keys.
@@ -1974,8 +1981,9 @@ mod tests {
         let vault = function_state.get_vault(DEFAULT_VAULT_ID).unwrap();
 
         // Open an app session.
-        let (session_id, _) =
+        let session_result =
             helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
+        let session_id = session_result.session_id;
         let app_session = function.get_user_session(session_id, false).unwrap();
 
         // Create some session_only keys.
@@ -1997,7 +2005,7 @@ mod tests {
         drop(app_session);
 
         // Close the session.
-        let result = function.close_user_session(session_id);
+        let result = function.close_user_session(session_result.session_id);
         assert!(result.is_ok());
 
         // Should error because Entry is disabled
@@ -2009,7 +2017,7 @@ mod tests {
         // Release Entry and close again
         drop(entry);
 
-        let result = function.close_user_session(session_id);
+        let result = function.close_user_session(session_result.session_id);
         assert!(result.is_err(), "result {:?}", result);
     }
 
@@ -2022,8 +2030,9 @@ mod tests {
         let vault = function_state.get_vault(DEFAULT_VAULT_ID).unwrap();
 
         // Open an app session.
-        let (session_id, _) =
+        let session_result =
             helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
+        let session_id = session_result.session_id;
         let app_session = function.get_user_session(session_id, false).unwrap();
 
         // Hold another reference to the session
@@ -2052,8 +2061,9 @@ mod tests {
         let vault = function_state.get_vault(DEFAULT_VAULT_ID).unwrap();
 
         // Open an app session.
-        let (session_id, _) =
+        let session_result =
             helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
+        let session_id = session_result.session_id;
         let app_session = function.get_user_session(session_id, false).unwrap();
 
         // Hold another reference to the session
@@ -2080,8 +2090,9 @@ mod tests {
         let vault = function_state.get_vault(DEFAULT_VAULT_ID).unwrap();
 
         // Open an app session.
-        let (session_id, _) =
+        let session_result =
             helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
+        let session_id = session_result.session_id;
         let app_session = function.get_user_session(session_id, false).unwrap();
 
         let der_lengths = [294, 422, 550];
@@ -2093,7 +2104,10 @@ mod tests {
 
             // Check the generated key has a App Session ID of None
             assert_eq!(
-                vault.get_key_entry(private_key_num).unwrap().sess_id(),
+                vault
+                    .get_key_entry(private_key_num)
+                    .unwrap()
+                    .physical_sess_id(),
                 None
             );
         }
@@ -2107,9 +2121,11 @@ mod tests {
         let function_state = function.get_function_state();
         let vault = function_state.get_vault(DEFAULT_VAULT_ID).unwrap();
 
-        // Open an app session.
-        let (session_id, _) =
+        // Open 2 sessions and use the second one only to make sure physical session ID is not the same as virtual session ID
+        let _ = helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
+        let session_result =
             helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
+        let session_id = session_result.session_id;
         let app_session = function.get_user_session(session_id, false).unwrap();
 
         let der_lengths = [294, 422, 550];
@@ -2121,7 +2137,17 @@ mod tests {
 
             // Check the generated key has a App Session ID
             assert_eq!(
-                vault.get_key_entry(private_key_num).unwrap().sess_id(),
+                vault
+                    .get_key_entry(private_key_num)
+                    .unwrap()
+                    .physical_sess_id(),
+                Some(vault.get_target_session_id(app_session.id()).unwrap())
+            );
+            assert_ne!(
+                vault
+                    .get_key_entry(private_key_num)
+                    .unwrap()
+                    .physical_sess_id(),
                 Some(app_session.id())
             );
         }
@@ -2136,8 +2162,9 @@ mod tests {
         let vault = function_state.get_vault(DEFAULT_VAULT_ID).unwrap();
 
         // Open an app session.
-        let (session_id, _) =
+        let session_result =
             helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
+        let session_id = session_result.session_id;
         let app_session = function.get_user_session(session_id, false).unwrap();
 
         // Generate key with invalid length.
@@ -2179,8 +2206,9 @@ mod tests {
         let vault = function_state.get_vault(DEFAULT_VAULT_ID).unwrap();
 
         // Open an app session.
-        let (session_id, _) =
+        let session_result =
             helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
+        let session_id = session_result.session_id;
         let app_session = function.get_user_session(session_id, false).unwrap();
 
         let vault = function
@@ -2276,8 +2304,9 @@ mod tests {
         let vault = function_state.get_vault(DEFAULT_VAULT_ID).unwrap();
 
         // Open an app session.
-        let (session_id, _) =
+        let session_result =
             helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
+        let session_id = session_result.session_id;
         let app_session = function.get_user_session(session_id, false).unwrap();
 
         // Generate key
@@ -2297,22 +2326,23 @@ mod tests {
 
         // Create 3 app sessions.
         // Admin session will try to delete keys added by client session.
-        let (app_session_admin_id, _) =
+        let session_result =
             helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
-        let app_session_admin = function
-            .get_user_session(app_session_admin_id, false)
-            .unwrap();
+        let session_admin_id = session_result.session_id;
+        let app_session_admin = function.get_user_session(session_admin_id, false).unwrap();
 
-        let (app_session_client_app_keys_id, _) =
+        let session_result =
             helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
+        let session_client_app_keys_id = session_result.session_id;
         let app_session_client_app_keys = function
-            .get_user_session(app_session_client_app_keys_id, false)
+            .get_user_session(session_client_app_keys_id, false)
             .unwrap();
 
-        let (app_session_client_session_only_keys_id, _) =
+        let session_result =
             helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
+        let session_client_session_only_keys_id = session_result.session_id;
         let app_session_client_session_only_keys = function
-            .get_user_session(app_session_client_session_only_keys_id, false)
+            .get_user_session(session_client_session_only_keys_id, false)
             .unwrap();
 
         // Client adds some key.
@@ -2358,17 +2388,15 @@ mod tests {
 
         // Create 2 app sessions.
         // Admin session will try to delete keys added by client session.
-        let (app_session_admin_id, _) =
+        let session_result =
             helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
-        let app_session_admin = function
-            .get_user_session(app_session_admin_id, false)
-            .unwrap();
+        let session_admin_id = session_result.session_id;
+        let app_session_admin = function.get_user_session(session_admin_id, false).unwrap();
 
-        let (app_session_client_id, _) =
+        let session_result =
             helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
-        let app_session_client = function
-            .get_user_session(app_session_client_id, false)
-            .unwrap();
+        let session_client_id = session_result.session_id;
+        let app_session_client = function.get_user_session(session_client_id, false).unwrap();
 
         // Client adds some key.
         let (key_num, _) = app_session_client
@@ -2402,14 +2430,16 @@ mod tests {
         let vault = function_state.get_vault(DEFAULT_VAULT_ID).unwrap();
 
         // Create 2 app sessions, one for creating session_only keys, one for app keys.
-        let (app_session_session_only_key_id, _) =
+        let session_result =
             helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
+        let app_session_session_only_key_id = session_result.session_id;
         let app_session_session_only_key = function
             .get_user_session(app_session_session_only_key_id, false)
             .unwrap();
 
-        let (app_session_app_keys_id, _) =
+        let session_result =
             helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
+        let app_session_app_keys_id = session_result.session_id;
         let app_session_app_keys = function
             .get_user_session(app_session_app_keys_id, false)
             .unwrap();
@@ -2453,8 +2483,9 @@ mod tests {
         let vault = function_state.get_vault(DEFAULT_VAULT_ID).unwrap();
 
         // Open an app session.
-        let (session_id, _) =
+        let session_result =
             helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
+        let session_id = session_result.session_id;
         let app_session = function.get_user_session(session_id, false).unwrap();
 
         let bits = 2048;
@@ -2489,11 +2520,13 @@ mod tests {
         let vault = function_state.get_vault(DEFAULT_VAULT_ID).unwrap();
 
         // Open an app session.
-        let (session_id1, _) =
+        let session_result =
             helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
+        let session_id1 = session_result.session_id;
         let app_session1 = function.get_user_session(session_id1, false).unwrap();
-        let (session_id2, _) =
+        let session_result =
             helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
+        let session_id2 = session_result.session_id;
         let app_session2 = function.get_user_session(session_id2, false).unwrap();
 
         // Create a new session.
@@ -2524,8 +2557,9 @@ mod tests {
         let vault = function_state.get_vault(DEFAULT_VAULT_ID).unwrap();
 
         // Open an app session.
-        let (session_id, _) =
+        let session_result =
             helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
+        let session_id = session_result.session_id;
         let app_session = function.get_user_session(session_id, false).unwrap();
 
         // Use invalid key index.
@@ -2545,8 +2579,9 @@ mod tests {
         let vault = function_state.get_vault(DEFAULT_VAULT_ID).unwrap();
 
         // Open an app session.
-        let (session_id, _) =
+        let session_result =
             helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
+        let session_id = session_result.session_id;
         let app_session = function.get_user_session(session_id, false).unwrap();
 
         let vault = function
@@ -2607,9 +2642,11 @@ mod tests {
         let vault = function_state.get_vault(DEFAULT_VAULT_ID).unwrap();
 
         // Open an app session.
-        let (session_id, _) =
+        let session_result =
             helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
-        let app_session = function.get_user_session(session_id, false).unwrap();
+        let app_session = function
+            .get_user_session(session_result.session_id, false)
+            .unwrap();
 
         let vault = function
             .get_function_state()
@@ -2645,9 +2682,11 @@ mod tests {
         let vault = function_state.get_vault(DEFAULT_VAULT_ID).unwrap();
 
         // Open an app session.
-        let (session_id, _) =
+        let session_result =
             helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
-        let app_session = function.get_user_session(session_id, false).unwrap();
+        let app_session = function
+            .get_user_session(session_result.session_id, false)
+            .unwrap();
 
         let vault = function
             .get_function_state()
@@ -2682,9 +2721,11 @@ mod tests {
         let vault = function_state.get_vault(DEFAULT_VAULT_ID).unwrap();
 
         // Open an app session.
-        let (session_id, _) =
+        let session_result =
             helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
-        let app_session = function.get_user_session(session_id, false).unwrap();
+        let app_session = function
+            .get_user_session(session_result.session_id, false)
+            .unwrap();
 
         let vault = function
             .get_function_state()
@@ -2720,9 +2761,11 @@ mod tests {
         let vault = function_state.get_vault(DEFAULT_VAULT_ID).unwrap();
 
         // Open an app session.
-        let (session_id, _) =
+        let session_result =
             helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
-        let app_session = function.get_user_session(session_id, false).unwrap();
+        let app_session = function
+            .get_user_session(session_result.session_id, false)
+            .unwrap();
 
         let vault = function
             .get_function_state()
@@ -2791,11 +2834,11 @@ mod tests {
             for _ in 0..1000 {
                 // Open an app session.
                 let result = helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev);
-                if let Ok((session_id, _)) = result {
+                if let Ok(session_result) = result {
                     let session_id = {
-                        let result = function.get_user_session(session_id, false);
+                        let result = function.get_user_session(session_result.session_id, false);
                         assert!(result.is_ok());
-                        session_id
+                        session_result.session_id
                     };
 
                     // Close the session.
@@ -2836,9 +2879,11 @@ mod tests {
         let vault = function_state.get_vault(DEFAULT_VAULT_ID).unwrap();
 
         // Open an app session.
-        let (session_id, _) =
+        let session_result =
             helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
-        let app_session = function.get_user_session(session_id, false).unwrap();
+        let app_session = function
+            .get_user_session(session_result.session_id, false)
+            .unwrap();
 
         println!("app_session {:?}", app_session);
         let app_session_weak = app_session.as_weak();
@@ -2855,9 +2900,11 @@ mod tests {
         let vault = function_state.get_vault(DEFAULT_VAULT_ID).unwrap();
 
         // Open an app session.
-        let (session_id, _) =
+        let session_result =
             helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
-        let app_session = function.get_user_session(session_id, false).unwrap();
+        let app_session = function
+            .get_user_session(session_result.session_id, false)
+            .unwrap();
 
         // import AES key
         let result = app_session.import_key(
@@ -2927,5 +2974,517 @@ mod tests {
         //None,
         //);
         //assert_eq!(result, Err(ManticoreError::InvalidArgument));
+    }
+
+    #[test]
+    fn test_mixed_sessions_key_generation() {
+        let function = common_setup(64);
+        let api_rev = function.get_api_rev_range().max;
+
+        let function_state = function.get_function_state();
+        let vault = function_state.get_vault(DEFAULT_VAULT_ID).unwrap();
+
+        let flags = EntryFlags::new().with_allow_sign_verify(true);
+
+        // Each session generates an RSA key with 2048 bits and session_only=true
+        let bits = 2048u16;
+        let test_data = vec![0x42u8; bits as usize / 8]; // Create data equal to key size in bytes
+
+        // Create session 1 and key 1
+        let session_result =
+            helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
+        let session_id1 = session_result.session_id;
+        let user_session1 = function.get_user_session(session_id1, false).unwrap();
+        // Session 1 generates RSA key (session_only=true)
+        let (key_num1, _public_key1) = user_session1
+            .rsa_generate_key(bits, true, flags, None)
+            .expect("Session 1: rsa_generate_key failed");
+
+        // close session 1
+        function.close_user_session(session_id1).unwrap();
+
+        // Create session 2 and key 2
+        let session_result =
+            helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
+        let session_id2 = session_result.session_id;
+
+        let user_session2 = function.get_user_session(session_id2, false).unwrap();
+        // Session 2 generates RSA key (session_only=true)
+        let (key_num2, _public_key2) = user_session2
+            .rsa_generate_key(bits, true, flags, None)
+            .expect("Session 2: rsa_generate_key failed");
+
+        // Session 2 CAN use key 1 to sign data (key belongs to session 1)
+        // Because Session 2 key 2  effectively overwrites session 1 and key 1.
+        // This means that session 2 can use key 1 without any issues.
+        // We need test on client side which may pass other credentials other than session id and key num.
+
+        assert_eq!(session_id1, session_id2);
+        assert!(function.get_user_session(session_id1, false).is_ok());
+        assert_eq!(key_num1, key_num2);
+        assert!(user_session2
+            .rsa_private(key_num1, &test_data, RsaOpType::Sign)
+            .is_ok());
+
+        // Session 2 can use its own key
+        assert!(user_session2
+            .rsa_private(key_num2, &test_data, RsaOpType::Sign)
+            .is_ok());
+
+        // Create session 3 and key 3
+        let session_result =
+            helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
+        let session_id3 = session_result.session_id;
+        let user_session3 = function.get_user_session(session_id3, false).unwrap();
+        // Session 3 generates RSA key (session_only=true)
+        let (key_num3, _public_key3) = user_session3
+            .rsa_generate_key(bits, true, flags, None)
+            .expect("Session 3: rsa_generate_key failed");
+
+        // Drop session 3 reference and close session 3
+        drop(user_session3);
+        assert!(function.close_user_session(session_id3).is_ok());
+
+        // Session 2 still works with its own key
+        assert!(user_session2
+            .rsa_private(key_num2, &test_data, RsaOpType::Sign)
+            .is_ok());
+
+        // Session 2 cannot use key 3 (from closed session 3)
+        assert_eq!(
+            user_session2.rsa_private(key_num3, &test_data, RsaOpType::Sign),
+            Err(ManticoreError::InvalidKeyIndex)
+        );
+
+        assert!(function.close_user_session(session_id2).is_ok());
+        // Check that the sessions have been removed.
+        assert!(function.get_user_session(session_id2, false).is_err());
+        assert!(function.get_user_session(session_id3, false).is_err());
+        // Try to use session 2 and key2 to sign -- it should fail since the session is closed
+        assert_eq!(
+            user_session2.rsa_private(key_num2, &test_data, RsaOpType::Sign),
+            Err(ManticoreError::InvalidKeyIndex)
+        );
+    }
+    #[test]
+    fn test_mixed_sessions_key_generation_2() {
+        let function = common_setup(64);
+        let api_rev = function.get_api_rev_range().max;
+
+        let function_state = function.get_function_state();
+        let vault = function_state.get_vault(DEFAULT_VAULT_ID).unwrap();
+
+        let flags = EntryFlags::new().with_allow_sign_verify(true);
+
+        // Each session generates an RSA key with 2048 bits and session_only=true
+        let bits = 2048u16;
+        let test_data = vec![0x42u8; bits as usize / 8]; // Create data equal to key size in bytes
+
+        // Create session 1 and key 1
+        let session_result =
+            helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
+        let session_id1 = session_result.session_id;
+        let user_session1 = function.get_user_session(session_id1, false).unwrap();
+        // Session 1 generates RSA key (session_only=true)
+        let (key_num1, _public_key1) = user_session1
+            .rsa_generate_key(bits, true, flags, None)
+            .expect("Session 1: rsa_generate_key failed");
+
+        // Create session 2
+        let session_result =
+            helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
+        let session_id2 = session_result.session_id;
+        let user_session2 = function.get_user_session(session_id2, false).unwrap();
+
+        // close session 1
+        function.close_user_session(session_id1).unwrap();
+
+        // Session 2 generates RSA key 2 (session_only=true)
+        let (key_num2, _public_key2) = user_session2
+            .rsa_generate_key(bits, true, flags, None)
+            .expect("Session 2: rsa_generate_key failed");
+
+        // Session 2 CAN NOT use key 1 to sign data (key belongs to session 1)
+        assert_ne!(session_id1, session_id2);
+        assert!(function.get_user_session(session_id1, false).is_err());
+        assert!(user_session2
+            .rsa_private(key_num1, &test_data, RsaOpType::Sign)
+            .is_err());
+
+        // Session 2 can use its own key
+        assert!(user_session2
+            .rsa_private(key_num2, &test_data, RsaOpType::Sign)
+            .is_ok());
+
+        // Create session 3 and key 3
+        let session_result =
+            helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
+        let session_id3 = session_result.session_id;
+        let user_session3 = function.get_user_session(session_id3, false).unwrap();
+        // Session 3 generates RSA key (session_only=true)
+        let (key_num3, _public_key3) = user_session3
+            .rsa_generate_key(bits, true, flags, None)
+            .expect("Session 3: rsa_generate_key failed");
+
+        // Drop session 3 reference and close session 3
+        drop(user_session3);
+        assert!(function.close_user_session(session_id3).is_ok());
+
+        // Session 2 still works with its own key
+        assert!(user_session2
+            .rsa_private(key_num2, &test_data, RsaOpType::Sign)
+            .is_ok());
+
+        // Session 2 cannot use key 3 (from closed session 3)
+        assert_eq!(
+            user_session2.rsa_private(key_num3, &test_data, RsaOpType::Sign),
+            Err(ManticoreError::InvalidKeyIndex)
+        );
+
+        assert!(function.close_user_session(session_id2).is_ok());
+        // Check that the sessions have been removed.
+        assert!(function.get_user_session(session_id2, false).is_err());
+        assert!(function.get_user_session(session_id3, false).is_err());
+        // Try to use session 2 and key2 to sign -- it should fail since the session is closed
+        assert_eq!(
+            user_session2.rsa_private(key_num2, &test_data, RsaOpType::Sign),
+            Err(ManticoreError::InvalidKeyIndex)
+        );
+    }
+
+    #[test]
+    fn test_simple_masked_key() {
+        let function = common_setup(64);
+
+        // Initialize masking key: init_bk3 followed by provision
+        let original_bk3 = [0x77u8; 48];
+        let masked_bk3 = function.init_bk3(original_bk3).unwrap();
+        let _bmk_result = function.provision(&masked_bk3, None).unwrap();
+
+        let function_state = function.get_function_state();
+        let vault = function_state.get_vault(DEFAULT_VAULT_ID).unwrap();
+        let api_rev = function.get_api_rev_range().max;
+
+        let flags = EntryFlags::new()
+            .with_allow_encrypt_decrypt(true)
+            .with_session_only(true); // Make keys session-only
+
+        let session_result =
+            helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
+        let session_id = session_result.session_id;
+        let user_session = function.get_user_session(session_id, false).unwrap();
+
+        let key_size = AesKeySize::Aes256;
+        let key_num = user_session
+            .aes_generate_key(key_size, flags, None)
+            .expect("aes_generate_key failed");
+
+        let key_entry = vault
+            .get_key_entry(key_num)
+            .expect("Failed to get key entry");
+
+        let masked_key = user_session
+            .mask_key(&key_entry)
+            .expect("Should be able to mask key");
+
+        println!("Masked key length: {}", masked_key.len());
+
+        let unmasked_key_num = user_session
+            .unmask_key(&masked_key)
+            .expect("Should be able to unmask key");
+
+        println!(
+            "Original key num: {}, Unmasked key num: {}",
+            key_num, unmasked_key_num
+        );
+
+        assert!(function.close_user_session(session_id).is_ok());
+    }
+
+    #[test]
+    fn test_simple_masked_key_rsa2k() {
+        let function = common_setup(64);
+
+        // Initialize masking key: init_bk3 followed by provision
+        let original_bk3 = [0x77u8; 48];
+        let masked_bk3 = function.init_bk3(original_bk3).unwrap();
+        let _bmk_result = function.provision(&masked_bk3, None).unwrap();
+
+        let function_state = function.get_function_state();
+        let vault = function_state.get_vault(DEFAULT_VAULT_ID).unwrap();
+        let api_rev = function.get_api_rev_range().max;
+
+        let flags = EntryFlags::new()
+            .with_allow_encrypt_decrypt(true)
+            .with_session_only(true); // Make keys session-only
+
+        let session_result =
+            helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
+        let session_id = session_result.session_id;
+        let user_session = function.get_user_session(session_id, false).unwrap();
+
+        let bits = 2048u16; // RSA2k key size
+        let (key_num, _public_key) = user_session
+            .rsa_generate_key(bits, true, flags, None)
+            .expect("rsa_generate_key failed");
+
+        let key_entry = vault
+            .get_key_entry(key_num)
+            .expect("Failed to get key entry");
+
+        let masked_key = user_session
+            .mask_key(&key_entry)
+            .expect("Should be able to mask key");
+
+        println!("Masked RSA2k key length: {}", masked_key.len());
+
+        let unmasked_key_num = user_session
+            .unmask_key(&masked_key)
+            .expect("Should be able to unmask key");
+
+        println!(
+            "Original RSA2k key num: {}, Unmasked key num: {}",
+            key_num, unmasked_key_num
+        );
+
+        assert!(function.close_user_session(session_id).is_ok());
+    }
+
+    #[test]
+    fn test_session_masked_key_isolation() {
+        let function = common_setup(64);
+        let api_rev = function.get_api_rev_range().max;
+
+        // Initialize masking key: init_bk3 followed by provision
+        let original_bk3 = [0x77u8; 48];
+        let masked_bk3 = function.init_bk3(original_bk3).unwrap();
+        let _bmk_result = function.provision(&masked_bk3, None).unwrap();
+
+        let function_state = function.get_function_state();
+        let vault = function_state.get_vault(DEFAULT_VAULT_ID).unwrap();
+
+        let flags = EntryFlags::new()
+            .with_allow_encrypt_decrypt(true)
+            .with_session_only(true); // Make keys session-only
+
+        // AES 256-bit key for testing
+        let key_size = AesKeySize::Aes256;
+        let test_data = vec![0x42u8; 16]; // 16 bytes for AES testing
+
+        // Step 1: Create two sessions, each creating an AES256 key
+        let session_result =
+            helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
+        let session_id1 = session_result.session_id;
+        let user_session1 = function.get_user_session(session_id1, false).unwrap();
+
+        let session_result =
+            helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
+        let session_id2 = session_result.session_id;
+        let user_session2 = function.get_user_session(session_id2, false).unwrap();
+
+        // Session 1 generates AES key
+        let key_num1 = user_session1
+            .aes_generate_key(key_size, flags, None)
+            .expect("Session 1: aes_generate_key failed");
+
+        // Session 2 generates AES key
+        let key_num2 = user_session2
+            .aes_generate_key(key_size, flags, None)
+            .expect("Session 2: aes_generate_key failed");
+
+        println!(
+            "✓ Step 1: Created AES keys - Session 1: key {}, Session 2: key {}",
+            key_num1, key_num2
+        );
+
+        // Get the key entries
+        let key_entry1 = vault
+            .get_key_entry(key_num1)
+            .expect("Failed to get key entry 1");
+        let key_entry2 = vault
+            .get_key_entry(key_num2)
+            .expect("Failed to get key entry 2");
+
+        // Step 2: Each session tries to mask its own key - both should succeed
+        let masked_key1 = user_session1
+            .mask_key(&key_entry1)
+            .expect("Session 1 should be able to mask its own key");
+        let masked_key2 = user_session2
+            .mask_key(&key_entry2)
+            .expect("Session 2 should be able to mask its own key");
+
+        println!("✓ Step 2: Each session successfully masked its own key (mask1: {} bytes, mask2: {} bytes)",
+                 masked_key1.len(), masked_key2.len());
+
+        // Step 3: Each session tries to mask the other session's key
+        // This should succeed at the mask level because we have direct
+        // access to the vault entries, which won't be available to dispatcher clients.
+        // Will fail when trying to unmask due to session ID mismatch
+        let masked_key1_by_session2 = user_session2
+            .mask_key(&key_entry1)
+            .expect("Masking should succeed even for other session's key");
+        let masked_key2_by_session1 = user_session1
+            .mask_key(&key_entry2)
+            .expect("Masking should succeed even for other session's key");
+
+        println!("✓ Step 3: Cross-session masking succeeded (expected - session isolation checked during unmask)");
+
+        // Step 4: Each session tries to unmask its own key - should succeed
+        let unmasked_key_num1 = user_session1
+            .unmask_key(&masked_key1)
+            .expect("Session 1 should be able to unmask its own key");
+        let unmasked_key_num2 = user_session2
+            .unmask_key(&masked_key2)
+            .expect("Session 2 should be able to unmask its own key");
+
+        println!("✓ Step 4: Each session successfully unmasked its own key - Session 1: key {}, Session 2: key {}",
+                 unmasked_key_num1, unmasked_key_num2);
+
+        // Step 5: Each session tries to unmask the other session's masked key - should fail
+        let result1 = user_session1.unmask_key(&masked_key2);
+        assert!(
+            result1.is_err(),
+            "Session 1 should not be able to unmask session 2's key"
+        );
+
+        let result2 = user_session2.unmask_key(&masked_key1);
+        assert!(
+            result2.is_err(),
+            "Session 2 should not be able to unmask session 1's key"
+        );
+
+        // Also test cross-masked keys (keys masked by the wrong session)
+        let result3 = user_session1.unmask_key(&masked_key1_by_session2);
+        assert!(
+            result3.is_err(),
+            "Session 1 should not be able to unmask its key when masked by session 2"
+        );
+
+        let result4 = user_session2.unmask_key(&masked_key2_by_session1);
+        assert!(
+            result4.is_err(),
+            "Session 2 should not be able to unmask its key when masked by session 1"
+        );
+
+        println!(
+            "✓ Step 5: Cross-session unmasking correctly failed (4/4 attempts properly blocked)"
+        );
+
+        // Step 6: Each session tries to use own unmasked key for AES operations - should succeed
+        let encrypt_result1 = user_session1
+            .aes_encrypt_decrypt(unmasked_key_num1, AesMode::Encrypt, &test_data, &[0x1; 16])
+            .expect("Session 1 should be able to use its own unmasked key for encryption");
+
+        let encrypt_result2 = user_session2
+            .aes_encrypt_decrypt(unmasked_key_num2, AesMode::Encrypt, &test_data, &[0x1; 16])
+            .expect("Session 2 should be able to use its own unmasked key for encryption");
+
+        // Verify encrypted data is different (different keys)
+        assert_ne!(
+            encrypt_result1.data, encrypt_result2.data,
+            "Encrypted data should be different"
+        );
+
+        println!("✓ Step 6: Each session successfully used its own key for encryption - results differ as expected");
+
+        // Step 7: Each session tries to use the other session's unmasked key - should fail
+        let result5 = user_session1.aes_encrypt_decrypt(
+            unmasked_key_num2,
+            AesMode::Encrypt,
+            &test_data,
+            &[0x1; 16],
+        );
+        assert!(
+            result5.is_err(),
+            "Session 1 should not be able to use session 2's unmasked key"
+        );
+
+        let result6 = user_session2.aes_encrypt_decrypt(
+            unmasked_key_num1,
+            AesMode::Encrypt,
+            &test_data,
+            &[0x1; 16],
+        );
+        assert!(
+            result6.is_err(),
+            "Session 2 should not be able to use session 1's unmasked key"
+        );
+
+        println!("✓ Step 7: Cross-session key usage correctly failed");
+        println!("🎉 All session isolation tests passed! Masked keys are properly isolated between sessions.");
+
+        // Clean up
+        assert!(function.close_user_session(session_id1).is_ok());
+        assert!(function.close_user_session(session_id2).is_ok());
+    }
+
+    #[test]
+    fn test_key_serialization_sizes() {
+        use crate::crypto::aes::generate_aes;
+        use crate::crypto::ecc::generate_ecc;
+        use crate::crypto::ecc::EccCurve;
+        use crate::crypto::rsa::generate_rsa;
+        use crate::mask::KeySerialization;
+        use crate::table::entry::key::Key;
+
+        // Test RSA keys
+        for (rsa_bits, kind) in [
+            (2048, Kind::Rsa2kPrivate),
+            (3072, Kind::Rsa3kPrivate),
+            (4096, Kind::Rsa4kPrivate),
+            (2048, Kind::Rsa2kPrivateCrt),
+            (3072, Kind::Rsa3kPrivateCrt),
+            (4096, Kind::Rsa4kPrivateCrt),
+        ] {
+            let (rsa_key, _) = generate_rsa(rsa_bits).expect("Failed to generate RSA key");
+            let key = Key::RsaPrivate(rsa_key);
+            let serialized = key.serialize().expect("Failed to serialize RSA key");
+            assert_eq!(
+                kind.serde_size(),
+                serialized.len(),
+                "{:?} der_size() ({}) does not match actual serialized size ({})",
+                kind,
+                kind.serde_size(),
+                serialized.len()
+            );
+        }
+
+        // Test ECC keys
+        for (ecc_curve, kind) in [
+            (EccCurve::P256, Kind::Ecc256Private),
+            (EccCurve::P384, Kind::Ecc384Private),
+            (EccCurve::P521, Kind::Ecc521Private),
+        ] {
+            let (ecc_key, _) = generate_ecc(ecc_curve).expect("Failed to generate ECC key");
+            let key = Key::EccPrivate(ecc_key);
+            let serialized = key.serialize().expect("Failed to serialize ECC key");
+            assert_eq!(
+                kind.serde_size(),
+                serialized.len(),
+                "{:?} der_size() ({}) does not match actual serialized size ({})",
+                kind,
+                kind.serde_size(),
+                serialized.len()
+            );
+        }
+
+        // Test AES keys
+        for (aes_size, kind) in [
+            (AesKeySize::Aes128, Kind::Aes128),
+            (AesKeySize::Aes192, Kind::Aes192),
+            (AesKeySize::Aes256, Kind::Aes256),
+        ] {
+            let aes_key = generate_aes(aes_size).expect("Failed to generate AES key");
+            let key = Key::Aes(aes_key);
+            let serialized = key.serialize().expect("Failed to serialize AES key");
+            assert_eq!(
+                kind.serde_size(),
+                serialized.len(),
+                "{:?} der_size() ({}) does not match actual serialized size ({})",
+                kind,
+                kind.serde_size(),
+                serialized.len()
+            );
+        }
     }
 }

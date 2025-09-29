@@ -1,11 +1,15 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
+
 // Test code for Fast path aes gcm and xts encryption and decryption
 // flows
 // Applicable to device and mock
 
 mod common;
 
+#[cfg(not(feature = "resilient"))]
 use mcr_api::*;
+#[cfg(feature = "resilient")]
+use mcr_api_resilient::*;
 use test_with_tracing::test;
 
 use crate::common::*;
@@ -17,7 +21,7 @@ fn test_aes_xts_encrypt_decrypt_rsaunwrap() {
 
         let result = rsa_unwrap_from_wrap_data(
             &app_session,
-            KeyType::AesBulk256,
+            KeyType::AesXtsBulk256,
             DigestKind::Sha1,
             KeyUsage::EncryptDecrypt,
         );
@@ -26,7 +30,7 @@ fn test_aes_xts_encrypt_decrypt_rsaunwrap() {
 
         let result = rsa_unwrap_from_wrap_data(
             &app_session,
-            KeyType::AesBulk256,
+            KeyType::AesXtsBulk256,
             DigestKind::Sha1,
             KeyUsage::EncryptDecrypt,
         );
@@ -72,7 +76,7 @@ fn test_aes_xts_tampered_data_rsaunwrap() {
 
         let result = rsa_unwrap_from_wrap_data(
             &app_session,
-            KeyType::AesBulk256,
+            KeyType::AesXtsBulk256,
             DigestKind::Sha1,
             KeyUsage::EncryptDecrypt,
         );
@@ -81,7 +85,7 @@ fn test_aes_xts_tampered_data_rsaunwrap() {
 
         let result = rsa_unwrap_from_wrap_data(
             &app_session,
-            KeyType::AesBulk256,
+            KeyType::AesXtsBulk256,
             DigestKind::Sha1,
             KeyUsage::EncryptDecrypt,
         );
@@ -137,7 +141,7 @@ fn test_aes_xts_tampered_tweak_value_rsaunwrap() {
 
         let result = rsa_unwrap_from_wrap_data(
             &app_session,
-            KeyType::AesBulk256,
+            KeyType::AesXtsBulk256,
             DigestKind::Sha1,
             KeyUsage::EncryptDecrypt,
         );
@@ -146,7 +150,7 @@ fn test_aes_xts_tampered_tweak_value_rsaunwrap() {
 
         let result = rsa_unwrap_from_wrap_data(
             &app_session,
-            KeyType::AesBulk256,
+            KeyType::AesXtsBulk256,
             DigestKind::Sha1,
             KeyUsage::EncryptDecrypt,
         );
@@ -194,7 +198,7 @@ fn test_aes_xts_encrypt_decrypt_multi_times_rsaunwrap() {
 
         let result = rsa_unwrap_from_wrap_data(
             &app_session,
-            KeyType::AesBulk256,
+            KeyType::AesXtsBulk256,
             DigestKind::Sha1,
             KeyUsage::EncryptDecrypt,
         );
@@ -203,7 +207,7 @@ fn test_aes_xts_encrypt_decrypt_multi_times_rsaunwrap() {
 
         let result = rsa_unwrap_from_wrap_data(
             &app_session,
-            KeyType::AesBulk256,
+            KeyType::AesXtsBulk256,
             DigestKind::Sha1,
             KeyUsage::EncryptDecrypt,
         );
@@ -279,7 +283,7 @@ fn test_aes_xts_encrypt_data_size_rsaunwrap() {
 
         let result = rsa_unwrap_from_wrap_data(
             &app_session,
-            KeyType::AesBulk256,
+            KeyType::AesXtsBulk256,
             DigestKind::Sha1,
             KeyUsage::EncryptDecrypt,
         );
@@ -288,7 +292,7 @@ fn test_aes_xts_encrypt_data_size_rsaunwrap() {
 
         let result = rsa_unwrap_from_wrap_data(
             &app_session,
-            KeyType::AesBulk256,
+            KeyType::AesXtsBulk256,
             DigestKind::Sha1,
             KeyUsage::EncryptDecrypt,
         );
@@ -492,41 +496,44 @@ fn test_aes_xts_encrypt_data_size_rsaunwrap() {
         assert_eq!(encrypted_data.data.len(), data_len);
         assert_ne!(data, encrypted_data.data);
 
-        //size > 16
-        let data = generate_random_vector(17);
-        let tweak: [u8; 16usize] = [0x4; 16usize];
-        let data_len = data.len();
+        // Note: The HW doesn't support non 16 byte aligned sizes
+        // Uncomment when/if it does.
 
-        let result = app_session.aes_xts_encrypt_decrypt(
-            AesMode::Encrypt,
-            &aes_key1_handle,
-            &aes_key2_handle,
-            data_len, // data unit length == buffer length
-            tweak,
-            data.clone(),
-        );
-        assert!(result.is_ok(), "result {:?}", result);
-        let encrypted_data = result.unwrap();
-        assert_eq!(encrypted_data.data.len(), data_len);
-        assert_ne!(data, encrypted_data.data);
+        // //size > 16
+        // let data = generate_random_vector(17);
+        // let tweak: [u8; 16usize] = [0x4; 16usize];
+        // let data_len = data.len();
 
-        //size is odd
-        let data = generate_random_vector(109);
-        let tweak: [u8; 16usize] = [0x4; 16usize];
-        let data_len = data.len();
+        // let result = app_session.aes_xts_encrypt_decrypt(
+        //     AesMode::Encrypt,
+        //     &aes_key1_handle,
+        //     &aes_key2_handle,
+        //     data_len, // data unit length == buffer length
+        //     tweak,
+        //     data.clone(),
+        // );
+        // assert!(result.is_ok(), "result {:?}", result);
+        // let encrypted_data = result.unwrap();
+        // assert_eq!(encrypted_data.data.len(), data_len);
+        // assert_ne!(data, encrypted_data.data);
 
-        let result = app_session.aes_xts_encrypt_decrypt(
-            AesMode::Encrypt,
-            &aes_key1_handle,
-            &aes_key2_handle,
-            data_len, // data unit length == buffer length
-            tweak,
-            data.clone(),
-        );
-        assert!(result.is_ok(), "result {:?}", result);
-        let encrypted_data = result.unwrap();
-        assert_eq!(encrypted_data.data.len(), data_len);
-        assert_ne!(data, encrypted_data.data);
+        // //size is odd
+        // let data = generate_random_vector(109);
+        // let tweak: [u8; 16usize] = [0x4; 16usize];
+        // let data_len = data.len();
+
+        // let result = app_session.aes_xts_encrypt_decrypt(
+        //     AesMode::Encrypt,
+        //     &aes_key1_handle,
+        //     &aes_key2_handle,
+        //     data_len, // data unit length == buffer length
+        //     tweak,
+        //     data.clone(),
+        // );
+        // assert!(result.is_ok(), "result {:?}", result);
+        // let encrypted_data = result.unwrap();
+        // assert_eq!(encrypted_data.data.len(), data_len);
+        // assert_ne!(data, encrypted_data.data);
 
         //big size
         let data = generate_random_vector(2048 * 1024);
@@ -555,7 +562,7 @@ fn test_aes_xts_decrypt_data_size_rsaunwrap() {
 
         let result = rsa_unwrap_from_wrap_data(
             &app_session,
-            KeyType::AesBulk256,
+            KeyType::AesXtsBulk256,
             DigestKind::Sha1,
             KeyUsage::EncryptDecrypt,
         );
@@ -564,7 +571,7 @@ fn test_aes_xts_decrypt_data_size_rsaunwrap() {
 
         let result = rsa_unwrap_from_wrap_data(
             &app_session,
-            KeyType::AesBulk256,
+            KeyType::AesXtsBulk256,
             DigestKind::Sha1,
             KeyUsage::EncryptDecrypt,
         );
@@ -783,24 +790,28 @@ fn test_aes_xts_decrypt_data_size_rsaunwrap() {
         assert!(decrypted_result.is_err());
         assert_eq!(decrypted_result.unwrap_err(), HsmError::InvalidParameter);
 
-        //decrypt szie as is 255
         let data_to_decrypt = encrypted_data.data;
-        let mut tampered_data = data_to_decrypt.clone();
-        let new_length = 255;
-        tampered_data.truncate(new_length);
 
-        let result = app_session.aes_xts_encrypt_decrypt(
-            AesMode::Decrypt,
-            &aes_key1_handle,
-            &aes_key2_handle,
-            new_length,
-            tweak,
-            tampered_data,
-        );
-        assert!(result.is_ok(), "result {:?}", result);
-        let decrypted_data = result.unwrap();
-        assert_ne!(decrypted_data.data.len(), data.len());
-        assert_ne!(decrypted_data.data, data);
+        // Note: The HW doesn't support non 16 byte aligned sizes
+        // Uncomment when/if it does.
+
+        // decrypt size as is 255
+        // let mut tampered_data = data_to_decrypt.clone();
+        // let new_length = 255;
+        // tampered_data.truncate(new_length);
+
+        // let result = app_session.aes_xts_encrypt_decrypt(
+        //     AesMode::Decrypt,
+        //     &aes_key1_handle,
+        //     &aes_key2_handle,
+        //     new_length,
+        //     tweak,
+        //     tampered_data,
+        // );
+        // assert!(result.is_ok(), "result {:?}", result);
+        // let decrypted_data = result.unwrap();
+        // assert_ne!(decrypted_data.data.len(), data.len());
+        // assert_ne!(decrypted_data.data, data);
 
         //size 0
 
@@ -898,7 +909,7 @@ fn test_aes_xts_encrypt_mismatched_datalen_rsaunwrap() {
 
         let result = rsa_unwrap_from_wrap_data(
             &app_session,
-            KeyType::AesBulk256,
+            KeyType::AesXtsBulk256,
             DigestKind::Sha1,
             KeyUsage::EncryptDecrypt,
         );
@@ -907,7 +918,7 @@ fn test_aes_xts_encrypt_mismatched_datalen_rsaunwrap() {
 
         let result = rsa_unwrap_from_wrap_data(
             &app_session,
-            KeyType::AesBulk256,
+            KeyType::AesXtsBulk256,
             DigestKind::Sha1,
             KeyUsage::EncryptDecrypt,
         );
@@ -951,7 +962,7 @@ fn test_aes_xts_decrypt_mismatched_datalen_rsaunwrap() {
 
         let result = rsa_unwrap_from_wrap_data(
             &app_session,
-            KeyType::AesBulk256,
+            KeyType::AesXtsBulk256,
             DigestKind::Sha1,
             KeyUsage::EncryptDecrypt,
         );
@@ -960,7 +971,7 @@ fn test_aes_xts_decrypt_mismatched_datalen_rsaunwrap() {
 
         let result = rsa_unwrap_from_wrap_data(
             &app_session,
-            KeyType::AesBulk256,
+            KeyType::AesXtsBulk256,
             DigestKind::Sha1,
             KeyUsage::EncryptDecrypt,
         );
@@ -1023,7 +1034,7 @@ fn test_aes_xts_switch_keys_rsaunwrap() {
 
         let result = rsa_unwrap_from_wrap_data(
             &app_session,
-            KeyType::AesBulk256,
+            KeyType::AesXtsBulk256,
             DigestKind::Sha1,
             KeyUsage::EncryptDecrypt,
         );
@@ -1032,7 +1043,7 @@ fn test_aes_xts_switch_keys_rsaunwrap() {
 
         let result = rsa_unwrap_from_wrap_data(
             &app_session,
-            KeyType::AesBulk256,
+            KeyType::AesXtsBulk256,
             DigestKind::Sha1,
             KeyUsage::EncryptDecrypt,
         );

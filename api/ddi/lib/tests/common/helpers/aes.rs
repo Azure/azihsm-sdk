@@ -19,7 +19,9 @@ pub fn helper_aes_generate(
         data: DdiAesGenerateKeyReq {
             key_size,
             key_tag,
-            key_properties,
+            key_properties: key_properties
+                .try_into()
+                .map_err(|_| DdiError::InvalidParameter)?,
         },
         ext: None,
     };
@@ -50,6 +52,52 @@ pub fn helper_aes_encrypt_decrypt(
         },
         ext: None,
     };
+    let mut cookie = None;
+    dev.exec_op(&req, &mut cookie)
+}
+
+pub fn helper_soft_aes_op(
+    dev: &mut <DdiTest as Ddi>::Dev,
+    session_id: u16,
+    kek_len: usize,
+    kek: &[u8],
+    msg_len: usize,
+    msg: &[u8],
+    req_op: DdiSoftAesOp,
+) -> DdiResult<DdiSoftAesCmdResp> {
+    const MAX_KEY_LEN: usize = 32;
+    const MAX_MSG_LEN: usize = 1024;
+
+    let req = DdiSoftAesCmdReq {
+        hdr: DdiReqHdr {
+            op: DdiOp::SoftAes,
+            sess_id: Some(session_id),
+            rev: Some(DdiApiRev { major: 1, minor: 0 }),
+        },
+        data: DdiSoftAesReq {
+            key: MborByteArray::new(
+                {
+                    let mut data = [0u8; MAX_KEY_LEN];
+                    data[..kek_len].copy_from_slice(kek);
+                    data
+                },
+                kek_len,
+            )
+            .expect("failed to create byte array"),
+            inout: MborByteArray::new(
+                {
+                    let mut data = [0u8; MAX_MSG_LEN];
+                    data[..msg_len].copy_from_slice(msg);
+                    data
+                },
+                msg_len,
+            )
+            .expect("failed to create byte array"),
+            op: req_op,
+        },
+        ext: None,
+    };
+
     let mut cookie = None;
     dev.exec_op(&req, &mut cookie)
 }

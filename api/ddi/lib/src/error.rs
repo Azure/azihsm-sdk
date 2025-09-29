@@ -90,4 +90,8 @@ pub enum DdiError {
     /// Driver error
     #[error("Driver error")]
     DriverError(DriverError),
+
+    /// Reset Device error
+    #[error("Reset Device operation error")]
+    ResetDeviceError(u32),
 }

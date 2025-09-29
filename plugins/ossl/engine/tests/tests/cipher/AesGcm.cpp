@@ -1,4 +1,4 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation. All rights reserved.
 
 #include "AziHsmTestEngine.hpp"
 #include "AziHsmCiphers.hpp"
@@ -39,7 +39,7 @@ TEST_CASE("AZIHSM AES GCM Ciphers", "[AziHsmAesGcm]")
     REQUIRE(e != nullptr);
 
     const EVP_CIPHER *cipher;
-
+#ifdef AZIHSM_GCM
     SECTION("Test AES-GCM init ctx with deleted key")
     {
         // Allocate CTX
@@ -469,4 +469,45 @@ TEST_CASE("AZIHSM AES GCM Ciphers", "[AziHsmAesGcm]")
         REQUIRE(aes_ctx.decrypt(cipher_data.data(), cipher_data.size(), iv.data(), recovered_data) == 1);
         REQUIRE(std::memcmp(plain_data.data(), recovered_data.data(), plain_data.size()) == 0);
     }
+#else
+    SECTION("Test AES-GCM encrypt/decrypt with builtin implementation")
+    {
+        // Allocate CTX
+        AziHsmAesCipherCtx aes_ctx = AziHsmAesCipherCtx();
+
+        // Init ctx with key for encrypting
+        REQUIRE(aes_ctx.init(nullptr, NID_aes_256_gcm, 1, nullptr, nullptr) == 1);
+        REQUIRE(aes_ctx.keygen(1) == 1);
+
+        const unsigned char *plain_text = (const unsigned char *)"A secret is a secret until it's not until it is ";
+        int ptext_len = strlen((const char *)plain_text);
+        std::vector<unsigned char> cipher_text(ptext_len);
+        std::vector<unsigned char> recovered_text(ptext_len);
+        std::vector<unsigned char> tag;
+        int iv_len = EVP_CIPHER_CTX_iv_length(aes_ctx.getCtx());
+        std::vector<unsigned char> iv(iv_len);
+        std::vector<unsigned char> aad(AZIHSM_AES_GCM_AAD_SIZE);
+
+        REQUIRE(RAND_bytes(iv.data(), iv_len) == 1);
+        REQUIRE(RAND_bytes(aad.data(), AZIHSM_AES_GCM_AAD_SIZE) == 1);
+
+        // set AAD and encrypt
+        REQUIRE(aes_ctx.auth_encrypt(plain_text, ptext_len, iv.data(), aad, cipher_text) == 1);
+
+        // Get tag.
+        tag.resize(AZIHSM_AES_GCM_TAG_SIZE);
+        REQUIRE(aes_ctx.ctrl(EVP_CTRL_AEAD_GET_TAG, tag.size(), tag) == 1);
+
+        // Reinit for decrypting
+        REQUIRE(aes_ctx.init(nullptr, NID_aes_256_gcm, 0, nullptr, nullptr) == 1);
+        REQUIRE(aes_ctx.ctrl(EVP_CTRL_AEAD_SET_TAG, AZIHSM_AES_GCM_TAG_SIZE, tag) == 1);
+
+        // set AAD and decrypt
+        REQUIRE(aes_ctx.auth_decrypt(cipher_text.data(), cipher_text.size(), iv.data(), aad, recovered_text) == 1);
+
+        // Compare
+        REQUIRE(std::memcmp(plain_text, recovered_text.data(), ptext_len) == 0);
+    }
+
+#endif // AZIHSM_GCM
 }

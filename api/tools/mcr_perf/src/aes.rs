@@ -49,7 +49,9 @@ pub(crate) fn helper_create_aes_key(
             key_properties: helper_key_properties(
                 DdiKeyUsage::EncryptDecrypt,
                 DdiKeyAvailability::App,
-            ),
+            )
+            .try_into()
+            .unwrap(),
         },
         ext: None,
     };

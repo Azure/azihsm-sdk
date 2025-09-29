@@ -8,7 +8,7 @@ use std::ffi::c_void;
 use api_interface::engine_ctrl::collateral::Collateral;
 use api_interface::AziHsmCollateral;
 use api_interface::AziHsmEngineCommand;
-use mcr_api::ManticoreCollateral;
+use mcr_api_resilient::ManticoreCertificate;
 use openssl_rust::safeapi::engine::Engine;
 use openssl_rust::safeapi::engine_ctrl::EngineCtrlCmdInfo;
 use openssl_rust::safeapi::error::OpenSSLResult;
@@ -51,15 +51,15 @@ impl EngineCtrlCmdInfo for CmdGetCollateral {
         let hsm_ctx = azihsm_engine();
         let hsm_ctx_lock = hsm_ctx.read();
         let app_session = hsm_ctx_lock.app_session_as_ref()?;
-        let collateral = app_session.get_collateral().map_err(map_hsm_error)?;
-        let cert_chain = match collateral {
-            ManticoreCollateral::PhysicalManticore(device_cert_chain) => device_cert_chain,
-            ManticoreCollateral::VirtualManticore {
+        let certificate = app_session.get_certificate().map_err(map_hsm_error)?;
+        let cert_chain = match certificate {
+            ManticoreCertificate::PhysicalManticore(device_cert_chain) => device_cert_chain,
+            ManticoreCertificate::VirtualManticore {
                 ak_cert,
                 tee_cert_chain: _,
                 tee_report: _,
             } => {
-                // TODO: For now just get the Attest Key Certficate from the virtual manticore
+                // TODO: For now just get the Attest Key certificate from the virtual manticore
                 ak_cert
             }
         };

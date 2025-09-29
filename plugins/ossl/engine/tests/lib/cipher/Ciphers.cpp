@@ -1,4 +1,4 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation. All rights reserved.
 
 #include "AziHsmCiphers.hpp"
 #include <cstring>
@@ -154,12 +154,24 @@ int AziHsmAesCipherCtx::init(ENGINE *e, int nid, int encrypting, const unsigned 
     this->e = e;
     int mode = nid_to_mode(nid);
     int iv_len = nid_to_iv_len(nid);
-    this->cipher = AziHsmAesCipher(e, nid, mode, iv_len);
+    const EVP_CIPHER *cipher_ptr = nullptr;
+    if (e != nullptr)
+    {
+        this->cipher = AziHsmAesCipher(e, nid, mode, iv_len);
+        cipher_ptr = this->cipher.getCipher();
+    }
+    else
+    {
+        cipher_ptr = EVP_get_cipherbynid(nid);
+    }
     this->nid = nid;
     this->encrypting = encrypting;
-    if (EVP_CipherInit_ex(ctx, cipher.getCipher(), e, key, iv, encrypting) == 1)
+    if (EVP_CipherInit_ex(ctx, cipher_ptr, e, key, iv, encrypting) == 1)
     {
-        validate();
+        if (e != nullptr)
+        {
+            validate();
+        }
         return 1;
     }
 
@@ -286,7 +298,8 @@ int AziHsmAesCipherCtx::auth_encrypt(const unsigned char *pdata, int pdatalen, c
         return 0;
     }
 
-    if (EVP_CIPHER_CTX_encrypting(ctx) != 1) {
+    if (EVP_CIPHER_CTX_encrypting(ctx) != 1)
+    {
         return 0;
     }
 

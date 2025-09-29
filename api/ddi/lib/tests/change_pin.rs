@@ -18,17 +18,13 @@ fn test_change_pin() {
         |dev, ddi, path, session_id| {
             let (new_pin, pub_key) = encrypt_pin_for_change_pin(dev, TEST_CRED_PIN_ALT);
 
-            let req = DdiChangePinCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::ChangePin,
-                    sess_id: Some(session_id),
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiChangePinReq { new_pin, pub_key },
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_change_pin(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                new_pin,
+                pub_key,
+            );
 
             assert!(resp.is_ok(), "resp {:?}", resp);
 
@@ -39,8 +35,12 @@ fn test_change_pin() {
                 // Set Device Kind
                 set_device_kind(&mut new_dev);
 
-                let (encrypted_credential, pub_key) =
-                    encrypt_userid_pin_for_open_session(&new_dev, TEST_CRED_ID, TEST_CRED_PIN);
+                let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                    &new_dev,
+                    TEST_CRED_ID,
+                    TEST_CRED_PIN,
+                    TEST_SESSION_SEED,
+                );
 
                 let resp = helper_open_session(
                     &new_dev,
@@ -60,8 +60,12 @@ fn test_change_pin() {
                 // Set Device Kind
                 set_device_kind(&mut new_dev);
 
-                let (encrypted_credential, pub_key) =
-                    encrypt_userid_pin_for_open_session(&new_dev, TEST_CRED_ID, TEST_CRED_PIN_ALT);
+                let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                    &new_dev,
+                    TEST_CRED_ID,
+                    TEST_CRED_PIN_ALT,
+                    TEST_SESSION_SEED,
+                );
 
                 let resp = helper_open_session(
                     &new_dev,
@@ -76,17 +80,13 @@ fn test_change_pin() {
             // Restore to original credential
             let (new_pin, pub_key) = encrypt_pin_for_change_pin(dev, TEST_CRED_PIN);
 
-            let req = DdiChangePinCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::ChangePin,
-                    sess_id: Some(session_id),
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiChangePinReq { new_pin, pub_key },
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_change_pin(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                new_pin,
+                pub_key,
+            );
 
             assert!(resp.is_ok(), "resp {:?}", resp);
         },
@@ -104,20 +104,13 @@ fn test_change_pin_tampered_pin() {
             tampered_new_pin.encrypted_pin.data_mut()[10] =
                 tampered_new_pin.encrypted_pin.data()[10].wrapping_add(1);
 
-            let req = DdiChangePinCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::ChangePin,
-                    sess_id: Some(session_id),
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiChangePinReq {
-                    new_pin: tampered_new_pin,
-                    pub_key,
-                },
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_change_pin(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                tampered_new_pin,
+                pub_key,
+            );
 
             assert!(resp.is_err(), "resp {:?}", resp);
 
@@ -128,8 +121,12 @@ fn test_change_pin_tampered_pin() {
                 // Set Device Kind
                 set_device_kind(&mut new_dev);
 
-                let (encrypted_credential, pub_key) =
-                    encrypt_userid_pin_for_open_session(&new_dev, TEST_CRED_ID, TEST_CRED_PIN);
+                let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                    &new_dev,
+                    TEST_CRED_ID,
+                    TEST_CRED_PIN,
+                    TEST_SESSION_SEED,
+                );
 
                 let resp = helper_open_session(
                     &new_dev,
@@ -154,20 +151,13 @@ fn test_change_pin_tampered_iv() {
                 encrypt_pin_for_change_pin(dev, TEST_CRED_PIN_ALT);
             tampered_new_pin.iv.data_mut()[10] = tampered_new_pin.iv.data()[10].wrapping_add(1);
 
-            let req = DdiChangePinCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::ChangePin,
-                    sess_id: Some(session_id),
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiChangePinReq {
-                    new_pin: tampered_new_pin,
-                    pub_key,
-                },
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_change_pin(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                tampered_new_pin,
+                pub_key,
+            );
 
             assert!(resp.is_err(), "resp {:?}", resp);
 
@@ -178,8 +168,12 @@ fn test_change_pin_tampered_iv() {
                 // Set Device Kind
                 set_device_kind(&mut new_dev);
 
-                let (encrypted_credential, pub_key) =
-                    encrypt_userid_pin_for_open_session(&new_dev, TEST_CRED_ID, TEST_CRED_PIN);
+                let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                    &new_dev,
+                    TEST_CRED_ID,
+                    TEST_CRED_PIN,
+                    TEST_SESSION_SEED,
+                );
 
                 let resp = helper_open_session(
                     &new_dev,
@@ -204,20 +198,13 @@ fn test_change_pin_tampered_nonce() {
                 encrypt_pin_for_change_pin(dev, TEST_CRED_PIN_ALT);
             tampered_new_pin.nonce[0] = tampered_new_pin.nonce[0].wrapping_add(1);
 
-            let req = DdiChangePinCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::ChangePin,
-                    sess_id: Some(session_id),
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiChangePinReq {
-                    new_pin: tampered_new_pin,
-                    pub_key,
-                },
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_change_pin(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                tampered_new_pin,
+                pub_key,
+            );
 
             assert!(resp.is_err(), "resp {:?}", resp);
 
@@ -228,8 +215,12 @@ fn test_change_pin_tampered_nonce() {
                 // Set Device Kind
                 set_device_kind(&mut new_dev);
 
-                let (encrypted_credential, pub_key) =
-                    encrypt_userid_pin_for_open_session(&new_dev, TEST_CRED_ID, TEST_CRED_PIN);
+                let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                    &new_dev,
+                    TEST_CRED_ID,
+                    TEST_CRED_PIN,
+                    TEST_SESSION_SEED,
+                );
 
                 let resp = helper_open_session(
                     &new_dev,
@@ -255,20 +246,13 @@ fn test_change_pin_tampered_tag() {
                 encrypt_pin_for_change_pin(dev, TEST_CRED_PIN_ALT);
             tampered_new_pin.tag[10] = tampered_new_pin.tag[10].wrapping_add(1);
 
-            let req = DdiChangePinCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::ChangePin,
-                    sess_id: Some(session_id),
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiChangePinReq {
-                    new_pin: tampered_new_pin,
-                    pub_key,
-                },
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_change_pin(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                tampered_new_pin,
+                pub_key,
+            );
 
             assert!(resp.is_err(), "resp {:?}", resp);
 
@@ -279,8 +263,12 @@ fn test_change_pin_tampered_tag() {
                 // Set Device Kind
                 set_device_kind(&mut new_dev);
 
-                let (encrypted_credential, pub_key) =
-                    encrypt_userid_pin_for_open_session(&new_dev, TEST_CRED_ID, TEST_CRED_PIN);
+                let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                    &new_dev,
+                    TEST_CRED_ID,
+                    TEST_CRED_PIN,
+                    TEST_SESSION_SEED,
+                );
 
                 let resp = helper_open_session(
                     &new_dev,
@@ -306,20 +294,13 @@ fn test_change_pin_tampered_pub_key() {
                 encrypt_pin_for_change_pin(dev, TEST_CRED_PIN_ALT);
             tampered_pub_key.der.data_mut()[30] = tampered_pub_key.der.data()[30].wrapping_add(1);
 
-            let req = DdiChangePinCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::ChangePin,
-                    sess_id: Some(session_id),
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiChangePinReq {
-                    new_pin,
-                    pub_key: tampered_pub_key,
-                },
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_change_pin(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                new_pin,
+                tampered_pub_key,
+            );
 
             assert!(resp.is_err(), "resp {:?}", resp);
 
@@ -330,8 +311,12 @@ fn test_change_pin_tampered_pub_key() {
                 // Set Device Kind
                 set_device_kind(&mut new_dev);
 
-                let (encrypted_credential, pub_key) =
-                    encrypt_userid_pin_for_open_session(&new_dev, TEST_CRED_ID, TEST_CRED_PIN);
+                let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                    &new_dev,
+                    TEST_CRED_ID,
+                    TEST_CRED_PIN,
+                    TEST_SESSION_SEED,
+                );
 
                 let resp = helper_open_session(
                     &new_dev,
@@ -355,17 +340,13 @@ fn test_change_pin_null_pin() {
         |dev, ddi, path, session_id| {
             let (new_pin, pub_key) = encrypt_pin_for_change_pin(dev, [0; 16]);
 
-            let req = DdiChangePinCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::ChangePin,
-                    sess_id: Some(session_id),
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiChangePinReq { new_pin, pub_key },
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_change_pin(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                new_pin,
+                pub_key,
+            );
 
             assert!(resp.is_err(), "resp {:?}", resp);
 
@@ -376,8 +357,12 @@ fn test_change_pin_null_pin() {
                 // Set Device Kind
                 set_device_kind(&mut new_dev);
 
-                let (encrypted_credential, pub_key) =
-                    encrypt_userid_pin_for_open_session(&new_dev, TEST_CRED_ID, TEST_CRED_PIN);
+                let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                    &new_dev,
+                    TEST_CRED_ID,
+                    TEST_CRED_PIN,
+                    TEST_SESSION_SEED,
+                );
 
                 let resp = helper_open_session(
                     &new_dev,
@@ -400,20 +385,13 @@ fn test_change_pin_verify_nonce_change() {
         |dev, _ddi, _path, session_id| {
             let (new_pin, pub_key) = encrypt_pin_for_change_pin(dev, TEST_CRED_PIN_ALT);
 
-            let req = DdiChangePinCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::ChangePin,
-                    sess_id: Some(session_id),
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiChangePinReq {
-                    new_pin: new_pin.clone(),
-                    pub_key,
-                },
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_change_pin(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                new_pin.clone(),
+                pub_key,
+            );
 
             assert!(resp.is_ok(), "resp {:?}", resp);
 
@@ -423,17 +401,13 @@ fn test_change_pin_verify_nonce_change() {
             // Restore to original credential
             let (new_pin, pub_key) = encrypt_pin_for_change_pin(dev, TEST_CRED_PIN);
 
-            let req = DdiChangePinCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::ChangePin,
-                    sess_id: Some(session_id),
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiChangePinReq { new_pin, pub_key },
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_change_pin(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                new_pin,
+                pub_key,
+            );
 
             assert!(resp.is_ok(), "resp {:?}", resp);
         },
@@ -448,20 +422,13 @@ fn test_change_pin_verify_public_key_not_change() {
         |dev, _ddi, _path, session_id| {
             let (new_pin, pub_key) = encrypt_pin_for_change_pin(dev, TEST_CRED_PIN_ALT);
 
-            let req = DdiChangePinCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::ChangePin,
-                    sess_id: Some(session_id),
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiChangePinReq {
-                    new_pin: new_pin.clone(),
-                    pub_key: pub_key.clone(),
-                },
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_change_pin(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                new_pin.clone(),
+                pub_key.clone(),
+            );
 
             assert!(resp.is_ok(), "resp {:?}", resp);
 
@@ -474,17 +441,13 @@ fn test_change_pin_verify_public_key_not_change() {
             // Restore to original credential
             let (new_pin, pub_key) = encrypt_pin_for_change_pin(dev, TEST_CRED_PIN);
 
-            let req = DdiChangePinCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::ChangePin,
-                    sess_id: Some(session_id),
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiChangePinReq { new_pin, pub_key },
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_change_pin(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                new_pin,
+                pub_key,
+            );
 
             assert!(resp.is_ok(), "resp {:?}", resp);
         },
@@ -499,17 +462,13 @@ fn test_change_pin_same_pin() {
         |dev, ddi, path, session_id| {
             let (new_pin, pub_key) = encrypt_pin_for_change_pin(dev, TEST_CRED_PIN);
 
-            let req = DdiChangePinCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::ChangePin,
-                    sess_id: Some(session_id),
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiChangePinReq { new_pin, pub_key },
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_change_pin(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                new_pin,
+                pub_key,
+            );
 
             assert!(resp.is_ok(), "resp {:?}", resp);
 
@@ -520,8 +479,12 @@ fn test_change_pin_same_pin() {
                 // Set Device Kind
                 set_device_kind(&mut new_dev);
 
-                let (encrypted_credential, pub_key) =
-                    encrypt_userid_pin_for_open_session(&new_dev, TEST_CRED_ID, TEST_CRED_PIN);
+                let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                    &new_dev,
+                    TEST_CRED_ID,
+                    TEST_CRED_PIN,
+                    TEST_SESSION_SEED,
+                );
 
                 let resp = helper_open_session(
                     &new_dev,
@@ -540,8 +503,12 @@ fn test_change_pin_same_pin() {
                 // Set Device Kind
                 set_device_kind(&mut new_dev);
 
-                let (encrypted_credential, pub_key) =
-                    encrypt_userid_pin_for_open_session(&new_dev, TEST_CRED_ID, TEST_CRED_PIN_ALT);
+                let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                    &new_dev,
+                    TEST_CRED_ID,
+                    TEST_CRED_PIN_ALT,
+                    TEST_SESSION_SEED,
+                );
 
                 let resp = helper_open_session(
                     &new_dev,
@@ -566,57 +533,37 @@ fn test_change_pin_multiple() {
             let (new_pin, pub_key) = encrypt_pin_for_change_pin(dev, TEST_CRED_PIN_ALT);
 
             {
-                let req = DdiChangePinCmdReq {
-                    hdr: DdiReqHdr {
-                        op: DdiOp::ChangePin,
-                        sess_id: Some(session_id),
-                        rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                    },
-                    data: DdiChangePinReq {
-                        new_pin: new_pin.clone(),
-                        pub_key: pub_key.clone(),
-                    },
-                    ext: None,
-                };
-                let mut cookie = None;
-                let resp = dev.exec_op(&req, &mut cookie);
-
+                let resp = helper_change_pin(
+                    dev,
+                    Some(session_id),
+                    Some(DdiApiRev { major: 1, minor: 0 }),
+                    new_pin.clone(),
+                    pub_key.clone(),
+                );
                 assert!(resp.is_ok(), "resp {:?}", resp);
             }
 
             for _ in 0..10 {
-                let req = DdiChangePinCmdReq {
-                    hdr: DdiReqHdr {
-                        op: DdiOp::ChangePin,
-                        sess_id: Some(session_id),
-                        rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                    },
-                    data: DdiChangePinReq {
-                        new_pin: new_pin.clone(),
-                        pub_key: pub_key.clone(),
-                    },
-                    ext: None,
-                };
-                let mut cookie = None;
-                let resp = dev.exec_op(&req, &mut cookie);
-
+                let resp = helper_change_pin(
+                    dev,
+                    Some(session_id),
+                    Some(DdiApiRev { major: 1, minor: 0 }),
+                    new_pin.clone(),
+                    pub_key.clone(),
+                );
                 assert!(resp.is_err(), "resp {:?}", resp);
             }
 
             // Restore to original credential
             let (new_pin, pub_key) = encrypt_pin_for_change_pin(dev, TEST_CRED_PIN);
 
-            let req = DdiChangePinCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::ChangePin,
-                    sess_id: Some(session_id),
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiChangePinReq { new_pin, pub_key },
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_change_pin(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                new_pin,
+                pub_key,
+            );
 
             assert!(resp.is_ok(), "resp {:?}", resp);
         },
@@ -643,8 +590,12 @@ fn test_change_pin_multi_threaded_single_winner() {
                 let ddi = DdiTest::default();
                 let mut dev_item = ddi.open_dev(path).unwrap();
                 set_device_kind(&mut dev_item);
-                let (encrypted_credential, pub_key) =
-                    encrypt_userid_pin_for_open_session(&dev_item, TEST_CRED_ID, TEST_CRED_PIN);
+                let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                    &dev_item,
+                    TEST_CRED_ID,
+                    TEST_CRED_PIN,
+                    TEST_SESSION_SEED,
+                );
                 let resp = helper_open_session(
                     &dev_item,
                     None,
@@ -694,17 +645,13 @@ fn test_change_pin_multi_threaded_single_winner() {
             // Restore to original credential
             let (new_pin, pub_key) = encrypt_pin_for_change_pin(dev, TEST_CRED_PIN);
 
-            let req = DdiChangePinCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::ChangePin,
-                    sess_id: Some(session_id),
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiChangePinReq { new_pin, pub_key },
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_change_pin(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                new_pin,
+                pub_key,
+            );
 
             assert!(resp.is_ok(), "resp {:?}", resp);
 
@@ -728,16 +675,12 @@ fn test_thread_fn(
     new_pin: DdiEncryptedPin,
     pub_key: DdiDerPublicKey,
 ) {
-    let req = DdiChangePinCmdReq {
-        hdr: DdiReqHdr {
-            op: DdiOp::ChangePin,
-            sess_id: Some(session_id),
-            rev: Some(DdiApiRev { major: 1, minor: 0 }),
-        },
-        data: DdiChangePinReq { new_pin, pub_key },
-        ext: None,
-    };
-    let mut cookie = None;
-
-    dev.exec_op(&req, &mut cookie).unwrap();
+    helper_change_pin(
+        dev,
+        Some(session_id),
+        Some(DdiApiRev { major: 1, minor: 0 }),
+        new_pin,
+        pub_key,
+    )
+    .unwrap();
 }

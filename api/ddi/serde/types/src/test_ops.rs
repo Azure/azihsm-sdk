@@ -75,6 +75,12 @@ pub enum DdiTestAction {
 
     /// Trigger TDISP interrupt
     TriggerTdispInterrupt = 17,
+
+    /// Clear User Credentials
+    ClearUserCredentials = 18,
+
+    /// Clear Provisioning State
+    ClearProvisioningState = 19,
 }
 
 /// Test action crash type.
@@ -112,6 +118,12 @@ pub enum DdiTestActionEccErrorType {
 
     /// GSRAM Double Bit
     GsramDoubleBit = 3,
+
+    /// CDMA Single Bit
+    CdmaSingleBit = 4,
+
+    /// CDMA Single Bit ECC error threshold exceeded Interrupt count
+    CdmaEccErrIntrCount = 5,
 }
 
 /// Test action interrupt type.
@@ -258,7 +270,11 @@ pub struct DdiTestActionReq {
 #[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
 #[derive(Debug, Ddi)]
 #[ddi(map)]
-pub struct DdiTestActionResp {}
+pub struct DdiTestActionResp {
+    /// Optional 4‑byte reusable result parameter returned by certain test actions
+    #[ddi(id = 1)]
+    pub result: Option<u32>,
+}
 
 ddi_op_req_resp!(DdiTestAction);
 
@@ -283,7 +299,7 @@ pub struct DdiDerKeyImportReq {
 
     /// Key properties
     #[ddi(id = 4)]
-    pub key_properties: DdiKeyProperties,
+    pub key_properties: DdiTargetKeyProperties,
 }
 
 /// DDI DER Key Import (Test Operation) Response Structure
@@ -305,7 +321,7 @@ pub struct DdiDerKeyImportResp {
 
     /// Key Type
     #[ddi(id = 4)]
-    pub kind: DdiKeyType,
+    pub key_type: DdiKeyType,
 
     /// Masked Key
     #[ddi(id = 5)]
@@ -435,7 +451,7 @@ pub struct DdiRawKeyImportReq {
 
     /// Key properties
     #[ddi(id = 4)]
-    pub key_properties: DdiKeyProperties,
+    pub key_properties: DdiTargetKeyProperties,
 }
 
 /// DDI RAW Key Import (Test Operation) Response Structure

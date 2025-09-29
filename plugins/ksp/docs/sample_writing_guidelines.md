@@ -310,7 +310,7 @@ Write comments in the sample's code to explain processes, function calls, variab
 Because these samples will be open to the public, every source code file should have the following copyright at the top:
 
 ```cpp
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 ```
 This is the same copyright message seen in the [OpenEnclave repository](https://github.com/openenclave/openenclave), and other Microsoft repositories that use the MIT license.
@@ -481,6 +481,67 @@ index 49b9468d..517b9af2 100644
    <ImportGroup Label="ExtensionTargets">
    </ImportGroup>
 </Project>
+```
+
+</details>
+
+## Enable Control Flow Guard and other Compiler/Linker Settings
+
+Enable the usage of the following compiler/linker settings in your project's Visual Studio config:
+
+* [`/guard:cf`](https://learn.microsoft.com/en-us/cpp/build/reference/guard-enable-control-flow-guard) (Control Flow Guard)
+* [`/guard:ehcont`](https://learn.microsoft.com/en-us/cpp/build/reference/guard-enable-eh-continuation-metadata) (EH Continuation Metadata)
+* [`/DYNAMICBASE`](https://learn.microsoft.com/en-us/cpp/build/reference/dynamicbase-use-address-space-layout-randomization) (Address Space Layout Randomization)
+* [`/CETCOMPAT`](https://learn.microsoft.com/en-us/cpp/build/reference/cetcompat) (CET Shadow Stack)
+
+This ensures the executable produced when compiling the sample is compliant with Microsoft's S360 security standards.
+
+<details>
+<summary>(Click here to see an example of how to modify the `.vcxproj` file)</summary>
+
+```diff
+diff --git a/plugins/ksp/samples/samples/cpp/ECDH-KDF-AESCBC/ECDH-KDF-AESCBC/ECDH-KDF-AESCBC.vcxproj b/plugins/ksp/samples/samples/cpp/ECDH-KDF-AESCBC/ECDH-KDF-AESCBC/ECDH-KDF-AESCBC.vcxproj
+index 592a8dbf..1322b53b 100644
+--- a/plugins/ksp/samples/samples/cpp/ECDH-KDF-AESCBC/ECDH-KDF-AESCBC/ECDH-KDF-AESCBC.vcxproj
++++ b/plugins/ksp/samples/samples/cpp/ECDH-KDF-AESCBC/ECDH-KDF-AESCBC/ECDH-KDF-AESCBC.vcxproj
+@@ -56,10 +56,16 @@
+       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+       <ConformanceMode>true</ConformanceMode>
+       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
++      <ControlFlowGuard>Guard</ControlFlowGuard>
++      <GuardEHContMetadata>true</GuardEHContMetadata>
++      <OmitDefaultLibName>
++      </OmitDefaultLibName>
++      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+     </ClCompile>
+     <Link>
+       <SubSystem>Console</SubSystem>
+       <GenerateDebugInformation>true</GenerateDebugInformation>
++      <CETCompat>true</CETCompat>
+     </Link>
+   </ItemDefinitionGroup>
+   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+@@ -71,10 +77,16 @@
+       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+       <ConformanceMode>true</ConformanceMode>
+       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
++      <ControlFlowGuard>Guard</ControlFlowGuard>
++      <GuardEHContMetadata>true</GuardEHContMetadata>
++      <OmitDefaultLibName>
++      </OmitDefaultLibName>
++      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+     </ClCompile>
+     <Link>
+       <SubSystem>Console</SubSystem>
+       <GenerateDebugInformation>true</GenerateDebugInformation>
++      <CETCompat>true</CETCompat>
+     </Link>
+   </ItemDefinitionGroup>
+   <ItemGroup>
+@@ -83,4 +95,4 @@
+   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+   <ImportGroup Label="ExtensionTargets">
+   </ImportGroup>
 ```
 
 </details>

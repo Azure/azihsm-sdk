@@ -515,6 +515,34 @@ pub const MCR_FP_IOCTL_AES_CYPHER_XTS: u8 = 1;
 pub const MCR_FP_IOCTL_OP_TYPE_ENCRYPT: u8 = 0;
 pub const MCR_FP_IOCTL_OP_TYPE_DECRYPT: u8 = 1;
 
+// Constants for reset device operations:
+
+#[allow(unused)]
+#[derive(PartialEq)]
+pub enum AbortType {
+    Reserved = 0, // Reserved for driver use, driver will fail the IOCTL if this value is used.
+    AppLevelTwoNssr = 1, // Perform a Level-Two abort but use SubSystem Reset
+    AppLevelTwoCtrlReset = 2, // Perform a Disable/Enable Of Controller
+}
+
+#[derive(Default)]
+#[repr(C)]
+pub struct ResetDeviceInData {
+    pub ioctl_hdr: McrIoctlHeader,
+    pub ctxt: u64,
+    pub abort_type: u32,
+}
+
+#[derive(Default)]
+#[repr(C)]
+pub struct ResetDeviceOutData {
+    pub ioctl_hdr: McrIoctlHeader,
+    pub ctxt: u64,
+    pub abort_status: u32,
+}
+
+pub const MCR_IOCTL_RESET_DEVICE: u32 = 0x402;
+
 /// DDI Implementation - MCR Windows Device
 #[derive(Debug, Clone)]
 pub struct DdiWinDev {
@@ -1136,5 +1164,88 @@ impl DdiDev for DdiWinDev {
         }
 
         Ok(DdiAesXtsResult { data: dest_buf })
+    }
+
+    /// Execute NVMe subsystem reset to help emulate Live Migration
+    ///
+    /// # Returns
+    /// * `Ok(())` - Successfully sent NSSR Reset Device command
+    /// * `Err(DdiError)` - Error occurred while executing the command
+    fn simulate_nssr_after_lm(&self) -> Result<(), DdiError> {
+        let ioctl_in_buffer = ResetDeviceInData {
+            ioctl_hdr: McrIoctlHeader {
+                ioctl_data_size: mem::size_of::<ResetDeviceInData>() as u32,
+                app_cmd_id: 0xCD1DDEAE,
+                timeout: 100, // in ms
+                flags: 0,
+            },
+            abort_type: AbortType::AppLevelTwoNssr as u32,
+            ..Default::default()
+        };
+
+        let ioctl_out_buffer = ResetDeviceOutData::default();
+
+        // SAFETY: WINAPI call requires unsafe call.
+        let mut overlapped: OVERLAPPED = unsafe { mem::zeroed() };
+        let mut bytes_returned: DWORD = 0;
+        let in_ptr = ptr::addr_of!(ioctl_in_buffer);
+        let out_ptr = ptr::addr_of!(ioctl_out_buffer);
+        let overlapped_ptr: *mut OVERLAPPED = &mut overlapped;
+
+        let event = IoEvent::new()?;
+        overlapped.hEvent = event.handle();
+
+        let ioctl_code = CTL_CODE(
+            0x3F,
+            MCR_IOCTL_RESET_DEVICE,
+            METHOD_BUFFERED,
+            FILE_READ_ACCESS | FILE_WRITE_ACCESS,
+        );
+
+        // SAFETY: WINAPI call requires unsafe call.
+        let _ioctl_ret = unsafe {
+            DeviceIoControl(
+                self.file.read().as_raw_handle() as HANDLE,
+                ioctl_code,
+                in_ptr as *mut c_void,
+                mem::size_of::<ResetDeviceInData>() as DWORD,
+                out_ptr as *mut c_void,
+                mem::size_of::<ResetDeviceOutData>() as DWORD,
+                ptr::null_mut(),
+                overlapped_ptr,
+            )
+        };
+
+        let last_error = std::io::Error::last_os_error();
+        if last_error.raw_os_error() != Some(ERROR_IO_PENDING as i32) {
+            Err(DdiError::IoError(last_error))?;
+        }
+
+        // SAFETY: WINAPI call requires unsafe call.
+        let result = unsafe {
+            GetOverlappedResult(
+                self.file.read().as_raw_handle() as HANDLE,
+                overlapped_ptr,
+                &mut bytes_returned,
+                1,
+            )
+        };
+
+        /* There are 2 ways to deal with this ioctl
+         *  If the ioctl has failed, return the Winerror
+         *  If the ioctl has succeeded, the extended ioctl status
+         *  will further indicate success or failure
+         */
+
+        if result == 0 {
+            let last_error = std::io::Error::last_os_error();
+            Err(DdiError::IoError(last_error))?;
+        }
+
+        if ioctl_out_buffer.abort_status != 0 {
+            Err(DdiError::ResetDeviceError(ioctl_out_buffer.abort_status))?
+        }
+
+        Ok(())
     }
 }

@@ -23,8 +23,12 @@ fn test_open_session_simple() {
         |dev, _ddi, _path, _incorrect_session_id| {
             helper_common_establish_credential(dev, TEST_CRED_ID, TEST_CRED_PIN);
 
-            let (encrypted_credential, pub_key) =
-                encrypt_userid_pin_for_open_session(dev, TEST_CRED_ID, TEST_CRED_PIN);
+            let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                dev,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                TEST_SESSION_SEED,
+            );
 
             let resp = helper_open_session(
                 dev,
@@ -58,8 +62,12 @@ fn test_open_session_simple_repeat() {
         |dev, _ddi, _path, _incorrect_session_id| {
             helper_common_establish_credential(dev, TEST_CRED_ID, TEST_CRED_PIN);
 
-            let (encrypted_credential, pub_key) =
-                encrypt_userid_pin_for_open_session(dev, TEST_CRED_ID, TEST_CRED_PIN);
+            let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                dev,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                TEST_SESSION_SEED,
+            );
 
             let resp = helper_open_session(
                 dev,
@@ -196,6 +204,7 @@ fn test_close_session_middle_session() {
                         file_handle,
                         TEST_CRED_ID,
                         TEST_CRED_PIN,
+                        TEST_SESSION_SEED,
                     );
 
                     let resp = helper_open_session(
@@ -225,8 +234,12 @@ fn test_close_session_middle_session() {
             }
 
             if let Some(file_handle) = &file_handles[max_sessions / 2] {
-                let (encrypted_credential, pub_key) =
-                    encrypt_userid_pin_for_open_session(file_handle, TEST_CRED_ID, TEST_CRED_PIN);
+                let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                    file_handle,
+                    TEST_CRED_ID,
+                    TEST_CRED_PIN,
+                    TEST_SESSION_SEED,
+                );
 
                 let resp = helper_open_session(
                     file_handle,

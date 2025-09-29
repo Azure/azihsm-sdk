@@ -5,10 +5,10 @@ use std::ffi::c_uchar;
 
 use api_interface::REPORT_DATA_SIZE;
 use engine_common::handle_table::Handle;
-use mcr_api::DigestKind;
-use mcr_api::KeyAvailability;
-use mcr_api::KeyClass;
-use mcr_api::KeyUsage;
+use mcr_api_resilient::DigestKind;
+use mcr_api_resilient::KeyAvailability;
+use mcr_api_resilient::KeyClass;
+use mcr_api_resilient::KeyUsage;
 use openssl_rust::safeapi::ec::ecdsa_sig::Ecdsa_Sig;
 use openssl_rust::safeapi::ec::key::EcKey;
 use openssl_rust::safeapi::error::*;

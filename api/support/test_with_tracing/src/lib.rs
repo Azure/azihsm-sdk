@@ -27,6 +27,7 @@ pub fn init() {
             .log_internal_errors(true)
             .with_test_writer()
             .with_max_level(LevelFilter::TRACE)
+            .with_thread_ids(true)
             .finish()
             .with(targets)
             .init();

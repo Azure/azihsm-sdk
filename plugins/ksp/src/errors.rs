@@ -1,5 +1,5 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
-use mcr_api::HsmError;
+use mcr_api_resilient::HsmError;
 use winapi::shared::winerror::*;
 use windows::core::HRESULT;
 

@@ -5,6 +5,7 @@ mod invalid_ecc_pub_key_vectors;
 
 use std::thread;
 
+use crypto::rand::rand_bytes;
 use mcr_ddi::*;
 use mcr_ddi_mbor::MborByteArray;
 use mcr_ddi_types::MborError;
@@ -21,6 +22,32 @@ pub fn setup(dev: &mut <DdiTest as Ddi>::Dev, ddi: &DdiTest, path: &str) -> u16 
     25
 }
 
+// Helper function to initialize the device and establish credential
+fn helper_init_bk3_and_establish_credential(
+    dev: &<DdiTest as Ddi>::Dev,
+    sess_id: Option<u16>,
+    rev: Option<DdiApiRev>,
+    encrypted_credential: DdiEncryptedEstablishCredential,
+    pub_key: DdiDerPublicKey,
+) -> Result<DdiEstablishCredentialCmdResp, DdiError> {
+    let mut bk3 = vec![0u8; 48];
+    rand_bytes(&mut bk3).unwrap();
+    let masked_bk3 = helper_init_bk3(dev, bk3)
+        .expect("InitBk3 failed")
+        .data
+        .masked_bk3;
+    helper_establish_credential(
+        dev,
+        sess_id,
+        rev,
+        encrypted_credential,
+        pub_key,
+        masked_bk3,
+        MborByteArray::from_slice(&[]).expect("Failed to create empty BMK"),
+        MborByteArray::from_slice(&[]).expect("Failed to create empty masked unwrapping key"),
+    )
+}
+
 #[test]
 fn test_establish_credential_with_session() {
     ddi_dev_test(
@@ -30,20 +57,13 @@ fn test_establish_credential_with_session() {
             let (encrypted_credential, pub_key) =
                 encrypt_userid_pin_for_establish_cred(dev, TEST_CRED_ID, TEST_CRED_PIN);
 
-            let req = DdiEstablishCredentialCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::EstablishCredential,
-                    sess_id: Some(incorrect_session_id),
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiEstablishCredentialReq {
-                    encrypted_credential,
-                    pub_key,
-                },
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_init_bk3_and_establish_credential(
+                dev,
+                Some(incorrect_session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                encrypted_credential,
+                pub_key,
+            );
 
             assert!(resp.is_err(), "resp {:?}", resp);
 
@@ -64,20 +84,13 @@ fn test_establish_credential_without_revision() {
             let (encrypted_credential, pub_key) =
                 encrypt_userid_pin_for_establish_cred(dev, TEST_CRED_ID, TEST_CRED_PIN);
 
-            let req = DdiEstablishCredentialCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::EstablishCredential,
-                    sess_id: None,
-                    rev: None,
-                },
-                data: DdiEstablishCredentialReq {
-                    encrypted_credential,
-                    pub_key,
-                },
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_init_bk3_and_establish_credential(
+                dev,
+                None,
+                None,
+                encrypted_credential,
+                pub_key,
+            );
 
             assert!(resp.is_err(), "resp {:?}", resp);
 
@@ -98,20 +111,13 @@ fn test_establish_credential() {
             let (encrypted_credential, pub_key) =
                 encrypt_userid_pin_for_establish_cred(dev, TEST_CRED_ID, TEST_CRED_PIN);
 
-            let req = DdiEstablishCredentialCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::EstablishCredential,
-                    sess_id: None,
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiEstablishCredentialReq {
-                    encrypted_credential,
-                    pub_key,
-                },
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_init_bk3_and_establish_credential(
+                dev,
+                None,
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                encrypted_credential,
+                pub_key,
+            );
 
             assert!(resp.is_ok(), "resp {:?}", resp);
 
@@ -130,7 +136,7 @@ fn test_establish_credential_without_get_key() {
         setup,
         common_cleanup,
         |dev, _ddi, _path, _incorrect_session_id| {
-            let encrypted_credential = DdiEncryptedCredential {
+            let encrypted_credential = DdiEncryptedEstablishCredential {
                 encrypted_id: MborByteArray::new(
                     [
                         69, 237, 223, 217, 67, 83, 78, 223, 104, 238, 179, 193, 249, 43, 57, 102,
@@ -204,20 +210,13 @@ fn test_establish_credential_without_get_key() {
                 key_kind: DdiKeyType::Ecc384Public,
             };
 
-            let req = DdiEstablishCredentialCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::EstablishCredential,
-                    sess_id: None,
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiEstablishCredentialReq {
-                    encrypted_credential,
-                    pub_key,
-                },
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_init_bk3_and_establish_credential(
+                dev,
+                None,
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                encrypted_credential,
+                pub_key,
+            );
 
             assert!(resp.is_err(), "resp {:?}", resp);
         },
@@ -234,20 +233,13 @@ fn test_establish_credential_multiple() {
                 encrypt_userid_pin_for_establish_cred(dev, TEST_CRED_ID, TEST_CRED_PIN);
 
             {
-                let req = DdiEstablishCredentialCmdReq {
-                    hdr: DdiReqHdr {
-                        op: DdiOp::EstablishCredential,
-                        sess_id: None,
-                        rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                    },
-                    data: DdiEstablishCredentialReq {
-                        encrypted_credential: encrypted_credential.clone(),
-                        pub_key: pub_key.clone(),
-                    },
-                    ext: None,
-                };
-                let mut cookie = None;
-                let resp = dev.exec_op(&req, &mut cookie);
+                let resp = helper_init_bk3_and_establish_credential(
+                    dev,
+                    None,
+                    Some(DdiApiRev { major: 1, minor: 0 }),
+                    encrypted_credential.clone(),
+                    pub_key.clone(),
+                );
 
                 assert!(resp.is_ok(), "resp {:?}", resp);
 
@@ -259,20 +251,13 @@ fn test_establish_credential_multiple() {
             }
 
             for _ in 0..10 {
-                let req = DdiEstablishCredentialCmdReq {
-                    hdr: DdiReqHdr {
-                        op: DdiOp::EstablishCredential,
-                        sess_id: None,
-                        rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                    },
-                    data: DdiEstablishCredentialReq {
-                        encrypted_credential: encrypted_credential.clone(),
-                        pub_key: pub_key.clone(),
-                    },
-                    ext: None,
-                };
-                let mut cookie = None;
-                let resp = dev.exec_op(&req, &mut cookie);
+                let resp = helper_init_bk3_and_establish_credential(
+                    dev,
+                    None,
+                    Some(DdiApiRev { major: 1, minor: 0 }),
+                    encrypted_credential.clone(),
+                    pub_key.clone(),
+                );
 
                 assert!(resp.is_err(), "resp {:?}", resp);
             }
@@ -290,20 +275,13 @@ fn test_establish_credential_multiple_get_key() {
                 let (encrypted_credential, pub_key) =
                     encrypt_userid_pin_for_establish_cred(dev, TEST_CRED_ID, TEST_CRED_PIN);
 
-                let req = DdiEstablishCredentialCmdReq {
-                    hdr: DdiReqHdr {
-                        op: DdiOp::EstablishCredential,
-                        sess_id: None,
-                        rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                    },
-                    data: DdiEstablishCredentialReq {
-                        encrypted_credential,
-                        pub_key,
-                    },
-                    ext: None,
-                };
-                let mut cookie = None;
-                let resp = dev.exec_op(&req, &mut cookie);
+                let resp = helper_init_bk3_and_establish_credential(
+                    dev,
+                    None,
+                    Some(DdiApiRev { major: 1, minor: 0 }),
+                    encrypted_credential,
+                    pub_key,
+                );
 
                 assert!(resp.is_ok(), "resp {:?}", resp);
 
@@ -315,22 +293,18 @@ fn test_establish_credential_multiple_get_key() {
             }
 
             for _ in 0..10 {
-                let resp = helper_common_get_establish_cred_encryption_key_no_unwrap(dev);
+                let resp = helper_get_establish_cred_encryption_key(
+                    dev,
+                    None,
+                    Some(DdiApiRev { major: 1, minor: 0 }),
+                );
                 assert!(resp.is_err(), "resp {:?}", resp);
 
-                let req = DdiGetEstablishCredEncryptionKeyCmdReq {
-                    hdr: DdiReqHdr {
-                        op: DdiOp::GetEstablishCredEncryptionKey,
-                        sess_id: None,
-                        rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                    },
-                    data: DdiGetEstablishCredEncryptionKeyReq {},
-                    ext: None,
-                };
-
-                let mut cookie = None;
-
-                let resp = dev.exec_op(&req, &mut cookie);
+                let resp = helper_get_establish_cred_encryption_key(
+                    dev,
+                    None,
+                    Some(DdiApiRev { major: 1, minor: 0 }),
+                );
 
                 assert!(resp.is_err(), "resp {:?}", resp);
             }
@@ -349,20 +323,13 @@ fn test_establish_credential_tamper_id() {
             tampered_encrypted_credential.encrypted_id.data_mut()[10] =
                 tampered_encrypted_credential.encrypted_id.data_take()[10].wrapping_add(1);
 
-            let req = DdiEstablishCredentialCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::EstablishCredential,
-                    sess_id: None,
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiEstablishCredentialReq {
-                    encrypted_credential: tampered_encrypted_credential,
-                    pub_key,
-                },
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_init_bk3_and_establish_credential(
+                dev,
+                None,
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                tampered_encrypted_credential,
+                pub_key,
+            );
 
             assert!(resp.is_err(), "resp {:?}", resp);
 
@@ -385,20 +352,13 @@ fn test_establish_credential_tamper_pin() {
             tampered_encrypted_credential.encrypted_pin.data_mut()[10] =
                 tampered_encrypted_credential.encrypted_pin.data_take()[10].wrapping_add(1);
 
-            let req = DdiEstablishCredentialCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::EstablishCredential,
-                    sess_id: None,
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiEstablishCredentialReq {
-                    encrypted_credential: tampered_encrypted_credential,
-                    pub_key,
-                },
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_init_bk3_and_establish_credential(
+                dev,
+                None,
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                tampered_encrypted_credential,
+                pub_key,
+            );
 
             assert!(resp.is_err(), "resp {:?}", resp);
 
@@ -421,20 +381,13 @@ fn test_establish_credential_tamper_iv() {
             tampered_encrypted_credential.iv.data_mut()[10] =
                 tampered_encrypted_credential.iv.data_take()[10].wrapping_add(1);
 
-            let req = DdiEstablishCredentialCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::EstablishCredential,
-                    sess_id: None,
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiEstablishCredentialReq {
-                    encrypted_credential: tampered_encrypted_credential,
-                    pub_key,
-                },
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_init_bk3_and_establish_credential(
+                dev,
+                None,
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                tampered_encrypted_credential,
+                pub_key,
+            );
 
             assert!(resp.is_err(), "resp {:?}", resp);
 
@@ -457,20 +410,13 @@ fn test_establish_credential_tamper_nonce() {
             tampered_encrypted_credential.nonce[0] =
                 tampered_encrypted_credential.nonce[0].wrapping_add(1);
 
-            let req = DdiEstablishCredentialCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::EstablishCredential,
-                    sess_id: None,
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiEstablishCredentialReq {
-                    encrypted_credential: tampered_encrypted_credential,
-                    pub_key,
-                },
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_init_bk3_and_establish_credential(
+                dev,
+                None,
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                tampered_encrypted_credential,
+                pub_key,
+            );
 
             assert!(matches!(
                 resp.unwrap_err(),
@@ -491,20 +437,13 @@ fn test_establish_credential_tamper_tag() {
             tampered_encrypted_credential.tag[10] =
                 tampered_encrypted_credential.tag[10].wrapping_add(1);
 
-            let req = DdiEstablishCredentialCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::EstablishCredential,
-                    sess_id: None,
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiEstablishCredentialReq {
-                    encrypted_credential: tampered_encrypted_credential,
-                    pub_key,
-                },
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_init_bk3_and_establish_credential(
+                dev,
+                None,
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                tampered_encrypted_credential,
+                pub_key,
+            );
 
             assert!(resp.is_err(), "resp {:?}", resp);
 
@@ -527,20 +466,13 @@ fn test_establish_credential_tamper_pub_key() {
             tampered_pub_key.der.data_mut()[30] =
                 tampered_pub_key.der.data_take()[30].wrapping_add(1);
 
-            let req = DdiEstablishCredentialCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::EstablishCredential,
-                    sess_id: None,
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiEstablishCredentialReq {
-                    encrypted_credential,
-                    pub_key: tampered_pub_key,
-                },
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_init_bk3_and_establish_credential(
+                dev,
+                None,
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                encrypted_credential,
+                tampered_pub_key,
+            );
 
             assert!(resp.is_err(), "resp {:?}", resp);
         },
@@ -556,21 +488,13 @@ fn test_establish_credential_null_id() {
             let (encrypted_credential, pub_key) =
                 encrypt_userid_pin_for_establish_cred(dev, [0; 16], TEST_CRED_PIN);
 
-            let req = DdiEstablishCredentialCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::EstablishCredential,
-                    sess_id: None,
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiEstablishCredentialReq {
-                    encrypted_credential,
-                    pub_key,
-                },
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
-
+            let resp = helper_init_bk3_and_establish_credential(
+                dev,
+                None,
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                encrypted_credential,
+                pub_key,
+            );
             assert!(resp.is_err(), "resp {:?}", resp);
 
             assert!(matches!(
@@ -590,20 +514,13 @@ fn test_establish_credential_null_pin() {
             let (encrypted_credential, pub_key) =
                 encrypt_userid_pin_for_establish_cred(dev, TEST_CRED_ID, [0; 16]);
 
-            let req = DdiEstablishCredentialCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::EstablishCredential,
-                    sess_id: None,
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiEstablishCredentialReq {
-                    encrypted_credential,
-                    pub_key,
-                },
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_init_bk3_and_establish_credential(
+                dev,
+                None,
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                encrypted_credential,
+                pub_key,
+            );
 
             assert!(resp.is_err(), "resp {:?}", resp);
 
@@ -649,15 +566,21 @@ fn test_establish_credential_multi_threaded_single_winner() {
     ddi_dev_test(
         setup,
         common_cleanup,
-        |_dev, _ddi, path, _incorrect_session_id| {
+        |dev, _ddi, path, _incorrect_session_id| {
             let thread_count = 16;
+
+            let mut bk3 = vec![0u8; 48];
+            rand_bytes(&mut bk3).unwrap();
+            let masked_bk3_result = helper_init_bk3(dev, bk3).unwrap().data.masked_bk3;
 
             let mut thread_list = Vec::new();
             for i in 0..thread_count {
                 let thread_id = i as u8;
                 let thread_device_path = path.to_string();
 
-                let thread = thread::spawn(move || test_thread_fn(thread_id, thread_device_path));
+                let thread = thread::spawn(move || {
+                    test_thread_fn(thread_id, thread_device_path, masked_bk3_result)
+                });
                 thread_list.push(thread);
             }
 
@@ -687,7 +610,7 @@ fn test_establish_credential_multi_threaded_single_winner() {
     );
 }
 
-fn test_thread_fn(_thread_id: u8, device_path: String) {
+fn test_thread_fn(_thread_id: u8, device_path: String, masked_bk3: MborByteArray<1024>) {
     let ddi = DdiTest::default();
     let mut dev = ddi.open_dev(device_path.as_str()).unwrap();
     set_device_kind(&mut dev);
@@ -695,20 +618,17 @@ fn test_thread_fn(_thread_id: u8, device_path: String) {
     let (encrypted_credential, pub_key) =
         encrypt_userid_pin_for_establish_cred(&dev, TEST_CRED_ID, TEST_CRED_PIN);
 
-    let req = DdiEstablishCredentialCmdReq {
-        hdr: DdiReqHdr {
-            op: DdiOp::EstablishCredential,
-            sess_id: None,
-            rev: Some(DdiApiRev { major: 1, minor: 0 }),
-        },
-        data: DdiEstablishCredentialReq {
-            encrypted_credential,
-            pub_key,
-        },
-        ext: None,
-    };
-    let mut cookie = None;
-    dev.exec_op(&req, &mut cookie).unwrap();
+    helper_establish_credential(
+        &dev,
+        None,
+        Some(DdiApiRev { major: 1, minor: 0 }),
+        encrypted_credential,
+        pub_key,
+        masked_bk3,
+        MborByteArray::from_slice(&[]).expect("Failed to create empty BMK"),
+        MborByteArray::from_slice(&[]).expect("Failed to create empty masked unwrapping key"),
+    )
+    .unwrap();
 }
 
 #[test]
@@ -724,20 +644,13 @@ fn test_establish_credential_null_id_then_proper_id() {
                     encrypt_userid_pin_for_establish_cred(dev, [0; 16], TEST_CRED_PIN);
                 old_nonce = Some(encrypted_credential.nonce);
 
-                let req = DdiEstablishCredentialCmdReq {
-                    hdr: DdiReqHdr {
-                        op: DdiOp::EstablishCredential,
-                        sess_id: None,
-                        rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                    },
-                    data: DdiEstablishCredentialReq {
-                        encrypted_credential,
-                        pub_key,
-                    },
-                    ext: None,
-                };
-                let mut cookie = None;
-                let resp = dev.exec_op(&req, &mut cookie);
+                let resp = helper_init_bk3_and_establish_credential(
+                    dev,
+                    None,
+                    Some(DdiApiRev { major: 1, minor: 0 }),
+                    encrypted_credential,
+                    pub_key,
+                );
 
                 assert!(resp.is_err(), "resp {:?}", resp);
 
@@ -757,20 +670,13 @@ fn test_establish_credential_null_id_then_proper_id() {
                     "Nonce is expected to be different now since crypto portion was successful previously"
                 );
 
-                let req = DdiEstablishCredentialCmdReq {
-                    hdr: DdiReqHdr {
-                        op: DdiOp::EstablishCredential,
-                        sess_id: None,
-                        rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                    },
-                    data: DdiEstablishCredentialReq {
-                        encrypted_credential,
-                        pub_key,
-                    },
-                    ext: None,
-                };
-                let mut cookie = None;
-                let resp = dev.exec_op(&req, &mut cookie);
+                let resp = helper_init_bk3_and_establish_credential(
+                    dev,
+                    None,
+                    Some(DdiApiRev { major: 1, minor: 0 }),
+                    encrypted_credential,
+                    pub_key,
+                );
 
                 assert!(resp.is_ok(), "resp {:?}", resp);
 
@@ -805,20 +711,13 @@ fn test_establish_credential_invalid_public_key_p384_y_as_prime() {
                 key_kind: DdiKeyType::Ecc384Public,
             };
 
-            let req = DdiEstablishCredentialCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::EstablishCredential,
-                    sess_id: None,
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiEstablishCredentialReq {
-                    encrypted_credential,
-                    pub_key: invalid_pub_key,
-                },
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_init_bk3_and_establish_credential(
+                dev,
+                None,
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                encrypted_credential,
+                invalid_pub_key,
+            );
 
             assert!(matches!(
                 resp,
@@ -849,20 +748,13 @@ fn test_establish_credential_invalid_public_key_p384_x_as_prime() {
                 key_kind: DdiKeyType::Ecc384Public,
             };
 
-            let req = DdiEstablishCredentialCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::EstablishCredential,
-                    sess_id: None,
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiEstablishCredentialReq {
-                    encrypted_credential,
-                    pub_key: invalid_pub_key,
-                },
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_init_bk3_and_establish_credential(
+                dev,
+                None,
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                encrypted_credential,
+                invalid_pub_key,
+            );
 
             assert!(matches!(
                 resp,
@@ -893,20 +785,13 @@ fn test_establish_credential_invalid_public_key_p384_not_on_curve() {
                 key_kind: DdiKeyType::Ecc384Public,
             };
 
-            let req = DdiEstablishCredentialCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::EstablishCredential,
-                    sess_id: None,
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiEstablishCredentialReq {
-                    encrypted_credential,
-                    pub_key: invalid_pub_key,
-                },
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_init_bk3_and_establish_credential(
+                dev,
+                None,
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                encrypted_credential,
+                invalid_pub_key,
+            );
 
             assert!(matches!(
                 resp,
@@ -937,20 +822,13 @@ fn test_establish_credential_invalid_public_key_p384_point_at_infinity() {
                 key_kind: DdiKeyType::Ecc384Public,
             };
 
-            let req = DdiEstablishCredentialCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::EstablishCredential,
-                    sess_id: None,
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiEstablishCredentialReq {
-                    encrypted_credential,
-                    pub_key: invalid_pub_key,
-                },
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_init_bk3_and_establish_credential(
+                dev,
+                None,
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                encrypted_credential,
+                invalid_pub_key,
+            );
 
             assert!(
                 matches!(resp, Err(DdiError::MborError(MborError::EncodeError))),
@@ -971,20 +849,13 @@ fn test_establish_credential_with_reset_in_middle() {
                 let (encrypted_credential, pub_key) =
                     encrypt_userid_pin_for_establish_cred(dev, TEST_CRED_ID, TEST_CRED_PIN);
 
-                let req = DdiEstablishCredentialCmdReq {
-                    hdr: DdiReqHdr {
-                        op: DdiOp::EstablishCredential,
-                        sess_id: None,
-                        rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                    },
-                    data: DdiEstablishCredentialReq {
-                        encrypted_credential,
-                        pub_key,
-                    },
-                    ext: None,
-                };
-                let mut cookie = None;
-                let resp = dev.exec_op(&req, &mut cookie);
+                let resp = helper_init_bk3_and_establish_credential(
+                    dev,
+                    None,
+                    Some(DdiApiRev { major: 1, minor: 0 }),
+                    encrypted_credential,
+                    pub_key,
+                );
 
                 assert!(resp.is_ok(), "resp {:?}", resp);
 
@@ -1002,20 +873,13 @@ fn test_establish_credential_with_reset_in_middle() {
                 let (encrypted_credential, pub_key) =
                     encrypt_userid_pin_for_establish_cred(dev, TEST_CRED_ID, TEST_CRED_PIN);
 
-                let req = DdiEstablishCredentialCmdReq {
-                    hdr: DdiReqHdr {
-                        op: DdiOp::EstablishCredential,
-                        sess_id: None,
-                        rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                    },
-                    data: DdiEstablishCredentialReq {
-                        encrypted_credential,
-                        pub_key,
-                    },
-                    ext: None,
-                };
-                let mut cookie = None;
-                let resp = dev.exec_op(&req, &mut cookie);
+                let resp = helper_init_bk3_and_establish_credential(
+                    dev,
+                    None,
+                    Some(DdiApiRev { major: 1, minor: 0 }),
+                    encrypted_credential,
+                    pub_key,
+                );
 
                 assert!(resp.is_ok(), "resp {:?}", resp);
 

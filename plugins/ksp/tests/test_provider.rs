@@ -6,8 +6,9 @@ use std::sync::Arc;
 use std::sync::Barrier;
 use std::thread;
 
-use mcr_api::HsmDevice;
+use mcr_api_resilient::HsmDevice;
 use winapi::shared::winerror::ERROR_LOCK_FAILED;
+#[cfg(feature = "mock")]
 use winapi::shared::winerror::E_UNEXPECTED;
 use winapi::shared::winerror::NTE_BUFFER_TOO_SMALL;
 use winapi::shared::winerror::NTE_INVALID_HANDLE;
@@ -280,10 +281,13 @@ fn test_get_provider_resource_property_invalid_buffer() {
 }
 
 // Generate keys till we reach the limit of AZIHSM_DEVICE_MAX_KEY_COUNT_PROPERTY
+
+#[cfg(feature = "mock")]
 #[test]
 fn test_generate_key_till_limit() {
-    const NUM_BUILTIN_KEYS: u32 = 4;
-
+    // This differs for mock Manticore and physical device
+    // Before provisioning partition, mock device used up space of only 5 keys
+    const NUM_BUILTIN_KEYS: u32 = 5;
     unsafe fn create_key(
         azihsm_provider: &mut Handle<NCRYPT_PROV_HANDLE>,
         expect_to_fail: bool,

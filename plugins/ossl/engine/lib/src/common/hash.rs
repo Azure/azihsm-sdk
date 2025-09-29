@@ -2,7 +2,7 @@
 
 use std::ffi::c_uint;
 
-use mcr_api::DigestKind;
+use mcr_api_resilient::DigestKind;
 use openssl_rust::safeapi::error::OpenSSLError;
 use openssl_rust::safeapi::error::OpenSSLResult;
 use openssl_rust::NID_sha1 as NID_SHA1;

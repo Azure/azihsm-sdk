@@ -60,6 +60,28 @@ pub struct EncryptedCredential {
     pub(crate) tag: [u8; 48],
 }
 
+/// Encrypted Credential structure
+#[derive(Debug, Copy, Clone)]
+pub struct EncryptedSessionCredential {
+    /// ID
+    pub(crate) id: [u8; 16],
+
+    /// PIN
+    pub(crate) pin: [u8; 16],
+
+    /// Seed
+    pub(crate) seed: [u8; 48],
+
+    /// IV
+    pub(crate) iv: [u8; 16],
+
+    /// Nonce
+    pub(crate) nonce: [u8; 32],
+
+    /// Tag
+    pub(crate) tag: [u8; 48],
+}
+
 /// Encrypted Pin structure
 #[derive(Debug, Copy, Clone)]
 pub struct EncryptedPin {

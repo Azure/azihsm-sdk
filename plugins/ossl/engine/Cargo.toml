@@ -14,7 +14,7 @@ api-interface = { path = "api-interface" }
 engine-common = { path = "engine-common" }
 azihsmengine = { path = "lib" }
 openssl-rust = { path = "openssl-rust" }
-mcr_api = { path = "../../../api/lib", features = ["use-openssl"], default-features = false}
+mcr_api_resilient = { path = "../../../api/resilience", features = ["use-openssl"], default-features = false}
 
 # External
 thiserror = "1.0"

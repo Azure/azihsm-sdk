@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use mcr_api::*;
+use mcr_api_resilient::*;
 use openssl_rust::safeapi::error::*;
 use openssl_rust::safeapi::evp_cipher::callback::*;
 use parking_lot::RwLock;
@@ -114,7 +114,7 @@ impl AesXtsInner {
     }
 
     fn generate_key(&mut self) -> OpenSSLResult<()> {
-        let key_size = AesKeySize::AesBulk256;
+        let key_size = AesKeySize::AesXtsBulk256;
         let hsm_key1 = HsmKeyContainer::aes_generate(key_size)?;
         let hsm_key2 = HsmKeyContainer::aes_generate(key_size)?;
 

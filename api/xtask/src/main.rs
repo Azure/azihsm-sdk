@@ -15,11 +15,20 @@ use clap::Parser;
 use clap::Subcommand;
 
 mod build;
+mod clean;
 mod clippy;
 pub mod common;
 mod copyright;
 mod fmt;
+mod fuzz;
+mod install;
+mod install_symcrypt;
+mod job_main;
+mod mcr_perf;
+mod nextest;
 mod precheck;
+mod rustup_component_add;
+mod setup;
 mod test;
 
 /// Common context passed into every Xtask
@@ -51,10 +60,19 @@ struct Cli {
 enum Commands {
     Build(build::Build),
     Precheck(precheck::Precheck),
+    Clean(clean::Clean),
     Clippy(clippy::Clippy),
     Copyright(copyright::Copyright),
     Fmt(fmt::Fmt),
+    Fuzz(fuzz::Fuzz),
     Test(test::Test),
+    Nextest(nextest::Nextest),
+    Install(install::Install),
+    InstallSymcrypt(install_symcrypt::InstallSymcrypt),
+    RustupComponentAdd(rustup_component_add::RustupComponentAdd),
+    Setup(setup::Setup),
+    McrPerf(mcr_perf::McrPerf),
+    JobMain(job_main::JobMain),
 }
 
 fn main() {
@@ -82,10 +100,19 @@ fn try_main() -> anyhow::Result<()> {
 
     match cli.command {
         Commands::Build(task) => task.run(ctx),
+        Commands::Clean(task) => task.run(ctx),
         Commands::Clippy(task) => task.run(ctx),
         Commands::Copyright(task) => task.run(ctx),
         Commands::Fmt(task) => task.run(ctx),
+        Commands::Fuzz(task) => task.run(ctx),
         Commands::Precheck(task) => task.run(ctx),
         Commands::Test(task) => task.run(ctx),
+        Commands::Nextest(task) => task.run(ctx),
+        Commands::Install(task) => task.run(ctx),
+        Commands::InstallSymcrypt(task) => task.run(ctx),
+        Commands::RustupComponentAdd(task) => task.run(ctx),
+        Commands::Setup(task) => task.run(ctx),
+        Commands::McrPerf(task) => task.run(ctx),
+        Commands::JobMain(task) => task.run(ctx),
     }
 }

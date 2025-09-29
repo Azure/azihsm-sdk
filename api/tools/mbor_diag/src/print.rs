@@ -722,9 +722,11 @@ mod tests {
         let data = DdiAesGenerateKeyReq {
             key_size: DdiAesKeySize::Aes256,
             key_tag: None,
-            key_properties: DdiKeyProperties {
-                key_usage: DdiKeyUsage::EncryptDecrypt,
-                key_availability: DdiKeyAvailability::App,
+            key_properties: DdiTargetKeyProperties {
+                key_metadata: DdiTargetKeyMetadata::default()
+                    .with_encrypt(true)
+                    .with_decrypt(true)
+                    .with_session(false),
                 key_label: MborByteArray::from_slice(&[]).unwrap(),
             },
         };
@@ -740,7 +742,7 @@ mod tests {
         let input = &buf[..encoded_len];
         print_converted_data(&mut logger, To::Debug, input);
 
-        assert_eq!(logger.0.len(), 12);
+        assert_eq!(logger.0.len(), 13);
 
         // Merge the output into a single string
         let merged_output = logger.0.join("\n");
@@ -750,13 +752,14 @@ mod tests {
     18 01 # Field ID 1 (U8)
     1A 00000003 # U32 with value 3
     18 03 # Field ID 3 (U8)
-    A3 # Map with 3 fields
+    A2 # Map with 2 fields
         18 01 # Field ID 1 (U8)
-        1A 00000002 # U32 with value 2
+        A1 # Map with 1 fields
+            18 01 # Field ID 1 (U8)
+            80 0010  # Bytes with len 16 pad 0
+                0C000000000000000000000000000000 # Bytes Value [12, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
         18 02 # Field ID 2 (U8)
-        1A 00000001 # U32 with value 1
-        18 03 # Field ID 3 (U8)
-        82 0000 0000 # Bytes with len 0 pad 2
+        80 0000  # Bytes with len 0 pad 0
              # Bytes Value []"#;
 
         assert_eq!(merged_output, expected_output);

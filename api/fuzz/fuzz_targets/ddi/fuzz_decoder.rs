@@ -1,4 +1,5 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
+
 // Checking decoder for potential crashes by feeding random input data]
 #![cfg_attr(target_os = "linux", no_main)]
 

@@ -8,6 +8,7 @@ use std::thread;
 use mcr_ddi::*;
 use mcr_ddi_mbor::MborByteArray;
 use mcr_ddi_types::*;
+use test_with_tracing::test;
 
 use crate::common::*;
 
@@ -52,13 +53,6 @@ fn test_masked_key_aes_bulk_256_gen() {
         common_setup,
         common_cleanup,
         |dev, ddi, path, session_id| {
-            if get_device_kind(dev) == DdiDeviceKind::Virtual {
-                tracing::debug!(
-                    "Masked key test is only support in Physical platform. Skipping the test..."
-                );
-                return;
-            }
-
             let max_keys = get_device_info(ddi, path).tables as usize * 7;
             // We open a session in each thread and we can only do MAX_SESSIONS sessions max.
             let max_threads = MAX_SESSIONS;
@@ -85,12 +79,14 @@ fn test_masked_key_aes_bulk_gen_with_rollback_error() {
         common_setup,
         common_cleanup,
         |dev, ddi, path, session_id| {
+            // Virtual device doesn't support DdiTestAction
             if get_device_kind(dev) != DdiDeviceKind::Physical {
                 println!("Physical device NOT found. Test only supported on physical device.");
                 return;
             }
 
-            let resp = generate_aes_bulk_256_key(dev, &session_id, Some(1));
+            let resp =
+                generate_aes_bulk_256_key(dev, &session_id, Some(1), DdiAesKeySize::AesXtsBulk256);
             assert!(resp.is_ok(), "{:?}", resp);
             let resp = resp.unwrap();
             let key_id = resp.data.key_id;
@@ -117,8 +113,12 @@ fn test_masked_key_aes_bulk_gen_with_rollback_error() {
                 return;
             }
 
-            let (encrypted_credential, pub_key) =
-                encrypt_userid_pin_for_open_session(dev, TEST_CRED_ID, TEST_CRED_PIN);
+            let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                dev,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                TEST_SESSION_SEED,
+            );
 
             let resp = helper_open_session(
                 dev,
@@ -158,6 +158,7 @@ fn test_masked_key_aes_bulk_gen_with_rollback_after_exhaust_keys() {
         common_setup,
         common_cleanup,
         |dev, ddi, path, session_id| {
+            // Virtual device doesn't support DdiStatus::ReachedMaxAesBulkKeys
             if get_device_kind(dev) != DdiDeviceKind::Physical {
                 println!("Physical device NOT found. Test only supported on physical device.");
                 return;
@@ -169,7 +170,12 @@ fn test_masked_key_aes_bulk_gen_with_rollback_after_exhaust_keys() {
                 MborByteArray::from_slice(&[]).expect("Failed to create temp array");
             // Exhaust the key vault with App keys
             loop {
-                match generate_aes_bulk_256_key(dev, &session_id, Some(key_tag)) {
+                match generate_aes_bulk_256_key(
+                    dev,
+                    &session_id,
+                    Some(key_tag),
+                    DdiAesKeySize::AesXtsBulk256,
+                ) {
                     Err(DdiError::DdiStatus(DdiStatus::ReachedMaxAesBulkKeys)) => break,
                     Err(err) => panic!("Unexpected error code: {:?}", err),
                     Ok(val) => {
@@ -202,8 +208,12 @@ fn test_masked_key_aes_bulk_gen_with_rollback_after_exhaust_keys() {
                 return;
             }
 
-            let (encrypted_credential, pub_key) =
-                encrypt_userid_pin_for_open_session(dev, TEST_CRED_ID, TEST_CRED_PIN);
+            let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                dev,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                TEST_SESSION_SEED,
+            );
 
             let resp = helper_open_session(
                 dev,
@@ -229,7 +239,12 @@ fn test_masked_key_aes_bulk_gen_with_rollback_after_exhaust_keys() {
                 Ok(_) => panic!("Unexpected success response"),
             }
 
-            let resp = generate_aes_bulk_256_key(dev, &app_sess_id, Some(3355));
+            let resp = generate_aes_bulk_256_key(
+                dev,
+                &app_sess_id,
+                Some(3355),
+                DdiAesKeySize::AesXtsBulk256,
+            );
             assert!(resp.is_ok(), "resp: {:?}", resp);
 
             match helper_unmask_key(
@@ -259,12 +274,14 @@ fn test_masked_key_aes_bulk_gen_with_rollback_error_after_dma_out() {
         common_setup,
         common_cleanup,
         |dev, ddi, path, session_id| {
+            // Virtual device doesn't support DdiTestAction
             if get_device_kind(dev) != DdiDeviceKind::Physical {
                 println!("Physical device NOT found. Test only supported on physical device.");
                 return;
             }
 
-            let resp = generate_aes_bulk_256_key(dev, &session_id, Some(1));
+            let resp =
+                generate_aes_bulk_256_key(dev, &session_id, Some(1), DdiAesKeySize::AesXtsBulk256);
             assert!(resp.is_ok(), "{:?}", resp);
             let resp = resp.unwrap();
             let key_id = resp.data.key_id;
@@ -291,8 +308,12 @@ fn test_masked_key_aes_bulk_gen_with_rollback_error_after_dma_out() {
                 return;
             }
 
-            let (encrypted_credential, pub_key) =
-                encrypt_userid_pin_for_open_session(dev, TEST_CRED_ID, TEST_CRED_PIN);
+            let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                dev,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                TEST_SESSION_SEED,
+            );
 
             let resp = helper_open_session(
                 dev,
@@ -334,6 +355,7 @@ fn test_masked_key_aes_bulk_gen_with_rollback_error_after_dma_out_after_exhaust_
         common_setup,
         common_cleanup,
         |dev, ddi, path, session_id| {
+            // Virtual device doesn't support DdiTestAction
             if get_device_kind(dev) != DdiDeviceKind::Physical {
                 println!("Physical device NOT found. Test only supported on physical device.");
                 return;
@@ -346,7 +368,12 @@ fn test_masked_key_aes_bulk_gen_with_rollback_error_after_dma_out_after_exhaust_
 
             // Exhaust the key vault with App keys
             loop {
-                match generate_aes_bulk_256_key(dev, &session_id, Some(key_tag)) {
+                match generate_aes_bulk_256_key(
+                    dev,
+                    &session_id,
+                    Some(key_tag),
+                    DdiAesKeySize::AesXtsBulk256,
+                ) {
                     Err(DdiError::DdiStatus(DdiStatus::ReachedMaxAesBulkKeys)) => break,
                     Err(err) => panic!("Unexpected error code: {:?}", err),
                     Ok(val) => {
@@ -379,8 +406,12 @@ fn test_masked_key_aes_bulk_gen_with_rollback_error_after_dma_out_after_exhaust_
                 return;
             }
 
-            let (encrypted_credential, pub_key) =
-                encrypt_userid_pin_for_open_session(dev, TEST_CRED_ID, TEST_CRED_PIN);
+            let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                dev,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                TEST_SESSION_SEED,
+            );
 
             let resp = helper_open_session(
                 dev,
@@ -406,7 +437,12 @@ fn test_masked_key_aes_bulk_gen_with_rollback_error_after_dma_out_after_exhaust_
                 Ok(_) => panic!("Unexpected success response"),
             }
 
-            let resp = generate_aes_bulk_256_key(dev, &app_sess_id, Some(3355));
+            let resp = generate_aes_bulk_256_key(
+                dev,
+                &app_sess_id,
+                Some(3355),
+                DdiAesKeySize::AesXtsBulk256,
+            );
             assert!(resp.is_ok(), "resp: {:?}", resp);
 
             match helper_unmask_key(
@@ -436,12 +472,14 @@ fn test_masked_key_aes_bulk_gen_with_rollback_error_after_dma_end() {
         common_setup,
         common_cleanup,
         |dev, ddi, path, session_id| {
+            // Virtual device doesn't support DdiTestAction
             if get_device_kind(dev) != DdiDeviceKind::Physical {
                 println!("Physical device NOT found. Test only supported on physical device.");
                 return;
             }
 
-            let resp = generate_aes_bulk_256_key(dev, &session_id, Some(1));
+            let resp =
+                generate_aes_bulk_256_key(dev, &session_id, Some(1), DdiAesKeySize::AesXtsBulk256);
             assert!(resp.is_ok(), "{:?}", resp);
             let resp = resp.unwrap();
             let key_id = resp.data.key_id;
@@ -468,8 +506,12 @@ fn test_masked_key_aes_bulk_gen_with_rollback_error_after_dma_end() {
                 return;
             }
 
-            let (encrypted_credential, pub_key) =
-                encrypt_userid_pin_for_open_session(dev, TEST_CRED_ID, TEST_CRED_PIN);
+            let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                dev,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                TEST_SESSION_SEED,
+            );
 
             let resp = helper_open_session(
                 dev,
@@ -511,6 +553,7 @@ fn test_masked_key_aes_bulk_gen_with_rollback_error_after_dma_end_after_exhaust_
         common_setup,
         common_cleanup,
         |dev, ddi, path, session_id| {
+            // Virtual device doesn't support DdiTestAction
             if get_device_kind(dev) != DdiDeviceKind::Physical {
                 println!("Physical device NOT found. Test only supported on physical device.");
                 return;
@@ -522,7 +565,12 @@ fn test_masked_key_aes_bulk_gen_with_rollback_error_after_dma_end_after_exhaust_
                 MborByteArray::from_slice(&[]).expect("Failed to create temp array");
             // Exhaust the key vault with App keys
             loop {
-                match generate_aes_bulk_256_key(dev, &session_id, Some(key_tag)) {
+                match generate_aes_bulk_256_key(
+                    dev,
+                    &session_id,
+                    Some(key_tag),
+                    DdiAesKeySize::AesXtsBulk256,
+                ) {
                     Err(DdiError::DdiStatus(DdiStatus::ReachedMaxAesBulkKeys)) => break,
                     Err(err) => panic!("Unexpected error code: {:?}", err),
                     Ok(val) => {
@@ -555,8 +603,12 @@ fn test_masked_key_aes_bulk_gen_with_rollback_error_after_dma_end_after_exhaust_
                 return;
             }
 
-            let (encrypted_credential, pub_key) =
-                encrypt_userid_pin_for_open_session(dev, TEST_CRED_ID, TEST_CRED_PIN);
+            let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                dev,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                TEST_SESSION_SEED,
+            );
 
             let resp = helper_open_session(
                 dev,
@@ -582,7 +634,12 @@ fn test_masked_key_aes_bulk_gen_with_rollback_error_after_dma_end_after_exhaust_
                 Ok(_) => panic!("Unexpected success response"),
             }
 
-            let resp = generate_aes_bulk_256_key(dev, &app_sess_id, Some(3355));
+            let resp = generate_aes_bulk_256_key(
+                dev,
+                &app_sess_id,
+                Some(3355),
+                DdiAesKeySize::AesXtsBulk256,
+            );
             assert!(resp.is_ok(), "resp: {:?}", resp);
 
             match helper_unmask_key(
@@ -611,13 +668,6 @@ fn test_masked_key_aes_gen(
     session_id: u16,
     key_size: DdiAesKeySize,
 ) {
-    if get_device_kind(dev) == DdiDeviceKind::Virtual {
-        tracing::debug!(
-            "Masked key test is only support in Physical platform. Skipping the test..."
-        );
-        return;
-    }
-
     // Generate a key
     let key_props = helper_key_properties(DdiKeyUsage::EncryptDecrypt, DdiKeyAvailability::App);
 
@@ -635,16 +685,6 @@ fn test_masked_key_aes_gen(
     let resp = resp.unwrap();
     let key_id = resp.data.key_id;
     let masked_key = resp.data.masked_key;
-
-    // Try to unmask this key, it should fail because the key tag already exists
-    let resp = helper_unmask_key(
-        dev,
-        Some(session_id),
-        Some(DdiApiRev { major: 1, minor: 0 }),
-        masked_key,
-    );
-
-    assert!(resp.is_err(), "resp {:?}", resp);
 
     // Encrypt the plain text with the key
     let iv = MborByteArray::new([0x8; 16], 16).expect("failed to create byte array");
@@ -667,28 +707,16 @@ fn test_masked_key_aes_gen(
 
     let encrypted_msg = resp.data.msg.as_slice().to_vec();
 
-    // Delete that key
-    let resp = helper_delete_key(
+    let resp = helper_get_new_key_id_from_unmask(
         dev,
         Some(session_id),
         Some(DdiApiRev { major: 1, minor: 0 }),
         key_id,
-    );
-
-    assert!(resp.is_ok(), "resp {:?}", resp);
-
-    // Import that key with masked key (Unmask this key)
-    let resp = helper_unmask_key(
-        dev,
-        Some(session_id),
-        Some(DdiApiRev { major: 1, minor: 0 }),
+        true,
         masked_key,
     );
-
     assert!(resp.is_ok(), "resp {:?}", resp);
-
-    let resp = resp.unwrap();
-    let new_key_id = resp.data.key_id;
+    let (new_key_id, _, _) = resp.unwrap();
 
     // Decrypt the plain text
     let resp = helper_aes_encrypt_decrypt(
@@ -722,8 +750,12 @@ fn test_masked_key_aes_gcm_encrypt_decrypt_thread_fn(
     let mut short_app_id = None;
 
     for _ in 0..max_attempts {
-        let (encrypted_credential, pub_key) =
-            encrypt_userid_pin_for_open_session(&dev, TEST_CRED_ID, TEST_CRED_PIN);
+        let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+            &dev,
+            TEST_CRED_ID,
+            TEST_CRED_PIN,
+            TEST_SESSION_SEED,
+        );
 
         let resp = helper_open_session(
             &dev,
@@ -760,7 +792,12 @@ fn test_masked_key_aes_gcm_encrypt_decrypt_thread_fn(
 
     thread::sleep(std::time::Duration::from_secs(1));
 
-    let resp = generate_aes_bulk_256_key(parent_dev, &parent_session, Some(1));
+    let resp = generate_aes_bulk_256_key(
+        parent_dev,
+        &parent_session,
+        Some(1),
+        DdiAesKeySize::AesGcmBulk256Unapproved,
+    );
     assert!(resp.is_ok(), "resp: {:?}", resp);
     let resp = resp.unwrap();
 
@@ -768,16 +805,6 @@ fn test_masked_key_aes_gcm_encrypt_decrypt_thread_fn(
     let key_id_aes_bulk_256 = resp.data.bulk_key_id;
     let masked_key = resp.data.masked_key;
     assert!(key_id_aes_bulk_256.is_some());
-
-    // Try to unmask this key, it should fail because the key tag already exists
-    let resp = helper_unmask_key(
-        parent_dev,
-        Some(parent_session),
-        Some(DdiApiRev { major: 1, minor: 0 }),
-        masked_key,
-    );
-
-    assert!(resp.is_err(), "resp {:?}", resp);
 
     // Set up requests for the gcm encrypt operations
     let aad = [0x4; 32usize];
@@ -809,28 +836,17 @@ fn test_masked_key_aes_gcm_encrypt_decrypt_thread_fn(
     assert_ne!(RAW_MSG.to_vec(), encrypted_resp.data);
     let tag = encrypted_resp.tag;
 
-    // Delete that key
-    let resp = helper_delete_key(
+    let resp = helper_get_new_key_id_from_unmask(
         parent_dev,
         Some(parent_session),
         Some(DdiApiRev { major: 1, minor: 0 }),
         key_id,
-    );
-
-    assert!(resp.is_ok(), "resp {:?}", resp);
-
-    // Import that key with masked key (Unmask this key)
-    let resp = helper_unmask_key(
-        parent_dev,
-        Some(parent_session),
-        Some(DdiApiRev { major: 1, minor: 0 }),
+        true,
         masked_key,
     );
-
     assert!(resp.is_ok(), "resp {:?}", resp);
+    let (_, new_bulk_key_id, _) = resp.unwrap();
 
-    let resp = resp.unwrap();
-    let new_bulk_key_id = resp.data.bulk_key_id;
     assert!(new_bulk_key_id.is_some());
     let newbulk_key_id = new_bulk_key_id.unwrap();
 
@@ -848,4 +864,323 @@ fn test_masked_key_aes_gcm_encrypt_decrypt_thread_fn(
 
     assert_eq!(decrypted_resp.data.len(), RAW_MSG.len());
     assert_eq!(decrypted_resp.data, RAW_MSG);
+}
+
+// Create session key, delete the key
+// Unmask the key, should still be session key
+#[test]
+fn test_unmask_session_key() {
+    ddi_dev_test(
+        common_setup,
+        common_cleanup,
+        |dev, _ddi, _path, session_id| {
+            let key_props =
+                helper_key_properties(DdiKeyUsage::EncryptDecrypt, DdiKeyAvailability::Session);
+
+            // Create a session key
+            let resp = helper_aes_generate(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                DdiAesKeySize::Aes128,
+                None,
+                key_props,
+            );
+
+            assert!(resp.is_ok(), "resp {:?}", resp);
+            let data = resp.unwrap().data;
+
+            let key_id = data.key_id;
+
+            let masked_key = data.masked_key;
+            assert!(!masked_key.is_empty());
+
+            // Delete the original key
+            {
+                let resp = helper_delete_key(
+                    dev,
+                    Some(session_id),
+                    Some(DdiApiRev { major: 1, minor: 0 }),
+                    key_id,
+                );
+                assert!(resp.is_ok(), "resp {:?}", resp);
+            }
+
+            // Import/unmask the key
+            let key_id = {
+                let resp = helper_unmask_key(
+                    dev,
+                    Some(session_id),
+                    Some(DdiApiRev { major: 1, minor: 0 }),
+                    masked_key,
+                );
+                assert!(resp.is_ok(), "resp {:?}", resp);
+                let data = resp.unwrap().data;
+                data.key_id
+            };
+
+            // Check if this key is session key
+            let resp = helper_open_key(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                key_id,
+            );
+            // Should fail
+            assert!(resp.is_err());
+
+            // Close session and reopen
+            let session_id = {
+                let resp = helper_close_session(
+                    dev,
+                    Some(session_id),
+                    Some(DdiApiRev { major: 1, minor: 0 }),
+                );
+                assert!(resp.is_ok(), "resp {:?}", resp);
+
+                let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                    dev,
+                    TEST_CRED_ID,
+                    TEST_CRED_PIN,
+                    TEST_SESSION_SEED,
+                );
+
+                let resp = helper_open_session(
+                    dev,
+                    None,
+                    Some(DdiApiRev { major: 1, minor: 0 }),
+                    encrypted_credential.clone(),
+                    pub_key.clone(),
+                );
+
+                assert!(resp.is_ok(), "resp {:?}", resp);
+
+                let resp = resp.unwrap();
+
+                assert!(resp.hdr.sess_id.is_some());
+                assert_eq!(resp.hdr.op, DdiOp::OpenSession);
+                assert_eq!(resp.hdr.status, DdiStatus::Success);
+
+                resp.data.sess_id
+            };
+
+            // Check if the session key still exists
+            // By using it to encrypt
+            {
+                let raw_msg = [1u8; 512];
+                let msg_len = raw_msg.len();
+                let mut msg = [0u8; 1024];
+                msg[..msg_len].clone_from_slice(&raw_msg);
+
+                let resp = helper_aes_encrypt_decrypt(
+                    dev,
+                    Some(session_id),
+                    Some(DdiApiRev { major: 1, minor: 0 }),
+                    key_id,
+                    DdiAesOp::Encrypt,
+                    MborByteArray::new([0x1; 1024], msg_len).expect("failed to create byte array"),
+                    MborByteArray::new([0x0; 16], 16).expect("failed to create byte array"),
+                );
+
+                assert!(resp.is_err(), "resp {:?}", resp);
+            }
+        },
+    );
+}
+
+// Create named key, delete the key
+// Unmask the key, should still be named key
+#[test]
+fn test_unmask_named_key() {
+    ddi_dev_test(
+        common_setup,
+        common_cleanup,
+        |dev, _ddi, _path, session_id| {
+            const KEY_TAG: u16 = 0x1234;
+            let key_props =
+                helper_key_properties(DdiKeyUsage::EncryptDecrypt, DdiKeyAvailability::App);
+
+            // Create a named key
+            let resp = helper_aes_generate(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                DdiAesKeySize::Aes128,
+                Some(KEY_TAG),
+                key_props,
+            );
+
+            assert!(resp.is_ok(), "resp {:?}", resp);
+            let data = resp.unwrap().data;
+
+            let key_id = data.key_id;
+
+            let masked_key = data.masked_key;
+            assert!(!masked_key.is_empty());
+
+            // Delete the key
+            {
+                let resp = helper_delete_key(
+                    dev,
+                    Some(session_id),
+                    Some(DdiApiRev { major: 1, minor: 0 }),
+                    key_id,
+                );
+                assert!(resp.is_ok(), "resp {:?}", resp);
+            }
+
+            // Close session and open session with new seed
+            let session_id = {
+                let resp = helper_close_session(
+                    dev,
+                    Some(session_id),
+                    Some(DdiApiRev { major: 1, minor: 0 }),
+                );
+                assert!(resp.is_ok(), "resp {:?}", resp);
+
+                let new_session_seed = [42u8; 48];
+                let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                    dev,
+                    TEST_CRED_ID,
+                    TEST_CRED_PIN,
+                    new_session_seed,
+                );
+
+                let resp = helper_open_session(
+                    dev,
+                    None,
+                    Some(DdiApiRev { major: 1, minor: 0 }),
+                    encrypted_credential.clone(),
+                    pub_key.clone(),
+                );
+
+                assert!(resp.is_ok(), "resp {:?}", resp);
+
+                let resp = resp.unwrap();
+
+                assert!(resp.hdr.sess_id.is_some());
+                assert_eq!(resp.hdr.op, DdiOp::OpenSession);
+                assert_eq!(resp.hdr.status, DdiStatus::Success);
+
+                resp.data.sess_id
+            };
+
+            // Import/unmask the key
+            let resp = helper_unmask_key(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                masked_key,
+            );
+            assert!(resp.is_ok(), "resp {:?}", resp);
+
+            // Check if this key is named key
+            let resp = helper_open_key(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                KEY_TAG,
+            );
+            // Should pass
+            assert!(resp.is_ok());
+
+            // Key should still be there
+            let resp = helper_open_key(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                KEY_TAG,
+            );
+            // Should pass
+            assert!(resp.is_ok());
+        },
+    );
+}
+
+// Create session key
+// Confirm unmasking into different session fails
+#[test]
+fn test_unmask_session_key_different_session() {
+    ddi_dev_test(
+        common_setup,
+        common_cleanup,
+        |dev, _ddi, _path, session_id| {
+            let key_props =
+                helper_key_properties(DdiKeyUsage::EncryptDecrypt, DdiKeyAvailability::Session);
+
+            // Create a session key
+            let resp = helper_aes_generate(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                DdiAesKeySize::Aes128,
+                None,
+                key_props,
+            );
+
+            assert!(resp.is_ok(), "resp {:?}", resp);
+            let data = resp.unwrap().data;
+
+            let key_id = data.key_id;
+
+            let masked_key = data.masked_key;
+            assert!(!masked_key.is_empty());
+
+            // Delete the original key
+            {
+                let resp = helper_delete_key(
+                    dev,
+                    Some(session_id),
+                    Some(DdiApiRev { major: 1, minor: 0 }),
+                    key_id,
+                );
+                assert!(resp.is_ok(), "resp {:?}", resp);
+            }
+
+            // Close session and open session with new seed
+            let session_id = {
+                let resp = helper_close_session(
+                    dev,
+                    Some(session_id),
+                    Some(DdiApiRev { major: 1, minor: 0 }),
+                );
+                assert!(resp.is_ok(), "resp {:?}", resp);
+
+                let new_session_seed = [42u8; 48];
+                let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                    dev,
+                    TEST_CRED_ID,
+                    TEST_CRED_PIN,
+                    new_session_seed,
+                );
+
+                let resp = helper_open_session(
+                    dev,
+                    None,
+                    Some(DdiApiRev { major: 1, minor: 0 }),
+                    encrypted_credential.clone(),
+                    pub_key.clone(),
+                );
+
+                assert!(resp.is_ok(), "resp {:?}", resp);
+
+                let resp = resp.unwrap();
+
+                assert!(resp.hdr.sess_id.is_some());
+                assert_eq!(resp.hdr.op, DdiOp::OpenSession);
+                assert_eq!(resp.hdr.status, DdiStatus::Success);
+
+                resp.data.sess_id
+            };
+
+            // Import/unmask the key; should fail
+            let resp = helper_unmask_key(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                masked_key,
+            );
+            assert!(resp.is_err(), "resp {:?}", resp);
+        },
+    );
 }

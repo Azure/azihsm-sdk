@@ -110,6 +110,79 @@ pub fn sha(hash_algorithm: HashAlgorithm, data: &[u8]) -> Result<Vec<u8>, Mantic
     Ok(digest)
 }
 
+/// Generic HMAC operation helper, OpenSSL implementation.
+#[cfg(feature = "use-openssl")]
+fn hmac_openssl<const N: usize>(
+    key: &[u8],
+    data: &[u8],
+    expected_key_len: usize,
+    md: &openssl::md::MdRef,
+    algorithm_name: &str,
+) -> Result<[u8; N], ManticoreError> {
+    let handle_err = |openssl_error_stack| {
+        tracing::error!(?openssl_error_stack);
+        ManticoreError::HmacError
+    };
+
+    if key.len() != expected_key_len {
+        tracing::error!(
+            error=?ManticoreError::HmacError,
+            key_len = key.len(),
+            expected = expected_key_len,
+            "Expected HMAC key size is {} bytes for {}",
+            expected_key_len,
+            algorithm_name
+        );
+        Err(ManticoreError::HmacError)?
+    }
+
+    let pkey = openssl::pkey::PKey::hmac(key).map_err(handle_err)?;
+    let mut ctx = openssl::md_ctx::MdCtx::new().map_err(handle_err)?;
+
+    ctx.digest_sign_init(Some(md), &pkey).map_err(handle_err)?;
+    ctx.digest_sign_update(data).map_err(handle_err)?;
+
+    let size = ctx.digest_sign_final(None).map_err(handle_err)?;
+    if size != N {
+        tracing::error!(
+            error=?ManticoreError::HmacError,
+            size,
+            expected = N,
+            "Expected HMAC size is {} for {}",
+            N,
+            algorithm_name
+        );
+        Err(ManticoreError::HmacError)?
+    }
+
+    let mut output = [0u8; N];
+    ctx.digest_sign_final(Some(&mut output))
+        .map_err(handle_err)?;
+
+    Ok(output)
+}
+
+/// HMAC-SHA-384 operation, OpenSSL implementation.
+#[cfg(feature = "use-openssl")]
+pub fn hmac_sha_384(key: &[u8], data: &[u8]) -> Result<[u8; 48], ManticoreError> {
+    hmac_openssl::<48>(key, data, 48, openssl::md::Md::sha384(), "HMAC-SHA-384")
+}
+
+/// HMAC-SHA-384 operation, SymCrypt implementation.
+#[cfg(feature = "use-symcrypt")]
+pub fn hmac_sha_384(key: &[u8], data: &[u8]) -> Result<[u8; 48], ManticoreError> {
+    if key.len() != 48 {
+        tracing::error!(error=?ManticoreError::HmacError, key_len = key.len(), "Expected HMAC key size is 48 bytes");
+        Err(ManticoreError::HmacError)?
+    }
+
+    use symcrypt::hmac::hmac_sha384;
+    hmac_sha384(key, data).map_err(|err| {
+        tracing::error!(?err, "HMAC-SHA-384 operation failed");
+        ManticoreError::HmacError
+    })
+}
+
 /// HKDF-SHA-256 operation.
 ///
 /// # Arguments

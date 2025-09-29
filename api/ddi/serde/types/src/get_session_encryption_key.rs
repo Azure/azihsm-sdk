@@ -25,7 +25,18 @@ pub struct DdiGetSessionEncryptionKeyResp {
 
     /// Signature of the Public Key
     #[ddi(id = 3)]
+    #[ddi(post_decode_fn = "signature_post_decode")]
     pub pub_key_signature: MborByteArray<192>,
+}
+
+impl DdiGetSessionEncryptionKeyResp {
+    #[cfg(feature = "post_decode")]
+    pub fn signature_post_decode(
+        &self,
+        input_array: &MborByteArray<192>,
+    ) -> Result<MborByteArray<192>, MborDecodeError> {
+        ecc_signature_post_decode(input_array)
+    }
 }
 
 ddi_op_req_resp!(DdiGetSessionEncryptionKey);

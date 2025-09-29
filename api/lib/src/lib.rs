@@ -32,7 +32,6 @@ use mcr_ddi::DdiDev;
 use mcr_ddi::DevInfo;
 // use mcr_ddi_serde::report::REPORT_DATA_SIZE;
 use mcr_ddi_mbor::MborByteArray;
-use mcr_ddi_types::DdiGetCollateralType;
 use mcr_ddi_types::*;
 use parking_lot::RwLock;
 use rsa_padding::RsaDigestKind;
@@ -61,6 +60,12 @@ pub type HsmDevInfo = DevInfo;
 
 /// Default Vault ID
 pub const DEFAULT_VAULT_ID: Uuid = uuid!("E01D5EA3-6451-439D-A55C-23DED856EFA3");
+
+/// Size of BK3 in bytes
+const BK3_SIZE: usize = 48;
+
+/// Size limit of sealed BK3 in bytes
+const SEALED_BK3_SIZE: usize = 512;
 
 /// Size of the report data.
 const REPORT_DATA_SIZE: usize = 128;
@@ -232,25 +237,35 @@ impl HsmDevice {
     /// # Arguments
     /// `api_rev` - API Revision for the session
     /// `credentials` - Application Credentials
+    /// `masked_bk3` - Masked BK3 data
+    /// `bmk` - Optional BMK data
+    /// `masked_unwrapping_key` - Optional masked unwrapping key data
     ///
     /// # Returns
     /// `HsmResult`
-    /// * `()` - If signature is valid
+    /// Ok(bmk) - on success
     /// else ddi error
     #[instrument(skip_all)]
     pub fn establish_credential(
         &self,
         api_rev: HsmApiRevision,
         credentials: HsmAppCredentials,
-    ) -> HsmResult<()> {
+        masked_bk3: Vec<u8>,
+        bmk: Option<Vec<u8>>,
+        masked_unwrapping_key: Option<Vec<u8>>,
+    ) -> HsmResult<Vec<u8>> {
         // Log credential establishing at the INFO level. This is is
         // intentionally left at INFO level as a way to measure how much usage
         // AzIHSM is getting
         tracing::info!("Establishing credential");
 
-        self.inner
-            .write()
-            .establish_credential(api_rev, credentials)
+        self.inner.write().establish_credential(
+            api_rev,
+            credentials,
+            masked_bk3,
+            bmk,
+            masked_unwrapping_key,
+        )
     }
 
     /// Open Application Session
@@ -278,6 +293,52 @@ impl HsmDevice {
         self.inner
             .write()
             .open_session(device, api_rev, credentials)
+    }
+
+    /// Initialize BK3 for device with custom data
+    ///
+    /// # Arguments
+    /// * `api_rev` - API Revision for the transaction
+    /// * `bk3_data` - The BK3 data to initialize
+    ///
+    /// # Returns
+    /// * `Vec<u8>` - The masked BK3 data returned by the device
+    ///
+    /// # Errors
+    /// DDI errors
+    #[instrument(skip_all)]
+    pub fn init_bk3(&self, api_rev: HsmApiRevision, bk3_data: &[u8]) -> HsmResult<Vec<u8>> {
+        self.inner.write().init_bk3(api_rev, bk3_data)
+    }
+
+    /// Set the sealed BK3 data on the device
+    /// for later use during partition provisioning.
+    ///
+    /// # Arguments
+    /// * `api_rev` - API Revision for the transaction
+    /// * `sealed_bk3` - The sealed BK3 data to store
+    ///
+    /// # Errors
+    /// DDI errors
+    #[instrument(skip_all)]
+    pub fn set_sealed_bk3(&self, api_rev: HsmApiRevision, sealed_bk3: &[u8]) -> HsmResult<()> {
+        self.inner.write().set_sealed_bk3(api_rev, sealed_bk3)
+    }
+
+    /// Get the sealed BK3 data from the device
+    /// This retrieves the sealed BK3 data that was previously stored.
+    ///
+    /// # Arguments
+    /// * `api_rev` - API Revision for the transaction
+    ///
+    /// # Returns
+    /// * `Vec<u8>` - The sealed BK3 data
+    ///
+    /// # Errors
+    /// DDI errors
+    #[instrument(skip_all)]
+    pub fn get_sealed_bk3(&self, api_rev: HsmApiRevision) -> HsmResult<Vec<u8>> {
+        self.inner.read().get_sealed_bk3(api_rev)
     }
 }
 
@@ -315,11 +376,55 @@ impl HsmDeviceInner {
         self.device_info
     }
 
+    /// Helper method to get session encryption key and encrypt credentials
+    /// Returns the encrypted credential and public key for session operations
+    fn prepare_session_encrypted_credentials(
+        &self,
+        api_rev: HsmApiRevision,
+        credentials: HsmAppCredentials,
+        session_seed: [u8; 48],
+    ) -> HsmResult<(DdiEncryptedSessionCredential, DdiDerPublicKey)> {
+        tracing::debug!("Getting session encryption key");
+        let mut cookie = None;
+        let req = DdiGetSessionEncryptionKeyCmdReq {
+            hdr: DdiReqHdr {
+                op: DdiOp::GetSessionEncryptionKey,
+                sess_id: None,
+                rev: Some(DdiApiRev {
+                    major: api_rev.major,
+                    minor: api_rev.minor,
+                }),
+            },
+            data: DdiGetSessionEncryptionKeyReq {},
+            ext: None,
+        };
+        let resp = self.dev.exec_op(&req, &mut cookie)?;
+        tracing::debug!("Done getting session encryption key");
+
+        let nonce = resp.data.nonce;
+        let param_encryption_key = DeviceCredentialEncryptionKey::new(&resp.data.pub_key, nonce)?;
+        tracing::debug!("Generating ephemeral encryption key");
+        let (priv_key, ddi_public_key) =
+            param_encryption_key.generate_ephemeral_encryption_key()?;
+
+        let ddi_encrypted_credential = priv_key.encrypt_session_credential(
+            credentials.id.into_bytes(),
+            credentials.pin,
+            session_seed,
+            nonce,
+        )?;
+
+        Ok((ddi_encrypted_credential, ddi_public_key))
+    }
+
     fn establish_credential(
         &self,
         api_rev: HsmApiRevision,
         credentials: HsmAppCredentials,
-    ) -> HsmResult<()> {
+        masked_bk3: Vec<u8>,
+        bmk: Option<Vec<u8>>,
+        masked_unwrapping_key: Option<Vec<u8>>,
+    ) -> HsmResult<Vec<u8>> {
         if api_rev < self.api_rev_range.min || api_rev > self.api_rev_range.max {
             tracing::error!(error = ?HsmError::InvalidApiRevision, api_rev = ?api_rev, supported = ?self.api_rev_range, "api_rev is not supported");
             return Err(HsmError::InvalidApiRevision);
@@ -349,9 +454,14 @@ impl HsmDeviceInner {
         let (priv_key, ddi_public_key) =
             param_encryption_key.generate_ephemeral_encryption_key()?;
 
-        let ddi_encrypted_credential =
-            priv_key.encrypt(credentials.id.into_bytes(), credentials.pin, nonce)?;
+        let ddi_encrypted_credential = priv_key.encrypt_establish_credential(
+            credentials.id.into_bytes(),
+            credentials.pin,
+            nonce,
+        )?;
 
+        let bmk = bmk.unwrap_or_default(); // Empty BMK if not provided
+        let masked_unwrapping_key = masked_unwrapping_key.unwrap_or_default(); // Empty masked unwrapping key if not provided
         tracing::debug!("Sending Establish Credential Command");
         let req = DdiEstablishCredentialCmdReq {
             hdr: DdiReqHdr {
@@ -365,15 +475,22 @@ impl HsmDeviceInner {
             data: DdiEstablishCredentialReq {
                 encrypted_credential: ddi_encrypted_credential,
                 pub_key: ddi_public_key,
+                masked_bk3: MborByteArray::from_slice(&masked_bk3)
+                    .expect("Failed to create masked BK3 byte array"),
+                bmk: MborByteArray::from_slice(&bmk).expect("Failed to create BMK byte array"),
+                masked_unwrapping_key: MborByteArray::from_slice(&masked_unwrapping_key)
+                    .expect("Failed to create empty masked unwrapping key"),
             },
             ext: None,
         };
 
         let mut cookie = None;
-        self.dev.exec_op(&req, &mut cookie)?;
+        let resp = self.dev.exec_op(&req, &mut cookie)?;
         tracing::debug!("Done establishing credential");
 
-        Ok(())
+        let bmk = resp.data.bmk.as_slice().to_vec();
+
+        Ok(bmk)
     }
 
     fn open_session(
@@ -395,30 +512,14 @@ impl HsmDeviceInner {
             return Err(HsmError::InvalidApiRevision);
         }
 
-        let mut cookie = None;
-        let req = DdiGetSessionEncryptionKeyCmdReq {
-            hdr: DdiReqHdr {
-                op: DdiOp::GetSessionEncryptionKey,
-                sess_id: None,
-                rev: Some(DdiApiRev {
-                    major: api_rev.major,
-                    minor: api_rev.minor,
-                }),
-            },
-            data: DdiGetSessionEncryptionKeyReq {},
-            ext: None,
-        };
-        let resp = self.dev.exec_op(&req, &mut cookie)?;
-        tracing::debug!("Done getting session encryption key");
+        let mut session_seed = [0u8; 48];
+        crypto::rand::rand_bytes(&mut session_seed).map_err(|err| {
+            tracing::error!("crypto::rand_bytes failure {:?}", err);
+            HsmError::InternalError
+        })?;
 
-        let nonce = resp.data.nonce;
-        let param_encryption_key = DeviceCredentialEncryptionKey::new(&resp.data.pub_key, nonce)?;
-        tracing::debug!("Generating ephemeral encryption key");
-        let (priv_key, ddi_public_key) =
-            param_encryption_key.generate_ephemeral_encryption_key()?;
-
-        let ddi_encrypted_credential =
-            priv_key.encrypt(credentials.id.into_bytes(), credentials.pin, nonce)?;
+        let (ddi_encrypted_credential, ddi_public_key) =
+            self.prepare_session_encrypted_credentials(api_rev, credentials, session_seed)?;
 
         tracing::debug!("Sending Open Session command");
         let req = DdiOpenSessionCmdReq {
@@ -447,10 +548,107 @@ impl HsmDeviceInner {
             credentials.id,
             resp.data.short_app_id,
             resp.data.sess_id,
+            session_seed,
+            resp.data.bmk_session.as_slice().to_vec(),
         );
         self.session_open = true;
 
         Ok(session)
+    }
+
+    fn init_bk3(&mut self, api_rev: HsmApiRevision, bk3_data: &[u8]) -> HsmResult<Vec<u8>> {
+        if bk3_data.len() != BK3_SIZE {
+            tracing::error!(
+                expected = BK3_SIZE,
+                actual = bk3_data.len(),
+                "BK3 data exceeds maximum size"
+            );
+            return Err(HsmError::InvalidParameter);
+        }
+
+        let bk3_mbor = MborByteArray::new(bk3_data.try_into().unwrap(), BK3_SIZE)
+            .map_err(|_| HsmError::MborEncodeFailed)?;
+
+        let api_rev = DdiApiRev {
+            major: api_rev.major,
+            minor: api_rev.minor,
+        };
+
+        let req = DdiInitBk3CmdReq {
+            hdr: DdiReqHdr {
+                op: DdiOp::InitBk3,
+                sess_id: None,
+                rev: Some(api_rev),
+            },
+            data: DdiInitBk3Req { bk3: bk3_mbor },
+            ext: None,
+        };
+
+        let mut cookie = None;
+        let init_result = self.dev.exec_op(&req, &mut cookie)?;
+
+        tracing::debug!("BK3 initialization completed successfully");
+
+        Ok(init_result.data.masked_bk3.as_slice().to_vec())
+    }
+
+    fn set_sealed_bk3(&mut self, api_rev: HsmApiRevision, sealed_bk3: &[u8]) -> HsmResult<()> {
+        if sealed_bk3.len() > SEALED_BK3_SIZE {
+            tracing::error!(
+                expected_max = SEALED_BK3_SIZE,
+                actual = sealed_bk3.len(),
+                "Invalid sealed BK3 size"
+            );
+            return Err(HsmError::InvalidParameter);
+        }
+        let api_rev = DdiApiRev {
+            major: api_rev.major,
+            minor: api_rev.minor,
+        };
+
+        let set_sealed_req = DdiSetSealedBk3CmdReq {
+            hdr: DdiReqHdr {
+                op: DdiOp::SetSealedBk3,
+                sess_id: None,
+                rev: Some(api_rev),
+            },
+            data: DdiSetSealedBk3Req {
+                sealed_bk3: MborByteArray::from_slice(sealed_bk3)
+                    .map_err(|_| HsmError::MborEncodeFailed)?,
+            },
+            ext: None,
+        };
+
+        let mut cookie = None;
+        self.dev.exec_op(&set_sealed_req, &mut cookie)?;
+
+        tracing::debug!("Sealed BK3 stored successfully");
+        Ok(())
+    }
+
+    fn get_sealed_bk3(&self, api_rev: HsmApiRevision) -> HsmResult<Vec<u8>> {
+        tracing::debug!("Getting sealed BK3 data from device");
+
+        let api_rev = DdiApiRev {
+            major: api_rev.major,
+            minor: api_rev.minor,
+        };
+
+        let get_sealed_req = DdiGetSealedBk3CmdReq {
+            hdr: DdiReqHdr {
+                op: DdiOp::GetSealedBk3,
+                sess_id: None,
+                rev: Some(api_rev),
+            },
+            data: DdiGetSealedBk3Req {},
+            ext: None,
+        };
+
+        let mut cookie = None;
+        let resp = self.dev.exec_op(&get_sealed_req, &mut cookie)?;
+
+        tracing::debug!("Sealed BK3 retrieved successfully");
+        Ok(resp.data.sealed_bk3.as_slice().to_vec())
     }
 }
 
@@ -461,10 +659,6 @@ pub struct HsmKeyHandle {
     /// Key ID
     id: u16,
 
-    /// Key Tag
-    #[allow(unused)]
-    name: Option<u16>,
-
     /// Key Type
     kind: KeyType,
 
@@ -473,6 +667,9 @@ pub struct HsmKeyHandle {
 
     /// bulk_key_id
     bulk_key_id: Option<u16>,
+
+    /// Blob that contains current key in a encrypted format
+    masked_key: Option<Vec<u8>>,
 }
 
 impl HsmKeyHandle {
@@ -490,12 +687,17 @@ impl HsmKeyHandle {
     pub fn kind(&self) -> KeyType {
         self.kind
     }
+
+    /// Get Masked Key
+    pub fn masked_key(&self) -> Option<&[u8]> {
+        self.masked_key.as_deref()
+    }
 }
 
-/// Collateral returned by the Manticore device
+/// Certificate returned by the Manticore device
 #[derive(Debug)]
-pub enum ManticoreCollateral {
-    /// Represents collateral from a physical Manticore device.
+pub enum ManticoreCertificate {
+    /// Represents certificates from a physical Manticore device.
     /// Contains array of PEM encoded certificate, concatenated by '\n'
     PhysicalManticore(Vec<u8>),
 
@@ -532,6 +734,12 @@ pub struct HsmSession {
     /// Session ID
     session_id: u16,
 
+    /// Session seed
+    session_seed: [u8; 48],
+
+    /// Session bmk
+    session_bmk: Vec<u8>,
+
     /// Session successfully closed flag
     closed: bool,
 }
@@ -563,6 +771,8 @@ impl HsmSession {
         app_id: Uuid,
         short_app_id: u8,
         session_id: u16,
+        session_seed: [u8; 48],
+        session_bmk: Vec<u8>,
     ) -> Self {
         tracing::debug!(session_id, "Creating new HsmSession");
         Self {
@@ -571,6 +781,8 @@ impl HsmSession {
             app_id,
             short_app_id,
             session_id,
+            session_seed,
+            session_bmk,
             closed: false,
         }
     }
@@ -694,6 +906,67 @@ impl HsmSession {
         Ok(())
     }
 
+    /// Reopen session after live migration
+    ///
+    /// This method attempts to reopen a session that has become invalid due to live migration.
+    /// The caller must have already re-established credentials on the device before calling this method.
+    ///
+    /// # Arguments
+    /// * `credentials` - Application credentials for reopening
+    ///
+    /// # Errors
+    /// `HsmError::SessionClosed` - Session is closed.
+    /// DDI errors
+    #[instrument(skip_all, fields(sess_id = self.session_id))]
+    pub fn reopen(&self, credentials: HsmAppCredentials) -> HsmResult<()> {
+        tracing::debug!("Reopening session after live migration");
+        let write_locked_device = self.device_inner.write();
+
+        if self.closed {
+            tracing::error!(error = ?HsmError::SessionClosed, "reopen_session failed: Session already closed");
+            return Err(HsmError::SessionClosed);
+        }
+
+        let (ddi_encrypted_credential, ddi_public_key) = write_locked_device
+            .prepare_session_encrypted_credentials(self.api_rev, credentials, self.session_seed)?;
+
+        // Send reopen session command
+        tracing::debug!("Sending Reopen Session command");
+        let req = DdiReopenSessionCmdReq {
+            hdr: DdiReqHdr {
+                op: DdiOp::ReopenSession,
+                sess_id: Some(self.session_id),
+                rev: Some(DdiApiRev {
+                    major: self.api_rev.major,
+                    minor: self.api_rev.minor,
+                }),
+            },
+            data: DdiReopenSessionReq {
+                encrypted_credential: ddi_encrypted_credential,
+                pub_key: ddi_public_key,
+                bmk_session: MborByteArray::from_slice(&self.session_bmk)
+                    .map_err(|_| HsmError::InvalidParameter)?,
+            },
+            ext: None,
+        };
+
+        let mut cookie = None;
+        let resp = write_locked_device.dev.exec_op(&req, &mut cookie)?;
+        tracing::debug!("Done reopening session");
+
+        // Verify session ID matches
+        if resp.data.sess_id != self.session_id {
+            tracing::error!(
+                expected_session_id = self.session_id,
+                actual_session_id = resp.data.sess_id,
+                "Reopened session ID mismatch"
+            );
+            return Err(HsmError::InternalError);
+        }
+
+        Ok(())
+    }
+
     /// Clear Device
     ///
     /// # Errors
@@ -782,14 +1055,14 @@ impl HsmSession {
         let pub_key = resp
             .data
             .pub_key
-            .map(|resp_pub_key| resp_pub_key.der.data()[..resp_pub_key.der.len()].to_vec());
+            .map(|resp_pub_key| resp_pub_key.der.as_slice().to_vec());
 
         Ok(HsmKeyHandle {
             id: resp.data.key_id,
-            name: Some(key_tag),
             kind: resp.data.key_kind.try_into()?,
             pub_key,
             bulk_key_id: resp.data.bulk_key_id,
+            masked_key: None, // Masked key is not returned in this operation
         })
     }
 
@@ -891,6 +1164,8 @@ impl HsmSession {
             RsaCryptoPadding::Oaep => DdiRsaCryptoPadding::Oaep,
         };
 
+        let target_key_properties: DdiKeyProperties = target_key_properties.into();
+
         let req = DdiRsaUnwrapCmdReq {
             hdr: DdiReqHdr {
                 op: DdiOp::RsaUnwrap,
@@ -908,7 +1183,9 @@ impl HsmSession {
                 wrapped_blob_padding,
                 wrapped_blob_hash_algorithm: wrapped_blob_params.hash_algorithm.into(),
                 key_tag: target_key_tag,
-                key_properties: target_key_properties.into(),
+                key_properties: target_key_properties
+                    .try_into()
+                    .map_err(|_| HsmError::InvalidParameter)?,
             },
             ext: None,
         };
@@ -918,17 +1195,20 @@ impl HsmSession {
         let resp = read_locked_device.dev.exec_op(&req, &mut cookie)?;
         tracing::debug!(key_id = resp.data.key_id, "Done RSA Unwrap");
 
-        let pub_key = resp
-            .data
+        let data = resp.data;
+
+        let pub_key = data
             .pub_key
-            .map(|resp_pub_key| resp_pub_key.der.data()[..resp_pub_key.der.len()].to_vec());
+            .map(|resp_pub_key| resp_pub_key.der.as_slice().to_vec());
+
+        let masked_key = data.masked_key.as_slice().to_vec();
 
         Ok(HsmKeyHandle {
-            id: resp.data.key_id,
-            name: target_key_tag,
-            kind: resp.data.kind.try_into()?,
+            id: data.key_id,
+            kind: data.kind.try_into()?,
             pub_key,
-            bulk_key_id: resp.data.bulk_key_id,
+            bulk_key_id: data.bulk_key_id,
+            masked_key: Some(masked_key),
         })
     }
 
@@ -1212,7 +1492,7 @@ impl HsmSession {
         let resp = read_locked_device.dev.exec_op(&req, &mut cookie)?;
         tracing::debug!("Done RSA Sign");
 
-        Ok(resp.data.x.data()[..resp.data.x.len() as usize].to_vec())
+        Ok(resp.data.x.as_slice().to_vec())
     }
 
     /// RSA Verify using Public Key
@@ -1316,6 +1596,8 @@ impl HsmSession {
             Err(HsmError::SessionClosed)?
         }
 
+        let key_properties: DdiKeyProperties = key_properties.into();
+
         let req = DdiEccGenerateKeyPairCmdReq {
             hdr: DdiReqHdr {
                 op: DdiOp::EccGenerateKeyPair,
@@ -1328,7 +1610,9 @@ impl HsmSession {
             data: DdiEccGenerateKeyPairReq {
                 curve: curve.into(),
                 key_tag,
-                key_properties: key_properties.into(),
+                key_properties: key_properties
+                    .try_into()
+                    .map_err(|_| HsmError::InvalidParameter)?,
             },
             ext: None,
         };
@@ -1338,10 +1622,13 @@ impl HsmSession {
         let resp = read_locked_device.dev.exec_op(&req, &mut cookie)?;
         tracing::debug!("Done generating ECC Key");
 
-        let pub_key = resp
-            .data
+        let data = resp.data;
+
+        let pub_key = data
             .pub_key
-            .map(|resp_pub_key| resp_pub_key.der.data()[..resp_pub_key.der.len()].to_vec());
+            .map(|resp_pub_key| resp_pub_key.der.as_slice().to_vec());
+
+        let masked_key = data.masked_key.as_slice().to_vec();
 
         let key_type = match curve {
             EccCurve::P256 => KeyType::Ecc256Private,
@@ -1350,11 +1637,11 @@ impl HsmSession {
         };
 
         Ok(HsmKeyHandle {
-            id: resp.data.private_key_id,
-            name: key_tag,
+            id: data.private_key_id,
             kind: key_type,
             pub_key,
             bulk_key_id: None,
+            masked_key: Some(masked_key),
         })
     }
 
@@ -1423,7 +1710,7 @@ impl HsmSession {
         let resp = read_locked_device.dev.exec_op(&req, &mut cookie)?;
         tracing::debug!("Done ECC Sign");
 
-        Ok(resp.data.signature.data()[..resp.data.signature.len()].to_vec())
+        Ok(resp.data.signature.as_slice().to_vec())
     }
 
     /// ECC Verify using Public Key
@@ -1525,6 +1812,8 @@ impl HsmSession {
             Err(HsmError::SessionClosed)?
         }
 
+        let target_key_properties: DdiKeyProperties = target_key_properties.into();
+
         let req = DdiEcdhKeyExchangeCmdReq {
             hdr: DdiReqHdr {
                 op: DdiOp::EcdhKeyExchange,
@@ -1540,7 +1829,9 @@ impl HsmSession {
                     .map_err(|_| HsmError::CborByteArrayCreationError)?,
                 key_type: target_key_type.into(),
                 key_tag: target_key_tag,
-                key_properties: target_key_properties.into(),
+                key_properties: target_key_properties
+                    .try_into()
+                    .map_err(|_| HsmError::InvalidParameter)?,
             },
             ext: None,
         };
@@ -1550,12 +1841,16 @@ impl HsmSession {
         let resp = read_locked_device.dev.exec_op(&req, &mut cookie)?;
         tracing::debug!("Done ECDH Key Exchange");
 
+        let data = resp.data;
+
+        let masked_key = data.masked_key.as_slice().to_vec();
+
         Ok(HsmKeyHandle {
-            id: resp.data.key_id,
-            name: target_key_tag,
+            id: data.key_id,
             kind: target_key_type,
             pub_key: None,
             bulk_key_id: None,
+            masked_key: Some(masked_key),
         })
     }
 
@@ -1601,6 +1896,8 @@ impl HsmSession {
             None
         };
 
+        let target_key_properties: DdiKeyProperties = target_key_properties.into();
+
         let req = DdiHkdfDeriveCmdReq {
             hdr: DdiReqHdr {
                 op: DdiOp::HkdfDerive,
@@ -1617,7 +1914,9 @@ impl HsmSession {
                 info,
                 key_type: target_key_type.into(),
                 key_tag: target_key_tag,
-                key_properties: target_key_properties.into(),
+                key_properties: target_key_properties
+                    .try_into()
+                    .map_err(|_| HsmError::InvalidParameter)?,
             },
             ext: None,
         };
@@ -1627,12 +1926,16 @@ impl HsmSession {
         let resp = read_locked_device.dev.exec_op(&req, &mut cookie)?;
         tracing::debug!("Done HKDF Derive");
 
+        let data = resp.data;
+
+        let masked_key = data.masked_key.as_slice().to_vec();
+
         Ok(HsmKeyHandle {
-            id: resp.data.key_id,
-            name: target_key_tag,
+            id: data.key_id,
             kind: target_key_type,
             pub_key: None,
             bulk_key_id: None,
+            masked_key: Some(masked_key),
         })
     }
 
@@ -1678,6 +1981,8 @@ impl HsmSession {
             None
         };
 
+        let target_key_properties: DdiKeyProperties = target_key_properties.into();
+
         let req = DdiKbkdfCounterHmacDeriveCmdReq {
             hdr: DdiReqHdr {
                 op: DdiOp::KbkdfCounterHmacDerive,
@@ -1694,7 +1999,9 @@ impl HsmSession {
                 context,
                 key_type: target_key_type.into(),
                 key_tag: target_key_tag,
-                key_properties: target_key_properties.into(),
+                key_properties: target_key_properties
+                    .try_into()
+                    .map_err(|_| HsmError::InvalidParameter)?,
             },
             ext: None,
         };
@@ -1704,12 +2011,16 @@ impl HsmSession {
         let resp = read_locked_device.dev.exec_op(&req, &mut cookie)?;
         tracing::debug!("Done KBKDF Counter Mode Derive");
 
+        let data = resp.data;
+
+        let masked_key = data.masked_key.as_slice().to_vec();
+
         Ok(HsmKeyHandle {
-            id: resp.data.key_id,
-            name: target_key_tag,
+            id: data.key_id,
             kind: target_key_type,
             pub_key: None,
             bulk_key_id: None,
+            masked_key: Some(masked_key),
         })
     }
 
@@ -1719,7 +2030,7 @@ impl HsmSession {
     /// `key` - Own key, must have KeyUsage `Sign` and KeyType `HmacSha`
     /// `msg` - input data
     #[instrument(skip_all, fields(sess_id = self.session_id, key_id = key.id()))]
-    pub fn hmac(&self, key: HsmKeyHandle, msg: Vec<u8>) -> HsmResult<Vec<u8>> {
+    pub fn hmac(&self, key: &HsmKeyHandle, msg: Vec<u8>) -> HsmResult<Vec<u8>> {
         tracing::debug!("Performing HMAC");
         let read_locked_device = self.device_inner.read();
 
@@ -1750,7 +2061,7 @@ impl HsmSession {
         let resp = read_locked_device.dev.exec_op(&req, &mut cookie)?;
         tracing::debug!("Done HMAC");
 
-        Ok(resp.data.tag.data()[..resp.data.tag.len()].to_vec())
+        Ok(resp.data.tag.as_slice().to_vec())
     }
 
     /// Attest Key
@@ -1790,7 +2101,7 @@ impl HsmSession {
         let resp = read_locked_device.dev.exec_op(&req, &mut cookie)?;
         tracing::debug!("Done attest key");
 
-        Ok(resp.data.report.data()[..resp.data.report.len()].to_vec())
+        Ok(resp.data.report.as_slice().to_vec())
     }
 
     /// Get Unwrapping Key
@@ -1822,55 +2133,96 @@ impl HsmSession {
             unwrap_key_id = resp.data.key_id,
             "Done getting unwrapping key"
         );
+        let data = resp.data;
 
-        let pub_key = resp.data.pub_key.der.data()[..resp.data.pub_key.der.len()].to_vec();
+        let pub_key = data.pub_key.der.as_slice().to_vec();
+        let masked_key = data.masked_key.as_slice().to_vec();
 
         Ok(HsmKeyHandle {
-            id: resp.data.key_id,
-            name: None,
+            id: data.key_id,
             kind: KeyType::Rsa2kPrivate,
             pub_key: Some(pub_key),
             bulk_key_id: None,
+            masked_key: Some(masked_key),
         })
     }
 
-    /// Helper function to fetch collateral for Virtual Manticore
+    /// Helper function to fetch certificates for Virtual Manticore
     /// Will only fetch 1 AK Cert
     /// TODO: Add TeeReport when the support is ready
-    fn get_collateral_for_virtual_device(&self) -> HsmResult<ManticoreCollateral> {
+    fn get_certificate_for_virtual_device(&self) -> HsmResult<ManticoreCertificate> {
         let read_locked_device = self.device_inner.read();
 
-        let req = DdiGetCollateralCmdReq {
+        // Fetch cert chain info
+        let req = DdiGetCertChainInfoCmdReq {
             hdr: DdiReqHdr {
-                op: DdiOp::GetCollateral,
-                sess_id: Some(self.session_id),
+                op: DdiOp::GetCertChainInfo,
+                sess_id: None,
                 rev: Some(DdiApiRev {
                     major: self.api_rev.major,
                     minor: self.api_rev.minor,
                 }),
             },
-            data: DdiGetCollateralReq {
-                // For Virtual Manticore, only fetch the AK Cert
-                collateral_type: DdiGetCollateralType::AKCert,
-                cert_id: None,
+            data: DdiGetCertChainInfoReq { slot_id: 0 },
+            ext: None,
+        };
+        let mut cookie = None;
+        let resp = read_locked_device.dev.exec_op(&req, &mut cookie)?;
+        let num_certs = resp.data.num_certs;
+        let expected_hash = resp.data.thumbprint.as_slice();
+        tracing::debug!(num_certs, "Got Cert Chain Length");
+
+        // For Virtual Manticore, currently only 1 cert (AK Cert) is supported
+        if num_certs != 1 {
+            tracing::error!(
+                err = ?HsmError::GetCertificateError,
+                num_certs,
+                "Virtual Manticore should only have 1 cert (AK Cert)"
+            );
+            return Err(HsmError::GetCertificateError);
+        }
+
+        // Fetch the AK Cert
+        let req = DdiGetCertificateCmdReq {
+            hdr: DdiReqHdr {
+                op: DdiOp::GetCertificate,
+                sess_id: None,
+                rev: Some(DdiApiRev {
+                    major: self.api_rev.major,
+                    minor: self.api_rev.minor,
+                }),
+            },
+            data: DdiGetCertificateReq {
+                slot_id: 0,
+                // Index 0 is the AK Cert
+                cert_id: 0,
             },
             ext: None,
         };
 
         let mut cookie = None;
-
         let resp = read_locked_device.dev.exec_op(&req, &mut cookie)?;
 
-        // DER format
-        let ak_cert_der = &resp.data.collateral.data()[..resp.data.collateral.len()];
+        // The cert is in DER format
+        let ak_cert_der = resp.data.certificate.as_slice();
+
+        // Check hash
+        let actual_hash = Self::crypto_sha256(ak_cert_der);
+        if actual_hash != expected_hash {
+            tracing::error!(
+                err = ?HsmError::CertificateHashMismatch,
+                "AK Cert hash mismatch"
+            );
+            return Err(HsmError::CertificateHashMismatch);
+        }
 
         // Convert DER to PEM
         let ak_cert_pem = der_to_pem(ak_cert_der).map_err(|err| {
             tracing::error!(?err, "Failed to convert AK Cert DER to PEM");
-            HsmError::GetCollateralError
+            HsmError::GetCertificateError
         })?;
 
-        Ok(ManticoreCollateral::VirtualManticore {
+        Ok(ManticoreCertificate::VirtualManticore {
             ak_cert: ak_cert_pem,
             // TODO: return empty until vManticore collateral support
             tee_cert_chain: Vec::new(),
@@ -1879,57 +2231,51 @@ impl HsmSession {
         })
     }
 
-    /// Helper function to fetch collateral for HW Manticore
+    /// Helper function to fetch certificates for HW Manticore
     /// Will make multiple calls to fetch all the certs
-    fn get_collateral_for_physical_device(&self) -> HsmResult<ManticoreCollateral> {
-        tracing::debug!("Getting Collateral for Physical device");
+    fn get_certificate_for_physical_device(&self) -> HsmResult<ManticoreCertificate> {
+        tracing::debug!("Getting Certificates for Physical device");
         let read_locked_device = self.device_inner.read();
 
         // First get number of certs
-        let req = DdiGetCollateralCmdReq {
+        let req = DdiGetCertChainInfoCmdReq {
             hdr: DdiReqHdr {
-                op: DdiOp::GetCollateral,
-                sess_id: Some(self.session_id),
+                op: DdiOp::GetCertChainInfo,
+                sess_id: None,
                 rev: Some(DdiApiRev {
                     major: self.api_rev.major,
                     minor: self.api_rev.minor,
                 }),
             },
-            data: DdiGetCollateralReq {
-                collateral_type: DdiGetCollateralType::CertChainLen,
-                cert_id: None,
-            },
+            data: DdiGetCertChainInfoReq { slot_id: 0 },
             ext: None,
         };
         let mut cookie = None;
         let resp = read_locked_device.dev.exec_op(&req, &mut cookie)?;
 
-        let num_certs = resp.data.num_certs.ok_or_else(|| {
-            tracing::error!(error = ?HsmError::GetCollateralError, num_certs = ?resp.data, "Failed to get number of certs, expect number but got None");
-            HsmError::GetCollateralError
-        })?;
+        let num_certs = resp.data.num_certs;
         tracing::debug!(num_certs, "Got Cert Chain Length");
 
         // Fetch each cert
-        // Array of collaterals, root cert first, leaf cert last
+        // Array of certificates, root cert first, leaf cert last
         // Before returning, reverse the order so leaf cert is first
-        let mut collaterals: Vec<Vec<u8>> = Vec::with_capacity(num_certs as usize);
+        let mut certs: Vec<Vec<u8>> = Vec::with_capacity(num_certs as usize);
 
         // 0-based, root cert at index 0, leaf cert at last
         for i in 0..num_certs {
             tracing::debug!("Fetching cert {}, total {}", i, num_certs);
-            let req = DdiGetCollateralCmdReq {
+            let req = DdiGetCertificateCmdReq {
                 hdr: DdiReqHdr {
-                    op: DdiOp::GetCollateral,
-                    sess_id: Some(self.session_id),
+                    op: DdiOp::GetCertificate,
+                    sess_id: None,
                     rev: Some(DdiApiRev {
                         major: self.api_rev.major,
                         minor: self.api_rev.minor,
                     }),
                 },
-                data: DdiGetCollateralReq {
-                    collateral_type: DdiGetCollateralType::CertId,
-                    cert_id: Some(i),
+                data: DdiGetCertificateReq {
+                    slot_id: 0,
+                    cert_id: i,
                 },
                 ext: None,
             };
@@ -1937,53 +2283,53 @@ impl HsmSession {
             let result = read_locked_device.dev.exec_op(&req, &mut cookie)?;
             tracing::debug!("Done fetching cert {}", i);
 
-            let der = &result.data.collateral.data()[..result.data.collateral.len()];
+            let der = result.data.certificate.as_slice();
 
             // Convert DER to PEM
             let pem = der_to_pem(der).map_err(|err| {
                 tracing::error!(?err, "Failed to convert AK Cert DER to PEM");
-                HsmError::GetCollateralError
+                HsmError::GetCertificateError
             })?;
 
-            collaterals.push(pem);
+            certs.push(pem);
         }
-        tracing::debug!("Done fetching collateral for Physical device");
+        tracing::debug!("Done fetching certificates for Physical device");
 
         // Reverse so leaf cert is first, root cert is last
-        collaterals.reverse();
+        certs.reverse();
 
-        // Flatten the collaterals into a single byte array, separated by newline
-        let mut flatten_collaterals = Vec::new();
-        for (i, item) in collaterals.iter().enumerate() {
+        // Flatten the certificates into a single byte array, separated by newline
+        let mut flatten_certs = Vec::new();
+        for (i, item) in certs.iter().enumerate() {
             if i != 0 {
-                // Add seperator except for first item
-                flatten_collaterals.push(b'\n');
+                // Add separator except for first item
+                flatten_certs.push(b'\n');
             }
-            flatten_collaterals.extend_from_slice(item);
+            flatten_certs.extend_from_slice(item);
         }
 
-        Ok(ManticoreCollateral::PhysicalManticore(flatten_collaterals))
+        Ok(ManticoreCertificate::PhysicalManticore(flatten_certs))
     }
 
-    /// Get Collateral
+    /// Get Certificate
     #[instrument(skip_all, fields(sess_id = self.session_id))]
-    pub fn get_collateral(&self) -> HsmResult<ManticoreCollateral> {
-        tracing::debug!("Getting Collateral");
+    pub fn get_certificate(&self) -> HsmResult<ManticoreCertificate> {
+        tracing::debug!("Getting Certificate");
         let read_locked_device = self.device_inner.read();
 
         if self.closed {
-            tracing::error!(error = ?HsmError::SessionClosed, "get_collateral failed: App Session already closed");
+            tracing::error!(error = ?HsmError::SessionClosed, "get certificates failed: App Session already closed");
             Err(HsmError::SessionClosed)?
         }
 
-        let collaterals = match read_locked_device.get_device_info().kind {
-            DeviceKind::Virtual => self.get_collateral_for_virtual_device(),
-            DeviceKind::Physical => self.get_collateral_for_physical_device(),
+        let certificates = match read_locked_device.get_device_info().kind {
+            DeviceKind::Virtual => self.get_certificate_for_virtual_device(),
+            DeviceKind::Physical => self.get_certificate_for_physical_device(),
         }?;
 
-        tracing::debug!("Done getting collateral");
+        tracing::debug!("Done getting certificates");
 
-        Ok(collaterals)
+        Ok(certificates)
     }
 
     /// Generate AES Key
@@ -2002,6 +2348,8 @@ impl HsmSession {
             Err(HsmError::SessionClosed)?
         }
 
+        let key_properties: DdiKeyProperties = key_properties.into();
+
         let req = DdiAesGenerateKeyCmdReq {
             hdr: DdiReqHdr {
                 op: DdiOp::AesGenerateKey,
@@ -2014,7 +2362,9 @@ impl HsmSession {
             data: DdiAesGenerateKeyReq {
                 key_size: key_size.into(),
                 key_tag,
-                key_properties: key_properties.into(),
+                key_properties: key_properties
+                    .try_into()
+                    .map_err(|_| HsmError::InvalidParameter)?,
             },
             ext: None,
         };
@@ -2024,19 +2374,24 @@ impl HsmSession {
         let resp = read_locked_device.dev.exec_op(&req, &mut cookie)?;
         tracing::debug!("Done generating AES key");
 
+        let data = resp.data;
+        let masked_key = data.masked_key.as_slice().to_vec();
+
         let key_type = match key_size {
             AesKeySize::Aes128 => KeyType::Aes128,
             AesKeySize::Aes192 => KeyType::Aes192,
             AesKeySize::Aes256 => KeyType::Aes256,
-            AesKeySize::AesBulk256 => KeyType::AesBulk256,
+            AesKeySize::AesXtsBulk256 => KeyType::AesXtsBulk256,
+            AesKeySize::AesGcmBulk256 => KeyType::AesGcmBulk256,
+            AesKeySize::AesGcmBulk256Unapproved => KeyType::AesGcmBulk256Unapproved,
         };
 
         Ok(HsmKeyHandle {
-            id: resp.data.key_id,
-            name: key_tag,
+            id: data.key_id,
             kind: key_type,
             pub_key: None,
-            bulk_key_id: resp.data.bulk_key_id,
+            bulk_key_id: data.bulk_key_id,
+            masked_key: Some(masked_key),
         })
     }
 
@@ -2101,7 +2456,7 @@ impl HsmSession {
         tracing::debug!("Done AES encrypt/decrypt");
 
         Ok(AesResult {
-            data: resp.data.msg.data()[..resp.data.msg.len()].to_vec(),
+            data: resp.data.msg.as_slice().to_vec(),
             iv: resp.data.iv.data_take(),
         })
     }
@@ -2132,8 +2487,8 @@ impl HsmSession {
             Err(HsmError::AesGcmDecryptionNoTagProvided)?
         }
 
-        // Key kind must be AesBulk256
-        if key.kind() != KeyType::AesBulk256 {
+        // Key kind must be AES Bulk GCM type
+        if key.kind() != KeyType::AesGcmBulk256Unapproved && key.kind() != KeyType::AesGcmBulk256 {
             Err(HsmError::InvalidKeyType)?;
         }
 
@@ -2187,11 +2542,11 @@ impl HsmSession {
         tracing::debug!("Performing AES XTS Encrypt/Decrypt");
 
         // both keys must be AesBulk256
-        if key_1.kind() != KeyType::AesBulk256 {
+        if key_1.kind() != KeyType::AesXtsBulk256 {
             Err(HsmError::InvalidKeyType)?;
         }
 
-        if key_2.kind() != KeyType::AesBulk256 {
+        if key_2.kind() != KeyType::AesXtsBulk256 {
             Err(HsmError::InvalidKeyType)?;
         }
 
@@ -2223,6 +2578,126 @@ impl HsmSession {
         Ok(AesXtsResult { data: resp.data })
     }
 
+    /// Unmask/Import a key
+    ///
+    /// # Arguments
+    /// * `key` - Key to unmask, this will be modified in place to point to the unmasked key
+    ///
+    /// # Returns
+    /// * `HsmKeyHandle` - Unmasked key
+    pub fn unmask_key_from_handle(&self, key: &mut HsmKeyHandle) -> HsmResult<()> {
+        tracing::debug!("Unmasking key");
+        let read_locked_device = self.device_inner.read();
+
+        if self.closed {
+            tracing::error!(error = ?HsmError::SessionClosed, "unmask_key failed: App Session already closed");
+            Err(HsmError::SessionClosed)?
+        }
+
+        let masked_key = key.masked_key().ok_or_else(|| {
+            tracing::error!(error = ?HsmError::InvalidParameter, "HsmKeyHandle::masked_key is None");
+            HsmError::InvalidParameter
+        })?;
+
+        let req = DdiUnmaskKeyCmdReq {
+            hdr: DdiReqHdr {
+                op: DdiOp::UnmaskKey,
+                sess_id: Some(self.session_id),
+                rev: Some(DdiApiRev {
+                    major: self.api_rev.major,
+                    minor: self.api_rev.minor,
+                }),
+            },
+            data: DdiUnmaskKeyReq {
+                masked_key: MborByteArray::from_slice(masked_key)
+                    .map_err(|_| HsmError::CborByteArrayCreationError)?,
+            },
+            ext: None,
+        };
+
+        let mut cookie = None;
+
+        let resp = read_locked_device.dev.exec_op(&req, &mut cookie)?;
+        tracing::debug!("Done unmasking key");
+
+        let data = resp.data;
+        let masked_key = data.masked_key.as_slice().to_vec();
+        let pub_key = data
+            .pub_key
+            .map(|resp_pub_key| resp_pub_key.der.as_slice().to_vec());
+
+        // Check type same as before
+        if data.kind != key.kind.into() || pub_key != key.pub_key {
+            tracing::error!(error = ?HsmError::InternalError, "Unmasked key has different kind or public key than original");
+            Err(HsmError::InternalError)?
+        }
+
+        // Update field on key
+        key.id = data.key_id;
+        key.bulk_key_id = data.bulk_key_id;
+        key.masked_key = Some(masked_key);
+
+        Ok(())
+    }
+
+    /// Unmask/Import a key given a encrypted key blob
+    ///
+    /// # Arguments
+    /// * `blob` - Encrypted key blob, i.e. the `masked_key`
+    ///
+    /// # Returns
+    /// * `HsmKeyHandle` - Unmasked key
+    pub fn unmask_key(&self, blob: &[u8]) -> HsmResult<HsmKeyHandle> {
+        tracing::debug!("Unmasking key");
+        let read_locked_device = self.device_inner.read();
+
+        if self.closed {
+            tracing::error!(error = ?HsmError::SessionClosed, "unmask_key failed: App Session already closed");
+            Err(HsmError::SessionClosed)?
+        }
+
+        if blob.is_empty() {
+            tracing::error!(error = ?HsmError::InvalidParameter, "Blob is empty");
+            Err(HsmError::InvalidParameter)?
+        }
+
+        let req = DdiUnmaskKeyCmdReq {
+            hdr: DdiReqHdr {
+                op: DdiOp::UnmaskKey,
+                sess_id: Some(self.session_id),
+                rev: Some(DdiApiRev {
+                    major: self.api_rev.major,
+                    minor: self.api_rev.minor,
+                }),
+            },
+            data: DdiUnmaskKeyReq {
+                masked_key: MborByteArray::from_slice(blob)
+                    .map_err(|_| HsmError::CborByteArrayCreationError)?,
+            },
+            ext: None,
+        };
+
+        let mut cookie = None;
+
+        let resp = read_locked_device.dev.exec_op(&req, &mut cookie)?;
+        tracing::debug!("Done unmasking key from blob");
+
+        let data = resp.data;
+
+        let pub_key = data
+            .pub_key
+            .map(|resp_pub_key| resp_pub_key.der.as_slice().to_vec());
+        let masked_key = data.masked_key.as_slice().to_vec();
+
+        Ok(HsmKeyHandle {
+            id: data.key_id,
+            kind: data.kind.try_into()?,
+            pub_key,
+            bulk_key_id: data.bulk_key_id,
+            masked_key: Some(masked_key),
+        })
+    }
+
     #[cfg(feature = "testhooks")]
     /// Import Key
     ///
@@ -2247,6 +2722,8 @@ impl HsmSession {
             Err(HsmError::SessionClosed)?
         }
 
+        let key_properties: DdiKeyProperties = key_properties.into();
+
         let req = DdiDerKeyImportCmdReq {
             hdr: DdiReqHdr {
                 op: DdiOp::DerKeyImport,
@@ -2261,7 +2738,9 @@ impl HsmSession {
                     .map_err(|_| HsmError::CborByteArrayCreationError)?,
                 key_class: key_class.into(),
                 key_tag,
-                key_properties: key_properties.into(),
+                key_properties: key_properties
+                    .try_into()
+                    .map_err(|_| HsmError::InvalidParameter)?,
             },
             ext: None,
         };
@@ -2269,18 +2748,19 @@ impl HsmSession {
         let mut cookie = None;
 
         let resp = read_locked_device.dev.exec_op(&req, &mut cookie)?;
+        let data = resp.data;
 
-        let pub_key = resp
-            .data
+        let pub_key = data
             .pub_key
-            .map(|resp_pub_key| resp_pub_key.der.data()[..resp_pub_key.der.len()].to_vec());
+            .map(|resp_pub_key| resp_pub_key.der.as_slice().to_vec());
+        let masked_key = data.masked_key.as_slice().to_vec();
 
         Ok(HsmKeyHandle {
-            id: resp.data.key_id,
-            name: key_tag,
+            id: data.key_id,
             pub_key,
-            bulk_key_id: resp.data.bulk_key_id,
-            kind: resp.data.kind.try_into()?,
+            bulk_key_id: data.bulk_key_id,
+            kind: data.key_type.try_into()?,
+            masked_key: Some(masked_key),
         })
     }
 }
@@ -2335,8 +2815,14 @@ pub enum KeyClass {
     /// AES
     Aes,
 
-    /// AES Bulk
-    AesBulk,
+    /// AES XTS Bulk
+    AesXtsBulk,
+
+    /// AES GCM Bulk
+    AesGcmBulk,
+
+    /// AES GCM Bulk Unapproved
+    AesGcmBulkUnapproved,
 
     /// ECC Private
     Ecc,
@@ -2348,7 +2834,9 @@ impl From<KeyClass> for DdiKeyClass {
             KeyClass::Rsa => DdiKeyClass::Rsa,
             KeyClass::RsaCrt => DdiKeyClass::RsaCrt,
             KeyClass::Aes => DdiKeyClass::Aes,
-            KeyClass::AesBulk => DdiKeyClass::AesBulk,
+            KeyClass::AesXtsBulk => DdiKeyClass::AesXtsBulk,
+            KeyClass::AesGcmBulk => DdiKeyClass::AesGcmBulk,
+            KeyClass::AesGcmBulkUnapproved => DdiKeyClass::AesGcmBulkUnapproved,
             KeyClass::Ecc => DdiKeyClass::Ecc,
         }
     }
@@ -2412,8 +2900,14 @@ pub enum KeyType {
     /// AES 256-bit Key
     Aes256,
 
-    /// AES Bulk 256-bit Key
-    AesBulk256,
+    /// AES XTS Bulk 256-bit Key
+    AesXtsBulk256,
+
+    /// AES GCM Bulk 256-bit Key
+    AesGcmBulk256,
+
+    /// AES GCM Bulk 256-bit Unapproved Key
+    AesGcmBulk256Unapproved,
 
     /// 256-bit Secret from key exchange
     Secret256,
@@ -2455,7 +2949,9 @@ impl From<KeyType> for DdiKeyType {
             KeyType::Aes128 => DdiKeyType::Aes128,
             KeyType::Aes192 => DdiKeyType::Aes192,
             KeyType::Aes256 => DdiKeyType::Aes256,
-            KeyType::AesBulk256 => DdiKeyType::AesBulk256,
+            KeyType::AesXtsBulk256 => DdiKeyType::AesXtsBulk256,
+            KeyType::AesGcmBulk256 => DdiKeyType::AesGcmBulk256,
+            KeyType::AesGcmBulk256Unapproved => DdiKeyType::AesGcmBulk256Unapproved,
             KeyType::Secret256 => DdiKeyType::Secret256,
             KeyType::Secret384 => DdiKeyType::Secret384,
             KeyType::Secret521 => DdiKeyType::Secret521,
@@ -2489,7 +2985,9 @@ impl TryFrom<DdiKeyType> for KeyType {
             DdiKeyType::Aes128 => Ok(KeyType::Aes128),
             DdiKeyType::Aes192 => Ok(KeyType::Aes192),
             DdiKeyType::Aes256 => Ok(KeyType::Aes256),
-            DdiKeyType::AesBulk256 => Ok(KeyType::AesBulk256),
+            DdiKeyType::AesXtsBulk256 => Ok(KeyType::AesXtsBulk256),
+            DdiKeyType::AesGcmBulk256 => Ok(KeyType::AesGcmBulk256),
+            DdiKeyType::AesGcmBulk256Unapproved => Ok(KeyType::AesGcmBulk256Unapproved),
             DdiKeyType::Secret256 => Ok(KeyType::Secret256),
             DdiKeyType::Secret384 => Ok(KeyType::Secret384),
             DdiKeyType::Secret521 => Ok(KeyType::Secret521),
@@ -2522,7 +3020,9 @@ impl From<KeyType> for CryptoKeyKind {
             KeyType::Aes128 => CryptoKeyKind::Aes128,
             KeyType::Aes192 => CryptoKeyKind::Aes192,
             KeyType::Aes256 => CryptoKeyKind::Aes256,
-            KeyType::AesBulk256 => CryptoKeyKind::AesBulk256,
+            KeyType::AesXtsBulk256 => CryptoKeyKind::AesXtsBulk256,
+            KeyType::AesGcmBulk256 => CryptoKeyKind::AesGcmBulk256,
+            KeyType::AesGcmBulk256Unapproved => CryptoKeyKind::AesGcmBulk256Unapproved,
             KeyType::Secret256 => CryptoKeyKind::Secret256,
             KeyType::Secret384 => CryptoKeyKind::Secret384,
             KeyType::Secret521 => CryptoKeyKind::Secret521,
@@ -2640,8 +3140,8 @@ pub enum KeyUsage {
     /// The key may be used for encryption and decryption.
     EncryptDecrypt,
 
-    /// The key may be used for wrapping and unwrapping.
-    WrapUnwrap,
+    /// The key may be used for unwrapping.
+    Unwrap,
 
     /// The key may be used for ECDH or key derivation. This flag is invalid for RSA/AES key types.
     Derive,
@@ -2674,7 +3174,7 @@ impl From<KeyProperties> for DdiKeyProperties {
         let key_usage = match props.key_usage {
             KeyUsage::SignVerify => DdiKeyUsage::SignVerify,
             KeyUsage::EncryptDecrypt => DdiKeyUsage::EncryptDecrypt,
-            KeyUsage::WrapUnwrap => DdiKeyUsage::WrapUnwrap,
+            KeyUsage::Unwrap => DdiKeyUsage::Unwrap,
             KeyUsage::Derive => DdiKeyUsage::Derive,
         };
 
@@ -2757,8 +3257,14 @@ pub enum AesKeySize {
     /// AES 256
     Aes256,
 
-    /// AES Bulk 256
-    AesBulk256,
+    /// AES XTS Bulk 256
+    AesXtsBulk256,
+
+    /// AES GCM Bulk 256
+    AesGcmBulk256,
+
+    /// AES GCM Bulk 256 Unapproved
+    AesGcmBulk256Unapproved,
 }
 
 impl From<AesKeySize> for DdiAesKeySize {
@@ -2767,7 +3273,9 @@ impl From<AesKeySize> for DdiAesKeySize {
             AesKeySize::Aes128 => DdiAesKeySize::Aes128,
             AesKeySize::Aes192 => DdiAesKeySize::Aes192,
             AesKeySize::Aes256 => DdiAesKeySize::Aes256,
-            AesKeySize::AesBulk256 => DdiAesKeySize::AesBulk256,
+            AesKeySize::AesXtsBulk256 => DdiAesKeySize::AesXtsBulk256,
+            AesKeySize::AesGcmBulk256 => DdiAesKeySize::AesGcmBulk256,
+            AesKeySize::AesGcmBulk256Unapproved => DdiAesKeySize::AesGcmBulk256Unapproved,
         }
     }
 }
@@ -2853,6 +3361,16 @@ impl From<CryptoError> for HsmError {
             CryptoError::HkdfError => HsmError::HkdfError,
             CryptoError::EccFromRawError => HsmError::EccFromRawError,
             CryptoError::ByteArrayCreationError => HsmError::CborByteArrayCreationError,
+            CryptoError::KbkdfError => HsmError::KbkdfError,
+            CryptoError::OutputBufferTooSmall => HsmError::OutputBufferTooSmall,
+            CryptoError::InvalidKeyLength => HsmError::InvalidKeyLength,
+            CryptoError::InvalidAlgorithm => HsmError::InvalidAlgorithm,
+            CryptoError::MetadataEncodeFailed => HsmError::MetadataEncodeFailed,
+            CryptoError::MetadataDecodeFailed => HsmError::MetadataDecodeFailed,
+            CryptoError::MaskedKeyPreEncodeFailed => HsmError::MaskedKeyPreEncodeFailed,
+            CryptoError::MaskedKeyEncodeFailed => HsmError::MaskedKeyEncodeFailed,
+            CryptoError::MaskedKeyDecodeFailed => HsmError::MaskedKeyDecodeFailed,
+            CryptoError::MborEncodeFailed => HsmError::MborEncodeFailed,
         }
     }
 }

@@ -1,17 +1,17 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
 
 use enum_as_inner::EnumAsInner;
-use mcr_api::DigestKind;
-use mcr_api::EccCurve;
-use mcr_api::HsmError;
-use mcr_api::HsmKeyHandle;
-use mcr_api::HsmSession;
-use mcr_api::KeyAvailability;
-use mcr_api::KeyClass;
-use mcr_api::KeyProperties;
-use mcr_api::KeyUsage;
-use mcr_api::RsaCryptoPadding;
-use mcr_api::RsaUnwrapParams;
+use mcr_api_resilient::DigestKind;
+use mcr_api_resilient::EccCurve;
+use mcr_api_resilient::HsmError;
+use mcr_api_resilient::HsmKeyHandle;
+use mcr_api_resilient::HsmSession;
+use mcr_api_resilient::KeyAvailability;
+use mcr_api_resilient::KeyClass;
+use mcr_api_resilient::KeyProperties;
+use mcr_api_resilient::KeyUsage;
+use mcr_api_resilient::RsaCryptoPadding;
+use mcr_api_resilient::RsaUnwrapParams;
 use winapi::shared::winerror::*;
 use windows::core::HRESULT;
 use windows::core::*;

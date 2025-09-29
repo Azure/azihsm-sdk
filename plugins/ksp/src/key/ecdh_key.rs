@@ -2,15 +2,15 @@
 
 use std::sync::Arc;
 
-use mcr_api::DigestKind;
-use mcr_api::EccCurve;
-use mcr_api::HsmKeyHandle;
-use mcr_api::HsmSession;
-use mcr_api::KeyAvailability;
-use mcr_api::KeyClass;
-use mcr_api::KeyProperties;
-use mcr_api::KeyType;
-use mcr_api::KeyUsage;
+use mcr_api_resilient::DigestKind;
+use mcr_api_resilient::EccCurve;
+use mcr_api_resilient::HsmKeyHandle;
+use mcr_api_resilient::HsmSession;
+use mcr_api_resilient::KeyAvailability;
+use mcr_api_resilient::KeyClass;
+use mcr_api_resilient::KeyProperties;
+use mcr_api_resilient::KeyType;
+use mcr_api_resilient::KeyUsage;
 use parking_lot::RwLock;
 use winapi::shared::winerror::ERROR_INVALID_DATA;
 use winapi::shared::winerror::E_INVALIDARG;

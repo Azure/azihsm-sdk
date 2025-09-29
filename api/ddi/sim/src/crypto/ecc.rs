@@ -59,6 +59,7 @@ use x509_cert::time::Validity;
 #[cfg(feature = "use-openssl")]
 use crate::crypto::ecc::openssl::asn1::Asn1Time;
 use crate::errors::ManticoreError;
+use crate::mask::KeySerialization;
 use crate::table::entry::Kind;
 
 #[cfg(feature = "use-symcrypt")]
@@ -338,6 +339,16 @@ pub struct EccPrivateKey {
     #[cfg(feature = "use-symcrypt")]
     handle: EccKeyContainer,
     size: EccKeySize,
+}
+
+impl KeySerialization<EccPrivateKey> for EccPrivateKey {
+    fn serialize(&self) -> Result<Vec<u8>, ManticoreError> {
+        self.to_der()
+    }
+
+    fn deserialize(raw: &[u8], expected_type: Kind) -> Result<EccPrivateKey, ManticoreError> {
+        EccPrivateKey::from_der(raw, Some(expected_type))
+    }
 }
 
 #[cfg(feature = "use-openssl")]
@@ -954,8 +965,7 @@ impl EccPrivateOp for EccPrivateKey {
     fn create_pub_key_cert(&self) -> Result<Vec<u8>, ManticoreError> {
         use std::str::FromStr;
 
-        use der::pem::LineEnding;
-        use der::EncodePem;
+        use der::Encode;
 
         let der = self.to_der().map_err(|error_stack| {
             tracing::error!(?error_stack);
@@ -1047,17 +1057,12 @@ impl EccPrivateOp for EccPrivateKey {
             _ => Err(ManticoreError::EccPubKeyCertGenerateError),
         }?;
 
-        let pem = cert.to_pem(LineEnding::LF).map_err(|error_stack| {
+        let der = cert.to_der().map_err(|error_stack| {
             tracing::error!(?error_stack);
             ManticoreError::EccPubKeyCertGenerateError
         })?;
 
-        let (_label, decoded) = pem_rfc7468::decode_vec(pem.as_bytes()).map_err(|error_stack| {
-            tracing::error!(?error_stack);
-            ManticoreError::EccPubKeyCertGenerateError
-        })?;
-
-        Ok(decoded)
+        Ok(der)
     }
 }
 

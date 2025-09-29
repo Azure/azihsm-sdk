@@ -4,11 +4,11 @@ use std::ffi::c_int;
 use std::ffi::c_uint;
 
 use api_interface::REPORT_DATA_SIZE;
-use mcr_api::DigestKind;
-use mcr_api::KeyAvailability;
-use mcr_api::KeyClass;
-use mcr_api::KeyType;
-use mcr_api::KeyUsage;
+use mcr_api_resilient::DigestKind;
+use mcr_api_resilient::KeyAvailability;
+use mcr_api_resilient::KeyClass;
+use mcr_api_resilient::KeyType;
+use mcr_api_resilient::KeyUsage;
 use openssl_rust::safeapi::error::OpenSSLError;
 use openssl_rust::safeapi::error::OpenSSLResult;
 use openssl_rust::safeapi::rsa::key::RsaKey;

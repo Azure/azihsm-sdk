@@ -102,8 +102,14 @@ impl Copyright {
             ))?,
         };
 
-        let header = format!("{} {}\n", prefix, Self::COPYRIGHT_HEADER_TEXT);
-        file_content.insert_str(0, header.as_str());
+        let mut insert_idx = 0;
+        // check for shebang in shell scripts
+        if (ext == "sh") & file_content.starts_with("#!") {
+            insert_idx = file_content.find('\n').unwrap_or_default() + 1;
+        }
+
+        let header = format!("{} {}\n\n", prefix, Self::COPYRIGHT_HEADER_TEXT);
+        file_content.insert_str(insert_idx, header.as_str());
 
         std::fs::write(path, file_content)?;
         Ok(())

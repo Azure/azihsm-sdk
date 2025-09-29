@@ -375,17 +375,11 @@ fn test_get_unwrapping_key_trigger_pct_failure() {
 
             std::thread::sleep(std::time::Duration::from_secs(30));
 
-            let req = DdiGetUnwrappingKeyCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::GetUnwrappingKey,
-                    sess_id: Some(session_id),
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiGetUnwrappingKeyReq {},
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_get_unwrapping_key(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+            );
 
             assert!(resp.is_err(), "resp {:?}", resp);
             if let Err(err) = &resp {
@@ -435,17 +429,11 @@ fn test_get_establish_cred_encryption_key_failure() {
             // This will call the reset function
             common_cleanup(dev, ddi, path, None);
 
-            let req = DdiGetEstablishCredEncryptionKeyCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::GetEstablishCredEncryptionKey,
-                    sess_id: None,
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiGetEstablishCredEncryptionKeyReq {},
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_get_establish_cred_encryption_key(
+                dev,
+                None,
+                Some(DdiApiRev { major: 1, minor: 0 }),
+            );
 
             assert!(resp.is_err(), "resp {:?}", resp);
             if let Err(err) = &resp {
@@ -497,17 +485,11 @@ fn test_get_session_encryption_key_failure() {
 
             helper_common_establish_credential(dev, TEST_CRED_ID, TEST_CRED_PIN);
 
-            let req = DdiGetSessionEncryptionKeyCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::GetSessionEncryptionKey,
-                    sess_id: None,
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiGetSessionEncryptionKeyReq {},
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_get_session_encryption_key(
+                dev,
+                None,
+                Some(DdiApiRev { major: 1, minor: 0 }),
+            );
 
             assert!(resp.is_err(), "resp {:?}", resp);
             if let Err(err) = &resp {

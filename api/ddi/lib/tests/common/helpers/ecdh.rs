@@ -24,7 +24,9 @@ pub fn helper_ecdh_key_exchange(
             pub_key_der,
             key_tag,
             key_type,
-            key_properties,
+            key_properties: key_properties
+                .try_into()
+                .map_err(|_| DdiError::InvalidParameter)?,
         },
         ext: None,
     };

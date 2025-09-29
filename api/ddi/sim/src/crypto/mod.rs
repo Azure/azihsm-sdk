@@ -3,6 +3,9 @@
 //! Module for Cryptographic Keys.
 
 pub mod aes;
+pub mod aeshmac;
+#[cfg(feature = "use-symcrypt")]
+pub mod cng;
 pub mod ecc;
 pub mod hmac;
 pub mod rand;

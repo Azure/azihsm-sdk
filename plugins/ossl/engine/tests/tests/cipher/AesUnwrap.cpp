@@ -80,8 +80,12 @@ TEST_CASE("AZIHSM AES Unwrap tests", "[AesKeyUnWrap]")
         validate_aes_unwrap(azihsm_engine, NID_aes_128_cbc, digest_kind);
         validate_aes_unwrap(azihsm_engine, NID_aes_192_cbc, digest_kind);
         validate_aes_unwrap(azihsm_engine, NID_aes_256_cbc, digest_kind);
+#ifdef AZIHSM_GCM
         validate_aes_unwrap(azihsm_engine, NID_aes_256_gcm, digest_kind);
+#endif
+#ifdef AZIHSM_XTS
         validate_aes_xts_unwrap(azihsm_engine, NID_aes_256_xts, digest_kind);
+#endif
     }
 
     SECTION("Test AES Cbc key Unwrap with AZIHSM_DIGEST_SHA256")
@@ -90,8 +94,12 @@ TEST_CASE("AZIHSM AES Unwrap tests", "[AesKeyUnWrap]")
         validate_aes_unwrap(azihsm_engine, NID_aes_128_cbc, digest_kind);
         validate_aes_unwrap(azihsm_engine, NID_aes_192_cbc, digest_kind);
         validate_aes_unwrap(azihsm_engine, NID_aes_256_cbc, digest_kind);
+#ifdef AZIHSM_GCM
         validate_aes_unwrap(azihsm_engine, NID_aes_256_gcm, digest_kind);
+#endif
+#ifdef AZIHSM_XTS
         validate_aes_xts_unwrap(azihsm_engine, NID_aes_256_xts, digest_kind);
+#endif
     }
 
     SECTION("Test AES Cbc key Unwrap with AZIHSM_DIGEST_SHA384")
@@ -100,8 +108,12 @@ TEST_CASE("AZIHSM AES Unwrap tests", "[AesKeyUnWrap]")
         validate_aes_unwrap(azihsm_engine, NID_aes_128_cbc, digest_kind);
         validate_aes_unwrap(azihsm_engine, NID_aes_192_cbc, digest_kind);
         validate_aes_unwrap(azihsm_engine, NID_aes_256_cbc, digest_kind);
+#ifdef AZIHSM_GCM
         validate_aes_unwrap(azihsm_engine, NID_aes_256_gcm, digest_kind);
+#endif
+#ifdef AZIHSM_XTS
         validate_aes_xts_unwrap(azihsm_engine, NID_aes_256_xts, digest_kind);
+#endif
     }
 
     SECTION("Test AES Cbc key Unwrap with AZIHSM_DIGEST_SHA512")
@@ -110,7 +122,11 @@ TEST_CASE("AZIHSM AES Unwrap tests", "[AesKeyUnWrap]")
         validate_aes_unwrap(azihsm_engine, NID_aes_128_cbc, digest_kind);
         validate_aes_unwrap(azihsm_engine, NID_aes_192_cbc, digest_kind);
         validate_aes_unwrap(azihsm_engine, NID_aes_192_cbc, digest_kind);
+#ifdef AZIHSM_GCM
         validate_aes_unwrap(azihsm_engine, NID_aes_256_gcm, digest_kind);
+#endif
+#ifdef AZIHSM_XTS
         validate_aes_xts_unwrap(azihsm_engine, NID_aes_256_xts, digest_kind);
+#endif
     }
 }

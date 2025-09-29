@@ -1,4 +1,4 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.operations
+// Copyright (C) Microsoft Corporation. All rights reserved.
 
 //! Module for describing unstructured bits and key derivation functions.
 
@@ -9,6 +9,8 @@ use crate::crypto::hmac::HmacKey;
 use crate::crypto::hmac::HmacOp;
 use crate::crypto::sha::HashAlgorithm;
 use crate::errors::ManticoreError;
+use crate::mask::KeySerialization;
+use crate::table::entry::Kind;
 
 /// Trait for Secret operations
 pub trait SecretOp {
@@ -88,6 +90,22 @@ pub struct SecretKey {
     key: Vec<u8>,
     #[allow(unused)]
     size: SecretSize,
+}
+
+impl KeySerialization<SecretKey> for SecretKey {
+    fn serialize(&self) -> Result<Vec<u8>, ManticoreError> {
+        Ok(self.key.clone())
+    }
+
+    fn deserialize(raw: &[u8], expected_type: Kind) -> Result<SecretKey, ManticoreError> {
+        match expected_type {
+            Kind::Secret256 | Kind::Secret384 | Kind::Secret521 => SecretKey::from_bytes(raw),
+            _ => {
+                tracing::error!(error=?ManticoreError::DerAndKeyTypeMismatch, ?expected_type, "Expected type not Secret when deserializing sealed key for SecretKey");
+                Err(ManticoreError::DerAndKeyTypeMismatch)
+            }
+        }
+    }
 }
 
 impl SecretOp for SecretKey {

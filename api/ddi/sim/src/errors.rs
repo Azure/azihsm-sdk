@@ -100,6 +100,9 @@ pub enum ManticoreError {
     /// [AppSession] with given id does not exit.
     SessionNotFound,
 
+    /// Session exists but needs renegotiation.
+    SessionNeedsRenegotiation,
+
     /// The function is not found.
     FunctionNotFound,
 
@@ -264,6 +267,33 @@ pub enum ManticoreError {
 
     /// Nonce mismatch
     NonceMismatch,
+
+    /// Masked key length is not valid
+    MaskedKeyInvalidLength,
+
+    /// Masked key pre-encode failed
+    MaskedKeyPreEncodeFailed,
+
+    /// Masked key encode failed
+    MaskedKeyEncodeFailed,
+
+    /// Masked key decode failed
+    MaskedKeyDecodeFailed,
+
+    /// Partition already provisioned
+    PartitionAlreadyProvisioned,
+
+    /// Sealed BK3 data is too large
+    SealedBk3TooLarge,
+
+    /// Sealed BK3 not present on device
+    SealedBk3NotPresent,
+
+    /// Credentials haven't been established. Cannot open a session
+    CredentialsNotEstablished,
+
+    /// Partition has not been provisioned.
+    PartitionNotProvisioned,
 }
 
 impl From<ManticoreError> for DdiStatus {
@@ -284,6 +314,7 @@ impl From<ManticoreError> for DdiStatus {
             ManticoreError::CborDecodeError => DdiStatus::DdiDecodeFailed,
             ManticoreError::CborEncodeError => DdiStatus::DdiEncodeFailed,
             ManticoreError::SessionNotFound => DdiStatus::SessionNotFound,
+            ManticoreError::SessionNeedsRenegotiation => DdiStatus::SessionNeedsRenegotiation,
             ManticoreError::InvalidKeyIndex => DdiStatus::KeyNotFound,
             ManticoreError::KeyNotFound => DdiStatus::KeyNotFound,
             ManticoreError::KeyTagAlreadyExists => DdiStatus::KeyTagAlreadyExists,
@@ -350,6 +381,15 @@ impl From<ManticoreError> for DdiStatus {
             ManticoreError::CannotDeleteInternalKeys => DdiStatus::CannotDeleteInternalKeys,
             ManticoreError::RngError => DdiStatus::RngError,
             ManticoreError::NonceMismatch => DdiStatus::NonceMismatch,
+            ManticoreError::MaskedKeyInvalidLength => DdiStatus::MaskedKeyInvalidLength,
+            ManticoreError::MaskedKeyPreEncodeFailed => DdiStatus::MaskedKeyPreEncodeFailed,
+            ManticoreError::MaskedKeyEncodeFailed => DdiStatus::MaskedKeyEncodeFailed,
+            ManticoreError::MaskedKeyDecodeFailed => DdiStatus::MaskedKeyDecodeFailed,
+            ManticoreError::PartitionAlreadyProvisioned => DdiStatus::PartitionAlreadyProvisioned,
+            ManticoreError::SealedBk3NotPresent => DdiStatus::SealedBk3NotPresent,
+            ManticoreError::SealedBk3TooLarge => DdiStatus::SealedBk3TooLarge,
+            ManticoreError::CredentialsNotEstablished => DdiStatus::CredentialsNotEstablished,
+            ManticoreError::PartitionNotProvisioned => DdiStatus::PartitionNotProvisioned,
         }
     }
 }

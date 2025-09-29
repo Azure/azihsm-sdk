@@ -309,9 +309,9 @@ pub(crate) struct CustomMixArgs {
     #[arg(long, default_value_t = 0)]
     pub(crate) aes_cbc_192_open_key: u16,
 
-    /// Ratio of AES Bulk 256 OpenKey  operations
+    /// Ratio of AES XTS Bulk 256 OpenKey  operations
     #[arg(long, default_value_t = 0)]
-    pub(crate) aes_bulk_256_open_key: u16,
+    pub(crate) aes_xts_bulk_256_open_key: u16,
 
     /// Ratio of RSA 4K No CRT OpenKey  operations
     #[arg(long, default_value_t = 0)]
@@ -352,9 +352,9 @@ pub(crate) struct CustomMixArgs {
     #[arg(long, default_value_t = 0)]
     pub(crate) create_app_and_delete: u16,
 
-    /// Ratio of Get Collateral operations
+    /// Ratio of Get Certificate Chain operations
     #[arg(long, default_value_t = 0)]
-    pub(crate) get_collateral: u16,
+    pub(crate) get_cert_chain: u16,
 
     /// Ratio of Get Unwrapping Key operations
     #[arg(long, default_value_t = 0)]

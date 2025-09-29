@@ -1,11 +1,15 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
+
 // Test code for Fast path aes gcm and xts encryption and decryption
 // flows
 // Applicable to device and mock
 
 mod common;
 
+#[cfg(not(feature = "resilient"))]
 use mcr_api::*;
+#[cfg(feature = "resilient")]
+use mcr_api_resilient::*;
 use test_with_tracing::test;
 
 use crate::common::*;
@@ -23,7 +27,7 @@ fn test_aes_gcm_encrypt_decrypt_no_aad() {
         let app_session = common_open_app_session(device);
 
         let result = app_session.aes_generate(
-            AesKeySize::AesBulk256,
+            AesKeySize::AesGcmBulk256Unapproved,
             None,
             KeyProperties {
                 key_usage: KeyUsage::EncryptDecrypt,
@@ -74,7 +78,7 @@ fn test_aes_gcm_zero_length_no_aad() {
         let app_session = common_open_app_session(device);
 
         let result = app_session.aes_generate(
-            AesKeySize::AesBulk256,
+            AesKeySize::AesGcmBulk256Unapproved,
             None,
             KeyProperties {
                 key_usage: KeyUsage::EncryptDecrypt,
@@ -115,7 +119,7 @@ fn test_aes_gcm_corrupt_no_aad() {
         let app_session = common_open_app_session(device);
 
         let result = app_session.aes_generate(
-            AesKeySize::AesBulk256,
+            AesKeySize::AesGcmBulk256Unapproved,
             None,
             KeyProperties {
                 key_usage: KeyUsage::EncryptDecrypt,
@@ -163,7 +167,7 @@ fn test_aes_invalid_key_no_aad() {
         let app_session = common_open_app_session(device);
 
         let result = app_session.aes_generate(
-            AesKeySize::AesBulk256,
+            AesKeySize::AesGcmBulk256Unapproved,
             None,
             KeyProperties {
                 key_usage: KeyUsage::EncryptDecrypt,
@@ -208,7 +212,7 @@ fn test_aes_gcm_mismatched_iv_no_aad() {
         let app_session = common_open_app_session(device);
 
         let result = app_session.aes_generate(
-            AesKeySize::AesBulk256,
+            AesKeySize::AesGcmBulk256Unapproved,
             None,
             KeyProperties {
                 key_usage: KeyUsage::EncryptDecrypt,

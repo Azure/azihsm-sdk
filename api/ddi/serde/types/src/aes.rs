@@ -34,8 +34,14 @@ pub enum DdiAesKeySize {
     /// AES 256-bit
     Aes256 = 3,
 
-    /// AES Bulk 256-bit
-    AesBulk256 = 4,
+    /// AES XTS Bulk 256-bit
+    AesXtsBulk256 = 4,
+
+    /// AES GCM Bulk 256-bit
+    AesGcmBulk256 = 5,
+
+    /// AES GCM Bulk 256-bit Unapproved
+    AesGcmBulk256Unapproved = 6,
 }
 
 /// DDI AES Key Size Error
@@ -52,9 +58,39 @@ impl TryFrom<DdiAesKeySize> for usize {
             DdiAesKeySize::Aes128 => Ok(16),
             DdiAesKeySize::Aes192 => Ok(24),
             DdiAesKeySize::Aes256 => Ok(32),
-            DdiAesKeySize::AesBulk256 => Ok(32),
+            DdiAesKeySize::AesXtsBulk256 => Ok(32),
+            DdiAesKeySize::AesGcmBulk256 => Ok(32),
+            DdiAesKeySize::AesGcmBulk256Unapproved => Ok(32),
             _ => Err(DdiAesKeySizeError::InvalidKeySize),
         }
+    }
+}
+
+impl TryInto<DdiKeyType> for DdiAesKeySize {
+    type Error = DdiAesKeySizeError;
+
+    fn try_into(self) -> Result<DdiKeyType, Self::Error> {
+        match self {
+            DdiAesKeySize::Aes128 => Ok(DdiKeyType::Aes128),
+            DdiAesKeySize::Aes192 => Ok(DdiKeyType::Aes192),
+            DdiAesKeySize::Aes256 => Ok(DdiKeyType::Aes256),
+            DdiAesKeySize::AesXtsBulk256 => Ok(DdiKeyType::AesXtsBulk256),
+            DdiAesKeySize::AesGcmBulk256 => Ok(DdiKeyType::AesGcmBulk256),
+            DdiAesKeySize::AesGcmBulk256Unapproved => Ok(DdiKeyType::AesGcmBulk256Unapproved),
+            _ => Err(DdiAesKeySizeError::InvalidKeySize),
+        }
+    }
+}
+
+impl DdiAesKeySize {
+    /// Check if the key size is a bulk key size
+    pub fn is_bulk_key(self) -> bool {
+        matches!(
+            self,
+            DdiAesKeySize::AesXtsBulk256
+                | DdiAesKeySize::AesGcmBulk256
+                | DdiAesKeySize::AesGcmBulk256Unapproved
+        )
     }
 }
 
@@ -75,7 +111,7 @@ pub struct DdiAesGenerateKeyReq {
 
     /// Key properties
     #[ddi(id = 3)]
-    pub key_properties: DdiKeyProperties,
+    pub key_properties: DdiTargetKeyProperties,
 }
 
 /// DDI AES Generate Key Response Structure

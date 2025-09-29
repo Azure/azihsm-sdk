@@ -50,8 +50,12 @@ fn test_api_rev_with_session() {
         |dev, ddi, path, _incorrect_session_id| {
             let _ = helper_common_establish_credential_no_unwrap(dev, TEST_CRED_ID, TEST_CRED_PIN);
 
-            let (encrypted_credential, pub_key) =
-                encrypt_userid_pin_for_open_session(dev, TEST_CRED_ID, TEST_CRED_PIN);
+            let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                dev,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                TEST_SESSION_SEED,
+            );
 
             let app_dev = open_dev_and_set_device_kind(ddi, path);
             let resp = helper_open_session(

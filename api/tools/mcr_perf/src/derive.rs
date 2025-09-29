@@ -26,7 +26,9 @@ pub(crate) fn helper_hkdf_derive(
             info,
             key_type,
             key_tag: None,
-            key_properties: helper_key_properties(key_usage, DdiKeyAvailability::App),
+            key_properties: helper_key_properties(key_usage, DdiKeyAvailability::App)
+                .try_into()
+                .unwrap(),
         },
         ext: None,
     };
@@ -81,7 +83,9 @@ pub(crate) fn helper_kbkdf_derive(
             context,
             key_type,
             key_tag: None,
-            key_properties: helper_key_properties(key_usage, DdiKeyAvailability::App),
+            key_properties: helper_key_properties(key_usage, DdiKeyAvailability::App)
+                .try_into()
+                .unwrap(),
         },
         ext: None,
     };

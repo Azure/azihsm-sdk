@@ -51,7 +51,7 @@ pub struct DdiGetCertificateReq {
 pub struct DdiGetCertificateResp {
     /// Output data (certificate)
     #[ddi(id = 1)]
-    pub certificate: MborByteArray<1024>,
+    pub certificate: MborByteArray<2048>,
 }
 
 ddi_op_req_resp!(DdiGetCertificate);

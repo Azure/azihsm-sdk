@@ -33,10 +33,6 @@ use mcr_ddi_sim::report::SIGNATURE_SIZE;
 use mcr_ddi_sim::report::SIG_STRUCTURE_MAX_SIZE;
 use mcr_ddi_sim::report::TAGGED_COSE_SIGN1_OBJECT_MAX_SIZE;
 use mcr_ddi_types::*;
-use openssl::error::ErrorStack;
-use openssl::stack::Stack;
-use openssl::x509::store::X509StoreBuilder;
-use openssl::x509::X509StoreContext;
 use openssl::x509::X509;
 use test_with_tracing::test;
 
@@ -48,25 +44,29 @@ fn test_attest_ecc_signing_key() {
         common_setup,
         common_cleanup,
         |dev, _ddi, _path, session_id| {
-            let (private_key_id, pub_key_der) =
-                ecc_gen_key_mcr(dev, DdiEccCurve::P256, session_id, DdiKeyUsage::SignVerify);
+            // TODO: remove once virtual device supports cert chain ddi commands
+            let device_kind = get_device_kind(dev);
+            if device_kind != DdiDeviceKind::Physical {
+                tracing::debug!("Skipped test_attest_ecc_signing_key for virtual device");
+                return;
+            }
+
+            let (private_key_id, pub_key_der, _) = ecc_gen_key_mcr(
+                dev,
+                DdiEccCurve::P256,
+                None,
+                Some(session_id),
+                DdiKeyUsage::SignVerify,
+            );
 
             let report_data = [2u8; REPORT_DATA_SIZE];
-            let req = DdiAttestKeyCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::AttestKey,
-                    sess_id: Some(session_id),
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiAttestKeyReq {
-                    key_id: private_key_id,
-                    report_data: MborByteArray::new(report_data, report_data.len())
-                        .expect("failed to create byte array"),
-                },
-                ext: None,
-            };
-            let mut cookie = None;
-            let result = dev.exec_op(&req, &mut cookie);
+            let result = helper_attest_key_cmd(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                report_data,
+                private_key_id,
+            );
             assert!(result.is_ok(), "result {:?}", result);
 
             let resp = result.unwrap();
@@ -74,9 +74,9 @@ fn test_attest_ecc_signing_key() {
             let report_len = resp.data.report.len();
             assert!(report_len <= TAGGED_COSE_SIGN1_OBJECT_MAX_SIZE);
 
-            let (device_kind, collateral) = get_collateral(dev, session_id);
-            assert!(verify_collateral(device_kind, &collateral).is_ok());
-            let report_payload = verify_report(&report, &collateral);
+            let cert_chain = helper_get_cert_chain(dev);
+            assert!(helper_verify_cert_chain(&cert_chain).is_ok());
+            let report_payload = verify_report(&report, &cert_chain);
 
             assert_eq!(report_payload.report_data, report_data);
 
@@ -137,25 +137,29 @@ fn test_attest_ecc_seed_key() {
         common_setup,
         common_cleanup,
         |dev, _ddi, _path, session_id| {
-            let (private_key_id, pub_key_der) =
-                ecc_gen_key_mcr(dev, DdiEccCurve::P256, session_id, DdiKeyUsage::Derive);
+            // TODO: remove once virtual device supports cert chain ddi commands
+            let device_kind = get_device_kind(dev);
+            if device_kind != DdiDeviceKind::Physical {
+                tracing::debug!("Skipped test_attest_ecc_seed_key for virtual device");
+                return;
+            }
+
+            let (private_key_id, pub_key_der, _) = ecc_gen_key_mcr(
+                dev,
+                DdiEccCurve::P256,
+                None,
+                Some(session_id),
+                DdiKeyUsage::Derive,
+            );
 
             let report_data = [2u8; REPORT_DATA_SIZE];
-            let req = DdiAttestKeyCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::AttestKey,
-                    sess_id: Some(session_id),
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiAttestKeyReq {
-                    key_id: private_key_id,
-                    report_data: MborByteArray::new(report_data, report_data.len())
-                        .expect("failed to create byte array"),
-                },
-                ext: None,
-            };
-            let mut cookie = None;
-            let result = dev.exec_op(&req, &mut cookie);
+            let result = helper_attest_key_cmd(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                report_data,
+                private_key_id,
+            );
             assert!(result.is_ok(), "result {:?}", result);
 
             let resp = result.unwrap();
@@ -163,9 +167,9 @@ fn test_attest_ecc_seed_key() {
             let report_len = resp.data.report.len();
             assert!(report_len <= TAGGED_COSE_SIGN1_OBJECT_MAX_SIZE);
 
-            let (device_kind, collateral) = get_collateral(dev, session_id);
-            assert!(verify_collateral(device_kind, &collateral).is_ok());
-            let report_payload = verify_report(&report, &collateral);
+            let cert_chain = helper_get_cert_chain(dev);
+            assert!(helper_verify_cert_chain(&cert_chain).is_ok());
+            let report_payload = verify_report(&report, &cert_chain);
 
             assert_eq!(report_payload.report_data, report_data);
 
@@ -226,24 +230,23 @@ fn test_attest_rsa_unwrapping_key() {
         common_setup,
         common_cleanup,
         |dev, _ddi, _path, session_id| {
-            let (private_key_id, pub_key_der) = get_unwrapping_key(dev, session_id);
+            // TODO: remove once virtual device supports cert chain ddi commands
+            let device_kind = get_device_kind(dev);
+            if device_kind != DdiDeviceKind::Physical {
+                tracing::debug!("Skipped test_attest_rsa_unwrapping_key for virtual device");
+                return;
+            }
+
+            let (private_key_id, pub_key_der, _) = get_unwrapping_key(dev, session_id);
 
             let report_data = [2u8; REPORT_DATA_SIZE];
-            let req = DdiAttestKeyCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::AttestKey,
-                    sess_id: Some(session_id),
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiAttestKeyReq {
-                    key_id: private_key_id,
-                    report_data: MborByteArray::new(report_data, report_data.len())
-                        .expect("failed to create byte array"),
-                },
-                ext: None,
-            };
-            let mut cookie = None;
-            let result = dev.exec_op(&req, &mut cookie);
+            let result = helper_attest_key_cmd(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                report_data,
+                private_key_id,
+            );
             assert!(result.is_ok(), "result {:?}", result);
 
             let resp = result.unwrap();
@@ -251,9 +254,9 @@ fn test_attest_rsa_unwrapping_key() {
             let report_len = resp.data.report.len();
             assert!(report_len <= TAGGED_COSE_SIGN1_OBJECT_MAX_SIZE);
 
-            let (device_kind, collateral) = get_collateral(dev, session_id);
-            assert!(verify_collateral(device_kind, &collateral).is_ok());
-            let report_payload = verify_report(&report, &collateral);
+            let cert_chain = helper_get_cert_chain(dev);
+            assert!(helper_verify_cert_chain(&cert_chain).is_ok());
+            let report_payload = verify_report(&report, &cert_chain);
 
             assert_eq!(report_payload.report_data, report_data);
 
@@ -309,24 +312,23 @@ fn test_attest_rsa_decryption_key() {
         common_setup,
         common_cleanup,
         |dev, _ddi, _path, session_id| {
+            // TODO: remove once virtual device supports cert chain ddi commands
+            let device_kind = get_device_kind(dev);
+            if device_kind != DdiDeviceKind::Physical {
+                tracing::debug!("Skipped test_attest_rsa_decryption_key for virtual device");
+                return;
+            }
+
             let (private_key_id, pub_key_der) = import_rsa_key(dev, session_id);
 
             let report_data = [2u8; REPORT_DATA_SIZE];
-            let req = DdiAttestKeyCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::AttestKey,
-                    sess_id: Some(session_id),
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiAttestKeyReq {
-                    key_id: private_key_id,
-                    report_data: MborByteArray::new(report_data, report_data.len())
-                        .expect("failed to create byte array"),
-                },
-                ext: None,
-            };
-            let mut cookie = None;
-            let result = dev.exec_op(&req, &mut cookie);
+            let result = helper_attest_key_cmd(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                report_data,
+                private_key_id,
+            );
             assert!(result.is_ok(), "result {:?}", result);
 
             let resp = result.unwrap();
@@ -334,9 +336,9 @@ fn test_attest_rsa_decryption_key() {
             let report_len = resp.data.report.len();
             assert!(report_len <= TAGGED_COSE_SIGN1_OBJECT_MAX_SIZE);
 
-            let (device_kind, collateral) = get_collateral(dev, session_id);
-            assert!(verify_collateral(device_kind, &collateral).is_ok());
-            let report_payload = verify_report(&report, &collateral);
+            let cert_chain = helper_get_cert_chain(dev);
+            assert!(helper_verify_cert_chain(&cert_chain).is_ok());
+            let report_payload = verify_report(&report, &cert_chain);
 
             assert_eq!(report_payload.report_data, report_data);
 
@@ -392,6 +394,13 @@ fn test_attest_aes_key_negative() {
         common_setup,
         common_cleanup,
         |dev, _ddi, _path, session_id| {
+            // TODO: remove once virtual device supports cert chain ddi commands
+            let device_kind = get_device_kind(dev);
+            if device_kind != DdiDeviceKind::Physical {
+                tracing::debug!("Skipped test_attest_aes_key_negative for virtual device");
+                return;
+            }
+
             let report_data = [2u8; REPORT_DATA_SIZE];
             let raw_msg = [1u8; 512];
             let msg_len = raw_msg.len() as u16;
@@ -416,21 +425,13 @@ fn test_attest_aes_key_negative() {
 
             let key_id = resp.data.key_id;
 
-            let req = DdiAttestKeyCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::AttestKey,
-                    sess_id: Some(session_id),
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiAttestKeyReq {
-                    key_id,
-                    report_data: MborByteArray::new(report_data, report_data.len())
-                        .expect("failed to create byte array"),
-                },
-                ext: None,
-            };
-            let mut cookie = None;
-            let result = dev.exec_op(&req, &mut cookie);
+            let result = helper_attest_key_cmd(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                report_data,
+                key_id,
+            );
             assert!(result.is_err(), "result {:?}", result);
             assert!(matches!(
                 result.unwrap_err(),
@@ -440,134 +441,105 @@ fn test_attest_aes_key_negative() {
     );
 }
 
-fn get_collateral_for_physical_device(
-    dev: &mut <DdiTest as Ddi>::Dev,
-    session_id: u16,
-) -> Vec<Vec<u8>> {
-    tracing::debug!(
-        "Getting collateral from physical device for session {}",
-        session_id
+#[test]
+fn test_attest_masked_key_rsa_2k_no_crt_der_import() {
+    ddi_dev_test(
+        common_setup,
+        common_cleanup,
+        |dev, _ddi, _path, session_id| {
+            test_attest_rsa_der_import(dev, session_id, 2, true);
+        },
     );
-    // Gets the cert chain
-    // 1. Gets the number of certs in the cert chain using DDI command GetCollateral with collateral type CertChainLen
-    // 2. Gets all keys in the cert chain using DDI command GetCollateral with collateral type CertId where
-    //    cert id is 0 to num_certs - 1.
-    // 3. Gets the alias key cert using DDI command GetCollateral with collateral type AKCert
+}
 
-    let req = DdiGetCollateralCmdReq {
-        hdr: DdiReqHdr {
-            op: DdiOp::GetCollateral,
-            sess_id: Some(session_id),
-            rev: Some(DdiApiRev { major: 1, minor: 0 }),
+#[test]
+fn test_attest_masked_key_rsa_3k_no_crt_der_import() {
+    ddi_dev_test(
+        common_setup,
+        common_cleanup,
+        |dev, _ddi, _path, session_id| {
+            test_attest_rsa_der_import(dev, session_id, 3, true);
         },
-        data: DdiGetCollateralReq {
-            collateral_type: DdiGetCollateralType::CertChainLen,
-            cert_id: None,
+    );
+}
+
+#[test]
+fn test_attest_masked_key_rsa_4k_no_crt_der_import() {
+    ddi_dev_test(
+        common_setup,
+        common_cleanup,
+        |dev, _ddi, _path, session_id| {
+            test_attest_rsa_der_import(dev, session_id, 4, true);
         },
-        ext: None,
-    };
-    let mut cookie = None;
-    let result = dev.exec_op(&req, &mut cookie);
+    );
+}
+
+#[test]
+fn test_attest_masked_key_rsa_2k_der_import() {
+    ddi_dev_test(
+        common_setup,
+        common_cleanup,
+        |dev, _ddi, _path, session_id| {
+            test_attest_rsa_der_import(dev, session_id, 2, false);
+        },
+    );
+}
+
+#[test]
+fn test_attest_masked_key_rsa_3k_der_import() {
+    ddi_dev_test(
+        common_setup,
+        common_cleanup,
+        |dev, _ddi, _path, session_id| {
+            test_attest_rsa_der_import(dev, session_id, 3, false);
+        },
+    );
+}
+
+#[test]
+fn test_attest_masked_key_rsa_4k_der_import() {
+    ddi_dev_test(
+        common_setup,
+        common_cleanup,
+        |dev, _ddi, _path, session_id| {
+            test_attest_rsa_der_import(dev, session_id, 4, false);
+        },
+    );
+}
+
+/// Helper function to get certificate chain
+fn helper_get_cert_chain(dev: &mut <DdiTest as Ddi>::Dev) -> Vec<Vec<u8>> {
+    tracing::debug!("Getting certificate chain");
+    // Gets the cert chain
+    // 1. Gets the number of certs in the cert chain using DDI command GetCertChainInfo command
+    // 2. Gets all certs in the cert chain using DDI command GetCertificate where
+    //    cert id is 0 to num_certs - 1.
+    // 3. Gets the partition id cert using DDI command GetCertificate which is the last cert in the chain
+
+    let result = helper_get_cert_chain_info(dev);
     assert!(result.is_ok(), "result {:?}", result);
 
     let resp = result.unwrap();
     let num_certs = resp.data.num_certs;
-    assert!(num_certs.is_some());
 
-    let num_certs = num_certs.unwrap() as usize;
-    let mut cert_chain: Vec<Vec<u8>> = Vec::with_capacity(num_certs);
+    let mut cert_chain: Vec<Vec<u8>> = Vec::with_capacity(num_certs as usize);
     for i in 0..num_certs {
-        let req = DdiGetCollateralCmdReq {
-            hdr: DdiReqHdr {
-                op: DdiOp::GetCollateral,
-                sess_id: Some(session_id),
-                rev: Some(DdiApiRev { major: 1, minor: 0 }),
-            },
-            data: DdiGetCollateralReq {
-                collateral_type: DdiGetCollateralType::CertId,
-                cert_id: Some(i as u8),
-            },
-            ext: None,
-        };
-        let mut cookie = None;
-        let result = dev.exec_op(&req, &mut cookie);
+        let result = helper_get_certificate(dev, i);
         assert!(result.is_ok(), "result {:?}", result);
 
         let resp = result.unwrap();
-        let der = &resp.data.collateral.data()[..resp.data.collateral.len()];
+        let der = &resp.data.certificate.as_slice();
         print!("cert DER {:?}", der);
 
         cert_chain.push(der.to_vec());
     }
 
+    tracing::debug!(len = cert_chain.len(), "Done getting cert chain");
     cert_chain
 }
 
-/// For Virtual Manticore
-/// For now will only result an array of one element
-/// Which is alias key cert
-fn get_collateral_for_virtual_device(
-    dev: &mut <DdiTest as Ddi>::Dev,
-    session_id: u16,
-) -> Vec<Vec<u8>> {
-    tracing::debug!(
-        "Getting collateral from virtual device for session {}",
-        session_id
-    );
-    let req = DdiGetCollateralCmdReq {
-        hdr: DdiReqHdr {
-            op: DdiOp::GetCollateral,
-            sess_id: Some(session_id),
-            rev: Some(DdiApiRev { major: 1, minor: 0 }),
-        },
-        data: DdiGetCollateralReq {
-            collateral_type: DdiGetCollateralType::AKCert,
-            cert_id: None,
-        },
-        ext: None,
-    };
-    let mut cookie = None;
-    let result = dev.exec_op(&req, &mut cookie);
-    assert!(result.is_ok(), "result {:?}", result);
-    let resp = result.unwrap();
-    let collateral_der = &resp.data.collateral.data()[..resp.data.collateral.len()];
-
-    vec![collateral_der.to_vec()]
-}
-
-/// Helper function to call GetCollateral for either a physical or virtual device
-/// Same as api/lib/src/lib.rs:get_collateral
-fn get_collateral(
-    dev: &mut <DdiTest as Ddi>::Dev,
-    session_id: u16,
-) -> (DdiDeviceKind, Vec<Vec<u8>>) {
-    tracing::debug!("Getting collateral for session {}", session_id);
-    let req = DdiGetDeviceInfoCmdReq {
-        hdr: DdiReqHdr {
-            op: DdiOp::GetDeviceInfo,
-            sess_id: None,
-            rev: Some(DdiApiRev { major: 1, minor: 0 }),
-        },
-        data: DdiGetDeviceInfoReq {},
-        ext: None,
-    };
-    let mut cookie = None;
-    let result = dev.exec_op(&req, &mut cookie);
-    assert!(result.is_ok(), "result {:?}", result);
-    let resp = result.unwrap();
-
-    let collaterals = match resp.data.kind {
-        DdiDeviceKind::Physical => get_collateral_for_physical_device(dev, session_id),
-        DdiDeviceKind::Virtual => get_collateral_for_virtual_device(dev, session_id),
-        _ => panic!("Unknown device kind"),
-    };
-
-    tracing::debug!(len = collaterals.len(), "Done getting collateral");
-    (resp.data.kind, collaterals)
-}
-
 fn import_rsa_key(dev: &mut <DdiTest as Ddi>::Dev, session_id: u16) -> (u16, Vec<u8>) {
-    let (unwrap_key_id, unwrap_pub_key_der) = get_unwrapping_key(dev, session_id);
+    let (unwrap_key_id, unwrap_pub_key_der, _) = get_unwrapping_key(dev, session_id);
 
     let rsa_3k_private_wrapped = wrap_data(unwrap_pub_key_der, TEST_RSA_3K_PRIVATE_KEY.as_slice());
 
@@ -602,63 +574,15 @@ fn import_rsa_key(dev: &mut <DdiTest as Ddi>::Dev, session_id: u16) -> (u16, Vec
     (key_id, pub_key.der.data()[..pub_key.der.len()].to_vec())
 }
 
-/// Helper function to verify the collateral returned from GetCollateral call
-/// Using OpenSSL
-/// Return the public key of the leaf cert (Attestation public key)
-/// First element of collaterals should be the root cert
-fn verify_collateral(
-    device_kind: DdiDeviceKind,
-    collaterals: &[Vec<u8>],
-) -> Result<bool, ErrorStack> {
-    tracing::debug!(?device_kind, len = ?collaterals.len(), "Verifying collateral");
-    if device_kind == DdiDeviceKind::Virtual {
-        // TODO: Collateral support for virtual device is pending
-        // For now, don't verify the collateral from virtual device
-        // As it is a single cert from Attestation Key
-        return Ok(true);
-    }
-
-    // 1. Convert each byte array to X509 cert
-    let collaterals: Vec<X509> = collaterals
-        .iter()
-        .map(|collateral| X509::from_der(collateral).unwrap())
-        .collect();
-
-    // 2. Build a Store that holds root CA
-    let mut store_builder = X509StoreBuilder::new()?;
-    store_builder.add_cert(collaterals.first().unwrap().clone())?;
-    let store = store_builder.build();
-
-    // 3. Build a Stack that holds intermediate certs
-    let mut cert_chain = Stack::new().unwrap();
-    // Skip first (CA Cert) and last cert in the chain
-    for cert in &collaterals[1..(collaterals.len() - 1)] {
-        tracing::debug!(?cert, "Adding cert to chain");
-        cert_chain.push(cert.clone())?;
-    }
-
-    // 4. Build a Context to verify the leaf cert
-    let mut store_ctx = X509StoreContext::new()?;
-    let result = store_ctx.init(&store, collaterals.last().unwrap(), &cert_chain, |ctx| {
-        ctx.verify_cert()
-    });
-
-    tracing::debug!(?result, "Collateral verification complete");
-
-    result
-}
-
 /// Helper function to verify the report
-fn verify_report(report: &[u8], collateral: &[Vec<u8>]) -> KeyAttestationReport {
+fn verify_report(report: &[u8], cert_chain: &[Vec<u8>]) -> KeyAttestationReport {
     tracing::debug!("Verifying report");
-    tracing::debug!(?report, ?collateral, "Dumping report and collateral");
+    tracing::debug!(?report, ?cert_chain, "Dumping report and certificate chain");
 
     let (protected_header, report_payload, signature) = parse_report(report);
 
-    // For physical manticore, take the public key from alias cert which is the last cert
-    // For virtual manticore, take the public key from the Attestation Key cert
-    let ak_cert = X509::from_der(collateral.last().unwrap()).unwrap();
-    let public_key = ak_cert.public_key().unwrap();
+    let part_cert = X509::from_der(cert_chain.last().unwrap()).unwrap();
+    let public_key = part_cert.public_key().unwrap();
     let der = public_key.public_key_to_der().unwrap();
 
     let result = EccPublicKey::from_der(&der, None);
@@ -837,4 +761,100 @@ fn normalized_key(key: &[u8]) -> Vec<u8> {
         normalized_key.remove(0);
     }
     normalized_key
+}
+
+fn test_attest_rsa_der_import(
+    dev: &mut <DdiTest as Ddi>::Dev,
+    session_id: u16,
+    key_size: u8,
+    no_crt: bool,
+) {
+    if get_device_kind(dev) == DdiDeviceKind::Virtual {
+        tracing::debug!(
+            "Masked key test is only support in Physical platform. Skipping the test..."
+        );
+        return;
+    }
+
+    let (_key_id_pub, key_id_priv, masked_key) = if no_crt {
+        store_rsa_keys_no_crt(
+            dev,
+            session_id,
+            DdiKeyUsage::EncryptDecrypt,
+            key_size,
+            Some(1),
+        )
+    } else {
+        store_rsa_keys_crt(
+            dev,
+            session_id,
+            DdiKeyUsage::EncryptDecrypt,
+            key_size,
+            Some(1),
+        )
+    };
+
+    let report_data = [2u8; REPORT_DATA_SIZE];
+    let result = helper_attest_key_cmd(
+        dev,
+        Some(session_id),
+        Some(DdiApiRev { major: 1, minor: 0 }),
+        report_data,
+        key_id_priv,
+    );
+    assert!(result.is_ok(), "result {:?}", result);
+
+    let resp = result.unwrap();
+    let report = resp.data.report.data_take();
+    let report_len = resp.data.report.len();
+    assert!(report_len <= TAGGED_COSE_SIGN1_OBJECT_MAX_SIZE);
+
+    let cert_chain = helper_get_cert_chain(dev);
+    assert!(helper_verify_cert_chain(&cert_chain).is_ok());
+    let report_payload = verify_report(&report, &cert_chain);
+
+    assert_eq!(report_payload.report_data, report_data);
+
+    let resp = helper_get_new_key_id_from_unmask(
+        dev,
+        Some(session_id),
+        Some(DdiApiRev { major: 1, minor: 0 }),
+        key_id_priv,
+        true,
+        masked_key,
+    );
+    assert!(resp.is_ok(), "resp {:?}", resp);
+    let (new_key_id, _, _) = resp.unwrap();
+
+    let new_report_data = [2u8; REPORT_DATA_SIZE];
+    let result = helper_attest_key_cmd(
+        dev,
+        Some(session_id),
+        Some(DdiApiRev { major: 1, minor: 0 }),
+        new_report_data,
+        new_key_id,
+    );
+    assert!(result.is_ok(), "result {:?}", result);
+
+    let resp = result.unwrap();
+    let new_report = resp.data.report.data_take();
+    let new_report_len = resp.data.report.len();
+    assert!(new_report_len <= TAGGED_COSE_SIGN1_OBJECT_MAX_SIZE);
+
+    let new_report_payload = verify_report(&new_report, &cert_chain);
+
+    assert_eq!(new_report_payload.report_data, new_report_data);
+
+    assert_eq!(report_payload.app_uuid, new_report_payload.app_uuid);
+    assert_eq!(report_payload.flags, new_report_payload.flags);
+    assert_eq!(
+        report_payload.public_key_size,
+        new_report_payload.public_key_size
+    );
+    assert_eq!(
+        report_payload.public_key[..report_payload.public_key_size as usize],
+        new_report_payload.public_key[..report_payload.public_key_size as usize]
+    );
+    assert_eq!(report_payload.version, new_report_payload.version);
+    assert_eq!(report_payload.vm_launch_id, new_report_payload.vm_launch_id);
 }

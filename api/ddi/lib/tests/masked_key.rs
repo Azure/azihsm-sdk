@@ -4,6 +4,7 @@ mod common;
 
 use mcr_ddi::*;
 use mcr_ddi_types::*;
+use test_with_tracing::test;
 
 use crate::common::*;
 
@@ -13,13 +14,6 @@ fn test_masked_key_malformed_ddi() {
         common_setup,
         common_cleanup,
         |dev, _ddi, _path, session_id| {
-            if get_device_kind(dev) == DdiDeviceKind::Virtual {
-                tracing::debug!(
-                    "Masked key test is only support in Physical platform. Skipping the test..."
-                );
-                return;
-            }
-
             let resp = helper_get_api_rev_op(
                 dev,
                 DdiOp::UnmaskKey,
@@ -42,13 +36,6 @@ fn test_masked_key_no_session() {
         common_setup,
         common_cleanup,
         |dev, _ddi, _path, session_id| {
-            if get_device_kind(dev) == DdiDeviceKind::Virtual {
-                tracing::debug!(
-                    "Masked key test is only support in Physical platform. Skipping the test..."
-                );
-                return;
-            }
-
             let key_props =
                 helper_key_properties(DdiKeyUsage::EncryptDecrypt, DdiKeyAvailability::App);
 
@@ -88,13 +75,6 @@ fn test_masked_key_malformed_mask_key() {
         common_setup,
         common_cleanup,
         |dev, _ddi, _path, session_id| {
-            if get_device_kind(dev) == DdiDeviceKind::Virtual {
-                tracing::debug!(
-                    "Masked key test is only support in Physical platform. Skipping the test..."
-                );
-                return;
-            }
-
             const FORMAT_OFFSET: usize = 2;
             const ALGORITHM_OFFSET: usize = FORMAT_OFFSET + 2;
             const IV_LEN_OFFSET: usize = ALGORITHM_OFFSET + 2;

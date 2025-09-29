@@ -11,11 +11,15 @@ use crate::*;
 pub struct DdiReopenSessionReq {
     /// Encrypted credential
     #[ddi(id = 1)]
-    pub encrypted_credential: DdiEncryptedCredential,
+    pub encrypted_credential: DdiEncryptedSessionCredential,
 
     /// Public Key (ECC 384)
     #[ddi(id = 2)]
     pub pub_key: DdiDerPublicKey,
+
+    /// Backed up Session masking key
+    #[ddi(id = 3)]
+    pub bmk_session: MborByteArray<1024>,
 }
 
 /// DDI Open Session Response Structure
@@ -30,6 +34,10 @@ pub struct DdiReopenSessionResp {
     /// Short App ID
     #[ddi(id = 2)]
     pub short_app_id: u8,
+
+    /// Backed up Session masking key
+    #[ddi(id = 3)]
+    pub bmk_session: MborByteArray<1024>,
 }
 
 ddi_op_req_resp!(DdiReopenSession);

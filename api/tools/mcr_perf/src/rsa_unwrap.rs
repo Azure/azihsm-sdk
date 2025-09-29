@@ -73,7 +73,7 @@ pub(crate) fn helper_rsa_unwrap(
             wrapped_blob_padding: DdiRsaCryptoPadding::Oaep,
             wrapped_blob_hash_algorithm: DdiHashAlgorithm::Sha256,
             key_tag: target_key_tag,
-            key_properties: target_key_properties,
+            key_properties: target_key_properties.try_into().unwrap(),
         },
         ext: None,
     };

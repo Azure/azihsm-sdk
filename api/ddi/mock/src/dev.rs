@@ -490,4 +490,16 @@ impl DdiDev for DdiMockDev {
 
         Ok(mcr_ddi_aes_xts_result)
     }
+
+    /// Execute NVMe subsystem reset to help emulate Live Migration
+    /// For mock device, we call a migration_sim function on the dispatcher
+    ///
+    /// # Returns
+    /// * `Ok(())` - Successfully sent NSSR Reset Device command
+    /// * `Err(DdiError)` - Error occurred while executing the command
+    fn simulate_nssr_after_lm(&self) -> Result<(), DdiError> {
+        self.dispatcher
+            .dispatch_migration_sim()
+            .map_err(|err| DdiError::DdiError(err as u32))
+    }
 }

@@ -6,9 +6,9 @@ use std::ffi::CStr;
 use std::marker::PhantomData;
 use std::slice::from_raw_parts;
 
-use mcr_api::DigestKind;
-use mcr_api::KeyAvailability;
-use mcr_api::KeyUsage;
+use mcr_api_resilient::DigestKind;
+use mcr_api_resilient::KeyAvailability;
+use mcr_api_resilient::KeyUsage;
 use openssl_rust::safeapi::error::OpenSSLError;
 use openssl_rust::safeapi::error::OpenSSLResult;
 

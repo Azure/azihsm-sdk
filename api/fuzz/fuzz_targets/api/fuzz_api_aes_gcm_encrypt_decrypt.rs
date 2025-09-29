@@ -1,4 +1,5 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
+
 #![cfg_attr(target_os = "linux", no_main)]
 
 #[cfg(target_os = "linux")]
@@ -38,7 +39,7 @@ fuzz_target!(|input: AesGcmEncryptDecryptInput| {
             if input.use_valid_keyhandle {
                 let result = rsa_unwrap_from_wrap_data(
                     &app_session,
-                    KeyType::AesBulk256,
+                    KeyType::AesGcmBulk256Unapproved,
                     input.digest_kind,
                     KeyUsage::EncryptDecrypt,
                 );

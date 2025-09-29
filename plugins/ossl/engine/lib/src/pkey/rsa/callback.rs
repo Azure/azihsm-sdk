@@ -4,7 +4,7 @@ use std::ffi::c_int;
 use std::ffi::c_ushort;
 
 use api_interface::REPORT_DATA_SIZE;
-use mcr_api::*;
+use mcr_api_resilient::*;
 use openssl_rust::safeapi::error::*;
 use openssl_rust::safeapi::evp_md::ctx::EvpMdCtx;
 use openssl_rust::safeapi::evp_md::md::EvpMd;

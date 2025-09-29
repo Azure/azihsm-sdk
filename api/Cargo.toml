@@ -15,10 +15,14 @@ members = [
     "ddi/win",
     "lib",
     "fuzz",
+    "resilience",
     "tools/get_device_info",
     "tools/mbor_diag",
     "tools/mcr_api_perf",
     "tools/mcr_perf",
+    "support/crypto_env",
+    "support/masked_key",
+    "support/lm_key_derive",
     "support/rsa_padding",
     "xtask",
 ]
@@ -27,6 +31,7 @@ members = [
 
 # internal crates
 mcr_api = { path = "lib" }
+mcr_api_resilient = { path = "resilience" }
 mcr_ddi = { path = "ddi/lib" }
 mcr_ddi_mock = { path = "ddi/mock" }
 mcr_ddi_nix = { path = "ddi/nix" }
@@ -42,6 +47,9 @@ mcr_ddi_win = { path = "ddi/win" }
 rsa_padding = { path = "support/rsa_padding" }
 
 crypto = { path = "support/crypto" }
+crypto_env = { path = "support/crypto_env"}
+masked_key = { path = "support/masked_key" }
+lmkey_derive = { path = "support/lm_key_derive" }
 session_parameter_encryption = { path = "support/session_parameter_encryption" }
 test_with_tracing = { path = "support/test_with_tracing" }
 test_with_tracing_macro = { path = "support/test_with_tracing/test_with_tracing_macro" }
@@ -53,10 +61,12 @@ anyhow = "1.0"
 bitfield-struct = "0.5"
 hex = "0.4"
 cfg-if = "1"
+ciborium = "0.2.2"
 circular-queue = "0.2.6"
 clap = { version = "4.5.4", features = ["derive", "string"] }
 darling = "0.20.11"
 env_logger = "0.11.8"
+fs2 = "0.4.3"
 glob = "0.3"
 indicatif = "0.17.8"
 libc = "0.2"
@@ -74,6 +84,7 @@ quote = "1.0"
 rand = "0.8"
 rand_distr = "0.4.3"
 rstest = "0.18.2"
+serde = { version = "1.0.215", features = ["derive"] }
 syn = "2"
 thiserror = "1.0"
 trybuild = { version = "1.0.82", features = ["diff"] }
@@ -96,7 +107,7 @@ winapi = { version = "0.3", features = [
 tracing = "0.1"
 tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
 tracing-attributes = "0.1.26"
-zerocopy = { version = "0.7.35", features = ["derive"] }
+zerocopy = { version = "0.8.17", features = ["derive"] }
 libfuzzer-sys = { version = "0.4.0", features = ["arbitrary-derive"] }
 arbitrary = { version = "1", features = ["derive"] }
 spki = "0.7.3"
@@ -107,6 +118,10 @@ pkcs8 = "0.10.2"
 symcrypt = { version = "0.5.0", features = ["sha1", "pkcs1-encrypt-decrypt"] }
 generic-array = { version = "0.14.7" }
 xshell = "0.2.7"
+
+# needed for SessionTable in ddi/sim
+zeroize = "1.8.1"
+bitfield = "0.19.1"
 
 # Causes the project to link with the Spectre-mitigated CRT and libs.
 msvc_spectre_libs = { version = "0.1", features = ["error"] }

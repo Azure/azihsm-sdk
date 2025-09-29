@@ -33,18 +33,6 @@ pub fn create_mbor_byte_array<const N: usize>(input: &[u8]) -> MborByteArray<N> 
     MborByteArray::new(fixed_array, len_to_copy).expect("Failed to initialize MborByteArray")
 }
 
-fn create_get_privkey_request(session_id: Option<u16>, key_id: u16) -> DdiGetPrivKeyCmdReq {
-    DdiGetPrivKeyCmdReq {
-        hdr: DdiReqHdr {
-            op: DdiOp::GetPrivKey,
-            sess_id: session_id,
-            rev: Some(DdiApiRev { major: 1, minor: 0 }),
-        },
-        data: DdiGetPrivKeyReq { key_id },
-        ext: None,
-    }
-}
-
 pub fn create_aes_key(dev: &mut <DdiTest as Ddi>::Dev, sess_id: u16) -> u16 {
     let key_props = helper_key_properties(DdiKeyUsage::EncryptDecrypt, DdiKeyAvailability::App);
 
@@ -219,10 +207,13 @@ pub fn retrieve_shared_secret(
     sess_id: u16,
     secret_key_id: u16,
 ) -> Result<Vec<u8>, String> {
-    let req = create_get_privkey_request(Some(sess_id), secret_key_id);
-    let mut cookie = None;
+    let resp = helper_get_priv_key(
+        dev,
+        Some(sess_id),
+        Some(DdiApiRev { major: 1, minor: 0 }),
+        secret_key_id,
+    );
 
-    let resp = dev.exec_op(&req, &mut cookie);
     if let Err(err) = resp {
         return Err(format!("Failed to execute operation: {:?}", err));
     }
@@ -247,10 +238,12 @@ fn test_aes_get_and_validate_key() {
             // Generate and store AES key
             let aes_key_id = create_aes_key(dev, session_id);
 
-            let req = create_get_privkey_request(Some(session_id), aes_key_id);
-            let mut cookie = None;
-
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_get_priv_key(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                aes_key_id,
+            );
 
             if let Err(err) = &resp {
                 if is_unsupported_cmd(err) {
@@ -296,7 +289,12 @@ fn test_aes_bulk_get_and_validate_key() {
                 reopen_session_with_short_app_id(dev, session_id);
 
             // Generate AES Bulk 256 key directly
-            let resp = generate_aes_bulk_256_key(dev, &app_sess_id, None);
+            let resp = generate_aes_bulk_256_key(
+                dev,
+                &app_sess_id,
+                None,
+                DdiAesKeySize::AesGcmBulk256Unapproved,
+            );
             assert!(resp.is_ok(), "AES bulk key generation failed: {:?}", resp);
             let resp = resp.unwrap();
 
@@ -319,10 +317,12 @@ fn test_aes_bulk_get_and_validate_key() {
             );
 
             // Retrieve the raw AES Bulk key
-            let req = create_get_privkey_request(Some(session_id), aes_key_id);
-            let mut cookie = None;
-
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_get_priv_key(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                aes_key_id,
+            );
 
             if let Err(err) = &resp {
                 if is_unsupported_cmd(err) {
@@ -367,10 +367,12 @@ fn test_secret_get_and_validate_key() {
                 create_ecdh_secrets(session_id, dev, DdiKeyType::Secret256);
 
             // Perform an early check for FIPS validation hooks support
-            let check_req = create_get_privkey_request(Some(session_id), secret_key_id1);
-            let mut cookie = None;
-
-            let resp = dev.exec_op(&check_req, &mut cookie);
+            let resp = helper_get_priv_key(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                secret_key_id1,
+            );
 
             if let Err(err) = &resp {
                 if is_unsupported_cmd(err) {
@@ -406,13 +408,20 @@ fn test_ecc_get_privkey() {
                 return;
             }
 
-            let (private_key_id, pub_key) =
-                ecc_gen_key_mcr(dev, DdiEccCurve::P256, session_id, DdiKeyUsage::SignVerify);
+            let (private_key_id, pub_key, _) = ecc_gen_key_mcr(
+                dev,
+                DdiEccCurve::P256,
+                None,
+                Some(session_id),
+                DdiKeyUsage::SignVerify,
+            );
 
-            let req = create_get_privkey_request(Some(session_id), private_key_id);
-            let mut cookie = None;
-
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_get_priv_key(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                private_key_id,
+            );
 
             if let Err(err) = &resp {
                 if is_unsupported_cmd(err) {
@@ -462,10 +471,12 @@ fn test_ecc_get_privkey_key_not_found() {
 
             let invalid_key_id = 9999;
 
-            let req = create_get_privkey_request(Some(session_id), invalid_key_id);
-            let mut cookie = None;
-
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_get_priv_key(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                invalid_key_id,
+            );
 
             if let Err(err) = &resp {
                 if is_unsupported_cmd(err) {
@@ -498,8 +509,13 @@ fn test_ecc_get_privkey_deleted_key() {
                 return;
             }
 
-            let (private_key_id, _pub_key) =
-                ecc_gen_key_mcr(dev, DdiEccCurve::P256, session_id, DdiKeyUsage::SignVerify);
+            let (private_key_id, _pub_key, _) = ecc_gen_key_mcr(
+                dev,
+                DdiEccCurve::P256,
+                None,
+                Some(session_id),
+                DdiKeyUsage::SignVerify,
+            );
 
             //Delete the key
             let resp = helper_delete_key(
@@ -510,10 +526,12 @@ fn test_ecc_get_privkey_deleted_key() {
             );
             assert!(resp.is_ok(), "resp {:?}", resp);
 
-            let req = create_get_privkey_request(Some(session_id), private_key_id);
-            let mut cookie = None;
-
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_get_priv_key(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                private_key_id,
+            );
 
             if let Err(err) = &resp {
                 if is_unsupported_cmd(err) {
@@ -546,13 +564,20 @@ fn test_ecc_get_privkey_no_session() {
                 return;
             }
 
-            let (private_key_id, _pub_key) =
-                ecc_gen_key_mcr(dev, DdiEccCurve::P256, session_id, DdiKeyUsage::SignVerify);
+            let (private_key_id, _pub_key, _) = ecc_gen_key_mcr(
+                dev,
+                DdiEccCurve::P256,
+                None,
+                Some(session_id),
+                DdiKeyUsage::SignVerify,
+            );
 
-            let req = create_get_privkey_request(None, private_key_id);
-            let mut cookie = None;
-
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_get_priv_key(
+                dev,
+                None,
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                private_key_id,
+            );
 
             if let Err(err) = &resp {
                 if is_unsupported_cmd(err) {
@@ -585,14 +610,21 @@ fn test_ecc_get_privkey_incorrect_session() {
                 return;
             }
 
-            let (private_key_id, _pub_key) =
-                ecc_gen_key_mcr(dev, DdiEccCurve::P256, session_id, DdiKeyUsage::SignVerify);
+            let (private_key_id, _pub_key, _) = ecc_gen_key_mcr(
+                dev,
+                DdiEccCurve::P256,
+                None,
+                Some(session_id),
+                DdiKeyUsage::SignVerify,
+            );
 
             let session_id = 20;
-            let req = create_get_privkey_request(Some(session_id), private_key_id);
-            let mut cookie = None;
-
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_get_priv_key(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                private_key_id,
+            );
 
             if let Err(err) = &resp {
                 if is_unsupported_cmd(err) {

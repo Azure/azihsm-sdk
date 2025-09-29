@@ -53,7 +53,9 @@ pub(crate) fn helper_create_ecc_key(
         data: DdiEccGenerateKeyPairReq {
             curve,
             key_tag,
-            key_properties: helper_key_properties(key_usage, DdiKeyAvailability::App),
+            key_properties: helper_key_properties(key_usage, DdiKeyAvailability::App)
+                .try_into()
+                .unwrap(),
         },
         ext: None,
     };
@@ -85,7 +87,9 @@ pub(crate) fn helper_create_ecdh_key(
                 .expect("failed to create byte array"),
             key_type,
             key_tag,
-            key_properties: helper_key_properties(DdiKeyUsage::Derive, DdiKeyAvailability::App),
+            key_properties: helper_key_properties(DdiKeyUsage::Derive, DdiKeyAvailability::App)
+                .try_into()
+                .unwrap(),
         },
         ext: None,
     };

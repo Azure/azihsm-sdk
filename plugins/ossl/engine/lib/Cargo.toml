@@ -9,11 +9,13 @@ edition = "2021"
 crate-type = ["lib", "cdylib"]
 
 [features]
-mock = ["mcr_api/mock"]
+mock = ["mcr_api_resilient/mock"]
+gcm = []
+xts = []
 
 [dependencies]
 thiserror.workspace = true
-mcr_api.workspace = true
+mcr_api_resilient.workspace = true
 api-interface.workspace = true
 openssl-rust.workspace = true
 engine-common.workspace = true
@@ -27,6 +29,6 @@ lazy_static = "1.5.0"
 enum-as-inner = { version = "0.6.0" }
 
 [dev-dependencies]
-aes-kw = { version = "0.2.1", features = ["std"] }
 sha2 = "0.10.8"
 rsa = "0.9.7"
+mcr_ddi_sim = { path = "../../../../api/ddi/sim", features = ["use-openssl"]}

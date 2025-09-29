@@ -4,7 +4,7 @@ use std::mem::size_of;
 use std::panic::UnwindSafe;
 use std::slice;
 
-use mcr_api::DigestKind;
+use mcr_api_resilient::DigestKind;
 use widestring::*;
 use windows::core::HRESULT;
 use windows::core::PCWSTR;

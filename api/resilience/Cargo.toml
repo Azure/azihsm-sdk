@@ -1,0 +1,42 @@
+# Copyright (C) Microsoft Corporation. All rights reserved.
+
+[package]
+name = "mcr_api_resilient"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+doctest = false
+test = false
+
+[dependencies]
+crypto.workspace = true
+ciborium.workspace = true
+fs2.workspace = true
+mcr_api.workspace = true
+parking_lot.workspace = true
+serde.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+cfg-if.workspace = true
+crypto.workspace = true
+mcr_ddi.workspace = true
+mcr_ddi_mock.workspace = true
+mcr_ddi_nix.workspace = true
+mcr_ddi_types.workspace = true
+mcr_ddi_win.workspace = true
+test_with_tracing.workspace = true
+
+[features]
+default = []
+mock = ["mcr_api/mock"]
+use-openssl = ["mcr_api/use-openssl", "mcr_ddi_mock/use-openssl"]
+use-symcrypt = ["mcr_api/use-symcrypt", "mcr_ddi_mock/use-symcrypt"]
+testhooks = ["mcr_api/testhooks"]
+table-4 = ["mcr_api/table-4"]
+table-64 = ["mcr_api/table-64"]
+
+[lints]
+workspace = true

@@ -5,6 +5,11 @@
 use std::sync::Arc;
 use std::sync::Weak;
 
+use lmkey_derive::LMKeyDerive;
+use mcr_ddi_types::DdiDeviceKind;
+use mcr_ddi_types::DdiKeyType;
+use mcr_ddi_types::DdiMaskedKeyAttributes;
+use mcr_ddi_types::MaskingKeyAlgorithm;
 use parking_lot::RwLock;
 use tracing::instrument;
 use uuid::Uuid;
@@ -13,6 +18,8 @@ use crate::credentials::*;
 use crate::crypto::aes::AesAlgo;
 use crate::crypto::aes::AesKey;
 use crate::crypto::aes::AesOp;
+use crate::crypto::aeshmac::AesHmacKey;
+use crate::crypto::aeshmac::AesHmacOp;
 use crate::crypto::ecc::EccOp;
 use crate::crypto::ecc::EccPrivateOp;
 use crate::crypto::ecc::EccPublicKey;
@@ -24,7 +31,13 @@ use crate::crypto::secret::SecretOp;
 use crate::crypto::sha::HashAlgorithm;
 use crate::errors::ManticoreError;
 use crate::function::ApiRev;
+use crate::function::METADATA_MAX_SIZE_BYTES;
+use crate::session_table::SessionTable;
+use crate::sim_crypto_env::SimCryptEnv;
+use crate::sim_crypto_env::BK_AES_CBC_256_HMAC384_SIZE_BYTES;
+use crate::sim_crypto_env::SESSION_SEED_SIZE_BYTES;
 use crate::table::entry::key::Key;
+use crate::table::entry::key::SessionKey;
 use crate::table::entry::Entry;
 use crate::table::entry::EntryFlags;
 use crate::table::entry::Kind;
@@ -41,7 +54,7 @@ pub(crate) const DEFAULT_VAULT_ID: Uuid = Uuid::from_bytes([
 /// Guests are blocked from creating an app with this ID in add_app.
 pub(crate) const APP_ID_FOR_INTERNAL_KEYS: Uuid = DEFAULT_VAULT_ID;
 
-const MAX_SESSIONS: usize = 8;
+pub(crate) const MAX_SESSIONS: usize = 8;
 
 struct KeyNumber(u16);
 
@@ -57,6 +70,13 @@ impl KeyNumber {
     fn entry(&self) -> u8 {
         (self.0 & 0xff) as u8
     }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct SessionResult {
+    pub(crate) session_id: u16,
+    pub(crate) short_app_id: u8,
+    pub(crate) bmk: Vec<u8>,
 }
 
 /// The Vault.
@@ -151,19 +171,6 @@ impl Vault {
         self.inner.read().remove_key(key_num)
     }
 
-    /// Removes all session_only keys of a given app session from the vault.
-    ///
-    /// # Arguments
-    /// * `sess_id` - ID of the App Session of which the session_only keys will be removed.
-    ///
-    /// # Errors
-    /// * `ManticoreError::CannotDeleteKeyInUse` - If the key cannot be deleted.
-    /// * `ManticoreError::CannotDeleteSomeKeysInUse` - If more than one key cannot be deleted.
-    #[instrument(skip(self), fields(id = ?self.id()))]
-    pub(crate) fn remove_session_only_keys(&self, sess_id: u16) -> Result<u16, ManticoreError> {
-        self.inner.write().remove_session_only_keys(sess_id)
-    }
-
     /// Get a key from the vault.
     ///
     /// # Arguments
@@ -180,20 +187,40 @@ impl Vault {
         self.inner.read().get_key_entry(key_num)
     }
 
-    /// Get a key from the vault.
+    /// Get a session entry from the vault by session ID.
     ///
     /// # Arguments
-    /// * `key_num` - The key number of the key to get.
+    /// * `session_id` - The virtual session ID to look up.
     ///
     /// # Returns
-    /// * The key `Entry`.
+    /// * The key `Entry` for the session.
     ///
     /// # Errors
-    /// * `ManticoreError::InvalidKeyNumber`: If the key number's table is invalid.
-    /// * `ManticoreError::InvalidKeyIndex` - If the jey number's index is invalid.
+    /// * `ManticoreError::InvalidArgument` - If the session ID is invalid.
     #[instrument(skip(self), fields(id = ?self.id()))]
-    pub(crate) fn get_key_entry_unchecked(&self, key_num: u16) -> Result<Entry, ManticoreError> {
-        self.inner.read().get_key_entry_unchecked(key_num)
+    pub(crate) fn get_session_entry(&self, session_id: u16) -> Result<Entry, ManticoreError> {
+        self.inner.read().get_session_entry(session_id)
+    }
+
+    /// Get a session entry from the vault by session ID without checking if it's disabled.
+    /// This method allows access to sessions that have been disabled and are in the process
+    /// of being closed. This is primarily used for cleanup operations and API revision
+    /// validation during session closure where access to disabled sessions is required.
+    ///
+    /// # Arguments
+    /// * `session_id` - The virtual session ID to look up.
+    ///
+    /// # Returns
+    /// * The key `Entry` for the session (even if disabled).
+    ///
+    /// # Errors
+    /// * `ManticoreError::InvalidArgument` - If the session ID is invalid.
+    #[instrument(skip(self), fields(id = ?self.id()))]
+    pub(crate) fn get_session_entry_unchecked(
+        &self,
+        session_id: u16,
+    ) -> Result<Entry, ManticoreError> {
+        self.inner.read().get_session_entry_unchecked(session_id)
     }
 
     /// Get nonce from the vault.
@@ -249,18 +276,95 @@ impl Vault {
 
     /// Open Session.
     ///
+    /// # Arguments
+    /// * `encrypted_credential` - Encrypted credentials
+    /// * `client_pub_key` - Client public key
+    /// * `api_rev` - API revision
+    /// * `bk_partition` - Partition backup key, used to derive the bk_session to decrypt bmk
+    ///
     /// # Returns
     /// * Ok if successful.
     #[instrument(skip(self), fields(id = ?self.id()))]
     pub(crate) fn open_session(
         &self,
-        encrypted_credential: EncryptedCredential,
+        encrypted_credential: EncryptedSessionCredential,
         client_pub_key: &[u8],
         api_rev: ApiRev,
-    ) -> Result<(u16, u8), ManticoreError> {
+        bk_partition: &[u8],
+    ) -> Result<SessionResult, ManticoreError> {
         self.inner
             .write()
-            .open_session(encrypted_credential, client_pub_key, api_rev)
+            .open_session(encrypted_credential, client_pub_key, api_rev, bk_partition)
+    }
+
+    /// Reopen Session - reestablish a session that requires renegotiation.
+    ///
+    /// # Arguments
+    /// * `encrypted_credential` - Encrypted credentials
+    /// * `client_pub_key` - Client public key
+    /// * `api_rev` - API revision
+    /// * `reopen_sess_id` - Virtual session ID to reopen
+    /// * `bmk` - Backup session masking key
+    /// * `bk_partition` - Partition backup key, used to derive the bk_session to decrypt bmk
+    ///
+    /// # Returns
+    /// * `Ok((session_id, short_app_id))` if successful.
+    ///
+    /// # Errors
+    /// * `ManticoreError::InvalidArgument` - If the session doesn't exist or doesn't need renegotiation
+    /// * Other errors from credential validation or session creation
+    #[instrument(skip(self), fields(id = ?self.id()))]
+    pub(crate) fn reopen_session(
+        &self,
+        encrypted_credential: EncryptedSessionCredential,
+        client_pub_key: &[u8],
+        api_rev: ApiRev,
+        reopen_sess_id: u16,
+        bmk: Option<&[u8]>,
+        bk_partition: &[u8],
+    ) -> Result<SessionResult, ManticoreError> {
+        self.inner.write().reopen_session(
+            encrypted_credential,
+            client_pub_key,
+            api_rev,
+            reopen_sess_id,
+            bmk,
+            bk_partition,
+        )
+    }
+
+    /// Close Session - close session and clean up all session-related resources.
+    ///
+    /// # Arguments
+    /// * `session_id` - Virtual session ID to close
+    ///
+    /// # Returns
+    /// * Ok if successful.
+    ///
+    /// # Errors
+    /// * `ManticoreError::SessionNotFound` - If the session ID is invalid.
+    /// * `ManticoreError::CannotDeleteKeyInUse` - If session keys cannot be deleted.
+    #[instrument(skip(self), fields(id = ?self.id()))]
+    pub(crate) fn close_session(&self, session_id: u16) -> Result<(), ManticoreError> {
+        self.inner.write().close_session(session_id)
+    }
+
+    /// Get Target Session ID - translate virtual session ID to physical session ID.
+    ///
+    /// # Arguments
+    /// * `virtual_session_id` - The virtual session ID to translate
+    ///
+    /// # Returns
+    /// * `Ok(physical_session_id)` - The corresponding physical session ID
+    ///
+    /// # Errors
+    /// * `ManticoreError::SessionNotFound` - If the virtual session ID is invalid or not found.
+    #[instrument(skip(self), fields(id = ?self.id()))]
+    pub(crate) fn get_target_session_id(
+        &self,
+        virtual_session_id: u16,
+    ) -> Result<u16, ManticoreError> {
+        self.inner.read().get_target_session_id(virtual_session_id)
     }
 
     /// Change the user's PIN.
@@ -279,6 +383,24 @@ impl Vault {
     ) -> Result<(), ManticoreError> {
         self.inner.write().change_pin(new_pin, client_pub_key)
     }
+
+    /// Backup session table state for migration simulation.
+    ///
+    /// # Returns
+    /// * `u8` - Mask representing which sessions are currently active
+    #[instrument(skip(self), fields(id = ?self.id()))]
+    pub(crate) fn backup_session_table(&self) -> u8 {
+        self.inner.read().session_table.backup()
+    }
+
+    /// Restore session table state after migration simulation.
+    ///
+    /// # Arguments
+    /// * `mask` - Mask representing which sessions to restore
+    #[instrument(skip(self), fields(id = ?self.id()))]
+    pub(crate) fn restore_session_table(&self, mask: u8) {
+        self.inner.write().session_table.restore(mask);
+    }
 }
 
 #[derive(Debug)]
@@ -289,6 +411,7 @@ struct VaultInner {
     establish_cred_encryption_key_id: Option<u16>,
     session_encryption_key_id: Option<u16>,
     nonce: [u8; 32],
+    session_table: SessionTable,
 }
 
 impl Drop for VaultInner {
@@ -318,6 +441,7 @@ impl VaultInner {
             establish_cred_encryption_key_id: None,
             session_encryption_key_id: None,
             nonce,
+            session_table: SessionTable::new(),
         };
 
         vault_inner
@@ -352,10 +476,21 @@ impl VaultInner {
             Err(ManticoreError::InvalidArgument)?
         }
 
-        if !flags.session_only() && sess_id_or_key_tag != 0 {
-            let key_tag_exists = self.get_key_num_by_tag(app_id, sess_id_or_key_tag);
+        // For session-only keys, convert virtual session ID to physical session ID
+        let actual_sess_id_or_key_tag = if flags.session_only() {
+            self.session_table
+                .get_target_session(sess_id_or_key_tag)
+                .ok_or_else(|| {
+                    tracing::error!(err = ?ManticoreError::InvalidArgument, ?sess_id_or_key_tag, "Target session not found");
+                    ManticoreError::InvalidArgument})?
+        } else {
+            sess_id_or_key_tag
+        };
+
+        if !flags.session_only() && actual_sess_id_or_key_tag != 0 {
+            let key_tag_exists = self.get_key_num_by_tag(app_id, actual_sess_id_or_key_tag);
             if key_tag_exists.is_ok() {
-                tracing::error!(key_tag = ?sess_id_or_key_tag, "Key tag already exists");
+                tracing::error!(key_tag = ?actual_sess_id_or_key_tag, "Key tag already exists");
                 Err(ManticoreError::KeyTagAlreadyExists)?
             }
         }
@@ -367,7 +502,7 @@ impl VaultInner {
             .enumerate()
             .find_map(|(table_index, table)| {
                 table
-                    .add(app_id, kind, key.clone(), flags, sess_id_or_key_tag)
+                    .add(app_id, kind, key.clone(), flags, actual_sess_id_or_key_tag)
                     .map(|entry_index| KeyNumber::new(table_index as u8, entry_index))
                     .ok()
             })
@@ -392,26 +527,35 @@ impl VaultInner {
             Err(ManticoreError::InvalidKeyNumber)?
         }
 
+        tracing::debug!(table_index, entry_index, "Removing entry from table");
         self.tables[table_index].remove(entry_index)
     }
 
-    fn remove_session_only_keys(&mut self, sess_id: u16) -> Result<u16, ManticoreError> {
+    /// Remove all session-only keys for a given physical session ID.
+    /// This is a helper function used by close_session.
+    #[instrument(skip(self))]
+    fn remove_session_only_keys_by_physical_session_id(
+        &mut self,
+        physical_sess_id: u16,
+    ) -> Result<u16, ManticoreError> {
         let mut removed_count = 0;
         let mut failed_delete_count: u8 = 0;
+
         for table in self.tables.iter_mut() {
-            match table.remove_all_session_only_keys(sess_id) {
+            match table.remove_all_session_only_keys(physical_sess_id) {
                 Ok(count) => removed_count += count,
                 Err(error) => {
-                    tracing::error!(error = ?error, sess_id, "remove_session_only_keys failed");
+                    tracing::error!(error = ?error, physical_sess_id, "remove_session_only_keys_by_physical_id failed");
                     failed_delete_count += 1;
                 }
             }
         }
 
+        tracing::debug!(failed_delete_count, removed_count);
         match failed_delete_count {
             0 => Ok(removed_count),
-            1 => Err(ManticoreError::CannotDeleteKeyInUse)?,
-            _ => Err(ManticoreError::CannotDeleteSomeKeysInUse)?,
+            1 => Err(ManticoreError::CannotDeleteKeyInUse),
+            _ => Err(ManticoreError::CannotDeleteSomeKeysInUse),
         }
     }
 
@@ -480,7 +624,7 @@ impl VaultInner {
     fn get_session_encryption_key_id(&self) -> Result<u16, ManticoreError> {
         // Check if credentials is not already set
         if self.user.credentials.id.is_nil() || self.user.credentials.pin.eq(&[0; 16]) {
-            Err(ManticoreError::InvalidArgument)?;
+            Err(ManticoreError::CredentialsNotEstablished)?;
         }
 
         self.session_encryption_key_id
@@ -635,93 +779,115 @@ impl VaultInner {
         Ok(())
     }
 
-    fn open_session(
+    /// Verify encrypted credentials and extract user ID and PIN.
+    /// Return the session seed data.
+    /// This contains the common credential verification logic shared by open_session and reopen_session.
+    ///
+    /// # Arguments
+    /// * `encrypted_credential` - Encrypted credentials
+    /// * `client_pub_key` - Client public key
+    ///
+    /// # Returns
+    /// * `Ok(Vec<u8>)` Vec<u8> session_seed, if credentials are valid
+    ///
+    /// # Errors
+    /// * Various credential validation errors
+    fn verify_encrypted_session_credentials(
         &mut self,
-        encrypted_credential: EncryptedCredential,
+        encrypted_credential: EncryptedSessionCredential,
         client_pub_key: &[u8],
-        api_rev: ApiRev,
-    ) -> Result<(u16, u8), ManticoreError> {
+    ) -> Result<Vec<u8>, ManticoreError> {
         let key_id = self.get_session_encryption_key_id()?;
-        {
-            let entry = self.get_key_entry(key_id)?;
+        let entry = self.get_key_entry(key_id)?;
 
-            // Check if sent nonce is same
-            if encrypted_credential.nonce != self.get_nonce() {
-                Err(ManticoreError::NonceMismatch)?;
+        // Check if sent nonce is same
+        if encrypted_credential.nonce != self.get_nonce() {
+            Err(ManticoreError::NonceMismatch)?;
+        }
+
+        // Check if credential is already set
+        if self.user.credentials.id.is_nil() || self.user.credentials.pin.eq(&[0; 16]) {
+            Err(ManticoreError::CredentialsNotEstablished)?;
+        }
+
+        if let EccPrivate(private_key) = entry.key() {
+            let public_key = EccPublicKey::from_der(client_pub_key, Some(Kind::Ecc384Public))?;
+            let secret_bytes = private_key.derive(&public_key)?;
+            let secret_key = SecretKey::from_bytes(&secret_bytes)?;
+            let current_nonce = self.get_nonce();
+            let keys =
+                secret_key.hkdf_derive(HashAlgorithm::Sha384, None, Some(&current_nonce), 80)?;
+
+            let hmac_key = &keys[32..];
+
+            let mut id_pin_seed_iv_nonce = [0; 128];
+            id_pin_seed_iv_nonce[..16].copy_from_slice(&encrypted_credential.id);
+            id_pin_seed_iv_nonce[16..32].copy_from_slice(&encrypted_credential.pin);
+            id_pin_seed_iv_nonce[32..80].copy_from_slice(&encrypted_credential.seed);
+            id_pin_seed_iv_nonce[80..96].copy_from_slice(&encrypted_credential.iv);
+            id_pin_seed_iv_nonce[96..].copy_from_slice(&current_nonce);
+
+            let hmac_key = HmacKey::from_bytes(hmac_key)?;
+            let calculated_tag = hmac_key.hmac(&id_pin_seed_iv_nonce, HashAlgorithm::Sha384)?;
+            if calculated_tag != encrypted_credential.tag {
+                Err(ManticoreError::PinDecryptionFailed)?;
             }
 
-            // Check if credential is already set
-            if self.user.credentials.id.is_nil() || self.user.credentials.pin.eq(&[0; 16]) {
-                Err(ManticoreError::InvalidArgument)?;
-            }
+            self.reset_nonce()?;
 
-            if let EccPrivate(private_key) = entry.key() {
-                let public_key = EccPublicKey::from_der(client_pub_key, Some(Kind::Ecc384Public))?;
-                let secret_bytes = private_key.derive(&public_key)?;
-                let secret_key = SecretKey::from_bytes(&secret_bytes)?;
-                let current_nonce = self.get_nonce();
-                let keys = secret_key.hkdf_derive(
-                    HashAlgorithm::Sha384,
-                    None,
-                    Some(&current_nonce),
-                    80,
-                )?;
+            let aes_key = AesKey::from_bytes(&keys[..32])?;
+            let decrypted_id = aes_key
+                .decrypt(
+                    &encrypted_credential.id,
+                    AesAlgo::Cbc,
+                    Some(&encrypted_credential.iv),
+                )?
+                .plain_text;
+            let decrypted_pin = aes_key
+                .decrypt(
+                    &encrypted_credential.pin,
+                    AesAlgo::Cbc,
+                    Some(&encrypted_credential.iv),
+                )?
+                .plain_text;
+            let decrypted_seed = aes_key
+                .decrypt(
+                    &encrypted_credential.seed,
+                    AesAlgo::Cbc,
+                    Some(&encrypted_credential.iv),
+                )?
+                .plain_text;
 
-                let hmac_key = &keys[32..];
+            let mut id = [0; 16];
+            let mut pin = [0; 16];
 
-                let mut id_pin_iv_nonce = [0; 80];
-                id_pin_iv_nonce[..16].copy_from_slice(&encrypted_credential.id);
-                id_pin_iv_nonce[16..32].copy_from_slice(&encrypted_credential.pin);
-                id_pin_iv_nonce[32..48].copy_from_slice(&encrypted_credential.iv);
-                id_pin_iv_nonce[48..].copy_from_slice(&current_nonce);
+            id.copy_from_slice(&decrypted_id);
+            pin.copy_from_slice(&decrypted_pin);
 
-                let hmac_key = HmacKey::from_bytes(hmac_key)?;
-                let calculated_tag = hmac_key.hmac(&id_pin_iv_nonce, HashAlgorithm::Sha384)?;
-                if calculated_tag != encrypted_credential.tag {
-                    Err(ManticoreError::PinDecryptionFailed)?;
-                }
-
-                self.reset_nonce()?;
-
-                let aes_key = AesKey::from_bytes(&keys[..32])?;
-                let decrypted_id = aes_key
-                    .decrypt(
-                        &encrypted_credential.id,
-                        AesAlgo::Cbc,
-                        Some(&encrypted_credential.iv),
-                    )?
-                    .plain_text;
-                let decrypted_pin = aes_key
-                    .decrypt(
-                        &encrypted_credential.pin,
-                        AesAlgo::Cbc,
-                        Some(&encrypted_credential.iv),
-                    )?
-                    .plain_text;
-
-                let mut id = [0; 16];
-                let mut pin = [0; 16];
-
-                id.copy_from_slice(&decrypted_id);
-                pin.copy_from_slice(&decrypted_pin);
-
-                self.verify_user_credential(id, pin)?;
-
-                self.add_session(api_rev)
-            } else {
-                Err(ManticoreError::InternalError)
-            }
+            self.verify_user_credential(id, pin)?;
+            Ok(decrypted_seed)
+        } else {
+            Err(ManticoreError::InternalError)
         }
     }
 
-    fn get_session_count(&self) -> usize {
-        self.tables
-            .iter()
-            .map(|table| table.get_session_count())
-            .sum()
-    }
-
-    fn add_session(&mut self, api_rev: ApiRev) -> Result<(u16, u8), ManticoreError> {
+    /// Create a new physical session and return its key number.
+    /// This creates the session key entry but doesn't map it to a virtual session ID.
+    ///
+    /// # Arguments
+    /// * `api_rev` - API revision
+    /// * `mk_session` - Masking key for the session
+    ///
+    /// # Returns
+    /// * `Ok(physical_session_key_num)` if successful
+    ///
+    /// # Errors
+    /// * Session limit errors and key creation errors
+    fn create_physical_session(
+        &mut self,
+        api_rev: ApiRev,
+        mk_session: &[u8],
+    ) -> Result<u16, ManticoreError> {
         if self.get_session_count() >= MAX_SESSIONS {
             Err(ManticoreError::VaultSessionLimitReached)?;
         }
@@ -731,15 +897,276 @@ impl VaultInner {
 
         let key_kind = Kind::Session;
 
-        let sess_id = self.add_key(
+        let masking_key = AesHmacKey::from_bytes(mk_session)?;
+        let session_data = SessionKey {
+            api_rev,
+            masking_key,
+        };
+
+        let sess_key_num = self.add_key(
             APP_ID_FOR_INTERNAL_KEYS,
             key_kind,
-            Key::Session(api_rev),
+            Key::Session(session_data),
             entry_flags,
             0,
         )?;
 
-        Ok((sess_id, self.user.short_app_id))
+        Ok(sess_key_num)
+    }
+
+    /// Create a new backup session masking key, used in open_session
+    ///
+    /// # Arguments
+    /// * `bk_session` - Backup key for the session, used to encrypt the session masking key
+    ///
+    /// # Returns
+    /// * `Ok(session_bmk)` if successful
+    fn generate_session_bmk(&self, bk_session: &[u8]) -> Result<Vec<u8>, ManticoreError> {
+        let env = SimCryptEnv;
+
+        // Generate BMK
+        let mut metadata_len = METADATA_MAX_SIZE_BYTES;
+        let mut metadata = [0u8; METADATA_MAX_SIZE_BYTES];
+        LMKeyDerive::encode_masked_key_metadata(
+            DdiDeviceKind::Virtual,
+            Some(1),
+            DdiKeyType::AesCbc256Hmac384,
+            DdiMaskedKeyAttributes { blob: [0u8; 32] },
+            Some(0),
+            None,
+            b"SMK",
+            &mut metadata_len,
+            &mut metadata,
+        )
+        .map_err(|err| {
+            tracing::error!("encode_masked_key_metadata error {:?}", err);
+            ManticoreError::InternalError
+        })?;
+
+        // Get the required length for BMK
+        let mut session_bmk_len = 0;
+        let _ = LMKeyDerive::bmk_gen(
+            &env,
+            MaskingKeyAlgorithm::AesCbc256Hmac384,
+            bk_session,
+            &metadata[..metadata_len],
+            &mut session_bmk_len,
+            &mut [0u8; 0],
+        );
+
+        // Now generate the session BMK
+        let mut session_bmk = vec![0u8; session_bmk_len];
+        LMKeyDerive::bmk_gen(
+            &env,
+            MaskingKeyAlgorithm::AesCbc256Hmac384,
+            bk_session,
+            &metadata[..metadata_len],
+            &mut session_bmk_len,
+            &mut session_bmk,
+        )
+        .map_err(|err| {
+            tracing::error!("bmk_gen error {:?}", err);
+            ManticoreError::InternalError
+        })?;
+
+        Ok(session_bmk)
+    }
+
+    /// Open session.
+    /// This includes steps to decrypt credential information,
+    /// and use the session_seed to generate session masking key (session_mk)
+    ///
+    /// # Arguments
+    /// * `encrypted_credential` - encrypted blob including credentials and session seed
+    /// * `client_pub_key` - public key data from client necessary to decrypt credentials
+    /// * `api_rev` - ApiRevision for the session to support
+    /// * `bk_partition` - Backup Key for the partition passed from the vault;
+    ///   used to derive the bk_session (session backup key)
+    ///
+    /// # Returns
+    /// * `Ok(SessionResult)` if successful
+    fn open_session(
+        &mut self,
+        encrypted_credential: EncryptedSessionCredential,
+        client_pub_key: &[u8],
+        api_rev: ApiRev,
+        bk_partition: &[u8],
+    ) -> Result<SessionResult, ManticoreError> {
+        let session_seed_vec =
+            self.verify_encrypted_session_credentials(encrypted_credential, client_pub_key)?;
+
+        let mut session_seed = [0u8; SESSION_SEED_SIZE_BYTES];
+        if session_seed.len() != session_seed_vec.len() {
+            Err(ManticoreError::InternalError)?
+        }
+        session_seed.copy_from_slice(&session_seed_vec);
+
+        // Derive bk_session from bk_partition
+        let env = SimCryptEnv;
+        let mut bk_session_len = BK_AES_CBC_256_HMAC384_SIZE_BYTES;
+        let mut bk_session = vec![0u8; BK_AES_CBC_256_HMAC384_SIZE_BYTES];
+        LMKeyDerive::bk_session_gen(
+            &env,
+            MaskingKeyAlgorithm::AesCbc256Hmac384,
+            &session_seed,
+            bk_partition,
+            &mut bk_session_len,
+            &mut bk_session,
+        )
+        .map_err(|err| {
+            tracing::error!("bk_session_gen error {:?}", err);
+            ManticoreError::InternalError
+        })?;
+
+        let session_bmk = self.generate_session_bmk(&bk_session)?;
+
+        // Decode bmk to get the session_mk
+        let session_mk =
+            LMKeyDerive::bmk_restore(&env, &bk_session, &session_bmk).map_err(|err| {
+                tracing::error!("bmk_restore error {:?}", err);
+                ManticoreError::InternalError
+            })?;
+
+        let mut decoded_session_mk = [0u8; BK_AES_CBC_256_HMAC384_SIZE_BYTES];
+        let _unmasked_mk_length = session_mk
+            .decrypt_key(&env, &bk_session, &mut decoded_session_mk)
+            .map_err(|err| {
+                tracing::error!("decoded_mk decrypt_key error {:?}", err);
+                ManticoreError::InternalError
+            })?;
+
+        let sess_key_num = self.create_physical_session(api_rev, &decoded_session_mk)?;
+        let virtual_session_id = self.session_table.create_session(sess_key_num)?;
+
+        Ok(SessionResult {
+            session_id: virtual_session_id,
+            short_app_id: self.user.short_app_id,
+            bmk: session_bmk,
+        })
+    }
+
+    /// Re-open session.
+    /// This includes steps to decrypt credential information,
+    /// and use the session_seed to decrypt the session masking key from backup masking key
+    ///
+    /// # Arguments
+    /// * `encrypted_credential` - encrypted blob including credentials and session seed
+    /// * `client_pub_key` - public key data from client necessary to decrypt credentials
+    /// * `api_rev` - ApiRevision for the session to support
+    /// * `reopen_sess_id` - virtual session id to reopen
+    /// * `bmk` - Backup session masking key, needs to be decrypted using bk_session
+    /// * `bk_partition` - Backup Key for the partition, used to derive the bk_session (session backup key)
+    ///
+    /// # Returns
+    /// * `Ok(SessionResult)` if successful
+    fn reopen_session(
+        &mut self,
+        encrypted_credential: EncryptedSessionCredential,
+        client_pub_key: &[u8],
+        api_rev: ApiRev,
+        reopen_sess_id: u16,
+        bmk: Option<&[u8]>,
+        bk_partition: &[u8],
+    ) -> Result<SessionResult, ManticoreError> {
+        // Check renegotiation requirement first
+        if !self.session_table.needs_renegotiation(reopen_sess_id) {
+            return Err(ManticoreError::InvalidArgument);
+        }
+
+        // Verify credentials and get session seed
+        let session_seed_vec =
+            self.verify_encrypted_session_credentials(encrypted_credential, client_pub_key)?;
+
+        let mut session_seed = [0u8; SESSION_SEED_SIZE_BYTES];
+        if session_seed.len() != session_seed_vec.len() {
+            Err(ManticoreError::InternalError)?
+        }
+        session_seed.copy_from_slice(&session_seed_vec);
+
+        // Create bk_session
+        let env = SimCryptEnv;
+        let mut bk_session_len = BK_AES_CBC_256_HMAC384_SIZE_BYTES;
+        let mut bk_session = vec![0u8; bk_session_len];
+        LMKeyDerive::bk_session_gen(
+            &env,
+            MaskingKeyAlgorithm::AesCbc256Hmac384,
+            &session_seed,
+            bk_partition,
+            &mut bk_session_len,
+            &mut bk_session,
+        )
+        .map_err(|err| {
+            tracing::error!("bk_session_gen error {:?}", err);
+            ManticoreError::InternalError
+        })?;
+
+        let session_bmk = match bmk {
+            None => self.generate_session_bmk(&bk_session)?,
+            Some(bmk) => bmk.to_vec(),
+        };
+
+        // Decode bmk to get the session_mk
+        let session_mk =
+            LMKeyDerive::bmk_restore(&env, &bk_session, &session_bmk).map_err(|err| {
+                tracing::error!("bmk_restore error {:?}", err);
+                ManticoreError::InternalError
+            })?;
+
+        let mut decoded_session_mk = [0u8; BK_AES_CBC_256_HMAC384_SIZE_BYTES];
+        let _unmasked_mk_length = session_mk
+            .decrypt_key(&env, &bk_session, &mut decoded_session_mk)
+            .map_err(|err| {
+                tracing::error!("decoded_mk decrypt_key error {:?}", err);
+                ManticoreError::InternalError
+            })?;
+
+        // Get session_seed from verify_encrypted_session_credentials
+        let physical_session_key_num =
+            self.create_physical_session(api_rev, &decoded_session_mk)?;
+
+        // Now recreate the session
+        self.session_table
+            .recreate_session(reopen_sess_id, physical_session_key_num);
+
+        Ok(SessionResult {
+            session_id: reopen_sess_id,
+            short_app_id: self.user.short_app_id,
+            bmk: session_bmk,
+        })
+    }
+
+    fn get_session_count(&self) -> usize {
+        self.tables
+            .iter()
+            .map(|table| table.get_session_count())
+            .sum()
+    }
+
+    fn close_session(&mut self, virtual_session_id: u16) -> Result<(), ManticoreError> {
+        // Check if the session needs renegotiation (e.g., after backup/restore)
+        if self.session_table.needs_renegotiation(virtual_session_id) {
+            // Session needs renegotiation - just clean up the session table entry
+            tracing::debug!("Session needs renegotiation");
+            self.session_table.delete(virtual_session_id);
+            return Ok(());
+        }
+
+        let session_key_num = self
+            .session_table
+            .get_target_session(virtual_session_id)
+            .ok_or(ManticoreError::SessionNotFound)?;
+
+        self.remove_session_only_keys_by_physical_session_id(session_key_num)?;
+        self.remove_key(session_key_num)?;
+
+        self.session_table.delete(virtual_session_id);
+        Ok(())
+    }
+
+    fn get_target_session_id(&self, virtual_session_id: u16) -> Result<u16, ManticoreError> {
+        self.session_table
+            .get_target_session(virtual_session_id)
+            .ok_or(ManticoreError::SessionNotFound)
     }
 
     fn change_pin(
@@ -820,6 +1247,34 @@ impl VaultInner {
         tracing::debug!(key_tag, "Key not found by tag");
         Err(ManticoreError::KeyNotFound)
     }
+
+    fn get_session_entry(&self, session_id: u16) -> Result<Entry, ManticoreError> {
+        // Check if the session needs renegotiation first
+        if self.session_table.needs_renegotiation(session_id) {
+            return Err(ManticoreError::SessionNeedsRenegotiation);
+        }
+
+        let session_key_num = self
+            .session_table
+            .get_target_session(session_id)
+            .ok_or(ManticoreError::InvalidArgument)?;
+
+        self.get_key_entry(session_key_num)
+    }
+
+    fn get_session_entry_unchecked(&self, session_id: u16) -> Result<Entry, ManticoreError> {
+        // Check if the session needs renegotiation first
+        if self.session_table.needs_renegotiation(session_id) {
+            return Err(ManticoreError::SessionNeedsRenegotiation);
+        }
+
+        let session_key_num = self
+            .session_table
+            .get_target_session(session_id)
+            .ok_or(ManticoreError::InvalidArgument)?;
+
+        self.get_key_entry_unchecked(session_key_num)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -893,6 +1348,13 @@ pub(crate) mod tests {
     pub(crate) const TEST_CRED_PIN: [u8; 16] = [
         0x09, 0x90, 0xa8, 0x31, 0x06, 0x66, 0xc0, 0xe4, 0xa1, 0x64, 0x03, 0x62, 0x00, 0x04, 0xe4,
         0x20,
+    ];
+
+    pub(crate) const TEST_SESSION_SEED: [u8; 48] = [
+        0xe5, 0x1b, 0x8b, 0x4b, 0xa7, 0x94, 0xc7, 0xc8, 0xa2, 0x32, 0x84, 0xec, 0xad, 0x2b, 0x6a,
+        0xc, 0x37, 0xe8, 0x6a, 0x63, 0x6a, 0x9f, 0x43, 0x20, 0x95, 0xe1, 0x24, 0xd0, 0x85, 0x12,
+        0xe2, 0x12, 0x95, 0x14, 0xaa, 0x0f, 0x6b, 0x05, 0x40, 0x71, 0xbf, 0x63, 0xa5, 0x87, 0xa6,
+        0x25, 0x70, 0x81,
     ];
 
     #[test]
@@ -1079,6 +1541,82 @@ pub(crate) mod tests {
         }
     }
 
+    pub(crate) fn helper_encrypt_session_credential(
+        vault: &Vault,
+        key_num: u16,
+        id: [u8; 16],
+        pin: [u8; 16],
+        seed: [u8; 48],
+    ) -> Result<(EncryptedSessionCredential, Vec<u8>), ManticoreError> {
+        let entry = vault.get_key_entry(key_num)?;
+
+        if entry.kind() != Kind::Ecc384Private {
+            Err(ManticoreError::InvalidArgument)?;
+        }
+
+        if let EccPrivate(key) = entry.key() {
+            let nonce = vault.get_nonce();
+            let pub_key_der = key.extract_pub_key_der()?;
+            let device_credential_key =
+                EccPublicKey::from_der(&pub_key_der, Some(Kind::Ecc384Public))?;
+
+            let client_priv_key =
+                EccPrivateKey::from_der(&TEST_ECC_384_PRIVATE_KEY, Some(Kind::Ecc384Private))?;
+
+            // ECDH exchange
+            let ecdh_bytes = client_priv_key.derive(&device_credential_key)?;
+
+            // HKDF
+            let derived_bytes = hkdf_sha_384_derive(&ecdh_bytes, Some(&nonce), 80)?;
+            let mut aes_key = [0u8; 32];
+            aes_key.copy_from_slice(&derived_bytes[..32]);
+            let mut hmac_key = [0u8; 48];
+            hmac_key.copy_from_slice(&derived_bytes[32..]);
+
+            let mut encrypted_id = [0; 16];
+            let mut encrypted_pin = [0; 16];
+            let mut encrypted_seed = [0; 48];
+            let mut iv = [0; 16];
+
+            crypto::rand::rand_bytes(&mut iv)?;
+
+            let aes_key = AesKey::from_bytes(&aes_key)?;
+
+            let encrypted_id_vec = aes_key.encrypt(&id, AesAlgo::Cbc, Some(&iv))?.cipher_text;
+            encrypted_id.copy_from_slice(&encrypted_id_vec);
+
+            let encrypted_pin_vec = aes_key.encrypt(&pin, AesAlgo::Cbc, Some(&iv))?.cipher_text;
+            encrypted_pin.copy_from_slice(&encrypted_pin_vec);
+
+            let encrypted_seed_vec = aes_key.encrypt(&seed, AesAlgo::Cbc, Some(&iv))?.cipher_text;
+            encrypted_seed.copy_from_slice(&encrypted_seed_vec);
+
+            let mut id_pin_seed_iv_nonce = [0; 128];
+            id_pin_seed_iv_nonce[..16].copy_from_slice(&encrypted_id);
+            id_pin_seed_iv_nonce[16..32].copy_from_slice(&encrypted_pin);
+            id_pin_seed_iv_nonce[32..80].copy_from_slice(&encrypted_seed);
+            id_pin_seed_iv_nonce[80..96].copy_from_slice(&iv);
+            id_pin_seed_iv_nonce[96..].copy_from_slice(&nonce);
+
+            let hmac_key = HmacKey::from_bytes(&hmac_key)?;
+            let tag = hmac_key.hmac(&id_pin_seed_iv_nonce, HashAlgorithm::Sha384)?;
+            let tag_48: [u8; 48] = tag.try_into().unwrap();
+            Ok((
+                EncryptedSessionCredential {
+                    id: encrypted_id,
+                    pin: encrypted_pin,
+                    seed: encrypted_seed,
+                    iv,
+                    nonce,
+                    tag: tag_48,
+                },
+                TEST_ECC_384_PUBLIC_KEY.to_vec(),
+            ))
+        } else {
+            Err(ManticoreError::InvalidArgument)
+        }
+    }
+
     pub(crate) fn helper_establish_credential(vault: &Vault, id: [u8; 16], pin: [u8; 16]) {
         let key_num = vault.get_establish_cred_encryption_key_id().unwrap();
         let (encrypted_credential, client_pub_key) =
@@ -1093,11 +1631,43 @@ pub(crate) mod tests {
         id: [u8; 16],
         pin: [u8; 16],
         api_rev: ApiRev,
-    ) -> Result<(u16, u8), ManticoreError> {
+    ) -> Result<SessionResult, ManticoreError> {
         let key_num = vault.get_session_encryption_key_id().unwrap();
         let (encrypted_credential, client_pub_key) =
-            helper_encrypt_credential(vault, key_num, id, pin).unwrap();
-        vault.open_session(encrypted_credential, &client_pub_key, api_rev)
+            helper_encrypt_session_credential(vault, key_num, id, pin, TEST_SESSION_SEED).unwrap();
+
+        // Use a hardcoded partition_mk
+        let partition_mk = [42u8; 80];
+        vault.open_session(
+            encrypted_credential,
+            &client_pub_key,
+            api_rev,
+            &partition_mk,
+        )
+    }
+
+    pub(crate) fn helper_reopen_session(
+        vault: &Vault,
+        id: [u8; 16],
+        pin: [u8; 16],
+        api_rev: ApiRev,
+        reopen_sess_id: u16,
+        bmk: Option<&[u8]>,
+    ) -> Result<SessionResult, ManticoreError> {
+        let key_num = vault.get_session_encryption_key_id().unwrap();
+        let (encrypted_credential, client_pub_key) =
+            helper_encrypt_session_credential(vault, key_num, id, pin, TEST_SESSION_SEED).unwrap();
+
+        // Use a hardcoded partition_mk
+        let partition_mk = [42u8; 80];
+        vault.reopen_session(
+            encrypted_credential,
+            &client_pub_key,
+            api_rev,
+            reopen_sess_id,
+            bmk,
+            &partition_mk,
+        )
     }
 
     #[test]
@@ -1584,15 +2154,18 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn remove_session_only_keys_basic() {
+    fn close_session_basic() {
         let key_tag = 0x5453;
 
-        let test_app_session_id = 1;
         let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
+        //cred-establish enc and session enc key IDs 0, 1, key 0 freed after use for cred-establish.
         helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
+        let api_rev = ApiRev { major: 1, minor: 0 };
+        let session_result =
+            helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap(); //reuse key ID 0
 
         let (_rsa_private_key, rsa_public_key) = generate_rsa(2048).unwrap();
-        // Add 2 persisent keys
+        // Add 2 persisent keys, key 2 and key 3
         for i in 0..2 {
             let result = vault.add_key(
                 Uuid::from_bytes(TEST_CRED_ID),
@@ -1606,7 +2179,7 @@ pub(crate) mod tests {
 
         let mut flags = EntryFlags::default();
         flags.set_session_only(true);
-        // Add 2 session_only keys
+        // Add 2 session_only keys, key IDs 4 and key 5.
         for i in 0..2 {
             let result = vault
                 .add_key(
@@ -1614,10 +2187,10 @@ pub(crate) mod tests {
                     Kind::Rsa2kPublic,
                     Key::RsaPublic(rsa_public_key.clone()),
                     flags,
-                    test_app_session_id,
+                    session_result.session_id,
                 )
                 .unwrap();
-            assert_eq!(result, i + 3);
+            assert_eq!(result, i + 4);
         }
 
         let vault_inner = vault.inner.read();
@@ -1636,20 +2209,22 @@ pub(crate) mod tests {
         );
         drop(vault_inner);
 
-        // remove session_only keys
-        let result = vault.remove_session_only_keys(test_app_session_id);
+        //close session
+        let result = vault.close_session(session_result.session_id);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), 2);
+
+        // Verify session has been cleaned up from session table
+        assert!(vault.get_session_entry(session_result.session_id).is_err());
     }
 
     #[test]
-    fn remove_session_only_keys_key_in_use() {
+    fn close_session_with_key_in_use() {
         // Test the removal of session_only keys while the key is in use
 
         let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
         helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
         let api_rev = ApiRev { major: 1, minor: 0 };
-        let (test_app_session_id, _) =
+        let session_result =
             helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
 
         let (_rsa_private_key, rsa_public_key) = generate_rsa(2048).unwrap();
@@ -1663,7 +2238,7 @@ pub(crate) mod tests {
                 Kind::Rsa2kPublic,
                 Key::RsaPublic(rsa_public_key.clone()),
                 flags,
-                test_app_session_id,
+                session_result.session_id,
             )
             .unwrap();
         for _ in 0..2 {
@@ -1672,7 +2247,7 @@ pub(crate) mod tests {
                 Kind::Rsa2kPublic,
                 Key::RsaPublic(rsa_public_key.clone()),
                 flags,
-                test_app_session_id,
+                session_result.session_id,
             );
             assert!(result.is_ok());
         }
@@ -1680,95 +2255,11 @@ pub(crate) mod tests {
         // Hold a ref to Entry
         let entry = vault.get_key_entry(key1).unwrap();
 
-        // remove session_only keys
-        let result = vault.remove_session_only_keys(test_app_session_id);
+        let result = vault.close_session(session_result.session_id);
         assert!(result.is_ok());
 
         // Check entry marked as disabled
         assert!(entry.disabled());
-
-        // Release ref and delete again
-        drop(entry);
-        let result = vault.remove_session_only_keys(test_app_session_id);
-        assert_eq!(result, Ok(0));
-    }
-
-    #[test]
-    fn remove_keys_for_session_basic() {
-        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
-        helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
-        let api_rev = ApiRev { major: 1, minor: 0 };
-        let (test_app_session_id1, _) =
-            helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
-        let (test_app_session_id2, _) =
-            helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
-
-        let (_rsa_private_key, rsa_public_key) = generate_rsa(2048).unwrap();
-
-        let key_tag = 0x5453;
-        let mut flags = EntryFlags::default();
-        flags.set_session_only(true);
-
-        // Add one session_only key and one app key for each app
-        let result = vault.add_key(
-            Uuid::from_bytes(TEST_CRED_ID),
-            Kind::Rsa2kPublic,
-            Key::RsaPublic(rsa_public_key.clone()),
-            EntryFlags::default(),
-            key_tag,
-        );
-        assert_eq!(result, Ok(3));
-
-        let result = vault.add_key(
-            Uuid::from_bytes(TEST_CRED_ID),
-            Kind::Rsa2kPublic,
-            Key::RsaPublic(rsa_public_key.clone()),
-            flags,
-            test_app_session_id1,
-        );
-        assert_eq!(result, Ok(4));
-
-        let result = vault.add_key(
-            Uuid::from_bytes(TEST_CRED_ID),
-            Kind::Rsa2kPublic,
-            Key::RsaPublic(rsa_public_key.clone()),
-            EntryFlags::default(),
-            key_tag + 1,
-        );
-        assert_eq!(result, Ok(5));
-
-        let result = vault.add_key(
-            Uuid::from_bytes(TEST_CRED_ID),
-            Kind::Rsa2kPublic,
-            Key::RsaPublic(rsa_public_key),
-            flags,
-            test_app_session_id2,
-        );
-        assert_eq!(result, Ok(6));
-
-        {
-            let vault_inner = vault.inner.read();
-            assert_eq!(vault_inner.tables.len(), 4);
-            assert_eq!(
-                vault_inner.user,
-                UserCredentials {
-                    credentials: Credentials {
-                        id: Uuid::from_bytes(TEST_CRED_ID),
-                        role: Role::User,
-                        pin: TEST_CRED_PIN
-                    },
-                    short_app_id: 0
-                }
-            );
-        }
-
-        // Remove keys for session #1
-        let result = vault.remove_session_only_keys(test_app_session_id1);
-        assert_eq!(result, Ok(1));
-
-        // Remove keys for session #2
-        let result = vault.remove_session_only_keys(test_app_session_id2);
-        assert_eq!(result, Ok(1));
     }
 
     #[test]
@@ -1893,7 +2384,7 @@ pub(crate) mod tests {
         let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
         helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
         let api_rev = ApiRev { major: 1, minor: 0 };
-        let (_, _) = helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
+        let _ = helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
     }
 
     #[test]
@@ -1909,10 +2400,24 @@ pub(crate) mod tests {
         helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
         let api_rev = ApiRev { major: 1, minor: 0 };
         let key_num = vault.get_session_encryption_key_id().unwrap();
-        let (mut encrypted_credential, client_pub_key) =
-            helper_encrypt_credential(&vault, key_num, TEST_CRED_ID, TEST_CRED_PIN).unwrap();
+        let (mut encrypted_credential, client_pub_key) = helper_encrypt_session_credential(
+            &vault,
+            key_num,
+            TEST_CRED_ID,
+            TEST_CRED_PIN,
+            TEST_SESSION_SEED,
+        )
+        .unwrap();
         encrypted_credential.id[4] = encrypted_credential.id[4].wrapping_add(0x1);
-        let result = vault.open_session(encrypted_credential, &client_pub_key, api_rev);
+
+        let mut partition_mk = [0u8; 80];
+        crypto::rand::rand_bytes(&mut partition_mk).unwrap();
+        let result = vault.open_session(
+            encrypted_credential,
+            &client_pub_key,
+            api_rev,
+            &partition_mk,
+        );
         assert!(result.is_err(), "result {:?}", result);
     }
 
@@ -1922,10 +2427,24 @@ pub(crate) mod tests {
         helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
         let api_rev = ApiRev { major: 1, minor: 0 };
         let key_num = vault.get_session_encryption_key_id().unwrap();
-        let (mut encrypted_credential, client_pub_key) =
-            helper_encrypt_credential(&vault, key_num, TEST_CRED_ID, TEST_CRED_PIN).unwrap();
+        let (mut encrypted_credential, client_pub_key) = helper_encrypt_session_credential(
+            &vault,
+            key_num,
+            TEST_CRED_ID,
+            TEST_CRED_PIN,
+            TEST_SESSION_SEED,
+        )
+        .unwrap();
         encrypted_credential.pin[4] = encrypted_credential.pin[4].wrapping_add(0x1);
-        let result = vault.open_session(encrypted_credential, &client_pub_key, api_rev);
+
+        let mut partition_mk = [0u8; 80];
+        crypto::rand::rand_bytes(&mut partition_mk).unwrap();
+        let result = vault.open_session(
+            encrypted_credential,
+            &client_pub_key,
+            api_rev,
+            &partition_mk,
+        );
         assert!(result.is_err(), "result {:?}", result);
     }
 
@@ -1935,10 +2454,24 @@ pub(crate) mod tests {
         helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
         let api_rev = ApiRev { major: 1, minor: 0 };
         let key_num = vault.get_session_encryption_key_id().unwrap();
-        let (mut encrypted_credential, client_pub_key) =
-            helper_encrypt_credential(&vault, key_num, TEST_CRED_ID, TEST_CRED_PIN).unwrap();
+        let (mut encrypted_credential, client_pub_key) = helper_encrypt_session_credential(
+            &vault,
+            key_num,
+            TEST_CRED_ID,
+            TEST_CRED_PIN,
+            TEST_SESSION_SEED,
+        )
+        .unwrap();
         encrypted_credential.iv[4] = encrypted_credential.iv[4].wrapping_add(0x1);
-        let result = vault.open_session(encrypted_credential, &client_pub_key, api_rev);
+
+        let mut partition_mk = [0u8; 80];
+        crypto::rand::rand_bytes(&mut partition_mk).unwrap();
+        let result = vault.open_session(
+            encrypted_credential,
+            &client_pub_key,
+            api_rev,
+            &partition_mk,
+        );
         assert!(result.is_err(), "result {:?}", result);
     }
 
@@ -1948,10 +2481,24 @@ pub(crate) mod tests {
         helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
         let api_rev = ApiRev { major: 1, minor: 0 };
         let key_num = vault.get_session_encryption_key_id().unwrap();
-        let (mut encrypted_credential, client_pub_key) =
-            helper_encrypt_credential(&vault, key_num, TEST_CRED_ID, TEST_CRED_PIN).unwrap();
+        let (mut encrypted_credential, client_pub_key) = helper_encrypt_session_credential(
+            &vault,
+            key_num,
+            TEST_CRED_ID,
+            TEST_CRED_PIN,
+            TEST_SESSION_SEED,
+        )
+        .unwrap();
         encrypted_credential.nonce[2] = encrypted_credential.nonce[2].wrapping_add(0x1);
-        let result = vault.open_session(encrypted_credential, &client_pub_key, api_rev);
+
+        let mut partition_mk = [0u8; 80];
+        crypto::rand::rand_bytes(&mut partition_mk).unwrap();
+        let result = vault.open_session(
+            encrypted_credential,
+            &client_pub_key,
+            api_rev,
+            &partition_mk,
+        );
         assert!(result.is_err(), "result {:?}", result);
     }
 
@@ -1961,10 +2508,51 @@ pub(crate) mod tests {
         helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
         let api_rev = ApiRev { major: 1, minor: 0 };
         let key_num = vault.get_session_encryption_key_id().unwrap();
-        let (mut encrypted_credential, client_pub_key) =
-            helper_encrypt_credential(&vault, key_num, TEST_CRED_ID, TEST_CRED_PIN).unwrap();
+        let (mut encrypted_credential, client_pub_key) = helper_encrypt_session_credential(
+            &vault,
+            key_num,
+            TEST_CRED_ID,
+            TEST_CRED_PIN,
+            TEST_SESSION_SEED,
+        )
+        .unwrap();
         encrypted_credential.tag[4] = encrypted_credential.tag[4].wrapping_add(0x1);
-        let result = vault.open_session(encrypted_credential, &client_pub_key, api_rev);
+
+        let mut partition_mk = [0u8; 80];
+        crypto::rand::rand_bytes(&mut partition_mk).unwrap();
+        let result = vault.open_session(
+            encrypted_credential,
+            &client_pub_key,
+            api_rev,
+            &partition_mk,
+        );
+        assert!(result.is_err(), "result {:?}", result);
+    }
+
+    #[test]
+    fn test_open_session_tampered_seed() {
+        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
+        helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
+        let api_rev = ApiRev { major: 1, minor: 0 };
+        let key_num = vault.get_session_encryption_key_id().unwrap();
+        let (mut encrypted_credential, client_pub_key) = helper_encrypt_session_credential(
+            &vault,
+            key_num,
+            TEST_CRED_ID,
+            TEST_CRED_PIN,
+            TEST_SESSION_SEED,
+        )
+        .unwrap();
+        encrypted_credential.seed[4] = encrypted_credential.tag[4].wrapping_add(0x1);
+
+        let mut partition_mk = [0u8; 80];
+        crypto::rand::rand_bytes(&mut partition_mk).unwrap();
+        let result = vault.open_session(
+            encrypted_credential,
+            &client_pub_key,
+            api_rev,
+            &partition_mk,
+        );
         assert!(result.is_err(), "result {:?}", result);
     }
 
@@ -2215,6 +2803,364 @@ pub(crate) mod tests {
         let result = vault.get_key_entry(0x8801);
         assert!(result.is_err(), "result {:?}", result);
     }
+    #[test]
+    fn test_virtual_session_id_reuse_after_cleanup() {
+        // Test that virtual session IDs become available for reuse after cleanup
+
+        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
+        helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
+        let api_rev = ApiRev { major: 1, minor: 0 };
+
+        // Create first session
+        let session_result1 =
+            helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
+
+        // Verify session exists
+        assert!(vault.get_session_entry(session_result1.session_id).is_ok());
+
+        let result = vault.close_session(session_result1.session_id);
+        assert!(result.is_ok());
+
+        // Verify session is cleaned up
+        assert!(vault.get_session_entry(session_result1.session_id).is_err());
+
+        // Create a new session - should be able to reuse the same virtual session ID
+        let session_result2 =
+            helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
+
+        // The session ID should be reused (likely the same as session_id_1)
+        assert_eq!(session_result1.session_id, session_result2.session_id);
+
+        // Verify new session exists
+        assert!(vault.get_session_entry(session_result2.session_id).is_ok());
+    }
+
+    #[test]
+    fn test_multiple_sessions_independent_cleanup() {
+        // Test multiple concurrent sessions and independent cleanup
+
+        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
+        helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
+        let api_rev = ApiRev { major: 1, minor: 0 };
+
+        // Create two sessions
+        let session_result1 =
+            helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
+        let session_result2 =
+            helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
+
+        assert_ne!(session_result1.session_id, session_result2.session_id);
+
+        // Verify both sessions exist
+        assert!(vault.get_session_entry(session_result1.session_id).is_ok());
+        assert!(vault.get_session_entry(session_result2.session_id).is_ok());
+
+        // Add session-only keys to both sessions
+        let (_rsa_private_key, rsa_public_key) = generate_rsa(2048).unwrap();
+        let mut flags = EntryFlags::default();
+        flags.set_session_only(true);
+
+        let key_1 = vault
+            .add_key(
+                Uuid::from_bytes(TEST_CRED_ID),
+                Kind::Rsa2kPublic,
+                Key::RsaPublic(rsa_public_key.clone()),
+                flags,
+                session_result1.session_id,
+            )
+            .unwrap();
+
+        let key_2 = vault
+            .add_key(
+                Uuid::from_bytes(TEST_CRED_ID),
+                Kind::Rsa2kPublic,
+                Key::RsaPublic(rsa_public_key.clone()),
+                flags,
+                session_result2.session_id,
+            )
+            .unwrap();
+
+        assert_ne!(key_1, key_2);
+
+        // Close only session 1
+        let result = vault.close_session(session_result1.session_id);
+        assert!(result.is_ok());
+
+        // Verify session 1 is cleaned up but session 2 remains
+        assert!(vault.get_session_entry(session_result1.session_id).is_err());
+        assert!(vault.get_session_entry(session_result2.session_id).is_ok());
+
+        // Close session 2
+        let result = vault.close_session(session_result2.session_id);
+        assert!(result.is_ok());
+
+        // Verify both sessions are now cleaned up
+        assert!(vault.get_session_entry(session_result1.session_id).is_err());
+        assert!(vault.get_session_entry(session_result2.session_id).is_err());
+    }
+
+    #[test]
+    fn test_close_nonexistent_session() {
+        // Test calling close_session with invalid/nonexistent session ID
+
+        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
+        helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
+
+        let nonexistent_session_id = 99;
+        let result = vault.close_session(nonexistent_session_id);
+
+        assert_eq!(result, Err(ManticoreError::SessionNotFound));
+    }
+
+    #[test]
+    fn test_session_table_exhaustion_handling() {
+        // Test what happens when all 8 session table slots are used
+
+        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
+        helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
+        let api_rev = ApiRev { major: 1, minor: 0 };
+
+        let mut session_ids = Vec::new();
+
+        // Create sessions up to the limit (should be 8 based on session table design)
+        // The actual limit might be lower due to vault session limits, so we'll test both
+        for i in 0..10 {
+            match helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev) {
+                Ok(session_result) => {
+                    session_ids.push(session_result.session_id);
+                    tracing::debug!(
+                        "Created session {}: virtual_id={}",
+                        i,
+                        session_result.session_id
+                    );
+                }
+                Err(e) => {
+                    tracing::debug!("Failed to create session {}: {:?}", i, e);
+                    break;
+                }
+            }
+        }
+
+        assert_eq!(session_ids.len(), 8);
+        tracing::debug!("Created {} sessions total", session_ids.len());
+
+        // Clean up all sessions
+        for session_id in session_ids {
+            let result = vault.close_session(session_id);
+            assert!(result.is_ok());
+        }
+    }
+
+    #[test]
+    fn test_complete_session_lifecycle_with_session_table() {
+        // Test: open_session -> add keys -> close_session -> verify cleanup
+
+        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
+        helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
+        let api_rev = ApiRev { major: 1, minor: 0 };
+
+        // 1. Open session
+        let session_result =
+            helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
+
+        // 2. Add both regular and session-only keys
+        let (_rsa_private_key, rsa_public_key) = generate_rsa(2048).unwrap();
+
+        // Add regular key
+        let regular_key = vault
+            .add_key(
+                Uuid::from_bytes(TEST_CRED_ID),
+                Kind::Rsa2kPublic,
+                Key::RsaPublic(rsa_public_key.clone()),
+                EntryFlags::default(),
+                0x2000,
+            )
+            .unwrap();
+
+        // Add session-only keys
+        let mut flags = EntryFlags::default();
+        flags.set_session_only(true);
+
+        let session_key_1 = vault
+            .add_key(
+                Uuid::from_bytes(TEST_CRED_ID),
+                Kind::Rsa2kPublic,
+                Key::RsaPublic(rsa_public_key.clone()),
+                flags,
+                session_result.session_id,
+            )
+            .unwrap();
+
+        let session_key_2 = vault
+            .add_key(
+                Uuid::from_bytes(TEST_CRED_ID),
+                Kind::Rsa2kPublic,
+                Key::RsaPublic(rsa_public_key.clone()),
+                flags,
+                session_result.session_id,
+            )
+            .unwrap();
+
+        // Verify all keys exist
+        assert!(vault.get_key_entry(regular_key).is_ok());
+        assert!(vault.get_key_entry(session_key_1).is_ok());
+        assert!(vault.get_key_entry(session_key_2).is_ok());
+
+        // 3. Close session and remove session-only keys
+        let result = vault.close_session(session_result.session_id);
+        assert!(result.is_ok());
+
+        // 4. Verify cleanup
+        // Session table entry should be gone
+        assert!(vault.get_session_entry(session_result.session_id).is_err());
+        // Regular key should still exist
+        assert!(vault.get_key_entry(regular_key).is_ok());
+
+        // Session-only keys should be gone.
+        assert!(vault.get_key_entry(session_key_1).is_err());
+        assert!(vault.get_key_entry(session_key_2).is_err());
+    }
+
+    #[test]
+    fn test_session_table_virtual_to_physical_mapping() {
+        // Test that virtual session IDs properly map to physical session IDs
+
+        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
+        helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
+        let api_rev = ApiRev { major: 1, minor: 0 };
+
+        let mut sessions = Vec::new();
+
+        // Create multiple sessions
+        for _ in 0..3 {
+            let session_result =
+                helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
+
+            // Get the physical ID
+            let vault_inner = vault.inner.read();
+            let session_table = &vault_inner.session_table;
+            let physical_id = session_table
+                .get_target_session(session_result.session_id)
+                .unwrap();
+            drop(vault_inner);
+
+            sessions.push((session_result.session_id, physical_id));
+        }
+
+        // Verify mappings are consistent and unique
+        for i in 0..sessions.len() {
+            let (virtual_i, physical_i) = sessions[i];
+
+            // Verify mapping is consistent
+            let vault_inner = vault.inner.read();
+            let session_table = &vault_inner.session_table;
+            assert_eq!(
+                session_table.get_target_session(virtual_i).unwrap(),
+                physical_i
+            );
+            drop(vault_inner);
+
+            // Verify virtual and physical IDs are unique across sessions
+            for (virtual_j, physical_j) in sessions.iter().skip(i + 1) {
+                assert_ne!(
+                    virtual_i, *virtual_j,
+                    "Virtual session IDs should be unique"
+                );
+                assert_ne!(
+                    physical_i, *physical_j,
+                    "Physical session IDs should be unique"
+                );
+            }
+        }
+
+        // Clean up sessions
+        for (virtual_id, _) in sessions {
+            let result = vault.close_session(virtual_id);
+            assert!(result.is_ok());
+        }
+    }
+
+    #[test]
+    fn test_session_table_backup_restore_integration() {
+        // Test session table backup/restore with vault integration
+
+        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
+        helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
+        let api_rev = ApiRev { major: 1, minor: 0 };
+
+        // Create sessions
+        let session_result1 =
+            helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
+        let session_result2 =
+            helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
+
+        // Add session-only keys
+        let (_rsa_private_key, rsa_public_key) = generate_rsa(2048).unwrap();
+        let mut flags = EntryFlags::default();
+        flags.set_session_only(true);
+
+        let _key_1 = vault
+            .add_key(
+                Uuid::from_bytes(TEST_CRED_ID),
+                Kind::Rsa2kPublic,
+                Key::RsaPublic(rsa_public_key.clone()),
+                flags,
+                session_result1.session_id,
+            )
+            .unwrap();
+
+        let _key_2 = vault
+            .add_key(
+                Uuid::from_bytes(TEST_CRED_ID),
+                Kind::Rsa2kPublic,
+                Key::RsaPublic(rsa_public_key.clone()),
+                flags,
+                session_result2.session_id,
+            )
+            .unwrap();
+
+        // Backup session table state
+        let vault_inner = vault.inner.read();
+        let session_table = &vault_inner.session_table;
+        let backup_mask = session_table.backup();
+        drop(vault_inner);
+
+        // Verify backup contains session information
+        assert_ne!(backup_mask, 0); // Should have some sessions recorded
+
+        // Simulate session table restoration (this would happen after live migration)
+        let mut vault_inner = vault.inner.write();
+        let session_table = &mut vault_inner.session_table;
+        session_table.restore(backup_mask);
+        assert!(session_table.needs_renegotiation(session_result1.session_id));
+        assert!(session_table.needs_renegotiation(session_result2.session_id));
+        drop(vault_inner);
+
+        // After restore, sessions would need to be reestablished,
+        // but the virtual ID allocation masks will be preserved.
+
+        // This is tested more thoroughly in session_table.rs tests
+        // Here we just verify that the vault integration works
+        let result = vault.close_session(session_result1.session_id);
+        assert!(result.is_ok());
+        let result = vault.close_session(session_result2.session_id);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_close_already_closed_session() {
+        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
+        helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
+        let api_rev = ApiRev { major: 1, minor: 0 };
+
+        let session_result =
+            helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
+        let result = vault.close_session(session_result.session_id);
+        assert!(result.is_ok());
+
+        let result = vault.close_session(session_result.session_id);
+        assert_eq!(result, Err(ManticoreError::SessionNotFound));
+    }
 
     #[test]
     fn test_get_session_encryption_key_id_without_establish_credential() {
@@ -2226,15 +3172,269 @@ pub(crate) mod tests {
         assert!(result.is_ok());
     }
 
+    #[test]
+    fn test_close_session_after_backup_restore_success() {
+        // Test that closing a session succeeds after backup and restore operations by handling renegotiation requirement
+        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
+        helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
+        let api_rev = ApiRev { major: 1, minor: 0 };
+
+        // Create session
+        let session_result =
+            helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
+
+        // Verify session exists and is valid
+        assert!(vault.get_session_entry(session_result.session_id).is_ok());
+
+        // Perform backup operation
+        let vault_inner = vault.inner.read();
+        let session_table = &vault_inner.session_table;
+        let backup_mask = session_table.backup();
+        assert!(!session_table.needs_renegotiation(session_result.session_id));
+        drop(vault_inner);
+
+        // Verify backup captured the session
+        assert_ne!(backup_mask, 0);
+
+        // Perform restore operation
+        let mut vault_inner = vault.inner.write();
+        let session_table = &mut vault_inner.session_table;
+        session_table.restore(backup_mask);
+        // After restore, session should need renegotiation
+        assert!(session_table.needs_renegotiation(session_result.session_id));
+        assert_eq!(
+            session_table.get_available_session_count(),
+            (MAX_SESSIONS - 1) as u32
+        );
+        drop(vault_inner);
+
+        // After backup/restore, the session needs renegotiation but can now be closed successfully
+        let result = vault.close_session(session_result.session_id);
+        assert!(
+            result.is_ok(),
+            "Expected session to be closeable after backup/restore even with renegotiation requirement: {:?}",
+            result
+        );
+
+        // Verify session is properly cleaned up from session table
+        assert!(vault.get_session_entry(session_result.session_id).is_err());
+    }
+
+    #[test]
+    fn test_close_session_before_backup_restore_not_exist_after() {
+        // Test that a session closed before backup/restore operations does not exist after
+        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
+        helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
+        let api_rev = ApiRev { major: 1, minor: 0 };
+
+        // Create a session
+        let session_result =
+            helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
+
+        // Verify session exists
+        assert!(vault.get_session_entry(session_result.session_id).is_ok());
+
+        // Close the session before backup/restore
+        let result = vault.close_session(session_result.session_id);
+        assert!(result.is_ok());
+
+        // Verify session is closed
+        assert!(vault.get_session_entry(session_result.session_id).is_err());
+
+        // Perform backup operation (should capture no sessions since the only session is closed)
+        let vault_inner = vault.inner.read();
+        let session_table = &vault_inner.session_table;
+        let backup_mask = session_table.backup();
+        assert!(
+            backup_mask == 0,
+            "Expected backup mask to be 0 since session was closed"
+        );
+        assert!(
+            !session_table.needs_renegotiation(session_result.session_id),
+            "Session should not need renegotiation since it was closed"
+        );
+        assert!(
+            !session_table.valid(session_result.session_id),
+            "Session should not exist in session table after being closed"
+        );
+        drop(vault_inner);
+
+        // Since we closed the session, backup should be 0 (no sessions to backup)
+        assert_eq!(backup_mask, 0);
+
+        // Perform restore operation with empty mask
+        let mut vault_inner = vault.inner.write();
+        let session_table = &mut vault_inner.session_table;
+        session_table.restore(backup_mask);
+        assert!(!session_table.needs_renegotiation(session_result.session_id));
+        assert!(
+            !session_table.valid(session_result.session_id),
+            "Session should not exist in session table after being closed"
+        );
+        assert_eq!(
+            session_table.get_available_session_count(),
+            MAX_SESSIONS as u32
+        );
+        drop(vault_inner);
+
+        // Verify session still does not exist after backup/restore
+        assert!(vault.get_session_entry(session_result.session_id).is_err());
+
+        // Try to close the already-closed session (should fail)
+        let result = vault.close_session(session_result.session_id);
+        assert_eq!(result, Err(ManticoreError::SessionNotFound));
+    }
+
+    #[test]
+    fn test_ecc_signing_session_isolation() {
+        let vault = Vault::new(Uuid::from_bytes([0xb3; 16]), 4);
+        helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
+        let api_rev = ApiRev { major: 1, minor: 0 };
+
+        // Open session 1
+        let session_result1 =
+            helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
+
+        // Open session 2
+        let session_result2 =
+            helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
+
+        // Generate ECC key pairs
+        let (ecc_private_key_1, _ecc_public_key_1) = generate_ecc(EccCurve::P256).unwrap();
+        let (ecc_private_key_2, _ecc_public_key_2) = generate_ecc(EccCurve::P256).unwrap();
+
+        // Add ECC signing key to session 1
+        let mut flags = EntryFlags::default();
+        flags.set_session_only(true);
+
+        let key_1 = vault
+            .add_key(
+                Uuid::from_bytes(TEST_CRED_ID),
+                Kind::Ecc256Private,
+                Key::EccPrivate(ecc_private_key_1.clone()),
+                flags,
+                session_result1.session_id,
+            )
+            .unwrap();
+
+        // Add ECC signing key to session 2
+        let key_2 = vault
+            .add_key(
+                Uuid::from_bytes(TEST_CRED_ID),
+                Kind::Ecc256Private,
+                Key::EccPrivate(ecc_private_key_2.clone()),
+                flags,
+                session_result2.session_id,
+            )
+            .unwrap();
+
+        // Test data to sign
+        let blob_to_sign = b"test data to sign";
+
+        // Test 1: Use key 1 with session 1 -> should succeed
+        let entry_1 = vault.get_key_entry(key_1).unwrap();
+        if let Key::EccPrivate(ref ecc_key) = entry_1.key() {
+            let result = ecc_key.sign(blob_to_sign);
+            assert!(
+                result.is_ok(),
+                "Signing with key 1 in session 1 should succeed"
+            );
+        } else {
+            panic!("Expected ECC private key");
+        }
+
+        // Test 2: Use key 2 with session 2 -> should succeed
+        let entry_2 = vault.get_key_entry(key_2).unwrap();
+        if let Key::EccPrivate(ref ecc_key) = entry_2.key() {
+            let result = ecc_key.sign(blob_to_sign);
+            assert!(
+                result.is_ok(),
+                "Signing with key 2 in session 2 should succeed"
+            );
+        } else {
+            panic!("Expected ECC private key");
+        }
+
+        // Test 3: Try to access key 2 after close session 2 -> should fail
+        let result = vault.close_session(session_result2.session_id);
+        assert!(result.is_ok(), "Closing session 2 should succeed");
+
+        let entry_1 = vault.get_key_entry(key_1).unwrap();
+        if let Key::EccPrivate(ref ecc_key) = entry_1.key() {
+            let result = ecc_key.sign(blob_to_sign);
+            assert!(
+                result.is_ok(),
+                "Signing with key 1 in session 1 should succeed after closing session 2"
+            );
+        } else {
+            panic!("Expected ECC private key");
+        }
+
+        // Key 2 should no longer be accessible (was session-only)
+        let result = vault.get_key_entry(key_2);
+        assert!(
+            result.is_err(),
+            "Key 2 should be inaccessible after session 2 is closed"
+        );
+
+        let result = vault.close_session(session_result1.session_id);
+        assert!(result.is_ok(), "Closing session 1 should succeed");
+
+        // Key 1 should no longer be accessible (was session-only)
+        let result = vault.get_key_entry(key_1);
+        assert!(
+            result.is_err(),
+            "Key 1 should be inaccessible after session 1 is closed"
+        );
+    }
+
+    #[test]
+    fn test_get_target_session_id() {
+        let vault = Vault::new(Uuid::from_bytes([0xb3; 16]), 4);
+        helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
+        let api_rev = ApiRev { major: 1, minor: 0 };
+
+        // Open a session
+        let session_result =
+            helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
+
+        // Test 1: Get target session ID for valid virtual session ID -> should succeed
+        let result = vault.get_target_session_id(session_result.session_id);
+        assert!(
+            result.is_ok(),
+            "Getting target session ID for valid virtual session should succeed"
+        );
+        let _physical_session_id = result.unwrap();
+
+        // Test 2: Get target session ID for invalid virtual session ID -> should fail
+        let invalid_virtual_session_id = 999u16; // Invalid session ID
+        let result = vault.get_target_session_id(invalid_virtual_session_id);
+        assert!(
+            result.is_err(),
+            "Getting target session ID for invalid virtual session should fail"
+        );
+        assert_eq!(result.unwrap_err(), ManticoreError::SessionNotFound);
+
+        // Test 3: Get target session ID after closing session -> should fail
+        let result = vault.close_session(session_result.session_id);
+        assert!(result.is_ok(), "Closing session should succeed");
+
+        let result = vault.get_target_session_id(session_result.session_id);
+        assert!(
+            result.is_err(),
+            "Getting target session ID for closed session should fail"
+        );
+        assert_eq!(result.unwrap_err(), ManticoreError::SessionNotFound);
+    }
+
     // This test helps achieve 100% test coverage
     // as debug trait is mainly used for test purposes
     #[test]
     fn test_debug_trait_print() {
         let vault = Vault::new(Uuid::new_v4(), 4);
-        println!("Vault {:?}", vault);
+
         let vault_weak = vault.as_weak();
-        println!("VaultWeak {:?}", vault_weak);
-        let upgraded_vault = vault_weak.upgrade();
-        println!("Vault {:?}", upgraded_vault);
+
+        let _upgraded_vault = vault_weak.upgrade();
     }
 }

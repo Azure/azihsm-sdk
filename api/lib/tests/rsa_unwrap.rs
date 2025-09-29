@@ -2,7 +2,10 @@
 
 mod common;
 
+#[cfg(not(feature = "resilient"))]
 use mcr_api::*;
+#[cfg(feature = "resilient")]
+use mcr_api_resilient::*;
 use mcr_ddi_sim::crypto::rsa::RsaOp;
 use test_with_tracing::test;
 
@@ -27,7 +30,7 @@ fn test_rsa_unwrap() {
             KeyClass::Rsa,
             None,
             KeyProperties {
-                key_usage: KeyUsage::WrapUnwrap,
+                key_usage: KeyUsage::Unwrap,
                 key_availability: KeyAvailability::Session,
             },
         );

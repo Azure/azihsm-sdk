@@ -6,9 +6,10 @@ use std::mem::size_of;
 use std::path::PathBuf;
 
 use open_enum::open_enum;
-use zerocopy::AsBytes;
-use zerocopy::FromBytes;
-use zerocopy::FromZeroes;
+use zerocopy::Immutable;
+use zerocopy::IntoBytes;
+use zerocopy::KnownLayout;
+use zerocopy::TryFromBytes;
 
 use super::*;
 
@@ -27,8 +28,9 @@ pub(crate) fn helper_post_process_log(bin_log: PathBuf) {
     let cp_size = size_of::<Checkpoint>();
 
     while offset + cp_size < perf_log_raw.len() {
-        let checkpoint = Checkpoint::read_from(&perf_log_raw[offset..offset + cp_size])
-            .expect("Could not convert binary log to friendly log");
+        let (checkpoint, _) =
+            Checkpoint::try_ref_from_prefix(&perf_log_raw[offset..offset + cp_size])
+                .expect("Could not convert binary log to friendly log");
 
         offset += cp_size;
 
@@ -37,7 +39,7 @@ pub(crate) fn helper_post_process_log(bin_log: PathBuf) {
             continue;
         }
 
-        checkpoints.push(checkpoint);
+        checkpoints.push(checkpoint.clone());
     }
 
     println!("Opening out file {:?}", out_log);
@@ -85,7 +87,7 @@ const MAX_CHECKPOINTS: usize = 16;
 #[repr(u8)]
 #[allow(missing_docs)]
 #[open_enum]
-#[derive(Debug, Copy, Clone, PartialEq, Eq, AsBytes, FromBytes, FromZeroes)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, IntoBytes, TryFromBytes, Immutable)]
 pub enum CheckpointId {
     /// Unknown
     Unknown,
@@ -203,9 +205,6 @@ pub enum CheckpointId {
     /// Generate attestation report for key
     DdiOpAttestKey,
 
-    /// Get collateral
-    DdiOpGetCollateral,
-
     /// RSA Modular Exponentiation
     DdiOpRsaModExp,
 
@@ -283,7 +282,7 @@ pub enum CheckpointId {
 /// Enumeration of checkpoint kind
 #[repr(u8)]
 #[open_enum]
-#[derive(Debug, Copy, Clone, PartialEq, Eq, AsBytes, FromBytes, FromZeroes)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, IntoBytes, TryFromBytes, Immutable)]
 pub enum CheckpointKind {
     /// Independent event
     Independent,
@@ -297,7 +296,7 @@ pub enum CheckpointKind {
 
 /// Represents a checkpoint.
 #[repr(C)]
-#[derive(Debug, Clone, AsBytes, FromBytes, FromZeroes)]
+#[derive(Debug, Clone, IntoBytes, TryFromBytes, Immutable, KnownLayout)]
 pub struct Checkpoint {
     version: u32,
     next: u32,
@@ -308,7 +307,7 @@ pub struct Checkpoint {
 
 /// Checkpoint record
 #[repr(C)]
-#[derive(Debug, Copy, Clone, AsBytes, FromBytes, FromZeroes)]
+#[derive(Debug, Copy, Clone, IntoBytes, TryFromBytes, Immutable)]
 pub struct CheckPointRecord {
     time: u32,
     kind: CheckpointKind,
@@ -420,7 +419,6 @@ impl std::fmt::Display for CheckpointId {
             CheckpointId::DdiOpDeleteKey => "DdiOpDeleteKey",
             CheckpointId::DdiOpOpenKey => "DdiOpOpenKey",
             CheckpointId::DdiOpAttestKey => "DdiOpAttestKey",
-            CheckpointId::DdiOpGetCollateral => "DdiOpGetCollateral",
             CheckpointId::DdiOpRsaModExp => "DdiOpRsaModExp",
             CheckpointId::DdiOpRsaUnwrap => "DdiOpRsaUnwrap",
             CheckpointId::DdiOpGetUnwrappingKey => "DdiOpGetUnwrappingKey",
@@ -457,7 +455,7 @@ impl std::fmt::Display for CheckpointId {
             CheckpointId::MiscCpF => "MiscCpF",
 
             _ => {
-                _unknown = format!("UNKNOWN_{:?}", self_owned.as_bytes());
+                _unknown = format!("UNKNOWN_{:?}", &mut self_owned.as_bytes());
                 _unknown.as_str()
             }
         };

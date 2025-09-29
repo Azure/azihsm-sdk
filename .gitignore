@@ -11,6 +11,9 @@
 target/
 Cargo.lock
 
+# File generated in mcr_api_resilient tests
+tmpfile
+
 # User-specific files (MonoDevelop/Xamarin Studio)
 *.userprefs
 
@@ -367,3 +370,6 @@ bld_engine_test*
 .*.swo
 .*.swn
 .*.swm
+
+# HSM C++ build artifacts
+hsm/cpp/build/

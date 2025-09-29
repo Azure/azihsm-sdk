@@ -7,16 +7,32 @@ edition = "2021"
 
 [features]
 default = []
-use-openssl = ["openssl"]
-use-symcrypt = ["symcrypt", "spki", "sec1", "pem-rfc7468", "pkcs8", "pkcs1", "rand", "sha2", "generic-array"]
+use-openssl = ["openssl","crypto/use-openssl"]
+use-symcrypt = [
+    "symcrypt",
+    "spki",
+    "sec1",
+    "pem-rfc7468",
+    "pkcs8",
+    "pkcs1",
+    "rand",
+    "sha2",
+    "generic-array",
+    "crypto/use-symcrypt",
+]
 rust_analyzer_fix = []
 fuzzing = ["arbitrary"]
 
 [dependencies]
 #crate specific subcrates
 mcr_ddi_types.workspace = true
+masked_key.workspace = true
+crypto_env.workspace = true
+crypto.workspace = true
+lmkey_derive.workspace = true
 
 #external crates
+bitfield.workspace = true
 bitfield-struct.workspace = true
 mcr_ddi_mbor.workspace = true
 minicbor.workspace = true
@@ -28,8 +44,10 @@ spki = { workspace = true, optional = true }
 sec1 = { workspace = true, optional = true }
 pem-rfc7468 = { workspace = true, optional = true }
 pkcs8 = { workspace = true, optional = true }
-pkcs1 = {workspace = true, optional = true}
+pkcs1 = { workspace = true, optional = true }
 rand = { workspace = true, optional = true }
+zerocopy.workspace = true
+zeroize.workspace = true
 
 # generic-array needed by sec1::EncodedPoint and sec1 does not export.
 generic-array = { workspace = true, optional = true }
@@ -37,8 +55,6 @@ generic-array = { workspace = true, optional = true }
 # The following crates are not included in workspace, as they may have
 # crypto usage that shouldn't be included in client library
 sha2 = { version = "0.10.8", features = ["oid"], optional = true }
-xts-mode = "0.5.1"
-aes-crate = { package = "aes", version = "0.8.4" }
 time = { version = "0.3.6", default-features = false }
 asn1 = { version = "0.20", default-features = false }
 x509-cert = { version = "0.2.5", features = ["builder"] }
@@ -53,6 +69,9 @@ arbitrary = { workspace = true, optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 openssl = { workspace = true, optional = true }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.58", features = ["Win32_Security_Cryptography"] }
 
 [dev-dependencies]
 #support crates

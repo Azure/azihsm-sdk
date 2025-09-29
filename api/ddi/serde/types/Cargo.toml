@@ -10,6 +10,7 @@ mcr_ddi_derive.workspace = true
 mcr_ddi_mbor.workspace = true
 open-enum.workspace = true
 paste.workspace = true
+zerocopy.workspace = true
 
 # dependencies for fuzzing
 arbitrary = { workspace = true, optional = true }

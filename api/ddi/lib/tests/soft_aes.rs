@@ -3,57 +3,10 @@
 mod common;
 
 use mcr_ddi::*;
-use mcr_ddi_mbor::*;
 use mcr_ddi_types::*;
 use test_with_tracing::test;
 
 use crate::common::*;
-
-fn exec_soft_aes_op(
-    dev: &mut <DdiTest as Ddi>::Dev,
-    session_id: u16,
-    kek_len: usize,
-    kek: &[u8],
-    msg_len: usize,
-    msg: &[u8],
-    req_op: DdiSoftAesOp,
-) -> DdiResult<DdiSoftAesCmdResp> {
-    const MAX_KEY_LEN: usize = 32;
-    const MAX_MSG_LEN: usize = 1024;
-
-    let req = DdiSoftAesCmdReq {
-        hdr: DdiReqHdr {
-            op: DdiOp::SoftAes,
-            sess_id: Some(session_id),
-            rev: Some(DdiApiRev { major: 1, minor: 0 }),
-        },
-        data: DdiSoftAesReq {
-            key: MborByteArray::new(
-                {
-                    let mut data = [0u8; MAX_KEY_LEN];
-                    data[..kek_len].copy_from_slice(kek);
-                    data
-                },
-                kek_len,
-            )
-            .expect("failed to create byte array"),
-            inout: MborByteArray::new(
-                {
-                    let mut data = [0u8; MAX_MSG_LEN];
-                    data[..msg_len].copy_from_slice(msg);
-                    data
-                },
-                msg_len,
-            )
-            .expect("failed to create byte array"),
-            op: req_op,
-        },
-        ext: None,
-    };
-
-    let mut cookie = None;
-    dev.exec_op(&req, &mut cookie)
-}
 
 #[test]
 fn test_aes_unwrap_key_256() {
@@ -89,7 +42,7 @@ fn test_aes_unwrap_key_256() {
                 0xf9, 0x90,
             ];
 
-            let resp = exec_soft_aes_op(
+            let resp = helper_soft_aes_op(
                 dev,
                 session_id,
                 kek.len(),
@@ -149,7 +102,7 @@ fn test_aes_unwrap_key_192() {
                 0x35, 0xb8,
             ];
 
-            let resp = exec_soft_aes_op(
+            let resp = helper_soft_aes_op(
                 dev,
                 session_id,
                 kek.len(),
@@ -209,7 +162,7 @@ fn test_aes_unwrap_key_128() {
                 0x68, 0x41,
             ];
 
-            let resp = exec_soft_aes_op(
+            let resp = helper_soft_aes_op(
                 dev,
                 session_id,
                 kek.len(),
@@ -249,7 +202,7 @@ fn test_aes_unwrap_key_invalid_key_length() {
             let kek = [0xFF; 17];
             let input = [0xFF; 64];
 
-            let resp = exec_soft_aes_op(
+            let resp = helper_soft_aes_op(
                 dev,
                 session_id,
                 kek.len(),
@@ -268,7 +221,7 @@ fn test_aes_unwrap_key_invalid_key_length() {
             assert!(resp.is_err(), "resp {:?}", resp);
             assert!(matches!(
                 resp.unwrap_err(),
-                DdiError::DdiStatus(DdiStatus::RsaUnwrapError)
+                DdiError::DdiStatus(DdiStatus::RsaUnwrapAesUnwrapFailed)
             ));
         },
     );
@@ -289,7 +242,7 @@ fn test_aes_unwrap_key_invalid_input_length() {
             // Valid inputs are divisible by 8
             let input = [0xFF; 61];
 
-            let resp = exec_soft_aes_op(
+            let resp = helper_soft_aes_op(
                 dev,
                 session_id,
                 kek.len(),
@@ -308,7 +261,7 @@ fn test_aes_unwrap_key_invalid_input_length() {
             assert!(resp.is_err(), "resp {:?}", resp);
             assert!(matches!(
                 resp.unwrap_err(),
-                DdiError::DdiStatus(DdiStatus::RsaUnwrapError)
+                DdiError::DdiStatus(DdiStatus::RsaUnwrapAesUnwrapFailed)
             ));
         },
     );
@@ -349,7 +302,7 @@ fn test_aes_ecb_decrypt_256() {
                 0xAD, 0x2B, 0x41, 0x7B, 0xE6, 0x6C, 0x37, 0x10,
             ];
 
-            let resp = exec_soft_aes_op(
+            let resp = helper_soft_aes_op(
                 dev,
                 session_id,
                 key.len(),
@@ -409,7 +362,7 @@ fn test_aes_ecb_decrypt_192() {
                 0xAD, 0x2B, 0x41, 0x7B, 0xE6, 0x6C, 0x37, 0x10,
             ];
 
-            let resp = exec_soft_aes_op(
+            let resp = helper_soft_aes_op(
                 dev,
                 session_id,
                 key.len(),
@@ -469,7 +422,7 @@ fn test_aes_ecb_decrypt_128() {
                 0xAD, 0x2B, 0x41, 0x7B, 0xE6, 0x6C, 0x37, 0x10,
             ];
 
-            let resp = exec_soft_aes_op(
+            let resp = helper_soft_aes_op(
                 dev,
                 session_id,
                 key.len(),
@@ -509,7 +462,7 @@ fn test_aes_ecb_decrypt_invalid_key_length() {
             let message: [u8; 64] = [0xFF; 64];
             let key: [u8; 17] = [0x00; 17];
 
-            let resp = exec_soft_aes_op(
+            let resp = helper_soft_aes_op(
                 dev,
                 session_id,
                 key.len(),
@@ -528,7 +481,7 @@ fn test_aes_ecb_decrypt_invalid_key_length() {
             assert!(resp.is_err(), "resp {:?}", resp);
             assert!(matches!(
                 resp.unwrap_err(),
-                DdiError::DdiStatus(DdiStatus::RsaUnwrapError)
+                DdiError::DdiStatus(DdiStatus::RsaUnwrapAesUnwrapFailed)
             ));
         },
     );
@@ -548,7 +501,7 @@ fn test_aes_ecb_decrypt_invalid_message_length() {
             let message: [u8; 61] = [0xFF; 61];
             let key: [u8; 32] = [0x00; 32];
 
-            let resp = exec_soft_aes_op(
+            let resp = helper_soft_aes_op(
                 dev,
                 session_id,
                 key.len(),
@@ -567,7 +520,7 @@ fn test_aes_ecb_decrypt_invalid_message_length() {
             assert!(resp.is_err(), "resp {:?}", resp);
             assert!(matches!(
                 resp.unwrap_err(),
-                DdiError::DdiStatus(DdiStatus::RsaUnwrapError)
+                DdiError::DdiStatus(DdiStatus::RsaUnwrapAesUnwrapFailed)
             ));
         },
     );

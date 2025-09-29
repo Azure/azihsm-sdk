@@ -2,6 +2,7 @@
 
 //! Module for handling the incoming request, processing them and sending the response back.
 
+use mcr_ddi_mbor::MborByteArray;
 use mcr_ddi_mbor::*;
 use mcr_ddi_types::*;
 use tracing::instrument;
@@ -14,12 +15,16 @@ use crate::crypto::ecc::EccPrivateOp;
 use crate::crypto::rsa::RsaCryptoPadding;
 use crate::crypto::rsa::RsaOp;
 use crate::crypto::rsa::RsaPrivateOp;
+use crate::crypto::sha::sha;
 use crate::crypto::sha::HashAlgorithm;
 use crate::errors::ManticoreError;
 use crate::function::ApiRev;
 use crate::function::Function;
 use crate::session::RsaOpType;
+use crate::sim_crypto_env::BK3_SIZE_BYTES;
+use crate::sim_crypto_env::SEALED_BK3_SIZE;
 use crate::table::entry::key::Key::*;
+use crate::table::entry::Entry;
 use crate::table::entry::EntryFlags;
 use crate::table::entry::KeyClass;
 use crate::table::entry::Kind;
@@ -222,19 +227,26 @@ impl Dispatcher {
             Err(ManticoreError::UnsupportedRevision)?
         }
 
-        // For in-session Op, verify it matches rev of session
+        // For in-session Op, verify it matches rev of session unless it needs renegotiation
         let control_kind = SessionControlKind::from(opcode_in_hdr);
         if control_kind == SessionControlKind::InSession
             || control_kind == SessionControlKind::Close
         {
             let session_id = session_id_in_hdr.ok_or_else(|| {
                 tracing::error!("session_id should be Some");
-                ManticoreError::InvalidArgument
+                ManticoreError::SessionExpected
             })?;
+
             let allow_disabled = control_kind == SessionControlKind::Close;
-            let session_api_rev = self
+            let session_api_rev = match self
                 .function
-                .get_user_session_api_rev(session_id, allow_disabled)?;
+                .get_user_session_api_rev(session_id, allow_disabled)
+            {
+                Ok(api_rev) => api_rev,
+                // Session migrated, no rev info to check.
+                Err(ManticoreError::SessionNeedsRenegotiation) => return Ok(()),
+                Err(e) => return Err(e),
+            };
 
             if session_api_rev != rev {
                 tracing::error!(
@@ -337,6 +349,101 @@ impl Dispatcher {
 
         Ok(())
     }
+
+    fn extract_pub_key(&self, entry: &Entry) -> Result<Option<DdiDerPublicKey>, ManticoreError> {
+        const DER_MAX_SIZE: usize = 768;
+        let mut der = [0u8; DER_MAX_SIZE];
+
+        let pub_key = match entry.kind() {
+            Kind::Rsa2kPrivate
+            | Kind::Rsa3kPrivate
+            | Kind::Rsa4kPrivate
+            | Kind::Rsa2kPrivateCrt
+            | Kind::Rsa3kPrivateCrt
+            | Kind::Rsa4kPrivateCrt => {
+                if let RsaPrivate(priv_key) = entry.key() {
+                    let der_vec = priv_key.extract_pub_key_der()?;
+                    if der_vec.len() > der.len() {
+                        tracing::error!(pub_key_len = ?der_vec.len(), max = ?DER_MAX_SIZE, "Public Key DER size exceeds maximum");
+                        Err(ManticoreError::InternalError)?
+                    }
+                    der[..der_vec.len()].copy_from_slice(&der_vec);
+                    Some(DdiDerPublicKey {
+                        der: MborByteArray::new(der, der_vec.len())
+                            .map_err(|_| ManticoreError::InternalError)?,
+                        key_kind: entry.kind().as_pub()?.try_into()?,
+                    })
+                } else {
+                    None
+                }
+            }
+
+            Kind::Rsa2kPublic | Kind::Rsa3kPublic | Kind::Rsa4kPublic => {
+                if let RsaPublic(pub_key) = entry.key() {
+                    let der_vec = pub_key.to_der()?;
+                    if der_vec.len() > der.len() {
+                        tracing::error!(pub_key_len = ?der_vec.len(), max = ?DER_MAX_SIZE, "Public Key DER size exceeds maximum");
+                        Err(ManticoreError::InternalError)?
+                    }
+                    der[..der_vec.len()].copy_from_slice(&der_vec);
+                    Some(DdiDerPublicKey {
+                        der: MborByteArray::new(der, der_vec.len())
+                            .map_err(|_| ManticoreError::InternalError)?,
+                        key_kind: entry.kind().as_pub()?.try_into()?,
+                    })
+                } else {
+                    None
+                }
+            }
+
+            Kind::Ecc256Private | Kind::Ecc384Private | Kind::Ecc521Private => {
+                if let EccPrivate(priv_key) = entry.key() {
+                    let der_vec = priv_key.extract_pub_key_der()?;
+                    if der_vec.len() > der.len() {
+                        tracing::error!(pub_key_len = ?der_vec.len(), max = ?DER_MAX_SIZE, "Public Key DER size exceeds maximum");
+                        Err(ManticoreError::InternalError)?
+                    }
+                    der[..der_vec.len()].copy_from_slice(&der_vec);
+                    Some(DdiDerPublicKey {
+                        der: MborByteArray::new(der, der_vec.len())
+                            .map_err(|_| ManticoreError::InternalError)?,
+                        key_kind: entry.kind().as_pub()?.try_into()?,
+                    })
+                } else {
+                    None
+                }
+            }
+
+            Kind::Ecc256Public | Kind::Ecc384Public | Kind::Ecc521Public => {
+                if let EccPublic(pub_key) = entry.key() {
+                    let der_vec = pub_key.to_der()?;
+                    if der_vec.len() > der.len() {
+                        tracing::error!(pub_key_len = ?der_vec.len(), max = ?DER_MAX_SIZE, "Public Key DER size exceeds maximum");
+                        Err(ManticoreError::InternalError)?
+                    }
+                    der[..der_vec.len()].copy_from_slice(&der_vec);
+                    Some(DdiDerPublicKey {
+                        der: MborByteArray::new(der, der_vec.len())
+                            .map_err(|_| ManticoreError::InternalError)?,
+                        key_kind: entry.kind().as_pub()?.try_into()?,
+                    })
+                } else {
+                    None
+                }
+            }
+
+            Kind::Aes128 | Kind::Aes192 | Kind::Aes256 => None,
+            Kind::AesXtsBulk256 | Kind::AesGcmBulk256 | Kind::AesGcmBulk256Unapproved => None,
+            Kind::AesHmac640 => None,
+            Kind::Secret256 | Kind::Secret384 | Kind::Secret521 => None,
+            Kind::HmacSha256 | Kind::HmacSha384 | Kind::HmacSha512 => None,
+
+            Kind::Session => Err(ManticoreError::InvalidArgument)?,
+        };
+
+        Ok(pub_key)
+    }
+
     /// Execute AES GCM Operation
     ///     on fast path
     /// Dispatcher entry point for mock
@@ -513,6 +620,16 @@ impl Dispatcher {
             Err(e) => Err(e),
         }
     }
+
+    /// Simulate live migration for testing
+    ///
+    /// # Returns
+    /// * `Ok(())` - Successfully initiated and completed migration simulation
+    /// * `ManticoreError` - Error that occurred during migration simulation
+    pub fn dispatch_migration_sim(&self) -> Result<(), ManticoreError> {
+        self.function.simulate_migration()
+    }
+
     /// Dispatches the incoming request to the appropriate handler and fill the response buffer.
     ///
     /// # Arguments
@@ -609,13 +726,6 @@ impl Dispatcher {
                 DdiOp::AttestKey => {
                     dispatch_handler!(
                         self.dispatch_attest_key(&mut decoder, &hdr, out_data),
-                        resp_header
-                    )
-                }
-
-                DdiOp::GetCollateral => {
-                    dispatch_handler!(
-                        self.dispatch_get_collateral(&mut decoder, &hdr, out_data),
                         resp_header
                     )
                 }
@@ -736,9 +846,37 @@ impl Dispatcher {
                     )
                 }
 
+                DdiOp::ReopenSession => {
+                    dispatch_handler!(
+                        self.dispatch_reopen_session(&mut decoder, &hdr, out_data),
+                        resp_header
+                    )
+                }
+
                 DdiOp::ChangePin => {
                     dispatch_handler!(
                         self.dispatch_change_pin(&mut decoder, &hdr, out_data),
+                        resp_header
+                    )
+                }
+
+                DdiOp::UnmaskKey => {
+                    dispatch_handler!(
+                        self.dispatch_unmask_key(&mut decoder, &hdr, out_data),
+                        resp_header
+                    )
+                }
+
+                DdiOp::GetCertChainInfo => {
+                    dispatch_handler!(
+                        self.dispatch_get_cert_chain_info(&mut decoder, &hdr, out_data),
+                        resp_header
+                    )
+                }
+
+                DdiOp::GetCertificate => {
+                    dispatch_handler!(
+                        self.dispatch_get_certificate(&mut decoder, &hdr, out_data),
                         resp_header
                     )
                 }
@@ -760,6 +898,27 @@ impl Dispatcher {
                 DdiOp::GetPerfLogChunk => {
                     dispatch_handler!(
                         self.dispatch_get_perf_log_chunk(&mut decoder, &hdr, out_data),
+                        resp_header
+                    )
+                }
+
+                DdiOp::InitBk3 => {
+                    dispatch_handler!(
+                        self.dispatch_init_bk3(&mut decoder, &hdr, out_data),
+                        resp_header
+                    )
+                }
+
+                DdiOp::SetSealedBk3 => {
+                    dispatch_handler!(
+                        self.dispatch_set_sealed_bk3(&mut decoder, &hdr, out_data),
+                        resp_header
+                    )
+                }
+
+                DdiOp::GetSealedBk3 => {
+                    dispatch_handler!(
+                        self.dispatch_get_sealed_bk3(&mut decoder, &hdr, out_data),
                         resp_header
                     )
                 }
@@ -921,81 +1080,9 @@ impl Dispatcher {
         let key_num = app_session.get_key_num_by_tag(req.key_tag)?;
         let entry = app_session.get_key_entry(key_num)?;
 
-        let pub_key = match entry.kind() {
-            Kind::Rsa2kPrivate
-            | Kind::Rsa3kPrivate
-            | Kind::Rsa4kPrivate
-            | Kind::Rsa2kPrivateCrt
-            | Kind::Rsa3kPrivateCrt
-            | Kind::Rsa4kPrivateCrt => {
-                if let RsaPrivate(priv_key) = entry.key() {
-                    let mut der = [0u8; 768];
-                    let der_vec = priv_key.extract_pub_key_der()?;
-                    der[..der_vec.len()].copy_from_slice(&der_vec);
-                    Some(DdiDerPublicKey {
-                        der: MborByteArray::new(der, der_vec.len())
-                            .map_err(|_| ManticoreError::InternalError)?,
-                        key_kind: entry.kind().as_pub()?.into(),
-                    })
-                } else {
-                    None
-                }
-            }
+        let pub_key = self.extract_pub_key(&entry)?;
 
-            Kind::Rsa2kPublic | Kind::Rsa3kPublic | Kind::Rsa4kPublic => {
-                if let RsaPublic(pub_key) = entry.key() {
-                    let mut der = [0u8; 768];
-                    let der_vec = pub_key.to_der()?;
-                    der[..der_vec.len()].copy_from_slice(&der_vec);
-                    Some(DdiDerPublicKey {
-                        der: MborByteArray::new(der, der_vec.len())
-                            .map_err(|_| ManticoreError::InternalError)?,
-                        key_kind: entry.kind().as_pub()?.into(),
-                    })
-                } else {
-                    None
-                }
-            }
-
-            Kind::Ecc256Private | Kind::Ecc384Private | Kind::Ecc521Private => {
-                if let EccPrivate(priv_key) = entry.key() {
-                    let mut der = [0u8; 768];
-                    let der_vec = priv_key.extract_pub_key_der()?;
-                    der[..der_vec.len()].copy_from_slice(&der_vec);
-                    Some(DdiDerPublicKey {
-                        der: MborByteArray::new(der, der_vec.len())
-                            .map_err(|_| ManticoreError::InternalError)?,
-                        key_kind: entry.kind().as_pub()?.into(),
-                    })
-                } else {
-                    None
-                }
-            }
-
-            Kind::Ecc256Public | Kind::Ecc384Public | Kind::Ecc521Public => {
-                if let EccPublic(pub_key) = entry.key() {
-                    let mut der = [0u8; 768];
-                    let der_vec = pub_key.to_der()?;
-                    der[..der_vec.len()].copy_from_slice(&der_vec);
-                    Some(DdiDerPublicKey {
-                        der: MborByteArray::new(der, der_vec.len())
-                            .map_err(|_| ManticoreError::InternalError)?,
-                        key_kind: entry.kind().as_pub()?.into(),
-                    })
-                } else {
-                    None
-                }
-            }
-
-            Kind::Aes128 | Kind::Aes192 | Kind::Aes256 => None,
-            Kind::AesBulk256 => None,
-            Kind::Secret256 | Kind::Secret384 | Kind::Secret521 => None,
-            Kind::HmacSha256 | Kind::HmacSha384 | Kind::HmacSha512 => None,
-
-            Kind::Session => Err(ManticoreError::InvalidArgument)?,
-        };
-
-        let bulk_key_id = if entry.kind() == Kind::AesBulk256 {
+        let bulk_key_id = if entry.kind().is_bulk_key() {
             Some(key_num)
         } else {
             None
@@ -1003,7 +1090,7 @@ impl Dispatcher {
 
         let resp = DdiOpenKeyResp {
             key_id: key_num,
-            key_kind: entry.kind().into(),
+            key_kind: entry.kind().try_into()?,
             pub_key,
             bulk_key_id,
         };
@@ -1040,54 +1127,6 @@ impl Dispatcher {
 
         let resp = DdiAttestKeyResp {
             report: MborByteArray::new(report, report_len)
-                .map_err(|_| ManticoreError::InternalError)?,
-        };
-
-        self.send_response(resp_header, resp, None, out_data)
-    }
-
-    fn dispatch_get_collateral(
-        &self,
-        decoder: &mut DdiDecoder<'_>,
-        hdr: &DdiReqHdr,
-        out_data: &mut [u8],
-    ) -> Result<SessionInfoResponse, ManticoreError> {
-        let resp_header = DdiRespHdr {
-            rev: hdr.rev,
-            op: hdr.op,
-            sess_id: hdr.sess_id,
-            status: DdiStatus::Success,
-            fips_approved: false,
-        };
-
-        // TODO: Collateral support for virtual device is pending
-        // For now, virtual manticore only accept request for AKCert
-        let req = decoder
-            .decode_data::<DdiGetCollateralReq>()
-            .map_err(|_| ManticoreError::CborDecodeError)?;
-        if req.collateral_type != DdiGetCollateralType::AKCert {
-            tracing::error!("Collateral type ({:?}) is not AKCert", req.collateral_type,);
-            Err(ManticoreError::InvalidArgument)?
-        }
-
-        let session_id = hdr.sess_id.ok_or(ManticoreError::SessionExpected)?;
-
-        let app_session = self.function.get_user_session(session_id, false)?;
-        let span = tracing::info_span!("AppSession", session_id = ?app_session.id());
-        let _guard = span.enter();
-
-        let collateral_vec = app_session.get_collateral()?;
-        tracing::debug!(
-            collateral_len = collateral_vec.len(),
-            "Completed app_session.get_collateral()"
-        );
-
-        let mut collateral_array = [0u8; 3072];
-        collateral_array[..collateral_vec.len()].copy_from_slice(&collateral_vec);
-
-        let resp = DdiGetCollateralResp {
-            num_certs: None,
-            collateral: MborByteArray::new(collateral_array, collateral_vec.len())
                 .map_err(|_| ManticoreError::InternalError)?,
         };
 
@@ -1166,9 +1205,7 @@ impl Dispatcher {
         }
 
         // Disallow named keys for session keys.
-        if req.key_properties.key_availability == DdiKeyAvailability::Session
-            && req.key_tag.is_some()
-        {
+        if req.key_properties.key_metadata.session() && req.key_tag.is_some() {
             tracing::error!(error = ?ManticoreError::InvalidArgument, "Named keys are not allowed for session keys");
             Err(ManticoreError::InvalidArgument)?
         }
@@ -1231,20 +1268,27 @@ impl Dispatcher {
         let mut flags = EntryFlags::new().with_imported(true);
 
         let key_class: KeyClass = req.wrapped_blob_key_class.try_into()?;
-        if !key_class.allows_usage(req.key_properties.key_usage) {
-            tracing::error!(error = ?ManticoreError::InvalidPermissions, key_class = ?key_class, key_usage = ?req.key_properties.key_usage, "Key type doesn't allow this key usage");
+
+        let usage = req
+            .key_properties
+            .key_metadata
+            .try_into()
+            .map_err(|_| ManticoreError::InvalidPermissions)?;
+
+        if !key_class.allows_usage(usage) {
+            tracing::error!(error = ?ManticoreError::InvalidPermissions, key_class = ?key_class, key_usage = ?usage, "Key type doesn't allow this key usage");
             Err(ManticoreError::InvalidPermissions)?
         }
 
-        match req.key_properties.key_usage {
+        match usage {
             DdiKeyUsage::SignVerify => flags.set_allow_sign_verify(true),
             DdiKeyUsage::EncryptDecrypt => flags.set_allow_encrypt_decrypt(true),
-            DdiKeyUsage::WrapUnwrap => flags.set_allow_unwrap(true),
+            DdiKeyUsage::Unwrap => flags.set_allow_unwrap(true),
             DdiKeyUsage::Derive => flags.set_allow_derive(true),
             _ => Err(ManticoreError::InvalidArgument)?,
         }
 
-        if req.key_properties.key_availability == DdiKeyAvailability::Session {
+        if req.key_properties.key_metadata.session() {
             flags.set_session_only(true);
         }
 
@@ -1254,95 +1298,24 @@ impl Dispatcher {
             flags,
             req.key_tag,
         )?;
-        tracing::debug!(key_num, "Completed app_session.import_key()");
+        tracing::debug!(key_num, "Completed app_session.import_key() in rsa_unwrap");
 
         let entry = app_session.get_key_entry(key_num)?;
-        let public_key = match entry.kind() {
-            Kind::Rsa2kPrivate
-            | Kind::Rsa3kPrivate
-            | Kind::Rsa4kPrivate
-            | Kind::Rsa2kPrivateCrt
-            | Kind::Rsa3kPrivateCrt
-            | Kind::Rsa4kPrivateCrt => {
-                if let RsaPrivate(priv_key) = entry.key() {
-                    let mut der = [0u8; 768];
-                    let der_vec = priv_key.extract_pub_key_der()?;
-                    der[..der_vec.len()].copy_from_slice(&der_vec);
-                    Some(DdiDerPublicKey {
-                        der: MborByteArray::new(der, der_vec.len())
-                            .map_err(|_| ManticoreError::InternalError)?,
-                        key_kind: entry.kind().as_pub()?.into(),
-                    })
-                } else {
-                    None
-                }
-            }
-
-            Kind::Rsa2kPublic | Kind::Rsa3kPublic | Kind::Rsa4kPublic => {
-                if let RsaPublic(pub_key) = entry.key() {
-                    let mut der = [0u8; 768];
-                    let der_vec = pub_key.to_der()?;
-                    der[..der_vec.len()].copy_from_slice(&der_vec);
-                    Some(DdiDerPublicKey {
-                        der: MborByteArray::new(der, der_vec.len())
-                            .map_err(|_| ManticoreError::InternalError)?,
-                        key_kind: entry.kind().as_pub()?.into(),
-                    })
-                } else {
-                    None
-                }
-            }
-
-            Kind::Ecc256Private | Kind::Ecc384Private | Kind::Ecc521Private => {
-                if let EccPrivate(priv_key) = entry.key() {
-                    let mut der = [0u8; 768];
-                    let der_vec = priv_key.extract_pub_key_der()?;
-                    der[..der_vec.len()].copy_from_slice(&der_vec);
-                    Some(DdiDerPublicKey {
-                        der: MborByteArray::new(der, der_vec.len())
-                            .map_err(|_| ManticoreError::InternalError)?,
-                        key_kind: entry.kind().as_pub()?.into(),
-                    })
-                } else {
-                    None
-                }
-            }
-
-            Kind::Ecc256Public | Kind::Ecc384Public | Kind::Ecc521Public => {
-                if let EccPublic(pub_key) = entry.key() {
-                    let mut der = [0u8; 768];
-                    let der_vec = pub_key.to_der()?;
-                    der[..der_vec.len()].copy_from_slice(&der_vec);
-                    Some(DdiDerPublicKey {
-                        der: MborByteArray::new(der, der_vec.len())
-                            .map_err(|_| ManticoreError::InternalError)?,
-                        key_kind: entry.kind().as_pub()?.into(),
-                    })
-                } else {
-                    None
-                }
-            }
-
-            Kind::Aes128 | Kind::Aes192 | Kind::Aes256 => None,
-            Kind::AesBulk256 => None,
-            Kind::Secret256 | Kind::Secret384 | Kind::Secret521 => None,
-            Kind::HmacSha256 | Kind::HmacSha384 | Kind::HmacSha512 => None,
-
-            Kind::Session => Err(ManticoreError::InvalidArgument)?,
-        };
-
-        let bulk_key_id = if entry.kind() == Kind::AesBulk256 {
+        let public_key: Option<DdiDerPublicKey> = self.extract_pub_key(&entry)?;
+        let bulk_key_id = if entry.kind().is_bulk_key() {
             Some(key_num)
         } else {
             None
         };
 
+        let masked_key = app_session.mask_key(&entry)?;
+
         let resp = DdiRsaUnwrapResp {
             key_id: key_num,     // this is the imported key id
             pub_key: public_key, // this is the public key of the imported key
             bulk_key_id,
-            kind: entry.kind().into(),
-            masked_key: MborByteArray::from_slice(&[])
+            kind: entry.kind().try_into()?,
+            masked_key: MborByteArray::from_slice(&masked_key)
                 .map_err(|_| ManticoreError::InvalidArgument)?,
         };
 
@@ -1376,6 +1349,7 @@ impl Dispatcher {
             .get_unwrapping_key_num()?;
 
         let entry = app_session.get_key_entry(key_id)?;
+        let masked_key = app_session.mask_key(&entry)?;
 
         let pub_key = if let RsaPrivate(private_key) = entry.key() {
             let mut der = [0u8; 768];
@@ -1384,14 +1358,19 @@ impl Dispatcher {
             DdiDerPublicKey {
                 der: MborByteArray::new(der, der_vec.len())
                     .map_err(|_| ManticoreError::InternalError)?,
-                key_kind: entry.kind().as_pub()?.into(),
+                key_kind: entry.kind().as_pub()?.try_into()?,
             }
         } else {
             // Implies unwrapping key was initialized incorrectly
             Err(ManticoreError::InternalError)?
         };
 
-        let resp = DdiGetUnwrappingKeyResp { key_id, pub_key };
+        let resp = DdiGetUnwrappingKeyResp {
+            key_id,
+            pub_key,
+            masked_key: MborByteArray::from_slice(&masked_key)
+                .map_err(|_| ManticoreError::InvalidArgument)?,
+        };
         self.send_response(resp_header, resp, None, out_data)
     }
 
@@ -1420,27 +1399,37 @@ impl Dispatcher {
         let _guard = span.enter();
 
         let key_kind: Kind = req.curve.try_into()?;
-        if !key_kind.allows_usage(req.key_properties.key_usage) {
-            tracing::error!(error = ?ManticoreError::InvalidPermissions, key_kind = ?key_kind, key_usage = ?req.key_properties.key_usage, "Key type doesn't allow this key usage");
+
+        let usage = req
+            .key_properties
+            .key_metadata
+            .try_into()
+            .map_err(|_| ManticoreError::InvalidPermissions)?;
+
+        if !key_kind.allows_usage(usage) {
+            tracing::error!(error = ?ManticoreError::InvalidPermissions, key_kind = ?key_kind, key_usage = ?usage, "Key type doesn't allow this key usage");
             Err(ManticoreError::InvalidPermissions)?
         }
 
         let mut flags = EntryFlags::default();
-        match req.key_properties.key_usage {
+        match usage {
             DdiKeyUsage::SignVerify => flags.set_allow_sign_verify(true),
             DdiKeyUsage::EncryptDecrypt => flags.set_allow_encrypt_decrypt(true),
-            DdiKeyUsage::WrapUnwrap => flags.set_allow_unwrap(true),
+            DdiKeyUsage::Unwrap => flags.set_allow_unwrap(true),
             DdiKeyUsage::Derive => flags.set_allow_derive(true),
             _ => Err(ManticoreError::InvalidArgument)?,
         }
 
-        if req.key_properties.key_availability == DdiKeyAvailability::Session {
+        if req.key_properties.key_metadata.session() {
             flags.set_session_only(true);
         }
 
         let (private_key_id, der_vec) =
             app_session.ecc_generate_key(req.curve.try_into()?, flags, req.key_tag)?;
         tracing::debug!(private_key_id, "Completed app_session.ecc_generate_key()");
+
+        let entry = app_session.get_key_entry(private_key_id)?;
+        let masked_key = app_session.mask_key(&entry)?;
 
         let mut der = [0u8; 768];
         der[..der_vec.len()].copy_from_slice(&der_vec);
@@ -1450,9 +1439,9 @@ impl Dispatcher {
             pub_key: Some(DdiDerPublicKey {
                 der: MborByteArray::new(der, der_vec.len())
                     .map_err(|_| ManticoreError::InternalError)?,
-                key_kind: key_kind.as_pub()?.into(),
+                key_kind: key_kind.as_pub()?.try_into()?,
             }),
-            masked_key: MborByteArray::from_slice(&[])
+            masked_key: MborByteArray::from_slice(&masked_key)
                 .map_err(|_| ManticoreError::InvalidArgument)?,
         };
 
@@ -1534,21 +1523,28 @@ impl Dispatcher {
         let app_session = self.function.get_user_session(session_id, false)?;
 
         let output_key_type: Kind = req.key_type.try_into()?;
-        if !output_key_type.allows_usage(req.key_properties.key_usage) {
-            tracing::error!(error = ?ManticoreError::InvalidPermissions, key_type = ?req.key_type, key_usage = ?req.key_properties.key_usage, "Key type doesn't allow this key usage");
+
+        let usage = req
+            .key_properties
+            .key_metadata
+            .try_into()
+            .map_err(|_| ManticoreError::InvalidPermissions)?;
+
+        if !output_key_type.allows_usage(usage) {
+            tracing::error!(error = ?ManticoreError::InvalidPermissions, key_type = ?req.key_type, key_usage = ?usage, "Key type doesn't allow this key usage");
             Err(ManticoreError::InvalidPermissions)?
         }
 
         let mut flags = EntryFlags::default();
-        match req.key_properties.key_usage {
+        match usage {
             DdiKeyUsage::SignVerify => flags.set_allow_sign_verify(true),
             DdiKeyUsage::EncryptDecrypt => flags.set_allow_encrypt_decrypt(true),
-            DdiKeyUsage::WrapUnwrap => flags.set_allow_unwrap(true),
+            DdiKeyUsage::Unwrap => flags.set_allow_unwrap(true),
             DdiKeyUsage::Derive => flags.set_allow_derive(true),
             _ => Err(ManticoreError::InvalidArgument)?,
         }
 
-        if req.key_properties.key_availability == DdiKeyAvailability::Session {
+        if req.key_properties.key_metadata.session() {
             flags.set_session_only(true);
         }
 
@@ -1567,9 +1563,12 @@ impl Dispatcher {
             req.key_tag,
         )?;
 
+        let entry = app_session.get_key_entry(key_id)?;
+        let masked_key = app_session.mask_key(&entry)?;
+
         let resp = DdiEcdhKeyExchangeResp {
             key_id,
-            masked_key: MborByteArray::from_slice(&[])
+            masked_key: MborByteArray::from_slice(&masked_key)
                 .map_err(|_| ManticoreError::InvalidArgument)?,
         };
 
@@ -1610,21 +1609,28 @@ impl Dispatcher {
         }
 
         let key_kind: Kind = req.key_type.try_into()?;
-        if !key_kind.allows_usage(req.key_properties.key_usage) {
-            tracing::error!(error = ?ManticoreError::InvalidPermissions, key_type = ?req.key_type, key_usage = ?req.key_properties.key_usage, "Key type doesn't allow this key usage");
+
+        let usage = req
+            .key_properties
+            .key_metadata
+            .try_into()
+            .map_err(|_| ManticoreError::InvalidPermissions)?;
+
+        if !key_kind.allows_usage(usage) {
+            tracing::error!(error = ?ManticoreError::InvalidPermissions, key_type = ?req.key_type, key_usage = ?usage, "Key type doesn't allow this key usage");
             Err(ManticoreError::InvalidPermissions)?
         }
 
         let mut flags = EntryFlags::default();
-        match req.key_properties.key_usage {
+        match usage {
             DdiKeyUsage::SignVerify => flags.set_allow_sign_verify(true),
             DdiKeyUsage::EncryptDecrypt => flags.set_allow_encrypt_decrypt(true),
-            DdiKeyUsage::WrapUnwrap => flags.set_allow_unwrap(true),
+            DdiKeyUsage::Unwrap => flags.set_allow_unwrap(true),
             DdiKeyUsage::Derive => flags.set_allow_derive(true),
             _ => Err(ManticoreError::InvalidArgument)?,
         }
 
-        if req.key_properties.key_availability == DdiKeyAvailability::Session {
+        if req.key_properties.key_metadata.session() {
             flags.set_session_only(true);
         };
 
@@ -1647,9 +1653,12 @@ impl Dispatcher {
             req.key_tag,
         )?;
 
+        let entry = app_session.get_key_entry(key_id)?;
+        let masked_key = app_session.mask_key(&entry)?;
+
         let resp = DdiHkdfDeriveResp {
             key_id,
-            masked_key: MborByteArray::from_slice(&[])
+            masked_key: MborByteArray::from_slice(&masked_key)
                 .map_err(|_| ManticoreError::InvalidArgument)?,
             bulk_key_id: None,
         };
@@ -1691,21 +1700,28 @@ impl Dispatcher {
         }
 
         let key_kind: Kind = req.key_type.try_into()?;
-        if !key_kind.allows_usage(req.key_properties.key_usage) {
-            tracing::error!(error = ?ManticoreError::InvalidPermissions, key_type = ?req.key_type, key_usage = ?req.key_properties.key_usage, "Key type doesn't allow this key usage");
+
+        let usage = req
+            .key_properties
+            .key_metadata
+            .try_into()
+            .map_err(|_| ManticoreError::InvalidPermissions)?;
+
+        if !key_kind.allows_usage(usage) {
+            tracing::error!(error = ?ManticoreError::InvalidPermissions, key_type = ?req.key_type, key_usage = ?usage, "Key type doesn't allow this key usage");
             Err(ManticoreError::InvalidPermissions)?
         }
 
         let mut flags = EntryFlags::default();
-        match req.key_properties.key_usage {
+        match usage {
             DdiKeyUsage::SignVerify => flags.set_allow_sign_verify(true),
             DdiKeyUsage::EncryptDecrypt => flags.set_allow_encrypt_decrypt(true),
-            DdiKeyUsage::WrapUnwrap => flags.set_allow_unwrap(true),
+            DdiKeyUsage::Unwrap => flags.set_allow_unwrap(true),
             DdiKeyUsage::Derive => flags.set_allow_derive(true),
             _ => Err(ManticoreError::InvalidArgument)?,
         }
 
-        if req.key_properties.key_availability == DdiKeyAvailability::Session {
+        if req.key_properties.key_metadata.session() {
             flags.set_session_only(true);
         }
 
@@ -1729,9 +1745,12 @@ impl Dispatcher {
             req.key_tag,
         )?;
 
+        let entry = app_session.get_key_entry(key_id)?;
+        let masked_key = app_session.mask_key(&entry)?;
+
         let resp = DdiKbkdfCounterHmacDeriveResp {
             key_id,
-            masked_key: MborByteArray::from_slice(&[])
+            masked_key: MborByteArray::from_slice(&masked_key)
                 .map_err(|_| ManticoreError::InvalidArgument)?,
             bulk_key_id: None,
         };
@@ -1799,28 +1818,38 @@ impl Dispatcher {
         let _guard = span.enter();
 
         let key_kind: Kind = req.key_size.try_into()?;
-        if !key_kind.allows_usage(req.key_properties.key_usage) {
-            tracing::error!(error = ?ManticoreError::InvalidPermissions, key_kind = ?key_kind, key_usage = ?req.key_properties.key_usage, "Key type doesn't allow this key usage");
+
+        let usage = req
+            .key_properties
+            .key_metadata
+            .try_into()
+            .map_err(|_| ManticoreError::InvalidPermissions)?;
+
+        if !key_kind.allows_usage(usage) {
+            tracing::error!(error = ?ManticoreError::InvalidPermissions, key_kind = ?key_kind, key_usage = ?usage, "Key type doesn't allow this key usage");
             Err(ManticoreError::InvalidPermissions)?
         }
 
         let mut flags = EntryFlags::default();
-        match req.key_properties.key_usage {
+        match usage {
             DdiKeyUsage::SignVerify => flags.set_allow_sign_verify(true),
             DdiKeyUsage::EncryptDecrypt => flags.set_allow_encrypt_decrypt(true),
-            DdiKeyUsage::WrapUnwrap => flags.set_allow_unwrap(true),
+            DdiKeyUsage::Unwrap => flags.set_allow_unwrap(true),
             DdiKeyUsage::Derive => Err(ManticoreError::InvalidPermissions)?,
             _ => Err(ManticoreError::InvalidArgument)?,
         }
 
-        if req.key_properties.key_availability == DdiKeyAvailability::Session {
+        if req.key_properties.key_metadata.session() {
             flags.set_session_only(true);
         }
 
         let key_id = app_session.aes_generate_key(req.key_size.try_into()?, flags, req.key_tag)?;
         tracing::debug!(key_id, "Completed app_session.aes_generate_key()");
 
-        let bulk_key_id = if req.key_size == DdiAesKeySize::AesBulk256 {
+        let entry = app_session.get_key_entry(key_id)?;
+        let masked_key = app_session.mask_key(&entry)?;
+
+        let bulk_key_id = if req.key_size.is_bulk_key() {
             Some(key_id)
         } else {
             None
@@ -1829,7 +1858,7 @@ impl Dispatcher {
         let resp = DdiAesGenerateKeyResp {
             key_id,
             bulk_key_id,
-            masked_key: MborByteArray::from_slice(&[])
+            masked_key: MborByteArray::from_slice(&masked_key)
                 .map_err(|_| ManticoreError::InvalidArgument)?,
         };
 
@@ -1927,7 +1956,7 @@ impl Dispatcher {
             DdiDerPublicKey {
                 der: MborByteArray::new(der, der_vec.len())
                     .map_err(|_| ManticoreError::InternalError)?,
-                key_kind: entry.kind().as_pub()?.into(),
+                key_kind: entry.kind().as_pub()?.try_into()?,
             }
         } else {
             // Implies unwrapping key was initialized incorrectly
@@ -1966,6 +1995,10 @@ impl Dispatcher {
             tracing::error!("hdr.sess_id should be None");
             Err(ManticoreError::SessionNotExpected)?
         }
+        if req.masked_bk3.is_empty() {
+            tracing::error!("masked_bk3 is empty in establish_credential request.");
+            Err(ManticoreError::InvalidArgument)?
+        }
 
         let _ = hdr.rev.ok_or(ManticoreError::UnsupportedRevision)?;
 
@@ -1986,7 +2019,31 @@ impl Dispatcher {
             &req.pub_key.der.data()[..req.pub_key.der.len()],
         )?;
 
-        let resp = DdiEstablishCredentialResp {};
+        let bmk_result = {
+            tracing::debug!(
+                masked_bk3_len = req.masked_bk3.len(),
+                "Processing provision partition within establish credential"
+            );
+
+            let bmk_option = if req.bmk.is_empty() {
+                None
+            } else {
+                Some(req.bmk.as_slice())
+            };
+
+            let bmk = self
+                .function
+                .provision(req.masked_bk3.as_slice(), bmk_option)?;
+
+            tracing::debug!(bmk_size = bmk.len(), "Successfully provisioned partition");
+
+            bmk
+        };
+
+        let resp = DdiEstablishCredentialResp {
+            bmk: MborByteArray::from_slice(&bmk_result)
+                .map_err(|_| ManticoreError::InternalError)?,
+        };
 
         self.send_response(resp_header, resp, None, out_data)
     }
@@ -2026,7 +2083,7 @@ impl Dispatcher {
             DdiDerPublicKey {
                 der: MborByteArray::new(der, der_vec.len())
                     .map_err(|_| ManticoreError::InternalError)?,
-                key_kind: entry.kind().as_pub()?.into(),
+                key_kind: entry.kind().as_pub()?.try_into()?,
             }
         } else {
             // Implies unwrapping key was initialized incorrectly
@@ -2072,25 +2129,40 @@ impl Dispatcher {
             .function
             .get_function_state()
             .get_vault(DEFAULT_VAULT_ID)?;
+        let partition_bk = self
+            .function
+            .get_function_state()
+            .get_bk_partition()
+            .map_err(|err| {
+                tracing::error!(
+                    "Converting error to CredentialsNotEstablished to match firmware behavior {:?}",
+                    err
+                );
+                ManticoreError::CredentialsNotEstablished
+            })?;
 
-        let encrypted_credential = EncryptedCredential {
+        let encrypted_credential = EncryptedSessionCredential {
             id: req.encrypted_credential.encrypted_id.data_take(),
             pin: req.encrypted_credential.encrypted_pin.data_take(),
+            seed: req.encrypted_credential.encrypted_seed.data_take(),
             iv: req.encrypted_credential.iv.data_take(),
             nonce: req.encrypted_credential.nonce,
             tag: req.encrypted_credential.tag,
         };
 
-        let (sess_id, short_app_id) = vault.open_session(
+        let session_result = vault.open_session(
             encrypted_credential,
             &req.pub_key.der.data()[..req.pub_key.der.len()],
             api_rev.into(),
+            &partition_bk,
         )?;
 
-        resp_header.sess_id = Some(sess_id);
+        resp_header.sess_id = Some(session_result.session_id);
         let resp = DdiOpenSessionResp {
-            sess_id,
-            short_app_id,
+            sess_id: session_result.session_id,
+            short_app_id: session_result.short_app_id,
+            bmk_session: MborByteArray::from_slice(&session_result.bmk)
+                .map_err(|_| ManticoreError::InternalError)?,
         };
 
         self.send_response(resp_header, resp, None, out_data)
@@ -2116,7 +2188,6 @@ impl Dispatcher {
 
         let session_id = hdr.sess_id.ok_or(ManticoreError::SessionExpected)?;
 
-        self.function.get_user_session_api_rev(session_id, false)?;
         let span = tracing::debug_span!("user_session", session_id);
         let _guard = span.enter();
 
@@ -2125,6 +2196,70 @@ impl Dispatcher {
         let resp = DdiCloseSessionResp {};
 
         self.send_response(resp_header, resp, None, out_data)
+    }
+
+    fn dispatch_reopen_session(
+        &self,
+        decoder: &mut DdiDecoder<'_>,
+        hdr: &DdiReqHdr,
+        out_data: &mut [u8],
+    ) -> Result<SessionInfoResponse, ManticoreError> {
+        let mut resp_header = DdiRespHdr {
+            rev: hdr.rev,
+            op: hdr.op,
+            sess_id: hdr.sess_id,
+            status: DdiStatus::Success,
+            fips_approved: false,
+        };
+
+        let req = decoder
+            .decode_data::<DdiReopenSessionReq>()
+            .map_err(|_| ManticoreError::CborDecodeError)?;
+
+        // For reopen session, we need the session ID in the header
+        let reopen_sess_id = hdr.sess_id.ok_or(ManticoreError::SessionExpected)?;
+
+        let api_rev = hdr.rev.ok_or(ManticoreError::UnsupportedRevision)?;
+
+        let vault = self
+            .function
+            .get_function_state()
+            .get_vault(DEFAULT_VAULT_ID)?;
+
+        let encrypted_credential = EncryptedSessionCredential {
+            id: req.encrypted_credential.encrypted_id.data_take(),
+            pin: req.encrypted_credential.encrypted_pin.data_take(),
+            seed: req.encrypted_credential.encrypted_seed.data_take(),
+            iv: req.encrypted_credential.iv.data_take(),
+            nonce: req.encrypted_credential.nonce,
+            tag: req.encrypted_credential.tag,
+        };
+
+        tracing::debug!(reopen_sess_id, "Reopening session");
+        let partition_bk = self.function.get_function_state().get_bk_partition()?;
+        let session_result = vault.reopen_session(
+            encrypted_credential,
+            &req.pub_key.der.data()[..req.pub_key.der.len()],
+            api_rev.into(),
+            reopen_sess_id,
+            Some(req.bmk_session.as_slice()),
+            &partition_bk,
+        )?;
+
+        resp_header.sess_id = Some(session_result.session_id);
+        let resp = DdiReopenSessionResp {
+            sess_id: session_result.session_id,
+            short_app_id: session_result.short_app_id,
+            bmk_session: MborByteArray::from_slice(&session_result.bmk)
+                .map_err(|_| ManticoreError::InvalidArgument)?,
+        };
+
+        self.send_response(
+            resp_header,
+            resp,
+            Some(session_result.short_app_id),
+            out_data,
+        )
     }
 
     #[allow(unused)]
@@ -2166,6 +2301,123 @@ impl Dispatcher {
         )?;
 
         let resp = DdiChangePinResp {};
+
+        self.send_response(resp_header, resp, None, out_data)
+    }
+
+    #[allow(unused)]
+    fn dispatch_unmask_key(
+        &self,
+        decoder: &mut DdiDecoder<'_>,
+        hdr: &DdiReqHdr,
+        out_data: &mut [u8],
+    ) -> Result<SessionInfoResponse, ManticoreError> {
+        let resp_header = DdiRespHdr {
+            rev: hdr.rev,
+            op: hdr.op,
+            sess_id: hdr.sess_id,
+            status: DdiStatus::Success,
+            fips_approved: false,
+        };
+
+        let req = decoder
+            .decode_data::<DdiUnmaskKeyReq>()
+            .map_err(|_| ManticoreError::CborDecodeError)?;
+
+        let session_id = hdr.sess_id.ok_or(ManticoreError::SessionExpected)?;
+        self.function.get_user_session_api_rev(session_id, false)?;
+        let span = tracing::debug_span!("user_session", session_id);
+        let _guard = span.enter();
+
+        let user_session = self.function.get_user_session(session_id, false)?;
+
+        let blob = req.masked_key.as_slice();
+
+        let key_num = user_session.unmask_key(blob)?;
+        let unmasked_entry = user_session.get_key_entry(key_num)?;
+
+        let pub_key = self.extract_pub_key(&unmasked_entry)?;
+        let bulk_key_id = if unmasked_entry.kind().is_bulk_key() {
+            Some(key_num)
+        } else {
+            None
+        };
+
+        let resp = DdiUnmaskKeyResp {
+            key_id: key_num,
+            pub_key,
+            bulk_key_id,
+            kind: unmasked_entry.kind().try_into()?,
+            masked_key: req.masked_key,
+        };
+
+        self.send_response(resp_header, resp, None, out_data)
+    }
+
+    fn dispatch_get_cert_chain_info(
+        &self,
+        _decoder: &mut DdiDecoder<'_>,
+        hdr: &DdiReqHdr,
+        out_data: &mut [u8],
+    ) -> Result<SessionInfoResponse, ManticoreError> {
+        let resp_header = DdiRespHdr {
+            rev: hdr.rev,
+            op: hdr.op,
+            sess_id: hdr.sess_id,
+            status: DdiStatus::Success,
+            fips_approved: false,
+        };
+
+        tracing::debug!("Getting cert chain info");
+
+        // Compute SHA-256(certificate)
+        let certificate = self.function.get_function_state().get_certificate()?;
+        let hash = sha(HashAlgorithm::Sha256, &certificate)?;
+
+        // TODO: Collateral support for virtual device is pending
+        // For now just return 1 for Virtual Manticore
+        let resp = DdiGetCertChainInfoResp {
+            num_certs: 1,
+            thumbprint: MborByteArray::from_slice(&hash)
+                .map_err(|_| ManticoreError::InternalError)?,
+        };
+
+        self.send_response(resp_header, resp, None, out_data)
+    }
+
+    fn dispatch_get_certificate(
+        &self,
+        decoder: &mut DdiDecoder<'_>,
+        hdr: &DdiReqHdr,
+        out_data: &mut [u8],
+    ) -> Result<SessionInfoResponse, ManticoreError> {
+        let resp_header = DdiRespHdr {
+            rev: hdr.rev,
+            op: hdr.op,
+            sess_id: hdr.sess_id,
+            status: DdiStatus::Success,
+            fips_approved: false,
+        };
+
+        // TODO: Collateral support for virtual device is pending
+        // For now, virtual manticore only accept request for AKCert
+        let req = decoder
+            .decode_data::<DdiGetCertificateReq>()
+            .map_err(|_| ManticoreError::CborDecodeError)?;
+        if !(req.slot_id == 0 && req.cert_id == 0) {
+            tracing::error!(err = ?ManticoreError::InvalidArgument, slot_id = req.slot_id, cert_id = req.cert_id, "Expects slot_id = 0 and cert_id = 0");
+            Err(ManticoreError::InvalidArgument)?
+        }
+        let certificate = self.function.get_function_state().get_certificate()?;
+        tracing::debug!(
+            certificate_len = certificate.len(),
+            "Completed app_session.get_certificate()"
+        );
+
+        let resp = DdiGetCertificateResp {
+            certificate: MborByteArray::from_slice(&certificate)
+                .map_err(|_| ManticoreError::InternalError)?,
+        };
 
         self.send_response(resp_header, resp, None, out_data)
     }
@@ -2228,104 +2480,38 @@ impl Dispatcher {
         let mut flags = EntryFlags::default();
         flags.set_imported(true);
 
-        match req.key_properties.key_usage {
+        let usage = req
+            .key_properties
+            .key_metadata
+            .try_into()
+            .map_err(|_| ManticoreError::InvalidPermissions)?;
+
+        match usage {
             DdiKeyUsage::SignVerify => flags.set_allow_sign_verify(true),
             DdiKeyUsage::EncryptDecrypt => flags.set_allow_encrypt_decrypt(true),
-            DdiKeyUsage::WrapUnwrap => flags.set_allow_unwrap(true),
+            DdiKeyUsage::Unwrap => flags.set_allow_unwrap(true),
             DdiKeyUsage::Derive => flags.set_allow_derive(true),
             _ => Err(ManticoreError::InvalidArgument)?,
         }
 
-        if req.key_properties.key_availability == DdiKeyAvailability::Session {
+        if req.key_properties.key_metadata.session() {
             flags.set_session_only(true);
         }
 
-        let result = app_session.import_key(
+        let key_num = app_session.import_key(
             &req.der.data()[..req.der.len()],
             req.key_class.try_into()?,
             flags,
             req.key_tag,
-        );
-        tracing::debug!(result = ?result, "Completed app_session.import_key()");
+        )?;
+        tracing::debug!(?key_num, "Completed app_session.import_key()");
 
-        let key_num = result?;
         let entry = app_session.get_key_entry(key_num)?;
+        let masked_key = app_session.mask_key(&entry)?;
 
-        let pub_key = match entry.kind() {
-            Kind::Rsa2kPrivate
-            | Kind::Rsa3kPrivate
-            | Kind::Rsa4kPrivate
-            | Kind::Rsa2kPrivateCrt
-            | Kind::Rsa3kPrivateCrt
-            | Kind::Rsa4kPrivateCrt => {
-                if let RsaPrivate(priv_key) = entry.key() {
-                    let mut der = [0u8; 768];
-                    let der_vec = priv_key.extract_pub_key_der()?;
-                    der[..der_vec.len()].copy_from_slice(&der_vec);
-                    Some(DdiDerPublicKey {
-                        der: MborByteArray::new(der, der_vec.len())
-                            .map_err(|_| ManticoreError::InternalError)?,
-                        key_kind: entry.kind().as_pub()?.into(),
-                    })
-                } else {
-                    None
-                }
-            }
-
-            Kind::Rsa2kPublic | Kind::Rsa3kPublic | Kind::Rsa4kPublic => {
-                if let RsaPublic(pub_key) = entry.key() {
-                    let mut der = [0u8; 768];
-                    let der_vec = pub_key.to_der()?;
-                    der[..der_vec.len()].copy_from_slice(&der_vec);
-                    Some(DdiDerPublicKey {
-                        der: MborByteArray::new(der, der_vec.len())
-                            .map_err(|_| ManticoreError::InternalError)?,
-                        key_kind: entry.kind().as_pub()?.into(),
-                    })
-                } else {
-                    None
-                }
-            }
-
-            Kind::Ecc256Private | Kind::Ecc384Private | Kind::Ecc521Private => {
-                if let EccPrivate(priv_key) = entry.key() {
-                    let mut der = [0u8; 768];
-                    let der_vec = priv_key.extract_pub_key_der()?;
-                    der[..der_vec.len()].copy_from_slice(&der_vec);
-                    Some(DdiDerPublicKey {
-                        der: MborByteArray::new(der, der_vec.len())
-                            .map_err(|_| ManticoreError::InternalError)?,
-                        key_kind: entry.kind().as_pub()?.into(),
-                    })
-                } else {
-                    None
-                }
-            }
-
-            Kind::Ecc256Public | Kind::Ecc384Public | Kind::Ecc521Public => {
-                if let EccPublic(pub_key) = entry.key() {
-                    let mut der = [0u8; 768];
-                    let der_vec = pub_key.to_der()?;
-                    der[..der_vec.len()].copy_from_slice(&der_vec);
-                    Some(DdiDerPublicKey {
-                        der: MborByteArray::new(der, der_vec.len())
-                            .map_err(|_| ManticoreError::InternalError)?,
-                        key_kind: entry.kind().as_pub()?.into(),
-                    })
-                } else {
-                    None
-                }
-            }
-
-            Kind::Aes128 | Kind::Aes192 | Kind::Aes256 => None,
-            Kind::AesBulk256 => None,
-            Kind::Secret256 | Kind::Secret384 | Kind::Secret521 => None,
-            Kind::HmacSha256 | Kind::HmacSha384 | Kind::HmacSha512 => None,
-
-            Kind::Session => Err(ManticoreError::InvalidArgument)?,
-        };
-
-        let bulk_key_id = if entry.kind() == Kind::AesBulk256 {
+        let entry = app_session.get_key_entry(key_num)?;
+        let pub_key = self.extract_pub_key(&entry)?;
+        let bulk_key_id = if entry.kind().is_bulk_key() {
             Some(key_num)
         } else {
             None
@@ -2335,8 +2521,8 @@ impl Dispatcher {
             key_id: key_num,
             pub_key,
             bulk_key_id,
-            kind: entry.kind().into(),
-            masked_key: MborByteArray::from_slice(&[])
+            key_type: entry.kind().try_into()?,
+            masked_key: MborByteArray::from_slice(&masked_key)
                 .map_err(|_| ManticoreError::InvalidArgument)?,
         };
 
@@ -2372,6 +2558,115 @@ impl Dispatcher {
         let resp = DdiGetPerfLogChunkResp {
             chunk: [chunk_len; 2048],
             chunk_len: chunk_len as u16,
+        };
+
+        self.send_response(resp_header, resp, None, out_data)
+    }
+
+    fn dispatch_init_bk3(
+        &self,
+        decoder: &mut DdiDecoder<'_>,
+        hdr: &DdiReqHdr,
+        out_data: &mut [u8],
+    ) -> Result<SessionInfoResponse, ManticoreError> {
+        let resp_header = DdiRespHdr {
+            rev: hdr.rev,
+            op: hdr.op,
+            sess_id: hdr.sess_id,
+            status: DdiStatus::Success,
+            fips_approved: false,
+        };
+
+        let req = decoder
+            .decode_data::<DdiInitBk3Req>()
+            .map_err(|_| ManticoreError::CborDecodeError)?;
+
+        tracing::debug!(bk3_len = req.bk3.len(), "InitBk3 request");
+
+        if req.bk3.len() != BK3_SIZE_BYTES {
+            tracing::error!(
+                expected = BK3_SIZE_BYTES,
+                actual = req.bk3.len(),
+                "Invalid sealed BK3 size"
+            );
+            return Err(ManticoreError::InvalidArgument);
+        }
+
+        let mut bk3_array = [0u8; BK3_SIZE_BYTES];
+        bk3_array.copy_from_slice(req.bk3.as_slice());
+        let masked_bk3 = self.function.init_bk3(bk3_array)?;
+
+        tracing::debug!(
+            masked_bk3_size = masked_bk3.len(),
+            "Successfully initialized BK3"
+        );
+
+        let resp = DdiInitBk3Resp {
+            masked_bk3: MborByteArray::from_slice(&masked_bk3)
+                .map_err(|_| ManticoreError::InternalError)?,
+            vm_launch_guid: [0u8; 16], // TODO: Generate proper VM launch GUID
+        };
+
+        self.send_response(resp_header, resp, None, out_data)
+    }
+
+    fn dispatch_set_sealed_bk3(
+        &self,
+        decoder: &mut DdiDecoder<'_>,
+        hdr: &DdiReqHdr,
+        out_data: &mut [u8],
+    ) -> Result<SessionInfoResponse, ManticoreError> {
+        let resp_header = DdiRespHdr {
+            rev: hdr.rev,
+            op: hdr.op,
+            sess_id: hdr.sess_id,
+            status: DdiStatus::Success,
+            fips_approved: false,
+        };
+
+        let req = decoder
+            .decode_data::<DdiSetSealedBk3Req>()
+            .map_err(|_| ManticoreError::CborDecodeError)?;
+
+        tracing::debug!(
+            sealed_bk3_len = req.sealed_bk3.len(),
+            "SetSealedBk3 request"
+        );
+
+        if req.sealed_bk3.len() > SEALED_BK3_SIZE {
+            return Err(ManticoreError::SealedBk3TooLarge);
+        }
+
+        self.function.set_sealed_bk3(req.sealed_bk3.as_slice())?;
+
+        let resp = DdiSetSealedBk3Resp {};
+
+        self.send_response(resp_header, resp, None, out_data)
+    }
+
+    fn dispatch_get_sealed_bk3(
+        &self,
+        decoder: &mut DdiDecoder<'_>,
+        hdr: &DdiReqHdr,
+        out_data: &mut [u8],
+    ) -> Result<SessionInfoResponse, ManticoreError> {
+        let resp_header = DdiRespHdr {
+            rev: hdr.rev,
+            op: hdr.op,
+            sess_id: hdr.sess_id,
+            status: DdiStatus::Success,
+            fips_approved: false,
+        };
+
+        let _req = decoder
+            .decode_data::<DdiGetSealedBk3Req>()
+            .map_err(|_| ManticoreError::CborDecodeError)?;
+
+        let sealed_bk3_data = self.function.get_sealed_bk3()?;
+
+        let resp = DdiGetSealedBk3Resp {
+            sealed_bk3: MborByteArray::from_slice(&sealed_bk3_data)
+                .map_err(|_| ManticoreError::InternalError)?,
         };
 
         self.send_response(resp_header, resp, None, out_data)
@@ -2421,11 +2716,73 @@ mod tests {
     use test_with_tracing::test;
 
     use super::*;
+    use crate::crypto::ecc::EccCurve;
+    use crate::errors::ManticoreError;
+    use crate::table::entry::EntryFlags;
+    use crate::vault::tests::*;
+    use crate::vault::SessionResult;
+    use crate::vault::DEFAULT_VAULT_ID;
 
     fn create_dispatcher(table_count: usize) -> Dispatcher {
         let result = Dispatcher::new(table_count);
         assert!(result.is_ok());
         result.unwrap()
+    }
+
+    fn create_test_session(dispatcher: &Dispatcher) -> SessionResult {
+        // Get function state and default vault
+        let function_state = dispatcher.function.get_function_state();
+        let vault = function_state
+            .get_vault(DEFAULT_VAULT_ID)
+            .expect("Failed to get vault");
+
+        // Establish credential first
+        helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
+
+        // Open a session
+        let api_rev = dispatcher.function.get_api_rev_range().max;
+        helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev)
+            .expect("Failed to open session")
+    }
+
+    /// Helper function to dispatch SetSealedBk3 requests.
+    ///
+    /// # Arguments
+    /// * `dispatcher` - The dispatcher instance
+    /// * `sealed_bk3_data` - The sealed BK3 data to set
+    /// * `out_data` - Output buffer for the response (allows caller to decode and validate)
+    ///
+    /// # Returns
+    /// * `Result<SessionInfoResponse, ManticoreError>` - The session info response
+    ///
+    fn helper_dispatch_set_sealed_bk3(
+        dispatcher: &Dispatcher,
+        sealed_bk3_data: &[u8],
+        out_data: &mut [u8],
+    ) -> Result<SessionInfoResponse, ManticoreError> {
+        let req = DdiSetSealedBk3Req {
+            sealed_bk3: MborByteArray::from_slice(sealed_bk3_data).unwrap(),
+        };
+
+        let api_rev = dispatcher.function.get_api_rev_range().max;
+        let hdr = DdiReqHdr {
+            rev: Some(DdiApiRev {
+                major: api_rev.major,
+                minor: api_rev.minor,
+            }),
+            op: DdiOp::SetSealedBk3,
+            sess_id: None,
+        };
+
+        let mut in_data = [0u8; 2048];
+        let req_size = DdiEncoder::encode_parts(hdr, req, &mut in_data, false).unwrap();
+
+        let session_info_request = SessionInfoRequest {
+            session_control_kind: SessionControlKind::from(DdiOp::SetSealedBk3),
+            session_id: None,
+        };
+
+        dispatcher.dispatch(session_info_request, &in_data[..req_size], out_data)
     }
 
     #[test]
@@ -2575,5 +2932,588 @@ mod tests {
         let x = 50u16;
         let res = dispatcher.flush_session(x);
         assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_dispatch_migration_sim_success() {
+        let dispatcher = create_dispatcher(4);
+
+        // Test successful migration simulation
+        let result = dispatcher.dispatch_migration_sim();
+        assert!(
+            result.is_ok(),
+            "Migration simulation should succeed: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_dispatch_migration_sim_session_state_after() {
+        let dispatcher = create_dispatcher(4);
+        let session_result = create_test_session(&dispatcher);
+        let session_id = session_result.session_id;
+
+        // Verify session works before migration
+        let session_before = dispatcher.function.get_user_session(session_id, false);
+        assert!(
+            session_before.is_ok(),
+            "Session should be valid before migration"
+        );
+
+        // Simulate migration
+        let result = dispatcher.dispatch_migration_sim();
+        assert!(
+            result.is_ok(),
+            "Migration simulation should succeed: {:?}",
+            result
+        );
+
+        // After migration simulation, session should require renegotiation
+        let session_after = dispatcher.function.get_user_session(session_id, false);
+        assert!(
+            matches!(
+                session_after,
+                Err(ManticoreError::SessionNeedsRenegotiation)
+            ),
+            "Session should require renegotiation after migration simulation"
+        );
+    }
+
+    #[test]
+    fn test_dispatch_migration_sim_with_keys() {
+        let dispatcher = create_dispatcher(4);
+        let session_result = create_test_session(&dispatcher);
+        let session_id = session_result.session_id;
+
+        // Get the session and add some keys
+        let app_session = dispatcher
+            .function
+            .get_user_session(session_id, false)
+            .unwrap();
+
+        // Create a regular key
+        let (regular_key_id, _) = app_session
+            .ecc_generate_key(EccCurve::P256, EntryFlags::new(), None)
+            .expect("Failed to generate regular key");
+
+        // Create a session-only key
+        let (session_key_id, _) = app_session
+            .ecc_generate_key(
+                EccCurve::P256,
+                EntryFlags::new().with_session_only(true),
+                None,
+            )
+            .expect("Failed to generate session key");
+
+        // Verify keys exist before migration
+        let regular_key_before = app_session.get_key_entry(regular_key_id);
+        let session_key_before = app_session.get_key_entry(session_key_id);
+        assert!(
+            regular_key_before.is_ok(),
+            "Regular key should exist before migration"
+        );
+        assert!(
+            session_key_before.is_ok(),
+            "Session key should exist before migration"
+        );
+
+        drop(app_session); // Release session reference
+
+        // Simulate migration
+        let result = dispatcher.dispatch_migration_sim();
+        assert!(
+            result.is_ok(),
+            "Migration simulation should succeed: {:?}",
+            result
+        );
+
+        // After migration simulation, the entire function state is reset
+        // So all keys are cleared, including regular keys
+        // This is the expected behavior of migration simulation
+        let function_state = dispatcher.function.get_function_state();
+        let vault = function_state
+            .get_vault(DEFAULT_VAULT_ID)
+            .expect("Failed to get vault");
+
+        // Both keys should be cleared after migration simulation reset
+        let regular_key_result = vault.get_key_entry(regular_key_id);
+        assert!(
+            regular_key_result.is_err(),
+            "Regular key should be cleared after migration simulation reset: {:?}",
+            regular_key_result
+        );
+
+        let session_key_result = vault.get_key_entry(session_key_id);
+        assert!(
+            session_key_result.is_err(),
+            "Session key should be cleared after migration simulation reset: {:?}",
+            session_key_result
+        );
+    }
+
+    #[test]
+    fn test_dispatch_migration_sim_close_session_after() {
+        let dispatcher = create_dispatcher(4);
+        let session_result = create_test_session(&dispatcher);
+        let session_id = session_result.session_id;
+
+        // Verify session works before migration
+        let session_before = dispatcher.function.get_user_session(session_id, false);
+        assert!(
+            session_before.is_ok(),
+            "Session should be valid before migration"
+        );
+
+        // Simulate migration
+        let result = dispatcher.dispatch_migration_sim();
+        assert!(
+            result.is_ok(),
+            "Migration simulation should succeed: {:?}",
+            result
+        );
+
+        // Try to close session after migration - should succeed
+        let close_result = dispatcher.function.close_user_session(session_id);
+        assert!(
+            close_result.is_ok(),
+            "Close session should succeed after migration: {:?}",
+            close_result
+        );
+    }
+
+    #[test]
+    fn test_dispatch_migration_sim_reopen_session_after() {
+        let dispatcher = create_dispatcher(4);
+
+        // Provision partition
+        // Use a hardcoded partition_mk
+        let partition_mk = [42u8; 80];
+        let set_bk_result = dispatcher
+            .function
+            .get_function_state()
+            .set_bk_partition(partition_mk);
+        assert!(
+            set_bk_result.is_ok(),
+            "set partition bk should succeed: {:?}",
+            set_bk_result
+        );
+
+        let original_session_result = create_test_session(&dispatcher);
+        let original_session_id = original_session_result.session_id;
+
+        // Verify original session works
+        let original_session = dispatcher
+            .function
+            .get_user_session(original_session_id, false);
+        assert!(
+            original_session.is_ok(),
+            "Original session should be valid before migration"
+        );
+
+        // Simulate migration
+        let migration_result = dispatcher.dispatch_migration_sim();
+        assert!(
+            migration_result.is_ok(),
+            "Migration simulation should succeed: {:?}",
+            migration_result
+        );
+
+        // Re-provision partition
+        let set_bk_result = dispatcher
+            .function
+            .get_function_state()
+            .set_bk_partition(partition_mk);
+        assert!(
+            set_bk_result.is_ok(),
+            "set partition bk should succeed: {:?}",
+            set_bk_result
+        );
+
+        // After migration, original session should require renegotiation
+        let session_after_migration = dispatcher
+            .function
+            .get_user_session(original_session_id, false);
+        assert!(
+            matches!(
+                session_after_migration,
+                Err(ManticoreError::SessionNeedsRenegotiation)
+            ),
+            "Original session should require renegotiation after migration"
+        );
+
+        // Re-establish credential with the same identities
+        let function_state = dispatcher.function.get_function_state();
+        let vault = function_state
+            .get_vault(DEFAULT_VAULT_ID)
+            .expect("Failed to get vault");
+
+        helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
+
+        // Reopen session using the new ReopenSession dispatch approach
+        let api_rev = dispatcher.function.get_api_rev_range().max;
+        let key_num = vault.get_session_encryption_key_id().unwrap();
+        let (encrypted_credential, client_pub_key) = helper_encrypt_session_credential(
+            &vault,
+            key_num,
+            TEST_CRED_ID,
+            TEST_CRED_PIN,
+            TEST_SESSION_SEED,
+        )
+        .expect("Failed to encrypt credential");
+
+        // Create DdiReopenSessionReq
+        let req = DdiReopenSessionReq {
+            encrypted_credential: DdiEncryptedSessionCredential {
+                encrypted_id: MborByteArray::from_slice(&encrypted_credential.id).unwrap(),
+                encrypted_pin: MborByteArray::from_slice(&encrypted_credential.pin).unwrap(),
+                encrypted_seed: MborByteArray::from_slice(&encrypted_credential.seed).unwrap(),
+                iv: MborByteArray::from_slice(&encrypted_credential.iv).unwrap(),
+                nonce: encrypted_credential.nonce,
+                tag: encrypted_credential.tag,
+            },
+            pub_key: DdiDerPublicKey {
+                der: MborByteArray::from_slice(&client_pub_key).unwrap(),
+                key_kind: DdiKeyType::Ecc384Private,
+            },
+            bmk_session: MborByteArray::from_slice(&original_session_result.bmk).unwrap(),
+        };
+
+        let hdr = DdiReqHdr {
+            rev: Some(DdiApiRev {
+                major: api_rev.major,
+                minor: api_rev.minor,
+            }),
+            op: DdiOp::ReopenSession,
+            sess_id: Some(original_session_id),
+        };
+
+        // Encode request
+        let mut in_data = [0u8; 2048];
+        let req_size = DdiEncoder::encode_parts(hdr, req, &mut in_data, false).unwrap();
+
+        // Dispatch reopen session
+        let session_info_request = SessionInfoRequest {
+            session_control_kind: SessionControlKind::from(DdiOp::ReopenSession),
+            session_id: Some(original_session_id),
+        };
+
+        let mut out_data = [0u8; 2048];
+        let reopen_result =
+            dispatcher.dispatch(session_info_request, &in_data[..req_size], &mut out_data);
+
+        assert!(
+            reopen_result.is_ok(),
+            "Should be able to reopen session with original ID after migration: {:?}",
+            reopen_result
+        );
+
+        let session_info = reopen_result.unwrap();
+        assert_eq!(
+            session_info.session_control_kind,
+            SessionControlKind::InSession
+        );
+        assert_eq!(session_info.session_id, Some(original_session_id));
+
+        // Verify the response contains the expected data
+        let out_slice = &out_data[0..session_info.response_length as usize];
+        let mut decoder = DdiDecoder::new(out_slice, false);
+        let resp_header = decoder.decode_hdr::<DdiRespHdr>().unwrap();
+        assert_eq!(resp_header.status, DdiStatus::Success);
+        assert_eq!(resp_header.sess_id, Some(original_session_id));
+
+        let resp_data = decoder.decode_data::<DdiReopenSessionResp>().unwrap();
+        assert_eq!(resp_data.sess_id, original_session_id);
+
+        // Verify the reopened session works
+        let reopened_session = dispatcher
+            .function
+            .get_user_session(original_session_id, false);
+        assert!(
+            reopened_session.is_ok(),
+            "Reopened session should be valid and functional: {:?}",
+            reopened_session
+        );
+
+        // Test that we can perform operations with the reopened session
+        let app_session = reopened_session.unwrap();
+        let key_result = app_session.ecc_generate_key(EccCurve::P256, EntryFlags::new(), None);
+        assert!(
+            key_result.is_ok(),
+            "Should be able to generate keys with reopened session: {:?}",
+            key_result
+        );
+    }
+
+    #[test]
+    fn test_dispatch_reopen_session_no_session_id() {
+        let dispatcher = create_dispatcher(4);
+
+        // Prepare reopen session request without session ID in header
+        let api_rev = dispatcher.function.get_api_rev_range().max;
+        let function_state = dispatcher.function.get_function_state();
+        let vault = function_state
+            .get_vault(DEFAULT_VAULT_ID)
+            .expect("Failed to get vault");
+
+        helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
+
+        let key_num = vault.get_session_encryption_key_id().unwrap();
+        let (encrypted_credential, client_pub_key) = helper_encrypt_session_credential(
+            &vault,
+            key_num,
+            TEST_CRED_ID,
+            TEST_CRED_PIN,
+            TEST_SESSION_SEED,
+        )
+        .expect("Failed to encrypt credential");
+
+        let req = DdiReopenSessionReq {
+            encrypted_credential: DdiEncryptedSessionCredential {
+                encrypted_id: MborByteArray::from_slice(&encrypted_credential.id).unwrap(),
+                encrypted_pin: MborByteArray::from_slice(&encrypted_credential.pin).unwrap(),
+                encrypted_seed: MborByteArray::from_slice(&encrypted_credential.seed).unwrap(),
+                iv: MborByteArray::from_slice(&encrypted_credential.iv).unwrap(),
+                nonce: encrypted_credential.nonce,
+                tag: encrypted_credential.tag,
+            },
+            pub_key: DdiDerPublicKey {
+                der: MborByteArray::from_slice(&client_pub_key).unwrap(),
+                key_kind: DdiKeyType::Ecc384Private,
+            },
+            bmk_session: MborByteArray::from_slice(&[]).unwrap(),
+        };
+
+        let hdr = DdiReqHdr {
+            rev: Some(DdiApiRev {
+                major: api_rev.major,
+                minor: api_rev.minor,
+            }),
+            op: DdiOp::ReopenSession,
+            sess_id: None, // No session ID
+        };
+
+        let mut in_data = [0u8; 2048];
+        let req_size = DdiEncoder::encode_parts(hdr, req, &mut in_data, false).unwrap();
+
+        let session_info_request = SessionInfoRequest {
+            session_control_kind: SessionControlKind::from(DdiOp::ReopenSession),
+            session_id: None,
+        };
+
+        let mut out_data = [0u8; 2048];
+        let result = dispatcher.dispatch(session_info_request, &in_data[..req_size], &mut out_data);
+
+        // Should succeed but return error response because reopen session requires session ID
+        assert!(result.is_ok(), "Dispatch should succeed: {:?}", result);
+        let session_info = result.unwrap();
+
+        // Decode the response to check the error status
+        let mut decoder =
+            DdiDecoder::new(&out_data[..session_info.response_length as usize], false);
+        let resp_hdr = decoder
+            .decode_hdr::<DdiRespHdr>()
+            .expect("Failed to decode response header");
+
+        // The response should indicate SessionExpected error
+        assert_eq!(
+            resp_hdr.status,
+            DdiStatus::from(ManticoreError::SessionExpected)
+        );
+    }
+
+    #[test]
+    fn test_dispatch_set_sealed_bk3_variable_lengths() {
+        let test_sizes = [48, 128, 256, 400, 512]; // Various valid sizes
+
+        for size in test_sizes {
+            tracing::info!("Testing SetSealedBk3 with {} bytes", size);
+
+            // Create a new dispatcher for each test size since sealed BK3 can only be set once
+            let dispatcher = create_dispatcher(4);
+
+            let mut sealed_bk3_data = vec![0xAAu8; size];
+            for (i, byte) in sealed_bk3_data.iter_mut().enumerate() {
+                *byte = (i % 256) as u8;
+            }
+
+            let mut out_data = [0u8; 2048];
+            let result =
+                helper_dispatch_set_sealed_bk3(&dispatcher, &sealed_bk3_data, &mut out_data);
+
+            // Should succeed for all valid sizes
+            assert!(
+                result.is_ok(),
+                "Dispatch should succeed for size {}: {:?}",
+                size,
+                result
+            );
+            let session_info = result.unwrap();
+
+            // Decode and validate the successful response
+            let mut decoder =
+                DdiDecoder::new(&out_data[..session_info.response_length as usize], false);
+            let resp_hdr = decoder
+                .decode_hdr::<DdiRespHdr>()
+                .expect("Failed to decode response header");
+
+            assert_eq!(resp_hdr.status, DdiStatus::Success);
+            assert_eq!(resp_hdr.op, DdiOp::SetSealedBk3);
+        }
+    }
+
+    #[test]
+    fn test_dispatch_set_sealed_bk3_invalid_size() {
+        let dispatcher = create_dispatcher(4);
+
+        let sealed_bk3_data = [0x42u8; 1024]; // Too large - exceeds 512 byte limit
+
+        let mut out_data = [0u8; 2048];
+        let result = helper_dispatch_set_sealed_bk3(&dispatcher, &sealed_bk3_data, &mut out_data);
+
+        assert!(result.is_ok(), "Dispatch should succeed: {:?}", result);
+        let session_info = result.unwrap();
+
+        // Now decode the response to validate the error status
+        let mut decoder =
+            DdiDecoder::new(&out_data[..session_info.response_length as usize], false);
+        let resp_hdr = decoder
+            .decode_hdr::<DdiRespHdr>()
+            .expect("Failed to decode response header");
+
+        assert_eq!(
+            resp_hdr.status,
+            DdiStatus::from(ManticoreError::SealedBk3TooLarge)
+        );
+    }
+
+    #[test]
+    fn test_dispatch_get_sealed_bk3() {
+        let dispatcher = create_dispatcher(4);
+
+        let sealed_bk3_data = [0x42u8; 256]; // 256 bytes of test data
+
+        // Set the sealed BK3 first using our helper
+        let mut set_out_data = [0u8; 2048];
+        let set_result =
+            helper_dispatch_set_sealed_bk3(&dispatcher, &sealed_bk3_data, &mut set_out_data);
+        assert!(
+            set_result.is_ok(),
+            "Set operation should succeed: {:?}",
+            set_result
+        );
+
+        // Now test getting the sealed BK3
+        let api_rev = dispatcher.function.get_api_rev_range().max;
+        let get_req = DdiGetSealedBk3Req {};
+
+        let get_hdr = DdiReqHdr {
+            rev: Some(DdiApiRev {
+                major: api_rev.major,
+                minor: api_rev.minor,
+            }),
+            op: DdiOp::GetSealedBk3,
+            sess_id: None,
+        };
+
+        let mut get_in_data = [0u8; 2048];
+        let get_req_size =
+            DdiEncoder::encode_parts(get_hdr, get_req, &mut get_in_data, false).unwrap();
+
+        let get_session_info_request = SessionInfoRequest {
+            session_control_kind: SessionControlKind::from(DdiOp::GetSealedBk3),
+            session_id: None,
+        };
+
+        let mut get_out_data = [0u8; 2048];
+        let get_result = dispatcher.dispatch(
+            get_session_info_request,
+            &get_in_data[..get_req_size],
+            &mut get_out_data,
+        );
+
+        assert!(
+            get_result.is_ok(),
+            "Get dispatch should succeed: {:?}",
+            get_result
+        );
+        let session_info = get_result.unwrap();
+        assert_eq!(
+            session_info.session_control_kind,
+            SessionControlKind::NoSession
+        );
+
+        let mut decoder = DdiDecoder::new(
+            &get_out_data[..session_info.response_length as usize],
+            false,
+        );
+        let resp_hdr = decoder
+            .decode_hdr::<DdiRespHdr>()
+            .expect("Failed to decode response header");
+
+        assert_eq!(resp_hdr.status, DdiStatus::Success);
+        assert_eq!(resp_hdr.op, DdiOp::GetSealedBk3);
+
+        let resp_data = decoder
+            .decode_data::<DdiGetSealedBk3Resp>()
+            .expect("Failed to decode response data");
+
+        assert_eq!(resp_data.sealed_bk3.len(), sealed_bk3_data.len());
+        assert_eq!(
+            resp_data.sealed_bk3.data()[..sealed_bk3_data.len()],
+            sealed_bk3_data
+        );
+    }
+
+    #[test]
+    fn test_dispatch_get_sealed_bk3_not_set() {
+        let dispatcher = create_dispatcher(4);
+
+        let get_req = DdiGetSealedBk3Req {};
+
+        let api_rev = dispatcher.function.get_api_rev_range().max;
+        let get_hdr = DdiReqHdr {
+            rev: Some(DdiApiRev {
+                major: api_rev.major,
+                minor: api_rev.minor,
+            }),
+            op: DdiOp::GetSealedBk3,
+            sess_id: None,
+        };
+
+        let mut get_in_data = [0u8; 2048];
+        let get_req_size =
+            DdiEncoder::encode_parts(get_hdr, get_req, &mut get_in_data, false).unwrap();
+
+        let get_session_info_request = SessionInfoRequest {
+            session_control_kind: SessionControlKind::from(DdiOp::GetSealedBk3),
+            session_id: None,
+        };
+
+        let mut get_out_data = [0u8; 2048];
+        let get_result = dispatcher.dispatch(
+            get_session_info_request,
+            &get_in_data[..get_req_size],
+            &mut get_out_data,
+        );
+
+        assert!(
+            get_result.is_ok(),
+            "Get dispatch should succeed: {:?}",
+            get_result
+        );
+        let session_info = get_result.unwrap();
+
+        let mut decoder = DdiDecoder::new(
+            &get_out_data[..session_info.response_length as usize],
+            false,
+        );
+        let resp_hdr = decoder
+            .decode_hdr::<DdiRespHdr>()
+            .expect("Failed to decode response header");
+
+        assert_eq!(
+            resp_hdr.status,
+            DdiStatus::from(ManticoreError::SealedBk3NotPresent)
+        );
     }
 }

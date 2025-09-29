@@ -27,7 +27,75 @@ pub fn helper_rsa_unwrap(
             wrapped_blob_padding,
             wrapped_blob_hash_algorithm,
             key_tag,
-            key_properties,
+            key_properties: key_properties
+                .try_into()
+                .map_err(|_| DdiError::InvalidParameter)?,
+        },
+        ext: None,
+    };
+    let mut cookie = None;
+    dev.exec_op(&req, &mut cookie)
+}
+
+pub fn helper_rsa_mod_exp(
+    dev: &<DdiTest as Ddi>::Dev,
+    sess_id: Option<u16>,
+    rev: Option<DdiApiRev>,
+    key_id: u16,
+    y: MborByteArray<512>,
+    op_type: DdiRsaOpType,
+) -> Result<DdiRsaModExpCmdResp, DdiError> {
+    let req = DdiRsaModExpCmdReq {
+        hdr: DdiReqHdr {
+            op: DdiOp::RsaModExp,
+            sess_id,
+            rev,
+        },
+        data: DdiRsaModExpReq { key_id, y, op_type },
+        ext: None,
+    };
+    let mut cookie = None;
+    dev.exec_op(&req, &mut cookie)
+}
+
+pub fn helper_rsa_mod_exp_op(
+    dev: &<DdiTest as Ddi>::Dev,
+    op: DdiOp,
+    sess_id: Option<u16>,
+    rev: Option<DdiApiRev>,
+    key_id: u16,
+    y: MborByteArray<512>,
+    op_type: DdiRsaOpType,
+) -> Result<DdiRsaModExpCmdResp, DdiError> {
+    let req = DdiRsaModExpCmdReq {
+        hdr: DdiReqHdr { op, sess_id, rev },
+        data: DdiRsaModExpReq { key_id, y, op_type },
+        ext: None,
+    };
+    let mut cookie = None;
+    dev.exec_op(&req, &mut cookie)
+}
+
+pub fn helper_rsa_unwrap_kek(
+    dev: &<DdiTest as Ddi>::Dev,
+    sess_id: Option<u16>,
+    rev: Option<DdiApiRev>,
+    key_id: u16,
+    wrapped_blob: MborByteArray<3072>,
+    wrapped_blob_padding: DdiRsaCryptoPadding,
+    wrapped_blob_hash_algorithm: DdiHashAlgorithm,
+) -> Result<DdiRsaUnwrapKekCmdResp, DdiError> {
+    let req = DdiRsaUnwrapKekCmdReq {
+        hdr: DdiReqHdr {
+            op: DdiOp::RsaUnwrapKek,
+            sess_id,
+            rev,
+        },
+        data: DdiRsaUnwrapKekReq {
+            key_id,
+            wrapped_blob,
+            wrapped_blob_padding,
+            wrapped_blob_hash_algorithm,
         },
         ext: None,
     };

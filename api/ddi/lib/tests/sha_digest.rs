@@ -16,34 +16,6 @@ pub fn create_mbor_byte_array<const N: usize>(input: &[u8]) -> MborByteArray<N> 
     MborByteArray::new(fixed_array, len_to_copy).expect("Failed to initialize MborByteArray")
 }
 
-fn create_sha_digest_request(
-    session_id: Option<u16>,
-    msg: &[u8],
-    msg_len: usize,
-    sha_mode: DdiHashAlgorithm,
-) -> DdiShaDigestGenerateCmdReq {
-    DdiShaDigestGenerateCmdReq {
-        hdr: DdiReqHdr {
-            op: DdiOp::ShaDigest,
-            sess_id: session_id,
-            rev: Some(DdiApiRev { major: 1, minor: 0 }),
-        },
-        data: DdiShaDigestGenerateReq {
-            sha_mode,
-            msg: MborByteArray::new(
-                {
-                    let mut data = [0u8; 1024];
-                    data[..msg_len].copy_from_slice(msg);
-                    data
-                },
-                msg_len,
-            )
-            .expect("failed to create byte array"),
-        },
-        ext: None,
-    }
-}
-
 #[test]
 fn test_sha_digest_invalid_session() {
     ddi_dev_test(
@@ -52,11 +24,15 @@ fn test_sha_digest_invalid_session() {
         |dev, _ddi, _path, _session_id| {
             let input_msg = [1u8; 10];
             let msg_len = input_msg.len();
-            let req =
-                create_sha_digest_request(Some(0x5), &input_msg, msg_len, DdiHashAlgorithm::Sha512);
-            let mut cookie = None;
-
-            let resp = dev.exec_op(&req, &mut cookie);
+            let mut data = [0u8; 1024];
+            data[..msg_len].copy_from_slice(&input_msg);
+            let resp = helper_sha_digest(
+                dev,
+                Some(0x5),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                MborByteArray::new(data, msg_len).expect("failed to create byte array"),
+                DdiHashAlgorithm::Sha512,
+            );
 
             // Validate error for incorrect session.
             assert!(resp.is_err(), "resp {:?}", resp);
@@ -80,12 +56,16 @@ fn test_sha_digest_no_session() {
         |dev, _ddi, _path, _session_id| {
             let input_msg = [1u8; 10];
             let msg_len = input_msg.len();
+            let mut data = [0u8; 1024];
+            data[..msg_len].copy_from_slice(&input_msg);
 
-            let req =
-                create_sha_digest_request(None, &input_msg, msg_len, DdiHashAlgorithm::Sha512);
-            let mut cookie = None;
-
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_sha_digest(
+                dev,
+                None,
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                MborByteArray::new(data, msg_len).expect("failed to create byte array"),
+                DdiHashAlgorithm::Sha512,
+            );
 
             // Validate error for no session.
             assert!(resp.is_err(), "resp {:?}", resp);
@@ -112,6 +92,9 @@ fn test_sha_digest_sha512() {
             // SHA512 = 5886828959d1f82254068be0bd14b6a88f59f534061fb20376a0541052dd3635edf3c6f0ca3d08775e13525df9333a2113c0b2af76515887529910b6c793c8a5
             let input_msg: [u8; 10] = [0xba, 0xd7, 0xc6, 0x18, 0xf4, 0x5b, 0xe2, 0x07, 0x97, 0x5e];
             let msg_len = input_msg.len();
+            let mut data = [0u8; 1024];
+            data[..msg_len].copy_from_slice(&input_msg);
+
             const EXPECTED_DIGEST: [u8; 64] = [
                 0x58, 0x86, 0x82, 0x89, 0x59, 0xd1, 0xf8, 0x22, 0x54, 0x06, 0x8b, 0xe0, 0xbd, 0x14,
                 0xb6, 0xa8, 0x8f, 0x59, 0xf5, 0x34, 0x06, 0x1f, 0xb2, 0x03, 0x76, 0xa0, 0x54, 0x10,
@@ -120,15 +103,13 @@ fn test_sha_digest_sha512() {
                 0x52, 0x99, 0x10, 0xb6, 0xc7, 0x93, 0xc8, 0xa5,
             ];
 
-            let req = create_sha_digest_request(
+            let resp = helper_sha_digest(
+                dev,
                 Some(session_id),
-                &input_msg,
-                msg_len,
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                MborByteArray::new(data, msg_len).expect("failed to create byte array"),
                 DdiHashAlgorithm::Sha512,
             );
-            let mut cookie = None;
-
-            let resp = dev.exec_op(&req, &mut cookie);
 
             if let Err(err) = &resp {
                 if is_unsupported_cmd(err) {
@@ -164,6 +145,9 @@ fn test_sha_digest_sha384() {
                 0x3d, 0x95, 0xb8, 0xba,
             ];
             let msg_len = input_msg.len();
+            let mut data = [0u8; 1024];
+            data[..msg_len].copy_from_slice(&input_msg);
+
             const EXPECTED_DIGEST: [u8; 48] = [
                 0xc5, 0xcf, 0x54, 0xb8, 0xe3, 0x10, 0x5b, 0x1c, 0x7b, 0xf7, 0xa4, 0x37, 0x54, 0xd9,
                 0x15, 0xb0, 0x94, 0x7f, 0x28, 0xb6, 0xdc, 0x94, 0xa0, 0x19, 0x18, 0x29, 0x29, 0xb5,
@@ -171,15 +155,13 @@ fn test_sha_digest_sha384() {
                 0x12, 0x95, 0x4f, 0x0f, 0x5d, 0x99,
             ];
 
-            let req = create_sha_digest_request(
+            let resp = helper_sha_digest(
+                dev,
                 Some(session_id),
-                &input_msg,
-                msg_len,
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                MborByteArray::new(data, msg_len).expect("failed to create byte array"),
                 DdiHashAlgorithm::Sha384,
             );
-            let mut cookie = None;
-
-            let resp = dev.exec_op(&req, &mut cookie);
 
             if let Err(err) = &resp {
                 if is_unsupported_cmd(err) {
@@ -216,22 +198,23 @@ fn test_sha_digest_sha256() {
                 0xe6, 0x61, 0xc7, 0xbf, 0x4c, 0x77, 0xf3, 0x35, 0x39, 0x03, 0x94, 0xc3, 0x7f, 0xa1,
                 0xa9, 0xf9, 0xbe, 0x83, 0x6a, 0xc2, 0x85, 0x09,
             ];
+            let mut data = [0u8; 1024];
             let msg_len = input_msg.len();
+
+            data[..msg_len].copy_from_slice(&input_msg);
             const EXPECTED_DIGEST: [u8; 32] = [
                 0x42, 0xe6, 0x1e, 0x17, 0x4f, 0xbb, 0x38, 0x97, 0xd6, 0xdd, 0x6c, 0xef, 0x3d, 0xd2,
                 0x80, 0x2f, 0xe6, 0x7b, 0x33, 0x19, 0x53, 0xb0, 0x61, 0x14, 0xa6, 0x5c, 0x77, 0x28,
                 0x59, 0xdf, 0xc1, 0xaa,
             ];
 
-            let req = create_sha_digest_request(
+            let resp = helper_sha_digest(
+                dev,
                 Some(session_id),
-                &input_msg,
-                msg_len,
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                MborByteArray::new(data, msg_len).expect("failed to create byte array"),
                 DdiHashAlgorithm::Sha256,
             );
-            let mut cookie = None;
-
-            let resp = dev.exec_op(&req, &mut cookie);
 
             if let Err(err) = &resp {
                 if is_unsupported_cmd(err) {
@@ -263,20 +246,20 @@ fn test_sha_digest_sha1() {
             // SHA1 = 24a2c34b976305277ce58c2f42d5092031572520
             let input_msg: [u8; 8] = [0x7e, 0x3d, 0x7b, 0x3e, 0xad, 0xa9, 0x88, 0x66];
             let msg_len = input_msg.len();
+            let mut data = [0u8; 1024];
+            data[..msg_len].copy_from_slice(&input_msg);
             const EXPECTED_DIGEST: [u8; 20] = [
                 0x24, 0xa2, 0xc3, 0x4b, 0x97, 0x63, 0x05, 0x27, 0x7c, 0xe5, 0x8c, 0x2f, 0x42, 0xd5,
                 0x09, 0x20, 0x31, 0x57, 0x25, 0x20,
             ];
 
-            let req = create_sha_digest_request(
+            let resp = helper_sha_digest(
+                dev,
                 Some(session_id),
-                &input_msg,
-                msg_len,
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                MborByteArray::new(data, msg_len).expect("failed to create byte array"),
                 DdiHashAlgorithm::Sha1,
             );
-            let mut cookie = None;
-
-            let resp = dev.exec_op(&req, &mut cookie);
 
             if let Err(err) = &resp {
                 if is_unsupported_cmd(err) {
@@ -312,23 +295,13 @@ fn test_sha_digest_null_msg() {
                 0x18, 0x90, 0xaf, 0xd8, 0x07, 0x09,
             ];
 
-            let req: DdiShaDigestGenerateCmdReq = DdiShaDigestGenerateCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::ShaDigest,
-                    sess_id: Some(session_id),
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiShaDigestGenerateReq {
-                    sha_mode: DdiHashAlgorithm::Sha1,
-                    msg: MborByteArray::new([0u8; 1024], msg_len)
-                        .expect("failed to create byte array"),
-                },
-                ext: None,
-            };
-
-            let mut cookie = None;
-
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_sha_digest(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                MborByteArray::new([0u8; 1024], msg_len).expect("failed to create byte array"),
+                DdiHashAlgorithm::Sha1,
+            );
 
             if let Err(err) = &resp {
                 if is_unsupported_cmd(err) {

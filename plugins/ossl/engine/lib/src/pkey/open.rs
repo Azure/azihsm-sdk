@@ -1,6 +1,6 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
 
-use mcr_api::*;
+use mcr_api_resilient::*;
 use openssl_rust::safeapi::error::OpenSSLError;
 use openssl_rust::safeapi::error::OpenSSLResult;
 use openssl_rust::safeapi::evp_pkey::pkey::EvpPKey;

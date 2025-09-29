@@ -272,9 +272,15 @@ fn test_open_key_ecc256() {
             assert_eq!(open_pub_key.der, gen_pub_key.der);
 
             // Sign digest with generated ECC private key
-            let req = ecc_sign_req(session_id, resp.data.key_id, DdiHashAlgorithm::Sha256);
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+
+            let resp = helper_ecc_sign(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                resp.data.key_id,
+                MborByteArray::new(DIGEST, DIGEST_LEN).expect("failed to create byte array"),
+                DdiHashAlgorithm::Sha256,
+            );
             assert!(resp.is_ok(), "resp {:?}", resp);
 
             let resp = resp.unwrap();
@@ -331,9 +337,16 @@ fn test_open_key_ecc384() {
             assert_eq!(open_pub_key.der, gen_pub_key.der);
 
             // Sign digest with generated ECC private key
-            let req = ecc_sign_req(session_id, resp.data.key_id, DdiHashAlgorithm::Sha384);
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+
+            let resp = helper_ecc_sign(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                resp.data.key_id,
+                MborByteArray::new(DIGEST, DIGEST_LEN).expect("failed to create byte array"),
+                DdiHashAlgorithm::Sha384,
+            );
+
             assert!(resp.is_ok(), "resp {:?}", resp);
 
             let resp = resp.unwrap();
@@ -390,9 +403,14 @@ fn test_open_key_ecc521() {
             assert_eq!(open_pub_key.der, gen_pub_key.der);
 
             // Sign digest with generated ECC private key
-            let req = ecc_sign_req(session_id, resp.data.key_id, DdiHashAlgorithm::Sha512);
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_ecc_sign(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                resp.data.key_id,
+                MborByteArray::new(DIGEST, DIGEST_LEN).expect("failed to create byte array"),
+                DdiHashAlgorithm::Sha512,
+            );
             assert!(resp.is_ok(), "resp {:?}", resp);
 
             let resp = resp.unwrap();
@@ -450,20 +468,4 @@ fn test_open_deleted_key() {
             ));
         },
     );
-}
-
-fn ecc_sign_req(session_id: u16, key_id: u16, digest_algo: DdiHashAlgorithm) -> DdiEccSignCmdReq {
-    DdiEccSignCmdReq {
-        hdr: DdiReqHdr {
-            op: DdiOp::EccSign,
-            sess_id: Some(session_id),
-            rev: Some(DdiApiRev { major: 1, minor: 0 }),
-        },
-        data: DdiEccSignReq {
-            key_id,
-            digest: MborByteArray::new(DIGEST, DIGEST_LEN).expect("failed to create byte array"),
-            digest_algo,
-        },
-        ext: None,
-    }
 }

@@ -47,6 +47,16 @@ $ cargo build --features=mock
 $ cargo build --features=mock --release
 ```
 
+By default `AES-256-GCM` and `AES-256-XTS` support are not included. If you need these algorithms, you must enable them explicitly by adding the following features:
+
+```bash
+# For Debug build
+$ cargo build --features=mock,gcm,xts
+
+# For Release build
+$ cargo build --features=mock,gcm,xts --release
+```
+
 #### Build for Hardware *(I am working on a machine with a physical AZIHSM device)*
 Run the following commands: 
 

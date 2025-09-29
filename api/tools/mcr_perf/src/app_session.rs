@@ -6,10 +6,11 @@ pub(crate) fn helper_open_app_session(
     dev: &<DdiTest as Ddi>::Dev,
     app_id: [u8; 16],
     app_pin: [u8; 16],
+    seed: [u8; 48],
 ) -> DdiResult<(u16, u8)> {
     loop {
         let (encrypted_credential, pub_key) =
-            encrypt_userid_pin_for_open_session(dev, app_id, app_pin);
+            encrypt_userid_pin_for_open_session(dev, app_id, app_pin, seed);
 
         let req = DdiOpenSessionCmdReq {
             hdr: DdiReqHdr {
@@ -63,8 +64,9 @@ pub(crate) fn helper_open_app_session_and_close(
     dev: &<DdiTest as Ddi>::Dev,
     app_id: [u8; 16],
     app_pin: [u8; 16],
+    seed: [u8; 48],
 ) -> DdiResult<()> {
-    let (app_sess_id, _) = helper_open_app_session(dev, app_id, app_pin)?;
+    let (app_sess_id, _) = helper_open_app_session(dev, app_id, app_pin, seed)?;
     helper_close_app_session(dev, app_sess_id)
 }
 

@@ -30,8 +30,12 @@ fn test_open_session_with_session() {
         |dev, _ddi, _path, incorrect_session_id| {
             helper_common_establish_credential(dev, TEST_CRED_ID, TEST_CRED_PIN);
 
-            let (encrypted_credential, pub_key) =
-                encrypt_userid_pin_for_open_session(dev, TEST_CRED_ID, TEST_CRED_PIN);
+            let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                dev,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                TEST_SESSION_SEED,
+            );
 
             let resp = helper_open_session(
                 dev,
@@ -59,8 +63,12 @@ fn test_open_session_without_revision() {
         |dev, _ddi, _path, _incorrect_session_id| {
             helper_common_establish_credential(dev, TEST_CRED_ID, TEST_CRED_PIN);
 
-            let (encrypted_credential, pub_key) =
-                encrypt_userid_pin_for_open_session(dev, TEST_CRED_ID, TEST_CRED_PIN);
+            let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                dev,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                TEST_SESSION_SEED,
+            );
 
             let resp = helper_open_session(dev, None, None, encrypted_credential, pub_key);
 
@@ -82,8 +90,12 @@ fn test_open_session() {
         |dev, _ddi, _path, _incorrect_session_id| {
             helper_common_establish_credential(dev, TEST_CRED_ID, TEST_CRED_PIN);
 
-            let (encrypted_credential, pub_key) =
-                encrypt_userid_pin_for_open_session(dev, TEST_CRED_ID, TEST_CRED_PIN);
+            let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                dev,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                TEST_SESSION_SEED,
+            );
 
             let resp = helper_open_session(
                 dev,
@@ -100,6 +112,8 @@ fn test_open_session() {
             assert!(resp.hdr.sess_id.is_some());
             assert_eq!(resp.hdr.op, DdiOp::OpenSession);
             assert_eq!(resp.hdr.status, DdiStatus::Success);
+
+            assert!(!resp.data.bmk_session.is_empty());
         },
     );
 }
@@ -117,8 +131,12 @@ fn test_open_session_invalid_public_key_p384_y_as_prime() {
 
             helper_common_establish_credential(dev, TEST_CRED_ID, TEST_CRED_PIN);
 
-            let (encrypted_credential, _) =
-                encrypt_userid_pin_for_open_session(dev, TEST_CRED_ID, TEST_CRED_PIN);
+            let (encrypted_credential, _) = encrypt_userid_pin_for_open_session(
+                dev,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                TEST_SESSION_SEED,
+            );
 
             // Invalid public key for P384 with y coordinate as prime
             let invalid_pub_key = DdiDerPublicKey {
@@ -156,8 +174,12 @@ fn test_open_session_invalid_public_key_p384_x_as_prime() {
 
             helper_common_establish_credential(dev, TEST_CRED_ID, TEST_CRED_PIN);
 
-            let (encrypted_credential, _) =
-                encrypt_userid_pin_for_open_session(dev, TEST_CRED_ID, TEST_CRED_PIN);
+            let (encrypted_credential, _) = encrypt_userid_pin_for_open_session(
+                dev,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                TEST_SESSION_SEED,
+            );
 
             // Invalid public key for P384 with x coordinate as prime
             let invalid_pub_key = DdiDerPublicKey {
@@ -195,8 +217,12 @@ fn test_open_session_invalid_public_key_p384_not_on_curve() {
 
             helper_common_establish_credential(dev, TEST_CRED_ID, TEST_CRED_PIN);
 
-            let (encrypted_credential, _) =
-                encrypt_userid_pin_for_open_session(dev, TEST_CRED_ID, TEST_CRED_PIN);
+            let (encrypted_credential, _) = encrypt_userid_pin_for_open_session(
+                dev,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                TEST_SESSION_SEED,
+            );
 
             // Invalid public key for P384 with point not on the curve
             let invalid_pub_key = DdiDerPublicKey {
@@ -234,8 +260,12 @@ fn test_open_session_invalid_public_key_p384_point_at_infinity() {
 
             helper_common_establish_credential(dev, TEST_CRED_ID, TEST_CRED_PIN);
 
-            let (encrypted_credential, _) =
-                encrypt_userid_pin_for_open_session(dev, TEST_CRED_ID, TEST_CRED_PIN);
+            let (encrypted_credential, _) = encrypt_userid_pin_for_open_session(
+                dev,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                TEST_SESSION_SEED,
+            );
 
             // Invalid public key for P384 with point at infinity
             let invalid_pub_key = DdiDerPublicKey {
@@ -268,27 +298,20 @@ fn test_open_session_without_get_key() {
         |dev, _ddi, _path, _incorrect_session_id| {
             helper_common_establish_credential(dev, TEST_CRED_ID, TEST_CRED_PIN);
 
-            let encrypted_credential = DdiEncryptedCredential {
-                encrypted_id: MborByteArray::new(
-                    [
-                        69, 237, 223, 217, 67, 83, 78, 223, 104, 238, 179, 193, 249, 43, 57, 102,
-                    ],
-                    16,
-                )
+            let encrypted_credential = DdiEncryptedSessionCredential {
+                encrypted_id: MborByteArray::from_slice(&[
+                    69, 237, 223, 217, 67, 83, 78, 223, 104, 238, 179, 193, 249, 43, 57, 102,
+                ])
                 .expect("failed to create byte array"),
-                encrypted_pin: MborByteArray::new(
-                    [
-                        240, 244, 194, 248, 223, 76, 238, 234, 13, 32, 210, 231, 13, 237, 38, 215,
-                    ],
-                    16,
-                )
+                encrypted_pin: MborByteArray::from_slice(&[
+                    240, 244, 194, 248, 223, 76, 238, 234, 13, 32, 210, 231, 13, 237, 38, 215,
+                ])
                 .expect("failed to create byte array"),
-                iv: MborByteArray::new(
-                    [
-                        211, 139, 212, 48, 114, 222, 183, 23, 106, 21, 2, 21, 251, 191, 145, 18,
-                    ],
-                    16,
-                )
+                encrypted_seed: MborByteArray::from_slice(&[2; 48])
+                    .expect("failed to create byte array"),
+                iv: MborByteArray::from_slice(&[
+                    211, 139, 212, 48, 114, 222, 183, 23, 106, 21, 2, 21, 251, 191, 145, 18,
+                ])
                 .expect("failed to create byte array"),
                 nonce: {
                     let mut nonce_bytes = [0u8; 32];
@@ -298,45 +321,15 @@ fn test_open_session_without_get_key() {
                 tag: [29; 48],
             };
             let pub_key = DdiDerPublicKey {
-                der: MborByteArray::new(
-                    [
-                        48, 118, 48, 16, 6, 7, 42, 134, 72, 206, 61, 2, 1, 6, 5, 43, 129, 4, 0, 34,
-                        3, 98, 0, 4, 228, 32, 154, 215, 7, 164, 136, 26, 255, 240, 18, 97, 146,
-                        199, 157, 131, 119, 73, 33, 204, 93, 243, 185, 33, 196, 61, 174, 170, 88,
-                        184, 52, 43, 56, 60, 218, 178, 136, 240, 228, 185, 86, 20, 17, 21, 117,
-                        186, 187, 35, 124, 103, 247, 209, 151, 99, 199, 184, 86, 211, 34, 178, 186,
-                        186, 26, 198, 180, 234, 13, 173, 162, 86, 41, 213, 202, 15, 74, 78, 238,
-                        23, 176, 178, 244, 177, 88, 186, 174, 161, 88, 156, 16, 7, 247, 14, 199,
-                        98, 66, 224, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                        0, 0,
-                    ],
-                    120,
-                )
+                der: MborByteArray::from_slice(&[
+                    48, 118, 48, 16, 6, 7, 42, 134, 72, 206, 61, 2, 1, 6, 5, 43, 129, 4, 0, 34, 3,
+                    98, 0, 4, 228, 32, 154, 215, 7, 164, 136, 26, 255, 240, 18, 97, 146, 199, 157,
+                    131, 119, 73, 33, 204, 93, 243, 185, 33, 196, 61, 174, 170, 88, 184, 52, 43,
+                    56, 60, 218, 178, 136, 240, 228, 185, 86, 20, 17, 21, 117, 186, 187, 35, 124,
+                    103, 247, 209, 151, 99, 199, 184, 86, 211, 34, 178, 186, 186, 26, 198, 180,
+                    234, 13, 173, 162, 86, 41, 213, 202, 15, 74, 78, 238, 23, 176, 178, 244, 177,
+                    88, 186, 174, 161, 88, 156, 16, 7, 247, 14, 199, 98, 66, 224,
+                ])
                 .expect("failed to create byte array"),
                 key_kind: DdiKeyType::Ecc384Public,
             };
@@ -362,8 +355,12 @@ fn test_open_session_multiple() {
         |dev, _ddi, _path, _incorrect_session_id| {
             helper_common_establish_credential(dev, TEST_CRED_ID, TEST_CRED_PIN);
 
-            let (encrypted_credential, pub_key) =
-                encrypt_userid_pin_for_open_session(dev, TEST_CRED_ID, TEST_CRED_PIN);
+            let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                dev,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                TEST_SESSION_SEED,
+            );
 
             {
                 let resp = helper_open_session(
@@ -381,6 +378,7 @@ fn test_open_session_multiple() {
                 assert!(resp.hdr.sess_id.is_some());
                 assert_eq!(resp.hdr.op, DdiOp::OpenSession);
                 assert_eq!(resp.hdr.status, DdiStatus::Success);
+                assert!(!resp.data.bmk_session.is_empty());
             }
 
             for _ in 0..10 {
@@ -407,8 +405,12 @@ fn test_open_session_multiple_get_key() {
             helper_common_establish_credential(dev, TEST_CRED_ID, TEST_CRED_PIN);
 
             {
-                let (encrypted_credential, pub_key) =
-                    encrypt_userid_pin_for_open_session(dev, TEST_CRED_ID, TEST_CRED_PIN);
+                let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                    dev,
+                    TEST_CRED_ID,
+                    TEST_CRED_PIN,
+                    TEST_SESSION_SEED,
+                );
 
                 let resp = helper_open_session(
                     dev,
@@ -425,11 +427,16 @@ fn test_open_session_multiple_get_key() {
                 assert!(resp.hdr.sess_id.is_some());
                 assert_eq!(resp.hdr.op, DdiOp::OpenSession);
                 assert_eq!(resp.hdr.status, DdiStatus::Success);
+                assert!(!resp.data.bmk_session.is_empty());
             }
 
             for _ in 0..10 {
-                let (encrypted_credential, pub_key) =
-                    encrypt_userid_pin_for_open_session(dev, TEST_CRED_ID, TEST_CRED_PIN);
+                let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                    dev,
+                    TEST_CRED_ID,
+                    TEST_CRED_PIN,
+                    TEST_SESSION_SEED,
+                );
 
                 let resp = helper_open_session(
                     dev,
@@ -458,8 +465,12 @@ fn test_open_session_tamper_id() {
         |dev, _ddi, _path, _incorrect_session_id| {
             helper_common_establish_credential(dev, TEST_CRED_ID, TEST_CRED_PIN);
 
-            let (mut tampered_encrypted_credential, pub_key) =
-                encrypt_userid_pin_for_open_session(dev, TEST_CRED_ID, TEST_CRED_PIN);
+            let (mut tampered_encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                dev,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                TEST_SESSION_SEED,
+            );
             let value = tampered_encrypted_credential.encrypted_id.data()[10];
             tampered_encrypted_credential.encrypted_id.data_mut()[10] = value.wrapping_add(1);
 
@@ -489,8 +500,12 @@ fn test_open_session_tamper_pin() {
         |dev, _ddi, _path, _incorrect_session_id| {
             helper_common_establish_credential(dev, TEST_CRED_ID, TEST_CRED_PIN);
 
-            let (mut tampered_encrypted_credential, pub_key) =
-                encrypt_userid_pin_for_open_session(dev, TEST_CRED_ID, TEST_CRED_PIN);
+            let (mut tampered_encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                dev,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                TEST_SESSION_SEED,
+            );
             let value = tampered_encrypted_credential.encrypted_pin.data()[10];
             tampered_encrypted_credential.encrypted_pin.data_mut()[10] = value.wrapping_add(1);
 
@@ -520,8 +535,12 @@ fn test_open_session_tamper_iv() {
         |dev, _ddi, _path, _incorrect_session_id| {
             helper_common_establish_credential(dev, TEST_CRED_ID, TEST_CRED_PIN);
 
-            let (mut tampered_encrypted_credential, pub_key) =
-                encrypt_userid_pin_for_open_session(dev, TEST_CRED_ID, TEST_CRED_PIN);
+            let (mut tampered_encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                dev,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                TEST_SESSION_SEED,
+            );
             let value = tampered_encrypted_credential.iv.data()[10];
             tampered_encrypted_credential.iv.data_mut()[10] = value.wrapping_add(1);
 
@@ -551,8 +570,12 @@ fn test_open_session_tamper_nonce() {
         |dev, _ddi, _path, _incorrect_session_id| {
             helper_common_establish_credential(dev, TEST_CRED_ID, TEST_CRED_PIN);
 
-            let (mut tampered_encrypted_credential, pub_key) =
-                encrypt_userid_pin_for_open_session(dev, TEST_CRED_ID, TEST_CRED_PIN);
+            let (mut tampered_encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                dev,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                TEST_SESSION_SEED,
+            );
             tampered_encrypted_credential.nonce[0] =
                 tampered_encrypted_credential.nonce[0].wrapping_add(1);
 
@@ -582,8 +605,12 @@ fn test_open_session_tamper_tag() {
         |dev, _ddi, _path, _incorrect_session_id| {
             helper_common_establish_credential(dev, TEST_CRED_ID, TEST_CRED_PIN);
 
-            let (mut tampered_encrypted_credential, pub_key) =
-                encrypt_userid_pin_for_open_session(dev, TEST_CRED_ID, TEST_CRED_PIN);
+            let (mut tampered_encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                dev,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                TEST_SESSION_SEED,
+            );
             tampered_encrypted_credential.tag[10] =
                 tampered_encrypted_credential.tag[10].wrapping_add(1);
 
@@ -613,8 +640,12 @@ fn test_open_session_tamper_pub_key() {
         |dev, _ddi, _path, _incorrect_session_id| {
             helper_common_establish_credential(dev, TEST_CRED_ID, TEST_CRED_PIN);
 
-            let (encrypted_credential, mut tampered_pub_key) =
-                encrypt_userid_pin_for_open_session(dev, TEST_CRED_ID, TEST_CRED_PIN);
+            let (encrypted_credential, mut tampered_pub_key) = encrypt_userid_pin_for_open_session(
+                dev,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                TEST_SESSION_SEED,
+            );
             let value = tampered_pub_key.der.data()[30];
             tampered_pub_key.der.data_mut()[30] = value.wrapping_add(1);
 
@@ -640,7 +671,7 @@ fn test_open_session_null_id() {
             helper_common_establish_credential(dev, TEST_CRED_ID, TEST_CRED_PIN);
 
             let (encrypted_credential, pub_key) =
-                encrypt_userid_pin_for_open_session(dev, [0; 16], TEST_CRED_PIN);
+                encrypt_userid_pin_for_open_session(dev, [0; 16], TEST_CRED_PIN, TEST_SESSION_SEED);
 
             let resp = helper_open_session(
                 dev,
@@ -669,7 +700,7 @@ fn test_open_session_null_pin() {
             helper_common_establish_credential(dev, TEST_CRED_ID, TEST_CRED_PIN);
 
             let (encrypted_credential, pub_key) =
-                encrypt_userid_pin_for_open_session(dev, TEST_CRED_ID, [0; 16]);
+                encrypt_userid_pin_for_open_session(dev, TEST_CRED_ID, [0; 16], TEST_SESSION_SEED);
 
             let resp = helper_open_session(
                 dev,
@@ -697,8 +728,12 @@ fn test_open_session_verify_nonce_change() {
         |dev, _ddi, _path, _incorrect_session_id| {
             helper_common_establish_credential(dev, TEST_CRED_ID, TEST_CRED_PIN);
 
-            let (encrypted_credential, pub_key) =
-                encrypt_userid_pin_for_open_session(dev, TEST_CRED_ID, TEST_CRED_PIN);
+            let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                dev,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                TEST_SESSION_SEED,
+            );
 
             let resp = helper_open_session(
                 dev,
@@ -716,8 +751,14 @@ fn test_open_session_verify_nonce_change() {
             assert_eq!(resp.hdr.op, DdiOp::OpenSession);
             assert_eq!(resp.hdr.status, DdiStatus::Success);
 
-            let (encrypted_credential2, _pub_key2) =
-                encrypt_userid_pin_for_open_session(dev, TEST_CRED_ID, TEST_CRED_PIN);
+            assert!(!resp.data.bmk_session.is_empty());
+
+            let (encrypted_credential2, _pub_key2) = encrypt_userid_pin_for_open_session(
+                dev,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                TEST_SESSION_SEED,
+            );
 
             assert_ne!(
                 encrypted_credential.nonce, encrypted_credential2.nonce,
@@ -735,8 +776,12 @@ fn test_open_session_verify_public_key_not_change() {
         |dev, _ddi, _path, _incorrect_session_id| {
             helper_common_establish_credential(dev, TEST_CRED_ID, TEST_CRED_PIN);
 
-            let (encrypted_credential, pub_key) =
-                encrypt_userid_pin_for_open_session(dev, TEST_CRED_ID, TEST_CRED_PIN);
+            let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                dev,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                TEST_SESSION_SEED,
+            );
 
             let resp = helper_open_session(
                 dev,
@@ -754,8 +799,14 @@ fn test_open_session_verify_public_key_not_change() {
             assert_eq!(resp.hdr.op, DdiOp::OpenSession);
             assert_eq!(resp.hdr.status, DdiStatus::Success);
 
-            let (_encrypted_credential2, pub_key2) =
-                encrypt_userid_pin_for_open_session(dev, TEST_CRED_ID, TEST_CRED_PIN);
+            assert!(!resp.data.bmk_session.is_empty());
+
+            let (_encrypted_credential2, pub_key2) = encrypt_userid_pin_for_open_session(
+                dev,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                TEST_SESSION_SEED,
+            );
 
             assert_eq!(
                 pub_key, pub_key2,
@@ -821,8 +872,12 @@ fn test_thread_fn(_thread_id: u8, device: Arc<RwLock<<DdiTest as Ddi>::Dev>>, ma
     let dev = device.read();
 
     for _ in 0..max_attempts {
-        let (encrypted_credential, pub_key) =
-            encrypt_userid_pin_for_open_session(&dev, TEST_CRED_ID, TEST_CRED_PIN);
+        let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+            &dev,
+            TEST_CRED_ID,
+            TEST_CRED_PIN,
+            TEST_SESSION_SEED,
+        );
 
         let resp = helper_open_session(
             &dev,
@@ -863,8 +918,12 @@ fn test_open_session_null_id_then_proper_id() {
             let old_nonce;
 
             {
-                let (encrypted_credential, pub_key) =
-                    encrypt_userid_pin_for_open_session(dev, [0; 16], TEST_CRED_PIN);
+                let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                    dev,
+                    [0; 16],
+                    TEST_CRED_PIN,
+                    TEST_SESSION_SEED,
+                );
                 old_nonce = Some(encrypted_credential.nonce);
 
                 let resp = helper_open_session(
@@ -884,8 +943,12 @@ fn test_open_session_null_id_then_proper_id() {
             }
 
             {
-                let (encrypted_credential, pub_key) =
-                    encrypt_userid_pin_for_open_session(dev, TEST_CRED_ID, TEST_CRED_PIN);
+                let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                    dev,
+                    TEST_CRED_ID,
+                    TEST_CRED_PIN,
+                    TEST_SESSION_SEED,
+                );
 
                 assert_ne!(
                     old_nonce.unwrap(),
@@ -908,6 +971,8 @@ fn test_open_session_null_id_then_proper_id() {
                 assert!(resp.hdr.sess_id.is_some());
                 assert_eq!(resp.hdr.op, DdiOp::OpenSession);
                 assert_eq!(resp.hdr.status, DdiStatus::Success);
+
+                assert!(!resp.data.bmk_session.is_empty());
             }
         },
     );
@@ -923,8 +988,12 @@ fn test_open_session_with_reset_in_middle() {
             {
                 helper_common_establish_credential(dev, TEST_CRED_ID, TEST_CRED_PIN);
 
-                let (encrypted_credential, pub_key) =
-                    encrypt_userid_pin_for_open_session(dev, TEST_CRED_ID, TEST_CRED_PIN);
+                let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                    dev,
+                    TEST_CRED_ID,
+                    TEST_CRED_PIN,
+                    TEST_SESSION_SEED,
+                );
 
                 let resp = helper_open_session(
                     dev,
@@ -941,6 +1010,8 @@ fn test_open_session_with_reset_in_middle() {
                 assert!(resp.hdr.sess_id.is_some());
                 assert_eq!(resp.hdr.op, DdiOp::OpenSession);
                 assert_eq!(resp.hdr.status, DdiStatus::Success);
+
+                assert!(!resp.data.bmk_session.is_empty());
                 session_id = resp.data.sess_id;
             }
 
@@ -950,8 +1021,12 @@ fn test_open_session_with_reset_in_middle() {
             {
                 helper_common_establish_credential(dev, TEST_CRED_ID, TEST_CRED_PIN);
 
-                let (encrypted_credential, pub_key) =
-                    encrypt_userid_pin_for_open_session(dev, TEST_CRED_ID, TEST_CRED_PIN);
+                let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                    dev,
+                    TEST_CRED_ID,
+                    TEST_CRED_PIN,
+                    TEST_SESSION_SEED,
+                );
 
                 let resp = helper_open_session(
                     dev,
@@ -968,6 +1043,8 @@ fn test_open_session_with_reset_in_middle() {
                 assert!(resp.hdr.sess_id.is_some());
                 assert_eq!(resp.hdr.op, DdiOp::OpenSession);
                 assert_eq!(resp.hdr.status, DdiStatus::Success);
+
+                assert!(!resp.data.bmk_session.is_empty());
             }
         },
     );
@@ -982,7 +1059,7 @@ fn test_open_session_incorrect_id() {
             helper_common_establish_credential(dev, TEST_CRED_ID, TEST_CRED_PIN);
 
             let (encrypted_credential, pub_key) =
-                encrypt_userid_pin_for_open_session(dev, [1; 16], TEST_CRED_PIN);
+                encrypt_userid_pin_for_open_session(dev, [1; 16], TEST_CRED_PIN, TEST_SESSION_SEED);
 
             let resp = helper_open_session(
                 dev,
@@ -1011,7 +1088,7 @@ fn test_open_session_incorrect_pin() {
             helper_common_establish_credential(dev, TEST_CRED_ID, TEST_CRED_PIN);
 
             let (encrypted_credential, pub_key) =
-                encrypt_userid_pin_for_open_session(dev, TEST_CRED_ID, [1; 16]);
+                encrypt_userid_pin_for_open_session(dev, TEST_CRED_ID, [1; 16], TEST_SESSION_SEED);
 
             let resp = helper_open_session(
                 dev,
@@ -1056,6 +1133,7 @@ fn test_open_session_max_sessions() {
                         file_handle,
                         TEST_CRED_ID,
                         TEST_CRED_PIN,
+                        TEST_SESSION_SEED,
                     );
 
                     let resp = helper_open_session(
@@ -1073,14 +1151,20 @@ fn test_open_session_max_sessions() {
                     assert!(resp.hdr.sess_id.is_some());
                     assert_eq!(resp.hdr.op, DdiOp::OpenSession);
                     assert_eq!(resp.hdr.status, DdiStatus::Success);
+
+                    assert!(!resp.data.bmk_session.is_empty());
                 }
             }
 
             // Now we should not be able to open any more sessions
             let file_handle = open_dev_and_set_device_kind(ddi, path);
 
-            let (encrypted_credential, pub_key) =
-                encrypt_userid_pin_for_open_session(&file_handle, TEST_CRED_ID, TEST_CRED_PIN);
+            let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                &file_handle,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                TEST_SESSION_SEED,
+            );
 
             let resp = helper_open_session(
                 dev,
@@ -1103,8 +1187,12 @@ fn test_open_session_multi_threaded_single_winner() {
             let thread_count = 16;
 
             helper_common_establish_credential(dev, TEST_CRED_ID, TEST_CRED_PIN);
-            let (encrypted_credential, pub_key) =
-                encrypt_userid_pin_for_open_session(dev, TEST_CRED_ID, TEST_CRED_PIN);
+            let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                dev,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                TEST_SESSION_SEED,
+            );
 
             let mut thread_list = Vec::new();
             for i in 0..thread_count {
@@ -1153,7 +1241,7 @@ fn test_open_session_multi_threaded_single_winner() {
 fn test_thread_fn_open_session_single_winner(
     _thread_id: u8,
     device_path: String,
-    encrypted_credential: DdiEncryptedCredential,
+    encrypted_credential: DdiEncryptedSessionCredential,
     pub_key: DdiDerPublicKey,
 ) {
     let ddi = DdiTest::default();

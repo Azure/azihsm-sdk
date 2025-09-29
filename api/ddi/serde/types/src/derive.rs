@@ -37,7 +37,7 @@ pub struct DdiHkdfDeriveReq {
 
     /// Target key properties
     #[ddi(id = 7)]
-    pub key_properties: DdiKeyProperties,
+    pub key_properties: DdiTargetKeyProperties,
 }
 
 /// DDI HKDF Derive Function Response Structure
@@ -93,7 +93,7 @@ pub struct DdiKbkdfCounterHmacDeriveReq {
 
     /// Target key properties
     #[ddi(id = 7)]
-    pub key_properties: DdiKeyProperties,
+    pub key_properties: DdiTargetKeyProperties,
 }
 
 /// DDI KBKDF Counter HMAC Derive Function Response Structure

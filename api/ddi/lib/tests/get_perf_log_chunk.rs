@@ -14,17 +14,8 @@ fn test_get_perf_log_chunk_no_session() {
         common_setup,
         common_cleanup,
         |dev, _ddi, _path, _session_id| {
-            let req = DdiGetPerfLogChunkCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::GetPerfLogChunk,
-                    sess_id: None,
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiGetPerfLogChunkReq { chunk_id: 0 },
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp =
+                helper_get_perf_log_chunk(dev, None, Some(DdiApiRev { major: 1, minor: 0 }), 0);
 
             assert!(resp.is_err(), "resp {:?}", resp);
 
@@ -43,17 +34,12 @@ fn test_get_perf_log_chunk_incorrect_session_id() {
         common_cleanup,
         |dev, _ddi, _path, _session_id| {
             let session_id = 20;
-            let req = DdiGetPerfLogChunkCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::GetPerfLogChunk,
-                    sess_id: Some(session_id),
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiGetPerfLogChunkReq { chunk_id: 0 },
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_get_perf_log_chunk(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                0,
+            );
 
             assert!(resp.is_err(), "resp {:?}", resp);
 
@@ -76,17 +62,12 @@ fn test_get_perf_log_chunk() {
                 return;
             }
 
-            let req = DdiGetPerfLogChunkCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::GetPerfLogChunk,
-                    sess_id: Some(session_id),
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiGetPerfLogChunkReq { chunk_id: 0 },
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_get_perf_log_chunk(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                0,
+            );
 
             assert!(resp.is_ok(), "resp {:?}", resp);
         },

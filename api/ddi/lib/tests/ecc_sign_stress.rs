@@ -58,8 +58,12 @@ fn test_thread_fn(_thread_id: u8, device_path: String, max_attempts: usize) {
     let mut app_sess_id = None;
 
     for _ in 0..max_attempts {
-        let (encrypted_credential, pub_key) =
-            encrypt_userid_pin_for_open_session(&dev, TEST_CRED_ID, TEST_CRED_PIN);
+        let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+            &dev,
+            TEST_CRED_ID,
+            TEST_CRED_PIN,
+            TEST_SESSION_SEED,
+        );
 
         let resp = helper_open_session(
             &dev,
@@ -109,20 +113,6 @@ fn test_thread_fn(_thread_id: u8, device_path: String, max_attempts: usize) {
 
     thread::sleep(std::time::Duration::from_secs(1));
 
-    let req = DdiEccSignCmdReq {
-        hdr: DdiReqHdr {
-            op: DdiOp::EccSign,
-            sess_id: Some(app_sess_id),
-            rev: Some(DdiApiRev { major: 1, minor: 0 }),
-        },
-        data: DdiEccSignReq {
-            key_id: resp.data.private_key_id,
-            digest: MborByteArray::new(DIGEST, DIGEST_LEN).expect("failed to create byte array"),
-            digest_algo: DdiHashAlgorithm::Sha256,
-        },
-        ext: None,
-    };
-
     // Get the current local time
     let now = Local::now();
     // Format the time with milliseconds
@@ -130,8 +120,14 @@ fn test_thread_fn(_thread_id: u8, device_path: String, max_attempts: usize) {
     let mut counter: usize = 0;
     let start_time = Instant::now();
     while Instant::now().duration_since(start_time).as_secs() < NUM_SECS {
-        let mut cookie = None;
-        let resp = dev.exec_op(&req, &mut cookie);
+        let resp = helper_ecc_sign(
+            &dev,
+            Some(app_sess_id),
+            Some(DdiApiRev { major: 1, minor: 0 }),
+            resp.data.private_key_id,
+            MborByteArray::new(DIGEST, DIGEST_LEN).expect("failed to create byte array"),
+            DdiHashAlgorithm::Sha256,
+        );
         assert!(resp.is_ok(), "resp {:?}", resp);
         thread::yield_now();
 

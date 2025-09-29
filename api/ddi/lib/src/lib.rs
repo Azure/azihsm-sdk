@@ -221,4 +221,11 @@ pub trait DdiDev {
         xts_params: DdiAesXtsParams,
         src_buf: Vec<u8>,
     ) -> Result<DdiAesXtsResult, DdiError>;
+
+    /// Execute NVMe subsystem reset to help emulate Live Migration
+    ///
+    /// # Returns
+    /// * `Ok(())` - Successfully sent NSSR Reset Device command
+    /// * `Err(DdiError)` - Error occurred while executing the command
+    fn simulate_nssr_after_lm(&self) -> Result<(), DdiError>;
 }

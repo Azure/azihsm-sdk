@@ -100,7 +100,8 @@ pub fn api_fuzz_common_setup(_device: &HsmDevice, path: &str) {
     // Establishing credentials can only happen once, which means that after the
     // first call to this function, it will fail. Because of this, we ignore any
     // errors returned in the response.
-    let _ = device.establish_credential(api_rev, TEST_APP_CREDENTIALS);
+    let masked_bk3 = device.init_bk3(api_rev, &[1u8; 48]).unwrap();
+    let _ = device.establish_credential(api_rev, TEST_APP_CREDENTIALS, masked_bk3, None, None);
 }
 
 #[allow(dead_code)]
@@ -216,8 +217,18 @@ pub(crate) fn rsa_unwrap_from_wrap_data(
             generate_aes(key_type)
         }
 
-        KeyType::AesBulk256 => {
-            key_class = KeyClass::AesBulk;
+        KeyType::AesXtsBulk256 => {
+            key_class = KeyClass::AesXtsBulk;
+            generate_aes(key_type)
+        }
+
+        KeyType::AesGcmBulk256 => {
+            key_class = KeyClass::AesGcmBulk;
+            generate_aes(key_type)
+        }
+
+        KeyType::AesGcmBulk256Unapproved => {
+            key_class = KeyClass::AesGcmBulkUnapproved;
             generate_aes(key_type)
         }
 
@@ -260,7 +271,7 @@ pub(crate) fn generate_aes(key_type: KeyType) -> Vec<u8> {
         KeyType::Aes128 => 16,
         KeyType::Aes192 => 24,
         KeyType::Aes256 => 32,
-        KeyType::AesBulk256 => 32,
+        KeyType::AesXtsBulk256 | KeyType::AesGcmBulk256 | KeyType::AesGcmBulk256Unapproved => 32,
         _ => 32,
     };
 

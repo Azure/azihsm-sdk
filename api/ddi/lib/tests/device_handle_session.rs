@@ -47,8 +47,12 @@ fn test_device_handle_session_open_session_twice() {
         |dev, _ddi, _path, _incorrect_session_id| {
             helper_common_establish_credential(dev, TEST_CRED_ID, TEST_CRED_PIN);
 
-            let (encrypted_credential, pub_key) =
-                encrypt_userid_pin_for_open_session(dev, TEST_CRED_ID, TEST_CRED_PIN);
+            let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                dev,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                TEST_SESSION_SEED,
+            );
 
             let resp = helper_open_session(
                 dev,
@@ -68,8 +72,12 @@ fn test_device_handle_session_open_session_twice() {
             assert_eq!(resp.hdr.rev.unwrap().minor, 0);
 
             // now try to open another session on the same device handle
-            let (encrypted_credential, pub_key) =
-                encrypt_userid_pin_for_open_session(dev, TEST_CRED_ID, TEST_CRED_PIN);
+            let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                dev,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                TEST_SESSION_SEED,
+            );
 
             let resp = helper_open_session(
                 dev,

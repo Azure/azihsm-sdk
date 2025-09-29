@@ -5,7 +5,6 @@ mod common;
 use crypto::rand::rand_bytes;
 use mcr_ddi::DdiError;
 use mcr_ddi::*;
-use mcr_ddi_mbor::MborByteArray;
 use mcr_ddi_types::*;
 use test_with_tracing::test;
 
@@ -36,67 +35,6 @@ fn verify_physical_device_and_hooks(dev: &mut <DdiTest as Ddi>::Dev) -> bool {
     true
 }
 
-fn create_get_priv_key_request(session_id: Option<u16>, key_id: u16) -> DdiGetPrivKeyCmdReq {
-    DdiGetPrivKeyCmdReq {
-        hdr: DdiReqHdr {
-            op: DdiOp::GetPrivKey,
-            sess_id: session_id,
-            rev: Some(DdiApiRev { major: 1, minor: 0 }),
-        },
-        data: DdiGetPrivKeyReq { key_id },
-        ext: None,
-    }
-}
-
-pub fn retrieve_shared_raw_key<const N: usize>(
-    dev: &mut <DdiTest as Ddi>::Dev,
-    sess_id: u16,
-    secret_key_id: u16,
-) -> Result<[u8; N], DdiError> {
-    // Changed return type to use DdiError
-    let req = create_get_priv_key_request(Some(sess_id), secret_key_id);
-    let mut cookie = None;
-
-    let resp = dev.exec_op(&req, &mut cookie)?;
-
-    // Extract the response and raw secret
-    let raw_secret_len = resp.data.key_data.len();
-
-    if raw_secret_len != N {
-        return Err(DdiError::InvalidParameter);
-    }
-
-    // Convert slice to fixed-size array
-    let mut result = [0u8; N];
-    result.copy_from_slice(&resp.data.key_data.data()[..raw_secret_len]);
-
-    Ok(result)
-}
-
-fn create_raw_key_import_request(
-    session_id: Option<u16>,
-    raw: [u8; 3072],
-    key_length: usize,
-    key_kind: DdiKeyType,
-    key_tag: Option<u16>,
-    key_properties: DdiKeyProperties,
-) -> DdiRawKeyImportCmdReq {
-    DdiRawKeyImportCmdReq {
-        hdr: DdiReqHdr {
-            op: DdiOp::RawKeyImport,
-            sess_id: session_id,
-            rev: Some(DdiApiRev { major: 1, minor: 0 }),
-        },
-        data: DdiRawKeyImportReq {
-            raw: MborByteArray::new(raw, key_length).expect("failed to create byte array"),
-            key_kind,
-            key_tag,
-            key_properties,
-        },
-        ext: None,
-    }
-}
-
 #[test]
 fn test_raw_key_import_invalid_session() {
     ddi_dev_test(
@@ -117,7 +55,8 @@ fn test_raw_key_import_invalid_session() {
             let key_properties =
                 helper_key_properties(DdiKeyUsage::Derive, DdiKeyAvailability::App);
 
-            let req = create_raw_key_import_request(
+            let resp = helper_raw_key_import(
+                dev,
                 Some(5),
                 raw_key,
                 secret_buf.len(),
@@ -125,9 +64,6 @@ fn test_raw_key_import_invalid_session() {
                 Some(KEY_TAG),
                 key_properties,
             );
-            let mut cookie = None;
-
-            let resp = dev.exec_op(&req, &mut cookie);
 
             // Validate error for invalid session.
             assert!(resp.is_err(), "resp {:?}", resp);
@@ -163,7 +99,8 @@ fn test_raw_key_import_no_session() {
             let key_properties =
                 helper_key_properties(DdiKeyUsage::Derive, DdiKeyAvailability::App);
 
-            let req = create_raw_key_import_request(
+            let resp = helper_raw_key_import(
+                dev,
                 None,
                 raw_key,
                 secret_buf.len(),
@@ -171,9 +108,6 @@ fn test_raw_key_import_no_session() {
                 Some(KEY_TAG),
                 key_properties,
             );
-            let mut cookie = None;
-
-            let resp = dev.exec_op(&req, &mut cookie);
 
             // Validate error for no session.
             assert!(resp.is_err(), "resp {:?}", resp);
@@ -209,7 +143,8 @@ fn test_raw_key_import_invalid_key_availability() {
             let key_properties =
                 helper_key_properties(DdiKeyUsage::Derive, DdiKeyAvailability::Session);
 
-            let req = create_raw_key_import_request(
+            let resp = helper_raw_key_import(
+                dev,
                 Some(session_id),
                 raw_key,
                 secret_buf.len(),
@@ -217,9 +152,6 @@ fn test_raw_key_import_invalid_key_availability() {
                 Some(KEY_TAG),
                 key_properties,
             );
-            let mut cookie = None;
-
-            let resp = dev.exec_op(&req, &mut cookie);
 
             if let Err(err) = &resp {
                 if is_unsupported_cmd(err) {
@@ -261,7 +193,8 @@ fn test_raw_key_import_invalid_key_usage() {
             let key_properties =
                 helper_key_properties(DdiKeyUsage::SignVerify, DdiKeyAvailability::App);
 
-            let req = create_raw_key_import_request(
+            let resp = helper_raw_key_import(
+                dev,
                 Some(session_id),
                 raw_key,
                 rsa_2k_key.len(),
@@ -269,9 +202,6 @@ fn test_raw_key_import_invalid_key_usage() {
                 Some(KEY_TAG),
                 key_properties,
             );
-            let mut cookie = None;
-
-            let resp = dev.exec_op(&req, &mut cookie);
 
             if let Err(err) = &resp {
                 if is_unsupported_cmd(err) {
@@ -313,17 +243,15 @@ fn test_raw_key_import_invalid_key_type_aes_bulk_key() {
             let key_properties =
                 helper_key_properties(DdiKeyUsage::EncryptDecrypt, DdiKeyAvailability::App);
 
-            let req = create_raw_key_import_request(
+            let resp = helper_raw_key_import(
+                dev,
                 Some(session_id),
                 raw_key,
                 aes_bulk_key.len(),
-                DdiKeyType::AesBulk256,
+                DdiKeyType::AesGcmBulk256Unapproved,
                 Some(KEY_TAG),
                 key_properties,
             );
-            let mut cookie = None;
-
-            let resp = dev.exec_op(&req, &mut cookie);
 
             if let Err(err) = &resp {
                 if is_unsupported_cmd(err) {
@@ -363,9 +291,10 @@ fn test_raw_key_import_invalid_key_type_rsa3kprivate() {
             raw_key[..rsa_3k_priv_key.len()].copy_from_slice(&rsa_3k_priv_key);
 
             let key_properties =
-                helper_key_properties(DdiKeyUsage::WrapUnwrap, DdiKeyAvailability::App);
+                helper_key_properties(DdiKeyUsage::Unwrap, DdiKeyAvailability::App);
 
-            let req = create_raw_key_import_request(
+            let resp = helper_raw_key_import(
+                dev,
                 Some(session_id),
                 raw_key,
                 rsa_3k_priv_key.len(),
@@ -373,9 +302,6 @@ fn test_raw_key_import_invalid_key_type_rsa3kprivate() {
                 Some(KEY_TAG),
                 key_properties,
             );
-            let mut cookie = None;
-
-            let resp = dev.exec_op(&req, &mut cookie);
 
             if let Err(err) = &resp {
                 if is_unsupported_cmd(err) {
@@ -415,9 +341,10 @@ fn test_raw_key_import_invalid_key_type_rsa4kprivate() {
             raw_key[..rsa_4k_priv_key.len()].copy_from_slice(&rsa_4k_priv_key);
 
             let key_properties =
-                helper_key_properties(DdiKeyUsage::WrapUnwrap, DdiKeyAvailability::Session);
+                helper_key_properties(DdiKeyUsage::Unwrap, DdiKeyAvailability::Session);
 
-            let req = create_raw_key_import_request(
+            let resp = helper_raw_key_import(
+                dev,
                 Some(session_id),
                 raw_key,
                 rsa_4k_priv_key.len(),
@@ -425,9 +352,6 @@ fn test_raw_key_import_invalid_key_type_rsa4kprivate() {
                 None,
                 key_properties,
             );
-            let mut cookie = None;
-
-            let resp = dev.exec_op(&req, &mut cookie);
 
             if let Err(err) = &resp {
                 if is_unsupported_cmd(err) {
@@ -469,7 +393,8 @@ fn test_raw_key_import_secret256() {
             let key_properties =
                 helper_key_properties(DdiKeyUsage::Derive, DdiKeyAvailability::App);
 
-            let req = create_raw_key_import_request(
+            let resp = helper_raw_key_import(
+                dev,
                 Some(session_id),
                 raw_key,
                 secret_buf.len(),
@@ -477,9 +402,6 @@ fn test_raw_key_import_secret256() {
                 Some(KEY_TAG),
                 key_properties,
             );
-            let mut cookie = None;
-
-            let resp = dev.exec_op(&req, &mut cookie);
 
             if let Err(err) = &resp {
                 if is_unsupported_cmd(err) {
@@ -523,7 +445,8 @@ fn test_raw_key_import_secret384() {
             let key_properties =
                 helper_key_properties(DdiKeyUsage::Derive, DdiKeyAvailability::App);
 
-            let req = create_raw_key_import_request(
+            let resp = helper_raw_key_import(
+                dev,
                 Some(session_id),
                 raw_key,
                 secret_buf.len(),
@@ -531,9 +454,6 @@ fn test_raw_key_import_secret384() {
                 Some(KEY_TAG),
                 key_properties,
             );
-            let mut cookie = None;
-
-            let resp = dev.exec_op(&req, &mut cookie);
 
             if let Err(err) = &resp {
                 if is_unsupported_cmd(err) {
@@ -578,7 +498,8 @@ fn test_raw_key_import_secret521() {
             let key_properties =
                 helper_key_properties(DdiKeyUsage::Derive, DdiKeyAvailability::App);
 
-            let req = create_raw_key_import_request(
+            let resp = helper_raw_key_import(
+                dev,
                 Some(session_id),
                 raw_key,
                 secret_buf.len(),
@@ -586,9 +507,6 @@ fn test_raw_key_import_secret521() {
                 Some(KEY_TAG),
                 key_properties,
             );
-            let mut cookie = None;
-
-            let resp = dev.exec_op(&req, &mut cookie);
 
             if let Err(err) = &resp {
                 if is_unsupported_cmd(err) {
@@ -634,7 +552,8 @@ fn test_raw_key_import_multiple_keys_and_validate() {
             let key_properties =
                 helper_key_properties(DdiKeyUsage::Derive, DdiKeyAvailability::App);
 
-            let req = create_raw_key_import_request(
+            let resp_1 = helper_raw_key_import(
+                dev,
                 Some(session_id),
                 raw_key_1,
                 secret_buf_1.len(),
@@ -642,9 +561,6 @@ fn test_raw_key_import_multiple_keys_and_validate() {
                 Some(KEY_TAG),
                 key_properties,
             );
-            let mut cookie = None;
-
-            let resp_1 = dev.exec_op(&req, &mut cookie);
 
             if let Err(err) = &resp_1 {
                 if is_unsupported_cmd(err) {
@@ -666,7 +582,8 @@ fn test_raw_key_import_multiple_keys_and_validate() {
             let key_properties =
                 helper_key_properties(DdiKeyUsage::Derive, DdiKeyAvailability::App);
 
-            let req = create_raw_key_import_request(
+            let resp_2 = helper_raw_key_import(
+                dev,
                 Some(session_id),
                 raw_key_2,
                 secret_buf_2.len(),
@@ -674,9 +591,6 @@ fn test_raw_key_import_multiple_keys_and_validate() {
                 Some(KEY_TAG_1),
                 key_properties,
             );
-            let mut cookie = None;
-
-            let resp_2 = dev.exec_op(&req, &mut cookie);
 
             let resp_2 = resp_2.unwrap();
             let resp_2 = resp_2.data;
@@ -761,9 +675,10 @@ fn test_raw_key_import_unwrapping_key() {
                 .copy_from_slice(&TEST_RSA_2K_PRIVATE_KEY_RAW);
 
             let key_properties =
-                helper_key_properties(DdiKeyUsage::WrapUnwrap, DdiKeyAvailability::App);
+                helper_key_properties(DdiKeyUsage::Unwrap, DdiKeyAvailability::App);
 
-            let req = create_raw_key_import_request(
+            let resp = helper_raw_key_import(
+                dev,
                 Some(session_id),
                 raw_key,
                 TEST_RSA_2K_PRIVATE_KEY_RAW.len(),
@@ -771,9 +686,6 @@ fn test_raw_key_import_unwrapping_key() {
                 Some(KEY_TAG),
                 key_properties,
             );
-            let mut cookie = None;
-
-            let resp = dev.exec_op(&req, &mut cookie);
 
             if let Err(err) = &resp {
                 if is_unsupported_cmd(err) {
@@ -846,7 +758,8 @@ fn test_raw_key_import_rsa2k_decrypt_unsupported_key_usage() {
             let key_properties =
                 helper_key_properties(DdiKeyUsage::EncryptDecrypt, DdiKeyAvailability::App);
 
-            let req = create_raw_key_import_request(
+            let resp = helper_raw_key_import(
+                dev,
                 Some(session_id),
                 raw_key,
                 TEST_RSA_2K_PRIVATE_KEY_RAW.len(),
@@ -854,9 +767,7 @@ fn test_raw_key_import_rsa2k_decrypt_unsupported_key_usage() {
                 Some(KEY_TAG),
                 key_properties,
             );
-            let mut cookie = None;
-
-            match dev.exec_op(&req, &mut cookie) {
+            match resp {
                 Err(DdiError::DdiStatus(DdiStatus::InvalidPermissions)) => (),
                 Err(DdiError::DdiStatus(DdiStatus::UnsupportedCmd)) => {
                     println!("Firmware is not built with fips_validation_hooks.");
@@ -878,7 +789,7 @@ fn test_raw_key_import_aes256_unsupported_key() {
                 return;
             }
 
-            // Actual AES-256 private key in Raw format
+            // Actual RSA 2K private key in Raw format
             const TEST_AES256_RAW_KEY: [u8; 32] = [
                 0x1D, 0xD7, 0x59, 0xF9, 0x8D, 0x2B, 0xF0, 0x71, 0x6D, 0xAB, 0x91, 0xF4, 0xDB, 0xD9,
                 0x70, 0x89, 0x5D, 0x73, 0x58, 0x16, 0x1F, 0xA4, 0x31, 0xAD, 0x3D, 0x0E, 0xBE, 0xE1,
@@ -891,7 +802,8 @@ fn test_raw_key_import_aes256_unsupported_key() {
             let key_properties =
                 helper_key_properties(DdiKeyUsage::EncryptDecrypt, DdiKeyAvailability::App);
 
-            let req = create_raw_key_import_request(
+            let resp = helper_raw_key_import(
+                dev,
                 Some(session_id),
                 raw_key,
                 TEST_AES256_RAW_KEY.len(),
@@ -899,9 +811,7 @@ fn test_raw_key_import_aes256_unsupported_key() {
                 Some(KEY_TAG),
                 key_properties,
             );
-            let mut cookie = None;
-
-            match dev.exec_op(&req, &mut cookie) {
+            match resp {
                 Err(DdiError::DdiStatus(DdiStatus::InvalidKeyType)) => (),
                 Err(DdiError::DdiStatus(DdiStatus::UnsupportedCmd)) => {
                     println!("Firmware is not built with fips_validation_hooks.");
@@ -933,7 +843,8 @@ fn test_raw_key_import_hmacsha256() {
             let key_properties =
                 helper_key_properties(DdiKeyUsage::Derive, DdiKeyAvailability::App);
 
-            let req = create_raw_key_import_request(
+            let resp = helper_raw_key_import(
+                dev,
                 Some(session_id),
                 raw_key,
                 key_buf.len(),
@@ -941,9 +852,6 @@ fn test_raw_key_import_hmacsha256() {
                 Some(KEY_TAG),
                 key_properties,
             );
-            let mut cookie = None;
-
-            let resp = dev.exec_op(&req, &mut cookie);
 
             if let Err(err) = &resp {
                 if is_unsupported_cmd(err) {
@@ -988,7 +896,8 @@ fn test_raw_key_import_hmacsha384() {
             let key_properties =
                 helper_key_properties(DdiKeyUsage::Derive, DdiKeyAvailability::App);
 
-            let req = create_raw_key_import_request(
+            let resp = helper_raw_key_import(
+                dev,
                 Some(session_id),
                 raw_key,
                 key_buf.len(),
@@ -996,9 +905,6 @@ fn test_raw_key_import_hmacsha384() {
                 Some(KEY_TAG),
                 key_properties,
             );
-            let mut cookie = None;
-
-            let resp = dev.exec_op(&req, &mut cookie);
 
             if let Err(err) = &resp {
                 if is_unsupported_cmd(err) {
@@ -1043,7 +949,8 @@ fn test_raw_key_import_hmacsha512() {
             let key_properties =
                 helper_key_properties(DdiKeyUsage::Derive, DdiKeyAvailability::App);
 
-            let req = create_raw_key_import_request(
+            let resp = helper_raw_key_import(
+                dev,
                 Some(session_id),
                 raw_key,
                 key_buf.len(),
@@ -1051,9 +958,6 @@ fn test_raw_key_import_hmacsha512() {
                 Some(KEY_TAG),
                 key_properties,
             );
-            let mut cookie = None;
-
-            let resp = dev.exec_op(&req, &mut cookie);
 
             if let Err(err) = &resp {
                 if is_unsupported_cmd(err) {

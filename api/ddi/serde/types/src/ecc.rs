@@ -38,7 +38,7 @@ pub struct DdiEccGenerateKeyPairReq {
 
     /// Key properties
     #[ddi(id = 3)]
-    pub key_properties: DdiKeyProperties,
+    pub key_properties: DdiTargetKeyProperties,
 }
 
 /// DDI ECC Generate Key Pair Response Structure
@@ -157,7 +157,7 @@ pub struct DdiEcdhKeyExchangeReq {
 
     /// Target key properties
     #[ddi(id = 5)]
-    pub key_properties: DdiKeyProperties,
+    pub key_properties: DdiTargetKeyProperties,
 }
 
 impl DdiEcdhKeyExchangeReq {

@@ -17,24 +17,17 @@ fn test_rsa_3k_decrypt_no_session() {
         common_setup,
         common_cleanup,
         |dev, _ddi, _path, session_id| {
-            let (_key_id_rsa3k_pub, key_id_rsa3k_priv_crt) =
-                store_rsa_keys_crt(dev, session_id, DdiKeyUsage::EncryptDecrypt, 3);
+            let (_key_id_rsa3k_pub, key_id_rsa3k_priv_crt, _) =
+                store_rsa_keys_crt(dev, session_id, DdiKeyUsage::EncryptDecrypt, 3, None);
 
-            let req = DdiRsaModExpCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::RsaModExp,
-                    sess_id: None,
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiRsaModExpReq {
-                    key_id: key_id_rsa3k_priv_crt,
-                    y: MborByteArray::from_slice(&[0x1; 384]).expect("failed to create byte array"),
-                    op_type: DdiRsaOpType::Decrypt,
-                },
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_rsa_mod_exp(
+                dev,
+                None,
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                key_id_rsa3k_priv_crt,
+                MborByteArray::from_slice(&[0x1; 384]).expect("failed to create byte array"),
+                DdiRsaOpType::Decrypt,
+            );
 
             assert!(resp.is_err(), "resp {:?}", resp);
 
@@ -52,25 +45,18 @@ fn test_rsa_3k_decrypt_incorrect_session_id() {
         common_setup,
         common_cleanup,
         |dev, _ddi, _path, session_id| {
-            let (_key_id_rsa3k_pub, key_id_rsa3k_priv_crt) =
-                store_rsa_keys_crt(dev, session_id, DdiKeyUsage::EncryptDecrypt, 3);
+            let (_key_id_rsa3k_pub, key_id_rsa3k_priv_crt, _) =
+                store_rsa_keys_crt(dev, session_id, DdiKeyUsage::EncryptDecrypt, 3, None);
 
             let session_id = 20;
-            let req = DdiRsaModExpCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::RsaModExp,
-                    sess_id: Some(session_id),
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiRsaModExpReq {
-                    key_id: key_id_rsa3k_priv_crt,
-                    y: MborByteArray::from_slice(&[0x1; 384]).expect("failed to create byte array"),
-                    op_type: DdiRsaOpType::Decrypt,
-                },
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_rsa_mod_exp(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                key_id_rsa3k_priv_crt,
+                MborByteArray::from_slice(&[0x1; 384]).expect("failed to create byte array"),
+                DdiRsaOpType::Decrypt,
+            );
 
             assert!(resp.is_err(), "resp {:?}", resp);
 
@@ -88,21 +74,14 @@ fn test_rsa_3k_decrypt_incorrect_key_num_table() {
         common_setup,
         common_cleanup,
         |dev, _ddi, _path, session_id| {
-            let req = DdiRsaModExpCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::RsaModExp,
-                    sess_id: Some(session_id),
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiRsaModExpReq {
-                    key_id: 0x0300,
-                    y: MborByteArray::from_slice(&[0x1; 384]).expect("failed to create byte array"),
-                    op_type: DdiRsaOpType::Decrypt,
-                },
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_rsa_mod_exp(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                0x0300,
+                MborByteArray::from_slice(&[0x1; 384]).expect("failed to create byte array"),
+                DdiRsaOpType::Decrypt,
+            );
 
             assert!(resp.is_err(), "resp {:?}", resp);
         },
@@ -115,21 +94,14 @@ fn test_rsa_3k_decrypt_incorrect_key_num_entry() {
         common_setup,
         common_cleanup,
         |dev, _ddi, _path, session_id| {
-            let req = DdiRsaModExpCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::RsaModExp,
-                    sess_id: Some(session_id),
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiRsaModExpReq {
-                    key_id: 0x0020,
-                    y: MborByteArray::from_slice(&[0x1; 384]).expect("failed to create byte array"),
-                    op_type: DdiRsaOpType::Decrypt,
-                },
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_rsa_mod_exp(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                0x0020,
+                MborByteArray::from_slice(&[0x1; 384]).expect("failed to create byte array"),
+                DdiRsaOpType::Decrypt,
+            );
 
             assert!(resp.is_err(), "resp {:?}", resp);
 
@@ -150,21 +122,14 @@ fn test_rsa_3k_decrypt_incorrect_key_type() {
             // Import a key with a wrong type
             let key_id_wrong_type = store_aes_keys(dev, session_id);
 
-            let req = DdiRsaModExpCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::RsaModExp,
-                    sess_id: Some(session_id),
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiRsaModExpReq {
-                    key_id: key_id_wrong_type,
-                    y: MborByteArray::from_slice(&[0x1; 384]).expect("failed to create byte array"),
-                    op_type: DdiRsaOpType::Decrypt,
-                },
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_rsa_mod_exp(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                key_id_wrong_type,
+                MborByteArray::from_slice(&[0x1; 384]).expect("failed to create byte array"),
+                DdiRsaOpType::Decrypt,
+            );
 
             assert!(resp.is_err(), "resp {:?}", resp);
 
@@ -192,24 +157,17 @@ fn test_rsa_3k_decrypt_incorrect_message_zero_data() {
                 return;
             }
 
-            let (_key_id_rsa3k_pub, key_id_rsa3k_priv_crt) =
-                store_rsa_keys_crt(dev, session_id, DdiKeyUsage::EncryptDecrypt, 3);
+            let (_key_id_rsa3k_pub, key_id_rsa3k_priv_crt, _) =
+                store_rsa_keys_crt(dev, session_id, DdiKeyUsage::EncryptDecrypt, 3, None);
 
-            let req = DdiRsaModExpCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::RsaModExp,
-                    sess_id: Some(session_id),
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiRsaModExpReq {
-                    key_id: key_id_rsa3k_priv_crt,
-                    y: MborByteArray::new([0x0; 512], 384).expect("failed to create byte array"),
-                    op_type: DdiRsaOpType::Decrypt,
-                },
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_rsa_mod_exp(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                key_id_rsa3k_priv_crt,
+                MborByteArray::new([0x0; 512], 384).expect("failed to create byte array"),
+                DdiRsaOpType::Decrypt,
+            );
 
             assert!(resp.is_err(), "resp {:?}", resp);
 
@@ -237,24 +195,17 @@ fn test_rsa_3k_decrypt_incorrect_message_large_data() {
                 return;
             }
 
-            let (_key_id_rsa3k_pub, key_id_rsa3k_priv_crt) =
-                store_rsa_keys_crt(dev, session_id, DdiKeyUsage::EncryptDecrypt, 3);
+            let (_key_id_rsa3k_pub, key_id_rsa3k_priv_crt, _) =
+                store_rsa_keys_crt(dev, session_id, DdiKeyUsage::EncryptDecrypt, 3, None);
 
-            let req = DdiRsaModExpCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::RsaModExp,
-                    sess_id: Some(session_id),
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiRsaModExpReq {
-                    key_id: key_id_rsa3k_priv_crt,
-                    y: MborByteArray::new([0xff; 512], 384).expect("failed to create byte array"),
-                    op_type: DdiRsaOpType::Decrypt,
-                },
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_rsa_mod_exp(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                key_id_rsa3k_priv_crt,
+                MborByteArray::new([0xff; 512], 384).expect("failed to create byte array"),
+                DdiRsaOpType::Decrypt,
+            );
 
             assert!(resp.is_err(), "resp {:?}", resp);
 
@@ -272,24 +223,17 @@ fn test_rsa_3k_decrypt() {
         common_setup,
         common_cleanup,
         |dev, _ddi, _path, session_id| {
-            let (_key_id_rsa3k_pub, key_id_rsa3k_priv_crt) =
-                store_rsa_keys_crt(dev, session_id, DdiKeyUsage::EncryptDecrypt, 3);
+            let (_key_id_rsa3k_pub, key_id_rsa3k_priv_crt, _) =
+                store_rsa_keys_crt(dev, session_id, DdiKeyUsage::EncryptDecrypt, 3, None);
 
-            let req = DdiRsaModExpCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::RsaModExp,
-                    sess_id: Some(session_id),
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiRsaModExpReq {
-                    key_id: key_id_rsa3k_priv_crt,
-                    y: MborByteArray::from_slice(&[0x1; 384]).expect("failed to create byte array"),
-                    op_type: DdiRsaOpType::Decrypt,
-                },
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_rsa_mod_exp(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                key_id_rsa3k_priv_crt,
+                MborByteArray::from_slice(&[0x1; 384]).expect("failed to create byte array"),
+                DdiRsaOpType::Decrypt,
+            );
             assert!(resp.is_ok(), "resp {:?}", resp);
         },
     );
@@ -301,8 +245,8 @@ fn test_rsa_3k_encrypt_and_decrypt() {
         common_setup,
         common_cleanup,
         |dev, _ddi, _path, session_id| {
-            let (_key_id_rsa3k_pub, key_id_rsa3k_priv_crt) =
-                store_rsa_keys_crt(dev, session_id, DdiKeyUsage::EncryptDecrypt, 3);
+            let (_key_id_rsa3k_pub, key_id_rsa3k_priv_crt, _) =
+                store_rsa_keys_crt(dev, session_id, DdiKeyUsage::EncryptDecrypt, 3, None);
 
             let orig_x = [0x1u8; 512];
             let data_len_to_test = 318;
@@ -318,22 +262,15 @@ fn test_rsa_3k_encrypt_and_decrypt() {
             encrypted_data[..resp.len()].copy_from_slice(resp.as_slice());
             let encrypted_data_len = resp.len();
 
-            let req = DdiRsaModExpCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::RsaModExp,
-                    sess_id: Some(session_id),
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiRsaModExpReq {
-                    key_id: key_id_rsa3k_priv_crt,
-                    y: MborByteArray::new(encrypted_data, encrypted_data_len)
-                        .expect("failed to create byte array"),
-                    op_type: DdiRsaOpType::Decrypt,
-                },
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_rsa_mod_exp(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                key_id_rsa3k_priv_crt,
+                MborByteArray::new(encrypted_data, encrypted_data_len)
+                    .expect("failed to create byte array"),
+                DdiRsaOpType::Decrypt,
+            );
 
             assert!(resp.is_ok(), "resp {:?}", resp);
 

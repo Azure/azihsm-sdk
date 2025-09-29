@@ -77,12 +77,12 @@ impl CredentialEncryptionKey {
         Ok(CredentialEncryptionKey { aes_key, hmac_key })
     }
 
-    pub fn encrypt(
+    pub fn encrypt_establish_credential(
         &self,
         id: [u8; 16],
         pin: [u8; 16],
         nonce: [u8; 32],
-    ) -> Result<DdiEncryptedCredential, CryptoError> {
+    ) -> Result<DdiEncryptedEstablishCredential, CryptoError> {
         let mut encrypted_id = [0; 16];
         let mut encrypted_pin = [0; 16];
         let mut iv = [0; 16];
@@ -105,10 +105,57 @@ impl CredentialEncryptionKey {
 
         let tag = hmac_sha_384(&self.hmac_key, &id_pin_iv_nonce)?;
 
-        Ok(DdiEncryptedCredential {
+        Ok(DdiEncryptedEstablishCredential {
             encrypted_id: MborByteArray::new(encrypted_id, 16)
                 .map_err(|_| CryptoError::ByteArrayCreationError)?,
             encrypted_pin: MborByteArray::new(encrypted_pin, 16)
+                .map_err(|_| CryptoError::ByteArrayCreationError)?,
+            iv: MborByteArray::new(iv, 16).map_err(|_| CryptoError::ByteArrayCreationError)?,
+            nonce,
+            tag,
+        })
+    }
+
+    pub fn encrypt_session_credential(
+        &self,
+        id: [u8; 16],
+        pin: [u8; 16],
+        seed: [u8; 48],
+        nonce: [u8; 32],
+    ) -> Result<DdiEncryptedSessionCredential, CryptoError> {
+        let mut encrypted_id = [0; 16];
+        let mut encrypted_pin = [0; 16];
+        let mut encrypted_seed = [0; 48];
+        let mut iv = [0; 16];
+
+        crypto::rand::rand_bytes(&mut iv)?;
+
+        let aes_key = AesKey::from_bytes(&self.aes_key)?;
+
+        let encrypted_id_vec = aes_key.encrypt(&id, AesAlgo::Cbc, Some(&iv))?.cipher_text;
+        encrypted_id.copy_from_slice(&encrypted_id_vec);
+
+        let encrypted_pin_vec = aes_key.encrypt(&pin, AesAlgo::Cbc, Some(&iv))?.cipher_text;
+        encrypted_pin.copy_from_slice(&encrypted_pin_vec);
+
+        let encrypted_seed_vec = aes_key.encrypt(&seed, AesAlgo::Cbc, Some(&iv))?.cipher_text;
+        encrypted_seed.copy_from_slice(&encrypted_seed_vec);
+
+        let mut id_pin_seed_iv_nonce = [0; 128];
+        id_pin_seed_iv_nonce[..16].copy_from_slice(&encrypted_id);
+        id_pin_seed_iv_nonce[16..32].copy_from_slice(&encrypted_pin);
+        id_pin_seed_iv_nonce[32..80].copy_from_slice(&encrypted_seed);
+        id_pin_seed_iv_nonce[80..96].copy_from_slice(&iv);
+        id_pin_seed_iv_nonce[96..].copy_from_slice(&nonce);
+
+        let tag = hmac_sha_384(&self.hmac_key, &id_pin_seed_iv_nonce)?;
+
+        Ok(DdiEncryptedSessionCredential {
+            encrypted_id: MborByteArray::new(encrypted_id, 16)
+                .map_err(|_| CryptoError::ByteArrayCreationError)?,
+            encrypted_pin: MborByteArray::new(encrypted_pin, 16)
+                .map_err(|_| CryptoError::ByteArrayCreationError)?,
+            encrypted_seed: MborByteArray::new(encrypted_seed, 48)
                 .map_err(|_| CryptoError::ByteArrayCreationError)?,
             iv: MborByteArray::new(iv, 16).map_err(|_| CryptoError::ByteArrayCreationError)?,
             nonce,

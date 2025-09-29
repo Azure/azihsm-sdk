@@ -7,6 +7,7 @@ use mcr_ddi_mbor::MborByteArray;
 use mcr_ddi_types::*;
 use rsa_padding::RsaDigestKind;
 use rsa_padding::RsaEncoding;
+use test_with_tracing::test;
 
 use crate::common::*;
 
@@ -24,29 +25,24 @@ fn import_unwrap_key(dev: &mut <DdiTest as Ddi>::Dev, sess_id: u16) -> u16 {
     let mut der = [0u8; 3072];
     der[..TEST_RSA_2K_PRIVATE_KEY.len()].copy_from_slice(&TEST_RSA_2K_PRIVATE_KEY);
 
-    let req = DdiDerKeyImportCmdReq {
-        hdr: DdiReqHdr {
-            op: DdiOp::DerKeyImport,
-            sess_id: Some(sess_id),
-            rev: Some(DdiApiRev { major: 1, minor: 0 }),
-        },
-        data: DdiDerKeyImportReq {
-            der: MborByteArray::new(der, TEST_RSA_2K_PRIVATE_KEY.len())
-                .expect("failed to create byte array"),
-            key_class: DdiKeyClass::Rsa,
-            key_tag: None,
-            key_properties: helper_key_properties(DdiKeyUsage::WrapUnwrap, DdiKeyAvailability::App),
-        },
-        ext: None,
-    };
-    let mut cookie = None;
-    let resp = dev.exec_op(&req, &mut cookie);
+    let key_props = helper_key_properties(DdiKeyUsage::Unwrap, DdiKeyAvailability::App);
+
+    let resp = helper_der_key_import(
+        dev,
+        Some(sess_id),
+        Some(DdiApiRev { major: 1, minor: 0 }),
+        MborByteArray::new(der, TEST_RSA_2K_PRIVATE_KEY.len())
+            .expect("failed to create byte array"),
+        DdiKeyClass::Rsa,
+        None,
+        key_props,
+    );
 
     assert!(resp.is_ok(), "resp {:?}", resp);
 
     let resp = resp.unwrap();
 
-    assert_eq!(resp.data.kind, DdiKeyType::Rsa2kPrivate);
+    assert_eq!(resp.data.key_type, DdiKeyType::Rsa2kPrivate);
 
     resp.data.key_id
 }
@@ -350,31 +346,23 @@ fn test_rsa_unwrap_incorrect_input_key_usage() {
         let mut der = [0u8; 3072];
         der[..TEST_RSA_2K_PRIVATE_KEY.len()].copy_from_slice(&TEST_RSA_2K_PRIVATE_KEY);
 
-        let req = DdiDerKeyImportCmdReq {
-            hdr: DdiReqHdr {
-                op: DdiOp::DerKeyImport,
-                sess_id: Some(session_id),
-                rev: Some(DdiApiRev { major: 1, minor: 0 }),
-            },
-            data: DdiDerKeyImportReq {
-                der: MborByteArray::new(der, TEST_RSA_2K_PRIVATE_KEY.len())
-                    .expect("failed to create byte array"),
-                key_class: DdiKeyClass::Rsa,
-                key_tag: None,
-                key_properties: helper_key_properties(
-                    DdiKeyUsage::EncryptDecrypt,
-                    DdiKeyAvailability::App,
-                ),
-            },
-            ext: None,
-        };
-        let mut cookie = None;
-        let resp = dev.exec_op(&req, &mut cookie);
+        let key_props = helper_key_properties(DdiKeyUsage::EncryptDecrypt, DdiKeyAvailability::App);
+
+        let resp = helper_der_key_import(
+            dev,
+            Some(session_id),
+            Some(DdiApiRev { major: 1, minor: 0 }),
+            MborByteArray::new(der, TEST_RSA_2K_PRIVATE_KEY.len())
+                .expect("failed to create byte array"),
+            DdiKeyClass::Rsa,
+            None,
+            key_props,
+        );
 
         assert!(resp.is_ok(), "resp {:?}", resp);
         let resp = resp.unwrap();
         let bad_unwrap_key_id = resp.data.key_id;
-        assert_eq!(resp.data.kind, DdiKeyType::Rsa2kPrivate);
+        assert_eq!(resp.data.key_type, DdiKeyType::Rsa2kPrivate);
 
         let mut der = [0u8; 3072];
         der[..TEST_RSA_3K_PRIVATE_CKM_WRAPPED.len()]
@@ -452,21 +440,14 @@ fn test_rsa_unwrap() {
         y[..resp.len()].copy_from_slice(resp.as_slice());
         let y_len = resp.len();
 
-        let req = DdiRsaModExpCmdReq {
-            hdr: DdiReqHdr {
-                op: DdiOp::RsaModExp,
-                sess_id: Some(session_id),
-                rev: Some(DdiApiRev { major: 1, minor: 0 }),
-            },
-            data: DdiRsaModExpReq {
-                key_id: unwrapped_key_id,
-                y: MborByteArray::new(y, y_len).expect("failed to create byte array"),
-                op_type: DdiRsaOpType::Decrypt,
-            },
-            ext: None,
-        };
-        let mut cookie = None;
-        let resp = dev.exec_op(&req, &mut cookie);
+        let resp = helper_rsa_mod_exp(
+            dev,
+            Some(session_id),
+            Some(DdiApiRev { major: 1, minor: 0 }),
+            unwrapped_key_id,
+            MborByteArray::new(y, y_len).expect("failed to create byte array"),
+            DdiRsaOpType::Decrypt,
+        );
 
         assert!(resp.is_ok(), "resp {:?}", resp);
 
@@ -486,6 +467,144 @@ fn test_rsa_unwrap() {
         let unpadded_data = unpadded_data_result.unwrap();
 
         assert_eq!(orig_x[..data_len_to_test], unpadded_data);
+    });
+}
+
+#[test]
+fn test_rsa_unwrap_should_have_masked_key() {
+    ddi_dev_test(setup, common_cleanup, |dev, _ddi, _path, session_id| {
+        // Run this test only for Mock device
+        if get_device_kind(dev) != DdiDeviceKind::Virtual {
+            println!("Unmask key Not supported for Physical Device.");
+            return;
+        }
+
+        let unwrap_key_id = import_unwrap_key(dev, session_id);
+
+        let mut der = [0u8; 3072];
+        der[..TEST_RSA_3K_PRIVATE_CKM_WRAPPED.len()]
+            .copy_from_slice(&TEST_RSA_3K_PRIVATE_CKM_WRAPPED);
+
+        let key_props = helper_key_properties(DdiKeyUsage::EncryptDecrypt, DdiKeyAvailability::App);
+        let resp = helper_rsa_unwrap(
+            dev,
+            Some(session_id),
+            Some(DdiApiRev { major: 1, minor: 0 }),
+            unwrap_key_id,
+            MborByteArray::new(der, 2064).expect("failed to create byte array"),
+            DdiKeyClass::Rsa,
+            DdiRsaCryptoPadding::Oaep,
+            DdiHashAlgorithm::Sha1,
+            None,
+            key_props,
+        );
+
+        assert!(resp.is_ok(), "resp {:?}", resp);
+        let resp = resp.unwrap();
+        assert_eq!(resp.data.kind, DdiKeyType::Rsa3kPrivate);
+        let unwrapped_key_id = resp.data.key_id;
+
+        let masked_key = resp.data.masked_key;
+        assert!(!masked_key.is_empty(), "Masked key should be present");
+
+        // Unmask
+        let unmasked_key_id = {
+            let resp = helper_unmask_key(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                masked_key,
+            );
+
+            assert!(resp.is_ok(), "resp {:?}", resp);
+            let resp = resp.unwrap();
+            let data = resp.data;
+
+            // key id should be different
+            assert_ne!(data.key_id, unwrapped_key_id);
+            // key kind should be the same
+            assert_eq!(data.kind, DdiKeyType::Rsa3kPrivate);
+
+            data.key_id
+        };
+
+        // Use two key to decrypt
+        // Should produce the same correct result
+        let orig_x = [0x1u8; 512];
+        let data_len_to_test = 190;
+        let resp = rsa_encrypt_local_openssl(
+            &TEST_RSA_3K_PUBLIC_KEY,
+            &orig_x,
+            data_len_to_test,
+            DdiRsaCryptoPadding::Oaep,
+            Some(DdiHashAlgorithm::Sha256),
+        );
+
+        let mut y = [0u8; 512];
+        y[..resp.len()].copy_from_slice(resp.as_slice());
+        let y_len = resp.len();
+
+        {
+            let resp = helper_rsa_mod_exp(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                unwrapped_key_id,
+                MborByteArray::new(y, y_len).expect("failed to create byte array"),
+                DdiRsaOpType::Decrypt,
+            );
+
+            assert!(resp.is_ok(), "resp {:?}", resp);
+
+            let resp = resp.unwrap();
+
+            let mut padded_data = [0u8; 512];
+            padded_data[..resp.data.x.len()]
+                .copy_from_slice(&resp.data.x.data()[..resp.data.x.len()]);
+
+            let unpadded_data_result = RsaEncoding::decode_oaep(
+                &mut padded_data[..resp.data.x.len()],
+                None,
+                3072 / 8,
+                RsaDigestKind::Sha256,
+                crypto_sha256,
+            );
+            assert!(unpadded_data_result.is_ok());
+            let unpadded_data = unpadded_data_result.unwrap();
+
+            assert_eq!(orig_x[..data_len_to_test], unpadded_data);
+        }
+
+        {
+            let resp = helper_rsa_mod_exp(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                unmasked_key_id,
+                MborByteArray::new(y, y_len).expect("failed to create byte array"),
+                DdiRsaOpType::Decrypt,
+            );
+
+            assert!(resp.is_ok(), "resp {:?}", resp);
+
+            let resp = resp.unwrap();
+
+            let mut padded_data = [0u8; 512];
+            padded_data[..resp.data.x.len()]
+                .copy_from_slice(&resp.data.x.data()[..resp.data.x.len()]);
+
+            let unpadded_data_result = RsaEncoding::decode_oaep(
+                &mut padded_data[..resp.data.x.len()],
+                None,
+                3072 / 8,
+                RsaDigestKind::Sha256,
+                crypto_sha256,
+            );
+            assert!(unpadded_data_result.is_ok());
+            let unpadded_data = unpadded_data_result.unwrap();
+
+            assert_eq!(orig_x[..data_len_to_test], unpadded_data);
+        }
     });
 }
 

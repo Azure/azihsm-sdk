@@ -30,6 +30,7 @@ fn aes_bulk_unwrap_send_req_and_get_resp(
     der: &[u8; 3072],
     der_len: &usize,
     key_tag: &u16,
+    key_class: DdiKeyClass,
     dev: &mut <DdiTest as Ddi>::Dev,
 ) -> Result<DdiRsaUnwrapCmdResp, mcr_ddi::DdiError> {
     let key_props = helper_key_properties(DdiKeyUsage::EncryptDecrypt, DdiKeyAvailability::App);
@@ -40,7 +41,7 @@ fn aes_bulk_unwrap_send_req_and_get_resp(
         Some(DdiApiRev { major: 1, minor: 0 }),
         *unwrap_key_id,
         MborByteArray::new(*der, *der_len).expect("failed to create byte array"),
-        DdiKeyClass::AesBulk,
+        key_class,
         DdiRsaCryptoPadding::Oaep,
         DdiHashAlgorithm::Sha256,
         Some(*key_tag),
@@ -54,7 +55,7 @@ fn test_rsa_unwrap_no_session() {
         common_setup,
         common_cleanup,
         |dev, _ddi, _path, session_id| {
-            let (unwrap_key_id, unwrap_pub_key_der) = get_unwrapping_key(dev, session_id);
+            let (unwrap_key_id, unwrap_pub_key_der, _) = get_unwrapping_key(dev, session_id);
 
             let rsa_3k_private_wrapped =
                 wrap_data(unwrap_pub_key_der, TEST_RSA_3K_PRIVATE_KEY.as_slice());
@@ -96,7 +97,7 @@ fn test_rsa_unwrap_incorrect_session_id() {
         common_setup,
         common_cleanup,
         |dev, _ddi, _path, session_id| {
-            let (unwrap_key_id, unwrap_pub_key_der) = get_unwrapping_key(dev, session_id);
+            let (unwrap_key_id, unwrap_pub_key_der, _) = get_unwrapping_key(dev, session_id);
 
             let rsa_3k_private_wrapped =
                 wrap_data(unwrap_pub_key_der, TEST_RSA_3K_PRIVATE_KEY.as_slice());
@@ -140,7 +141,7 @@ fn test_rsa_unwrap_incorrect_key_num_table() {
         common_setup,
         common_cleanup,
         |dev, _ddi, _path, session_id| {
-            let (unwrap_key_id, unwrap_pub_key_der) = get_unwrapping_key(dev, session_id);
+            let (unwrap_key_id, unwrap_pub_key_der, _) = get_unwrapping_key(dev, session_id);
 
             let rsa_3k_private_wrapped =
                 wrap_data(unwrap_pub_key_der, TEST_RSA_3K_PRIVATE_KEY.as_slice());
@@ -177,7 +178,7 @@ fn test_rsa_unwrap_incorrect_key_num_entry() {
         common_setup,
         common_cleanup,
         |dev, _ddi, _path, session_id| {
-            let (unwrap_key_id, unwrap_pub_key_der) = get_unwrapping_key(dev, session_id);
+            let (unwrap_key_id, unwrap_pub_key_der, _) = get_unwrapping_key(dev, session_id);
 
             let rsa_3k_private_wrapped =
                 wrap_data(unwrap_pub_key_der, TEST_RSA_3K_PRIVATE_KEY.as_slice());
@@ -219,7 +220,7 @@ fn test_rsa_unwrap_incorrect_der_len() {
         common_setup,
         common_cleanup,
         |dev, _ddi, _path, session_id| {
-            let (unwrap_key_id, unwrap_pub_key_der) = get_unwrapping_key(dev, session_id);
+            let (unwrap_key_id, unwrap_pub_key_der, _) = get_unwrapping_key(dev, session_id);
 
             let rsa_3k_private_wrapped =
                 wrap_data(unwrap_pub_key_der, TEST_RSA_3K_PRIVATE_KEY.as_slice());
@@ -256,7 +257,7 @@ fn test_rsa_unwrap_incorrect_key_type() {
         common_setup,
         common_cleanup,
         |dev, _ddi, _path, session_id| {
-            let (unwrap_key_id, unwrap_pub_key_der) = get_unwrapping_key(dev, session_id);
+            let (unwrap_key_id, unwrap_pub_key_der, _) = get_unwrapping_key(dev, session_id);
 
             let rsa_3k_private_wrapped =
                 wrap_data(unwrap_pub_key_der, TEST_RSA_3K_PRIVATE_KEY.as_slice());
@@ -293,7 +294,7 @@ fn test_rsa_unwrap_incorrect_hash() {
         common_setup,
         common_cleanup,
         |dev, _ddi, _path, session_id| {
-            let (unwrap_key_id, unwrap_pub_key_der) = get_unwrapping_key(dev, session_id);
+            let (unwrap_key_id, unwrap_pub_key_der, _) = get_unwrapping_key(dev, session_id);
 
             let rsa_3k_private_wrapped =
                 wrap_data(unwrap_pub_key_der, TEST_RSA_3K_PRIVATE_KEY.as_slice());
@@ -330,7 +331,7 @@ fn test_rsa_unwrap_tampered_data() {
         common_setup,
         common_cleanup,
         |dev, _ddi, _path, session_id| {
-            let (unwrap_key_id, unwrap_pub_key_der) = get_unwrapping_key(dev, session_id);
+            let (unwrap_key_id, unwrap_pub_key_der, _) = get_unwrapping_key(dev, session_id);
 
             let rsa_3k_private_wrapped =
                 wrap_data(unwrap_pub_key_der, TEST_RSA_3K_PRIVATE_KEY.as_slice());
@@ -371,29 +372,15 @@ fn test_rsa_unwrap_incorrect_input_key_usage() {
         common_cleanup,
         |dev, _ddi, _path, session_id| {
             // Import a private key with incorrect usage
-            let mut der = [0u8; 3072];
-            der[..TEST_RSA_2K_PRIVATE_KEY.len()].copy_from_slice(&TEST_RSA_2K_PRIVATE_KEY);
-
-            let req = DdiDerKeyImportCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::DerKeyImport,
-                    sess_id: Some(session_id),
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiDerKeyImportReq {
-                    der: MborByteArray::new(der, TEST_RSA_2K_PRIVATE_KEY.len())
-                        .expect("failed to create byte array"),
-                    key_class: DdiKeyClass::Rsa,
-                    key_tag: None,
-                    key_properties: helper_key_properties(
-                        DdiKeyUsage::EncryptDecrypt,
-                        DdiKeyAvailability::App,
-                    ),
-                },
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = rsa_secure_import_key(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                &TEST_RSA_2K_PRIVATE_KEY,
+                DdiKeyClass::Rsa,
+                DdiKeyUsage::EncryptDecrypt,
+                None,
+            );
 
             assert!(resp.is_ok(), "resp {:?}", resp);
             let resp_data = resp.unwrap().data;
@@ -446,7 +433,7 @@ fn test_rsa_unwrap_rsa_key_sizes() {
             ];
 
             for (test_key, expected_key_type) in keys.iter() {
-                let (unwrap_key_id, unwrap_pub_key_der) = get_unwrapping_key(dev, session_id);
+                let (unwrap_key_id, unwrap_pub_key_der, _) = get_unwrapping_key(dev, session_id);
 
                 let rsa_private_wrapped = wrap_data(unwrap_pub_key_der, test_key);
 
@@ -485,7 +472,7 @@ fn test_rsa_unwrap_rsa_key() {
         common_setup,
         common_cleanup,
         |dev, _ddi, _path, session_id| {
-            let (unwrap_key_id, unwrap_pub_key_der) = get_unwrapping_key(dev, session_id);
+            let (unwrap_key_id, unwrap_pub_key_der, _) = get_unwrapping_key(dev, session_id);
 
             let rsa_3k_private_wrapped =
                 wrap_data(unwrap_pub_key_der, TEST_RSA_3K_PRIVATE_KEY.as_slice());
@@ -532,21 +519,14 @@ fn test_rsa_unwrap_rsa_key() {
             y[..resp.len()].copy_from_slice(resp.as_slice());
             let y_len = resp.len();
 
-            let req = DdiRsaModExpCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::RsaModExp,
-                    sess_id: Some(session_id),
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiRsaModExpReq {
-                    key_id: unwrapped_key_id,
-                    y: MborByteArray::new(y, y_len).expect("failed to create byte array"),
-                    op_type: DdiRsaOpType::Decrypt,
-                },
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_rsa_mod_exp(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                unwrapped_key_id,
+                MborByteArray::new(y, y_len).expect("failed to create byte array"),
+                DdiRsaOpType::Decrypt,
+            );
 
             assert!(resp.is_ok(), "resp {:?}", resp);
 
@@ -577,7 +557,7 @@ fn test_rsa_unwrap_rsa_crt_key() {
         common_setup,
         common_cleanup,
         |dev, _ddi, _path, session_id| {
-            let (unwrap_key_id, unwrap_pub_key_der) = get_unwrapping_key(dev, session_id);
+            let (unwrap_key_id, unwrap_pub_key_der, _) = get_unwrapping_key(dev, session_id);
 
             let rsa_3k_private_wrapped =
                 wrap_data(unwrap_pub_key_der, TEST_RSA_3K_PRIVATE_KEY.as_slice());
@@ -624,21 +604,14 @@ fn test_rsa_unwrap_rsa_crt_key() {
             y[..resp.len()].copy_from_slice(resp.as_slice());
             let y_len = resp.len();
 
-            let req = DdiRsaModExpCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::RsaModExp,
-                    sess_id: Some(session_id),
-                    rev: Some(DdiApiRev { major: 1, minor: 0 }),
-                },
-                data: DdiRsaModExpReq {
-                    key_id: unwrapped_key_id,
-                    y: MborByteArray::new(y, y_len).expect("failed to create byte array"),
-                    op_type: DdiRsaOpType::Decrypt,
-                },
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_rsa_mod_exp(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                unwrapped_key_id,
+                MborByteArray::new(y, y_len).expect("failed to create byte array"),
+                DdiRsaOpType::Decrypt,
+            );
 
             assert!(resp.is_ok(), "resp {:?}", resp);
 
@@ -669,7 +642,7 @@ fn test_rsa_unwrap_rsa_with_key_tag() {
         common_setup,
         common_cleanup,
         |dev, _ddi, _path, session_id| {
-            let (unwrap_key_id, unwrap_pub_key_der) = get_unwrapping_key(dev, session_id);
+            let (unwrap_key_id, unwrap_pub_key_der, _) = get_unwrapping_key(dev, session_id);
 
             let rsa_3k_private_wrapped =
                 wrap_data(unwrap_pub_key_der, TEST_RSA_3K_PRIVATE_KEY.as_slice());
@@ -724,7 +697,7 @@ fn test_rsa_unwrap_rsa_crt_with_key_tag() {
         common_setup,
         common_cleanup,
         |dev, _ddi, _path, session_id| {
-            let (unwrap_key_id, unwrap_pub_key_der) = get_unwrapping_key(dev, session_id);
+            let (unwrap_key_id, unwrap_pub_key_der, _) = get_unwrapping_key(dev, session_id);
 
             let rsa_3k_private_wrapped =
                 wrap_data(unwrap_pub_key_der, TEST_RSA_3K_PRIVATE_KEY.as_slice());
@@ -798,7 +771,7 @@ fn test_rsa_unwrap_ecc_keys_with_key_tag() {
             ];
 
             for (test_key, expected_key_type, key_tag) in keys.iter() {
-                let (unwrap_key_id, unwrap_pub_key_der) = get_unwrapping_key(dev, session_id);
+                let (unwrap_key_id, unwrap_pub_key_der, _) = get_unwrapping_key(dev, session_id);
 
                 let ecc_wrapped = wrap_data(unwrap_pub_key_der, test_key);
 
@@ -851,7 +824,7 @@ fn test_rsa_unwrap_aes_key() {
         common_setup,
         common_cleanup,
         |dev, _ddi, _path, session_id| {
-            let (unwrap_key_id, unwrap_pub_key_der) = get_unwrapping_key(dev, session_id);
+            let (unwrap_key_id, unwrap_pub_key_der, _) = get_unwrapping_key(dev, session_id);
 
             let aes_256_wrapped = wrap_data(unwrap_pub_key_der, TEST_AES_256.as_slice());
 
@@ -906,7 +879,7 @@ fn test_rsa_unwrap_aes_with_key_tag() {
         common_setup,
         common_cleanup,
         |dev, _ddi, _path, session_id| {
-            let (unwrap_key_id, unwrap_pub_key_der) = get_unwrapping_key(dev, session_id);
+            let (unwrap_key_id, unwrap_pub_key_der, _) = get_unwrapping_key(dev, session_id);
 
             let aes_256_wrapped = wrap_data(unwrap_pub_key_der, TEST_AES_256.as_slice());
 
@@ -965,7 +938,7 @@ fn test_rsa_unwrap_aes_bulk_key_with_rollback_error() {
                 return;
             }
 
-            let (unwrap_key_id, unwrap_pub_key_der) = get_unwrapping_key(dev, session_id);
+            let (unwrap_key_id, unwrap_pub_key_der, _) = get_unwrapping_key(dev, session_id);
 
             let aes_256_wrapped = wrap_data(unwrap_pub_key_der, TEST_AES_256.as_slice());
 
@@ -989,6 +962,7 @@ fn test_rsa_unwrap_aes_bulk_key_with_rollback_error() {
                 &der,
                 &der_len,
                 &key_tag,
+                DdiKeyClass::AesGcmBulkUnapproved,
                 dev,
             ) {
                 Err(DdiError::DdiStatus(DdiStatus::InvalidKeyType)) => (),
@@ -1010,7 +984,7 @@ fn test_rsa_unwrap_aes_bulk_key_with_rollback_error_after_exhaust_keys() {
                 return;
             }
 
-            let (unwrap_key_id, unwrap_pub_key_der) = get_unwrapping_key(dev, session_id);
+            let (unwrap_key_id, unwrap_pub_key_der, _) = get_unwrapping_key(dev, session_id);
 
             let aes_256_wrapped = wrap_data(unwrap_pub_key_der, TEST_AES_256.as_slice());
 
@@ -1032,6 +1006,7 @@ fn test_rsa_unwrap_aes_bulk_key_with_rollback_error_after_exhaust_keys() {
                     &der,
                     &der_len,
                     &key_tag,
+                    DdiKeyClass::AesGcmBulkUnapproved,
                     dev,
                 ) {
                     Err(DdiError::DdiStatus(DdiStatus::ReachedMaxAesBulkKeys)) => break,
@@ -1065,6 +1040,7 @@ fn test_rsa_unwrap_aes_bulk_key_with_rollback_error_after_exhaust_keys() {
                 &der,
                 &der_len,
                 &key_tag,
+                DdiKeyClass::AesGcmBulkUnapproved,
                 dev,
             ) {
                 Err(DdiError::DdiStatus(DdiStatus::InvalidKeyType)) => (),
@@ -1080,6 +1056,7 @@ fn test_rsa_unwrap_aes_bulk_key_with_rollback_error_after_exhaust_keys() {
                 &der,
                 &der_len,
                 &key_tag,
+                DdiKeyClass::AesGcmBulkUnapproved,
                 dev,
             );
             assert!(resp.is_ok(), "{:?}", resp);
@@ -1092,6 +1069,7 @@ fn test_rsa_unwrap_aes_bulk_key_with_rollback_error_after_exhaust_keys() {
                 &der,
                 &der_len,
                 &key_tag,
+                DdiKeyClass::AesGcmBulkUnapproved,
                 dev,
             ) {
                 Err(DdiError::DdiStatus(DdiStatus::ReachedMaxAesBulkKeys)) => (),
@@ -1113,7 +1091,7 @@ fn test_rsa_unwrap_aes_bulk_key_with_rollback_error_after_dma_out() {
                 return;
             }
 
-            let (unwrap_key_id, unwrap_pub_key_der) = get_unwrapping_key(dev, session_id);
+            let (unwrap_key_id, unwrap_pub_key_der, _) = get_unwrapping_key(dev, session_id);
 
             let aes_256_wrapped = wrap_data(unwrap_pub_key_der, TEST_AES_256.as_slice());
 
@@ -1137,6 +1115,7 @@ fn test_rsa_unwrap_aes_bulk_key_with_rollback_error_after_dma_out() {
                 &der,
                 &der_len,
                 &key_tag,
+                DdiKeyClass::AesGcmBulkUnapproved,
                 dev,
             ) {
                 Err(DdiError::DdiError(201)) => (),
@@ -1158,7 +1137,7 @@ fn test_rsa_unwrap_aes_bulk_key_with_rollback_error_after_dma_out_after_exhaust_
                 return;
             }
 
-            let (unwrap_key_id, unwrap_pub_key_der) = get_unwrapping_key(dev, session_id);
+            let (unwrap_key_id, unwrap_pub_key_der, _) = get_unwrapping_key(dev, session_id);
 
             let aes_256_wrapped = wrap_data(unwrap_pub_key_der, TEST_AES_256.as_slice());
 
@@ -1180,6 +1159,7 @@ fn test_rsa_unwrap_aes_bulk_key_with_rollback_error_after_dma_out_after_exhaust_
                     &der,
                     &der_len,
                     &key_tag,
+                    DdiKeyClass::AesGcmBulkUnapproved,
                     dev,
                 ) {
                     Err(DdiError::DdiStatus(DdiStatus::ReachedMaxAesBulkKeys)) => break,
@@ -1212,6 +1192,7 @@ fn test_rsa_unwrap_aes_bulk_key_with_rollback_error_after_dma_out_after_exhaust_
                 &der,
                 &der_len,
                 &key_tag,
+                DdiKeyClass::AesGcmBulkUnapproved,
                 dev,
             ) {
                 Err(DdiError::DdiError(201)) => (),
@@ -1227,6 +1208,7 @@ fn test_rsa_unwrap_aes_bulk_key_with_rollback_error_after_dma_out_after_exhaust_
                 &der,
                 &der_len,
                 &key_tag,
+                DdiKeyClass::AesGcmBulkUnapproved,
                 dev,
             );
             assert!(resp.is_ok(), "{:?}", resp);
@@ -1239,6 +1221,7 @@ fn test_rsa_unwrap_aes_bulk_key_with_rollback_error_after_dma_out_after_exhaust_
                 &der,
                 &der_len,
                 &key_tag,
+                DdiKeyClass::AesGcmBulkUnapproved,
                 dev,
             ) {
                 Err(DdiError::DdiStatus(DdiStatus::ReachedMaxAesBulkKeys)) => (),
@@ -1260,7 +1243,7 @@ fn test_rsa_unwrap_aes_bulk_key_with_rollback_error_after_dma_end() {
                 return;
             }
 
-            let (unwrap_key_id, unwrap_pub_key_der) = get_unwrapping_key(dev, session_id);
+            let (unwrap_key_id, unwrap_pub_key_der, _) = get_unwrapping_key(dev, session_id);
 
             let aes_256_wrapped = wrap_data(unwrap_pub_key_der, TEST_AES_256.as_slice());
 
@@ -1284,6 +1267,7 @@ fn test_rsa_unwrap_aes_bulk_key_with_rollback_error_after_dma_end() {
                 &der,
                 &der_len,
                 &key_tag,
+                DdiKeyClass::AesGcmBulkUnapproved,
                 dev,
             ) {
                 Err(DdiError::DdiError(198)) => (),
@@ -1305,7 +1289,7 @@ fn test_rsa_unwrap_aes_bulk_key_with_rollback_error_after_dma_end_after_exhaust_
                 return;
             }
 
-            let (unwrap_key_id, unwrap_pub_key_der) = get_unwrapping_key(dev, session_id);
+            let (unwrap_key_id, unwrap_pub_key_der, _) = get_unwrapping_key(dev, session_id);
 
             let aes_256_wrapped = wrap_data(unwrap_pub_key_der, TEST_AES_256.as_slice());
 
@@ -1327,6 +1311,7 @@ fn test_rsa_unwrap_aes_bulk_key_with_rollback_error_after_dma_end_after_exhaust_
                     &der,
                     &der_len,
                     &key_tag,
+                    DdiKeyClass::AesGcmBulkUnapproved,
                     dev,
                 ) {
                     Err(DdiError::DdiStatus(DdiStatus::ReachedMaxAesBulkKeys)) => break,
@@ -1359,6 +1344,7 @@ fn test_rsa_unwrap_aes_bulk_key_with_rollback_error_after_dma_end_after_exhaust_
                 &der,
                 &der_len,
                 &key_tag,
+                DdiKeyClass::AesGcmBulkUnapproved,
                 dev,
             ) {
                 Err(DdiError::DdiError(198)) => (),
@@ -1374,6 +1360,7 @@ fn test_rsa_unwrap_aes_bulk_key_with_rollback_error_after_dma_end_after_exhaust_
                 &der,
                 &der_len,
                 &key_tag,
+                DdiKeyClass::AesGcmBulkUnapproved,
                 dev,
             );
             assert!(resp.is_ok(), "{:?}", resp);
@@ -1386,6 +1373,7 @@ fn test_rsa_unwrap_aes_bulk_key_with_rollback_error_after_dma_end_after_exhaust_
                 &der,
                 &der_len,
                 &key_tag,
+                DdiKeyClass::AesGcmBulkUnapproved,
                 dev,
             ) {
                 Err(DdiError::DdiStatus(DdiStatus::ReachedMaxAesBulkKeys)) => (),

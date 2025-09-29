@@ -3,7 +3,6 @@
 mod common;
 
 use mcr_ddi::Ddi;
-use mcr_ddi::DdiDev;
 use mcr_ddi::DdiError;
 use mcr_ddi_mbor::MborByteArray;
 use mcr_ddi_types::*;
@@ -29,22 +28,14 @@ pub fn ecc_sign_mcr(
         _ => panic!("Unsupported digest length"),
     };
 
-    let req = DdiEccSignCmdReq {
-        hdr: DdiReqHdr {
-            op: DdiOp::EccSign,
-            sess_id: Some(session_id),
-            rev: Some(DdiApiRev { major: 1, minor: 0 }),
-        },
-        data: DdiEccSignReq {
-            key_id: private_key_id,
-            digest: MborByteArray::new(digest, digest_len).expect("failed to create byte array"),
-            digest_algo,
-        },
-        ext: None,
-    };
-
-    let mut cookie = None;
-    dev.exec_op(&req, &mut cookie)
+    helper_ecc_sign(
+        dev,
+        Some(session_id),
+        Some(DdiApiRev { major: 1, minor: 0 }),
+        private_key_id,
+        MborByteArray::new(digest, digest_len).expect("failed to create byte array"),
+        digest_algo,
+    )
 }
 
 /// Wrapper function to verify ECC signatures with FIPS awareness.
@@ -92,8 +83,8 @@ fn test_ecc_gen_key_sign_256_compat() {
         |dev, _ddi, _path, session_id| {
             let curve = DdiEccCurve::P256;
 
-            let (private_key_id, pub_key) =
-                ecc_gen_key_mcr(dev, curve, session_id, DdiKeyUsage::SignVerify);
+            let (private_key_id, pub_key, _) =
+                ecc_gen_key_mcr(dev, curve, None, Some(session_id), DdiKeyUsage::SignVerify);
             let mut digest = [100u8; 96];
             let digest_len = 20;
 
@@ -126,8 +117,8 @@ fn test_ecc_gen_key_sign_256_digest_32_compat() {
         |dev, _ddi, _path, session_id| {
             let curve = DdiEccCurve::P256;
 
-            let (private_key_id, pub_key) =
-                ecc_gen_key_mcr(dev, curve, session_id, DdiKeyUsage::SignVerify);
+            let (private_key_id, pub_key, _) =
+                ecc_gen_key_mcr(dev, curve, None, Some(session_id), DdiKeyUsage::SignVerify);
             let mut digest = [100u8; 96];
             let digest_len = 32;
 
@@ -160,8 +151,8 @@ fn test_ecc_gen_key_sign_384_compat() {
         |dev, _ddi, _path, session_id| {
             let curve = DdiEccCurve::P384;
 
-            let (private_key_id, pub_key) =
-                ecc_gen_key_mcr(dev, curve, session_id, DdiKeyUsage::SignVerify);
+            let (private_key_id, pub_key, _) =
+                ecc_gen_key_mcr(dev, curve, None, Some(session_id), DdiKeyUsage::SignVerify);
             let mut digest = [100u8; 96];
             let digest_len = 20;
 
@@ -194,8 +185,8 @@ fn test_ecc_gen_key_sign_384_digest_32_compat() {
         |dev, _ddi, _path, session_id| {
             let curve = DdiEccCurve::P384;
 
-            let (private_key_id, pub_key) =
-                ecc_gen_key_mcr(dev, curve, session_id, DdiKeyUsage::SignVerify);
+            let (private_key_id, pub_key, _) =
+                ecc_gen_key_mcr(dev, curve, None, Some(session_id), DdiKeyUsage::SignVerify);
             let mut digest = [100u8; 96];
             let digest_len = 32;
 
@@ -228,8 +219,8 @@ fn test_ecc_gen_key_sign_384_digest_48_compat() {
         |dev, _ddi, _path, session_id| {
             let curve = DdiEccCurve::P384;
 
-            let (private_key_id, pub_key) =
-                ecc_gen_key_mcr(dev, curve, session_id, DdiKeyUsage::SignVerify);
+            let (private_key_id, pub_key, _) =
+                ecc_gen_key_mcr(dev, curve, None, Some(session_id), DdiKeyUsage::SignVerify);
             let mut digest = [100u8; 96];
             let digest_len = 48;
 
@@ -262,8 +253,8 @@ fn test_ecc_gen_key_sign_521_compat() {
         |dev, _ddi, _path, session_id| {
             let curve = DdiEccCurve::P521;
 
-            let (private_key_id, pub_key) =
-                ecc_gen_key_mcr(dev, curve, session_id, DdiKeyUsage::SignVerify);
+            let (private_key_id, pub_key, _) =
+                ecc_gen_key_mcr(dev, curve, None, Some(session_id), DdiKeyUsage::SignVerify);
             let mut digest = [100u8; 96];
             let digest_len = 20;
 
@@ -296,8 +287,8 @@ fn test_ecc_gen_key_sign_521_digest_32_compat() {
         |dev, _ddi, _path, session_id| {
             let curve = DdiEccCurve::P521;
 
-            let (private_key_id, pub_key) =
-                ecc_gen_key_mcr(dev, curve, session_id, DdiKeyUsage::SignVerify);
+            let (private_key_id, pub_key, _) =
+                ecc_gen_key_mcr(dev, curve, None, Some(session_id), DdiKeyUsage::SignVerify);
             let mut digest = [100u8; 96];
             let digest_len = 32;
 
@@ -330,8 +321,8 @@ fn test_ecc_gen_key_sign_521_digest_48_compat() {
         |dev, _ddi, _path, session_id| {
             let curve = DdiEccCurve::P521;
 
-            let (private_key_id, pub_key) =
-                ecc_gen_key_mcr(dev, curve, session_id, DdiKeyUsage::SignVerify);
+            let (private_key_id, pub_key, _) =
+                ecc_gen_key_mcr(dev, curve, None, Some(session_id), DdiKeyUsage::SignVerify);
             let mut digest = [100u8; 96];
             let digest_len = 48;
 
@@ -364,8 +355,8 @@ fn test_ecc_gen_key_sign_521_digest_64_compat() {
         |dev, _ddi, _path, session_id| {
             let curve = DdiEccCurve::P521;
 
-            let (private_key_id, pub_key) =
-                ecc_gen_key_mcr(dev, curve, session_id, DdiKeyUsage::SignVerify);
+            let (private_key_id, pub_key, _) =
+                ecc_gen_key_mcr(dev, curve, None, Some(session_id), DdiKeyUsage::SignVerify);
             let mut digest = [100u8; 96];
             let digest_len = 64;
 

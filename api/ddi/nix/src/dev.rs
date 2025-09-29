@@ -569,6 +569,47 @@ ioctl_readwrite!(
     McrFpCmd
 );
 
+#[allow(unused)]
+#[derive(PartialEq)]
+pub enum AbortType {
+    Reserved = 0, // Reserved for driver use, driver will fail the IOCTL if this value is used.
+    AppLevelTwoNssr = 1, // Perform a Level-Two abort but use SubSystem Reset
+    AppLevelTwoCtrlReset = 2, // Perform a Disable/Enable Of Controller
+}
+
+#[derive(Default)]
+#[repr(C)]
+struct ResetDeviceIoctlInData {
+    abort_type: u32,
+    rsvd: [u32; 20],
+}
+
+#[derive(Default)]
+#[repr(C)]
+struct ResetDeviceIoctlOutData {
+    abort_sts: u32,
+    rsvd: [u32; 20],
+}
+
+#[derive(Default)]
+#[repr(C)]
+struct ResetDeviceData {
+    pub hdr: McrIoctlHeader,
+    pub ctxt: u64,
+    pub rst_in_data: ResetDeviceIoctlInData,
+    pub rst_out_data: ResetDeviceIoctlOutData,
+    rsvd: [u32; 20],
+}
+
+pub const MCR_IOCTL_RESET_DEVICE: u32 = 0x6;
+
+ioctl_readwrite!(
+    mcr_reset_device,
+    MCR_HSM_IOC_MAGIC,
+    MCR_IOCTL_RESET_DEVICE as u8,
+    ResetDeviceData
+);
+
 // constants for fp ioctl operations
 const MCR_FP_IOCTL_FRAME_TYPE_AES: u8 = 1;
 const MCR_FP_IOCTL_AES_CYPHER_GCM: u8 = 0;
@@ -980,5 +1021,36 @@ impl DdiDev for DdiNixDev {
         }
 
         Ok(DdiAesXtsResult { data: dest_buf })
+    }
+
+    /// Execute NVMe subsystem reset to help emulate Live Migration
+    ///
+    /// # Returns
+    /// * `Ok(())` - Successfully sent NSSR Reset Device command
+    /// * `Err(DdiError)` - Error occurred while executing the command
+    fn simulate_nssr_after_lm(&self) -> Result<(), DdiError> {
+        let mut cmd = ResetDeviceData::default();
+
+        cmd.hdr.ioctl_data_size = mem::size_of::<ResetDeviceData>() as u32;
+        cmd.hdr.app_cmd_id = 0xCD1DDEAD;
+        cmd.hdr.timeout = 100; // in ms
+
+        cmd.rst_in_data = ResetDeviceIoctlInData {
+            abort_type: AbortType::AppLevelTwoNssr as u32,
+            ..Default::default()
+        };
+
+        // SAFETY: IOCTL call requires unsafe call.
+        let resp = unsafe { mcr_reset_device(self.file.read().as_raw_fd(), &mut cmd) };
+
+        if resp.is_err() {
+            resp.map_err(DdiError::NixError)?;
+        }
+
+        if cmd.rst_out_data.abort_sts != 0 {
+            Err(DdiError::ResetDeviceError(cmd.rst_out_data.abort_sts))?
+        }
+
+        Ok(())
     }
 }

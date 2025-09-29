@@ -74,7 +74,7 @@ fn send_rng_hw_failure_request(device_path: String, test: u32) {
     }
 
     let (encrypted_credential, pub_key) =
-        encrypt_userid_pin_for_open_session(&dev, TEST_CRED_ID, TEST_CRED_PIN);
+        encrypt_userid_pin_for_open_session(&dev, TEST_CRED_ID, TEST_CRED_PIN, TEST_SESSION_SEED);
 
     let resp = helper_open_session(
         &dev,

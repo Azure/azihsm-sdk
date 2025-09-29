@@ -1,4 +1,4 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.operations
+// Copyright (C) Microsoft Corporation. All rights reserved.
 
 //! Module for describing keys used for Hash operations
 
@@ -8,6 +8,8 @@ compile_error!("OpenSSL and non-openssl cannot be enabled at the same time.");
 use crate::crypto::sha;
 use crate::crypto::sha::HashAlgorithm;
 use crate::errors::ManticoreError;
+use crate::mask::KeySerialization;
+use crate::table::entry::Kind;
 
 /// Trait for Hmac hash operations
 pub trait HmacOp {
@@ -46,6 +48,22 @@ pub enum HmacShaSize {
 #[derive(Debug, Clone)]
 pub struct HmacKey {
     key: Vec<u8>,
+}
+
+impl KeySerialization<HmacKey> for HmacKey {
+    fn serialize(&self) -> Result<Vec<u8>, ManticoreError> {
+        Ok(self.key.clone())
+    }
+
+    fn deserialize(raw: &[u8], expected_type: Kind) -> Result<HmacKey, ManticoreError> {
+        match expected_type {
+            Kind::HmacSha256 | Kind::HmacSha384 | Kind::HmacSha512 => HmacKey::from_bytes(raw),
+            _ => {
+                tracing::error!(error=?ManticoreError::DerAndKeyTypeMismatch, ?expected_type, "Expected type should be HMAC when deserializing masked key for HmacKey");
+                Err(ManticoreError::DerAndKeyTypeMismatch)
+            }
+        }
+    }
 }
 
 impl HmacOp for HmacKey {

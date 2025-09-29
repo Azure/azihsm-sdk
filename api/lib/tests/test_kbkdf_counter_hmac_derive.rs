@@ -2,7 +2,10 @@
 
 mod common;
 
+#[cfg(not(feature = "resilient"))]
 use mcr_api::*;
+#[cfg(feature = "resilient")]
+use mcr_api_resilient::*;
 use test_with_tracing::test;
 
 use crate::common::*;
@@ -489,7 +492,7 @@ fn test_key_kbkdf_invalid_target_usage() {
             None,
             KeyType::Aes192,
             KeyProperties {
-                key_usage: KeyUsage::WrapUnwrap,
+                key_usage: KeyUsage::Unwrap,
                 key_availability: KeyAvailability::Session,
             },
         );

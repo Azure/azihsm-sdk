@@ -17,6 +17,31 @@ pub fn setup(dev: &mut <DdiTest as Ddi>::Dev, ddi: &DdiTest, path: &str) -> u16 
     25
 }
 
+fn helper_get_session_encryption_key_with_sig_verify(
+    dev: &mut <DdiTest as Ddi>::Dev,
+    sess_id: Option<u16>,
+    rev: Option<DdiApiRev>,
+) -> Result<DdiGetSessionEncryptionKeyCmdResp, DdiError> {
+    let resp = helper_get_session_encryption_key(dev, sess_id, rev)?;
+
+    #[cfg(target_os = "linux")]
+    {
+        let device_kind = get_device_kind(dev);
+
+        if device_kind != DdiDeviceKind::Virtual {
+            let pub_key_der = resp.data.pub_key.der.as_slice();
+            let signature = resp.data.pub_key_signature.as_slice();
+
+            assert!(
+                helper_key_signature_verification(dev, pub_key_der, signature),
+                "Signature Verification failed"
+            );
+        }
+    }
+
+    Ok(resp)
+}
+
 #[test]
 fn test_get_session_encryption_key_with_session() {
     ddi_dev_test(setup, common_cleanup, |dev, _ddi, _path, _session_id| {
@@ -24,17 +49,7 @@ fn test_get_session_encryption_key_with_session() {
 
         let session_id = 10;
 
-        let req = DdiGetSessionEncryptionKeyCmdReq {
-            hdr: DdiReqHdr {
-                op: DdiOp::GetSessionEncryptionKey,
-                sess_id: Some(session_id),
-                rev: None,
-            },
-            data: DdiGetSessionEncryptionKeyReq {},
-            ext: None,
-        };
-        let mut cookie = None;
-        let resp = dev.exec_op(&req, &mut cookie);
+        let resp = helper_get_session_encryption_key(dev, Some(session_id), None);
 
         assert!(resp.is_err(), "resp {:?}", resp);
 
@@ -46,21 +61,12 @@ fn test_get_session_encryption_key_with_session() {
 }
 
 #[test]
-fn test_get_session_encryption_key() {
+fn test_get_session_encryption_key_verify() {
     ddi_dev_test(setup, common_cleanup, |dev, _ddi, _path, _session_id| {
         helper_common_establish_credential(dev, TEST_CRED_ID, TEST_CRED_PIN);
 
-        let req = DdiGetSessionEncryptionKeyCmdReq {
-            hdr: DdiReqHdr {
-                op: DdiOp::GetSessionEncryptionKey,
-                sess_id: None,
-                rev: Some(DdiApiRev { major: 1, minor: 0 }),
-            },
-            data: DdiGetSessionEncryptionKeyReq {},
-            ext: None,
-        };
-        let mut cookie = None;
-        let resp = dev.exec_op(&req, &mut cookie);
+        let resp =
+            helper_get_session_encryption_key(dev, None, Some(DdiApiRev { major: 1, minor: 0 }));
 
         assert!(resp.is_ok(), "resp: {:?}", resp);
     });
@@ -71,34 +77,17 @@ fn test_get_session_encryption_key_twice() {
     ddi_dev_test(setup, common_cleanup, |dev, _ddi, _path, _session_id| {
         helper_common_establish_credential(dev, TEST_CRED_ID, TEST_CRED_PIN);
 
-        let req = DdiGetSessionEncryptionKeyCmdReq {
-            hdr: DdiReqHdr {
-                op: DdiOp::GetSessionEncryptionKey,
-                sess_id: None,
-                rev: Some(DdiApiRev { major: 1, minor: 0 }),
-            },
-            data: DdiGetSessionEncryptionKeyReq {},
-            ext: None,
-        };
-        let mut cookie = None;
-        let resp = dev.exec_op(&req, &mut cookie);
+        let resp =
+            helper_get_session_encryption_key(dev, None, Some(DdiApiRev { major: 1, minor: 0 }));
 
         assert!(resp.is_ok(), "resp: {:?}", resp);
         let resp_data = resp.unwrap().data;
         let session_encrypt_pub_key = resp_data.pub_key;
         let session_encrypt_nonce = resp_data.nonce;
 
-        let req = DdiGetSessionEncryptionKeyCmdReq {
-            hdr: DdiReqHdr {
-                op: DdiOp::GetSessionEncryptionKey,
-                sess_id: None,
-                rev: Some(DdiApiRev { major: 1, minor: 0 }),
-            },
-            data: DdiGetSessionEncryptionKeyReq {},
-            ext: None,
-        };
-        let mut cookie = None;
-        let resp = dev.exec_op(&req, &mut cookie);
+        let resp =
+            helper_get_session_encryption_key(dev, None, Some(DdiApiRev { major: 1, minor: 0 }));
+
         assert!(resp.is_ok(), "resp: {:?}", resp);
 
         let resp_data = resp.unwrap().data;
@@ -149,17 +138,11 @@ fn test_get_session_encryption_key_thread_fn(
     let mut dev = ddi.open_dev(device_path.as_str()).unwrap();
     set_device_kind(&mut dev);
 
-    let req = DdiGetSessionEncryptionKeyCmdReq {
-        hdr: DdiReqHdr {
-            op: DdiOp::GetSessionEncryptionKey,
-            sess_id: None,
-            rev: Some(DdiApiRev { major: 1, minor: 0 }),
-        },
-        data: DdiGetSessionEncryptionKeyReq {},
-        ext: None,
-    };
-    let mut cookie = None;
-    let resp = dev.exec_op(&req, &mut cookie);
+    let resp = helper_get_session_encryption_key_with_sig_verify(
+        &mut dev,
+        None,
+        Some(DdiApiRev { major: 1, minor: 0 }),
+    );
 
     assert!(resp.is_ok(), "resp: {:?}", resp);
     let resp = resp.unwrap();
@@ -171,17 +154,8 @@ fn test_get_session_encryption_key_changes_after_reset() {
     ddi_dev_test(setup, common_cleanup, |dev, ddi, path, _session_id| {
         helper_common_establish_credential(dev, TEST_CRED_ID, TEST_CRED_PIN);
 
-        let req = DdiGetSessionEncryptionKeyCmdReq {
-            hdr: DdiReqHdr {
-                op: DdiOp::GetSessionEncryptionKey,
-                sess_id: None,
-                rev: Some(DdiApiRev { major: 1, minor: 0 }),
-            },
-            data: DdiGetSessionEncryptionKeyReq {},
-            ext: None,
-        };
-        let mut cookie = None;
-        let resp = dev.exec_op(&req, &mut cookie);
+        let resp =
+            helper_get_session_encryption_key(dev, None, Some(DdiApiRev { major: 1, minor: 0 }));
 
         assert!(resp.is_ok(), "resp: {:?}", resp);
         let resp = resp.unwrap();
@@ -193,18 +167,8 @@ fn test_get_session_encryption_key_changes_after_reset() {
         common_cleanup(dev, ddi, path, None);
 
         helper_common_establish_credential(dev, TEST_CRED_ID, TEST_CRED_PIN);
-
-        let req = DdiGetSessionEncryptionKeyCmdReq {
-            hdr: DdiReqHdr {
-                op: DdiOp::GetSessionEncryptionKey,
-                sess_id: None,
-                rev: Some(DdiApiRev { major: 1, minor: 0 }),
-            },
-            data: DdiGetSessionEncryptionKeyReq {},
-            ext: None,
-        };
-        let mut cookie = None;
-        let resp = dev.exec_op(&req, &mut cookie);
+        let resp =
+            helper_get_session_encryption_key(dev, None, Some(DdiApiRev { major: 1, minor: 0 }));
 
         assert!(resp.is_ok(), "resp: {:?}", resp);
         let resp = resp.unwrap();
@@ -223,23 +187,143 @@ fn test_get_session_encryption_key_changes_after_reset() {
 #[test]
 fn test_get_session_encryption_key_without_establish_cred() {
     ddi_dev_test(setup, common_cleanup, |dev, _ddi, _path, _session_id| {
-        let req = DdiGetSessionEncryptionKeyCmdReq {
-            hdr: DdiReqHdr {
-                op: DdiOp::GetSessionEncryptionKey,
-                sess_id: None,
-                rev: Some(DdiApiRev { major: 1, minor: 0 }),
-            },
-            data: DdiGetSessionEncryptionKeyReq {},
-            ext: None,
-        };
-        let mut cookie = None;
-        let resp = dev.exec_op(&req, &mut cookie);
+        let resp =
+            helper_get_session_encryption_key(dev, None, Some(DdiApiRev { major: 1, minor: 0 }));
 
         assert!(resp.is_err(), "resp: {:?}", resp);
+
+        if get_device_kind(dev) == DdiDeviceKind::Virtual {
+            assert!(matches!(
+                resp.unwrap_err(),
+                DdiError::DdiStatus(DdiStatus::CredentialsNotEstablished)
+            ));
+        }
+    });
+}
+
+#[test]
+fn test_get_session_encryption_key_with_session_with_sig_verify() {
+    ddi_dev_test(setup, common_cleanup, |dev, _ddi, _path, _session_id| {
+        helper_common_establish_credential(dev, TEST_CRED_ID, TEST_CRED_PIN);
+
+        let session_id = 10;
+
+        let resp = helper_get_session_encryption_key_with_sig_verify(dev, Some(session_id), None);
+
+        assert!(resp.is_err(), "resp {:?}", resp);
 
         assert!(matches!(
             resp.unwrap_err(),
             DdiError::DdiStatus(DdiStatus::InvalidArg)
         ));
+    });
+}
+
+#[test]
+fn test_get_session_encryption_key_verify_with_sig_verify() {
+    ddi_dev_test(setup, common_cleanup, |dev, _ddi, _path, _session_id| {
+        helper_common_establish_credential(dev, TEST_CRED_ID, TEST_CRED_PIN);
+
+        let resp = helper_get_session_encryption_key_with_sig_verify(
+            dev,
+            None,
+            Some(DdiApiRev { major: 1, minor: 0 }),
+        );
+
+        assert!(resp.is_ok(), "resp: {:?}", resp);
+    });
+}
+
+#[test]
+fn test_get_session_encryption_key_twice_with_sig_verify() {
+    ddi_dev_test(setup, common_cleanup, |dev, _ddi, _path, _session_id| {
+        helper_common_establish_credential(dev, TEST_CRED_ID, TEST_CRED_PIN);
+
+        let resp = helper_get_session_encryption_key_with_sig_verify(
+            dev,
+            None,
+            Some(DdiApiRev { major: 1, minor: 0 }),
+        );
+
+        assert!(resp.is_ok(), "resp: {:?}", resp);
+        let resp_data = resp.unwrap().data;
+        let session_encrypt_pub_key = resp_data.pub_key;
+        let session_encrypt_nonce = resp_data.nonce;
+
+        let resp = helper_get_session_encryption_key_with_sig_verify(
+            dev,
+            None,
+            Some(DdiApiRev { major: 1, minor: 0 }),
+        );
+
+        assert!(resp.is_ok(), "resp: {:?}", resp);
+
+        let resp_data = resp.unwrap().data;
+        let session_encrypt_pub_key2 = resp_data.pub_key;
+        let session_encrypt_nonce2 = resp_data.nonce;
+
+        assert_eq!(session_encrypt_pub_key, session_encrypt_pub_key2);
+        assert_eq!(session_encrypt_nonce, session_encrypt_nonce2);
+    });
+}
+
+#[test]
+fn test_get_session_encryption_key_changes_after_reset_with_sig_verify() {
+    ddi_dev_test(setup, common_cleanup, |dev, ddi, path, _session_id| {
+        helper_common_establish_credential(dev, TEST_CRED_ID, TEST_CRED_PIN);
+
+        let resp = helper_get_session_encryption_key_with_sig_verify(
+            dev,
+            None,
+            Some(DdiApiRev { major: 1, minor: 0 }),
+        );
+
+        assert!(resp.is_ok(), "resp: {:?}", resp);
+        let resp = resp.unwrap();
+
+        let old_nonce = resp.data.nonce;
+        let old_pub_key = resp.data.pub_key;
+
+        // This will do the reset function
+        common_cleanup(dev, ddi, path, None);
+
+        helper_common_establish_credential(dev, TEST_CRED_ID, TEST_CRED_PIN);
+        let resp = helper_get_session_encryption_key_with_sig_verify(
+            dev,
+            None,
+            Some(DdiApiRev { major: 1, minor: 0 }),
+        );
+
+        assert!(resp.is_ok(), "resp: {:?}", resp);
+        let resp = resp.unwrap();
+
+        assert_ne!(
+            old_pub_key, resp.data.pub_key,
+            "Device pub key must change after reset"
+        );
+        assert_ne!(
+            old_nonce, resp.data.nonce,
+            "Device nonce must change after reset"
+        );
+    });
+}
+
+#[test]
+fn test_get_session_encryption_key_without_establish_cred_with_sig_verify() {
+    ddi_dev_test(setup, common_cleanup, |dev, _ddi, _path, _session_id| {
+        let resp = helper_get_session_encryption_key_with_sig_verify(
+            dev,
+            None,
+            Some(DdiApiRev { major: 1, minor: 0 }),
+        );
+
+        assert!(resp.is_err(), "resp: {:?}", resp);
+
+        if get_device_kind(dev) == DdiDeviceKind::Virtual {
+            assert!(matches!(
+                resp.unwrap_err(),
+                DdiError::DdiStatus(DdiStatus::CredentialsNotEstablished)
+            ));
+        }
     });
 }

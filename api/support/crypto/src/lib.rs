@@ -105,8 +105,14 @@ pub enum CryptoKeyKind {
     /// AES 256-bit Key.
     Aes256,
 
-    /// AES Bulk 256-bit Key.
-    AesBulk256,
+    /// AES XTS Bulk 256-bit Key.
+    AesXtsBulk256,
+
+    /// AES GCM Bulk 256-bit Key.
+    AesGcmBulk256,
+
+    /// AES GCM Bulk 256-bit Unapproved Key.
+    AesGcmBulk256Unapproved,
 
     /// 256-bit Secret from key exchange
     Secret256,
@@ -128,7 +134,7 @@ pub enum CryptoKeyKind {
 }
 
 /// HSM Error
-#[derive(Error, Debug, PartialEq, Eq)]
+#[derive(Error, Debug, PartialEq, Eq, Clone, Copy)]
 pub enum CryptoError {
     /// Invalid parameter
     #[error("invalid parameter")]
@@ -253,4 +259,44 @@ pub enum CryptoError {
     /// Failure to create `MborByteArray`
     #[error("failure to create MborByteArray")]
     ByteArrayCreationError,
+
+    /// Output buffer too small
+    #[error("output buffer too small")]
+    OutputBufferTooSmall,
+
+    /// Invalid algorithm
+    #[error("invalid algorithm")]
+    InvalidAlgorithm,
+
+    /// Invalid key length
+    #[error("invalid key length")]
+    InvalidKeyLength,
+
+    /// Metadata encoding failed
+    #[error("metadata encoding failed")]
+    MetadataEncodeFailed,
+
+    /// Metadata decoding failed
+    #[error("metadata decoding failed")]
+    MetadataDecodeFailed,
+
+    /// Masked Key Pre-Encoding Failed
+    #[error("masked key pre-encoding failed")]
+    MaskedKeyPreEncodeFailed,
+
+    /// Masked Key Encoding Failed
+    #[error("masked key encoding failed")]
+    MaskedKeyEncodeFailed,
+
+    /// Masked Key Decoding Failed
+    #[error("masked key decoding failed")]
+    MaskedKeyDecodeFailed,
+
+    /// MBOR Encoding Failed
+    #[error("mbor encoding failed")]
+    MborEncodeFailed,
+
+    /// KBKDF error
+    #[error("kbkdf error")]
+    KbkdfError,
 }

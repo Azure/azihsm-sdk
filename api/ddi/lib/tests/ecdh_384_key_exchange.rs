@@ -11,68 +11,6 @@ use test_with_tracing::test;
 use crate::common::*;
 use crate::invalid_ecc_pub_key_vectors::*;
 
-// Max size of a ECC Public Key
-const DER_MAX_SIZE: usize = 192;
-
-// Returns: (private key id 1, public key 1, public key len 1, private key id 2, public key 2, public key len 2)
-fn create_ecc_key_pairs(
-    sess_id: u16,
-    dev: &mut <DdiTest as Ddi>::Dev,
-) -> (
-    u16,
-    [u8; DER_MAX_SIZE],
-    usize,
-    u16,
-    [u8; DER_MAX_SIZE],
-    usize,
-) {
-    // Initalize first keypair
-
-    let key_props = helper_key_properties(DdiKeyUsage::Derive, DdiKeyAvailability::App);
-
-    let resp = helper_ecc_generate_key_pair(
-        dev,
-        Some(sess_id),
-        Some(DdiApiRev { major: 1, minor: 0 }),
-        DdiEccCurve::P384,
-        None,
-        key_props,
-    );
-
-    assert!(resp.is_ok(), "resp {:?}", resp);
-    let resp = resp.unwrap();
-
-    let priv_key_id1 = resp.data.private_key_id;
-    let pub_key1 = resp.data.pub_key.unwrap();
-    let mut der1 = [0u8; DER_MAX_SIZE];
-    let der1_len = pub_key1.der.len();
-    der1[..der1_len].clone_from_slice(&pub_key1.der.data()[..der1_len]);
-
-    // Initialize second key pair
-
-    let key_props = helper_key_properties(DdiKeyUsage::Derive, DdiKeyAvailability::App);
-
-    let resp = helper_ecc_generate_key_pair(
-        dev,
-        Some(sess_id),
-        Some(DdiApiRev { major: 1, minor: 0 }),
-        DdiEccCurve::P384,
-        None,
-        key_props,
-    );
-
-    assert!(resp.is_ok(), "resp {:?}", resp);
-    let resp = resp.unwrap();
-
-    let priv_key_id2 = resp.data.private_key_id;
-    let pub_key2: DdiDerPublicKey = resp.data.pub_key.unwrap();
-    let mut der2 = [0u8; DER_MAX_SIZE];
-    let der2_len = pub_key2.der.len();
-    der2[..der2_len].clone_from_slice(&pub_key2.der.data()[..der2_len]);
-
-    (priv_key_id1, der1, der1_len, priv_key_id2, der2, der2_len)
-}
-
 #[test]
 fn test_ecdh_384_key_exchange_no_session() {
     ddi_dev_test(
@@ -80,7 +18,13 @@ fn test_ecdh_384_key_exchange_no_session() {
         common_cleanup,
         |dev, _ddi, _path, session_id| {
             let (priv_key_id1, _pub_key1, _pub_key1_len, _priv_key_id2, pub_key2, pub_key2_len) =
-                create_ecc_key_pairs(session_id, dev);
+                helper_create_ecc_key_pairs(
+                    dev,
+                    Some(session_id),
+                    Some(DdiApiRev { major: 1, minor: 0 }),
+                    DdiEccCurve::P384,
+                    None,
+                );
 
             let key_props = helper_key_properties(DdiKeyUsage::Derive, DdiKeyAvailability::App);
             let resp = helper_ecdh_key_exchange(
@@ -111,7 +55,13 @@ fn test_ecdh_384_key_exchange_incorrect_session_id() {
         common_cleanup,
         |dev, _ddi, _path, session_id| {
             let (priv_key_id1, _pub_key1, _pub_key1_len, _priv_key_id2, pub_key2, pub_key2_len) =
-                create_ecc_key_pairs(session_id, dev);
+                helper_create_ecc_key_pairs(
+                    dev,
+                    Some(session_id),
+                    Some(DdiApiRev { major: 1, minor: 0 }),
+                    DdiEccCurve::P384,
+                    None,
+                );
 
             // Use incorrect session id
             let session_id = 20;
@@ -144,7 +94,13 @@ fn test_ecdh_384_key_exchange_incorrect_private_key_num() {
         common_cleanup,
         |dev, _ddi, _path, session_id| {
             let (_priv_key_id1, _pub_key1, _pub_key1_len, _priv_key_id2, pub_key2, pub_key2_len) =
-                create_ecc_key_pairs(session_id, dev);
+                helper_create_ecc_key_pairs(
+                    dev,
+                    Some(session_id),
+                    Some(DdiApiRev { major: 1, minor: 0 }),
+                    DdiEccCurve::P384,
+                    None,
+                );
 
             let key_props = helper_key_properties(DdiKeyUsage::Derive, DdiKeyAvailability::App);
             let resp = helper_ecdh_key_exchange(
@@ -175,7 +131,13 @@ fn test_ecdh_384_key_exchange_incorrect_public_key_size() {
         common_cleanup,
         |dev, _ddi, _path, session_id| {
             let (priv_key_id1, _pub_key1, _pub_key1_len, _priv_key_id2, pub_key2, _pub_key2_len) =
-                create_ecc_key_pairs(session_id, dev);
+                helper_create_ecc_key_pairs(
+                    dev,
+                    Some(session_id),
+                    Some(DdiApiRev { major: 1, minor: 0 }),
+                    DdiEccCurve::P384,
+                    None,
+                );
 
             let key_props = helper_key_properties(DdiKeyUsage::Derive, DdiKeyAvailability::App);
             let resp = helper_ecdh_key_exchange(
@@ -202,7 +164,13 @@ fn test_ecdh_384_key_exchange_incorrect_target_key_type() {
         common_cleanup,
         |dev, _ddi, _path, session_id| {
             let (priv_key_id1, _pub_key1, _pub_key1_len, _priv_key_id2, pub_key2, pub_key2_len) =
-                create_ecc_key_pairs(session_id, dev);
+                helper_create_ecc_key_pairs(
+                    dev,
+                    Some(session_id),
+                    Some(DdiApiRev { major: 1, minor: 0 }),
+                    DdiEccCurve::P384,
+                    None,
+                );
 
             let key_props = helper_key_properties(DdiKeyUsage::Derive, DdiKeyAvailability::App);
             let resp = helper_ecdh_key_exchange(
@@ -229,7 +197,13 @@ fn test_ecdh_384_key_exchange_incorrect_target_key_size() {
         common_cleanup,
         |dev, _ddi, _path, session_id| {
             let (priv_key_id1, _pub_key1, _pub_key1_len, _priv_key_id2, pub_key2, pub_key2_len) =
-                create_ecc_key_pairs(session_id, dev);
+                helper_create_ecc_key_pairs(
+                    dev,
+                    Some(session_id),
+                    Some(DdiApiRev { major: 1, minor: 0 }),
+                    DdiEccCurve::P384,
+                    None,
+                );
 
             let key_props = helper_key_properties(DdiKeyUsage::Derive, DdiKeyAvailability::App);
             let resp = helper_ecdh_key_exchange(
@@ -256,7 +230,13 @@ fn test_ecdh_384_key_exchange_incorrect_target_key_usage() {
         common_cleanup,
         |dev, _ddi, _path, session_id| {
             let (priv_key_id1, _pub_key1, _pub_key1_len, _priv_key_id2, pub_key2, pub_key2_len) =
-                create_ecc_key_pairs(session_id, dev);
+                helper_create_ecc_key_pairs(
+                    dev,
+                    Some(session_id),
+                    Some(DdiApiRev { major: 1, minor: 0 }),
+                    DdiEccCurve::P384,
+                    None,
+                );
 
             let key_props = helper_key_properties(DdiKeyUsage::SignVerify, DdiKeyAvailability::App);
             let resp = helper_ecdh_key_exchange(
@@ -287,7 +267,13 @@ fn test_ecdh_384_key_exchange_incorrect_input_key_usage() {
         common_cleanup,
         |dev, _ddi, _path, session_id| {
             let (priv_key_id1, pub_key1, pub_key1_len, _priv_key_id2, _pub_key2, _pub_key2_len) =
-                create_ecc_key_pairs(session_id, dev);
+                helper_create_ecc_key_pairs(
+                    dev,
+                    Some(session_id),
+                    Some(DdiApiRev { major: 1, minor: 0 }),
+                    DdiEccCurve::P384,
+                    None,
+                );
 
             // Generate third key pair without Derive usage
 
@@ -355,7 +341,13 @@ fn test_ecdh_384_key_exchange_521_mismatch_input_size() {
         common_cleanup,
         |dev, _ddi, _path, session_id| {
             let (priv_key_id1, pub_key1, pub_key1_len, _priv_key_id2, _pub_key2, _pub_key2_len) =
-                create_ecc_key_pairs(session_id, dev);
+                helper_create_ecc_key_pairs(
+                    dev,
+                    Some(session_id),
+                    Some(DdiApiRev { major: 1, minor: 0 }),
+                    DdiEccCurve::P384,
+                    None,
+                );
 
             // Generate third key pair with 521 bit size
 
@@ -419,7 +411,13 @@ fn test_ecdh_384_key_exchange_256_mismatch_input_size() {
         common_cleanup,
         |dev, _ddi, _path, session_id| {
             let (priv_key_id1, pub_key1, pub_key1_len, _priv_key_id2, _pub_key2, _pub_key2_len) =
-                create_ecc_key_pairs(session_id, dev);
+                helper_create_ecc_key_pairs(
+                    dev,
+                    Some(session_id),
+                    Some(DdiApiRev { major: 1, minor: 0 }),
+                    DdiEccCurve::P384,
+                    None,
+                );
 
             // Generate third key pair with 256 bit size
 
@@ -488,7 +486,13 @@ fn test_ecdh_384_key_exchange_invalid_public_key_y_as_prime() {
             }
 
             let (priv_key_id1, _pub_key1, _pub_key1_len, _priv_key_id2, _pub_key2, _pub_key2_len) =
-                create_ecc_key_pairs(session_id, dev);
+                helper_create_ecc_key_pairs(
+                    dev,
+                    Some(session_id),
+                    Some(DdiApiRev { major: 1, minor: 0 }),
+                    DdiEccCurve::P384,
+                    None,
+                );
 
             // Invalid public key for P384 with y coordinate as prime
             let invalid_pub_key_der =
@@ -527,7 +531,13 @@ fn test_ecdh_384_key_exchange_invalid_public_key_x_as_prime() {
             }
 
             let (priv_key_id1, _pub_key1, _pub_key1_len, _priv_key_id2, _pub_key2, _pub_key2_len) =
-                create_ecc_key_pairs(session_id, dev);
+                helper_create_ecc_key_pairs(
+                    dev,
+                    Some(session_id),
+                    Some(DdiApiRev { major: 1, minor: 0 }),
+                    DdiEccCurve::P384,
+                    None,
+                );
 
             // Invalid public key for P384 with x coordinate as prime
             let invalid_pub_key_der =
@@ -566,7 +576,13 @@ fn test_ecdh_384_key_exchange_invalid_public_key_not_on_curve() {
             }
 
             let (priv_key_id1, _pub_key1, _pub_key1_len, _priv_key_id2, _pub_key2, _pub_key2_len) =
-                create_ecc_key_pairs(session_id, dev);
+                helper_create_ecc_key_pairs(
+                    dev,
+                    Some(session_id),
+                    Some(DdiApiRev { major: 1, minor: 0 }),
+                    DdiEccCurve::P384,
+                    None,
+                );
 
             // Invalid public key for P384 with point not on the curve
             let invalid_pub_key_der =
@@ -605,7 +621,13 @@ fn test_ecdh_384_key_exchange_invalid_public_key_point_at_infinity() {
             }
 
             let (priv_key_id1, _pub_key1, _pub_key1_len, _priv_key_id2, _pub_key2, _pub_key2_len) =
-                create_ecc_key_pairs(session_id, dev);
+                helper_create_ecc_key_pairs(
+                    dev,
+                    Some(session_id),
+                    Some(DdiApiRev { major: 1, minor: 0 }),
+                    DdiEccCurve::P384,
+                    None,
+                );
 
             // Invalid public key for P384 with point at infinity
             let invalid_pub_key_der =
@@ -639,7 +661,13 @@ fn test_ecdh_384_key_exchange() {
         common_cleanup,
         |dev, _ddi, _path, session_id| {
             let (priv_key_id1, pub_key1, pub_key1_len, priv_key_id2, pub_key2, pub_key2_len) =
-                create_ecc_key_pairs(session_id, dev);
+                helper_create_ecc_key_pairs(
+                    dev,
+                    Some(session_id),
+                    Some(DdiApiRev { major: 1, minor: 0 }),
+                    DdiEccCurve::P384,
+                    None,
+                );
 
             let key_props = helper_key_properties(DdiKeyUsage::Derive, DdiKeyAvailability::App);
             let resp = helper_ecdh_key_exchange(
@@ -677,7 +705,13 @@ fn test_ecdh_384_key_exchange_key_tag() {
         common_cleanup,
         |dev, _ddi, _path, session_id| {
             let (priv_key_id1, _pub_key1, _pub_key1_len, _priv_key_id2, pub_key2, pub_key2_len) =
-                create_ecc_key_pairs(session_id, dev);
+                helper_create_ecc_key_pairs(
+                    dev,
+                    Some(session_id),
+                    Some(DdiApiRev { major: 1, minor: 0 }),
+                    DdiEccCurve::P384,
+                    None,
+                );
 
             let key_tag = 0x6677;
             let key_props = helper_key_properties(DdiKeyUsage::Derive, DdiKeyAvailability::App);

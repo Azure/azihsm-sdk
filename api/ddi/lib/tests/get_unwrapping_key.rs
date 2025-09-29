@@ -15,17 +15,7 @@ fn test_get_unwrapping_key_no_session() {
         common_setup,
         common_cleanup,
         |dev, _ddi, _path, _session_id| {
-            let req = DdiGetUnwrappingKeyCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::GetUnwrappingKey,
-                    sess_id: None,
-                    rev: None,
-                },
-                data: DdiGetUnwrappingKeyReq {},
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_get_unwrapping_key(dev, None, None);
 
             assert!(resp.is_err(), "resp {:?}", resp);
 
@@ -44,17 +34,7 @@ fn test_get_unwrapping_key_incorrect_session_id() {
         common_cleanup,
         |dev, _ddi, _path, _session_id| {
             let session_id = 20;
-            let req = DdiGetUnwrappingKeyCmdReq {
-                hdr: DdiReqHdr {
-                    op: DdiOp::GetUnwrappingKey,
-                    sess_id: Some(session_id),
-                    rev: None,
-                },
-                data: DdiGetUnwrappingKeyReq {},
-                ext: None,
-            };
-            let mut cookie = None;
-            let resp = dev.exec_op(&req, &mut cookie);
+            let resp = helper_get_unwrapping_key(dev, Some(session_id), None);
 
             assert!(resp.is_err(), "resp {:?}", resp);
 
@@ -72,7 +52,7 @@ fn test_get_unwrapping_key() {
         common_setup,
         common_cleanup,
         |dev, _ddi, _path, session_id| {
-            let (_, _) = get_unwrapping_key(dev, session_id);
+            let (_, _, _) = get_unwrapping_key(dev, session_id);
         },
     );
 }
@@ -129,8 +109,12 @@ fn test_get_unwrapping_key_thread_fn(
     let mut app_sess_id = None;
 
     for _ in 0..max_attempts {
-        let (encrypted_credential, pub_key) =
-            encrypt_userid_pin_for_open_session(&dev, TEST_CRED_ID, TEST_CRED_PIN);
+        let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+            &dev,
+            TEST_CRED_ID,
+            TEST_CRED_PIN,
+            TEST_SESSION_SEED,
+        );
 
         let resp = helper_open_session(
             &dev,
@@ -164,6 +148,6 @@ fn test_get_unwrapping_key_thread_fn(
 
     let app_sess_id = app_sess_id.unwrap();
 
-    let (_, pub_key_der) = get_unwrapping_key(&mut dev, app_sess_id);
+    let (_, pub_key_der, _) = get_unwrapping_key(&mut dev, app_sess_id);
     pub_key_der
 }

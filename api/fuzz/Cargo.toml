@@ -12,6 +12,7 @@ cargo-fuzz = true
 [dependencies]
 mcr_api = { workspace = true, features = ["fuzzing"] }
 mcr_ddi.workspace = true
+mcr_ddi_mbor.workspace = true
 mcr_ddi_mock.workspace = true
 mcr_ddi_nix.workspace = true
 mcr_ddi_sim = { workspace = true, features = ["fuzzing"] }

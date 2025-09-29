@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use mcr_api::*;
+use mcr_api_resilient::*;
 use openssl_rust::safeapi::error::*;
 use openssl_rust::safeapi::evp_cipher::callback::*;
 use parking_lot::RwLock;

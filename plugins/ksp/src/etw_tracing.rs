@@ -114,6 +114,8 @@ pub fn register_tracing_subscriber() -> isize {
         .with_level(false)
         .with_file(false)
         .with_line_number(false)
+        // Collect thread ids for debugging multithreaded issues
+        .with_thread_ids(true)
         .with_writer(MakeETWWriter {})
         .with_filter(filter);
 

@@ -198,7 +198,8 @@ struct McrCpGetDeviceInfoIoctlOutData {
     serial_number: [u8; 33],
     model_num: [u8; 5],
     fw_rev: [u8; 33],
-    driver_rev: [u8; 33],
+    driver_rev: [u8; 16],
+    reserved: [u8; 17],
     entropy_data: [u8; 32],
     hot_patch_reserved: [usize; 16],
 }
@@ -212,7 +213,8 @@ impl Default for McrCpGetDeviceInfoIoctlOutData {
             serial_number: [0u8; 33],
             model_num: [0u8; 5],
             fw_rev: [0u8; 33],
-            driver_rev: [0u8; 33],
+            driver_rev: [0u8; 16],
+            reserved: [0u8; 17],
             entropy_data: [0u8; 32],
             hot_patch_reserved: [0usize; 16],
         }

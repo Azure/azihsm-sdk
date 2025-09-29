@@ -26,12 +26,11 @@
 
 use std::ffi::CString;
 
-use aes_kw::Kek;
 use azihsmengine::bind_helper;
 use azihsmengine::common::rsa_key::RsaKeyData;
 use azihsmengine::engine_internal::azihsm_engine;
 use azihsmengine::pkey::rsa::callback::pkey_rsa_import_key;
-use mcr_api::*;
+use mcr_api_resilient::*;
 use openssl_rust::safeapi::engine::Engine;
 use openssl_rust::safeapi::evp_pkey::ctx::EvpPKeyCtx;
 use openssl_rust::safeapi::evp_pkey::pkey::EvpPKey;
@@ -751,17 +750,20 @@ pub(crate) fn load_engine() -> Engine {
 
 /// Wrap a key with the default unwrapping key
 pub fn wrap_key(key_to_wrap: &[u8]) -> Vec<u8> {
+    use mcr_ddi_sim::crypto::aes::AesOp;
     let mut rng = rand::thread_rng();
 
     // Generate a random AES-256 key
-    let mut aes_key = [0u8; 32];
-    rng.fill(&mut aes_key);
+    let mut aes_key_bytes = [0u8; 32];
+    rng.fill(&mut aes_key_bytes);
 
-    // Encrypt the key to wrap using AES-256
-    let kek = Kek::from(aes_key);
-    let wrapped_key = kek
-        .wrap_with_padding_vec(key_to_wrap)
-        .expect("Could not wrap key");
+    let aes_key = mcr_ddi_sim::crypto::aes::AesKey::from_bytes(&aes_key_bytes[..])
+        .expect("Failed to create AES key");
+
+    let wrapped_key = aes_key
+        .wrap_pad(key_to_wrap)
+        .expect("Failed to wrap data")
+        .cipher_text;
 
     // Get the unwrapping key
     let hsm_ctx = azihsm_engine();
@@ -783,7 +785,7 @@ pub fn wrap_key(key_to_wrap: &[u8]) -> Vec<u8> {
     // Encrypt the AES-256 key using RSA with OAEP padding
     let padding = Oaep::new::<sha2::Sha256>();
     let encrypted_aes_key = public_key
-        .encrypt(&mut rng, padding, &aes_key)
+        .encrypt(&mut rng, padding, &aes_key_bytes)
         .expect("Could not encrypt public key");
 
     // Combine the encoded keys
