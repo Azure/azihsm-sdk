@@ -5,11 +5,10 @@
 
 //! Xtask to run build
 
-use std::path::PathBuf;
-
 use clap::Parser;
 use xshell::cmd;
 
+use crate::common;
 use crate::Xtask;
 use crate::XtaskCtx;
 
@@ -48,9 +47,7 @@ impl Xtask for Build {
         let crypto = String::from("use-symcrypt");
         #[cfg(not(target_os = "windows"))]
         let crypto = String::from("use-openssl");
-        let mut target_dir = PathBuf::new();
-        target_dir.push("target");
-        target_dir.push("xtask");
+        let target_dir = common::target_dir();
 
         // convert xtask parameters into cargo command arguments
         let mut command_args = Vec::new();
@@ -68,13 +65,13 @@ impl Xtask for Build {
             "{}{}{}",
             crypto,
             if self.features.is_some() { "," } else { "" },
-            self.features.unwrap_or("".to_string())
+            self.features.unwrap_or_default()
         );
         command_args.push(features.as_str());
         if self.package.is_some() {
             command_args.push("--package");
         }
-        let package_val = self.package.clone().unwrap_or("".to_string());
+        let package_val = self.package.clone().unwrap_or_default();
         if self.package.is_some() {
             command_args.push(&package_val);
         }

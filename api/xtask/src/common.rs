@@ -39,3 +39,10 @@ pub fn git_ls_files() -> anyhow::Result<Vec<PathBuf>> {
     // Vec is returned in sorted order because of BTreeSet iteration order
     Ok(allow_list.into_iter().collect())
 }
+
+/// Return target directory xtask builds to so that it doesn't overwrite itself
+pub fn target_dir() -> PathBuf {
+    let mut target_dir = PathBuf::new();
+    target_dir.extend(["target", "xtask"]);
+    target_dir
+}

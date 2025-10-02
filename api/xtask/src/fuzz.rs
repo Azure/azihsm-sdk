@@ -5,11 +5,10 @@
 
 //! Xtask to run fuzz
 
-use std::path::PathBuf;
-
 use clap::Parser;
 use xshell::cmd;
 
+use crate::common;
 use crate::Xtask;
 use crate::XtaskCtx;
 
@@ -32,10 +31,7 @@ impl Xtask for Fuzz {
 
         let sh = xshell::Shell::new()?;
         let rust_toolchain = sh.var("RUST_TOOLCHAIN").map(|s| format!("+{s}")).ok();
-        let mut target_dir = PathBuf::new();
-        target_dir.push(".");
-        target_dir.push("target");
-        target_dir.push("xtask");
+        let mut target_dir = common::target_dir();
         target_dir.push("debug");
         let runs = self.runs.to_string();
 

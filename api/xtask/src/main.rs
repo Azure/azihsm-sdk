@@ -23,7 +23,6 @@ mod fmt;
 mod fuzz;
 mod install;
 mod install_symcrypt;
-mod job_main;
 mod mcr_perf;
 mod nextest;
 mod precheck;
@@ -72,7 +71,6 @@ enum Commands {
     RustupComponentAdd(rustup_component_add::RustupComponentAdd),
     Setup(setup::Setup),
     McrPerf(mcr_perf::McrPerf),
-    JobMain(job_main::JobMain),
 }
 
 fn main() {
@@ -113,6 +111,5 @@ fn try_main() -> anyhow::Result<()> {
         Commands::RustupComponentAdd(task) => task.run(ctx),
         Commands::Setup(task) => task.run(ctx),
         Commands::McrPerf(task) => task.run(ctx),
-        Commands::JobMain(task) => task.run(ctx),
     }
 }

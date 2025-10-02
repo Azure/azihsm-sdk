@@ -5,11 +5,10 @@
 
 //! Xtask to run clean
 
-use std::path::PathBuf;
-
 use clap::Parser;
 use xshell::cmd;
 
+use crate::common;
 use crate::Xtask;
 use crate::XtaskCtx;
 
@@ -24,9 +23,7 @@ impl Xtask for Clean {
 
         let sh = xshell::Shell::new()?;
         let rust_toolchain = sh.var("RUST_TOOLCHAIN").map(|s| format!("+{s}")).ok();
-        let mut target_dir = PathBuf::new();
-        target_dir.push("target");
-        target_dir.push("xtask");
+        let target_dir = common::target_dir();
 
         // convert xtask parameters into cargo command arguments
         let command_args = vec!["--target-dir", target_dir.to_str().unwrap()];

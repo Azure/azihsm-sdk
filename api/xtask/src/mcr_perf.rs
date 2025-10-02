@@ -5,10 +5,13 @@
 
 //! Xtask to run mcr_perf
 
+use std::path::PathBuf;
+
 use clap::Parser;
 use clap::Subcommand;
 use xshell::cmd;
 
+use crate::common;
 use crate::Xtask;
 use crate::XtaskCtx;
 
@@ -22,6 +25,10 @@ const AES_CBC_128_ENCRYPT_DEFAULT: u32 = 0;
 #[derive(Parser)]
 #[clap(about = "Run mcr_perf")]
 pub struct McrPerf {
+    /// override default path (directory of xtask.exe) with custom path
+    #[clap(long)]
+    pub path_override: Option<String>,
+
     /// Use shared session for all threads or let each thread have their own session
     #[clap(long)]
     pub shared_session: bool,
@@ -102,17 +109,17 @@ impl Xtask for McrPerf {
             }
         }
 
-        #[cfg(target_os = "windows")]
-        {
-            let mut cwd = sh.current_dir();
-            cwd.extend(["mcr_perf.exe"]);
-            let mcr_perf_path = cwd.display().to_string();
-            cmd!(sh, "{mcr_perf_path} perf {command_args...}")
-                .quiet()
-                .run()?;
+        let mut mcr_perf_path;
+        if self.path_override.is_some() {
+            mcr_perf_path = PathBuf::from(self.path_override.unwrap_or_default());
+        } else {
+            mcr_perf_path = sh.current_dir();
+            mcr_perf_path.push(common::target_dir().display().to_string());
+            mcr_perf_path.push("debug");
         }
-        #[cfg(not(target_os = "windows"))]
-        cmd!(sh, "./mcr_perf perf {command_args...}")
+        mcr_perf_path.push("mcr_perf");
+        let mcr_perf_path_display = mcr_perf_path.display().to_string();
+        cmd!(sh, "{mcr_perf_path_display} perf {command_args...}")
             .quiet()
             .run()?;
 

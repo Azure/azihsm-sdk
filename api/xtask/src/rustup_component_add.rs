@@ -35,7 +35,7 @@ impl Xtask for RustupComponentAdd {
         let rust_toolchain_val;
         if rust_toolchain.is_some() {
             rust_toolchain_arg.push("--toolchain");
-            rust_toolchain_val = rust_toolchain.unwrap_or("".to_string());
+            rust_toolchain_val = rust_toolchain.unwrap_or_default();
             rust_toolchain_arg.push(&rust_toolchain_val);
         }
         let component_val = self.component;

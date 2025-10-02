@@ -34,52 +34,43 @@ jobs:
       run: echo "RUSTFLAGS=-D warnings" >> $GITHUB_ENV
     - name: Build mcr_ddi tests
       run: |
-        cargo xtask build --tests
         cargo xtask clean
+        cargo xtask build --tests
       working-directory: api/ddi/lib/tests
     - name: Build mcr_api tests
       run: |
-        cargo xtask build --tests
         cargo xtask clean
+        cargo xtask build --tests
       working-directory: api/lib/tests
     - name: Build mcr_api_hook tests
       run: |
-        cargo xtask build --tests --features testhooks
         cargo xtask clean
+        cargo xtask build --tests --features testhooks
       working-directory: api/lib/tests
     - name: Cargo build release
-      run: |
-        cargo xtask build --all-targets --release
-        cargo xtask clean
+      run: cargo xtask build --all-targets --release
     - name: Cargo test mock 1 table
-      run: |
-        cargo xtask nextest --features mock,testhooks
-        cargo xtask clean
+      run: cargo xtask nextest --features mock,testhooks
     - name: Cargo test crypto package
       run: |
         cargo xtask nextest --package crypto
         cargo xtask nextest --features mock --package mcr_api --no-default-features
-        cargo xtask clean
     - name: Cargo fuzz
       run: |
         cargo xtask build --features mock,testhooks
         cargo xtask fuzz
-        cargo xtask clean
     - name: Cargo test mock 4 tables
       run: |
         cargo xtask nextest --features mock,testhooks,table-4
-        cargo xtask clean
     - name: Cargo test mock 64 tables
       run: |
         cargo xtask nextest --features mock,testhooks,table-64
-        cargo xtask clean
     - name: Cargo build mock perf
       run: cargo xtask build --features mock --package mcr_perf
     - name: Mock Perf test - multi-threaded
       run: |
         cargo xtask mcr-perf --shared-session --threads 120 --stabilize-seconds 5 --test-seconds 10 custom --get-api-rev 100
         cargo xtask mcr-perf --shared-session --threads 200 --stabilize-seconds 5 --test-seconds 10 custom --aes-cbc-128-encrypt 100
-      working-directory: api/target/xtask/debug
 
   build_windows:
 
@@ -109,36 +100,30 @@ jobs:
       run: echo "RUSTFLAGS=-D warnings" >> $GITHUB_ENV
     - name: Build mcr_ddi tests
       run: |
-        cargo xtask build --tests
         cargo xtask clean
+        cargo xtask build --tests
       working-directory: api/ddi/lib/tests
     - name: Build mcr_api tests
       run: |
-        cargo xtask build --tests
         cargo xtask clean
+        cargo xtask build --tests
       working-directory: api/lib/tests
     - name: Build mcr_api_hook tests
       run: |
-        cargo xtask build --tests --features testhooks
         cargo xtask clean
+        cargo xtask build --tests --features testhooks
       working-directory: api/lib/tests
     - name: Cargo build release
-      run: |
-        cargo xtask build --all-targets --release
-        cargo xtask clean
+      run: cargo xtask build --all-targets --release
     - name: Cargo test mock 1 table
-      run: |
-        cargo xtask nextest --features mock,testhooks
-        cargo xtask clean
+      run: cargo xtask nextest --features mock,testhooks
     - name: Cargo test crypto package
       run: |
         cargo xtask nextest --package crypto
         cargo xtask nextest --features mock --package mcr_api --no-default-features
-        cargo xtask clean
     - name: Cargo build mock perf
       run: cargo xtask build --features mock --package mcr_perf
     - name: Mock Perf test - multi-threaded
       run: |
         cargo xtask mcr-perf --shared-session --threads 120 --stabilize-seconds 5 --test-seconds 10 custom --get-api-rev 100
         cargo xtask mcr-perf --shared-session --threads 200 --stabilize-seconds 5 --test-seconds 10 custom --aes-cbc-128-encrypt 100
-      working-directory: api/target/xtask/debug

@@ -48,7 +48,7 @@ impl Xtask for Test {
             features_vec.push(crypto);
         }
         if self.features.is_some() {
-            features_vec.push(self.features.unwrap_or("".to_string()));
+            features_vec.push(self.features.unwrap_or_default());
         }
         let features_val;
         if !features_vec.is_empty() {
