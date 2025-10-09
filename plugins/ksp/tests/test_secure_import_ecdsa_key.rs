@@ -5,11 +5,12 @@ mod common;
 use std::mem::size_of;
 use std::ptr;
 
-use openssl::rand::rand_bytes;
 use winapi::shared::winerror::NTE_NOT_SUPPORTED;
 use windows::core::HRESULT;
 use windows::Win32::Security::Cryptography::*;
 use windows::Win32::Security::OBJECT_SECURITY_INFORMATION;
+
+use crypto::rand::rand_bytes;
 
 use crate::common::*;
 
@@ -120,7 +121,7 @@ fn test_ecdsa_p256_key_unwrap_with_ckm_rsa_aes_key_wrap() {
 
         // Sign and verify a hash with the target key
         let mut digest = [0u8; 32];
-        rand_bytes(&mut digest).unwrap();
+        rand_bytes(&mut digest).expect("Failed to generate random bytes");
         let mut signature_size = 0u32;
         let result = NCryptSignHash(
             target_key.handle(),
@@ -235,7 +236,7 @@ fn test_ecdsa_p256_key_unwrap_with_rsa_aes_key_wrap_256() {
 
         // Sign and verify a hash with the target key
         let mut digest = [0u8; 32];
-        rand_bytes(&mut digest).unwrap();
+        rand_bytes(&mut digest).expect("Failed to generate random bytes");
         let mut signature_size = 0u32;
         let result = NCryptSignHash(
             target_key.handle(),
@@ -350,7 +351,7 @@ fn test_ecdsa_p256_key_unwrap_with_rsa_aes_key_wrap_384() {
 
         // Sign and verify a hash with the target key
         let mut digest = [0u8; 32];
-        rand_bytes(&mut digest).unwrap();
+        rand_bytes(&mut digest).expect("Failed to generate random bytes");
         let mut signature_size = 0u32;
         let result = NCryptSignHash(
             target_key.handle(),
@@ -465,7 +466,7 @@ fn test_ecdsa_p384_key_unwrap_with_ckm_rsa_aes_key_wrap() {
 
         // Sign and verify a hash with the target key
         let mut digest = [0u8; 32];
-        rand_bytes(&mut digest).unwrap();
+        rand_bytes(&mut digest).expect("Failed to generate random bytes");
         let mut signature_size = 0u32;
         let result = NCryptSignHash(
             target_key.handle(),
@@ -607,7 +608,7 @@ fn test_ecdsa_p384_key_unwrap_with_rsa_aes_key_wrap_256() {
 
         // Sign and verify a hash with the target key
         let mut digest = [0u8; 32];
-        rand_bytes(&mut digest).unwrap();
+        rand_bytes(&mut digest).expect("Failed to generate random bytes");
         let mut signature_size = 0u32;
         let result = NCryptSignHash(
             target_key.handle(),
@@ -722,7 +723,7 @@ fn test_ecdsa_p384_key_unwrap_with_rsa_aes_key_wrap_384() {
 
         // Sign and verify a hash with the target key
         let mut digest = [0u8; 32];
-        rand_bytes(&mut digest).unwrap();
+        rand_bytes(&mut digest).expect("Failed to generate random bytes");
         let mut signature_size = 0u32;
         let result = NCryptSignHash(
             target_key.handle(),
@@ -837,7 +838,7 @@ fn test_ecdsa_p521_key_unwrap_with_ckm_rsa_aes_key_wrap() {
 
         // Sign and verify a hash with the target key
         let mut digest = [0u8; 32];
-        rand_bytes(&mut digest).unwrap();
+        rand_bytes(&mut digest).expect("Failed to generate random bytes");
         let mut signature_size = 0u32;
         let result = NCryptSignHash(
             target_key.handle(),
@@ -952,7 +953,7 @@ fn test_ecdsa_p521_key_unwrap_with_rsa_aes_key_wrap_256() {
 
         // Sign and verify a hash with the target key
         let mut digest = [0u8; 32];
-        rand_bytes(&mut digest).unwrap();
+        rand_bytes(&mut digest).expect("Failed to generate random bytes");
         let mut signature_size = 0u32;
         let result = NCryptSignHash(
             target_key.handle(),
@@ -1094,7 +1095,7 @@ fn test_ecdsa_p521_key_unwrap_with_rsa_aes_key_wrap_384() {
 
         // Sign and verify a hash with the target key
         let mut digest = [0u8; 32];
-        rand_bytes(&mut digest).unwrap();
+        rand_bytes(&mut digest).expect("Failed to generate random bytes");
         let mut signature_size = 0u32;
         let result = NCryptSignHash(
             target_key.handle(),

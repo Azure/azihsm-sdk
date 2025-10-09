@@ -16,6 +16,7 @@ use openssl::cipher_ctx::CipherCtx;
 #[cfg(feature = "use-symcrypt")]
 use symcrypt::cipher::AesExpandedKey;
 
+use crate::rand::rand_bytes;
 use crate::CryptoError;
 
 /// The size of the AES CBC IV.
@@ -78,6 +79,9 @@ pub struct AesDecryptResult {
 
 /// Trait for AES operations.
 pub trait AesOp {
+    fn generate(size: AesKeySize) -> Result<Self, CryptoError>
+    where
+        Self: Sized;
     fn from_bytes(bytes: &[u8]) -> Result<Self, CryptoError>
     where
         Self: Sized;
@@ -117,6 +121,26 @@ fn get_cipher(size: &AesKeySize, mode: &AesAlgo) -> Result<&'static CipherRef, C
 }
 
 impl AesOp for AesKey {
+    /// Generate a new AES key with random bytes.
+    fn generate(size: AesKeySize) -> Result<Self, CryptoError> {
+        // Based on the provided key size, determine the number of bytes needed
+        // in the key.
+        let key_len = match size {
+            AesKeySize::Aes128 => 16,
+            AesKeySize::Aes192 => 24,
+            AesKeySize::Aes256 => 32,
+        };
+
+        // Generate random bytes for the key, and pass it into the
+        // `from_bytes()` function to create the `AesKey` object.
+        let mut key_bytes = vec![0u8; key_len];
+        rand_bytes(key_bytes.as_mut_slice()).map_err(|rand_error_stack| {
+            tracing::error!(?rand_error_stack);
+            CryptoError::AesGenerateError
+        })?;
+        Self::from_bytes(key_bytes.as_slice())
+    }
+
     /// Create a `AesKey` instance from a raw key.
     ///
     /// # Arguments
@@ -507,5 +531,19 @@ mod tests {
 
         assert_eq!(output_iv_2, expected_iv);
         assert_eq!(plain, expected_plain);
+    }
+
+    /// Tests the `generate` for AES keys.
+    #[test]
+    fn test_aes_generate() {
+        for size in [AesKeySize::Aes128, AesKeySize::Aes192, AesKeySize::Aes256] {
+            // Generate an AES key
+            let result = AesKey::generate(size);
+            assert!(result.is_ok());
+
+            // Ensure the key size matches what we passed in
+            let key = result.unwrap();
+            assert_eq!(key.size(), size);
+        }
     }
 }

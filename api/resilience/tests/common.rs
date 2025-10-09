@@ -102,6 +102,7 @@ pub fn common_cleanup(path: &str) {
 pub fn setup_device_with_credentials(device_path: &str) -> (HsmDevice, HsmApiRevision) {
     let device = HsmDevice::open(device_path).expect("Failed to open HSM device");
     let api_rev = device.get_api_revision_range().max;
+
     device
         .establish_credential(api_rev, TEST_CREDENTIALS)
         .expect("Failed to establish credentials");
@@ -117,7 +118,7 @@ pub fn setup_device_and_session(device_path: &str) -> (HsmDevice, HsmSession, Hs
     (device, session, api_rev)
 }
 
-const SESSION_KEY_PROPERTIES: KeyProperties = KeyProperties {
+pub(crate) const SESSION_KEY_PROPERTIES: KeyProperties = KeyProperties {
     key_usage: KeyUsage::EncryptDecrypt,
     key_availability: KeyAvailability::Session,
 };

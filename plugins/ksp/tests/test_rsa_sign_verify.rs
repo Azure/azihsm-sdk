@@ -2,10 +2,6 @@
 mod common;
 use std::ptr;
 
-use openssl::pkey::PKey;
-use openssl::pkey::Private;
-use openssl::pkey_ctx::PkeyCtx;
-use openssl::rand::rand_bytes;
 use winapi::shared::winerror::ERROR_INVALID_DATA;
 use winapi::shared::winerror::E_UNEXPECTED;
 use winapi::shared::winerror::NTE_BAD_SIGNATURE;
@@ -15,6 +11,16 @@ use windows::core::Owned;
 use windows::core::HRESULT;
 use windows::core::PCWSTR;
 use windows::Win32::Security::Cryptography::*;
+
+use der::Decode;
+use pkcs1::RsaPrivateKey;
+use pkcs8::PrivateKeyInfo;
+use symcrypt::{
+    hash::HashAlgorithm,
+    rsa::{RsaKey, RsaKeyUsage},
+};
+
+use crypto::rand::rand_bytes;
 
 use crate::common::*;
 
@@ -49,19 +55,10 @@ fn test_rsa_2k_sign_sha1_rejected() {
 // Import the RSA 2k Key, and verify the data
 #[test]
 fn test_rsa_2k_verify_sha1() {
-    fn _sign(key: &PKey<Private>, digest: &[u8]) -> Vec<u8> {
-        // RSA Signing with OpenSSL
-        let mut ctx = PkeyCtx::new(key).unwrap();
-        ctx.sign_init().unwrap();
-        ctx.set_rsa_padding(openssl::rsa::Padding::PKCS1).unwrap();
-        ctx.set_signature_md(openssl::md::Md::sha1()).unwrap();
-
-        let buffer_len = ctx.sign(digest, None).unwrap();
-        let mut buffer = vec![0u8; buffer_len];
-        let decrypted_len = ctx.sign(digest, Some(&mut buffer)).unwrap();
-
-        let buffer = &buffer[..decrypted_len];
-        buffer.to_vec()
+    fn _sign(key: &RsaKey, digest: &[u8]) -> Vec<u8> {
+        // sign the digest with the SymCrypt RSA private key
+        key.pkcs1_sign(digest, HashAlgorithm::Sha1)
+            .expect("Failed to sign with SymCrypt RSA private key")
     }
 
     unsafe fn _import_key(
@@ -140,7 +137,22 @@ fn test_rsa_2k_verify_sha1() {
 
     // Generate signature using the private key
     let signature = {
-        let key = PKey::private_key_from_pkcs8(&der_rsa_key_private).unwrap();
+        // parse the contents of the RSA private key (which is in PKCS8-DER
+        // format), and use it to construct a `RsaPrivateKey` object
+        let private_key_info = PrivateKeyInfo::from_der(&der_rsa_key_private)
+            .expect("Failed to decode PKCS8 RSA private key");
+        let private_key = RsaPrivateKey::from_der(private_key_info.private_key)
+            .expect("Failed to decode PKCS8 RSA private key");
+
+        // use the `RsaPrivateKey` object to set up a usable SymCrypt RSA key
+        let key = RsaKey::set_key_pair(
+            private_key.modulus.as_bytes(),
+            private_key.public_exponent.as_bytes(),
+            private_key.prime1.as_bytes(),
+            private_key.prime2.as_bytes(),
+            RsaKeyUsage::Sign,
+        )
+        .expect("Failed to create SymCrypt RSA private key");
 
         _sign(&key, &digest)
     };
@@ -153,7 +165,7 @@ fn test_rsa_2k_verify_sha1() {
         let imported_key = _import_key(
             &der_rsa_key_private,
             *azihsm_provider,
-            KeyEncryptionAlgorithm::CKM_RSA_AES_KEY_WRAP,
+            KeyEncryptionAlgorithm::RSA_AES_KEY_WRAP_256,
         );
 
         let result = NCryptSetProperty(
@@ -2137,7 +2149,7 @@ fn test_helper_rsa_sign_buffer_incorrect_size(
 
         // Create a randomized hash digest.
         let mut digest = vec![1u8; digest_size];
-        rand_bytes(&mut digest).unwrap();
+        rand_bytes(&mut digest).expect("Failed to generate random bytes");
 
         let mut signature_size = 0u32;
         let result = NCryptSignHash(
@@ -2665,7 +2677,7 @@ fn test_helper_rsa_sign_no_finalize(
 
         // Generate a random digest.
         let mut digest = vec![1u8; digest_size];
-        rand_bytes(&mut digest).unwrap();
+        rand_bytes(&mut digest).expect("Failed to generate random bytes");
 
         let mut signature_size = 0u32;
         let mut signature = vec![0u8; data_len_max];
@@ -2946,7 +2958,7 @@ fn test_helper_rsa_sign_incorrect_key_usage(
         }
 
         let mut digest = vec![1u8; digest_size];
-        rand_bytes(&mut digest).unwrap();
+        rand_bytes(&mut digest).expect("Failed to generate random bytes");
 
         let mut signature_size = 0u32;
         let mut signature = vec![0u8; data_len_max];
@@ -3231,7 +3243,7 @@ fn test_helper_rsa_sign_algid_null(
 
         // Generate a random digest
         let mut digest = vec![1u8; digest_size];
-        rand_bytes(&mut digest).unwrap();
+        rand_bytes(&mut digest).expect("Failed to generate random bytes");
 
         let mut signature_size = 0u32;
         let mut signature = vec![0u8; data_len_max];
@@ -3513,7 +3525,7 @@ fn test_helper_verify_failure(
 
         // Generate a random digest.
         let mut digest = vec![1u8; digest_size];
-        rand_bytes(&mut digest).unwrap();
+        rand_bytes(&mut digest).expect("Failed to generate random bytes");
 
         let mut signature_size = 0u32;
         let result = NCryptSignHash(

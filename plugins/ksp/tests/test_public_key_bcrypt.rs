@@ -3,9 +3,10 @@ mod common;
 use std::mem::size_of;
 use std::ptr;
 
-use openssl::rand::rand_bytes;
 use windows::core::PCWSTR;
 use windows::Win32::Security::Cryptography::*;
+
+use crypto::rand::rand_bytes;
 
 use crate::common::*;
 
@@ -628,8 +629,7 @@ fn test_ecdsa_export_pubkey_bcrypt_helper(curve: EccCurve) {
         // Sign with AziHSM
         let digest_size = 32;
         let mut digest = vec![0u8; digest_size];
-        let result = rand_bytes(&mut digest);
-        assert!(result.is_ok(), "result {:?}", result);
+        rand_bytes(&mut digest).expect("Failed to generate random bytes");
 
         let signature = ncrypt_sign(&azihsm_key, &digest, None, NCRYPT_FLAGS(0));
 
@@ -703,8 +703,7 @@ fn test_rsa_export_pubkey_bcrypt_helper(rsa_size: RsaSize) {
         };
         let digest_size = 32;
         let mut digest = vec![1u8; digest_size];
-        let result = rand_bytes(&mut digest);
-        assert!(result.is_ok(), "result {:?}", result);
+        rand_bytes(&mut digest).expect("Failed to generate random bytes");
 
         let signature = ncrypt_sign(
             &azihsm_key,
@@ -878,12 +877,10 @@ fn test_ecdh_kbkdf_bcrypt_helper(curve: EccCurve) {
 
         // AES encrypt with BCrypt, decrypt with Manticore
         let mut iv = [0u8; 16];
-        let result = rand_bytes(&mut iv);
-        assert!(result.is_ok(), "result {:?}", result);
+        rand_bytes(&mut iv).expect("Failed to generate random bytes");
 
         let mut plaintext = vec![0u8; 128];
-        let result = rand_bytes(&mut plaintext);
-        assert!(result.is_ok(), "result {:?}", result);
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         let encrypted = bcrypt_aes_encrypt(&bob_derived_key, &iv, &plaintext);
         let decrypted = ncrypt_aes_decrypt(&alice_derived_key, &iv, &encrypted);
@@ -891,12 +888,10 @@ fn test_ecdh_kbkdf_bcrypt_helper(curve: EccCurve) {
 
         // AES encrypt with Manticore, decrypt with BCrypt
         let mut iv = [0u8; 16];
-        let result = rand_bytes(&mut iv);
-        assert!(result.is_ok(), "result {:?}", result);
+        rand_bytes(&mut iv).expect("Failed to generate random bytes");
 
         let mut plaintext = vec![0u8; 128];
-        let result = rand_bytes(&mut plaintext);
-        assert!(result.is_ok(), "result {:?}", result);
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         let encrypted = ncrypt_aes_encrypt(&alice_derived_key, &iv, &plaintext);
         let decrypted = bcrypt_aes_decrypt(&bob_derived_key, &iv, &encrypted);

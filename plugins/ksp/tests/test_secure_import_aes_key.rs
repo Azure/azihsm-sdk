@@ -5,12 +5,13 @@ mod common;
 use std::mem::size_of;
 use std::ptr;
 
-use openssl::rand::rand_bytes;
 use widestring::*;
 use winapi::shared::winerror::NTE_NOT_SUPPORTED;
 use windows::core::HRESULT;
 use windows::Win32::Security::Cryptography::*;
 use windows::Win32::Security::OBJECT_SECURITY_INFORMATION;
+
+use crypto::rand::rand_bytes;
 
 use crate::common::*;
 
@@ -51,7 +52,7 @@ fn test_aes_cbc_128_key_unwrap_encryption_mode_not_set() {
 
         // Generate an AES 128 key
         // Wrap it with the import public key using CKM_RSA_AES_KEY_WRAP key encryption algorithm
-        let private_key = generate_aes(KeyType::Aes128);
+        let private_key = generate_aes_bytes(KeyType::Aes128);
         let encrypted_blob = wrap_data(
             pub_key,
             &private_key,
@@ -131,7 +132,7 @@ fn test_aes_cbc_128_key_unwrap_with_ckm_rsa_aes_key_wrap() {
 
         // Generate an AES 128 key
         // Wrap it with the import public key using CKM_RSA_AES_KEY_WRAP key encryption algorithm
-        let private_key = generate_aes(KeyType::Aes128);
+        let private_key = generate_aes_bytes(KeyType::Aes128);
         let encrypted_blob = wrap_data(
             pub_key,
             &private_key,
@@ -244,7 +245,7 @@ fn test_aes_cbc_128_key_unwrap_with_ckm_rsa_aes_key_wrap() {
 
         // Encrypt and decrypt data using the target key
         let mut iv = [0u8; 16];
-        rand_bytes(&mut iv).unwrap();
+        rand_bytes(&mut iv).expect("Failed to generate random bytes");
         let mut iv_orig = iv;
 
         let mut padding_info: NCRYPT_CIPHER_PADDING_INFO = NCRYPT_CIPHER_PADDING_INFO {
@@ -259,7 +260,7 @@ fn test_aes_cbc_128_key_unwrap_with_ckm_rsa_aes_key_wrap() {
         let mut plaintext = [0u8; 128];
         let mut ciphertext = [0u8; 128];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         let result = NCryptEncrypt(
             target_key.handle(),
@@ -326,7 +327,7 @@ fn test_aes_cbc_128_key_unwrap_with_rsa_aes_key_wrap_256() {
 
         // Generate an AES 128 key
         // Wrap it with the import public key using RSA_AES_KEY_WRAP_256 key encryption algorithm
-        let private_key = generate_aes(KeyType::Aes128);
+        let private_key = generate_aes_bytes(KeyType::Aes128);
         let encrypted_blob = wrap_data(
             pub_key,
             &private_key,
@@ -383,7 +384,7 @@ fn test_aes_cbc_128_key_unwrap_with_rsa_aes_key_wrap_256() {
 
         // Encrypt and decrypt data using the target key
         let mut iv = [0u8; 16];
-        rand_bytes(&mut iv).unwrap();
+        rand_bytes(&mut iv).expect("Failed to generate random bytes");
         let mut iv_orig = iv;
 
         let mut padding_info: NCRYPT_CIPHER_PADDING_INFO = NCRYPT_CIPHER_PADDING_INFO {
@@ -398,7 +399,7 @@ fn test_aes_cbc_128_key_unwrap_with_rsa_aes_key_wrap_256() {
         let mut plaintext = [0u8; 128];
         let mut ciphertext = [0u8; 128];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         let result = NCryptEncrypt(
             target_key.handle(),
@@ -465,7 +466,7 @@ fn test_aes_cbc_128_key_unwrap_with_rsa_aes_key_wrap_384() {
 
         // Generate an AES 128 key
         // Wrap it with the import public key using RSA_AES_KEY_WRAP_384 key encryption algorithm
-        let private_key = generate_aes(KeyType::Aes128);
+        let private_key = generate_aes_bytes(KeyType::Aes128);
         let encrypted_blob = wrap_data(
             pub_key,
             &private_key,
@@ -522,7 +523,7 @@ fn test_aes_cbc_128_key_unwrap_with_rsa_aes_key_wrap_384() {
 
         // Encrypt and decrypt data using the target key
         let mut iv = [0u8; 16];
-        rand_bytes(&mut iv).unwrap();
+        rand_bytes(&mut iv).expect("Failed to generate random bytes");
         let mut iv_orig = iv;
 
         let mut padding_info: NCRYPT_CIPHER_PADDING_INFO = NCRYPT_CIPHER_PADDING_INFO {
@@ -537,7 +538,7 @@ fn test_aes_cbc_128_key_unwrap_with_rsa_aes_key_wrap_384() {
         let mut plaintext = [0u8; 128];
         let mut ciphertext = [0u8; 128];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         let result = NCryptEncrypt(
             target_key.handle(),
@@ -604,7 +605,7 @@ fn test_aes_cbc_192_key_unwrap_with_ckm_rsa_aes_key_wrap() {
 
         // Generate an AES 192 key
         // Wrap it with the import public key using CKM_RSA_AES_KEY_WRAP key encryption algorithm
-        let private_key = generate_aes(KeyType::Aes192);
+        let private_key = generate_aes_bytes(KeyType::Aes192);
         let encrypted_blob = wrap_data(
             pub_key,
             &private_key,
@@ -717,7 +718,7 @@ fn test_aes_cbc_192_key_unwrap_with_ckm_rsa_aes_key_wrap() {
 
         // Encrypt and decrypt data using the target key
         let mut iv = [0u8; 16];
-        rand_bytes(&mut iv).unwrap();
+        rand_bytes(&mut iv).expect("Failed to generate random bytes");
         let mut iv_orig = iv;
 
         let mut padding_info: NCRYPT_CIPHER_PADDING_INFO = NCRYPT_CIPHER_PADDING_INFO {
@@ -732,7 +733,7 @@ fn test_aes_cbc_192_key_unwrap_with_ckm_rsa_aes_key_wrap() {
         let mut plaintext = [0u8; 128];
         let mut ciphertext = [0u8; 128];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         let result = NCryptEncrypt(
             target_key.handle(),
@@ -799,7 +800,7 @@ fn test_aes_cbc_192_key_unwrap_with_rsa_aes_key_wrap_256() {
 
         // Generate an AES 192 key
         // Wrap it with the import public key using RSA_AES_KEY_WRAP_256 key encryption algorithm
-        let private_key = generate_aes(KeyType::Aes192);
+        let private_key = generate_aes_bytes(KeyType::Aes192);
         let encrypted_blob = wrap_data(
             pub_key,
             &private_key,
@@ -856,7 +857,7 @@ fn test_aes_cbc_192_key_unwrap_with_rsa_aes_key_wrap_256() {
 
         // Encrypt and decrypt data using the target key
         let mut iv = [0u8; 16];
-        rand_bytes(&mut iv).unwrap();
+        rand_bytes(&mut iv).expect("Failed to generate random bytes");
         let mut iv_orig = iv;
 
         let mut padding_info: NCRYPT_CIPHER_PADDING_INFO = NCRYPT_CIPHER_PADDING_INFO {
@@ -871,7 +872,7 @@ fn test_aes_cbc_192_key_unwrap_with_rsa_aes_key_wrap_256() {
         let mut plaintext = [0u8; 128];
         let mut ciphertext = [0u8; 128];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         let result = NCryptEncrypt(
             target_key.handle(),
@@ -938,7 +939,7 @@ fn test_aes_cbc_192_key_unwrap_with_rsa_aes_key_wrap_384() {
 
         // Generate an AES 192 key
         // Wrap it with the import public key using RSA_AES_KEY_WRAP_384 key encryption algorithm
-        let private_key = generate_aes(KeyType::Aes192);
+        let private_key = generate_aes_bytes(KeyType::Aes192);
         let encrypted_blob = wrap_data(
             pub_key,
             &private_key,
@@ -995,7 +996,7 @@ fn test_aes_cbc_192_key_unwrap_with_rsa_aes_key_wrap_384() {
 
         // Encrypt and decrypt data using the target key
         let mut iv = [0u8; 16];
-        rand_bytes(&mut iv).unwrap();
+        rand_bytes(&mut iv).expect("Failed to generate random bytes");
         let mut iv_orig = iv;
 
         let mut padding_info: NCRYPT_CIPHER_PADDING_INFO = NCRYPT_CIPHER_PADDING_INFO {
@@ -1010,7 +1011,7 @@ fn test_aes_cbc_192_key_unwrap_with_rsa_aes_key_wrap_384() {
         let mut plaintext = [0u8; 128];
         let mut ciphertext = [0u8; 128];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         let result = NCryptEncrypt(
             target_key.handle(),
@@ -1077,7 +1078,7 @@ fn test_aes_cbc_256_key_unwrap_with_ckm_rsa_aes_key_wrap() {
 
         // Generate an AES 256 key
         // Wrap it with the import public key using CKM_RSA_AES_KEY_WRAP key encryption algorithm
-        let private_key = generate_aes(KeyType::Aes256);
+        let private_key = generate_aes_bytes(KeyType::Aes256);
         let encrypted_blob = wrap_data(
             pub_key,
             &private_key,
@@ -1190,7 +1191,7 @@ fn test_aes_cbc_256_key_unwrap_with_ckm_rsa_aes_key_wrap() {
 
         // Encrypt and decrypt data using the target key
         let mut iv = [0u8; 16];
-        rand_bytes(&mut iv).unwrap();
+        rand_bytes(&mut iv).expect("Failed to generate random bytes");
         let mut iv_orig = iv;
 
         let mut padding_info: NCRYPT_CIPHER_PADDING_INFO = NCRYPT_CIPHER_PADDING_INFO {
@@ -1205,7 +1206,7 @@ fn test_aes_cbc_256_key_unwrap_with_ckm_rsa_aes_key_wrap() {
         let mut plaintext = [0u8; 128];
         let mut ciphertext = [0u8; 128];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         let result = NCryptEncrypt(
             target_key.handle(),
@@ -1272,7 +1273,7 @@ fn test_aes_cbc_256_key_unwrap_with_rsa_aes_key_wrap_256() {
 
         // Generate an AES 256 key
         // Wrap it with the import public key using RSA_AES_KEY_WRAP_256 key encryption algorithm
-        let private_key = generate_aes(KeyType::Aes256);
+        let private_key = generate_aes_bytes(KeyType::Aes256);
         let encrypted_blob = wrap_data(
             pub_key,
             &private_key,
@@ -1329,7 +1330,7 @@ fn test_aes_cbc_256_key_unwrap_with_rsa_aes_key_wrap_256() {
 
         // Encrypt and decrypt data using the target key
         let mut iv = [0u8; 16];
-        rand_bytes(&mut iv).unwrap();
+        rand_bytes(&mut iv).expect("Failed to generate random bytes");
         let mut iv_orig = iv;
 
         let mut padding_info: NCRYPT_CIPHER_PADDING_INFO = NCRYPT_CIPHER_PADDING_INFO {
@@ -1344,7 +1345,7 @@ fn test_aes_cbc_256_key_unwrap_with_rsa_aes_key_wrap_256() {
         let mut plaintext = [0u8; 128];
         let mut ciphertext = [0u8; 128];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         let result = NCryptEncrypt(
             target_key.handle(),
@@ -1411,7 +1412,7 @@ fn test_aes_cbc_256_key_unwrap_with_rsa_aes_key_wrap_384() {
 
         // Generate an AES 256 key
         // Wrap it with the import public key using RSA_AES_KEY_WRAP_384 key encryption algorithm
-        let private_key = generate_aes(KeyType::Aes256);
+        let private_key = generate_aes_bytes(KeyType::Aes256);
         let encrypted_blob = wrap_data(
             pub_key,
             &private_key,
@@ -1468,7 +1469,7 @@ fn test_aes_cbc_256_key_unwrap_with_rsa_aes_key_wrap_384() {
 
         // Encrypt and decrypt data using the target key
         let mut iv = [0u8; 16];
-        rand_bytes(&mut iv).unwrap();
+        rand_bytes(&mut iv).expect("Failed to generate random bytes");
         let mut iv_orig = iv;
 
         let mut padding_info: NCRYPT_CIPHER_PADDING_INFO = NCRYPT_CIPHER_PADDING_INFO {
@@ -1483,7 +1484,7 @@ fn test_aes_cbc_256_key_unwrap_with_rsa_aes_key_wrap_384() {
         let mut plaintext = [0u8; 128];
         let mut ciphertext = [0u8; 128];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         let result = NCryptEncrypt(
             target_key.handle(),
@@ -1551,7 +1552,7 @@ fn test_aes_gcm_256_key_unwrap_with_ckm_rsa_aes_key_wrap() {
 
         // Generate an AES 256 key
         // Wrap it with the import public key using CKM_RSA_AES_KEY_WRAP key encryption algorithm
-        let private_key = generate_aes(KeyType::Aes256);
+        let private_key = generate_aes_bytes(KeyType::Aes256);
         let encrypted_blob = wrap_data(
             pub_key,
             &private_key,
@@ -1702,7 +1703,7 @@ fn test_aes_gcm_256_key_unwrap_with_rsa_aes_key_wrap_256() {
 
         // Generate an AES 256 key
         // Wrap it with the import public key using RSA_AES_KEY_WRAP_256 key encryption algorithm
-        let private_key = generate_aes(KeyType::Aes256);
+        let private_key = generate_aes_bytes(KeyType::Aes256);
         let encrypted_blob = wrap_data(
             pub_key,
             &private_key,
@@ -1797,7 +1798,7 @@ fn test_aes_gcm_256_key_unwrap_with_rsa_aes_key_wrap_384() {
 
         // Generate an AES 256 key
         // Wrap it with the import public key using RSA_AES_KEY_WRAP_384 key encryption algorithm
-        let private_key = generate_aes(KeyType::Aes256);
+        let private_key = generate_aes_bytes(KeyType::Aes256);
         let encrypted_blob = wrap_data(
             pub_key,
             &private_key,
@@ -1854,10 +1855,10 @@ fn test_aes_gcm_256_key_unwrap_with_rsa_aes_key_wrap_384() {
 
         // Encrypt and decrypt data using the target key
         let mut iv = [0u8; AES_GCM_IV_SIZE];
-        rand_bytes(&mut iv).unwrap();
+        rand_bytes(&mut iv).expect("Failed to generate random bytes");
 
         let mut aad = [0u8; AES_GCM_AAD_SIZE];
-        rand_bytes(&mut aad).unwrap();
+        rand_bytes(&mut aad).expect("Failed to generate random bytes");
 
         let mut tag_length_property_size = 0u32;
         let result = NCryptGetProperty(
@@ -1913,7 +1914,7 @@ fn test_aes_gcm_256_key_unwrap_with_rsa_aes_key_wrap_384() {
 
         let mut plaintext = vec![0u8; 256_usize];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         let result = NCryptEncrypt(
             target_key.handle(),
@@ -2017,7 +2018,7 @@ fn test_aes_gcm_key_import_not_supported() {
 
         // Generate an AES 256 key
         // Wrap it with the import public key using RSA_AES_KEY_WRAP_384 key encryption algorithm
-        let private_key = generate_aes(KeyType::Aes256);
+        let private_key = generate_aes_bytes(KeyType::Aes256);
         let encrypted_blob = wrap_data(
             pub_key,
             &private_key,
@@ -2111,7 +2112,7 @@ fn test_aes_cbc_256_key_unwrap_with_unsupported_rsa_crt_property() {
 
         // Generate an AES 256 key
         // Wrap it with the import public key using RSA_AES_KEY_WRAP_256 key encryption algorithm
-        let private_key = generate_aes(KeyType::Aes256);
+        let private_key = generate_aes_bytes(KeyType::Aes256);
         let encrypted_blob = wrap_data(
             pub_key,
             &private_key,
@@ -2233,8 +2234,8 @@ fn test_aes_xts_key_import_not_supported() {
         //
         // We'll combine these two keys' bytes together when we wrap it up with
         // the AzIHSM built-in unwrapping key.
-        let private_key_1 = generate_aes(KeyType::Aes256);
-        let private_key_2 = generate_aes(KeyType::Aes256);
+        let private_key_1 = generate_aes_bytes(KeyType::Aes256);
+        let private_key_2 = generate_aes_bytes(KeyType::Aes256);
         let mut private_key_combined = private_key_1.clone();
         private_key_combined.extend(private_key_2.as_slice());
 

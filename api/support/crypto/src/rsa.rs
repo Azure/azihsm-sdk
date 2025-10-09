@@ -10,6 +10,8 @@ use openssl::md::Md;
 #[cfg(feature = "use-openssl")]
 use openssl::pkey::PKey;
 #[cfg(feature = "use-openssl")]
+use openssl::pkey::Private;
+#[cfg(feature = "use-openssl")]
 use openssl::pkey::Public;
 #[cfg(feature = "use-openssl")]
 use openssl::pkey_ctx::PkeyCtx;
@@ -34,6 +36,7 @@ const RSA_OID: pkcs1::ObjectIdentifier =
 
 /// Trait for RSA Operations.
 pub trait RsaOp<T> {
+    fn generate(size: u32) -> Result<T, CryptoError>;
     fn from_der(der: &[u8], expected_type: Option<CryptoKeyKind>) -> Result<T, CryptoError>;
     fn to_der(&self) -> Result<Vec<u8>, CryptoError>;
     fn modulus(&self) -> Result<Vec<u8>, CryptoError>;
@@ -41,6 +44,7 @@ pub trait RsaOp<T> {
 }
 
 pub trait RsaPublicOp {
+    fn from_raw(modulus: &[u8], exponent: &[u8]) -> Result<RsaPublicKey, CryptoError>;
     fn encrypt(
         &self,
         data: &[u8],
@@ -70,6 +74,41 @@ pub struct RsaPublicKey {
 
 #[cfg(feature = "use-openssl")]
 impl RsaOp<RsaPublicKey> for RsaPublicKey {
+    /// Generate an RSA public key.
+    fn generate(size: u32) -> Result<RsaPublicKey, CryptoError> {
+        // Rsa::generate() uses 65537 as public exponent
+        let rsa_private = openssl::rsa::Rsa::generate(size).map_err(|openssl_error_stack| {
+            tracing::error!(?openssl_error_stack);
+            CryptoError::RsaGenerateError
+        })?;
+
+        // Derive the public key
+        let n = rsa_private.n().to_owned().map_err(|openssl_error_stack| {
+            tracing::error!(?openssl_error_stack);
+            CryptoError::RsaGenerateError
+        })?;
+        let e = rsa_private.e().to_owned().map_err(|openssl_error_stack| {
+            tracing::error!(?openssl_error_stack);
+            CryptoError::RsaGenerateError
+        })?;
+        let rsa_public =
+            openssl::rsa::Rsa::from_public_components(n, e).map_err(|openssl_error_stack| {
+                tracing::error!(?openssl_error_stack);
+                CryptoError::RsaGenerateError
+            })?;
+
+        // Wrap the public key in a `PKey` object
+        let pkey_public =
+            openssl::pkey::PKey::from_rsa(rsa_public).map_err(|openssl_error_stack| {
+                tracing::error!(?openssl_error_stack);
+                CryptoError::RsaGenerateError
+            })?;
+
+        Ok(RsaPublicKey {
+            handle: pkey_public,
+        })
+    }
+
     /// Deserialize an RSA public key from a DER-encoded SubjectPublicKeyInfo format.
     fn from_der(
         der: &[u8],
@@ -152,6 +191,35 @@ impl RsaOp<RsaPublicKey> for RsaPublicKey {
 
 #[cfg(feature = "use-openssl")]
 impl RsaPublicOp for RsaPublicKey {
+    // Create from raw modulus and exponent
+    fn from_raw(modulus: &[u8], exponent: &[u8]) -> Result<RsaPublicKey, CryptoError> {
+        // Construct OpenSSL `BigNum` objects from the modulus and public
+        // exponent. These are needed to create an OpenSSL RSA object.
+        let n = openssl::bn::BigNum::from_slice(modulus).map_err(|openssl_error_stack| {
+            tracing::error!(?openssl_error_stack);
+            CryptoError::RsaFromRawError
+        })?;
+        let e = openssl::bn::BigNum::from_slice(exponent).map_err(|openssl_error_stack| {
+            tracing::error!(?openssl_error_stack);
+            CryptoError::RsaFromRawError
+        })?;
+
+        // Create an OpenSSL `Rsa` object
+        let rsa =
+            openssl::rsa::Rsa::from_public_components(n, e).map_err(|openssl_error_stack| {
+                tracing::error!(?openssl_error_stack);
+                CryptoError::RsaFromRawError
+            })?;
+
+        // Wrap it in a `PKey` object
+        let pkey = openssl::pkey::PKey::from_rsa(rsa).map_err(|openssl_error_stack| {
+            tracing::error!(?openssl_error_stack);
+            CryptoError::RsaFromRawError
+        })?;
+
+        Ok(RsaPublicKey { handle: pkey })
+    }
+
     // Encryption
     fn encrypt(
         &self,
@@ -301,6 +369,19 @@ impl RsaPublicOp for RsaPublicKey {
 
 #[cfg(feature = "use-symcrypt")]
 impl RsaOp<RsaPublicKey> for RsaPublicKey {
+    /// Generate an RSA public key.
+    fn generate(size: u32) -> Result<RsaPublicKey, CryptoError> {
+        // Use SymCrypt to generate an RSA public/private key pair
+        let key = RsaKey::generate_key_pair(size, None, RsaKeyUsage::SignAndEncrypt).map_err(
+            |symcrypt_error_stack| {
+                tracing::error!(?symcrypt_error_stack);
+                CryptoError::RsaGenerateError
+            },
+        )?;
+
+        Ok(RsaPublicKey { handle: key })
+    }
+
     fn from_der(
         der: &[u8],
         expected_type: Option<CryptoKeyKind>,
@@ -439,6 +520,16 @@ impl RsaOp<RsaPublicKey> for RsaPublicKey {
 
 #[cfg(feature = "use-symcrypt")]
 impl RsaPublicOp for RsaPublicKey {
+    // Create from raw modulus and exponent
+    fn from_raw(modulus: &[u8], exponent: &[u8]) -> Result<RsaPublicKey, CryptoError> {
+        let handle = RsaKey::set_public_key(modulus, exponent, RsaKeyUsage::SignAndEncrypt)
+            .map_err(|symcrypt_error_stack| {
+                tracing::error!(?symcrypt_error_stack);
+                CryptoError::RsaFromRawError
+            })?;
+        Ok(RsaPublicKey { handle })
+    }
+
     fn encrypt(
         &self,
         data: &[u8],
@@ -513,659 +604,603 @@ impl RsaPublicOp for RsaPublicKey {
     }
 }
 
-#[cfg(test)]
-mod tests {
+pub trait RsaPrivateOp {
+    fn decrypt(
+        &self,
+        data: &[u8],
+        padding: CryptoRsaCryptoPadding,
+        hash_algorithm: Option<CryptoHashAlgorithm>,
+        label: Option<&[u8]>,
+    ) -> Result<Vec<u8>, CryptoError>;
+    fn sign(
+        &self,
+        digest: &[u8],
+        padding: CryptoRsaSignaturePadding,
+        hash_algorithm: Option<CryptoHashAlgorithm>,
+        salt_len: Option<u16>,
+    ) -> Result<Vec<u8>, CryptoError>;
+    fn extract_pub_key_der(&self) -> Result<Vec<u8>, CryptoError>;
+}
+
+pub fn generate_rsa(size: u32) -> Result<(RsaPrivateKey, RsaPublicKey), CryptoError> {
+    RsaPrivateKey::generate(size).and_then(|private_key| {
+        let public_key_der = private_key.extract_pub_key_der()?;
+        RsaPublicKey::from_der(&public_key_der, None).map(|public_key| (private_key, public_key))
+    })
+}
+
+/// RSA Private Key.
+#[derive(Debug)]
+pub struct RsaPrivateKey {
     #[cfg(feature = "use-openssl")]
-    use openssl::pkey::Private;
-    use test_with_tracing::test;
+    handle: PKey<Private>,
 
-    use super::*;
+    #[cfg(feature = "use-symcrypt")]
+    handle: RsaKey,
+}
 
-    pub trait RsaPrivateOp {
-        fn decrypt(
-            &self,
-            data: &[u8],
-            padding: CryptoRsaCryptoPadding,
-            hash_algorithm: Option<CryptoHashAlgorithm>,
-            label: Option<&[u8]>,
-        ) -> Result<Vec<u8>, CryptoError>;
-        fn sign(
-            &self,
-            digest: &[u8],
-            padding: CryptoRsaSignaturePadding,
-            hash_algorithm: Option<CryptoHashAlgorithm>,
-            salt_len: Option<u16>,
-        ) -> Result<Vec<u8>, CryptoError>;
-        fn extract_pub_key_der(&self) -> Result<Vec<u8>, CryptoError>;
-    }
-
-    /// Generate a RSA key pair using openssl.
-    ///
-    /// # Arguments
-    /// * `size` - Size of the RSA key pair to generate (2048/ 3072/ 4096 etc).
-    ///
-    /// # Returns
-    /// * `(RsaPrivateKey, RsaPublicKey)` - Generated RSA key pair.
-    ///
-    /// # Errors
-    /// * `CryptoError::RsaGenerateError` - If the RSA key pair generation fails.
-    #[cfg(feature = "use-openssl")]
-    pub fn generate_rsa(size: u32) -> Result<(RsaPrivateKey, RsaPublicKey), CryptoError> {
+#[cfg(feature = "use-openssl")]
+impl RsaOp<RsaPrivateKey> for RsaPrivateKey {
+    /// Generate an RSA private key.
+    fn generate(size: u32) -> Result<RsaPrivateKey, CryptoError> {
         // Rsa::generate() uses 65537 as public exponent
         let rsa_private = openssl::rsa::Rsa::generate(size).map_err(|openssl_error_stack| {
             tracing::error!(?openssl_error_stack);
             CryptoError::RsaGenerateError
         })?;
 
-        // Derive the public key
-        let n = rsa_private.n().to_owned().map_err(|openssl_error_stack| {
-            tracing::error!(?openssl_error_stack);
-            CryptoError::RsaGenerateError
-        })?;
-        let e = rsa_private.e().to_owned().map_err(|openssl_error_stack| {
-            tracing::error!(?openssl_error_stack);
-            CryptoError::RsaGenerateError
-        })?;
-        let rsa_public =
-            openssl::rsa::Rsa::from_public_components(n, e).map_err(|openssl_error_stack| {
-                tracing::error!(?openssl_error_stack);
-                CryptoError::RsaGenerateError
-            })?;
-
+        // Wrap the private key in a `PKey` object
         let pkey_private =
             openssl::pkey::PKey::from_rsa(rsa_private).map_err(|openssl_error_stack| {
                 tracing::error!(?openssl_error_stack);
                 CryptoError::RsaGenerateError
             })?;
-        let pkey_public =
-            openssl::pkey::PKey::from_rsa(rsa_public).map_err(|openssl_error_stack| {
-                tracing::error!(?openssl_error_stack);
-                CryptoError::RsaGenerateError
-            })?;
 
-        Ok((
-            RsaPrivateKey {
-                handle: pkey_private,
-            },
-            RsaPublicKey {
-                handle: pkey_public,
-            },
-        ))
+        Ok(RsaPrivateKey {
+            handle: pkey_private,
+        })
     }
 
-    /// RSA Private Key.
-    #[derive(Debug)]
-    pub struct RsaPrivateKey {
-        #[cfg(feature = "use-openssl")]
-        handle: PKey<Private>,
+    /// Deserialize an RSA private key from a DER-encoded PKCS#8 format.
+    fn from_der(
+        der: &[u8],
+        expected_type: Option<CryptoKeyKind>,
+    ) -> Result<RsaPrivateKey, CryptoError> {
+        let pkey = PKey::private_key_from_pkcs8(der).map_err(|openssl_error_stack| {
+            tracing::error!(?openssl_error_stack);
+            CryptoError::RsaFromDerError
+        })?;
 
-        #[cfg(feature = "use-symcrypt")]
-        handle: RsaKey,
-    }
-    #[cfg(feature = "use-openssl")]
-    impl RsaOp<RsaPrivateKey> for RsaPrivateKey {
-        /// Deserialize an RSA private key from a DER-encoded PKCS#8 format.
-        fn from_der(
-            der: &[u8],
-            expected_type: Option<CryptoKeyKind>,
-        ) -> Result<RsaPrivateKey, CryptoError> {
-            let pkey = PKey::private_key_from_pkcs8(der).map_err(|openssl_error_stack| {
-                tracing::error!(?openssl_error_stack);
-                CryptoError::RsaFromDerError
-            })?;
-
-            match expected_type {
-                Some(CryptoKeyKind::Rsa2kPrivate) | Some(CryptoKeyKind::Rsa2kPrivateCrt) => {
-                    if pkey.bits() != 2048 {
-                        Err(CryptoError::DerAndKeyTypeMismatch)?
-                    }
+        match expected_type {
+            Some(CryptoKeyKind::Rsa2kPrivate) | Some(CryptoKeyKind::Rsa2kPrivateCrt) => {
+                if pkey.bits() != 2048 {
+                    Err(CryptoError::DerAndKeyTypeMismatch)?
                 }
-                Some(CryptoKeyKind::Rsa3kPrivate) | Some(CryptoKeyKind::Rsa3kPrivateCrt) => {
-                    if pkey.bits() != 3072 {
-                        Err(CryptoError::DerAndKeyTypeMismatch)?
-                    }
-                }
-                Some(CryptoKeyKind::Rsa4kPrivate) | Some(CryptoKeyKind::Rsa4kPrivateCrt) => {
-                    if pkey.bits() != 4096 {
-                        Err(CryptoError::DerAndKeyTypeMismatch)?
-                    }
-                }
-                None => {}
-                _ => Err(CryptoError::DerAndKeyTypeMismatch)?,
             }
-
-            Ok(RsaPrivateKey { handle: pkey })
+            Some(CryptoKeyKind::Rsa3kPrivate) | Some(CryptoKeyKind::Rsa3kPrivateCrt) => {
+                if pkey.bits() != 3072 {
+                    Err(CryptoError::DerAndKeyTypeMismatch)?
+                }
+            }
+            Some(CryptoKeyKind::Rsa4kPrivate) | Some(CryptoKeyKind::Rsa4kPrivateCrt) => {
+                if pkey.bits() != 4096 {
+                    Err(CryptoError::DerAndKeyTypeMismatch)?
+                }
+            }
+            None => {}
+            _ => Err(CryptoError::DerAndKeyTypeMismatch)?,
         }
 
-        /// Serialize the RSA private key to a DER-encoded PKCS#8 format.
-        fn to_der(&self) -> Result<Vec<u8>, CryptoError> {
-            let der =
-                self.handle
-                    .as_ref()
-                    .private_key_to_pkcs8()
-                    .map_err(|openssl_error_stack| {
-                        tracing::error!(?openssl_error_stack);
-                        CryptoError::RsaToDerError
-                    })?;
-
-            Ok(der)
-        }
-
-        /// Get the modulus of the RSA key.
-        fn modulus(&self) -> Result<Vec<u8>, CryptoError> {
-            let rsa = self.handle.rsa().map_err(|openssl_error_stack| {
-                tracing::error!(?openssl_error_stack);
-                CryptoError::RsaGetModulusError
-            })?;
-            let modulus = rsa.n().to_owned().map_err(|openssl_error_stack| {
-                tracing::error!(?openssl_error_stack);
-                CryptoError::RsaGetModulusError
-            })?;
-
-            Ok(modulus.to_vec())
-        }
-
-        /// Get the public exponent of the RSA key.
-        fn public_exponent(&self) -> Result<Vec<u8>, CryptoError> {
-            let rsa = self.handle.rsa().map_err(|openssl_error_stack| {
-                tracing::error!(?openssl_error_stack);
-                CryptoError::RsaGetPublicExponentError
-            })?;
-            let public_exponent = rsa.e().to_owned().map_err(|openssl_error_stack| {
-                tracing::error!(?openssl_error_stack);
-                CryptoError::RsaGetPublicExponentError
-            })?;
-
-            Ok(public_exponent.to_vec())
-        }
+        Ok(RsaPrivateKey { handle: pkey })
     }
 
-    #[cfg(feature = "use-openssl")]
-    impl RsaPrivateOp for RsaPrivateKey {
-        // Decryption
-        fn decrypt(
-            &self,
-            data: &[u8],
-            padding: CryptoRsaCryptoPadding,
-            hash_algorithm: Option<CryptoHashAlgorithm>,
-            label: Option<&[u8]>,
-        ) -> Result<Vec<u8>, CryptoError> {
-            let padding = match padding {
-                CryptoRsaCryptoPadding::None => openssl::rsa::Padding::NONE,
-                CryptoRsaCryptoPadding::Oaep => openssl::rsa::Padding::PKCS1_OAEP,
+    /// Serialize the RSA private key to a DER-encoded PKCS#8 format.
+    fn to_der(&self) -> Result<Vec<u8>, CryptoError> {
+        let der = self
+            .handle
+            .as_ref()
+            .private_key_to_pkcs8()
+            .map_err(|openssl_error_stack| {
+                tracing::error!(?openssl_error_stack);
+                CryptoError::RsaToDerError
+            })?;
+
+        Ok(der)
+    }
+
+    /// Get the modulus of the RSA key.
+    fn modulus(&self) -> Result<Vec<u8>, CryptoError> {
+        let rsa = self.handle.rsa().map_err(|openssl_error_stack| {
+            tracing::error!(?openssl_error_stack);
+            CryptoError::RsaGetModulusError
+        })?;
+        let modulus = rsa.n().to_owned().map_err(|openssl_error_stack| {
+            tracing::error!(?openssl_error_stack);
+            CryptoError::RsaGetModulusError
+        })?;
+
+        Ok(modulus.to_vec())
+    }
+
+    /// Get the public exponent of the RSA key.
+    fn public_exponent(&self) -> Result<Vec<u8>, CryptoError> {
+        let rsa = self.handle.rsa().map_err(|openssl_error_stack| {
+            tracing::error!(?openssl_error_stack);
+            CryptoError::RsaGetPublicExponentError
+        })?;
+        let public_exponent = rsa.e().to_owned().map_err(|openssl_error_stack| {
+            tracing::error!(?openssl_error_stack);
+            CryptoError::RsaGetPublicExponentError
+        })?;
+
+        Ok(public_exponent.to_vec())
+    }
+}
+
+#[cfg(feature = "use-openssl")]
+impl RsaPrivateOp for RsaPrivateKey {
+    // Decryption
+    fn decrypt(
+        &self,
+        data: &[u8],
+        padding: CryptoRsaCryptoPadding,
+        hash_algorithm: Option<CryptoHashAlgorithm>,
+        label: Option<&[u8]>,
+    ) -> Result<Vec<u8>, CryptoError> {
+        let padding = match padding {
+            CryptoRsaCryptoPadding::None => openssl::rsa::Padding::NONE,
+            CryptoRsaCryptoPadding::Oaep => openssl::rsa::Padding::PKCS1_OAEP,
+        };
+
+        let mut ctx = PkeyCtx::new(&self.handle).map_err(|openssl_error_stack| {
+            tracing::error!(?openssl_error_stack);
+            CryptoError::RsaDecryptFailed
+        })?;
+
+        ctx.decrypt_init().map_err(|openssl_error_stack| {
+            tracing::error!(?openssl_error_stack);
+            CryptoError::RsaDecryptFailed
+        })?;
+
+        ctx.set_rsa_padding(padding)
+            .map_err(|openssl_error_stack| {
+                tracing::error!(?openssl_error_stack);
+                CryptoError::RsaDecryptFailed
+            })?;
+
+        if padding == openssl::rsa::Padding::PKCS1_OAEP {
+            // If padding is OAEP, set the OAEP algorithm and the
+            // OAEP label (but only if a label was provided)
+            let algo = match hash_algorithm.unwrap_or(CryptoHashAlgorithm::Sha256) {
+                CryptoHashAlgorithm::Sha1 => Md::sha1(),
+                CryptoHashAlgorithm::Sha256 => Md::sha256(),
+                CryptoHashAlgorithm::Sha384 => Md::sha384(),
+                CryptoHashAlgorithm::Sha512 => Md::sha512(),
             };
 
-            let mut ctx = PkeyCtx::new(&self.handle).map_err(|openssl_error_stack| {
+            ctx.set_rsa_oaep_md(algo).map_err(|openssl_error_stack| {
                 tracing::error!(?openssl_error_stack);
                 CryptoError::RsaDecryptFailed
             })?;
 
-            ctx.decrypt_init().map_err(|openssl_error_stack| {
-                tracing::error!(?openssl_error_stack);
-                CryptoError::RsaDecryptFailed
-            })?;
+            if let Some(label_buffer) = label {
+                ctx.set_rsa_oaep_label(label_buffer)
+                    .map_err(|openssl_error_stack| {
+                        tracing::error!(?openssl_error_stack);
+                        CryptoError::RsaEncryptFailed
+                    })?;
+            }
+        }
 
-            ctx.set_rsa_padding(padding)
+        let buffer_len = ctx.decrypt(data, None).map_err(|openssl_error_stack| {
+            tracing::error!(?openssl_error_stack);
+            CryptoError::RsaDecryptFailed
+        })?;
+
+        let mut buffer = vec![0u8; buffer_len];
+
+        let decrypted_len =
+            ctx.decrypt(data, Some(&mut buffer))
                 .map_err(|openssl_error_stack| {
                     tracing::error!(?openssl_error_stack);
                     CryptoError::RsaDecryptFailed
                 })?;
 
-            if padding == openssl::rsa::Padding::PKCS1_OAEP {
-                // If padding is OAEP, set the OAEP algorithm and the
-                // OAEP label (but only if a label was provided)
-                let algo = match hash_algorithm.unwrap_or(CryptoHashAlgorithm::Sha256) {
-                    // Allow Sha1 for tests
-                    CryptoHashAlgorithm::Sha1 => Md::sha1(),
-                    CryptoHashAlgorithm::Sha256 => Md::sha256(),
-                    CryptoHashAlgorithm::Sha384 => Md::sha384(),
-                    CryptoHashAlgorithm::Sha512 => Md::sha512(),
-                };
+        let buffer = &buffer[..decrypted_len];
 
-                ctx.set_rsa_oaep_md(algo).map_err(|openssl_error_stack| {
-                    tracing::error!(?openssl_error_stack);
-                    CryptoError::RsaDecryptFailed
-                })?;
-
-                if let Some(label_buffer) = label {
-                    ctx.set_rsa_oaep_label(label_buffer)
-                        .map_err(|openssl_error_stack| {
-                            tracing::error!(?openssl_error_stack);
-                            CryptoError::RsaEncryptFailed
-                        })?;
-                }
-            }
-
-            let buffer_len = ctx.decrypt(data, None).map_err(|openssl_error_stack| {
-                tracing::error!(?openssl_error_stack);
-                CryptoError::RsaDecryptFailed
-            })?;
-
-            let mut buffer = vec![0u8; buffer_len];
-
-            let decrypted_len =
-                ctx.decrypt(data, Some(&mut buffer))
-                    .map_err(|openssl_error_stack| {
-                        tracing::error!(?openssl_error_stack);
-                        CryptoError::RsaDecryptFailed
-                    })?;
-
-            let buffer = &buffer[..decrypted_len];
-
-            Ok(buffer.to_vec())
-        }
-
-        // Sign
-        fn sign(
-            &self,
-            digest: &[u8],
-            padding: CryptoRsaSignaturePadding,
-            hash_algorithm: Option<CryptoHashAlgorithm>,
-            salt_len: Option<u16>,
-        ) -> Result<Vec<u8>, CryptoError> {
-            let padding = match padding {
-                CryptoRsaSignaturePadding::Pss => openssl::rsa::Padding::PKCS1_PSS,
-                CryptoRsaSignaturePadding::Pkcs1_5 => openssl::rsa::Padding::PKCS1,
-            };
-
-            let mut ctx = PkeyCtx::new(&self.handle).map_err(|openssl_error_stack| {
-                tracing::error!(?openssl_error_stack);
-                CryptoError::RsaSignFailed
-            })?;
-
-            ctx.sign_init().map_err(|openssl_error_stack| {
-                tracing::error!(?openssl_error_stack);
-                CryptoError::RsaSignFailed
-            })?;
-
-            ctx.set_rsa_padding(padding)
-                .map_err(|openssl_error_stack| {
-                    tracing::error!(?openssl_error_stack);
-                    CryptoError::RsaSignFailed
-                })?;
-
-            if let Some(salt_len) = salt_len {
-                ctx.set_rsa_pss_saltlen(RsaPssSaltlen::custom(salt_len.into()))
-                    .map_err(|openssl_error_stack| {
-                        tracing::error!(?openssl_error_stack);
-                        CryptoError::RsaSignFailed
-                    })?;
-            }
-
-            let hash_algo = match hash_algorithm {
-                Some(CryptoHashAlgorithm::Sha1) => Md::sha1(),
-                Some(CryptoHashAlgorithm::Sha256) => Md::sha256(),
-                Some(CryptoHashAlgorithm::Sha384) => Md::sha384(),
-                Some(CryptoHashAlgorithm::Sha512) => Md::sha512(),
-                None => match digest.len() {
-                    20 => Md::sha1(),
-                    32 => Md::sha256(),
-                    48 => Md::sha384(),
-                    64 => Md::sha512(),
-                    _ => return Err(CryptoError::RsaSignFailed),
-                },
-            };
-
-            ctx.set_signature_md(hash_algo)
-                .map_err(|openssl_error_stack| {
-                    tracing::error!(?openssl_error_stack);
-                    CryptoError::RsaSignFailed
-                })?;
-
-            let buffer_len = ctx.sign(digest, None).map_err(|openssl_error_stack| {
-                tracing::error!(?openssl_error_stack);
-                CryptoError::RsaSignFailed
-            })?;
-
-            let mut buffer = vec![0u8; buffer_len];
-
-            let signature_len =
-                ctx.sign(digest, Some(&mut buffer))
-                    .map_err(|openssl_error_stack| {
-                        tracing::error!(?openssl_error_stack);
-                        CryptoError::RsaSignFailed
-                    })?;
-
-            let buffer = &buffer[..signature_len];
-
-            Ok(buffer.to_vec())
-        }
-
-        fn extract_pub_key_der(&self) -> Result<Vec<u8>, CryptoError> {
-            self.handle
-                .public_key_to_der()
-                .map_err(|openssl_error_stack| {
-                    tracing::error!(?openssl_error_stack);
-                    CryptoError::RsaToDerError
-                })
-        }
+        Ok(buffer.to_vec())
     }
 
-    #[cfg(feature = "use-symcrypt")]
-    pub fn generate_rsa(size: u32) -> Result<(RsaPrivateKey, RsaPublicKey), CryptoError> {
-        let key_pair = RsaKey::generate_key_pair(size, None, RsaKeyUsage::SignAndEncrypt).map_err(
+    // Sign
+    fn sign(
+        &self,
+        digest: &[u8],
+        padding: CryptoRsaSignaturePadding,
+        hash_algorithm: Option<CryptoHashAlgorithm>,
+        salt_len: Option<u16>,
+    ) -> Result<Vec<u8>, CryptoError> {
+        let padding = match padding {
+            CryptoRsaSignaturePadding::Pss => openssl::rsa::Padding::PKCS1_PSS,
+            CryptoRsaSignaturePadding::Pkcs1_5 => openssl::rsa::Padding::PKCS1,
+        };
+
+        let mut ctx = PkeyCtx::new(&self.handle).map_err(|openssl_error_stack| {
+            tracing::error!(?openssl_error_stack);
+            CryptoError::RsaSignFailed
+        })?;
+
+        ctx.sign_init().map_err(|openssl_error_stack| {
+            tracing::error!(?openssl_error_stack);
+            CryptoError::RsaSignFailed
+        })?;
+
+        ctx.set_rsa_padding(padding)
+            .map_err(|openssl_error_stack| {
+                tracing::error!(?openssl_error_stack);
+                CryptoError::RsaSignFailed
+            })?;
+
+        if let Some(salt_len) = salt_len {
+            ctx.set_rsa_pss_saltlen(RsaPssSaltlen::custom(salt_len.into()))
+                .map_err(|openssl_error_stack| {
+                    tracing::error!(?openssl_error_stack);
+                    CryptoError::RsaSignFailed
+                })?;
+        }
+
+        let hash_algo = match hash_algorithm {
+            Some(CryptoHashAlgorithm::Sha1) => Md::sha1(),
+            Some(CryptoHashAlgorithm::Sha256) => Md::sha256(),
+            Some(CryptoHashAlgorithm::Sha384) => Md::sha384(),
+            Some(CryptoHashAlgorithm::Sha512) => Md::sha512(),
+            None => match digest.len() {
+                20 => Md::sha1(),
+                32 => Md::sha256(),
+                48 => Md::sha384(),
+                64 => Md::sha512(),
+                _ => return Err(CryptoError::RsaSignFailed),
+            },
+        };
+
+        ctx.set_signature_md(hash_algo)
+            .map_err(|openssl_error_stack| {
+                tracing::error!(?openssl_error_stack);
+                CryptoError::RsaSignFailed
+            })?;
+
+        let buffer_len = ctx.sign(digest, None).map_err(|openssl_error_stack| {
+            tracing::error!(?openssl_error_stack);
+            CryptoError::RsaSignFailed
+        })?;
+
+        let mut buffer = vec![0u8; buffer_len];
+
+        let signature_len = ctx
+            .sign(digest, Some(&mut buffer))
+            .map_err(|openssl_error_stack| {
+                tracing::error!(?openssl_error_stack);
+                CryptoError::RsaSignFailed
+            })?;
+
+        let buffer = &buffer[..signature_len];
+
+        Ok(buffer.to_vec())
+    }
+
+    fn extract_pub_key_der(&self) -> Result<Vec<u8>, CryptoError> {
+        self.handle
+            .public_key_to_der()
+            .map_err(|openssl_error_stack| {
+                tracing::error!(?openssl_error_stack);
+                CryptoError::RsaToDerError
+            })
+    }
+}
+
+#[cfg(feature = "use-symcrypt")]
+impl RsaOp<RsaPrivateKey> for RsaPrivateKey {
+    /// Generate an RSA private key.
+    fn generate(size: u32) -> Result<RsaPrivateKey, CryptoError> {
+        // Use SymCrypt to generate an RSA public/private key pair
+        let key = RsaKey::generate_key_pair(size, None, RsaKeyUsage::SignAndEncrypt).map_err(
             |symcrypt_error_stack| {
                 tracing::error!(?symcrypt_error_stack);
                 CryptoError::RsaGenerateError
             },
         )?;
-        let blob = key_pair
+
+        Ok(RsaPrivateKey { handle: key })
+    }
+
+    fn from_der(
+        der: &[u8],
+        expected_type: Option<CryptoKeyKind>,
+    ) -> Result<RsaPrivateKey, CryptoError> {
+        use pkcs1::der::Decode;
+
+        let private_key_info = pkcs8::PrivateKeyInfo::from_der(der).map_err(|error_stack| {
+            tracing::error!(?error_stack);
+            CryptoError::RsaFromDerError
+        })?;
+
+        let private_key = pkcs1::RsaPrivateKey::from_der(private_key_info.private_key).map_err(
+            |error_stack| {
+                tracing::error!(?error_stack);
+                CryptoError::RsaFromDerError
+            },
+        )?;
+
+        let symcrypt_key = RsaKey::set_key_pair(
+            private_key.modulus.as_bytes(),
+            private_key.public_exponent.as_bytes(),
+            private_key.prime1.as_bytes(),
+            private_key.prime2.as_bytes(),
+            RsaKeyUsage::SignAndEncrypt,
+        )
+        .map_err(|error_stack| {
+            tracing::error!(?error_stack);
+            CryptoError::RsaFromDerError
+        })?;
+
+        match expected_type {
+            Some(CryptoKeyKind::Rsa2kPrivate) | Some(CryptoKeyKind::Rsa2kPrivateCrt) => {
+                if symcrypt_key.get_size_of_modulus() != 256 {
+                    Err(CryptoError::DerAndKeyTypeMismatch)?
+                }
+            }
+            Some(CryptoKeyKind::Rsa3kPrivate) | Some(CryptoKeyKind::Rsa3kPrivateCrt) => {
+                if symcrypt_key.get_size_of_modulus() != 384 {
+                    Err(CryptoError::DerAndKeyTypeMismatch)?
+                }
+            }
+            Some(CryptoKeyKind::Rsa4kPrivate) | Some(CryptoKeyKind::Rsa4kPrivateCrt) => {
+                if symcrypt_key.get_size_of_modulus() != 512 {
+                    Err(CryptoError::DerAndKeyTypeMismatch)?
+                }
+            }
+            None => {}
+            _ => Err(CryptoError::DerAndKeyTypeMismatch)?,
+        }
+
+        Ok(RsaPrivateKey {
+            handle: symcrypt_key,
+        })
+    }
+
+    fn to_der(&self) -> Result<Vec<u8>, CryptoError> {
+        use pkcs1::der::Encode;
+
+        let private_key_blob =
+            self.handle
+                .export_key_pair_blob()
+                .map_err(|symcrypt_error_stack| {
+                    tracing::error!(?symcrypt_error_stack);
+                    CryptoError::RsaToDerError
+                })?;
+
+        let modulus = pkcs1::UintRef::new(&private_key_blob.modulus).map_err(|error_stack| {
+            tracing::error!(?error_stack);
+            CryptoError::RsaToDerError
+        })?;
+        let public_exponent =
+            pkcs1::UintRef::new(&private_key_blob.pub_exp).map_err(|error_stack| {
+                tracing::error!(?error_stack);
+                CryptoError::RsaToDerError
+            })?;
+        let private_exponent =
+            pkcs1::UintRef::new(&private_key_blob.private_exp).map_err(|error_stack| {
+                tracing::error!(?error_stack);
+                CryptoError::RsaToDerError
+            })?;
+        let prime1 = pkcs1::UintRef::new(&private_key_blob.p).map_err(|error_stack| {
+            tracing::error!(?error_stack);
+            CryptoError::RsaToDerError
+        })?;
+        let prime2 = pkcs1::UintRef::new(&private_key_blob.q).map_err(|error_stack| {
+            tracing::error!(?error_stack);
+            CryptoError::RsaToDerError
+        })?;
+        let exponent1 = pkcs1::UintRef::new(&private_key_blob.d_p).map_err(|error_stack| {
+            tracing::error!(?error_stack);
+            CryptoError::RsaToDerError
+        })?;
+        let exponent2 = pkcs1::UintRef::new(&private_key_blob.d_q).map_err(|error_stack| {
+            tracing::error!(?error_stack);
+            CryptoError::RsaToDerError
+        })?;
+        let coefficient =
+            pkcs1::UintRef::new(&private_key_blob.crt_coefficient).map_err(|error_stack| {
+                tracing::error!(?error_stack);
+                CryptoError::RsaToDerError
+            })?;
+        let private_key = pkcs1::RsaPrivateKey {
+            modulus,
+            public_exponent,
+            private_exponent,
+            prime1,
+            prime2,
+            exponent1,
+            exponent2,
+            coefficient,
+            other_prime_infos: None,
+        };
+
+        let private_key_der = private_key.to_der().map_err(|error_stack| {
+            tracing::error!(?error_stack);
+            CryptoError::RsaToDerError
+        })?;
+
+        let null_param: pkcs8::der::AnyRef<'_> = pkcs8::der::asn1::Null.into(); // This creates a DER-encoded NULL
+        let alg_id = spki::AlgorithmIdentifier {
+            oid: RSA_OID,
+            parameters: Some(null_param),
+        };
+
+        let private_key_info = pkcs8::PrivateKeyInfo::new(alg_id, &private_key_der);
+        let der = private_key_info.to_der().map_err(|error_stack| {
+            tracing::error!(?error_stack);
+            CryptoError::RsaToDerError
+        })?;
+
+        Ok(der)
+    }
+
+    fn modulus(&self) -> Result<Vec<u8>, CryptoError> {
+        let blob = self
+            .handle
             .export_key_pair_blob()
             .map_err(|symcrypt_error_stack| {
                 tracing::error!(?symcrypt_error_stack);
-                CryptoError::RsaGenerateError
+                CryptoError::RsaGetModulusError
             })?;
-        let public_key =
-            RsaKey::set_public_key(&blob.modulus, &blob.pub_exp, key_pair.get_rsa_key_usage())
-                .map_err(|symcrypt_error_stack| {
-                    tracing::error!(?symcrypt_error_stack);
-                    CryptoError::RsaGenerateError
-                })?;
-        let private_key = RsaKey::set_key_pair(
-            &blob.modulus,
-            &blob.pub_exp,
-            &blob.p,
-            &blob.q,
-            key_pair.get_rsa_key_usage(),
-        )
-        .map_err(|symcrypt_error_stack| {
-            tracing::error!(?symcrypt_error_stack);
-            CryptoError::RsaGenerateError
-        })?;
-        Ok((
-            RsaPrivateKey {
-                handle: private_key,
-            },
-            RsaPublicKey { handle: public_key },
-        ))
+        Ok(blob.modulus)
     }
 
-    #[cfg(feature = "use-symcrypt")]
-    impl RsaOp<RsaPrivateKey> for RsaPrivateKey {
-        fn from_der(
-            der: &[u8],
-            expected_type: Option<CryptoKeyKind>,
-        ) -> Result<RsaPrivateKey, CryptoError> {
-            use pkcs1::der::Decode;
-
-            let private_key_info = pkcs8::PrivateKeyInfo::from_der(der).map_err(|error_stack| {
-                tracing::error!(?error_stack);
-                CryptoError::RsaFromDerError
+    fn public_exponent(&self) -> Result<Vec<u8>, CryptoError> {
+        let blob = self
+            .handle
+            .export_key_pair_blob()
+            .map_err(|symcrypt_error_stack| {
+                tracing::error!(?symcrypt_error_stack);
+                CryptoError::RsaGetModulusError
             })?;
+        Ok(blob.pub_exp)
+    }
+}
 
-            let private_key = pkcs1::RsaPrivateKey::from_der(private_key_info.private_key)
-                .map_err(|error_stack| {
-                    tracing::error!(?error_stack);
-                    CryptoError::RsaFromDerError
+#[cfg(feature = "use-symcrypt")]
+impl RsaPrivateOp for RsaPrivateKey {
+    fn decrypt(
+        &self,
+        data: &[u8],
+        padding: CryptoRsaCryptoPadding,
+        hash_algorithm: Option<CryptoHashAlgorithm>,
+        label: Option<&[u8]>,
+    ) -> Result<Vec<u8>, CryptoError> {
+        match padding {
+            CryptoRsaCryptoPadding::None => Err(CryptoError::RsaDecryptFailed),
+            CryptoRsaCryptoPadding::Oaep => {
+                let hash_algo = match hash_algorithm.unwrap_or(CryptoHashAlgorithm::Sha256) {
+                    CryptoHashAlgorithm::Sha1 => HashAlgorithm::Sha1,
+                    CryptoHashAlgorithm::Sha256 => HashAlgorithm::Sha256,
+                    CryptoHashAlgorithm::Sha384 => HashAlgorithm::Sha384,
+                    CryptoHashAlgorithm::Sha512 => HashAlgorithm::Sha512,
+                };
+                let label_param = label.unwrap_or(b"");
+                let message = self
+                    .handle
+                    .oaep_decrypt(data, hash_algo, label_param)
+                    .map_err(|symcrypt_error_stack| {
+                        tracing::error!(?symcrypt_error_stack);
+                        CryptoError::RsaDecryptFailed
+                    })?;
+                Ok(message)
+            }
+        }
+    }
+
+    fn extract_pub_key_der(&self) -> Result<Vec<u8>, CryptoError> {
+        use pkcs1::der::Encode;
+
+        let public_key_blob =
+            self.handle
+                .export_public_key_blob()
+                .map_err(|symcrypt_error_stack| {
+                    tracing::error!(?symcrypt_error_stack);
+                    CryptoError::RsaToDerError
                 })?;
 
-            let symcrypt_key = RsaKey::set_key_pair(
-                private_key.modulus.as_bytes(),
-                private_key.public_exponent.as_bytes(),
-                private_key.prime1.as_bytes(),
-                private_key.prime2.as_bytes(),
-                RsaKeyUsage::SignAndEncrypt,
-            )
+        let modulus = pkcs1::UintRef::new(&public_key_blob.modulus).map_err(|error_stack| {
+            tracing::error!(?error_stack);
+            CryptoError::RsaToDerError
+        })?;
+        let public_exponent =
+            pkcs1::UintRef::new(&public_key_blob.pub_exp).map_err(|error_stack| {
+                tracing::error!(?error_stack);
+                CryptoError::RsaToDerError
+            })?;
+
+        let public_key = pkcs1::RsaPublicKey {
+            modulus,
+            public_exponent,
+        };
+        let public_key_der = public_key.to_der().map_err(|error_stack| {
+            tracing::error!(?error_stack);
+            CryptoError::RsaToDerError
+        })?;
+
+        let alg_id = spki::AlgorithmIdentifier {
+            oid: RSA_OID,
+            parameters: None,
+        };
+
+        let public_key_der_bitstring = pkcs1::der::asn1::BitString::from_bytes(&public_key_der)
             .map_err(|error_stack| {
                 tracing::error!(?error_stack);
-                CryptoError::RsaFromDerError
-            })?;
-
-            match expected_type {
-                Some(CryptoKeyKind::Rsa2kPrivate) | Some(CryptoKeyKind::Rsa2kPrivateCrt) => {
-                    if symcrypt_key.get_size_of_modulus() != 256 {
-                        Err(CryptoError::DerAndKeyTypeMismatch)?
-                    }
-                }
-                Some(CryptoKeyKind::Rsa3kPrivate) | Some(CryptoKeyKind::Rsa3kPrivateCrt) => {
-                    if symcrypt_key.get_size_of_modulus() != 384 {
-                        Err(CryptoError::DerAndKeyTypeMismatch)?
-                    }
-                }
-                Some(CryptoKeyKind::Rsa4kPrivate) | Some(CryptoKeyKind::Rsa4kPrivateCrt) => {
-                    if symcrypt_key.get_size_of_modulus() != 512 {
-                        Err(CryptoError::DerAndKeyTypeMismatch)?
-                    }
-                }
-                None => {}
-                _ => Err(CryptoError::DerAndKeyTypeMismatch)?,
-            }
-
-            Ok(RsaPrivateKey {
-                handle: symcrypt_key,
-            })
-        }
-
-        fn to_der(&self) -> Result<Vec<u8>, CryptoError> {
-            use pkcs1::der::Encode;
-
-            let private_key_blob =
-                self.handle
-                    .export_key_pair_blob()
-                    .map_err(|symcrypt_error_stack| {
-                        tracing::error!(?symcrypt_error_stack);
-                        CryptoError::RsaToDerError
-                    })?;
-
-            let modulus =
-                pkcs1::UintRef::new(&private_key_blob.modulus).map_err(|error_stack| {
-                    tracing::error!(?error_stack);
-                    CryptoError::RsaToDerError
-                })?;
-            let public_exponent =
-                pkcs1::UintRef::new(&private_key_blob.pub_exp).map_err(|error_stack| {
-                    tracing::error!(?error_stack);
-                    CryptoError::RsaToDerError
-                })?;
-            let private_exponent =
-                pkcs1::UintRef::new(&private_key_blob.private_exp).map_err(|error_stack| {
-                    tracing::error!(?error_stack);
-                    CryptoError::RsaToDerError
-                })?;
-            let prime1 = pkcs1::UintRef::new(&private_key_blob.p).map_err(|error_stack| {
-                tracing::error!(?error_stack);
                 CryptoError::RsaToDerError
             })?;
-            let prime2 = pkcs1::UintRef::new(&private_key_blob.q).map_err(|error_stack| {
-                tracing::error!(?error_stack);
-                CryptoError::RsaToDerError
-            })?;
-            let exponent1 = pkcs1::UintRef::new(&private_key_blob.d_p).map_err(|error_stack| {
-                tracing::error!(?error_stack);
-                CryptoError::RsaToDerError
-            })?;
-            let exponent2 = pkcs1::UintRef::new(&private_key_blob.d_q).map_err(|error_stack| {
-                tracing::error!(?error_stack);
-                CryptoError::RsaToDerError
-            })?;
-            let coefficient =
-                pkcs1::UintRef::new(&private_key_blob.crt_coefficient).map_err(|error_stack| {
-                    tracing::error!(?error_stack);
-                    CryptoError::RsaToDerError
-                })?;
-            let private_key = pkcs1::RsaPrivateKey {
-                modulus,
-                public_exponent,
-                private_exponent,
-                prime1,
-                prime2,
-                exponent1,
-                exponent2,
-                coefficient,
-                other_prime_infos: None,
-            };
+        let subject_public_key_info = spki::SubjectPublicKeyInfoOwned {
+            algorithm: alg_id,
+            subject_public_key: public_key_der_bitstring,
+        };
 
-            let private_key_der = private_key.to_der().map_err(|error_stack| {
-                tracing::error!(?error_stack);
-                CryptoError::RsaToDerError
-            })?;
+        let der = subject_public_key_info.to_der().map_err(|error_stack| {
+            tracing::error!(?error_stack);
+            CryptoError::RsaToDerError
+        })?;
 
-            let null_param: pkcs8::der::AnyRef<'_> = pkcs8::der::asn1::Null.into(); // This creates a DER-encoded NULL
-            let alg_id = spki::AlgorithmIdentifier {
-                oid: RSA_OID,
-                parameters: Some(null_param),
-            };
-
-            let private_key_info = pkcs8::PrivateKeyInfo::new(alg_id, &private_key_der);
-            let der = private_key_info.to_der().map_err(|error_stack| {
-                tracing::error!(?error_stack);
-                CryptoError::RsaToDerError
-            })?;
-
-            Ok(der)
-        }
-
-        fn modulus(&self) -> Result<Vec<u8>, CryptoError> {
-            let blob = self
-                .handle
-                .export_key_pair_blob()
-                .map_err(|symcrypt_error_stack| {
-                    tracing::error!(?symcrypt_error_stack);
-                    CryptoError::RsaGetModulusError
-                })?;
-            Ok(blob.modulus)
-        }
-
-        fn public_exponent(&self) -> Result<Vec<u8>, CryptoError> {
-            let blob = self
-                .handle
-                .export_key_pair_blob()
-                .map_err(|symcrypt_error_stack| {
-                    tracing::error!(?symcrypt_error_stack);
-                    CryptoError::RsaGetModulusError
-                })?;
-            Ok(blob.pub_exp)
-        }
+        Ok(der)
     }
 
-    #[cfg(feature = "use-symcrypt")]
-    impl RsaPrivateOp for RsaPrivateKey {
-        fn decrypt(
-            &self,
-            data: &[u8],
-            padding: CryptoRsaCryptoPadding,
-            hash_algorithm: Option<CryptoHashAlgorithm>,
-            label: Option<&[u8]>,
-        ) -> Result<Vec<u8>, CryptoError> {
-            match padding {
-                CryptoRsaCryptoPadding::None => Err(CryptoError::RsaDecryptFailed),
-                CryptoRsaCryptoPadding::Oaep => {
-                    let hash_algo = match hash_algorithm.unwrap_or(CryptoHashAlgorithm::Sha256) {
-                        CryptoHashAlgorithm::Sha1 => HashAlgorithm::Sha1,
-                        CryptoHashAlgorithm::Sha256 => HashAlgorithm::Sha256,
-                        CryptoHashAlgorithm::Sha384 => HashAlgorithm::Sha384,
-                        CryptoHashAlgorithm::Sha512 => HashAlgorithm::Sha512,
-                    };
-                    let label_param = label.unwrap_or(b"");
-                    let message = self
-                        .handle
-                        .oaep_decrypt(data, hash_algo, label_param)
-                        .map_err(|symcrypt_error_stack| {
-                            tracing::error!(?symcrypt_error_stack);
-                            CryptoError::RsaDecryptFailed
-                        })?;
-                    Ok(message)
-                }
-            }
-        }
-
-        fn extract_pub_key_der(&self) -> Result<Vec<u8>, CryptoError> {
-            use pkcs1::der::Encode;
-
-            let public_key_blob =
-                self.handle
-                    .export_public_key_blob()
-                    .map_err(|symcrypt_error_stack| {
-                        tracing::error!(?symcrypt_error_stack);
-                        CryptoError::RsaToDerError
-                    })?;
-
-            let modulus = pkcs1::UintRef::new(&public_key_blob.modulus).map_err(|error_stack| {
-                tracing::error!(?error_stack);
-                CryptoError::RsaToDerError
-            })?;
-            let public_exponent =
-                pkcs1::UintRef::new(&public_key_blob.pub_exp).map_err(|error_stack| {
-                    tracing::error!(?error_stack);
-                    CryptoError::RsaToDerError
-                })?;
-
-            let public_key = pkcs1::RsaPublicKey {
-                modulus,
-                public_exponent,
-            };
-            let public_key_der = public_key.to_der().map_err(|error_stack| {
-                tracing::error!(?error_stack);
-                CryptoError::RsaToDerError
-            })?;
-
-            let alg_id = spki::AlgorithmIdentifier {
-                oid: RSA_OID,
-                parameters: None,
-            };
-
-            let public_key_der_bitstring = pkcs1::der::asn1::BitString::from_bytes(&public_key_der)
-                .map_err(|error_stack| {
-                    tracing::error!(?error_stack);
-                    CryptoError::RsaToDerError
-                })?;
-            let subject_public_key_info = spki::SubjectPublicKeyInfoOwned {
-                algorithm: alg_id,
-                subject_public_key: public_key_der_bitstring,
-            };
-
-            let der = subject_public_key_info.to_der().map_err(|error_stack| {
-                tracing::error!(?error_stack);
-                CryptoError::RsaToDerError
-            })?;
-
-            Ok(der)
-        }
-
-        fn sign(
-            &self,
-            digest: &[u8],
-            padding: CryptoRsaSignaturePadding,
-            hash_algorithm: Option<CryptoHashAlgorithm>,
-            salt_len: Option<u16>,
-        ) -> Result<Vec<u8>, CryptoError> {
-            let hash_algo = match hash_algorithm {
-                Some(CryptoHashAlgorithm::Sha1) => HashAlgorithm::Sha1,
-                Some(CryptoHashAlgorithm::Sha256) => HashAlgorithm::Sha256,
-                Some(CryptoHashAlgorithm::Sha384) => HashAlgorithm::Sha384,
-                Some(CryptoHashAlgorithm::Sha512) => HashAlgorithm::Sha512,
-                None => match digest.len() {
-                    20 => HashAlgorithm::Sha1,
-                    32 => HashAlgorithm::Sha256,
-                    48 => HashAlgorithm::Sha384,
-                    64 => HashAlgorithm::Sha512,
-                    _ => return Err(CryptoError::RsaSignFailed),
-                },
-            };
-            match padding {
-                CryptoRsaSignaturePadding::Pkcs1_5 => {
-                    let signature = self.handle.pkcs1_sign(digest, hash_algo).map_err(
-                        |symcrypt_error_stack| {
-                            tracing::error!(?symcrypt_error_stack);
-                            CryptoError::RsaSignFailed
-                        },
-                    )?;
-                    Ok(signature)
-                }
-                CryptoRsaSignaturePadding::Pss => {
-                    let salt_len = salt_len.unwrap_or(digest.len() as u16);
-                    let signature = self
-                        .handle
-                        .pss_sign(digest, hash_algo, salt_len as usize)
+    fn sign(
+        &self,
+        digest: &[u8],
+        padding: CryptoRsaSignaturePadding,
+        hash_algorithm: Option<CryptoHashAlgorithm>,
+        salt_len: Option<u16>,
+    ) -> Result<Vec<u8>, CryptoError> {
+        let hash_algo = match hash_algorithm {
+            Some(CryptoHashAlgorithm::Sha1) => HashAlgorithm::Sha1,
+            Some(CryptoHashAlgorithm::Sha256) => HashAlgorithm::Sha256,
+            Some(CryptoHashAlgorithm::Sha384) => HashAlgorithm::Sha384,
+            Some(CryptoHashAlgorithm::Sha512) => HashAlgorithm::Sha512,
+            None => match digest.len() {
+                20 => HashAlgorithm::Sha1,
+                32 => HashAlgorithm::Sha256,
+                48 => HashAlgorithm::Sha384,
+                64 => HashAlgorithm::Sha512,
+                _ => return Err(CryptoError::RsaSignFailed),
+            },
+        };
+        match padding {
+            CryptoRsaSignaturePadding::Pkcs1_5 => {
+                let signature =
+                    self.handle
+                        .pkcs1_sign(digest, hash_algo)
                         .map_err(|symcrypt_error_stack| {
                             tracing::error!(?symcrypt_error_stack);
                             CryptoError::RsaSignFailed
                         })?;
-                    Ok(signature)
-                }
+                Ok(signature)
+            }
+            CryptoRsaSignaturePadding::Pss => {
+                let salt_len = salt_len.unwrap_or(digest.len() as u16);
+                let signature = self
+                    .handle
+                    .pss_sign(digest, hash_algo, salt_len as usize)
+                    .map_err(|symcrypt_error_stack| {
+                        tracing::error!(?symcrypt_error_stack);
+                        CryptoError::RsaSignFailed
+                    })?;
+                Ok(signature)
             }
         }
     }
+}
+
+#[cfg(test)]
+pub mod tests {
+    use super::*;
 
     #[test]
     fn test_rsa_private_der() {
@@ -1375,6 +1410,28 @@ mod tests {
         if let Err(error) = result {
             assert_eq!(error, CryptoError::RsaFromDerError);
         }
+    }
+
+    // Tests creating an RSA public key from raw modulus and exponent data.
+    #[test]
+    fn test_rsa_public_from_raw() {
+        // Start by generating an RSA public key
+        let public_key = RsaPublicKey::generate(2048).expect("Failed to generate RSA public key");
+
+        // Extract the public key's modulus and exponent
+        let modulus = public_key
+            .modulus()
+            .expect("Failed to get public key modulus");
+        let exponent = public_key
+            .public_exponent()
+            .expect("Failed to get public key exponent");
+
+        // Use these to create a new RSA public key, this time using `from_raw()`.
+        let new_key_result = RsaPublicKey::from_raw(modulus.as_slice(), exponent.as_slice());
+        assert!(
+            new_key_result.is_ok(),
+            "Failed to create RSA public key from raw data"
+        );
     }
 
     #[test]

@@ -7,8 +7,6 @@ use std::mem::size_of;
 use std::ptr;
 
 #[cfg(not(feature = "disable-fp"))]
-use openssl::rand::rand_bytes;
-#[cfg(not(feature = "disable-fp"))]
 use winapi::shared::winerror::E_INVALIDARG;
 #[cfg(not(feature = "disable-fp"))]
 use winapi::shared::winerror::NTE_BAD_FLAGS;
@@ -21,6 +19,9 @@ use winapi::shared::winerror::NTE_INVALID_PARAMETER;
 #[cfg(not(feature = "disable-fp"))]
 use windows::core::HRESULT;
 use windows::Win32::Security::Cryptography::*;
+
+#[cfg(not(feature = "disable-fp"))]
+use crypto::rand::rand_bytes;
 
 use crate::common::*;
 
@@ -84,7 +85,7 @@ fn test_aes_xts_encrypt_decrypt_1mb_buffer() {
         assert!(result.is_ok());
 
         let mut tweak = [0u8; 16];
-        rand_bytes(&mut tweak).unwrap();
+        rand_bytes(&mut tweak).expect("Failed to generate random bytes");
 
         let padding_info: NCRYPT_CIPHER_PADDING_INFO = NCRYPT_CIPHER_PADDING_INFO {
             cbSize: size_of::<NCRYPT_CIPHER_PADDING_INFO>() as u32,
@@ -98,7 +99,7 @@ fn test_aes_xts_encrypt_decrypt_1mb_buffer() {
         let mut plaintext = vec![0; 1024 * 1024];
         let plaintext_len = plaintext.len() as u32;
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         // First call - Get the ciphertext length.
         let result = NCryptEncrypt(
@@ -192,7 +193,7 @@ fn test_aes_xts_encrypt_decrypt_arbitrary_buffer_500_bytes() {
         assert!(result.is_ok());
 
         let mut tweak = [0u8; 16];
-        rand_bytes(&mut tweak).unwrap();
+        rand_bytes(&mut tweak).expect("Failed to generate random bytes");
 
         let padding_info: NCRYPT_CIPHER_PADDING_INFO = NCRYPT_CIPHER_PADDING_INFO {
             cbSize: size_of::<NCRYPT_CIPHER_PADDING_INFO>() as u32,
@@ -206,7 +207,7 @@ fn test_aes_xts_encrypt_decrypt_arbitrary_buffer_500_bytes() {
         let mut plaintext = vec![0; 512];
         let plaintext_len = plaintext.len() as u32;
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         // First call - Get the ciphertext length.
         let result = NCryptEncrypt(
@@ -370,7 +371,7 @@ fn test_aes_xts_encrypt_decrypt_with_invalid_tweak_size() {
         assert!(result.is_ok());
 
         let mut tweak = [0u8; 20]; // Invalid tweak size; must be 16 bytes.
-        rand_bytes(&mut tweak).unwrap();
+        rand_bytes(&mut tweak).expect("Failed to generate random bytes");
 
         let padding_info: NCRYPT_CIPHER_PADDING_INFO = NCRYPT_CIPHER_PADDING_INFO {
             cbSize: size_of::<NCRYPT_CIPHER_PADDING_INFO>() as u32,
@@ -383,7 +384,7 @@ fn test_aes_xts_encrypt_decrypt_with_invalid_tweak_size() {
 
         let mut plaintext = vec![0; 1024 * 1024];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         let result = NCryptEncrypt(
             azihsm_key.handle(),
@@ -436,7 +437,7 @@ fn test_aes_xts_encrypt_decrypt_with_corrupt_ciphertext() {
         assert!(result.is_ok());
 
         let mut tweak = [0u8; 16];
-        rand_bytes(&mut tweak).unwrap();
+        rand_bytes(&mut tweak).expect("Failed to generate random bytes");
 
         let padding_info: NCRYPT_CIPHER_PADDING_INFO = NCRYPT_CIPHER_PADDING_INFO {
             cbSize: size_of::<NCRYPT_CIPHER_PADDING_INFO>() as u32,
@@ -450,7 +451,7 @@ fn test_aes_xts_encrypt_decrypt_with_corrupt_ciphertext() {
         let mut plaintext = vec![0; 512];
         let plaintext_len = plaintext.len() as u32;
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         // First call - Get the ciphertext length.
         let result = NCryptEncrypt(
@@ -549,7 +550,7 @@ fn test_aes_xts_encrypt_decrypt_with_deleted_key() {
         assert!(result.is_ok());
 
         let mut tweak = [0u8; 16];
-        rand_bytes(&mut tweak).unwrap();
+        rand_bytes(&mut tweak).expect("Failed to generate random bytes");
 
         let padding_info: NCRYPT_CIPHER_PADDING_INFO = NCRYPT_CIPHER_PADDING_INFO {
             cbSize: size_of::<NCRYPT_CIPHER_PADDING_INFO>() as u32,
@@ -563,7 +564,7 @@ fn test_aes_xts_encrypt_decrypt_with_deleted_key() {
         let mut plaintext = vec![0; 128];
         let plaintext_len = plaintext.len() as u32;
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         // First call - Get the ciphertext length.
         let result = NCryptEncrypt(
@@ -647,7 +648,7 @@ fn test_aes_xts_encrypt_decrypt_with_corrupted_tweak() {
         assert!(result.is_ok());
 
         let mut tweak = [0u8; 16];
-        rand_bytes(&mut tweak).unwrap();
+        rand_bytes(&mut tweak).expect("Failed to generate random bytes");
 
         let padding_info: NCRYPT_CIPHER_PADDING_INFO = NCRYPT_CIPHER_PADDING_INFO {
             cbSize: size_of::<NCRYPT_CIPHER_PADDING_INFO>() as u32,
@@ -661,7 +662,7 @@ fn test_aes_xts_encrypt_decrypt_with_corrupted_tweak() {
         let mut plaintext = vec![0; 256];
         let plaintext_len = plaintext.len() as u32;
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         // First call - Get the ciphertext length.
         let result = NCryptEncrypt(
@@ -761,7 +762,7 @@ fn test_aes_xts_encrypt_decrypt_with_null_padding_info() {
 
         let mut plaintext = vec![0; 256];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         // First call - Get the ciphertext length.
         let result = NCryptEncrypt(
@@ -815,7 +816,7 @@ fn test_aes_xts_encrypt_decrypt_with_bad_flags() {
         assert!(result.is_ok());
 
         let mut tweak = [0u8; 16];
-        rand_bytes(&mut tweak).unwrap();
+        rand_bytes(&mut tweak).expect("Failed to generate random bytes");
 
         let padding_info: NCRYPT_CIPHER_PADDING_INFO = NCRYPT_CIPHER_PADDING_INFO {
             cbSize: size_of::<NCRYPT_CIPHER_PADDING_INFO>() as u32,
@@ -828,7 +829,7 @@ fn test_aes_xts_encrypt_decrypt_with_bad_flags() {
 
         let mut plaintext = vec![0; 384];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         let result = NCryptEncrypt(
             azihsm_key.handle(),
@@ -877,7 +878,7 @@ fn test_aes_xts_encrypt_query_required_input_buffer_size_lt_required() {
         assert!(result.is_ok());
 
         let mut tweak = [0u8; 16];
-        rand_bytes(&mut tweak).unwrap();
+        rand_bytes(&mut tweak).expect("Failed to generate random bytes");
 
         let padding_info: NCRYPT_CIPHER_PADDING_INFO = NCRYPT_CIPHER_PADDING_INFO {
             cbSize: size_of::<NCRYPT_CIPHER_PADDING_INFO>() as u32,
@@ -890,7 +891,7 @@ fn test_aes_xts_encrypt_query_required_input_buffer_size_lt_required() {
 
         let mut plaintext = [0u8; 128];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         // First call - Get the ciphertext length.
         let result = NCryptEncrypt(
@@ -953,7 +954,7 @@ fn test_aes_xts_encrypt_query_required_output_buffer_size_lt_required() {
         assert!(result.is_ok());
 
         let mut tweak = [0u8; 16];
-        rand_bytes(&mut tweak).unwrap();
+        rand_bytes(&mut tweak).expect("Failed to generate random bytes");
         let ciphertext = [0u8; 128];
 
         let padding_info: NCRYPT_CIPHER_PADDING_INFO = NCRYPT_CIPHER_PADDING_INFO {
@@ -1027,7 +1028,7 @@ fn test_aes_xts_encrypt_query_required_input_buffer_size_gt_required() {
         assert!(result.is_ok());
 
         let mut tweak = [0u8; 16];
-        rand_bytes(&mut tweak).unwrap();
+        rand_bytes(&mut tweak).expect("Failed to generate random bytes");
 
         let padding_info: NCRYPT_CIPHER_PADDING_INFO = NCRYPT_CIPHER_PADDING_INFO {
             cbSize: size_of::<NCRYPT_CIPHER_PADDING_INFO>() as u32,
@@ -1040,7 +1041,7 @@ fn test_aes_xts_encrypt_query_required_input_buffer_size_gt_required() {
 
         let mut plaintext = [0u8; 128];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         // First call - Get the ciphertext length.
         let result = NCryptEncrypt(
@@ -1102,7 +1103,7 @@ fn test_aes_xts_encrypt_query_required_output_buffer_size_gt_required() {
         assert!(result.is_ok());
 
         let mut tweak = [0u8; 16];
-        rand_bytes(&mut tweak).unwrap();
+        rand_bytes(&mut tweak).expect("Failed to generate random bytes");
 
         let padding_info: NCRYPT_CIPHER_PADDING_INFO = NCRYPT_CIPHER_PADDING_INFO {
             cbSize: size_of::<NCRYPT_CIPHER_PADDING_INFO>() as u32,
@@ -1115,7 +1116,7 @@ fn test_aes_xts_encrypt_query_required_output_buffer_size_gt_required() {
 
         let mut plaintext = [0u8; 128];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         // First call - Get the ciphertext length.
         let result = NCryptEncrypt(

@@ -61,6 +61,7 @@ pub enum CryptoEccCurve {
 
 /// Trait for ECC common operations.
 pub trait EccOp<T> {
+    fn generate(curve: CryptoEccCurve) -> Result<T, CryptoError>;
     fn from_der(der: &[u8], expected_type: Option<CryptoKeyKind>) -> Result<T, CryptoError>;
     fn from_raw(raw_key_data: &[u8], key_kind: CryptoKeyKind) -> Result<T, CryptoError>;
     fn to_der(&self) -> Result<Vec<u8>, CryptoError>;
@@ -85,6 +86,42 @@ pub struct EccPublicKey {
 
 #[cfg(feature = "use-openssl")]
 impl EccOp<EccPublicKey> for EccPublicKey {
+    /// Generate an ECC public key.
+    fn generate(curve: CryptoEccCurve) -> Result<EccPublicKey, CryptoError> {
+        let curve_name = match curve {
+            CryptoEccCurve::P256 => Nid::X9_62_PRIME256V1,
+            CryptoEccCurve::P384 => Nid::SECP384R1,
+            CryptoEccCurve::P521 => Nid::SECP521R1,
+        };
+        let group =
+            openssl::ec::EcGroup::from_curve_name(curve_name).map_err(|openssl_error_stack| {
+                tracing::error!(?openssl_error_stack);
+                CryptoError::EccGenerateError
+            })?;
+        let ecc_private = openssl::ec::EcKey::generate(&group).map_err(|openssl_error_stack| {
+            tracing::error!(?openssl_error_stack);
+            CryptoError::EccGenerateError
+        })?;
+
+        // Derive the public key from the private key
+        let ecc_public = openssl::ec::EcKey::from_public_key(&group, ecc_private.public_key())
+            .map_err(|openssl_error_stack| {
+                tracing::error!(?openssl_error_stack);
+                CryptoError::EccGenerateError
+            })?;
+
+        // Pack the public key into a `PKey` object
+        let pkey_public =
+            openssl::pkey::PKey::from_ec_key(ecc_public).map_err(|openssl_error_stack| {
+                tracing::error!(?openssl_error_stack);
+                CryptoError::EccGenerateError
+            })?;
+
+        Ok(EccPublicKey {
+            handle: pkey_public,
+        })
+    }
+
     /// Deserialize an ECC public key from a DER-encoded SubjectPublicKeyInfo format.
     fn from_der(der: &[u8], expected_type: Option<CryptoKeyKind>) -> Result<Self, CryptoError> {
         let ecc = openssl::ec::EcKey::public_key_from_der(der).map_err(|openssl_error_stack| {
@@ -255,6 +292,41 @@ impl EccPublicOp for EccPublicKey {
 
 #[cfg(feature = "use-symcrypt")]
 impl EccOp<EccPublicKey> for EccPublicKey {
+    /// Generate an ECC public key.
+    fn generate(curve: CryptoEccCurve) -> Result<EccPublicKey, CryptoError> {
+        let curve_type = match curve {
+            CryptoEccCurve::P256 => ecc::CurveType::NistP256,
+            CryptoEccCurve::P384 => ecc::CurveType::NistP384,
+            CryptoEccCurve::P521 => ecc::CurveType::NistP521,
+        };
+        let key_pair = ecc::EcKey::generate_key_pair(curve_type, ecc::EcKeyUsage::EcDhAndEcDsa)
+            .map_err(|symcrypt_error_stack| {
+                tracing::error!(?symcrypt_error_stack);
+                CryptoError::EccGenerateError
+            })?;
+
+        // Export the public key information, and re-import it into a new
+        // SymCrypt `EcKey` object. (This new key is oblivious to the private
+        // key information.)
+        let raw_public_key = key_pair
+            .export_public_key()
+            .map_err(|symcrypt_error_stack| {
+                tracing::error!(?symcrypt_error_stack);
+                CryptoError::EccGenerateError
+            })?;
+        let public_key = ecc::EcKey::set_public_key(
+            key_pair.get_curve_type(),
+            &raw_public_key,
+            key_pair.get_ec_curve_usage(),
+        )
+        .map_err(|symcrypt_error_stack| {
+            tracing::error!(?symcrypt_error_stack);
+            CryptoError::EccGenerateError
+        })?;
+
+        Ok(EccPublicKey { handle: public_key })
+    }
+
     fn from_der(der: &[u8], expected_type: Option<CryptoKeyKind>) -> Result<Self, CryptoError> {
         use sec1::der::Decode;
 
@@ -475,6 +547,35 @@ pub trait EccPrivateOp {
 
 #[cfg(feature = "use-openssl")]
 impl EccOp<EccPrivateKey> for EccPrivateKey {
+    /// Generate an ECC private key.
+    fn generate(curve: CryptoEccCurve) -> Result<EccPrivateKey, CryptoError> {
+        let curve_name = match curve {
+            CryptoEccCurve::P256 => Nid::X9_62_PRIME256V1,
+            CryptoEccCurve::P384 => Nid::SECP384R1,
+            CryptoEccCurve::P521 => Nid::SECP521R1,
+        };
+        let group =
+            openssl::ec::EcGroup::from_curve_name(curve_name).map_err(|openssl_error_stack| {
+                tracing::error!(?openssl_error_stack);
+                CryptoError::EccGenerateError
+            })?;
+        let ecc_private = openssl::ec::EcKey::generate(&group).map_err(|openssl_error_stack| {
+            tracing::error!(?openssl_error_stack);
+            CryptoError::EccGenerateError
+        })?;
+
+        // Pack the private key into a `PKey` object
+        let pkey_private =
+            openssl::pkey::PKey::from_ec_key(ecc_private).map_err(|openssl_error_stack| {
+                tracing::error!(?openssl_error_stack);
+                CryptoError::EccGenerateError
+            })?;
+
+        Ok(EccPrivateKey {
+            handle: pkey_private,
+        })
+    }
+
     /// Deserialize an ECC private key from a DER-encoded PKCS#8 format.
     fn from_der(der: &[u8], expected_type: Option<CryptoKeyKind>) -> Result<Self, CryptoError> {
         let pkey = PKey::private_key_from_pkcs8(der).map_err(|openssl_error_stack| {
@@ -731,61 +832,24 @@ impl EccPrivateOp for EccPrivateKey {
     }
 }
 
-/// Generate an ECC key pair using openssl.
-///
-/// # Arguments
-/// * `curve` - The ECC curve of the key pair to generate (p256/ p384/ p521).
-///
-/// # Returns
-/// * `(EccPrivateKey, EccPublicKey)` - Generated ECC key pair.
-///
-/// # Errors
-/// * `CryptoError::EccGenerateError` - If the ECC key pair generation fails.
-#[cfg(feature = "use-openssl")]
-pub fn generate_ecc(curve: CryptoEccCurve) -> Result<(EccPrivateKey, EccPublicKey), CryptoError> {
-    let curve_name = match curve {
-        CryptoEccCurve::P256 => Nid::X9_62_PRIME256V1,
-        CryptoEccCurve::P384 => Nid::SECP384R1,
-        CryptoEccCurve::P521 => Nid::SECP521R1,
-    };
-    let group =
-        openssl::ec::EcGroup::from_curve_name(curve_name).map_err(|openssl_error_stack| {
-            tracing::error!(?openssl_error_stack);
-            CryptoError::EccGenerateError
-        })?;
-    let ecc_private = openssl::ec::EcKey::generate(&group).map_err(|openssl_error_stack| {
-        tracing::error!(?openssl_error_stack);
-        CryptoError::EccGenerateError
-    })?;
-    let ecc_public = openssl::ec::EcKey::from_public_key(&group, ecc_private.public_key())
-        .map_err(|openssl_error_stack| {
-            tracing::error!(?openssl_error_stack);
-            CryptoError::EccGenerateError
-        })?;
-
-    let pkey_private =
-        openssl::pkey::PKey::from_ec_key(ecc_private).map_err(|openssl_error_stack| {
-            tracing::error!(?openssl_error_stack);
-            CryptoError::EccGenerateError
-        })?;
-    let pkey_public =
-        openssl::pkey::PKey::from_ec_key(ecc_public).map_err(|openssl_error_stack| {
-            tracing::error!(?openssl_error_stack);
-            CryptoError::EccGenerateError
-        })?;
-
-    Ok((
-        EccPrivateKey {
-            handle: pkey_private,
-        },
-        EccPublicKey {
-            handle: pkey_public,
-        },
-    ))
-}
-
 #[cfg(feature = "use-symcrypt")]
 impl EccOp<EccPrivateKey> for EccPrivateKey {
+    /// Generate an ECC private key.
+    fn generate(curve: CryptoEccCurve) -> Result<EccPrivateKey, CryptoError> {
+        let curve_type = match curve {
+            CryptoEccCurve::P256 => ecc::CurveType::NistP256,
+            CryptoEccCurve::P384 => ecc::CurveType::NistP384,
+            CryptoEccCurve::P521 => ecc::CurveType::NistP521,
+        };
+        let key_pair = ecc::EcKey::generate_key_pair(curve_type, ecc::EcKeyUsage::EcDhAndEcDsa)
+            .map_err(|symcrypt_error_stack| {
+                tracing::error!(?symcrypt_error_stack);
+                CryptoError::EccGenerateError
+            })?;
+
+        Ok(EccPrivateKey { handle: key_pair })
+    }
+
     fn from_der(
         der: &[u8],
         expected_type: Option<CryptoKeyKind>,
@@ -1077,37 +1141,21 @@ impl EccPrivateOp for EccPrivateKey {
     }
 }
 
-#[cfg(feature = "use-symcrypt")]
+/// Generate an ECC key pair (using OpenSSL on Linux, and SymCrypt on Windows).
+///
+/// # Arguments
+/// * `curve` - The ECC curve of the key pair to generate (p256/ p384/ p521).
+///
+/// # Returns
+/// * `(EccPrivateKey, EccPublicKey)` - Generated ECC key pair.
+///
+/// # Errors
+/// * `CryptoError::EccGenerateError` - If the ECC key pair generation fails.
 pub fn generate_ecc(curve: CryptoEccCurve) -> Result<(EccPrivateKey, EccPublicKey), CryptoError> {
-    let curve_type = match curve {
-        CryptoEccCurve::P256 => ecc::CurveType::NistP256,
-        CryptoEccCurve::P384 => ecc::CurveType::NistP384,
-        CryptoEccCurve::P521 => ecc::CurveType::NistP521,
-    };
-    let key_pair = ecc::EcKey::generate_key_pair(curve_type, ecc::EcKeyUsage::EcDhAndEcDsa)
-        .map_err(|symcrypt_error_stack| {
-            tracing::error!(?symcrypt_error_stack);
-            CryptoError::EccGenerateError
-        })?;
-    let raw_public_key = key_pair
-        .export_public_key()
-        .map_err(|symcrypt_error_stack| {
-            tracing::error!(?symcrypt_error_stack);
-            CryptoError::EccGenerateError
-        })?;
-    let public_key = ecc::EcKey::set_public_key(
-        key_pair.get_curve_type(),
-        &raw_public_key,
-        key_pair.get_ec_curve_usage(),
-    )
-    .map_err(|symcrypt_error_stack| {
-        tracing::error!(?symcrypt_error_stack);
-        CryptoError::EccGenerateError
-    })?;
-    Ok((
-        EccPrivateKey { handle: key_pair },
-        EccPublicKey { handle: public_key },
-    ))
+    EccPrivateKey::generate(curve).and_then(|private_key| {
+        let public_key_der = private_key.extract_pub_key_der()?;
+        EccPublicKey::from_der(&public_key_der, None).map(|public_key| (private_key, public_key))
+    })
 }
 
 #[cfg(test)]

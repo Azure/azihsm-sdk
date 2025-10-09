@@ -33,18 +33,15 @@ impl Xtask for InstallSymcrypt {
         #[cfg(target_os = "windows")]
         cmd!(
             sh,
-            "powershell -File ../.github/workflows/scripts/install-symcrypt.ps1"
+            "powershell -File ../.pipelines/scripts/install-symcrypt.ps1"
         )
         .quiet()
         .run()?;
         #[cfg(not(target_os = "windows"))]
         {
-            cmd!(
-                sh,
-                "chmod +x ../.github/workflows/scripts/install-symcrypt.sh"
-            )
-            .quiet()
-            .run()?;
+            cmd!(sh, "chmod +x ../.pipelines/scripts/install-symcrypt.sh")
+                .quiet()
+                .run()?;
 
             let ubuntu_version = self.ubuntu_version.unwrap_or_else(|| {
                 sh.var("UBUNTU_VER")
@@ -54,7 +51,7 @@ impl Xtask for InstallSymcrypt {
 
             cmd!(
                 sh,
-                "../.github/workflows/scripts/install-symcrypt.sh {ubuntu_version}"
+                "../.pipelines/scripts/install-symcrypt.sh {ubuntu_version}"
             )
             .quiet()
             .run()?;

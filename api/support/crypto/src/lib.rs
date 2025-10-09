@@ -188,6 +188,10 @@ pub enum CryptoError {
     #[error("rsa from der error")]
     RsaFromDerError,
 
+    /// RSA from raw error
+    #[error("rsa from raw error")]
+    RsaFromRawError,
+
     /// RSA generate error
     #[error("rsa generate error")]
     RsaGenerateError,

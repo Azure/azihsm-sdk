@@ -470,14 +470,12 @@ impl Dispatcher {
 
         // Perform validation on input and output buffers
         // and session id and short app id
-        if let Err(_e) = self.fp_aes_validate_params(
+        self.fp_aes_validate_params(
             &mut source_buffers,
             destination_buffers,
             gcm_request.session_id,
             gcm_request.short_app_id,
-        ) {
-            Err(ManticoreError::AesGcmInvalidBufSize)?;
-        }
+        )?;
 
         // Session id and short app id have already been
         // validated above
@@ -544,14 +542,19 @@ impl Dispatcher {
         tracing::debug!("FP AES XTS {:?}", mode);
         // Perform validation on input and output buffers
         // and session id and short app id
-        if let Err(_e) = self.fp_aes_validate_params(
+        self.fp_aes_validate_params(
             &mut source_buffers,
             destination_buffers,
             xts_request.session_id,
             xts_request.short_app_id,
-        ) {
-            Err(ManticoreError::AesXtsInvalidBufSize)?;
-        }
+        )
+        .map_err(|err| {
+            if err == ManticoreError::AesGcmInvalidBufSize {
+                ManticoreError::AesXtsInvalidBufSize
+            } else {
+                err
+            }
+        })?;
 
         let src_buffer_size: usize = source_buffers.iter().map(|buffer| buffer.len()).sum();
 

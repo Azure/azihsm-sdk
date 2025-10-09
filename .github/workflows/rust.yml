@@ -88,7 +88,6 @@ jobs:
       run: |
         $libpath = Join-Path -Path ([System.Environment]::GetFolderPath("LocalApplicationData")) -ChildPath "symcrypt\dll"
         "SYMCRYPT_LIB_PATH=$libpath" >> $env:GITHUB_ENV
-      working-directory: .github/workflows/scripts
       shell: pwsh
     - name: Run Clippy
       run: cargo xtask clippy

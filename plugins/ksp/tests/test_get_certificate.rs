@@ -4,9 +4,11 @@ mod common;
 
 use std::ptr;
 
-use openssl::x509::X509;
 use windows::Win32::Security::Cryptography::*;
 use windows::Win32::Security::OBJECT_SECURITY_INFORMATION;
+
+use x509::X509Certificate;
+use x509::X509CertificateOp;
 
 use crate::common::*;
 
@@ -42,10 +44,14 @@ fn test_get_certificate() {
         assert!(result.is_ok());
         certificate.truncate(certificate_size as usize);
 
-        let x509_cert = X509::from_pem(&certificate);
-        assert!(x509_cert.is_ok());
+        // --------------------- Parse X509 Certificate --------------------- //
+        // Parse the certificate's PEM bytes and create an `X509Certificate`
+        // object
+        let cert = X509Certificate::from_pem(&certificate).expect("Failed to parse certificate");
 
-        let public_key = x509_cert.unwrap().public_key();
-        assert!(public_key.is_ok());
+        // Extract the public key DER blob from the certificate
+        let _public_key_blob = cert
+            .get_public_key_der()
+            .expect("Failed to get public key blob");
     }
 }

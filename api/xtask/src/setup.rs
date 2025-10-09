@@ -6,6 +6,8 @@
 //! Xtask to run various repo-specific checks
 
 use clap::Parser;
+use xshell::cmd;
+use xshell::Shell;
 
 use crate::install;
 #[cfg(target_os = "windows")]
@@ -23,6 +25,8 @@ impl Xtask for Setup {
     fn run(self, ctx: XtaskCtx) -> anyhow::Result<()> {
         log::trace!("running setup");
 
+        let sh = Shell::new()?;
+
         #[cfg(target_os = "windows")]
         {
             // Run Install SymCrypt
@@ -38,19 +42,29 @@ impl Xtask for Setup {
         };
         install_cargo_nextest.run(ctx.clone())?;
 
-        // Add Clippy
-        let add_clippy = rustup_component_add::RustupComponentAdd {
-            component: "clippy".to_string(),
-            toolchain: None,
-        };
-        add_clippy.run(ctx.clone())?;
+        // Check if Clippy is installed by running 'cargo clippy --version'
+        if cmd!(sh, "cargo clippy --version").quiet().run().is_err() {
+            // Add Clippy
+            let add_clippy = rustup_component_add::RustupComponentAdd {
+                component: "clippy".to_string(),
+                toolchain: None,
+            };
+            add_clippy.run(ctx.clone())?;
+        }
 
-        // Add Fmt
-        let add_fmt = rustup_component_add::RustupComponentAdd {
-            component: "rustfmt".to_string(),
-            toolchain: Some("nightly".to_string()), // Use nightly toolchain by default
-        };
-        add_fmt.run(ctx.clone())?;
+        // Check if Fmt is installed by running 'cargo fmt --version'
+        if cmd!(sh, "cargo +nightly fmt --version")
+            .quiet()
+            .run()
+            .is_err()
+        {
+            // Add Fmt
+            let add_fmt = rustup_component_add::RustupComponentAdd {
+                component: "rustfmt".to_string(),
+                toolchain: Some("nightly".to_string()), // Use nightly toolchain by default
+            };
+            add_fmt.run(ctx.clone())?;
+        }
 
         #[cfg(not(target_os = "windows"))]
         {

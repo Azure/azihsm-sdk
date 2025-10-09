@@ -2147,10 +2147,9 @@ impl HsmSession {
         })
     }
 
-    /// Helper function to fetch certificates for Virtual Manticore
-    /// Will only fetch 1 AK Cert
-    /// TODO: Add TeeReport when the support is ready
-    fn get_certificate_for_virtual_device(&self) -> HsmResult<ManticoreCertificate> {
+    /// Fetch all certificates from the device
+    /// Return cert chain, leaf cert first, all cert in DER
+    fn get_cert_chain(&self, slot_id: u8) -> HsmResult<Vec<Vec<u8>>> {
         let read_locked_device = self.device_inner.read();
 
         // Fetch cert chain info
@@ -2163,98 +2162,14 @@ impl HsmSession {
                     minor: self.api_rev.minor,
                 }),
             },
-            data: DdiGetCertChainInfoReq { slot_id: 0 },
+            data: DdiGetCertChainInfoReq { slot_id },
             ext: None,
         };
         let mut cookie = None;
         let resp = read_locked_device.dev.exec_op(&req, &mut cookie)?;
         let num_certs = resp.data.num_certs;
-        let expected_hash = resp.data.thumbprint.as_slice();
-        tracing::debug!(num_certs, "Got Cert Chain Length");
-
-        // For Virtual Manticore, currently only 1 cert (AK Cert) is supported
-        if num_certs != 1 {
-            tracing::error!(
-                err = ?HsmError::GetCertificateError,
-                num_certs,
-                "Virtual Manticore should only have 1 cert (AK Cert)"
-            );
-            return Err(HsmError::GetCertificateError);
-        }
-
-        // Fetch the AK Cert
-        let req = DdiGetCertificateCmdReq {
-            hdr: DdiReqHdr {
-                op: DdiOp::GetCertificate,
-                sess_id: None,
-                rev: Some(DdiApiRev {
-                    major: self.api_rev.major,
-                    minor: self.api_rev.minor,
-                }),
-            },
-            data: DdiGetCertificateReq {
-                slot_id: 0,
-                // Index 0 is the AK Cert
-                cert_id: 0,
-            },
-            ext: None,
-        };
-
-        let mut cookie = None;
-        let resp = read_locked_device.dev.exec_op(&req, &mut cookie)?;
-
-        // The cert is in DER format
-        let ak_cert_der = resp.data.certificate.as_slice();
-
-        // Check hash
-        let actual_hash = Self::crypto_sha256(ak_cert_der);
-        if actual_hash != expected_hash {
-            tracing::error!(
-                err = ?HsmError::CertificateHashMismatch,
-                "AK Cert hash mismatch"
-            );
-            return Err(HsmError::CertificateHashMismatch);
-        }
-
-        // Convert DER to PEM
-        let ak_cert_pem = der_to_pem(ak_cert_der).map_err(|err| {
-            tracing::error!(?err, "Failed to convert AK Cert DER to PEM");
-            HsmError::GetCertificateError
-        })?;
-
-        Ok(ManticoreCertificate::VirtualManticore {
-            ak_cert: ak_cert_pem,
-            // TODO: return empty until vManticore collateral support
-            tee_cert_chain: Vec::new(),
-            // TODO: return empty until vManticore collateral support
-            tee_report: Vec::new(),
-        })
-    }
-
-    /// Helper function to fetch certificates for HW Manticore
-    /// Will make multiple calls to fetch all the certs
-    fn get_certificate_for_physical_device(&self) -> HsmResult<ManticoreCertificate> {
-        tracing::debug!("Getting Certificates for Physical device");
-        let read_locked_device = self.device_inner.read();
-
-        // First get number of certs
-        let req = DdiGetCertChainInfoCmdReq {
-            hdr: DdiReqHdr {
-                op: DdiOp::GetCertChainInfo,
-                sess_id: None,
-                rev: Some(DdiApiRev {
-                    major: self.api_rev.major,
-                    minor: self.api_rev.minor,
-                }),
-            },
-            data: DdiGetCertChainInfoReq { slot_id: 0 },
-            ext: None,
-        };
-        let mut cookie = None;
-        let resp = read_locked_device.dev.exec_op(&req, &mut cookie)?;
-
-        let num_certs = resp.data.num_certs;
-        tracing::debug!(num_certs, "Got Cert Chain Length");
+        let thumbprint = resp.data.thumbprint.as_slice();
+        tracing::debug!(num_certs, slot_id, "Got Cert Chain Length");
 
         // Fetch each cert
         // Array of certificates, root cert first, leaf cert last
@@ -2274,7 +2189,7 @@ impl HsmSession {
                     }),
                 },
                 data: DdiGetCertificateReq {
-                    slot_id: 0,
+                    slot_id,
                     cert_id: i,
                 },
                 ext: None,
@@ -2285,30 +2200,36 @@ impl HsmSession {
 
             let der = result.data.certificate.as_slice();
 
-            // Convert DER to PEM
-            let pem = der_to_pem(der).map_err(|err| {
-                tracing::error!(?err, "Failed to convert AK Cert DER to PEM");
-                HsmError::GetCertificateError
-            })?;
-
-            certs.push(pem);
+            certs.push(der.to_vec());
         }
-        tracing::debug!("Done fetching certificates for Physical device");
+        tracing::debug!("Done fetching certificate chain");
+
+        // Valid cert chain by comparing hash
+        let req = DdiGetCertChainInfoCmdReq {
+            hdr: DdiReqHdr {
+                op: DdiOp::GetCertChainInfo,
+                sess_id: None,
+                rev: Some(DdiApiRev {
+                    major: self.api_rev.major,
+                    minor: self.api_rev.minor,
+                }),
+            },
+            data: DdiGetCertChainInfoReq { slot_id },
+            ext: None,
+        };
+        let mut cookie = None;
+        let resp = read_locked_device.dev.exec_op(&req, &mut cookie)?;
+        let num_certs_after = resp.data.num_certs;
+        let thumbprint_after = resp.data.thumbprint.as_slice();
+        if num_certs != num_certs_after || thumbprint != thumbprint_after {
+            tracing::error!(error = ?HsmError::CertificateHashMismatch, "Certificate chain hash mismatch");
+            Err(HsmError::CertificateHashMismatch)?
+        }
 
         // Reverse so leaf cert is first, root cert is last
         certs.reverse();
 
-        // Flatten the certificates into a single byte array, separated by newline
-        let mut flatten_certs = Vec::new();
-        for (i, item) in certs.iter().enumerate() {
-            if i != 0 {
-                // Add separator except for first item
-                flatten_certs.push(b'\n');
-            }
-            flatten_certs.extend_from_slice(item);
-        }
-
-        Ok(ManticoreCertificate::PhysicalManticore(flatten_certs))
+        Ok(certs)
     }
 
     /// Get Certificate
@@ -2322,14 +2243,37 @@ impl HsmSession {
             Err(HsmError::SessionClosed)?
         }
 
-        let certificates = match read_locked_device.get_device_info().kind {
-            DeviceKind::Virtual => self.get_certificate_for_virtual_device(),
-            DeviceKind::Physical => self.get_certificate_for_physical_device(),
-        }?;
+        let slot_id = 0;
+        let cert_chain = self.get_cert_chain(slot_id)?;
+
+        // Flatten cert by converting to PEM
+        let mut flatten_certs = Vec::new();
+        for (i, cert_der) in cert_chain.iter().enumerate() {
+            if i != 0 {
+                // Add separator except for first item
+                flatten_certs.push(b'\n');
+            }
+
+            let cert_pem = der_to_pem(cert_der).map_err(|err| {
+                tracing::error!(?err, cert_index = i, "Failed to convert Cert DER to PEM");
+                HsmError::GetCertificateError
+            })?;
+            flatten_certs.extend_from_slice(&cert_pem);
+        }
 
         tracing::debug!("Done getting certificates");
-
-        Ok(certificates)
+        Ok(match read_locked_device.get_device_info().kind {
+            DeviceKind::Virtual => {
+                ManticoreCertificate::VirtualManticore {
+                    ak_cert: flatten_certs,
+                    // TODO: return empty until vManticore collateral support
+                    tee_cert_chain: Vec::new(),
+                    // TODO: return empty until vManticore collateral support
+                    tee_report: Vec::new(),
+                }
+            }
+            DeviceKind::Physical => ManticoreCertificate::PhysicalManticore(flatten_certs),
+        })
     }
 
     /// Generate AES Key
@@ -3343,6 +3287,7 @@ impl From<CryptoError> for HsmError {
             CryptoError::AesDecryptFailed => HsmError::AesDecryptFailed,
             CryptoError::RsaToDerError => HsmError::RsaToDerError,
             CryptoError::RsaFromDerError => HsmError::RsaFromDerError,
+            CryptoError::RsaFromRawError => HsmError::RsaFromRawError,
             CryptoError::RsaGenerateError => HsmError::RsaGenerateError,
             CryptoError::RsaGetModulusError => HsmError::RsaGetModulusError,
             CryptoError::RsaGetPublicExponentError => HsmError::RsaGetPublicExponentError,

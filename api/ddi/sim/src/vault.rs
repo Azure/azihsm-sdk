@@ -2543,7 +2543,7 @@ pub(crate) mod tests {
             TEST_SESSION_SEED,
         )
         .unwrap();
-        encrypted_credential.seed[4] = encrypted_credential.tag[4].wrapping_add(0x1);
+        encrypted_credential.seed[4] = encrypted_credential.seed[4].wrapping_add(0x1);
 
         let mut partition_mk = [0u8; 80];
         crypto::rand::rand_bytes(&mut partition_mk).unwrap();

@@ -4,11 +4,12 @@ mod common;
 
 use std::ptr;
 
-use openssl::rand::rand_bytes;
 use widestring::WideCString;
 use windows::core::*;
 use windows::Win32::Security::Cryptography::*;
 use windows::Win32::Security::OBJECT_SECURITY_INFORMATION;
+
+use crypto::rand::rand_bytes;
 
 use crate::common::*;
 
@@ -49,7 +50,7 @@ fn test_import_without_flag_then_finalize() {
 
         // Generate an AES 128 key
         // Wrap it with the import public key using RSA_AES_KEY_WRAP_256 key encryption algorithm
-        let private_key = generate_aes(KeyType::Aes128);
+        let private_key = generate_aes_bytes(KeyType::Aes128);
         let encrypted_blob = wrap_data(
             pub_key,
             &private_key,
@@ -130,7 +131,7 @@ fn test_import_aes_128_key_without_flag() {
 
         // Generate an AES 128 key
         // Wrap it with the import public key using RSA_AES_KEY_WRAP_256 key encryption algorithm
-        let private_key = generate_aes(KeyType::Aes128);
+        let private_key = generate_aes_bytes(KeyType::Aes128);
         let encrypted_blob = wrap_data(
             pub_key,
             &private_key,
@@ -170,7 +171,7 @@ fn test_import_aes_128_key_without_flag() {
         // Verify by Encrypt and decrypt data using the target key
         {
             let mut iv = [0u8; 16];
-            rand_bytes(&mut iv).unwrap();
+            rand_bytes(&mut iv).expect("Failed to generate random bytes");
             let mut iv_orig = iv;
 
             let mut padding_info: NCRYPT_CIPHER_PADDING_INFO = NCRYPT_CIPHER_PADDING_INFO {
@@ -185,7 +186,7 @@ fn test_import_aes_128_key_without_flag() {
             let mut plaintext = [0u8; 128];
             let mut ciphertext = [0u8; 128];
             let mut ciphertext_len = 0u32;
-            rand_bytes(&mut plaintext).unwrap();
+            rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
             let result = NCryptEncrypt(
                 target_key.handle(),
@@ -317,7 +318,7 @@ fn test_import_aes_256_key_without_flag() {
 
         // Generate an AES 256 key
         // Wrap it with the import public key using RSA_AES_KEY_WRAP_384 key encryption algorithm
-        let private_key = generate_aes(KeyType::Aes256);
+        let private_key = generate_aes_bytes(KeyType::Aes256);
         let encrypted_blob = wrap_data(
             pub_key,
             &private_key,
@@ -356,7 +357,7 @@ fn test_import_aes_256_key_without_flag() {
 
         // Encrypt and decrypt data using the target key
         let mut iv = [0u8; 16];
-        rand_bytes(&mut iv).unwrap();
+        rand_bytes(&mut iv).expect("Failed to generate random bytes");
         let mut iv_orig = iv;
 
         let mut padding_info: NCRYPT_CIPHER_PADDING_INFO = NCRYPT_CIPHER_PADDING_INFO {
@@ -371,7 +372,7 @@ fn test_import_aes_256_key_without_flag() {
         let mut plaintext = [0u8; 128];
         let mut ciphertext = [0u8; 128];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         let result = NCryptEncrypt(
             target_key.handle(),
@@ -503,7 +504,7 @@ fn test_import_aes_gcm_256_key_without_flag() {
 
         // Generate an AES 256 key
         // Wrap it with the import public key using RSA_AES_KEY_WRAP_256 key encryption algorithm
-        let private_key = generate_aes(KeyType::Aes256);
+        let private_key = generate_aes_bytes(KeyType::Aes256);
         let encrypted_blob = wrap_data(
             pub_key,
             &private_key,
@@ -573,7 +574,7 @@ fn test_import_aes_gcm_256_key_without_flag() {
 
             let mut plaintext = vec![0u8; 256_usize];
             let mut ciphertext_len = 0u32;
-            rand_bytes(&mut plaintext).unwrap();
+            rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
             // Get Ciphertext length
             let result = NCryptEncrypt(
@@ -631,16 +632,16 @@ fn test_import_rsa_2k_key_without_flag() {
         pub_key.truncate(pub_key_size as usize);
 
         // Generate a KeyType::Rsa2k RSA private key
-        // Wrap it with the import public key using CKM_RSA_AES_KEY_WRAP key encryption algorithm
+        // Wrap it with the import public key using RSA_AES_KEY_WRAP_256 key encryption algorithm
         let private_key = generate_rsa_der(KeyType::Rsa2k).0;
         let encrypted_blob = wrap_data(
             pub_key,
             &private_key,
-            KeyEncryptionAlgorithm::CKM_RSA_AES_KEY_WRAP,
+            KeyEncryptionAlgorithm::RSA_AES_KEY_WRAP_256,
         );
         let key_blob = create_pkcs11_rsa_aes_wrap_blob(
             &encrypted_blob,
-            KeyEncryptionAlgorithm::CKM_RSA_AES_KEY_WRAP,
+            KeyEncryptionAlgorithm::RSA_AES_KEY_WRAP_256,
         );
 
         // Prepare paramlist for unwrapping
@@ -779,16 +780,16 @@ fn test_import_rsa_4k_key_without_flag() {
         pub_key.truncate(pub_key_size as usize);
 
         // Generate a KeyType::Rsa4k RSA private key
-        // Wrap it with the import public key using CKM_RSA_AES_KEY_WRAP key encryption algorithm
+        // Wrap it with the import public key using RSA_AES_KEY_WRAP_256 key encryption algorithm
         let private_key = generate_rsa_der(KeyType::Rsa4k).0;
         let encrypted_blob = wrap_data(
             pub_key,
             &private_key,
-            KeyEncryptionAlgorithm::CKM_RSA_AES_KEY_WRAP,
+            KeyEncryptionAlgorithm::RSA_AES_KEY_WRAP_256,
         );
         let key_blob = create_pkcs11_rsa_aes_wrap_blob(
             &encrypted_blob,
-            KeyEncryptionAlgorithm::CKM_RSA_AES_KEY_WRAP,
+            KeyEncryptionAlgorithm::RSA_AES_KEY_WRAP_256,
         );
 
         // Prepare paramlist for unwrapping
@@ -1244,7 +1245,7 @@ fn test_import_ecdsa_256_key_without_flag() {
 
         // Sign and verify a hash with the target key
         let mut digest = [0u8; 32];
-        rand_bytes(&mut digest).unwrap();
+        rand_bytes(&mut digest).expect("Failed to generate random bytes");
         let mut signature_size = 0u32;
         let result = NCryptSignHash(
             target_key.handle(),

@@ -4,7 +4,6 @@ mod common;
 use std::mem::size_of;
 use std::ptr;
 
-use openssl::rand::rand_bytes;
 use widestring::*;
 use winapi::shared::winerror::E_INVALIDARG;
 use winapi::shared::winerror::NTE_BAD_FLAGS;
@@ -13,6 +12,8 @@ use winapi::shared::winerror::NTE_INVALID_PARAMETER;
 use windows::core::HRESULT;
 use windows::Win32::Security::Cryptography::*;
 use windows::Win32::Security::OBJECT_SECURITY_INFORMATION;
+
+use crypto::rand::rand_bytes;
 
 use crate::common::*;
 
@@ -63,7 +64,7 @@ fn test_aes_cbc_encrypt_decrypt() {
         assert!(result.is_ok());
 
         let mut iv = [0u8; 16];
-        rand_bytes(&mut iv).unwrap();
+        rand_bytes(&mut iv).expect("Failed to generate random bytes");
         let mut iv_orig = iv;
 
         let mut padding_info: NCRYPT_CIPHER_PADDING_INFO = NCRYPT_CIPHER_PADDING_INFO {
@@ -78,7 +79,7 @@ fn test_aes_cbc_encrypt_decrypt() {
         let mut plaintext = [0u8; 128];
         let mut ciphertext = [0u8; 128];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         let result = NCryptEncrypt(
             azihsm_key.handle(),
@@ -211,7 +212,7 @@ fn test_aes_cbc_encrypt_decrypt_no_flag() {
         assert!(result.is_ok());
 
         let mut iv = [0u8; 16];
-        rand_bytes(&mut iv).unwrap();
+        rand_bytes(&mut iv).expect("Failed to generate random bytes");
         let mut iv_orig = iv;
 
         let mut padding_info: NCRYPT_CIPHER_PADDING_INFO = NCRYPT_CIPHER_PADDING_INFO {
@@ -226,7 +227,7 @@ fn test_aes_cbc_encrypt_decrypt_no_flag() {
         let mut plaintext = [0u8; 128];
         let mut ciphertext = [0u8; 128];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         // Try Encrypt with no flag
         let result = NCryptEncrypt(
@@ -329,7 +330,7 @@ fn test_aes_cbc_encrypt_decrypt_rsa_flag() {
         assert!(result.is_ok());
 
         let mut iv = [0u8; 16];
-        rand_bytes(&mut iv).unwrap();
+        rand_bytes(&mut iv).expect("Failed to generate random bytes");
         let mut iv_orig = iv;
 
         let mut padding_info: NCRYPT_CIPHER_PADDING_INFO = NCRYPT_CIPHER_PADDING_INFO {
@@ -344,7 +345,7 @@ fn test_aes_cbc_encrypt_decrypt_rsa_flag() {
         let mut plaintext = [0u8; 128];
         let mut ciphertext = [0u8; 128];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         // Try Encrypt with RSA flag
         let result = NCryptEncrypt(
@@ -446,7 +447,7 @@ fn test_aes_cbc_encrypt_query_required_input_buffer_size() {
         assert!(result.is_ok());
 
         let mut iv = [0u8; 16];
-        rand_bytes(&mut iv).unwrap();
+        rand_bytes(&mut iv).expect("Failed to generate random bytes");
 
         let padding_info: NCRYPT_CIPHER_PADDING_INFO = NCRYPT_CIPHER_PADDING_INFO {
             cbSize: size_of::<NCRYPT_CIPHER_PADDING_INFO>() as u32,
@@ -459,7 +460,7 @@ fn test_aes_cbc_encrypt_query_required_input_buffer_size() {
 
         let mut plaintext = [0u8; 128];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         let result = NCryptEncrypt(
             azihsm_key.handle(),
@@ -521,7 +522,7 @@ fn test_aes_cbc_encrypt_query_required_output_buffer_size() {
         assert!(result.is_ok());
 
         let mut iv = [0u8; 16];
-        rand_bytes(&mut iv).unwrap();
+        rand_bytes(&mut iv).expect("Failed to generate random bytes");
         let mut iv_orig = iv;
 
         let mut padding_info: NCRYPT_CIPHER_PADDING_INFO = NCRYPT_CIPHER_PADDING_INFO {
@@ -535,7 +536,7 @@ fn test_aes_cbc_encrypt_query_required_output_buffer_size() {
 
         let mut plaintext = [0u8; 128];
         let ciphertext = [0u8; 128];
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         let mut decrypted_len = 0u32;
         padding_info.pbIV = iv_orig.as_mut_ptr();
@@ -600,7 +601,7 @@ fn test_aes_cbc_encrypt_query_required_input_buffer_size_lt_required() {
         assert!(result.is_ok());
 
         let mut iv = [0u8; 16];
-        rand_bytes(&mut iv).unwrap();
+        rand_bytes(&mut iv).expect("Failed to generate random bytes");
 
         let padding_info: NCRYPT_CIPHER_PADDING_INFO = NCRYPT_CIPHER_PADDING_INFO {
             cbSize: size_of::<NCRYPT_CIPHER_PADDING_INFO>() as u32,
@@ -613,7 +614,7 @@ fn test_aes_cbc_encrypt_query_required_input_buffer_size_lt_required() {
 
         let mut plaintext = [0u8; 128];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         let result = NCryptEncrypt(
             azihsm_key.handle(),
@@ -688,7 +689,7 @@ fn test_aes_cbc_encrypt_query_required_input_buffer_size_gt_required() {
         assert!(result.is_ok());
 
         let mut iv = [0u8; 16];
-        rand_bytes(&mut iv).unwrap();
+        rand_bytes(&mut iv).expect("Failed to generate random bytes");
 
         let padding_info: NCRYPT_CIPHER_PADDING_INFO = NCRYPT_CIPHER_PADDING_INFO {
             cbSize: size_of::<NCRYPT_CIPHER_PADDING_INFO>() as u32,
@@ -701,7 +702,7 @@ fn test_aes_cbc_encrypt_query_required_input_buffer_size_gt_required() {
 
         let mut plaintext = [0u8; 128];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         let result = NCryptEncrypt(
             azihsm_key.handle(),
@@ -776,7 +777,7 @@ fn test_aes_cbc_encrypt_query_required_output_buffer_size_lt_required() {
         assert!(result.is_ok());
 
         let mut iv = [0u8; 16];
-        rand_bytes(&mut iv).unwrap();
+        rand_bytes(&mut iv).expect("Failed to generate random bytes");
         let mut iv_orig = iv;
 
         let mut padding_info: NCRYPT_CIPHER_PADDING_INFO = NCRYPT_CIPHER_PADDING_INFO {
@@ -790,7 +791,7 @@ fn test_aes_cbc_encrypt_query_required_output_buffer_size_lt_required() {
 
         let mut plaintext = [0u8; 128];
         let ciphertext = [0u8; 128];
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         let mut decrypted_len = 0u32;
         padding_info.pbIV = iv_orig.as_mut_ptr();
@@ -868,7 +869,7 @@ fn test_aes_cbc_encrypt_query_required_output_buffer_size_gt_required() {
         assert!(result.is_ok());
 
         let mut iv = [0u8; 16];
-        rand_bytes(&mut iv).unwrap();
+        rand_bytes(&mut iv).expect("Failed to generate random bytes");
         let mut iv_orig = iv;
 
         let mut padding_info: NCRYPT_CIPHER_PADDING_INFO = NCRYPT_CIPHER_PADDING_INFO {
@@ -883,7 +884,7 @@ fn test_aes_cbc_encrypt_query_required_output_buffer_size_gt_required() {
         let mut plaintext = [0u8; 128];
         let mut ciphertext = [0u8; 128];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         let result = NCryptEncrypt(
             azihsm_key.handle(),
@@ -971,7 +972,7 @@ fn test_aes_cbc_multi_block_encrypt_decrypt() {
         assert!(result.is_ok());
 
         let mut iv = [0u8; 16];
-        rand_bytes(&mut iv).unwrap();
+        rand_bytes(&mut iv).expect("Failed to generate random bytes");
         let mut iv_orig = iv;
 
         let mut padding_info: NCRYPT_CIPHER_PADDING_INFO = NCRYPT_CIPHER_PADDING_INFO {
@@ -988,7 +989,7 @@ fn test_aes_cbc_multi_block_encrypt_decrypt() {
         let mut ciphertext1 = [0u8; 128];
         let mut ciphertext2 = [0u8; 128];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         let result = NCryptEncrypt(
             azihsm_key.handle(),
@@ -1354,9 +1355,9 @@ fn test_encrypt_decrypt(
             IvType::Size(size) => size,
             _ => 0,
         };
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
         let mut iv = vec![0u8; iv_size];
-        rand_bytes(&mut iv).unwrap();
+        rand_bytes(&mut iv).expect("Failed to generate random bytes");
         let mut iv_orig = iv.clone();
 
         let (iv_ptr, iv_len) = match iv_type {

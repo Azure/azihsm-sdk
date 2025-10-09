@@ -3,11 +3,12 @@ mod common;
 use std::mem::size_of;
 use std::ptr;
 
-use openssl::rand::rand_bytes;
 use winapi::shared::winerror::NTE_BAD_FLAGS;
 use winapi::shared::winerror::NTE_BUFFER_TOO_SMALL;
 use windows::core::HRESULT;
 use windows::Win32::Security::Cryptography::*;
+
+use crypto::rand::rand_bytes;
 
 use crate::common::*;
 
@@ -48,7 +49,7 @@ fn test_ecdsa_p256_sign_verify_valid_digest_sizes() {
         let valid_digest_sizes = [20, 32];
         for &digest_size in &valid_digest_sizes {
             let mut digest = vec![0u8; digest_size];
-            rand_bytes(&mut digest).unwrap();
+            rand_bytes(&mut digest).expect("Failed to generate random bytes");
             let mut signature_size = 0u32;
             let result = NCryptSignHash(
                 azihsm_key.handle(),
@@ -123,7 +124,7 @@ fn test_ecdsa_p256_sign_unsupported_digest_sizes() {
         let digest_sizes = [48, 64];
         for &digest_size in &digest_sizes {
             let mut digest = vec![0u8; digest_size];
-            rand_bytes(&mut digest).unwrap();
+            rand_bytes(&mut digest).expect("Failed to generate random bytes");
             let mut signature_size = 0u32;
             let result = NCryptSignHash(
                 azihsm_key.handle(),
@@ -175,7 +176,7 @@ fn test_ecdsa_p256_sign_invalid_digest_sizes() {
         let invalid_digest_sizes = [25, 30]; // Invalid digest sizes
         for &digest_size in &invalid_digest_sizes {
             let mut digest = vec![0u8; digest_size];
-            rand_bytes(&mut digest).unwrap();
+            rand_bytes(&mut digest).expect("Failed to generate random bytes");
             let mut signature_size = 0u32;
             let result = NCryptSignHash(
                 azihsm_key.handle(),
@@ -215,7 +216,7 @@ fn test_ecdsa_p384_sign_verify_valid_digest_sizes() {
         let valid_digest_sizes = [20, 32, 48];
         for &digest_size in &valid_digest_sizes {
             let mut digest = vec![0u8; digest_size];
-            rand_bytes(&mut digest).unwrap();
+            rand_bytes(&mut digest).expect("Failed to generate random bytes");
             let mut signature_size = 0u32;
             let result = NCryptSignHash(
                 azihsm_key.handle(),
@@ -278,7 +279,7 @@ fn test_ecdsa_p384_sign_unsupported_digest_sizes() {
         let digest_sizes = [64];
         for &digest_size in &digest_sizes {
             let mut digest = vec![0u8; digest_size];
-            rand_bytes(&mut digest).unwrap();
+            rand_bytes(&mut digest).expect("Failed to generate random bytes");
             let mut signature_size = 0u32;
             let result = NCryptSignHash(
                 azihsm_key.handle(),
@@ -318,7 +319,7 @@ fn test_ecdsa_p384_sign_invalid_digest_sizes() {
         let digest_sizes = [25, 50]; // Invalid digest sizes
         for &digest_size in &digest_sizes {
             let mut digest = vec![0u8; digest_size];
-            rand_bytes(&mut digest).unwrap();
+            rand_bytes(&mut digest).expect("Failed to generate random bytes");
             let mut signature_size = 0u32;
             let result = NCryptSignHash(
                 azihsm_key.handle(),
@@ -360,7 +361,7 @@ fn test_ecdsa_p521_sign_verify_valid_digest_sizes() {
 
         for &digest_size in &valid_digest_sizes {
             let mut digest = vec![0u8; digest_size];
-            rand_bytes(&mut digest).unwrap();
+            rand_bytes(&mut digest).expect("Failed to generate random bytes");
             let mut signature_size = 0u32;
             let result = NCryptSignHash(
                 azihsm_key.handle(),
@@ -422,7 +423,7 @@ fn test_ecdsa_p521_sign_invalid_digest_sizes() {
 
         for &digest_size in &valid_digest_sizes {
             let mut digest = vec![0u8; digest_size];
-            rand_bytes(&mut digest).unwrap();
+            rand_bytes(&mut digest).expect("Failed to generate random bytes");
             let mut signature_size = 0u32;
             let result = NCryptSignHash(
                 azihsm_key.handle(),
@@ -460,7 +461,7 @@ fn test_ecdsa_sign_buffer_lt_required() {
         assert!(result.is_ok());
 
         let mut digest = [0u8; 32];
-        rand_bytes(&mut digest).unwrap();
+        rand_bytes(&mut digest).expect("Failed to generate random bytes");
 
         let mut signature_size = 0u32;
         let result = NCryptSignHash(
@@ -512,7 +513,7 @@ fn test_ecdsa_sign_buffer_gt_required() {
         assert!(result.is_ok());
 
         let mut digest = [0u8; 32];
-        rand_bytes(&mut digest).unwrap();
+        rand_bytes(&mut digest).expect("Failed to generate random bytes");
 
         let mut signature_size = 0u32;
         let result = NCryptSignHash(
@@ -585,7 +586,7 @@ fn test_ecdsa_sign_invalid_flag() {
         assert!(result.is_ok());
 
         let mut digest = [0u8; 32];
-        rand_bytes(&mut digest).unwrap();
+        rand_bytes(&mut digest).expect("Failed to generate random bytes");
         let mut signature_size = 0u32;
         let result = NCryptSignHash(
             azihsm_key.handle(),
@@ -635,7 +636,7 @@ fn test_ecdsa_verify_invalid_flag() {
         assert!(result.is_ok());
 
         let mut digest = [0u8; 32];
-        rand_bytes(&mut digest).unwrap();
+        rand_bytes(&mut digest).expect("Failed to generate random bytes");
         let mut signature_size = 0u32;
         let result = NCryptSignHash(
             azihsm_key.handle(),
@@ -786,7 +787,7 @@ fn test_ecdsa_verify_modified_signature() {
         assert!(result.is_ok());
 
         let mut digest = [0u8; 32];
-        rand_bytes(&mut digest).unwrap();
+        rand_bytes(&mut digest).expect("Failed to generate random bytes");
         let mut signature_size = 0u32;
         let result = NCryptSignHash(
             azihsm_key.handle(),
@@ -863,7 +864,7 @@ fn test_ecdsa_key_deletion_and_reuse() {
 
         // Attempt to use the deleted key
         let mut digest = [0u8; 32];
-        rand_bytes(&mut digest).unwrap();
+        rand_bytes(&mut digest).expect("Failed to generate random bytes");
         let mut signature_size = 0u32;
         let result = NCryptSignHash(
             temp_key,

@@ -3,7 +3,6 @@ mod common;
 use std::mem::size_of;
 use std::ptr;
 
-use openssl::rand::rand_bytes;
 use widestring::*;
 use winapi::shared::winerror::E_INVALIDARG;
 use winapi::shared::winerror::E_UNEXPECTED;
@@ -13,6 +12,8 @@ use winapi::shared::winerror::NTE_INVALID_PARAMETER;
 use winapi::shared::winerror::NTE_NOT_SUPPORTED;
 use windows::core::*;
 use windows::Win32::Security::Cryptography::*;
+
+use crypto::rand::rand_bytes;
 
 use crate::common::*;
 
@@ -555,7 +556,7 @@ fn test_ecdh_p256_secret_gen_charlie_ecc_key() {
         // for decrypting and compare the data.
         // Data should be different
         let mut iv = [0u8; 16];
-        rand_bytes(&mut iv).unwrap();
+        rand_bytes(&mut iv).expect("Failed to generate random bytes");
         let mut iv_orig = iv;
 
         let mut padding_info: NCRYPT_CIPHER_PADDING_INFO = NCRYPT_CIPHER_PADDING_INFO {
@@ -570,7 +571,7 @@ fn test_ecdh_p256_secret_gen_charlie_ecc_key() {
         let mut plaintext = [0u8; 128];
         let mut ciphertext = [0u8; 128];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         let result = NCryptEncrypt(
             alice_derived_key.handle(),
@@ -1502,7 +1503,7 @@ fn test_derive_key_inner(
         // use alice key for encrypting plain text and bob key
         // for decrypting and compare the data.
         let mut iv = [0u8; 16];
-        rand_bytes(&mut iv).unwrap();
+        rand_bytes(&mut iv).expect("Failed to generate random bytes");
         let mut iv_orig = iv;
 
         let mut padding_info: NCRYPT_CIPHER_PADDING_INFO = NCRYPT_CIPHER_PADDING_INFO {
@@ -1517,7 +1518,7 @@ fn test_derive_key_inner(
         let mut plaintext = [0u8; 128];
         let mut ciphertext = [0u8; 128];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         let result = NCryptEncrypt(
             alice_derived_key.handle(),
@@ -1795,7 +1796,7 @@ fn test_import_derived_key_without_finalize_flag() {
         // use alice key for encrypting plain text and bob key
         // for decrypting and compare the data.
         let mut iv = [0u8; 16];
-        rand_bytes(&mut iv).unwrap();
+        rand_bytes(&mut iv).expect("Failed to generate random bytes");
         let mut iv_orig = iv;
 
         let mut padding_info: NCRYPT_CIPHER_PADDING_INFO = NCRYPT_CIPHER_PADDING_INFO {
@@ -1810,7 +1811,7 @@ fn test_import_derived_key_without_finalize_flag() {
         let mut plaintext = [0u8; 128];
         let mut ciphertext = [0u8; 128];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         // Encrypt with Alice's derived key
         let result = NCryptEncrypt(

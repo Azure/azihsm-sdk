@@ -48,13 +48,7 @@ impl Xtask for Precheck {
         };
         fmt.run(ctx.clone())?;
 
-        // elevate warnings to errors for all build steps
-        std::env::set_var("RUSTFLAGS", "-D warnings");
-
         // Build mcr_ddi tests
-        let mut cwd = ctx.root.clone();
-        cwd.extend(["ddi", "lib", "tests"]);
-        std::env::set_current_dir(cwd.as_path())?;
         let clean_mcr_ddi_tests = clean::Clean {};
         clean_mcr_ddi_tests.run(ctx.clone())?;
         let build_mcr_ddi_tests = build::Build {
@@ -62,14 +56,11 @@ impl Xtask for Precheck {
             all_targets: false,
             release: false,
             features: None,
-            package: None,
+            package: Some("mcr_ddi".to_string()),
         };
         build_mcr_ddi_tests.run(ctx.clone())?;
 
         // Build mcr_api tests
-        cwd = ctx.root.clone();
-        cwd.extend(["lib", "tests"]);
-        std::env::set_current_dir(cwd.as_path())?;
         let clean_mcr_api_tests = clean::Clean {};
         clean_mcr_api_tests.run(ctx.clone())?;
         let build_mcr_api_tests = build::Build {
@@ -77,7 +68,7 @@ impl Xtask for Precheck {
             all_targets: false,
             release: false,
             features: None,
-            package: None,
+            package: Some("mcr_api".to_string()),
         };
         build_mcr_api_tests.run(ctx.clone())?;
 
@@ -89,13 +80,11 @@ impl Xtask for Precheck {
             all_targets: false,
             release: false,
             features: Some("testhooks".to_string()),
-            package: None,
+            package: Some("mcr_api".to_string()),
         };
         build_mcr_api_hook_tests.run(ctx.clone())?;
 
         // Cargo build release
-        cwd = ctx.root.clone();
-        std::env::set_current_dir(cwd.as_path())?;
         let build_release = build::Build {
             tests: false,
             all_targets: true,
@@ -130,6 +119,7 @@ impl Xtask for Precheck {
 
         #[cfg(not(target_os = "windows"))]
         {
+            // Cargo fuzz
             let build_mock_testhooks = build::Build {
                 tests: false,
                 all_targets: false,
@@ -161,16 +151,6 @@ impl Xtask for Precheck {
             };
             test_mock_64_table.run(ctx.clone())?;
         }
-
-        // Cargo build mock perf
-        let build_mock_perf = build::Build {
-            tests: false,
-            all_targets: false,
-            release: false,
-            features: Some("mock".to_string()),
-            package: Some("mcr_perf".to_string()),
-        };
-        build_mock_perf.run(ctx.clone())?;
 
         // Mock Perf test - multi-threaded
         let mock_perf_test_get_api_rev = mcr_perf::McrPerf {

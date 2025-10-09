@@ -24,6 +24,7 @@ use mcr_ddi_types::MborError;
 use mcr_ddi_types::SessionControlKind;
 use mcr_ddi_types::SessionInfoRequest;
 use parking_lot::Mutex;
+use parking_lot::RwLock;
 
 #[derive(Debug)]
 struct SessionIdInner {
@@ -36,7 +37,7 @@ struct SessionIdInner {
 pub struct DdiMockDev {
     session_id: Arc<Mutex<SessionIdInner>>,
     // Dispatcher instance
-    dispatcher: Arc<Dispatcher>,
+    dispatcher: Arc<RwLock<Dispatcher>>,
 }
 
 #[cfg(feature = "table-4")]
@@ -49,8 +50,9 @@ const TABLE_COUNT: usize = 1;
 const AES_CHUNK_SIZE: usize = 0x1000;
 
 lazy_static! {
-    static ref G_DISPATCHER: Arc<Dispatcher> =
-        Arc::new(Dispatcher::new(TABLE_COUNT).expect("Failed to create Dispatcher"));
+    static ref G_DISPATCHER: Arc<RwLock<Dispatcher>> = Arc::new(RwLock::new(
+        Dispatcher::new(TABLE_COUNT).expect("Failed to create Dispatcher")
+    ));
 }
 
 impl DdiMockDev {
@@ -78,6 +80,7 @@ impl Drop for DdiMockDev {
         if self.session_id.lock().session_id.is_some() {
             let _resp = self
                 .dispatcher
+                .read()
                 .flush_session(self.session_id.lock().session_id.unwrap());
         }
     }
@@ -205,6 +208,7 @@ impl DdiDev for DdiMockDev {
 
         let session_info_response = self
             .dispatcher
+            .read()
             .dispatch(session_info_request, req_buf, resp_buf.as_mut_slice())
             .map_err(|err| DdiError::DdiError(err as u32))?;
 
@@ -317,14 +321,14 @@ impl DdiDev for DdiMockDev {
             aad: gcm_params.aad,
         };
 
-        let result = self.dispatcher.dispatch_fp_aes_gcm_encrypt_decrypt(
+        let result = self.dispatcher.read().dispatch_fp_aes_gcm_encrypt_decrypt(
             encrypt_decrypt_mode,
             session_aes_gcm_request,
             source_buffers,
             &mut destination_buffers,
         );
 
-        let result = result.map_err(|err| DdiError::FpError(err as u32))?;
+        let result = result.map_err(|err| DdiError::DdiStatus(DdiStatus::from(err)))?;
 
         let mut dest_buffer: Vec<u8> = destination_buffers.into_iter().flatten().collect();
 
@@ -452,14 +456,14 @@ impl DdiDev for DdiMockDev {
             short_app_id: xts_params.short_app_id,
         };
 
-        let result = self.dispatcher.dispatch_fp_aes_xts_encrypt_decrypt(
+        let result = self.dispatcher.read().dispatch_fp_aes_xts_encrypt_decrypt(
             encrypt_decrypt_mode,
             session_aes_xts_request,
             source_buffers,
             &mut destination_buffers,
         );
 
-        let result = result.map_err(|err| DdiError::FpError(err as u32))?;
+        let result = result.map_err(|err| DdiError::DdiStatus(DdiStatus::from(err)))?;
 
         let mut dest_buffer: Vec<u8> = destination_buffers.into_iter().flatten().collect();
         let total_size: usize = result.total_size as usize;
@@ -499,6 +503,7 @@ impl DdiDev for DdiMockDev {
     /// * `Err(DdiError)` - Error occurred while executing the command
     fn simulate_nssr_after_lm(&self) -> Result<(), DdiError> {
         self.dispatcher
+            .write()
             .dispatch_migration_sim()
             .map_err(|err| DdiError::DdiError(err as u32))
     }

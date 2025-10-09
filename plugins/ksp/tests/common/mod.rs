@@ -4,17 +4,23 @@ use std::mem::size_of;
 use std::ptr;
 use std::slice;
 
-use openssl::nid::Nid;
-use openssl::rand::rand_bytes;
 use windows::core::*;
 use windows::Win32::Security::Cryptography::*;
 use windows::Win32::Security::OBJECT_SECURITY_INFORMATION;
 
-#[allow(dead_code)]
-pub(crate) const AES_GCM_AAD_SIZE: usize = 32;
-
-#[allow(dead_code)]
-pub(crate) const AES_GCM_IV_SIZE: usize = 12;
+use crypto::aes::AesAlgo;
+use crypto::aes::AesKey;
+use crypto::aes::AesOp;
+use crypto::ecc::generate_ecc;
+use crypto::ecc::CryptoEccCurve;
+use crypto::ecc::EccOp;
+use crypto::rand::rand_bytes;
+use crypto::rsa::generate_rsa;
+use crypto::rsa::RsaOp;
+use crypto::rsa::RsaPublicKey;
+use crypto::rsa::RsaPublicOp;
+use crypto::CryptoHashAlgorithm;
+use crypto::CryptoRsaCryptoPadding;
 
 // #[cfg(test)]
 pub(crate) const AZIHSM_KSP_NAME: PCWSTR =
@@ -72,6 +78,19 @@ pub(crate) const AES_KEY_BIT_LENGTH_192: usize = 192;
 
 #[allow(dead_code)]
 pub(crate) const AES_KEY_BIT_LENGTH_256: usize = 256;
+
+#[allow(dead_code)]
+pub(crate) const AES_GCM_AAD_SIZE: usize = 32;
+
+#[allow(dead_code)]
+pub(crate) const AES_GCM_IV_SIZE: usize = 12;
+
+#[allow(dead_code)]
+pub(crate) const AES_KEY_WRAP_PAD_IV: u32 = 0xa65959a6;
+#[allow(dead_code)]
+pub(crate) const AES_KEY_WRAP_PAD_AES_BLOCK_LENGTH: usize = 16;
+#[allow(dead_code)]
+pub(crate) const AES_KEY_WRAP_PAD_TEXT_BLOCK_LENGTH: usize = 8;
 
 #[allow(dead_code)]
 pub(crate) const RSA_2K_DATA_SIZE_LIMIT: usize = 256;
@@ -145,8 +164,7 @@ pub(crate) enum KeyEncryptionAlgorithm {
 }
 
 #[allow(dead_code)]
-pub(crate) static KEY_ENC_ALOG: [KeyEncryptionAlgorithm; 3] = [
-    KeyEncryptionAlgorithm::CKM_RSA_AES_KEY_WRAP,
+pub(crate) static KEY_ENC_ALOG: [KeyEncryptionAlgorithm; 2] = [
     KeyEncryptionAlgorithm::RSA_AES_KEY_WRAP_256,
     KeyEncryptionAlgorithm::RSA_AES_KEY_WRAP_384,
 ];
@@ -189,7 +207,47 @@ pub(crate) enum NCryptPaddingType {
 pub(crate) static NCRYPT_PADDING_TYPES: [NCryptPaddingType; 2] =
     [NCryptPaddingType::Pkcs1, NCryptPaddingType::Pss];
 
-/// Generates an RSA key pair using OpenSSL.
+/// Uses the client library crypto support crate to decode a RSA public key in
+/// DER format. Returns a SymCrypt RSA public key object.
+///
+/// NOTE: This functionality is already implemented by the local `crypto::rsa`
+/// crate. The crate should be used as a first choice when implementing
+/// additional tests, *not* this function.
+///
+/// That being said, we have a small number of tests that require this function
+/// for deriving a raw SymCrypt RSA key object from the DER bytes. This is
+/// needed to test with SHA-1 encryption & signing (because `crypto::rsa`
+/// forbids the usage of SHA-1 for encrypt & sign).
+#[allow(dead_code)]
+pub(crate) fn rsa_public_key_from_der(der_bytes: &[u8]) -> symcrypt::rsa::RsaKey {
+    use der::Decode;
+    use pkcs8::spki;
+    use symcrypt::rsa::RsaKey;
+
+    // Parse the DER-encoded RSA public key into an SPKI object. From within the
+    // object, retrieve the DER-formatted key data
+    let rsa_key_spki = spki::SubjectPublicKeyInfoRef::from_der(der_bytes)
+        .expect("Failed to decode RSA public key DER");
+    let rsa_key_der = rsa_key_spki.subject_public_key;
+
+    // Use the DER-formatted key data to create a PKCS1 `RsaPublicKey` object,
+    // which will give us the public key modulus and public exponent
+    let rsa_key_pkcs1 = pkcs1::RsaPublicKey::from_der(rsa_key_der.raw_bytes())
+        .expect("Failed to create RsaPublicKey from RSA public key DER");
+    let rsa_key_modulus = rsa_key_pkcs1.modulus.as_bytes();
+    let rsa_key_exponent = rsa_key_pkcs1.public_exponent.as_bytes();
+
+    // Finally, pass the modulus and the exponent to SymCrypt to create a
+    // useable RSA key object (for encryption)
+    RsaKey::set_public_key(
+        rsa_key_modulus,
+        rsa_key_exponent,
+        symcrypt::rsa::RsaKeyUsage::Encrypt,
+    )
+    .expect("Failed to create SymCrypt RSA key from modulus and exponent")
+}
+
+/// Generates an RSA key pair using the client library crypto support crate.
 ///
 /// # Arguments
 ///
@@ -200,33 +258,25 @@ pub(crate) static NCRYPT_PADDING_TYPES: [NCryptPaddingType; 2] =
 /// A tuple containing the private key and public key in DER format.
 #[allow(dead_code)]
 pub(crate) fn generate_rsa_der(key_type: KeyType) -> (Vec<u8>, Vec<u8>) {
-    let size = match key_type {
+    let (private_key, public_key) = generate_rsa(match key_type {
         KeyType::Rsa2k => 2048,
         KeyType::Rsa3k => 3072,
         KeyType::Rsa4k => 4096,
         _ => panic!("Invalid key type"),
-    };
+    })
+    .expect("Failed to generate RSA key pair");
 
-    let result = openssl::rsa::Rsa::generate(size);
-    assert!(result.is_ok());
-    let rsa_private_key = result.unwrap();
-
-    let result = openssl::pkey::PKey::from_rsa(rsa_private_key);
-    assert!(result.is_ok());
-    let pkey = result.unwrap();
-
-    let result = pkey.private_key_to_pkcs8();
-    assert!(result.is_ok());
-    let private_key_der = result.unwrap();
-
-    let result = pkey.public_key_to_der();
-    assert!(result.is_ok());
-    let public_key_der = result.unwrap();
-
-    (private_key_der, public_key_der)
+    (
+        private_key
+            .to_der()
+            .expect("Failed to export RSA private key to DER"),
+        public_key
+            .to_der()
+            .expect("Failed to export RSA public key to DER"),
+    )
 }
 
-/// Generates an AES key.
+/// Generates bytes for an AES key.
 ///
 /// # Arguments
 ///
@@ -236,7 +286,7 @@ pub(crate) fn generate_rsa_der(key_type: KeyType) -> (Vec<u8>, Vec<u8>) {
 ///
 /// A vector containing the AES key.
 #[allow(dead_code)]
-pub(crate) fn generate_aes(key_type: KeyType) -> Vec<u8> {
+pub(crate) fn generate_aes_bytes(key_type: KeyType) -> Vec<u8> {
     let buf_len = match key_type {
         KeyType::Aes128 => 16,
         KeyType::Aes192 => 24,
@@ -246,11 +296,12 @@ pub(crate) fn generate_aes(key_type: KeyType) -> Vec<u8> {
 
     let mut buf = [0u8; 32];
     let buf_slice = &mut buf[..buf_len as usize];
-    let _ = rand_bytes(buf_slice);
+    rand_bytes(buf_slice).expect("Failed to generate random bytes");
     buf_slice.to_vec()
 }
 
-/// Generates an ECC key pair using OpenSSL.
+/// Generates an ECC key pair using the local client library crypto support
+/// crate.
 ///
 /// # Arguments
 ///
@@ -261,34 +312,194 @@ pub(crate) fn generate_aes(key_type: KeyType) -> Vec<u8> {
 /// A tuple containing the private key and public key in DER format.
 #[allow(dead_code)]
 pub(crate) fn generate_ecc_der(key_type: KeyType) -> (Vec<u8>, Vec<u8>) {
-    let curve_name = match key_type {
-        KeyType::Ecc256 => Nid::X9_62_PRIME256V1,
-        KeyType::Ecc384 => Nid::SECP384R1,
-        KeyType::Ecc521 => Nid::SECP521R1,
+    // generate a key pair using SymCrypt
+    let (private_key, public_key) = generate_ecc(match key_type {
+        KeyType::Ecc256 => CryptoEccCurve::P256,
+        KeyType::Ecc384 => CryptoEccCurve::P384,
+        KeyType::Ecc521 => CryptoEccCurve::P521,
         _ => panic!("Invalid key type"),
+    })
+    .expect("Failed to generate ECC key pair");
+
+    (
+        private_key
+            .to_der()
+            .expect("Failed to export ECC private key to DER"),
+        public_key
+            .to_der()
+            .expect("Failed to export ECC public key to DER"),
+    )
+}
+
+/// Helper function for `wrap_data()` that implements RFC 5649 section 4.1
+/// ("Extended Key Wrapping Process"). The provided data buffer is padded and
+/// encrypted.
+pub(crate) fn aes_key_wrap_pad(aes_key_bytes: &[u8], data: &[u8]) -> Vec<u8> {
+    let data_len = data.len();
+
+    // ---------------------- Initializing 'A' Buffer ----------------------- //
+    // Start by initializing the 'A' buffer, which contains a special
+    // initialization value (f bytes), plus the length of the original data
+    // (another f bytes)
+    let mut a: Vec<u8> = Vec::with_capacity(AES_KEY_WRAP_PAD_TEXT_BLOCK_LENGTH);
+    a.extend_from_slice(&(AES_KEY_WRAP_PAD_IV).to_be_bytes());
+    a.extend_from_slice(&(data_len as u32).to_be_bytes());
+
+    // ------------------------- Plaintext Padding -------------------------- //
+    // Next, calculate how much padding is required
+    let padding = (AES_KEY_WRAP_PAD_TEXT_BLOCK_LENGTH
+        - (data_len % AES_KEY_WRAP_PAD_TEXT_BLOCK_LENGTH))
+        % AES_KEY_WRAP_PAD_TEXT_BLOCK_LENGTH;
+
+    // Create a copy of the data buffer with padding appended onto the end
+    let data_padded_len = data_len + padding;
+    let data_padded = {
+        let mut v = Vec::with_capacity(data_padded_len);
+        v.extend_from_slice(data);
+        v.extend_from_slice(&vec![0u8; padding]);
+        v
     };
 
-    let result = openssl::ec::EcGroup::from_curve_name(curve_name);
-    assert!(result.is_ok());
-    let group = result.unwrap();
+    // ----------------------------- Encryption ----------------------------- //
+    // Our local crypto support library (and SymCrypt, which is invoked by that
+    // library internally) only supports AES-CBC encryption, even though RFC
+    // 5649 sectio 4.1 specifies AES-ECB encryption. However, by using an
+    // all-zero chaining block, we can achieve the same result as AES-ECB
+    // encryption.
+    let chaining_block = [0u8; AES_KEY_WRAP_PAD_AES_BLOCK_LENGTH];
 
-    let result = openssl::ec::EcKey::generate(&group);
-    assert!(result.is_ok());
-    let ecc_private_key = result.clone().unwrap();
+    // Create an AES key
+    let key = AesKey::from_bytes(aes_key_bytes)
+        .expect("Failed to create SymCrypt AES key from AES key bytes");
 
-    let result = openssl::pkey::PKey::from_ec_key(ecc_private_key);
-    assert!(result.is_ok());
-    let pkey = result.unwrap();
+    // CASE 1: Single Block Plaintext
+    // If the padded plaintext is exactly 8 bytes long (a single block)...
+    // ("if the padded plaintext contains exactly eight octets")
+    if data_padded_len == AES_KEY_WRAP_PAD_TEXT_BLOCK_LENGTH {
+        // We'll encrypt a single time in this case. Form the current plaintext
+        // by concatenating the contents of the 'A' buffer with the current
+        // block of data.
+        //
+        // (This buffer will be used to pass the plaintext into the AES
+        // encryption function, AND to store the encryption output.)
+        let encrypt_buffer = [a.as_slice(), data_padded.as_slice()].concat();
 
-    let result = pkey.private_key_to_pkcs8();
-    assert!(result.is_ok());
-    let private_key_der = result.unwrap();
+        // invoke AES-CBC encryption; pass in the current contents of the
+        // encryption buffer as the plaintext, and the all-zero chaining block
+        let encrypt_result = key
+            .encrypt(
+                encrypt_buffer.as_slice(),
+                AesAlgo::Cbc,
+                Some(&chaining_block),
+            )
+            .expect("AES Wrap (single-block case) - Failed to encrypt data with AES key");
 
-    let result = pkey.public_key_to_der();
-    assert!(result.is_ok());
-    let public_key_der = result.unwrap();
+        // The encryption result contains the ciphertext we just produced;
+        // return it.
+        return encrypt_result.cipher_text;
+    }
 
-    (private_key_der, public_key_der)
+    // CASE 2: Multiple Block Plaintext
+    // If we've reached here, then the padded data must contain more than one
+    // 8-byte block. Compute the number of blocks present in the padded data
+    let data_padded_block_count = data_padded_len / AES_KEY_WRAP_PAD_TEXT_BLOCK_LENGTH;
+
+    // The key wrapping process in the loop below incorporates the previous
+    // loop's encryption result into the next loop iteration.
+    //
+    // So, we need a working buffer to store the intermediate results, and to
+    // pull from in the subsequent loop iteration. Make a copy of the padded
+    // plaintext to serve as the working buffer.
+    let mut working_buffer = data_padded.clone();
+
+    // Enter a loop that iterates 6 times over the number of data blocks
+    for j in 0..6 {
+        // (iterate from 1 to the block count (inclusive))
+        for block_idx in 0..data_padded_block_count {
+            // Extract the bytes from the current block in the working buffer
+            let block_start = block_idx * AES_KEY_WRAP_PAD_TEXT_BLOCK_LENGTH;
+            let block_end = block_start + AES_KEY_WRAP_PAD_TEXT_BLOCK_LENGTH;
+            let block: &[u8] = &working_buffer[block_start..block_end];
+
+            // Form the current plaintext by concatenating the contents of the
+            // 'A' buffer with the current block of data.
+            //
+            // (This buffer will be used to pass the plaintext into the AES
+            // encryption function, AND to store the encryption output.)
+            let mut encrypt_buffer = [a.as_slice(), block].concat();
+
+            // invoke AES-CBC encryption; pass in the current contents of the
+            // encryption buffer as the plaintext, and the all-zero chaining
+            // block.
+            //
+            // NOTE: If you were encrypting truly in-place (meaning, if the call
+            // to your `encrypt()` function modifies the contents of your
+            // plaintext and chaining block buffers), you would need to
+            // explicitly zero out the chaining block buffer before each call to
+            // `encrypt()`. This is because the chaining block is modified after
+            // each AES-CBC encryption call. To simulate AES-ECB (the required
+            // AES algorithm for RFC 5649 section 4.1), the chaining block needs
+            // to be all zeroes for every call to `encrypt()`.
+            //
+            // Because this call to `encrypt()` is not in-place, we don't need
+            // to worry about zeroing out the chaining block.
+            let encrypt_result = key
+                .encrypt(
+                    encrypt_buffer.as_slice(),
+                    AesAlgo::Cbc,
+                    Some(&chaining_block),
+                )
+                .expect("AES Wrap (multi-block case) - Failed to encrypt data with AES key");
+
+            // Despite the above `encrypt()` call not performing encryption
+            // in-place, we want to simulate this to make the implementation of
+            // this wrapping algorithm simpler.
+            //
+            // (In other words, we want to use the same buffer that we stored
+            // the plaintext in to now be updated to store the ciphertext.)
+            //
+            // Do this by copying the ciphertext from the encryption result
+            // object into `encrypt_buffer`.
+            encrypt_buffer.copy_from_slice(encrypt_result.cipher_text.as_slice());
+
+            // Next, we need to XOR the most significant 8 bytes (MSBs) of
+            // ciphertext with a special `t` value. Start by splitting the
+            // ciphertext buffer in two:
+            //
+            // 1. The MSBs (Most Significant Bytes)
+            // 2. The LSBs (Least Significant Bytes)
+            let ciphertext_msb = &encrypt_buffer[..AES_KEY_WRAP_PAD_TEXT_BLOCK_LENGTH];
+            let ciphertext_lsb = &encrypt_buffer[AES_KEY_WRAP_PAD_TEXT_BLOCK_LENGTH..];
+            // Next, calculate the `t` value. This value starts at 1 and
+            // increases consecutively with each inner loop iteration.
+            let t = ((data_padded_block_count * j) + (block_idx + 1)) as u64;
+
+            // Finally, modify the ciphertext MSBs such that each one XOR'd with
+            // the corresponding byte in the big-endian representation of `t`.
+            let mut ciphertext_msb_xor = [0u8; AES_KEY_WRAP_PAD_TEXT_BLOCK_LENGTH];
+            let t_bytes = t.to_be_bytes();
+            for i in 0..AES_KEY_WRAP_PAD_TEXT_BLOCK_LENGTH {
+                ciphertext_msb_xor[i] = ciphertext_msb[i] ^ t_bytes[i];
+            }
+            // Next, we need to update the 'A' buffer to store this result (the
+            // ciphertext MSB XOR'd with `t`).
+            a.copy_from_slice(&ciphertext_msb_xor);
+
+            // At this point, we've incorporated the MSBs of the ciphertext into
+            // the next encryption operation (which will happen in the next
+            // inner loop iteration). However, we haven't incorporated the LSBs.
+            //
+            // To do this, we will update the working buffer by overwriting the
+            // current block position's bytes with the ciphertext LSBs.
+            working_buffer[block_start..block_end].copy_from_slice(ciphertext_lsb);
+        }
+    }
+
+    // The final step is to prepend the contents of the 'A' buffer (which was
+    // changing during every iteration of the above loops) to the working
+    // buffer (which now contains the final ciphertext blocks).
+    let result: Vec<u8> = [a.as_slice(), working_buffer.as_slice()].concat();
+    result
 }
 
 /// Wraps data using a specified key encryption algorithm.
@@ -308,66 +519,70 @@ pub(crate) fn wrap_data(
     data: &[u8],
     enc: KeyEncryptionAlgorithm,
 ) -> Vec<u8> {
-    let aes_key = generate_aes(KeyType::Aes256);
-    let aes_key_slice = aes_key.as_slice();
+    let aes_key_bytes = generate_aes_bytes(KeyType::Aes256);
 
-    let rsa_public_key = openssl::rsa::Rsa::public_key_from_der(&wrapping_pub_key_der)
-        .expect("Failed to load RSA public key from DER");
+    // By default, this function uses the `crypto::rsa` local create to perform
+    // RSA public key operations. However, `crypto::rsa` forbids the usage of
+    // SHA-1 for encryption, so we need to use SymCrypt directly for tests that
+    // require SHA-1.
+    //
+    // To make testing simplier, this function will use both `crypto::rsa` and
+    // SymCrypt, depending on the key encryption algorithm specified.
 
-    let pkey = openssl::pkey::PKey::from_rsa(rsa_public_key)
-        .expect("Failed to convert RSA public key to PKey");
+    let aes_key_encrypted = match enc {
+        // --------------------- RSA Encryption - SHA-1 --------------------- //
+        KeyEncryptionAlgorithm::CKM_RSA_AES_KEY_WRAP => {
+            // Parse the DER-encoded RSA public key (the unwrapping key) into a
+            // SymCrypt RSA key object.
+            let wrap_key = rsa_public_key_from_der(wrapping_pub_key_der.as_slice());
 
-    let mut pkey_ctx = openssl::pkey_ctx::PkeyCtx::new(&pkey).expect("Failed to create PkeyCtx");
-    pkey_ctx
-        .encrypt_init()
-        .expect("Failed to initialize encryption");
-    pkey_ctx
-        .set_rsa_padding(openssl::rsa::Padding::PKCS1_OAEP)
-        .expect("Failed to set RSA padding");
+            // Encrypt the contents of the AES key using the public RSA
+            // unwrapping key
+            wrap_key
+                .oaep_encrypt(
+                    aes_key_bytes.as_slice(),
+                    symcrypt::hash::HashAlgorithm::Sha1,
+                    b"",
+                )
+                .expect("Failed to encrypt AES key with RSA public unwrapping key")
+        }
+        // ------------------- RSA Encryption - Non-SHA-1 ------------------- //
+        _ => {
+            // Otherwise, if SHA-1 was not specified as the key encryption
+            // algorithm, we use `crypto::rsa` perform the RSA encryption.
 
-    let md = match enc {
-        KeyEncryptionAlgorithm::CKM_RSA_AES_KEY_WRAP => openssl::md::Md::sha1(),
-        KeyEncryptionAlgorithm::RSA_AES_KEY_WRAP_256 => openssl::md::Md::sha256(),
-        KeyEncryptionAlgorithm::RSA_AES_KEY_WRAP_384 => openssl::md::Md::sha384(),
+            // Parse the DER-encoded RSA public key (the unwrapping key) into an
+            // RSA key object.
+            let wrap_key = RsaPublicKey::from_der(wrapping_pub_key_der.as_slice(), None)
+                .expect("Failed to parse RSA public key DER");
+
+            // Encrypt the contents of the AES key using the public RSA
+            // unwrapping key
+            wrap_key
+                .encrypt(
+                    aes_key_bytes.as_slice(),
+                    CryptoRsaCryptoPadding::Oaep,
+                    Some(match enc {
+                        KeyEncryptionAlgorithm::RSA_AES_KEY_WRAP_256 => CryptoHashAlgorithm::Sha256,
+                        KeyEncryptionAlgorithm::RSA_AES_KEY_WRAP_384 => CryptoHashAlgorithm::Sha384,
+                        _ => panic!("Unsupported key encryption algorithm"),
+                    }),
+                    None,
+                )
+                .expect("Failed to encrypt AES key with RSA public unwrapping key")
+        }
     };
 
-    pkey_ctx
-        .set_rsa_oaep_md(md)
-        .expect("Failed to set RSA OAEP message digest");
+    // --------------------- Encrypt Data with AES Key ---------------------- //
+    // Use the AES key to encrypt & wrap the data according to RFC 5649 section
+    // 4.1 ("Extended Key Wrapping Process")
+    let data_encrypted = aes_key_wrap_pad(aes_key_bytes.as_slice(), data);
 
-    // Encrypt AES key with RSA public key
-    let encrypted_aes_key_len = pkey_ctx
-        .encrypt(aes_key_slice, None)
-        .expect("Failed to determine buffer length for encrypted AES key");
-    let mut encrypted_aes_key = vec![0u8; encrypted_aes_key_len];
-    let encrypted_len = pkey_ctx
-        .encrypt(aes_key_slice, Some(&mut encrypted_aes_key))
-        .expect("Failed to encrypt AES key");
-    encrypted_aes_key.truncate(encrypted_len);
-
-    let aes_cipher = openssl::cipher::Cipher::aes_256_wrap_pad();
-    let mut cipher_ctx = openssl::cipher_ctx::CipherCtx::new().expect("Failed to create CipherCtx");
-    cipher_ctx.set_flags(openssl::cipher_ctx::CipherCtxFlags::FLAG_WRAP_ALLOW);
-    cipher_ctx
-        .encrypt_init(Some(aes_cipher), Some(aes_key_slice), None)
-        .expect("Failed to initialize AES encryption");
-
-    // Encrypt data with AES key
-    let padding = 8 - data.len() % 8;
-    let mut encrypted_data = vec![0; data.len() + padding + aes_cipher.block_size() * 2];
-    let count = cipher_ctx
-        .cipher_update(data, Some(&mut encrypted_data))
-        .expect("Failed to update AES encryption");
-    let rest = cipher_ctx
-        .cipher_final(&mut encrypted_data[count..])
-        .expect("Failed to finalize AES encryption");
-    encrypted_data.truncate(count + rest);
-
-    // Concatenate encrypted AES key and encrypted data
-    let mut wrapped_data = Vec::with_capacity(encrypted_aes_key.len() + encrypted_data.len());
-    wrapped_data.extend_from_slice(&encrypted_aes_key);
-    wrapped_data.extend_from_slice(&encrypted_data);
-
+    // -------------------------- Concatenate Data -------------------------- //
+    // Combine the encrypted AES key (first) with the encrypted data (second)
+    let mut wrapped_data = Vec::with_capacity(aes_key_encrypted.len() + data_encrypted.len());
+    wrapped_data.extend_from_slice(&aes_key_encrypted);
+    wrapped_data.extend_from_slice(&data_encrypted);
     wrapped_data
 }
 
@@ -623,11 +838,11 @@ pub(crate) fn test_helper_create_iv_aad_tag(
 ) -> ([u8; AES_GCM_IV_SIZE], [u8; AES_GCM_AAD_SIZE], Vec<u8>) {
     // Generate IV
     let mut iv = [0u8; AES_GCM_IV_SIZE];
-    rand_bytes(&mut iv).unwrap();
+    rand_bytes(&mut iv).expect("Failed to generate random bytes");
 
     // Generate AAD
     let mut aad = [0u8; AES_GCM_AAD_SIZE];
-    rand_bytes(&mut aad).unwrap();
+    rand_bytes(&mut aad).expect("Failed to generate random bytes");
 
     unsafe {
         // Get the tag length property size
@@ -754,13 +969,13 @@ pub(crate) fn set_key_rsa_crt_enabled_property_withcheck(
 //   wrapped blob of data that is to be passed into `NCryptImportKey()`.
 // * `enable_crt` - Controls whether or not the `RsaCrtEnabled` key property is
 //   set before finalizing the RSA key, and the value it is set to.
-//		* If `Some(true)`, then `NCryptSetProperty()` will be invoked to set
-//		  the value to a non-zero integer, thus enabling CRT for the imported
-//		  RSA key.
-//		* If `Some(false)`, then `NCryptSetProperty()` will be invoked to set
-//		  the value to zero, thus disabling CRT for the imported RSA key.
+//        * If `Some(true)`, then `NCryptSetProperty()` will be invoked to set
+//          the value to a non-zero integer, thus enabling CRT for the imported
+//          RSA key.
+//        * If `Some(false)`, then `NCryptSetProperty()` will be invoked to set
+//          the value to zero, thus disabling CRT for the imported RSA key.
 //      * If `None`, then `NCryptSetProperty()` will *not* be called, and the
-// 		  `RsaCrtProperty` will be left to its default value.
+//           `RsaCrtProperty` will be left to its default value.
 // * `key_usage` - The 32-bit unsigned integer that's passed into
 //   `NCryptSetProperty()` when setting the key usage property.
 //
@@ -982,7 +1197,7 @@ pub(crate) fn test_helper_rsa_encrypt_decrypt(
 ) {
     // generate a random plaintext buffer
     let mut plaintext: Vec<u8> = vec![0u8; 100];
-    rand_bytes(plaintext.as_mut_slice()).unwrap();
+    rand_bytes(plaintext.as_mut_slice()).expect("Failed to generate random bytes");
 
     // make two copies of the label `Option` to avoid ownership issues when
     // invoking the encrypt and decrypt helper functions below
@@ -1136,7 +1351,7 @@ pub(crate) fn test_helper_rsa_sign_verify(
 
         // Create a randomized hash digest.
         let mut digest = vec![1u8; digest_size];
-        rand_bytes(&mut digest).unwrap();
+        rand_bytes(&mut digest).expect("Failed to generate random bytes");
 
         // Call `NCryptSignHash()` once, to determine the number of bytes
         // required to hold the resulting signature.

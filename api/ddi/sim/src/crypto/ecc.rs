@@ -6,11 +6,6 @@
 compile_error!("OpenSSL and non-OpenSSL cannot be enabled at the same time.");
 
 #[cfg(feature = "use-symcrypt")]
-use std::time::Duration;
-
-#[cfg(feature = "use-symcrypt")]
-use der::Decode;
-#[cfg(feature = "use-symcrypt")]
 use generic_array;
 use mcr_ddi_types::DdiEccCurve;
 #[cfg(feature = "use-openssl")]
@@ -38,23 +33,9 @@ use openssl::x509::X509NameBuilder;
 #[cfg(feature = "use-openssl")]
 use openssl::x509::X509;
 #[cfg(feature = "use-symcrypt")]
-use spki::SubjectPublicKeyInfo;
-#[cfg(feature = "use-symcrypt")]
 use symcrypt::ecc;
 #[cfg(feature = "use-symcrypt")]
 use symcrypt::errors::SymCryptError;
-#[cfg(feature = "use-symcrypt")]
-use x509_cert::builder::Builder;
-#[cfg(feature = "use-symcrypt")]
-use x509_cert::builder::CertificateBuilder;
-#[cfg(feature = "use-symcrypt")]
-use x509_cert::builder::Profile;
-#[cfg(feature = "use-symcrypt")]
-use x509_cert::name::Name;
-#[cfg(feature = "use-symcrypt")]
-use x509_cert::serial_number::SerialNumber;
-#[cfg(feature = "use-symcrypt")]
-use x509_cert::time::Validity;
 
 #[cfg(feature = "use-openssl")]
 use crate::crypto::ecc::openssl::asn1::Asn1Time;
@@ -963,10 +944,6 @@ impl EccPrivateOp for EccPrivateKey {
     }
 
     fn create_pub_key_cert(&self) -> Result<Vec<u8>, ManticoreError> {
-        use std::str::FromStr;
-
-        use der::Encode;
-
         let der = self.to_der().map_err(|error_stack| {
             tracing::error!(?error_stack);
             ManticoreError::EccPubKeyCertGenerateError
@@ -977,77 +954,18 @@ impl EccPrivateOp for EccPrivateKey {
             ManticoreError::EccPubKeyCertGenerateError
         })?;
 
-        let public_key =
-            SubjectPublicKeyInfo::from_der(&public_key_der).map_err(|error_stack| {
-                tracing::error!(?error_stack);
-                ManticoreError::EccPubKeyCertGenerateError
-            })?;
-
-        let profile = Profile::Root;
-        let serial_number = SerialNumber::from(1u32);
-        let validity =
-            Validity::from_now(Duration::new(365 * 24 * 60 * 60, 0)).map_err(|error_stack| {
-                tracing::error!(?error_stack);
-                ManticoreError::EccPubKeyCertGenerateError
-            })?;
-        let subject = Name::from_str("CN=example.com").unwrap();
-
         let cert = match self.handle.get_curve_type() {
             ecc::CurveType::NistP256 => {
-                use p256::ecdsa::DerSignature;
-                use p256::pkcs8::DecodePrivateKey;
-                let ec_key_p256 = p256::SecretKey::from_pkcs8_der(&der).map_err(|error_stack| {
-                    tracing::error!(?error_stack);
-                    ManticoreError::EccPubKeyCertGenerateError
-                })?;
-
-                let signer = p256::ecdsa::SigningKey::from(ec_key_p256);
-
-                let builder = CertificateBuilder::new(
-                    profile,
-                    serial_number,
-                    validity,
-                    subject,
-                    public_key,
-                    &signer,
-                )
-                .map_err(|error_stack| {
-                    tracing::error!(?error_stack);
-                    ManticoreError::EccPubKeyCertGenerateError
-                })?;
-
-                builder.build::<DerSignature>().map_err(|error_stack| {
-                    tracing::error!(?error_stack);
-                    ManticoreError::EccPubKeyCertGenerateError
-                })
+                // Attestation Key on mock Manticore is P-384
+                // Pending mock Manticore attestation design
+                // Return Error for now
+                Err(ManticoreError::EccPubKeyCertGenerateError)
             }
 
             ecc::CurveType::NistP384 => {
-                use p384::ecdsa::DerSignature;
-                use p384::pkcs8::DecodePrivateKey;
-                let ec_key_p384 = p384::SecretKey::from_pkcs8_der(&der).map_err(|error_stack| {
-                    tracing::error!(?error_stack);
-                    ManticoreError::EccPubKeyCertGenerateError
-                })?;
-                let signer = p384::ecdsa::SigningKey::from(ec_key_p384);
+                use crate::crypto::cert::recreate_cert;
 
-                let builder = CertificateBuilder::new(
-                    profile,
-                    serial_number,
-                    validity,
-                    subject,
-                    public_key,
-                    &signer,
-                )
-                .map_err(|error_stack| {
-                    tracing::error!(?error_stack);
-                    ManticoreError::EccPubKeyCertGenerateError
-                })?;
-
-                builder.build::<DerSignature>().map_err(|error_stack| {
-                    tracing::error!(?error_stack);
-                    ManticoreError::EccPubKeyCertGenerateError
-                })
+                recreate_cert(&public_key_der, &der)
             }
             ecc::CurveType::NistP521 => {
                 // p521 does not implement the KeyPairRef trait required by CertificateBuilder.
@@ -1057,12 +975,7 @@ impl EccPrivateOp for EccPrivateKey {
             _ => Err(ManticoreError::EccPubKeyCertGenerateError),
         }?;
 
-        let der = cert.to_der().map_err(|error_stack| {
-            tracing::error!(?error_stack);
-            ManticoreError::EccPubKeyCertGenerateError
-        })?;
-
-        Ok(der)
+        Ok(cert)
     }
 }
 

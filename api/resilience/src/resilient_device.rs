@@ -212,7 +212,9 @@ fn retry_on_open_session_op<T>(result: &HsmResult<T>) -> bool {
     // TODO: Update with correct error based on out-of-session error handling. TASK 34575020
     match result {
         Ok(_) => false,
-        Err(HsmError::CredentialsNotEstablished) | Err(HsmError::NonceMismatch) => {
+        Err(HsmError::CredentialsNotEstablished)
+        | Err(HsmError::NonceMismatch)
+        | Err(HsmError::PartitionNotProvisioned) => {
             tracing::info!(
                 "Error {:?} on open_session operation indicates possible resiliency event occured. ProcessId={}",
                 result.as_ref().err(),
@@ -415,21 +417,19 @@ impl ResilientDeviceInner {
         Ok(sealed_bk3)
     }
 
-    fn try_establish_credential(
+    fn try_establish_credential_no_lock(
         &mut self,
         api_rev: HsmApiRevision,
         credentials: HsmAppCredentials,
+        write_locked_disk: &mut crate::memory_manager::FileLockGuard,
     ) -> HsmResult<()> {
-        // Get write lock to protect against synchronization issues with establish credential.
-        let mut write_locked_disk = self.memory_manager.write_lock()?;
-
         let masked_bk3 = match write_locked_disk.get_sealed_bk3()? {
             // if we failed getting masked BK3, device is in bad state
             // and we should fail.
             Some(sealed_bk3) => self.try_unseal_bk3(api_rev, sealed_bk3)?,
             None => {
                 tracing::error!(
-                            "try_establish_credential: No sealed BK3 found on disk, trying to get from device. ProcessId={}",
+                            "try_establish_credential_no_lock: No sealed BK3 found on disk, trying to get from device. ProcessId={}",
                             process::id()
                         );
 
@@ -451,7 +451,7 @@ impl ResilientDeviceInner {
         write_locked_disk.set_backup_masking_key(&new_bmk)?;
 
         tracing::debug!(
-            "try_establish_credential: Saving credential information. ProcessId={}",
+            "try_establish_credential_no_lock: Saving credential information. ProcessId={}",
             process::id()
         );
         self.credentials = Some(CachedEstablishCredentials {
@@ -459,6 +459,16 @@ impl ResilientDeviceInner {
             api_rev,
         });
         Ok(())
+    }
+
+    fn try_establish_credential(
+        &mut self,
+        api_rev: HsmApiRevision,
+        credentials: HsmAppCredentials,
+    ) -> HsmResult<()> {
+        // Get write lock to protect against synchronization issues with establish credential.
+        let mut write_locked_disk = self.memory_manager.write_lock()?;
+        self.try_establish_credential_no_lock(api_rev, credentials, &mut write_locked_disk)
     }
 
     fn establish_credential(
@@ -480,9 +490,43 @@ impl ResilientDeviceInner {
         credentials: HsmAppCredentials,
     ) -> HsmResult<()> {
         // Get write lock to protect against synchronization issues with open session.
-        let _write_locked_disk = self.memory_manager.write_lock()?;
+        let mut write_locked_disk = self.memory_manager.write_lock()?;
 
-        let hsm_session = self.device.open_session(api_rev, credentials)?;
+        let hsm_session_result = self.device.open_session(api_rev, credentials);
+
+        // If open_session fails with CredentialsNotEstablished, try to establish credentials first
+        let hsm_session = match hsm_session_result {
+            Err(HsmError::CredentialsNotEstablished) | Err(HsmError::PartitionNotProvisioned) => {
+                tracing::warn!(
+                    "try_open_session: CredentialsNotEstablished, attempting to establish credentials from disk cache. ProcessId={}",
+                    process::id()
+                );
+
+                match self.try_establish_credential_no_lock(
+                    api_rev,
+                    credentials,
+                    &mut write_locked_disk,
+                ) {
+                    Ok(()) => {
+                        tracing::info!(
+                            "try_open_session: Successfully established credentials from disk cache. ProcessId={}",
+                            process::id()
+                        );
+                    }
+                    Err(HsmError::KeyNotFound) => {
+                        tracing::info!(
+                            "try_open_session: Credentials already established (KeyNotFound), continuing with session open. ProcessId={}",
+                            process::id()
+                        );
+                    }
+                    Err(e) => return Err(e),
+                }
+
+                self.device.open_session(api_rev, credentials)?
+            }
+            Err(e) => return Err(e),
+            Ok(session) => session,
+        };
 
         tracing::debug!(
             "try_open_session: Saving session and credential information. ProcessId={}",

@@ -4,12 +4,13 @@ mod common;
 use std::mem::size_of;
 use std::ptr;
 
-use openssl::rand::rand_bytes;
 use winapi::shared::winerror::NTE_BAD_TYPE;
 use winapi::shared::winerror::NTE_INVALID_HANDLE;
 use winapi::shared::winerror::NTE_INVALID_PARAMETER;
 use windows::core::HRESULT;
 use windows::Win32::Security::Cryptography::*;
+
+use crypto::rand::rand_bytes;
 
 use crate::common::*;
 
@@ -47,7 +48,7 @@ fn test_create_claim_builtin_unwrapping_key() {
         assert!(result.is_ok());
 
         let mut report_data = [0u8; REPORT_DATA_SIZE as usize];
-        rand_bytes(&mut report_data).unwrap();
+        rand_bytes(&mut report_data).expect("Failed to generate random bytes");
 
         let param_buffers = [BCryptBuffer {
             cbBuffer: report_data.len() as u32,
@@ -112,7 +113,7 @@ fn test_create_claim_ecdsa_p256() {
         assert!(result.is_ok());
 
         let mut report_data = [0u8; REPORT_DATA_SIZE as usize];
-        rand_bytes(&mut report_data).unwrap();
+        rand_bytes(&mut report_data).expect("Failed to generate random bytes");
 
         let param_buffers = [BCryptBuffer {
             cbBuffer: report_data.len() as u32,
@@ -177,7 +178,7 @@ fn test_create_claim_ecdsa_p384() {
         assert!(result.is_ok());
 
         let mut report_data = [0u8; REPORT_DATA_SIZE as usize];
-        rand_bytes(&mut report_data).unwrap();
+        rand_bytes(&mut report_data).expect("Failed to generate random bytes");
 
         let param_buffers = [BCryptBuffer {
             cbBuffer: report_data.len() as u32,
@@ -242,7 +243,7 @@ fn test_create_claim_ecdsa_p521() {
         assert!(result.is_ok());
 
         let mut report_data = [0u8; REPORT_DATA_SIZE as usize];
-        rand_bytes(&mut report_data).unwrap();
+        rand_bytes(&mut report_data).expect("Failed to generate random bytes");
 
         let param_buffers = [BCryptBuffer {
             cbBuffer: report_data.len() as u32,
@@ -307,7 +308,7 @@ fn test_create_claim_ecdh_p521() {
         assert!(result.is_ok());
 
         let mut report_data = [0u8; REPORT_DATA_SIZE as usize];
-        rand_bytes(&mut report_data).unwrap();
+        rand_bytes(&mut report_data).expect("Failed to generate random bytes");
 
         let param_buffers = [BCryptBuffer {
             cbBuffer: report_data.len() as u32,
@@ -406,7 +407,7 @@ fn test_create_claim_aes_should_fail() {
         assert!(result.is_ok());
 
         let mut report_data = [0u8; REPORT_DATA_SIZE as usize];
-        rand_bytes(&mut report_data).unwrap();
+        rand_bytes(&mut report_data).expect("Failed to generate random bytes");
 
         let param_buffers = [BCryptBuffer {
             cbBuffer: report_data.len() as u32,
@@ -459,7 +460,7 @@ fn test_create_claim_report_size_greater_than_expected() {
         assert!(result.is_ok());
 
         let mut report_data = [0u8; (REPORT_DATA_SIZE as usize) + 50];
-        rand_bytes(&mut report_data).unwrap();
+        rand_bytes(&mut report_data).expect("Failed to generate random bytes");
 
         let param_buffers = [BCryptBuffer {
             cbBuffer: report_data.len() as u32,
@@ -512,7 +513,7 @@ fn test_create_claim_report_size_less_than_expected() {
         assert!(result.is_ok());
 
         let mut report_data = [0u8; (REPORT_DATA_SIZE as usize) - 50];
-        rand_bytes(&mut report_data).unwrap();
+        rand_bytes(&mut report_data).expect("Failed to generate random bytes");
 
         let param_buffers = [BCryptBuffer {
             cbBuffer: report_data.len() as u32,
@@ -562,7 +563,7 @@ fn test_create_claim_builtin_unwrapping_key_null_params() {
         assert!(result.is_ok());
 
         let mut report_data = [0u8; REPORT_DATA_SIZE as usize];
-        rand_bytes(&mut report_data).unwrap();
+        rand_bytes(&mut report_data).expect("Failed to generate random bytes");
 
         let mut claim_size = 0u32;
         let result = NCryptCreateClaim(
@@ -603,7 +604,7 @@ fn test_create_claim_incorrect_buffer_descriptor() {
         assert!(result.is_ok());
 
         let mut report_data = [0u8; REPORT_DATA_SIZE as usize];
-        rand_bytes(&mut report_data).unwrap();
+        rand_bytes(&mut report_data).expect("Failed to generate random bytes");
 
         // Instead of NCRYPTBUFFER_CLAIM_KEYATTESTATION_NONCE, we use NCRYPTBUFFER_PKCS_ALG_ID
         let param_buffers = [BCryptBuffer {
@@ -663,7 +664,7 @@ fn test_create_claim_invalid_key_handle() {
         assert!(result.is_ok());
 
         let mut report_data = [0u8; REPORT_DATA_SIZE as usize];
-        rand_bytes(&mut report_data).unwrap();
+        rand_bytes(&mut report_data).expect("Failed to generate random bytes");
 
         let param_buffers = [BCryptBuffer {
             cbBuffer: report_data.len() as u32,
@@ -716,7 +717,7 @@ fn test_create_claim_with_invalid_provider_handle() {
         assert!(result.is_ok());
 
         let mut report_data = [0u8; REPORT_DATA_SIZE as usize];
-        rand_bytes(&mut report_data).unwrap();
+        rand_bytes(&mut report_data).expect("Failed to generate random bytes");
 
         let param_buffers = [BCryptBuffer {
             cbBuffer: report_data.len() as u32,
@@ -769,7 +770,7 @@ fn test_create_claim_with_invalid_flag() {
         assert!(result.is_ok());
 
         let mut report_data = [0u8; REPORT_DATA_SIZE as usize];
-        rand_bytes(&mut report_data).unwrap();
+        rand_bytes(&mut report_data).expect("Failed to generate random bytes");
 
         let param_buffers = [BCryptBuffer {
             cbBuffer: report_data.len() as u32,
@@ -822,7 +823,7 @@ fn test_create_claim_non_null_authority_key() {
         assert!(result.is_ok());
 
         let mut report_data = [0u8; REPORT_DATA_SIZE as usize];
-        rand_bytes(&mut report_data).unwrap();
+        rand_bytes(&mut report_data).expect("Failed to generate random bytes");
 
         let param_buffers = [BCryptBuffer {
             cbBuffer: report_data.len() as u32,

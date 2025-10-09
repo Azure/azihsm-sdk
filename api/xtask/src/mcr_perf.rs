@@ -11,6 +11,7 @@ use clap::Parser;
 use clap::Subcommand;
 use xshell::cmd;
 
+use crate::build;
 use crate::common;
 use crate::Xtask;
 use crate::XtaskCtx;
@@ -63,8 +64,20 @@ pub enum Commands {
 }
 
 impl Xtask for McrPerf {
-    fn run(self, _ctx: XtaskCtx) -> anyhow::Result<()> {
+    fn run(self, ctx: XtaskCtx) -> anyhow::Result<()> {
         log::trace!("running mcr_perf");
+
+        if self.path_override.is_none() {
+            // Cargo build mock perf if path_override isn't set
+            let build_mock_perf = build::Build {
+                tests: false,
+                all_targets: false,
+                release: false,
+                features: Some("mock".to_string()),
+                package: Some("mcr_perf".to_string()),
+            };
+            build_mock_perf.run(ctx.clone())?;
+        }
 
         let sh = xshell::Shell::new()?;
 

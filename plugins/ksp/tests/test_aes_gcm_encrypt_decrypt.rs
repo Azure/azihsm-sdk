@@ -7,8 +7,6 @@ use std::mem::size_of;
 use std::ptr;
 
 #[cfg(not(feature = "disable-fp"))]
-use openssl::rand::rand_bytes;
-#[cfg(not(feature = "disable-fp"))]
 use widestring::*;
 #[cfg(not(feature = "disable-fp"))]
 use winapi::shared::winerror::ERROR_INVALID_DATA;
@@ -25,6 +23,9 @@ use windows::core::HRESULT;
 use windows::Win32::Security::Cryptography::*;
 #[cfg(not(feature = "disable-fp"))]
 use windows::Win32::Security::OBJECT_SECURITY_INFORMATION;
+
+#[cfg(not(feature = "disable-fp"))]
+use crypto::rand::rand_bytes;
 
 use crate::common::*;
 
@@ -205,7 +206,7 @@ fn test_aes_gcm_encrypt_decrypt() {
 
         let mut plaintext = vec![0u8; 256_usize];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         // Get Ciphertext length
         let result = NCryptEncrypt(
@@ -312,7 +313,7 @@ fn test_aes_gcm_encrypt_decrypt_data_eq_1024_bytes() {
 
         let mut plaintext = vec![0u8; 1024_usize];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         // Get Ciphertext length
         let result = NCryptEncrypt(
@@ -420,7 +421,7 @@ fn test_aes_gcm_encrypt_decrypt_data_gt_1024_bytes() {
 
         let mut plaintext = vec![0u8; 2048_usize];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         // Get Ciphertext length
         let result = NCryptEncrypt(
@@ -527,7 +528,7 @@ fn test_aes_gcm_encrypt_query_required_input_buffer_size() {
 
         let mut plaintext = [0u8; 256];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         let result = NCryptEncrypt(
             azihsm_key.handle(),
@@ -585,7 +586,7 @@ fn test_aes_gcm_encrypt_query_required_output_buffer_size() {
 
         let mut plaintext = [0u8; 256];
         let ciphertext = [0u8; 256];
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         let mut decrypted_len = 0u32;
 
@@ -646,7 +647,7 @@ fn test_aes_gcm_encrypt_query_required_input_buffer_size_lt_required() {
 
         let mut plaintext = [0u8; 256];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         let result = NCryptEncrypt(
             azihsm_key.handle(),
@@ -720,7 +721,7 @@ fn test_aes_gcm_encrypt_query_required_output_buffer_size_lt_required() {
 
         let mut plaintext = [0u8; 256];
         let ciphertext = [0u8; 256];
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         let mut decrypted_len = 0u32;
 
@@ -797,7 +798,7 @@ fn test_aes_gcm_encrypt_query_required_input_buffer_size_gt_required() {
 
         let mut plaintext = [0u8; 256];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         let result = NCryptEncrypt(
             azihsm_key.handle(),
@@ -872,7 +873,7 @@ fn test_aes_gcm_encrypt_query_required_output_buffer_size_gt_required() {
 
         let mut plaintext = vec![0u8; 256_usize];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         let result = NCryptEncrypt(
             azihsm_key.handle(),
@@ -981,7 +982,7 @@ fn test_aes_gcm_multi_block_encrypt_decrypt() {
         let chunk_size = 256;
 
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
         let result = NCryptEncrypt(
             azihsm_key.handle(),
             Some(&plaintext[..chunk_size]),
@@ -1178,7 +1179,7 @@ fn test_aes_gcm_encrypt_decrypt_invalid_key_property() {
 
         let mut plaintext = vec![0u8; 256_usize];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         // Get Ciphertext length
         let result = NCryptEncrypt(
@@ -1409,7 +1410,7 @@ fn test_aes_gcm_encrypt_iv_is_null() {
 
         let mut plaintext = vec![0u8; 256_usize];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         // Get Ciphertext length
         let result = NCryptEncrypt(
@@ -1469,7 +1470,7 @@ fn test_aes_gcm_decrypt_iv_is_null() {
 
         let mut plaintext = vec![0u8; 256_usize];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         // Get Ciphertext length
         let result = NCryptEncrypt(
@@ -1590,7 +1591,7 @@ fn test_aes_gcm_encrypt_decrypt_tampered_iv() {
 
         let mut plaintext = vec![0u8; 256_usize];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         // Get Ciphertext length
         let result = NCryptEncrypt(
@@ -1707,7 +1708,7 @@ fn test_aes_gcm_encrypt_decrypt_aad_provided() {
 
         let mut plaintext = vec![0u8; 256_usize];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         // Get Ciphertext length
         let result = NCryptEncrypt(
@@ -1847,7 +1848,7 @@ fn test_aes_gcm_encrypt_decrypt_add_tampered() {
 
         let mut plaintext = vec![0u8; 256_usize];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         // Get Ciphertext length
         let result = NCryptEncrypt(
@@ -1989,7 +1990,7 @@ fn test_aes_gcm_encrypt_decrypt_tampered_ciphertext() {
 
         let mut plaintext = vec![0u8; 256_usize];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         // Get Ciphertext length
         let result = NCryptEncrypt(
@@ -2076,10 +2077,10 @@ fn test_aes_gcm_encrypt_decrypt_tag_is_null() {
         helper_create_aes_256_key(&mut azihsm_provider, &mut azihsm_key);
 
         let mut iv = [0u8; AES_GCM_IV_SIZE];
-        rand_bytes(&mut iv).unwrap();
+        rand_bytes(&mut iv).expect("Failed to generate random bytes");
 
         let mut aad = [0u8; AES_GCM_AAD_SIZE];
-        rand_bytes(&mut aad).unwrap();
+        rand_bytes(&mut aad).expect("Failed to generate random bytes");
 
         let mut other_info: BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO =
             BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO {
@@ -2110,7 +2111,7 @@ fn test_aes_gcm_encrypt_decrypt_tag_is_null() {
 
         let mut plaintext = vec![0u8; 256_usize];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         // Get Ciphertext length
         let result = NCryptEncrypt(
@@ -2222,7 +2223,7 @@ fn test_aes_gcm_encrypt_decrypt_tampered_tag() {
 
         let mut plaintext = vec![0u8; 256_usize];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         // Get Ciphertext length
         let result = NCryptEncrypt(
@@ -2338,7 +2339,7 @@ fn test_aes_gcm_encrypt_decrypt_with_deleted_key() {
 
         let mut plaintext = vec![0u8; 256_usize];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         // Get Ciphertext length
         let result = NCryptEncrypt(
@@ -2455,7 +2456,7 @@ fn test_aes_gcm_encrypt_decrypt_data_16_bytes() {
 
         let mut plaintext = vec![0u8; PLAINTEXT_LEN];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         // Get Ciphertext length
         let result = NCryptEncrypt(
@@ -2567,7 +2568,7 @@ fn test_aes_gcm_encrypt_decrypt_data_gt_16_bytes() {
 
         let mut plaintext = vec![0u8; PLAINTEXT_LEN];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         // Get Ciphertext length
         let result = NCryptEncrypt(
@@ -2647,10 +2648,10 @@ fn test_aes_gcm_encrypt_decrypt_iv_ne_12() {
         helper_create_aes_256_key(&mut azihsm_provider, &mut azihsm_key);
 
         let mut iv = [0u8; 16];
-        rand_bytes(&mut iv).unwrap();
+        rand_bytes(&mut iv).expect("Failed to generate random bytes");
 
         let mut aad = [0u8; 16];
-        rand_bytes(&mut aad).unwrap();
+        rand_bytes(&mut aad).expect("Failed to generate random bytes");
 
         let mut tag_length_property_size = 0u32;
         let result = NCryptGetProperty(
@@ -2706,7 +2707,7 @@ fn test_aes_gcm_encrypt_decrypt_iv_ne_12() {
 
         let mut plaintext = vec![0u8; 256_usize];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         // Get Ciphertext length
         let result = NCryptEncrypt(

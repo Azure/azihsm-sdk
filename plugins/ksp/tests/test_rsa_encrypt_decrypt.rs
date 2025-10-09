@@ -2,11 +2,6 @@
 mod common;
 use std::ptr;
 
-use openssl::md::Md;
-use openssl::pkey::PKey;
-use openssl::pkey::Public;
-use openssl::pkey_ctx::PkeyCtx;
-use openssl::rand::rand_bytes;
 use winapi::shared::winerror::ERROR_INVALID_STATE;
 use winapi::shared::winerror::E_UNEXPECTED;
 use winapi::shared::winerror::NTE_BAD_DATA;
@@ -20,6 +15,8 @@ use windows::core::HRESULT;
 use windows::core::PCWSTR;
 use windows::Win32::Security::Cryptography::*;
 use windows::Win32::Security::OBJECT_SECURITY_INFORMATION;
+
+use crypto::rand::rand_bytes;
 
 use crate::common::*;
 
@@ -59,16 +56,16 @@ fn test_rsa_import_key_donotfinalize_flag_not_set() {
         pub_key.truncate(pub_key_size as usize);
 
         // Generate a KeyType::Rsa2k RSA private key
-        // Wrap it with the import public key using CKM_RSA_AES_KEY_WRAP key encryption algorithm
+        // Wrap it with the import public key using RSA_AES_KEY_WRAP_256 key encryption algorithm
         let private_key = generate_rsa_der(KeyType::Rsa2k).0;
         let encrypted_blob = wrap_data(
             pub_key,
             &private_key,
-            KeyEncryptionAlgorithm::CKM_RSA_AES_KEY_WRAP,
+            KeyEncryptionAlgorithm::RSA_AES_KEY_WRAP_256,
         );
         let key_blob = create_pkcs11_rsa_aes_wrap_blob(
             &encrypted_blob,
-            KeyEncryptionAlgorithm::CKM_RSA_AES_KEY_WRAP,
+            KeyEncryptionAlgorithm::RSA_AES_KEY_WRAP_256,
         );
 
         // Prepare paramlist for unwrapping
@@ -205,7 +202,7 @@ fn test_helper_rsa_encrypt_without_finalize(
         };
         let mut plaintext = [0u8; 100];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         let result = NCryptEncrypt(
             target_key.handle(),
@@ -447,7 +444,7 @@ fn test_helper_rsa_encrypt_decrypt_required_input_buffer_size(
         };
         let mut plaintext = [0u8; 100];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         let result = NCryptEncrypt(
             target_key.handle(),
@@ -627,7 +624,7 @@ fn test_helper_rsa_encrypt_decrypt_required_input_buffer_size_lt_required(
         };
         let mut plaintext = [0u8; 100];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         let result = NCryptEncrypt(
             target_key.handle(),
@@ -821,7 +818,7 @@ fn test_helper_rsa_encrypt_decrypt_required_input_buffer_size_gt_required(
         };
         let mut plaintext = [0u8; 100];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         let result = NCryptEncrypt(
             target_key.handle(),
@@ -1380,7 +1377,7 @@ fn test_helper_rsa_encrypt_decrypt_required_output_buffer_size_gt_required(
         let mut plaintext = [0u8; 100];
         let mut ciphertext: Vec<u8> = vec![0u8; expected_ciphertext_len];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         let result = NCryptEncrypt(
             target_key.handle(),
@@ -1585,7 +1582,7 @@ fn test_helper_rsa_encrypt_algid_null(
         let mut plaintext = [0u8; 100];
         let mut ciphertext: Vec<u8> = vec![0u8; expected_ciphertext_len];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         let result = NCryptEncrypt(
             target_key.handle(),
@@ -1737,7 +1734,7 @@ fn test_helper_rsa_decrypt_algid_null(
         let mut plaintext = [0u8; 100];
         let mut ciphertext: Vec<u8> = vec![0u8; expected_ciphertext_len];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         let result = NCryptEncrypt(
             target_key.handle(),
@@ -1921,24 +1918,16 @@ fn test_rsa_2k_encrypt_sha1_rejected() {
 // Import the RSA 2K key and decrypt the data with SHA-1
 #[test]
 fn test_rsa_2k_decrypt_sha1() {
+    use symcrypt::hash::HashAlgorithm;
+    use symcrypt::rsa::RsaKey;
+
     // RSA Encrypt with OAEP and SHA-1
-    // Can't re-use our crypto lib because it doesn't support SHA-1
-    fn _encrypt(key: &PKey<Public>, data: &[u8]) -> Vec<u8> {
-        let mut ctx = PkeyCtx::new(key).unwrap();
-        ctx.encrypt_init().unwrap();
-        ctx.set_rsa_padding(openssl::rsa::Padding::PKCS1_OAEP)
-            .unwrap();
-        ctx.set_rsa_oaep_md(Md::sha1()).unwrap();
-
-        let buffer_len = ctx.encrypt(data, None).unwrap();
-
-        let mut buffer = vec![0u8; buffer_len];
-
-        let encrypted_len = ctx.encrypt(data, Some(&mut buffer)).unwrap();
-
-        let buffer = &buffer[..encrypted_len];
-
-        buffer.to_vec()
+    //
+    // We can't re-use our crypto lib because it doesn't support SHA-1.
+    // So instead, we use SymCrypt.
+    fn _encrypt(key: &RsaKey, data: &[u8]) -> Vec<u8> {
+        key.oaep_encrypt(data, HashAlgorithm::Sha1, b"")
+            .expect("Failed to encrypt AES key with RSA public key")
     }
 
     unsafe fn _import_key(
@@ -2016,10 +2005,8 @@ fn test_rsa_2k_decrypt_sha1() {
 
     // Encrypt plaintext using the public key
     let ciphertext = {
-        let rsa = openssl::rsa::Rsa::public_key_from_der(&der_rsa_key_pub).unwrap();
-        let pkey = openssl::pkey::PKey::from_rsa(rsa).unwrap();
-
-        _encrypt(&pkey, &plaintext)
+        let rsa_key = rsa_public_key_from_der(der_rsa_key_pub.as_slice());
+        _encrypt(&rsa_key, &plaintext)
     };
 
     unsafe {
@@ -2030,7 +2017,7 @@ fn test_rsa_2k_decrypt_sha1() {
         let imported_key = _import_key(
             &der_rsa_key_private,
             *azihsm_provider,
-            KeyEncryptionAlgorithm::CKM_RSA_AES_KEY_WRAP,
+            KeyEncryptionAlgorithm::RSA_AES_KEY_WRAP_256,
         );
 
         let result = NCryptSetProperty(
@@ -2293,7 +2280,7 @@ fn test_rsa_2k_encrypt_decrypt_sha256_with_oaep_label() {
 
         // generate a random vector of bytes to use as the OAEP label
         let mut oaep_label: Vec<u8> = vec![0u8; 128];
-        rand_bytes(oaep_label.as_mut_slice()).unwrap();
+        rand_bytes(oaep_label.as_mut_slice()).expect("Failed to generate random bytes");
 
         test_helper_rsa_encrypt_decrypt(
             &key,
@@ -2322,7 +2309,7 @@ fn test_rsa_2k_encrypt_decrypt_sha256_with_oaep_label_crt_enable() {
 
         // generate a random vector of bytes to use as the OAEP label
         let mut oaep_label: Vec<u8> = vec![0u8; 128];
-        rand_bytes(oaep_label.as_mut_slice()).unwrap();
+        rand_bytes(oaep_label.as_mut_slice()).expect("Failed to generate random bytes");
 
         test_helper_rsa_encrypt_decrypt(
             &key,
@@ -2351,7 +2338,7 @@ fn test_rsa_2k_encrypt_decrypt_sha256_with_oaep_label_crt_disable() {
 
         // generate a random vector of bytes to use as the OAEP label
         let mut oaep_label: Vec<u8> = vec![0u8; 128];
-        rand_bytes(oaep_label.as_mut_slice()).unwrap();
+        rand_bytes(oaep_label.as_mut_slice()).expect("Failed to generate random bytes");
 
         test_helper_rsa_encrypt_decrypt(
             &key,
@@ -2596,7 +2583,7 @@ fn test_rsa_3k_encrypt_decrypt_sha256_with_oaep_label() {
 
         // generate a random vector of bytes to use as the OAEP label
         let mut oaep_label: Vec<u8> = vec![0u8; 128];
-        rand_bytes(oaep_label.as_mut_slice()).unwrap();
+        rand_bytes(oaep_label.as_mut_slice()).expect("Failed to generate random bytes");
 
         test_helper_rsa_encrypt_decrypt(
             &key,
@@ -2625,7 +2612,7 @@ fn test_rsa_3k_encrypt_decrypt_sha256_with_oaep_label_crt_enable() {
 
         // generate a random vector of bytes to use as the OAEP label
         let mut oaep_label: Vec<u8> = vec![0u8; 128];
-        rand_bytes(oaep_label.as_mut_slice()).unwrap();
+        rand_bytes(oaep_label.as_mut_slice()).expect("Failed to generate random bytes");
 
         test_helper_rsa_encrypt_decrypt(
             &key,
@@ -2654,7 +2641,7 @@ fn test_rsa_3k_encrypt_decrypt_sha256_with_oaep_label_crt_disable() {
 
         // generate a random vector of bytes to use as the OAEP label
         let mut oaep_label: Vec<u8> = vec![0u8; 128];
-        rand_bytes(oaep_label.as_mut_slice()).unwrap();
+        rand_bytes(oaep_label.as_mut_slice()).expect("Failed to generate random bytes");
 
         test_helper_rsa_encrypt_decrypt(
             &key,
@@ -2899,7 +2886,7 @@ fn test_rsa_4k_encrypt_decrypt_sha256_with_oaep_label() {
 
         // generate a random vector of bytes to use as the OAEP label
         let mut oaep_label: Vec<u8> = vec![0u8; 128];
-        rand_bytes(oaep_label.as_mut_slice()).unwrap();
+        rand_bytes(oaep_label.as_mut_slice()).expect("Failed to generate random bytes");
 
         test_helper_rsa_encrypt_decrypt(
             &key,
@@ -2928,7 +2915,7 @@ fn test_rsa_4k_encrypt_decrypt_sha256_with_oaep_label_crt_enable() {
 
         // generate a random vector of bytes to use as the OAEP label
         let mut oaep_label: Vec<u8> = vec![0u8; 128];
-        rand_bytes(oaep_label.as_mut_slice()).unwrap();
+        rand_bytes(oaep_label.as_mut_slice()).expect("Failed to generate random bytes");
 
         test_helper_rsa_encrypt_decrypt(
             &key,
@@ -2957,7 +2944,7 @@ fn test_rsa_4k_encrypt_decrypt_sha256_with_oaep_label_crt_disable() {
 
         // generate a random vector of bytes to use as the OAEP label
         let mut oaep_label: Vec<u8> = vec![0u8; 128];
-        rand_bytes(oaep_label.as_mut_slice()).unwrap();
+        rand_bytes(oaep_label.as_mut_slice()).expect("Failed to generate random bytes");
 
         test_helper_rsa_encrypt_decrypt(
             &key,
@@ -2988,13 +2975,13 @@ fn test_helper_rsa_encrypt_decrypt_with_tampered_oaep_label(
 
     // generate a random plaintext buffer
     let mut plaintext: Vec<u8> = vec![0u8; 100];
-    rand_bytes(plaintext.as_mut_slice()).unwrap();
+    rand_bytes(plaintext.as_mut_slice()).expect("Failed to generate random bytes");
 
     // generate a random vector of bytes to use as the OAEP label. Make a second
     // copy to pass into the decrypt helper function later, to avoid ownership
     // issues
     let mut oaep_label: Vec<u8> = vec![0u8; 128];
-    rand_bytes(oaep_label.as_mut_slice()).unwrap();
+    rand_bytes(oaep_label.as_mut_slice()).expect("Failed to generate random bytes");
     let mut oaep_label_dec: Vec<u8> = oaep_label.clone();
 
     // call the encryption helper function to encrypt the plaintext
@@ -3167,7 +3154,7 @@ fn test_helper_rsa_encrypt_decrypt_with_paddinginfo_null(
         let mut plaintext = [0u8; 100];
         let mut ciphertext: Vec<u8> = vec![0u8; expected_ciphertext_len];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         let result = NCryptEncrypt(
             target_key.handle(),
@@ -3332,7 +3319,7 @@ fn test_helper_rsa_encrypt_with_invalid_flag(
         let mut plaintext = [0u8; 100];
         let mut ciphertext: Vec<u8> = vec![0u8; expected_ciphertext_len];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         let result = NCryptEncrypt(
             target_key.handle(),
@@ -3511,7 +3498,7 @@ fn test_helper_rsa_decrypt_with_invalid_flag(
         let mut plaintext = [0u8; 100];
         let mut ciphertext: Vec<u8> = vec![0u8; expected_ciphertext_len];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         let result = NCryptEncrypt(
             target_key.handle(),
@@ -3704,7 +3691,7 @@ fn test_helper_rsa_encrypt_with_no_pad_oaep_flag(
         let mut plaintext = [0u8; 100];
         let mut ciphertext: Vec<u8> = vec![0u8; expected_ciphertext_len];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         let result = NCryptEncrypt(
             target_key.handle(),
@@ -3883,7 +3870,7 @@ fn test_helper_rsa_decrypt_with_no_pad_oaep_flag(
         let mut plaintext = [0u8; 100];
         let mut ciphertext: Vec<u8> = vec![0u8; expected_ciphertext_len];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         let result = NCryptEncrypt(
             target_key.handle(),
@@ -4076,7 +4063,7 @@ fn test_helper_rsa_encrypt_decrypt_with_corrupt_ciphertext(
         let mut plaintext = [0u8; 100];
         let mut ciphertext: Vec<u8> = vec![0u8; expected_ciphertext_len];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         let result = NCryptEncrypt(
             target_key.handle(),
@@ -4273,7 +4260,7 @@ fn test_helper_rsa_encrypt_decrypt_with_deleted_key(
         let mut plaintext = [0u8; 100];
         let mut ciphertext: Vec<u8> = vec![0u8; expected_ciphertext_len];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         let result = NCryptEncrypt(
             target_key.handle(),
@@ -4475,7 +4462,7 @@ fn test_helper_rsa_encrypt_decrypt_with_wrong_usage(
         let mut plaintext = [0u8; 100];
         let mut ciphertext: Vec<u8> = vec![0u8; expected_ciphertext_len];
         let mut ciphertext_len = 0u32;
-        rand_bytes(&mut plaintext).unwrap();
+        rand_bytes(&mut plaintext).expect("Failed to generate random bytes");
 
         let result = NCryptEncrypt(
             target_key.handle(),

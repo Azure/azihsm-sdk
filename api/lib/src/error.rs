@@ -222,6 +222,10 @@ pub enum HsmError {
     #[error("rsa from der error")]
     RsaFromDerError,
 
+    /// RSA from raw error
+    #[error("rsa from raw error")]
+    RsaFromRawError,
+
     /// RSA generate error
     #[error("rsa generate error")]
     RsaGenerateError,
@@ -860,6 +864,10 @@ pub enum HsmError {
     #[error("Partition is already provisioned")]
     PartitionAlreadyProvisioned,
 
+    /// Partition is not provisioned
+    #[error("Partition is not provisioned")]
+    PartitionNotProvisioned,
+
     /// Credentials need to be established before opening a session
     #[error("Credentials are not established")]
     CredentialsNotEstablished,
@@ -1098,6 +1106,8 @@ impl HsmError {
             HsmError::InvalidAliasKey => -312,
             HsmError::InvalidPartIdPrivKeyInternalError => -313,
             HsmError::CertificateHashMismatch => -314,
+            HsmError::PartitionNotProvisioned => -315,
+            HsmError::RsaFromRawError => -316,
             HsmError::UnknownError => -999,
         }
     }
@@ -1132,6 +1142,7 @@ impl From<DdiError> for HsmError {
                 DdiStatus::SessionNeedsRenegotiation => HsmError::SessionNeedsRenegotiation,
                 DdiStatus::SealedBk3NotPresent => HsmError::SealedBk3NotPresent,
                 DdiStatus::PartitionAlreadyProvisioned => HsmError::PartitionAlreadyProvisioned,
+                DdiStatus::PartitionNotProvisioned => HsmError::PartitionNotProvisioned,
                 DdiStatus::InvalidPartitionIdContent => HsmError::InvalidPartIdPrivKeyInternalError,
                 DdiStatus::CannotUseDefaultCredentials => HsmError::CannotUseDefaultCredentials,
                 DdiStatus::InvalidManagerCredentials => HsmError::InvalidVaultManagerCredentials,
@@ -1364,7 +1375,10 @@ impl From<DdiError> for HsmError {
                 DdiStatus::MaskedKeyInvalidLength => HsmError::MaskedKeyInvalidLength,
                 DdiStatus::MaskedKeyPreEncodeFailed => HsmError::MaskedKeyPreEncodeFailed,
                 DdiStatus::CredentialsNotEstablished => HsmError::CredentialsNotEstablished,
-                _ => HsmError::UnknownError,
+                _ => {
+                    tracing::warn!("Unknown DdiStatus encountered: {:?}", ddi_status);
+                    HsmError::UnknownError
+                }
             },
             #[cfg(target_os = "linux")]
             DdiError::NixError(err_code) => HsmError::NixError(err_code),

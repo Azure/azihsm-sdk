@@ -11,12 +11,20 @@ use test_with_tracing::test;
 
 use crate::common::*;
 
+static SKIP_COMMON_CLEANUP: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 #[test]
 fn trigger_tdisp_interrupt() {
     ddi_dev_test(
         common_setup,
-        |_, _, _, _| {
-            tracing::warn!("VM is gone. No more common_cleanup");
+        |dev, ddi, path, session_id| {
+            if SKIP_COMMON_CLEANUP.load(std::sync::atomic::Ordering::SeqCst) {
+                tracing::warn!("VM is gone. No more common_cleanup");
+                return;
+            }
+
+            common_cleanup(dev, ddi, path, session_id);
         },
         |dev, _ddi, _path, session_id| {
             if get_device_kind(dev) != DdiDeviceKind::Physical {
@@ -56,6 +64,8 @@ fn trigger_tdisp_interrupt() {
                     return;
                 }
             }
+
+            SKIP_COMMON_CLEANUP.store(true, std::sync::atomic::Ordering::SeqCst);
 
             assert!(resp.is_ok(), "resp {:?}", resp);
         },
