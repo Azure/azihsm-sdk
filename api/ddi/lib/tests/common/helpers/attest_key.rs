@@ -1,6 +1,6 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
 
-use mcr_ddi_sim::report::REPORT_DATA_SIZE;
+use attestation::report::REPORT_DATA_SIZE;
 
 use super::*;
 

@@ -73,7 +73,7 @@ impl EngineCtrlCmdInfo for CmdEvpPKeyRsaImport {
                     digest_kind,
                     key_usage,
                     key_availability,
-                    key_name,
+                    key_name.as_deref(),
                     is_crt,
                 )
             }
@@ -132,7 +132,7 @@ impl EngineCtrlCmdInfo for CmdEvpPKeyEcImport {
                     digest_kind,
                     key_usage,
                     key_availability,
-                    key_name,
+                    key_name.as_deref(),
                 )
             }
             _ => Err(OpenSSLError::InvalidKey),

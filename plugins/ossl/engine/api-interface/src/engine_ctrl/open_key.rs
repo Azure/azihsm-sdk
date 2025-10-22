@@ -8,7 +8,7 @@ use openssl_rust::safeapi::error::OpenSSLError;
 use openssl_rust::safeapi::error::OpenSSLResult;
 
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub fn name_from_ptr(name: *const c_char) -> OpenSSLResult<u16> {
+pub fn name_from_ptr(name: *const c_char) -> OpenSSLResult<Vec<u8>> {
     if name.is_null() {
         Err(OpenSSLError::InvalidKeyName("<null>".to_string()))?;
     }
@@ -17,9 +17,7 @@ pub fn name_from_ptr(name: *const c_char) -> OpenSSLResult<u16> {
     let name = name
         .to_str()
         .map_err(|_| OpenSSLError::InvalidKeyName("<invalid>".to_string()))?;
-    let name = name
-        .parse::<u16>()
-        .map_err(|e| OpenSSLError::InvalidKeyName(format!("{e}")))?;
+    let name = name.as_bytes().to_vec();
     Ok(name)
 }
 

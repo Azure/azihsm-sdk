@@ -1,68 +1,26 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
+// All the constants in this file are used by tests but for some reason clippy still thinks they
+// are not used perhaps due to a bug so we mark whole file with #![allow(dead_code)]
+#![allow(dead_code)]
 
 use std::thread;
 
 use crypto::rand::rand_bytes;
-#[cfg(not(feature = "resilient"))]
 use mcr_api::DigestKind;
-#[cfg(not(feature = "resilient"))]
 use mcr_api::HsmApiRevision;
-#[cfg(not(feature = "resilient"))]
 use mcr_api::HsmAppCredentials;
-#[cfg(not(feature = "resilient"))]
 use mcr_api::HsmDevice;
-#[cfg(not(feature = "resilient"))]
 use mcr_api::HsmError;
-#[cfg(not(feature = "resilient"))]
 use mcr_api::HsmKeyHandle;
-#[cfg(not(feature = "resilient"))]
 use mcr_api::HsmResult;
-#[cfg(not(feature = "resilient"))]
 use mcr_api::HsmSession;
-#[cfg(not(feature = "resilient"))]
 use mcr_api::KeyAvailability;
-#[cfg(not(feature = "resilient"))]
 use mcr_api::KeyClass;
-#[cfg(not(feature = "resilient"))]
 use mcr_api::KeyProperties;
-#[cfg(not(feature = "resilient"))]
 use mcr_api::KeyType;
-#[cfg(not(feature = "resilient"))]
 use mcr_api::KeyUsage;
-#[cfg(not(feature = "resilient"))]
 use mcr_api::RsaCryptoPadding;
-#[cfg(not(feature = "resilient"))]
 use mcr_api::RsaUnwrapParams;
-#[cfg(feature = "resilient")]
-use mcr_api_resilient::DigestKind;
-#[cfg(feature = "resilient")]
-use mcr_api_resilient::HsmApiRevision;
-#[cfg(feature = "resilient")]
-use mcr_api_resilient::HsmAppCredentials;
-#[cfg(feature = "resilient")]
-use mcr_api_resilient::HsmDevice;
-#[cfg(feature = "resilient")]
-use mcr_api_resilient::HsmError;
-#[cfg(feature = "resilient")]
-use mcr_api_resilient::HsmKeyHandle;
-#[cfg(feature = "resilient")]
-use mcr_api_resilient::HsmResult;
-#[cfg(feature = "resilient")]
-use mcr_api_resilient::HsmSession;
-#[cfg(feature = "resilient")]
-use mcr_api_resilient::KeyAvailability;
-#[cfg(feature = "resilient")]
-use mcr_api_resilient::KeyClass;
-#[cfg(feature = "resilient")]
-use mcr_api_resilient::KeyProperties;
-#[cfg(feature = "resilient")]
-use mcr_api_resilient::KeyType;
-#[cfg(feature = "resilient")]
-use mcr_api_resilient::KeyUsage;
-#[cfg(feature = "resilient")]
-use mcr_api_resilient::RsaCryptoPadding;
-#[cfg(feature = "resilient")]
-use mcr_api_resilient::RsaUnwrapParams;
 use mcr_ddi_sim::crypto::aes::*;
 use mcr_ddi_sim::crypto::ecc::*;
 use mcr_ddi_sim::crypto::hmac::HmacOp;
@@ -71,6 +29,20 @@ use mcr_ddi_sim::crypto::secret::*;
 use mcr_ddi_sim::crypto::sha::HashAlgorithm;
 use rand::prelude::*;
 use uuid::Uuid;
+
+cfg_if::cfg_if! {
+    if #[cfg(feature = "mock")] {
+        use mcr_ddi::Ddi;
+        use mcr_ddi::DdiDev;
+        use mcr_ddi_types::*;
+        pub type DdiLibTest = mcr_ddi_mock::DdiMock;
+    } else if #[cfg(target_os = "linux")] {
+        pub type DdiLibTest = mcr_ddi_nix::DdiNix;
+    }
+    else if #[cfg(target_os = "windows")] {
+        pub type DdiLibTest = mcr_ddi_win::DdiWin;
+    }
+}
 
 // Keys to import have to be in DER PKCS#8 format.
 // TEST RSA KEY GENERATE STEPS:
@@ -93,10 +65,7 @@ use uuid::Uuid;
 // xxd -i enc2k.bin
 // xxd -i dec2k.bin
 //
-
-#[cfg(test)]
-#[allow(dead_code)]
-pub(crate) const TEST_RSA_2K_PRIVATE_KEY: [u8; 1214] = [
+pub const TEST_RSA_2K_PRIVATE_KEY: [u8; 1214] = [
     0x30, 0x82, 0x04, 0xba, 0x02, 0x01, 0x00, 0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7,
     0x0d, 0x01, 0x01, 0x01, 0x05, 0x00, 0x04, 0x82, 0x04, 0xa4, 0x30, 0x82, 0x04, 0xa0, 0x02, 0x01,
     0x00, 0x02, 0x82, 0x01, 0x01, 0x00, 0xe1, 0x60, 0x77, 0xe2, 0x62, 0x3f, 0x84, 0x56, 0xc9, 0x2a,
@@ -175,8 +144,7 @@ pub(crate) const TEST_RSA_2K_PRIVATE_KEY: [u8; 1214] = [
     0x6f, 0x46, 0xb1, 0x13, 0x32, 0x5c, 0x5e, 0x07, 0xea, 0x74, 0x02, 0x45, 0xce, 0x87,
 ];
 
-#[allow(dead_code)]
-pub(crate) const TEST_RSA_2K_PUBLIC_KEY: [u8; 294] = [
+pub const TEST_RSA_2K_PUBLIC_KEY: [u8; 294] = [
     0x30, 0x82, 0x01, 0x22, 0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01,
     0x01, 0x05, 0x00, 0x03, 0x82, 0x01, 0x0f, 0x00, 0x30, 0x82, 0x01, 0x0a, 0x02, 0x82, 0x01, 0x01,
     0x00, 0xe1, 0x60, 0x77, 0xe2, 0x62, 0x3f, 0x84, 0x56, 0xc9, 0x2a, 0xc1, 0xf2, 0x09, 0x9e, 0x97,
@@ -198,8 +166,7 @@ pub(crate) const TEST_RSA_2K_PUBLIC_KEY: [u8; 294] = [
     0xc9, 0x02, 0x03, 0x01, 0x00, 0x01,
 ];
 
-#[allow(dead_code)]
-pub(crate) const TEST_RSA_3K_PRIVATE_KEY: [u8; 1793] = [
+pub const TEST_RSA_3K_PRIVATE_KEY: [u8; 1793] = [
     0x30, 0x82, 0x06, 0xfd, 0x02, 0x01, 0x00, 0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7,
     0x0d, 0x01, 0x01, 0x01, 0x05, 0x00, 0x04, 0x82, 0x06, 0xe7, 0x30, 0x82, 0x06, 0xe3, 0x02, 0x01,
     0x00, 0x02, 0x82, 0x01, 0x81, 0x00, 0xcf, 0xa2, 0xe7, 0x8f, 0x36, 0x38, 0xc8, 0xf4, 0xf9, 0xa5,
@@ -315,8 +282,7 @@ pub(crate) const TEST_RSA_3K_PRIVATE_KEY: [u8; 1793] = [
     0x38,
 ];
 
-#[allow(dead_code)]
-pub(crate) const TEST_RSA_3K_PUBLIC_KEY: [u8; 422] = [
+pub const TEST_RSA_3K_PUBLIC_KEY: [u8; 422] = [
     0x30, 0x82, 0x01, 0xa2, 0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01,
     0x01, 0x05, 0x00, 0x03, 0x82, 0x01, 0x8f, 0x00, 0x30, 0x82, 0x01, 0x8a, 0x02, 0x82, 0x01, 0x81,
     0x00, 0xcf, 0xa2, 0xe7, 0x8f, 0x36, 0x38, 0xc8, 0xf4, 0xf9, 0xa5, 0x03, 0xfa, 0x64, 0x75, 0x1d,
@@ -346,8 +312,7 @@ pub(crate) const TEST_RSA_3K_PUBLIC_KEY: [u8; 422] = [
     0x3d, 0x02, 0x03, 0x01, 0x00, 0x01,
 ];
 
-#[allow(dead_code)]
-pub(crate) const TEST_RSA_4K_PRIVATE_KEY: [u8; 2375] = [
+pub const TEST_RSA_4K_PRIVATE_KEY: [u8; 2375] = [
     0x30, 0x82, 0x09, 0x43, 0x02, 0x01, 0x00, 0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7,
     0x0d, 0x01, 0x01, 0x01, 0x05, 0x00, 0x04, 0x82, 0x09, 0x2d, 0x30, 0x82, 0x09, 0x29, 0x02, 0x01,
     0x00, 0x02, 0x82, 0x02, 0x01, 0x00, 0xc8, 0x51, 0xcf, 0xa8, 0x62, 0x9f, 0x0a, 0x4c, 0xa3, 0x6d,
@@ -499,8 +464,7 @@ pub(crate) const TEST_RSA_4K_PRIVATE_KEY: [u8; 2375] = [
     0xe8, 0x91, 0x43, 0x3e, 0xfb, 0x72, 0x2b,
 ];
 
-#[allow(dead_code)]
-pub(crate) const TEST_RSA_4K_PUBLIC_KEY: [u8; 550] = [
+pub const TEST_RSA_4K_PUBLIC_KEY: [u8; 550] = [
     0x30, 0x82, 0x02, 0x22, 0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01,
     0x01, 0x05, 0x00, 0x03, 0x82, 0x02, 0x0f, 0x00, 0x30, 0x82, 0x02, 0x0a, 0x02, 0x82, 0x02, 0x01,
     0x00, 0xc8, 0x51, 0xcf, 0xa8, 0x62, 0x9f, 0x0a, 0x4c, 0xa3, 0x6d, 0x30, 0x29, 0x65, 0x40, 0x00,
@@ -546,9 +510,7 @@ pub(crate) const TEST_RSA_4K_PUBLIC_KEY: [u8; 550] = [
 // TEST ECC KEY ARRAY CONVERSION STEPS:
 // xxd -i public_ec_key_test.der
 // xxd -i ec_private_pk8.der
-
-#[allow(dead_code)]
-pub(crate) const TEST_ECC_256_PRIVATE_KEY: [u8; 138] = [
+pub const TEST_ECC_256_PRIVATE_KEY: [u8; 138] = [
     0x30, 0x81, 0x87, 0x02, 0x01, 0x00, 0x30, 0x13, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02,
     0x01, 0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, 0x04, 0x6d, 0x30, 0x6b, 0x02,
     0x01, 0x01, 0x04, 0x20, 0x87, 0x59, 0x09, 0x7e, 0x21, 0xd7, 0xb2, 0x92, 0xce, 0x88, 0x13, 0xf2,
@@ -560,8 +522,7 @@ pub(crate) const TEST_ECC_256_PRIVATE_KEY: [u8; 138] = [
     0x79, 0x41, 0xc1, 0x20, 0xf1, 0x56, 0x23, 0x0f, 0x51, 0x0b,
 ];
 
-#[allow(dead_code)]
-pub(crate) const TEST_ECC_256_PUBLIC_KEY: [u8; 91] = [
+pub const TEST_ECC_256_PUBLIC_KEY: [u8; 91] = [
     0x30, 0x59, 0x30, 0x13, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, 0x06, 0x08, 0x2a,
     0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, 0x03, 0x42, 0x00, 0x04, 0xb0, 0x51, 0x4f, 0x91, 0x20,
     0x67, 0x1e, 0xd0, 0xfd, 0xab, 0x69, 0x81, 0x8f, 0xd3, 0x67, 0xca, 0xc1, 0x8b, 0x4e, 0x8b, 0x20,
@@ -570,8 +531,7 @@ pub(crate) const TEST_ECC_256_PUBLIC_KEY: [u8; 91] = [
     0x3e, 0x79, 0x41, 0xc1, 0x20, 0xf1, 0x56, 0x23, 0x0f, 0x51, 0x0b,
 ];
 
-#[allow(dead_code)]
-pub(crate) const TEST_ECC_384_PRIVATE_KEY: [u8; 185] = [
+pub const TEST_ECC_384_PRIVATE_KEY: [u8; 185] = [
     0x30, 0x81, 0xb6, 0x02, 0x01, 0x00, 0x30, 0x10, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02,
     0x01, 0x06, 0x05, 0x2b, 0x81, 0x04, 0x00, 0x22, 0x04, 0x81, 0x9e, 0x30, 0x81, 0x9b, 0x02, 0x01,
     0x01, 0x04, 0x30, 0xce, 0xbc, 0xbb, 0x90, 0x3d, 0x9a, 0x1d, 0x46, 0xd9, 0x59, 0x15, 0x16, 0xf9,
@@ -586,8 +546,7 @@ pub(crate) const TEST_ECC_384_PRIVATE_KEY: [u8; 185] = [
     0x9c, 0x10, 0x07, 0xf7, 0x0e, 0xc7, 0x62, 0x42, 0xe0,
 ];
 
-#[allow(dead_code)]
-pub(crate) const TEST_ECC_384_PUBLIC_KEY: [u8; 120] = [
+pub const TEST_ECC_384_PUBLIC_KEY: [u8; 120] = [
     0x30, 0x76, 0x30, 0x10, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, 0x06, 0x05, 0x2b,
     0x81, 0x04, 0x00, 0x22, 0x03, 0x62, 0x00, 0x04, 0xe4, 0x20, 0x9a, 0xd7, 0x07, 0xa4, 0x88, 0x1a,
     0xff, 0xf0, 0x12, 0x61, 0x92, 0xc7, 0x9d, 0x83, 0x77, 0x49, 0x21, 0xcc, 0x5d, 0xf3, 0xb9, 0x21,
@@ -598,8 +557,7 @@ pub(crate) const TEST_ECC_384_PUBLIC_KEY: [u8; 120] = [
     0x10, 0x07, 0xf7, 0x0e, 0xc7, 0x62, 0x42, 0xe0,
 ];
 
-#[allow(dead_code)]
-pub(crate) const TEST_ECC_521_PRIVATE_KEY: [u8; 241] = [
+pub const TEST_ECC_521_PRIVATE_KEY: [u8; 241] = [
     0x30, 0x81, 0xee, 0x02, 0x01, 0x00, 0x30, 0x10, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02,
     0x01, 0x06, 0x05, 0x2b, 0x81, 0x04, 0x00, 0x23, 0x04, 0x81, 0xd6, 0x30, 0x81, 0xd3, 0x02, 0x01,
     0x01, 0x04, 0x42, 0x01, 0xc5, 0x2a, 0xa1, 0xd5, 0x11, 0x60, 0x7a, 0x8c, 0x7e, 0x70, 0x79, 0xc2,
@@ -618,8 +576,7 @@ pub(crate) const TEST_ECC_521_PRIVATE_KEY: [u8; 241] = [
     0xe7,
 ];
 
-#[allow(dead_code)]
-pub(crate) const TEST_ECC_521_PUBLIC_KEY: [u8; 158] = [
+pub const TEST_ECC_521_PUBLIC_KEY: [u8; 158] = [
     0x30, 0x81, 0x9b, 0x30, 0x10, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, 0x06, 0x05,
     0x2b, 0x81, 0x04, 0x00, 0x23, 0x03, 0x81, 0x86, 0x00, 0x04, 0x01, 0x96, 0x7b, 0x85, 0xda, 0x42,
     0x97, 0xa0, 0x79, 0xfd, 0x6f, 0x69, 0x1b, 0x2a, 0xc2, 0x8a, 0x44, 0xba, 0xb8, 0x2b, 0x78, 0x9b,
@@ -641,14 +598,12 @@ pub(crate) const TEST_ECC_521_PUBLIC_KEY: [u8; 158] = [
 // 6- cat ephemeral_aes_wrapped_by_TEST_RSA_2K_PUBLIC_KEY TEST_RSA_3K_PRIVATE_KEY_wrapped_der > final_TEST_RSA_3K_PRIVATE_KEY_wrapped_der
 // 7- hexdump -v -e '/1 "0x%02X,"' < final_TEST_RSA_3K_PRIVATE_KEY_wrapped_der > final_TEST_RSA_3K_PRIVATE_KEY_wrapped_der.hex
 // 8- Copy the content of final_TEST_RSA_3K_PRIVATE_KEY_wrapped_der.hex into TEST_RSA_3K_PRIVATE_CKM_WRAPPED variable.
-#[allow(dead_code)]
-pub(crate) const TEST_EPHEMERAL_AES: [u8; 32] = [
+pub const TEST_EPHEMERAL_AES: [u8; 32] = [
     0x02, 0x9A, 0xD6, 0x07, 0x10, 0x43, 0x01, 0xFE, 0x11, 0xC1, 0x6A, 0x62, 0x18, 0x86, 0x4E, 0x8F,
     0x28, 0x22, 0x3A, 0xE7, 0x46, 0x88, 0x09, 0x6F, 0x15, 0x60, 0xD5, 0xCB, 0xBE, 0x43, 0x22, 0xD1,
 ];
 
-#[allow(dead_code)]
-pub(crate) const TEST_RSA_3K_PRIVATE_CKM_WRAPPED: [u8; 2064] = [
+pub const TEST_RSA_3K_PRIVATE_CKM_WRAPPED: [u8; 2064] = [
     0xE0, 0x3C, 0xF5, 0xE6, 0xF6, 0xE6, 0xF0, 0x52, 0xD6, 0x7D, 0x4F, 0xCD, 0x27, 0xC0, 0x47, 0x9D,
     0xEE, 0x85, 0x0F, 0xFB, 0x07, 0xDE, 0xC1, 0xEB, 0xC1, 0xA7, 0x5E, 0xEE, 0x84, 0x0C, 0xD9, 0xA9,
     0x4F, 0x03, 0x3C, 0x60, 0x39, 0x87, 0x8E, 0xC9, 0x51, 0x2C, 0x52, 0xB5, 0x5B, 0x6D, 0x8B, 0x1B,
@@ -780,15 +735,13 @@ pub(crate) const TEST_RSA_3K_PRIVATE_CKM_WRAPPED: [u8; 2064] = [
     0x5C, 0x2A, 0x76, 0x8D, 0x0A, 0x17, 0xFF, 0x7E, 0xD9, 0x7F, 0x7C, 0x55, 0x8F, 0x55, 0xB5, 0x31,
 ];
 
-#[allow(dead_code)]
-pub(crate) const TEST_AES_256: [u8; 32] = [
+pub const TEST_AES_256: [u8; 32] = [
     0x69, 0xe4, 0x04, 0xf9, 0xa6, 0x09, 0x5a, 0x04, 0xd0, 0xd6, 0x59, 0xdf, 0xfe, 0xb4, 0x44, 0x12,
     0xc3, 0x33, 0x35, 0x71, 0xf2, 0xed, 0x0f, 0x42, 0x38, 0x82, 0x3c, 0x66, 0x76, 0x2d, 0x11, 0x76,
 ];
 
 // `TEST_AES_256` wrapped by `TEST_EPHEMERAL_AES` and `TEST_RSA_2K_PUBLIC_KEY``
-#[allow(dead_code)]
-pub(crate) const TEST_AES_256_CKM_WRAPPED: [u8; 296] = [
+pub const TEST_AES_256_CKM_WRAPPED: [u8; 296] = [
     0x51, 0xb3, 0x22, 0x98, 0xc5, 0x9f, 0xab, 0x74, 0x33, 0x62, 0xae, 0xf2, 0x7d, 0xe3, 0x26, 0x9b,
     0xab, 0x16, 0xf9, 0x67, 0xc5, 0x72, 0x46, 0xa2, 0x9a, 0xa5, 0x1f, 0xb1, 0x63, 0xbd, 0xd6, 0xd9,
     0x84, 0x5d, 0x19, 0x34, 0x31, 0x49, 0x7c, 0x12, 0x3d, 0xdc, 0xab, 0xda, 0x22, 0x2e, 0xe6, 0x48,
@@ -810,37 +763,26 @@ pub(crate) const TEST_AES_256_CKM_WRAPPED: [u8; 296] = [
     0xa2, 0x45, 0x16, 0xba, 0x10, 0xec, 0x4e, 0x07,
 ];
 
-#[allow(dead_code)]
-pub(crate) const OAEP_PADDING_BUFFING_LEN: usize = 66;
-#[allow(dead_code)]
-pub(crate) const RSA_2K_DATA_SIZE_LIMIT: usize = 256;
-#[allow(dead_code)]
-pub(crate) const RSA_3K_DATA_SIZE_LIMIT: usize = 384;
-#[allow(dead_code)]
-pub(crate) const RSA_4K_DATA_SIZE_LIMIT: usize = 512;
+pub const OAEP_PADDING_BUFFING_LEN: usize = 66;
 
-#[allow(dead_code)]
-pub(crate) const ECC256_DATA_LEN_LIMIT: usize = 32;
-#[allow(dead_code)]
-pub(crate) const ECC256_SIG_LEN_LIMIT: usize = 64;
-#[allow(dead_code)]
-pub(crate) const ECC384_DATA_LEN_LIMIT: usize = 48;
-#[allow(dead_code)]
-pub(crate) const ECC384_SIG_LEN_LIMIT: usize = 96;
-#[allow(dead_code)]
-pub(crate) const ECC521_DATA_LEN_LIMIT: usize = 64;
-#[allow(dead_code)]
-pub(crate) const ECC521_SIG_LEN_LIMIT: usize = 132;
+pub const RSA_2K_DATA_SIZE_LIMIT: usize = 256;
+pub const RSA_3K_DATA_SIZE_LIMIT: usize = 384;
+pub const RSA_4K_DATA_SIZE_LIMIT: usize = 512;
 
-#[allow(dead_code)]
-pub(crate) const MAX_SESSIONS: usize = 8;
+pub const ECC256_DATA_LEN_LIMIT: usize = 32;
+pub const ECC256_SIG_LEN_LIMIT: usize = 64;
+pub const ECC384_DATA_LEN_LIMIT: usize = 48;
+pub const ECC384_SIG_LEN_LIMIT: usize = 96;
+pub const ECC521_DATA_LEN_LIMIT: usize = 64;
+pub const ECC521_SIG_LEN_LIMIT: usize = 132;
+
+pub const MAX_SESSIONS: usize = 8;
 
 /// cleanup function
 /// Cleanup function that all tests in this
 /// module call to cleanup resources allocated
 /// this ensures that the next test can run
-#[allow(dead_code)]
-pub(crate) fn cleanup(
+pub fn cleanup(
     mut app_session: HsmSession,
     _api_rev: HsmApiRevision,
     _device: HsmDevice,
@@ -850,7 +792,8 @@ pub(crate) fn cleanup(
     let result = app_session.close_session();
     assert!(result.is_ok(), "result {:?}", result);
 }
-/// This  function generates wrapped data,
+
+/// This function generates wrapped data,
 /// wraps it using input wrapping_key_der using OpenSSL,
 /// then returns the wrapped data, and the counterpart public key
 ///
@@ -859,8 +802,7 @@ pub(crate) fn cleanup(
 ///
 /// # Returns
 /// * `(Vec<u8>)` - The wrapped data blob,
-#[allow(dead_code)]
-pub(crate) fn wrap_data(wrapping_pub_key_der: Vec<u8>, data: &[u8]) -> Vec<u8> {
+pub fn wrap_data(wrapping_pub_key_der: Vec<u8>, data: &[u8]) -> Vec<u8> {
     let ace_binding = generate_aes(KeyType::Aes256);
     let aes_key = ace_binding.as_slice();
 
@@ -923,8 +865,7 @@ pub fn get_unwrapping_key(session: &HsmSession) -> HsmKeyHandle {
 ///* `target_key_usage` - Target Key usage
 /// # Returns
 /// * `HsmKeyHandle` - Unwrapped Key Handle
-#[allow(dead_code)]
-pub(crate) fn rsa_unwrap_from_wrap_data(
+pub fn rsa_unwrap_from_wrap_data(
     app_session: &HsmSession,
     key_type: KeyType,
     hash_algorithm: DigestKind,
@@ -1001,8 +942,7 @@ pub(crate) fn rsa_unwrap_from_wrap_data(
     )
 }
 
-#[allow(dead_code)]
-pub(crate) fn generate_aes(key_type: KeyType) -> Vec<u8> {
+pub fn generate_aes(key_type: KeyType) -> Vec<u8> {
     let buf_len = match key_type {
         KeyType::Aes128 => 16,
         KeyType::Aes192 => 24,
@@ -1027,8 +967,7 @@ pub(crate) fn generate_aes(key_type: KeyType) -> Vec<u8> {
 ///
 /// # Errors
 /// * `ManticoreError::RsaGenerateError` - If the RSA key pair generation fails.
-#[allow(dead_code)]
-pub(crate) fn generate_rsa_der(key_type: KeyType) -> (Vec<u8>, Vec<u8>) {
+pub fn generate_rsa_der(key_type: KeyType) -> (Vec<u8>, Vec<u8>) {
     // Rsa::generate() uses 65537 as public exponent
 
     let size = match key_type {
@@ -1060,9 +999,7 @@ pub(crate) fn generate_rsa_der(key_type: KeyType) -> (Vec<u8>, Vec<u8>) {
 ///
 /// # Returns
 /// * `(EccPrivateKey, EccPublicKey)` - Generated ECC key pair.
-///
-#[allow(dead_code)]
-pub(crate) fn generate_ecc_der(key_type: KeyType) -> (Vec<u8>, Vec<u8>) {
+pub fn generate_ecc_der(key_type: KeyType) -> (Vec<u8>, Vec<u8>) {
     let curve_name = match key_type {
         KeyType::Ecc256Private | KeyType::Secret256 | KeyType::Ecc256Public => EccCurve::P256,
         KeyType::Ecc384Private | KeyType::Secret384 | KeyType::Ecc384Public => EccCurve::P384,
@@ -1082,8 +1019,7 @@ pub(crate) fn generate_ecc_der(key_type: KeyType) -> (Vec<u8>, Vec<u8>) {
     )
 }
 
-#[allow(dead_code)]
-pub(crate) fn ecdh_derive(ecc_priv_der: &[u8], ecc_pub_der: &[u8]) -> Vec<u8> {
+pub fn ecdh_derive(ecc_priv_der: &[u8], ecc_pub_der: &[u8]) -> Vec<u8> {
     let ecc_priv = EccPrivateKey::from_der(ecc_priv_der, None)
         .expect("Failed to create ECC Private Key from DER");
 
@@ -1095,8 +1031,7 @@ pub(crate) fn ecdh_derive(ecc_priv_der: &[u8], ecc_pub_der: &[u8]) -> Vec<u8> {
         .expect("Failed to derive shared secret")
 }
 
-#[allow(dead_code)]
-pub(crate) fn hkdf_derive(
+pub fn hkdf_derive(
     data: &[u8],
     salt: Option<&[u8]>,
     info: Option<&[u8]>,
@@ -1118,8 +1053,7 @@ pub(crate) fn hkdf_derive(
         .expect("Failed to derive HKDF")
 }
 
-#[allow(dead_code)]
-pub(crate) fn hmac(key: &[u8], msg: &[u8]) -> Vec<u8> {
+pub fn hmac(key: &[u8], msg: &[u8]) -> Vec<u8> {
     let hash_algorithm = match key.len() {
         32 => mcr_ddi_sim::crypto::sha::HashAlgorithm::Sha256,
         48 => mcr_ddi_sim::crypto::sha::HashAlgorithm::Sha384,
@@ -1135,8 +1069,7 @@ pub(crate) fn hmac(key: &[u8], msg: &[u8]) -> Vec<u8> {
         .expect("Failed to compute HMAC")
 }
 
-#[allow(dead_code)]
-pub(crate) fn aes_encrypt_cbc(key: &[u8], data: &[u8], iv: Option<&[u8]>) -> Vec<u8> {
+pub fn aes_encrypt_cbc(key: &[u8], data: &[u8], iv: Option<&[u8]>) -> Vec<u8> {
     let aes_key = AesKey::from_bytes(key).expect("Failed to create AES key");
 
     aes_key
@@ -1145,8 +1078,7 @@ pub(crate) fn aes_encrypt_cbc(key: &[u8], data: &[u8], iv: Option<&[u8]>) -> Vec
         .cipher_text
 }
 
-#[allow(dead_code)]
-pub(crate) fn aes_decrypt_cbc(key: &[u8], data: &[u8], iv: Option<&[u8]>) -> Vec<u8> {
+pub fn aes_decrypt_cbc(key: &[u8], data: &[u8], iv: Option<&[u8]>) -> Vec<u8> {
     let aes_key = AesKey::from_bytes(key).expect("Failed to create AES key");
 
     aes_key
@@ -1155,8 +1087,7 @@ pub(crate) fn aes_decrypt_cbc(key: &[u8], data: &[u8], iv: Option<&[u8]>) -> Vec
         .plain_text
 }
 
-#[allow(dead_code)]
-pub(crate) fn generate_random_vector(size: usize) -> Vec<u8> {
+pub fn generate_random_vector(size: usize) -> Vec<u8> {
     // Create a random number generator
     let mut rng = rand::thread_rng();
 
@@ -1166,8 +1097,6 @@ pub(crate) fn generate_random_vector(size: usize) -> Vec<u8> {
     random_vector
 }
 
-#[cfg(test)]
-#[allow(dead_code)]
 pub fn api_test(
     setup: fn(&HsmDevice, &str),
     cleanup: fn(&HsmDevice, &str),
@@ -1189,34 +1118,26 @@ pub fn api_test(
     }
 }
 
-#[allow(dead_code)]
 // 70FCF730-B876-4238-B835-8010CE8A3F76
-pub(crate) const TEST_CRED_ID: [u8; 16] = [
+pub const TEST_CRED_ID: [u8; 16] = [
     0x70, 0xFC, 0xF7, 0x30, 0xB8, 0x76, 0x42, 0x38, 0xB8, 0x35, 0x80, 0x10, 0xCE, 0x8A, 0x3F, 0x76,
 ];
 
-#[allow(dead_code)]
 // DB3DC77F-C22E-4300-80D4-1B31B6F04800
-pub(crate) const TEST_CRED_PIN: [u8; 16] = [
+pub const TEST_CRED_PIN: [u8; 16] = [
     0xDB, 0x3D, 0xC7, 0x7F, 0xC2, 0x2E, 0x43, 0x00, 0x80, 0xD4, 0x1B, 0x31, 0xB6, 0xF0, 0x48, 0x00,
 ];
 
-#[cfg(test)]
-#[allow(dead_code)]
-pub(crate) const TEST_APP_CREDENTIALS: HsmAppCredentials = HsmAppCredentials {
+pub const TEST_APP_CREDENTIALS: HsmAppCredentials = HsmAppCredentials {
     id: Uuid::from_bytes(TEST_CRED_ID),
     pin: TEST_CRED_PIN,
 };
 
-#[cfg(test)]
-#[allow(dead_code)]
-pub(crate) const TEST_APP_CREDENTIALS_2: HsmAppCredentials = HsmAppCredentials {
+pub const TEST_APP_CREDENTIALS_2: HsmAppCredentials = HsmAppCredentials {
     id: Uuid::from_bytes([0x2; 16]),
     pin: [0x5; 16],
 };
 
-#[cfg(test)]
-#[allow(dead_code)]
 pub fn common_setup(_device: &HsmDevice, path: &str) {
     let result = HsmDevice::open(path);
     assert!(result.is_ok(), "result {:?}", result);
@@ -1253,12 +1174,8 @@ pub fn common_setup(_device: &HsmDevice, path: &str) {
     println!("establish credential succeeded");
 }
 
-#[cfg(test)]
-#[allow(dead_code)]
 pub fn common_cleanup(_device: &HsmDevice, _path: &str) {}
 
-#[cfg(test)]
-#[allow(dead_code)]
 pub fn common_open_app_session(device: &HsmDevice) -> HsmSession {
     let result = device.open_session(device.get_api_revision_range().max, TEST_APP_CREDENTIALS);
     assert!(result.is_ok(), "result {:?}", result);
@@ -1267,8 +1184,6 @@ pub fn common_open_app_session(device: &HsmDevice) -> HsmSession {
 }
 
 // Helper to establish credential; returns masked bk3
-#[cfg(test)]
-#[allow(dead_code)]
 pub fn common_establish_credential(device: &HsmDevice, bk3: &[u8]) -> Vec<u8> {
     // Establish credential can only happen once so it could fail
     // in future instances so ignore error
@@ -1289,4 +1204,46 @@ pub fn common_establish_credential(device: &HsmDevice, bk3: &[u8]) -> Vec<u8> {
 
     println!("establish credential succeeded");
     masked_bk3
+}
+
+// Helper function to migrate and reestablish credentials
+#[cfg(feature = "mock")]
+pub fn common_simulate_lm_reestablish_cred(
+    path: &str,
+    masked_bk3: Vec<u8>,
+) -> Result<(), HsmError> {
+    let ddi = DdiLibTest::default();
+    let mut ddi_device = ddi.open_dev(path).map_err(HsmError::from)?;
+
+    common_set_device_kind(&mut ddi_device).map_err(|_e| HsmError::InternalError)?;
+
+    ddi_device
+        .simulate_nssr_after_lm()
+        .map_err(HsmError::from)?;
+    let hsm = HsmDevice::open(path)?;
+    let api_rev = hsm.get_api_revision_range().max;
+
+    hsm.establish_credential(api_rev, TEST_APP_CREDENTIALS, masked_bk3, None, None)?;
+
+    Ok(())
+}
+
+/// Helper function to set device kind by querying device info
+#[cfg(feature = "mock")]
+pub fn common_set_device_kind(
+    device: &mut <DdiLibTest as Ddi>::Dev,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let req = DdiGetDeviceInfoCmdReq {
+        hdr: DdiReqHdr {
+            op: DdiOp::GetDeviceInfo,
+            sess_id: None,
+            rev: Some(DdiApiRev { major: 1, minor: 0 }),
+        },
+        data: DdiGetDeviceInfoReq {},
+        ext: None,
+    };
+    let mut cookie = None;
+    let resp_info = device.exec_op(&req, &mut cookie)?;
+    device.set_device_kind(resp_info.data.kind);
+    Ok(())
 }

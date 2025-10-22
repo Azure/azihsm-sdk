@@ -9,5 +9,4 @@ target_sources(
     PKeyRsaAttest.cpp
     RsaAttest.cpp
     CtrlInfo.cpp
-    GetUnwrapKey.cpp
-    GetCollateral.cpp)
+    GetUnwrapKey.cpp)

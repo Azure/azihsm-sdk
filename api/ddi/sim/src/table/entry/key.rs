@@ -2,11 +2,16 @@
 
 //! Module for Cryptographic Key Handles.
 
+use attestation::attestation::CoseKey;
+
 use crate::crypto::aes::AesKey;
 use crate::crypto::aeshmac::AesHmacKey;
+use crate::crypto::ecc::EccCurve;
+use crate::crypto::ecc::EccOp;
 use crate::crypto::ecc::EccPrivateKey;
 use crate::crypto::ecc::EccPublicKey;
 use crate::crypto::hmac::HmacKey;
+use crate::crypto::rsa::RsaOp;
 use crate::crypto::rsa::RsaPrivateKey;
 use crate::crypto::rsa::RsaPublicKey;
 use crate::crypto::secret::SecretKey;
@@ -115,5 +120,71 @@ impl KeySerialization<Key> for Key {
         };
 
         Ok(imported_key)
+    }
+}
+
+impl TryFrom<&Key> for CoseKey {
+    type Error = ManticoreError;
+    fn try_from(key: &Key) -> Result<Self, Self::Error> {
+        match key {
+            Key::RsaPrivate(key) => {
+                let n = key.modulus()?;
+                let e = key.public_exponent()?;
+
+                Ok(Self::RsaPublic { n, e })
+            }
+            Key::RsaPublic(key) => {
+                let n = key.modulus()?;
+                let e = key.public_exponent()?;
+
+                Ok(Self::RsaPublic { n, e })
+            }
+            Key::EccPrivate(key) => {
+                let curve_name = key.curve()?;
+
+                // Based on Table 18, https://www.rfc-editor.org/rfc/rfc9053.html
+                let crv = match curve_name {
+                    EccCurve::P256 => 1,
+                    EccCurve::P384 => 2,
+                    EccCurve::P521 => 3,
+                };
+
+                let (x, y) = key.coordinates()?;
+
+                Ok(Self::EccPublic { crv, x, y })
+            }
+            Key::EccPublic(key) => {
+                let curve_name = key.curve()?;
+
+                // Based on Table 18, https://www.rfc-editor.org/rfc/rfc9053.html
+                let crv = match curve_name {
+                    EccCurve::P256 => 1,
+                    EccCurve::P384 => 2,
+                    EccCurve::P521 => 3,
+                };
+
+                let (x, y) = key.coordinates()?;
+
+                Ok(Self::EccPublic { crv, x, y })
+            }
+            Key::Aes(_) => {
+                tracing::error!(error = ?ManticoreError::InvalidKeyType, "Key to be attested cannot be an AES key");
+                Err(ManticoreError::InvalidKeyType)
+            }
+            Key::AesHmac(_) => {
+                tracing::error!(error = ?ManticoreError::InvalidKeyType, "Key to be attested cannot be an AES-HMAC key");
+                Err(ManticoreError::InvalidKeyType)
+            }
+            Key::Secret(_) => {
+                tracing::error!(error = ?ManticoreError::InvalidKeyType, "Key to be attested cannot be a Secret key");
+                Err(ManticoreError::InvalidKeyType)
+            }
+            Key::Hmac(_) => {
+                tracing::error!(error = ?ManticoreError::InvalidKeyType, "Key to be attested cannot be an HMAC key");
+                Err(ManticoreError::InvalidKeyType)
+            }
+
+            Key::Session(_) => Err(ManticoreError::InvalidKeyType),
+        }
     }
 }

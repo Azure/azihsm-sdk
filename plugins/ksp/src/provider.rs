@@ -17,7 +17,6 @@ use mcr_api_resilient::HsmAppCredentials;
 use mcr_api_resilient::HsmDevice;
 use mcr_api_resilient::HsmSession;
 use mcr_api_resilient::KeyType;
-use mcr_api_resilient::ManticoreCertificate;
 use mcr_api_resilient::RsaSignaturePadding;
 use p256::pkcs8::DecodePublicKey;
 use parking_lot::RwLock;
@@ -38,7 +37,6 @@ use windows::core::HRESULT;
 use windows::core::PCWSTR;
 use windows::Win32::Security::Cryptography::*;
 
-use super::AZIHSM_DEVICE_CERT_CHAIN_PROPERTY;
 use super::AZIHSM_DEVICE_MAX_KEY_COUNT_PROPERTY;
 use super::AZIHSM_DEVICE_MAX_STORAGE_SIZE_PROPERTY;
 use super::BCRYPT_PKCS11_RSA_AES_WRAP_BLOB;
@@ -91,17 +89,14 @@ const SUPPORTED_API_REV_RANGE: HsmApiRevisionRange = HsmApiRevisionRange {
 
 #[derive(Debug, PartialEq)]
 pub(crate) enum ProviderPropertyIdentifier {
-    AzIHsmDeviceCertChain, // AZIHSM_DEVICE_CERT_CHAIN_PROPERTY
-    AziHsmMaxKeyCount,     // AZIHSM_DEVICE_MAX_KEY_COUNT_PROPERTY
-    AziHsmMaxStorageSize,  // AZIHSM_DEVICE_MAX_STORAGE_SIZE_PROPERTY
+    AziHsmMaxKeyCount,    // AZIHSM_DEVICE_MAX_KEY_COUNT_PROPERTY
+    AziHsmMaxStorageSize, // AZIHSM_DEVICE_MAX_STORAGE_SIZE_PROPERTY
     Unknown,
 }
 
 impl From<PCWSTR> for ProviderPropertyIdentifier {
     fn from(id: PCWSTR) -> ProviderPropertyIdentifier {
-        if pcwstr::equals(id, AZIHSM_DEVICE_CERT_CHAIN_PROPERTY) {
-            ProviderPropertyIdentifier::AzIHsmDeviceCertChain
-        } else if pcwstr::equals(id, AZIHSM_DEVICE_MAX_KEY_COUNT_PROPERTY) {
+        if pcwstr::equals(id, AZIHSM_DEVICE_MAX_KEY_COUNT_PROPERTY) {
             ProviderPropertyIdentifier::AziHsmMaxKeyCount
         } else if pcwstr::equals(id, AZIHSM_DEVICE_MAX_STORAGE_SIZE_PROPERTY) {
             ProviderPropertyIdentifier::AziHsmMaxStorageSize
@@ -1360,49 +1355,6 @@ impl Provider {
         tracing::debug!(?property, "Getting provider property");
 
         match property {
-            ProviderPropertyIdentifier::AzIHsmDeviceCertChain => {
-                let inner = self.inner.read();
-                let app_session = inner.app_session.as_ref().ok_or_else(|| {
-                    tracing::error!("Failed to get app session");
-                    HRESULT(E_UNEXPECTED)
-                })?;
-                let certificate = match app_session.get_certificate() {
-                    Ok(certificate) => certificate,
-                    Err(err) => {
-                        tracing::error!("Failed to get certificate: {:?}", err);
-                        Err(HRESULT(E_UNEXPECTED))?
-                    }
-                };
-
-                // Take physical AZIHSM's cert chain as certificate
-                // Or take virtual AZIHSM's ak cert as certificate (TODO: till virtual AZIHSM certificate support is added)
-                let certificate = match certificate {
-                    ManticoreCertificate::PhysicalManticore(cert_chain) => cert_chain,
-                    ManticoreCertificate::VirtualManticore { ak_cert, .. } => {
-                        // TODO: for virtual AZIHSM, certificate support is pending
-                        // Currently it only populates ak_cert
-                        ak_cert
-                    }
-                };
-
-                if value.is_empty() {
-                    // If the output buffer is empty, return double the length of the certificate.
-                    // This ensures that the caller allocates a sufficiently large buffer for subsequent calls,
-                    // accounting for potential variations in the length of the certificate between calls.
-                    *result = 2 * certificate.len() as u32;
-                    tracing::warn!("Value is empty, returning certificate length: {}", *result);
-                    return Ok(());
-                } else if value.len() < certificate.len() {
-                    tracing::error!(
-                        "Buffer too small for certificate: expected: {}, actual: {}",
-                        certificate.len(),
-                        value.len()
-                    );
-                    Err(HRESULT(NTE_BUFFER_TOO_SMALL))?;
-                }
-                value[..certificate.len()].copy_from_slice(&certificate);
-                *result = certificate.len() as u32;
-            }
             ProviderPropertyIdentifier::AziHsmMaxKeyCount => {
                 let size_u32 = std::mem::size_of::<u32>();
 
@@ -1669,16 +1621,12 @@ impl ProviderInner {
             env!("CARGO_PKG_VERSION"),
         );
 
-        // If app credentials haven't been initialized, create an app.
+        // If app credentials haven't been initialized, create them.
         if app_credentials.is_none() {
             let credentials = HsmAppCredentials {
                 id: Uuid::from_bytes(TEST_CRED_ID),
                 pin: TEST_CRED_PIN,
             };
-            // Ignore establish credential error as credential
-            // may have already been established by another process
-            let _ = device.establish_credential(api_rev, credentials);
-
             *app_credentials = Some(credentials);
         }
 
@@ -1687,7 +1635,7 @@ impl ProviderInner {
             HRESULT(E_UNEXPECTED)
         })?;
 
-        // Open a new app session.
+        // Open a new session.
         match device.open_session(api_rev, app_credentials_inner) {
             Ok(app_session) => {
                 self.device = Some(device);

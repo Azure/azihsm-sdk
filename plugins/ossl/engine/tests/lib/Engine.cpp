@@ -228,23 +228,6 @@ int AziHsmEngine::attestRsaPKey(EVP_PKEY *pkey, std::vector<unsigned char> repor
     return azihsm_attest_evp_pkey_rsa(engine, pkey, report_data.data(), report_data.size(), claim.data(), &claim_len);
 }
 
-std::vector<unsigned char> AziHsmEngine::getCollateral()
-{
-    std::vector<unsigned char> collateral;
-    size_t collateral_len = 0;
-    if (azihsm_get_collateral(engine, nullptr, &collateral_len) != 1 || collateral_len == 0)
-    {
-        throw std::runtime_error("Could not get collateral size");
-    }
-
-    collateral.resize(collateral_len);
-    if (azihsm_get_collateral(engine, collateral.data(), &collateral_len) != 1)
-    {
-        throw std::runtime_error("Could not get collateral");
-    }
-    return collateral;
-}
-
 std::vector<unsigned char> AziHsmEngine::getBuiltinUnwrappingKey()
 {
     std::vector<unsigned char> unwrapping_key;

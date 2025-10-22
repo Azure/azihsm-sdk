@@ -43,11 +43,6 @@ fn test_masked_key_get_unwrapping_with_lm() {
         |_, _, _| 0,
         common_cleanup,
         |dev, ddi, path, _session_id| {
-            if get_device_kind(dev) != DdiDeviceKind::Physical {
-                println!("BMK in open session response is not implemented in sim");
-                return;
-            }
-
             let setup_res = common_setup_for_lm(dev, ddi, path);
 
             let (_, pub_key_der, masked_key) = get_unwrapping_key(dev, setup_res.session_id);

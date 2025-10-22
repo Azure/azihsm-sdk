@@ -90,8 +90,6 @@ public:
 
     int attestRsaPKey(EVP_PKEY *pkey, std::vector<unsigned char> report_data, std::vector<unsigned char> &claim);
 
-    std::vector<unsigned char> getCollateral();
-
 private:
     ENGINE *engine;
 };

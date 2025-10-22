@@ -2034,9 +2034,17 @@ impl Dispatcher {
                 Some(req.bmk.as_slice())
             };
 
-            let bmk = self
-                .function
-                .provision(req.masked_bk3.as_slice(), bmk_option)?;
+            let masked_unwrapping_key_option = if req.masked_unwrapping_key.is_empty() {
+                None
+            } else {
+                Some(req.masked_unwrapping_key.as_slice())
+            };
+
+            let bmk = self.function.provision(
+                req.masked_bk3.as_slice(),
+                bmk_option,
+                masked_unwrapping_key_option,
+            )?;
 
             tracing::debug!(bmk_size = bmk.len(), "Successfully provisioned partition");
 

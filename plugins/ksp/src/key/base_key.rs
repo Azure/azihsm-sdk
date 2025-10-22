@@ -396,7 +396,7 @@ impl BaseKey {
         &self,
         app_session: &HsmSession,
         report_data: &[u8; REPORT_DATA_SIZE as usize],
-        claim: &mut [u8],
+        output: &mut [u8],
         result: &mut u32,
     ) -> AzIHsmHresult<()> {
         let hsm_key_handle = match self.hsm_key_handle() {
@@ -407,30 +407,31 @@ impl BaseKey {
             }
         };
 
-        let attest_claim = match app_session.attest_key(&hsm_key_handle, report_data) {
-            Ok(attest_claim) => attest_claim,
-            Err(err) => {
-                tracing::error!(?err, "HsmSession::attest_key failed.",);
-                Err(HRESULT(NTE_FAIL))?
-            }
-        };
+        let (report, cert) = app_session
+            .attest_key_and_obtain_cert(&hsm_key_handle, report_data)
+            .map_err(|err| {
+                tracing::error!(?err, "HsmSession::attest_key_and_obtain_cert failed.");
+                HRESULT(NTE_FAIL)
+            })?;
 
-        if claim.is_empty() {
-            // If the claim buffer is empty, return double the length of the attest_claim.
+        let attest_claim = encode_attestation_claim(&report, &cert);
+
+        if output.is_empty() {
+            // If the output buffer is empty, return double the length of the attest_claim.
             // This ensures that the caller allocates a sufficiently large buffer for subsequent calls,
             // accounting for potential variations in the length of the attestation claim between calls.
             *result = 2 * attest_claim.len() as u32;
             tracing::warn!("Claim is empty. Returning attest_claim length: {}", *result);
             return Ok(());
-        } else if claim.len() < attest_claim.len() {
+        } else if output.len() < attest_claim.len() {
             tracing::error!(
-                "Buffer too small for attestation claim: expected: {}, actual: {}",
-                attest_claim.len(),
-                claim.len()
+                expected = attest_claim.len(),
+                actual = output.len(),
+                "Buffer too small for attestation claim"
             );
             Err(HRESULT(NTE_BUFFER_TOO_SMALL))?;
         }
-        claim[..attest_claim.len() as usize].copy_from_slice(&attest_claim);
+        output[..attest_claim.len()].copy_from_slice(&attest_claim);
         *result = attest_claim.len() as u32;
         Ok(())
     }

@@ -1424,6 +1424,18 @@ extern "system" fn azihsm_get_provider_property(
 /// # Returns
 /// `S_OK` if the function succeeds, otherwise an error code.
 ///
+/// # Output buffer format
+/// On success, the `pbclaimblob` output buffer will contain a binary content with following format:
+/// Output buffer format (all numbers are little-endian):
+/// - Header
+/// - 4 bytes: version, currently 1
+/// - 4 bytes: buffer total length, including header
+/// - metadata
+/// - 4 bytes: length of attestation report in bytes
+/// - 4 bytes: length of certificate in bytes
+/// - payload
+/// - N bytes: attestation report (binary format)
+/// - M bytes: certificate (string, PEM format)
 #[cfg_attr(feature = "expose-symbols", export_name = "azihsm_create_claim")]
 extern "system" fn azihsm_create_claim(
     prov_handle: NCRYPT_PROV_HANDLE,

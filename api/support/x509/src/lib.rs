@@ -3,19 +3,17 @@
 //! This module implements utilities for parsing and interacting with X509
 //! certificates.
 
-#[cfg(target_os = "windows")]
-use windows::Win32::Foundation::GetLastError;
-#[cfg(target_os = "windows")]
-use windows::Win32::Security::Cryptography::*;
-
 #[cfg(target_os = "linux")]
 use openssl::pkey::PKey;
 #[cfg(target_os = "linux")]
 use openssl::pkey::Public;
 #[cfg(target_os = "linux")]
 use openssl::x509::X509;
-
 use thiserror::Error;
+#[cfg(target_os = "windows")]
+use windows::Win32::Foundation::GetLastError;
+#[cfg(target_os = "windows")]
+use windows::Win32::Security::Cryptography::*;
 
 /// Enum to represent errors that can occur when working with X509 certificates.
 #[derive(Error, Debug, PartialEq, Eq, Clone, Copy)]
@@ -518,7 +516,9 @@ pub mod tests {
     #[test]
     fn test_rsa_public_key_from_cert() {
         use crypto::CryptoRsaCryptoPadding;
-        use crypto::rsa::{RsaOp, RsaPublicKey, RsaPublicOp};
+        use crypto::rsa::RsaOp;
+        use crypto::rsa::RsaPublicKey;
+        use crypto::rsa::RsaPublicOp;
 
         let der_bytes = get_rsa_der_valid();
 
@@ -543,7 +543,8 @@ pub mod tests {
     /// usable ECC public key.
     #[test]
     fn test_ecc_public_key_from_cert() {
-        use crypto::ecc::{EccOp, EccPublicKey};
+        use crypto::ecc::EccOp;
+        use crypto::ecc::EccPublicKey;
 
         let der_bytes = get_ecc_der_valid();
 

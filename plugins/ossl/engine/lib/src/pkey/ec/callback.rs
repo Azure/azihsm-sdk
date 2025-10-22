@@ -34,7 +34,7 @@ pub(crate) fn pkey_ec_import_key(
     digest_kind: DigestKind,
     key_usage: KeyUsage,
     key_availability: KeyAvailability,
-    key_name: Option<u16>,
+    key_name: Option<&[u8]>,
 ) -> OpenSSLResult<()> {
     let key_container = HsmKeyContainer::unwrap_key(
         wrapped_blob.to_vec(),

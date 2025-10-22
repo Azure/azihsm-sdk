@@ -44,8 +44,6 @@ fn test_unmask_all_session_keys_aes() {
         decrypted_data.data, buffer,
         "decrypted data does not match original"
     );
-
-    common_cleanup(&device_path);
 }
 
 #[test]
@@ -90,6 +88,4 @@ fn test_unmask_all_session_keys_ecc() {
 
     let result = session.ecc_verify(&ecc_key, buffer.to_vec(), signature2);
     assert!(result.is_ok(), "failed to verify signature2: {:?}", result);
-
-    common_cleanup(&device_path);
 }

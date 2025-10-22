@@ -6,6 +6,7 @@
 
 mod common;
 
+use attestation::report::*;
 use crypto::ecc::CryptoEccCurve;
 use crypto::ecc::EccOp;
 use crypto::ecc::EccPublicKey;
@@ -16,22 +17,6 @@ use crypto::sha::sha;
 use crypto::sha::HashAlgorithm;
 use mcr_ddi::*;
 use mcr_ddi_mbor::MborByteArray;
-use mcr_ddi_sim::report::encode_sig_struct;
-use mcr_ddi_sim::report::KeyAttestationReport;
-use mcr_ddi_sim::report::KeyFlags;
-use mcr_ddi_sim::report::COSE_KEY_COMMON_PARAMETERS_KTY;
-use mcr_ddi_sim::report::COSE_KEY_TYPES_EC2;
-use mcr_ddi_sim::report::COSE_KEY_TYPES_RSA;
-use mcr_ddi_sim::report::COSE_KEY_TYPE_PARAMETERS_EC2_CRV;
-use mcr_ddi_sim::report::COSE_KEY_TYPE_PARAMETERS_EC2_X;
-use mcr_ddi_sim::report::COSE_KEY_TYPE_PARAMETERS_EC2_Y;
-use mcr_ddi_sim::report::COSE_KEY_TYPE_PARAMETERS_RSA_E;
-use mcr_ddi_sim::report::COSE_KEY_TYPE_PARAMETERS_RSA_N;
-use mcr_ddi_sim::report::PROTECTED_HEADER_SIZE;
-use mcr_ddi_sim::report::REPORT_DATA_SIZE;
-use mcr_ddi_sim::report::SIGNATURE_SIZE;
-use mcr_ddi_sim::report::SIG_STRUCTURE_MAX_SIZE;
-use mcr_ddi_sim::report::TAGGED_COSE_SIGN1_OBJECT_MAX_SIZE;
 use mcr_ddi_types::*;
 use openssl::x509::X509;
 use test_with_tracing::test;

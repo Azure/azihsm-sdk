@@ -27,6 +27,10 @@ pub struct Nextest {
     /// Whether to include --no-default-features
     #[clap(long)]
     pub no_default_features: bool,
+
+    /// Test filterset (see https://nexte.st/docs/filtersets)
+    #[clap(long, short = 'E')]
+    pub filterset: Option<String>,
 }
 
 impl Xtask for Nextest {
@@ -45,7 +49,7 @@ impl Xtask for Nextest {
         let mut features_vec = Vec::new();
         features_vec.push(crypto);
         if self.features.is_some() {
-            features_vec.push(self.features.unwrap_or("".to_string()));
+            features_vec.push(self.features.unwrap_or_default());
         }
         let features_val;
         if !features_vec.is_empty() {
@@ -53,15 +57,18 @@ impl Xtask for Nextest {
             features_val = features_vec.join(",");
             command_args.push(&features_val);
         }
+        let package_val = self.package.clone().unwrap_or_default();
         if self.package.is_some() {
             command_args.push("--package");
-        }
-        let package_val = self.package.clone().unwrap_or("".to_string());
-        if self.package.is_some() {
             command_args.push(&package_val);
         }
         if self.no_default_features {
             command_args.push("--no-default-features");
+        }
+        let filterset_val = self.filterset.clone().unwrap_or_default();
+        if self.filterset.is_some() {
+            command_args.push("--filterset");
+            command_args.push(&filterset_val);
         }
 
         cmd!(

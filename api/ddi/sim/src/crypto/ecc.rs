@@ -5,8 +5,7 @@
 #[cfg(all(feature = "use-openssl", feature = "use-symcrypt"))]
 compile_error!("OpenSSL and non-OpenSSL cannot be enabled at the same time.");
 
-#[cfg(feature = "use-symcrypt")]
-use generic_array;
+use crypto::ecc::EccOp as SupportCryptoEccOp;
 use mcr_ddi_types::DdiEccCurve;
 #[cfg(feature = "use-openssl")]
 use openssl;
@@ -332,6 +331,15 @@ impl KeySerialization<EccPrivateKey> for EccPrivateKey {
     }
 }
 
+impl TryFrom<EccPrivateKey> for crypto::ecc::EccPrivateKey {
+    type Error = crypto::CryptoError;
+
+    fn try_from(value: EccPrivateKey) -> Result<Self, Self::Error> {
+        let der = value.to_der().map_err(|_| Self::Error::EccToDerError)?;
+        crypto::ecc::EccPrivateKey::from_der(&der, None)
+    }
+}
+
 #[cfg(feature = "use-openssl")]
 impl EccOp<EccPrivateKey> for EccPrivateKey {
     /// Deserialize an ECC private key from a DER-encoded PKCS#8 format.
@@ -444,22 +452,25 @@ impl EccOp<EccPrivateKey> for EccPrivateKey {
 #[cfg(feature = "use-symcrypt")]
 impl EccOp<EccPrivateKey> for EccPrivateKey {
     fn from_der(der: &[u8], expected_type: Option<Kind>) -> Result<EccPrivateKey, ManticoreError> {
-        use sec1::der::Decode;
-
-        let private_key_info = pkcs8::PrivateKeyInfo::from_der(der).map_err(|error_stack| {
-            tracing::error!(?error_stack);
-            ManticoreError::EccFromDerError
-        })?;
+        let private_key_info = {
+            use pkcs8::der::Decode;
+            pkcs8::PrivateKeyInfo::from_der(der).map_err(|error_stack| {
+                tracing::error!(?error_stack);
+                ManticoreError::EccFromDerError
+            })?
+        };
         let (_alg_oid, param_oid) = private_key_info.algorithm.oids().map_err(|error_stack| {
             tracing::error!(?error_stack);
             ManticoreError::EccFromDerError
         })?;
 
-        let private_key =
+        let private_key = {
+            use sec1::der::Decode;
             sec1::EcPrivateKey::from_der(private_key_info.private_key).map_err(|error_stack| {
                 tracing::error!(?error_stack);
                 ManticoreError::EccFromDerError
-            })?;
+            })?
+        };
 
         let (curve_type, symcrypt_key) = match param_oid {
             oid if oid == Some(P256_OID) => {
@@ -549,8 +560,6 @@ impl EccOp<EccPrivateKey> for EccPrivateKey {
     }
 
     fn to_der(&self) -> Result<Vec<u8>, ManticoreError> {
-        use sec1::der::Encode;
-
         let private_key_data =
             self.handle
                 .export_private_key()
@@ -582,7 +591,7 @@ impl EccOp<EccPrivateKey> for EccPrivateKey {
             public_key: Some(&uncompressed),
         };
 
-        let param_oid: sec1::der::Any = match self.handle.get_curve_type() {
+        let param_oid: spki::der::Any = match self.handle.get_curve_type() {
             ecc::CurveType::NistP256 => P256_OID.into(),
             ecc::CurveType::NistP384 => P384_OID.into(),
             ecc::CurveType::NistP521 => P521_OID.into(),
@@ -595,16 +604,22 @@ impl EccOp<EccPrivateKey> for EccPrivateKey {
             parameters: Some(param_oid.owned_to_ref()),
         };
 
-        let private_key_der = private_key.to_der().map_err(|error_stack| {
-            tracing::error!(?error_stack);
-            ManticoreError::EccToDerError
-        })?;
+        let private_key_der = {
+            use sec1::der::Encode;
+            private_key.to_der().map_err(|error_stack| {
+                tracing::error!(?error_stack);
+                ManticoreError::EccToDerError
+            })?
+        };
         let private_key_info = pkcs8::PrivateKeyInfo::new(alg_id, &private_key_der);
 
-        let der = private_key_info.to_der().map_err(|symcrypt_error_stack| {
-            tracing::error!(?symcrypt_error_stack);
-            ManticoreError::EccFromDerError
-        })?;
+        let der = {
+            use spki::der::Encode;
+            private_key_info.to_der().map_err(|symcrypt_error_stack| {
+                tracing::error!(?symcrypt_error_stack);
+                ManticoreError::EccFromDerError
+            })?
+        };
         Ok(der)
     }
 
@@ -883,8 +898,6 @@ impl EccPrivateOp for EccPrivateKey {
     }
 
     fn extract_pub_key_der(&self) -> Result<Vec<u8>, ManticoreError> {
-        use sec1::der::Encode;
-
         let public_key_point = self.handle.export_public_key().map_err(|error_stack| {
             tracing::error!(?error_stack);
             ManticoreError::EccToDerError
@@ -892,21 +905,27 @@ impl EccPrivateOp for EccPrivateKey {
 
         let public_key_der = match self.handle.get_curve_type() {
             ecc::CurveType::NistP256 => {
-                let generic_array = generic_array::GenericArray::from_slice(&public_key_point);
-                let point =
-                    sec1::EncodedPoint::<sec1::consts::U32>::from_untagged_bytes(generic_array);
+                let mut untagged_bytes = [0u8; 32 * 2];
+                untagged_bytes.copy_from_slice(&public_key_point);
+                let point = sec1::EncodedPoint::<sec1::consts::U32>::from_untagged_bytes(
+                    &untagged_bytes.into(),
+                );
                 point.as_bytes().to_vec()
             }
             ecc::CurveType::NistP384 => {
-                let generic_array = generic_array::GenericArray::from_slice(&public_key_point);
-                let point =
-                    sec1::EncodedPoint::<sec1::consts::U48>::from_untagged_bytes(generic_array);
+                let mut untagged_bytes = [0u8; 48 * 2];
+                untagged_bytes.copy_from_slice(&public_key_point);
+                let point = sec1::EncodedPoint::<sec1::consts::U48>::from_untagged_bytes(
+                    &untagged_bytes.into(),
+                );
                 point.as_bytes().to_vec()
             }
             ecc::CurveType::NistP521 => {
-                let generic_array = generic_array::GenericArray::from_slice(&public_key_point);
-                let point =
-                    sec1::EncodedPoint::<sec1::consts::U66>::from_untagged_bytes(generic_array);
+                let mut untagged_bytes = [0u8; 66 * 2];
+                untagged_bytes.copy_from_slice(&public_key_point);
+                let point = sec1::EncodedPoint::<sec1::consts::U66>::from_untagged_bytes(
+                    &untagged_bytes.into(),
+                );
                 point.as_bytes().to_vec()
             }
             _ => Err(ManticoreError::EccToDerError)?,
@@ -918,7 +937,7 @@ impl EccPrivateOp for EccPrivateKey {
                 ManticoreError::EccToDerError
             })?;
 
-        let param_oid: sec1::der::Any = match self.handle.get_curve_type() {
+        let param_oid: spki::der::Any = match self.handle.get_curve_type() {
             ecc::CurveType::NistP256 => P256_OID.into(),
             ecc::CurveType::NistP384 => P384_OID.into(),
             ecc::CurveType::NistP521 => P521_OID.into(),
@@ -935,10 +954,13 @@ impl EccPrivateOp for EccPrivateKey {
             subject_public_key: public_key_der_bitstring,
         };
 
-        let der = subject_public_key_info.to_der().map_err(|error_stack| {
-            tracing::error!(?error_stack);
-            ManticoreError::EccToDerError
-        })?;
+        let der = {
+            use spki::der::Encode;
+            subject_public_key_info.to_der().map_err(|error_stack| {
+                tracing::error!(?error_stack);
+                ManticoreError::EccToDerError
+            })?
+        };
 
         Ok(der)
     }
@@ -1108,13 +1130,13 @@ impl EccOp<EccPublicKey> for EccPublicKey {
 #[cfg(feature = "use-symcrypt")]
 impl EccOp<EccPublicKey> for EccPublicKey {
     fn from_der(der: &[u8], expected_type: Option<Kind>) -> Result<EccPublicKey, ManticoreError> {
-        use sec1::der::Decode;
-
-        let public_key_info =
+        let public_key_info = {
+            use spki::der::Decode;
             spki::SubjectPublicKeyInfoRef::from_der(der).map_err(|error_stack| {
                 tracing::error!(?error_stack);
                 ManticoreError::EccFromDerError
-            })?;
+            })?
+        };
 
         let public_key_der = public_key_info.subject_public_key;
         let (_alg_oid, param_oid) = public_key_info.algorithm.oids().map_err(|error_stack| {
@@ -1176,8 +1198,6 @@ impl EccOp<EccPublicKey> for EccPublicKey {
     }
 
     fn to_der(&self) -> Result<Vec<u8>, ManticoreError> {
-        use sec1::der::Encode;
-
         let public_key_point = self.handle.export_public_key().map_err(|error_stack| {
             tracing::error!(?error_stack);
             ManticoreError::EccToDerError
@@ -1185,21 +1205,27 @@ impl EccOp<EccPublicKey> for EccPublicKey {
 
         let public_key_der = match self.handle.get_curve_type() {
             ecc::CurveType::NistP256 => {
-                let generic_array = generic_array::GenericArray::from_slice(&public_key_point);
-                let point =
-                    sec1::EncodedPoint::<sec1::consts::U32>::from_untagged_bytes(generic_array);
+                let mut untagged_bytes = [0u8; 32 * 2];
+                untagged_bytes.copy_from_slice(&public_key_point);
+                let point = sec1::EncodedPoint::<sec1::consts::U32>::from_untagged_bytes(
+                    &untagged_bytes.into(),
+                );
                 point.as_bytes().to_vec()
             }
             ecc::CurveType::NistP384 => {
-                let generic_array = generic_array::GenericArray::from_slice(&public_key_point);
-                let point =
-                    sec1::EncodedPoint::<sec1::consts::U48>::from_untagged_bytes(generic_array);
+                let mut untagged_bytes = [0u8; 48 * 2];
+                untagged_bytes.copy_from_slice(&public_key_point);
+                let point = sec1::EncodedPoint::<sec1::consts::U48>::from_untagged_bytes(
+                    &untagged_bytes.into(),
+                );
                 point.as_bytes().to_vec()
             }
             ecc::CurveType::NistP521 => {
-                let generic_array = generic_array::GenericArray::from_slice(&public_key_point);
-                let point =
-                    sec1::EncodedPoint::<sec1::consts::U66>::from_untagged_bytes(generic_array);
+                let mut untagged_bytes = [0u8; 66 * 2];
+                untagged_bytes.copy_from_slice(&public_key_point);
+                let point = sec1::EncodedPoint::<sec1::consts::U66>::from_untagged_bytes(
+                    &untagged_bytes.into(),
+                );
                 point.as_bytes().to_vec()
             }
             _ => Err(ManticoreError::EccToDerError)?,
@@ -1211,7 +1237,7 @@ impl EccOp<EccPublicKey> for EccPublicKey {
                 ManticoreError::EccToDerError
             })?;
 
-        let param_oid: sec1::der::Any = match self.handle.get_curve_type() {
+        let param_oid: spki::der::Any = match self.handle.get_curve_type() {
             ecc::CurveType::NistP256 => P256_OID.into(),
             ecc::CurveType::NistP384 => P384_OID.into(),
             ecc::CurveType::NistP521 => P521_OID.into(),
@@ -1228,10 +1254,13 @@ impl EccOp<EccPublicKey> for EccPublicKey {
             subject_public_key: public_key_der_bitstring,
         };
 
-        let der = subject_public_key_info.to_der().map_err(|error_stack| {
-            tracing::error!(?error_stack);
-            ManticoreError::EccToDerError
-        })?;
+        let der = {
+            use spki::der::Encode;
+            subject_public_key_info.to_der().map_err(|error_stack| {
+                tracing::error!(?error_stack);
+                ManticoreError::EccToDerError
+            })?
+        };
 
         Ok(der)
     }

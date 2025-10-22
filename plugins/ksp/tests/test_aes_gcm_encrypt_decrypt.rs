@@ -7,6 +7,8 @@ use std::mem::size_of;
 use std::ptr;
 
 #[cfg(not(feature = "disable-fp"))]
+use crypto::rand::rand_bytes;
+#[cfg(not(feature = "disable-fp"))]
 use widestring::*;
 #[cfg(not(feature = "disable-fp"))]
 use winapi::shared::winerror::ERROR_INVALID_DATA;
@@ -23,9 +25,6 @@ use windows::core::HRESULT;
 use windows::Win32::Security::Cryptography::*;
 #[cfg(not(feature = "disable-fp"))]
 use windows::Win32::Security::OBJECT_SECURITY_INFORMATION;
-
-#[cfg(not(feature = "disable-fp"))]
-use crypto::rand::rand_bytes;
 
 use crate::common::*;
 

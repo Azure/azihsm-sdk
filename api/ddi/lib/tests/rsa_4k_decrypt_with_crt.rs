@@ -142,7 +142,7 @@ fn test_rsa_4k_decrypt_incorrect_key_type() {
 }
 
 #[test]
-fn test_rsa_4k_decrypt_incorrect_message_zero_data() {
+fn test_rsa_4k_decrypt_message_data_below_lower_limit() {
     ddi_dev_test(
         common_setup,
         common_cleanup,
@@ -151,8 +151,8 @@ fn test_rsa_4k_decrypt_incorrect_message_zero_data() {
             // This is a FIPS only requirement
             let device_kind = get_device_kind(dev);
             if device_kind != DdiDeviceKind::Physical {
-                tracing::debug!(
-                    "Skipped test_rsa_4k_decrypt_incorrect_message_zero_data for virtual device"
+                tracing::info!(
+                    "Skipped test_rsa_4k_decrypt_message_data_below_lower_limit for virtual device"
                 );
                 return;
             }
@@ -160,12 +160,16 @@ fn test_rsa_4k_decrypt_incorrect_message_zero_data() {
             let (_key_id_rsa4k_pub, key_id_rsa4k_priv_crt, _) =
                 store_rsa_keys_crt(dev, session_id, DdiKeyUsage::EncryptDecrypt, 4, None);
 
+            let mut msg = MborByteArray::new([0x0; 512], 512).expect("failed to create byte array");
+            let last_idx = msg.len() - 1;
+            msg.data_mut()[last_idx] = 0x1;
+
             let resp = helper_rsa_mod_exp(
                 dev,
                 Some(session_id),
                 Some(DdiApiRev { major: 1, minor: 0 }),
                 key_id_rsa4k_priv_crt,
-                MborByteArray::new([0x0; 512], 512).expect("failed to create byte array"),
+                msg,
                 DdiRsaOpType::Decrypt,
             );
 
@@ -180,7 +184,7 @@ fn test_rsa_4k_decrypt_incorrect_message_zero_data() {
 }
 
 #[test]
-fn test_rsa_4k_decrypt_incorrect_message_large_data() {
+fn test_rsa_4k_decrypt_message_data_above_upper_limit() {
     ddi_dev_test(
         common_setup,
         common_cleanup,
@@ -190,7 +194,7 @@ fn test_rsa_4k_decrypt_incorrect_message_large_data() {
             let device_kind = get_device_kind(dev);
             if device_kind != DdiDeviceKind::Physical {
                 tracing::debug!(
-                    "Skipped test_rsa_4k_decrypt_incorrect_message_large_data for virtual device"
+                    "Skipped test_rsa_4k_decrypt_message_data_above_upper_limit for virtual device"
                 );
                 return;
             }

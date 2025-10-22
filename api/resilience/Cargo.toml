@@ -25,6 +25,7 @@ crypto.workspace = true
 mcr_ddi.workspace = true
 mcr_ddi_mock.workspace = true
 mcr_ddi_nix.workspace = true
+mcr_ddi_sim.workspace = true
 mcr_ddi_types.workspace = true
 mcr_ddi_win.workspace = true
 test_with_tracing.workspace = true

@@ -7,6 +7,8 @@ use std::mem::size_of;
 use std::ptr;
 
 #[cfg(not(feature = "disable-fp"))]
+use crypto::rand::rand_bytes;
+#[cfg(not(feature = "disable-fp"))]
 use winapi::shared::winerror::E_INVALIDARG;
 #[cfg(not(feature = "disable-fp"))]
 use winapi::shared::winerror::NTE_BAD_FLAGS;
@@ -19,9 +21,6 @@ use winapi::shared::winerror::NTE_INVALID_PARAMETER;
 #[cfg(not(feature = "disable-fp"))]
 use windows::core::HRESULT;
 use windows::Win32::Security::Cryptography::*;
-
-#[cfg(not(feature = "disable-fp"))]
-use crypto::rand::rand_bytes;
 
 use crate::common::*;
 

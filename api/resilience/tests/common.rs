@@ -73,45 +73,17 @@ pub fn simulate_live_migration_helper(path: &str) {
     lm_dev.simulate_nssr_after_lm().unwrap();
 }
 
-pub fn common_cleanup(path: &str) {
-    // Use mcr_api so we have access to clear_device
-    let result = mcr_api::HsmDevice::open(path);
-    assert!(result.is_ok(), "result {:?}", result);
-    let device = result.unwrap();
-
-    // Establish credential can only happen once so it could fail
-    // in future instances so ignore error
-    let api_rev = device.get_api_revision_range().max;
-    let masked_bk3 = device.init_bk3(api_rev, &[1u8; 48]).unwrap();
-    let resp = device.establish_credential(api_rev, TEST_CREDENTIALS, masked_bk3, None, None);
-    if let Err(resp) = resp {
-        println!("establish credential failed with {}. Ignoring since establish credential can only be done once and may have happened before", resp);
-    } else {
-        println!("establish credential succeeded");
-    }
-
-    let result = device.open_session(device.get_api_revision_range().max, TEST_CREDENTIALS);
-    assert!(result.is_ok(), "result {:?}", result);
-    let mut session = result.unwrap();
-
-    let result = session.clear_device();
-    assert!(result.is_ok(), "clear_device result {:?}", result);
-}
-
-/// Helper function to set up a device with established credentials
-pub fn setup_device_with_credentials(device_path: &str) -> (HsmDevice, HsmApiRevision) {
+/// Helper function to set up a device
+pub fn setup_device(device_path: &str) -> (HsmDevice, HsmApiRevision) {
     let device = HsmDevice::open(device_path).expect("Failed to open HSM device");
     let api_rev = device.get_api_revision_range().max;
 
-    device
-        .establish_credential(api_rev, TEST_CREDENTIALS)
-        .expect("Failed to establish credentials");
     (device, api_rev)
 }
 
 /// Helper function to set up a device and open a session
 pub fn setup_device_and_session(device_path: &str) -> (HsmDevice, HsmSession, HsmApiRevision) {
-    let (device, api_rev) = setup_device_with_credentials(device_path);
+    let (device, api_rev) = setup_device(device_path);
     let session = device
         .open_session(api_rev, TEST_CREDENTIALS)
         .expect("Failed to open session");
@@ -131,4 +103,76 @@ pub fn generate_session_aes_key(session: &HsmSession, error_context: &str) -> Hs
         Ok(key_handle) => key_handle,
         Err(e) => panic!("{}: {:?}", error_context, e),
     }
+}
+
+/// Helper function to generate AES key bytes of the specified type
+pub fn generate_aes_bytes(key_type: KeyType) -> Vec<u8> {
+    use crypto::rand::rand_bytes;
+
+    let buf_len = match key_type {
+        KeyType::Aes128 => 16,
+        KeyType::Aes192 => 24,
+        KeyType::Aes256 => 32,
+        KeyType::AesXtsBulk256 | KeyType::AesGcmBulk256 | KeyType::AesGcmBulk256Unapproved => 32,
+        _ => 32,
+    };
+
+    let mut buf = [0u8; 32];
+    let buf_slice = &mut buf[..buf_len];
+    rand_bytes(buf_slice).expect("Failed to generate random bytes");
+    buf_slice.to_vec()
+}
+
+/// Helper function to wrap data using RSA-OAEP + AES-KW
+pub fn wrap_data(wrapping_pub_key_der: Vec<u8>, data: &[u8]) -> Vec<u8> {
+    use mcr_ddi_sim::crypto::aes::AesKey;
+    use mcr_ddi_sim::crypto::aes::AesOp;
+    use mcr_ddi_sim::crypto::rsa::RsaCryptoPadding;
+    use mcr_ddi_sim::crypto::rsa::RsaOp;
+    use mcr_ddi_sim::crypto::rsa::RsaPublicKey;
+    use mcr_ddi_sim::crypto::rsa::RsaPublicOp;
+    use mcr_ddi_sim::crypto::sha::HashAlgorithm;
+
+    // Generate a random AES-256 key
+    let aes_key_bytes = generate_aes_bytes(KeyType::Aes256);
+
+    // Encrypt the AES key with RSA-OAEP
+    let wrapping_pub_key = RsaPublicKey::from_der(&wrapping_pub_key_der, None).unwrap();
+    let encrypted_aes_key = wrapping_pub_key
+        .encrypt(
+            &aes_key_bytes,
+            RsaCryptoPadding::Oaep,
+            Some(HashAlgorithm::Sha256),
+        )
+        .unwrap();
+
+    // Encrypt the data with AES
+    let aes_key = AesKey::from_bytes(&aes_key_bytes).expect("Failed to create AES key");
+    let encrypted_data = aes_key
+        .wrap_pad(data)
+        .expect("Failed to wrap data")
+        .cipher_text;
+
+    // Concatenate encrypted AES key and encrypted data
+    let mut wrapped_data = Vec::with_capacity(encrypted_aes_key.len() + encrypted_data.len());
+    wrapped_data.extend_from_slice(&encrypted_aes_key);
+    wrapped_data.extend_from_slice(&encrypted_data);
+
+    wrapped_data
+}
+
+/// Helper function to generate wrapped data (wrapped private RSA key and its public key)
+pub fn generate_wrapped_data(wrapping_key_der: Vec<u8>) -> (Vec<u8>, Vec<u8>) {
+    use mcr_ddi_sim::crypto::rsa::generate_rsa;
+    use mcr_ddi_sim::crypto::rsa::RsaOp;
+
+    // Generate a new 3072-bit RSA key pair
+    let (rsa_priv, rsa_pub) = generate_rsa(3072).expect("Failed to generate RSA key");
+    let target_der = rsa_priv.to_der().unwrap();
+    let public_key_der = rsa_pub.to_der().unwrap();
+
+    // Wrap the private key using the wrapping key
+    let wrapped_key = wrap_data(wrapping_key_der, &target_der);
+
+    (wrapped_key, public_key_der)
 }

@@ -101,6 +101,7 @@ static void verify_named_key_ecdh(AziHsmEngine &azihsm_engine, int curve_type)
     REQUIRE(key == nullptr);
 }
 
+#ifdef AZIHSM_NAMED_KEYS
 TEST_CASE("AZIHSM EC named keys", "[AziHsmEngineECCNamedKeys]")
 {
     AziHsmEngine azihsm_engine = get_test_engine();
@@ -159,3 +160,4 @@ TEST_CASE("AZIHSM EC named keys", "[AziHsmEngineECCNamedKeys]")
         verify_named_key_ecdh(azihsm_engine, NID_secp521r1);
     }
 }
+#endif

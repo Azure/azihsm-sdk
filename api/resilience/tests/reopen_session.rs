@@ -19,11 +19,10 @@ fn test_resilient_session_open() {
     // Add another session key to the session after migration
     let _second_key =
         generate_session_aes_key(&session, "second aes_generate after migration failed");
-
-    common_cleanup(&device_path);
 }
 
 #[test]
+#[cfg(feature = "mock")]
 fn test_close_session_after_live_migration() {
     let device_path = get_device_path_helper();
     let (_device, mut session, _api_rev) = setup_device_and_session(&device_path);
@@ -32,8 +31,6 @@ fn test_close_session_after_live_migration() {
 
     let result = session.close_session();
     assert!(result.is_ok(), "close_session result {:?}", result);
-
-    common_cleanup(&device_path);
 }
 
 #[test]
@@ -58,8 +55,6 @@ fn test_session_survives_multiple_live_migrations() {
     simulate_live_migration_helper(&device_path);
     let _key_after_3rd =
         generate_session_aes_key(&session, "aes_generate after 3rd migration failed");
-
-    common_cleanup(&device_path);
 }
 
 #[test]
@@ -67,7 +62,7 @@ fn test_multiple_device_instances_with_live_migration() {
     let device_path = get_device_path_helper();
 
     // Open two resilient Device instances
-    let (dev1, api_rev) = setup_device_with_credentials(&device_path);
+    let (dev1, api_rev) = setup_device(&device_path);
     let dev2 = HsmDevice::open(&device_path).expect("Failed to open second HSM device");
 
     let session1 = dev1
@@ -97,6 +92,4 @@ fn test_multiple_device_instances_with_live_migration() {
         &session2,
         "session2 aes_generate after 2nd migration failed",
     );
-
-    common_cleanup(&device_path);
 }

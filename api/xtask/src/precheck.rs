@@ -17,6 +17,7 @@ use crate::fuzz;
 use crate::mcr_perf;
 use crate::nextest;
 use crate::setup;
+use crate::test;
 use crate::Xtask;
 use crate::XtaskCtx;
 
@@ -30,7 +31,10 @@ impl Xtask for Precheck {
         log::trace!("running precheck");
 
         // Run Setup
-        let setup = setup::Setup {};
+        let setup = setup::Setup {
+            force: false,
+            config: None,
+        };
         setup.run(ctx.clone())?;
 
         // Run Copyright
@@ -94,19 +98,30 @@ impl Xtask for Precheck {
         };
         build_release.run(ctx.clone())?;
 
-        // Cargo test mock 1 table
+        // Cargo test mock
         let test_mock_1_table = nextest::Nextest {
             features: Some("mock,testhooks".to_string()),
             package: None,
             no_default_features: false,
+            filterset: Some("not package(mcr_api_resilient)".to_string()),
         };
         test_mock_1_table.run(ctx.clone())?;
+
+        // Cargo test mcr_api_resilient package
+        let test_mcr_api_resilient = test::Test {
+            features: Some("mock,testhooks".to_string()),
+            package: Some("mcr_api_resilient".to_string()),
+            exclude_os_crypto: false,
+            test_threads: 1,
+        };
+        test_mcr_api_resilient.run(ctx.clone())?;
 
         // Cargo test crypto package
         let test_crypto_package = nextest::Nextest {
             features: None,
             package: Some("crypto".to_string()),
             no_default_features: false,
+            filterset: None,
         };
         test_crypto_package.run(ctx.clone())?;
 
@@ -114,6 +129,7 @@ impl Xtask for Precheck {
             features: Some("mock".to_string()),
             package: Some("mcr_api".to_string()),
             no_default_features: true,
+            filterset: None,
         };
         test_mcr_api_package.run(ctx.clone())?;
 
@@ -140,6 +156,7 @@ impl Xtask for Precheck {
                 features: Some("mock,testhooks,table-4".to_string()),
                 package: None,
                 no_default_features: false,
+                filterset: Some("not package(mcr_api_resilient)".to_string()),
             };
             test_mock_4_table.run(ctx.clone())?;
 
@@ -148,6 +165,7 @@ impl Xtask for Precheck {
                 features: Some("mock,testhooks,table-64".to_string()),
                 package: None,
                 no_default_features: false,
+                filterset: Some("not package(mcr_api_resilient)".to_string()),
             };
             test_mock_64_table.run(ctx.clone())?;
         }
@@ -159,10 +177,7 @@ impl Xtask for Precheck {
             threads: 120,
             stabilize_seconds: 5,
             test_seconds: 10,
-            command: mcr_perf::Commands::Custom {
-                get_api_rev: 100,
-                aes_cbc_128_encrypt: 0,
-            },
+            custom_option: "get-api-rev".to_string(),
         };
         mock_perf_test_get_api_rev.run(ctx.clone())?;
 
@@ -172,10 +187,7 @@ impl Xtask for Precheck {
             threads: 200,
             stabilize_seconds: 5,
             test_seconds: 10,
-            command: mcr_perf::Commands::Custom {
-                get_api_rev: 0,
-                aes_cbc_128_encrypt: 100,
-            },
+            custom_option: "aes-cbc-128-encrypt".to_string(),
         };
         mock_perf_test_aes_cbc_128_encrypt.run(ctx.clone())?;
 

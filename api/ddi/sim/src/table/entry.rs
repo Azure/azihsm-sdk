@@ -5,6 +5,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
+use attestation::report::KeyFlags;
 use bitfield_struct::bitfield;
 use mcr_ddi_types::DdiAesKeySize;
 use mcr_ddi_types::DdiEccCurve;
@@ -19,7 +20,6 @@ use crate::crypto::aes::AesKeySize;
 use crate::crypto::ecc::EccKeySize;
 use crate::crypto::rsa::RsaKeySize;
 use crate::errors::ManticoreError;
-use crate::report::KeyFlags;
 
 pub mod key;
 

@@ -4,6 +4,7 @@ mod common;
 use std::mem::size_of;
 use std::ptr;
 
+use crypto::rand::rand_bytes;
 use widestring::*;
 use winapi::shared::winerror::E_INVALIDARG;
 use winapi::shared::winerror::NTE_BAD_FLAGS;
@@ -12,8 +13,6 @@ use winapi::shared::winerror::NTE_INVALID_PARAMETER;
 use windows::core::HRESULT;
 use windows::Win32::Security::Cryptography::*;
 use windows::Win32::Security::OBJECT_SECURITY_INFORMATION;
-
-use crypto::rand::rand_bytes;
 
 use crate::common::*;
 

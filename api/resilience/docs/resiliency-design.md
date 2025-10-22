@@ -46,17 +46,6 @@ ResilientDeviceInner contains all of the resiliency logic:
 
 In the future, we will need to implement a service to handle storing information that needs to be shared cross-process (like masked named key data). ResilientDeviceInner can also handle communication with that service.
 
-## Testing
-
-`mcr_api` tests in api\lib\tests have been configured to test `mcr_api_resilient` instead of `mcr_api` by enabling a "resilient" feature. Here are example commands you can use to test `mcr_api_resilient` with mock and testhooks configuration:
-
-```
-cargo nextest run --features mock,testhooks,use-symcrypt,resilient
-cargo test --features mock,testhooks,use-symcrypt,resilient -- --test-threads=1
-```
-
-Currently, pipeline does not run these tests with `resilient` automatically. `mcr_api_resilient` is still being developed, and will diverge from the `mcr_api` surface. We can add this in the future once `mcr_api_resilient` is more hardened.
-
 ## Sequence Diagrams
 
 What follows are some sequence diagrams to describe scenarios. The plantUml code is at the end of this doc.

@@ -8,7 +8,6 @@
 use std::path::PathBuf;
 
 use clap::Parser;
-use clap::Subcommand;
 use xshell::cmd;
 
 use crate::build;
@@ -19,14 +18,12 @@ use crate::XtaskCtx;
 const THREADS_DEFAULT: u32 = 128;
 const STABILIZE_SECONDS_DEFAULT: u32 = 5;
 const TEST_SECONDS_DEFAULT: u32 = 100;
-const GET_API_REV_DEFAULT: u32 = 0;
-const AES_CBC_128_ENCRYPT_DEFAULT: u32 = 0;
 
 /// Xtask to run mcr_perf
 #[derive(Parser)]
 #[clap(about = "Run mcr_perf")]
 pub struct McrPerf {
-    /// override default path (directory of xtask.exe) with custom path
+    /// Override path for mcr_perf with custom path. It will also skip building the mcr_perf with mock.
     #[clap(long)]
     pub path_override: Option<String>,
 
@@ -46,21 +43,9 @@ pub struct McrPerf {
     #[clap(long, default_value_t = TEST_SECONDS_DEFAULT)]
     pub test_seconds: u32,
 
-    #[clap(subcommand)]
-    pub command: Commands,
-}
-
-#[derive(Subcommand)]
-pub enum Commands {
-    Custom {
-        /// Ratio of Get API Revision operations
-        #[clap(long, default_value_t = GET_API_REV_DEFAULT)]
-        get_api_rev: u32,
-
-        /// Ratio of AES-CBC 128 Encrypt operations
-        #[clap(long, default_value_t = AES_CBC_128_ENCRYPT_DEFAULT)]
-        aes_cbc_128_encrypt: u32,
-    },
+    /// Option to provide to custom command
+    #[clap(long)]
+    pub custom_option: String,
 }
 
 impl Xtask for McrPerf {
@@ -101,26 +86,10 @@ impl Xtask for McrPerf {
             command_args.push("--test-seconds");
             command_args.push(&test_seconds_val);
         }
-        let get_api_rev_val;
-        let aes_cbc_128_encrypt_val;
-        match self.command {
-            Commands::Custom {
-                get_api_rev,
-                aes_cbc_128_encrypt,
-            } => {
-                command_args.push("custom");
-                get_api_rev_val = get_api_rev.to_string();
-                if get_api_rev != GET_API_REV_DEFAULT {
-                    command_args.push("--get-api-rev");
-                    command_args.push(&get_api_rev_val);
-                }
-                aes_cbc_128_encrypt_val = aes_cbc_128_encrypt.to_string();
-                if aes_cbc_128_encrypt != AES_CBC_128_ENCRYPT_DEFAULT {
-                    command_args.push("--aes-cbc-128-encrypt");
-                    command_args.push(&aes_cbc_128_encrypt_val);
-                }
-            }
-        }
+        command_args.push("custom");
+        let custom_option_val = format!("--{}", self.custom_option);
+        command_args.push(&custom_option_val);
+        command_args.push("100");
 
         let mut mcr_perf_path;
         if self.path_override.is_some() {

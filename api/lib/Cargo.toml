@@ -10,6 +10,7 @@ doctest = false
 test = false
 
 [dependencies]
+attestation.workspace = true
 cfg-if.workspace = true
 crypto.workspace = true
 mcr_ddi.workspace = true
@@ -25,13 +26,13 @@ session_parameter_encryption.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
 tracing.workspace = true
+x509.workspace = true
 
 # dependencies for fuzzing
 arbitrary = { workspace = true, optional = true }
 
 [dev-dependencies]
 mcr_ddi_sim.workspace = true
-mcr_api_resilient.workspace = true
 rand.workspace = true
 sec1.workspace = true
 spki.workspace = true
@@ -47,13 +48,10 @@ default = []
 mock = ["mcr_ddi_mock"]
 use-openssl = ["crypto/use-openssl", "mcr_ddi_mock/use-openssl", "mcr_ddi_sim/use-openssl"]
 use-symcrypt = ["crypto/use-symcrypt", "mcr_ddi_mock/use-symcrypt", "mcr_ddi_sim/use-symcrypt"]
-testhooks = ["mcr_api_resilient/testhooks"]
+testhooks = []
 table-4 = ["mcr_ddi_mock/table-4"]
 table-64 = ["mcr_ddi_mock/table-64"]
 fuzzing = ["arbitrary"]
-
-# This feature determines whether tests exercise `mcr_api` or `mcr_api_resilient`
-resilient = []
 
 [lints]
 workspace = true

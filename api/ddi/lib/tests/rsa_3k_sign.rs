@@ -224,6 +224,126 @@ fn test_rsa_3k_sign_incorrect_permission() {
 }
 
 #[test]
+fn test_rsa_3k_sign_message_data_below_lower_limit() {
+    ddi_dev_test(
+        common_setup,
+        common_cleanup,
+        |dev, _ddi, _path, session_id| {
+            // Skip test for virtual device as it doesn't check for RSA mod exp data
+            // This is a FIPS only requirement
+            let device_kind = get_device_kind(dev);
+            if device_kind != DdiDeviceKind::Physical {
+                tracing::info!(
+                    "Skipped test_rsa_3k_sign_message_data_below_lower_limit for virtual device"
+                );
+                return;
+            }
+
+            let (_key_id_rsa3k_pub, key_id_rsa3k_priv, _) =
+                store_rsa_keys_no_crt(dev, session_id, DdiKeyUsage::SignVerify, 3, None);
+            let (_key_id_rsa3k_pub, key_id_rsa3k_priv_crt, _) =
+                store_rsa_keys_crt(dev, session_id, DdiKeyUsage::SignVerify, 3, None);
+
+            let mut msg = MborByteArray::new([0x0; 512], 384).expect("failed to create byte array");
+            let last_idx = msg.len() - 1;
+            msg.data_mut()[last_idx] = 0x1;
+
+            // Non crt
+            let resp = helper_rsa_mod_exp(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                key_id_rsa3k_priv,
+                msg,
+                DdiRsaOpType::Sign,
+            );
+
+            assert!(resp.is_err(), "resp {:?}", resp);
+
+            assert!(matches!(
+                resp.unwrap_err(),
+                DdiError::DdiStatus(DdiStatus::InvalidArg)
+            ));
+
+            // Crt
+            let resp = helper_rsa_mod_exp(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                key_id_rsa3k_priv_crt,
+                msg,
+                DdiRsaOpType::Sign,
+            );
+
+            assert!(resp.is_err(), "resp {:?}", resp);
+
+            assert!(matches!(
+                resp.unwrap_err(),
+                DdiError::DdiStatus(DdiStatus::InvalidArg)
+            ));
+        },
+    );
+}
+
+#[test]
+fn test_rsa_3k_sign_message_data_above_upper_limit() {
+    ddi_dev_test(
+        common_setup,
+        common_cleanup,
+        |dev, _ddi, _path, session_id| {
+            // Skip test for virtual device as it doesn't check for RSA mod exp data
+            // This is a FIPS only requirement
+            let device_kind = get_device_kind(dev);
+            if device_kind != DdiDeviceKind::Physical {
+                tracing::info!(
+                    "Skipped test_rsa_3k_sign_message_data_above_upper_limit for virtual device"
+                );
+                return;
+            }
+
+            let (_key_id_rsa3k_pub, key_id_rsa3k_priv, _) =
+                store_rsa_keys_no_crt(dev, session_id, DdiKeyUsage::SignVerify, 3, None);
+            let (_key_id_rsa3k_pub, key_id_rsa3k_priv_crt, _) =
+                store_rsa_keys_crt(dev, session_id, DdiKeyUsage::SignVerify, 3, None);
+
+            // Non crt
+            let resp = helper_rsa_mod_exp(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                key_id_rsa3k_priv,
+                MborByteArray::new([0xff; 512], 384).expect("failed to create byte array"),
+                DdiRsaOpType::Sign,
+            );
+
+            assert!(resp.is_err(), "resp {:?}", resp);
+
+            assert!(matches!(
+                resp.unwrap_err(),
+                DdiError::DdiStatus(DdiStatus::InvalidArg)
+            ));
+
+            // Crt
+            let resp = helper_rsa_mod_exp(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                key_id_rsa3k_priv_crt,
+                MborByteArray::new([0xff; 512], 384).expect("failed to create byte array"),
+                DdiRsaOpType::Sign,
+            );
+
+            assert!(resp.is_err(), "resp {:?}", resp);
+
+            assert!(matches!(
+                resp.unwrap_err(),
+                DdiError::DdiStatus(DdiStatus::InvalidArg)
+            ));
+        },
+    );
+}
+
+#[test]
 fn test_rsa_3k_sign_and_verify_pkcs15_sha1() {
     ddi_dev_test(
         common_setup,

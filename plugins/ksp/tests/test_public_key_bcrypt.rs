@@ -3,10 +3,9 @@ mod common;
 use std::mem::size_of;
 use std::ptr;
 
+use crypto::rand::rand_bytes;
 use windows::core::PCWSTR;
 use windows::Win32::Security::Cryptography::*;
-
-use crypto::rand::rand_bytes;
 
 use crate::common::*;
 

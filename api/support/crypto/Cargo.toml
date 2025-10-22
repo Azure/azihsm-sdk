@@ -18,9 +18,6 @@ pem-rfc7468 = { workspace = true, optional = true, features = ["alloc"] }
 pkcs8 = { workspace = true, optional = true}
 pkcs1 = {workspace = true, optional = true}
 
-# generic-array needed by sec1::EncodedPoint and sec1 does not export.
-generic-array = { workspace = true, optional = true }
-
 [target.'cfg(target_os = "linux")'.dependencies]
 openssl = { workspace = true, optional = true }
 
@@ -32,7 +29,7 @@ tracing-subscriber.workspace = true
 [features]
 default = []
 use-openssl = ["openssl"]
-use-symcrypt = ["symcrypt", "spki", "sec1", "pkcs1", "pem-rfc7468", "pkcs8", "generic-array"]
+use-symcrypt = ["symcrypt", "spki", "sec1", "pkcs1", "pem-rfc7468", "pkcs8"]
 
 [lints]
 workspace = true

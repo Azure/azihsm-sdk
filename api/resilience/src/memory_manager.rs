@@ -27,7 +27,7 @@ fn read_file(file: &mut File) -> HsmResult<FileContent> {
         == 0
     {
         return Ok(FileContent {
-            sealed_bk3: None,
+            reserved: None,
             masked_unwrapping_key: None,
             backup_masking_key: None,
         });
@@ -151,28 +151,6 @@ impl FileLockGuard {
         })
     }
 
-    /// Read sealed bk3 data from disk
-    #[allow(dead_code)]
-    pub(crate) fn get_sealed_bk3(&self) -> HsmResult<Option<Vec<u8>>> {
-        Ok(self.content.sealed_bk3.clone())
-    }
-
-    /// Write sealed bk3 data on disk
-    #[allow(dead_code)]
-    pub(crate) fn set_sealed_bk3(&mut self, sealed_bk3: &[u8]) -> HsmResult<()> {
-        if self.lock_type == FileLockGuardType::ReadLock {
-            tracing::error!("Unexpected write method with shared_lock. GuardType={:?}, FileName={:?}, ProcessId={}",
-                self.lock_type,
-                self.file,
-                process::id()
-            );
-            Err(HsmError::InternalError)?
-        }
-
-        self.content.sealed_bk3 = Some(sealed_bk3.to_vec());
-        Ok(())
-    }
-
     /// Read masked unwrapping key data from disk
     #[allow(dead_code)]
     pub(crate) fn get_masked_unwrapping_key(&self) -> HsmResult<Option<Vec<u8>>> {
@@ -242,7 +220,8 @@ impl Drop for FileLockGuard {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct FileContent {
-    sealed_bk3: Option<Vec<u8>>,
+    // Optional vector if we need to include additional info in the future
+    reserved: Option<Vec<u8>>,
     masked_unwrapping_key: Option<Vec<u8>>,
     backup_masking_key: Option<Vec<u8>>,
 }
@@ -299,7 +278,7 @@ impl MemoryManager {
         })?;
 
         let blank_content = FileContent {
-            sealed_bk3: None,
+            reserved: None,
             masked_unwrapping_key: None,
             backup_masking_key: None,
         };
@@ -380,12 +359,6 @@ mod tests {
                     .expect("get masked key failure"),
                 None
             );
-            assert_eq!(
-                write_locked_memory_manager
-                    .get_sealed_bk3()
-                    .expect("get bk3 failure"),
-                None
-            );
 
             // Write values to memory
             write_locked_memory_manager
@@ -394,9 +367,6 @@ mod tests {
             write_locked_memory_manager
                 .set_masked_unwrapping_key(&masked_unwrapping_key)
                 .expect("set bmk failure");
-            write_locked_memory_manager
-                .set_sealed_bk3(&sealed_bk3)
-                .expect("set bk3 failure");
 
             // Confirm values are reflected in memory
             assert_eq!(
@@ -410,12 +380,6 @@ mod tests {
                     .get_masked_unwrapping_key()
                     .expect("get masked key failure"),
                 Some(masked_unwrapping_key.to_vec())
-            );
-            assert_eq!(
-                write_locked_memory_manager
-                    .get_sealed_bk3()
-                    .expect("get bk3 failure"),
-                Some(sealed_bk3.to_vec())
             );
 
             // Drop the write lock
@@ -434,9 +398,6 @@ mod tests {
                 read_locked_memory_manager.set_masked_unwrapping_key(&masked_unwrapping_key);
             assert!(result.is_err(), "result {:?}", result);
 
-            let result = read_locked_memory_manager.set_sealed_bk3(&sealed_bk3);
-            assert!(result.is_err(), "result {:?}", result);
-
             // Confirm values are reflected in memory
             assert_eq!(
                 read_locked_memory_manager
@@ -449,12 +410,6 @@ mod tests {
                     .get_masked_unwrapping_key()
                     .expect("get masked key failure"),
                 Some(masked_unwrapping_key.to_vec())
-            );
-            assert_eq!(
-                read_locked_memory_manager
-                    .get_sealed_bk3()
-                    .expect("get bk3 failure"),
-                Some(sealed_bk3.to_vec())
             );
 
             // Drop the read lock
@@ -499,9 +454,6 @@ mod tests {
             write_locked_memory_manager
                 .set_masked_unwrapping_key(&masked_unwrapping_key)
                 .expect("set bmk failure");
-            write_locked_memory_manager
-                .set_sealed_bk3(&sealed_bk3)
-                .expect("set bk3 failure");
 
             // Confirm values are reflected in memory
             assert_eq!(
@@ -515,12 +467,6 @@ mod tests {
                     .get_masked_unwrapping_key()
                     .expect("get masked key failure"),
                 Some(masked_unwrapping_key.to_vec())
-            );
-            assert_eq!(
-                write_locked_memory_manager
-                    .get_sealed_bk3()
-                    .expect("get bk3 failure"),
-                Some(sealed_bk3.to_vec())
             );
 
             // Drop the write lock
@@ -539,9 +485,6 @@ mod tests {
             write_locked_memory_manager
                 .set_masked_unwrapping_key(&masked_unwrapping_key[..truncate_size])
                 .expect("set bmk failure");
-            write_locked_memory_manager
-                .set_sealed_bk3(&sealed_bk3[..truncate_size])
-                .expect("set bk3 failure");
 
             // Confirm values are reflected in memory
             assert_eq!(
@@ -555,12 +498,6 @@ mod tests {
                     .get_masked_unwrapping_key()
                     .expect("get masked key failure"),
                 Some(masked_unwrapping_key[..truncate_size].to_vec())
-            );
-            assert_eq!(
-                write_locked_memory_manager
-                    .get_sealed_bk3()
-                    .expect("get bk3 failure"),
-                Some(sealed_bk3[..truncate_size].to_vec())
             );
 
             // Drop the write lock
@@ -583,12 +520,6 @@ mod tests {
                     .get_masked_unwrapping_key()
                     .expect("get masked key failure"),
                 Some(masked_unwrapping_key[..truncate_size].to_vec())
-            );
-            assert_eq!(
-                read_locked_memory_manager
-                    .get_sealed_bk3()
-                    .expect("get bk3 failure"),
-                Some(sealed_bk3[..truncate_size].to_vec())
             );
 
             // Drop the read lock

@@ -2,44 +2,27 @@
 
 mod common;
 
-#[cfg(feature = "mock")]
 use std::sync::Arc;
-#[cfg(feature = "mock")]
 use std::sync::Barrier;
-#[cfg(feature = "mock")]
 use std::thread;
-#[cfg(feature = "mock")]
 use std::time::Duration;
 
-#[cfg(feature = "mock")]
 use mcr_ddi::Ddi;
-#[cfg(feature = "mock")]
 use mcr_ddi::DdiDev;
-#[cfg(feature = "mock")]
 use mcr_ddi::DdiError;
-#[cfg(feature = "mock")]
 use mcr_ddi_mbor::MborByteArray;
-#[cfg(feature = "mock")]
 use mcr_ddi_types::DdiAesKeySize;
-#[cfg(feature = "mock")]
 use mcr_ddi_types::DdiApiRev;
-#[cfg(feature = "mock")]
 use mcr_ddi_types::DdiKeyAvailability;
-#[cfg(feature = "mock")]
 use mcr_ddi_types::DdiKeyUsage;
-#[cfg(feature = "mock")]
 use mcr_ddi_types::DdiStatus;
-#[cfg(feature = "mock")]
 use parking_lot::RwLock;
-#[cfg(feature = "mock")]
 use test_with_tracing::test;
-#[cfg(feature = "mock")]
 use tracing::info;
 
 use crate::common::*;
 
 /// Information needed for thread-safe session reopening operations
-#[cfg(feature = "mock")]
 struct ThreadSessionInfo {
     dev: <DdiTest as Ddi>::Dev,
     session_id: u16,
@@ -48,7 +31,6 @@ struct ThreadSessionInfo {
     thread_id: usize,
 }
 
-#[cfg(feature = "mock")]
 impl ThreadSessionInfo {
     fn new(
         ddi: &DdiTest,
@@ -187,7 +169,6 @@ impl ThreadSessionInfo {
 }
 
 // Just simulate live migration
-#[cfg(feature = "mock")]
 #[test]
 fn test_live_migration_sim_minimum() {
     let ddi = DdiTest::default();
@@ -206,7 +187,6 @@ fn test_live_migration_sim_minimum() {
 }
 
 // Simulate a live migration of the AziHSM partition for current VM (VF)
-#[cfg(feature = "mock")]
 #[test]
 fn test_live_migration_sim_basic() {
     ddi_dev_test(
@@ -374,7 +354,6 @@ fn test_live_migration_sealed_bk3() {
 }
 
 // Test: open two sessions, sim LM, both sessions can be reopened
-#[cfg(feature = "mock")]
 #[test]
 fn test_live_migration_two_sessions() {
     ddi_dev_test(
@@ -492,7 +471,6 @@ fn test_live_migration_two_sessions() {
 }
 
 // Test: open ZERO sessions, sim LM, reopen session fails
-#[cfg(feature = "mock")]
 #[test]
 fn test_live_migration_zero_sessions() {
     let ddi = DdiTest::default();
@@ -545,7 +523,6 @@ fn test_live_migration_zero_sessions() {
 }
 
 // Test: open session, DON'T sim LM, reopen session fails
-#[cfg(feature = "mock")]
 #[test]
 fn test_reopen_no_live_migration_sim() {
     ddi_dev_test(
@@ -619,7 +596,6 @@ fn test_close_after_live_migration_sim() {
 }
 
 // Test: open session, sim LM, reopen session on new device handle fails
-#[cfg(feature = "mock")]
 #[test]
 fn test_live_migration_reopen_new_device_handle() {
     ddi_dev_test(
@@ -671,7 +647,6 @@ fn test_live_migration_reopen_new_device_handle() {
 }
 
 // Test: open session, repeat live migration and reopen 5 times
-#[cfg(feature = "mock")]
 #[test]
 fn test_live_migration_repeated_cycles() {
     ddi_dev_test(
@@ -764,7 +739,6 @@ fn test_live_migration_repeated_cycles() {
 }
 
 // Test: 6 threads - one doing live migrations, adding session keys in other 5 threads
-#[cfg(feature = "mock")]
 #[test]
 fn test_live_migration_concurrent_shared_session() {
     let ddi = Arc::new(DdiTest::default());
@@ -968,7 +942,6 @@ fn test_live_migration_concurrent_shared_session() {
 }
 
 // Test: multiple threads each with their own device handle and session
-#[cfg(feature = "mock")]
 #[test]
 fn test_live_migration_concurrent_separate_sessions() {
     let ddi = Arc::new(DdiTest::default());
@@ -1219,6 +1192,8 @@ fn test_live_migration_concurrent_separate_sessions() {
 
 // Run only on mock device
 // Check the hash before and after live migration
+// This only applies for mock. In firmware scenario, certificate(s)
+// will only change if there's an impactless update or similar.
 #[cfg(feature = "mock")]
 #[test]
 fn test_get_cert_chain_info_during_live_migration() {
@@ -1248,6 +1223,8 @@ fn test_get_cert_chain_info_during_live_migration() {
 
 // Run only on mock device
 // Calculate the hash before and after live migration
+// This only applies for mock. In firmware scenario, certificate(s)
+// will only change if there's an impactless update or similar.
 #[cfg(feature = "mock")]
 #[test]
 fn test_get_cert_hash_during_live_migration() {

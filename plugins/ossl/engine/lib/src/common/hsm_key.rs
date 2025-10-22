@@ -4,6 +4,7 @@ use api_interface::REPORT_DATA_SIZE;
 use mcr_api_resilient::*;
 use openssl_rust::safeapi::error::OpenSSLResult;
 
+use super::key_util::encode_attestation_payload;
 use crate::engine_internal::*;
 
 /// A container to hold an HsmKeyHandle, which will optionally delete the key on drop.
@@ -46,7 +47,7 @@ impl HsmKeyContainer {
     ///
     /// # Argument
     /// * `key_name` - Name of the key to open
-    pub fn open_key(key_name: u16) -> OpenSSLResult<Self> {
+    pub fn open_key(key_name: &[u8]) -> OpenSSLResult<Self> {
         let hsm_ctx = azihsm_engine();
         let hsm_ctx_lock = hsm_ctx.read();
         let app_session = hsm_ctx_lock.app_session_as_ref()?;
@@ -74,7 +75,7 @@ impl HsmKeyContainer {
         dgst_kind: DigestKind,
         key_usage: KeyUsage,
         key_availability: KeyAvailability,
-        key_name: Option<u16>,
+        key_name: Option<&[u8]>,
     ) -> OpenSSLResult<Self> {
         let wrapped_key_params = RsaUnwrapParams {
             key_class,
@@ -123,9 +124,11 @@ impl HsmKeyContainer {
         let engine_ctx = engine_ctx.write();
         let app_session = engine_ctx.app_session_as_ref()?;
 
-        app_session
-            .attest_key(&self.hsm_handle(), report_data)
-            .map_err(map_hsm_error)
+        let (report, cert) = app_session
+            .attest_key_and_obtain_cert(&self.hsm_handle(), report_data)
+            .map_err(map_hsm_error)?;
+
+        Ok(encode_attestation_payload(&report, &cert))
     }
 
     /// Export public key data

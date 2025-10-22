@@ -5,12 +5,13 @@
 use std::sync::Arc;
 use std::sync::Weak;
 
+use attestation::attestation::*;
+use attestation::report::TAGGED_COSE_SIGN1_OBJECT_MAX_SIZE;
 use bitfield_struct::bitfield;
 use parking_lot::RwLock;
 use tracing::instrument;
 use uuid::Uuid;
 
-use crate::attestation::*;
 use crate::credentials::EncryptedPin;
 use crate::crypto::aes::*;
 use crate::crypto::aeshmac::AesHmacKey;
@@ -23,7 +24,6 @@ use crate::crypto::sha::*;
 use crate::errors::ManticoreError;
 use crate::function::FunctionState;
 use crate::function::FunctionStateWeak;
-use crate::report::TAGGED_COSE_SIGN1_OBJECT_MAX_SIZE;
 use crate::table::entry::key::*;
 use crate::table::entry::*;
 use crate::vault::*;
@@ -608,42 +608,23 @@ impl UserSessionInner {
         let launch_id = self.launch_id.as_bytes();
 
         // Encode the key to be attested
-        let cose_key = match key_to_attest.key() {
-            Key::RsaPrivate(key) => CoseKey::from_rsa_private(&key),
-            Key::RsaPublic(key) => CoseKey::from_rsa_public(&key),
-            Key::EccPrivate(key) => CoseKey::from_ecc_private(&key),
-            Key::EccPublic(key) => CoseKey::from_ecc_public(&key),
-            Key::Aes(_) => {
-                tracing::error!(error = ?ManticoreError::InvalidKeyType, "Key to be attested cannot be an AES key");
-                Err(ManticoreError::InvalidKeyType)
-            }
-            Key::AesHmac(_) => {
-                tracing::error!(error = ?ManticoreError::InvalidKeyType, "Key to be attested cannot be an AES-HMAC key");
-                Err(ManticoreError::InvalidKeyType)
-            }
-            Key::Secret(_) => {
-                tracing::error!(error = ?ManticoreError::InvalidKeyType, "Key to be attested cannot be a Secret key");
-                Err(ManticoreError::InvalidKeyType)
-            }
-            Key::Hmac(_) => {
-                tracing::error!(error = ?ManticoreError::InvalidKeyType, "Key to be attested cannot be an HMAC key");
-                Err(ManticoreError::InvalidKeyType)
-            }
-
-            Key::Session(_) => Err(ManticoreError::InvalidKeyType)?,
-        }?;
-        let (encoded_key, encoded_key_len) = cose_key.encode()?;
+        let cose_key = CoseKey::try_from(&key_to_attest.key())?;
+        let (encoded_key, encoded_key_len) = cose_key
+            .encode()
+            .map_err(|_| ManticoreError::CborEncodeError)?;
 
         // Generate attestation report payload
         let mut attester = KeyAttester::new();
-        attester.create_report_payload(
-            &encoded_key,
-            encoded_key_len,
-            key_flag,
-            app_uuid,
-            report_data,
-            launch_id,
-        )?;
+        attester
+            .create_report_payload(
+                &encoded_key,
+                encoded_key_len,
+                key_flag,
+                app_uuid,
+                report_data,
+                launch_id,
+            )
+            .map_err(|_| ManticoreError::CborEncodeError)?;
 
         // Retrieve Attestation Key to sign the report
         let function_state = self.get_function_state()?;
@@ -658,7 +639,13 @@ impl UserSessionInner {
         }
 
         if let Key::EccPrivate(key) = attestation_key.key() {
-            let (signed_quote, signed_quote_len) = attester.sign(&key)?;
+            let key = key
+                .try_into()
+                .map_err(|_| ManticoreError::EccFromDerError)?;
+            let (signed_quote, signed_quote_len) = attester.sign(&key).map_err(|error| {
+                tracing::error!(?error, "Failed to sign attestation report");
+                ManticoreError::AttestKeyInternalErr
+            })?;
             Ok((signed_quote, signed_quote_len))
         } else {
             // Implies attestation_key was initialized incorrectly
@@ -1589,7 +1576,6 @@ pub enum RsaOpType {
 
 #[cfg(test)]
 mod tests {
-
     use std::thread;
 
     use test_with_tracing::test;
@@ -2158,6 +2144,9 @@ mod tests {
         let function = common_setup(1);
         let api_rev = function.get_api_rev_range().max;
 
+        let dummy_bk3 = function.init_bk3([0u8; 48]).unwrap(); // Create properly masked BK3
+        function.provision(&dummy_bk3, None, None).unwrap();
+
         let function_state = function.get_function_state();
         let vault = function_state.get_vault(DEFAULT_VAULT_ID).unwrap();
 
@@ -2425,6 +2414,9 @@ mod tests {
         // Test we cannot delete internal keys
         let function = common_setup(64);
         let api_rev = function.get_api_rev_range().max;
+
+        let dummy_bk3 = function.init_bk3([0u8; 48]).unwrap(); // Create properly masked BK3
+        function.provision(&dummy_bk3, None, None).unwrap();
 
         let function_state = function.get_function_state();
         let vault = function_state.get_vault(DEFAULT_VAULT_ID).unwrap();
@@ -3159,7 +3151,7 @@ mod tests {
         // Initialize masking key: init_bk3 followed by provision
         let original_bk3 = [0x77u8; 48];
         let masked_bk3 = function.init_bk3(original_bk3).unwrap();
-        let _bmk_result = function.provision(&masked_bk3, None).unwrap();
+        let _bmk_result = function.provision(&masked_bk3, None, None).unwrap();
 
         let function_state = function.get_function_state();
         let vault = function_state.get_vault(DEFAULT_VAULT_ID).unwrap();
@@ -3208,7 +3200,7 @@ mod tests {
         // Initialize masking key: init_bk3 followed by provision
         let original_bk3 = [0x77u8; 48];
         let masked_bk3 = function.init_bk3(original_bk3).unwrap();
-        let _bmk_result = function.provision(&masked_bk3, None).unwrap();
+        let _bmk_result = function.provision(&masked_bk3, None, None).unwrap();
 
         let function_state = function.get_function_state();
         let vault = function_state.get_vault(DEFAULT_VAULT_ID).unwrap();
@@ -3258,7 +3250,7 @@ mod tests {
         // Initialize masking key: init_bk3 followed by provision
         let original_bk3 = [0x77u8; 48];
         let masked_bk3 = function.init_bk3(original_bk3).unwrap();
-        let _bmk_result = function.provision(&masked_bk3, None).unwrap();
+        let _bmk_result = function.provision(&masked_bk3, None, None).unwrap();
 
         let function_state = function.get_function_state();
         let vault = function_state.get_vault(DEFAULT_VAULT_ID).unwrap();
@@ -3486,5 +3478,59 @@ mod tests {
                 serialized.len()
             );
         }
+    }
+
+    #[test]
+    fn test_unwrapping_key_after_lm() {
+        // Test that unwrapping key restoration works after live migration
+
+        let function = common_setup(64);
+        let original_bk3 = [0x77u8; 48];
+        let masked_bk3 = function.init_bk3(original_bk3).unwrap();
+
+        // First provision to generate an unwrapping key
+        let bmk = function
+            .provision(&masked_bk3, None, None)
+            .expect("Initial provision failed");
+
+        let original_key_num = function
+            .get_function_state()
+            .get_unwrapping_key_num()
+            .expect("Should have unwrapping key after provision");
+
+        // Get the real masked unwrapping key using function_state.mask_vault_entry
+        // Get the key entry directly from the vault
+        let vault = function
+            .get_function_state()
+            .get_vault(DEFAULT_VAULT_ID)
+            .unwrap();
+        let entry = vault.get_key_entry(original_key_num).unwrap();
+
+        // Use function_state.mask_vault_entry to create the masked key
+        // For unwrapping key, we don't need session-specific masking
+        let function_state = function.get_function_state();
+        let real_masked_unwrapping_key =
+            function_state.mask_vault_entry(&entry, None, None).unwrap();
+
+        // Simulate live migration: reset function to clean state
+        // This preserves sealed BK3 but clears masking keys and provisioned state
+        function.reset_function().expect("Reset should succeed");
+
+        // After reset, we should not be provisioned anymore
+        assert!(
+            !function.get_function_state().is_provisioned(),
+            "Function should not be provisioned after reset"
+        );
+
+        // Now provision again with the BMK and real masked unwrapping key
+        // This simulates restoring after live migration
+        let result = function.provision(&masked_bk3, Some(&bmk), Some(&real_masked_unwrapping_key));
+
+        assert!(result.is_ok());
+        // verify that unwrapping key is restored
+        function
+            .get_function_state()
+            .get_unwrapping_key_num()
+            .expect("Should have unwrapping key after restoration");
     }
 }

@@ -3,12 +3,11 @@ mod common;
 use std::mem::size_of;
 use std::ptr;
 
+use crypto::rand::rand_bytes;
 use winapi::shared::winerror::NTE_BAD_FLAGS;
 use winapi::shared::winerror::NTE_BUFFER_TOO_SMALL;
 use windows::core::HRESULT;
 use windows::Win32::Security::Cryptography::*;
-
-use crypto::rand::rand_bytes;
 
 use crate::common::*;
 

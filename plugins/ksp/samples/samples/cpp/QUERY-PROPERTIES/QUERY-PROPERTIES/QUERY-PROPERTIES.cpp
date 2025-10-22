@@ -70,36 +70,6 @@ cleanup:
     return status;
 }
 
-// Query "AZIHSM_DEVICE_CERT_CHAIN_PROPERTY"
-// You can retrieve the device certificate chain with this property.
-// The returned buffer will contain multiple certificates in PEM format, concatenated together with newline (\n).
-// The leaf certificate will be first in the chain.
-// Retrieving this property is useful during device attestation, for more information about attestation,
-// see another sample: ATTEST-UNWRAP-RSA
-static SECURITY_STATUS queryCertChainProperty(NCRYPT_PROV_HANDLE provider) {
-    SECURITY_STATUS status = E_FAIL;
-
-    PBYTE buffer = NULL;
-    DWORD bufferSize;
-
-    status = query(provider, AZIHSM_PROPERTY_CERT_CHAIN_NAME, &buffer, &bufferSize);
-    if (FAILED(status))
-    {
-        fprintf(stderr, "Failed to get AZIHSM_PROPERTY_CERT_CHAIN_NAME. query returned: 0x%08x\n", status);
-        goto cleanup;
-    }
-
-    // To not flood the console with the certificate chain, we will not print it here.
-    printf("Retrieved AZIHSM_DEVICE_CERT_CHAIN_PROPERTY successfully. Buffer size: %lu\n", bufferSize);
-
-    status = S_OK;
-cleanup:
-    if (buffer)
-    {
-        delete[] buffer;
-    }
-    return status;
-}
 
 // Query "AZIHSM_DEVICE_MAX_STORAGE_SIZE_PROPERTY"
 // You can retrieve the maximum storage size of the AziHSM device.
@@ -224,17 +194,6 @@ int main() {
         goto cleanup;
     }
     printf("Opened NCrypt Storage Provider handle: 0x%08x\n", (int) provider);
-
-    printf("\nQuery AZIHSM_DEVICE_CERT_CHAIN_PROPERTY"
-           "\n---------------------------------------\n");
-    status = queryCertChainProperty(provider);
-    if (FAILED(status))
-    {
-        fprintf(stderr,
-            "Failed to query AZIHSM_DEVICE_CERT_CHAIN_PROPERTY: 0x%08x\n",
-            status);
-        goto cleanup;
-    }
 
     printf("\nQuery AZIHSM_DEVICE_MAX_STORAGE_SIZE_PROPERTY"
            "\n---------------------------------------------\n");

@@ -61,12 +61,13 @@ pub struct RsaPublicKeyData {
 /// Helper function for implementing pre_encode_fn
 #[cfg(feature = "pre_encode")]
 pub fn ecc_pub_key_der_to_raw(buf: &[u8]) -> Result<EccPublicKeyData, MborEncodeError> {
-    use sec1::der::Decode;
-
-    let public_key_info = spki::SubjectPublicKeyInfoRef::from_der(buf).map_err(|error_stack| {
-        tracing::error!(?error_stack);
-        MborEncodeError::DerDecodeFailed
-    })?;
+    let public_key_info = {
+        use spki::der::Decode;
+        spki::SubjectPublicKeyInfoRef::from_der(buf).map_err(|error_stack| {
+            tracing::error!(?error_stack);
+            MborEncodeError::DerDecodeFailed
+        })?
+    };
 
     let (_alg_oid, param_oid) = public_key_info.algorithm.oids().map_err(|error_stack| {
         tracing::error!(?error_stack);
@@ -169,30 +170,44 @@ pub fn ecc_pub_key_der_to_raw(buf: &[u8]) -> Result<EccPublicKeyData, MborEncode
 /// Helper function for implementing post_decode_fn
 #[cfg(feature = "post_decode")]
 pub fn ecc_pub_key_raw_to_der(key_data: EccPublicKeyData) -> Result<Vec<u8>, MborDecodeError> {
-    use generic_array;
-    use sec1::der::Encode;
+    use spki::der::Encode;
 
     let public_key_der = match key_data.curve {
         DdiEccCurve::P256 => {
+            let mut x_bytes = [0u8; 32];
+            x_bytes.copy_from_slice(&key_data.x[..32]);
+            let mut y_bytes = [0u8; 32];
+            y_bytes.copy_from_slice(&key_data.y[..32]);
+
             let point = sec1::point::EncodedPoint::<sec1::consts::U32>::from_affine_coordinates(
-                &generic_array::GenericArray::clone_from_slice(&key_data.x[..32]),
-                &generic_array::GenericArray::clone_from_slice(&key_data.y[..32]),
+                &x_bytes.into(),
+                &y_bytes.into(),
                 false,
             );
             point.as_bytes().to_vec()
         }
         DdiEccCurve::P384 => {
+            let mut x_bytes = [0u8; 48];
+            x_bytes.copy_from_slice(&key_data.x[..48]);
+            let mut y_bytes = [0u8; 48];
+            y_bytes.copy_from_slice(&key_data.y[..48]);
+
             let point = sec1::point::EncodedPoint::<sec1::consts::U48>::from_affine_coordinates(
-                &generic_array::GenericArray::clone_from_slice(&key_data.x[..48]),
-                &generic_array::GenericArray::clone_from_slice(&key_data.y[..48]),
+                &x_bytes.into(),
+                &y_bytes.into(),
                 false,
             );
             point.as_bytes().to_vec()
         }
         DdiEccCurve::P521 => {
+            let mut x_bytes = [0u8; 66];
+            x_bytes.copy_from_slice(&key_data.x[..66]);
+            let mut y_bytes = [0u8; 66];
+            y_bytes.copy_from_slice(&key_data.y[..66]);
+
             let point = sec1::point::EncodedPoint::<sec1::consts::U66>::from_affine_coordinates(
-                &generic_array::GenericArray::clone_from_slice(&key_data.x[..66]),
-                &generic_array::GenericArray::clone_from_slice(&key_data.y[..66]),
+                &x_bytes.into(),
+                &y_bytes.into(),
                 false,
             );
             point.as_bytes().to_vec()
@@ -209,7 +224,7 @@ pub fn ecc_pub_key_raw_to_der(key_data: EccPublicKeyData) -> Result<Vec<u8>, Mbo
             MborDecodeError::InvalidParameter
         })?;
 
-    let param_oid: sec1::der::Any = match key_data.curve {
+    let param_oid: spki::der::Any = match key_data.curve {
         DdiEccCurve::P256 => P256_OID.into(),
         DdiEccCurve::P384 => P384_OID.into(),
         DdiEccCurve::P521 => P521_OID.into(),

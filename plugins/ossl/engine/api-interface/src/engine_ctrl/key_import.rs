@@ -86,7 +86,7 @@ impl<T> KeyImport<T> {
         }
     }
 
-    pub fn key_name(&self) -> OpenSSLResult<Option<u16>> {
+    pub fn key_name(&self) -> OpenSSLResult<Option<Vec<u8>>> {
         let key_name_ptr = unsafe { (*self.inner).key_name };
         if key_name_ptr.is_null() {
             return Ok(None);
@@ -96,9 +96,7 @@ impl<T> KeyImport<T> {
         let key_name = key_name
             .to_str()
             .map_err(|_| OpenSSLError::InvalidKeyName("<invalid UTF-8>".to_string()))?;
-        let key_name = key_name
-            .parse::<u16>()
-            .map_err(|_| OpenSSLError::InvalidKeyName(key_name.to_string()))?;
+        let key_name = key_name.as_bytes().to_vec();
         Ok(Some(key_name))
     }
 

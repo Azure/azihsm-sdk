@@ -35,12 +35,6 @@ fn test_multithreaded_open_session() {
     // Open device
     let result = HsmDevice::open(&device_path);
     assert!(result.is_ok(), "result {:?}", result);
-    let device = result.unwrap();
-
-    // Establish credentials
-    let api_rev = device.get_api_revision_range().max;
-    let result = device.establish_credential(api_rev, TEST_CREDENTIALS);
-    assert!(result.is_ok(), "establish credential result {:?}", result);
 
     let mut threads = Vec::new();
 
@@ -60,6 +54,4 @@ fn test_multithreaded_open_session() {
     for thread in threads {
         thread.join().unwrap();
     }
-
-    common_cleanup(&device_path);
 }

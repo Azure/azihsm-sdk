@@ -14,6 +14,7 @@ use openssl_rust::safeapi::error::*;
 use openssl_rust::ENGINE_CTRL_FLAG_INTERNAL;
 use openssl_rust::EVP_PKEY;
 
+use crate::common::key_util::encode_attestation_payload;
 use crate::engine_internal::*;
 
 pub struct CmdAttestBuiltinUnwrapKey;
@@ -59,9 +60,11 @@ impl EngineCtrlCmdInfo for CmdAttestBuiltinUnwrapKey {
         let app_session = hsm_ctx_lock.app_session_as_ref()?;
         let unwrap_key = app_session.get_unwrapping_key().map_err(map_hsm_error)?;
 
-        let claim = app_session
-            .attest_key(&unwrap_key, report_data)
+        let (report, cert) = app_session
+            .attest_key_and_obtain_cert(&unwrap_key, report_data)
             .map_err(map_hsm_error)?;
+
+        let claim = encode_attestation_payload(&report, &cert);
 
         attest_key_data.set_claim(claim.as_slice())
     }

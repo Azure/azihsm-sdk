@@ -201,13 +201,7 @@ impl Function {
         let instance = Self {
             inner: Arc::new(RwLock::new(FunctionInner::new(table_count))),
         };
-
-        let generate_attestation_err = instance.generate_attestation_key();
-        let generate_unwrapping_err = instance.generate_unwrapping_key();
-
-        // Note: earlier errors can mask later errors
-        generate_attestation_err?;
-        generate_unwrapping_err?;
+        instance.generate_attestation_key()?;
 
         Ok(instance)
     }
@@ -225,10 +219,6 @@ impl Function {
     #[instrument(skip(self))]
     fn generate_attestation_key(&self) -> Result<(), ManticoreError> {
         self.inner.write().generate_attestation_key()
-    }
-
-    fn generate_unwrapping_key(&self) -> Result<(), ManticoreError> {
-        self.inner.write().generate_unwrapping_key()
     }
 
     /// Reset the function to clean state, preserving sealed BK3
@@ -252,11 +242,12 @@ impl Function {
         self.inner.read().get_sealed_bk3()
     }
 
-    /// Provisions the HSM with a masked BK3 (backup key 3) and optionally a BMK (backup masking key).
+    /// Provisions the HSM with a masked BK3 (backup key 3), optionally a BMK (backup masking key), and optionally a masked unwrapping key.
     ///
     /// # Arguments
     /// * `masked_bk3` - The raw bytes of the masked BK3 data
     /// * `bmk` - Optional partition backup masking key, should be None before live migration.
+    /// * `masked_unwrapping_key` - Optional masked unwrapping key for restoration after live migration.
     ///
     /// # Returns
     /// * `Result<Vec<u8>, ManticoreError>` - The masked BMK on success, or an error
@@ -267,8 +258,11 @@ impl Function {
         &self,
         masked_bk3: &[u8],
         bmk: Option<&[u8]>,
+        masked_unwrapping_key: Option<&[u8]>,
     ) -> Result<Vec<u8>, ManticoreError> {
-        self.inner.write().provision(masked_bk3, bmk)
+        self.inner
+            .write()
+            .provision(masked_bk3, bmk, masked_unwrapping_key)
     }
 
     /// Returns the API revision range supported.
@@ -419,12 +413,9 @@ impl FunctionInner {
 
         self.state.reset()?;
 
-        let generate_attestation_err = self.generate_attestation_key();
-        let generate_unwrapping_err = self.generate_unwrapping_key();
+        self.generate_attestation_key()?;
 
-        // Note: earlier errors can mask later errors
-        generate_attestation_err?;
-        generate_unwrapping_err
+        Ok(())
     }
 
     /// This function should only be called once during initialization.
@@ -484,6 +475,32 @@ impl FunctionInner {
         Ok(())
     }
 
+    /// Restore unwrapping key from masked data
+    fn restore_unwrapping_key(
+        &mut self,
+        masked_unwrapping_key: &[u8],
+        masking_key_bytes: &[u8],
+    ) -> Result<(), ManticoreError> {
+        tracing::debug!("Restoring unwrapping key from masked data");
+
+        // unmask the unwrapping key using the masking key bytes provided
+        let key_num = self.state.unmask_and_import_key_internal(
+            masked_unwrapping_key,
+            0,                        // session_id can be ignored for partition keys
+            APP_ID_FOR_INTERNAL_KEYS, // Use the internal app_id for unwrapping keys
+            masking_key_bytes,        // Provide themasking key bytes
+        )?;
+
+        // Save the key num on FunctionState
+        self.state.set_unwrapping_key_num(key_num)?;
+
+        tracing::debug!(
+            key_num,
+            "Successfully restored unwrapping key from masked data"
+        );
+
+        Ok(())
+    }
     /// Store masking key in the vault and set the key number in state
     fn store_masking_key(&mut self, masking_key_bytes: &[u8]) -> Result<u16, ManticoreError> {
         let vault = self.state.get_vault(DEFAULT_VAULT_ID)?;
@@ -540,6 +557,7 @@ impl FunctionInner {
         &mut self,
         masked_bk3: &[u8],
         bmk: Option<&[u8]>,
+        masked_unwrapping_key: Option<&[u8]>,
     ) -> Result<Vec<u8>, ManticoreError> {
         if self.state.is_provisioned() {
             return Err(ManticoreError::PartitionAlreadyProvisioned);
@@ -647,7 +665,16 @@ impl FunctionInner {
                 ManticoreError::InternalError
             })?;
 
-        // Save mk and bk
+        // Handle unwrapping key restoration or generation
+        // Note: the unwrapping key is stored in the vault and its key num is saved in FunctionState
+        // After this point, no failure should be allowed.
+        match masked_unwrapping_key {
+            Some(data) if !data.is_empty() => self.restore_unwrapping_key(data, &mk)?,
+            _ => self.generate_unwrapping_key()?,
+        }
+
+        // All cryptographic operations completed successfully - now commit state changes
+        // these should not fail as we just checked provisioned state
         self.get_function_state().set_bk_partition(bk_partition)?;
         self.store_masking_key(&mk)?;
 
@@ -941,6 +968,22 @@ impl FunctionState {
             .unmask_and_import_key(blob, session_id, app_id, session_masking_key)
     }
 
+    /// Unmask and import a key with an external masking key (for restoration scenarios)
+    pub(crate) fn unmask_and_import_key_internal(
+        &self,
+        blob: &[u8],
+        session_id: u16,
+        app_id: Uuid,
+        external_masking_key_bytes: &[u8],
+    ) -> Result<u16, ManticoreError> {
+        self.inner.read().unmask_and_import_key_internal(
+            blob,
+            session_id,
+            app_id,
+            external_masking_key_bytes,
+        )
+    }
+
     pub(crate) fn get_certificate(&mut self) -> Result<Vec<u8>, ManticoreError> {
         self.inner.write().get_certificate()
     }
@@ -1047,7 +1090,16 @@ impl FunctionStateInner {
     fn get_unwrapping_key_num(&self) -> Result<u16, ManticoreError> {
         match self.wrapping_key_num {
             Some(key_num) => Ok(key_num),
-            None => Err(ManticoreError::KeyNotFound)?,
+            None => {
+                // Check if partition is provisioned
+                if self.is_provisioned() {
+                    // Partition is provisioned but unwrapping key is missing (shouldn't happen)
+                    Err(ManticoreError::KeyNotFound)
+                } else {
+                    // Partition needs provisioning first
+                    Err(ManticoreError::PartitionNotProvisioned)
+                }
+            }
         }
     }
 
@@ -1210,7 +1262,29 @@ impl FunctionStateInner {
         session_masking_key: Option<&AesHmacKey>,
     ) -> Result<u16, ManticoreError> {
         const ERR: ManticoreError = ManticoreError::MaskedKeyDecodeFailed;
-        tracing::debug!("Unmasking and importing key with verification");
+
+        let session_only = Self::is_session_only_masked_key(blob)?;
+        // Use known masking bytes or get partition or session masking key bytes
+        let masking_key_bytes = if session_only {
+            // Get session masking key
+            session_masking_key.ok_or(ERR)?.serialize()?
+        } else {
+            // Get partition masking key
+            self.get_partition_masking_key_bytes()?
+        };
+
+        self.unmask_and_import_key_internal(blob, session_id, app_id, &masking_key_bytes)
+    }
+
+    /// Determines if a masked key blob represents a session-only key by partially decoding its metadata
+    ///
+    /// # Arguments
+    /// * `blob` - The masked key blob to check
+    ///
+    /// # Returns
+    /// * `Result<bool, ManticoreError>` - True if the key is session-only, false otherwise
+    fn is_session_only_masked_key(blob: &[u8]) -> Result<bool, ManticoreError> {
+        const ERR: ManticoreError = ManticoreError::MaskedKeyDecodeFailed;
 
         // Partial decode to determine whether this is a session or partition key
         let env = SimCryptEnv;
@@ -1230,20 +1304,23 @@ impl FunctionStateInner {
 
         let flags_bytes = &metadata.key_attributes.blob[0..2];
         let flags = EntryFlags::from(u16::from_le_bytes([flags_bytes[0], flags_bytes[1]]));
-        let session_only = flags.session_only();
+        Ok(flags.session_only())
+    }
 
-        // Get partition or session masking key bytes
-        let masking_key_bytes = if session_only {
-            // Get session masking key
-            session_masking_key.ok_or(ERR)?.serialize()?
-        } else {
-            // Get partition masking key
-            self.get_partition_masking_key_bytes()?
-        };
+    fn unmask_and_import_key_internal(
+        &self,
+        blob: &[u8],
+        session_id: u16,
+        app_id: Uuid,
+        masking_key_bytes: &[u8],
+    ) -> Result<u16, ManticoreError> {
+        const ERR: ManticoreError = ManticoreError::MaskedKeyDecodeFailed;
+        tracing::debug!("Unmasking and importing key with verification");
+        let env = SimCryptEnv;
 
         // Use the masking key to decode the masked key
         let decoded_key =
-            MaskedKey::decode(&env, &masking_key_bytes, blob, true).map_err(|err| {
+            MaskedKey::decode(&env, masking_key_bytes, blob, true).map_err(|err| {
                 tracing::error!("MaskedKey::decode error {:?}", err);
                 ERR
             })?;
@@ -1302,7 +1379,7 @@ impl FunctionStateInner {
 
         let mut decrypted_key = vec![0u8; expected_key_len];
         let actual_len = decoded_key
-            .decrypt_key(&env, &masking_key_bytes, &mut decrypted_key)
+            .decrypt_key(&env, masking_key_bytes, &mut decrypted_key)
             .map_err(|err| {
                 tracing::error!("decrypt_key error {:?}", err);
                 ERR
@@ -1438,6 +1515,14 @@ mod tests {
             .attestation_key_num
             .is_some());
 
+        // Before provision, unwrapping key should not be available
+        let result = function.get_function_state().get_unwrapping_key_num();
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            ManticoreError::PartitionNotProvisioned
+        ));
+
         // Check attestation key
         let result = function.get_function_state().get_attestation_key_num();
         assert!(result.is_ok());
@@ -1466,7 +1551,13 @@ mod tests {
         assert_eq!(entry.kind(), Kind::Ecc384Private);
         assert!(matches!(entry.key(), Key::EccPrivate { .. }));
 
-        // Check unwrapping key
+        // After provision, unwrapping key should be available
+        // Create some dummy BK3 data for testing
+        let dummy_bk3 = function.init_bk3([0u8; BK3_SIZE_BYTES]).unwrap();
+        let provision_result = function.provision(&dummy_bk3, None, None);
+        assert!(provision_result.is_ok());
+
+        // Now unwrapping key should be available
         let result = function.get_function_state().get_unwrapping_key_num();
         assert!(result.is_ok());
         let key_num = result.unwrap();
@@ -1641,6 +1732,11 @@ mod tests {
         let function = create_function(2);
         let api_rev = function.get_api_rev_range().max;
 
+        // Provision the function first to enable unwrapping key
+        let dummy_bk3 = function.init_bk3([0u8; BK3_SIZE_BYTES]).unwrap();
+        let provision_result = function.provision(&dummy_bk3, None, None);
+        assert!(provision_result.is_ok());
+
         let result = function.get_function_state().get_vault(DEFAULT_VAULT_ID);
         assert!(result.is_ok());
         let vault = result.unwrap();
@@ -1668,8 +1764,14 @@ mod tests {
         // Verify function state was reset (new attestation keys generated)
         let new_attestation_key = function.get_function_state().get_attestation_key_num();
         assert!(new_attestation_key.is_ok());
+
+        // After reset, unwrapping key should not be available until reprovisioning
         let new_unwrapping_key = function.get_function_state().get_unwrapping_key_num();
-        assert!(new_unwrapping_key.is_ok());
+        assert!(new_unwrapping_key.is_err());
+        assert!(matches!(
+            new_unwrapping_key.unwrap_err(),
+            ManticoreError::PartitionNotProvisioned
+        ));
     }
 
     #[test]
@@ -1804,6 +1906,11 @@ mod tests {
     fn test_simulate_migration_clears_persistent_key() {
         let function = create_function(2);
         let api_rev = function.get_api_rev_range().max;
+
+        // Provision the function first to enable unwrapping key
+        let dummy_bk3 = function.init_bk3([0u8; BK3_SIZE_BYTES]).unwrap();
+        let provision_result = function.provision(&dummy_bk3, None, None);
+        assert!(provision_result.is_ok());
 
         let result = function.get_function_state().get_vault(DEFAULT_VAULT_ID);
         assert!(result.is_ok());

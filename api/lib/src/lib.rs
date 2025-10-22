@@ -11,6 +11,8 @@ mod error;
 
 use std::sync::Arc;
 
+use attestation::attestation::KeyAttester;
+use attestation::error::AttestationError;
 use crypto::cert::der_to_pem;
 use crypto::ecc::EccOp;
 use crypto::ecc::EccPublicKey;
@@ -40,6 +42,8 @@ use session_parameter_encryption::DeviceCredentialEncryptionKey;
 use tracing::instrument;
 use uuid::uuid;
 use uuid::Uuid;
+use x509::X509Certificate;
+use x509::X509CertificateOp;
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "mock")] {
@@ -753,7 +757,11 @@ impl Drop for HsmSession {
         // we can't retry anymore. We will depend on the hardware to clean up the session as we cannot do anything
         // else.
         if let Err(error) = self.close_session() {
-            tracing::warn!(error = ?error, session_id = self.session_id, "Ignored error while closing HsmSession");
+            tracing::warn!(
+                ?error,
+                session_id = self.session_id,
+                "Ignored error while closing HsmSession"
+            );
         }
 
         // Session object is about to be dropped. If the above close_session() has failed then session_open would still
@@ -2062,6 +2070,89 @@ impl HsmSession {
         tracing::debug!("Done HMAC");
 
         Ok(resp.data.tag.as_slice().to_vec())
+    }
+
+    /// Attest the key and obtain key attestation report,
+    /// Also fetch the certificate chain for that report,
+    /// Then verify if the report is signed by the certificate's public key.
+    /// If signature doesn't match, then LM might have occurred during two calls.
+    ///
+    /// # Arguments
+    /// * `key` - handle to the Key to be attested
+    /// * `report_data` - arbitrary user data to be included in the attestation report
+    ///
+    /// # Returns
+    /// * `(Vec<u8>, ManticoreCertificate)` - Attestation report and certificate
+    ///
+    /// # Errors
+    /// * `HsmError::SessionNeedsRenegotiation` - Thrown if the attestation report signature doesn't match the certificate's public key, LM might have occurred.
+    #[instrument(skip_all, fields(sess_id = self.session_id, key_id = key.id()))]
+    pub fn attest_key_and_obtain_cert(
+        &self,
+        key: &HsmKeyHandle,
+        report_data: &[u8; REPORT_DATA_SIZE],
+    ) -> HsmResult<(Vec<u8>, ManticoreCertificate)> {
+        let attestation_report = self.attest_key(key, report_data)?;
+
+        let certificate = self.get_certificate()?;
+        let cert_chain = match &certificate {
+            ManticoreCertificate::PhysicalManticore(cert_chain) => cert_chain,
+            ManticoreCertificate::VirtualManticore { ak_cert, .. } => ak_cert,
+        };
+
+        // Find the leaf cert from cert chain
+        let leaf_cert_pem = {
+            let pattern_header = "-----BEGIN CERTIFICATE-----".as_bytes();
+            let pattern_footer = "-----END CERTIFICATE-----".as_bytes();
+
+            let start = cert_chain
+                .windows(pattern_header.len())
+                .position(|window| window == pattern_header)
+                .ok_or(HsmError::GetCertificateError)?;
+            let end = cert_chain
+                .windows(pattern_footer.len())
+                .position(|window| window == pattern_footer)
+                .ok_or(HsmError::GetCertificateError)?;
+
+            // Move to end of footer
+            let end = end + pattern_footer.len();
+
+            &cert_chain[start..end]
+        };
+
+        // Parse the leaf cert to get a ECC Pub key
+        let ecc_pub_key = {
+            let cert = X509Certificate::from_pem(leaf_cert_pem)
+                .map_err(|_| HsmError::GetCertificateError)?;
+            let der = cert
+                .get_public_key_der()
+                .map_err(|_| HsmError::GetCertificateError)?;
+            EccPublicKey::from_der(&der, None)?
+        };
+
+        let key_attester = KeyAttester::parse(&attestation_report).map_err(|error| {
+            tracing::error!(?error, "Failed to parse attestation report");
+            HsmError::AttestKeyError
+        })?;
+
+        // If error is AttestationError::ReportSignatureMismatch, LM might occurred
+        key_attester
+            .verify(&ecc_pub_key)
+            .map_err(|error| match error {
+                AttestationError::ReportSignatureMismatch => {
+                    tracing::error!(
+                        error = ?HsmError::AttestReportSignatureMismatch,
+                        "Attestation report signature mismatch, LM might have occurred"
+                    );
+                    HsmError::AttestReportSignatureMismatch
+                }
+                _ => {
+                    tracing::error!(?error, "Failed to verify attestation report");
+                    HsmError::AttestKeyError
+                }
+            })?;
+
+        Ok((attestation_report, certificate))
     }
 
     /// Attest Key

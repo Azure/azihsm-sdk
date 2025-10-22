@@ -9,7 +9,6 @@ use crate::engine_ctrl::attest_key::evp_pkey::CmdAttestPKeyEcKey;
 use crate::engine_ctrl::attest_key::evp_pkey::CmdAttestPKeyRsaKey;
 use crate::engine_ctrl::attest_key::rsa_key::CmdAttestRsaKey;
 use crate::engine_ctrl::attest_key::unwrap_key::CmdAttestBuiltinUnwrapKey;
-use crate::engine_ctrl::collateral::CmdGetCollateral;
 use crate::engine_ctrl::delete_key::CmdDeleteKey;
 use crate::engine_ctrl::import_key::ec_key::CmdEcKeyImport;
 use crate::engine_ctrl::import_key::evp_cipher::CmdEvpCipherKeyImport;
@@ -27,7 +26,6 @@ pub fn init_engine_ctrl(engine: &Engine) -> OpenSSLResult<()> {
         .push(Box::new(CmdAttestPKeyRsaKey))
         .push(Box::new(CmdAttestRsaKey))
         .push(Box::new(CmdAttestBuiltinUnwrapKey))
-        .push(Box::new(CmdGetCollateral))
         .push(Box::new(CmdDeleteKey))
         .push(Box::new(CmdEcKeyImport))
         .push(Box::new(CmdEvpCipherKeyImport))

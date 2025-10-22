@@ -2,6 +2,13 @@
 mod common;
 use std::ptr;
 
+use crypto::rand::rand_bytes;
+use der::Decode;
+use pkcs1::RsaPrivateKey;
+use pkcs8::PrivateKeyInfo;
+use symcrypt::hash::HashAlgorithm;
+use symcrypt::rsa::RsaKey;
+use symcrypt::rsa::RsaKeyUsage;
 use winapi::shared::winerror::ERROR_INVALID_DATA;
 use winapi::shared::winerror::E_UNEXPECTED;
 use winapi::shared::winerror::NTE_BAD_SIGNATURE;
@@ -11,16 +18,6 @@ use windows::core::Owned;
 use windows::core::HRESULT;
 use windows::core::PCWSTR;
 use windows::Win32::Security::Cryptography::*;
-
-use der::Decode;
-use pkcs1::RsaPrivateKey;
-use pkcs8::PrivateKeyInfo;
-use symcrypt::{
-    hash::HashAlgorithm,
-    rsa::{RsaKey, RsaKeyUsage},
-};
-
-use crypto::rand::rand_bytes;
 
 use crate::common::*;
 

@@ -20,15 +20,17 @@ members = [
     "tools/mbor_diag",
     "tools/mcr_api_perf",
     "tools/mcr_perf",
+    "support/attestation",
+    "support/crypto",
     "support/crypto_env",
     "support/masked_key",
     "support/lm_key_derive",
     "support/rsa_padding",
+    "support/x509",
     "xtask",
 ]
 
 [workspace.dependencies]
-
 # internal crates
 mcr_api = { path = "lib" }
 mcr_api_resilient = { path = "resilience" }
@@ -46,10 +48,12 @@ mcr_ddi_sim = { path = "ddi/sim" }
 mcr_ddi_win = { path = "ddi/win" }
 rsa_padding = { path = "support/rsa_padding" }
 
+attestation = { path = "support/attestation" }
 crypto = { path = "support/crypto" }
-crypto_env = { path = "support/crypto_env"}
+crypto_env = { path = "support/crypto_env" }
 masked_key = { path = "support/masked_key" }
 lmkey_derive = { path = "support/lm_key_derive" }
+x509 = { path = "support/x509" }
 session_parameter_encryption = { path = "support/session_parameter_encryption" }
 test_with_tracing = { path = "support/test_with_tracing" }
 test_with_tracing_macro = { path = "support/test_with_tracing/test_with_tracing_macro" }
@@ -74,7 +78,7 @@ log = "0.4"
 minicbor = { version = "0.19.1", features = ["derive", "std"] }
 nix = "0.26"
 open-enum = "0.3.0"
-openssl = { version = "0.10.68"}
+openssl = { version = "0.10.68" }
 openssl-sys = "0.9"
 parking_lot = "0.12"
 paste = "1.0.12"
@@ -111,12 +115,11 @@ zerocopy = { version = "0.8.17", features = ["derive"] }
 libfuzzer-sys = { version = "0.4.0", features = ["arbitrary-derive"] }
 arbitrary = { version = "1", features = ["derive"] }
 spki = "0.7.3"
-sec1 = { version = "0.7.3", features = ["pkcs8"] }
+sec1 = { version = "=0.8.0-rc.10", features = ["alloc"] }
 pem-rfc7468 = "0.7.0"
 pkcs1 = { version = "0.7.5", features = ["alloc"], default-features = false }
 pkcs8 = "0.10.2"
 symcrypt = { version = "0.5.0", features = ["sha1", "pkcs1-encrypt-decrypt"] }
-generic-array = { version = "0.14.7" }
 xshell = "0.2.7"
 
 # needed for SessionTable in ddi/sim

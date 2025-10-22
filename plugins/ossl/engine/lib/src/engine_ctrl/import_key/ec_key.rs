@@ -72,7 +72,7 @@ impl EngineCtrlCmdInfo for CmdEcKeyImport {
             digest_kind,
             key_usage,
             key_availability,
-            key_name,
+            key_name.as_deref(),
         )
     }
 }

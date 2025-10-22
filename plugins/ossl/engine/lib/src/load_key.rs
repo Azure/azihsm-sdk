@@ -4,7 +4,6 @@ use std::ffi::c_void;
 
 use api_interface::engine_ctrl::open_key::is_key_ecdh;
 use openssl_rust::safeapi::engine::Engine;
-use openssl_rust::safeapi::error::OpenSSLError;
 use openssl_rust::safeapi::error::OpenSSLResult;
 use openssl_rust::EVP_PKEY;
 use openssl_rust::UI_METHOD;
@@ -22,10 +21,8 @@ fn load_private_key(
     _: *mut UI_METHOD,
     is_ecdh: *mut c_void,
 ) -> OpenSSLResult<*mut EVP_PKEY> {
-    let name = name
-        .parse::<u16>()
-        .map_err(|_| OpenSSLError::InvalidKeyName(name.to_string()))?;
+    let name = name.as_bytes().to_vec();
     let is_ecdh = is_key_ecdh(is_ecdh);
-    let key = open_private_key(name, is_ecdh)?;
+    let key = open_private_key(&name, is_ecdh)?;
     Ok(key.as_mut_ptr())
 }

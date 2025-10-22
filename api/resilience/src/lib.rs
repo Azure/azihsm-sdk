@@ -96,30 +96,13 @@ impl HsmDevice {
         self.inner.get_device_info()
     }
 
-    /// Establish Credentials
-    ///
-    /// # Arguments
-    /// * `api_rev` - API Revision for the session
-    /// * `credentials` - Application Credentials
-    ///
-    /// # Returns
-    /// * `HsmResult<()>` - Success or DDI error
-    ///
-    /// # Errors
-    /// * DDI errors if credential establishment fails
-    pub fn establish_credential(
-        &self,
-        api_rev: HsmApiRevision,
-        credentials: HsmAppCredentials,
-    ) -> HsmResult<()> {
-        self.inner.establish_credential(api_rev, credentials)
-    }
-
     /// Open Session
+    /// This will also handle provisioning the partition, and establishing
+    /// credentials, if necessary.
     ///
     /// # Arguments
     /// * `api_rev` - API Revision for the session
-    /// * `credentials` - Application Credentials
+    /// * `credentials` - Credentials to use during device initialization
     ///
     /// # Returns
     /// * `HsmResult<HsmSession>` - Application Session
@@ -162,17 +145,6 @@ impl HsmKeyHandle {
     }
 }
 
-// Macro for operations that take a session and return a result
-macro_rules! session_op {
-    ($(#[$meta:meta])* $fn_name:ident, $ret_ty:ty, $($arg_name:ident: $arg_ty:ty),*) => {
-        $(#[$meta])*
-        pub fn $fn_name(&self, $($arg_name: $arg_ty),*) -> HsmResult<$ret_ty> {
-            let fn_op = |session: &mcr_api::HsmSession| session.$fn_name($($arg_name),*);
-            self.inner.session_op(&fn_op)
-        }
-    };
-}
-
 // Macro for operations that take a session and key, return a result
 macro_rules! key_op {
     ($(#[$meta:meta])* $fn_name:ident, $ret_ty:ty, $($arg_name:ident: $arg_ty:ty),*) => {
@@ -200,45 +172,6 @@ macro_rules! key_op_clone {
     };
 }
 
-// Macro for operations that create a new key
-macro_rules! create_key_op {
-    ($(#[$meta:meta])* $fn_name:ident, $($arg_name:ident: $arg_ty:ty),*) => {
-        $(#[$meta])*
-        pub fn $fn_name(&self, $($arg_name: $arg_ty),*) -> HsmResult<HsmKeyHandle> {
-            let fn_op = |session: &mcr_api::HsmSession| session.$fn_name($($arg_name),*);
-            let key_id = self.inner.create_key_op(&fn_op)?;
-            Ok(HsmKeyHandle { inner: key_id })
-        }
-    };
-}
-
-// Macro for operations that create a new key and need cloning to capture (such as Vec<u8>)
-#[cfg(feature = "testhooks")]
-macro_rules! create_key_op_clone {
-    ($(#[$meta:meta])* $fn_name:ident, $($arg_name:ident: $arg_ty:ty),*) => {
-        $(#[$meta])*
-        pub fn $fn_name(&self, $($arg_name: $arg_ty),*) -> HsmResult<HsmKeyHandle> {
-            let fn_op = |session: &mcr_api::HsmSession| session.$fn_name($($arg_name.clone()),*);
-            let key_id = self.inner.create_key_op(&fn_op)?;
-            Ok(HsmKeyHandle { inner: key_id })
-        }
-    };
-}
-
-// Macro for operations that create a new key using an existing key
-macro_rules! create_key_key_op {
-    ($(#[$meta:meta])* $fn_name:ident, $($arg_name:ident: $arg_ty:ty),*) => {
-        $(#[$meta])*
-        pub fn $fn_name(&self, key: &HsmKeyHandle, $($arg_name: $arg_ty),*) -> HsmResult<HsmKeyHandle> {
-            let fn_op = |session: &mcr_api::HsmSession, key: &mcr_api::HsmKeyHandle| {
-                session.$fn_name(key, $($arg_name.clone()),*)
-            };
-            let key_id = self.inner.create_key_key_op(&key.inner, &fn_op)?;
-            Ok(HsmKeyHandle { inner: key_id })
-        }
-    };
-}
-
 impl HsmSession {
     /// Close Session
     ///
@@ -253,133 +186,91 @@ impl HsmSession {
     }
 
     //
-    // Session operations
-    //
-
-    // TODO: resilient_mcr_api does not support operations that can impact experiences in other sessions.
-    // change_pin (when other processes will not be aware pin changing and won't be able to restore session) should be removed.
-    // TASK 34413237
-    // We will leave for now, for better mcr_api test compatibility.
-    session_op!(
-        /// Change User PIN
-        ///
-        /// # Arguments
-        /// * `new_pin` - New User PIN
-        ///
-        /// # Returns
-        /// * `HsmResult<()>` - Success or error
-        ///
-        /// # Errors
-        /// * `HsmError::SessionClosed` - Session is closed
-        /// * DDI errors
-        change_pin, (), new_pin: [u8; 16]
-    );
-
-    session_op!(
-        /// Get Manticore certificate from the HSM device
-        ///
-        /// # Returns
-        /// * `ManticoreCertificate` - Device certificate information
-        ///
-        /// # Errors
-        /// * `HsmError::SessionClosed` - Session is closed
-        /// * DDI errors
-        get_certificate, ManticoreCertificate,
-    );
-
-    //
     // Create key operations
     //
 
-    // TODO: resilient_mcr_api does not support operations that can impact keys in other sessions.
-    // open_key (which exposes named key functionality) should be removed. TASK 34413237
-    // We will leave for now, for better mcr_api test compatibility.
-    create_key_op!(
-        /// Open Key by Name
-        /// Only app  keys are allowed to be opened by name.
-        /// The name must be 2 bytes in length and cannot be 0.
-        /// It must also be unique for the partition.
-        ///
-        /// # Arguments
-        /// * `key_name` - Key Name
-        ///
-        /// # Returns
-        /// * `HsmKeyHandle` - Key Handle
-        ///
-        /// # Errors
-        /// * `HsmError::SessionClosed` - Session is closed
-        /// * DDI errors
-        open_key, key_name: u16
-    );
+    /// Open Key by Name
+    /// Only keys created with a key_name can be opened.
+    /// Named keys are currently not supported.
+    ///
+    /// # Arguments
+    /// * `key_name` - Key Name
+    ///
+    /// # Returns
+    /// * `HsmKeyHandle` - Key Handle
+    ///
+    /// # Errors
+    /// * `HsmError::NamedKeysNotSupported` - This API is not supported.
+    /// * DDI errors
+    pub fn open_key(&self, _key_name: &[u8]) -> HsmResult<HsmKeyHandle> {
+        Err(HsmError::NamedKeysNotSupported)?
+    }
 
-    create_key_op!(
-        /// Generate a new ECC key pair
-        ///
-        /// # Arguments
-        /// * `curve` - The elliptic curve to use for key generation
-        /// * `key_name` - Optional name to assign to the key
-        /// * `key_properties` - Properties and usage permissions for the key
-        ///
-        /// # Returns
-        /// * `HsmKeyHandle` - Handle to the newly generated key
-        ///
-        /// # Errors
-        /// * `HsmError::SessionClosed` - Session is closed
-        /// * DDI errors
-        ecc_generate, curve: EccCurve, key_name: Option<u16>, key_properties: KeyProperties
-    );
+    /// Generate a new ECC key pair
+    ///
+    /// # Arguments
+    /// * `curve` - The elliptic curve to use for key generation
+    /// * `key_name` - Optional name to assign to the key
+    /// * `key_properties` - Properties and usage permissions for the key
+    ///
+    /// # Returns
+    /// * `HsmKeyHandle` - Handle to the newly generated key
+    ///
+    /// # Errors
+    /// * `HsmError::SessionClosed` - Session is closed
+    /// * DDI errors
+    pub fn ecc_generate(
+        &self,
+        curve: EccCurve,
+        key_name: Option<&[u8]>,
+        key_properties: KeyProperties,
+    ) -> HsmResult<HsmKeyHandle> {
+        let fn_op = |session: &mcr_api::HsmSession, key_tag: Option<u16>| {
+            session.ecc_generate(curve, key_tag, key_properties)
+        };
+        let key_id = self.inner.create_key_op(key_name, &fn_op)?;
+        Ok(HsmKeyHandle { inner: key_id })
+    }
 
-    create_key_op!(
-        /// Get Unwrapping Key
-        ///
-        /// # Returns
-        /// * `HsmKeyHandle` - Handle to the unwrapping key
-        ///
-        /// # Errors
-        /// * `HsmError::SessionClosed` - Session is closed
-        /// * DDI errors
-        get_unwrapping_key,
-    );
+    /// Get Unwrapping Key
+    ///
+    /// # Returns
+    /// * `HsmKeyHandle` - Handle to the unwrapping key
+    ///
+    /// # Errors
+    /// * `HsmError::SessionClosed` - Session is closed
+    /// * DDI errors
+    pub fn get_unwrapping_key(&self) -> HsmResult<HsmKeyHandle> {
+        Ok(HsmKeyHandle {
+            inner: self.inner.get_unwrapping_key()?,
+        })
+    }
 
-    create_key_op!(
-        /// Generate an AES Key
-        ///
-        /// # Arguments
-        /// * `key_size` - Key size
-        /// * `key_name` - Optional name to assign to the key
-        /// * `key_properties` - Properties and usage permissions for the key
-        ///
-        /// # Returns
-        /// * `HsmKeyHandle` - Handle to the newly generated key
-        ///
-        /// # Errors
-        /// * `HsmError::SessionClosed` - Session is closed
-        /// * DDI errors
-        aes_generate, key_size: AesKeySize, key_name: Option<u16>, key_properties: KeyProperties
-    );
-
-    //
-    // Create key operations with Vec<u8> parameters (cloning needed)
-    //
-
-    #[cfg(feature = "testhooks")]
-    create_key_op_clone!(
-        /// Import Key
-        ///
-        /// # Arguments
-        /// * `der` - Key in DER format
-        /// * `key_class` - Key type
-        /// * `key_name` - Optional name to assign to the key
-        /// * `key_properties` - Properties and usage permissions for the key
-        ///
-        /// # Returns
-        /// * `HsmKeyHandle` - Handle to the imported key
-        ///
-        /// # Errors
-        /// * `HsmError::SessionClosed` - Session is closed
-        /// * DDI errors
-        import_key, der: Vec<u8>, key_class: KeyClass, key_name: Option<u16>, key_properties: KeyProperties
-    );
+    /// Generate an AES Key
+    ///
+    /// # Arguments
+    /// * `key_size` - Key size
+    /// * `key_name` - Optional name to assign to the key
+    /// * `key_properties` - Properties and usage permissions for the key
+    ///
+    /// # Returns
+    /// * `HsmKeyHandle` - Handle to the newly generated key
+    ///
+    /// # Errors
+    /// * `HsmError::SessionClosed` - Session is closed
+    /// * DDI errors
+    pub fn aes_generate(
+        &self,
+        key_size: AesKeySize,
+        key_name: Option<&[u8]>,
+        key_properties: KeyProperties,
+    ) -> HsmResult<HsmKeyHandle> {
+        let fn_op = |session: &mcr_api::HsmSession, key_tag: Option<u16>| {
+            session.aes_generate(key_size, key_tag, key_properties)
+        };
+        let key_id = self.inner.create_key_op(key_name, &fn_op)?;
+        Ok(HsmKeyHandle { inner: key_id })
+    }
 
     //
     // Simple key operations
@@ -397,7 +288,7 @@ impl HsmSession {
     );
 
     key_op!(
-        /// Attest Key
+        /// Attest Key and Obtain Certificate
         ///
         /// # Arguments
         /// * `key` - Key Handle to attest
@@ -405,11 +296,12 @@ impl HsmSession {
         ///
         /// # Returns
         /// * `Vec<u8>` - The attestation report
+        /// * `ManticoreCertificate` - The device certificate
         ///
         /// # Errors
         /// * `HsmError::SessionClosed` - Session is closed
         /// * DDI errors
-        attest_key, Vec<u8>, report_data: &[u8; REPORT_DATA_SIZE]
+        attest_key_and_obtain_cert, (Vec<u8>, ManticoreCertificate), report_data: &[u8; REPORT_DATA_SIZE]
     );
 
     //
@@ -598,102 +490,162 @@ impl HsmSession {
         aes_gcm_encrypt_decrypt, AesGcmResult, mode: AesMode, data: Vec<u8>, iv: [u8; 12usize], aad: Option<Vec<u8>>, tag: Option<[u8; 16usize]>
     );
 
+    //
     // Create key operations that use an existing key
+    //
 
-    create_key_key_op!(
-        /// ECDH Key Exchange
-        ///
-        /// # Arguments
-        /// * `key` - Own private key, must be Ecc Private type, must have KeyUsage `Derive`
-        /// * `peer_pub_key` - Other party's public key, must be Ecc Public type and same curve name as private key
-        /// * `target_key_name` - Target key name
-        /// * `target_key_type` - Target key type, must be `Secret` type with matching bit size
-        /// * `target_key_properties` - Target key properties, must be `Derive` usage
-        ///
-        /// # Returns
-        /// * `HsmKeyHandle` - New key handle with KeyType `Secret` and KeyUsage `Derive`
-        ///
-        /// # Errors
-        /// * `HsmError::SessionClosed` - Session is closed
-        /// * `HsmError::InvalidKey` - Key is not suitable for ECDH
-        /// * DDI errors
-        ecdh_key_exchange, peer_pub_key: &[u8], target_key_name: Option<u16>, target_key_type: KeyType, target_key_properties: KeyProperties
-    );
-
-    create_key_key_op!(
-        /// HMAC Key Derivation Function
-        ///
-        /// # Arguments
-        /// * `key` - Own key, must be Secret type, must have KeyUsage `Derive`
-        /// * `params` - Parameters for HKDF, including `hash_algorithm`, `salt`, `info` values
-        /// * `target_key_name` - Target key name
-        /// * `target_key_type` - Target key type, must be Secret or Aes
-        /// * `target_key_properties` - Target key properties
-        ///
-        /// # Returns
-        /// * `HsmKeyHandle` - New derived key handle
-        ///
-        /// # Errors
-        /// * `HsmError::SessionClosed` - Session is closed
-        /// * `HsmError::InvalidKey` - Key is not suitable for derivation
-        /// * DDI errors
-        hkdf_derive, params: HkdfDeriveParameters<'_>, target_key_name: Option<u16>, target_key_type: KeyType, target_key_properties: KeyProperties
-    );
-
-    create_key_key_op!(
-        /// Key-Based Key Derivation Function (Counter-mode, HMAC)
-        ///
-        /// # Arguments
-        /// * `key` - Own key, must have KeyUsage `Derive`
-        /// * `params` - Parameters for KBKDF, including `hash_algorithm`, `salt`, `info` values
-        /// * `target_key_name` - Target key name
-        /// * `target_key_type` - Target key type, must be Secret or Aes
-        /// * `target_key_properties` - Target key properties
-        ///
-        /// # Returns
-        /// * `HsmKeyHandle` - New derived key handle
-        ///
-        /// # Errors
-        /// * `HsmError::SessionClosed` - Session is closed
-        /// * `HsmError::InvalidKey` - Key is not suitable for derivation
-        /// * DDI errors
-        kbkdf_counter_hmac_derive, params: KbkdfDeriveParameters<'_>, target_key_name: Option<u16>, target_key_type: KeyType, target_key_properties: KeyProperties
-    );
-
-    create_key_key_op!(
-        /// Perform RSA Unwrap on the wrapped blob using the import key
-        ///
-        /// # Arguments
-        /// * `key` - Import Key Handle
-        /// * `wrapped_blob` - Wrapped Blob
-        /// * `wrapped_blob_params` - Wrapped blob parameters including key type, padding, and hash algorithm
-        /// * `target_key_name` - Target Key Name
-        /// * `target_key_properties` - Target key properties
-        ///
-        /// # Returns
-        /// * `HsmKeyHandle` - Unwrapped Key Handle
-        ///
-        /// # Errors
-        /// * `HsmError::SessionClosed` - Session is closed
-        /// * `HsmError::InvalidKey` - Key is not suitable for unwrapping
-        /// * DDI errors
-        rsa_unwrap, wrapped_blob: Vec<u8>, wrapped_blob_params: RsaUnwrapParams, target_key_name: Option<u16>, target_key_properties: KeyProperties
-    );
-
-    // TODO: resilient_mcr_api does not support operations that can impact keys in
-    // other sessions. clear_device should be removed. TASK 34413237
-    // We will leave for now, for better mcr_api test compatibility.
-
-    /// Clear Device
+    /// ECDH Key Exchange
+    ///
+    /// # Arguments
+    /// * `key` - Own private key, must be Ecc Private type, must have KeyUsage `Derive`
+    /// * `peer_pub_key` - Other party's public key, must be Ecc Public type and same curve name as private key
+    /// * `target_key_name` - Target key name
+    /// * `target_key_type` - Target key type, must be `Secret` type with matching bit size
+    /// * `target_key_properties` - Target key properties, must be `Derive` usage
     ///
     /// # Returns
-    /// * `HsmResult<()>` - Success or error
+    /// * `HsmKeyHandle` - New key handle with KeyType `Secret` and KeyUsage `Derive`
     ///
     /// # Errors
     /// * `HsmError::SessionClosed` - Session is closed
+    /// * `HsmError::InvalidKey` - Key is not suitable for ECDH
     /// * DDI errors
-    pub fn clear_device(&mut self) -> HsmResult<()> {
-        self.inner.clear_device()
+    pub fn ecdh_key_exchange(
+        &self,
+        key: &HsmKeyHandle,
+        peer_pub_key: &[u8],
+        target_key_name: Option<&[u8]>,
+        target_key_type: KeyType,
+        target_key_properties: KeyProperties,
+    ) -> HsmResult<HsmKeyHandle> {
+        let fn_op =
+            |session: &mcr_api::HsmSession, key: &mcr_api::HsmKeyHandle, key_tag: Option<u16>| {
+                session.ecdh_key_exchange(
+                    key,
+                    peer_pub_key,
+                    key_tag,
+                    target_key_type,
+                    target_key_properties,
+                )
+            };
+        let key_id = self
+            .inner
+            .create_key_key_op(&key.inner, target_key_name, &fn_op)?;
+        Ok(HsmKeyHandle { inner: key_id })
+    }
+
+    /// HMAC Key Derivation Function
+    ///
+    /// # Arguments
+    /// * `key` - Own key, must be Secret type, must have KeyUsage `Derive`
+    /// * `params` - Parameters for HKDF, including `hash_algorithm`, `salt`, `info` values
+    /// * `target_key_name` - Target key name
+    /// * `target_key_type` - Target key type, must be Secret or Aes
+    /// * `target_key_properties` - Target key properties
+    ///
+    /// # Returns
+    /// * `HsmKeyHandle` - New derived key handle
+    ///
+    /// # Errors
+    /// * `HsmError::SessionClosed` - Session is closed
+    /// * `HsmError::InvalidKey` - Key is not suitable for derivation
+    /// * DDI errors
+    pub fn hkdf_derive(
+        &self,
+        key: &HsmKeyHandle,
+        params: HkdfDeriveParameters<'_>,
+        target_key_name: Option<&[u8]>,
+        target_key_type: KeyType,
+        target_key_properties: KeyProperties,
+    ) -> HsmResult<HsmKeyHandle> {
+        let fn_op =
+            |session: &mcr_api::HsmSession, key: &mcr_api::HsmKeyHandle, key_tag: Option<u16>| {
+                session.hkdf_derive(key, params, key_tag, target_key_type, target_key_properties)
+            };
+        let key_id = self
+            .inner
+            .create_key_key_op(&key.inner, target_key_name, &fn_op)?;
+        Ok(HsmKeyHandle { inner: key_id })
+    }
+
+    /// Key-Based Key Derivation Function (Counter-mode, HMAC)
+    ///
+    /// # Arguments
+    /// * `key` - Own key, must have KeyUsage `Derive`
+    /// * `params` - Parameters for KBKDF, including `hash_algorithm`, `salt`, `info` values
+    /// * `target_key_name` - Target key name
+    /// * `target_key_type` - Target key type, must be Secret or Aes
+    /// * `target_key_properties` - Target key properties
+    ///
+    /// # Returns
+    /// * `HsmKeyHandle` - New derived key handle
+    ///
+    /// # Errors
+    /// * `HsmError::SessionClosed` - Session is closed
+    /// * `HsmError::InvalidKey` - Key is not suitable for derivation
+    /// * DDI errors
+    pub fn kbkdf_counter_hmac_derive(
+        &self,
+        key: &HsmKeyHandle,
+        params: KbkdfDeriveParameters<'_>,
+        target_key_name: Option<&[u8]>,
+        target_key_type: KeyType,
+        target_key_properties: KeyProperties,
+    ) -> HsmResult<HsmKeyHandle> {
+        let fn_op =
+            |session: &mcr_api::HsmSession, key: &mcr_api::HsmKeyHandle, key_tag: Option<u16>| {
+                session.kbkdf_counter_hmac_derive(
+                    key,
+                    params,
+                    key_tag,
+                    target_key_type,
+                    target_key_properties,
+                )
+            };
+        let key_id = self
+            .inner
+            .create_key_key_op(&key.inner, target_key_name, &fn_op)?;
+        Ok(HsmKeyHandle { inner: key_id })
+    }
+
+    /// Perform RSA Unwrap on the wrapped blob using the import key
+    ///
+    /// # Arguments
+    /// * `key` - Import Key Handle
+    /// * `wrapped_blob` - Wrapped Blob
+    /// * `wrapped_blob_params` - Wrapped blob parameters including key type, padding, and hash algorithm
+    /// * `target_key_name` - Target Key Name
+    /// * `target_key_properties` - Target key properties
+    ///
+    /// # Returns
+    /// * `HsmKeyHandle` - Unwrapped Key Handle
+    ///
+    /// # Errors
+    /// * `HsmError::SessionClosed` - Session is closed
+    /// * `HsmError::InvalidKey` - Key is not suitable for unwrapping
+    /// * DDI errors
+    pub fn rsa_unwrap(
+        &self,
+        key: &HsmKeyHandle,
+        wrapped_blob: Vec<u8>,
+        wrapped_blob_params: RsaUnwrapParams,
+        target_key_name: Option<&[u8]>,
+        target_key_properties: KeyProperties,
+    ) -> HsmResult<HsmKeyHandle> {
+        let fn_op =
+            |session: &mcr_api::HsmSession, key: &mcr_api::HsmKeyHandle, key_tag: Option<u16>| {
+                session.rsa_unwrap(
+                    key,
+                    wrapped_blob.clone(),
+                    wrapped_blob_params,
+                    key_tag,
+                    target_key_properties,
+                )
+            };
+        let key_id = self
+            .inner
+            .create_key_key_op(&key.inner, target_key_name, &fn_op)?;
+        Ok(HsmKeyHandle { inner: key_id })
     }
 
     /// Delete Key

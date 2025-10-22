@@ -17,7 +17,6 @@ use-symcrypt = [
     "pkcs1",
     "rand",
     "sha2",
-    "generic-array",
     "crypto/use-symcrypt",
 ]
 rust_analyzer_fix = []
@@ -25,6 +24,7 @@ fuzzing = ["arbitrary"]
 
 [dependencies]
 #crate specific subcrates
+attestation.workspace = true
 mcr_ddi_types.workspace = true
 masked_key.workspace = true
 crypto_env.workspace = true
@@ -48,9 +48,6 @@ pkcs1 = { workspace = true, optional = true }
 rand = { workspace = true, optional = true }
 zerocopy.workspace = true
 zeroize.workspace = true
-
-# generic-array needed by sec1::EncodedPoint and sec1 does not export.
-generic-array = { workspace = true, optional = true }
 
 # The following crates are not included in workspace, as they may have
 # crypto usage that shouldn't be included in client library

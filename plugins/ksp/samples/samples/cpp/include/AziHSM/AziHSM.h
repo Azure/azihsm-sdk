@@ -32,10 +32,6 @@ const wchar_t* AZIHSM_KSP_NAME = _AZIHSM_KSP_NAME;
 // To access each of these properties, pass the appropriate string into
 // `NCryptGetProperty()`, as the property name.
 
-// The name of the property that holds the AziHSM's device cert chain.
-#define _AZIHSM_PROPERTY_CERT_CHAIN_NAME L"AZIHSM_DEVICE_CERT_CHAIN_PROPERTY"
-const wchar_t* AZIHSM_PROPERTY_CERT_CHAIN_NAME = _AZIHSM_PROPERTY_CERT_CHAIN_NAME;
-
 // The name of the property that holds maximum number of keys the device can
 // store at one time.
 //

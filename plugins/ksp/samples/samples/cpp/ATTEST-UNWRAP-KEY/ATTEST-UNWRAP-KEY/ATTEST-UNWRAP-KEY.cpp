@@ -46,30 +46,38 @@ enum KeyType {
 
 // Fetch quote and Collateral from AziHSM
 // Quote and Collateral will be in a opaque format
-static SECURITY_STATUS get_quote_collateral(NCRYPT_PROV_HANDLE provider,
+// Caller is responsible to free the two output buffers
+static SECURITY_STATUS get_quote_and_certificate(
+    NCRYPT_PROV_HANDLE provider,
     NCRYPT_KEY_HANDLE importKey,
     char userdata[128],
     PBYTE* outBufferQuote,
     DWORD* outBufferQuoteSize,
-    PBYTE* outBufferCollateral,
-    DWORD* outBufferCollateralSize)
+    PBYTE* outBufferCertificate,
+    DWORD* outBufferCertificateSize)
 {
     SECURITY_STATUS status = E_FAIL;
 
     DWORD bytesWritten = 0;
 
+    PBYTE bufferClaim = NULL;
+    DWORD bufferClaimSize = 0;
+
+    // Points to bufferClaim
     PBYTE bufferQuote = NULL;
     DWORD bufferQuoteSize = 0;
 
-    PBYTE bufferCollateral = NULL;
-    DWORD bufferCollateralSize = 0;
+    // Points to bufferClaim
+    PBYTE bufferCertificate = NULL;
+    DWORD bufferCertificateSize = 0;
 
     // A fixed-size (128 bytes) buffer that will be copied into the quote
     // This buffer is used to provide a nonce for the quote generation.
     BCryptBuffer bcryptBuffer = { 128, NCRYPTBUFFER_CLAIM_KEYATTESTATION_NONCE, userdata };
     NCryptBufferDesc paramBuffers = { NCRYPTBUFFER_VERSION, 1, &bcryptBuffer };
 
-    // Get size of the quote
+    // Use NCryptCreateClaim to obtain the unwrapping key attestation report + certificate chain
+    // Get size of the output buffer
     status = NCryptCreateClaim(importKey, NULL, 0, &paramBuffers, NULL, 0, &bytesWritten, 0);
     if (FAILED(status))
     {
@@ -77,60 +85,106 @@ static SECURITY_STATUS get_quote_collateral(NCRYPT_PROV_HANDLE provider,
         goto cleanup;
     }
 
-    bufferQuoteSize = bytesWritten;
-    bufferQuote = new BYTE[bufferQuoteSize];
+    bufferClaimSize = bytesWritten;
+    bufferClaim = new BYTE[bufferClaimSize];
 
-    // Get quote
-    status = NCryptCreateClaim(importKey, NULL, 0, &paramBuffers, bufferQuote, bufferQuoteSize, &bytesWritten, 0);
+    // Get quote and certificate
+    status = NCryptCreateClaim(importKey, NULL, 0, &paramBuffers, bufferClaim, bufferClaimSize, &bytesWritten, 0);
     if (FAILED(status))
     {
-        fprintf(stderr, "Failed to get quote size. NCryptCreateClaim returned: 0x%08x\n", status);
+        fprintf(stderr, "Failed to get claim size. NCryptCreateClaim returned: 0x%08x\n", status);
         goto cleanup;
     }
     // The allocated buffer size may be larger than the actual quote size, so we update the size
-    bufferQuoteSize = bytesWritten;
+    bufferClaimSize = bytesWritten;
 
-    // Get Collateral
-    status = NCryptGetProperty(provider, AZIHSM_PROPERTY_CERT_CHAIN_NAME, NULL, 0, &bytesWritten, 0);
-    if (FAILED(status))
+    // Buffer format
+    // - Header
+    // - 4 bytes: version, currently 1
+    // - 4 bytes: buffer total length, including header
+    // - metadata
+    // - 4 bytes: length of attestation report in bytes
+    // - 4 bytes: length of certificate in bytes
+    // - payload
+    // - N bytes: attestation report
+    // - M bytes: certificate
     {
-        fprintf(stderr, "Failed to get collateral size. NCryptGetProperty returned: 0x%08x\n", status);
-        goto cleanup;
+        if (bufferClaimSize < 16)
+        {
+            fprintf(stderr, "Invalid claim buffer format\n");
+            status = NTE_BAD_DATA;
+            goto cleanup;
+        }
+
+        // Get Version
+        DWORD offset = 0;
+        UINT32 version =
+            ((UINT32)bufferClaim[offset]) |
+            ((UINT32)bufferClaim[offset + 1] << 8) |
+            ((UINT32)bufferClaim[offset + 2] << 16) |
+            ((UINT32)bufferClaim[offset + 3] << 24);
+        offset += 4;
+
+        if (version != 1)
+        {
+            fprintf(stderr, "Unsupported claim buffer version: %d\n", version);
+            status = NTE_BAD_DATA;
+            goto cleanup;
+        }
+
+        // Get buffer length
+        UINT32 bufferSize =
+            ((UINT32)bufferClaim[offset]) |
+            ((UINT32)bufferClaim[offset + 1] << 8) |
+            ((UINT32)bufferClaim[offset + 2] << 16) |
+            ((UINT32)bufferClaim[offset + 3] << 24);
+        offset += 4;
+
+        // Get report length
+        bufferQuoteSize =
+            ((UINT32)bufferClaim[offset]) |
+            ((UINT32)bufferClaim[offset + 1] << 8) |
+            ((UINT32)bufferClaim[offset + 2] << 16) |
+            ((UINT32)bufferClaim[offset + 3] << 24);
+        offset += 4;
+
+        // Get cert chain length
+        bufferCertificateSize =
+            ((UINT32)bufferClaim[offset]) |
+            ((UINT32)bufferClaim[offset + 1] << 8) |
+            ((UINT32)bufferClaim[offset + 2] << 16) |
+            ((UINT32)bufferClaim[offset + 3] << 24);
+        offset += 4;
+
+        // Verify lengths
+        if ((16 + bufferQuoteSize + bufferCertificateSize) != bufferSize ||
+            bufferSize != bufferClaimSize)
+        {
+            fprintf(stderr, "Invalid claim buffer lengths\n");
+            status = NTE_BAD_DATA;
+            goto cleanup;
+        }
+
+        bufferQuote = bufferClaim + offset;
+        offset += bufferQuoteSize;
+
+        bufferCertificate = bufferClaim + offset;
     }
 
-    bufferCollateralSize = bytesWritten;
-    bufferCollateral = new BYTE[bufferCollateralSize];
-    status = NCryptGetProperty(provider,
-        AZIHSM_PROPERTY_CERT_CHAIN_NAME,
-        bufferCollateral,
-        bufferCollateralSize,
-        &bytesWritten, 0);
-    if (FAILED(status))
-    {
-        fprintf(stderr, "Failed to get collateral. NCryptGetProperty returned: 0x%08x\n", status);
-        goto cleanup;
-    }
-    // The allocated buffer size may be larger than the actual quote size, so we update the size
-    bufferCollateralSize = bytesWritten;
-
-    *outBufferQuote = bufferQuote;
-    bufferQuote = NULL;
+    // Return copy of the two buffers
+    *outBufferQuote = new BYTE[bufferQuoteSize];
     *outBufferQuoteSize = bufferQuoteSize;
+    memcpy(*outBufferQuote, bufferQuote, bufferQuoteSize);
 
-    *outBufferCollateral = bufferCollateral;
-    bufferCollateral = NULL;
-    *outBufferCollateralSize = bufferCollateralSize;
+    *outBufferCertificate = new BYTE[bufferCertificateSize];
+    *outBufferCertificateSize = bufferCertificateSize;
+    memcpy(*outBufferCertificate, bufferCertificate, bufferCertificateSize);
 
     status = S_OK;
 cleanup:
-    if (bufferQuote)
+    if (bufferClaim)
     {
-        delete[] bufferQuote;
-    }
-
-    if (bufferCollateral)
-    {
-        delete[] bufferCollateral;
+        delete[] bufferClaim;
     }
 
     return status;
@@ -140,7 +194,8 @@ cleanup:
 // As it mocks the behavior of an external service that
 // 1. Verifies the quote and collateral
 // 2. Returns an attestation token
-static HRESULT mock_attestation(PBYTE quoteBuffer,
+static HRESULT mock_attestation(
+    PBYTE quoteBuffer,
     DWORD quoteBufferSize,
     PBYTE collateralBuffer,
     DWORD collateralBufferSize,
@@ -167,7 +222,8 @@ static HRESULT mock_attestation(PBYTE quoteBuffer,
 // Why we need importKey here?
 // The importKey handle is only needed for mocking purposes.
 // The external service would typically obtain import key from attestation token.
-static SECURITY_STATUS mock_key_wrap_and_release(KeyType keyType,
+static SECURITY_STATUS mock_key_wrap_and_release(
+    KeyType keyType,
     int attestationToken,
     char* linkToPrivateKey,
     NCRYPT_KEY_HANDLE importKey,
@@ -279,7 +335,8 @@ cleanup:
 //     NCRYPT_ALLOW_DECRYPT_FLAG: Allow Encrypt/Decrypt
 //     NCRYPT_ALLOW_SIGNING_FLAG: Allow Sign/Verify
 //     NCRYPT_ALLOW_KEY_IMPORT_FLAG: Allow importing keys
-static SECURITY_STATUS import_wrapped_key(KeyType keyType,
+static SECURITY_STATUS import_wrapped_key(
+    KeyType keyType,
     NCRYPT_PROV_HANDLE provider,
     NCRYPT_KEY_HANDLE importKey,
     PBYTE bufferKeyBlob,
@@ -294,7 +351,7 @@ static SECURITY_STATUS import_wrapped_key(KeyType keyType,
     // Pick the algorithm same as the type of key you wish to import
     LPCWSTR algo = (keyType == KeyType::KEY_TYPE_RSA) ? BCRYPT_RSA_ALGORITHM : BCRYPT_ECDSA_P256_ALGORITHM;
     NCryptBuffer paramBuffers[] = {
-        {(ULONG) ((wcslen(algo) + 1) * sizeof(wchar_t)), NCRYPTBUFFER_PKCS_ALG_ID, (PVOID)algo} };
+        {(ULONG)((wcslen(algo) + 1) * sizeof(wchar_t)), NCRYPTBUFFER_PKCS_ALG_ID, (PVOID)algo} };
     NCryptBufferDesc paramBuffer = { NCRYPTBUFFER_VERSION, 1, paramBuffers };
 
     // Import Key blob
@@ -364,7 +421,8 @@ cleanup:
 
 // Use the imported key to sign something and verify
 // Use RSA Key
-static SECURITY_STATUS sign_verify_rsa(NCRYPT_KEY_HANDLE importedKey,
+static SECURITY_STATUS sign_verify_rsa(
+    NCRYPT_KEY_HANDLE importedKey,
     DWORD bufferHashSize,
     LPCWSTR hashAlgId,
     PBYTE* outBufferSignature,
@@ -459,7 +517,8 @@ cleanup:
 // Use the imported key to sign something and verify
 // Use ECDSA Key
 // The signature is in raw format (r s), not ASN.1 encoded
-static SECURITY_STATUS sign_verify_ecdsa(NCRYPT_KEY_HANDLE importedKey,
+static SECURITY_STATUS sign_verify_ecdsa(
+    NCRYPT_KEY_HANDLE importedKey,
     DWORD bufferHashSize,
     PBYTE* outBufferSignature,
     DWORD* outBufferSignatureSize)
@@ -617,7 +676,7 @@ int main(int argc, char** argv)
     // quote from AziHSM
     PBYTE bufferQuote = NULL;
     DWORD bufferQuoteSize = 0;
-    // collateral from AziHSM
+    // collateral from AziHSM, it contains certificate chain
     PBYTE bufferCollateral = NULL;
     DWORD bufferCollateralSize = 0;
 
@@ -656,7 +715,7 @@ int main(int argc, char** argv)
     DWORD bufferSignatureSize = 0;
 
     printf("\nStep 1: Get Quote and Collateral"
-           "\n--------------------------------\n");
+        "\n--------------------------------\n");
 
     // To use AziHSM, you need to open "Microsoft Azure Integrated HSM Key Storage Provider"
     status = NCryptOpenStorageProvider(&provider, AZIHSM_KSP_NAME, 0);
@@ -668,7 +727,7 @@ int main(int argc, char** argv)
             status);
         goto cleanup;
     }
-    printf("Opened NCrypt Storage Provider handle: 0x%08x\n", (int) provider);
+    printf("Opened NCrypt Storage Provider handle: 0x%08x\n", (int)provider);
 
     // Obtain the public part of built-in unwrapping key
     // We will send this key to the external service for key wrapping and release
@@ -682,7 +741,7 @@ int main(int argc, char** argv)
         goto cleanup;
     }
 
-    status = get_quote_collateral(provider,
+    status = get_quote_and_certificate(provider,
         importKey,
         userdata,
         &bufferQuote,
@@ -692,14 +751,14 @@ int main(int argc, char** argv)
     if (FAILED(status))
     {
         fprintf(stderr,
-            "Failed to get quote and collateral. "
-            "get_quote_collateral returned: 0x%08x\n",
+            "Failed to get quote and certificate. "
+            "get_quote_and_certificate returned: 0x%08x\n",
             status);
         goto cleanup;
     }
 
     printf("\nStep 2: Mock Attestation"
-           "\n------------------------\n");
+        "\n------------------------\n");
     // In a real-world scenario, you would send the quote and collateral to
     // an external service for attestation verification.
     // Here we just dump the quote and collateral and return a mock attestation token.
@@ -714,7 +773,7 @@ int main(int argc, char** argv)
     }
 
     printf("\nStep 3: Mock Key Wrap and Release"
-           "\n---------------------------------\n");
+        "\n---------------------------------\n");
     // In a real-world scenario, you would send the attestation token,
     // link to the private key to an external service for key wrapping and release.
     // Here we just wrap a pre-defined RSA key using import key and return it.
@@ -734,7 +793,7 @@ int main(int argc, char** argv)
     }
 
     printf("\nStep 4: Import Wrapped Key"
-           "\n--------------------------\n");
+        "\n--------------------------\n");
     status = import_wrapped_key(keyType,
         provider,
         importKey,
@@ -752,7 +811,7 @@ int main(int argc, char** argv)
     }
 
     printf("\nStep 5: Sign with imported key and Verify"
-           "\n-----------------------------------------\n");
+        "\n-----------------------------------------\n");
     if (keyType == KeyType::KEY_TYPE_RSA) {
         status = sign_verify_rsa(importedKey, hashSizeRsa, hashAlgId, &bufferSignature, &bufferSignatureSize);
     }
@@ -781,7 +840,7 @@ int main(int argc, char** argv)
     }
 
     printf("\nSample finished successfully"
-           "\n----------------------------\n");
+        "\n----------------------------\n");
 
     status = S_OK;
 cleanup:
@@ -821,7 +880,7 @@ cleanup:
     }
 
     printf("\nDone Cleaning Up"
-           "\n----------------\n");
+        "\n----------------\n");
 
     return status;
 }

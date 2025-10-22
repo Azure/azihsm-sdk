@@ -11,6 +11,7 @@ use std::time::Instant;
 
 use crypto::rand;
 use mcr_api_resilient::*;
+#[cfg(feature = "mock")]
 use test_with_tracing::test;
 
 use crate::common::*;
@@ -81,7 +82,9 @@ fn generate_session_secret_key(session: &HsmSession, error_context: &str) -> Hsm
 }
 
 // Test configuration constants
+#[cfg(feature = "mock")]
 const DEFAULT_THREAD_COUNT: usize = 4;
+#[cfg(feature = "mock")]
 const DEFAULT_TEST_DURATION_SECS: u64 = 10;
 // This is unrealistically low to increase the chance of migration during operations
 const MIGRATION_SLEEP_MIN_MS: u32 = 1000;
@@ -145,6 +148,7 @@ enum MixedSessionOperation {
     KeyCreateDelete(KeyCreateDeleteOp),
     AesXts(AesXtsOp),
     HkdfDerive(HkdfDeriveOp),
+    UnwrappingKey(UnwrappingKeyOp),
 }
 
 #[allow(dead_code)]
@@ -155,6 +159,7 @@ impl SessionOperation for MixedSessionOperation {
             MixedSessionOperation::KeyCreateDelete(op) => op.execute(session, thread_id),
             MixedSessionOperation::AesXts(op) => op.execute(session, thread_id),
             MixedSessionOperation::HkdfDerive(op) => op.execute(session, thread_id),
+            MixedSessionOperation::UnwrappingKey(op) => op.execute(session, thread_id),
         }
     }
 }
@@ -389,6 +394,137 @@ impl SessionOperation for AesXtsOp {
                 thread_id
             ));
         }
+        Ok(())
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Clone)]
+struct UnwrappingKeyOp {
+    wrapping_key: Option<HsmKeyHandle>,
+    wrapped_key_handle: Option<HsmKeyHandle>,
+    message: Vec<u8>,
+}
+
+#[allow(dead_code)]
+impl UnwrappingKeyOp {
+    fn new() -> Self {
+        let message = vec![0x1, 0x3, 0x5, 0x7, 0x9, 0xA, 0xC, 0xF];
+        Self {
+            wrapping_key: None,
+            wrapped_key_handle: None,
+            message,
+        }
+    }
+}
+
+#[allow(dead_code)]
+impl SessionOperation for UnwrappingKeyOp {
+    fn execute(&mut self, session: &HsmSession, thread_id: usize) -> Result<(), String> {
+        // Get unwrapping key (only once per operation instance)
+        if self.wrapping_key.is_none() {
+            let wrapping_key = session
+                .get_unwrapping_key()
+                .map_err(|e| format!("thread {} get_unwrapping_key failed: {:?}", thread_id, e))?;
+            self.wrapping_key = Some(wrapping_key);
+        }
+        let wrapping_key = self.wrapping_key.as_ref().unwrap();
+
+        // Attest the unwrapping key
+        let report_data = [0x42u8; 128];
+        let (attestation_report, _cert) = session
+            .attest_key_and_obtain_cert(wrapping_key, &report_data)
+            .map_err(|e| format!("thread {} attest_key failed: {:?}", thread_id, e))?;
+
+        if attestation_report.is_empty() {
+            return Err(format!(
+                "thread {} attestation report should not be empty",
+                thread_id
+            ));
+        }
+
+        // Export public key from unwrapping key
+        let public_key_der = session
+            .export_public_key(wrapping_key)
+            .map_err(|e| format!("thread {} export_public_key failed: {:?}", thread_id, e))?;
+
+        // Generate wrapped data (wrapped private key and its public key)
+        let (wrapped_blob, public_key_der_for_target) = generate_wrapped_data(public_key_der);
+
+        // Unwrap the key
+        let wrapped_blob_params = RsaUnwrapParams {
+            key_class: KeyClass::Rsa,
+            padding: RsaCryptoPadding::Oaep,
+            hash_algorithm: DigestKind::Sha256,
+        };
+
+        let wrapped_key_handle = session
+            .rsa_unwrap(
+                wrapping_key,
+                wrapped_blob,
+                wrapped_blob_params,
+                None,
+                KeyProperties {
+                    key_usage: KeyUsage::EncryptDecrypt,
+                    key_availability: KeyAvailability::Session,
+                },
+            )
+            .map_err(|e| format!("thread {} rsa_unwrap failed: {:?}", thread_id, e))?;
+
+        // Export public key from wrapped key handle and verify it matches
+        let wrapped_key_pub = session
+            .export_public_key(&wrapped_key_handle)
+            .map_err(|e| {
+                format!(
+                    "thread {} export_public_key (wrapped key) failed: {:?}",
+                    thread_id, e
+                )
+            })?;
+
+        if wrapped_key_pub != public_key_der_for_target {
+            return Err(format!(
+                "thread {} public key from wrapped handle should match the generated key",
+                thread_id
+            ));
+        }
+
+        // Encrypt with the wrapped key
+        let encrypted_data = session
+            .rsa_encrypt(
+                &wrapped_key_handle,
+                self.message.clone(),
+                RsaCryptoPadding::Oaep,
+                Some(DigestKind::Sha256),
+                None,
+            )
+            .map_err(|e| format!("thread {} rsa_encrypt failed: {:?}", thread_id, e))?;
+
+        // Decrypt with the wrapped key
+        let dec_data = session
+            .rsa_decrypt(
+                &wrapped_key_handle,
+                encrypted_data,
+                RsaCryptoPadding::Oaep,
+                Some(DigestKind::Sha256),
+                None,
+            )
+            .map_err(|e| format!("thread {} rsa_decrypt failed: {:?}", thread_id, e))?;
+
+        if dec_data != self.message {
+            return Err(format!(
+                "thread {} decrypted message should match original",
+                thread_id
+            ));
+        }
+
+        // Clean up the wrapped key handle
+        session.delete_key(&wrapped_key_handle).map_err(|e| {
+            format!(
+                "thread {} delete_key (wrapped key) failed: {:?}",
+                thread_id, e
+            )
+        })?;
+
         Ok(())
     }
 }
@@ -679,34 +815,6 @@ impl DeviceOperation for DeviceInfoOp {
 }
 
 #[allow(dead_code)]
-#[derive(Clone)]
-struct CredentialEstablishOp;
-
-#[allow(dead_code)]
-impl CredentialEstablishOp {
-    fn new() -> Self {
-        Self
-    }
-}
-
-#[allow(dead_code)]
-impl DeviceOperation for CredentialEstablishOp {
-    fn execute(&mut self, device_path: &str, _thread_id: usize) -> Result<(), String> {
-        let device = HsmDevice::open(device_path).expect("Failed to open HSM device");
-        let api_rev = device.get_api_revision_range().max;
-
-        // Try to establish credentials, but ignore KeyNotFound errors as they indicate
-        // credentials were already established by a previous test
-        match device.establish_credential(api_rev, TEST_CREDENTIALS) {
-            Ok(()) => println!("establish credential succeeded"),
-            Err(HsmError::KeyNotFound) => println!("establish credential failed with key not found. Ignoring since establish credential can only be done once and may have happened before"),
-            Err(e) => panic!("Failed to establish credentials: {:?}", e),
-        }
-        Ok(())
-    }
-}
-
-#[allow(dead_code)]
 fn session_thread<T: SessionOperation + 'static>(
     thread_id: usize,
     device_path: String,
@@ -815,7 +923,7 @@ fn run_separate_session_test<T: SessionOperation + Clone + 'static>(
     thread_type_name: &str,
 ) {
     let device_path = get_device_path_helper();
-    setup_device_with_credentials(&device_path);
+    setup_device(&device_path);
 
     let num_threads = config.operations.len();
 
@@ -854,8 +962,6 @@ fn run_separate_session_test<T: SessionOperation + Clone + 'static>(
     }
 
     handle_thread_join_result(migration_handle.join(), "Migration", None);
-
-    common_cleanup(&device_path);
 }
 
 #[allow(dead_code)]
@@ -880,7 +986,7 @@ fn run_shared_session_test_with_setup<T: SessionOperation + Clone + 'static>(
     setup_fn: impl FnOnce(&Arc<HsmSession>) -> Vec<T>,
 ) {
     let device_path = get_device_path_helper();
-    setup_device_with_credentials(&device_path);
+    setup_device(&device_path);
 
     let device = HsmDevice::open(&device_path)
         .unwrap_or_else(|e| panic!("Failed to open HSM device: {:?}", e));
@@ -929,8 +1035,6 @@ fn run_shared_session_test_with_setup<T: SessionOperation + Clone + 'static>(
     }
 
     handle_thread_join_result(migration_handle.join(), "Migration", None);
-
-    common_cleanup(&device_path);
 }
 
 #[allow(dead_code)]
@@ -939,7 +1043,7 @@ fn run_no_session_test<T: DeviceOperation + Clone + 'static>(
     thread_type_name: &str,
 ) {
     let device_path = get_device_path_helper();
-    setup_device_with_credentials(&device_path);
+    setup_device(&device_path);
 
     let num_threads = config.operations.len();
 
@@ -978,8 +1082,6 @@ fn run_no_session_test<T: DeviceOperation + Clone + 'static>(
     }
 
     handle_thread_join_result(migration_handle.join(), "Migration", None);
-
-    common_cleanup(&device_path);
 }
 
 #[cfg(feature = "mock")]
@@ -1017,7 +1119,7 @@ fn multithread_resiliency_separate_sessions_hkdf_derive() {
     run_separate_session_test(config, "HKDF Session");
 }
 
-#[allow(dead_code)]
+#[cfg(feature = "mock")]
 #[test]
 #[ignore = "Skip for pipeline due to time constraints"]
 fn multithread_resiliency_separate_sessions_aes_xts() {
@@ -1076,6 +1178,34 @@ fn multithread_resiliency_shared_session_aes_xts() {
 }
 
 #[cfg(feature = "mock")]
+/// Pending investigation
+/// Tracking: https://msazure.visualstudio.com/One/_workitems/edit/35641516
+#[ignore = "Skip for pipeline due to flaky"]
+#[test]
+fn multithread_resiliency_separate_sessions_unwrapping_key() {
+    let config = TestConfig::new_single(
+        UnwrappingKeyOp::new,
+        DEFAULT_THREAD_COUNT,
+        Duration::from_secs(DEFAULT_TEST_DURATION_SECS),
+    );
+    run_separate_session_test(config, "Unwrapping Key Session");
+}
+
+#[cfg(feature = "mock")]
+/// Pending investigation
+/// Tracking: https://msazure.visualstudio.com/One/_workitems/edit/35641516
+#[ignore = "Skip for pipeline due to flaky"]
+#[test]
+fn multithread_resiliency_shared_session_unwrapping_key() {
+    let config = TestConfig::new_single(
+        UnwrappingKeyOp::new,
+        DEFAULT_THREAD_COUNT,
+        Duration::from_secs(DEFAULT_TEST_DURATION_SECS),
+    );
+    run_shared_session_test(config, "Shared Unwrapping Key Session");
+}
+
+#[cfg(feature = "mock")]
 #[test]
 fn multithread_resiliency_separate_sessions_mixed_operations() {
     let operations = vec![
@@ -1084,6 +1214,7 @@ fn multithread_resiliency_separate_sessions_mixed_operations() {
         Box::new(|| MixedSessionOperation::KeyCreateDelete(KeyCreateDeleteOp::new())),
         Box::new(|| MixedSessionOperation::AesXts(AesXtsOp::new())),
         Box::new(|| MixedSessionOperation::HkdfDerive(HkdfDeriveOp::new())),
+        Box::new(|| MixedSessionOperation::UnwrappingKey(UnwrappingKeyOp::new())),
     ];
 
     let config =
@@ -1100,6 +1231,7 @@ fn multithread_resiliency_shared_session_mixed_operations() {
         Box::new(|| MixedSessionOperation::KeyCreateDelete(KeyCreateDeleteOp::new())),
         Box::new(|| MixedSessionOperation::AesXts(AesXtsOp::new())),
         Box::new(|| MixedSessionOperation::HkdfDerive(HkdfDeriveOp::new())),
+        Box::new(|| MixedSessionOperation::UnwrappingKey(UnwrappingKeyOp::new())),
     ];
 
     let config =
@@ -1128,17 +1260,6 @@ fn multithread_resiliency_no_session_device_info() {
         Duration::from_secs(DEFAULT_TEST_DURATION_SECS),
     );
     run_no_session_test(config, "Device Info");
-}
-
-#[cfg(feature = "mock")]
-#[test]
-fn multithread_resiliency_no_session_establish_credential() {
-    let config = TestConfig::new_single(
-        CredentialEstablishOp::new,
-        DEFAULT_THREAD_COUNT,
-        Duration::from_secs(DEFAULT_TEST_DURATION_SECS),
-    );
-    run_no_session_test(config, "Credential Establish");
 }
 
 #[cfg(feature = "mock")]

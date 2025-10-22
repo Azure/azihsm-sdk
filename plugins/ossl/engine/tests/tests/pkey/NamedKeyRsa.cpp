@@ -197,6 +197,7 @@ static void test_sign_verify(AziHsmEngine &azihsm_engine, const char *name, cons
     REQUIRE(key == nullptr);
 }
 
+#ifdef AZIHSM_NAMED_KEYS
 TEST_CASE("AZIHSM RSA named keys", "[AziHsmEngineRSANamedKeys]")
 {
     AziHsmEngine azihsm_engine = get_test_engine();
@@ -252,3 +253,4 @@ TEST_CASE("AZIHSM RSA named keys", "[AziHsmEngineRSANamedKeys]")
         test_sign_verify(azihsm_engine, name, RSA_PRIV_KEY_4096, AziHsmShaHashType::SHA256);
     }
 }
+#endif

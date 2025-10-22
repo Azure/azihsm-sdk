@@ -19,6 +19,14 @@ pub struct Install {
     /// Name of crate to install
     #[clap(long)]
     pub crate_name: String,
+
+    /// Force overwriting existing crates or binaries
+    #[clap(long)]
+    pub force: bool,
+
+    /// Override a configuration value
+    #[clap(long)]
+    pub config: Option<String>,
 }
 
 impl Xtask for Install {
@@ -29,14 +37,22 @@ impl Xtask for Install {
         let rust_toolchain = sh.var("RUST_TOOLCHAIN").map(|s| format!("+{s}")).ok();
 
         // convert xtask parameters into cargo command arguments
-        let crate_name = self.crate_name.as_str();
+        let mut command_args = Vec::new();
+        command_args.push(self.crate_name.as_str());
+        command_args.push("--locked");
+        if self.force {
+            command_args.push("--force");
+        }
+        let config_val;
+        if self.config.is_some() {
+            command_args.push("--config");
+            config_val = self.config.unwrap_or_default();
+            command_args.push(&config_val);
+        }
 
-        cmd!(
-            sh,
-            "cargo {rust_toolchain...} install {crate_name} --locked"
-        )
-        .quiet()
-        .run()?;
+        cmd!(sh, "cargo {rust_toolchain...} install {command_args...}")
+            .quiet()
+            .run()?;
 
         log::trace!("done install");
         Ok(())

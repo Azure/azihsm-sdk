@@ -66,12 +66,8 @@ impl AziHsmEngine {
     pub fn init(&mut self) -> OpenSSLResult<()> {
         let (device, api_rev) = self.open_device()?;
 
-        // Establish credential
-        // We ignore the result as establish credential can fail if
-        // another process already established the credentials
-        let _result = device.establish_credential(api_rev, self.app_creds);
-
-        // open app session, and cleanup if it fails
+        // open app session (including establish credential if necessary),
+        // and cleanup if it fails
         let result = device.open_session(api_rev, self.app_creds).map_err(|e| {
             let _ = self.destroy();
             map_hsm_error(e)

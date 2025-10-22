@@ -28,7 +28,7 @@ pub(crate) fn import_rsa_key(
     digest_kind: DigestKind,
     key_usage: KeyUsage,
     key_availability: KeyAvailability,
-    key_name: Option<u16>,
+    key_name: Option<&[u8]>,
     is_crt: bool,
 ) -> OpenSSLResult<()> {
     let rsa_key_usage = RsaKeyUsage::try_from(key_usage)?;

@@ -146,6 +146,11 @@ pub enum HsmError {
     #[error("session needs renegotiation")]
     SessionNeedsRenegotiation,
 
+    /// Attestation report signature doesn't match leaf cert
+    /// This can happen if LM has occurred between attest_key and get_cert_chain
+    #[error("attestation report signature doesn't match leaf cert")]
+    AttestReportSignatureMismatch,
+
     /// Invalid vault manager credentials
     #[error("invalid vault manager credentials")]
     InvalidVaultManagerCredentials,
@@ -880,6 +885,10 @@ pub enum HsmError {
     #[error("Invalid Partition Id Private Key")]
     InvalidPartIdPrivKeyInternalError,
 
+    /// Named Keys Not Supported
+    #[error("Named keys are not supported")]
+    NamedKeysNotSupported,
+
     /// Unknown error
     #[error("unknown error")]
     UnknownError,
@@ -1108,6 +1117,8 @@ impl HsmError {
             HsmError::CertificateHashMismatch => -314,
             HsmError::PartitionNotProvisioned => -315,
             HsmError::RsaFromRawError => -316,
+            HsmError::NamedKeysNotSupported => -317,
+            HsmError::AttestReportSignatureMismatch => -318,
             HsmError::UnknownError => -999,
         }
     }

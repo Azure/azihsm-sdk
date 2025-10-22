@@ -14,29 +14,10 @@ use mcr_api::HsmDevice;
 #[cfg(feature = "mock")]
 use mcr_api::*;
 #[cfg(feature = "mock")]
-use mcr_ddi::Ddi;
-#[cfg(feature = "mock")]
-use mcr_ddi::DdiDev;
-#[cfg(feature = "mock")]
-use mcr_ddi_types::*;
-#[cfg(feature = "mock")]
 use test_with_tracing::test;
 
 #[cfg(feature = "mock")]
 use crate::common::*;
-
-cfg_if::cfg_if! {
-    if #[cfg(feature = "mock")] {
-        type DdiTest = mcr_ddi_mock::DdiMock;
-    } else if #[cfg(target_os = "linux")] {
-        #[allow(dead_code)]
-        type DdiTest = mcr_ddi_nix::DdiNix;
-    }
-    else if #[cfg(target_os = "windows")] {
-        #[allow(dead_code)]
-        type DdiTest = mcr_ddi_win::DdiWin;
-    }
-}
 
 /// Setup function that clears device without establish credentials
 #[cfg(feature = "mock")]
@@ -64,43 +45,6 @@ pub fn setup(_device: &HsmDevice, path: &str) {
     assert!(result.is_ok(), "clear_device result {:?}", result);
 }
 
-/// Helper function to set device kind by querying device info
-#[cfg(feature = "mock")]
-fn set_device_kind(device: &mut <DdiTest as Ddi>::Dev) -> Result<(), Box<dyn std::error::Error>> {
-    let req = DdiGetDeviceInfoCmdReq {
-        hdr: DdiReqHdr {
-            op: DdiOp::GetDeviceInfo,
-            sess_id: None,
-            rev: Some(DdiApiRev { major: 1, minor: 0 }),
-        },
-        data: DdiGetDeviceInfoReq {},
-        ext: None,
-    };
-    let mut cookie = None;
-    let resp_info = device.exec_op(&req, &mut cookie)?;
-    device.set_device_kind(resp_info.data.kind);
-    Ok(())
-}
-
-// Helper function to migrate and reestablish credentials
-#[cfg(feature = "mock")]
-fn simulate_lm_reestablish_cred(path: &str, masked_bk3: Vec<u8>) -> Result<(), HsmError> {
-    let ddi = DdiTest::default();
-    let mut ddi_device = ddi.open_dev(path).map_err(HsmError::from)?;
-
-    set_device_kind(&mut ddi_device).map_err(|_e| HsmError::InternalError)?;
-
-    ddi_device
-        .simulate_nssr_after_lm()
-        .map_err(HsmError::from)?;
-    let hsm = HsmDevice::open(path)?;
-    let api_rev = hsm.get_api_revision_range().max;
-
-    hsm.establish_credential(api_rev, TEST_APP_CREDENTIALS, masked_bk3, None, None)?;
-
-    Ok(())
-}
-
 // Helper function for migration thread
 #[cfg(feature = "mock")]
 fn migration_thread_func(
@@ -118,7 +62,7 @@ fn migration_thread_func(
     for _i in 0..5 {
         {
             let _migration_lock = migration_lock.write().unwrap();
-            let migration_result = simulate_lm_reestablish_cred(&path, masked_bk3.clone());
+            let migration_result = common_simulate_lm_reestablish_cred(&path, masked_bk3.clone());
             if migration_result.is_err() {
                 return false;
             }
@@ -203,7 +147,7 @@ fn test_reopen_session_basic() {
         println!("establish credential succeeded");
         let session = common_open_app_session(device);
 
-        let migration_result = simulate_lm_reestablish_cred(path, masked_bk3);
+        let migration_result = common_simulate_lm_reestablish_cred(path, masked_bk3);
         assert!(
             migration_result.is_ok(),
             "Migration simulation should succeed"
@@ -257,7 +201,7 @@ fn test_reopen_session_already_closed() {
         let close_result = session.close_session();
         assert!(close_result.is_ok(), "Session close should succeed");
 
-        let migration_result = simulate_lm_reestablish_cred(path, masked_bk3);
+        let migration_result = common_simulate_lm_reestablish_cred(path, masked_bk3);
         assert!(
             migration_result.is_ok(),
             "Migration simulation should succeed"
@@ -292,7 +236,7 @@ fn test_reopen_session_invalid_credentials() {
         println!("establish credential succeeded");
         let session = common_open_app_session(device);
 
-        let migration_result = simulate_lm_reestablish_cred(path, masked_bk3);
+        let migration_result = common_simulate_lm_reestablish_cred(path, masked_bk3);
         assert!(
             migration_result.is_ok(),
             "Migration simulation should succeed"
@@ -332,7 +276,7 @@ fn test_reopen_session_multiple_operations() {
         assert!(key1_result.is_ok(), "First key generation should succeed");
         let _key1 = key1_result.unwrap();
 
-        let migration_result = simulate_lm_reestablish_cred(path, masked_bk3);
+        let migration_result = common_simulate_lm_reestablish_cred(path, masked_bk3);
         assert!(
             migration_result.is_ok(),
             "Migration simulation should succeed"
@@ -421,7 +365,7 @@ fn test_reopen_session_multiple_rounds() {
                 cycle
             );
 
-            let migration_result = simulate_lm_reestablish_cred(path, masked_bk3.clone());
+            let migration_result = common_simulate_lm_reestablish_cred(path, masked_bk3.clone());
             assert!(
                 migration_result.is_ok(),
                 "Cycle {}: Migration simulation should succeed",

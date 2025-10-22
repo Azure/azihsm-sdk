@@ -14,19 +14,18 @@ fn test_establish_credential() {
     assert!(result.is_ok(), "result {:?}", result);
     let device = result.unwrap();
 
-    // Establish credential
-    let api_rev = device.get_api_revision_range().max;
-    let result = device.establish_credential(api_rev, TEST_CREDENTIALS);
-    assert!(result.is_ok(), "establish credential result {:?}", result);
+    // Open session (and establish credentials)
+    let result = device.open_session(device.get_api_revision_range().max, TEST_CREDENTIALS);
+    assert!(result.is_ok(), "result {:?}", result);
 
     // Simulate live migration
     simulate_live_migration_helper(&device_path);
 
-    // Open session
-    let result = device.open_session(device.get_api_revision_range().max, TEST_CREDENTIALS);
+    // Open another session
+    let result = HsmDevice::open(&device_path);
     assert!(result.is_ok(), "result {:?}", result);
+    let device2 = result.unwrap();
 
-    let _session = result.unwrap();
-
-    common_cleanup(&device_path);
+    let result = device2.open_session(device2.get_api_revision_range().max, TEST_CREDENTIALS);
+    assert!(result.is_ok(), "result {:?}", result);
 }

@@ -45,7 +45,7 @@ impl EngineCtrlCmdInfo for CmdDeleteKey {
         let hsm_ctx_lock = hsm_ctx.read();
         let app_session = hsm_ctx_lock.app_session_as_ref()?;
 
-        let key_handle = app_session.open_key(name).map_err(map_hsm_error)?;
+        let key_handle = app_session.open_key(&name).map_err(map_hsm_error)?;
         app_session.delete_key(&key_handle).map_err(map_hsm_error)
     }
 }

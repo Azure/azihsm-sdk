@@ -17,7 +17,7 @@ use crate::pkey::rsa::callback::pkey_rsa_open_private_key;
 ///
 /// # Returns
 /// * `OpenSSLResult<EvpPKey>` - An `EvpPKey` with the key data
-pub(crate) fn open_private_key(key_name: u16, is_ecdh: bool) -> OpenSSLResult<EvpPKey> {
+pub(crate) fn open_private_key(key_name: &[u8], is_ecdh: bool) -> OpenSSLResult<EvpPKey> {
     let key_container = HsmKeyContainer::open_key(key_name)?;
     match key_container.key_kind() {
         KeyType::Ecc256Private | KeyType::Ecc384Private | KeyType::Ecc521Private => {

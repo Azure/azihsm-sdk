@@ -17,9 +17,13 @@ const TEST_THREADS_DEFAULT: u32 = 1;
 #[derive(Parser)]
 #[clap(about = "Run tests")]
 pub struct Test {
-    /// Features to include in nextest run
+    /// Space or comma separated list of features to activate
     #[clap(long)]
     pub features: Option<String>,
+
+    /// Package to run tests for
+    #[clap(long)]
+    pub package: Option<String>,
 
     /// Whether to exclude OS-specific cryptographic library in features (use-symcrypt on Windows, use-openssl on Linux)
     #[clap(long)]
@@ -56,12 +60,20 @@ impl Xtask for Test {
             features_val = features_vec.join(",");
             command_args.push(&features_val);
         }
+        let package_val = self.package.clone().unwrap_or_default();
+        if self.package.is_some() {
+            command_args.push("--package");
+            command_args.push(&package_val);
+        }
         let test_threads_val = self.test_threads.to_string();
         if self.test_threads != 0 {
             command_args.push("--");
             command_args.push("--test-threads");
             command_args.push(&test_threads_val);
         }
+
+        // elevate warnings to errors for test
+        std::env::set_var("RUSTFLAGS", "-D warnings");
 
         cmd!(sh, "cargo {rust_toolchain...} test {command_args...}")
             .quiet()

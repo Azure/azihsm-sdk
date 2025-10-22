@@ -18,6 +18,7 @@ thiserror.workspace = true
 nix.workspace = true
 
 [dev-dependencies]
+attestation.workspace = true
 cfg-if.workspace = true
 crypto.workspace = true
 mcr_ddi_mbor.workspace = true

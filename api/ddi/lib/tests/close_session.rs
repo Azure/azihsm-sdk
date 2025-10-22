@@ -253,3 +253,26 @@ fn test_close_session_middle_session() {
         },
     );
 }
+
+#[test]
+fn test_close_session_after_lm() {
+    ddi_dev_test(
+        common_setup,
+        common_cleanup,
+        |dev, _ddi, _path, session_id| {
+            let result = dev.simulate_nssr_after_lm();
+            assert!(
+                result.is_ok(),
+                "Migration simulation should succeed: {:?}",
+                result
+            );
+
+            let resp = helper_close_session(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+            );
+            assert!(resp.is_ok(), "resp {:?}", resp);
+        },
+    );
+}

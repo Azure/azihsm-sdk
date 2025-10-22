@@ -4,13 +4,12 @@ mod common;
 use std::mem::size_of;
 use std::ptr;
 
+use crypto::rand::rand_bytes;
 use winapi::shared::winerror::NTE_BAD_TYPE;
 use winapi::shared::winerror::NTE_INVALID_HANDLE;
 use winapi::shared::winerror::NTE_INVALID_PARAMETER;
 use windows::core::HRESULT;
 use windows::Win32::Security::Cryptography::*;
-
-use crypto::rand::rand_bytes;
 
 use crate::common::*;
 
@@ -87,6 +86,8 @@ fn test_create_claim_builtin_unwrapping_key() {
             0,
         );
         assert!(result.is_ok());
+
+        verify_attestation_claim(&claim[..claim_size as usize]);
     }
 }
 
@@ -152,6 +153,7 @@ fn test_create_claim_ecdsa_p256() {
             0,
         );
         assert!(result.is_ok());
+        verify_attestation_claim(&claim[..claim_size as usize]);
     }
 }
 
@@ -217,6 +219,7 @@ fn test_create_claim_ecdsa_p384() {
             0,
         );
         assert!(result.is_ok());
+        verify_attestation_claim(&claim[..claim_size as usize]);
     }
 }
 
@@ -282,6 +285,7 @@ fn test_create_claim_ecdsa_p521() {
             0,
         );
         assert!(result.is_ok());
+        verify_attestation_claim(&claim[..claim_size as usize]);
     }
 }
 
@@ -347,6 +351,7 @@ fn test_create_claim_ecdh_p521() {
             0,
         );
         assert!(result.is_ok());
+        verify_attestation_claim(&claim[..claim_size as usize]);
     }
 }
 

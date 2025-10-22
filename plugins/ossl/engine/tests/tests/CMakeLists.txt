@@ -52,6 +52,7 @@ target_link_libraries(${AZIHSM_ENGINE_TESTS} PUBLIC ${OPENSSL_CRYPTO_LIBRARY})
 
 option(AZIHSM_GCM "Enable GCM cipher tests using AZIHSM" OFF)
 option(AZIHSM_XTS "Enable XTS cipher tests using AZIHSM" OFF)
+option(AZIHSM_NAMED_KEYS "Enable tests using named keys with AZIHSM" OFF)
 
 if(AZIHSM_GCM)
     target_compile_definitions(${AZIHSM_ENGINE_TESTS} PRIVATE AZIHSM_GCM)
@@ -59,9 +60,13 @@ endif()
 if(AZIHSM_XTS)
     target_compile_definitions(${AZIHSM_ENGINE_TESTS} PRIVATE AZIHSM_XTS)
 endif()
+if(AZIHSM_NAMED_KEYS)
+    target_compile_definitions(${AZIHSM_ENGINE_TESTS} PRIVATE AZIHSM_NAMED_KEYS)
+endif()
 
 message(STATUS "AZIHSM_GCM: ${AZIHSM_GCM}")
 message(STATUS "AZIHSM_XTS: ${AZIHSM_XTS}")
+message(STATUS "AZIHSM_NAMED_KEYS: ${AZIHSM_NAMED_KEYS}")
 
 target_compile_definitions(${AZIHSM_ENGINE_TESTS} PRIVATE AZIHSM_LIB_DIR="${AZIHSM_LIB_DIR}")
 

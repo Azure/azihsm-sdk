@@ -6,10 +6,7 @@
 
 mod common;
 
-#[cfg(not(feature = "resilient"))]
 use mcr_api::*;
-#[cfg(feature = "resilient")]
-use mcr_api_resilient::*;
 use openssl::error::ErrorStack;
 use openssl::stack::Stack;
 use openssl::x509::store::X509StoreBuilder;

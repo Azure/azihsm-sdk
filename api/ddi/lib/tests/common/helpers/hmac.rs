@@ -1,7 +1,5 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
 
-use mcr_ddi_sim::report::REPORT_DATA_SIZE;
-
 use super::*;
 
 pub fn helper_hmac(

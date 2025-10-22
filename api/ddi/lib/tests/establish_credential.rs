@@ -892,3 +892,34 @@ fn test_establish_credential_with_reset_in_middle() {
         },
     );
 }
+
+#[test]
+fn test_establish_credential_after_reset() {
+    ddi_dev_test(
+        |_, _, _| 0,
+        common_cleanup,
+        |dev, ddi, path, _session_id| {
+            let setup_res = common_setup_for_lm(dev, ddi, path);
+
+            let resp = helper_reset_function(
+                dev,
+                Some(setup_res.session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+            );
+
+            assert!(resp.is_ok(), "resp {:?}", resp);
+
+            let bmk = helper_common_establish_credential_with_bmk(
+                dev,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                setup_res.masked_bk3,
+                setup_res.partition_bmk,
+                MborByteArray::from_slice(&[])
+                    .expect("Failed to create empty masked unwrapping key"),
+            );
+
+            assert!(!bmk.is_empty());
+        },
+    );
+}

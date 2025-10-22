@@ -25,6 +25,15 @@ pub const VIRTUAL_BK3: [u8; 48] = [
     0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F,
 ];
 
+// Fixed UUID for unwrapping key.
+// caa103da-7c33-447a-9e6c-363eaf32168a
+const UNWRAPPING_KEY_ID: KeyId = KeyId {
+    uuid: Uuid::from_bytes([
+        0xca, 0xa1, 0x03, 0xda, 0x7c, 0x33, 0x44, 0x7a, 0x9e, 0x6c, 0x36, 0x3e, 0xaf, 0x32, 0x16,
+        0x8a,
+    ]),
+};
+
 #[derive(Debug)]
 pub(crate) struct ResilientDevice {
     inner: Arc<RwLock<ResilientDeviceInner>>,
@@ -45,16 +54,6 @@ impl ResilientDevice {
 
     pub(crate) fn get_device_info(&self) -> HsmDeviceInfo {
         self.inner.read().get_device_info()
-    }
-
-    pub(crate) fn establish_credential(
-        &self,
-        api_rev: HsmApiRevision,
-        credentials: HsmAppCredentials,
-    ) -> HsmResult<()> {
-        self.inner
-            .write()
-            .establish_credential(api_rev, credentials)
     }
 
     pub(crate) fn open_session(
@@ -84,29 +83,28 @@ impl ResilientSession {
         self.inner.write().close_session()
     }
 
-    /// Try Session Operation with read lock,
-    /// then use write lock if necessary
-    pub(crate) fn session_op<T>(
-        &self,
-        fn_session_op: &dyn Fn(&HsmSession) -> HsmResult<T>,
-    ) -> HsmResult<T> {
-        let result = self.inner.read().try_session_op(fn_session_op);
-
-        if retry_on_in_session_op(&result) {
-            // Try again, with write lock
-            self.inner.write().run_session_op(fn_session_op)
-        } else {
-            result
-        }
-    }
-
     /// Create Key Operation
     /// Always takes write lock
     pub(crate) fn create_key_op(
         &self,
-        fn_create_key_op: &dyn Fn(&HsmSession) -> HsmResult<HsmKeyHandle>,
+        key_name: Option<&[u8]>,
+        fn_create_key_op: &dyn Fn(&HsmSession, Option<u16>) -> HsmResult<HsmKeyHandle>,
     ) -> HsmResult<ResilientKey> {
+        if key_name.is_some() {
+            Err(HsmError::NamedKeysNotSupported)?
+        }
+
         let key_id = self.inner.write().run_create_key_op(fn_create_key_op)?;
+        Ok(ResilientKey {
+            key_id,
+            inner: self.inner.clone(),
+        })
+    }
+
+    /// Create Unwrapping Key Operation with caching
+    /// Always takes write lock
+    pub(crate) fn get_unwrapping_key(&self) -> HsmResult<ResilientKey> {
+        let key_id = self.inner.write().run_get_unwrapping_key()?;
         Ok(ResilientKey {
             key_id,
             inner: self.inner.clone(),
@@ -118,8 +116,17 @@ impl ResilientSession {
     pub(crate) fn create_key_key_op(
         &self,
         key: &ResilientKey,
-        fn_create_key_op: &dyn Fn(&HsmSession, &HsmKeyHandle) -> HsmResult<HsmKeyHandle>,
+        key_name: Option<&[u8]>,
+        fn_create_key_op: &dyn Fn(
+            &HsmSession,
+            &HsmKeyHandle,
+            Option<u16>,
+        ) -> HsmResult<HsmKeyHandle>,
     ) -> HsmResult<ResilientKey> {
+        if key_name.is_some() {
+            Err(HsmError::NamedKeysNotSupported)?
+        }
+
         let key_id = self
             .inner
             .write()
@@ -134,12 +141,6 @@ impl ResilientSession {
     /// Always takes write lock
     pub(crate) fn delete_key_op(&self, key: &ResilientKey) -> HsmResult<()> {
         self.inner.write().run_delete_key_op(&key.key_id)
-    }
-
-    /// Clear Device (Reset Function)
-    /// Always takes write lock
-    pub(crate) fn clear_device(&self) -> HsmResult<()> {
-        self.inner.write().clear_device()
     }
 
     /// Try Key Operation with read lock,
@@ -212,12 +213,12 @@ fn retry_on_open_session_op<T>(result: &HsmResult<T>) -> bool {
     // TODO: Update with correct error based on out-of-session error handling. TASK 34575020
     match result {
         Ok(_) => false,
-        Err(HsmError::CredentialsNotEstablished)
-        | Err(HsmError::NonceMismatch)
-        | Err(HsmError::PartitionNotProvisioned) => {
+        Err(err @ HsmError::CredentialsNotEstablished)
+        | Err(err @ HsmError::NonceMismatch)
+        | Err(err @ HsmError::PartitionNotProvisioned) => {
             tracing::info!(
                 "Error {:?} on open_session operation indicates possible resiliency event occured. ProcessId={}",
-                result.as_ref().err(),
+                err,
                 process::id()
             );
             true
@@ -239,18 +240,21 @@ fn retry_on_open_session_op<T>(result: &HsmResult<T>) -> bool {
 fn retry_on_in_session_op<T>(result: &HsmResult<T>) -> bool {
     match result {
         Ok(_) => false,
-        Err(HsmError::SessionNeedsRenegotiation) => {
+        // Errors that indicate possible resiliency event
+        Err(err @ HsmError::SessionNeedsRenegotiation)
+        | Err(err @ HsmError::AttestReportSignatureMismatch) => {
             tracing::info!(
-                "Error {:?} on in-session operation indicates possible resiliency event occured. ProcessId={}",
-                result.as_ref().err(),
+                ?err,
+                "Error on in-session operation indicates possible resiliency event occured. ProcessId={}",
                 process::id()
             );
             true
         }
-        _ => {
+        // All other error
+        Err(err) => {
             tracing::debug!(
-                "Error {:?} on in-session operation doesn't indicate resiliency event. Ignoring. ProcessId={}",
-                result.as_ref().err(),
+                ?err,
+                "Error on in-session operation doesn't indicate resiliency event. Ignoring. ProcessId={}",
                 process::id()
             );
             false
@@ -271,6 +275,7 @@ struct ResilientDeviceInner {
     credentials: Option<CachedEstablishCredentials>,
     session: Option<HsmSession>,
     session_keys: HashMap<KeyId, HsmKeyHandle>,
+    unwrapping_key: Option<HsmKeyHandle>,
 }
 
 // We need to implement Debug manually to skip Credentials information.
@@ -285,6 +290,7 @@ impl fmt::Debug for ResilientDeviceInner {
             memory_manager: &'a MemoryManager,
             session: &'a Option<HsmSession>,
             session_keys: &'a HashMap<KeyId, HsmKeyHandle>,
+            resilient_unwrapping_key: &'a Option<HsmKeyHandle>,
         }
 
         let Self {
@@ -293,6 +299,7 @@ impl fmt::Debug for ResilientDeviceInner {
             credentials: _,
             session,
             session_keys,
+            unwrapping_key: resilient_unwrapping_key,
         } = self;
 
         fmt::Debug::fmt(
@@ -301,6 +308,7 @@ impl fmt::Debug for ResilientDeviceInner {
                 memory_manager,
                 session,
                 session_keys,
+                resilient_unwrapping_key,
             },
             f,
         )
@@ -322,6 +330,7 @@ impl ResilientDeviceInner {
             credentials: None,
             session: None,
             session_keys: HashMap::new(),
+            unwrapping_key: None,
         })
     }
 
@@ -386,11 +395,8 @@ impl ResilientDeviceInner {
         self.device.get_device_info()
     }
 
-    /// Try to get both sealed and masked BK3 from device.
-    fn try_get_sealed_and_masked_bk3(
-        &self,
-        api_rev: HsmApiRevision,
-    ) -> HsmResult<(Vec<u8>, Vec<u8>)> {
+    /// Try to get sealed BK3 from device, then unseal with TPM to get masked BK3
+    fn try_get_masked_bk3(&self, api_rev: HsmApiRevision) -> HsmResult<Vec<u8>> {
         let sealed_bk3 = self.device.get_sealed_bk3(api_rev);
 
         match sealed_bk3 {
@@ -400,13 +406,10 @@ impl ResilientDeviceInner {
                 tracing::info!("No sealed BK3 found on device, setting to test value virtual device. ProcessId={}", process::id());
                 let masked_bk3 = self.device.init_bk3(api_rev, &VIRTUAL_BK3)?;
                 self.device.set_sealed_bk3(api_rev, &masked_bk3)?;
-                Ok((masked_bk3.clone(), masked_bk3))
+                Ok(masked_bk3)
             }
             Err(e) => Err(e),
-            Ok(sealed_bk3_value) => Ok((
-                sealed_bk3_value.clone(),
-                self.try_unseal_bk3(api_rev, sealed_bk3_value)?,
-            )),
+            Ok(sealed_bk3_value) => Ok(self.try_unseal_bk3(api_rev, sealed_bk3_value)?),
         }
     }
 
@@ -423,31 +426,26 @@ impl ResilientDeviceInner {
         credentials: HsmAppCredentials,
         write_locked_disk: &mut crate::memory_manager::FileLockGuard,
     ) -> HsmResult<()> {
-        let masked_bk3 = match write_locked_disk.get_sealed_bk3()? {
-            // if we failed getting masked BK3, device is in bad state
-            // and we should fail.
-            Some(sealed_bk3) => self.try_unseal_bk3(api_rev, sealed_bk3)?,
-            None => {
-                tracing::error!(
-                            "try_establish_credential_no_lock: No sealed BK3 found on disk, trying to get from device. ProcessId={}",
-                            process::id()
-                        );
+        tracing::debug!(
+            "try_establish_credential_no_lock: Trying to get BK3 from device. ProcessId={}",
+            process::id()
+        );
 
-                let (dev_sealed_bk3, dev_masked_bk3) =
-                    self.try_get_sealed_and_masked_bk3(api_rev)?;
+        let masked_bk3 = self.try_get_masked_bk3(api_rev)?;
 
-                // this should not return error but if it does, we should fail too
-                write_locked_disk.set_sealed_bk3(&dev_sealed_bk3)?;
-                dev_masked_bk3
-            }
-        };
-
-        // TODO 34106152, 34486596
-        // unmask unwrapping key from disk memory if we are the partition provisioner
+        tracing::debug!(
+            "try_establish_credential_no_lock: Getting masked unwrapping key and bmk from disk, then establishing credentials. ProcessId={}",
+            process::id()
+        );
+        let masked_unwrapping_key = write_locked_disk.get_masked_unwrapping_key()?;
         let bmk = write_locked_disk.get_backup_masking_key()?;
-        let new_bmk =
-            self.device
-                .establish_credential(api_rev, credentials, masked_bk3, bmk, None)?;
+        let new_bmk = self.device.establish_credential(
+            api_rev,
+            credentials,
+            masked_bk3,
+            bmk,
+            masked_unwrapping_key,
+        )?;
         write_locked_disk.set_backup_masking_key(&new_bmk)?;
 
         tracing::debug!(
@@ -459,29 +457,6 @@ impl ResilientDeviceInner {
             api_rev,
         });
         Ok(())
-    }
-
-    fn try_establish_credential(
-        &mut self,
-        api_rev: HsmApiRevision,
-        credentials: HsmAppCredentials,
-    ) -> HsmResult<()> {
-        // Get write lock to protect against synchronization issues with establish credential.
-        let mut write_locked_disk = self.memory_manager.write_lock()?;
-        self.try_establish_credential_no_lock(api_rev, credentials, &mut write_locked_disk)
-    }
-
-    fn establish_credential(
-        &mut self,
-        api_rev: HsmApiRevision,
-        credentials: HsmAppCredentials,
-    ) -> HsmResult<()> {
-        // An error can occur with establish_credential if Live Migration occurs
-        // in-between GetEstablishCredEncryptionKey and EstablishCredential
-        self.retry_with_restore(
-            |device| device.try_establish_credential(api_rev, credentials),
-            retry_on_open_session_op,
-        )
     }
 
     fn try_open_session(
@@ -496,9 +471,11 @@ impl ResilientDeviceInner {
 
         // If open_session fails with CredentialsNotEstablished, try to establish credentials first
         let hsm_session = match hsm_session_result {
-            Err(HsmError::CredentialsNotEstablished) | Err(HsmError::PartitionNotProvisioned) => {
-                tracing::warn!(
-                    "try_open_session: CredentialsNotEstablished, attempting to establish credentials from disk cache. ProcessId={}",
+            Err(err @ HsmError::CredentialsNotEstablished)
+            | Err(err @ HsmError::PartitionNotProvisioned) => {
+                tracing::info!(
+                    "try_open_session: Error {:?}, attempting to establish credentials from disk cache. ProcessId={}",
+                    err,
                     process::id()
                 );
 
@@ -566,30 +543,12 @@ impl ResilientDeviceInner {
         self.try_close_session()
     }
 
-    fn try_session_op<T>(
-        &self,
-        fn_session_op: &dyn Fn(&HsmSession) -> HsmResult<T>,
-    ) -> HsmResult<T> {
-        let hsm_session = self.session.as_ref().ok_or(HsmError::SessionClosed)?;
-        fn_session_op(hsm_session)
-    }
-
-    fn run_session_op<T>(
-        &mut self,
-        fn_session_op: &dyn Fn(&HsmSession) -> HsmResult<T>,
-    ) -> HsmResult<T> {
-        self.retry_with_restore(
-            |device| device.try_session_op(fn_session_op),
-            retry_on_in_session_op,
-        )
-    }
-
     fn try_create_key_op(
         &mut self,
-        fn_create_key_op: &dyn Fn(&HsmSession) -> HsmResult<HsmKeyHandle>,
+        fn_create_key_op: &dyn Fn(&HsmSession, Option<u16>) -> HsmResult<HsmKeyHandle>,
     ) -> HsmResult<KeyId> {
         let hsm_session = self.session.as_ref().ok_or(HsmError::SessionClosed)?;
-        let hsm_key = fn_create_key_op(hsm_session)?;
+        let hsm_key = fn_create_key_op(hsm_session, None)?;
 
         let key_uuid = KeyId {
             uuid: Uuid::new_v4(),
@@ -600,7 +559,7 @@ impl ResilientDeviceInner {
 
     fn run_create_key_op(
         &mut self,
-        fn_create_key_op: &dyn Fn(&HsmSession) -> HsmResult<HsmKeyHandle>,
+        fn_create_key_op: &dyn Fn(&HsmSession, Option<u16>) -> HsmResult<HsmKeyHandle>,
     ) -> HsmResult<KeyId> {
         self.retry_with_restore(
             |device| device.try_create_key_op(fn_create_key_op),
@@ -608,14 +567,54 @@ impl ResilientDeviceInner {
         )
     }
 
+    fn try_get_unwrapping_key(&mut self) -> HsmResult<KeyId> {
+        // Check if unwrapping key already exists in named cache
+        if self.unwrapping_key.is_some() {
+            return Ok(UNWRAPPING_KEY_ID);
+        }
+
+        // Note: restoring unwrapping key from disk is done in establish_credential,
+        // And that is done automatically as part of restore_partition in case of live migration.
+        let hsm_session = self.session.as_ref().ok_or(HsmError::SessionClosed)?;
+        let hsm_key = hsm_session.get_unwrapping_key()?;
+
+        // Cache the masked unwrapping key to disk for live migration resilience
+        self.memory_manager
+            .write_lock()?
+            .set_masked_unwrapping_key(hsm_key.masked_key().ok_or(HsmError::InternalError)?)?;
+
+        // Store the unwrapping key
+        self.unwrapping_key = Some(hsm_key);
+        Ok(UNWRAPPING_KEY_ID)
+    }
+
+    fn run_get_unwrapping_key(&mut self) -> HsmResult<KeyId> {
+        self.retry_with_restore(
+            |device| device.try_get_unwrapping_key(),
+            retry_on_in_session_op,
+        )
+    }
+
+    /// Helper function to get a key from either session_keys or the_unwrapping_key cache
+    fn get_cached_key(&self, key_id: &KeyId) -> HsmResult<&HsmKeyHandle> {
+        match self.session_keys.get(key_id) {
+            Some(key) => Ok(key),
+            None if *key_id == UNWRAPPING_KEY_ID => {
+                self.unwrapping_key.as_ref().ok_or(HsmError::KeyNotFound)
+            }
+            None => Err(HsmError::KeyNotFound),
+        }
+    }
+
     fn try_create_key_key_op(
         &mut self,
         key_id: &KeyId,
-        fn_key_op: &dyn Fn(&HsmSession, &HsmKeyHandle) -> HsmResult<HsmKeyHandle>,
+        fn_key_op: &dyn Fn(&HsmSession, &HsmKeyHandle, Option<u16>) -> HsmResult<HsmKeyHandle>,
     ) -> HsmResult<KeyId> {
         let hsm_session = self.session.as_ref().ok_or(HsmError::SessionClosed)?;
-        let hsm_key = self.session_keys.get(key_id).ok_or(HsmError::KeyNotFound)?;
-        let new_hsm_key = fn_key_op(hsm_session, hsm_key)?;
+        let hsm_key = self.get_cached_key(key_id)?;
+
+        let new_hsm_key = fn_key_op(hsm_session, hsm_key, None)?;
 
         let key_uuid = KeyId {
             uuid: Uuid::new_v4(),
@@ -627,7 +626,7 @@ impl ResilientDeviceInner {
     fn run_create_key_key_op(
         &mut self,
         key_id: &KeyId,
-        fn_key_op: &dyn Fn(&HsmSession, &HsmKeyHandle) -> HsmResult<HsmKeyHandle>,
+        fn_key_op: &dyn Fn(&HsmSession, &HsmKeyHandle, Option<u16>) -> HsmResult<HsmKeyHandle>,
     ) -> HsmResult<KeyId> {
         self.retry_with_restore(
             |device| device.try_create_key_key_op(key_id, fn_key_op),
@@ -637,14 +636,18 @@ impl ResilientDeviceInner {
 
     fn try_delete_key_op(&mut self, key_id: &KeyId) -> HsmResult<()> {
         let hsm_session = self.session.as_ref().ok_or(HsmError::SessionClosed)?;
-        let hsm_key = self.session_keys.get(key_id).ok_or(HsmError::KeyNotFound)?;
-        hsm_session.delete_key(hsm_key)?;
+        let hsm_key = self.get_cached_key(key_id)?;
 
-        // We just accessed the key on self.session_keys.
-        // If remove fails, it's unexpected error.
-        self.session_keys
-            .remove(key_id)
-            .ok_or(HsmError::UnknownError)?;
+        if *key_id != UNWRAPPING_KEY_ID {
+            //only delete if not unwrapping key
+            hsm_session.delete_key(hsm_key)?;
+
+            // We just accessed the key on self.session_keys.
+            // If remove fails, it's unexpected error.
+            self.session_keys
+                .remove(key_id)
+                .ok_or(HsmError::UnknownError)?;
+        }
         Ok(())
     }
 
@@ -663,7 +666,7 @@ impl ResilientDeviceInner {
         fn_key_op: &dyn Fn(&HsmSession, &HsmKeyHandle) -> HsmResult<T>,
     ) -> HsmResult<T> {
         let hsm_session = self.session.as_ref().ok_or(HsmError::SessionClosed)?;
-        let hsm_key = self.session_keys.get(key).ok_or(HsmError::KeyNotFound)?;
+        let hsm_key = self.get_cached_key(key)?;
         fn_key_op(hsm_session, hsm_key)
     }
 
@@ -684,6 +687,8 @@ impl ResilientDeviceInner {
         key_id2: &KeyId,
         fn_key_op: &dyn Fn(&HsmSession, &HsmKeyHandle, &HsmKeyHandle) -> HsmResult<T>,
     ) -> HsmResult<T> {
+        // We only have one 2-key-op:aes_xts_encrypt_decrypt
+        // Only check session_keys cache for now.
         let hsm_session = self.session.as_ref().ok_or(HsmError::SessionClosed)?;
         let hsm_key1 = self
             .session_keys
@@ -709,24 +714,11 @@ impl ResilientDeviceInner {
     }
 
     fn get_key_property<T>(&self, key: &KeyId, fn_key_op: &dyn Fn(&HsmKeyHandle) -> T) -> T {
-        let hsm_key = self.session_keys.get(key).expect("key no longer exists");
+        let hsm_key = self.get_cached_key(key).expect("Key no longer exists");
         fn_key_op(hsm_key)
 
         // There is no run_get_key_property because key properties
         // are cached locally and are not expected to fail
-    }
-
-    fn try_clear_device(&mut self) -> HsmResult<()> {
-        let hsm_session = self.session.as_mut().ok_or(HsmError::SessionClosed)?;
-        hsm_session.clear_device()?;
-
-        self.session_keys.clear();
-        self.session = None;
-        Ok(())
-    }
-
-    fn clear_device(&mut self) -> HsmResult<()> {
-        self.retry_with_restore(|device| device.try_clear_device(), retry_on_in_session_op)
     }
 
     /// Restore partition
@@ -734,55 +726,56 @@ impl ResilientDeviceInner {
         tracing::info!("Enter restore_partition. ProcessId={}", process::id());
 
         // Per resiliency-design.md:
-
-        // 1, 3, 4 : Reestablish credential, if credentials have been established, provision partition, unmask unwrapping key
-        let Some(establish_credential_info) = self.credentials.as_ref() else {
-            tracing::warn!(
-            "Restore_partition: We do not have cached credential info, skipping re-establishing credentials and session. ProcessId={}",
-            process::id()
-            );
-
-            return Ok(());
-        };
-
-        tracing::info!(
-            "Restore_partition: We have cached credential info, re-establishing credentials. ProcessId={}",
-            process::id()
-        );
-        let api_rev = establish_credential_info.api_rev;
-        let creds = establish_credential_info.credentials;
-
-        // Ignoring errors since establish credential can only be done once and may have happened before via another device handle.
-        // TODO TASK 34575020: We should specifically check for error from credential already set.
-        // If LM happens between GetEstablishCredEncryptionKey and EstablishCredential, we should catch that
-        let _ = self.try_establish_credential(api_rev, creds).map_err(|err| (
-            tracing::info!("Restore_partition: establish credential failed with {:?}, ignoring error. ProcessId={}", err, process::id())
-        ));
-
-        // 2 : Reopen session, if one has been opened
-        let Some(session) = &self.session else {
-            tracing::info!(
-            "Restore_partition: We do not have session info, skipping re-establishing session. ProcessId={}",
-            process::id()
-            );
-
-            return Ok(());
-        };
-
-        tracing::info!(
-            "Restore_partition: We have session info, re-opening session. ProcessId={}",
-            process::id()
-        );
         {
             // Get disk write lock to protect against synchronization
             // issues with establish credential and reopen session.
-            let _write_locked_disk = self.memory_manager.write_lock()?;
+            let mut write_locked_disk = self.memory_manager.write_lock()?;
+
+            // 1, 3, 4 : Reestablish credential, if credentials have been established, provision partition, unmask unwrapping key
+            let Some(establish_credential_info) = self.credentials.as_ref() else {
+                tracing::warn!(
+                    "Restore_partition: We do not have cached credential info, skipping re-establishing credentials and session. ProcessId={}",
+                    process::id()
+                );
+
+                return Ok(());
+            };
+
+            tracing::info!(
+                "Restore_partition: We have cached credential info, re-establishing credentials. ProcessId={}",
+                process::id()
+            );
+            let api_rev = establish_credential_info.api_rev;
+            let creds = establish_credential_info.credentials;
+
+            // Ignoring errors since establish credential can only be done once and may have happened before via another device handle.
+            // TODO TASK 34575020: We should specifically check for error from credential already set.
+            // If LM happens between GetEstablishCredEncryptionKey and EstablishCredential, we should catch that
+            let _ = self.try_establish_credential_no_lock(api_rev, creds, &mut write_locked_disk).map_err(|err| (
+                tracing::info!("Restore_partition: establish credential failed with {:?}, ignoring error. ProcessId={}", err, process::id())
+            ));
+
+            // 2 : Reopen session, if one has been opened
+            let Some(session) = &self.session else {
+                tracing::info!(
+                "Restore_partition: We do not have session info, skipping re-establishing session. ProcessId={}",
+                process::id()
+                );
+
+                return Ok(());
+            };
+
+            tracing::info!(
+                "Restore_partition: We have session info, re-opening session. ProcessId={}",
+                process::id()
+            );
+
             let result = session.reopen(creds);
             if retry_on_open_session_op(&result) {
                 // We may have had another LM event. Caller decides how to proceed.
                 tracing::error!(
-                "Restore_partition: Detected resiliency event during restore_partition. ProcessId={}",
-                process::id()
+                    "Restore_partition: Detected resiliency event during restore_partition. ProcessId={}",
+                    process::id()
                 );
                 return Err(HsmError::RestorePartitionFailed);
             }
@@ -801,7 +794,7 @@ impl ResilientDeviceInner {
             return Err(HsmError::RestorePartitionFailed);
         }
 
-        // Return Ok for now
+        // Restoring successful, return Ok
         tracing::info!("Exit restore_partition. ProcessId={}", process::id());
         Ok(())
     }

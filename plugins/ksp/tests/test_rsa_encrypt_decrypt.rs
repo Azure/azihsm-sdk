@@ -2,6 +2,7 @@
 mod common;
 use std::ptr;
 
+use crypto::rand::rand_bytes;
 use winapi::shared::winerror::ERROR_INVALID_STATE;
 use winapi::shared::winerror::E_UNEXPECTED;
 use winapi::shared::winerror::NTE_BAD_DATA;
@@ -15,8 +16,6 @@ use windows::core::HRESULT;
 use windows::core::PCWSTR;
 use windows::Win32::Security::Cryptography::*;
 use windows::Win32::Security::OBJECT_SECURITY_INFORMATION;
-
-use crypto::rand::rand_bytes;
 
 use crate::common::*;
 

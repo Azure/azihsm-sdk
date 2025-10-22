@@ -8,8 +8,6 @@ use std::thread;
 
 use mcr_api_resilient::HsmDevice;
 use winapi::shared::winerror::ERROR_LOCK_FAILED;
-#[cfg(feature = "mock")]
-use winapi::shared::winerror::E_UNEXPECTED;
 use winapi::shared::winerror::NTE_BUFFER_TOO_SMALL;
 use winapi::shared::winerror::NTE_INVALID_HANDLE;
 use windows::core::*;
@@ -277,114 +275,5 @@ fn test_get_provider_resource_property_invalid_buffer() {
             assert!(result.is_err());
             assert_eq!(result.unwrap_err().code(), HRESULT(NTE_BUFFER_TOO_SMALL));
         };
-    }
-}
-
-// Generate keys till we reach the limit of AZIHSM_DEVICE_MAX_KEY_COUNT_PROPERTY
-
-#[cfg(feature = "mock")]
-#[test]
-fn test_generate_key_till_limit() {
-    // This differs for mock Manticore and physical device
-    // Before provisioning partition, mock device used up space of only 5 keys
-    const NUM_BUILTIN_KEYS: u32 = 5;
-    unsafe fn create_key(
-        azihsm_provider: &mut Handle<NCRYPT_PROV_HANDLE>,
-        expect_to_fail: bool,
-    ) -> Option<Handle<NCRYPT_KEY_HANDLE>> {
-        let mut azihsm_key = KeyHandle::new();
-
-        let result = NCryptCreatePersistedKey(
-            azihsm_provider.handle(),
-            azihsm_key.as_mut(),
-            BCRYPT_AES_ALGORITHM,
-            None,
-            CERT_KEY_SPEC(0),
-            NCRYPT_FLAGS(0),
-        );
-        assert!(result.is_ok());
-
-        // Set Encryption Mode.
-        let encryption_mode = std::slice::from_raw_parts(
-            BCRYPT_CHAIN_MODE_CBC.as_ptr().cast::<u8>(),
-            BCRYPT_CHAIN_MODE_CBC.to_string().unwrap().len() * size_of::<u16>(),
-        );
-
-        let result = NCryptSetProperty(
-            azihsm_key.handle(),
-            NCRYPT_CHAINING_MODE_PROPERTY,
-            encryption_mode,
-            NCRYPT_FLAGS(0),
-        );
-        assert!(result.is_ok());
-
-        // Set Key Length.
-        let key_length = 128u32;
-        let result = NCryptSetProperty(
-            azihsm_key.handle(),
-            NCRYPT_LENGTH_PROPERTY,
-            &key_length.to_le_bytes()[..],
-            NCRYPT_FLAGS(0),
-        );
-        assert!(result.is_ok());
-
-        let result = NCryptFinalizeKey(azihsm_key.handle(), NCRYPT_FLAGS(0));
-        if expect_to_fail {
-            assert!(result.is_err());
-            assert_eq!(result.unwrap_err().code(), HRESULT(E_UNEXPECTED));
-            None
-        } else {
-            assert!(result.is_ok());
-            Some(azihsm_key)
-        }
-    }
-
-    let mut azihsm_provider = ProviderHandle::new();
-    let mut keys = vec![];
-
-    unsafe {
-        let result = NCryptOpenStorageProvider(azihsm_provider.as_mut(), AZIHSM_KSP_NAME, 0);
-        assert!(result.is_ok());
-
-        let max_key_count = {
-            let mut buffer_size = 0u32;
-
-            let result = NCryptGetProperty(
-                azihsm_provider.handle(),
-                AZIHSM_DEVICE_MAX_KEY_COUNT_PROPERTY,
-                None,
-                std::ptr::addr_of_mut!(buffer_size),
-                OBJECT_SECURITY_INFORMATION(0),
-            );
-
-            assert!(result.is_ok());
-            assert!(buffer_size > 0);
-
-            let mut buffer = vec![0u8; buffer_size as usize];
-            let result = NCryptGetProperty(
-                azihsm_provider.handle(),
-                AZIHSM_DEVICE_MAX_KEY_COUNT_PROPERTY,
-                Some(&mut buffer),
-                std::ptr::addr_of_mut!(buffer_size),
-                OBJECT_SECURITY_INFORMATION(0),
-            );
-
-            assert!(result.is_ok());
-            let size_u32 = std::mem::size_of::<u32>();
-            assert_eq!(buffer_size, size_u32 as u32);
-
-            u32::from_le_bytes(buffer[..size_u32].try_into().unwrap())
-        };
-
-        // Create this many keys
-        // Minus builtin keys
-        for _ in 0..(max_key_count - NUM_BUILTIN_KEYS) {
-            let key = create_key(&mut azihsm_provider, false).unwrap();
-            keys.push(key);
-        }
-
-        // Next key creation should fail
-        let result = create_key(&mut azihsm_provider, true);
-        assert!(result.is_none(), "Key creation should fail");
     }
 }

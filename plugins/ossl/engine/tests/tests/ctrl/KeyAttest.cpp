@@ -6,7 +6,18 @@
 #include "AziHsmPKeyEc.hpp"
 #include "AziHsmCiphers.hpp"
 
-#define AZIHSM_CMD_ATTEST_AES static_cast<AziHsmEngineCommand>(AZIHSM_CMD_GET_COLLATERAL + 1)
+#define AZIHSM_CMD_ATTEST_AES static_cast<AziHsmEngineCommand>(AZIHSM_CMD_ATTEST_EVP_PKEY_ECC + 1)
+
+// Read 32-bit little-endian integer from byte array
+int from_le_bytes(const unsigned char *bytes)
+{
+    int value = 0;
+    for (size_t i = 0; i < 4; ++i)
+    {
+        value |= (bytes[i] << (8 * i));
+    }
+    return value;
+}
 
 TEST_CASE("AZIHSM Key Attest Tests common", "[AziHsmAttestCommon]")
 {
@@ -25,6 +36,30 @@ TEST_CASE("AZIHSM Key Attest Tests common", "[AziHsmAttestCommon]")
         size_t claim_len = 0;
 
         REQUIRE(azihsm_engine.attestBuiltinUnwrapKey(report_data, claim) == 1);
+    }
+
+    SECTION("Built-in Unwrapping Key - Verify claim")
+    {
+        std::vector<unsigned char> report_data(REPORT_DATA_SIZE);
+        RAND_bytes(report_data.data(), report_data.size());
+        std::vector<unsigned char> claim;
+
+        REQUIRE(azihsm_engine.attestBuiltinUnwrapKey(report_data, claim) == 1);
+
+        REQUIRE(claim.size() >= 16);
+
+        unsigned char *buffer = claim.data();
+        int version = from_le_bytes(buffer);
+        buffer += 4;
+        int len_buffer = from_le_bytes(buffer);
+        buffer += 4;
+        int len_report = from_le_bytes(buffer);
+        buffer += 4;
+        int len_cert_chain = from_le_bytes(buffer);
+
+        // Verify length info
+        REQUIRE(version == 1);
+        REQUIRE((16 + len_report + len_cert_chain) == len_buffer);
     }
 
     SECTION("Invalid report data length")

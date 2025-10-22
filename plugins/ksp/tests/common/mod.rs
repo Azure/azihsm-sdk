@@ -4,10 +4,6 @@ use std::mem::size_of;
 use std::ptr;
 use std::slice;
 
-use windows::core::*;
-use windows::Win32::Security::Cryptography::*;
-use windows::Win32::Security::OBJECT_SECURITY_INFORMATION;
-
 use crypto::aes::AesAlgo;
 use crypto::aes::AesKey;
 use crypto::aes::AesOp;
@@ -21,6 +17,9 @@ use crypto::rsa::RsaPublicKey;
 use crypto::rsa::RsaPublicOp;
 use crypto::CryptoHashAlgorithm;
 use crypto::CryptoRsaCryptoPadding;
+use windows::core::*;
+use windows::Win32::Security::Cryptography::*;
+use windows::Win32::Security::OBJECT_SECURITY_INFORMATION;
 
 // #[cfg(test)]
 pub(crate) const AZIHSM_KSP_NAME: PCWSTR =
@@ -1489,4 +1488,24 @@ pub(crate) fn test_helper_check_key_usage(target_key: &KeyHandle, key_usage: u32
         let key_usage_val = u32::from_le_bytes(key_usage_bytes.try_into().unwrap());
         assert_eq!(key_usage_val, key_usage);
     }
+}
+
+/// Verify if the given buffer contains valid claim.
+/// Will panic if not.
+/// See `fn encode_attestation_claim` in utils.rs for details of the format.
+#[allow(dead_code)]
+pub fn verify_attestation_claim(buffer: &[u8]) {
+    if buffer.len() < 16 {
+        panic!("Buffer too small to be a valid claim");
+    }
+
+    let version = u32::from_le_bytes(buffer[0..4].try_into().unwrap());
+    assert_eq!(version, 1);
+
+    let len_buffer = u32::from_le_bytes(buffer[4..8].try_into().unwrap());
+    assert_eq!(len_buffer as usize, buffer.len());
+
+    let len_report = u32::from_le_bytes(buffer[8..12].try_into().unwrap());
+    let len_cert_chain = u32::from_le_bytes(buffer[12..16].try_into().unwrap());
+    assert_eq!(len_report + len_cert_chain + 16, buffer.len() as u32);
 }

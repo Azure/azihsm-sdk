@@ -60,10 +60,6 @@ fn test_set_and_get_sealed_bk3() {
         common_setup,
         common_cleanup,
         |dev, _ddi, _path, _session_id| {
-            if get_device_kind(dev) != DdiDeviceKind::Physical {
-                tracing::debug!("Skipped test_part_prov_test_lm for virtual device");
-                return;
-            }
             let sealed_bk3 = [9u8; 499];
             let resp = helper_test_set_get_sealed_bk3(dev, &sealed_bk3);
             assert!(resp.is_ok(), "resp {:?}", resp);
@@ -73,12 +69,7 @@ fn test_set_and_get_sealed_bk3() {
 
 #[test]
 fn test_part_prov_test_provisioning() {
-    ddi_dev_test(setup, common_cleanup, |dev, ddi, path, _session_id| {
-        if get_device_kind(dev) != DdiDeviceKind::Physical {
-            tracing::debug!("Skipped test_part_prov_test_lm for virtual device");
-            return;
-        }
-
+    ddi_dev_test(setup, common_cleanup, |_dev, ddi, path, _session_id| {
         let mut dev = ddi.open_dev(path).unwrap();
 
         // Set Device Kind
@@ -128,11 +119,6 @@ fn test_part_prov_test_lm() {
         |_, _, _| 0,
         common_cleanup,
         |dev, ddi, path, _session_id| {
-            if get_device_kind(dev) != DdiDeviceKind::Physical {
-                tracing::debug!("Skipped test_part_prov_test_lm for virtual device");
-                return;
-            }
-
             let setup_res = common_setup_for_lm(dev, ddi, path);
 
             // simulate LM
@@ -180,12 +166,7 @@ fn test_part_prov_test_lm() {
 
 #[test]
 fn test_part_not_prov() {
-    ddi_dev_test(setup, common_cleanup, |dev, ddi, path, _session_id| {
-        if get_device_kind(dev) != DdiDeviceKind::Physical {
-            tracing::debug!("Skipped test_part_not_prov for virtual device");
-            return;
-        }
-
+    ddi_dev_test(setup, common_cleanup, |_dev, ddi, path, _session_id| {
         let mut dev = ddi.open_dev(path).unwrap();
 
         // Set Device Kind
@@ -275,11 +256,7 @@ fn test_part_not_prov() {
 
 #[test]
 fn test_part_prov_only_once() {
-    ddi_dev_test(setup, common_cleanup, |dev, ddi, path, _session_id| {
-        if get_device_kind(dev) != DdiDeviceKind::Physical {
-            tracing::debug!("Skipped test_part_prov_only_once for virtual device");
-            return;
-        }
+    ddi_dev_test(setup, common_cleanup, |_dev, ddi, path, _session_id| {
         let mut dev = ddi.open_dev(path).unwrap();
 
         // Set Device Kind

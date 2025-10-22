@@ -4,12 +4,11 @@ mod common;
 
 use std::ptr;
 
+use crypto::rand::rand_bytes;
 use widestring::WideCString;
 use windows::core::*;
 use windows::Win32::Security::Cryptography::*;
 use windows::Win32::Security::OBJECT_SECURITY_INFORMATION;
-
-use crypto::rand::rand_bytes;
 
 use crate::common::*;
 

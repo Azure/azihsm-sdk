@@ -1,10 +1,8 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
 
 mod common;
-#[cfg(not(feature = "resilient"))]
+
 use mcr_api::*;
-#[cfg(feature = "resilient")]
-use mcr_api_resilient::*;
 use test_with_tracing::test;
 
 use crate::common::*;

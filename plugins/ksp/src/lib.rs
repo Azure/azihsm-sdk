@@ -23,10 +23,6 @@ pub(crate) type AzIHsmHresult<T> = core::result::Result<T, HRESULT>;
 pub(crate) const AZIHSM_KSP_NAME: PCWSTR =
     w!("Microsoft Azure Integrated HSM Key Storage Provider");
 
-/// The property name for AZIHSM device cert chain.
-pub(crate) const AZIHSM_DEVICE_CERT_CHAIN_PROPERTY: PCWSTR =
-    w!("AZIHSM_DEVICE_CERT_CHAIN_PROPERTY");
-
 /// The property names for AZIHSM device Resource capacity.
 /// 4 bytes, holds the little-endian representation of Max number of keys this device can hold
 pub(crate) const AZIHSM_DEVICE_MAX_KEY_COUNT_PROPERTY: PCWSTR =

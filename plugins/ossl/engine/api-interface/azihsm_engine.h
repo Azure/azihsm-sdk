@@ -50,9 +50,6 @@ typedef enum AziHsmEngineCommandE
     /// @brief Command to attest an ECC key with the given EVP_PKEY
     AZIHSM_CMD_ATTEST_EVP_PKEY_ECC,
 
-    /// @brief Command to get AZIHSM Collateral (device certificate chain)
-    AZIHSM_CMD_GET_COLLATERAL,
-
     /// @brief Command to delete a key by name
     AZIHSM_CMD_DELETE_KEY,
 } AziHsmEngineCommand;
@@ -602,27 +599,6 @@ static inline int azihsm_attest_evp_pkey_ecc(
     size_t *claim_len)
 {
     return azihsm_attest_key(engine, AZIHSM_CMD_ATTEST_EVP_PKEY_ECC, (unsigned char *)key, report_data, report_data_len, claim, claim_len);
-}
-
-/// @brief Get the AZIHSM device collateral (device certificate chain)
-/// When called with NULL for the collateral, the function will return the length of the collateral data
-/// @param engine Pointer to OpenSSL ENGINE
-/// @param collateral Collateral data
-/// @param collateral_len Length of collateral data
-/// @return 1 on success, 0 on failure
-static inline int azihsm_get_collateral(
-    ENGINE *engine,
-    unsigned char *collateral,
-    size_t *collateral_len)
-{
-    AziHsmCollateral collateral_data = {
-        .collateral = collateral,
-        .collateral_len = *collateral_len};
-
-    int ret = ENGINE_ctrl(engine, AZIHSM_CMD_GET_COLLATERAL, 0, (void *)&collateral_data, NULL);
-    if (ret == 1)
-        *collateral_len = collateral_data.collateral_len;
-    return ret;
 }
 
 /// @brief Delete a key by name

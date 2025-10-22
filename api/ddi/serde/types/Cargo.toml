@@ -21,9 +21,6 @@ spki = { workspace = true, optional = true }
 sec1 = { workspace = true, optional = true }
 pkcs1 = { workspace = true, optional = true }
 
-# generic-array needed by sec1::EncodedPoint and sec1 does not export.
-generic-array = { workspace = true, optional = true }
-
 [dev-dependencies]
 minicbor.workspace = true
 
@@ -38,4 +35,4 @@ fuzzing = ["arbitrary", "mcr_ddi_mbor/fuzzing"]
 array = ["mcr_ddi_mbor/array"]
 pre_encode = ["featuregroup-crypto", "tracing", "mcr_ddi_mbor/pre_encode"]
 post_decode = ["featuregroup-crypto", "tracing", "mcr_ddi_mbor/post_decode"]
-featuregroup-crypto = ["spki", "sec1", "pkcs1", "generic-array"]
+featuregroup-crypto = ["spki", "sec1", "pkcs1"]
