@@ -239,7 +239,7 @@ impl EccPublicOp for EccPublicKey {
     /// * `CryptoError::EccVerifyFailed` - If the verification fails.
     fn verify(&self, digest: &[u8], signature: &[u8]) -> Result<(), CryptoError> {
         let signature_len = signature.len();
-        if signature_len % 2 != 0 {
+        if !signature_len.is_multiple_of(2) {
             Err(CryptoError::InvalidParameter)?
         }
 
@@ -516,7 +516,7 @@ impl EccOp<EccPublicKey> for EccPublicKey {
 impl EccPublicOp for EccPublicKey {
     fn verify(&self, digest: &[u8], signature: &[u8]) -> Result<(), CryptoError> {
         let signature_len = signature.len();
-        if signature_len % 2 != 0 {
+        if !signature_len.is_multiple_of(2) {
             Err(CryptoError::InvalidParameter)?
         }
         let result = self

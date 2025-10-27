@@ -57,18 +57,21 @@ static SECURITY_STATUS get_quote_and_certificate(
     DWORD* outBufferCertificateSize)
 {
     SECURITY_STATUS status = E_FAIL;
+    AZIHSM_STATUS azihsm_status = AZIHSM_FAILURE;
 
     DWORD bytesWritten = 0;
 
     PBYTE bufferClaim = NULL;
     DWORD bufferClaimSize = 0;
 
-    // Points to bufferClaim
-    PBYTE bufferQuote = NULL;
+    // Offset in bufferClaim
+    // Quote == bufferClaim[bufferQuoteOffset, bufferQuoteOffset + bufferQuoteSize]
+    DWORD bufferQuoteOffset = NULL;
     DWORD bufferQuoteSize = 0;
 
-    // Points to bufferClaim
-    PBYTE bufferCertificate = NULL;
+    // Offset to bufferClaim
+    // Certificate == bufferClaim[bufferCertificateOffset, bufferCertificateOffset + bufferCertificateSize]
+    DWORD bufferCertificateOffset = NULL;
     DWORD bufferCertificateSize = 0;
 
     // A fixed-size (128 bytes) buffer that will be copied into the quote
@@ -98,87 +101,23 @@ static SECURITY_STATUS get_quote_and_certificate(
     // The allocated buffer size may be larger than the actual quote size, so we update the size
     bufferClaimSize = bytesWritten;
 
-    // Buffer format
-    // - Header
-    // - 4 bytes: version, currently 1
-    // - 4 bytes: buffer total length, including header
-    // - metadata
-    // - 4 bytes: length of attestation report in bytes
-    // - 4 bytes: length of certificate in bytes
-    // - payload
-    // - N bytes: attestation report
-    // - M bytes: certificate
-    {
-        if (bufferClaimSize < 16)
-        {
-            fprintf(stderr, "Invalid claim buffer format\n");
-            status = NTE_BAD_DATA;
-            goto cleanup;
-        }
+    azihsm_status = azihsm_parse_claim(bufferClaim, bufferClaimSize,
+        &bufferQuoteOffset, &bufferQuoteSize,
+        &bufferCertificateOffset, &bufferCertificateSize);
 
-        // Get Version
-        DWORD offset = 0;
-        UINT32 version =
-            ((UINT32)bufferClaim[offset]) |
-            ((UINT32)bufferClaim[offset + 1] << 8) |
-            ((UINT32)bufferClaim[offset + 2] << 16) |
-            ((UINT32)bufferClaim[offset + 3] << 24);
-        offset += 4;
-
-        if (version != 1)
-        {
-            fprintf(stderr, "Unsupported claim buffer version: %d\n", version);
-            status = NTE_BAD_DATA;
-            goto cleanup;
-        }
-
-        // Get buffer length
-        UINT32 bufferSize =
-            ((UINT32)bufferClaim[offset]) |
-            ((UINT32)bufferClaim[offset + 1] << 8) |
-            ((UINT32)bufferClaim[offset + 2] << 16) |
-            ((UINT32)bufferClaim[offset + 3] << 24);
-        offset += 4;
-
-        // Get report length
-        bufferQuoteSize =
-            ((UINT32)bufferClaim[offset]) |
-            ((UINT32)bufferClaim[offset + 1] << 8) |
-            ((UINT32)bufferClaim[offset + 2] << 16) |
-            ((UINT32)bufferClaim[offset + 3] << 24);
-        offset += 4;
-
-        // Get cert chain length
-        bufferCertificateSize =
-            ((UINT32)bufferClaim[offset]) |
-            ((UINT32)bufferClaim[offset + 1] << 8) |
-            ((UINT32)bufferClaim[offset + 2] << 16) |
-            ((UINT32)bufferClaim[offset + 3] << 24);
-        offset += 4;
-
-        // Verify lengths
-        if ((16 + bufferQuoteSize + bufferCertificateSize) != bufferSize ||
-            bufferSize != bufferClaimSize)
-        {
-            fprintf(stderr, "Invalid claim buffer lengths\n");
-            status = NTE_BAD_DATA;
-            goto cleanup;
-        }
-
-        bufferQuote = bufferClaim + offset;
-        offset += bufferQuoteSize;
-
-        bufferCertificate = bufferClaim + offset;
+    if (AZIHSM_SUCCESS != azihsm_status) {
+        fprintf(stderr, "Failed to parse claim buffer, status: %d\n", azihsm_status);
+        goto cleanup;
     }
 
-    // Return copy of the two buffers
+    // Return copy of quote + certificate so we can free the buffer returned from NCryptCreateClaim
     *outBufferQuote = new BYTE[bufferQuoteSize];
     *outBufferQuoteSize = bufferQuoteSize;
-    memcpy(*outBufferQuote, bufferQuote, bufferQuoteSize);
+    memcpy(*outBufferQuote, bufferClaim + bufferQuoteOffset, bufferQuoteSize);
 
     *outBufferCertificate = new BYTE[bufferCertificateSize];
     *outBufferCertificateSize = bufferCertificateSize;
-    memcpy(*outBufferCertificate, bufferCertificate, bufferCertificateSize);
+    memcpy(*outBufferCertificate, bufferClaim + bufferCertificateOffset, bufferCertificateSize);
 
     status = S_OK;
 cleanup:

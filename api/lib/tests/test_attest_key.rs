@@ -171,21 +171,16 @@ fn test_attest_rsa_key_lm_then_obtain_cert_with_unwrapped_rsa() {
 
         // Manually verify the report with leaf cert
         {
-            let cert_chain = match &certificate {
-                ManticoreCertificate::PhysicalManticore(cert_chain) => cert_chain,
-                ManticoreCertificate::VirtualManticore { ak_cert, .. } => ak_cert,
-            };
-
             // Find the leaf cert from cert chain
             let leaf_cert_pem = {
                 let pattern_header = "-----BEGIN CERTIFICATE-----".as_bytes();
                 let pattern_footer = "-----END CERTIFICATE-----".as_bytes();
 
-                let start = cert_chain
+                let start = certificate
                     .windows(pattern_header.len())
                     .position(|window| window == pattern_header)
                     .unwrap();
-                let end = cert_chain
+                let end = certificate
                     .windows(pattern_footer.len())
                     .position(|window| window == pattern_footer)
                     .unwrap();
@@ -193,7 +188,7 @@ fn test_attest_rsa_key_lm_then_obtain_cert_with_unwrapped_rsa() {
                 // Move to end of footer
                 let end = end + pattern_footer.len();
 
-                &cert_chain[start..end]
+                &certificate[start..end]
             };
 
             // Parse the leaf cert to get a ECC Pub key

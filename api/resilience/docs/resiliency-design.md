@@ -46,6 +46,19 @@ ResilientDeviceInner contains all of the resiliency logic:
 
 In the future, we will need to implement a service to handle storing information that needs to be shared cross-process (like masked named key data). ResilientDeviceInner can also handle communication with that service.
 
+### Cache Storage Configuration
+
+The resilience layer uses disk-based caching to store partition state, namely masked BK3 and backup masking key, that needs to survive live migration events. The cache file path is resolved using the following priority:
+
+1. `AZIHSM_RESILIENCE_STATE_PATH` environment variable (if set and non-empty)
+2. Platform-specific defaults:
+   - **Windows**:
+     - a. `%ALLUSERSPROFILE%\Microsoft\azihsmguest\partition_cache` (the KSP plugin always create and set it modify-allowed for all users during registration)
+     - b. `%LOCALAPPDATA%\Microsoft\azihsmguest\partition_cache` (fallback)
+   - **Linux**: `/var/tmp/azihsmguest/partition_cache` (with world Read & Write permission)
+
+The cache path is resolved and validated once during initialization and shared across all `ResilientDevice` instances to avoid redundant I/O operations.
+
 ## Sequence Diagrams
 
 What follows are some sequence diagrams to describe scenarios. The plantUml code is at the end of this doc.

@@ -35,9 +35,9 @@ pub(crate) fn validate_aes_header(header: &MaskedKeyAesHeader) -> Result<(), Mas
     }
 
     // Check if the lengths are padded correctly
-    if (header.iv_len + header.post_iv_pad_len) % 4 != 0
-        || (header.metadata_len + header.post_metadata_pad_len) % 4 != 0
-        || (header.encrypted_key_len + header.post_encrypted_key_pad_len) % 4 != 0
+    if !(header.iv_len + header.post_iv_pad_len).is_multiple_of(4)
+        || !(header.metadata_len + header.post_metadata_pad_len).is_multiple_of(4)
+        || !(header.encrypted_key_len + header.post_encrypted_key_pad_len).is_multiple_of(4)
     {
         Err(MaskedKeyError::InvalidLength)?;
     }

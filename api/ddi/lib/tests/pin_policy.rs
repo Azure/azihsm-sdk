@@ -133,7 +133,7 @@ fn pin_policy_sample_login_availability(
     thread::sleep(std::time::Duration::from_millis(sample_period_in_ms));
 
     while Instant::now().duration_since(start_time).as_secs() < duration {
-        if count % 2 == 0 {
+        if count.is_multiple_of(2) {
             open_session_and_assert_failure(&dev, &DdiError::DdiStatus(DdiStatus::LoginFailed));
         } else {
             open_session_and_assert_failure(

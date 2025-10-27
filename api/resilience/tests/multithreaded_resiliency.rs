@@ -1178,9 +1178,6 @@ fn multithread_resiliency_shared_session_aes_xts() {
 }
 
 #[cfg(feature = "mock")]
-/// Pending investigation
-/// Tracking: https://msazure.visualstudio.com/One/_workitems/edit/35641516
-#[ignore = "Skip for pipeline due to flaky"]
 #[test]
 fn multithread_resiliency_separate_sessions_unwrapping_key() {
     let config = TestConfig::new_single(
@@ -1192,9 +1189,6 @@ fn multithread_resiliency_separate_sessions_unwrapping_key() {
 }
 
 #[cfg(feature = "mock")]
-/// Pending investigation
-/// Tracking: https://msazure.visualstudio.com/One/_workitems/edit/35641516
-#[ignore = "Skip for pipeline due to flaky"]
 #[test]
 fn multithread_resiliency_shared_session_unwrapping_key() {
     let config = TestConfig::new_single(

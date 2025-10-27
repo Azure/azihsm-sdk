@@ -699,25 +699,8 @@ impl HsmKeyHandle {
 }
 
 /// Certificate returned by the Manticore device
-#[derive(Debug)]
-pub enum ManticoreCertificate {
-    /// Represents certificates from a physical Manticore device.
-    /// Contains array of PEM encoded certificate, concatenated by '\n'
-    PhysicalManticore(Vec<u8>),
-
-    /// Represents collateral from an virtual Manticore device.
-    VirtualManticore {
-        /// Attestation Key Cert
-        /// PEM format
-        ak_cert: Vec<u8>,
-        /// The cert chain for TEE
-        /// TODO: Collateral support for virtual device is pending
-        tee_cert_chain: Vec<u8>,
-        /// The TEE Report
-        /// TODO: Collateral support for virtual device is pending
-        tee_report: Vec<u8>,
-    },
-}
+/// A buffer containing PEM encoded certificate, separated by new lines
+pub type ManticoreCertificate = Vec<u8>;
 
 /// HSM Application Session Structure
 
@@ -2085,7 +2068,9 @@ impl HsmSession {
     /// * `(Vec<u8>, ManticoreCertificate)` - Attestation report and certificate
     ///
     /// # Errors
-    /// * `HsmError::SessionNeedsRenegotiation` - Thrown if the attestation report signature doesn't match the certificate's public key, LM might have occurred.
+    /// * `HsmError::AttestReportSignatureMismatch | HsmError::CertificateHashMismatch` -
+    /// Thrown if the attestation report signature
+    /// doesn't match the certificate's public key, indicating LM might have occurred.
     #[instrument(skip_all, fields(sess_id = self.session_id, key_id = key.id()))]
     pub fn attest_key_and_obtain_cert(
         &self,
@@ -2095,21 +2080,17 @@ impl HsmSession {
         let attestation_report = self.attest_key(key, report_data)?;
 
         let certificate = self.get_certificate()?;
-        let cert_chain = match &certificate {
-            ManticoreCertificate::PhysicalManticore(cert_chain) => cert_chain,
-            ManticoreCertificate::VirtualManticore { ak_cert, .. } => ak_cert,
-        };
 
         // Find the leaf cert from cert chain
         let leaf_cert_pem = {
             let pattern_header = "-----BEGIN CERTIFICATE-----".as_bytes();
             let pattern_footer = "-----END CERTIFICATE-----".as_bytes();
 
-            let start = cert_chain
+            let start = certificate
                 .windows(pattern_header.len())
                 .position(|window| window == pattern_header)
                 .ok_or(HsmError::GetCertificateError)?;
-            let end = cert_chain
+            let end = certificate
                 .windows(pattern_footer.len())
                 .position(|window| window == pattern_footer)
                 .ok_or(HsmError::GetCertificateError)?;
@@ -2117,7 +2098,7 @@ impl HsmSession {
             // Move to end of footer
             let end = end + pattern_footer.len();
 
-            &cert_chain[start..end]
+            &certificate[start..end]
         };
 
         // Parse the leaf cert to get a ECC Pub key
@@ -2135,7 +2116,7 @@ impl HsmSession {
             HsmError::AttestKeyError
         })?;
 
-        // If error is AttestationError::ReportSignatureMismatch, LM might occurred
+        // If error is AttestationError::ReportSignatureMismatch, LM might have occurred
         key_attester
             .verify(&ecc_pub_key)
             .map_err(|error| match error {
@@ -2313,7 +2294,7 @@ impl HsmSession {
         let num_certs_after = resp.data.num_certs;
         let thumbprint_after = resp.data.thumbprint.as_slice();
         if num_certs != num_certs_after || thumbprint != thumbprint_after {
-            tracing::error!(error = ?HsmError::CertificateHashMismatch, "Certificate chain hash mismatch");
+            tracing::error!(error = ?HsmError::CertificateHashMismatch, "Certificate chain hash mismatch, LM might have occurred");
             Err(HsmError::CertificateHashMismatch)?
         }
 
@@ -2327,7 +2308,6 @@ impl HsmSession {
     #[instrument(skip_all, fields(sess_id = self.session_id))]
     pub fn get_certificate(&self) -> HsmResult<ManticoreCertificate> {
         tracing::debug!("Getting Certificate");
-        let read_locked_device = self.device_inner.read();
 
         if self.closed {
             tracing::error!(error = ?HsmError::SessionClosed, "get certificates failed: App Session already closed");
@@ -2353,18 +2333,7 @@ impl HsmSession {
         }
 
         tracing::debug!("Done getting certificates");
-        Ok(match read_locked_device.get_device_info().kind {
-            DeviceKind::Virtual => {
-                ManticoreCertificate::VirtualManticore {
-                    ak_cert: flatten_certs,
-                    // TODO: return empty until vManticore collateral support
-                    tee_cert_chain: Vec::new(),
-                    // TODO: return empty until vManticore collateral support
-                    tee_report: Vec::new(),
-                }
-            }
-            DeviceKind::Physical => ManticoreCertificate::PhysicalManticore(flatten_certs),
-        })
+        Ok(flatten_certs)
     }
 
     /// Generate AES Key
@@ -2460,7 +2429,7 @@ impl HsmSession {
             Err(HsmError::InvalidParameter)?
         }
 
-        if data.len() % 16 != 0 {
+        if !data.len().is_multiple_of(16) {
             tracing::error!(error = ?HsmError::InvalidParameter, key_id = key.id(), len = data.len(), "Data length is not multiple of 16");
             Err(HsmError::InvalidParameter)?
         }

@@ -445,8 +445,7 @@ macro_rules! get_rand_ddi_request_helper {
 
         // if encoding succeeded, cut the result buffer down to size and
         // return an `Ok`
-        if encode_result.is_ok() {
-            let result_len = encode_result.unwrap();
+        if let Ok(result_len) = encode_result {
             result.truncate(result_len);
             return Ok(result);
         }

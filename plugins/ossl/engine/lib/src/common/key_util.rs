@@ -29,18 +29,8 @@ pub fn encode_attestation_payload(report: &[u8], cert: &ManticoreCertificate) ->
     // Header version, only 1 is supported for now
     const VERSION: u32 = 1;
 
-    // Extract certificate chain based on certificate type
-    let cert_chain = match cert {
-        ManticoreCertificate::PhysicalManticore(cert_chain) => cert_chain,
-        ManticoreCertificate::VirtualManticore {
-            ak_cert,
-            tee_cert_chain: _,
-            tee_report: _,
-        } => ak_cert,
-    };
-
     let len_report = report.len() as u32;
-    let len_cert_chain = cert_chain.len() as u32;
+    let len_cert_chain = cert.len() as u32;
 
     // Calculate total buffer length including header
     let len_buffer = 4 + // version
@@ -68,7 +58,7 @@ pub fn encode_attestation_payload(report: &[u8], cert: &ManticoreCertificate) ->
     buffer.extend_from_slice(report);
 
     // Payload: certificate
-    buffer.extend_from_slice(cert_chain);
+    buffer.extend_from_slice(cert);
 
     buffer
 }

@@ -182,7 +182,7 @@ mod tests {
             encrypted_key_len,
         );
         assert!(encoded_length > 0);
-        assert!(encoded_length % 4 == 0);
+        assert!(encoded_length.is_multiple_of(4));
 
         // Create a buffer of the required length.
         let mut buffer = vec![0u8; encoded_length];
@@ -241,7 +241,7 @@ mod tests {
             encoded_metadata.len(),
             encrypted_key_len,
         );
-        assert!(encoded_length % 4 == 0);
+        assert!(encoded_length.is_multiple_of(4));
         let mut buffer = vec![0u8; encoded_length];
         let result = MaskedKey::pre_encode(
             1,
@@ -317,7 +317,7 @@ mod tests {
             encoded_metadata.len(),
             encrypted_key_len,
         );
-        assert!(encoded_length % 4 == 0);
+        assert!(encoded_length.is_multiple_of(4));
         let mut buffer = vec![0u8; encoded_length - 1];
         let result = MaskedKey::pre_encode(
             1,
@@ -352,7 +352,7 @@ mod tests {
             encoded_metadata.len(),
             encrypted_key_len,
         );
-        assert!(encoded_length % 4 == 0);
+        assert!(encoded_length.is_multiple_of(4));
         let mut buffer = vec![0u8; encoded_length];
         let result = MaskedKey::pre_encode(
             1,

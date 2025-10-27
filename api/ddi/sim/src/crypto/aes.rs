@@ -352,7 +352,7 @@ impl AesKey {
     ///
     /// Optimized to use the output as the intermediate storage rather than having an additional allocation.
     fn base_key_wrap(&self, input: &[u8], aiv: u64) -> Result<AesEncryptResult, ManticoreError> {
-        if input.len() % 8 != 0 {
+        if !input.len().is_multiple_of(8) {
             Err(ManticoreError::AesEncryptError)?;
         }
 
@@ -391,7 +391,7 @@ impl AesKey {
         input: &[u8],
         output: &mut [u8],
     ) -> Result<AivPadding, ManticoreError> {
-        if input.len() % 8 != 0 {
+        if !input.len().is_multiple_of(8) {
             Err(ManticoreError::AesDecryptError)? // Unaligned input buffer length
         }
 
@@ -443,7 +443,7 @@ impl AesKey {
     }
 
     fn check_aiv(output: &[u8], aiv: u64) -> Result<AivPadding, ManticoreError> {
-        if output.len() % 8 != 0 {
+        if !output.len().is_multiple_of(8) {
             Err(ManticoreError::InvalidArgument)? //Unaligned output length
         }
         // check AIV
@@ -858,7 +858,7 @@ impl AesOp for AesKey {
         let key1_handle = CngKeyHandle::new(alg_handle.handle(), &self.key)?;
         let key2_handle = CngKeyHandle::new(alg_handle.handle(), &key2.key)?;
 
-        if dul % 16 != 0 {
+        if !dul.is_multiple_of(16) {
             Err(ManticoreError::AesEncryptError)?;
         }
 
@@ -966,7 +966,7 @@ impl AesOp for AesKey {
 
         let mut total_processed = 0;
 
-        if dul % 16 != 0 {
+        if !dul.is_multiple_of(16) {
             Err(ManticoreError::AesDecryptError)?;
         }
 
@@ -1088,7 +1088,7 @@ impl AesOp for AesKey {
         _algo: AesAlgo,
         iv: Option<&[u8]>,
     ) -> Result<AesEncryptResult, ManticoreError> {
-        if data.len() % 16 != 0 {
+        if !data.len().is_multiple_of(16) {
             Err(ManticoreError::AesEncryptError)?;
         }
         let mut cipher_text = vec![0u8; data.len()];
@@ -1237,7 +1237,7 @@ impl AesOp for AesKey {
         let mli = m as u64;
         let aiv = (PADDED_UPPER_AIV | mli).swap_bytes();
 
-        if data.len() % 8 == 0 {
+        if data.len().is_multiple_of(8) {
             // no padding
             return self.base_key_wrap(data, aiv);
         }

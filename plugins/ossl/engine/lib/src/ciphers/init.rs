@@ -214,7 +214,7 @@ impl AesType {
 }
 
 /// Get all Cipher NIDs supported by AZIHSM or Get cipher requested by NID.
-pub fn engine_ciphers(_e: &Engine, nid: i32) -> OpenSSLResult<EngineCiphersResult> {
+pub fn engine_ciphers(_e: &Engine, nid: i32) -> OpenSSLResult<EngineCiphersResult<'_>> {
     if nid == 0 {
         let nids = AZIHSM_CIPHER_NIDS
             .get()

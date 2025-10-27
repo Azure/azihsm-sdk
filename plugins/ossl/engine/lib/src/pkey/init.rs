@@ -112,7 +112,7 @@ fn init_ec_pkey_meth() -> OpenSSLResult<&'static EvpPKeyMethod> {
 }
 
 /// Get all PKey NIDs supported by AZIHSM or get cipher requested by NID.
-pub fn engine_pkeys(_e: &Engine, nid: c_uint) -> OpenSSLResult<EnginePKeyResult> {
+pub fn engine_pkeys(_e: &Engine, nid: c_uint) -> OpenSSLResult<EnginePKeyResult<'_>> {
     if nid == 0 {
         let pkey_nids = AZIHSM_PKEY_NIDS
             .get()

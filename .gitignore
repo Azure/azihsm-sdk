@@ -373,3 +373,4 @@ bld_engine_test*
 
 # HSM C++ build artifacts
 hsm/cpp/build/
+hsm/cpp/build-release/

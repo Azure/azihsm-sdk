@@ -117,12 +117,12 @@ pub struct MaskedKeyAesHeader {
 
 const _: () = {
     assert!(
-        core::mem::size_of::<MaskedKeyHeader>() % 4 == 0,
+        core::mem::size_of::<MaskedKeyHeader>().is_multiple_of(4),
         "MaskedKeyHeader size must be a multiple of 4 bytes"
     );
 
     assert!(
-        core::mem::size_of::<MaskedKeyAesHeader>() % 4 == 0,
+        core::mem::size_of::<MaskedKeyAesHeader>().is_multiple_of(4),
         "MaskedKeyAesHeader size must be a multiple of 4 bytes"
     );
 };

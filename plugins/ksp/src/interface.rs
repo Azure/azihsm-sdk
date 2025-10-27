@@ -1749,9 +1749,9 @@ extern "system" fn azihsm_enum_algorithms(
 
         // User should free it later with NCryptFreeBuffer
         let result = unsafe { allocate(algorithms) };
-        if result.is_err() {
+        if let Err(hresult_error) = result {
             tracing::error!("Failed to allocate memory for algorithm list");
-            return result.unwrap_err();
+            return hresult_error;
         }
         let ptr = result.unwrap();
 

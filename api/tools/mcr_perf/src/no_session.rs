@@ -35,7 +35,7 @@ pub(crate) fn helper_get_device_info(
     let mut cookie = None;
 
     let resp = dev.exec_op(&req, &mut cookie);
-    resp.map(|info| (info.data))
+    resp.map(|info| info.data)
 }
 
 pub(crate) fn helper_set_device_kind(dev: &mut <DdiTest as Ddi>::Dev) -> DdiResult<()> {

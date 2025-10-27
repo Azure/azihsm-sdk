@@ -115,7 +115,7 @@ pub(crate) fn copy_pcwstr_to_slice(pcwstr: PCWSTR, slice: &mut [u8], out_size: &
 
 #[allow(dead_code)]
 pub(crate) fn byte_slice_to_pcwstr(byte_slice: &[u8]) -> Option<PCWSTR> {
-    if byte_slice.len() % 2 != 0 {
+    if !byte_slice.len().is_multiple_of(2) {
         return None; // The byte slice length must be even
     }
 

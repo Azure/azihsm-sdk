@@ -8,9 +8,9 @@ use windows::Win32::Security::Cryptography::*;
 pub(crate) type NCryptInterfaceVersion = BCRYPT_INTERFACE_VERSION;
 
 pub(crate) type NCryptOpenStorageProviderFn = extern "system" fn(
-    phProvider: *mut NCRYPT_PROV_HANDLE,
-    pszProviderName: PCWSTR,
-    dwFlags: NCRYPT_FLAGS,
+    ph_provider: *mut NCRYPT_PROV_HANDLE,
+    psz_provider_name: PCWSTR,
+    dw_flags: NCRYPT_FLAGS,
 ) -> HRESULT;
 
 pub(crate) type NCryptFreeProviderFn = extern "system" fn(hprovider: NCRYPT_PROV_HANDLE) -> HRESULT;
@@ -32,14 +32,14 @@ pub(crate) type NCryptSetKeyPropertyFn = extern "system" fn(
     key_handle: NCRYPT_KEY_HANDLE,
     property: PCWSTR,
     input: *mut u8,
-    cbInput: u32,
+    cb_input: u32,
     flags: NCRYPT_FLAGS,
 ) -> HRESULT;
 
 pub(crate) type NCryptFinalizeKeyFn = extern "system" fn(
     prov_handle: NCRYPT_PROV_HANDLE,
     hkey: NCRYPT_KEY_HANDLE,
-    dwflags: NCRYPT_FLAGS,
+    dw_flags: NCRYPT_FLAGS,
 ) -> HRESULT;
 
 pub(crate) type NCryptDeleteKeyFn = extern "system" fn(
@@ -81,7 +81,7 @@ pub(crate) type NcryptSignHashFn = extern "system" fn(
     pbsignature: *mut u8,
     cbsignature: u32,
     pcbresult: *mut u32,
-    dwflags: NCRYPT_FLAGS,
+    dw_flags: NCRYPT_FLAGS,
 ) -> HRESULT;
 
 pub(crate) type NcryptVerifySignatureFn = extern "system" fn(
@@ -92,7 +92,7 @@ pub(crate) type NcryptVerifySignatureFn = extern "system" fn(
     cbhashvalue: u32,
     pbsignature: *const u8,
     cbsignature: u32,
-    dwflags: NCRYPT_FLAGS,
+    dw_flags: NCRYPT_FLAGS,
 ) -> HRESULT;
 
 pub(crate) type NCryptGetKeyPropertyFn = extern "system" fn(
@@ -113,7 +113,7 @@ pub(crate) type NCryptImportKeyFn = extern "system" fn(
     phkey: *mut NCRYPT_KEY_HANDLE,
     pbdata: *const u8,
     cbdata: u32,
-    dwflags: NCRYPT_FLAGS,
+    dw_flags: NCRYPT_FLAGS,
 ) -> HRESULT;
 
 pub(crate) type NCryptExportKeyFn = extern "system" fn(
@@ -167,7 +167,7 @@ pub(crate) type NCryptCreateClaimFn = extern "system" fn(
     pbclaimblob: *mut u8,
     cbclaimblob: u32,
     pcbresult: *mut u32,
-    dwflags: u32,
+    dw_flags: u32,
 ) -> HRESULT;
 
 pub(crate) type NCryptDeriveKeyFn = extern "system" fn(
@@ -178,7 +178,7 @@ pub(crate) type NCryptDeriveKeyFn = extern "system" fn(
     pbderivedkey: *mut u8,
     cbderivedkey: u32,
     pcbresult: *mut u32,
-    dwflags: u32,
+    dw_flags: u32,
 ) -> HRESULT;
 
 pub(crate) type NCryptSetProviderPropertyFn = extern "system" fn(
@@ -186,20 +186,20 @@ pub(crate) type NCryptSetProviderPropertyFn = extern "system" fn(
     pszproperty: PCWSTR,
     pbinput: *const u8,
     cbinput: u32,
-    dwflags: u32,
+    dw_flags: u32,
 ) -> HRESULT;
 
 pub(crate) type NCryptFreeBufferFn = extern "system" fn(pvinput: *mut c_void) -> HRESULT;
 
 pub(crate) type NCryptIsAlgSupportedFn =
-    extern "system" fn(hprovider: NCRYPT_PROV_HANDLE, pszalgid: PCWSTR, dwflags: u32) -> HRESULT;
+    extern "system" fn(hprovider: NCRYPT_PROV_HANDLE, pszalgid: PCWSTR, dw_flags: u32) -> HRESULT;
 
 pub(crate) type NCryptEnumAlgorithmsFn = extern "system" fn(
     hprovider: NCRYPT_PROV_HANDLE,
     dwalgclass: u32,
     pdwalgcount: *mut u32,
     ppalglist: *mut *mut NCryptAlgorithmName,
-    dwflags: u32,
+    dw_flags: u32,
 ) -> HRESULT;
 
 pub(crate) type NCryptEnumKeysFn = extern "system" fn(
@@ -207,20 +207,20 @@ pub(crate) type NCryptEnumKeysFn = extern "system" fn(
     pszscope: PCWSTR,
     ppkeyname: *mut *mut NCryptKeyName,
     ppenumstate: *mut *mut c_void,
-    dwflags: u32,
+    dw_flags: u32,
 ) -> HRESULT;
 
 pub(crate) type NCryptPromptUserFn = extern "system" fn(
     hprovider: NCRYPT_PROV_HANDLE,
     hkey: NCRYPT_KEY_HANDLE,
     pszoperation: PCWSTR,
-    dwflags: u32,
+    dw_flags: u32,
 ) -> HRESULT;
 
 pub(crate) type NCryptNotifyChangeKeyFn = extern "system" fn(
     hprovider: NCRYPT_PROV_HANDLE,
     phevent: *mut HANDLE,
-    dwflags: u32,
+    dw_flags: u32,
 ) -> HRESULT;
 
 pub(crate) type NCryptKeyDerivationFn = extern "system" fn(
@@ -230,7 +230,7 @@ pub(crate) type NCryptKeyDerivationFn = extern "system" fn(
     pbderivedkey: *mut u8,
     cbderivedkey: u32,
     pcbresult: *mut u32,
-    dwflags: u32,
+    dw_flags: u32,
 ) -> HRESULT;
 
 pub(crate) type NCryptVerifyClaimFn = extern "system" fn(
@@ -242,7 +242,7 @@ pub(crate) type NCryptVerifyClaimFn = extern "system" fn(
     pbclaimblob: *const u8,
     cbclaimblob: u32,
     poutput: *mut BCryptBufferDesc,
-    dwflags: u32,
+    dw_flags: u32,
 ) -> HRESULT;
 
 #[repr(C)]

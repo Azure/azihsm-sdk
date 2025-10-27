@@ -10,6 +10,7 @@
 //! offers automatic Migration detection and recovery.
 //!
 
+mod cache_storage;
 mod memory_manager;
 mod resilient_device;
 
@@ -287,22 +288,29 @@ impl HsmSession {
         export_public_key, Vec<u8>,
     );
 
-    key_op!(
-        /// Attest Key and Obtain Certificate
-        ///
-        /// # Arguments
-        /// * `key` - Key Handle to attest
-        /// * `report_data` - 128-byte report data to include in the attestation
-        ///
-        /// # Returns
-        /// * `Vec<u8>` - The attestation report
-        /// * `ManticoreCertificate` - The device certificate
-        ///
-        /// # Errors
-        /// * `HsmError::SessionClosed` - Session is closed
-        /// * DDI errors
-        attest_key_and_obtain_cert, (Vec<u8>, ManticoreCertificate), report_data: &[u8; REPORT_DATA_SIZE]
-    );
+    /// Attest Key and Obtain Certificate
+    ///
+    /// # Arguments
+    /// * `key` - Key Handle to attest
+    /// * `report_data` - 128-byte report data to include in the attestation
+    ///
+    /// # Returns
+    /// * `Vec<u8>` - The attestation report
+    /// * `ManticoreCertificate` - The device certificate
+    ///
+    /// # Errors
+    /// * `HsmError::SessionClosed` - Session is closed
+    /// * DDI errors
+    pub fn attest_key_and_obtain_cert(
+        &self,
+        key: &HsmKeyHandle,
+        report_data: &[u8; REPORT_DATA_SIZE],
+    ) -> HsmResult<(Vec<u8>, ManticoreCertificate)> {
+        let fn_op = |session: &mcr_api::HsmSession, key: &mcr_api::HsmKeyHandle| {
+            session.attest_key_and_obtain_cert(key, report_data)
+        };
+        self.inner.attest_key_op(&key.inner, &fn_op)
+    }
 
     //
     // Key operations with Vec<u8> parameters (cloning needed)

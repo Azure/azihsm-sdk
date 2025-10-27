@@ -178,7 +178,7 @@ pub fn encrypt_single_buffer(
     // Encrypt the initial tweak with key2 to get T
     let mut t = aes_encrypt_block(key2_handle, tweak)?;
 
-    if plaintext.len() % 16 != 0 {
+    if !plaintext.len().is_multiple_of(16) {
         return Err(ManticoreError::AesEncryptError);
     }
 
@@ -232,7 +232,7 @@ pub fn decrypt_single_buffer(
     // Encrypt the initial tweak with key2 to get T
     let mut t = aes_encrypt_block(key2_handle, tweak)?;
 
-    if ciphertext.len() % 16 != 0 {
+    if !ciphertext.len().is_multiple_of(16) {
         return Err(ManticoreError::AesDecryptError);
     }
 

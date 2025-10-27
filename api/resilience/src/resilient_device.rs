@@ -10,12 +10,8 @@ use parking_lot::RwLock;
 use tracing::instrument;
 use uuid::Uuid;
 
+use crate::cache_storage::get_cache_file_path;
 use crate::memory_manager::MemoryManager;
-
-// Hard-coded file path to store information on disk
-// TODO 34728454: Need to store in path accessible to all process
-#[allow(dead_code)]
-pub(crate) const FILE_PATH: &str = "tmpfile";
 
 // Hard-coded BK3 of 48 bytes for virtual device testing
 #[allow(dead_code)]
@@ -181,6 +177,23 @@ impl ResilientSession {
             result
         }
     }
+
+    /// Try Attest Key Operation with read lock,
+    /// then take write lock if necessary
+    pub(crate) fn attest_key_op<T>(
+        &self,
+        key: &ResilientKey,
+        fn_key_op: &dyn Fn(&HsmSession, &HsmKeyHandle) -> HsmResult<T>,
+    ) -> HsmResult<T> {
+        let result = self.inner.read().try_key_op(&key.key_id, fn_key_op);
+
+        if retry_on_attest_key_op(&result) {
+            // Try again, with write lock
+            self.inner.write().run_attest_key_op(&key.key_id, fn_key_op)
+        } else {
+            result
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -234,15 +247,47 @@ fn retry_on_open_session_op<T>(result: &HsmResult<T>) -> bool {
     }
 }
 
-// Returns true if the HsmResult could signify a resilience event
-// during an in-session operation (e.g. ecc_generate, or ecc_sign).
-// Returns false if HsmResult is Ok(()), or an unexpected HsmError.
+/// Returns true if the HsmResult could signify a resilience event
+/// during attest_key operation.
+/// Returns false if HsmResult is Ok(()), or an unexpected HsmError.
+fn retry_on_attest_key_op<T>(result: &HsmResult<T>) -> bool {
+    match result {
+        Ok(_) => false,
+        Err(err) => {
+            let is_resiliency_error = matches!(
+                err,
+                HsmError::SessionNeedsRenegotiation
+                    | HsmError::AttestReportSignatureMismatch
+                    | HsmError::CertificateHashMismatch
+            );
+
+            if is_resiliency_error {
+                tracing::info!(
+                    ?err,
+                    "Error on attest_key operation indicates possible resiliency event occurred. ProcessId={}",
+                    process::id()
+                );
+            } else {
+                tracing::debug!(
+                    ?err,
+                    "Error on attest_key operation doesn't indicate resiliency event. Ignoring. ProcessId={}",
+                    process::id()
+                );
+            }
+
+            is_resiliency_error
+        }
+    }
+}
+
+/// Returns true if the HsmResult could signify a resilience event
+/// during an in-session operation (e.g. ecc_generate, or ecc_sign).
+/// Returns false if HsmResult is Ok(()), or an unexpected HsmError.
 fn retry_on_in_session_op<T>(result: &HsmResult<T>) -> bool {
     match result {
         Ok(_) => false,
         // Errors that indicate possible resiliency event
-        Err(err @ HsmError::SessionNeedsRenegotiation)
-        | Err(err @ HsmError::AttestReportSignatureMismatch) => {
+        Err(err @ HsmError::SessionNeedsRenegotiation) => {
             tracing::info!(
                 ?err,
                 "Error on in-session operation indicates possible resiliency event occured. ProcessId={}",
@@ -324,9 +369,12 @@ impl ResilientDeviceInner {
 
         let device = HsmDevice::open(device_path)?;
 
+        // Initialize and get cache path (fails if initialization fails)
+        let cache_path = get_cache_file_path()?;
+
         Ok(ResilientDeviceInner {
             device,
-            memory_manager: MemoryManager::new(FILE_PATH),
+            memory_manager: MemoryManager::new(&cache_path),
             credentials: None,
             session: None,
             session_keys: HashMap::new(),
@@ -681,6 +729,17 @@ impl ResilientDeviceInner {
         )
     }
 
+    fn run_attest_key_op<T>(
+        &mut self,
+        key_id: &KeyId,
+        fn_key_op: &dyn Fn(&HsmSession, &HsmKeyHandle) -> HsmResult<T>,
+    ) -> HsmResult<T> {
+        self.retry_with_restore(
+            |device| device.try_key_op(key_id, fn_key_op),
+            retry_on_attest_key_op,
+        )
+    }
+
     fn try_two_key_op<T>(
         &self,
         key_id1: &KeyId,
@@ -751,9 +810,7 @@ impl ResilientDeviceInner {
             // Ignoring errors since establish credential can only be done once and may have happened before via another device handle.
             // TODO TASK 34575020: We should specifically check for error from credential already set.
             // If LM happens between GetEstablishCredEncryptionKey and EstablishCredential, we should catch that
-            let _ = self.try_establish_credential_no_lock(api_rev, creds, &mut write_locked_disk).map_err(|err| (
-                tracing::info!("Restore_partition: establish credential failed with {:?}, ignoring error. ProcessId={}", err, process::id())
-            ));
+            let _ = self.try_establish_credential_no_lock(api_rev, creds, &mut write_locked_disk).map_err(|err| tracing::info!("Restore_partition: establish credential failed with {:?}, ignoring error. ProcessId={}", err, process::id()));
 
             // 2 : Reopen session, if one has been opened
             let Some(session) = &self.session else {

@@ -1310,7 +1310,7 @@ impl EccPublicOp for EccPublicKey {
     /// * `ManticoreError::EccVerifyError` - If the verification fails.
     fn verify(&self, digest: &[u8], signature: &[u8]) -> Result<(), ManticoreError> {
         let signature_len = signature.len();
-        if signature_len % 2 != 0 {
+        if !signature_len.is_multiple_of(2) {
             Err(ManticoreError::InvalidArgument)?
         }
 
@@ -1364,7 +1364,7 @@ impl EccPublicOp for EccPublicKey {
 impl EccPublicOp for EccPublicKey {
     fn verify(&self, digest: &[u8], signature: &[u8]) -> Result<(), ManticoreError> {
         let signature_len = signature.len();
-        if signature_len % 2 != 0 {
+        if !signature_len.is_multiple_of(2) {
             Err(ManticoreError::InvalidArgument)?
         }
         let result = self

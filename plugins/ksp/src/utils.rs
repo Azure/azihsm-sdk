@@ -63,7 +63,7 @@ pub(crate) mod pcwstr {
     }
 
     pub(crate) fn byte_slice_to_pcwstr(byte_slice: &[u8]) -> Option<PCWSTR> {
-        if byte_slice.len() % 2 != 0 {
+        if !byte_slice.len().is_multiple_of(2) {
             return None; // The byte slice length must be even
         }
 
@@ -413,18 +413,8 @@ pub fn encode_attestation_claim(report: &[u8], cert: &ManticoreCertificate) -> V
     // Header version, only 1 is supported for now
     const VERSION: u32 = 1;
 
-    // Extract certificate chain based on certificate type
-    let cert_chain = match cert {
-        ManticoreCertificate::PhysicalManticore(cert_chain) => cert_chain,
-        ManticoreCertificate::VirtualManticore {
-            ak_cert,
-            tee_cert_chain: _,
-            tee_report: _,
-        } => ak_cert,
-    };
-
     let len_report = report.len() as u32;
-    let len_cert_chain = cert_chain.len() as u32;
+    let len_cert_chain = cert.len() as u32;
 
     // Calculate total buffer length including header
     let len_buffer = 4 + // version
@@ -452,7 +442,7 @@ pub fn encode_attestation_claim(report: &[u8], cert: &ManticoreCertificate) -> V
     buffer.extend_from_slice(report);
 
     // Payload: certificate
-    buffer.extend_from_slice(cert_chain);
+    buffer.extend_from_slice(cert);
 
     buffer
 }

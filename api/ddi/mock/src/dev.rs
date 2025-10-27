@@ -418,7 +418,7 @@ impl DdiDev for DdiMockDev {
             Err(DdiError::InvalidParameter)?;
         }
 
-        if src_buf.len() % xts_params.data_unit_len != 0 {
+        if !src_buf.len().is_multiple_of(xts_params.data_unit_len) {
             tracing::error!(
                 "Src buffer size ({}) not multiple of data unit length ({}).",
                 src_buf.len(),

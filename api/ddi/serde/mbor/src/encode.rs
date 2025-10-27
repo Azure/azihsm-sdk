@@ -164,7 +164,10 @@ pub struct MborEncoder<'a> {
 }
 
 impl MborEncoder<'_> {
-    pub fn new(buffer: &mut [u8], #[cfg(feature = "pre_encode")] pre_encode: bool) -> MborEncoder {
+    pub fn new(
+        buffer: &mut [u8],
+        #[cfg(feature = "pre_encode")] pre_encode: bool,
+    ) -> MborEncoder<'_> {
         MborEncoder {
             buffer,
             pos: 0,

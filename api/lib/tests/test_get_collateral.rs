@@ -6,7 +6,6 @@
 
 mod common;
 
-use mcr_api::*;
 use openssl::error::ErrorStack;
 use openssl::stack::Stack;
 use openssl::x509::store::X509StoreBuilder;
@@ -20,11 +19,22 @@ use crate::common::*;
 /// Using OpenSSL
 /// cert_chain: Raw byte array of PEM encoded certificates, separated by newline.
 /// The first cert is the leaf cert, the last cert is the root cert.
-#[cfg(test)]
 #[allow(dead_code)]
-pub(crate) fn verify_certificate_chain(cert_chain: Vec<u8>) -> Result<bool, ErrorStack> {
+pub(crate) fn verify_certificate_chain(buffer: Vec<u8>) -> Result<bool, ErrorStack> {
     // 1. Load the certificate chain
-    let cert_chain = X509::stack_from_pem(&cert_chain)?;
+    let cert_chain = X509::stack_from_pem(&buffer)?;
+
+    // If there is 1 cert in the cert chain
+    // It might be from mock device
+    if cert_chain.len() == 1 {
+        // Verify AK Cert from mock device
+        let cert_from_der = X509::from_pem(&buffer);
+        assert!(cert_from_der.is_ok());
+
+        let public_key = cert_from_der.unwrap().public_key();
+        assert!(public_key.is_ok());
+        return Ok(true);
+    }
 
     // 2. Build a Store that holds root CA
     let mut store_builder = X509StoreBuilder::new()?;
@@ -159,33 +169,12 @@ fn test_get_collateral() {
         let result = app_session.get_certificate();
         assert!(result.is_ok(), "result {:?}", result);
 
-        let collateral = result.unwrap();
+        let cert = result.unwrap();
 
-        match collateral {
-            ManticoreCertificate::PhysicalManticore(cert_chain) => {
-                let result = verify_certificate_chain(cert_chain);
-                assert!(result.is_ok(), "Verification failed with {:?}", result);
-                let result = result.unwrap();
-                assert!(result, "Verification result should be true");
-            }
-            ManticoreCertificate::VirtualManticore {
-                ak_cert,
-                tee_cert_chain,
-                tee_report,
-            } => {
-                // Check ak_cert
-                let cert_from_der = X509::from_pem(&ak_cert);
-                println!("AK Cert: {:?}", cert_from_der);
-                assert!(cert_from_der.is_ok());
-
-                let public_key = cert_from_der.unwrap().public_key();
-                assert!(public_key.is_ok());
-
-                // the rest should be empty for now
-                assert!(tee_cert_chain.is_empty());
-                assert!(tee_report.is_empty());
-            }
-        }
+        let result = verify_certificate_chain(cert);
+        assert!(result.is_ok(), "Verification failed with {:?}", result);
+        let result = result.unwrap();
+        assert!(result, "Verification result should be true");
     });
 }
 
