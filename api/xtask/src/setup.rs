@@ -42,7 +42,7 @@ impl Xtask for Setup {
 
         // Run Install Cargo nextest
         let install_cargo_nextest = install::Install {
-            crate_name: "cargo-nextest".to_string(),
+            crate_name: "cargo-nextest@0.9.108".to_string(),
             force: self.force,
             config: self.config.clone(),
         };
