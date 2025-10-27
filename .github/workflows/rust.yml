@@ -69,8 +69,8 @@ jobs:
       run: cargo xtask build --features mock --package mcr_perf
     - name: Mock Perf test - multi-threaded
       run: |
-        cargo xtask mcr-perf --shared-session --threads 120 --stabilize-seconds 5 --test-seconds 10 custom --get-api-rev 100
-        cargo xtask mcr-perf --shared-session --threads 200 --stabilize-seconds 5 --test-seconds 10 custom --aes-cbc-128-encrypt 100
+        cargo xtask mcr-perf --shared-session --threads 120 --stabilize-seconds 5 --test-seconds 10 --custom-option get-api-rev
+        cargo xtask mcr-perf --shared-session --threads 200 --stabilize-seconds 5 --test-seconds 10 --custom-option aes-cbc-128-encrypt
 
   build_windows:
 
@@ -124,5 +124,5 @@ jobs:
       run: cargo xtask build --features mock --package mcr_perf
     - name: Mock Perf test - multi-threaded
       run: |
-        cargo xtask mcr-perf --shared-session --threads 120 --stabilize-seconds 5 --test-seconds 10 custom --get-api-rev 100
-        cargo xtask mcr-perf --shared-session --threads 200 --stabilize-seconds 5 --test-seconds 10 custom --aes-cbc-128-encrypt 100
+        cargo xtask mcr-perf --shared-session --threads 120 --stabilize-seconds 5 --test-seconds 10 --custom-option get-api-rev
+        cargo xtask mcr-perf --shared-session --threads 200 --stabilize-seconds 5 --test-seconds 10 --custom-option aes-cbc-128-encrypt
