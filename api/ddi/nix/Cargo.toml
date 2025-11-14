@@ -1,0 +1,22 @@
+# Copyright (C) Microsoft Corporation. All rights reserved.
+
+[package]
+name = "mcr_ddi_nix"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+doctest = false
+
+[dependencies]
+glob.workspace = true
+mcr_ddi.workspace = true
+mcr_ddi_mbor.workspace = true
+mcr_ddi_types.workspace = true
+nix.workspace = true
+parking_lot.workspace = true
+bitfield-struct.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

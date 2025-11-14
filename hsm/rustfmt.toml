@@ -1,0 +1,7 @@
+# Copyright (C) Microsoft Corporation. All rights reserved.
+
+# use_small_heuristics = "Max"
+group_imports = "StdExternalCrate"
+imports_granularity = "Item"
+format_macro_bodies = true
+format_macro_matchers = true

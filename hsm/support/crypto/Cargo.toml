@@ -1,0 +1,30 @@
+# Copyright (C) Microsoft Corporation. All rights reserved.
+
+[package]
+name = "azihsm_crypto"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+doctest = false
+
+[dependencies]
+asn1.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+openssl.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows.workspace = true
+
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+thiserror.workspace = true
+rand.workspace = true
+test-log.workspace = true
+tracing-subscriber.workspace = true
