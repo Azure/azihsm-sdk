@@ -6,14 +6,13 @@
 //! Xtask to run install symcrypt
 
 use clap::Parser;
+#[cfg(target_os = "windows")]
 use xshell::cmd;
+#[cfg(target_os = "windows")]
 use xshell::Shell;
 
 use crate::Xtask;
 use crate::XtaskCtx;
-
-#[cfg(not(target_os = "windows"))]
-const UBUNTU_VER_DEFAULT: &str = "22.04";
 
 /// Xtask to run install symcrypt
 #[derive(Parser)]
@@ -28,15 +27,17 @@ impl Xtask for InstallSymcrypt {
     fn run(self, _ctx: XtaskCtx) -> anyhow::Result<()> {
         log::trace!("running install symcrypt");
 
-        let sh = Shell::new()?;
-
         #[cfg(target_os = "windows")]
-        cmd!(
-            sh,
-            "powershell -File ../.pipelines/scripts/install-symcrypt.ps1"
-        )
-        .quiet()
-        .run()?;
+        {
+            let sh = Shell::new()?;
+
+            cmd!(
+                sh,
+                "powershell -File ../.pipelines/scripts/install-symcrypt.ps1"
+            )
+            .quiet()
+            .run()?;
+        }
 
         log::trace!("done install symcrypt");
         Ok(())
