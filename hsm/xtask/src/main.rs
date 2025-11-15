@@ -18,8 +18,11 @@ mod clippy;
 pub mod common;
 mod copyright;
 mod fmt;
+mod install_symcrypt;
 mod native;
 mod precheck;
+mod rustup_component_add;
+mod setup;
 mod test;
 
 /// Common context passed into every Xtask
@@ -53,9 +56,12 @@ enum Commands {
     Clippy(clippy::Clippy),
     Copyright(copyright::Copyright),
     Fmt(fmt::Fmt),
-    Test(test::Test),
+    InstallSymcrypt(install_symcrypt::InstallSymcrypt),
     #[clap(alias = "nbt")]
     NativeBuildAndTest(native::NativeBuildAndTest),
+    RustupComponentAdd(rustup_component_add::RustupComponentAdd),
+    Setup(setup::Setup),
+    Test(test::Test),
 }
 
 fn main() {
@@ -85,8 +91,11 @@ fn try_main() -> anyhow::Result<()> {
         Commands::Clippy(task) => task.run(ctx),
         Commands::Copyright(task) => task.run(ctx),
         Commands::Fmt(task) => task.run(ctx),
+        Commands::InstallSymcrypt(task) => task.run(ctx),
         Commands::Precheck(task) => task.run(ctx),
-        Commands::Test(task) => task.run(ctx),
         Commands::NativeBuildAndTest(task) => task.run(ctx),
+        Commands::RustupComponentAdd(task) => task.run(ctx),
+        Commands::Setup(task) => task.run(ctx),
+        Commands::Test(task) => task.run(ctx),
     }
 }
