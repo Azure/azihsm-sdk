@@ -2115,7 +2115,7 @@ mod tests {
             let iv = [0xCD; AES_CBC_BLOCK_IV_LENGTH];
             let mut aes_cbc = AesCbcAlgo::new(iv, true);
 
-            let calculated_len = aes_cbc.ciphertext_len(plaintext.len()) as usize;
+            let calculated_len = aes_cbc.ciphertext_len(plaintext.len());
             assert_eq!(calculated_len, expected_ct_len);
 
             let mut ciphertext = vec![0u8; calculated_len];
