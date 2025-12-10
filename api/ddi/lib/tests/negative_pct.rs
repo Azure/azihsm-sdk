@@ -23,13 +23,7 @@ fn test_ecc_generate_p256_trigger_pct_failure() {
                 dev,
                 session_id,
                 DdiTestAction::TriggerNegativePctFailure,
-                None,
-                None,
-                None,
-                None,
-                Some(0),
-                None,
-                None,
+                DdiTestActionContext::NegPctSkipCnt(0),
             ) {
                 if is_unsupported_cmd(&err) {
                     return;
@@ -79,13 +73,7 @@ fn test_ecc_generate_p384_trigger_pct_failure() {
                 dev,
                 session_id,
                 DdiTestAction::TriggerNegativePctFailure,
-                None,
-                None,
-                None,
-                None,
-                Some(0),
-                None,
-                None,
+                DdiTestActionContext::NegPctSkipCnt(0),
             ) {
                 if is_unsupported_cmd(&err) {
                     return;
@@ -135,13 +123,7 @@ fn test_ecc_generate_p521_trigger_pct_failure() {
                 dev,
                 session_id,
                 DdiTestAction::TriggerNegativePctFailure,
-                None,
-                None,
-                None,
-                None,
-                Some(0),
-                None,
-                None,
+                DdiTestActionContext::NegPctSkipCnt(0),
             ) {
                 if is_unsupported_cmd(&err) {
                     return;
@@ -191,13 +173,7 @@ fn test_ecdh_256_key_exchange_pct_failure() {
                 dev,
                 session_id,
                 DdiTestAction::TriggerNegativePctFailure,
-                None,
-                None,
-                None,
-                None,
-                Some(0),
-                None,
-                None,
+                DdiTestActionContext::NegPctSkipCnt(0),
             ) {
                 if is_unsupported_cmd(&err) {
                     return;
@@ -247,13 +223,7 @@ fn test_ecdh_384_key_exchange_pct_failure() {
                 dev,
                 session_id,
                 DdiTestAction::TriggerNegativePctFailure,
-                None,
-                None,
-                None,
-                None,
-                Some(0),
-                None,
-                None,
+                DdiTestActionContext::NegPctSkipCnt(0),
             ) {
                 if is_unsupported_cmd(&err) {
                     return;
@@ -303,13 +273,7 @@ fn test_ecdh_521_key_exchange_pct_failure() {
                 dev,
                 session_id,
                 DdiTestAction::TriggerNegativePctFailure,
-                None,
-                None,
-                None,
-                None,
-                Some(0),
-                None,
-                None,
+                DdiTestActionContext::NegPctSkipCnt(0),
             ) {
                 if is_unsupported_cmd(&err) {
                     return;
@@ -359,13 +323,7 @@ fn test_get_unwrapping_key_trigger_pct_failure() {
                 dev,
                 session_id,
                 DdiTestAction::TriggerNegativePctFailure,
-                None,
-                None,
-                None,
-                None,
-                Some(0),
-                None,
-                None,
+                DdiTestActionContext::NegPctSkipCnt(0),
             ) {
                 if is_unsupported_cmd(&err) {
                     return;
@@ -412,13 +370,7 @@ fn test_get_establish_cred_encryption_key_failure() {
                 dev,
                 session_id,
                 DdiTestAction::TriggerNegativePctFailure,
-                None,
-                None,
-                None,
-                None,
-                Some(0),
-                None,
-                None,
+                DdiTestActionContext::NegPctSkipCnt(0),
             ) {
                 if is_unsupported_cmd(&err) {
                     return;
@@ -466,13 +418,7 @@ fn test_get_session_encryption_key_failure() {
                 dev,
                 session_id,
                 DdiTestAction::TriggerNegativePctFailure,
-                None,
-                None,
-                None,
-                None,
-                Some(1),
-                None,
-                None,
+                DdiTestActionContext::NegPctSkipCnt(1),
             ) {
                 if is_unsupported_cmd(&err) {
                     return;

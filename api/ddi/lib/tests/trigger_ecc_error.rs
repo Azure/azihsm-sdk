@@ -29,13 +29,7 @@ fn trigger_dtcm_ecc_error_cp0() {
                 dev,
                 session_id,
                 DdiTestAction::TriggerEccError,
-                None,
-                None,
-                None,
-                None,
-                None,
-                Some(ecc_error_info),
-                None,
+                DdiTestActionContext::EccErrorInfo(ecc_error_info),
             );
 
             if let Err(err) = &resp {
@@ -79,13 +73,7 @@ fn trigger_dtcm_ecc_error_cp1() {
                 dev,
                 session_id,
                 DdiTestAction::TriggerEccError,
-                None,
-                None,
-                None,
-                None,
-                None,
-                Some(ecc_error_info),
-                None,
+                DdiTestActionContext::EccErrorInfo(ecc_error_info),
             );
 
             if let Err(err) = &resp {
@@ -383,13 +371,7 @@ fn trigger_itcm_ecc_error() {
                 dev,
                 session_id,
                 DdiTestAction::TriggerEccError,
-                None,
-                None,
-                None,
-                None,
-                None,
-                Some(ecc_error_info),
-                None,
+                DdiTestActionContext::EccErrorInfo(ecc_error_info),
             );
 
             if let Err(err) = &resp {
@@ -502,13 +484,7 @@ fn inject_corr_ecc_error(dev: &mut <DdiTest as Ddi>::Dev, session_id: u16) -> bo
         dev,
         session_id,
         DdiTestAction::TriggerEccError,
-        None,
-        None,
-        None,
-        None,
-        None,
-        Some(ecc_error_info),
-        None,
+        DdiTestActionContext::EccErrorInfo(ecc_error_info),
     );
 
     if let Err(err) = &resp {
@@ -541,13 +517,7 @@ fn get_corr_ecc_intr_count(
         dev,
         session_id,
         DdiTestAction::TriggerEccError,
-        None,
-        None,
-        None,
-        None,
-        None,
-        Some(ecc_error_info),
-        None,
+        DdiTestActionContext::EccErrorInfo(ecc_error_info),
     );
 
     if let Err(err) = &resp {

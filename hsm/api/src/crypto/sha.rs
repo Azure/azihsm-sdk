@@ -2,10 +2,14 @@
 
 #![warn(missing_docs)]
 
+use azihsm_crypto::DigestContext;
 use azihsm_crypto::HashAlgo;
+use azihsm_crypto::HashContext;
 use azihsm_crypto::HashOp;
 
 use crate::crypto::DigestOp;
+use crate::crypto::StreamingDigestAlgo;
+use crate::crypto::StreamingDigestOp;
 use crate::types::AlgoId;
 use crate::AzihsmError;
 use crate::Session;
@@ -29,7 +33,7 @@ impl DigestOp for ShaAlgo {
             AlgoId::Sha256 => HashAlgo::Sha256,
             AlgoId::Sha384 => HashAlgo::Sha384,
             AlgoId::Sha512 => HashAlgo::Sha512,
-            _ => return Err(AZIHSM_ALGORITHM_NOT_SUPPORTED),
+            _ => Err(AZIHSM_ALGORITHM_NOT_SUPPORTED)?,
         };
         // Call hash function, session is not used for now
         sha_algo
@@ -47,10 +51,51 @@ impl DigestOp for ShaAlgo {
             AlgoId::Sha256 => HashAlgo::Sha256,
             AlgoId::Sha384 => HashAlgo::Sha384,
             AlgoId::Sha512 => HashAlgo::Sha512,
-            _ => return Err(AZIHSM_ALGORITHM_NOT_SUPPORTED),
+            _ => Err(AZIHSM_ALGORITHM_NOT_SUPPORTED)?,
         };
         // Get digest length
         Ok(sha_algo.hash_length() as u32)
+    }
+}
+
+/// Streaming SHA digest operation
+pub struct ShaDigestStream {
+    hasher: DigestContext,
+    hash_algo: HashAlgo,
+}
+
+impl StreamingDigestOp for ShaDigestStream {
+    fn digest_len(&self) -> usize {
+        self.hash_algo.hash_length()
+    }
+
+    fn update(&mut self, data: &[u8]) -> Result<(), AzihsmError> {
+        self.hasher.update(data).map_err(|_| AZIHSM_INTERNAL_ERROR)
+    }
+
+    fn finalize(self, digest: &mut [u8]) -> Result<usize, AzihsmError> {
+        let digest_len = self.hash_algo.hash_length();
+
+        if digest.len() < digest_len {
+            Err(AZIHSM_ERROR_INSUFFICIENT_BUFFER)?;
+        }
+
+        self.hasher
+            .finish(&mut digest[..digest_len])
+            .map_err(|_| AZIHSM_INTERNAL_ERROR)?;
+
+        Ok(digest_len)
+    }
+}
+
+impl<'a> StreamingDigestAlgo<'a> for ShaAlgo {
+    type DigestStream = ShaDigestStream;
+
+    fn digest_init(&self, _session: &'a Session) -> Result<Self::DigestStream, AzihsmError> {
+        let hash_algo = HashAlgo::try_from(self.algo)?;
+        let hasher = hash_algo.init().map_err(|_| AZIHSM_INTERNAL_ERROR)?;
+
+        Ok(ShaDigestStream { hasher, hash_algo })
     }
 }
 
@@ -264,5 +309,315 @@ mod tests {
         // We don't verify the exact value here since it's less commonly known,
         // but we ensure the operation completes successfully
         assert_ne!(digest, vec![0u8; 32], "Digest should not be all zeros");
+    }
+
+    #[test]
+    fn test_sha_streaming_digest_all_algorithms() {
+        let (_partition, session) = create_test_session();
+
+        let test_cases = [
+            (AlgoId::Sha1, 20, "SHA1"),
+            (AlgoId::Sha256, 32, "SHA256"),
+            (AlgoId::Sha384, 48, "SHA384"),
+            (AlgoId::Sha512, 64, "SHA512"),
+        ];
+
+        for (algo_id, expected_len, algo_name) in test_cases {
+            let sha_algo = ShaAlgo { algo: algo_id };
+
+            // Streaming digest
+            let mut digest_stream = session
+                .digest_init(&sha_algo)
+                .unwrap_or_else(|_| panic!("Failed to init {} digest stream", algo_name));
+
+            let message = b"Test message for streaming digest";
+            digest_stream
+                .update(message)
+                .unwrap_or_else(|_| panic!("Failed to update {} digest stream", algo_name));
+
+            let mut digest = vec![0u8; expected_len];
+            digest_stream
+                .finalize(&mut digest)
+                .unwrap_or_else(|_| panic!("Failed to finalize {} digest stream", algo_name));
+
+            // Non-streaming digest for comparison
+            let mut sha_algo_non_streaming = ShaAlgo { algo: algo_id };
+            let mut expected_digest = vec![0u8; expected_len];
+            sha_algo_non_streaming
+                .digest(&session, message, &mut expected_digest)
+                .unwrap_or_else(|_| panic!("Failed non-streaming {} digest", algo_name));
+
+            assert_eq!(
+                digest, expected_digest,
+                "{} streaming and non-streaming digests should match",
+                algo_name
+            );
+        }
+    }
+
+    #[test]
+    fn test_sha_streaming_digest_empty_message() {
+        let (_partition, session) = create_test_session();
+        let sha_algo = ShaAlgo {
+            algo: AlgoId::Sha256,
+        };
+
+        // Initialize digest stream
+        let digest_stream = session
+            .digest_init(&sha_algo)
+            .expect("Failed to init digest stream");
+
+        // Don't call update - finalize immediately with empty data
+        let mut digest = vec![0u8; 32];
+        digest_stream
+            .finalize(&mut digest)
+            .expect("Failed to finalize with empty message");
+
+        // Verify against expected SHA256 of empty string
+        let expected = [
+            0xe3, 0xb0, 0xc4, 0x42, 0x98, 0xfc, 0x1c, 0x14, 0x9a, 0xfb, 0xf4, 0xc8, 0x99, 0x6f,
+            0xb9, 0x24, 0x27, 0xae, 0x41, 0xe4, 0x64, 0x9b, 0x93, 0x4c, 0xa4, 0x95, 0x99, 0x1b,
+            0x78, 0x52, 0xb8, 0x55,
+        ];
+        assert_eq!(
+            digest, expected,
+            "SHA-256 digest of empty message should match expected value"
+        );
+    }
+
+    #[test]
+    fn test_sha_streaming_digest_large_message() {
+        let (_partition, session) = create_test_session();
+        let sha_algo = ShaAlgo {
+            algo: AlgoId::Sha256,
+        };
+
+        // Initialize digest stream
+        let mut digest_stream = session
+            .digest_init(&sha_algo)
+            .expect("Failed to init digest stream");
+
+        // Update with large message in chunks
+        let chunk_size = 1024;
+        let num_chunks = 1024; // 1MB total
+        for i in 0..num_chunks {
+            let chunk = vec![(i % 256) as u8; chunk_size];
+            digest_stream
+                .update(&chunk)
+                .expect("Failed to update with large chunk");
+        }
+
+        // Finalize
+        let mut digest = vec![0u8; 32];
+        digest_stream
+            .finalize(&mut digest)
+            .expect("Failed to finalize large message digest");
+
+        // Verify against non-streaming version
+        let mut sha_algo_non_streaming = ShaAlgo {
+            algo: AlgoId::Sha256,
+        };
+        let mut large_message = Vec::new();
+        for i in 0..num_chunks {
+            large_message.extend(vec![(i % 256) as u8; chunk_size]);
+        }
+        let mut expected_digest = vec![0u8; 32];
+        sha_algo_non_streaming
+            .digest(&session, &large_message, &mut expected_digest)
+            .expect("Failed non-streaming large message digest");
+
+        assert_eq!(
+            digest, expected_digest,
+            "Large message digests should match"
+        );
+    }
+
+    #[test]
+    fn test_sha_streaming_digest_multiple_small_updates() {
+        let (_partition, session) = create_test_session();
+        let sha_algo = ShaAlgo {
+            algo: AlgoId::Sha256,
+        };
+
+        // Initialize digest stream
+        let mut digest_stream = session
+            .digest_init(&sha_algo)
+            .expect("Failed to init digest stream");
+
+        // Update with many small chunks (single bytes)
+        let message = b"abcdefghijklmnopqrstuvwxyz";
+        for &byte in message.iter() {
+            digest_stream
+                .update(&[byte])
+                .expect("Failed to update with single byte");
+        }
+
+        // Finalize
+        let mut digest = vec![0u8; 32];
+        digest_stream
+            .finalize(&mut digest)
+            .expect("Failed to finalize digest");
+
+        // Verify against non-streaming version
+        let mut sha_algo_non_streaming = ShaAlgo {
+            algo: AlgoId::Sha256,
+        };
+        let mut expected_digest = vec![0u8; 32];
+        sha_algo_non_streaming
+            .digest(&session, message, &mut expected_digest)
+            .expect("Failed non-streaming digest");
+
+        assert_eq!(
+            digest, expected_digest,
+            "Multiple small update digests should match"
+        );
+    }
+
+    #[test]
+    fn test_sha_streaming_digest_insufficient_buffer() {
+        let (_partition, session) = create_test_session();
+        let sha_algo = ShaAlgo {
+            algo: AlgoId::Sha256,
+        };
+
+        // Initialize digest stream
+        let mut digest_stream = session
+            .digest_init(&sha_algo)
+            .expect("Failed to init digest stream");
+
+        digest_stream
+            .update(b"Test message")
+            .expect("Failed to update");
+
+        // Try to finalize with insufficient buffer
+        let mut small_digest = vec![0u8; 16]; // Too small for SHA-256
+
+        let result = digest_stream.finalize(&mut small_digest);
+        assert!(
+            result.is_err(),
+            "Finalize should fail with insufficient buffer"
+        );
+        assert_eq!(
+            result.unwrap_err(),
+            AZIHSM_ERROR_INSUFFICIENT_BUFFER,
+            "Should return AZIHSM_ERROR_INSUFFICIENT_BUFFER"
+        );
+    }
+
+    #[test]
+    fn test_sha_streaming_digest_len() {
+        let (_partition, session) = create_test_session();
+
+        let test_cases = [
+            (AlgoId::Sha1, 20, "SHA1"),
+            (AlgoId::Sha256, 32, "SHA256"),
+            (AlgoId::Sha384, 48, "SHA384"),
+            (AlgoId::Sha512, 64, "SHA512"),
+        ];
+
+        for (algo_id, expected_len, algo_name) in test_cases {
+            let sha_algo = ShaAlgo { algo: algo_id };
+
+            let digest_stream = session
+                .digest_init(&sha_algo)
+                .unwrap_or_else(|_| panic!("Failed to init {} digest stream", algo_name));
+
+            let digest_len = digest_stream.digest_len();
+            assert_eq!(
+                digest_len, expected_len,
+                "{} digest length should be {} bytes",
+                algo_name, expected_len
+            );
+        }
+    }
+
+    #[test]
+    fn test_sha_streaming_vs_non_streaming_consistency() {
+        let (_partition, session) = create_test_session();
+
+        let test_messages = [
+            b"" as &[u8],
+            b"a",
+            b"abc",
+            b"message digest",
+            b"abcdefghijklmnopqrstuvwxyz",
+            b"The quick brown fox jumps over the lazy dog",
+        ];
+
+        let test_algos = [
+            (AlgoId::Sha1, 20),
+            (AlgoId::Sha256, 32),
+            (AlgoId::Sha384, 48),
+            (AlgoId::Sha512, 64),
+        ];
+
+        for (algo_id, digest_len) in test_algos {
+            for message in &test_messages {
+                // Streaming digest
+                let sha_algo = ShaAlgo { algo: algo_id };
+                let mut digest_stream = session
+                    .digest_init(&sha_algo)
+                    .expect("Failed to init digest stream");
+                digest_stream.update(message).expect("Failed to update");
+                let mut streaming_digest = vec![0u8; digest_len];
+                digest_stream
+                    .finalize(&mut streaming_digest)
+                    .expect("Failed to finalize");
+
+                // Non-streaming digest
+                let mut sha_algo_non_streaming = ShaAlgo { algo: algo_id };
+                let mut non_streaming_digest = vec![0u8; digest_len];
+                sha_algo_non_streaming
+                    .digest(&session, message, &mut non_streaming_digest)
+                    .expect("Failed non-streaming digest");
+
+                assert_eq!(
+                    streaming_digest, non_streaming_digest,
+                    "Streaming and non-streaming digests should match for {:?}",
+                    algo_id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_sha_streaming_digest_chunked_vs_whole() {
+        let (_partition, session) = create_test_session();
+        let sha_algo = ShaAlgo {
+            algo: AlgoId::Sha256,
+        };
+
+        let message = b"The quick brown fox jumps over the lazy dog";
+
+        // Stream with multiple chunks
+        let mut chunked_stream = session
+            .digest_init(&sha_algo)
+            .expect("Failed to init chunked stream");
+        for chunk in message.chunks(5) {
+            chunked_stream
+                .update(chunk)
+                .expect("Failed to update chunked stream");
+        }
+        let mut chunked_digest = vec![0u8; 32];
+        chunked_stream
+            .finalize(&mut chunked_digest)
+            .expect("Failed to finalize chunked stream");
+
+        // Stream with whole message
+        let mut whole_stream = session
+            .digest_init(&sha_algo)
+            .expect("Failed to init whole stream");
+        whole_stream
+            .update(message)
+            .expect("Failed to update whole stream");
+        let mut whole_digest = vec![0u8; 32];
+        whole_stream
+            .finalize(&mut whole_digest)
+            .expect("Failed to finalize whole stream");
+
+        assert_eq!(
+            chunked_digest, whole_digest,
+            "Chunked and whole message digests should match"
+        );
     }
 }

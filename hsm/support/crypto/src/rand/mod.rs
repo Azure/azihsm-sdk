@@ -3,11 +3,11 @@
 #![warn(missing_docs)]
 
 //! Random number generation support
+#[cfg(target_os = "windows")]
+mod rand_cng;
 
-#[cfg(target_os = "windows")]
-use windows::Win32::Foundation::STATUS_SUCCESS;
-#[cfg(target_os = "windows")]
-use windows::Win32::Security::Cryptography::*;
+#[cfg(target_os = "linux")]
+mod rand_ossl;
 
 pub(crate) use crate::CryptoError;
 
@@ -28,32 +28,6 @@ pub trait RngOp {
     /// * `Result<(), CryptoError>` - Returns `Ok(())` on success,
     ///   or `Err(CryptoError)` if random number generation fails.
     fn rand_bytes(&self, buf: &mut [u8]) -> Result<(), CryptoError>;
-}
-
-impl RngOp for Rng {
-    #[cfg(target_os = "linux")]
-    fn rand_bytes(&self, buf: &mut [u8]) -> Result<(), CryptoError> {
-        openssl::rand::rand_bytes(buf).map_err(|_| CryptoError::RngError)
-    }
-
-    #[cfg(target_os = "windows")]
-    #[allow(unsafe_code)]
-    fn rand_bytes(&self, buf: &mut [u8]) -> Result<(), CryptoError> {
-        //SAFETY: Calling Bcrypt unsafe functions
-        let status = unsafe {
-            BCryptGenRandom(
-                None, // Use system RNG
-                buf,
-                BCRYPT_USE_SYSTEM_PREFERRED_RNG,
-            )
-        };
-
-        if status != STATUS_SUCCESS {
-            Err(CryptoError::RngError)?
-        } else {
-            Ok(())
-        }
-    }
 }
 
 #[cfg(test)]

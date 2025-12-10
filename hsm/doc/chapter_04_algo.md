@@ -792,13 +792,8 @@ This algorithm performs padding based on [PKCS#7](https://datatracker.ietf.org/d
 **Example**
 
 ```cpp
-struct azihsm_buffer iv = {
-    .buf = some_iv,
-    .len = 16,
-};
-
 struct azihsm_algo_aes_cbc_params params = {
-    .iv = &iv
+    .iv = {0}
 };
 
 struct azihsm_algo algo = {

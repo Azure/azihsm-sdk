@@ -60,6 +60,11 @@ fn test_set_and_get_sealed_bk3() {
         common_setup,
         common_cleanup,
         |dev, _ddi, _path, _session_id| {
+            if get_device_kind(dev) != DdiDeviceKind::Physical {
+                println!("Physical device NOT found. Test only supported on physical device.");
+                return;
+            }
+
             let sealed_bk3 = [9u8; 499];
             let resp = helper_test_set_get_sealed_bk3(dev, &sealed_bk3);
             assert!(resp.is_ok(), "resp {:?}", resp);
@@ -69,7 +74,12 @@ fn test_set_and_get_sealed_bk3() {
 
 #[test]
 fn test_part_prov_test_provisioning() {
-    ddi_dev_test(setup, common_cleanup, |_dev, ddi, path, _session_id| {
+    ddi_dev_test(setup, common_cleanup, |dev, ddi, path, _session_id| {
+        if get_device_kind(dev) != DdiDeviceKind::Physical {
+            println!("Physical device NOT found. Test only supported on physical device.");
+            return;
+        }
+
         let mut dev = ddi.open_dev(path).unwrap();
 
         // Set Device Kind
@@ -213,13 +223,7 @@ fn test_part_not_prov() {
             &mut dev,
             session_id.unwrap(),
             DdiTestAction::ClearProvisioningState,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            DdiTestActionContext::None,
         );
 
         if let Err(err) = resp {
@@ -256,7 +260,12 @@ fn test_part_not_prov() {
 
 #[test]
 fn test_part_prov_only_once() {
-    ddi_dev_test(setup, common_cleanup, |_dev, ddi, path, _session_id| {
+    ddi_dev_test(setup, common_cleanup, |dev, ddi, path, _session_id| {
+        if get_device_kind(dev) != DdiDeviceKind::Physical {
+            println!("Physical device NOT found. Test only supported on physical device.");
+            return;
+        }
+
         let mut dev = ddi.open_dev(path).unwrap();
 
         // Set Device Kind
@@ -318,13 +327,7 @@ fn test_part_prov_only_once() {
             &mut dev,
             session_id.unwrap(),
             DdiTestAction::ClearUserCredentials,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            DdiTestActionContext::None,
         );
 
         if let Err(err) = resp {
@@ -380,4 +383,82 @@ fn test_part_prov_only_once() {
             DdiError::DdiStatus(DdiStatus::PartitionAlreadyProvisioned)
         ));
     });
+}
+
+#[test]
+fn test_part_prov_fail_then_succeed() {
+    ddi_dev_test(
+        |_, _, _| 0,
+        common_cleanup,
+        |dev, ddi, path, _session_id| {
+            if get_device_kind(dev) != DdiDeviceKind::Physical {
+                println!("Physical device NOT found. Test only supported on physical device.");
+                return;
+            }
+
+            let setup_res = common_setup_for_lm(dev, ddi, path);
+
+            // simulate LM
+            let result = dev.simulate_nssr_after_lm();
+            assert!(
+                result.is_ok(),
+                "Migration simulation should succeed: {:?}",
+                result
+            );
+
+            let mut setup_dev = ddi.open_dev(path).unwrap();
+            // Set Device Kind
+            set_device_kind(&mut setup_dev);
+
+            // Try establish credential with invalid partition_bmk
+            let mut random_bmk = [0u8; 48];
+            rand_bytes(&mut random_bmk).expect("Failed to create random bytes");
+
+            let resp = helper_common_establish_credential_with_bmk_no_unwrap(
+                &mut setup_dev,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                setup_res.masked_bk3,
+                MborByteArray::from_slice(&random_bmk).expect("Failed to create mborbytearray"),
+                MborByteArray::from_slice(&[])
+                    .expect("Failed to create empty masked unwrapping key"), // No unwrapping key is present, send an empty array
+            );
+
+            assert!(resp.is_err(), "resp {:?}", resp);
+            println!("{:?}", resp);
+            assert!(matches!(
+                resp.unwrap_err(),
+                DdiError::DdiStatus(DdiStatus::MaskedKeyDecodeFailed)
+            ));
+
+            // Now try with correct bmk; it should be successful
+            let _ = helper_common_establish_credential_with_bmk(
+                &mut setup_dev,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                setup_res.masked_bk3,
+                setup_res.partition_bmk,
+                MborByteArray::from_slice(&[])
+                    .expect("Failed to create empty masked unwrapping key"), // No unwrapping key is present, send an empty array
+            );
+
+            let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                &setup_dev,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                setup_res.random_seed,
+            );
+
+            let resp = helper_open_session(
+                &setup_dev,
+                None,
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                encrypted_credential,
+                pub_key,
+            );
+            assert!(resp.is_ok(), "resp {:?}", resp);
+            let resp = resp.unwrap();
+            assert!(resp.hdr.sess_id.is_some());
+        },
+    );
 }

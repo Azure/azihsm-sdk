@@ -170,13 +170,7 @@ fn skip_thread_fn(device_path: String, max_attempts: usize) {
             &mut dev,
             vault_manager_sess_id,
             DdiTestAction::Level1SkipIo,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            DdiTestActionContext::None,
         );
 
         assert!(resp.is_err(), "resp {:?}", resp);
@@ -263,13 +257,7 @@ fn level2_skip_thread_fn(device_path: String, max_attempts: usize) {
             &mut dev,
             vault_manager_sess_id,
             DdiTestAction::SetLevel2SkipIo,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            DdiTestActionContext::None,
         );
 
         assert!(resp.is_err(), "resp {:?}", resp);

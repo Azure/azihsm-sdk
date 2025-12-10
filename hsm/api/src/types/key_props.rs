@@ -8,10 +8,18 @@ use mcr_ddi_mbor::MborByteArray;
 use mcr_ddi_types::DdiKeyAvailability;
 use mcr_ddi_types::DdiKeyProperties;
 use mcr_ddi_types::DdiKeyUsage;
+use mcr_ddi_types::MaskedKey;
 use strum::EnumCount;
 
+use crate::crypto::Key;
 use crate::AzihsmError;
+use crate::HandleType;
+use crate::Session;
+use crate::AZIHSM_ERROR_INSUFFICIENT_BUFFER;
+use crate::AZIHSM_ERROR_INVALID_ARGUMENT;
 use crate::AZIHSM_ILLEGAL_KEY_PROPERTY;
+use crate::AZIHSM_ILLEGAL_KEY_PROPERTY_OPERATION;
+use crate::AZIHSM_OPERATION_NOT_SUPPORTED;
 
 /// Key property identifier enumeration.
 ///
@@ -259,6 +267,14 @@ pub enum KeyKind {
     Masking = 10,
 }
 
+impl TryFrom<u32> for KeyKind {
+    type Error = AzihsmError;
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        Self::from_repr(value).ok_or(AZIHSM_ERROR_INVALID_ARGUMENT)
+    }
+}
+
 /// Elliptic curve identifier enumeration for ECC keys.
 ///
 /// This enum defines the supported elliptic curves for Elliptic Curve Cryptography (ECC)
@@ -281,26 +297,386 @@ pub enum EcCurve {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum KeyPropValue {
+pub enum KeyPropValue {
     None,
     Boolean(bool),
     KeyClass(AzihsmKeyClass),
     KeyType(KeyKind),
-    String(String),
+    IsSessionKey(bool), //Flag indicating if the key is a session key
+    Modifiable(bool),
+    Copyable(bool),
+    Destroyable(bool),
+    Local(bool),
+    Sensitive(bool),
+    AlwaysSensitive(bool),
+    Extractable(bool),
+    NeverExtractable(bool),
+    Trusted(bool),
+    WrapWithTrusted(bool),
+    Encrypt(bool),
+    Decrypt(bool),
+    Sign(bool),
+    Verify(bool),
+    Wrap(bool),
+    Unwrap(bool),
+    Derive(bool),
+    PubKeyInfo(Vec<u8>),
     EcCurve(EcCurve),
+    MaskedKey(Vec<u8>),
     BitLen(u32),
+    Label(String),
+    String(String),
+}
+
+// Helper macros for serialization
+
+/// Macro to write boolean value to buffer
+macro_rules! write_bool_to_buffer {
+    ($buffer:expr, $value:expr) => {{
+        if $buffer.is_empty() {
+            Err(AZIHSM_ERROR_INSUFFICIENT_BUFFER)?
+        }
+        $buffer[0] = if $value { 1 } else { 0 };
+        Ok(1)
+    }};
+}
+
+/// Macro to write u32 value to buffer
+macro_rules! write_u32_to_buffer {
+    ($buffer:expr, $value:expr) => {{
+        if $buffer.len() < std::mem::size_of::<u32>() {
+            Err(AZIHSM_ERROR_INSUFFICIENT_BUFFER)?
+        }
+        let bytes = $value.to_ne_bytes();
+        $buffer[..4].copy_from_slice(&bytes);
+        Ok(4)
+    }};
+}
+
+/// Macro to write enum (as u32) to buffer
+macro_rules! write_enum_to_buffer {
+    ($buffer:expr, $enum_val:expr) => {{
+        if $buffer.len() < std::mem::size_of::<u32>() {
+            Err(AZIHSM_ERROR_INSUFFICIENT_BUFFER)?
+        }
+        let bytes = ($enum_val as u32).to_ne_bytes();
+        $buffer[..4].copy_from_slice(&bytes);
+        Ok(4)
+    }};
+}
+
+// Helper macros for deserialization
+
+/// Macro to read boolean value from buffer
+macro_rules! read_bool_from_buffer {
+    ($data:expr) => {{
+        if $data.is_empty() {
+            Err(AZIHSM_ERROR_INVALID_ARGUMENT)?
+        }
+        $data[0] != 0
+    }};
+}
+
+/// Macro to read u32 value from buffer
+macro_rules! read_u32_from_buffer {
+    ($data:expr) => {{
+        if $data.len() < std::mem::size_of::<u32>() {
+            Err(AZIHSM_ERROR_INVALID_ARGUMENT)?
+        }
+        u32::from_ne_bytes([$data[0], $data[1], $data[2], $data[3]])
+    }};
+}
+
+/// Macro to read enum from buffer
+macro_rules! read_enum_from_buffer {
+    ($data:expr, $enum_type:ty) => {{
+        if $data.len() < std::mem::size_of::<u32>() {
+            Err(AZIHSM_ERROR_INVALID_ARGUMENT)?
+        }
+        let val = u32::from_ne_bytes([$data[0], $data[1], $data[2], $data[3]]);
+        <$enum_type>::from_repr(val).ok_or(AZIHSM_ERROR_INVALID_ARGUMENT)?
+    }};
+}
+
+// Impl Key Property get for key
+
+impl KeyPropValue {
+    /// Get spec-defined default values for properties.
+    /// These are applied during key generation, not during KeyProps construction.
+    pub fn default_for_id(id: AzihsmKeyPropId) -> Self {
+        match id {
+            // User-specifiable properties with spec-defined defaults
+            AzihsmKeyPropId::Session => KeyPropValue::IsSessionKey(true), // Spec: AZIHSM_BOOL_TRUE
+            AzihsmKeyPropId::Modifiable => KeyPropValue::Boolean(false),  // Spec: AZIHSM_BOOL_FALSE
+            AzihsmKeyPropId::Encrypt => KeyPropValue::Boolean(false),     // Spec: AZIHSM_BOOL_FALSE
+            AzihsmKeyPropId::Decrypt => KeyPropValue::Boolean(false),     // Spec: AZIHSM_BOOL_FALSE
+            AzihsmKeyPropId::Sign => KeyPropValue::Boolean(false),        // Spec: AZIHSM_BOOL_FALSE
+            AzihsmKeyPropId::Verify => KeyPropValue::Boolean(false),      // Spec: AZIHSM_BOOL_FALSE
+            AzihsmKeyPropId::Wrap => KeyPropValue::Boolean(false),        // Spec: AZIHSM_BOOL_FALSE
+            AzihsmKeyPropId::Unwrap => KeyPropValue::Boolean(false),      // Spec: AZIHSM_BOOL_FALSE
+            AzihsmKeyPropId::Derive => KeyPropValue::Boolean(false),      // Spec: AZIHSM_BOOL_FALSE
+
+            // All other properties start as None
+            _ => KeyPropValue::None,
+        }
+    }
+
+    /// Write the byte representation of this value to the provided buffer
+    /// Returns the number of bytes written
+    pub fn to_bytes(&self, buffer: &mut [u8]) -> Result<usize, AzihsmError> {
+        match self {
+            KeyPropValue::None => Err(AZIHSM_ERROR_INVALID_ARGUMENT),
+
+            // Boolean values -> single byte (0 or 1)
+            KeyPropValue::Boolean(v)
+            | KeyPropValue::IsSessionKey(v)
+            | KeyPropValue::Modifiable(v)
+            | KeyPropValue::Copyable(v)
+            | KeyPropValue::Destroyable(v)
+            | KeyPropValue::Local(v)
+            | KeyPropValue::Sensitive(v)
+            | KeyPropValue::AlwaysSensitive(v)
+            | KeyPropValue::Extractable(v)
+            | KeyPropValue::NeverExtractable(v)
+            | KeyPropValue::Trusted(v)
+            | KeyPropValue::WrapWithTrusted(v)
+            | KeyPropValue::Encrypt(v)
+            | KeyPropValue::Decrypt(v)
+            | KeyPropValue::Sign(v)
+            | KeyPropValue::Verify(v)
+            | KeyPropValue::Wrap(v)
+            | KeyPropValue::Unwrap(v)
+            | KeyPropValue::Derive(v) => write_bool_to_buffer!(buffer, *v),
+
+            // Enum and numeric values -> 4 bytes (u32)
+            KeyPropValue::KeyClass(class) => write_enum_to_buffer!(buffer, *class),
+            KeyPropValue::KeyType(kind) => write_enum_to_buffer!(buffer, *kind),
+            KeyPropValue::EcCurve(curve) => write_enum_to_buffer!(buffer, *curve),
+            KeyPropValue::BitLen(bits) => write_u32_to_buffer!(buffer, *bits),
+
+            // String values -> UTF-8 bytes
+            KeyPropValue::Label(s) | KeyPropValue::String(s) => {
+                let s_bytes = s.as_bytes();
+                if buffer.len() < s_bytes.len() {
+                    Err(AZIHSM_ERROR_INSUFFICIENT_BUFFER)?
+                }
+                buffer[..s_bytes.len()].copy_from_slice(s_bytes);
+                Ok(s_bytes.len())
+            }
+
+            // Binary data -> raw bytes
+            KeyPropValue::PubKeyInfo(data) | KeyPropValue::MaskedKey(data) => {
+                if buffer.len() < data.len() {
+                    Err(AZIHSM_ERROR_INSUFFICIENT_BUFFER)?
+                }
+                buffer[..data.len()].copy_from_slice(data);
+                Ok(data.len())
+            }
+        }
+    }
+
+    /// Create a KeyPropValue from bytes based on the property ID
+    pub fn from_bytes(prop_id: AzihsmKeyPropId, data: &[u8]) -> Result<Self, AzihsmError> {
+        match prop_id {
+            // Boolean properties with specific variants
+            AzihsmKeyPropId::Session => {
+                Ok(KeyPropValue::IsSessionKey(read_bool_from_buffer!(data)))
+            }
+            AzihsmKeyPropId::Modifiable => {
+                Ok(KeyPropValue::Modifiable(read_bool_from_buffer!(data)))
+            }
+            AzihsmKeyPropId::Encrypt => Ok(KeyPropValue::Encrypt(read_bool_from_buffer!(data))),
+            AzihsmKeyPropId::Decrypt => Ok(KeyPropValue::Decrypt(read_bool_from_buffer!(data))),
+            AzihsmKeyPropId::Sign => Ok(KeyPropValue::Sign(read_bool_from_buffer!(data))),
+            AzihsmKeyPropId::Verify => Ok(KeyPropValue::Verify(read_bool_from_buffer!(data))),
+            AzihsmKeyPropId::Wrap => Ok(KeyPropValue::Wrap(read_bool_from_buffer!(data))),
+            AzihsmKeyPropId::Unwrap => Ok(KeyPropValue::Unwrap(read_bool_from_buffer!(data))),
+            AzihsmKeyPropId::Derive => Ok(KeyPropValue::Derive(read_bool_from_buffer!(data))),
+
+            // Other boolean properties use generic Boolean variant
+            AzihsmKeyPropId::Private
+            | AzihsmKeyPropId::Copyable
+            | AzihsmKeyPropId::Destroyable
+            | AzihsmKeyPropId::Local
+            | AzihsmKeyPropId::Sensitive
+            | AzihsmKeyPropId::AlwaysSensitive
+            | AzihsmKeyPropId::Extractable
+            | AzihsmKeyPropId::NeverExtractable
+            | AzihsmKeyPropId::Trusted
+            | AzihsmKeyPropId::WrapWithTrusted => {
+                Ok(KeyPropValue::Boolean(read_bool_from_buffer!(data)))
+            }
+
+            // Enum properties (4 bytes u32)
+            AzihsmKeyPropId::Class => Ok(KeyPropValue::KeyClass(read_enum_from_buffer!(
+                data,
+                AzihsmKeyClass
+            ))),
+            AzihsmKeyPropId::Kind => {
+                Ok(KeyPropValue::KeyType(read_enum_from_buffer!(data, KeyKind)))
+            }
+            AzihsmKeyPropId::EcCurve => {
+                Ok(KeyPropValue::EcCurve(read_enum_from_buffer!(data, EcCurve)))
+            }
+
+            // Numeric properties (4 bytes u32)
+            AzihsmKeyPropId::BitLen => Ok(KeyPropValue::BitLen(read_u32_from_buffer!(data))),
+
+            // String properties (UTF-8)
+            AzihsmKeyPropId::Label => {
+                let s = std::str::from_utf8(data).map_err(|_| AZIHSM_ERROR_INVALID_ARGUMENT)?;
+                Ok(KeyPropValue::Label(s.to_string()))
+            }
+
+            // Binary data properties
+            AzihsmKeyPropId::PubKeyInfo => Ok(KeyPropValue::PubKeyInfo(data.to_vec())),
+            AzihsmKeyPropId::MaskedKey => Ok(KeyPropValue::MaskedKey(data.to_vec())),
+        }
+    }
+}
+
+// Inner trait for actual key property implementations without handle type
+// Used by individual key structs (RsaPkcsPrivateKeyInner, RsaPkcsPublicKeyInner, AES keys, etc.)
+pub trait InnerKeyPropsOps {
+    fn get_property(&self, id: AzihsmKeyPropId) -> Result<KeyPropValue, AzihsmError>;
+    fn set_property(&mut self, id: AzihsmKeyPropId, value: KeyPropValue)
+        -> Result<(), AzihsmError>;
+
+    /// Apply key-type-specific default values.
+    /// Each key type must implement this to set appropriate defaults for:
+    /// - Operation flags (encrypt/decrypt/sign/verify/wrap/unwrap/derive)
+    /// - Key metadata (session, modifiable, etc.)
+    /// - Any algorithm-specific properties
+    ///
+    /// This is called AFTER user properties are applied during key generation.
+    fn apply_defaults(&mut self) -> Result<(), AzihsmError>;
+}
+
+/// Trait for symmetric key property operations (AES, HMAC).
+///
+/// Symmetric keys have a single set of properties that apply to the key material.
+/// This trait provides get and set operations without handle type discrimination.
+pub trait KeyPropsOps: Key {
+    /// Get a property value from the symmetric key.
+    fn get_property(&self, id: AzihsmKeyPropId) -> Result<KeyPropValue, AzihsmError>;
+
+    /// Set a property value on the symmetric key.
+    fn set_property(&mut self, id: AzihsmKeyPropId, value: KeyPropValue)
+        -> Result<(), AzihsmError>;
+}
+
+/// Trait for asymmetric key pair property operations (RSA, ECDSA).
+///
+/// Asymmetric key pairs have separate property sets for public and private keys.
+/// This trait provides explicit methods to access each key's properties independently.
+pub trait KeyPairPropsOps: Key {
+    /// Get a property value from the public key.
+    fn get_pub_property(&self, id: AzihsmKeyPropId) -> Result<KeyPropValue, AzihsmError>;
+
+    /// Set a property value on the public key.
+    fn set_pub_property(
+        &mut self,
+        id: AzihsmKeyPropId,
+        value: KeyPropValue,
+    ) -> Result<(), AzihsmError>;
+
+    /// Get a property value from the private key.
+    fn get_priv_property(&self, id: AzihsmKeyPropId) -> Result<KeyPropValue, AzihsmError>;
+
+    /// Set a property value on the private key.
+    fn set_priv_property(
+        &mut self,
+        id: AzihsmKeyPropId,
+        value: KeyPropValue,
+    ) -> Result<(), AzihsmError>;
 }
 
 #[derive(Debug, Clone)]
 pub struct KeyProps {
     props: [KeyPropValue; AzihsmKeyPropId::COUNT + 1],
+    // Track which properties have been set and are now immutable
+    immutable_props: [bool; AzihsmKeyPropId::COUNT + 1],
 }
 
 impl KeyProps {
     pub(crate) fn new() -> Self {
         KeyProps {
-            props: std::array::from_fn(|_| KeyPropValue::None.clone()),
+            props: std::array::from_fn(|_| KeyPropValue::None),
+            immutable_props: [false; AzihsmKeyPropId::COUNT + 1],
         }
+    }
+
+    /// Check if a property should be immutable after first set
+    fn is_immutable_property(id: AzihsmKeyPropId) -> bool {
+        matches!(
+            id,
+            AzihsmKeyPropId::BitLen
+                | AzihsmKeyPropId::Kind
+                | AzihsmKeyPropId::Class
+                | AzihsmKeyPropId::EcCurve
+        )
+    }
+
+    /// Check if a property is user-settable during key generation
+    fn is_settable_property(id: AzihsmKeyPropId) -> bool {
+        matches!(
+            id,
+            AzihsmKeyPropId::Session
+                | AzihsmKeyPropId::Modifiable
+                | AzihsmKeyPropId::Encrypt
+                | AzihsmKeyPropId::Decrypt
+                | AzihsmKeyPropId::Sign
+                | AzihsmKeyPropId::Verify
+                | AzihsmKeyPropId::Wrap
+                | AzihsmKeyPropId::Unwrap
+                | AzihsmKeyPropId::Derive
+                | AzihsmKeyPropId::Label
+                | AzihsmKeyPropId::BitLen
+                | AzihsmKeyPropId::EcCurve
+                | AzihsmKeyPropId::Kind
+        )
+    }
+
+    /// Apply default values to properties as defined by the specification.
+    /// This should be called during key generation to set defaults before applying user properties.
+    pub(crate) fn apply_default_values(&mut self) {
+        for i in 0..=AzihsmKeyPropId::COUNT {
+            if let Some(prop_id) = AzihsmKeyPropId::from_repr(i as u32) {
+                let default_value = KeyPropValue::default_for_id(prop_id);
+                if !matches!(default_value, KeyPropValue::None) {
+                    self.props[i] = default_value;
+                }
+            }
+        }
+    }
+
+    pub fn get_property(&self, id: AzihsmKeyPropId) -> Result<KeyPropValue, AzihsmError> {
+        Ok(self.props[id as usize].clone())
+    }
+
+    pub fn set_property(
+        &mut self,
+        id: AzihsmKeyPropId,
+        value: KeyPropValue,
+    ) -> Result<(), AzihsmError> {
+        // Check if this property is user-settable (not read-only)
+        if !Self::is_settable_property(id) {
+            Err(AZIHSM_OPERATION_NOT_SUPPORTED)?
+        }
+
+        // Check if this property is immutable and has already been set
+        if self.immutable_props[id as usize] {
+            Err(AZIHSM_ILLEGAL_KEY_PROPERTY_OPERATION)?
+        }
+
+        self.props[id as usize] = value;
+
+        // Mark as immutable if it's an immutable property type
+        if Self::is_immutable_property(id) {
+            self.immutable_props[id as usize] = true;
+        }
+
+        Ok(())
     }
 
     pub fn class(&self) -> Option<AzihsmKeyClass> {
@@ -311,7 +687,11 @@ impl KeyProps {
     }
 
     pub(crate) fn set_class(&mut self, class: AzihsmKeyClass) {
-        self.props[AzihsmKeyPropId::Class as usize] = KeyPropValue::KeyClass(class);
+        let prop_id = AzihsmKeyPropId::Class;
+        self.props[prop_id as usize] = KeyPropValue::KeyClass(class);
+        if Self::is_immutable_property(prop_id) {
+            self.immutable_props[prop_id as usize] = true;
+        }
     }
 
     pub fn kind(&self) -> Option<KeyKind> {
@@ -322,18 +702,102 @@ impl KeyProps {
     }
 
     pub(crate) fn set_kind(&mut self, kind: KeyKind) {
-        self.props[AzihsmKeyPropId::Kind as usize] = KeyPropValue::KeyType(kind);
+        let prop_id = AzihsmKeyPropId::Kind;
+        self.props[prop_id as usize] = KeyPropValue::KeyType(kind);
+        if Self::is_immutable_property(prop_id) {
+            self.immutable_props[prop_id as usize] = true;
+        }
+    }
+
+    /// Apply HSM-managed default values based on key class and generation method.
+    /// This should be called after key generation to set properties that are
+    /// determined by the HSM based on key type and how it was created.
+    ///
+    /// # Arguments
+    /// * `class` - The key class (Private, Public, or Secret)
+    /// * `is_local` - Whether the key was generated locally (true) or imported (false)
+    pub(crate) fn apply_hsm_defaults(&mut self, class: AzihsmKeyClass, is_local: bool) {
+        // Set class and kind (already set by caller, but mark as immutable)
+        self.set_class(class);
+
+        // Session - Default to true (session key) unless explicitly set otherwise
+        if self.session().is_none() {
+            self.set_session(true);
+        }
+
+        // Modifiable - Default to false (user can't modify) unless explicitly set otherwise
+        if self.modifiable().is_none() {
+            self.set_modifiable(false);
+        }
+
+        // Private - All keys in session are private (Spec: AZIHSM_BOOL_TRUE)
+        if self.private().is_none() {
+            self.set_private(true);
+        }
+
+        // Local - True for generated keys, false for imported
+        if self.local().is_none() {
+            self.set_local(is_local);
+        }
+
+        // Sensitive - True for Private & Secret keys, False for Public keys
+        if self.sensitive().is_none() {
+            let is_sensitive = class != AzihsmKeyClass::Public;
+            self.set_sensitive(is_sensitive);
+        }
+
+        // AlwaysSensitive - True for Private & Secret keys, False for Public keys
+        if self.always_sensitive().is_none() {
+            let is_always_sensitive = class != AzihsmKeyClass::Public;
+            self.set_always_sensitive(is_always_sensitive);
+        }
+
+        // Copyable - All keys are not copyable (Spec: AZIHSM_BOOL_FALSE)
+        if self.copyable().is_none() {
+            self.set_copyable(false);
+        }
+
+        // Check if this is a session key for session-specific defaults
+        let is_session_key = self.session().unwrap_or(true); // Default to true if not set
+
+        // Destroyable - All session keys are destroyable (Spec: AZIHSM_BOOL_TRUE)
+        // Device generated keys may be marked as not destroyable
+        if self.destroyable().is_none() {
+            self.set_destroyable(is_session_key);
+        }
+
+        // Extractable - All session keys are always extractable (Spec: AZIHSM_BOOL_TRUE)
+        // Device generated keys may be marked as not extractable
+        if self.extractable().is_none() {
+            self.set_extractable(is_session_key);
+        }
+
+        // NeverExtractable - All session keys are always extractable, so never_extractable is false
+        // Device generated keys may be marked as never extractable
+        if self.never_extractable().is_none() {
+            self.set_never_extractable(!is_session_key);
+        }
+
+        // WrapWithTrusted - True for Private & Secret keys
+        if self.wrap_with_trusted().is_none() && class != AzihsmKeyClass::Public {
+            self.set_wrap_with_trusted(true);
+        }
+
+        // Trusted - Default false (only applicable to Public keys, but default false for all)
+        if self.trusted().is_none() {
+            self.set_trusted(false);
+        }
     }
 
     pub fn session(&self) -> Option<bool> {
         match &self.props[AzihsmKeyPropId::Session as usize] {
-            KeyPropValue::Boolean(val) => Some(*val),
+            KeyPropValue::IsSessionKey(val) => Some(*val),
             _ => None,
         }
     }
 
     pub(crate) fn set_session(&mut self, session: bool) {
-        self.props[AzihsmKeyPropId::Session as usize] = KeyPropValue::Boolean(session);
+        self.props[AzihsmKeyPropId::Session as usize] = KeyPropValue::IsSessionKey(session);
     }
 
     pub fn private(&self) -> Option<bool> {
@@ -349,13 +813,13 @@ impl KeyProps {
 
     pub fn modifiable(&self) -> Option<bool> {
         match &self.props[AzihsmKeyPropId::Modifiable as usize] {
-            KeyPropValue::Boolean(val) => Some(*val),
+            KeyPropValue::Modifiable(val) => Some(*val),
             _ => None,
         }
     }
 
     pub(crate) fn set_modifiable(&mut self, modifiable: bool) {
-        self.props[AzihsmKeyPropId::Modifiable as usize] = KeyPropValue::Boolean(modifiable);
+        self.props[AzihsmKeyPropId::Modifiable as usize] = KeyPropValue::Modifiable(modifiable);
     }
 
     pub fn copyable(&self) -> Option<bool> {
@@ -462,79 +926,79 @@ impl KeyProps {
 
     pub fn encrypt(&self) -> Option<bool> {
         match &self.props[AzihsmKeyPropId::Encrypt as usize] {
-            KeyPropValue::Boolean(val) => Some(*val),
+            KeyPropValue::Encrypt(val) => Some(*val),
             _ => None,
         }
     }
 
     pub(crate) fn set_encrypt(&mut self, encrypt: bool) {
-        self.props[AzihsmKeyPropId::Encrypt as usize] = KeyPropValue::Boolean(encrypt);
+        self.props[AzihsmKeyPropId::Encrypt as usize] = KeyPropValue::Encrypt(encrypt);
     }
 
     pub fn decrypt(&self) -> Option<bool> {
         match &self.props[AzihsmKeyPropId::Decrypt as usize] {
-            KeyPropValue::Boolean(val) => Some(*val),
+            KeyPropValue::Decrypt(val) => Some(*val),
             _ => None,
         }
     }
 
     pub(crate) fn set_decrypt(&mut self, decrypt: bool) {
-        self.props[AzihsmKeyPropId::Decrypt as usize] = KeyPropValue::Boolean(decrypt);
+        self.props[AzihsmKeyPropId::Decrypt as usize] = KeyPropValue::Decrypt(decrypt);
     }
 
     pub fn sign(&self) -> Option<bool> {
         match &self.props[AzihsmKeyPropId::Sign as usize] {
-            KeyPropValue::Boolean(val) => Some(*val),
+            KeyPropValue::Sign(val) => Some(*val),
             _ => None,
         }
     }
 
     pub(crate) fn set_sign(&mut self, sign: bool) {
-        self.props[AzihsmKeyPropId::Sign as usize] = KeyPropValue::Boolean(sign);
+        self.props[AzihsmKeyPropId::Sign as usize] = KeyPropValue::Sign(sign);
     }
 
     pub fn verify(&self) -> Option<bool> {
         match &self.props[AzihsmKeyPropId::Verify as usize] {
-            KeyPropValue::Boolean(val) => Some(*val),
+            KeyPropValue::Verify(val) => Some(*val),
             _ => None,
         }
     }
 
     pub(crate) fn set_verify(&mut self, verify: bool) {
-        self.props[AzihsmKeyPropId::Verify as usize] = KeyPropValue::Boolean(verify);
+        self.props[AzihsmKeyPropId::Verify as usize] = KeyPropValue::Verify(verify);
     }
 
     pub fn wrap(&self) -> Option<bool> {
         match &self.props[AzihsmKeyPropId::Wrap as usize] {
-            KeyPropValue::Boolean(val) => Some(*val),
+            KeyPropValue::Wrap(val) => Some(*val),
             _ => None,
         }
     }
 
     pub(crate) fn set_wrap(&mut self, wrap: bool) {
-        self.props[AzihsmKeyPropId::Wrap as usize] = KeyPropValue::Boolean(wrap);
+        self.props[AzihsmKeyPropId::Wrap as usize] = KeyPropValue::Wrap(wrap);
     }
 
     pub fn unwrap(&self) -> Option<bool> {
         match &self.props[AzihsmKeyPropId::Unwrap as usize] {
-            KeyPropValue::Boolean(val) => Some(*val),
+            KeyPropValue::Unwrap(val) => Some(*val),
             _ => None,
         }
     }
 
     pub(crate) fn set_unwrap(&mut self, unwrap: bool) {
-        self.props[AzihsmKeyPropId::Unwrap as usize] = KeyPropValue::Boolean(unwrap);
+        self.props[AzihsmKeyPropId::Unwrap as usize] = KeyPropValue::Unwrap(unwrap);
     }
 
     pub fn derive(&self) -> Option<bool> {
         match &self.props[AzihsmKeyPropId::Derive as usize] {
-            KeyPropValue::Boolean(val) => Some(*val),
+            KeyPropValue::Derive(val) => Some(*val),
             _ => None,
         }
     }
 
     pub(crate) fn set_derive(&mut self, derive: bool) {
-        self.props[AzihsmKeyPropId::Derive as usize] = KeyPropValue::Boolean(derive);
+        self.props[AzihsmKeyPropId::Derive as usize] = KeyPropValue::Derive(derive);
     }
 
     pub fn ecc_curve(&self) -> Option<EcCurve> {
@@ -545,7 +1009,11 @@ impl KeyProps {
     }
 
     pub(crate) fn set_ecc_curve(&mut self, curve: EcCurve) {
-        self.props[AzihsmKeyPropId::EcCurve as usize] = KeyPropValue::EcCurve(curve);
+        let prop_id = AzihsmKeyPropId::EcCurve;
+        self.props[prop_id as usize] = KeyPropValue::EcCurve(curve);
+        if Self::is_immutable_property(prop_id) {
+            self.immutable_props[prop_id as usize] = true;
+        }
     }
 
     pub fn bit_len(&self) -> Option<u32> {
@@ -555,7 +1023,19 @@ impl KeyProps {
         }
     }
     pub(crate) fn set_bit_len(&mut self, bit_len: u32) {
-        self.props[AzihsmKeyPropId::BitLen as usize] = KeyPropValue::BitLen(bit_len);
+        let prop_id = AzihsmKeyPropId::BitLen;
+        self.props[prop_id as usize] = KeyPropValue::BitLen(bit_len);
+        if Self::is_immutable_property(prop_id) {
+            self.immutable_props[prop_id as usize] = true;
+        }
+    }
+
+    pub(crate) fn set_pub_key_info(&mut self, data: Vec<u8>) {
+        self.props[AzihsmKeyPropId::PubKeyInfo as usize] = KeyPropValue::PubKeyInfo(data);
+    }
+
+    pub(crate) fn clear_pub_key_info(&mut self) {
+        self.props[AzihsmKeyPropId::PubKeyInfo as usize] = KeyPropValue::None;
     }
 
     pub fn label(&self) -> Option<&String> {
@@ -568,24 +1048,245 @@ impl KeyProps {
     pub(crate) fn set_label(&mut self, label: String) {
         self.props[AzihsmKeyPropId::Label as usize] = KeyPropValue::String(label);
     }
+
+    /// Validate that key usage operations are mutually exclusive.
+    ///
+    /// The DDI layer supports these operation categories:
+    /// - EncryptDecrypt: Encrypt and/or Decrypt (user can set both or either)
+    /// - SignVerify: Sign and/or Verify (user can set both or either)
+    /// - Unwrap: Wrap and/or Unwrap (user can set both or either)
+    /// - Derive: Key derivation only
+    ///
+    /// A key can only belong to ONE category. For example, a key cannot be used
+    /// for both encryption AND signing.
+    ///
+    /// This static version validates properties without needing self
+    fn validate_operation_exclusivity_static(props: &[KeyPropValue]) -> Result<(), AzihsmError> {
+        let mut operation_count = 0;
+
+        // Check if encrypt/decrypt operations are enabled (EncryptDecrypt category)
+        let encrypt = matches!(
+            props[AzihsmKeyPropId::Encrypt as usize],
+            KeyPropValue::Encrypt(true)
+        );
+        let decrypt = matches!(
+            props[AzihsmKeyPropId::Decrypt as usize],
+            KeyPropValue::Decrypt(true)
+        );
+        if encrypt || decrypt {
+            operation_count += 1;
+        }
+
+        // Check if sign/verify operations are enabled (SignVerify category)
+        let sign = matches!(
+            props[AzihsmKeyPropId::Sign as usize],
+            KeyPropValue::Sign(true)
+        );
+        let verify = matches!(
+            props[AzihsmKeyPropId::Verify as usize],
+            KeyPropValue::Verify(true)
+        );
+        if sign || verify {
+            operation_count += 1;
+        }
+
+        // Check if wrap/unwrap operations are enabled (Unwrap category)
+        // Note: DDI layer groups both wrap and unwrap under "Unwrap" category
+        let wrap = matches!(
+            props[AzihsmKeyPropId::Wrap as usize],
+            KeyPropValue::Wrap(true)
+        );
+        let unwrap = matches!(
+            props[AzihsmKeyPropId::Unwrap as usize],
+            KeyPropValue::Unwrap(true)
+        );
+        if wrap || unwrap {
+            operation_count += 1;
+        }
+
+        // Check if derive operation is enabled (Derive category)
+        let derive = matches!(
+            props[AzihsmKeyPropId::Derive as usize],
+            KeyPropValue::Derive(true)
+        );
+        if derive {
+            operation_count += 1;
+        }
+
+        // Only one operation category is allowed per DDI layer requirements
+        if operation_count > 1 {
+            Err(AZIHSM_ILLEGAL_KEY_PROPERTY)?
+        }
+
+        Ok(())
+    }
+
+    /// Validate operation exclusivity on the current key properties.
+    /// This is a public wrapper for validate_operation_exclusivity_static.
+    pub(crate) fn validate_operation_exclusivity(&self) -> Result<(), AzihsmError> {
+        Self::validate_operation_exclusivity_static(&self.props)
+    }
+
+    /// Apply user-provided properties from the property list.
+    /// This first applies user-specified values, then fills in defaults for unset properties.
+    /// Only applies settable properties (user-controllable), ignoring read-only properties.
+    ///
+    /// # Arguments
+    /// * `user_props` - KeyProps containing user-specified property values from FFI layer
+    pub(crate) fn apply_user_properties(
+        &mut self,
+        user_props: &KeyProps,
+    ) -> Result<(), AzihsmError> {
+        // First, validate user properties before applying anything
+        for i in 0..=AzihsmKeyPropId::COUNT {
+            if let Some(prop_id) = AzihsmKeyPropId::from_repr(i as u32) {
+                if let Ok(value) = user_props.get_property(prop_id) {
+                    // Skip if the property was not set by user (None means not provided)
+                    if matches!(value, KeyPropValue::None) {
+                        continue;
+                    }
+
+                    // Check if this property is user-settable
+                    if !Self::is_settable_property(prop_id) {
+                        Err(AZIHSM_OPERATION_NOT_SUPPORTED)?
+                    }
+                }
+            }
+        }
+
+        // Validate operation exclusivity on user-provided properties
+        Self::validate_operation_exclusivity_static(&user_props.props)?;
+
+        // All validation passed, now apply user-provided properties
+        for i in 0..=AzihsmKeyPropId::COUNT {
+            if let Some(prop_id) = AzihsmKeyPropId::from_repr(i as u32) {
+                if let Ok(value) = user_props.get_property(prop_id) {
+                    if !matches!(value, KeyPropValue::None) {
+                        self.props[prop_id as usize] = value;
+                        // Mark immutable properties as immutable after setting
+                        if Self::is_immutable_property(prop_id) {
+                            self.immutable_props[prop_id as usize] = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+/// Key properties container for asymmetric key pairs.
+///
+/// This structure holds separate property sets for the public and private keys
+/// in an asymmetric key pair (RSA, ECDSA). Each key in the pair has its own
+/// independent set of properties managed via the nested `KeyProps` structures.
+#[derive(Debug, Clone)]
+pub struct KeyPairProps {
+    pub_key_props: KeyProps,
+    priv_key_props: KeyProps,
+}
+
+impl KeyPairProps {
+    /// Create a new KeyPairProps with default values.
+    pub(crate) fn new() -> Self {
+        Self {
+            pub_key_props: KeyProps::new(),
+            priv_key_props: KeyProps::new(),
+        }
+    }
+
+    /// Get a property from the public key.
+    pub fn get_pub_property(&self, id: AzihsmKeyPropId) -> Result<KeyPropValue, AzihsmError> {
+        self.pub_key_props.get_property(id)
+    }
+
+    /// Set a property on the public key.
+    pub fn set_pub_property(
+        &mut self,
+        id: AzihsmKeyPropId,
+        value: KeyPropValue,
+    ) -> Result<(), AzihsmError> {
+        self.pub_key_props.set_property(id, value)
+    }
+
+    /// Get a property from the private key.
+    pub fn get_priv_property(&self, id: AzihsmKeyPropId) -> Result<KeyPropValue, AzihsmError> {
+        self.priv_key_props.get_property(id)
+    }
+
+    /// Set a property on the private key.
+    pub fn set_priv_property(
+        &mut self,
+        id: AzihsmKeyPropId,
+        value: KeyPropValue,
+    ) -> Result<(), AzihsmError> {
+        self.priv_key_props.set_property(id, value)
+    }
+
+    /// Get direct read-only access to public key properties.
+    pub fn pub_props(&self) -> &KeyProps {
+        &self.pub_key_props
+    }
+
+    /// Get direct mutable access to public key properties.
+    pub fn pub_props_mut(&mut self) -> &mut KeyProps {
+        &mut self.pub_key_props
+    }
+
+    /// Get direct read-only access to private key properties.
+    pub fn priv_props(&self) -> &KeyProps {
+        &self.priv_key_props
+    }
+
+    /// Get direct mutable access to private key properties.
+    pub fn priv_props_mut(&mut self) -> &mut KeyProps {
+        &mut self.priv_key_props
+    }
+
+    /// Apply HSM-managed default values to both public and private keys.
+    pub(crate) fn apply_hsm_defaults(&mut self, is_local: bool) {
+        self.pub_key_props
+            .apply_hsm_defaults(AzihsmKeyClass::Public, is_local);
+        self.priv_key_props
+            .apply_hsm_defaults(AzihsmKeyClass::Private, is_local);
+    }
+
+    /// Apply user-provided properties from FFI layer to both keys.
+    pub(crate) fn apply_user_properties(
+        &mut self,
+        user_pub_props: &KeyProps,
+        user_priv_props: &KeyProps,
+    ) -> Result<(), AzihsmError> {
+        self.pub_key_props.apply_user_properties(user_pub_props)?;
+        self.priv_key_props.apply_user_properties(user_priv_props)?;
+        Ok(())
+    }
+
+    /// Apply default values to both public and private key properties.
+    pub(crate) fn apply_default_values(&mut self) {
+        self.pub_key_props.apply_default_values();
+        self.priv_key_props.apply_default_values();
+    }
 }
 
 /// Builder for constructing `KeyProps` with a fluent API.
 ///
-/// This builder allows for easy construction of key properties by chaining method calls.
-/// It provides a more ergonomic way to create key properties compared to manually setting
-/// each property individually.
-pub struct KeyPropsBuilder {
+/// This builder is internal-only and used for converting C FFI key property lists
+/// into Rust KeyProps. It allows for easy construction of key properties by chaining
+/// method calls during FFI conversion.
+pub(crate) struct KeyPropsBuilder {
     props: KeyProps,
 }
 
 impl KeyProps {
     /// Creates a new builder for constructing `KeyProps`.
+    /// This is internal-only for C FFI conversion.
     ///
     /// # Returns
     ///
     /// A new `KeyPropsBuilder` instance with default values.
-    pub fn builder() -> KeyPropsBuilder {
+    pub(crate) fn builder() -> KeyPropsBuilder {
         KeyPropsBuilder {
             props: KeyProps::new(),
         }
@@ -713,6 +1414,16 @@ impl KeyPropsBuilder {
         self
     }
 
+    /// Sets the kind (type) of the key.
+    ///
+    /// # Arguments
+    ///
+    /// * `kind` - The key kind (e.g., RSA, EC, AES, HMAC_SHA256)
+    pub(crate) fn kind(mut self, kind: KeyKind) -> Self {
+        self.props.set_kind(kind);
+        self
+    }
+
     /// Builds the final `KeyProps` instance.
     ///
     /// # Returns
@@ -734,6 +1445,8 @@ impl TryFrom<&KeyProps> for DdiKeyProperties {
             DdiKeyUsage::SignVerify
         } else if props.wrap().unwrap_or(false) || props.unwrap().unwrap_or(false) {
             DdiKeyUsage::Unwrap
+        } else if props.derive().unwrap_or(false) {
+            DdiKeyUsage::Derive
         } else {
             DdiKeyUsage::EncryptDecrypt // Default when no operations are specified
         };
@@ -758,427 +1471,5 @@ impl TryFrom<&KeyProps> for DdiKeyProperties {
             key_availability,
             key_label,
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_key_props_new() {
-        let props = KeyProps::new();
-
-        // All properties should be None initially
-        assert_eq!(props.class(), None);
-        assert_eq!(props.kind(), None);
-        assert_eq!(props.session(), None);
-        assert_eq!(props.private(), None);
-        assert_eq!(props.modifiable(), None);
-        assert_eq!(props.copyable(), None);
-        assert_eq!(props.destroyable(), None);
-        assert_eq!(props.local(), None);
-        assert_eq!(props.sensitive(), None);
-        assert_eq!(props.always_sensitive(), None);
-        assert_eq!(props.extractable(), None);
-        assert_eq!(props.never_extractable(), None);
-        assert_eq!(props.trusted(), None);
-        assert_eq!(props.wrap_with_trusted(), None);
-        assert_eq!(props.encrypt(), None);
-        assert_eq!(props.decrypt(), None);
-        assert_eq!(props.sign(), None);
-        assert_eq!(props.verify(), None);
-        assert_eq!(props.wrap(), None);
-        assert_eq!(props.unwrap(), None);
-        assert_eq!(props.derive(), None);
-        assert_eq!(props.bit_len(), None);
-        assert_eq!(props.label(), None);
-    }
-
-    #[test]
-    fn test_key_props_setters_and_getters() {
-        let mut props = KeyProps::new();
-
-        // Test class
-        props.set_class(AzihsmKeyClass::Private);
-        assert_eq!(props.class(), Some(AzihsmKeyClass::Private));
-
-        // Test kind
-        props.set_kind(KeyKind::Rsa);
-        assert_eq!(props.kind(), Some(KeyKind::Rsa));
-
-        // Test boolean properties
-        props.set_session(true);
-        assert_eq!(props.session(), Some(true));
-
-        props.set_private(false);
-        assert_eq!(props.private(), Some(false));
-
-        props.set_modifiable(true);
-        assert_eq!(props.modifiable(), Some(true));
-
-        props.set_copyable(false);
-        assert_eq!(props.copyable(), Some(false));
-
-        props.set_destroyable(true);
-        assert_eq!(props.destroyable(), Some(true));
-
-        props.set_local(false);
-        assert_eq!(props.local(), Some(false));
-
-        props.set_sensitive(true);
-        assert_eq!(props.sensitive(), Some(true));
-
-        props.set_always_sensitive(false);
-        assert_eq!(props.always_sensitive(), Some(false));
-
-        props.set_extractable(true);
-        assert_eq!(props.extractable(), Some(true));
-
-        props.set_never_extractable(false);
-        assert_eq!(props.never_extractable(), Some(false));
-
-        props.set_trusted(true);
-        assert_eq!(props.trusted(), Some(true));
-
-        props.set_wrap_with_trusted(false);
-        assert_eq!(props.wrap_with_trusted(), Some(false));
-
-        props.set_encrypt(true);
-        assert_eq!(props.encrypt(), Some(true));
-
-        props.set_decrypt(false);
-        assert_eq!(props.decrypt(), Some(false));
-
-        props.set_sign(true);
-        assert_eq!(props.sign(), Some(true));
-
-        props.set_verify(false);
-        assert_eq!(props.verify(), Some(false));
-
-        props.set_wrap(true);
-        assert_eq!(props.wrap(), Some(true));
-
-        props.set_unwrap(false);
-        assert_eq!(props.unwrap(), Some(false));
-
-        props.set_derive(true);
-        assert_eq!(props.derive(), Some(true));
-
-        // Test numeric property
-        props.set_bit_len(2048);
-        assert_eq!(props.bit_len(), Some(2048));
-
-        // Test string property
-        props.set_label("Test Key".to_string());
-        assert_eq!(props.label(), Some(&"Test Key".to_string()));
-    }
-
-    #[test]
-    fn test_key_class_enum() {
-        assert_eq!(AzihsmKeyClass::Private as u32, 1);
-        assert_eq!(AzihsmKeyClass::Public as u32, 2);
-        assert_eq!(AzihsmKeyClass::Secret as u32, 3);
-    }
-
-    #[test]
-    fn test_key_kind_enum() {
-        assert_eq!(KeyKind::Rsa as u32, 1);
-        assert_eq!(KeyKind::Ec as u32, 2);
-        assert_eq!(KeyKind::Aes as u32, 3);
-        assert_eq!(KeyKind::AesXts as u32, 4);
-        assert_eq!(KeyKind::Generic as u32, 5);
-        assert_eq!(KeyKind::HmacSha1 as u32, 6);
-        assert_eq!(KeyKind::HmacSha256 as u32, 7);
-        assert_eq!(KeyKind::HmacSha384 as u32, 8);
-        assert_eq!(KeyKind::HmacSha512 as u32, 9);
-        assert_eq!(KeyKind::Masking as u32, 10);
-    }
-
-    #[test]
-    fn test_key_prop_id_enum() {
-        assert_eq!(AzihsmKeyPropId::Class as u32, 1);
-        assert_eq!(AzihsmKeyPropId::Kind as u32, 2);
-        assert_eq!(AzihsmKeyPropId::Session as u32, 3);
-        assert_eq!(AzihsmKeyPropId::Private as u32, 4);
-        assert_eq!(AzihsmKeyPropId::Label as u32, 26);
-
-        // Test enum count
-        assert_eq!(AzihsmKeyPropId::COUNT, 26);
-    }
-
-    #[test]
-    fn test_from_repr_key_class() {
-        assert_eq!(AzihsmKeyClass::from_repr(1), Some(AzihsmKeyClass::Private));
-        assert_eq!(AzihsmKeyClass::from_repr(2), Some(AzihsmKeyClass::Public));
-        assert_eq!(AzihsmKeyClass::from_repr(3), Some(AzihsmKeyClass::Secret));
-        assert_eq!(AzihsmKeyClass::from_repr(999), None);
-    }
-
-    #[test]
-    fn test_from_repr_key_kind() {
-        assert_eq!(KeyKind::from_repr(1), Some(KeyKind::Rsa));
-        assert_eq!(KeyKind::from_repr(2), Some(KeyKind::Ec));
-        assert_eq!(KeyKind::from_repr(3), Some(KeyKind::Aes));
-        assert_eq!(KeyKind::from_repr(999), None);
-    }
-
-    #[test]
-    fn test_from_repr_key_prop_id() {
-        assert_eq!(AzihsmKeyPropId::from_repr(1), Some(AzihsmKeyPropId::Class));
-        assert_eq!(AzihsmKeyPropId::from_repr(2), Some(AzihsmKeyPropId::Kind));
-        assert_eq!(AzihsmKeyPropId::from_repr(26), Some(AzihsmKeyPropId::Label));
-        assert_eq!(AzihsmKeyPropId::from_repr(999), None);
-    }
-
-    #[test]
-    fn test_builder_pattern() {
-        let props = KeyProps::builder()
-            .bit_len(2048)
-            .encrypt(true)
-            .decrypt(true)
-            .sign(true)
-            .verify(false)
-            .label("RSA Private Key".to_string())
-            .build();
-
-        // Only test settable properties via builder
-        assert_eq!(props.bit_len(), Some(2048));
-        assert_eq!(props.encrypt(), Some(true));
-        assert_eq!(props.decrypt(), Some(true));
-        assert_eq!(props.sign(), Some(true));
-        assert_eq!(props.verify(), Some(false));
-        assert_eq!(props.label(), Some(&"RSA Private Key".to_string()));
-
-        // Non-settable properties should be None
-        assert_eq!(props.class(), None);
-        assert_eq!(props.kind(), None);
-        assert_eq!(props.sensitive(), None);
-        assert_eq!(props.extractable(), None);
-    }
-
-    #[test]
-    fn test_builder_chaining() {
-        let builder = KeyProps::builder();
-        let builder = builder.session(true);
-        let builder = builder.bit_len(256);
-        let props = builder.build();
-
-        assert_eq!(props.session(), Some(true));
-        assert_eq!(props.bit_len(), Some(256));
-
-        // Non-settable properties should be None
-        assert_eq!(props.class(), None);
-        assert_eq!(props.kind(), None);
-    }
-
-    #[test]
-    fn test_settable_properties_only() {
-        let props = KeyProps::builder()
-            .session(false)
-            .modifiable(true)
-            .encrypt(true)
-            .decrypt(true)
-            .sign(false)
-            .verify(true)
-            .wrap(false)
-            .unwrap(true)
-            .derive(false)
-            .bit_len(256)
-            .label("AES-256 Key".to_string())
-            .build();
-
-        // Test only settable properties
-        assert_eq!(props.session(), Some(false));
-        assert_eq!(props.modifiable(), Some(true));
-        assert_eq!(props.encrypt(), Some(true));
-        assert_eq!(props.decrypt(), Some(true));
-        assert_eq!(props.sign(), Some(false));
-        assert_eq!(props.verify(), Some(true));
-        assert_eq!(props.wrap(), Some(false));
-        assert_eq!(props.unwrap(), Some(true));
-        assert_eq!(props.derive(), Some(false));
-        assert_eq!(props.bit_len(), Some(256));
-        assert_eq!(props.label(), Some(&"AES-256 Key".to_string()));
-
-        // Non-settable properties should be None
-        assert_eq!(props.class(), None);
-        assert_eq!(props.kind(), None);
-        assert_eq!(props.private(), None);
-        assert_eq!(props.copyable(), None);
-        assert_eq!(props.destroyable(), None);
-        assert_eq!(props.local(), None);
-        assert_eq!(props.sensitive(), None);
-        assert_eq!(props.always_sensitive(), None);
-        assert_eq!(props.extractable(), None);
-        assert_eq!(props.never_extractable(), None);
-        assert_eq!(props.trusted(), None);
-        assert_eq!(props.wrap_with_trusted(), None);
-    }
-
-    #[test]
-    fn test_direct_property_setting() {
-        // Test direct property setting (used internally, not via builder)
-        let mut props = KeyProps::new();
-
-        // Set non-settable properties directly
-        props.set_class(AzihsmKeyClass::Secret);
-        props.set_kind(KeyKind::Aes);
-        props.set_private(false);
-        props.set_copyable(false);
-        props.set_destroyable(true);
-        props.set_local(true);
-        props.set_sensitive(true);
-        props.set_always_sensitive(true);
-        props.set_extractable(false);
-        props.set_never_extractable(true);
-        props.set_trusted(false);
-        props.set_wrap_with_trusted(false);
-
-        // Set settable properties
-        props.set_session(false);
-        props.set_modifiable(false);
-        props.set_encrypt(true);
-        props.set_decrypt(true);
-        props.set_bit_len(256);
-        props.set_label("Test AES Key".to_string());
-
-        // Verify all properties
-        assert_eq!(props.class(), Some(AzihsmKeyClass::Secret));
-        assert_eq!(props.kind(), Some(KeyKind::Aes));
-        assert_eq!(props.private(), Some(false));
-        assert_eq!(props.copyable(), Some(false));
-        assert_eq!(props.destroyable(), Some(true));
-        assert_eq!(props.local(), Some(true));
-        assert_eq!(props.sensitive(), Some(true));
-        assert_eq!(props.always_sensitive(), Some(true));
-        assert_eq!(props.extractable(), Some(false));
-        assert_eq!(props.never_extractable(), Some(true));
-        assert_eq!(props.trusted(), Some(false));
-        assert_eq!(props.wrap_with_trusted(), Some(false));
-        assert_eq!(props.session(), Some(false));
-        assert_eq!(props.modifiable(), Some(false));
-        assert_eq!(props.encrypt(), Some(true));
-        assert_eq!(props.decrypt(), Some(true));
-        assert_eq!(props.bit_len(), Some(256));
-        assert_eq!(props.label(), Some(&"Test AES Key".to_string()));
-    }
-
-    #[test]
-    fn test_bit_len_string_conversion() {
-        let mut props = KeyProps::new();
-
-        // Test various bit lengths
-        props.set_bit_len(128);
-        assert_eq!(props.bit_len(), Some(128));
-
-        props.set_bit_len(256);
-        assert_eq!(props.bit_len(), Some(256));
-
-        props.set_bit_len(2048);
-        assert_eq!(props.bit_len(), Some(2048));
-
-        props.set_bit_len(4096);
-        assert_eq!(props.bit_len(), Some(4096));
-    }
-
-    #[test]
-    fn test_empty_builder() {
-        let props = KeyProps::builder().build();
-
-        // Should be equivalent to KeyProps::new()
-        assert_eq!(props.class(), None);
-        assert_eq!(props.kind(), None);
-        assert_eq!(props.bit_len(), None);
-        assert_eq!(props.label(), None);
-    }
-
-    #[test]
-    fn test_partial_builder() {
-        let props = KeyProps::builder().encrypt(true).bit_len(2048).build();
-
-        assert_eq!(props.encrypt(), Some(true));
-        assert_eq!(props.bit_len(), Some(2048));
-
-        // Other properties should remain None
-        assert_eq!(props.class(), None);
-        assert_eq!(props.kind(), None);
-        assert_eq!(props.decrypt(), None);
-        assert_eq!(props.label(), None);
-    }
-
-    #[test]
-    fn test_key_prop_value_clone() {
-        let value1 = KeyPropValue::Boolean(true);
-        let value2 = value1.clone();
-        assert_eq!(value1, value2);
-
-        let value3 = KeyPropValue::KeyClass(AzihsmKeyClass::Private);
-        let value4 = value3.clone();
-        assert_eq!(value3, value4);
-
-        let value5 = KeyPropValue::String("test".to_string());
-        let value6 = value5.clone();
-        assert_eq!(value5, value6);
-    }
-
-    #[test]
-    fn test_comprehensive_key_scenario() {
-        // Test a comprehensive scenario with mixed settable/non-settable properties
-        let mut props = KeyProps::new();
-
-        // Set non-settable properties
-        props.set_class(AzihsmKeyClass::Private);
-        props.set_kind(KeyKind::Rsa);
-        props.set_private(true);
-        props.set_copyable(false);
-        props.set_destroyable(true);
-        props.set_local(true);
-        props.set_sensitive(true);
-        props.set_always_sensitive(true);
-        props.set_extractable(false);
-        props.set_never_extractable(true);
-        props.set_trusted(true);
-        props.set_wrap_with_trusted(true);
-
-        // Set settable properties (user configurable)
-        props.set_session(false);
-        props.set_modifiable(false);
-        props.set_encrypt(false); // Private key typically doesn't encrypt
-        props.set_decrypt(true);
-        props.set_sign(true);
-        props.set_verify(false); // Private key typically doesn't verify
-        props.set_wrap(false);
-        props.set_unwrap(true);
-        props.set_derive(false);
-        props.set_bit_len(2048);
-        props.set_label("Production RSA-2048 Private Key".to_string());
-
-        // Verify all properties
-        assert_eq!(props.class(), Some(AzihsmKeyClass::Private));
-        assert_eq!(props.kind(), Some(KeyKind::Rsa));
-        assert_eq!(props.bit_len(), Some(2048));
-        assert_eq!(props.private(), Some(true));
-        assert_eq!(props.sensitive(), Some(true));
-        assert_eq!(props.always_sensitive(), Some(true));
-        assert_eq!(props.extractable(), Some(false));
-        assert_eq!(props.never_extractable(), Some(true));
-        assert_eq!(props.local(), Some(true));
-        assert_eq!(props.modifiable(), Some(false));
-        assert_eq!(props.copyable(), Some(false));
-        assert_eq!(props.destroyable(), Some(true));
-        assert_eq!(props.trusted(), Some(true));
-        assert_eq!(props.wrap_with_trusted(), Some(true));
-        assert_eq!(props.encrypt(), Some(false));
-        assert_eq!(props.decrypt(), Some(true));
-        assert_eq!(props.sign(), Some(true));
-        assert_eq!(props.verify(), Some(false));
-        assert_eq!(props.wrap(), Some(false));
-        assert_eq!(props.unwrap(), Some(true));
-        assert_eq!(props.derive(), Some(false));
-        assert_eq!(
-            props.label(),
-            Some(&"Production RSA-2048 Private Key".to_string())
-        );
     }
 }

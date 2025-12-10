@@ -49,13 +49,7 @@ fn test_skip_ios() {
                 dev,
                 vault_manager_sess_id,
                 DdiTestAction::Level1SkipIo,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
+                DdiTestActionContext::None,
             );
             assert!(resp.is_err(), "resp {:?}", resp);
 
@@ -124,13 +118,7 @@ fn test_skip_ios_followed_by_get_api_rev() {
                 dev,
                 vault_manager_sess_id,
                 DdiTestAction::Level1SkipIo,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
+                DdiTestActionContext::None,
             );
             assert!(resp.is_err(), "resp {:?}", resp);
 
@@ -225,13 +213,7 @@ fn test_skip_ios_followed_by_get_api_rev_for_20_seconds() {
                     dev,
                     vault_manager_sess_id,
                     DdiTestAction::Level1SkipIo,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
+                    DdiTestActionContext::None,
                 );
                 assert!(resp.is_err(), "resp {:?}", resp);
 

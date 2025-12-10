@@ -626,12 +626,14 @@ Parameters for AES XTS Algorithm
 ```cpp
 struct azihsm_algo_aes_xts_params {
     uint8_t sector_num[16];
+    uint32_t data_unit_length;
 };
 ```
 
-| Field      | Type    | Description                                                           |
-| ---------- | ------- | --------------------------------------------------------------------- |
-| sector_num | uint8_t | sector or data unit sequence number                            &nbsp; |
+| Field            | Type     | Description                                                           |
+| ---------------- | -------  | --------------------------------------------------------------------- |
+| sector_num       | uint8_t  | sector or data unit sequence number                            &nbsp; |
+| data_unit_length | uint32_t | data unit length                                               &nbsp; |
 
 
 ### azihsm_algo_hkdf_params

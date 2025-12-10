@@ -19,6 +19,7 @@ use rsa_cng::CngRsaPrivateKeyHandle;
 use rsa_cng::CngRsaPublicKeyHandle;
 
 use crate::sha::HashAlgo;
+use crate::AesKeySize;
 use crate::CryptoError;
 
 /// RSA Encryption/ Decryption Padding
@@ -224,6 +225,50 @@ pub trait RsaPublicKeyOp {
         padding: RsaCryptPadding,
         hash_algo: HashAlgo,
     ) -> Result<usize, CryptoError>;
+
+    /// Wraps user data using RSA wrap encryption (AES-CBC + RSA-OAEP).
+    ///
+    /// This function implements a RSA wrap encryption scheme:
+    /// 1. Generates a random AES session key
+    /// 2. Encrypts the user data with AES-CBC using PKCS#7 padding and zero IV
+    /// 3. Encrypts the AES session key with RSA-OAEP
+    /// 4. Returns: [RSA-OAEP Encrypted AES Key | AES-CBC Encrypted User Data]
+    ///
+    /// # Arguments
+    /// * `user_data` - The plaintext user data to wrap.
+    /// * `aes_key_size` - The size of the AES session key to generate.
+    /// * `hash_algo` - The OAEP hash algorithm for RSA encryption.
+    /// * `label` - Optional OAEP label.
+    /// * `wrapped_data` - Output buffer for the complete wrapped blob.
+    ///
+    /// # Returns
+    /// * `Ok(&[u8])` - The wrapped blob bytes.
+    /// * `Err(CryptoError)` - If wrapping fails.
+    fn rsa_wrap<'a>(
+        &self,
+        user_data: &[u8],
+        aes_key_size: AesKeySize,
+        hash_algo: HashAlgo,
+        label: Option<&[u8]>,
+        wrapped_data: &'a mut [u8],
+    ) -> Result<&'a [u8], CryptoError>;
+
+    /// Returns the required output buffer size for RSA wrapping.
+    ///
+    /// # Arguments
+    /// * `user_data_len` - Length of the user data to wrap.
+    /// * `aes_key_size` - The size of the AES session key.
+    /// * `hash_algo` - The OAEP hash algorithm.
+    ///
+    /// # Returns
+    /// * `Ok(usize)` - The required output buffer size in bytes.
+    /// * `Err(CryptoError)` - If the size cannot be determined.
+    fn rsa_wrap_len(
+        &self,
+        user_data_len: usize,
+        aes_key_size: AesKeySize,
+        hash_algo: HashAlgo,
+    ) -> Result<usize, CryptoError>;
 }
 
 /// Trait for RSA private key operations, such as decryption and signing.
@@ -283,6 +328,47 @@ pub trait RsaPrivateKeyOp {
     /// * `Ok(usize)` - The maximum decrypted data size in bytes.
     /// * `Err(CryptoError)` - If the key size could not be determined.
     fn rsa_max_decrypt_len(&self) -> Result<usize, CryptoError>;
+
+    /// Unwraps user data using RSA unwrap decryption (RSA-OAEP + AES-CBC).
+    ///
+    /// This function implements RSA unwrap decryption for data wrapped by `rsa_wrap`:
+    /// 1. Parses the wrapped blob: [RSA-OAEP Encrypted AES Key | AES-CBC Encrypted User Data]
+    /// 2. Decrypts the AES session key using RSA-OAEP
+    /// 3. Decrypts the user data using AES-CBC with zero IV and PKCS#7 padding removal
+    ///
+    /// # Arguments
+    /// * `wrapped_blob` - The complete wrapped blob from `rsa_wrap`.
+    /// * `aes_key_size` - The size of the AES session key used.
+    /// * `hash_algo` - The OAEP hash algorithm used for RSA decryption.
+    /// * `label` - Optional OAEP label (must match the one used in wrapping).
+    /// * `unwrapped_data` - Output buffer for the unwrapped user data.
+    ///
+    /// # Returns
+    /// * `Ok(&[u8])` - The unwrapped user data bytes.
+    /// * `Err(CryptoError)` - If unwrapping fails.
+    fn rsa_unwrap<'a>(
+        &self,
+        wrapped_blob: &[u8],
+        aes_key_size: AesKeySize,
+        hash_algo: HashAlgo,
+        label: Option<&[u8]>,
+        unwrapped_data: &'a mut [u8],
+    ) -> Result<&'a [u8], CryptoError>;
+
+    /// Returns the maximum size of the unwrapped user data buffer required.
+    ///
+    /// # Arguments
+    /// * `wrapped_blob_len` - Length of the wrapped blob.
+    /// * `aes_key_size` - The size of the AES session key used.
+    ///
+    /// # Returns
+    /// * `Ok(usize)` - The maximum unwrapped data size in bytes.
+    /// * `Err(CryptoError)` - If the size cannot be determined.
+    fn rsa_unwrap_len(
+        &self,
+        wrapped_blob_len: usize,
+        aes_key_size: AesKeySize,
+    ) -> Result<usize, CryptoError>;
 }
 
 #[cfg(test)]
@@ -1718,5 +1804,490 @@ mod tests {
             "All {} BoringSSL OAEP test vectors passed!",
             OAEP_TEST_VECTORS.len()
         );
+    }
+
+    #[test]
+    fn test_rsa_wrap_unwrap_basic() {
+        let (priv_key, pub_key) = RsaKeyGen.rsa_key_gen_pair(2048).unwrap();
+
+        // Test data to encrypt
+        let test_data = b"Hello, wrap encryption world!";
+        let mut encrypted_blob = vec![0u8; 2048]; // Large buffer
+
+        // Wrap the data
+        let encrypted_result = pub_key
+            .rsa_wrap(
+                test_data,
+                AesKeySize::Aes256,
+                HashAlgo::Sha256,
+                None,
+                &mut encrypted_blob,
+            )
+            .expect("Wrap should succeed");
+
+        // Unwrap the data
+        let mut decrypted_data = vec![0u8; test_data.len() + 100]; // Some extra space
+        let decrypted_result = priv_key
+            .rsa_unwrap(
+                encrypted_result,
+                AesKeySize::Aes256,
+                HashAlgo::Sha256,
+                None,
+                &mut decrypted_data,
+            )
+            .expect("Unwrap should succeed");
+
+        // Check the result
+        assert_eq!(decrypted_result.len(), test_data.len());
+        assert_eq!(decrypted_result, &test_data[..]);
+    }
+
+    #[test]
+    fn test_rsa_wrap_unwrap_empty_input() {
+        let (_priv_key, pub_key) = RsaKeyGen.rsa_key_gen_pair(2048).unwrap();
+
+        // Test with empty input
+        let test_data = b"";
+        let mut encrypted_blob = vec![0u8; 2048];
+
+        let result = pub_key.rsa_wrap(
+            test_data,
+            AesKeySize::Aes256,
+            HashAlgo::Sha256,
+            None,
+            &mut encrypted_blob,
+        );
+        assert!(matches!(result, Err(CryptoError::RsaWrapInputEmpty)));
+    }
+
+    #[test]
+    fn test_rsa_wrap_unwrap_various_sizes() {
+        let (priv_key, pub_key) = RsaKeyGen.rsa_key_gen_pair(2048).unwrap();
+
+        let test_cases = [
+            b"Short".as_slice(),
+            b"Medium length test data for encryption".as_slice(),
+            &vec![0x42u8; 1000], // 1KB of data
+            &vec![0xAAu8; 5000], // 5KB of data
+        ];
+
+        for test_data in &test_cases {
+            let mut encrypted_blob = vec![0u8; 8192]; // Large buffer for big data
+
+            // Wrap the data
+            let encrypted_result = pub_key
+                .rsa_wrap(
+                    test_data,
+                    AesKeySize::Aes256,
+                    HashAlgo::Sha256,
+                    None,
+                    &mut encrypted_blob,
+                )
+                .expect("Wrap should succeed");
+
+            // Unwrap the data
+            let mut decrypted_data = vec![0u8; test_data.len() + 100];
+            let decrypted_result = priv_key
+                .rsa_unwrap(
+                    encrypted_result,
+                    AesKeySize::Aes256,
+                    HashAlgo::Sha256,
+                    None,
+                    &mut decrypted_data,
+                )
+                .expect("Unwrap should succeed");
+
+            // Check the result
+            assert_eq!(decrypted_result.len(), test_data.len());
+            assert_eq!(decrypted_result, &test_data[..]);
+        }
+    }
+
+    #[test]
+    fn test_rsa_wrap_insufficient_output_buffer() {
+        let (_, pub_key) = RsaKeyGen.rsa_key_gen_pair(2048).unwrap();
+
+        let test_data = b"Test data";
+        let mut small_buffer = vec![0u8; 10]; // Too small
+
+        let result = pub_key.rsa_wrap(
+            test_data,
+            AesKeySize::Aes256,
+            HashAlgo::Sha256,
+            None,
+            &mut small_buffer,
+        );
+        assert!(matches!(
+            result,
+            Err(CryptoError::RsaWrapOutputBufferTooSmall)
+        ));
+    }
+
+    #[test]
+    fn test_rsa_unwrap_invalid_input() {
+        let (priv_key, _) = RsaKeyGen.rsa_key_gen_pair(2048).unwrap();
+
+        // Test with empty input
+        let mut output = vec![0u8; 100];
+        let result =
+            priv_key.rsa_unwrap(&[], AesKeySize::Aes256, HashAlgo::Sha256, None, &mut output);
+        assert!(matches!(result, Err(CryptoError::RsaUnwrapInputEmpty)));
+
+        // Test with too small input
+        let small_input = vec![0u8; 10];
+        let result = priv_key.rsa_unwrap(
+            &small_input,
+            AesKeySize::Aes256,
+            HashAlgo::Sha256,
+            None,
+            &mut output,
+        );
+        assert!(matches!(result, Err(CryptoError::RsaUnwrapInputTooSmall)));
+
+        // Test with random data (should fail during RSA decrypt)
+        let random_input = vec![0x42u8; 500];
+        let result = priv_key.rsa_unwrap(
+            &random_input,
+            AesKeySize::Aes256,
+            HashAlgo::Sha256,
+            None,
+            &mut output,
+        );
+        assert!(result.is_err()); // Should fail at some point in the process
+    }
+
+    #[test]
+    fn test_rsa_wrap_unwrap_all_aes_key_sizes() {
+        let (priv_key, pub_key) = RsaKeyGen.rsa_key_gen_pair(2048).unwrap();
+        let test_data = b"Testing different AES key sizes";
+
+        let aes_key_sizes = [AesKeySize::Aes128, AesKeySize::Aes192, AesKeySize::Aes256];
+
+        for &aes_key_size in &aes_key_sizes {
+            let mut encrypted_blob = vec![0u8; 2048];
+
+            // Wrap with specific AES key size
+            let encrypted_result = pub_key
+                .rsa_wrap(
+                    test_data,
+                    aes_key_size,
+                    HashAlgo::Sha256,
+                    None,
+                    &mut encrypted_blob,
+                )
+                .unwrap_or_else(|_| panic!("Wrap failed for AES size {:?}", aes_key_size));
+
+            // Unwrap with same AES key size
+            let mut decrypted_data = vec![0u8; test_data.len() + 100];
+            let decrypted_result = priv_key
+                .rsa_unwrap(
+                    encrypted_result,
+                    aes_key_size,
+                    HashAlgo::Sha256,
+                    None,
+                    &mut decrypted_data,
+                )
+                .unwrap_or_else(|e| {
+                    panic!("Unwrap failed for AES size {:?}: {:?}", aes_key_size, e)
+                });
+
+            assert_eq!(decrypted_result.len(), test_data.len());
+            assert_eq!(decrypted_result, &test_data[..]);
+        }
+    }
+
+    #[test]
+    fn test_rsa_wrap_unwrap_all_hash_algorithms() {
+        let (priv_key, pub_key) = RsaKeyGen.rsa_key_gen_pair(2048).unwrap();
+        let test_data = b"Testing different hash algorithms";
+
+        let hash_algos = [
+            HashAlgo::Sha1,
+            HashAlgo::Sha256,
+            HashAlgo::Sha384,
+            HashAlgo::Sha512,
+        ];
+
+        for &hash_algo in &hash_algos {
+            let mut encrypted_blob = vec![0u8; 2048];
+
+            // Wrap with specific hash algorithm
+            let encrypted_result = pub_key
+                .rsa_wrap(
+                    test_data,
+                    AesKeySize::Aes256,
+                    hash_algo,
+                    None,
+                    &mut encrypted_blob,
+                )
+                .unwrap_or_else(|_| panic!("Wrap failed for hash {:?}", hash_algo));
+
+            // Unwrap with same hash algorithm
+            let mut decrypted_data = vec![0u8; test_data.len() + 100];
+            let decrypted_result = priv_key
+                .rsa_unwrap(
+                    encrypted_result,
+                    AesKeySize::Aes256,
+                    hash_algo,
+                    None,
+                    &mut decrypted_data,
+                )
+                .unwrap_or_else(|_| panic!("Unwrap failed for hash {:?}", hash_algo));
+
+            assert_eq!(decrypted_result.len(), test_data.len());
+            assert_eq!(decrypted_result, &test_data[..]);
+        }
+    }
+
+    #[test]
+    fn test_rsa_wrap_unwrap_different_rsa_key_sizes() {
+        let test_data = b"Testing different RSA key sizes";
+        let rsa_key_sizes = [2048, 3072, 4096];
+
+        for &rsa_size in &rsa_key_sizes {
+            let (priv_key, pub_key) = RsaKeyGen.rsa_key_gen_pair(rsa_size).unwrap();
+            let mut encrypted_blob = vec![0u8; 8192]; // Large buffer for bigger keys
+
+            // Wrap with specific RSA key size
+            let encrypted_result = pub_key
+                .rsa_wrap(
+                    test_data,
+                    AesKeySize::Aes256,
+                    HashAlgo::Sha256,
+                    None,
+                    &mut encrypted_blob,
+                )
+                .unwrap_or_else(|_| panic!("Wrap failed for RSA size {}", rsa_size));
+
+            // Unwrap with same RSA key
+            let mut decrypted_data = vec![0u8; test_data.len() + 100];
+            let decrypted_result = priv_key
+                .rsa_unwrap(
+                    encrypted_result,
+                    AesKeySize::Aes256,
+                    HashAlgo::Sha256,
+                    None,
+                    &mut decrypted_data,
+                )
+                .unwrap_or_else(|_| panic!("Unwrap failed for RSA size {}", rsa_size));
+
+            assert_eq!(decrypted_result.len(), test_data.len());
+            assert_eq!(decrypted_result, &test_data[..]);
+        }
+    }
+
+    #[test]
+    fn test_rsa_wrap_unwrap_with_labels() {
+        let (priv_key, pub_key) = RsaKeyGen.rsa_key_gen_pair(2048).unwrap();
+        let test_data = b"Testing OAEP labels";
+
+        let long_label = vec![0xAAu8; 100];
+        let test_labels = [
+            None,
+            Some(b"".as_slice()),                  // Empty label
+            Some(b"test".as_slice()),              // Short label
+            Some(b"longer test label".as_slice()), // Medium label
+            Some(long_label.as_slice()),           // Long label
+        ];
+
+        for label in &test_labels {
+            let mut encrypted_blob = vec![0u8; 2048];
+
+            // Wrap with label
+            let encrypted_result = pub_key
+                .rsa_wrap(
+                    test_data,
+                    AesKeySize::Aes256,
+                    HashAlgo::Sha256,
+                    *label,
+                    &mut encrypted_blob,
+                )
+                .unwrap_or_else(|_| panic!("Wrap failed with label {:?}", label.map(|l| l.len())));
+
+            // Unwrap with same label
+            let mut decrypted_data = vec![0u8; test_data.len() + 100];
+            let decrypted_result = priv_key
+                .rsa_unwrap(
+                    encrypted_result,
+                    AesKeySize::Aes256,
+                    HashAlgo::Sha256,
+                    *label,
+                    &mut decrypted_data,
+                )
+                .unwrap_or_else(|_| {
+                    panic!("Unwrap failed with label {:?}", label.map(|l| l.len()))
+                });
+
+            assert_eq!(decrypted_result.len(), test_data.len());
+            assert_eq!(decrypted_result, &test_data[..]);
+        }
+    }
+
+    #[test]
+    fn test_rsa_wrap_unwrap_mismatched_parameters() {
+        let (priv_key, pub_key) = RsaKeyGen.rsa_key_gen_pair(2048).unwrap();
+        let test_data = b"Testing parameter mismatches";
+        let mut encrypted_blob = vec![0u8; 2048];
+
+        // Wrap with AES-256
+        let encrypted_result = pub_key
+            .rsa_wrap(
+                test_data,
+                AesKeySize::Aes256,
+                HashAlgo::Sha256,
+                None,
+                &mut encrypted_blob,
+            )
+            .expect("Wrap should succeed");
+
+        let mut decrypted_data = vec![0u8; test_data.len() + 100];
+
+        // Try to unwrap with wrong AES key size
+        let result = priv_key.rsa_unwrap(
+            encrypted_result,
+            AesKeySize::Aes128, // Wrong size
+            HashAlgo::Sha256,
+            None,
+            &mut decrypted_data,
+        );
+        assert!(
+            result.is_err(),
+            "Unwrap should fail with wrong AES key size"
+        );
+
+        // Try to unwrap with wrong hash algorithm
+        let result = priv_key.rsa_unwrap(
+            encrypted_result,
+            AesKeySize::Aes256,
+            HashAlgo::Sha1, // Wrong hash
+            None,
+            &mut decrypted_data,
+        );
+        assert!(
+            result.is_err(),
+            "Unwrap should fail with wrong hash algorithm"
+        );
+
+        // Try to unwrap with wrong label
+        let result = priv_key.rsa_unwrap(
+            encrypted_result,
+            AesKeySize::Aes256,
+            HashAlgo::Sha256,
+            Some(b"wrong label"), // Wrong label
+            &mut decrypted_data,
+        );
+        assert!(result.is_err(), "Unwrap should fail with wrong label");
+    }
+
+    #[test]
+    fn test_rsa_unwrap_insufficient_output_buffer() {
+        let (priv_key, pub_key) = RsaKeyGen.rsa_key_gen_pair(2048).unwrap();
+        let test_data = b"This data will be wrapped successfully";
+        let mut encrypted_blob = vec![0u8; 2048];
+
+        // Wrap the data successfully
+        let encrypted_result = pub_key
+            .rsa_wrap(
+                test_data,
+                AesKeySize::Aes256,
+                HashAlgo::Sha256,
+                None,
+                &mut encrypted_blob,
+            )
+            .expect("Wrap should succeed");
+
+        // Try to unwrap into too small buffer
+        let mut small_output = vec![0u8; 10]; // Too small for the data
+        let result = priv_key.rsa_unwrap(
+            encrypted_result,
+            AesKeySize::Aes256,
+            HashAlgo::Sha256,
+            None,
+            &mut small_output,
+        );
+        assert!(matches!(
+            result,
+            Err(CryptoError::RsaUnwrapOutputBufferTooSmall)
+        ));
+    }
+
+    #[test]
+    fn test_rsa_wrap_unwrap_edge_case_data_sizes() {
+        let (priv_key, pub_key) = RsaKeyGen.rsa_key_gen_pair(2048).unwrap();
+
+        let test_cases = [
+            vec![0u8; 1],     // 1 byte
+            vec![0u8; 15],    // Just under AES block size
+            vec![0u8; 16],    // Exactly AES block size
+            vec![0u8; 17],    // Just over AES block size
+            vec![0u8; 32],    // Two AES blocks
+            vec![0u8; 10000], // Large data
+        ];
+
+        for test_data in &test_cases {
+            let mut encrypted_blob = vec![0u8; 16384]; // Large buffer
+
+            let encrypted_result = pub_key
+                .rsa_wrap(
+                    test_data,
+                    AesKeySize::Aes256,
+                    HashAlgo::Sha256,
+                    None,
+                    &mut encrypted_blob,
+                )
+                .unwrap_or_else(|_| panic!("Wrap failed for {} bytes", test_data.len()));
+
+            let mut decrypted_data = vec![0u8; test_data.len() + 100];
+            let decrypted_result = priv_key
+                .rsa_unwrap(
+                    encrypted_result,
+                    AesKeySize::Aes256,
+                    HashAlgo::Sha256,
+                    None,
+                    &mut decrypted_data,
+                )
+                .unwrap_or_else(|_| panic!("Unwrap failed for {} bytes", test_data.len()));
+
+            assert_eq!(decrypted_result.len(), test_data.len());
+            assert_eq!(decrypted_result, test_data.as_slice());
+        }
+    }
+
+    #[test]
+    fn test_rsa_wrap_unwrap_all_combinations() {
+        // Comprehensive test covering multiple parameter combinations
+        let (priv_key, pub_key) = RsaKeyGen.rsa_key_gen_pair(2048).unwrap();
+        let test_data = b"Comprehensive combination test";
+
+        let aes_sizes = [AesKeySize::Aes128, AesKeySize::Aes256];
+        let hash_algos = [HashAlgo::Sha256, HashAlgo::Sha384];
+
+        for &aes_size in &aes_sizes {
+            for &hash_algo in &hash_algos {
+                let mut encrypted_blob = vec![0u8; 2048];
+
+                let encrypted_result = pub_key
+                    .rsa_wrap(test_data, aes_size, hash_algo, None, &mut encrypted_blob)
+                    .unwrap_or_else(|_| {
+                        panic!("Wrap failed for AES {:?}, Hash {:?}", aes_size, hash_algo)
+                    });
+
+                let mut decrypted_data = vec![0u8; test_data.len() + 100];
+                let decrypted_result = priv_key
+                    .rsa_unwrap(
+                        encrypted_result,
+                        aes_size,
+                        hash_algo,
+                        None,
+                        &mut decrypted_data,
+                    )
+                    .unwrap_or_else(|_| {
+                        panic!("Unwrap failed for AES {:?}, Hash {:?}", aes_size, hash_algo)
+                    });
+
+                assert_eq!(decrypted_result.len(), test_data.len());
+                assert_eq!(decrypted_result, &test_data[..]);
+            }
+        }
     }
 }

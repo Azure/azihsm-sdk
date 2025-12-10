@@ -50,13 +50,7 @@ fn trigger_tdisp_interrupt() {
                 dev,
                 session_id,
                 DdiTestAction::TriggerTdispInterrupt,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                Some(interrupt_type),
+                DdiTestActionContext::TdispInterruptType(interrupt_type),
             );
 
             if let Err(err) = &resp {

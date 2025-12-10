@@ -61,8 +61,8 @@ TEST_F(EncryptDecryptTest, EncryptArgumentValidation)
     // Set up valid test data
     uint8_t plaintext[] = "1234567890123456";
     uint8_t iv_data[16] = {0};
-    azihsm_buffer iv_buffer = {.buf = iv_data, .len = sizeof(iv_data)};
-    azihsm_algo_aes_cbc_params cbc_params = {.iv = &iv_buffer};
+    azihsm_algo_aes_cbc_params cbc_params = {0};
+    memcpy(cbc_params.iv, iv_data, sizeof(iv_data));
     azihsm_algo encrypt_algo = {
         .id = AZIHSM_ALGO_ID_AES_CBC,
         .params = &cbc_params,
@@ -152,8 +152,8 @@ TEST_F(EncryptDecryptTest, DecryptArgumentValidation)
     // Set up valid test data
     uint8_t ciphertext[] = "encrypted_data16"; // 16 bytes of dummy ciphertext
     uint8_t iv_data[16] = {0};
-    azihsm_buffer iv_buffer = {.buf = iv_data, .len = sizeof(iv_data)};
-    azihsm_algo_aes_cbc_params cbc_params = {.iv = &iv_buffer};
+    azihsm_algo_aes_cbc_params cbc_params = {0};
+    memcpy(cbc_params.iv, iv_data, sizeof(iv_data));
     azihsm_algo decrypt_algo = {
         .id = AZIHSM_ALGO_ID_AES_CBC,
         .params = &cbc_params,
@@ -244,8 +244,8 @@ TEST_F(EncryptDecryptTest, BufferSizeValidation)
 
     uint8_t plaintext[] = "1234567890123456"; // 16 bytes
     uint8_t iv_data[16] = {0};
-    azihsm_buffer iv_buffer = {.buf = iv_data, .len = sizeof(iv_data)};
-    azihsm_algo_aes_cbc_params cbc_params = {.iv = &iv_buffer};
+    azihsm_algo_aes_cbc_params cbc_params = {0};
+    memcpy(cbc_params.iv, iv_data, sizeof(iv_data));
     azihsm_algo encrypt_algo = {
         .id = AZIHSM_ALGO_ID_AES_CBC,
         .params = &cbc_params,

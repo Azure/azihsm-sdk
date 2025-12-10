@@ -2,18 +2,24 @@
 
 #![warn(missing_docs)]
 
+use std::ffi::c_int;
+use std::ptr;
+
 use openssl::encrypt::Decrypter;
 use openssl::encrypt::Encrypter;
 use openssl::hash::MessageDigest;
 use openssl::pkey::PKey;
 use openssl::pkey::Private;
 use openssl::pkey::Public;
+use openssl::rand::rand_bytes;
 use openssl::rsa::Padding as OsslPadding;
 use openssl::rsa::Rsa;
 use openssl::sign::RsaPssSaltlen;
 use openssl::sign::Verifier;
+use openssl_sys::*;
 
 use super::*;
+use crate::aes::*;
 use crate::sha::*;
 
 /// Wrapper for a Ossl private key handle.
@@ -141,8 +147,8 @@ impl RsaKeyOps<RsaPrivateKeyHandle> for RsaPrivateKeyHandle {
         );
         // Extract the OpenSSL PKey<Private> from the handle
         let pkey = &self.private_key_handle.ossl_private_key;
-        // Export the RSA private key to DER (PKCS#8)
-        let der_bytes = pkey.private_key_to_der().map_err(|e| {
+        // Export the RSA private key to DER (PKCS#8) - explicit PKCS#8 format
+        let der_bytes = pkey.private_key_to_pkcs8().map_err(|e| {
             tracing::error!("Failed to serialize RSA private key to PKCS#8 DER: {}", e);
             CryptoError::RsaDerEncodeFailed
         })?;
@@ -511,6 +517,134 @@ impl RsaPublicKeyOp for RsaPublicKeyHandle {
             }
         }
     }
+
+    /// Wraps user data using hybrid encryption: AES session key + RSA OAEP.
+    ///
+    /// This function implements a hybrid encryption scheme:
+    /// 1. Generate a random AES session key of the specified size
+    /// 2. Generate a random 16-byte IV
+    /// 3. Encrypt the user data using AES-CBC with PKCS#7 padding
+    /// 4. Encrypt the AES session key using RSA OAEP
+    /// 5. Return a blob containing: [RSA-encrypted AES key | IV | AES-encrypted data]
+    ///
+    /// # Arguments
+    /// * `user_data` - The user data to wrap.
+    /// * `aes_key_size` - The size of the AES session key to generate.
+    /// * `hash_algo` - The OAEP hash algorithm for RSA encryption.
+    /// * `label` - Optional OAEP label.
+    /// * `wrapped_data` - Output buffer for the complete wrapped blob.
+    ///
+    /// # Returns
+    /// * `Ok(&[u8])` - The wrapped blob bytes.
+    /// * `Err(CryptoError)` - If wrapping fails.
+    fn rsa_wrap<'a>(
+        &self,
+        user_data: &[u8],
+        aes_key_size: AesKeySize,
+        hash_algo: HashAlgo,
+        label: Option<&[u8]>,
+        wrapped_data: &'a mut [u8],
+    ) -> Result<&'a [u8], CryptoError> {
+        tracing::debug!(
+            "[Wrap] Wrapping user data ({} bytes) with RSA wrap encryption",
+            user_data.len()
+        );
+
+        // Input validation
+        if user_data.is_empty() {
+            tracing::error!("User data to wrap is empty");
+            return Err(CryptoError::RsaWrapInputEmpty);
+        }
+
+        // Step 1: Generate random AES KEK (Key Encryption Key)
+        let aes_key_len = aes_key_size.key_len();
+        let mut aes_kek = vec![0u8; aes_key_len];
+        rand_bytes(&mut aes_kek).map_err(|e| {
+            tracing::error!("Failed to generate random AES KEK: {}", e);
+            CryptoError::AesKeyGenError
+        })?;
+
+        // Step 2: Encrypt user data with AES Key Wrap 2 (RFC 5649)
+        let wrapped_user_data = aes_kw2_wrap_ossl(user_data, &aes_kek)?;
+
+        // Step 3: Encrypt the AES KEK with RSA OAEP
+        let rsa_modulus_size =
+            self.rsa_encrypt_len(aes_key_len, RsaCryptPadding::Oaep, hash_algo)?;
+        let mut encrypted_aes_kek = vec![0u8; rsa_modulus_size];
+        let encrypted_kek_slice = self.rsa_encrypt(
+            &aes_kek,
+            RsaCryptPadding::Oaep,
+            hash_algo,
+            label,
+            &mut encrypted_aes_kek,
+        )?;
+
+        // Calculate the total blob size: [RSA-encrypted AES KEK | AES-KW2 wrapped data]
+        let encrypted_kek_len = encrypted_kek_slice.len();
+        let wrapped_data_len = wrapped_user_data.len();
+        let total_len = encrypted_kek_len + wrapped_data_len;
+
+        if wrapped_data.len() < total_len {
+            tracing::error!(
+                "Output buffer too small: need {} bytes, got {}",
+                total_len,
+                wrapped_data.len()
+            );
+            return Err(CryptoError::RsaWrapOutputBufferTooSmall);
+        }
+
+        // Step 4: Build the blob: [RSA-encrypted AES KEK | AES-KW2 wrapped data]
+        let mut offset = 0;
+
+        // Copy RSA-encrypted AES KEK
+        wrapped_data[offset..offset + encrypted_kek_len].copy_from_slice(encrypted_kek_slice);
+        offset += encrypted_kek_len;
+
+        // Copy AES Key Wrap 2 encrypted data
+        wrapped_data[offset..offset + wrapped_data_len].copy_from_slice(&wrapped_user_data);
+
+        // Security: Zero out the AES KEK from memory after use
+        aes_kek.fill(0);
+
+        tracing::debug!(
+            "[Wrap] Successfully created wrapped blob ({} bytes): RSA KEK={}, AES-KW2 data={}",
+            total_len,
+            encrypted_kek_len,
+            wrapped_data_len
+        );
+
+        Ok(&wrapped_data[..total_len])
+    }
+
+    /// Returns the required output buffer size for RSA wrapping.
+    ///
+    /// # Arguments
+    /// * `user_data_len` - Length of the user data to wrap.
+    /// * `aes_key_size` - The size of the AES session key.
+    /// * `hash_algo` - The OAEP hash algorithm.
+    ///
+    /// # Returns
+    /// * `Ok(usize)` - The required output buffer size in bytes.
+    /// * `Err(CryptoError)` - If the size cannot be determined.
+    fn rsa_wrap_len(
+        &self,
+        user_data_len: usize,
+        aes_key_size: AesKeySize,
+        hash_algo: HashAlgo,
+    ) -> Result<usize, CryptoError> {
+        // Get the AES key length to use for RSA encryption length calculation
+        let aes_key_len = aes_key_size.key_len();
+
+        // RSA-encrypted AES KEK size (always modulus size)
+        let rsa_encrypted_kek_len =
+            self.rsa_encrypt_len(aes_key_len, RsaCryptPadding::Oaep, hash_algo)?;
+
+        // AES Key Wrap 2 output size (RFC 5649): padded to 8-byte boundary + 8 bytes ICV
+        let padded_len = user_data_len.div_ceil(8) * 8; // Round up to 8-byte boundary
+        let aes_kw2_wrapped_size = padded_len + 8;
+
+        Ok(rsa_encrypted_kek_len + aes_kw2_wrapped_size)
+    }
 }
 
 impl RsaPrivateKeyOp for RsaPrivateKeyHandle {
@@ -713,6 +847,146 @@ impl RsaPrivateKeyOp for RsaPrivateKeyHandle {
     fn rsa_max_decrypt_len(&self) -> Result<usize, CryptoError> {
         self.modulus_size_bytes()
     }
+
+    /// Unwraps user data using hybrid decryption: RSA OAEP + AES session key.
+    ///
+    /// This function reverses the hybrid encryption scheme:
+    /// 1. Parse the wrapped blob: [RSA-encrypted AES key | IV | AES-encrypted data]
+    /// 2. Decrypt the AES session key using RSA OAEP
+    /// 3. Decrypt the user data using AES-CBC with PKCS#7 padding
+    /// 4. Return the original user data
+    ///
+    /// # Arguments
+    /// * `wrapped_blob` - The complete wrapped blob from `rsa_wrap`.
+    /// * `aes_key_size` - The size of the AES session key used.
+    /// * `hash_algo` - The OAEP hash algorithm used for RSA decryption.
+    /// * `label` - Optional OAEP label (must match the one used in wrapping).
+    /// * `unwrapped_data` - Output buffer for the unwrapped user data.
+    ///
+    /// # Returns
+    /// * `Ok(&[u8])` - The unwrapped user data bytes.
+    /// * `Err(CryptoError)` - If unwrapping fails.
+    fn rsa_unwrap<'a>(
+        &self,
+        wrapped_blob: &[u8],
+        aes_key_size: AesKeySize,
+        hash_algo: HashAlgo,
+        label: Option<&[u8]>,
+        unwrapped_data: &'a mut [u8],
+    ) -> Result<&'a [u8], CryptoError> {
+        tracing::debug!(
+            "[Unwrap] Unwrapping blob ({} bytes) with RSA unwrap decryption",
+            wrapped_blob.len()
+        );
+
+        // Calculate expected component sizes
+        let rsa_modulus_size = self.rsa_max_decrypt_len()?;
+        let aes_key_len = aes_key_size.key_len();
+
+        // Validate minimum blob size: RSA key + at least one AES block
+        let min_blob_size = rsa_modulus_size + 16; // minimum 1 AES block for encrypted data
+        if wrapped_blob.is_empty() {
+            tracing::error!("Wrapped blob is empty");
+            return Err(CryptoError::RsaUnwrapInputEmpty);
+        }
+        if wrapped_blob.len() < min_blob_size {
+            tracing::error!(
+                "Wrapped blob too small: {} bytes, expected at least {}",
+                wrapped_blob.len(),
+                min_blob_size
+            );
+            return Err(CryptoError::RsaUnwrapInputTooSmall);
+        }
+
+        // Step 1: Parse the blob: [RSA-encrypted AES key | AES-encrypted data]
+        let mut offset = 0;
+
+        // Extract RSA-encrypted session key
+        let encrypted_key = &wrapped_blob[offset..offset + rsa_modulus_size];
+        offset += rsa_modulus_size;
+
+        // Extract AES-encrypted data (remainder of the blob)
+        let encrypted_data = &wrapped_blob[offset..];
+
+        // Step 2: Decrypt the AES session key using RSA OAEP
+        let mut temp_buffer = vec![0u8; rsa_modulus_size];
+        let decrypted_key_slice = self.rsa_decrypt(
+            encrypted_key,
+            RsaCryptPadding::Oaep,
+            hash_algo,
+            label,
+            &mut temp_buffer,
+        )?;
+
+        // Validate the decrypted AES key length
+        if decrypted_key_slice.len() != aes_key_len {
+            tracing::error!(
+                "Decrypted AES key length mismatch: expected {} bytes for {:?}, got {}",
+                aes_key_len,
+                aes_key_size,
+                decrypted_key_slice.len()
+            );
+            return Err(CryptoError::RsaUnwrapInvalidBlobFormat);
+        }
+
+        // Step 3: Unwrap the user data using AES Key Wrap 2 (RFC 5649)
+        let unwrapped_len = aes_kw2_unwrap_ossl(
+            decrypted_key_slice,
+            encrypted_data,
+            unwrapped_data,
+            aes_key_size,
+        )?;
+
+        // Security: Zero out the temporary buffer containing the decrypted AES key
+        temp_buffer.fill(0);
+
+        tracing::debug!(
+            "[Unwrap] Successfully unwrapped user data ({} bytes)",
+            unwrapped_len
+        );
+
+        Ok(&unwrapped_data[..unwrapped_len])
+    }
+
+    /// Returns the maximum size of the unwrapped user data buffer required.
+    ///
+    /// # Arguments
+    /// * `wrapped_blob_len` - Length of the wrapped blob.
+    /// * `aes_key_size` - The size of the AES session key used.
+    ///
+    /// # Returns
+    /// * `Ok(usize)` - The maximum unwrapped data size in bytes.
+    /// * `Err(CryptoError)` - If the size cannot be determined.
+    fn rsa_unwrap_len(
+        &self,
+        wrapped_blob_len: usize,
+        _aes_key_size: AesKeySize,
+    ) -> Result<usize, CryptoError> {
+        // Calculate component sizes
+        let rsa_modulus_size = self.rsa_max_decrypt_len()?;
+
+        // Validate minimum blob size for AES-KW2
+        let min_blob_size = rsa_modulus_size + 16; // RSA key + at least 8 bytes data + 8 bytes ICV
+        if wrapped_blob_len < min_blob_size {
+            tracing::error!(
+                "Invalid wrapped blob length: {} bytes, expected at least {}",
+                wrapped_blob_len,
+                min_blob_size
+            );
+            return Err(CryptoError::RsaUnwrapInputTooSmall);
+        }
+
+        // The AES-KW2 wrapped data length is the remainder after RSA key
+        let aes_kw2_data_len = wrapped_blob_len - rsa_modulus_size;
+
+        // Maximum possible user data length for AES-KW2 (subtract 8-byte ICV)
+        // AES-KW2 adds exactly 8 bytes overhead (ICV)
+        if aes_kw2_data_len < 8 {
+            return Err(CryptoError::RsaUnwrapInputTooSmall);
+        }
+
+        Ok(aes_kw2_data_len - 8)
+    }
 }
 
 impl RsaPrivateKeyHandle {
@@ -782,4 +1056,188 @@ fn get_pss_saltlen(
         return Err(CryptoError::RsaPssSaltlenInvalid);
     }
     Ok(RsaPssSaltlen::custom(salt_len as i32))
+}
+
+/// AES Key Wrap 2 (RFC 5649) encryption using OpenSSL native implementation
+///
+/// # Arguments
+/// * `user_data` - The plaintext data to wrap
+/// * `aes_key` - The AES Key Encryption Key (KEK)
+///
+/// # Returns
+/// * `Ok(Vec<u8>)` - The wrapped data
+/// * `Err(CryptoError)` - If wrapping fails
+#[allow(unsafe_code)]
+fn aes_kw2_wrap_ossl(user_data: &[u8], aes_key: &[u8]) -> Result<Vec<u8>, CryptoError> {
+    if user_data.is_empty() {
+        return Err(CryptoError::RsaWrapInputEmpty);
+    }
+    //SAFETY: AES Key Wrap requires at least 1 block (8 bytes) of data
+    unsafe {
+        // Create cipher context
+        let ctx = EVP_CIPHER_CTX_new();
+        if ctx.is_null() {
+            return Err(CryptoError::RsaWrapAesEncryptFailed);
+        }
+
+        let result = (|| {
+            // Select appropriate AES-WRAP-PAD cipher based on key size
+            let cipher = match aes_key.len() {
+                16 => EVP_aes_128_wrap_pad(),
+                24 => EVP_aes_192_wrap_pad(),
+                32 => EVP_aes_256_wrap_pad(),
+                _ => return Err(CryptoError::RsaWrapAesEncryptFailed),
+            };
+
+            if cipher.is_null() {
+                return Err(CryptoError::RsaWrapAesEncryptFailed);
+            }
+
+            // Initialize encryption
+            let ret =
+                EVP_EncryptInit_ex(ctx, cipher, ptr::null_mut(), aes_key.as_ptr(), ptr::null());
+            if ret != 1 {
+                return Err(CryptoError::RsaWrapAesEncryptFailed);
+            }
+
+            // AES Key Wrap can expand by up to 8 bytes (64 bits)
+            let mut outbuf = vec![0u8; user_data.len() + 16]; // Extra space for safety
+            let mut outlen: c_int = 0;
+
+            // Perform encryption
+            let ret = EVP_EncryptUpdate(
+                ctx,
+                outbuf.as_mut_ptr(),
+                &mut outlen,
+                user_data.as_ptr(),
+                user_data.len() as c_int,
+            );
+            if ret != 1 {
+                return Err(CryptoError::RsaWrapAesEncryptFailed);
+            }
+
+            let mut tmplen: c_int = 0;
+            // Bounds check before pointer arithmetic
+            if (outlen as usize) >= outbuf.len() {
+                return Err(CryptoError::RsaWrapAesEncryptFailed);
+            }
+
+            let ret =
+                EVP_EncryptFinal_ex(ctx, outbuf.as_mut_ptr().add(outlen as usize), &mut tmplen);
+            if ret != 1 {
+                return Err(CryptoError::RsaWrapAesEncryptFailed);
+            }
+
+            let total_len = outlen + tmplen;
+            if total_len < 0 || total_len as usize > outbuf.len() {
+                return Err(CryptoError::RsaWrapAesEncryptFailed);
+            }
+
+            outbuf.truncate(total_len as usize);
+            Ok(outbuf)
+        })();
+
+        // Cleanup
+        EVP_CIPHER_CTX_free(ctx);
+        result
+    }
+}
+
+/// AES Key Wrap 2 (RFC 5649) decryption using OpenSSL native implementation
+///
+/// # Arguments
+/// * `aes_key` - The AES Key Encryption Key (KEK)
+/// * `wrapped_data` - The wrapped data to unwrap
+/// * `output` - Output buffer for unwrapped data
+/// * `aes_key_size` - The AES key size (for validation)
+///
+/// # Returns
+/// * `Ok(usize)` - The length of unwrapped data
+/// * `Err(CryptoError)` - If unwrapping fails
+#[allow(unsafe_code)]
+fn aes_kw2_unwrap_ossl(
+    aes_key: &[u8],
+    wrapped_data: &[u8],
+    output: &mut [u8],
+    _aes_key_size: AesKeySize,
+) -> Result<usize, CryptoError> {
+    if wrapped_data.is_empty() || wrapped_data.len() < 16 {
+        return Err(CryptoError::RsaUnwrapInvalidBlobFormat);
+    }
+    //SAFETY: AES Key Wrap requires at least 1 block (8 bytes) of data
+    unsafe {
+        // Create cipher context
+        let ctx = EVP_CIPHER_CTX_new();
+        if ctx.is_null() {
+            return Err(CryptoError::RsaUnwrapAesDecryptFailed);
+        }
+
+        let result = (|| {
+            // Select appropriate AES-WRAP-PAD cipher based on key size
+            let cipher = match aes_key.len() {
+                16 => EVP_aes_128_wrap_pad(),
+                24 => EVP_aes_192_wrap_pad(),
+                32 => EVP_aes_256_wrap_pad(),
+                _ => return Err(CryptoError::RsaUnwrapAesDecryptFailed),
+            };
+
+            if cipher.is_null() {
+                return Err(CryptoError::RsaUnwrapAesDecryptFailed);
+            }
+
+            // Initialize decryption
+            let ret =
+                EVP_DecryptInit_ex(ctx, cipher, ptr::null_mut(), aes_key.as_ptr(), ptr::null());
+            if ret != 1 {
+                return Err(CryptoError::RsaUnwrapAesDecryptFailed);
+            }
+
+            let mut outlen: c_int = 0;
+
+            // Check output buffer size before decryption
+            if output.len() < wrapped_data.len() {
+                return Err(CryptoError::RsaUnwrapOutputBufferTooSmall);
+            }
+
+            // Perform decryption
+            let ret = EVP_DecryptUpdate(
+                ctx,
+                output.as_mut_ptr(),
+                &mut outlen,
+                wrapped_data.as_ptr(),
+                wrapped_data.len() as c_int,
+            );
+            if ret != 1 {
+                return Err(CryptoError::RsaUnwrapAesDecryptFailed);
+            }
+
+            let mut tmplen: c_int = 0;
+            // Ensure we don't write beyond buffer bounds
+            if (outlen as usize) >= output.len() {
+                return Err(CryptoError::RsaUnwrapOutputBufferTooSmall);
+            }
+
+            let remaining_space = output.len() - outlen as usize;
+            let ret = if remaining_space > 0 {
+                EVP_DecryptFinal_ex(ctx, output.as_mut_ptr().add(outlen as usize), &mut tmplen)
+            } else {
+                0 // No space for final block
+            };
+
+            if ret != 1 {
+                return Err(CryptoError::RsaUnwrapAesDecryptFailed);
+            }
+
+            let total_len = outlen + tmplen;
+            if total_len < 0 || total_len as usize > output.len() {
+                return Err(CryptoError::RsaUnwrapAesDecryptFailed);
+            }
+
+            Ok(total_len as usize)
+        })();
+
+        // Cleanup
+        EVP_CIPHER_CTX_free(ctx);
+        result
+    }
 }

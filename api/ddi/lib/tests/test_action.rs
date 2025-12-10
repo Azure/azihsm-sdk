@@ -19,13 +19,7 @@ fn test_ecc_generate_with_fixed_engine_instance() {
                 dev,
                 session_id,
                 DdiTestAction::ForcePkaInstance,
-                None,
-                None,
-                None,
-                Some(0),
-                None,
-                None,
-                None,
+                DdiTestActionContext::ForcePkaInstance(0),
             );
 
             match resp {
@@ -101,13 +95,7 @@ fn test_ecc_generate_with_fixed_engine_instance() {
                 dev,
                 session_id,
                 DdiTestAction::ForcePkaInstance,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
+                DdiTestActionContext::None,
             );
             match resp {
                 Err(DdiError::DdiStatus(DdiStatus::UnsupportedCmd)) => {

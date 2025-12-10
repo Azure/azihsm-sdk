@@ -1,18 +1,12 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
 
-// TODO: Currently restricting tests to Linux as openssl use is disallowed on Windows
-// and causes S360 issues. Need to find a good way to run these tests on Windows.
-#![cfg(target_os = "linux")]
-
 mod common;
 
+use crypto::aes::*;
 use crypto::CryptoKeyKind;
 use mcr_ddi::*;
 use mcr_ddi_mbor::*;
 use mcr_ddi_types::*;
-use openssl::symm::Cipher;
-use openssl::symm::Crypter;
-use openssl::symm::Mode;
 use test_with_tracing::test;
 
 use crate::common::*;
@@ -52,27 +46,24 @@ pub fn create_aes_key(dev: &mut <DdiTest as Ddi>::Dev, sess_id: u16) -> u16 {
 }
 
 /// Perform AES encryption or decryption
-fn aes_crypt_local_openssl(key: &[u8], input: &[u8], mode: Mode) -> Vec<u8> {
-    let cipher = match key.len() {
-        16 => Cipher::aes_128_cbc(),
-        24 => Cipher::aes_192_cbc(),
-        32 => Cipher::aes_256_cbc(),
-        _ => panic!("Invalid AES key size: {}", key.len()),
-    };
+fn aes_crypt_local(key: &[u8], input: &[u8], mode: AesMode) -> Vec<u8> {
+    let aes_key = AesKey::from_bytes(key).expect("Failed to create AES key");
 
-    let mut crypter = Crypter::new(cipher, mode, key, Some(&[0u8; 16]))
-        .expect("Failed to initialize AES crypter");
-
-    let mut output = vec![0u8; input.len() + cipher.block_size()];
-    let count = crypter
-        .update(input, &mut output)
-        .expect("AES operation update failed");
-    let rest = crypter
-        .finalize(&mut output[count..])
-        .expect("AES operation finalize failed");
-
-    output.truncate(count + rest);
-    output
+    let iv = [0u8; 16];
+    match mode {
+        AesMode::Encrypt => {
+            let result = aes_key
+                .encrypt(input, AesAlgo::Cbc, Some(&iv))
+                .expect("AES encryption failed");
+            result.cipher_text
+        }
+        AesMode::Decrypt => {
+            let result = aes_key
+                .decrypt(input, AesAlgo::Cbc, Some(&iv))
+                .expect("AES decryption failed");
+            result.plain_text
+        }
+    }
 }
 
 /// Perform the hardware AES encryption
@@ -120,41 +111,20 @@ fn aes_encrypt_hardware(
 }
 
 /// Perform AES GCM decryption
-fn aes_gcm_decrypt_local_openssl(
+fn aes_gcm_decrypt_local(
     key: &[u8],
     ciphertext: &[u8],
     iv: &[u8],
     aad: &[u8],
     tag: &[u8],
 ) -> Vec<u8> {
-    // Ensure key length is valid
-    let cipher = match key.len() {
-        16 => Cipher::aes_128_gcm(),
-        24 => Cipher::aes_192_gcm(),
-        32 => Cipher::aes_256_gcm(),
-        _ => panic!("Invalid AES key size: {}", key.len()),
-    };
-
-    let mut crypter =
-        Crypter::new(cipher, Mode::Decrypt, key, Some(iv)).expect("Failed to initialize Crypter");
-
-    crypter.aad_update(aad).expect("Failed to set AAD");
-
-    let mut plaintext = vec![0u8; ciphertext.len() + cipher.block_size()];
-    let count = crypter
-        .update(ciphertext, &mut plaintext)
-        .expect("Failed during AES-GCM decryption");
-
-    // Set the tag for authentication
-    crypter
-        .set_tag(tag)
-        .expect("Failed to set GCM tag for decryption");
-
-    let rest = crypter
-        .finalize(&mut plaintext[count..])
-        .expect("Failed to finalize AES-GCM decryption");
-
-    plaintext[..(count + rest)].to_vec()
+    let aes_key = AesKey::from_bytes(key).expect("Failed to create AES key");
+    let mut data = ciphertext.to_vec();
+    data.extend_from_slice(tag);
+    let result = aes_key
+        .decrypt_with_aad(&data, AesAlgo::Gcm, Some(iv), Some(aad))
+        .expect("AES GCM decryption failed");
+    result.plain_text
 }
 
 /// Perform the hardware AES GCM encryption
@@ -262,7 +232,7 @@ fn test_aes_get_and_validate_key() {
             // Validate AES key by performing encryption and decryption
             let plaintext = b"This is a test message.";
             let ciphertext = aes_encrypt_hardware(dev, session_id, aes_key_id, plaintext);
-            let decrypted_text = aes_crypt_local_openssl(&raw_aes_key, &ciphertext, Mode::Decrypt);
+            let decrypted_text = aes_crypt_local(&raw_aes_key, &ciphertext, AesMode::Decrypt);
 
             assert_eq!(
                 plaintext.to_vec(),
@@ -340,7 +310,7 @@ fn test_aes_bulk_get_and_validate_key() {
 
             // Decrypt using OpenSSL
             let decrypted_data =
-                aes_gcm_decrypt_local_openssl(&raw_aes_bulk_key, &encrypted_data, &iv, &aad, &tag);
+                aes_gcm_decrypt_local(&raw_aes_bulk_key, &encrypted_data, &iv, &aad, &tag);
 
             // Validate decryption matches plaintext
             assert_eq!(data, decrypted_data, "Decryption failed using OpenSSL");

@@ -35,9 +35,6 @@ chrono.workspace = true
 session_parameter_encryption.workspace = true
 x509.workspace = true
 
-[target.'cfg(target_os = "linux")'.dev-dependencies]
-openssl.workspace = true
-
 [features]
 default = []
 mock = []

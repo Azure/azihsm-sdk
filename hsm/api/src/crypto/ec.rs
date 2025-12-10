@@ -19,8 +19,14 @@ use crate::crypto::KeyGenOp;
 use crate::crypto::KeyId;
 use crate::crypto::SafeInnerAccess;
 use crate::crypto::SignOp;
+use crate::crypto::StreamingSignOp;
+use crate::crypto::StreamingSignVerifyAlgo;
+use crate::crypto::StreamingVerifyOp;
 use crate::crypto::VerifyOp;
 use crate::ddi;
+use crate::types::key_props::AzihsmKeyPropId;
+use crate::types::key_props::KeyPairPropsOps;
+use crate::types::key_props::KeyPropValue;
 use crate::types::AlgoId;
 use crate::types::EcCurve;
 use crate::types::KeyProps;
@@ -78,10 +84,21 @@ impl TryFrom<AlgoId> for HashAlgo {
 
     fn try_from(algo_id: AlgoId) -> Result<Self, Self::Error> {
         match algo_id {
-            AlgoId::EcdsaSha1 => Ok(HashAlgo::Sha1),
-            AlgoId::EcdsaSha256 => Ok(HashAlgo::Sha256),
-            AlgoId::EcdsaSha384 => Ok(HashAlgo::Sha384),
-            AlgoId::EcdsaSha512 => Ok(HashAlgo::Sha512),
+            AlgoId::EcdsaSha1 | AlgoId::RsaPkcsSha1 | AlgoId::RsaPkcsPssSha1 | AlgoId::Sha1 => {
+                Ok(HashAlgo::Sha1)
+            }
+            AlgoId::EcdsaSha256
+            | AlgoId::RsaPkcsSha256
+            | AlgoId::RsaPkcsPssSha256
+            | AlgoId::Sha256 => Ok(HashAlgo::Sha256),
+            AlgoId::EcdsaSha384
+            | AlgoId::RsaPkcsSha384
+            | AlgoId::RsaPkcsPssSha384
+            | AlgoId::Sha384 => Ok(HashAlgo::Sha384),
+            AlgoId::EcdsaSha512
+            | AlgoId::RsaPkcsSha512
+            | AlgoId::RsaPkcsPssSha512
+            | AlgoId::Sha512 => Ok(HashAlgo::Sha512),
             _ => Err(AZIHSM_ERROR_INVALID_ARGUMENT), // Not an ECDSA Hash algorithm
         }
     }
@@ -93,7 +110,6 @@ pub struct EcdsaKeyPair(Arc<RwLock<EcdsaKeyPairInner>>);
 #[derive(Debug)]
 struct EcdsaKeyPairInner {
     priv_key_id: Option<KeyId>,
-    pub_key: Option<Vec<u8>>,
     #[allow(unused)]
     pub_key_props: KeyProps,
     priv_key_props: KeyProps,
@@ -104,7 +120,18 @@ impl EcdsaKeyPair {
     pub fn new(pub_key_props: KeyProps, priv_key_props: KeyProps) -> Self {
         EcdsaKeyPair(Arc::new(RwLock::new(EcdsaKeyPairInner {
             priv_key_id: None,
-            pub_key: None,
+            pub_key_props,
+            priv_key_props,
+            _masked_key: None,
+        })))
+    }
+    pub fn new_with_id(
+        priv_key_id: KeyId,
+        pub_key_props: KeyProps,
+        priv_key_props: KeyProps,
+    ) -> Self {
+        EcdsaKeyPair(Arc::new(RwLock::new(EcdsaKeyPairInner {
+            priv_key_id: Some(priv_key_id),
             pub_key_props,
             priv_key_props,
             _masked_key: None,
@@ -128,12 +155,28 @@ impl EcdsaKeyPair {
 
     #[allow(unused)]
     pub fn pub_key(&self) -> Option<Vec<u8>> {
-        self.with_inner(|inner| inner.pub_key.clone())
+        self.with_inner(|inner| {
+            match inner
+                .pub_key_props
+                .get_property(AzihsmKeyPropId::PubKeyInfo)
+            {
+                Ok(KeyPropValue::PubKeyInfo(data)) => Some(data),
+                _ => None,
+            }
+        })
     }
 
     #[allow(unused)]
     pub fn with_pub_key<R>(&self, f: impl FnOnce(Option<&[u8]>) -> R) -> R {
-        self.with_inner(|inner| f(inner.pub_key.as_deref()))
+        self.with_inner(|inner| {
+            match inner
+                .pub_key_props
+                .get_property(AzihsmKeyPropId::PubKeyInfo)
+            {
+                Ok(KeyPropValue::PubKeyInfo(data)) => f(Some(&data)),
+                _ => f(None),
+            }
+        })
     }
 
     /// Get the curve type for this key pair
@@ -145,12 +188,38 @@ impl EcdsaKeyPair {
 
 impl Key for EcdsaKeyPair {}
 
+impl KeyPairPropsOps for EcdsaKeyPair {
+    fn get_pub_property(&self, id: AzihsmKeyPropId) -> Result<KeyPropValue, AzihsmError> {
+        self.with_inner(|inner| inner.pub_key_props.get_property(id))
+    }
+
+    fn set_pub_property(
+        &mut self,
+        id: AzihsmKeyPropId,
+        value: KeyPropValue,
+    ) -> Result<(), AzihsmError> {
+        self.with_inner_mut(|inner| inner.pub_key_props.set_property(id, value))
+    }
+
+    fn get_priv_property(&self, id: AzihsmKeyPropId) -> Result<KeyPropValue, AzihsmError> {
+        self.with_inner(|inner| inner.priv_key_props.get_property(id))
+    }
+
+    fn set_priv_property(
+        &mut self,
+        id: AzihsmKeyPropId,
+        value: KeyPropValue,
+    ) -> Result<(), AzihsmError> {
+        self.with_inner_mut(|inner| inner.priv_key_props.set_property(id, value))
+    }
+}
+
 impl KeyGenOp for EcdsaKeyPair {
     fn generate_key_pair(&mut self, session: &Session) -> Result<(), AzihsmError> {
         let mut inner = self.0.write();
 
         // Check if already generated
-        if inner.priv_key_id.is_some() || inner.pub_key.is_some() {
+        if inner.priv_key_id.is_some() {
             Err(AZIHSM_KEY_ALREADY_EXISTS)?;
         }
 
@@ -171,12 +240,11 @@ impl KeyGenOp for EcdsaKeyPair {
         // Copy private key ID
         inner.priv_key_id = Some(KeyId(resp.data.private_key_id));
 
-        // Copy public key
-        inner.pub_key = resp
-            .data
-            .pub_key
-            .map(|resp_pub_key| resp_pub_key.der.data()[..resp_pub_key.der.len()].to_vec());
-
+        // Store public key DER as PubKeyInfo property
+        if let Some(resp_pub_key) = resp.data.pub_key {
+            let pub_key_der = resp_pub_key.der.data()[..resp_pub_key.der.len()].to_vec();
+            inner.pub_key_props.set_pub_key_info(pub_key_der);
+        }
         Ok(())
     }
 }
@@ -213,12 +281,18 @@ impl KeyDeleteOp for EcdsaKeyPair {
     /// Delete only the public key (local storage only)
     fn delete_pub_key(&mut self, _session: &Session) -> Result<(), AzihsmError> {
         self.with_inner_mut(|inner| {
-            if inner.pub_key.is_none() {
-                return Err(AZIHSM_KEY_NOT_INITIALIZED);
+            // Check if public key exists in property
+            match inner
+                .pub_key_props
+                .get_property(AzihsmKeyPropId::PubKeyInfo)
+            {
+                Ok(KeyPropValue::PubKeyInfo(_)) => {
+                    // Clear the PubKeyInfo property
+                    inner.pub_key_props.clear_pub_key_info();
+                    Ok(())
+                }
+                _ => Err(AZIHSM_KEY_NOT_INITIALIZED),
             }
-
-            inner.pub_key = None;
-            Ok(())
         })
     }
 
@@ -273,10 +347,15 @@ impl SignOp<EcdsaKeyPair> for EcdsaAlgo {
     fn sign(
         &self,
         session: &Session,
-        priv_key_id: KeyId,
+        priv_key: &EcdsaKeyPair,
         data: &[u8],
         sig: &mut [u8],
     ) -> Result<(), AzihsmError> {
+        // ensure private key ID exists
+        if priv_key.priv_key_id().is_none() {
+            Err(AZIHSM_KEY_NOT_INITIALIZED)?;
+        }
+
         let digest_to_sign = if self.algo == AlgoId::Ecdsa {
             // Generic ECDSA - treat input as pre-computed digest
             data.to_vec()
@@ -291,7 +370,7 @@ impl SignOp<EcdsaKeyPair> for EcdsaAlgo {
 
             digest
         };
-
+        let priv_key_id = priv_key.priv_key_id().ok_or(AZIHSM_KEY_NOT_INITIALIZED)?;
         // Perform the actual signing with the digest
         let resp = ddi::ecc_sign(
             &session.partition().read().partition,
@@ -316,7 +395,13 @@ impl SignOp<EcdsaKeyPair> for EcdsaAlgo {
 }
 
 impl VerifyOp<EcdsaKeyPair> for EcdsaAlgo {
-    fn verify(&self, key_pair: &EcdsaKeyPair, data: &[u8], sig: &[u8]) -> Result<(), AzihsmError> {
+    fn verify(
+        &self,
+        _session: &Session,
+        key_pair: &EcdsaKeyPair,
+        data: &[u8],
+        sig: &[u8],
+    ) -> Result<(), AzihsmError> {
         let curve = key_pair.curve().ok_or(AZIHSM_KEY_NOT_INITIALIZED)?;
 
         let ecc_public_key = key_pair.with_pub_key(|pub_key_opt| match pub_key_opt {
@@ -343,6 +428,160 @@ impl VerifyOp<EcdsaKeyPair> for EcdsaAlgo {
         ecc_public_key
             .ecdsa_crypt_verify_digest(&digest_to_verify, sig)
             .map_err(|_| AZIHSM_ECC_VERIFY_FAILED)
+    }
+}
+
+/// Streaming ECDSA sign operation
+pub struct EcdsaSignStream<'a> {
+    algo: AlgoId,
+    key: EcdsaKeyPair,
+    buffered_data: Vec<u8>,
+    session: &'a Session,
+}
+
+impl<'a> StreamingSignOp for EcdsaSignStream<'a> {
+    fn signature_len(&self) -> Result<u32, AzihsmError> {
+        let curve = self.key.curve().ok_or(AZIHSM_KEY_NOT_INITIALIZED)?;
+        Ok(match curve {
+            EcCurve::P256 => 64,
+            EcCurve::P384 => 96,
+            EcCurve::P521 => 132,
+        })
+    }
+
+    fn update(&mut self, data: &[u8]) -> Result<(), AzihsmError> {
+        // Accumulate data for hashing
+        self.buffered_data.extend_from_slice(data);
+        Ok(())
+    }
+
+    fn finalize(self, signature: &mut [u8]) -> Result<usize, AzihsmError> {
+        // Ensure private key ID exists
+        if self.key.priv_key_id().is_none() {
+            Err(AZIHSM_KEY_NOT_INITIALIZED)?;
+        }
+
+        let digest_to_sign = if self.algo == AlgoId::Ecdsa {
+            // Generic ECDSA - treat accumulated data as pre-computed digest
+            self.buffered_data
+        } else {
+            // Specific ECDSA with hash algorithm - hash the accumulated data
+            let hash_algo = HashAlgo::try_from(self.algo)?;
+
+            let mut digest = vec![0u8; hash_algo.hash_length()];
+            hash_algo
+                .hash(&self.buffered_data, &mut digest)
+                .map_err(|_| AZIHSM_INTERNAL_ERROR)?;
+
+            digest
+        };
+
+        let priv_key_id = self.key.priv_key_id().ok_or(AZIHSM_KEY_NOT_INITIALIZED)?;
+
+        // Perform the actual signing with the digest
+        let resp = ddi::ecc_sign(
+            &self.session.partition().read().partition,
+            Some(self.session.session_id()),
+            Some(self.session.api_rev().into()),
+            priv_key_id.0,
+            &digest_to_sign,
+        )
+        .map_err(|_| AZIHSM_ECC_SIGN_FAILED)?;
+
+        let sig_data = resp.data.signature.data();
+        let sig_len = resp.data.signature.len() as usize;
+
+        if signature.len() < sig_len {
+            Err(AZIHSM_ERROR_INSUFFICIENT_BUFFER)?;
+        }
+
+        signature[..sig_len].copy_from_slice(&sig_data[..sig_len]);
+
+        Ok(sig_len)
+    }
+}
+
+/// Streaming ECDSA verify operation
+pub struct EcdsaVerifyStream {
+    algo: AlgoId,
+    key: EcdsaKeyPair,
+    buffered_data: Vec<u8>,
+}
+
+impl StreamingVerifyOp for EcdsaVerifyStream {
+    fn update(&mut self, data: &[u8]) -> Result<(), AzihsmError> {
+        // Accumulate data for hashing
+        self.buffered_data.extend_from_slice(data);
+        Ok(())
+    }
+
+    fn finalize(self, signature: &[u8]) -> Result<(), AzihsmError> {
+        let curve = self.key.curve().ok_or(AZIHSM_KEY_NOT_INITIALIZED)?;
+
+        let ecc_public_key = self.key.with_pub_key(|pub_key_opt| match pub_key_opt {
+            Some(pub_key_bytes) => EcPublicKey::ec_key_from_der(pub_key_bytes, curve.into())
+                .map_err(|_| AZIHSM_INTERNAL_ERROR),
+            None => Err(AZIHSM_KEY_NOT_INITIALIZED),
+        })?;
+
+        let digest_to_verify = if self.algo == AlgoId::Ecdsa {
+            // Generic ECDSA - treat accumulated data as pre-computed digest
+            self.buffered_data
+        } else {
+            // Specific ECDSA with hash algorithm - hash the accumulated data
+            let hash_algo = HashAlgo::try_from(self.algo)?;
+
+            let mut digest = vec![0u8; hash_algo.hash_length()];
+            hash_algo
+                .hash(&self.buffered_data, &mut digest)
+                .map_err(|_| AZIHSM_INTERNAL_ERROR)?;
+
+            digest
+        };
+
+        ecc_public_key
+            .ecdsa_crypt_verify_digest(&digest_to_verify, signature)
+            .map_err(|_| AZIHSM_ECC_VERIFY_FAILED)
+    }
+}
+
+impl<'a> StreamingSignVerifyAlgo<'a, EcdsaKeyPair> for EcdsaAlgo {
+    type SignStream = EcdsaSignStream<'a>;
+    type VerifyStream = EcdsaVerifyStream;
+
+    fn sign_init(
+        &self,
+        session: &'a Session,
+        key: &EcdsaKeyPair,
+    ) -> Result<Self::SignStream, AzihsmError> {
+        // Ensure private key exists
+        if key.priv_key_id().is_none() {
+            Err(AZIHSM_KEY_NOT_INITIALIZED)?;
+        }
+
+        Ok(EcdsaSignStream {
+            algo: self.algo,
+            key: key.clone(),
+            buffered_data: Vec::new(),
+            session,
+        })
+    }
+
+    fn verify_init(
+        &self,
+        _session: &'a Session,
+        key: &EcdsaKeyPair,
+    ) -> Result<Self::VerifyStream, AzihsmError> {
+        // Ensure public key exists
+        if key.pub_key().is_none() {
+            Err(AZIHSM_KEY_NOT_INITIALIZED)?;
+        }
+
+        Ok(EcdsaVerifyStream {
+            algo: self.algo,
+            key: key.clone(),
+            buffered_data: Vec::new(),
+        })
     }
 }
 
@@ -773,8 +1012,6 @@ mod tests {
             .generate_key_pair(&mut keypair)
             .expect("Failed to generate ECDSA P-256 key pair");
 
-        let priv_key_id = keypair.priv_key_id().unwrap();
-
         // Create ECDSA algorithm with SHA-256
         let algo = EcdsaAlgo::new(AlgoId::EcdsaSha256);
 
@@ -787,7 +1024,7 @@ mod tests {
 
         // Sign the message
         session
-            .sign(&algo, priv_key_id, message, &mut signature)
+            .sign(&algo, &keypair, message, &mut signature)
             .expect("Failed to sign message");
 
         // Verify the signature should succeed
@@ -837,8 +1074,6 @@ mod tests {
             .generate_key_pair(&mut keypair)
             .expect("Failed to generate ECDSA P-384 key pair");
 
-        let priv_key_id = keypair.priv_key_id().unwrap();
-
         // Create ECDSA algorithm with SHA-384
         let algo = EcdsaAlgo::new(AlgoId::EcdsaSha384);
 
@@ -851,7 +1086,7 @@ mod tests {
 
         // Sign the message
         session
-            .sign(&algo, priv_key_id, message, &mut signature)
+            .sign(&algo, &keypair, message, &mut signature)
             .expect("Failed to sign message with P-384");
 
         // Verify the signature
@@ -884,8 +1119,6 @@ mod tests {
             .generate_key_pair(&mut keypair)
             .expect("Failed to generate ECDSA P-521 key pair");
 
-        let priv_key_id = keypair.priv_key_id().unwrap();
-
         // Create ECDSA algorithm with SHA-512
         let algo = EcdsaAlgo::new(AlgoId::EcdsaSha512);
 
@@ -898,7 +1131,7 @@ mod tests {
 
         // Sign the message
         session
-            .sign(&algo, priv_key_id, message, &mut signature)
+            .sign(&algo, &keypair, message, &mut signature)
             .expect("Failed to sign message with P-521");
 
         // Verify the signature
@@ -931,8 +1164,6 @@ mod tests {
             .generate_key_pair(&mut keypair)
             .expect("Failed to generate ECDSA key pair");
 
-        let priv_key_id = keypair.priv_key_id().unwrap();
-
         // Create ECDSA algorithm
         let algo = EcdsaAlgo::new(AlgoId::EcdsaSha256);
 
@@ -948,7 +1179,7 @@ mod tests {
 
         // Sign the digest directly
         session
-            .sign(&algo, priv_key_id, &msg, &mut signature)
+            .sign(&algo, &keypair, &msg, &mut signature)
             .expect("Failed to sign digest");
 
         // Verify the signature using digest
@@ -1024,8 +1255,6 @@ mod tests {
             .generate_key_pair(&mut keypair)
             .expect("Failed to generate ECDSA key pair");
 
-        let priv_key_id = keypair.priv_key_id().unwrap();
-
         // Create ECDSA algorithm
         let algo = EcdsaAlgo::new(AlgoId::EcdsaSha256);
 
@@ -1038,7 +1267,7 @@ mod tests {
 
         // Sign the empty message
         session
-            .sign(&algo, priv_key_id, message, &mut signature)
+            .sign(&algo, &keypair, message, &mut signature)
             .expect("Failed to sign empty message");
 
         // Verify the signature
@@ -1071,8 +1300,6 @@ mod tests {
             .generate_key_pair(&mut keypair)
             .expect("Failed to generate ECDSA key pair");
 
-        let priv_key_id = keypair.priv_key_id().unwrap();
-
         // Create ECDSA algorithm
         let algo = EcdsaAlgo::new(AlgoId::EcdsaSha256);
 
@@ -1085,7 +1312,7 @@ mod tests {
 
         // Sign the large message
         session
-            .sign(&algo, priv_key_id, &large_message, &mut signature)
+            .sign(&algo, &keypair, &large_message, &mut signature)
             .expect("Failed to sign large message");
 
         // Verify the signature
@@ -1097,64 +1324,6 @@ mod tests {
         session
             .delete_key(&mut keypair)
             .expect("Failed to delete key pair");
-        session.close().expect("Failed to close session");
-    }
-
-    #[test]
-    fn test_ecdsa_sign_verify_multiple_algorithms() {
-        let (_partition, mut session) = create_test_session();
-
-        // Test different hash algorithms with P-256
-        let hash_algorithms = vec![
-            AlgoId::EcdsaSha1,
-            AlgoId::EcdsaSha256,
-            AlgoId::EcdsaSha384,
-            AlgoId::EcdsaSha512,
-        ];
-
-        for algo_id in hash_algorithms {
-            let key_props = KeyProps::builder()
-                .ecc_curve(EcCurve::P256)
-                .sign(true)
-                .verify(true)
-                .build();
-
-            let mut keypair = EcdsaKeyPair::new(key_props.clone(), key_props);
-
-            // Generate the key pair
-            session
-                .generate_key_pair(&mut keypair)
-                .expect("Failed to generate key pair");
-
-            let priv_key_id = keypair.priv_key_id().unwrap();
-
-            // Create ECDSA algorithm
-            let algo = EcdsaAlgo::new(algo_id);
-
-            // Test message
-            let message = format!("Testing with algorithm {:?}", algo_id);
-            let message_bytes = message.as_bytes();
-
-            // Get signature length
-            let sig_len = algo.signature_len(&keypair).unwrap() as usize;
-            let mut signature = vec![0u8; sig_len];
-
-            // Sign the message
-            session
-                .sign(&algo, priv_key_id, message_bytes, &mut signature)
-                .expect("Failed to sign message");
-
-            // Verify the signature
-            session
-                .verify(&algo, &keypair, message_bytes, &signature)
-                .expect("Failed to verify signature");
-
-            // Clean up this key pair before next iteration
-            session
-                .delete_key(&mut keypair)
-                .expect("Failed to delete key pair");
-        }
-
         session.close().expect("Failed to close session");
     }
 
@@ -1176,8 +1345,6 @@ mod tests {
             .generate_key_pair(&mut keypair)
             .expect("Failed to generate ECDSA key pair");
 
-        let priv_key_id = keypair.priv_key_id().unwrap();
-
         // Create ECDSA algorithm
         let algo = EcdsaAlgo::new(AlgoId::EcdsaSha256);
 
@@ -1188,7 +1355,7 @@ mod tests {
         let mut small_signature = vec![0u8; 32]; // P-256 needs 64 bytes
 
         // Sign should fail with insufficient buffer
-        let sign_result = session.sign(&algo, priv_key_id, message, &mut small_signature);
+        let sign_result = session.sign(&algo, &keypair, message, &mut small_signature);
         assert!(
             sign_result.is_err(),
             "Sign should fail with insufficient buffer"
@@ -1229,6 +1396,615 @@ mod tests {
         );
         assert_eq!(verify_result.unwrap_err(), AZIHSM_KEY_NOT_INITIALIZED);
 
+        session.close().expect("Failed to close session");
+    }
+
+    #[test]
+    fn test_ecdsa_streaming_sign_verify_p256_sha256() {
+        let (_partition, mut session) = create_test_session();
+
+        // Create ECDSA key with P-256 curve
+        let key_props = KeyProps::builder()
+            .ecc_curve(EcCurve::P256)
+            .sign(true)
+            .verify(true)
+            .build();
+
+        let mut keypair = EcdsaKeyPair::new(key_props.clone(), key_props);
+
+        // Generate the key pair
+        session
+            .generate_key_pair(&mut keypair)
+            .expect("Failed to generate ECDSA P-256 key pair");
+
+        // Create ECDSA algorithm with SHA-256
+        let algo = EcdsaAlgo::new(AlgoId::EcdsaSha256);
+
+        // Initialize streaming sign operation
+        let mut sign_stream = session
+            .sign_init(&algo, &keypair)
+            .expect("Failed to init sign stream");
+
+        // Update with data in chunks
+        let chunk1 = b"Hello, ";
+        let chunk2 = b"ECDSA ";
+        let chunk3 = b"streaming!";
+
+        sign_stream
+            .update(chunk1)
+            .expect("Failed to update sign stream with chunk 1");
+        sign_stream
+            .update(chunk2)
+            .expect("Failed to update sign stream with chunk 2");
+        sign_stream
+            .update(chunk3)
+            .expect("Failed to update sign stream with chunk 3");
+
+        // Get signature length and finalize
+        let sig_len = sign_stream.signature_len().unwrap() as usize;
+        let mut signature = vec![0u8; sig_len];
+
+        let bytes_written = sign_stream
+            .finalize(&mut signature)
+            .expect("Failed to finalize sign stream");
+
+        assert_eq!(bytes_written, sig_len, "Signature length mismatch");
+
+        // Verify with streaming verify
+        let mut verify_stream = session
+            .verify_init(&algo, &keypair)
+            .expect("Failed to init verify stream");
+
+        verify_stream
+            .update(chunk1)
+            .expect("Failed to update verify stream with chunk 1");
+        verify_stream
+            .update(chunk2)
+            .expect("Failed to update verify stream with chunk 2");
+        verify_stream
+            .update(chunk3)
+            .expect("Failed to update verify stream with chunk 3");
+
+        verify_stream
+            .finalize(&signature)
+            .expect("Failed to verify streaming signature");
+
+        // Clean up
+        session
+            .delete_key(&mut keypair)
+            .expect("Failed to delete key pair");
+        session.close().expect("Failed to close session");
+    }
+
+    #[test]
+    fn test_ecdsa_streaming_sign_verify_p384_sha384() {
+        let (_partition, mut session) = create_test_session();
+
+        // Create ECDSA key with P-384 curve
+        let key_props = KeyProps::builder()
+            .ecc_curve(EcCurve::P384)
+            .sign(true)
+            .verify(true)
+            .build();
+
+        let mut keypair = EcdsaKeyPair::new(key_props.clone(), key_props);
+
+        session
+            .generate_key_pair(&mut keypair)
+            .expect("Failed to generate ECDSA P-384 key pair");
+
+        let algo = EcdsaAlgo::new(AlgoId::EcdsaSha384);
+
+        // Initialize streaming sign
+        let mut sign_stream = session
+            .sign_init(&algo, &keypair)
+            .expect("Failed to init sign stream");
+
+        // Update with multiple chunks
+        let data = b"Testing P-384 curve with streaming operations";
+        for chunk in data.chunks(10) {
+            sign_stream
+                .update(chunk)
+                .expect("Failed to update sign stream");
+        }
+
+        // Finalize signature
+        let sig_len = sign_stream.signature_len().unwrap() as usize;
+        let mut signature = vec![0u8; sig_len];
+        sign_stream
+            .finalize(&mut signature)
+            .expect("Failed to finalize sign stream");
+
+        // Verify with streaming
+        let mut verify_stream = session
+            .verify_init(&algo, &keypair)
+            .expect("Failed to init verify stream");
+
+        for chunk in data.chunks(10) {
+            verify_stream
+                .update(chunk)
+                .expect("Failed to update verify stream");
+        }
+
+        verify_stream
+            .finalize(&signature)
+            .expect("Failed to verify streaming signature");
+
+        // Clean up
+        session
+            .delete_key(&mut keypair)
+            .expect("Failed to delete key pair");
+        session.close().expect("Failed to close session");
+    }
+
+    #[test]
+    fn test_ecdsa_streaming_sign_verify_p521_sha512() {
+        let (_partition, mut session) = create_test_session();
+
+        let key_props = KeyProps::builder()
+            .ecc_curve(EcCurve::P521)
+            .sign(true)
+            .verify(true)
+            .build();
+
+        let mut keypair = EcdsaKeyPair::new(key_props.clone(), key_props);
+
+        session
+            .generate_key_pair(&mut keypair)
+            .expect("Failed to generate ECDSA P-521 key pair");
+
+        let algo = EcdsaAlgo::new(AlgoId::EcdsaSha512);
+
+        // Initialize and update streaming sign
+        let mut sign_stream = session
+            .sign_init(&algo, &keypair)
+            .expect("Failed to init sign stream");
+        let message = b"Testing the strongest curve P-521 with streaming SHA-512";
+        sign_stream
+            .update(message)
+            .expect("Failed to update sign stream");
+
+        // Finalize signature
+        let sig_len = sign_stream.signature_len().unwrap() as usize;
+        let mut signature = vec![0u8; sig_len];
+        sign_stream
+            .finalize(&mut signature)
+            .expect("Failed to finalize sign stream");
+
+        // Verify with streaming
+        let mut verify_stream = session
+            .verify_init(&algo, &keypair)
+            .expect("Failed to init verify stream");
+        verify_stream
+            .update(message)
+            .expect("Failed to update verify stream");
+        verify_stream
+            .finalize(&signature)
+            .expect("Failed to verify streaming signature");
+
+        // Clean up
+        session
+            .delete_key(&mut keypair)
+            .expect("Failed to delete key pair");
+        session.close().expect("Failed to close session");
+    }
+
+    #[test]
+    fn test_ecdsa_streaming_sign_empty_message() {
+        let (_partition, mut session) = create_test_session();
+
+        let key_props = KeyProps::builder()
+            .ecc_curve(EcCurve::P256)
+            .sign(true)
+            .verify(true)
+            .build();
+
+        let mut keypair = EcdsaKeyPair::new(key_props.clone(), key_props);
+
+        session
+            .generate_key_pair(&mut keypair)
+            .expect("Failed to generate key pair");
+
+        let algo = EcdsaAlgo::new(AlgoId::EcdsaSha256);
+
+        // Initialize sign stream
+        let sign_stream = session
+            .sign_init(&algo, &keypair)
+            .expect("Failed to init sign stream");
+
+        // Don't call update - finalize with empty buffer
+        let sig_len = sign_stream.signature_len().unwrap() as usize;
+        let mut signature = vec![0u8; sig_len];
+        sign_stream
+            .finalize(&mut signature)
+            .expect("Failed to finalize with empty message");
+
+        // Verify empty message
+        let verify_stream = session
+            .verify_init(&algo, &keypair)
+            .expect("Failed to init verify stream");
+        verify_stream
+            .finalize(&signature)
+            .expect("Failed to verify empty message signature");
+
+        // Clean up
+        session
+            .delete_key(&mut keypair)
+            .expect("Failed to delete key pair");
+        session.close().expect("Failed to close session");
+    }
+
+    #[test]
+    fn test_ecdsa_streaming_sign_large_message() {
+        let (_partition, mut session) = create_test_session();
+
+        let key_props = KeyProps::builder()
+            .ecc_curve(EcCurve::P256)
+            .sign(true)
+            .verify(true)
+            .build();
+
+        let mut keypair = EcdsaKeyPair::new(key_props.clone(), key_props);
+
+        session
+            .generate_key_pair(&mut keypair)
+            .expect("Failed to generate key pair");
+
+        let algo = EcdsaAlgo::new(AlgoId::EcdsaSha256);
+
+        // Initialize sign stream
+        let mut sign_stream = session
+            .sign_init(&algo, &keypair)
+            .expect("Failed to init sign stream");
+
+        // Create and update with large message in chunks
+        let chunk_size = 1024;
+        let num_chunks = 1024; // 1MB total
+        for i in 0..num_chunks {
+            let chunk = vec![(i % 256) as u8; chunk_size];
+            sign_stream
+                .update(&chunk)
+                .expect("Failed to update with large chunk");
+        }
+
+        // Finalize
+        let sig_len = sign_stream.signature_len().unwrap() as usize;
+        let mut signature = vec![0u8; sig_len];
+        sign_stream
+            .finalize(&mut signature)
+            .expect("Failed to finalize large message signature");
+
+        // Verify with same chunking pattern
+        let mut verify_stream = session
+            .verify_init(&algo, &keypair)
+            .expect("Failed to init verify stream");
+
+        for i in 0..num_chunks {
+            let chunk = vec![(i % 256) as u8; chunk_size];
+            verify_stream
+                .update(&chunk)
+                .expect("Failed to update verify with large chunk");
+        }
+
+        verify_stream
+            .finalize(&signature)
+            .expect("Failed to verify large message signature");
+
+        // Clean up
+        session
+            .delete_key(&mut keypair)
+            .expect("Failed to delete key pair");
+        session.close().expect("Failed to close session");
+    }
+
+    #[test]
+    fn test_ecdsa_streaming_verify_tampered_message() {
+        let (_partition, mut session) = create_test_session();
+
+        let key_props = KeyProps::builder()
+            .ecc_curve(EcCurve::P256)
+            .sign(true)
+            .verify(true)
+            .build();
+
+        let mut keypair = EcdsaKeyPair::new(key_props.clone(), key_props);
+
+        session
+            .generate_key_pair(&mut keypair)
+            .expect("Failed to generate key pair");
+
+        let algo = EcdsaAlgo::new(AlgoId::EcdsaSha256);
+
+        // Sign original message
+        let mut sign_stream = session
+            .sign_init(&algo, &keypair)
+            .expect("Failed to init sign stream");
+        let chunk1 = b"Original ";
+        let chunk2 = b"message";
+        sign_stream.update(chunk1).expect("Update failed");
+        sign_stream.update(chunk2).expect("Update failed");
+
+        let sig_len = sign_stream.signature_len().unwrap() as usize;
+        let mut signature = vec![0u8; sig_len];
+        sign_stream
+            .finalize(&mut signature)
+            .expect("Failed to finalize");
+
+        // Verify with tampered message
+        let mut verify_stream = session
+            .verify_init(&algo, &keypair)
+            .expect("Failed to init verify stream");
+        let tampered_chunk1 = b"Tampered ";
+        verify_stream
+            .update(tampered_chunk1)
+            .expect("Update failed");
+        verify_stream.update(chunk2).expect("Update failed");
+
+        let result = verify_stream.finalize(&signature);
+        assert!(
+            result.is_err(),
+            "Verification should fail with tampered message"
+        );
+
+        // Clean up
+        session
+            .delete_key(&mut keypair)
+            .expect("Failed to delete key pair");
+        session.close().expect("Failed to close session");
+    }
+
+    #[test]
+    fn test_ecdsa_streaming_verify_tampered_signature() {
+        let (_partition, mut session) = create_test_session();
+
+        let key_props = KeyProps::builder()
+            .ecc_curve(EcCurve::P256)
+            .sign(true)
+            .verify(true)
+            .build();
+
+        let mut keypair = EcdsaKeyPair::new(key_props.clone(), key_props);
+
+        session
+            .generate_key_pair(&mut keypair)
+            .expect("Failed to generate key pair");
+
+        let algo = EcdsaAlgo::new(AlgoId::EcdsaSha256);
+
+        // Sign message
+        let mut sign_stream = session
+            .sign_init(&algo, &keypair)
+            .expect("Failed to init sign stream");
+        let message = b"Test message for signature tampering";
+        sign_stream.update(message).expect("Update failed");
+
+        let sig_len = sign_stream.signature_len().unwrap() as usize;
+        let mut signature = vec![0u8; sig_len];
+        sign_stream
+            .finalize(&mut signature)
+            .expect("Failed to finalize");
+
+        // Tamper with signature
+        signature[0] ^= 0xFF;
+
+        // Verify with tampered signature
+        let mut verify_stream = session
+            .verify_init(&algo, &keypair)
+            .expect("Failed to init verify stream");
+        verify_stream.update(message).expect("Update failed");
+
+        let result = verify_stream.finalize(&signature);
+        assert!(
+            result.is_err(),
+            "Verification should fail with tampered signature"
+        );
+
+        // Clean up
+        session
+            .delete_key(&mut keypair)
+            .expect("Failed to delete key pair");
+        session.close().expect("Failed to close session");
+    }
+
+    #[test]
+    fn test_ecdsa_streaming_sign_without_private_key() {
+        let (_partition, mut session) = create_test_session();
+
+        // Create key pair without generating it
+        let key_props = KeyProps::builder()
+            .ecc_curve(EcCurve::P256)
+            .sign(true)
+            .verify(true)
+            .build();
+
+        let keypair = EcdsaKeyPair::new(key_props.clone(), key_props);
+
+        let algo = EcdsaAlgo::new(AlgoId::EcdsaSha256);
+
+        // Try to initialize sign stream without generated key
+        let result = session.sign_init(&algo, &keypair);
+        assert!(
+            result.is_err(),
+            "Sign init should fail without generated key"
+        );
+        assert!(matches!(result, Err(AZIHSM_KEY_NOT_INITIALIZED)));
+
+        session.close().expect("Failed to close session");
+    }
+
+    #[test]
+    fn test_ecdsa_streaming_verify_without_public_key() {
+        let (_partition, mut session) = create_test_session();
+
+        // Create key pair without generating it
+        let key_props = KeyProps::builder()
+            .ecc_curve(EcCurve::P256)
+            .sign(true)
+            .verify(true)
+            .build();
+
+        let keypair = EcdsaKeyPair::new(key_props.clone(), key_props);
+
+        let algo = EcdsaAlgo::new(AlgoId::EcdsaSha256);
+
+        // Try to initialize verify stream without generated key
+        let result = session.verify_init(&algo, &keypair);
+        assert!(
+            result.is_err(),
+            "Verify init should fail without generated key"
+        );
+        assert!(matches!(result, Err(AZIHSM_KEY_NOT_INITIALIZED)));
+
+        session.close().expect("Failed to close session");
+    }
+
+    #[test]
+    fn test_ecdsa_streaming_signature_lengths() {
+        let (_partition, mut session) = create_test_session();
+
+        let test_cases = vec![
+            (EcCurve::P256, AlgoId::EcdsaSha256, 64usize),
+            (EcCurve::P384, AlgoId::EcdsaSha384, 96usize),
+            (EcCurve::P521, AlgoId::EcdsaSha512, 132usize),
+        ];
+
+        for (curve, algo_id, expected_len) in test_cases {
+            let key_props = KeyProps::builder()
+                .ecc_curve(curve)
+                .sign(true)
+                .verify(true)
+                .build();
+
+            let mut keypair = EcdsaKeyPair::new(key_props.clone(), key_props);
+
+            session
+                .generate_key_pair(&mut keypair)
+                .expect("Failed to generate key pair");
+
+            let algo = EcdsaAlgo::new(algo_id);
+            let sign_stream = session
+                .sign_init(&algo, &keypair)
+                .expect("Failed to init sign stream");
+
+            // Check signature length
+            let sig_len = sign_stream.signature_len().unwrap() as usize;
+            assert_eq!(
+                sig_len, expected_len,
+                "Signature length for {:?} should be {} bytes",
+                curve, expected_len
+            );
+
+            // Clean up
+            session
+                .delete_key(&mut keypair)
+                .expect("Failed to delete key pair");
+        }
+
+        session.close().expect("Failed to close session");
+    }
+
+    #[test]
+    fn test_ecdsa_streaming_vs_non_streaming_consistency() {
+        let (_partition, mut session) = create_test_session();
+
+        let key_props = KeyProps::builder()
+            .ecc_curve(EcCurve::P256)
+            .sign(true)
+            .verify(true)
+            .build();
+
+        let mut keypair = EcdsaKeyPair::new(key_props.clone(), key_props);
+
+        session
+            .generate_key_pair(&mut keypair)
+            .expect("Failed to generate key pair");
+
+        let algo = EcdsaAlgo::new(AlgoId::EcdsaSha256);
+
+        let message = b"Test message for comparing streaming vs non-streaming operations";
+
+        // Non-streaming sign
+        let sig_len = algo.signature_len(&keypair).unwrap() as usize;
+        let mut non_streaming_sig = vec![0u8; sig_len];
+        session
+            .sign(&algo, &keypair, message, &mut non_streaming_sig)
+            .expect("Failed to sign non-streaming");
+
+        // Streaming sign
+        let mut sign_stream = session
+            .sign_init(&algo, &keypair)
+            .expect("Failed to init sign stream");
+        sign_stream
+            .update(message)
+            .expect("Failed to update sign stream");
+        let mut streaming_sig = vec![0u8; sig_len];
+        sign_stream
+            .finalize(&mut streaming_sig)
+            .expect("Failed to finalize sign stream");
+
+        // Verify non-streaming signature with streaming verify
+        let mut verify_stream = session
+            .verify_init(&algo, &keypair)
+            .expect("Failed to init verify stream");
+        verify_stream
+            .update(message)
+            .expect("Failed to update verify stream");
+        verify_stream
+            .finalize(&non_streaming_sig)
+            .expect("Failed to verify non-streaming signature with streaming verify");
+
+        // Verify streaming signature with non-streaming verify
+        session
+            .verify(&algo, &keypair, message, &streaming_sig)
+            .expect("Failed to verify streaming signature with non-streaming verify");
+
+        // Clean up
+        session
+            .delete_key(&mut keypair)
+            .expect("Failed to delete key pair");
+        session.close().expect("Failed to close session");
+    }
+
+    #[test]
+    fn test_ecdsa_streaming_sign_insufficient_buffer() {
+        let (_partition, mut session) = create_test_session();
+
+        let key_props = KeyProps::builder()
+            .ecc_curve(EcCurve::P256)
+            .sign(true)
+            .verify(true)
+            .build();
+
+        let mut keypair = EcdsaKeyPair::new(key_props.clone(), key_props);
+
+        session
+            .generate_key_pair(&mut keypair)
+            .expect("Failed to generate key pair");
+
+        let algo = EcdsaAlgo::new(AlgoId::EcdsaSha256);
+
+        // Initialize and update sign stream
+        let mut sign_stream = session
+            .sign_init(&algo, &keypair)
+            .expect("Failed to init sign stream");
+        sign_stream
+            .update(b"Test message")
+            .expect("Failed to update");
+
+        // Try to finalize with insufficient buffer
+        let mut small_signature = vec![0u8; sign_stream.signature_len().unwrap() as usize - 1];
+
+        let result = sign_stream.finalize(&mut small_signature);
+        assert!(
+            result.is_err(),
+            "Finalize should fail with insufficient buffer"
+        );
+        assert_eq!(result.unwrap_err(), AZIHSM_ERROR_INSUFFICIENT_BUFFER);
+
+        // Clean up
+        session
+            .delete_key(&mut keypair)
+            .expect("Failed to delete key pair");
         session.close().expect("Failed to close session");
     }
 }

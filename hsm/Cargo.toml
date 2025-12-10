@@ -46,6 +46,7 @@ log = "0.4"
 minicbor = { version = "0.19.1", features = ["derive", "std"] }
 nix = "0.26"
 openssl = { version = "0.10.68" }
+openssl-sys = "0.9"
 parking_lot = "0.12"
 quote = "1.0"
 rand = "0.8"

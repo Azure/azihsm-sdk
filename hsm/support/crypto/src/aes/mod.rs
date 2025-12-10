@@ -25,6 +25,31 @@ pub enum AesKeySize {
     Aes256,
 }
 
+impl AesKeySize {
+    /// Returns the key size in bytes.
+    ///
+    /// # Returns
+    /// * `16` for AES-128
+    /// * `24` for AES-192
+    /// * `32` for AES-256
+    pub fn key_len(self) -> usize {
+        match self {
+            AesKeySize::Aes128 => 16,
+            AesKeySize::Aes192 => 24,
+            AesKeySize::Aes256 => 32,
+        }
+    }
+
+    /// Returns the key size in bits.
+    pub fn key_bits(self) -> usize {
+        match self {
+            AesKeySize::Aes128 => 128,
+            AesKeySize::Aes192 => 192,
+            AesKeySize::Aes256 => 256,
+        }
+    }
+}
+
 /// Padding enable/disable option for AES CBC operations.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum AesCbcPadding {

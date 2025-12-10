@@ -311,6 +311,45 @@ pub enum CryptoError {
     /// Input data to encrypt is too large for the key/padding
     #[error("RSA encrypt input is too large for the key/padding")]
     RsaEncryptInputTooLarge,
+    /// AES key to wrap is empty
+    #[error("RSA wrap input is empty")]
+    RsaWrapInputEmpty,
+    /// Output buffer for wrapped key is empty
+    #[error("RSA wrap output buffer is empty")]
+    RsaWrapOutputBufferEmpty,
+    /// AES key length does not match expected size
+    #[error("RSA wrap input wrong size")]
+    RsaWrapInputWrongSize,
+    /// Wrapped key to unwrap is empty
+    #[error("RSA unwrap input is empty")]
+    RsaUnwrapInputEmpty,
+    /// Output buffer for unwrapped key is empty
+    #[error("RSA unwrap output buffer is empty")]
+    RsaUnwrapOutputBufferEmpty,
+    // Unwrap buffer is too small
+    #[error("RSA unwrap output buffer too small")]
+    RsaUnwrapOutputBufferTooSmall,
+    /// Unwrapped AES key length does not match expected size
+    #[error("RSA unwrap output wrong size")]
+    RsaUnwrapOutputWrongSize,
+    /// Output buffer for wrapped blob is too small
+    #[error("RSA wrap output buffer too small")]
+    RsaWrapOutputBufferTooSmall,
+    /// Failed to generate random AES session key
+    #[error("RSA wrap AES key generation failed")]
+    RsaWrapAesKeyGenFailed,
+    /// Failed to encrypt user data with AES
+    #[error("RSA wrap AES encryption failed")]
+    RsaWrapAesEncryptFailed,
+    /// Wrapped blob is too small to contain valid data
+    #[error("RSA unwrap input too small")]
+    RsaUnwrapInputTooSmall,
+    /// Failed to decrypt user data with AES
+    #[error("RSA unwrap AES decryption failed")]
+    RsaUnwrapAesDecryptFailed,
+    /// Invalid wrapped blob format
+    #[error("RSA unwrap invalid blob format")]
+    RsaUnwrapInvalidBlobFormat,
     // ECDH specific errors
     #[error("ECDH internal error")]
     EcdhInternalError,

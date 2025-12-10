@@ -7,14 +7,25 @@ use parking_lot::RwLock;
 
 use crate::crypto::Algo;
 use crate::crypto::DecryptOp;
+use crate::crypto::DeriveOp;
 use crate::crypto::EncryptOp;
 use crate::crypto::Key;
 use crate::crypto::KeyDeleteOp;
 use crate::crypto::KeyGenOp;
 use crate::crypto::KeyId;
+use crate::crypto::KeyUnwrapOp;
+use crate::crypto::KeyWrapOp;
 use crate::crypto::SignOp;
+use crate::crypto::StreamingEncDecAlgo;
+use crate::crypto::StreamingSignVerifyAlgo;
 use crate::crypto::VerifyOp;
 use crate::ddi;
+use crate::types::key_props::AzihsmKeyPropId;
+use crate::types::key_props::KeyPairPropsOps;
+use crate::types::key_props::KeyPropValue;
+use crate::types::key_props::KeyProps;
+use crate::types::key_props::KeyPropsOps;
+use crate::types::AlgoId;
 use crate::AzihsmError;
 use crate::PartitionInner;
 use crate::AZIHSM_CLOSE_SESSION_FAILED;
@@ -201,7 +212,110 @@ impl Session {
         key.generate_key_pair(self)
     }
 
-    /// Delete a cryptographic key from the HSM.
+    /// Unwrap a cryptographic key using this session.
+    ///
+    /// # Parameters
+    /// * `key` - The key object to use for unwrapping (contains the unwrapping key).
+    /// * `algo` - The algorithm specification for the unwrap operation.
+    /// * `wrapped_blob` - The wrapped key data to unwrap.
+    /// * `unwrapped_key_props` - Properties for the key that will be unwrapped.
+    ///
+    /// # Returns
+    /// `Result<KeyId, AzihsmError>` - Ok with the KeyId of the unwrapped key if successful,
+    /// Err if the key unwrapping failed.
+    ///
+    #[allow(private_bounds)]
+    pub fn unwrap<A, K>(
+        &self,
+        key: &K,
+        algo: &A,
+        wrapped_blob: &[u8],
+        unwrapped_key_props: &KeyProps,
+    ) -> Result<KeyId, AzihsmError>
+    where
+        A: Algo,
+        K: Key + KeyUnwrapOp<A>,
+    {
+        // Unwrap the key using the key's implementation
+        key.unwrap(self, algo, wrapped_blob, unwrapped_key_props)
+    }
+
+    /// Get the maximum unwrap length for RSA OAEP unwrapping.
+    ///
+    /// # Parameters
+    /// * `hash_algo_id` - The identifier of the hash algorithm to use
+    /// * `key_size` - The size of the key in bytes
+    /// # Returns
+    /// `Result<usize, AzihsmError>` - Ok with the maximum unwrap length,
+    /// Err if the operation failed.
+    #[allow(private_bounds)]
+    pub fn unwrap_max_len<A: Algo, K: Key + KeyUnwrapOp<A>>(
+        &self,
+        key: &K,
+        hash_algo_id: AlgoId,
+    ) -> Result<usize, AzihsmError> {
+        // Get the maximum unwrap length using the session
+        key.unwrap_max_len(hash_algo_id)
+    }
+
+    /// Wrap user data using the specified algorithm and key.
+    ///
+    /// This function performs a cryptographic wrapping operation using the specified
+    /// algorithm and wrapping key. The wrapped data is written to the provided buffer.
+    ///
+    /// # Parameters
+    /// * `key` - The key to use for wrapping.
+    /// * `algo` - The algorithm specification to use for wrapping.
+    /// * `user_data` - The user data to wrap.
+    /// * `wrapped_data` - The buffer to store the wrapped data.
+    ///
+    /// # Returns
+    /// `Result<usize, AzihsmError>` - Ok with bytes written if the wrapping was successful,
+    /// Err if the wrapping failed.
+    ///
+    #[allow(private_bounds)]
+    pub fn wrap<A, K>(
+        &self,
+        key: &K,
+        algo: &A,
+        user_data: &[u8],
+        wrapped_data: &mut [u8],
+    ) -> Result<usize, AzihsmError>
+    where
+        A: Algo,
+        K: Key + KeyWrapOp<A>,
+    {
+        // Wrap the data using the key's implementation
+        key.wrap(self, algo, user_data, wrapped_data)
+    }
+
+    /// Get the required buffer length for wrapping user data.
+    ///
+    /// # Parameters
+    /// * `key` - The key to use for wrapping.
+    /// * `algo` - The algorithm specification to use for wrapping.
+    /// * `user_data_len` - The length of user data to wrap.
+    ///
+    /// # Returns
+    /// `Result<usize, AzihsmError>` - Ok with required buffer length,
+    /// Err if the operation failed.
+    ///
+    #[allow(private_bounds)]
+    pub fn wrap_len<A, K>(
+        &self,
+        key: &K,
+        algo: &A,
+        user_data_len: usize,
+    ) -> Result<usize, AzihsmError>
+    where
+        A: Algo,
+        K: Key + KeyWrapOp<A>,
+    {
+        // Get the required buffer length using the key's implementation
+        key.wrap_len(algo, user_data_len)
+    }
+
+    /// Delete a cryptographic key using this session.
     ///
     /// # Parameters
     /// * `key_id` - The identifier of the key to delete.
@@ -234,6 +348,129 @@ impl Session {
         key.delete_priv_key(self)
     }
 
+    ///
+    /// Get a property from a symmetric key.
+    ///
+    /// # Parameters
+    /// * `key` - Reference to the symmetric key
+    /// * `id` - The property ID to get
+    ///
+    /// # Returns
+    /// `Result<KeyPropValue, AzihsmError>` - The property value if successful.
+    #[allow(dead_code)]
+    pub(crate) fn get_property<K>(
+        &self,
+        key: &K,
+        id: AzihsmKeyPropId,
+    ) -> Result<KeyPropValue, AzihsmError>
+    where
+        K: Key + KeyPropsOps,
+    {
+        key.get_property(id)
+    }
+
+    /// Get a property from an asymmetric key pair's public key.
+    ///
+    /// # Parameters
+    /// * `key` - Reference to the key pair
+    /// * `id` - The property ID to get
+    ///
+    /// # Returns
+    /// `Result<KeyPropValue, AzihsmError>` - The property value if successful.
+    pub(crate) fn get_pub_property<K>(
+        &self,
+        key: &K,
+        id: AzihsmKeyPropId,
+    ) -> Result<KeyPropValue, AzihsmError>
+    where
+        K: Key + KeyPairPropsOps,
+    {
+        key.get_pub_property(id)
+    }
+
+    /// Get a property from an asymmetric key pair's private key.
+    ///
+    /// # Parameters
+    /// * `key` - Reference to the key pair
+    /// * `id` - The property ID to get
+    ///
+    /// # Returns
+    /// `Result<KeyPropValue, AzihsmError>` - The property value if successful.
+    pub(crate) fn get_priv_property<K>(
+        &self,
+        key: &K,
+        id: AzihsmKeyPropId,
+    ) -> Result<KeyPropValue, AzihsmError>
+    where
+        K: Key + KeyPairPropsOps,
+    {
+        key.get_priv_property(id)
+    }
+
+    /// Set a property on a symmetric key.
+    ///
+    /// # Parameters
+    /// * `key` - Reference to the symmetric key
+    /// * `id` - The property ID to set
+    /// * `value` - The property value to set
+    ///
+    /// # Returns
+    /// `Result<(), AzihsmError>` - Ok if successful, Err if the operation failed.
+    #[allow(dead_code)]
+    pub(crate) fn set_property<K>(
+        &self,
+        key: &mut K,
+        id: AzihsmKeyPropId,
+        value: KeyPropValue,
+    ) -> Result<(), AzihsmError>
+    where
+        K: Key + KeyPropsOps,
+    {
+        key.set_property(id, value)
+    }
+
+    /// Set a property on an asymmetric key pair's public key.
+    ///
+    /// # Parameters
+    /// * `key` - Reference to the key pair
+    /// * `id` - The property ID to set
+    /// * `value` - The property value to set
+    ///
+    /// # Returns
+    /// `Result<(), AzihsmError>` - Ok if successful, Err if the operation failed.
+    pub(crate) fn set_pub_property<K>(
+        &self,
+        key: &mut K,
+        id: AzihsmKeyPropId,
+        value: KeyPropValue,
+    ) -> Result<(), AzihsmError>
+    where
+        K: Key + KeyPairPropsOps,
+    {
+        key.set_pub_property(id, value)
+    }
+
+    /// Set a property on an asymmetric key pair's private key.
+    ///
+    /// # Parameters
+    /// * `key` - Reference to the key pair
+    /// * `id` - The property ID to set
+    /// * `value` - The property value to set
+    ///
+    /// # Returns
+    /// `Result<(), AzihsmError>` - Ok if successful, Err if the operation failed.
+    pub(crate) fn set_priv_property<K>(
+        &self,
+        key: &mut K,
+        id: AzihsmKeyPropId,
+        value: KeyPropValue,
+    ) -> Result<(), AzihsmError>
+    where
+        K: Key + KeyPairPropsOps,
+    {
+        key.set_priv_property(id, value)
+    }
+
     /// Encrypt data using the specified algorithm and key.
     ///
     /// # Parameters
@@ -247,10 +484,10 @@ impl Session {
     /// Err if the encryption failed.
     ///
     #[allow(private_bounds)]
-    pub fn encrypt<A: Algo + EncryptOp>(
+    pub fn encrypt<K: Key, A: Algo + EncryptOp<K>>(
         &self,
         algo: &mut A,
-        key: KeyId,
+        key: &K,
         pt: &[u8],
         ct: &mut [u8],
     ) -> Result<usize, AzihsmError> {
@@ -270,10 +507,10 @@ impl Session {
     /// Err if the decryption failed.
     ///
     #[allow(private_bounds)]
-    pub fn decrypt<A: Algo + DecryptOp>(
+    pub fn decrypt<K: Key, A: Algo + DecryptOp<K>>(
         &self,
         algo: &mut A,
-        key: KeyId,
+        key: &K,
         ct: &[u8],
         pt: &mut [u8],
     ) -> Result<usize, AzihsmError> {
@@ -282,11 +519,14 @@ impl Session {
 
     /// Sign data using the specified algorithm and key.
     ///
+    /// This function performs a cryptographic signing operation using the specified
+    /// algorithm and private key. The signature is written to the provided buffer.
+    ///
     /// # Parameters
-    /// * `algo` - The algorithm to use for signing.
-    /// * `key_id` - The identifier of the private key to use for signing.
+    /// * `algo` - The algorithm specification to use for signing.
+    /// * `key` - The private key to use for signing.
     /// * `data` - The data to sign.
-    /// * `signature` - The buffer to store the signature.
+    /// * `signature` - The buffer to store the generated signature.
     ///
     /// # Returns
     /// `Result<(), AzihsmError>` - Ok if the signing was successful,
@@ -296,7 +536,7 @@ impl Session {
     pub fn sign<A, K>(
         &self,
         algo: &A,
-        key_id: KeyId,
+        key: &K,
         data: &[u8],
         signature: &mut [u8],
     ) -> Result<(), AzihsmError>
@@ -304,7 +544,7 @@ impl Session {
         A: Algo + SignOp<K>,
         K: Key,
     {
-        algo.sign(self, key_id, data, signature)
+        algo.sign(self, key, data, signature)
     }
 
     /// Verify a signature using the specified algorithm and key.
@@ -331,7 +571,106 @@ impl Session {
         A: Algo + VerifyOp<K>,
         K: Key,
     {
-        algo.verify(key, data, signature)
+        algo.verify(self, key, data, signature)
+    }
+
+    /// Create a streaming encryption context
+    ///
+    /// # Parameters
+    /// * `algo` - The algorithm to use for encryption
+    /// * `key` - The key to use for encryption
+    ///
+    /// # Returns
+    /// `Result<A::EncryptStream, AzihsmError>` - The streaming encryption context
+    ///
+    #[allow(private_bounds)]
+    pub fn encrypt_init<'a, A, K>(
+        &'a self,
+        algo: &A,
+        key: &K,
+    ) -> Result<A::EncryptStream, AzihsmError>
+    where
+        A: StreamingEncDecAlgo<'a, K>,
+        K: Key,
+    {
+        algo.encrypt_init(self, key)
+    }
+
+    /// Create a streaming decryption context
+    ///
+    /// # Parameters
+    /// * `algo` - The algorithm to use for decryption
+    /// * `key` - The key to use for decryption
+    ///
+    /// # Returns
+    /// `Result<A::DecryptStream, AzihsmError>` - The streaming decryption context
+    ///
+    //#[allow(private_bounds)]
+    pub fn decrypt_init<'a, A, K>(
+        &'a self,
+        algo: &A,
+        key: &K,
+    ) -> Result<A::DecryptStream, AzihsmError>
+    where
+        A: StreamingEncDecAlgo<'a, K>,
+        K: Key,
+    {
+        algo.decrypt_init(self, key)
+    }
+
+    /// Initialize a streaming sign operation.
+    ///
+    /// # Parameters
+    /// * `algo` - The algorithm to use for signing.
+    /// * `key` - The key to use for signing.
+    ///
+    /// # Returns
+    /// A streaming sign context that can be updated with data and finalized to produce a signature.
+    ///
+    #[allow(private_bounds)]
+    pub fn sign_init<'a, A, K>(&'a self, algo: &A, key: &K) -> Result<A::SignStream, AzihsmError>
+    where
+        A: Algo + StreamingSignVerifyAlgo<'a, K>,
+        K: Key,
+    {
+        algo.sign_init(self, key)
+    }
+
+    /// Initialize a streaming verify operation.
+    ///
+    /// # Parameters
+    /// * `algo` - The algorithm to use for verification.
+    /// * `key` - The key to use for verification.
+    ///
+    /// # Returns
+    /// A streaming verify context that can be updated with data and finalized to verify a signature.
+    ///
+    #[allow(private_bounds)]
+    pub fn verify_init<'a, A, K>(
+        &'a self,
+        algo: &A,
+        key: &K,
+    ) -> Result<A::VerifyStream, AzihsmError>
+    where
+        A: Algo + StreamingSignVerifyAlgo<'a, K>,
+        K: Key,
+    {
+        algo.verify_init(self, key)
+    }
+
+    /// Initialize a streaming digest operation.
+    ///
+    /// # Parameters
+    /// * `algo` - The digest algorithm to use for streaming digest operations.
+    ///
+    /// # Returns
+    /// `Result<A::DigestStream, AzihsmError>` - Ok with a digest stream context that can be updated with data and finalized to produce the digest,
+    /// Err if the initialization failed.
+    pub fn digest_init<'a, A>(&'a self, algo: &A) -> Result<A::DigestStream, AzihsmError>
+    where
+        A: crate::crypto::StreamingDigestAlgo<'a>,
+    {
+        algo.digest_init(self)
     }
 
     /// Close the session
@@ -359,6 +698,30 @@ impl Session {
         self.closed = true;
 
         Ok(())
+    }
+
+    /// Derive a new key from a base key using key derivation algorithms
+    ///
+    /// # Parameters
+    /// * `algo` - The algorithm specification to use for key derivation
+    /// * `base_key` - The base key to derive from
+    /// * `derived_key_props` - Properties for the derived key that will be created
+    ///
+    /// # Returns
+    /// `Result<KeyId, AzihsmError>` - Ok with the KeyId of the derived key if successful,
+    /// Err if the key derivation failed
+    ///
+    pub(crate) fn key_derive<A, K>(
+        &self,
+        algo: &A,
+        base_key: &K,
+        derived_key_props: &KeyProps,
+    ) -> Result<KeyId, AzihsmError>
+    where
+        A: Algo + DeriveOp<K>,
+        K: Key,
+    {
+        algo.key_derive(self, base_key, derived_key_props)
     }
 }
 

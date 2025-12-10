@@ -267,10 +267,6 @@ fn test_attest_rsa_unwrapping_key() {
                 panic!()
             };
 
-            // Hardware device returns a big-endian slice.
-            // Convert to little-endian and then compare.
-            let e: Vec<u8> = e.iter().rev().cloned().collect();
-
             let result = rsa_pub.public_exponent();
             assert!(result.is_ok(), "result {:?}", result);
             let expected_e = result.unwrap();
@@ -279,8 +275,13 @@ fn test_attest_rsa_unwrapping_key() {
             assert!(result.is_ok(), "result {:?}", result);
             let expected_n = result.unwrap();
 
-            assert_eq!(e, expected_e);
-            assert_eq!(n, expected_n);
+            // Hardware device returns big-endian slices.
+            // Crypto library returns little-endian, so convert expected_e to big-endian.
+            // Convert little-endian expected_e to big-endian, then normalize both to strip leading zeros
+            let expected_e_be: Vec<u8> = expected_e.iter().rev().cloned().collect();
+
+            assert_eq!(normalized_key(&e), normalized_key(&expected_e_be));
+            assert_eq!(normalized_key(&n), normalized_key(&expected_n));
         },
     );
 }
@@ -347,10 +348,6 @@ fn test_attest_rsa_decryption_key() {
                 panic!()
             };
 
-            // Hardware device returns a big-endian slice.
-            // Convert to little-endian and then compare.
-            let e: Vec<u8> = e.iter().rev().cloned().collect();
-
             let result = rsa_pub.public_exponent();
             assert!(result.is_ok(), "result {:?}", result);
             let expected_e = result.unwrap();
@@ -359,8 +356,13 @@ fn test_attest_rsa_decryption_key() {
             assert!(result.is_ok(), "result {:?}", result);
             let expected_n = result.unwrap();
 
-            assert_eq!(e, expected_e);
-            assert_eq!(n, expected_n);
+            // Hardware device returns big-endian slices.
+            // Crypto library returns little-endian, so convert expected_e to big-endian.
+            // Convert little-endian expected_e to big-endian, then normalize both to strip leading zeros
+            let expected_e_be: Vec<u8> = expected_e.iter().rev().cloned().collect();
+
+            assert_eq!(normalized_key(&e), normalized_key(&expected_e_be));
+            assert_eq!(normalized_key(&n), normalized_key(&expected_n));
         },
     );
 }

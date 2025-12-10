@@ -369,13 +369,7 @@ fn trigger_crash(
         &mut dev,
         vault_manager_sess_id,
         DdiTestAction::TriggerCrash,
-        Some(DdiTestActionCrashReqInfo { crash_type, cpu_id }),
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
+        DdiTestActionContext::CrashInfo(DdiTestActionCrashReqInfo { crash_type, cpu_id }),
     );
     assert!(resp.is_err(), "resp {:?}", resp);
 

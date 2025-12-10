@@ -1,6 +1,7 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
 
 #![warn(missing_docs)]
+use std::slice;
 
 use asn1::*;
 use windows::core::PCWSTR;
@@ -965,7 +966,28 @@ impl RsaKeyOps<RsaPublicKeyHandle> for RsaPublicKeyHandle {
         Ok(spki_estimated)
     }
 }
+#[allow(unsafe_code)]
+fn pcwstr_to_u8_vec(pcwstr: PCWSTR) -> Vec<u8> {
+    //SAFETY: use unsafe section to convert PCWSTR to vec
+    unsafe {
+        let mut len = 0;
+        let ptr = pcwstr.0;
 
+        // Count UTF-16 code units until null terminator
+        while *ptr.add(len) != 0 {
+            len += 1;
+        }
+
+        // Include null terminator
+        let u16_slice = slice::from_raw_parts(ptr, len + 1);
+
+        // Convert &[u16] to &[u8] by reinterpreting the memory
+        let byte_ptr = u16_slice.as_ptr() as *const u8;
+        let byte_len = u16_slice.len() * 2;
+
+        slice::from_raw_parts(byte_ptr, byte_len).to_vec()
+    }
+}
 impl RsaPublicKeyOp for RsaPublicKeyHandle {
     /// Encrypts the given data using the specified padding, hash algorithm, and optional label.
     ///
@@ -1027,20 +1049,28 @@ impl RsaPublicKeyOp for RsaPublicKeyHandle {
             }
         }
 
-        // Prepare padding info
+        // Prepare padding info - ensure it lives for the entire function
+        // Create padding info outside match to ensure lifetime
+        let oaep_padding_info: Option<BCRYPT_OAEP_PADDING_INFO>;
+        #[allow(unused_assignments)]
         let (padding_info_ptr, padding_flags) = match padding {
             RsaCryptPadding::Oaep => {
                 let algo_id = get_hash_algo_id(hash_algo);
-                let padding_info = BCRYPT_OAEP_PADDING_INFO {
+                let info = BCRYPT_OAEP_PADDING_INFO {
                     pszAlgId: algo_id,
                     pbLabel: label.map_or(std::ptr::null_mut(), |l| l.as_ptr() as *mut u8),
                     cbLabel: label.map_or(0, |l| l.len() as u32),
                 };
-                let padding_info_ptr = &padding_info as *const _ as *const std::ffi::c_void;
+                oaep_padding_info = Some(info);
+                let padding_info_ptr =
+                    oaep_padding_info.as_ref().unwrap() as *const _ as *const std::ffi::c_void;
                 (Some(padding_info_ptr), BCRYPT_PAD_OAEP)
             }
             // For None, flags must be BCRYPT_FLAGS(0) (not BCRYPT_PAD_NONE or 0)
-            RsaCryptPadding::None => (None, BCRYPT_FLAGS(0)),
+            RsaCryptPadding::None => {
+                oaep_padding_info = None;
+                (None, BCRYPT_FLAGS(0))
+            }
         };
 
         // Read required size
@@ -1137,6 +1167,10 @@ impl RsaPublicKeyOp for RsaPublicKeyHandle {
             }
         }
 
+        // Create padding structures outside match to ensure lifetime spans entire function
+        let pss_padding_info: Option<BCRYPT_PSS_PADDING_INFO>;
+        let pkcs1_padding_info: Option<BCRYPT_PKCS1_PADDING_INFO>;
+        #[allow(unused_assignments)]
         let (padding_info_ptr, padding_flags) = match padding {
             RsaSignaturePadding::Pss => {
                 let salt_len = match salt_size {
@@ -1148,17 +1182,23 @@ impl RsaPublicKeyOp for RsaPublicKeyHandle {
                 };
                 validate_pss_salt_len_with_modulus(self.size()?, hash_algo, salt_len)?;
                 let algo_id = get_hash_algo_id(hash_algo);
-                let padding_info = BCRYPT_PSS_PADDING_INFO {
+                pss_padding_info = Some(BCRYPT_PSS_PADDING_INFO {
                     pszAlgId: algo_id,
                     cbSalt: salt_len as u32,
-                };
-                let padding_info_ptr = &padding_info as *const _ as *const std::ffi::c_void;
+                });
+                pkcs1_padding_info = None;
+                let padding_info_ptr =
+                    pss_padding_info.as_ref().unwrap() as *const _ as *const std::ffi::c_void;
                 (Some(padding_info_ptr), BCRYPT_PAD_PSS)
             }
             RsaSignaturePadding::Pkcs1_5 => {
                 let algo_id = get_hash_algo_id(hash_algo);
-                let padding_info = BCRYPT_PKCS1_PADDING_INFO { pszAlgId: algo_id };
-                let padding_info_ptr = &padding_info as *const _ as *const std::ffi::c_void;
+
+                pss_padding_info = None; // Unused variable
+
+                pkcs1_padding_info = Some(BCRYPT_PKCS1_PADDING_INFO { pszAlgId: algo_id });
+                let padding_info_ptr =
+                    pkcs1_padding_info.as_ref().unwrap() as *const _ as *const std::ffi::c_void;
                 (Some(padding_info_ptr), BCRYPT_PAD_PKCS1)
             }
         };
@@ -1245,6 +1285,201 @@ impl RsaPublicKeyOp for RsaPublicKeyHandle {
         }
         Ok(modulus_size)
     }
+
+    /// Wraps user data using RSA wrap encryption (AES-KW2 + RSA-OAEP).
+    ///
+    /// This function implements a RSA wrap encryption scheme:
+    /// 1. Generates a random AES key-encryption-key (KEK)
+    /// 2. Encrypts the user data with AES Key Wrap 2 (RFC 5649)
+    /// 3. Encrypts the AES KEK with RSA-OAEP
+    /// 4. Returns: [RSA-OAEP Encrypted AES KEK | AES-KW2 Encrypted User Data]
+    ///
+    /// # Arguments
+    /// * `user_data` - The plaintext user data to wrap.
+    /// * `aes_key_size` - The size of the AES KEK to generate.
+    /// * `hash_algo` - The OAEP hash algorithm for RSA encryption.
+    /// * `label` - Optional OAEP label.
+    /// * `wrapped_data` - Output buffer for the complete wrapped blob.
+    ///
+    /// # Returns
+    /// * `Ok(&[u8])` - The wrapped blob bytes.
+    /// * `Err(CryptoError)` - If wrapping fails.
+    #[allow(unsafe_code)]
+    fn rsa_wrap<'a>(
+        &self,
+        user_data: &[u8],
+        aes_key_size: AesKeySize,
+        hash_algo: HashAlgo,
+        label: Option<&[u8]>,
+        wrapped_blob: &'a mut [u8],
+    ) -> Result<&'a [u8], CryptoError> {
+        // Input validation
+        if user_data.is_empty() {
+            tracing::error!("User data to wrap is empty");
+            return Err(CryptoError::RsaWrapInputEmpty);
+        }
+        if wrapped_blob.is_empty() {
+            tracing::error!("Output buffer for wrapped blob is empty");
+            return Err(CryptoError::RsaWrapOutputBufferEmpty);
+        }
+
+        // Check if output buffer is large enough
+        let required_size = self.rsa_wrap_len(user_data.len(), aes_key_size, hash_algo)?;
+        if wrapped_blob.len() < required_size {
+            tracing::error!(
+                "Output buffer too small: required {}, got {}",
+                required_size,
+                wrapped_blob.len()
+            );
+            return Err(CryptoError::RsaWrapOutputBufferTooSmall);
+        }
+
+        // Step 1: Generate random AES KEK using Windows CNG
+        let aes_kek_len = aes_key_size.key_len();
+        let mut aes_kek = vec![0u8; aes_kek_len];
+        // SAFETY: BCryptGenRandom with default provider is safe for generating random bytes
+        let status = unsafe {
+            BCryptGenRandom(
+                BCRYPT_ALG_HANDLE::default(),
+                &mut aes_kek,
+                BCRYPT_USE_SYSTEM_PREFERRED_RNG,
+            )
+        };
+        if status != STATUS_SUCCESS {
+            tracing::error!("Failed to generate random AES KEK: {:?}", status);
+            return Err(CryptoError::RsaWrapAesKeyGenFailed);
+        }
+
+        // Step 2: Open AES algorithm provider for Key Wrap
+        let mut aes_alg_handle = BCRYPT_ALG_HANDLE::default();
+        // SAFETY: BCryptOpenAlgorithmProvider is safe with valid parameters
+        let status = unsafe {
+            BCryptOpenAlgorithmProvider(
+                &mut aes_alg_handle,
+                BCRYPT_AES_ALGORITHM,
+                None,
+                BCRYPT_OPEN_ALGORITHM_PROVIDER_FLAGS(0),
+            )
+        };
+        if status != STATUS_SUCCESS {
+            tracing::error!("Failed to open AES algorithm provider: {:?}", status);
+            return Err(CryptoError::RsaWrapAesEncryptFailed);
+        }
+
+        // Step 3: Set AES chaining mode to ECB for manual Key Wrap implementation
+        let ecb_mode_bytes = pcwstr_to_u8_vec(BCRYPT_CHAIN_MODE_ECB);
+
+        // SAFETY: BCryptSetProperty is safe with valid handle and data
+        let status = unsafe {
+            BCryptSetProperty(
+                aes_alg_handle.into(),
+                BCRYPT_CHAINING_MODE,
+                ecb_mode_bytes.as_slice(),
+                0,
+            )
+        };
+        if status != STATUS_SUCCESS {
+            tracing::error!("Failed to set AES-ECB mode: {:?}", status);
+            // SAFETY: Close the algorithm handle on error
+            unsafe {
+                let _ = BCryptCloseAlgorithmProvider(aes_alg_handle, 0);
+            }
+            return Err(CryptoError::RsaWrapAesEncryptFailed);
+        }
+
+        // Step 4: Import the AES KEK
+        let mut aes_key_handle = BCRYPT_KEY_HANDLE::default();
+        // SAFETY: BCryptGenerateSymmetricKey is safe with valid parameters
+        let status = unsafe {
+            BCryptGenerateSymmetricKey(aes_alg_handle, &mut aes_key_handle, None, &aes_kek, 0)
+        };
+        if status != STATUS_SUCCESS {
+            tracing::error!("Failed to import AES KEK: {:?}", status);
+            // SAFETY: Close the algorithm handle on error
+            unsafe {
+                let _ = BCryptCloseAlgorithmProvider(aes_alg_handle, 0);
+            }
+            return Err(CryptoError::RsaWrapAesEncryptFailed);
+        }
+
+        // Step 5: Perform AES-KW2 encryption using our implementation
+        let rsa_encrypted_len =
+            self.rsa_encrypt_len(aes_kek_len, RsaCryptPadding::Oaep, hash_algo)?;
+        let aes_wrapped_offset = rsa_encrypted_len;
+
+        // Perform AES-KW2 encryption
+        let actual_wrapped_len = aes_kw2_wrap(
+            aes_key_handle,
+            user_data,
+            &mut wrapped_blob[aes_wrapped_offset..],
+        )
+        .inspect_err(|_e| {
+            // Cleanup on error
+            // SAFETY: Cleanup CNG handles on error, safe to ignore return values
+            unsafe {
+                let _ = BCryptDestroyKey(aes_key_handle);
+                let _ = BCryptCloseAlgorithmProvider(aes_alg_handle, 0);
+            }
+        })?;
+
+        // Cleanup AES resources
+        // SAFETY: Cleanup CNG handles after successful operation, safe to ignore return values
+        unsafe {
+            let _ = BCryptDestroyKey(aes_key_handle);
+            let _ = BCryptCloseAlgorithmProvider(aes_alg_handle, 0);
+        }
+
+        // Step 6: Encrypt AES KEK with RSA-OAEP
+        let mut rsa_encrypted_key = vec![0u8; rsa_encrypted_len];
+        let rsa_encrypted = self.rsa_encrypt(
+            &aes_kek,
+            RsaCryptPadding::Oaep,
+            hash_algo,
+            label,
+            &mut rsa_encrypted_key,
+        )?;
+
+        // Step 7: Build the final blob: [RSA-OAEP Encrypted AES KEK | AES Key Wrap Encrypted User Data]
+        let mut offset = 0;
+
+        // Copy RSA-encrypted AES KEK
+        wrapped_blob[offset..offset + rsa_encrypted.len()].copy_from_slice(rsa_encrypted);
+        offset += rsa_encrypted.len();
+
+        // AES-KW2 wrapped data is already in place at the correct offset
+        offset += actual_wrapped_len;
+
+        tracing::debug!(
+            "RSA wrap successful: RSA KEK={}, AES wrapped data={}, total={}",
+            rsa_encrypted.len(),
+            actual_wrapped_len,
+            offset
+        );
+
+        Ok(&wrapped_blob[..offset])
+    }
+
+    /// Returns the required output buffer size for RSA wrapping.
+    fn rsa_wrap_len(
+        &self,
+        user_data_len: usize,
+        aes_key_size: AesKeySize,
+        hash_algo: HashAlgo,
+    ) -> Result<usize, CryptoError> {
+        let aes_kek_len = aes_key_size.key_len();
+
+        // RSA-encrypted AES KEK size
+        let rsa_encrypted_size =
+            self.rsa_encrypt_len(aes_kek_len, RsaCryptPadding::Oaep, hash_algo)?;
+
+        // AES Key Wrap 2 output size (RFC 5649): padded to 8-byte boundary + 8 bytes ICV
+        // The Key Wrap 2 algorithm pads input to 8-byte boundary and adds 8 bytes ICV
+        let padded_len = user_data_len.div_ceil(8) * 8; // Round up to 8-byte boundary
+        let aes_wrapped_size = padded_len + 8;
+
+        let total_size = rsa_encrypted_size + aes_wrapped_size;
+        Ok(total_size)
+    }
 }
 
 impl RsaPrivateKeyOp for RsaPrivateKeyHandle {
@@ -1278,20 +1513,28 @@ impl RsaPrivateKeyOp for RsaPrivateKeyHandle {
             tracing::error!("Output buffer for decrypted data is empty");
             return Err(CryptoError::RsaDecryptOutputBufferEmpty);
         }
+        // Create padding structure outside match to ensure lifetime spans entire function
+        let oaep_padding_info: Option<BCRYPT_OAEP_PADDING_INFO>;
+
         // Prepare padding info
+        #[allow(unused_assignments)]
         let (padding_info_ptr, padding_flags) = match padding {
             RsaCryptPadding::Oaep => {
                 let algo_id = get_hash_algo_id(hash_algo);
-                let padding_info = BCRYPT_OAEP_PADDING_INFO {
+                oaep_padding_info = Some(BCRYPT_OAEP_PADDING_INFO {
                     pszAlgId: algo_id,
                     pbLabel: label.map_or(std::ptr::null_mut(), |l| l.as_ptr() as *mut u8),
                     cbLabel: label.map_or(0, |l| l.len() as u32),
-                };
-                let padding_info_ptr = &padding_info as *const _ as *const std::ffi::c_void;
+                });
+                let padding_info_ptr =
+                    oaep_padding_info.as_ref().unwrap() as *const _ as *const std::ffi::c_void;
                 (Some(padding_info_ptr), BCRYPT_PAD_OAEP)
             }
             // For None, flags must be BCRYPT_FLAGS(0) (not BCRYPT_PAD_NONE or 0)
-            RsaCryptPadding::None => (None, BCRYPT_FLAGS(0)),
+            RsaCryptPadding::None => {
+                oaep_padding_info = None;
+                (None, BCRYPT_FLAGS(0))
+            }
         };
         // Read required size
         let mut plain_len = 0;
@@ -1385,6 +1628,11 @@ impl RsaPrivateKeyOp for RsaPrivateKeyHandle {
         // get the digest
         hash_algo.hash(data, &mut digest_bytes)?;
 
+        // Create padding structures outside match to ensure lifetime spans entire function
+        let pss_padding_info: Option<BCRYPT_PSS_PADDING_INFO>;
+        let pkcs1_padding_info: Option<BCRYPT_PKCS1_PADDING_INFO>;
+
+        #[allow(unused_assignments)]
         let (padding_info_ptr, padding_flags) = match padding {
             RsaSignaturePadding::Pss => {
                 let salt_len = match salt_size {
@@ -1396,17 +1644,23 @@ impl RsaPrivateKeyOp for RsaPrivateKeyHandle {
                 };
                 validate_pss_salt_len_with_modulus(self.size()?, hash_algo, salt_len)?;
                 let algo_id = get_hash_algo_id(hash_algo);
-                let padding_info = BCRYPT_PSS_PADDING_INFO {
+                pss_padding_info = Some(BCRYPT_PSS_PADDING_INFO {
                     pszAlgId: algo_id,
                     cbSalt: salt_len as u32,
-                };
-                let padding_info_ptr = &padding_info as *const _ as *const std::ffi::c_void;
+                });
+                pkcs1_padding_info = None;
+                let padding_info_ptr =
+                    pss_padding_info.as_ref().unwrap() as *const _ as *const std::ffi::c_void;
                 (Some(padding_info_ptr), BCRYPT_PAD_PSS)
             }
             RsaSignaturePadding::Pkcs1_5 => {
                 let algo_id = get_hash_algo_id(hash_algo);
-                let padding_info = BCRYPT_PKCS1_PADDING_INFO { pszAlgId: algo_id };
-                let padding_info_ptr = &padding_info as *const _ as *const std::ffi::c_void;
+
+                pss_padding_info = None; // Unused variable
+
+                pkcs1_padding_info = Some(BCRYPT_PKCS1_PADDING_INFO { pszAlgId: algo_id });
+                let padding_info_ptr =
+                    pkcs1_padding_info.as_ref().unwrap() as *const _ as *const std::ffi::c_void;
                 (Some(padding_info_ptr), BCRYPT_PAD_PKCS1)
             }
         };
@@ -1484,6 +1738,204 @@ impl RsaPrivateKeyOp for RsaPrivateKeyHandle {
         // For OAEP, the actual plaintext is less, but this is the upper bound.
         let key_bits = self.size()?;
         Ok(key_bits.div_ceil(8))
+    }
+
+    /// Unwraps user data using RSA unwrap decryption (RSA-OAEP + AES-KW2).
+    ///
+    /// This function implements RSA unwrap decryption for data wrapped by `rsa_wrap`:
+    /// 1. Parses the wrapped blob: [RSA-OAEP Encrypted AES KEK | AES-KW2 Encrypted User Data]
+    /// 2. Decrypts the AES KEK using RSA-OAEP
+    /// 3. Decrypts the user data using AES Key Wrap 2 (RFC 5649)
+    ///
+    /// # Arguments
+    /// * `wrapped_blob` - The complete wrapped blob from `rsa_wrap`.
+    /// * `aes_key_size` - The size of the AES KEK used.
+    /// * `hash_algo` - The OAEP hash algorithm used for RSA decryption.
+    /// * `label` - Optional OAEP label (must match the one used in wrapping).
+    /// * `unwrapped_data` - Output buffer for the unwrapped user data.
+    ///
+    /// # Returns
+    /// * `Ok(&[u8])` - The unwrapped user data bytes.
+    /// * `Err(CryptoError)` - If unwrapping fails.
+    #[allow(unsafe_code)]
+    fn rsa_unwrap<'a>(
+        &self,
+        wrapped_blob: &[u8],
+        aes_key_size: AesKeySize,
+        hash_algo: HashAlgo,
+        label: Option<&[u8]>,
+        unwrapped_data: &'a mut [u8],
+    ) -> Result<&'a [u8], CryptoError> {
+        // Input validation
+        if wrapped_blob.is_empty() {
+            tracing::error!("Wrapped blob to unwrap is empty");
+            return Err(CryptoError::RsaUnwrapInputEmpty);
+        }
+        if unwrapped_data.is_empty() {
+            tracing::error!("Output buffer for unwrapped data is empty");
+            return Err(CryptoError::RsaUnwrapOutputBufferEmpty);
+        }
+
+        // Calculate expected component sizes
+        let aes_kek_len = aes_key_size.key_len();
+        let modulus_size = self.size()? / 8; // Convert bits to bytes
+        let min_blob_size = modulus_size + 16; // At least 8 bytes for Key Wrap overhead + some data
+
+        if wrapped_blob.len() < min_blob_size {
+            tracing::error!(
+                "Wrapped blob too small: {} bytes, minimum expected: {}",
+                wrapped_blob.len(),
+                min_blob_size
+            );
+            return Err(CryptoError::RsaUnwrapInputTooSmall);
+        }
+
+        // Parse the blob: [RSA-OAEP Encrypted AES KEK | AES Key Wrap Encrypted User Data]
+        let mut offset = 0;
+
+        // Step 1: Extract and decrypt the RSA-encrypted AES KEK
+        let rsa_encrypted_kek = &wrapped_blob[offset..offset + modulus_size];
+        offset += modulus_size;
+
+        let mut aes_kek = vec![0u8; aes_kek_len];
+        let decrypted_kek = self.rsa_decrypt(
+            rsa_encrypted_kek,
+            RsaCryptPadding::Oaep,
+            hash_algo,
+            label,
+            &mut aes_kek,
+        )?;
+
+        // Validate the decrypted KEK size
+        if decrypted_kek.len() != aes_kek_len {
+            tracing::error!(
+                "Decrypted AES KEK size mismatch: expected {}, got {}",
+                aes_kek_len,
+                decrypted_kek.len()
+            );
+            return Err(CryptoError::RsaUnwrapInvalidBlobFormat);
+        }
+
+        // Step 2: Extract the AES Key Wrap encrypted user data
+        let wrapped_data = &wrapped_blob[offset..];
+        if wrapped_data.is_empty() {
+            tracing::error!("No AES Key Wrap encrypted data found in wrapped blob");
+            return Err(CryptoError::RsaUnwrapInvalidBlobFormat);
+        }
+
+        // Step 3: Open AES algorithm provider for Key Wrap
+        let mut aes_alg_handle = BCRYPT_ALG_HANDLE::default();
+        // SAFETY: BCryptOpenAlgorithmProvider is safe with valid parameters
+        let status = unsafe {
+            BCryptOpenAlgorithmProvider(
+                &mut aes_alg_handle,
+                BCRYPT_AES_ALGORITHM,
+                None,
+                BCRYPT_OPEN_ALGORITHM_PROVIDER_FLAGS(0),
+            )
+        };
+        if status != STATUS_SUCCESS {
+            tracing::error!("Failed to open AES algorithm provider: {:?}", status);
+            return Err(CryptoError::RsaUnwrapAesDecryptFailed);
+        }
+
+        // Step 4: Set AES chaining mode to ECB for manual Key Wrap implementation
+        let ecb_mode_bytes = {
+            // SAFETY: BCRYPT_CHAIN_MODE_ECB is a valid PCWSTR constant
+            let mode_wide = unsafe { BCRYPT_CHAIN_MODE_ECB.as_wide() };
+            // SAFETY: mode_wide is a valid pointer from Windows API, creating byte slice for BCryptSetProperty
+            unsafe {
+                std::slice::from_raw_parts(
+                    mode_wide.as_ptr() as *const u8,
+                    std::mem::size_of_val(mode_wide),
+                )
+            }
+        };
+
+        // SAFETY: BCryptSetProperty is safe with valid handle and data
+        let status = unsafe {
+            BCryptSetProperty(
+                aes_alg_handle.into(),
+                BCRYPT_CHAINING_MODE,
+                ecb_mode_bytes,
+                0,
+            )
+        };
+        if status != STATUS_SUCCESS {
+            tracing::error!("Failed to set AES-ECB mode: {:?}", status);
+            // SAFETY: Close the algorithm handle on error
+            unsafe {
+                let _ = BCryptCloseAlgorithmProvider(aes_alg_handle, 0);
+            }
+            return Err(CryptoError::RsaUnwrapAesDecryptFailed);
+        }
+
+        // Step 5: Import the AES KEK
+        let mut aes_key_handle = BCRYPT_KEY_HANDLE::default();
+        // SAFETY: BCryptGenerateSymmetricKey is safe with valid parameters
+        let status = unsafe {
+            BCryptGenerateSymmetricKey(aes_alg_handle, &mut aes_key_handle, None, decrypted_kek, 0)
+        };
+        if status != STATUS_SUCCESS {
+            tracing::error!("Failed to import AES KEK: {:?}", status);
+            // SAFETY: Close the algorithm handle on error
+            unsafe {
+                let _ = BCryptCloseAlgorithmProvider(aes_alg_handle, 0);
+            }
+            return Err(CryptoError::RsaUnwrapAesDecryptFailed);
+        }
+
+        // Step 6: Perform AES-KW2 decryption using our implementation
+        let actual_unwrapped_len = aes_kw2_unwrap(aes_key_handle, wrapped_data, unwrapped_data)
+            .inspect_err(|_e| {
+                // Cleanup on error
+                // SAFETY: Cleanup CNG handles on error, safe to ignore return values
+                unsafe {
+                    let _ = BCryptDestroyKey(aes_key_handle);
+                    let _ = BCryptCloseAlgorithmProvider(aes_alg_handle, 0);
+                }
+            })?;
+
+        // Cleanup AES resources
+        // SAFETY: Cleanup CNG handles after successful operation, safe to ignore return values
+        unsafe {
+            let _ = BCryptDestroyKey(aes_key_handle);
+            let _ = BCryptCloseAlgorithmProvider(aes_alg_handle, 0);
+        }
+
+        tracing::debug!(
+            "RSA unwrap successful: AES KEK={}, unwrapped data={}",
+            aes_kek_len,
+            actual_unwrapped_len
+        );
+
+        Ok(&unwrapped_data[..actual_unwrapped_len])
+    }
+
+    /// Returns the maximum size of the unwrapped user data buffer required.
+    fn rsa_unwrap_len(
+        &self,
+        wrapped_blob_len: usize,
+        _aes_key_size: AesKeySize,
+    ) -> Result<usize, CryptoError> {
+        let modulus_size = self.size()? / 8;
+
+        if wrapped_blob_len < modulus_size {
+            return Err(CryptoError::RsaUnwrapInputTooSmall);
+        }
+
+        // AES Key Wrap 2 data size (subtract RSA encrypted KEK size)
+        let aes_wrapped_data_size = wrapped_blob_len - modulus_size;
+
+        // AES Key Wrap 2 removes 8 bytes ICV and any padding
+        // Maximum user data size is wrapped_data_size - 8 (ICV)
+        if aes_wrapped_data_size < 16 {
+            // Minimum: 8 bytes data + 8 bytes ICV
+            return Err(CryptoError::RsaUnwrapInputTooSmall);
+        }
+
+        let max_user_data_size = aes_wrapped_data_size - 8;
+        Ok(max_user_data_size)
     }
 }
 
@@ -1664,4 +2116,374 @@ fn prepend_zero_if_needed(input: &[u8]) -> Vec<u8> {
     } else {
         trimmed.to_vec()
     }
+}
+
+/// AES Key Wrap 2 (RFC 5649) encryption using CNG AES-ECB
+/// This implements the AESKW2 algorithm for wrapping arbitrary length plaintext
+#[allow(unsafe_code)]
+fn aes_kw2_wrap(
+    aes_key_handle: BCRYPT_KEY_HANDLE,
+    plaintext: &[u8],
+    output: &mut [u8],
+) -> Result<usize, CryptoError> {
+    // RFC 5649: AES Key Wrap 2 with Padding
+    // Match DDI implementation: compute AIV according to RFC 5649 section 3
+    const PADDED_UPPER_AIV: u64 = 0xA65959A600000000;
+    let mli = plaintext.len() as u64;
+    let aiv = (PADDED_UPPER_AIV | mli).swap_bytes();
+
+    // Pad plaintext to 8-byte boundary
+    let padded_len = plaintext.len().div_ceil(8) * 8;
+    let mut padded_plaintext = vec![0u8; padded_len];
+    padded_plaintext[..plaintext.len()].copy_from_slice(plaintext);
+
+    // If plaintext is exactly 8 bytes, use simpler algorithm (matches DDI special case)
+    if padded_len == 8 {
+        // DDI special case: aes_ecb(aiv, plaintext_as_u64) -> (c0, c1)
+        let p64 = u64::from_le_bytes([
+            padded_plaintext[0],
+            padded_plaintext[1],
+            padded_plaintext[2],
+            padded_plaintext[3],
+            padded_plaintext[4],
+            padded_plaintext[5],
+            padded_plaintext[6],
+            padded_plaintext[7],
+        ]);
+
+        // Create 16-byte input: [aiv.to_le_bytes(), p64.to_le_bytes()]
+        let mut input = Vec::with_capacity(16);
+        input.extend_from_slice(&aiv.to_le_bytes());
+        input.extend_from_slice(&p64.to_le_bytes());
+
+        let mut encrypted = [0u8; 16];
+        let mut encrypted_len = 0u32;
+        // SAFETY: BCryptEncrypt called with valid key handle, input buffer, and output buffer
+        let status = unsafe {
+            BCryptEncrypt(
+                aes_key_handle,
+                Some(&input),
+                None,
+                None,
+                Some(&mut encrypted),
+                &mut encrypted_len,
+                BCRYPT_FLAGS(0),
+            )
+        };
+
+        if status != STATUS_SUCCESS {
+            tracing::error!("AES-KW2 encryption failed: {:?}", status);
+            return Err(CryptoError::RsaWrapAesEncryptFailed);
+        }
+
+        // Split result back into c0 and c1, then output as [c0.to_le_bytes(), c1.to_le_bytes()]
+        let c0 = u64::from_le_bytes([
+            encrypted[0],
+            encrypted[1],
+            encrypted[2],
+            encrypted[3],
+            encrypted[4],
+            encrypted[5],
+            encrypted[6],
+            encrypted[7],
+        ]);
+        let c1 = u64::from_le_bytes([
+            encrypted[8],
+            encrypted[9],
+            encrypted[10],
+            encrypted[11],
+            encrypted[12],
+            encrypted[13],
+            encrypted[14],
+            encrypted[15],
+        ]);
+
+        // Output format: [c0.to_le_bytes(), c1.to_le_bytes()]
+        if output.len() < 16 {
+            return Err(CryptoError::RsaWrapOutputBufferTooSmall);
+        }
+
+        output[0..8].copy_from_slice(&c0.to_le_bytes());
+        output[8..16].copy_from_slice(&c1.to_le_bytes());
+
+        Ok(16)
+    } else {
+        // >8-byte case: use base_key_wrap algorithm (matches DDI)
+        aes_kw2_base_key_wrap(aes_key_handle, aiv, &padded_plaintext, output)
+    }
+}
+
+/// AES Key Wrap base algorithm - exactly matches DDI base_key_wrap
+#[allow(unsafe_code)]
+fn aes_kw2_base_key_wrap(
+    aes_key_handle: BCRYPT_KEY_HANDLE,
+    aiv: u64,
+    input: &[u8],
+    output: &mut [u8],
+) -> Result<usize, CryptoError> {
+    if !input.len().is_multiple_of(8) {
+        return Err(CryptoError::RsaWrapAesEncryptFailed); // Unaligned input buffer length
+    }
+
+    let mut output_buf = vec![0u8; input.len() + 8];
+
+    // Initialize (matches DDI exactly)
+    let n = input.len() / 8;
+    let mut a = aiv;
+    output_buf[8..(n + 1) * 8].copy_from_slice(&input[..n * 8]);
+
+    // Intermediate calculation (matches DDI exactly)
+    for j in 0..6 {
+        for i in 0..n {
+            let b = u64::from_le_bytes(
+                output_buf[(i + 1) * 8..(i + 2) * 8]
+                    .try_into()
+                    .map_err(|_| CryptoError::RsaWrapAesEncryptFailed)?,
+            );
+
+            // AES ECB encryption using Windows CNG (replaces DDI's self.aes_ecb)
+            let (msb, lsb) = aes_ecb_cng(aes_key_handle, true, a, b)?;
+
+            output_buf[(i + 1) * 8..(i + 2) * 8].copy_from_slice(&lsb.to_le_bytes());
+            a = msb ^ (((n * j) + (i + 1)) as u64).swap_bytes();
+        }
+    }
+
+    // Output (matches DDI exactly)
+    output_buf[0..8].copy_from_slice(&a.to_le_bytes());
+
+    let output_len = input.len() + 8;
+    if output.len() < output_len {
+        return Err(CryptoError::RsaWrapOutputBufferTooSmall);
+    }
+
+    output[0..output_len].copy_from_slice(&output_buf[0..output_len]);
+    Ok(output_len)
+}
+
+/// AES ECB operation using Windows CNG - replaces DDI's aes_ecb function
+#[allow(unsafe_code)]
+fn aes_ecb_cng(
+    aes_key_handle: BCRYPT_KEY_HANDLE,
+    encrypt: bool,
+    a: u64,
+    b: u64,
+) -> Result<(u64, u64), CryptoError> {
+    // Input block will be 16 bytes (matches DDI exactly)
+    let mut block = [0u8; 16];
+    block[0..8].copy_from_slice(&a.to_le_bytes());
+    block[8..16].copy_from_slice(&b.to_le_bytes());
+
+    let mut output_block = [0u8; 16];
+    let mut output_len = 0u32;
+
+    // SAFETY: BCryptEncrypt/BCryptDecrypt called with valid key handle, input and output buffers
+    let status = unsafe {
+        if encrypt {
+            BCryptEncrypt(
+                aes_key_handle,
+                Some(&block),
+                None,
+                None,
+                Some(&mut output_block),
+                &mut output_len,
+                BCRYPT_FLAGS(0),
+            )
+        } else {
+            BCryptDecrypt(
+                aes_key_handle,
+                Some(&block),
+                None,
+                None,
+                Some(&mut output_block),
+                &mut output_len,
+                BCRYPT_FLAGS(0),
+            )
+        }
+    };
+
+    if status != STATUS_SUCCESS {
+        tracing::error!("AES ECB operation failed: {:?}", status);
+        return Err(CryptoError::RsaWrapAesEncryptFailed);
+    }
+
+    let x = u64::from_le_bytes([
+        output_block[0],
+        output_block[1],
+        output_block[2],
+        output_block[3],
+        output_block[4],
+        output_block[5],
+        output_block[6],
+        output_block[7],
+    ]);
+    let y = u64::from_le_bytes([
+        output_block[8],
+        output_block[9],
+        output_block[10],
+        output_block[11],
+        output_block[12],
+        output_block[13],
+        output_block[14],
+        output_block[15],
+    ]);
+
+    Ok((x, y))
+}
+
+/// AES Key Wrap 2 (RFC 5649) decryption using CNG AES-ECB
+#[allow(unsafe_code)]
+fn aes_kw2_unwrap(
+    aes_key_handle: BCRYPT_KEY_HANDLE,
+    ciphertext: &[u8],
+    output: &mut [u8],
+) -> Result<usize, CryptoError> {
+    if ciphertext.len() < 16 || !ciphertext.len().is_multiple_of(8) {
+        return Err(CryptoError::RsaUnwrapInvalidBlobFormat);
+    }
+    const AIV: u32 = 0xA65959A6;
+    let n = (ciphertext.len() / 8) - 1; // Number of 64-bit plaintext blocks
+
+    if n == 1 {
+        // Simple case: decrypt two AES blocks
+        let mut decrypted = [0u8; 16];
+        let mut decrypted_len = 0u32;
+        // SAFETY: BCryptDecrypt called with valid key handle, input and output buffers
+        let status = unsafe {
+            BCryptDecrypt(
+                aes_key_handle,
+                Some(ciphertext),
+                None,
+                None,
+                Some(&mut decrypted),
+                &mut decrypted_len,
+                BCRYPT_FLAGS(0),
+            )
+        };
+
+        if status != STATUS_SUCCESS {
+            tracing::error!("AES-KW2 decryption failed: {:?}", status);
+            return Err(CryptoError::RsaUnwrapAesDecryptFailed);
+        }
+
+        // Verify AIV and extract length
+        if decrypted[0..4] != AIV.to_be_bytes() {
+            return Err(CryptoError::RsaUnwrapInvalidBlobFormat);
+        }
+
+        let plaintext_len =
+            u32::from_be_bytes([decrypted[4], decrypted[5], decrypted[6], decrypted[7]]) as usize;
+
+        if plaintext_len > 8 || plaintext_len == 0 {
+            return Err(CryptoError::RsaUnwrapInvalidBlobFormat);
+        }
+
+        if output.len() < plaintext_len {
+            return Err(CryptoError::RsaUnwrapOutputBufferTooSmall);
+        }
+
+        output[..plaintext_len].copy_from_slice(&decrypted[8..8 + plaintext_len]);
+        Ok(plaintext_len)
+    } else {
+        // Complex case: use RFC 5649 unwrapping algorithm
+        aes_kw2_unwrap_complex(aes_key_handle, ciphertext, output)
+    }
+}
+
+/// AES Key Wrap 2 complex case for unwrapping data > 8 bytes
+#[allow(unsafe_code)]
+fn aes_kw2_unwrap_complex(
+    aes_key_handle: BCRYPT_KEY_HANDLE,
+    ciphertext: &[u8],
+    output: &mut [u8],
+) -> Result<usize, CryptoError> {
+    let n = (ciphertext.len() / 8) - 1;
+    let mut a = [0u8; 8];
+    a.copy_from_slice(&ciphertext[0..8]);
+
+    let mut r = vec![0u64; n];
+    for (i, chunk) in ciphertext[8..].chunks_exact(8).enumerate() {
+        r[i] = u64::from_be_bytes([
+            chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
+        ]);
+    }
+
+    // Perform unwrapping algorithm (RFC 5649, Section 4)
+    for j in (0..6).rev() {
+        for (i, r_i) in r.iter_mut().enumerate().rev() {
+            // B = AES^-1(K, (A ^ t) | R[i])
+            let t = (n * j + i + 1) as u64;
+            let a_val = u64::from_be_bytes(a);
+            let a_xor_t = a_val ^ t;
+
+            let mut input = [0u8; 16];
+            input[0..8].copy_from_slice(&a_xor_t.to_be_bytes());
+            input[8..16].copy_from_slice(&r_i.to_be_bytes());
+
+            let mut decrypted = [0u8; 16];
+            let mut decrypted_len = 0u32;
+            // SAFETY: BCryptDecrypt called with valid key handle, input and output buffers
+            let status = unsafe {
+                BCryptDecrypt(
+                    aes_key_handle,
+                    Some(&input),
+                    None,
+                    None,
+                    Some(&mut decrypted),
+                    &mut decrypted_len,
+                    BCRYPT_FLAGS(0),
+                )
+            };
+
+            if status != STATUS_SUCCESS {
+                tracing::error!("AES decryption failed in KW2 unwrap: {:?}", status);
+                return Err(CryptoError::RsaUnwrapAesDecryptFailed);
+            }
+
+            // A = MSB(64, B)
+            a.copy_from_slice(&decrypted[0..8]);
+
+            // R[i] = LSB(64, B)
+            *r_i = u64::from_be_bytes([
+                decrypted[8],
+                decrypted[9],
+                decrypted[10],
+                decrypted[11],
+                decrypted[12],
+                decrypted[13],
+                decrypted[14],
+                decrypted[15],
+            ]);
+        }
+    }
+
+    // Verify AIV format and extract plaintext length
+    if a[0..4] != 0xA65959A6u32.to_be_bytes() {
+        return Err(CryptoError::RsaUnwrapInvalidBlobFormat);
+    }
+
+    let plaintext_len = u32::from_be_bytes([a[4], a[5], a[6], a[7]]) as usize;
+    let padded_len = n * 8;
+
+    if plaintext_len > padded_len || plaintext_len == 0 {
+        return Err(CryptoError::RsaUnwrapInvalidBlobFormat);
+    }
+
+    if output.len() < plaintext_len {
+        return Err(CryptoError::RsaUnwrapOutputBufferTooSmall);
+    }
+
+    // Extract plaintext from R blocks
+    let mut plaintext_pos = 0;
+    for &r_i in &r {
+        let r_bytes = r_i.to_be_bytes();
+        let copy_len = std::cmp::min(8, plaintext_len - plaintext_pos);
+        if copy_len == 0 {
+            break;
+        }
+        output[plaintext_pos..plaintext_pos + copy_len].copy_from_slice(&r_bytes[..copy_len]);
+        plaintext_pos += copy_len;
+    }
+
+    Ok(plaintext_len)
 }

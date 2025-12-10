@@ -8,7 +8,12 @@ use std::thread;
 use crypto::rand::rand_bytes;
 use mcr_ddi::*;
 use mcr_ddi_mbor::MborByteArray;
+use mcr_ddi_mbor::MborDecode;
+use mcr_ddi_mbor::MborDecoder;
+use mcr_ddi_mbor::MborEncode;
+use mcr_ddi_mbor::MborEncoder;
 use mcr_ddi_types::*;
+use session_parameter_encryption::DeviceCredentialEncryptionKey;
 use test_with_tracing::test;
 
 use crate::common::*;
@@ -318,13 +323,7 @@ fn test_reopen_session_with_rollback_error() {
                 dev,
                 response[0].session_id,
                 DdiTestAction::TriggerIoFailure,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
+                DdiTestActionContext::None,
             );
             if let Err(err) = resp {
                 assert!(
@@ -1519,6 +1518,222 @@ fn test_reopen_session_incorrect_pin() {
 }
 
 #[test]
+fn test_reopen_session_dest_larger_svn() {
+    ddi_dev_test(
+        |_, _, _| 0,
+        common_cleanup,
+        |dev, ddi, path, _session_id| {
+            if get_device_kind(dev) != DdiDeviceKind::Physical {
+                println!("Physical device NOT found. Test only supported on physical device.");
+                return;
+            }
+
+            let mut dev2 = open_dev_and_set_device_kind(ddi, path);
+            let response = setup_two_sessions_and_lm(dev, &mut dev2, ddi, path);
+
+            let _ = helper_common_establish_credential_with_bmk(
+                dev,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                response[0].masked_bk3,
+                response[0].partition_bmk,
+                MborByteArray::from_slice(&[])
+                    .expect("Failed to create empty masked unwrapping key"),
+            );
+
+            let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                dev,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                response[0].random_seed,
+            );
+
+            let resp = helper_reopen_session(
+                dev,
+                response[0].session_id,
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                encrypted_credential,
+                pub_key,
+                response[0].session_bmk,
+            );
+
+            assert!(resp.is_ok(), "resp {:?}", resp);
+
+            let resp = resp.unwrap();
+
+            assert_eq!(resp.hdr.sess_id, Some(response[0].session_id));
+            assert_eq!(resp.hdr.op, DdiOp::ReopenSession);
+            assert_eq!(resp.hdr.status, DdiStatus::Success);
+            assert!(!resp.data.bmk_session.is_empty());
+
+            let current_svn = extract_svn_from_bmk(response[0].session_bmk.as_slice());
+            assert!(current_svn.is_some(), "Failed to extract SVN from BMK");
+            let current_svn = current_svn.unwrap();
+            let updated_svn = current_svn + 1;
+
+            let resp = helper_test_action_cmd(
+                dev,
+                response[0].session_id,
+                DdiTestAction::UpdateSvn,
+                DdiTestActionContext::UpdatedSvn(updated_svn),
+            );
+            if let Err(err) = resp {
+                assert!(
+                    matches!(err, DdiError::DdiStatus(DdiStatus::UnsupportedCmd)),
+                    "{:?}",
+                    err
+                );
+
+                println!("Firmware is not built with test_action test_hooks.");
+                return;
+            }
+
+            let resp = helper_close_session(
+                dev,
+                Some(response[0].session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+            );
+
+            assert!(resp.is_ok(), "resp {:?}", resp);
+
+            let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                &dev2,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                response[1].random_seed,
+            );
+
+            let resp = helper_reopen_session(
+                &dev2,
+                response[1].session_id,
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                encrypted_credential,
+                pub_key,
+                response[1].session_bmk,
+            );
+
+            assert!(resp.is_ok(), "resp {:?}", resp);
+
+            let resp = resp.unwrap();
+
+            assert_eq!(resp.hdr.sess_id, Some(response[1].session_id));
+            assert_eq!(resp.hdr.op, DdiOp::ReopenSession);
+            assert_eq!(resp.hdr.status, DdiStatus::Success);
+            assert!(!resp.data.bmk_session.is_empty());
+        },
+    );
+}
+
+#[test]
+fn test_reopen_session_dest_smaller_svn() {
+    ddi_dev_test(
+        |_, _, _| 0,
+        common_cleanup,
+        |dev, ddi, path, _session_id| {
+            if get_device_kind(dev) != DdiDeviceKind::Physical {
+                println!("Physical device NOT found. Test only supported on physical device.");
+                return;
+            }
+
+            let setup_res = common_setup_for_lm(dev, ddi, path);
+            let result = dev.simulate_nssr_after_lm();
+            assert!(
+                result.is_ok(),
+                "Migration simulation should succeed: {:?}",
+                result
+            );
+
+            let current_svn = extract_svn_from_bmk(setup_res.partition_bmk.as_slice());
+            assert!(current_svn.is_some(), "Failed to extract SVN from BMK");
+            let current_svn = current_svn.unwrap();
+            let updated_svn = current_svn + 1;
+            let mut partition_bmk_copy = setup_res.partition_bmk;
+            update_svn_in_bmk(partition_bmk_copy.as_mut_slice(), updated_svn);
+
+            // Get establish credential encryption key
+            let resp = helper_get_establish_cred_encryption_key(
+                dev,
+                None,
+                Some(DdiApiRev { major: 1, minor: 0 }),
+            )
+            .unwrap();
+            // Establish credential
+            let nonce = resp.data.nonce;
+            let param_encryption_key =
+                DeviceCredentialEncryptionKey::new(&resp.data.pub_key, nonce).unwrap();
+            let (establish_cred_encryption_key, ddi_public_key) = param_encryption_key
+                .create_credential_key_from_der(&TEST_ECC_384_PRIVATE_KEY)
+                .unwrap();
+            let ddi_encrypted_credential = establish_cred_encryption_key
+                .encrypt_establish_credential(TEST_CRED_ID, TEST_CRED_PIN, nonce)
+                .unwrap();
+            let resp = helper_establish_credential(
+                dev,
+                None,
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                ddi_encrypted_credential,
+                ddi_public_key,
+                setup_res.masked_bk3,
+                partition_bmk_copy,
+                MborByteArray::from_slice(&[])
+                    .expect("Failed to create empty masked unwrapping key"),
+            );
+            // Cannot establish credential when destination SVN is smaller than source SVN
+            assert!(resp.is_err(), "resp {:?}", resp);
+
+            // now we try establishing credential with the right SVN to ensure everything still works
+            let bmk = helper_common_establish_credential_with_bmk(
+                dev,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                setup_res.masked_bk3,
+                setup_res.partition_bmk,
+                MborByteArray::from_slice(&[])
+                    .expect("Failed to create empty masked unwrapping key"),
+            );
+            assert!(!bmk.is_empty(), "BMK session should not be empty");
+
+            let mut session_bmk_copy = setup_res.session_bmk;
+            update_svn_in_bmk(session_bmk_copy.as_mut_slice(), updated_svn);
+
+            let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                dev,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                setup_res.random_seed,
+            );
+
+            let resp = helper_reopen_session(
+                dev,
+                setup_res.session_id,
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                encrypted_credential.clone(),
+                pub_key.clone(),
+                session_bmk_copy,
+            );
+            assert!(resp.is_err(), "resp {:?}", resp);
+
+            // lets use the right SVN to ensure everything still works
+            let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                dev,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                setup_res.random_seed,
+            );
+            let resp = helper_reopen_session(
+                dev,
+                setup_res.session_id,
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                encrypted_credential,
+                pub_key,
+                setup_res.session_bmk,
+            );
+            assert!(resp.is_ok(), "resp {:?}", resp);
+        },
+    );
+}
+
+#[test]
 fn test_reopen_session_multi_threaded_single_winner() {
     ddi_dev_test(
         |_, _, _| 0,
@@ -1610,4 +1825,106 @@ fn test_thread_fn_open_session_single_winner(
         bmk,
     )
     .unwrap();
+}
+
+// Extract the SVN from the BMK metadata section
+fn extract_svn_from_bmk(bmk: &[u8]) -> Option<u64> {
+    const FORMAT_OFFSET: usize = 2;
+    const ALGORITHM_OFFSET: usize = FORMAT_OFFSET + 2;
+    const IV_LEN_OFFSET: usize = ALGORITHM_OFFSET + 2;
+    const IV_PADDING_OFFSET: usize = IV_LEN_OFFSET + 2;
+    const METADATA_LEN_OFFSET: usize = IV_PADDING_OFFSET + 2;
+    const METADATA_PADDING_OFFSET: usize = METADATA_LEN_OFFSET + 2;
+    const ENCRYPTED_KEY_LEN_OFFSET: usize = METADATA_PADDING_OFFSET + 2;
+    const ENCRYPTED_KEY_PADDING_OFFSET: usize = ENCRYPTED_KEY_LEN_OFFSET + 2;
+    const TAG_LEN_OFFSET: usize = ENCRYPTED_KEY_PADDING_OFFSET + 2;
+    const RESERVED_OFFSET: usize = TAG_LEN_OFFSET + 34;
+
+    if bmk.len() < RESERVED_OFFSET {
+        return None;
+    }
+
+    let iv_len: usize =
+        u16::from_le_bytes(bmk[ALGORITHM_OFFSET..IV_LEN_OFFSET].try_into().unwrap()).into();
+    let iv_padding_len: usize =
+        u16::from_le_bytes(bmk[IV_LEN_OFFSET..IV_PADDING_OFFSET].try_into().unwrap()).into();
+    let metadata_len: usize = u16::from_le_bytes(
+        bmk[IV_PADDING_OFFSET..METADATA_LEN_OFFSET]
+            .try_into()
+            .unwrap(),
+    )
+    .into();
+
+    let metadata_offset = RESERVED_OFFSET + iv_len + iv_padding_len;
+
+    if bmk.len() < metadata_offset + metadata_len {
+        return None;
+    }
+
+    let metadata = &bmk[metadata_offset..metadata_offset + metadata_len];
+    let mut decoder = MborDecoder::new(metadata, false);
+
+    let metadata = DdiMaskedKeyMetadata::mbor_decode(&mut decoder);
+    if metadata.is_err() {
+        tracing::error!("mbor_decode error {:?}", metadata.unwrap_err());
+
+        return None;
+    }
+
+    metadata.unwrap().svn
+}
+
+// Update the SVN in the BMK metadata section
+fn update_svn_in_bmk(bmk: &mut [u8], svn: u64) {
+    const FORMAT_OFFSET: usize = 2;
+    const ALGORITHM_OFFSET: usize = FORMAT_OFFSET + 2;
+    const IV_LEN_OFFSET: usize = ALGORITHM_OFFSET + 2;
+    const IV_PADDING_OFFSET: usize = IV_LEN_OFFSET + 2;
+    const METADATA_LEN_OFFSET: usize = IV_PADDING_OFFSET + 2;
+    const METADATA_PADDING_OFFSET: usize = METADATA_LEN_OFFSET + 2;
+    const ENCRYPTED_KEY_LEN_OFFSET: usize = METADATA_PADDING_OFFSET + 2;
+    const ENCRYPTED_KEY_PADDING_OFFSET: usize = ENCRYPTED_KEY_LEN_OFFSET + 2;
+    const TAG_LEN_OFFSET: usize = ENCRYPTED_KEY_PADDING_OFFSET + 2;
+    const RESERVED_OFFSET: usize = TAG_LEN_OFFSET + 34;
+
+    if bmk.len() < RESERVED_OFFSET {
+        tracing::error!("BMK length is less than RESERVED_OFFSET");
+        return;
+    }
+
+    let iv_len: usize =
+        u16::from_le_bytes(bmk[ALGORITHM_OFFSET..IV_LEN_OFFSET].try_into().unwrap()).into();
+    let iv_padding_len: usize =
+        u16::from_le_bytes(bmk[IV_LEN_OFFSET..IV_PADDING_OFFSET].try_into().unwrap()).into();
+    let metadata_len: usize = u16::from_le_bytes(
+        bmk[IV_PADDING_OFFSET..METADATA_LEN_OFFSET]
+            .try_into()
+            .unwrap(),
+    )
+    .into();
+
+    let metadata_offset = RESERVED_OFFSET + iv_len + iv_padding_len;
+
+    if bmk.len() < metadata_offset + metadata_len {
+        tracing::error!("BMK length is less than metadata section");
+        return;
+    }
+
+    let metadata = &bmk[metadata_offset..metadata_offset + metadata_len];
+    let mut decoder = MborDecoder::new(metadata, false);
+
+    let metadata = DdiMaskedKeyMetadata::mbor_decode(&mut decoder);
+    if metadata.is_err() {
+        tracing::error!("mbor_decode error {:?}", metadata.unwrap_err());
+        return;
+    }
+    let mut metadata = metadata.unwrap();
+    metadata.svn = Some(svn);
+
+    let metadata_slot = &mut bmk[metadata_offset..metadata_offset + metadata_len];
+    let mut encoder = MborEncoder::new(metadata_slot, false);
+    let metadata = metadata.mbor_encode(&mut encoder);
+    if metadata.is_err() {
+        tracing::error!("mbor_encode error {:?}", metadata.unwrap_err());
+    }
 }

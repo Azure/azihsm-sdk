@@ -15,6 +15,7 @@ tracing.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 openssl.workspace = true
+openssl-sys.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows.workspace = true

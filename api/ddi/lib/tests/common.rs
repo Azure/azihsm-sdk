@@ -418,6 +418,43 @@ pub fn helper_common_establish_credential_with_bmk(
     resp.unwrap().data.bmk
 }
 
+#[allow(dead_code)]
+pub fn helper_common_establish_credential_with_bmk_no_unwrap(
+    dev: &mut <DdiTest as Ddi>::Dev,
+    id: [u8; 16],
+    pin: [u8; 16],
+    masked_bk3: MborByteArray<1024>,
+    bmk: MborByteArray<1024>,
+    unwrapping_key: MborByteArray<1024>,
+) -> Result<DdiEstablishCredentialCmdResp, DdiError> {
+    // Get establish credential encryption key
+    let resp =
+        helper_get_establish_cred_encryption_key(dev, None, Some(DdiApiRev { major: 1, minor: 0 }))
+            .unwrap();
+
+    // Establish credential
+    let nonce = resp.data.nonce;
+    let param_encryption_key =
+        DeviceCredentialEncryptionKey::new(&resp.data.pub_key, nonce).unwrap();
+    let (establish_cred_encryption_key, ddi_public_key) = param_encryption_key
+        .create_credential_key_from_der(&TEST_ECC_384_PRIVATE_KEY)
+        .unwrap();
+    let ddi_encrypted_credential = establish_cred_encryption_key
+        .encrypt_establish_credential(id, pin, nonce)
+        .unwrap();
+
+    helper_establish_credential(
+        dev,
+        None,
+        Some(DdiApiRev { major: 1, minor: 0 }),
+        ddi_encrypted_credential,
+        ddi_public_key,
+        masked_bk3,
+        bmk,
+        unwrapping_key,
+    )
+}
+
 #[derive(Clone, Copy)]
 #[allow(dead_code)]
 pub struct LMSetupResult {
@@ -1180,9 +1217,7 @@ pub fn set_test_action(ddi: &DdiTest, path: &str, action: DdiTestAction) -> bool
 
     let sess_id = resp.data.sess_id;
 
-    let resp = helper_test_action_cmd(
-        &mut dev, sess_id, action, None, None, None, None, None, None, None,
-    );
+    let resp = helper_test_action_cmd(&mut dev, sess_id, action, DdiTestActionContext::None);
     if let Err(err) = resp {
         assert!(
             matches!(err, DdiError::DdiStatus(DdiStatus::UnsupportedCmd)),

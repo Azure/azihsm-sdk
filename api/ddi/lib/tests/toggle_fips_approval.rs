@@ -45,13 +45,7 @@ fn test_toggle_fips_approved_state() {
                 dev,
                 session_id,
                 DdiTestAction::ToggleFipsApprovedState,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
+                DdiTestActionContext::None,
             ) {
                 if is_unsupported_cmd(&err) {
                     return;
@@ -70,13 +64,7 @@ fn test_toggle_fips_approved_state() {
                 dev,
                 session_id,
                 DdiTestAction::ToggleFipsApprovedState,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
+                DdiTestActionContext::None,
             ) {
                 if is_unsupported_cmd(&err) {
                     return;

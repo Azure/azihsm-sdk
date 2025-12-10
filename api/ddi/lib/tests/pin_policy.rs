@@ -28,13 +28,7 @@ pub fn pin_policy_cleanup(
             dev,
             session_id,
             DdiTestAction::PinPolicyClear,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            DdiTestActionContext::None,
         );
         if let Err(err) = resp {
             assert!(
@@ -177,13 +171,7 @@ fn pin_policy_delay_factor_test(
         dev,
         session_id,
         DdiTestAction::PinPolicyOverride,
-        None,
-        None,
-        pin_policy_config,
-        None,
-        None,
-        None,
-        None,
+        DdiTestActionContext::PinPolicyConfig(pin_policy_config),
     );
     if let Err(err) = resp {
         assert!(
@@ -221,13 +209,7 @@ fn pin_policy_delay_factor_test(
         dev,
         session_id,
         DdiTestAction::PinPolicyOverride,
-        None,
-        None,
-        pin_policy_config,
-        None,
-        None,
-        None,
-        None,
+        DdiTestActionContext::PinPolicyConfig(pin_policy_config),
     );
     if let Err(err) = resp {
         assert!(
@@ -259,13 +241,7 @@ fn pin_policy_delay_factor_test(
         dev,
         session_id,
         DdiTestAction::PinPolicyOverride,
-        None,
-        None,
-        pin_policy_config,
-        None,
-        None,
-        None,
-        None,
+        DdiTestActionContext::PinPolicyConfig(pin_policy_config),
     );
     if let Err(err) = resp {
         assert!(
@@ -434,13 +410,7 @@ fn test_pin_policy_increase_delay_factor() {
                 dev,
                 session_id,
                 DdiTestAction::PinPolicyClear,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
+                DdiTestActionContext::None,
             );
             if let Err(err) = &resp {
                 if is_unsupported_cmd(err) {
@@ -521,13 +491,7 @@ fn test_pin_policy_delay_factor_rollover() {
                 dev,
                 session_id,
                 DdiTestAction::PinPolicyClear,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
+                DdiTestActionContext::None,
             );
             if let Err(err) = &resp {
                 if is_unsupported_cmd(err) {
@@ -551,13 +515,7 @@ fn test_pin_policy_delay_factor_rollover() {
                 dev,
                 session_id,
                 DdiTestAction::PinPolicyOverride,
-                None,
-                None,
-                pin_policy_config,
-                None,
-                None,
-                None,
-                None,
+                DdiTestActionContext::PinPolicyConfig(pin_policy_config),
             );
             if let Err(err) = resp {
                 assert!(
@@ -614,13 +572,7 @@ fn test_pin_policy_delay_factor_1_min_for_idfu_test() {
                 dev,
                 session_id,
                 DdiTestAction::PinPolicyClear,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
+                DdiTestActionContext::None,
             );
             if let Err(err) = &resp {
                 if is_unsupported_cmd(err) {
@@ -651,13 +603,7 @@ fn test_pin_policy_delay_factor_1_min_for_idfu_test() {
                 dev,
                 session_id,
                 DdiTestAction::PinPolicyOverride,
-                None,
-                None,
-                pin_policy_config,
-                None,
-                None,
-                None,
-                None,
+                DdiTestActionContext::PinPolicyConfig(pin_policy_config),
             );
             if let Err(err) = resp {
                 assert!(
@@ -713,13 +659,7 @@ fn test_pin_policy_1_delay_factor() {
                 dev,
                 session_id,
                 DdiTestAction::PinPolicyClear,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
+                DdiTestActionContext::None,
             );
             if let Err(err) = &resp {
                 if is_unsupported_cmd(err) {
@@ -758,13 +698,7 @@ fn test_pin_policy_2_delay_factor() {
                 dev,
                 session_id,
                 DdiTestAction::PinPolicyClear,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
+                DdiTestActionContext::None,
             );
             if let Err(err) = &resp {
                 if is_unsupported_cmd(err) {
@@ -803,13 +737,7 @@ fn test_pin_policy_8_delay_factor() {
                 dev,
                 session_id,
                 DdiTestAction::PinPolicyClear,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
+                DdiTestActionContext::None,
             );
             if let Err(err) = &resp {
                 if is_unsupported_cmd(err) {
@@ -848,13 +776,7 @@ fn test_pin_policy_16_delay_factor() {
                 dev,
                 session_id,
                 DdiTestAction::PinPolicyClear,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
+                DdiTestActionContext::None,
             );
             if let Err(err) = &resp {
                 if is_unsupported_cmd(err) {
@@ -893,13 +815,7 @@ fn test_pin_policy_32_delay_factor() {
                 dev,
                 session_id,
                 DdiTestAction::PinPolicyClear,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
+                DdiTestActionContext::None,
             );
             if let Err(err) = &resp {
                 if is_unsupported_cmd(err) {

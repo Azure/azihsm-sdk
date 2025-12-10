@@ -13,10 +13,19 @@ pub(crate) enum HandleType {
     Partition,
     Session,
     AesCbcKey,
+    AesXtsKey,
     EcdsaPrivateKey,
     EcdsaPublicKey,
     RsaPrivateKey,
     RsaPublicKey,
+    SecretKey,
+    HmacKey,
+    AesCbcStreamingContext,
+    EcSignStreamingContext,
+    EcVerifyStreamingContext,
+    ShaStreamingContext,
+    HmacSignStreamingContext,
+    HmacVerifyStreamingContext,
 }
 
 struct Entry {

@@ -81,6 +81,9 @@ pub enum DdiTestAction {
 
     /// Clear Provisioning State
     ClearProvisioningState = 19,
+
+    /// Update SVN value
+    UpdateSvn = 20,
 }
 
 /// Test action crash type.
@@ -264,6 +267,10 @@ pub struct DdiTestActionReq {
     /// Trigger Tdisp Interrupt Type
     #[ddi(id = 8)]
     pub tdisp_interrupt_type: Option<DdiTestActionInterruptSimulationType>,
+
+    /// SVN value to be updated
+    #[ddi(id = 9)]
+    pub updated_svn: Option<u64>,
 }
 
 /// Test - Skip IO Response Structure

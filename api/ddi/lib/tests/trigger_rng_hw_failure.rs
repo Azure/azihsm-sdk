@@ -92,13 +92,7 @@ fn send_rng_hw_failure_request(device_path: String, test: u32) {
         &mut dev,
         vault_manager_sess_id,
         DdiTestAction::TriggerRngHwFailure,
-        None,
-        Some(test),
-        None,
-        None,
-        None,
-        None,
-        None,
+        DdiTestActionContext::NegTestId(test),
     );
 
     if let Err(err) = &resp {

@@ -1,9 +1,12 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
 
-mod crypto_ops;
+mod crypto_digest;
+mod crypto_enc_dec;
+mod crypto_sign_verify;
 mod ffi_types;
 mod handle_table;
 mod key_mgmt;
+mod key_props;
 mod partition;
 mod session;
 mod str;
@@ -18,6 +21,12 @@ pub use str::*;
 pub(crate) use utils::*;
 
 use crate::bindings::ffi_types::AzihsmAlgoAesCbcParams;
+use crate::bindings::ffi_types::AzihsmAlgoAesXtsParams;
+use crate::bindings::ffi_types::AzihsmAlgoHkdfParams;
+use crate::bindings::ffi_types::AzihsmAlgoRsaAesKeyWrapParams;
+use crate::bindings::ffi_types::AzihsmAlgoRsaPkcsOaepParams;
+use crate::bindings::ffi_types::AzihsmAlgoRsaPkcsPssParams;
+use crate::types::EcCurve;
 
 /// Handle type
 pub type AzihsmHandle = u32;
@@ -94,6 +103,9 @@ pub const AZIHSM_KEY_ALREADY_EXISTS: AzihsmError = -21;
 /// Operation not supported error code
 pub const AZIHSM_OPERATION_NOT_SUPPORTED: AzihsmError = -22;
 
+/// Illegal property operation error code
+pub const AZIHSM_ILLEGAL_KEY_PROPERTY_OPERATION: AzihsmError = -23;
+
 /// AES key generation failed error code
 pub const AZIHSM_AES_KEYGEN_FAILED: AzihsmError = -30;
 
@@ -105,6 +117,9 @@ pub const AZIHSM_AES_ENCRYPT_FAILED: AzihsmError = -32;
 
 /// AES decrypt failed error code
 pub const AZIHSM_AES_DECRYPT_FAILED: AzihsmError = -33;
+
+/// AES invalid key size error code
+pub const AZIHSM_AES_INVALID_KEY_SIZE: AzihsmError = -34;
 
 /// ECC key generation failed error code
 pub const AZIHSM_ECC_KEYGEN_FAILED: AzihsmError = -34;
@@ -118,6 +133,9 @@ pub const AZIHSM_ECC_SIGN_FAILED: AzihsmError = -36;
 /// ECC verify failed error code
 pub const AZIHSM_ECC_VERIFY_FAILED: AzihsmError = -37;
 
+/// Unsupported key size error code
+pub const AZIHSM_UNSUPPORTED_KEY_SIZE: AzihsmError = -38;
+
 /// RSA key generation failed error code
 pub const AZIHSM_RSA_KEYGEN_FAILED: AzihsmError = -40;
 
@@ -126,6 +144,54 @@ pub const AZIHSM_RSA_INVALID_PADDING: AzihsmError = -41;
 
 /// RSA invalid key size error code
 pub const AZIHSM_RSA_INVALID_KEY_SIZE: AzihsmError = -42;
+
+/// RSA unsupported hash algorithm error code
+pub const AZIHSM_RSA_UNSUPPORTED_HASH_ALGORITHM: AzihsmError = -43;
+
+/// RSA Unwrap failed error code
+pub const AZIHSM_RSA_UNWRAP_FAILED: AzihsmError = -44;
+
+/// RSA unwrap keykind not supported
+pub const AZIHSM_KEY_KIND_NOT_SUPPORTED: AzihsmError = -45;
+
+/// RSA sign failed error code
+pub const AZIHSM_RSA_SIGN_FAILED: AzihsmError = -46;
+
+/// RSA verify failed error code
+pub const AZIHSM_RSA_VERIFY_FAILED: AzihsmError = -47;
+
+/// RSA verify internal failed error code
+pub const AZIHSM_RSA_VERIFY_INTERNAL_ERROR: AzihsmError = -48;
+
+/// RSA Invalid pub Key
+pub const AZIHSM_RSA_INVALID_PUB_KEY: AzihsmError = -49;
+
+/// RSA Invalid MGF1 Hash Algorithm
+pub const AZIHSM_ERROR_INVALID_HASH_ALGO: AzihsmError = -50;
+
+/// RSA unwrap invalid key id error code
+pub const AZIHSM_RSA_UNWRAP_INVALID_KEY_ID: AzihsmError = -51;
+
+/// RSA crypto operation failed error code  
+pub const AZIHSM_RSA_CRYPTO_ERROR: AzihsmError = -52;
+
+/// ECDH derive failed error code
+pub const AZIHSM_ECDH_DERIVE_FAILED: AzihsmError = -53;
+
+/// HKDF derive failed error code
+pub const AZIHSM_HKDF_DERIVE_FAILED: AzihsmError = -54;
+
+/// HMAC sign failed error code
+pub const AZIHSM_HMAC_SIGN_FAILED: AzihsmError = -55;
+
+/// HMAC verify failed error code
+pub const AZIHSM_HMAC_VERIFY_FAILED: AzihsmError = -56;
+
+/// Unsupported data unit length error code
+pub const AZIHSM_AES_UNSUPPORTED_DATA_UNIT_LENGTH: AzihsmError = -57;
+
+/// Message too large error code
+pub const AZIHSM_ERROR_MSG_TOO_LARGE: AzihsmError = -99;
 
 /// Internal error code
 pub const AZIHSM_INTERNAL_ERROR: AzihsmError = -100;
@@ -150,8 +216,14 @@ pub(crate) fn abi_boundary<F: FnOnce() -> Result<(), AzihsmError> + UnwindSafe>(
 #[no_mangle]
 #[doc(hidden)]
 #[allow(unsafe_code)]
-pub extern "C" fn __azihsm_internal_for_bindgen(_: AzihsmAlgoAesCbcParams) {
+pub extern "C" fn __azihsm_internal_for_bindgen(
+    _: AzihsmAlgoAesCbcParams,
+    _: AzihsmAlgoAesXtsParams,
+    _: AzihsmAlgoRsaAesKeyWrapParams,
+    _: AzihsmAlgoRsaPkcsOaepParams,
+    _: AzihsmAlgoRsaPkcsPssParams,
+    _: AzihsmAlgoHkdfParams,
+    _: EcCurve,
+) {
     // This function is a placeholder for internal use by bindgen.
-    // It does not perform any operations and is used to ensure that
-    // the types are correctly defined and can be used in FFI contexts.
 }

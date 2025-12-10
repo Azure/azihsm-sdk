@@ -49,6 +49,71 @@ fn helper_init_bk3_and_establish_credential(
 }
 
 #[test]
+fn test_establish_credential_success_prov_failure_bad_masked_bk3() {
+    ddi_dev_test(
+        setup,
+        common_cleanup,
+        |dev, _ddi, _path, _incorrect_session_id| {
+            if get_device_kind(dev) != DdiDeviceKind::Physical {
+                println!("Physical device NOT found. Test only supported on physical device.");
+                return;
+            }
+
+            let (encrypted_credential, pub_key) =
+                encrypt_userid_pin_for_establish_cred(dev, TEST_CRED_ID, TEST_CRED_PIN);
+
+            let mut bk3 = vec![0u8; 48];
+            rand_bytes(&mut bk3).unwrap();
+            let masked_bk3 = helper_init_bk3(dev, bk3)
+                .expect("InitBk3 failed")
+                .data
+                .masked_bk3;
+
+            // tamper the masked bk3 to cause provisioning failure
+            let mut tampered_masked_bk3 = masked_bk3;
+            tampered_masked_bk3.data_mut()[10] =
+                tampered_masked_bk3.data_take()[10].wrapping_add(1);
+
+            let resp = helper_establish_credential(
+                dev,
+                None,
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                encrypted_credential.clone(),
+                pub_key.clone(),
+                tampered_masked_bk3,
+                MborByteArray::from_slice(&[]).expect("Failed to create empty BMK"),
+                MborByteArray::from_slice(&[])
+                    .expect("Failed to create empty masked unwrapping key"),
+            );
+
+            assert!(resp.is_err());
+
+            let (encrypted_credential, pub_key) =
+                encrypt_userid_pin_for_establish_cred(dev, TEST_CRED_ID, TEST_CRED_PIN);
+
+            // lets re-attempt with correct masked bk3 to ensure success
+            let resp = helper_establish_credential(
+                dev,
+                None,
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                encrypted_credential,
+                pub_key,
+                masked_bk3,
+                MborByteArray::from_slice(&[]).expect("Failed to create empty BMK"),
+                MborByteArray::from_slice(&[])
+                    .expect("Failed to create empty masked unwrapping key"),
+            );
+            assert!(resp.is_ok(), "resp {:?}", resp);
+            let resp = resp.unwrap();
+
+            assert!(resp.hdr.sess_id.is_none());
+            assert_eq!(resp.hdr.op, DdiOp::EstablishCredential);
+            assert_eq!(resp.hdr.status, DdiStatus::Success);
+        },
+    );
+}
+
+#[test]
 fn test_establish_credential_with_session() {
     ddi_dev_test(
         setup,

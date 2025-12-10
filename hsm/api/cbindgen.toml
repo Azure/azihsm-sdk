@@ -53,6 +53,15 @@ item_types = ["enums", "structs", "functions", "typedefs", "constants"]
 "AzihsmKeyPropList" = "azihsm_key_prop_list"
 "AzihsmBuffer" = "azihsm_buffer"
 "AzihsmAlgoAesCbcParams" = "azihsm_algo_aes_cbc_params"
+"AzihsmAlgoAesXtsParams" = "azihsm_algo_aes_xts_params"
+"AzihsmAlgoRsaAesKeyWrapParams" = "azihsm_algo_rsa_aes_key_wrap_params"
+"AzihsmAlgoRsaPkcsOaepParams" = "azihsm_algo_rsa_pkcs_oaep_params"
+"AzihsmMgf1Id" = "azihsm_mgf1_id"
+"KeyKind" = "azihsm_key_type"
+"AzihsmAlgoRsaPkcsPssParams" =  "azihsm_algo_rsa_pkcs_pss_params"
+"AzihsmEcdhAlgoParams" = "azihsm_algo_ecdh_params"
+"AzihsmAlgoHkdfParams" = "azihsm_algo_hkdf_params"
+"EcCurve" = "azihsm_ec_curve_id"
 
 [defines]
 "target_os = linux" = "__linux__ "

@@ -17,7 +17,7 @@ macro_rules! validate_pointers {
     ($($ptr:expr),+ $(,)?) => {{
         $(
             if $ptr.is_null() {
-                return Err(AZIHSM_ERROR_INVALID_ARGUMENT);
+                Err(AZIHSM_ERROR_INVALID_ARGUMENT)?;
             }
         )+
     }};
@@ -27,7 +27,7 @@ macro_rules! validate_pointers {
 macro_rules! deref_mut_ptr {
     ($ptr:expr) => {{
         if $ptr.is_null() {
-            return Err(AZIHSM_ERROR_INVALID_ARGUMENT);
+            Err(AZIHSM_ERROR_INVALID_ARGUMENT)?;
         }
         // SAFETY: Pointer has been validated as non-null above
         unsafe { &mut *$ptr }
@@ -38,7 +38,7 @@ macro_rules! deref_mut_ptr {
 macro_rules! deref_const_ptr {
     ($ptr:expr) => {{
         if $ptr.is_null() {
-            return Err(AZIHSM_ERROR_INVALID_ARGUMENT);
+            Err(AZIHSM_ERROR_INVALID_ARGUMENT)?;
         }
         // SAFETY: Pointer has been validated as non-null above
         unsafe { &*$ptr }
@@ -49,7 +49,7 @@ macro_rules! deref_const_ptr {
 macro_rules! validate_buffer {
     ($buf:expr) => {{
         if $buf.buf.is_null() || $buf.len == 0 {
-            return Err(AZIHSM_ERROR_INVALID_ARGUMENT);
+            Err(AZIHSM_ERROR_INVALID_ARGUMENT)?;
         }
     }};
 }
@@ -59,7 +59,7 @@ macro_rules! validate_conditions {
     ($($condition:expr),+ $(,)?) => {{
         $(
             if $condition {
-                return Err(AZIHSM_ERROR_INVALID_ARGUMENT);
+                Err(AZIHSM_ERROR_INVALID_ARGUMENT)?;
             }
         )+
     }};
@@ -130,6 +130,17 @@ macro_rules! convert_key_props {
     }};
 }
 
+/// Macro to safely write a value to an output pointer.
+/// The pointer must be validated as non-null before calling this macro.
+macro_rules! write_to_out_ptr {
+    ($ptr:expr, $value:expr) => {{
+        // SAFETY: Pointer has been validated as non-null above
+        unsafe {
+            *$ptr = $value;
+        }
+    }};
+}
+
 impl TryFrom<*const AzihsmKeyPropList> for KeyPropsBuilder {
     type Error = AzihsmError;
 
@@ -192,12 +203,16 @@ impl TryFrom<*const AzihsmKeyPropList> for KeyPropsBuilder {
                     extract_enum_property!(builder, prop, EcCurve, ecc_curve)
                 }
 
+                // Key Kind property
+                AzihsmKeyPropId::Kind => {
+                    extract_enum_property!(builder, prop, KeyKind, kind)
+                }
+
                 // String properties
                 AzihsmKeyPropId::Label => extract_string_property!(builder, prop, label),
 
                 // Read-only properties - not settable by user
                 AzihsmKeyPropId::Class
-                | AzihsmKeyPropId::Kind
                 | AzihsmKeyPropId::Private
                 | AzihsmKeyPropId::Copyable
                 | AzihsmKeyPropId::Destroyable
@@ -220,10 +235,16 @@ impl TryFrom<*const AzihsmKeyPropList> for KeyPropsBuilder {
 
 /// Helper function to validate buffer size and prepare output slice.
 /// Required length is updated in the output buffer if insufficient.
+/// Returns an empty slice if required_len is 0 (no output needed).
 pub(crate) fn prepare_output_buffer(
     output_buf: &mut AzihsmBuffer,
     required_len: u32,
 ) -> Result<&mut [u8], AzihsmError> {
+    // Special case: if no output is required, return empty slice
+    if required_len == 0 {
+        return Ok(&mut []);
+    }
+
     if output_buf.len < required_len {
         output_buf.len = required_len;
         Err(AZIHSM_ERROR_INSUFFICIENT_BUFFER)?;
@@ -239,3 +260,4 @@ pub(crate) use deref_mut_ptr;
 pub(crate) use validate_buffer;
 pub(crate) use validate_conditions;
 pub(crate) use validate_pointers;
+pub(crate) use write_to_out_ptr;

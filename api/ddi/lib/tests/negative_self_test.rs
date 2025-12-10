@@ -87,13 +87,7 @@ fn send_negative_self_test(device_path: String, test: u32) {
         &mut dev,
         vault_manager_sess_id,
         DdiTestAction::ExecuteNegativeSelfTest,
-        None,
-        Some(test),
-        None,
-        None,
-        None,
-        None,
-        None,
+        DdiTestActionContext::NegTestId(test),
     );
     assert!(resp.is_ok(), "resp {:?}", resp);
 }
