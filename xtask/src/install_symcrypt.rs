@@ -33,7 +33,7 @@ impl Xtask for InstallSymcrypt {
 
             cmd!(
                 sh,
-                "powershell -File ../.pipelines/scripts/install-symcrypt.ps1"
+                "powershell -File .pipelines/scripts/install-symcrypt.ps1"
             )
             .quiet()
             .run()?;

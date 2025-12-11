@@ -22,16 +22,18 @@ jobs:
     - uses: actions/checkout@v4
     - name: Run Setup
       run: cargo xtask setup
+    - name: Run Copyright
+      run: cargo xtask copyright
     - name: Cargo format
       run: |
         cargo +nightly fmt --version
         cargo xtask fmt --toolchain nightly
-    - name: Run Copyright
-      run: cargo xtask copyright
     - name: Cargo Clippy
       run: |
         cargo clippy --version
         cargo xtask clippy
+    - name: Run Rust tests
+      run: cargo xtask test
     - name: Clean release build and run tests
       run: cargo xtask nbt --clean --config Release --test
 
@@ -52,15 +54,17 @@ jobs:
         $libpath = Join-Path -Path ([System.Environment]::GetFolderPath("LocalApplicationData")) -ChildPath "symcrypt\dll"
         "SYMCRYPT_LIB_PATH=$libpath" >> $env:GITHUB_ENV
       shell: pwsh
+    - name: Run Copyright
+      run: cargo xtask copyright
     - name: Cargo format
       run: |
         cargo +nightly fmt --version
         cargo xtask fmt --toolchain nightly
-    - name: Run Copyright
-      run: cargo xtask copyright
     - name: Cargo Clippy
       run: |
         cargo clippy --version
         cargo xtask clippy
+    - name: Run Rust tests
+      run: cargo xtask test
     - name: Clean release build and run tests
       run: cargo xtask nbt --clean --config Release --test
