@@ -4,6 +4,8 @@
 
 use crate::bindings::ffi_types::AzihsmKeyProp;
 use crate::bindings::HANDLE_TABLE;
+use crate::crypto::aes::AesCbcKey;
+use crate::crypto::aes::AesXtsKey;
 use crate::crypto::ec::EcdsaKeyPair;
 use crate::crypto::rsa::RsaPkcsKeyPair;
 use crate::types::key_props::KeyPropValue;
@@ -61,6 +63,14 @@ pub unsafe extern "C" fn azihsm_key_get_prop(
                 let ec_key_pair: &EcdsaKeyPair =
                     HANDLE_TABLE.as_ref(key_handle, key_handle_type)?;
                 session.get_priv_property(ec_key_pair, prop_id)?
+            }
+            HandleType::AesCbcKey => {
+                let aes_cbc_key: &AesCbcKey = HANDLE_TABLE.as_ref(key_handle, key_handle_type)?;
+                session.get_property(aes_cbc_key, prop_id)?
+            }
+            HandleType::AesXtsKey => {
+                let aes_xts_key: &AesXtsKey = HANDLE_TABLE.as_ref(key_handle, key_handle_type)?;
+                session.get_property(aes_xts_key, prop_id)?
             }
             _ => Err(AZIHSM_OPERATION_NOT_SUPPORTED)?,
         };
@@ -131,6 +141,16 @@ pub unsafe extern "C" fn azihsm_key_set_prop(
                 let ec_key_pair =
                     HANDLE_TABLE.as_mut::<EcdsaKeyPair>(key_handle, key_handle_type)?;
                 session.set_priv_property(ec_key_pair, prop_id, value)?;
+            }
+            HandleType::AesCbcKey => {
+                let aes_cbc_key: &mut AesCbcKey =
+                    HANDLE_TABLE.as_mut::<AesCbcKey>(key_handle, key_handle_type)?;
+                session.set_property(aes_cbc_key, prop_id, value)?;
+            }
+            HandleType::AesXtsKey => {
+                let aes_xts_key: &mut AesXtsKey =
+                    HANDLE_TABLE.as_mut::<AesXtsKey>(key_handle, key_handle_type)?;
+                session.set_property(aes_xts_key, prop_id, value)?;
             }
             _ => Err(AZIHSM_OPERATION_NOT_SUPPORTED)?,
         }

@@ -13,5 +13,7 @@
 |            | Renamed device API to partition API                              |
 | 05/12/2025 | Fixed parameter type for partition get API                       |
 |            | Fixed parameter name for partition get path API                  |
+| 12/09/2025 | Updated algorithm parameter for AES CBC                          |
+|            | Added data unit length param to algorithm parameter for AES XTS  |
 
 \pagebreak
