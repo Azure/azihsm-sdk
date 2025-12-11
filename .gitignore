@@ -371,6 +371,6 @@ bld_engine_test*
 .*.swn
 .*.swm
 
-# HSM C++ build artifacts
-hsm/cpp/build/
-hsm/cpp/build-release/
+# API C++ build artifacts
+api/cpp/build/
+api/cpp/build-release/

@@ -1,306 +1,400 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
 
-#[cfg(all(feature = "use-openssl", feature = "use-symcrypt"))]
-compile_error!("OpenSSL and SymCrypt cannot be enabled at the same time.");
+mod aes;
+mod ecc;
+mod ecdh;
+mod ecdsa;
+mod eckey;
+mod hkdf;
+mod hmac;
+mod kbkdf;
+mod rand;
+mod rsa;
+mod secretkey;
+mod sha;
 
-pub mod aes;
-pub mod cert;
-pub mod ecc;
-pub mod rand;
-pub mod rsa;
-pub mod sha;
-
+pub use aes::*;
+pub use ecc::*;
+pub use ecdh::*;
+pub use ecdsa::*;
+pub use eckey::*;
+pub use hkdf::*;
+pub use hmac::*;
+pub use kbkdf::*;
+pub use rand::*;
+pub use rsa::*;
+pub use secretkey::*;
+pub use sha::*;
 use thiserror::Error;
 
-/// RSA Encryption/ Decryption Padding
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum CryptoRsaCryptoPadding {
-    // No Padding
-    None,
-
-    /// OAEP Padding
-    Oaep,
-}
-
-/// RSA Signature Padding
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum CryptoRsaSignaturePadding {
-    /// PSS Padding
-    Pss,
-
-    /// PKCS1.5 Padding
-    Pkcs1_5,
-}
-
-/// Digest Kind / Hash Algorithm
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum CryptoHashAlgorithm {
-    /// SHA1
-    Sha1,
-
-    /// SHA256
-    Sha256,
-
-    /// SHA384
-    Sha384,
-
-    /// SHA512
-    Sha512,
-}
-
-/// Kind of Cryptographic Key.
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum CryptoKeyKind {
-    /// RSA 2048-bit Public Key.
-    Rsa2kPublic,
-
-    /// RSA 3072-bit Public Key.
-    Rsa3kPublic,
-
-    /// RSA 4096-bit Public Key.
-    Rsa4kPublic,
-
-    /// RSA 2048-bit Private Key.
-    Rsa2kPrivate,
-
-    /// RSA 3072-bit Private Key.
-    Rsa3kPrivate,
-
-    /// RSA 4096-bit Private Key.
-    Rsa4kPrivate,
-
-    /// RSA 2048-bit Private CRT Key.
-    Rsa2kPrivateCrt,
-
-    /// RSA 3072-bit Private CRT Key.
-    Rsa3kPrivateCrt,
-
-    /// RSA 4096-bit Private CRT Key.
-    Rsa4kPrivateCrt,
-
-    /// ECC 256 Public Key
-    Ecc256Public,
-
-    /// ECC 384 Public Key
-    Ecc384Public,
-
-    /// ECC 521 Public Key
-    Ecc521Public,
-
-    /// ECC 256 Private Key
-    Ecc256Private,
-
-    /// ECC 384 Private Key
-    Ecc384Private,
-
-    /// ECC 521 Private Key
-    Ecc521Private,
-
-    /// AES 128-bit Key.
-    Aes128,
-
-    /// AES 192-bit Key.
-    Aes192,
-
-    /// AES 256-bit Key.
-    Aes256,
-
-    /// AES XTS Bulk 256-bit Key.
-    AesXtsBulk256,
-
-    /// AES GCM Bulk 256-bit Key.
-    AesGcmBulk256,
-
-    /// AES GCM Bulk 256-bit Unapproved Key.
-    AesGcmBulk256Unapproved,
-
-    /// 256-bit Secret from key exchange
-    Secret256,
-
-    /// 384-bit Secret from key exchange
-    Secret384,
-
-    /// 521-bit Secret from key exchange
-    Secret521,
-
-    /// 256-bit HMAC key for SHA256
-    HmacSha256,
-
-    /// 384-bit HMAC key for SHA384
-    HmacSha384,
-
-    /// 512-bit HMAC key for SHA512
-    HmacSha512,
-}
-
 /// HSM Error
-#[derive(Error, Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Error, Debug, PartialEq, Eq)]
 pub enum CryptoError {
-    /// Invalid parameter
-    #[error("invalid parameter")]
-    InvalidParameter,
-
-    /// Invalid certificate
-    #[error("invalid certificate")]
-    InvalidCertificate,
-
-    /// RSA Encrypt Failed
-    #[error("rsa encrypt failed")]
-    RsaEncryptFailed,
-
-    /// RSA Decrypt Failed
-    #[error("rsa decrypt failed")]
-    RsaDecryptFailed,
-
-    /// RSA Sign Failed
-    #[error("rsa sign failed")]
-    RsaSignFailed,
-
-    /// RSA Verify Failed
-    #[error("rsa verify failed")]
-    RsaVerifyFailed,
-
-    /// DER-encoded content does not decode to provided key type.
-    #[error("der does not match key type")]
-    DerAndKeyTypeMismatch,
-
-    /// ECC Sign Failed
-    #[error("ecc sign failed")]
-    EccSignFailed,
-
-    /// ECC Verify Failed
-    #[error("ecc verify failed")]
-    EccVerifyFailed,
-
-    /// AES Encrypt Failed
-    #[error("aes encrypt failed")]
-    AesEncryptFailed,
-
-    /// AES Decrypt Failed
-    #[error("aes decrypt failed")]
-    AesDecryptFailed,
-
-    /// RSA to DER error
-    #[error("rsa to der error")]
-    RsaToDerError,
-
-    /// RSA from DER error
-    #[error("rsa from der error")]
-    RsaFromDerError,
-
-    /// RSA from raw error
-    #[error("rsa from raw error")]
-    RsaFromRawError,
-
-    /// RSA generate error
-    #[error("rsa generate error")]
-    RsaGenerateError,
-
-    /// RSA get modulus error
-    #[error("rsa get modulus error")]
-    RsaGetModulusError,
-
-    /// RSA get public exponent error
-    #[error("rsa get public exponent error")]
-    RsaGetPublicExponentError,
-
-    /// RSA invalid key length
-    #[error("rsa invalid key length")]
-    RsaInvalidKeyLength,
-
-    /// ECC to DER error
-    #[error("ecc to der error")]
-    EccToDerError,
-
-    /// ECC from DER error
-    #[error("ecc from der error")]
-    EccFromDerError,
-
-    /// ECC generate error
-    #[error("ecc generate error")]
-    EccGenerateError,
-
-    /// ECC derive error
-    #[error("ecc derive error")]
-    EccDeriveError,
-
-    /// ECC get curve error
-    #[error("ecc get curve error")]
-    EccGetCurveError,
-
-    /// ECC get coordinates error
-    #[error("ecc get coordinates error")]
-    EccGetCoordinatesError,
-
     /// SHA error
     #[error("sha error")]
     ShaError,
+    #[error("sha invalid digest size")]
+    ShaDigestSizeError,
 
-    /// AES generate error
-    #[error("aes generate error")]
-    AesGenerateError,
+    //AES related erros
+    #[error("AES invalid key size")]
+    AesKeySizeError,
+    #[error("AES invalid data size")]
+    AesDataSizeError,
+    #[error("AES invalid IV ")]
+    AesInvalidIVError,
+    #[error("AES Key Generation Error")]
+    AesKeyGenError,
+    #[error("AES Encryption Error")]
+    AesEncryptError,
+    #[error("AES Decryption Error")]
+    AesDecryptError,
+    #[error("AES Error")]
+    AesError,
 
-    /// RNG error
-    #[error("rng error")]
-    RngError,
+    //ECC Error
+    #[error("ecc error")]
+    EccError,
+    #[error("ecc Unsupported curve in Key generation")]
+    EccUnsupportedCurveInKeyGen,
+    #[error("ecc sign error")]
+    EccSignError,
+    #[error("ecc verify error")]
+    EccVerifyError,
+    #[error("ECC Unsupported Hash Algorithm")]
+    EccUnsupportedHashAlgorithm,
+    #[error("ECC Unsupported Digest size")]
+    EccUnsupportedDigestSize,
+    #[error("ECC Unsupported EC feature")]
+    EccUnsupportedFeaure,
+    #[error("ECC Key Import failed")]
+    EcImportFailed,
+    #[error("ECC Key Export failed")]
+    EcExportFailed,
+    #[error("ECC Invalid key")]
+    EcInvalidKey,
+    #[error("ECC Error caused by backend crypto")]
+    EcBackendError,
+    #[error("ECC invalid signature size")]
+    EcdsaInvalidRawSignatureSize,
+    #[error("Buffer is too small")]
+    EcBufferTooSmall,
+    /// ASN.1 parse error
+    #[error("ASN.1 parse error")]
+    EcAsn1ParseError,
+    /// Curve mismatch or unsupported curve
+    #[error("Curve mismatch or unsupported curve")]
+    EcCurveMismatch,
+    /// Key size mismatch (expected vs actual)
+    #[error("Key size mismatch")]
+    EcKeySizeMismatch,
 
-    /// AES invalid key length
-    #[error("aes invalid key length")]
-    AesInvalidKeyLength,
+    // HMAC
+    #[error("Invalid signature size")]
+    HmacSignatureBufferTooSmall,
+    #[error("HMAC Backend error")]
+    HmacBackendFail,
+    #[error("HMAC Failed to sign the data")]
+    HmacSignFail,
+    #[error("HMAC signature length mismatch")]
+    HmacSignatureLengthMismatch,
+    #[error("HMAC verify failed")]
+    HmacVerifyFail,
+    #[error("HMAC signature mismatch")]
+    HmacSignatureMismatch,
+    /// Returned when the HMAC key is empty, which is not allowed by the backend.
+    #[error("HMAC key is empty")]
+    HmacKeyEmpty,
+    /// Returned when the HMAC key size is not within the valid range for the algorithm.
+    #[error("HMAC key size is invalid for the selected algorithm")]
+    HmacInvalidKeySize,
+    /// Returned when the HMAC key is shorter than the minimum allowed for the hash algorithm.
+    #[error("HMAC key is too short")]
+    HmacKeyTooShort,
+    /// Returned when the HMAC key is longer than the maximum allowed for the hash algorithm.
+    #[error("HMAC key is too long")]
+    HmacKeyTooLong,
+    /// Output length must be greater than zero
+    #[error("Output length must be greater than zero")]
+    InvalidOutputLength,
 
-    /// HMAC error
-    #[error("hmac error")]
-    HmacError,
+    /// Unsupported hash algorithm
+    #[error("Unsupported hash algorithm")]
+    UnsupportedHashAlgorithm,
 
-    /// HKDF error
-    #[error("HKDF error")]
-    HkdfError,
+    /// Failed to create CNG secret
+    #[error("Failed to create CNG secret")]
+    SecretCreationFailed,
 
-    /// ECC from RAW error
-    #[error("ecc from raw error")]
-    EccFromRawError,
+    /// KBKDF key derivation failed
+    #[error("KBKDF key derivation failed")]
+    KeyDerivationFailed,
 
-    /// Failure to create `MborByteArray`
-    #[error("failure to create MborByteArray")]
-    ByteArrayCreationError,
+    /// KBKDF PKey error
+    #[error("KBKDF: PKey::hmac failed")]
+    KbkdfPKeyError,
 
-    /// Output buffer too small
-    #[error("output buffer too small")]
+    /// KBKDF Signer error
+    #[error("KBKDF: Signer::new failed")]
+    KbkdfSignerError,
+
+    /// KBKDF Signer update error
+    #[error("KBKDF: signer.update failed")]
+    KbkdfSignerUpdateError,
+
+    /// KBKDF Signer sign_to_vec error
+    #[error("KBKDF: signer.sign_to_vec failed")]
+    KbkdfSignToVecError,
+
+    /// KBKDF output buffer too small
+    #[error("KBKDF: output buffer too small")]
     OutputBufferTooSmall,
+    ///RSA Error
+    #[error("RSA Error")]
+    RsaError,
+    /// RSA key size is less than the minimum allowed
+    #[error("RSA key size too small")]
+    RsaKeySizeTooSmall,
+    /// RSA key size is greater than the maximum allowed
+    #[error("RSA key size too large")]
+    RsaKeySizeTooLarge,
+    /// RSA key size is not a valid step
+    #[error("RSA key size invalid step")]
+    RsaKeySizeInvalidStep,
+    /// RSA invalid key size
+    #[error("RSA invalid key size")]
+    RsaInvalidKeySize,
+    /// Failed to open RSA algorithm provider
+    #[error("RSA algorithm provider open failed")]
+    RsaAlgoOpenFailed,
+    /// Failed to generate RSA key pair
+    #[error("RSA key pair generation failed")]
+    RsaKeyPairGenFailed,
+    /// Failed to extract RSA public key using OpenSSL
+    #[error("RSA public key extraction failed (OpenSSL)")]
+    RsaPublicKeyExtractFailed,
+    /// Failed to finalize RSA key pair
+    #[error("RSA key pair finalize failed")]
+    RsaKeyPairFinalizeFailed,
+    /// Failed to cleanup after RSA key pair finalize
+    #[error("RSA key pair cleanup failed")]
+    RsaKeyPairCleanupFailed,
+    /// RSA DER buffer is empty
+    #[error("RSA DER buffer is empty")]
+    RsaDerBufferEmpty,
+    /// Failed to get private key blob size for export
+    #[error("RSA export blob size failed")]
+    RsaExportBlobSizeFailed,
+    /// Failed to export private key blob
+    #[error("RSA export blob failed")]
+    RsaExportBlobFailed,
+    /// Failed to encode DER
+    #[error("RSA DER encode failed")]
+    RsaDerEncodeFailed,
+    /// DER buffer provided is too small
+    #[error("RSA DER buffer too small")]
+    RsaDerBufferTooSmall,
+    /// Failed to decode DER for RSA key
+    #[error("RSA DER decode failed")]
+    RsaDerDecodeFailed,
+    /// Failed to import private key into CNG
+    #[error("RSA import key failed")]
+    RsaImportKeyFailed,
+    /// Input data to encrypt is empty
+    #[error("RSA encrypt input is empty")]
+    RsaEncryptInputEmpty,
+    /// Output buffer for cipher data is empty
+    #[error("RSA encrypt output buffer is empty")]
+    RsaEncryptOutputBufferEmpty,
+    /// Failed to get expected cipher length
+    #[error("RSA encrypt get cipher length failed")]
+    RsaEncryptGetCipherLenFailed,
+    /// Cipher buffer size is too small
+    #[error("RSA encrypt output buffer too small")]
+    RsaEncryptOutputBufferTooSmall,
+    /// Failed to encrypt data
+    #[error("RSA encrypt failed")]
+    RsaEncryptFailed,
+    /// Expected cipher text length does not match actual length
+    #[error("RSA encrypt length mismatch")]
+    RsaEncryptLengthMismatch,
+    /// Input cipher data to decrypt is empty
+    #[error("RSA decrypt input is empty")]
+    RsaDecryptInputEmpty,
+    /// Output buffer for decrypted data is empty
+    #[error("RSA decrypt output buffer is empty")]
+    RsaDecryptOutputBufferEmpty,
+    /// Failed to get expected plain text length
+    #[error("RSA decrypt get plain text length failed")]
+    RsaDecryptGetPlainLenFailed,
+    /// Decrypted buffer size is too small
+    #[error("RSA decrypt output buffer too small")]
+    RsaDecryptOutputBufferTooSmall,
+    /// Failed to decrypt data
+    #[error("RSA decrypt failed")]
+    RsaDecryptFailed,
+    /// Expected plain text length does not match actual length
+    #[error("RSA decrypt length mismatch")]
+    RsaDecryptLengthMismatch,
+    /// Failed to decode PKCS#1 DER for RSA key
+    #[error("RSA PKCS#1 DER decode failed")]
+    RsaDecodeFailed,
+    /// Failed to compute CRT inverse for RSA key
+    #[error("RSA CRT inverse failed")]
+    RsaCrtInverseFailed,
+    /// Invalid block size for padding none
+    #[error("RSA Input data is wrong size for padding none ")]
+    RsaEncryptInputWrongSize,
+    /// Feature not yet implemented
+    #[error("Rsa sub feature not implemented yet")]
+    RsaFeatureNotImplemented,
+    /// Invalid salt length for RSA-PSS
+    #[error("RSA PSS salt length is invalid for the given hash algorithm")]
+    RsaPssSaltlenInvalid,
+    /// Signature is invalid
+    #[error("RSA signature is invalid")]
+    RsaSignatureInvalid,
+    /// Signature verification failed
+    #[error("RSA signature verification failed ")]
+    RsaSignatureFailed,
+    /// Failed to create signature verifier
+    #[error("RSA signature verifier creation failed")]
+    RsaSignatureVerifierCreateFailed,
+    /// Failed to set signature padding
+    #[error("RSA signature set padding failed")]
+    RsaSignatureSetPaddingFailed,
+    /// Failed to set PSS salt length
+    #[error("RSA signature set PSS salt length failed")]
+    RsaSignatureSetPssSaltlenFailed,
+    /// Failed to update verifier with data
+    #[error("RSA signature verifier update failed")]
+    RsaSignatureVerifierUpdateFailed,
+    /// Output buffer for signature is too small
+    #[error("RSA sign output buffer too small")]
+    RsaSignOutputBufferTooSmall,
+    /// Input data to verify is empty
+    #[error("RSA verify input is empty")]
+    RsaVerifyInputEmpty,
+    /// Signature to verify is empty
+    #[error("RSA verify signature is empty")]
+    RsaVerifySignatureEmpty,
+    /// Signature verification failed
+    #[error("RSA verify failed")]
+    RsaVerifyFailed,
+    /// Feature not yet implemented for RSA decrypt
+    #[error("RSA decrypt feature not implemented yet")]
+    RsaDecryptFeatureNotImplemented,
+    /// Feature not yet implemented for RSA encrypt
+    #[error("RSA encrypt feature not implemented yet")]
+    RsaEncryptFeatureNotImplemented,
+    /// Feature not yet implemented for RSA sign
+    #[error("RSA sign feature not implemented yet")]
+    RsaSignFeatureNotImplemented,
+    /// Feature not yet implemented for RSA verify
+    #[error("RSA verify feature not implemented yet")]
+    RsaVerifyFeatureNotImplemented,
+    /// Failed to sign data
+    #[error("RSA sign failed")]
+    RsaSignFailed,
+    /// Expected signature length does not match actual length
+    #[error("RSA sign length mismatch")]
+    RsaSignLengthMismatch,
+    /// Input data to sign is empty
+    #[error("RSA sign input is empty")]
+    RsaSignInputEmpty,
+    /// Output buffer for signature is empty
+    #[error("RSA sign output buffer is empty")]
+    RsaSignOutputBufferEmpty,
+    /// Not supported by platform or FIPS policy
+    #[error("RSA operation not supported by platform or FIPS policy")]
+    RsaNotSupported,
+    /// Input data to encrypt is too large for the key/padding
+    #[error("RSA encrypt input is too large for the key/padding")]
+    RsaEncryptInputTooLarge,
+    /// AES key to wrap is empty
+    #[error("RSA wrap input is empty")]
+    RsaWrapInputEmpty,
+    /// Output buffer for wrapped key is empty
+    #[error("RSA wrap output buffer is empty")]
+    RsaWrapOutputBufferEmpty,
+    /// AES key length does not match expected size
+    #[error("RSA wrap input wrong size")]
+    RsaWrapInputWrongSize,
+    /// Wrapped key to unwrap is empty
+    #[error("RSA unwrap input is empty")]
+    RsaUnwrapInputEmpty,
+    /// Output buffer for unwrapped key is empty
+    #[error("RSA unwrap output buffer is empty")]
+    RsaUnwrapOutputBufferEmpty,
+    // Unwrap buffer is too small
+    #[error("RSA unwrap output buffer too small")]
+    RsaUnwrapOutputBufferTooSmall,
+    /// Unwrapped AES key length does not match expected size
+    #[error("RSA unwrap output wrong size")]
+    RsaUnwrapOutputWrongSize,
+    /// Output buffer for wrapped blob is too small
+    #[error("RSA wrap output buffer too small")]
+    RsaWrapOutputBufferTooSmall,
+    /// Failed to generate random AES session key
+    #[error("RSA wrap AES key generation failed")]
+    RsaWrapAesKeyGenFailed,
+    /// Failed to encrypt user data with AES
+    #[error("RSA wrap AES encryption failed")]
+    RsaWrapAesEncryptFailed,
+    /// Wrapped blob is too small to contain valid data
+    #[error("RSA unwrap input too small")]
+    RsaUnwrapInputTooSmall,
+    /// Failed to decrypt user data with AES
+    #[error("RSA unwrap AES decryption failed")]
+    RsaUnwrapAesDecryptFailed,
+    /// Invalid wrapped blob format
+    #[error("RSA unwrap invalid blob format")]
+    RsaUnwrapInvalidBlobFormat,
+    // ECDH specific errors
+    #[error("ECDH internal error")]
+    EcdhInternalError,
+    #[error("ECDH key agreement failed")]
+    EcdhKeyAgreementFailed,
+    #[error("ECDH key derivation failed")]
+    EcdhKeyDerivationFailed,
+    #[error("ECDH output buffer too small")]
+    EcdhBufferTooSmall,
+    #[error("ECDH get key size failed")]
+    EcdhGetKeySizeFailed,
 
-    /// Invalid algorithm
-    #[error("invalid algorithm")]
-    InvalidAlgorithm,
+    //HKDF
+    #[error("HKDF key is empty")]
+    HkdfSecretCreationFailed,
+    #[error("HKDF backend fail")]
+    HkdfBackendFail,
+    #[error("Unsupported hash algorithm")]
+    HkdfUnsupportedHashAlgorithm,
+    /// HKDF Extract phase failed during HMAC operations
+    #[error("HKDF Extract phase failed")]
+    HkdfExtractFailed,
+    /// HKDF Expand phase failed during HMAC operations
+    #[error("HKDF Expand phase failed")]
+    HkdfExpandFailed,
+    /// HKDF output length exceeds maximum allowed (255 * hash_len)
+    #[error("HKDF output length too large")]
+    HkdfOutputTooLarge,
+    /// HKDF output length is zero
+    #[error("HKDF output length cannot be zero")]
+    HkdfOutputLengthZero,
+    /// HKDF output buffer is too small for requested length
+    #[error("HKDF output buffer too small")]
+    HkdfOutputBufferTooSmall,
+    /// HKDF PRK (Pseudorandom Key) has invalid length
+    #[error("HKDF PRK has invalid length")]
+    HkdfInvalidPrkLength,
+    /// HKDF HMAC signer creation failed
+    #[error("HKDF HMAC signer creation failed")]
+    HkdfHmacSignerFailed,
+    /// HKDF HMAC key creation failed
+    #[error("HKDF HMAC key creation failed")]
+    HkdfHmacKeyFailed,
 
-    /// Invalid key length
-    #[error("invalid key length")]
-    InvalidKeyLength,
-
-    /// Metadata encoding failed
-    #[error("metadata encoding failed")]
-    MetadataEncodeFailed,
-
-    /// Metadata decoding failed
-    #[error("metadata decoding failed")]
-    MetadataDecodeFailed,
-
-    /// Masked Key Pre-Encoding Failed
-    #[error("masked key pre-encoding failed")]
-    MaskedKeyPreEncodeFailed,
-
-    /// Masked Key Encoding Failed
-    #[error("masked key encoding failed")]
-    MaskedKeyEncodeFailed,
-
-    /// Masked Key Decoding Failed
-    #[error("masked key decoding failed")]
-    MaskedKeyDecodeFailed,
-
-    /// MBOR Encoding Failed
-    #[error("mbor encoding failed")]
-    MborEncodeFailed,
-
-    /// KBKDF error
-    #[error("kbkdf error")]
-    KbkdfError,
+    /// Random number generation failed
+    #[error("Random number generation failed")]
+    RngError,
 }
