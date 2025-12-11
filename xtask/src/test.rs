@@ -23,9 +23,12 @@ impl Xtask for Test {
         let sh = xshell::Shell::new()?;
         let rust_toolchain = sh.var("RUST_TOOLCHAIN").map(|s| format!("+{s}")).ok();
 
-        cmd!(sh, "cargo {rust_toolchain...} test --all-targets")
-            .quiet()
-            .run()?;
+        cmd!(
+            sh,
+            "cargo {rust_toolchain...} nextest run --all-targets --features mock"
+        )
+        .quiet()
+        .run()?;
 
         log::trace!("done tests");
         Ok(())

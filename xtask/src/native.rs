@@ -36,7 +36,8 @@ impl Xtask for NativeBuildAndTest {
         log::trace!("running build-cpp");
 
         // The workspace root is the Martichoras root, cpp is under hsm/cpp
-        let cpp_dir = ctx.root.join("cpp");
+        let mut cpp_dir = ctx.root.clone();
+        cpp_dir.extend(["api", "cpp"]);
         let build_dir = cpp_dir.join("build");
 
         // Verify cpp directory exists

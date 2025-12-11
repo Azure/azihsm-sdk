@@ -6,7 +6,7 @@ resolver = "2"
 members = [
     "./api/lib",
     "./api/support/crypto",
-    "./api/xtask",
+    "./xtask",
 ]
 
 [workspace.dependencies]

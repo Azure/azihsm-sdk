@@ -7,6 +7,7 @@
 
 use clap::Parser;
 
+use crate::install;
 #[cfg(target_os = "windows")]
 use crate::install_symcrypt;
 use crate::rustup_component_add;
@@ -38,6 +39,14 @@ impl Xtask for Setup {
             };
             install_symcrypt.run(ctx.clone())?;
         }
+
+        // Run Install Cargo nextest
+        let install_cargo_nextest = install::Install {
+            crate_name: "cargo-nextest@0.9.108".to_string(),
+            force: self.force,
+            config: self.config.clone(),
+        };
+        install_cargo_nextest.run(ctx.clone())?;
 
         // Add Clippy
         let add_clippy = rustup_component_add::RustupComponentAdd {

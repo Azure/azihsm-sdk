@@ -18,6 +18,7 @@ mod clippy;
 pub mod common;
 mod copyright;
 mod fmt;
+mod install;
 mod install_symcrypt;
 mod native;
 mod precheck;
@@ -56,6 +57,7 @@ enum Commands {
     Clippy(clippy::Clippy),
     Copyright(copyright::Copyright),
     Fmt(fmt::Fmt),
+    Install(install::Install),
     InstallSymcrypt(install_symcrypt::InstallSymcrypt),
     #[clap(alias = "nbt")]
     NativeBuildAndTest(native::NativeBuildAndTest),
@@ -91,6 +93,7 @@ fn try_main() -> anyhow::Result<()> {
         Commands::Clippy(task) => task.run(ctx),
         Commands::Copyright(task) => task.run(ctx),
         Commands::Fmt(task) => task.run(ctx),
+        Commands::Install(task) => task.run(ctx),
         Commands::InstallSymcrypt(task) => task.run(ctx),
         Commands::Precheck(task) => task.run(ctx),
         Commands::NativeBuildAndTest(task) => task.run(ctx),
