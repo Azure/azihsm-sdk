@@ -77,7 +77,7 @@ add_custom_target(azihsm_api ALL
 add_dependencies(azihsm_api GTest::gtest_main)
 add_dependencies(azihsm_api scope_guard::scope_guard)
 
-set(SOURCE helpers.cpp part_tests.cpp session_tests.cpp key_mgmt_tests.cpp enc_dec_tests.cpp aes_tests.cpp ec_tests.cpp sha_tests.cpp rsa_tests.cpp hmac_tests.cpp rsa_key_prop_tests.cpp)
+set(SOURCE helpers.cpp part_tests.cpp session_tests.cpp key_mgmt_tests.cpp enc_dec_tests.cpp aes_tests.cpp ec_tests.cpp sha_tests.cpp rsa_tests.cpp hmac_tests.cpp rsa_key_prop_tests.cpp aes_key_prop_tests.cpp)
 add_executable(azihsm_api_tests ${SOURCE})
 target_include_directories(
     azihsm_api_tests 

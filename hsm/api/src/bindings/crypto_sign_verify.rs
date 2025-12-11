@@ -390,7 +390,7 @@ pub unsafe extern "C" fn azihsm_crypt_sign_init(
 }
 
 /// Generic helper for streaming update operations
-fn perform_streaming_update<S>(
+fn perform_streaming_sign_update<S>(
     ctx_handle: AzihsmHandle,
     ctx_handle_type: HandleType,
     input_data: &[u8],
@@ -432,14 +432,14 @@ pub unsafe extern "C" fn azihsm_crypt_sign_update(
 
         match ctx_handle_type {
             HandleType::EcSignStreamingContext => {
-                perform_streaming_update::<EcdsaSignStream<'_>>(
+                perform_streaming_sign_update::<EcdsaSignStream<'_>>(
                     ctx_handle,
                     ctx_handle_type,
                     input_data,
                 )?;
             }
             HandleType::HmacSignStreamingContext => {
-                perform_streaming_update::<HmacSignStream<'_>>(
+                perform_streaming_sign_update::<HmacSignStream<'_>>(
                     ctx_handle,
                     ctx_handle_type,
                     input_data,
@@ -635,6 +635,19 @@ pub unsafe extern "C" fn azihsm_crypt_verify_init(
     })
 }
 
+/// Generic helper for streaming update operations (verify)
+fn perform_streaming_verify_update<V>(
+    ctx_handle: AzihsmHandle,
+    ctx_handle_type: HandleType,
+    input_data: &[u8],
+) -> Result<(), AzihsmError>
+where
+    V: StreamingVerifyOp,
+{
+    let stream: &mut V = HANDLE_TABLE.as_mut(ctx_handle, ctx_handle_type)?;
+    stream.update(input_data)
+}
+
 /// Update streaming verify operation with additional data.
 ///
 /// @param[in] sess_handle Handle to the HSM session
@@ -665,9 +678,18 @@ pub unsafe extern "C" fn azihsm_crypt_verify_update(
 
         match ctx_handle_type {
             HandleType::EcVerifyStreamingContext => {
-                let verify_stream: &mut EcdsaVerifyStream =
-                    HANDLE_TABLE.as_mut(ctx_handle, HandleType::EcVerifyStreamingContext)?;
-                verify_stream.update(input_data)?;
+                perform_streaming_verify_update::<EcdsaVerifyStream>(
+                    ctx_handle,
+                    ctx_handle_type,
+                    input_data,
+                )?;
+            }
+            HandleType::HmacVerifyStreamingContext => {
+                perform_streaming_verify_update::<HmacVerifyStream<'_>>(
+                    ctx_handle,
+                    ctx_handle_type,
+                    input_data,
+                )?;
             }
             _ => Err(AZIHSM_ERROR_INVALID_HANDLE)?,
         }
