@@ -11,6 +11,8 @@ use crate::crypto::aes::AesCbcDecryptStreamOp;
 use crate::crypto::aes::AesCbcEncryptStreamOp;
 use crate::crypto::aes::AesCbcKey;
 use crate::crypto::aes::AesXtsAlgo;
+use crate::crypto::aes::AesXtsDecryptStreamOp;
+use crate::crypto::aes::AesXtsEncryptStreamOp;
 use crate::crypto::aes::AesXtsKey;
 use crate::crypto::rsa::RsaPkcsKeyPair;
 use crate::crypto::rsa::RsaPkcsOaepAlgo;
@@ -275,7 +277,9 @@ pub unsafe extern "C" fn azihsm_crypt_decrypt(
 unsafe fn perform_streaming_init<'a, TAlgo, TKey, TStreamOp>(
     algo: *mut AzihsmAlgo,
     key_handle: AzihsmHandle,
+    key_handle_type: HandleType,
     ctx_handle: *mut AzihsmHandle,
+    ctx_handle_type: HandleType,
     supported_algos: &[AlgoId],
     init_fn: impl FnOnce(&TAlgo, &TKey) -> Result<TStreamOp, AzihsmError>,
 ) -> Result<(), AzihsmError>
@@ -287,22 +291,16 @@ where
     validate_pointers!(algo, ctx_handle);
 
     let algo_spec = deref_mut_ptr!(algo);
-    let key_handle_type = HANDLE_TABLE.get_handle_type(key_handle)?;
 
-    let (stream_op, ctx_handle_type) = match key_handle_type {
-        HandleType::AesCbcKey => {
-            if !supported_algos.contains(&algo_spec.id) {
-                Err(AZIHSM_ALGORITHM_NOT_SUPPORTED)?;
-            }
+    if !supported_algos.contains(&algo_spec.id) {
+        Err(AZIHSM_ALGORITHM_NOT_SUPPORTED)?;
+    }
 
-            let key: &TKey = HANDLE_TABLE.as_ref(key_handle, key_handle_type)?;
-            // SAFETY: algo_spec points to a valid AzihsmAlgo, checked by validate_pointers! macro
-            let algo = unsafe { algo_spec.from_algo::<TAlgo>()? };
-            let stream = init_fn(&algo, key)?;
-            (Box::new(stream), HandleType::AesCbcStreamingContext)
-        }
-        _ => Err(AZIHSM_ERROR_INVALID_HANDLE)?,
-    };
+    let key: &TKey = HANDLE_TABLE.as_ref(key_handle, key_handle_type)?;
+    // SAFETY: algo_spec points to a valid AzihsmAlgo, checked by validate_pointers! macro
+    let algo = unsafe { algo_spec.from_algo::<TAlgo>()? };
+    let stream = init_fn(&algo, key)?;
+    let stream_op = Box::new(stream);
 
     // SAFETY: ctx_handle pointer is validated by validate_pointers! macro
     unsafe {
@@ -342,15 +340,47 @@ pub unsafe extern "C" fn azihsm_crypt_encrypt_init(
                     perform_streaming_init::<AesCbcAlgo, AesCbcKey, AesCbcEncryptStreamOp<'_>>(
                         algo,
                         key_handle,
+                        HandleType::AesCbcKey,
                         ctx_handle,
+                        HandleType::AesCbcStreamingContext,
                         &[AlgoId::AesCbc, AlgoId::AesCbcPad],
                         |algo, key| session.encrypt_init(algo, key),
                     )
                 }
-                // Future: Add HandleType::AesXtsKey, etc.
+                HandleType::AesXtsKey => {
+                    perform_streaming_init::<AesXtsAlgo, AesXtsKey, AesXtsEncryptStreamOp<'_>>(
+                        algo,
+                        key_handle,
+                        HandleType::AesXtsKey,
+                        ctx_handle,
+                        HandleType::AesXtsStreamingContext,
+                        &[AlgoId::AesXts],
+                        |algo, key| session.encrypt_init(algo, key),
+                    )
+                }
                 _ => Err(AZIHSM_ERROR_INVALID_HANDLE),
             }
     })
+}
+
+/// Helper for streaming encrypt update operations
+fn perform_streaming_encrypt_update<TStreamOp>(
+    ctx_handle: AzihsmHandle,
+    ctx_handle_type: HandleType,
+    input_data: &[u8],
+    output_buf: &mut AzihsmBuffer,
+) -> Result<(), AzihsmError>
+where
+    TStreamOp: StreamingEncryptOp,
+{
+    let stream: &mut TStreamOp = HANDLE_TABLE.as_mut(ctx_handle, ctx_handle_type)?;
+
+    let required_len = stream.required_output_len(input_data.len(), Stage::Update);
+    let output_data = prepare_output_buffer(output_buf, required_len as u32)?;
+    let bytes_written = stream.update(input_data, output_data)?;
+    output_buf.len = bytes_written as u32;
+
+    Ok(())
 }
 
 /// Update streaming encryption operation with additional plaintext data.
@@ -387,23 +417,50 @@ pub unsafe extern "C" fn azihsm_crypt_encrypt_update(
 
         match ctx_handle_type {
             HandleType::AesCbcStreamingContext => {
-                let encrypt_stream: &mut AesCbcEncryptStreamOp<'_> =
-                    HANDLE_TABLE.as_mut(ctx_handle, HandleType::AesCbcStreamingContext)?;
-
-                // Calculate required output size based on buffered data + new input
-                let required_len =
-                    encrypt_stream.required_output_len(input_data.len(), Stage::Update);
-
-                let output_data = prepare_output_buffer(output_buf, required_len as u32)?;
-                let bytes_written = encrypt_stream.update(input_data, output_data)?;
-                output_buf.len = bytes_written as u32;
+                perform_streaming_encrypt_update::<AesCbcEncryptStreamOp<'_>>(
+                    ctx_handle,
+                    HandleType::AesCbcStreamingContext,
+                    input_data,
+                    output_buf,
+                )
             }
-            // Future: Add HandleType::AesXtsStreamingContext, etc.
-            _ => Err(AZIHSM_ERROR_INVALID_HANDLE)?,
+            HandleType::AesXtsStreamingContext => {
+                perform_streaming_encrypt_update::<AesXtsEncryptStreamOp<'_>>(
+                    ctx_handle,
+                    HandleType::AesXtsStreamingContext,
+                    input_data,
+                    output_buf,
+                )
+            }
+            _ => Err(AZIHSM_ERROR_INVALID_HANDLE),
         }
-
-        Ok(())
     })
+}
+
+/// Helper for streaming encrypt finalize operations
+fn perform_streaming_encrypt_finalize<TStreamOp>(
+    ctx_handle: AzihsmHandle,
+    ctx_handle_type: HandleType,
+    output_buf: &mut AzihsmBuffer,
+) -> Result<(), AzihsmError>
+where
+    TStreamOp: StreamingEncryptOp,
+{
+    // First, check what output size we need
+    let encrypt_stream_ref: &TStreamOp = HANDLE_TABLE.as_ref(ctx_handle, ctx_handle_type)?;
+
+    // Calculate required output size based on buffered data
+    let required_len = encrypt_stream_ref.required_output_len(0, Stage::Finalize);
+
+    let output_data = prepare_output_buffer(output_buf, required_len as u32)?;
+
+    // Now that buffer is validated, take ownership and finalize
+    let encrypt_stream: TStreamOp = *HANDLE_TABLE.free_handle(ctx_handle, ctx_handle_type)?;
+
+    let bytes_written = encrypt_stream.finalize(output_data)?;
+    output_buf.len = bytes_written as u32;
+
+    Ok(())
 }
 
 /// Finalize streaming encryption operation and retrieve any remaining ciphertext.
@@ -435,27 +492,21 @@ pub unsafe extern "C" fn azihsm_crypt_encrypt_final(
 
         match ctx_handle_type {
             HandleType::AesCbcStreamingContext => {
-                // First, check what output size we need
-                let encrypt_stream_ref: &AesCbcEncryptStreamOp<'_> =
-                    HANDLE_TABLE.as_ref(ctx_handle, HandleType::AesCbcStreamingContext)?;
-
-                // Calculate required output size based on buffered data + new input
-                let required_len = encrypt_stream_ref.required_output_len(0, Stage::Finalize);
-
-                let output_data = prepare_output_buffer(output_buf, required_len as u32)?;
-
-                // Now that buffer is validated, take ownership and finalize
-                let encrypt_stream: AesCbcEncryptStreamOp<'_> =
-                    *HANDLE_TABLE.free_handle(ctx_handle, HandleType::AesCbcStreamingContext)?;
-
-                let bytes_written = encrypt_stream.finalize(output_data)?;
-                output_buf.len = bytes_written as u32;
+                perform_streaming_encrypt_finalize::<AesCbcEncryptStreamOp<'_>>(
+                    ctx_handle,
+                    HandleType::AesCbcStreamingContext,
+                    output_buf,
+                )
             }
-            // Future: Add HandleType::AesXtsStreamingContext, etc.
-            _ => Err(AZIHSM_ERROR_INVALID_HANDLE)?,
+            HandleType::AesXtsStreamingContext => {
+                perform_streaming_encrypt_finalize::<AesXtsEncryptStreamOp<'_>>(
+                    ctx_handle,
+                    HandleType::AesXtsStreamingContext,
+                    output_buf,
+                )
+            }
+            _ => Err(AZIHSM_ERROR_INVALID_HANDLE),
         }
-
-        Ok(())
     })
 }
 
@@ -490,8 +541,21 @@ pub unsafe extern "C" fn azihsm_crypt_decrypt_init(
                     perform_streaming_init::<AesCbcAlgo, AesCbcKey, AesCbcDecryptStreamOp<'_>>(
                         algo,
                         key_handle,
+                        HandleType::AesCbcKey,
                         ctx_handle,
+                        HandleType::AesCbcStreamingContext,
                         &[AlgoId::AesCbc, AlgoId::AesCbcPad],
+                        |algo, key| session.decrypt_init(algo, key),
+                    )
+                }
+                HandleType::AesXtsKey => {
+                    perform_streaming_init::<AesXtsAlgo, AesXtsKey, AesXtsDecryptStreamOp<'_>>(
+                        algo,
+                        key_handle,
+                        HandleType::AesXtsKey,
+                        ctx_handle,
+                        HandleType::AesXtsStreamingContext,
+                        &[AlgoId::AesXts],
                         |algo, key| session.decrypt_init(algo, key),
                     )
                 }
@@ -499,6 +563,26 @@ pub unsafe extern "C" fn azihsm_crypt_decrypt_init(
                 _ => Err(AZIHSM_ERROR_INVALID_HANDLE),
             }
     })
+}
+
+/// Helper for streaming decrypt update operations
+fn perform_streaming_decrypt_update<TStreamOp>(
+    ctx_handle: AzihsmHandle,
+    ctx_handle_type: HandleType,
+    input_data: &[u8],
+    output_buf: &mut AzihsmBuffer,
+) -> Result<(), AzihsmError>
+where
+    TStreamOp: StreamingDecryptOp,
+{
+    let stream: &mut TStreamOp = HANDLE_TABLE.as_mut(ctx_handle, ctx_handle_type)?;
+
+    let required_len = stream.required_output_len(input_data.len(), Stage::Update);
+    let output_data = prepare_output_buffer(output_buf, required_len as u32)?;
+    let bytes_written = stream.update(input_data, output_data)?;
+    output_buf.len = bytes_written as u32;
+
+    Ok(())
 }
 
 /// Update streaming decryption operation with additional ciphertext data.
@@ -535,23 +619,50 @@ pub unsafe extern "C" fn azihsm_crypt_decrypt_update(
 
         match ctx_handle_type {
             HandleType::AesCbcStreamingContext => {
-                let decrypt_stream: &mut AesCbcDecryptStreamOp<'_> =
-                    HANDLE_TABLE.as_mut(ctx_handle, HandleType::AesCbcStreamingContext)?;
-
-                // Calculate required output size based on buffered data + new input
-                let required_len =
-                    decrypt_stream.required_output_len(input_data.len(), Stage::Update);
-
-                let output_data = prepare_output_buffer(output_buf, required_len as u32)?;
-                let bytes_written = decrypt_stream.update(input_data, output_data)?;
-                output_buf.len = bytes_written as u32;
+                perform_streaming_decrypt_update::<AesCbcDecryptStreamOp<'_>>(
+                    ctx_handle,
+                    HandleType::AesCbcStreamingContext,
+                    input_data,
+                    output_buf,
+                )
             }
-            // Future: Add HandleType::AesXtsStreamingContext, etc.
-            _ => Err(AZIHSM_ERROR_INVALID_HANDLE)?,
+            HandleType::AesXtsStreamingContext => {
+                perform_streaming_decrypt_update::<AesXtsDecryptStreamOp<'_>>(
+                    ctx_handle,
+                    HandleType::AesXtsStreamingContext,
+                    input_data,
+                    output_buf,
+                )
+            }
+            _ => Err(AZIHSM_ERROR_INVALID_HANDLE),
         }
-
-        Ok(())
     })
+}
+
+/// Helper for streaming decrypt finalize operations
+fn perform_streaming_decrypt_finalize<TStreamOp>(
+    ctx_handle: AzihsmHandle,
+    ctx_handle_type: HandleType,
+    output_buf: &mut AzihsmBuffer,
+) -> Result<(), AzihsmError>
+where
+    TStreamOp: StreamingDecryptOp,
+{
+    // First, check what output size we need
+    let decrypt_stream_ref: &TStreamOp = HANDLE_TABLE.as_ref(ctx_handle, ctx_handle_type)?;
+
+    // Calculate required output size based on buffered data
+    let required_len = decrypt_stream_ref.required_output_len(0, Stage::Finalize);
+
+    let output_data = prepare_output_buffer(output_buf, required_len as u32)?;
+
+    // Now that buffer is validated, take ownership and finalize
+    let decrypt_stream: TStreamOp = *HANDLE_TABLE.free_handle(ctx_handle, ctx_handle_type)?;
+
+    let bytes_written = decrypt_stream.finalize(output_data)?;
+    output_buf.len = bytes_written as u32;
+
+    Ok(())
 }
 
 /// Finalize streaming decryption operation and retrieve any remaining plaintext.
@@ -583,26 +694,20 @@ pub unsafe extern "C" fn azihsm_crypt_decrypt_final(
 
         match ctx_handle_type {
             HandleType::AesCbcStreamingContext => {
-                // First, check what output size we need
-                let decrypt_stream_ref: &AesCbcDecryptStreamOp<'_> =
-                    HANDLE_TABLE.as_ref(ctx_handle, HandleType::AesCbcStreamingContext)?;
-
-                // Calculate required output size based on buffered data + new input
-                let required_len = decrypt_stream_ref.required_output_len(0, Stage::Finalize);
-
-                let output_data = prepare_output_buffer(output_buf, required_len as u32)?;
-
-                // Now that buffer is validated, take ownership and finalize
-                let decrypt_stream: AesCbcDecryptStreamOp<'_> =
-                    *HANDLE_TABLE.free_handle(ctx_handle, HandleType::AesCbcStreamingContext)?;
-
-                let bytes_written = decrypt_stream.finalize(output_data)?;
-                output_buf.len = bytes_written as u32;
+                perform_streaming_decrypt_finalize::<AesCbcDecryptStreamOp<'_>>(
+                    ctx_handle,
+                    HandleType::AesCbcStreamingContext,
+                    output_buf,
+                )
             }
-            // Future: Add HandleType::AesXtsStreamingContext, etc.
-            _ => Err(AZIHSM_ERROR_INVALID_HANDLE)?,
+            HandleType::AesXtsStreamingContext => {
+                perform_streaming_decrypt_finalize::<AesXtsDecryptStreamOp<'_>>(
+                    ctx_handle,
+                    HandleType::AesXtsStreamingContext,
+                    output_buf,
+                )
+            }
+            _ => Err(AZIHSM_ERROR_INVALID_HANDLE),
         }
-
-        Ok(())
     })
 }

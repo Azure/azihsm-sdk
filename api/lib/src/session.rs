@@ -583,7 +583,7 @@ impl Session {
     /// # Returns
     /// `Result<A::EncryptStream, AzihsmError>` - The streaming encryption context
     ///
-    #[allow(private_bounds)]
+    #[allow(private_bounds, private_interfaces)]
     pub fn encrypt_init<'a, A, K>(
         &'a self,
         algo: &A,
@@ -605,7 +605,7 @@ impl Session {
     /// # Returns
     /// `Result<A::DecryptStream, AzihsmError>` - The streaming decryption context
     ///
-    //#[allow(private_bounds)]
+    #[allow(private_bounds, private_interfaces)]
     pub fn decrypt_init<'a, A, K>(
         &'a self,
         algo: &A,
@@ -627,7 +627,7 @@ impl Session {
     /// # Returns
     /// A streaming sign context that can be updated with data and finalized to produce a signature.
     ///
-    #[allow(private_bounds)]
+    #[allow(private_bounds, private_interfaces)]
     pub fn sign_init<'a, A, K>(&'a self, algo: &A, key: &K) -> Result<A::SignStream, AzihsmError>
     where
         A: Algo + StreamingSignVerifyAlgo<'a, K>,
@@ -645,7 +645,7 @@ impl Session {
     /// # Returns
     /// A streaming verify context that can be updated with data and finalized to verify a signature.
     ///
-    #[allow(private_bounds)]
+    #[allow(private_bounds, private_interfaces)]
     pub fn verify_init<'a, A, K>(
         &'a self,
         algo: &A,
@@ -666,6 +666,7 @@ impl Session {
     /// # Returns
     /// `Result<A::DigestStream, AzihsmError>` - Ok with a digest stream context that can be updated with data and finalized to produce the digest,
     /// Err if the initialization failed.
+    #[allow(private_bounds, private_interfaces)]
     pub fn digest_init<'a, A>(&'a self, algo: &A) -> Result<A::DigestStream, AzihsmError>
     where
         A: crate::crypto::StreamingDigestAlgo<'a>,

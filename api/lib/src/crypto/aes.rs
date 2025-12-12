@@ -925,25 +925,34 @@ pub struct AesXtsAlgo {
 }
 
 impl AesXtsAlgo {
+    fn validate_data_unit_len(data_unit_len: Option<u32>) -> Result<(), AzihsmError> {
+        if let Some(unit_len) = data_unit_len {
+            if !matches!(unit_len, 512 | 4096 | 8192) {
+                Err(AZIHSM_AES_UNSUPPORTED_DATA_UNIT_LENGTH)?;
+            }
+        }
+        Ok(())
+    }
+
+    // Core XTS operation without validation (assumes validation done at init)
     fn xts_operation(
-        &self,
         session: &Session,
-        key: &AesXtsKey,
+        key_ids: (KeyId, KeyId),
+        sector_num: [u8; AES_XTS_SECTOR_NUM_LEN],
+        data_unit_len: Option<u32>,
         input: &[u8],
         output: &mut [u8],
         operation: DdiAesOp,
     ) -> Result<usize, AzihsmError> {
+        if input.is_empty() {
+            return Ok(0);
+        }
+
         if output.len() < input.len() {
-            Err(AZIHSM_ERROR_INSUFFICIENT_BUFFER)?
+            Err(AZIHSM_ERROR_INSUFFICIENT_BUFFER)?;
         }
 
-        let key_ids = key.id().ok_or(AZIHSM_KEY_NOT_INITIALIZED)?;
-
-        // Validate data unit length
-        let data_unit_len = self.data_unit_len.unwrap_or(input.len() as u32);
-        if data_unit_len as usize != input.len() && !matches!(data_unit_len, 512 | 4096 | 8192) {
-            Err(AZIHSM_AES_UNSUPPORTED_DATA_UNIT_LENGTH)?;
-        }
+        let data_unit_len = data_unit_len.unwrap_or(input.len() as u32);
 
         let error_code = match operation {
             DdiAesOp::Encrypt => AZIHSM_AES_ENCRYPT_FAILED,
@@ -954,23 +963,47 @@ impl AesXtsAlgo {
         let resp = aes_xts_enc_dec(
             &session.partition().read().partition,
             session.session_id(),
-            0, // [TODO]
+            0,
             key_ids.1 .0,
             key_ids.0 .0,
             operation,
             input,
-            self.sector_num,
+            sector_num,
             data_unit_len,
         )
         .map_err(|_| error_code)?;
 
         if resp.data.len() > output.len() {
-            Err(error_code)?
+            Err(error_code)?;
         }
 
         output[..resp.data.len()].copy_from_slice(&resp.data);
 
         Ok(resp.data.len())
+    }
+
+    fn xts_one_shot_operation(
+        &self,
+        session: &Session,
+        key: &AesXtsKey,
+        input: &[u8],
+        output: &mut [u8],
+        operation: DdiAesOp,
+    ) -> Result<usize, AzihsmError> {
+        let key_ids = key.id().ok_or(AZIHSM_KEY_NOT_INITIALIZED)?;
+
+        // Validate for one-shot operations
+        Self::validate_data_unit_len(self.data_unit_len)?;
+
+        Self::xts_operation(
+            session,
+            key_ids,
+            self.sector_num,
+            self.data_unit_len,
+            input,
+            output,
+            operation,
+        )
     }
 }
 
@@ -988,7 +1021,7 @@ impl EncryptOp<AesXtsKey> for AesXtsAlgo {
         pt: &[u8],
         ct: &mut [u8],
     ) -> Result<usize, AzihsmError> {
-        self.xts_operation(session, key, pt, ct, DdiAesOp::Encrypt)
+        self.xts_one_shot_operation(session, key, pt, ct, DdiAesOp::Encrypt)
     }
 }
 
@@ -1004,6 +1037,174 @@ impl DecryptOp<AesXtsKey> for AesXtsAlgo {
         ct: &[u8],
         pt: &mut [u8],
     ) -> Result<usize, AzihsmError> {
-        self.xts_operation(session, key, ct, pt, DdiAesOp::Decrypt)
+        self.xts_one_shot_operation(session, key, ct, pt, DdiAesOp::Decrypt)
+    }
+}
+
+pub struct AesXtsStreamOp<'a, const IS_ENCRYPT: bool> {
+    session: &'a Session,
+    sector_num: [u8; AES_XTS_SECTOR_NUM_LEN],
+    data_unit_len: Option<u32>,
+    buffer: Vec<u8>,
+    key_ids: (KeyId, KeyId),
+}
+
+impl<'a, const IS_ENCRYPT: bool> AesXtsStreamOp<'a, IS_ENCRYPT> {
+    fn new(
+        session: &'a Session,
+        sector_num: [u8; AES_XTS_SECTOR_NUM_LEN],
+        data_unit_len: Option<u32>,
+        key_ids: (KeyId, KeyId),
+    ) -> Self {
+        Self {
+            session,
+            sector_num,
+            data_unit_len,
+            buffer: Vec::new(),
+            key_ids,
+        }
+    }
+
+    fn process_complete_units(&self, data: &[u8], output: &mut [u8]) -> Result<usize, AzihsmError> {
+        let operation = if IS_ENCRYPT {
+            DdiAesOp::Encrypt
+        } else {
+            DdiAesOp::Decrypt
+        };
+
+        AesXtsAlgo::xts_operation(
+            self.session,
+            self.key_ids,
+            self.sector_num,
+            self.data_unit_len,
+            data,
+            output,
+            operation,
+        )
+    }
+
+    fn required_output_len_impl(&self, input_len: usize, stage: Stage) -> usize {
+        let total_data = self.buffer.len() + input_len;
+
+        match stage {
+            Stage::Update => {
+                if let Some(unit_len) = self.data_unit_len {
+                    let num_complete_units = total_data / unit_len as usize;
+                    num_complete_units * unit_len as usize
+                } else {
+                    0
+                }
+            }
+            Stage::Finalize => total_data,
+        }
+    }
+
+    fn update_impl(&mut self, input: &[u8], output: &mut [u8]) -> Result<usize, AzihsmError> {
+        let bytes_to_process = self.required_output_len_impl(input.len(), Stage::Update);
+
+        if output.len() < bytes_to_process {
+            Err(AZIHSM_ERROR_INSUFFICIENT_BUFFER)?;
+        }
+
+        self.buffer.extend_from_slice(input);
+
+        if bytes_to_process == 0 {
+            return Ok(0);
+        }
+
+        let mut total_written = 0;
+        if let Some(unit_len) = self.data_unit_len {
+            let unit_len = unit_len as usize;
+            while self.buffer.len() >= unit_len {
+                let bytes_written = self.process_complete_units(
+                    &self.buffer[..unit_len],
+                    &mut output[total_written..],
+                )?;
+                total_written += bytes_written;
+                self.buffer.drain(..unit_len);
+            }
+        }
+
+        Ok(total_written)
+    }
+
+    fn finalize_impl(self, output: &mut [u8]) -> Result<usize, AzihsmError> {
+        if self.buffer.is_empty() {
+            return Ok(0);
+        }
+
+        if output.len() < self.buffer.len() {
+            Err(AZIHSM_ERROR_INSUFFICIENT_BUFFER)?;
+        }
+
+        self.process_complete_units(&self.buffer, output)
+    }
+}
+
+/// Streaming encryption context for AES XTS
+pub type AesXtsEncryptStreamOp<'a> = AesXtsStreamOp<'a, true>;
+/// Streaming decryption context for AES XTS
+pub type AesXtsDecryptStreamOp<'a> = AesXtsStreamOp<'a, false>;
+
+impl<'a> StreamingEncryptOp for AesXtsEncryptStreamOp<'a> {
+    fn required_output_len(&self, input_len: usize, stage: Stage) -> usize {
+        self.required_output_len_impl(input_len, stage)
+    }
+
+    fn update(&mut self, pt: &[u8], ct: &mut [u8]) -> Result<usize, AzihsmError> {
+        self.update_impl(pt, ct)
+    }
+
+    fn finalize(self, ct: &mut [u8]) -> Result<usize, AzihsmError> {
+        self.finalize_impl(ct)
+    }
+}
+
+impl<'a> StreamingDecryptOp for AesXtsDecryptStreamOp<'a> {
+    fn required_output_len(&self, input_len: usize, stage: Stage) -> usize {
+        self.required_output_len_impl(input_len, stage)
+    }
+
+    fn update(&mut self, ct: &[u8], pt: &mut [u8]) -> Result<usize, AzihsmError> {
+        self.update_impl(ct, pt)
+    }
+
+    fn finalize(self, pt: &mut [u8]) -> Result<usize, AzihsmError> {
+        self.finalize_impl(pt)
+    }
+}
+
+impl<'a> StreamingEncDecAlgo<'a, AesXtsKey> for AesXtsAlgo {
+    type EncryptStream = AesXtsEncryptStreamOp<'a>;
+    type DecryptStream = AesXtsDecryptStreamOp<'a>;
+
+    fn encrypt_init(
+        &self,
+        session: &'a Session,
+        key: &AesXtsKey,
+    ) -> Result<Self::EncryptStream, AzihsmError> {
+        Self::validate_data_unit_len(self.data_unit_len)?;
+
+        Ok(AesXtsStreamOp::new(
+            session,
+            self.sector_num,
+            self.data_unit_len,
+            key.id().ok_or(AZIHSM_KEY_NOT_INITIALIZED)?,
+        ))
+    }
+
+    fn decrypt_init(
+        &self,
+        session: &'a Session,
+        key: &AesXtsKey,
+    ) -> Result<Self::DecryptStream, AzihsmError> {
+        Self::validate_data_unit_len(self.data_unit_len)?;
+
+        Ok(AesXtsStreamOp::new(
+            session,
+            self.sector_num,
+            self.data_unit_len,
+            key.id().ok_or(AZIHSM_KEY_NOT_INITIALIZED)?,
+        ))
     }
 }

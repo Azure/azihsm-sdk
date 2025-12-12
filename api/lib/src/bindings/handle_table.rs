@@ -21,6 +21,7 @@ pub(crate) enum HandleType {
     SecretKey,
     HmacKey,
     AesCbcStreamingContext,
+    AesXtsStreamingContext,
     EcSignStreamingContext,
     EcVerifyStreamingContext,
     ShaStreamingContext,
