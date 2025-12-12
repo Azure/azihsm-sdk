@@ -1,0 +1,16 @@
+# Copyright (C) Microsoft Corporation. All rights reserved.
+
+[package]
+name = "xtask"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow.workspace = true
+clap = { workspace = true, features = ["derive", "env"] }
+env_logger.workspace = true
+log.workspace = true
+xshell.workspace = true
+
+[lints]
+workspace = true
