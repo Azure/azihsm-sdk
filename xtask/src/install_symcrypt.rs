@@ -54,14 +54,14 @@ impl Xtask for InstallSymcrypt {
                 .unwrap_or_else(|| "amd64|x64|x86_64|x86-64".to_string());
             cmd!(
                 sh,
-                "powershell -File ../.pipelines/scripts/install-symcrypt.ps1 -InstallMethod {install_method_str} -SymcryptVersion {symcrypt_version} -SymcryptOS {os} -SymcryptArchitecture {arch}"
+                "powershell -File .pipelines/scripts/install-symcrypt.ps1 -InstallMethod {install_method_str} -SymcryptVersion {symcrypt_version} -SymcryptOS {os} -SymcryptArchitecture {arch}"
             )
             .quiet()
             .run()?;
         }
         #[cfg(not(target_os = "windows"))]
         {
-            cmd!(sh, "chmod +x ../.pipelines/scripts/install-symcrypt.sh")
+            cmd!(sh, "chmod +x .pipelines/scripts/install-symcrypt.sh")
                 .quiet()
                 .run()?;
 
@@ -73,7 +73,7 @@ impl Xtask for InstallSymcrypt {
 
             cmd!(
                 sh,
-                "../.pipelines/scripts/install-symcrypt.sh {ubuntu_version}"
+                ".pipelines/scripts/install-symcrypt.sh {ubuntu_version}"
             )
             .quiet()
             .run()?;
