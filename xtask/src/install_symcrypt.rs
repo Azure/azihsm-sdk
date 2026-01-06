@@ -44,7 +44,7 @@ impl Xtask for InstallSymcrypt {
 
         #[cfg(target_os = "windows")]
         {
-            let install_method_str = self.install_method.unwrap_or_else(|| "nuget".to_string());
+            let _install_method_str = self.install_method.unwrap_or_else(|| "nuget".to_string());
             let symcrypt_version = self
                 .symcrypt_version
                 .unwrap_or_else(|| "103.10.0-b39181fb-129971309".to_string());
@@ -54,7 +54,7 @@ impl Xtask for InstallSymcrypt {
                 .unwrap_or_else(|| "amd64|x64|x86_64|x86-64".to_string());
             cmd!(
                 sh,
-                "powershell -File .pipelines/scripts/install-symcrypt.ps1 -InstallMethod {install_method_str} -SymcryptVersion {symcrypt_version} -SymcryptOS {os} -SymcryptArchitecture {arch}"
+                "powershell -File .pipelines/scripts/install-symcrypt.ps1 -SymcryptVersion {symcrypt_version} -SymcryptOS {os} -SymcryptArchitecture {arch}"
             )
             .quiet()
             .run()?;
