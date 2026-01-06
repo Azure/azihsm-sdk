@@ -1,3 +1,4 @@
+# Copyright (C) Microsoft Corporation. All rights reserved.
 # This script installs SymCrypt to a specified location.
 
 # SymCrypt configuration (the null fields are set below in the main function).
