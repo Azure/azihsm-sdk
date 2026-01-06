@@ -1,7 +1,7 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
 
-use mcr_ddi_derive::*;
-use mcr_ddi_mbor::*;
+use azihsm_ddi_derive::*;
+use azihsm_ddi_mbor::*;
 
 #[test]
 fn test_struct_opt_only_fields() {

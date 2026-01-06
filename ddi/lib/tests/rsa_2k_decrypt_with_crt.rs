@@ -1,12 +1,13 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
 
+#![cfg(test)]
+
 mod common;
 
-use mcr_ddi::*;
-use mcr_ddi_mbor::MborByteArray;
-use mcr_ddi_types::*;
-use rsa_padding::RsaDigestKind;
-use rsa_padding::RsaEncoding;
+use azihsm_crypto::*;
+use azihsm_ddi::*;
+use azihsm_ddi_mbor::MborByteArray;
+use azihsm_ddi_types::*;
 use test_with_tracing::test;
 
 use crate::common::*;
@@ -284,17 +285,12 @@ fn test_rsa_2k_encrypt_and_decrypt() {
             padded_data[..resp.data.x.len()]
                 .copy_from_slice(&resp.data.x.data()[..resp.data.x.len()]);
 
-            let unpadded_data_result = RsaEncoding::decode_oaep(
-                &mut padded_data[..resp.data.x.len()],
-                None,
-                2048 / 8,
-                RsaDigestKind::Sha256,
-                crypto_sha256,
-            );
-            assert!(unpadded_data_result.is_ok());
-            let unpadded_data = unpadded_data_result.unwrap();
-
-            assert_eq!(orig_x[..data_len_to_test], unpadded_data);
+            let params = RsaPadOaepAlgoParams::new(2048 / 8, HashAlgo::sha256(), None);
+            let unpadded_data_result =
+                RsaPadOaepAlgo::from_bytes(&padded_data[..resp.data.x.len()], params)
+                    .expect("Failed to unpad decrypted block");
+            let unpadded_data = unpadded_data_result.message();
+            assert_eq!(&orig_x[..data_len_to_test], unpadded_data);
         },
     );
 }

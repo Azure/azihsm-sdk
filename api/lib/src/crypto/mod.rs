@@ -173,7 +173,7 @@ pub trait StreamingDecryptOp {
 
 /// Trait for algorithms that support streaming operations
 #[allow(unused)]
-pub trait StreamingEncDecAlgo<'a, K: Key> {
+pub(crate) trait StreamingEncDecAlgo<'a, K: Key> {
     type EncryptStream: StreamingEncryptOp;
     type DecryptStream: StreamingDecryptOp;
 
@@ -241,7 +241,7 @@ pub trait StreamingVerifyOp {
 
 /// Trait for algorithms that support streaming sign/verify operations
 #[allow(unused)]
-pub trait StreamingSignVerifyAlgo<'a, K: Key> {
+pub(crate) trait StreamingSignVerifyAlgo<'a, K: Key> {
     type SignStream: StreamingSignOp;
     type VerifyStream: StreamingVerifyOp;
 
@@ -280,7 +280,7 @@ pub trait StreamingDigestOp {
 
 #[allow(unused)]
 /// Trait for algorithms that support streaming digest operations
-pub trait StreamingDigestAlgo<'a> {
+pub(crate) trait StreamingDigestAlgo<'a> {
     type DigestStream: StreamingDigestOp;
 
     /// Create a streaming digest object

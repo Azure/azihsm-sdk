@@ -1,5 +1,6 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
 
+#![cfg(test)]
 #[path = "common/helpers/mod.rs"]
 #[allow(dead_code)]
 #[allow(unused_imports)]
@@ -7,27 +8,13 @@ pub mod helpers;
 
 use std::thread;
 
-use crypto::ecc::EccOp;
-use crypto::ecc::EccPrivateKey;
-use crypto::ecc::EccPrivateOp;
-use crypto::ecc::EccPublicKey;
-use crypto::ecc::EccPublicOp;
-use crypto::rand::rand_bytes;
-use crypto::rsa::RsaOp;
-use crypto::rsa::RsaPublicKey;
-use crypto::rsa::RsaPublicOp;
-use crypto::sha::*;
-use crypto::CryptoHashAlgorithm;
-use crypto::CryptoKeyKind;
-use crypto::CryptoRsaCryptoPadding;
-use crypto::CryptoRsaSignaturePadding;
+use azihsm_cred_encrypt::DeviceCredKey;
+use azihsm_crypto::*;
+use azihsm_ddi::*;
+use azihsm_ddi_mbor::MborByteArray;
+pub use azihsm_ddi_test_helpers::*;
+use azihsm_ddi_types::*;
 pub use helpers::*;
-use mcr_ddi::Ddi;
-use mcr_ddi::*;
-use mcr_ddi_mbor::MborByteArray;
-use mcr_ddi_sim::crypto::aes::AesOp;
-use mcr_ddi_types::*;
-use session_parameter_encryption::DeviceCredentialEncryptionKey;
 use x509::X509CertificateOp;
 use x509::*;
 
@@ -252,11 +239,11 @@ pub fn helper_key_signature_verification(
     pub_key_der: &[u8],
     signature: &[u8],
 ) -> bool {
-    let result = EccPublicKey::from_der(pub_key_der, Some(CryptoKeyKind::Ecc384Public));
+    let result = EccPublicKey::from_bytes(pub_key_der);
     assert!(result.is_ok(), "result {:?}", result);
     let ecc_pub = result.unwrap();
 
-    let result = ecc_pub.coordinates();
+    let result = ecc_pub.coord_vec();
     assert!(result.is_ok(), "result {:?}", result);
     let (expected_x, expected_y) = result.unwrap();
 
@@ -281,12 +268,14 @@ pub fn helper_key_signature_verification(
     let part_id_pub_key = helper_get_partition_id_pub_key(dev);
 
     // verify the signature using the partition ID public key
-    let pkey = EccPublicKey::from_der(
-        part_id_pub_key.as_slice(),
-        Some(CryptoKeyKind::Ecc384Public),
+    let pkey = EccPublicKey::from_bytes(part_id_pub_key.as_slice()).unwrap();
+    Verifier::verify(
+        &mut EccAlgo::default(),
+        &pkey,
+        &digest[..digest_len],
+        signature,
     )
-    .unwrap();
-    pkey.verify(&digest[..digest_len], signature).is_ok()
+    .is_ok()
 }
 
 #[allow(dead_code)]
@@ -352,8 +341,7 @@ pub fn helper_common_establish_credential_no_unwrap(
 
     // Establish credential
     let nonce = resp.data.nonce;
-    let param_encryption_key =
-        DeviceCredentialEncryptionKey::new(&resp.data.pub_key, nonce).unwrap();
+    let param_encryption_key = DeviceCredKey::new(&resp.data.pub_key, nonce).unwrap();
     let (establish_cred_encryption_key, ddi_public_key) = param_encryption_key
         .create_credential_key_from_der(&TEST_ECC_384_PRIVATE_KEY)
         .unwrap();
@@ -362,8 +350,8 @@ pub fn helper_common_establish_credential_no_unwrap(
         .unwrap();
 
     let mut bk3 = vec![0u8; 48];
-    rand_bytes(&mut bk3).unwrap();
-    let masked_bk3 = helper_init_bk3(dev, bk3).unwrap().data.masked_bk3;
+    Rng::rand_bytes(&mut bk3).unwrap();
+    let masked_bk3 = helper_get_or_init_bk3(dev);
 
     let _ = helper_establish_credential(
         dev,
@@ -395,8 +383,7 @@ pub fn helper_common_establish_credential_with_bmk(
 
     // Establish credential
     let nonce = resp.data.nonce;
-    let param_encryption_key =
-        DeviceCredentialEncryptionKey::new(&resp.data.pub_key, nonce).unwrap();
+    let param_encryption_key = DeviceCredKey::new(&resp.data.pub_key, nonce).unwrap();
     let (establish_cred_encryption_key, ddi_public_key) = param_encryption_key
         .create_credential_key_from_der(&TEST_ECC_384_PRIVATE_KEY)
         .unwrap();
@@ -434,8 +421,7 @@ pub fn helper_common_establish_credential_with_bmk_no_unwrap(
 
     // Establish credential
     let nonce = resp.data.nonce;
-    let param_encryption_key =
-        DeviceCredentialEncryptionKey::new(&resp.data.pub_key, nonce).unwrap();
+    let param_encryption_key = DeviceCredKey::new(&resp.data.pub_key, nonce).unwrap();
     let (establish_cred_encryption_key, ddi_public_key) = param_encryption_key
         .create_credential_key_from_der(&TEST_ECC_384_PRIVATE_KEY)
         .unwrap();
@@ -479,13 +465,10 @@ pub fn common_setup_for_lm(
     // Set Device Kind
     set_device_kind(&mut setup_dev);
 
-    let mut bk3 = vec![0u8; 48];
-    rand_bytes(&mut bk3).unwrap();
-
-    let masked_bk3 = helper_init_bk3(&setup_dev, bk3).unwrap().data.masked_bk3;
+    let masked_bk3 = helper_get_or_init_bk3(&setup_dev);
 
     let mut random_seed = vec![0u8; 48];
-    rand_bytes(&mut random_seed).unwrap();
+    Rng::rand_bytes(&mut random_seed).unwrap();
 
     // This is used for initial setup from fresh so all the option fields are empty
     let bmk = helper_common_establish_credential_with_bmk(
@@ -541,8 +524,7 @@ pub fn helper_common_establish_credential(
 
     // Establish credential
     let nonce = resp.data.nonce;
-    let param_encryption_key =
-        DeviceCredentialEncryptionKey::new(&resp.data.pub_key, nonce).unwrap();
+    let param_encryption_key = DeviceCredKey::new(&resp.data.pub_key, nonce).unwrap();
     let (establish_cred_encryption_key, ddi_public_key) = param_encryption_key
         .create_credential_key_from_der(&TEST_ECC_384_PRIVATE_KEY)
         .unwrap();
@@ -550,9 +532,7 @@ pub fn helper_common_establish_credential(
         .encrypt_establish_credential(id, pin, nonce)
         .unwrap();
 
-    let mut bk3 = vec![0u8; 48];
-    rand_bytes(&mut bk3).unwrap();
-    let masked_bk3 = helper_init_bk3(dev, bk3).unwrap().data.masked_bk3;
+    let masked_bk3 = helper_get_or_init_bk3(dev);
 
     let resp = helper_establish_credential(
         dev,
@@ -604,8 +584,7 @@ pub fn encrypt_userid_pin_for_establish_cred(
         helper_get_establish_cred_encryption_key(dev, None, Some(DdiApiRev { major: 1, minor: 0 }))
             .unwrap();
     let nonce = resp.data.nonce;
-    let param_encryption_key =
-        DeviceCredentialEncryptionKey::new(&resp.data.pub_key, nonce).unwrap();
+    let param_encryption_key = DeviceCredKey::new(&resp.data.pub_key, nonce).unwrap();
     let (establish_cred_encryption_key, ddi_public_key) = param_encryption_key
         .create_credential_key_from_der(&TEST_ECC_384_PRIVATE_KEY)
         .unwrap();
@@ -626,8 +605,7 @@ pub fn encrypt_userid_pin_for_open_session(
     let resp = helper_get_session_encryption_key(dev, None, Some(DdiApiRev { major: 1, minor: 0 }))
         .unwrap();
     let nonce = resp.data.nonce;
-    let param_encryption_key =
-        DeviceCredentialEncryptionKey::new(&resp.data.pub_key, nonce).unwrap();
+    let param_encryption_key = DeviceCredKey::new(&resp.data.pub_key, nonce).unwrap();
     let (establish_cred_encryption_key, ddi_public_key) = param_encryption_key
         .create_credential_key_from_der(&TEST_ECC_384_PRIVATE_KEY)
         .unwrap();
@@ -648,7 +626,7 @@ pub fn encrypt_userid_pin_for_open_session_no_unwrap(
     let resp =
         helper_get_session_encryption_key(dev, None, Some(DdiApiRev { major: 1, minor: 0 }))?;
     let nonce = resp.data.nonce;
-    let param_encryption_key = DeviceCredentialEncryptionKey::new(&resp.data.pub_key, nonce)?;
+    let param_encryption_key = DeviceCredKey::new(&resp.data.pub_key, nonce)?;
     let (establish_cred_encryption_key, ddi_public_key) =
         param_encryption_key.create_credential_key_from_der(&TEST_ECC_384_PRIVATE_KEY)?;
     let ddi_encrypted_credential =
@@ -665,8 +643,7 @@ pub fn encrypt_pin_for_change_pin(
     let resp = helper_get_session_encryption_key(dev, None, Some(DdiApiRev { major: 1, minor: 0 }))
         .unwrap();
     let nonce = resp.data.nonce;
-    let param_encryption_key =
-        DeviceCredentialEncryptionKey::new(&resp.data.pub_key, nonce).unwrap();
+    let param_encryption_key = DeviceCredKey::new(&resp.data.pub_key, nonce).unwrap();
     let (establish_cred_encryption_key, ddi_public_key) = param_encryption_key
         .create_credential_key_from_der(&TEST_ECC_384_PRIVATE_KEY)
         .unwrap();
@@ -851,24 +828,20 @@ pub fn wrap_data_with_aes_key(
     data: &[u8],
     aes_key: &[u8],
 ) -> Vec<u8> {
-    let wrapping_pub_key =
-        crypto::rsa::RsaPublicKey::from_der(&wrapping_pub_key_der, None).unwrap();
-    let mut encrypted_aes_key = wrapping_pub_key
-        .encrypt(
-            aes_key,
-            crypto::CryptoRsaCryptoPadding::Oaep,
-            Some(CryptoHashAlgorithm::Sha256),
-            None,
-        )
-        .unwrap();
+    let wrapping_pub_key = RsaPublicKey::from_bytes(&wrapping_pub_key_der).unwrap();
 
-    let aes_key =
-        mcr_ddi_sim::crypto::aes::AesKey::from_bytes(aes_key).expect("Failed to create AES key");
+    let mut encrypted_aes_key = Encrypter::encrypt_vec(
+        &mut RsaEncryptAlgo::with_oaep_padding(HashAlgo::sha256(), None),
+        &wrapping_pub_key,
+        aes_key,
+    )
+    .unwrap();
 
-    let mut encrypted_data = aes_key
-        .wrap_pad(data)
-        .expect("Failed to wrap data")
-        .cipher_text;
+    let aes_key = AesKey::from_bytes(aes_key).expect("Failed to create AES key");
+
+    let mut encrypted_data =
+        Encrypter::encrypt_vec(&mut AesKeyWrapPadAlgo::default(), &aes_key, data)
+            .expect("Failed to wrap data");
 
     // Concatenate the encrypted_aes_key and encrypted_data to form the wrapped blob
     let mut wrapped_data = Vec::with_capacity(encrypted_aes_key.len() + encrypted_data.len());
@@ -882,24 +855,19 @@ pub fn wrap_data_with_aes_key(
 #[allow(unused)]
 pub fn wrap_data(wrapping_pub_key_der: Vec<u8>, data: &[u8]) -> Vec<u8> {
     let aes_key = TEST_EPHEMERAL_AES.as_slice();
-    let wrapping_pub_key =
-        crypto::rsa::RsaPublicKey::from_der(&wrapping_pub_key_der, None).unwrap();
-    let mut encrypted_aes_key = wrapping_pub_key
-        .encrypt(
-            aes_key,
-            crypto::CryptoRsaCryptoPadding::Oaep,
-            Some(CryptoHashAlgorithm::Sha256),
-            None,
-        )
-        .unwrap();
+    let wrapping_pub_key = RsaPublicKey::from_bytes(&wrapping_pub_key_der).unwrap();
+    let mut encrypted_aes_key = Encrypter::encrypt_vec(
+        &mut RsaEncryptAlgo::with_oaep_padding(HashAlgo::sha256(), None),
+        &wrapping_pub_key,
+        aes_key,
+    )
+    .unwrap();
 
-    let aes_key =
-        mcr_ddi_sim::crypto::aes::AesKey::from_bytes(aes_key).expect("Failed to create AES key");
+    let aes_key = AesKey::from_bytes(aes_key).expect("Failed to create AES key");
 
-    let mut encrypted_data = aes_key
-        .wrap_pad(data)
-        .expect("Failed to wrap data")
-        .cipher_text;
+    let mut encrypted_data =
+        Encrypter::encrypt_vec(&mut AesKeyWrapPadAlgo::default(), &aes_key, data)
+            .expect("Failed to wrap data");
 
     // Concatenate the encrypted_aes_key and encrypted_data to form the wrapped blob
     let mut wrapped_data = Vec::with_capacity(encrypted_aes_key.len() + encrypted_data.len());
@@ -913,15 +881,14 @@ pub fn wrap_data(wrapping_pub_key_der: Vec<u8>, data: &[u8]) -> Vec<u8> {
 #[allow(unused)]
 pub fn ecc_sign_local(
     priv_key: Vec<u8>,
-    key_kind: CryptoKeyKind,
+    curve: EccCurve,
     digest: [u8; 96],
     digest_len: usize,
 ) -> Vec<u8> {
-    // Create a private key handle from the DER-encoded data
-    let pkey = EccPrivateKey::from_raw(&priv_key, key_kind).unwrap();
-
-    // Perform the signing operation using the private key handle
-    pkey.sign(&digest[..digest_len]).unwrap()
+    let der = DerEccPrivateKey::new(curve, &priv_key);
+    let vec = der.to_der_vec().unwrap();
+    let pkey = EccPrivateKey::from_bytes(&vec).unwrap();
+    Signer::sign_vec(&mut EccAlgo::default(), &pkey, &digest[..digest_len]).unwrap()
 }
 
 /// Helper to perform ECC verify operation using OpenSSL.
@@ -932,8 +899,14 @@ pub fn ecc_verify_local_openssl(
     digest: [u8; 96],
     digest_len: usize,
 ) -> bool {
-    let pkey = EccPublicKey::from_der(&pub_key.der.data()[..pub_key.der.len()], None).unwrap();
-    pkey.verify(&digest[..digest_len], signature).is_ok()
+    let pkey = EccPublicKey::from_bytes(&pub_key.der.data()[..pub_key.der.len()]).unwrap();
+    Verifier::verify(
+        &mut EccAlgo::default(),
+        &pkey,
+        &digest[..digest_len],
+        signature,
+    )
+    .unwrap()
 }
 
 // Helper to perform RSA encrypt operation using OpenSSL.
@@ -945,22 +918,27 @@ pub fn rsa_encrypt_local_openssl(
     padding: DdiRsaCryptoPadding,
     hash_algorithm: Option<DdiHashAlgorithm>,
 ) -> Vec<u8> {
-    let padding = match padding {
-        DdiRsaCryptoPadding::Oaep => CryptoRsaCryptoPadding::Oaep,
-        _ => return vec![],
-    };
+    if padding != DdiRsaCryptoPadding::Oaep {
+        return vec![];
+    }
 
-    let hash_algorithm = hash_algorithm.map(|x| match x {
-        DdiHashAlgorithm::Sha1 => CryptoHashAlgorithm::Sha1,
-        DdiHashAlgorithm::Sha256 => CryptoHashAlgorithm::Sha256,
-        DdiHashAlgorithm::Sha384 => CryptoHashAlgorithm::Sha384,
-        DdiHashAlgorithm::Sha512 => CryptoHashAlgorithm::Sha512,
-        _ => panic!("Unsupported hash algorithm"),
-    });
+    let hash = hash_algorithm
+        .map(|x| match x {
+            DdiHashAlgorithm::Sha1 => HashAlgo::sha1(),
+            DdiHashAlgorithm::Sha256 => HashAlgo::sha256(),
+            DdiHashAlgorithm::Sha384 => HashAlgo::sha384(),
+            DdiHashAlgorithm::Sha512 => HashAlgo::sha512(),
+            _ => panic!("Unsupported hash algorithm"),
+        })
+        .unwrap_or(HashAlgo::sha1());
 
-    let pkey = RsaPublicKey::from_der(pub_key, None).unwrap();
-    pkey.encrypt(&x[..x_len], padding, hash_algorithm, None)
-        .unwrap()
+    let pkey = RsaPublicKey::from_bytes(pub_key).unwrap();
+    Encrypter::encrypt_vec(
+        &mut RsaEncryptAlgo::with_oaep_padding(hash, None),
+        &pkey,
+        &x[..x_len],
+    )
+    .unwrap()
 }
 
 #[allow(dead_code)]
@@ -968,21 +946,29 @@ pub fn rsa_verify_local_openssl(
     pub_key: &[u8],
     signature: &[u8],
     digest: &[u8],
-    padding: CryptoRsaSignaturePadding,
+    pkcs1: bool,
     hash_algorithm: Option<DdiHashAlgorithm>,
     salt_len: Option<u16>,
 ) -> bool {
-    let hash_algorithm = hash_algorithm.map(|x| match x {
-        DdiHashAlgorithm::Sha1 => CryptoHashAlgorithm::Sha1,
-        DdiHashAlgorithm::Sha256 => CryptoHashAlgorithm::Sha256,
-        DdiHashAlgorithm::Sha384 => CryptoHashAlgorithm::Sha384,
-        DdiHashAlgorithm::Sha512 => CryptoHashAlgorithm::Sha512,
-        _ => panic!("Unsupported hash algorithm"),
-    });
+    let hash = hash_algorithm
+        .map(|x| match x {
+            DdiHashAlgorithm::Sha1 => HashAlgo::sha1(),
+            DdiHashAlgorithm::Sha256 => HashAlgo::sha256(),
+            DdiHashAlgorithm::Sha384 => HashAlgo::sha384(),
+            DdiHashAlgorithm::Sha512 => HashAlgo::sha512(),
+            _ => panic!("Unsupported hash algorithm"),
+        })
+        .unwrap_or(HashAlgo::sha1());
 
-    let pkey = RsaPublicKey::from_der(pub_key, None).unwrap();
-    pkey.verify(digest, signature, padding, hash_algorithm, salt_len)
-        .is_ok()
+    let pkey = RsaPublicKey::from_bytes(pub_key).unwrap();
+
+    let mut algo = if pkcs1 {
+        RsaSignAlgo::with_pkcs1_padding(hash)
+    } else {
+        RsaSignAlgo::with_pss_padding(hash, salt_len.unwrap_or(20) as usize)
+    };
+
+    Verifier::verify(&mut algo, &pkey, digest, signature).is_ok()
 }
 
 // Returns: secret key id 1, secret key id 2
@@ -1182,59 +1168,6 @@ pub fn generate_aes_bulk_256_key(
     )
 }
 
-/// Set test action to the device with the requested action.
-///
-/// # Arguments
-///
-/// * `dev` - Device to set the test action.
-/// * `action` - Test action to set.
-///
-/// # Returns
-///
-/// * `bool` - True if the action was set successfully.
-#[allow(dead_code)]
-pub fn set_test_action(ddi: &DdiTest, path: &str, action: DdiTestAction) -> bool {
-    let mut supported = true;
-
-    let mut dev = ddi.open_dev(path).unwrap();
-    set_device_kind(&mut dev);
-
-    let _ = helper_common_establish_credential_no_unwrap(&mut dev, TEST_CRED_ID, TEST_CRED_PIN);
-
-    let (encrypted_credential, pub_key) =
-        encrypt_userid_pin_for_open_session(&dev, TEST_CRED_ID, TEST_CRED_PIN, TEST_SESSION_SEED);
-
-    let resp = helper_open_session(
-        &dev,
-        None,
-        Some(DdiApiRev { major: 1, minor: 0 }),
-        encrypted_credential,
-        pub_key,
-    );
-    assert!(resp.is_ok(), "{:?}", resp);
-
-    let resp = resp.unwrap();
-
-    let sess_id = resp.data.sess_id;
-
-    let resp = helper_test_action_cmd(&mut dev, sess_id, action, DdiTestActionContext::None);
-    if let Err(err) = resp {
-        assert!(
-            matches!(err, DdiError::DdiStatus(DdiStatus::UnsupportedCmd)),
-            "{:?}",
-            err
-        );
-
-        supported = false;
-    }
-
-    let resp = helper_close_session(&dev, Some(sess_id), Some(DdiApiRev { major: 1, minor: 0 }));
-
-    assert!(resp.is_ok(), "resp {:?}", resp);
-
-    supported
-}
-
 /// Helper to close the session.
 #[allow(unused)]
 pub fn close_app_session(dev: &mut <DdiTest as Ddi>::Dev, app_sess_id: u16) {
@@ -1280,22 +1213,106 @@ pub fn reopen_session_with_short_app_id(
 
 #[allow(dead_code)]
 pub fn crypto_sha1(data: &[u8]) -> Vec<u8> {
-    sha(HashAlgorithm::Sha1, data).expect("Failed to compute SHA1 hash")
+    Hasher::hash_vec(&mut HashAlgo::sha1(), data).expect("Failed to compute SHA1 hash")
 }
 
 #[allow(dead_code)]
 pub fn crypto_sha256(data: &[u8]) -> Vec<u8> {
-    sha(HashAlgorithm::Sha256, data).expect("Failed to compute SHA256 hash")
+    Hasher::hash_vec(&mut HashAlgo::sha256(), data).expect("Failed to compute SHA256 hash")
 }
 
 #[allow(dead_code)]
 pub fn crypto_sha384(data: &[u8]) -> Vec<u8> {
-    sha(HashAlgorithm::Sha384, data).expect("Failed to compute SHA384 hash")
+    Hasher::hash_vec(&mut HashAlgo::sha384(), data).expect("Failed to compute SHA384 hash")
 }
 
 #[allow(dead_code)]
 pub fn crypto_sha512(data: &[u8]) -> Vec<u8> {
-    sha(HashAlgorithm::Sha512, data).expect("Failed to compute SHA512 hash")
+    Hasher::hash_vec(&mut HashAlgo::sha512(), data).expect("Failed to compute SHA512 hash")
+}
+
+/// RSA digest kinds for padding operations
+#[allow(dead_code)]
+pub enum RsaDigestKind {
+    Sha1,
+    Sha256,
+    Sha384,
+    Sha512,
+}
+
+/// RSA encoding helper functions
+#[allow(dead_code)]
+pub struct RsaEncoding;
+
+impl RsaEncoding {
+    /// Encode data using PKCS#1 v1.5 padding for signatures
+    #[allow(dead_code)]
+    pub fn encode_pkcs_v15(
+        hash: &[u8],
+        modulus_size_bytes: usize,
+        digest_kind: RsaDigestKind,
+    ) -> Result<Vec<u8>, CryptoError> {
+        let hash_algo = match digest_kind {
+            RsaDigestKind::Sha1 => HashAlgo::sha1(),
+            RsaDigestKind::Sha256 => HashAlgo::sha256(),
+            RsaDigestKind::Sha384 => HashAlgo::sha384(),
+            RsaDigestKind::Sha512 => HashAlgo::sha512(),
+        };
+
+        let mut algo = RsaPadPkcs1SignAlgo::new(modulus_size_bytes, hash_algo, hash);
+        Encoder::encode_vec(&mut algo)
+    }
+
+    /// Encode data using PSS padding for signatures  
+    #[allow(dead_code)]
+    pub fn encode_pss<F>(
+        hash: &[u8],
+        mod_bits: usize,
+        digest_kind: RsaDigestKind,
+        _hash_fn: fn(&[u8]) -> Vec<u8>,
+        salt_length: usize,
+        _rng: F,
+    ) -> Result<Vec<u8>, CryptoError>
+    where
+        F: FnMut(&mut [u8]) -> Result<(), ()>,
+    {
+        let hash_algo = match digest_kind {
+            RsaDigestKind::Sha1 => HashAlgo::sha1(),
+            RsaDigestKind::Sha256 => HashAlgo::sha256(),
+            RsaDigestKind::Sha384 => HashAlgo::sha384(),
+            RsaDigestKind::Sha512 => HashAlgo::sha512(),
+        };
+
+        let modulus_size_bytes = mod_bits.div_ceil(8);
+        let mut algo = RsaPadPssAlgo::with_mgf1(modulus_size_bytes, hash_algo, hash, salt_length);
+        Encoder::encode_vec(&mut algo)
+    }
+
+    /// Decode OAEP padded data
+    #[allow(dead_code)]
+    pub fn decode_oaep(
+        padded_data: &mut [u8],
+        label: Option<&[u8]>,
+        modulus_size_bytes: usize,
+        digest_kind: RsaDigestKind,
+        _hash_fn: fn(&[u8]) -> Vec<u8>,
+    ) -> Result<Vec<u8>, CryptoError> {
+        let hash_algo = match digest_kind {
+            RsaDigestKind::Sha1 => HashAlgo::sha1(),
+            RsaDigestKind::Sha256 => HashAlgo::sha256(),
+            RsaDigestKind::Sha384 => HashAlgo::sha384(),
+            RsaDigestKind::Sha512 => HashAlgo::sha512(),
+        };
+
+        // Create OAEP params
+        let params = RsaPadOaepAlgoParams::new(modulus_size_bytes, hash_algo, label);
+
+        // Decode OAEP and extract message
+        let algo = Decoder::decode::<RsaPadOaepAlgo>(padded_data, params)?;
+
+        // Return the extracted message
+        Ok(algo.message().to_vec())
+    }
 }
 
 /// Helper to check if the error is due to unsupported command.
@@ -2068,16 +2085,7 @@ pub(crate) const TEST_AES_256_CKM_WRAPPED: [u8; 296] = [
     0xa2, 0x45, 0x16, 0xba, 0x10, 0xec, 0x4e, 0x07,
 ];
 
-cfg_if::cfg_if! {
-    if #[cfg(feature = "mock")] {
-        pub type DdiTest = mcr_ddi_mock::DdiMock;
-    } else if #[cfg(target_os = "linux")] {
-        pub type DdiTest = mcr_ddi_nix::DdiNix;
-    }
-    else if #[cfg(target_os = "windows")] {
-        pub type DdiTest = mcr_ddi_win::DdiWin;
-    }
-}
+pub type DdiTest = AzihsmDdi;
 
 #[cfg(test)]
 #[allow(dead_code)]

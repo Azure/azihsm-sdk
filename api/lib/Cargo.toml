@@ -1,41 +1,39 @@
 # Copyright (C) Microsoft Corporation. All rights reserved.
 
 [package]
+edition = "2021"
 name = "azihsm"
 version = "0.1.0"
-edition = "2021"
 
 [lib]
 crate-type = ["cdylib", "lib"]
 doctest = false
 
 [dependencies]
+azihsm_cred_encrypt.workspace = true
 azihsm_crypto.workspace = true
+azihsm_ddi.workspace = true
+azihsm_ddi_mbor.workspace = true
+azihsm_ddi_types.workspace = true
 cfg-if.workspace = true
 delegate.workspace = true
 lazy_static.workspace = true
-mcr_ddi.workspace = true
-mcr_ddi_mbor.workspace = true
-mcr_ddi_types.workspace = true
 parking_lot.workspace = true
-session_parameter_encryption.workspace = true
 strum.workspace = true
 strum_macros.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
-mcr_ddi_nix.workspace = true
-mcr_ddi_mock = { workspace = true, optional = true, features = ["use-openssl"] }
+azihsm_ddi_nix.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
-mcr_ddi_win.workspace = true
-mcr_ddi_mock = { workspace = true, optional = true, features = ["use-symcrypt"] }
+azihsm_ddi_win.workspace = true
 
 [build-dependencies]
 cbindgen.workspace = true
 
 [features]
 default = ["mock"]
-mock = ["dep:mcr_ddi_mock"]
+mock = ["azihsm_ddi/mock"]
 
 [lints]
 workspace = true

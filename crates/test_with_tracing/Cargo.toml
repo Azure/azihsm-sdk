@@ -1,9 +1,9 @@
 # Copyright (C) Microsoft Corporation. All rights reserved.
 
 [package]
+edition = "2021"
 name = "test_with_tracing"
 version = "0.1.0"
-edition = "2021"
 
 [dependencies]
 test_with_tracing_macro.workspace = true
@@ -13,7 +13,7 @@ tracing.workspace = true
 # to avoid polluting the logs with ANSI control sequences... Otherwise, if the
 # feature gets enabled via some other peer crate, there will be no way to turn
 # it off at runtime.
-tracing-subscriber = { workspace = true, features = ["ansi"] }
+tracing-subscriber = { features = ["ansi"], workspace = true }
 
 [dev-dependencies]
 log.workspace = true

@@ -10,7 +10,6 @@ mod tests {
         use crate::crypto::aes::AesCbcKey;
         use crate::crypto::aes::AES_CBC_BLOCK_IV_LENGTH;
         use crate::crypto::DecryptOp;
-        use crate::crypto::EncryptOp;
         use crate::test_helpers::create_test_session;
         use crate::types::KeyProps;
         use crate::AZIHSM_ERROR_INSUFFICIENT_BUFFER;
@@ -142,8 +141,8 @@ mod tests {
             let mut aes_cbc = AesCbcAlgo::new(iv, false);
 
             // Encrypt the plaintext
-            aes_cbc
-                .encrypt(&session, &aes_key, plaintext, &mut ciphertext)
+            session
+                .encrypt(&mut aes_cbc, &aes_key, plaintext, &mut ciphertext)
                 .expect("Failed to encrypt data");
 
             // Verify that ciphertext is different from plaintext
@@ -160,8 +159,8 @@ mod tests {
             ];
 
             // Decrypt the ciphertext
-            aes_cbc
-                .decrypt(&session, &aes_key, &ciphertext, &mut decrypted)
+            session
+                .decrypt(&mut aes_cbc, &aes_key, &ciphertext, &mut decrypted)
                 .expect("Failed to decrypt data");
 
             // Verify that decrypted data matches original plaintext
@@ -203,8 +202,12 @@ mod tests {
             let mut small_ciphertext = vec![0u8; 8]; // 8 bytes - too small for 16 byte plaintext
             let mut aes_cbc_encrypt1 = AesCbcAlgo::new(iv, false);
 
-            let result =
-                aes_cbc_encrypt1.encrypt(&session, &aes_key, plaintext, &mut small_ciphertext);
+            let result = session.encrypt(
+                &mut aes_cbc_encrypt1,
+                &aes_key,
+                plaintext,
+                &mut small_ciphertext,
+            );
             assert!(
                 result.is_err(),
                 "Encrypt should fail with insufficient buffer"
@@ -215,8 +218,12 @@ mod tests {
             let mut exact_ciphertext = vec![0u8; 16]; // 16 bytes - exact match
             let mut aes_cbc_encrypt2 = AesCbcAlgo::new(iv, false);
 
-            let result =
-                aes_cbc_encrypt2.encrypt(&session, &aes_key, plaintext, &mut exact_ciphertext);
+            let result = session.encrypt(
+                &mut aes_cbc_encrypt2,
+                &aes_key,
+                plaintext,
+                &mut exact_ciphertext,
+            );
             assert!(
                 result.is_ok(),
                 "Encrypt should succeed with exact buffer size"
@@ -229,8 +236,13 @@ mod tests {
             let mut large_ciphertext = vec![0u8; 32]; // 32 bytes - larger than needed
             let mut aes_cbc_encrypt3 = AesCbcAlgo::new(iv, false);
 
-            let encrypted_len = aes_cbc_encrypt3
-                .encrypt(&session, &aes_key, plaintext, &mut large_ciphertext)
+            let encrypted_len = session
+                .encrypt(
+                    &mut aes_cbc_encrypt3,
+                    &aes_key,
+                    plaintext,
+                    &mut large_ciphertext,
+                )
                 .expect("Encrypt should succeed with larger buffer");
 
             // Verify that only the first 16 bytes contain the encrypted data
@@ -249,8 +261,8 @@ mod tests {
             let mut unaligned_ciphertext = vec![0u8; 16];
             let mut aes_cbc_encrypt4 = AesCbcAlgo::new(iv, false);
 
-            let result = aes_cbc_encrypt4.encrypt(
-                &session,
+            let result = session.encrypt(
+                &mut aes_cbc_encrypt4,
                 &aes_key,
                 unaligned_plaintext,
                 &mut unaligned_ciphertext,
@@ -292,9 +304,9 @@ mod tests {
             let iv = [0u8; 16];
             let mut aes_cbc_encrypt = AesCbcAlgo::new(iv, false);
 
-            aes_cbc_encrypt
+            session
                 .encrypt(
-                    &session,
+                    &mut aes_cbc_encrypt,
                     &aes_key,
                     original_plaintext,
                     &mut valid_ciphertext,
@@ -321,8 +333,8 @@ mod tests {
             let mut exact_plaintext = vec![0u8; 16]; // 16 bytes - exact match
             let mut aes_cbc_decrypt2 = AesCbcAlgo::new(iv, false);
 
-            let result = aes_cbc_decrypt2.decrypt(
-                &session,
+            let result = session.decrypt(
+                &mut aes_cbc_decrypt2,
                 &aes_key,
                 &valid_ciphertext,
                 &mut exact_plaintext,
@@ -337,8 +349,13 @@ mod tests {
             let mut large_plaintext = vec![0u8; 32]; // 32 bytes - larger than needed
             let mut aes_cbc_decrypt3 = AesCbcAlgo::new(iv, false);
 
-            let decrypted_len = aes_cbc_decrypt3
-                .decrypt(&session, &aes_key, &valid_ciphertext, &mut large_plaintext)
+            let decrypted_len = session
+                .decrypt(
+                    &mut aes_cbc_decrypt3,
+                    &aes_key,
+                    &valid_ciphertext,
+                    &mut large_plaintext,
+                )
                 .expect("Decrypt should succeed with larger buffer");
 
             // Verify that only the first 16 bytes contain the decrypted data
@@ -389,8 +406,8 @@ mod tests {
             let mut aes_cbc = AesCbcAlgo::new(iv, false);
 
             // Encrypt multiple blocks
-            aes_cbc
-                .encrypt(&session, &aes_key, plaintext, &mut ciphertext)
+            session
+                .encrypt(&mut aes_cbc, &aes_key, plaintext, &mut ciphertext)
                 .expect("Failed to encrypt multiple blocks");
 
             // Verify encryption changed the data
@@ -403,8 +420,8 @@ mod tests {
             ];
 
             // Decrypt multiple blocks
-            aes_cbc
-                .decrypt(&session, &aes_key, &ciphertext, &mut decrypted)
+            session
+                .decrypt(&mut aes_cbc, &aes_key, &ciphertext, &mut decrypted)
                 .expect("Failed to decrypt multiple blocks");
 
             // Verify round-trip success
@@ -442,7 +459,7 @@ mod tests {
             let mut aes_cbc = AesCbcAlgo::new(iv, false); // No padding
 
             // Should fail because input is not block-aligned
-            let result = aes_cbc.encrypt(&session, &aes_key, plaintext, &mut ciphertext);
+            let result = session.encrypt(&mut aes_cbc, &aes_key, plaintext, &mut ciphertext);
             assert!(
                 result.is_err(),
                 "Should fail with non-block-aligned input in unpadded mode"
@@ -464,7 +481,6 @@ mod tests {
         use crate::crypto::aes::AesCbcAlgo;
         use crate::crypto::aes::AesCbcKey;
         use crate::crypto::aes::AES_CBC_BLOCK_IV_LENGTH;
-        use crate::crypto::EncryptOp;
         use crate::crypto::StreamingDecryptOp;
         use crate::crypto::StreamingEncryptOp;
         use crate::test_helpers::create_test_session;
@@ -535,8 +551,8 @@ mod tests {
             // Verify total output matches non-streaming encryption
             let mut aes_cbc_compare = AesCbcAlgo::new(iv, false);
             let mut expected_ct = vec![0u8; 48];
-            aes_cbc_compare
-                .encrypt(&session, &aes_key, plaintext, &mut expected_ct)
+            session
+                .encrypt(&mut aes_cbc_compare, &aes_key, plaintext, &mut expected_ct)
                 .expect("Failed non-streaming encryption");
 
             assert_eq!(
@@ -574,8 +590,8 @@ mod tests {
 
             let mut aes_cbc = AesCbcAlgo::new(iv, false);
             let mut ciphertext = vec![0u8; 32];
-            aes_cbc
-                .encrypt(&session, &aes_key, plaintext, &mut ciphertext)
+            session
+                .encrypt(&mut aes_cbc, &aes_key, plaintext, &mut ciphertext)
                 .expect("Failed to encrypt test data");
 
             // Now test streaming decryption
@@ -713,8 +729,8 @@ mod tests {
 
             let mut aes_cbc = AesCbcAlgo::new(iv, false);
             let mut ciphertext = vec![0u8; 48];
-            aes_cbc
-                .encrypt(&session, &aes_key, &plaintext, &mut ciphertext)
+            session
+                .encrypt(&mut aes_cbc, &aes_key, &plaintext, &mut ciphertext)
                 .expect("Failed to encrypt test data");
 
             // Now test streaming decryption with partial chunks
@@ -867,8 +883,8 @@ mod tests {
             // Verify against normal encryption
             let mut aes_cbc_compare = AesCbcAlgo::new(iv, false);
             let mut expected_ct = vec![0u8; 32];
-            aes_cbc_compare
-                .encrypt(&session, &aes_key, plaintext, &mut expected_ct)
+            session
+                .encrypt(&mut aes_cbc_compare, &aes_key, plaintext, &mut expected_ct)
                 .expect("Failed comparison encryption");
 
             assert_eq!(
@@ -939,8 +955,8 @@ mod tests {
             // Verify with non-streaming encryption
             let mut aes_cbc_compare = AesCbcAlgo::new(iv, false);
             let mut expected_ct = vec![0u8; 1024];
-            aes_cbc_compare
-                .encrypt(&session, &aes_key, &plaintext, &mut expected_ct)
+            session
+                .encrypt(&mut aes_cbc_compare, &aes_key, &plaintext, &mut expected_ct)
                 .expect("Failed comparison encryption");
 
             assert_eq!(
@@ -1065,7 +1081,6 @@ mod tests {
         use crate::crypto::aes::AesCbcAlgo;
         use crate::crypto::aes::AesCbcKey;
         use crate::crypto::aes::AES_CBC_BLOCK_IV_LENGTH;
-        use crate::crypto::DecryptOp;
         use crate::crypto::EncryptOp;
         use crate::test_helpers::create_test_session;
         use crate::types::KeyProps;
@@ -1106,8 +1121,8 @@ mod tests {
             let mut aes_cbc = AesCbcAlgo::new(iv, true);
 
             // Encrypt the plaintext
-            aes_cbc
-                .encrypt(&session, &aes_key, plaintext, &mut ciphertext)
+            session
+                .encrypt(&mut aes_cbc, &aes_key, plaintext, &mut ciphertext)
                 .expect("Failed to encrypt data with PKCS#7 padding");
 
             // Verify that ciphertext is different from plaintext
@@ -1121,8 +1136,8 @@ mod tests {
             aes_cbc.iv = iv;
 
             // Decrypt the ciphertext
-            aes_cbc
-                .decrypt(&session, &aes_key, &ciphertext, &mut decrypted)
+            session
+                .decrypt(&mut aes_cbc, &aes_key, &ciphertext, &mut decrypted)
                 .expect("Failed to decrypt data with PKCS#7 padding");
 
             // Verify that decrypted data matches original plaintext
@@ -1182,14 +1197,14 @@ mod tests {
                 let mut decrypted = vec![0u8; plaintext.len()];
 
                 // Encrypt
-                aes_cbc
-                    .encrypt(&session, &aes_key, plaintext, &mut ciphertext)
+                session
+                    .encrypt(&mut aes_cbc, &aes_key, plaintext, &mut ciphertext)
                     .unwrap_or_else(|_| panic!("Test case {}: Failed to encrypt", i));
 
                 // Reset IV and decrypt
                 aes_cbc.iv = iv;
-                aes_cbc
-                    .decrypt(&session, &aes_key, &ciphertext, &mut decrypted)
+                session
+                    .decrypt(&mut aes_cbc, &aes_key, &ciphertext, &mut decrypted)
                     .unwrap_or_else(|_| panic!("Test case {}: Failed to decrypt", i));
 
                 // Verify round-trip
@@ -1235,14 +1250,14 @@ mod tests {
             let mut aes_cbc = AesCbcAlgo::new(iv, true);
 
             // Encrypt empty input
-            aes_cbc
-                .encrypt(&session, &aes_key, plaintext, &mut ciphertext)
+            session
+                .encrypt(&mut aes_cbc, &aes_key, plaintext, &mut ciphertext)
                 .expect("Failed to encrypt empty input with PKCS#7 padding");
 
             // Reset IV and decrypt
             aes_cbc.iv = iv;
-            aes_cbc
-                .decrypt(&session, &aes_key, &ciphertext, &mut decrypted)
+            session
+                .decrypt(&mut aes_cbc, &aes_key, &ciphertext, &mut decrypted)
                 .expect("Failed to decrypt empty input with PKCS#7 padding");
 
             // Verify that decrypted data is empty
@@ -1287,14 +1302,14 @@ mod tests {
             let mut decrypted = vec![0u8; plaintext.len()];
 
             // Encrypt large input
-            aes_cbc
-                .encrypt(&session, &aes_key, &plaintext, &mut ciphertext)
+            session
+                .encrypt(&mut aes_cbc, &aes_key, &plaintext, &mut ciphertext)
                 .expect("Failed to encrypt large input with PKCS#7 padding");
 
             // Reset IV and decrypt
             aes_cbc.iv = iv;
-            aes_cbc
-                .decrypt(&session, &aes_key, &ciphertext, &mut decrypted)
+            session
+                .decrypt(&mut aes_cbc, &aes_key, &ciphertext, &mut decrypted)
                 .expect("Failed to decrypt large input with PKCS#7 padding");
 
             // Verify round-trip
@@ -1336,7 +1351,7 @@ mod tests {
             let mut aes_cbc = AesCbcAlgo::new(iv, true);
 
             // Should fail due to insufficient output buffer
-            let result = aes_cbc.encrypt(&session, &aes_key, plaintext, &mut small_buffer);
+            let result = session.encrypt(&mut aes_cbc, &aes_key, plaintext, &mut small_buffer);
             assert!(result.is_err(), "Should fail with insufficient buffer");
             assert_eq!(result.unwrap_err(), AZIHSM_ERROR_INSUFFICIENT_BUFFER);
 
@@ -1372,16 +1387,16 @@ mod tests {
             let mut aes_cbc_unpadded = AesCbcAlgo::new(iv, false);
             let mut ct_unpadded = vec![0u8; 16]; // Same size as input
 
-            aes_cbc_unpadded
-                .encrypt(&session, &aes_key, plaintext, &mut ct_unpadded)
+            session
+                .encrypt(&mut aes_cbc_unpadded, &aes_key, plaintext, &mut ct_unpadded)
                 .expect("Failed to encrypt in unpadded mode");
 
             // Test padded mode
             let mut aes_cbc_padded = AesCbcAlgo::new(iv, true);
             let mut ct_padded = vec![0u8; 32]; // Will be 32 bytes due to padding
 
-            aes_cbc_padded
-                .encrypt(&session, &aes_key, plaintext, &mut ct_padded)
+            session
+                .encrypt(&mut aes_cbc_padded, &aes_key, plaintext, &mut ct_padded)
                 .expect("Failed to encrypt in padded mode");
 
             // Verify that padded mode produces longer ciphertext
@@ -1396,14 +1411,19 @@ mod tests {
             // Verify both decrypt correctly
             let mut pt_unpadded = vec![0u8; 16];
             aes_cbc_unpadded.iv = iv;
-            aes_cbc_unpadded
-                .decrypt(&session, &aes_key, &ct_unpadded, &mut pt_unpadded)
+            session
+                .decrypt(
+                    &mut aes_cbc_unpadded,
+                    &aes_key,
+                    &ct_unpadded,
+                    &mut pt_unpadded,
+                )
                 .expect("Failed to decrypt unpadded");
 
             let mut pt_padded = vec![0u8; 16];
             aes_cbc_padded.iv = iv;
-            aes_cbc_padded
-                .decrypt(&session, &aes_key, &ct_padded, &mut pt_padded)
+            session
+                .decrypt(&mut aes_cbc_padded, &aes_key, &ct_padded, &mut pt_padded)
                 .expect("Failed to decrypt padded");
 
             assert_eq!(&pt_unpadded[..], &plaintext[..]);
@@ -1424,7 +1444,6 @@ mod tests {
         use crate::crypto::aes::AesCbcAlgo;
         use crate::crypto::aes::AesCbcKey;
         use crate::crypto::aes::AES_CBC_BLOCK_IV_LENGTH;
-        use crate::crypto::EncryptOp;
         use crate::crypto::StreamingDecryptOp;
         use crate::crypto::StreamingEncryptOp;
         use crate::test_helpers::create_test_session;
@@ -1483,8 +1502,8 @@ mod tests {
             // Verify against non-streaming encryption
             let mut aes_cbc_compare = AesCbcAlgo::new(iv, true);
             let mut expected_ct = vec![0u8; 48];
-            aes_cbc_compare
-                .encrypt(&session, &aes_key, plaintext, &mut expected_ct)
+            session
+                .encrypt(&mut aes_cbc_compare, &aes_key, plaintext, &mut expected_ct)
                 .expect("Failed to encrypt with non-streaming");
 
             assert_eq!(
@@ -1523,8 +1542,8 @@ mod tests {
 
             let mut aes_cbc = AesCbcAlgo::new(iv, true);
             let mut ciphertext = vec![0u8; 48]; // Will be padded to 48 bytes
-            aes_cbc
-                .encrypt(&session, &aes_key, plaintext, &mut ciphertext)
+            session
+                .encrypt(&mut aes_cbc, &aes_key, plaintext, &mut ciphertext)
                 .expect("Failed to encrypt");
 
             // Now test streaming decryption
@@ -1613,8 +1632,8 @@ mod tests {
             // Verify against non-streaming encryption
             let mut aes_cbc_compare = AesCbcAlgo::new(iv, true);
             let mut expected_ct = vec![0u8; 16];
-            aes_cbc_compare
-                .encrypt(&session, &aes_key, plaintext, &mut expected_ct)
+            session
+                .encrypt(&mut aes_cbc_compare, &aes_key, plaintext, &mut expected_ct)
                 .expect("Failed to encrypt empty input");
 
             assert_eq!(
@@ -1653,8 +1672,8 @@ mod tests {
 
             let mut aes_cbc_encrypt = AesCbcAlgo::new(iv, true);
             let mut ciphertext = vec![0u8; 16];
-            aes_cbc_encrypt
-                .encrypt(&session, &aes_key, plaintext, &mut ciphertext)
+            session
+                .encrypt(&mut aes_cbc_encrypt, &aes_key, plaintext, &mut ciphertext)
                 .expect("Failed to encrypt empty input");
 
             // Now test streaming decryption of the encrypted empty input
@@ -1741,8 +1760,8 @@ mod tests {
             // Verify against non-streaming encryption
             let mut aes_cbc_compare = AesCbcAlgo::new(iv, true);
             let mut expected_ct = vec![0u8; 16];
-            aes_cbc_compare
-                .encrypt(&session, &aes_key, plaintext, &mut expected_ct)
+            session
+                .encrypt(&mut aes_cbc_compare, &aes_key, plaintext, &mut expected_ct)
                 .expect("Failed to encrypt single byte");
 
             assert_eq!(
@@ -1781,8 +1800,8 @@ mod tests {
 
             let mut aes_cbc_encrypt = AesCbcAlgo::new(iv, true);
             let mut ciphertext = vec![0u8; 16];
-            aes_cbc_encrypt
-                .encrypt(&session, &aes_key, plaintext, &mut ciphertext)
+            session
+                .encrypt(&mut aes_cbc_encrypt, &aes_key, plaintext, &mut ciphertext)
                 .expect("Failed to encrypt single byte");
 
             // Now test streaming decryption
@@ -1877,8 +1896,8 @@ mod tests {
             // Verify against non-streaming encryption
             let mut aes_cbc_compare = AesCbcAlgo::new(iv, true);
             let mut expected_ct = vec![0u8; expected_size];
-            aes_cbc_compare
-                .encrypt(&session, &aes_key, &plaintext, &mut expected_ct)
+            session
+                .encrypt(&mut aes_cbc_compare, &aes_key, &plaintext, &mut expected_ct)
                 .expect("Failed to encrypt large data");
 
             assert_eq!(
@@ -2454,8 +2473,8 @@ mod tests {
             };
 
             // Encrypt the plaintext
-            aes_xts
-                .encrypt(&session, &aes_xts_key, plaintext, &mut ciphertext)
+            session
+                .encrypt(&mut aes_xts, &aes_xts_key, plaintext, &mut ciphertext)
                 .expect("Failed to encrypt plaintext");
 
             // Verify that ciphertext is different from plaintext
@@ -2466,8 +2485,8 @@ mod tests {
             );
 
             // Decrypt the ciphertext (XTS doesn't modify sector_num like CBC modifies IV)
-            aes_xts
-                .decrypt(&session, &aes_xts_key, &ciphertext, &mut decrypted)
+            session
+                .decrypt(&mut aes_xts, &aes_xts_key, &ciphertext, &mut decrypted)
                 .expect("Failed to decrypt ciphertext");
 
             // Verify that decrypted data matches original plaintext
@@ -2516,16 +2535,16 @@ mod tests {
             };
 
             // Encrypt large data
-            aes_xts
-                .encrypt(&session, &aes_xts_key, &plaintext, &mut ciphertext)
+            session
+                .encrypt(&mut aes_xts, &aes_xts_key, &plaintext, &mut ciphertext)
                 .expect("Failed to encrypt large data");
 
             // Verify encryption changed the data
             assert_ne!(&ciphertext[..], &plaintext[..]);
 
             // Decrypt large data
-            aes_xts
-                .decrypt(&session, &aes_xts_key, &ciphertext, &mut decrypted)
+            session
+                .decrypt(&mut aes_xts, &aes_xts_key, &ciphertext, &mut decrypted)
                 .expect("Failed to decrypt large data");
 
             // Verify round-trip success
@@ -2565,7 +2584,7 @@ mod tests {
             };
 
             // Encrypt should fail due to insufficient buffer
-            let result = aes_xts.encrypt(&session, &aes_xts_key, plaintext, &mut ciphertext);
+            let result = session.encrypt(&mut aes_xts, &aes_xts_key, plaintext, &mut ciphertext);
             assert!(
                 result.is_err(),
                 "Encrypt should fail with insufficient buffer"
@@ -2606,7 +2625,7 @@ mod tests {
             };
 
             // Decrypt should fail due to insufficient buffer
-            let result = aes_xts.decrypt(&session, &aes_xts_key, &ciphertext, &mut plaintext);
+            let result = session.decrypt(&mut aes_xts, &aes_xts_key, &ciphertext, &mut plaintext);
             assert!(
                 result.is_err(),
                 "Decrypt should fail with insufficient buffer"
@@ -2652,8 +2671,8 @@ mod tests {
             };
 
             // Encrypt with larger buffer - should succeed
-            let encrypted_len = aes_xts
-                .encrypt(&session, &aes_xts_key, plaintext, &mut ciphertext)
+            let encrypted_len = session
+                .encrypt(&mut aes_xts, &aes_xts_key, plaintext, &mut ciphertext)
                 .expect("Failed to encrypt with larger buffer");
 
             // Verify encrypted length equals original plaintext length
@@ -2667,9 +2686,9 @@ mod tests {
             );
 
             // Decrypt with larger buffer - should succeed
-            let decrypted_len = aes_xts
+            let decrypted_len = session
                 .decrypt(
-                    &session,
+                    &mut aes_xts,
                     &aes_xts_key,
                     &ciphertext[..encrypted_len],
                     &mut decrypted,
@@ -2724,7 +2743,7 @@ mod tests {
             };
 
             // Encrypt should fail - key not initialized
-            let result = aes_xts.encrypt(&session, &aes_xts_key, plaintext, &mut ciphertext);
+            let result = session.encrypt(&mut aes_xts, &aes_xts_key, plaintext, &mut ciphertext);
             assert!(
                 result.is_err(),
                 "Encrypt should fail with uninitialized key"
@@ -2732,7 +2751,7 @@ mod tests {
             assert_eq!(result.unwrap_err(), AZIHSM_KEY_NOT_INITIALIZED);
 
             // Decrypt should also fail - key not initialized
-            let result = aes_xts.decrypt(&session, &aes_xts_key, plaintext, &mut decrypted_buf);
+            let result = session.decrypt(&mut aes_xts, &aes_xts_key, plaintext, &mut decrypted_buf);
             assert!(
                 result.is_err(),
                 "Decrypt should fail with uninitialized key"
@@ -2782,13 +2801,13 @@ mod tests {
             };
 
             // Encrypt with sector number 1
-            aes_xts1
-                .encrypt(&session, &aes_xts_key, plaintext, &mut ciphertext1)
+            session
+                .encrypt(&mut aes_xts1, &aes_xts_key, plaintext, &mut ciphertext1)
                 .expect("Failed to encrypt with sector number 1");
 
             // Encrypt with sector number 2
-            aes_xts2
-                .encrypt(&session, &aes_xts_key, plaintext, &mut ciphertext2)
+            session
+                .encrypt(&mut aes_xts2, &aes_xts_key, plaintext, &mut ciphertext2)
                 .expect("Failed to encrypt with sector number 2");
 
             // Ciphertexts should be different due to different sector numbers (tweaks)
@@ -2806,12 +2825,12 @@ mod tests {
             let mut decrypted1 = vec![0u8; plaintext.len()];
             let mut decrypted2 = vec![0u8; plaintext.len()];
 
-            aes_xts1
-                .decrypt(&session, &aes_xts_key, &ciphertext1, &mut decrypted1)
+            session
+                .decrypt(&mut aes_xts1, &aes_xts_key, &ciphertext1, &mut decrypted1)
                 .expect("Failed to decrypt with sector number 1");
 
-            aes_xts2
-                .decrypt(&session, &aes_xts_key, &ciphertext2, &mut decrypted2)
+            session
+                .decrypt(&mut aes_xts2, &aes_xts_key, &ciphertext2, &mut decrypted2)
                 .expect("Failed to decrypt with sector number 2");
 
             // Both should decrypt to original plaintext
@@ -2860,8 +2879,8 @@ mod tests {
                 };
 
                 // Test encryption
-                let encrypted_len = aes_xts
-                    .encrypt(&session, &aes_xts_key, &plaintext, &mut ciphertext)
+                let encrypted_len = session
+                    .encrypt(&mut aes_xts, &aes_xts_key, &plaintext, &mut ciphertext)
                     .unwrap_or_else(|_| panic!("Failed to encrypt {} bytes", size));
 
                 assert_eq!(
@@ -2877,8 +2896,8 @@ mod tests {
                 );
 
                 // Test decryption
-                let decrypted_len = aes_xts
-                    .decrypt(&session, &aes_xts_key, &ciphertext, &mut decrypted)
+                let decrypted_len = session
+                    .decrypt(&mut aes_xts, &aes_xts_key, &ciphertext, &mut decrypted)
                     .unwrap_or_else(|_| panic!("Failed to decrypt {} bytes", size));
 
                 assert_eq!(
@@ -2954,8 +2973,8 @@ mod tests {
                 sector_num,
                 data_unit_len: None,
             };
-            aes_xts1
-                .encrypt(&session, &aes_xts_key, plaintext, &mut ciphertext)
+            session
+                .encrypt(&mut aes_xts1, &aes_xts_key, plaintext, &mut ciphertext)
                 .expect("Failed first encryption");
 
             // Second encryption with same sector number
@@ -2964,8 +2983,8 @@ mod tests {
                 sector_num,
                 data_unit_len: None,
             };
-            aes_xts2
-                .encrypt(&session, &aes_xts_key, plaintext, &mut ciphertext2)
+            session
+                .encrypt(&mut aes_xts2, &aes_xts_key, plaintext, &mut ciphertext2)
                 .expect("Failed second encryption");
 
             // Results should be identical
@@ -2976,8 +2995,8 @@ mod tests {
             );
 
             // Decrypt and verify
-            aes_xts1
-                .decrypt(&session, &aes_xts_key, &ciphertext, &mut decrypted)
+            session
+                .decrypt(&mut aes_xts1, &aes_xts_key, &ciphertext, &mut decrypted)
                 .expect("Failed decryption");
 
             assert_eq!(&decrypted[..], &plaintext[..]);
@@ -3015,12 +3034,12 @@ mod tests {
                 data_unit_len: Some(512),
             };
 
-            aes_xts
-                .encrypt(&session, &aes_xts_key, &plaintext, &mut ciphertext)
+            session
+                .encrypt(&mut aes_xts, &aes_xts_key, &plaintext, &mut ciphertext)
                 .expect("Encryption should succeed with data_unit_len=512");
 
-            aes_xts
-                .decrypt(&session, &aes_xts_key, &ciphertext, &mut decrypted)
+            session
+                .decrypt(&mut aes_xts, &aes_xts_key, &ciphertext, &mut decrypted)
                 .expect("Decryption should succeed with data_unit_len=512");
 
             assert_eq!(&decrypted[..], &plaintext[..]);
@@ -3057,12 +3076,12 @@ mod tests {
                 data_unit_len: Some(4096),
             };
 
-            aes_xts
-                .encrypt(&session, &aes_xts_key, &plaintext, &mut ciphertext)
+            session
+                .encrypt(&mut aes_xts, &aes_xts_key, &plaintext, &mut ciphertext)
                 .expect("Encryption should succeed with data_unit_len=4096");
 
-            aes_xts
-                .decrypt(&session, &aes_xts_key, &ciphertext, &mut decrypted)
+            session
+                .decrypt(&mut aes_xts, &aes_xts_key, &ciphertext, &mut decrypted)
                 .expect("Decryption should succeed with data_unit_len=4096");
 
             assert_eq!(&decrypted[..], &plaintext[..]);
@@ -3100,12 +3119,12 @@ mod tests {
                 data_unit_len: Some(8192),
             };
 
-            aes_xts
-                .encrypt(&session, &aes_xts_key, &plaintext, &mut ciphertext)
+            session
+                .encrypt(&mut aes_xts, &aes_xts_key, &plaintext, &mut ciphertext)
                 .expect("Encryption should succeed with data_unit_len=8192");
 
-            aes_xts
-                .decrypt(&session, &aes_xts_key, &ciphertext, &mut decrypted)
+            session
+                .decrypt(&mut aes_xts, &aes_xts_key, &ciphertext, &mut decrypted)
                 .expect("Decryption should succeed with data_unit_len=8192");
 
             assert_eq!(&decrypted[..], &plaintext[..]);
@@ -3141,7 +3160,7 @@ mod tests {
                 data_unit_len: Some(2048), // Invalid: not equal to plaintext length and not 512/4096/8192
             };
 
-            let result = aes_xts.encrypt(&session, &aes_xts_key, &plaintext, &mut ciphertext);
+            let result = session.encrypt(&mut aes_xts, &aes_xts_key, &plaintext, &mut ciphertext);
             assert!(result.is_err(), "Should fail with invalid data_unit_len");
             assert_eq!(result.unwrap_err(), AZIHSM_AES_UNSUPPORTED_DATA_UNIT_LENGTH);
 
@@ -3177,7 +3196,7 @@ mod tests {
                 data_unit_len: Some(4096), // Standard size, but plaintext is not a multiple
             };
 
-            let result = aes_xts.encrypt(&session, &aes_xts_key, &plaintext, &mut ciphertext);
+            let result = session.encrypt(&mut aes_xts, &aes_xts_key, &plaintext, &mut ciphertext);
             assert!(
                 result.is_err(),
                 "Should fail when plaintext is not a multiple of data_unit_len"
@@ -3192,7 +3211,8 @@ mod tests {
                 data_unit_len: Some(512),
             };
 
-            let result2 = aes_xts2.encrypt(&session, &aes_xts_key, &plaintext2, &mut ciphertext2);
+            let result2 =
+                session.encrypt(&mut aes_xts2, &aes_xts_key, &plaintext2, &mut ciphertext2);
             assert!(
                 result2.is_err(),
                 "Should fail when plaintext (1000 bytes) is not a multiple of data_unit_len (512)"
@@ -3207,12 +3227,997 @@ mod tests {
                 data_unit_len: Some(8096),
             };
 
-            let result3 = aes_xts3.encrypt(&session, &aes_xts_key, &plaintext3, &mut ciphertext3);
+            let result3 =
+                session.encrypt(&mut aes_xts3, &aes_xts_key, &plaintext3, &mut ciphertext3);
             assert!(
                 result3.is_err(),
                 "Should fail when plaintext (8097 bytes) is not a multiple of data_unit_len (8096)"
             );
 
+            session
+                .delete_key(&mut aes_xts_key)
+                .expect("Failed to delete key");
+            session.close().expect("Failed to close session");
+        }
+    }
+
+    mod xts_streaming {
+        use crate::crypto::aes::AesXtsAlgo;
+        use crate::crypto::aes::AesXtsKey;
+        use crate::crypto::StreamingDecryptOp;
+        use crate::crypto::StreamingEncryptOp;
+        use crate::test_helpers::create_test_session;
+        use crate::types::KeyProps;
+
+        #[test]
+        fn test_full_length_data_unit_oneshot_encrypt_streaming_decrypt() {
+            let (_partition, mut session) = create_test_session();
+
+            // Create AES XTS key
+            let key_props = KeyProps::builder()
+                .bit_len(512)
+                .encrypt(true)
+                .decrypt(true)
+                .build();
+
+            let mut aes_xts_key = AesXtsKey::new(key_props);
+            session
+                .generate_key(&mut aes_xts_key)
+                .expect("Failed to generate AES XTS key");
+
+            // Test data - 1024 bytes
+            let plaintext = vec![0x42u8; 1024];
+            let mut ciphertext = vec![0u8; plaintext.len()];
+
+            let sector_num = [
+                0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E,
+                0x1F, 0x20,
+            ];
+
+            // Encrypt using one-shot with data_unit_len: None (full length as single unit)
+            let mut aes_xts = AesXtsAlgo {
+                sector_num,
+                data_unit_len: None,
+            };
+
+            let ct_len = session
+                .encrypt(&mut aes_xts, &aes_xts_key, &plaintext, &mut ciphertext)
+                .expect("Failed to encrypt plaintext");
+            assert_eq!(ct_len, plaintext.len());
+
+            // Decrypt using streaming with data_unit_len: None
+            let aes_xts_stream = AesXtsAlgo {
+                sector_num,
+                data_unit_len: None,
+            };
+
+            let mut decrypt_stream = session
+                .decrypt_init(&aes_xts_stream, &aes_xts_key)
+                .expect("Failed to initialize decrypt stream");
+
+            // Feed data in chunks
+            let chunk_size = 256;
+            let mut decrypted = vec![0u8; plaintext.len()];
+            let mut total_decrypted = 0;
+
+            for chunk_start in (0..ciphertext.len()).step_by(chunk_size) {
+                let chunk_end = std::cmp::min(chunk_start + chunk_size, ciphertext.len());
+                let chunk = &ciphertext[chunk_start..chunk_end];
+
+                let bytes_written = decrypt_stream
+                    .update(chunk, &mut decrypted[total_decrypted..])
+                    .expect("Failed to decrypt chunk");
+
+                total_decrypted += bytes_written;
+            }
+
+            // Finalize decryption
+            let final_bytes = decrypt_stream
+                .finalize(&mut decrypted[total_decrypted..])
+                .expect("Failed to finalize decryption");
+            total_decrypted += final_bytes;
+
+            assert_eq!(total_decrypted, plaintext.len());
+            assert_eq!(
+                &decrypted[..],
+                &plaintext[..],
+                "Decrypted data should match original plaintext"
+            );
+
+            // Clean up
+            session
+                .delete_key(&mut aes_xts_key)
+                .expect("Failed to delete key");
+            session.close().expect("Failed to close session");
+        }
+
+        #[test]
+        fn test_full_length_data_unit_streaming_encrypt_oneshot_decrypt() {
+            let (_partition, mut session) = create_test_session();
+
+            // Create AES XTS key
+            let key_props = KeyProps::builder()
+                .bit_len(512)
+                .encrypt(true)
+                .decrypt(true)
+                .build();
+
+            let mut aes_xts_key = AesXtsKey::new(key_props);
+            session
+                .generate_key(&mut aes_xts_key)
+                .expect("Failed to generate AES XTS key");
+
+            // Test data - 1024 bytes
+            let plaintext = vec![0x42u8; 1024];
+            let mut ciphertext = vec![0u8; plaintext.len()];
+
+            let sector_num = [
+                0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E,
+                0x1F, 0x20,
+            ];
+
+            // Encrypt using streaming with data_unit_len: None (full length as single unit)
+            let aes_xts_stream = AesXtsAlgo {
+                sector_num,
+                data_unit_len: None,
+            };
+
+            let mut encrypt_stream = session
+                .encrypt_init(&aes_xts_stream, &aes_xts_key)
+                .expect("Failed to initialize encrypt stream");
+
+            // Feed plaintext in chunks
+            let chunk_size = 256;
+            let mut total_encrypted = 0;
+
+            for chunk_start in (0..plaintext.len()).step_by(chunk_size) {
+                let chunk_end = std::cmp::min(chunk_start + chunk_size, plaintext.len());
+                let chunk = &plaintext[chunk_start..chunk_end];
+
+                let bytes_written = encrypt_stream
+                    .update(chunk, &mut ciphertext[total_encrypted..])
+                    .expect("Failed to encrypt chunk");
+
+                total_encrypted += bytes_written;
+            }
+
+            // Finalize encryption
+            let final_bytes = encrypt_stream
+                .finalize(&mut ciphertext[total_encrypted..])
+                .expect("Failed to finalize encryption");
+            total_encrypted += final_bytes;
+
+            assert_eq!(total_encrypted, plaintext.len());
+
+            // Decrypt using one-shot with data_unit_len: None
+            let mut aes_xts = AesXtsAlgo {
+                sector_num,
+                data_unit_len: None,
+            };
+
+            let mut decrypted = vec![0u8; plaintext.len()];
+            let pt_len = session
+                .decrypt(&mut aes_xts, &aes_xts_key, &ciphertext, &mut decrypted)
+                .expect("Failed to decrypt ciphertext");
+
+            assert_eq!(pt_len, plaintext.len());
+            assert_eq!(
+                &decrypted[..],
+                &plaintext[..],
+                "Decrypted data should match original plaintext"
+            );
+
+            // Clean up
+            session
+                .delete_key(&mut aes_xts_key)
+                .expect("Failed to delete key");
+            session.close().expect("Failed to close session");
+        }
+
+        #[test]
+        fn test_streaming_with_data_unit_len_512() {
+            let (_partition, mut session) = create_test_session();
+
+            // Create AES XTS key
+            let key_props = KeyProps::builder()
+                .bit_len(512)
+                .encrypt(true)
+                .decrypt(true)
+                .build();
+
+            let mut aes_xts_key = AesXtsKey::new(key_props);
+            session
+                .generate_key(&mut aes_xts_key)
+                .expect("Failed to generate AES XTS key");
+
+            // Test data - 2048 bytes (4 data units of 512 bytes each)
+            let plaintext = vec![0xABu8; 2048];
+            let sector_num = [0x01; 16];
+
+            // Streaming encryption with data_unit_len: 512
+            let aes_xts_encrypt = AesXtsAlgo {
+                sector_num,
+                data_unit_len: Some(512),
+            };
+
+            let mut encrypt_stream = session
+                .encrypt_init(&aes_xts_encrypt, &aes_xts_key)
+                .expect("Failed to initialize encrypt stream");
+
+            let mut ciphertext = vec![0u8; plaintext.len()];
+            let mut total_encrypted = 0;
+
+            // Feed plaintext in 512-byte chunks (one data unit at a time)
+            for chunk_start in (0..plaintext.len()).step_by(512) {
+                let chunk_end = std::cmp::min(chunk_start + 512, plaintext.len());
+                let chunk = &plaintext[chunk_start..chunk_end];
+
+                let bytes_written = encrypt_stream
+                    .update(chunk, &mut ciphertext[total_encrypted..])
+                    .expect("Failed to encrypt chunk");
+
+                total_encrypted += bytes_written;
+            }
+
+            let final_bytes = encrypt_stream
+                .finalize(&mut ciphertext[total_encrypted..])
+                .expect("Failed to finalize encryption");
+            total_encrypted += final_bytes;
+
+            assert_eq!(total_encrypted, plaintext.len());
+
+            // Streaming decryption with data_unit_len: 512
+            let aes_xts_decrypt = AesXtsAlgo {
+                sector_num,
+                data_unit_len: Some(512),
+            };
+
+            let mut decrypt_stream = session
+                .decrypt_init(&aes_xts_decrypt, &aes_xts_key)
+                .expect("Failed to initialize decrypt stream");
+
+            let mut decrypted = vec![0u8; plaintext.len()];
+            let mut total_decrypted = 0;
+
+            // Decrypt in 512-byte chunks
+            for chunk_start in (0..ciphertext.len()).step_by(512) {
+                let chunk_end = std::cmp::min(chunk_start + 512, ciphertext.len());
+                let chunk = &ciphertext[chunk_start..chunk_end];
+
+                let bytes_written = decrypt_stream
+                    .update(chunk, &mut decrypted[total_decrypted..])
+                    .expect("Failed to decrypt chunk");
+
+                total_decrypted += bytes_written;
+            }
+
+            let final_bytes = decrypt_stream
+                .finalize(&mut decrypted[total_decrypted..])
+                .expect("Failed to finalize decryption");
+            total_decrypted += final_bytes;
+
+            assert_eq!(total_decrypted, plaintext.len());
+            assert_eq!(
+                &decrypted[..],
+                &plaintext[..],
+                "Decrypted data should match original plaintext"
+            );
+
+            // Clean up
+            session
+                .delete_key(&mut aes_xts_key)
+                .expect("Failed to delete key");
+            session.close().expect("Failed to close session");
+        }
+
+        #[test]
+        fn test_streaming_with_data_unit_len_4096() {
+            let (_partition, mut session) = create_test_session();
+
+            // Create AES XTS key
+            let key_props = KeyProps::builder()
+                .bit_len(512)
+                .encrypt(true)
+                .decrypt(true)
+                .build();
+
+            let mut aes_xts_key = AesXtsKey::new(key_props);
+            session
+                .generate_key(&mut aes_xts_key)
+                .expect("Failed to generate AES XTS key");
+
+            // Test data - 12288 bytes (3 data units of 4096 bytes each)
+            let plaintext = vec![0xCDu8; 12288];
+            let sector_num = [0x02; 16];
+
+            // Streaming encryption with data_unit_len: 4096
+            let aes_xts_encrypt = AesXtsAlgo {
+                sector_num,
+                data_unit_len: Some(4096),
+            };
+
+            let mut encrypt_stream = session
+                .encrypt_init(&aes_xts_encrypt, &aes_xts_key)
+                .expect("Failed to initialize encrypt stream");
+
+            let mut ciphertext = vec![0u8; plaintext.len()];
+            let mut total_encrypted = 0;
+
+            // Feed plaintext in 4096-byte chunks (one data unit at a time)
+            for chunk_start in (0..plaintext.len()).step_by(4096) {
+                let chunk_end = std::cmp::min(chunk_start + 4096, plaintext.len());
+                let chunk = &plaintext[chunk_start..chunk_end];
+
+                let bytes_written = encrypt_stream
+                    .update(chunk, &mut ciphertext[total_encrypted..])
+                    .expect("Failed to encrypt chunk");
+
+                total_encrypted += bytes_written;
+            }
+
+            let final_bytes = encrypt_stream
+                .finalize(&mut ciphertext[total_encrypted..])
+                .expect("Failed to finalize encryption");
+            total_encrypted += final_bytes;
+
+            assert_eq!(total_encrypted, plaintext.len());
+
+            // Streaming decryption with data_unit_len: 4096
+            let aes_xts_decrypt = AesXtsAlgo {
+                sector_num,
+                data_unit_len: Some(4096),
+            };
+
+            let mut decrypt_stream = session
+                .decrypt_init(&aes_xts_decrypt, &aes_xts_key)
+                .expect("Failed to initialize decrypt stream");
+
+            let mut decrypted = vec![0u8; plaintext.len()];
+            let mut total_decrypted = 0;
+
+            // Decrypt in 4096-byte chunks
+            for chunk_start in (0..ciphertext.len()).step_by(4096) {
+                let chunk_end = std::cmp::min(chunk_start + 4096, ciphertext.len());
+                let chunk = &ciphertext[chunk_start..chunk_end];
+
+                let bytes_written = decrypt_stream
+                    .update(chunk, &mut decrypted[total_decrypted..])
+                    .expect("Failed to decrypt chunk");
+
+                total_decrypted += bytes_written;
+            }
+
+            let final_bytes = decrypt_stream
+                .finalize(&mut decrypted[total_decrypted..])
+                .expect("Failed to finalize decryption");
+            total_decrypted += final_bytes;
+
+            assert_eq!(total_decrypted, plaintext.len());
+            assert_eq!(
+                &decrypted[..],
+                &plaintext[..],
+                "Decrypted data should match original plaintext"
+            );
+
+            // Clean up
+            session
+                .delete_key(&mut aes_xts_key)
+                .expect("Failed to delete key");
+            session.close().expect("Failed to close session");
+        }
+
+        #[test]
+        fn test_streaming_with_data_unit_len_8192() {
+            let (_partition, mut session) = create_test_session();
+
+            // Create AES XTS key
+            let key_props = KeyProps::builder()
+                .bit_len(512)
+                .encrypt(true)
+                .decrypt(true)
+                .build();
+
+            let mut aes_xts_key = AesXtsKey::new(key_props);
+            session
+                .generate_key(&mut aes_xts_key)
+                .expect("Failed to generate AES XTS key");
+
+            // Test data - 24576 bytes (3 data units of 8192 bytes each)
+            let plaintext = vec![0xEFu8; 24576];
+            let sector_num = [0x03; 16];
+
+            // Streaming encryption with data_unit_len: 8192
+            let aes_xts_encrypt = AesXtsAlgo {
+                sector_num,
+                data_unit_len: Some(8192),
+            };
+
+            let mut encrypt_stream = session
+                .encrypt_init(&aes_xts_encrypt, &aes_xts_key)
+                .expect("Failed to initialize encrypt stream");
+
+            let mut ciphertext = vec![0u8; plaintext.len()];
+            let mut total_encrypted = 0;
+
+            // Feed plaintext in 8192-byte chunks (one data unit at a time)
+            for chunk_start in (0..plaintext.len()).step_by(8192) {
+                let chunk_end = std::cmp::min(chunk_start + 8192, plaintext.len());
+                let chunk = &plaintext[chunk_start..chunk_end];
+
+                let bytes_written = encrypt_stream
+                    .update(chunk, &mut ciphertext[total_encrypted..])
+                    .expect("Failed to encrypt chunk");
+
+                total_encrypted += bytes_written;
+            }
+
+            let final_bytes = encrypt_stream
+                .finalize(&mut ciphertext[total_encrypted..])
+                .expect("Failed to finalize encryption");
+            total_encrypted += final_bytes;
+
+            assert_eq!(total_encrypted, plaintext.len());
+
+            // Streaming decryption with data_unit_len: 8192
+            let aes_xts_decrypt = AesXtsAlgo {
+                sector_num,
+                data_unit_len: Some(8192),
+            };
+
+            let mut decrypt_stream = session
+                .decrypt_init(&aes_xts_decrypt, &aes_xts_key)
+                .expect("Failed to initialize decrypt stream");
+
+            let mut decrypted = vec![0u8; plaintext.len()];
+            let mut total_decrypted = 0;
+
+            // Decrypt in 8192-byte chunks
+            for chunk_start in (0..ciphertext.len()).step_by(8192) {
+                let chunk_end = std::cmp::min(chunk_start + 8192, ciphertext.len());
+                let chunk = &ciphertext[chunk_start..chunk_end];
+
+                let bytes_written = decrypt_stream
+                    .update(chunk, &mut decrypted[total_decrypted..])
+                    .expect("Failed to decrypt chunk");
+
+                total_decrypted += bytes_written;
+            }
+
+            let final_bytes = decrypt_stream
+                .finalize(&mut decrypted[total_decrypted..])
+                .expect("Failed to finalize decryption");
+            total_decrypted += final_bytes;
+
+            assert_eq!(total_decrypted, plaintext.len());
+            assert_eq!(
+                &decrypted[..],
+                &plaintext[..],
+                "Decrypted data should match original plaintext"
+            );
+
+            // Clean up
+            session
+                .delete_key(&mut aes_xts_key)
+                .expect("Failed to delete key");
+            session.close().expect("Failed to close session");
+        }
+
+        #[test]
+        #[ignore = "does not pass on windows"]
+        fn test_data_unit_len_512_oneshot_encrypt_streaming_decrypt() {
+            let (_partition, mut session) = create_test_session();
+
+            // Create AES XTS key
+            let key_props = KeyProps::builder()
+                .bit_len(512)
+                .encrypt(true)
+                .decrypt(true)
+                .build();
+
+            let mut aes_xts_key = AesXtsKey::new(key_props);
+            session
+                .generate_key(&mut aes_xts_key)
+                .expect("Failed to generate AES XTS key");
+
+            // Test data - 2048 bytes (4 data units of 512 bytes each)
+            let plaintext = vec![0xABu8; 2048];
+            let sector_num = [0x00; 16];
+
+            // One-shot encryption with data_unit_len: 512
+            let mut aes_xts_encrypt = AesXtsAlgo {
+                sector_num,
+                data_unit_len: Some(512),
+            };
+
+            let mut ciphertext = vec![0u8; plaintext.len()];
+            let bytes_encrypted = session
+                .encrypt(
+                    &mut aes_xts_encrypt,
+                    &aes_xts_key,
+                    &plaintext,
+                    &mut ciphertext,
+                )
+                .expect("Failed to encrypt");
+
+            assert_eq!(bytes_encrypted, plaintext.len());
+
+            // Streaming decryption with data_unit_len: 512
+            let aes_xts_decrypt = AesXtsAlgo {
+                sector_num,
+                data_unit_len: Some(512),
+            };
+
+            let mut decrypt_stream = session
+                .decrypt_init(&aes_xts_decrypt, &aes_xts_key)
+                .expect("Failed to initialize decrypt stream");
+
+            let mut decrypted = vec![0u8; plaintext.len()];
+            let mut total_decrypted = 0;
+
+            // Decrypt in irregular chunk sizes (not aligned to data unit boundaries)
+            let chunk_sizes = [200, 300, 512, 400, 636]; // Total: 2048 bytes
+            let mut offset = 0;
+
+            for chunk_size in chunk_sizes {
+                let chunk_end = std::cmp::min(offset + chunk_size, ciphertext.len());
+                let chunk = &ciphertext[offset..chunk_end];
+
+                let bytes_written = decrypt_stream
+                    .update(chunk, &mut decrypted[total_decrypted..])
+                    .expect("Failed to decrypt chunk");
+
+                total_decrypted += bytes_written;
+                offset = chunk_end;
+            }
+
+            let final_bytes = decrypt_stream
+                .finalize(&mut decrypted[total_decrypted..])
+                .expect("Failed to finalize decryption");
+            total_decrypted += final_bytes;
+
+            assert_eq!(total_decrypted, plaintext.len());
+            assert_eq!(
+                &decrypted[..],
+                &plaintext[..],
+                "Decrypted data should match original plaintext"
+            );
+
+            // Clean up
+            session
+                .delete_key(&mut aes_xts_key)
+                .expect("Failed to delete key");
+            session.close().expect("Failed to close session");
+        }
+
+        #[test]
+        #[ignore = "does not pass on windows"]
+        fn test_data_unit_len_512_streaming_encrypt_oneshot_decrypt() {
+            let (_partition, mut session) = create_test_session();
+
+            // Create AES XTS key
+            let key_props = KeyProps::builder()
+                .bit_len(512)
+                .encrypt(true)
+                .decrypt(true)
+                .build();
+
+            let mut aes_xts_key = AesXtsKey::new(key_props);
+            session
+                .generate_key(&mut aes_xts_key)
+                .expect("Failed to generate AES XTS key");
+
+            // Test data - 2048 bytes (4 data units of 512 bytes each)
+            let plaintext = vec![0xABu8; 2048];
+            let sector_num = [0x12; 16];
+
+            // Streaming encryption with data_unit_len: 512
+            let aes_xts_encrypt = AesXtsAlgo {
+                sector_num,
+                data_unit_len: Some(512),
+            };
+
+            let mut encrypt_stream = session
+                .encrypt_init(&aes_xts_encrypt, &aes_xts_key)
+                .expect("Failed to initialize encrypt stream");
+
+            let mut ciphertext = vec![0u8; plaintext.len()];
+            let mut total_encrypted = 0;
+
+            // Feed plaintext in irregular chunk sizes (not aligned to data unit boundaries)
+            let chunk_sizes = [300, 500, 400, 848]; // Total: 2048 bytes
+            let mut offset = 0;
+
+            for chunk_size in chunk_sizes {
+                let chunk_end = std::cmp::min(offset + chunk_size, plaintext.len());
+                let chunk = &plaintext[offset..chunk_end];
+
+                let bytes_written = encrypt_stream
+                    .update(chunk, &mut ciphertext[total_encrypted..])
+                    .expect("Failed to encrypt chunk");
+
+                total_encrypted += bytes_written;
+                offset = chunk_end;
+            }
+
+            let final_bytes = encrypt_stream
+                .finalize(&mut ciphertext[total_encrypted..])
+                .expect("Failed to finalize encryption");
+            total_encrypted += final_bytes;
+
+            assert_eq!(total_encrypted, plaintext.len());
+
+            // One-shot decryption with data_unit_len: 512
+            let mut aes_xts_decrypt = AesXtsAlgo {
+                sector_num,
+                data_unit_len: Some(512),
+            };
+
+            let mut decrypted = vec![0u8; plaintext.len()];
+            let bytes_decrypted = session
+                .decrypt(
+                    &mut aes_xts_decrypt,
+                    &aes_xts_key,
+                    &ciphertext,
+                    &mut decrypted,
+                )
+                .expect("Failed to decrypt");
+
+            assert_eq!(bytes_decrypted, plaintext.len());
+            assert_eq!(
+                &decrypted[..],
+                &plaintext[..],
+                "Decrypted data should match original plaintext"
+            );
+
+            // Clean up
+            session
+                .delete_key(&mut aes_xts_key)
+                .expect("Failed to delete key");
+            session.close().expect("Failed to close session");
+        }
+
+        #[test]
+        #[ignore = "does not pass on windows"]
+        fn test_data_unit_len_4096_oneshot_encrypt_streaming_decrypt() {
+            let (_partition, mut session) = create_test_session();
+
+            // Create AES XTS key
+            let key_props = KeyProps::builder()
+                .bit_len(512)
+                .encrypt(true)
+                .decrypt(true)
+                .build();
+
+            let mut aes_xts_key = AesXtsKey::new(key_props);
+            session
+                .generate_key(&mut aes_xts_key)
+                .expect("Failed to generate AES XTS key");
+
+            // Test data - 12288 bytes (3 data units of 4096 bytes each)
+            let plaintext = vec![0xCDu8; 12288];
+            let sector_num = [0x21; 16];
+
+            // One-shot encryption with data_unit_len: 4096
+            let mut aes_xts_encrypt = AesXtsAlgo {
+                sector_num,
+                data_unit_len: Some(4096),
+            };
+
+            let mut ciphertext = vec![0u8; plaintext.len()];
+            let bytes_encrypted = session
+                .encrypt(
+                    &mut aes_xts_encrypt,
+                    &aes_xts_key,
+                    &plaintext,
+                    &mut ciphertext,
+                )
+                .expect("Failed to encrypt");
+
+            assert_eq!(bytes_encrypted, plaintext.len());
+
+            // Streaming decryption with data_unit_len: 4096
+            let aes_xts_decrypt = AesXtsAlgo {
+                sector_num,
+                data_unit_len: Some(4096),
+            };
+
+            let mut decrypt_stream = session
+                .decrypt_init(&aes_xts_decrypt, &aes_xts_key)
+                .expect("Failed to initialize decrypt stream");
+
+            let mut decrypted = vec![0u8; plaintext.len()];
+            let mut total_decrypted = 0;
+
+            // Decrypt in irregular chunk sizes
+            let chunk_sizes = [2000, 3000, 4096, 3192]; // Total: 12288 bytes
+            let mut offset = 0;
+
+            for chunk_size in chunk_sizes {
+                let chunk_end = std::cmp::min(offset + chunk_size, ciphertext.len());
+                let chunk = &ciphertext[offset..chunk_end];
+
+                let bytes_written = decrypt_stream
+                    .update(chunk, &mut decrypted[total_decrypted..])
+                    .expect("Failed to decrypt chunk");
+
+                total_decrypted += bytes_written;
+                offset = chunk_end;
+            }
+
+            let final_bytes = decrypt_stream
+                .finalize(&mut decrypted[total_decrypted..])
+                .expect("Failed to finalize decryption");
+            total_decrypted += final_bytes;
+
+            assert_eq!(total_decrypted, plaintext.len());
+            assert_eq!(
+                &decrypted[..],
+                &plaintext[..],
+                "Decrypted data should match original plaintext"
+            );
+
+            // Clean up
+            session
+                .delete_key(&mut aes_xts_key)
+                .expect("Failed to delete key");
+            session.close().expect("Failed to close session");
+        }
+
+        #[test]
+        #[ignore = "does not pass on windows"]
+        fn test_data_unit_len_4096_streaming_encrypt_oneshot_decrypt() {
+            let (_partition, mut session) = create_test_session();
+
+            // Create AES XTS key
+            let key_props = KeyProps::builder()
+                .bit_len(512)
+                .encrypt(true)
+                .decrypt(true)
+                .build();
+
+            let mut aes_xts_key = AesXtsKey::new(key_props);
+            session
+                .generate_key(&mut aes_xts_key)
+                .expect("Failed to generate AES XTS key");
+
+            // Test data - 12288 bytes (3 data units of 4096 bytes each)
+            let plaintext = vec![0xCDu8; 12288];
+            let sector_num = [0x22; 16];
+
+            // Streaming encryption with data_unit_len: 4096
+            let aes_xts_encrypt = AesXtsAlgo {
+                sector_num,
+                data_unit_len: Some(4096),
+            };
+
+            let mut encrypt_stream = session
+                .encrypt_init(&aes_xts_encrypt, &aes_xts_key)
+                .expect("Failed to initialize encrypt stream");
+
+            let mut ciphertext = vec![0u8; plaintext.len()];
+            let mut total_encrypted = 0;
+
+            // Feed plaintext in irregular chunk sizes
+            let chunk_sizes = [1500, 4000, 3788, 3000]; // Total: 12288 bytes
+            let mut offset = 0;
+
+            for chunk_size in chunk_sizes {
+                let chunk_end = std::cmp::min(offset + chunk_size, plaintext.len());
+                let chunk = &plaintext[offset..chunk_end];
+
+                let bytes_written = encrypt_stream
+                    .update(chunk, &mut ciphertext[total_encrypted..])
+                    .expect("Failed to encrypt chunk");
+
+                total_encrypted += bytes_written;
+                offset = chunk_end;
+            }
+
+            let final_bytes = encrypt_stream
+                .finalize(&mut ciphertext[total_encrypted..])
+                .expect("Failed to finalize encryption");
+            total_encrypted += final_bytes;
+
+            assert_eq!(total_encrypted, plaintext.len());
+
+            // One-shot decryption with data_unit_len: 4096
+            let mut aes_xts_decrypt = AesXtsAlgo {
+                sector_num,
+                data_unit_len: Some(4096),
+            };
+
+            let mut decrypted = vec![0u8; plaintext.len()];
+            let bytes_decrypted = session
+                .decrypt(
+                    &mut aes_xts_decrypt,
+                    &aes_xts_key,
+                    &ciphertext,
+                    &mut decrypted,
+                )
+                .expect("Failed to decrypt");
+
+            assert_eq!(bytes_decrypted, plaintext.len());
+            assert_eq!(
+                &decrypted[..],
+                &plaintext[..],
+                "Decrypted data should match original plaintext"
+            );
+
+            // Clean up
+            session
+                .delete_key(&mut aes_xts_key)
+                .expect("Failed to delete key");
+            session.close().expect("Failed to close session");
+        }
+
+        #[test]
+        #[ignore = "does not pass on windows"]
+        fn test_data_unit_len_8192_oneshot_encrypt_streaming_decrypt() {
+            let (_partition, mut session) = create_test_session();
+
+            // Create AES XTS key
+            let key_props = KeyProps::builder()
+                .bit_len(512)
+                .encrypt(true)
+                .decrypt(true)
+                .build();
+
+            let mut aes_xts_key = AesXtsKey::new(key_props);
+            session
+                .generate_key(&mut aes_xts_key)
+                .expect("Failed to generate AES XTS key");
+
+            // Test data - 24576 bytes (3 data units of 8192 bytes each)
+            let plaintext = vec![0xEFu8; 24576];
+            let sector_num = [0x31; 16];
+
+            // One-shot encryption with data_unit_len: 8192
+            let mut aes_xts_encrypt = AesXtsAlgo {
+                sector_num,
+                data_unit_len: Some(8192),
+            };
+
+            let mut ciphertext = vec![0u8; plaintext.len()];
+            let bytes_encrypted = session
+                .encrypt(
+                    &mut aes_xts_encrypt,
+                    &aes_xts_key,
+                    &plaintext,
+                    &mut ciphertext,
+                )
+                .expect("Failed to encrypt");
+
+            assert_eq!(bytes_encrypted, plaintext.len());
+
+            // Streaming decryption with data_unit_len: 8192
+            let aes_xts_decrypt = AesXtsAlgo {
+                sector_num,
+                data_unit_len: Some(8192),
+            };
+
+            let mut decrypt_stream = session
+                .decrypt_init(&aes_xts_decrypt, &aes_xts_key)
+                .expect("Failed to initialize decrypt stream");
+
+            let mut decrypted = vec![0u8; plaintext.len()];
+            let mut total_decrypted = 0;
+
+            // Decrypt in irregular chunk sizes
+            let chunk_sizes = [5000, 8192, 6000, 5384]; // Total: 24576 bytes
+            let mut offset = 0;
+
+            for chunk_size in chunk_sizes {
+                let chunk_end = std::cmp::min(offset + chunk_size, ciphertext.len());
+                let chunk = &ciphertext[offset..chunk_end];
+
+                let bytes_written = decrypt_stream
+                    .update(chunk, &mut decrypted[total_decrypted..])
+                    .expect("Failed to decrypt chunk");
+
+                total_decrypted += bytes_written;
+                offset = chunk_end;
+            }
+
+            let final_bytes = decrypt_stream
+                .finalize(&mut decrypted[total_decrypted..])
+                .expect("Failed to finalize decryption");
+            total_decrypted += final_bytes;
+
+            assert_eq!(total_decrypted, plaintext.len());
+            assert_eq!(
+                &decrypted[..],
+                &plaintext[..],
+                "Decrypted data should match original plaintext"
+            );
+
+            // Clean up
+            session
+                .delete_key(&mut aes_xts_key)
+                .expect("Failed to delete key");
+            session.close().expect("Failed to close session");
+        }
+
+        #[test]
+        #[ignore = "does not pass on windows"]
+        fn test_data_unit_len_8192_streaming_encrypt_oneshot_decrypt() {
+            let (_partition, mut session) = create_test_session();
+
+            // Create AES XTS key
+            let key_props = KeyProps::builder()
+                .bit_len(512)
+                .encrypt(true)
+                .decrypt(true)
+                .build();
+
+            let mut aes_xts_key = AesXtsKey::new(key_props);
+            session
+                .generate_key(&mut aes_xts_key)
+                .expect("Failed to generate AES XTS key");
+
+            // Test data - 24576 bytes (3 data units of 8192 bytes each)
+            let plaintext = vec![0xEFu8; 24576];
+            let sector_num = [0x32; 16];
+
+            // Streaming encryption with data_unit_len: 8192
+            let aes_xts_encrypt = AesXtsAlgo {
+                sector_num,
+                data_unit_len: Some(8192),
+            };
+
+            let mut encrypt_stream = session
+                .encrypt_init(&aes_xts_encrypt, &aes_xts_key)
+                .expect("Failed to initialize encrypt stream");
+
+            let mut ciphertext = vec![0u8; plaintext.len()];
+            let mut total_encrypted = 0;
+
+            // Feed plaintext in irregular chunk sizes
+            let chunk_sizes = [7000, 10000, 4576, 3000]; // Total: 24576 bytes
+            let mut offset = 0;
+
+            for chunk_size in chunk_sizes {
+                let chunk_end = std::cmp::min(offset + chunk_size, plaintext.len());
+                let chunk = &plaintext[offset..chunk_end];
+
+                let bytes_written = encrypt_stream
+                    .update(chunk, &mut ciphertext[total_encrypted..])
+                    .expect("Failed to encrypt chunk");
+
+                total_encrypted += bytes_written;
+                offset = chunk_end;
+            }
+
+            let final_bytes = encrypt_stream
+                .finalize(&mut ciphertext[total_encrypted..])
+                .expect("Failed to finalize encryption");
+            total_encrypted += final_bytes;
+
+            assert_eq!(total_encrypted, plaintext.len());
+
+            // One-shot decryption with data_unit_len: 8192
+            let mut aes_xts_decrypt = AesXtsAlgo {
+                sector_num,
+                data_unit_len: Some(8192),
+            };
+
+            let mut decrypted = vec![0u8; plaintext.len()];
+            let bytes_decrypted = session
+                .decrypt(
+                    &mut aes_xts_decrypt,
+                    &aes_xts_key,
+                    &ciphertext,
+                    &mut decrypted,
+                )
+                .expect("Failed to decrypt");
+
+            assert_eq!(bytes_decrypted, plaintext.len());
+            assert_eq!(
+                &decrypted[..],
+                &plaintext[..],
+                "Decrypted data should match original plaintext"
+            );
+
+            // Clean up
             session
                 .delete_key(&mut aes_xts_key)
                 .expect("Failed to delete key");

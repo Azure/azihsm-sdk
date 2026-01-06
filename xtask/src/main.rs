@@ -14,6 +14,8 @@ use std::path::PathBuf;
 use clap::Parser;
 use clap::Subcommand;
 
+mod build;
+mod clean;
 mod clippy;
 pub mod common;
 mod copyright;
@@ -21,10 +23,10 @@ mod fmt;
 mod install;
 mod install_symcrypt;
 mod native;
+mod nextest;
 mod precheck;
 mod rustup_component_add;
 mod setup;
-mod test;
 
 /// Common context passed into every Xtask
 #[derive(Clone)]
@@ -53,17 +55,19 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    Build(build::Build),
     Precheck(precheck::Precheck),
+    Clean(clean::Clean),
     Clippy(clippy::Clippy),
     Copyright(copyright::Copyright),
     Fmt(fmt::Fmt),
-    Install(install::Install),
-    InstallSymcrypt(install_symcrypt::InstallSymcrypt),
     #[clap(alias = "nbt")]
     NativeBuildAndTest(native::NativeBuildAndTest),
-    RustupComponentAdd(rustup_component_add::RustupComponentAdd),
+    Nextest(nextest::Nextest),
     Setup(setup::Setup),
-    Test(test::Test),
+    Install(install::Install),
+    InstallSymcrypt(install_symcrypt::InstallSymcrypt),
+    RustupComponentAdd(rustup_component_add::RustupComponentAdd),
 }
 
 fn main() {
@@ -90,15 +94,17 @@ fn try_main() -> anyhow::Result<()> {
     let ctx = XtaskCtx { root };
 
     match cli.command {
+        Commands::Build(task) => task.run(ctx),
+        Commands::Clean(task) => task.run(ctx),
         Commands::Clippy(task) => task.run(ctx),
         Commands::Copyright(task) => task.run(ctx),
         Commands::Fmt(task) => task.run(ctx),
-        Commands::Install(task) => task.run(ctx),
-        Commands::InstallSymcrypt(task) => task.run(ctx),
         Commands::Precheck(task) => task.run(ctx),
         Commands::NativeBuildAndTest(task) => task.run(ctx),
-        Commands::RustupComponentAdd(task) => task.run(ctx),
+        Commands::Nextest(task) => task.run(ctx),
         Commands::Setup(task) => task.run(ctx),
-        Commands::Test(task) => task.run(ctx),
+        Commands::Install(task) => task.run(ctx),
+        Commands::InstallSymcrypt(task) => task.run(ctx),
+        Commands::RustupComponentAdd(task) => task.run(ctx),
     }
 }

@@ -1,11 +1,13 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
 
+#![cfg(test)]
+
 mod common;
 
-use mcr_ddi::*;
-use mcr_ddi_mbor::MborByteArray;
-use mcr_ddi_sim::crypto::rsa::*;
-use mcr_ddi_types::*;
+use azihsm_crypto::*;
+use azihsm_ddi::*;
+use azihsm_ddi_mbor::MborByteArray;
+use azihsm_ddi_types::*;
 use test_with_tracing::test;
 
 use crate::common::*;
@@ -204,11 +206,12 @@ fn test_rsa_mod_exp_encrypt_and_decrypt() {
 
             let data = &orig_x[..data_len_to_test];
 
-            let rsa_pub_key = RsaPublicKey::from_der(&TEST_RSA_2K_PUBLIC_KEY, None)
-                .expect("failed to create RSA public key from DER");
-            let encrypted_data = rsa_pub_key
-                .encrypt(data, RsaCryptoPadding::None, None)
-                .expect("failed to encrypt data with RSA public key");
+            let rsa_pub_key = RsaPublicKey::from_bytes(&TEST_RSA_2K_PUBLIC_KEY)
+                .expect("Failed to create RSA public key from DER");
+
+            let encrypted_data =
+                Encrypter::encrypt_vec(&mut RsaEncryptAlgo::with_no_padding(), &rsa_pub_key, data)
+                    .expect("Failed to encrypt the data");
 
             let resp = helper_rsa_mod_exp(
                 dev,

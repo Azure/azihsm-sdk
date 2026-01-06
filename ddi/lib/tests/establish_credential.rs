@@ -1,15 +1,17 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
 
+#![cfg(test)]
+
 mod common;
 mod invalid_ecc_pub_key_vectors;
 
 use std::thread;
 
-use crypto::rand::rand_bytes;
-use mcr_ddi::*;
-use mcr_ddi_mbor::MborByteArray;
-use mcr_ddi_types::MborError;
-use mcr_ddi_types::*;
+use azihsm_crypto::*;
+use azihsm_ddi::*;
+use azihsm_ddi_mbor::MborByteArray;
+use azihsm_ddi_types::MborError;
+use azihsm_ddi_types::*;
 use test_with_tracing::test;
 
 use crate::common::*;
@@ -30,12 +32,8 @@ fn helper_init_bk3_and_establish_credential(
     encrypted_credential: DdiEncryptedEstablishCredential,
     pub_key: DdiDerPublicKey,
 ) -> Result<DdiEstablishCredentialCmdResp, DdiError> {
-    let mut bk3 = vec![0u8; 48];
-    rand_bytes(&mut bk3).unwrap();
-    let masked_bk3 = helper_init_bk3(dev, bk3)
-        .expect("InitBk3 failed")
-        .data
-        .masked_bk3;
+    let masked_bk3 = helper_get_or_init_bk3(dev);
+
     helper_establish_credential(
         dev,
         sess_id,
@@ -62,12 +60,7 @@ fn test_establish_credential_success_prov_failure_bad_masked_bk3() {
             let (encrypted_credential, pub_key) =
                 encrypt_userid_pin_for_establish_cred(dev, TEST_CRED_ID, TEST_CRED_PIN);
 
-            let mut bk3 = vec![0u8; 48];
-            rand_bytes(&mut bk3).unwrap();
-            let masked_bk3 = helper_init_bk3(dev, bk3)
-                .expect("InitBk3 failed")
-                .data
-                .masked_bk3;
+            let masked_bk3 = helper_get_or_init_bk3(dev);
 
             // tamper the masked bk3 to cause provisioning failure
             let mut tampered_masked_bk3 = masked_bk3;
@@ -635,8 +628,8 @@ fn test_establish_credential_multi_threaded_single_winner() {
             let thread_count = 16;
 
             let mut bk3 = vec![0u8; 48];
-            rand_bytes(&mut bk3).unwrap();
-            let masked_bk3_result = helper_init_bk3(dev, bk3).unwrap().data.masked_bk3;
+            Rng::rand_bytes(&mut bk3).unwrap();
+            let masked_bk3_result = helper_get_or_init_bk3(dev);
 
             let mut thread_list = Vec::new();
             for i in 0..thread_count {
@@ -966,13 +959,12 @@ fn test_establish_credential_after_reset() {
         |dev, ddi, path, _session_id| {
             let setup_res = common_setup_for_lm(dev, ddi, path);
 
-            let resp = helper_reset_function(
-                dev,
-                Some(setup_res.session_id),
-                Some(DdiApiRev { major: 1, minor: 0 }),
+            let result = dev.simulate_nssr_after_lm();
+            assert!(
+                result.is_ok(),
+                "Migration simulation should succeed: {:?}",
+                result
             );
-
-            assert!(resp.is_ok(), "resp {:?}", resp);
 
             let bmk = helper_common_establish_credential_with_bmk(
                 dev,

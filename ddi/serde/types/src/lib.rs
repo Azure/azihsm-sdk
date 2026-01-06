@@ -37,6 +37,8 @@ mod test_ops;
 
 pub use aes::*;
 pub use attest_key::*;
+use azihsm_ddi_derive::Ddi;
+use azihsm_ddi_mbor::*;
 pub use change_pin::*;
 pub use close_session::*;
 pub use decoder::DdiDecoder;
@@ -58,8 +60,6 @@ pub use hmac::*;
 pub use init_bk3::*;
 pub use mask::*;
 pub use masked_key::*;
-use mcr_ddi_derive::Ddi;
-use mcr_ddi_mbor::*;
 pub use metadata::*;
 use open_enum::open_enum;
 pub use open_key::*;
@@ -181,12 +181,6 @@ pub enum DdiOp {
     // Test only opcodes below
     /// Reset function to default state for testing
     ResetFunction = 2001,
-
-    /// Import key in DER format for testing including private keys
-    DerKeyImport = 2002,
-
-    /// Get Perf Log Chunk
-    GetPerfLogChunk = 2003,
 
     /// Test action request
     TestAction = 2004,
@@ -835,6 +829,12 @@ pub enum DdiStatus {
 
     /// Partition not provisioned
     PartitionNotProvisioned = 141557973,
+
+    /// Bk3 Already Initialized
+    Bk3AlreadyInitialized = 141557974,
+
+    /// Sealed BK3 already set
+    SealedBk3AlreadySet = 141557975,
 }
 
 /// DDI Key Class

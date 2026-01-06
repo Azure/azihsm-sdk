@@ -1,8 +1,10 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
 
+#![cfg(test)]
+
 mod common;
 
-use mcr_ddi::*;
+use azihsm_ddi::*;
 use test_with_tracing::test;
 
 use crate::common::*;

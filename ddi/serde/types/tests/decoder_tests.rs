@@ -1,7 +1,7 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
 
-use mcr_ddi_mbor::*;
-use mcr_ddi_types::*;
+use azihsm_ddi_mbor::*;
+use azihsm_ddi_types::*;
 
 #[test]
 fn test_decode_hdr() {

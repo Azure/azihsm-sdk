@@ -15,10 +15,10 @@ use std::path::Path;
 use std::ptr;
 use std::ptr::null_mut;
 
-use mcr_ddi::Ddi;
-use mcr_ddi::DdiError;
-use mcr_ddi::DdiResult;
-use mcr_ddi::DevInfo;
+use azihsm_ddi_interface::Ddi;
+use azihsm_ddi_interface::DdiError;
+use azihsm_ddi_interface::DdiResult;
+use azihsm_ddi_interface::DevInfo;
 use winapi::ctypes::c_void;
 use winapi::shared::minwindef::DWORD;
 use winapi::shared::winerror::ERROR_NO_MORE_ITEMS;

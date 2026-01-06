@@ -15,6 +15,9 @@ mod session;
 
 pub(crate) use aes::*;
 pub use api_rev::*;
+use azihsm_ddi::*;
+use azihsm_ddi_mbor::MborByteArray;
+use azihsm_ddi_types::*;
 pub use device::*;
 pub(crate) use ecc::*;
 pub(crate) use ecdh::*;
@@ -23,9 +26,6 @@ pub(crate) use hkdf::*;
 pub(crate) use hmac::*;
 pub use init_bk3::*;
 pub use key::*;
-use mcr_ddi::*;
-use mcr_ddi_mbor::MborByteArray;
-use mcr_ddi_types::*;
 pub(crate) use rsa::*;
 pub use session::*;
 

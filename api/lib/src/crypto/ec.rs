@@ -2,14 +2,9 @@
 
 use std::sync::Arc;
 
-use azihsm_crypto::EcCurveId;
-use azihsm_crypto::EcPublicKey;
-use azihsm_crypto::EcdsaCryptVerifyOp;
-use azihsm_crypto::EckeyOps;
-use azihsm_crypto::HashAlgo;
-use azihsm_crypto::HashOp;
-use mcr_ddi_types::DdiEccCurve;
-use mcr_ddi_types::DdiKeyProperties;
+use azihsm_crypto::*;
+use azihsm_ddi_types::DdiEccCurve;
+use azihsm_ddi_types::DdiKeyProperties;
 use parking_lot::RwLock;
 
 use crate::crypto::Algo;
@@ -69,12 +64,12 @@ impl TryFrom<u32> for EcCurve {
     }
 }
 
-impl From<EcCurve> for EcCurveId {
+impl From<EcCurve> for EccCurve {
     fn from(curve: EcCurve) -> Self {
         match curve {
-            EcCurve::P256 => EcCurveId::EccP256,
-            EcCurve::P384 => EcCurveId::EccP384,
-            EcCurve::P521 => EcCurveId::EccP521,
+            EcCurve::P256 => EccCurve::P256,
+            EcCurve::P384 => EccCurve::P384,
+            EcCurve::P521 => EccCurve::P521,
         }
     }
 }
@@ -85,20 +80,20 @@ impl TryFrom<AlgoId> for HashAlgo {
     fn try_from(algo_id: AlgoId) -> Result<Self, Self::Error> {
         match algo_id {
             AlgoId::EcdsaSha1 | AlgoId::RsaPkcsSha1 | AlgoId::RsaPkcsPssSha1 | AlgoId::Sha1 => {
-                Ok(HashAlgo::Sha1)
+                Ok(HashAlgo::sha1())
             }
             AlgoId::EcdsaSha256
             | AlgoId::RsaPkcsSha256
             | AlgoId::RsaPkcsPssSha256
-            | AlgoId::Sha256 => Ok(HashAlgo::Sha256),
+            | AlgoId::Sha256 => Ok(HashAlgo::sha256()),
             AlgoId::EcdsaSha384
             | AlgoId::RsaPkcsSha384
             | AlgoId::RsaPkcsPssSha384
-            | AlgoId::Sha384 => Ok(HashAlgo::Sha384),
+            | AlgoId::Sha384 => Ok(HashAlgo::sha384()),
             AlgoId::EcdsaSha512
             | AlgoId::RsaPkcsSha512
             | AlgoId::RsaPkcsPssSha512
-            | AlgoId::Sha512 => Ok(HashAlgo::Sha512),
+            | AlgoId::Sha512 => Ok(HashAlgo::sha512()),
             _ => Err(AZIHSM_ERROR_INVALID_ARGUMENT), // Not an ECDSA Hash algorithm
         }
     }
@@ -361,11 +356,10 @@ impl SignOp<EcdsaKeyPair> for EcdsaAlgo {
             data.to_vec()
         } else {
             // Specific ECDSA with hash algorithm - need to hash
-            let hash_algo = HashAlgo::try_from(self.algo)?;
+            let mut hash_algo = HashAlgo::try_from(self.algo)?;
 
-            let mut digest = vec![0u8; hash_algo.hash_length()];
-            hash_algo
-                .hash(data, &mut digest)
+            let mut digest = vec![0u8; hash_algo.size()];
+            Hasher::hash(&mut hash_algo, data, Some(&mut digest))
                 .map_err(|_| AZIHSM_INTERNAL_ERROR)?;
 
             digest
@@ -402,11 +396,10 @@ impl VerifyOp<EcdsaKeyPair> for EcdsaAlgo {
         data: &[u8],
         sig: &[u8],
     ) -> Result<(), AzihsmError> {
-        let curve = key_pair.curve().ok_or(AZIHSM_KEY_NOT_INITIALIZED)?;
-
         let ecc_public_key = key_pair.with_pub_key(|pub_key_opt| match pub_key_opt {
-            Some(pub_key_bytes) => EcPublicKey::ec_key_from_der(pub_key_bytes, curve.into())
-                .map_err(|_| AZIHSM_INTERNAL_ERROR),
+            Some(pub_key_bytes) => {
+                EccPublicKey::from_bytes(pub_key_bytes).map_err(|_| AZIHSM_INTERNAL_ERROR)
+            }
             None => Err(AZIHSM_KEY_NOT_INITIALIZED),
         })?;
 
@@ -415,19 +408,25 @@ impl VerifyOp<EcdsaKeyPair> for EcdsaAlgo {
             data.to_vec()
         } else {
             // Specific ECDSA with hash algorithm - need to hash
-            let hash_algo = HashAlgo::try_from(self.algo)?;
-
-            let mut digest = vec![0u8; hash_algo.hash_length()];
-            hash_algo
-                .hash(data, &mut digest)
+            let mut hash_algo = HashAlgo::try_from(self.algo)?;
+            let mut digest = vec![0u8; hash_algo.size()];
+            Hasher::hash(&mut hash_algo, data, Some(&mut digest))
                 .map_err(|_| AZIHSM_INTERNAL_ERROR)?;
-
             digest
         };
 
-        ecc_public_key
-            .ecdsa_crypt_verify_digest(&digest_to_verify, sig)
-            .map_err(|_| AZIHSM_ECC_VERIFY_FAILED)
+        let result = Verifier::verify(
+            &mut EccAlgo::default(),
+            &ecc_public_key,
+            &digest_to_verify,
+            sig,
+        )
+        .map_err(|_| AZIHSM_ECC_VERIFY_FAILED)?;
+        if !result {
+            Err(AZIHSM_ECC_VERIFY_FAILED)?
+        }
+
+        Ok(())
     }
 }
 
@@ -466,11 +465,10 @@ impl<'a> StreamingSignOp for EcdsaSignStream<'a> {
             self.buffered_data
         } else {
             // Specific ECDSA with hash algorithm - hash the accumulated data
-            let hash_algo = HashAlgo::try_from(self.algo)?;
+            let mut hash_algo = HashAlgo::try_from(self.algo)?;
+            let mut digest = vec![0u8; hash_algo.size()];
 
-            let mut digest = vec![0u8; hash_algo.hash_length()];
-            hash_algo
-                .hash(&self.buffered_data, &mut digest)
+            Hasher::hash(&mut hash_algo, &self.buffered_data, Some(&mut digest))
                 .map_err(|_| AZIHSM_INTERNAL_ERROR)?;
 
             digest
@@ -516,11 +514,12 @@ impl StreamingVerifyOp for EcdsaVerifyStream {
     }
 
     fn finalize(self, signature: &[u8]) -> Result<(), AzihsmError> {
-        let curve = self.key.curve().ok_or(AZIHSM_KEY_NOT_INITIALIZED)?;
+        // let curve = self.key.curve().ok_or(AZIHSM_KEY_NOT_INITIALIZED)?;
 
         let ecc_public_key = self.key.with_pub_key(|pub_key_opt| match pub_key_opt {
-            Some(pub_key_bytes) => EcPublicKey::ec_key_from_der(pub_key_bytes, curve.into())
-                .map_err(|_| AZIHSM_INTERNAL_ERROR),
+            Some(pub_key_bytes) => {
+                EccPublicKey::from_bytes(pub_key_bytes).map_err(|_| AZIHSM_INTERNAL_ERROR)
+            }
             None => Err(AZIHSM_KEY_NOT_INITIALIZED),
         })?;
 
@@ -529,19 +528,27 @@ impl StreamingVerifyOp for EcdsaVerifyStream {
             self.buffered_data
         } else {
             // Specific ECDSA with hash algorithm - hash the accumulated data
-            let hash_algo = HashAlgo::try_from(self.algo)?;
+            let mut hash_algo = HashAlgo::try_from(self.algo)?;
 
-            let mut digest = vec![0u8; hash_algo.hash_length()];
-            hash_algo
-                .hash(&self.buffered_data, &mut digest)
+            let mut digest = vec![0u8; hash_algo.size()];
+            Hasher::hash(&mut hash_algo, &self.buffered_data, Some(&mut digest))
                 .map_err(|_| AZIHSM_INTERNAL_ERROR)?;
 
             digest
         };
 
-        ecc_public_key
-            .ecdsa_crypt_verify_digest(&digest_to_verify, signature)
-            .map_err(|_| AZIHSM_ECC_VERIFY_FAILED)
+        let result = Verifier::verify(
+            &mut EccAlgo::default(),
+            &ecc_public_key,
+            &digest_to_verify,
+            signature,
+        )
+        .map_err(|_| AZIHSM_ECC_VERIFY_FAILED)?;
+        if !result {
+            Err(AZIHSM_ECC_VERIFY_FAILED)?;
+        }
+
+        Ok(())
     }
 }
 

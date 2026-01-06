@@ -2,11 +2,10 @@
 
 use std::sync::Arc;
 
-use azihsm_crypto::Rng;
-use azihsm_crypto::RngOp;
-use mcr_ddi_mbor::MborByteArray;
+use azihsm_cred_encrypt::DeviceCredKey;
+use azihsm_crypto::*;
+use azihsm_ddi_mbor::MborByteArray;
 use parking_lot::RwLock;
-use session_parameter_encryption::DeviceCredentialEncryptionKey;
 
 use crate::*;
 
@@ -207,9 +206,7 @@ impl PartitionInner {
         }
 
         let mut session_seed = [0u8; SESSION_SEED_SIZE_BYTES];
-        let rng = Rng {};
-        rng.rand_bytes(&mut session_seed)
-            .map_err(|_| AZIHSM_INTERNAL_ERROR)?;
+        Rng::rand_bytes(&mut session_seed).map_err(|_| AZIHSM_INTERNAL_ERROR)?;
 
         let (encrypted_credential, pub_key) =
             self.prepare_session_encrypted_credentials(api_rev, credentials, session_seed)?;
@@ -248,8 +245,8 @@ impl PartitionInner {
             .map_err(|_| AZIHSM_GET_SESSION_ENCRYPTION_KEY_FAILED)?;
 
         let nonce = resp.data.nonce;
-        let param_encryption_key = DeviceCredentialEncryptionKey::new(&resp.data.pub_key, nonce)
-            .map_err(|_| AZIHSM_INTERNAL_ERROR)?;
+        let param_encryption_key =
+            DeviceCredKey::new(&resp.data.pub_key, nonce).map_err(|_| AZIHSM_INTERNAL_ERROR)?;
 
         let (priv_key, ddi_public_key) = param_encryption_key
             .generate_ephemeral_encryption_key()
@@ -283,8 +280,8 @@ impl PartitionInner {
             .map_err(|_| AZIHSM_GET_ESTABLISH_CREDENTIAL_ENCRYPTION_KEY_FAILED)?;
 
         let nonce = resp.data.nonce;
-        let param_encryption_key = DeviceCredentialEncryptionKey::new(&resp.data.pub_key, nonce)
-            .map_err(|_| AZIHSM_INTERNAL_ERROR)?;
+        let param_encryption_key =
+            DeviceCredKey::new(&resp.data.pub_key, nonce).map_err(|_| AZIHSM_INTERNAL_ERROR)?;
         let (priv_key, pub_key) = param_encryption_key
             .generate_ephemeral_encryption_key()
             .map_err(|_| AZIHSM_INTERNAL_ERROR)?;

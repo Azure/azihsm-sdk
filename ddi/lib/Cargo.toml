@@ -1,45 +1,48 @@
 # Copyright (C) Microsoft Corporation. All rights reserved.
 
 [package]
-name = "mcr_ddi"
-version = "0.1.0"
 edition = "2021"
+name = "azihsm_ddi"
+version = "0.1.0"
 
 [lib]
 doctest = false
 test = false
 
 [dependencies]
-mcr_ddi_types.workspace = true
-minicbor.workspace = true
-thiserror.workspace = true
+azihsm_ddi_interface.workspace = true
+azihsm_ddi_mock = { optional = true, workspace = true }
+cfg-if.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
-nix.workspace = true
+azihsm_ddi_nix.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+azihsm_ddi_win.workspace = true
 
 [dev-dependencies]
-attestation.workspace = true
-cfg-if.workspace = true
-crypto.workspace = true
-mcr_ddi_mbor.workspace = true
-mcr_ddi_mock.workspace = true
-mcr_ddi_nix.workspace = true
-mcr_ddi_sim.workspace = true
-mcr_ddi_win.workspace = true
+azihsm_cred_encrypt.workspace = true
+azihsm_crypto.workspace = true
+azihsm_ddi.workspace = true
+azihsm_ddi_mbor.workspace = true
+azihsm_ddi_mock.workspace = true
+azihsm_ddi_nix.workspace = true
+azihsm_ddi_test_helpers.workspace = true
+azihsm_ddi_types.workspace = true
+azihsm_ddi_win.workspace = true
+chrono.workspace = true
+minicbor.workspace = true
 parking_lot.workspace = true
-rsa_padding.workspace = true
 test_with_tracing.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
-chrono.workspace = true
-session_parameter_encryption.workspace = true
 x509.workspace = true
 
 [features]
 default = []
-mock = []
-use-openssl = ["crypto/use-openssl", "mcr_ddi_sim/use-openssl"]
-use-symcrypt = ["crypto/use-symcrypt", "mcr_ddi_sim/use-symcrypt"]
+mock = ["azihsm_ddi_mock"]
+table-4 = ["azihsm_ddi_mock/table-4"]
+table-64 = ["azihsm_ddi_mock/table-64"]
 
 [lints]
 workspace = true

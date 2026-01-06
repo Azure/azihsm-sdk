@@ -2,7 +2,7 @@
 
 //! Errors reported by Manticore operations.
 
-use mcr_ddi_types::DdiStatus;
+use azihsm_ddi_types::DdiStatus;
 // Imports for use in doc links.
 #[allow(unused)]
 use {crate::session::UserSession, uuid::Uuid};
@@ -14,7 +14,7 @@ use {crate::session::UserSession, uuid::Uuid};
 /// * [CBOR](https://en.wikipedia.org/wiki/CBOR)
 /// * [PKCS8](https://en.wikipedia.org/wiki/PKCS_8)
 ///
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub enum ManticoreError {
     /// The argument is invalid.
     InvalidArgument,
@@ -294,6 +294,38 @@ pub enum ManticoreError {
 
     /// Partition has not been provisioned.
     PartitionNotProvisioned,
+
+    /// Invalid algorithm specified
+    InvalidAlgorithm,
+
+    /// Output buffer provided is too small
+    OutputBufferTooSmall,
+
+    /// Invalid parameter provided
+    InvalidKeyLength,
+
+    /// Mbor encoding failed
+    MborEncodeFailed,
+
+    /// Mbor decoding failed
+    MetadataEncodeFailed,
+
+    /// Mbor decoding failed
+    MetadataDecodeFailed,
+
+    /// AES encryption failed
+    AesEncryptFailed,
+
+    /// AES decryption failed
+    AesDecryptFailed,
+
+    /// Report signature does not match
+    ReportSignatureMismatch,
+    /// Bk3 Already Initialized
+    Bk3AlreadyInitialized,
+
+    /// Sealed BK3 already set
+    SealedBk3AlreadySet,
 }
 
 impl From<ManticoreError> for DdiStatus {
@@ -390,6 +422,17 @@ impl From<ManticoreError> for DdiStatus {
             ManticoreError::SealedBk3TooLarge => DdiStatus::SealedBk3TooLarge,
             ManticoreError::CredentialsNotEstablished => DdiStatus::CredentialsNotEstablished,
             ManticoreError::PartitionNotProvisioned => DdiStatus::PartitionNotProvisioned,
+            ManticoreError::InvalidAlgorithm => DdiStatus::InvalidArg,
+            ManticoreError::OutputBufferTooSmall => DdiStatus::InvalidArg,
+            ManticoreError::InvalidKeyLength => DdiStatus::InvalidArg,
+            ManticoreError::MborEncodeFailed => DdiStatus::InvalidArg,
+            ManticoreError::MetadataEncodeFailed => DdiStatus::InvalidArg,
+            ManticoreError::MetadataDecodeFailed => DdiStatus::InvalidArg,
+            ManticoreError::AesEncryptFailed => DdiStatus::InvalidArg,
+            ManticoreError::AesDecryptFailed => DdiStatus::InvalidArg,
+            ManticoreError::ReportSignatureMismatch => DdiStatus::InvalidArg,
+            ManticoreError::Bk3AlreadyInitialized => DdiStatus::Bk3AlreadyInitialized,
+            ManticoreError::SealedBk3AlreadySet => DdiStatus::SealedBk3AlreadySet,
         }
     }
 }

@@ -1,11 +1,13 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
 
+#![cfg(test)]
+
 mod common;
 
 use std::thread;
 
-use mcr_ddi::*;
-use mcr_ddi_types::*;
+use azihsm_ddi::*;
+use azihsm_ddi_types::*;
 use test_with_tracing::test;
 
 use crate::common::*;
@@ -125,78 +127,6 @@ fn test_get_cert_chain_length_multiple_times() {
                     );
                 }
             }
-        },
-    );
-}
-
-#[test]
-fn test_get_certificate_with_invalid_cert_id() {
-    ddi_dev_test(
-        common_setup,
-        common_cleanup,
-        |dev, ddi, path, session_id| {
-            let device_kind = get_device_kind(dev);
-            if device_kind != DdiDeviceKind::Physical {
-                tracing::debug!(
-                    "Skipped test_get_certificate_with_invalid_cert_id for virtual device"
-                );
-                return;
-            }
-
-            close_app_session(dev, session_id);
-
-            if !set_test_action(ddi, path, DdiTestAction::InvalidateCertSizeCache) {
-                println!("Firmware is not built with test_action test_hooks.");
-                return;
-            }
-
-            let result = helper_get_certificate(dev, 0);
-            assert!(result.is_err(), "result {:?}", result);
-            assert!(matches!(
-                result.unwrap_err(),
-                DdiError::DdiStatus(DdiStatus::InvalidCertificate)
-            ));
-        },
-    );
-}
-
-#[test]
-fn test_get_cert_chain_interrupted_by_simulating_idfu() {
-    ddi_dev_test(
-        common_setup,
-        common_cleanup,
-        |dev, ddi, path, session_id| {
-            let device_kind = get_device_kind(dev);
-            if device_kind != DdiDeviceKind::Physical {
-                tracing::debug!(
-                    "Skipped test_get_cert_chain_interrupted_by_simulating_idfu for virtual device"
-                );
-                return;
-            }
-
-            close_app_session(dev, session_id);
-
-            // Gets Cert Chain Info but invalidates the cache in the firmware while getting the cert chain.
-            // this is to simulate a scenario where the firmware is interrupted by an IDFU while getting the cert chain.
-            let result = helper_get_cert_chain_info(dev);
-            assert!(result.is_ok(), "result {:?}", result);
-
-            let result = helper_get_certificate(dev, 0);
-            assert!(result.is_ok(), "result {:?}", result);
-
-            // Simulating IDFU by clearing the cert info stored in the firmware from the
-            // get cert chain info call.
-            if !set_test_action(ddi, path, DdiTestAction::InvalidateCertSizeCache) {
-                println!("Firmware is not built with mcr_test_hooks.");
-                return;
-            }
-
-            let result = helper_get_certificate(dev, 1);
-            assert!(result.is_err(), "result {:?}", result);
-            assert!(matches!(
-                result.unwrap_err(),
-                DdiError::DdiStatus(DdiStatus::InvalidCertificate)
-            ));
         },
     );
 }

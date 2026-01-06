@@ -1,14 +1,13 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
 
+#![cfg(test)]
+
 mod common;
 
-use crypto::rand::rand_bytes;
-use crypto::CryptoRsaSignaturePadding;
-use mcr_ddi::*;
-use mcr_ddi_mbor::MborByteArray;
-use mcr_ddi_types::*;
-use rsa_padding::RsaDigestKind;
-use rsa_padding::RsaEncoding;
+use azihsm_crypto::*;
+use azihsm_ddi::*;
+use azihsm_ddi_mbor::MborByteArray;
+use azihsm_ddi_types::*;
 use test_with_tracing::test;
 
 use crate::common::*;
@@ -404,7 +403,7 @@ fn test_rsa_2k_sign_and_verify_pkcs15_sha1() {
                 &TEST_RSA_2K_PUBLIC_KEY,
                 &resp.data.x.data()[..resp.data.x.len()],
                 &[0x1; 20],
-                CryptoRsaSignaturePadding::Pkcs1_5,
+                true,
                 Some(DdiHashAlgorithm::Sha1),
                 None,
             );
@@ -489,7 +488,7 @@ fn test_rsa_2k_sign_and_verify_pkcs15_sha256() {
                 &TEST_RSA_2K_PUBLIC_KEY,
                 &resp.data.x.data()[..resp.data.x.len()],
                 &[0x1; 32],
-                CryptoRsaSignaturePadding::Pkcs1_5,
+                true,
                 Some(DdiHashAlgorithm::Sha256),
                 None,
             );
@@ -574,7 +573,7 @@ fn test_rsa_2k_sign_and_verify_pkcs15_sha384() {
                 &TEST_RSA_2K_PUBLIC_KEY,
                 &resp.data.x.data()[..resp.data.x.len()],
                 &[0x1; 48],
-                CryptoRsaSignaturePadding::Pkcs1_5,
+                true,
                 Some(DdiHashAlgorithm::Sha384),
                 None,
             );
@@ -659,7 +658,7 @@ fn test_rsa_2k_sign_and_verify_pkcs15_sha512() {
                 &TEST_RSA_2K_PUBLIC_KEY,
                 &resp.data.x.data()[..resp.data.x.len()],
                 &[0x1; 64],
-                CryptoRsaSignaturePadding::Pkcs1_5,
+                true,
                 Some(DdiHashAlgorithm::Sha512),
                 None,
             );
@@ -703,7 +702,7 @@ fn test_rsa_2k_sign_and_verify_pss_sha1() {
                     RsaDigestKind::Sha1,
                     crypto_sha1,
                     0,
-                    |buf| rand_bytes(buf).map_err(|_| ()),
+                    |buf| Rng::rand_bytes(buf).map_err(|_| ()),
                 )
                 .unwrap();
 
@@ -755,7 +754,7 @@ fn test_rsa_2k_sign_and_verify_pss_sha1() {
                     &TEST_RSA_2K_PUBLIC_KEY,
                     &resp.data.x.data()[..resp.data.x.len()],
                     &[0x1; 20],
-                    CryptoRsaSignaturePadding::Pss,
+                    false,
                     Some(DdiHashAlgorithm::Sha1),
                     Some(0),
                 );
@@ -784,7 +783,7 @@ fn test_rsa_2k_sign_and_verify_pss_sha1() {
                     RsaDigestKind::Sha1,
                     crypto_sha1,
                     20,
-                    |buf| rand_bytes(buf).map_err(|_| ()),
+                    |buf| Rng::rand_bytes(buf).map_err(|_| ()),
                 )
                 .unwrap();
 
@@ -806,7 +805,7 @@ fn test_rsa_2k_sign_and_verify_pss_sha1() {
                     &TEST_RSA_2K_PUBLIC_KEY,
                     &resp.data.x.data()[..resp.data.x.len()],
                     &[0x1; 20],
-                    CryptoRsaSignaturePadding::Pss,
+                    false,
                     Some(DdiHashAlgorithm::Sha1),
                     Some(20),
                 );
@@ -836,7 +835,7 @@ fn test_rsa_2k_sign_and_verify_pss_sha256() {
                     RsaDigestKind::Sha256,
                     crypto_sha256,
                     0,
-                    |buf| rand_bytes(buf).map_err(|_| ()),
+                    |buf| Rng::rand_bytes(buf).map_err(|_| ()),
                 )
                 .unwrap();
 
@@ -888,7 +887,7 @@ fn test_rsa_2k_sign_and_verify_pss_sha256() {
                     &TEST_RSA_2K_PUBLIC_KEY,
                     &resp.data.x.data()[..resp.data.x.len()],
                     &[0x1; 32],
-                    CryptoRsaSignaturePadding::Pss,
+                    false,
                     Some(DdiHashAlgorithm::Sha256),
                     Some(0),
                 );
@@ -917,7 +916,7 @@ fn test_rsa_2k_sign_and_verify_pss_sha256() {
                     RsaDigestKind::Sha256,
                     crypto_sha256,
                     32,
-                    |buf| rand_bytes(buf).map_err(|_| ()),
+                    |buf| Rng::rand_bytes(buf).map_err(|_| ()),
                 )
                 .unwrap();
 
@@ -939,7 +938,7 @@ fn test_rsa_2k_sign_and_verify_pss_sha256() {
                     &TEST_RSA_2K_PUBLIC_KEY,
                     &resp.data.x.data()[..resp.data.x.len()],
                     &[0x1; 32],
-                    CryptoRsaSignaturePadding::Pss,
+                    false,
                     Some(DdiHashAlgorithm::Sha256),
                     Some(32),
                 );
@@ -969,7 +968,7 @@ fn test_rsa_2k_sign_and_verify_pss_sha384() {
                     RsaDigestKind::Sha384,
                     crypto_sha384,
                     0,
-                    |buf| rand_bytes(buf).map_err(|_| ()),
+                    |buf| Rng::rand_bytes(buf).map_err(|_| ()),
                 )
                 .unwrap();
 
@@ -1021,7 +1020,7 @@ fn test_rsa_2k_sign_and_verify_pss_sha384() {
                     &TEST_RSA_2K_PUBLIC_KEY,
                     &resp.data.x.data()[..resp.data.x.len()],
                     &[0x1; 48],
-                    CryptoRsaSignaturePadding::Pss,
+                    false,
                     Some(DdiHashAlgorithm::Sha384),
                     Some(0),
                 );
@@ -1050,7 +1049,7 @@ fn test_rsa_2k_sign_and_verify_pss_sha384() {
                     RsaDigestKind::Sha384,
                     crypto_sha384,
                     48,
-                    |buf| rand_bytes(buf).map_err(|_| ()),
+                    |buf| Rng::rand_bytes(buf).map_err(|_| ()),
                 )
                 .unwrap();
 
@@ -1072,7 +1071,7 @@ fn test_rsa_2k_sign_and_verify_pss_sha384() {
                     &TEST_RSA_2K_PUBLIC_KEY,
                     &resp.data.x.data()[..resp.data.x.len()],
                     &[0x1; 48],
-                    CryptoRsaSignaturePadding::Pss,
+                    false,
                     Some(DdiHashAlgorithm::Sha384),
                     Some(48),
                 );
@@ -1102,7 +1101,7 @@ fn test_rsa_2k_sign_and_verify_pss_sha512() {
                     RsaDigestKind::Sha512,
                     crypto_sha512,
                     0,
-                    |buf| rand_bytes(buf).map_err(|_| ()),
+                    |buf| Rng::rand_bytes(buf).map_err(|_| ()),
                 )
                 .unwrap();
 
@@ -1154,7 +1153,7 @@ fn test_rsa_2k_sign_and_verify_pss_sha512() {
                     &TEST_RSA_2K_PUBLIC_KEY,
                     &resp.data.x.data()[..resp.data.x.len()],
                     &[0x1; 64],
-                    CryptoRsaSignaturePadding::Pss,
+                    false,
                     Some(DdiHashAlgorithm::Sha512),
                     Some(0),
                 );
@@ -1183,7 +1182,7 @@ fn test_rsa_2k_sign_and_verify_pss_sha512() {
                     RsaDigestKind::Sha512,
                     crypto_sha512,
                     64,
-                    |buf| rand_bytes(buf).map_err(|_| ()),
+                    |buf| Rng::rand_bytes(buf).map_err(|_| ()),
                 )
                 .unwrap();
 
@@ -1205,7 +1204,7 @@ fn test_rsa_2k_sign_and_verify_pss_sha512() {
                     &TEST_RSA_2K_PUBLIC_KEY,
                     &resp.data.x.data()[..resp.data.x.len()],
                     &[0x1; 64],
-                    CryptoRsaSignaturePadding::Pss,
+                    false,
                     Some(DdiHashAlgorithm::Sha512),
                     Some(64),
                 );

@@ -6,23 +6,19 @@
 use std::sync::Arc;
 use std::sync::Weak;
 
-use crypto_env::CryptEnv;
-use lmkey_derive::LMKeyDerive;
-use masked_key::MaskedKeyDecode;
-use masked_key::MaskedKeyEncode;
-use mcr_ddi_mbor::MborByteArray;
-use mcr_ddi_mbor::MborDecode;
-use mcr_ddi_mbor::MborDecoder;
-use mcr_ddi_mbor::MborEncode;
-use mcr_ddi_mbor::MborLen;
-use mcr_ddi_mbor::MborLenAccumulator;
-use mcr_ddi_types::DdiDeviceKind;
-use mcr_ddi_types::DdiKeyType;
-use mcr_ddi_types::DdiMaskedKeyAttributes;
-use mcr_ddi_types::DdiMaskedKeyMetadata;
-use mcr_ddi_types::MaskedKey;
-use mcr_ddi_types::MaskingKeyAlgorithm;
-use mcr_ddi_types::DDI_MAX_KEY_LABEL_LENGTH;
+use azihsm_ddi_mbor::MborByteArray;
+use azihsm_ddi_mbor::MborDecode;
+use azihsm_ddi_mbor::MborDecoder;
+use azihsm_ddi_mbor::MborEncode;
+use azihsm_ddi_mbor::MborLen;
+use azihsm_ddi_mbor::MborLenAccumulator;
+use azihsm_ddi_types::DdiDeviceKind;
+use azihsm_ddi_types::DdiKeyType;
+use azihsm_ddi_types::DdiMaskedKeyAttributes;
+use azihsm_ddi_types::DdiMaskedKeyMetadata;
+use azihsm_ddi_types::MaskedKey;
+use azihsm_ddi_types::MaskingKeyAlgorithm;
+use azihsm_ddi_types::DDI_MAX_KEY_LABEL_LENGTH;
 use parking_lot::RwLock;
 use tracing::instrument;
 use uuid::Uuid;
@@ -30,9 +26,13 @@ use uuid::Uuid;
 use crate::crypto::aeshmac::AesHmacKey;
 use crate::crypto::aeshmac::AesHmacOp;
 use crate::crypto::ecc::EccPrivateOp;
+use crate::crypto_env::CryptEnv;
 use crate::errors::ManticoreError;
+use crate::lmkey_derive::LMKeyDerive;
 use crate::mask::KeySerialization;
 use crate::mask::KEY_BLOB_MAX_SIZE;
+use crate::masked_key::MaskedKeyDecode;
+use crate::masked_key::MaskedKeyEncode;
 use crate::session::UserSession;
 use crate::sim_crypto_env::SimCryptEnv;
 use crate::sim_crypto_env::BK3_SIZE_BYTES;
@@ -104,7 +104,7 @@ fn encode_masked_key(
     }
 
     let mut encoded_metadata = vec![0u8; metadata_len];
-    let mut encoder = mcr_ddi_mbor::MborEncoder::new(&mut encoded_metadata, false);
+    let mut encoder = azihsm_ddi_mbor::MborEncoder::new(&mut encoded_metadata, false);
     metadata
         .mbor_encode(&mut encoder)
         .map_err(|_| ManticoreError::MaskedKeyPreEncodeFailed)?;
@@ -199,7 +199,7 @@ impl Function {
     #[instrument(name = "Function::new")]
     pub fn new(table_count: usize) -> Result<Self, ManticoreError> {
         let instance = Self {
-            inner: Arc::new(RwLock::new(FunctionInner::new(table_count))),
+            inner: Arc::new(RwLock::new(FunctionInner::new(table_count)?)),
         };
         instance.generate_attestation_key()?;
 
@@ -395,10 +395,10 @@ struct FunctionInner {
 }
 
 impl FunctionInner {
-    fn new(table_count: usize) -> Self {
-        Self {
-            state: FunctionState::new(table_count),
-        }
+    fn new(table_count: usize) -> Result<Self, ManticoreError> {
+        Ok(Self {
+            state: FunctionState::new(table_count)?,
+        })
     }
 
     fn get_api_rev_range(&self) -> ApiRevRange {
@@ -747,10 +747,10 @@ pub(crate) struct FunctionState {
 
 impl FunctionState {
     #[instrument(name = "FunctionState::new")]
-    fn new(tables_max: usize) -> Self {
-        Self {
-            inner: Arc::new(RwLock::new(FunctionStateInner::new(tables_max))),
-        }
+    fn new(tables_max: usize) -> Result<Self, ManticoreError> {
+        Ok(Self {
+            inner: Arc::new(RwLock::new(FunctionStateInner::new(tables_max)?)),
+        })
     }
 
     fn get_user_session_api_rev(
@@ -1016,12 +1016,12 @@ impl Drop for FunctionStateInner {
 }
 
 impl FunctionStateInner {
-    fn new(table_count: usize) -> Self {
+    fn new(table_count: usize) -> Result<Self, ManticoreError> {
         let mut vaults = Vec::with_capacity(table_count);
-        let default_vault = Vault::new(DEFAULT_VAULT_ID, table_count);
+        let default_vault = Vault::new(DEFAULT_VAULT_ID, table_count)?;
         vaults.push(default_vault);
 
-        Self {
+        Ok(Self {
             tables_max: table_count,
             tables_used: table_count,
             vaults,
@@ -1032,7 +1032,7 @@ impl FunctionStateInner {
             sealed_bk3_data: None,
             sealed_bk3_actual_len: None,
             bk_partition: None,
-        }
+        })
     }
 
     fn get_user_session_api_rev(
@@ -1220,7 +1220,7 @@ impl FunctionStateInner {
 
         let metadata = DdiMaskedKeyMetadata {
             svn: Some(1),
-            key_type: mcr_ddi_types::DdiKeyType::try_from(entry.kind()).map_err(|_| ERR)?,
+            key_type: azihsm_ddi_types::DdiKeyType::try_from(entry.kind()).map_err(|_| ERR)?,
             key_attributes: DdiMaskedKeyAttributes {
                 blob: {
                     let mut blob = [0u8; 32];
@@ -1440,7 +1440,7 @@ impl FunctionStateInner {
         let tables_max = self.tables_max;
 
         // Reset to new state
-        *self = Self::new(tables_max);
+        *self = Self::new(tables_max)?;
 
         // Restore preserved sealed BK3 data
         self.sealed_bk3_data = sealed_bk3_data;
@@ -1468,11 +1468,11 @@ impl FunctionStateWeak {
 #[cfg(test)]
 mod tests {
 
-    use masked_key::MaskedKeyDecode;
     use test_with_tracing::test;
 
     use super::*;
     use crate::crypto::rsa::generate_rsa;
+    use crate::masked_key::MaskedKeyDecode;
     use crate::table::entry::key::Key;
     use crate::table::entry::Kind;
     use crate::vault::tests::*;

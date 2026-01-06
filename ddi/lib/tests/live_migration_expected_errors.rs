@@ -1,10 +1,12 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
 
+#![cfg(test)]
+
 mod common;
 
-use mcr_ddi::*;
-use mcr_ddi_mbor::MborByteArray;
-use mcr_ddi_types::*;
+use azihsm_ddi::*;
+use azihsm_ddi_mbor::MborByteArray;
+use azihsm_ddi_types::*;
 use test_with_tracing::test;
 
 use crate::common::*;
@@ -53,7 +55,7 @@ fn test_establish_credential_after_lm() {
             result
         );
 
-        let masked_bk3 = helper_init_bk3(dev, vec![0u8; 48]).unwrap().data.masked_bk3;
+        let masked_bk3 = helper_get_or_init_bk3(dev);
 
         // Confirm fails with NonceMismatch
         let resp = helper_establish_credential(

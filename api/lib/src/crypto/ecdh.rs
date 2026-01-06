@@ -4,9 +4,9 @@
 
 use std::sync::Arc;
 
-use mcr_ddi_types::DdiKeyAvailability;
-use mcr_ddi_types::DdiKeyType;
-use mcr_ddi_types::DdiKeyUsage;
+use azihsm_ddi_types::DdiKeyAvailability;
+use azihsm_ddi_types::DdiKeyType;
+use azihsm_ddi_types::DdiKeyUsage;
 use parking_lot::RwLock;
 
 use crate::crypto::ec::EcdsaKeyPair;

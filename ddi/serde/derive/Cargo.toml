@@ -1,14 +1,14 @@
 # Copyright (C) Microsoft Corporation. All rights reserved.
 
 [package]
-name = "mcr_ddi_derive"
-version = "0.1.0"
-edition = "2021"
 autotests = false
+edition = "2021"
+name = "azihsm_ddi_derive"
+version = "0.1.0"
 
 [lib]
-proc-macro = true
 doctest = false
+proc-macro = true
 
 [dependencies]
 darling.workspace = true
@@ -18,10 +18,10 @@ quote.workspace = true
 syn.workspace = true
 
 [dev-dependencies]
-trybuild.workspace = true
-mcr_ddi_mbor.workspace = true
-rand.workspace = true
+azihsm_ddi_mbor.workspace = true
 open-enum.workspace = true
+rand.workspace = true
+trybuild.workspace = true
 
 [[test]]
 name = "compile_tests"

@@ -2,22 +2,19 @@
 
 //! Module for SHA.
 
-#[cfg(all(feature = "use-openssl", feature = "use-symcrypt"))]
-compile_error!("OpenSSL and SymCrypt cannot be enabled at the same time.");
-
-#[cfg(feature = "use-openssl")]
+#[cfg(target_os = "linux")]
 use openssl;
-#[cfg(feature = "use-openssl")]
+#[cfg(target_os = "linux")]
 use openssl::hash::MessageDigest;
-#[cfg(feature = "use-openssl")]
+#[cfg(target_os = "linux")]
 use openssl::pkey::Id;
-#[cfg(feature = "use-openssl")]
+#[cfg(target_os = "linux")]
 use openssl::pkey_ctx::PkeyCtx;
-#[cfg(feature = "use-symcrypt")]
+#[cfg(target_os = "windows")]
 use symcrypt::hash;
-#[cfg(feature = "use-symcrypt")]
+#[cfg(target_os = "windows")]
 use symcrypt::hkdf::hkdf;
-#[cfg(feature = "use-symcrypt")]
+#[cfg(target_os = "windows")]
 use symcrypt::hmac::HmacAlgorithm;
 
 use crate::errors::ManticoreError;
@@ -71,7 +68,7 @@ impl HashAlgorithm {
 ///
 /// # Errors
 /// * `ManticoreError::ShaError` - If the SHA operation fails.
-#[cfg(feature = "use-openssl")]
+#[cfg(target_os = "linux")]
 pub(crate) fn sha(hash_algorithm: HashAlgorithm, data: &[u8]) -> Result<Vec<u8>, ManticoreError> {
     let hash_algorithm = match hash_algorithm {
         HashAlgorithm::Sha1 => MessageDigest::sha1(),
@@ -99,7 +96,7 @@ pub(crate) fn sha(hash_algorithm: HashAlgorithm, data: &[u8]) -> Result<Vec<u8>,
 ///
 /// # Errors
 /// * `ManticoreError::ShaError` - If the SHA operation fails.
-#[cfg(feature = "use-symcrypt")]
+#[cfg(target_os = "windows")]
 pub fn sha(hash_algorithm: HashAlgorithm, data: &[u8]) -> Result<Vec<u8>, ManticoreError> {
     let digest = match hash_algorithm {
         HashAlgorithm::Sha1 => hash::sha1(data).to_vec(),
@@ -111,7 +108,7 @@ pub fn sha(hash_algorithm: HashAlgorithm, data: &[u8]) -> Result<Vec<u8>, Mantic
 }
 
 /// Generic HMAC operation helper, OpenSSL implementation.
-#[cfg(feature = "use-openssl")]
+#[cfg(target_os = "linux")]
 fn hmac_openssl<const N: usize>(
     key: &[u8],
     data: &[u8],
@@ -163,13 +160,13 @@ fn hmac_openssl<const N: usize>(
 }
 
 /// HMAC-SHA-384 operation, OpenSSL implementation.
-#[cfg(feature = "use-openssl")]
+#[cfg(target_os = "linux")]
 pub fn hmac_sha_384(key: &[u8], data: &[u8]) -> Result<[u8; 48], ManticoreError> {
     hmac_openssl::<48>(key, data, 48, openssl::md::Md::sha384(), "HMAC-SHA-384")
 }
 
 /// HMAC-SHA-384 operation, SymCrypt implementation.
-#[cfg(feature = "use-symcrypt")]
+#[cfg(target_os = "windows")]
 pub fn hmac_sha_384(key: &[u8], data: &[u8]) -> Result<[u8; 48], ManticoreError> {
     if key.len() != 48 {
         tracing::error!(error=?ManticoreError::HmacError, key_len = key.len(), "Expected HMAC key size is 48 bytes");
@@ -199,7 +196,7 @@ pub fn hkdf_sha_256_derive(
     _info: Option<&[u8]>,
     out_len: usize,
 ) -> Result<Vec<u8>, ManticoreError> {
-    #[cfg(feature = "use-openssl")]
+    #[cfg(target_os = "linux")]
     {
         use openssl::md::Md;
         use openssl::pkey_ctx::HkdfMode;
@@ -247,7 +244,7 @@ pub fn hkdf_sha_256_derive(
         Ok(out_vec)
     }
 
-    #[cfg(feature = "use-symcrypt")]
+    #[cfg(target_os = "windows")]
     {
         let result = hkdf(HmacAlgorithm::HmacSha256, data, &[], &[], out_len as u64).map_err(
             |symcrypt_error_stack| {

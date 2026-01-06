@@ -2,9 +2,6 @@
 
 //! Module for describing keys used for Hash operations
 
-#[cfg(all(feature = "use-openssl", feature = "use-symcrypt"))]
-compile_error!("OpenSSL and non-openssl cannot be enabled at the same time.");
-
 use crate::crypto::sha;
 use crate::crypto::sha::HashAlgorithm;
 use crate::errors::ManticoreError;

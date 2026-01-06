@@ -1,0 +1,22 @@
+# Copyright (C) Microsoft Corporation. All rights reserved.
+
+[package]
+edition = "2021"
+name = "azihsm_ddi_test_helpers"
+version = "0.1.0"
+
+[lib]
+doctest = false
+test = false
+
+[dependencies]
+azihsm_crypto.workspace = true
+azihsm_ddi.workspace = true
+azihsm_ddi_mbor.workspace = true
+azihsm_ddi_types.workspace = true
+bitfield-struct.workspace = true
+minicbor.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

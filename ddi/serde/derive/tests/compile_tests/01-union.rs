@@ -1,6 +1,6 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
 
-#[derive(mcr_ddi_derive::Ddi)]
+#[derive(azihsm_ddi_derive::Ddi)]
 union A {
     a: u32,
 }

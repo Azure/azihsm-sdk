@@ -1,10 +1,12 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
 
+#![cfg(test)]
+
 mod common;
 
-use crypto::rand::rand_bytes;
-use mcr_ddi::*;
-use mcr_ddi_types::*;
+use azihsm_crypto::*;
+use azihsm_ddi::*;
+use azihsm_ddi_types::*;
 use test_with_tracing::test;
 
 use crate::common::*;
@@ -148,7 +150,7 @@ fn test_aes_xts_encrypt_with_identical_key_content() {
             // generate AES 256 bulk key; 32 bytes of random data
             let mut buf = [0u8; 32];
             let buf = &mut buf;
-            let _ = rand_bytes(buf);
+            let _ = Rng::rand_bytes(buf);
 
             // set AES 256 bulk key 2 == key 1
             // import key 1
@@ -256,11 +258,11 @@ fn test_aes_xts_encrypt_with_gcm_key_in_the_mix() {
             // generate AES 256 bulk key; 32 bytes of random data
             let mut buf = [0u8; 32];
             let buf = &mut buf;
-            let _ = rand_bytes(buf);
+            let _ = Rng::rand_bytes(buf);
 
             let mut gcm_key_buf = [0u8; 32];
             let gcm_key_buf = &mut gcm_key_buf;
-            let _ = rand_bytes(gcm_key_buf);
+            let _ = Rng::rand_bytes(gcm_key_buf);
 
             // set AES 256 bulk key 2 == key 1
             // import key 1

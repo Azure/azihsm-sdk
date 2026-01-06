@@ -2,10 +2,10 @@
 
 //! DDI Implementation - MCR Mock Device - DDI Module
 
+use azihsm_ddi_interface::Ddi;
+use azihsm_ddi_interface::DdiResult;
+use azihsm_ddi_interface::DevInfo;
 use lazy_static::lazy_static;
-use mcr_ddi::Ddi;
-use mcr_ddi::DdiResult;
-use mcr_ddi::DevInfo;
 use rand::Rng;
 
 use crate::dev::DdiMockDev;

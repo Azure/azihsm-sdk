@@ -2,9 +2,6 @@
 
 //! Module for describing unstructured bits and key derivation functions.
 
-#[cfg(all(feature = "use-openssl", feature = "use-symcrypt"))]
-compile_error!("OpenSSL and non-openssl cannot be enabled at the same time.");
-
 use crate::crypto::hmac::HmacKey;
 use crate::crypto::hmac::HmacOp;
 use crate::crypto::sha::HashAlgorithm;

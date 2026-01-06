@@ -5,11 +5,10 @@
 use std::sync::Arc;
 use std::sync::Weak;
 
-use lmkey_derive::LMKeyDerive;
-use mcr_ddi_types::DdiDeviceKind;
-use mcr_ddi_types::DdiKeyType;
-use mcr_ddi_types::DdiMaskedKeyAttributes;
-use mcr_ddi_types::MaskingKeyAlgorithm;
+use azihsm_ddi_types::DdiDeviceKind;
+use azihsm_ddi_types::DdiKeyType;
+use azihsm_ddi_types::DdiMaskedKeyAttributes;
+use azihsm_ddi_types::MaskingKeyAlgorithm;
 use parking_lot::RwLock;
 use tracing::instrument;
 use uuid::Uuid;
@@ -32,6 +31,7 @@ use crate::crypto::sha::HashAlgorithm;
 use crate::errors::ManticoreError;
 use crate::function::ApiRev;
 use crate::function::METADATA_MAX_SIZE_BYTES;
+use crate::lmkey_derive::LMKeyDerive;
 use crate::session_table::SessionTable;
 use crate::sim_crypto_env::SimCryptEnv;
 use crate::sim_crypto_env::BK_AES_CBC_256_HMAC384_SIZE_BYTES;
@@ -94,11 +94,11 @@ impl Vault {
     ///
     /// # Returns
     /// * The new vault.
-    pub(crate) fn new(id: Uuid, table_count: usize) -> Self {
+    pub(crate) fn new(id: Uuid, table_count: usize) -> Result<Self, ManticoreError> {
         tracing::debug!(id = ?id, table_count, "Creating vault");
-        Self {
-            inner: Arc::new(RwLock::new(VaultInner::new(id, table_count))),
-        }
+        Ok(Self {
+            inner: Arc::new(RwLock::new(VaultInner::new(id, table_count)?)),
+        })
     }
 
     fn with_inner(inner: Arc<RwLock<VaultInner>>) -> Self {
@@ -421,14 +421,17 @@ impl Drop for VaultInner {
 }
 
 impl VaultInner {
-    fn new(id: Uuid, table_count: usize) -> Self {
+    fn new(id: Uuid, table_count: usize) -> Result<Self, ManticoreError> {
         let mut tables = Vec::with_capacity(table_count);
         for _ in 0..table_count {
             tables.push(Table::new());
         }
 
         let mut rand_buf = [0; 32];
-        rand_bytes(&mut rand_buf).unwrap();
+        rand_bytes(&mut rand_buf).map_err(|err| {
+            tracing::error!(error = ?err, "Failed to generate random bytes for new vault");
+            ManticoreError::InternalError
+        })?;
         let nonce = rand_buf;
 
         let mut vault_inner = Self {
@@ -444,13 +447,11 @@ impl VaultInner {
             session_table: SessionTable::new(),
         };
 
-        vault_inner
-            .generate_establish_cred_encryption_key_id()
-            .unwrap();
+        vault_inner.generate_establish_cred_encryption_key_id()?;
 
-        vault_inner.generate_session_encryption_key_id().unwrap();
+        vault_inner.generate_session_encryption_key_id()?;
 
-        vault_inner
+        Ok(vault_inner)
     }
 
     fn id(&self) -> Uuid {
@@ -1303,7 +1304,6 @@ pub(crate) mod tests {
 
     use super::*;
     use crate::credentials::Role;
-    use crate::crypto;
     use crate::crypto::ecc::generate_ecc;
     use crate::crypto::ecc::EccCurve;
     use crate::crypto::ecc::EccPrivateKey;
@@ -1359,7 +1359,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_new() {
-        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
+        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4).expect("Failed to create Vault");
         let vault_inner = vault.inner.read();
 
         assert_eq!(vault_inner.id, Uuid::from_bytes([0xb2; 16]));
@@ -1452,7 +1452,7 @@ pub(crate) mod tests {
         let key_tag = 0x5453;
 
         let (_rsa_private_key, rsa_public_key) = generate_rsa(2048).unwrap();
-        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
+        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4).expect("Failed to create Vault");
         let result = vault.add_key(
             Uuid::nil(),
             Kind::Rsa2kPublic,
@@ -1507,7 +1507,7 @@ pub(crate) mod tests {
             let mut encrypted_pin = [0; 16];
             let mut iv = [0; 16];
 
-            crypto::rand::rand_bytes(&mut iv)?;
+            rand_bytes(&mut iv)?;
 
             let aes_key = AesKey::from_bytes(&aes_key)?;
 
@@ -1525,7 +1525,10 @@ pub(crate) mod tests {
 
             let hmac_key = HmacKey::from_bytes(&hmac_key)?;
             let tag = hmac_key.hmac(&id_pin_iv_nonce, HashAlgorithm::Sha384)?;
-            let tag_48: [u8; 48] = tag.try_into().unwrap();
+            let tag_48: [u8; 48] = tag.try_into().map_err(|err| {
+                tracing::error!("Failed to convert tag into 48 bytes: {:?}", err);
+                ManticoreError::InternalError
+            })?;
             Ok((
                 EncryptedCredential {
                     id: encrypted_id,
@@ -1578,7 +1581,7 @@ pub(crate) mod tests {
             let mut encrypted_seed = [0; 48];
             let mut iv = [0; 16];
 
-            crypto::rand::rand_bytes(&mut iv)?;
+            rand_bytes(&mut iv)?;
 
             let aes_key = AesKey::from_bytes(&aes_key)?;
 
@@ -1600,7 +1603,10 @@ pub(crate) mod tests {
 
             let hmac_key = HmacKey::from_bytes(&hmac_key)?;
             let tag = hmac_key.hmac(&id_pin_seed_iv_nonce, HashAlgorithm::Sha384)?;
-            let tag_48: [u8; 48] = tag.try_into().unwrap();
+            let tag_48: [u8; 48] = tag.try_into().map_err(|err| {
+                tracing::error!("Failed to convert tag into 48 bytes: {:?}", err);
+                ManticoreError::InternalError
+            })?;
             Ok((
                 EncryptedSessionCredential {
                     id: encrypted_id,
@@ -1618,12 +1624,15 @@ pub(crate) mod tests {
     }
 
     pub(crate) fn helper_establish_credential(vault: &Vault, id: [u8; 16], pin: [u8; 16]) {
-        let key_num = vault.get_establish_cred_encryption_key_id().unwrap();
+        let key_num = vault
+            .get_establish_cred_encryption_key_id()
+            .expect("Failed to get_establish_cred_encryption_key_id()");
         let (encrypted_credential, client_pub_key) =
-            helper_encrypt_credential(vault, key_num, id, pin).unwrap();
+            helper_encrypt_credential(vault, key_num, id, pin)
+                .expect("Failed to encrypt credential");
         vault
             .establish_credential(encrypted_credential, &client_pub_key)
-            .unwrap();
+            .expect("Failed to establish credential");
     }
 
     pub(crate) fn helper_open_session(
@@ -1632,9 +1641,12 @@ pub(crate) mod tests {
         pin: [u8; 16],
         api_rev: ApiRev,
     ) -> Result<SessionResult, ManticoreError> {
-        let key_num = vault.get_session_encryption_key_id().unwrap();
+        let key_num = vault
+            .get_session_encryption_key_id()
+            .expect("Failed to get_session_encryption_key_id()");
         let (encrypted_credential, client_pub_key) =
-            helper_encrypt_session_credential(vault, key_num, id, pin, TEST_SESSION_SEED).unwrap();
+            helper_encrypt_session_credential(vault, key_num, id, pin, TEST_SESSION_SEED)
+                .expect("Failed to encrypt session credential");
 
         // Use a hardcoded partition_mk
         let partition_mk = [42u8; 80];
@@ -1654,9 +1666,12 @@ pub(crate) mod tests {
         reopen_sess_id: u16,
         bmk: Option<&[u8]>,
     ) -> Result<SessionResult, ManticoreError> {
-        let key_num = vault.get_session_encryption_key_id().unwrap();
+        let key_num = vault
+            .get_session_encryption_key_id()
+            .expect("Failed to get_session_encryption_key_id()");
         let (encrypted_credential, client_pub_key) =
-            helper_encrypt_session_credential(vault, key_num, id, pin, TEST_SESSION_SEED).unwrap();
+            helper_encrypt_session_credential(vault, key_num, id, pin, TEST_SESSION_SEED)
+                .expect("Failed to encrypt session credential");
 
         // Use a hardcoded partition_mk
         let partition_mk = [42u8; 80];
@@ -1674,7 +1689,7 @@ pub(crate) mod tests {
     fn add_key_basic() {
         let key_tag = 0;
 
-        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
+        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4).expect("Failed to create Vault");
         helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
 
         let (_rsa_private_key, rsa_public_key) = generate_rsa(2048).unwrap();
@@ -1718,7 +1733,7 @@ pub(crate) mod tests {
     fn add_key_app_not_found() {
         let key_tag = 0x5453;
 
-        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
+        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4).expect("Failed to create Vault");
         helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
 
         let (_rsa_private_key, rsa_public_key) = generate_rsa(2048).unwrap();
@@ -1751,7 +1766,7 @@ pub(crate) mod tests {
     fn add_key_table_max_bytes() {
         let key_tag = 0;
 
-        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
+        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4).expect("Failed to create Vault");
         helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
 
         let (rsa_private_key, _rsa_public_key) = generate_rsa(4096).unwrap();
@@ -1845,7 +1860,7 @@ pub(crate) mod tests {
     fn get_key_and_meta_data() {
         let key_tag = 0;
 
-        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
+        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4).expect("Failed to create Vault");
         helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
 
         let (rsa_private_key, rsa_public_key) = generate_rsa(2048).unwrap();
@@ -1907,7 +1922,7 @@ pub(crate) mod tests {
     fn add_key_table_max_key_count() {
         let key_tag = 0;
 
-        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
+        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4).expect("Failed to create Vault");
         helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
 
         let (ecc_private_key, _ecc_public_key) = generate_ecc(EccCurve::P256).unwrap();
@@ -1999,7 +2014,7 @@ pub(crate) mod tests {
 
     #[test]
     fn remove_key_invalid_table() {
-        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
+        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4).expect("Failed to create Vault");
         helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
         let result = vault.remove_key(0x6600);
         assert_eq!(result, Err(ManticoreError::InvalidKeyNumber));
@@ -2007,7 +2022,7 @@ pub(crate) mod tests {
 
     #[test]
     fn remove_key_invalid_entry() {
-        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
+        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4).expect("Failed to create Vault");
         helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
         let result = vault.remove_key(0x0100);
         assert_eq!(result, Err(ManticoreError::InvalidKeyIndex));
@@ -2017,7 +2032,7 @@ pub(crate) mod tests {
     fn remove_key_basic() {
         let key_tag = 0x5453;
 
-        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
+        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4).expect("Failed to create Vault");
         helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
 
         let (_rsa_private_key, rsa_public_key) = generate_rsa(2048).unwrap();
@@ -2072,7 +2087,7 @@ pub(crate) mod tests {
     fn remove_key_middle() {
         let key_tag = 0;
 
-        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
+        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4).expect("Failed to create Vault");
         helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
 
         let entry_kind = Kind::Rsa4kPrivate;
@@ -2157,7 +2172,7 @@ pub(crate) mod tests {
     fn close_session_basic() {
         let key_tag = 0x5453;
 
-        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
+        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4).expect("Failed to create Vault");
         //cred-establish enc and session enc key IDs 0, 1, key 0 freed after use for cred-establish.
         helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
         let api_rev = ApiRev { major: 1, minor: 0 };
@@ -2221,7 +2236,7 @@ pub(crate) mod tests {
     fn close_session_with_key_in_use() {
         // Test the removal of session_only keys while the key is in use
 
-        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
+        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4).expect("Failed to create Vault");
         helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
         let api_rev = ApiRev { major: 1, minor: 0 };
         let session_result =
@@ -2264,7 +2279,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_establish_credential() {
-        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
+        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4).expect("Failed to create Vault");
         helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
 
         assert_eq!(
@@ -2282,7 +2297,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_reject_user_id_0() {
-        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
+        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4).expect("Failed to create Vault");
 
         let id = [0; 16];
         let pin = TEST_CRED_PIN;
@@ -2295,7 +2310,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_reject_user_pin_0() {
-        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
+        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4).expect("Failed to create Vault");
 
         let id = TEST_CRED_ID;
         let pin = [0; 16];
@@ -2308,7 +2323,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_establish_credential_tampered_id() {
-        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
+        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4).expect("Failed to create Vault");
 
         let key_num = vault.get_establish_cred_encryption_key_id().unwrap();
         let (mut encrypted_credential, client_pub_key) =
@@ -2320,7 +2335,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_establish_credential_tampered_pin() {
-        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
+        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4).expect("Failed to create Vault");
 
         let key_num = vault.get_establish_cred_encryption_key_id().unwrap();
         let (mut encrypted_credential, client_pub_key) =
@@ -2332,7 +2347,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_establish_credential_tampered_iv() {
-        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
+        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4).expect("Failed to create Vault");
 
         let key_num = vault.get_establish_cred_encryption_key_id().unwrap();
         let (mut encrypted_credential, client_pub_key) =
@@ -2344,7 +2359,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_establish_credential_tampered_nonce() {
-        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
+        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4).expect("Failed to create Vault");
 
         let key_num = vault.get_establish_cred_encryption_key_id().unwrap();
         let (mut encrypted_credential, client_pub_key) =
@@ -2356,7 +2371,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_establish_credential_tampered_tag() {
-        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
+        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4).expect("Failed to create Vault");
 
         let key_num = vault.get_establish_cred_encryption_key_id().unwrap();
         let (mut encrypted_credential, client_pub_key) =
@@ -2368,7 +2383,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_establish_credential_multiple_times() {
-        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
+        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4).expect("Failed to create Vault");
 
         let key_num = vault.get_establish_cred_encryption_key_id().unwrap();
         let (encrypted_credential, client_pub_key) =
@@ -2381,7 +2396,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_open_session() {
-        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
+        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4).expect("Failed to create Vault");
         helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
         let api_rev = ApiRev { major: 1, minor: 0 };
         let _ = helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
@@ -2389,14 +2404,14 @@ pub(crate) mod tests {
 
     #[test]
     fn test_get_session_encryption_key_without_establish_credential() {
-        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
+        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4).expect("Failed to create Vault");
         let result = vault.get_session_encryption_key_id();
         assert!(result.is_err(), "result {:?}", result);
     }
 
     #[test]
     fn test_open_session_tampered_id() {
-        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
+        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4).expect("Failed to create Vault");
         helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
         let api_rev = ApiRev { major: 1, minor: 0 };
         let key_num = vault.get_session_encryption_key_id().unwrap();
@@ -2411,7 +2426,7 @@ pub(crate) mod tests {
         encrypted_credential.id[4] = encrypted_credential.id[4].wrapping_add(0x1);
 
         let mut partition_mk = [0u8; 80];
-        crypto::rand::rand_bytes(&mut partition_mk).unwrap();
+        rand_bytes(&mut partition_mk).unwrap();
         let result = vault.open_session(
             encrypted_credential,
             &client_pub_key,
@@ -2423,7 +2438,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_open_session_tampered_pin() {
-        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
+        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4).expect("Failed to create Vault");
         helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
         let api_rev = ApiRev { major: 1, minor: 0 };
         let key_num = vault.get_session_encryption_key_id().unwrap();
@@ -2438,7 +2453,7 @@ pub(crate) mod tests {
         encrypted_credential.pin[4] = encrypted_credential.pin[4].wrapping_add(0x1);
 
         let mut partition_mk = [0u8; 80];
-        crypto::rand::rand_bytes(&mut partition_mk).unwrap();
+        rand_bytes(&mut partition_mk).unwrap();
         let result = vault.open_session(
             encrypted_credential,
             &client_pub_key,
@@ -2450,7 +2465,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_open_session_tampered_iv() {
-        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
+        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4).expect("Failed to create Vault");
         helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
         let api_rev = ApiRev { major: 1, minor: 0 };
         let key_num = vault.get_session_encryption_key_id().unwrap();
@@ -2465,7 +2480,7 @@ pub(crate) mod tests {
         encrypted_credential.iv[4] = encrypted_credential.iv[4].wrapping_add(0x1);
 
         let mut partition_mk = [0u8; 80];
-        crypto::rand::rand_bytes(&mut partition_mk).unwrap();
+        rand_bytes(&mut partition_mk).unwrap();
         let result = vault.open_session(
             encrypted_credential,
             &client_pub_key,
@@ -2477,7 +2492,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_open_session_tampered_nonce() {
-        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
+        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4).expect("Failed to create Vault");
         helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
         let api_rev = ApiRev { major: 1, minor: 0 };
         let key_num = vault.get_session_encryption_key_id().unwrap();
@@ -2492,7 +2507,7 @@ pub(crate) mod tests {
         encrypted_credential.nonce[2] = encrypted_credential.nonce[2].wrapping_add(0x1);
 
         let mut partition_mk = [0u8; 80];
-        crypto::rand::rand_bytes(&mut partition_mk).unwrap();
+        rand_bytes(&mut partition_mk).unwrap();
         let result = vault.open_session(
             encrypted_credential,
             &client_pub_key,
@@ -2504,7 +2519,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_open_session_tampered_tag() {
-        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
+        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4).expect("Failed to create Vault");
         helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
         let api_rev = ApiRev { major: 1, minor: 0 };
         let key_num = vault.get_session_encryption_key_id().unwrap();
@@ -2519,7 +2534,7 @@ pub(crate) mod tests {
         encrypted_credential.tag[4] = encrypted_credential.tag[4].wrapping_add(0x1);
 
         let mut partition_mk = [0u8; 80];
-        crypto::rand::rand_bytes(&mut partition_mk).unwrap();
+        rand_bytes(&mut partition_mk).unwrap();
         let result = vault.open_session(
             encrypted_credential,
             &client_pub_key,
@@ -2531,7 +2546,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_open_session_tampered_seed() {
-        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
+        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4).expect("Failed to create Vault");
         helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
         let api_rev = ApiRev { major: 1, minor: 0 };
         let key_num = vault.get_session_encryption_key_id().unwrap();
@@ -2546,7 +2561,7 @@ pub(crate) mod tests {
         encrypted_credential.seed[4] = encrypted_credential.seed[4].wrapping_add(0x1);
 
         let mut partition_mk = [0u8; 80];
-        crypto::rand::rand_bytes(&mut partition_mk).unwrap();
+        rand_bytes(&mut partition_mk).unwrap();
         let result = vault.open_session(
             encrypted_credential,
             &client_pub_key,
@@ -2561,7 +2576,8 @@ pub(crate) mod tests {
         let key_tag = 0;
 
         let table_count = 4;
-        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), table_count);
+        let vault =
+            Vault::new(Uuid::from_bytes([0xb2; 16]), table_count).expect("Failed to create Vault");
         helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
 
         let (_rsa_private_key, rsa_public_key) = generate_rsa(2048).unwrap();
@@ -2636,7 +2652,8 @@ pub(crate) mod tests {
         let key_tag = 0x5453;
 
         let table_count = 4;
-        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), table_count);
+        let vault =
+            Vault::new(Uuid::from_bytes([0xb2; 16]), table_count).expect("Failed to create Vault");
         helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
 
         let (_rsa_private_key, rsa_public_key) = generate_rsa(2048).unwrap();
@@ -2708,7 +2725,8 @@ pub(crate) mod tests {
     #[test]
     fn test_add_app_short_app_id() {
         let table_count = 4;
-        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), table_count);
+        let vault =
+            Vault::new(Uuid::from_bytes([0xb2; 16]), table_count).expect("Failed to create Vault");
         helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
 
         assert_eq!(vault.user().short_app_id, 0);
@@ -2718,7 +2736,7 @@ pub(crate) mod tests {
     fn test_get_key_num_by_tag() {
         let key_tag = 0x5453;
 
-        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
+        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4).expect("Failed to create Vault");
         helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
 
         let result = vault.get_key_num_by_tag(Uuid::from_bytes(TEST_CRED_ID), key_tag);
@@ -2742,7 +2760,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_add_key_internal_session_only() {
-        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
+        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4).expect("Failed to create Vault");
         helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
 
         let mut flags = EntryFlags::default();
@@ -2761,7 +2779,7 @@ pub(crate) mod tests {
     #[test]
     fn test_add_key_duplicate_key_tag() {
         let key_tag = 0x5354;
-        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
+        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4).expect("Failed to create Vault");
         helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
 
         let flags = EntryFlags::default();
@@ -2787,7 +2805,7 @@ pub(crate) mod tests {
     #[test]
     fn test_get_key_entry_invalid_table_index() {
         let key_tag = 0x5354;
-        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
+        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4).expect("Failed to create Vault");
         helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
 
         let flags = EntryFlags::default();
@@ -2807,7 +2825,7 @@ pub(crate) mod tests {
     fn test_virtual_session_id_reuse_after_cleanup() {
         // Test that virtual session IDs become available for reuse after cleanup
 
-        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
+        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4).expect("Failed to create Vault");
         helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
         let api_rev = ApiRev { major: 1, minor: 0 };
 
@@ -2839,7 +2857,7 @@ pub(crate) mod tests {
     fn test_multiple_sessions_independent_cleanup() {
         // Test multiple concurrent sessions and independent cleanup
 
-        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
+        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4).expect("Failed to create Vault");
         helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
         let api_rev = ApiRev { major: 1, minor: 0 };
 
@@ -2903,7 +2921,7 @@ pub(crate) mod tests {
     fn test_close_nonexistent_session() {
         // Test calling close_session with invalid/nonexistent session ID
 
-        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
+        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4).expect("Failed to create Vault");
         helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
 
         let nonexistent_session_id = 99;
@@ -2916,7 +2934,7 @@ pub(crate) mod tests {
     fn test_session_table_exhaustion_handling() {
         // Test what happens when all 8 session table slots are used
 
-        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
+        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4).expect("Failed to create Vault");
         helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
         let api_rev = ApiRev { major: 1, minor: 0 };
 
@@ -2955,7 +2973,7 @@ pub(crate) mod tests {
     fn test_complete_session_lifecycle_with_session_table() {
         // Test: open_session -> add keys -> close_session -> verify cleanup
 
-        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
+        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4).expect("Failed to create Vault");
         helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
         let api_rev = ApiRev { major: 1, minor: 0 };
 
@@ -3025,7 +3043,7 @@ pub(crate) mod tests {
     fn test_session_table_virtual_to_physical_mapping() {
         // Test that virtual session IDs properly map to physical session IDs
 
-        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
+        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4).expect("Failed to create Vault");
         helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
         let api_rev = ApiRev { major: 1, minor: 0 };
 
@@ -3084,7 +3102,7 @@ pub(crate) mod tests {
     fn test_session_table_backup_restore_integration() {
         // Test session table backup/restore with vault integration
 
-        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
+        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4).expect("Failed to create Vault");
         helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
         let api_rev = ApiRev { major: 1, minor: 0 };
 
@@ -3149,7 +3167,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_close_already_closed_session() {
-        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
+        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4).expect("Failed to create Vault");
         helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
         let api_rev = ApiRev { major: 1, minor: 0 };
 
@@ -3164,7 +3182,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_get_session_encryption_key_id_without_establish_credential() {
-        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
+        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4).expect("Failed to create Vault");
         let result = vault.get_session_encryption_key_id();
         assert!(result.is_err(), "result {:?}", result);
         helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
@@ -3175,7 +3193,7 @@ pub(crate) mod tests {
     #[test]
     fn test_close_session_after_backup_restore_success() {
         // Test that closing a session succeeds after backup and restore operations by handling renegotiation requirement
-        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
+        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4).expect("Failed to create Vault");
         helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
         let api_rev = ApiRev { major: 1, minor: 0 };
 
@@ -3223,7 +3241,7 @@ pub(crate) mod tests {
     #[test]
     fn test_close_session_before_backup_restore_not_exist_after() {
         // Test that a session closed before backup/restore operations does not exist after
-        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4);
+        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4).expect("Failed to create Vault");
         helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
         let api_rev = ApiRev { major: 1, minor: 0 };
 
@@ -3287,7 +3305,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_ecc_signing_session_isolation() {
-        let vault = Vault::new(Uuid::from_bytes([0xb3; 16]), 4);
+        let vault = Vault::new(Uuid::from_bytes([0xb3; 16]), 4).expect("Failed to create Vault");
         helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
         let api_rev = ApiRev { major: 1, minor: 0 };
 
@@ -3390,7 +3408,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_get_target_session_id() {
-        let vault = Vault::new(Uuid::from_bytes([0xb3; 16]), 4);
+        let vault = Vault::new(Uuid::from_bytes([0xb3; 16]), 4).expect("Failed to create Vault");
         helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
         let api_rev = ApiRev { major: 1, minor: 0 };
 
@@ -3431,7 +3449,7 @@ pub(crate) mod tests {
     // as debug trait is mainly used for test purposes
     #[test]
     fn test_debug_trait_print() {
-        let vault = Vault::new(Uuid::new_v4(), 4);
+        let vault = Vault::new(Uuid::new_v4(), 4).expect("Failed to create Vault");
 
         let vault_weak = vault.as_weak();
 

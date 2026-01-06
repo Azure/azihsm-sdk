@@ -6,8 +6,7 @@
 
 use std::ptr;
 
-use mcr_ddi::DdiError;
-use mcr_ddi::DdiResult;
+use azihsm_ddi_interface::*;
 use winapi::shared::ntdef::HANDLE;
 use winapi::um::handleapi::CloseHandle;
 use winapi::um::synchapi::CreateEventW;

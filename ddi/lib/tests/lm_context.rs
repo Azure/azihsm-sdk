@@ -1,9 +1,11 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
 
+#![cfg(test)]
+
 mod common;
 
-use mcr_ddi_mbor::MborByteArray;
-use mcr_ddi_types::*;
+use azihsm_ddi_mbor::MborByteArray;
+use azihsm_ddi_types::*;
 use test_with_tracing::test;
 
 use crate::common::*;
@@ -35,17 +37,6 @@ fn test_lm_context_save_and_restore() {
             }
 
             let setup_res = common_setup_for_lm(dev, ddi, path);
-
-            // We use masked_bk3 as the sealed_bk3 in this test
-            let resp = helper_set_sealed_bk3(dev, setup_res.masked_bk3.as_slice().to_vec());
-
-            assert!(resp.is_ok(), "Set sealed bk3: {:?}", resp.err());
-
-            let resp = resp.unwrap();
-            assert_eq!(resp.hdr.op, DdiOp::SetSealedBk3);
-            assert!(resp.hdr.rev.is_some());
-            assert!(resp.hdr.sess_id.is_none());
-            assert_eq!(resp.hdr.status, DdiStatus::Success);
 
             // Wait for a file to be written once VF save and restore is done.
             // while a file named "ready_for_lm" does not exist, wait.

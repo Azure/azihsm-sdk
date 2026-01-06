@@ -1,14 +1,12 @@
 # Copyright (C) Microsoft Corporation. All rights reserved.
 
 [package]
-name = "mcr_ddi_mock"
-version = "0.1.0"
 edition = "2021"
+name = "azihsm_ddi_mock"
+version = "0.1.0"
 
 [features]
 default = []
-use-openssl = ["mcr_ddi_sim/use-openssl"]
-use-symcrypt = ["mcr_ddi_sim/use-symcrypt"]
 table-4 = []
 table-64 = []
 
@@ -16,14 +14,14 @@ table-64 = []
 doctest = false
 
 [dependencies]
-mcr_ddi.workspace = true
-mcr_ddi_types.workspace = true
-mcr_ddi_mbor.workspace = true
-mcr_ddi_sim.workspace = true
+azihsm_ddi_interface.workspace = true
+azihsm_ddi_mbor.workspace = true
+azihsm_ddi_sim.workspace = true
+azihsm_ddi_types.workspace = true
 lazy_static = "1.4.0"
 parking_lot.workspace = true
-tracing.workspace = true
 rand.workspace = true
+tracing.workspace = true
 
 [lints]
 workspace = true

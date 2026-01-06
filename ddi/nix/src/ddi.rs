@@ -9,11 +9,11 @@ use std::mem;
 use std::os::unix::io::AsRawFd;
 use std::path::Path;
 
+use azihsm_ddi_interface::Ddi;
+use azihsm_ddi_interface::DdiError;
+use azihsm_ddi_interface::DdiResult;
+use azihsm_ddi_interface::DevInfo;
 use glob::glob;
-use mcr_ddi::Ddi;
-use mcr_ddi::DdiError;
-use mcr_ddi::DdiResult;
-use mcr_ddi::DevInfo;
 use nix::ioctl_readwrite;
 
 use crate::dev::DdiNixDev;

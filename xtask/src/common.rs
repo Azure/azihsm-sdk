@@ -39,3 +39,12 @@ pub fn git_ls_files() -> anyhow::Result<Vec<PathBuf>> {
     // Vec is returned in sorted order because of BTreeSet iteration order
     Ok(allow_list.into_iter().collect())
 }
+
+/// Return target directory xtask builds to so that it doesn't overwrite itself
+pub fn target_dir() -> anyhow::Result<PathBuf> {
+    let sh = Shell::new()?;
+    // use CARGO_TARGET_DIR if set, otherwise use local target directory
+    let mut target_dir = PathBuf::from(sh.var("CARGO_TARGET_DIR").unwrap_or("target".to_string()));
+    target_dir.push("xtask");
+    Ok(target_dir)
+}

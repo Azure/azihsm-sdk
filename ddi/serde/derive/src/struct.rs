@@ -103,7 +103,10 @@ fn parse_field(field: &DdiStructFieldAttr) -> syn::Result<DdiStructField> {
     };
 
     Ok(DdiStructField {
-        ident: field.ident.clone().unwrap(),
+        ident: field.ident.clone().ok_or_else(|| {
+            let msg = "Failed to clone field identifier.";
+            syn::Error::new(field.ty.span(), msg)
+        })?,
         ty: field.ty.clone(),
         opt,
         id: field.id,
@@ -127,10 +130,22 @@ fn parse_type_path(type_path: &syn::TypePath) -> syn::Result<DdiStructFieldKind>
         if let AngleBracketed(a) = s.arguments.clone() {
             if let Some(GenericArgument::Type(Array(arr))) = a.args.last() {
                 if let syn::Type::Path(p) = arr.elem.as_ref() {
-                    if p.path.segments.last().unwrap().ident != "u8" {
+                    if p.path
+                        .segments
+                        .last()
+                        .ok_or_else(|| {
+                            let msg = "Failed to unwrap last path segment for array element type.";
+                            syn::Error::new(arr.elem.span(), msg)
+                        })?
+                        .ident
+                        != "u8"
+                    {
                         let msg = "Invalid array type. Only u8 is supported.";
                         Err(syn::Error::new(
-                            p.path.segments.last().unwrap().ident.span(),
+                            p.path.segments.last().ok_or_else(|| {
+                                let msg = "Failed to unwrap last path segment for array element type.";
+                                syn::Error::new(arr.elem.span(), msg)
+                            })?.ident.span(),
                             msg,
                         ))?
                     }
@@ -139,7 +154,16 @@ fn parse_type_path(type_path: &syn::TypePath) -> syn::Result<DdiStructFieldKind>
                 }
             }
             if let Some(GenericArgument::Type(Type::Path(p))) = a.args.last() {
-                if p.path.segments.last().unwrap().ident == "MborByteArray" {
+                if p.path
+                    .segments
+                    .last()
+                    .ok_or_else(|| {
+                        let msg = "Failed to unwrap last path segment for path type.";
+                        syn::Error::new(p.path.span(), msg)
+                    })?
+                    .ident
+                    == "MborByteArray"
+                {
                     return Ok(DdiStructFieldKind::MborArray);
                 }
             }
@@ -156,10 +180,27 @@ fn parse_type_path(type_path: &syn::TypePath) -> syn::Result<DdiStructFieldKind>
 fn parse_type_array(type_arr: &syn::TypeArray) -> syn::Result<DdiStructFieldKind> {
     let kind = match type_arr.elem.as_ref() {
         syn::Type::Path(p) => {
-            if p.path.segments.first().unwrap().ident != "u8" {
+            if p.path
+                .segments
+                .first()
+                .ok_or_else(|| {
+                    let msg = "Failed to unwrap first path segment for path type.";
+                    syn::Error::new(type_arr.elem.span(), msg)
+                })?
+                .ident
+                != "u8"
+            {
                 let msg = "Invalid array type. Only u8 is supported.";
                 Err(syn::Error::new(
-                    p.path.segments.first().unwrap().ident.span(),
+                    p.path
+                        .segments
+                        .first()
+                        .ok_or_else(|| {
+                            let msg = "Failed to unwrap first path segment for path type.";
+                            syn::Error::new(type_arr.elem.span(), msg)
+                        })?
+                        .ident
+                        .span(),
                     msg,
                 ))?
             }

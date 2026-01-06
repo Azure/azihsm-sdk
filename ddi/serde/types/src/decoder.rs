@@ -1,6 +1,6 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
 
-use mcr_ddi_mbor::*;
+use azihsm_ddi_mbor::*;
 
 use crate::*;
 

@@ -3,10 +3,10 @@
 
 //! HKDF cryptographic operations
 
-use mcr_ddi_types::DdiHashAlgorithm;
-use mcr_ddi_types::DdiKeyAvailability;
-use mcr_ddi_types::DdiKeyType;
-use mcr_ddi_types::DdiKeyUsage;
+use azihsm_ddi_types::DdiHashAlgorithm;
+use azihsm_ddi_types::DdiKeyAvailability;
+use azihsm_ddi_types::DdiKeyType;
+use azihsm_ddi_types::DdiKeyUsage;
 
 use crate::crypto::ecdh::SecretKey;
 use crate::crypto::Algo;

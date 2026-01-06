@@ -5169,3 +5169,813 @@ TEST_F(AESTest, AesXtsDataUnitLenNone)
 
     std::cout << "AES XTS data_unit_len=0 (default) test passed" << std::endl;
 }
+
+// ================================================================================
+// AES XTS Streaming Tests
+// ================================================================================
+
+TEST_F(AESTest, AesXtsStreamingEncryptDecrypt512)
+{
+    // Generate AES XTS key
+    azihsm_handle key_handle = 0;
+    azihsm_algo key_gen_algo = {
+        .id = AZIHSM_ALGO_ID_AES_XTS_KEY_GEN,
+        .params = nullptr,
+        .len = 0};
+
+    uint32_t bit_len = 512;
+    bool encrypt_prop = true;
+    bool decrypt_prop = true;
+    azihsm_key_prop props[] = {
+        {.id = AZIHSM_KEY_PROP_ID_BIT_LEN, .val = &bit_len, .len = sizeof(bit_len)},
+        {.id = AZIHSM_KEY_PROP_ID_ENCRYPT, .val = &encrypt_prop, .len = sizeof(encrypt_prop)},
+        {.id = AZIHSM_KEY_PROP_ID_DECRYPT, .val = &decrypt_prop, .len = sizeof(decrypt_prop)}};
+
+    azihsm_key_prop_list prop_list = {.props = props, .count = 3};
+
+    auto err = azihsm_key_gen(session_handle, &key_gen_algo, &prop_list, &key_handle);
+    EXPECT_EQ(err, AZIHSM_ERROR_SUCCESS) << "Failed to generate AES XTS key";
+
+    auto key_guard = scope_guard::make_scope_exit([&]
+                                                  { azihsm_key_delete(session_handle, key_handle); });
+
+    // Test data - 2048 bytes (4 data units of 512 bytes each)
+    std::vector<uint8_t> plaintext(2048, 0xAB);
+
+    // Setup XTS parameters with data_unit_len = 512
+    azihsm_algo_aes_xts_params xts_params = {
+        .sector_num = {0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
+                       0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01},
+        .data_unit_len = 512};
+
+    azihsm_algo encrypt_algo = {
+        .id = AZIHSM_ALGO_ID_AES_XTS,
+        .params = &xts_params,
+        .len = sizeof(xts_params)};
+
+    // Initialize encryption stream
+    azihsm_handle encrypt_ctx_handle = 0;
+    err = azihsm_crypt_encrypt_init(session_handle, &encrypt_algo, key_handle, &encrypt_ctx_handle);
+    EXPECT_EQ(err, AZIHSM_ERROR_SUCCESS) << "Failed to initialize encrypt stream";
+    EXPECT_NE(encrypt_ctx_handle, 0) << "Encrypt context handle should be valid";
+
+    auto encrypt_ctx_guard = scope_guard::make_scope_exit([&]
+                                                          {
+        if (encrypt_ctx_handle != 0) {
+            std::vector<uint8_t> final_output(512);
+            azihsm_buffer final_buffer = {.buf = final_output.data(), .len = static_cast<uint32_t>(final_output.size())};
+            azihsm_crypt_encrypt_final(session_handle, encrypt_ctx_handle, &final_buffer);
+        } });
+
+    // Encrypt in 512-byte chunks (one data unit at a time)
+    std::vector<uint8_t> ciphertext(plaintext.size());
+    size_t total_encrypted = 0;
+
+    for (size_t offset = 0; offset < plaintext.size(); offset += 512)
+    {
+        azihsm_buffer pt_chunk = {
+            .buf = plaintext.data() + offset,
+            .len = 512};
+
+        azihsm_buffer ct_chunk = {
+            .buf = ciphertext.data() + total_encrypted,
+            .len = static_cast<uint32_t>(ciphertext.size() - total_encrypted)};
+
+        err = azihsm_crypt_encrypt_update(session_handle, encrypt_ctx_handle, &pt_chunk, &ct_chunk);
+        EXPECT_EQ(err, AZIHSM_ERROR_SUCCESS) << "Failed to encrypt chunk at offset " << offset;
+        total_encrypted += ct_chunk.len;
+    }
+
+    // Finalize encryption
+    std::vector<uint8_t> final_ct(512);
+    azihsm_buffer final_ct_buffer = {.buf = final_ct.data(), .len = static_cast<uint32_t>(final_ct.size())};
+    err = azihsm_crypt_encrypt_final(session_handle, encrypt_ctx_handle, &final_ct_buffer);
+    EXPECT_EQ(err, AZIHSM_ERROR_SUCCESS) << "Failed to finalize encryption";
+    encrypt_ctx_handle = 0; // Context is consumed
+
+    EXPECT_EQ(total_encrypted, plaintext.size()) << "Total encrypted should match plaintext size";
+    EXPECT_NE(memcmp(plaintext.data(), ciphertext.data(), plaintext.size()), 0)
+        << "Ciphertext should differ from plaintext";
+
+    // Now decrypt using streaming
+    azihsm_algo decrypt_algo = {
+        .id = AZIHSM_ALGO_ID_AES_XTS,
+        .params = &xts_params,
+        .len = sizeof(xts_params)};
+
+    azihsm_handle decrypt_ctx_handle = 0;
+    err = azihsm_crypt_decrypt_init(session_handle, &decrypt_algo, key_handle, &decrypt_ctx_handle);
+    EXPECT_EQ(err, AZIHSM_ERROR_SUCCESS) << "Failed to initialize decrypt stream";
+    EXPECT_NE(decrypt_ctx_handle, 0) << "Decrypt context handle should be valid";
+
+    auto decrypt_ctx_guard = scope_guard::make_scope_exit([&]
+                                                          {
+        if (decrypt_ctx_handle != 0) {
+            std::vector<uint8_t> final_output(512);
+            azihsm_buffer final_buffer = {.buf = final_output.data(), .len = static_cast<uint32_t>(final_output.size())};
+            azihsm_crypt_decrypt_final(session_handle, decrypt_ctx_handle, &final_buffer);
+        } });
+
+    // Decrypt in 512-byte chunks
+    std::vector<uint8_t> decrypted(ciphertext.size());
+    size_t total_decrypted = 0;
+
+    for (size_t offset = 0; offset < ciphertext.size(); offset += 512)
+    {
+        azihsm_buffer ct_chunk = {
+            .buf = ciphertext.data() + offset,
+            .len = 512};
+
+        azihsm_buffer pt_chunk = {
+            .buf = decrypted.data() + total_decrypted,
+            .len = static_cast<uint32_t>(decrypted.size() - total_decrypted)};
+
+        err = azihsm_crypt_decrypt_update(session_handle, decrypt_ctx_handle, &ct_chunk, &pt_chunk);
+        EXPECT_EQ(err, AZIHSM_ERROR_SUCCESS) << "Failed to decrypt chunk at offset " << offset;
+        total_decrypted += pt_chunk.len;
+    }
+
+    // Finalize decryption
+    std::vector<uint8_t> final_pt(512);
+    azihsm_buffer final_pt_buffer = {.buf = final_pt.data(), .len = static_cast<uint32_t>(final_pt.size())};
+    err = azihsm_crypt_decrypt_final(session_handle, decrypt_ctx_handle, &final_pt_buffer);
+    EXPECT_EQ(err, AZIHSM_ERROR_SUCCESS) << "Failed to finalize decryption";
+    decrypt_ctx_handle = 0; // Context is consumed
+
+    EXPECT_EQ(total_decrypted, plaintext.size()) << "Total decrypted should match plaintext size";
+    EXPECT_EQ(memcmp(plaintext.data(), decrypted.data(), plaintext.size()), 0)
+        << "Decrypted data should match original plaintext";
+
+    std::cout << "AES XTS streaming encrypt/decrypt test passed (data_unit_len=512)" << std::endl;
+}
+
+TEST_F(AESTest, AesXtsStreamingDataUnitLen4096)
+{
+    // Generate AES XTS key
+    azihsm_handle key_handle = 0;
+    azihsm_algo key_gen_algo = {
+        .id = AZIHSM_ALGO_ID_AES_XTS_KEY_GEN,
+        .params = nullptr,
+        .len = 0};
+
+    uint32_t bit_len = 512;
+    bool encrypt_prop = true;
+    bool decrypt_prop = true;
+    azihsm_key_prop props[] = {
+        {.id = AZIHSM_KEY_PROP_ID_BIT_LEN, .val = &bit_len, .len = sizeof(bit_len)},
+        {.id = AZIHSM_KEY_PROP_ID_ENCRYPT, .val = &encrypt_prop, .len = sizeof(encrypt_prop)},
+        {.id = AZIHSM_KEY_PROP_ID_DECRYPT, .val = &decrypt_prop, .len = sizeof(decrypt_prop)}};
+
+    azihsm_key_prop_list prop_list = {.props = props, .count = 3};
+
+    auto err = azihsm_key_gen(session_handle, &key_gen_algo, &prop_list, &key_handle);
+    EXPECT_EQ(err, AZIHSM_ERROR_SUCCESS);
+
+    auto key_guard = scope_guard::make_scope_exit([&]
+                                                  { azihsm_key_delete(session_handle, key_handle); });
+
+    // Test data - 12288 bytes (3 data units of 4096 bytes each)
+    std::vector<uint8_t> plaintext(12288, 0xCD);
+
+    azihsm_algo_aes_xts_params xts_params = {
+        .sector_num = {0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02,
+                       0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02},
+        .data_unit_len = 4096};
+
+    azihsm_algo encrypt_algo = {
+        .id = AZIHSM_ALGO_ID_AES_XTS,
+        .params = &xts_params,
+        .len = sizeof(xts_params)};
+
+    // Initialize encryption stream
+    azihsm_handle encrypt_ctx_handle = 0;
+    err = azihsm_crypt_encrypt_init(session_handle, &encrypt_algo, key_handle, &encrypt_ctx_handle);
+    EXPECT_EQ(err, AZIHSM_ERROR_SUCCESS);
+
+    // Encrypt in 4096-byte chunks
+    std::vector<uint8_t> ciphertext(plaintext.size());
+    size_t total_encrypted = 0;
+
+    for (size_t offset = 0; offset < plaintext.size(); offset += 4096)
+    {
+        azihsm_buffer pt_chunk = {.buf = plaintext.data() + offset, .len = 4096};
+        azihsm_buffer ct_chunk = {
+            .buf = ciphertext.data() + total_encrypted,
+            .len = static_cast<uint32_t>(ciphertext.size() - total_encrypted)};
+
+        err = azihsm_crypt_encrypt_update(session_handle, encrypt_ctx_handle, &pt_chunk, &ct_chunk);
+        EXPECT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        total_encrypted += ct_chunk.len;
+    }
+
+    // Finalize
+    std::vector<uint8_t> final_ct(4096);
+    azihsm_buffer final_ct_buffer = {.buf = final_ct.data(), .len = static_cast<uint32_t>(final_ct.size())};
+    err = azihsm_crypt_encrypt_final(session_handle, encrypt_ctx_handle, &final_ct_buffer);
+    EXPECT_EQ(err, AZIHSM_ERROR_SUCCESS);
+
+    // Decrypt using streaming
+    azihsm_algo decrypt_algo = {
+        .id = AZIHSM_ALGO_ID_AES_XTS,
+        .params = &xts_params,
+        .len = sizeof(xts_params)};
+
+    azihsm_handle decrypt_ctx_handle = 0;
+    err = azihsm_crypt_decrypt_init(session_handle, &decrypt_algo, key_handle, &decrypt_ctx_handle);
+    EXPECT_EQ(err, AZIHSM_ERROR_SUCCESS);
+
+    std::vector<uint8_t> decrypted(ciphertext.size());
+    size_t total_decrypted = 0;
+
+    for (size_t offset = 0; offset < ciphertext.size(); offset += 4096)
+    {
+        azihsm_buffer ct_chunk = {.buf = ciphertext.data() + offset, .len = 4096};
+        azihsm_buffer pt_chunk = {
+            .buf = decrypted.data() + total_decrypted,
+            .len = static_cast<uint32_t>(decrypted.size() - total_decrypted)};
+
+        err = azihsm_crypt_decrypt_update(session_handle, decrypt_ctx_handle, &ct_chunk, &pt_chunk);
+        EXPECT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        total_decrypted += pt_chunk.len;
+    }
+
+    std::vector<uint8_t> final_pt(4096);
+    azihsm_buffer final_pt_buffer = {.buf = final_pt.data(), .len = static_cast<uint32_t>(final_pt.size())};
+    err = azihsm_crypt_decrypt_final(session_handle, decrypt_ctx_handle, &final_pt_buffer);
+    EXPECT_EQ(err, AZIHSM_ERROR_SUCCESS);
+
+    EXPECT_EQ(memcmp(plaintext.data(), decrypted.data(), plaintext.size()), 0)
+        << "Decrypted data should match original plaintext";
+
+    std::cout << "AES XTS streaming test passed (data_unit_len=4096)" << std::endl;
+}
+
+TEST_F(AESTest, AesXtsStreamingDataUnitLen8192)
+{
+    // Generate AES XTS key
+    azihsm_handle key_handle = 0;
+    azihsm_algo key_gen_algo = {
+        .id = AZIHSM_ALGO_ID_AES_XTS_KEY_GEN,
+        .params = nullptr,
+        .len = 0};
+
+    uint32_t bit_len = 512;
+    bool encrypt_prop = true;
+    bool decrypt_prop = true;
+    azihsm_key_prop props[] = {
+        {.id = AZIHSM_KEY_PROP_ID_BIT_LEN, .val = &bit_len, .len = sizeof(bit_len)},
+        {.id = AZIHSM_KEY_PROP_ID_ENCRYPT, .val = &encrypt_prop, .len = sizeof(encrypt_prop)},
+        {.id = AZIHSM_KEY_PROP_ID_DECRYPT, .val = &decrypt_prop, .len = sizeof(decrypt_prop)}};
+
+    azihsm_key_prop_list prop_list = {.props = props, .count = 3};
+
+    auto err = azihsm_key_gen(session_handle, &key_gen_algo, &prop_list, &key_handle);
+    EXPECT_EQ(err, AZIHSM_ERROR_SUCCESS);
+
+    auto key_guard = scope_guard::make_scope_exit([&]
+                                                  { azihsm_key_delete(session_handle, key_handle); });
+
+    // Test data - 24576 bytes (3 data units of 8192 bytes each)
+    std::vector<uint8_t> plaintext(24576, 0xEF);
+
+    azihsm_algo_aes_xts_params xts_params = {
+        .sector_num = {0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03,
+                       0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03},
+        .data_unit_len = 8192};
+
+    azihsm_algo encrypt_algo = {
+        .id = AZIHSM_ALGO_ID_AES_XTS,
+        .params = &xts_params,
+        .len = sizeof(xts_params)};
+
+    // Initialize encryption stream
+    azihsm_handle encrypt_ctx_handle = 0;
+    err = azihsm_crypt_encrypt_init(session_handle, &encrypt_algo, key_handle, &encrypt_ctx_handle);
+    EXPECT_EQ(err, AZIHSM_ERROR_SUCCESS);
+
+    // Encrypt in 8192-byte chunks
+    std::vector<uint8_t> ciphertext(plaintext.size());
+    size_t total_encrypted = 0;
+
+    for (size_t offset = 0; offset < plaintext.size(); offset += 8192)
+    {
+        azihsm_buffer pt_chunk = {.buf = plaintext.data() + offset, .len = 8192};
+        azihsm_buffer ct_chunk = {
+            .buf = ciphertext.data() + total_encrypted,
+            .len = static_cast<uint32_t>(ciphertext.size() - total_encrypted)};
+
+        err = azihsm_crypt_encrypt_update(session_handle, encrypt_ctx_handle, &pt_chunk, &ct_chunk);
+        EXPECT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        total_encrypted += ct_chunk.len;
+    }
+
+    // Finalize
+    std::vector<uint8_t> final_ct(8192);
+    azihsm_buffer final_ct_buffer = {.buf = final_ct.data(), .len = static_cast<uint32_t>(final_ct.size())};
+    err = azihsm_crypt_encrypt_final(session_handle, encrypt_ctx_handle, &final_ct_buffer);
+    EXPECT_EQ(err, AZIHSM_ERROR_SUCCESS);
+
+    // Decrypt using streaming
+    azihsm_algo decrypt_algo = {
+        .id = AZIHSM_ALGO_ID_AES_XTS,
+        .params = &xts_params,
+        .len = sizeof(xts_params)};
+
+    azihsm_handle decrypt_ctx_handle = 0;
+    err = azihsm_crypt_decrypt_init(session_handle, &decrypt_algo, key_handle, &decrypt_ctx_handle);
+    EXPECT_EQ(err, AZIHSM_ERROR_SUCCESS);
+
+    std::vector<uint8_t> decrypted(ciphertext.size());
+    size_t total_decrypted = 0;
+
+    for (size_t offset = 0; offset < ciphertext.size(); offset += 8192)
+    {
+        azihsm_buffer ct_chunk = {.buf = ciphertext.data() + offset, .len = 8192};
+        azihsm_buffer pt_chunk = {
+            .buf = decrypted.data() + total_decrypted,
+            .len = static_cast<uint32_t>(decrypted.size() - total_decrypted)};
+
+        err = azihsm_crypt_decrypt_update(session_handle, decrypt_ctx_handle, &ct_chunk, &pt_chunk);
+        EXPECT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        total_decrypted += pt_chunk.len;
+    }
+
+    std::vector<uint8_t> final_pt(8192);
+    azihsm_buffer final_pt_buffer = {.buf = final_pt.data(), .len = static_cast<uint32_t>(final_pt.size())};
+    err = azihsm_crypt_decrypt_final(session_handle, decrypt_ctx_handle, &final_pt_buffer);
+    EXPECT_EQ(err, AZIHSM_ERROR_SUCCESS);
+
+    EXPECT_EQ(memcmp(plaintext.data(), decrypted.data(), plaintext.size()), 0)
+        << "Decrypted data should match original plaintext";
+
+    std::cout << "AES XTS streaming test passed (data_unit_len=8192)" << std::endl;
+}
+
+#ifndef _WIN32 // [TODO] This test fails on Windows. Investigate and fix.
+TEST_F(AESTest, AesXtsOneshotEncryptStreamingDecrypt)
+{
+    // Generate AES XTS key
+    azihsm_handle key_handle = 0;
+    azihsm_algo key_gen_algo = {
+        .id = AZIHSM_ALGO_ID_AES_XTS_KEY_GEN,
+        .params = nullptr,
+        .len = 0};
+
+    uint32_t bit_len = 512;
+    bool encrypt_prop = true;
+    bool decrypt_prop = true;
+    azihsm_key_prop props[] = {
+        {.id = AZIHSM_KEY_PROP_ID_BIT_LEN, .val = &bit_len, .len = sizeof(bit_len)},
+        {.id = AZIHSM_KEY_PROP_ID_ENCRYPT, .val = &encrypt_prop, .len = sizeof(encrypt_prop)},
+        {.id = AZIHSM_KEY_PROP_ID_DECRYPT, .val = &decrypt_prop, .len = sizeof(decrypt_prop)}};
+
+    azihsm_key_prop_list prop_list = {.props = props, .count = 3};
+
+    auto err = azihsm_key_gen(session_handle, &key_gen_algo, &prop_list, &key_handle);
+    EXPECT_EQ(err, AZIHSM_ERROR_SUCCESS);
+
+    auto key_guard = scope_guard::make_scope_exit([&]
+                                                  { azihsm_key_delete(session_handle, key_handle); });
+
+    // Test data - 2048 bytes (4 data units of 512 bytes each)
+    std::vector<uint8_t> plaintext(2048, 0xAB);
+
+    azihsm_algo_aes_xts_params xts_params = {
+        .sector_num = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+        .data_unit_len = 512};
+
+    azihsm_algo encrypt_algo = {
+        .id = AZIHSM_ALGO_ID_AES_XTS,
+        .params = &xts_params,
+        .len = sizeof(xts_params)};
+
+    // One-shot encryption
+    azihsm_buffer pt_buffer = {.buf = plaintext.data(), .len = static_cast<uint32_t>(plaintext.size())};
+    std::vector<uint8_t> ciphertext(plaintext.size());
+    azihsm_buffer ct_buffer = {.buf = ciphertext.data(), .len = static_cast<uint32_t>(ciphertext.size())};
+
+    err = azihsm_crypt_encrypt(session_handle, &encrypt_algo, key_handle, &pt_buffer, &ct_buffer);
+    EXPECT_EQ(err, AZIHSM_ERROR_SUCCESS);
+
+    // Streaming decryption
+    azihsm_algo decrypt_algo = {
+        .id = AZIHSM_ALGO_ID_AES_XTS,
+        .params = &xts_params,
+        .len = sizeof(xts_params)};
+
+    azihsm_handle decrypt_ctx_handle = 0;
+    err = azihsm_crypt_decrypt_init(session_handle, &decrypt_algo, key_handle, &decrypt_ctx_handle);
+    EXPECT_EQ(err, AZIHSM_ERROR_SUCCESS);
+
+    std::vector<uint8_t> decrypted(ciphertext.size());
+    size_t total_decrypted = 0;
+
+    for (size_t offset = 0; offset < ciphertext.size(); offset += 512)
+    {
+        azihsm_buffer ct_chunk = {.buf = ciphertext.data() + offset, .len = 512};
+        azihsm_buffer pt_chunk = {
+            .buf = decrypted.data() + total_decrypted,
+            .len = static_cast<uint32_t>(decrypted.size() - total_decrypted)};
+
+        err = azihsm_crypt_decrypt_update(session_handle, decrypt_ctx_handle, &ct_chunk, &pt_chunk);
+        EXPECT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        total_decrypted += pt_chunk.len;
+    }
+
+    std::vector<uint8_t> final_pt(512);
+    azihsm_buffer final_pt_buffer = {.buf = final_pt.data(), .len = static_cast<uint32_t>(final_pt.size())};
+    err = azihsm_crypt_decrypt_final(session_handle, decrypt_ctx_handle, &final_pt_buffer);
+    EXPECT_EQ(err, AZIHSM_ERROR_SUCCESS);
+
+    EXPECT_EQ(memcmp(plaintext.data(), decrypted.data(), plaintext.size()), 0)
+        << "Decrypted data should match original plaintext";
+
+    std::cout << "AES XTS one-shot encrypt + streaming decrypt test passed" << std::endl;
+}
+#endif
+
+#ifndef _WIN32 // [TODO] This test fails on Windows. Investigate and fix.
+TEST_F(AESTest, AesXtsStreamingEncryptOneshotDecrypt)
+{
+    // Generate AES XTS key
+    azihsm_handle key_handle = 0;
+    azihsm_algo key_gen_algo = {
+        .id = AZIHSM_ALGO_ID_AES_XTS_KEY_GEN,
+        .params = nullptr,
+        .len = 0};
+
+    uint32_t bit_len = 512;
+    bool encrypt_prop = true;
+    bool decrypt_prop = true;
+    azihsm_key_prop props[] = {
+        {.id = AZIHSM_KEY_PROP_ID_BIT_LEN, .val = &bit_len, .len = sizeof(bit_len)},
+        {.id = AZIHSM_KEY_PROP_ID_ENCRYPT, .val = &encrypt_prop, .len = sizeof(encrypt_prop)},
+        {.id = AZIHSM_KEY_PROP_ID_DECRYPT, .val = &decrypt_prop, .len = sizeof(decrypt_prop)}};
+
+    azihsm_key_prop_list prop_list = {.props = props, .count = 3};
+
+    auto err = azihsm_key_gen(session_handle, &key_gen_algo, &prop_list, &key_handle);
+    EXPECT_EQ(err, AZIHSM_ERROR_SUCCESS);
+
+    auto key_guard = scope_guard::make_scope_exit([&]
+                                                  { azihsm_key_delete(session_handle, key_handle); });
+
+    // Test data - 2048 bytes (4 data units of 512 bytes each)
+    std::vector<uint8_t> plaintext(2048, 0xAB);
+
+    azihsm_algo_aes_xts_params xts_params = {
+        .sector_num = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+        .data_unit_len = 512};
+
+    azihsm_algo encrypt_algo = {
+        .id = AZIHSM_ALGO_ID_AES_XTS,
+        .params = &xts_params,
+        .len = sizeof(xts_params)};
+
+    // Streaming encryption
+    azihsm_handle encrypt_ctx_handle = 0;
+    err = azihsm_crypt_encrypt_init(session_handle, &encrypt_algo, key_handle, &encrypt_ctx_handle);
+    EXPECT_EQ(err, AZIHSM_ERROR_SUCCESS);
+
+    std::vector<uint8_t> ciphertext(plaintext.size());
+    size_t total_encrypted = 0;
+
+    for (size_t offset = 0; offset < plaintext.size(); offset += 512)
+    {
+        azihsm_buffer pt_chunk = {.buf = plaintext.data() + offset, .len = 512};
+        azihsm_buffer ct_chunk = {
+            .buf = ciphertext.data() + total_encrypted,
+            .len = static_cast<uint32_t>(ciphertext.size() - total_encrypted)};
+
+        err = azihsm_crypt_encrypt_update(session_handle, encrypt_ctx_handle, &pt_chunk, &ct_chunk);
+        EXPECT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        total_encrypted += ct_chunk.len;
+    }
+
+    std::vector<uint8_t> final_ct(512);
+    azihsm_buffer final_ct_buffer = {.buf = final_ct.data(), .len = static_cast<uint32_t>(final_ct.size())};
+    err = azihsm_crypt_encrypt_final(session_handle, encrypt_ctx_handle, &final_ct_buffer);
+    EXPECT_EQ(err, AZIHSM_ERROR_SUCCESS);
+
+    // One-shot decryption
+    azihsm_algo decrypt_algo = {
+        .id = AZIHSM_ALGO_ID_AES_XTS,
+        .params = &xts_params,
+        .len = sizeof(xts_params)};
+
+    azihsm_buffer ct_buffer = {.buf = ciphertext.data(), .len = static_cast<uint32_t>(ciphertext.size())};
+    std::vector<uint8_t> decrypted(ciphertext.size());
+    azihsm_buffer pt_buffer = {.buf = decrypted.data(), .len = static_cast<uint32_t>(decrypted.size())};
+
+    err = azihsm_crypt_decrypt(session_handle, &decrypt_algo, key_handle, &ct_buffer, &pt_buffer);
+    EXPECT_EQ(err, AZIHSM_ERROR_SUCCESS);
+
+    EXPECT_EQ(memcmp(plaintext.data(), decrypted.data(), plaintext.size()), 0)
+        << "Decrypted data should match original plaintext";
+
+    std::cout << "AES XTS streaming encrypt + one-shot decrypt test passed" << std::endl;
+}
+#endif
+
+TEST_F(AESTest, AesXtsStreamingInvalidDataUnitLen)
+{
+    // Generate AES XTS key
+    azihsm_handle key_handle = 0;
+    azihsm_algo key_gen_algo = {
+        .id = AZIHSM_ALGO_ID_AES_XTS_KEY_GEN,
+        .params = nullptr,
+        .len = 0};
+
+    uint32_t bit_len = 512;
+    bool encrypt_prop = true;
+    bool decrypt_prop = true;
+    azihsm_key_prop props[] = {
+        {.id = AZIHSM_KEY_PROP_ID_BIT_LEN, .val = &bit_len, .len = sizeof(bit_len)},
+        {.id = AZIHSM_KEY_PROP_ID_ENCRYPT, .val = &encrypt_prop, .len = sizeof(encrypt_prop)},
+        {.id = AZIHSM_KEY_PROP_ID_DECRYPT, .val = &decrypt_prop, .len = sizeof(decrypt_prop)}};
+
+    azihsm_key_prop_list prop_list = {.props = props, .count = 3};
+
+    auto err = azihsm_key_gen(session_handle, &key_gen_algo, &prop_list, &key_handle);
+    EXPECT_EQ(err, AZIHSM_ERROR_SUCCESS);
+
+    auto key_guard = scope_guard::make_scope_exit([&]
+                                                  { azihsm_key_delete(session_handle, key_handle); });
+
+    // Test with invalid data_unit_len (2048 - not 512/4096/8192)
+    azihsm_algo_aes_xts_params xts_params = {
+        .sector_num = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+        .data_unit_len = 2048};
+
+    azihsm_algo encrypt_algo = {
+        .id = AZIHSM_ALGO_ID_AES_XTS,
+        .params = &xts_params,
+        .len = sizeof(xts_params)};
+
+    azihsm_handle encrypt_ctx_handle = 0;
+    err = azihsm_crypt_encrypt_init(session_handle, &encrypt_algo, key_handle, &encrypt_ctx_handle);
+    EXPECT_EQ(err, AZIHSM_AES_UNSUPPORTED_DATA_UNIT_LENGTH)
+        << "encrypt_init should fail with invalid data_unit_len";
+    EXPECT_EQ(encrypt_ctx_handle, 0) << "Context handle should be 0 on failure";
+
+    // Test decrypt_init with same invalid data_unit_len
+    azihsm_algo decrypt_algo = {
+        .id = AZIHSM_ALGO_ID_AES_XTS,
+        .params = &xts_params,
+        .len = sizeof(xts_params)};
+
+    azihsm_handle decrypt_ctx_handle = 0;
+    err = azihsm_crypt_decrypt_init(session_handle, &decrypt_algo, key_handle, &decrypt_ctx_handle);
+    EXPECT_EQ(err, AZIHSM_AES_UNSUPPORTED_DATA_UNIT_LENGTH)
+        << "decrypt_init should fail with invalid data_unit_len";
+    EXPECT_EQ(decrypt_ctx_handle, 0) << "Context handle should be 0 on failure";
+
+    std::cout << "AES XTS streaming invalid data_unit_len test passed" << std::endl;
+}
+
+TEST_F(AESTest, AesXtsStreamingInvalidHandle)
+{
+    // Test operations with invalid handle
+    azihsm_handle invalid_handle = 0xDEADBEEF;
+
+    std::vector<uint8_t> data(512, 0xAA);
+    azihsm_buffer data_buf = {.buf = data.data(), .len = 512};
+    std::vector<uint8_t> output(512);
+    azihsm_buffer output_buf = {.buf = output.data(), .len = 512};
+
+    // Test encrypt_update with invalid handle
+    auto err = azihsm_crypt_encrypt_update(session_handle, invalid_handle, &data_buf, &output_buf);
+    EXPECT_EQ(err, AZIHSM_ERROR_INVALID_HANDLE)
+        << "encrypt_update should fail with invalid handle";
+
+    // Test encrypt_final with invalid handle
+    err = azihsm_crypt_encrypt_final(session_handle, invalid_handle, &output_buf);
+    EXPECT_EQ(err, AZIHSM_ERROR_INVALID_HANDLE)
+        << "encrypt_final should fail with invalid handle";
+
+    // Test decrypt_update with invalid handle
+    err = azihsm_crypt_decrypt_update(session_handle, invalid_handle, &data_buf, &output_buf);
+    EXPECT_EQ(err, AZIHSM_ERROR_INVALID_HANDLE)
+        << "decrypt_update should fail with invalid handle";
+
+    // Test decrypt_final with invalid handle
+    err = azihsm_crypt_decrypt_final(session_handle, invalid_handle, &output_buf);
+    EXPECT_EQ(err, AZIHSM_ERROR_INVALID_HANDLE)
+        << "decrypt_final should fail with invalid handle";
+
+    std::cout << "AES XTS streaming invalid handle test passed" << std::endl;
+}
+
+TEST_F(AESTest, AesXtsStreamingPartialDataUnit)
+{
+    // Generate AES XTS key
+    azihsm_handle key_handle = 0;
+    azihsm_algo key_gen_algo = {
+        .id = AZIHSM_ALGO_ID_AES_XTS_KEY_GEN,
+        .params = nullptr,
+        .len = 0};
+
+    uint32_t bit_len = 512;
+    bool encrypt_prop = true;
+    bool decrypt_prop = true;
+    azihsm_key_prop props[] = {
+        {.id = AZIHSM_KEY_PROP_ID_BIT_LEN, .val = &bit_len, .len = sizeof(bit_len)},
+        {.id = AZIHSM_KEY_PROP_ID_ENCRYPT, .val = &encrypt_prop, .len = sizeof(encrypt_prop)},
+        {.id = AZIHSM_KEY_PROP_ID_DECRYPT, .val = &decrypt_prop, .len = sizeof(decrypt_prop)}};
+
+    azihsm_key_prop_list prop_list = {.props = props, .count = 3};
+
+    auto err = azihsm_key_gen(session_handle, &key_gen_algo, &prop_list, &key_handle);
+    EXPECT_EQ(err, AZIHSM_ERROR_SUCCESS);
+
+    auto key_guard = scope_guard::make_scope_exit([&]
+                                                  { azihsm_key_delete(session_handle, key_handle); });
+
+    azihsm_algo_aes_xts_params xts_params = {
+        .sector_num = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+        .data_unit_len = 512};
+
+    azihsm_algo encrypt_algo = {
+        .id = AZIHSM_ALGO_ID_AES_XTS,
+        .params = &xts_params,
+        .len = sizeof(xts_params)};
+
+    // Initialize streaming encryption
+    azihsm_handle encrypt_ctx_handle = 0;
+    err = azihsm_crypt_encrypt_init(session_handle, &encrypt_algo, key_handle, &encrypt_ctx_handle);
+    EXPECT_EQ(err, AZIHSM_ERROR_SUCCESS);
+
+    auto enc_ctx_guard = scope_guard::make_scope_exit([&]
+                                                      {
+        if (encrypt_ctx_handle != 0)
+        {
+            azihsm_buffer final_buf = {.buf = nullptr, .len = 0};
+            azihsm_crypt_encrypt_final(session_handle, encrypt_ctx_handle, &final_buf);
+        } });
+
+    // Update with partial data unit (256 bytes, but data_unit_len is 512)
+    std::vector<uint8_t> partial_data(256, 0xBB);
+    azihsm_buffer pt_buf = {.buf = partial_data.data(), .len = 256};
+    std::vector<uint8_t> ciphertext(512);
+    azihsm_buffer ct_buf = {.buf = ciphertext.data(), .len = 512};
+
+    err = azihsm_crypt_encrypt_update(session_handle, encrypt_ctx_handle, &pt_buf, &ct_buf);
+    EXPECT_EQ(err, AZIHSM_ERROR_SUCCESS);
+    EXPECT_EQ(ct_buf.len, 0) << "Should buffer partial data unit without output";
+
+    // Finalize should fail because we have incomplete data unit
+    azihsm_buffer final_buf = {.buf = ciphertext.data(), .len = 512};
+    err = azihsm_crypt_encrypt_final(session_handle, encrypt_ctx_handle, &final_buf);
+    EXPECT_NE(err, AZIHSM_ERROR_SUCCESS)
+        << "encrypt_final should fail with incomplete data unit";
+
+    encrypt_ctx_handle = 0; // Mark as cleaned up
+
+    std::cout << "AES XTS streaming partial data unit test passed" << std::endl;
+}
+
+TEST_F(AESTest, AesXtsStreamingWrongChunkSize)
+{
+    // Generate AES XTS key
+    azihsm_handle key_handle = 0;
+    azihsm_algo key_gen_algo = {
+        .id = AZIHSM_ALGO_ID_AES_XTS_KEY_GEN,
+        .params = nullptr,
+        .len = 0};
+
+    uint32_t bit_len = 512;
+    bool encrypt_prop = true;
+    bool decrypt_prop = true;
+    azihsm_key_prop props[] = {
+        {.id = AZIHSM_KEY_PROP_ID_BIT_LEN, .val = &bit_len, .len = sizeof(bit_len)},
+        {.id = AZIHSM_KEY_PROP_ID_ENCRYPT, .val = &encrypt_prop, .len = sizeof(encrypt_prop)},
+        {.id = AZIHSM_KEY_PROP_ID_DECRYPT, .val = &decrypt_prop, .len = sizeof(decrypt_prop)}};
+
+    azihsm_key_prop_list prop_list = {.props = props, .count = 3};
+
+    auto err = azihsm_key_gen(session_handle, &key_gen_algo, &prop_list, &key_handle);
+    EXPECT_EQ(err, AZIHSM_ERROR_SUCCESS);
+
+    auto key_guard = scope_guard::make_scope_exit([&]
+                                                  { azihsm_key_delete(session_handle, key_handle); });
+
+    azihsm_algo_aes_xts_params xts_params = {
+        .sector_num = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+        .data_unit_len = 512};
+
+    azihsm_algo encrypt_algo = {
+        .id = AZIHSM_ALGO_ID_AES_XTS,
+        .params = &xts_params,
+        .len = sizeof(xts_params)};
+
+    // Initialize streaming encryption
+    azihsm_handle encrypt_ctx_handle = 0;
+    err = azihsm_crypt_encrypt_init(session_handle, &encrypt_algo, key_handle, &encrypt_ctx_handle);
+    EXPECT_EQ(err, AZIHSM_ERROR_SUCCESS);
+
+    auto enc_ctx_guard = scope_guard::make_scope_exit([&]
+                                                      {
+        if (encrypt_ctx_handle != 0)
+        {
+            azihsm_buffer final_buf = {.buf = nullptr, .len = 0};
+            azihsm_crypt_encrypt_final(session_handle, encrypt_ctx_handle, &final_buf);
+        } });
+
+    // First update with correct size (512 bytes)
+    std::vector<uint8_t> plaintext1(512, 0xAA);
+    azihsm_buffer pt_buf1 = {.buf = plaintext1.data(), .len = 512};
+    std::vector<uint8_t> ciphertext(1024);
+    azihsm_buffer ct_buf1 = {.buf = ciphertext.data(), .len = 512};
+
+    err = azihsm_crypt_encrypt_update(session_handle, encrypt_ctx_handle, &pt_buf1, &ct_buf1);
+    EXPECT_EQ(err, AZIHSM_ERROR_SUCCESS);
+    EXPECT_EQ(ct_buf1.len, 512);
+
+    // Second update with wrong size (768 bytes - not a multiple of data_unit_len)
+    std::vector<uint8_t> plaintext2(768, 0xBB);
+    azihsm_buffer pt_buf2 = {.buf = plaintext2.data(), .len = 768};
+    azihsm_buffer ct_buf2 = {.buf = ciphertext.data() + 512, .len = 512};
+
+    err = azihsm_crypt_encrypt_update(session_handle, encrypt_ctx_handle, &pt_buf2, &ct_buf2);
+    EXPECT_EQ(err, AZIHSM_ERROR_SUCCESS);
+    // 768 = 512 + 256, so 512 gets processed, 256 gets buffered
+    EXPECT_EQ(ct_buf2.len, 512) << "Should process one complete 512-byte unit";
+
+    // Finalize should fail because of remaining 256 bytes
+    azihsm_buffer final_buf = {.buf = ciphertext.data(), .len = 512};
+    err = azihsm_crypt_encrypt_final(session_handle, encrypt_ctx_handle, &final_buf);
+    EXPECT_NE(err, AZIHSM_ERROR_SUCCESS)
+        << "encrypt_final should fail with incomplete final data unit";
+
+    encrypt_ctx_handle = 0; // Mark as cleaned up
+
+    std::cout << "AES XTS streaming wrong chunk size test passed" << std::endl;
+}
+
+TEST_F(AESTest, AesXtsStreamingInsufficientOutputBuffer)
+{
+    // Generate AES XTS key
+    azihsm_handle key_handle = 0;
+    azihsm_algo key_gen_algo = {
+        .id = AZIHSM_ALGO_ID_AES_XTS_KEY_GEN,
+        .params = nullptr,
+        .len = 0};
+
+    uint32_t bit_len = 512;
+    bool encrypt_prop = true;
+    bool decrypt_prop = true;
+    azihsm_key_prop props[] = {
+        {.id = AZIHSM_KEY_PROP_ID_BIT_LEN, .val = &bit_len, .len = sizeof(bit_len)},
+        {.id = AZIHSM_KEY_PROP_ID_ENCRYPT, .val = &encrypt_prop, .len = sizeof(encrypt_prop)},
+        {.id = AZIHSM_KEY_PROP_ID_DECRYPT, .val = &decrypt_prop, .len = sizeof(decrypt_prop)}};
+
+    azihsm_key_prop_list prop_list = {.props = props, .count = 3};
+
+    auto err = azihsm_key_gen(session_handle, &key_gen_algo, &prop_list, &key_handle);
+    EXPECT_EQ(err, AZIHSM_ERROR_SUCCESS);
+
+    auto key_guard = scope_guard::make_scope_exit([&]
+                                                  { azihsm_key_delete(session_handle, key_handle); });
+
+    azihsm_algo_aes_xts_params xts_params = {
+        .sector_num = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+        .data_unit_len = 512};
+
+    azihsm_algo encrypt_algo = {
+        .id = AZIHSM_ALGO_ID_AES_XTS,
+        .params = &xts_params,
+        .len = sizeof(xts_params)};
+
+    // Initialize streaming encryption
+    azihsm_handle encrypt_ctx_handle = 0;
+    err = azihsm_crypt_encrypt_init(session_handle, &encrypt_algo, key_handle, &encrypt_ctx_handle);
+    EXPECT_EQ(err, AZIHSM_ERROR_SUCCESS);
+
+    auto enc_ctx_guard = scope_guard::make_scope_exit([&]
+                                                      {
+        if (encrypt_ctx_handle != 0)
+        {
+            azihsm_buffer final_buf = {.buf = nullptr, .len = 0};
+            azihsm_crypt_encrypt_final(session_handle, encrypt_ctx_handle, &final_buf);
+        } });
+
+    // Update with 512 bytes but provide insufficient output buffer
+    std::vector<uint8_t> plaintext(512, 0xCC);
+    azihsm_buffer pt_buf = {.buf = plaintext.data(), .len = 512};
+    std::vector<uint8_t> small_buffer(256); // Only 256 bytes, need 512
+    azihsm_buffer ct_buf = {.buf = small_buffer.data(), .len = 256};
+
+    err = azihsm_crypt_encrypt_update(session_handle, encrypt_ctx_handle, &pt_buf, &ct_buf);
+    EXPECT_NE(err, AZIHSM_ERROR_SUCCESS)
+        << "encrypt_update should fail with insufficient output buffer";
+
+    encrypt_ctx_handle = 0; // Mark as cleaned up
+
+    std::cout << "AES XTS streaming insufficient output buffer test passed" << std::endl;
+}

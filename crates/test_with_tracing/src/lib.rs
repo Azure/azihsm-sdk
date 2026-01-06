@@ -2,6 +2,10 @@
 
 //! Crate for defining tests that have tracing output.
 
+// This is only used by test code and is not a critical part of the client
+// library; we allow `expect` usage (but not `unwrap`) here.
+#![allow(clippy::expect_used)]
+
 #[cfg(test)]
 extern crate self as test_with_tracing;
 
@@ -17,7 +21,8 @@ pub fn init() {
 
     ONCE.call_once(|| {
         let targets = if let Ok(var) = std::env::var("RUST_LOG") {
-            var.parse().unwrap()
+            var.parse()
+                .expect("Failed to parse RUST_LOG environment variable")
         } else {
             Targets::new().with_default(LevelFilter::DEBUG)
         };

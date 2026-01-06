@@ -13,22 +13,13 @@ mod partition;
 mod session;
 mod types;
 
+pub(crate) use azihsm_ddi::*;
+use azihsm_ddi_types::*;
 pub use bindings::*;
-pub(crate) use mcr_ddi::*;
-use mcr_ddi_types::*;
 pub use partition::*;
 pub use session::*;
 
-cfg_if::cfg_if! {
-    if #[cfg(feature = "mock")] {
-        type HsmDdi = mcr_ddi_mock::DdiMock;
-    } else if #[cfg(target_os = "linux")] {
-        type HsmDdi = mcr_ddi_nix::DdiNix;
-    }
-    else if #[cfg(target_os = "windows")] {
-        type HsmDdi = mcr_ddi_win::DdiWin;
-    }
-}
+type HsmDdi = AzihsmDdi;
 
 lazy_static::lazy_static! {
     pub(crate) static ref DDI: HsmDdi = HsmDdi::default();
