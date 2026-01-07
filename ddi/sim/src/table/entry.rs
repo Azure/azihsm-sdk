@@ -5,13 +5,12 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use attestation::report::KeyFlags;
+use azihsm_ddi_types::DdiAesKeySize;
+use azihsm_ddi_types::DdiEccCurve;
+use azihsm_ddi_types::DdiKeyClass;
+use azihsm_ddi_types::DdiKeyType;
+use azihsm_ddi_types::DdiKeyUsage;
 use bitfield_struct::bitfield;
-use mcr_ddi_types::DdiAesKeySize;
-use mcr_ddi_types::DdiEccCurve;
-use mcr_ddi_types::DdiKeyClass;
-use mcr_ddi_types::DdiKeyType;
-use mcr_ddi_types::DdiKeyUsage;
 use parking_lot::RwLock;
 use uuid::Uuid;
 
@@ -20,6 +19,7 @@ use crate::crypto::aes::AesKeySize;
 use crate::crypto::ecc::EccKeySize;
 use crate::crypto::rsa::RsaKeySize;
 use crate::errors::ManticoreError;
+use crate::report::KeyFlags;
 
 pub mod key;
 

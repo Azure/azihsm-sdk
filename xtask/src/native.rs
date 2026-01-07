@@ -35,10 +35,11 @@ impl Xtask for NativeBuildAndTest {
     fn run(self, ctx: XtaskCtx) -> anyhow::Result<()> {
         log::trace!("running build-cpp");
 
-        // The workspace root is the Martichoras root, cpp is under hsm/cpp
-        let mut cpp_dir = ctx.root.clone();
-        cpp_dir.extend(["api", "cpp"]);
-        let build_dir = cpp_dir.join("build");
+        // The workspace root is the Martichoras root, cpp is under api/cpp
+        let cpp_dir = ctx.root.join("api").join("cpp");
+        let build_dir = ctx.root.join("target").join("cpp-build");
+        println!("C++ source directory: {}", cpp_dir.display());
+        println!("C++ build directory: {}", build_dir.display());
 
         // Verify cpp directory exists
         if !cpp_dir.exists() {
@@ -117,10 +118,10 @@ impl NativeBuildAndTest {
         // Add platform-specific configurations
         if cfg!(target_os = "windows") {
             log::debug!("Configuring for Windows build");
-            cmd!(sh, "cmake .. {config_arg} -DBUILD_TESTING=ON").run()?;
+            cmd!(sh, "cmake {cpp_dir} {config_arg} -DBUILD_TESTING=ON").run()?;
         } else {
             log::debug!("Configuring for Linux build");
-            cmd!(sh, "cmake .. {config_arg} -DBUILD_TESTING=ON").run()?;
+            cmd!(sh, "cmake {cpp_dir} {config_arg} -DBUILD_TESTING=ON").run()?;
         }
 
         log::info!("CMake configuration completed successfully");
@@ -175,10 +176,10 @@ impl NativeBuildAndTest {
 
         if cfg!(target_os = "windows") {
             // On Windows, specify the configuration
-            cmd!(sh, "ctest --output-on-failure --verbose -C {config}").run()?;
+            cmd!(sh, "ctest --output-on-failure {config}").run()?;
         } else {
             // On Linux/Unix
-            cmd!(sh, "ctest --output-on-failure --verbose").run()?;
+            cmd!(sh, "ctest --output-on-failure ").run()?;
         }
 
         log::info!("All native tests passed successfully");

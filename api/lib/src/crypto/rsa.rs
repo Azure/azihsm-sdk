@@ -4,22 +4,13 @@
 //! RSA cryptographic operations
 use std::sync::Arc;
 
-use azihsm_crypto::AesKeySize;
-use azihsm_crypto::HashAlgo;
-use azihsm_crypto::HashOp;
-use azihsm_crypto::Rng;
-use azihsm_crypto::RngOp;
-use azihsm_crypto::RsaCryptPadding;
-use azihsm_crypto::RsaKeyOps;
-use azihsm_crypto::RsaPublicKeyHandle;
-use azihsm_crypto::RsaPublicKeyOp;
-use azihsm_crypto::RsaSignaturePadding;
-use mcr_ddi_types::DdiHashAlgorithm;
-use mcr_ddi_types::DdiKeyAvailability;
-use mcr_ddi_types::DdiKeyClass;
-use mcr_ddi_types::DdiKeyType;
-use mcr_ddi_types::DdiKeyUsage;
-use mcr_ddi_types::DdiRsaCryptoPadding;
+use azihsm_crypto::*;
+use azihsm_ddi_types::DdiHashAlgorithm;
+use azihsm_ddi_types::DdiKeyAvailability;
+use azihsm_ddi_types::DdiKeyClass;
+use azihsm_ddi_types::DdiKeyType;
+use azihsm_ddi_types::DdiKeyUsage;
+use azihsm_ddi_types::DdiRsaCryptoPadding;
 use parking_lot::RwLock;
 
 use crate::crypto::utils::rsa_pkcs_pss_utils;
@@ -47,7 +38,6 @@ use crate::types::AzihsmKeyPropId;
 use crate::types::KeyKind;
 use crate::AzihsmError;
 use crate::Session;
-use crate::AZIHSM_AES_INVALID_KEY_SIZE;
 use crate::AZIHSM_ERROR_INSUFFICIENT_BUFFER;
 use crate::AZIHSM_ERROR_INVALID_ARGUMENT;
 use crate::AZIHSM_INTERNAL_ERROR;
@@ -695,37 +685,29 @@ impl KeyWrapOp<AlgoRsaAesKeyWrap> for RsaPkcsKeyPair {
 
         // Get public key DER data
         let pub_key_der = self.pub_key().ok_or(AZIHSM_KEY_NOT_INITIALIZED)?;
+        let secret_key =
+            GenericSecretKey::from_bytes(user_data).map_err(|_| AZIHSM_RSA_CRYPTO_ERROR)?;
 
         // Import public key into azihsm_crypto
-        let crypto_pub_key = RsaPublicKeyHandle::rsa_key_from_der(&pub_key_der)
-            .map_err(|_| AZIHSM_RSA_CRYPTO_ERROR)?; // Convert AES key size from algo params to AesKeySize enum
-        let aes_key_enum = match algo.params.aes_key_bits {
-            128 => AesKeySize::Aes128,
-            192 => AesKeySize::Aes192,
-            256 => AesKeySize::Aes256,
-            _ => Err(AZIHSM_AES_INVALID_KEY_SIZE)?,
-        };
+        let crypto_pub_key =
+            RsaPublicKey::from_bytes(&pub_key_der).map_err(|_| AZIHSM_RSA_CRYPTO_ERROR)?;
 
         // Convert hash algorithm to azihsm_crypto HashAlgo
-        let hash_algo = match algo.params.oaep_params.hash_algo_id {
-            AlgoId::Sha256 => HashAlgo::Sha256,
-            AlgoId::Sha384 => HashAlgo::Sha384,
-            AlgoId::Sha512 => HashAlgo::Sha512,
+        let hash = match algo.params.oaep_params.hash_algo_id {
+            AlgoId::Sha256 => HashAlgo::sha256(),
+            AlgoId::Sha384 => HashAlgo::sha384(),
+            AlgoId::Sha512 => HashAlgo::sha512(),
             _ => Err(AZIHSM_RSA_UNSUPPORTED_HASH_ALGORITHM)?,
         };
 
+        let wrap = RsaAesKeyWrap::new(hash, (algo.params.aes_key_bits / 8) as usize);
+
         // Perform the wrapping
-        let wrapped_data_slice = crypto_pub_key
-            .rsa_wrap(
-                user_data,
-                aes_key_enum,
-                hash_algo,
-                None, // No OAEP label
-                wrapped_data,
-            )
+        let len = wrap
+            .wrap_key(&crypto_pub_key, &secret_key, Some(wrapped_data))
             .map_err(|_| AZIHSM_RSA_CRYPTO_ERROR)?;
 
-        Ok(wrapped_data_slice.len())
+        Ok(len)
     }
 
     /// Get the required buffer length for wrapping user data
@@ -739,33 +721,31 @@ impl KeyWrapOp<AlgoRsaAesKeyWrap> for RsaPkcsKeyPair {
             Err(AZIHSM_KEY_NOT_INITIALIZED)?;
         }
 
+        let key = vec![0u8; user_data_len];
         // Get public key DER data
         let pub_key_der = self.pub_key().ok_or(AZIHSM_KEY_NOT_INITIALIZED)?;
+        let secret_key = GenericSecretKey::from_bytes(&key).map_err(|_| AZIHSM_RSA_CRYPTO_ERROR)?;
 
         // Import public key into azihsm_crypto
-        let crypto_pub_key = RsaPublicKeyHandle::rsa_key_from_der(&pub_key_der)
-            .map_err(|_| AZIHSM_RSA_CRYPTO_ERROR)?; // Convert AES key size from algo params to AesKeySize enum
-        let aes_key_enum = match algo.params.aes_key_bits {
-            128 => AesKeySize::Aes128,
-            192 => AesKeySize::Aes192,
-            256 => AesKeySize::Aes256,
-            _ => Err(AZIHSM_AES_INVALID_KEY_SIZE)?,
-        };
+        let crypto_pub_key =
+            RsaPublicKey::from_bytes(&pub_key_der).map_err(|_| AZIHSM_RSA_CRYPTO_ERROR)?;
 
         // Convert hash algorithm to azihsm_crypto HashAlgo
-        let hash_algo = match algo.params.oaep_params.hash_algo_id {
-            AlgoId::Sha256 => HashAlgo::Sha256,
-            AlgoId::Sha384 => HashAlgo::Sha384,
-            AlgoId::Sha512 => HashAlgo::Sha512,
+        let hash = match algo.params.oaep_params.hash_algo_id {
+            AlgoId::Sha256 => HashAlgo::sha256(),
+            AlgoId::Sha384 => HashAlgo::sha384(),
+            AlgoId::Sha512 => HashAlgo::sha512(),
             _ => Err(AZIHSM_RSA_UNSUPPORTED_HASH_ALGORITHM)?,
         };
 
-        // Calculate required buffer size for wrapping
-        let wrap_len = crypto_pub_key
-            .rsa_wrap_len(user_data_len, aes_key_enum, hash_algo)
+        let wrap = RsaAesKeyWrap::new(hash, (algo.params.aes_key_bits / 8) as usize);
+
+        // Perform the wrapping
+        let len = wrap
+            .wrap_key(&crypto_pub_key, &secret_key, None)
             .map_err(|_| AZIHSM_RSA_CRYPTO_ERROR)?;
 
-        Ok(wrap_len)
+        Ok(len)
     }
 }
 
@@ -820,7 +800,7 @@ impl RsaPkcs15Algo {
 
     fn get_minimum_padded_digest_len(&self) -> Result<usize, AzihsmError> {
         let hash_algorithm = HashAlgo::try_from(self.algo_id)?;
-        let hash_len = hash_algorithm.hash_length();
+        let hash_len = hash_algorithm.size();
         let digest_info_len = self.get_pkcs1v15_digest_info_len()?;
 
         // Minimum RSA key size for PKCS#1 v1.5: hash_len + digest_info_len + 11 bytes overhead
@@ -845,18 +825,17 @@ impl RsaPkcs15Algo {
         }
 
         // Get hash algorithm instance
-        let hash_algo = HashAlgo::try_from(self.algo_id)?;
+        let mut hash_algo = HashAlgo::try_from(self.algo_id)?;
 
         // Perform hashing on the input data
-        let hash_len = hash_algo.hash_length();
+        let hash_len = hash_algo.size();
         let mut hash_output = vec![0u8; hash_len];
-        hash_algo
-            .hash(data, &mut hash_output)
-            .map_err(|crypto_error| match crypto_error {
-                azihsm_crypto::CryptoError::ShaError => AZIHSM_INTERNAL_ERROR,
-                azihsm_crypto::CryptoError::ShaDigestSizeError => AZIHSM_ERROR_INSUFFICIENT_BUFFER,
+        Hasher::hash(&mut hash_algo, data, Some(&mut hash_output)).map_err(|crypto_error| {
+            match crypto_error {
+                azihsm_crypto::CryptoError::HashBufferTooSmall => AZIHSM_ERROR_INSUFFICIENT_BUFFER,
                 _ => AZIHSM_INTERNAL_ERROR,
-            })?;
+            }
+        })?;
 
         // Get DigestInfo for the hash algorithm
         let hash_algo_id = self.get_hash_algo_id()?;
@@ -991,21 +970,24 @@ impl VerifyOp<RsaPkcsKeyPair> for RsaPkcs15Algo {
 
         // Import Der pub key into crypto package
         let pub_key_der = key.pub_key().ok_or(AZIHSM_KEY_NOT_INITIALIZED)?;
-        let rsa_pub_key_handle = RsaPublicKeyHandle::rsa_key_from_der(pub_key_der.as_slice())
-            .map_err(|_| AZIHSM_RSA_INVALID_PUB_KEY)?;
+        let rsa_pub_key_handle =
+            RsaPublicKey::from_bytes(&pub_key_der).map_err(|_| AZIHSM_RSA_INVALID_PUB_KEY)?;
 
         // get hash algo
         let hash_algo = HashAlgo::try_from(self.algo_id)?;
         // Perform RSA public key operation to verify signature
-        rsa_pub_key_handle
-            .rsa_verify(
-                data,
-                RsaSignaturePadding::Pkcs1_5,
-                hash_algo,
-                None,
-                signature,
-            )
-            .map_err(|_| AZIHSM_RSA_VERIFY_FAILED)?;
+
+        let result = Verifier::verify(
+            &mut RsaHashSignAlgo::with_pkcs1_padding(hash_algo),
+            &rsa_pub_key_handle,
+            data,
+            signature,
+        )
+        .map_err(|_| AZIHSM_INTERNAL_ERROR)?;
+
+        if !result {
+            Err(AZIHSM_RSA_VERIFY_FAILED)?;
+        }
 
         Ok(())
     }
@@ -1048,13 +1030,13 @@ impl RsaPkcsPssAlgo {
         &self,
         data: &[u8],
         em_bits: usize,
-        hash_algo: HashAlgo,
+        hash_algo: &mut HashAlgo,
         salt_len: u16,
         encoded_message: &mut [u8],
     ) -> Result<(), AzihsmError> {
         // em_len = ceil(em_bits/8)
         let em_len = em_bits.div_ceil(8);
-        let h_len = hash_algo.hash_length();
+        let h_len = hash_algo.size();
 
         // Handle salt_len = 0 as maximum allowable salt length (like DDI implementation)
         let s_len = if salt_len == 0 {
@@ -1082,9 +1064,7 @@ impl RsaPkcsPssAlgo {
 
         let mut salt: Vec<u8> = vec![0; s_len];
         // get cryptographic random bytes for salt
-        let rng = Rng {};
-        rng.rand_bytes(salt.as_mut_slice())
-            .map_err(|_| AZIHSM_INTERNAL_ERROR)?;
+        Rng::rand_bytes(salt.as_mut_slice()).map_err(|_| AZIHSM_INTERNAL_ERROR)?;
 
         // Hash the message
         let m_hash = data.to_vec();
@@ -1094,9 +1074,7 @@ impl RsaPkcsPssAlgo {
         m_dash[8 + m_hash.len()..].copy_from_slice(&salt);
         //compute H = Hash(m_dash)
         let mut h: Vec<u8> = vec![0; h_len];
-        hash_algo
-            .hash(&m_dash, h.as_mut_slice())
-            .map_err(|_| AZIHSM_INTERNAL_ERROR)?;
+        Hasher::hash(hash_algo, &m_dash, Some(&mut h)).map_err(|_| AZIHSM_INTERNAL_ERROR)?;
 
         let db_size = em_len - h_len - 1;
         let db = &mut encoded_message[0..db_size];
@@ -1137,8 +1115,8 @@ impl VerifyOp<RsaPkcsKeyPair> for RsaPkcsPssAlgo {
 
         // Import Der pub key into crypto package
         let pub_key_der = key.pub_key().ok_or(AZIHSM_KEY_NOT_INITIALIZED)?;
-        let rsa_pub_key_handle = RsaPublicKeyHandle::rsa_key_from_der(pub_key_der.as_slice())
-            .map_err(|_| AZIHSM_RSA_INVALID_PUB_KEY)?;
+        let rsa_pub_key_handle =
+            RsaPublicKey::from_bytes(&pub_key_der).map_err(|_| AZIHSM_RSA_INVALID_PUB_KEY)?;
         // check if hash_algo_id matches with mgf1 hash algo id
         if self.params.hash_algo_id != self.params.mgf_id.to_algo_id() {
             Err(AZIHSM_ERROR_INVALID_ARGUMENT)?;
@@ -1146,22 +1124,19 @@ impl VerifyOp<RsaPkcsKeyPair> for RsaPkcsPssAlgo {
         // get hash algo
         let hash_algo = HashAlgo::try_from(self.params.hash_algo_id)?;
         // Perform RSA public key operation to verify signature
-        // Handle salt_len = 0 as auto-detect (None) for verification
-        let salt_len_for_verify = if self.params.salt_len == 0 {
-            None // Let the crypto library auto-detect the salt length
-        } else {
-            Some(self.params.salt_len as usize)
-        };
-
-        rsa_pub_key_handle
-            .rsa_verify(
-                data,
-                RsaSignaturePadding::Pss,
-                hash_algo,
-                salt_len_for_verify,
-                signature,
-            )
-            .map_err(|_| AZIHSM_RSA_VERIFY_FAILED)?;
+        let result = Verifier::verify(
+            &mut RsaHashSignAlgo::with_pss_padding(
+                hash_algo.clone(),
+                self.params.salt_len as usize,
+            ),
+            &rsa_pub_key_handle,
+            data,
+            signature,
+        )
+        .map_err(|_| AZIHSM_INTERNAL_ERROR)?;
+        if !result {
+            Err(AZIHSM_RSA_VERIFY_FAILED)?;
+        }
 
         Ok(())
     }
@@ -1201,10 +1176,9 @@ impl SignOp<RsaPkcsKeyPair> for RsaPkcsPssAlgo {
         //get private key id
         let priv_key_id = key.priv_key_id().ok_or(AZIHSM_KEY_NOT_INITIALIZED)?;
         // Hash the message and encode using PSS
-        let hash_algo = HashAlgo::try_from(self.params.hash_algo_id)?;
-        let mut hashed_data = vec![0u8; hash_algo.hash_length()];
-        hash_algo
-            .hash(data, hashed_data.as_mut_slice())
+        let mut hash_algo = HashAlgo::try_from(self.params.hash_algo_id)?;
+        let mut hashed_data = vec![0u8; hash_algo.size()];
+        Hasher::hash(&mut hash_algo, data, Some(&mut hashed_data))
             .map_err(|_| AZIHSM_INTERNAL_ERROR)?;
         // Prepare encoded message
         let em_bits = (key_size_bytes * 8) - 1;
@@ -1212,7 +1186,7 @@ impl SignOp<RsaPkcsKeyPair> for RsaPkcsPssAlgo {
         self.encode_pss(
             hashed_data.as_slice(),
             em_bits,
-            HashAlgo::try_from(self.params.hash_algo_id)?,
+            &mut hash_algo,
             self.params.salt_len as u16,
             &mut encoded_message,
         )?;
@@ -1267,15 +1241,14 @@ impl RsaPkcsOaepAlgo {
         encoded_message: &mut [u8],
         label: Option<&[u8]>,
         key_size: usize,
-        hash_algo: HashAlgo,
+        hash_algo: &mut HashAlgo,
     ) -> Result<Vec<u8>, AzihsmError> {
-        let h_len = hash_algo.hash_length();
+        let h_len = hash_algo.size();
 
         // Compute L_hash = Hash(label) where label is the optional OAEP label
         let label_data = label.unwrap_or(b""); // Use empty string if no label provided
         let mut l_hash = vec![0u8; h_len];
-        hash_algo
-            .hash(label_data, &mut l_hash)
+        Hasher::hash(hash_algo, label_data, Some(&mut l_hash))
             .map_err(|_| AZIHSM_INTERNAL_ERROR)?;
 
         {
@@ -1330,16 +1303,21 @@ impl EncryptOp<RsaPkcsKeyPair> for RsaPkcsOaepAlgo {
         let public_key_der = key.pub_key().ok_or(AZIHSM_KEY_NOT_INITIALIZED)?;
 
         // 2. Import public key into HSM Crypto support module as DDI doesn't support direct encrypt with public key
-        let rsa_public_key_handle = RsaPublicKeyHandle::rsa_key_from_der(public_key_der.as_slice())
-            .map_err(|_| AZIHSM_RSA_INVALID_PUB_KEY)?;
+        let rsa_public_key_handle =
+            RsaPublicKey::from_bytes(&public_key_der).map_err(|_| AZIHSM_RSA_INVALID_PUB_KEY)?;
 
         // 3. Perform RSA encryption using the imported key
         let hash_algo = HashAlgo::try_from(self.params.hash_algo_id)?;
         let label = self.params.label.as_deref();
-        let encrypted_data = rsa_public_key_handle
-            .rsa_encrypt(pt, RsaCryptPadding::Oaep, hash_algo, label, ct)
-            .map_err(|_| AZIHSM_OPERATION_NOT_SUPPORTED)?;
-        Ok(encrypted_data.len())
+        let len = Encrypter::encrypt(
+            &mut RsaEncryptAlgo::with_oaep_padding(hash_algo, label),
+            &rsa_public_key_handle,
+            pt,
+            Some(ct),
+        )
+        .map_err(|_| AZIHSM_OPERATION_NOT_SUPPORTED)?;
+
+        Ok(len)
     }
 
     fn ciphertext_len(&self, _pt_len: usize) -> usize {
@@ -1384,7 +1362,7 @@ impl DecryptOp<RsaPkcsKeyPair> for RsaPkcsOaepAlgo {
 
         // Step 2: Apply OAEP padding removal to get the plaintext message
 
-        let hash_algo = HashAlgo::try_from(self.params.hash_algo_id)
+        let mut hash_algo = HashAlgo::try_from(self.params.hash_algo_id)
             .map_err(|_| AZIHSM_OPERATION_NOT_SUPPORTED)?;
 
         let label = self.params.label.as_deref();
@@ -1406,7 +1384,7 @@ impl DecryptOp<RsaPkcsKeyPair> for RsaPkcsOaepAlgo {
         // Decode OAEP to extract the original message
 
         let plaintext_message =
-            Self::decode_oaep(&mut raw_decrypted, label, key_size_bytes, hash_algo)?;
+            Self::decode_oaep(&mut raw_decrypted, label, key_size_bytes, &mut hash_algo)?;
 
         // Step 3: Copy the plaintext message to output buffer (check size after OAEP removal)
         if output_buf.len() < plaintext_message.len() {

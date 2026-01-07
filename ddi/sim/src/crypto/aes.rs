@@ -2,37 +2,34 @@
 
 //! Module for AES Cryptographic Keys.
 
-#[cfg(all(feature = "use-openssl", feature = "use-symcrypt"))]
-compile_error!("OpenSSL and non-OpenSSL cannot be enabled at the same time.");
-
 #[cfg(feature = "fuzzing")]
 use arbitrary::Arbitrary;
-use mcr_ddi_types::DdiAesKeySize;
-use mcr_ddi_types::DdiAesOp;
-#[cfg(feature = "use-openssl")]
+use azihsm_ddi_types::DdiAesKeySize;
+use azihsm_ddi_types::DdiAesOp;
+#[cfg(target_os = "linux")]
 use openssl;
-#[cfg(feature = "use-openssl")]
+#[cfg(target_os = "linux")]
 use openssl::cipher::Cipher;
-#[cfg(feature = "use-openssl")]
+#[cfg(target_os = "linux")]
 use openssl::cipher::CipherRef;
-#[cfg(feature = "use-openssl")]
+#[cfg(target_os = "linux")]
 use openssl::cipher_ctx::CipherCtx;
-#[cfg(feature = "use-openssl")]
+#[cfg(target_os = "linux")]
 use openssl::rand::rand_bytes;
-#[cfg(feature = "use-openssl")]
+#[cfg(target_os = "linux")]
 use openssl::symm::Crypter;
-#[cfg(feature = "use-openssl")]
+#[cfg(target_os = "linux")]
 use openssl::symm::Mode;
-#[cfg(feature = "use-symcrypt")]
+#[cfg(target_os = "windows")]
 use symcrypt::cipher::AesExpandedKey;
-#[cfg(feature = "use-symcrypt")]
+#[cfg(target_os = "windows")]
 use symcrypt::cipher::BlockCipherType;
-#[cfg(feature = "use-symcrypt")]
+#[cfg(target_os = "windows")]
 use symcrypt::gcm::GcmExpandedKey;
-#[cfg(feature = "use-symcrypt")]
+#[cfg(target_os = "windows")]
 use symcrypt::symcrypt_random;
 
-#[cfg(feature = "use-symcrypt")]
+#[cfg(target_os = "windows")]
 use crate::crypto::cng::*;
 use crate::errors::ManticoreError;
 use crate::mask::KeySerialization;
@@ -40,7 +37,7 @@ use crate::table::entry::Kind;
 
 /// The size of an AES GCM tag.
 const AES_GCM_TAG_SIZE: usize = 16;
-#[cfg(feature = "use-openssl")]
+#[cfg(target_os = "linux")]
 /// The size of the AES CBC IV.
 const AES_CBC_IV_SIZE: usize = 16;
 
@@ -290,7 +287,7 @@ impl KeySerialization<AesKey> for AesKey {
     }
 }
 
-#[cfg(feature = "use-openssl")]
+#[cfg(target_os = "linux")]
 /// Generate an AES key.
 pub fn generate_aes(key_size: AesKeySize) -> Result<AesKey, ManticoreError> {
     let buf_len = match key_size {
@@ -315,7 +312,7 @@ pub fn generate_aes(key_size: AesKeySize) -> Result<AesKey, ManticoreError> {
     })
 }
 
-#[cfg(feature = "use-symcrypt")]
+#[cfg(target_os = "windows")]
 /// Generate an AES key.
 pub fn generate_aes(key_size: AesKeySize) -> Result<AesKey, ManticoreError> {
     let buf_len = match key_size {
@@ -335,7 +332,7 @@ pub fn generate_aes(key_size: AesKeySize) -> Result<AesKey, ManticoreError> {
     })
 }
 
-#[cfg(feature = "use-openssl")]
+#[cfg(target_os = "linux")]
 fn get_cipher(size: &AesKeySize, mode: &AesAlgo) -> Result<&'static CipherRef, ManticoreError> {
     let cipher = match (size, mode) {
         (AesKeySize::Aes128, AesAlgo::Cbc) => Cipher::aes_128_cbc(),
@@ -402,13 +399,25 @@ impl AesKey {
 
         // initialize
         let n = input.len() / 8 - 1;
-        let mut a = u64::from_le_bytes(input[0..8].try_into().unwrap());
+        let mut a = u64::from_le_bytes(input[0..8].try_into().map_err(|err| {
+            tracing::error!(?err, "Failed to parse u64 from input bytes 0-7");
+            ManticoreError::AesDecryptError
+        })?);
         output[0..n * 8].copy_from_slice(&input[8..(n + 1) * 8]);
 
         // intermediate calculation
         for j in (0..6).rev() {
             for i in (0..n).rev() {
-                let b = u64::from_le_bytes(output[i * 8..(i + 1) * 8].try_into().unwrap());
+                let b =
+                    u64::from_le_bytes(output[i * 8..(i + 1) * 8].try_into().map_err(|err| {
+                        tracing::error!(
+                            ?err,
+                            "Failed to parse u64 from output bytes {}-{}",
+                            i * 8,
+                            ((i + 1) * 8) - 1
+                        );
+                        ManticoreError::AesDecryptError
+                    })?);
                 let (msb, lsb) =
                     self.aes_ecb(false, a ^ (((n * j) + (i + 1)) as u64).swap_bytes(), b)?;
                 a = msb;
@@ -539,7 +548,7 @@ impl AesOp for AesKey {
     ///
     /// # Errors
     /// * `ManticoreError::AesEncryptError` - If the encryption fails.
-    #[cfg(feature = "use-openssl")]
+    #[cfg(target_os = "linux")]
     fn aes_gcm_encrypt_mb(
         &self,
         plaintext_buffers: &[Vec<u8>],
@@ -607,7 +616,7 @@ impl AesOp for AesKey {
         })
     }
 
-    #[cfg(feature = "use-symcrypt")]
+    #[cfg(target_os = "windows")]
     fn aes_gcm_encrypt_mb(
         &self,
         plaintext_buffers: &[Vec<u8>],
@@ -666,7 +675,7 @@ impl AesOp for AesKey {
     ///
     /// # Errors
     /// * `ManticoreError::AesDecryptError` - If the encryption fails.
-    #[cfg(feature = "use-openssl")]
+    #[cfg(target_os = "linux")]
     fn aes_gcm_decrypt_mb(
         &self,
         encrypted_buffers: &[Vec<u8>],
@@ -698,15 +707,13 @@ impl AesOp for AesKey {
                 })?;
         }
 
-        if tag.is_some() {
+        if let Some(t) = tag {
             tracing::debug!("AES GCM Decrypt MB: Tag provided. Updating");
-        }
-        crypter
-            .set_tag(tag.unwrap())
-            .map_err(|openssl_error_stack| {
+            crypter.set_tag(t).map_err(|openssl_error_stack| {
                 tracing::error!(?openssl_error_stack);
                 ManticoreError::AesDecryptError
             })?;
+        }
 
         for (encrypted, decrypted_buffer) in
             encrypted_buffers.iter().zip(decrypted_buffers.iter_mut())
@@ -740,7 +747,7 @@ impl AesOp for AesKey {
         })
     }
 
-    #[cfg(feature = "use-symcrypt")]
+    #[cfg(target_os = "windows")]
     fn aes_gcm_decrypt_mb(
         &self,
         encrypted_buffers: &[Vec<u8>],
@@ -794,7 +801,7 @@ impl AesOp for AesKey {
         })
     }
 
-    #[cfg(feature = "use-openssl")]
+    #[cfg(target_os = "linux")]
     fn aes_xts_encrypt_mb(
         &self,
         key2: AesKey,
@@ -838,7 +845,7 @@ impl AesOp for AesKey {
         })
     }
 
-    #[cfg(feature = "use-symcrypt")]
+    #[cfg(target_os = "windows")]
     fn aes_xts_encrypt_mb(
         &self,
         key2: AesKey,
@@ -904,7 +911,7 @@ impl AesOp for AesKey {
         })
     }
 
-    #[cfg(feature = "use-openssl")]
+    #[cfg(target_os = "linux")]
     fn aes_xts_decrypt_mb(
         &self,
         key2: AesKey,
@@ -948,7 +955,7 @@ impl AesOp for AesKey {
         })
     }
 
-    #[cfg(feature = "use-symcrypt")]
+    #[cfg(target_os = "windows")]
     fn aes_xts_decrypt_mb(
         &self,
         key2: AesKey,
@@ -1023,7 +1030,7 @@ impl AesOp for AesKey {
     ///
     /// # Errors
     /// * `ManticoreError::AesEncryptError` - If the encryption fails.
-    #[cfg(feature = "use-openssl")]
+    #[cfg(target_os = "linux")]
     fn encrypt(
         &self,
         data: &[u8],
@@ -1081,7 +1088,7 @@ impl AesOp for AesKey {
         Ok(AesEncryptResult { cipher_text, iv })
     }
 
-    #[cfg(feature = "use-symcrypt")]
+    #[cfg(target_os = "windows")]
     fn encrypt(
         &self,
         data: &[u8],
@@ -1125,7 +1132,7 @@ impl AesOp for AesKey {
     ///
     /// # Errors
     /// * `ManticoreError::AesDecryptError` - If the decryption fails.
-    #[cfg(feature = "use-openssl")]
+    #[cfg(target_os = "linux")]
     fn decrypt(
         &self,
         data: &[u8],
@@ -1186,7 +1193,7 @@ impl AesOp for AesKey {
         Ok(AesDecryptResult { plain_text, iv })
     }
 
-    #[cfg(feature = "use-symcrypt")]
+    #[cfg(target_os = "windows")]
     fn decrypt(
         &self,
         data: &[u8],
@@ -1251,7 +1258,10 @@ impl AesOp for AesKey {
         // special case
         if p.len() == 8 {
             let mut output = vec![0u8; 16];
-            let p64 = u64::from_le_bytes(p[0..8].try_into().unwrap());
+            let p64 = u64::from_le_bytes(p[0..8].try_into().map_err(|err| {
+                tracing::error!(?err, "Failed to parse u64 from bytes 0-7");
+                ManticoreError::InvalidArgument
+            })?);
             let (c0, c1) = self.aes_ecb(true, aiv, p64)?;
             output[0..8].copy_from_slice(&c0.to_le_bytes());
             output[8..16].copy_from_slice(&c1.to_le_bytes());
@@ -1284,8 +1294,14 @@ impl AesOp for AesKey {
 
         if data.len() == 16 {
             // special case
-            let c0 = u64::from_le_bytes(data[0..8].try_into().unwrap());
-            let c1 = u64::from_le_bytes(data[8..16].try_into().unwrap());
+            let c0 = u64::from_le_bytes(data[0..8].try_into().map_err(|err| {
+                tracing::error!(?err, "Failed to parse u64 from bytes 0-7");
+                ManticoreError::InvalidArgument
+            })?);
+            let c1 = u64::from_le_bytes(data[8..16].try_into().map_err(|err| {
+                tracing::error!(?err, "Failed to parse u64 from bytes 8-15");
+                ManticoreError::InvalidArgument
+            })?);
             let (a, p1) = self.aes_ecb(false, c0, c1)?;
             // let mut output = vec![0u8; 8];
             output[0..8].copy_from_slice(&p1.to_le_bytes());

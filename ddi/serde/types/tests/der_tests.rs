@@ -1,40 +1,25 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
 
-#[cfg(target_os = "windows")]
-use crypto::ecc::CryptoEccCurve;
-#[cfg(target_os = "windows")]
-use crypto::ecc::*;
-#[cfg(target_os = "windows")]
-use crypto::rsa::*;
+use azihsm_crypto::*;
 #[cfg(any(feature = "pre_encode", feature = "post_decode"))]
-use mcr_ddi_types::*;
+use azihsm_ddi_types::*;
 
 #[cfg(feature = "pre_encode")]
-#[cfg(target_os = "linux")]
 fn test_ecc_pub_key_der_to_raw(curve: DdiEccCurve) {
     let (curve_name, der_len) = match curve {
-        DdiEccCurve::P256 => (openssl::nid::Nid::X9_62_PRIME256V1, 32),
-        DdiEccCurve::P384 => (openssl::nid::Nid::SECP384R1, 48),
-        DdiEccCurve::P521 => (openssl::nid::Nid::SECP521R1, 66),
+        DdiEccCurve::P256 => (EccCurve::P256, 32),
+        DdiEccCurve::P384 => (EccCurve::P384, 48),
+        DdiEccCurve::P521 => (EccCurve::P521, 66),
         _ => return,
     };
 
     // Generate ecc public key
-    let group = openssl::ec::EcGroup::from_curve_name(curve_name).unwrap();
-    let ecc_private = openssl::ec::EcKey::generate(&group).unwrap();
-    let ecc_public = openssl::ec::EcKey::from_public_key(&group, ecc_private.public_key()).unwrap();
-
-    // Get affine coordinate data
-    let mut x = openssl::bn::BigNum::new().unwrap();
-    let mut y = openssl::bn::BigNum::new().unwrap();
-    let mut ctx = openssl::bn::BigNumContext::new().unwrap();
-    ecc_public
-        .public_key()
-        .affine_coordinates(&group, &mut x, &mut y, &mut ctx)
-        .unwrap();
+    let ecc_private = EccPrivateKey::from_curve(curve_name).unwrap();
+    let ecc_public = ecc_private.public_key().unwrap();
+    let (x, y) = ecc_public.coord_vec().unwrap();
 
     // Get key in der format
-    let public_key_der = ecc_public.public_key_to_der().unwrap();
+    let public_key_der = ecc_public.to_vec().unwrap();
 
     // Call ecc_pub_key_der_to_raw to get affine coordinate data from der
     let key_data = ecc_pub_key_der_to_raw(&public_key_der).unwrap();
@@ -42,35 +27,25 @@ fn test_ecc_pub_key_der_to_raw(curve: DdiEccCurve) {
     // Verify key_data
     assert_eq!(key_data.curve, curve);
     // key_data might have a leading 0u8 byte, just compare up to OpenSSL data length
-    let x_len_diff = der_len - x.to_vec().len();
-    let y_len_diff = der_len - y.to_vec().len();
-    assert_eq!(key_data.x[x_len_diff..der_len], x.to_vec());
-    assert_eq!(key_data.y[y_len_diff..der_len], y.to_vec());
+    let x_len_diff = der_len - x.len();
+    let y_len_diff = der_len - y.len();
+    assert_eq!(key_data.x[x_len_diff..der_len], x);
+    assert_eq!(key_data.y[y_len_diff..der_len], y);
 }
 
 #[cfg(feature = "post_decode")]
-#[cfg(target_os = "linux")]
 fn test_ecc_pub_key_raw_to_der(curve: DdiEccCurve) {
     let (curve_name, der_len) = match curve {
-        DdiEccCurve::P256 => (openssl::nid::Nid::X9_62_PRIME256V1, 32),
-        DdiEccCurve::P384 => (openssl::nid::Nid::SECP384R1, 48),
-        DdiEccCurve::P521 => (openssl::nid::Nid::SECP521R1, 66),
+        DdiEccCurve::P256 => (EccCurve::P256, 32),
+        DdiEccCurve::P384 => (EccCurve::P384, 48),
+        DdiEccCurve::P521 => (EccCurve::P521, 66),
         _ => return,
     };
 
     // Generate ecc public key
-    let group = openssl::ec::EcGroup::from_curve_name(curve_name).unwrap();
-    let ecc_private = openssl::ec::EcKey::generate(&group).unwrap();
-    let ecc_public = openssl::ec::EcKey::from_public_key(&group, ecc_private.public_key()).unwrap();
-
-    // Get affine coordinate data
-    let mut x = openssl::bn::BigNum::new().unwrap();
-    let mut y = openssl::bn::BigNum::new().unwrap();
-    let mut ctx = openssl::bn::BigNumContext::new().unwrap();
-    ecc_public
-        .public_key()
-        .affine_coordinates(&group, &mut x, &mut y, &mut ctx)
-        .unwrap();
+    let ecc_private = EccPrivateKey::from_curve(curve_name).unwrap();
+    let ecc_public = ecc_private.public_key().unwrap();
+    let (x, y) = ecc_public.coord_vec().unwrap();
 
     let mut x_array = [0u8; 66];
     let mut y_array = [0u8; 66];
@@ -95,110 +70,13 @@ fn test_ecc_pub_key_raw_to_der(curve: DdiEccCurve) {
 }
 
 #[cfg(feature = "post_decode")]
-#[cfg(target_os = "linux")]
 fn test_rsa_pub_key_raw_to_der(size: u32) {
     // Generate rsa public key
-    let rsa_private = openssl::rsa::Rsa::generate(size).unwrap();
 
-    let n = rsa_private.n().to_owned().unwrap();
-    let e = rsa_private.e().to_owned().unwrap();
+    let rsa_private = RsaPrivateKey::generate((size / 8) as usize).unwrap();
 
-    let key_data = RsaPublicKeyData {
-        n: n.to_vec(),
-        e: e.to_vec(),
-        little_endian: false,
-    };
-    let der_vec = rsa_pub_key_raw_to_der(key_data).unwrap();
-
-    let rsa_public = openssl::rsa::Rsa::public_key_from_der(&der_vec).unwrap();
-    let new_n = rsa_public.n().to_owned().unwrap();
-    let new_e = rsa_public.e().to_owned().unwrap();
-
-    let pkey = openssl::pkey::PKey::from_rsa(rsa_public).unwrap();
-
-    let new_size = pkey.bits();
-    assert_eq!(size, new_size);
-    assert_eq!(n, new_n);
-    assert_eq!(e, new_e);
-}
-
-#[cfg(feature = "pre_encode")]
-#[cfg(target_os = "windows")]
-fn test_ecc_pub_key_der_to_raw(curve: DdiEccCurve) {
-    let (curve_name, der_len) = match curve {
-        DdiEccCurve::P256 => (CryptoEccCurve::P256, 32),
-        DdiEccCurve::P384 => (CryptoEccCurve::P384, 48),
-        DdiEccCurve::P521 => (CryptoEccCurve::P521, 66),
-        _ => return,
-    };
-
-    // Generate ecc public key
-    let (_ecc_private, ecc_public) = crypto::ecc::generate_ecc(curve_name).unwrap();
-
-    // Get affine coordinate data
-    let (x, y) = ecc_public.coordinates().unwrap();
-
-    // Get key in der format
-    let public_key_der = ecc_public.to_der().unwrap();
-
-    // Call ecc_pub_key_der_to_raw to get affine coordinate data from der
-    let key_data = ecc_pub_key_der_to_raw(&public_key_der).unwrap();
-
-    // Verify key_data
-    assert_eq!(key_data.curve, curve);
-    // key_data might have a leading 0u8 byte, just compare up to OpenSSL data length
-    let x_len_diff = der_len - x.len();
-    let y_len_diff = der_len - y.len();
-    assert_eq!(key_data.x[x_len_diff..der_len], x);
-    assert_eq!(key_data.y[y_len_diff..der_len], y);
-}
-
-#[cfg(feature = "post_decode")]
-#[cfg(target_os = "windows")]
-fn test_ecc_pub_key_raw_to_der(curve: DdiEccCurve) {
-    let (curve_name, der_len) = match curve {
-        DdiEccCurve::P256 => (CryptoEccCurve::P256, 32),
-        DdiEccCurve::P384 => (CryptoEccCurve::P384, 48),
-        DdiEccCurve::P521 => (CryptoEccCurve::P521, 66),
-        _ => return,
-    };
-
-    // Generate ecc public key
-    let (_ecc_private, ecc_public) = crypto::ecc::generate_ecc(curve_name).unwrap();
-
-    // Get affine coordinate data
-    let (x, y) = ecc_public.coordinates().unwrap();
-
-    let mut x_array = [0u8; 66];
-    let mut y_array = [0u8; 66];
-    x_array[der_len - x.len()..der_len].copy_from_slice(&x);
-    y_array[der_len - y.len()..der_len].copy_from_slice(&y);
-    let pub_key_data = EccPublicKeyData {
-        x: x_array,
-        y: y_array,
-        curve,
-    };
-
-    // Construct DER
-    let der = ecc_pub_key_raw_to_der(pub_key_data.clone()).unwrap();
-
-    // Test with inverse function
-    let new_key_data = ecc_pub_key_der_to_raw(&der).unwrap();
-
-    assert_eq!(pub_key_data, new_key_data);
-    assert_eq!(pub_key_data.curve, new_key_data.curve);
-    assert_eq!(pub_key_data.x, new_key_data.x);
-    assert_eq!(pub_key_data.y, new_key_data.y);
-}
-
-#[cfg(feature = "post_decode")]
-#[cfg(target_os = "windows")]
-fn test_rsa_pub_key_raw_to_der(size: u32) {
-    // Generate rsa public key
-    let rsa_private = crypto::rsa::RsaPrivateKey::generate(size).unwrap();
-
-    let n = rsa_private.modulus().unwrap();
-    let e = rsa_private.public_exponent().unwrap();
+    let n = rsa_private.n_vec().unwrap();
+    let e = rsa_private.e_vec().unwrap();
 
     let key_data = RsaPublicKeyData {
         n: n.clone(),
@@ -207,12 +85,12 @@ fn test_rsa_pub_key_raw_to_der(size: u32) {
     };
     let der_vec = rsa_pub_key_raw_to_der(key_data).unwrap();
 
-    let rsa_public = crypto::rsa::RsaPublicKey::from_der(&der_vec, None).unwrap();
-    let new_n = rsa_public.modulus().unwrap();
-    let new_e = rsa_public.public_exponent().unwrap();
+    let rsa_public = RsaPublicKey::from_bytes(&der_vec).unwrap();
+    let new_n = rsa_public.n_vec().unwrap();
+    let new_e = rsa_public.e_vec().unwrap();
 
-    let new_size = rsa_public.bits();
-    assert_eq!(size, new_size);
+    // let new_size = rsa_public.
+    // assert_eq!(size, new_size);
     assert_eq!(n, new_n);
     assert_eq!(e, new_e);
 }

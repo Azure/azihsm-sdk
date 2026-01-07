@@ -905,10 +905,7 @@ qUzzk3pb
     /// usable RSA public key.
     #[test]
     fn test_rsa_public_key_from_cert() {
-        use crypto::CryptoRsaCryptoPadding;
-        use crypto::rsa::RsaOp;
-        use crypto::rsa::RsaPublicKey;
-        use crypto::rsa::RsaPublicOp;
+        use azihsm_crypto::*;
 
         let der_bytes = get_rsa_der_valid();
 
@@ -919,22 +916,24 @@ qUzzk3pb
         let public_key_der = cert
             .get_public_key_der()
             .expect("Failed to get public key DER blob");
-        let public_key = RsaPublicKey::from_der(public_key_der.as_slice(), None).expect(
+        let public_key = RsaPublicKey::from_bytes(&public_key_der).expect(
             "Failed to parse public key DER blob while attempting to create RSA public key",
         );
 
         // Test the RSA public key we just parsed by using it to encrypt data.
-        let _ciphertext = public_key
-            .encrypt(b"TEST_PLAINTEXT", CryptoRsaCryptoPadding::Oaep, None, None)
-            .expect("Failed to encrypt data with RSA public key");
+        let _ciphertext = Encrypter::encrypt_vec(
+            &mut RsaEncryptAlgo::with_oaep_padding(HashAlgo::sha256(), None),
+            &public_key,
+            b"TEST_PLAINTEXT",
+        )
+        .expect("Failed to encrypt data with RSA public key");
     }
 
     /// Tests deriving a public key from a certificate and turning it into a
     /// usable ECC public key.
     #[test]
     fn test_ecc_public_key_from_cert() {
-        use crypto::ecc::EccOp;
-        use crypto::ecc::EccPublicKey;
+        use azihsm_crypto::*;
 
         let der_bytes = get_ecc_der_valid();
 
@@ -945,7 +944,7 @@ qUzzk3pb
         let public_key_der = cert
             .get_public_key_der()
             .expect("Failed to get public key DER blob");
-        let _public_key = EccPublicKey::from_der(public_key_der.as_slice(), None).expect(
+        let _public_key = EccPublicKey::from_bytes(&public_key_der).expect(
             "Failed to parse public key DER blob while attempting to create ECC public key",
         );
 

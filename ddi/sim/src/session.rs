@@ -5,13 +5,12 @@
 use std::sync::Arc;
 use std::sync::Weak;
 
-use attestation::attestation::*;
-use attestation::report::TAGGED_COSE_SIGN1_OBJECT_MAX_SIZE;
 use bitfield_struct::bitfield;
 use parking_lot::RwLock;
 use tracing::instrument;
 use uuid::Uuid;
 
+use crate::attestation::*;
 use crate::credentials::EncryptedPin;
 use crate::crypto::aes::*;
 use crate::crypto::aeshmac::AesHmacKey;
@@ -24,6 +23,7 @@ use crate::crypto::sha::*;
 use crate::errors::ManticoreError;
 use crate::function::FunctionState;
 use crate::function::FunctionStateWeak;
+use crate::report::TAGGED_COSE_SIGN1_OBJECT_MAX_SIZE;
 use crate::table::entry::key::*;
 use crate::table::entry::*;
 use crate::vault::*;
@@ -639,9 +639,6 @@ impl UserSessionInner {
         }
 
         if let Key::EccPrivate(key) = attestation_key.key() {
-            let key = key
-                .try_into()
-                .map_err(|_| ManticoreError::EccFromDerError)?;
             let (signed_quote, signed_quote_len) = attester.sign(&key).map_err(|error| {
                 tracing::error!(?error, "Failed to sign attestation report");
                 ManticoreError::AttestKeyInternalErr

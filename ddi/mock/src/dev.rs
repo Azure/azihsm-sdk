@@ -4,25 +4,25 @@
 
 use std::sync::Arc;
 
+use azihsm_ddi_interface::*;
+use azihsm_ddi_mbor::MborDecode;
+use azihsm_ddi_mbor::MborDecoder;
+use azihsm_ddi_mbor::MborEncoder;
+use azihsm_ddi_sim::aesgcmxts::*;
+use azihsm_ddi_sim::crypto::aes::AesMode;
+use azihsm_ddi_sim::dispatcher::Dispatcher;
+use azihsm_ddi_types::DdiAesOp;
+use azihsm_ddi_types::DdiDecoder;
+use azihsm_ddi_types::DdiDeviceKind;
+use azihsm_ddi_types::DdiOp;
+use azihsm_ddi_types::DdiOpReq;
+use azihsm_ddi_types::DdiOpenSessionCmdResp;
+use azihsm_ddi_types::DdiRespHdr;
+use azihsm_ddi_types::DdiStatus;
+use azihsm_ddi_types::MborError;
+use azihsm_ddi_types::SessionControlKind;
+use azihsm_ddi_types::SessionInfoRequest;
 use lazy_static::lazy_static;
-use mcr_ddi::*;
-use mcr_ddi_mbor::MborDecode;
-use mcr_ddi_mbor::MborDecoder;
-use mcr_ddi_mbor::MborEncoder;
-use mcr_ddi_sim::aesgcmxts::*;
-use mcr_ddi_sim::crypto::aes::AesMode;
-use mcr_ddi_sim::dispatcher::Dispatcher;
-use mcr_ddi_types::DdiAesOp;
-use mcr_ddi_types::DdiDecoder;
-use mcr_ddi_types::DdiDeviceKind;
-use mcr_ddi_types::DdiOp;
-use mcr_ddi_types::DdiOpReq;
-use mcr_ddi_types::DdiOpenSessionCmdResp;
-use mcr_ddi_types::DdiRespHdr;
-use mcr_ddi_types::DdiStatus;
-use mcr_ddi_types::MborError;
-use mcr_ddi_types::SessionControlKind;
-use mcr_ddi_types::SessionInfoRequest;
 use parking_lot::Mutex;
 use parking_lot::RwLock;
 
@@ -51,7 +51,11 @@ const AES_CHUNK_SIZE: usize = 0x1000;
 
 lazy_static! {
     static ref G_DISPATCHER: Arc<RwLock<Dispatcher>> = Arc::new(RwLock::new(
-        Dispatcher::new(TABLE_COUNT).expect("Failed to create Dispatcher")
+        #[allow(
+            clippy::expect_used,
+            reason = "lazy_static G_DISPATCHER creation should not fail"
+        )]
+        Dispatcher::new(TABLE_COUNT).expect("Failed to create lazy_static G_DISPATCHER")
     ));
 }
 
@@ -77,11 +81,10 @@ impl DdiMockDev {
 impl Drop for DdiMockDev {
     fn drop(&mut self) {
         tracing::debug!("Dropping DdiMockDev");
-        if self.session_id.lock().session_id.is_some() {
-            let _resp = self
-                .dispatcher
-                .read()
-                .flush_session(self.session_id.lock().session_id.unwrap());
+        if let Some(session_id) = self.session_id.lock().session_id {
+            let _resp = self.dispatcher.read().flush_session(session_id);
+        } else {
+            tracing::warn!("DdiMockDev session_id is None during DdiMockDev::drop()");
         }
     }
 }

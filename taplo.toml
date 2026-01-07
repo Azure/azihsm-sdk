@@ -1,0 +1,16 @@
+# Copyright (C) Microsoft Corporation. All rights reserved.
+
+exclude = ["target"]
+
+[formatting]
+# Enable alphabetical reordering of keys in tables
+reorder_keys = true
+
+# Enable alphabetical reordering of inline tables
+reorder_inline_tables = true
+
+# Enable alphabetical reordering of array values (if not separated by blank lines)
+reorder_arrays = true
+
+# Maximum number of consecutive blank lines
+allowed_blank_lines = 1

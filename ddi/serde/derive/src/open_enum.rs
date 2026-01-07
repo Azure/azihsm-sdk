@@ -59,7 +59,13 @@ pub(crate) fn prase_open_enum(input: &syn::DeriveInput) -> syn::Result<DdiOpenEn
                 Err(syn::Error::new(enum_attr.ident.span(), msg))?
             }
 
-            let field = fields.fields.into_iter().next().unwrap();
+            let field = fields.fields.into_iter().next().ok_or_else(|| {
+                let msg = format!(
+                    "Failed to unwrap field for #[ddi(enumeration)] attribute for open_enum {}.",
+                    enum_attr.ident
+                );
+                syn::Error::new(enum_attr.ident.span(), msg)
+            })?;
             let field_segments = match field.ty {
                 syn::Type::Path(p) => p.path.segments,
                 _ => {
@@ -79,7 +85,13 @@ pub(crate) fn prase_open_enum(input: &syn::DeriveInput) -> syn::Result<DdiOpenEn
                 Err(syn::Error::new(enum_attr.ident.span(), msg))?
             }
 
-            let ident = field_segments.first().unwrap().ident.clone();
+            let ident = field_segments.first().ok_or_else(|| {
+                let msg = format!(
+                    "Failed to unwrap first field type segment for #[ddi(enumeration)] attribute for open_enum {}.",
+                    enum_attr.ident
+                );
+                syn::Error::new(enum_attr.ident.span(), msg)
+            })?.ident.clone();
             let u32_ident = Ident::new("u32", ident.span());
 
             if ident.cmp(&u32_ident) != std::cmp::Ordering::Equal {

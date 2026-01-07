@@ -2,42 +2,41 @@
 
 //! Module for RSA Cryptographic Keys.
 
-#[cfg(all(feature = "use-openssl", feature = "use-symcrypt"))]
-compile_error!("OpenSSL and non-OpenSSL cannot be enabled at the same time.");
-
-#[cfg(feature = "use-openssl")]
+#[cfg(target_os = "linux")]
 use openssl;
-#[cfg(feature = "use-openssl")]
+#[cfg(target_os = "linux")]
 use openssl::bn::BigNum;
-#[cfg(feature = "use-openssl")]
+#[cfg(target_os = "linux")]
 use openssl::md::Md;
-#[cfg(feature = "use-openssl")]
+#[cfg(target_os = "linux")]
 use openssl::pkey::PKey;
-#[cfg(feature = "use-openssl")]
+#[cfg(target_os = "linux")]
 use openssl::pkey::Private;
-#[cfg(feature = "use-openssl")]
+#[cfg(target_os = "linux")]
 use openssl::pkey::Public;
-#[cfg(feature = "use-openssl")]
+#[cfg(target_os = "linux")]
 use openssl::pkey_ctx::PkeyCtx;
-#[cfg(feature = "use-openssl")]
+#[cfg(target_os = "linux")]
 use openssl::rsa::RsaPrivateKeyBuilder;
-#[cfg(feature = "use-openssl")]
+#[cfg(target_os = "linux")]
 use openssl::sign::RsaPssSaltlen;
-#[cfg(feature = "use-symcrypt")]
+#[cfg(target_os = "windows")]
 use rand::rngs::OsRng;
-#[cfg(feature = "use-symcrypt")]
+#[cfg(target_os = "windows")]
 use rsa;
-#[cfg(feature = "use-symcrypt")]
+#[cfg(target_os = "windows")]
 use rsa::hazmat::rsa_decrypt;
-#[cfg(feature = "use-symcrypt")]
+#[cfg(target_os = "windows")]
 use rsa::hazmat::rsa_encrypt;
-#[cfg(feature = "use-symcrypt")]
+#[cfg(target_os = "windows")]
 use rsa::BigUint;
-#[cfg(feature = "use-symcrypt")]
+#[cfg(target_os = "windows")]
+use symcrypt::errors::SymCryptError;
+#[cfg(target_os = "windows")]
 use symcrypt::hash::HashAlgorithm as SymcryptHashAlgorithm;
-#[cfg(feature = "use-symcrypt")]
+#[cfg(target_os = "windows")]
 use symcrypt::rsa::RsaKey;
-#[cfg(feature = "use-symcrypt")]
+#[cfg(target_os = "windows")]
 use symcrypt::rsa::RsaKeyUsage;
 
 use crate::crypto::sha::HashAlgorithm;
@@ -45,7 +44,7 @@ use crate::errors::ManticoreError;
 use crate::mask::KeySerialization;
 use crate::table::entry::Kind;
 
-#[cfg(feature = "use-symcrypt")]
+#[cfg(target_os = "windows")]
 const RSA_OID: pkcs1::ObjectIdentifier =
     pkcs1::ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.1");
 
@@ -173,7 +172,7 @@ pub trait RsaPublicOp {
 ///
 /// # Errors
 /// * `ManticoreError::RsaGenerateError` - If the RSA key pair generation fails.
-#[cfg(feature = "use-openssl")]
+#[cfg(target_os = "linux")]
 pub fn generate_rsa(size: u32) -> Result<(RsaPrivateKey, RsaPublicKey), ManticoreError> {
     // Rsa::generate() uses 65537 as public exponent
     let rsa_private = openssl::rsa::Rsa::generate(size).map_err(|openssl_error_stack| {
@@ -219,7 +218,7 @@ pub fn generate_rsa(size: u32) -> Result<(RsaPrivateKey, RsaPublicKey), Manticor
 }
 
 /// Generate a RSA key pair using symcrypt.
-#[cfg(feature = "use-symcrypt")]
+#[cfg(target_os = "windows")]
 pub fn generate_rsa(size: u32) -> Result<(RsaPrivateKey, RsaPublicKey), ManticoreError> {
     let key_pair = RsaKey::generate_key_pair(size, None, RsaKeyUsage::SignAndEncrypt).map_err(
         |symcrypt_error_stack| {
@@ -263,7 +262,7 @@ pub fn generate_rsa(size: u32) -> Result<(RsaPrivateKey, RsaPublicKey), Manticor
     ))
 }
 
-#[cfg(feature = "use-symcrypt")]
+#[cfg(target_os = "windows")]
 fn create_rsa_public_key_from_symcrypt(
     symcrypt_key: &RsaKey,
 ) -> Result<rsa::RsaPublicKey, ManticoreError> {
@@ -288,7 +287,7 @@ fn create_rsa_public_key_from_symcrypt(
     Ok(rsa_public_key)
 }
 
-#[cfg(feature = "use-symcrypt")]
+#[cfg(target_os = "windows")]
 fn create_rsa_private_key_from_symcrypt(
     symcrypt_key: &RsaKey,
 ) -> Result<rsa::RsaPrivateKey, ManticoreError> {
@@ -317,10 +316,10 @@ fn create_rsa_private_key_from_symcrypt(
 /// RSA Private Key.
 #[derive(Debug)]
 pub struct RsaPrivateKey {
-    #[cfg(feature = "use-openssl")]
+    #[cfg(target_os = "linux")]
     handle: PKey<Private>,
 
-    #[cfg(feature = "use-symcrypt")]
+    #[cfg(target_os = "windows")]
     handle: RsaKey,
 
     size: RsaKeySize,
@@ -329,24 +328,25 @@ pub struct RsaPrivateKey {
 /// RSA Public Key.
 #[derive(Debug)]
 pub struct RsaPublicKey {
-    #[cfg(feature = "use-openssl")]
+    #[cfg(target_os = "linux")]
     handle: PKey<Public>,
 
-    #[cfg(feature = "use-symcrypt")]
+    #[cfg(target_os = "windows")]
     handle: RsaKey,
 
     #[allow(unused)]
     size: RsaKeySize,
 }
 
-#[cfg(feature = "use-symcrypt")]
-impl Clone for RsaPrivateKey {
-    fn clone(&self) -> Self {
+/// Error-safe implementation of `Clone` for SymCrypt-based RSA private keys.
+/// SymCrypt does not implement its own `Clone` trait, so we manually implement
+/// it by exporting a key's contents and re-importing it into a new key.
+#[cfg(target_os = "windows")]
+impl RsaPrivateKey {
+    // Attempts to clone the key; returning a SymCrypt error on failure.
+    fn try_clone(&self) -> Result<Self, SymCryptError> {
         // Export the key components
-        let blob = self
-            .handle
-            .export_key_pair_blob()
-            .expect("Failed to export key pair blob for cloning");
+        let blob = self.handle.export_key_pair_blob()?;
 
         // Recreate the private key from components
         let cloned_key = RsaKey::set_key_pair(
@@ -355,13 +355,31 @@ impl Clone for RsaPrivateKey {
             &blob.p,
             &blob.q,
             self.handle.get_rsa_key_usage(),
-        )
-        .expect("Failed to recreate private key for cloning");
+        )?;
 
-        RsaPrivateKey {
+        Ok(RsaPrivateKey {
             handle: cloned_key,
             size: self.size,
-        }
+        })
+    }
+}
+
+/// This implementation of `Clone` for SymCrypt-based RSA public keys uses the
+/// `try_clone()` implementation above, and assumes success (via `expect()`).
+///
+/// Usage of `expect()` and `unwrap()` are forbidden, but in this case we make
+/// an exception to ensure this key is clone-able, just like all the other key
+/// implementations, for the mock device. Because this code is only used in
+/// testing (the mock device), any panics will be caught in testing and this
+/// will not be compiled into a production version of the library.
+#[cfg(target_os = "windows")]
+impl Clone for RsaPrivateKey {
+    #[allow(
+        clippy::expect_used,
+        reason = "cloning RsaPrivateKey with mock device assumes success; panics will be caught in testing"
+    )]
+    fn clone(&self) -> Self {
+        self.try_clone().expect("Failed to clone RSA private key")
     }
 }
 
@@ -473,32 +491,51 @@ impl KeySerialization<RsaPrivateKey> for RsaPrivateKey {
     }
 }
 
-#[cfg(feature = "use-symcrypt")]
-impl Clone for RsaPublicKey {
-    fn clone(&self) -> Self {
+/// Error-safe implementation of `Clone` for SymCrypt-based RSA public keys.
+/// SymCrypt does not implement its own `Clone` trait, so we manually implement
+/// it by exporting a key's contents and re-importing it into a new key.
+#[cfg(target_os = "windows")]
+impl RsaPublicKey {
+    // Attempts to clone the key; returning a SymCrypt error on failure.
+    fn try_clone(&self) -> Result<Self, SymCryptError> {
         // Export the public key components
-        let blob = self
-            .handle
-            .export_public_key_blob()
-            .expect("Failed to export public key blob for cloning");
+        let blob = self.handle.export_public_key_blob()?;
 
         // Recreate the public key from components
         let cloned_key = RsaKey::set_public_key(
             &blob.modulus,
             &blob.pub_exp,
             self.handle.get_rsa_key_usage(),
-        )
-        .expect("Failed to recreate public key for cloning");
+        )?;
 
-        RsaPublicKey {
+        Ok(RsaPublicKey {
             handle: cloned_key,
             size: self.size,
-        }
+        })
+    }
+}
+
+/// This implementation of `Clone` for SymCrypt-based RSA public keys uses the
+/// `try_clone()` implementation above, and assumes success (via `expect()`).
+///
+/// Usage of `expect()` and `unwrap()` are forbidden, but in this case we make
+/// an exception to ensure this key is clone-able, just like all the other key
+/// implementations, for the mock device. Because this code is only used in
+/// testing (the mock device), any panics will be caught in testing and this
+/// will not be compiled into a production version of the library.
+#[cfg(target_os = "windows")]
+impl Clone for RsaPublicKey {
+    #[allow(
+        clippy::expect_used,
+        reason = "cloning RsaPublicKey with mock device assumes success; panics will be caught in testing"
+    )]
+    fn clone(&self) -> Self {
+        self.try_clone().expect("Failed to clone RSA public key")
     }
 }
 
 // For OpenSSL, the existing Clone derive should work since PKey implements Clone
-#[cfg(feature = "use-openssl")]
+#[cfg(target_os = "linux")]
 impl Clone for RsaPrivateKey {
     fn clone(&self) -> Self {
         RsaPrivateKey {
@@ -508,7 +545,7 @@ impl Clone for RsaPrivateKey {
     }
 }
 
-#[cfg(feature = "use-openssl")]
+#[cfg(target_os = "linux")]
 impl Clone for RsaPublicKey {
     fn clone(&self) -> Self {
         RsaPublicKey {
@@ -518,7 +555,7 @@ impl Clone for RsaPublicKey {
     }
 }
 
-#[cfg(feature = "use-openssl")]
+#[cfg(target_os = "linux")]
 impl RsaOp<RsaPrivateKey> for RsaPrivateKey {
     /// Deserialize an RSA private key from a DER-encoded PKCS#8 format.
     fn from_der(der: &[u8], expected_type: Option<Kind>) -> Result<RsaPrivateKey, ManticoreError> {
@@ -605,7 +642,7 @@ impl RsaOp<RsaPrivateKey> for RsaPrivateKey {
     }
 }
 
-#[cfg(feature = "use-symcrypt")]
+#[cfg(target_os = "windows")]
 impl RsaOp<RsaPrivateKey> for RsaPrivateKey {
     fn from_der(der: &[u8], expected_type: Option<Kind>) -> Result<RsaPrivateKey, ManticoreError> {
         use pkcs1::der::Decode;
@@ -773,7 +810,7 @@ impl RsaOp<RsaPrivateKey> for RsaPrivateKey {
     }
 }
 
-#[cfg(feature = "use-openssl")]
+#[cfg(target_os = "linux")]
 impl RsaPrivateKey {
     /// Export the Prime1 and Prime2 of the RSA Private key
     fn primes(&self) -> Result<(Vec<u8>, Vec<u8>), ManticoreError> {
@@ -871,7 +908,7 @@ impl RsaPrivateKey {
     }
 }
 
-#[cfg(feature = "use-symcrypt")]
+#[cfg(target_os = "windows")]
 impl RsaPrivateKey {
     /// Export the Prime1 and Prime2 of the RSA Private key
     fn primes(&self) -> Result<(Vec<u8>, Vec<u8>), ManticoreError> {
@@ -937,7 +974,7 @@ impl RsaPrivateKey {
     }
 }
 
-#[cfg(feature = "use-openssl")]
+#[cfg(target_os = "linux")]
 impl RsaPrivateOp for RsaPrivateKey {
     // Private key operation (modular exponentiation)
     fn operate(&self, data: &[u8]) -> Result<Vec<u8>, ManticoreError> {
@@ -1087,7 +1124,7 @@ impl RsaPrivateOp for RsaPrivateKey {
     }
 }
 
-#[cfg(feature = "use-symcrypt")]
+#[cfg(target_os = "windows")]
 impl RsaPrivateOp for RsaPrivateKey {
     fn operate(&self, data: &[u8]) -> Result<Vec<u8>, ManticoreError> {
         self.decrypt(data, RsaCryptoPadding::None, None)
@@ -1275,7 +1312,7 @@ impl RsaPrivateOp for RsaPrivateKey {
     }
 }
 
-#[cfg(feature = "use-openssl")]
+#[cfg(target_os = "linux")]
 impl RsaOp<RsaPublicKey> for RsaPublicKey {
     /// Deserialize an RSA public key from a DER-encoded SubjectPublicKeyInfo format.
     fn from_der(der: &[u8], expected_type: Option<Kind>) -> Result<RsaPublicKey, ManticoreError> {
@@ -1366,7 +1403,7 @@ impl RsaOp<RsaPublicKey> for RsaPublicKey {
     }
 }
 
-#[cfg(feature = "use-symcrypt")]
+#[cfg(target_os = "windows")]
 impl RsaOp<RsaPublicKey> for RsaPublicKey {
     fn from_der(der: &[u8], expected_type: Option<Kind>) -> Result<RsaPublicKey, ManticoreError> {
         use pkcs1::der::Decode;
@@ -1511,7 +1548,7 @@ impl RsaOp<RsaPublicKey> for RsaPublicKey {
     }
 }
 
-#[cfg(feature = "use-openssl")]
+#[cfg(target_os = "linux")]
 impl RsaPublicOp for RsaPublicKey {
     // Encryption
     fn encrypt(
@@ -1643,7 +1680,7 @@ impl RsaPublicOp for RsaPublicKey {
     }
 }
 
-#[cfg(feature = "use-symcrypt")]
+#[cfg(target_os = "windows")]
 impl RsaPublicOp for RsaPublicKey {
     fn encrypt(
         &self,

@@ -8,9 +8,9 @@ extern crate alloc;
 use alloc::vec::Vec;
 
 #[cfg(feature = "post_decode")]
-use mcr_ddi_mbor::MborDecodeError;
+use azihsm_ddi_mbor::MborDecodeError;
 #[cfg(feature = "pre_encode")]
-use mcr_ddi_mbor::MborEncodeError;
+use azihsm_ddi_mbor::MborEncodeError;
 
 #[cfg(any(feature = "pre_encode", feature = "post_decode"))]
 use crate::DdiEccCurve;

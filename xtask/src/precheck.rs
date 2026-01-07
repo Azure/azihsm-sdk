@@ -11,7 +11,7 @@ use crate::clippy;
 use crate::copyright;
 use crate::fmt;
 use crate::native;
-use crate::test;
+use crate::nextest;
 use crate::Xtask;
 use crate::XtaskCtx;
 
@@ -40,8 +40,13 @@ impl Xtask for Precheck {
         clippy.run(ctx.clone())?;
 
         // Run Rust tests
-        let test = test::Test {};
-        test.run(ctx.clone())?;
+        let nextest = nextest::Nextest {
+            features: Some("mock".to_string()),
+            package: None,
+            no_default_features: false,
+            filterset: None,
+        };
+        nextest.run(ctx.clone())?;
 
         // Replace the build_cpp section with:
         let cpp_test = native::NativeBuildAndTest {

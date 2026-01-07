@@ -1,7 +1,7 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
 
-use mcr_ddi_mbor::MborEncode;
-use mcr_ddi_mbor::MborEncoder;
+use azihsm_ddi_mbor::MborEncode;
+use azihsm_ddi_mbor::MborEncoder;
 
 use crate::*;
 

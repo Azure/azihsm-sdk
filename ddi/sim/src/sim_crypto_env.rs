@@ -2,17 +2,19 @@
 
 //! Adapter implementing crypto_env::CryptEnv for the SIM, built on the shared crypto crate.
 
-use crypto::aes::AesAlgo;
-use crypto::aes::AesKey;
-use crypto::aes::AesOp;
-use crypto::sha::hmac_sha_384;
-use crypto::CryptoError;
-use crypto_env::CryptEnv;
-use mcr_ddi_types::AES_BLOCK_SIZE;
-use mcr_ddi_types::AES_CBC_256_KEY_SIZE;
-use mcr_ddi_types::AES_CBC_IV_SIZE;
-use mcr_ddi_types::HMAC384_KEY_SIZE;
-use mcr_ddi_types::HMAC384_TAG_SIZE;
+use azihsm_ddi_types::AES_BLOCK_SIZE;
+use azihsm_ddi_types::AES_CBC_256_KEY_SIZE;
+use azihsm_ddi_types::AES_CBC_IV_SIZE;
+use azihsm_ddi_types::HMAC384_KEY_SIZE;
+use azihsm_ddi_types::HMAC384_TAG_SIZE;
+
+use crate::crypto::aes::AesAlgo;
+use crate::crypto::aes::AesKey;
+use crate::crypto::aes::AesOp;
+use crate::crypto::rand::rand_bytes;
+use crate::crypto::sha::hmac_sha_384;
+use crate::crypto_env::CryptEnv;
+use crate::errors::ManticoreError;
 
 /// Size of BK3 in bytes
 pub const BK3_SIZE_BYTES: usize = 48;
@@ -42,7 +44,11 @@ pub const SESSION_SEED_SIZE_BYTES: usize = 48;
 pub struct SimCryptEnv;
 
 impl CryptEnv for SimCryptEnv {
-    fn hmac384_tag(&self, key: &[u8], data: &[u8]) -> Result<[u8; HMAC384_TAG_SIZE], CryptoError> {
+    fn hmac384_tag(
+        &self,
+        key: &[u8],
+        data: &[u8],
+    ) -> Result<[u8; HMAC384_TAG_SIZE], ManticoreError> {
         hmac_sha_384(key, data)
     }
 
@@ -57,11 +63,11 @@ impl CryptEnv for SimCryptEnv {
         plaintext: &[u8],
         iv_out: &mut [u8],
         ciphertext: &mut [u8],
-    ) -> Result<usize, CryptoError> {
+    ) -> Result<usize, ManticoreError> {
         let aes_key = AesKey::from_bytes(key)?;
 
         let mut iv = [0u8; AES_CBC_IV_SIZE];
-        crypto::rand::rand_bytes(&mut iv).map_err(|_| CryptoError::RngError)?;
+        rand_bytes(&mut iv).map_err(|_| ManticoreError::RngError)?;
 
         // Pad plaintext to the next 16-byte boundary with zeros
         let padded_len = self.aescbc256_enc_data_len(plaintext.len());
@@ -70,10 +76,10 @@ impl CryptEnv for SimCryptEnv {
 
         let result = aes_key
             .encrypt(&padded_plaintext, AesAlgo::Cbc, Some(&iv))
-            .map_err(|_| CryptoError::AesEncryptFailed)?;
+            .map_err(|_| ManticoreError::AesEncryptFailed)?;
 
         if ciphertext.len() < result.cipher_text.len() {
-            return Err(CryptoError::OutputBufferTooSmall);
+            return Err(ManticoreError::OutputBufferTooSmall);
         }
 
         ciphertext[..result.cipher_text.len()].copy_from_slice(&result.cipher_text);
@@ -88,12 +94,12 @@ impl CryptEnv for SimCryptEnv {
         iv: &[u8],
         ciphertext: &[u8],
         plaintext: &mut [u8],
-    ) -> Result<usize, CryptoError> {
+    ) -> Result<usize, ManticoreError> {
         let aes_key = AesKey::from_bytes(key)?;
 
         let result = aes_key
             .decrypt(ciphertext, AesAlgo::Cbc, Some(iv))
-            .map_err(|_| CryptoError::AesDecryptFailed)?;
+            .map_err(|_| ManticoreError::AesDecryptFailed)?;
 
         // The decrypted data includes zero-byte padding
         let decrypted_data = result.plain_text;
@@ -106,7 +112,7 @@ impl CryptEnv for SimCryptEnv {
                 expected_len = self.aescbc256_enc_data_len(plaintext.len()),
                 "Decrypted data length does not match expected length"
             );
-            return Err(CryptoError::AesDecryptFailed);
+            return Err(ManticoreError::AesDecryptFailed);
         }
 
         // Sanity check: verify that truncated bytes (padding) are all zeros
@@ -114,7 +120,7 @@ impl CryptEnv for SimCryptEnv {
             let padding_bytes = &decrypted_data[plaintext.len()..];
             if !padding_bytes.iter().all(|&byte| byte == 0) {
                 tracing::debug!("Decrypted data padding is not all zeros");
-                return Err(CryptoError::AesDecryptFailed);
+                return Err(ManticoreError::AesDecryptFailed);
             }
         }
 
@@ -130,14 +136,14 @@ impl CryptEnv for SimCryptEnv {
         context: Option<&[u8]>,
         out_len: usize,
         output: &mut [u8],
-    ) -> Result<(), CryptoError> {
+    ) -> Result<(), ManticoreError> {
         // api\support\lib does not have kbkdf support
         // We use api\ddi\sim\src\crypto implementation
         use crate::crypto::secret::SecretKey;
         use crate::crypto::secret::SecretOp;
         use crate::crypto::sha::HashAlgorithm;
 
-        let secret_key = SecretKey::from_bytes(key).map_err(|_| CryptoError::KbkdfError)?;
+        let secret_key = SecretKey::from_bytes(key).map_err(|_| ManticoreError::KbkdfError)?;
 
         let output_vec = secret_key
             .kbkdf_counter_hmac_derive(
@@ -148,16 +154,16 @@ impl CryptEnv for SimCryptEnv {
                 true, /*use_l, default value*/
                 out_len,
             )
-            .map_err(|_| CryptoError::KbkdfError)?;
+            .map_err(|_| ManticoreError::KbkdfError)?;
         if output.len() < output_vec.len() {
-            Err(CryptoError::InvalidParameter)?
+            Err(ManticoreError::InvalidArgument)?
         }
         output[..output_vec.len()].copy_from_slice(&output_vec);
 
         Ok(())
     }
 
-    fn generate_random(&self, output: &mut [u8]) -> Result<(), CryptoError> {
-        crypto::rand::rand_bytes(output).map_err(|_| CryptoError::RngError)
+    fn generate_random(&self, output: &mut [u8]) -> Result<(), ManticoreError> {
+        rand_bytes(output).map_err(|_| ManticoreError::RngError)
     }
 }

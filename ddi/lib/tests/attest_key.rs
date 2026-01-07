@@ -1,19 +1,14 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
 
+#![cfg(test)]
+
 mod common;
 
-use attestation::report::*;
-use crypto::ecc::CryptoEccCurve;
-use crypto::ecc::EccOp;
-use crypto::ecc::EccPublicKey;
-use crypto::ecc::EccPublicOp;
-use crypto::rsa::RsaOp;
-use crypto::rsa::RsaPublicKey;
-use crypto::sha::sha;
-use crypto::sha::HashAlgorithm;
-use mcr_ddi::*;
-use mcr_ddi_mbor::MborByteArray;
-use mcr_ddi_types::*;
+use azihsm_crypto::*;
+use azihsm_ddi::*;
+use azihsm_ddi_mbor::MborByteArray;
+use azihsm_ddi_test_helpers::*;
+use azihsm_ddi_types::*;
 use test_with_tracing::test;
 use x509::*;
 
@@ -79,8 +74,7 @@ fn test_attest_ecc_signing_key() {
                 &report_payload.public_key[..report_payload.public_key_size.into()],
             );
 
-            let result =
-                EccPublicKey::from_der(&pub_key_der.der.data()[..pub_key_der.der.len()], None);
+            let result = EccPublicKey::from_bytes(&pub_key_der.der.data()[..pub_key_der.der.len()]);
             assert!(result.is_ok(), "result {:?}", result);
             let ecc_pub = result.unwrap();
 
@@ -88,24 +82,23 @@ fn test_attest_ecc_signing_key() {
                 panic!("Should be CoseKey::EccPublic")
             };
 
-            let result = ecc_pub.coordinates();
+            let result = ecc_pub.coord_vec();
             assert!(result.is_ok(), "result {:?}", result);
             let (expected_x, expected_y) = result.unwrap();
 
             // In the rare case where generate ECC key returns a point with leading zeros,
-            // With feature use-openssl, expected_x (or y) would NOT have leading zeros as OpenSSL strips them.
-            // With feature use-symcrypt, expected_x (or y) could have leading zeros as SymCrypt doesn't strip them.
+            // With openssl, expected_x (or y) would NOT have leading zeros as OpenSSL strips them.
+            // With symcrypt, expected_x (or y) could have leading zeros as SymCrypt doesn't strip them.
             // CoseKey::EccPublic does not strip out leading zeros in the big number representation of the public key.
             // So here we remove leading zeros regardless
             assert_eq!(normalized_key(&x), normalized_key(&expected_x));
             assert_eq!(normalized_key(&y), normalized_key(&expected_y));
 
-            let result = ecc_pub.curve();
-            assert!(result.is_ok(), "result {:?}", result);
-            let expected_crv = match result.unwrap() {
-                CryptoEccCurve::P256 => 1,
-                CryptoEccCurve::P384 => 2,
-                CryptoEccCurve::P521 => 3,
+            let curve = ecc_pub.curve();
+            let expected_crv = match curve {
+                EccCurve::P256 => 1,
+                EccCurve::P384 => 2,
+                EccCurve::P521 => 3,
             };
             assert_eq!(crv, expected_crv);
         },
@@ -172,8 +165,7 @@ fn test_attest_ecc_seed_key() {
                 &report_payload.public_key[..report_payload.public_key_size.into()],
             );
 
-            let result =
-                EccPublicKey::from_der(&pub_key_der.der.data()[..pub_key_der.der.len()], None);
+            let result = EccPublicKey::from_bytes(&pub_key_der.der.data()[..pub_key_der.der.len()]);
             assert!(result.is_ok(), "result {:?}", result);
             let ecc_pub = result.unwrap();
 
@@ -181,24 +173,23 @@ fn test_attest_ecc_seed_key() {
                 panic!("Should be CoseKey::EccPublic")
             };
 
-            let result = ecc_pub.coordinates();
+            let result = ecc_pub.coord_vec();
             assert!(result.is_ok(), "result {:?}", result);
             let (expected_x, expected_y) = result.unwrap();
 
             // In the rare case where generate ECC key returns a point with leading zeros,
-            // With feature use-openssl, expected_x (or y) would NOT have leading zeros as OpenSSL strips them.
-            // With feature use-symcrypt, expected_x (or y) could have leading zeros as SymCrypt doesn't strip them.
+            // With openssl, expected_x (or y) would NOT have leading zeros as OpenSSL strips them.
+            // With symcrypt, expected_x (or y) could have leading zeros as SymCrypt doesn't strip them.
             // CoseKey::EccPublic does not strip out leading zeros in the big number representation of the public key.
             // So here we remove leading zeros regardless
             assert_eq!(normalized_key(&x), normalized_key(&expected_x));
             assert_eq!(normalized_key(&y), normalized_key(&expected_y));
 
-            let result = ecc_pub.curve();
-            assert!(result.is_ok(), "result {:?}", result);
-            let expected_crv = match result.unwrap() {
-                CryptoEccCurve::P256 => 1,
-                CryptoEccCurve::P384 => 2,
-                CryptoEccCurve::P521 => 3,
+            let curve = ecc_pub.curve();
+            let expected_crv = match curve {
+                EccCurve::P256 => 1,
+                EccCurve::P384 => 2,
+                EccCurve::P521 => 3,
             };
             assert_eq!(crv, expected_crv);
         },
@@ -259,7 +250,7 @@ fn test_attest_rsa_unwrapping_key() {
                 &report_payload.public_key[..report_payload.public_key_size.into()],
             );
 
-            let result = RsaPublicKey::from_der(&pub_key_der, None);
+            let result = RsaPublicKey::from_bytes(&pub_key_der);
             assert!(result.is_ok(), "result {:?}", result);
             let rsa_pub = result.unwrap();
 
@@ -267,11 +258,11 @@ fn test_attest_rsa_unwrapping_key() {
                 panic!()
             };
 
-            let result = rsa_pub.public_exponent();
+            let result = rsa_pub.e_vec();
             assert!(result.is_ok(), "result {:?}", result);
             let expected_e = result.unwrap();
 
-            let result = rsa_pub.modulus();
+            let result = rsa_pub.n_vec();
             assert!(result.is_ok(), "result {:?}", result);
             let expected_n = result.unwrap();
 
@@ -340,7 +331,7 @@ fn test_attest_rsa_decryption_key() {
                 &report_payload.public_key[..report_payload.public_key_size.into()],
             );
 
-            let result = RsaPublicKey::from_der(&pub_key_der, None);
+            let result = RsaPublicKey::from_bytes(&pub_key_der);
             assert!(result.is_ok(), "result {:?}", result);
             let rsa_pub = result.unwrap();
 
@@ -348,11 +339,11 @@ fn test_attest_rsa_decryption_key() {
                 panic!()
             };
 
-            let result = rsa_pub.public_exponent();
+            let result = rsa_pub.e_vec();
             assert!(result.is_ok(), "result {:?}", result);
             let expected_e = result.unwrap();
 
-            let result = rsa_pub.modulus();
+            let result = rsa_pub.n_vec();
             assert!(result.is_ok(), "result {:?}", result);
             let expected_n = result.unwrap();
 
@@ -563,17 +554,17 @@ fn verify_report(report: &[u8], cert_chain: &[Vec<u8>]) -> KeyAttestationReport 
     let part_cert = x509::X509Certificate::from_der(cert_chain.last().unwrap()).unwrap();
     let public_key_der = part_cert.get_public_key_der().unwrap();
 
-    let result = EccPublicKey::from_der(&public_key_der, None);
+    let result = EccPublicKey::from_bytes(&public_key_der);
     assert!(result.is_ok(), "result {:?}", result);
     let ecc_public = result.unwrap();
 
     let tbs = create_tbs(&protected_header, &report_payload);
 
-    let result = sha(HashAlgorithm::Sha384, &tbs);
+    let result = Hasher::hash_vec(&mut HashAlgo::sha384(), &tbs);
     assert!(result.is_ok(), "result {:?}", result);
     let digest = result.unwrap();
 
-    let result = ecc_public.verify(&digest, &signature);
+    let result = Verifier::verify(&mut EccAlgo::default(), &ecc_public, &digest, &signature);
     assert!(result.is_ok(), "result {:?}", result);
 
     decode_report_payload(&report_payload)

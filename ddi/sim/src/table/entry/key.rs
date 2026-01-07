@@ -2,8 +2,7 @@
 
 //! Module for Cryptographic Key Handles.
 
-use attestation::attestation::CoseKey;
-
+use crate::attestation::CoseKey;
 use crate::crypto::aes::AesKey;
 use crate::crypto::aeshmac::AesHmacKey;
 use crate::crypto::ecc::EccCurve;

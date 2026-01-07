@@ -11,19 +11,19 @@ use std::os::unix::io::AsRawFd;
 use std::path::Path;
 use std::sync::Arc;
 
+use azihsm_ddi_interface::*;
+use azihsm_ddi_mbor::MborDecode;
+use azihsm_ddi_mbor::MborDecoder;
+use azihsm_ddi_mbor::MborEncoder;
+use azihsm_ddi_types::DdiAesOp;
+use azihsm_ddi_types::DdiDecoder;
+use azihsm_ddi_types::DdiDeviceKind;
+use azihsm_ddi_types::DdiOpReq;
+use azihsm_ddi_types::DdiRespHdr;
+use azihsm_ddi_types::DdiStatus;
+use azihsm_ddi_types::MborError;
+use azihsm_ddi_types::SessionControlKind;
 use bitfield_struct::bitfield;
-use mcr_ddi::*;
-use mcr_ddi_mbor::MborDecode;
-use mcr_ddi_mbor::MborDecoder;
-use mcr_ddi_mbor::MborEncoder;
-use mcr_ddi_types::DdiAesOp;
-use mcr_ddi_types::DdiDecoder;
-use mcr_ddi_types::DdiDeviceKind;
-use mcr_ddi_types::DdiOpReq;
-use mcr_ddi_types::DdiRespHdr;
-use mcr_ddi_types::DdiStatus;
-use mcr_ddi_types::MborError;
-use mcr_ddi_types::SessionControlKind;
 use nix::ioctl_readwrite;
 use parking_lot::RwLock;
 
@@ -828,7 +828,8 @@ impl DdiDev for DdiNixDev {
             return Err(DdiError::InvalidParameter);
         }
 
-        // if decryption operation tag must be provided
+        // If this is a decryption operation, the tag must be provided. Return
+        // early with an error if the caller did not provide a tag.
         if mode == DdiAesOp::Decrypt && gcm_params.tag.is_none() {
             Err(DdiError::DdiStatus(DdiStatus::NoTagProvided))?;
         }
@@ -860,8 +861,16 @@ impl DdiDev for DdiNixDev {
             cmd.in_data.opc = MCR_FP_IOCTL_OP_TYPE_ENCRYPT;
         } else {
             cmd.in_data.opc = MCR_FP_IOCTL_OP_TYPE_DECRYPT;
-            // guaranteed that tag is not None
-            cmd.in_data.xts_or_gcm.gcm.tag = gcm_params.tag.unwrap();
+            // If this is a decryption operation, we've already handled the case
+            // where a tag is not provided above, so it's safe to unwrap here.
+            // Even still, we use `ok_or_else` to log and return an error if
+            // this unwrap were to produce an unexpected `None`.
+            cmd.in_data.xts_or_gcm.gcm.tag = gcm_params.tag.ok_or_else(|| {
+                tracing::error!(
+                    "Failed to unwrap tag for decryption operation despite prior validation"
+                );
+                DdiError::DdiStatus(DdiStatus::InternalError)
+            })?;
         }
 
         cmd.in_data.cypher = MCR_FP_IOCTL_AES_CYPHER_GCM; /* gcm */

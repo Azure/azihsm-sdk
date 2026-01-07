@@ -1,0 +1,21 @@
+# Copyright (C) Microsoft Corporation. All rights reserved.
+
+[package]
+edition = "2021"
+name = "azihsm_ddi_interface"
+version = "0.1.0"
+
+[lib]
+doctest = false
+test = false
+
+[dependencies]
+azihsm_ddi_types.workspace = true
+minicbor.workspace = true
+thiserror.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+nix.workspace = true
+
+[lints]
+workspace = true

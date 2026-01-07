@@ -49,11 +49,11 @@ pub(crate) fn struct_encode(ddi: &DdiStruct) -> syn::Result<proc_macro2::TokenSt
         .collect::<Vec<_>>();
 
     Ok(quote! {
-        impl<#(#lifetimes,)*> mcr_ddi_mbor::MborEncode for #ident<#(#lifetimes,)*> {
+        impl<#(#lifetimes,)*> azihsm_ddi_mbor::MborEncode for #ident<#(#lifetimes,)*> {
             fn mbor_encode(
                 &self,
-                encoder: &mut mcr_ddi_mbor::MborEncoder,
-            ) -> Result<(), mcr_ddi_mbor::MborEncodeError>
+                encoder: &mut azihsm_ddi_mbor::MborEncoder,
+            ) -> Result<(), azihsm_ddi_mbor::MborEncodeError>
             {
                 let mut cnt = #field_cnt as MborId;
                 #(#enc_cnt)*
@@ -94,7 +94,7 @@ fn mbor_encode_field(field: &DdiStructField) -> proc_macro2::TokenStream {
         DdiStructFieldKind::MborArray => {
             quote! {
                 #id.mbor_encode(encoder)?;
-                let pad = mcr_ddi_mbor::pad4(encoder.position() as u32 + 3) as u8;
+                let pad = azihsm_ddi_mbor::pad4(encoder.position() as u32 + 3) as u8;
                 #[cfg(test)]
                 assert_eq!((encoder.position() + 3 + pad as usize) % 4, 0);
                 #[cfg(feature = "pre_encode")]
@@ -115,11 +115,11 @@ pub(crate) fn open_enum_encode(ddi: &DdiOpenEnum) -> syn::Result<proc_macro2::To
     let ident = &ddi.ident;
 
     Ok(quote! {
-        impl mcr_ddi_mbor::MborEncode for #ident {
+        impl azihsm_ddi_mbor::MborEncode for #ident {
             fn mbor_encode(
                 &self,
-                encoder: &mut mcr_ddi_mbor::MborEncoder
-            ) -> Result<(), mcr_ddi_mbor::MborEncodeError>
+                encoder: &mut azihsm_ddi_mbor::MborEncoder
+            ) -> Result<(), azihsm_ddi_mbor::MborEncodeError>
             {
                 self.0.mbor_encode(encoder)
             }

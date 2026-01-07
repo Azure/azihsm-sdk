@@ -5,8 +5,7 @@
 use super::AzihsmError;
 
 pub mod rsa_pkcs_pss_utils {
-    use azihsm_crypto::HashAlgo;
-    use azihsm_crypto::HashOp;
+    use azihsm_crypto::*;
 
     use super::*;
     use crate::AZIHSM_ERROR_INSUFFICIENT_BUFFER;
@@ -17,10 +16,10 @@ pub mod rsa_pkcs_pss_utils {
     pub fn mgf1(
         seed: &[u8],
         length: usize,
-        hash_algo: HashAlgo,
+        hash_algo: &mut HashAlgo,
         mask: &mut [u8],
     ) -> Result<(), AzihsmError> {
-        let h_len = hash_algo.hash_length();
+        let h_len = hash_algo.size();
 
         if length > (1 << 32) * h_len {
             Err(AZIHSM_ERROR_INVALID_ARGUMENT)?;
@@ -46,8 +45,7 @@ pub mod rsa_pkcs_pss_utils {
 
             // Hash the concatenated data
             let mut hash_output = vec![0u8; h_len];
-            hash_algo
-                .hash(&d, &mut hash_output)
+            Hasher::hash(hash_algo, &d, Some(&mut hash_output))
                 .map_err(|_| AZIHSM_RSA_VERIFY_INTERNAL_ERROR)?;
 
             // Copy hash output to mask, taking care not to exceed length

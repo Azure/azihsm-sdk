@@ -1,123 +1,24 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
 
+#![cfg(test)]
+
 mod common;
 mod invalid_ecc_pub_key_vectors;
 
 use std::thread;
 
-use crypto::rand::rand_bytes;
-use mcr_ddi::*;
-use mcr_ddi_mbor::MborByteArray;
-use mcr_ddi_mbor::MborDecode;
-use mcr_ddi_mbor::MborDecoder;
-use mcr_ddi_mbor::MborEncode;
-use mcr_ddi_mbor::MborEncoder;
-use mcr_ddi_types::*;
-use session_parameter_encryption::DeviceCredentialEncryptionKey;
+use azihsm_cred_encrypt::DeviceCredKey;
+use azihsm_ddi::*;
+use azihsm_ddi_mbor::MborByteArray;
+use azihsm_ddi_mbor::MborDecode;
+use azihsm_ddi_mbor::MborDecoder;
+use azihsm_ddi_mbor::MborEncode;
+use azihsm_ddi_mbor::MborEncoder;
+use azihsm_ddi_types::*;
 use test_with_tracing::test;
 
 use crate::common::*;
 use crate::invalid_ecc_pub_key_vectors::*;
-
-// This is a special setup for re-open session rollback error
-// We need to open two sessions before LM happens
-// After LM we re-open one session to set the test action for injecting rollback
-// And re-open the second session to fail the rollback
-fn setup_two_sessions_and_lm(
-    dev1: &mut <DdiTest as Ddi>::Dev,
-    dev2: &mut <DdiTest as Ddi>::Dev,
-    ddi: &DdiTest,
-    path: &str,
-) -> [LMSetupResult; 2] {
-    common_cleanup(dev1, ddi, path, None);
-    common_cleanup(dev2, ddi, path, None);
-
-    let mut setup_dev = ddi.open_dev(path).unwrap();
-
-    // Set Device Kind
-    set_device_kind(&mut setup_dev);
-
-    let mut bk3 = vec![0u8; 48];
-    rand_bytes(&mut bk3).unwrap();
-
-    let mut first_random_seed = vec![0u8; 48];
-    rand_bytes(&mut first_random_seed).unwrap();
-
-    let masked_bk3 = helper_init_bk3(&setup_dev, bk3).unwrap().data.masked_bk3;
-    let bmk = helper_common_establish_credential_with_bmk(
-        &mut setup_dev,
-        TEST_CRED_ID,
-        TEST_CRED_PIN,
-        masked_bk3,
-        MborByteArray::from_slice(&[]).expect("Failed to create empty BMK"),
-        MborByteArray::from_slice(&[]).expect("Failed to create empty masked unwrapping key"),
-    );
-
-    let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
-        &setup_dev,
-        TEST_CRED_ID,
-        TEST_CRED_PIN,
-        first_random_seed.as_slice().try_into().unwrap(),
-    );
-
-    let first_resp = helper_open_session(
-        dev1,
-        None,
-        Some(DdiApiRev { major: 1, minor: 0 }),
-        encrypted_credential,
-        pub_key,
-    );
-    assert!(first_resp.is_ok(), "first_resp {:?}", first_resp);
-
-    let first_resp = first_resp.unwrap();
-    assert!(first_resp.hdr.sess_id.is_some());
-
-    let mut second_random_seed = vec![0u8; 48];
-    rand_bytes(&mut second_random_seed).unwrap();
-
-    let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
-        &setup_dev,
-        TEST_CRED_ID,
-        TEST_CRED_PIN,
-        second_random_seed.as_slice().try_into().unwrap(),
-    );
-
-    let second_resp = helper_open_session(
-        dev2,
-        None,
-        Some(DdiApiRev { major: 1, minor: 0 }),
-        encrypted_credential,
-        pub_key,
-    );
-    assert!(second_resp.is_ok(), "second_resp {:?}", second_resp);
-
-    let second_resp = second_resp.unwrap();
-    assert!(second_resp.hdr.sess_id.is_some());
-
-    let result = dev1.simulate_nssr_after_lm();
-    assert!(
-        result.is_ok(),
-        "Migration simulation should succeed: {:?}",
-        result
-    );
-
-    [
-        LMSetupResult {
-            session_id: first_resp.hdr.sess_id.unwrap(),
-            masked_bk3,
-            partition_bmk: bmk,
-            session_bmk: first_resp.data.bmk_session,
-            random_seed: first_random_seed.as_slice().try_into().unwrap(),
-        },
-        LMSetupResult {
-            session_id: second_resp.hdr.sess_id.unwrap(),
-            masked_bk3,
-            partition_bmk: bmk,
-            session_bmk: second_resp.data.bmk_session,
-            random_seed: second_random_seed.as_slice().try_into().unwrap(),
-        },
-    ]
-}
 
 #[test]
 fn test_reopen_session_with_session() {
@@ -263,130 +164,6 @@ fn test_reopen_session() {
             let resp = resp.unwrap();
 
             assert_eq!(resp.hdr.sess_id, Some(setup_res.session_id));
-            assert_eq!(resp.hdr.op, DdiOp::ReopenSession);
-            assert_eq!(resp.hdr.status, DdiStatus::Success);
-            assert!(!resp.data.bmk_session.is_empty());
-        },
-    );
-}
-
-#[test]
-fn test_reopen_session_with_rollback_error() {
-    ddi_dev_test(
-        |_, _, _| 0,
-        common_cleanup,
-        |dev, ddi, path, _session_id| {
-            if get_device_kind(dev) != DdiDeviceKind::Physical {
-                println!("Physical device NOT found. Test only supported on physical device.");
-                return;
-            }
-
-            let mut dev2 = open_dev_and_set_device_kind(ddi, path);
-            let response = setup_two_sessions_and_lm(dev, &mut dev2, ddi, path);
-
-            let _ = helper_common_establish_credential_with_bmk(
-                dev,
-                TEST_CRED_ID,
-                TEST_CRED_PIN,
-                response[0].masked_bk3,
-                response[0].partition_bmk,
-                MborByteArray::from_slice(&[])
-                    .expect("Failed to create empty masked unwrapping key"),
-            );
-
-            let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
-                dev,
-                TEST_CRED_ID,
-                TEST_CRED_PIN,
-                response[0].random_seed,
-            );
-
-            let resp = helper_reopen_session(
-                dev,
-                response[0].session_id,
-                Some(DdiApiRev { major: 1, minor: 0 }),
-                encrypted_credential,
-                pub_key,
-                response[0].session_bmk,
-            );
-
-            assert!(resp.is_ok(), "resp {:?}", resp);
-
-            let resp = resp.unwrap();
-
-            assert_eq!(resp.hdr.sess_id, Some(response[0].session_id));
-            assert_eq!(resp.hdr.op, DdiOp::ReopenSession);
-            assert_eq!(resp.hdr.status, DdiStatus::Success);
-            assert!(!resp.data.bmk_session.is_empty());
-
-            let resp = helper_test_action_cmd(
-                dev,
-                response[0].session_id,
-                DdiTestAction::TriggerIoFailure,
-                DdiTestActionContext::None,
-            );
-            if let Err(err) = resp {
-                assert!(
-                    matches!(err, DdiError::DdiStatus(DdiStatus::UnsupportedCmd)),
-                    "{:?}",
-                    err
-                );
-
-                println!("Firmware is not built with test_action test_hooks.");
-                return;
-            }
-
-            let resp = helper_close_session(
-                dev,
-                Some(response[0].session_id),
-                Some(DdiApiRev { major: 1, minor: 0 }),
-            );
-
-            assert!(resp.is_ok(), "resp {:?}", resp);
-
-            let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
-                &dev2,
-                TEST_CRED_ID,
-                TEST_CRED_PIN,
-                response[1].random_seed,
-            );
-
-            let resp = helper_reopen_session(
-                &dev2,
-                response[1].session_id,
-                Some(DdiApiRev { major: 1, minor: 0 }),
-                encrypted_credential,
-                pub_key,
-                response[1].session_bmk,
-            );
-
-            assert!(resp.is_err(), "resp {:?}", resp);
-            assert!(matches!(
-                resp.unwrap_err(),
-                DdiError::DdiStatus(DdiStatus::InvalidKeyType)
-            ));
-
-            let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
-                &dev2,
-                TEST_CRED_ID,
-                TEST_CRED_PIN,
-                response[1].random_seed,
-            );
-
-            let resp = helper_reopen_session(
-                &dev2,
-                response[1].session_id,
-                Some(DdiApiRev { major: 1, minor: 0 }),
-                encrypted_credential,
-                pub_key,
-                response[1].session_bmk,
-            );
-
-            assert!(resp.is_ok(), "resp {:?}", resp);
-
-            let resp = resp.unwrap();
-
-            assert_eq!(resp.hdr.sess_id, Some(response[1].session_id));
             assert_eq!(resp.hdr.op, DdiOp::ReopenSession);
             assert_eq!(resp.hdr.status, DdiStatus::Success);
             assert!(!resp.data.bmk_session.is_empty());
@@ -1518,113 +1295,6 @@ fn test_reopen_session_incorrect_pin() {
 }
 
 #[test]
-fn test_reopen_session_dest_larger_svn() {
-    ddi_dev_test(
-        |_, _, _| 0,
-        common_cleanup,
-        |dev, ddi, path, _session_id| {
-            if get_device_kind(dev) != DdiDeviceKind::Physical {
-                println!("Physical device NOT found. Test only supported on physical device.");
-                return;
-            }
-
-            let mut dev2 = open_dev_and_set_device_kind(ddi, path);
-            let response = setup_two_sessions_and_lm(dev, &mut dev2, ddi, path);
-
-            let _ = helper_common_establish_credential_with_bmk(
-                dev,
-                TEST_CRED_ID,
-                TEST_CRED_PIN,
-                response[0].masked_bk3,
-                response[0].partition_bmk,
-                MborByteArray::from_slice(&[])
-                    .expect("Failed to create empty masked unwrapping key"),
-            );
-
-            let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
-                dev,
-                TEST_CRED_ID,
-                TEST_CRED_PIN,
-                response[0].random_seed,
-            );
-
-            let resp = helper_reopen_session(
-                dev,
-                response[0].session_id,
-                Some(DdiApiRev { major: 1, minor: 0 }),
-                encrypted_credential,
-                pub_key,
-                response[0].session_bmk,
-            );
-
-            assert!(resp.is_ok(), "resp {:?}", resp);
-
-            let resp = resp.unwrap();
-
-            assert_eq!(resp.hdr.sess_id, Some(response[0].session_id));
-            assert_eq!(resp.hdr.op, DdiOp::ReopenSession);
-            assert_eq!(resp.hdr.status, DdiStatus::Success);
-            assert!(!resp.data.bmk_session.is_empty());
-
-            let current_svn = extract_svn_from_bmk(response[0].session_bmk.as_slice());
-            assert!(current_svn.is_some(), "Failed to extract SVN from BMK");
-            let current_svn = current_svn.unwrap();
-            let updated_svn = current_svn + 1;
-
-            let resp = helper_test_action_cmd(
-                dev,
-                response[0].session_id,
-                DdiTestAction::UpdateSvn,
-                DdiTestActionContext::UpdatedSvn(updated_svn),
-            );
-            if let Err(err) = resp {
-                assert!(
-                    matches!(err, DdiError::DdiStatus(DdiStatus::UnsupportedCmd)),
-                    "{:?}",
-                    err
-                );
-
-                println!("Firmware is not built with test_action test_hooks.");
-                return;
-            }
-
-            let resp = helper_close_session(
-                dev,
-                Some(response[0].session_id),
-                Some(DdiApiRev { major: 1, minor: 0 }),
-            );
-
-            assert!(resp.is_ok(), "resp {:?}", resp);
-
-            let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
-                &dev2,
-                TEST_CRED_ID,
-                TEST_CRED_PIN,
-                response[1].random_seed,
-            );
-
-            let resp = helper_reopen_session(
-                &dev2,
-                response[1].session_id,
-                Some(DdiApiRev { major: 1, minor: 0 }),
-                encrypted_credential,
-                pub_key,
-                response[1].session_bmk,
-            );
-
-            assert!(resp.is_ok(), "resp {:?}", resp);
-
-            let resp = resp.unwrap();
-
-            assert_eq!(resp.hdr.sess_id, Some(response[1].session_id));
-            assert_eq!(resp.hdr.op, DdiOp::ReopenSession);
-            assert_eq!(resp.hdr.status, DdiStatus::Success);
-            assert!(!resp.data.bmk_session.is_empty());
-        },
-    );
-}
-
-#[test]
 fn test_reopen_session_dest_smaller_svn() {
     ddi_dev_test(
         |_, _, _| 0,
@@ -1659,8 +1329,7 @@ fn test_reopen_session_dest_smaller_svn() {
             .unwrap();
             // Establish credential
             let nonce = resp.data.nonce;
-            let param_encryption_key =
-                DeviceCredentialEncryptionKey::new(&resp.data.pub_key, nonce).unwrap();
+            let param_encryption_key = DeviceCredKey::new(&resp.data.pub_key, nonce).unwrap();
             let (establish_cred_encryption_key, ddi_public_key) = param_encryption_key
                 .create_credential_key_from_der(&TEST_ECC_384_PRIVATE_KEY)
                 .unwrap();

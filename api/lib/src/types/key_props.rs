@@ -4,11 +4,11 @@
 
 use std::ffi::c_void;
 
-use mcr_ddi_mbor::MborByteArray;
-use mcr_ddi_types::DdiKeyAvailability;
-use mcr_ddi_types::DdiKeyProperties;
-use mcr_ddi_types::DdiKeyUsage;
-use mcr_ddi_types::MaskedKey;
+use azihsm_ddi_mbor::MborByteArray;
+use azihsm_ddi_types::DdiKeyAvailability;
+use azihsm_ddi_types::DdiKeyProperties;
+use azihsm_ddi_types::DdiKeyUsage;
+use azihsm_ddi_types::MaskedKey;
 use strum::EnumCount;
 
 use crate::crypto::Key;

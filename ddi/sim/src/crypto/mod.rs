@@ -4,9 +4,9 @@
 
 pub mod aes;
 pub mod aeshmac;
-#[cfg(feature = "use-symcrypt")]
+#[cfg(target_os = "windows")]
 mod cert;
-#[cfg(feature = "use-symcrypt")]
+#[cfg(target_os = "windows")]
 pub mod cng;
 pub mod ecc;
 pub mod hmac;

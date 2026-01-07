@@ -1,306 +1,367 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
 
-#[cfg(all(feature = "use-openssl", feature = "use-symcrypt"))]
-compile_error!("OpenSSL and SymCrypt cannot be enabled at the same time.");
+//! New cryptographic library for HSM operations.
+//!
+//! This crate provides a collection of cryptographic primitives and utilities
+//! for working with Hardware Security Modules (HSMs). It includes support for:
+//!
+//! - **AES**: Symmetric encryption with various modes (CBC, GCM, XTS)
+//! - **ECC**: Elliptic Curve Cryptography with NIST curves (P-256, P-384, P-521)
+//! - **Hash**: Cryptographic hash functions (SHA-256, SHA-384, SHA-512)
+//! - **HMAC**: Hash-based Message Authentication Codes
+//! - **DER**: DER encoding/decoding for cryptographic keys
+//! - **RNG**: Cryptographically secure random number generation
+//!
+//! # Platform Support
+//!
+//! This library provides platform-specific implementations:
+//! - Linux: OpenSSL-based implementations
+//! - Windows: Native Windows cryptography APIs
 
-pub mod aes;
-pub mod cert;
-pub mod ecc;
-pub mod rand;
-pub mod rsa;
-pub mod sha;
+mod aes;
+mod der;
+mod ecc;
+mod hash;
+mod hmac;
+mod kdf;
+mod rand;
+mod rsa;
+mod secret;
 
+mod op;
+mod traits;
+
+pub use aes::*;
+pub use der::*;
+pub use ecc::*;
+pub use hash::*;
+pub use hmac::*;
+pub use kdf::*;
+pub use op::*;
+pub use rand::*;
+pub use rsa::*;
+pub use secret::*;
 use thiserror::Error;
+pub use traits::*;
 
-/// RSA Encryption/ Decryption Padding
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum CryptoRsaCryptoPadding {
-    // No Padding
-    None,
-
-    /// OAEP Padding
-    Oaep,
-}
-
-/// RSA Signature Padding
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum CryptoRsaSignaturePadding {
-    /// PSS Padding
-    Pss,
-
-    /// PKCS1.5 Padding
-    Pkcs1_5,
-}
-
-/// Digest Kind / Hash Algorithm
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum CryptoHashAlgorithm {
-    /// SHA1
-    Sha1,
-
-    /// SHA256
-    Sha256,
-
-    /// SHA384
-    Sha384,
-
-    /// SHA512
-    Sha512,
-}
-
-/// Kind of Cryptographic Key.
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum CryptoKeyKind {
-    /// RSA 2048-bit Public Key.
-    Rsa2kPublic,
-
-    /// RSA 3072-bit Public Key.
-    Rsa3kPublic,
-
-    /// RSA 4096-bit Public Key.
-    Rsa4kPublic,
-
-    /// RSA 2048-bit Private Key.
-    Rsa2kPrivate,
-
-    /// RSA 3072-bit Private Key.
-    Rsa3kPrivate,
-
-    /// RSA 4096-bit Private Key.
-    Rsa4kPrivate,
-
-    /// RSA 2048-bit Private CRT Key.
-    Rsa2kPrivateCrt,
-
-    /// RSA 3072-bit Private CRT Key.
-    Rsa3kPrivateCrt,
-
-    /// RSA 4096-bit Private CRT Key.
-    Rsa4kPrivateCrt,
-
-    /// ECC 256 Public Key
-    Ecc256Public,
-
-    /// ECC 384 Public Key
-    Ecc384Public,
-
-    /// ECC 521 Public Key
-    Ecc521Public,
-
-    /// ECC 256 Private Key
-    Ecc256Private,
-
-    /// ECC 384 Private Key
-    Ecc384Private,
-
-    /// ECC 521 Private Key
-    Ecc521Private,
-
-    /// AES 128-bit Key.
-    Aes128,
-
-    /// AES 192-bit Key.
-    Aes192,
-
-    /// AES 256-bit Key.
-    Aes256,
-
-    /// AES XTS Bulk 256-bit Key.
-    AesXtsBulk256,
-
-    /// AES GCM Bulk 256-bit Key.
-    AesGcmBulk256,
-
-    /// AES GCM Bulk 256-bit Unapproved Key.
-    AesGcmBulk256Unapproved,
-
-    /// 256-bit Secret from key exchange
-    Secret256,
-
-    /// 384-bit Secret from key exchange
-    Secret384,
-
-    /// 521-bit Secret from key exchange
-    Secret521,
-
-    /// 256-bit HMAC key for SHA256
-    HmacSha256,
-
-    /// 384-bit HMAC key for SHA384
-    HmacSha384,
-
-    /// 512-bit HMAC key for SHA512
-    HmacSha512,
-}
-
-/// HSM Error
-#[derive(Error, Debug, PartialEq, Eq, Clone, Copy)]
+/// Comprehensive error type for all cryptographic operations.
+///
+/// This enum covers errors from various cryptographic operations including
+/// AES encryption/decryption, hashing, HMAC, DER encoding/decoding, and
+/// random number generation.
+#[derive(Error, Debug, PartialEq, Eq)]
 pub enum CryptoError {
-    /// Invalid parameter
-    #[error("invalid parameter")]
-    InvalidParameter,
+    // AES-related errors
+    /// AES key size is invalid for the specified algorithm.
+    #[error("AES invalid key size")]
+    AesInvalidKeySize,
+    /// AES data size is invalid for the operation.
+    #[error("AES invalid data size")]
+    AesDataSizeError,
+    /// AES input size is invalid.
+    #[error("AES invalid input size")]
+    AesInvalidInputSize,
+    /// AES initialization vector size is invalid.
+    #[error("AES invalid IV size")]
+    AesInvalidIVSize,
+    /// AES initialization vector is invalid.
+    #[error("AES invalid IV")]
+    AesInvalidIVError,
+    /// AES Alternative Initial Value (AIV) verification failed.
+    #[error("AES AIV mismatch")]
+    AesAIVMismatch,
+    /// AES Message Length Indicator (MLI) is invalid.
+    #[error("AES invalid MLI (Message Length Indicator)")]
+    AesInvlidMLI,
+    /// AES padding is invalid or verification failed.
+    #[error("AES invalid padding")]
+    AesInvalidPadding,
+    /// AES key generation failed.
+    #[error("AES key generation failed")]
+    AesKeyGenError,
+    /// AES encryption operation failed.
+    #[error("AES encryption failed")]
+    AesEncryptError,
+    /// AES decryption operation failed.
+    #[error("AES decryption failed")]
+    AesDecryptError,
+    /// Output buffer is too small for AES operation.
+    #[error("AES buffer too small")]
+    AesBufferTooSmall,
+    /// General AES operation failure.
+    #[error("AES operation failed")]
+    AesError,
 
-    /// Invalid certificate
-    #[error("invalid certificate")]
-    InvalidCertificate,
-
-    /// RSA Encrypt Failed
-    #[error("rsa encrypt failed")]
-    RsaEncryptFailed,
-
-    /// RSA Decrypt Failed
-    #[error("rsa decrypt failed")]
-    RsaDecryptFailed,
-
-    /// RSA Sign Failed
-    #[error("rsa sign failed")]
-    RsaSignFailed,
-
-    /// RSA Verify Failed
-    #[error("rsa verify failed")]
-    RsaVerifyFailed,
-
-    /// DER-encoded content does not decode to provided key type.
-    #[error("der does not match key type")]
-    DerAndKeyTypeMismatch,
-
-    /// ECC Sign Failed
-    #[error("ecc sign failed")]
-    EccSignFailed,
-
-    /// ECC Verify Failed
-    #[error("ecc verify failed")]
-    EccVerifyFailed,
-
-    /// AES Encrypt Failed
-    #[error("aes encrypt failed")]
-    AesEncryptFailed,
-
-    /// AES Decrypt Failed
-    #[error("aes decrypt failed")]
-    AesDecryptFailed,
-
-    /// RSA to DER error
-    #[error("rsa to der error")]
-    RsaToDerError,
-
-    /// RSA from DER error
-    #[error("rsa from der error")]
-    RsaFromDerError,
-
-    /// RSA from raw error
-    #[error("rsa from raw error")]
-    RsaFromRawError,
-
-    /// RSA generate error
-    #[error("rsa generate error")]
-    RsaGenerateError,
-
-    /// RSA get modulus error
-    #[error("rsa get modulus error")]
-    RsaGetModulusError,
-
-    /// RSA get public exponent error
-    #[error("rsa get public exponent error")]
-    RsaGetPublicExponentError,
-
-    /// RSA invalid key length
-    #[error("rsa invalid key length")]
-    RsaInvalidKeyLength,
-
-    /// ECC to DER error
-    #[error("ecc to der error")]
-    EccToDerError,
-
-    /// ECC from DER error
-    #[error("ecc from der error")]
-    EccFromDerError,
-
-    /// ECC generate error
-    #[error("ecc generate error")]
-    EccGenerateError,
-
-    /// ECC derive error
-    #[error("ecc derive error")]
-    EccDeriveError,
-
-    /// ECC get curve error
-    #[error("ecc get curve error")]
-    EccGetCurveError,
-
-    /// ECC get coordinates error
-    #[error("ecc get coordinates error")]
-    EccGetCoordinatesError,
-
-    /// SHA error
-    #[error("sha error")]
-    ShaError,
-
-    /// AES generate error
-    #[error("aes generate error")]
-    AesGenerateError,
-
-    /// RNG error
-    #[error("rng error")]
+    // Random number generation errors
+    /// Random number generation operation failed.
+    #[error("Random number generation failed")]
     RngError,
 
-    /// AES invalid key length
-    #[error("aes invalid key length")]
-    AesInvalidKeyLength,
+    // Hash-related errors
+    /// Output buffer is too small to hold the hash result.
+    #[error("Hash buffer too small")]
+    HashBufferTooSmall,
+    /// General hashing operation failure.
+    #[error("Hashing operation failed")]
+    HashError,
+    /// Hash context initialization failed.
+    #[error("Hash initialization failed")]
+    HashInitError,
+    /// Hash update operation failed.
+    #[error("Hash update failed")]
+    HashUpdateError,
+    /// Hash finalization failed.
+    #[error("Hash finalization failed")]
+    HashFinishError,
+    /// Failed to retrieve hash property.
+    #[error("Hash get property failed")]
+    HashGetPropertyError,
 
-    /// HMAC error
-    #[error("hmac error")]
-    HmacError,
+    // HMAC-related errors
+    /// HMAC context initialization failed.
+    #[error("HMAC initialization failed")]
+    HmacInitError,
+    /// HMAC key size is invalid for the specified algorithm.
+    #[error("HMAC invalid key size")]
+    HmacInvalidKeySize,
+    /// HMAC key generation failed.
+    #[error("HMAC key generation failed")]
+    HmacKeyError,
+    /// HMAC key import failed.
+    #[error("HMAC key import failed")]
+    HmacKeyImportError,
+    /// HMAC key export failed.
+    #[error("HMAC key export failed")]
+    HmacKeyExportError,
+    /// Output buffer is too small for HMAC operation.
+    #[error("HMAC buffer too small")]
+    HmacBufferTooSmall,
+    /// Failed to retrieve HMAC property.
+    #[error("HMAC get property failed")]
+    HmacGetPropertyError,
+    /// Output buffer is too small to hold HMAC signature.
+    #[error("HMAC signature buffer too small")]
+    HmacSignatureBufferTooSmall,
+    /// HMAC signing operation failed.
+    #[error("HMAC sign failed")]
+    HmacSignError,
+    /// HMAC signing context initialization failed.
+    #[error("HMAC sign initialization failed")]
+    HmacSignInitError,
+    /// HMAC signing update operation failed.
+    #[error("HMAC sign update failed")]
+    HmacSignUpdateError,
+    /// HMAC signing finalization failed.
+    #[error("HMAC sign finalization failed")]
+    HmacSignFinishError,
+    /// HMAC verification operation failed.
+    #[error("HMAC verify failed")]
+    HmacVerifyError,
+    /// HMAC verification context initialization failed.
+    #[error("HMAC verify initialization failed")]
+    HmacVerifyInitError,
+    /// HMAC verification update operation failed.
+    #[error("HMAC verify update failed")]
+    HmacVerifyUpdateError,
+    /// HMAC verification finalization failed.
+    #[error("HMAC verify finalization failed")]
+    HmacVerifyFinishError,
+    /// HMAC invalid derived key length.
+    #[error("HMAC invalid derived key length")]
+    HmacInvalidDerivedKeyLength,
 
-    /// HKDF error
-    #[error("HKDF error")]
+    // DER encoding/decoding errors
+    /// Invalid ASN.1 Object Identifier in DER structure.
+    #[error("DER invalid Object Identifier")]
+    DerInvalidOid,
+    /// Invalid key parameter or length in DER structure.
+    #[error("DER invalid parameter")]
+    DerInvalidParameter,
+    /// Failed to decode ASN.1 DER structure.
+    #[error("DER ASN.1 decode error")]
+    DerAsn1DecodeError,
+    /// Failed to encode ASN.1 DER structure.
+    #[error("DER ASN.1 encode error")]
+    DerAsn1EncodeError,
+    /// Output buffer is too small for DER-encoded data.
+    #[error("DER buffer too small")]
+    DerBufferTooSmall,
+    /// Invalid public key format in DER structure.
+    #[error("DER invalid public key")]
+    DerInvalidPubKey,
+    /// Invalid digest size for the specified hash algorithm.
+    #[error("DER invalid digest size")]
+    DerInvalidDigestSize,
+
+    // ECC-related errors
+    /// ECC key generation failed.
+    #[error("ECC key generation failed")]
+    EccKeyGenError,
+    /// ECC key import failed.
+    #[error("ECC key import failed")]
+    EccKeyImportError,
+    /// ECC key export failed.
+    #[error("ECC key export failed")]
+    EccKeyExportError,
+    /// Output buffer is too small for ECC operation.
+    #[error("ECC buffer too small")]
+    EccBufferTooSmall,
+    /// ECC key size is invalid.
+    #[error("ECC invalid key size")]
+    EccInvalidKeySize,
+    /// General ECC operation failure.
+    #[error("ECC operation failed")]
+    EccError,
+    /// ECC signing operation failed.
+    #[error("ECC sign failed")]
+    EccSignError,
+    /// ECC verification operation failed.
+    #[error("ECC verify failed")]
+    EccVerifyError,
+
+    // ECDH-related errors
+    /// ECDH key derivation operation failed.
+    #[error("ECDH operation failed")]
+    EcdhError,
+    /// ECDH set peer key property failed.
+    #[error("ECDH set property failed")]
+    EcdhSetPropertyError,
+    /// ECDH derive operation failed.
+    #[error("ECDH derive failed")]
+    EcdhDeriveError,
+
+    /// ECDH invalid derived key length.
+    #[error("ECDH invalid derived key length")]
+    EcdhInvalidDerivedKeyLength,
+
+    // RSA-related errors
+    /// General RSA operation failure.
+    #[error("RSA operation failed")]
+    RsaError,
+    /// Invalid RSA key size.
+    #[error("RSA invalid key size")]
+    RsaInvalidKeySize,
+    /// RSA key generation failed.
+    #[error("RSA key generation failed")]
+    RsaKeyGenError,
+    /// RSA key import failed.
+    #[error("RSA key import failed")]
+    RsaKeyImportError,
+    /// RSA key export failed.
+    #[error("RSA key export failed")]
+    RsaKeyExportError,
+    /// RSA encryption operation failed.
+    #[error("RSA encryption failed")]
+    RsaEncryptError,
+    /// RSA decryption operation failed.
+    #[error("RSA decryption failed")]
+    RsaDecryptError,
+    /// Invalid hash algorithm for RSA operation.
+    #[error("RSA invalid hash algorithm")]
+    RsaInvalidHashAlgorithm,
+    /// Output buffer is too small for RSA operation.
+    #[error("RSA buffer too small")]
+    RsaBufferTooSmall,
+    /// Failed to set RSA property.
+    #[error("RSA set property failed")]
+    RsaSetPropertyError,
+    /// RSA signing operation failed.
+    #[error("RSA sign failed")]
+    RsaSignError,
+    /// RSA signing update operation failed.
+    #[error("RSA sign update failed")]
+    RsaSignUpdateError,
+    /// RSA signing finalization failed.
+    #[error("RSA sign finalization failed")]
+    RsaSignFinishError,
+    /// RSA verification operation failed.
+    #[error("RSA verify failed")]
+    RsaVerifyError,
+    /// RSA verification update operation failed.
+    #[error("RSA verify update failed")]
+    RsaVerifyUpdateError,
+    /// RSA verification finalization failed.
+    #[error("RSA verify finalization failed")]
+    RsaVerifyFinishError,
+    /// Invalid RSA private key blob format.
+    #[error("RSA invalid private key blob")]
+    RsaInvalidPrivateKeyBlob,
+    /// Invalid RSA public key blob format.
+    #[error("RSA invalid public key blob")]
+    RsaInvalidPublicKeyBlob,
+    /// RSA modulus size is not supported.
+    #[error("RSA unsupported modulus size")]
+    RsaUnsupportedModulusSize,
+    /// RSA message is too long for the given key size and padding scheme.
+    #[error("RSA message too long")]
+    RsaMessageTooLong,
+    /// RSA padding is invalid or verification failed.
+    #[error("RSA invalid padding")]
+    RsaInvalidPadding,
+
+    /// HKDF operation failed.
+    #[error("HKDF operation failed")]
     HkdfError,
+    /// HKDF initialization or property setting failed.
+    #[error("HKDF initialization failed")]
+    HkdfSetPropertyError,
+    /// HKDF key derivation operation failed.
+    #[error("HKDF derive operation failed")]
+    HkdfDeriveError,
+    /// HKDF invalid PRK length.
+    #[error("HKDF invalid PRK length")]
+    HkdfInvalidPrkLength,
 
-    /// ECC from RAW error
-    #[error("ecc from raw error")]
-    EccFromRawError,
-
-    /// Failure to create `MborByteArray`
-    #[error("failure to create MborByteArray")]
-    ByteArrayCreationError,
-
-    /// Output buffer too small
-    #[error("output buffer too small")]
-    OutputBufferTooSmall,
-
-    /// Invalid algorithm
-    #[error("invalid algorithm")]
-    InvalidAlgorithm,
-
-    /// Invalid key length
-    #[error("invalid key length")]
-    InvalidKeyLength,
-
-    /// Metadata encoding failed
-    #[error("metadata encoding failed")]
-    MetadataEncodeFailed,
-
-    /// Metadata decoding failed
-    #[error("metadata decoding failed")]
-    MetadataDecodeFailed,
-
-    /// Masked Key Pre-Encoding Failed
-    #[error("masked key pre-encoding failed")]
-    MaskedKeyPreEncodeFailed,
-
-    /// Masked Key Encoding Failed
-    #[error("masked key encoding failed")]
-    MaskedKeyEncodeFailed,
-
-    /// Masked Key Decoding Failed
-    #[error("masked key decoding failed")]
-    MaskedKeyDecodeFailed,
-
-    /// MBOR Encoding Failed
-    #[error("mbor encoding failed")]
-    MborEncodeFailed,
-
-    /// KBKDF error
-    #[error("kbkdf error")]
+    /// KBKDF operation failed.
+    #[error("KBKDF operation failed")]
     KbkdfError,
+    /// KBKDF initialization or property setting failed.
+    #[error("KBKDF initialization failed")]
+    KbkdfSetPropertyError,
+    /// KBKDF key derivation operation failed.
+    #[error("KBKDF derive operation failed")]
+    KbkdfDeriveError,
+    /// KBKDF invalid derived key length.
+    #[error("KBKDF invalid derived key length")]
+    KbkdfInvalidDerivedKeyLength,
+    /// KBKDF invalid prk
+    #[error("KBKDF invalid prk length")]
+    KbkdfInvalidKdkLength,
 }
+
+/// Macro for defining platform-specific algorithm type aliases.
+///
+/// This macro creates platform-specific type aliases for cryptographic algorithms,
+/// allowing different implementations on Linux and Windows.
+macro_rules! define_type {
+    ($vis:vis $name: ident, $linux_type: ty, $windows_type: ty) => {
+        /// Default key type for the current platform
+        #[cfg(target_os = "linux")]
+        $vis type $name = $linux_type;
+
+        /// Default key type for the current platform
+        #[cfg(target_os = "windows")]
+        $vis type $name = $windows_type;
+    };
+    ($vis:vis $name: ident<$lt:lifetime>, $linux_type: ty, $windows_type: ty) => {
+        /// Default key type for the current platform
+        #[cfg(target_os = "linux")]
+        $vis type $name<$lt> = $linux_type;
+
+        /// Default key type for the current platform
+        #[cfg(target_os = "windows")]
+        $vis type $name<$lt> = $windows_type;
+    };
+
+    ($vis:vis $name: ident<$lt:lifetime, $t1:ident>, $linux_type: ty, $windows_type: ty) => {
+        /// Default key type for the current platform
+        #[cfg(target_os = "linux")]
+        $vis type $name<$lt, $t1> = $linux_type;
+
+        /// Default key type for the current platform
+        #[cfg(target_os = "windows")]
+        $vis type $name<$lt, $t1> = $windows_type;
+    };
+}
+
+pub(crate) use define_type;

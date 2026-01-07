@@ -2,9 +2,9 @@
 
 //! Module for handling the incoming request, processing them and sending the response back.
 
-use mcr_ddi_mbor::MborByteArray;
-use mcr_ddi_mbor::*;
-use mcr_ddi_types::*;
+use azihsm_ddi_mbor::MborByteArray;
+use azihsm_ddi_mbor::*;
+use azihsm_ddi_types::*;
 use tracing::instrument;
 
 use crate::aesgcmxts::*;
@@ -887,20 +887,6 @@ impl Dispatcher {
                 DdiOp::ResetFunction => {
                     dispatch_handler!(
                         self.dispatch_reset_function(&mut decoder, &hdr, out_data),
-                        resp_header
-                    )
-                }
-
-                DdiOp::DerKeyImport => {
-                    dispatch_handler!(
-                        self.dispatch_der_key_import(&mut decoder, &hdr, out_data),
-                        resp_header
-                    )
-                }
-
-                DdiOp::GetPerfLogChunk => {
-                    dispatch_handler!(
-                        self.dispatch_get_perf_log_chunk(&mut decoder, &hdr, out_data),
                         resp_header
                     )
                 }
@@ -2460,116 +2446,6 @@ impl Dispatcher {
         self.function.reset_function()?;
 
         let resp = DdiResetFunctionResp {};
-
-        self.send_response(resp_header, resp, None, out_data)
-    }
-
-    fn dispatch_der_key_import(
-        &self,
-        decoder: &mut DdiDecoder<'_>,
-        hdr: &DdiReqHdr,
-        out_data: &mut [u8],
-    ) -> Result<SessionInfoResponse, ManticoreError> {
-        let resp_header = DdiRespHdr {
-            rev: hdr.rev,
-            op: hdr.op,
-            sess_id: hdr.sess_id,
-            status: DdiStatus::Success,
-            fips_approved: false,
-        };
-
-        let req = decoder
-            .decode_data::<DdiDerKeyImportReq>()
-            .map_err(|_| ManticoreError::CborDecodeError)?;
-
-        let session_id = hdr.sess_id.ok_or(ManticoreError::SessionExpected)?;
-
-        let app_session = self.function.get_user_session(session_id, false)?;
-        let span = tracing::debug_span!("AppSession", session = ?app_session.id());
-        let _guard = span.enter();
-
-        let mut flags = EntryFlags::default();
-        flags.set_imported(true);
-
-        let usage = req
-            .key_properties
-            .key_metadata
-            .try_into()
-            .map_err(|_| ManticoreError::InvalidPermissions)?;
-
-        match usage {
-            DdiKeyUsage::SignVerify => flags.set_allow_sign_verify(true),
-            DdiKeyUsage::EncryptDecrypt => flags.set_allow_encrypt_decrypt(true),
-            DdiKeyUsage::Unwrap => flags.set_allow_unwrap(true),
-            DdiKeyUsage::Derive => flags.set_allow_derive(true),
-            _ => Err(ManticoreError::InvalidArgument)?,
-        }
-
-        if req.key_properties.key_metadata.session() {
-            flags.set_session_only(true);
-        }
-
-        let key_num = app_session.import_key(
-            &req.der.data()[..req.der.len()],
-            req.key_class.try_into()?,
-            flags,
-            req.key_tag,
-        )?;
-        tracing::debug!(?key_num, "Completed app_session.import_key()");
-
-        let entry = app_session.get_key_entry(key_num)?;
-        let masked_key = app_session.mask_key(&entry)?;
-
-        let entry = app_session.get_key_entry(key_num)?;
-        let pub_key = self.extract_pub_key(&entry)?;
-        let bulk_key_id = if entry.kind().is_bulk_key() {
-            Some(key_num)
-        } else {
-            None
-        };
-
-        let resp = DdiDerKeyImportResp {
-            key_id: key_num,
-            pub_key,
-            bulk_key_id,
-            key_type: entry.kind().try_into()?,
-            masked_key: MborByteArray::from_slice(&masked_key)
-                .map_err(|_| ManticoreError::InvalidArgument)?,
-        };
-
-        self.send_response(resp_header, resp, None, out_data)
-    }
-
-    fn dispatch_get_perf_log_chunk(
-        &self,
-        decoder: &mut DdiDecoder<'_>,
-        hdr: &DdiReqHdr,
-        out_data: &mut [u8],
-    ) -> Result<SessionInfoResponse, ManticoreError> {
-        let resp_header = DdiRespHdr {
-            rev: hdr.rev,
-            op: hdr.op,
-            sess_id: hdr.sess_id,
-            status: DdiStatus::Success,
-            fips_approved: false,
-        };
-
-        let req = decoder
-            .decode_data::<DdiGetPerfLogChunkReq>()
-            .map_err(|_| ManticoreError::CborDecodeError)?;
-
-        let session_id = hdr.sess_id.ok_or(ManticoreError::SessionExpected)?;
-
-        self.function.get_user_session(session_id, false)?;
-        let span = tracing::debug_span!("vault_manager_session", session_id);
-        let _guard = span.enter();
-
-        let chunk_len = if req.chunk_id == 0 { 10 } else { 0 };
-
-        let resp = DdiGetPerfLogChunkResp {
-            chunk: [chunk_len; 2048],
-            chunk_len: chunk_len as u16,
-        };
 
         self.send_response(resp_header, resp, None, out_data)
     }

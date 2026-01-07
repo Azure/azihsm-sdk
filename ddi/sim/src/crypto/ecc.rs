@@ -2,53 +2,49 @@
 
 //! Module for elliptic curve cryptography (ECC).
 
-#[cfg(all(feature = "use-openssl", feature = "use-symcrypt"))]
-compile_error!("OpenSSL and non-OpenSSL cannot be enabled at the same time.");
-
-use crypto::ecc::EccOp as SupportCryptoEccOp;
-use mcr_ddi_types::DdiEccCurve;
-#[cfg(feature = "use-openssl")]
+use azihsm_ddi_types::DdiEccCurve;
+#[cfg(target_os = "linux")]
 use openssl;
-#[cfg(feature = "use-openssl")]
+#[cfg(target_os = "linux")]
 use openssl::bn::BigNum;
-#[cfg(feature = "use-openssl")]
+#[cfg(target_os = "linux")]
 use openssl::bn::BigNumContext;
-#[cfg(feature = "use-openssl")]
+#[cfg(target_os = "linux")]
 use openssl::derive::Deriver;
-#[cfg(feature = "use-openssl")]
+#[cfg(target_os = "linux")]
 use openssl::ecdsa::EcdsaSig;
-#[cfg(feature = "use-openssl")]
+#[cfg(target_os = "linux")]
 use openssl::nid::Nid;
-#[cfg(feature = "use-openssl")]
+#[cfg(target_os = "linux")]
 use openssl::pkey::PKey;
-#[cfg(feature = "use-openssl")]
+#[cfg(target_os = "linux")]
 use openssl::pkey::Private;
-#[cfg(feature = "use-openssl")]
+#[cfg(target_os = "linux")]
 use openssl::pkey::Public;
-#[cfg(feature = "use-openssl")]
+#[cfg(target_os = "linux")]
 use openssl::pkey_ctx::PkeyCtx;
-#[cfg(feature = "use-openssl")]
+#[cfg(target_os = "linux")]
 use openssl::x509::X509NameBuilder;
-#[cfg(feature = "use-openssl")]
+#[cfg(target_os = "linux")]
 use openssl::x509::X509;
-#[cfg(feature = "use-symcrypt")]
+#[cfg(target_os = "windows")]
 use symcrypt::ecc;
-#[cfg(feature = "use-symcrypt")]
+#[cfg(target_os = "windows")]
 use symcrypt::errors::SymCryptError;
 
-#[cfg(feature = "use-openssl")]
+#[cfg(target_os = "linux")]
 use crate::crypto::ecc::openssl::asn1::Asn1Time;
 use crate::errors::ManticoreError;
 use crate::mask::KeySerialization;
 use crate::table::entry::Kind;
 
-#[cfg(feature = "use-symcrypt")]
+#[cfg(target_os = "windows")]
 const EC_OID: spki::ObjectIdentifier = spki::ObjectIdentifier::new_unwrap("1.2.840.10045.2.1");
-#[cfg(feature = "use-symcrypt")]
+#[cfg(target_os = "windows")]
 const P256_OID: spki::ObjectIdentifier = spki::ObjectIdentifier::new_unwrap("1.2.840.10045.3.1.7");
-#[cfg(feature = "use-symcrypt")]
+#[cfg(target_os = "windows")]
 const P384_OID: spki::ObjectIdentifier = spki::ObjectIdentifier::new_unwrap("1.3.132.0.34");
-#[cfg(feature = "use-symcrypt")]
+#[cfg(target_os = "windows")]
 const P521_OID: spki::ObjectIdentifier = spki::ObjectIdentifier::new_unwrap("1.3.132.0.35");
 
 /// Trait for ECC common operations.
@@ -85,7 +81,6 @@ pub trait EccPrivateOp {
 }
 
 /// Trait for ECC public key operations.
-#[cfg(test)]
 pub trait EccPublicOp {
     /// Verify a signature against a digest using the ECC public key.
     fn verify(&self, digest: &[u8], signature: &[u8]) -> Result<(), ManticoreError>;
@@ -153,7 +148,7 @@ impl TryFrom<u32> for EccKeySize {
 ///
 /// # Errors
 /// * `ManticoreError::EccGenerateError` - If the ECC key pair generation fails.
-#[cfg(feature = "use-openssl")]
+#[cfg(target_os = "linux")]
 pub fn generate_ecc(curve: EccCurve) -> Result<(EccPrivateKey, EccPublicKey), ManticoreError> {
     let curve_name = match curve {
         EccCurve::P256 => Nid::X9_62_PRIME256V1,
@@ -199,7 +194,7 @@ pub fn generate_ecc(curve: EccCurve) -> Result<(EccPrivateKey, EccPublicKey), Ma
 }
 
 /// Generate an ECC key pair.
-#[cfg(feature = "use-symcrypt")]
+#[cfg(target_os = "windows")]
 pub fn generate_ecc(curve: EccCurve) -> Result<(EccPrivateKey, EccPublicKey), ManticoreError> {
     let (curve_type, size) = match curve {
         EccCurve::P256 => (ecc::CurveType::NistP256, EccKeySize::Ecc256),
@@ -247,7 +242,7 @@ pub fn generate_ecc(curve: EccCurve) -> Result<(EccPrivateKey, EccPublicKey), Ma
     ))
 }
 
-#[cfg(feature = "use-symcrypt")]
+#[cfg(target_os = "windows")]
 #[derive(Debug, Clone)]
 struct EccKeyContainer {
     curve_type: ecc::CurveType,
@@ -256,7 +251,7 @@ struct EccKeyContainer {
     public_key: Vec<u8>,
     private_key: Vec<u8>,
 }
-#[cfg(feature = "use-symcrypt")]
+#[cfg(target_os = "windows")]
 impl EccKeyContainer {
     fn get_curve_type(&self) -> ecc::CurveType {
         self.curve_type
@@ -298,7 +293,6 @@ impl EccKeyContainer {
         self.ec_key_usage
     }
 
-    #[cfg(test)]
     fn ecdsa_verify(&self, signature: &[u8], hashed_message: &[u8]) -> Result<(), SymCryptError> {
         let handle = ecc::EcKey::set_public_key(
             self.curve_type,
@@ -313,10 +307,10 @@ impl EccKeyContainer {
 /// ECC Private Key.
 #[derive(Debug, Clone)]
 pub struct EccPrivateKey {
-    #[cfg(feature = "use-openssl")]
+    #[cfg(target_os = "linux")]
     handle: PKey<Private>,
 
-    #[cfg(feature = "use-symcrypt")]
+    #[cfg(target_os = "windows")]
     handle: EccKeyContainer,
     size: EccKeySize,
 }
@@ -331,16 +325,7 @@ impl KeySerialization<EccPrivateKey> for EccPrivateKey {
     }
 }
 
-impl TryFrom<EccPrivateKey> for crypto::ecc::EccPrivateKey {
-    type Error = crypto::CryptoError;
-
-    fn try_from(value: EccPrivateKey) -> Result<Self, Self::Error> {
-        let der = value.to_der().map_err(|_| Self::Error::EccToDerError)?;
-        crypto::ecc::EccPrivateKey::from_der(&der, None)
-    }
-}
-
-#[cfg(feature = "use-openssl")]
+#[cfg(target_os = "linux")]
 impl EccOp<EccPrivateKey> for EccPrivateKey {
     /// Deserialize an ECC private key from a DER-encoded PKCS#8 format.
     fn from_der(der: &[u8], expected_type: Option<Kind>) -> Result<Self, ManticoreError> {
@@ -449,7 +434,7 @@ impl EccOp<EccPrivateKey> for EccPrivateKey {
     }
 }
 
-#[cfg(feature = "use-symcrypt")]
+#[cfg(target_os = "windows")]
 impl EccOp<EccPrivateKey> for EccPrivateKey {
     fn from_der(der: &[u8], expected_type: Option<Kind>) -> Result<EccPrivateKey, ManticoreError> {
         let private_key_info = {
@@ -651,7 +636,7 @@ impl EccOp<EccPrivateKey> for EccPrivateKey {
     }
 }
 
-#[cfg(feature = "use-openssl")]
+#[cfg(target_os = "linux")]
 impl EccPrivateOp for EccPrivateKey {
     /// ECDSA signing.
     ///
@@ -761,7 +746,7 @@ impl EccPrivateOp for EccPrivateKey {
 
     /// TEST_ONLY: This function is for testing purposes only.
     /// We don't need to generate the certificate in production.
-    #[cfg(feature = "use-openssl")]
+    #[cfg(target_os = "linux")]
     fn create_pub_key_cert(&self) -> Result<Vec<u8>, ManticoreError> {
         let pkey = self.handle.clone();
 
@@ -857,7 +842,7 @@ impl EccPrivateOp for EccPrivateKey {
     }
 }
 
-#[cfg(feature = "use-symcrypt")]
+#[cfg(target_os = "windows")]
 impl EccPrivateOp for EccPrivateKey {
     fn sign(&self, digest: &[u8]) -> Result<Vec<u8>, ManticoreError> {
         let signature = self
@@ -1004,17 +989,17 @@ impl EccPrivateOp for EccPrivateKey {
 /// ECC Public Key.
 #[derive(Debug, Clone)]
 pub struct EccPublicKey {
-    #[cfg(feature = "use-openssl")]
+    #[cfg(target_os = "linux")]
     handle: PKey<Public>,
 
-    #[cfg(feature = "use-symcrypt")]
+    #[cfg(target_os = "windows")]
     handle: EccKeyContainer,
 
     #[allow(unused)]
     size: EccKeySize,
 }
 
-#[cfg(feature = "use-openssl")]
+#[cfg(target_os = "linux")]
 impl EccOp<EccPublicKey> for EccPublicKey {
     /// Deserialize an ECC public key from a DER-encoded SubjectPublicKeyInfo format.
     fn from_der(der: &[u8], expected_type: Option<Kind>) -> Result<Self, ManticoreError> {
@@ -1127,7 +1112,7 @@ impl EccOp<EccPublicKey> for EccPublicKey {
     }
 }
 
-#[cfg(feature = "use-symcrypt")]
+#[cfg(target_os = "windows")]
 impl EccOp<EccPublicKey> for EccPublicKey {
     fn from_der(der: &[u8], expected_type: Option<Kind>) -> Result<EccPublicKey, ManticoreError> {
         let public_key_info = {
@@ -1293,8 +1278,7 @@ impl EccOp<EccPublicKey> for EccPublicKey {
     }
 }
 
-#[cfg(test)]
-#[cfg(feature = "use-openssl")]
+#[cfg(target_os = "linux")]
 impl EccPublicOp for EccPublicKey {
     /// ECDSA signature verification.
     ///
@@ -1359,8 +1343,7 @@ impl EccPublicOp for EccPublicKey {
     }
 }
 
-#[cfg(test)]
-#[cfg(feature = "use-symcrypt")]
+#[cfg(target_os = "windows")]
 impl EccPublicOp for EccPublicKey {
     fn verify(&self, digest: &[u8], signature: &[u8]) -> Result<(), ManticoreError> {
         let signature_len = signature.len();
@@ -1570,7 +1553,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "use-openssl")]
+    #[cfg(target_os = "linux")]
     fn test_ecc_create_pub_key_cert() {
         // Generate the key pair
         let keypair = generate_ecc(EccCurve::P384);
@@ -1590,7 +1573,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "use-symcrypt")]
+    #[cfg(target_os = "windows")]
     fn test_ecc_create_pub_key_cert() {
         // TODO: This test on Windows needs to be implemented
         // without dependency on OpenSSL.

@@ -25,49 +25,47 @@ style = "tag"
 # instead of `uintptr_t` and `intptr_t` respectively.
 usize_is_size_t = true
 
-
 [export]
 
 # A list of items to not include in the generated bindings
 # default: []
 exclude = []
 
-item_types = ["enums", "structs", "functions", "typedefs", "constants"]
+item_types = ["constants", "enums", "functions", "structs", "typedefs"]
 
 [export.rename]
-"AzihsmI32" = "azihsm_i32"
-"AzihsmI64" = "azihsm_i64"
-"AzihsmU8" = "azihsm_u8"
-"AzihsmU16" = "azihsm_u16"
-"AzihsmU32" = "azihsm_u32"
-"AzihsmU64" = "azihsm_u64"
-"AzihsmHandle" = "azihsm_handle"
-"AzihsmError" = "azihsm_error"
-"SessionType" = "azihsm_sess_type"
+"AlgoId" = "azihsm_algo_id"
 "ApiRev" = "azihsm_api_rev"
 "AppCreds" = "azihsm_app_creds"
 "AzihsmAlgo" = "azihsm_algo"
-"AlgoId" = "azihsm_algo_id"
-"AzihsmKeyPropId" = "azihsm_key_prop_id"
-"AzihsmKeyProp" = "azihsm_key_prop"
-"AzihsmKeyPropList" = "azihsm_key_prop_list"
-"AzihsmBuffer" = "azihsm_buffer"
 "AzihsmAlgoAesCbcParams" = "azihsm_algo_aes_cbc_params"
 "AzihsmAlgoAesXtsParams" = "azihsm_algo_aes_xts_params"
+"AzihsmAlgoHkdfParams" = "azihsm_algo_hkdf_params"
 "AzihsmAlgoRsaAesKeyWrapParams" = "azihsm_algo_rsa_aes_key_wrap_params"
 "AzihsmAlgoRsaPkcsOaepParams" = "azihsm_algo_rsa_pkcs_oaep_params"
-"AzihsmMgf1Id" = "azihsm_mgf1_id"
-"KeyKind" = "azihsm_key_type"
-"AzihsmAlgoRsaPkcsPssParams" =  "azihsm_algo_rsa_pkcs_pss_params"
+"AzihsmAlgoRsaPkcsPssParams" = "azihsm_algo_rsa_pkcs_pss_params"
+"AzihsmBuffer" = "azihsm_buffer"
 "AzihsmEcdhAlgoParams" = "azihsm_algo_ecdh_params"
-"AzihsmAlgoHkdfParams" = "azihsm_algo_hkdf_params"
+"AzihsmError" = "azihsm_error"
+"AzihsmHandle" = "azihsm_handle"
+"AzihsmI32" = "azihsm_i32"
+"AzihsmI64" = "azihsm_i64"
+"AzihsmKeyProp" = "azihsm_key_prop"
+"AzihsmKeyPropId" = "azihsm_key_prop_id"
+"AzihsmKeyPropList" = "azihsm_key_prop_list"
+"AzihsmMgf1Id" = "azihsm_mgf1_id"
+"AzihsmU16" = "azihsm_u16"
+"AzihsmU32" = "azihsm_u32"
+"AzihsmU64" = "azihsm_u64"
+"AzihsmU8" = "azihsm_u8"
 "EcCurve" = "azihsm_ec_curve_id"
+"KeyKind" = "azihsm_key_type"
+"SessionType" = "azihsm_sess_type"
 
 [defines]
 "target_os = linux" = "__linux__ "
 "target_os = windows" = "_WIN32"
 
-
 [enum]
-rename_variants = "QualifiedScreamingSnakeCase"
 enum_class = false
+rename_variants = "QualifiedScreamingSnakeCase"

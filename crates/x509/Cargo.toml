@@ -1,27 +1,28 @@
 # Copyright (C) Microsoft Corporation. All rights reserved.
 
 [package]
+edition = "2024"
 name = "x509"
 version = "0.1.0"
-edition = "2024"
 
 [dependencies]
-tracing = { workspace = true }
 thiserror = { workspace = true }
+tracing = { workspace = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows = { version = "0.58.0", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Cryptography" ] }
+windows = { features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_Security_Cryptography",
+], version = "0.58.0" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 openssl = { workspace = true }
 
 # The local crypto crate is needed for testing purposes. We use it to ensure an
 # X509 certificate can be parsed and turned into a usable public key.
-[target.'cfg(target_os = "windows")'.dev-dependencies]
-crypto = { workspace = true, features = ["use-symcrypt"] }
-
-[target.'cfg(target_os = "linux")'.dev-dependencies]
-crypto = { workspace = true, features = ["use-openssl"] }
+[dev-dependencies]
+azihsm_crypto.workspace = true
 
 [features]
 default = []
@@ -30,4 +31,3 @@ default = []
 # API, and thus requires unsafe code.
 [lints.rust]
 unsafe_code = { level = "allow" }
-

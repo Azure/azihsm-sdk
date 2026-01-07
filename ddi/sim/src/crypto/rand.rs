@@ -2,12 +2,9 @@
 
 //! Module for Rand.
 
-#[cfg(all(feature = "use-openssl", feature = "use-symcrypt"))]
-compile_error!("OpenSSL and non-OpenSSL cannot be enabled at the same time.");
-
-#[cfg(feature = "use-openssl")]
+#[cfg(target_os = "linux")]
 use openssl::rand;
-#[cfg(feature = "use-symcrypt")]
+#[cfg(target_os = "windows")]
 use symcrypt::symcrypt_random;
 
 use crate::errors::ManticoreError;
@@ -22,7 +19,7 @@ use crate::errors::ManticoreError;
 ///
 /// # Errors
 /// * `ManticoreError::RngError` - If the RNG operation fails.
-#[cfg(feature = "use-openssl")]
+#[cfg(target_os = "linux")]
 pub fn rand_bytes(buf: &mut [u8]) -> Result<(), ManticoreError> {
     rand::rand_bytes(buf).map_err(|_| ManticoreError::RngError)
 }
@@ -37,7 +34,7 @@ pub fn rand_bytes(buf: &mut [u8]) -> Result<(), ManticoreError> {
 ///
 /// # Errors
 /// * `ManticoreError::RngError` - If the RNG operation fails.
-#[cfg(feature = "use-symcrypt")]
+#[cfg(target_os = "windows")]
 pub fn rand_bytes(buf: &mut [u8]) -> Result<(), ManticoreError> {
     symcrypt_random(buf);
     Ok(())

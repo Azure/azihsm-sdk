@@ -70,12 +70,12 @@ pub(crate) fn struct_decode(ddi: &DdiStruct) -> syn::Result<proc_macro2::TokenSt
                 quote! {
                     #fname: {
                         if cnt.0 == 0 {
-                            Err(mcr_ddi_mbor::MborDecodeError::InvalidId)?
+                            Err(azihsm_ddi_mbor::MborDecodeError::InvalidId)?
                         }
                         let id = u8::mbor_decode(dec)?;
                         cnt.0 -= 1;
                         if id != #id {
-                            Err(mcr_ddi_mbor::MborDecodeError::InvalidId)?
+                            Err(azihsm_ddi_mbor::MborDecodeError::InvalidId)?
                         } else {
                             <#ftype>::mbor_decode(dec)?
                         }
@@ -86,8 +86,8 @@ pub(crate) fn struct_decode(ddi: &DdiStruct) -> syn::Result<proc_macro2::TokenSt
         .collect::<Vec<_>>();
 
     Ok(quote! {
-        impl<'bytes:#(#lifetimes +)* , #(#lifetimes,)*> mcr_ddi_mbor::MborDecode<'bytes> for #ident<#(#lifetimes,)*> {
-            fn mbor_decode(dec: &mut mcr_ddi_mbor::MborDecoder<'bytes>) -> Result<Self, mcr_ddi_mbor::MborDecodeError>
+        impl<'bytes:#(#lifetimes +)* , #(#lifetimes,)*> azihsm_ddi_mbor::MborDecode<'bytes> for #ident<#(#lifetimes,)*> {
+            fn mbor_decode(dec: &mut azihsm_ddi_mbor::MborDecoder<'bytes>) -> Result<Self, azihsm_ddi_mbor::MborDecodeError>
             {
                 #map
                 let mut obj =Self {
@@ -95,7 +95,7 @@ pub(crate) fn struct_decode(ddi: &DdiStruct) -> syn::Result<proc_macro2::TokenSt
                 };
 
                 if cnt.0 != 0 {
-                    Err(mcr_ddi_mbor::MborDecodeError::InvalidLen)?;
+                    Err(azihsm_ddi_mbor::MborDecodeError::InvalidLen)?;
                 }
 
                 #(#post_decode_calls)*
@@ -131,8 +131,8 @@ pub(crate) fn open_enum_decode(ddi: &DdiOpenEnum) -> syn::Result<proc_macro2::To
     let ident = &ddi.ident;
 
     Ok(quote! {
-        impl<'bytes> mcr_ddi_mbor::MborDecode<'bytes> for #ident {
-            fn mbor_decode(dec: &mut mcr_ddi_mbor::MborDecoder<'bytes>) -> Result<Self, mcr_ddi_mbor::MborDecodeError>
+        impl<'bytes> azihsm_ddi_mbor::MborDecode<'bytes> for #ident {
+            fn mbor_decode(dec: &mut azihsm_ddi_mbor::MborDecoder<'bytes>) -> Result<Self, azihsm_ddi_mbor::MborDecodeError>
             {
                 let val = u32::mbor_decode(dec)?;
                 Ok(Self(val))

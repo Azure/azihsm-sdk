@@ -1,0 +1,39 @@
+// Copyright (C) Microsoft Corporation. All rights reserved.
+
+mod cbc_128_nist_gf_sbox_test_vectors;
+mod cbc_128_nist_mct_test_vectors;
+mod cbc_128_nist_mmt_test_vectors;
+mod cbc_128_nist_sbox_test_vectors;
+mod cbc_128_nist_varkey_test_vectors;
+mod cbc_128_nist_vartxt_test_vectors;
+mod cbc_192_nist_gf_sbox_test_vectors;
+mod cbc_192_nist_mct_test_vectors;
+mod cbc_192_nist_mmt_test_vectors;
+mod cbc_192_nist_sbox_test_vectors;
+mod cbc_192_nist_varkey_test_vectors;
+mod cbc_192_nist_vartxt_test_vectors;
+mod cbc_256_nist_gf_sbox_test_vectors;
+mod cbc_256_nist_mct_test_vectors;
+mod cbc_256_nist_mmt_test_vectors;
+mod cbc_256_nist_sbox_test_vectors;
+mod cbc_256_nist_varkey_test_vectors;
+mod cbc_256_nist_vartxt_test_vectors;
+
+pub(crate) use cbc_128_nist_gf_sbox_test_vectors::AES_CBC_128_GFSBOX_TEST_VECTORS;
+pub(crate) use cbc_128_nist_mct_test_vectors::AES_CBC_128_MCT_TEST_VECTORS;
+pub(crate) use cbc_128_nist_mmt_test_vectors::AES_CBC_128_MMT_TEST_VECTORS;
+pub(crate) use cbc_128_nist_sbox_test_vectors::AES_CBC_128_SBOX_TEST_VECTORS;
+pub(crate) use cbc_128_nist_varkey_test_vectors::AES_CBC_128_VAR_KEY_TEST_VECTORS;
+pub(crate) use cbc_128_nist_vartxt_test_vectors::AES_CBC_128_VAR_TXT_TEST_VECTORS;
+pub(crate) use cbc_192_nist_gf_sbox_test_vectors::AES_CBC_192_GFSBOX_TEST_VECTORS;
+pub(crate) use cbc_192_nist_mct_test_vectors::AES_CBC_192_MCT_TEST_VECTORS;
+pub(crate) use cbc_192_nist_mmt_test_vectors::AES_CBC_192_MMT_TEST_VECTORS;
+pub(crate) use cbc_192_nist_sbox_test_vectors::AES_CBC_192_SBOX_TEST_VECTORS;
+pub(crate) use cbc_192_nist_varkey_test_vectors::AES_CBC_192_VAR_KEY_TEST_VECTORS;
+pub(crate) use cbc_192_nist_vartxt_test_vectors::AES_CBC_192_VAR_TXT_TEST_VECTORS;
+pub(crate) use cbc_256_nist_gf_sbox_test_vectors::AES_CBC_256_GFSBOX_TEST_VECTORS;
+pub(crate) use cbc_256_nist_mct_test_vectors::AES_CBC_256_MCT_TEST_VECTORS;
+pub(crate) use cbc_256_nist_mmt_test_vectors::AES_CBC_256_MMT_TEST_VECTORS;
+pub(crate) use cbc_256_nist_sbox_test_vectors::AES_CBC_256_SBOX_TEST_VECTORS;
+pub(crate) use cbc_256_nist_varkey_test_vectors::AES_CBC_256_VAR_KEY_TEST_VECTORS;
+pub(crate) use cbc_256_nist_vartxt_test_vectors::AES_CBC_256_VAR_TXT_TEST_VECTORS;

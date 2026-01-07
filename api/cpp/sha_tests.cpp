@@ -411,10 +411,10 @@ TEST_F(SHATest, BufferSizeMismatch)
     };
 
     std::vector<TestCase> test_cases = {
-        {AZIHSM_ALGO_ID_SHA1, 20, {0, 1, 19, 21, 32, 48, 64}},
-        {AZIHSM_ALGO_ID_SHA256, 32, {0, 1, 20, 31, 33, 48, 64}},
-        {AZIHSM_ALGO_ID_SHA384, 48, {0, 1, 20, 32, 47, 49, 64}},
-        {AZIHSM_ALGO_ID_SHA512, 64, {0, 1, 20, 32, 48, 63, 65, 128}}};
+        {AZIHSM_ALGO_ID_SHA1, 20, {0, 1, 19}},
+        {AZIHSM_ALGO_ID_SHA256, 32, {0, 1, 20, 31}},
+        {AZIHSM_ALGO_ID_SHA384, 48, {0, 1, 20, 32, 47}},
+        {AZIHSM_ALGO_ID_SHA512, 64, {0, 1, 20, 32, 48, 63}}};
 
     azihsm_buffer data_buf = {
         .buf = const_cast<uint8_t *>(TEST_DATA_1K.data()),

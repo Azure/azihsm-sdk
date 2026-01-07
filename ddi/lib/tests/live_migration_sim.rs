@@ -1,5 +1,7 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
 
+#![cfg(test)]
+
 mod common;
 
 use std::sync::Arc;
@@ -7,15 +9,15 @@ use std::sync::Barrier;
 use std::thread;
 use std::time::Duration;
 
-use mcr_ddi::Ddi;
-use mcr_ddi::DdiDev;
-use mcr_ddi::DdiError;
-use mcr_ddi_mbor::MborByteArray;
-use mcr_ddi_types::DdiAesKeySize;
-use mcr_ddi_types::DdiApiRev;
-use mcr_ddi_types::DdiKeyAvailability;
-use mcr_ddi_types::DdiKeyUsage;
-use mcr_ddi_types::DdiStatus;
+use azihsm_ddi::Ddi;
+use azihsm_ddi::DdiDev;
+use azihsm_ddi::DdiError;
+use azihsm_ddi_mbor::MborByteArray;
+use azihsm_ddi_types::DdiAesKeySize;
+use azihsm_ddi_types::DdiApiRev;
+use azihsm_ddi_types::DdiKeyAvailability;
+use azihsm_ddi_types::DdiKeyUsage;
+use azihsm_ddi_types::DdiStatus;
 use parking_lot::RwLock;
 use test_with_tracing::test;
 use tracing::info;
@@ -92,7 +94,7 @@ impl ThreadSessionInfo {
     fn encrypt_userid_pin_and_reopen_session_with_retry(
         &self,
         session_bmk: &[u8],
-    ) -> Result<mcr_ddi_types::DdiReopenSessionCmdResp, String> {
+    ) -> Result<azihsm_ddi_types::DdiReopenSessionCmdResp, String> {
         const MAX_RETRIES: usize = 5;
         let mut retry_count = 0;
 
@@ -294,9 +296,9 @@ fn test_live_migration_sealed_bk3() {
         common_setup,
         common_cleanup,
         |dev, _ddi, _path, _session_id| {
-            let sealed_bk3 = [0xAB; 256];
-            let res = helper_set_sealed_bk3(dev, sealed_bk3.to_vec());
-            assert!(res.is_ok(), "Failed to set initial sealed BK3: {:?}", res);
+            let bk3 = [0xAB; 48];
+            let res = helper_init_bk3(dev, bk3.to_vec());
+            assert!(res.is_ok(), "Failed to init sealed BK3: {:?}", res);
             let sealed_bk3_before = helper_get_sealed_bk3(dev);
             assert!(
                 sealed_bk3_before.is_ok(),
@@ -1279,6 +1281,8 @@ fn test_get_cert_chain_info_during_live_migration() {
 #[cfg(feature = "mock")]
 #[test]
 fn test_get_cert_hash_during_live_migration() {
+    use azihsm_crypto::*;
+
     ddi_dev_test(
         common_setup,
         common_cleanup,
@@ -1308,7 +1312,7 @@ fn test_get_cert_hash_during_live_migration() {
             );
             let cert = result.unwrap().data.certificate;
 
-            let result = crypto::sha::sha(crypto::sha::HashAlgorithm::Sha256, cert.as_slice());
+            let result = Hasher::hash_vec(&mut HashAlgo::sha256(), cert.as_slice());
             assert!(result.is_ok(), "SHA256 calculation should succeed");
             let hash2 = result.unwrap();
 

@@ -4,41 +4,44 @@
 resolver = "2"
 
 members = [
-    "./api/lib",
-    "./api/support/crypto",
-    "./xtask",
+  "api/lib",
+  "crates/cred_encrypt",
+  "crates/crypto",
+  "crates/test_with_tracing",
+  "crates/x509",
+  "ddi/interface",
+  "ddi/lib",
+  "ddi/test_helpers",
+  "xtask",
 ]
 
 [workspace.dependencies]
 # Internal crates
-azihsm = { path = "ddi" }
-azihsm_crypto = { path = "api/support/crypto" }
-mcr_ddi = { path = "ddi/lib" }
-mcr_ddi_derive = { path = "ddi/serde/derive" }
-mcr_ddi_mbor = { path = "ddi/serde/mbor" }
-mcr_ddi_nix = { path = "ddi/nix" }
-mcr_ddi_types = { path = "ddi/serde/types", features = [
-    "array",
-    "pre_encode",
-    "post_decode",
-] }
-mcr_ddi_mock = { path = "ddi/mock" }
-mcr_ddi_win = { path = "ddi/win" }
-mcr_ddi_sim = { path = "ddi/sim" }
-rsa_padding = { path = "crates/rsa_padding" }
-attestation = { path = "crates/attestation" }
-crypto = { path = "crates/crypto" }
-crypto_env = { path = "crates/crypto_env" }
-masked_key = { path = "crates/masked_key" }
-lmkey_derive = { path = "crates/lm_key_derive" }
-x509 = { path = "crates/x509" }
-session_parameter_encryption = { path = "crates/session_parameter_encryption" }
+azihsm = { path = "api/lib" }
+azihsm_cred_encrypt = { path = "crates/cred_encrypt" }
+azihsm_crypto = { path = "crates/crypto" }
+azihsm_ddi = { path = "ddi/lib" }
+azihsm_ddi_derive = { path = "ddi/serde/derive" }
+azihsm_ddi_interface = { path = "ddi/interface" }
+azihsm_ddi_mbor = { path = "ddi/serde/mbor" }
+azihsm_ddi_mock = { path = "ddi/mock" }
+azihsm_ddi_nix = { path = "ddi/nix" }
+azihsm_ddi_sim = { path = "ddi/sim" }
+azihsm_ddi_test_helpers = { path = "ddi/test_helpers" }
+azihsm_ddi_types = { features = [
+  "array",
+  "post_decode",
+  "pre_encode",
+], path = "ddi/serde/types" }
+azihsm_ddi_win = { path = "ddi/win" }
 test_with_tracing = { path = "crates/test_with_tracing" }
 test_with_tracing_macro = { path = "crates/test_with_tracing/test_with_tracing_macro" }
+x509 = { path = "crates/x509" }
 
 # Public crates
 anyhow = "1.0"
-asn1 = "0.13.0"
+arbitrary = { features = ["derive"], version = "1" }
+asn1 = "0.23.0"
 bitfield = "0.19.1"
 bitfield-struct = "0.5"
 cbindgen = "0.27.0"
@@ -54,52 +57,50 @@ hex = "0.4.3"
 lazy_static = "1.5"
 libc = "0.2"
 log = "0.4"
-minicbor = { version = "0.19.1", features = ["derive", "std"] }
+minicbor = { features = ["derive", "std"], version = "0.19.1" }
 nix = "0.26"
 open-enum = "0.3.0"
 openssl = { version = "0.10.68" }
 openssl-sys = "0.9"
 parking_lot = "0.12"
 paste = "1.0.12"
-proc-macro2 = "1.0.82"
+pem-rfc7468 = "0.7.0"
+pkcs1 = "0.7.5"
+pkcs8 = "0.10.2"
+proc-macro2 = "1.0.103"
 quote = "1.0"
 rand = "0.8"
+sec1 = { features = ["alloc"], version = "=0.8.0-rc.10" }
+spki = { features = ["alloc"], version = "0.7.3" }
 strum = "0.27.1"
 strum_macros = "0.27.1"
+symcrypt = { features = ["pkcs1-encrypt-decrypt", "sha1"], version = "0.5.0" }
 syn = "2"
-test-log = { version = "0.2.8", features = ["trace"] }
+test-log = { features = ["trace"], version = "0.2.8" }
 thiserror = "1.0"
 tracing = "0.1"
-tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
-trybuild = { version = "1.0.82", features = ["diff"] }
-uuid = { version = "1.3.1", features = ["v4"] }
-winapi = { version = "0.3", features = [
-    "errhandlingapi",
-    "fileapi",
-    "handleapi",
-    "ioapiset",
-    "minwindef",
-    "setupapi",
-    "synchapi",
-    "winbase",
-    "winerror",
-    "winioctl",
-    "winnt",
-    "winuser",
-] }
-windows = { version = "0.56", features = ["Win32_Security_Cryptography"] }
-zerocopy = { version = "0.8.17", features = ["derive"] }
-arbitrary = { version = "1", features = ["derive"] }
-spki = "0.7.3"
-sec1 = { version = "=0.8.0-rc.10", features = ["alloc"] }
-pem-rfc7468 = "0.7.0"
-pkcs1 = { version = "0.7.5", features = ["alloc"], default-features = false }
-pkcs8 = "0.10.2"
-symcrypt = { version = "0.5.0", features = ["sha1", "pkcs1-encrypt-decrypt"] }
+tracing-subscriber = { features = ["env-filter"], version = "0.3.16" }
+trybuild = "1.0.114"
+uuid = { features = ["v4"], version = "1.3.1" }
+winapi = { features = [
+  "errhandlingapi",
+  "fileapi",
+  "handleapi",
+  "ioapiset",
+  "minwindef",
+  "setupapi",
+  "synchapi",
+  "winbase",
+  "winerror",
+  "winioctl",
+  "winnt",
+  "winuser",
+], version = "0.3" }
+windows = { features = ["Win32_Security_Cryptography"], version = "0.56" }
 xshell = "0.2.7"
-
-# needed for SessionTable in ddi/sim
+zerocopy = { features = ["derive"], version = "0.8.17" }
 zeroize = "1.8.1"
+
 [workspace.lints.rust]
 future_incompatible = { level = "deny", priority = -1 }
 nonstandard_style = { level = "deny", priority = -1 }

@@ -44,7 +44,7 @@ pub(crate) fn struct_len(ddi: &DdiStruct) -> syn::Result<proc_macro2::TokenStrea
                         quote! {
                             if let Some(value) = &self.#name {
                                 #id.mbor_len(acc);
-                                let pad = mcr_ddi_mbor::pad4(acc.len() as u32 + 3);
+                                let pad = azihsm_ddi_mbor::pad4(acc.len() as u32 + 3);
                                 #[cfg(test)]
                                 assert_eq!((acc.len() + 3 + pad as usize) % 4, 0);
                                 MborPaddedByteArray(value, pad as u8).mbor_len(acc);
@@ -69,7 +69,7 @@ pub(crate) fn struct_len(ddi: &DdiStruct) -> syn::Result<proc_macro2::TokenStrea
                     DdiStructFieldKind::MborArray => {
                         quote! {
                             #id.mbor_len(acc);
-                            let pad = mcr_ddi_mbor::pad4(acc.len() as u32 + 3);
+                            let pad = azihsm_ddi_mbor::pad4(acc.len() as u32 + 3);
                             #[cfg(test)]
                             assert_eq!((acc.len() + 3 + pad as usize) % 4, 0);
                             MborPaddedByteArray(&self.#name, pad as u8).mbor_len(acc);
@@ -85,8 +85,8 @@ pub(crate) fn struct_len(ddi: &DdiStruct) -> syn::Result<proc_macro2::TokenStrea
         .collect::<Vec<_>>();
 
     Ok(quote! {
-        impl<#(#lifetimes,)*> mcr_ddi_mbor::MborLen for #ident<#(#lifetimes,)*> {
-            fn mbor_len(&self, acc: &mut mcr_ddi_mbor::MborLenAccumulator) {
+        impl<#(#lifetimes,)*> azihsm_ddi_mbor::MborLen for #ident<#(#lifetimes,)*> {
+            fn mbor_len(&self, acc: &mut azihsm_ddi_mbor::MborLenAccumulator) {
                 let mut cnt = #field_cnt as MborId;
                 #(#enc_cnt)*
                 MborMap(cnt).mbor_len(acc);
@@ -100,8 +100,8 @@ pub(crate) fn open_enum_len(ddi: &DdiOpenEnum) -> syn::Result<proc_macro2::Token
     let ident = &ddi.ident;
 
     Ok(quote! {
-        impl mcr_ddi_mbor::MborLen for #ident {
-            fn mbor_len(&self, acc: &mut mcr_ddi_mbor::MborLenAccumulator) {
+        impl azihsm_ddi_mbor::MborLen for #ident {
+            fn mbor_len(&self, acc: &mut azihsm_ddi_mbor::MborLenAccumulator) {
                 self.0.mbor_len(acc);
             }
         }
@@ -113,7 +113,7 @@ mod tests {
     extern crate alloc;
     use alloc::vec;
 
-    use mcr_ddi_mbor::*;
+    use azihsm_ddi_mbor::*;
     use rand::Rng;
 
     #[test]
