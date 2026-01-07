@@ -1,0 +1,4 @@
+# .gitattributes file
+
+# Always use LF for TOML scripts
+*.toml text eol=lf
