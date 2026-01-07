@@ -47,7 +47,7 @@ impl Xtask for InstallSymcrypt {
             let _install_method_str = self.install_method.unwrap_or_else(|| "nuget".to_string());
             let symcrypt_version = self
                 .symcrypt_version
-                .unwrap_or_else(|| "103.10.0-b39181fb-129971309".to_string());
+                .unwrap_or_else(|| "v103.5.1".to_string());
             let os = self.os.unwrap_or_else(|| "windows".to_string());
             let arch = self
                 .architecture
