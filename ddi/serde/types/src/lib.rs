@@ -181,27 +181,6 @@ pub enum DdiOp {
     // Test only opcodes below
     /// Reset function to default state for testing
     ResetFunction = 2001,
-
-    /// Test action request
-    TestAction = 2004,
-
-    /// Get Private Key request
-    GetPrivKey = 2005,
-
-    /// SHA Digest
-    ShaDigest = 2006,
-
-    /// Get Random Number using RNG
-    GetRandomNumber = 2007,
-
-    /// Import a key in RAW format
-    RawKeyImport = 2008,
-
-    /// Aes KWP ECB
-    SoftAes = 2009,
-
-    /// RSA Unwrap KEK
-    RsaUnwrapKek = 2010,
 }
 
 /// DDI status code enumeration

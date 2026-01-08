@@ -86,10 +86,13 @@ impl CredentialEncryptionKey {
         Ok(CredentialEncryptionKey { aes_key, hmac_key })
     }
 
-    fn aes_cbc_encrypt(&self, iv: &[u8; 16], plaintext: &[u8]) -> Result<Vec<u8>, CredEncErr> {
-        let mut algo = AesCbcAlgo::with_no_padding(iv);
+    fn aes_cbc_encrypt(
+        &self,
+        algo: &mut AesCbcAlgo,
+        plaintext: &[u8],
+    ) -> Result<Vec<u8>, CredEncErr> {
         let key = AesKey::from_bytes(&self.aes_key).map_err(|_| CredEncErr::AesKeyImportError)?;
-        let ciphertext = Encrypter::encrypt_vec(&mut algo, &key, plaintext)
+        let ciphertext = Encrypter::encrypt_vec(algo, &key, plaintext)
             .map_err(|_| CredEncErr::AesCbcEncryptError)?;
         Ok(ciphertext)
     }
@@ -114,8 +117,9 @@ impl CredentialEncryptionKey {
         let mut iv = [0; 16];
         Rng::rand_bytes(&mut iv).map_err(|_| CredEncErr::RngError)?;
 
-        let encrypted_id = self.aes_cbc_encrypt(&iv, &id)?;
-        let encrypted_pin = self.aes_cbc_encrypt(&iv, &pin)?;
+        let mut algo = AesCbcAlgo::with_no_padding(&iv);
+        let encrypted_id = self.aes_cbc_encrypt(&mut algo, &id)?;
+        let encrypted_pin = self.aes_cbc_encrypt(&mut algo, &pin)?;
 
         let mut id_pin_iv_nonce = [0; 80];
         id_pin_iv_nonce[..16].copy_from_slice(&encrypted_id);
@@ -146,9 +150,10 @@ impl CredentialEncryptionKey {
         let mut iv = [0; 16];
         Rng::rand_bytes(&mut iv).map_err(|_| CredEncErr::RngError)?;
 
-        let encrypted_id = self.aes_cbc_encrypt(&iv, &id)?;
-        let encrypted_pin = self.aes_cbc_encrypt(&iv, &pin)?;
-        let encrypted_seed = self.aes_cbc_encrypt(&iv, &seed)?;
+        let mut algo = AesCbcAlgo::with_no_padding(&iv);
+        let encrypted_id = self.aes_cbc_encrypt(&mut algo, &id)?;
+        let encrypted_pin = self.aes_cbc_encrypt(&mut algo, &pin)?;
+        let encrypted_seed = self.aes_cbc_encrypt(&mut algo, &seed)?;
 
         let mut id_pin_seed_iv_nonce = [0; 128];
         id_pin_seed_iv_nonce[..16].copy_from_slice(&encrypted_id);
@@ -180,7 +185,8 @@ impl CredentialEncryptionKey {
         let mut iv = [0; 16];
         Rng::rand_bytes(&mut iv).map_err(|_| CredEncErr::RngError)?;
 
-        let encrypted_pin = self.aes_cbc_encrypt(&iv, &pin)?;
+        let mut algo = AesCbcAlgo::with_no_padding(&iv);
+        let encrypted_pin = self.aes_cbc_encrypt(&mut algo, &pin)?;
 
         let mut id_pin_iv_nonce = [0; 64];
         id_pin_iv_nonce[..16].copy_from_slice(&encrypted_pin);
