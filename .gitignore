@@ -374,3 +374,7 @@ bld_engine_test*
 # API C++ build artifacts
 api/cpp/build/
 api/cpp/build-release/
+
+# OpenSSL Provider build artifacts
+plugins/openssl/build
+plugins/openssl/.cache

@@ -1,0 +1,19 @@
+//
+// Copyright (c) Microsoft Corporation. Licensed under the MIT license.
+//
+
+#pragma once
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#include <azihsm.h>
+
+void aihsm_close_device_and_session(azihsm_handle device, azihsm_handle session);
+azihsm_error aihsm_open_device_and_session(azihsm_handle* device, azihsm_handle* session);
+
+#ifdef __cplusplus
+}
+#endif
+
