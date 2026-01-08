@@ -912,30 +912,6 @@ impl Dispatcher {
                     )
                 }
 
-                DdiOp::TestAction => {
-                    resp_header.status = DdiStatus::UnsupportedCmd;
-                }
-
-                DdiOp::GetPrivKey => {
-                    resp_header.status = DdiStatus::UnsupportedCmd;
-                }
-
-                DdiOp::ShaDigest => {
-                    resp_header.status = DdiStatus::UnsupportedCmd;
-                }
-
-                DdiOp::GetRandomNumber => {
-                    resp_header.status = DdiStatus::UnsupportedCmd;
-                }
-
-                DdiOp::RawKeyImport => {
-                    resp_header.status = DdiStatus::UnsupportedCmd;
-                }
-
-                DdiOp::SoftAes => {
-                    resp_header.status = DdiStatus::UnsupportedCmd;
-                }
-
                 DdiOp::Invalid => {
                     resp_header.status = DdiStatus::UnsupportedCmd;
                 }
@@ -1425,11 +1401,11 @@ impl Dispatcher {
 
         let resp = DdiEccGenerateKeyPairResp {
             private_key_id,
-            pub_key: Some(DdiDerPublicKey {
+            pub_key: DdiDerPublicKey {
                 der: MborByteArray::new(der, der_vec.len())
                     .map_err(|_| ManticoreError::InternalError)?,
                 key_kind: key_kind.as_pub()?.try_into()?,
-            }),
+            },
             masked_key: MborByteArray::from_slice(&masked_key)
                 .map_err(|_| ManticoreError::InvalidArgument)?,
         };

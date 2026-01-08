@@ -740,20 +740,18 @@ impl VaultInner {
                 self.reset_nonce()?;
 
                 let aes_key = AesKey::from_bytes(&keys[..32])?;
-                let decrypted_id = aes_key
-                    .decrypt(
-                        &encrypted_credential.id,
-                        AesAlgo::Cbc,
-                        Some(&encrypted_credential.iv),
-                    )?
-                    .plain_text;
-                let decrypted_pin = aes_key
-                    .decrypt(
-                        &encrypted_credential.pin,
-                        AesAlgo::Cbc,
-                        Some(&encrypted_credential.iv),
-                    )?
-                    .plain_text;
+
+                let aes_result = aes_key.decrypt(
+                    &encrypted_credential.id,
+                    AesAlgo::Cbc,
+                    Some(&encrypted_credential.iv),
+                )?;
+                let decrypted_id = aes_result.plain_text;
+                let iv = aes_result.iv;
+
+                let aes_result =
+                    aes_key.decrypt(&encrypted_credential.pin, AesAlgo::Cbc, iv.as_deref())?;
+                let decrypted_pin = aes_result.plain_text;
 
                 self.set_user_new_credential(&decrypted_id, &decrypted_pin)?;
             } else {
@@ -837,27 +835,23 @@ impl VaultInner {
             self.reset_nonce()?;
 
             let aes_key = AesKey::from_bytes(&keys[..32])?;
-            let decrypted_id = aes_key
-                .decrypt(
-                    &encrypted_credential.id,
-                    AesAlgo::Cbc,
-                    Some(&encrypted_credential.iv),
-                )?
-                .plain_text;
-            let decrypted_pin = aes_key
-                .decrypt(
-                    &encrypted_credential.pin,
-                    AesAlgo::Cbc,
-                    Some(&encrypted_credential.iv),
-                )?
-                .plain_text;
-            let decrypted_seed = aes_key
-                .decrypt(
-                    &encrypted_credential.seed,
-                    AesAlgo::Cbc,
-                    Some(&encrypted_credential.iv),
-                )?
-                .plain_text;
+
+            let aes_result = aes_key.decrypt(
+                &encrypted_credential.id,
+                AesAlgo::Cbc,
+                Some(&encrypted_credential.iv),
+            )?;
+            let decrypted_id = aes_result.plain_text;
+            let iv = aes_result.iv;
+
+            let aes_result =
+                aes_key.decrypt(&encrypted_credential.pin, AesAlgo::Cbc, iv.as_deref())?;
+            let decrypted_pin = aes_result.plain_text;
+            let iv = aes_result.iv;
+
+            let aes_result =
+                aes_key.decrypt(&encrypted_credential.seed, AesAlgo::Cbc, iv.as_deref())?;
+            let decrypted_seed = aes_result.plain_text;
 
             let mut id = [0; 16];
             let mut pin = [0; 16];
@@ -1505,22 +1499,23 @@ pub(crate) mod tests {
 
             let mut encrypted_id = [0; 16];
             let mut encrypted_pin = [0; 16];
-            let mut iv = [0; 16];
+            let mut orig_iv = [0; 16];
 
-            rand_bytes(&mut iv)?;
+            rand_bytes(&mut orig_iv)?;
 
             let aes_key = AesKey::from_bytes(&aes_key)?;
 
-            let encrypted_id_vec = aes_key.encrypt(&id, AesAlgo::Cbc, Some(&iv))?.cipher_text;
-            encrypted_id.copy_from_slice(&encrypted_id_vec);
+            let aes_result = aes_key.encrypt(&id, AesAlgo::Cbc, Some(&orig_iv))?;
+            encrypted_id.copy_from_slice(&aes_result.cipher_text);
+            let iv = aes_result.iv;
 
-            let encrypted_pin_vec = aes_key.encrypt(&pin, AesAlgo::Cbc, Some(&iv))?.cipher_text;
-            encrypted_pin.copy_from_slice(&encrypted_pin_vec);
+            let aes_result = aes_key.encrypt(&pin, AesAlgo::Cbc, iv.as_deref())?;
+            encrypted_pin.copy_from_slice(&aes_result.cipher_text);
 
             let mut id_pin_iv_nonce = [0; 80];
             id_pin_iv_nonce[..16].copy_from_slice(&encrypted_id);
             id_pin_iv_nonce[16..32].copy_from_slice(&encrypted_pin);
-            id_pin_iv_nonce[32..48].copy_from_slice(&iv);
+            id_pin_iv_nonce[32..48].copy_from_slice(&orig_iv);
             id_pin_iv_nonce[48..].copy_from_slice(&nonce);
 
             let hmac_key = HmacKey::from_bytes(&hmac_key)?;
@@ -1533,7 +1528,7 @@ pub(crate) mod tests {
                 EncryptedCredential {
                     id: encrypted_id,
                     pin: encrypted_pin,
-                    iv,
+                    iv: orig_iv,
                     nonce,
                     tag: tag_48,
                 },
@@ -1579,26 +1574,28 @@ pub(crate) mod tests {
             let mut encrypted_id = [0; 16];
             let mut encrypted_pin = [0; 16];
             let mut encrypted_seed = [0; 48];
-            let mut iv = [0; 16];
+            let mut orig_iv = [0; 16];
 
-            rand_bytes(&mut iv)?;
+            rand_bytes(&mut orig_iv)?;
 
             let aes_key = AesKey::from_bytes(&aes_key)?;
 
-            let encrypted_id_vec = aes_key.encrypt(&id, AesAlgo::Cbc, Some(&iv))?.cipher_text;
-            encrypted_id.copy_from_slice(&encrypted_id_vec);
+            let aes_result = aes_key.encrypt(&id, AesAlgo::Cbc, Some(&orig_iv))?;
+            encrypted_id.copy_from_slice(&aes_result.cipher_text);
+            let iv = aes_result.iv;
 
-            let encrypted_pin_vec = aes_key.encrypt(&pin, AesAlgo::Cbc, Some(&iv))?.cipher_text;
-            encrypted_pin.copy_from_slice(&encrypted_pin_vec);
+            let aes_result = aes_key.encrypt(&pin, AesAlgo::Cbc, iv.as_deref())?;
+            encrypted_pin.copy_from_slice(&aes_result.cipher_text);
+            let iv = aes_result.iv;
 
-            let encrypted_seed_vec = aes_key.encrypt(&seed, AesAlgo::Cbc, Some(&iv))?.cipher_text;
-            encrypted_seed.copy_from_slice(&encrypted_seed_vec);
+            let aes_result = aes_key.encrypt(&seed, AesAlgo::Cbc, iv.as_deref())?;
+            encrypted_seed.copy_from_slice(&aes_result.cipher_text);
 
             let mut id_pin_seed_iv_nonce = [0; 128];
             id_pin_seed_iv_nonce[..16].copy_from_slice(&encrypted_id);
             id_pin_seed_iv_nonce[16..32].copy_from_slice(&encrypted_pin);
             id_pin_seed_iv_nonce[32..80].copy_from_slice(&encrypted_seed);
-            id_pin_seed_iv_nonce[80..96].copy_from_slice(&iv);
+            id_pin_seed_iv_nonce[80..96].copy_from_slice(&orig_iv);
             id_pin_seed_iv_nonce[96..].copy_from_slice(&nonce);
 
             let hmac_key = HmacKey::from_bytes(&hmac_key)?;
@@ -1612,7 +1609,7 @@ pub(crate) mod tests {
                     id: encrypted_id,
                     pin: encrypted_pin,
                     seed: encrypted_seed,
-                    iv,
+                    iv: orig_iv,
                     nonce,
                     tag: tag_48,
                 },

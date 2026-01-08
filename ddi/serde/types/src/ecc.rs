@@ -50,9 +50,9 @@ pub struct DdiEccGenerateKeyPairResp {
     #[ddi(id = 1)]
     pub private_key_id: u16,
 
-    /// Optional Public Key
+    /// Public Key
     #[ddi(id = 2)]
-    pub pub_key: Option<DdiDerPublicKey>,
+    pub pub_key: DdiDerPublicKey,
 
     /// Masked Key
     #[ddi(id = 3)]

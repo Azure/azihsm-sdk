@@ -56,7 +56,7 @@ pub fn helper_create_ecc_key_pairs(
     let resp = resp.unwrap();
 
     let priv_key_id1 = resp.data.private_key_id;
-    let pub_key1 = resp.data.pub_key.unwrap();
+    let pub_key1 = resp.data.pub_key;
     let mut der1 = [0u8; DER_MAX_SIZE];
     let der1_len = pub_key1.der.len();
     der1[..der1_len].clone_from_slice(&pub_key1.der.data()[..der1_len]);
@@ -71,7 +71,7 @@ pub fn helper_create_ecc_key_pairs(
     let resp = resp.unwrap();
 
     let priv_key_id2 = resp.data.private_key_id;
-    let pub_key2: DdiDerPublicKey = resp.data.pub_key.unwrap();
+    let pub_key2 = resp.data.pub_key;
     let mut der2 = [0u8; DER_MAX_SIZE];
     let der2_len = pub_key2.der.len();
     der2[..der2_len].clone_from_slice(&pub_key2.der.data()[..der2_len]);

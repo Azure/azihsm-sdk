@@ -236,10 +236,9 @@ impl KeyGenOp for EcdsaKeyPair {
         inner.priv_key_id = Some(KeyId(resp.data.private_key_id));
 
         // Store public key DER as PubKeyInfo property
-        if let Some(resp_pub_key) = resp.data.pub_key {
-            let pub_key_der = resp_pub_key.der.data()[..resp_pub_key.der.len()].to_vec();
-            inner.pub_key_props.set_pub_key_info(pub_key_der);
-        }
+        let pub_key_der = resp.data.pub_key.der.as_slice().to_vec();
+        inner.pub_key_props.set_pub_key_info(pub_key_der);
+
         Ok(())
     }
 }
