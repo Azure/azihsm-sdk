@@ -19,6 +19,10 @@ pub struct Fmt {
     #[clap(long)]
     pub fix: bool,
 
+    /// Skip TOML formatting
+    #[clap(long)]
+    pub skip_toml: bool,
+
     /// Override toolchain to use for formatting
     #[clap(long)]
     pub toolchain: Option<String>,
@@ -45,6 +49,11 @@ impl Xtask for Fmt {
         cmd!(sh, "cargo {rust_toolchain...} fmt -- {fmt_check...}")
             .quiet()
             .run()?;
+
+        if !self.skip_toml {
+            log::trace!("running taplo fmt");
+            cmd!(sh, "taplo fmt {fmt_check...}").quiet().run()?;
+        }
 
         log::trace!("done fmt");
         Ok(())

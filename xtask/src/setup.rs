@@ -67,11 +67,19 @@ impl Xtask for Setup {
         };
         install_cargo_nextest.run(ctx.clone())?;
 
+        // Run Install Cargo taplo-cli
+        let install_cargo_taplo_cli = install::Install {
+            crate_name: "taplo-cli@0.10.0".to_string(),
+            force: self.force,
+            config: self.config.clone(),
+        };
+        install_cargo_taplo_cli.run(ctx.clone())?;
+
         #[cfg(not(target_os = "windows"))]
         {
             // Cargo fuzz
             let install_cargo_fuzz = install::Install {
-                crate_name: "cargo-fuzz".to_string(),
+                crate_name: "cargo-fuzz@0.13.1".to_string(),
                 force: self.force,
                 config: self.config.clone(),
             };

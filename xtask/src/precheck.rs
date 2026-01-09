@@ -18,7 +18,11 @@ use crate::XtaskCtx;
 /// Xtask to run various repo-specific checks
 #[derive(Parser)]
 #[clap(about = "Run various checks")]
-pub struct Precheck {}
+pub struct Precheck {
+    /// Skip TOML formatting
+    #[clap(long)]
+    pub skip_toml: bool,
+}
 
 impl Xtask for Precheck {
     fn run(self, ctx: XtaskCtx) -> anyhow::Result<()> {
@@ -31,6 +35,7 @@ impl Xtask for Precheck {
         // Run Fmt
         let fmt = fmt::Fmt {
             fix: false,                             // Do not fix formatting issues by default
+            skip_toml: self.skip_toml,              // Pass through skip_toml flag
             toolchain: Some("nightly".to_string()), // Use nightly toolchain by default
         };
         fmt.run(ctx.clone())?;
