@@ -47,7 +47,7 @@ static AIHSM_ENCODER_CTX* azihsm_ossl_encoder_newctx(AZIHSM_OSSL_PROV_CTX* provc
 
     ectx->handle  = provctx->handle;
     ectx->libctx  = provctx->libctx;
-    ectx->session = provctx->session; 
+    ectx->session = provctx->session;
 
     return ectx;
 }
@@ -111,7 +111,7 @@ static uint8_t* azihsm_ossl_get_der_spki(azihsm_handle session, azihsm_handle ke
     struct azihsm_key_prop prop = {
         .id  = AZIHSM_KEY_PROP_ID_PUB_KEY_INFO,
         .val = spki,
-        .len = spki_max_len 
+        .len = spki_max_len
     };
 
     if (azihsm_key_get_prop(session, key_handle, &prop) != AZIHSM_ERROR_SUCCESS) {

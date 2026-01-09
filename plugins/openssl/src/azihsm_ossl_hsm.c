@@ -3,7 +3,7 @@
 /*
  * picks and opens the first possible HSM device
  * */
-static azihsm_error aihsm_get_device_handle(azihsm_handle* device)
+static azihsm_error azihsm_get_device_handle(azihsm_handle* device)
 {
     azihsm_error  status;
     azihsm_handle device_list;
@@ -45,7 +45,7 @@ static azihsm_error aihsm_get_device_handle(azihsm_handle* device)
     return AZIHSM_INTERNAL_ERROR;
 }
 
-azihsm_error aihsm_open_device_and_session(azihsm_handle* device, azihsm_handle* session)
+azihsm_error azihsm_open_device_and_session(azihsm_handle* device, azihsm_handle* session)
 {
     azihsm_error status;
 
@@ -65,7 +65,7 @@ azihsm_error aihsm_open_device_and_session(azihsm_handle* device, azihsm_handle*
         }
     };
 
-    status = aihsm_get_device_handle(device);
+    status = azihsm_get_device_handle(device);
 
     if (status != AZIHSM_ERROR_SUCCESS) {
         return status;
@@ -88,7 +88,7 @@ azihsm_error aihsm_open_device_and_session(azihsm_handle* device, azihsm_handle*
     return AZIHSM_ERROR_SUCCESS;
 }
 
-void aihsm_close_device_and_session(azihsm_handle device, azihsm_handle session) {
+void azihsm_close_device_and_session(azihsm_handle device, azihsm_handle session) {
 
     azihsm_sess_close(session);
     azihsm_part_close(device);

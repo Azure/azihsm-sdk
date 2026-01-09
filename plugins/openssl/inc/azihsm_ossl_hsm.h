@@ -10,8 +10,8 @@ extern "C" {
 
 #include <azihsm.h>
 
-void aihsm_close_device_and_session(azihsm_handle device, azihsm_handle session);
-azihsm_error aihsm_open_device_and_session(azihsm_handle* device, azihsm_handle* session);
+void azihsm_close_device_and_session(azihsm_handle device, azihsm_handle session);
+azihsm_error azihsm_open_device_and_session(azihsm_handle* device, azihsm_handle* session);
 
 #ifdef __cplusplus
 }

@@ -12,8 +12,8 @@ extern "C" {
  * Custom OpenSSL Parameters (keymgmt)
  * */
 
-#define AZIHSM_OSSL_PKEY_PARAM_PRIV_KEY_USAGE "aihsm.priv_key_usage"
-#define AZIHSM_OSSL_PKEY_PARAM_PUB_KEY_USAGE  "aihsm.pub_key_usage"
+#define AZIHSM_OSSL_PKEY_PARAM_PRIV_KEY_USAGE "azihsm.priv_key_usage"
+#define AZIHSM_OSSL_PKEY_PARAM_PUB_KEY_USAGE  "azihsm.pub_key_usage"
 
 #define KEY_USAGE_LIST_MAX 8
 

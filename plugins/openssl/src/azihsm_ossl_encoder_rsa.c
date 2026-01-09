@@ -45,7 +45,7 @@ static AIHSM_ENCODER_CTX* azihsm_ossl_encoder_newctx(AZIHSM_OSSL_PROV_CTX* provc
 
     ectx->handle  = provctx->handle;
     ectx->libctx  = provctx->libctx;
-    ectx->session = provctx->session; 
+    ectx->session = provctx->session;
 
     return ectx;
 }

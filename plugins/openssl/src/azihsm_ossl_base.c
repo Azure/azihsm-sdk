@@ -115,12 +115,15 @@ extern const OSSL_DISPATCH azihsm_ossl_ec_text_encoder_functions[];
 extern const OSSL_DISPATCH azihsm_ossl_ec_der_spki_encoder_functions[];
 
 static const OSSL_ALGORITHM azihsm_ossl_encoders[] = {
-    { "RSA",     "provider=aihsm,output=text",                        azihsm_ossl_rsa_text_encoder_functions,     NULL },
-    { "RSA",     "provider=aihsm,output=der,structure=type-specific", azihsm_ossl_rsa_der_spki_encoder_functions, NULL },
-    { "RSA-PSS", "provider=aihsm,output=text",                        azihsm_ossl_rsa_text_encoder_functions,     NULL },
-    { "RSA-PSS", "provider=aihsm,output=der,structure=type-specific", azihsm_ossl_rsa_der_spki_encoder_functions, NULL },
-    { "EC",      "provider=aihsm,output=text",                        azihsm_ossl_ec_text_encoder_functions,      NULL },
-    { "EC",      "provider=aihsm,output=der,structure=type-specific", azihsm_ossl_ec_der_spki_encoder_functions,  NULL },
+    { "RSA",     "provider=azihsm,output=text",                        azihsm_ossl_rsa_text_encoder_functions,     NULL },
+    { "RSA",     "provider=azihsm,output=der,structure=type-specific", azihsm_ossl_rsa_der_spki_encoder_functions, NULL },
+    { "RSA",     "provider=azihsm,output=der,structure=PrivateKeyInfo", azihsm_ossl_rsa_der_pki_encoder_functions,  NULL },
+    { "RSA-PSS", "provider=azihsm,output=text",                        azihsm_ossl_rsa_text_encoder_functions,     NULL },
+    { "RSA-PSS", "provider=azihsm,output=der,structure=type-specific", azihsm_ossl_rsa_der_spki_encoder_functions, NULL },
+    { "RSA-PSS", "provider=azihsm,output=der,structure=PrivateKeyInfo", azihsm_ossl_rsa_der_pki_encoder_functions,  NULL },
+    { "EC",      "provider=azihsm,output=text",                        azihsm_ossl_ec_text_encoder_functions,      NULL },
+    { "EC",      "provider=azihsm,output=der,structure=type-specific", azihsm_ossl_ec_der_spki_encoder_functions,  NULL },
+    { "EC",      "provider=azihsm,output=der,structure=PrivateKeyInfo", azihsm_ossl_ec_der_pki_encoder_functions,  NULL },
     { NULL, NULL, NULL, NULL }
 };
 
@@ -134,7 +137,7 @@ static void azihsm_ossl_teardown(AZIHSM_OSSL_PROV_CTX *provctx)
         OSSL_LIB_CTX_free(provctx->libctx);
     }
 
-    aihsm_close_device_and_session(provctx->device, provctx->session);
+    azihsm_close_device_and_session(provctx->device, provctx->session);
     OPENSSL_free(provctx);
 }
 
@@ -235,7 +238,7 @@ OSSL_STATUS OSSL_provider_init(const OSSL_CORE_HANDLE *handle,
         return OSSL_FAILURE;
     }
 
-    status = aihsm_open_device_and_session(&ctx->device, &ctx->session);
+    status = azihsm_open_device_and_session(&ctx->device, &ctx->session);
 
     if (status != AZIHSM_ERROR_SUCCESS) {
         OSSL_LIB_CTX_free(ctx->libctx);

@@ -27,19 +27,19 @@
  *   Example:
  *      -pkeyopt group:P-384
  *
- *   @aihsm.pub_key_usage
+ *   @azihsm.pub_key_usage
  *   Description: Comma-delimited list of key usage attributes of public key
  *   Accepted values: sign, verify, unwrap, derive, ...
  *   Default value: verify
  *   Example:
- *      -pkeyopt aihsm.priv_key_usage:derive,verify
+ *      -pkeyopt azihsm.priv_key_usage:derive,verify
  *
- *   @aihsm.priv_key_usage [mandatory]
+ *   @azihsm.priv_key_usage [mandatory]
  *   Description: Comma-delimited list of key usage attributes of private key
  *   Accepted values: sign, verify, unwrap, derive, ...
  *   Default value: sign
  *   Example:
- *      -pkeyopt aihsm.priv_key_usage:sign
+ *      -pkeyopt azihsm.priv_key_usage:sign
  *
  * */
 
