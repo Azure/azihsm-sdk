@@ -1,3 +1,4 @@
+# Copyright (C) Microsoft Corporation. All rights reserved.
 cmake_minimum_required(VERSION 3.13.0)
 
 project(azihsm_ossl_provider
