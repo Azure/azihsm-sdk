@@ -1,3 +1,4 @@
+# Copyright (C) Microsoft Corporation. All rights reserved.
 #!/usr/bin/env bash
 
 set -eux

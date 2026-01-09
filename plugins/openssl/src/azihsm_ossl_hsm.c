@@ -1,3 +1,4 @@
+//Copyright (C) Microsoft Corporation. All rights reserved.
 #include "azihsm_ossl_hsm.h"
 
 /*
