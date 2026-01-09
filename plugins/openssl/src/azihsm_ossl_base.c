@@ -111,8 +111,10 @@ static const OSSL_ALGORITHM azihsm_ossl_asym_cipher[] = {
 // Encoders
 extern const OSSL_DISPATCH azihsm_ossl_rsa_text_encoder_functions[];
 extern const OSSL_DISPATCH azihsm_ossl_rsa_der_spki_encoder_functions[];
+extern const OSSL_DISPATCH azihsm_ossl_rsa_der_pki_encoder_functions[];
 extern const OSSL_DISPATCH azihsm_ossl_ec_text_encoder_functions[];
 extern const OSSL_DISPATCH azihsm_ossl_ec_der_spki_encoder_functions[];
+extern const OSSL_DISPATCH azihsm_ossl_ec_der_pki_encoder_functions[];
 
 static const OSSL_ALGORITHM azihsm_ossl_encoders[] = {
     { "RSA",     "provider=azihsm,output=text",                        azihsm_ossl_rsa_text_encoder_functions,     NULL },

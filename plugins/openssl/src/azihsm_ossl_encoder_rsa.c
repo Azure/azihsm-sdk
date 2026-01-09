@@ -158,4 +158,54 @@ const OSSL_DISPATCH azihsm_ossl_rsa_der_spki_encoder_functions[] = {
     { 0, NULL }
 };
 
+/* --- ENCODER (DER PRIVATEKEY INFO) --- */
 
+static int azihsm_ossl_encoder_der_pki_encode(AIHSM_ENCODER_CTX* ctx, OSSL_CORE_BIO* out, const AZIHSM_RSA_KEY* rsa_key,
+                                              ossl_unused const OSSL_PARAM key_abstract[], ossl_unused int selection,
+                                              ossl_unused OSSL_PASSPHRASE_CALLBACK* cb, ossl_unused void* cbarg)
+{
+    BIO* bio;
+
+    if ((bio = BIO_new_from_core_bio(ctx->libctx, out)) == NULL) {
+        return 0;
+    }
+
+    if (selection & OSSL_KEYMGMT_SELECT_PRIVATE_KEY) {
+        BIO_printf(bio, "\n");
+        BIO_printf(bio, "==== PrivateKeyInfo (PKCS#8) ====\n");
+        BIO_printf(bio, "provider             : azihsm\n");
+        BIO_printf(bio, "algorithm            : %s\n", key_type_to_str(rsa_key->genctx.key_type));
+        BIO_printf(bio, "public-key bit length: %"PRIu32"\n", rsa_key->genctx.pubkey_bits);
+        BIO_printf(bio, "handle (public-key)  : %"PRIu32"\n", rsa_key->key.public);
+        BIO_printf(bio, "handle (private-key) : %"PRIu32"\n", rsa_key->key.private);
+        BIO_printf(bio, "\n");
+        BIO_printf(bio, "NOTE: Full PKCS#8 DER encoding is not implemented.\n");
+        BIO_printf(bio, "      Keys remain in HSM and cannot be exported.\n");
+    } else if (selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY) {
+        BIO_printf(bio, "info: DER-encoded PrivateKeyInfo not available for public keys\n");
+    }
+
+    BIO_free(bio);
+    return 1;
+}
+
+static int azihsm_ossl_encoder_der_pki_does_selection(ossl_unused void* provctx, int selection)
+{
+    if (selection & OSSL_KEYMGMT_SELECT_PRIVATE_KEY) {
+        return 1;
+    }
+
+    if (selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY) {
+        return 1;
+    }
+
+    return 0;
+}
+
+const OSSL_DISPATCH azihsm_ossl_rsa_der_pki_encoder_functions[] = {
+    { OSSL_FUNC_ENCODER_NEWCTX,         (void (*)(void)) azihsm_ossl_encoder_newctx },
+    { OSSL_FUNC_ENCODER_FREECTX,        (void (*)(void)) azihsm_ossl_encoder_freectx },
+    { OSSL_FUNC_ENCODER_DOES_SELECTION, (void (*)(void)) azihsm_ossl_encoder_der_pki_does_selection },
+    { OSSL_FUNC_ENCODER_ENCODE,         (void (*)(void)) azihsm_ossl_encoder_der_pki_encode },
+    { 0, NULL }
+};

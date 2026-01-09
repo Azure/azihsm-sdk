@@ -182,4 +182,61 @@ const OSSL_DISPATCH azihsm_ossl_ec_der_spki_encoder_functions[] = {
     { 0, NULL }
 };
 
+static int azihsm_ossl_encoder_der_pki_encode(AIHSM_ENCODER_CTX* ctx, OSSL_CORE_BIO* out, const AZIHSM_EC_KEY* ec_key,
+                                              ossl_unused const OSSL_PARAM key_abstract[], ossl_unused int selection,
+                                              ossl_unused OSSL_PASSPHRASE_CALLBACK* cb, ossl_unused void* cbarg)
+{
+    BIO*                    bio;
+    const AIHSM_EC_GEN_CTX* genctx = &ec_key->genctx;
+    char                    pub_usage[256] = { }, priv_usage[256] = { };
 
+    if ((bio = BIO_new_from_core_bio(ctx->libctx, out)) == NULL) {
+        return 0;
+    }
+
+    if (selection & OSSL_KEYMGMT_SELECT_PRIVATE_KEY) {
+
+        azihsm_ossl_key_usage_list_to_str(&genctx->pub_key_usage, pub_usage, sizeof(pub_usage));
+        azihsm_ossl_key_usage_list_to_str(&genctx->priv_key_usage, priv_usage, sizeof(priv_usage));
+
+        BIO_printf(bio, "\n");
+        BIO_printf(bio, "==== PrivateKeyInfo (PKCS#8) ====\n");
+        BIO_printf(bio, "provider             : azihsm\n");
+        BIO_printf(bio, "algorithm            : EC\n");
+        BIO_printf(bio, "curve                : %s\n", curve_id_to_str(genctx->ec_curve_id));
+        BIO_printf(bio, "public-key usage     : %s\n", pub_usage);
+        BIO_printf(bio, "private-key usage    : %s\n", priv_usage);
+        BIO_printf(bio, "handle (public-key)  : %"PRIu32"\n", ec_key->key.public);
+        BIO_printf(bio, "handle (private-key) : %"PRIu32"\n", ec_key->key.private);
+        BIO_printf(bio, "\n");
+        BIO_printf(bio, "NOTE: Full PKCS#8 DER encoding is not implemented.\n");
+        BIO_printf(bio, "      Keys remain in HSM and cannot be exported.\n");
+
+    } else if (selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY) {
+        BIO_printf(bio, "info: DER-encoded PrivateKeyInfo not available for public keys\n");
+    }
+
+    BIO_free(bio);
+    return 1;
+}
+
+static int azihsm_ossl_encoder_der_pki_does_selection(ossl_unused void* provctx, int selection)
+{
+    if (selection & OSSL_KEYMGMT_SELECT_PRIVATE_KEY) {
+        return 1;
+    }
+
+    if (selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY) {
+        return 1;
+    }
+
+    return 0;
+}
+
+const OSSL_DISPATCH azihsm_ossl_ec_der_pki_encoder_functions[] = {
+    { OSSL_FUNC_ENCODER_NEWCTX,         (void (*)(void)) azihsm_ossl_encoder_newctx },
+    { OSSL_FUNC_ENCODER_FREECTX,        (void (*)(void)) azihsm_ossl_encoder_freectx },
+    { OSSL_FUNC_ENCODER_DOES_SELECTION, (void (*)(void)) azihsm_ossl_encoder_der_pki_does_selection },
+    { OSSL_FUNC_ENCODER_ENCODE,         (void (*)(void)) azihsm_ossl_encoder_der_pki_encode },
+    { 0, NULL }
+};
