@@ -12,6 +12,7 @@ rust_analyzer_fix = []
 
 [dependencies]
 #crate specific subcrates
+azihsm_crypto.workspace = true
 azihsm_ddi_types.workspace = true
 
 #external crates
@@ -20,6 +21,7 @@ bitfield.workspace = true
 bitfield-struct.workspace = true
 minicbor.workspace = true
 parking_lot.workspace = true
+rand.workspace = true
 tracing.workspace = true
 uuid.workspace = true
 zerocopy.workspace = true
@@ -27,30 +29,11 @@ zeroize.workspace = true
 
 # The following crates are not included in workspace, as they may have
 # crypto usage that shouldn't be included in client library
-asn1 = { default-features = false, version = "0.20" }
 der = "0.7.8"
-p256 = { features = ["pkcs8"], version = "0.13.2" }
 p384 = { features = ["pkcs8"], version = "0.13.0" }
-p521 = { features = ["pkcs8"], version = "0.13.3" }
-rsa = { features = ["hazmat"], version = "0.9.7" }
-sha2 = { features = ["oid"], version = "0.10.8" }
-time = { default-features = false, version = "0.3.6" }
 
 # fuzzing dependencies
 arbitrary = { optional = true, workspace = true }
-
-[target.'cfg(target_os = "linux")'.dependencies]
-openssl.workspace = true
-
-[target.'cfg(target_os = "windows")'.dependencies]
-pem-rfc7468.workspace = true
-pkcs1.workspace = true
-pkcs8.workspace = true
-rand.workspace = true
-sec1.workspace = true
-spki.workspace = true
-symcrypt.workspace = true
-windows = { features = ["Win32_Security_Cryptography"], version = "0.58" }
 
 [dev-dependencies]
 #support crates

@@ -92,6 +92,41 @@ pub enum CryptoError {
     #[error("AES operation failed")]
     AesError,
 
+    /// AES XTS related errors
+    /// AES XTS Key size is invalid.
+    #[error("AES XTS invalid key size")]
+    AesXtsInvalidKeySize,
+    /// AES XTS invalid key
+    #[error("AES XTS invalid key - both halves are identical")]
+    AesXtsInvalidKey,
+    /// AES XTS data size is invalid for the operation.
+    #[error("AES XTS invalid data size")]
+    AesXtsInvalidDataSize,
+    /// AES XTS buffer size is too small.
+    #[error("AES XTS buffer too small")]
+    AesXtsBufferTooSmall,
+    /// AES XTS input size is invalid.
+    #[error("AES XTS invalid input size")]
+    AesXtsInvalidInputSize,
+    /// AES XTS encryption operation failed.
+    #[error("AES XTS encryption failed")]
+    AesXtsEncryptError,
+    /// AES XTS decryption operation failed.
+    #[error("AES XTS decryption failed")]
+    AesXtsDecryptError,
+    /// AES XTS invalid tweak size.
+    #[error("AES XTS invalid tweak size")]
+    AesXtsInvalidTweakSize,
+    /// AES XTS invalid data unit length
+    #[error("AES XTS invalid data unit length")]
+    AesXtsInvalidDataUnitLen,
+    /// AES XTS config error
+    #[error("AES XTS config error")]
+    AesXtsConfigError,
+    /// AES XTS tweak overflow.
+    #[error("AES XTS tweak overflow")]
+    AesXtsTweakOverflow,
+
     // Random number generation errors
     /// Random number generation operation failed.
     #[error("Random number generation failed")]
@@ -327,6 +362,27 @@ pub enum CryptoError {
     /// KBKDF invalid prk
     #[error("KBKDF invalid prk length")]
     KbkdfInvalidKdkLength,
+
+    /// AES-GCM related errors
+
+    /// AES-GCM invalid IV length.
+    #[error("AES-GCM invalid IV length")]
+    GcmInvalidIvLength,
+    /// AES-GCM invalid tag length.
+    #[error("AES-GCM invalid tag length")]
+    GcmInvalidTagLength,
+    /// AES-GCM output buffer is too small.
+    #[error("AES-GCM output buffer too small")]
+    GcmBufferTooSmall,
+    /// AES-GCM invalid key size.
+    #[error("AES-GCM invalid key size")]
+    GcmInvalidKeySize,
+    /// AES-GCM encryption operation failed.
+    #[error("AES-GCM encryption failed")]
+    GcmEncryptionFailed,
+    /// AES-GCM decryption operation failed.
+    #[error("AES-GCM decryption failed")]
+    GcmDecryptionFailed,
 }
 
 /// Macro for defining platform-specific algorithm type aliases.

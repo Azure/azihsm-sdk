@@ -451,7 +451,10 @@ pub struct FpGcmParams {
     kid: u32,
     tag: [u8; 16],
     iv: [u8; 12],
-    add_data_len: u32,
+    aad_data_len: u32,
+    aligned_aad_data_len: u32,
+    enable_gcm_work_around: u8,
+    rsvd: [u8; 3],
 }
 
 #[repr(C)]
@@ -482,7 +485,7 @@ pub struct McrFpIoctlIndata {
     session_id: u16,
     short_app_id: u8,
     xts_or_gcm: XtsOrGcmParams,
-    rsvd2: [u32; 32],
+    rsvd2: [u32; 30],
 }
 
 ///FpXtsDul
@@ -517,7 +520,7 @@ impl Default for McrFpIoctlIndata {
             frame_type: 0,
             session_id: 0,
             short_app_id: 0,
-            rsvd2: [0; 32],
+            rsvd2: [0; 30],
         }
     }
 }
@@ -537,7 +540,10 @@ pub struct McrFpIoctlOutData {
     cmd_spec_data: [u8; 16],
     byte_count: u32,
     ioctl_status: u32,
-    rsvd: [u32; 30],
+    pub fips_approved: bool,
+    pub reserved: [u8; 3],
+    pub iv_from_device: [u8; 12],
+    rsvd: [u32; 26],
 }
 
 #[derive(Default)]
@@ -690,6 +696,42 @@ impl DdiNixDev {
     }
 }
 
+/// Align AAD in place according to the following rules:
+/// The AAD needs to be aligned in such a way that the
+/// AAD data comes in the middle of alignment.
+/// This means that a AAD size of 11 bytes will be aligned like this:
+///
+/// Before[Size:11]: [AB, AB, AB, AB, AB, AB, AB, AB, AB, AB, AB]
+/// Buffer size after resize to  32
+/// After: [00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, | 16 bytes of zeros
+///         AB, AB, AB, AB, AB, AB, AB, AB, AB, AB, AB, | 11 bytes of AAD data
+///         00, 00, 00, 00, 00] | 5 bytes of zeros to pad to 32B multiple
+///
+/// - If len % 32 == 0: do nothing
+/// - Else if len % 32 <= 16: prepend 16 zeros, then pad with zeros to a 32B multiple
+/// - Else: just pad with zeros to a 32B multiple
+///
+/// This mutates `buf` directly.
+///
+pub fn align_aad_in_place(buf: &mut Vec<u8>) {
+    const AAD_ALIGN: usize = 32;
+    let len = buf.len();
+    let rem = len & (AAD_ALIGN - 1);
+
+    if rem == 0 {
+        return; // already aligned
+    }
+
+    // If original remainder <= 16, insert a 16-byte zero prefix.
+    if rem <= 16 {
+        buf.splice(0..0, std::iter::repeat_n(0u8, 16).take(16));
+    }
+
+    // Now pad with zeros to the next AAD_ALIGN-byte boundary based on the NEW length.
+    let target = buf.len().div_ceil(AAD_ALIGN) * AAD_ALIGN;
+    buf.resize(target, 0);
+}
+
 impl DdiDev for DdiNixDev {
     /// Set Device Kind, to determine encode/decode behavior
     ///
@@ -840,14 +882,24 @@ impl DdiDev for DdiNixDev {
         cmd.hdr.app_cmd_id = 0xCD1DDEAD;
         cmd.hdr.timeout = 100; // in ms
 
+        // Extract the aad
         let aad = gcm_params.aad.unwrap_or_default();
         let aad_len = aad.len();
-        cmd.in_data.xts_or_gcm.gcm.add_data_len = aad_len as u32;
+        // Fill in the actual aad length without padding
+        cmd.in_data.xts_or_gcm.gcm.aad_data_len = aad_len as u32;
+
+        // If the aad is not aligned to 32 bytes, pad it with zeros
+        // The driver expects the aad to be aligned to 32 bytes
+        let mut final_aad = aad;
+        align_aad_in_place(&mut final_aad);
+
+        cmd.in_data.xts_or_gcm.gcm.aligned_aad_data_len = final_aad.len() as u32;
+        cmd.in_data.xts_or_gcm.gcm.enable_gcm_work_around = 1;
 
         // Create a new buffer that concatenates
         // aad and the cleartext
         let mut new_src_buf: Vec<u8> = Vec::new();
-        new_src_buf.extend(aad);
+        new_src_buf.extend(&final_aad);
         new_src_buf.extend(src_buf);
         let mut dest_buf: Vec<u8> = vec![0; new_src_buf.len()];
 
@@ -901,11 +953,13 @@ impl DdiDev for DdiNixDev {
             Err(DdiError::FpCmdSpecificError(cmd.out_data.ioctl_status))?
         }
 
-        dest_buf.drain(0..aad_len);
+        dest_buf.drain(0..final_aad.len());
 
         Ok(DdiAesGcmResult {
             data: dest_buf,
             tag: Some(cmd.out_data.cmd_spec_data),
+            iv: Some(cmd.out_data.iv_from_device),
+            fips_approved: cmd.out_data.fips_approved,
         })
     }
 
@@ -1017,7 +1071,7 @@ impl DdiDev for DdiNixDev {
                 Err(DdiError::DdiStatus(DdiStatus::AesEncryptFailed))?;
             } else {
                 tracing::error!(
-                    "AES XTS Decrypt. Device output length ({}) is greater than destination buffer size ({})",
+                    "AES XTS Decrypt: Device output length ({}) is greater than destination buffer size ({})",
                     total_size,
                     dest_buf.len()
                 );
@@ -1029,7 +1083,10 @@ impl DdiDev for DdiNixDev {
             dest_buf.truncate(total_size);
         }
 
-        Ok(DdiAesXtsResult { data: dest_buf })
+        Ok(DdiAesXtsResult {
+            data: dest_buf,
+            fips_approved: cmd.out_data.fips_approved,
+        })
     }
 
     /// Execute NVMe subsystem reset to help emulate Live Migration

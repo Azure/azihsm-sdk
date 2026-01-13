@@ -4,10 +4,7 @@
 
 pub mod aes;
 pub mod aeshmac;
-#[cfg(target_os = "windows")]
 mod cert;
-#[cfg(target_os = "windows")]
-pub mod cng;
 pub mod ecc;
 pub mod hmac;
 pub mod rand;

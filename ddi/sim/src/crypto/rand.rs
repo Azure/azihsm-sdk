@@ -2,10 +2,7 @@
 
 //! Module for Rand.
 
-#[cfg(target_os = "linux")]
-use openssl::rand;
-#[cfg(target_os = "windows")]
-use symcrypt::symcrypt_random;
+use azihsm_crypto::Rng;
 
 use crate::errors::ManticoreError;
 
@@ -19,23 +16,9 @@ use crate::errors::ManticoreError;
 ///
 /// # Errors
 /// * `ManticoreError::RngError` - If the RNG operation fails.
-#[cfg(target_os = "linux")]
 pub fn rand_bytes(buf: &mut [u8]) -> Result<(), ManticoreError> {
-    rand::rand_bytes(buf).map_err(|_| ManticoreError::RngError)
-}
-
-///  RNG operation.
-///
-/// # Arguments
-/// * `buf` - The buffer to be filled with cryptographically strong pseudo-random bytes.
-///
-/// # Returns
-/// * Ok(()) - If the operation is successful.
-///
-/// # Errors
-/// * `ManticoreError::RngError` - If the RNG operation fails.
-#[cfg(target_os = "windows")]
-pub fn rand_bytes(buf: &mut [u8]) -> Result<(), ManticoreError> {
-    symcrypt_random(buf);
-    Ok(())
+    Rng::rand_bytes(buf).map_err(|e| {
+        tracing::error!(?e, "Random number generation failed");
+        ManticoreError::RngError
+    })
 }

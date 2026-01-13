@@ -512,6 +512,8 @@ impl Dispatcher {
             Ok(x) => Ok(SessionAesGcmResponse {
                 total_size: x.final_size as u32,
                 tag: x.tag,
+                iv: x.iv,
+                fips_approved: x.fips_approved,
             }),
             Err(e) => Err(e),
         }
@@ -619,6 +621,7 @@ impl Dispatcher {
         match result {
             Ok(x) => Ok(SessionAesXtsResponse {
                 total_size: x.final_size as u32,
+                fips_approved: x.fips_approved,
             }),
             Err(e) => Err(e),
         }

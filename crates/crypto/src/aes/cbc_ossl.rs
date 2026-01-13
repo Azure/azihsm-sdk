@@ -263,7 +263,7 @@ impl<'a> EncryptStreamingOp<'a> for OsslAesCbcAlgo {
         Ok(OsslAesCbcEncryptContext {
             algo: self,
             crypter,
-            block: AesCbcBlock::default(),
+            block: AesBlock::default(),
         })
     }
 }
@@ -293,7 +293,7 @@ impl<'a> EncryptStreamingOp<'a> for OsslAesCbcAlgo {
 pub struct OsslAesCbcEncryptContext {
     algo: OsslAesCbcAlgo,
     crypter: Crypter,
-    block: AesCbcBlock,
+    block: AesBlock,
 }
 
 /// Implements streaming encryption operations for the AES-CBC encrypt context.
@@ -521,7 +521,7 @@ impl<'a> DecryptStreamingOp<'a> for OsslAesCbcAlgo {
         Ok(OsslAesCbcDecryptContext {
             algo: self,
             crypter,
-            block: AesCbcBlock::default(),
+            block: AesBlock::default(),
         })
     }
 }
@@ -551,7 +551,7 @@ impl<'a> DecryptStreamingOp<'a> for OsslAesCbcAlgo {
 pub struct OsslAesCbcDecryptContext {
     algo: OsslAesCbcAlgo,
     crypter: Crypter,
-    block: AesCbcBlock,
+    block: AesBlock,
 }
 
 /// Implements streaming decryption operations for the AES-CBC decrypt context.

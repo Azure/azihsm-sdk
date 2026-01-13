@@ -44,6 +44,22 @@ use super::*;
 type CngRsaPrivateKeyHandle = CngRsaKeyHandle<CngRsaPrivateKeyInfo>;
 type CngRsaPublicKeyHandle = CngRsaKeyHandle<CngRsaPublicKeyInfo>;
 
+#[allow(unsafe_code)]
+// SAFETY: CngRsaPrivateKey wraps Windows CNG handles which are thread-safe and can be sent across threads
+unsafe impl Send for CngRsaPrivateKey {}
+
+#[allow(unsafe_code)]
+// SAFETY: CngRsaPrivateKey wraps Windows CNG handles which are thread-safe and can be shared across threads
+unsafe impl Sync for CngRsaPrivateKey {}
+
+#[allow(unsafe_code)]
+// SAFETY: CngRsaPublicKey wraps Windows CNG handles which are thread-safe and can be sent across threads
+unsafe impl Send for CngRsaPublicKey {}
+
+#[allow(unsafe_code)]
+// SAFETY: CngRsaPublicKey wraps Windows CNG handles which are thread-safe and can be shared across threads
+unsafe impl Sync for CngRsaPublicKey {}
+
 /// RSA private key implementation using Windows CNG.
 ///
 /// This structure wraps a Windows CNG RSA private key handle and provides a safe
@@ -66,7 +82,7 @@ type CngRsaPublicKeyHandle = CngRsaKeyHandle<CngRsaPublicKeyInfo>;
 /// - `KeyExportOp`: Supports exporting to DER format
 /// - `KeyImportOp`: Supports importing from DER format
 /// - `KeyGenerationOp`: Supports generating new random keys
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct CngRsaPrivateKey {
     key: CngRsaPrivateKeyHandle,
 }
@@ -249,6 +265,18 @@ impl CngRsaPrivateKey {
     pub(crate) fn handle(&self) -> BCRYPT_KEY_HANDLE {
         self.key.handle()
     }
+
+    #[allow(unsafe_code)]
+    pub fn from_bcrypt_blob(blob: &[u8]) -> Result<Self, CryptoError> {
+        Ok(Self {
+            key: CngRsaPrivateKeyHandle::from_bcrypt_blob(blob)?,
+        })
+    }
+
+    #[allow(unsafe_code)]
+    pub fn to_bcrypt_blob(&self) -> Result<Vec<u8>, CryptoError> {
+        self.key.to_bcrypt_blob()
+    }
 }
 
 /// RSA public key implementation using Windows CNG.
@@ -271,7 +299,7 @@ impl CngRsaPrivateKey {
 /// - `PublicKey`: Marks this as a public key
 /// - `KeyExportOp`: Supports exporting to DER format
 /// - `KeyImportOp`: Supports importing from DER format
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct CngRsaPublicKey {
     key: CngRsaPublicKeyHandle,
 }
@@ -427,7 +455,7 @@ trait CngRsaKeyInfo {
 }
 
 /// Type information for RSA private keys.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct CngRsaPrivateKeyInfo;
 impl CngRsaKeyInfo for CngRsaPrivateKeyInfo {
     type Blob = CngRsaPrivateKeyBlob;
@@ -438,7 +466,7 @@ impl CngRsaKeyInfo for CngRsaPrivateKeyInfo {
 }
 
 /// Type information for RSA public keys.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct CngRsaPublicKeyInfo;
 impl CngRsaKeyInfo for CngRsaPublicKeyInfo {
     type Blob = CngRsaPublicKeyBlob;
@@ -484,6 +512,22 @@ impl<KeyInfo: CngRsaKeyInfo> Drop for CngRsaKeyHandle<KeyInfo> {
         unsafe {
             let _ = BCryptDestroyKey(self.handle);
         }
+    }
+}
+
+impl<KeyInfo: CngRsaKeyInfo> Clone for CngRsaKeyHandle<KeyInfo> {
+    /// Clones the key handle by exporting and re-importing the key blob.
+    #[allow(unsafe_code)]
+    fn clone(&self) -> Self {
+        let Ok(bytes) = self.to_blob() else {
+            // Clone cannot fail.
+            panic!("Failed to export CNG RSA key blob for cloning");
+        };
+        let Ok(handle) = Self::from_blob(&bytes) else {
+            // Clone cannot fail.
+            panic!("Failed to import CNG RSA key blob for cloning");
+        };
+        handle
     }
 }
 
@@ -615,6 +659,97 @@ impl<KeyInfo: CngRsaKeyInfo> CngRsaKeyHandle<KeyInfo> {
             marker: PhantomData,
         })
     }
+
+    #[allow(unsafe_code)]
+    fn from_bcrypt_blob(blob: &[u8]) -> Result<Self, CryptoError> {
+        // valid the blob is RSA Private Key Blob
+        if blob.len() < std::mem::size_of::<BCRYPT_RSAKEY_BLOB>() {
+            return Err(CryptoError::RsaInvalidPrivateKeyBlob);
+        }
+
+        let header_size = std::mem::size_of::<BCRYPT_RSAKEY_BLOB>();
+        if blob.len() < header_size {
+            return Err(CryptoError::RsaInvalidPrivateKeyBlob);
+        }
+
+        // SAFETY: We have validated that blob is at least the size of BCRYPT_RSAKEY_BLOB
+        let header = unsafe { &*(blob.as_ptr() as *const BCRYPT_RSAKEY_BLOB) };
+        if header.Magic != BCRYPT_RSAPRIVATE_MAGIC {
+            return Err(CryptoError::RsaInvalidPrivateKeyBlob);
+        }
+
+        let size = header.BitLength.div_ceil(8) as usize;
+        if !is_valid_key_size(size) {
+            return Err(CryptoError::RsaInvalidKeySize);
+        }
+
+        // check the blob length
+        let expected_len = header_size
+            + header.cbModulus as usize
+            + header.cbPublicExp as usize
+            + header.cbPrime1 as usize
+            + header.cbPrime2 as usize;
+
+        if blob.len() != expected_len {
+            return Err(CryptoError::RsaInvalidPrivateKeyBlob);
+        }
+
+        let mut handle = BCRYPT_KEY_HANDLE::default();
+        // SAFETY: Calling Windows CNG BCryptImportKeyPair to import an RSA private key.
+        let status = unsafe {
+            BCryptImportKeyPair(
+                BCRYPT_RSA_ALG_HANDLE,
+                None,
+                BCRYPT_RSAPRIVATE_BLOB,
+                &mut handle,
+                blob,
+                0,
+            )
+        };
+        status.ok().map_err(|_| CryptoError::RsaKeyImportError)?;
+
+        Ok(Self {
+            handle,
+            size,
+            marker: PhantomData,
+        })
+    }
+
+    #[allow(unsafe_code)]
+    fn to_bcrypt_blob(&self) -> Result<Vec<u8>, CryptoError> {
+        let mut len = 0u32;
+
+        // SAFETY: Calling Windows CNG BCryptExportKey to query buffer size.
+        let status = unsafe {
+            BCryptExportKey(
+                self.handle(),
+                None,
+                BCRYPT_RSAPRIVATE_BLOB,
+                None,
+                &mut len,
+                0,
+            )
+        };
+        status.ok().map_err(|_| CryptoError::RsaKeyExportError)?;
+
+        let mut blob = vec![0u8; len as usize];
+
+        // SAFETY: Calling Windows CNG BCryptExportKey to export the key blob.
+        let status = unsafe {
+            BCryptExportKey(
+                self.handle(),
+                None,
+                BCRYPT_RSAPRIVATE_BLOB,
+                Some(&mut blob),
+                &mut len,
+                0,
+            )
+        };
+        status.ok().map_err(|_| CryptoError::RsaKeyExportError)?;
+        blob.truncate(len as usize);
+
+        Ok(blob)
+    }
 }
 
 /// Trait for Windows CNG RSA key blobs.
@@ -731,6 +866,18 @@ impl CngRsaPrivateKeyBlob {
         qi: &[u8],
         d: &[u8],
     ) -> Self {
+        let modulus_size = key_len;
+        let prime_size = modulus_size / 2;
+
+        assert_eq!(n.len(), modulus_size);
+
+        let p = Self::pad_to_len(p, prime_size);
+        let q = Self::pad_to_len(q, prime_size);
+        let dp = Self::pad_to_len(dp, prime_size);
+        let dq = Self::pad_to_len(dq, prime_size);
+        let qi = Self::pad_to_len(qi, prime_size);
+        let d = Self::pad_to_len(d, modulus_size);
+
         let data_len = Self::HEADER_LEN
             + n.len()
             + e.len()
@@ -755,17 +902,27 @@ impl CngRsaPrivateKeyBlob {
         Self::copy_header(&header, &mut data);
         data.extend_from_slice(e);
         data.extend_from_slice(n);
-        data.extend_from_slice(p);
-        data.extend_from_slice(q);
-        data.extend_from_slice(dp);
-        data.extend_from_slice(dq);
-        data.extend_from_slice(qi);
-        data.extend_from_slice(d);
+        data.extend_from_slice(&p);
+        data.extend_from_slice(&q);
+        data.extend_from_slice(&dp);
+        data.extend_from_slice(&dq);
+        data.extend_from_slice(&qi);
+        data.extend_from_slice(&d);
 
         Self {
             key_len,
             data,
             components: Self::make_comp_ranges(&header),
+        }
+    }
+
+    fn pad_to_len(data: &[u8], len: usize) -> Vec<u8> {
+        if data.len() >= len {
+            data.to_vec()
+        } else {
+            let mut padded = vec![0u8; len - data.len()];
+            padded.extend_from_slice(data);
+            padded
         }
     }
 

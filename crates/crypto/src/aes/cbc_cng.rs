@@ -340,7 +340,7 @@ impl<'a> EncryptStreamingOp<'a> for CngAesCbcAlgo {
         Ok(CngAesCbcEncryptContext {
             algo: self,
             key,
-            block: AesCbcBlock::default(),
+            block: AesBlock::default(),
         })
     }
 }
@@ -369,7 +369,7 @@ impl<'a> EncryptStreamingOp<'a> for CngAesCbcAlgo {
 pub struct CngAesCbcEncryptContext {
     algo: CngAesCbcAlgo,
     key: AesKey,
-    block: AesCbcBlock,
+    block: AesBlock,
 }
 
 /// Implementation of streaming encryption operations for the AES-CBC encrypt context.
@@ -527,7 +527,7 @@ impl<'a> DecryptStreamingOp<'a> for CngAesCbcAlgo {
         Ok(CngAesCbcDecryptContext {
             algo: self,
             key,
-            block: AesCbcBlock::default(),
+            block: AesBlock::default(),
         })
     }
 }
@@ -558,7 +558,7 @@ impl<'a> DecryptStreamingOp<'a> for CngAesCbcAlgo {
 pub struct CngAesCbcDecryptContext {
     algo: CngAesCbcAlgo,
     key: AesKey,
-    block: AesCbcBlock,
+    block: AesBlock,
 }
 
 /// Implementation of streaming decryption operations for the AES-CBC decrypt context.

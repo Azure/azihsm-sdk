@@ -422,3 +422,17 @@ impl Drop for CngHmacHandle {
         let _ = unsafe { BCryptDestroyHash(self.handle) };
     }
 }
+
+impl Clone for CngHmacHandle {
+    #[allow(unsafe_code)]
+    fn clone(&self) -> Self {
+        let mut handle = BCRYPT_HASH_HANDLE::default();
+        //SAFETY: Duplicate the existing hash handle
+        let status = unsafe { BCryptDuplicateHash(self.handle, &mut handle, None, 0) };
+        if status.is_err() {
+            // Clone cannot fail.
+            panic!("Failed to duplicate CNG hash handle");
+        }
+        Self { handle }
+    }
+}

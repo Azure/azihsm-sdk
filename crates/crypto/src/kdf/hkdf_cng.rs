@@ -171,6 +171,23 @@ impl Drop for CngHkdfKeyHandle {
     }
 }
 
+impl Clone for CngHkdfKeyHandle {
+    #[allow(unsafe_code)]
+    fn clone(&self) -> Self {
+        // Duplicate the existing key handle using BCryptDuplicateKey
+        let mut handle = BCRYPT_KEY_HANDLE::default();
+        // SAFETY: Calling Windows CNG API to duplicate a key handle. self.handle is valid.
+        let status = unsafe { BCryptDuplicateKey(self.handle, &mut handle, None, 0) };
+
+        // Clone cannot fail.
+        if status.is_err() {
+            panic!("Failed to duplicate HKDF CNG key handle");
+        }
+
+        Self { handle }
+    }
+}
+
 impl CngHkdfKeyHandle {
     /// Creates a new HKDF key handle from key material.
     ///

@@ -18,6 +18,8 @@ mod cbc_256_nist_mmt_test_vectors;
 mod cbc_256_nist_sbox_test_vectors;
 mod cbc_256_nist_varkey_test_vectors;
 mod cbc_256_nist_vartxt_test_vectors;
+mod xts_128_nist_test_vectors;
+mod xts_256_nist_test_vectors;
 
 pub(crate) use cbc_128_nist_gf_sbox_test_vectors::AES_CBC_128_GFSBOX_TEST_VECTORS;
 pub(crate) use cbc_128_nist_mct_test_vectors::AES_CBC_128_MCT_TEST_VECTORS;
@@ -37,3 +39,5 @@ pub(crate) use cbc_256_nist_mmt_test_vectors::AES_CBC_256_MMT_TEST_VECTORS;
 pub(crate) use cbc_256_nist_sbox_test_vectors::AES_CBC_256_SBOX_TEST_VECTORS;
 pub(crate) use cbc_256_nist_varkey_test_vectors::AES_CBC_256_VAR_KEY_TEST_VECTORS;
 pub(crate) use cbc_256_nist_vartxt_test_vectors::AES_CBC_256_VAR_TXT_TEST_VECTORS;
+pub(crate) use xts_128_nist_test_vectors::AES_XTS_128_NIST_TEST_VECTORS;
+pub(crate) use xts_256_nist_test_vectors::AES_XTS_256_NIST_TEST_VECTORS;

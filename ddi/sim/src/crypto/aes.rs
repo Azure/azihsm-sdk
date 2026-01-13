@@ -4,40 +4,24 @@
 
 #[cfg(feature = "fuzzing")]
 use arbitrary::Arbitrary;
+use azihsm_crypto::AesCbcAlgo;
+use azihsm_crypto::AesGcmAlgo;
+use azihsm_crypto::AesKey as AzihsmAesKey;
+use azihsm_crypto::AesXtsAlgo;
+use azihsm_crypto::AesXtsKey as AzihsmAesXtsKey;
+use azihsm_crypto::DecryptOp;
+use azihsm_crypto::EncryptOp;
+use azihsm_crypto::ImportableKey;
+use azihsm_crypto::Rng;
 use azihsm_ddi_types::DdiAesKeySize;
 use azihsm_ddi_types::DdiAesOp;
-#[cfg(target_os = "linux")]
-use openssl;
-#[cfg(target_os = "linux")]
-use openssl::cipher::Cipher;
-#[cfg(target_os = "linux")]
-use openssl::cipher::CipherRef;
-#[cfg(target_os = "linux")]
-use openssl::cipher_ctx::CipherCtx;
-#[cfg(target_os = "linux")]
-use openssl::rand::rand_bytes;
-#[cfg(target_os = "linux")]
-use openssl::symm::Crypter;
-#[cfg(target_os = "linux")]
-use openssl::symm::Mode;
-#[cfg(target_os = "windows")]
-use symcrypt::cipher::AesExpandedKey;
-#[cfg(target_os = "windows")]
-use symcrypt::cipher::BlockCipherType;
-#[cfg(target_os = "windows")]
-use symcrypt::gcm::GcmExpandedKey;
-#[cfg(target_os = "windows")]
-use symcrypt::symcrypt_random;
 
-#[cfg(target_os = "windows")]
-use crate::crypto::cng::*;
 use crate::errors::ManticoreError;
 use crate::mask::KeySerialization;
 use crate::table::entry::Kind;
 
 /// The size of an AES GCM tag.
 const AES_GCM_TAG_SIZE: usize = 16;
-#[cfg(target_os = "linux")]
 /// The size of the AES CBC IV.
 const AES_CBC_IV_SIZE: usize = 16;
 
@@ -171,6 +155,12 @@ pub struct FPAesGcmEncryptDecryptResult {
 
     /// Length of the encrypted or decrypted buffer
     pub final_size: usize,
+
+    /// IV returned from the device
+    pub iv: Option<[u8; 12usize]>,
+
+    /// FIPS approved indication
+    pub fips_approved: bool,
 }
 
 /// Result of the AES XTS encrypt/decrypt
@@ -179,6 +169,9 @@ pub struct FPAesGcmEncryptDecryptResult {
 pub struct FPAesXtsEncryptDecryptResult {
     /// Size of the encrypted or decrypted buffer
     pub final_size: usize,
+
+    /// FIPS approved indication
+    pub fips_approved: bool,
 }
 
 /// Trait for AES operations.
@@ -287,7 +280,6 @@ impl KeySerialization<AesKey> for AesKey {
     }
 }
 
-#[cfg(target_os = "linux")]
 /// Generate an AES key.
 pub fn generate_aes(key_size: AesKeySize) -> Result<AesKey, ManticoreError> {
     let buf_len = match key_size {
@@ -301,8 +293,8 @@ pub fn generate_aes(key_size: AesKeySize) -> Result<AesKey, ManticoreError> {
 
     let mut buf = [0u8; 32];
     let buf_slice = &mut buf[..buf_len];
-    rand_bytes(buf_slice).map_err(|openssl_error_stack| {
-        tracing::error!(?openssl_error_stack);
+    Rng::rand_bytes(buf_slice).map_err(|_| {
+        tracing::error!("Failed to generate random bytes for AES key");
         ManticoreError::AesGenerateError
     })?;
 
@@ -310,38 +302,6 @@ pub fn generate_aes(key_size: AesKeySize) -> Result<AesKey, ManticoreError> {
         key: buf_slice.to_vec(),
         size: key_size,
     })
-}
-
-#[cfg(target_os = "windows")]
-/// Generate an AES key.
-pub fn generate_aes(key_size: AesKeySize) -> Result<AesKey, ManticoreError> {
-    let buf_len = match key_size {
-        AesKeySize::Aes128 => 16,
-        AesKeySize::Aes192 => 24,
-        AesKeySize::Aes256 => 32,
-        AesKeySize::AesXtsBulk256 => 32,
-        AesKeySize::AesGcmBulk256 => 32,
-        AesKeySize::AesGcmBulk256Unapproved => 32,
-    };
-    let mut buf = [0u8; 32];
-    let buf_slice = &mut buf[..buf_len];
-    symcrypt_random(buf_slice);
-    Ok(AesKey {
-        key: buf_slice.to_vec(),
-        size: key_size,
-    })
-}
-
-#[cfg(target_os = "linux")]
-fn get_cipher(size: &AesKeySize, mode: &AesAlgo) -> Result<&'static CipherRef, ManticoreError> {
-    let cipher = match (size, mode) {
-        (AesKeySize::Aes128, AesAlgo::Cbc) => Cipher::aes_128_cbc(),
-        (AesKeySize::Aes192, AesAlgo::Cbc) => Cipher::aes_192_cbc(),
-        (AesKeySize::Aes256, AesAlgo::Cbc) => Cipher::aes_256_cbc(),
-        _ => Err(ManticoreError::InvalidArgument)?,
-    };
-
-    Ok(cipher)
 }
 
 impl AesKey {
@@ -548,7 +508,6 @@ impl AesOp for AesKey {
     ///
     /// # Errors
     /// * `ManticoreError::AesEncryptError` - If the encryption fails.
-    #[cfg(target_os = "linux")]
     fn aes_gcm_encrypt_mb(
         &self,
         plaintext_buffers: &[Vec<u8>],
@@ -557,107 +516,50 @@ impl AesOp for AesKey {
         encrypted_buffers: &mut [Vec<u8>],
     ) -> Result<FPAesGcmEncryptDecryptResult, ManticoreError> {
         tracing::debug!("AES GCM Encrypt MB: Beginning");
+
+        let iv = iv.ok_or(ManticoreError::AesEncryptError)?;
+        let key =
+            AzihsmAesKey::from_bytes(&self.key).map_err(|_| ManticoreError::AesEncryptError)?;
+
+        let mut algo =
+            AesGcmAlgo::for_encrypt(iv, aad).map_err(|_| ManticoreError::AesEncryptError)?;
+
         let mut encrypted_size = 0;
-        let cipher = openssl::symm::Cipher::aes_256_gcm();
-        let mut crypter =
-            Crypter::new(cipher, Mode::Encrypt, &self.key, iv).map_err(|openssl_error_stack| {
-                tracing::error!(?openssl_error_stack);
-                ManticoreError::AesEncryptError
-            })?;
 
-        // If aad is provided as input, use it
-        if let Some(actual_aad) = aad {
-            tracing::debug!("AES GCM Encrypt MB: AAD provided. Updating");
-            crypter
-                .aad_update(actual_aad)
-                .map_err(|openssl_error_stack| {
-                    tracing::error!(?openssl_error_stack);
-                    ManticoreError::AesEncryptError
-                })?;
-        }
+        // Concatenate all plaintext buffers
+        let plaintext: Vec<u8> = plaintext_buffers.iter().flatten().copied().collect();
+        let mut ciphertext = vec![0u8; plaintext.len()];
 
-        for (plaintext, encrypted_buffer) in
-            plaintext_buffers.iter().zip(encrypted_buffers.iter_mut())
-        {
-            //encrypted_buffer.resize(plaintext.len(), 0); // Ensure buffer is correctly sized
-            let count =
-                crypter
-                    .update(plaintext, encrypted_buffer)
-                    .map_err(|openssl_error_stack| {
-                        tracing::error!(?openssl_error_stack);
-                        ManticoreError::AesEncryptError
-                    })?;
-            encrypted_buffer.truncate(count); // Truncate in case the output is shorter (unlikely for GCM)
-            encrypted_size += encrypted_buffer.len();
-        }
+        algo.encrypt(&key, &plaintext, Some(&mut ciphertext))
+            .map_err(|_| ManticoreError::AesEncryptError)?;
 
-        // Finalize encryption (may not be needed for each buffer, but to capture any final state)
-        let mut final_block = vec![0; cipher.block_size()];
-        let _final_count = crypter
-            .finalize(&mut final_block)
-            .map_err(|openssl_error_stack| {
-                tracing::error!(?openssl_error_stack);
-                ManticoreError::AesEncryptError
-            })?;
+        // Get the authentication tag
+        let tag = algo.tag();
+        let mut tag_array = [0u8; AES_GCM_TAG_SIZE];
+        tag_array.copy_from_slice(tag);
 
-        let mut tag = [0u8; AES_GCM_TAG_SIZE];
-        crypter.get_tag(&mut tag).map_err(|openssl_error_stack| {
-            tracing::error!(?openssl_error_stack);
-            ManticoreError::AesEncryptError
-        })?;
-
-        tracing::debug!(
-            "AES GCM Encrypt MB: Success. Encrypted size: {}",
-            encrypted_size,
-        );
-        Ok(FPAesGcmEncryptDecryptResult {
-            final_size: encrypted_size,
-            tag: Some(tag),
-        })
-    }
-
-    #[cfg(target_os = "windows")]
-    fn aes_gcm_encrypt_mb(
-        &self,
-        plaintext_buffers: &[Vec<u8>],
-        iv: Option<&[u8]>,
-        aad: Option<&[u8]>,
-        encrypted_buffers: &mut [Vec<u8>],
-    ) -> Result<FPAesGcmEncryptDecryptResult, ManticoreError> {
-        let gcm_state = GcmExpandedKey::new(&self.key, BlockCipherType::AesBlock).map_err(
-            |symcrypt_error_stack| {
-                tracing::error!(?symcrypt_error_stack);
-                ManticoreError::AesEncryptError
-            },
-        )?;
-        let nonce: [u8; 12] = match iv {
-            Some(iv) => iv.try_into().map_err(|error_stack| {
-                tracing::error!(?error_stack);
-                ManticoreError::AesEncryptError
-            })?,
-            None => return Err(ManticoreError::AesEncryptError),
-        };
-        let auth_data = match aad {
-            Some(aad) => aad.to_vec(),
-            None => Vec::new(),
-        };
-
-        let mut encrypted_size = 0usize;
-        let mut buffer: Vec<u8> = plaintext_buffers.iter().flatten().copied().collect();
-        let mut tag = [0u8; AES_GCM_TAG_SIZE];
-        gcm_state.encrypt_in_place(&nonce, &auth_data, &mut buffer, &mut tag);
-        for (chunk, encrypted_buffer) in buffer
-            .as_slice()
-            .chunks(buffer.len().div_ceil(encrypted_buffers.len()))
+        // Distribute ciphertext back into output buffers
+        let chunk_size = ciphertext.len().div_ceil(encrypted_buffers.len());
+        for (chunk, encrypted_buffer) in ciphertext
+            .chunks(chunk_size)
             .zip(encrypted_buffers.iter_mut())
         {
             *encrypted_buffer = chunk.to_vec();
             encrypted_size += chunk.len();
         }
 
+        tracing::debug!(
+            "AES GCM Encrypt MB: Success. Encrypted size: {}",
+            encrypted_size,
+        );
+
+        let iv = Some(iv.try_into().map_err(|_| ManticoreError::InvalidArgument)?);
+
         Ok(FPAesGcmEncryptDecryptResult {
             final_size: encrypted_size,
-            tag: Some(tag),
+            tag: Some(tag_array),
+            iv,
+            fips_approved: false,
         })
     }
 
@@ -675,7 +577,6 @@ impl AesOp for AesKey {
     ///
     /// # Errors
     /// * `ManticoreError::AesDecryptError` - If the encryption fails.
-    #[cfg(target_os = "linux")]
     fn aes_gcm_decrypt_mb(
         &self,
         encrypted_buffers: &[Vec<u8>],
@@ -685,123 +586,49 @@ impl AesOp for AesKey {
         decrypted_buffers: &mut [Vec<u8>],
     ) -> Result<FPAesGcmEncryptDecryptResult, ManticoreError> {
         tracing::debug!("AES GCM Decrypt MB: Beginning");
+
+        let iv = iv.ok_or(ManticoreError::AesDecryptError)?;
+        let tag = tag.ok_or(ManticoreError::AesDecryptError)?;
+        let key =
+            AzihsmAesKey::from_bytes(&self.key).map_err(|_| ManticoreError::AesDecryptError)?;
+
+        let mut algo =
+            AesGcmAlgo::for_decrypt(iv, tag, aad).map_err(|_| ManticoreError::AesDecryptError)?;
+
         let mut decrypted_size = 0;
-        if tag.is_none() {
-            Err(ManticoreError::AesDecryptError)?;
-        }
-        let cipher = openssl::symm::Cipher::aes_256_gcm();
-        let mut crypter =
-            Crypter::new(cipher, Mode::Decrypt, &self.key, iv).map_err(|openssl_error_stack| {
-                tracing::error!(?openssl_error_stack);
-                ManticoreError::AesDecryptError
-            })?;
 
-        // If aad is provided as input, use it
-        if let Some(actual_aad) = aad {
-            tracing::debug!("AES GCM Decrypt MB: AAD provided. Updating");
-            crypter
-                .aad_update(actual_aad)
-                .map_err(|openssl_error_stack| {
-                    tracing::error!(?openssl_error_stack);
-                    ManticoreError::AesDecryptError
-                })?;
-        }
+        // Concatenate all encrypted buffers
+        let ciphertext: Vec<u8> = encrypted_buffers.iter().flatten().copied().collect();
+        let mut plaintext = vec![0u8; ciphertext.len()];
 
-        if let Some(t) = tag {
-            tracing::debug!("AES GCM Decrypt MB: Tag provided. Updating");
-            crypter.set_tag(t).map_err(|openssl_error_stack| {
-                tracing::error!(?openssl_error_stack);
-                ManticoreError::AesDecryptError
-            })?;
-        }
+        algo.decrypt(&key, &ciphertext, Some(&mut plaintext))
+            .map_err(|_| ManticoreError::AesDecryptError)?;
 
-        for (encrypted, decrypted_buffer) in
-            encrypted_buffers.iter().zip(decrypted_buffers.iter_mut())
-        {
-            //decrypted_buffer.resize(encrypted.len(), 0); // Ensure buffer is correctly sized
-            let count =
-                crypter
-                    .update(encrypted, decrypted_buffer)
-                    .map_err(|openssl_error_stack| {
-                        tracing::error!(?openssl_error_stack);
-                        ManticoreError::AesDecryptError
-                    })?;
-            decrypted_buffer.truncate(count); // Truncate to actual decrypted data length
-            decrypted_size += decrypted_buffer.len();
-        }
-
-        let mut final_chunk = vec![0; cipher.block_size()];
-        let _final_count = crypter
-            .finalize(&mut final_chunk)
-            .map_err(|openssl_error_stack| {
-                tracing::error!(?openssl_error_stack);
-                ManticoreError::AesDecryptError
-            })?;
-        tracing::debug!(
-            "AES GCM Decrypt MB: Success. Decrypted size: {}",
-            decrypted_size
-        );
-        Ok(FPAesGcmEncryptDecryptResult {
-            final_size: decrypted_size,
-            tag: None,
-        })
-    }
-
-    #[cfg(target_os = "windows")]
-    fn aes_gcm_decrypt_mb(
-        &self,
-        encrypted_buffers: &[Vec<u8>],
-        iv: Option<&[u8]>,
-        aad: Option<&[u8]>,
-        tag: Option<&[u8]>,
-        decrypted_buffers: &mut [Vec<u8>],
-    ) -> Result<FPAesGcmEncryptDecryptResult, ManticoreError> {
-        let gcm_state = GcmExpandedKey::new(&self.key, BlockCipherType::AesBlock).map_err(
-            |symcrypt_error_stack| {
-                tracing::error!(?symcrypt_error_stack);
-                ManticoreError::AesDecryptError
-            },
-        )?;
-        let nonce: [u8; 12] = match iv {
-            Some(iv) => iv[0..12].try_into().map_err(|error_stack| {
-                tracing::error!(?error_stack);
-                ManticoreError::AesEncryptError
-            })?,
-            None => return Err(ManticoreError::AesEncryptError),
-        };
-        let auth_data = match aad {
-            Some(aad) => aad.to_vec(),
-            None => Vec::new(),
-        };
-        let tag_data = match tag {
-            Some(tag) => tag.to_vec(),
-            None => Vec::new(),
-        };
-
-        let mut decrypted_size = 0usize;
-        let mut buffer: Vec<u8> = encrypted_buffers.iter().flatten().copied().collect();
-        gcm_state
-            .decrypt_in_place(&nonce, &auth_data, &mut buffer, &tag_data)
-            .map_err(|symcrypt_error_stack| {
-                tracing::error!(?symcrypt_error_stack);
-                ManticoreError::AesDecryptError
-            })?;
-        for (chunk, decrypted_buffer) in buffer
-            .as_slice()
-            .chunks(buffer.len().div_ceil(decrypted_buffers.len()))
+        // Distribute plaintext back into output buffers
+        let chunk_size = plaintext.len().div_ceil(decrypted_buffers.len());
+        for (chunk, decrypted_buffer) in plaintext
+            .chunks(chunk_size)
             .zip(decrypted_buffers.iter_mut())
         {
             *decrypted_buffer = chunk.to_vec();
             decrypted_size += chunk.len();
         }
 
+        tracing::debug!(
+            "AES GCM Decrypt MB: Success. Decrypted size: {}",
+            decrypted_size
+        );
+
+        let iv = Some(iv.try_into().map_err(|_| ManticoreError::InvalidArgument)?);
+
         Ok(FPAesGcmEncryptDecryptResult {
             final_size: decrypted_size,
             tag: None,
+            iv,
+            fips_approved: false,
         })
     }
 
-    #[cfg(target_os = "linux")]
     fn aes_xts_encrypt_mb(
         &self,
         key2: AesKey,
@@ -810,108 +637,57 @@ impl AesOp for AesKey {
         plaintext_buffers: &[Vec<u8>],
         encrypted_buffers: &mut [Vec<u8>],
     ) -> Result<FPAesXtsEncryptDecryptResult, ManticoreError> {
-        let mut total_encrypted_size = 0;
-        let cipher = openssl::symm::Cipher::aes_256_xts();
+        // Combine keys for XTS (key1 + key2)
         let mut full_key = Vec::with_capacity(self.key.len() + key2.key.len());
         full_key.extend_from_slice(&self.key);
         full_key.extend_from_slice(&key2.key);
 
-        for (data, output) in plaintext_buffers.iter().zip(encrypted_buffers.iter_mut()) {
-            let mut crypter = Crypter::new(cipher, Mode::Encrypt, &full_key, Some(&tweak))
-                .map_err(|openssl_error_stack| {
-                    tracing::error!(?openssl_error_stack);
+        // Create XTS key from combined key material
+        let xts_key = AzihsmAesXtsKey::from_bytes(&full_key).map_err(|e| {
+            tracing::error!(?e, "Failed to create AES XTS key");
+            ManticoreError::AesEncryptError
+        })?;
+
+        // Use first 8 bytes of tweak (XTS expects 8-byte tweak)
+        let tweak_bytes = &tweak[..8];
+
+        // Create XTS algorithm with tweak and data unit length
+        let mut xts_algo = AesXtsAlgo::new(tweak_bytes, dul).map_err(|e| {
+            tracing::error!(?e, "Failed to create AES XTS algorithm");
+            ManticoreError::AesEncryptError
+        })?;
+
+        let mut total_encrypted_size = 0;
+
+        for (plaintext, encrypted) in plaintext_buffers.iter().zip(encrypted_buffers.iter_mut()) {
+            // Calculate required output size
+            let output_len = xts_algo.encrypt(&xts_key, plaintext, None).map_err(|e| {
+                tracing::error!(?e, "Failed to calculate XTS output size");
+                ManticoreError::AesEncryptError
+            })?;
+
+            // Allocate output buffer
+            encrypted.clear();
+            encrypted.resize(output_len, 0);
+
+            // Perform encryption
+            let actual_len = xts_algo
+                .encrypt(&xts_key, plaintext, Some(encrypted))
+                .map_err(|e| {
+                    tracing::error!(?e, "AES XTS encryption failed");
                     ManticoreError::AesEncryptError
                 })?;
-            output.clear();
-            output.extend(vec![0u8; dul + cipher.block_size()]);
-            let mut count = crypter
-                .update(data, output)
-                .map_err(|openssl_error_stack| {
-                    tracing::error!(?openssl_error_stack);
-                    ManticoreError::AesEncryptError
-                })?;
-            count += crypter
-                .finalize(&mut output[count..])
-                .map_err(|openssl_error_stack| {
-                    tracing::error!(?openssl_error_stack);
-                    ManticoreError::AesEncryptError
-                })?;
-            output.truncate(count);
-            total_encrypted_size += output.len();
+
+            encrypted.truncate(actual_len);
+            total_encrypted_size += actual_len;
         }
 
         Ok(FPAesXtsEncryptDecryptResult {
             final_size: total_encrypted_size,
+            fips_approved: false,
         })
     }
 
-    #[cfg(target_os = "windows")]
-    fn aes_xts_encrypt_mb(
-        &self,
-        key2: AesKey,
-        dul: usize,
-        tweak: [u8; 16usize],
-        plaintext_buffers: &[Vec<u8>],
-        encrypted_buffers: &mut [Vec<u8>],
-    ) -> Result<FPAesXtsEncryptDecryptResult, ManticoreError> {
-        if self.key == key2.key {
-            Err(ManticoreError::AesEncryptError)?;
-        }
-
-        // Create algorithm handle for this operation
-        let alg_handle = CngAlgoHandle::new()?;
-
-        // Create key handles for this operation
-        let key1_handle = CngKeyHandle::new(alg_handle.handle(), &self.key)?;
-        let key2_handle = CngKeyHandle::new(alg_handle.handle(), &key2.key)?;
-
-        if !dul.is_multiple_of(16) {
-            Err(ManticoreError::AesEncryptError)?;
-        }
-
-        let mut total_processed = 0;
-
-        for (i, (plaintext, encrypted)) in plaintext_buffers
-            .iter()
-            .zip(encrypted_buffers.iter_mut())
-            .enumerate()
-        {
-            if plaintext.len() < 16 || plaintext.len() % 16 != 0 {
-                Err(ManticoreError::AesEncryptError)?;
-            }
-
-            // Calculate tweak for this buffer (using dul as data unit length and buffer index)
-            let mut buffer_tweak = tweak;
-            let tweak_increment = (i * dul / 16) as u64; // Increment based on data unit position
-
-            // Add the increment to the tweak (treating it as a little-endian counter)
-            let mut carry = tweak_increment;
-            for byte in buffer_tweak.iter_mut() {
-                let sum = *byte as u64 + carry;
-                *byte = sum as u8;
-                carry = sum >> 8;
-                if carry == 0 {
-                    break;
-                }
-            }
-
-            encrypted.resize(plaintext.len(), 0);
-            encrypt_single_buffer(
-                key1_handle.handle(),
-                key2_handle.handle(),
-                plaintext,
-                &buffer_tweak,
-                encrypted,
-            )?;
-
-            total_processed += plaintext.len();
-        }
-        Ok(FPAesXtsEncryptDecryptResult {
-            final_size: total_processed,
-        })
-    }
-
-    #[cfg(target_os = "linux")]
     fn aes_xts_decrypt_mb(
         &self,
         key2: AesKey,
@@ -920,101 +696,54 @@ impl AesOp for AesKey {
         encrypted_buffers: &[Vec<u8>],
         cleartext_buffers: &mut [Vec<u8>],
     ) -> Result<FPAesXtsEncryptDecryptResult, ManticoreError> {
-        let cipher = openssl::symm::Cipher::aes_256_xts();
-        let mut total_decrypted_size = 0;
+        // Combine keys for XTS (key1 + key2)
         let mut full_key = Vec::with_capacity(self.key.len() + key2.key.len());
         full_key.extend_from_slice(&self.key);
         full_key.extend_from_slice(&key2.key);
 
-        for (data, output) in encrypted_buffers.iter().zip(cleartext_buffers.iter_mut()) {
-            let mut crypter = Crypter::new(cipher, Mode::Decrypt, &full_key, Some(&tweak))
-                .map_err(|openssl_error_stack| {
-                    tracing::error!(?openssl_error_stack);
+        // Create XTS key from combined key material
+        let xts_key = AzihsmAesXtsKey::from_bytes(&full_key).map_err(|e| {
+            tracing::error!(?e, "Failed to create AES XTS key");
+            ManticoreError::AesDecryptError
+        })?;
+
+        // Use first 8 bytes of tweak (XTS expects 8-byte tweak)
+        let tweak_bytes = &tweak[..8];
+
+        // Create XTS algorithm with tweak and data unit length
+        let mut xts_algo = AesXtsAlgo::new(tweak_bytes, dul).map_err(|e| {
+            tracing::error!(?e, "Failed to create AES XTS algorithm");
+            ManticoreError::AesDecryptError
+        })?;
+
+        let mut total_decrypted_size = 0;
+
+        for (encrypted, cleartext) in encrypted_buffers.iter().zip(cleartext_buffers.iter_mut()) {
+            // Calculate required output size
+            let output_len = xts_algo.decrypt(&xts_key, encrypted, None).map_err(|e| {
+                tracing::error!(?e, "Failed to calculate XTS output size");
+                ManticoreError::AesDecryptError
+            })?;
+
+            // Allocate output buffer
+            cleartext.clear();
+            cleartext.resize(output_len, 0);
+
+            // Perform decryption
+            let actual_len = xts_algo
+                .decrypt(&xts_key, encrypted, Some(cleartext))
+                .map_err(|e| {
+                    tracing::error!(?e, "AES XTS decryption failed");
                     ManticoreError::AesDecryptError
                 })?;
-            output.clear();
-            output.extend(vec![0u8; dul + cipher.block_size()]);
-            let mut count = crypter
-                .update(data, output)
-                .map_err(|openssl_error_stack| {
-                    tracing::error!(?openssl_error_stack);
-                    ManticoreError::AesDecryptError
-                })?;
-            count += crypter
-                .finalize(&mut output[count..])
-                .map_err(|openssl_error_stack| {
-                    tracing::error!(?openssl_error_stack);
-                    ManticoreError::AesDecryptError
-                })?;
-            output.truncate(count);
-            total_decrypted_size += output.len();
+
+            cleartext.truncate(actual_len);
+            total_decrypted_size += actual_len;
         }
 
         Ok(FPAesXtsEncryptDecryptResult {
             final_size: total_decrypted_size,
-        })
-    }
-
-    #[cfg(target_os = "windows")]
-    fn aes_xts_decrypt_mb(
-        &self,
-        key2: AesKey,
-        dul: usize,
-        tweak: [u8; 16usize],
-        encrypted_buffers: &[Vec<u8>],
-        cleartext_buffers: &mut [Vec<u8>],
-    ) -> Result<FPAesXtsEncryptDecryptResult, ManticoreError> {
-        // Create algorithm handle for this operation
-        let alg_handle = CngAlgoHandle::new()?;
-
-        // Create key handles for this operation
-        let key1_handle = CngKeyHandle::new(alg_handle.handle(), &self.key)?;
-        let key2_handle = CngKeyHandle::new(alg_handle.handle(), &key2.key)?;
-
-        let mut total_processed = 0;
-
-        if !dul.is_multiple_of(16) {
-            Err(ManticoreError::AesDecryptError)?;
-        }
-
-        for (i, (encrypted, cleartext)) in encrypted_buffers
-            .iter()
-            .zip(cleartext_buffers.iter_mut())
-            .enumerate()
-        {
-            if encrypted.len() < 16 || encrypted.len() % 16 != 0 {
-                Err(ManticoreError::AesDecryptError)?;
-            }
-
-            // Calculate tweak for this buffer (using dul as data unit length and buffer index)
-            let mut buffer_tweak = tweak;
-            let tweak_increment = (i * dul / 16) as u64; // Increment based on data unit position
-
-            // Add the increment to the tweak (treating it as a little-endian counter)
-            let mut carry = tweak_increment;
-            for byte in buffer_tweak.iter_mut() {
-                let sum = *byte as u64 + carry;
-                *byte = sum as u8;
-                carry = sum >> 8;
-                if carry == 0 {
-                    break;
-                }
-            }
-
-            cleartext.resize(encrypted.len(), 0);
-            decrypt_single_buffer(
-                key1_handle.handle(),
-                key2_handle.handle(),
-                encrypted,
-                &buffer_tweak,
-                cleartext,
-            )?;
-
-            total_processed += encrypted.len();
-        }
-
-        Ok(FPAesXtsEncryptDecryptResult {
-            final_size: total_processed,
+            fips_approved: false,
         })
     }
 
@@ -1030,94 +759,73 @@ impl AesOp for AesKey {
     ///
     /// # Errors
     /// * `ManticoreError::AesEncryptError` - If the encryption fails.
-    #[cfg(target_os = "linux")]
     fn encrypt(
         &self,
         data: &[u8],
         algo: AesAlgo,
         iv: Option<&[u8]>,
     ) -> Result<AesEncryptResult, ManticoreError> {
-        let cipher = get_cipher(&self.size, &algo)?;
-        let mut ctx = CipherCtx::new().map_err(|openssl_error_stack| {
-            tracing::error!(?openssl_error_stack);
-            ManticoreError::AesEncryptError
-        })?;
-        let mut cipher_text = vec![0; data.len() + cipher.block_size()];
-
-        ctx.encrypt_init(Some(cipher), None, None)
-            .map_err(|openssl_error_stack| {
-                tracing::error!(?openssl_error_stack);
-                ManticoreError::AesEncryptError
-            })?;
-
-        ctx.encrypt_init(None, Some(&self.key), iv)
-            .map_err(|openssl_error_stack| {
-                tracing::error!(?openssl_error_stack);
-                ManticoreError::AesEncryptError
-            })?;
-
-        // Do not support padding
-        ctx.set_padding(false);
-
-        let result = ctx.cipher_update(data, Some(&mut cipher_text));
-
-        let count = result.map_err(|openssl_error_stack| {
-            tracing::error!(?openssl_error_stack);
-            ManticoreError::AesEncryptError
-        })?;
-
-        let rest = ctx
-            .cipher_final(&mut cipher_text[count..])
-            .map_err(|openssl_error_stack| {
-                tracing::error!(?openssl_error_stack);
-                ManticoreError::AesEncryptError
-            })?;
-
-        cipher_text.truncate(count + rest);
-
-        let iv = match algo {
-            AesAlgo::Cbc if cipher_text.len() >= AES_CBC_IV_SIZE => {
-                // The size of cipher text should be always 16-byte aligned.
-                let last_block = &cipher_text[(cipher_text.len() - AES_CBC_IV_SIZE)..];
-                Some(last_block.to_vec())
-            }
-            // The cipher text is empty
-            AesAlgo::Cbc => None,
-        };
-
-        Ok(AesEncryptResult { cipher_text, iv })
-    }
-
-    #[cfg(target_os = "windows")]
-    fn encrypt(
-        &self,
-        data: &[u8],
-        _algo: AesAlgo,
-        iv: Option<&[u8]>,
-    ) -> Result<AesEncryptResult, ManticoreError> {
-        if !data.len().is_multiple_of(16) {
-            Err(ManticoreError::AesEncryptError)?;
+        // Only CBC mode is supported with azihsm_crypto
+        if algo != AesAlgo::Cbc {
+            return Err(ManticoreError::InvalidArgument);
         }
-        let mut cipher_text = vec![0u8; data.len()];
-        let mut chaining_value: [u8; 16] = match iv {
-            Some(init_vec) => init_vec.try_into().map_err(|symcrypt_error_stack| {
-                tracing::error!(?symcrypt_error_stack);
-                ManticoreError::AesEncryptError
-            })?,
-            None => [0u8; 16],
-        };
-        let aes_cbc = AesExpandedKey::new(&self.key).map_err(|symcrypt_error_stack| {
-            tracing::error!(?symcrypt_error_stack);
+
+        // Handle empty input specially
+        if data.is_empty() {
+            return Ok(AesEncryptResult {
+                cipher_text: Vec::new(),
+                iv: None,
+            });
+        }
+
+        // Data must be 16-byte aligned for CBC without padding
+        if !data.len().is_multiple_of(16) {
+            return Err(ManticoreError::AesEncryptError);
+        }
+
+        let iv_bytes = iv.unwrap_or(&[0u8; AES_CBC_IV_SIZE]);
+        if iv_bytes.len() != AES_CBC_IV_SIZE {
+            return Err(ManticoreError::AesEncryptError);
+        }
+
+        // Create AzihsmAesKey from our key bytes
+        let aes_key = AzihsmAesKey::from_bytes(&self.key).map_err(|e| {
+            tracing::error!(?e, "Failed to create AES key");
             ManticoreError::AesEncryptError
         })?;
-        aes_cbc
-            .aes_cbc_encrypt(&mut chaining_value, data, &mut cipher_text)
-            .map_err(|symcrypt_error_stack| {
-                tracing::error!(?symcrypt_error_stack);
+
+        // Create CBC algorithm with no padding
+        let mut cbc_algo = AesCbcAlgo::with_no_padding(iv_bytes);
+
+        // Calculate output size
+        let output_len = cbc_algo.encrypt(&aes_key, data, None).map_err(|e| {
+            tracing::error!(?e, "Failed to calculate output size");
+            ManticoreError::AesEncryptError
+        })?;
+
+        // Perform encryption
+        let mut cipher_text = vec![0u8; output_len];
+        let actual_len = cbc_algo
+            .encrypt(&aes_key, data, Some(&mut cipher_text))
+            .map_err(|e| {
+                tracing::error!(?e, "AES CBC encryption failed");
                 ManticoreError::AesEncryptError
             })?;
-        let iv = Some(chaining_value.to_vec());
-        Ok(AesEncryptResult { cipher_text, iv })
+
+        cipher_text.truncate(actual_len);
+
+        // Calculate new IV (last block of ciphertext for CBC)
+        let new_iv = if cipher_text.len() >= AES_CBC_IV_SIZE {
+            let last_block = &cipher_text[(cipher_text.len() - AES_CBC_IV_SIZE)..];
+            Some(last_block.to_vec())
+        } else {
+            None
+        };
+
+        Ok(AesEncryptResult {
+            cipher_text,
+            iv: new_iv,
+        })
     }
 
     /// AES decryption.
@@ -1132,94 +840,73 @@ impl AesOp for AesKey {
     ///
     /// # Errors
     /// * `ManticoreError::AesDecryptError` - If the decryption fails.
-    #[cfg(target_os = "linux")]
     fn decrypt(
         &self,
         data: &[u8],
         algo: AesAlgo,
         iv: Option<&[u8]>,
     ) -> Result<AesDecryptResult, ManticoreError> {
-        let cipher = get_cipher(&self.size, &algo)?;
-        let mut ctx = CipherCtx::new().map_err(|openssl_error_stack| {
-            tracing::error!(?openssl_error_stack);
+        // Only CBC mode is supported with azihsm_crypto
+        if algo != AesAlgo::Cbc {
+            return Err(ManticoreError::InvalidArgument);
+        }
+
+        // Handle empty input specially
+        if data.is_empty() {
+            return Ok(AesDecryptResult {
+                plain_text: Vec::new(),
+                iv: None,
+            });
+        }
+
+        // Data must be 16-byte aligned for CBC
+        if !data.len().is_multiple_of(16) {
+            return Err(ManticoreError::AesDecryptError);
+        }
+
+        let iv_bytes = iv.unwrap_or(&[0u8; AES_CBC_IV_SIZE]);
+        if iv_bytes.len() != AES_CBC_IV_SIZE {
+            return Err(ManticoreError::AesDecryptError);
+        }
+
+        // Create AzihsmAesKey from our key bytes
+        let aes_key = AzihsmAesKey::from_bytes(&self.key).map_err(|e| {
+            tracing::error!(?e, "Failed to create AES key");
             ManticoreError::AesDecryptError
         })?;
-        let mut plain_text = vec![0; data.len() + cipher.block_size()];
 
-        ctx.decrypt_init(Some(cipher), None, None)
-            .map_err(|openssl_error_stack| {
-                tracing::error!(?openssl_error_stack);
+        // Create CBC algorithm with no padding
+        let mut cbc_algo = AesCbcAlgo::with_no_padding(iv_bytes);
+
+        // Calculate output size
+        let output_len = cbc_algo.decrypt(&aes_key, data, None).map_err(|e| {
+            tracing::error!(?e, "Failed to calculate output size");
+            ManticoreError::AesDecryptError
+        })?;
+
+        // Perform decryption
+        let mut plain_text = vec![0u8; output_len];
+        let actual_len = cbc_algo
+            .decrypt(&aes_key, data, Some(&mut plain_text))
+            .map_err(|e| {
+                tracing::error!(?e, "AES CBC decryption failed");
                 ManticoreError::AesDecryptError
             })?;
 
-        ctx.decrypt_init(None, Some(&self.key), iv)
-            .map_err(|openssl_error_stack| {
-                tracing::error!(?openssl_error_stack);
-                ManticoreError::AesDecryptError
-            })?;
+        plain_text.truncate(actual_len);
 
-        // Do not support padding
-        ctx.set_padding(false);
-
-        let count =
-            ctx.cipher_update(data, Some(&mut plain_text))
-                .map_err(|openssl_error_stack| {
-                    tracing::error!(?openssl_error_stack);
-                    ManticoreError::AesDecryptError
-                })?;
-
-        let rest = ctx
-            .cipher_final(&mut plain_text[count..])
-            .map_err(|openssl_error_stack| {
-                tracing::error!(?openssl_error_stack);
-                ManticoreError::AesDecryptError
-            })?;
-
-        plain_text.truncate(count + rest);
-
-        let iv = if algo == AesAlgo::Cbc {
-            if data.len() >= AES_CBC_IV_SIZE {
-                // The data size should be always 16-byte aligned.
-                let last_block = &data[(data.len() - AES_CBC_IV_SIZE)..];
-                Some(last_block.to_vec())
-            } else {
-                // The data is empty
-                None
-            }
+        // Calculate new IV (last block of ciphertext for CBC)
+        let new_iv = if data.len() >= AES_CBC_IV_SIZE {
+            let last_block = &data[(data.len() - AES_CBC_IV_SIZE)..];
+            Some(last_block.to_vec())
         } else {
             None
         };
 
-        Ok(AesDecryptResult { plain_text, iv })
-    }
-
-    #[cfg(target_os = "windows")]
-    fn decrypt(
-        &self,
-        data: &[u8],
-        _algo: AesAlgo,
-        iv: Option<&[u8]>,
-    ) -> Result<AesDecryptResult, ManticoreError> {
-        let mut plain_text: Vec<u8> = vec![0u8; data.len()];
-        let mut chaining_value: [u8; 16] = match iv {
-            Some(init_vec) => init_vec.try_into().map_err(|symcrypt_error_stack| {
-                tracing::error!(?symcrypt_error_stack);
-                ManticoreError::AesDecryptError
-            })?,
-            None => [0u8; 16],
-        };
-        let aes_cbc = AesExpandedKey::new(&self.key).map_err(|symcrypt_error_stack| {
-            tracing::error!(?symcrypt_error_stack);
-            ManticoreError::AesDecryptError
-        })?;
-        aes_cbc
-            .aes_cbc_decrypt(&mut chaining_value, data, &mut plain_text)
-            .map_err(|symcrypt_error_stack| {
-                tracing::error!(?symcrypt_error_stack);
-                ManticoreError::AesDecryptError
-            })?;
-        let iv = Some(chaining_value.to_vec());
-        Ok(AesDecryptResult { plain_text, iv })
+        Ok(AesDecryptResult {
+            plain_text,
+            iv: new_iv,
+        })
     }
 
     /// AES key wrap with padding (RFC-5649) KW2.
@@ -1341,7 +1028,6 @@ mod tests {
         cipher: &'a str,
     }
 
-    #[cfg(target_os = "windows")]
     fn test_cng_aes_xts(plaintext_size: usize, dul: usize) {
         use rand::Rng;
         // Generate random keys
@@ -1399,44 +1085,37 @@ mod tests {
         assert_eq!(plaintext_buf, decrypted_buf);
     }
 
-    #[cfg(target_os = "windows")]
     #[test]
     fn test_xts_encrypt_decrypt_roundtrip() {
-        test_cng_aes_xts(528, 512);
-        test_cng_aes_xts(544, 4096);
+        test_cng_aes_xts(512, 512);
         test_cng_aes_xts(1024, 512);
-        test_cng_aes_xts(16, 4096);
+        test_cng_aes_xts(8192, 4096);
     }
 
-    #[cfg(target_os = "windows")]
     #[test]
     #[should_panic]
     fn test_xts_encrypt_decrypt_unaligned_data_527_dul_512() {
         test_cng_aes_xts(527, 512);
     }
 
-    #[cfg(target_os = "windows")]
     #[test]
     #[should_panic]
     fn test_xts_encrypt_decrypt_invalid_data_15_dul_4096() {
         test_cng_aes_xts(15, 4096);
     }
 
-    #[cfg(target_os = "windows")]
     #[test]
     #[should_panic]
     fn test_xts_encrypt_decrypt_unaligned_data_17_dul_4096() {
         test_cng_aes_xts(17, 4096);
     }
 
-    #[cfg(target_os = "windows")]
     #[test]
     #[should_panic]
     fn test_xts_encrypt_decrypt_unaligned_data_17_dul_17() {
         test_cng_aes_xts(17, 17);
     }
 
-    #[cfg(target_os = "windows")]
     #[test]
     #[should_panic]
     fn test_xts_encrypt_decrypt_unaligned_data_544_dul_17() {

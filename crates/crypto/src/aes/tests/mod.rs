@@ -11,8 +11,10 @@ mod cbc_tests_nist_sbox;
 mod cbc_tests_nist_varkey;
 mod cbc_tests_nist_vartxt;
 mod ecb_tests;
+mod gcm_tests;
 mod kw_tests;
 mod kwp_tests;
+mod xts_tests;
 
 use super::*;
 
@@ -24,4 +26,14 @@ pub struct AesCbcTestVector {
     pub iv: &'static [u8],
     pub plaintext: &'static [u8],
     pub ciphertext: &'static [u8],
+}
+/// AES XTS Test vector struct
+#[derive(Debug)]
+pub struct AesXtsTestVector {
+    pub test_count_id: u32,
+    pub key: &'static [u8],
+    pub tweak: &'static [u8],
+    pub plaintext: &'static [u8],
+    pub ciphertext: &'static [u8],
+    pub encrypt: bool, // true=encrypt, false=decrypt
 }

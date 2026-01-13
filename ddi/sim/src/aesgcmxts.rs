@@ -47,6 +47,12 @@ pub struct SessionAesGcmResponse {
     /// Indicates the total size of the encrypted
     /// buffer or decrypted buffer
     pub total_size: u32,
+
+    /// IV returned from the device
+    pub iv: Option<[u8; 12usize]>,
+
+    /// FIPS approved indication
+    pub fips_approved: bool,
 }
 
 #[cfg_attr(feature = "fuzzing", derive(Arbitrary))]
@@ -81,4 +87,7 @@ pub struct SessionAesXtsResponse {
     /// data
     /// *`total size of output buffer`
     pub total_size: u32,
+
+    /// FIPS approved indication
+    pub fips_approved: bool,
 }

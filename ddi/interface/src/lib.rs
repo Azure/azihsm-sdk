@@ -114,6 +114,12 @@ pub struct DdiAesGcmResult {
     /// Tag
     pub tag: Option<[u8; 16usize]>,
 
+    /// IV returned from the device
+    pub iv: Option<[u8; 12usize]>,
+
+    /// FIPS approved indication
+    pub fips_approved: bool,
+
     /// output data
     pub data: Vec<u8>,
 }
@@ -145,6 +151,9 @@ pub struct DdiAesXtsParams {
 pub struct DdiAesXtsResult {
     /// output data
     pub data: Vec<u8>,
+
+    /// FIPS approved indication
+    pub fips_approved: bool,
 }
 
 /// Driver Error Status

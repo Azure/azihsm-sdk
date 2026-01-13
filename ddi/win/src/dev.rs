@@ -399,7 +399,10 @@ pub struct FpGcmParams {
     kid: u32,
     tag: [u8; 16],
     init_vec: [u8; 12],
-    add_data_len: u32,
+    aad_data_len: u32,
+    aligned_aad_data_len: u32,
+    enable_gcm_work_around: u8,
+    rsvd: [u8; 3],
 }
 
 #[repr(C)]
@@ -449,7 +452,7 @@ pub struct McrFpIoctlIndata {
     pub session_id: u16,
     pub short_app_id: u8,
     pub xts_or_gcm: XtsOrGcmParams,
-    pub rsvd2: [u32; 32],
+    pub rsvd2: [u32; 30],
     pub hot_patch_reserved: [usize; 16],
 }
 
@@ -468,7 +471,7 @@ impl Default for McrFpIoctlIndata {
             frame_type: 0,
             session_id: 0,
             short_app_id: 0,
-            rsvd2: [0; 32],
+            rsvd2: [0; 30],
             hot_patch_reserved: [0usize; 16],
         }
     }
@@ -498,7 +501,10 @@ pub struct McrFpIoctlOutData {
     /// this will contain more
     /// information about the failure
     pub extended_status: u32,
-    pub rsvd: [u32; 30],
+    pub fips_approved: bool,
+    pub reserved: [u8; 3],
+    pub iv_from_device: [u8; 12],
+    pub rsvd: [u32; 26],
     pub hot_patch_reserved: [usize; 16],
 }
 
@@ -630,6 +636,42 @@ impl DdiWinDev {
 
         Ok(ioctl_status)
     }
+}
+
+/// Align AAD in place according to the following rules:
+/// The AAD needs to be aligned in such a way that the
+/// AAD data comes in the middle of alignment.
+/// This means that a AAD size of 11 bytes will be aligned like this:
+///
+/// Before[Size:11]: [AB, AB, AB, AB, AB, AB, AB, AB, AB, AB, AB]
+/// Buffer size after resize to  32
+/// After: [00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, | 16 bytes of zeros
+///         AB, AB, AB, AB, AB, AB, AB, AB, AB, AB, AB, | 11 bytes of AAD data    
+///         00, 00, 00, 00, 00] | 5 bytes of zeros to pad to 32B multiple
+///
+/// - If len % 32 == 0: do nothing
+/// - Else if len % 32 <= 16: prepend 16 zeros, then pad with zeros to a 32B multiple
+/// - Else: just pad with zeros to a 32B multiple
+///
+/// This mutates `buf` directly.
+///
+pub fn align_aad_in_place(buf: &mut Vec<u8>) {
+    const AAD_ALIGN: usize = 32;
+    let len = buf.len();
+    let rem = len & (AAD_ALIGN - 1);
+
+    if rem == 0 {
+        return; // already aligned
+    }
+
+    // If original remainder <= 16, insert a 16-byte zero prefix.
+    if rem <= 16 {
+        buf.splice(0..0, std::iter::repeat_n(0u8, 16).take(16));
+    }
+
+    // Now pad with zeros to the next AAD_ALIGN-byte boundary based on the NEW length.
+    let target = buf.len().div_ceil(AAD_ALIGN) * AAD_ALIGN;
+    buf.resize(target, 0);
 }
 
 impl DdiDev for DdiWinDev {
@@ -866,12 +908,22 @@ impl DdiDev for DdiWinDev {
         // Extract the aad
         let aad = gcm_params.aad.unwrap_or_default();
         let aad_len = aad.len();
-        ioctl_in_buffer.xts_or_gcm.gcm.add_data_len = aad_len as u32;
+
+        // Fill in the actual aad length without padding
+        ioctl_in_buffer.xts_or_gcm.gcm.aad_data_len = aad_len as u32;
+
+        // If the aad is not aligned to 32 bytes, pad it with zeros
+        // The driver expects the aad to be aligned to 32 bytes
+        let mut final_aad = aad;
+        align_aad_in_place(&mut final_aad);
+
+        ioctl_in_buffer.xts_or_gcm.gcm.aligned_aad_data_len = final_aad.len() as u32;
+        ioctl_in_buffer.xts_or_gcm.gcm.enable_gcm_work_around = 1;
 
         // Create a new buffer that concatenates
         // aad and the cleartext
         let mut new_src_buf: Vec<u8> = Vec::new();
-        new_src_buf.extend(aad);
+        new_src_buf.extend(&final_aad);
         new_src_buf.extend(src_buf);
         let mut dest_buf: Vec<u8> = vec![0; new_src_buf.len()];
 
@@ -991,11 +1043,13 @@ impl DdiDev for DdiWinDev {
             ))?
         }
 
-        dest_buf.drain(0..aad_len);
+        dest_buf.drain(0..final_aad.len());
 
         Ok(DdiAesGcmResult {
             data: dest_buf,
             tag: Some(ioctl_out_buffer.cmd_spec_data),
+            iv: Some(ioctl_out_buffer.iv_from_device),
+            fips_approved: ioctl_out_buffer.fips_approved,
         })
     }
 
@@ -1192,7 +1246,10 @@ impl DdiDev for DdiWinDev {
             dest_buf.truncate(total_size);
         }
 
-        Ok(DdiAesXtsResult { data: dest_buf })
+        Ok(DdiAesXtsResult {
+            data: dest_buf,
+            fips_approved: ioctl_out_buffer.fips_approved,
+        })
     }
 
     /// Execute NVMe subsystem reset to help emulate Live Migration
