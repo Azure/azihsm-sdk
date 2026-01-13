@@ -8,8 +8,6 @@
 use clap::Parser;
 
 use crate::install;
-#[cfg(target_os = "windows")]
-use crate::install_symcrypt;
 use crate::rustup_component_add;
 use crate::Xtask;
 use crate::XtaskCtx;
@@ -25,39 +23,11 @@ pub struct Setup {
     /// Override a configuration value in install::Install subtasks
     #[clap(long)]
     pub config: Option<String>,
-
-    #[clap(long)]
-    pub symcrypt_ubuntu_version: Option<String>,
-
-    #[clap(long)]
-    pub symcrypt_install_method: Option<String>,
-
-    #[clap(long)]
-    pub symcrypt_version: Option<String>,
-
-    #[clap(long)]
-    pub symcrypt_os: Option<String>,
-
-    #[clap(long)]
-    pub symcrypt_architecture: Option<String>,
 }
 
 impl Xtask for Setup {
     fn run(self, ctx: XtaskCtx) -> anyhow::Result<()> {
         log::trace!("running setup");
-
-        #[cfg(target_os = "windows")]
-        {
-            // Run Install SymCrypt
-            let install_symcrypt = install_symcrypt::InstallSymcrypt {
-                ubuntu_version: self.symcrypt_ubuntu_version,
-                install_method: self.symcrypt_install_method,
-                symcrypt_version: self.symcrypt_version,
-                os: self.symcrypt_os,
-                architecture: self.symcrypt_architecture,
-            };
-            install_symcrypt.run(ctx.clone())?;
-        }
 
         // Run Install Cargo nextest
         let install_cargo_nextest = install::Install {

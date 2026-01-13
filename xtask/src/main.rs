@@ -21,7 +21,6 @@ pub mod common;
 mod copyright;
 mod fmt;
 mod install;
-mod install_symcrypt;
 mod native;
 mod nextest;
 mod precheck;
@@ -66,7 +65,6 @@ enum Commands {
     Nextest(nextest::Nextest),
     Setup(setup::Setup),
     Install(install::Install),
-    InstallSymcrypt(install_symcrypt::InstallSymcrypt),
     RustupComponentAdd(rustup_component_add::RustupComponentAdd),
 }
 
@@ -104,7 +102,6 @@ fn try_main() -> anyhow::Result<()> {
         Commands::Nextest(task) => task.run(ctx),
         Commands::Setup(task) => task.run(ctx),
         Commands::Install(task) => task.run(ctx),
-        Commands::InstallSymcrypt(task) => task.run(ctx),
         Commands::RustupComponentAdd(task) => task.run(ctx),
     }
 }
