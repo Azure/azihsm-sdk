@@ -133,16 +133,16 @@ static AZIHSM_EC_KEY* azihsm_ossl_keymgmt_gen(AIHSM_EC_GEN_CTX* genctx, ossl_unu
         }
     };
 
-    for (int i = 0; i < genctx->pub_key_usage.count; i++) {
+    for (uint32_t i = 0; i < genctx->pub_key_usage.count; i++) {
 
-        pub_key_props[1 + i].id  = genctx->pub_key_usage.elements[i];
+        pub_key_props[1 + i].id  = (azihsm_algo_id) genctx->pub_key_usage.elements[i];
         pub_key_props[1 + i].val = (void*) &enable;
         pub_key_props[1 + i].len = sizeof(bool);
     }
 
-    for (int i = 0; i < genctx->priv_key_usage.count; i++) {
+    for (uint32_t i = 0; i < genctx->priv_key_usage.count; i++) {
 
-        priv_key_props[1 + i].id  = genctx->priv_key_usage.elements[i];
+        priv_key_props[1 + i].id  = (azihsm_algo_id) genctx->priv_key_usage.elements[i];
         priv_key_props[1 + i].val = (void*) &enable;
         priv_key_props[1 + i].len = sizeof(bool);
     }
@@ -224,7 +224,7 @@ static int azihsm_ossl_keymgmt_gen_set_params(AIHSM_EC_GEN_CTX* genctx, const OS
             return 0;
         }
 
-        genctx->ec_curve_id = curve_id;
+        genctx->ec_curve_id = (uint32_t) curve_id;
     }
 
     if ((p = OSSL_PARAM_locate_const(params, AZIHSM_OSSL_PKEY_PARAM_PUB_KEY_USAGE)) != NULL) {
@@ -364,7 +364,7 @@ static int azihsm_ossl_keymgmt_get_params(AZIHSM_EC_KEY* key, OSSL_PARAM params[
 
     p = OSSL_PARAM_locate(params, OSSL_PKEY_PARAM_GROUP_NAME);
 
-    if (p != NULL && !OSSL_PARAM_set_utf8_string(p, OBJ_nid2sn(azihsm_ossl_curve_id_to_nid(key->genctx.ec_curve_id)))) {
+    if (p != NULL && !OSSL_PARAM_set_utf8_string(p, OBJ_nid2sn(azihsm_ossl_curve_id_to_nid((int) key->genctx.ec_curve_id)))) {
         ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_SET_PARAMETER);
         return 0;
     }

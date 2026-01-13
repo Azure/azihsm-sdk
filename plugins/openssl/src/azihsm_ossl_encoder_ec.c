@@ -136,7 +136,7 @@ static int azihsm_ossl_encoder_der_spki_encode(AIHSM_ENCODER_CTX* ctx, OSSL_CORE
     if (selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY) {
 
         if ((spki = azihsm_ossl_get_der_spki(ctx->session, ec_key->key.public, &nbytes)) != NULL) {
-            BIO_write(bio, (const void*) spki, nbytes);
+            BIO_write(bio, (const void*) spki, (int) nbytes);
             OPENSSL_clear_free(spki, nbytes);
             rc = 1;
         }

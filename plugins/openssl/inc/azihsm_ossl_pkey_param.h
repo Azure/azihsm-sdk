@@ -1,6 +1,8 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
 #pragma once
 
+#include <stdint.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -19,8 +21,8 @@ extern "C" {
  * Can be embedded into genctx
  * */
 typedef struct {
-    int count;
-    int elements[KEY_USAGE_LIST_MAX];
+    uint32_t count;
+    uint32_t elements[KEY_USAGE_LIST_MAX];
 } AIHSM_KEY_USAGE_LIST;
 
 /*

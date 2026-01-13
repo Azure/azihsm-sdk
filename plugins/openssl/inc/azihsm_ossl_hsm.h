@@ -13,4 +13,3 @@ azihsm_error azihsm_open_device_and_session(azihsm_handle* device, azihsm_handle
 #ifdef __cplusplus
 }
 #endif
-

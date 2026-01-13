@@ -35,6 +35,7 @@ extern "C" {
 #define AZIHSM_OSSL_ALG_NAME_RSA "RSA:rsaEncryption:1.2.840.113549.1.1.1"
 #define AZIHSM_OSSL_ALG_NAME_RSA_PSS "RSA-PSS:" SN_rsassaPss ":1.2.840.113549.1.1.10"
 #define AZIHSM_OSSL_ALG_NAME_EC "EC:" SN_X9_62_id_ecPublicKey ":1.2.840.10045.2.1"
+#define AZIHSM_OSSL_ALG_NAME_AES "AES:aes"
 
 // Key Exchange
 #define AZIHSM_OSSL_ALG_NAME_ECDH "ECDH"

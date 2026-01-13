@@ -11,7 +11,7 @@
 #include "azihsm_ossl_helpers.h"
 
 typedef struct {
-    char* name;
+    const char* name;
     int id;
 } KEY_USAGE_MAPPING_ENTRY;
 
@@ -49,13 +49,13 @@ static const char* get_key_usage_str(const int id)
 
 void azihsm_ossl_key_usage_list_to_str(const AIHSM_KEY_USAGE_LIST* ulist, char* out, const size_t out_len)
 {
-    for (int i = 0; i < ulist->count; i++) {
+    for (uint32_t i = 0; i < ulist->count; i++) {
 
         if (i > 0) {
             strlcat(out, ",", out_len);
         }
 
-        strlcat(out, get_key_usage_str(ulist->elements[i]), out_len);
+        strlcat(out, get_key_usage_str((int) ulist->elements[i]), out_len);
     }
 }
 
@@ -78,7 +78,7 @@ int azihsm_ossl_key_usage_list_from_str(const char* value, AIHSM_KEY_USAGE_LIST*
             return -1;
         }
 
-        ulist->elements[ulist->count] = id;
+        ulist->elements[ulist->count] = (uint32_t) id;
         ulist->count += 1;
 
         token = strtok(NULL, ",");
