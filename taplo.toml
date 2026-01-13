@@ -1,6 +1,6 @@
 # Copyright (C) Microsoft Corporation. All rights reserved.
 
-exclude = ["target"]
+exclude = ["target/**"]
 
 [formatting]
 # Enable alphabetical reordering of keys in tables
