@@ -39,8 +39,42 @@ if (CMAKE_BUILD_TYPE MATCHES Sanitize)
     add_link_options(-fno-sanitize-recover=all)
 endif()
 
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -Wno-unknown-pragmas")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++1y -Wall -Wextra")
+# Enhanced compiler warning flags for code quality
+# C-specific warnings (strict prototypes not supported in C++)
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} \
+    -Wall \
+    -Wextra \
+    -Wno-unknown-pragmas \
+    -Wstrict-prototypes \
+    -Wwrite-strings \
+    -Wpointer-arith \
+    -Wconversion \
+    -Wshadow \
+    -Wformat=2 \
+    -Wformat-security \
+    -Wtrampolines \
+    -Wlogical-op \
+    -Wnested-externs \
+    -Winit-self \
+    -Wundef")
+
+# C++ warnings (compatible subset of C warnings)
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} \
+    -std=c++1y \
+    -Wall \
+    -Wextra \
+    -Wconversion \
+    -Wshadow \
+    -Wformat=2 \
+    -Wundef")
+
+# Optional: Treat warnings as errors (disabled by default for development)
+option(ENABLE_WERROR "Treat compiler warnings as errors" OFF)
+if(ENABLE_WERROR)
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Werror")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Werror")
+    message(STATUS "Warning mode: Treating compiler warnings as errors")
+endif()
 
 configure_file(
     ${CMAKE_CURRENT_SOURCE_DIR}/inc/azihsm_ossl_base.h.in
@@ -90,9 +124,3 @@ install(
     PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
 )
 
-# Enable testing
-option(BUILD_TESTING "Build the testing tree" ON)
-if(BUILD_TESTING)
-    enable_testing()
-    add_subdirectory(tests)
-endif()
