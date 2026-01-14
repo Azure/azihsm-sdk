@@ -47,7 +47,7 @@ impl HsmKeyDeriveOp for EcdhAlgo {
     type BaseKey = HsmEccPrivateKey;
 
     /// The type of derived key produced by this operation.
-    type DerivedKey = HsmSharedSecretKey;
+    type DerivedKey = HsmGenericSecretKey;
 
     /// The error type returned by this operation.
     type Error = HsmError;
@@ -97,6 +97,6 @@ impl HsmKeyDeriveOp for EcdhAlgo {
         let (handle, props) = ddi::ecdh_derive(base_key, &self.peer_der, props)?;
         // update derived key properties based on base key properties if needed
 
-        Ok(HsmSharedSecretKey::new(session.clone(), props, handle))
+        Ok(HsmGenericSecretKey::new(session.clone(), props, handle))
     }
 }

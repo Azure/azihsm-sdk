@@ -3,6 +3,7 @@
 mod aes;
 mod ecc;
 mod hash;
+mod hmac;
 mod kdf;
 mod rsa;
 mod secret;
@@ -10,6 +11,7 @@ mod secret;
 pub use aes::*;
 pub use ecc::*;
 pub use hash::*;
+pub use hmac::*;
 pub use kdf::*;
 pub use rsa::*;
 pub use secret::*;
@@ -58,6 +60,17 @@ macro_rules! define_hsm_key {
                 /// Returns the session ID.
                 pub(crate) fn sess_id(&self) -> u16 {
                     self.with_session(|s| s.id())
+                }
+
+                /// Returns the HSM session.
+                pub(crate) fn session(&self) -> HsmSession {
+                    self.with_session(|s| s.clone())
+                }
+
+                /// Returns props
+                pub(crate) fn props(&self) -> HsmKeyProps {
+                    let guard = self.inner.read().unwrap();
+                    guard.key_props().clone()
                 }
 
                 /// Returns the API revision.

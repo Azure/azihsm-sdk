@@ -51,10 +51,10 @@ impl HsmKeyDeriveOp for HsmHkdfAlgo {
     type Session = HsmSession;
 
     /// The type of base key used by this operation.
-    type BaseKey = HsmSharedSecretKey;
+    type BaseKey = HsmGenericSecretKey;
 
     /// The type of derived key produced by this operation.
-    type DerivedKey = HsmAesKey; // Currently only AES keys are supported.
+    type DerivedKey = HsmGenericSecretKey; // Currently only AES keys are supported.
 
     /// The error type returned by this operation.
     type Error = HsmError;
@@ -87,6 +87,6 @@ impl HsmKeyDeriveOp for HsmHkdfAlgo {
             self.info.as_deref(),
             props,
         )?;
-        Ok(HsmAesKey::new(session.clone(), props, handle))
+        Ok(Self::DerivedKey::new(session.clone(), props, handle))
     }
 }

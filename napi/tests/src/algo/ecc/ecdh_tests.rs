@@ -52,7 +52,7 @@ pub(crate) fn ecdh_derive_shared_secret(
     session: &HsmSession,
     private_key: &HsmEccPrivateKey,
     peer_public_key: &HsmEccPublicKey,
-) -> HsmResult<HsmSharedSecretKey> {
+) -> HsmResult<HsmGenericSecretKey> {
     // Get the peer public key in DER format.
     let pub_key_der = peer_public_key.pub_key_der_vec()?;
 
@@ -67,7 +67,7 @@ pub(crate) fn ecdh_derive_shared_secret_from_der(
     session: &HsmSession,
     private_key: &HsmEccPrivateKey,
     peer_public_key_der: &[u8],
-) -> HsmResult<HsmSharedSecretKey> {
+) -> HsmResult<HsmGenericSecretKey> {
     // Create an ECDH algorithm instance bound to the peer public key.
     let mut ecdh_algo = EcdhAlgo::new(peer_public_key_der);
 

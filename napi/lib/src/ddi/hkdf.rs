@@ -38,7 +38,7 @@ use super::*;
 /// - The derived key properties cannot be converted to DDI key type/properties.
 /// - The underlying DDI HKDF command fails.
 pub(crate) fn hkdf_derive(
-    shared_secret: &HsmSharedSecretKey,
+    shared_secret: &HsmGenericSecretKey,
     hash_algo: HsmHashAlgo,
     salt: Option<&[u8]>,
     info: Option<&[u8]>,
@@ -91,12 +91,18 @@ impl TryFrom<&HsmKeyProps> for DdiKeyType {
     /// - The requested key size is invalid for the supported kind.
     fn try_from(key_props: &HsmKeyProps) -> Result<Self, Self::Error> {
         match key_props.kind() {
+            // Supported AES key sizes
             HsmKeyKind::Aes => match key_props.bits() {
                 128 => Ok(DdiKeyType::Aes128),
                 192 => Ok(DdiKeyType::Aes192),
                 256 => Ok(DdiKeyType::Aes256),
                 _ => Err(HsmError::InvalidArgument),
             },
+            //HMAC key types supported by HKDF
+            HsmKeyKind::HmacSha256 => Ok(DdiKeyType::HmacSha256),
+            HsmKeyKind::HmacSha384 => Ok(DdiKeyType::HmacSha384),
+            HsmKeyKind::HmacSha512 => Ok(DdiKeyType::HmacSha512),
+            // All other key kinds are unsupported
             _ => Err(HsmError::InvalidArgument),
         }
     }

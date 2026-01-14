@@ -113,3 +113,21 @@ impl HsmKeyUnwrapOp for HsmAesKeyRsaAesKeyUnwrapAlgo {
         Ok(key)
     }
 }
+
+impl TryFrom<HsmGenericSecretKey> for HsmAesKey {
+    type Error = HsmError;
+
+    fn try_from(gs_key: HsmGenericSecretKey) -> Result<Self, Self::Error> {
+        // ensure the generic secret key is actually an AES key
+        if gs_key.kind() != HsmKeyKind::Aes {
+            Err(HsmError::InvalidKey)?;
+        }
+
+        // construct HsmAesKey from the generic secret key's properties
+        Ok(HsmAesKey::new(
+            gs_key.session(),
+            gs_key.props(),
+            gs_key.handle(),
+        ))
+    }
+}
