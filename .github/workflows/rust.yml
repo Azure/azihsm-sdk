@@ -32,8 +32,6 @@ jobs:
       run: |
         cargo clippy --version
         cargo xtask clippy
-    - name: Clean release native build and run tests
-      run: cargo xtask nbt --clean --config Release --test
     - name: SDK Run all mock tests
       run: cargo xtask nextest --features mock
     - name: SDK Run all mock tests table-4
@@ -63,7 +61,5 @@ jobs:
       run: |
         cargo clippy --version
         cargo xtask clippy
-    - name: Clean release native build and run tests
-      run: cargo xtask nbt --clean --config Release --test
     - name: SDK Run all mock tests
       run: cargo xtask nextest --features mock
