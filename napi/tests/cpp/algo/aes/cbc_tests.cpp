@@ -11,7 +11,7 @@
 #include "handle/part_list_handle.hpp"
 #include "handle/session_handle.hpp"
 
-class azihsm_aes : public ::testing::Test
+class azihsm_aes_cbc : public ::testing::Test
 {
   protected:
     PartitionListHandle part_list_ = PartitionListHandle{};
@@ -166,7 +166,7 @@ class azihsm_aes : public ::testing::Test
     }
 };
 
-TEST_F(azihsm_aes, encrypt_decrypt_128)
+TEST_F(azihsm_aes_cbc, encrypt_decrypt_128)
 {
     part_list_.for_each_part([](std::vector<azihsm_char> &path) {
         // Open partition and create session
@@ -218,7 +218,7 @@ TEST_F(azihsm_aes, encrypt_decrypt_128)
     });
 }
 
-TEST_F(azihsm_aes, encrypt_decrypt_128_with_padding)
+TEST_F(azihsm_aes_cbc, encrypt_decrypt_128_with_padding)
 {
     part_list_.for_each_part([](std::vector<azihsm_char> &path) {
         // Open partition and create session
@@ -271,7 +271,7 @@ TEST_F(azihsm_aes, encrypt_decrypt_128_with_padding)
     });
 }
 
-TEST_F(azihsm_aes, streaming_encrypt_decrypt_no_padding)
+TEST_F(azihsm_aes_cbc, streaming_encrypt_decrypt_no_padding)
 {
     part_list_.for_each_part([](std::vector<azihsm_char> &path) {
         // Open partition and create session
@@ -326,7 +326,7 @@ TEST_F(azihsm_aes, streaming_encrypt_decrypt_no_padding)
     });
 }
 
-TEST_F(azihsm_aes, streaming_encrypt_decrypt_with_padding)
+TEST_F(azihsm_aes_cbc, streaming_encrypt_decrypt_with_padding)
 {
     part_list_.for_each_part([](std::vector<azihsm_char> &path) {
         // Open partition and create session

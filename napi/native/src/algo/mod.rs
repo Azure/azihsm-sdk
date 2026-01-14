@@ -1,6 +1,7 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
 
 pub(crate) mod aes;
+pub(crate) mod ecc;
 
 use std::ffi::c_void;
 

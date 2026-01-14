@@ -14,6 +14,8 @@ pub(crate) enum HandleType {
     Session,
     AesKey,
     AesCbcStreamingCtx,
+    EccPrivKey,
+    EccPubKey,
 }
 
 struct Entry {
