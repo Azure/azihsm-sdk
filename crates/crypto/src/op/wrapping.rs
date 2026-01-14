@@ -95,7 +95,7 @@ pub trait WrapOp {
     /// - Wrapped keys can only be unwrapped with the correct unwrapping key
     /// - Clear the wrapped key buffer when no longer needed
     fn wrap_key<TargetKey: ExportableKey>(
-        &self,
+        &mut self,
         key: &Self::Key,
         target_key: &TargetKey,
         wrapped_key: Option<&mut [u8]>,
@@ -164,7 +164,7 @@ pub trait UnwrapOp {
     /// - Unwrapped key material must be cleared from memory after use
     /// - Timing attacks are mitigated during integrity verification
     fn unwrap_key<TargetKey: ImportableKey>(
-        &self,
+        &mut self,
         key: &Self::Key,
         wrapped_key: &[u8],
     ) -> Result<TargetKey, CryptoError>;

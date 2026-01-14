@@ -1,0 +1,62 @@
+language = "C"
+
+header = "/* Copyright (C) Microsoft Corporation. All rights reserved. */"
+
+cpp_compat = true
+
+include_guard = "__AZIHSM_API_H__"
+
+documentation_style = "c"
+
+# Codegen Options
+
+# When generating a C header, the kind of declaration style to use for structs
+# or enums.
+#
+# possible values:
+# * "type": typedef struct { ... } MyType;
+# * "tag": struct MyType { ... };
+# * "both": typedef struct MyType { ... } MyType;
+#
+# default: "both"
+style = "tag"
+
+# If this option is true `usize` and `isize` will be converted into `size_t` and `ptrdiff_t`
+# instead of `uintptr_t` and `intptr_t` respectively.
+usize_is_size_t = true
+
+[export]
+
+# A list of items to not include in the generated bindings
+# default: []
+exclude = []
+include = ["AzihsmAlgoAesCbcParams"]
+
+item_types = ["constants", "enums", "functions", "structs", "typedefs"]
+
+[export.rename]
+"AzihsmAlgo" = "azihsm_algo"
+"AzihsmAlgoAesCbcParams" = "azihsm_algo_aes_cbc_params"
+"AzihsmAlgoId" = "azihsm_algo_id"
+"AzihsmApiRev" = "azihsm_api_rev"
+"AzihsmBuffer" = "azihsm_buffer"
+"AzihsmChar" = "azihsm_char"
+"AzihsmCredentials" = "azihsm_credentials"
+"AzihsmEccCurve" = "azihsm_ecc_curve"
+"AzihsmError" = "azihsm_error"
+"AzihsmHandle" = "azihsm_handle"
+"AzihsmHsmKeyKind" = "azihsm_key_kind"
+"AzihsmKeyProp" = "azihsm_key_prop"
+"AzihsmKeyPropId" = "azihsm_key_prop_id"
+"AzihsmKeyPropList" = "azihsm_key_prop_list"
+"AzihsmStr" = "azihsm_str"
+"AzihsmWideChar" = "azihsm_char"
+"HsmError" = "azihsm_error"
+
+[defines]
+"target_os = linux" = "__linux__ "
+"target_os = windows" = "_WIN32"
+
+[enum]
+enum_class = false
+rename_variants = "QualifiedScreamingSnakeCase"

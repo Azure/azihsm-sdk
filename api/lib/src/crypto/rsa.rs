@@ -700,7 +700,7 @@ impl KeyWrapOp<AlgoRsaAesKeyWrap> for RsaPkcsKeyPair {
             _ => Err(AZIHSM_RSA_UNSUPPORTED_HASH_ALGORITHM)?,
         };
 
-        let wrap = RsaAesKeyWrap::new(hash, (algo.params.aes_key_bits / 8) as usize);
+        let mut wrap = RsaAesKeyWrap::new(hash, (algo.params.aes_key_bits / 8) as usize);
 
         // Perform the wrapping
         let len = wrap
@@ -738,7 +738,7 @@ impl KeyWrapOp<AlgoRsaAesKeyWrap> for RsaPkcsKeyPair {
             _ => Err(AZIHSM_RSA_UNSUPPORTED_HASH_ALGORITHM)?,
         };
 
-        let wrap = RsaAesKeyWrap::new(hash, (algo.params.aes_key_bits / 8) as usize);
+        let mut wrap = RsaAesKeyWrap::new(hash, (algo.params.aes_key_bits / 8) as usize);
 
         // Perform the wrapping
         let len = wrap

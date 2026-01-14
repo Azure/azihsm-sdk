@@ -125,41 +125,14 @@ impl WrapOp for RsaAesKeyWrap {
     /// - RSA-OAEP provides semantic security against chosen-ciphertext attacks
     /// - The wrapped key can only be unwrapped with the corresponding private key
     fn wrap_key<TargetKey: ExportableKey>(
-        &self,
+        &mut self,
         key: &Self::Key,
         target_key: &TargetKey,
         wrapped_key: Option<&mut [u8]>,
     ) -> Result<usize, CryptoError> {
         // Export the target key to bytes
         let target_bytes = target_key.to_vec()?;
-
-        // Generate a random AES KEK with configured size
-        let kek = AesKey::generate(self.kek_size)?;
-
-        // Wrap the target key using AES-KWP
-        let mut kwp = AesKeyWrapPadAlgo::default();
-        let wrapped_target = Encrypter::encrypt_vec(&mut kwp, &kek, &target_bytes)?;
-
-        // Export the KEK to bytes
-        let kek_vec = kek.to_vec()?;
-
-        // Encrypt the KEK using RSA-OAEP
-        let mut rsa_enc = RsaEncryptAlgo::with_oaep_padding(self.hash.clone(), None);
-        let encrypted_kek = Encrypter::encrypt_vec(&mut rsa_enc, key, &kek_vec)?;
-
-        // Calculate total size
-        let total_size = encrypted_kek.len() + wrapped_target.len();
-
-        if let Some(output) = wrapped_key {
-            if output.len() < total_size {
-                return Err(CryptoError::RsaBufferTooSmall);
-            }
-            // Concatenate: [encrypted KEK] || [wrapped target key]
-            output[..encrypted_kek.len()].copy_from_slice(&encrypted_kek);
-            output[encrypted_kek.len()..total_size].copy_from_slice(&wrapped_target);
-        }
-
-        Ok(total_size)
+        self.encrypt(key, &target_bytes, wrapped_key)
     }
 }
 
@@ -210,10 +183,66 @@ impl UnwrapOp for RsaAesKeyWrap {
     /// - Timing-safe operations prevent leaking information about failures
     /// - Any corruption or modification of wrapped key material will be detected
     fn unwrap_key<TargetKey: ImportableKey>(
-        &self,
+        &mut self,
         key: &Self::Key,
         wrapped_key: &[u8],
     ) -> Result<TargetKey, CryptoError> {
+        let len = self.decrypt(key, wrapped_key, None)?;
+        let mut unwrapped_bytes = vec![0u8; len];
+        self.decrypt(key, wrapped_key, Some(&mut unwrapped_bytes))?;
+        unwrapped_bytes.truncate(len);
+        TargetKey::from_bytes(&unwrapped_bytes)
+    }
+}
+
+impl EncryptOp for RsaAesKeyWrap {
+    type Key = RsaPublicKey;
+
+    fn encrypt(
+        &mut self,
+        key: &Self::Key,
+        input: &[u8],
+        output: Option<&mut [u8]>,
+    ) -> Result<usize, CryptoError> {
+        // Generate a random AES KEK with configured size
+        let kek = AesKey::generate(self.kek_size)?;
+
+        // Wrap the target key using AES-KWP
+        let mut kwp = AesKeyWrapPadAlgo::default();
+        let wrapped_target = Encrypter::encrypt_vec(&mut kwp, &kek, input)?;
+
+        // Export the KEK to bytes
+        let kek_vec = kek.to_vec()?;
+
+        // Encrypt the KEK using RSA-OAEP
+        let mut rsa_enc = RsaEncryptAlgo::with_oaep_padding(self.hash.clone(), None);
+        let encrypted_kek = Encrypter::encrypt_vec(&mut rsa_enc, key, &kek_vec)?;
+
+        // Calculate total size
+        let total_size = encrypted_kek.len() + wrapped_target.len();
+
+        if let Some(output) = output {
+            if output.len() < total_size {
+                return Err(CryptoError::RsaBufferTooSmall);
+            }
+            // Concatenate: [encrypted KEK] || [wrapped target key]
+            output[..encrypted_kek.len()].copy_from_slice(&encrypted_kek);
+            output[encrypted_kek.len()..total_size].copy_from_slice(&wrapped_target);
+        }
+
+        Ok(total_size)
+    }
+}
+
+impl DecryptOp for RsaAesKeyWrap {
+    type Key = RsaPrivateKey;
+
+    fn decrypt(
+        &mut self,
+        key: &Self::Key,
+        input: &[u8],
+        output: Option<&mut [u8]>,
+    ) -> Result<usize, CryptoError> {
         // Step 1: Determine the encrypted KEK size by querying the decryption operation
         // Create a decryption context to query the ciphertext size
         let mut rsa_enc_query = RsaEncryptAlgo::with_oaep_padding(self.hash.clone(), None);
@@ -225,13 +254,13 @@ impl UnwrapOp for RsaAesKeyWrap {
         let public_key = key.public_key()?;
         let rsa_ciphertext_size = rsa_enc_query.encrypt(&public_key, &[], None)?;
 
-        if wrapped_key.len() < rsa_ciphertext_size {
+        if input.len() < rsa_ciphertext_size {
             return Err(CryptoError::RsaDecryptError);
         }
 
         // Step 2: Split the wrapped key into encrypted KEK and wrapped target
-        let encrypted_kek = &wrapped_key[..rsa_ciphertext_size];
-        let wrapped_target = &wrapped_key[rsa_ciphertext_size..];
+        let encrypted_kek = &input[..rsa_ciphertext_size];
+        let wrapped_target = &input[rsa_ciphertext_size..];
 
         // Step 3: Decrypt the KEK using RSA-OAEP
         let mut rsa_enc = RsaEncryptAlgo::with_oaep_padding(self.hash.clone(), None);
@@ -248,9 +277,6 @@ impl UnwrapOp for RsaAesKeyWrap {
 
         // Step 5: Unwrap the target key using AES-KWP
         let mut kwp = AesKeyWrapPadAlgo::default();
-        let unwrapped_bytes = Decrypter::decrypt_vec(&mut kwp, &kek, wrapped_target)?;
-
-        // Step 6: Import the target key from the unwrapped bytes
-        TargetKey::from_bytes(&unwrapped_bytes)
+        Decrypter::decrypt(&mut kwp, &kek, wrapped_target, output)
     }
 }

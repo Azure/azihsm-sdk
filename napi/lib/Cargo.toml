@@ -1,0 +1,28 @@
+# Copyright (C) Microsoft Corporation. All rights reserved.
+[package]
+edition = "2024"
+name = "azihsm_napi"
+version = "0.0.0"
+
+[dependencies]
+azihsm_cred_encrypt.workspace = true
+azihsm_crypto.workspace = true
+azihsm_ddi.workspace = true
+azihsm_ddi_mbor.workspace = true
+azihsm_ddi_types.workspace = true
+bitflags.workspace = true
+delegate.workspace = true
+env_logger.workspace = true
+itertools.workspace = true
+log.workspace = true
+open-enum.workspace = true
+pastey.workspace = true
+test_with_tracing.workspace = true
+tracing.workspace = true
+
+[features]
+default = []
+mock = ["azihsm_ddi/mock"]
+
+[lints]
+workspace = true

@@ -40,7 +40,7 @@ impl KeyWrapper {
     /// - The target key cannot be exported/wrapped
     /// - The underlying cryptographic operation fails
     pub fn wrap<Algo: WrapOp, TargetKey: ExportableKey>(
-        algo: &Algo,
+        algo: &mut Algo,
         key: &Algo::Key,
         target_key: &TargetKey,
         wrapped_key: Option<&mut [u8]>,
@@ -71,7 +71,7 @@ impl KeyWrapper {
     /// - Memory allocation fails
     /// - The underlying cryptographic operation fails
     pub fn wrap_vec<Algo: WrapOp, TargetKey: ExportableKey>(
-        algo: &Algo,
+        algo: &mut Algo,
         key: &Algo::Key,
         target_key: &TargetKey,
     ) -> Result<Vec<u8>, CryptoError> {

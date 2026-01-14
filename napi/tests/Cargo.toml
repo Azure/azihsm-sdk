@@ -1,0 +1,32 @@
+# Copyright (C) Microsoft Corporation. All rights reserved.
+[package]
+edition = "2024"
+name = "azihsm_napi_tests"
+version = "0.0.0"
+
+[dependencies]
+
+[build-dependencies]
+cmake.workspace = true
+
+[dev-dependencies]
+azihsm_crypto.workspace = true
+azihsm_napi.workspace = true
+azihsm_napi_tests_macro.workspace = true
+hex.workspace = true
+libtest-mimic.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tracing-tree.workspace = true
+
+[features]
+default = []
+mock = ["azihsm_napi/mock"]
+
+[lints]
+workspace = true
+
+[[test]]
+harness = false
+name = "cpp"
+path = "cpp/tests.rs"

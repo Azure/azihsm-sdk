@@ -14,7 +14,7 @@ fn test_rsa_kw_basic_wrap_unwrap() {
     let target_key = AesKey::generate(32).expect("Failed to generate target key");
 
     // Create hash algorithm and wrapper
-    let wrapper = RsaAesKeyWrap::new(HashAlgo::sha256(), 32);
+    let mut wrapper = RsaAesKeyWrap::new(HashAlgo::sha256(), 32);
 
     // Query the required buffer size
     let wrapped_len = wrapper
@@ -57,7 +57,7 @@ fn test_rsa_kw_different_aes_key_sizes() {
     let public_key = private_key
         .public_key()
         .expect("Failed to derive public key");
-    let wrapper = RsaAesKeyWrap::new(HashAlgo::sha256(), 32);
+    let mut wrapper = RsaAesKeyWrap::new(HashAlgo::sha256(), 32);
     // Test with different AES key sizes (128, 192, 256 bits)
     for key_size in [16, 24, 32] {
         let target_key = AesKey::generate(key_size).expect("Failed to generate target key");
@@ -97,7 +97,7 @@ fn test_rsa_kw_different_kek_sizes() {
     let target_key = AesKey::generate(32).expect("Failed to generate target key");
     // Test with different KEK sizes (128, 192, 256 bits)
     for kek_size in [16, 24, 32] {
-        let wrapper = RsaAesKeyWrap::new(HashAlgo::sha256(), kek_size);
+        let mut wrapper = RsaAesKeyWrap::new(HashAlgo::sha256(), kek_size);
 
         let wrapped_len = wrapper
             .wrap_key(&public_key, &target_key, None)
@@ -135,7 +135,7 @@ fn test_rsa_kw_different_hash_algorithms() {
 
     // Test with different hash algorithms
     for hash_algo in [HashAlgo::sha256(), HashAlgo::sha384(), HashAlgo::sha512()] {
-        let wrapper = RsaAesKeyWrap::new(hash_algo.clone(), 32);
+        let mut wrapper = RsaAesKeyWrap::new(hash_algo.clone(), 32);
 
         let wrapped_len = wrapper
             .wrap_key(&public_key, &target_key, None)
@@ -167,7 +167,7 @@ fn test_rsa_kw_different_hash_algorithms() {
 #[test]
 fn test_rsa_kw_different_rsa_key_sizes() {
     let target_key = AesKey::generate(32).expect("Failed to generate target key");
-    let wrapper = RsaAesKeyWrap::new(HashAlgo::sha256(), 32);
+    let mut wrapper = RsaAesKeyWrap::new(HashAlgo::sha256(), 32);
     // Test with different RSA key sizes (2048, 3072, 4096 bits)
     for rsa_size in [256, 384, 512] {
         let private_key = RsaPrivateKey::generate(rsa_size).expect("Failed to generate RSA key");
@@ -207,7 +207,7 @@ fn test_rsa_kw_corrupted_data_fails() {
     let public_key = private_key
         .public_key()
         .expect("Failed to derive public key");
-    let wrapper = RsaAesKeyWrap::new(HashAlgo::sha256(), 32);
+    let mut wrapper = RsaAesKeyWrap::new(HashAlgo::sha256(), 32);
     let target_key = AesKey::generate(32).expect("Failed to generate target key");
 
     let wrapped_len = wrapper
@@ -237,7 +237,7 @@ fn test_rsa_kw_wrong_private_key_fails() {
 
     let private_key2 = RsaPrivateKey::generate(256).expect("Failed to generate RSA key 2");
 
-    let wrapper = RsaAesKeyWrap::new(HashAlgo::sha256(), 32);
+    let mut wrapper = RsaAesKeyWrap::new(HashAlgo::sha256(), 32);
     let target_key = AesKey::generate(32).expect("Failed to generate target key");
 
     let wrapped_len = wrapper
@@ -264,7 +264,7 @@ fn test_rsa_kw_truncated_data_fails() {
     let public_key = private_key
         .public_key()
         .expect("Failed to derive public key");
-    let wrapper = RsaAesKeyWrap::new(HashAlgo::sha256(), 32);
+    let mut wrapper = RsaAesKeyWrap::new(HashAlgo::sha256(), 32);
     let target_key = AesKey::generate(32).expect("Failed to generate target key");
 
     let wrapped_len = wrapper
@@ -289,7 +289,7 @@ fn test_rsa_kw_buffer_too_small_fails() {
     let public_key = private_key
         .public_key()
         .expect("Failed to derive public key");
-    let wrapper = RsaAesKeyWrap::new(HashAlgo::sha256(), 32);
+    let mut wrapper = RsaAesKeyWrap::new(HashAlgo::sha256(), 32);
     let target_key = AesKey::generate(32).expect("Failed to generate target key");
 
     let wrapped_len = wrapper

@@ -72,7 +72,7 @@ mod tests {
         // Step 3: Wrap the private key using HSM public key
         let hash = HashAlgo::try_from(AlgoId::Sha256).map_err(|_| AZIHSM_INTERNAL_ERROR)?;
 
-        let rsa_kw = RsaAesKeyWrap::new(hash, 32);
+        let mut rsa_kw = RsaAesKeyWrap::new(hash, 32);
 
         let target_key =
             GenericSecretKey::from_bytes(private_key_der).map_err(|_| AZIHSM_INTERNAL_ERROR)?;
@@ -854,7 +854,7 @@ mod tests {
         let crypto_pub_key = RsaPublicKey::from_bytes(&pub_key_der)
             .expect("Failed to import public key into azihsm_crypto");
 
-        let rsa_kw = RsaAesKeyWrap::new(hash_algo, aes_key_size);
+        let mut rsa_kw = RsaAesKeyWrap::new(hash_algo, aes_key_size);
 
         let target_key = GenericSecretKey::from_bytes(&test_data)
             .expect("Failed to create GenericSecretKey from test data");
@@ -971,7 +971,9 @@ mod tests {
                             "[WARN] Key validation: Decryption failed with error: {:?}",
                             e
                         );
-                        println!("  This is expected - the unwrapped key may not match test vector key exactly");
+                        println!(
+                            "  This is expected - the unwrapped key may not match test vector key exactly"
+                        );
                     }
                 }
 
@@ -1187,7 +1189,7 @@ mod tests {
         let hash_algo = HashAlgo::sha256();
         let aes_key_size = 32; // AES-256
 
-        let rsa_kw = RsaAesKeyWrap::new(hash_algo, aes_key_size);
+        let mut rsa_kw = RsaAesKeyWrap::new(hash_algo, aes_key_size);
 
         let target_key = GenericSecretKey::from_bytes(&aes_key_bytes)
             .expect("Failed to create GenericSecretKey from AES key bytes");
@@ -1295,7 +1297,9 @@ mod tests {
             }
             Err(e) => {
                 println!("[ERROR] Step 6: Decryption failed with error: {:?}", e);
-                println!("   This might be expected if the unwrapped key doesn't match the test vector key");
+                println!(
+                    "   This might be expected if the unwrapped key doesn't match the test vector key"
+                );
             }
         }
 

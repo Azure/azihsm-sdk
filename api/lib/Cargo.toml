@@ -32,7 +32,7 @@ azihsm_ddi_win.workspace = true
 cbindgen.workspace = true
 
 [features]
-default = ["mock"]
+default = []
 mock = ["azihsm_ddi/mock"]
 
 [lints]

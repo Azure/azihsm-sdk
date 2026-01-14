@@ -10,7 +10,6 @@ use clap::Parser;
 use crate::clippy;
 use crate::copyright;
 use crate::fmt;
-use crate::native;
 use crate::nextest;
 use crate::Xtask;
 use crate::XtaskCtx;
@@ -52,14 +51,6 @@ impl Xtask for Precheck {
             filterset: None,
         };
         nextest.run(ctx.clone())?;
-
-        // Replace the build_cpp section with:
-        let cpp_test = native::NativeBuildAndTest {
-            clean: false,           // Do not clean build directory by default
-            config: "Debug".into(), // Use Debug configuration by default
-            test: true,             // Run tests as part of precheck
-        };
-        cpp_test.run(ctx)?;
 
         log::trace!("done precheck");
         Ok(())
