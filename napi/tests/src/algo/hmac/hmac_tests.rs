@@ -36,7 +36,7 @@ fn hmac_test_key_kinds() -> [HsmKeyKind; 3] {
 
 // Converts an HMAC key kind to its key size in bits.
 fn hmac_key_kind_to_bits(key_kind: HsmKeyKind) -> u32 {
-  match key_kind {
+    match key_kind {
         HsmKeyKind::HmacSha256 => 256,
         HsmKeyKind::HmacSha384 => 384,
         HsmKeyKind::HmacSha512 => 512,
