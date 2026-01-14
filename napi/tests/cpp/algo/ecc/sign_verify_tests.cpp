@@ -355,7 +355,7 @@ TEST_F(azihsm_ecc_sign_verify, wrong_key_type_for_sign)
 
         // Try to sign with public key
         auto err = azihsm_crypt_sign(&algo, pub_key, &hash_buf, &sig_buf);
-        ASSERT_EQ(err, AZIHSM_ERROR_UNSUPPORTED_KEY_KIND);
+        ASSERT_EQ(err, AZIHSM_ERROR_INVALID_HANDLE);
 
         azihsm_key_delete(priv_key);
         azihsm_key_delete(pub_key);
@@ -385,7 +385,7 @@ TEST_F(azihsm_ecc_sign_verify, wrong_key_type_for_verify)
 
         // Try to verify with private key
         auto err = azihsm_crypt_verify(&algo, priv_key, &hash_buf, &sig_buf);
-        ASSERT_EQ(err, AZIHSM_ERROR_UNSUPPORTED_KEY_KIND);
+        ASSERT_EQ(err, AZIHSM_ERROR_INVALID_HANDLE);
 
         azihsm_key_delete(priv_key);
         azihsm_key_delete(pub_key);

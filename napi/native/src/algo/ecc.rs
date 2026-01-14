@@ -19,113 +19,97 @@ impl TryFrom<&AzihsmAlgo> for HsmEccKeyGenAlgo {
     }
 }
 
-/// ECC algorithm variant for signing and verification operations
-enum EccAlgoVariant {
-    Direct(HsmEccSignAlgo),
-    WithHash(HsmHashSignAlgo),
-}
-
-impl EccAlgoVariant {
-    /// Create the appropriate algorithm based on the algorithm ID
-    fn from_algo_id(algo_id: AzihsmAlgoId) -> Result<Self, AzihsmError> {
-        match algo_id {
-            AzihsmAlgoId::Ecdsa => Ok(Self::Direct(HsmEccSignAlgo::default())),
-            AzihsmAlgoId::EcdsaSha1 => Ok(Self::WithHash(HsmHashSignAlgo::new(HsmHashAlgo::Sha1))),
-            AzihsmAlgoId::EcdsaSha256 => {
-                Ok(Self::WithHash(HsmHashSignAlgo::new(HsmHashAlgo::Sha256)))
-            }
-            AzihsmAlgoId::EcdsaSha384 => {
-                Ok(Self::WithHash(HsmHashSignAlgo::new(HsmHashAlgo::Sha384)))
-            }
-            AzihsmAlgoId::EcdsaSha512 => {
-                Ok(Self::WithHash(HsmHashSignAlgo::new(HsmHashAlgo::Sha512)))
-            }
-            _ => Err(AzihsmError::UnsupportedAlgorithm),
-        }
-    }
-}
-
-/// Helper function to perform ECC signing operation
-fn perform_ecc_sign(
-    algo_id: AzihsmAlgoId,
-    key: &HsmEccPrivateKey,
-    input: &[u8],
-    output: Option<&mut [u8]>,
-) -> Result<usize, AzihsmError> {
-    let mut sign_algo = EccAlgoVariant::from_algo_id(algo_id)?;
-
-    let result = match &mut sign_algo {
-        EccAlgoVariant::Direct(algo) => HsmSigner::sign(algo, key, input, output),
-        EccAlgoVariant::WithHash(algo) => HsmSigner::sign(algo, key, input, output),
-    };
-
-    Ok(result?)
-}
-
-pub(crate) fn ecc_sign(
-    algo: &AzihsmAlgo,
+/// Generic helper function to perform ECC signing operation
+fn sign_with_algo<A>(
+    mut algo: A,
     key_handle: AzihsmHandle,
     input: &[u8],
     output: &mut AzihsmBuffer,
-) -> Result<(), AzihsmError> {
+) -> Result<(), AzihsmError>
+where
+    A: HsmSignOp<Key = HsmEccPrivateKey, Error = HsmError>,
+{
     // Get the key from handle
     let key: &HsmEccPrivateKey = &key_handle.try_into()?;
 
-    // Determine the required signature size
-    let required_size = perform_ecc_sign(algo.id, key, input, None)?;
+    // Determine required size
+    let required_size = HsmSigner::sign(&mut algo, key, input, None)?;
 
-    // Check if output buffer is large enough
+    // Validate and get output buffer
     let output_data = validate_output_buffer(output, required_size)?;
 
-    // Perform the actual signing operation
-    let sig_len = perform_ecc_sign(algo.id, key, input, Some(output_data))?;
+    // Perform actual signing
+    let sig_len = HsmSigner::sign(&mut algo, key, input, Some(output_data))?;
 
-    // Update the output buffer length with actual signature length
+    // Update output buffer length
     output.len = sig_len as u32;
 
     Ok(())
 }
 
+/// Generic helper function to perform ECC verification operation
+fn verify_with_algo<A>(
+    mut algo: A,
+    key_handle: AzihsmHandle,
+    data: &[u8],
+    sig: &[u8],
+) -> Result<bool, AzihsmError>
+where
+    A: HsmVerifyOp<Key = HsmEccPublicKey, Error = HsmError>,
+{
+    // Get the key from handle
+    let key: &HsmEccPublicKey = &key_handle.try_into()?;
+
+    Ok(HsmVerifier::verify(&mut algo, key, data, sig)?)
+}
+
+/// Helper function to perform ECC signing operation with direct (pre-hashed) algorithm
+pub(crate) fn ecc_sign(
+    key_handle: AzihsmHandle,
+    input: &[u8],
+    output: &mut AzihsmBuffer,
+) -> Result<(), AzihsmError> {
+    sign_with_algo(HsmEccSignAlgo::default(), key_handle, input, output)
+}
+
+/// Helper function to perform ECC signing operation with hash algorithm
+pub(crate) fn ecc_hash_sign(
+    hash_algo: HsmHashAlgo,
+    key_handle: AzihsmHandle,
+    input: &[u8],
+    output: &mut AzihsmBuffer,
+) -> Result<(), AzihsmError> {
+    sign_with_algo(HsmHashSignAlgo::new(hash_algo), key_handle, input, output)
+}
+
+/// Helper function to perform ECC verification operation with direct (pre-hashed) algorithm
 pub(crate) fn ecc_verify(
-    algo: &AzihsmAlgo,
     key_handle: AzihsmHandle,
     data: &[u8],
     sig: &[u8],
 ) -> Result<bool, AzihsmError> {
-    // Get the key from handle
-    let key: &HsmEccPublicKey = &key_handle.try_into()?;
+    verify_with_algo(HsmEccSignAlgo::default(), key_handle, data, sig)
+}
 
-    // Create the appropriate verification algorithm
-    let mut verify_algo = EccAlgoVariant::from_algo_id(algo.id)?;
-
-    // Perform verification with the selected algorithm
-    let result = match &mut verify_algo {
-        EccAlgoVariant::Direct(algo) => HsmVerifier::verify(algo, key, data, sig),
-        EccAlgoVariant::WithHash(algo) => HsmVerifier::verify(algo, key, data, sig),
-    };
-
-    Ok(result?)
+/// Helper function to perform ECC verification operation with hash algorithm
+pub(crate) fn ecc_hash_verify(
+    hash_algo: HsmHashAlgo,
+    key_handle: AzihsmHandle,
+    data: &[u8],
+    sig: &[u8],
+) -> Result<bool, AzihsmError> {
+    verify_with_algo(HsmHashSignAlgo::new(hash_algo), key_handle, data, sig)
 }
 
 pub(crate) fn ecc_sign_init(
-    algo: &AzihsmAlgo,
+    hash_algo: HsmHashAlgo,
     key_handle: AzihsmHandle,
 ) -> Result<AzihsmHandle, AzihsmError> {
     // Get the key from handle
     let key: HsmEccPrivateKey = key_handle.try_into()?;
 
-    // Create the appropriate signing algorithm variant based on algorithm ID
-    let sign_algo = match algo.id {
-        AzihsmAlgoId::Ecdsa => {
-            // Streaming pre-computed hash input is not supported
-            Err(AzihsmError::UnsupportedAlgorithm)?
-        }
-        AzihsmAlgoId::EcdsaSha1 => HsmHashSignAlgo::new(HsmHashAlgo::Sha1),
-        AzihsmAlgoId::EcdsaSha256 => HsmHashSignAlgo::new(HsmHashAlgo::Sha256),
-        AzihsmAlgoId::EcdsaSha384 => HsmHashSignAlgo::new(HsmHashAlgo::Sha384),
-        AzihsmAlgoId::EcdsaSha512 => HsmHashSignAlgo::new(HsmHashAlgo::Sha512),
-        _ => return Err(AzihsmError::UnsupportedAlgorithm),
-    };
+    // Create the signing algorithm
+    let sign_algo = HsmHashSignAlgo::new(hash_algo);
 
     // Initialize the streaming signing context
     let ctx = HsmSigner::sign_init(sign_algo, key)?;
@@ -173,24 +157,14 @@ pub(crate) fn ecc_sign_final(
 }
 
 pub(crate) fn ecc_verify_init(
-    algo: &AzihsmAlgo,
+    hash_algo: HsmHashAlgo,
     key_handle: AzihsmHandle,
 ) -> Result<AzihsmHandle, AzihsmError> {
     // Get the key from handle
     let key: HsmEccPublicKey = key_handle.try_into()?;
 
-    // Create the appropriate verification algorithm variant based on algorithm ID
-    let verify_algo = match algo.id {
-        AzihsmAlgoId::Ecdsa => {
-            // Streaming pre-computed hash input is not supported
-            Err(AzihsmError::UnsupportedAlgorithm)?
-        }
-        AzihsmAlgoId::EcdsaSha1 => HsmHashSignAlgo::new(HsmHashAlgo::Sha1),
-        AzihsmAlgoId::EcdsaSha256 => HsmHashSignAlgo::new(HsmHashAlgo::Sha256),
-        AzihsmAlgoId::EcdsaSha384 => HsmHashSignAlgo::new(HsmHashAlgo::Sha384),
-        AzihsmAlgoId::EcdsaSha512 => HsmHashSignAlgo::new(HsmHashAlgo::Sha512),
-        _ => return Err(AzihsmError::UnsupportedAlgorithm),
-    };
+    // Create the verification algorithm
+    let verify_algo = HsmHashSignAlgo::new(hash_algo);
 
     // Initialize the streaming verification context
     let ctx = HsmVerifier::verify_init(verify_algo, key)?;

@@ -1,5 +1,7 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
 
+use azihsm_napi::*;
+
 use super::*;
 use crate::algo::ecc::*;
 
@@ -33,18 +35,24 @@ pub unsafe extern "C" fn azihsm_crypt_sign(
         // Convert input buffer to slice
         let input_data: &[u8] = data_buf.try_into()?;
 
-        // Get the key handle type and perform operation based on key type and algorithm
-        let key_type: HandleType = key_handle.try_into()?;
-
-        match key_type {
-            HandleType::EccPrivKey => {
-                ecc_sign(algo, key_handle, input_data, sig_buf)?;
+        // Dispatch based on algorithm ID
+        match algo.id {
+            AzihsmAlgoId::Ecdsa => {
+                ecc_sign(key_handle, input_data, sig_buf)?;
             }
-
-            // Add support for other key types here as needed (RSA, etc.)
-            _ => {
-                Err(AzihsmError::UnsupportedKeyKind)?;
+            AzihsmAlgoId::EcdsaSha1 => {
+                ecc_hash_sign(HsmHashAlgo::Sha1, key_handle, input_data, sig_buf)?;
             }
+            AzihsmAlgoId::EcdsaSha256 => {
+                ecc_hash_sign(HsmHashAlgo::Sha256, key_handle, input_data, sig_buf)?;
+            }
+            AzihsmAlgoId::EcdsaSha384 => {
+                ecc_hash_sign(HsmHashAlgo::Sha384, key_handle, input_data, sig_buf)?;
+            }
+            AzihsmAlgoId::EcdsaSha512 => {
+                ecc_hash_sign(HsmHashAlgo::Sha512, key_handle, input_data, sig_buf)?;
+            }
+            _ => Err(AzihsmError::UnsupportedAlgorithm)?,
         }
 
         Ok(())
@@ -80,13 +88,22 @@ pub unsafe extern "C" fn azihsm_crypt_verify(
         let input_data: &[u8] = data_buf.try_into()?;
         let sig_data: &[u8] = sig_buf.try_into()?;
 
-        let key_type: HandleType = key_handle.try_into()?;
-
-        let is_valid = match key_type {
-            HandleType::EccPubKey => ecc_verify(algo, key_handle, input_data, sig_data)?,
-
-            // Add support for other key types here as needed (RSA, etc.)
-            _ => Err(AzihsmError::UnsupportedKeyKind)?,
+        // Dispatch based on algorithm ID and perform verification
+        let is_valid = match algo.id {
+            AzihsmAlgoId::Ecdsa => ecc_verify(key_handle, input_data, sig_data)?,
+            AzihsmAlgoId::EcdsaSha1 => {
+                ecc_hash_verify(HsmHashAlgo::Sha1, key_handle, input_data, sig_data)?
+            }
+            AzihsmAlgoId::EcdsaSha256 => {
+                ecc_hash_verify(HsmHashAlgo::Sha256, key_handle, input_data, sig_data)?
+            }
+            AzihsmAlgoId::EcdsaSha384 => {
+                ecc_hash_verify(HsmHashAlgo::Sha384, key_handle, input_data, sig_data)?
+            }
+            AzihsmAlgoId::EcdsaSha512 => {
+                ecc_hash_verify(HsmHashAlgo::Sha512, key_handle, input_data, sig_data)?
+            }
+            _ => Err(AzihsmError::UnsupportedAlgorithm)?,
         };
 
         if !is_valid {
@@ -119,13 +136,18 @@ pub unsafe extern "C" fn azihsm_crypt_sign_init(
         validate_ptr(ctx_handle)?;
 
         let algo = deref_mut_ptr(algo)?;
-        let key_type: HandleType = key_handle.try_into()?;
 
-        let handle = match key_type {
-            HandleType::EccPrivKey => ecc_sign_init(algo, key_handle)?,
-
-            // Add support for other key types here as needed (RSA, etc.)
-            _ => Err(AzihsmError::UnsupportedKeyKind)?,
+        // Dispatch based on algorithm ID
+        let handle = match algo.id {
+            AzihsmAlgoId::Ecdsa => {
+                // Streaming pre-computed hash input is not supported
+                Err(AzihsmError::UnsupportedAlgorithm)?
+            }
+            AzihsmAlgoId::EcdsaSha1 => ecc_sign_init(HsmHashAlgo::Sha1, key_handle)?,
+            AzihsmAlgoId::EcdsaSha256 => ecc_sign_init(HsmHashAlgo::Sha256, key_handle)?,
+            AzihsmAlgoId::EcdsaSha384 => ecc_sign_init(HsmHashAlgo::Sha384, key_handle)?,
+            AzihsmAlgoId::EcdsaSha512 => ecc_sign_init(HsmHashAlgo::Sha512, key_handle)?,
+            _ => Err(AzihsmError::UnsupportedAlgorithm)?,
         };
 
         assign_ptr(ctx_handle, handle)?;
@@ -224,13 +246,18 @@ pub unsafe extern "C" fn azihsm_crypt_verify_init(
         validate_ptr(ctx_handle)?;
 
         let algo = deref_mut_ptr(algo)?;
-        let key_type: HandleType = key_handle.try_into()?;
 
-        let handle = match key_type {
-            HandleType::EccPubKey => ecc_verify_init(algo, key_handle)?,
-
-            // Add support for other key types here as needed (RSA, etc.)
-            _ => Err(AzihsmError::UnsupportedKeyKind)?,
+        // Dispatch based on algorithm ID
+        let handle = match algo.id {
+            AzihsmAlgoId::Ecdsa => {
+                // Streaming pre-computed hash input is not supported
+                Err(AzihsmError::UnsupportedAlgorithm)?
+            }
+            AzihsmAlgoId::EcdsaSha1 => ecc_verify_init(HsmHashAlgo::Sha1, key_handle)?,
+            AzihsmAlgoId::EcdsaSha256 => ecc_verify_init(HsmHashAlgo::Sha256, key_handle)?,
+            AzihsmAlgoId::EcdsaSha384 => ecc_verify_init(HsmHashAlgo::Sha384, key_handle)?,
+            AzihsmAlgoId::EcdsaSha512 => ecc_verify_init(HsmHashAlgo::Sha512, key_handle)?,
+            _ => Err(AzihsmError::UnsupportedAlgorithm)?,
         };
 
         assign_ptr(ctx_handle, handle)?;
