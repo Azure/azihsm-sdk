@@ -6,6 +6,8 @@ use super::*;
 use crate::AzihsmBuffer;
 use crate::AzihsmError;
 use crate::AzihsmHandle;
+use crate::HANDLE_TABLE;
+use crate::handle_table::HandleType;
 use crate::utils::validate_output_buffer;
 
 impl TryFrom<&AzihsmAlgo> for HsmEccKeyGenAlgo {
@@ -103,4 +105,123 @@ pub(crate) fn ecc_verify(
     };
 
     Ok(result?)
+}
+
+pub(crate) fn ecc_sign_init(
+    algo: &AzihsmAlgo,
+    key_handle: AzihsmHandle,
+) -> Result<AzihsmHandle, AzihsmError> {
+    // Get the key from handle
+    let key: HsmEccPrivateKey = key_handle.try_into()?;
+
+    // Create the appropriate signing algorithm variant based on algorithm ID
+    let sign_algo = match algo.id {
+        AzihsmAlgoId::Ecdsa => {
+            // Streaming pre-computed hash input is not supported
+            Err(AzihsmError::UnsupportedAlgorithm)?
+        }
+        AzihsmAlgoId::EcdsaSha1 => HsmHashSignAlgo::new(HsmHashAlgo::Sha1),
+        AzihsmAlgoId::EcdsaSha256 => HsmHashSignAlgo::new(HsmHashAlgo::Sha256),
+        AzihsmAlgoId::EcdsaSha384 => HsmHashSignAlgo::new(HsmHashAlgo::Sha384),
+        AzihsmAlgoId::EcdsaSha512 => HsmHashSignAlgo::new(HsmHashAlgo::Sha512),
+        _ => return Err(AzihsmError::UnsupportedAlgorithm),
+    };
+
+    // Initialize the streaming signing context
+    let ctx = HsmSigner::sign_init(sign_algo, key)?;
+
+    // Allocate a handle for the context and return it
+    let ctx_handle = HANDLE_TABLE.alloc_handle(HandleType::EccSignStreamingCtx, Box::new(ctx));
+
+    Ok(ctx_handle)
+}
+
+pub(crate) fn ecc_sign_update(ctx_handle: AzihsmHandle, data: &[u8]) -> Result<(), AzihsmError> {
+    // Get mutable reference to the context from handle table
+    let ctx: &mut HsmEccSignContext =
+        HANDLE_TABLE.as_mut(ctx_handle, HandleType::EccSignStreamingCtx)?;
+
+    // Update the context with the data chunk
+    ctx.update(data)?;
+
+    Ok(())
+}
+
+pub(crate) fn ecc_sign_final(
+    ctx_handle: AzihsmHandle,
+    output: &mut AzihsmBuffer,
+) -> Result<(), AzihsmError> {
+    // Get a reference to determine the required signature size
+    let ctx_ref: &mut HsmEccSignContext =
+        HANDLE_TABLE.as_mut(ctx_handle, HandleType::EccSignStreamingCtx)?;
+    let required_size = ctx_ref.finish(None)?;
+
+    // Check if output buffer is large enough
+    let output_data = validate_output_buffer(output, required_size)?;
+
+    // Take ownership of the context and finalize
+    let mut ctx: Box<HsmEccSignContext> =
+        HANDLE_TABLE.free_handle(ctx_handle, HandleType::EccSignStreamingCtx)?;
+
+    // Perform the final signing operation
+    let sig_len = ctx.finish(Some(output_data))?;
+
+    // Update the output buffer length with actual signature length
+    output.len = sig_len as u32;
+
+    Ok(())
+}
+
+pub(crate) fn ecc_verify_init(
+    algo: &AzihsmAlgo,
+    key_handle: AzihsmHandle,
+) -> Result<AzihsmHandle, AzihsmError> {
+    // Get the key from handle
+    let key: HsmEccPublicKey = key_handle.try_into()?;
+
+    // Create the appropriate verification algorithm variant based on algorithm ID
+    let verify_algo = match algo.id {
+        AzihsmAlgoId::Ecdsa => {
+            // Streaming pre-computed hash input is not supported
+            Err(AzihsmError::UnsupportedAlgorithm)?
+        }
+        AzihsmAlgoId::EcdsaSha1 => HsmHashSignAlgo::new(HsmHashAlgo::Sha1),
+        AzihsmAlgoId::EcdsaSha256 => HsmHashSignAlgo::new(HsmHashAlgo::Sha256),
+        AzihsmAlgoId::EcdsaSha384 => HsmHashSignAlgo::new(HsmHashAlgo::Sha384),
+        AzihsmAlgoId::EcdsaSha512 => HsmHashSignAlgo::new(HsmHashAlgo::Sha512),
+        _ => return Err(AzihsmError::UnsupportedAlgorithm),
+    };
+
+    // Initialize the streaming verification context
+    let ctx = HsmVerifier::verify_init(verify_algo, key)?;
+
+    // Allocate a handle for the context and return it
+    let ctx_handle = HANDLE_TABLE.alloc_handle(HandleType::EccVerifyStreamingCtx, Box::new(ctx));
+
+    Ok(ctx_handle)
+}
+
+pub(crate) fn ecc_verify_update(ctx_handle: AzihsmHandle, data: &[u8]) -> Result<(), AzihsmError> {
+    // Get mutable reference to the context from handle table
+    let ctx: &mut HsmEccVerifyContext =
+        HANDLE_TABLE.as_mut(ctx_handle, HandleType::EccVerifyStreamingCtx)?;
+
+    // Update the context with the data chunk
+    ctx.update(data)?;
+
+    Ok(())
+}
+
+pub(crate) fn ecc_verify_final(
+    ctx_handle: AzihsmHandle,
+    signature: &[u8],
+) -> Result<bool, AzihsmError> {
+    // Take ownership of the context and finalize
+    let mut ctx: Box<HsmEccVerifyContext> =
+        HANDLE_TABLE.free_handle(ctx_handle, HandleType::EccVerifyStreamingCtx)?;
+
+    // Perform the final verification operation
+    let is_valid = ctx.finish(signature)?;
+
+    Ok(is_valid)
 }

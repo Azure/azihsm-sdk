@@ -107,6 +107,8 @@ pub unsafe extern "C" fn azihsm_crypt_encrypt_init(
     ctx_handle: *mut AzihsmHandle,
 ) -> AzihsmError {
     abi_boundary(|| {
+        validate_ptr(ctx_handle)?;
+
         let algo = deref_mut_ptr(algo)?;
         let key_type: HandleType = key_handle.try_into()?;
 
@@ -208,6 +210,8 @@ pub unsafe extern "C" fn azihsm_crypt_decrypt_init(
     ctx_handle: *mut AzihsmHandle,
 ) -> AzihsmError {
     abi_boundary(|| {
+        validate_ptr(ctx_handle)?;
+
         let algo = deref_mut_ptr(algo)?;
         let key_type: HandleType = key_handle.try_into()?;
 
