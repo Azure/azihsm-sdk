@@ -2,20 +2,17 @@
 
 //! Module for SHA.
 
-#[cfg(target_os = "linux")]
-use openssl;
-#[cfg(target_os = "linux")]
-use openssl::hash::MessageDigest;
-#[cfg(target_os = "linux")]
-use openssl::pkey::Id;
-#[cfg(target_os = "linux")]
-use openssl::pkey_ctx::PkeyCtx;
-#[cfg(target_os = "windows")]
-use symcrypt::hash;
-#[cfg(target_os = "windows")]
-use symcrypt::hkdf::hkdf;
-#[cfg(target_os = "windows")]
-use symcrypt::hmac::HmacAlgorithm;
+use azihsm_crypto::DeriveOp;
+use azihsm_crypto::ExportableKey;
+use azihsm_crypto::GenericSecretKey;
+use azihsm_crypto::HashAlgo;
+use azihsm_crypto::HashOp;
+use azihsm_crypto::HkdfAlgo;
+use azihsm_crypto::HkdfMode;
+use azihsm_crypto::HmacAlgo;
+use azihsm_crypto::HmacKey;
+use azihsm_crypto::ImportableKey;
+use azihsm_crypto::SignOp;
 
 use crate::errors::ManticoreError;
 
@@ -68,122 +65,84 @@ impl HashAlgorithm {
 ///
 /// # Errors
 /// * `ManticoreError::ShaError` - If the SHA operation fails.
-#[cfg(target_os = "linux")]
 pub(crate) fn sha(hash_algorithm: HashAlgorithm, data: &[u8]) -> Result<Vec<u8>, ManticoreError> {
-    let hash_algorithm = match hash_algorithm {
-        HashAlgorithm::Sha1 => MessageDigest::sha1(),
-        HashAlgorithm::Sha256 => MessageDigest::sha256(),
-        HashAlgorithm::Sha384 => MessageDigest::sha384(),
-        HashAlgorithm::Sha512 => MessageDigest::sha512(),
+    let mut hash_algo = match hash_algorithm {
+        HashAlgorithm::Sha1 => HashAlgo::sha1(),
+        HashAlgorithm::Sha256 => HashAlgo::sha256(),
+        HashAlgorithm::Sha384 => HashAlgo::sha384(),
+        HashAlgorithm::Sha512 => HashAlgo::sha512(),
     };
 
-    let hash = openssl::hash::hash(hash_algorithm, data).map_err(|openssl_error_stack| {
-        tracing::error!(?openssl_error_stack);
+    // Query the required buffer size
+    let size = hash_algo.hash(data, None).map_err(|e| {
+        tracing::error!(?e, "Hash size query failed");
         ManticoreError::ShaError
     })?;
 
-    Ok((*hash).to_vec())
-}
-
-///  SHA operation.
-///
-/// # Arguments
-/// * `hash_algorithm` - The SHA algorithm (SHA-1/ SHA-256/ SHA-384/ SHA-512) to be used.
-/// * `data` - The data to be hashed.
-///
-/// # Returns
-/// * `Vec<u8>` - The resulting hash.
-///
-/// # Errors
-/// * `ManticoreError::ShaError` - If the SHA operation fails.
-#[cfg(target_os = "windows")]
-pub fn sha(hash_algorithm: HashAlgorithm, data: &[u8]) -> Result<Vec<u8>, ManticoreError> {
-    let digest = match hash_algorithm {
-        HashAlgorithm::Sha1 => hash::sha1(data).to_vec(),
-        HashAlgorithm::Sha256 => hash::sha256(data).to_vec(),
-        HashAlgorithm::Sha384 => hash::sha384(data).to_vec(),
-        HashAlgorithm::Sha512 => hash::sha512(data).to_vec(),
-    };
-    Ok(digest)
-}
-
-/// Generic HMAC operation helper, OpenSSL implementation.
-#[cfg(target_os = "linux")]
-fn hmac_openssl<const N: usize>(
-    key: &[u8],
-    data: &[u8],
-    expected_key_len: usize,
-    md: &openssl::md::MdRef,
-    algorithm_name: &str,
-) -> Result<[u8; N], ManticoreError> {
-    let handle_err = |openssl_error_stack| {
-        tracing::error!(?openssl_error_stack);
-        ManticoreError::HmacError
-    };
-
-    if key.len() != expected_key_len {
-        tracing::error!(
-            error=?ManticoreError::HmacError,
-            key_len = key.len(),
-            expected = expected_key_len,
-            "Expected HMAC key size is {} bytes for {}",
-            expected_key_len,
-            algorithm_name
-        );
-        Err(ManticoreError::HmacError)?
-    }
-
-    let pkey = openssl::pkey::PKey::hmac(key).map_err(handle_err)?;
-    let mut ctx = openssl::md_ctx::MdCtx::new().map_err(handle_err)?;
-
-    ctx.digest_sign_init(Some(md), &pkey).map_err(handle_err)?;
-    ctx.digest_sign_update(data).map_err(handle_err)?;
-
-    let size = ctx.digest_sign_final(None).map_err(handle_err)?;
-    if size != N {
-        tracing::error!(
-            error=?ManticoreError::HmacError,
-            size,
-            expected = N,
-            "Expected HMAC size is {} for {}",
-            N,
-            algorithm_name
-        );
-        Err(ManticoreError::HmacError)?
-    }
-
-    let mut output = [0u8; N];
-    ctx.digest_sign_final(Some(&mut output))
-        .map_err(handle_err)?;
+    // Allocate buffer and compute hash
+    let mut output = vec![0u8; size];
+    hash_algo.hash(data, Some(&mut output)).map_err(|e| {
+        tracing::error!(?e, "Hash operation failed");
+        ManticoreError::ShaError
+    })?;
 
     Ok(output)
 }
 
-/// HMAC-SHA-384 operation, OpenSSL implementation.
-#[cfg(target_os = "linux")]
-pub fn hmac_sha_384(key: &[u8], data: &[u8]) -> Result<[u8; 48], ManticoreError> {
-    hmac_openssl::<48>(key, data, 48, openssl::md::Md::sha384(), "HMAC-SHA-384")
-}
-
-/// HMAC-SHA-384 operation, SymCrypt implementation.
-#[cfg(target_os = "windows")]
+/// HMAC-SHA-384 operation.
 pub fn hmac_sha_384(key: &[u8], data: &[u8]) -> Result<[u8; 48], ManticoreError> {
     if key.len() != 48 {
-        tracing::error!(error=?ManticoreError::HmacError, key_len = key.len(), "Expected HMAC key size is 48 bytes");
-        Err(ManticoreError::HmacError)?
+        tracing::error!(
+            error=?ManticoreError::HmacError,
+            key_len = key.len(),
+            expected = 48,
+            "Expected HMAC key size is 48 bytes for HMAC-SHA-384"
+        );
+        return Err(ManticoreError::HmacError);
     }
 
-    use symcrypt::hmac::hmac_sha384;
-    hmac_sha384(key, data).map_err(|err| {
-        tracing::error!(?err, "HMAC-SHA-384 operation failed");
+    // Create HMAC key from bytes
+    let hmac_key = HmacKey::from_bytes(key).map_err(|e| {
+        tracing::error!(?e, "Failed to create HMAC key");
         ManticoreError::HmacError
-    })
+    })?;
+
+    // Create HMAC algorithm with SHA-384
+    let mut hmac_algo = HmacAlgo::new(HashAlgo::sha384());
+
+    // Query the required signature size
+    let size = hmac_algo.sign(&hmac_key, data, None).map_err(|e| {
+        tracing::error!(?e, "HMAC size query failed");
+        ManticoreError::HmacError
+    })?;
+
+    if size != 48 {
+        tracing::error!(
+            error=?ManticoreError::HmacError,
+            size,
+            expected = 48,
+            "Expected HMAC size is 48 for HMAC-SHA-384"
+        );
+        return Err(ManticoreError::HmacError);
+    }
+
+    // Compute HMAC
+    let mut output = [0u8; 48];
+    hmac_algo
+        .sign(&hmac_key, data, Some(&mut output))
+        .map_err(|e| {
+            tracing::error!(?e, "HMAC operation failed");
+            ManticoreError::HmacError
+        })?;
+
+    Ok(output)
 }
 
 /// HKDF-SHA-256 operation.
 ///
 /// # Arguments
 /// * `data` - Shared secret data to derive from
+/// * `info` - Optional context and application-specific information
 /// * `out_len` - Size of data to derive
 ///
 /// # Returns
@@ -193,67 +152,37 @@ pub fn hmac_sha_384(key: &[u8], data: &[u8]) -> Result<[u8; 48], ManticoreError>
 /// * `ManticoreError::HkdfError` - If the HKDF operation fails.
 pub fn hkdf_sha_256_derive(
     data: &[u8],
-    _info: Option<&[u8]>,
+    info: Option<&[u8]>,
     out_len: usize,
 ) -> Result<Vec<u8>, ManticoreError> {
-    #[cfg(target_os = "linux")]
-    {
-        use openssl::md::Md;
-        use openssl::pkey_ctx::HkdfMode;
+    // Create secret key from input data
+    let secret_key = GenericSecretKey::from_bytes(data).map_err(|e| {
+        tracing::error!(?e, "Failed to create secret key from data");
+        ManticoreError::HkdfError
+    })?;
 
-        let info = _info.unwrap_or(&[]);
+    // Create hash algorithm (needs to live long enough for HKDF)
+    let hash_algo = HashAlgo::sha256();
 
-        let mut ctx = PkeyCtx::new_id(Id::HKDF).map_err(|openssl_error_stack| {
-            tracing::error!(?openssl_error_stack);
-            ManticoreError::HkdfError
-        })?;
-        ctx.derive_init().map_err(|openssl_error_stack| {
-            tracing::error!(?openssl_error_stack);
-            ManticoreError::HkdfError
-        })?;
+    // Create HKDF algorithm with SHA-256, ExtractAndExpand mode
+    let hkdf_algo = HkdfAlgo::new(
+        HkdfMode::ExtractAndExpand,
+        &hash_algo,
+        None, // No salt
+        info,
+    );
 
-        ctx.set_hkdf_key(data).map_err(|openssl_error_stack| {
-            tracing::error!(?openssl_error_stack);
-            ManticoreError::HkdfError
-        })?;
+    // Derive key material
+    let derived_key = hkdf_algo.derive(&secret_key, out_len).map_err(|e| {
+        tracing::error!(?e, "HKDF derivation failed");
+        ManticoreError::HkdfError
+    })?;
 
-        ctx.set_hkdf_md(Md::sha256())
-            .map_err(|openssl_error_stack| {
-                tracing::error!(?openssl_error_stack);
-                ManticoreError::HkdfError
-            })?;
-
-        ctx.add_hkdf_info(info).map_err(|openssl_error_stack| {
-            tracing::error!(?openssl_error_stack);
-            ManticoreError::HkdfError
-        })?;
-
-        ctx.set_hkdf_mode(HkdfMode::EXTRACT_THEN_EXPAND)
-            .map_err(|openssl_error_stack| {
-                tracing::error!(?openssl_error_stack);
-                ManticoreError::HkdfError
-            })?;
-
-        let mut out_vec = vec![0u8; out_len];
-        ctx.derive(Some(&mut out_vec))
-            .map_err(|openssl_error_stack| {
-                tracing::error!(?openssl_error_stack);
-                ManticoreError::HkdfError
-            })?;
-
-        Ok(out_vec)
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        let result = hkdf(HmacAlgorithm::HmacSha256, data, &[], &[], out_len as u64).map_err(
-            |symcrypt_error_stack| {
-                tracing::error!(?symcrypt_error_stack);
-                ManticoreError::HkdfError
-            },
-        )?;
-        Ok(result)
-    }
+    // Convert to Vec<u8>
+    derived_key.to_vec().map_err(|e| {
+        tracing::error!(?e, "Failed to convert derived key to bytes");
+        ManticoreError::HkdfError
+    })
 }
 
 #[cfg(test)]

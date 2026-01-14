@@ -2,50 +2,39 @@
 
 //! Module for elliptic curve cryptography (ECC).
 
+use azihsm_crypto as crypto;
 use azihsm_ddi_types::DdiEccCurve;
-#[cfg(target_os = "linux")]
-use openssl;
-#[cfg(target_os = "linux")]
-use openssl::bn::BigNum;
-#[cfg(target_os = "linux")]
-use openssl::bn::BigNumContext;
-#[cfg(target_os = "linux")]
-use openssl::derive::Deriver;
-#[cfg(target_os = "linux")]
-use openssl::ecdsa::EcdsaSig;
-#[cfg(target_os = "linux")]
-use openssl::nid::Nid;
-#[cfg(target_os = "linux")]
-use openssl::pkey::PKey;
-#[cfg(target_os = "linux")]
-use openssl::pkey::Private;
-#[cfg(target_os = "linux")]
-use openssl::pkey::Public;
-#[cfg(target_os = "linux")]
-use openssl::pkey_ctx::PkeyCtx;
-#[cfg(target_os = "linux")]
-use openssl::x509::X509NameBuilder;
-#[cfg(target_os = "linux")]
-use openssl::x509::X509;
-#[cfg(target_os = "windows")]
-use symcrypt::ecc;
-#[cfg(target_os = "windows")]
-use symcrypt::errors::SymCryptError;
+use crypto::DeriveOp;
+use crypto::EccKeyOp;
+use crypto::ExportableKey;
+use crypto::ImportableKey;
+use crypto::PrivateKey;
+use crypto::SignOp;
+use crypto::VerifyOp;
 
-#[cfg(target_os = "linux")]
-use crate::crypto::ecc::openssl::asn1::Asn1Time;
 use crate::errors::ManticoreError;
 use crate::mask::KeySerialization;
 use crate::table::entry::Kind;
 
-#[cfg(target_os = "windows")]
-const EC_OID: spki::ObjectIdentifier = spki::ObjectIdentifier::new_unwrap("1.2.840.10045.2.1");
-#[cfg(target_os = "windows")]
-const P256_OID: spki::ObjectIdentifier = spki::ObjectIdentifier::new_unwrap("1.2.840.10045.3.1.7");
-#[cfg(target_os = "windows")]
-const P384_OID: spki::ObjectIdentifier = spki::ObjectIdentifier::new_unwrap("1.3.132.0.34");
-#[cfg(target_os = "windows")]
-const P521_OID: spki::ObjectIdentifier = spki::ObjectIdentifier::new_unwrap("1.3.132.0.35");
+/// Implementation of conversion from CryptoError to ManticoreError
+impl From<crypto::CryptoError> for ManticoreError {
+    fn from(err: crypto::CryptoError) -> Self {
+        match err {
+            crypto::CryptoError::EccKeyGenError => ManticoreError::EccGenerateError,
+            crypto::CryptoError::EccKeyImportError => ManticoreError::EccFromDerError,
+            crypto::CryptoError::EccKeyExportError => ManticoreError::EccToDerError,
+            crypto::CryptoError::EccSignError => ManticoreError::EccSignError,
+            crypto::CryptoError::EccVerifyError => ManticoreError::EccVerifyError,
+            crypto::CryptoError::EccError => ManticoreError::EccGetCurveError,
+            crypto::CryptoError::DerAsn1DecodeError => ManticoreError::EccFromDerError,
+            crypto::CryptoError::EcdhError | crypto::CryptoError::EcdhDeriveError => {
+                ManticoreError::EccDeriveError
+            }
+            crypto::CryptoError::EccBufferTooSmall => ManticoreError::EccGetCoordinatesError,
+            _ => ManticoreError::InternalError,
+        }
+    }
+}
 
 /// Trait for ECC common operations.
 pub trait EccOp<T> {
@@ -112,6 +101,26 @@ impl TryFrom<DdiEccCurve> for EccCurve {
     }
 }
 
+impl From<EccCurve> for crypto::EccCurve {
+    fn from(curve: EccCurve) -> Self {
+        match curve {
+            EccCurve::P256 => crypto::EccCurve::P256,
+            EccCurve::P384 => crypto::EccCurve::P384,
+            EccCurve::P521 => crypto::EccCurve::P521,
+        }
+    }
+}
+
+impl From<crypto::EccCurve> for EccCurve {
+    fn from(curve: crypto::EccCurve) -> Self {
+        match curve {
+            crypto::EccCurve::P256 => EccCurve::P256,
+            crypto::EccCurve::P384 => EccCurve::P384,
+            crypto::EccCurve::P521 => EccCurve::P521,
+        }
+    }
+}
+
 /// Size of ECC key in bits.
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum EccKeySize {
@@ -138,6 +147,16 @@ impl TryFrom<u32> for EccKeySize {
     }
 }
 
+impl From<crypto::EccCurve> for EccKeySize {
+    fn from(curve: crypto::EccCurve) -> Self {
+        match curve {
+            crypto::EccCurve::P256 => EccKeySize::Ecc256,
+            crypto::EccCurve::P384 => EccKeySize::Ecc384,
+            crypto::EccCurve::P521 => EccKeySize::Ecc521,
+        }
+    }
+}
+
 /// Generate an ECC key pair using openssl.
 ///
 /// # Arguments
@@ -145,174 +164,23 @@ impl TryFrom<u32> for EccKeySize {
 ///
 /// # Returns
 /// * `(EccPrivateKey, EccPublicKey)` - Generated ECC key pair.
-///
 /// # Errors
 /// * `ManticoreError::EccGenerateError` - If the ECC key pair generation fails.
-#[cfg(target_os = "linux")]
 pub fn generate_ecc(curve: EccCurve) -> Result<(EccPrivateKey, EccPublicKey), ManticoreError> {
-    let curve_name = match curve {
-        EccCurve::P256 => Nid::X9_62_PRIME256V1,
-        EccCurve::P384 => Nid::SECP384R1,
-        EccCurve::P521 => Nid::SECP521R1,
-    };
-    let group =
-        openssl::ec::EcGroup::from_curve_name(curve_name).map_err(|openssl_error_stack| {
-            tracing::error!(?openssl_error_stack);
-            ManticoreError::EccGenerateError
-        })?;
-    let ecc_private = openssl::ec::EcKey::generate(&group).map_err(|openssl_error_stack| {
-        tracing::error!(?openssl_error_stack);
-        ManticoreError::EccGenerateError
-    })?;
-    let ecc_public = openssl::ec::EcKey::from_public_key(&group, ecc_private.public_key())
-        .map_err(|openssl_error_stack| {
-            tracing::error!(?openssl_error_stack);
-            ManticoreError::EccGenerateError
-        })?;
-
-    let pkey_private =
-        openssl::pkey::PKey::from_ec_key(ecc_private).map_err(|openssl_error_stack| {
-            tracing::error!(?openssl_error_stack);
-            ManticoreError::EccGenerateError
-        })?;
-    let pkey_public =
-        openssl::pkey::PKey::from_ec_key(ecc_public).map_err(|openssl_error_stack| {
-            tracing::error!(?openssl_error_stack);
-            ManticoreError::EccGenerateError
-        })?;
+    let crypto_curve: crypto::EccCurve = curve.into();
+    let private_key = crypto::EccPrivateKey::from_curve(crypto_curve)?;
+    let public_key = private_key.public_key()?;
 
     Ok((
-        EccPrivateKey {
-            handle: pkey_private.clone(),
-            size: pkey_private.bits().try_into()?,
-        },
-        EccPublicKey {
-            handle: pkey_public.clone(),
-            size: pkey_public.bits().try_into()?,
-        },
+        EccPrivateKey { key: private_key },
+        EccPublicKey { key: public_key },
     ))
-}
-
-/// Generate an ECC key pair.
-#[cfg(target_os = "windows")]
-pub fn generate_ecc(curve: EccCurve) -> Result<(EccPrivateKey, EccPublicKey), ManticoreError> {
-    let (curve_type, size) = match curve {
-        EccCurve::P256 => (ecc::CurveType::NistP256, EccKeySize::Ecc256),
-        EccCurve::P384 => (ecc::CurveType::NistP384, EccKeySize::Ecc384),
-        EccCurve::P521 => (ecc::CurveType::NistP521, EccKeySize::Ecc521),
-    };
-    let key_pair = ecc::EcKey::generate_key_pair(curve_type, ecc::EcKeyUsage::EcDhAndEcDsa)
-        .map_err(|symcrypt_error_stack| {
-            tracing::error!(?symcrypt_error_stack);
-            ManticoreError::EccGenerateError
-        })?;
-    let raw_public_key = key_pair
-        .export_public_key()
-        .map_err(|symcrypt_error_stack| {
-            tracing::error!(?symcrypt_error_stack);
-            ManticoreError::EccGenerateError
-        })?;
-    let raw_private_key = key_pair
-        .export_private_key()
-        .map_err(|symcrypt_error_stack| {
-            tracing::error!(?symcrypt_error_stack);
-            ManticoreError::EccGenerateError
-        })?;
-    Ok((
-        EccPrivateKey {
-            handle: EccKeyContainer {
-                curve_type,
-                ec_key_usage: ecc::EcKeyUsage::EcDhAndEcDsa,
-                has_private_key: true,
-                public_key: raw_public_key.clone(),
-                private_key: raw_private_key,
-            },
-            size,
-        },
-        EccPublicKey {
-            handle: EccKeyContainer {
-                curve_type,
-                ec_key_usage: ecc::EcKeyUsage::EcDhAndEcDsa,
-                has_private_key: false,
-                public_key: raw_public_key,
-                private_key: vec![],
-            },
-            size,
-        },
-    ))
-}
-
-#[cfg(target_os = "windows")]
-#[derive(Debug, Clone)]
-struct EccKeyContainer {
-    curve_type: ecc::CurveType,
-    ec_key_usage: ecc::EcKeyUsage,
-    has_private_key: bool,
-    public_key: Vec<u8>,
-    private_key: Vec<u8>,
-}
-#[cfg(target_os = "windows")]
-impl EccKeyContainer {
-    fn get_curve_type(&self) -> ecc::CurveType {
-        self.curve_type
-    }
-
-    fn export_private_key(&self) -> Result<Vec<u8>, SymCryptError> {
-        if self.has_private_key {
-            Ok(self.private_key.clone())
-        } else {
-            Err(SymCryptError::InvalidBlob)
-        }
-    }
-
-    fn export_public_key(&self) -> Result<Vec<u8>, SymCryptError> {
-        Ok(self.public_key.clone())
-    }
-
-    fn ecdsa_sign(&self, digest: &[u8]) -> Result<Vec<u8>, SymCryptError> {
-        let handle = ecc::EcKey::set_key_pair(
-            self.curve_type,
-            self.private_key.as_slice(),
-            Some(self.public_key.as_slice()),
-            self.ec_key_usage,
-        )?;
-        handle.ecdsa_sign(digest)
-    }
-
-    pub fn ecdh_secret_agreement(&self, public_key: ecc::EcKey) -> Result<Vec<u8>, SymCryptError> {
-        let handle = ecc::EcKey::set_key_pair(
-            self.curve_type,
-            self.private_key.as_slice(),
-            Some(self.public_key.as_slice()),
-            self.ec_key_usage,
-        )?;
-        handle.ecdh_secret_agreement(public_key)
-    }
-
-    fn get_ec_curve_usage(&self) -> ecc::EcKeyUsage {
-        self.ec_key_usage
-    }
-
-    fn ecdsa_verify(&self, signature: &[u8], hashed_message: &[u8]) -> Result<(), SymCryptError> {
-        let handle = ecc::EcKey::set_public_key(
-            self.curve_type,
-            self.public_key.as_slice(),
-            self.ec_key_usage,
-        )?;
-
-        handle.ecdsa_verify(signature, hashed_message)
-    }
 }
 
 /// ECC Private Key.
 #[derive(Debug, Clone)]
 pub struct EccPrivateKey {
-    #[cfg(target_os = "linux")]
-    handle: PKey<Private>,
-
-    #[cfg(target_os = "windows")]
-    handle: EccKeyContainer,
-    size: EccKeySize,
+    key: crypto::EccPrivateKey,
 }
 
 impl KeySerialization<EccPrivateKey> for EccPrivateKey {
@@ -325,16 +193,12 @@ impl KeySerialization<EccPrivateKey> for EccPrivateKey {
     }
 }
 
-#[cfg(target_os = "linux")]
 impl EccOp<EccPrivateKey> for EccPrivateKey {
     /// Deserialize an ECC private key from a DER-encoded PKCS#8 format.
     fn from_der(der: &[u8], expected_type: Option<Kind>) -> Result<Self, ManticoreError> {
-        let pkey = PKey::private_key_from_pkcs8(der).map_err(|openssl_error_stack| {
-            tracing::error!(?openssl_error_stack);
-            ManticoreError::EccFromDerError
-        })?;
+        let key = crypto::EccPrivateKey::from_bytes(der)?;
+        let key_size: EccKeySize = key.curve().into();
 
-        let key_size = pkey.bits().try_into()?;
         match expected_type {
             Some(Kind::Ecc256Private) => {
                 if key_size != EccKeySize::Ecc256 {
@@ -352,291 +216,37 @@ impl EccOp<EccPrivateKey> for EccPrivateKey {
                 }
             }
             None => {
-                // Key size has been validated during `EccKeySize` conversion.
-                // Do nothing here.
+                // Key size has been validated during EccKeySize conversion.
             }
             _ => Err(ManticoreError::DerAndKeyTypeMismatch)?,
         }
 
-        Ok(Self {
-            handle: pkey,
-            size: key_size,
-        })
+        Ok(Self { key })
     }
 
     /// Serialize the ECC private key to a DER-encoded PKCS#8 format.
     fn to_der(&self) -> Result<Vec<u8>, ManticoreError> {
-        let der = self
-            .handle
-            .as_ref()
-            .private_key_to_pkcs8()
-            .map_err(|openssl_error_stack| {
-                tracing::error!(?openssl_error_stack);
-                ManticoreError::EccToDerError
-            })?;
-
-        Ok(der)
+        let size = self.key.to_bytes(None)?;
+        let mut buffer = vec![0u8; size];
+        self.key.to_bytes(Some(&mut buffer))?;
+        Ok(buffer)
     }
 
     fn curve(&self) -> Result<EccCurve, ManticoreError> {
-        let ec_key = self.handle.ec_key().map_err(|openssl_error_stack| {
-            tracing::error!(?openssl_error_stack);
-            ManticoreError::EccGetCurveError
-        })?;
-        let curve_name = ec_key
-            .group()
-            .curve_name()
-            .ok_or(ManticoreError::EccGetCurveError)?;
-
-        let curve = match curve_name {
-            Nid::X9_62_PRIME256V1 => EccCurve::P256,
-            Nid::SECP384R1 => EccCurve::P384,
-            Nid::SECP521R1 => EccCurve::P521,
-            _ => Err(ManticoreError::EccGetCurveError)?,
-        };
-
-        Ok(curve)
+        Ok(self.key.curve().into())
     }
 
     fn coordinates(&self) -> Result<(Vec<u8>, Vec<u8>), ManticoreError> {
-        let ec_key = self.handle.ec_key().map_err(|openssl_error_stack| {
-            tracing::error!(?openssl_error_stack);
-            ManticoreError::EccGetCoordinatesError
-        })?;
-        let group = ec_key.group();
-        let mut x = BigNum::new().map_err(|openssl_error_stack| {
-            tracing::error!(?openssl_error_stack);
-            ManticoreError::EccGetCoordinatesError
-        })?;
-        let mut y = BigNum::new().map_err(|openssl_error_stack| {
-            tracing::error!(?openssl_error_stack);
-            ManticoreError::EccGetCoordinatesError
-        })?;
-        let mut ctx = BigNumContext::new().map_err(|openssl_error_stack| {
-            tracing::error!(?openssl_error_stack);
-            ManticoreError::EccGetCoordinatesError
-        })?;
-
-        ec_key
-            .public_key()
-            .affine_coordinates(group, &mut x, &mut y, &mut ctx)
-            .map_err(|openssl_error_stack| {
-                tracing::error!(?openssl_error_stack);
-                ManticoreError::EccGetCoordinatesError
-            })?;
-
-        Ok((x.to_vec(), y.to_vec()))
+        let coords = self.key.coord_vec()?;
+        Ok(coords)
     }
 
     /// Get Key Size
     fn size(&self) -> EccKeySize {
-        self.size
+        self.key.curve().into()
     }
 }
 
-#[cfg(target_os = "windows")]
-impl EccOp<EccPrivateKey> for EccPrivateKey {
-    fn from_der(der: &[u8], expected_type: Option<Kind>) -> Result<EccPrivateKey, ManticoreError> {
-        let private_key_info = {
-            use pkcs8::der::Decode;
-            pkcs8::PrivateKeyInfo::from_der(der).map_err(|error_stack| {
-                tracing::error!(?error_stack);
-                ManticoreError::EccFromDerError
-            })?
-        };
-        let (_alg_oid, param_oid) = private_key_info.algorithm.oids().map_err(|error_stack| {
-            tracing::error!(?error_stack);
-            ManticoreError::EccFromDerError
-        })?;
-
-        let private_key = {
-            use sec1::der::Decode;
-            sec1::EcPrivateKey::from_der(private_key_info.private_key).map_err(|error_stack| {
-                tracing::error!(?error_stack);
-                ManticoreError::EccFromDerError
-            })?
-        };
-
-        let (curve_type, symcrypt_key) = match param_oid {
-            oid if oid == Some(P256_OID) => {
-                if expected_type.is_some() && expected_type != Some(Kind::Ecc256Private) {
-                    Err(ManticoreError::DerAndKeyTypeMismatch)?;
-                }
-                let curve_type = ecc::CurveType::NistP256;
-
-                let symcrypt_key = ecc::EcKey::set_key_pair(
-                    curve_type,
-                    private_key.private_key,
-                    None,
-                    ecc::EcKeyUsage::EcDhAndEcDsa,
-                )
-                .map_err(|symcrypt_error_stack| {
-                    tracing::error!(?symcrypt_error_stack);
-                    ManticoreError::EccFromDerError
-                })?;
-
-                (curve_type, symcrypt_key)
-            }
-            oid if oid == Some(P384_OID) => {
-                if expected_type.is_some() && expected_type != Some(Kind::Ecc384Private) {
-                    Err(ManticoreError::DerAndKeyTypeMismatch)?;
-                }
-                let curve_type = ecc::CurveType::NistP384;
-
-                let symcrypt_key = ecc::EcKey::set_key_pair(
-                    curve_type,
-                    private_key.private_key,
-                    None,
-                    ecc::EcKeyUsage::EcDhAndEcDsa,
-                )
-                .map_err(|symcrypt_error_stack| {
-                    tracing::error!(?symcrypt_error_stack);
-                    ManticoreError::EccFromDerError
-                })?;
-
-                (curve_type, symcrypt_key)
-            }
-            oid if oid == Some(P521_OID) => {
-                if expected_type.is_some() && expected_type != Some(Kind::Ecc521Private) {
-                    Err(ManticoreError::DerAndKeyTypeMismatch)?;
-                }
-                let curve_type = ecc::CurveType::NistP521;
-
-                let symcrypt_key = ecc::EcKey::set_key_pair(
-                    curve_type,
-                    private_key.private_key,
-                    None,
-                    ecc::EcKeyUsage::EcDhAndEcDsa,
-                )
-                .map_err(|symcrypt_error_stack| {
-                    tracing::error!(?symcrypt_error_stack);
-                    ManticoreError::EccFromDerError
-                })?;
-
-                (curve_type, symcrypt_key)
-            }
-            _ => Err(ManticoreError::DerAndKeyTypeMismatch)?,
-        };
-
-        let public_key = symcrypt_key
-            .export_public_key()
-            .map_err(|symcrypt_error_stack| {
-                tracing::error!(?symcrypt_error_stack);
-                ManticoreError::EccFromDerError
-            })?;
-
-        let size = match curve_type {
-            ecc::CurveType::NistP256 => EccKeySize::Ecc256,
-            ecc::CurveType::NistP384 => EccKeySize::Ecc384,
-            ecc::CurveType::NistP521 => EccKeySize::Ecc521,
-            _ => Err(ManticoreError::EccFromDerError)?,
-        };
-
-        Ok(Self {
-            handle: EccKeyContainer {
-                curve_type,
-                ec_key_usage: ecc::EcKeyUsage::EcDhAndEcDsa,
-                has_private_key: true,
-                public_key,
-                private_key: private_key.private_key.to_vec(),
-            },
-            size,
-        })
-    }
-
-    fn to_der(&self) -> Result<Vec<u8>, ManticoreError> {
-        let private_key_data =
-            self.handle
-                .export_private_key()
-                .map_err(|symcrypt_error_stack| {
-                    tracing::error!(?symcrypt_error_stack);
-                    ManticoreError::EccFromDerError
-                })?;
-        let public_key_data = self
-            .handle
-            .export_public_key()
-            .map_err(|symcrypt_error_stack| {
-                tracing::error!(?symcrypt_error_stack);
-                ManticoreError::EccFromDerError
-            })?;
-
-        // Validate length is even (X and Y should be equal length)
-        if public_key_data.len() % 2 != 0 {
-            return Err(ManticoreError::EccFromDerError);
-        }
-
-        // Prepend 0x04 to indicate uncompressed format
-        let mut uncompressed = Vec::with_capacity(public_key_data.len() + 1);
-        uncompressed.push(0x04);
-        uncompressed.extend_from_slice(&public_key_data);
-
-        let private_key = sec1::EcPrivateKey {
-            private_key: &private_key_data,
-            parameters: None,
-            public_key: Some(&uncompressed),
-        };
-
-        let param_oid: spki::der::Any = match self.handle.get_curve_type() {
-            ecc::CurveType::NistP256 => P256_OID.into(),
-            ecc::CurveType::NistP384 => P384_OID.into(),
-            ecc::CurveType::NistP521 => P521_OID.into(),
-            _ => Err(ManticoreError::EccToDerError)?,
-        };
-
-        use spki::der::referenced::OwnedToRef;
-        let alg_id = spki::AlgorithmIdentifier {
-            oid: EC_OID,
-            parameters: Some(param_oid.owned_to_ref()),
-        };
-
-        let private_key_der = {
-            use sec1::der::Encode;
-            private_key.to_der().map_err(|error_stack| {
-                tracing::error!(?error_stack);
-                ManticoreError::EccToDerError
-            })?
-        };
-        let private_key_info = pkcs8::PrivateKeyInfo::new(alg_id, &private_key_der);
-
-        let der = {
-            use spki::der::Encode;
-            private_key_info.to_der().map_err(|symcrypt_error_stack| {
-                tracing::error!(?symcrypt_error_stack);
-                ManticoreError::EccFromDerError
-            })?
-        };
-        Ok(der)
-    }
-
-    fn curve(&self) -> Result<EccCurve, ManticoreError> {
-        match self.handle.get_curve_type() {
-            ecc::CurveType::NistP256 => Ok(EccCurve::P256),
-            ecc::CurveType::NistP384 => Ok(EccCurve::P384),
-            ecc::CurveType::NistP521 => Ok(EccCurve::P521),
-            _ => Err(ManticoreError::EccGetCurveError)?,
-        }
-    }
-
-    fn coordinates(&self) -> Result<(Vec<u8>, Vec<u8>), ManticoreError> {
-        let raw_public_key = self
-            .handle
-            .export_public_key()
-            .map_err(|symcrypt_error_stack| {
-                tracing::error!(?symcrypt_error_stack);
-                ManticoreError::EccGetCoordinatesError
-            })?;
-        let point_size = raw_public_key.len() / 2;
-        let x = raw_public_key[..point_size].to_vec();
-        let y = raw_public_key[point_size..].to_vec();
-        Ok((x, y))
-    }
-
-    fn size(&self) -> EccKeySize {
-        self.size
-    }
-}
-
-#[cfg(target_os = "linux")]
 impl EccPrivateOp for EccPrivateKey {
     /// ECDSA signing.
     ///
@@ -649,59 +259,11 @@ impl EccPrivateOp for EccPrivateKey {
     /// # Errors
     /// * `ManticoreError::EccSignError` - If the signing operation fails.
     fn sign(&self, digest: &[u8]) -> Result<Vec<u8>, ManticoreError> {
-        let mut ctx = PkeyCtx::new(&self.handle).map_err(|openssl_error_stack| {
-            tracing::error!(?openssl_error_stack);
-            ManticoreError::EccSignError
-        })?;
-
-        ctx.sign_init().map_err(|openssl_error_stack| {
-            tracing::error!(?openssl_error_stack);
-            ManticoreError::EccSignError
-        })?;
-
-        let buffer_len = ctx.sign(digest, None).map_err(|openssl_error_stack| {
-            tracing::error!(?openssl_error_stack);
-            ManticoreError::EccSignError
-        })?;
-
-        let mut buffer = vec![0u8; buffer_len];
-
-        let signature_len = ctx
-            .sign(digest, Some(&mut buffer))
-            .map_err(|openssl_error_stack| {
-                tracing::error!(?openssl_error_stack);
-                ManticoreError::EccSignError
-            })?;
-
-        let buffer = &buffer[..signature_len];
-
-        // Convert the DER-encoded signature to fixed-size raw signature.
-        let signature = EcdsaSig::from_der(buffer).map_err(|openssl_error_stack| {
-            tracing::error!(?openssl_error_stack);
-            ManticoreError::EccSignError
-        })?;
-        let r_raw = signature.r().to_vec();
-        let s_raw = signature.s().to_vec();
-        // Handle the case where r or s is smaller than key size.
-        // Round up division, in case key_size is not divisible (e.g. 521)
-        let key_size = (self.handle.bits() as f32 / 8.0).ceil() as usize;
-        let mut r = vec![0u8; key_size];
-        let mut s = vec![0u8; key_size];
-
-        if r_raw.len() > key_size || s_raw.len() > key_size {
-            tracing::error!(
-                r_raw_len = r_raw.len(),
-                s_raw_len = s_raw.len(),
-                key_size,
-                "Unexpected parameters for ecc sign"
-            );
-            return Err(ManticoreError::InternalError);
-        }
-
-        r[key_size - r_raw.len()..].copy_from_slice(&r_raw);
-        s[key_size - s_raw.len()..].copy_from_slice(&s_raw);
-
-        Ok([r, s].concat().to_vec())
+        let mut algo = crypto::EccAlgo::default();
+        let size = algo.sign(&self.key, digest, None)?;
+        let mut signature = vec![0u8; size];
+        algo.sign(&self.key, digest, Some(&mut signature))?;
+        Ok(signature)
     }
 
     /// ECDH Key exchange.
@@ -715,239 +277,17 @@ impl EccPrivateOp for EccPrivateKey {
     /// # Errors
     /// * `ManticoreError::EccDeriveError` - If the operation fails.
     fn derive(&self, peer: &EccPublicKey) -> Result<Vec<u8>, ManticoreError> {
-        let mut deriver = Deriver::new(&self.handle).map_err(|openssl_error_stack| {
-            tracing::error!(?openssl_error_stack);
-            ManticoreError::EccDeriveError
-        })?;
-
-        deriver
-            .set_peer(&peer.handle)
-            .map_err(|openssl_error_stack| {
-                tracing::error!(?openssl_error_stack);
-                ManticoreError::EccDeriveError
-            })?;
-
-        let secret = deriver.derive_to_vec().map_err(|openssl_error_stack| {
-            tracing::error!(?openssl_error_stack);
-            ManticoreError::EccDeriveError
-        })?;
-
-        Ok(secret)
+        let algo = crypto::EcdhAlgo::new(&peer.key);
+        let secret = algo.derive(&self.key, self.key.curve().point_size())?;
+        Ok(secret.to_vec()?)
     }
 
     fn extract_pub_key_der(&self) -> Result<Vec<u8>, ManticoreError> {
-        self.handle
-            .public_key_to_der()
-            .map_err(|openssl_error_stack| {
-                tracing::error!(?openssl_error_stack);
-                ManticoreError::EccToDerError
-            })
-    }
-
-    /// TEST_ONLY: This function is for testing purposes only.
-    /// We don't need to generate the certificate in production.
-    #[cfg(target_os = "linux")]
-    fn create_pub_key_cert(&self) -> Result<Vec<u8>, ManticoreError> {
-        let pkey = self.handle.clone();
-
-        // Create a new X509 certificate builder
-        let mut builder = X509::builder().map_err(|openssl_error_stack| {
-            tracing::error!(?openssl_error_stack);
-            ManticoreError::EccPubKeyCertGenerateError
-        })?;
-
-        // Set the version of the certificate (v3)
-        builder.set_version(2).map_err(|openssl_error_stack| {
-            tracing::error!(?openssl_error_stack);
-            ManticoreError::EccPubKeyCertGenerateError
-        })?;
-
-        // Generate a X509 name and set it as the issuer and subject of the certificate
-        let mut name_builder = X509NameBuilder::new().map_err(|openssl_error_stack| {
-            tracing::error!(?openssl_error_stack);
-            ManticoreError::EccPubKeyCertGenerateError
-        })?;
-
-        name_builder
-            .append_entry_by_nid(Nid::COMMONNAME, "example.com")
-            .map_err(|openssl_error_stack| {
-                tracing::error!(?openssl_error_stack);
-                ManticoreError::EccPubKeyCertGenerateError
-            })?;
-
-        let name = name_builder.build();
-        builder
-            .set_subject_name(&name)
-            .map_err(|openssl_error_stack| {
-                tracing::error!(?openssl_error_stack);
-                ManticoreError::EccPubKeyCertGenerateError
-            })?;
-
-        builder
-            .set_issuer_name(&name)
-            .map_err(|openssl_error_stack| {
-                tracing::error!(?openssl_error_stack);
-                ManticoreError::EccPubKeyCertGenerateError
-            })?;
-
-        // Set the public key of the certificate
-        builder.set_pubkey(&pkey).map_err(|openssl_error_stack| {
-            tracing::error!(?openssl_error_stack);
-            ManticoreError::EccPubKeyCertGenerateError
-        })?;
-
-        // Set the validity period of the certificate
-        let not_before = Asn1Time::days_from_now(0).map_err(|openssl_error_stack| {
-            tracing::error!(?openssl_error_stack);
-            ManticoreError::EccPubKeyCertGenerateError
-        })?;
-
-        let not_after = Asn1Time::days_from_now(365).map_err(|openssl_error_stack| {
-            tracing::error!(?openssl_error_stack);
-            ManticoreError::EccPubKeyCertGenerateError
-        })?;
-
-        builder
-            .set_not_before(&not_before)
-            .map_err(|openssl_error_stack| {
-                tracing::error!(?openssl_error_stack);
-                ManticoreError::EccPubKeyCertGenerateError
-            })?;
-
-        builder
-            .set_not_after(&not_after)
-            .map_err(|openssl_error_stack| {
-                tracing::error!(?openssl_error_stack);
-                ManticoreError::EccPubKeyCertGenerateError
-            })?;
-
-        // Sign the certificate with the private key
-        builder
-            .sign(&pkey, openssl::hash::MessageDigest::sha256())
-            .map_err(|openssl_error_stack| {
-                tracing::error!(?openssl_error_stack);
-                ManticoreError::EccPubKeyCertGenerateError
-            })?;
-
-        // Build the certificate
-        let certificate = builder.build();
-
-        // Serialize the certificate to DER format
-        let cert_der = certificate.to_der().map_err(|openssl_error_stack| {
-            tracing::error!(?openssl_error_stack);
-            ManticoreError::EccPubKeyCertGenerateError
-        })?;
-
-        Ok(cert_der.as_slice().to_vec())
-    }
-}
-
-#[cfg(target_os = "windows")]
-impl EccPrivateOp for EccPrivateKey {
-    fn sign(&self, digest: &[u8]) -> Result<Vec<u8>, ManticoreError> {
-        let signature = self
-            .handle
-            .ecdsa_sign(digest)
-            .map_err(|symcrypt_error_stack| {
-                tracing::error!(?symcrypt_error_stack);
-                ManticoreError::EccSignError
-            })?;
-        Ok(signature)
-    }
-
-    fn derive(&self, peer: &EccPublicKey) -> Result<Vec<u8>, ManticoreError> {
-        let raw_public_key = peer
-            .handle
-            .export_public_key()
-            .map_err(|symcrypt_error_stack| {
-                tracing::error!(?symcrypt_error_stack);
-                ManticoreError::EccDeriveError
-            })?;
-        let handle = ecc::EcKey::set_public_key(
-            peer.handle.get_curve_type(),
-            &raw_public_key,
-            peer.handle.get_ec_curve_usage(),
-        )
-        .map_err(|symcrypt_error_stack| {
-            tracing::error!(?symcrypt_error_stack);
-            ManticoreError::EccDeriveError
-        })?;
-        let secret = self
-            .handle
-            .ecdh_secret_agreement(handle)
-            .map_err(|symcrypt_error_stack| {
-                tracing::error!(?symcrypt_error_stack);
-                ManticoreError::EccDeriveError
-            })?;
-        Ok(secret)
-    }
-
-    fn extract_pub_key_der(&self) -> Result<Vec<u8>, ManticoreError> {
-        let public_key_point = self.handle.export_public_key().map_err(|error_stack| {
-            tracing::error!(?error_stack);
-            ManticoreError::EccToDerError
-        })?;
-
-        let public_key_der = match self.handle.get_curve_type() {
-            ecc::CurveType::NistP256 => {
-                let mut untagged_bytes = [0u8; 32 * 2];
-                untagged_bytes.copy_from_slice(&public_key_point);
-                let point = sec1::EncodedPoint::<sec1::consts::U32>::from_untagged_bytes(
-                    &untagged_bytes.into(),
-                );
-                point.as_bytes().to_vec()
-            }
-            ecc::CurveType::NistP384 => {
-                let mut untagged_bytes = [0u8; 48 * 2];
-                untagged_bytes.copy_from_slice(&public_key_point);
-                let point = sec1::EncodedPoint::<sec1::consts::U48>::from_untagged_bytes(
-                    &untagged_bytes.into(),
-                );
-                point.as_bytes().to_vec()
-            }
-            ecc::CurveType::NistP521 => {
-                let mut untagged_bytes = [0u8; 66 * 2];
-                untagged_bytes.copy_from_slice(&public_key_point);
-                let point = sec1::EncodedPoint::<sec1::consts::U66>::from_untagged_bytes(
-                    &untagged_bytes.into(),
-                );
-                point.as_bytes().to_vec()
-            }
-            _ => Err(ManticoreError::EccToDerError)?,
-        };
-
-        let public_key_der_bitstring =
-            der::asn1::BitString::from_bytes(&public_key_der).map_err(|error_stack| {
-                tracing::error!(?error_stack);
-                ManticoreError::EccToDerError
-            })?;
-
-        let param_oid: spki::der::Any = match self.handle.get_curve_type() {
-            ecc::CurveType::NistP256 => P256_OID.into(),
-            ecc::CurveType::NistP384 => P384_OID.into(),
-            ecc::CurveType::NistP521 => P521_OID.into(),
-            _ => Err(ManticoreError::EccToDerError)?,
-        };
-
-        let alg_id = spki::AlgorithmIdentifier {
-            oid: EC_OID,
-            parameters: Some(param_oid),
-        };
-
-        let subject_public_key_info = spki::SubjectPublicKeyInfoOwned {
-            algorithm: alg_id,
-            subject_public_key: public_key_der_bitstring,
-        };
-
-        let der = {
-            use spki::der::Encode;
-            subject_public_key_info.to_der().map_err(|error_stack| {
-                tracing::error!(?error_stack);
-                ManticoreError::EccToDerError
-            })?
-        };
-
-        Ok(der)
+        let public_key = self.key.public_key()?;
+        let size = public_key.to_bytes(None)?;
+        let mut buffer = vec![0u8; size];
+        public_key.to_bytes(Some(&mut buffer))?;
+        Ok(buffer)
     }
 
     fn create_pub_key_cert(&self) -> Result<Vec<u8>, ManticoreError> {
@@ -961,23 +301,11 @@ impl EccPrivateOp for EccPrivateKey {
             ManticoreError::EccPubKeyCertGenerateError
         })?;
 
-        let cert = match self.handle.get_curve_type() {
-            ecc::CurveType::NistP256 => {
-                // Attestation Key on mock Manticore is P-384
-                // Pending mock Manticore attestation design
-                // Return Error for now
-                Err(ManticoreError::EccPubKeyCertGenerateError)
-            }
-
-            ecc::CurveType::NistP384 => {
+        let cert = match self.key.curve() {
+            crypto::EccCurve::P384 => {
                 use crate::crypto::cert::recreate_cert;
 
                 recreate_cert(&public_key_der, &der)
-            }
-            ecc::CurveType::NistP521 => {
-                // p521 does not implement the KeyPairRef trait required by CertificateBuilder.
-                // Returning an error until the dependency is updated.
-                Err(ManticoreError::EccPubKeyCertGenerateError)
             }
             _ => Err(ManticoreError::EccPubKeyCertGenerateError),
         }?;
@@ -989,30 +317,15 @@ impl EccPrivateOp for EccPrivateKey {
 /// ECC Public Key.
 #[derive(Debug, Clone)]
 pub struct EccPublicKey {
-    #[cfg(target_os = "linux")]
-    handle: PKey<Public>,
-
-    #[cfg(target_os = "windows")]
-    handle: EccKeyContainer,
-
-    #[allow(unused)]
-    size: EccKeySize,
+    key: crypto::EccPublicKey,
 }
 
-#[cfg(target_os = "linux")]
 impl EccOp<EccPublicKey> for EccPublicKey {
     /// Deserialize an ECC public key from a DER-encoded SubjectPublicKeyInfo format.
     fn from_der(der: &[u8], expected_type: Option<Kind>) -> Result<Self, ManticoreError> {
-        let ecc = openssl::ec::EcKey::public_key_from_der(der).map_err(|openssl_error_stack| {
-            tracing::error!(?openssl_error_stack);
-            ManticoreError::EccFromDerError
-        })?;
-        let pkey = openssl::pkey::PKey::from_ec_key(ecc).map_err(|openssl_error_stack| {
-            tracing::error!(?openssl_error_stack);
-            ManticoreError::EccFromDerError
-        })?;
+        let key = crypto::EccPublicKey::from_bytes(der)?;
+        let key_size: EccKeySize = key.curve().into();
 
-        let key_size = pkey.bits().try_into()?;
         match expected_type {
             Some(Kind::Ecc256Public) => {
                 if key_size != EccKeySize::Ecc256 {
@@ -1030,336 +343,61 @@ impl EccOp<EccPublicKey> for EccPublicKey {
                 }
             }
             None => {
-                // Key size has been validated during `EccKeySize` conversion.
-                // Do nothing here.
+                // Key size has been validated during EccKeySize conversion.
             }
             _ => Err(ManticoreError::DerAndKeyTypeMismatch)?,
         }
 
-        Ok(Self {
-            handle: pkey,
-            size: key_size,
-        })
+        Ok(Self { key })
     }
 
     /// Serialize the ECC public key to a DER-encoded SubjectPublicKeyInfo format.
     fn to_der(&self) -> Result<Vec<u8>, ManticoreError> {
-        let der = self
-            .handle
-            .as_ref()
-            .public_key_to_der()
-            .map_err(|openssl_error_stack| {
-                tracing::error!(?openssl_error_stack);
-                ManticoreError::EccToDerError
-            })?;
-
-        Ok(der)
+        let size = self.key.to_bytes(None)?;
+        let mut buffer = vec![0u8; size];
+        self.key.to_bytes(Some(&mut buffer))?;
+        Ok(buffer)
     }
 
     fn curve(&self) -> Result<EccCurve, ManticoreError> {
-        let ec_key = self.handle.ec_key().map_err(|openssl_error_stack| {
-            tracing::error!(?openssl_error_stack);
-            ManticoreError::EccGetCurveError
-        })?;
-        let curve_name = ec_key
-            .group()
-            .curve_name()
-            .ok_or(ManticoreError::EccGetCurveError)?;
-
-        let curve = match curve_name {
-            Nid::X9_62_PRIME256V1 => EccCurve::P256,
-            Nid::SECP384R1 => EccCurve::P384,
-            Nid::SECP521R1 => EccCurve::P521,
-            _ => Err(ManticoreError::EccGetCurveError)?,
-        };
-
-        Ok(curve)
+        Ok(self.key.curve().into())
     }
 
     fn coordinates(&self) -> Result<(Vec<u8>, Vec<u8>), ManticoreError> {
-        let ec_key = self.handle.ec_key().map_err(|openssl_error_stack| {
-            tracing::error!(?openssl_error_stack);
-            ManticoreError::EccGetCoordinatesError
-        })?;
-        let group = ec_key.group();
-        let mut x = BigNum::new().map_err(|openssl_error_stack| {
-            tracing::error!(?openssl_error_stack);
-            ManticoreError::EccGetCoordinatesError
-        })?;
-        let mut y = BigNum::new().map_err(|openssl_error_stack| {
-            tracing::error!(?openssl_error_stack);
-            ManticoreError::EccGetCoordinatesError
-        })?;
-        let mut ctx = BigNumContext::new().map_err(|openssl_error_stack| {
-            tracing::error!(?openssl_error_stack);
-            ManticoreError::EccGetCoordinatesError
-        })?;
-
-        ec_key
-            .public_key()
-            .affine_coordinates(group, &mut x, &mut y, &mut ctx)
-            .map_err(|openssl_error_stack| {
-                tracing::error!(?openssl_error_stack);
-                ManticoreError::EccGetCoordinatesError
-            })?;
-
-        Ok((x.to_vec(), y.to_vec()))
-    }
-
-    /// Get Key Size
-    fn size(&self) -> EccKeySize {
-        self.size
-    }
-}
-
-#[cfg(target_os = "windows")]
-impl EccOp<EccPublicKey> for EccPublicKey {
-    fn from_der(der: &[u8], expected_type: Option<Kind>) -> Result<EccPublicKey, ManticoreError> {
-        let public_key_info = {
-            use spki::der::Decode;
-            spki::SubjectPublicKeyInfoRef::from_der(der).map_err(|error_stack| {
-                tracing::error!(?error_stack);
-                ManticoreError::EccFromDerError
-            })?
-        };
-
-        let public_key_der = public_key_info.subject_public_key;
-        let (_alg_oid, param_oid) = public_key_info.algorithm.oids().map_err(|error_stack| {
-            tracing::error!(?error_stack);
-            ManticoreError::EccFromDerError
-        })?;
-
-        match param_oid {
-            oid if oid == Some(P256_OID) => {
-                if expected_type.is_some() && expected_type != Some(Kind::Ecc256Public) {
-                    Err(ManticoreError::DerAndKeyTypeMismatch)?;
-                }
-
-                Ok(Self {
-                    handle: EccKeyContainer {
-                        curve_type: ecc::CurveType::NistP256,
-                        ec_key_usage: ecc::EcKeyUsage::EcDhAndEcDsa,
-                        has_private_key: false,
-                        public_key: public_key_der.raw_bytes()[1..].to_vec(), // Remove the leading SEC1 tag byte
-                        private_key: vec![],
-                    },
-                    size: EccKeySize::Ecc256,
-                })
-            }
-            oid if oid == Some(P384_OID) => {
-                if expected_type.is_some() && expected_type != Some(Kind::Ecc384Public) {
-                    Err(ManticoreError::DerAndKeyTypeMismatch)?;
-                }
-
-                Ok(Self {
-                    handle: EccKeyContainer {
-                        curve_type: ecc::CurveType::NistP384,
-                        ec_key_usage: ecc::EcKeyUsage::EcDhAndEcDsa,
-                        has_private_key: false,
-                        public_key: public_key_der.raw_bytes()[1..].to_vec(), // Remove the leading SEC1 tag byte
-                        private_key: vec![],
-                    },
-                    size: EccKeySize::Ecc384,
-                })
-            }
-            oid if oid == Some(P521_OID) => {
-                if expected_type.is_some() && expected_type != Some(Kind::Ecc521Public) {
-                    Err(ManticoreError::DerAndKeyTypeMismatch)?;
-                }
-
-                Ok(Self {
-                    handle: EccKeyContainer {
-                        curve_type: ecc::CurveType::NistP521,
-                        ec_key_usage: ecc::EcKeyUsage::EcDhAndEcDsa,
-                        has_private_key: false,
-                        public_key: public_key_der.raw_bytes()[1..].to_vec(), // Remove the leading SEC1 tag byte
-                        private_key: vec![],
-                    },
-                    size: EccKeySize::Ecc521,
-                })
-            }
-            _ => Err(ManticoreError::DerAndKeyTypeMismatch)?,
-        }
-    }
-
-    fn to_der(&self) -> Result<Vec<u8>, ManticoreError> {
-        let public_key_point = self.handle.export_public_key().map_err(|error_stack| {
-            tracing::error!(?error_stack);
-            ManticoreError::EccToDerError
-        })?;
-
-        let public_key_der = match self.handle.get_curve_type() {
-            ecc::CurveType::NistP256 => {
-                let mut untagged_bytes = [0u8; 32 * 2];
-                untagged_bytes.copy_from_slice(&public_key_point);
-                let point = sec1::EncodedPoint::<sec1::consts::U32>::from_untagged_bytes(
-                    &untagged_bytes.into(),
-                );
-                point.as_bytes().to_vec()
-            }
-            ecc::CurveType::NistP384 => {
-                let mut untagged_bytes = [0u8; 48 * 2];
-                untagged_bytes.copy_from_slice(&public_key_point);
-                let point = sec1::EncodedPoint::<sec1::consts::U48>::from_untagged_bytes(
-                    &untagged_bytes.into(),
-                );
-                point.as_bytes().to_vec()
-            }
-            ecc::CurveType::NistP521 => {
-                let mut untagged_bytes = [0u8; 66 * 2];
-                untagged_bytes.copy_from_slice(&public_key_point);
-                let point = sec1::EncodedPoint::<sec1::consts::U66>::from_untagged_bytes(
-                    &untagged_bytes.into(),
-                );
-                point.as_bytes().to_vec()
-            }
-            _ => Err(ManticoreError::EccToDerError)?,
-        };
-
-        let public_key_der_bitstring =
-            der::asn1::BitString::from_bytes(&public_key_der).map_err(|error_stack| {
-                tracing::error!(?error_stack);
-                ManticoreError::EccToDerError
-            })?;
-
-        let param_oid: spki::der::Any = match self.handle.get_curve_type() {
-            ecc::CurveType::NistP256 => P256_OID.into(),
-            ecc::CurveType::NistP384 => P384_OID.into(),
-            ecc::CurveType::NistP521 => P521_OID.into(),
-            _ => Err(ManticoreError::EccToDerError)?,
-        };
-
-        let alg_id = spki::AlgorithmIdentifier {
-            oid: EC_OID,
-            parameters: Some(param_oid),
-        };
-
-        let subject_public_key_info = spki::SubjectPublicKeyInfoOwned {
-            algorithm: alg_id,
-            subject_public_key: public_key_der_bitstring,
-        };
-
-        let der = {
-            use spki::der::Encode;
-            subject_public_key_info.to_der().map_err(|error_stack| {
-                tracing::error!(?error_stack);
-                ManticoreError::EccToDerError
-            })?
-        };
-
-        Ok(der)
-    }
-
-    fn curve(&self) -> Result<EccCurve, ManticoreError> {
-        match self.handle.get_curve_type() {
-            ecc::CurveType::NistP256 => Ok(EccCurve::P256),
-            ecc::CurveType::NistP384 => Ok(EccCurve::P384),
-            ecc::CurveType::NistP521 => Ok(EccCurve::P521),
-            _ => Err(ManticoreError::EccGetCurveError)?,
-        }
-    }
-
-    fn coordinates(&self) -> Result<(Vec<u8>, Vec<u8>), ManticoreError> {
-        let raw_public_key = self
-            .handle
-            .export_public_key()
-            .map_err(|symcrypt_error_stack| {
-                tracing::error!(?symcrypt_error_stack);
-                ManticoreError::EccGetCoordinatesError
-            })?;
-        let point_size = raw_public_key.len() / 2;
-        let x = raw_public_key[..point_size].to_vec();
-        let y = raw_public_key[point_size..].to_vec();
-        Ok((x, y))
+        let coords = self.key.coord_vec()?;
+        Ok(coords)
     }
 
     fn size(&self) -> EccKeySize {
-        self.size
+        self.key.curve().into()
     }
 }
 
-#[cfg(target_os = "linux")]
+impl KeySerialization<EccPublicKey> for EccPublicKey {
+    fn serialize(&self) -> Result<Vec<u8>, ManticoreError> {
+        self.to_der()
+    }
+
+    fn deserialize(raw: &[u8], expected_type: Kind) -> Result<EccPublicKey, ManticoreError> {
+        EccPublicKey::from_der(raw, Some(expected_type))
+    }
+}
+
 impl EccPublicOp for EccPublicKey {
-    /// ECDSA signature verification.
+    /// Verify an ECDSA signature.
     ///
     /// # Arguments
-    /// * `digest` - The digest used to generate the signature.
-    /// * `signature` - The signature (in raw format) to be verified.
+    /// * `digest` - The digest that was signed.
+    /// * `signature` - The signature to verify (in raw format).
     ///
     /// # Returns
-    /// * `()` - If verification succeeds.
+    /// * `Ok(())` - If the signature is valid.
     ///
     /// # Errors
-    /// * `ManticoreError::InvalidArgument` - If the signature is not even.
-    /// * `ManticoreError::EccVerifyError` - If the verification fails.
+    /// * `ManticoreError::EccVerifyError` - If the signature verification fails.
     fn verify(&self, digest: &[u8], signature: &[u8]) -> Result<(), ManticoreError> {
-        let signature_len = signature.len();
-        if !signature_len.is_multiple_of(2) {
-            Err(ManticoreError::InvalidArgument)?
-        }
-
-        // Convert the raw signature to DER, which is expected by OpenSSL verify API.
-        let (r, s) = signature.split_at(signature_len / 2);
-        let r = BigNum::from_slice(r).map_err(|openssl_error_stack| {
-            tracing::error!(?openssl_error_stack);
-            ManticoreError::EccVerifyError
-        })?;
-        let s = BigNum::from_slice(s).map_err(|openssl_error_stack| {
-            tracing::error!(?openssl_error_stack);
-            ManticoreError::EccVerifyError
-        })?;
-        let signature = EcdsaSig::from_private_components(r, s).map_err(|openssl_error_stack| {
-            tracing::error!(?openssl_error_stack);
-            ManticoreError::EccVerifyError
-        })?;
-        let signature = signature.to_der().map_err(|openssl_error_stack| {
-            tracing::error!(?openssl_error_stack);
-            ManticoreError::EccVerifyError
-        })?;
-
-        let mut ctx = PkeyCtx::new(&self.handle).map_err(|openssl_error_stack| {
-            tracing::error!(?openssl_error_stack);
-            ManticoreError::EccVerifyError
-        })?;
-
-        ctx.verify_init().map_err(|openssl_error_stack| {
-            tracing::error!(?openssl_error_stack);
-            ManticoreError::EccVerifyError
-        })?;
-
-        let result = ctx
-            .verify(digest, &signature)
-            .map_err(|openssl_error_stack| {
-                tracing::error!(?openssl_error_stack);
-                ManticoreError::EccVerifyError
-            })?;
-
-        // Return error on verification failure.
-        if !result {
-            Err(ManticoreError::EccVerifyError)?
-        }
-
-        Ok(())
-    }
-}
-
-#[cfg(target_os = "windows")]
-impl EccPublicOp for EccPublicKey {
-    fn verify(&self, digest: &[u8], signature: &[u8]) -> Result<(), ManticoreError> {
-        let signature_len = signature.len();
-        if !signature_len.is_multiple_of(2) {
-            Err(ManticoreError::InvalidArgument)?
-        }
-        let result = self
-            .handle
-            .ecdsa_verify(signature, digest)
-            .map_err(|symcrypt_error_stack| {
-                tracing::error!(?symcrypt_error_stack);
-                ManticoreError::EccVerifyError
-            });
-        if result.is_err() {
-            Err(ManticoreError::EccVerifyError)?
-        }
+        let mut algo = crypto::EccAlgo::default();
+        algo.verify(&self.key, digest, signature)?;
         Ok(())
     }
 }
@@ -1550,32 +588,5 @@ mod tests {
 
         assert_eq!(x_from_private, x_from_public);
         assert_eq!(y_from_private, y_from_public);
-    }
-
-    #[test]
-    #[cfg(target_os = "linux")]
-    fn test_ecc_create_pub_key_cert() {
-        // Generate the key pair
-        let keypair = generate_ecc(EccCurve::P384);
-        assert!(keypair.is_ok());
-        let (ecc_private, ecc_public) = keypair.unwrap();
-
-        let result = ecc_private.create_pub_key_cert();
-        assert!(result.is_ok());
-
-        // validate the x509 certificate
-        let result = X509::from_der(&result.unwrap());
-        assert!(result.is_ok());
-
-        let cert = result.unwrap();
-        let result = cert.verify(&ecc_public.handle);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    #[cfg(target_os = "windows")]
-    fn test_ecc_create_pub_key_cert() {
-        // TODO: This test on Windows needs to be implemented
-        // without dependency on OpenSSL.
     }
 }

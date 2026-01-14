@@ -34,19 +34,22 @@
 //! - Consider using authenticated encryption modes (like AES-GCM) for new applications
 //! - Ensure proper key management and storage practices
 
-mod cbc;
+mod block;
 
 cfg_if::cfg_if! {
     if #[cfg(target_os = "linux")] {
         mod key_ossl;
         mod ecb_ossl;
         mod cbc_ossl;
-        pub use cbc_ossl::*;
+        mod xts_ossl;
+        mod gcm_ossl;
     } else if #[cfg(target_os = "windows")] {
         mod key_cng;
         mod ecb_cng;
         mod cbc_cng;
-        pub use cbc_cng::*;
+        mod xts_cng;
+        mod gcm_cng;
+
     } else {
         compile_error!("Unsupported target OS for AES-CBC implementation");
     }
@@ -55,15 +58,18 @@ cfg_if::cfg_if! {
 mod kw;
 mod kwp;
 
-use cbc::*;
+use block::*;
 pub use kw::AesKeyWrapAlgo;
 pub use kwp::AesKeyWrapPadAlgo;
 
 pub(crate) use super::*;
 
 define_type!(pub AesKey, key_ossl::OsslAesKey, key_cng::CngAesKey);
+define_type!(pub AesXtsKey, key_ossl::OsslAesXtsKey, key_cng::CngAesXtsKey);
 define_type!(pub AesCbcAlgo, cbc_ossl::OsslAesCbcAlgo, cbc_cng::CngAesCbcAlgo);
 define_type!(pub AesEcbAlgo, ecb_ossl::OsslAesEcbAlgo, ecb_cng::CngAesEcbAlgo);
+define_type!(pub AesXtsAlgo, xts_ossl::OsslAesXtsAlgo, xts_cng::CngAesXtsAlgo);
+define_type!(pub AesGcmAlgo, gcm_ossl::OsslAesGcmAlgo, gcm_cng::CngAesGcmAlgo);
 
 /// Test module for AES-CBC functionality.
 ///

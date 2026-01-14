@@ -25,7 +25,9 @@
 //! - Public keys can be freely distributed for signature verification and encryption
 //! - Key generation uses cryptographically secure random number generation
 
+use openssl::bn::*;
 use openssl::pkey::*;
+use openssl::rsa::*;
 
 use super::*;
 
@@ -46,6 +48,7 @@ use super::*;
 /// - Securely zeroed when no longer needed
 /// - Never transmitted or stored without encryption
 /// - Generated using cryptographically secure random sources
+#[derive(Clone, Debug)]
 pub struct OsslRsaPrivateKey {
     /// The underlying OpenSSL RSA private key
     key: PKey<Private>,
@@ -67,7 +70,7 @@ pub struct OsslRsaPrivateKey {
 /// - Can be freely transmitted and stored
 /// - Should be authenticated to prevent man-in-the-middle attacks
 /// - Are derived from private keys and cannot be reversed to obtain the private key
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct OsslRsaPublicKey {
     /// The underlying OpenSSL RSA public key
     key: PKey<Public>,
@@ -231,8 +234,8 @@ impl KeyGenerationOp for OsslRsaPrivateKey {
     /// # Errors
     ///
     /// Returns an error if:
-    /// - `CryptoError::EccError` - RSA structure creation fails
-    /// - `CryptoError::EccKeyGenError` - Key generation fails
+    /// - `CryptoError::RsaError` - RSA structure creation fails
+    /// - `CryptoError::RsaKeyGenError` - Key generation fails
     ///
     /// # Security
     ///
@@ -241,12 +244,12 @@ impl KeyGenerationOp for OsslRsaPrivateKey {
     fn generate(size: usize) -> Result<Self, CryptoError> {
         // check for valid sizes via helper function
         if !is_valid_key_size(size) {
-            return Err(CryptoError::EccInvalidKeySize);
+            return Err(CryptoError::RsaInvalidKeySize);
         }
 
         let rsa = openssl::rsa::Rsa::generate(size as u32 * 8)
-            .map_err(|_| CryptoError::EccKeyGenError)?;
-        let pkey = PKey::from_rsa(rsa).map_err(|_| CryptoError::EccError)?;
+            .map_err(|_| CryptoError::RsaKeyGenError)?;
+        let pkey = PKey::from_rsa(rsa).map_err(|_| CryptoError::RsaError)?;
         Ok(OsslRsaPrivateKey::new(pkey))
     }
 }
@@ -325,28 +328,6 @@ impl OsslRsaPrivateKey {
         Self { key }
     }
 
-    /// Generates a new RSA private key for the specified key size.
-    ///
-    /// This is a convenience method that generates a key using the predefined
-    /// key size enum rather than a numeric byte size.
-    ///
-    /// # Arguments
-    ///
-    /// * `curve` - The RSA key size to use (converted from EccCurve for compatibility)
-    ///
-    /// # Returns
-    ///
-    /// A new randomly generated private key on success.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - `CryptoError::EccError` - RSA structure creation fails
-    /// - `CryptoError::EccKeyGenError` - Key generation fails
-    pub fn from_curve(curve: EccCurve) -> Result<Self, CryptoError> {
-        Self::generate(curve.into())
-    }
-
     /// Returns a reference to the underlying OpenSSL private key.
     ///
     /// This is an internal method used by other cryptographic operations that
@@ -357,6 +338,155 @@ impl OsslRsaPrivateKey {
     /// A reference to the OpenSSL `PKey<Private>` wrapper.
     pub(crate) fn pkey(&self) -> &PKeyRef<Private> {
         &self.key
+    }
+
+    #[allow(unsafe_code)]
+    /// Imports an RSA public key from a BCRYPT_RSAKEY_BLOB.
+    ///
+    /// #Arguments
+    ///
+    /// * `blob` - The BCRYPT_RSAKEY_BLOB byte slice.
+    ///
+    /// # Returns
+    ///
+    /// A new `OsslRsaPublicKey` instance on success.
+    #[allow(unsafe_code)]
+    pub fn from_bcrypt_blob(blob: &[u8]) -> Result<Self, CryptoError> {
+        let header_size = std::mem::size_of::<BcryptRsaKeyHeader>();
+
+        if blob.len() < header_size {
+            return Err(CryptoError::RsaKeyImportError);
+        }
+
+        // SAFETY: This function uses unsafe code to interpret the byte slice as a
+        let header: &BcryptRsaKeyHeader = unsafe { &*(blob.as_ptr() as *const BcryptRsaKeyHeader) };
+
+        if header.magic != BCRYPT_RSAPRIVATE_MAGIC {
+            return Err(CryptoError::RsaKeyImportError);
+        }
+
+        if blob.len()
+            != header_size
+                + header.modulus_len as usize
+                + header.public_exp_len as usize
+                + header.prime1_len as usize
+                + header.prime2_len as usize
+        {
+            return Err(CryptoError::RsaKeyImportError);
+        }
+
+        let mut offset = std::mem::size_of::<BcryptRsaKeyHeader>();
+
+        let modulus = &blob[offset..offset + header.modulus_len as usize];
+        offset += header.modulus_len as usize;
+
+        let exponent = &blob[offset..offset + header.public_exp_len as usize];
+        offset += header.public_exp_len as usize;
+
+        let p = &blob[offset..offset + header.prime1_len as usize];
+        offset += header.prime1_len as usize;
+
+        let q = &blob[offset..offset + header.prime2_len as usize];
+
+        let public_exp =
+            BigNum::from_slice(exponent).map_err(|_| CryptoError::RsaKeyImportError)?;
+        let modulus = BigNum::from_slice(modulus).map_err(|_| CryptoError::RsaKeyImportError)?;
+        let p = BigNum::from_slice(p).map_err(|_| CryptoError::RsaKeyImportError)?;
+        let q = BigNum::from_slice(q).map_err(|_| CryptoError::RsaKeyImportError)?;
+
+        let d = Self::compute_private_exponent(&public_exp, &p, &q)?;
+
+        let rsa_key = RsaPrivateKeyBuilder::new(modulus, public_exp, d)
+            .map_err(|_| CryptoError::RsaKeyImportError)?
+            .set_factors(p, q)
+            .map_err(|_| CryptoError::RsaKeyImportError)?
+            .build();
+
+        let pkey = PKey::from_rsa(rsa_key).map_err(|_| CryptoError::RsaKeyImportError)?;
+        Ok(Self::new(pkey))
+    }
+
+    #[allow(unsafe_code)]
+    pub fn to_bcrypt_blob(&self) -> Result<Vec<u8>, CryptoError> {
+        let rsa = self.key.rsa().map_err(|_| CryptoError::RsaKeyExportError)?;
+
+        let n = rsa.n().to_vec();
+        let e = rsa.e().to_vec();
+        let p = rsa.p().ok_or(CryptoError::RsaKeyExportError)?.to_vec();
+        let q = rsa.q().ok_or(CryptoError::RsaKeyExportError)?.to_vec();
+
+        let header_size = std::mem::size_of::<BcryptRsaKeyHeader>();
+        let blob_size = header_size + n.len() + e.len() + p.len() + q.len();
+
+        let mut blob = vec![0u8; blob_size];
+
+        // SAFETY: This function uses unsafe code to interpret the byte slice as a
+        let header: &mut BcryptRsaKeyHeader =
+            unsafe { &mut *(blob.as_mut_ptr() as *mut BcryptRsaKeyHeader) };
+
+        header.magic = BCRYPT_RSAPRIVATE_MAGIC;
+        header.bit_len = (n.len() * 8) as u32;
+        header.modulus_len = n.len() as u32;
+        header.public_exp_len = e.len() as u32;
+        header.prime1_len = p.len() as u32;
+        header.prime2_len = q.len() as u32;
+
+        let mut offset = header_size;
+
+        blob[offset..offset + n.len()].copy_from_slice(&n);
+        offset += n.len();
+
+        blob[offset..offset + e.len()].copy_from_slice(&e);
+        offset += e.len();
+
+        blob[offset..offset + p.len()].copy_from_slice(&p);
+        offset += p.len();
+
+        blob[offset..offset + q.len()].copy_from_slice(&q);
+
+        Ok(blob)
+    }
+
+    /// Computes the RSA private exponent (d) from the public exponent and primes.
+    ///
+    /// This function calculates d = e^(-1) mod φ(n), where φ(n) = (p-1)(q-1).
+    ///
+    /// # Arguments
+    ///
+    /// * `public_exp` - The RSA public exponent (e)
+    /// * `p` - First prime factor
+    /// * `q` - Second prime factor
+    ///
+    /// # Returns
+    ///
+    /// The private exponent (d) on success.
+    ///
+    /// # Errors
+    ///
+    /// Returns `CryptoError::RsaKeyImportError` if computation fails.
+    fn compute_private_exponent(
+        public_exp: &BigNum,
+        p: &BigNum,
+        q: &BigNum,
+    ) -> Result<BigNum, CryptoError> {
+        let mut ctx =
+            openssl::bn::BigNumContext::new().map_err(|_| CryptoError::RsaKeyImportError)?;
+        let one = BigNum::from_u32(1).map_err(|_| CryptoError::RsaKeyImportError)?;
+
+        let mut p1 = BigNum::new().map_err(|_| CryptoError::RsaKeyImportError)?;
+        p1.checked_sub(p, &one)
+            .map_err(|_| CryptoError::RsaKeyImportError)?;
+        let mut p2 = BigNum::new().map_err(|_| CryptoError::RsaKeyImportError)?;
+        p2.checked_sub(q, &one)
+            .map_err(|_| CryptoError::RsaKeyImportError)?;
+
+        let mut phi = BigNum::new().map_err(|_| CryptoError::RsaKeyImportError)?;
+        phi.checked_mul(&p1, &p2, &mut ctx)
+            .map_err(|_| CryptoError::RsaKeyImportError)?;
+        let mut d = BigNum::new().map_err(|_| CryptoError::RsaKeyImportError)?;
+        d.mod_inverse(public_exp, &phi, &mut ctx)
+            .map_err(|_| CryptoError::RsaKeyImportError)?;
+        Ok(d)
     }
 }
 
@@ -419,17 +549,17 @@ impl ImportableKey for OsslRsaPublicKey {
     ///
     /// # Errors
     ///
-    /// Returns `CryptoError::EccKeyImportError` if:
+    /// Returns `CryptoError::RsaKeyImportError` if:
     /// - The DER encoding is invalid
     /// - The RSA parameters are invalid
     /// - The key format is not supported
     fn from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
         let rsa = openssl::rsa::Rsa::public_key_from_der(bytes)
-            .map_err(|_| CryptoError::EccKeyImportError)?;
+            .map_err(|_| CryptoError::RsaKeyImportError)?;
         if !is_valid_key_size(rsa.size() as usize) {
-            return Err(CryptoError::EccInvalidKeySize);
+            return Err(CryptoError::RsaInvalidKeySize);
         }
-        let pkey = PKey::from_rsa(rsa).map_err(|_| CryptoError::EccError)?;
+        let pkey = PKey::from_rsa(rsa).map_err(|_| CryptoError::RsaError)?;
         Ok(OsslRsaPublicKey::new(pkey))
     }
 }
@@ -576,4 +706,15 @@ impl OsslRsaPublicKey {
 /// - 512 bytes (4096 bits) - High security
 fn is_valid_key_size(size: usize) -> bool {
     matches!(size, 256 | 384 | 512)
+}
+
+const BCRYPT_RSAPRIVATE_MAGIC: u32 = 843141970u32;
+#[repr(C)]
+struct BcryptRsaKeyHeader {
+    pub magic: u32,
+    pub bit_len: u32,
+    pub public_exp_len: u32,
+    pub modulus_len: u32,
+    pub prime1_len: u32,
+    pub prime2_len: u32,
 }

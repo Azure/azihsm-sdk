@@ -49,6 +49,7 @@ use super::*;
 /// - Securely zeroed when no longer needed
 /// - Never transmitted or stored without encryption
 /// - Generated using cryptographically secure random sources
+#[derive(Debug, Clone)]
 pub struct OsslEccPrivateKey {
     /// The underlying OpenSSL ECC private key
     key: PKey<Private>,
@@ -71,7 +72,7 @@ pub struct OsslEccPrivateKey {
 /// - Can be freely transmitted and stored
 /// - Should be authenticated to prevent man-in-the-middle attacks
 /// - Are derived from private keys and cannot be reversed to obtain the private key
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct OsslEccPublicKey {
     /// The underlying OpenSSL ECC public key
     key: PKey<Public>,
@@ -163,7 +164,8 @@ impl ImportableKey for OsslEccPrivateKey {
     /// - The curve is not supported
     /// - The private key value is invalid for the curve
     fn from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
-        let pkey = PKey::private_key_from_der(bytes).map_err(|_| CryptoError::EccKeyImportError)?;
+        let pkey =
+            PKey::private_key_from_pkcs8(bytes).map_err(|_| CryptoError::EccKeyImportError)?;
         let eckey = pkey.ec_key().map_err(|_| CryptoError::EccError)?;
         let nid = eckey.group().curve_name().ok_or(CryptoError::EccError)?;
         let curve = nid.try_into()?;
@@ -200,7 +202,7 @@ impl ExportableKey for OsslEccPrivateKey {
     fn to_bytes(&self, bytes: Option<&mut [u8]>) -> Result<usize, CryptoError> {
         let der = self
             .key
-            .private_key_to_der()
+            .private_key_to_pkcs8()
             .map_err(|_| CryptoError::EccKeyExportError)?;
         if let Some(bytes) = bytes {
             if bytes.len() < der.len() {

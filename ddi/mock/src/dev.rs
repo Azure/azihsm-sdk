@@ -362,6 +362,8 @@ impl DdiDev for DdiMockDev {
         let mcr_ddi_aes_gcm_result = DdiAesGcmResult {
             tag: result.tag,
             data: dest_buffer,
+            fips_approved: result.fips_approved,
+            iv: result.iv,
         };
 
         Ok(mcr_ddi_aes_gcm_result)
@@ -493,7 +495,10 @@ impl DdiDev for DdiMockDev {
             dest_buffer.truncate(result.total_size as usize);
         }
 
-        let mcr_ddi_aes_xts_result = DdiAesXtsResult { data: dest_buffer };
+        let mcr_ddi_aes_xts_result = DdiAesXtsResult {
+            data: dest_buffer,
+            fips_approved: false,
+        };
 
         Ok(mcr_ddi_aes_xts_result)
     }

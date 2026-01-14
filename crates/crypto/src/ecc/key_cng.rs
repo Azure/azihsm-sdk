@@ -29,6 +29,22 @@ type CngEcdsaPublicKeyHandle = CngEccKeyHandle<CngEcdsaPublicKeyInfo>;
 type CngEcdhPrivateKeyHandle = CngEccKeyHandle<CngEcdhPrivateKeyInfo>;
 type CngEcdhPublicKeyHandle = CngEccKeyHandle<CngEcdhPublicKeyInfo>;
 
+#[allow(unsafe_code)]
+// SAFETY: CngEccPrivateKey wraps Windows CNG handles which are thread-safe and can be sent across threads
+unsafe impl Send for CngEccPrivateKey {}
+
+#[allow(unsafe_code)]
+// SAFETY: CngEccPrivateKey wraps Windows CNG handles which are thread-safe and can be shared across threads
+unsafe impl Sync for CngEccPrivateKey {}
+
+#[allow(unsafe_code)]
+// SAFETY: CngEccPublicKey wraps Windows CNG handles which are thread-safe and can be sent across threads
+unsafe impl Send for CngEccPublicKey {}
+
+#[allow(unsafe_code)]
+// SAFETY: CngEccPublicKey wraps Windows CNG handles which are thread-safe and can be shared across threads
+unsafe impl Sync for CngEccPublicKey {}
+
 /// Windows CNG ECC private key supporting both ECDSA and ECDH operations.
 ///
 /// This key maintains separate handles for ECDSA (signing/verification) and
@@ -466,11 +482,27 @@ trait CngEccKeyInfo {
 ///
 /// Provides RAII-style management of `BCRYPT_KEY_HANDLE` with automatic cleanup.
 /// The `KeyInfo` type parameter distinguishes between ECDSA/ECDH and public/private keys.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct CngEccKeyHandle<KeyInfo: CngEccKeyInfo> {
     handle: BCRYPT_KEY_HANDLE,
     curve: EccCurve,
     marker: PhantomData<KeyInfo>,
+}
+
+impl<KeyInfo: CngEccKeyInfo> Clone for CngEccKeyHandle<KeyInfo> {
+    /// Clones the key handle by exporting and re-importing the key blob.
+    #[allow(unsafe_code)]
+    fn clone(&self) -> Self {
+        let Ok(bytes) = self.to_blob() else {
+            // Clone cannot fail.
+            panic!("Failed to export CNG ECC key blob for cloning");
+        };
+        let Ok(handle) = Self::from_blob(&bytes) else {
+            // Clone cannot fail.
+            panic!("Failed to import CNG ECC key blob for cloning");
+        };
+        handle
+    }
 }
 
 impl<KeyInfo: CngEccKeyInfo> Drop for CngEccKeyHandle<KeyInfo> {

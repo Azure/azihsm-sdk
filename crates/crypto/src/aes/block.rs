@@ -36,7 +36,7 @@ use super::*;
 ///
 /// The buffer is pre-allocated with the exact capacity needed (16 bytes)
 /// to minimize memory allocations during streaming operations.
-pub(crate) struct AesCbcBlock {
+pub(crate) struct AesBlock {
     /// Internal buffer for storing partial block data.
     ///
     /// This vector has a fixed capacity of 16 bytes (one AES block)
@@ -48,7 +48,7 @@ pub(crate) struct AesCbcBlock {
 ///
 /// Creates a new block buffer with pre-allocated capacity for one AES block (16 bytes).
 /// The buffer starts empty but with sufficient capacity to avoid reallocations.
-impl Default for AesCbcBlock {
+impl Default for AesBlock {
     fn default() -> Self {
         Self {
             block: Vec::with_capacity(Self::BLOCK_SIZE),
@@ -56,7 +56,7 @@ impl Default for AesCbcBlock {
     }
 }
 
-impl AesCbcBlock {
+impl AesBlock {
     /// AES block size in bytes.
     ///
     /// AES always operates on 128-bit (16-byte) blocks regardless of key size.
