@@ -189,7 +189,6 @@ azihsm_status azihsm_crypt_decrypt_final(
 
 ```cpp
 azihsm_status azihsm_crypt_sign(
-    azihsm_handle sess_handle,
     azihsm_algo *algo,
     azihsm_handle key_handle,
     const azihsm_buffer *data,
@@ -201,7 +200,6 @@ azihsm_status azihsm_crypt_sign(
 
  | Parameter        | Name                              | Description           |
  | ---------------- | --------------------------------- | --------------------- |
- | [in] sess_handle | [azihsm_handle](#azihsm_handle)   | session handle        |
  | [in] algo        | [azihsm_algo *](#azihsm_algo)     | algorithm params      |
  | [in] key_handle  | [azihsm_handle](#azihsm_handle)   | key handle            |
  | [in] data        | [azihsm_buffer *](#azihsm_buffer) | data to sign          |
@@ -215,7 +213,6 @@ azihsm_status azihsm_crypt_sign(
 
 ```cpp
 azihsm_status azihsm_crypt_sign_init(
-    azihsm_handle sess_handle,
     azihsm_algo *algo,
     azihsm_handle key_handle,
     azihsm_handle *ctx_handle
@@ -226,7 +223,6 @@ azihsm_status azihsm_crypt_sign_init(
 
  | Parameter        | Name                            | Description                 |
  | ---------------- | ------------------------------- | --------------------------- |
- | [in] sess_handle | [azihsm_handle](#azihsm_handle) | session handle              |
  | [in] algo        | [azihsm_algo *](#azihsm_algo)   | algorithm params            |
  | [in] key_handle  | [azihsm_handle](#azihsm_handle) | key handle       &nbsp;     |
  | [out] ctx_handle | [azihsm_handle](#azihsm_handle) | context handle       &nbsp; |
@@ -281,7 +277,6 @@ azihsm_status azihsm_crypt_sign_final(
 
 ```cpp
 azihsm_status azihsm_crypt_verify(
-    azihsm_handle sess_handle,
     azihsm_algo *algo,
     azihsm_handle key_handle,
     const azihsm_buffer *data,
@@ -293,7 +288,6 @@ azihsm_status azihsm_crypt_verify(
 
  | Parameter        | Name                              | Description           |
  | ---------------- | --------------------------------- | --------------------- |
- | [in] sess_handle | [azihsm_handle](#azihsm_handle)   | session handle        |
  | [in] algo        | [azihsm_algo *](#azihsm_algo)     | algorithm params      |
  | [in] key_handle  | [azihsm_handle](#azihsm_handle)   | key handle            |
  | [in] data        | [azihsm_buffer *](#azihsm_buffer) | data to sign          |
@@ -307,7 +301,6 @@ azihsm_status azihsm_crypt_verify(
 
 ```cpp
 azihsm_status azihsm_crypt_verify_init(
-    azihsm_handle sess_handle,
     azihsm_algo *algo,
     azihsm_handle key_handle,
     azihsm_handle *ctx_handle
@@ -318,7 +311,6 @@ azihsm_status azihsm_crypt_verify_init(
 
  | Parameter        | Name                            | Description                 |
  | ---------------- | ------------------------------- | --------------------------- |
- | [in] sess_handle | [azihsm_handle](#azihsm_handle) | session handle              |
  | [in] algo        | [azihsm_algo *](#azihsm_algo)   | algorithm params            |
  | [in] key_handle  | [azihsm_handle](#azihsm_handle) | key handle                  |
  | [out] ctx_handle | [azihsm_handle](#azihsm_handle) | context handle       &nbsp; |

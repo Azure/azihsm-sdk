@@ -9,6 +9,7 @@ use crate::AzihsmHandle;
 use crate::HANDLE_TABLE;
 use crate::crypto_enc_dec::CryptoOp;
 use crate::handle_table::HandleType;
+use crate::utils::validate_output_buffer;
 use crate::utils::validate_ptr;
 
 impl TryFrom<&AzihsmAlgo> for azihsm_napi::HsmAesKeyGenAlgo {
@@ -46,28 +47,6 @@ impl<'a> TryFrom<&'a mut AzihsmAlgo> for &'a mut AzihsmAlgoAesCbcParams {
 
         Ok(params)
     }
-}
-
-/// Validate and prepare the caller-provided output buffer.
-///
-/// - If the buffer is large enough, returns a mutable slice to write into.
-/// - If it is too small, sets `output_buf.len` to `required_len` and returns
-///   `AzihsmError::BufferTooSmall` so the caller can resize and retry.
-///
-/// This function does not write any data; it only checks size and produces
-/// a slice on success.
-fn validate_output_buffer(
-    output_buf: &mut AzihsmBuffer,
-    required_len: usize,
-) -> Result<&mut [u8], AzihsmError> {
-    // Check if output buffer is large enough
-    if output_buf.len < required_len as u32 {
-        output_buf.len = required_len as u32;
-        Err(AzihsmError::BufferTooSmall)?;
-    }
-
-    // Get output buffer slice
-    output_buf.try_into()
 }
 
 /// Wrapper for AES CBC streaming contexts (encryption or decryption)
@@ -164,7 +143,7 @@ pub(crate) fn aes_cbc_crypt(
     }
 
     // Get the AES key from handle table
-    let key: &HsmAesKey = HANDLE_TABLE.as_ref(key_handle, HandleType::AesKey)?;
+    let key: &HsmAesKey = &key_handle.try_into()?;
 
     let algo_id = algo.id;
     let params: &mut AzihsmAlgoAesCbcParams = algo.try_into()?;
@@ -224,7 +203,7 @@ pub(crate) fn aes_cbc_streaming_init(
     op: CryptoOp,
 ) -> Result<AzihsmHandle, AzihsmError> {
     // Get the AES key from handle table
-    let key: &HsmAesKey = HANDLE_TABLE.as_ref(key_handle, HandleType::AesKey)?;
+    let key: &HsmAesKey = &key_handle.try_into()?;
 
     let algo_id = algo.id;
     let params: &mut AzihsmAlgoAesCbcParams = algo.try_into()?;

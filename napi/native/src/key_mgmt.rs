@@ -127,20 +127,20 @@ pub unsafe extern "C" fn azihsm_key_gen_pair(
 #[allow(unsafe_code)]
 pub unsafe extern "C" fn azihsm_key_delete(key_handle: AzihsmHandle) -> AzihsmError {
     abi_boundary(|| {
-        let key_type = HANDLE_TABLE.get_handle_type(key_handle)?;
+        let key_type: HandleType = key_handle.try_into()?;
 
         match key_type {
             HandleType::AesKey => {
-                let _key: Box<HsmAesKey> = HANDLE_TABLE.free_handle(key_handle, key_type)?;
-                // [TODO] Delete the key via HsmKeyManager when supported
+                let key: Box<HsmAesKey> = HANDLE_TABLE.free_handle(key_handle, key_type)?;
+                key.delete_key()?;
             }
             HandleType::EccPrivKey => {
-                let _key: Box<HsmEccPrivateKey> = HANDLE_TABLE.free_handle(key_handle, key_type)?;
-                // [TODO] Delete the key via HsmKeyManager when supported
+                let key: Box<HsmEccPrivateKey> = HANDLE_TABLE.free_handle(key_handle, key_type)?;
+                key.delete_key()?;
             }
             HandleType::EccPubKey => {
-                let _key: Box<HsmEccPublicKey> = HANDLE_TABLE.free_handle(key_handle, key_type)?;
-                // [TODO] Delete the key via HsmKeyManager when supported
+                let key: Box<HsmEccPublicKey> = HANDLE_TABLE.free_handle(key_handle, key_type)?;
+                key.delete_key()?;
             }
             _ => Err(AzihsmError::UnsupportedKeyKind)?,
         }

@@ -38,7 +38,7 @@ class azihsm_aes_cbc : public ::testing::Test
 
         // Allocate buffer and perform operation
         std::vector<uint8_t> result(output.len);
-        output.buf = result.data();
+        output.ptr = result.data();
 
         if (encrypt)
         {
@@ -99,7 +99,7 @@ class azihsm_aes_cbc : public ::testing::Test
                 EXPECT_GT(out_buf.len, 0);
                 size_t current_pos = output.size();
                 output.resize(current_pos + out_buf.len);
-                out_buf.buf = output.data() + current_pos;
+                out_buf.ptr = output.data() + current_pos;
 
                 if (encrypt)
                 {
@@ -145,7 +145,7 @@ class azihsm_aes_cbc : public ::testing::Test
             EXPECT_GT(final_out.len, 0);
             size_t current_pos = output.size();
             output.resize(current_pos + final_out.len);
-            final_out.buf = output.data() + current_pos;
+            final_out.ptr = output.data() + current_pos;
 
             if (encrypt)
             {

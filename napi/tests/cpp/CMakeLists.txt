@@ -53,7 +53,8 @@ set(SOURCE
     partition_tests.cpp 
     session_tests.cpp 
     algo/aes/cbc_tests.cpp
-    algo/ecc/key_tests.cpp
+    algo/ecc/keygen_tests.cpp
+    algo/ecc/sign_verify_tests.cpp
 )
 add_executable(azihsm_napi_cpp_tests ${SOURCE})
 target_include_directories(azihsm_napi_cpp_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

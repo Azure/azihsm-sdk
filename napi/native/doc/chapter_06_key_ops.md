@@ -120,7 +120,6 @@ Delete a key.
 
 ```cpp
 azihsm_status azihsm_key_delete(
-    azihsm_handle sess_handle,
     azihsm_handle key,
     );
 ```
@@ -129,7 +128,6 @@ azihsm_status azihsm_key_delete(
 
  | Parameter        | Name                            | Description                   |
  | ---------------- | ------------------------------- | ----------------------------- |
- | [in] sess_handle | [azihsm_handle](#azihsm_handle) | session handle                |
  | [in] key         | [azihsm_handle](#azihsm_handle) | key to delete         &nsbsp; |
 
 **Returns**

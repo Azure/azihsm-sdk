@@ -26,16 +26,13 @@ pub unsafe extern "C" fn azihsm_sess_open(
     sess_handle: *mut AzihsmHandle,
 ) -> AzihsmError {
     abi_boundary(|| {
-        if sess_handle.is_null() {
-            Err(AzihsmError::InvalidArgument)?
-        }
+        validate_ptr(sess_handle)?;
 
         let api_rev = deref_ptr(api_rev)?;
         let credentials = deref_ptr(creds)?;
 
         // Get the partition from the handle
-        let partition: &api::HsmPartition =
-            HANDLE_TABLE.as_ref(dev_handle, HandleType::Partition)?;
+        let partition: &api::HsmPartition = &dev_handle.try_into()?;
 
         let session =
             Box::new(partition.open_session(api_rev.into(), &credentials.into(), None)?);
