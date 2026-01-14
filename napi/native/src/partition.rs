@@ -24,9 +24,7 @@ use super::*;
 #[allow(unsafe_code)]
 pub unsafe extern "C" fn azihsm_part_get_list(handle: *mut AzihsmHandle) -> AzihsmError {
     abi_boundary(|| {
-        if handle.is_null() {
-            Err(AzihsmError::InvalidArgument)?
-        }
+        validate_ptr(handle)?;
 
         let part_list = Box::new(api::HsmPartitionManager::partition_info_list());
 
@@ -76,9 +74,7 @@ pub unsafe extern "C" fn azihsm_part_get_count(
     count: *mut u32,
 ) -> AzihsmError {
     abi_boundary(|| {
-        if count.is_null() {
-            Err(AzihsmError::InvalidArgument)?
-        }
+        validate_ptr(count)?;
 
         let part_list: &Vec<api::HsmPartitionInfo> =
             HANDLE_TABLE.as_ref(handle, HandleType::PartitionList)?;
@@ -111,9 +107,7 @@ pub unsafe extern "C" fn azihsm_part_get_path(
     path: *mut AzihsmStr,
 ) -> AzihsmError {
     abi_boundary(|| {
-        if path.is_null() {
-            Err(AzihsmError::InvalidArgument)?
-        }
+        validate_ptr(path)?;
 
         // SAFETY: the function ensures that the pointers are valid
         let path = unsafe { &mut *path };
@@ -169,9 +163,8 @@ pub unsafe extern "C" fn azihsm_part_open(
     handle: *mut AzihsmHandle,
 ) -> AzihsmError {
     abi_boundary(|| {
-        if handle.is_null() || path.is_null() {
-            Err(AzihsmError::InvalidArgument)?
-        }
+        validate_ptr(handle)?;
+        validate_ptr(path)?;
 
         // SAFETY: the function ensures that the pointer is valid
         let path = unsafe { &*path };
@@ -207,7 +200,7 @@ pub unsafe extern "C" fn azihsm_part_init(
         let creds = deref_ptr(creds)?;
 
         // Get the partition from the handle
-        let partition: &HsmPartition = HANDLE_TABLE.as_ref(part_handle, HandleType::Partition)?;
+        let partition: &HsmPartition = &part_handle.try_into()?;
 
         partition.init(creds.into(), None, None, None)?;
 

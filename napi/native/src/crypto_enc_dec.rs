@@ -34,7 +34,7 @@ pub unsafe extern "C" fn azihsm_crypt_encrypt(
 ) -> AzihsmError {
     abi_boundary(|| {
         let algo = deref_mut_ptr(algo)?;
-        let key_type = HANDLE_TABLE.get_handle_type(key_handle)?;
+        let key_type: HandleType = key_handle.try_into()?;
         let input_buf = deref_ptr(plain_text)?;
         let output_buf = deref_mut_ptr(cipher_text)?;
 
@@ -73,7 +73,7 @@ pub unsafe extern "C" fn azihsm_crypt_decrypt(
 ) -> AzihsmError {
     abi_boundary(|| {
         let algo = deref_mut_ptr(algo)?;
-        let key_type = HANDLE_TABLE.get_handle_type(key_handle)?;
+        let key_type: HandleType = key_handle.try_into()?;
         let input_buf = deref_ptr(cipher_text)?;
         let output_buf = deref_mut_ptr(plain_text)?;
 
@@ -107,8 +107,10 @@ pub unsafe extern "C" fn azihsm_crypt_encrypt_init(
     ctx_handle: *mut AzihsmHandle,
 ) -> AzihsmError {
     abi_boundary(|| {
+        validate_ptr(ctx_handle)?;
+
         let algo = deref_mut_ptr(algo)?;
-        let key_type = HANDLE_TABLE.get_handle_type(key_handle)?;
+        let key_type: HandleType = key_handle.try_into()?;
 
         let handle = match key_type {
             HandleType::AesKey => aes_cbc_streaming_init(algo, key_handle, CryptoOp::Encrypt)?,
@@ -144,7 +146,7 @@ pub unsafe extern "C" fn azihsm_crypt_encrypt_update(
     cipher_text: *mut AzihsmBuffer,
 ) -> AzihsmError {
     abi_boundary(|| {
-        let ctx_type = HANDLE_TABLE.get_handle_type(ctx_handle)?;
+        let ctx_type: HandleType = ctx_handle.try_into()?;
         let input_buf = deref_ptr(plain_text)?;
         let output_buf = deref_mut_ptr(cipher_text)?;
 
@@ -178,7 +180,7 @@ pub unsafe extern "C" fn azihsm_crypt_encrypt_final(
     cipher_text: *mut AzihsmBuffer,
 ) -> AzihsmError {
     abi_boundary(|| {
-        let ctx_type = HANDLE_TABLE.get_handle_type(ctx_handle)?;
+        let ctx_type: HandleType = ctx_handle.try_into()?;
         let output_buf = deref_mut_ptr(cipher_text)?;
 
         match ctx_type {
@@ -208,8 +210,10 @@ pub unsafe extern "C" fn azihsm_crypt_decrypt_init(
     ctx_handle: *mut AzihsmHandle,
 ) -> AzihsmError {
     abi_boundary(|| {
+        validate_ptr(ctx_handle)?;
+
         let algo = deref_mut_ptr(algo)?;
-        let key_type = HANDLE_TABLE.get_handle_type(key_handle)?;
+        let key_type: HandleType = key_handle.try_into()?;
 
         let handle = match key_type {
             HandleType::AesKey => aes_cbc_streaming_init(algo, key_handle, CryptoOp::Decrypt)?,
@@ -245,7 +249,7 @@ pub unsafe extern "C" fn azihsm_crypt_decrypt_update(
     plain_text: *mut AzihsmBuffer,
 ) -> AzihsmError {
     abi_boundary(|| {
-        let ctx_type = HANDLE_TABLE.get_handle_type(ctx_handle)?;
+        let ctx_type: HandleType = ctx_handle.try_into()?;
         let input_buf = deref_ptr(cipher_text)?;
         let output_buf = deref_mut_ptr(plain_text)?;
 
@@ -280,7 +284,7 @@ pub unsafe extern "C" fn azihsm_crypt_decrypt_final(
     plain_text: *mut AzihsmBuffer,
 ) -> AzihsmError {
     abi_boundary(|| {
-        let ctx_type = HANDLE_TABLE.get_handle_type(ctx_handle)?;
+        let ctx_type: HandleType = ctx_handle.try_into()?;
         let output_buf = deref_mut_ptr(plain_text)?;
 
         match ctx_type {

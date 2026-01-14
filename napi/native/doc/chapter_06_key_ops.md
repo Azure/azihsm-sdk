@@ -34,10 +34,10 @@ Generate asymmetric key pair
 azihsm_status azihsm_key_gen_pair(
     azihsm_handle sess_handle,
     azihsm_algo *algo,
-    const azihsm_key_prop_list *pub_key_props,
     const azihsm_key_prop_list *priv_key_props,
-    azihsm_handle *pub_key_handle
+    const azihsm_key_prop_list *pub_key_props,
     azihsm_handle *priv_key_handle
+    azihsm_handle *pub_key_handle
     );
 ```
 
@@ -47,10 +47,10 @@ azihsm_status azihsm_key_gen_pair(
  | --------------------- | ---------------------------------------------------- | ------------------------------------ |
  | [in] sess_handle      | [azihsm_handle](#azihsm_handle)                      | session handle                       |
  | [in] algo             | [azihsm_algo *](#azihsm_algo)                        | algorithm params                     |
- | [in] pub_key_props    | [const azihsm_key_prop_list*](#azihsm_key_prop_list) | public key properties                |
  | [in] priv_key_props   | [const azihsm_key_prop_list*](#azihsm_key_prop_list) | private key properties               |
- | [out] pub_key_handle  | [azihsm_handle *](#azihsm_handle)                    | key handle for generated public key  |
+ | [in] pub_key_props    | [const azihsm_key_prop_list*](#azihsm_key_prop_list) | public key properties                | 
  | [out] priv_key_handle | [azihsm_handle *](#azihsm_handle)                    | key handle for generated private key |
+ | [out] pub_key_handle  | [azihsm_handle *](#azihsm_handle)                    | key handle for generated public key  | 
 
 **Returns**
 
@@ -120,7 +120,6 @@ Delete a key.
 
 ```cpp
 azihsm_status azihsm_key_delete(
-    azihsm_handle sess_handle,
     azihsm_handle key,
     );
 ```
@@ -129,7 +128,6 @@ azihsm_status azihsm_key_delete(
 
  | Parameter        | Name                            | Description                   |
  | ---------------- | ------------------------------- | ----------------------------- |
- | [in] sess_handle | [azihsm_handle](#azihsm_handle) | session handle                |
  | [in] key         | [azihsm_handle](#azihsm_handle) | key to delete         &nsbsp; |
 
 **Returns**

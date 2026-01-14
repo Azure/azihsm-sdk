@@ -49,8 +49,15 @@ corrosion_experimental_cbindgen(
     HEADER_NAME "azihsm_api.h"
     )
 
-set(SOURCE partition_tests.cpp session_tests.cpp aes_cbc_tests.cpp)
+set(SOURCE 
+    partition_tests.cpp 
+    session_tests.cpp 
+    algo/aes/cbc_tests.cpp
+    algo/ecc/keygen_tests.cpp
+    algo/ecc/sign_verify_tests.cpp
+)
 add_executable(azihsm_napi_cpp_tests ${SOURCE})
+target_include_directories(azihsm_napi_cpp_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(
     azihsm_napi_cpp_tests
     PUBLIC

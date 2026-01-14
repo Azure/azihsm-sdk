@@ -17,6 +17,7 @@
 
 mod algo;
 mod crypto_enc_dec;
+mod crypto_sign_verify;
 #[allow(unused)]
 #[path = "../../lib/src/error.rs"]
 mod error;
@@ -207,16 +208,60 @@ impl TryFrom<AzihsmHandle> for api::HsmSession {
     }
 }
 
+impl TryFrom<AzihsmHandle> for api::HsmPartition {
+    type Error = AzihsmError;
+
+    fn try_from(value: AzihsmHandle) -> Result<api::HsmPartition, Self::Error> {
+        let partition: &api::HsmPartition = HANDLE_TABLE.as_ref(value, HandleType::Partition)?;
+        Ok(partition.clone())
+    }
+}
+
+impl TryFrom<AzihsmHandle> for api::HsmAesKey {
+    type Error = AzihsmError;
+
+    fn try_from(value: AzihsmHandle) -> Result<api::HsmAesKey, Self::Error> {
+        let key: &api::HsmAesKey = HANDLE_TABLE.as_ref(value, HandleType::AesKey)?;
+        Ok(key.clone())
+    }
+}
+
+impl TryFrom<AzihsmHandle> for api::HsmEccPrivateKey {
+    type Error = AzihsmError;
+
+    fn try_from(value: AzihsmHandle) -> Result<api::HsmEccPrivateKey, Self::Error> {
+        let key: &api::HsmEccPrivateKey = HANDLE_TABLE.as_ref(value, HandleType::EccPrivKey)?;
+        Ok(key.clone())
+    }
+}
+
+impl TryFrom<AzihsmHandle> for api::HsmEccPublicKey {
+    type Error = AzihsmError;
+
+    fn try_from(value: AzihsmHandle) -> Result<api::HsmEccPublicKey, Self::Error> {
+        let key: &api::HsmEccPublicKey = HANDLE_TABLE.as_ref(value, HandleType::EccPubKey)?;
+        Ok(key.clone())
+    }
+}
+
+impl TryFrom<AzihsmHandle> for HandleType {
+    type Error = AzihsmError;
+
+    fn try_from(value: AzihsmHandle) -> Result<HandleType, Self::Error> {
+        HANDLE_TABLE.get_handle_type(value)
+    }
+}
+
 /// C FFI structure for a buffer
 ///
 /// # Safety
 /// When using this struct from C code:
-/// - `buf` must point to valid memory for `len` bytes
-/// - `buf` lifetime must exceed the lifetime of this struct
+/// - `ptr` must point to valid memory for `len` bytes
+/// - `ptr` lifetime must exceed the lifetime of this struct
 /// - Caller is responsible for proper memory management
 #[repr(C)]
 pub struct AzihsmBuffer {
-    pub buf: *mut c_void,
+    pub ptr: *mut c_void,
     pub len: u32,
 }
 
@@ -231,13 +276,13 @@ impl<'a> TryFrom<&'a AzihsmBuffer> for &'a [u8] {
     #[allow(unsafe_code)]
     fn try_from(buffer: &'a AzihsmBuffer) -> Result<Self, Self::Error> {
         // Check for null pointer
-        if buffer.buf.is_null() {
+        if buffer.ptr.is_null() {
             return Err(AzihsmError::InvalidArgument);
         }
 
         // Safety: Caller ensures buffer.buf points to valid memory
         let slice =
-            unsafe { std::slice::from_raw_parts(buffer.buf as *const u8, buffer.len as usize) };
+            unsafe { std::slice::from_raw_parts(buffer.ptr as *const u8, buffer.len as usize) };
 
         Ok(slice)
     }
@@ -254,7 +299,7 @@ impl<'a> TryFrom<&'a mut AzihsmBuffer> for &'a mut [u8] {
     #[allow(unsafe_code)]
     fn try_from(buffer: &'a mut AzihsmBuffer) -> Result<Self, Self::Error> {
         // Check for null pointer
-        if buffer.buf.is_null() {
+        if buffer.ptr.is_null() {
             // Only allow null buffer if length is 0
             if buffer.len == 0 {
                 return Ok(&mut []);
@@ -265,7 +310,7 @@ impl<'a> TryFrom<&'a mut AzihsmBuffer> for &'a mut [u8] {
 
         // Safety: Caller ensures buffer.buf points to valid memory
         let slice =
-            unsafe { std::slice::from_raw_parts_mut(buffer.buf as *mut u8, buffer.len as usize) };
+            unsafe { std::slice::from_raw_parts_mut(buffer.ptr as *mut u8, buffer.len as usize) };
 
         Ok(slice)
     }

@@ -374,3 +374,5 @@ bld_engine_test*
 # API C++ build artifacts
 api/cpp/build/
 api/cpp/build-release/
+napi/tests/cpp/build/
+napi/tests/cpp/build/-release/

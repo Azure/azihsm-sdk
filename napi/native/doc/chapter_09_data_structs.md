@@ -454,7 +454,7 @@ A sized buffer
 
 ```cpp
 struct azihsm_buffer{
-  azihsm_byte *buf;
+  azihsm_byte *ptr;
   azihsm_u32 len;
 };
 
@@ -464,7 +464,7 @@ struct azihsm_buffer{
 
  | Field | Type                         | Description                                                       |
  | ----- | ---------------------------- | ----------------------------------------------------------------- |
- | buf   | [azihsm_byte*](#azihsm_byte) | byte buffer                                                       |
+ | ptr   | [azihsm_byte*](#azihsm_byte) | pointer to buffer                                                 |
  | len   | [azihsm_u32](#azihsm_u32)    | length of the buffer                                       &nbsp; |
 
 

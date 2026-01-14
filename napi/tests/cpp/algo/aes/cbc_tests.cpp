@@ -11,7 +11,7 @@
 #include "handle/part_list_handle.hpp"
 #include "handle/session_handle.hpp"
 
-class azihsm_aes : public ::testing::Test
+class azihsm_aes_cbc : public ::testing::Test
 {
   protected:
     PartitionListHandle part_list_ = PartitionListHandle{};
@@ -38,7 +38,7 @@ class azihsm_aes : public ::testing::Test
 
         // Allocate buffer and perform operation
         std::vector<uint8_t> result(output.len);
-        output.buf = result.data();
+        output.ptr = result.data();
 
         if (encrypt)
         {
@@ -99,7 +99,7 @@ class azihsm_aes : public ::testing::Test
                 EXPECT_GT(out_buf.len, 0);
                 size_t current_pos = output.size();
                 output.resize(current_pos + out_buf.len);
-                out_buf.buf = output.data() + current_pos;
+                out_buf.ptr = output.data() + current_pos;
 
                 if (encrypt)
                 {
@@ -145,7 +145,7 @@ class azihsm_aes : public ::testing::Test
             EXPECT_GT(final_out.len, 0);
             size_t current_pos = output.size();
             output.resize(current_pos + final_out.len);
-            final_out.buf = output.data() + current_pos;
+            final_out.ptr = output.data() + current_pos;
 
             if (encrypt)
             {
@@ -166,7 +166,7 @@ class azihsm_aes : public ::testing::Test
     }
 };
 
-TEST_F(azihsm_aes, encrypt_decrypt_128)
+TEST_F(azihsm_aes_cbc, encrypt_decrypt_128)
 {
     part_list_.for_each_part([](std::vector<azihsm_char> &path) {
         // Open partition and create session
@@ -218,7 +218,7 @@ TEST_F(azihsm_aes, encrypt_decrypt_128)
     });
 }
 
-TEST_F(azihsm_aes, encrypt_decrypt_128_with_padding)
+TEST_F(azihsm_aes_cbc, encrypt_decrypt_128_with_padding)
 {
     part_list_.for_each_part([](std::vector<azihsm_char> &path) {
         // Open partition and create session
@@ -271,7 +271,7 @@ TEST_F(azihsm_aes, encrypt_decrypt_128_with_padding)
     });
 }
 
-TEST_F(azihsm_aes, streaming_encrypt_decrypt_no_padding)
+TEST_F(azihsm_aes_cbc, streaming_encrypt_decrypt_no_padding)
 {
     part_list_.for_each_part([](std::vector<azihsm_char> &path) {
         // Open partition and create session
@@ -326,7 +326,7 @@ TEST_F(azihsm_aes, streaming_encrypt_decrypt_no_padding)
     });
 }
 
-TEST_F(azihsm_aes, streaming_encrypt_decrypt_with_padding)
+TEST_F(azihsm_aes_cbc, streaming_encrypt_decrypt_with_padding)
 {
     part_list_.for_each_part([](std::vector<azihsm_char> &path) {
         // Open partition and create session
