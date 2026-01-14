@@ -31,30 +31,23 @@ impl HsmSigningKey for HsmHmacKey {}
 // `HsmHmacKey` can be used to verify HMAC tags by recomputing and comparing.
 impl HsmVerificationKey for HsmHmacKey {}
 
-/// Converts a generic secret-key handle into a typed HMAC key wrapper.
-///
-/// This conversion does not copy or expose key material. It simply re-wraps the
-/// existing shared key state (handle + properties) after validating that the
-/// underlying key is a secret HMAC key of a supported digest size.
 impl TryFrom<HsmGenericSecretKey> for HsmHmacKey {
     type Error = HsmError;
 
-    fn try_from(key: HsmGenericSecretKey) -> Result<Self, Self::Error> {
-        // Validate both the key kind and class.
-        //
-        // NOTE: `HsmGenericSecretKey` is a broad wrapper; this ensures callers
-        // can't accidentally pass (for example) an AES key or a non-secret key
-        // into HMAC operations.
-        if (key.kind() != HsmKeyKind::HmacSha256
-            && key.kind() != HsmKeyKind::HmacSha384
-            && key.kind() != HsmKeyKind::HmacSha512)
-            || key.class() != HsmKeyClass::Secret
+    fn try_from(gs_key: HsmGenericSecretKey) -> Result<Self, Self::Error> {
+        // ensure the generic secret key is actually an HMAC key
+        if gs_key.kind() != HsmKeyKind::HmacSha256
+            && gs_key.kind() != HsmKeyKind::HmacSha384
+            && gs_key.kind() != HsmKeyKind::HmacSha512
         {
             Err(HsmError::InvalidKey)?;
         }
 
-        // Re-wrap the existing inner key state so typed wrappers share the same
-        // underlying handle + drop semantics.
-        Ok(HsmHmacKey::from_inner(key.inner()))
+        // construct HsmHmacKey from the generic secret key's properties
+        Ok(HsmHmacKey::new(
+            gs_key.session(),
+            gs_key.props(),
+            gs_key.handle(),
+        ))
     }
 }

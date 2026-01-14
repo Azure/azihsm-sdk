@@ -117,18 +117,17 @@ impl HsmKeyUnwrapOp for HsmAesKeyRsaAesKeyUnwrapAlgo {
 impl TryFrom<HsmGenericSecretKey> for HsmAesKey {
     type Error = HsmError;
 
-    /// Converts a generic secret-key handle into a typed AES key wrapper.
-    ///
-    /// This is a cheap conversion: it re-wraps the same underlying key handle
-    /// (stored in shared state) after validating key kind and class.
-    fn try_from(key: HsmGenericSecretKey) -> Result<Self, Self::Error> {
-        // Ensure the generic key is actually an AES *secret* key.
-        if key.kind() != HsmKeyKind::Aes || key.class() != HsmKeyClass::Secret {
+    fn try_from(gs_key: HsmGenericSecretKey) -> Result<Self, Self::Error> {
+        // ensure the generic secret key is actually an AES key
+        if gs_key.kind() != HsmKeyKind::Aes {
             Err(HsmError::InvalidKey)?;
         }
 
-        // Re-wrap the existing inner key state so typed wrappers share the same
-        // underlying handle + drop semantics.
-        Ok(HsmAesKey::from_inner(key.inner()))
+        // construct HsmAesKey from the generic secret key's properties
+        Ok(HsmAesKey::new(
+            gs_key.session(),
+            gs_key.props(),
+            gs_key.handle(),
+        ))
     }
 }
