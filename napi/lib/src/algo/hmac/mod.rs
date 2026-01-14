@@ -17,6 +17,7 @@
 mod key;
 mod sign;
 
-use super::*;
 pub use key::*;
 pub use sign::*;
+
+use super::*;
