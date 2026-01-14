@@ -21,6 +21,19 @@ impl TryFrom<&AzihsmAlgo> for azihsm_napi::HsmAesKeyGenAlgo {
     }
 }
 
+/// Helper function to generate an AES key
+pub(crate) fn aes_generate_key(
+    session: &HsmSession,
+    algo: &AzihsmAlgo,
+    key_props: HsmKeyProps,
+) -> Result<AzihsmHandle, AzihsmError> {
+    let mut aes_algo = HsmAesKeyGenAlgo::try_from(algo)?;
+    let key = HsmKeyManager::generate_key(session, &mut aes_algo, key_props)?;
+    let handle = HANDLE_TABLE.alloc_handle(HandleType::AesKey, Box::new(key));
+
+    Ok(handle)
+}
+
 /// AES CBC parameters.
 #[repr(C)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]

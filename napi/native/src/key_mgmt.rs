@@ -3,6 +3,8 @@
 use azihsm_napi::*;
 
 use super::*;
+use crate::algo::aes::*;
+use crate::algo::ecc::*;
 
 /// Generate a symmetric key
 ///
@@ -35,11 +37,7 @@ pub unsafe extern "C" fn azihsm_key_gen(
         // Generate key based on algorithm ID
         let handle = match algo.id {
             // AES family algorithms
-            AzihsmAlgoId::AesKeyGen => {
-                let mut aes_algo = HsmAesKeyGenAlgo::try_from(algo)?;
-                let key = HsmKeyManager::generate_key(&session, &mut aes_algo, key_props)?;
-                HANDLE_TABLE.alloc_handle(HandleType::AesKey, Box::new(key))
-            }
+            AzihsmAlgoId::AesKeyGen => aes_generate_key(&session, algo, key_props)?,
 
             // Unknown or unsupported algorithms
             _ => Err(AzihsmError::InvalidArgument)?,
@@ -90,17 +88,7 @@ pub unsafe extern "C" fn azihsm_key_gen_pair(
         // Generate key based on algorithm ID
         let (priv_key, pub_key) = match algo.id {
             AzihsmAlgoId::EcKeyPairGen => {
-                let mut ecc_algo = HsmEccKeyGenAlgo::try_from(algo)?;
-                let (priv_key, pub_key) = HsmKeyManager::generate_key_pair(
-                    &session,
-                    &mut ecc_algo,
-                    priv_key_props,
-                    pub_key_props,
-                )?;
-                (
-                    HANDLE_TABLE.alloc_handle(HandleType::EccPrivKey, Box::new(priv_key)),
-                    HANDLE_TABLE.alloc_handle(HandleType::EccPubKey, Box::new(pub_key)),
-                )
+                ecc_generate_key_pair(&session, algo, priv_key_props, pub_key_props)?
             }
 
             // Unknown or unsupported algorithms

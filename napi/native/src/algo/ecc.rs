@@ -19,6 +19,23 @@ impl TryFrom<&AzihsmAlgo> for HsmEccKeyGenAlgo {
     }
 }
 
+/// Helper function to generate an ECC key pair
+pub(crate) fn ecc_generate_key_pair(
+    session: &HsmSession,
+    algo: &AzihsmAlgo,
+    priv_key_props: HsmKeyProps,
+    pub_key_props: HsmKeyProps,
+) -> Result<(AzihsmHandle, AzihsmHandle), AzihsmError> {
+    let mut ecc_algo = HsmEccKeyGenAlgo::try_from(algo)?;
+    let (priv_key, pub_key) =
+        HsmKeyManager::generate_key_pair(session, &mut ecc_algo, priv_key_props, pub_key_props)?;
+
+    let priv_handle = HANDLE_TABLE.alloc_handle(HandleType::EccPrivKey, Box::new(priv_key));
+    let pub_handle = HANDLE_TABLE.alloc_handle(HandleType::EccPubKey, Box::new(pub_key));
+
+    Ok((priv_handle, pub_handle))
+}
+
 /// Generic helper function to perform ECC signing operation
 fn sign_with_algo<A>(
     mut algo: A,
