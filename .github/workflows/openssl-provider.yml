@@ -27,6 +27,11 @@ jobs:
 
     - name: Checkout repository
       uses: actions/checkout@v4
+    
+    - name: Install build dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential perl libbsd-dev
 
     - name: Restore OpenSSL build cache
       uses: actions/cache@v3
@@ -36,12 +41,6 @@ jobs:
         key: openssl-${{ runner.os }}-${{ env.OPENSSL_COMMIT }}
         restore-keys: |
           openssl-${{ runner.os }}-${{ env.OPENSSL_COMMIT }}
-
-    - name: Install build dependencies
-      if: steps.cache-openssl.outputs.cache-hit != 'true'
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y build-essential perl libbsd-dev
 
     - name: Clone OpenSSL repository
       if: steps.cache-openssl.outputs.cache-hit != 'true'
@@ -61,7 +60,8 @@ jobs:
         cd ${{ env.OPENSSL_SOURCE_DIR }}
         ./Configure --prefix=${{ env.OPENSSL_INSTALL_DIR }} shared
         make -j$(nproc)
-        make install
+        make install_sw
+        make install_ssldirs
 
     - name: Build AZIHSM SDK
       run: cargo build --release
@@ -74,3 +74,13 @@ jobs:
 
         cd plugins/openssl
         make BUILD_TYPE=release ENABLE_WERROR=ON
+
+    - name: Test AZIHSM OpenSSL Provider - RSA Key Generation
+      run: |
+        export PATH="${{ env.OPENSSL_INSTALL_DIR }}/bin:${PATH}"
+        export LD_LIBRARY_PATH="${{ env.OPENSSL_INSTALL_DIR }}/lib64"
+
+        which openssl
+
+        "${{ env.OPENSSL_INSTALL_DIR }}/bin/openssl" genpkey -outform DER -provider-path "${{ github.workspace }}/plugins/openssl/build" -provider azihsm -text -algorithm RSA
+
