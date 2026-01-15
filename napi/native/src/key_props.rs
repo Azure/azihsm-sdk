@@ -10,6 +10,7 @@ use azihsm_napi::HsmKeyProps;
 use azihsm_napi::HsmKeyPropsBuilder;
 
 use super::*;
+use crate::algo::ecc::ecc_get_key_property;
 
 /// Key property identifier enumeration.
 ///
@@ -354,4 +355,37 @@ impl TryFrom<&AzihsmKeyPropList> for HsmKeyProps {
 
         Ok(builder.build()?)
     }
+}
+
+/// Get a property of a key
+///
+/// @param[in] key Handle to the key
+/// @param[in/out] key_prop Pointer to key property structure. On input, specifies which property to get. On output, contains the property value.
+///
+/// @return 0 on success, or a negative error code on failure
+///
+/// @internal
+/// # Safety
+/// This function is unsafe because it dereferences raw pointers.
+#[unsafe(no_mangle)]
+#[allow(unsafe_code)]
+pub unsafe extern "C" fn azihsm_key_get_prop(
+    key_handle: AzihsmHandle,
+    key_prop: *mut AzihsmKeyProp,
+) -> AzihsmError {
+    abi_boundary(|| {
+        validate_ptr(key_prop)?;
+
+        let prop = deref_mut_ptr(key_prop)?;
+        let key_type = HandleType::try_from(key_handle)?;
+
+        match key_type {
+            HandleType::EccPubKey | HandleType::EccPrivKey => {
+                ecc_get_key_property(key_handle, prop)?;
+            }
+            _ => Err(AzihsmError::InvalidHandle)?,
+        }
+
+        Ok(())
+    })
 }

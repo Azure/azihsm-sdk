@@ -140,7 +140,6 @@ Get key property.
 
 ```cpp
 azihsm_status azihsm_key_get_prop(
-    azihsm_handle sess_handle,
     azihsm_handle key,
     azihsm_key_prop *key_prop,
     );
@@ -150,7 +149,6 @@ azihsm_status azihsm_key_get_prop(
 
  | Parameter          | Name                                  | Description                   |
  | ------------------ | ------------------------------------- | ----------------------------- |
- | [in] sess_handle   | [azihsm_handle](#azihsm_handle)       | session handle                |
  | [in] key           | [azihsm_handle](#azihsm_handle)       | key to delete         &nsbsp; |
  | [in, out] key_prop | [azihsm_key_prop *](#azihsm_key_prop) | key property to retrieve      |
 

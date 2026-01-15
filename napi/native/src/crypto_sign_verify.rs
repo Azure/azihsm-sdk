@@ -158,6 +158,10 @@ pub unsafe extern "C" fn azihsm_crypt_sign_init(
             AzihsmAlgoId::EcdsaSha256 => ecc_sign_init(HsmHashAlgo::Sha256, key_handle)?,
             AzihsmAlgoId::EcdsaSha384 => ecc_sign_init(HsmHashAlgo::Sha384, key_handle)?,
             AzihsmAlgoId::EcdsaSha512 => ecc_sign_init(HsmHashAlgo::Sha512, key_handle)?,
+            AzihsmAlgoId::HmacSha1
+            | AzihsmAlgoId::HmacSha256
+            | AzihsmAlgoId::HmacSha384
+            | AzihsmAlgoId::HmacSha512 => hmac_sign_init(key_handle)?,
             _ => Err(AzihsmError::UnsupportedAlgorithm)?,
         };
 
@@ -191,7 +195,9 @@ pub unsafe extern "C" fn azihsm_crypt_sign_update(
             HandleType::EccSignStreamingCtx => {
                 ecc_sign_update(ctx_handle, input_data)?;
             }
-            // Add support for other context types here as needed (RSA, HMAC, etc.)
+            HandleType::HmacSignStreamingCtx => {
+                hmac_sign_update(ctx_handle, input_data)?;
+            }
             _ => Err(AzihsmError::InvalidHandle)?,
         }
 
@@ -225,7 +231,9 @@ pub unsafe extern "C" fn azihsm_crypt_sign_final(
             HandleType::EccSignStreamingCtx => {
                 ecc_sign_final(ctx_handle, sig_buf)?;
             }
-            // Add support for other context types here as needed (RSA, HMAC, etc.)
+            HandleType::HmacSignStreamingCtx => {
+                hmac_sign_final(ctx_handle, sig_buf)?;
+            }
             _ => Err(AzihsmError::InvalidHandle)?,
         }
 
@@ -266,6 +274,10 @@ pub unsafe extern "C" fn azihsm_crypt_verify_init(
             AzihsmAlgoId::EcdsaSha256 => ecc_verify_init(HsmHashAlgo::Sha256, key_handle)?,
             AzihsmAlgoId::EcdsaSha384 => ecc_verify_init(HsmHashAlgo::Sha384, key_handle)?,
             AzihsmAlgoId::EcdsaSha512 => ecc_verify_init(HsmHashAlgo::Sha512, key_handle)?,
+            AzihsmAlgoId::HmacSha1
+            | AzihsmAlgoId::HmacSha256
+            | AzihsmAlgoId::HmacSha384
+            | AzihsmAlgoId::HmacSha512 => hmac_verify_init(key_handle)?,
             _ => Err(AzihsmError::UnsupportedAlgorithm)?,
         };
 
@@ -299,7 +311,9 @@ pub unsafe extern "C" fn azihsm_crypt_verify_update(
             HandleType::EccVerifyStreamingCtx => {
                 ecc_verify_update(ctx_handle, input_data)?;
             }
-            // Add support for other context types here as needed (RSA, HMAC, etc.)
+            HandleType::HmacVerifyStreamingCtx => {
+                hmac_verify_update(ctx_handle, input_data)?;
+            }
             _ => Err(AzihsmError::InvalidHandle)?,
         }
 
@@ -330,7 +344,7 @@ pub unsafe extern "C" fn azihsm_crypt_verify_final(
 
         let is_valid = match ctx_type {
             HandleType::EccVerifyStreamingCtx => ecc_verify_final(ctx_handle, signature)?,
-            // Add support for other context types here as needed (RSA, HMAC, etc.)
+            HandleType::HmacVerifyStreamingCtx => hmac_verify_final(ctx_handle, signature)?,
             _ => Err(AzihsmError::InvalidHandle)?,
         };
 

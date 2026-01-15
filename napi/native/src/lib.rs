@@ -27,6 +27,9 @@ mod key_mgmt;
 mod key_props;
 mod partition;
 mod session;
+#[allow(unused)]
+#[path = "../../lib/src/shared_types.rs"]
+mod shared_types;
 mod str;
 mod utils;
 
@@ -44,6 +47,8 @@ use azihsm_napi::HsmKeyKind;
 use error::*;
 use handle_table::*;
 use key_props::*;
+#[allow(unused)]
+use shared_types::*;
 use str::*;
 use utils::*;
 
@@ -90,6 +95,10 @@ type AzihsmEccCurve = HsmEccCurve;
 /// An alias for key kinds.
 #[allow(unused)]
 type AzihsmKeyKind = HsmKeyKind;
+
+/// An alias for key classes.
+#[allow(unused)]
+type AzihsmKeyClass = HsmKeyClass;
 
 /// Global handle table for managing HSM object lifetimes.
 ///
@@ -323,5 +332,59 @@ impl TryFrom<AzihsmHandle> for api::HsmHmacKey {
     fn try_from(value: AzihsmHandle) -> Result<api::HsmHmacKey, Self::Error> {
         let key: &api::HsmHmacKey = HANDLE_TABLE.as_ref(value, HandleType::HmacKey)?;
         Ok(key.clone())
+    }
+}
+
+/// ECDH parameter structure matching C API
+#[repr(C)]
+pub struct AzihsmAlgoEcdhParams {
+    pub_key: *const AzihsmBuffer,
+}
+
+impl<'a> TryFrom<&'a AzihsmAlgo> for &'a AzihsmAlgoEcdhParams {
+    type Error = AzihsmError;
+
+    /// Extracts a reference to ECDH parameters from the algorithm specification.
+    ///
+    /// # Safety
+    /// The caller must ensure that `algo.params` points to valid `AzihsmAlgoEcdhParams` data
+    /// when the algorithm ID is ECDH.
+    #[allow(unsafe_code)]
+    fn try_from(algo: &'a AzihsmAlgo) -> Result<Self, Self::Error> {
+        // Check for null pointer
+        validate_ptr(algo.params)?;
+
+        // Safety: algo.params is validated to be non-null
+        let params = unsafe { &*(algo.params as *const AzihsmAlgoEcdhParams) };
+
+        Ok(params)
+    }
+}
+
+/// HKDF parameter structure matching C API
+#[repr(C)]
+pub struct AzihsmAlgoHkdfParams {
+    hmac_algo_id: AzihsmAlgoId,
+    salt: *const AzihsmBuffer,
+    info: *const AzihsmBuffer,
+}
+
+impl<'a> TryFrom<&'a AzihsmAlgo> for &'a AzihsmAlgoHkdfParams {
+    type Error = AzihsmError;
+
+    /// Extracts a reference to HKDF parameters from the algorithm specification.
+    ///
+    /// # Safety
+    /// The caller must ensure that `algo.params` points to valid `AzihsmAlgoHkdfParams` data
+    /// when the algorithm ID is HKDF.
+    #[allow(unsafe_code)]
+    fn try_from(algo: &'a AzihsmAlgo) -> Result<Self, Self::Error> {
+        // Check for null pointer
+        validate_ptr(algo.params)?;
+
+        // Safety: algo.params is validated to be non-null
+        let params = unsafe { &*(algo.params as *const AzihsmAlgoHkdfParams) };
+
+        Ok(params)
     }
 }

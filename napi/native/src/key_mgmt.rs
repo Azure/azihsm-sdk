@@ -5,6 +5,7 @@ use azihsm_napi::*;
 use super::*;
 use crate::algo::aes::*;
 use crate::algo::ecc::*;
+use crate::algo::kdf::*;
 use crate::algo::rsa::*;
 
 /// Generate a symmetric key
@@ -146,6 +147,54 @@ pub unsafe extern "C" fn azihsm_key_delete(key_handle: AzihsmHandle) -> AzihsmEr
             _ => Err(AzihsmError::UnsupportedKeyKind)?,
         }
 
+        Ok(())
+    })
+}
+
+/// Derive a key from a base key
+///
+/// @param[in] sess_handle Handle to the HSM session
+/// @param[in] algo Pointer to algorithm specification
+/// @param[in] base_key Handle to the base key
+/// @param[in] key_props Pointer to key properties list for the derived key
+/// @param[out] key_handle Pointer to store the derived key handle
+///
+/// @return 0 on success, or a negative error code on failure
+///
+/// @internal
+/// # Safety
+/// This function is unsafe because it dereferences raw pointers.
+#[unsafe(no_mangle)]
+#[allow(unsafe_code)]
+pub unsafe extern "C" fn azihsm_key_derive(
+    sess_handle: AzihsmHandle,
+    algo: *mut AzihsmAlgo,
+    base_key: AzihsmHandle,
+    key_props: *const AzihsmKeyPropList,
+    key_handle: *mut AzihsmHandle,
+) -> AzihsmError {
+    abi_boundary(|| {
+        validate_ptr(key_handle)?;
+
+        let algo = deref_ptr(algo)?;
+        let props = deref_ptr(key_props)?;
+        let derived_key_props = HsmKeyProps::try_from(props)?;
+        let session = HsmSession::try_from(sess_handle)?;
+
+        // Dispatch based on algorithm ID
+        let handle = match algo.id {
+            // ECDH derivation
+            AzihsmAlgoId::Ecdh => ecdh_derive_key(&session, algo, base_key, derived_key_props)?,
+
+            // HKDF derivation
+            AzihsmAlgoId::HkdfDerive => {
+                hkdf_derive_key(&session, algo, base_key, derived_key_props)?
+            }
+
+            _ => Err(AzihsmError::UnsupportedAlgorithm)?,
+        };
+
+        assign_ptr(key_handle, handle)?;
         Ok(())
     })
 }
