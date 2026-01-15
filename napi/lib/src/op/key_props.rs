@@ -549,3 +549,7 @@ impl HsmKeyPropsBuilder {
         })
     }
 }
+
+pub(crate) trait HsmKeyPropsValidator {
+    fn validate(props: &HsmKeyProps) -> HsmResult<()>;
+}

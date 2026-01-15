@@ -16,6 +16,41 @@ impl HsmEncryptionKey for HsmAesKey {}
 
 impl HsmDecryptionKey for HsmAesKey {}
 
+impl HsmKeyPropsValidator for HsmAesKey {
+    fn validate(props: &HsmKeyProps) -> HsmResult<()> {
+        // check if key kind is AES
+        if props.kind() != HsmKeyKind::Aes {
+            return Err(HsmError::InvalidKeyProps);
+        }
+
+        // check if key class is Secret
+        if props.class() != HsmKeyClass::Secret {
+            return Err(HsmError::InvalidKeyProps);
+        }
+
+        // check if key can be used for encryption or decryption
+        if props.can_sign()
+            || props.can_verify()
+            || props.can_derive()
+            || props.can_wrap()
+            || props.can_unwrap()
+        {
+            return Err(HsmError::InvalidKeyProps);
+        }
+
+        // check if key is extractable
+        if props.is_extractable() {
+            return Err(HsmError::InvalidKeyProps);
+        }
+
+        // check if key size is valid
+        match props.bits() {
+            128 | 192 | 256 => Ok(()),
+            _ => Err(HsmError::InvalidKeyProps),
+        }
+    }
+}
+
 /// HSM-based AES key generation algorithm.
 ///
 /// Implements the key generation operation trait for creating AES keys within
@@ -56,6 +91,9 @@ impl HsmKeyGenOp for HsmAesKeyGenAlgo {
         session: &Self::Session,
         props: HsmKeyProps,
     ) -> Result<Self::Key, Self::Error> {
+        //check key properties before generating key
+        HsmAesKey::validate(&props)?;
+
         let (handle, props) = ddi::aes_generate_key(session, props)?;
         Ok(HsmAesKey::new(session.clone(), props, handle))
     }
@@ -107,6 +145,9 @@ impl HsmKeyUnwrapOp for HsmAesKeyRsaAesKeyUnwrapAlgo {
         wrapped_key: &[u8],
         key_props: HsmKeyProps,
     ) -> Result<Self::Key, Self::Error> {
+        // Validate key properties before unwrapping, else handle will not be released properly
+        HsmAesKey::validate(&key_props)?;
+
         let (handle, props) =
             ddi::rsa_aes_unwrap_key(unwrapping_key, wrapped_key, self.hash_algo, key_props)?;
         let key = HsmAesKey::new(unwrapping_key.session().clone(), props, handle);
@@ -126,6 +167,9 @@ impl TryFrom<HsmGenericSecretKey> for HsmAesKey {
         if key.kind() != HsmKeyKind::Aes || key.class() != HsmKeyClass::Secret {
             Err(HsmError::InvalidKey)?;
         }
+
+        // Validate key properties before converting
+        HsmAesKey::validate(&key.props())?;
 
         // Re-wrap the existing inner key state so typed wrappers share the same
         // underlying handle + drop semantics.
