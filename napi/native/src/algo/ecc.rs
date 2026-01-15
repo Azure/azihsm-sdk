@@ -47,7 +47,7 @@ where
     A: HsmSignOp<Key = HsmEccPrivateKey, Error = HsmError>,
 {
     // Get the key from handle
-    let key: &HsmEccPrivateKey = &key_handle.try_into()?;
+    let key = &HsmEccPrivateKey::try_from(key_handle)?;
 
     // Determine required size
     let required_size = HsmSigner::sign(&mut algo, key, input, None)?;
@@ -75,7 +75,7 @@ where
     A: HsmVerifyOp<Key = HsmEccPublicKey, Error = HsmError>,
 {
     // Get the key from handle
-    let key: &HsmEccPublicKey = &key_handle.try_into()?;
+    let key = &HsmEccPublicKey::try_from(key_handle)?;
 
     Ok(HsmVerifier::verify(&mut algo, key, data, sig)?)
 }
@@ -123,7 +123,7 @@ pub(crate) fn ecc_sign_init(
     key_handle: AzihsmHandle,
 ) -> Result<AzihsmHandle, AzihsmError> {
     // Get the key from handle
-    let key: HsmEccPrivateKey = key_handle.try_into()?;
+    let key = HsmEccPrivateKey::try_from(key_handle)?;
 
     // Create the signing algorithm
     let sign_algo = HsmHashSignAlgo::new(hash_algo);
@@ -178,7 +178,7 @@ pub(crate) fn ecc_verify_init(
     key_handle: AzihsmHandle,
 ) -> Result<AzihsmHandle, AzihsmError> {
     // Get the key from handle
-    let key: HsmEccPublicKey = key_handle.try_into()?;
+    let key = HsmEccPublicKey::try_from(key_handle)?;
 
     // Create the verification algorithm
     let verify_algo = HsmHashSignAlgo::new(hash_algo);

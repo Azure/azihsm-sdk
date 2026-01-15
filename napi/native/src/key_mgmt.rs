@@ -33,7 +33,7 @@ pub unsafe extern "C" fn azihsm_key_gen(
         let algo = deref_ptr(algo)?;
         let props = deref_ptr(key_props)?;
         let key_props = HsmKeyProps::try_from(props)?;
-        let session: HsmSession = sess_handle.try_into()?;
+        let session: HsmSession = HsmSession::try_from(sess_handle)?;
 
         // Generate key based on algorithm ID
         let handle = match algo.id {
@@ -84,7 +84,7 @@ pub unsafe extern "C" fn azihsm_key_gen_pair(
         let pub_key_props = HsmKeyProps::try_from(props)?;
         let props = deref_ptr(priv_key_props)?;
         let priv_key_props = HsmKeyProps::try_from(props)?;
-        let session: HsmSession = sess_handle.try_into()?;
+        let session: HsmSession = HsmSession::try_from(sess_handle)?;
 
         // Generate key based on algorithm ID
         let (priv_key, pub_key) = match algo.id {
@@ -119,7 +119,7 @@ pub unsafe extern "C" fn azihsm_key_gen_pair(
 #[allow(unsafe_code)]
 pub unsafe extern "C" fn azihsm_key_delete(key_handle: AzihsmHandle) -> AzihsmError {
     abi_boundary(|| {
-        let key_type: HandleType = key_handle.try_into()?;
+        let key_type = HandleType::try_from(key_handle)?;
 
         match key_type {
             HandleType::AesKey => {
