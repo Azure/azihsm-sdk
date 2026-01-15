@@ -17,37 +17,71 @@ impl HsmEncryptionKey for HsmAesKey {}
 impl HsmDecryptionKey for HsmAesKey {}
 
 impl HsmKeyPropsValidator for HsmAesKey {
+    /// Validates that `props` describe a supported HSM-backed AES secret key.
+    ///
+    /// This is used as a defensive check at API boundaries (key generation,
+    /// unwrapping, and algorithm operations) so we fail fast with
+    /// [`HsmError::InvalidKeyProps`] instead of sending an invalid request to the device.
+    ///
+    /// # Enforced invariants
+    ///
+    /// - Key kind must be AES and class must be Secret.
+    /// - AES keys in this layer are restricted to encryption/decryption usage; we
+    ///   reject signing/verifying/derivation and key wrap/unwrap usage flags.
+    /// - Key material must not be extractable.
+    /// - Key size must be one of 128/192/256 bits.
     fn validate(props: &HsmKeyProps) -> HsmResult<()> {
-        // check if key kind is AES
+        // Kind/class: ensure we're validating an AES *secret* key.
         if props.kind() != HsmKeyKind::Aes {
-            return Err(HsmError::InvalidKeyProps);
+            Err(HsmError::InvalidKeyProps)?;
         }
 
-        // check if key class is Secret
+        // AES keys must be secret keys.
         if props.class() != HsmKeyClass::Secret {
-            return Err(HsmError::InvalidKeyProps);
+            Err(HsmError::InvalidKeyProps)?;
         }
 
-        // check if key can be used for encryption or decryption
+        // AES keys should be both encrypt/decrypt.
+        if !props.can_encrypt() && !props.can_decrypt() {
+            Err(HsmError::InvalidKeyProps)?;
+        }
+
+        // Usage restrictions: this wrapper is for AES encryption/decryption only.
         if props.can_sign()
             || props.can_verify()
             || props.can_derive()
             || props.can_wrap()
             || props.can_unwrap()
         {
-            return Err(HsmError::InvalidKeyProps);
+            Err(HsmError::InvalidKeyProps)?;
         }
 
-        // check if key is extractable
+        // Key material must not be extractable via this API.
         if props.is_extractable() {
-            return Err(HsmError::InvalidKeyProps);
+            Err(HsmError::InvalidKeyProps)?;
         }
 
-        // check if key size is valid
-        match props.bits() {
-            128 | 192 | 256 => Ok(()),
-            _ => Err(HsmError::InvalidKeyProps),
+        // Only standard AES key sizes are supported.
+        if props.bits() != 128 && props.bits() != 192 && props.bits() != 256 {
+            Err(HsmError::InvalidKeyProps)?;
         }
+
+        // Make sure ECC Curve is None for AES keys
+        if props.ecc_curve().is_some() {
+            Err(HsmError::InvalidKeyProps)?;
+        }
+
+        // AES keys should not pub key material
+        if props.pub_key_der().is_some() {
+            Err(HsmError::InvalidKeyProps)?;
+        }
+
+        // AES secret keys are not marked as private.
+        if props.is_private() {
+            Err(HsmError::InvalidKeyProps)?;
+        }
+
+        Ok(())
     }
 }
 
