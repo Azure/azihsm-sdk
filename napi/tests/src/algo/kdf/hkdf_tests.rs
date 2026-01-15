@@ -17,7 +17,7 @@ fn supported_hkdf_hash_algos() -> &'static [HsmHashAlgo] {
 fn derive_ecdh_shared_secrets(
     session: &HsmSession,
     curve: HsmEccCurve,
-) -> (HsmSharedSecretKey, HsmSharedSecretKey) {
+) -> (HsmGenericSecretKey, HsmGenericSecretKey) {
     let (priv_key_a, pub_key_a) = generate_ecc_keypair_with_derive(session.clone(), curve, true)
         .expect("Failed to generate key pair for party A");
 
@@ -35,7 +35,7 @@ fn derive_ecdh_shared_secrets(
 fn derive_aes_key_from_shared_secret(
     session: &HsmSession,
     hkdf_algo: &mut HsmHkdfAlgo,
-    shared_secret: &HsmSharedSecretKey,
+    shared_secret: &HsmGenericSecretKey,
     bits: u32,
 ) -> HsmAesKey {
     let aes_key_props = HsmKeyPropsBuilder::default()
@@ -53,6 +53,8 @@ fn derive_aes_key_from_shared_secret(
     assert_eq!(derived_key.kind(), HsmKeyKind::Aes);
     assert_eq!(derived_key.bits(), bits);
     derived_key
+        .try_into()
+        .expect("Derived key was not an AES key")
 }
 
 fn assert_aes_cbc_roundtrip(enc_key: &HsmAesKey, dec_key: &HsmAesKey, plaintext: &[u8]) {

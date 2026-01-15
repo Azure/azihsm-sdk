@@ -16,6 +16,6 @@ pub use super::*;
 //
 // This type typically represents the output of key-derivation operations that yield raw secret
 // material (e.g., ECDH). It intentionally does not encode an algorithm-specific key kind.
-define_hsm_key!(pub HsmSharedSecretKey);
+define_hsm_key!(pub HsmGenericSecretKey);
 
-impl HsmDerivationKey for HsmSharedSecretKey {}
+impl HsmDerivationKey for HsmGenericSecretKey {}

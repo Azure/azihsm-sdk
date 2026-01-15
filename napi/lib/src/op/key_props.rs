@@ -55,6 +55,18 @@ pub enum HsmKeyKind {
 
     /// Shared secret key kind.
     SharedSecret = 5,
+
+    /// HMAC SHA 1 is not supported.
+    // HmacSha1 = 6,
+
+    /// HMAC SHA 256
+    HmacSha256 = 7,
+
+    /// HMAC SHA 384
+    HmacSha384 = 8,
+
+    /// HMAC SHA 512
+    HmacSha512 = 9,
 }
 
 impl TryFrom<u32> for HsmKeyKind {
@@ -66,6 +78,9 @@ impl TryFrom<u32> for HsmKeyKind {
             2 => Ok(HsmKeyKind::Ecc),
             3 => Ok(HsmKeyKind::Aes),
             5 => Ok(HsmKeyKind::SharedSecret),
+            7 => Ok(HsmKeyKind::HmacSha256),
+            8 => Ok(HsmKeyKind::HmacSha384),
+            9 => Ok(HsmKeyKind::HmacSha512),
             _ => Err(HsmError::InvalidArgument),
         }
     }
