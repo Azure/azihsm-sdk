@@ -58,7 +58,7 @@ impl Xtask for Setup {
 
         // Run Install cargo-audit
         let install_cargo_audit = install::Install {
-            crate_name: "cargo-audit@0.22".to_string(),
+            crate_name: "cargo-audit@0.22.0".to_string(),
             force: self.force,
             config: self.config.clone(),
         };
