@@ -5,6 +5,7 @@ use azihsm_napi::*;
 use super::*;
 use crate::algo::aes::*;
 use crate::algo::ecc::*;
+use crate::algo::rsa::*;
 
 /// Generate a symmetric key
 ///
@@ -90,6 +91,9 @@ pub unsafe extern "C" fn azihsm_key_gen_pair(
             AzihsmAlgoId::EcKeyPairGen => {
                 ecc_generate_key_pair(&session, algo, priv_key_props, pub_key_props)?
             }
+            AzihsmAlgoId::RsaKeyUnwrappingKeyPairGen => {
+                rsa_generate_key_pair(&session, algo, priv_key_props, pub_key_props)?
+            }
 
             // Unknown or unsupported algorithms
             _ => Err(AzihsmError::InvalidArgument)?,
@@ -128,6 +132,15 @@ pub unsafe extern "C" fn azihsm_key_delete(key_handle: AzihsmHandle) -> AzihsmEr
             }
             HandleType::EccPubKey => {
                 let key: Box<HsmEccPublicKey> = HANDLE_TABLE.free_handle(key_handle, key_type)?;
+                key.delete_key()?;
+            }
+            HandleType::RsaPrivKey => {
+                let _key: Box<HsmRsaPrivateKey> = HANDLE_TABLE.free_handle(key_handle, key_type)?;
+                // [FIXME] Delete for HSM internal RSA private key should be no-op.
+                //key.delete_key()?;
+            }
+            HandleType::RsaPubKey => {
+                let key: Box<HsmRsaPublicKey> = HANDLE_TABLE.free_handle(key_handle, key_type)?;
                 key.delete_key()?;
             }
             _ => Err(AzihsmError::UnsupportedKeyKind)?,

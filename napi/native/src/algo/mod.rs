@@ -2,6 +2,7 @@
 
 pub(crate) mod aes;
 pub(crate) mod ecc;
+pub(crate) mod rsa;
 
 use std::ffi::c_void;
 
@@ -37,9 +38,9 @@ pub enum AzihsmAlgoId {
     // ======================================================
     // RSA Algorithms (0x0001xxxx)
     // ======================================================
-    /// RSA PKCS#1 v1.5 Key Pair Generation.
-    // Corresponds to AZIHSM_ALGO_ID_RSA_PKCS_KEY_PAIR_GEN
-    RsaPkcsKeyPairGen = 0x00010001,
+    /// RSA Key Unwrap Key Pair Generation.
+    // Corresponds to AZIHSM_ALGO_ID_RSA_KEY_UNWRAPPING_KEY_PAIR_GEN
+    RsaKeyUnwrappingKeyPairGen = 0x00010001,
 
     /// RSA PKCS#1 v1.5 Sign & Verify.
     // Corresponds to AZIHSM_ALGO_ID_RSA_PKCS
