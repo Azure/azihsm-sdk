@@ -3,6 +3,7 @@
 pub(crate) mod aes;
 pub(crate) mod ecc;
 pub(crate) mod rsa;
+pub(crate) mod sha;
 
 use std::ffi::c_void;
 
