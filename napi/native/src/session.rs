@@ -32,7 +32,7 @@ pub unsafe extern "C" fn azihsm_sess_open(
         let credentials = deref_ptr(creds)?;
 
         // Get the partition from the handle
-        let partition: &api::HsmPartition = &dev_handle.try_into()?;
+        let partition = &api::HsmPartition::try_from(dev_handle)?;
 
         let session =
             Box::new(partition.open_session(api_rev.into(), &credentials.into(), None)?);

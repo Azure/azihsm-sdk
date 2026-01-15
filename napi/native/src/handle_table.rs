@@ -18,6 +18,9 @@ pub(crate) enum HandleType {
     EccPubKey,
     EccSignStreamingCtx,
     EccVerifyStreamingCtx,
+    RsaPrivKey,
+    RsaPubKey,
+    ShaStreamingCtx,
 }
 
 struct Entry {

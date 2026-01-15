@@ -156,7 +156,7 @@ pub(crate) fn aes_cbc_crypt(
     }
 
     // Get the AES key from handle table
-    let key: &HsmAesKey = &key_handle.try_into()?;
+    let key = &HsmAesKey::try_from(key_handle)?;
 
     let algo_id = algo.id;
     let params: &mut AzihsmAlgoAesCbcParams = algo.try_into()?;
@@ -216,7 +216,7 @@ pub(crate) fn aes_cbc_streaming_init(
     op: CryptoOp,
 ) -> Result<AzihsmHandle, AzihsmError> {
     // Get the AES key from handle table
-    let key: &HsmAesKey = &key_handle.try_into()?;
+    let key = &HsmAesKey::try_from(key_handle)?;
 
     let algo_id = algo.id;
     let params: &mut AzihsmAlgoAesCbcParams = algo.try_into()?;

@@ -200,7 +200,7 @@ pub unsafe extern "C" fn azihsm_part_init(
         let creds = deref_ptr(creds)?;
 
         // Get the partition from the handle
-        let partition: &HsmPartition = &part_handle.try_into()?;
+        let partition = &HsmPartition::try_from(part_handle)?;
 
         partition.init(creds.into(), None, None, None)?;
 

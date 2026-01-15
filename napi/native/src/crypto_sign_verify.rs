@@ -174,8 +174,7 @@ pub unsafe extern "C" fn azihsm_crypt_sign_update(
     abi_boundary(|| {
         let data_buf = deref_ptr(data)?;
         let input_data: &[u8] = data_buf.try_into()?;
-
-        let ctx_type: HandleType = ctx_handle.try_into()?;
+        let ctx_type = HandleType::try_from(ctx_handle)?;
 
         match ctx_type {
             HandleType::EccSignStreamingCtx => {
@@ -209,8 +208,7 @@ pub unsafe extern "C" fn azihsm_crypt_sign_final(
 ) -> AzihsmError {
     abi_boundary(|| {
         let sig_buf = deref_mut_ptr(sig)?;
-
-        let ctx_type: HandleType = ctx_handle.try_into()?;
+        let ctx_type = HandleType::try_from(ctx_handle)?;
 
         match ctx_type {
             HandleType::EccSignStreamingCtx => {
@@ -284,8 +282,7 @@ pub unsafe extern "C" fn azihsm_crypt_verify_update(
     abi_boundary(|| {
         let data_buf = deref_ptr(data)?;
         let input_data: &[u8] = data_buf.try_into()?;
-
-        let ctx_type: HandleType = ctx_handle.try_into()?;
+        let ctx_type: HandleType = HandleType::try_from(ctx_handle)?;
 
         match ctx_type {
             HandleType::EccVerifyStreamingCtx => {
@@ -318,8 +315,7 @@ pub unsafe extern "C" fn azihsm_crypt_verify_final(
     abi_boundary(|| {
         let sig_buf = deref_ptr(sig)?;
         let signature: &[u8] = sig_buf.try_into()?;
-
-        let ctx_type: HandleType = ctx_handle.try_into()?;
+        let ctx_type: HandleType = HandleType::try_from(ctx_handle)?;
 
         let is_valid = match ctx_type {
             HandleType::EccVerifyStreamingCtx => ecc_verify_final(ctx_handle, signature)?,

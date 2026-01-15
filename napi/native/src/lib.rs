@@ -16,6 +16,7 @@
 //! - C-compatible types and calling conventions
 
 mod algo;
+mod crypto_digest;
 mod crypto_enc_dec;
 mod crypto_sign_verify;
 #[allow(unused)]

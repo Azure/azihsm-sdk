@@ -5,6 +5,7 @@ use azihsm_napi::*;
 use super::*;
 use crate::algo::aes::*;
 use crate::algo::ecc::*;
+use crate::algo::rsa::*;
 
 /// Generate a symmetric key
 ///
@@ -32,7 +33,7 @@ pub unsafe extern "C" fn azihsm_key_gen(
         let algo = deref_ptr(algo)?;
         let props = deref_ptr(key_props)?;
         let key_props = HsmKeyProps::try_from(props)?;
-        let session: HsmSession = sess_handle.try_into()?;
+        let session: HsmSession = HsmSession::try_from(sess_handle)?;
 
         // Generate key based on algorithm ID
         let handle = match algo.id {
@@ -83,12 +84,15 @@ pub unsafe extern "C" fn azihsm_key_gen_pair(
         let pub_key_props = HsmKeyProps::try_from(props)?;
         let props = deref_ptr(priv_key_props)?;
         let priv_key_props = HsmKeyProps::try_from(props)?;
-        let session: HsmSession = sess_handle.try_into()?;
+        let session: HsmSession = HsmSession::try_from(sess_handle)?;
 
         // Generate key based on algorithm ID
         let (priv_key, pub_key) = match algo.id {
             AzihsmAlgoId::EcKeyPairGen => {
                 ecc_generate_key_pair(&session, algo, priv_key_props, pub_key_props)?
+            }
+            AzihsmAlgoId::RsaKeyUnwrappingKeyPairGen => {
+                rsa_generate_key_pair(&session, algo, priv_key_props, pub_key_props)?
             }
 
             // Unknown or unsupported algorithms
@@ -115,7 +119,7 @@ pub unsafe extern "C" fn azihsm_key_gen_pair(
 #[allow(unsafe_code)]
 pub unsafe extern "C" fn azihsm_key_delete(key_handle: AzihsmHandle) -> AzihsmError {
     abi_boundary(|| {
-        let key_type: HandleType = key_handle.try_into()?;
+        let key_type = HandleType::try_from(key_handle)?;
 
         match key_type {
             HandleType::AesKey => {
@@ -128,6 +132,15 @@ pub unsafe extern "C" fn azihsm_key_delete(key_handle: AzihsmHandle) -> AzihsmEr
             }
             HandleType::EccPubKey => {
                 let key: Box<HsmEccPublicKey> = HANDLE_TABLE.free_handle(key_handle, key_type)?;
+                key.delete_key()?;
+            }
+            HandleType::RsaPrivKey => {
+                let _key: Box<HsmRsaPrivateKey> = HANDLE_TABLE.free_handle(key_handle, key_type)?;
+                // [FIXME] Delete for HSM internal RSA private key should be no-op.
+                //key.delete_key()?;
+            }
+            HandleType::RsaPubKey => {
+                let key: Box<HsmRsaPublicKey> = HANDLE_TABLE.free_handle(key_handle, key_type)?;
                 key.delete_key()?;
             }
             _ => Err(AzihsmError::UnsupportedKeyKind)?,
