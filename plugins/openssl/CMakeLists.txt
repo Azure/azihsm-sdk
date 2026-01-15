@@ -109,6 +109,7 @@ set_target_properties(azihsm_ossl_provider PROPERTIES PREFIX "")
 set_target_properties(azihsm_ossl_provider PROPERTIES OUTPUT_NAME "azihsm")
 
 target_link_libraries(azihsm_ossl_provider PUBLIC ${OPENSSL_CRYPTO_LIBRARY})
+target_link_libraries(azihsm_ossl_provider PUBLIC bsd)
 target_link_libraries(azihsm_ossl_provider PUBLIC ${AZIHSM_SDK_PATH}/target/${AZIHSM_BUILD_TYPE}/libazihsm.so)
 
 if (NOT DEFINED OPENSSL_PROVIDERS)

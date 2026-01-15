@@ -1,4 +1,6 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
+#define _DEFAULT_SOURCE
+#include <strings.h>
 #include <openssl/core_dispatch.h>
 #include <openssl/err.h>
 #include <openssl/evp.h>
