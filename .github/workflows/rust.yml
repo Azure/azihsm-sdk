@@ -21,26 +21,25 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Run Setup
-      run: cargo xtask setup
+      run: cargo xtask precheck --setup
     - name: Run Copyright
-      run: cargo xtask copyright
+      run: cargo xtask precheck --copyright
     - name: Cargo format
       run: |
         cargo +nightly fmt --version
-        cargo xtask fmt --toolchain nightly
+        cargo xtask precheck --fmt
     - name: Cargo Clippy
       run: |
         cargo clippy --version
-        cargo xtask clippy
+        cargo xtask precheck --clippy
     - name: Clean release native build and run tests
-      run: cargo xtask nbt --clean --config Release --test
+      run: cargo xtask precheck --nbt
     - name: SDK Run all mock tests
-      run: cargo xtask nextest --features mock
+      run: cargo xtask precheck --nextest --features mock
     - name: SDK Run all mock tests table-4
-      run: cargo xtask nextest --package azihsm_ddi --features mock,table-4
+      run: cargo xtask precheck --nextest --package azihsm_ddi --features mock,table-4
     - name: SDK Run all mock tests table-64
-      run: cargo xtask nextest --package azihsm_ddi --features mock,table-64
-
+      run: cargo xtask precheck --nextest --package azihsm_ddi --features mock,table-64
   build_windows:
 
     runs-on: windows-latest
@@ -52,18 +51,18 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Run Setup
-      run: cargo xtask setup
+      run: cargo xtask precheck --setup
     - name: Run Copyright
-      run: cargo xtask copyright
+      run: cargo xtask precheck --copyright
     - name: Cargo format
       run: |
         cargo +nightly fmt --version
-        cargo xtask fmt --toolchain nightly
+        cargo xtask precheck --fmt
     - name: Cargo Clippy
       run: |
         cargo clippy --version
-        cargo xtask clippy
+        cargo xtask precheck --clippy
     - name: Clean release native build and run tests
-      run: cargo xtask nbt --clean --config Release --test
+      run: cargo xtask precheck --nbt
     - name: SDK Run all mock tests
-      run: cargo xtask nextest --features mock
+      run: cargo xtask precheck --nextest --features mock
