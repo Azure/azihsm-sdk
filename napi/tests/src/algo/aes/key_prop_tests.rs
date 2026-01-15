@@ -93,6 +93,24 @@ fn test_aes_key_prop_kind_validation(session: HsmSession) {
         "Key generation should fail with InvalidKeyProps for non-AES keys"
     );
 }
+
+#[session_test]
+fn test_aes_key_prop_ecc_curve_rejected(session: HsmSession) {
+    // ECC curve metadata must not be set for AES keys.
+    let invalid_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::Aes)
+        .bits(256)
+        .ecc_curve(HsmEccCurve::P256)
+        .can_encrypt(true)
+        .can_decrypt(true)
+        .build()
+        .expect("Failed to build key props");
+
+    let result = test_aes_key_prop_gen_key(&session, invalid_props);
+    assert!(matches!(result, Err(HsmError::InvalidKeyProps)));
+}
+
 #[session_test]
 fn test_aes_key_prop_sign_validation(session: HsmSession) {
     //build key properties with invalid usage flags for AES key

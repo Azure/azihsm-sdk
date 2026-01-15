@@ -117,7 +117,7 @@ impl HsmEncryptOp for HsmAesCbcAlgo {
         ciphertext: Option<&mut [u8]>,
     ) -> Result<usize, Self::Error> {
         // Validate key properties before encrypting.
-        HsmAesKey::validate(&key.props())?;
+        HsmAesKey::validate_props(&key.props())?;
 
         //Return error if padding is disabled and plaintext is not block aligned
         let expected_len = if self.pad {
@@ -164,7 +164,7 @@ impl HsmEncryptStreamingOp for HsmAesCbcAlgo {
     /// * `Err(HsmError)` - If initialization fails
     fn encrypt_init(self, key: Self::Key) -> Result<Self::Context, Self::Error> {
         // Validate key properties before encrypting.
-        HsmAesKey::validate(&key.props())?;
+        HsmAesKey::validate_props(&key.props())?;
 
         Ok(HsmAesCbcEncryptContext {
             algo: self,
@@ -340,7 +340,7 @@ impl HsmDecryptOp for HsmAesCbcAlgo {
         plaintext: Option<&mut [u8]>,
     ) -> Result<usize, Self::Error> {
         // Validate key properties before decrypting.
-        HsmAesKey::validate(&key.props())?;
+        HsmAesKey::validate_props(&key.props())?;
 
         //Return error if cipher text is not block aligned, AES Cipher Text should be always block aligned
         if ciphertext.is_empty() || !ciphertext.len().is_multiple_of(Self::BLOCK_SIZE) {
@@ -385,7 +385,7 @@ impl HsmDecryptStreamingOp for HsmAesCbcAlgo {
     /// * `Err(HsmError)` - If initialization fails
     fn decrypt_init(self, key: Self::Key) -> Result<Self::Context, Self::Error> {
         // Validate key properties before decrypting.
-        HsmAesKey::validate(&key.props())?;
+        HsmAesKey::validate_props(&key.props())?;
         Ok(HsmAesCbcDecryptContext {
             algo: self,
             key,

@@ -10,6 +10,22 @@ use super::*;
 
 define_hsm_key!(pub HsmAesKey);
 
+impl HsmAesKey {
+    /// Returns whether `bits` is a supported AES key size.
+    ///
+    /// The value is expressed in **bits** (not bytes). This layer only accepts
+    /// standard AES key sizes: 128, 192, and 256.
+    ///
+    /// This is used by [`HsmAesKey::validate_props`] to reject unsupported key
+    /// sizes early.
+    fn validate_key_size(bits: usize) -> Result<(), HsmError> {
+        match bits {
+            128 | 192 | 256 => Ok(()),
+            _ => Err(HsmError::InvalidKeyProps),
+        }
+    }
+}
+
 impl HsmSecretKey for HsmAesKey {}
 
 impl HsmEncryptionKey for HsmAesKey {}
@@ -30,7 +46,15 @@ impl HsmKeyPropsValidator for HsmAesKey {
     ///   reject signing/verifying/derivation and key wrap/unwrap usage flags.
     /// - Key material must not be extractable.
     /// - Key size must be one of 128/192/256 bits.
-    fn validate(props: &HsmKeyProps) -> HsmResult<()> {
+    fn validate_props(props: &HsmKeyProps) -> HsmResult<()> {
+        let supported_flags = HsmKeyFlags::ENCRYPT
+            | HsmKeyFlags::DECRYPT //AES Keys can be used for both encrypt and decrypt
+            | HsmKeyFlags::LOCAL // Keys can be local
+            | HsmKeyFlags::SESSION // Session keys
+            | HsmKeyFlags::NEVER_EXTRACTABLE // Keys must not be extractable
+            | HsmKeyFlags::ALWAYS_SENSITIVE // Keys must always be sensitive
+            | HsmKeyFlags::DESTROYABLE; // Keys can be destroyed
+
         // Kind/class: ensure we're validating an AES *secret* key.
         if props.kind() != HsmKeyKind::Aes {
             Err(HsmError::InvalidKeyProps)?;
@@ -41,46 +65,18 @@ impl HsmKeyPropsValidator for HsmAesKey {
             Err(HsmError::InvalidKeyProps)?;
         }
 
-        // AES keys should be both encrypt/decrypt.
-        if !props.can_encrypt() && !props.can_decrypt() {
-            Err(HsmError::InvalidKeyProps)?;
-        }
-
-        // Usage restrictions: this wrapper is for AES encryption/decryption only.
-        if props.can_sign()
-            || props.can_verify()
-            || props.can_derive()
-            || props.can_wrap()
-            || props.can_unwrap()
-        {
-            Err(HsmError::InvalidKeyProps)?;
-        }
-
-        // Key material must not be extractable via this API.
-        if props.is_extractable() {
-            Err(HsmError::InvalidKeyProps)?;
-        }
-
         // Only standard AES key sizes are supported.
-        if props.bits() != 128 && props.bits() != 192 && props.bits() != 256 {
-            Err(HsmError::InvalidKeyProps)?;
-        }
+        HsmAesKey::validate_key_size(props.bits() as usize)?;
 
-        // Make sure ECC Curve is None for AES keys
+        // check if Ecc curve is set
         if props.ecc_curve().is_some() {
             Err(HsmError::InvalidKeyProps)?;
         }
 
-        // AES keys should not pub key material
-        if props.pub_key_der().is_some() {
+        // Ensure no invalid usage flags are set.
+        if props.check_unsupported_flags(supported_flags) {
             Err(HsmError::InvalidKeyProps)?;
         }
-
-        // AES secret keys are not marked as private.
-        if props.is_private() {
-            Err(HsmError::InvalidKeyProps)?;
-        }
-
         Ok(())
     }
 }
@@ -126,7 +122,7 @@ impl HsmKeyGenOp for HsmAesKeyGenAlgo {
         props: HsmKeyProps,
     ) -> Result<Self::Key, Self::Error> {
         //check key properties before generating key
-        HsmAesKey::validate(&props)?;
+        HsmAesKey::validate_props(&props)?;
 
         let (handle, props) = ddi::aes_generate_key(session, props)?;
         Ok(HsmAesKey::new(session.clone(), props, handle))
@@ -180,7 +176,7 @@ impl HsmKeyUnwrapOp for HsmAesKeyRsaAesKeyUnwrapAlgo {
         key_props: HsmKeyProps,
     ) -> Result<Self::Key, Self::Error> {
         // Validate key properties before unwrapping, else handle will not be released properly
-        HsmAesKey::validate(&key_props)?;
+        HsmAesKey::validate_props(&key_props)?;
 
         let (handle, props) =
             ddi::rsa_aes_unwrap_key(unwrapping_key, wrapped_key, self.hash_algo, key_props)?;
@@ -203,7 +199,7 @@ impl TryFrom<HsmGenericSecretKey> for HsmAesKey {
         }
 
         // Validate key properties before converting
-        HsmAesKey::validate(&key.props())?;
+        HsmAesKey::validate_props(&key.props())?;
 
         // Re-wrap the existing inner key state so typed wrappers share the same
         // underlying handle + drop semantics.

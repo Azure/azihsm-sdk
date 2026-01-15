@@ -433,6 +433,11 @@ impl HsmKeyProps {
     pub(crate) fn set_pub_key_der(&mut self, pub_key_der: &[u8]) {
         self.pub_key_der = Some(pub_key_der.to_vec());
     }
+
+    pub(crate) fn check_unsupported_flags(&self, allowed_flags: HsmKeyFlags) -> bool {
+        // Returns true if any current flag is not in `allowed_flags`.
+        !(self.flags & !allowed_flags).is_empty()
+    }
 }
 
 /// Builder for constructing [`KeyProps`] instances.
@@ -567,5 +572,5 @@ pub(crate) trait HsmKeyPropsValidator {
     ///
     /// Implementations should not mutate `props` and should be safe to call on
     /// properties obtained from either user input (builders) or device responses.
-    fn validate(props: &HsmKeyProps) -> HsmResult<()>;
+    fn validate_props(props: &HsmKeyProps) -> HsmResult<()>;
 }
