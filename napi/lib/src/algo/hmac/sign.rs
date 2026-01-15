@@ -284,9 +284,29 @@ impl HsmSignStreamingOpContext for HsmHmacSignContext {
     }
 }
 
+/// Context for buffered streaming HMAC operations.
+///
+/// This context buffers message bytes provided via `update()` and performs the
+/// final HMAC operation when `finish()` is called.
+///
+/// # Internal State
+///
+/// The context encapsulates:
+/// - A cloned HMAC algorithm instance
+/// - A key handle used for the final operation
+/// - An in-memory message buffer that grows with each `update()` call
+///
+/// # Lifecycle
+///
+/// 1. Created via  [`HsmVerifyStreamingOp::verify_init`]
+/// 2. Message bytes appended via `update()`
+/// 3. Tag generated/verified via `finish()`
+///
+/// Note: `finish()` does not clear the accumulated buffer; subsequent `update()` calls
+/// continue appending to the existing message.
 impl HsmVerifyStreamingOp for HsmHmacAlgo {
     type Key = HsmHmacKey;
-    type Context = HsmHmacSignContext;
+    type Context = HsmHmacVerifyContext;
     type Error = HsmError;
 
     /// Initializes a streaming verification context.
@@ -307,14 +327,46 @@ impl HsmVerifyStreamingOp for HsmHmacAlgo {
     ///
     /// This initializer currently cannot fail.
     fn verify_init(self, key: Self::Key) -> Result<Self::Context, Self::Error> {
-        Ok(HsmHmacSignContext {
+        Ok(HsmHmacVerifyContext {
             algo: self,
             key,
             data: Vec::with_capacity(Self::MAX_MESSAGE_SIZE),
         })
     }
 }
-impl HsmVerifyStreamingOpContext for HsmHmacSignContext {
+
+/// Context for buffered streaming HMAC verify operations.
+///
+/// This context buffers message bytes provided via `update()` and performs the
+/// final HMAC operation when `finish()` is called.
+///
+/// # Internal State
+///
+/// The context encapsulates:
+/// - A cloned HMAC algorithm instance
+/// - A key handle used for the final operation
+/// - An in-memory message buffer that grows with each `update()` call
+///
+/// # Lifecycle
+///
+/// 1. Created via [`HsmVerifyStreamingOp::verify_init`]
+/// 2. Message bytes appended via `update()`
+/// 3. Tag generated/verified via `finish()`
+///
+/// Note: `finish()` does not clear the accumulated buffer; subsequent `update()` calls
+/// continue appending to the existing message.
+pub struct HsmHmacVerifyContext {
+    algo: HsmHmacAlgo,
+    key: HsmHmacKey,
+
+    /// Buffered message data.
+    ///
+    /// The initial capacity is set to 1024 bytes to match the current DDI limit.
+    /// This is only a capacity hint; callers must still ensure the total message
+    /// size is within the device limit.
+    data: Vec<u8>,
+}
+impl HsmVerifyStreamingOpContext for HsmHmacVerifyContext {
     type Algo = HsmHmacAlgo;
 
     /// Appends bytes to the buffered message.
