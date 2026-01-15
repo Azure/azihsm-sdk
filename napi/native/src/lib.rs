@@ -316,3 +316,12 @@ impl<'a> TryFrom<&'a mut AzihsmBuffer> for &'a mut [u8] {
         Ok(slice)
     }
 }
+
+impl TryFrom<AzihsmHandle> for api::HsmHmacKey {
+    type Error = AzihsmError;
+
+    fn try_from(value: AzihsmHandle) -> Result<api::HsmHmacKey, Self::Error> {
+        let key: &api::HsmHmacKey = HANDLE_TABLE.as_ref(value, HandleType::HmacKey)?;
+        Ok(key.clone())
+    }
+}

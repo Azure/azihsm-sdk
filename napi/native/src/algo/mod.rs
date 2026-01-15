@@ -2,6 +2,7 @@
 
 pub(crate) mod aes;
 pub(crate) mod ecc;
+pub(crate) mod hmac;
 pub(crate) mod rsa;
 pub(crate) mod sha;
 

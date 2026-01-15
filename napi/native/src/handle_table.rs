@@ -21,6 +21,7 @@ pub(crate) enum HandleType {
     RsaPrivKey,
     RsaPubKey,
     ShaStreamingCtx,
+    HmacKey,
 }
 
 struct Entry {

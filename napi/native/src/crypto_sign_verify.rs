@@ -4,6 +4,7 @@ use azihsm_napi::*;
 
 use super::*;
 use crate::algo::ecc::*;
+use crate::algo::hmac::*;
 
 /// Sign data using a cryptographic key and algorithm.
 ///
@@ -51,6 +52,12 @@ pub unsafe extern "C" fn azihsm_crypt_sign(
             }
             AzihsmAlgoId::EcdsaSha512 => {
                 ecc_hash_sign(HsmHashAlgo::Sha512, key_handle, input_data, sig_buf)?;
+            }
+            AzihsmAlgoId::HmacSha1
+            | AzihsmAlgoId::HmacSha256
+            | AzihsmAlgoId::HmacSha384
+            | AzihsmAlgoId::HmacSha512 => {
+                hmac_sign(key_handle, input_data, sig_buf)?;
             }
             _ => Err(AzihsmError::UnsupportedAlgorithm)?,
         }
@@ -103,6 +110,10 @@ pub unsafe extern "C" fn azihsm_crypt_verify(
             AzihsmAlgoId::EcdsaSha512 => {
                 ecc_hash_verify(HsmHashAlgo::Sha512, key_handle, input_data, sig_data)?
             }
+            AzihsmAlgoId::HmacSha1
+            | AzihsmAlgoId::HmacSha256
+            | AzihsmAlgoId::HmacSha384
+            | AzihsmAlgoId::HmacSha512 => hmac_verify(key_handle, input_data, sig_data)?,
             _ => Err(AzihsmError::UnsupportedAlgorithm)?,
         };
 
