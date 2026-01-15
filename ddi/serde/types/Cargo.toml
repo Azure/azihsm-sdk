@@ -9,7 +9,7 @@ version = "0.1.0"
 azihsm_ddi_derive.workspace = true
 azihsm_ddi_mbor.workspace = true
 open-enum.workspace = true
-paste.workspace = true
+pastey.workspace = true
 zerocopy.workspace = true
 
 # dependencies for fuzzing

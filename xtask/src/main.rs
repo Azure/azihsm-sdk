@@ -14,6 +14,7 @@ use std::path::PathBuf;
 use clap::Parser;
 use clap::Subcommand;
 
+mod audit;
 mod build;
 mod clean;
 mod clippy;
@@ -54,6 +55,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    Audit(audit::Audit),
     Build(build::Build),
     Precheck(precheck::Precheck),
     Clean(clean::Clean),
@@ -92,6 +94,7 @@ fn try_main() -> anyhow::Result<()> {
     let ctx = XtaskCtx { root };
 
     match cli.command {
+        Commands::Audit(task) => task.run(ctx),
         Commands::Build(task) => task.run(ctx),
         Commands::Clean(task) => task.run(ctx),
         Commands::Clippy(task) => task.run(ctx),

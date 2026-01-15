@@ -8,6 +8,7 @@
 use clap::Parser;
 use xshell::Shell;
 
+use crate::audit;
 use crate::clippy;
 use crate::copyright;
 use crate::fmt;
@@ -24,6 +25,9 @@ struct Stage {
     /// Run copyright checks
     #[clap(long)]
     copyright: bool,
+    /// Run audit checks
+    #[clap(long)]
+    audit: bool,
     /// Run formatting checks
     #[clap(long)]
     fmt: bool,
@@ -98,6 +102,12 @@ impl Xtask for Precheck {
         if stage.copyright || stage.all {
             let copyright = copyright::Copyright { fix: false };
             copyright.run(ctx.clone())?;
+        }
+
+        // Run Audit
+        if stage.audit || stage.all {
+            let audit = audit::Audit {};
+            audit.run(ctx.clone())?;
         }
 
         // Cargo format
