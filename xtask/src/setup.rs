@@ -56,6 +56,14 @@ impl Xtask for Setup {
             install_cargo_fuzz.run(ctx.clone())?;
         }
 
+        // Run Install cargo-audit
+        let install_cargo_audit = install::Install {
+            crate_name: "cargo-audit@0.22.0".to_string(),
+            force: self.force,
+            config: self.config.clone(),
+        };
+        install_cargo_audit.run(ctx.clone())?;
+
         // Add Clippy
         let add_clippy = rustup_component_add::RustupComponentAdd {
             component: "clippy".to_string(),

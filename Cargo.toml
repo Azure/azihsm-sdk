@@ -63,7 +63,7 @@ open-enum = "0.3.0"
 openssl = { version = "0.10.68" }
 openssl-sys = "0.9"
 parking_lot = "0.12"
-paste = "1.0.12"
+pastey = "0.2.1"
 pem-rfc7468 = "0.7.0"
 pkcs1 = "0.7.5"
 pkcs8 = "0.10.2"
