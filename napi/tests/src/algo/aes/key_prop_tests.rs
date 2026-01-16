@@ -332,6 +332,7 @@ fn test_aes_unwrap_invalid_props_wrap_fails_fast(session: HsmSession) {
 fn test_aes_unwrap_invalid_props_key_size_fails_fast(session: HsmSession) {
     let key_props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Secret)
+        .is_session(false)
         .key_kind(HsmKeyKind::Aes)
         .bits(257)
         .can_encrypt(true)
@@ -377,4 +378,28 @@ fn test_aes_key_props_builder_missing_bits_fails() {
         .build();
 
     assert!(matches!(result, Err(HsmError::KeyPropertyNotPresent)));
+}
+
+#[session_test]
+fn test_aes_key_gen_non_session_succeeds(session: HsmSession) {
+    let key_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .is_session(false)
+        .key_kind(HsmKeyKind::Aes)
+        .bits(128)
+        .can_encrypt(true)
+        .can_decrypt(true)
+        .build()
+        .expect("Failed to build key props");
+
+    let result = test_aes_key_prop_gen_key(&session, key_props);
+    assert!(
+        result.is_ok(),
+        "AES key generation should succeed for non-session keys"
+    );
+    let key = result.unwrap();
+    assert!(
+        !key.is_session(),
+        "Generated key should not be a session key"
+    );
 }
