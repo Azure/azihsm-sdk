@@ -52,6 +52,11 @@ impl HsmEncryptOp for HsmRsaAesWrapAlgo {
         plaintext: &[u8],
         ciphertext: Option<&mut [u8]>,
     ) -> Result<usize, Self::Error> {
+        // make sure key can wrap keys
+        if !key.can_wrap() {
+            return Err(HsmError::InvalidKey);
+        }
+
         let mut algo = crypto::RsaAesKeyWrap::new(self.hash_algo.into(), self.kek_size);
 
         key.with_crypto_key(|crypto_key| {

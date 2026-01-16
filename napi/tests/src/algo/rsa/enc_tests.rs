@@ -49,7 +49,7 @@ fn import_rsa_key(
         .class(HsmKeyClass::Public)
         .key_kind(HsmKeyKind::Rsa)
         .bits(bits)
-        .can_decrypt(true)
+        .can_encrypt(true)
         .build()
         .expect("Failed to build public key props");
 

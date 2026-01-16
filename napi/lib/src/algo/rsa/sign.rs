@@ -81,6 +81,11 @@ impl HsmSignOp for HsmRsaSignAlgo {
         data: &[u8],
         signature: Option<&mut [u8]>,
     ) -> Result<usize, Self::Error> {
+        // check if key can sign
+        if !key.can_sign() {
+            return Err(HsmError::InvalidKey);
+        }
+
         let expected_len = key.size();
         let Some(signature) = signature else {
             return Ok(expected_len);
@@ -134,6 +139,11 @@ impl HsmVerifyOp for HsmRsaSignAlgo {
         data: &[u8],
         signature: &[u8],
     ) -> Result<bool, Self::Error> {
+        // check if key can verify
+        if !key.can_verify() {
+            return Err(HsmError::InvalidKey);
+        }
+
         use azihsm_crypto::VerifyOp;
         let mut algo = match self.padding {
             HsmRsaSignPadding::Pkcs1 => {
