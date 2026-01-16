@@ -433,6 +433,14 @@ impl HsmKeyProps {
     pub(crate) fn set_pub_key_der(&mut self, pub_key_der: &[u8]) {
         self.pub_key_der = Some(pub_key_der.to_vec());
     }
+
+    pub(crate) fn check_supported_flags(&self, supported_flags: HsmKeyFlags) -> bool {
+        // Allow additional flags which is settable for all keys(session flag)
+        let allowed_flags = supported_flags | HsmKeyFlags::SESSION;
+
+        // Returns `true` only if all currently-set flags are within `allowed_flags`.
+        (self.flags & !allowed_flags).is_empty()
+    }
 }
 
 /// Builder for constructing [`KeyProps`] instances.
