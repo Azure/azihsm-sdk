@@ -434,9 +434,12 @@ impl HsmKeyProps {
         self.pub_key_der = Some(pub_key_der.to_vec());
     }
 
-    pub(crate) fn check_unsupported_flags(&self, allowed_flags: HsmKeyFlags) -> bool {
-        // Returns true if any current flag is not in `allowed_flags`.
-        !(self.flags & !allowed_flags).is_empty()
+    pub(crate) fn check_supported_flags(&self, supported_flags: HsmKeyFlags) -> bool {
+        // Allow additional flags which is settable for all keys(session flag)
+        let allowed_flags = supported_flags | HsmKeyFlags::SESSION;
+
+        // Returns `true` only if all currently-set flags are within `allowed_flags`.
+        (self.flags & !allowed_flags).is_empty()
     }
 }
 
@@ -553,24 +556,4 @@ impl HsmKeyPropsBuilder {
             flags: self.flags,
         })
     }
-}
-
-/// Validates that a [`HsmKeyProps`] value is compatible with a concrete key wrapper.
-///
-/// This trait is implemented by typed key wrappers (e.g. `HsmAesKey`) to enforce
-/// *type-level* invariants on the dynamic key properties returned by the device.
-///
-/// Typical uses:
-/// - Before key generation / unwrapping (fail fast on invalid properties)
-/// - Before converting from a generic key handle to a typed key wrapper
-/// - Before performing an algorithm operation that assumes a specific key kind/class
-///
-/// Implementations should be conservative and return [`HsmError::InvalidKeyProps`]
-/// when the provided properties do not match the expectations for the typed key.
-pub(crate) trait HsmKeyPropsValidator {
-    /// Validates key properties for the typed key.
-    ///
-    /// Implementations should not mutate `props` and should be safe to call on
-    /// properties obtained from either user input (builders) or device responses.
-    fn validate_props(props: &HsmKeyProps) -> HsmResult<()>;
 }

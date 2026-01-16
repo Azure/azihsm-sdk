@@ -116,8 +116,10 @@ impl HsmEncryptOp for HsmAesCbcAlgo {
         plaintext: &[u8],
         ciphertext: Option<&mut [u8]>,
     ) -> Result<usize, Self::Error> {
-        // Validate key properties before encrypting.
-        HsmAesKey::validate_props(&key.props())?;
+        // check if key can encrypt
+        if !key.props().can_encrypt() {
+            Err(HsmError::InvalidKey)?;
+        }
 
         //Return error if padding is disabled and plaintext is not block aligned
         let expected_len = if self.pad {
@@ -163,8 +165,10 @@ impl HsmEncryptStreamingOp for HsmAesCbcAlgo {
     /// * `Ok(HsmAesCbcEncryptContext)` - An initialized encryption context
     /// * `Err(HsmError)` - If initialization fails
     fn encrypt_init(self, key: Self::Key) -> Result<Self::Context, Self::Error> {
-        // Validate key properties before encrypting.
-        HsmAesKey::validate_props(&key.props())?;
+        // check if key can encrypt
+        if !key.props().can_encrypt() {
+            Err(HsmError::InvalidKey)?;
+        }
 
         Ok(HsmAesCbcEncryptContext {
             algo: self,
@@ -339,8 +343,10 @@ impl HsmDecryptOp for HsmAesCbcAlgo {
         ciphertext: &[u8],
         plaintext: Option<&mut [u8]>,
     ) -> Result<usize, Self::Error> {
-        // Validate key properties before decrypting.
-        HsmAesKey::validate_props(&key.props())?;
+        // check if key can decrypt
+        if !key.props().can_decrypt() {
+            Err(HsmError::InvalidKey)?;
+        }
 
         //Return error if cipher text is not block aligned, AES Cipher Text should be always block aligned
         if ciphertext.is_empty() || !ciphertext.len().is_multiple_of(Self::BLOCK_SIZE) {
@@ -384,8 +390,11 @@ impl HsmDecryptStreamingOp for HsmAesCbcAlgo {
     /// * `Ok(HsmAesCbcDecryptContext)` - An initialized decryption context
     /// * `Err(HsmError)` - If initialization fails
     fn decrypt_init(self, key: Self::Key) -> Result<Self::Context, Self::Error> {
-        // Validate key properties before decrypting.
-        HsmAesKey::validate_props(&key.props())?;
+        // check if key can decrypt
+        if !key.props().can_decrypt() {
+            Err(HsmError::InvalidKey)?;
+        }
+
         Ok(HsmAesCbcDecryptContext {
             algo: self,
             key,

@@ -24,15 +24,7 @@ impl HsmAesKey {
             _ => Err(HsmError::InvalidKeyProps),
         }
     }
-}
 
-impl HsmSecretKey for HsmAesKey {}
-
-impl HsmEncryptionKey for HsmAesKey {}
-
-impl HsmDecryptionKey for HsmAesKey {}
-
-impl HsmKeyPropsValidator for HsmAesKey {
     /// Validates that `props` describe a supported HSM-backed AES secret key.
     ///
     /// This is used as a defensive check at API boundaries (key generation,
@@ -47,13 +39,7 @@ impl HsmKeyPropsValidator for HsmAesKey {
     /// - Key material must not be extractable.
     /// - Key size must be one of 128/192/256 bits.
     fn validate_props(props: &HsmKeyProps) -> HsmResult<()> {
-        let supported_flags = HsmKeyFlags::ENCRYPT
-            | HsmKeyFlags::DECRYPT //AES Keys can be used for both encrypt and decrypt
-            | HsmKeyFlags::LOCAL // Keys can be local
-            | HsmKeyFlags::SESSION // Session keys
-            | HsmKeyFlags::NEVER_EXTRACTABLE // Keys must not be extractable
-            | HsmKeyFlags::ALWAYS_SENSITIVE // Keys must always be sensitive
-            | HsmKeyFlags::DESTROYABLE; // Keys can be destroyed
+        let supported_flags = HsmKeyFlags::ENCRYPT | HsmKeyFlags::DECRYPT; //AES Keys can be used for both encrypt and decrypt
 
         // Kind/class: ensure we're validating an AES *secret* key.
         if props.kind() != HsmKeyKind::Aes {
@@ -74,12 +60,18 @@ impl HsmKeyPropsValidator for HsmAesKey {
         }
 
         // Ensure no invalid usage flags are set.
-        if props.check_unsupported_flags(supported_flags) {
+        if !props.check_supported_flags(supported_flags) {
             Err(HsmError::InvalidKeyProps)?;
         }
         Ok(())
     }
 }
+
+impl HsmSecretKey for HsmAesKey {}
+
+impl HsmEncryptionKey for HsmAesKey {}
+
+impl HsmDecryptionKey for HsmAesKey {}
 
 /// HSM-based AES key generation algorithm.
 ///
@@ -193,11 +185,6 @@ impl TryFrom<HsmGenericSecretKey> for HsmAesKey {
     /// This is a cheap conversion: it re-wraps the same underlying key handle
     /// (stored in shared state) after validating key kind and class.
     fn try_from(key: HsmGenericSecretKey) -> Result<Self, Self::Error> {
-        // Ensure the generic key is actually an AES *secret* key.
-        if key.kind() != HsmKeyKind::Aes || key.class() != HsmKeyClass::Secret {
-            Err(HsmError::InvalidKey)?;
-        }
-
         // Validate key properties before converting
         HsmAesKey::validate_props(&key.props())?;
 
