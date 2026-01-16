@@ -1,8 +1,9 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
 
-use super::ecc::key_tests::*;
 use azihsm_napi::*;
 use azihsm_napi_tests_macro::*;
+
+use super::ecc::key_tests::*;
 
 fn gen_ecc_key_pair(
     session: &HsmSession,
