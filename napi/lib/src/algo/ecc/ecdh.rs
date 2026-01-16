@@ -76,6 +76,11 @@ impl HsmKeyDeriveOp for EcdhAlgo {
         base_key: &Self::BaseKey,
         props: HsmKeyProps,
     ) -> Result<Self::DerivedKey, Self::Error> {
+        // Make sure base key can be used for derivation
+        if !base_key.can_derive() {
+            Err(HsmError::InvalidKey)?;
+        }
+
         // Parse the peer public key from DER so we can validate curve compatibility before
         // dispatching the operation to the DDI layer.
         let peer_pub_key =

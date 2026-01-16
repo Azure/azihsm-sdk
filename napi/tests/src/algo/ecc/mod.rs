@@ -2,6 +2,7 @@
 
 mod ecdh_tests;
 mod hash_sign_tests;
+mod key_prop_tests;
 mod key_tests;
 mod sign_tests;
 

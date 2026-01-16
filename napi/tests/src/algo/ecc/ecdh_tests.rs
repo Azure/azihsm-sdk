@@ -20,9 +20,9 @@ pub(crate) fn generate_ecc_keypair_with_derive(
         .class(HsmKeyClass::Private)
         .key_kind(HsmKeyKind::Ecc)
         .ecc_curve(curve)
+        .is_session(true)
         .can_derive(can_derive)
         .can_sign(!can_derive)
-        .can_verify(!can_derive)
         .build()?;
 
     // Create key properties for the public key.
@@ -31,7 +31,6 @@ pub(crate) fn generate_ecc_keypair_with_derive(
         .key_kind(HsmKeyKind::Ecc)
         .ecc_curve(curve)
         .can_verify(!can_derive)
-        .can_derive(can_derive)
         .build()?;
 
     // Create the ECC key generation algorithm.
@@ -185,10 +184,7 @@ fn test_ecdh_base_key_without_derive_capability_fails(session: HsmSession) {
             .expect("Failed to generate key pair");
 
     let result = ecdh_derive_shared_secret(&session, &priv_key, &pub_key);
-    assert!(matches!(
-        result,
-        Err(HsmError::InvalidArgument) | Err(HsmError::DdiCmdFailure)
-    ));
+    assert!(matches!(result, Err(HsmError::InvalidKey)));
 }
 
 /// Negative test: `masked_key` should reject a buffer of the wrong size.

@@ -11,7 +11,6 @@ fn generate_ecc_key_pair(
         .key_kind(HsmKeyKind::Ecc)
         .ecc_curve(curve)
         .can_sign(true)
-        .can_verify(true)
         .is_session(true)
         .build()
         .expect("Failed to build private key props");

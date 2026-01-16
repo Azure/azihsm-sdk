@@ -99,6 +99,11 @@ impl HsmSignOp for HsmHashSignAlgo {
         data: &[u8],
         signature: Option<&mut [u8]>,
     ) -> Result<usize, Self::Error> {
+        // Make sure key is signing key
+        if !key.can_sign() {
+            Err(HsmError::InvalidKey)?;
+        }
+
         let hash = crypto::Hasher::hash_vec(&mut crypto::HashAlgo::from(self.hash_algo), data)
             .map_err(|_| HsmError::InternalError)?;
         let mut algo = HsmEccSignAlgo::default();
@@ -146,6 +151,11 @@ impl HsmSignStreamingOp for HsmHashSignAlgo {
     /// - The HSM fails to initialize the signing context
     /// - Required algorithm parameters are missing or invalid
     fn sign_init(self, key: Self::Key) -> Result<Self::Context, Self::Error> {
+        // Make sure key is signing key
+        if !key.can_sign() {
+            Err(HsmError::InvalidKey)?;
+        }
+
         let hasher = crypto::Hasher::hash_init(crypto::HashAlgo::from(self.hash_algo))
             .map_hsm_err(HsmError::InternalError)?;
         Ok(HsmEccSignContext {
@@ -320,6 +330,11 @@ impl HsmVerifyOp for HsmHashSignAlgo {
         data: &[u8],
         signature: &[u8],
     ) -> Result<bool, Self::Error> {
+        // Make sure key is verification key
+        if !key.can_verify() {
+            Err(HsmError::InvalidKey)?;
+        }
+
         let hash = crypto::Hasher::hash_vec(&mut crypto::HashAlgo::from(self.hash_algo), data)
             .map_err(|_| HsmError::InternalError)?;
         let mut algo = HsmEccSignAlgo::default();
@@ -363,6 +378,11 @@ impl HsmVerifyStreamingOp for HsmHashSignAlgo {
     /// - The HSM fails to initialize the verification context
     /// - Required algorithm parameters are missing or invalid
     fn verify_init(self, key: Self::Key) -> Result<Self::Context, Self::Error> {
+        // Make sure key is verification key
+        if !key.can_verify() {
+            Err(HsmError::InvalidKey)?;
+        }
+
         let hasher = crypto::Hasher::hash_init(crypto::HashAlgo::from(self.hash_algo))
             .map_hsm_err(HsmError::InternalError)?;
         Ok(HsmEccVerifyContext {
