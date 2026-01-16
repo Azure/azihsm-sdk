@@ -34,6 +34,7 @@ fn unwrap_ecc_with_props(
 }
 
 #[session_test]
+// Generates a valid ECC sign/verify key pair and expects keygen to succeed.
 fn test_ecc_key_pair_valid_sign_verify_succeeds(session: HsmSession) {
     let priv_key_props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Private)
@@ -56,6 +57,7 @@ fn test_ecc_key_pair_valid_sign_verify_succeeds(session: HsmSession) {
 }
 
 #[session_test]
+// Rejects ECC private key props when class is not Private.
 fn test_ecc_priv_props_invalid_class_fails(session: HsmSession) {
     let priv_key_props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Public)
@@ -78,6 +80,7 @@ fn test_ecc_priv_props_invalid_class_fails(session: HsmSession) {
 }
 
 #[session_test]
+// Rejects ECC private key props when key kind is not Ecc.
 fn test_ecc_priv_props_invalid_kind_fails(session: HsmSession) {
     let priv_key_props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Private)
@@ -100,6 +103,7 @@ fn test_ecc_priv_props_invalid_kind_fails(session: HsmSession) {
 }
 
 #[session_test]
+// Rejects ECC private key props when curve is missing (even if bits is set).
 fn test_ecc_priv_props_missing_curve_fails(session: HsmSession) {
     let priv_key_props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Private)
@@ -122,6 +126,7 @@ fn test_ecc_priv_props_missing_curve_fails(session: HsmSession) {
 }
 
 #[session_test]
+// Rejects ECC private key props when both SIGN and DERIVE are set.
 fn test_ecc_priv_props_sign_and_derive_both_set_fails(session: HsmSession) {
     let priv_key_props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Private)
@@ -145,6 +150,7 @@ fn test_ecc_priv_props_sign_and_derive_both_set_fails(session: HsmSession) {
 }
 
 #[session_test]
+// Rejects ECC private key props when no usage flags are set.
 fn test_ecc_priv_props_no_usage_flags_fails(session: HsmSession) {
     let priv_key_props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Private)
@@ -166,6 +172,7 @@ fn test_ecc_priv_props_no_usage_flags_fails(session: HsmSession) {
 }
 
 #[session_test]
+// Rejects ECC public key props that include DERIVE usage.
 fn test_ecc_pub_props_derive_rejected(session: HsmSession) {
     let priv_key_props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Private)
@@ -189,6 +196,7 @@ fn test_ecc_pub_props_derive_rejected(session: HsmSession) {
 }
 
 #[session_test]
+// Ensures unwrap fails fast when private key props are invalid.
 fn test_ecc_unwrap_invalid_priv_props_fails(session: HsmSession) {
     let priv_key_props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Public)
@@ -211,6 +219,7 @@ fn test_ecc_unwrap_invalid_priv_props_fails(session: HsmSession) {
 }
 
 #[session_test]
+// Ensures unwrap validates props first and reaches the DDI layer with valid props.
 fn test_ecc_unwrap_valid_props(session: HsmSession) {
     let priv_key_props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Private)

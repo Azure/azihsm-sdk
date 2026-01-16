@@ -14,6 +14,19 @@ use super::*;
 define_hsm_key_pair!(pub HsmEccPrivateKey, pub HsmEccPublicKey,  crypto::EccPublicKey);
 
 impl HsmEccPrivateKey {
+    /// Validates key properties for an ECC **private** key.
+    ///
+    /// This is a fail-fast validation used by operations like key generation and unwrapping.
+    /// It enforces:
+    /// - `kind` must be [`HsmKeyKind::Ecc`]
+    /// - `class` must be [`HsmKeyClass::Private`]
+    /// - an ECC curve must be present (`ecc_curve`)
+    /// - usage flags must be **exactly one** of `SIGN` or `DERIVE`
+    /// - no unsupported flags may be set (beyond what this layer allows)
+    ///
+    /// # Errors
+    /// Returns [`HsmError::InvalidKeyProps`] if any required property is missing/invalid,
+    /// or if unsupported/contradictory usage flags are present.
     fn validate_props(props: &HsmKeyProps) -> HsmResult<()> {
         // Supported usage flags for ECC private keys in this layer.
         let supported_flag = HsmKeyFlags::SIGN | HsmKeyFlags::DERIVE;
@@ -48,6 +61,18 @@ impl HsmEccPrivateKey {
 }
 
 impl HsmEccPublicKey {
+    /// Validates key properties for an ECC **public** key.
+    ///
+    /// This is a fail-fast validation used by operations like key generation and unwrapping.
+    /// It enforces:
+    /// - `kind` must be [`HsmKeyKind::Ecc`]
+    /// - `class` must be [`HsmKeyClass::Public`]
+    /// - an ECC curve must be present (`ecc_curve`)
+    /// - only supported usage flags may be set (typically `VERIFY`)
+    ///
+    /// # Errors
+    /// Returns [`HsmError::InvalidKeyProps`] if any required property is missing/invalid,
+    /// or if unsupported usage flags are present.
     fn validate_props(props: &HsmKeyProps) -> HsmResult<()> {
         // Supported usage flags for ECC public keys in this layer.
         let supported_flag = HsmKeyFlags::VERIFY;
