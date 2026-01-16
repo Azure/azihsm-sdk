@@ -54,7 +54,7 @@ impl HsmKeyDeriveOp for HsmHkdfAlgo {
     type BaseKey = HsmGenericSecretKey;
 
     /// The type of derived key produced by this operation.
-    type DerivedKey = HsmGenericSecretKey; // Currently only AES keys are supported.
+    type DerivedKey = HsmGenericSecretKey;
 
     /// The error type returned by this operation.
     type Error = HsmError;
@@ -80,6 +80,18 @@ impl HsmKeyDeriveOp for HsmHkdfAlgo {
         base_key: &Self::BaseKey,
         props: HsmKeyProps,
     ) -> Result<Self::DerivedKey, Self::Error> {
+        //check if base key can be used for derivation
+        if !base_key.can_derive() {
+            Err(HsmError::InvalidKey)?;
+        }
+
+        // Validate derived key properties early so callers get consistent failures
+        // for unsupported key metadata (instead of leaking DDI-specific errors).
+        HsmGenericSecretKey::validate_props(&props)?;
+
+        //check if props are valid for generic secret key, AES, HMAC conversion will be done later if needed
+        HsmGenericSecretKey::validate_props(&props)?;
+
         let (handle, props) = ddi::hkdf_derive(
             base_key,
             self.hash_algo,

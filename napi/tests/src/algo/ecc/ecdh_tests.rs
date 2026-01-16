@@ -91,6 +91,21 @@ pub(crate) fn ecdh_derive_shared_secret_from_der(
     Ok(derived_key)
 }
 
+/// Perform ECDH key agreement with caller-provided derived key properties.
+///
+/// This helper is used to validate that derived key property validation is enforced
+/// (fail-fast) for `HsmGenericSecretKey`.
+pub(crate) fn ecdh_derive_shared_secret_with_props(
+    session: &HsmSession,
+    private_key: &HsmEccPrivateKey,
+    peer_public_key: &HsmEccPublicKey,
+    derived_key_props: HsmKeyProps,
+) -> HsmResult<HsmGenericSecretKey> {
+    let pub_key_der = peer_public_key.pub_key_der_vec()?;
+    let mut ecdh_algo = EcdhAlgo::new(&pub_key_der);
+    HsmKeyManager::derive_key(session, &mut ecdh_algo, private_key, derived_key_props)
+}
+
 /// Test ECDH key derivation.
 ///
 /// Generates two ECC P-256 key pairs (party A and party B) and performs ECDH from both sides.
@@ -205,4 +220,108 @@ fn test_ecdh_masked_key_buffer_size_mismatch_fails(session: HsmSession) {
     let mut too_small = vec![0u8; len - 1];
     let result = shared_secret.masked_key(Some(&mut too_small));
     assert!(matches!(result, Err(HsmError::BufferTooSmall)));
+}
+
+#[session_test]
+// Rejects derived secret props when class is not Secret.
+fn test_ecdh_derived_secret_props_invalid_class_fails(session: HsmSession) {
+    let (priv_key, pub_key) =
+        generate_ecc_keypair_with_derive(session.clone(), HsmEccCurve::P256, true)
+            .expect("Failed to generate key pair");
+
+    let derived_key_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Public)
+        .key_kind(HsmKeyKind::SharedSecret)
+        .bits(256)
+        .can_derive(true)
+        .build()
+        .expect("Failed to build derived key props");
+
+    let result =
+        ecdh_derive_shared_secret_with_props(&session, &priv_key, &pub_key, derived_key_props);
+    assert!(matches!(result, Err(HsmError::InvalidKeyProps)));
+}
+
+#[session_test]
+// Rejects derived secret props when kind is not SharedSecret.
+fn test_ecdh_derived_secret_props_invalid_kind_fails(session: HsmSession) {
+    let (priv_key, pub_key) =
+        generate_ecc_keypair_with_derive(session.clone(), HsmEccCurve::P256, true)
+            .expect("Failed to generate key pair");
+
+    let derived_key_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::Aes)
+        .bits(256)
+        .can_derive(true)
+        .build()
+        .expect("Failed to build derived key props");
+
+    let result =
+        ecdh_derive_shared_secret_with_props(&session, &priv_key, &pub_key, derived_key_props);
+    assert!(matches!(result, Err(HsmError::InvalidKeyProps)));
+}
+
+#[session_test]
+// Rejects derived secret props when an ECC curve is set.
+fn test_ecdh_derived_secret_props_ecc_curve_set_fails(session: HsmSession) {
+    let (priv_key, pub_key) =
+        generate_ecc_keypair_with_derive(session.clone(), HsmEccCurve::P256, true)
+            .expect("Failed to generate key pair");
+
+    let derived_key_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::SharedSecret)
+        .ecc_curve(HsmEccCurve::P256)
+        .bits(256)
+        .can_derive(true)
+        .build()
+        .expect("Failed to build derived key props");
+
+    let result =
+        ecdh_derive_shared_secret_with_props(&session, &priv_key, &pub_key, derived_key_props);
+    assert!(matches!(result, Err(HsmError::InvalidKeyProps)));
+}
+
+#[session_test]
+// Rejects derived secret props when unsupported usage flags are present.
+fn test_ecdh_derived_secret_props_unsupported_flags_fails(session: HsmSession) {
+    let (priv_key, pub_key) =
+        generate_ecc_keypair_with_derive(session.clone(), HsmEccCurve::P256, true)
+            .expect("Failed to generate key pair");
+
+    let derived_key_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::SharedSecret)
+        .bits(256)
+        .can_derive(true)
+        .can_encrypt(true)
+        .build()
+        .expect("Failed to build derived key props");
+
+    let result =
+        ecdh_derive_shared_secret_with_props(&session, &priv_key, &pub_key, derived_key_props);
+    assert!(matches!(result, Err(HsmError::InvalidKeyProps)));
+}
+
+#[session_test]
+// Allows SESSION flag on derived shared secrets.
+fn test_ecdh_derived_secret_props_session_flag_allowed(session: HsmSession) {
+    let (priv_key, pub_key) =
+        generate_ecc_keypair_with_derive(session.clone(), HsmEccCurve::P256, true)
+            .expect("Failed to generate key pair");
+
+    let derived_key_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::SharedSecret)
+        .bits(256)
+        .can_derive(true)
+        .is_session(true)
+        .build()
+        .expect("Failed to build derived key props");
+
+    let derived =
+        ecdh_derive_shared_secret_with_props(&session, &priv_key, &pub_key, derived_key_props)
+            .expect("Failed to derive shared secret");
+    assert!(derived.is_session());
 }

@@ -99,6 +99,11 @@ impl HsmSignOp for HsmHmacAlgo {
         data: &[u8],
         signature: Option<&mut [u8]>,
     ) -> Result<usize, Self::Error> {
+        // check if key can sign
+        if !key.can_sign() {
+            Err(HsmError::InvalidKey)?;
+        }
+
         // return size of signature if signature buffer is None
         let Some(signature) = signature else {
             return Ok(key.size());
@@ -150,6 +155,11 @@ impl HsmVerifyOp for HsmHmacAlgo {
         data: &[u8],
         signature: &[u8],
     ) -> Result<bool, Self::Error> {
+        //check key can verify
+        if !key.can_verify() {
+            Err(HsmError::InvalidKey)?;
+        }
+
         //check if data length exceeds limit
         if data.len() > Self::MAX_MESSAGE_SIZE {
             return Err(HsmError::IndexOutOfRange);
@@ -224,6 +234,11 @@ impl HsmSignStreamingOp for HsmHmacAlgo {
     ///
     /// This initializer currently cannot fail.
     fn sign_init(self, key: Self::Key) -> Result<Self::Context, Self::Error> {
+        // check if key can sign
+        if !key.can_sign() {
+            Err(HsmError::InvalidKey)?;
+        }
+
         Ok(HsmHmacSignContext {
             algo: self,
             key,
@@ -327,6 +342,11 @@ impl HsmVerifyStreamingOp for HsmHmacAlgo {
     ///
     /// This initializer currently cannot fail.
     fn verify_init(self, key: Self::Key) -> Result<Self::Context, Self::Error> {
+        // check if key can verify
+        if !key.can_verify() {
+            Err(HsmError::InvalidKey)?;
+        }
+
         Ok(HsmHmacVerifyContext {
             algo: self,
             key,
