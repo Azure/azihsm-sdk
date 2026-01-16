@@ -3,13 +3,67 @@
 use azihsm_napi::*;
 
 use super::*;
-use crate::AzihsmAlgoEcdhParams;
-use crate::AzihsmAlgoHkdfParams;
+use crate::AzihsmBuffer;
 use crate::AzihsmError;
 use crate::AzihsmHandle;
 use crate::HANDLE_TABLE;
 use crate::handle_table::HandleType;
 use crate::utils::deref_ptr;
+use crate::utils::validate_ptr;
+
+/// ECDH parameter structure matching C API
+#[repr(C)]
+pub struct AzihsmAlgoEcdhParams {
+    pub_key: *const AzihsmBuffer,
+}
+
+impl<'a> TryFrom<&'a AzihsmAlgo> for &'a AzihsmAlgoEcdhParams {
+    type Error = AzihsmError;
+
+    /// Extracts a reference to ECDH parameters from the algorithm specification.
+    ///
+    /// # Safety
+    /// The caller must ensure that `algo.params` points to valid `AzihsmAlgoEcdhParams` data
+    /// when the algorithm ID is ECDH.
+    #[allow(unsafe_code)]
+    fn try_from(algo: &'a AzihsmAlgo) -> Result<Self, Self::Error> {
+        // Check for null pointer
+        validate_ptr(algo.params)?;
+
+        // Safety: algo.params is validated to be non-null
+        let params = unsafe { &*(algo.params as *const AzihsmAlgoEcdhParams) };
+
+        Ok(params)
+    }
+}
+
+/// HKDF parameter structure matching C API
+#[repr(C)]
+pub struct AzihsmAlgoHkdfParams {
+    hmac_algo_id: AzihsmAlgoId,
+    salt: *const AzihsmBuffer,
+    info: *const AzihsmBuffer,
+}
+
+impl<'a> TryFrom<&'a AzihsmAlgo> for &'a AzihsmAlgoHkdfParams {
+    type Error = AzihsmError;
+
+    /// Extracts a reference to HKDF parameters from the algorithm specification.
+    ///
+    /// # Safety
+    /// The caller must ensure that `algo.params` points to valid `AzihsmAlgoHkdfParams` data
+    /// when the algorithm ID is HKDF.
+    #[allow(unsafe_code)]
+    fn try_from(algo: &'a AzihsmAlgo) -> Result<Self, Self::Error> {
+        // Check for null pointer
+        validate_ptr(algo.params)?;
+
+        // Safety: algo.params is validated to be non-null
+        let params = unsafe { &*(algo.params as *const AzihsmAlgoHkdfParams) };
+
+        Ok(params)
+    }
+}
 
 /// Helper function to perform ECDH key derivation
 pub(crate) fn ecdh_derive_key(
