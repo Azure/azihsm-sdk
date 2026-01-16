@@ -4,7 +4,9 @@ use azihsm_crypto as crypto;
 use azihsm_napi::*;
 use azihsm_napi_tests_macro::*;
 
-fn get_rsa_unwrapping_key_pair(session: &HsmSession) -> (HsmRsaPrivateKey, HsmRsaPublicKey) {
+pub(crate) fn get_rsa_unwrapping_key_pair(
+    session: &HsmSession,
+) -> (HsmRsaPrivateKey, HsmRsaPublicKey) {
     let priv_key_props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Private)
         .key_kind(HsmKeyKind::Rsa)
@@ -42,7 +44,6 @@ fn test_ecc_p256_key_pair_generation(session: HsmSession) {
         .key_kind(HsmKeyKind::Ecc)
         .ecc_curve(HsmEccCurve::P256)
         .can_sign(true)
-        .can_verify(true)
         .build()
         .expect("Failed to build key props");
 

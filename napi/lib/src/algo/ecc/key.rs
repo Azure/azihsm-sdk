@@ -13,6 +13,69 @@ use super::*;
 // Define HsmEccPrivateKey and HsmEccPublicKey types.
 define_hsm_key_pair!(pub HsmEccPrivateKey, pub HsmEccPublicKey,  crypto::EccPublicKey);
 
+impl HsmEccPrivateKey {
+    fn validate_props(props: &HsmKeyProps) -> HsmResult<()> {
+        // Supported usage flags for ECC private keys in this layer.
+        let supported_flag = HsmKeyFlags::SIGN | HsmKeyFlags::DERIVE;
+
+        // ECC private key must be either a signing key or a derivation key (but not both).
+        if props.can_sign() == props.can_derive() {
+            Err(HsmError::InvalidKeyProps)?;
+        }
+
+        // Kind/class: ensure we're validating an ECC *private* key.
+        if props.kind() != HsmKeyKind::Ecc {
+            Err(HsmError::InvalidKeyProps)?;
+        }
+
+        // ECC private keys must have a curve specified.
+        if props.ecc_curve().is_none() {
+            Err(HsmError::InvalidKeyProps)?;
+        }
+
+        // ECC private keys must be private keys.
+        if props.class() != HsmKeyClass::Private {
+            Err(HsmError::InvalidKeyProps)?;
+        }
+
+        // Ensure only supported usage flags are set.
+        if !props.check_supported_flags(supported_flag) {
+            Err(HsmError::InvalidKeyProps)?;
+        }
+
+        Ok(())
+    }
+}
+
+impl HsmEccPublicKey {
+    fn validate_props(props: &HsmKeyProps) -> HsmResult<()> {
+        // Supported usage flags for ECC public keys in this layer.
+        let supported_flag = HsmKeyFlags::VERIFY;
+
+        // Kind/class: ensure we're validating an ECC *public* key.
+        if props.kind() != HsmKeyKind::Ecc {
+            Err(HsmError::InvalidKeyProps)?;
+        }
+
+        // ECC public keys must have a curve specified.
+        if props.ecc_curve().is_none() {
+            Err(HsmError::InvalidKeyProps)?;
+        }
+
+        // ECC public keys must be public keys.
+        if props.class() != HsmKeyClass::Public {
+            Err(HsmError::InvalidKeyProps)?;
+        }
+
+        // Ensure only supported usage flags are set.
+        if !props.check_supported_flags(supported_flag) {
+            Err(HsmError::InvalidKeyProps)?;
+        }
+
+        Ok(())
+    }
+}
+
 impl HsmSigningKey for HsmEccPrivateKey {}
 
 impl HsmDerivationKey for HsmEccPrivateKey {}
@@ -51,6 +114,12 @@ impl HsmKeyPairGenOp for HsmEccKeyGenAlgo {
         ),
         Self::Error,
     > {
+        //validate private key properties
+        HsmEccPrivateKey::validate_props(&priv_key_props)?;
+
+        //validate public key properties
+        HsmEccPublicKey::validate_props(&pub_key_props)?;
+
         // Create the ECC Key in the HSM via DDI.
         let (handle, priv_key_props, pub_key_props) =
             ddi::ecc_generate_key(session, priv_key_props, pub_key_props)?;
@@ -123,6 +192,18 @@ impl HsmKeyPairUnwrapOp for HsmEccKeyRsaAesKeyUnwrapAlgo {
         ),
         Self::Error,
     > {
+        //Make sure unwrapping key can unwrap
+        if !unwrapping_key.can_unwrap() {
+            return Err(HsmError::InvalidKey);
+        }
+
+        // Make sure private props are valid
+        HsmEccPrivateKey::validate_props(&priv_key_props)?;
+
+        // Make sure public props are valid
+        HsmEccPublicKey::validate_props(&pub_key_props)?;
+
+        //Make sure public key is verifiable key
         let (handle, priv_key_props, pub_key_props) = ddi::rsa_aes_unwrap_key_pair(
             unwrapping_key,
             wrapped_key,
