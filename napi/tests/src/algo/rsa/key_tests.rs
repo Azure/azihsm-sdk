@@ -4,7 +4,9 @@ use azihsm_crypto as crypto;
 
 use super::*;
 
-fn get_rsa_unwrapping_key_pair(session: &HsmSession) -> (HsmRsaPrivateKey, HsmRsaPublicKey) {
+pub(crate) fn get_rsa_unwrapping_key_pair(
+    session: &HsmSession,
+) -> (HsmRsaPrivateKey, HsmRsaPublicKey) {
     let priv_key_props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Private)
         .key_kind(HsmKeyKind::Rsa)

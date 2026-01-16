@@ -76,6 +76,11 @@ impl HsmEncryptOp for HsmRsaEncryptAlgo {
         plaintext: &[u8],
         ciphertext: Option<&mut [u8]>,
     ) -> Result<usize, Self::Error> {
+        // check if key can encrypt
+        if !key.can_encrypt() {
+            return Err(HsmError::InvalidKey);
+        }
+
         match self.padding {
             HsmRsaEncryptPadding::Pkcs1 => {
                 let mut algo = crypto::RsaEncryptAlgo::with_pkcs1_padding();
@@ -124,6 +129,11 @@ impl HsmDecryptOp for HsmRsaEncryptAlgo {
         ciphertext: &[u8],
         plaintext: Option<&mut [u8]>,
     ) -> Result<usize, Self::Error> {
+        // check if key can decrypt
+        if !key.can_decrypt() {
+            return Err(HsmError::InvalidKey);
+        }
+
         let expected_len = key.size();
         let Some(plaintext) = plaintext else {
             return Ok(expected_len);

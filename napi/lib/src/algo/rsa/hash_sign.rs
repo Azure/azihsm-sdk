@@ -128,6 +128,11 @@ impl HsmSignOp for HsmRsaHashSignAlgo {
         data: &[u8],
         signature: Option<&mut [u8]>,
     ) -> Result<usize, Self::Error> {
+        // check if key can sign
+        if !key.can_sign() {
+            return Err(HsmError::InvalidKey);
+        }
+
         let expected_len = key.size();
         let Some(signature) = signature else {
             return Ok(expected_len);
@@ -167,6 +172,11 @@ impl HsmVerifyOp for HsmRsaHashSignAlgo {
         data: &[u8],
         signature: &[u8],
     ) -> Result<bool, Self::Error> {
+        // check if key can verify
+        if !key.can_verify() {
+            return Err(HsmError::InvalidKey);
+        }
+
         let data = self.hash(data)?;
         key.with_crypto_key(|crypto_key| {
             let mut algo = self.verify_algo();
@@ -195,6 +205,11 @@ impl HsmSignStreamingOp for HsmRsaHashSignAlgo {
     ///
     /// Returns an error if the hash algorithm initialization fails.
     fn sign_init(self, key: Self::Key) -> Result<Self::Context, Self::Error> {
+        // check if key can sign
+        if !key.can_sign() {
+            return Err(HsmError::InvalidKey);
+        }
+
         let hasher = Hasher::hash_init(HashAlgo::from(self.hash_algo))
             .map_hsm_err(HsmError::InternalError)?;
         Ok(HsmRsaSignContext {
@@ -287,6 +302,11 @@ impl HsmVerifyStreamingOp for HsmRsaHashSignAlgo {
     ///
     /// Returns an error if the hash algorithm initialization fails.
     fn verify_init(self, key: Self::Key) -> Result<Self::Context, Self::Error> {
+        // check if key can verify
+        if !key.can_verify() {
+            return Err(HsmError::InvalidKey);
+        }
+
         let hasher = Hasher::hash_init(HashAlgo::from(self.hash_algo))
             .map_hsm_err(HsmError::InternalError)?;
         Ok(HsmRsaVerifyContext {

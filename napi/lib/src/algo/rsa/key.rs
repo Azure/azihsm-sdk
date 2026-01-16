@@ -6,6 +6,120 @@ use super::*;
 
 define_hsm_key_pair!(pub HsmRsaPrivateKey, pub HsmRsaPublicKey, crypto::RsaPublicKey);
 
+/// Validates supported RSA key sizes for this layer.
+///
+/// The RSA backend/implementation only supports a fixed set of modulus sizes.
+/// Callers should ensure the `bits` field of [`HsmKeyProps`] is one of these values
+/// before attempting key generation/import/unwrapping.
+///
+/// # Errors
+/// Returns [`HsmError::InvalidKeyProps`] if `bits` is not supported.
+fn validate_key_size(bits: usize) -> HsmResult<()> {
+    match bits {
+        2048 | 3072 | 4096 => Ok(()),
+        _ => Err(HsmError::InvalidKeyProps),
+    }
+}
+
+impl HsmRsaPrivateKey {
+    /// Validates key properties for an RSA **private** key.
+    ///
+    /// This is a fail-fast validation used by operations like unwrapping/import.
+    /// It enforces:
+    /// - `kind` must be [`HsmKeyKind::Rsa`]
+    /// - `class` must be [`HsmKeyClass::Private`]
+    /// - key size must be supported (see [`validate_key_size`])
+    /// - `ecc_curve` must be unset (RSA keys must not specify an ECC curve)
+    /// - usage flags must include **exactly one** of: `DECRYPT`, `UNWRAP`, `SIGN`
+    /// - no unsupported flags may be set (beyond what this layer allows; `SESSION` is allowed)
+    ///
+    /// # Errors
+    /// Returns [`HsmError::InvalidKeyProps`] if any required property is missing/invalid,
+    /// if more than one usage flag is set, or if unsupported flags are present.
+    fn validate_props(props: &HsmKeyProps) -> HsmResult<()> {
+        //RSA private key supported flags are DECRYPT, UNWRAP, SIGN
+        let supported_flags = HsmKeyFlags::DECRYPT | HsmKeyFlags::SIGN | HsmKeyFlags::UNWRAP;
+
+        // Kind/class: ensure we're validating an AES *secret* key.
+        if props.kind() != HsmKeyKind::Rsa {
+            Err(HsmError::InvalidKeyProps)?;
+        }
+
+        // RSA private keys must be Private class.
+        if props.class() != HsmKeyClass::Private {
+            Err(HsmError::InvalidKeyProps)?;
+        }
+
+        //RSA should have one of the supported crypto functions (typecast to u8 and sum to simplify the logic)
+        if props.can_decrypt() as u8 + props.can_unwrap() as u8 + props.can_sign() as u8 != 1 {
+            Err(HsmError::InvalidKeyProps)?;
+        }
+
+        // check if Ecc curve is set
+        if props.ecc_curve().is_some() {
+            Err(HsmError::InvalidKeyProps)?;
+        }
+
+        // Validate key size
+        validate_key_size(props.bits() as usize)?;
+
+        // Ensure no invalid usage flags are set other than expected ones.
+        if !props.check_supported_flags(supported_flags) {
+            Err(HsmError::InvalidKeyProps)?;
+        }
+        Ok(())
+    }
+}
+impl HsmRsaPublicKey {
+    /// Validates key properties for an RSA **public** key.
+    ///
+    /// This is a fail-fast validation used by operations like unwrapping/import.
+    /// It enforces:
+    /// - `kind` must be [`HsmKeyKind::Rsa`]
+    /// - `class` must be [`HsmKeyClass::Public`]
+    /// - key size must be supported (see [`validate_key_size`])
+    /// - `ecc_curve` must be unset (RSA keys must not specify an ECC curve)
+    /// - usage flags must include **zero or one** of: `ENCRYPT`, `WRAP`, `VERIFY`
+    ///   (zero allows "export-only" public keys)
+    /// - no unsupported flags may be set (beyond what this layer allows; `SESSION` is allowed)
+    ///
+    /// # Errors
+    /// Returns [`HsmError::InvalidKeyProps`] if any required property is missing/invalid,
+    /// if more than one usage flag is set, or if unsupported flags are present.
+    fn validate_props(props: &HsmKeyProps) -> HsmResult<()> {
+        //RSA public key supported flags are ENCRYPT, WRAP, VERIFY
+        let supported_flags = HsmKeyFlags::ENCRYPT | HsmKeyFlags::VERIFY | HsmKeyFlags::WRAP;
+
+        // Kind/class: ensure we're validating an AES *secret* key.
+        if props.kind() != HsmKeyKind::Rsa {
+            Err(HsmError::InvalidKeyProps)?;
+        }
+
+        // RSA public keys must be Public class.
+        if props.class() != HsmKeyClass::Public {
+            Err(HsmError::InvalidKeyProps)?;
+        }
+
+        //RSA public keys must have none or one of the supported crypto functions (typecast to u8 and sum to simplify the logic)
+        if props.can_encrypt() as u8 + props.can_wrap() as u8 + props.can_verify() as u8 > 1 {
+            Err(HsmError::InvalidKeyProps)?;
+        }
+        // check if Ecc curve is set
+        if props.ecc_curve().is_some() {
+            Err(HsmError::InvalidKeyProps)?;
+        }
+
+        // Validate key size
+        validate_key_size(props.bits() as usize)?;
+
+        // Ensure no invalid usage flags are set.
+        if !props.check_supported_flags(supported_flags) {
+            Err(HsmError::InvalidKeyProps)?;
+        }
+        Ok(())
+    }
+}
+
 impl HsmDecryptionKey for HsmRsaPrivateKey {}
 
 impl HsmSigningKey for HsmRsaPrivateKey {}
@@ -48,6 +162,22 @@ impl HsmKeyPairGenOp for HsmRsaKeyUnwrappingKeyGenAlgo {
         ),
         Self::Error,
     > {
+        // Validate the provided key properties.
+        HsmRsaPrivateKey::validate_props(&priv_key_props)?;
+
+        //validate public key props
+        HsmRsaPublicKey::validate_props(&pub_key_props)?;
+
+        // DDI supports only unwrapping keys for RSA key pair generation.
+        if !priv_key_props.can_unwrap() || !pub_key_props.can_wrap() {
+            return Err(HsmError::InvalidKeyProps);
+        }
+
+        // DDI Supports only 2048 key size for unwrapping keys
+        if priv_key_props.bits() != 2048 || pub_key_props.bits() != 2048 {
+            return Err(HsmError::InvalidKeyProps);
+        }
+
         let (handle, priv_key_props, pub_key_props) =
             ddi::get_rsa_unwrapping_key(session, priv_key_props, pub_key_props)?;
 
@@ -94,12 +224,12 @@ impl HsmKeyPairUnwrapOp for HsmRsaKeyRsaAesKeyUnwrapAlgo {
     type PrivateKey = HsmRsaPrivateKey;
     type Error = HsmError;
 
-    /// Unwraps (decrypts) a wrapped ECC key pair using the specified RSA unwrapping key.
+    /// Unwraps (decrypts) a wrapped RSA key pair using the specified RSA unwrapping key.
     ///
     /// # Arguments
     ///
-    /// * `unwrapping_key` - The RSA private key used to unwrap the ECC key pair.
-    /// * `wrapped_key` - The wrapped ECC key pair data.
+    /// * `unwrapping_key` - The RSA private key used to unwrap the RSA key pair.
+    /// * `wrapped_key` - The wrapped RSA key pair data.
     /// * `priv_key_props` - Properties for the unwrapped private key.
     /// * `pub_key_props` - Properties for the unwrapped public key.
     ///
@@ -119,6 +249,17 @@ impl HsmKeyPairUnwrapOp for HsmRsaKeyRsaAesKeyUnwrapAlgo {
         ),
         Self::Error,
     > {
+        // check if unwrapping key can unwrap
+        if !unwrapping_key.can_unwrap() {
+            return Err(HsmError::InvalidKey);
+        }
+
+        //check private key props
+        HsmRsaPrivateKey::validate_props(&priv_key_props)?;
+
+        //check public key props
+        HsmRsaPublicKey::validate_props(&pub_key_props)?;
+
         let (handle, priv_key_props, pub_key_props) = ddi::rsa_aes_unwrap_key_pair(
             unwrapping_key,
             wrapped_key,
