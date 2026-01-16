@@ -56,6 +56,14 @@ impl Xtask for Setup {
             install_cargo_fuzz.run(ctx.clone())?;
         }
 
+        // Run Install cargo-llvm-cov
+        let install_cargo_llvm_cov = install::Install {
+            crate_name: "cargo-llvm-cov@0.6.23".to_string(),
+            force: self.force,
+            config: self.config.clone(),
+        };
+        install_cargo_llvm_cov.run(ctx.clone())?;
+
         // Add Clippy
         let add_clippy = rustup_component_add::RustupComponentAdd {
             component: "clippy".to_string(),
