@@ -27,6 +27,9 @@ mod key_mgmt;
 mod key_props;
 mod partition;
 mod session;
+#[allow(unused)]
+#[path = "../../lib/src/shared_types.rs"]
+mod shared_types;
 mod str;
 mod utils;
 
@@ -44,6 +47,8 @@ use azihsm_napi::HsmKeyKind;
 use error::*;
 use handle_table::*;
 use key_props::*;
+#[allow(unused)]
+use shared_types::*;
 use str::*;
 use utils::*;
 
@@ -90,6 +95,10 @@ type AzihsmEccCurve = HsmEccCurve;
 /// An alias for key kinds.
 #[allow(unused)]
 type AzihsmKeyKind = HsmKeyKind;
+
+/// An alias for key classes.
+#[allow(unused)]
+type AzihsmKeyClass = HsmKeyClass;
 
 /// Global handle table for managing HSM object lifetimes.
 ///
@@ -314,5 +323,14 @@ impl<'a> TryFrom<&'a mut AzihsmBuffer> for &'a mut [u8] {
             unsafe { std::slice::from_raw_parts_mut(buffer.ptr as *mut u8, buffer.len as usize) };
 
         Ok(slice)
+    }
+}
+
+impl TryFrom<AzihsmHandle> for api::HsmHmacKey {
+    type Error = AzihsmError;
+
+    fn try_from(value: AzihsmHandle) -> Result<api::HsmHmacKey, Self::Error> {
+        let key: &api::HsmHmacKey = HANDLE_TABLE.as_ref(value, HandleType::HmacKey)?;
+        Ok(key.clone())
     }
 }

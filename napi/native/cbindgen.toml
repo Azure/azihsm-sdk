@@ -30,13 +30,22 @@ usize_is_size_t = true
 # A list of items to not include in the generated bindings
 # default: []
 exclude = []
-include = ["AzihsmAlgoAesCbcParams"]
+include = [
+  "AzihsmAlgoAesCbcParams",
+  "AzihsmAlgoEcdhParams",
+  "AzihsmAlgoHkdfParams",
+  "HsmEccCurve",
+  "HsmKeyClass",
+  "HsmKeyKind",
+]
 
 item_types = ["constants", "enums", "functions", "structs", "typedefs"]
 
 [export.rename]
 "AzihsmAlgo" = "azihsm_algo"
 "AzihsmAlgoAesCbcParams" = "azihsm_algo_aes_cbc_params"
+"AzihsmAlgoEcdhParams" = "azihsm_algo_ecdh_params"
+"AzihsmAlgoHkdfParams" = "azihsm_algo_hkdf_params"
 "AzihsmAlgoId" = "azihsm_algo_id"
 "AzihsmApiRev" = "azihsm_api_rev"
 "AzihsmBuffer" = "azihsm_buffer"
@@ -51,7 +60,10 @@ item_types = ["constants", "enums", "functions", "structs", "typedefs"]
 "AzihsmKeyPropList" = "azihsm_key_prop_list"
 "AzihsmStr" = "azihsm_str"
 "AzihsmWideChar" = "azihsm_char"
+"HsmEccCurve" = "azihsm_ecc_curve"
 "HsmError" = "azihsm_error"
+"HsmKeyClass" = "azihsm_key_class"
+"HsmKeyKind" = "azihsm_key_kind"
 
 [defines]
 "target_os = linux" = "__linux__ "

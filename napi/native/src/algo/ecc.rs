@@ -8,6 +8,8 @@ use crate::AzihsmError;
 use crate::AzihsmHandle;
 use crate::HANDLE_TABLE;
 use crate::handle_table::HandleType;
+use crate::key_props::AzihsmKeyProp;
+use crate::key_props::AzihsmKeyPropId;
 use crate::utils::validate_output_buffer;
 
 impl TryFrom<&AzihsmAlgo> for HsmEccKeyGenAlgo {
@@ -215,4 +217,45 @@ pub(crate) fn ecc_verify_final(
     let is_valid = ctx.finish(signature)?;
 
     Ok(is_valid)
+}
+
+/// Helper function to get ECC key properties
+pub(crate) fn ecc_get_key_property(
+    key_handle: AzihsmHandle,
+    key_prop: &mut AzihsmKeyProp,
+) -> Result<(), AzihsmError> {
+    let key_type = HandleType::try_from(key_handle)?;
+
+    match key_type {
+        HandleType::EccPubKey => {
+            match key_prop.id {
+                AzihsmKeyPropId::PubKeyInfo => {
+                    let pub_key = HsmEccPublicKey::try_from(key_handle)?;
+                    let pub_key_der = pub_key.pub_key_der_vec()?;
+
+                    let mut temp_buffer = AzihsmBuffer {
+                        ptr: key_prop.val,
+                        len: key_prop.len,
+                    };
+
+                    // Validate and update the output buffer
+                    let output_buf = validate_output_buffer(&mut temp_buffer, pub_key_der.len())?;
+
+                    // Copy the public key DER data to output buffer
+                    output_buf[..pub_key_der.len()].copy_from_slice(&pub_key_der);
+
+                    // Set the actual length of data written
+                    key_prop.len = pub_key_der.len() as u32;
+
+                    Ok(())
+                }
+                _ => Err(AzihsmError::UnsupportedKeyProperty), // Not yet implemented
+            }
+        }
+        HandleType::EccPrivKey => {
+            // Private key properties not yet implemented
+            Err(AzihsmError::UnsupportedKeyProperty)
+        }
+        _ => Err(AzihsmError::InvalidHandle),
+    }
 }

@@ -40,7 +40,7 @@ pub enum HsmError {
     UnsupportedAlgorithm = -14,
     InvalidSignature = -15,
     InvalidKeyProps = -16,
-
+    UnsupportedKeyProperty = -17,
     Panic = i32::MIN,
 }
 
