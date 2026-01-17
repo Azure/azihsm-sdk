@@ -16,6 +16,7 @@ use clap::Subcommand;
 
 mod audit;
 mod build;
+mod clang_format;
 mod clean;
 mod clippy;
 pub mod common;

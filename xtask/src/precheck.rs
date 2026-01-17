@@ -115,6 +115,7 @@ impl Xtask for Precheck {
             let fmt = fmt::Fmt {
                 fix: false,                // Do not fix formatting issues by default
                 skip_toml: self.skip_toml, // Pass through skip_toml flag
+                skip_clang: false,         // Include C/C++ formatting
                 toolchain: if self.skip_toolchain {
                     None
                 } else {
