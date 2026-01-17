@@ -1,13 +1,8 @@
 # Copyright (C) Microsoft Corporation. All rights reserved.
-
 [package]
-edition = "2021"
-name = "azihsm"
-version = "0.1.0"
-
-[lib]
-crate-type = ["cdylib", "lib"]
-doctest = false
+edition = "2024"
+name = "azihsm_api"
+version = "0.0.0"
 
 [dependencies]
 azihsm_cred_encrypt.workspace = true
@@ -15,21 +10,15 @@ azihsm_crypto.workspace = true
 azihsm_ddi.workspace = true
 azihsm_ddi_mbor.workspace = true
 azihsm_ddi_types.workspace = true
-cfg-if.workspace = true
+bitflags.workspace = true
 delegate.workspace = true
-lazy_static.workspace = true
-parking_lot.workspace = true
-strum.workspace = true
-strum_macros.workspace = true
-
-[target.'cfg(target_os = "linux")'.dependencies]
-azihsm_ddi_nix.workspace = true
-
-[target.'cfg(target_os = "windows")'.dependencies]
-azihsm_ddi_win.workspace = true
-
-[build-dependencies]
-cbindgen.workspace = true
+env_logger.workspace = true
+itertools.workspace = true
+log.workspace = true
+open-enum.workspace = true
+pastey.workspace = true
+test_with_tracing.workspace = true
+tracing.workspace = true
 
 [features]
 default = []

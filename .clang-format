@@ -1,2 +1,14 @@
 BasedOnStyle: Microsoft
-ColumnLimit: 120
+ColumnLimit: 100
+UseTab: Never
+TabWidth: 4
+IndentWidth: 4
+ContinuationIndentWidth: 4
+BinPackArguments: false
+BinPackParameters: OnePerLine
+AlignAfterOpenBracket: BlockIndent
+Cpp11BracedListStyle: false
+AllowAllParametersOfDeclarationOnNextLine: false
+AllowAllArgumentsOnNextLine: false
+IndentPPDirectives: None
+IndentExternBlock: NoIndent

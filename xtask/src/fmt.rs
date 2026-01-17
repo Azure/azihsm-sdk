@@ -11,7 +11,7 @@ use std::process::Command;
 use clap::Parser;
 use xshell::cmd;
 
-use crate::clang_format::ClangFormat;
+use crate::clang_format::*;
 use crate::Xtask;
 use crate::XtaskCtx;
 
@@ -80,10 +80,22 @@ impl Xtask for Fmt {
                     quiet: false,
                     color: "auto".to_string(),
                     exclude: vec![],
-                    files: vec![PathBuf::from(&ctx.root)
-                        .join("napi")
-                        .join("tests")
-                        .join("cpp")],
+                    files: vec![
+                        PathBuf::from(&ctx.root)
+                            .join("napi")
+                            .join("tests")
+                            .join("cpp"),
+                        #[cfg(target_os = "linux")]
+                        PathBuf::from(&ctx.root)
+                            .join("plugins")
+                            .join("ossl_prov")
+                            .join("src"),
+                        #[cfg(target_os = "linux")]
+                        PathBuf::from(&ctx.root)
+                            .join("plugins")
+                            .join("ossl_prov")
+                            .join("inc"),
+                    ],
                 };
                 clang_format.run(ctx)?;
             } else {

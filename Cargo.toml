@@ -4,6 +4,10 @@
 resolver = "2"
 
 members = [
+  "api/lib",
+  "api/native",
+  "api/tests",
+  "api/tests/macro",
   "crates/cred_encrypt",
   "crates/crypto",
   "crates/test_with_tracing",
@@ -11,16 +15,15 @@ members = [
   "ddi/interface",
   "ddi/lib",
   "ddi/test_helpers",
-  "napi/lib",
-  "napi/native",
-  "napi/tests",
-  "napi/tests/macro",
+  "plugins/ossl_prov",
   "xtask",
 ]
 
 [workspace.dependencies]
 # Internal crates
-azihsm = { path = "api/lib" }
+azihsm_api = { path = "api/lib" }
+azihsm_api_native = { path = "api/native" }
+azihsm_api_tests_macro = { path = "api/tests/macro" }
 azihsm_cred_encrypt = { path = "crates/cred_encrypt" }
 azihsm_crypto = { path = "crates/crypto" }
 azihsm_ddi = { path = "ddi/lib" }
@@ -37,9 +40,6 @@ azihsm_ddi_types = { features = [
   "pre_encode",
 ], path = "ddi/serde/types" }
 azihsm_ddi_win = { path = "ddi/win" }
-azihsm_napi = { path = "napi/lib" }
-azihsm_napi_native = { path = "napi/native" }
-azihsm_napi_tests_macro = { path = "napi/tests/macro" }
 test_with_tracing = { path = "crates/test_with_tracing" }
 test_with_tracing_macro = { path = "crates/test_with_tracing/test_with_tracing_macro" }
 x509 = { path = "crates/x509" }
