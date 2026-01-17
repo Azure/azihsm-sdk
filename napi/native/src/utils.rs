@@ -1,5 +1,7 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
 
+use std::ffi::c_void;
+
 use crate::AzihsmError;
 
 pub(crate) fn validate_ptr<T>(ptr: *const T) -> Result<(), AzihsmError> {
@@ -71,4 +73,28 @@ pub(crate) fn validate_output_buffer(
 
     // Get output buffer slice
     output_buf.try_into()
+}
+
+/// Cast a raw pointer to a typed reference after validation
+///
+/// # Safety
+/// The caller must ensure that:
+/// - The pointer points to valid memory containing a properly initialized value of type T
+/// - The memory layout matches the expected type T
+/// - The pointer's lifetime exceeds the returned reference lifetime
+///
+/// # Arguments
+/// * `ptr` - Raw pointer to cast
+///
+/// # Returns
+/// * `Ok(&T)` - Reference to the typed value
+/// * `Err(AzihsmError::NullPointer)` - If the pointer is null
+#[allow(unsafe_code)]
+pub(crate) fn cast_ptr<'a, T>(ptr: *const c_void) -> Result<&'a T, AzihsmError> {
+    validate_ptr(ptr)?;
+
+    // SAFETY: We have validated that the pointer is not null.
+    // The caller is responsible for ensuring the pointer points to valid memory
+    // containing a properly initialized value of type T.
+    Ok(unsafe { &*(ptr as *const T) })
 }

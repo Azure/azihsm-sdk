@@ -90,8 +90,8 @@ impl HsmKeyManager {
     ///
     /// # Arguments
     ///
-    /// * `unwrapping_key` - The key used to unwrap (decrypt) the wrapped key
     /// * `algo` - The key unwrapping algorithm implementation
+    /// * `unwrapping_key` - The key used to unwrap (decrypt) the wrapped key
     /// * `wrapped_key` - The wrapped (encrypted) key data
     /// * `key_props` - Properties for the unwrapped key
     ///
@@ -111,7 +111,6 @@ impl HsmKeyManager {
     ///
     /// # Arguments
     ///
-    /// * `session` - The session context in which to unwrap the key pair
     /// * `algo` - The key pair unwrapping algorithm implementation
     /// * `unwrapping_key` - The key used to unwrap (decrypt) the
     /// * `wrapped_key_pair` - The wrapped (encrypted) key pair data
@@ -150,6 +149,7 @@ impl HsmKeyManager {
     ///
     /// # Arguments
     ///
+    /// * `session` - The session context in which to derive the key
     /// * `algo` - The key derivation algorithm implementation
     /// * `base_key` - The base key material (or handle) from which to derive a new key
     /// * `props` - Key properties specifying the desired derived key attributes

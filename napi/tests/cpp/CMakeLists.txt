@@ -56,6 +56,8 @@ set(SOURCE
     algo/ecc/keygen_tests.cpp
     algo/ecc/sign_verify_tests.cpp
     algo/rsa/keygen_tests.cpp
+    algo/rsa/enc_dec_tests.cpp
+    algo/rsa/sign_verify_tests.cpp
     algo/sha/digest_tests.cpp
     algo/hmac/sign_verify_tests.cpp
 )

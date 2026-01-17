@@ -34,6 +34,10 @@ include = [
   "AzihsmAlgoAesCbcParams",
   "AzihsmAlgoEcdhParams",
   "AzihsmAlgoHkdfParams",
+  "AzihsmAlgoRsaAesKeyWrapParams",
+  "AzihsmAlgoRsaAesWrapParams",
+  "AzihsmAlgoRsaPkcsOaepParams",
+  "AzihsmAlgoRsaPkcsPssParams",
   "HsmEccCurve",
   "HsmKeyClass",
   "HsmKeyKind",
@@ -47,6 +51,10 @@ item_types = ["constants", "enums", "functions", "structs", "typedefs"]
 "AzihsmAlgoEcdhParams" = "azihsm_algo_ecdh_params"
 "AzihsmAlgoHkdfParams" = "azihsm_algo_hkdf_params"
 "AzihsmAlgoId" = "azihsm_algo_id"
+"AzihsmAlgoRsaAesKeyWrapParams" = "azihsm_algo_rsa_aes_key_wrap_params"
+"AzihsmAlgoRsaAesWrapParams" = "azihsm_algo_rsa_aes_wrap_params"
+"AzihsmAlgoRsaPkcsOaepParams" = "azihsm_algo_rsa_pkcs_oaep_params"
+"AzihsmAlgoRsaPkcsPssParams" = "azihsm_algo_rsa_pkcs_pss_params"
 "AzihsmApiRev" = "azihsm_api_rev"
 "AzihsmBuffer" = "azihsm_buffer"
 "AzihsmChar" = "azihsm_char"
@@ -58,6 +66,7 @@ item_types = ["constants", "enums", "functions", "structs", "typedefs"]
 "AzihsmKeyProp" = "azihsm_key_prop"
 "AzihsmKeyPropId" = "azihsm_key_prop_id"
 "AzihsmKeyPropList" = "azihsm_key_prop_list"
+"AzihsmMgf1Id" = "azihsm_mgf1_id"
 "AzihsmStr" = "azihsm_str"
 "AzihsmWideChar" = "azihsm_char"
 "HsmEccCurve" = "azihsm_ecc_curve"

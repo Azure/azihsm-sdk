@@ -8,7 +8,8 @@
 #include "handle/part_handle.hpp"
 #include "handle/part_list_handle.hpp"
 #include "handle/session_handle.hpp"
-#include "rsa_test_helpers.hpp"
+#include "helpers.hpp"
+#include "utils.hpp"
 
 class azihsm_rsa_keygen : public ::testing::Test
 {
@@ -22,15 +23,20 @@ TEST_F(azihsm_rsa_keygen, generate_rsa_2048_keypair)
         auto partition = PartitionHandle(path);
         auto session = SessionHandle(partition.get());
 
-        azihsm_handle priv_key = 0;
-        azihsm_handle pub_key = 0;
-        generate_rsa_keypair(session.get(), 2048, priv_key, pub_key);
+        AutoKey priv_key;
+        AutoKey pub_key;
+        auto err = generate_rsa_unwrapping_keypair(session.get(), priv_key.get_ptr(), pub_key.get_ptr());
+        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_NE(priv_key.get(), 0);
+        ASSERT_NE(pub_key.get(), 0);
 
-        // Clean up keys
-        auto priv_err = azihsm_key_delete(priv_key);
-        auto pub_err = azihsm_key_delete(pub_key);
+        // Explicitly test deletion (AutoKey will also delete on scope exit as backup)
+        auto delete_priv_err = azihsm_key_delete(priv_key.get());
+        ASSERT_EQ(delete_priv_err, AZIHSM_ERROR_SUCCESS);
+        priv_key.release();
 
-        ASSERT_EQ(priv_err, AZIHSM_ERROR_SUCCESS);
-        ASSERT_EQ(pub_err, AZIHSM_ERROR_SUCCESS);
+        auto delete_pub_err = azihsm_key_delete(pub_key.get());
+        ASSERT_EQ(delete_pub_err, AZIHSM_ERROR_SUCCESS);
+        pub_key.release();
     });
 }

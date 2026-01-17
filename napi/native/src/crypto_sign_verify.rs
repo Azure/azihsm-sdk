@@ -1,10 +1,9 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
 
-use azihsm_napi::*;
-
 use super::*;
 use crate::algo::ecc::*;
 use crate::algo::hmac::*;
+use crate::algo::rsa::*;
 
 /// Sign data using a cryptographic key and algorithm.
 ///
@@ -41,23 +40,34 @@ pub unsafe extern "C" fn azihsm_crypt_sign(
             AzihsmAlgoId::Ecdsa => {
                 ecc_sign(key_handle, input_data, sig_buf)?;
             }
-            AzihsmAlgoId::EcdsaSha1 => {
-                ecc_hash_sign(HsmHashAlgo::Sha1, key_handle, input_data, sig_buf)?;
+            AzihsmAlgoId::EcdsaSha1
+            | AzihsmAlgoId::EcdsaSha256
+            | AzihsmAlgoId::EcdsaSha384
+            | AzihsmAlgoId::EcdsaSha512 => {
+                ecc_hash_sign(algo.id, key_handle, input_data, sig_buf)?;
             }
-            AzihsmAlgoId::EcdsaSha256 => {
-                ecc_hash_sign(HsmHashAlgo::Sha256, key_handle, input_data, sig_buf)?;
-            }
-            AzihsmAlgoId::EcdsaSha384 => {
-                ecc_hash_sign(HsmHashAlgo::Sha384, key_handle, input_data, sig_buf)?;
-            }
-            AzihsmAlgoId::EcdsaSha512 => {
-                ecc_hash_sign(HsmHashAlgo::Sha512, key_handle, input_data, sig_buf)?;
-            }
+
             AzihsmAlgoId::HmacSha1
             | AzihsmAlgoId::HmacSha256
             | AzihsmAlgoId::HmacSha384
             | AzihsmAlgoId::HmacSha512 => {
                 hmac_sign(key_handle, input_data, sig_buf)?;
+            }
+
+            AzihsmAlgoId::RsaPkcsSha1
+            | AzihsmAlgoId::RsaPkcsSha256
+            | AzihsmAlgoId::RsaPkcsSha384
+            | AzihsmAlgoId::RsaPkcsSha512 => {
+                rsa_hash_sign(algo.id, key_handle, input_data, sig_buf)?;
+            }
+            AzihsmAlgoId::RsaPkcsPss => {
+                rsa_pss_sign(algo, key_handle, input_data, sig_buf)?;
+            }
+            AzihsmAlgoId::RsaPkcsPssSha1
+            | AzihsmAlgoId::RsaPkcsPssSha256
+            | AzihsmAlgoId::RsaPkcsPssSha384
+            | AzihsmAlgoId::RsaPkcsPssSha512 => {
+                rsa_pss_hash_sign(algo.id, algo, key_handle, input_data, sig_buf)?;
             }
             _ => Err(AzihsmError::UnsupportedAlgorithm)?,
         }
@@ -98,22 +108,33 @@ pub unsafe extern "C" fn azihsm_crypt_verify(
         // Dispatch based on algorithm ID and perform verification
         let is_valid = match algo.id {
             AzihsmAlgoId::Ecdsa => ecc_verify(key_handle, input_data, sig_data)?,
-            AzihsmAlgoId::EcdsaSha1 => {
-                ecc_hash_verify(HsmHashAlgo::Sha1, key_handle, input_data, sig_data)?
+            AzihsmAlgoId::EcdsaSha1
+            | AzihsmAlgoId::EcdsaSha256
+            | AzihsmAlgoId::EcdsaSha384
+            | AzihsmAlgoId::EcdsaSha512 => {
+                ecc_hash_verify(algo.id, key_handle, input_data, sig_data)?
             }
-            AzihsmAlgoId::EcdsaSha256 => {
-                ecc_hash_verify(HsmHashAlgo::Sha256, key_handle, input_data, sig_data)?
-            }
-            AzihsmAlgoId::EcdsaSha384 => {
-                ecc_hash_verify(HsmHashAlgo::Sha384, key_handle, input_data, sig_data)?
-            }
-            AzihsmAlgoId::EcdsaSha512 => {
-                ecc_hash_verify(HsmHashAlgo::Sha512, key_handle, input_data, sig_data)?
-            }
+
             AzihsmAlgoId::HmacSha1
             | AzihsmAlgoId::HmacSha256
             | AzihsmAlgoId::HmacSha384
             | AzihsmAlgoId::HmacSha512 => hmac_verify(key_handle, input_data, sig_data)?,
+
+            AzihsmAlgoId::RsaPkcsSha1
+            | AzihsmAlgoId::RsaPkcsSha256
+            | AzihsmAlgoId::RsaPkcsSha384
+            | AzihsmAlgoId::RsaPkcsSha512 => {
+                rsa_hash_verify(algo.id, key_handle, input_data, sig_data)?
+            }
+
+            AzihsmAlgoId::RsaPkcsPss => rsa_pss_verify(algo, key_handle, input_data, sig_data)?,
+
+            AzihsmAlgoId::RsaPkcsPssSha1
+            | AzihsmAlgoId::RsaPkcsPssSha256
+            | AzihsmAlgoId::RsaPkcsPssSha384
+            | AzihsmAlgoId::RsaPkcsPssSha512 => {
+                rsa_pss_hash_verify(algo.id, algo, key_handle, input_data, sig_data)?
+            }
             _ => Err(AzihsmError::UnsupportedAlgorithm)?,
         };
 
@@ -154,10 +175,12 @@ pub unsafe extern "C" fn azihsm_crypt_sign_init(
                 // Streaming pre-computed hash input is not supported
                 Err(AzihsmError::UnsupportedAlgorithm)?
             }
-            AzihsmAlgoId::EcdsaSha1 => ecc_sign_init(HsmHashAlgo::Sha1, key_handle)?,
-            AzihsmAlgoId::EcdsaSha256 => ecc_sign_init(HsmHashAlgo::Sha256, key_handle)?,
-            AzihsmAlgoId::EcdsaSha384 => ecc_sign_init(HsmHashAlgo::Sha384, key_handle)?,
-            AzihsmAlgoId::EcdsaSha512 => ecc_sign_init(HsmHashAlgo::Sha512, key_handle)?,
+
+            AzihsmAlgoId::EcdsaSha1
+            | AzihsmAlgoId::EcdsaSha256
+            | AzihsmAlgoId::EcdsaSha384
+            | AzihsmAlgoId::EcdsaSha512 => ecc_sign_init(algo.id, key_handle)?,
+
             AzihsmAlgoId::HmacSha1
             | AzihsmAlgoId::HmacSha256
             | AzihsmAlgoId::HmacSha384
@@ -270,10 +293,12 @@ pub unsafe extern "C" fn azihsm_crypt_verify_init(
                 // Streaming pre-computed hash input is not supported
                 Err(AzihsmError::UnsupportedAlgorithm)?
             }
-            AzihsmAlgoId::EcdsaSha1 => ecc_verify_init(HsmHashAlgo::Sha1, key_handle)?,
-            AzihsmAlgoId::EcdsaSha256 => ecc_verify_init(HsmHashAlgo::Sha256, key_handle)?,
-            AzihsmAlgoId::EcdsaSha384 => ecc_verify_init(HsmHashAlgo::Sha384, key_handle)?,
-            AzihsmAlgoId::EcdsaSha512 => ecc_verify_init(HsmHashAlgo::Sha512, key_handle)?,
+
+            AzihsmAlgoId::EcdsaSha1 => ecc_verify_init(algo.id, key_handle)?,
+            AzihsmAlgoId::EcdsaSha256 | AzihsmAlgoId::EcdsaSha384 | AzihsmAlgoId::EcdsaSha512 => {
+                ecc_verify_init(algo.id, key_handle)?
+            }
+
             AzihsmAlgoId::HmacSha1
             | AzihsmAlgoId::HmacSha256
             | AzihsmAlgoId::HmacSha384
