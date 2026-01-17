@@ -24,6 +24,8 @@ jobs:
       run: cargo xtask precheck --setup
     - name: Run Copyright
       run: cargo xtask precheck --copyright
+    - name: Run Audit
+      run: cargo xtask precheck --audit
     - name: Cargo format
       run: |
         cargo +nightly fmt --version
@@ -52,6 +54,8 @@ jobs:
       run: cargo xtask precheck --setup
     - name: Run Copyright
       run: cargo xtask precheck --copyright
+    - name: Run Audit
+      run: cargo xtask precheck --audit
     - name: Cargo format
       run: |
         cargo +nightly fmt --version

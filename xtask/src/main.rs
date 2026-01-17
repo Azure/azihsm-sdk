@@ -23,7 +23,6 @@ pub mod common;
 mod copyright;
 mod fmt;
 mod install;
-mod native;
 mod nextest;
 mod precheck;
 mod rustup_component_add;
@@ -64,7 +63,6 @@ enum Commands {
     Copyright(copyright::Copyright),
     Fmt(fmt::Fmt),
     #[clap(alias = "nbt")]
-    NativeBuildAndTest(native::NativeBuildAndTest),
     Nextest(nextest::Nextest),
     Setup(setup::Setup),
     Install(install::Install),
@@ -102,7 +100,6 @@ fn try_main() -> anyhow::Result<()> {
         Commands::Copyright(task) => task.run(ctx),
         Commands::Fmt(task) => task.run(ctx),
         Commands::Precheck(task) => task.run(ctx),
-        Commands::NativeBuildAndTest(task) => task.run(ctx),
         Commands::Nextest(task) => task.run(ctx),
         Commands::Setup(task) => task.run(ctx),
         Commands::Install(task) => task.run(ctx),
