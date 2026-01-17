@@ -241,5 +241,5 @@ fn test_hkdf_unsupported_derived_key_kind_fails(session: HsmSession) {
         Ok(_) => panic!("HKDF derive should fail for unsupported derived key kind"),
         Err(err) => err,
     };
-    assert_eq!(err, HsmError::InvalidArgument);
+    assert_eq!(err, HsmError::InvalidKeyProps);
 }

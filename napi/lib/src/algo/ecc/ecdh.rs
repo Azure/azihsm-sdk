@@ -98,6 +98,9 @@ impl HsmKeyDeriveOp for EcdhAlgo {
             return Err(HsmError::InvalidArgument);
         }
 
+        //check if props are valid for shared secret
+        HsmGenericSecretKey::validate_props(&props)?;
+
         // Perform the ECDH derive operation via DDI.
         let (handle, props) = ddi::ecdh_derive(base_key, &self.peer_der, props)?;
         // update derived key properties based on base key properties if needed

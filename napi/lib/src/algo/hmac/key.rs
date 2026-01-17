@@ -19,6 +19,55 @@ use super::*;
 // (see HsmKeyCommonProps::size).
 define_hsm_key!(pub HsmHmacKey);
 
+impl HsmHmacKey {
+    /// Validates that these key properties describe a well-formed HMAC key.
+    ///
+    /// This helper is used to fail fast (before DDI calls) when the provided metadata is
+    /// inconsistent with what the HMAC implementation supports.
+    ///
+    /// Requirements enforced here:
+    /// - `class` must be [`HsmKeyClass::Secret`]
+    /// - `kind` must be one of [`HsmKeyKind::HmacSha256`], [`HsmKeyKind::HmacSha384`],
+    ///   or [`HsmKeyKind::HmacSha512`]
+    /// - `ecc_curve` must be `None`
+    /// - `bits` must be non-zero
+    /// - usage flags must be limited to `SIGN | VERIFY` (and the global `SESSION` flag
+    ///   permitted by [`HsmKeyProps::check_supported_flags`])
+    pub fn validate_props(props: &HsmKeyProps) -> HsmResult<()> {
+        let supported_flags = HsmKeyFlags::SIGN | HsmKeyFlags::VERIFY;
+
+        // Kind/class: ensure we're validating a secret HMAC key.
+        if props.class() != HsmKeyClass::Secret {
+            Err(HsmError::InvalidKeyProps)?;
+        }
+
+        //check key kind
+        if props.kind() != HsmKeyKind::HmacSha256
+            && props.kind() != HsmKeyKind::HmacSha384
+            && props.kind() != HsmKeyKind::HmacSha512
+        {
+            Err(HsmError::InvalidKeyProps)?;
+        }
+
+        // Secret keys in this layer should not have an associated ECC curve.
+        if props.ecc_curve().is_some() {
+            Err(HsmError::InvalidKeyProps)?;
+        }
+
+        //check if key size is non-zero
+        if props.bits() == 0 {
+            Err(HsmError::InvalidKeyProps)?;
+        }
+
+        //check if only supported flags are set
+        if !props.check_supported_flags(supported_flags) {
+            Err(HsmError::InvalidKeyProps)?;
+        }
+
+        Ok(())
+    }
+}
+
 // Marker trait implementations.
 //
 // These are intentionally empty: they advertise the capabilities of `HsmHmacKey`
@@ -40,18 +89,8 @@ impl TryFrom<HsmGenericSecretKey> for HsmHmacKey {
     type Error = HsmError;
 
     fn try_from(key: HsmGenericSecretKey) -> Result<Self, Self::Error> {
-        // Validate both the key kind and class.
-        //
-        // NOTE: `HsmGenericSecretKey` is a broad wrapper; this ensures callers
-        // can't accidentally pass (for example) an AES key or a non-secret key
-        // into HMAC operations.
-        if (key.kind() != HsmKeyKind::HmacSha256
-            && key.kind() != HsmKeyKind::HmacSha384
-            && key.kind() != HsmKeyKind::HmacSha512)
-            || key.class() != HsmKeyClass::Secret
-        {
-            Err(HsmError::InvalidKey)?;
-        }
+        // Validate that the generic secret key is suitable for HMAC operations.
+        HsmHmacKey::validate_props(&key.props())?;
 
         // Re-wrap the existing inner key state so typed wrappers share the same
         // underlying handle + drop semantics.

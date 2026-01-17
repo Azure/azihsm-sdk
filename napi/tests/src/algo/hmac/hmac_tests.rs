@@ -6,7 +6,7 @@ use azihsm_napi_tests_macro::*;
 use crate::algo::ecc::*;
 
 // Maps an HMAC key kind to the hash algorithm used for HKDF.
-fn hkdf_hash_for_hmac_key_kind(key_kind: HsmKeyKind) -> HsmHashAlgo {
+pub(crate) fn hkdf_hash_for_hmac_key_kind(key_kind: HsmKeyKind) -> HsmHashAlgo {
     match key_kind {
         HsmKeyKind::HmacSha256 => HsmHashAlgo::Sha256,
         HsmKeyKind::HmacSha384 => HsmHashAlgo::Sha384,
@@ -16,7 +16,7 @@ fn hkdf_hash_for_hmac_key_kind(key_kind: HsmKeyKind) -> HsmHashAlgo {
 }
 
 // Chooses an ECDH curve to derive shared secrets for a given HMAC key kind.
-fn ecc_curve_for_hmac_key_kind(key_kind: HsmKeyKind) -> HsmEccCurve {
+pub(crate) fn ecc_curve_for_hmac_key_kind(key_kind: HsmKeyKind) -> HsmEccCurve {
     match key_kind {
         HsmKeyKind::HmacSha256 => HsmEccCurve::P256,
         HsmKeyKind::HmacSha384 => HsmEccCurve::P384,
@@ -50,7 +50,7 @@ fn test_message_bytes(seed: u8, len: usize) -> Vec<u8> {
 }
 
 // Derives a pair of ECDH shared secrets (party A and party B) that should match.
-fn derive_ecdh_shared_secrets(
+pub(crate) fn derive_ecdh_shared_secrets(
     session: &HsmSession,
     curve: HsmEccCurve,
 ) -> (HsmGenericSecretKey, HsmGenericSecretKey) {
