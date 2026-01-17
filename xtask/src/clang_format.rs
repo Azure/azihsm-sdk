@@ -239,6 +239,7 @@ fn is_excluded(path: &Path, excludes: &[glob::Pattern]) -> bool {
 ///
 /// # Returns
 /// `true` if the file has formatting differences, `false` otherwise
+#[allow(clippy::fn_params_excessive_bools)]
 fn process_file(
     file: &Path,
     clang_format_executable: &str,
