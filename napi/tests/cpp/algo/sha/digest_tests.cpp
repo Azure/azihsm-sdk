@@ -1,10 +1,10 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
 
+#include <array>
 #include <azihsm_api.h>
 #include <cstring>
 #include <gtest/gtest.h>
 #include <vector>
-#include <array>
 
 #include "handle/part_handle.hpp"
 #include "handle/part_list_handle.hpp"
@@ -17,8 +17,7 @@ class azihsm_sha_digest : public ::testing::Test
 };
 
 // Test data: 1024 bytes filled with 0x01
-const std::array<uint8_t, 1024> TEST_DATA_1K = []()
-{
+const std::array<uint8_t, 1024> TEST_DATA_1K = []() {
     std::array<uint8_t, 1024> data;
     data.fill(0x01);
     return data;

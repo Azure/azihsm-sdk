@@ -5,9 +5,13 @@
 
 //! Xtask to run various repo-specific formatting checks
 
+use std::path::PathBuf;
+use std::process::Command;
+
 use clap::Parser;
 use xshell::cmd;
 
+use crate::clang_format::ClangFormat;
 use crate::Xtask;
 use crate::XtaskCtx;
 
@@ -23,13 +27,17 @@ pub struct Fmt {
     #[clap(long)]
     pub skip_toml: bool,
 
+    /// Skip C/C++ formatting
+    #[clap(long)]
+    pub skip_clang: bool,
+
     /// Override toolchain to use for formatting
     #[clap(long)]
     pub toolchain: Option<String>,
 }
 
 impl Xtask for Fmt {
-    fn run(self, _ctx: XtaskCtx) -> anyhow::Result<()> {
+    fn run(self, ctx: XtaskCtx) -> anyhow::Result<()> {
         log::trace!("running fmt");
         let sh = xshell::Shell::new()?;
         let rust_toolchain = self
@@ -53,6 +61,34 @@ impl Xtask for Fmt {
         if !self.skip_toml {
             log::trace!("running taplo fmt");
             cmd!(sh, "taplo fmt {fmt_check...}").quiet().run()?;
+        }
+
+        if !self.skip_clang {
+            log::trace!("running clang-format");
+            // Check if clang-format is available
+            if Command::new("clang-format")
+                .arg("--version")
+                .output()
+                .is_ok()
+            {
+                let clang_format = ClangFormat {
+                    clang_format_executable: "clang-format".to_string(),
+                    extensions: "c,h,C,H,cpp,hpp,cc,hh,c++,h++,cxx,hxx".to_string(),
+                    recursive: true,
+                    dry_run: false,
+                    in_place: self.fix,
+                    quiet: false,
+                    color: "auto".to_string(),
+                    exclude: vec![],
+                    files: vec![PathBuf::from(&ctx.root)
+                        .join("napi")
+                        .join("tests")
+                        .join("cpp")],
+                };
+                clang_format.run(ctx)?;
+            } else {
+                log::warn!("clang-format not found, skipping C/C++ formatting");
+            }
         }
 
         log::trace!("done fmt");

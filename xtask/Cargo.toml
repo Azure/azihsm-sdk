@@ -7,9 +7,12 @@ version = "0.1.0"
 
 [dependencies]
 anyhow.workspace = true
+atty = "0.2"
 clap = { features = ["derive", "env"], workspace = true }
 env_logger.workspace = true
+glob = "0.3"
 log.workspace = true
+similar = { features = ["text"], version = "2.4" }
 xshell.workspace = true
 
 [lints]
