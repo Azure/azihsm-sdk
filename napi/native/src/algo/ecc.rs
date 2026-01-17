@@ -92,12 +92,14 @@ pub(crate) fn ecc_sign(
 }
 
 /// Helper function to perform ECC signing operation with hash algorithm
+/// Hashing is performed internally as part of signing
 pub(crate) fn ecc_hash_sign(
-    hash_algo: HsmHashAlgo,
+    hash_algo: AzihsmAlgoId,
     key_handle: AzihsmHandle,
     input: &[u8],
     output: &mut AzihsmBuffer,
 ) -> Result<(), AzihsmError> {
+    let hash_algo = HsmHashAlgo::try_from(hash_algo)?;
     sign_with_algo(HsmHashSignAlgo::new(hash_algo), key_handle, input, output)
 }
 
@@ -112,18 +114,21 @@ pub(crate) fn ecc_verify(
 
 /// Helper function to perform ECC verification operation with hash algorithm
 pub(crate) fn ecc_hash_verify(
-    hash_algo: HsmHashAlgo,
+    hash_algo: AzihsmAlgoId,
     key_handle: AzihsmHandle,
     data: &[u8],
     sig: &[u8],
 ) -> Result<bool, AzihsmError> {
+    let hash_algo = HsmHashAlgo::try_from(hash_algo)?;
     verify_with_algo(HsmHashSignAlgo::new(hash_algo), key_handle, data, sig)
 }
 
 pub(crate) fn ecc_sign_init(
-    hash_algo: HsmHashAlgo,
+    hash_algo: AzihsmAlgoId,
     key_handle: AzihsmHandle,
 ) -> Result<AzihsmHandle, AzihsmError> {
+    let hash_algo = HsmHashAlgo::try_from(hash_algo)?;
+
     // Get the key from handle
     let key = HsmEccPrivateKey::try_from(key_handle)?;
 
@@ -176,9 +181,11 @@ pub(crate) fn ecc_sign_final(
 }
 
 pub(crate) fn ecc_verify_init(
-    hash_algo: HsmHashAlgo,
+    hash_algo: AzihsmAlgoId,
     key_handle: AzihsmHandle,
 ) -> Result<AzihsmHandle, AzihsmError> {
+    let hash_algo = HsmHashAlgo::try_from(hash_algo)?;
+
     // Get the key from handle
     let key = HsmEccPublicKey::try_from(key_handle)?;
 

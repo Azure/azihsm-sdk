@@ -9,6 +9,10 @@ pub(crate) mod sha;
 
 use std::ffi::c_void;
 
+use azihsm_napi::HsmHashAlgo;
+
+use crate::AzihsmError;
+
 /// HSM Algorithm identifier enumeration.
 ///
 /// This enum defines all supported cryptographic algorithms in the HSM.
@@ -44,10 +48,6 @@ pub enum AzihsmAlgoId {
     /// RSA Key Unwrap Key Pair Generation.
     // Corresponds to AZIHSM_ALGO_ID_RSA_KEY_UNWRAPPING_KEY_PAIR_GEN
     RsaKeyUnwrappingKeyPairGen = 0x00010001,
-
-    /// RSA PKCS#1 v1.5 Sign & Verify.
-    // Corresponds to AZIHSM_ALGO_ID_RSA_PKCS
-    RsaPkcs = 0x00010002,
 
     /// RSA PKCS#1 v1.5 SHA-1 Sign & Verify.
     // Corresponds to AZIHSM_ALGO_ID_RSA_PKCS_SHA1
@@ -89,10 +89,17 @@ pub enum AzihsmAlgoId {
     // Corresponds to AZIHSM_ALGO_ID_RSA_PKCS_OAEP
     RsaPkcsOaep = 0x0001000C,
 
+    /// RSA PKCS#1  Encrypt & Decrypt.
+    // Corresponds to AZIHSM_ALGO_ID_RSA_PKCS
+    RsaPkcs = 0x0001000D,
+
     /// RSA AES Key Wrap & Unwrap.
     // Corresponds to AZIHSM_ALGO_ID_RSA_AES_KEYWRAP
-    RsaAesKeywrap = 0x0001000D,
+    RsaAesKeywrap = 0x0001000E,
 
+    /// RSA AES Wrap.
+    // Corresponds to AZIHSM_ALGO_ID_RSA_AES_WRAP
+    RsaAesWrap = 0x0001000F,
     // ======================================================
     // Elliptic Curve Algorithms (0x0002xxxx)
     // ======================================================
@@ -218,4 +225,37 @@ pub struct AzihsmAlgo {
 
     /// Length of the algorithm-specific parameters.
     pub len: u32,
+}
+
+impl TryFrom<AzihsmAlgoId> for HsmHashAlgo {
+    type Error = AzihsmError;
+
+    fn try_from(algo_id: AzihsmAlgoId) -> Result<Self, Self::Error> {
+        match algo_id {
+            AzihsmAlgoId::Sha1
+            | AzihsmAlgoId::HmacSha1
+            | AzihsmAlgoId::EcdsaSha1
+            | AzihsmAlgoId::RsaPkcsSha1
+            | AzihsmAlgoId::RsaPkcsPssSha1 => Ok(HsmHashAlgo::Sha1),
+
+            AzihsmAlgoId::Sha256
+            | AzihsmAlgoId::HmacSha256
+            | AzihsmAlgoId::EcdsaSha256
+            | AzihsmAlgoId::RsaPkcsSha256
+            | AzihsmAlgoId::RsaPkcsPssSha256 => Ok(HsmHashAlgo::Sha256),
+
+            AzihsmAlgoId::Sha384
+            | AzihsmAlgoId::HmacSha384
+            | AzihsmAlgoId::EcdsaSha384
+            | AzihsmAlgoId::RsaPkcsSha384
+            | AzihsmAlgoId::RsaPkcsPssSha384 => Ok(HsmHashAlgo::Sha384),
+
+            AzihsmAlgoId::Sha512
+            | AzihsmAlgoId::HmacSha512
+            | AzihsmAlgoId::EcdsaSha512
+            | AzihsmAlgoId::RsaPkcsSha512
+            | AzihsmAlgoId::RsaPkcsPssSha512 => Ok(HsmHashAlgo::Sha512),
+            _ => Err(AzihsmError::InvalidArgument),
+        }
+    }
 }

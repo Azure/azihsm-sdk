@@ -5,10 +5,11 @@
 #include <gtest/gtest.h>
 #include <vector>
 
-#include "ecc_test_helpers.hpp"
 #include "handle/part_handle.hpp"
 #include "handle/part_list_handle.hpp"
 #include "handle/session_handle.hpp"
+#include "helpers.hpp"
+#include "utils.hpp"
 
 class azihsm_ecc_sign_verify : public ::testing::Test
 {
@@ -22,9 +23,13 @@ TEST_F(azihsm_ecc_sign_verify, sign_verify_ecdsa_p256)
         auto partition = PartitionHandle(path);
         auto session = SessionHandle(partition.get());
 
-        azihsm_handle priv_key = 0;
-        azihsm_handle pub_key = 0;
-        generate_ecc_keypair(session.get(), 1 /* P256 */, priv_key, pub_key);
+        AutoKey priv_key;
+        AutoKey pub_key;
+        auto err =
+            generate_ecc_keypair(session.get(), AZIHSM_ECC_CURVE_P256, true, priv_key.get_ptr(), pub_key.get_ptr());
+        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_NE(priv_key.get(), 0);
+        ASSERT_NE(pub_key.get(), 0);
 
         // Prepare test data (pre-hashed for ECDSA)
         std::vector<uint8_t> hash(32, 0x42);
@@ -46,10 +51,6 @@ TEST_F(azihsm_ecc_sign_verify, sign_verify_ecdsa_p256)
         // Verify
         auto verify_err = azihsm_crypt_verify(&algo, pub_key, &hash_buf, &sig_buf);
         ASSERT_EQ(verify_err, AZIHSM_ERROR_SUCCESS);
-
-        // Clean up
-        azihsm_key_delete(priv_key);
-        azihsm_key_delete(pub_key);
     });
 }
 
@@ -59,9 +60,13 @@ TEST_F(azihsm_ecc_sign_verify, sign_verify_ecdsa_sha256_p256)
         auto partition = PartitionHandle(path);
         auto session = SessionHandle(partition.get());
 
-        azihsm_handle priv_key = 0;
-        azihsm_handle pub_key = 0;
-        generate_ecc_keypair(session.get(), 1 /* P256 */, priv_key, pub_key);
+        AutoKey priv_key;
+        AutoKey pub_key;
+        auto err =
+            generate_ecc_keypair(session.get(), AZIHSM_ECC_CURVE_P256, true, priv_key.get_ptr(), pub_key.get_ptr());
+        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_NE(priv_key.get(), 0);
+        ASSERT_NE(pub_key.get(), 0);
 
         // Prepare test data (raw message)
         const char *message = "Test message for ECDSA SHA-256";
@@ -84,10 +89,6 @@ TEST_F(azihsm_ecc_sign_verify, sign_verify_ecdsa_sha256_p256)
         // Verify
         auto verify_err = azihsm_crypt_verify(&algo, pub_key, &data_buf, &sig_buf);
         ASSERT_EQ(verify_err, AZIHSM_ERROR_SUCCESS);
-
-        // Clean up
-        azihsm_key_delete(priv_key);
-        azihsm_key_delete(pub_key);
     });
 }
 
@@ -97,9 +98,13 @@ TEST_F(azihsm_ecc_sign_verify, sign_verify_ecdsa_sha384_p384)
         auto partition = PartitionHandle(path);
         auto session = SessionHandle(partition.get());
 
-        azihsm_handle priv_key = 0;
-        azihsm_handle pub_key = 0;
-        generate_ecc_keypair(session.get(), 2 /* P384 */, priv_key, pub_key);
+        AutoKey priv_key;
+        AutoKey pub_key;
+        auto err =
+            generate_ecc_keypair(session.get(), AZIHSM_ECC_CURVE_P384, true, priv_key.get_ptr(), pub_key.get_ptr());
+        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_NE(priv_key.get(), 0);
+        ASSERT_NE(pub_key.get(), 0);
 
         const char *message = "Test message for ECDSA SHA-384";
         std::vector<uint8_t> data(message, message + strlen(message));
@@ -119,9 +124,6 @@ TEST_F(azihsm_ecc_sign_verify, sign_verify_ecdsa_sha384_p384)
 
         auto verify_err = azihsm_crypt_verify(&algo, pub_key, &data_buf, &sig_buf);
         ASSERT_EQ(verify_err, AZIHSM_ERROR_SUCCESS);
-
-        azihsm_key_delete(priv_key);
-        azihsm_key_delete(pub_key);
     });
 }
 
@@ -131,9 +133,13 @@ TEST_F(azihsm_ecc_sign_verify, sign_verify_ecdsa_sha512_p521)
         auto partition = PartitionHandle(path);
         auto session = SessionHandle(partition.get());
 
-        azihsm_handle priv_key = 0;
-        azihsm_handle pub_key = 0;
-        generate_ecc_keypair(session.get(), 3 /* P521 */, priv_key, pub_key);
+        AutoKey priv_key;
+        AutoKey pub_key;
+        auto err =
+            generate_ecc_keypair(session.get(), AZIHSM_ECC_CURVE_P521, true, priv_key.get_ptr(), pub_key.get_ptr());
+        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_NE(priv_key.get(), 0);
+        ASSERT_NE(pub_key.get(), 0);
 
         const char *message = "Test message for ECDSA SHA-512";
         std::vector<uint8_t> data(message, message + strlen(message));
@@ -153,9 +159,6 @@ TEST_F(azihsm_ecc_sign_verify, sign_verify_ecdsa_sha512_p521)
 
         auto verify_err = azihsm_crypt_verify(&algo, pub_key, &data_buf, &sig_buf);
         ASSERT_EQ(verify_err, AZIHSM_ERROR_SUCCESS);
-
-        azihsm_key_delete(priv_key);
-        azihsm_key_delete(pub_key);
     });
 }
 
@@ -165,9 +168,13 @@ TEST_F(azihsm_ecc_sign_verify, verify_fails_with_invalid_signature)
         auto partition = PartitionHandle(path);
         auto session = SessionHandle(partition.get());
 
-        azihsm_handle priv_key = 0;
-        azihsm_handle pub_key = 0;
-        generate_ecc_keypair(session.get(), 1 /* P256 */, priv_key, pub_key);
+        AutoKey priv_key;
+        AutoKey pub_key;
+        auto err =
+            generate_ecc_keypair(session.get(), AZIHSM_ECC_CURVE_P256, true, priv_key.get_ptr(), pub_key.get_ptr());
+        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_NE(priv_key.get(), 0);
+        ASSERT_NE(pub_key.get(), 0);
 
         const char *message = "Test message";
         std::vector<uint8_t> data(message, message + strlen(message));
@@ -189,9 +196,6 @@ TEST_F(azihsm_ecc_sign_verify, verify_fails_with_invalid_signature)
 
         auto verify_err = azihsm_crypt_verify(&algo, pub_key, &data_buf, &sig_buf);
         ASSERT_EQ(verify_err, AZIHSM_ERROR_INVALID_SIGNATURE);
-
-        azihsm_key_delete(priv_key);
-        azihsm_key_delete(pub_key);
     });
 }
 
@@ -201,9 +205,13 @@ TEST_F(azihsm_ecc_sign_verify, verify_fails_with_wrong_data)
         auto partition = PartitionHandle(path);
         auto session = SessionHandle(partition.get());
 
-        azihsm_handle priv_key = 0;
-        azihsm_handle pub_key = 0;
-        generate_ecc_keypair(session.get(), 1 /* P256 */, priv_key, pub_key);
+        AutoKey priv_key;
+        AutoKey pub_key;
+        auto err =
+            generate_ecc_keypair(session.get(), AZIHSM_ECC_CURVE_P256, true, priv_key.get_ptr(), pub_key.get_ptr());
+        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_NE(priv_key.get(), 0);
+        ASSERT_NE(pub_key.get(), 0);
 
         const char *message = "Original message";
         std::vector<uint8_t> data(message, message + strlen(message));
@@ -227,9 +235,6 @@ TEST_F(azihsm_ecc_sign_verify, verify_fails_with_wrong_data)
 
         auto verify_err = azihsm_crypt_verify(&algo, pub_key, &wrong_data_buf, &sig_buf);
         ASSERT_EQ(verify_err, AZIHSM_ERROR_INVALID_SIGNATURE);
-
-        azihsm_key_delete(priv_key);
-        azihsm_key_delete(pub_key);
     });
 }
 
@@ -239,9 +244,13 @@ TEST_F(azihsm_ecc_sign_verify, sign_buffer_too_small)
         auto partition = PartitionHandle(path);
         auto session = SessionHandle(partition.get());
 
-        azihsm_handle priv_key = 0;
-        azihsm_handle pub_key = 0;
-        generate_ecc_keypair(session.get(), 1 /* P256 */, priv_key, pub_key);
+        AutoKey priv_key;
+        AutoKey pub_key;
+        auto err =
+            generate_ecc_keypair(session.get(), AZIHSM_ECC_CURVE_P256, true, priv_key.get_ptr(), pub_key.get_ptr());
+        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_NE(priv_key.get(), 0);
+        ASSERT_NE(pub_key.get(), 0);
 
         std::vector<uint8_t> hash(32, 0x42);
 
@@ -257,9 +266,6 @@ TEST_F(azihsm_ecc_sign_verify, sign_buffer_too_small)
         auto sign_err = azihsm_crypt_sign(&algo, priv_key, &hash_buf, &sig_buf);
         ASSERT_EQ(sign_err, AZIHSM_ERROR_BUFFER_TOO_SMALL);
         ASSERT_EQ(sig_buf.len, 64); // Updated with required size
-
-        azihsm_key_delete(priv_key);
-        azihsm_key_delete(pub_key);
     });
 }
 
@@ -269,20 +275,21 @@ TEST_F(azihsm_ecc_sign_verify, sign_null_algorithm)
         auto partition = PartitionHandle(path);
         auto session = SessionHandle(partition.get());
 
-        azihsm_handle priv_key = 0;
-        azihsm_handle pub_key = 0;
-        generate_ecc_keypair(session.get(), 1 /* P256 */, priv_key, pub_key);
+        AutoKey priv_key;
+        AutoKey pub_key;
+        auto err =
+            generate_ecc_keypair(session.get(), AZIHSM_ECC_CURVE_P256, true, priv_key.get_ptr(), pub_key.get_ptr());
+        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_NE(priv_key.get(), 0);
+        ASSERT_NE(pub_key.get(), 0);
 
         std::vector<uint8_t> hash(32, 0x42);
         std::vector<uint8_t> signature(64);
         azihsm_buffer hash_buf{hash.data(), static_cast<uint32_t>(hash.size())};
         azihsm_buffer sig_buf{signature.data(), static_cast<uint32_t>(signature.size())};
 
-        auto err = azihsm_crypt_sign(nullptr, priv_key, &hash_buf, &sig_buf);
+        err = azihsm_crypt_sign(nullptr, priv_key.get(), &hash_buf, &sig_buf);
         ASSERT_EQ(err, AZIHSM_ERROR_INVALID_ARGUMENT);
-
-        azihsm_key_delete(priv_key);
-        azihsm_key_delete(pub_key);
     });
 }
 
@@ -309,9 +316,13 @@ TEST_F(azihsm_ecc_sign_verify, sign_unsupported_algorithm)
         auto partition = PartitionHandle(path);
         auto session = SessionHandle(partition.get());
 
-        azihsm_handle priv_key = 0;
-        azihsm_handle pub_key = 0;
-        generate_ecc_keypair(session.get(), 1 /* P256 */, priv_key, pub_key);
+        AutoKey priv_key;
+        AutoKey pub_key;
+        auto err =
+            generate_ecc_keypair(session.get(), AZIHSM_ECC_CURVE_P256, true, priv_key.get_ptr(), pub_key.get_ptr());
+        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_NE(priv_key.get(), 0);
+        ASSERT_NE(pub_key.get(), 0);
 
         std::vector<uint8_t> hash(32, 0x42);
 
@@ -324,11 +335,8 @@ TEST_F(azihsm_ecc_sign_verify, sign_unsupported_algorithm)
         azihsm_buffer hash_buf{hash.data(), static_cast<uint32_t>(hash.size())};
         azihsm_buffer sig_buf{signature.data(), static_cast<uint32_t>(signature.size())};
 
-        auto err = azihsm_crypt_sign(&algo, priv_key, &hash_buf, &sig_buf);
+        err = azihsm_crypt_sign(&algo, priv_key, &hash_buf, &sig_buf);
         ASSERT_EQ(err, AZIHSM_ERROR_UNSUPPORTED_ALGORITHM);
-
-        azihsm_key_delete(priv_key);
-        azihsm_key_delete(pub_key);
     });
 }
 
@@ -338,9 +346,13 @@ TEST_F(azihsm_ecc_sign_verify, wrong_key_type_for_sign)
         auto partition = PartitionHandle(path);
         auto session = SessionHandle(partition.get());
 
-        azihsm_handle priv_key = 0;
-        azihsm_handle pub_key = 0;
-        generate_ecc_keypair(session.get(), 1 /* P256 */, priv_key, pub_key);
+        AutoKey priv_key;
+        AutoKey pub_key;
+        auto err =
+            generate_ecc_keypair(session.get(), AZIHSM_ECC_CURVE_P256, true, priv_key.get_ptr(), pub_key.get_ptr());
+        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_NE(priv_key.get(), 0);
+        ASSERT_NE(pub_key.get(), 0);
 
         std::vector<uint8_t> hash(32, 0x42);
 
@@ -354,11 +366,8 @@ TEST_F(azihsm_ecc_sign_verify, wrong_key_type_for_sign)
         azihsm_buffer sig_buf{signature.data(), static_cast<uint32_t>(signature.size())};
 
         // Try to sign with public key
-        auto err = azihsm_crypt_sign(&algo, pub_key, &hash_buf, &sig_buf);
+        err = azihsm_crypt_sign(&algo, pub_key.get(), &hash_buf, &sig_buf);
         ASSERT_EQ(err, AZIHSM_ERROR_INVALID_HANDLE);
-
-        azihsm_key_delete(priv_key);
-        azihsm_key_delete(pub_key);
     });
 }
 
@@ -368,9 +377,13 @@ TEST_F(azihsm_ecc_sign_verify, wrong_key_type_for_verify)
         auto partition = PartitionHandle(path);
         auto session = SessionHandle(partition.get());
 
-        azihsm_handle priv_key = 0;
-        azihsm_handle pub_key = 0;
-        generate_ecc_keypair(session.get(), 1 /* P256 */, priv_key, pub_key);
+        AutoKey priv_key;
+        AutoKey pub_key;
+        auto err =
+            generate_ecc_keypair(session.get(), AZIHSM_ECC_CURVE_P256, true, priv_key.get_ptr(), pub_key.get_ptr());
+        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_NE(priv_key.get(), 0);
+        ASSERT_NE(pub_key.get(), 0);
 
         std::vector<uint8_t> hash(32, 0x42);
         std::vector<uint8_t> signature(64, 0x00);
@@ -384,11 +397,8 @@ TEST_F(azihsm_ecc_sign_verify, wrong_key_type_for_verify)
         azihsm_buffer sig_buf{signature.data(), static_cast<uint32_t>(signature.size())};
 
         // Try to verify with private key
-        auto err = azihsm_crypt_verify(&algo, priv_key, &hash_buf, &sig_buf);
+        err = azihsm_crypt_verify(&algo, priv_key, &hash_buf, &sig_buf);
         ASSERT_EQ(err, AZIHSM_ERROR_INVALID_HANDLE);
-
-        azihsm_key_delete(priv_key);
-        azihsm_key_delete(pub_key);
     });
 }
 
@@ -398,9 +408,13 @@ TEST_F(azihsm_ecc_sign_verify, streaming_sign_verify_ecdsa_sha256_p256)
         auto partition = PartitionHandle(path);
         auto session = SessionHandle(partition.get());
 
-        azihsm_handle priv_key = 0;
-        azihsm_handle pub_key = 0;
-        generate_ecc_keypair(session.get(), 1 /* P256 */, priv_key, pub_key);
+        AutoKey priv_key;
+        AutoKey pub_key;
+        auto err =
+            generate_ecc_keypair(session.get(), AZIHSM_ECC_CURVE_P256, true, priv_key.get_ptr(), pub_key.get_ptr());
+        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_NE(priv_key.get(), 0);
+        ASSERT_NE(pub_key.get(), 0);
 
         // Prepare test data in chunks
         const char *chunk1 = "Hello, ";
@@ -460,10 +474,6 @@ TEST_F(azihsm_ecc_sign_verify, streaming_sign_verify_ecdsa_sha256_p256)
         // Finalize verify
         auto verify_final_err = azihsm_crypt_verify_final(verify_ctx, &sig_buf);
         ASSERT_EQ(verify_final_err, AZIHSM_ERROR_SUCCESS);
-
-        // Clean up
-        azihsm_key_delete(priv_key);
-        azihsm_key_delete(pub_key);
     });
 }
 
@@ -473,9 +483,13 @@ TEST_F(azihsm_ecc_sign_verify, streaming_sign_verify_ecdsa_sha384_p384)
         auto partition = PartitionHandle(path);
         auto session = SessionHandle(partition.get());
 
-        azihsm_handle priv_key = 0;
-        azihsm_handle pub_key = 0;
-        generate_ecc_keypair(session.get(), 2 /* P384 */, priv_key, pub_key);
+        AutoKey priv_key;
+        AutoKey pub_key;
+        auto err =
+            generate_ecc_keypair(session.get(), AZIHSM_ECC_CURVE_P384, true, priv_key.get_ptr(), pub_key.get_ptr());
+        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_NE(priv_key.get(), 0);
+        ASSERT_NE(pub_key.get(), 0);
 
         const char *message = "Test message for streaming ECDSA SHA-384";
 
@@ -502,9 +516,6 @@ TEST_F(azihsm_ecc_sign_verify, streaming_sign_verify_ecdsa_sha384_p384)
         ASSERT_EQ(azihsm_crypt_verify_init(&algo, pub_key, &verify_ctx), AZIHSM_ERROR_SUCCESS);
         ASSERT_EQ(azihsm_crypt_verify_update(verify_ctx, &msg_buf), AZIHSM_ERROR_SUCCESS);
         ASSERT_EQ(azihsm_crypt_verify_final(verify_ctx, &sig_buf), AZIHSM_ERROR_SUCCESS);
-
-        azihsm_key_delete(priv_key);
-        azihsm_key_delete(pub_key);
     });
 }
 
@@ -514,9 +525,13 @@ TEST_F(azihsm_ecc_sign_verify, streaming_sign_verify_ecdsa_sha512_p521)
         auto partition = PartitionHandle(path);
         auto session = SessionHandle(partition.get());
 
-        azihsm_handle priv_key = 0;
-        azihsm_handle pub_key = 0;
-        generate_ecc_keypair(session.get(), 3 /* P521 */, priv_key, pub_key);
+        AutoKey priv_key;
+        AutoKey pub_key;
+        auto err =
+            generate_ecc_keypair(session.get(), AZIHSM_ECC_CURVE_P521, true, priv_key.get_ptr(), pub_key.get_ptr());
+        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_NE(priv_key.get(), 0);
+        ASSERT_NE(pub_key.get(), 0);
 
         const char *message = "Test message for streaming ECDSA SHA-512";
 
@@ -543,9 +558,6 @@ TEST_F(azihsm_ecc_sign_verify, streaming_sign_verify_ecdsa_sha512_p521)
         ASSERT_EQ(azihsm_crypt_verify_init(&algo, pub_key, &verify_ctx), AZIHSM_ERROR_SUCCESS);
         ASSERT_EQ(azihsm_crypt_verify_update(verify_ctx, &msg_buf), AZIHSM_ERROR_SUCCESS);
         ASSERT_EQ(azihsm_crypt_verify_final(verify_ctx, &sig_buf), AZIHSM_ERROR_SUCCESS);
-
-        azihsm_key_delete(priv_key);
-        azihsm_key_delete(pub_key);
     });
 }
 
@@ -555,9 +567,13 @@ TEST_F(azihsm_ecc_sign_verify, streaming_verify_fails_with_invalid_signature)
         auto partition = PartitionHandle(path);
         auto session = SessionHandle(partition.get());
 
-        azihsm_handle priv_key = 0;
-        azihsm_handle pub_key = 0;
-        generate_ecc_keypair(session.get(), 1 /* P256 */, priv_key, pub_key);
+        AutoKey priv_key;
+        AutoKey pub_key;
+        auto err =
+            generate_ecc_keypair(session.get(), AZIHSM_ECC_CURVE_P256, true, priv_key.get_ptr(), pub_key.get_ptr());
+        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_NE(priv_key.get(), 0);
+        ASSERT_NE(pub_key.get(), 0);
 
         const char *message = "Test message";
 
@@ -589,9 +605,6 @@ TEST_F(azihsm_ecc_sign_verify, streaming_verify_fails_with_invalid_signature)
         // Verification should fail with corrupted signature
         auto verify_err = azihsm_crypt_verify_final(verify_ctx, &sig_buf);
         ASSERT_EQ(verify_err, AZIHSM_ERROR_INVALID_SIGNATURE);
-
-        azihsm_key_delete(priv_key);
-        azihsm_key_delete(pub_key);
     });
 }
 
@@ -601,9 +614,13 @@ TEST_F(azihsm_ecc_sign_verify, streaming_verify_fails_with_wrong_data)
         auto partition = PartitionHandle(path);
         auto session = SessionHandle(partition.get());
 
-        azihsm_handle priv_key = 0;
-        azihsm_handle pub_key = 0;
-        generate_ecc_keypair(session.get(), 1 /* P256 */, priv_key, pub_key);
+        AutoKey priv_key;
+        AutoKey pub_key;
+        auto err =
+            generate_ecc_keypair(session.get(), AZIHSM_ECC_CURVE_P256, true, priv_key.get_ptr(), pub_key.get_ptr());
+        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_NE(priv_key.get(), 0);
+        ASSERT_NE(pub_key.get(), 0);
 
         const char *message = "Original message";
         const char *wrong_message = "Different message";
@@ -636,9 +653,6 @@ TEST_F(azihsm_ecc_sign_verify, streaming_verify_fails_with_wrong_data)
         // Verification should fail
         auto verify_err = azihsm_crypt_verify_final(verify_ctx, &sig_buf);
         ASSERT_EQ(verify_err, AZIHSM_ERROR_INVALID_SIGNATURE);
-
-        azihsm_key_delete(priv_key);
-        azihsm_key_delete(pub_key);
     });
 }
 
@@ -648,9 +662,13 @@ TEST_F(azihsm_ecc_sign_verify, streaming_sign_final_buffer_too_small)
         auto partition = PartitionHandle(path);
         auto session = SessionHandle(partition.get());
 
-        azihsm_handle priv_key = 0;
-        azihsm_handle pub_key = 0;
-        generate_ecc_keypair(session.get(), 1 /* P256 */, priv_key, pub_key);
+        AutoKey priv_key;
+        AutoKey pub_key;
+        auto err =
+            generate_ecc_keypair(session.get(), AZIHSM_ECC_CURVE_P256, true, priv_key.get_ptr(), pub_key.get_ptr());
+        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_NE(priv_key.get(), 0);
+        ASSERT_NE(pub_key.get(), 0);
 
         const char *message = "Test message";
 
@@ -670,12 +688,9 @@ TEST_F(azihsm_ecc_sign_verify, streaming_sign_final_buffer_too_small)
         std::vector<uint8_t> signature(32); // Should be 64
         azihsm_buffer sig_buf{signature.data(), static_cast<uint32_t>(signature.size())};
 
-        auto err = azihsm_crypt_sign_final(sign_ctx, &sig_buf);
+        err = azihsm_crypt_sign_final(sign_ctx, &sig_buf);
         ASSERT_EQ(err, AZIHSM_ERROR_BUFFER_TOO_SMALL);
         ASSERT_EQ(sig_buf.len, 64); // Updated with required size
-
-        azihsm_key_delete(priv_key);
-        azihsm_key_delete(pub_key);
     });
 }
 
@@ -685,9 +700,13 @@ TEST_F(azihsm_ecc_sign_verify, streaming_sign_consistency_with_single_shot)
         auto partition = PartitionHandle(path);
         auto session = SessionHandle(partition.get());
 
-        azihsm_handle priv_key = 0;
-        azihsm_handle pub_key = 0;
-        generate_ecc_keypair(session.get(), 1 /* P256 */, priv_key, pub_key);
+        AutoKey priv_key;
+        AutoKey pub_key;
+        auto err =
+            generate_ecc_keypair(session.get(), AZIHSM_ECC_CURVE_P256, true, priv_key.get_ptr(), pub_key.get_ptr());
+        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_NE(priv_key.get(), 0);
+        ASSERT_NE(pub_key.get(), 0);
 
         const char *message = "Test consistency";
         std::vector<uint8_t> data(message, message + strlen(message));
@@ -715,8 +734,5 @@ TEST_F(azihsm_ecc_sign_verify, streaming_sign_consistency_with_single_shot)
         // Both signatures should verify successfully (they may differ due to random k)
         ASSERT_EQ(azihsm_crypt_verify(&algo, pub_key, &data_buf, &single_sig_buf), AZIHSM_ERROR_SUCCESS);
         ASSERT_EQ(azihsm_crypt_verify(&algo, pub_key, &data_buf, &streaming_sig_buf), AZIHSM_ERROR_SUCCESS);
-
-        azihsm_key_delete(priv_key);
-        azihsm_key_delete(pub_key);
     });
 }

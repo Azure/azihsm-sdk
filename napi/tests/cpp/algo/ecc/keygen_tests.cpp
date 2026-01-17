@@ -5,10 +5,11 @@
 #include <gtest/gtest.h>
 #include <vector>
 
-#include "ecc_test_helpers.hpp"
 #include "handle/part_handle.hpp"
 #include "handle/part_list_handle.hpp"
 #include "handle/session_handle.hpp"
+#include "helpers.hpp"
+#include "utils.hpp"
 
 class azihsm_ecc_keygen : public ::testing::Test
 {
@@ -22,16 +23,22 @@ TEST_F(azihsm_ecc_keygen, generate_p256_keypair)
         auto partition = PartitionHandle(path);
         auto session = SessionHandle(partition.get());
 
-        azihsm_handle priv_key = 0;
-        azihsm_handle pub_key = 0;
-        generate_ecc_keypair(session.get(), 1 /* P256 */, priv_key, pub_key);
+        AutoKey priv_key;
+        AutoKey pub_key;
+        auto err =
+            generate_ecc_keypair(session.get(), AZIHSM_ECC_CURVE_P256, true, priv_key.get_ptr(), pub_key.get_ptr());
+        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_NE(priv_key.get(), 0);
+        ASSERT_NE(pub_key.get(), 0);
 
-        // Clean up keys
-        auto priv_err = azihsm_key_delete(priv_key);
-        auto pub_err = azihsm_key_delete(pub_key);
+        // Explicitly test deletion (AutoKey will also delete on scope exit as backup)
+        auto delete_priv_err = azihsm_key_delete(priv_key.get());
+        ASSERT_EQ(delete_priv_err, AZIHSM_ERROR_SUCCESS);
+        priv_key.release();
 
-        ASSERT_EQ(priv_err, AZIHSM_ERROR_SUCCESS);
-        ASSERT_EQ(pub_err, AZIHSM_ERROR_SUCCESS);
+        auto delete_pub_err = azihsm_key_delete(pub_key.get());
+        ASSERT_EQ(delete_pub_err, AZIHSM_ERROR_SUCCESS);
+        pub_key.release();
     });
 }
 
@@ -41,16 +48,22 @@ TEST_F(azihsm_ecc_keygen, generate_p384_keypair)
         auto partition = PartitionHandle(path);
         auto session = SessionHandle(partition.get());
 
-        azihsm_handle priv_key = 0;
-        azihsm_handle pub_key = 0;
-        generate_ecc_keypair(session.get(), 2 /* P384 */, priv_key, pub_key);
+        AutoKey priv_key;
+        AutoKey pub_key;
+        auto err =
+            generate_ecc_keypair(session.get(), AZIHSM_ECC_CURVE_P384, true, priv_key.get_ptr(), pub_key.get_ptr());
+        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_NE(priv_key.get(), 0);
+        ASSERT_NE(pub_key.get(), 0);
 
-        // Clean up keys
-        auto priv_err = azihsm_key_delete(priv_key);
-        auto pub_err = azihsm_key_delete(pub_key);
+        // Explicitly test deletion (AutoKey will also delete on scope exit as backup)
+        auto delete_priv_err = azihsm_key_delete(priv_key.get());
+        ASSERT_EQ(delete_priv_err, AZIHSM_ERROR_SUCCESS);
+        priv_key.release();
 
-        ASSERT_EQ(priv_err, AZIHSM_ERROR_SUCCESS);
-        ASSERT_EQ(pub_err, AZIHSM_ERROR_SUCCESS);
+        auto delete_pub_err = azihsm_key_delete(pub_key.get());
+        ASSERT_EQ(delete_pub_err, AZIHSM_ERROR_SUCCESS);
+        pub_key.release();
     });
 }
 
@@ -60,16 +73,22 @@ TEST_F(azihsm_ecc_keygen, generate_p521_keypair)
         auto partition = PartitionHandle(path);
         auto session = SessionHandle(partition.get());
 
-        azihsm_handle priv_key = 0;
-        azihsm_handle pub_key = 0;
-        generate_ecc_keypair(session.get(), 3 /* P521 */, priv_key, pub_key);
+        AutoKey priv_key;
+        AutoKey pub_key;
+        auto err =
+            generate_ecc_keypair(session.get(), AZIHSM_ECC_CURVE_P521, true, priv_key.get_ptr(), pub_key.get_ptr());
+        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_NE(priv_key.get(), 0);
+        ASSERT_NE(pub_key.get(), 0);
 
-        // Clean up keys
-        auto priv_err = azihsm_key_delete(priv_key);
-        auto pub_err = azihsm_key_delete(pub_key);
+        // Explicitly test deletion (AutoKey will also delete on scope exit as backup)
+        auto delete_priv_err = azihsm_key_delete(priv_key.get());
+        ASSERT_EQ(delete_priv_err, AZIHSM_ERROR_SUCCESS);
+        priv_key.release();
 
-        ASSERT_EQ(priv_err, AZIHSM_ERROR_SUCCESS);
-        ASSERT_EQ(pub_err, AZIHSM_ERROR_SUCCESS);
+        auto delete_pub_err = azihsm_key_delete(pub_key.get());
+        ASSERT_EQ(delete_pub_err, AZIHSM_ERROR_SUCCESS);
+        pub_key.release();
     });
 }
 
@@ -80,22 +99,14 @@ TEST_F(azihsm_ecc_keygen, null_algorithm)
         auto partition = PartitionHandle(path);
         auto session = SessionHandle(partition.get());
 
-        uint32_t priv_key_class, priv_key_kind, priv_ecc_curve;
-        uint8_t priv_is_session, priv_can_sign;
-        azihsm_key_prop priv_props[5];
-        build_ecc_priv_key_props(1, priv_key_class, priv_key_kind, priv_ecc_curve, priv_is_session, priv_can_sign,
-                                 priv_props);
-        azihsm_key_prop_list priv_prop_list{priv_props, 5};
-
-        uint32_t pub_key_class, pub_key_kind, pub_ecc_curve;
-        uint8_t pub_is_session, pub_can_verify;
-        azihsm_key_prop pub_props[5];
-        build_ecc_pub_key_props(1, pub_key_class, pub_key_kind, pub_ecc_curve, pub_is_session, pub_can_verify,
-                                pub_props);
-        azihsm_key_prop_list pub_prop_list{pub_props, 5};
+        DummyEccPrivKeyProps priv_props;
+        DummyEccPubKeyProps pub_props;
 
         azihsm_handle priv_key_handle = 0;
         azihsm_handle pub_key_handle = 0;
+
+        auto priv_prop_list = priv_props.get_prop_list();
+        auto pub_prop_list = pub_props.get_prop_list();
 
         auto err = azihsm_key_gen_pair(session.get(), nullptr, &priv_prop_list, &pub_prop_list, &priv_key_handle,
                                        &pub_key_handle);
@@ -114,12 +125,8 @@ TEST_F(azihsm_ecc_keygen, null_priv_key_props)
         keygen_algo.params = nullptr;
         keygen_algo.len = 0;
 
-        uint32_t pub_key_class, pub_key_kind, pub_ecc_curve;
-        uint8_t pub_is_session, pub_can_verify;
-        azihsm_key_prop pub_props[5];
-        build_ecc_pub_key_props(1, pub_key_class, pub_key_kind, pub_ecc_curve, pub_is_session, pub_can_verify,
-                                pub_props);
-        azihsm_key_prop_list pub_prop_list{pub_props, 5};
+        DummyEccPubKeyProps pub_props;
+        auto pub_prop_list = pub_props.get_prop_list();
 
         azihsm_handle priv_key_handle = 0;
         azihsm_handle pub_key_handle = 0;
@@ -141,12 +148,8 @@ TEST_F(azihsm_ecc_keygen, null_pub_key_props)
         keygen_algo.params = nullptr;
         keygen_algo.len = 0;
 
-        uint32_t priv_key_class, priv_key_kind, priv_ecc_curve;
-        uint8_t priv_is_session, priv_can_sign;
-        azihsm_key_prop priv_props[5];
-        build_ecc_priv_key_props(1, priv_key_class, priv_key_kind, priv_ecc_curve, priv_is_session, priv_can_sign,
-                                 priv_props);
-        azihsm_key_prop_list priv_prop_list{priv_props, 5};
+        DummyEccPrivKeyProps priv_props;
+        auto priv_prop_list = priv_props.get_prop_list();
 
         azihsm_handle priv_key_handle = 0;
         azihsm_handle pub_key_handle = 0;
@@ -168,19 +171,10 @@ TEST_F(azihsm_ecc_keygen, null_priv_key_handle_output)
         keygen_algo.params = nullptr;
         keygen_algo.len = 0;
 
-        uint32_t priv_key_class, priv_key_kind, priv_ecc_curve;
-        uint8_t priv_is_session, priv_can_sign;
-        azihsm_key_prop priv_props[5];
-        build_ecc_priv_key_props(1, priv_key_class, priv_key_kind, priv_ecc_curve, priv_is_session, priv_can_sign,
-                                 priv_props);
-        azihsm_key_prop_list priv_prop_list{priv_props, 5};
-
-        uint32_t pub_key_class, pub_key_kind, pub_ecc_curve;
-        uint8_t pub_is_session, pub_can_verify;
-        azihsm_key_prop pub_props[5];
-        build_ecc_pub_key_props(1, pub_key_class, pub_key_kind, pub_ecc_curve, pub_is_session, pub_can_verify,
-                                pub_props);
-        azihsm_key_prop_list pub_prop_list{pub_props, 5};
+        DummyEccPrivKeyProps priv_props;
+        DummyEccPubKeyProps pub_props;
+        auto priv_prop_list = priv_props.get_prop_list();
+        auto pub_prop_list = pub_props.get_prop_list();
 
         azihsm_handle pub_key_handle = 0;
 
@@ -201,19 +195,10 @@ TEST_F(azihsm_ecc_keygen, null_pub_key_handle_output)
         keygen_algo.params = nullptr;
         keygen_algo.len = 0;
 
-        uint32_t priv_key_class, priv_key_kind, priv_ecc_curve;
-        uint8_t priv_is_session, priv_can_sign;
-        azihsm_key_prop priv_props[5];
-        build_ecc_priv_key_props(1, priv_key_class, priv_key_kind, priv_ecc_curve, priv_is_session, priv_can_sign,
-                                 priv_props);
-        azihsm_key_prop_list priv_prop_list{priv_props, 5};
-
-        uint32_t pub_key_class, pub_key_kind, pub_ecc_curve;
-        uint8_t pub_is_session, pub_can_verify;
-        azihsm_key_prop pub_props[5];
-        build_ecc_pub_key_props(1, pub_key_class, pub_key_kind, pub_ecc_curve, pub_is_session, pub_can_verify,
-                                pub_props);
-        azihsm_key_prop_list pub_prop_list{pub_props, 5};
+        DummyEccPrivKeyProps priv_props;
+        DummyEccPubKeyProps pub_props;
+        auto priv_prop_list = priv_props.get_prop_list();
+        auto pub_prop_list = pub_props.get_prop_list();
 
         azihsm_handle priv_key_handle = 0;
 
@@ -230,30 +215,16 @@ TEST_F(azihsm_ecc_keygen, invalid_session_handle)
     keygen_algo.params = nullptr;
     keygen_algo.len = 0;
 
-    uint32_t priv_key_class, priv_key_kind, priv_ecc_curve;
-    uint8_t priv_is_session, priv_can_sign;
-    azihsm_key_prop priv_props[5];
-    build_ecc_priv_key_props(1, priv_key_class, priv_key_kind, priv_ecc_curve, priv_is_session, priv_can_sign,
-                             priv_props);
-    azihsm_key_prop_list priv_prop_list{priv_props, 5};
-
-    uint32_t pub_key_class, pub_key_kind, pub_ecc_curve;
-    uint8_t pub_is_session, pub_can_verify;
-    azihsm_key_prop pub_props[5];
-    build_ecc_pub_key_props(1, pub_key_class, pub_key_kind, pub_ecc_curve, pub_is_session, pub_can_verify, pub_props);
-    azihsm_key_prop_list pub_prop_list{pub_props, 5};
+    DummyEccPrivKeyProps priv_props;
+    DummyEccPubKeyProps pub_props;
+    auto priv_prop_list = priv_props.get_prop_list();
+    auto pub_prop_list = pub_props.get_prop_list();
 
     azihsm_handle priv_key_handle = 0;
     azihsm_handle pub_key_handle = 0;
 
     auto err = azihsm_key_gen_pair(0xDEADBEEF, &keygen_algo, &priv_prop_list, &pub_prop_list, &priv_key_handle,
                                    &pub_key_handle);
-    ASSERT_EQ(err, AZIHSM_ERROR_INVALID_HANDLE);
-}
-
-TEST_F(azihsm_ecc_keygen, delete_invalid_key_handle)
-{
-    auto err = azihsm_key_delete(0xDEADBEEF);
     ASSERT_EQ(err, AZIHSM_ERROR_INVALID_HANDLE);
 }
 
@@ -268,19 +239,10 @@ TEST_F(azihsm_ecc_keygen, unsupported_algorithm)
         keygen_algo.params = nullptr;
         keygen_algo.len = 0;
 
-        uint32_t priv_key_class, priv_key_kind, priv_ecc_curve;
-        uint8_t priv_is_session, priv_can_sign;
-        azihsm_key_prop priv_props[5];
-        build_ecc_priv_key_props(1, priv_key_class, priv_key_kind, priv_ecc_curve, priv_is_session, priv_can_sign,
-                                 priv_props);
-        azihsm_key_prop_list priv_prop_list{priv_props, 5};
-
-        uint32_t pub_key_class, pub_key_kind, pub_ecc_curve;
-        uint8_t pub_is_session, pub_can_verify;
-        azihsm_key_prop pub_props[5];
-        build_ecc_pub_key_props(1, pub_key_class, pub_key_kind, pub_ecc_curve, pub_is_session, pub_can_verify,
-                                pub_props);
-        azihsm_key_prop_list pub_prop_list{pub_props, 5};
+        DummyEccPrivKeyProps priv_props;
+        DummyEccPubKeyProps pub_props;
+        auto priv_prop_list = priv_props.get_prop_list();
+        auto pub_prop_list = pub_props.get_prop_list();
 
         azihsm_handle priv_key_handle = 0;
         azihsm_handle pub_key_handle = 0;

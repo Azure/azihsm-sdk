@@ -17,7 +17,7 @@ impl HsmRsaAesWrapAlgo {
     /// # Arguments
     ///
     /// * `hash_algo` - The hash algorithm to use (e.g., SHA-1, SHA-256).
-    /// * `key_size` - The key size in bits (e.g., 128, 192, 256).
+    /// * `key_size` - The key size in bytes (e.g., 16, 24, 32).
     ///
     /// # Returns
     ///

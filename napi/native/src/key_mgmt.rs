@@ -198,3 +198,116 @@ pub unsafe extern "C" fn azihsm_key_derive(
         Ok(())
     })
 }
+
+/// Unwrap a wrapped key using an unwrapping key
+///
+/// This function unwraps (decrypts) a previously wrapped key using the specified
+/// unwrapping key and algorithm. The unwrapped key is imported into the HSM with
+/// the provided key properties.
+///
+/// @param[in] algo Pointer to algorithm specification for unwrapping
+/// @param[in] unwrapping_key Handle to the key used to unwrap (decrypt) the wrapped key
+/// @param[in] wrapped_key Pointer to buffer containing the wrapped key data
+/// @param[in] key_props Pointer to key properties list for the unwrapped key
+/// @param[out] key_handle Pointer to store the unwrapped key handle
+///
+/// @return 0 on success, or a negative error code on failure
+///
+/// @internal
+/// # Safety
+/// This function is unsafe because it dereferences raw pointers.
+#[unsafe(no_mangle)]
+#[allow(unsafe_code)]
+pub unsafe extern "C" fn azihsm_key_unwrap(
+    algo: *mut AzihsmAlgo,
+    unwrapping_key: AzihsmHandle,
+    wrapped_key: *mut AzihsmBuffer,
+    key_props: *const AzihsmKeyPropList,
+    key_handle: *mut AzihsmHandle,
+) -> AzihsmError {
+    abi_boundary(|| {
+        validate_ptr(key_handle)?;
+
+        let algo = deref_mut_ptr(algo)?;
+        let wrapped_key = deref_ptr(wrapped_key)?;
+        let wrapped_key_buf: &[u8] = wrapped_key.try_into()?;
+
+        let props = deref_ptr(key_props)?;
+        let key_props = HsmKeyProps::try_from(props)?;
+
+        // Dispatch based on algorithm ID
+        let handle = match algo.id {
+            AzihsmAlgoId::RsaAesKeywrap => {
+                rsa_unwrap_key(algo, unwrapping_key, wrapped_key_buf, key_props)?
+            }
+            _ => Err(AzihsmError::UnsupportedAlgorithm)?,
+        };
+
+        assign_ptr(key_handle, handle)?;
+
+        Ok(())
+    })
+}
+
+/// Unwrap a wrapped key pair using an unwrapping key
+///
+/// This function unwraps (decrypts) a previously wrapped key pair using the specified
+/// unwrapping key and algorithm. The unwrapped key pair is imported into the HSM with
+/// the provided key properties.
+///
+/// @param[in] algo Pointer to algorithm specification for unwrapping
+/// @param[in] unwrapping_key Handle to the key used to unwrap (decrypt) the wrapped key pair
+/// @param[in] wrapped_key Pointer to buffer containing the wrapped key pair data
+/// @param[in] priv_key_props Pointer to private key properties list for the unwrapped key
+/// @param[in] pub_key_props Pointer to public key properties list for the unwrapped key
+/// @param[out] priv_key_handle Pointer to store the unwrapped private key handle
+/// @param[out] pub_key_handle Pointer to store the unwrapped public key handle
+///
+/// @return 0 on success, or a negative error code on failure
+///
+/// @internal
+/// # Safety
+/// This function is unsafe because it dereferences raw pointers.
+#[unsafe(no_mangle)]
+#[allow(unsafe_code)]
+pub unsafe extern "C" fn azihsm_keypair_unwrap(
+    algo: *mut AzihsmAlgo,
+    unwrapping_key: AzihsmHandle,
+    wrapped_key: *const AzihsmBuffer,
+    priv_key_props: *const AzihsmKeyPropList,
+    pub_key_props: *const AzihsmKeyPropList,
+    priv_key_handle: *mut AzihsmHandle,
+    pub_key_handle: *mut AzihsmHandle,
+) -> AzihsmError {
+    abi_boundary(|| {
+        validate_ptr(priv_key_handle)?;
+        validate_ptr(pub_key_handle)?;
+
+        let algo = deref_mut_ptr(algo)?;
+        let wrapped_key = deref_ptr(wrapped_key)?;
+        let wrapped_key_buf: &[u8] = wrapped_key.try_into()?;
+
+        let priv_props = deref_ptr(priv_key_props)?;
+        let priv_key_props = HsmKeyProps::try_from(priv_props)?;
+
+        let pub_props = deref_ptr(pub_key_props)?;
+        let pub_key_props = HsmKeyProps::try_from(pub_props)?;
+
+        // Dispatch based on algorithm ID
+        let (priv_handle, pub_handle) = match algo.id {
+            AzihsmAlgoId::RsaAesKeywrap => rsa_unwrap_key_pair(
+                algo,
+                unwrapping_key,
+                wrapped_key_buf,
+                priv_key_props,
+                pub_key_props,
+            )?,
+            _ => Err(AzihsmError::UnsupportedAlgorithm)?,
+        };
+
+        assign_ptr(priv_key_handle, priv_handle)?;
+        assign_ptr(pub_key_handle, pub_handle)?;
+
+        Ok(())
+    })
+}

@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::algo::aes::*;
+use crate::algo::rsa::*;
 
 /// Common cryptographic operation types
 #[derive(PartialEq)]
@@ -34,15 +35,18 @@ pub unsafe extern "C" fn azihsm_crypt_encrypt(
 ) -> AzihsmError {
     abi_boundary(|| {
         let algo = deref_mut_ptr(algo)?;
-        let key_type = HandleType::try_from(key_handle)?;
-        let input_buf = deref_ptr(plain_text)?;
+        let plain_text = deref_ptr(plain_text)?;
+        let input_buf: &[u8] = plain_text.try_into()?;
         let output_buf = deref_mut_ptr(cipher_text)?;
 
-        match key_type {
-            HandleType::AesKey => {
+        match algo.id {
+            AzihsmAlgoId::AesCbc | AzihsmAlgoId::AesCbcPad => {
                 aes_cbc_crypt(algo, key_handle, input_buf, output_buf, CryptoOp::Encrypt)?;
             }
-            _ => Err(AzihsmError::UnsupportedKeyKind)?,
+            AzihsmAlgoId::RsaPkcs | AzihsmAlgoId::RsaPkcsOaep | AzihsmAlgoId::RsaAesWrap => {
+                rsa_encrypt(algo, key_handle, input_buf, output_buf)?;
+            }
+            _ => Err(AzihsmError::UnsupportedAlgorithm)?,
         }
 
         Ok(())
@@ -73,15 +77,18 @@ pub unsafe extern "C" fn azihsm_crypt_decrypt(
 ) -> AzihsmError {
     abi_boundary(|| {
         let algo = deref_mut_ptr(algo)?;
-        let key_type = HandleType::try_from(key_handle)?;
-        let input_buf = deref_ptr(cipher_text)?;
+        let cipher_text = deref_ptr(cipher_text)?;
+        let input_buf: &[u8] = cipher_text.try_into()?;
         let output_buf = deref_mut_ptr(plain_text)?;
 
-        match key_type {
-            HandleType::AesKey => {
+        match algo.id {
+            AzihsmAlgoId::AesCbc | AzihsmAlgoId::AesCbcPad => {
                 aes_cbc_crypt(algo, key_handle, input_buf, output_buf, CryptoOp::Decrypt)?
             }
-            _ => Err(AzihsmError::UnsupportedKeyKind)?,
+            AzihsmAlgoId::RsaPkcs | AzihsmAlgoId::RsaPkcsOaep => {
+                rsa_decrypt(algo, key_handle, input_buf, output_buf)?;
+            }
+            _ => Err(AzihsmError::UnsupportedAlgorithm)?,
         }
 
         Ok(())
@@ -110,11 +117,12 @@ pub unsafe extern "C" fn azihsm_crypt_encrypt_init(
         validate_ptr(ctx_handle)?;
 
         let algo = deref_mut_ptr(algo)?;
-        let key_type = HandleType::try_from(key_handle)?;
 
-        let handle = match key_type {
-            HandleType::AesKey => aes_cbc_streaming_init(algo, key_handle, CryptoOp::Encrypt)?,
-            _ => Err(AzihsmError::UnsupportedKeyKind)?,
+        let handle = match algo.id {
+            AzihsmAlgoId::AesCbc | AzihsmAlgoId::AesCbcPad => {
+                aes_cbc_streaming_init(algo, key_handle, CryptoOp::Encrypt)?
+            }
+            _ => Err(AzihsmError::UnsupportedAlgorithm)?,
         };
 
         // Return the context handle
@@ -213,11 +221,12 @@ pub unsafe extern "C" fn azihsm_crypt_decrypt_init(
         validate_ptr(ctx_handle)?;
 
         let algo = deref_mut_ptr(algo)?;
-        let key_type = HandleType::try_from(key_handle)?;
 
-        let handle = match key_type {
-            HandleType::AesKey => aes_cbc_streaming_init(algo, key_handle, CryptoOp::Decrypt)?,
-            _ => Err(AzihsmError::UnsupportedKeyKind)?,
+        let handle = match algo.id {
+            AzihsmAlgoId::AesCbc | AzihsmAlgoId::AesCbcPad => {
+                aes_cbc_streaming_init(algo, key_handle, CryptoOp::Decrypt)?
+            }
+            _ => Err(AzihsmError::UnsupportedAlgorithm)?,
         };
 
         // Return the context handle

@@ -147,7 +147,7 @@ impl AesCbcStreamingContext {
 pub(crate) fn aes_cbc_crypt(
     algo: &mut AzihsmAlgo,
     key_handle: AzihsmHandle,
-    input: &AzihsmBuffer,
+    input: &[u8],
     output: &mut AzihsmBuffer,
     op: CryptoOp,
 ) -> Result<(), AzihsmError> {
@@ -169,14 +169,11 @@ pub(crate) fn aes_cbc_crypt(
         azihsm_napi::HsmAesCbcAlgo::with_no_padding(iv)?
     };
 
-    // Get input data slice
-    let input_data: &[u8] = input.try_into()?;
-
     // Query required output length first
     let required_len = if op == CryptoOp::Encrypt {
-        HsmEncrypter::encrypt(&mut aes_algo, key, input_data, None)?
+        HsmEncrypter::encrypt(&mut aes_algo, key, input, None)?
     } else {
-        HsmDecrypter::decrypt(&mut aes_algo, key, input_data, None)?
+        HsmDecrypter::decrypt(&mut aes_algo, key, input, None)?
     };
 
     // Check if output buffer is large enough
@@ -184,9 +181,9 @@ pub(crate) fn aes_cbc_crypt(
 
     // Perform actual encryption or decryption
     let written = if op == CryptoOp::Encrypt {
-        HsmEncrypter::encrypt(&mut aes_algo, key, input_data, Some(output_buf))?
+        HsmEncrypter::encrypt(&mut aes_algo, key, input, Some(output_buf))?
     } else {
-        HsmDecrypter::decrypt(&mut aes_algo, key, input_data, Some(output_buf))?
+        HsmDecrypter::decrypt(&mut aes_algo, key, input, Some(output_buf))?
     };
 
     // Update output buffer length with actual bytes written.
