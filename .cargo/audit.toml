@@ -1,7 +1,0 @@
-# Copyright (C) Microsoft Corporation. All rights reserved.
-
-[advisories]
-ignore = [
-  "RUSTSEC-2021-0145", # atty unaligned read - used only in xtask
-  "RUSTSEC-2024-0375", # atty unmaintained - used only in xtask
-]

@@ -62,7 +62,6 @@ enum Commands {
     Clippy(clippy::Clippy),
     Copyright(copyright::Copyright),
     Fmt(fmt::Fmt),
-    #[clap(alias = "nbt")]
     Nextest(nextest::Nextest),
     Setup(setup::Setup),
     Install(install::Install),
