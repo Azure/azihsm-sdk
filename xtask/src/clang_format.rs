@@ -17,6 +17,7 @@ use anyhow::bail;
 use anyhow::Context;
 use anyhow::Result;
 use clap::Parser;
+use is_terminal::IsTerminal;
 
 use crate::Xtask;
 use crate::XtaskCtx;
@@ -88,7 +89,7 @@ impl Xtask for ClangFormat {
         let colored = match self.color.as_str() {
             "always" => true,
             "never" => false,
-            _ => atty::is(atty::Stream::Stdout),
+            _ => std::io::stdout().is_terminal(),
         };
 
         // Load excludes from .clang-format-ignore file and command line
