@@ -445,7 +445,6 @@ pub trait HsmKeyUnmaskOp {
     ///
     /// * `session` - The session context in which to perform the unmasking operation
     /// * `masked_key` - The masked key data to be unmasked
-    /// * `key_props` - Key properties to apply to the unmasked key
     ///
     /// # Returns
     ///
