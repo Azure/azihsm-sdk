@@ -148,7 +148,7 @@ impl HsmKeyManager {
     /// * `session` - The session context in which to perform the unmasking operation
     /// * `algo` - The key unmasking algorithm implementation
     /// * `masked_key` - The masked key data
-    /// * `key_props` - Properties for the unmasked key
+
     ///
     /// # Returns
     ///

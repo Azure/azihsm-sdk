@@ -6,7 +6,7 @@ use super::*;
 
 bitflags::bitflags! {
     /// Masked key attributes flags.
-    #[derive(Debug,Default, Clone, Copy, PartialEq, Eq)]
+    #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
     struct HsmMaskedKeyAttributes : u16 {
         const LOCAL = 1 << 0;
         const IMPORTED = 1 << 1;
