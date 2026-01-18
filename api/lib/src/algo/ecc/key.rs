@@ -268,7 +268,7 @@ impl HsmKeyPairUnmaskOp for HsmEccKeyUnmaskAlgo {
     type PrivateKey = HsmEccPrivateKey;
     type Error = HsmError;
 
-    /// Unmasks an ECC key using the provided masked key data.
+    /// Unmasks an ECC key pair using the provided masked key data.
     ///
     /// # Arguments
     ///

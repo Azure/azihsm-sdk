@@ -3,14 +3,10 @@
 use std::ffi::c_void;
 use std::slice;
 
-use azihsm_api::HsmEccCurve;
-use azihsm_api::HsmKeyClass;
-use azihsm_api::HsmKeyKind;
-use azihsm_api::HsmKeyProps;
-use azihsm_api::HsmKeyPropsBuilder;
+use azihsm_api::*;
+use zerocopy::IntoBytes;
 
 use super::*;
-use crate::algo::ecc::ecc_get_key_property;
 
 /// Key property identifier enumeration.
 ///
@@ -31,101 +27,69 @@ pub enum AzihsmKeyPropId {
     // Corresponds to AZIHSM_KEY_PROP_ID_KIND
     Kind = 2,
 
+    /// Bit length of the key.
+    // Corresponds to AZIHSM_KEY_PROP_ID_BIT_LEN
+    BitLen = 3,
+
+    /// Human-readable label for the key.
+    // Corresponds to AZIHSM_KEY_PROP_ID_LABEL
+    Label = 4,
+
+    /// Public key information associated with the key.
+    // Corresponds to AZIHSM_KEY_PROP_PUB_KEY_INFO
+    PubKeyInfo = 5,
+
+    /// Elliptic curve identifier for ECC keys.
+    // Corresponds to AZIHSM_KEY_PROP_ID_EC_CURVE
+    EcCurve = 6,
+
+    /// Whether the key is masked (protected by hardware).
+    // Corresponds to AZIHSM_KEY_PROP_ID_MASKED_KEY
+    MaskedKey = 7,
+
     /// Session handle associated with the key.
     // Corresponds to AZIHSM_KEY_PROP_ID_SESSION
-    Session = 3,
-
-    /// Whether the key is private (boolean property).
-    // Corresponds to AZIHSM_KEY_PROP_ID_PRIVATE
-    Private = 4,
-
-    /// Whether the key can be modified after creation.
-    // Corresponds to AZIHSM_KEY_PROP_ID_MODIFIABLE
-    Modifiable = 5,
-
-    /// Whether the key can be copied.
-    // Corresponds to AZIHSM_KEY_PROP_ID_COPYABLE
-    Copyable = 6,
-
-    /// Whether the key can be destroyed.
-    // Corresponds to AZIHSM_KEY_PROP_ID_DESTROYABLE
-    Destroyable = 7,
+    Session = 8,
 
     /// Whether the key was generated locally in the HSM.
     // Corresponds to AZIHSM_KEY_PROP_ID_LOCAL
-    Local = 8,
+    Local = 9,
 
     /// Whether the key is sensitive (cannot be revealed in plaintext).
     // Corresponds to AZIHSM_KEY_PROP_ID_SENSITIVE
-    Sensitive = 9,
-
-    /// Whether the key has always been sensitive since creation.
-    // Corresponds to AZIHSM_KEY_PROP_ID_ALWAYS_SENSITIVE
-    AlwaysSensitive = 10,
+    Sensitive = 10,
 
     /// Whether the key can be extracted from the HSM.
     // Corresponds to AZIHSM_KEY_PROP_ID_EXTRACTABLE
     Extractable = 11,
 
-    /// Whether the key has never been extractable since creation.
-    // Corresponds to AZIHSM_KEY_PROP_ID_NEVER_EXTRACTABLE
-    NeverExtractable = 12,
-
-    /// Whether the key is trusted for cryptographic operations.
-    // Corresponds to AZIHSM_KEY_PROP_ID_TRUSTED
-    Trusted = 13,
-
-    /// Whether the key can only be wrapped with trusted keys.
-    // Corresponds to AZIHSM_KEY_PROP_ID_WRAP_WITH_TRUSTED
-    WrapWithTrusted = 14,
-
     /// Whether the key can be used for encryption operations.
     // Corresponds to AZIHSM_KEY_PROP_ID_ENCRYPT
-    Encrypt = 15,
+    Encrypt = 12,
 
     /// Whether the key can be used for decryption operations.
     // Corresponds to AZIHSM_KEY_PROP_ID_DECRYPT
-    Decrypt = 16,
+    Decrypt = 13,
 
     /// Whether the key can be used for signing operations.
     // Corresponds to AZIHSM_KEY_PROP_ID_SIGN
-    Sign = 17,
+    Sign = 14,
 
     /// Whether the key can be used for verification operations.
     // Corresponds to AZIHSM_KEY_PROP_ID_VERIFY
-    Verify = 18,
+    Verify = 15,
 
     /// Whether the key can be used for key wrapping operations.
     // Corresponds to AZIHSM_KEY_PROP_ID_WRAP
-    Wrap = 19,
+    Wrap = 16,
 
     /// Whether the key can be used for key unwrapping operations.
     // Corresponds to AZIHSM_KEY_PROP_ID_UNWRAP
-    Unwrap = 20,
+    Unwrap = 17,
 
     /// Whether the key can be used for key derivation operations.
     // Corresponds to AZIHSM_KEY_PROP_ID_DERIVE
-    Derive = 21,
-
-    /// Public key information associated with the key.
-    // Corresponds to AZIHSM_KEY_PROP_PUB_KEY_INFO
-    PubKeyInfo = 22,
-
-    /// Elliptic curve identifier for ECC keys.
-    // Corresponds to AZIHSM_KEY_PROP_ID_EC_CURVE
-    EcCurve = 23,
-
-    /// Whether the key is masked (protected by hardware).
-    // Corresponds to AZIHSM_KEY_PROP_ID_MASKED_KEY
-    MaskedKey = 24,
-
-    /// Bit length of the key.
-    // Corresponds to AZIHSM_KEY_PROP_ID_BIT_LEN
-    BitLen = 25,
-
-    /// Human-readable label for the key.
-    // Corresponds to AZIHSM_KEY_PROP_ID_LABEL
-    Label = 26,
+    Derive = 18,
 }
 
 /// C FFI structure for a single key property
@@ -223,7 +187,7 @@ impl TryFrom<&AzihsmKeyProp> for HsmEccCurve {
     #[allow(unsafe_code)]
     fn try_from(prop: &AzihsmKeyProp) -> Result<Self, Self::Error> {
         let value = u32::try_from(prop)?;
-        Ok(HsmEccCurve::try_from(value)?)
+        Ok(AzihsmEccCurve::try_from(value)?.into())
     }
 }
 
@@ -240,7 +204,7 @@ impl TryFrom<&AzihsmKeyProp> for HsmKeyKind {
     #[allow(unsafe_code)]
     fn try_from(prop: &AzihsmKeyProp) -> Result<Self, Self::Error> {
         let value = u32::try_from(prop)?;
-        Ok(HsmKeyKind::try_from(value)?)
+        Ok(AzihsmKeyKind::try_from(value)?.into())
     }
 }
 
@@ -254,7 +218,7 @@ impl TryFrom<&AzihsmKeyProp> for HsmKeyClass {
     #[allow(unsafe_code)]
     fn try_from(prop: &AzihsmKeyProp) -> Result<Self, Self::Error> {
         let value = u32::try_from(prop)?;
-        Ok(HsmKeyClass::try_from(value)?)
+        Ok(AzihsmKeyClass::try_from(value)?.into())
     }
 }
 
@@ -337,16 +301,9 @@ impl TryFrom<&AzihsmKeyPropList> for HsmKeyProps {
                 AzihsmKeyPropId::Class => builder.class(prop.try_into()?),
 
                 // These properties are not settable by the user
-                AzihsmKeyPropId::Private
-                | AzihsmKeyPropId::Copyable
-                | AzihsmKeyPropId::Destroyable
-                | AzihsmKeyPropId::Local
+                AzihsmKeyPropId::Local
                 | AzihsmKeyPropId::Sensitive
-                | AzihsmKeyPropId::AlwaysSensitive
-                | AzihsmKeyPropId::Extractable
-                | AzihsmKeyPropId::NeverExtractable
-                | AzihsmKeyPropId::Trusted
-                | AzihsmKeyPropId::WrapWithTrusted => Err(AzihsmError::InvalidArgument)?,
+                | AzihsmKeyPropId::Extractable => Err(AzihsmError::InvalidArgument)?,
 
                 // Ignore unknown properties
                 _ => builder,
@@ -380,12 +337,59 @@ pub unsafe extern "C" fn azihsm_key_get_prop(
         let key_type = HandleType::try_from(key_handle)?;
 
         match key_type {
-            HandleType::EccPubKey | HandleType::EccPrivKey => {
-                ecc_get_key_property(key_handle, prop)?;
+            HandleType::EccPubKey => {
+                let key = HsmEccPublicKey::try_from(key_handle)?;
+                get_key_prop(key, prop)
             }
-            _ => Err(AzihsmError::InvalidHandle)?,
+            HandleType::EccPrivKey => {
+                let key = HsmEccPrivateKey::try_from(key_handle)?;
+                get_key_prop(key, prop)
+            }
+            HandleType::AesKey => {
+                let key = HsmAesKey::try_from(key_handle)?;
+                get_key_prop(key, prop)
+            }
+            HandleType::RsaPubKey => {
+                let key = HsmRsaPublicKey::try_from(key_handle)?;
+                get_key_prop(key, prop)
+            }
+            HandleType::RsaPrivKey => {
+                let key = HsmRsaPrivateKey::try_from(key_handle)?;
+                get_key_prop(key, prop)
+            }
+            _ => Err(AzihsmError::InvalidHandle),
         }
-
-        Ok(())
     })
+}
+
+/// Helper function to get a key property
+fn get_key_prop(
+    key: impl HsmKeyCommonProps,
+    key_prop: &mut AzihsmKeyProp,
+) -> Result<(), AzihsmError> {
+    match key_prop.id {
+        AzihsmKeyPropId::Class => copy_to_key_prop(key_prop, key.class().as_bytes()),
+        AzihsmKeyPropId::Kind => copy_to_key_prop(key_prop, key.kind().as_bytes()),
+        AzihsmKeyPropId::BitLen => copy_to_key_prop(key_prop, &key.bits().to_le_bytes()),
+        AzihsmKeyPropId::Label => copy_to_key_prop(key_prop, &key.label()),
+        AzihsmKeyPropId::PubKeyInfo => copy_to_key_prop(key_prop, &key.pub_key_der_vec()?),
+        AzihsmKeyPropId::EcCurve => {
+            let Some(curve) = key.ecc_curve() else {
+                Err(AzihsmError::KeyPropertyNotPresent)?
+            };
+            copy_to_key_prop(key_prop, curve.as_bytes())
+        }
+        AzihsmKeyPropId::MaskedKey => copy_to_key_prop(key_prop, &key.masked_key_vec()?),
+        AzihsmKeyPropId::Session => copy_to_key_prop(key_prop, key.is_session().as_bytes()),
+        AzihsmKeyPropId::Local => copy_to_key_prop(key_prop, key.is_local().as_bytes()),
+        AzihsmKeyPropId::Sensitive => copy_to_key_prop(key_prop, key.is_sensitive().as_bytes()),
+        AzihsmKeyPropId::Extractable => copy_to_key_prop(key_prop, key.is_extractable().as_bytes()),
+        AzihsmKeyPropId::Encrypt => copy_to_key_prop(key_prop, key.can_encrypt().as_bytes()),
+        AzihsmKeyPropId::Decrypt => copy_to_key_prop(key_prop, key.can_decrypt().as_bytes()),
+        AzihsmKeyPropId::Sign => copy_to_key_prop(key_prop, key.can_sign().as_bytes()),
+        AzihsmKeyPropId::Verify => copy_to_key_prop(key_prop, key.can_verify().as_bytes()),
+        AzihsmKeyPropId::Wrap => copy_to_key_prop(key_prop, key.can_wrap().as_bytes()),
+        AzihsmKeyPropId::Unwrap => copy_to_key_prop(key_prop, key.can_unwrap().as_bytes()),
+        AzihsmKeyPropId::Derive => copy_to_key_prop(key_prop, key.can_derive().as_bytes()),
+    }
 }

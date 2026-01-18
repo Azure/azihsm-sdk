@@ -5,13 +5,13 @@
 //! This module provides core type definitions including key classes, key kinds,
 //! and elliptic curve identifiers that are shared between the library and native layers.
 
-use super::*;
+use zerocopy::*;
 
 /// Cryptographic key class.
 ///
 /// Defines the fundamental category of a cryptographic key.
 #[repr(u32)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, IntoBytes, Immutable)]
 pub enum HsmKeyClass {
     /// Symmetric secret key (e.g., AES, HMAC).
     Secret = 1,
@@ -23,24 +23,11 @@ pub enum HsmKeyClass {
     Private = 3,
 }
 
-impl TryFrom<u32> for HsmKeyClass {
-    type Error = HsmError;
-
-    fn try_from(value: u32) -> Result<Self, Self::Error> {
-        match value {
-            1 => Ok(HsmKeyClass::Secret),
-            2 => Ok(HsmKeyClass::Public),
-            3 => Ok(HsmKeyClass::Private),
-            _ => Err(HsmError::InvalidArgument),
-        }
-    }
-}
-
 /// Cryptographic key algorithm type.
 ///
 /// Specifies the algorithm family for a cryptographic key.
 #[repr(u32)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, IntoBytes, Immutable)]
 pub enum HsmKeyKind {
     /// RSA asymmetric key kind.
     Rsa = 1,
@@ -67,28 +54,11 @@ pub enum HsmKeyKind {
     HmacSha512 = 9,
 }
 
-impl TryFrom<u32> for HsmKeyKind {
-    type Error = HsmError;
-
-    fn try_from(value: u32) -> Result<Self, Self::Error> {
-        match value {
-            1 => Ok(HsmKeyKind::Rsa),
-            2 => Ok(HsmKeyKind::Ecc),
-            3 => Ok(HsmKeyKind::Aes),
-            5 => Ok(HsmKeyKind::SharedSecret),
-            7 => Ok(HsmKeyKind::HmacSha256),
-            8 => Ok(HsmKeyKind::HmacSha384),
-            9 => Ok(HsmKeyKind::HmacSha512),
-            _ => Err(HsmError::InvalidArgument),
-        }
-    }
-}
-
 /// Elliptic Curve Cryptography (ECC) curve identifier.
 ///
 /// Specifies the elliptic curve used for ECC keys, as defined by NIST.
 #[repr(u32)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, IntoBytes, Immutable)]
 pub enum HsmEccCurve {
     /// NIST P-256 curve (secp256r1), 256-bit security.
     P256 = 1,
@@ -96,19 +66,6 @@ pub enum HsmEccCurve {
     P384 = 2,
     /// NIST P-521 curve (secp521r1), 521-bit security.
     P521 = 3,
-}
-
-impl TryFrom<u32> for HsmEccCurve {
-    type Error = HsmError;
-
-    fn try_from(value: u32) -> Result<Self, Self::Error> {
-        match value {
-            1 => Ok(HsmEccCurve::P256),
-            2 => Ok(HsmEccCurve::P384),
-            3 => Ok(HsmEccCurve::P521),
-            _ => Err(HsmError::InvalidArgument),
-        }
-    }
 }
 
 impl HsmEccCurve {

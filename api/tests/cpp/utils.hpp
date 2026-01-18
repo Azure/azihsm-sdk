@@ -1,6 +1,7 @@
 #pragma once
 
 #include <azihsm_api.h>
+#include <vector>
 
 // Generic RAII wrapper for managing an existing HSM key with automatic cleanup
 struct AutoKey
@@ -94,7 +95,7 @@ inline azihsm_error generate_rsa_unwrapping_keypair(
     KeyProps props = {
         .key_kind = AZIHSM_KEY_KIND_RSA,
         .key_size_bits = 2048,
-        .session_key = true,
+        .session_key = false,
         .wrap = true,
         .unwrap = true,
     };
@@ -301,7 +302,7 @@ inline azihsm_error import_keypair(
                                            .count = static_cast<uint32_t>(pub_props_vec.size()) };
 
     // Step 5: Unwrap the key pair
-    return azihsm_keypair_unwrap(
+    return azihsm_key_unwrap_pair(
         &unwrap_algo,
         wrapping_priv_key,
         &wrapped_key_buf,

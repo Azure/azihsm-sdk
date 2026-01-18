@@ -53,6 +53,7 @@ set(SOURCE
     partition_tests.cpp 
     session_tests.cpp 
     algo/aes/cbc_tests.cpp
+    algo/aes/keygen_tests.cpp
     algo/ecc/keygen_tests.cpp
     algo/ecc/sign_verify_tests.cpp
     algo/rsa/keygen_tests.cpp

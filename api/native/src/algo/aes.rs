@@ -315,3 +315,18 @@ pub(crate) fn aes_cbc_streaming_final(
 
     Ok(())
 }
+
+/// Unmask a masked AES key
+pub(crate) fn aes_unmask_key(
+    session: &HsmSession,
+    masked_key: &[u8],
+) -> Result<AzihsmHandle, AzihsmError> {
+    let mut unmask_algo = HsmAesKeyUnmaskAlgo::default();
+
+    // Unmask AES key
+    let key: HsmAesKey = HsmKeyManager::unmask_key(session, &mut unmask_algo, masked_key)?;
+
+    let handle = HANDLE_TABLE.alloc_handle(HandleType::AesKey, Box::new(key));
+
+    Ok(handle)
+}
