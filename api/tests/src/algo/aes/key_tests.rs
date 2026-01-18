@@ -194,6 +194,8 @@ fn test_aes_key_unmask_common(session: &HsmSession, bits: u32) {
         .expect("Failed to unmask AES key");
 
     compare_key_properties(&original_key, &unmasked_key);
+    HsmKeyManager::delete_key(unmasked_key).expect("Failed to delete unmasked AES key");
+    HsmKeyManager::delete_key(original_key).expect("Failed to delete original AES key");
 }
 
 /// Test AES key generation.
