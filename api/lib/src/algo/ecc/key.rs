@@ -147,7 +147,7 @@ impl HsmKeyPairGenOp for HsmEccKeyGenAlgo {
 
         // Create the ECC Key in the HSM via DDI.
         let (handle, priv_key_props, pub_key_props) =
-            ddi::ecc_generate_key(session, priv_key_props, pub_key_props)?;
+            ddi::ecc_generate_key(session, priv_key_props)?;
 
         // Extract the public key DER from the private key properties.
         let Some(pub_key_der) = pub_key_props.pub_key_der() else {
@@ -255,6 +255,52 @@ impl HsmKeyPairUnwrapOp for HsmEccKeyRsaAesKeyUnwrapAlgo {
             handle,
             pub_key.clone(),
         );
+
+        Ok((priv_key, pub_key))
+    }
+}
+
+#[derive(Default)]
+pub struct HsmEccKeyUnmaskAlgo {}
+
+impl HsmKeyPairUnmaskOp for HsmEccKeyUnmaskAlgo {
+    type Session = HsmSession;
+    type PrivateKey = HsmEccPrivateKey;
+    type Error = HsmError;
+
+    /// Unmasks an ECC key using the provided masked key data.
+    ///
+    /// # Arguments
+    ///
+    /// * `session` - The HSM session to use for the unmasking operation.
+    /// * `masked_key` - The masked ECC key data.
+    ///
+    /// # Returns
+    ///
+    /// Returns the unmasked ECC key on success.
+    fn unmask_key_pair(
+        &mut self,
+        session: &HsmSession,
+        masked_key: &[u8],
+    ) -> HsmResult<(
+        algo::ecc::key::HsmEccPrivateKey,
+        algo::ecc::key::HsmEccPublicKey,
+    )> {
+        let (handle, priv_props, pub_props) = ddi::unmask_key_pair(session, masked_key)?;
+
+        HsmEccPrivateKey::validate_props(&priv_props)?;
+        HsmEccPublicKey::validate_props(&pub_props)?;
+
+        let Some(pub_key_der) = pub_props.pub_key_der() else {
+            return Err(HsmError::InternalError);
+        };
+
+        use crypto::ImportableKey;
+        let crypto_key =
+            crypto::EccPublicKey::from_bytes(pub_key_der).map_hsm_err(HsmError::InternalError)?;
+
+        let pub_key = HsmEccPublicKey::new(pub_props, crypto_key);
+        let priv_key = HsmEccPrivateKey::new(session.clone(), priv_props, handle, pub_key.clone());
 
         Ok((priv_key, pub_key))
     }

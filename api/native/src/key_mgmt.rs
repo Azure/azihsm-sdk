@@ -237,7 +237,7 @@ pub unsafe extern "C" fn azihsm_key_unwrap(
 
         // Dispatch based on algorithm ID
         let handle = match algo.id {
-            AzihsmAlgoId::RsaAesKeywrap => {
+            AzihsmAlgoId::RsaAesKeyWrap => {
                 rsa_unwrap_key(algo, unwrapping_key, wrapped_key_buf, key_props)?
             }
             _ => Err(AzihsmError::UnsupportedAlgorithm)?,
@@ -295,7 +295,7 @@ pub unsafe extern "C" fn azihsm_keypair_unwrap(
 
         // Dispatch based on algorithm ID
         let (priv_handle, pub_handle) = match algo.id {
-            AzihsmAlgoId::RsaAesKeywrap => rsa_unwrap_key_pair(
+            AzihsmAlgoId::RsaAesKeyWrap => rsa_unwrap_key_pair(
                 algo,
                 unwrapping_key,
                 wrapped_key_buf,

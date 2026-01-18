@@ -94,8 +94,8 @@ pub enum AzihsmAlgoId {
     RsaPkcs = 0x0001000D,
 
     /// RSA AES Key Wrap & Unwrap.
-    // Corresponds to AZIHSM_ALGO_ID_RSA_AES_KEYWRAP
-    RsaAesKeywrap = 0x0001000E,
+    // Corresponds to AZIHSM_ALGO_ID_RSA_AES_KEY_WRAP
+    RsaAesKeyWrap = 0x0001000E,
 
     /// RSA AES Wrap.
     // Corresponds to AZIHSM_ALGO_ID_RSA_AES_WRAP

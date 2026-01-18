@@ -177,6 +177,36 @@ impl HsmKeyUnwrapOp for HsmAesKeyRsaAesKeyUnwrapAlgo {
     }
 }
 
+#[derive(Default)]
+pub struct HsmAesKeyUnmaskAlgo {}
+
+impl HsmKeyUnmaskOp for HsmAesKeyUnmaskAlgo {
+    type Session = HsmSession;
+    type Key = HsmAesKey;
+    type Error = HsmError;
+
+    /// Unmasks an AES key using the provided masked key data.
+    ///
+    /// # Arguments
+    ///
+    /// * `session` - The HSM session to use for the unmasking operation.
+    /// * `masked_key` - The masked AES key data.
+    ///
+    /// # Returns
+    ///
+    /// Returns the unmasked AES key on success.
+    fn unmask_key(
+        &mut self,
+        session: &HsmSession,
+        masked_key: &[u8],
+    ) -> Result<Self::Key, Self::Error> {
+        let (handle, props) = ddi::unmask_key(session, masked_key)?;
+        HsmAesKey::validate_props(&props)?;
+        let key = HsmAesKey::new(session.clone(), props, handle);
+        Ok(key)
+    }
+}
+
 impl TryFrom<HsmGenericSecretKey> for HsmAesKey {
     type Error = HsmError;
 

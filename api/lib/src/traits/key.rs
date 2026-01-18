@@ -186,44 +186,14 @@ pub trait HsmKeyCommonProps: HsmKeyPropsProvider {
         self.with_props(|p| p.is_local())
     }
 
-    /// Returns whether the key is a private key.
-    fn is_private(&self) -> bool {
-        self.with_props(|p| p.is_private())
-    }
-
-    /// Returns whether the key is modifiable.
-    fn is_modifiable(&self) -> bool {
-        self.with_props(|p| p.is_modifiable())
-    }
-
-    /// Returns whether the key is copyable.
-    fn is_copyable(&self) -> bool {
-        self.with_props(|p| p.is_copyable())
-    }
-
-    /// Returns whether the key is destroyable.
-    fn is_destroyable(&self) -> bool {
-        self.with_props(|p| p.is_destroyable())
-    }
-
     /// Returns whether the key is sensitive.
     fn is_sensitive(&self) -> bool {
         self.with_props(|p| p.is_sensitive())
     }
 
-    /// Returns whether the key has always been sensitive.
-    fn is_always_sensitive(&self) -> bool {
-        self.with_props(|p| p.is_always_sensitive())
-    }
-
     /// Returns whether the key is extractable.
     fn is_extractable(&self) -> bool {
         self.with_props(|p| p.is_extractable())
-    }
-
-    /// Returns whether the key has never been extractable.
-    fn is_never_extractable(&self) -> bool {
-        self.with_props(|p| p.is_never_extractable())
     }
 
     /// Returns whether the key can be used for encryption.
@@ -454,6 +424,59 @@ pub trait HsmKeyPairUnwrapOp {
         wrapped_key: &[u8],
         priv_key_props: HsmKeyProps,
         pub_key_props: HsmKeyProps,
+    ) -> Result<
+        (
+            Self::PrivateKey,
+            <Self::PrivateKey as HsmPrivateKey>::PublicKey,
+        ),
+        Self::Error,
+    >;
+}
+
+/// Key unmasking operation trait.
+pub trait HsmKeyUnmaskOp {
+    type Session: Session;
+    type Key: HsmSecretKey;
+    type Error: Error;
+
+    /// Unmasks a masked key.
+    ///
+    /// # Arguments
+    ///
+    /// * `session` - The session context in which to perform the unmasking operation
+    /// * `masked_key` - The masked key data to be unmasked
+    /// * `key_props` - Key properties to apply to the unmasked key
+    ///
+    /// # Returns
+    ///
+    /// Returns the unmasked key on success.
+    fn unmask_key(
+        &mut self,
+        session: &Self::Session,
+        masked_key: &[u8],
+    ) -> Result<Self::Key, Self::Error>;
+}
+
+/// Key pair unmasking operation trait.
+pub trait HsmKeyPairUnmaskOp {
+    type Session: Session;
+    type PrivateKey: HsmPrivateKey;
+    type Error: Error;
+
+    /// Unmasks a masked key pair.
+    ///
+    /// # Arguments
+    ///
+    /// * `session` - The session context in which to perform the unmasking operation
+    /// * `masked_key` - The masked key pair data to be unmasked
+    ///
+    /// # Returns
+    ///
+    /// Returns a tuple containing the unmasked private key and public key on success.
+    fn unmask_key_pair(
+        &mut self,
+        session: &Self::Session,
+        masked_key: &[u8],
     ) -> Result<
         (
             Self::PrivateKey,

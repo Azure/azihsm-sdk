@@ -178,8 +178,7 @@ impl HsmKeyPairGenOp for HsmRsaKeyUnwrappingKeyGenAlgo {
             return Err(HsmError::InvalidKeyProps);
         }
 
-        let (handle, priv_key_props, pub_key_props) =
-            ddi::get_rsa_unwrapping_key(session, priv_key_props, pub_key_props)?;
+        let (handle, priv_key_props, pub_key_props) = ddi::get_rsa_unwrapping_key(session)?;
 
         // Extract the public key DER from the private key properties.
         let Some(pub_key_der) = pub_key_props.pub_key_der() else {
@@ -286,6 +285,52 @@ impl HsmKeyPairUnwrapOp for HsmRsaKeyRsaAesKeyUnwrapAlgo {
             handle,
             pub_key.clone(),
         );
+
+        Ok((priv_key, pub_key))
+    }
+}
+
+#[derive(Default)]
+pub struct HsmRsaKeyUnmaskAlgo {}
+
+impl HsmKeyPairUnmaskOp for HsmRsaKeyUnmaskAlgo {
+    type Session = HsmSession;
+    type PrivateKey = HsmRsaPrivateKey;
+    type Error = HsmError;
+
+    /// Unmasks an RSA key using the provided masked key data.
+    ///
+    /// # Arguments
+    ///
+    /// * `session` - The HSM session to use for the unmasking operation.
+    /// * `masked_key` - The masked RSA key data.
+    ///
+    /// # Returns
+    ///
+    /// Returns the unmasked RSA key pair on success.
+    fn unmask_key_pair(
+        &mut self,
+        session: &HsmSession,
+        masked_key: &[u8],
+    ) -> HsmResult<(
+        algo::rsa::key::HsmRsaPrivateKey,
+        algo::rsa::key::HsmRsaPublicKey,
+    )> {
+        let (handle, priv_props, pub_props) = ddi::unmask_key_pair(session, masked_key)?;
+
+        HsmRsaPrivateKey::validate_props(&priv_props)?;
+        HsmRsaPublicKey::validate_props(&pub_props)?;
+
+        let Some(pub_key_der) = pub_props.pub_key_der() else {
+            return Err(HsmError::InternalError);
+        };
+
+        use crypto::ImportableKey;
+        let crypto_key =
+            crypto::RsaPublicKey::from_bytes(pub_key_der).map_hsm_err(HsmError::InternalError)?;
+
+        let pub_key = HsmRsaPublicKey::new(pub_props, crypto_key);
+        let priv_key = HsmRsaPrivateKey::new(session.clone(), priv_props, handle, pub_key.clone());
 
         Ok((priv_key, pub_key))
     }

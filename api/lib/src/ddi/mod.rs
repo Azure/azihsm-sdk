@@ -6,6 +6,7 @@ mod ecc;
 mod hkdf;
 mod hmac;
 mod key;
+mod masked_key;
 mod partition;
 mod rsa;
 mod session;
@@ -19,6 +20,7 @@ pub(crate) use ecc::*;
 pub(crate) use hkdf::*;
 pub(crate) use hmac::*;
 pub(crate) use key::*;
+pub(crate) use masked_key::*;
 pub(crate) use partition::*;
 pub(crate) use rsa::*;
 pub(crate) use session::*;
@@ -42,7 +44,6 @@ impl From<HsmKeyFlags> for DdiTargetKeyMetadata {
     fn from(flags: HsmKeyFlags) -> Self {
         let mut meta = Self::default()
             .with_session(flags.is_session())
-            .with_modifiable(flags.is_modifiable())
             .with_wrap(flags.can_wrap())
             .with_unwrap(flags.can_unwrap())
             .with_derive(flags.can_derive())

@@ -45,14 +45,8 @@ bitflags::bitflags! {
     pub(crate)struct HsmKeyFlags: u32 {
         const SESSION = 1 << 0;
         const LOCAL = 1 << 1;
-        const PRIVATE = 1 << 2;
-        const MODIFIABLE = 1 << 3;
-        const COPYABLE = 1 << 4;
-        const DESTROYABLE = 1 << 5;
         const SENSITIVE = 1 << 6;
-        const ALWAYS_SENSITIVE = 1 << 7;
         const EXTRACTABLE = 1 << 8;
-        const NEVER_EXTRACTABLE = 1 << 9;
         const ENCRYPT = 1 << 10;
         const DECRYPT = 1 << 11;
         const SIGN = 1 << 12;
@@ -75,44 +69,14 @@ impl HsmKeyFlags {
         self.contains(HsmKeyFlags::LOCAL)
     }
 
-    /// Returns whether the key is a private key.
-    pub fn is_private(&self) -> bool {
-        self.contains(HsmKeyFlags::PRIVATE)
-    }
-
-    /// Returns whether the key is modifiable.
-    pub fn is_modifiable(&self) -> bool {
-        self.contains(HsmKeyFlags::MODIFIABLE)
-    }
-
-    /// Returns whether the key is copyable.
-    pub fn is_copyable(&self) -> bool {
-        self.contains(HsmKeyFlags::COPYABLE)
-    }
-
-    /// Returns whether the key is destroyable.
-    pub fn is_destroyable(&self) -> bool {
-        self.contains(HsmKeyFlags::DESTROYABLE)
-    }
-
     /// Returns whether the key is sensitive.
     pub fn is_sensitive(&self) -> bool {
         self.contains(HsmKeyFlags::SENSITIVE)
     }
 
-    /// Returns whether the key has always been sensitive.
-    pub fn is_always_sensitive(&self) -> bool {
-        self.contains(HsmKeyFlags::ALWAYS_SENSITIVE)
-    }
-
     /// Returns whether the key is extractable.
     pub fn is_extractable(&self) -> bool {
         self.contains(HsmKeyFlags::EXTRACTABLE)
-    }
-
-    /// Returns whether the key has never been extractable.
-    pub fn is_never_extractable(&self) -> bool {
-        self.contains(HsmKeyFlags::NEVER_EXTRACTABLE)
     }
 
     /// Returns whether the key can be used for encryption.
@@ -169,6 +133,26 @@ pub struct HsmKeyProps {
 }
 
 impl HsmKeyProps {
+    pub(crate) fn new(
+        class: HsmKeyClass,
+        kind: HsmKeyKind,
+        bits: u32,
+        ecc_curve: Option<HsmEccCurve>,
+        flags: HsmKeyFlags,
+        label: Vec<u8>,
+    ) -> Self {
+        Self {
+            class,
+            kind,
+            label,
+            bits,
+            ecc_curve,
+            masked_key: None,
+            pub_key_der: None,
+            flags,
+        }
+    }
+
     pub(crate) fn flags(&self) -> HsmKeyFlags {
         self.flags
     }
@@ -218,44 +202,14 @@ impl HsmKeyProps {
         self.flags.contains(HsmKeyFlags::LOCAL)
     }
 
-    /// Returns whether the key is a private key.
-    pub fn is_private(&self) -> bool {
-        self.flags.contains(HsmKeyFlags::PRIVATE)
-    }
-
-    /// Returns whether the key is modifiable.
-    pub fn is_modifiable(&self) -> bool {
-        self.flags.contains(HsmKeyFlags::MODIFIABLE)
-    }
-
-    /// Returns whether the key is copyable.
-    pub fn is_copyable(&self) -> bool {
-        self.flags.contains(HsmKeyFlags::COPYABLE)
-    }
-
-    /// Returns whether the key is destroyable.
-    pub fn is_destroyable(&self) -> bool {
-        self.flags.contains(HsmKeyFlags::DESTROYABLE)
-    }
-
     /// Returns whether the key is sensitive.
     pub fn is_sensitive(&self) -> bool {
         self.flags.contains(HsmKeyFlags::SENSITIVE)
     }
 
-    /// Returns whether the key has always been sensitive.
-    pub fn is_always_sensitive(&self) -> bool {
-        self.flags.contains(HsmKeyFlags::ALWAYS_SENSITIVE)
-    }
-
     /// Returns whether the key is extractable.
     pub fn is_extractable(&self) -> bool {
         self.flags.contains(HsmKeyFlags::EXTRACTABLE)
-    }
-
-    /// Returns whether the key has never been extractable.
-    pub fn is_never_extractable(&self) -> bool {
-        self.flags.contains(HsmKeyFlags::NEVER_EXTRACTABLE)
     }
 
     /// Returns whether the key can be used for encryption.
@@ -309,7 +263,11 @@ impl HsmKeyProps {
 
     pub(crate) fn check_supported_flags(&self, supported_flags: HsmKeyFlags) -> bool {
         // Allow additional flags which is settable for all keys(session flag)
-        let allowed_flags = supported_flags | HsmKeyFlags::SESSION;
+        let allowed_flags = supported_flags
+            | HsmKeyFlags::SESSION
+            | HsmKeyFlags::SENSITIVE
+            | HsmKeyFlags::EXTRACTABLE
+            | HsmKeyFlags::LOCAL;
 
         // Returns `true` only if all currently-set flags are within `allowed_flags`.
         (self.flags & !allowed_flags).is_empty()

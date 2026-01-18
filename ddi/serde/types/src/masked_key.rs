@@ -364,6 +364,20 @@ impl MaskedKeyLayout {
     }
 }
 
+impl From<&MaskedKeyAesHeader> for MaskedKeyAesLayout {
+    fn from(header: &MaskedKeyAesHeader) -> Self {
+        Self {
+            metadata_len: header.metadata_len as usize,
+            post_metadata_pad_len: header.post_metadata_pad_len as usize,
+            encrypted_key_len: header.encrypted_key_len as usize,
+            post_encrypted_key_pad_len: header.post_encrypted_key_pad_len as usize,
+            iv_len: header.iv_len as usize,
+            post_iv_pad_len: header.post_iv_pad_len as usize,
+            tag_len: header.tag_len as usize,
+        }
+    }
+}
+
 /// Pre-encoded masked key structure.
 /// This structure is used to prepare a masked key for encoding.
 /// Contains only methods that are common to all key types.

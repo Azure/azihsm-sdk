@@ -15,8 +15,6 @@ use super::*;
 /// Returns a tuple containing the key handle, private key properties, and public key properties.
 pub(crate) fn get_rsa_unwrapping_key(
     session: &HsmSession,
-    mut priv_key_props: HsmKeyProps,
-    mut pub_key_props: HsmKeyProps,
 ) -> HsmResult<(HsmKeyHandle, HsmKeyProps, HsmKeyProps)> {
     let req = DdiGetUnwrappingKeyCmdReq {
         hdr: DdiReqHdr {
@@ -34,9 +32,10 @@ pub(crate) fn get_rsa_unwrapping_key(
     })?;
 
     let handle = resp.data.key_id;
-    priv_key_props.set_masked_key(resp.data.masked_key.as_slice());
-    priv_key_props.set_pub_key_der(resp.data.pub_key.der.as_slice());
-    pub_key_props.set_pub_key_der(resp.data.pub_key.der.as_slice());
+    let masked_key = resp.data.masked_key.as_slice();
+    let pub_key = resp.data.pub_key;
+    let (priv_key_props, pub_key_props) =
+        HsmMaskedKey::to_key_pair_props(masked_key, pub_key.der.as_slice())?;
 
     Ok((handle, priv_key_props, pub_key_props))
 }
@@ -56,7 +55,7 @@ pub(crate) fn rsa_aes_unwrap_key(
     key: &HsmRsaPrivateKey,
     wrapped_key: &[u8],
     hash_algo: HsmHashAlgo,
-    mut key_props: HsmKeyProps,
+    key_props: HsmKeyProps,
 ) -> HsmResult<(HsmKeyHandle, HsmKeyProps)> {
     let req = DdiRsaUnwrapCmdReq {
         hdr: DdiReqHdr {
@@ -83,7 +82,8 @@ pub(crate) fn rsa_aes_unwrap_key(
     })?;
 
     let handle = resp.data.key_id;
-    key_props.set_masked_key(resp.data.masked_key.as_slice());
+    let masked_key = resp.data.masked_key.as_slice();
+    let key_props = HsmMaskedKey::to_key_props(masked_key)?;
 
     Ok((handle, key_props))
 }
@@ -104,8 +104,8 @@ pub(crate) fn rsa_aes_unwrap_key_pair(
     unwrapping_key: &HsmRsaPrivateKey,
     wrapped_key: &[u8],
     hash_algo: HsmHashAlgo,
-    mut priv_key_props: HsmKeyProps,
-    mut pub_key_props: HsmKeyProps,
+    priv_key_props: HsmKeyProps,
+    _pub_key_props: HsmKeyProps,
 ) -> HsmResult<(HsmKeyHandle, HsmKeyProps, HsmKeyProps)> {
     let req = DdiRsaUnwrapCmdReq {
         hdr: DdiReqHdr {
@@ -136,10 +136,9 @@ pub(crate) fn rsa_aes_unwrap_key_pair(
         return Err(HsmError::InternalError);
     };
     let masked_key = resp.data.masked_key.as_slice();
+    let (priv_key_props, pub_key_props) =
+        HsmMaskedKey::to_key_pair_props(masked_key, pub_key.der.as_slice())?;
 
-    priv_key_props.set_masked_key(masked_key);
-    priv_key_props.set_pub_key_der(pub_key.der.as_slice());
-    pub_key_props.set_pub_key_der(pub_key.der.as_slice());
     Ok((key_handle, priv_key_props, pub_key_props))
 }
 

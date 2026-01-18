@@ -141,6 +141,53 @@ impl HsmKeyManager {
         )
     }
 
+    /// Unmasks a masked key.
+    ///
+    /// # Arguments
+    ///
+    /// * `session` - The session context in which to perform the unmasking operation
+    /// * `algo` - The key unmasking algorithm implementation
+    /// * `masked_key` - The masked key data
+    /// * `key_props` - Properties for the unmasked key
+    ///
+    /// # Returns
+    ///
+    /// Returns the unmasked key on success.
+    pub fn unmask_key<Algo: HsmKeyUnmaskOp>(
+        session: &Algo::Session,
+        algo: &mut Algo,
+        masked_key: &[u8],
+    ) -> Result<Algo::Key, Algo::Error> {
+        algo.unmask_key(session, masked_key)
+    }
+
+    /// Unmasks a masked asymmetric key pair.
+    ///
+    /// # Arguments
+    ///
+    /// * `session` - The session context in which to perform the unmasking operation
+    /// * `algo` - The key pair unmasking algorithm implementation
+    /// * `masked_key_pair` - The masked key pair data
+    /// * `priv_key_props` - Properties for the unmasked private key
+    /// * `pub_key_props` - Properties for the unmasked public key
+    ///
+    /// # Returns
+    ///
+    /// Returns the unmasked private and public keys on success.
+    pub fn unmask_key_pair<Algo: HsmKeyPairUnmaskOp>(
+        session: &Algo::Session,
+        algo: &mut Algo,
+        masked_key_pair: &[u8],
+    ) -> Result<
+        (
+            Algo::PrivateKey,
+            <Algo::PrivateKey as HsmPrivateKey>::PublicKey,
+        ),
+        Algo::Error,
+    > {
+        algo.unmask_key_pair(session, masked_key_pair)
+    }
+
     /// Derives a new cryptographic key from an existing base key.
     ///
     /// Derives a key with the specified properties using the provided algorithm

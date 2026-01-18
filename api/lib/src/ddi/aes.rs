@@ -38,7 +38,7 @@ use super::*;
 /// - The session is invalid or closed
 pub(crate) fn aes_generate_key(
     session: &HsmSession,
-    mut props: HsmKeyProps,
+    props: HsmKeyProps,
 ) -> HsmResult<(HsmKeyHandle, HsmKeyProps)> {
     let req = DdiAesGenerateKeyCmdReq {
         hdr: DdiReqHdr {
@@ -61,10 +61,9 @@ pub(crate) fn aes_generate_key(
 
     let key_id = resp.data.key_id;
     let masked_key = resp.data.masked_key.as_slice();
+    let key_props = HsmMaskedKey::to_key_props(masked_key)?;
 
-    props.set_masked_key(masked_key);
-
-    Ok((key_id, props))
+    Ok((key_id, key_props))
 }
 
 /// Encrypts data using AES-CBC mode at the DDI layer.
