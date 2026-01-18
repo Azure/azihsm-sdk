@@ -515,6 +515,7 @@ fn test_ecc_key_unmask_for_curve(session: &HsmSession, curve: HsmEccCurve) {
     compare_ecc_private_key_properties(&original_priv_key, &unmasked_priv_key);
     compare_ecc_public_key_properties(&original_pub_key, &unmasked_pub_key);
 
+    HsmKeyManager::delete_key(original_priv_key).expect("Failed to delete original private key");
     HsmKeyManager::delete_key(original_pub_key).expect("Failed to delete original public key");
     HsmKeyManager::delete_key(unmasked_priv_key).expect("Failed to delete unmasked private key");
     HsmKeyManager::delete_key(unmasked_pub_key).expect("Failed to delete unmasked public key");
