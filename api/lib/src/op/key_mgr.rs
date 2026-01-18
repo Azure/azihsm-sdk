@@ -148,7 +148,6 @@ impl HsmKeyManager {
     /// * `session` - The session context in which to perform the unmasking operation
     /// * `algo` - The key unmasking algorithm implementation
     /// * `masked_key` - The masked key data
-
     ///
     /// # Returns
     ///
@@ -168,8 +167,6 @@ impl HsmKeyManager {
     /// * `session` - The session context in which to perform the unmasking operation
     /// * `algo` - The key pair unmasking algorithm implementation
     /// * `masked_key_pair` - The masked key pair data
-    /// * `priv_key_props` - Properties for the unmasked private key
-    /// * `pub_key_props` - Properties for the unmasked public key
     ///
     /// # Returns
     ///

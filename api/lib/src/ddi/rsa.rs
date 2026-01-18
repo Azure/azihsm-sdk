@@ -7,8 +7,6 @@ use super::*;
 /// # Arguments
 ///
 /// * `session` - The HSM session to use for key retrieval.
-/// * `priv_key_props` - Properties for the private key to be retrieved.
-/// * `pub_key_props` - Properties for the public key to be retrieved.
 ///
 /// # Returns
 ///
