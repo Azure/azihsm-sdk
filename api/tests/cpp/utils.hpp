@@ -191,7 +191,7 @@ inline azihsm_error import_keypair(
     unwrap_params.oaep_params = &oaep_params;
 
     azihsm_algo unwrap_algo = {};
-    unwrap_algo.id = AZIHSM_ALGO_ID_RSA_AES_KEYWRAP;
+    unwrap_algo.id = AZIHSM_ALGO_ID_RSA_AES_KEY_WRAP;
     unwrap_algo.params = &unwrap_params;
     unwrap_algo.len = sizeof(unwrap_params);
 

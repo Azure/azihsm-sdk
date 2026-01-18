@@ -441,7 +441,7 @@ The algorithm can wrap and unwrap a target asymmetric key of any length and type
 
 |                            |                                                                             |
 | -------------------------- | --------------------------------------------------------------------------- |
-| **Algorithm ID**           | `AZIHSM_ALGO_ID_RSA_AES_KEYWRAP`                                            |
+| **Algorithm ID**           | `AZIHSM_ALGO_ID_RSA_AES_KEY_WRAP`                                            |
 | **Params**                 | [azihsm_algo_rsa_aes_key_wrap_params](#azihsm_algo_rsa_aes_key_wrap_params) |
 | **Required Properties**    | None                                                                        |
 | **Contributed Properties** | None                                                                        |
@@ -467,7 +467,7 @@ struct azihsm_algo_rsa_aes_key_wrap_params params = {
 };
 
 struct azihsm_algo algo = {
-    .id = AZIHSM_ALGO_ID_RSA_AES_KEYWRAP,
+    .id = AZIHSM_ALGO_ID_RSA_AES_KEY_WRAP,
     .params = &params,
     .len = sizeof(struct azihsm_algo_rsa_aes_key_wrap_params),
 };

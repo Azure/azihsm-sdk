@@ -43,8 +43,7 @@ use super::*;
 /// - Session credentials are invalid or the session has expired
 pub(crate) fn ecc_generate_key(
     session: &HsmSession,
-    mut priv_key_props: HsmKeyProps,
-    mut pub_key_props: HsmKeyProps,
+    priv_key_props: HsmKeyProps,
 ) -> HsmResult<(HsmKeyHandle, HsmKeyProps, HsmKeyProps)> {
     let Some(curve) = priv_key_props.ecc_curve() else {
         return Err(HsmError::KeyPropertyNotPresent);
@@ -72,10 +71,7 @@ pub(crate) fn ecc_generate_key(
     let key_id = resp.data.private_key_id;
     let pub_key_der = resp.data.pub_key.der.as_slice();
     let masked_key = resp.data.masked_key.as_slice();
-
-    priv_key_props.set_masked_key(masked_key);
-    priv_key_props.set_pub_key_der(pub_key_der);
-    pub_key_props.set_pub_key_der(pub_key_der);
+    let (priv_key_props, pub_key_props) = HsmMaskedKey::to_key_pair_props(masked_key, pub_key_der)?;
 
     Ok((key_id, priv_key_props, pub_key_props))
 }
