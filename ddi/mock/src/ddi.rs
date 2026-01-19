@@ -28,6 +28,7 @@ impl Ddi for DdiMock {
     ///
     /// # Returns
     /// * `Vec<DevInfo>` - HSM device information list
+    #[tracing::instrument]
     fn dev_info_list(&self) -> Vec<DevInfo> {
         let entropy_data: Vec<u8> = (*G_ENTROPY_DATA).clone();
         let devs = vec![DevInfo {

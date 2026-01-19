@@ -146,10 +146,14 @@ pub struct DdiAesEncryptDecryptReq {
     pub op: DdiAesOp,
 
     #[ddi(id = 3)]
-    pub msg: MborByteArray<1024>,
+    pub msg: MborByteArray<{ Self::MAX_MSG_SIZE }>,
 
     #[ddi(id = 4)]
     pub iv: MborByteArray<16>,
+}
+
+impl DdiAesEncryptDecryptReq {
+    pub const MAX_MSG_SIZE: usize = 1024;
 }
 
 /// Aes Encrypt Response Structure

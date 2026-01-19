@@ -1,71 +1,109 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
 
+//! HKDF key derivation operations at the DDI layer.
+//!
+//! This module constructs and dispatches low-level DDI HKDF requests. It is used by the
+//! higher-level HKDF algorithm implementation to derive an HSM-managed symmetric key from an
+//! HSM-managed shared secret.
+
 use super::*;
 
-pub(crate) struct HkdfKeyDeriveParams {
-    pub hash_algo: DdiHashAlgorithm,
-    pub target_key_type: DdiKeyType,
-    pub key_usage: DdiKeyUsage,
-    pub key_availability: DdiKeyAvailability,
-    pub key_label: Option<Vec<u8>>,
-}
-
-/// HKDF Key derive operation
-pub(crate) fn hkdf_key_derive(
-    dev: &<HsmDdi as Ddi>::Dev,
-    sess_id: Option<u16>,
-    rev: Option<DdiApiRev>,
-    secret_key_id: u16,
+/// Derives a new key using HKDF at the DDI layer.
+///
+/// This function builds a `DdiHkdfDerive` request using the provided shared secret key handle as
+/// input keying material, and the HKDF parameters (`hash_algo`, optional `salt`, optional `info`).
+///
+/// On success, the returned `HsmKeyProps` contains the masked key material returned by the HSM
+/// so the derived key can be re-imported/used by higher layers.
+///
+/// # Arguments
+///
+/// * `shared_secret` - Base key (IKM) for HKDF; also provides the session ID and API revision.
+/// * `hash_algo` - Hash algorithm used for HKDF extract/expand.
+/// * `salt` - Optional HKDF salt. If `None`, HKDF runs with an empty salt.
+/// * `info` - Optional HKDF info/context string. If `None`, HKDF runs with an empty info.
+/// * `derived_key_props` - Properties of the key to derive (type, size, usage flags, lifetime).
+///
+/// # Returns
+///
+/// Returns `(key_handle, updated_props)` where:
+/// - `key_handle` is the DDI key identifier for subsequent operations.
+/// - `updated_props` is the provided `derived_key_props` with `masked_key` set from the DDI
+///   response.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - `salt` or `info` cannot be encoded as an MBOR byte array.
+/// - The derived key properties cannot be converted to DDI key type/properties.
+/// - The underlying DDI HKDF command fails.
+pub(crate) fn hkdf_derive(
+    shared_secret: &HsmGenericSecretKey,
+    hash_algo: HsmHashAlgo,
     salt: Option<&[u8]>,
     info: Option<&[u8]>,
-    key_params: HkdfKeyDeriveParams,
-) -> Result<DdiHkdfDeriveCmdResp, DdiError> {
-    // prepare key properties
-    let key_properties = DdiKeyProperties {
-        key_usage: key_params.key_usage,
-        key_availability: key_params.key_availability,
-        key_label: match &key_params.key_label {
-            Some(label) => MborByteArray::from_slice(label)
-                .map_err(|_| DdiError::MborError(MborError::EncodeError))?,
-            None => MborByteArray::from_slice(&[])
-                .map_err(|_| DdiError::MborError(MborError::EncodeError))?,
-        },
-    };
-    let salt = match salt {
-        Some(s) => Some(
-            MborByteArray::from_slice(s)
-                .map_err(|_| DdiError::MborError(MborError::EncodeError))?,
-        ),
-        None => None,
-    };
-
-    let info = match info {
-        Some(i) => Some(
-            MborByteArray::from_slice(i)
-                .map_err(|_| DdiError::MborError(MborError::EncodeError))?,
-        ),
-        None => None,
-    };
-
+    mut derived_key_props: HsmKeyProps,
+) -> HsmResult<(HsmKeyHandle, HsmKeyProps)> {
+    // Build the DDI HKDF derive key command request.
     let req = DdiHkdfDeriveCmdReq {
         hdr: DdiReqHdr {
+            rev: Some(shared_secret.api_rev().into()),
+            sess_id: Some(shared_secret.sess_id()),
             op: DdiOp::HkdfDerive,
-            sess_id,
-            rev,
         },
         data: DdiHkdfDeriveReq {
-            key_id: secret_key_id,
-            hash_algorithm: key_params.hash_algo,
-            salt,
-            info,
-            key_type: key_params.target_key_type,
+            key_id: shared_secret.handle(),
+            hash_algorithm: hash_algo.into(),
+            salt: salt
+                .map(|salt| MborByteArray::from_slice(salt).map_hsm_err(HsmError::InternalError))
+                .transpose()?,
+            info: info
+                .map(|info| MborByteArray::from_slice(info).map_hsm_err(HsmError::InternalError))
+                .transpose()?,
+            key_type: (&derived_key_props).try_into()?,
             key_tag: None,
-            key_properties: key_properties
-                .try_into()
-                .map_err(|_| DdiError::InvalidParameter)?,
+            key_properties: (&derived_key_props).try_into()?,
         },
         ext: None,
     };
-    let mut cookie = None;
-    dev.exec_op(&req, &mut cookie)
+    let resp = shared_secret.with_dev(|dev| {
+        dev.exec_op(&req, &mut None)
+            .map_hsm_err(HsmError::DdiCmdFailure)
+    })?;
+    let key_id = resp.data.key_id;
+    derived_key_props.set_masked_key(resp.data.masked_key.as_slice());
+
+    Ok((key_id, derived_key_props))
+}
+
+impl TryFrom<&HsmKeyProps> for DdiKeyType {
+    type Error = HsmError;
+
+    /// Converts derived key properties into the DDI key type.
+    ///
+    /// HKDF requires specifying the concrete output key type at the DDI layer.
+    /// For AES keys, this is derived from `key_props.bits()`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HsmError::InvalidArgument`] if:
+    /// - The key kind is not supported by HKDF in this layer.
+    /// - The requested key size is invalid for the supported kind.
+    fn try_from(key_props: &HsmKeyProps) -> Result<Self, Self::Error> {
+        match key_props.kind() {
+            // Supported AES key sizes
+            HsmKeyKind::Aes => match key_props.bits() {
+                128 => Ok(DdiKeyType::Aes128),
+                192 => Ok(DdiKeyType::Aes192),
+                256 => Ok(DdiKeyType::Aes256),
+                _ => Err(HsmError::InvalidArgument),
+            },
+            //HMAC key types supported by HKDF
+            HsmKeyKind::HmacSha256 => Ok(DdiKeyType::HmacSha256),
+            HsmKeyKind::HmacSha384 => Ok(DdiKeyType::HmacSha384),
+            HsmKeyKind::HmacSha512 => Ok(DdiKeyType::HmacSha512),
+            // All other key kinds are unsupported
+            _ => Err(HsmError::InvalidArgument),
+        }
+    }
 }

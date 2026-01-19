@@ -1,26 +1,20 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
 
-#![warn(missing_docs)]
-
-//! Azure Integrated HSM API
-//!
-//! This crate implements the Azure Integrated HSM API for Rust & C/C++.
-
-mod bindings;
-mod crypto;
+mod algo;
 mod ddi;
+mod error;
+mod op;
 mod partition;
 mod session;
-mod types;
+mod shared_types;
+pub mod traits;
 
-pub(crate) use azihsm_ddi::*;
-use azihsm_ddi_types::*;
-pub use bindings::*;
+pub use algo::*;
+pub use error::*;
+pub use op::*;
 pub use partition::*;
 pub use session::*;
+pub use shared_types::*;
+pub use traits::*;
 
-type HsmDdi = AzihsmDdi;
-
-lazy_static::lazy_static! {
-    pub(crate) static ref DDI: HsmDdi = HsmDdi::default();
-}
+pub type HsmResult<T> = Result<T, HsmError>;

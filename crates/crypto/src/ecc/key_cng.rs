@@ -396,7 +396,7 @@ impl CngEccPublicKey {
     }
 
     /// Returns the curve used by this key.
-    pub(super) fn curve(&self) -> EccCurve {
+    pub fn curve(&self) -> EccCurve {
         self.ecdsa_key.curve()
     }
 

@@ -36,7 +36,7 @@ impl KeyUnwrapper {
     /// - Integrity verification fails
     /// - The underlying cryptographic operation fails
     pub fn unwrap<Algo: UnwrapOp, TargetKey: ImportableKey>(
-        algo: &Algo,
+        algo: &mut Algo,
         key: &Algo::Key,
         wrapped_key: &[u8],
     ) -> Result<TargetKey, CryptoError> {

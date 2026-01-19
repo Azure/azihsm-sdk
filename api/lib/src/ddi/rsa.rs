@@ -1,139 +1,238 @@
-#![warn(missing_docs)]
 // Copyright (C) Microsoft Corporation. All rights reserved.
-
-//! RSA cryptographic DDI operations
-//!
-//! This module provides functions for generating RSA key pairs, encrypting and decrypting data,
-//! and signing and verifying messages using RSA keys.
 
 use super::*;
 
-pub(crate) fn rsa_get_unwrapping_key(
-    dev: &<HsmDdi as Ddi>::Dev,
-    sess_id: Option<u16>,
-    rev: Option<DdiApiRev>,
-) -> Result<DdiGetUnwrappingKeyCmdResp, DdiError> {
+/// Retrieves an RSA unwrapping key pair from the HSM.
+///
+/// # Arguments
+///
+/// * `session` - The HSM session to use for key retrieval.
+///
+/// # Returns
+///
+/// Returns a tuple containing the key handle, private key properties, and public key properties.
+pub(crate) fn get_rsa_unwrapping_key(
+    session: &HsmSession,
+) -> HsmResult<(HsmKeyHandle, HsmKeyProps, HsmKeyProps)> {
     let req = DdiGetUnwrappingKeyCmdReq {
         hdr: DdiReqHdr {
             op: DdiOp::GetUnwrappingKey,
-            sess_id,
-            rev,
+            rev: Some(session.api_rev().into()),
+            sess_id: Some(session.id()),
         },
         data: DdiGetUnwrappingKeyReq {},
         ext: None,
     };
-    let mut cookie = None;
-    dev.exec_op(&req, &mut cookie)
+
+    let resp = session.with_dev(|dev| {
+        dev.exec_op(&req, &mut None)
+            .map_hsm_err(HsmError::DdiCmdFailure)
+    })?;
+
+    let handle = resp.data.key_id;
+    let masked_key = resp.data.masked_key.as_slice();
+    let pub_key = resp.data.pub_key;
+    let (priv_key_props, pub_key_props) =
+        HsmMaskedKey::to_key_pair_props(masked_key, pub_key.der.as_slice())?;
+
+    Ok((handle, priv_key_props, pub_key_props))
 }
 
-pub(crate) struct DdiRsaUnwrapParams {
-    // key ID
-    pub key_id: u16,
-    // wrapped blob key class
-    pub key_class: DdiKeyClass,
-    // wrapped blob padding
-    pub padding: DdiRsaCryptoPadding,
-    //Hash algorithm
-    pub hash_algo: DdiHashAlgorithm,
-    // key tag
-    pub key_tag: Option<u16>,
-    // optional label
-    pub label: Option<Vec<u8>>,
-    // key usage
-    pub key_usage: DdiKeyUsage,
-    /// Key Availability
-    pub key_availability: DdiKeyAvailability,
-}
-
-pub(crate) fn rsa_unwrap_key(
-    dev: &<HsmDdi as Ddi>::Dev,
-    sess_id: Option<u16>,
-    rev: Option<DdiApiRev>,
-    params: DdiRsaUnwrapParams,
-    wrapped_blob: &[u8],
-) -> Result<DdiRsaUnwrapCmdResp, DdiError> {
-    // check if wrapped blob is empty or > MBOR size
-    const MAX_WRAPPED_BLOB_SIZE: usize = 3072;
-    if wrapped_blob.is_empty() || wrapped_blob.len() > MAX_WRAPPED_BLOB_SIZE {
-        Err(DdiError::InvalidParameter)?;
-    }
-    let key_props = DdiKeyProperties {
-        key_usage: params.key_usage,
-        key_availability: params.key_availability,
-        key_label: MborByteArray::from_slice(params.label.as_deref().unwrap_or(&[]))
-            .expect("Failed to create empty byte array for key label"),
-    };
-
+/// Performs RSA AES key unwrapping using the specified RSA private key.
+///
+/// # Arguments
+///
+/// * `key` - The RSA private key to use for unwrapping.
+/// * `wrapped_key` - The wrapped AES key data.
+/// * `key_props` - Properties for the unwrapped AES key.
+///
+/// # Returns
+///
+/// Returns a tuple containing the key handle and properties of the unwrapped AES key.
+pub(crate) fn rsa_aes_unwrap_key(
+    key: &HsmRsaPrivateKey,
+    wrapped_key: &[u8],
+    hash_algo: HsmHashAlgo,
+    key_props: HsmKeyProps,
+) -> HsmResult<(HsmKeyHandle, HsmKeyProps)> {
     let req = DdiRsaUnwrapCmdReq {
         hdr: DdiReqHdr {
             op: DdiOp::RsaUnwrap,
-            sess_id,
-            rev,
+            rev: Some(key.api_rev().into()),
+            sess_id: Some(key.sess_id()),
         },
         data: DdiRsaUnwrapReq {
-            key_id: params.key_id,
-            wrapped_blob: MborByteArray::from_slice(wrapped_blob)
-                .map_err(|_| DdiError::MborError(MborError::EncodeError))?,
-            wrapped_blob_key_class: params.key_class,
-            wrapped_blob_padding: params.padding,
-            wrapped_blob_hash_algorithm: params.hash_algo,
-            key_tag: params.key_tag,
-            key_properties: key_props
-                .try_into()
-                .map_err(|_| DdiError::InvalidParameter)?,
+            key_id: key.handle(),
+            wrapped_blob_key_class: key_props.kind().try_into()?,
+            wrapped_blob_padding: DdiRsaCryptoPadding::Oaep,
+            wrapped_blob_hash_algorithm: hash_algo.into(),
+            wrapped_blob: MborByteArray::from_slice(wrapped_key)
+                .map_hsm_err(HsmError::InternalError)?,
+            key_tag: None,
+            key_properties: (&key_props).try_into()?,
         },
         ext: None,
     };
-    let mut cookie = None;
-    dev.exec_op(&req, &mut cookie)
+
+    let resp = key.with_dev(|dev| {
+        dev.exec_op(&req, &mut None)
+            .map_hsm_err(HsmError::DdiCmdFailure)
+    })?;
+
+    let handle = resp.data.key_id;
+    let masked_key = resp.data.masked_key.as_slice();
+    let key_props = HsmMaskedKey::to_key_props(masked_key)?;
+
+    Ok((handle, key_props))
 }
 
-fn rsa_mod_exp_sign(
-    dev: &<HsmDdi as Ddi>::Dev,
-    sess_id: Option<u16>,
-    rev: Option<DdiApiRev>,
-    key_id: u16,
-    op_type: DdiRsaOpType,
-    y: &[u8],
-) -> Result<DdiRsaModExpCmdResp, DdiError> {
-    // check if y is empty or > MBOR size
-    const MAX_Y_SIZE: usize = 512;
-    if y.is_empty() || y.len() > MAX_Y_SIZE {
-        Err(DdiError::InvalidParameter)?;
-    }
-    let y_array =
-        MborByteArray::from_slice(y).map_err(|_| DdiError::MborError(MborError::EncodeError))?;
+/// Performs RSA AES key pair unwrapping using the specified RSA private key.
+///
+/// # Arguments
+///
+/// * `unwrapping_key` - The RSA private key used to unwrap the key pair.
+/// * `wrapped_key` - The wrapped key pair data.
+/// * `priv_key_props` - Properties for the unwrapped private key.
+/// * `pub_key_props` - Properties for the unwrapped public key.
+///
+/// # Returns
+///
+/// Returns a tuple containing the key handle, private key properties, and public key properties.
+pub(crate) fn rsa_aes_unwrap_key_pair(
+    unwrapping_key: &HsmRsaPrivateKey,
+    wrapped_key: &[u8],
+    hash_algo: HsmHashAlgo,
+    priv_key_props: HsmKeyProps,
+    _pub_key_props: HsmKeyProps,
+) -> HsmResult<(HsmKeyHandle, HsmKeyProps, HsmKeyProps)> {
+    let req = DdiRsaUnwrapCmdReq {
+        hdr: DdiReqHdr {
+            op: DdiOp::RsaUnwrap,
+            rev: Some(unwrapping_key.api_rev().into()),
+            sess_id: Some(unwrapping_key.sess_id()),
+        },
+        data: DdiRsaUnwrapReq {
+            key_id: unwrapping_key.handle(),
+            wrapped_blob_key_class: priv_key_props.kind().try_into()?,
+            wrapped_blob_padding: DdiRsaCryptoPadding::Oaep,
+            wrapped_blob_hash_algorithm: hash_algo.into(),
+            wrapped_blob: MborByteArray::from_slice(wrapped_key)
+                .map_hsm_err(HsmError::InternalError)?,
+            key_tag: None,
+            key_properties: (&priv_key_props).try_into()?,
+        },
+        ext: None,
+    };
+
+    let resp = unwrapping_key.with_dev(|dev| {
+        dev.exec_op(&req, &mut None)
+            .map_hsm_err(HsmError::DdiCmdFailure)
+    })?;
+
+    let key_handle = resp.data.key_id;
+    let Some(pub_key) = resp.data.pub_key else {
+        return Err(HsmError::InternalError);
+    };
+    let masked_key = resp.data.masked_key.as_slice();
+    let (priv_key_props, pub_key_props) =
+        HsmMaskedKey::to_key_pair_props(masked_key, pub_key.der.as_slice())?;
+
+    Ok((key_handle, priv_key_props, pub_key_props))
+}
+
+/// Performs RSA encryption using the specified RSA public key.
+///
+/// # Arguments
+///
+/// * `key` - The RSA public key to use for encryption.
+/// * `input` - The data to encrypt.
+/// * `output` - Optional output buffer. If `None`, returns the required ciphertext
+///   size. If provided, must be large enough to hold the ciphertext.
+///
+/// # Returns
+///
+/// Returns the number of bytes written to the output buffer, or the required
+/// buffer size if `output` is `None`.
+pub(crate) fn rsa_decrypt(
+    key: &HsmRsaPrivateKey,
+    input: &[u8],
+    output: &mut [u8],
+) -> HsmResult<usize> {
+    rsa_mod_exp(key, DdiRsaOpType::Decrypt, input, output)
+}
+
+/// Performs RSA signing using the specified RSA private key.
+///
+/// # Arguments
+///
+/// * `key` - The RSA private key to use for signing.
+/// * `data` - The data to sign.
+/// * `signature` - The buffer to receive the signature.
+///
+/// # Returns
+///
+/// Returns the number of bytes written to the signature buffer.
+pub(crate) fn rsa_sign(
+    key: &HsmRsaPrivateKey,
+    data: &[u8],
+    signature: &mut [u8],
+) -> HsmResult<usize> {
+    rsa_mod_exp(key, DdiRsaOpType::Sign, data, signature)
+}
+
+/// Performs an RSA modular exponentiation operation.
+///
+/// # Arguments
+///
+/// * `key` - The RSA private key to use for the operation.
+/// * `op` - The type of RSA operation to perform (e.g., Decrypt, Sign).
+/// * `input` - The input data for the operation.
+/// * `output` - Optional output buffer. If `None`, returns the required output size.
+///
+/// # Returns
+///
+/// Returns the number of bytes written to the output buffer, or the required
+/// buffer size if `output` is `None`.
+fn rsa_mod_exp(
+    key: &HsmRsaPrivateKey,
+    op: DdiRsaOpType,
+    input: &[u8],
+    output: &mut [u8],
+) -> HsmResult<usize> {
     let req = DdiRsaModExpCmdReq {
         hdr: DdiReqHdr {
             op: DdiOp::RsaModExp,
-            sess_id,
-            rev,
+            rev: Some(key.api_rev().into()),
+            sess_id: Some(key.sess_id()),
         },
         data: DdiRsaModExpReq {
-            key_id,
-            y: y_array,
-            op_type,
+            key_id: key.handle(),
+            op_type: op,
+            y: MborByteArray::from_slice(input).map_hsm_err(HsmError::InternalError)?,
         },
         ext: None,
     };
-    let mut cookie = None;
-    dev.exec_op(&req, &mut cookie)
+
+    let resp = key.with_dev(|dev| {
+        dev.exec_op(&req, &mut None)
+            .map_hsm_err(HsmError::DdiCmdFailure)
+    })?;
+
+    output.copy_from_slice(resp.data.x.as_slice());
+
+    Ok(resp.data.x.len())
 }
-pub(crate) fn rsa_sign(
-    dev: &<HsmDdi as Ddi>::Dev,
-    sess_id: Option<u16>,
-    rev: Option<DdiApiRev>,
-    key_id: u16,
-    digest: &[u8],
-) -> Result<DdiRsaModExpCmdResp, DdiError> {
-    rsa_mod_exp_sign(dev, sess_id, rev, key_id, DdiRsaOpType::Sign, digest)
-}
-pub(crate) fn rsa_decrypt(
-    dev: &<HsmDdi as Ddi>::Dev,
-    sess_id: Option<u16>,
-    rev: Option<DdiApiRev>,
-    key_id: u16,
-    ciphertext: &[u8],
-) -> Result<DdiRsaModExpCmdResp, DdiError> {
-    rsa_mod_exp_sign(dev, sess_id, rev, key_id, DdiRsaOpType::Decrypt, ciphertext)
+
+impl TryFrom<HsmKeyKind> for DdiKeyClass {
+    type Error = HsmError;
+
+    /// Converts an HSM key kind to a DDI key class.
+    fn try_from(kind: HsmKeyKind) -> Result<Self, Self::Error> {
+        match kind {
+            HsmKeyKind::Aes => Ok(DdiKeyClass::Aes),
+            HsmKeyKind::Rsa => Ok(DdiKeyClass::Rsa),
+            HsmKeyKind::Ecc => Ok(DdiKeyClass::Ecc),
+            _ => Err(HsmError::UnsupportedKeyKind),
+        }
+    }
 }

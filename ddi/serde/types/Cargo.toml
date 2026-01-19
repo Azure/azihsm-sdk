@@ -10,15 +10,15 @@ azihsm_ddi_derive.workspace = true
 azihsm_ddi_mbor.workspace = true
 open-enum.workspace = true
 pastey.workspace = true
-zerocopy.workspace = true
+zerocopy = { features = ["derive"], workspace = true }
 
 # dependencies for fuzzing
 arbitrary = { optional = true, workspace = true }
 
 # dependencies for pre_encode and/or post_decode
 pkcs1 = { optional = true, workspace = true }
-sec1 = { optional = true, workspace = true }
-spki = { optional = true, workspace = true }
+sec1 = { features = ["alloc"], optional = true, workspace = true }
+spki = { features = ["alloc"], optional = true, workspace = true }
 tracing = { optional = true, workspace = true }
 
 [dev-dependencies]

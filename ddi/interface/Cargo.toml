@@ -11,7 +11,7 @@ test = false
 
 [dependencies]
 azihsm_ddi_types.workspace = true
-minicbor.workspace = true
+minicbor = { features = ["derive", "std"], workspace = true }
 thiserror.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
