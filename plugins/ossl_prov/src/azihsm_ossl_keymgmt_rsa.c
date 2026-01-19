@@ -42,18 +42,18 @@ static AZIHSM_RSA_KEY *azihsm_ossl_keymgmt_gen(
     azihsm_handle public, private;
     azihsm_error status;
 
-    struct azihsm_algo algo = {
+    printf("azihsm_ossl_keymgmt_gen: Generating RSA keypair with %u bits\n", genctx->pubkey_bits);
 
-        .id = AZIHSM_ALGO_ID_RSA_PKCS_KEY_PAIR_GEN,
+    struct azihsm_algo algo = {
+        .id = AZIHSM_ALGO_ID_RSA_KEY_UNWRAPPING_KEY_PAIR_GEN,
         .params = NULL,
-        .len = 0
+        .len = 0,
     };
 
     struct azihsm_key_prop pub_key_prop = {
-
         .id = AZIHSM_KEY_PROP_ID_BIT_LEN,
         .val = (void *)&genctx->pubkey_bits,
-        .len = sizeof(genctx->pubkey_bits)
+        .len = sizeof(genctx->pubkey_bits),
     };
 
     struct azihsm_key_prop_list pub_key_prop_list = {
@@ -93,8 +93,8 @@ static void azihsm_ossl_keymgmt_free(AZIHSM_RSA_KEY *rsa_key)
         return;
     }
 
-    azihsm_key_delete(rsa_key->genctx.session, rsa_key->key.public);
-    azihsm_key_delete(rsa_key->genctx.session, rsa_key->key.private);
+    azihsm_key_delete(rsa_key->key.public);
+    azihsm_key_delete(rsa_key->key.private);
 
     OPENSSL_free(rsa_key);
 }

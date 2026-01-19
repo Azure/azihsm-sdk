@@ -117,6 +117,9 @@ static AZIHSM_EC_KEY *azihsm_ossl_keymgmt_gen(
     azihsm_handle public, private;
     azihsm_error status;
     const bool enable = true;
+    const azihsm_key_class priv_class = AZIHSM_KEY_CLASS_PRIVATE;
+    const azihsm_key_class pub_class = AZIHSM_KEY_CLASS_PUBLIC;
+    const azihsm_key_kind key_kind = AZIHSM_KEY_KIND_ECC;
 
     struct azihsm_algo algo = {
 
@@ -126,42 +129,53 @@ static AZIHSM_EC_KEY *azihsm_ossl_keymgmt_gen(
     };
 
     struct azihsm_key_prop pub_key_props[KEY_USAGE_LIST_MAX + 1] = {
-
-        [0] = { .id = AZIHSM_KEY_PROP_ID_EC_CURVE,
+        [0] = { .id = AZIHSM_KEY_PROP_ID_CLASS,
+                .val = (void *)&pub_class,
+                .len = sizeof(pub_class), },
+        [1] = { .id = AZIHSM_KEY_PROP_ID_KIND,
+                .val = (void *)&key_kind,
+                .len = sizeof(key_kind), },
+        [2] = { .id = AZIHSM_KEY_PROP_ID_EC_CURVE,
                 .val = (void *)&genctx->ec_curve_id,
-                .len = sizeof(genctx->ec_curve_id) }
+                .len = sizeof(genctx->ec_curve_id), }
     };
 
     struct azihsm_key_prop priv_key_props[KEY_USAGE_LIST_MAX + 1] = {
 
-        [0] = { .id = AZIHSM_KEY_PROP_ID_EC_CURVE,
+        [0] = { .id = AZIHSM_KEY_PROP_ID_CLASS,
+                .val = (void *)&priv_class,
+                .len = sizeof(priv_class), },
+        [1] = { .id = AZIHSM_KEY_PROP_ID_KIND,
+                .val = (void *)&key_kind,
+                .len = sizeof(key_kind), },
+        [2] = { .id = AZIHSM_KEY_PROP_ID_EC_CURVE,
                 .val = (void *)&genctx->ec_curve_id,
-                .len = sizeof(genctx->ec_curve_id) }
+                .len = sizeof(genctx->ec_curve_id), }
     };
 
     for (uint32_t i = 0; i < genctx->pub_key_usage.count; i++)
     {
-        pub_key_props[1 + i].id = (azihsm_algo_id)genctx->pub_key_usage.elements[i];
-        pub_key_props[1 + i].val = (void *)&enable;
-        pub_key_props[1 + i].len = sizeof(bool);
+        pub_key_props[3 + i].id = (azihsm_algo_id)genctx->pub_key_usage.elements[i];
+        pub_key_props[3 + i].val = (void *)&enable;
+        pub_key_props[3 + i].len = sizeof(bool);
     }
 
     for (uint32_t i = 0; i < genctx->priv_key_usage.count; i++)
     {
-        priv_key_props[1 + i].id = (azihsm_algo_id)genctx->priv_key_usage.elements[i];
-        priv_key_props[1 + i].val = (void *)&enable;
-        priv_key_props[1 + i].len = sizeof(bool);
+        priv_key_props[3 + i].id = (azihsm_algo_id)genctx->priv_key_usage.elements[i];
+        priv_key_props[3 + i].val = (void *)&enable;
+        priv_key_props[3 + i].len = sizeof(bool);
     }
 
     struct azihsm_key_prop_list pub_key_prop_list = {
         .props = pub_key_props,
-        .count = genctx->pub_key_usage.count + 1,
+        .count = genctx->pub_key_usage.count + 3,
     };
 
     struct azihsm_key_prop_list priv_key_prop_list = {
 
         .props = priv_key_props,
-        .count = genctx->priv_key_usage.count + 1,
+        .count = genctx->priv_key_usage.count + 3,
     };
 
     if ((ec_key = OPENSSL_zalloc(sizeof(AZIHSM_EC_KEY))) == NULL)
@@ -173,15 +187,18 @@ static AZIHSM_EC_KEY *azihsm_ossl_keymgmt_gen(
     status = azihsm_key_gen_pair(
         genctx->session,
         &algo,
-        &pub_key_prop_list,
         &priv_key_prop_list,
-        &public,
-        &private
+        &pub_key_prop_list,
+        &private,
+        &public
     );
 
     if (status != AZIHSM_ERROR_SUCCESS)
     {
         OPENSSL_free(ec_key);
+
+        printf("azihsm_ossl_keymgmt_gen: azihsm_key_gen_pair failed with error code %d\n", status);
+
         return NULL;
     }
 
