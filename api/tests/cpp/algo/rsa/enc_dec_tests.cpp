@@ -31,7 +31,7 @@ TEST_F(azihsm_rsa_encrypt_decrypt, encrypt_decrypt_oaep_with_unwrapped_key)
             wrapping_priv_key.get_ptr(),
             wrapping_pub_key.get_ptr()
         );
-        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_NE(wrapping_priv_key.get(), 0);
         ASSERT_NE(wrapping_pub_key.get(), 0);
 
@@ -55,7 +55,7 @@ TEST_F(azihsm_rsa_encrypt_decrypt, encrypt_decrypt_oaep_with_unwrapped_key)
             unwrapped_priv_key.get_ptr(),
             unwrapped_pub_key.get_ptr()
         );
-        ASSERT_EQ(import_err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(import_err, AZIHSM_STATUS_SUCCESS);
         ASSERT_NE(unwrapped_priv_key.get(), 0);
         ASSERT_NE(unwrapped_pub_key.get(), 0);
 
@@ -84,7 +84,7 @@ TEST_F(azihsm_rsa_encrypt_decrypt, encrypt_decrypt_oaep_with_unwrapped_key)
 
         auto encrypt_err =
             azihsm_crypt_encrypt(&encrypt_algo, unwrapped_pub_key, &plaintext_buf, &ciphertext_buf);
-        ASSERT_EQ(encrypt_err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(encrypt_err, AZIHSM_STATUS_SUCCESS);
 
         // Step 4: Decrypt the ciphertext with the unwrapped private key
         std::vector<uint8_t> decrypted_data(256);
@@ -98,7 +98,7 @@ TEST_F(azihsm_rsa_encrypt_decrypt, encrypt_decrypt_oaep_with_unwrapped_key)
             &ciphertext_buf,
             &decrypted_buf
         );
-        ASSERT_EQ(decrypt_err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(decrypt_err, AZIHSM_STATUS_SUCCESS);
 
         // Step 6: Verify the decrypted data matches the original plaintext
         ASSERT_EQ(decrypted_buf.len, plaintext_buf.len);
@@ -106,9 +106,9 @@ TEST_F(azihsm_rsa_encrypt_decrypt, encrypt_decrypt_oaep_with_unwrapped_key)
 
         // Step 5: Test the key deletion
         auto del_priv_err = azihsm_key_delete(unwrapped_priv_key.release());
-        ASSERT_EQ(del_priv_err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(del_priv_err, AZIHSM_STATUS_SUCCESS);
         auto del_pub_err = azihsm_key_delete(unwrapped_pub_key.release());
-        ASSERT_EQ(del_pub_err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(del_pub_err, AZIHSM_STATUS_SUCCESS);
     });
 }
 
@@ -126,7 +126,7 @@ TEST_F(azihsm_rsa_encrypt_decrypt, encrypt_decrypt_pkcs1_with_unwrapped_key)
             wrapping_priv_key.get_ptr(),
             wrapping_pub_key.get_ptr()
         );
-        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_NE(wrapping_priv_key.get(), 0);
         ASSERT_NE(wrapping_pub_key.get(), 0);
 
@@ -150,7 +150,7 @@ TEST_F(azihsm_rsa_encrypt_decrypt, encrypt_decrypt_pkcs1_with_unwrapped_key)
             unwrapped_priv_key.get_ptr(),
             unwrapped_pub_key.get_ptr()
         );
-        ASSERT_EQ(import_err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(import_err, AZIHSM_STATUS_SUCCESS);
         ASSERT_NE(unwrapped_priv_key.get(), 0);
         ASSERT_NE(unwrapped_pub_key.get(), 0);
 
@@ -174,7 +174,7 @@ TEST_F(azihsm_rsa_encrypt_decrypt, encrypt_decrypt_pkcs1_with_unwrapped_key)
 
         auto encrypt_err =
             azihsm_crypt_encrypt(&encrypt_algo, unwrapped_pub_key, &plaintext_buf, &ciphertext_buf);
-        ASSERT_EQ(encrypt_err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(encrypt_err, AZIHSM_STATUS_SUCCESS);
 
         // Step 4: Decrypt the ciphertext with the unwrapped private key
         std::vector<uint8_t> decrypted_data(256);
@@ -188,7 +188,7 @@ TEST_F(azihsm_rsa_encrypt_decrypt, encrypt_decrypt_pkcs1_with_unwrapped_key)
             &ciphertext_buf,
             &decrypted_buf
         );
-        ASSERT_EQ(decrypt_err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(decrypt_err, AZIHSM_STATUS_SUCCESS);
 
         // Step 6: Verify the decrypted data matches the original plaintext
         ASSERT_EQ(decrypted_buf.len, plaintext_buf.len);
@@ -196,8 +196,8 @@ TEST_F(azihsm_rsa_encrypt_decrypt, encrypt_decrypt_pkcs1_with_unwrapped_key)
 
         // Step 5: Test the key deletion
         auto del_priv_err = azihsm_key_delete(unwrapped_priv_key.release());
-        ASSERT_EQ(del_priv_err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(del_priv_err, AZIHSM_STATUS_SUCCESS);
         auto del_pub_err = azihsm_key_delete(unwrapped_pub_key.release());
-        ASSERT_EQ(del_pub_err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(del_pub_err, AZIHSM_STATUS_SUCCESS);
     });
 }

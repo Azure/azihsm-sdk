@@ -44,7 +44,7 @@ inline uint32_t get_curve_key_bits(azihsm_ecc_curve curve)
     }
 }
 
-azihsm_error generate_ec_key_pair_for_derive(
+azihsm_status generate_ec_key_pair_for_derive(
     azihsm_handle session_handle,
     azihsm_handle &pub_key_handle,
     azihsm_handle &priv_key_handle,
@@ -101,7 +101,7 @@ azihsm_error generate_ec_key_pair_for_derive(
     );
 }
 
-azihsm_error derive_hmac_key_via_ecdh_hkdf(
+azihsm_status derive_hmac_key_via_ecdh_hkdf(
     azihsm_handle session_handle,
     azihsm_handle server_priv_key,
     azihsm_handle client_pub_key,
@@ -111,7 +111,7 @@ azihsm_error derive_hmac_key_via_ecdh_hkdf(
     azihsm_handle *base_secret_handle = nullptr
 )
 {
-    azihsm_error err;
+    azihsm_status err;
 
     // Step 1: Get client's public key in DER format for ECDH
     std::vector<uint8_t> client_pub_key_data(512);
@@ -124,7 +124,7 @@ azihsm_error derive_hmac_key_via_ecdh_hkdf(
                                      .len = client_pub_key_len };
 
     err = azihsm_key_get_prop(client_pub_key, &pub_key_prop);
-    if (err != AZIHSM_ERROR_SUCCESS)
+    if (err != AZIHSM_STATUS_SUCCESS)
     {
         return err;
     }
@@ -178,7 +178,7 @@ azihsm_error derive_hmac_key_via_ecdh_hkdf(
         &base_secret_prop_list,
         &temp_base_secret.handle
     );
-    if (err != AZIHSM_ERROR_SUCCESS)
+    if (err != AZIHSM_STATUS_SUCCESS)
     {
         return err; // AutoKey will clean up temp_base_secret automatically
     }
@@ -236,7 +236,7 @@ azihsm_error derive_hmac_key_via_ecdh_hkdf(
     );
 
     // If caller wants to keep the base secret, transfer ownership
-    if (base_secret_handle != nullptr && err == AZIHSM_ERROR_SUCCESS)
+    if (base_secret_handle != nullptr && err == AZIHSM_STATUS_SUCCESS)
     {
         *base_secret_handle = temp_base_secret.handle;
         temp_base_secret.handle = 0; // Release ownership so AutoKey won't delete it
@@ -247,7 +247,7 @@ azihsm_error derive_hmac_key_via_ecdh_hkdf(
 }
 
 // Helper function to generate EC key pairs and derive HMAC key
-inline azihsm_error generate_ecdh_keys_and_derive_hmac(
+inline azihsm_status generate_ecdh_keys_and_derive_hmac(
     azihsm_handle session_handle,
     azihsm_key_kind hmac_key_type,
     EcdhKeyPairs &key_pairs,
@@ -258,13 +258,13 @@ inline azihsm_error generate_ecdh_keys_and_derive_hmac(
     key_pairs.session_handle = session_handle;
 
     // Generate server EC key pair
-    azihsm_error err = generate_ec_key_pair_for_derive(
+    azihsm_status err = generate_ec_key_pair_for_derive(
         session_handle,
         key_pairs.server_pub_key,
         key_pairs.server_priv_key,
         curve
     );
-    if (err != AZIHSM_ERROR_SUCCESS)
+    if (err != AZIHSM_STATUS_SUCCESS)
         return err;
 
     // Generate client EC key pair
@@ -274,7 +274,7 @@ inline azihsm_error generate_ecdh_keys_and_derive_hmac(
         key_pairs.client_priv_key,
         curve
     );
-    if (err != AZIHSM_ERROR_SUCCESS)
+    if (err != AZIHSM_STATUS_SUCCESS)
         return err;
 
     // Derive HMAC key

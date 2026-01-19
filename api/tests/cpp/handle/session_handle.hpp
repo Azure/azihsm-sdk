@@ -21,7 +21,7 @@ class SessionHandle
         std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
 
         auto err = azihsm_sess_open(part_handle, &api_rev, &creds, &handle_);
-        if (err != AZIHSM_ERROR_SUCCESS)
+        if (err != AZIHSM_STATUS_SUCCESS)
         {
             throw std::runtime_error("Failed to open session. Error: " + std::to_string(err));
         }

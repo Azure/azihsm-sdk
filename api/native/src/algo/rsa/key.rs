@@ -3,8 +3,8 @@
 use azihsm_api::*;
 
 use super::*;
-use crate::AzihsmError;
 use crate::AzihsmHandle;
+use crate::AzihsmStatus;
 use crate::HANDLE_TABLE;
 use crate::handle_table::HandleType;
 use crate::utils::*;
@@ -25,12 +25,12 @@ pub struct AzihsmAlgoRsaAesKeyWrapParams {
 }
 
 impl<'a> TryFrom<&'a AzihsmAlgo> for &'a AzihsmAlgoRsaAesKeyWrapParams {
-    type Error = AzihsmError;
+    type Error = AzihsmStatus;
 
     #[allow(unsafe_code)]
     fn try_from(algo: &'a AzihsmAlgo) -> Result<Self, Self::Error> {
         if algo.len != std::mem::size_of::<AzihsmAlgoRsaAesKeyWrapParams>() as u32 {
-            Err(AzihsmError::InvalidArgument)?;
+            Err(AzihsmStatus::InvalidArgument)?;
         }
 
         let params = cast_ptr::<AzihsmAlgoRsaAesKeyWrapParams>(algo.params)?;
@@ -43,12 +43,12 @@ impl<'a> TryFrom<&'a AzihsmAlgo> for &'a AzihsmAlgoRsaAesKeyWrapParams {
 }
 
 impl<'a> TryFrom<&'a AzihsmAlgo> for &'a AzihsmAlgoRsaPkcsOaepParams {
-    type Error = AzihsmError;
+    type Error = AzihsmStatus;
 
     #[allow(unsafe_code)]
     fn try_from(algo: &'a AzihsmAlgo) -> Result<Self, Self::Error> {
         if algo.len != std::mem::size_of::<AzihsmAlgoRsaPkcsOaepParams>() as u32 {
-            Err(AzihsmError::InvalidArgument)?;
+            Err(AzihsmStatus::InvalidArgument)?;
         }
 
         let params = cast_ptr::<AzihsmAlgoRsaPkcsOaepParams>(algo.params)?;
@@ -56,7 +56,7 @@ impl<'a> TryFrom<&'a AzihsmAlgo> for &'a AzihsmAlgoRsaPkcsOaepParams {
         // Validate hash algorithm ID
         match params.hash_algo_id {
             AzihsmAlgoId::Sha256 | AzihsmAlgoId::Sha384 | AzihsmAlgoId::Sha512 => {}
-            _ => Err(AzihsmError::InvalidArgument)?,
+            _ => Err(AzihsmStatus::InvalidArgument)?,
         }
 
         // Label is optional - if provided, validate the buffer
@@ -79,7 +79,7 @@ pub(crate) fn rsa_generate_key_pair(
     algo: &AzihsmAlgo,
     priv_key_props: HsmKeyProps,
     pub_key_props: HsmKeyProps,
-) -> Result<(AzihsmHandle, AzihsmHandle), AzihsmError> {
+) -> Result<(AzihsmHandle, AzihsmHandle), AzihsmStatus> {
     let mut rsa_algo = HsmRsaKeyUnwrappingKeyGenAlgo::try_from(algo)?;
     let (priv_key, pub_key) =
         HsmKeyManager::generate_key_pair(session, &mut rsa_algo, priv_key_props, pub_key_props)?;
@@ -96,7 +96,7 @@ pub(crate) fn rsa_unwrap_key(
     unwrapping_key_handle: AzihsmHandle,
     wrapped_key: &[u8],
     key_props: HsmKeyProps,
-) -> Result<AzihsmHandle, AzihsmError> {
+) -> Result<AzihsmHandle, AzihsmStatus> {
     // Get the unwrapping algorithm parameters
     let params = <&AzihsmAlgoRsaAesKeyWrapParams>::try_from(algo)?;
 
@@ -124,7 +124,7 @@ pub(crate) fn rsa_unwrap_key(
 
             HANDLE_TABLE.alloc_handle(HandleType::AesKey, Box::new(unwrapped_key))
         }
-        _ => return Err(AzihsmError::UnsupportedKeyKind),
+        _ => return Err(AzihsmStatus::UnsupportedKeyKind),
     };
 
     Ok(handle)
@@ -137,7 +137,7 @@ pub(crate) fn rsa_unwrap_key_pair(
     wrapped_key: &[u8],
     priv_key_props: HsmKeyProps,
     pub_key_props: HsmKeyProps,
-) -> Result<(AzihsmHandle, AzihsmHandle), AzihsmError> {
+) -> Result<(AzihsmHandle, AzihsmHandle), AzihsmStatus> {
     // Get the unwrapping algorithm parameters
     let params = <&AzihsmAlgoRsaAesKeyWrapParams>::try_from(algo)?;
 
@@ -188,7 +188,7 @@ pub(crate) fn rsa_unwrap_key_pair(
 
             (priv_handle, pub_handle)
         }
-        _ => return Err(AzihsmError::UnsupportedKeyKind),
+        _ => return Err(AzihsmStatus::UnsupportedKeyKind),
     };
 
     Ok((priv_handle, pub_handle))
@@ -198,7 +198,7 @@ pub(crate) fn rsa_unwrap_key_pair(
 pub(crate) fn rsa_unmask_key_pair(
     session: &HsmSession,
     masked_key: &[u8],
-) -> Result<(AzihsmHandle, AzihsmHandle), AzihsmError> {
+) -> Result<(AzihsmHandle, AzihsmHandle), AzihsmStatus> {
     let mut unmask_algo = HsmRsaKeyUnmaskAlgo::default();
 
     // Unmask RSA key pair

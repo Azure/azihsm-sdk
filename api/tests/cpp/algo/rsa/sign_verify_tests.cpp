@@ -31,7 +31,7 @@ class azihsm_rsa_sign_verify : public ::testing::Test
             wrapping_priv_key.get_ptr(),
             wrapping_pub_key.get_ptr()
         );
-        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_NE(wrapping_priv_key.get(), 0);
         ASSERT_NE(wrapping_pub_key.get(), 0);
 
@@ -53,7 +53,7 @@ class azihsm_rsa_sign_verify : public ::testing::Test
             imported_priv_key.get_ptr(),
             imported_pub_key.get_ptr()
         );
-        ASSERT_EQ(import_err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(import_err, AZIHSM_STATUS_SUCCESS);
         ASSERT_NE(imported_priv_key.get(), 0);
         ASSERT_NE(imported_pub_key.get(), 0);
     }
@@ -75,14 +75,14 @@ class azihsm_rsa_sign_verify : public ::testing::Test
 
         // Sign
         auto sign_err = azihsm_crypt_sign(&sign_algo, priv_key, &data_buf, &sig_buf);
-        ASSERT_EQ(sign_err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(sign_err, AZIHSM_STATUS_SUCCESS);
         ASSERT_GT(sig_buf.len, 0);
         ASSERT_LE(sig_buf.len, 256);
 
         // Verify
         azihsm_buffer verify_sig_buf = { .ptr = signature_data.data(), .len = sig_buf.len };
         auto verify_err = azihsm_crypt_verify(&sign_algo, pub_key, &data_buf, &verify_sig_buf);
-        ASSERT_EQ(verify_err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(verify_err, AZIHSM_STATUS_SUCCESS);
 
         // Verify fails with modified data
         std::vector<uint8_t> modified_data = data_to_sign;
@@ -91,7 +91,7 @@ class azihsm_rsa_sign_verify : public ::testing::Test
                                        .len = static_cast<uint32_t>(modified_data.size()) };
         auto verify_fail_err =
             azihsm_crypt_verify(&sign_algo, pub_key, &modified_buf, &verify_sig_buf);
-        ASSERT_NE(verify_fail_err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_NE(verify_fail_err, AZIHSM_STATUS_SUCCESS);
     }
 
     // Helper function to perform streaming sign/verify test
@@ -104,37 +104,37 @@ class azihsm_rsa_sign_verify : public ::testing::Test
     {
         // Streaming sign
         azihsm_handle sign_ctx = 0;
-        ASSERT_EQ(azihsm_crypt_sign_init(&sign_algo, priv_key, &sign_ctx), AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(azihsm_crypt_sign_init(&sign_algo, priv_key, &sign_ctx), AZIHSM_STATUS_SUCCESS);
 
         for (const char *chunk : data_chunks)
         {
             azihsm_buffer buf = { .ptr = (uint8_t *)chunk, .len = (uint32_t)strlen(chunk) };
-            ASSERT_EQ(azihsm_crypt_sign_update(sign_ctx, &buf), AZIHSM_ERROR_SUCCESS);
+            ASSERT_EQ(azihsm_crypt_sign_update(sign_ctx, &buf), AZIHSM_STATUS_SUCCESS);
         }
 
         std::vector<uint8_t> signature_data(256);
         azihsm_buffer sig_buf = { .ptr = signature_data.data(), .len = 256 };
-        ASSERT_EQ(azihsm_crypt_sign_final(sign_ctx, &sig_buf), AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(azihsm_crypt_sign_final(sign_ctx, &sig_buf), AZIHSM_STATUS_SUCCESS);
         ASSERT_GT(sig_buf.len, 0);
 
         // Streaming verify
         azihsm_handle verify_ctx = 0;
-        ASSERT_EQ(azihsm_crypt_verify_init(&sign_algo, pub_key, &verify_ctx), AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(azihsm_crypt_verify_init(&sign_algo, pub_key, &verify_ctx), AZIHSM_STATUS_SUCCESS);
 
         for (const char *chunk : data_chunks)
         {
             azihsm_buffer buf = { .ptr = (uint8_t *)chunk, .len = (uint32_t)strlen(chunk) };
-            ASSERT_EQ(azihsm_crypt_verify_update(verify_ctx, &buf), AZIHSM_ERROR_SUCCESS);
+            ASSERT_EQ(azihsm_crypt_verify_update(verify_ctx, &buf), AZIHSM_STATUS_SUCCESS);
         }
 
         azihsm_buffer verify_sig_buf = { .ptr = signature_data.data(), .len = sig_buf.len };
-        ASSERT_EQ(azihsm_crypt_verify_final(verify_ctx, &verify_sig_buf), AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(azihsm_crypt_verify_final(verify_ctx, &verify_sig_buf), AZIHSM_STATUS_SUCCESS);
 
         // Verify fails with modified data
         azihsm_handle verify_fail_ctx = 0;
         ASSERT_EQ(
             azihsm_crypt_verify_init(&sign_algo, pub_key, &verify_fail_ctx),
-            AZIHSM_ERROR_SUCCESS
+            AZIHSM_STATUS_SUCCESS
         );
 
         std::vector<const char *> modified_chunks = data_chunks;
@@ -143,12 +143,12 @@ class azihsm_rsa_sign_verify : public ::testing::Test
         for (const char *chunk : modified_chunks)
         {
             azihsm_buffer buf = { .ptr = (uint8_t *)chunk, .len = (uint32_t)strlen(chunk) };
-            ASSERT_EQ(azihsm_crypt_verify_update(verify_fail_ctx, &buf), AZIHSM_ERROR_SUCCESS);
+            ASSERT_EQ(azihsm_crypt_verify_update(verify_fail_ctx, &buf), AZIHSM_STATUS_SUCCESS);
         }
 
         ASSERT_NE(
             azihsm_crypt_verify_final(verify_fail_ctx, &verify_sig_buf),
-            AZIHSM_ERROR_SUCCESS
+            AZIHSM_STATUS_SUCCESS
         );
     }
 };
@@ -206,8 +206,8 @@ TEST_F(azihsm_rsa_sign_verify, sign_verify_pkcs_all_hash_algorithms)
                 data_to_sign
             );
 
-            ASSERT_EQ(azihsm_key_delete(imported_priv_key.release()), AZIHSM_ERROR_SUCCESS);
-            ASSERT_EQ(azihsm_key_delete(imported_pub_key.release()), AZIHSM_ERROR_SUCCESS);
+            ASSERT_EQ(azihsm_key_delete(imported_priv_key.release()), AZIHSM_STATUS_SUCCESS);
+            ASSERT_EQ(azihsm_key_delete(imported_pub_key.release()), AZIHSM_STATUS_SUCCESS);
         });
     }
 }
@@ -270,8 +270,8 @@ TEST_F(azihsm_rsa_sign_verify, sign_verify_pss_all_hash_algorithms)
                 data_to_sign
             );
 
-            ASSERT_EQ(azihsm_key_delete(imported_priv_key.release()), AZIHSM_ERROR_SUCCESS);
-            ASSERT_EQ(azihsm_key_delete(imported_pub_key.release()), AZIHSM_ERROR_SUCCESS);
+            ASSERT_EQ(azihsm_key_delete(imported_priv_key.release()), AZIHSM_STATUS_SUCCESS);
+            ASSERT_EQ(azihsm_key_delete(imported_pub_key.release()), AZIHSM_STATUS_SUCCESS);
         });
     }
 }
@@ -341,8 +341,8 @@ TEST_F(azihsm_rsa_sign_verify, sign_verify_pss_prehashed_all_hash_algorithms)
                 hashed_data
             );
 
-            ASSERT_EQ(azihsm_key_delete(imported_priv_key.release()), AZIHSM_ERROR_SUCCESS);
-            ASSERT_EQ(azihsm_key_delete(imported_pub_key.release()), AZIHSM_ERROR_SUCCESS);
+            ASSERT_EQ(azihsm_key_delete(imported_priv_key.release()), AZIHSM_STATUS_SUCCESS);
+            ASSERT_EQ(azihsm_key_delete(imported_pub_key.release()), AZIHSM_STATUS_SUCCESS);
         });
     }
 }
@@ -389,8 +389,8 @@ TEST_F(azihsm_rsa_sign_verify, streaming_sign_verify_pkcs_all_hash_algorithms)
                 chunks
             );
 
-            ASSERT_EQ(azihsm_key_delete(imported_priv_key.release()), AZIHSM_ERROR_SUCCESS);
-            ASSERT_EQ(azihsm_key_delete(imported_pub_key.release()), AZIHSM_ERROR_SUCCESS);
+            ASSERT_EQ(azihsm_key_delete(imported_priv_key.release()), AZIHSM_STATUS_SUCCESS);
+            ASSERT_EQ(azihsm_key_delete(imported_pub_key.release()), AZIHSM_STATUS_SUCCESS);
         });
     }
 }
@@ -451,8 +451,8 @@ TEST_F(azihsm_rsa_sign_verify, streaming_sign_verify_pss_all_hash_algorithms)
                 chunks
             );
 
-            ASSERT_EQ(azihsm_key_delete(imported_priv_key.release()), AZIHSM_ERROR_SUCCESS);
-            ASSERT_EQ(azihsm_key_delete(imported_pub_key.release()), AZIHSM_ERROR_SUCCESS);
+            ASSERT_EQ(azihsm_key_delete(imported_priv_key.release()), AZIHSM_STATUS_SUCCESS);
+            ASSERT_EQ(azihsm_key_delete(imported_pub_key.release()), AZIHSM_STATUS_SUCCESS);
         });
     }
 }

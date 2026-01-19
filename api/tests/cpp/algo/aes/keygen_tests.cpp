@@ -31,12 +31,12 @@ class azihsm_aes_keygen : public ::testing::Test
         prop.id = AZIHSM_KEY_PROP_ID_CLASS;
         prop.val = &original_class;
         prop.len = len;
-        azihsm_error err = azihsm_key_get_prop(original_key, &prop);
-        EXPECT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        azihsm_status err = azihsm_key_get_prop(original_key, &prop);
+        EXPECT_EQ(err, AZIHSM_STATUS_SUCCESS);
         
         prop.val = &unmasked_class;
         err = azihsm_key_get_prop(unmasked_key, &prop);
-        EXPECT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        EXPECT_EQ(err, AZIHSM_STATUS_SUCCESS);
         EXPECT_EQ(original_class, unmasked_class);
 
         // Compare key kind
@@ -46,11 +46,11 @@ class azihsm_aes_keygen : public ::testing::Test
         
         prop.val = &original_kind;
         err = azihsm_key_get_prop(original_key, &prop);
-        EXPECT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        EXPECT_EQ(err, AZIHSM_STATUS_SUCCESS);
         
         prop.val = &unmasked_kind;
         err = azihsm_key_get_prop(unmasked_key, &prop);
-        EXPECT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        EXPECT_EQ(err, AZIHSM_STATUS_SUCCESS);
         EXPECT_EQ(original_kind, unmasked_kind);
         EXPECT_EQ(original_kind, AZIHSM_KEY_KIND_AES);
 
@@ -61,11 +61,11 @@ class azihsm_aes_keygen : public ::testing::Test
         
         prop.val = &original_bits;
         err = azihsm_key_get_prop(original_key, &prop);
-        EXPECT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        EXPECT_EQ(err, AZIHSM_STATUS_SUCCESS);
         
         prop.val = &unmasked_bits;
         err = azihsm_key_get_prop(unmasked_key, &prop);
-        EXPECT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        EXPECT_EQ(err, AZIHSM_STATUS_SUCCESS);
         EXPECT_EQ(original_bits, unmasked_bits);
         EXPECT_EQ(original_bits, expected_bits);
 
@@ -76,11 +76,11 @@ class azihsm_aes_keygen : public ::testing::Test
         
         prop.val = &original_can_encrypt;
         err = azihsm_key_get_prop(original_key, &prop);
-        EXPECT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        EXPECT_EQ(err, AZIHSM_STATUS_SUCCESS);
         
         prop.val = &unmasked_can_encrypt;
         err = azihsm_key_get_prop(unmasked_key, &prop);
-        EXPECT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        EXPECT_EQ(err, AZIHSM_STATUS_SUCCESS);
         EXPECT_EQ(original_can_encrypt, unmasked_can_encrypt);
 
         // Compare decrypt capability
@@ -90,11 +90,11 @@ class azihsm_aes_keygen : public ::testing::Test
         
         prop.val = &original_can_decrypt;
         err = azihsm_key_get_prop(original_key, &prop);
-        EXPECT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        EXPECT_EQ(err, AZIHSM_STATUS_SUCCESS);
         
         prop.val = &unmasked_can_decrypt;
         err = azihsm_key_get_prop(unmasked_key, &prop);
-        EXPECT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        EXPECT_EQ(err, AZIHSM_STATUS_SUCCESS);
         EXPECT_EQ(original_can_decrypt, unmasked_can_decrypt);
     }
 };
@@ -134,8 +134,8 @@ TEST_F(azihsm_aes_keygen, unmask_aes_128_key)
         };
 
         azihsm_handle original_key = 0;
-        azihsm_error err = azihsm_key_gen(session.get(), &keygen_algo, &prop_list, &original_key);
-        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        azihsm_status err = azihsm_key_gen(session.get(), &keygen_algo, &prop_list, &original_key);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_NE(original_key, 0);
 
         auto cleanup_original = scope_guard::make_scope_exit([original_key] {
@@ -152,14 +152,14 @@ TEST_F(azihsm_aes_keygen, unmask_aes_128_key)
         masked_prop.len = masked_key_len;
         
         err = azihsm_key_get_prop(original_key, &masked_prop);
-        ASSERT_EQ(err, AZIHSM_ERROR_BUFFER_TOO_SMALL);
+        ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
         ASSERT_GT(masked_prop.len, 0);
 
         std::vector<uint8_t> masked_key_data(masked_prop.len);
         masked_prop.val = masked_key_data.data();
         
         err = azihsm_key_get_prop(original_key, &masked_prop);
-        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         // Step 3: Unmask the masked key
         azihsm_buffer masked_key_buf{};
@@ -173,7 +173,7 @@ TEST_F(azihsm_aes_keygen, unmask_aes_128_key)
             &masked_key_buf,
             &unmasked_key
         );
-        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_NE(unmasked_key, 0);
 
         auto cleanup_unmasked = scope_guard::make_scope_exit([unmasked_key] {

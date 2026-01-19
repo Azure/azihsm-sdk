@@ -3,8 +3,8 @@
 use azihsm_api::*;
 
 use crate::AzihsmBuffer;
-use crate::AzihsmError;
 use crate::AzihsmHandle;
+use crate::AzihsmStatus;
 use crate::HANDLE_TABLE;
 use crate::handle_table::HandleType;
 use crate::utils::validate_output_buffer;
@@ -14,7 +14,7 @@ pub(crate) fn hmac_sign(
     key_handle: AzihsmHandle,
     input: &[u8],
     output: &mut AzihsmBuffer,
-) -> Result<(), AzihsmError> {
+) -> Result<(), AzihsmStatus> {
     // Get the key from handle
     let key = &HsmHmacKey::try_from(key_handle)?;
 
@@ -41,7 +41,7 @@ pub(crate) fn hmac_verify(
     key_handle: AzihsmHandle,
     data: &[u8],
     sig: &[u8],
-) -> Result<bool, AzihsmError> {
+) -> Result<bool, AzihsmStatus> {
     // Get the key from handle
     let key = &HsmHmacKey::try_from(key_handle)?;
 
@@ -53,7 +53,7 @@ pub(crate) fn hmac_verify(
 }
 
 /// Initialize streaming HMAC sign operation
-pub(crate) fn hmac_sign_init(key_handle: AzihsmHandle) -> Result<AzihsmHandle, AzihsmError> {
+pub(crate) fn hmac_sign_init(key_handle: AzihsmHandle) -> Result<AzihsmHandle, AzihsmStatus> {
     // Get the key from handle
     let key = HsmHmacKey::try_from(key_handle)?;
 
@@ -70,7 +70,7 @@ pub(crate) fn hmac_sign_init(key_handle: AzihsmHandle) -> Result<AzihsmHandle, A
 }
 
 /// Update streaming HMAC sign operation with additional data
-pub(crate) fn hmac_sign_update(ctx_handle: AzihsmHandle, data: &[u8]) -> Result<(), AzihsmError> {
+pub(crate) fn hmac_sign_update(ctx_handle: AzihsmHandle, data: &[u8]) -> Result<(), AzihsmStatus> {
     // Get mutable reference to the context from handle table
     let ctx: &mut HsmHmacSignContext =
         HANDLE_TABLE.as_mut(ctx_handle, HandleType::HmacSignStreamingCtx)?;
@@ -85,7 +85,7 @@ pub(crate) fn hmac_sign_update(ctx_handle: AzihsmHandle, data: &[u8]) -> Result<
 pub(crate) fn hmac_sign_final(
     ctx_handle: AzihsmHandle,
     output: &mut AzihsmBuffer,
-) -> Result<(), AzihsmError> {
+) -> Result<(), AzihsmStatus> {
     // Get a reference to determine the required signature size
     let ctx_ref: &mut HsmHmacSignContext =
         HANDLE_TABLE.as_mut(ctx_handle, HandleType::HmacSignStreamingCtx)?;
@@ -108,7 +108,7 @@ pub(crate) fn hmac_sign_final(
 }
 
 /// Initialize streaming HMAC verify operation
-pub(crate) fn hmac_verify_init(key_handle: AzihsmHandle) -> Result<AzihsmHandle, AzihsmError> {
+pub(crate) fn hmac_verify_init(key_handle: AzihsmHandle) -> Result<AzihsmHandle, AzihsmStatus> {
     // Get the key from handle
     let key = HsmHmacKey::try_from(key_handle)?;
 
@@ -125,7 +125,10 @@ pub(crate) fn hmac_verify_init(key_handle: AzihsmHandle) -> Result<AzihsmHandle,
 }
 
 /// Update streaming HMAC verify operation with additional data
-pub(crate) fn hmac_verify_update(ctx_handle: AzihsmHandle, data: &[u8]) -> Result<(), AzihsmError> {
+pub(crate) fn hmac_verify_update(
+    ctx_handle: AzihsmHandle,
+    data: &[u8],
+) -> Result<(), AzihsmStatus> {
     // Get mutable reference to the context from handle table
     let ctx: &mut HsmHmacVerifyContext =
         HANDLE_TABLE.as_mut(ctx_handle, HandleType::HmacVerifyStreamingCtx)?;
@@ -139,7 +142,7 @@ pub(crate) fn hmac_verify_update(ctx_handle: AzihsmHandle, data: &[u8]) -> Resul
 pub(crate) fn hmac_verify_final(
     ctx_handle: AzihsmHandle,
     signature: &[u8],
-) -> Result<bool, AzihsmError> {
+) -> Result<bool, AzihsmStatus> {
     // Take ownership of the context and finalize
     let mut ctx: Box<HsmHmacVerifyContext> =
         HANDLE_TABLE.free_handle(ctx_handle, HandleType::HmacVerifyStreamingCtx)?;

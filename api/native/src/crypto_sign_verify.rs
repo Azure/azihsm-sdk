@@ -14,7 +14,7 @@ use crate::algo::rsa::*;
 ///
 /// @return 0 on success, or a negative error code on failure.
 /// If output buffer is insufficient, required length is updated in the output buffer and
-/// the function returns the AZIHSM_ERROR_INSUFFICIENT_BUFFER error.
+/// the function returns the AZIHSM_STATUS_INSUFFICIENT_BUFFER error.
 ///
 /// @internal
 /// # Safety
@@ -26,7 +26,7 @@ pub unsafe extern "C" fn azihsm_crypt_sign(
     key_handle: AzihsmHandle,
     data: *const AzihsmBuffer,
     sig: *mut AzihsmBuffer,
-) -> AzihsmError {
+) -> AzihsmStatus {
     abi_boundary(|| {
         let algo = deref_mut_ptr(algo)?;
         let data_buf = deref_ptr(data)?;
@@ -69,7 +69,7 @@ pub unsafe extern "C" fn azihsm_crypt_sign(
             | AzihsmAlgoId::RsaPkcsPssSha512 => {
                 rsa_pss_hash_sign(algo.id, algo, key_handle, input_data, sig_buf)?;
             }
-            _ => Err(AzihsmError::UnsupportedAlgorithm)?,
+            _ => Err(AzihsmStatus::UnsupportedAlgorithm)?,
         }
 
         Ok(())
@@ -95,7 +95,7 @@ pub unsafe extern "C" fn azihsm_crypt_verify(
     key_handle: AzihsmHandle,
     data: *const AzihsmBuffer,
     sig: *const AzihsmBuffer,
-) -> AzihsmError {
+) -> AzihsmStatus {
     abi_boundary(|| {
         let algo = deref_mut_ptr(algo)?;
         let data_buf = deref_ptr(data)?;
@@ -135,11 +135,11 @@ pub unsafe extern "C" fn azihsm_crypt_verify(
             | AzihsmAlgoId::RsaPkcsPssSha512 => {
                 rsa_pss_hash_verify(algo.id, algo, key_handle, input_data, sig_data)?
             }
-            _ => Err(AzihsmError::UnsupportedAlgorithm)?,
+            _ => Err(AzihsmStatus::UnsupportedAlgorithm)?,
         };
 
         if !is_valid {
-            Err(AzihsmError::InvalidSignature)?;
+            Err(AzihsmStatus::InvalidSignature)?;
         }
 
         Ok(())
@@ -163,7 +163,7 @@ pub unsafe extern "C" fn azihsm_crypt_sign_init(
     algo: *mut AzihsmAlgo,
     key_handle: AzihsmHandle,
     ctx_handle: *mut AzihsmHandle,
-) -> AzihsmError {
+) -> AzihsmStatus {
     abi_boundary(|| {
         validate_ptr(ctx_handle)?;
 
@@ -173,7 +173,7 @@ pub unsafe extern "C" fn azihsm_crypt_sign_init(
         let handle = match algo.id {
             AzihsmAlgoId::Ecdsa | AzihsmAlgoId::RsaPkcsPss => {
                 // Streaming pre-computed hash input is not supported
-                Err(AzihsmError::UnsupportedAlgorithm)?
+                Err(AzihsmStatus::UnsupportedAlgorithm)?
             }
 
             AzihsmAlgoId::EcdsaSha1
@@ -196,7 +196,7 @@ pub unsafe extern "C" fn azihsm_crypt_sign_init(
             | AzihsmAlgoId::RsaPkcsPssSha384
             | AzihsmAlgoId::RsaPkcsPssSha512 => rsa_pss_hash_sign_init(algo.id, algo, key_handle)?,
 
-            _ => Err(AzihsmError::UnsupportedAlgorithm)?,
+            _ => Err(AzihsmStatus::UnsupportedAlgorithm)?,
         };
 
         assign_ptr(ctx_handle, handle)?;
@@ -219,7 +219,7 @@ pub unsafe extern "C" fn azihsm_crypt_sign_init(
 pub unsafe extern "C" fn azihsm_crypt_sign_update(
     ctx_handle: AzihsmHandle,
     data: *const AzihsmBuffer,
-) -> AzihsmError {
+) -> AzihsmStatus {
     abi_boundary(|| {
         let data_buf = deref_ptr(data)?;
         let input_data: &[u8] = data_buf.try_into()?;
@@ -235,7 +235,7 @@ pub unsafe extern "C" fn azihsm_crypt_sign_update(
             HandleType::RsaSignStreamingCtx => {
                 rsa_sign_update(ctx_handle, input_data)?;
             }
-            _ => Err(AzihsmError::InvalidHandle)?,
+            _ => Err(AzihsmStatus::InvalidHandle)?,
         }
 
         Ok(())
@@ -249,7 +249,7 @@ pub unsafe extern "C" fn azihsm_crypt_sign_update(
 ///
 /// @return 0 on success, or a negative error code on failure.
 /// If output buffer is insufficient, required length is updated in the output buffer and
-/// the function returns the AZIHSM_ERROR_INSUFFICIENT_BUFFER error.
+/// the function returns the AZIHSM_STATUS_INSUFFICIENT_BUFFER error.
 ///
 /// @internal
 /// # Safety
@@ -259,7 +259,7 @@ pub unsafe extern "C" fn azihsm_crypt_sign_update(
 pub unsafe extern "C" fn azihsm_crypt_sign_final(
     ctx_handle: AzihsmHandle,
     sig: *mut AzihsmBuffer,
-) -> AzihsmError {
+) -> AzihsmStatus {
     abi_boundary(|| {
         let sig_buf = deref_mut_ptr(sig)?;
         let ctx_type = HandleType::try_from(ctx_handle)?;
@@ -274,7 +274,7 @@ pub unsafe extern "C" fn azihsm_crypt_sign_final(
             HandleType::RsaSignStreamingCtx => {
                 rsa_sign_final(ctx_handle, sig_buf)?;
             }
-            _ => Err(AzihsmError::InvalidHandle)?,
+            _ => Err(AzihsmStatus::InvalidHandle)?,
         }
 
         Ok(())
@@ -298,7 +298,7 @@ pub unsafe extern "C" fn azihsm_crypt_verify_init(
     algo: *mut AzihsmAlgo,
     key_handle: AzihsmHandle,
     ctx_handle: *mut AzihsmHandle,
-) -> AzihsmError {
+) -> AzihsmStatus {
     abi_boundary(|| {
         validate_ptr(ctx_handle)?;
 
@@ -308,7 +308,7 @@ pub unsafe extern "C" fn azihsm_crypt_verify_init(
         let handle = match algo.id {
             AzihsmAlgoId::Ecdsa | AzihsmAlgoId::RsaPkcsPss => {
                 // Streaming pre-computed hash input is not supported
-                Err(AzihsmError::UnsupportedAlgorithm)?
+                Err(AzihsmStatus::UnsupportedAlgorithm)?
             }
 
             AzihsmAlgoId::EcdsaSha1 => ecc_verify_init(algo.id, key_handle)?,
@@ -333,7 +333,7 @@ pub unsafe extern "C" fn azihsm_crypt_verify_init(
                 rsa_pss_hash_verify_init(algo.id, algo, key_handle)?
             }
 
-            _ => Err(AzihsmError::UnsupportedAlgorithm)?,
+            _ => Err(AzihsmStatus::UnsupportedAlgorithm)?,
         };
 
         assign_ptr(ctx_handle, handle)?;
@@ -356,7 +356,7 @@ pub unsafe extern "C" fn azihsm_crypt_verify_init(
 pub unsafe extern "C" fn azihsm_crypt_verify_update(
     ctx_handle: AzihsmHandle,
     data: *const AzihsmBuffer,
-) -> AzihsmError {
+) -> AzihsmStatus {
     abi_boundary(|| {
         let data_buf = deref_ptr(data)?;
         let input_data: &[u8] = data_buf.try_into()?;
@@ -372,7 +372,7 @@ pub unsafe extern "C" fn azihsm_crypt_verify_update(
             HandleType::RsaVerifyStreamingCtx => {
                 rsa_verify_update(ctx_handle, input_data)?;
             }
-            _ => Err(AzihsmError::InvalidHandle)?,
+            _ => Err(AzihsmStatus::InvalidHandle)?,
         }
 
         Ok(())
@@ -394,7 +394,7 @@ pub unsafe extern "C" fn azihsm_crypt_verify_update(
 pub unsafe extern "C" fn azihsm_crypt_verify_final(
     ctx_handle: AzihsmHandle,
     sig: *const AzihsmBuffer,
-) -> AzihsmError {
+) -> AzihsmStatus {
     abi_boundary(|| {
         let sig_buf = deref_ptr(sig)?;
         let signature: &[u8] = sig_buf.try_into()?;
@@ -404,11 +404,11 @@ pub unsafe extern "C" fn azihsm_crypt_verify_final(
             HandleType::EccVerifyStreamingCtx => ecc_verify_final(ctx_handle, signature)?,
             HandleType::HmacVerifyStreamingCtx => hmac_verify_final(ctx_handle, signature)?,
             HandleType::RsaVerifyStreamingCtx => rsa_verify_final(ctx_handle, signature)?,
-            _ => Err(AzihsmError::InvalidHandle)?,
+            _ => Err(AzihsmStatus::InvalidHandle)?,
         };
 
         if !is_valid {
-            Err(AzihsmError::InvalidSignature)?;
+            Err(AzihsmStatus::InvalidSignature)?;
         }
 
         Ok(())

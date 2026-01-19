@@ -32,17 +32,17 @@ TEST_F(azihsm_ecc_keygen, generate_p256_keypair)
             priv_key.get_ptr(),
             pub_key.get_ptr()
         );
-        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_NE(priv_key.get(), 0);
         ASSERT_NE(pub_key.get(), 0);
 
         // Explicitly test deletion (AutoKey will also delete on scope exit as backup)
         auto delete_priv_err = azihsm_key_delete(priv_key.get());
-        ASSERT_EQ(delete_priv_err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(delete_priv_err, AZIHSM_STATUS_SUCCESS);
         priv_key.release();
 
         auto delete_pub_err = azihsm_key_delete(pub_key.get());
-        ASSERT_EQ(delete_pub_err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(delete_pub_err, AZIHSM_STATUS_SUCCESS);
         pub_key.release();
     });
 }
@@ -62,17 +62,17 @@ TEST_F(azihsm_ecc_keygen, generate_p384_keypair)
             priv_key.get_ptr(),
             pub_key.get_ptr()
         );
-        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_NE(priv_key.get(), 0);
         ASSERT_NE(pub_key.get(), 0);
 
         // Explicitly test deletion (AutoKey will also delete on scope exit as backup)
         auto delete_priv_err = azihsm_key_delete(priv_key.get());
-        ASSERT_EQ(delete_priv_err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(delete_priv_err, AZIHSM_STATUS_SUCCESS);
         priv_key.release();
 
         auto delete_pub_err = azihsm_key_delete(pub_key.get());
-        ASSERT_EQ(delete_pub_err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(delete_pub_err, AZIHSM_STATUS_SUCCESS);
         pub_key.release();
     });
 }
@@ -92,17 +92,17 @@ TEST_F(azihsm_ecc_keygen, generate_p521_keypair)
             priv_key.get_ptr(),
             pub_key.get_ptr()
         );
-        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_NE(priv_key.get(), 0);
         ASSERT_NE(pub_key.get(), 0);
 
         // Explicitly test deletion (AutoKey will also delete on scope exit as backup)
         auto delete_priv_err = azihsm_key_delete(priv_key.get());
-        ASSERT_EQ(delete_priv_err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(delete_priv_err, AZIHSM_STATUS_SUCCESS);
         priv_key.release();
 
         auto delete_pub_err = azihsm_key_delete(pub_key.get());
-        ASSERT_EQ(delete_pub_err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(delete_pub_err, AZIHSM_STATUS_SUCCESS);
         pub_key.release();
     });
 }
@@ -131,7 +131,7 @@ TEST_F(azihsm_ecc_keygen, null_algorithm)
             &priv_key_handle,
             &pub_key_handle
         );
-        ASSERT_EQ(err, AZIHSM_ERROR_INVALID_ARGUMENT);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
 }
 
@@ -160,7 +160,7 @@ TEST_F(azihsm_ecc_keygen, null_priv_key_props)
             &priv_key_handle,
             &pub_key_handle
         );
-        ASSERT_EQ(err, AZIHSM_ERROR_INVALID_ARGUMENT);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
 }
 
@@ -189,7 +189,7 @@ TEST_F(azihsm_ecc_keygen, null_pub_key_props)
             &priv_key_handle,
             &pub_key_handle
         );
-        ASSERT_EQ(err, AZIHSM_ERROR_INVALID_ARGUMENT);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
 }
 
@@ -219,7 +219,7 @@ TEST_F(azihsm_ecc_keygen, null_priv_key_handle_output)
             nullptr,
             &pub_key_handle
         );
-        ASSERT_EQ(err, AZIHSM_ERROR_INVALID_ARGUMENT);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
 }
 
@@ -249,7 +249,7 @@ TEST_F(azihsm_ecc_keygen, null_pub_key_handle_output)
             &priv_key_handle,
             nullptr
         );
-        ASSERT_EQ(err, AZIHSM_ERROR_INVALID_ARGUMENT);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
 }
 
@@ -276,7 +276,7 @@ TEST_F(azihsm_ecc_keygen, invalid_session_handle)
         &priv_key_handle,
         &pub_key_handle
     );
-    ASSERT_EQ(err, AZIHSM_ERROR_INVALID_HANDLE);
+    ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
 }
 
 TEST_F(azihsm_ecc_keygen, unsupported_algorithm)
@@ -306,7 +306,7 @@ TEST_F(azihsm_ecc_keygen, unsupported_algorithm)
             &priv_key_handle,
             &pub_key_handle
         );
-        ASSERT_EQ(err, AZIHSM_ERROR_INVALID_ARGUMENT);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
 }
 
@@ -327,7 +327,7 @@ TEST_F(azihsm_ecc_keygen, unmask_ecc_p256_keypair)
             original_priv_key.get_ptr(),
             original_pub_key.get_ptr()
         );
-        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_NE(original_priv_key.get(), 0);
         ASSERT_NE(original_pub_key.get(), 0);
 
@@ -341,14 +341,14 @@ TEST_F(azihsm_ecc_keygen, unmask_ecc_p256_keypair)
         masked_prop.len = masked_key_len;
         
         err = azihsm_key_get_prop(original_priv_key.get(), &masked_prop);
-        ASSERT_EQ(err, AZIHSM_ERROR_BUFFER_TOO_SMALL);
+        ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
         ASSERT_GT(masked_prop.len, 0);
 
         std::vector<uint8_t> masked_key_data(masked_prop.len);
         masked_prop.val = masked_key_data.data();
         
         err = azihsm_key_get_prop(original_priv_key.get(), &masked_prop);
-        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         // Step 3: Unmask the key pair
         azihsm_buffer masked_key_buf{};
@@ -364,7 +364,7 @@ TEST_F(azihsm_ecc_keygen, unmask_ecc_p256_keypair)
             unmasked_priv_key.get_ptr(),
             unmasked_pub_key.get_ptr()
         );
-        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_NE(unmasked_priv_key.get(), 0);
         ASSERT_NE(unmasked_pub_key.get(), 0);
 
@@ -379,11 +379,11 @@ TEST_F(azihsm_ecc_keygen, unmask_ecc_p256_keypair)
             prop.val = &original_kind;
             prop.len = len;
             err = azihsm_key_get_prop(original_priv_key.get(), &prop);
-            ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+            ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
             
             prop.val = &unmasked_kind;
             err = azihsm_key_get_prop(unmasked_priv_key.get(), &prop);
-            ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+            ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
             ASSERT_EQ(original_kind, unmasked_kind);
             ASSERT_EQ(original_kind, AZIHSM_KEY_KIND_ECC);
 
@@ -394,11 +394,11 @@ TEST_F(azihsm_ecc_keygen, unmask_ecc_p256_keypair)
             
             prop.val = &original_curve;
             err = azihsm_key_get_prop(original_priv_key.get(), &prop);
-            ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+            ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
             
             prop.val = &unmasked_curve;
             err = azihsm_key_get_prop(unmasked_priv_key.get(), &prop);
-            ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+            ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
             ASSERT_EQ(original_curve, unmasked_curve);
             ASSERT_EQ(original_curve, AZIHSM_ECC_CURVE_P256);
         }
@@ -414,11 +414,11 @@ TEST_F(azihsm_ecc_keygen, unmask_ecc_p256_keypair)
             prop.val = &original_kind;
             prop.len = len;
             err = azihsm_key_get_prop(original_pub_key.get(), &prop);
-            ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+            ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
             
             prop.val = &unmasked_kind;
             err = azihsm_key_get_prop(unmasked_pub_key.get(), &prop);
-            ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+            ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
             ASSERT_EQ(original_kind, unmasked_kind);
             ASSERT_EQ(original_kind, AZIHSM_KEY_KIND_ECC);
 
@@ -429,11 +429,11 @@ TEST_F(azihsm_ecc_keygen, unmask_ecc_p256_keypair)
             
             prop.val = &original_curve;
             err = azihsm_key_get_prop(original_pub_key.get(), &prop);
-            ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+            ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
             
             prop.val = &unmasked_curve;
             err = azihsm_key_get_prop(unmasked_pub_key.get(), &prop);
-            ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+            ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
             ASSERT_EQ(original_curve, unmasked_curve);
             ASSERT_EQ(original_curve, AZIHSM_ECC_CURVE_P256);
         }

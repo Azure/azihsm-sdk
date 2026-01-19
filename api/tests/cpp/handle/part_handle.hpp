@@ -90,7 +90,7 @@ class PartitionHandle
         path_str.len = static_cast<uint32_t>(path.size());
 
         auto err = azihsm_part_open(&path_str, &handle_);
-        if (err != AZIHSM_ERROR_SUCCESS)
+        if (err != AZIHSM_STATUS_SUCCESS)
         {
             throw std::runtime_error("Failed to open partition. Error: " + std::to_string(err));
         }
@@ -105,7 +105,7 @@ class PartitionHandle
             std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
 
             err = azihsm_part_init(handle_, &creds);
-            if (err != AZIHSM_ERROR_SUCCESS)
+            if (err != AZIHSM_STATUS_SUCCESS)
             {
                 azihsm_part_close(handle_);
                 handle_ = 0;

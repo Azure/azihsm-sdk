@@ -4,8 +4,8 @@ use azihsm_api::*;
 
 use super::*;
 use crate::AzihsmBuffer;
-use crate::AzihsmError;
 use crate::AzihsmHandle;
+use crate::AzihsmStatus;
 use crate::HANDLE_TABLE;
 use crate::crypto_enc_dec::CryptoOp;
 use crate::handle_table::HandleType;
@@ -13,7 +13,7 @@ use crate::utils::validate_output_buffer;
 use crate::utils::validate_ptr;
 
 impl TryFrom<&AzihsmAlgo> for azihsm_api::HsmAesKeyGenAlgo {
-    type Error = AzihsmError;
+    type Error = AzihsmStatus;
 
     /// Converts a C FFI algorithm specification to HsmAesKeyGenAlgo.
     fn try_from(_algo: &AzihsmAlgo) -> Result<Self, Self::Error> {
@@ -26,7 +26,7 @@ pub(crate) fn aes_generate_key(
     session: &HsmSession,
     algo: &AzihsmAlgo,
     key_props: HsmKeyProps,
-) -> Result<AzihsmHandle, AzihsmError> {
+) -> Result<AzihsmHandle, AzihsmStatus> {
     let mut aes_algo = HsmAesKeyGenAlgo::try_from(algo)?;
     let key = HsmKeyManager::generate_key(session, &mut aes_algo, key_props)?;
     let handle = HANDLE_TABLE.alloc_handle(HandleType::AesKey, Box::new(key));
@@ -43,7 +43,7 @@ pub struct AzihsmAlgoAesCbcParams {
 }
 
 impl<'a> TryFrom<&'a mut AzihsmAlgo> for &'a mut AzihsmAlgoAesCbcParams {
-    type Error = AzihsmError;
+    type Error = AzihsmStatus;
 
     /// Extracts a mutable reference to AES-CBC parameters from the algorithm specification.
     ///
@@ -91,9 +91,9 @@ impl AesCbcStreamingContext {
     }
 
     /// Helper to execute an operation on the context and update IV
-    fn execute_and_update_iv<F>(&mut self, op: F) -> Result<usize, AzihsmError>
+    fn execute_and_update_iv<F>(&mut self, op: F) -> Result<usize, AzihsmStatus>
     where
-        F: FnOnce(&mut AesCbcContext) -> Result<usize, AzihsmError>,
+        F: FnOnce(&mut AesCbcContext) -> Result<usize, AzihsmStatus>,
     {
         let bytes_written = op(&mut self.context)?;
         self.update_iv()?;
@@ -101,7 +101,7 @@ impl AesCbcStreamingContext {
     }
 
     /// Update the streaming context with input data
-    fn update(&mut self, input: &[u8], output: Option<&mut [u8]>) -> Result<usize, AzihsmError> {
+    fn update(&mut self, input: &[u8], output: Option<&mut [u8]>) -> Result<usize, AzihsmStatus> {
         self.execute_and_update_iv(|ctx| match ctx {
             AesCbcContext::Encrypt(c) => Ok(c.update(input, output)?),
             AesCbcContext::Decrypt(c) => Ok(c.update(input, output)?),
@@ -109,7 +109,7 @@ impl AesCbcStreamingContext {
     }
 
     /// Finalize the streaming context
-    fn finish(&mut self, output: Option<&mut [u8]>) -> Result<usize, AzihsmError> {
+    fn finish(&mut self, output: Option<&mut [u8]>) -> Result<usize, AzihsmStatus> {
         self.execute_and_update_iv(|ctx| match ctx {
             AesCbcContext::Encrypt(c) => Ok(c.finish(output)?),
             AesCbcContext::Decrypt(c) => Ok(c.finish(output)?),
@@ -125,7 +125,7 @@ impl AesCbcStreamingContext {
     }
 
     /// Update the IV in the caller's parameters
-    fn update_iv(&mut self) -> Result<(), AzihsmError> {
+    fn update_iv(&mut self) -> Result<(), AzihsmStatus> {
         let params = crate::utils::deref_mut_ptr(self.params)?;
         params.iv.copy_from_slice(self.iv());
         Ok(())
@@ -150,9 +150,9 @@ pub(crate) fn aes_cbc_crypt(
     input: &[u8],
     output: &mut AzihsmBuffer,
     op: CryptoOp,
-) -> Result<(), AzihsmError> {
+) -> Result<(), AzihsmStatus> {
     if algo.id != AzihsmAlgoId::AesCbc && algo.id != AzihsmAlgoId::AesCbcPad {
-        Err(AzihsmError::UnsupportedAlgorithm)?;
+        Err(AzihsmStatus::UnsupportedAlgorithm)?;
     }
 
     // Get the AES key from handle table
@@ -211,7 +211,7 @@ pub(crate) fn aes_cbc_streaming_init(
     algo: &mut AzihsmAlgo,
     key_handle: AzihsmHandle,
     op: CryptoOp,
-) -> Result<AzihsmHandle, AzihsmError> {
+) -> Result<AzihsmHandle, AzihsmStatus> {
     // Get the AES key from handle table
     let key = &HsmAesKey::try_from(key_handle)?;
 
@@ -260,7 +260,7 @@ pub(crate) fn aes_cbc_streaming_update(
     ctx_handle: AzihsmHandle,
     input: &AzihsmBuffer,
     output: &mut AzihsmBuffer,
-) -> Result<(), AzihsmError> {
+) -> Result<(), AzihsmStatus> {
     // Get the streaming context from handle table
     let ctx: &mut AesCbcStreamingContext =
         HANDLE_TABLE.as_mut(ctx_handle, HandleType::AesCbcStreamingCtx)?;
@@ -296,7 +296,7 @@ pub(crate) fn aes_cbc_streaming_update(
 pub(crate) fn aes_cbc_streaming_final(
     ctx_handle: AzihsmHandle,
     output: &mut AzihsmBuffer,
-) -> Result<(), AzihsmError> {
+) -> Result<(), AzihsmStatus> {
     // Get the streaming context from handle table
     let ctx: &mut AesCbcStreamingContext =
         HANDLE_TABLE.as_mut(ctx_handle, HandleType::AesCbcStreamingCtx)?;
@@ -320,7 +320,7 @@ pub(crate) fn aes_cbc_streaming_final(
 pub(crate) fn aes_unmask_key(
     session: &HsmSession,
     masked_key: &[u8],
-) -> Result<AzihsmHandle, AzihsmError> {
+) -> Result<AzihsmHandle, AzihsmStatus> {
     let mut unmask_algo = HsmAesKeyUnmaskAlgo::default();
 
     // Unmask AES key

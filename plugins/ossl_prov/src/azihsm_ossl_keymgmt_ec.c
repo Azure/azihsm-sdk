@@ -115,7 +115,7 @@ static AZIHSM_EC_KEY *azihsm_ossl_keymgmt_gen(
 {
     AZIHSM_EC_KEY *ec_key;
     azihsm_handle public, private;
-    azihsm_error status;
+    azihsm_status status;
     const bool enable = true;
     const azihsm_key_class priv_class = AZIHSM_KEY_CLASS_PRIVATE;
     const azihsm_key_class pub_class = AZIHSM_KEY_CLASS_PUBLIC;
@@ -193,7 +193,7 @@ static AZIHSM_EC_KEY *azihsm_ossl_keymgmt_gen(
         &public
     );
 
-    if (status != AZIHSM_ERROR_SUCCESS)
+    if (status != AZIHSM_STATUS_SUCCESS)
     {
         OPENSSL_free(ec_key);
 

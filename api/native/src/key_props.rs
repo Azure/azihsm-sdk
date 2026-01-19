@@ -132,7 +132,7 @@ pub struct AzihsmKeyPropList {
 
 /// Extract a boolean value from a key property
 impl TryFrom<&AzihsmKeyProp> for bool {
-    type Error = AzihsmError;
+    type Error = AzihsmStatus;
 
     /// Converts a key property to a boolean.
     ///
@@ -142,7 +142,7 @@ impl TryFrom<&AzihsmKeyProp> for bool {
     #[allow(unsafe_code)]
     fn try_from(prop: &AzihsmKeyProp) -> Result<Self, Self::Error> {
         if prop.val.is_null() || prop.len != 1 {
-            Err(AzihsmError::InvalidArgument)?;
+            Err(AzihsmStatus::InvalidArgument)?;
         }
         let val_ptr = prop.val as *const u8;
         // SAFETY: Caller ensures prop.val is valid pointer to u8
@@ -153,7 +153,7 @@ impl TryFrom<&AzihsmKeyProp> for bool {
 
 /// Extract a u32 value from a key property
 impl TryFrom<&AzihsmKeyProp> for u32 {
-    type Error = AzihsmError;
+    type Error = AzihsmStatus;
 
     /// Converts a key property to a u32.
     ///
@@ -164,7 +164,7 @@ impl TryFrom<&AzihsmKeyProp> for u32 {
     #[allow(unsafe_code)]
     fn try_from(prop: &AzihsmKeyProp) -> Result<Self, Self::Error> {
         if prop.val.is_null() || prop.len != std::mem::size_of::<u32>() as u32 {
-            Err(AzihsmError::InvalidArgument)?;
+            Err(AzihsmStatus::InvalidArgument)?;
         }
         let val_ptr = prop.val as *const u32;
         Ok(
@@ -176,7 +176,7 @@ impl TryFrom<&AzihsmKeyProp> for u32 {
 
 /// Extract an ECC curve value from a key property
 impl TryFrom<&AzihsmKeyProp> for HsmEccCurve {
-    type Error = AzihsmError;
+    type Error = AzihsmStatus;
 
     /// Converts a key property to an ECC curve.
     ///
@@ -193,7 +193,7 @@ impl TryFrom<&AzihsmKeyProp> for HsmEccCurve {
 
 /// Extract a key kind value from a key property
 impl TryFrom<&AzihsmKeyProp> for HsmKeyKind {
-    type Error = AzihsmError;
+    type Error = AzihsmStatus;
 
     /// Converts a key property to a key type.
     ///
@@ -210,7 +210,7 @@ impl TryFrom<&AzihsmKeyProp> for HsmKeyKind {
 
 /// Extract a key class value from a key property
 impl TryFrom<&AzihsmKeyProp> for HsmKeyClass {
-    type Error = AzihsmError;
+    type Error = AzihsmStatus;
     /// Converts a key property to a key class.
     /// # Safety
     /// The caller must ensure that `prop.val` points to valid memory
@@ -224,7 +224,7 @@ impl TryFrom<&AzihsmKeyProp> for HsmKeyClass {
 
 /// Extract a byte slice from a key property
 impl TryFrom<&AzihsmKeyProp> for &[u8] {
-    type Error = AzihsmError;
+    type Error = AzihsmStatus;
 
     /// Converts a key property to a byte vector.
     ///
@@ -244,7 +244,7 @@ impl TryFrom<&AzihsmKeyProp> for &[u8] {
 
 /// Extract key properties from C FFI key property list into HsmKeyProps
 impl TryFrom<&AzihsmKeyPropList> for HsmKeyProps {
-    type Error = AzihsmError;
+    type Error = AzihsmStatus;
 
     /// Extract key properties from C FFI key property list into a builder.
     ///
@@ -259,7 +259,7 @@ impl TryFrom<&AzihsmKeyPropList> for HsmKeyProps {
     #[allow(unsafe_code)]
     fn try_from(key_props_list: &AzihsmKeyPropList) -> Result<Self, Self::Error> {
         if key_props_list.props.is_null() || key_props_list.count == 0 {
-            Err(AzihsmError::InvalidArgument)?;
+            Err(AzihsmStatus::InvalidArgument)?;
         }
 
         let mut builder = HsmKeyPropsBuilder::default();
@@ -270,7 +270,7 @@ impl TryFrom<&AzihsmKeyPropList> for HsmKeyProps {
 
         for prop in prop_slice {
             if prop.val.is_null() {
-                Err(AzihsmError::InvalidArgument)?;
+                Err(AzihsmStatus::InvalidArgument)?;
             }
 
             builder = match prop.id {
@@ -303,7 +303,7 @@ impl TryFrom<&AzihsmKeyPropList> for HsmKeyProps {
                 // These properties are not settable by the user
                 AzihsmKeyPropId::Local
                 | AzihsmKeyPropId::Sensitive
-                | AzihsmKeyPropId::Extractable => Err(AzihsmError::InvalidArgument)?,
+                | AzihsmKeyPropId::Extractable => Err(AzihsmStatus::InvalidArgument)?,
 
                 // Ignore unknown properties
                 _ => builder,
@@ -329,7 +329,7 @@ impl TryFrom<&AzihsmKeyPropList> for HsmKeyProps {
 pub unsafe extern "C" fn azihsm_key_get_prop(
     key_handle: AzihsmHandle,
     key_prop: *mut AzihsmKeyProp,
-) -> AzihsmError {
+) -> AzihsmStatus {
     abi_boundary(|| {
         validate_ptr(key_prop)?;
 
@@ -357,7 +357,7 @@ pub unsafe extern "C" fn azihsm_key_get_prop(
                 let key = HsmRsaPrivateKey::try_from(key_handle)?;
                 get_key_prop(key, prop)
             }
-            _ => Err(AzihsmError::InvalidHandle),
+            _ => Err(AzihsmStatus::InvalidHandle),
         }
     })
 }
@@ -366,7 +366,7 @@ pub unsafe extern "C" fn azihsm_key_get_prop(
 fn get_key_prop(
     key: impl HsmKeyCommonProps,
     key_prop: &mut AzihsmKeyProp,
-) -> Result<(), AzihsmError> {
+) -> Result<(), AzihsmStatus> {
     match key_prop.id {
         AzihsmKeyPropId::Class => copy_to_key_prop(key_prop, key.class().as_bytes()),
         AzihsmKeyPropId::Kind => copy_to_key_prop(key_prop, key.kind().as_bytes()),
@@ -375,7 +375,7 @@ fn get_key_prop(
         AzihsmKeyPropId::PubKeyInfo => copy_to_key_prop(key_prop, &key.pub_key_der_vec()?),
         AzihsmKeyPropId::EcCurve => {
             let Some(curve) = key.ecc_curve() else {
-                Err(AzihsmError::KeyPropertyNotPresent)?
+                Err(AzihsmStatus::KeyPropertyNotPresent)?
             };
             copy_to_key_prop(key_prop, curve.as_bytes())
         }

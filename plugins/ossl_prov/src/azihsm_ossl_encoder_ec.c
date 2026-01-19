@@ -9,9 +9,6 @@
 #include "azihsm_ossl_ec.h"
 #include "azihsm_ossl_helpers.h"
 
-#include <fcntl.h>
-#include <unistd.h>
-
 typedef struct
 {
     const OSSL_CORE_HANDLE *handle;
@@ -84,12 +81,8 @@ static int azihsm_ossl_encoder_encode(
         return 0;
     }
 
-    // printf("azihsm_ossl_encoder_encode: called\n");
-
     azihsm_ossl_key_usage_list_to_str(&genctx->pub_key_usage, pub_usage, sizeof(pub_usage));
     azihsm_ossl_key_usage_list_to_str(&genctx->priv_key_usage, priv_usage, sizeof(priv_usage));
-
-    // printf("azihsm_ossl_encoder_encode: called\n");
 
     BIO_printf(bio, "\n");
     BIO_printf(bio, "==== Key Generation Details ====\n");
@@ -132,25 +125,13 @@ static uint8_t *azihsm_ossl_get_der_spki(
                                     .val = spki,
                                     .len = spki_max_len };
 
-    if (azihsm_key_get_prop(key_handle, &prop) != AZIHSM_ERROR_SUCCESS)
+    if (azihsm_key_get_prop(key_handle, &prop) != AZIHSM_STATUS_SUCCESS)
     {
-        // printf("azihsm_ossl_get_der_spki: azihsm_key_get_prop failed to get SPKI\n");
         OPENSSL_free(spki);
         return NULL;
     }
 
-    // write the prop to file in tmp x.der
-    int fd = open("/tmp/x.der", O_CREAT | O_WRONLY | O_TRUNC, 0600);
-    if (fd != -1)
-    {
-        write(fd, prop.val, prop.len);
-        close(fd);
-    }
-
     *nbytes = prop.len;
-
-    // printf("azihsm_ossl_get_der_spki: obtained SPKI of %u bytes\n", *nbytes);
-
     return (uint8_t *)prop.val;
 }
 
@@ -169,8 +150,6 @@ static int azihsm_ossl_encoder_der_spki_encode(
     uint32_t nbytes = 0;
     int rc = 0;
 
-    // printf("azihsm_ossl_encoder_der_spki_encode: called\n");
-
     if ((bio = BIO_new_from_core_bio(ctx->libctx, out)) == NULL)
     {
         return 0;
@@ -178,12 +157,9 @@ static int azihsm_ossl_encoder_der_spki_encode(
 
     if (selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY)
     {
-        // printf("xx azihsm_ossl_encoder_der_spki_encode: encoding public key SPKI\n");
 
         if ((spki = azihsm_ossl_get_der_spki(ctx->session, ec_key->key.public, &nbytes)) != NULL)
         {
-            // printf("dsd azihsm_ossl_encoder_der_spki_encode: writing %u bytes of SPKI\n",
-            // nbytes);
             BIO_write(bio, (const void *)spki, (int)nbytes);
             OPENSSL_clear_free(spki, nbytes);
             rc = 1;
@@ -191,16 +167,12 @@ static int azihsm_ossl_encoder_der_spki_encode(
     }
     else if (selection & OSSL_KEYMGMT_SELECT_PRIVATE_KEY)
     {
-        // printf("info: azihsm_ossl_encoder_der_spki_encode: private key SPKI requested\n");
 
         BIO_printf(bio, "info: DER-encoded SPKI not available for private keys\n");
         rc = 1;
     }
 
     BIO_free(bio);
-
-    // printf("azihsm_ossl_encoder_der_spki_encode: completed with rc=%d\n", rc);
-
     return rc;
 }
 
@@ -208,7 +180,6 @@ static int azihsm_ossl_encoder_der_spki_does_selection(ossl_unused void *provctx
 {
     if (selection & OSSL_KEYMGMT_SELECT_PRIVATE_KEY)
     {
-        // printf("azihsm_ossl_encoder_der_spki_does_selection: private key SPKI requested\n");
         /*
          * technically, there is no SPKI for private keys,
          * but we still have to advertise it since OpenSSL requires it.
@@ -221,7 +192,6 @@ static int azihsm_ossl_encoder_der_spki_does_selection(ossl_unused void *provctx
 
     if (selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY)
     {
-        // printf("azihsm_ossl_encoder_der_spki_does_selection: public key SPKI requested\n");
         return 1;
     }
 
@@ -261,8 +231,6 @@ static int azihsm_ossl_encoder_der_pki_encode(
 
         azihsm_ossl_key_usage_list_to_str(&genctx->pub_key_usage, pub_usage, sizeof(pub_usage));
         azihsm_ossl_key_usage_list_to_str(&genctx->priv_key_usage, priv_usage, sizeof(priv_usage));
-
-        // printf("azihsm_ossl_encoder_der_pki_encode: encoding private key PKCS#8\n");
 
         BIO_printf(bio, "\n");
         BIO_printf(bio, "==== PrivateKeyInfo (PKCS#8) ====\n");

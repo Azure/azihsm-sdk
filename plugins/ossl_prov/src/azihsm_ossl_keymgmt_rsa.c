@@ -40,7 +40,7 @@ static AZIHSM_RSA_KEY *azihsm_ossl_keymgmt_gen(
 {
     AZIHSM_RSA_KEY *rsa_key;
     azihsm_handle public, private;
-    azihsm_error status;
+    azihsm_status status;
 
     printf("azihsm_ossl_keymgmt_gen: Generating RSA keypair with %u bits\n", genctx->pubkey_bits);
 
@@ -71,7 +71,7 @@ static AZIHSM_RSA_KEY *azihsm_ossl_keymgmt_gen(
     status =
         azihsm_key_gen_pair(genctx->session, &algo, &pub_key_prop_list, NULL, &public, &private);
 
-    if (status != AZIHSM_ERROR_SUCCESS)
+    if (status != AZIHSM_STATUS_SUCCESS)
     {
         OPENSSL_free(rsa_key);
         return NULL;

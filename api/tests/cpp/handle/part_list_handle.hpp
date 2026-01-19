@@ -27,7 +27,7 @@ class PartitionListHandle
     PartitionListHandle() : handle_(0)
     {
         auto err = azihsm_part_get_list(&handle_);
-        if (err != AZIHSM_ERROR_SUCCESS)
+        if (err != AZIHSM_STATUS_SUCCESS)
         {
             throw std::runtime_error("Failed to get partition list. Error: " + std::to_string(err));
         }
@@ -98,7 +98,7 @@ class PartitionListHandle
     {
         uint32_t count = 0;
         auto err = azihsm_part_get_count(handle_, &count);
-        if (err != AZIHSM_ERROR_SUCCESS)
+        if (err != AZIHSM_STATUS_SUCCESS)
         {
             throw std::runtime_error(
                 "Failed to get partition count. Error: " + std::to_string(err)
@@ -121,11 +121,11 @@ class PartitionListHandle
 
         // First call to get the required buffer size
         auto err = azihsm_part_get_path(handle_, index, &path);
-        if (err == AZIHSM_ERROR_INDEX_OUT_OF_RANGE)
+        if (err == AZIHSM_STATUS_INDEX_OUT_OF_RANGE)
         {
             throw std::out_of_range("Partition index out of range: " + std::to_string(index));
         }
-        if (err != AZIHSM_ERROR_BUFFER_TOO_SMALL)
+        if (err != AZIHSM_STATUS_BUFFER_TOO_SMALL)
         {
             throw std::runtime_error(
                 "Failed to get partition path size. Error: " + std::to_string(err)
@@ -137,7 +137,7 @@ class PartitionListHandle
         path.str = buffer.data();
 
         err = azihsm_part_get_path(handle_, index, &path);
-        if (err != AZIHSM_ERROR_SUCCESS)
+        if (err != AZIHSM_STATUS_SUCCESS)
         {
             throw std::runtime_error("Failed to get partition path. Error: " + std::to_string(err));
         }

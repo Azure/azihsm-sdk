@@ -20,7 +20,7 @@ pub(crate) enum CryptoOp {
 ///
 /// @return 0 on success, or a negative error code on failure.
 /// If output buffer is insufficient, required length is updated in the output buffer and
-/// the function returns the AZIHSM_ERROR_INSUFFICIENT_BUFFER error.
+/// the function returns the AZIHSM_STATUS_INSUFFICIENT_BUFFER error.
 ///
 /// @internal
 /// # Safety
@@ -32,7 +32,7 @@ pub unsafe extern "C" fn azihsm_crypt_encrypt(
     key_handle: AzihsmHandle,
     plain_text: *const AzihsmBuffer,
     cipher_text: *mut AzihsmBuffer,
-) -> AzihsmError {
+) -> AzihsmStatus {
     abi_boundary(|| {
         let algo = deref_mut_ptr(algo)?;
         let plain_text = deref_ptr(plain_text)?;
@@ -46,7 +46,7 @@ pub unsafe extern "C" fn azihsm_crypt_encrypt(
             AzihsmAlgoId::RsaPkcs | AzihsmAlgoId::RsaPkcsOaep | AzihsmAlgoId::RsaAesWrap => {
                 rsa_encrypt(algo, key_handle, input_buf, output_buf)?;
             }
-            _ => Err(AzihsmError::UnsupportedAlgorithm)?,
+            _ => Err(AzihsmStatus::UnsupportedAlgorithm)?,
         }
 
         Ok(())
@@ -62,7 +62,7 @@ pub unsafe extern "C" fn azihsm_crypt_encrypt(
 ///
 /// @return 0 on success, or a negative error code on failure.
 /// If output buffer is insufficient, required length is updated in the output buffer and
-/// the function returns the AZIHSM_ERROR_INSUFFICIENT_BUFFER error.
+/// the function returns the AZIHSM_STATUS_INSUFFICIENT_BUFFER error.
 ///
 /// @internal
 /// # Safety
@@ -74,7 +74,7 @@ pub unsafe extern "C" fn azihsm_crypt_decrypt(
     key_handle: AzihsmHandle,
     cipher_text: *const AzihsmBuffer,
     plain_text: *mut AzihsmBuffer,
-) -> AzihsmError {
+) -> AzihsmStatus {
     abi_boundary(|| {
         let algo = deref_mut_ptr(algo)?;
         let cipher_text = deref_ptr(cipher_text)?;
@@ -88,7 +88,7 @@ pub unsafe extern "C" fn azihsm_crypt_decrypt(
             AzihsmAlgoId::RsaPkcs | AzihsmAlgoId::RsaPkcsOaep => {
                 rsa_decrypt(algo, key_handle, input_buf, output_buf)?;
             }
-            _ => Err(AzihsmError::UnsupportedAlgorithm)?,
+            _ => Err(AzihsmStatus::UnsupportedAlgorithm)?,
         }
 
         Ok(())
@@ -112,7 +112,7 @@ pub unsafe extern "C" fn azihsm_crypt_encrypt_init(
     algo: *mut AzihsmAlgo,
     key_handle: AzihsmHandle,
     ctx_handle: *mut AzihsmHandle,
-) -> AzihsmError {
+) -> AzihsmStatus {
     abi_boundary(|| {
         validate_ptr(ctx_handle)?;
 
@@ -122,7 +122,7 @@ pub unsafe extern "C" fn azihsm_crypt_encrypt_init(
             AzihsmAlgoId::AesCbc | AzihsmAlgoId::AesCbcPad => {
                 aes_cbc_streaming_init(algo, key_handle, CryptoOp::Encrypt)?
             }
-            _ => Err(AzihsmError::UnsupportedAlgorithm)?,
+            _ => Err(AzihsmStatus::UnsupportedAlgorithm)?,
         };
 
         // Return the context handle
@@ -140,7 +140,7 @@ pub unsafe extern "C" fn azihsm_crypt_encrypt_init(
 ///
 /// @return 0 on success, or a negative error code on failure.
 /// If output buffer is insufficient, required length is updated in the output buffer and
-/// the function returns the AZIHSM_ERROR_INSUFFICIENT_BUFFER error.
+/// the function returns the AZIHSM_STATUS_INSUFFICIENT_BUFFER error.
 /// Note: Output may be less than input size if buffering occurs (e.g., for block alignment).
 ///
 /// @internal
@@ -152,7 +152,7 @@ pub unsafe extern "C" fn azihsm_crypt_encrypt_update(
     ctx_handle: AzihsmHandle,
     plain_text: *const AzihsmBuffer,
     cipher_text: *mut AzihsmBuffer,
-) -> AzihsmError {
+) -> AzihsmStatus {
     abi_boundary(|| {
         let ctx_type: HandleType = HandleType::try_from(ctx_handle)?;
         let input_buf = deref_ptr(plain_text)?;
@@ -162,7 +162,7 @@ pub unsafe extern "C" fn azihsm_crypt_encrypt_update(
             HandleType::AesCbcStreamingCtx => {
                 aes_cbc_streaming_update(ctx_handle, input_buf, output_buf)?
             }
-            _ => Err(AzihsmError::InvalidHandle)?,
+            _ => Err(AzihsmStatus::InvalidHandle)?,
         }
 
         Ok(())
@@ -176,7 +176,7 @@ pub unsafe extern "C" fn azihsm_crypt_encrypt_update(
 ///
 /// @return 0 on success, or a negative error code on failure.
 /// If output buffer is insufficient, required length is updated in the output buffer and
-/// the function returns the AZIHSM_ERROR_INSUFFICIENT_BUFFER error.
+/// the function returns the AZIHSM_STATUS_INSUFFICIENT_BUFFER error.
 ///
 /// @internal
 /// # Safety
@@ -186,14 +186,14 @@ pub unsafe extern "C" fn azihsm_crypt_encrypt_update(
 pub unsafe extern "C" fn azihsm_crypt_encrypt_final(
     ctx_handle: AzihsmHandle,
     cipher_text: *mut AzihsmBuffer,
-) -> AzihsmError {
+) -> AzihsmStatus {
     abi_boundary(|| {
         let ctx_type = HandleType::try_from(ctx_handle)?;
         let output_buf = deref_mut_ptr(cipher_text)?;
 
         match ctx_type {
             HandleType::AesCbcStreamingCtx => aes_cbc_streaming_final(ctx_handle, output_buf)?,
-            _ => Err(AzihsmError::InvalidHandle)?,
+            _ => Err(AzihsmStatus::InvalidHandle)?,
         }
         Ok(())
     })
@@ -216,7 +216,7 @@ pub unsafe extern "C" fn azihsm_crypt_decrypt_init(
     algo: *mut AzihsmAlgo,
     key_handle: AzihsmHandle,
     ctx_handle: *mut AzihsmHandle,
-) -> AzihsmError {
+) -> AzihsmStatus {
     abi_boundary(|| {
         validate_ptr(ctx_handle)?;
 
@@ -226,7 +226,7 @@ pub unsafe extern "C" fn azihsm_crypt_decrypt_init(
             AzihsmAlgoId::AesCbc | AzihsmAlgoId::AesCbcPad => {
                 aes_cbc_streaming_init(algo, key_handle, CryptoOp::Decrypt)?
             }
-            _ => Err(AzihsmError::UnsupportedAlgorithm)?,
+            _ => Err(AzihsmStatus::UnsupportedAlgorithm)?,
         };
 
         // Return the context handle
@@ -244,7 +244,7 @@ pub unsafe extern "C" fn azihsm_crypt_decrypt_init(
 ///
 /// @return 0 on success, or a negative error code on failure.
 /// If output buffer is insufficient, required length is updated in the output buffer and
-/// the function returns the AZIHSM_ERROR_INSUFFICIENT_BUFFER error.
+/// the function returns the AZIHSM_STATUS_INSUFFICIENT_BUFFER error.
 /// Note: Output may be less than input size if buffering occurs (e.g., for block alignment).
 ///
 /// @internal
@@ -256,7 +256,7 @@ pub unsafe extern "C" fn azihsm_crypt_decrypt_update(
     ctx_handle: AzihsmHandle,
     cipher_text: *const AzihsmBuffer,
     plain_text: *mut AzihsmBuffer,
-) -> AzihsmError {
+) -> AzihsmStatus {
     abi_boundary(|| {
         let ctx_type: HandleType = HandleType::try_from(ctx_handle)?;
         let input_buf = deref_ptr(cipher_text)?;
@@ -266,7 +266,7 @@ pub unsafe extern "C" fn azihsm_crypt_decrypt_update(
             HandleType::AesCbcStreamingCtx => {
                 aes_cbc_streaming_update(ctx_handle, input_buf, output_buf)?
             }
-            _ => Err(AzihsmError::InvalidHandle)?,
+            _ => Err(AzihsmStatus::InvalidHandle)?,
         }
 
         Ok(())
@@ -281,7 +281,7 @@ pub unsafe extern "C" fn azihsm_crypt_decrypt_update(
 ///
 /// @return 0 on success, or a negative error code on failure.
 /// If output buffer is insufficient, required length is updated in the output buffer and
-/// the function returns the AZIHSM_ERROR_INSUFFICIENT_BUFFER error.
+/// the function returns the AZIHSM_STATUS_INSUFFICIENT_BUFFER error.
 ///
 /// @internal
 /// # Safety
@@ -291,14 +291,14 @@ pub unsafe extern "C" fn azihsm_crypt_decrypt_update(
 pub unsafe extern "C" fn azihsm_crypt_decrypt_final(
     ctx_handle: AzihsmHandle,
     plain_text: *mut AzihsmBuffer,
-) -> AzihsmError {
+) -> AzihsmStatus {
     abi_boundary(|| {
         let ctx_type: HandleType = HandleType::try_from(ctx_handle)?;
         let output_buf = deref_mut_ptr(plain_text)?;
 
         match ctx_type {
             HandleType::AesCbcStreamingCtx => aes_cbc_streaming_final(ctx_handle, output_buf)?,
-            _ => Err(AzihsmError::InvalidHandle)?,
+            _ => Err(AzihsmStatus::InvalidHandle)?,
         }
         Ok(())
     })

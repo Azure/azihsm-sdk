@@ -51,7 +51,7 @@ impl HandleTable {
         &self,
         handle: AzihsmHandle,
         handle_type: HandleType,
-    ) -> Result<&T, AzihsmError> {
+    ) -> Result<&T, AzihsmStatus> {
         let table = self.table.read();
         table.as_ref(handle, handle_type)
     }
@@ -61,7 +61,7 @@ impl HandleTable {
         &self,
         handle: AzihsmHandle,
         handle_type: HandleType,
-    ) -> Result<&mut T, AzihsmError> {
+    ) -> Result<&mut T, AzihsmStatus> {
         let mut table = self.table.write();
         table.as_mut(handle, handle_type)
     }
@@ -71,7 +71,7 @@ impl HandleTable {
         &self,
         handle: AzihsmHandle,
         handle_type: HandleType,
-    ) -> Result<Box<T>, AzihsmError> {
+    ) -> Result<Box<T>, AzihsmStatus> {
         let mut table = self.table.write();
         table.free_handle(handle, handle_type)
     }
@@ -84,7 +84,7 @@ impl HandleTable {
     /// # Returns
     /// * `Ok(HandleType)` - The type of the handle
     /// * `Err(AzihsmError)` - If the handle is invalid
-    pub(crate) fn get_handle_type(&self, handle: AzihsmHandle) -> Result<HandleType, AzihsmError> {
+    pub(crate) fn get_handle_type(&self, handle: AzihsmHandle) -> Result<HandleType, AzihsmStatus> {
         let table = self.table.read();
         table.get_handle_type(handle)
     }
@@ -107,12 +107,12 @@ impl HandleTableInner {
         id
     }
 
-    fn addr(&self, handle: AzihsmHandle, handle_type: HandleType) -> Result<usize, AzihsmError> {
+    fn addr(&self, handle: AzihsmHandle, handle_type: HandleType) -> Result<usize, AzihsmStatus> {
         self.table
             .get(&handle)
             .filter(|entry| entry.handle_type == handle_type)
             .map(|entry| entry.addr)
-            .ok_or(AzihsmError::InvalidHandle)
+            .ok_or(AzihsmStatus::InvalidHandle)
     }
 
     #[allow(unsafe_code)]
@@ -120,7 +120,7 @@ impl HandleTableInner {
         &self,
         handle: AzihsmHandle,
         handle_type: HandleType,
-    ) -> Result<&'a T, AzihsmError> {
+    ) -> Result<&'a T, AzihsmStatus> {
         self.addr(handle, handle_type)
             // SAFETY: The caller must ensure that the handle is valid and points to a valid object.
             .map(|addr| unsafe { &*(addr as *const T) })
@@ -131,7 +131,7 @@ impl HandleTableInner {
         &mut self,
         handle: AzihsmHandle,
         handle_type: HandleType,
-    ) -> Result<&'a mut T, AzihsmError> {
+    ) -> Result<&'a mut T, AzihsmStatus> {
         self.addr(handle, handle_type)
             // SAFETY: The caller must ensure that the handle is valid and points to a valid object.
             .map(|addr| unsafe { &mut *(addr as *mut T) })
@@ -142,21 +142,21 @@ impl HandleTableInner {
         &mut self,
         handle: AzihsmHandle,
         handle_type: HandleType,
-    ) -> Result<Box<T>, AzihsmError> {
+    ) -> Result<Box<T>, AzihsmStatus> {
         match self.table.remove(&handle) {
             Some(entry) if entry.handle_type == handle_type => {
                 // SAFETY: The entry has been removed from the table, so we own the pointer.
                 Ok(unsafe { Box::from_raw(entry.addr as *mut T) })
             }
-            _ => Err(AzihsmError::InvalidHandle),
+            _ => Err(AzihsmStatus::InvalidHandle),
         }
     }
 
     /// Get the handle type for a given handle.
-    fn get_handle_type(&self, handle: AzihsmHandle) -> Result<HandleType, AzihsmError> {
+    fn get_handle_type(&self, handle: AzihsmHandle) -> Result<HandleType, AzihsmStatus> {
         self.table
             .get(&handle)
             .map(|entry| entry.handle_type)
-            .ok_or(AzihsmError::InvalidHandle)
+            .ok_or(AzihsmStatus::InvalidHandle)
     }
 }

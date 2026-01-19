@@ -44,7 +44,7 @@ TEST_F(azihsm_sha_digest, sha1_one_shot)
         digest_buf.len = static_cast<uint32_t>(digest.size());
 
         auto err = azihsm_crypt_digest(session.get(), &algo, &data_buf, &digest_buf);
-        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_EQ(digest_buf.len, 20u);
     });
 }
@@ -70,7 +70,7 @@ TEST_F(azihsm_sha_digest, sha256_one_shot)
         digest_buf.len = static_cast<uint32_t>(digest.size());
 
         auto err = azihsm_crypt_digest(session.get(), &algo, &data_buf, &digest_buf);
-        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_EQ(digest_buf.len, 32u);
     });
 }
@@ -96,7 +96,7 @@ TEST_F(azihsm_sha_digest, sha384_one_shot)
         digest_buf.len = static_cast<uint32_t>(digest.size());
 
         auto err = azihsm_crypt_digest(session.get(), &algo, &data_buf, &digest_buf);
-        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_EQ(digest_buf.len, 48u);
     });
 }
@@ -122,7 +122,7 @@ TEST_F(azihsm_sha_digest, sha512_one_shot)
         digest_buf.len = static_cast<uint32_t>(digest.size());
 
         auto err = azihsm_crypt_digest(session.get(), &algo, &data_buf, &digest_buf);
-        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_EQ(digest_buf.len, 64u);
     });
 }
@@ -149,7 +149,7 @@ TEST_F(azihsm_sha_digest, empty_data_sha256)
         digest_buf.len = static_cast<uint32_t>(digest.size());
 
         auto err = azihsm_crypt_digest(session.get(), &algo, &data_buf, &digest_buf);
-        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_EQ(digest_buf.len, 32u);
     });
 }
@@ -175,7 +175,7 @@ TEST_F(azihsm_sha_digest, insufficient_buffer_sha256)
         digest_buf.len = 16; // Too small for SHA-256 (needs 32)
 
         auto err = azihsm_crypt_digest(session.get(), &algo, &data_buf, &digest_buf);
-        ASSERT_EQ(err, AZIHSM_ERROR_BUFFER_TOO_SMALL);
+        ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
         ASSERT_EQ(digest_buf.len, 32u); // Updated to required size
     });
 }
@@ -196,7 +196,7 @@ TEST_F(azihsm_sha_digest, null_algorithm)
         digest_buf.len = static_cast<uint32_t>(digest.size());
 
         auto err = azihsm_crypt_digest(session.get(), nullptr, &data_buf, &digest_buf);
-        ASSERT_EQ(err, AZIHSM_ERROR_INVALID_ARGUMENT);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
 }
 
@@ -217,7 +217,7 @@ TEST_F(azihsm_sha_digest, null_data_buffer)
         digest_buf.len = static_cast<uint32_t>(digest.size());
 
         auto err = azihsm_crypt_digest(session.get(), &algo, nullptr, &digest_buf);
-        ASSERT_EQ(err, AZIHSM_ERROR_INVALID_ARGUMENT);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
 }
 
@@ -237,7 +237,7 @@ TEST_F(azihsm_sha_digest, null_digest_buffer)
         data_buf.len = static_cast<uint32_t>(TEST_DATA_1K.size());
 
         auto err = azihsm_crypt_digest(session.get(), &algo, &data_buf, nullptr);
-        ASSERT_EQ(err, AZIHSM_ERROR_INVALID_ARGUMENT);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
 }
 
@@ -259,11 +259,11 @@ TEST_F(azihsm_sha_digest, invalid_session_handle)
 
     // Invalid handle
     auto err = azihsm_crypt_digest(0xDEADBEEF, &algo, &data_buf, &digest_buf);
-    ASSERT_EQ(err, AZIHSM_ERROR_INVALID_HANDLE);
+    ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
 
     // Zero handle
     err = azihsm_crypt_digest(0, &algo, &data_buf, &digest_buf);
-    ASSERT_EQ(err, AZIHSM_ERROR_INVALID_HANDLE);
+    ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
 }
 
 TEST_F(azihsm_sha_digest, unsupported_algorithm)
@@ -287,7 +287,7 @@ TEST_F(azihsm_sha_digest, unsupported_algorithm)
         digest_buf.len = static_cast<uint32_t>(digest.size());
 
         auto err = azihsm_crypt_digest(session.get(), &algo, &data_buf, &digest_buf);
-        ASSERT_EQ(err, AZIHSM_ERROR_INVALID_ARGUMENT);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
 }
 
@@ -307,7 +307,7 @@ TEST_F(azihsm_sha_digest, sha256_streaming_single_update)
         // Initialize streaming context
         azihsm_handle ctx_handle = 0;
         auto err = azihsm_crypt_digest_init(session.get(), &algo, &ctx_handle);
-        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_NE(ctx_handle, 0u);
 
         // Update with data
@@ -316,7 +316,7 @@ TEST_F(azihsm_sha_digest, sha256_streaming_single_update)
         data_buf.len = static_cast<uint32_t>(TEST_DATA_1K.size());
 
         err = azihsm_crypt_digest_update(ctx_handle, &data_buf);
-        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         // Finalize and get digest
         std::array<uint8_t, 32> digest;
@@ -325,7 +325,7 @@ TEST_F(azihsm_sha_digest, sha256_streaming_single_update)
         digest_buf.len = static_cast<uint32_t>(digest.size());
 
         err = azihsm_crypt_digest_final(ctx_handle, &digest_buf);
-        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_EQ(digest_buf.len, 32u);
     });
 }
@@ -344,7 +344,7 @@ TEST_F(azihsm_sha_digest, sha256_streaming_multiple_updates)
         // Initialize streaming context
         azihsm_handle ctx_handle = 0;
         auto err = azihsm_crypt_digest_init(session.get(), &algo, &ctx_handle);
-        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         // Update with multiple chunks
         constexpr size_t chunk_size = 256;
@@ -358,7 +358,7 @@ TEST_F(azihsm_sha_digest, sha256_streaming_multiple_updates)
             data_buf.len = static_cast<uint32_t>(current_chunk);
 
             err = azihsm_crypt_digest_update(ctx_handle, &data_buf);
-            ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+            ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         }
 
         // Finalize and get digest
@@ -368,7 +368,7 @@ TEST_F(azihsm_sha_digest, sha256_streaming_multiple_updates)
         digest_buf.len = static_cast<uint32_t>(digest.size());
 
         err = azihsm_crypt_digest_final(ctx_handle, &digest_buf);
-        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_EQ(digest_buf.len, 32u);
     });
 }
@@ -387,14 +387,14 @@ TEST_F(azihsm_sha_digest, sha1_streaming)
         // Initialize
         azihsm_handle ctx_handle = 0;
         auto err = azihsm_crypt_digest_init(session.get(), &algo, &ctx_handle);
-        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         // Update
         azihsm_buffer data_buf{};
         data_buf.ptr = const_cast<uint8_t *>(TEST_DATA_1K.data());
         data_buf.len = static_cast<uint32_t>(TEST_DATA_1K.size());
         err = azihsm_crypt_digest_update(ctx_handle, &data_buf);
-        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         // Finalize
         std::array<uint8_t, 20> digest;
@@ -402,7 +402,7 @@ TEST_F(azihsm_sha_digest, sha1_streaming)
         digest_buf.ptr = digest.data();
         digest_buf.len = static_cast<uint32_t>(digest.size());
         err = azihsm_crypt_digest_final(ctx_handle, &digest_buf);
-        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_EQ(digest_buf.len, 20u);
     });
 }
@@ -421,14 +421,14 @@ TEST_F(azihsm_sha_digest, sha384_streaming)
         // Initialize
         azihsm_handle ctx_handle = 0;
         auto err = azihsm_crypt_digest_init(session.get(), &algo, &ctx_handle);
-        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         // Update
         azihsm_buffer data_buf{};
         data_buf.ptr = const_cast<uint8_t *>(TEST_DATA_1K.data());
         data_buf.len = static_cast<uint32_t>(TEST_DATA_1K.size());
         err = azihsm_crypt_digest_update(ctx_handle, &data_buf);
-        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         // Finalize
         std::array<uint8_t, 48> digest;
@@ -436,7 +436,7 @@ TEST_F(azihsm_sha_digest, sha384_streaming)
         digest_buf.ptr = digest.data();
         digest_buf.len = static_cast<uint32_t>(digest.size());
         err = azihsm_crypt_digest_final(ctx_handle, &digest_buf);
-        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_EQ(digest_buf.len, 48u);
     });
 }
@@ -455,14 +455,14 @@ TEST_F(azihsm_sha_digest, sha512_streaming)
         // Initialize
         azihsm_handle ctx_handle = 0;
         auto err = azihsm_crypt_digest_init(session.get(), &algo, &ctx_handle);
-        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         // Update
         azihsm_buffer data_buf{};
         data_buf.ptr = const_cast<uint8_t *>(TEST_DATA_1K.data());
         data_buf.len = static_cast<uint32_t>(TEST_DATA_1K.size());
         err = azihsm_crypt_digest_update(ctx_handle, &data_buf);
-        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         // Finalize
         std::array<uint8_t, 64> digest;
@@ -470,7 +470,7 @@ TEST_F(azihsm_sha_digest, sha512_streaming)
         digest_buf.ptr = digest.data();
         digest_buf.len = static_cast<uint32_t>(digest.size());
         err = azihsm_crypt_digest_final(ctx_handle, &digest_buf);
-        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_EQ(digest_buf.len, 64u);
     });
 }
@@ -489,7 +489,7 @@ TEST_F(azihsm_sha_digest, streaming_empty_data)
         // Initialize
         azihsm_handle ctx_handle = 0;
         auto err = azihsm_crypt_digest_init(session.get(), &algo, &ctx_handle);
-        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         // Finalize without any update (hash of empty data)
         std::array<uint8_t, 32> digest;
@@ -497,7 +497,7 @@ TEST_F(azihsm_sha_digest, streaming_empty_data)
         digest_buf.ptr = digest.data();
         digest_buf.len = static_cast<uint32_t>(digest.size());
         err = azihsm_crypt_digest_final(ctx_handle, &digest_buf);
-        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_EQ(digest_buf.len, 32u);
     });
 }
@@ -516,14 +516,14 @@ TEST_F(azihsm_sha_digest, streaming_insufficient_buffer)
         // Initialize
         azihsm_handle ctx_handle = 0;
         auto err = azihsm_crypt_digest_init(session.get(), &algo, &ctx_handle);
-        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         // Update
         azihsm_buffer data_buf{};
         data_buf.ptr = const_cast<uint8_t *>(TEST_DATA_1K.data());
         data_buf.len = static_cast<uint32_t>(TEST_DATA_1K.size());
         err = azihsm_crypt_digest_update(ctx_handle, &data_buf);
-        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         // Finalize with insufficient buffer
         std::array<uint8_t, 16> small_digest;
@@ -532,7 +532,7 @@ TEST_F(azihsm_sha_digest, streaming_insufficient_buffer)
         digest_buf.len = 16; // Too small for SHA-256
 
         err = azihsm_crypt_digest_final(ctx_handle, &digest_buf);
-        ASSERT_EQ(err, AZIHSM_ERROR_BUFFER_TOO_SMALL);
+        ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
         ASSERT_EQ(digest_buf.len, 32u); // Updated to required size
     });
 }
@@ -545,7 +545,7 @@ TEST_F(azihsm_sha_digest, streaming_invalid_context_handle)
 
     // Invalid handle for update
     auto err = azihsm_crypt_digest_update(0xDEADBEEF, &data_buf);
-    ASSERT_EQ(err, AZIHSM_ERROR_INVALID_HANDLE);
+    ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
 
     // Invalid handle for final
     std::array<uint8_t, 32> digest;
@@ -554,7 +554,7 @@ TEST_F(azihsm_sha_digest, streaming_invalid_context_handle)
     digest_buf.len = static_cast<uint32_t>(digest.size());
 
     err = azihsm_crypt_digest_final(0xDEADBEEF, &digest_buf);
-    ASSERT_EQ(err, AZIHSM_ERROR_INVALID_HANDLE);
+    ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
 }
 
 TEST_F(azihsm_sha_digest, streaming_null_context_handle)
@@ -569,7 +569,7 @@ TEST_F(azihsm_sha_digest, streaming_null_context_handle)
         algo.len = 0;
 
         auto err = azihsm_crypt_digest_init(session.get(), &algo, nullptr);
-        ASSERT_EQ(err, AZIHSM_ERROR_INVALID_ARGUMENT);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
 }
 
@@ -595,15 +595,15 @@ TEST_F(azihsm_sha_digest, streaming_consistency_with_one_shot)
         one_shot_buf.len = static_cast<uint32_t>(one_shot_digest.size());
 
         auto err = azihsm_crypt_digest(session.get(), &algo, &data_buf, &one_shot_buf);
-        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         // Streaming digest
         azihsm_handle ctx_handle = 0;
         err = azihsm_crypt_digest_init(session.get(), &algo, &ctx_handle);
-        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         err = azihsm_crypt_digest_update(ctx_handle, &data_buf);
-        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         std::array<uint8_t, 32> streaming_digest;
         azihsm_buffer streaming_buf{};
@@ -611,7 +611,7 @@ TEST_F(azihsm_sha_digest, streaming_consistency_with_one_shot)
         streaming_buf.len = static_cast<uint32_t>(streaming_digest.size());
 
         err = azihsm_crypt_digest_final(ctx_handle, &streaming_buf);
-        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         // Compare results - they should be identical
         ASSERT_EQ(one_shot_digest, streaming_digest);

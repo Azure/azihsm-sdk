@@ -22,7 +22,7 @@ use super::*;
 ///
 #[unsafe(no_mangle)]
 #[allow(unsafe_code)]
-pub unsafe extern "C" fn azihsm_part_get_list(handle: *mut AzihsmHandle) -> AzihsmError {
+pub unsafe extern "C" fn azihsm_part_get_list(handle: *mut AzihsmHandle) -> AzihsmStatus {
     abi_boundary(|| {
         validate_ptr(handle)?;
 
@@ -46,7 +46,7 @@ pub unsafe extern "C" fn azihsm_part_get_list(handle: *mut AzihsmHandle) -> Azih
 ///
 #[unsafe(no_mangle)]
 #[allow(unsafe_code)]
-pub extern "C" fn azihsm_part_free_list(handle: AzihsmHandle) -> AzihsmError {
+pub extern "C" fn azihsm_part_free_list(handle: AzihsmHandle) -> AzihsmStatus {
     abi_boundary(|| {
         let _: Box<Vec<api::HsmPartitionInfo>> =
             HANDLE_TABLE.free_handle(handle, HandleType::PartitionList)?;
@@ -72,7 +72,7 @@ pub extern "C" fn azihsm_part_free_list(handle: AzihsmHandle) -> AzihsmError {
 pub unsafe extern "C" fn azihsm_part_get_count(
     handle: AzihsmHandle,
     count: *mut u32,
-) -> AzihsmError {
+) -> AzihsmStatus {
     abi_boundary(|| {
         validate_ptr(count)?;
 
@@ -105,14 +105,14 @@ pub unsafe extern "C" fn azihsm_part_get_path(
     handle: AzihsmHandle,
     index: u32,
     path: *mut AzihsmStr,
-) -> AzihsmError {
+) -> AzihsmStatus {
     abi_boundary(|| {
         validate_ptr(path)?;
 
         // SAFETY: the function ensures that the pointers are valid
         let path = unsafe { &mut *path };
         if path.len != 0 && path.str.is_null() {
-            Err(AzihsmError::InvalidArgument)?
+            Err(AzihsmStatus::InvalidArgument)?
         }
 
         let part_list: &Vec<api::HsmPartitionInfo> =
@@ -121,7 +121,7 @@ pub unsafe extern "C" fn azihsm_part_get_path(
         // Get the path for the partition at the given index
         let part = match part_list.get(index as usize) {
             Some(part) => part,
-            None => Err(AzihsmError::IndexOutOfRange)?,
+            None => Err(AzihsmStatus::IndexOutOfRange)?,
         };
 
         let path_str = AzihsmStr::from_string(&part.path);
@@ -129,7 +129,7 @@ pub unsafe extern "C" fn azihsm_part_get_path(
         if path.len < path_str.len {
             // If the provided buffer is too small, return the required size
             path.len = path_str.len;
-            Err(AzihsmError::BufferTooSmall)?
+            Err(AzihsmStatus::BufferTooSmall)?
         }
 
         // SAFETY: the function ensures that the pointer is valid
@@ -161,7 +161,7 @@ pub unsafe extern "C" fn azihsm_part_get_path(
 pub unsafe extern "C" fn azihsm_part_open(
     path: *const AzihsmStr,
     handle: *mut AzihsmHandle,
-) -> AzihsmError {
+) -> AzihsmStatus {
     abi_boundary(|| {
         validate_ptr(handle)?;
         validate_ptr(path)?;
@@ -169,7 +169,7 @@ pub unsafe extern "C" fn azihsm_part_open(
         // SAFETY: the function ensures that the pointer is valid
         let path = unsafe { &*path };
         if path.is_null() || path.len == 0 {
-            Err(AzihsmError::InvalidArgument)?
+            Err(AzihsmStatus::InvalidArgument)?
         }
 
         // Convert the AzihsmStr to a Rust String
@@ -195,7 +195,7 @@ pub unsafe extern "C" fn azihsm_part_open(
 pub unsafe extern "C" fn azihsm_part_init(
     part_handle: AzihsmHandle,
     creds: *const AzihsmCredentials,
-) -> AzihsmError {
+) -> AzihsmStatus {
     abi_boundary(|| {
         let creds = deref_ptr(creds)?;
 
@@ -220,7 +220,7 @@ pub unsafe extern "C" fn azihsm_part_init(
 ///
 #[unsafe(no_mangle)]
 #[allow(unsafe_code)]
-pub unsafe extern "C" fn azihsm_part_close(handle: AzihsmHandle) -> AzihsmError {
+pub unsafe extern "C" fn azihsm_part_close(handle: AzihsmHandle) -> AzihsmStatus {
     abi_boundary(|| {
         let _: Box<HsmPartition> = HANDLE_TABLE.free_handle(handle, HandleType::Partition)?;
         Ok(())

@@ -26,11 +26,11 @@ TEST_F(azihsm_sess, open_and_close)
         azihsm_handle sess_handle = 0;
         auto err = azihsm_sess_open(partition.get(), &api_rev, &creds, &sess_handle);
 
-        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_NE(sess_handle, 0);
 
         auto guard = scope_guard::make_scope_exit([&sess_handle] {
-            ASSERT_EQ(azihsm_sess_close(sess_handle), AZIHSM_ERROR_SUCCESS);
+            ASSERT_EQ(azihsm_sess_close(sess_handle), AZIHSM_STATUS_SUCCESS);
         });
     });
 }
@@ -47,7 +47,7 @@ TEST_F(azihsm_sess, open_null_sess_handle)
 
         auto err = azihsm_sess_open(partition.get(), &api_rev, &creds, nullptr);
 
-        ASSERT_EQ(err, AZIHSM_ERROR_INVALID_ARGUMENT);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
 }
 
@@ -64,7 +64,7 @@ TEST_F(azihsm_sess, open_null_api_rev)
 
         auto err = azihsm_sess_open(partition.get(), nullptr, &creds, &sess_handle);
 
-        ASSERT_EQ(err, AZIHSM_ERROR_INVALID_ARGUMENT);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
 }
 
@@ -78,7 +78,7 @@ TEST_F(azihsm_sess, open_null_creds)
 
         auto err = azihsm_sess_open(partition.get(), &api_rev, nullptr, &sess_handle);
 
-        ASSERT_EQ(err, AZIHSM_ERROR_INVALID_ARGUMENT);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
 }
 
@@ -95,7 +95,7 @@ TEST_F(azihsm_sess, open_invalid_partition_handle)
 
         auto err = azihsm_sess_open(bad_handle, &api_rev, &creds, &sess_handle);
 
-        ASSERT_EQ(err, AZIHSM_ERROR_INVALID_HANDLE);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
     });
 }
 
@@ -104,7 +104,7 @@ TEST_F(azihsm_sess, close_invalid_handle)
     part_list_.for_each_part([](std::vector<azihsm_char> &path) {
         azihsm_handle bad_handle = 0xBADCAFE;
         auto err = azihsm_sess_close(bad_handle);
-        ASSERT_EQ(err, AZIHSM_ERROR_INVALID_HANDLE);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
     });
 }
 
@@ -122,15 +122,15 @@ TEST_F(azihsm_sess, close_double_close)
 
         auto err = azihsm_sess_open(partition.get(), &api_rev, &creds, &sess_handle);
 
-        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         // First close should succeed
         err = azihsm_sess_close(sess_handle);
-        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         // Second close should fail
         err = azihsm_sess_close(sess_handle);
-        ASSERT_EQ(err, AZIHSM_ERROR_INVALID_HANDLE);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
     });
 }
 
@@ -150,11 +150,11 @@ TEST_F(azihsm_sess, open_close_multiple)
             azihsm_handle sess_handle = 0;
             auto err = azihsm_sess_open(partition.get(), &api_rev, &creds, &sess_handle);
 
-            ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+            ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
             ASSERT_NE(sess_handle, 0);
 
             err = azihsm_sess_close(sess_handle);
-            ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+            ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         }
     });
 }
@@ -173,7 +173,7 @@ TEST_F(azihsm_sess, open_with_wrong_handle_type)
         azihsm_handle sess_handle = 0;
         auto err = azihsm_sess_open(list_handle, &api_rev, &creds, &sess_handle);
 
-        ASSERT_EQ(err, AZIHSM_ERROR_INVALID_HANDLE);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
     });
 }
 
@@ -188,7 +188,7 @@ TEST_F(azihsm_sess, open_with_corrupt_creds)
         azihsm_handle sess_handle = 0;
         auto err = azihsm_sess_open(partition.get(), &api_rev, &creds, &sess_handle);
 
-        ASSERT_NE(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
     });
 }
 
@@ -205,6 +205,6 @@ TEST_F(azihsm_sess, open_with_unsupported_api_rev)
         azihsm_handle sess_handle = 0;
         auto err = azihsm_sess_open(partition.get(), &api_rev, &creds, &sess_handle);
 
-        ASSERT_NE(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
     });
 }

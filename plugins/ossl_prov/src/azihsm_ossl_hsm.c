@@ -4,9 +4,9 @@
 /*
  * picks and opens the first possible HSM device
  * */
-static azihsm_error azihsm_get_device_handle(azihsm_handle *device)
+static azihsm_status azihsm_get_device_handle(azihsm_handle *device)
 {
-    azihsm_error status;
+    azihsm_status status;
     azihsm_handle device_list;
     uint32_t device_count = 0;
 
@@ -19,7 +19,7 @@ static azihsm_error azihsm_get_device_handle(azihsm_handle *device)
 
     status = azihsm_part_get_count(device_list, &device_count);
 
-    if (status != AZIHSM_ERROR_SUCCESS)
+    if (status != AZIHSM_STATUS_SUCCESS)
     {
         azihsm_part_free_list(device_list);
         return status;
@@ -33,27 +33,27 @@ static azihsm_error azihsm_get_device_handle(azihsm_handle *device)
 
         status = azihsm_part_get_path(device_list, i, &dev_path);
 
-        if (status != AZIHSM_ERROR_SUCCESS)
+        if (status != AZIHSM_STATUS_SUCCESS)
         {
             continue;
         }
 
         status = azihsm_part_open(&dev_path, device);
 
-        if (status == AZIHSM_ERROR_SUCCESS)
+        if (status == AZIHSM_STATUS_SUCCESS)
         {
             azihsm_part_free_list(device_list);
-            return AZIHSM_ERROR_SUCCESS;
+            return AZIHSM_STATUS_SUCCESS;
         }
     }
 
     azihsm_part_free_list(device_list);
-    return AZIHSM_ERROR_INTERNAL_ERROR;
+    return AZIHSM_STATUS_INTERNAL_ERROR;
 }
 
-azihsm_error azihsm_open_device_and_session(azihsm_handle *device, azihsm_handle *session)
+azihsm_status azihsm_open_device_and_session(azihsm_handle *device, azihsm_handle *session)
 {
-    azihsm_error status;
+    azihsm_status status;
 
     struct azihsm_api_rev api_rev = { .major = 1, .minor = 0 };
 
@@ -76,14 +76,14 @@ azihsm_error azihsm_open_device_and_session(azihsm_handle *device, azihsm_handle
 
     status = azihsm_get_device_handle(device);
 
-    if (status != AZIHSM_ERROR_SUCCESS)
+    if (status != AZIHSM_STATUS_SUCCESS)
     {
         return status;
     }
 
     status = azihsm_part_init(*device, &creds);
 
-    if (status != AZIHSM_ERROR_SUCCESS)
+    if (status != AZIHSM_STATUS_SUCCESS)
     {
         azihsm_part_close(*device);
         return status;
@@ -91,13 +91,13 @@ azihsm_error azihsm_open_device_and_session(azihsm_handle *device, azihsm_handle
 
     status = azihsm_sess_open(*device, &api_rev, &creds, session);
 
-    if (status != AZIHSM_ERROR_SUCCESS)
+    if (status != AZIHSM_STATUS_SUCCESS)
     {
         azihsm_part_close(*device);
         return status;
     }
 
-    return AZIHSM_ERROR_SUCCESS;
+    return AZIHSM_STATUS_SUCCESS;
 }
 
 void azihsm_close_device_and_session(azihsm_handle device, azihsm_handle session)

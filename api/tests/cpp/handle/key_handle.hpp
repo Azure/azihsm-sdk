@@ -61,7 +61,7 @@ class KeyHandle
         azihsm_key_prop_list list{ prop_list.data(), static_cast<uint32_t>(prop_list.size()) };
 
         auto err = azihsm_key_gen(sess_handle, algo, &list, &handle_);
-        if (err != AZIHSM_ERROR_SUCCESS)
+        if (err != AZIHSM_STATUS_SUCCESS)
         {
             throw std::runtime_error("Failed to generate key. Error: " + std::to_string(err));
         }

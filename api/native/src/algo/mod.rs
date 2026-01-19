@@ -11,7 +11,7 @@ use std::ffi::c_void;
 
 use azihsm_api::HsmHashAlgo;
 
-use crate::AzihsmError;
+use crate::AzihsmStatus;
 
 /// HSM Algorithm identifier enumeration.
 ///
@@ -228,7 +228,7 @@ pub struct AzihsmAlgo {
 }
 
 impl TryFrom<AzihsmAlgoId> for HsmHashAlgo {
-    type Error = AzihsmError;
+    type Error = AzihsmStatus;
 
     fn try_from(algo_id: AzihsmAlgoId) -> Result<Self, Self::Error> {
         match algo_id {
@@ -255,7 +255,7 @@ impl TryFrom<AzihsmAlgoId> for HsmHashAlgo {
             | AzihsmAlgoId::EcdsaSha512
             | AzihsmAlgoId::RsaPkcsSha512
             | AzihsmAlgoId::RsaPkcsPssSha512 => Ok(HsmHashAlgo::Sha512),
-            _ => Err(AzihsmError::InvalidArgument),
+            _ => Err(AzihsmStatus::InvalidArgument),
         }
     }
 }

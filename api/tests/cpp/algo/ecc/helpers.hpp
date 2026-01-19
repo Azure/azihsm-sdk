@@ -59,7 +59,7 @@ struct DummyEccPubKeyProps
 };
 
 // Helper function to generate ECC key pair for testing
-static azihsm_error generate_ecc_keypair(
+static azihsm_status generate_ecc_keypair(
     azihsm_handle session,
     azihsm_ecc_curve curve,
     bool session_key,

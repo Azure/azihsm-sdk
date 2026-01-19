@@ -24,7 +24,7 @@ pub unsafe extern "C" fn azihsm_sess_open(
     api_rev: *const AzihsmApiRev,
     creds: *const AzihsmCredentials,
     sess_handle: *mut AzihsmHandle,
-) -> AzihsmError {
+) -> AzihsmStatus {
     abi_boundary(|| {
         validate_ptr(sess_handle)?;
 
@@ -54,7 +54,7 @@ pub unsafe extern "C" fn azihsm_sess_open(
 ///
 #[unsafe(no_mangle)]
 #[allow(unsafe_code)]
-pub unsafe extern "C" fn azihsm_sess_close(handle: AzihsmHandle) -> AzihsmError {
+pub unsafe extern "C" fn azihsm_sess_close(handle: AzihsmHandle) -> AzihsmStatus {
     abi_boundary(|| {
         let _: Box<api::HsmSession> = HANDLE_TABLE.free_handle(handle, HandleType::Session)?;
 

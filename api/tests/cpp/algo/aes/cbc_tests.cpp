@@ -27,7 +27,7 @@ class azihsm_aes_cbc : public ::testing::Test
     {
         azihsm_buffer input{ const_cast<uint8_t *>(input_data), static_cast<uint32_t>(input_len) };
         azihsm_buffer output{ nullptr, 0 };
-        azihsm_error err;
+        azihsm_status err;
 
         // Query required buffer size
         if (encrypt)
@@ -38,7 +38,7 @@ class azihsm_aes_cbc : public ::testing::Test
         {
             err = azihsm_crypt_decrypt(algo, key_handle, &input, &output);
         }
-        EXPECT_EQ(err, AZIHSM_ERROR_BUFFER_TOO_SMALL);
+        EXPECT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
         EXPECT_GT(output.len, 0);
 
         // Allocate buffer and perform operation
@@ -53,7 +53,7 @@ class azihsm_aes_cbc : public ::testing::Test
         {
             err = azihsm_crypt_decrypt(algo, key_handle, &input, &output);
         }
-        EXPECT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        EXPECT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         // Resize to actual bytes written
         result.resize(output.len);
@@ -71,7 +71,7 @@ class azihsm_aes_cbc : public ::testing::Test
     )
     {
         azihsm_handle ctx = 0;
-        azihsm_error err;
+        azihsm_status err;
 
         // Initialize context
         if (encrypt)
@@ -82,7 +82,7 @@ class azihsm_aes_cbc : public ::testing::Test
         {
             err = azihsm_crypt_decrypt_init(algo, key_handle, &ctx);
         }
-        EXPECT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        EXPECT_EQ(err, AZIHSM_STATUS_SUCCESS);
         EXPECT_NE(ctx, 0);
 
         std::vector<uint8_t> output;
@@ -105,7 +105,7 @@ class azihsm_aes_cbc : public ::testing::Test
                 err = azihsm_crypt_decrypt_update(ctx, &input, &out_buf);
             }
 
-            if (err == AZIHSM_ERROR_BUFFER_TOO_SMALL)
+            if (err == AZIHSM_STATUS_BUFFER_TOO_SMALL)
             {
                 // Buffer too small, allocate and retry with same input
                 EXPECT_GT(out_buf.len, 0);
@@ -121,11 +121,11 @@ class azihsm_aes_cbc : public ::testing::Test
                 {
                     err = azihsm_crypt_decrypt_update(ctx, &input, &out_buf);
                 }
-                EXPECT_EQ(err, AZIHSM_ERROR_SUCCESS);
+                EXPECT_EQ(err, AZIHSM_STATUS_SUCCESS);
                 // Adjust output size to actual bytes written
                 output.resize(current_pos + out_buf.len);
             }
-            else if (err == AZIHSM_ERROR_SUCCESS)
+            else if (err == AZIHSM_STATUS_SUCCESS)
             {
                 // Success - data may or may not have been produced
                 // out_buf.len tells us how much data, but we didn't provide a buffer
@@ -152,7 +152,7 @@ class azihsm_aes_cbc : public ::testing::Test
             err = azihsm_crypt_decrypt_final(ctx, &final_out);
         }
 
-        if (err == AZIHSM_ERROR_BUFFER_TOO_SMALL)
+        if (err == AZIHSM_STATUS_BUFFER_TOO_SMALL)
         {
             EXPECT_GT(final_out.len, 0);
             size_t current_pos = output.size();
@@ -167,12 +167,12 @@ class azihsm_aes_cbc : public ::testing::Test
             {
                 err = azihsm_crypt_decrypt_final(ctx, &final_out);
             }
-            EXPECT_EQ(err, AZIHSM_ERROR_SUCCESS);
+            EXPECT_EQ(err, AZIHSM_STATUS_SUCCESS);
             // Adjust output size to actual bytes written
             output.resize(current_pos + final_out.len);
         }
 
-        EXPECT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        EXPECT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         return output;
     }

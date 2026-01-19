@@ -27,7 +27,7 @@ pub unsafe extern "C" fn azihsm_key_gen(
     algo: *const AzihsmAlgo,
     key_props: *const AzihsmKeyPropList,
     key_handle: *mut AzihsmHandle,
-) -> AzihsmError {
+) -> AzihsmStatus {
     abi_boundary(|| {
         validate_ptr(key_handle)?;
 
@@ -42,7 +42,7 @@ pub unsafe extern "C" fn azihsm_key_gen(
             AzihsmAlgoId::AesKeyGen => aes_generate_key(&session, algo, key_props)?,
 
             // Unknown or unsupported algorithms
-            _ => Err(AzihsmError::InvalidArgument)?,
+            _ => Err(AzihsmStatus::InvalidArgument)?,
         };
 
         // Return the generated key handle
@@ -75,7 +75,7 @@ pub unsafe extern "C" fn azihsm_key_gen_pair(
     pub_key_props: *const AzihsmKeyPropList,
     priv_key_handle: *mut AzihsmHandle,
     pub_key_handle: *mut AzihsmHandle,
-) -> AzihsmError {
+) -> AzihsmStatus {
     abi_boundary(|| {
         validate_ptr(pub_key_handle)?;
         validate_ptr(priv_key_handle)?;
@@ -97,7 +97,7 @@ pub unsafe extern "C" fn azihsm_key_gen_pair(
             }
 
             // Unknown or unsupported algorithms
-            _ => Err(AzihsmError::InvalidArgument)?,
+            _ => Err(AzihsmStatus::InvalidArgument)?,
         };
 
         assign_ptr(priv_key_handle, priv_key)?;
@@ -118,7 +118,7 @@ pub unsafe extern "C" fn azihsm_key_gen_pair(
 /// This function is marked unsafe due to no_mangle.
 #[unsafe(no_mangle)]
 #[allow(unsafe_code)]
-pub unsafe extern "C" fn azihsm_key_delete(key_handle: AzihsmHandle) -> AzihsmError {
+pub unsafe extern "C" fn azihsm_key_delete(key_handle: AzihsmHandle) -> AzihsmStatus {
     abi_boundary(|| {
         let key_type = HandleType::try_from(key_handle)?;
 
@@ -144,7 +144,7 @@ pub unsafe extern "C" fn azihsm_key_delete(key_handle: AzihsmHandle) -> AzihsmEr
                 let key: Box<HsmRsaPublicKey> = HANDLE_TABLE.free_handle(key_handle, key_type)?;
                 key.delete_key()?;
             }
-            _ => Err(AzihsmError::UnsupportedKeyKind)?,
+            _ => Err(AzihsmStatus::UnsupportedKeyKind)?,
         }
 
         Ok(())
@@ -172,7 +172,7 @@ pub unsafe extern "C" fn azihsm_key_derive(
     base_key: AzihsmHandle,
     key_props: *const AzihsmKeyPropList,
     key_handle: *mut AzihsmHandle,
-) -> AzihsmError {
+) -> AzihsmStatus {
     abi_boundary(|| {
         validate_ptr(key_handle)?;
 
@@ -191,7 +191,7 @@ pub unsafe extern "C" fn azihsm_key_derive(
                 hkdf_derive_key(&session, algo, base_key, derived_key_props)?
             }
 
-            _ => Err(AzihsmError::UnsupportedAlgorithm)?,
+            _ => Err(AzihsmStatus::UnsupportedAlgorithm)?,
         };
 
         assign_ptr(key_handle, handle)?;
@@ -224,7 +224,7 @@ pub unsafe extern "C" fn azihsm_key_unwrap(
     wrapped_key: *mut AzihsmBuffer,
     key_props: *const AzihsmKeyPropList,
     key_handle: *mut AzihsmHandle,
-) -> AzihsmError {
+) -> AzihsmStatus {
     abi_boundary(|| {
         validate_ptr(key_handle)?;
 
@@ -240,7 +240,7 @@ pub unsafe extern "C" fn azihsm_key_unwrap(
             AzihsmAlgoId::RsaAesKeyWrap => {
                 rsa_unwrap_key(algo, unwrapping_key, wrapped_key_buf, key_props)?
             }
-            _ => Err(AzihsmError::UnsupportedAlgorithm)?,
+            _ => Err(AzihsmStatus::UnsupportedAlgorithm)?,
         };
 
         assign_ptr(key_handle, handle)?;
@@ -278,7 +278,7 @@ pub unsafe extern "C" fn azihsm_key_unwrap_pair(
     pub_key_props: *const AzihsmKeyPropList,
     priv_key_handle: *mut AzihsmHandle,
     pub_key_handle: *mut AzihsmHandle,
-) -> AzihsmError {
+) -> AzihsmStatus {
     abi_boundary(|| {
         validate_ptr(priv_key_handle)?;
         validate_ptr(pub_key_handle)?;
@@ -302,7 +302,7 @@ pub unsafe extern "C" fn azihsm_key_unwrap_pair(
                 priv_key_props,
                 pub_key_props,
             )?,
-            _ => Err(AzihsmError::UnsupportedAlgorithm)?,
+            _ => Err(AzihsmStatus::UnsupportedAlgorithm)?,
         };
 
         assign_ptr(priv_key_handle, priv_handle)?;
@@ -335,7 +335,7 @@ pub unsafe extern "C" fn azihsm_key_unmask(
     key_kind: AzihsmKeyKind,
     masked_key: *const AzihsmBuffer,
     key_handle: *mut AzihsmHandle,
-) -> AzihsmError {
+) -> AzihsmStatus {
     abi_boundary(|| {
         validate_ptr(key_handle)?;
 
@@ -346,7 +346,7 @@ pub unsafe extern "C" fn azihsm_key_unmask(
         // Dispatch based on key kind
         let handle = match key_kind {
             AzihsmKeyKind::Aes => aes_unmask_key(&session, masked_key_buf)?,
-            _ => Err(AzihsmError::UnsupportedKeyKind)?,
+            _ => Err(AzihsmStatus::UnsupportedKeyKind)?,
         };
 
         assign_ptr(key_handle, handle)?;
@@ -380,7 +380,7 @@ pub unsafe extern "C" fn azihsm_key_unmask_pair(
     masked_key: *const AzihsmBuffer,
     priv_key_handle: *mut AzihsmHandle,
     pub_key_handle: *mut AzihsmHandle,
-) -> AzihsmError {
+) -> AzihsmStatus {
     abi_boundary(|| {
         validate_ptr(priv_key_handle)?;
         validate_ptr(pub_key_handle)?;
@@ -393,7 +393,7 @@ pub unsafe extern "C" fn azihsm_key_unmask_pair(
         let (priv_handle, pub_handle) = match key_kind {
             AzihsmKeyKind::Rsa => rsa_unmask_key_pair(&session, masked_key_buf)?,
             AzihsmKeyKind::Ecc => ecc_unmask_key_pair(&session, masked_key_buf)?,
-            _ => Err(AzihsmError::UnsupportedKeyKind)?,
+            _ => Err(AzihsmStatus::UnsupportedKeyKind)?,
         };
 
         assign_ptr(priv_key_handle, priv_handle)?;

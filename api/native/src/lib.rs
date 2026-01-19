@@ -81,7 +81,7 @@ impl AddAssign<u32> for AzihsmHandle {
 /// An alias for `HsmError` that represents all possible error conditions
 /// in the HSM API. This type is returned across the ABI boundary and can
 /// be converted to appropriate error codes for C callers.
-type AzihsmError = error::HsmError;
+type AzihsmStatus = error::HsmError;
 
 /// Key class type used in the native API.
 ///
@@ -103,7 +103,7 @@ type AzihsmKeyKind = shared_types::HsmKeyKind;
 type AzihsmEccCurve = shared_types::HsmEccCurve;
 
 impl TryFrom<u32> for AzihsmKeyKind {
-    type Error = AzihsmError;
+    type Error = AzihsmStatus;
 
     fn try_from(value: u32) -> Result<Self, Self::Error> {
         match value {
@@ -114,33 +114,33 @@ impl TryFrom<u32> for AzihsmKeyKind {
             7 => Ok(AzihsmKeyKind::HmacSha256),
             8 => Ok(AzihsmKeyKind::HmacSha384),
             9 => Ok(AzihsmKeyKind::HmacSha512),
-            _ => Err(AzihsmError::InvalidArgument),
+            _ => Err(AzihsmStatus::InvalidArgument),
         }
     }
 }
 
 impl TryFrom<u32> for AzihsmEccCurve {
-    type Error = AzihsmError;
+    type Error = AzihsmStatus;
 
     fn try_from(value: u32) -> Result<Self, Self::Error> {
         match value {
             1 => Ok(AzihsmEccCurve::P256),
             2 => Ok(AzihsmEccCurve::P384),
             3 => Ok(AzihsmEccCurve::P521),
-            _ => Err(AzihsmError::InvalidArgument),
+            _ => Err(AzihsmStatus::InvalidArgument),
         }
     }
 }
 
 impl TryFrom<u32> for AzihsmKeyClass {
-    type Error = AzihsmError;
+    type Error = AzihsmStatus;
 
     fn try_from(value: u32) -> Result<Self, Self::Error> {
         match value {
             1 => Ok(AzihsmKeyClass::Secret),
             2 => Ok(AzihsmKeyClass::Public),
             3 => Ok(AzihsmKeyClass::Private),
-            _ => Err(AzihsmError::InvalidArgument),
+            _ => Err(AzihsmStatus::InvalidArgument),
         }
     }
 }
@@ -174,19 +174,19 @@ static HANDLE_TABLE: LazyLock<HandleTable> = LazyLock::new(HandleTable::default)
 /// # Type Parameters
 ///
 /// * `F` - A function or closure that is `UnwindSafe` and returns a `Result<(), AzihsmError>`
-pub(crate) fn abi_boundary<F: FnOnce() -> Result<(), AzihsmError> + UnwindSafe>(
+pub(crate) fn abi_boundary<F: FnOnce() -> Result<(), AzihsmStatus> + UnwindSafe>(
     f: F,
-) -> AzihsmError {
+) -> AzihsmStatus {
     match catch_unwind(f) {
         Ok(hr) => match hr {
-            Ok(_) => AzihsmError::Success,
+            Ok(_) => AzihsmStatus::Success,
             Err(err) => err,
         },
-        Err(_) => AzihsmError::Panic,
+        Err(_) => AzihsmStatus::Panic,
     }
 }
 
-impl From<api::HsmError> for AzihsmError {
+impl From<api::HsmError> for AzihsmStatus {
     /// Converts an `api::HsmError` into an `AzihsmError`.
     #[allow(unsafe_code)]
     fn from(err: api::HsmError) -> Self {
@@ -195,10 +195,10 @@ impl From<api::HsmError> for AzihsmError {
     }
 }
 
-impl From<AzihsmError> for api::HsmError {
+impl From<AzihsmStatus> for api::HsmError {
     /// Converts an `AzihsmError` into an `api::HsmError`.
     #[allow(unsafe_code)]
-    fn from(err: AzihsmError) -> Self {
+    fn from(err: AzihsmStatus) -> Self {
         // SAFETY: AzihsmError and api::HsmError have the same representation
         unsafe { std::mem::transmute(err) }
     }
@@ -318,7 +318,7 @@ impl From<&AzihsmApiRev> for api::HsmApiRev {
 }
 
 impl TryFrom<AzihsmHandle> for api::HsmSession {
-    type Error = AzihsmError;
+    type Error = AzihsmStatus;
 
     fn try_from(value: AzihsmHandle) -> Result<api::HsmSession, Self::Error> {
         let session: &api::HsmSession = HANDLE_TABLE.as_ref(value, HandleType::Session)?;
@@ -327,7 +327,7 @@ impl TryFrom<AzihsmHandle> for api::HsmSession {
 }
 
 impl TryFrom<AzihsmHandle> for api::HsmPartition {
-    type Error = AzihsmError;
+    type Error = AzihsmStatus;
 
     fn try_from(value: AzihsmHandle) -> Result<api::HsmPartition, Self::Error> {
         let partition: &api::HsmPartition = HANDLE_TABLE.as_ref(value, HandleType::Partition)?;
@@ -336,7 +336,7 @@ impl TryFrom<AzihsmHandle> for api::HsmPartition {
 }
 
 impl TryFrom<AzihsmHandle> for api::HsmAesKey {
-    type Error = AzihsmError;
+    type Error = AzihsmStatus;
 
     fn try_from(value: AzihsmHandle) -> Result<api::HsmAesKey, Self::Error> {
         let key: &api::HsmAesKey = HANDLE_TABLE.as_ref(value, HandleType::AesKey)?;
@@ -345,7 +345,7 @@ impl TryFrom<AzihsmHandle> for api::HsmAesKey {
 }
 
 impl TryFrom<AzihsmHandle> for api::HsmEccPrivateKey {
-    type Error = AzihsmError;
+    type Error = AzihsmStatus;
 
     fn try_from(value: AzihsmHandle) -> Result<api::HsmEccPrivateKey, Self::Error> {
         let key: &api::HsmEccPrivateKey = HANDLE_TABLE.as_ref(value, HandleType::EccPrivKey)?;
@@ -354,7 +354,7 @@ impl TryFrom<AzihsmHandle> for api::HsmEccPrivateKey {
 }
 
 impl TryFrom<AzihsmHandle> for api::HsmEccPublicKey {
-    type Error = AzihsmError;
+    type Error = AzihsmStatus;
 
     fn try_from(value: AzihsmHandle) -> Result<api::HsmEccPublicKey, Self::Error> {
         let key: &api::HsmEccPublicKey = HANDLE_TABLE.as_ref(value, HandleType::EccPubKey)?;
@@ -363,7 +363,7 @@ impl TryFrom<AzihsmHandle> for api::HsmEccPublicKey {
 }
 
 impl TryFrom<AzihsmHandle> for HandleType {
-    type Error = AzihsmError;
+    type Error = AzihsmStatus;
 
     fn try_from(value: AzihsmHandle) -> Result<HandleType, Self::Error> {
         HANDLE_TABLE.get_handle_type(value)
@@ -384,7 +384,7 @@ pub struct AzihsmBuffer {
 }
 
 impl<'a> TryFrom<&'a AzihsmBuffer> for &'a [u8] {
-    type Error = AzihsmError;
+    type Error = AzihsmStatus;
 
     /// Converts an AzihsmBuffer to a byte slice.
     ///
@@ -395,7 +395,7 @@ impl<'a> TryFrom<&'a AzihsmBuffer> for &'a [u8] {
     fn try_from(buffer: &'a AzihsmBuffer) -> Result<Self, Self::Error> {
         // Check for null pointer
         if buffer.ptr.is_null() {
-            return Err(AzihsmError::InvalidArgument);
+            return Err(AzihsmStatus::InvalidArgument);
         }
 
         // Safety: Caller ensures buffer.buf points to valid memory
@@ -407,7 +407,7 @@ impl<'a> TryFrom<&'a AzihsmBuffer> for &'a [u8] {
 }
 
 impl<'a> TryFrom<&'a mut AzihsmBuffer> for &'a mut [u8] {
-    type Error = AzihsmError;
+    type Error = AzihsmStatus;
 
     /// Converts a mutable AzihsmBuffer to a mutable byte slice.
     ///
@@ -422,7 +422,7 @@ impl<'a> TryFrom<&'a mut AzihsmBuffer> for &'a mut [u8] {
             if buffer.len == 0 {
                 return Ok(&mut []);
             } else {
-                return Err(AzihsmError::InvalidArgument);
+                return Err(AzihsmStatus::InvalidArgument);
             }
         }
 
@@ -435,7 +435,7 @@ impl<'a> TryFrom<&'a mut AzihsmBuffer> for &'a mut [u8] {
 }
 
 impl TryFrom<AzihsmHandle> for api::HsmHmacKey {
-    type Error = AzihsmError;
+    type Error = AzihsmStatus;
 
     fn try_from(value: AzihsmHandle) -> Result<api::HsmHmacKey, Self::Error> {
         let key: &api::HsmHmacKey = HANDLE_TABLE.as_ref(value, HandleType::HmacKey)?;
@@ -444,7 +444,7 @@ impl TryFrom<AzihsmHandle> for api::HsmHmacKey {
 }
 
 impl<'a> TryFrom<&'a mut AzihsmKeyProp> for &'a mut [u8] {
-    type Error = AzihsmError;
+    type Error = AzihsmStatus;
 
     /// Converts a mutable AzihsmKeyProp to a mutable byte slice.
     ///
@@ -459,7 +459,7 @@ impl<'a> TryFrom<&'a mut AzihsmKeyProp> for &'a mut [u8] {
             if key_prop.len == 0 {
                 return Ok(&mut []);
             } else {
-                return Err(AzihsmError::InvalidArgument);
+                return Err(AzihsmStatus::InvalidArgument);
             }
         }
 

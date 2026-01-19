@@ -15,7 +15,7 @@ use super::*;
 ///
 /// @return 0 on success, or a negative error code on failure.
 /// If output buffer is insufficient, required length is updated in the output buffer and
-/// the function returns the AZIHSM_ERROR_INSUFFICIENT_BUFFER error.
+/// the function returns the AZIHSM_STATUS_INSUFFICIENT_BUFFER error.
 ///
 /// @internal
 /// # Safety
@@ -27,7 +27,7 @@ pub unsafe extern "C" fn azihsm_crypt_digest(
     algo: *const AzihsmAlgo,
     data: *const AzihsmBuffer,
     digest: *mut AzihsmBuffer,
-) -> AzihsmError {
+) -> AzihsmStatus {
     abi_boundary(|| {
         let algo_spec = deref_ptr(algo)?;
         let input_buf = deref_ptr(data)?;
@@ -49,7 +49,7 @@ pub unsafe extern "C" fn azihsm_crypt_digest(
             AzihsmAlgoId::Sha512 => {
                 sha_digest(&session, HsmHashAlgo::Sha512, input_data, output_buf)?;
             }
-            _ => return Err(AzihsmError::InvalidArgument),
+            _ => return Err(AzihsmStatus::InvalidArgument),
         }
 
         Ok(())
@@ -73,7 +73,7 @@ pub unsafe extern "C" fn azihsm_crypt_digest_init(
     sess_handle: AzihsmHandle,
     algo: *const AzihsmAlgo,
     ctx_handle: *mut AzihsmHandle,
-) -> AzihsmError {
+) -> AzihsmStatus {
     abi_boundary(|| {
         validate_ptr(ctx_handle)?;
         let algo_spec = deref_ptr(algo)?;
@@ -88,7 +88,7 @@ pub unsafe extern "C" fn azihsm_crypt_digest_init(
             AzihsmAlgoId::Sha256 => sha_digest_init(session, HsmHashAlgo::Sha256)?,
             AzihsmAlgoId::Sha384 => sha_digest_init(session, HsmHashAlgo::Sha384)?,
             AzihsmAlgoId::Sha512 => sha_digest_init(session, HsmHashAlgo::Sha512)?,
-            _ => return Err(AzihsmError::InvalidArgument),
+            _ => return Err(AzihsmStatus::InvalidArgument),
         };
 
         // Return the handle
@@ -113,7 +113,7 @@ pub unsafe extern "C" fn azihsm_crypt_digest_init(
 pub unsafe extern "C" fn azihsm_crypt_digest_update(
     ctx_handle: AzihsmHandle,
     data: *const AzihsmBuffer,
-) -> AzihsmError {
+) -> AzihsmStatus {
     abi_boundary(|| {
         let data_buf = deref_ptr(data)?;
         let input_data: &[u8] = data_buf.try_into()?;
@@ -124,7 +124,7 @@ pub unsafe extern "C" fn azihsm_crypt_digest_update(
                 sha_digest_update(ctx_handle, input_data)?;
             }
             // Add support for other context types here as needed (HMAC, etc.)
-            _ => Err(AzihsmError::InvalidHandle)?,
+            _ => Err(AzihsmStatus::InvalidHandle)?,
         }
 
         Ok(())
@@ -138,7 +138,7 @@ pub unsafe extern "C" fn azihsm_crypt_digest_update(
 ///
 /// @return 0 on success, or a negative error code on failure.
 /// If output buffer is insufficient, required length is updated in the output buffer and
-/// AZIHSM_ERROR_INSUFFICIENT_BUFFER is returned.
+/// AZIHSM_STATUS_INSUFFICIENT_BUFFER is returned.
 ///
 /// @internal
 /// # Safety
@@ -148,7 +148,7 @@ pub unsafe extern "C" fn azihsm_crypt_digest_update(
 pub unsafe extern "C" fn azihsm_crypt_digest_final(
     ctx_handle: AzihsmHandle,
     digest: *mut AzihsmBuffer,
-) -> AzihsmError {
+) -> AzihsmStatus {
     abi_boundary(|| {
         let digest_buf = deref_mut_ptr(digest)?;
         let ctx_type = HandleType::try_from(ctx_handle)?;
@@ -158,7 +158,7 @@ pub unsafe extern "C" fn azihsm_crypt_digest_final(
                 sha_digest_final(ctx_handle, digest_buf)?;
             }
             // Add support for other context types here as needed (HMAC, etc.)
-            _ => Err(AzihsmError::InvalidHandle)?,
+            _ => Err(AzihsmStatus::InvalidHandle)?,
         }
 
         Ok(())

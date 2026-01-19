@@ -81,7 +81,7 @@ typedef struct _KeyProps
 } KeyProps;
 
 /// Helper function to generate RSA unwrapping key pair for testing
-inline azihsm_error generate_rsa_unwrapping_keypair(
+inline azihsm_status generate_rsa_unwrapping_keypair(
     azihsm_handle session,
     azihsm_handle *priv_key_handle,
     azihsm_handle *pub_key_handle
@@ -146,7 +146,7 @@ inline azihsm_error generate_rsa_unwrapping_keypair(
 }
 
 /// Helper function to import a key pair (RSA or ECC) using RSA-AES key wrapping
-inline azihsm_error import_keypair(
+inline azihsm_status import_keypair(
     azihsm_handle wrapping_pub_key,
     azihsm_handle wrapping_priv_key,
     const std::vector<uint8_t> &key_der,
@@ -182,7 +182,7 @@ inline azihsm_error import_keypair(
 
     auto wrap_err =
         azihsm_crypt_encrypt(&wrap_algo, wrapping_pub_key, &input_key, &wrapped_key_buf);
-    if (wrap_err != AZIHSM_ERROR_SUCCESS)
+    if (wrap_err != AZIHSM_STATUS_SUCCESS)
     {
         return wrap_err;
     }
@@ -259,7 +259,7 @@ inline azihsm_error import_keypair(
             curve = AZIHSM_ECC_CURVE_P521;
             break;
         default:
-            return AZIHSM_ERROR_INVALID_ARGUMENT;
+            return AZIHSM_STATUS_INVALID_ARGUMENT;
         }
 
         // ECC private key properties (sign capability)
@@ -292,7 +292,7 @@ inline azihsm_error import_keypair(
     }
     else
     {
-        return AZIHSM_ERROR_INVALID_ARGUMENT;
+        return AZIHSM_STATUS_INVALID_ARGUMENT;
     }
 
     azihsm_key_prop_list priv_key_props = { .props = priv_props_vec.data(),

@@ -4,8 +4,8 @@ use azihsm_api::*;
 
 use crate::AzihsmAlgo;
 use crate::AzihsmBuffer;
-use crate::AzihsmError;
 use crate::AzihsmHandle;
+use crate::AzihsmStatus;
 use crate::HANDLE_TABLE;
 use crate::algo::AzihsmAlgoId;
 use crate::algo::rsa::AzihsmMgf1Id;
@@ -31,11 +31,11 @@ pub struct AzihsmAlgoRsaPkcsPssParams {
 }
 
 impl<'a> TryFrom<&'a AzihsmAlgo> for &'a AzihsmAlgoRsaPkcsPssParams {
-    type Error = AzihsmError;
+    type Error = AzihsmStatus;
 
     fn try_from(algo: &'a AzihsmAlgo) -> Result<Self, Self::Error> {
         if algo.len != std::mem::size_of::<AzihsmAlgoRsaPkcsPssParams>() as u32 {
-            Err(AzihsmError::InvalidArgument)?;
+            Err(AzihsmStatus::InvalidArgument)?;
         }
 
         let params = cast_ptr::<AzihsmAlgoRsaPkcsPssParams>(algo.params)?;
@@ -50,7 +50,7 @@ fn sign_with_algo<A>(
     key_handle: AzihsmHandle,
     input: &[u8],
     output: &mut AzihsmBuffer,
-) -> Result<(), AzihsmError>
+) -> Result<(), AzihsmStatus>
 where
     A: HsmSignOp<Key = HsmRsaPrivateKey, Error = HsmError>,
 {
@@ -78,7 +78,7 @@ pub(crate) fn rsa_pkcs1_hash_sign(
     key_handle: AzihsmHandle,
     input: &[u8],
     output: &mut AzihsmBuffer,
-) -> Result<(), AzihsmError> {
+) -> Result<(), AzihsmStatus> {
     let hash_algo = HsmHashAlgo::try_from(hash_algo)?;
     sign_with_algo(
         HsmRsaHashSignAlgo::with_pkcs1_padding(hash_algo),
@@ -94,7 +94,7 @@ pub(crate) fn rsa_pss_sign(
     key_handle: AzihsmHandle,
     input: &[u8],
     output: &mut AzihsmBuffer,
-) -> Result<(), AzihsmError> {
+) -> Result<(), AzihsmStatus> {
     // Extract PSS parameters
     let params = <&AzihsmAlgoRsaPkcsPssParams>::try_from(algo)?;
 
@@ -115,7 +115,7 @@ pub(crate) fn rsa_pss_hash_sign(
     key_handle: AzihsmHandle,
     input: &[u8],
     output: &mut AzihsmBuffer,
-) -> Result<(), AzihsmError> {
+) -> Result<(), AzihsmStatus> {
     let hash_algo = HsmHashAlgo::try_from(hash_algo_from_id)?;
 
     // Extract PSS parameters
@@ -126,7 +126,7 @@ pub(crate) fn rsa_pss_hash_sign(
 
     // Check that provided hash_algo matches the one in params
     if hash_algo != hash_algo_from_param {
-        Err(AzihsmError::InvalidArgument)?;
+        Err(AzihsmStatus::InvalidArgument)?;
     }
 
     // Create PSS hash+sign algorithm with parameters
@@ -141,7 +141,7 @@ fn verify_with_algo<A>(
     key_handle: AzihsmHandle,
     data: &[u8],
     sig: &[u8],
-) -> Result<bool, AzihsmError>
+) -> Result<bool, AzihsmStatus>
 where
     A: HsmVerifyOp<Key = HsmRsaPublicKey, Error = HsmError>,
 {
@@ -157,7 +157,7 @@ pub(crate) fn rsa_pkcs1_hash_verify(
     key_handle: AzihsmHandle,
     data: &[u8],
     sig: &[u8],
-) -> Result<bool, AzihsmError> {
+) -> Result<bool, AzihsmStatus> {
     let hash_algo = HsmHashAlgo::try_from(hash_algo)?;
     verify_with_algo(
         HsmRsaHashSignAlgo::with_pkcs1_padding(hash_algo),
@@ -173,7 +173,7 @@ pub(crate) fn rsa_pss_verify(
     key_handle: AzihsmHandle,
     data: &[u8],
     sig: &[u8],
-) -> Result<bool, AzihsmError> {
+) -> Result<bool, AzihsmStatus> {
     // Extract PSS parameters
     let params = <&AzihsmAlgoRsaPkcsPssParams>::try_from(algo)?;
 
@@ -194,7 +194,7 @@ pub(crate) fn rsa_pss_hash_verify(
     key_handle: AzihsmHandle,
     data: &[u8],
     sig: &[u8],
-) -> Result<bool, AzihsmError> {
+) -> Result<bool, AzihsmStatus> {
     let hash_algo = HsmHashAlgo::try_from(hash_algo_from_id)?;
 
     // Extract PSS parameters
@@ -205,7 +205,7 @@ pub(crate) fn rsa_pss_hash_verify(
 
     // Check that provided hash_algo matches the one in params
     if hash_algo != hash_algo_from_param {
-        Err(AzihsmError::InvalidArgument)?;
+        Err(AzihsmStatus::InvalidArgument)?;
     }
 
     // Create PSS hash+verify algorithm with parameters
@@ -218,7 +218,7 @@ pub(crate) fn rsa_pss_hash_verify(
 fn sign_init_with_algo<A>(
     sign_algo: A,
     key_handle: AzihsmHandle,
-) -> Result<AzihsmHandle, AzihsmError>
+) -> Result<AzihsmHandle, AzihsmStatus>
 where
     A: HsmSignStreamingOp<Key = HsmRsaPrivateKey, Error = HsmError>,
 {
@@ -237,7 +237,7 @@ where
 pub(crate) fn rsa_pkcs1_hash_sign_init(
     hash_algo: AzihsmAlgoId,
     key_handle: AzihsmHandle,
-) -> Result<AzihsmHandle, AzihsmError> {
+) -> Result<AzihsmHandle, AzihsmStatus> {
     let hash_algo = HsmHashAlgo::try_from(hash_algo)?;
     let sign_algo = HsmRsaHashSignAlgo::with_pkcs1_padding(hash_algo);
     sign_init_with_algo(sign_algo, key_handle)
@@ -247,7 +247,7 @@ pub(crate) fn rsa_pss_hash_sign_init(
     hash_algo_from_id: AzihsmAlgoId,
     algo: &AzihsmAlgo,
     key_handle: AzihsmHandle,
-) -> Result<AzihsmHandle, AzihsmError> {
+) -> Result<AzihsmHandle, AzihsmStatus> {
     let hash_algo = HsmHashAlgo::try_from(hash_algo_from_id)?;
 
     // Extract PSS parameters
@@ -258,7 +258,7 @@ pub(crate) fn rsa_pss_hash_sign_init(
 
     // Check that provided hash_algo matches the one in params
     if hash_algo != hash_algo_from_param {
-        Err(AzihsmError::InvalidArgument)?;
+        Err(AzihsmStatus::InvalidArgument)?;
     }
 
     // Create the signing algorithm with PSS padding
@@ -267,7 +267,7 @@ pub(crate) fn rsa_pss_hash_sign_init(
     sign_init_with_algo(sign_algo, key_handle)
 }
 
-pub(crate) fn rsa_sign_update(ctx_handle: AzihsmHandle, data: &[u8]) -> Result<(), AzihsmError> {
+pub(crate) fn rsa_sign_update(ctx_handle: AzihsmHandle, data: &[u8]) -> Result<(), AzihsmStatus> {
     // Get mutable reference to the context from handle table
     let ctx: &mut HsmRsaSignContext =
         HANDLE_TABLE.as_mut(ctx_handle, HandleType::RsaSignStreamingCtx)?;
@@ -281,7 +281,7 @@ pub(crate) fn rsa_sign_update(ctx_handle: AzihsmHandle, data: &[u8]) -> Result<(
 pub(crate) fn rsa_sign_final(
     ctx_handle: AzihsmHandle,
     output: &mut AzihsmBuffer,
-) -> Result<(), AzihsmError> {
+) -> Result<(), AzihsmStatus> {
     // Get a reference to determine the required signature size
     let ctx_ref: &mut HsmRsaSignContext =
         HANDLE_TABLE.as_mut(ctx_handle, HandleType::RsaSignStreamingCtx)?;
@@ -307,7 +307,7 @@ pub(crate) fn rsa_sign_final(
 fn verify_init_with_algo<A>(
     verify_algo: A,
     key_handle: AzihsmHandle,
-) -> Result<AzihsmHandle, AzihsmError>
+) -> Result<AzihsmHandle, AzihsmStatus>
 where
     A: HsmVerifyStreamingOp<Key = HsmRsaPublicKey, Error = HsmError>,
 {
@@ -326,7 +326,7 @@ where
 pub(crate) fn rsa_pkcs1_hash_verify_init(
     hash_algo: AzihsmAlgoId,
     key_handle: AzihsmHandle,
-) -> Result<AzihsmHandle, AzihsmError> {
+) -> Result<AzihsmHandle, AzihsmStatus> {
     let hash_algo = HsmHashAlgo::try_from(hash_algo)?;
     let verify_algo = HsmRsaHashSignAlgo::with_pkcs1_padding(hash_algo);
     verify_init_with_algo(verify_algo, key_handle)
@@ -336,7 +336,7 @@ pub(crate) fn rsa_pss_hash_verify_init(
     hash_algo_from_id: AzihsmAlgoId,
     algo: &AzihsmAlgo,
     key_handle: AzihsmHandle,
-) -> Result<AzihsmHandle, AzihsmError> {
+) -> Result<AzihsmHandle, AzihsmStatus> {
     let hash_algo = HsmHashAlgo::try_from(hash_algo_from_id)?;
 
     // Extract PSS parameters
@@ -347,7 +347,7 @@ pub(crate) fn rsa_pss_hash_verify_init(
 
     // Check that provided hash_algo matches the one in params
     if hash_algo != hash_algo_from_param {
-        Err(AzihsmError::InvalidArgument)?;
+        Err(AzihsmStatus::InvalidArgument)?;
     }
 
     // Create the verification algorithm with PSS padding
@@ -356,7 +356,7 @@ pub(crate) fn rsa_pss_hash_verify_init(
     verify_init_with_algo(verify_algo, key_handle)
 }
 
-pub(crate) fn rsa_verify_update(ctx_handle: AzihsmHandle, data: &[u8]) -> Result<(), AzihsmError> {
+pub(crate) fn rsa_verify_update(ctx_handle: AzihsmHandle, data: &[u8]) -> Result<(), AzihsmStatus> {
     // Get mutable reference to the context from handle table
     let ctx: &mut HsmRsaVerifyContext =
         HANDLE_TABLE.as_mut(ctx_handle, HandleType::RsaVerifyStreamingCtx)?;
@@ -367,7 +367,7 @@ pub(crate) fn rsa_verify_update(ctx_handle: AzihsmHandle, data: &[u8]) -> Result
     Ok(())
 }
 
-pub(crate) fn rsa_verify_final(ctx_handle: AzihsmHandle, sig: &[u8]) -> Result<bool, AzihsmError> {
+pub(crate) fn rsa_verify_final(ctx_handle: AzihsmHandle, sig: &[u8]) -> Result<bool, AzihsmStatus> {
     // Take ownership of the context and finalize
     let mut ctx: Box<HsmRsaVerifyContext> =
         HANDLE_TABLE.free_handle(ctx_handle, HandleType::RsaVerifyStreamingCtx)?;

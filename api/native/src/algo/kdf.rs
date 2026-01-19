@@ -4,8 +4,8 @@ use azihsm_api::*;
 
 use super::*;
 use crate::AzihsmBuffer;
-use crate::AzihsmError;
 use crate::AzihsmHandle;
+use crate::AzihsmStatus;
 use crate::HANDLE_TABLE;
 use crate::handle_table::HandleType;
 use crate::utils::deref_ptr;
@@ -18,7 +18,7 @@ pub struct AzihsmAlgoEcdhParams {
 }
 
 impl<'a> TryFrom<&'a AzihsmAlgo> for &'a AzihsmAlgoEcdhParams {
-    type Error = AzihsmError;
+    type Error = AzihsmStatus;
 
     /// Extracts a reference to ECDH parameters from the algorithm specification.
     ///
@@ -46,7 +46,7 @@ pub struct AzihsmAlgoHkdfParams {
 }
 
 impl<'a> TryFrom<&'a AzihsmAlgo> for &'a AzihsmAlgoHkdfParams {
-    type Error = AzihsmError;
+    type Error = AzihsmStatus;
 
     /// Extracts a reference to HKDF parameters from the algorithm specification.
     ///
@@ -71,7 +71,7 @@ pub(crate) fn ecdh_derive_key(
     algo: &AzihsmAlgo,
     base_key_handle: AzihsmHandle,
     derived_key_props: HsmKeyProps,
-) -> Result<AzihsmHandle, AzihsmError> {
+) -> Result<AzihsmHandle, AzihsmStatus> {
     let ecdh_params: &AzihsmAlgoEcdhParams = algo.try_into()?;
     let peer_pub_key_buf = deref_ptr(ecdh_params.pub_key)?;
     let peer_pub_key_der: &[u8] = peer_pub_key_buf.try_into()?;
@@ -99,7 +99,7 @@ pub(crate) fn hkdf_derive_key(
     algo: &AzihsmAlgo,
     base_key_handle: AzihsmHandle,
     derived_key_props: HsmKeyProps,
-) -> Result<AzihsmHandle, AzihsmError> {
+) -> Result<AzihsmHandle, AzihsmStatus> {
     // Extract HKDF parameters
     let hkdf_params: &AzihsmAlgoHkdfParams = algo.try_into()?;
 
@@ -109,7 +109,7 @@ pub(crate) fn hkdf_derive_key(
         AzihsmAlgoId::HmacSha256 => HsmHashAlgo::Sha256,
         AzihsmAlgoId::HmacSha384 => HsmHashAlgo::Sha384,
         AzihsmAlgoId::HmacSha512 => HsmHashAlgo::Sha512,
-        _ => Err(AzihsmError::InvalidArgument)?,
+        _ => Err(AzihsmStatus::InvalidArgument)?,
     };
 
     // Extract optional salt and info
@@ -155,7 +155,7 @@ pub(crate) fn hkdf_derive_key(
             let hmac_key: HsmHmacKey = derived_key.try_into()?;
             HANDLE_TABLE.alloc_handle(HandleType::HmacKey, Box::new(hmac_key))
         }
-        _ => Err(AzihsmError::UnsupportedKeyKind)?,
+        _ => Err(AzihsmStatus::UnsupportedKeyKind)?,
     };
 
     Ok(handle)

@@ -3,8 +3,8 @@
 use azihsm_api::*;
 
 use crate::AzihsmBuffer;
-use crate::AzihsmError;
 use crate::AzihsmHandle;
+use crate::AzihsmStatus;
 use crate::HANDLE_TABLE;
 use crate::handle_table::HandleType;
 use crate::utils::validate_output_buffer;
@@ -15,7 +15,7 @@ pub(crate) fn sha_digest(
     hash_algo: HsmHashAlgo,
     input: &[u8],
     output: &mut AzihsmBuffer,
-) -> Result<(), AzihsmError> {
+) -> Result<(), AzihsmStatus> {
     let mut hash_algo = hash_algo;
 
     // Get the required output size by calling with None
@@ -37,7 +37,7 @@ pub(crate) fn sha_digest(
 pub(crate) fn sha_digest_init(
     session: HsmSession,
     hash_algo: HsmHashAlgo,
-) -> Result<AzihsmHandle, AzihsmError> {
+) -> Result<AzihsmHandle, AzihsmStatus> {
     // Initialize streaming hash context
     let context = HsmHasher::hash_init(session, hash_algo)?;
 
@@ -48,7 +48,7 @@ pub(crate) fn sha_digest_init(
 }
 
 /// Helper function to update a streaming digest operation with more data
-pub(crate) fn sha_digest_update(ctx_handle: AzihsmHandle, data: &[u8]) -> Result<(), AzihsmError> {
+pub(crate) fn sha_digest_update(ctx_handle: AzihsmHandle, data: &[u8]) -> Result<(), AzihsmStatus> {
     // Get mutable reference to the context from handle table
     let ctx: &mut HsmHashContext = HANDLE_TABLE.as_mut(ctx_handle, HandleType::ShaStreamingCtx)?;
 
@@ -62,7 +62,7 @@ pub(crate) fn sha_digest_update(ctx_handle: AzihsmHandle, data: &[u8]) -> Result
 pub(crate) fn sha_digest_final(
     ctx_handle: AzihsmHandle,
     output: &mut AzihsmBuffer,
-) -> Result<(), AzihsmError> {
+) -> Result<(), AzihsmStatus> {
     // Get a reference to determine the required digest size
     let ctx_ref: &mut HsmHashContext =
         HANDLE_TABLE.as_mut(ctx_handle, HandleType::ShaStreamingCtx)?;

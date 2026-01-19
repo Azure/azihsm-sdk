@@ -4,14 +4,14 @@ use azihsm_api::*;
 
 use super::*;
 use crate::AzihsmBuffer;
-use crate::AzihsmError;
 use crate::AzihsmHandle;
+use crate::AzihsmStatus;
 use crate::HANDLE_TABLE;
 use crate::handle_table::HandleType;
 use crate::utils::validate_output_buffer;
 
 impl TryFrom<&AzihsmAlgo> for HsmEccKeyGenAlgo {
-    type Error = AzihsmError;
+    type Error = AzihsmStatus;
 
     /// Converts a C FFI algorithm specification to HsmEccKeyGenAlgo.
     fn try_from(_algo: &AzihsmAlgo) -> Result<Self, Self::Error> {
@@ -25,7 +25,7 @@ pub(crate) fn ecc_generate_key_pair(
     algo: &AzihsmAlgo,
     priv_key_props: HsmKeyProps,
     pub_key_props: HsmKeyProps,
-) -> Result<(AzihsmHandle, AzihsmHandle), AzihsmError> {
+) -> Result<(AzihsmHandle, AzihsmHandle), AzihsmStatus> {
     let mut ecc_algo = HsmEccKeyGenAlgo::try_from(algo)?;
     let (priv_key, pub_key) =
         HsmKeyManager::generate_key_pair(session, &mut ecc_algo, priv_key_props, pub_key_props)?;
@@ -42,7 +42,7 @@ fn sign_with_algo<A>(
     key_handle: AzihsmHandle,
     input: &[u8],
     output: &mut AzihsmBuffer,
-) -> Result<(), AzihsmError>
+) -> Result<(), AzihsmStatus>
 where
     A: HsmSignOp<Key = HsmEccPrivateKey, Error = HsmError>,
 {
@@ -70,7 +70,7 @@ fn verify_with_algo<A>(
     key_handle: AzihsmHandle,
     data: &[u8],
     sig: &[u8],
-) -> Result<bool, AzihsmError>
+) -> Result<bool, AzihsmStatus>
 where
     A: HsmVerifyOp<Key = HsmEccPublicKey, Error = HsmError>,
 {
@@ -85,7 +85,7 @@ pub(crate) fn ecc_sign(
     key_handle: AzihsmHandle,
     input: &[u8],
     output: &mut AzihsmBuffer,
-) -> Result<(), AzihsmError> {
+) -> Result<(), AzihsmStatus> {
     sign_with_algo(HsmEccSignAlgo::default(), key_handle, input, output)
 }
 
@@ -96,7 +96,7 @@ pub(crate) fn ecc_hash_sign(
     key_handle: AzihsmHandle,
     input: &[u8],
     output: &mut AzihsmBuffer,
-) -> Result<(), AzihsmError> {
+) -> Result<(), AzihsmStatus> {
     let hash_algo = HsmHashAlgo::try_from(hash_algo)?;
     sign_with_algo(HsmHashSignAlgo::new(hash_algo), key_handle, input, output)
 }
@@ -106,7 +106,7 @@ pub(crate) fn ecc_verify(
     key_handle: AzihsmHandle,
     data: &[u8],
     sig: &[u8],
-) -> Result<bool, AzihsmError> {
+) -> Result<bool, AzihsmStatus> {
     verify_with_algo(HsmEccSignAlgo::default(), key_handle, data, sig)
 }
 
@@ -116,7 +116,7 @@ pub(crate) fn ecc_hash_verify(
     key_handle: AzihsmHandle,
     data: &[u8],
     sig: &[u8],
-) -> Result<bool, AzihsmError> {
+) -> Result<bool, AzihsmStatus> {
     let hash_algo = HsmHashAlgo::try_from(hash_algo)?;
     verify_with_algo(HsmHashSignAlgo::new(hash_algo), key_handle, data, sig)
 }
@@ -124,7 +124,7 @@ pub(crate) fn ecc_hash_verify(
 pub(crate) fn ecc_sign_init(
     hash_algo: AzihsmAlgoId,
     key_handle: AzihsmHandle,
-) -> Result<AzihsmHandle, AzihsmError> {
+) -> Result<AzihsmHandle, AzihsmStatus> {
     let hash_algo = HsmHashAlgo::try_from(hash_algo)?;
 
     // Get the key from handle
@@ -142,7 +142,7 @@ pub(crate) fn ecc_sign_init(
     Ok(ctx_handle)
 }
 
-pub(crate) fn ecc_sign_update(ctx_handle: AzihsmHandle, data: &[u8]) -> Result<(), AzihsmError> {
+pub(crate) fn ecc_sign_update(ctx_handle: AzihsmHandle, data: &[u8]) -> Result<(), AzihsmStatus> {
     // Get mutable reference to the context from handle table
     let ctx: &mut HsmEccSignContext =
         HANDLE_TABLE.as_mut(ctx_handle, HandleType::EccSignStreamingCtx)?;
@@ -156,7 +156,7 @@ pub(crate) fn ecc_sign_update(ctx_handle: AzihsmHandle, data: &[u8]) -> Result<(
 pub(crate) fn ecc_sign_final(
     ctx_handle: AzihsmHandle,
     output: &mut AzihsmBuffer,
-) -> Result<(), AzihsmError> {
+) -> Result<(), AzihsmStatus> {
     // Get a reference to determine the required signature size
     let ctx_ref: &mut HsmEccSignContext =
         HANDLE_TABLE.as_mut(ctx_handle, HandleType::EccSignStreamingCtx)?;
@@ -181,7 +181,7 @@ pub(crate) fn ecc_sign_final(
 pub(crate) fn ecc_verify_init(
     hash_algo: AzihsmAlgoId,
     key_handle: AzihsmHandle,
-) -> Result<AzihsmHandle, AzihsmError> {
+) -> Result<AzihsmHandle, AzihsmStatus> {
     let hash_algo = HsmHashAlgo::try_from(hash_algo)?;
 
     // Get the key from handle
@@ -199,7 +199,7 @@ pub(crate) fn ecc_verify_init(
     Ok(ctx_handle)
 }
 
-pub(crate) fn ecc_verify_update(ctx_handle: AzihsmHandle, data: &[u8]) -> Result<(), AzihsmError> {
+pub(crate) fn ecc_verify_update(ctx_handle: AzihsmHandle, data: &[u8]) -> Result<(), AzihsmStatus> {
     // Get mutable reference to the context from handle table
     let ctx: &mut HsmEccVerifyContext =
         HANDLE_TABLE.as_mut(ctx_handle, HandleType::EccVerifyStreamingCtx)?;
@@ -213,7 +213,7 @@ pub(crate) fn ecc_verify_update(ctx_handle: AzihsmHandle, data: &[u8]) -> Result
 pub(crate) fn ecc_verify_final(
     ctx_handle: AzihsmHandle,
     signature: &[u8],
-) -> Result<bool, AzihsmError> {
+) -> Result<bool, AzihsmStatus> {
     // Take ownership of the context and finalize
     let mut ctx: Box<HsmEccVerifyContext> =
         HANDLE_TABLE.free_handle(ctx_handle, HandleType::EccVerifyStreamingCtx)?;
@@ -228,7 +228,7 @@ pub(crate) fn ecc_verify_final(
 pub(crate) fn ecc_unmask_key_pair(
     session: &HsmSession,
     masked_key: &[u8],
-) -> Result<(AzihsmHandle, AzihsmHandle), AzihsmError> {
+) -> Result<(AzihsmHandle, AzihsmHandle), AzihsmStatus> {
     let mut unmask_algo = HsmEccKeyUnmaskAlgo::default();
 
     // Unmask ECC key pair

@@ -285,7 +285,7 @@ OSSL_STATUS OSSL_provider_init(
 )
 {
     AZIHSM_OSSL_PROV_CTX *ctx;
-    azihsm_error status;
+    azihsm_status status;
 
     if ((ctx = OPENSSL_zalloc(sizeof(AZIHSM_OSSL_PROV_CTX))) == NULL)
     {
@@ -304,7 +304,7 @@ OSSL_STATUS OSSL_provider_init(
 
     status = azihsm_open_device_and_session(&ctx->device, &ctx->session);
 
-    if (status != AZIHSM_ERROR_SUCCESS)
+    if (status != AZIHSM_STATUS_SUCCESS)
     {
         OSSL_LIB_CTX_free(ctx->libctx);
         OPENSSL_free(ctx);
