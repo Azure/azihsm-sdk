@@ -15,1044 +15,444 @@ class azihsm_rsa_sign_verify : public ::testing::Test
 {
   protected:
     PartitionListHandle part_list_ = PartitionListHandle{};
+
+    // Helper function to setup wrapping and imported key pairs
+    void setup_keys(
+        azihsm_handle session,
+        AutoKey &wrapping_priv_key,
+        AutoKey &wrapping_pub_key,
+        AutoKey &imported_priv_key,
+        AutoKey &imported_pub_key
+    )
+    {
+        // Generate wrapping key pair
+        auto err = generate_rsa_unwrapping_keypair(
+            session,
+            wrapping_priv_key.get_ptr(),
+            wrapping_pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_NE(wrapping_priv_key.get(), 0);
+        ASSERT_NE(wrapping_pub_key.get(), 0);
+
+        // Import test key pair
+        KeyProps import_props = {
+            .key_kind = AZIHSM_KEY_KIND_RSA,
+            .key_size_bits = 2048,
+            .session_key = true,
+            .sign = true,
+            .verify = true,
+            .encrypt = false,
+            .decrypt = false,
+        };
+        auto import_err = import_keypair(
+            wrapping_pub_key.get(),
+            wrapping_priv_key.get(),
+            rsa_private_key_der,
+            import_props,
+            imported_priv_key.get_ptr(),
+            imported_pub_key.get_ptr()
+        );
+        ASSERT_EQ(import_err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_NE(imported_priv_key.get(), 0);
+        ASSERT_NE(imported_pub_key.get(), 0);
+    }
+
+    // Helper function to perform single-shot sign/verify test
+    void test_single_shot_sign_verify(
+        azihsm_handle priv_key,
+        azihsm_handle pub_key,
+        azihsm_algo &sign_algo,
+        const std::vector<uint8_t> &data_to_sign
+    )
+    {
+        azihsm_buffer data_buf = { .ptr = const_cast<uint8_t *>(data_to_sign.data()),
+                                   .len = static_cast<uint32_t>(data_to_sign.size()) };
+
+        std::vector<uint8_t> signature_data(256);
+        azihsm_buffer sig_buf = { .ptr = signature_data.data(),
+                                  .len = static_cast<uint32_t>(signature_data.size()) };
+
+        // Sign
+        auto sign_err = azihsm_crypt_sign(&sign_algo, priv_key, &data_buf, &sig_buf);
+        ASSERT_EQ(sign_err, AZIHSM_ERROR_SUCCESS);
+        ASSERT_GT(sig_buf.len, 0);
+        ASSERT_LE(sig_buf.len, 256);
+
+        // Verify
+        azihsm_buffer verify_sig_buf = { .ptr = signature_data.data(), .len = sig_buf.len };
+        auto verify_err = azihsm_crypt_verify(&sign_algo, pub_key, &data_buf, &verify_sig_buf);
+        ASSERT_EQ(verify_err, AZIHSM_ERROR_SUCCESS);
+
+        // Verify fails with modified data
+        std::vector<uint8_t> modified_data = data_to_sign;
+        modified_data[0] ^= 0xFF;
+        azihsm_buffer modified_buf = { .ptr = modified_data.data(),
+                                       .len = static_cast<uint32_t>(modified_data.size()) };
+        auto verify_fail_err =
+            azihsm_crypt_verify(&sign_algo, pub_key, &modified_buf, &verify_sig_buf);
+        ASSERT_NE(verify_fail_err, AZIHSM_ERROR_SUCCESS);
+    }
+
+    // Helper function to perform streaming sign/verify test
+    void test_streaming_sign_verify(
+        azihsm_handle priv_key,
+        azihsm_handle pub_key,
+        azihsm_algo &sign_algo,
+        const std::vector<const char *> &data_chunks
+    )
+    {
+        // Streaming sign
+        azihsm_handle sign_ctx = 0;
+        ASSERT_EQ(azihsm_crypt_sign_init(&sign_algo, priv_key, &sign_ctx), AZIHSM_ERROR_SUCCESS);
+
+        for (const char *chunk : data_chunks)
+        {
+            azihsm_buffer buf = { .ptr = (uint8_t *)chunk, .len = (uint32_t)strlen(chunk) };
+            ASSERT_EQ(azihsm_crypt_sign_update(sign_ctx, &buf), AZIHSM_ERROR_SUCCESS);
+        }
+
+        std::vector<uint8_t> signature_data(256);
+        azihsm_buffer sig_buf = { .ptr = signature_data.data(), .len = 256 };
+        ASSERT_EQ(azihsm_crypt_sign_final(sign_ctx, &sig_buf), AZIHSM_ERROR_SUCCESS);
+        ASSERT_GT(sig_buf.len, 0);
+
+        // Streaming verify
+        azihsm_handle verify_ctx = 0;
+        ASSERT_EQ(azihsm_crypt_verify_init(&sign_algo, pub_key, &verify_ctx), AZIHSM_ERROR_SUCCESS);
+
+        for (const char *chunk : data_chunks)
+        {
+            azihsm_buffer buf = { .ptr = (uint8_t *)chunk, .len = (uint32_t)strlen(chunk) };
+            ASSERT_EQ(azihsm_crypt_verify_update(verify_ctx, &buf), AZIHSM_ERROR_SUCCESS);
+        }
+
+        azihsm_buffer verify_sig_buf = { .ptr = signature_data.data(), .len = sig_buf.len };
+        ASSERT_EQ(azihsm_crypt_verify_final(verify_ctx, &verify_sig_buf), AZIHSM_ERROR_SUCCESS);
+
+        // Verify fails with modified data
+        azihsm_handle verify_fail_ctx = 0;
+        ASSERT_EQ(
+            azihsm_crypt_verify_init(&sign_algo, pub_key, &verify_fail_ctx),
+            AZIHSM_ERROR_SUCCESS
+        );
+
+        std::vector<const char *> modified_chunks = data_chunks;
+        modified_chunks[0] = "Modified ";
+
+        for (const char *chunk : modified_chunks)
+        {
+            azihsm_buffer buf = { .ptr = (uint8_t *)chunk, .len = (uint32_t)strlen(chunk) };
+            ASSERT_EQ(azihsm_crypt_verify_update(verify_fail_ctx, &buf), AZIHSM_ERROR_SUCCESS);
+        }
+
+        ASSERT_NE(
+            azihsm_crypt_verify_final(verify_fail_ctx, &verify_sig_buf),
+            AZIHSM_ERROR_SUCCESS
+        );
+    }
 };
 
-TEST_F(azihsm_rsa_sign_verify, sign_verify_pkcs_sha256_with_imported_key)
+// Unified test data structure for RSA tests (both single-shot and streaming)
+struct RsaTestParams
 {
-    part_list_.for_each_part([this](std::vector<azihsm_char> &path) {
-        auto partition = PartitionHandle(path);
-        auto session = SessionHandle(partition.get());
+    azihsm_algo_id algo_id;
+    const char *test_name;
+    azihsm_algo_rsa_pkcs_pss_params *pss_params; // nullptr for PKCS#1
+};
 
-        // Step 1: Generate an RSA key pair for wrapping/unwrapping
-        AutoKey wrapping_priv_key;
-        AutoKey wrapping_pub_key;
-        auto err = generate_rsa_unwrapping_keypair(
-            session.get(),
-            wrapping_priv_key.get_ptr(),
-            wrapping_pub_key.get_ptr()
-        );
-        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
-        ASSERT_NE(wrapping_priv_key.get(), 0);
-        ASSERT_NE(wrapping_pub_key.get(), 0);
+// RSA PKCS#1 Single-Shot Sign/Verify Tests (Raw Message)
+TEST_F(azihsm_rsa_sign_verify, sign_verify_pkcs_all_hash_algorithms)
+{
+    std::vector<RsaTestParams> test_cases = {
+        { AZIHSM_ALGO_ID_RSA_PKCS_SHA1, "SHA1", nullptr },
+        { AZIHSM_ALGO_ID_RSA_PKCS_SHA256, "SHA256", nullptr },
+        { AZIHSM_ALGO_ID_RSA_PKCS_SHA384, "SHA384", nullptr },
+        { AZIHSM_ALGO_ID_RSA_PKCS_SHA512, "SHA512", nullptr },
+    };
 
-        // Step 2: Import the hardcoded RSA key pair
-        AutoKey imported_priv_key;
-        AutoKey imported_pub_key;
-        KeyProps import_props = {
-            .key_kind = AZIHSM_KEY_KIND_RSA,
-            .key_size_bits = 2048,
-            .session_key = true,
-            .sign = true,
-            .verify = true,
-            .encrypt = false,
-            .decrypt = false,
-        };
-        auto import_err = import_keypair(
-            wrapping_pub_key.get(),
-            wrapping_priv_key.get(),
-            rsa_private_key_der,
-            import_props,
-            imported_priv_key.get_ptr(),
-            imported_pub_key.get_ptr()
-        );
-        ASSERT_EQ(import_err, AZIHSM_ERROR_SUCCESS);
-        ASSERT_NE(imported_priv_key.get(), 0);
-        ASSERT_NE(imported_pub_key.get(), 0);
+    for (const auto &test_case : test_cases)
+    {
+        SCOPED_TRACE("Testing PKCS#1 with " + std::string(test_case.test_name));
 
-        // Step 3: Prepare test data
-        const char *test_data = "Test RSA PKCS#1 v1.5 SHA-256 signing";
-        std::vector<uint8_t> data_to_sign(test_data, test_data + strlen(test_data));
+        part_list_.for_each_part([&](std::vector<azihsm_char> &path) {
+            auto partition = PartitionHandle(path);
+            auto session = SessionHandle(partition.get());
 
-        // Step 4: Setup PKCS#1 SHA-256 algorithm
-        azihsm_algo sign_algo = {};
-        sign_algo.id = AZIHSM_ALGO_ID_RSA_PKCS_SHA256;
-        sign_algo.params = nullptr;
-        sign_algo.len = 0;
+            AutoKey wrapping_priv_key, wrapping_pub_key;
+            AutoKey imported_priv_key, imported_pub_key;
+            setup_keys(
+                session.get(),
+                wrapping_priv_key,
+                wrapping_pub_key,
+                imported_priv_key,
+                imported_pub_key
+            );
 
-        azihsm_buffer data_buf = {};
-        data_buf.ptr = data_to_sign.data();
-        data_buf.len = static_cast<uint32_t>(data_to_sign.size());
+            std::string test_data =
+                std::string("Test RSA PKCS#1 v1.5 ") + test_case.test_name + " signing";
+            std::vector<uint8_t> data_to_sign(test_data.begin(), test_data.end());
 
-        std::vector<uint8_t> signature_data(256); // RSA 2048 = 256 bytes signature
-        azihsm_buffer sig_buf = {};
-        sig_buf.ptr = signature_data.data();
-        sig_buf.len = static_cast<uint32_t>(signature_data.size());
+            azihsm_algo sign_algo = { .id = test_case.algo_id,
+                                      .params = test_case.pss_params,
+                                      .len = test_case.pss_params
+                                                 ? sizeof(azihsm_algo_rsa_pkcs_pss_params)
+                                                 : 0 };
 
-        // Step 5: Sign with the imported private key
-        auto sign_err = azihsm_crypt_sign(&sign_algo, imported_priv_key.get(), &data_buf, &sig_buf);
-        ASSERT_EQ(sign_err, AZIHSM_ERROR_SUCCESS);
-        ASSERT_GT(sig_buf.len, 0);
-        ASSERT_LE(sig_buf.len, 256);
+            test_single_shot_sign_verify(
+                imported_priv_key.get(),
+                imported_pub_key.get(),
+                sign_algo,
+                data_to_sign
+            );
 
-        // Step 6: Verify with the imported public key
-        azihsm_buffer verify_sig_buf = {};
-        verify_sig_buf.ptr = signature_data.data();
-        verify_sig_buf.len = sig_buf.len;
-
-        auto verify_err =
-            azihsm_crypt_verify(&sign_algo, imported_pub_key.get(), &data_buf, &verify_sig_buf);
-        ASSERT_EQ(verify_err, AZIHSM_ERROR_SUCCESS);
-
-        // Step 7: Test verification fails with modified data
-        std::vector<uint8_t> modified_data = data_to_sign;
-        modified_data[0] ^= 0xFF; // Flip bits in first byte
-
-        azihsm_buffer modified_buf = {};
-        modified_buf.ptr = modified_data.data();
-        modified_buf.len = static_cast<uint32_t>(modified_data.size());
-
-        auto verify_fail_err =
-            azihsm_crypt_verify(&sign_algo, imported_pub_key.get(), &modified_buf, &verify_sig_buf);
-        ASSERT_NE(verify_fail_err, AZIHSM_ERROR_SUCCESS);
-
-        // Step 8: Test the key deletion
-        auto del_priv_err = azihsm_key_delete(imported_priv_key.release());
-        ASSERT_EQ(del_priv_err, AZIHSM_ERROR_SUCCESS);
-        auto del_pub_err = azihsm_key_delete(imported_pub_key.release());
-        ASSERT_EQ(del_pub_err, AZIHSM_ERROR_SUCCESS);
-    });
+            ASSERT_EQ(azihsm_key_delete(imported_priv_key.release()), AZIHSM_ERROR_SUCCESS);
+            ASSERT_EQ(azihsm_key_delete(imported_pub_key.release()), AZIHSM_ERROR_SUCCESS);
+        });
+    }
 }
 
-TEST_F(azihsm_rsa_sign_verify, sign_verify_pkcs_sha1_with_imported_key)
+// RSA PSS Single-Shot Sign/Verify Tests (Raw Message)
+TEST_F(azihsm_rsa_sign_verify, sign_verify_pss_all_hash_algorithms)
 {
-    part_list_.for_each_part([this](std::vector<azihsm_char> &path) {
-        auto partition = PartitionHandle(path);
-        auto session = SessionHandle(partition.get());
+    azihsm_algo_rsa_pkcs_pss_params pss_params_sha1 = { .hash_algo_id = AZIHSM_ALGO_ID_SHA1,
+                                                        .mgf_id = AZIHSM_MGF1_ID_SHA1,
+                                                        .salt_len = 20 };
 
-        // Step 1: Generate an RSA key pair for wrapping/unwrapping
-        AutoKey wrapping_priv_key;
-        AutoKey wrapping_pub_key;
-        auto err = generate_rsa_unwrapping_keypair(
-            session.get(),
-            wrapping_priv_key.get_ptr(),
-            wrapping_pub_key.get_ptr()
-        );
-        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
-        ASSERT_NE(wrapping_priv_key.get(), 0);
-        ASSERT_NE(wrapping_pub_key.get(), 0);
+    azihsm_algo_rsa_pkcs_pss_params pss_params_sha256 = { .hash_algo_id = AZIHSM_ALGO_ID_SHA256,
+                                                          .mgf_id = AZIHSM_MGF1_ID_SHA256,
+                                                          .salt_len = 32 };
 
-        // Step 2: Import the hardcoded RSA key pair
-        AutoKey imported_priv_key;
-        AutoKey imported_pub_key;
-        KeyProps import_props = {
-            .key_kind = AZIHSM_KEY_KIND_RSA,
-            .key_size_bits = 2048,
-            .session_key = true,
-            .sign = true,
-            .verify = true,
-            .encrypt = false,
-            .decrypt = false,
-        };
-        auto import_err = import_keypair(
-            wrapping_pub_key.get(),
-            wrapping_priv_key.get(),
-            rsa_private_key_der,
-            import_props,
-            imported_priv_key.get_ptr(),
-            imported_pub_key.get_ptr()
-        );
-        ASSERT_EQ(import_err, AZIHSM_ERROR_SUCCESS);
-        ASSERT_NE(imported_priv_key.get(), 0);
-        ASSERT_NE(imported_pub_key.get(), 0);
+    azihsm_algo_rsa_pkcs_pss_params pss_params_sha384 = { .hash_algo_id = AZIHSM_ALGO_ID_SHA384,
+                                                          .mgf_id = AZIHSM_MGF1_ID_SHA384,
+                                                          .salt_len = 48 };
 
-        // Step 3: Test data and algorithm
-        const char *test_data = "Test RSA PKCS#1 v1.5 SHA-1 signing";
-        std::vector<uint8_t> data_to_sign(test_data, test_data + strlen(test_data));
+    azihsm_algo_rsa_pkcs_pss_params pss_params_sha512 = { .hash_algo_id = AZIHSM_ALGO_ID_SHA512,
+                                                          .mgf_id = AZIHSM_MGF1_ID_SHA512,
+                                                          .salt_len = 64 };
 
-        azihsm_algo sign_algo = {};
-        sign_algo.id = AZIHSM_ALGO_ID_RSA_PKCS_SHA1;
-        sign_algo.params = nullptr;
-        sign_algo.len = 0;
+    std::vector<RsaTestParams> test_cases = {
+        { AZIHSM_ALGO_ID_RSA_PKCS_PSS_SHA1, "SHA1", &pss_params_sha1 },
+        { AZIHSM_ALGO_ID_RSA_PKCS_PSS_SHA256, "SHA256", &pss_params_sha256 },
+        { AZIHSM_ALGO_ID_RSA_PKCS_PSS_SHA384, "SHA384", &pss_params_sha384 },
+        { AZIHSM_ALGO_ID_RSA_PKCS_PSS_SHA512, "SHA512", &pss_params_sha512 },
+    };
 
-        azihsm_buffer data_buf = {};
-        data_buf.ptr = data_to_sign.data();
-        data_buf.len = static_cast<uint32_t>(data_to_sign.size());
+    for (const auto &test_case : test_cases)
+    {
+        SCOPED_TRACE("Testing PSS with " + std::string(test_case.test_name));
 
-        std::vector<uint8_t> signature_data(256);
-        azihsm_buffer sig_buf = {};
-        sig_buf.ptr = signature_data.data();
-        sig_buf.len = static_cast<uint32_t>(signature_data.size());
+        part_list_.for_each_part([&](std::vector<azihsm_char> &path) {
+            auto partition = PartitionHandle(path);
+            auto session = SessionHandle(partition.get());
 
-        // Step 4: Sign and verify
-        auto sign_err = azihsm_crypt_sign(&sign_algo, imported_priv_key.get(), &data_buf, &sig_buf);
-        ASSERT_EQ(sign_err, AZIHSM_ERROR_SUCCESS);
-        ASSERT_GT(sig_buf.len, 0);
+            AutoKey wrapping_priv_key, wrapping_pub_key;
+            AutoKey imported_priv_key, imported_pub_key;
+            setup_keys(
+                session.get(),
+                wrapping_priv_key,
+                wrapping_pub_key,
+                imported_priv_key,
+                imported_pub_key
+            );
 
-        azihsm_buffer verify_sig_buf = {};
-        verify_sig_buf.ptr = signature_data.data();
-        verify_sig_buf.len = sig_buf.len;
+            std::string test_data = std::string("Test RSA PSS ") + test_case.test_name + " signing";
+            std::vector<uint8_t> data_to_sign(test_data.begin(), test_data.end());
 
-        auto verify_err =
-            azihsm_crypt_verify(&sign_algo, imported_pub_key.get(), &data_buf, &verify_sig_buf);
-        ASSERT_EQ(verify_err, AZIHSM_ERROR_SUCCESS);
+            azihsm_algo sign_algo = { .id = test_case.algo_id,
+                                      .params = test_case.pss_params,
+                                      .len = sizeof(azihsm_algo_rsa_pkcs_pss_params) };
 
-        // Step 5: Test the key deletion
-        auto del_priv_err = azihsm_key_delete(imported_priv_key.release());
-        ASSERT_EQ(del_priv_err, AZIHSM_ERROR_SUCCESS);
-        auto del_pub_err = azihsm_key_delete(imported_pub_key.release());
-        ASSERT_EQ(del_pub_err, AZIHSM_ERROR_SUCCESS);
-    });
+            test_single_shot_sign_verify(
+                imported_priv_key.get(),
+                imported_pub_key.get(),
+                sign_algo,
+                data_to_sign
+            );
+
+            ASSERT_EQ(azihsm_key_delete(imported_priv_key.release()), AZIHSM_ERROR_SUCCESS);
+            ASSERT_EQ(azihsm_key_delete(imported_pub_key.release()), AZIHSM_ERROR_SUCCESS);
+        });
+    }
 }
 
-TEST_F(azihsm_rsa_sign_verify, sign_verify_pkcs_sha384_with_imported_key)
+// RSA PSS Pre-hashed Sign/Verify Tests (Pre-hashed Message)
+TEST_F(azihsm_rsa_sign_verify, sign_verify_pss_prehashed_all_hash_algorithms)
 {
-    part_list_.for_each_part([this](std::vector<azihsm_char> &path) {
-        auto partition = PartitionHandle(path);
-        auto session = SessionHandle(partition.get());
+    azihsm_algo_rsa_pkcs_pss_params pss_params_sha1 = { .hash_algo_id = AZIHSM_ALGO_ID_SHA1,
+                                                        .mgf_id = AZIHSM_MGF1_ID_SHA1,
+                                                        .salt_len = 20 };
 
-        // Step 1: Generate an RSA key pair for wrapping/unwrapping
-        AutoKey wrapping_priv_key;
-        AutoKey wrapping_pub_key;
-        auto err = generate_rsa_unwrapping_keypair(
-            session.get(),
-            wrapping_priv_key.get_ptr(),
-            wrapping_pub_key.get_ptr()
-        );
-        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
-        ASSERT_NE(wrapping_priv_key.get(), 0);
-        ASSERT_NE(wrapping_pub_key.get(), 0);
+    azihsm_algo_rsa_pkcs_pss_params pss_params_sha256 = { .hash_algo_id = AZIHSM_ALGO_ID_SHA256,
+                                                          .mgf_id = AZIHSM_MGF1_ID_SHA256,
+                                                          .salt_len = 32 };
 
-        // Step 2: Import the hardcoded RSA key pair
-        AutoKey imported_priv_key;
-        AutoKey imported_pub_key;
-        KeyProps import_props = {
-            .key_kind = AZIHSM_KEY_KIND_RSA,
-            .key_size_bits = 2048,
-            .session_key = true,
-            .sign = true,
-            .verify = true,
-            .encrypt = false,
-            .decrypt = false,
-        };
-        auto import_err = import_keypair(
-            wrapping_pub_key.get(),
-            wrapping_priv_key.get(),
-            rsa_private_key_der,
-            import_props,
-            imported_priv_key.get_ptr(),
-            imported_pub_key.get_ptr()
-        );
-        ASSERT_EQ(import_err, AZIHSM_ERROR_SUCCESS);
-        ASSERT_NE(imported_priv_key.get(), 0);
-        ASSERT_NE(imported_pub_key.get(), 0);
+    azihsm_algo_rsa_pkcs_pss_params pss_params_sha384 = { .hash_algo_id = AZIHSM_ALGO_ID_SHA384,
+                                                          .mgf_id = AZIHSM_MGF1_ID_SHA384,
+                                                          .salt_len = 48 };
 
-        // Step 3: Test data and algorithm
-        const char *test_data = "Test RSA PKCS#1 v1.5 SHA-384 signing";
-        std::vector<uint8_t> data_to_sign(test_data, test_data + strlen(test_data));
+    azihsm_algo_rsa_pkcs_pss_params pss_params_sha512 = { .hash_algo_id = AZIHSM_ALGO_ID_SHA512,
+                                                          .mgf_id = AZIHSM_MGF1_ID_SHA512,
+                                                          .salt_len = 64 };
 
-        azihsm_algo sign_algo = {};
-        sign_algo.id = AZIHSM_ALGO_ID_RSA_PKCS_SHA384;
-        sign_algo.params = nullptr;
-        sign_algo.len = 0;
+    struct PrehashedTestParams
+    {
+        const char *test_name;
+        azihsm_algo_rsa_pkcs_pss_params *pss_params;
+        size_t hash_size;
+        uint8_t fill_byte;
+    };
 
-        azihsm_buffer data_buf = {};
-        data_buf.ptr = data_to_sign.data();
-        data_buf.len = static_cast<uint32_t>(data_to_sign.size());
+    std::vector<PrehashedTestParams> test_cases = {
+        { "SHA1", &pss_params_sha1, 20, 0x9A },
+        { "SHA256", &pss_params_sha256, 32, 0xAB },
+        { "SHA384", &pss_params_sha384, 48, 0xCD },
+        { "SHA512", &pss_params_sha512, 64, 0xEF },
+    };
 
-        std::vector<uint8_t> signature_data(256);
-        azihsm_buffer sig_buf = {};
-        sig_buf.ptr = signature_data.data();
-        sig_buf.len = static_cast<uint32_t>(signature_data.size());
+    for (const auto &test_case : test_cases)
+    {
+        SCOPED_TRACE("Testing PSS pre-hashed with " + std::string(test_case.test_name));
 
-        // Step 4: Sign and verify
-        auto sign_err = azihsm_crypt_sign(&sign_algo, imported_priv_key.get(), &data_buf, &sig_buf);
-        ASSERT_EQ(sign_err, AZIHSM_ERROR_SUCCESS);
-        ASSERT_GT(sig_buf.len, 0);
+        part_list_.for_each_part([&](std::vector<azihsm_char> &path) {
+            auto partition = PartitionHandle(path);
+            auto session = SessionHandle(partition.get());
 
-        azihsm_buffer verify_sig_buf = {};
-        verify_sig_buf.ptr = signature_data.data();
-        verify_sig_buf.len = sig_buf.len;
+            AutoKey wrapping_priv_key, wrapping_pub_key;
+            AutoKey imported_priv_key, imported_pub_key;
+            setup_keys(
+                session.get(),
+                wrapping_priv_key,
+                wrapping_pub_key,
+                imported_priv_key,
+                imported_pub_key
+            );
 
-        auto verify_err =
-            azihsm_crypt_verify(&sign_algo, imported_pub_key.get(), &data_buf, &verify_sig_buf);
-        ASSERT_EQ(verify_err, AZIHSM_ERROR_SUCCESS);
+            std::vector<uint8_t> hashed_data(test_case.hash_size, test_case.fill_byte);
 
-        // Step 5: Test the key deletion
-        auto del_priv_err = azihsm_key_delete(imported_priv_key.release());
-        ASSERT_EQ(del_priv_err, AZIHSM_ERROR_SUCCESS);
-        auto del_pub_err = azihsm_key_delete(imported_pub_key.release());
-        ASSERT_EQ(del_pub_err, AZIHSM_ERROR_SUCCESS);
-    });
+            azihsm_algo sign_algo = { .id = AZIHSM_ALGO_ID_RSA_PKCS_PSS,
+                                      .params = test_case.pss_params,
+                                      .len = sizeof(azihsm_algo_rsa_pkcs_pss_params) };
+
+            test_single_shot_sign_verify(
+                imported_priv_key.get(),
+                imported_pub_key.get(),
+                sign_algo,
+                hashed_data
+            );
+
+            ASSERT_EQ(azihsm_key_delete(imported_priv_key.release()), AZIHSM_ERROR_SUCCESS);
+            ASSERT_EQ(azihsm_key_delete(imported_pub_key.release()), AZIHSM_ERROR_SUCCESS);
+        });
+    }
 }
 
-TEST_F(azihsm_rsa_sign_verify, sign_verify_pkcs_sha512_with_imported_key)
+// RSA PKCS#1 Streaming Sign/Verify Tests (Raw Message)
+TEST_F(azihsm_rsa_sign_verify, streaming_sign_verify_pkcs_all_hash_algorithms)
 {
-    part_list_.for_each_part([this](std::vector<azihsm_char> &path) {
-        auto partition = PartitionHandle(path);
-        auto session = SessionHandle(partition.get());
+    std::vector<RsaTestParams> test_cases = {
+        { AZIHSM_ALGO_ID_RSA_PKCS_SHA1, "SHA1", nullptr },
+        { AZIHSM_ALGO_ID_RSA_PKCS_SHA256, "SHA256", nullptr },
+        { AZIHSM_ALGO_ID_RSA_PKCS_SHA384, "SHA384", nullptr },
+        { AZIHSM_ALGO_ID_RSA_PKCS_SHA512, "SHA512", nullptr },
+    };
 
-        // Step 1: Generate an RSA key pair for wrapping/unwrapping
-        AutoKey wrapping_priv_key;
-        AutoKey wrapping_pub_key;
-        auto err = generate_rsa_unwrapping_keypair(
-            session.get(),
-            wrapping_priv_key.get_ptr(),
-            wrapping_pub_key.get_ptr()
-        );
-        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
-        ASSERT_NE(wrapping_priv_key.get(), 0);
-        ASSERT_NE(wrapping_pub_key.get(), 0);
+    for (const auto &test_case : test_cases)
+    {
+        SCOPED_TRACE("Testing PKCS#1 streaming with " + std::string(test_case.test_name));
 
-        // Step 2: Import the hardcoded RSA key pair
-        AutoKey imported_priv_key;
-        AutoKey imported_pub_key;
-        KeyProps import_props = {
-            .key_kind = AZIHSM_KEY_KIND_RSA,
-            .key_size_bits = 2048,
-            .session_key = true,
-            .sign = true,
-            .verify = true,
-            .encrypt = false,
-            .decrypt = false,
-        };
-        auto import_err = import_keypair(
-            wrapping_pub_key.get(),
-            wrapping_priv_key.get(),
-            rsa_private_key_der,
-            import_props,
-            imported_priv_key.get_ptr(),
-            imported_pub_key.get_ptr()
-        );
-        ASSERT_EQ(import_err, AZIHSM_ERROR_SUCCESS);
-        ASSERT_NE(imported_priv_key.get(), 0);
-        ASSERT_NE(imported_pub_key.get(), 0);
+        part_list_.for_each_part([&](std::vector<azihsm_char> &path) {
+            auto partition = PartitionHandle(path);
+            auto session = SessionHandle(partition.get());
 
-        // Step 3: Test data and algorithm
-        const char *test_data = "Test RSA PKCS#1 v1.5 SHA-512 signing";
-        std::vector<uint8_t> data_to_sign(test_data, test_data + strlen(test_data));
+            AutoKey wrapping_priv_key, wrapping_pub_key;
+            AutoKey imported_priv_key, imported_pub_key;
+            setup_keys(
+                session.get(),
+                wrapping_priv_key,
+                wrapping_pub_key,
+                imported_priv_key,
+                imported_pub_key
+            );
 
-        azihsm_algo sign_algo = {};
-        sign_algo.id = AZIHSM_ALGO_ID_RSA_PKCS_SHA512;
-        sign_algo.params = nullptr;
-        sign_algo.len = 0;
+            azihsm_algo sign_algo = { .id = test_case.algo_id,
+                                      .params = test_case.pss_params,
+                                      .len = test_case.pss_params
+                                                 ? sizeof(azihsm_algo_rsa_pkcs_pss_params)
+                                                 : 0 };
 
-        azihsm_buffer data_buf = {};
-        data_buf.ptr = data_to_sign.data();
-        data_buf.len = static_cast<uint32_t>(data_to_sign.size());
+            std::vector<const char *> chunks = { "Part1 ", "Part2 ", "Part3" };
+            test_streaming_sign_verify(
+                imported_priv_key.get(),
+                imported_pub_key.get(),
+                sign_algo,
+                chunks
+            );
 
-        std::vector<uint8_t> signature_data(256);
-        azihsm_buffer sig_buf = {};
-        sig_buf.ptr = signature_data.data();
-        sig_buf.len = static_cast<uint32_t>(signature_data.size());
-
-        // Step 4: Sign and verify
-        auto sign_err = azihsm_crypt_sign(&sign_algo, imported_priv_key.get(), &data_buf, &sig_buf);
-        ASSERT_EQ(sign_err, AZIHSM_ERROR_SUCCESS);
-        ASSERT_GT(sig_buf.len, 0);
-
-        azihsm_buffer verify_sig_buf = {};
-        verify_sig_buf.ptr = signature_data.data();
-        verify_sig_buf.len = sig_buf.len;
-
-        auto verify_err =
-            azihsm_crypt_verify(&sign_algo, imported_pub_key.get(), &data_buf, &verify_sig_buf);
-        ASSERT_EQ(verify_err, AZIHSM_ERROR_SUCCESS);
-
-        // Step 5: Test the key deletion
-        auto del_priv_err = azihsm_key_delete(imported_priv_key.release());
-        ASSERT_EQ(del_priv_err, AZIHSM_ERROR_SUCCESS);
-        auto del_pub_err = azihsm_key_delete(imported_pub_key.release());
-        ASSERT_EQ(del_pub_err, AZIHSM_ERROR_SUCCESS);
-    });
+            ASSERT_EQ(azihsm_key_delete(imported_priv_key.release()), AZIHSM_ERROR_SUCCESS);
+            ASSERT_EQ(azihsm_key_delete(imported_pub_key.release()), AZIHSM_ERROR_SUCCESS);
+        });
+    }
 }
 
-// RSA PSS SHA-256 sign and verify test
-TEST_F(azihsm_rsa_sign_verify, sign_verify_pss_sha256_with_imported_key)
+// RSA PSS Streaming Sign/Verify Tests
+TEST_F(azihsm_rsa_sign_verify, streaming_sign_verify_pss_all_hash_algorithms)
 {
-    part_list_.for_each_part([this](std::vector<azihsm_char> &path) {
-        auto partition = PartitionHandle(path);
-        auto session = SessionHandle(partition.get());
-
-        // Step 1: Generate an RSA key pair for wrapping/unwrapping
-        AutoKey wrapping_priv_key;
-        AutoKey wrapping_pub_key;
-        auto err = generate_rsa_unwrapping_keypair(
-            session.get(),
-            wrapping_priv_key.get_ptr(),
-            wrapping_pub_key.get_ptr()
-        );
-        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
-        ASSERT_NE(wrapping_priv_key.get(), 0);
-        ASSERT_NE(wrapping_pub_key.get(), 0);
-
-        // Step 2: Import the hardcoded RSA key pair
-        AutoKey imported_priv_key;
-        AutoKey imported_pub_key;
-        KeyProps import_props = {
-            .key_kind = AZIHSM_KEY_KIND_RSA,
-            .key_size_bits = 2048,
-            .session_key = true,
-            .sign = true,
-            .verify = true,
-            .encrypt = false,
-            .decrypt = false,
-        };
-        auto import_err = import_keypair(
-            wrapping_pub_key.get(),
-            wrapping_priv_key.get(),
-            rsa_private_key_der,
-            import_props,
-            imported_priv_key.get_ptr(),
-            imported_pub_key.get_ptr()
-        );
-        ASSERT_EQ(import_err, AZIHSM_ERROR_SUCCESS);
-        ASSERT_NE(imported_priv_key.get(), 0);
-        ASSERT_NE(imported_pub_key.get(), 0);
-
-        // Step 3: Prepare test data
-        const char *test_data = "Test RSA PSS SHA-256 signing";
-        std::vector<uint8_t> data_to_sign(test_data, test_data + strlen(test_data));
-
-        // Step 4: Setup PSS SHA-256 algorithm with parameters
-        azihsm_algo_rsa_pkcs_pss_params pss_params = {};
-        pss_params.hash_algo_id = AZIHSM_ALGO_ID_SHA256;
-        pss_params.mgf_id = AZIHSM_MGF1_ID_SHA256;
-        pss_params.salt_len = 32; // SHA-256 produces 32 bytes
-
-        azihsm_algo sign_algo = {};
-        sign_algo.id = AZIHSM_ALGO_ID_RSA_PKCS_PSS_SHA256;
-        sign_algo.params = &pss_params;
-        sign_algo.len = sizeof(pss_params);
-
-        azihsm_buffer data_buf = {};
-        data_buf.ptr = data_to_sign.data();
-        data_buf.len = static_cast<uint32_t>(data_to_sign.size());
-
-        std::vector<uint8_t> signature_data(256); // RSA 2048 = 256 bytes signature
-        azihsm_buffer sig_buf = {};
-        sig_buf.ptr = signature_data.data();
-        sig_buf.len = static_cast<uint32_t>(signature_data.size());
-
-        // Step 5: Sign with the imported private key
-        auto sign_err = azihsm_crypt_sign(&sign_algo, imported_priv_key.get(), &data_buf, &sig_buf);
-        ASSERT_EQ(sign_err, AZIHSM_ERROR_SUCCESS);
-        ASSERT_GT(sig_buf.len, 0);
-        ASSERT_LE(sig_buf.len, 256);
-
-        // Step 6: Verify with the imported public key
-        azihsm_buffer verify_sig_buf = {};
-        verify_sig_buf.ptr = signature_data.data();
-        verify_sig_buf.len = sig_buf.len;
-
-        auto verify_err =
-            azihsm_crypt_verify(&sign_algo, imported_pub_key.get(), &data_buf, &verify_sig_buf);
-        ASSERT_EQ(verify_err, AZIHSM_ERROR_SUCCESS);
-
-        // Step 7: Test verification fails with modified data
-        std::vector<uint8_t> modified_data = data_to_sign;
-        modified_data[0] ^= 0xFF; // Flip bits in first byte
-
-        azihsm_buffer modified_buf = {};
-        modified_buf.ptr = modified_data.data();
-        modified_buf.len = static_cast<uint32_t>(modified_data.size());
-
-        auto verify_fail_err =
-            azihsm_crypt_verify(&sign_algo, imported_pub_key.get(), &modified_buf, &verify_sig_buf);
-        ASSERT_NE(verify_fail_err, AZIHSM_ERROR_SUCCESS);
-
-        // Step 8: Test the key deletion
-        auto del_priv_err = azihsm_key_delete(imported_priv_key.release());
-        ASSERT_EQ(del_priv_err, AZIHSM_ERROR_SUCCESS);
-        auto del_pub_err = azihsm_key_delete(imported_pub_key.release());
-        ASSERT_EQ(del_pub_err, AZIHSM_ERROR_SUCCESS);
-    });
-}
-
-// RSA PSS SHA-1 sign and verify test
-TEST_F(azihsm_rsa_sign_verify, sign_verify_pss_sha1_with_imported_key)
-{
-    part_list_.for_each_part([this](std::vector<azihsm_char> &path) {
-        auto partition = PartitionHandle(path);
-        auto session = SessionHandle(partition.get());
-
-        // Step 1: Generate an RSA key pair for wrapping/unwrapping
-        AutoKey wrapping_priv_key;
-        AutoKey wrapping_pub_key;
-        auto err = generate_rsa_unwrapping_keypair(
-            session.get(),
-            wrapping_priv_key.get_ptr(),
-            wrapping_pub_key.get_ptr()
-        );
-        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
-
-        // Step 2: Import the hardcoded RSA key pair
-        AutoKey imported_priv_key;
-        AutoKey imported_pub_key;
-        KeyProps import_props = {
-            .key_kind = AZIHSM_KEY_KIND_RSA,
-            .key_size_bits = 2048,
-            .session_key = true,
-            .sign = true,
-            .verify = true,
-            .encrypt = false,
-            .decrypt = false,
-        };
-        auto import_err = import_keypair(
-            wrapping_pub_key.get(),
-            wrapping_priv_key.get(),
-            rsa_private_key_der,
-            import_props,
-            imported_priv_key.get_ptr(),
-            imported_pub_key.get_ptr()
-        );
-        ASSERT_EQ(import_err, AZIHSM_ERROR_SUCCESS);
-
-        // Step 3: Test data and algorithm
-        const char *test_data = "Test RSA PSS SHA-1 signing";
-        std::vector<uint8_t> data_to_sign(test_data, test_data + strlen(test_data));
-
-        azihsm_algo_rsa_pkcs_pss_params pss_params = {};
-        pss_params.hash_algo_id = AZIHSM_ALGO_ID_SHA1;
-        pss_params.mgf_id = AZIHSM_MGF1_ID_SHA1;
-        pss_params.salt_len = 20; // SHA-1 produces 20 bytes
-
-        azihsm_algo sign_algo = {};
-        sign_algo.id = AZIHSM_ALGO_ID_RSA_PKCS_PSS_SHA1;
-        sign_algo.params = &pss_params;
-        sign_algo.len = sizeof(pss_params);
-
-        azihsm_buffer data_buf = {};
-        data_buf.ptr = data_to_sign.data();
-        data_buf.len = static_cast<uint32_t>(data_to_sign.size());
-
-        std::vector<uint8_t> signature_data(256);
-        azihsm_buffer sig_buf = {};
-        sig_buf.ptr = signature_data.data();
-        sig_buf.len = static_cast<uint32_t>(signature_data.size());
-
-        // Step 4: Sign and verify
-        auto sign_err = azihsm_crypt_sign(&sign_algo, imported_priv_key.get(), &data_buf, &sig_buf);
-        ASSERT_EQ(sign_err, AZIHSM_ERROR_SUCCESS);
-        ASSERT_GT(sig_buf.len, 0);
-
-        azihsm_buffer verify_sig_buf = {};
-        verify_sig_buf.ptr = signature_data.data();
-        verify_sig_buf.len = sig_buf.len;
-
-        auto verify_err =
-            azihsm_crypt_verify(&sign_algo, imported_pub_key.get(), &data_buf, &verify_sig_buf);
-        ASSERT_EQ(verify_err, AZIHSM_ERROR_SUCCESS);
-
-        // Step 5: Test the key deletion
-        auto del_priv_err = azihsm_key_delete(imported_priv_key.release());
-        ASSERT_EQ(del_priv_err, AZIHSM_ERROR_SUCCESS);
-        auto del_pub_err = azihsm_key_delete(imported_pub_key.release());
-        ASSERT_EQ(del_pub_err, AZIHSM_ERROR_SUCCESS);
-    });
-}
-
-// RSA PSS SHA-384 sign and verify test
-TEST_F(azihsm_rsa_sign_verify, sign_verify_pss_sha384_with_imported_key)
-{
-    part_list_.for_each_part([this](std::vector<azihsm_char> &path) {
-        auto partition = PartitionHandle(path);
-        auto session = SessionHandle(partition.get());
-
-        // Step 1: Generate an RSA key pair for wrapping/unwrapping
-        AutoKey wrapping_priv_key;
-        AutoKey wrapping_pub_key;
-        auto err = generate_rsa_unwrapping_keypair(
-            session.get(),
-            wrapping_priv_key.get_ptr(),
-            wrapping_pub_key.get_ptr()
-        );
-        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
-
-        // Step 2: Import the hardcoded RSA key pair
-        AutoKey imported_priv_key;
-        AutoKey imported_pub_key;
-        KeyProps import_props = {
-            .key_kind = AZIHSM_KEY_KIND_RSA,
-            .key_size_bits = 2048,
-            .session_key = true,
-            .sign = true,
-            .verify = true,
-            .encrypt = false,
-            .decrypt = false,
-        };
-        auto import_err = import_keypair(
-            wrapping_pub_key.get(),
-            wrapping_priv_key.get(),
-            rsa_private_key_der,
-            import_props,
-            imported_priv_key.get_ptr(),
-            imported_pub_key.get_ptr()
-        );
-        ASSERT_EQ(import_err, AZIHSM_ERROR_SUCCESS);
-
-        // Step 3: Test data and algorithm
-        const char *test_data = "Test RSA PSS SHA-384 signing";
-        std::vector<uint8_t> data_to_sign(test_data, test_data + strlen(test_data));
-
-        azihsm_algo_rsa_pkcs_pss_params pss_params = {};
-        pss_params.hash_algo_id = AZIHSM_ALGO_ID_SHA384;
-        pss_params.mgf_id = AZIHSM_MGF1_ID_SHA384;
-        pss_params.salt_len = 48; // SHA-384 produces 48 bytes
-
-        azihsm_algo sign_algo = {};
-        sign_algo.id = AZIHSM_ALGO_ID_RSA_PKCS_PSS_SHA384;
-        sign_algo.params = &pss_params;
-        sign_algo.len = sizeof(pss_params);
-
-        azihsm_buffer data_buf = {};
-        data_buf.ptr = data_to_sign.data();
-        data_buf.len = static_cast<uint32_t>(data_to_sign.size());
-
-        std::vector<uint8_t> signature_data(256);
-        azihsm_buffer sig_buf = {};
-        sig_buf.ptr = signature_data.data();
-        sig_buf.len = static_cast<uint32_t>(signature_data.size());
-
-        // Step 4: Sign and verify
-        auto sign_err = azihsm_crypt_sign(&sign_algo, imported_priv_key.get(), &data_buf, &sig_buf);
-        ASSERT_EQ(sign_err, AZIHSM_ERROR_SUCCESS);
-        ASSERT_GT(sig_buf.len, 0);
-
-        azihsm_buffer verify_sig_buf = {};
-        verify_sig_buf.ptr = signature_data.data();
-        verify_sig_buf.len = sig_buf.len;
-
-        auto verify_err =
-            azihsm_crypt_verify(&sign_algo, imported_pub_key.get(), &data_buf, &verify_sig_buf);
-        ASSERT_EQ(verify_err, AZIHSM_ERROR_SUCCESS);
-
-        // Step 5: Test the key deletion
-        auto del_priv_err = azihsm_key_delete(imported_priv_key.release());
-        ASSERT_EQ(del_priv_err, AZIHSM_ERROR_SUCCESS);
-        auto del_pub_err = azihsm_key_delete(imported_pub_key.release());
-        ASSERT_EQ(del_pub_err, AZIHSM_ERROR_SUCCESS);
-    });
-}
-
-// RSA PSS SHA-512 sign and verify test
-TEST_F(azihsm_rsa_sign_verify, sign_verify_pss_sha512_with_imported_key)
-{
-    part_list_.for_each_part([this](std::vector<azihsm_char> &path) {
-        auto partition = PartitionHandle(path);
-        auto session = SessionHandle(partition.get());
-
-        // Step 1: Generate an RSA key pair for wrapping/unwrapping
-        AutoKey wrapping_priv_key;
-        AutoKey wrapping_pub_key;
-        auto err = generate_rsa_unwrapping_keypair(
-            session.get(),
-            wrapping_priv_key.get_ptr(),
-            wrapping_pub_key.get_ptr()
-        );
-        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
-
-        // Step 2: Import the hardcoded RSA key pair
-        AutoKey imported_priv_key;
-        AutoKey imported_pub_key;
-        KeyProps import_props = {
-            .key_kind = AZIHSM_KEY_KIND_RSA,
-            .key_size_bits = 2048,
-            .session_key = true,
-            .sign = true,
-            .verify = true,
-            .encrypt = false,
-            .decrypt = false,
-        };
-        auto import_err = import_keypair(
-            wrapping_pub_key.get(),
-            wrapping_priv_key.get(),
-            rsa_private_key_der,
-            import_props,
-            imported_priv_key.get_ptr(),
-            imported_pub_key.get_ptr()
-        );
-        ASSERT_EQ(import_err, AZIHSM_ERROR_SUCCESS);
-
-        // Step 3: Test data and algorithm
-        const char *test_data = "Test RSA PSS SHA-512 signing";
-        std::vector<uint8_t> data_to_sign(test_data, test_data + strlen(test_data));
-
-        azihsm_algo_rsa_pkcs_pss_params pss_params = {};
-        pss_params.hash_algo_id = AZIHSM_ALGO_ID_SHA512;
-        pss_params.mgf_id = AZIHSM_MGF1_ID_SHA512;
-        pss_params.salt_len = 64; // SHA-512 produces 64 bytes
-
-        azihsm_algo sign_algo = {};
-        sign_algo.id = AZIHSM_ALGO_ID_RSA_PKCS_PSS_SHA512;
-        sign_algo.params = &pss_params;
-        sign_algo.len = sizeof(pss_params);
-
-        azihsm_buffer data_buf = {};
-        data_buf.ptr = data_to_sign.data();
-        data_buf.len = static_cast<uint32_t>(data_to_sign.size());
-
-        std::vector<uint8_t> signature_data(256);
-        azihsm_buffer sig_buf = {};
-        sig_buf.ptr = signature_data.data();
-        sig_buf.len = static_cast<uint32_t>(signature_data.size());
-
-        // Step 4: Sign and verify
-        auto sign_err = azihsm_crypt_sign(&sign_algo, imported_priv_key.get(), &data_buf, &sig_buf);
-        ASSERT_EQ(sign_err, AZIHSM_ERROR_SUCCESS);
-        ASSERT_GT(sig_buf.len, 0);
-
-        azihsm_buffer verify_sig_buf = {};
-        verify_sig_buf.ptr = signature_data.data();
-        verify_sig_buf.len = sig_buf.len;
-
-        auto verify_err =
-            azihsm_crypt_verify(&sign_algo, imported_pub_key.get(), &data_buf, &verify_sig_buf);
-        ASSERT_EQ(verify_err, AZIHSM_ERROR_SUCCESS);
-
-        // Step 5: Test the key deletion
-        auto del_priv_err = azihsm_key_delete(imported_priv_key.release());
-        ASSERT_EQ(del_priv_err, AZIHSM_ERROR_SUCCESS);
-        auto del_pub_err = azihsm_key_delete(imported_pub_key.release());
-        ASSERT_EQ(del_pub_err, AZIHSM_ERROR_SUCCESS);
-    });
-}
-
-// RSA PSS direct (pre-hashed) sign and verify test
-TEST_F(azihsm_rsa_sign_verify, sign_verify_pss_prehashed_sha256_with_imported_key)
-{
-    part_list_.for_each_part([this](std::vector<azihsm_char> &path) {
-        auto partition = PartitionHandle(path);
-        auto session = SessionHandle(partition.get());
-
-        // Step 1: Generate an RSA key pair for wrapping/unwrapping
-        AutoKey wrapping_priv_key;
-        AutoKey wrapping_pub_key;
-        auto err = generate_rsa_unwrapping_keypair(
-            session.get(),
-            wrapping_priv_key.get_ptr(),
-            wrapping_pub_key.get_ptr()
-        );
-        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
-        ASSERT_NE(wrapping_priv_key.get(), 0);
-        ASSERT_NE(wrapping_pub_key.get(), 0);
-
-        // Step 2: Import the hardcoded RSA key pair
-        AutoKey imported_priv_key;
-        AutoKey imported_pub_key;
-        KeyProps import_props = {
-            .key_kind = AZIHSM_KEY_KIND_RSA,
-            .key_size_bits = 2048,
-            .session_key = true,
-            .sign = true,
-            .verify = true,
-            .encrypt = false,
-            .decrypt = false,
-        };
-        auto import_err = import_keypair(
-            wrapping_pub_key.get(),
-            wrapping_priv_key.get(),
-            rsa_private_key_der,
-            import_props,
-            imported_priv_key.get_ptr(),
-            imported_pub_key.get_ptr()
-        );
-        ASSERT_EQ(import_err, AZIHSM_ERROR_SUCCESS);
-        ASSERT_NE(imported_priv_key.get(), 0);
-        ASSERT_NE(imported_pub_key.get(), 0);
-
-        // Step 3: Prepare pre-hashed data (SHA-256 hash = 32 bytes)
-        std::vector<uint8_t> hashed_data(32, 0xAB); // 32 bytes all initialized to 0xAB
-
-        // Step 4: Setup PSS algorithm for pre-hashed data (AZIHSM_ALGO_ID_RSA_PKCS_PSS)
-        azihsm_algo_rsa_pkcs_pss_params pss_params = {};
-        pss_params.hash_algo_id = AZIHSM_ALGO_ID_SHA256;
-        pss_params.mgf_id = AZIHSM_MGF1_ID_SHA256;
-        pss_params.salt_len = 32; // SHA-256 produces 32 bytes
-
-        azihsm_algo sign_algo = {};
-        sign_algo.id = AZIHSM_ALGO_ID_RSA_PKCS_PSS; // Direct PSS, not PSS_SHA256
-        sign_algo.params = &pss_params;
-        sign_algo.len = sizeof(pss_params);
-
-        azihsm_buffer data_buf = {};
-        data_buf.ptr = hashed_data.data();
-        data_buf.len = static_cast<uint32_t>(hashed_data.size());
-
-        std::vector<uint8_t> signature_data(256); // RSA 2048 = 256 bytes signature
-        azihsm_buffer sig_buf = {};
-        sig_buf.ptr = signature_data.data();
-        sig_buf.len = static_cast<uint32_t>(signature_data.size());
-
-        // Step 5: Sign with the imported private key using pre-hashed data
-        auto sign_err = azihsm_crypt_sign(&sign_algo, imported_priv_key.get(), &data_buf, &sig_buf);
-        ASSERT_EQ(sign_err, AZIHSM_ERROR_SUCCESS);
-        ASSERT_GT(sig_buf.len, 0);
-        ASSERT_LE(sig_buf.len, 256);
-
-        // Step 6: Verify with the imported public key
-        azihsm_buffer verify_sig_buf = {};
-        verify_sig_buf.ptr = signature_data.data();
-        verify_sig_buf.len = sig_buf.len;
-
-        auto verify_err =
-            azihsm_crypt_verify(&sign_algo, imported_pub_key.get(), &data_buf, &verify_sig_buf);
-        ASSERT_EQ(verify_err, AZIHSM_ERROR_SUCCESS);
-
-        // Step 7: Test verification fails with modified hash
-        std::vector<uint8_t> modified_hash = hashed_data;
-        modified_hash[0] ^= 0xFF; // Flip bits in first byte
-
-        azihsm_buffer modified_buf = {};
-        modified_buf.ptr = modified_hash.data();
-        modified_buf.len = static_cast<uint32_t>(modified_hash.size());
-
-        auto verify_fail_err =
-            azihsm_crypt_verify(&sign_algo, imported_pub_key.get(), &modified_buf, &verify_sig_buf);
-        ASSERT_NE(verify_fail_err, AZIHSM_ERROR_SUCCESS);
-
-        // Step 8: Test the key deletion
-        auto del_priv_err = azihsm_key_delete(imported_priv_key.release());
-        ASSERT_EQ(del_priv_err, AZIHSM_ERROR_SUCCESS);
-        auto del_pub_err = azihsm_key_delete(imported_pub_key.release());
-        ASSERT_EQ(del_pub_err, AZIHSM_ERROR_SUCCESS);
-    });
-}
-
-// RSA PSS direct (pre-hashed) sign and verify test with SHA-384
-TEST_F(azihsm_rsa_sign_verify, sign_verify_pss_prehashed_sha384_with_imported_key)
-{
-    part_list_.for_each_part([this](std::vector<azihsm_char> &path) {
-        auto partition = PartitionHandle(path);
-        auto session = SessionHandle(partition.get());
-
-        // Step 1: Generate an RSA key pair for wrapping/unwrapping
-        AutoKey wrapping_priv_key;
-        AutoKey wrapping_pub_key;
-        auto err = generate_rsa_unwrapping_keypair(
-            session.get(),
-            wrapping_priv_key.get_ptr(),
-            wrapping_pub_key.get_ptr()
-        );
-        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
-
-        // Step 2: Import the hardcoded RSA key pair
-        AutoKey imported_priv_key;
-        AutoKey imported_pub_key;
-        KeyProps import_props = {
-            .key_kind = AZIHSM_KEY_KIND_RSA,
-            .key_size_bits = 2048,
-            .session_key = true,
-            .sign = true,
-            .verify = true,
-            .encrypt = false,
-            .decrypt = false,
-        };
-        auto import_err = import_keypair(
-            wrapping_pub_key.get(),
-            wrapping_priv_key.get(),
-            rsa_private_key_der,
-            import_props,
-            imported_priv_key.get_ptr(),
-            imported_pub_key.get_ptr()
-        );
-        ASSERT_EQ(import_err, AZIHSM_ERROR_SUCCESS);
-
-        // Step 3: Prepare pre-hashed data (SHA-384 hash = 48 bytes)
-        std::vector<uint8_t> hashed_data(48, 0xCD); // 48 bytes all initialized to 0xCD
-
-        // Step 4: Setup PSS algorithm for pre-hashed data
-        azihsm_algo_rsa_pkcs_pss_params pss_params = {};
-        pss_params.hash_algo_id = AZIHSM_ALGO_ID_SHA384;
-        pss_params.mgf_id = AZIHSM_MGF1_ID_SHA384;
-        pss_params.salt_len = 48; // SHA-384 produces 48 bytes
-
-        azihsm_algo sign_algo = {};
-        sign_algo.id = AZIHSM_ALGO_ID_RSA_PKCS_PSS; // Direct PSS
-        sign_algo.params = &pss_params;
-        sign_algo.len = sizeof(pss_params);
-
-        azihsm_buffer data_buf = {};
-        data_buf.ptr = hashed_data.data();
-        data_buf.len = static_cast<uint32_t>(hashed_data.size());
-
-        std::vector<uint8_t> signature_data(256);
-        azihsm_buffer sig_buf = {};
-        sig_buf.ptr = signature_data.data();
-        sig_buf.len = static_cast<uint32_t>(signature_data.size());
-
-        // Step 5: Sign and verify
-        auto sign_err = azihsm_crypt_sign(&sign_algo, imported_priv_key.get(), &data_buf, &sig_buf);
-        ASSERT_EQ(sign_err, AZIHSM_ERROR_SUCCESS);
-        ASSERT_GT(sig_buf.len, 0);
-
-        azihsm_buffer verify_sig_buf = {};
-        verify_sig_buf.ptr = signature_data.data();
-        verify_sig_buf.len = sig_buf.len;
-
-        auto verify_err =
-            azihsm_crypt_verify(&sign_algo, imported_pub_key.get(), &data_buf, &verify_sig_buf);
-        ASSERT_EQ(verify_err, AZIHSM_ERROR_SUCCESS);
-
-        // Step 6: Test the key deletion
-        auto del_priv_err = azihsm_key_delete(imported_priv_key.release());
-        ASSERT_EQ(del_priv_err, AZIHSM_ERROR_SUCCESS);
-        auto del_pub_err = azihsm_key_delete(imported_pub_key.release());
-        ASSERT_EQ(del_pub_err, AZIHSM_ERROR_SUCCESS);
-    });
-}
-
-// RSA PSS direct (pre-hashed) sign and verify test with SHA-512
-TEST_F(azihsm_rsa_sign_verify, sign_verify_pss_prehashed_sha512_with_imported_key)
-{
-    part_list_.for_each_part([this](std::vector<azihsm_char> &path) {
-        auto partition = PartitionHandle(path);
-        auto session = SessionHandle(partition.get());
-
-        // Step 1: Generate an RSA key pair for wrapping/unwrapping
-        AutoKey wrapping_priv_key;
-        AutoKey wrapping_pub_key;
-        auto err = generate_rsa_unwrapping_keypair(
-            session.get(),
-            wrapping_priv_key.get_ptr(),
-            wrapping_pub_key.get_ptr()
-        );
-        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
-
-        // Step 2: Import the hardcoded RSA key pair
-        AutoKey imported_priv_key;
-        AutoKey imported_pub_key;
-        KeyProps import_props = {
-            .key_kind = AZIHSM_KEY_KIND_RSA,
-            .key_size_bits = 2048,
-            .session_key = true,
-            .sign = true,
-            .verify = true,
-            .encrypt = false,
-            .decrypt = false,
-        };
-        auto import_err = import_keypair(
-            wrapping_pub_key.get(),
-            wrapping_priv_key.get(),
-            rsa_private_key_der,
-            import_props,
-            imported_priv_key.get_ptr(),
-            imported_pub_key.get_ptr()
-        );
-        ASSERT_EQ(import_err, AZIHSM_ERROR_SUCCESS);
-
-        // Step 3: Prepare pre-hashed data (SHA-512 hash = 64 bytes)
-        std::vector<uint8_t> hashed_data(64, 0xEF); // 64 bytes all initialized to 0xEF
-
-        // Step 4: Setup PSS algorithm for pre-hashed data
-        azihsm_algo_rsa_pkcs_pss_params pss_params = {};
-        pss_params.hash_algo_id = AZIHSM_ALGO_ID_SHA512;
-        pss_params.mgf_id = AZIHSM_MGF1_ID_SHA512;
-        pss_params.salt_len = 64; // SHA-512 produces 64 bytes
-
-        azihsm_algo sign_algo = {};
-        sign_algo.id = AZIHSM_ALGO_ID_RSA_PKCS_PSS; // Direct PSS
-        sign_algo.params = &pss_params;
-        sign_algo.len = sizeof(pss_params);
-
-        azihsm_buffer data_buf = {};
-        data_buf.ptr = hashed_data.data();
-        data_buf.len = static_cast<uint32_t>(hashed_data.size());
-
-        std::vector<uint8_t> signature_data(256);
-        azihsm_buffer sig_buf = {};
-        sig_buf.ptr = signature_data.data();
-        sig_buf.len = static_cast<uint32_t>(signature_data.size());
-
-        // Step 5: Sign and verify
-        auto sign_err = azihsm_crypt_sign(&sign_algo, imported_priv_key.get(), &data_buf, &sig_buf);
-        ASSERT_EQ(sign_err, AZIHSM_ERROR_SUCCESS);
-        ASSERT_GT(sig_buf.len, 0);
-
-        azihsm_buffer verify_sig_buf = {};
-        verify_sig_buf.ptr = signature_data.data();
-        verify_sig_buf.len = sig_buf.len;
-
-        auto verify_err =
-            azihsm_crypt_verify(&sign_algo, imported_pub_key.get(), &data_buf, &verify_sig_buf);
-        ASSERT_EQ(verify_err, AZIHSM_ERROR_SUCCESS);
-
-        // Step 6: Test the key deletion
-        auto del_priv_err = azihsm_key_delete(imported_priv_key.release());
-        ASSERT_EQ(del_priv_err, AZIHSM_ERROR_SUCCESS);
-        auto del_pub_err = azihsm_key_delete(imported_pub_key.release());
-        ASSERT_EQ(del_pub_err, AZIHSM_ERROR_SUCCESS);
-    });
-}
-
-// RSA PSS direct (pre-hashed) sign and verify test with SHA-1
-TEST_F(azihsm_rsa_sign_verify, sign_verify_pss_prehashed_sha1_with_imported_key)
-{
-    part_list_.for_each_part([this](std::vector<azihsm_char> &path) {
-        auto partition = PartitionHandle(path);
-        auto session = SessionHandle(partition.get());
-
-        // Step 1: Generate an RSA key pair for wrapping/unwrapping
-        AutoKey wrapping_priv_key;
-        AutoKey wrapping_pub_key;
-        auto err = generate_rsa_unwrapping_keypair(
-            session.get(),
-            wrapping_priv_key.get_ptr(),
-            wrapping_pub_key.get_ptr()
-        );
-        ASSERT_EQ(err, AZIHSM_ERROR_SUCCESS);
-
-        // Step 2: Import the hardcoded RSA key pair
-        AutoKey imported_priv_key;
-        AutoKey imported_pub_key;
-        KeyProps import_props = {
-            .key_kind = AZIHSM_KEY_KIND_RSA,
-            .key_size_bits = 2048,
-            .session_key = true,
-            .sign = true,
-            .verify = true,
-            .encrypt = false,
-            .decrypt = false,
-        };
-        auto import_err = import_keypair(
-            wrapping_pub_key.get(),
-            wrapping_priv_key.get(),
-            rsa_private_key_der,
-            import_props,
-            imported_priv_key.get_ptr(),
-            imported_pub_key.get_ptr()
-        );
-        ASSERT_EQ(import_err, AZIHSM_ERROR_SUCCESS);
-
-        // Step 3: Prepare pre-hashed data (SHA-1 hash = 20 bytes)
-        std::vector<uint8_t> hashed_data(20, 0x9A); // 20 bytes all initialized to 0x9A
-
-        // Step 4: Setup PSS algorithm for pre-hashed data
-        azihsm_algo_rsa_pkcs_pss_params pss_params = {};
-        pss_params.hash_algo_id = AZIHSM_ALGO_ID_SHA1;
-        pss_params.mgf_id = AZIHSM_MGF1_ID_SHA1;
-        pss_params.salt_len = 20; // SHA-1 produces 20 bytes
-
-        azihsm_algo sign_algo = {};
-        sign_algo.id = AZIHSM_ALGO_ID_RSA_PKCS_PSS; // Direct PSS
-        sign_algo.params = &pss_params;
-        sign_algo.len = sizeof(pss_params);
-
-        azihsm_buffer data_buf = {};
-        data_buf.ptr = hashed_data.data();
-        data_buf.len = static_cast<uint32_t>(hashed_data.size());
-
-        std::vector<uint8_t> signature_data(256);
-        azihsm_buffer sig_buf = {};
-        sig_buf.ptr = signature_data.data();
-        sig_buf.len = static_cast<uint32_t>(signature_data.size());
-
-        // Step 5: Sign and verify
-        auto sign_err = azihsm_crypt_sign(&sign_algo, imported_priv_key.get(), &data_buf, &sig_buf);
-        ASSERT_EQ(sign_err, AZIHSM_ERROR_SUCCESS);
-        ASSERT_GT(sig_buf.len, 0);
-
-        azihsm_buffer verify_sig_buf = {};
-        verify_sig_buf.ptr = signature_data.data();
-        verify_sig_buf.len = sig_buf.len;
-
-        auto verify_err =
-            azihsm_crypt_verify(&sign_algo, imported_pub_key.get(), &data_buf, &verify_sig_buf);
-        ASSERT_EQ(verify_err, AZIHSM_ERROR_SUCCESS);
-
-        // Step 6: Test the key deletion
-        auto del_priv_err = azihsm_key_delete(imported_priv_key.release());
-        ASSERT_EQ(del_priv_err, AZIHSM_ERROR_SUCCESS);
-        auto del_pub_err = azihsm_key_delete(imported_pub_key.release());
-        ASSERT_EQ(del_pub_err, AZIHSM_ERROR_SUCCESS);
-    });
+    azihsm_algo_rsa_pkcs_pss_params pss_params_sha1 = { .hash_algo_id = AZIHSM_ALGO_ID_SHA1,
+                                                        .mgf_id = AZIHSM_MGF1_ID_SHA1,
+                                                        .salt_len = 20 };
+
+    azihsm_algo_rsa_pkcs_pss_params pss_params_sha256 = { .hash_algo_id = AZIHSM_ALGO_ID_SHA256,
+                                                          .mgf_id = AZIHSM_MGF1_ID_SHA256,
+                                                          .salt_len = 32 };
+
+    azihsm_algo_rsa_pkcs_pss_params pss_params_sha384 = { .hash_algo_id = AZIHSM_ALGO_ID_SHA384,
+                                                          .mgf_id = AZIHSM_MGF1_ID_SHA384,
+                                                          .salt_len = 48 };
+
+    azihsm_algo_rsa_pkcs_pss_params pss_params_sha512 = { .hash_algo_id = AZIHSM_ALGO_ID_SHA512,
+                                                          .mgf_id = AZIHSM_MGF1_ID_SHA512,
+                                                          .salt_len = 64 };
+
+    std::vector<RsaTestParams> test_cases = {
+        { AZIHSM_ALGO_ID_RSA_PKCS_PSS_SHA1, "SHA1", &pss_params_sha1 },
+        { AZIHSM_ALGO_ID_RSA_PKCS_PSS_SHA256, "SHA256", &pss_params_sha256 },
+        { AZIHSM_ALGO_ID_RSA_PKCS_PSS_SHA384, "SHA384", &pss_params_sha384 },
+        { AZIHSM_ALGO_ID_RSA_PKCS_PSS_SHA512, "SHA512", &pss_params_sha512 },
+    };
+
+    for (const auto &test_case : test_cases)
+    {
+        SCOPED_TRACE("Testing PSS streaming with " + std::string(test_case.test_name));
+
+        part_list_.for_each_part([&](std::vector<azihsm_char> &path) {
+            auto partition = PartitionHandle(path);
+            auto session = SessionHandle(partition.get());
+
+            AutoKey wrapping_priv_key, wrapping_pub_key;
+            AutoKey imported_priv_key, imported_pub_key;
+            setup_keys(
+                session.get(),
+                wrapping_priv_key,
+                wrapping_pub_key,
+                imported_priv_key,
+                imported_pub_key
+            );
+
+            azihsm_algo sign_algo = { .id = test_case.algo_id,
+                                      .params = test_case.pss_params,
+                                      .len = sizeof(azihsm_algo_rsa_pkcs_pss_params) };
+
+            std::vector<const char *> chunks = { "Streaming ", "PSS ", test_case.test_name };
+            test_streaming_sign_verify(
+                imported_priv_key.get(),
+                imported_pub_key.get(),
+                sign_algo,
+                chunks
+            );
+
+            ASSERT_EQ(azihsm_key_delete(imported_priv_key.release()), AZIHSM_ERROR_SUCCESS);
+            ASSERT_EQ(azihsm_key_delete(imported_pub_key.release()), AZIHSM_ERROR_SUCCESS);
+        });
+    }
 }

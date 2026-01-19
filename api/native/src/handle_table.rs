@@ -25,6 +25,8 @@ pub(crate) enum HandleType {
     HmacSignStreamingCtx,
     HmacVerifyStreamingCtx,
     GenericSecretKey,
+    RsaSignStreamingCtx,
+    RsaVerifyStreamingCtx,
 }
 
 struct Entry {

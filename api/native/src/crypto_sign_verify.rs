@@ -58,7 +58,7 @@ pub unsafe extern "C" fn azihsm_crypt_sign(
             | AzihsmAlgoId::RsaPkcsSha256
             | AzihsmAlgoId::RsaPkcsSha384
             | AzihsmAlgoId::RsaPkcsSha512 => {
-                rsa_hash_sign(algo.id, key_handle, input_data, sig_buf)?;
+                rsa_pkcs1_hash_sign(algo.id, key_handle, input_data, sig_buf)?;
             }
             AzihsmAlgoId::RsaPkcsPss => {
                 rsa_pss_sign(algo, key_handle, input_data, sig_buf)?;
@@ -124,7 +124,7 @@ pub unsafe extern "C" fn azihsm_crypt_verify(
             | AzihsmAlgoId::RsaPkcsSha256
             | AzihsmAlgoId::RsaPkcsSha384
             | AzihsmAlgoId::RsaPkcsSha512 => {
-                rsa_hash_verify(algo.id, key_handle, input_data, sig_data)?
+                rsa_pkcs1_hash_verify(algo.id, key_handle, input_data, sig_data)?
             }
 
             AzihsmAlgoId::RsaPkcsPss => rsa_pss_verify(algo, key_handle, input_data, sig_data)?,
@@ -171,7 +171,7 @@ pub unsafe extern "C" fn azihsm_crypt_sign_init(
 
         // Dispatch based on algorithm ID
         let handle = match algo.id {
-            AzihsmAlgoId::Ecdsa => {
+            AzihsmAlgoId::Ecdsa | AzihsmAlgoId::RsaPkcsPss => {
                 // Streaming pre-computed hash input is not supported
                 Err(AzihsmError::UnsupportedAlgorithm)?
             }
@@ -185,6 +185,17 @@ pub unsafe extern "C" fn azihsm_crypt_sign_init(
             | AzihsmAlgoId::HmacSha256
             | AzihsmAlgoId::HmacSha384
             | AzihsmAlgoId::HmacSha512 => hmac_sign_init(key_handle)?,
+
+            AzihsmAlgoId::RsaPkcsSha1
+            | AzihsmAlgoId::RsaPkcsSha256
+            | AzihsmAlgoId::RsaPkcsSha384
+            | AzihsmAlgoId::RsaPkcsSha512 => rsa_pkcs1_hash_sign_init(algo.id, key_handle)?,
+
+            AzihsmAlgoId::RsaPkcsPssSha1
+            | AzihsmAlgoId::RsaPkcsPssSha256
+            | AzihsmAlgoId::RsaPkcsPssSha384
+            | AzihsmAlgoId::RsaPkcsPssSha512 => rsa_pss_hash_sign_init(algo.id, algo, key_handle)?,
+
             _ => Err(AzihsmError::UnsupportedAlgorithm)?,
         };
 
@@ -220,6 +231,9 @@ pub unsafe extern "C" fn azihsm_crypt_sign_update(
             }
             HandleType::HmacSignStreamingCtx => {
                 hmac_sign_update(ctx_handle, input_data)?;
+            }
+            HandleType::RsaSignStreamingCtx => {
+                rsa_sign_update(ctx_handle, input_data)?;
             }
             _ => Err(AzihsmError::InvalidHandle)?,
         }
@@ -257,6 +271,9 @@ pub unsafe extern "C" fn azihsm_crypt_sign_final(
             HandleType::HmacSignStreamingCtx => {
                 hmac_sign_final(ctx_handle, sig_buf)?;
             }
+            HandleType::RsaSignStreamingCtx => {
+                rsa_sign_final(ctx_handle, sig_buf)?;
+            }
             _ => Err(AzihsmError::InvalidHandle)?,
         }
 
@@ -289,7 +306,7 @@ pub unsafe extern "C" fn azihsm_crypt_verify_init(
 
         // Dispatch based on algorithm ID
         let handle = match algo.id {
-            AzihsmAlgoId::Ecdsa => {
+            AzihsmAlgoId::Ecdsa | AzihsmAlgoId::RsaPkcsPss => {
                 // Streaming pre-computed hash input is not supported
                 Err(AzihsmError::UnsupportedAlgorithm)?
             }
@@ -303,6 +320,19 @@ pub unsafe extern "C" fn azihsm_crypt_verify_init(
             | AzihsmAlgoId::HmacSha256
             | AzihsmAlgoId::HmacSha384
             | AzihsmAlgoId::HmacSha512 => hmac_verify_init(key_handle)?,
+
+            AzihsmAlgoId::RsaPkcsSha1
+            | AzihsmAlgoId::RsaPkcsSha256
+            | AzihsmAlgoId::RsaPkcsSha384
+            | AzihsmAlgoId::RsaPkcsSha512 => rsa_pkcs1_hash_verify_init(algo.id, key_handle)?,
+
+            AzihsmAlgoId::RsaPkcsPssSha1
+            | AzihsmAlgoId::RsaPkcsPssSha256
+            | AzihsmAlgoId::RsaPkcsPssSha384
+            | AzihsmAlgoId::RsaPkcsPssSha512 => {
+                rsa_pss_hash_verify_init(algo.id, algo, key_handle)?
+            }
+
             _ => Err(AzihsmError::UnsupportedAlgorithm)?,
         };
 
@@ -339,6 +369,9 @@ pub unsafe extern "C" fn azihsm_crypt_verify_update(
             HandleType::HmacVerifyStreamingCtx => {
                 hmac_verify_update(ctx_handle, input_data)?;
             }
+            HandleType::RsaVerifyStreamingCtx => {
+                rsa_verify_update(ctx_handle, input_data)?;
+            }
             _ => Err(AzihsmError::InvalidHandle)?,
         }
 
@@ -370,6 +403,7 @@ pub unsafe extern "C" fn azihsm_crypt_verify_final(
         let is_valid = match ctx_type {
             HandleType::EccVerifyStreamingCtx => ecc_verify_final(ctx_handle, signature)?,
             HandleType::HmacVerifyStreamingCtx => hmac_verify_final(ctx_handle, signature)?,
+            HandleType::RsaVerifyStreamingCtx => rsa_verify_final(ctx_handle, signature)?,
             _ => Err(AzihsmError::InvalidHandle)?,
         };
 

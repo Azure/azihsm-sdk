@@ -6,8 +6,10 @@ use crate::AzihsmAlgo;
 use crate::AzihsmBuffer;
 use crate::AzihsmError;
 use crate::AzihsmHandle;
+use crate::HANDLE_TABLE;
 use crate::algo::AzihsmAlgoId;
 use crate::algo::rsa::AzihsmMgf1Id;
+use crate::handle_table::HandleType;
 use crate::utils::*;
 
 /// RSA PKCS PSS signature parameters matching C API.
@@ -71,7 +73,7 @@ where
 }
 
 /// Helper function to perform RSA signing operation with hash algorithm
-pub(crate) fn rsa_hash_sign(
+pub(crate) fn rsa_pkcs1_hash_sign(
     hash_algo: AzihsmAlgoId,
     key_handle: AzihsmHandle,
     input: &[u8],
@@ -150,7 +152,7 @@ where
 }
 
 /// Helper function to perform RSA verification operation with hash algorithm
-pub(crate) fn rsa_hash_verify(
+pub(crate) fn rsa_pkcs1_hash_verify(
     hash_algo: AzihsmAlgoId,
     key_handle: AzihsmHandle,
     data: &[u8],
@@ -210,4 +212,168 @@ pub(crate) fn rsa_pss_hash_verify(
     let pss_algo = HsmRsaHashSignAlgo::with_pss_padding(hash_algo, params.salt_len as usize);
 
     verify_with_algo(pss_algo, key_handle, data, sig)
+}
+
+/// Generic helper function to initialize RSA streaming signing
+fn sign_init_with_algo<A>(
+    sign_algo: A,
+    key_handle: AzihsmHandle,
+) -> Result<AzihsmHandle, AzihsmError>
+where
+    A: HsmSignStreamingOp<Key = HsmRsaPrivateKey, Error = HsmError>,
+{
+    // Get the key from handle
+    let key = HsmRsaPrivateKey::try_from(key_handle)?;
+
+    // Initialize the streaming signing context
+    let ctx = HsmSigner::sign_init(sign_algo, key)?;
+
+    // Allocate a handle for the context and return it
+    let ctx_handle = HANDLE_TABLE.alloc_handle(HandleType::RsaSignStreamingCtx, Box::new(ctx));
+
+    Ok(ctx_handle)
+}
+
+pub(crate) fn rsa_pkcs1_hash_sign_init(
+    hash_algo: AzihsmAlgoId,
+    key_handle: AzihsmHandle,
+) -> Result<AzihsmHandle, AzihsmError> {
+    let hash_algo = HsmHashAlgo::try_from(hash_algo)?;
+    let sign_algo = HsmRsaHashSignAlgo::with_pkcs1_padding(hash_algo);
+    sign_init_with_algo(sign_algo, key_handle)
+}
+
+pub(crate) fn rsa_pss_hash_sign_init(
+    hash_algo_from_id: AzihsmAlgoId,
+    algo: &AzihsmAlgo,
+    key_handle: AzihsmHandle,
+) -> Result<AzihsmHandle, AzihsmError> {
+    let hash_algo = HsmHashAlgo::try_from(hash_algo_from_id)?;
+
+    // Extract PSS parameters
+    let params = <&AzihsmAlgoRsaPkcsPssParams>::try_from(algo)?;
+
+    // Convert hash algorithm from params
+    let hash_algo_from_param = HsmHashAlgo::try_from(params.hash_algo_id)?;
+
+    // Check that provided hash_algo matches the one in params
+    if hash_algo != hash_algo_from_param {
+        Err(AzihsmError::InvalidArgument)?;
+    }
+
+    // Create the signing algorithm with PSS padding
+    let sign_algo = HsmRsaHashSignAlgo::with_pss_padding(hash_algo, params.salt_len as usize);
+
+    sign_init_with_algo(sign_algo, key_handle)
+}
+
+pub(crate) fn rsa_sign_update(ctx_handle: AzihsmHandle, data: &[u8]) -> Result<(), AzihsmError> {
+    // Get mutable reference to the context from handle table
+    let ctx: &mut HsmRsaSignContext =
+        HANDLE_TABLE.as_mut(ctx_handle, HandleType::RsaSignStreamingCtx)?;
+
+    // Update the context with the data chunk
+    ctx.update(data)?;
+
+    Ok(())
+}
+
+pub(crate) fn rsa_sign_final(
+    ctx_handle: AzihsmHandle,
+    output: &mut AzihsmBuffer,
+) -> Result<(), AzihsmError> {
+    // Get a reference to determine the required signature size
+    let ctx_ref: &mut HsmRsaSignContext =
+        HANDLE_TABLE.as_mut(ctx_handle, HandleType::RsaSignStreamingCtx)?;
+    let required_size = ctx_ref.finish(None)?;
+
+    // Check if output buffer is large enough
+    let output_data = validate_output_buffer(output, required_size)?;
+
+    // Take ownership of the context and finalize
+    let mut ctx: Box<HsmRsaSignContext> =
+        HANDLE_TABLE.free_handle(ctx_handle, HandleType::RsaSignStreamingCtx)?;
+
+    // Perform the final signing operation
+    let sig_len = ctx.finish(Some(output_data))?;
+
+    // Update the output buffer length with actual signature length
+    output.len = sig_len as u32;
+
+    Ok(())
+}
+
+/// Generic helper function to initialize RSA streaming verification
+fn verify_init_with_algo<A>(
+    verify_algo: A,
+    key_handle: AzihsmHandle,
+) -> Result<AzihsmHandle, AzihsmError>
+where
+    A: HsmVerifyStreamingOp<Key = HsmRsaPublicKey, Error = HsmError>,
+{
+    // Get the key from handle
+    let key = HsmRsaPublicKey::try_from(key_handle)?;
+
+    // Initialize the streaming verification context
+    let ctx = HsmVerifier::verify_init(verify_algo, key)?;
+
+    // Allocate a handle for the context and return it
+    let ctx_handle = HANDLE_TABLE.alloc_handle(HandleType::RsaVerifyStreamingCtx, Box::new(ctx));
+
+    Ok(ctx_handle)
+}
+
+pub(crate) fn rsa_pkcs1_hash_verify_init(
+    hash_algo: AzihsmAlgoId,
+    key_handle: AzihsmHandle,
+) -> Result<AzihsmHandle, AzihsmError> {
+    let hash_algo = HsmHashAlgo::try_from(hash_algo)?;
+    let verify_algo = HsmRsaHashSignAlgo::with_pkcs1_padding(hash_algo);
+    verify_init_with_algo(verify_algo, key_handle)
+}
+
+pub(crate) fn rsa_pss_hash_verify_init(
+    hash_algo_from_id: AzihsmAlgoId,
+    algo: &AzihsmAlgo,
+    key_handle: AzihsmHandle,
+) -> Result<AzihsmHandle, AzihsmError> {
+    let hash_algo = HsmHashAlgo::try_from(hash_algo_from_id)?;
+
+    // Extract PSS parameters
+    let params = <&AzihsmAlgoRsaPkcsPssParams>::try_from(algo)?;
+
+    // Convert hash algorithm from params
+    let hash_algo_from_param = HsmHashAlgo::try_from(params.hash_algo_id)?;
+
+    // Check that provided hash_algo matches the one in params
+    if hash_algo != hash_algo_from_param {
+        Err(AzihsmError::InvalidArgument)?;
+    }
+
+    // Create the verification algorithm with PSS padding
+    let verify_algo = HsmRsaHashSignAlgo::with_pss_padding(hash_algo, params.salt_len as usize);
+
+    verify_init_with_algo(verify_algo, key_handle)
+}
+
+pub(crate) fn rsa_verify_update(ctx_handle: AzihsmHandle, data: &[u8]) -> Result<(), AzihsmError> {
+    // Get mutable reference to the context from handle table
+    let ctx: &mut HsmRsaVerifyContext =
+        HANDLE_TABLE.as_mut(ctx_handle, HandleType::RsaVerifyStreamingCtx)?;
+
+    // Update the context with the data chunk
+    ctx.update(data)?;
+
+    Ok(())
+}
+
+pub(crate) fn rsa_verify_final(ctx_handle: AzihsmHandle, sig: &[u8]) -> Result<bool, AzihsmError> {
+    // Take ownership of the context and finalize
+    let mut ctx: Box<HsmRsaVerifyContext> =
+        HANDLE_TABLE.free_handle(ctx_handle, HandleType::RsaVerifyStreamingCtx)?;
+
+    // Perform the final verification operation
+    let is_valid = ctx.finish(sig)?;
+
+    Ok(is_valid)
 }
