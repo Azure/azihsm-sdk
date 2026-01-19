@@ -193,3 +193,20 @@ pub(crate) fn rsa_unwrap_key_pair(
 
     Ok((priv_handle, pub_handle))
 }
+
+/// Unmask a masked RSA key pair
+pub(crate) fn rsa_unmask_key_pair(
+    session: &HsmSession,
+    masked_key: &[u8],
+) -> Result<(AzihsmHandle, AzihsmHandle), AzihsmError> {
+    let mut unmask_algo = HsmRsaKeyUnmaskAlgo::default();
+
+    // Unmask RSA key pair
+    let (priv_key, pub_key): (HsmRsaPrivateKey, HsmRsaPublicKey) =
+        HsmKeyManager::unmask_key_pair(session, &mut unmask_algo, masked_key)?;
+
+    let priv_handle = HANDLE_TABLE.alloc_handle(HandleType::RsaPrivKey, Box::new(priv_key));
+    let pub_handle = HANDLE_TABLE.alloc_handle(HandleType::RsaPubKey, Box::new(pub_key));
+
+    Ok((priv_handle, pub_handle))
+}

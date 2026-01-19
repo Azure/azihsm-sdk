@@ -51,7 +51,9 @@ impl HsmRsaPrivateKey {
         }
 
         //RSA should have one of the supported crypto functions (typecast to u8 and sum to simplify the logic)
-        if props.can_decrypt() as u8 + props.can_unwrap() as u8 + props.can_sign() as u8 != 1 {
+        let usage_count =
+            props.can_decrypt() as u8 + props.can_unwrap() as u8 + props.can_sign() as u8;
+        if usage_count != 1 {
             Err(HsmError::InvalidKeyProps)?;
         }
 

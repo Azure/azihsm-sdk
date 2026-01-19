@@ -11,6 +11,7 @@ crate-type = ["cdylib", "rlib"]
 azihsm_api.workspace = true
 parking_lot.workspace = true
 tracing.workspace = true
+zerocopy = { features = ["derive"], workspace = true }
 
 [features]
 default = []

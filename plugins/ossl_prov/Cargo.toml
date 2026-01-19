@@ -5,9 +5,9 @@ name = "azishm_ossl_provider"
 version = "0.1.0"
 
 [dependencies]
-azihsm_api_native.workspace = true
 
 [build-dependencies]
+azihsm_api_native.workspace = true
 cmake.workspace = true
 
 [lints]

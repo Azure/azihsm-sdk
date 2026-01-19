@@ -2,7 +2,7 @@
 
 use std::ffi::c_void;
 
-use crate::AzihsmError;
+use super::*;
 
 pub(crate) fn validate_ptr<T>(ptr: *const T) -> Result<(), AzihsmError> {
     if ptr.is_null() {
@@ -97,4 +97,30 @@ pub(crate) fn cast_ptr<'a, T>(ptr: *const c_void) -> Result<&'a T, AzihsmError> 
     // The caller is responsible for ensuring the pointer points to valid memory
     // containing a properly initialized value of type T.
     Ok(unsafe { &*(ptr as *const T) })
+}
+
+/// Copy a byte slice into a key property buffer
+///
+/// # Arguments
+///
+/// * `key_prop` - The key property to copy into
+/// * `bytes` - The byte slice to copy from
+///
+/// # Returns
+///
+/// * `Ok(())` - On success
+/// * `Err(AzihsmError::BufferTooSmall)` - If the key property buffer is too small
+pub(crate) fn copy_to_key_prop(
+    key_prop: &mut AzihsmKeyProp,
+    bytes: &[u8],
+) -> Result<(), AzihsmError> {
+    let required_len = bytes.len() as u32;
+    if key_prop.len < required_len {
+        key_prop.len = required_len;
+        Err(AzihsmError::BufferTooSmall)?;
+    }
+    let buf: &mut [u8] = key_prop.try_into()?;
+    buf[..bytes.len()].copy_from_slice(bytes);
+    key_prop.len = required_len;
+    Ok(())
 }

@@ -99,7 +99,7 @@ impl HsmMaskedKey {
     /// Returns the parsed masked key header and remaining data.
     fn parse_header(masked_key: &[u8]) -> HsmResult<(&MaskedKeyHeader, &[u8])> {
         if masked_key.len() < size_of::<MaskedKeyHeader>() {
-            Err(HsmError::IndexOutOfRange)?;
+            return Err(HsmError::IndexOutOfRange);
         }
 
         let (header, remaining) = MaskedKeyHeader::try_ref_from_prefix(masked_key)
@@ -127,7 +127,7 @@ impl HsmMaskedKey {
     /// Returns the parsed AES masked key header and remaining data.
     fn parse_aes_header(remaining: &[u8]) -> HsmResult<(&MaskedKeyAesHeader, &[u8])> {
         if remaining.len() < size_of::<MaskedKeyAesHeader>() {
-            Err(HsmError::IndexOutOfRange)?;
+            return Err(HsmError::IndexOutOfRange);
         }
 
         let (aes_header, remaining) = MaskedKeyAesHeader::try_ref_from_prefix(remaining)
@@ -155,7 +155,7 @@ impl HsmMaskedKey {
         data: &[u8],
     ) -> HsmResult<HsmMaskedKeyMetadata> {
         if data.len() < Self::metadata_size(aes_key_header) {
-            Err(HsmError::IndexOutOfRange)?;
+            return Err(HsmError::IndexOutOfRange);
         }
 
         let aes_masked_key = MaskedKeyAes::new(*header, aes_key_header.into(), data);

@@ -270,7 +270,7 @@ pub unsafe extern "C" fn azihsm_key_unwrap(
 /// This function is unsafe because it dereferences raw pointers.
 #[unsafe(no_mangle)]
 #[allow(unsafe_code)]
-pub unsafe extern "C" fn azihsm_keypair_unwrap(
+pub unsafe extern "C" fn azihsm_key_unwrap_pair(
     algo: *mut AzihsmAlgo,
     unwrapping_key: AzihsmHandle,
     wrapped_key: *const AzihsmBuffer,
@@ -303,6 +303,97 @@ pub unsafe extern "C" fn azihsm_keypair_unwrap(
                 pub_key_props,
             )?,
             _ => Err(AzihsmError::UnsupportedAlgorithm)?,
+        };
+
+        assign_ptr(priv_key_handle, priv_handle)?;
+        assign_ptr(pub_key_handle, pub_handle)?;
+
+        Ok(())
+    })
+}
+
+/// Unmask a masked symmetric key
+///
+/// This function unmasks a previously masked symmetric key. The masked key contains
+/// the key material and properties, so no external properties or unwrapping keys
+/// are needed. The key is imported into the HSM within the provided session.
+///
+/// @param[in] sess_handle Handle to the HSM session
+/// @param[in] key_kind The kind of key to unmask (e.g., AES)
+/// @param[in] masked_key Pointer to buffer containing the masked key data
+/// @param[out] key_handle Pointer to store the unmasked key handle
+///
+/// @return 0 on success, or a negative error code on failure
+///
+/// @internal
+/// # Safety
+/// This function is unsafe because it dereferences raw pointers.
+#[unsafe(no_mangle)]
+#[allow(unsafe_code)]
+pub unsafe extern "C" fn azihsm_key_unmask(
+    sess_handle: AzihsmHandle,
+    key_kind: AzihsmKeyKind,
+    masked_key: *const AzihsmBuffer,
+    key_handle: *mut AzihsmHandle,
+) -> AzihsmError {
+    abi_boundary(|| {
+        validate_ptr(key_handle)?;
+
+        let session = HsmSession::try_from(sess_handle)?;
+        let masked_key = deref_ptr(masked_key)?;
+        let masked_key_buf: &[u8] = masked_key.try_into()?;
+
+        // Dispatch based on key kind
+        let handle = match key_kind {
+            AzihsmKeyKind::Aes => aes_unmask_key(&session, masked_key_buf)?,
+            _ => Err(AzihsmError::UnsupportedKeyKind)?,
+        };
+
+        assign_ptr(key_handle, handle)?;
+
+        Ok(())
+    })
+}
+
+/// Unmask a masked key pair
+///
+/// This function unmasks a previously masked key pair. The masked key contains
+/// the key material and properties, so no external properties or unwrapping keys
+/// are needed. The key pair is imported into the HSM within the provided session.
+///
+/// @param[in] sess_handle Handle to the HSM session
+/// @param[in] key_kind The kind of key pair to unmask (RSA or ECC)
+/// @param[in] masked_key Pointer to buffer containing the masked key pair data
+/// @param[out] priv_key_handle Pointer to store the unmasked private key handle
+/// @param[out] pub_key_handle Pointer to store the unmasked public key handle
+///
+/// @return 0 on success, or a negative error code on failure
+///
+/// @internal
+/// # Safety
+/// This function is unsafe because it dereferences raw pointers.
+#[unsafe(no_mangle)]
+#[allow(unsafe_code)]
+pub unsafe extern "C" fn azihsm_key_unmask_pair(
+    sess_handle: AzihsmHandle,
+    key_kind: AzihsmKeyKind,
+    masked_key: *const AzihsmBuffer,
+    priv_key_handle: *mut AzihsmHandle,
+    pub_key_handle: *mut AzihsmHandle,
+) -> AzihsmError {
+    abi_boundary(|| {
+        validate_ptr(priv_key_handle)?;
+        validate_ptr(pub_key_handle)?;
+
+        let session = HsmSession::try_from(sess_handle)?;
+        let masked_key = deref_ptr(masked_key)?;
+        let masked_key_buf: &[u8] = masked_key.try_into()?;
+
+        // Dispatch based on key kind
+        let (priv_handle, pub_handle) = match key_kind {
+            AzihsmKeyKind::Rsa => rsa_unmask_key_pair(&session, masked_key_buf)?,
+            AzihsmKeyKind::Ecc => ecc_unmask_key_pair(&session, masked_key_buf)?,
+            _ => Err(AzihsmError::UnsupportedKeyKind)?,
         };
 
         assign_ptr(priv_key_handle, priv_handle)?;

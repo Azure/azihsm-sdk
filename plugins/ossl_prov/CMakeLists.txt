@@ -105,13 +105,13 @@ set(AZIHSM_OSSL_SOURCES
     ./src/azihsm_ossl_cipher.c
     ./src/azihsm_ossl_mac.c
     ./src/azihsm_ossl_kdf.c
-    # ./src/azihsm_ossl_keymgmt_rsa.c
+    ./src/azihsm_ossl_keymgmt_rsa.c
     ./src/azihsm_ossl_keymgmt_ec.c
     ./src/azihsm_ossl_keyexch.c
     ./src/azihsm_ossl_signature.c
     ./src/azihsm_ossl_asym_cipher.c
     ./src/azihsm_ossl_pkey_param.c
-    # ./src/azihsm_ossl_encoder_rsa.c
+    ./src/azihsm_ossl_encoder_rsa.c
     ./src/azihsm_ossl_encoder_ec.c
 )
 

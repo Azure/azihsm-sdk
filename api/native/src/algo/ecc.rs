@@ -8,8 +8,6 @@ use crate::AzihsmError;
 use crate::AzihsmHandle;
 use crate::HANDLE_TABLE;
 use crate::handle_table::HandleType;
-use crate::key_props::AzihsmKeyProp;
-use crate::key_props::AzihsmKeyPropId;
 use crate::utils::validate_output_buffer;
 
 impl TryFrom<&AzihsmAlgo> for HsmEccKeyGenAlgo {
@@ -226,43 +224,19 @@ pub(crate) fn ecc_verify_final(
     Ok(is_valid)
 }
 
-/// Helper function to get ECC key properties
-pub(crate) fn ecc_get_key_property(
-    key_handle: AzihsmHandle,
-    key_prop: &mut AzihsmKeyProp,
-) -> Result<(), AzihsmError> {
-    let key_type = HandleType::try_from(key_handle)?;
+/// Unmask a masked ECC key pair
+pub(crate) fn ecc_unmask_key_pair(
+    session: &HsmSession,
+    masked_key: &[u8],
+) -> Result<(AzihsmHandle, AzihsmHandle), AzihsmError> {
+    let mut unmask_algo = HsmEccKeyUnmaskAlgo::default();
 
-    match key_type {
-        HandleType::EccPubKey => {
-            match key_prop.id {
-                AzihsmKeyPropId::PubKeyInfo => {
-                    let pub_key = HsmEccPublicKey::try_from(key_handle)?;
-                    let pub_key_der = pub_key.pub_key_der_vec()?;
+    // Unmask ECC key pair
+    let (priv_key, pub_key): (HsmEccPrivateKey, HsmEccPublicKey) =
+        HsmKeyManager::unmask_key_pair(session, &mut unmask_algo, masked_key)?;
 
-                    let mut temp_buffer = AzihsmBuffer {
-                        ptr: key_prop.val,
-                        len: key_prop.len,
-                    };
+    let priv_handle = HANDLE_TABLE.alloc_handle(HandleType::EccPrivKey, Box::new(priv_key));
+    let pub_handle = HANDLE_TABLE.alloc_handle(HandleType::EccPubKey, Box::new(pub_key));
 
-                    // Validate and update the output buffer
-                    let output_buf = validate_output_buffer(&mut temp_buffer, pub_key_der.len())?;
-
-                    // Copy the public key DER data to output buffer
-                    output_buf[..pub_key_der.len()].copy_from_slice(&pub_key_der);
-
-                    // Set the actual length of data written
-                    key_prop.len = pub_key_der.len() as u32;
-
-                    Ok(())
-                }
-                _ => Err(AzihsmError::UnsupportedKeyProperty), // Not yet implemented
-            }
-        }
-        HandleType::EccPrivKey => {
-            // Private key properties not yet implemented
-            Err(AzihsmError::UnsupportedKeyProperty)
-        }
-        _ => Err(AzihsmError::InvalidHandle),
-    }
+    Ok((priv_handle, pub_handle))
 }

@@ -42,13 +42,8 @@ use std::sync::*;
 
 use algo::*;
 use azihsm_api as api;
-use azihsm_api::HsmEccCurve;
-use azihsm_api::HsmKeyKind;
-use error::*;
 use handle_table::*;
 use key_props::*;
-#[allow(unused)]
-use shared_types::*;
 use str::*;
 use utils::*;
 
@@ -86,19 +81,69 @@ impl AddAssign<u32> for AzihsmHandle {
 /// An alias for `HsmError` that represents all possible error conditions
 /// in the HSM API. This type is returned across the ABI boundary and can
 /// be converted to appropriate error codes for C callers.
-type AzihsmError = HsmError;
+type AzihsmError = error::HsmError;
 
-/// An alias for ECC curves.
-#[allow(unused)]
-type AzihsmEccCurve = HsmEccCurve;
+/// Key class type used in the native API.
+///
+/// An alias for `HsmKeyClass` that represents the class of a cryptographic key.
+/// This type is used across the FFI boundary to indicate whether a key is
+/// secret, public, or private.
+type AzihsmKeyClass = shared_types::HsmKeyClass;
 
-/// An alias for key kinds.
-#[allow(unused)]
-type AzihsmKeyKind = HsmKeyKind;
+/// Key kind type used in the native API.
+///
+/// An alias for `HsmKeyKind` that represents the algorithm type of a cryptographic key.
+/// This type is used across the FFI boundary to indicate whether a key is RSA, ECC, AES, etc.
+type AzihsmKeyKind = shared_types::HsmKeyKind;
 
-/// An alias for key classes.
-#[allow(unused)]
-type AzihsmKeyClass = HsmKeyClass;
+/// ECC curve type used in the native API.
+///
+/// An alias for `HsmEccCurve` that represents the elliptic curve used for ECC keys.
+/// This type is used across the FFI boundary to specify curves like P-256, P-384, and P-521.
+type AzihsmEccCurve = shared_types::HsmEccCurve;
+
+impl TryFrom<u32> for AzihsmKeyKind {
+    type Error = AzihsmError;
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(AzihsmKeyKind::Rsa),
+            2 => Ok(AzihsmKeyKind::Ecc),
+            3 => Ok(AzihsmKeyKind::Aes),
+            5 => Ok(AzihsmKeyKind::SharedSecret),
+            7 => Ok(AzihsmKeyKind::HmacSha256),
+            8 => Ok(AzihsmKeyKind::HmacSha384),
+            9 => Ok(AzihsmKeyKind::HmacSha512),
+            _ => Err(AzihsmError::InvalidArgument),
+        }
+    }
+}
+
+impl TryFrom<u32> for AzihsmEccCurve {
+    type Error = AzihsmError;
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(AzihsmEccCurve::P256),
+            2 => Ok(AzihsmEccCurve::P384),
+            3 => Ok(AzihsmEccCurve::P521),
+            _ => Err(AzihsmError::InvalidArgument),
+        }
+    }
+}
+
+impl TryFrom<u32> for AzihsmKeyClass {
+    type Error = AzihsmError;
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(AzihsmKeyClass::Secret),
+            2 => Ok(AzihsmKeyClass::Public),
+            3 => Ok(AzihsmKeyClass::Private),
+            _ => Err(AzihsmError::InvalidArgument),
+        }
+    }
+}
 
 /// Global handle table for managing HSM object lifetimes.
 ///
@@ -147,6 +192,69 @@ impl From<api::HsmError> for AzihsmError {
     fn from(err: api::HsmError) -> Self {
         // SAFETY: AzihsmError and api::HsmError have the same representation
         unsafe { std::mem::transmute(err) }
+    }
+}
+
+impl From<AzihsmError> for api::HsmError {
+    /// Converts an `AzihsmError` into an `api::HsmError`.
+    #[allow(unsafe_code)]
+    fn from(err: AzihsmError) -> Self {
+        // SAFETY: AzihsmError and api::HsmError have the same representation
+        unsafe { std::mem::transmute(err) }
+    }
+}
+
+impl From<api::HsmKeyClass> for AzihsmKeyClass {
+    /// Converts an `api::HsmKeyClass` into an `AzihsmKeyClass`.
+    #[allow(unsafe_code)]
+    fn from(class: api::HsmKeyClass) -> Self {
+        // SAFETY: AzihsmKeyClass and api::HsmKeyClass have the same representation
+        unsafe { std::mem::transmute(class) }
+    }
+}
+
+impl From<AzihsmKeyClass> for api::HsmKeyClass {
+    /// Converts an `AzihsmKeyClass` into an `api::HsmKeyClass`.
+    #[allow(unsafe_code)]
+    fn from(class: AzihsmKeyClass) -> Self {
+        // SAFETY: AzihsmKeyClass and api::HsmKeyClass have the same representation
+        unsafe { std::mem::transmute(class) }
+    }
+}
+
+impl From<api::HsmKeyKind> for AzihsmKeyKind {
+    /// Converts an `api::HsmKeyKind` into an `AzihsmKeyKind`.
+    #[allow(unsafe_code)]
+    fn from(kind: api::HsmKeyKind) -> Self {
+        // SAFETY: AzihsmKeyKind and api::HsmKeyKind have the same representation
+        unsafe { std::mem::transmute(kind) }
+    }
+}
+
+impl From<AzihsmKeyKind> for api::HsmKeyKind {
+    /// Converts an `AzihsmKeyKind` into an `api::HsmKeyKind`.
+    #[allow(unsafe_code)]
+    fn from(kind: AzihsmKeyKind) -> Self {
+        // SAFETY: AzihsmKeyKind and api::HsmKeyKind have the same representation
+        unsafe { std::mem::transmute(kind) }
+    }
+}
+
+impl From<api::HsmEccCurve> for AzihsmEccCurve {
+    /// Converts an `api::HsmEccCurve` into an `AzihsmEccCurve`.
+    #[allow(unsafe_code)]
+    fn from(curve: api::HsmEccCurve) -> Self {
+        // SAFETY: AzihsmEccCurve and api::HsmEccCurve have the same representation
+        unsafe { std::mem::transmute(curve) }
+    }
+}
+
+impl From<AzihsmEccCurve> for api::HsmEccCurve {
+    /// Converts an `AzihsmEccCurve` into an `api::HsmEccCurve`.
+    #[allow(unsafe_code)]
+    fn from(curve: AzihsmEccCurve) -> Self {
+        // SAFETY: AzihsmEccCurve and api::HsmEccCurve have the same representation
+        unsafe { std::mem::transmute(curve) }
     }
 }
 
@@ -332,5 +440,33 @@ impl TryFrom<AzihsmHandle> for api::HsmHmacKey {
     fn try_from(value: AzihsmHandle) -> Result<api::HsmHmacKey, Self::Error> {
         let key: &api::HsmHmacKey = HANDLE_TABLE.as_ref(value, HandleType::HmacKey)?;
         Ok(key.clone())
+    }
+}
+
+impl<'a> TryFrom<&'a mut AzihsmKeyProp> for &'a mut [u8] {
+    type Error = AzihsmError;
+
+    /// Converts a mutable AzihsmKeyProp to a mutable byte slice.
+    ///
+    /// # Safety
+    /// The caller must ensure that `key_prop.buf` points to valid memory
+    /// containing at least `key_prop.len` bytes.
+    #[allow(unsafe_code)]
+    fn try_from(key_prop: &'a mut AzihsmKeyProp) -> Result<Self, Self::Error> {
+        // Check for null pointer
+        if key_prop.val.is_null() {
+            // Only allow null buffer if length is 0
+            if key_prop.len == 0 {
+                return Ok(&mut []);
+            } else {
+                return Err(AzihsmError::InvalidArgument);
+            }
+        }
+
+        // Safety: Caller ensures key_prop.val points to valid memory
+        let slice = unsafe {
+            std::slice::from_raw_parts_mut(key_prop.val as *mut u8, key_prop.len as usize)
+        };
+        Ok(slice)
     }
 }

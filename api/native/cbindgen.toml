@@ -39,6 +39,7 @@ include = [
   "AzihsmAlgoRsaPkcsOaepParams",
   "AzihsmAlgoRsaPkcsPssParams",
   "HsmEccCurve",
+  "HsmError",
   "HsmKeyClass",
   "HsmKeyKind",
 ]
@@ -59,7 +60,11 @@ item_types = ["constants", "enums", "functions", "structs", "typedefs"]
 "AzihsmBuffer" = "azihsm_buffer"
 "AzihsmChar" = "azihsm_char"
 "AzihsmCredentials" = "azihsm_credentials"
+"AzihsmEccCurve" = "azihsm_ecc_curve"
+"AzihsmError" = "azihsm_error"
 "AzihsmHandle" = "azihsm_handle"
+"AzihsmKeyClass" = "azihsm_key_class"
+"AzihsmKeyKind" = "azihsm_key_kind"
 "AzihsmKeyProp" = "azihsm_key_prop"
 "AzihsmKeyPropId" = "azihsm_key_prop_id"
 "AzihsmKeyPropList" = "azihsm_key_prop_list"
