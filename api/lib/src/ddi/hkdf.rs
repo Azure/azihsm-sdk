@@ -42,7 +42,7 @@ pub(crate) fn hkdf_derive(
     hash_algo: HsmHashAlgo,
     salt: Option<&[u8]>,
     info: Option<&[u8]>,
-    mut derived_key_props: HsmKeyProps,
+    derived_key_props: HsmKeyProps,
 ) -> HsmResult<(HsmKeyHandle, HsmKeyProps)> {
     // Build the DDI HKDF derive key command request.
     let req = DdiHkdfDeriveCmdReq {
