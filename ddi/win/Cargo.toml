@@ -17,7 +17,19 @@ cfg-if.workspace = true
 libc.workspace = true
 parking_lot.workspace = true
 tracing.workspace = true
-winapi.workspace = true
+winapi = { features = [
+  "errhandlingapi",
+  "fileapi",
+  "handleapi",
+  "ioapiset",
+  "minwindef",
+  "setupapi",
+  "synchapi",
+  "winbase",
+  "winerror",
+  "winioctl",
+  "winnt",
+], workspace = true }
 
 [lints]
 workspace = true

@@ -19,18 +19,18 @@ azihsm_ddi_types.workspace = true
 azihsm_ddi_mbor.workspace = true
 bitfield.workspace = true
 bitfield-struct.workspace = true
-minicbor.workspace = true
+minicbor = { features = ["derive"], workspace = true }
 parking_lot.workspace = true
 rand.workspace = true
 tracing.workspace = true
-uuid.workspace = true
+uuid = { features = ["v4"], workspace = true }
 zerocopy.workspace = true
 zeroize.workspace = true
 
 # The following crates are not included in workspace, as they may have
 # crypto usage that shouldn't be included in client library
-der = "0.7.8"
-p384 = { features = ["pkcs8"], version = "0.13.0" }
+der = { workspace = true }
+p384 = { features = ["pkcs8"], workspace = true }
 
 # fuzzing dependencies
 arbitrary = { optional = true, workspace = true }

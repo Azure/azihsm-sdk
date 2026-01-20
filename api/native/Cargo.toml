@@ -1,0 +1,21 @@
+# Copyright (C) Microsoft Corporation. All rights reserved.
+[package]
+edition = "2024"
+name = "azihsm_api_native"
+version = "0.0.0"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+azihsm_api.workspace = true
+parking_lot.workspace = true
+tracing.workspace = true
+zerocopy = { features = ["derive"], workspace = true }
+
+[features]
+default = []
+mock = ["azihsm_api/mock"]
+
+[lints]
+workspace = true

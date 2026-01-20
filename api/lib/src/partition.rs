@@ -1,357 +1,446 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
 
-use std::sync::Arc;
+//! HSM partition management.
+//!
+//! This module provides structures and operations for managing HSM partitions.
+//! Partitions represent logical divisions within an HSM device, each with its
+//! own API revision support and configuration.
 
-use azihsm_cred_encrypt::DeviceCredKey;
-use azihsm_crypto::*;
-use azihsm_ddi_mbor::MborByteArray;
-use parking_lot::RwLock;
+use std::sync::*;
 
-use crate::*;
+use tracing::*;
 
-/// Dummy BK3 key data for initialization
-const DUMMY_BK3: &[u8; 48] = &[1u8; 48];
+use super::*;
 
-/// HSM Partition information
+/// HSM API revision.
+///
+/// Represents a specific API version with major and minor components.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct HsmApiRev {
+    /// Major version number.
+    pub major: u32,
+
+    /// Minor version number.
+    pub minor: u32,
+}
+
+/// HSM API revision range.
+///
+/// Defines the range of API revisions supported by an HSM partition,
+/// from minimum to maximum supported versions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HsmApiRevRange {
+    /// Minimum supported API revision.
+    min: HsmApiRev,
+
+    /// Maximum supported API revision.
+    max: HsmApiRev,
+}
+
+impl HsmApiRevRange {
+    /// Creates a new API revision range.
+    ///
+    /// # Arguments
+    ///
+    /// * `min` - Minimum supported API revision
+    /// * `max` - Maximum supported API revision
+    pub fn new(min: HsmApiRev, max: HsmApiRev) -> Self {
+        Self { min, max }
+    }
+
+    /// Returns the minimum supported API revision.
+    pub fn min(&self) -> HsmApiRev {
+        self.min
+    }
+
+    /// Returns the maximum supported API revision.
+    pub fn max(&self) -> HsmApiRev {
+        self.max
+    }
+}
+
+/// HSM partition information.
+///
+/// Contains metadata about an HSM partition, including its device path.
 #[derive(Debug, Clone)]
-pub struct PartitionInfo {
-    /// Partition Path
+pub struct HsmPartitionInfo {
+    /// Device path for accessing the partition.
     pub path: String,
 }
 
-/// HSM API Revision Range Structure
-#[derive(Clone, Copy, Debug)]
-pub struct ApiRevRange {
-    /// Minimum Supported API Revision
-    pub min: ApiRev,
-
-    /// Maximum Supported API Revision
-    pub max: ApiRev,
-}
-
-impl PartialOrd for ApiRev {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        if self.major == other.major {
-            // If major versions are equal, compare minor versions
-            self.minor.partial_cmp(&other.minor)
-        } else {
-            // Otherwise, compare major versions
-            self.major.partial_cmp(&other.major)
-        }
-    }
-}
-
-/// HSM Partition
-pub struct Partition {
-    inner: Arc<RwLock<PartitionInner>>,
-}
-
-/// Retrieve the HSM partition information list
-///
-/// # Returns
-/// * `Vec<PartitonInfo>` - HSM partition information list
-pub fn partition_info_list() -> Vec<PartitionInfo> {
-    DDI.dev_info_list()
-        .iter()
-        .map(|info| PartitionInfo {
-            path: info.path.clone(),
-        })
-        .collect()
-}
-
-/// Open HSM partition
-///
-/// # Arguments
-/// `path` - Partition path
-///
-/// # Returns
-/// `Partition` - HSM Partition
-pub fn partition_open(path: &str) -> Result<Partition, AzihsmError> {
-    let mut partition = DDI
-        .open_dev(path)
-        .map_err(|_| AZIHSM_OPEN_PARTITION_FAILED)?;
-
-    // Get the api revision range for the opened partition.
-    let resp = ddi::get_api_rev(&partition).map_err(|_| AZIHSM_GET_API_REVISION_FAILED)?;
-
-    // Get the device info for the opened partition.
-    let resp_info = ddi::get_device_info(&partition, resp.data.max)
-        .map_err(|_| AZIHSM_GET_PARTITION_INFO_FAILED)?;
-
-    partition.set_device_kind(resp_info.data.kind);
-
-    Ok(Partition {
-        inner: Arc::new(RwLock::new(PartitionInner {
-            partition,
-            api_rev_range: ApiRevRange {
-                min: ApiRev {
-                    major: resp.data.min.major,
-                    minor: resp.data.min.minor,
-                },
-                max: ApiRev {
-                    major: resp.data.max.major,
-                    minor: resp.data.max.minor,
-                },
-            },
-            part_info: PartitionInfo {
-                path: path.to_string(),
-            },
-            open_sessions: 0,
-        })),
-    })
-}
-
-impl Partition {
-    delegate::delegate! {
-    to self.inner.read() {
-        /// Get the API revision range
-        pub fn api_rev_range(&self) -> ApiRevRange;
-
-        /// Get the partition info
-        pub fn part_info(&self) -> PartitionInfo;
-    }}
-
-    /// Open a session within the HSM partition
+impl HsmPartitionInfo {
+    /// Creates new partition information.
     ///
     /// # Arguments
-    /// `kind` - Session type
-    /// `api_rev` - API revision
-    /// `credentials` - Application credentials
     ///
-    /// # Returns
-    /// `Session` - HSM Session
-    pub fn open_session(
-        &self,
-        kind: SessionType,
-        api_rev: ApiRev,
-        credentials: AppCreds,
-    ) -> Result<Session, AzihsmError> {
-        self.inner
-            .write()
-            .open_session(self.inner.clone(), kind, api_rev, credentials)
-    }
-
-    /// Temporary function to initialize the partition with dummy BK3 and credentials
-    pub fn init(&self, credentials: AppCreds) -> Result<(), AzihsmError> {
-        // Init BK3.
-        let masked_bk3 = self.inner.write().init_bk3(DUMMY_BK3)?;
-
-        // Establish credentials.
-        let _ = self.inner.write().establish_credential(
-            credentials,
-            masked_bk3.as_slice(),
-            None,
-            None,
-        )?;
-
-        Ok(())
-    }
-}
-
-/// Inner structure of the Partition
-pub struct PartitionInner {
-    /// Device partition
-    pub(crate) partition: <HsmDdi as Ddi>::Dev,
-
-    /// API Revision Range
-    api_rev_range: ApiRevRange,
-
-    /// Partition info
-    part_info: PartitionInfo,
-
-    /// Open session count
-    open_sessions: usize,
-}
-
-impl Drop for PartitionInner {
-    fn drop(&mut self) {
-        if self.open_sessions > 0 {
-            panic!("Session(s) not closed!")
+    /// * `path` - Device path string
+    fn new(path: &str) -> Self {
+        Self {
+            path: path.to_string(),
         }
     }
 }
 
-impl PartitionInner {
-    /// Get the api revision range of the partition
-    pub(super) fn api_rev_range(&self) -> ApiRevRange {
+/// HSM application credentials.
+///
+/// Contains authentication credentials for accessing HSM partition functionality,
+/// including application ID and PIN.
+#[repr(C)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct HsmCredentials {
+    /// Application ID
+    pub id: [u8; 16],
+
+    /// Application Pin
+    pub pin: [u8; 16],
+}
+
+impl HsmCredentials {
+    /// Creates new application credentials.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - Application ID bytes
+    /// * `pin` - Application PIN bytes
+    pub fn new(id: &[u8], pin: &[u8]) -> Self {
+        let mut app_id = [0u8; 16];
+        let mut app_pin = [0u8; 16];
+        app_id[..id.len().min(16)].copy_from_slice(&id[..id.len().min(16)]);
+        app_pin[..pin.len().min(16)].copy_from_slice(&pin[..pin.len().min(16)]);
+        Self {
+            id: app_id,
+            pin: app_pin,
+        }
+    }
+
+    /// Returns the application ID.
+    pub fn id(&self) -> &[u8; 16] {
+        &self.id
+    }
+
+    /// Returns the application PIN.
+    pub fn pin(&self) -> &[u8; 16] {
+        &self.pin
+    }
+}
+
+/// HSM partition manager.
+///
+/// Provides operations for discovering and opening HSM partitions.
+pub struct HsmPartitionManager;
+
+impl HsmPartitionManager {
+    /// Retrieves a list of all available HSM partitions.
+    ///
+    /// Queries the system for available HSM devices and returns information
+    /// about each discovered partition.
+    ///
+    /// # Returns
+    ///
+    /// A vector of partition information structures.
+    #[instrument]
+    pub fn partition_info_list() -> Vec<HsmPartitionInfo> {
+        let vec = ddi::dev_paths()
+            .into_iter()
+            .map(|path| HsmPartitionInfo { path })
+            .collect::<Vec<HsmPartitionInfo>>();
+        debug!("Found {} partition(s)", vec.len());
+        vec
+    }
+
+    /// Opens an HSM partition at the specified path.
+    ///
+    /// Establishes a connection to the HSM partition and retrieves its
+    /// supported API revision range.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Device path of the partition to open
+    ///
+    /// # Returns
+    ///
+    /// Returns an `HsmPartition` handle on success.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The device path is invalid or does not exist
+    /// - The device cannot be opened or is already in use
+    /// - API revision retrieval fails
+    /// - The underlying DDI operation fails
+    #[instrument()]
+    pub fn open_partition(path: &str) -> HsmResult<HsmPartition> {
+        let dev = ddi::open_dev(path)?;
+        let (min, max) = ddi::get_api_rev(&dev)?;
+        Ok(HsmPartition::new(
+            dev,
+            HsmApiRevRange::new(min, max),
+            HsmPartitionInfo::new(path),
+        ))
+    }
+}
+
+/// HSM partition handle.
+///
+/// A thread-safe handle to an open HSM partition. Provides access to partition
+/// operations and metadata through an internal `Arc<RwLock<HsmPartitionInner>>`.
+#[derive(Debug, Clone)]
+pub struct HsmPartition(Arc<RwLock<HsmPartitionInner>>);
+
+impl HsmPartition {
+    /// Creates a new HSM partition handle.
+    ///
+    /// # Arguments
+    ///
+    /// * `dev` - HSM device handle
+    /// * `api_rev_range` - Supported API revision range
+    /// * `part_info` - Partition metadata
+    fn new(dev: ddi::HsmDev, api_rev_range: HsmApiRevRange, part_info: HsmPartitionInfo) -> Self {
+        Self(Arc::new(RwLock::new(HsmPartitionInner::new(
+            dev,
+            api_rev_range,
+            part_info,
+        ))))
+    }
+
+    /// Initializes the HSM partition with application credentials and master keys.
+    ///
+    /// Configures the partition for use by setting up authentication credentials
+    /// and optionally providing master key material.
+    ///
+    /// # Arguments
+    ///
+    /// * `creds` - Application credentials (ID and PIN)
+    /// * `bmk` - Optional backup masking key
+    /// * `muk` - Optional masked unwrapping key
+    /// * `mobk` - Optional masked owner backup key
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Credentials are invalid
+    /// - API revision retrieval fails
+    /// - Partition initialization fails
+    #[instrument(skip_all,  fields(path = self.info().path.as_str()), err)]
+    pub fn init(
+        &self,
+        creds: HsmCredentials,
+        bmk: Option<&[u8]>,
+        muk: Option<&[u8]>,
+        mobk: Option<&[u8]>,
+    ) -> HsmResult<()> {
+        let (bmk, mobk) = self.with_dev(|dev| {
+            let (bmk, mobk) =
+                ddi::init_part(dev, self.api_rev_range().min(), creds, bmk, muk, mobk)?;
+            Ok((bmk, mobk))
+        })?;
+        self.inner().write().unwrap().set_masked_keys(bmk, mobk);
+        Ok(())
+    }
+
+    /// Opens a new session on the HSM partition.
+    ///
+    /// Creates a new cryptographic session with the specified API revision and
+    /// application credentials. The session provides a context for performing
+    /// cryptographic operations.
+    ///
+    /// # Arguments
+    ///
+    /// * `api_rev` - The API revision to use for the session
+    /// * `credentials` - Application credentials for authentication
+    /// * `seed` - Optional seed value for session initialization
+    ///
+    /// # Returns
+    ///
+    /// Returns an `HsmSession` handle on success.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Credentials are invalid or authentication fails
+    /// - The requested API revision is not supported
+    /// - Session creation fails
+    /// - Maximum number of sessions is reached
+    #[instrument(skip_all, err, fields(path = &self.info().path))]
+    pub fn open_session(
+        &self,
+        api_rev: HsmApiRev,
+        credentials: &HsmCredentials,
+        seed: Option<&[u8]>,
+    ) -> HsmResult<HsmSession> {
+        let (id, app_id) =
+            self.with_dev(|dev| ddi::open_session(dev, api_rev, credentials, seed))?;
+        Ok(HsmSession::new(id, app_id, api_rev, self.clone()))
+    }
+
+    /// Returns the API revision range supported by this partition.
+    ///
+    /// # Returns
+    ///
+    /// The supported API revision range with minimum and maximum versions.
+    pub fn api_rev_range(&self) -> HsmApiRevRange {
+        self.inner().read().unwrap().api_rev_range()
+    }
+
+    /// Returns partition information.
+    ///
+    /// # Returns
+    ///
+    /// A clone of the partition information structure containing metadata
+    /// such as the device path.
+    pub fn info(&self) -> HsmPartitionInfo {
+        self.inner().read().unwrap().info().clone()
+    }
+
+    /// Returns the backup masking key (BMK).
+    ///
+    /// Retrieves the backup masking key that was set during partition initialization.
+    ///
+    /// # Returns
+    ///
+    /// A vector containing the BMK bytes.
+    pub fn bmk(&self) -> Vec<u8> {
+        self.inner().read().unwrap().bmk().to_vec()
+    }
+
+    /// Returns the masked owner backup key (MOBK).
+    ///
+    /// Retrieves the masked owner backup key that was set during partition initialization.
+    ///
+    /// # Returns
+    ///
+    /// A vector containing the MOBK bytes.
+    pub fn mobk(&self) -> Vec<u8> {
+        self.inner().read().unwrap().mobk().to_vec()
+    }
+
+    /// Executes a closure with access to the underlying device handle.
+    ///
+    /// Provides thread-safe access to the HSM device for internal operations.
+    /// Acquires a read lock on the partition and passes the device handle
+    /// to the provided closure.
+    ///
+    /// # Arguments
+    ///
+    /// * `f` - Closure that receives the device handle and returns a value
+    ///
+    /// # Returns
+    ///
+    /// Returns the value produced by the closure.
+    pub(crate) fn with_dev<F, T>(&self, f: F) -> T
+    where
+        F: FnOnce(&ddi::HsmDev) -> T,
+    {
+        let part = self.inner().read().unwrap();
+        let dev = part.dev();
+        f(dev)
+    }
+
+    /// Returns a reference to the internal partition state.
+    ///
+    /// Provides access to the inner `Arc<RwLock<HsmPartitionInner>>` for
+    /// internal operations that require direct access to the shared state.
+    ///
+    /// # Returns
+    ///
+    /// A reference to the wrapped partition inner state.
+    pub(crate) fn inner(&self) -> &Arc<RwLock<HsmPartitionInner>> {
+        &self.0
+    }
+}
+
+/// Cleans up resources when the partition is dropped.
+///
+/// Ensures proper cleanup and logging when the partition handle goes out of scope.
+impl Drop for HsmPartition {
+    #[instrument(skip_all, fields(path = self.info().path.as_str()) )]
+    fn drop(&mut self) {}
+}
+
+/// HSM partition handle.
+///
+/// Represents an open connection to an HSM partition. This handle provides
+/// access to partition information, API revision support, and the underlying
+/// device for cryptographic operations.
+#[derive(Debug)]
+pub(crate) struct HsmPartitionInner {
+    dev: ddi::HsmDev,
+    api_rev_range: HsmApiRevRange,
+    part_info: HsmPartitionInfo,
+    bmk: Vec<u8>,
+    mobk: Vec<u8>,
+}
+
+impl HsmPartitionInner {
+    /// Creates a new partition handle.
+    ///
+    /// # Arguments
+    ///
+    /// * `dev` - HSM device handle
+    /// * `api_rev_range` - Supported API revision range
+    /// * `part_info` - Partition metadata
+    fn new(dev: ddi::HsmDev, api_rev_range: HsmApiRevRange, part_info: HsmPartitionInfo) -> Self {
+        Self {
+            dev,
+            api_rev_range,
+            part_info,
+            bmk: Vec::new(),
+            mobk: Vec::new(),
+        }
+    }
+
+    /// Returns the API revision range supported by this partition.
+    ///
+    /// # Returns
+    ///
+    /// The supported API revision range with minimum and maximum versions.
+    pub fn api_rev_range(&self) -> HsmApiRevRange {
         self.api_rev_range
     }
 
-    /// Get the partition info
-    pub(super) fn part_info(&self) -> PartitionInfo {
-        self.part_info.clone()
+    /// Returns partition information.
+    ///
+    /// # Returns
+    ///
+    /// A reference to the partition information structure containing metadata
+    /// such as the device path.
+    pub fn info(&self) -> &HsmPartitionInfo {
+        &self.part_info
     }
 
-    /// Update the open session count
-    pub(crate) fn update_open_session_count(&mut self, increment: bool) {
-        if increment {
-            self.open_sessions += 1;
-        } else {
-            if self.open_sessions == 0 {
-                panic!("Open session count is already zero");
-            }
-            self.open_sessions -= 1;
-        }
+    /// Returns the underlying device handle.
+    pub(crate) fn dev(&self) -> &ddi::HsmDev {
+        &self.dev
     }
 
-    fn open_session(
-        &mut self,
-        partition: Arc<RwLock<PartitionInner>>,
-        session_type: SessionType,
-        api_rev: ApiRev,
-        credentials: AppCreds,
-    ) -> Result<Session, AzihsmError> {
-        if api_rev < self.api_rev_range.min || api_rev > self.api_rev_range.max {
-            Err(AZIHSM_ERROR_INVALID_API_REV)?
-        }
-
-        let mut session_seed = [0u8; SESSION_SEED_SIZE_BYTES];
-        Rng::rand_bytes(&mut session_seed).map_err(|_| AZIHSM_INTERNAL_ERROR)?;
-
-        let (encrypted_credential, pub_key) =
-            self.prepare_session_encrypted_credentials(api_rev, credentials, session_seed)?;
-
-        let resp = ddi::open_session(
-            &self.partition,
-            api_rev.into(),
-            encrypted_credential,
-            pub_key,
-        )
-        .map_err(|_| AZIHSM_OPEN_SESSION_FAILED)?;
-
-        // Create a new session object
-        let session = Session::new(
-            partition,
-            api_rev,
-            session_type,
-            credentials.id,
-            resp.data.short_app_id,
-            resp.data.sess_id,
-            session_seed,
-        );
-        // Update the open session count on the partition.
-        self.update_open_session_count(true);
-
-        Ok(session)
+    /// Sets the backup masking key (BMK) and masked owner backup key (MOBK).
+    ///
+    /// Updates the internal state with the provided key material.
+    ///
+    /// # Arguments
+    ///
+    /// * `bmk` - Backup masking key bytes
+    /// * `mobk` - Masked owner backup key bytes
+    pub(crate) fn set_masked_keys(&mut self, bmk: Vec<u8>, mobk: Vec<u8>) {
+        self.bmk = bmk;
+        self.mobk = mobk;
     }
 
-    fn prepare_session_encrypted_credentials(
-        &self,
-        api_rev: ApiRev,
-        credentials: AppCreds,
-        session_seed: [u8; 48],
-    ) -> Result<(DdiEncryptedSessionCredential, DdiDerPublicKey), AzihsmError> {
-        let resp = ddi::get_session_encryption_key(&self.partition, api_rev.into())
-            .map_err(|_| AZIHSM_GET_SESSION_ENCRYPTION_KEY_FAILED)?;
-
-        let nonce = resp.data.nonce;
-        let param_encryption_key =
-            DeviceCredKey::new(&resp.data.pub_key, nonce).map_err(|_| AZIHSM_INTERNAL_ERROR)?;
-
-        let (priv_key, ddi_public_key) = param_encryption_key
-            .generate_ephemeral_encryption_key()
-            .map_err(|_| AZIHSM_INTERNAL_ERROR)?;
-
-        let ddi_encrypted_credential = priv_key
-            .encrypt_session_credential(credentials.id, credentials.pin, session_seed, nonce)
-            .map_err(|_| AZIHSM_INTERNAL_ERROR)?;
-
-        Ok((ddi_encrypted_credential, ddi_public_key))
+    /// Returns the backup masking key (BMK).
+    ///
+    /// # Returns
+    ///
+    /// A byte slice containing the BMK.
+    pub fn bmk(&self) -> &[u8] {
+        &self.bmk
     }
 
-    fn init_bk3(&self, bk3: &[u8; 48]) -> Result<MborByteArray<1024>, AzihsmError> {
-        // [TODO] Using hardcoded api_rev for now.
-        let resp = ddi::init_bk3(&self.partition, DdiApiRev { major: 1, minor: 0 }, bk3)
-            .map_err(|_| AZIHSM_INIT_BK3_FAILED)?;
-
-        Ok(resp.data.masked_bk3)
-    }
-
-    fn establish_credential(
-        &self,
-        credentials: AppCreds,
-        masked_bk3: &[u8],
-        bmk: Option<&[u8]>,
-        masked_unwrapping_key: Option<&[u8]>,
-    ) -> Result<DdiEstablishCredentialCmdResp, AzihsmError> {
-        // [TODO] Using hardcoded api_rev for now.
-        let api_rev = ApiRev { major: 1, minor: 0 };
-        let resp = ddi::get_establish_cred_encryption_key(&self.partition, api_rev.into())
-            .map_err(|_| AZIHSM_GET_ESTABLISH_CREDENTIAL_ENCRYPTION_KEY_FAILED)?;
-
-        let nonce = resp.data.nonce;
-        let param_encryption_key =
-            DeviceCredKey::new(&resp.data.pub_key, nonce).map_err(|_| AZIHSM_INTERNAL_ERROR)?;
-        let (priv_key, pub_key) = param_encryption_key
-            .generate_ephemeral_encryption_key()
-            .map_err(|_| AZIHSM_INTERNAL_ERROR)?;
-
-        let encrypted_credential = priv_key
-            .encrypt_establish_credential(credentials.id, credentials.pin, nonce)
-            .map_err(|_| AZIHSM_INTERNAL_ERROR)?;
-
-        let bmk = bmk.unwrap_or_default(); // Empty BMK if not provided
-        let masked_unwrapping_key = masked_unwrapping_key.unwrap_or_default(); // Empty masked unwrapping key if not provided
-
-        ddi::establish_credential(
-            &self.partition,
-            api_rev.into(),
-            encrypted_credential,
-            pub_key,
-            MborByteArray::from_slice(masked_bk3).map_err(|_| AZIHSM_INTERNAL_ERROR)?,
-            MborByteArray::from_slice(bmk).map_err(|_| AZIHSM_INTERNAL_ERROR)?,
-            MborByteArray::from_slice(masked_unwrapping_key).map_err(|_| AZIHSM_INTERNAL_ERROR)?,
-        )
-        .map_err(|_| AZIHSM_INVALID_CREDENTIALS)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_partition_open() {
-        // Get the first available partition.
-        let partition_list = partition_info_list();
-        assert!(
-            !partition_list.is_empty(),
-            "No partitions available for testing"
-        );
-
-        let expected_partition_info = &partition_list[0];
-
-        // Test that partition_open succeeds.
-        let partition =
-            partition_open(&expected_partition_info.path).expect("Failed to open partition");
-
-        // Verify partition properties.
-        let actual_partition_info = partition.part_info();
-        assert_eq!(actual_partition_info.path, expected_partition_info.path);
-
-        // Verify API revision range is valid.
-        let api_rev_range = partition.api_rev_range();
-        assert!(api_rev_range.min <= api_rev_range.max);
-        assert!(api_rev_range.min.major > 0 || api_rev_range.min.minor > 0);
-        assert!(api_rev_range.max.major > 0 || api_rev_range.max.minor > 0);
-    }
-
-    #[test]
-    fn test_partition_info_list() {
-        let partition_list = partition_info_list();
-
-        // Should have at least one partition availabl.
-        assert!(
-            !partition_list.is_empty(),
-            "Expected at least one partition to be available"
-        );
-
-        // Verify partition info structure
-        for partition_info in &partition_list {
-            assert!(
-                !partition_info.path.is_empty(),
-                "Partition path should not be empty"
-            );
-        }
+    /// Returns the masked owner backup key (MOBK).
+    ///
+    /// # Returns
+    ///
+    /// A byte slice containing the MOBK.
+    pub fn mobk(&self) -> &[u8] {
+        &self.mobk
     }
 }

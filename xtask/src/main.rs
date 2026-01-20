@@ -14,7 +14,9 @@ use std::path::PathBuf;
 use clap::Parser;
 use clap::Subcommand;
 
+mod audit;
 mod build;
+mod clang_format;
 mod clean;
 mod clippy;
 pub mod common;
@@ -22,7 +24,6 @@ mod copyright;
 mod coverage;
 mod fmt;
 mod install;
-mod native;
 mod nextest;
 mod precheck;
 mod rustup_component_add;
@@ -55,6 +56,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    Audit(audit::Audit),
     Build(build::Build),
     Precheck(precheck::Precheck),
     Clean(clean::Clean),
@@ -62,8 +64,6 @@ enum Commands {
     Copyright(copyright::Copyright),
     Coverage(coverage::Coverage),
     Fmt(fmt::Fmt),
-    #[clap(alias = "nbt")]
-    NativeBuildAndTest(native::NativeBuildAndTest),
     Nextest(nextest::Nextest),
     Setup(setup::Setup),
     Install(install::Install),
@@ -94,6 +94,7 @@ fn try_main() -> anyhow::Result<()> {
     let ctx = XtaskCtx { root };
 
     match cli.command {
+        Commands::Audit(task) => task.run(ctx),
         Commands::Build(task) => task.run(ctx),
         Commands::Clean(task) => task.run(ctx),
         Commands::Clippy(task) => task.run(ctx),
@@ -101,7 +102,6 @@ fn try_main() -> anyhow::Result<()> {
         Commands::Coverage(task) => task.run(ctx),
         Commands::Fmt(task) => task.run(ctx),
         Commands::Precheck(task) => task.run(ctx),
-        Commands::NativeBuildAndTest(task) => task.run(ctx),
         Commands::Nextest(task) => task.run(ctx),
         Commands::Setup(task) => task.run(ctx),
         Commands::Install(task) => task.run(ctx),

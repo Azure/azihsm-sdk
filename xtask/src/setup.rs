@@ -56,6 +56,14 @@ impl Xtask for Setup {
             install_cargo_fuzz.run(ctx.clone())?;
         }
 
+        // Run Install cargo-audit
+        let install_cargo_audit = install::Install {
+            crate_name: "cargo-audit@0.22.0".to_string(),
+            force: self.force,
+            config: self.config.clone(),
+        };
+        install_cargo_audit.run(ctx.clone())?;
+
         // Run Install cargo-llvm-cov
         let install_cargo_llvm_cov = install::Install {
             crate_name: "cargo-llvm-cov@0.6.23".to_string(),

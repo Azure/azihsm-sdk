@@ -64,6 +64,7 @@ pub use metadata::*;
 use open_enum::open_enum;
 pub use open_key::*;
 pub use open_session::*;
+use pastey::paste;
 pub use provision_part::*;
 pub use reopen_session::*;
 pub use rsa::*;
@@ -1366,7 +1367,7 @@ pub struct DdiRespExt {}
 #[macro_export]
 macro_rules! ddi_op_req_resp {
     ($name:ident) => {
-        paste::paste! {
+        paste! {
             #[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
             #[derive(Ddi, Debug)]
             #[ddi(map)]

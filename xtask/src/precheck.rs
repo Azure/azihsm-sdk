@@ -8,11 +8,11 @@
 use clap::Parser;
 use xshell::Shell;
 
+use crate::audit;
 use crate::clippy;
 use crate::copyright;
 use crate::coverage;
 use crate::fmt;
-use crate::native;
 use crate::nextest;
 use crate::setup;
 use crate::Xtask;
@@ -26,6 +26,9 @@ struct Stage {
     /// Run copyright checks
     #[clap(long)]
     copyright: bool,
+    /// Run audit checks
+    #[clap(long)]
+    audit: bool,
     /// Run formatting checks
     #[clap(long)]
     fmt: bool,
@@ -56,6 +59,9 @@ pub struct Precheck {
     /// Skip TOML formatting
     #[clap(long)]
     pub skip_toml: bool,
+    /// Skip Clang formatting
+    #[clap(long)]
+    pub skip_clang: bool,
     /// Skip specifying toolchain for formatting checks
     #[clap(long)]
     skip_toolchain: bool,
@@ -105,11 +111,18 @@ impl Xtask for Precheck {
             copyright.run(ctx.clone())?;
         }
 
+        // Run Audit
+        if stage.audit || stage.all {
+            let audit = audit::Audit {};
+            audit.run(ctx.clone())?;
+        }
+
         // Cargo format
         if stage.fmt || stage.all {
             let fmt = fmt::Fmt {
-                fix: false,                // Do not fix formatting issues by default
-                skip_toml: self.skip_toml, // Pass through skip_toml flag
+                fix: false,                  // Do not fix formatting issues by default
+                skip_toml: self.skip_toml,   // Pass through skip_toml flag
+                skip_clang: self.skip_clang, // Pass through skip_clang flag
                 toolchain: if self.skip_toolchain {
                     None
                 } else {
@@ -123,16 +136,6 @@ impl Xtask for Precheck {
         if stage.clippy || stage.all {
             let clippy = clippy::Clippy {};
             clippy.run(ctx.clone())?;
-        }
-
-        // Clean release native build and run tests
-        if stage.nbt || stage.all {
-            let cpp_test = native::NativeBuildAndTest {
-                clean: true,              // clean build directory by default
-                config: "Release".into(), // Use Release configuration by default
-                test: true,               // Run tests as part of precheck
-            };
-            cpp_test.run(ctx.clone())?;
         }
 
         if stage.nextest || stage.all {

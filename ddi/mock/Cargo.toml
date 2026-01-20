@@ -18,7 +18,7 @@ azihsm_ddi_interface.workspace = true
 azihsm_ddi_mbor.workspace = true
 azihsm_ddi_sim.workspace = true
 azihsm_ddi_types.workspace = true
-lazy_static = "1.4.0"
+lazy_static = { workspace = true }
 parking_lot.workspace = true
 rand.workspace = true
 tracing.workspace = true
