@@ -352,6 +352,22 @@ macro_rules! define_hsm_key_pair {
                 }
             }
 
+            impl HsmKeyReportOp for $priv_name {
+                type Error = HsmError;
+
+                /// Generates an attestation report for the key.
+                fn generate_key_report(
+                    &mut self,
+                    report_data: &[u8],
+                    report: Option<&mut [u8]>
+                ) -> Result<usize, Self::Error> {
+                    let handle = self.handle();
+                    self.with_session(|s| {
+                         ddi::generate_key_report(s, handle, report_data, report)
+                    })
+                }
+            }
+
             struct [<$priv_name Inner>] {
                 session: HsmSession,
                 props: HsmKeyProps,

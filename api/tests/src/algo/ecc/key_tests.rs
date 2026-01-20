@@ -593,3 +593,58 @@ fn test_ecc_p384_key_unmask(session: HsmSession) {
 fn test_ecc_p521_key_unmask(session: HsmSession) {
     test_ecc_key_unmask_for_curve(&session, HsmEccCurve::P521);
 }
+
+/// Test generating a key report for an ECC P-256 key.
+///
+/// Verifies that a key report can be successfully generated for an ECC private key,
+/// including custom report data and proper size calculation.
+#[session_test]
+fn test_ecc_p256_key_report(session: HsmSession) {
+    // Generate an ECC P-256 key pair
+    let priv_key_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Private)
+        .key_kind(HsmKeyKind::Ecc)
+        .ecc_curve(HsmEccCurve::P256)
+        .can_sign(true)
+        .is_session(true)
+        .build()
+        .expect("Failed to build private key props");
+
+    let pub_key_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Public)
+        .key_kind(HsmKeyKind::Ecc)
+        .ecc_curve(HsmEccCurve::P256)
+        .can_verify(true)
+        .is_session(true)
+        .build()
+        .expect("Failed to build public key props");
+
+    let mut algo = HsmEccKeyGenAlgo::default();
+    let (mut priv_key, pub_key) =
+        HsmKeyManager::generate_key_pair(&session, &mut algo, priv_key_props, pub_key_props)
+            .expect("Failed to generate ECC key pair");
+
+    // Custom report data (128 bytes is the max)
+    let report_data = [0x42u8; 128];
+
+    // First call: get the required buffer size
+    let report_size = HsmKeyManager::generate_key_report(&mut priv_key, &report_data, None)
+        .expect("Failed to get key report size");
+
+    assert!(report_size > 0, "Report size should be greater than 0");
+
+    // Second call: generate the actual report
+    let mut report_buffer = vec![0u8; report_size];
+    let actual_size =
+        HsmKeyManager::generate_key_report(&mut priv_key, &report_data, Some(&mut report_buffer))
+            .expect("Failed to generate key report");
+    report_buffer.truncate(actual_size);
+
+    // Verify the report buffer was populated (not all zeros)
+    let non_zero_bytes = report_buffer.iter().filter(|&&b| b != 0).count();
+    assert!(non_zero_bytes > 0, "Report should contain non-zero data");
+
+    // Clean up: delete the keys
+    HsmKeyManager::delete_key(priv_key).expect("Failed to delete ECC private key");
+    HsmKeyManager::delete_key(pub_key).expect("Failed to delete ECC public key");
+}
