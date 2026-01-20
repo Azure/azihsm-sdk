@@ -21,7 +21,18 @@ impl TryFrom<&AzihsmAlgo> for azihsm_api::HsmAesKeyGenAlgo {
     }
 }
 
-/// Helper function to generate an AES key
+/// Generates a new AES key
+///
+/// Creates a new AES symmetric key with the specified properties.
+///
+/// # Arguments
+/// * `session` - HSM session for key generation
+/// * `algo` - AES key generation algorithm parameters (key size)
+/// * `key_props` - Properties for the generated key (extractable, persistent, etc.)
+///
+/// # Returns
+/// * `Ok(AzihsmHandle)` - Handle to the generated AES key
+/// * `Err(AzihsmStatus)` - On failure (e.g., unsupported key size)
 pub(crate) fn aes_generate_key(
     session: &HsmSession,
     algo: &AzihsmAlgo,
@@ -316,7 +327,18 @@ pub(crate) fn aes_cbc_streaming_final(
     Ok(())
 }
 
-/// Unmask a masked AES key
+/// Unmasks a masked AES key and returns a handle to it
+///
+/// Takes a masked AES key (typically received from external storage or transmission)
+/// and unmasks it within the HSM session, creating a usable key handle.
+///
+/// # Arguments
+/// * `session` - Reference to the HSM session where the key will be unmasked
+/// * `masked_key` - Byte slice containing the masked key material
+///
+/// # Returns
+/// * `Ok(AzihsmHandle)` - Handle to the unmasked AES key for subsequent cryptographic operations
+/// * `Err(AzihsmStatus)` - On failure (e.g., invalid masked key format, session error)
 pub(crate) fn aes_unmask_key(
     session: &HsmSession,
     masked_key: &[u8],

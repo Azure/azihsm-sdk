@@ -65,7 +65,20 @@ impl<'a> TryFrom<&'a AzihsmAlgo> for &'a AzihsmAlgoHkdfParams {
     }
 }
 
-/// Helper function to perform ECDH key derivation
+/// Derives a shared secret using Elliptic Curve Diffie-Hellman (ECDH)
+///
+/// Performs key agreement between a private key and a peer's public key
+/// to derive a shared secret.
+///
+/// # Arguments
+/// * `session` - HSM session for the operation
+/// * `algo` - Algorithm specification containing peer public key
+/// * `private_key_handle` - Handle to the local ECC private key
+/// * `derived_key_props` - Properties for the derived key
+///
+/// # Returns
+/// * `Ok(AzihsmHandle)` - Handle to the derived shared secret key
+/// * `Err(AzihsmStatus)` - On failure (e.g., incompatible keys, invalid parameters)
 pub(crate) fn ecdh_derive_key(
     session: &HsmSession,
     algo: &AzihsmAlgo,
@@ -93,7 +106,19 @@ pub(crate) fn ecdh_derive_key(
     Ok(handle)
 }
 
-/// Helper function to perform HKDF key derivation
+/// Derives keying material using HMAC-based Key Derivation Function (HKDF)
+///
+/// Expands a master key into derived keying material using HKDF.
+///
+/// # Arguments
+/// * `session` - HSM session for the operation
+/// * `algo` - HKDF algorithm parameters (hash algorithm, salt, info)
+/// * `master_key_handle` - Handle to the master key (IKM - Input Keying Material)
+/// * `derived_key_props` - Properties for the derived key
+///
+/// # Returns
+/// * `Ok(AzihsmHandle)` - Handle to the derived key
+/// * `Err(AzihsmStatus)` - On failure (e.g., invalid parameters, unsupported algorithm)
 pub(crate) fn hkdf_derive_key(
     session: &HsmSession,
     algo: &AzihsmAlgo,

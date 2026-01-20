@@ -70,26 +70,4 @@ azihsm_status azihsm_sess_set_pin(
 
 `AZIHSM_STATUS_OK` on success, error code otherwise
 
-## azihsm_sess_set_part_owner_cert
-
-Set the partition owner certificate chain
-
-```cpp
-azihsm_status azihsm_sess_set_part_owner_cert(
-    azihsm_handle handle, 
-    const azihsm_char *cert
-    );
-```
-
-**Parameters**
-
- | Parameter   | Name                            | Description                       |
- | ----------- | ------------------------------- | --------------------------------- |
- | [in] handle | [azihsm_handle](#azihsm_handle) | session handle                    |
- | [in] cert   | [azihsm_char*](#azihsm_char)    | partition owner cert chain &nbsp; |
-
-**Returns**
-
-`AZIHSM_STATUS_OK` on success, error code otherwise
-
 \pagebreak

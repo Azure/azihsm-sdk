@@ -152,7 +152,19 @@ where
     Ok(())
 }
 
-/// Perform RSA encryption operation
+/// Encrypts data using RSA public key encryption
+///
+/// Encrypts plaintext using RSA with the specified padding scheme.
+///
+/// # Arguments
+/// * `algo` - RSA encryption algorithm (PKCS#1 v1.5 or OAEP)
+/// * `key_handle` - Handle to the RSA public key
+/// * `plaintext` - Data to encrypt
+/// * `output` - Output buffer for the ciphertext
+///
+/// # Returns
+/// * `Ok(())` - On successful encryption
+/// * `Err(AzihsmStatus)` - On failure (e.g., plaintext too large, buffer too small)
 pub(crate) fn rsa_encrypt(
     algo: &AzihsmAlgo,
     key_handle: AzihsmHandle,
@@ -193,7 +205,19 @@ pub(crate) fn rsa_encrypt(
     }
 }
 
-/// Perform RSA decryption operation
+/// Decrypts data using RSA private key decryption
+///
+/// Decrypts ciphertext using RSA with the specified padding scheme.
+///
+/// # Arguments
+/// * `algo` - RSA decryption algorithm (PKCS#1 v1.5 or OAEP)
+/// * `key_handle` - Handle to the RSA private key
+/// * `ciphertext` - Data to decrypt
+/// * `output` - Output buffer for the plaintext
+///
+/// # Returns
+/// * `Ok(())` - On successful decryption
+/// * `Err(AzihsmStatus)` - On failure (e.g., invalid ciphertext, buffer too small)
 pub(crate) fn rsa_decrypt(
     algo: &AzihsmAlgo,
     key_handle: AzihsmHandle,
