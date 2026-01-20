@@ -58,7 +58,13 @@ pub(crate) fn aes_generate_key(
     let key_id = resp.data.key_id;
     let masked_key = resp.data.masked_key.as_slice();
     let key_props = HsmMaskedKey::to_key_props(masked_key)?;
-
+    // Validate that the device returned properties match the requested properties.
+    if !props.validate_dev_props(&key_props) {
+        //delete key
+        delete_key(session, key_id)?;
+        //return error
+        Err(HsmError::InvalidKeyProps)?;
+    }
     Ok((key_id, key_props))
 }
 

@@ -66,10 +66,19 @@ pub(crate) fn hkdf_derive(
         dev.exec_op(&req, &mut None)
             .map_hsm_err(HsmError::DdiCmdFailure)
     })?;
-    let key_id = resp.data.key_id;
-    derived_key_props.set_masked_key(resp.data.masked_key.as_slice());
 
-    Ok((key_id, derived_key_props))
+    let key_id = resp.data.key_id;
+
+    let dev_key_props = HsmMaskedKey::to_key_props(resp.data.masked_key.as_slice())?;
+    // Validate that the device returned properties match the requested properties.
+    if !derived_key_props.validate_dev_props(&dev_key_props) {
+        //delete key
+        delete_key(&shared_secret.session(), key_id)?;
+        //return error
+        Err(HsmError::InvalidKeyProps)?;
+    }
+
+    Ok((key_id, dev_key_props))
 }
 
 impl TryFrom<&HsmKeyProps> for DdiKeyType {

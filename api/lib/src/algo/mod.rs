@@ -282,7 +282,6 @@ macro_rules! define_hsm_key_pair {
                 }
 
                 /// Returns the HSM session.
-                #[allow(unused)]
                 pub(crate) fn session(&self) -> HsmSession {
                     self.with_session(|s| s.clone())
                 }

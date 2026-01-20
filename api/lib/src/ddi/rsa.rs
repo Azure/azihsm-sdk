@@ -31,6 +31,16 @@ pub(crate) fn get_rsa_unwrapping_key(
     let (priv_key_props, pub_key_props) =
         HsmMaskedKey::to_key_pair_props(masked_key, pub_key.der.as_slice())?;
 
+    //check key properties before returning
+    if !priv_key_props.validate_dev_props(&priv_key_props)
+        || !pub_key_props.validate_dev_props(&pub_key_props)
+    {
+        //delete key
+        delete_key(session, handle)?;
+        //return error
+        Err(HsmError::InvalidKeyProps)?;
+    }
+
     Ok((handle, priv_key_props, pub_key_props))
 }
 
@@ -73,9 +83,15 @@ pub(crate) fn rsa_aes_unwrap_key(
 
     let handle = resp.data.key_id;
     let masked_key = resp.data.masked_key.as_slice();
-    let key_props = HsmMaskedKey::to_key_props(masked_key)?;
-
-    Ok((handle, key_props))
+    let dev_key_props = HsmMaskedKey::to_key_props(masked_key)?;
+    //check key properties before returning
+    if !key_props.validate_dev_props(&dev_key_props) {
+        //delete key
+        delete_key(&key.session(), handle)?;
+        //return error
+        Err(HsmError::InvalidKeyProps)?;
+    }
+    Ok((handle, dev_key_props))
 }
 
 /// Performs RSA AES key pair unwrapping using the specified RSA private key.
@@ -95,7 +111,7 @@ pub(crate) fn rsa_aes_unwrap_key_pair(
     wrapped_key: &[u8],
     hash_algo: HsmHashAlgo,
     priv_key_props: HsmKeyProps,
-    _pub_key_props: HsmKeyProps,
+    pub_key_props: HsmKeyProps,
 ) -> HsmResult<(HsmKeyHandle, HsmKeyProps, HsmKeyProps)> {
     let req = DdiRsaUnwrapCmdReq {
         hdr: build_ddi_req_hdr_sess(DdiOp::RsaUnwrap, &unwrapping_key.session()),
@@ -122,10 +138,18 @@ pub(crate) fn rsa_aes_unwrap_key_pair(
         return Err(HsmError::InternalError);
     };
     let masked_key = resp.data.masked_key.as_slice();
-    let (priv_key_props, pub_key_props) =
+    let (dev_priv_key_props, dev_pub_key_props) =
         HsmMaskedKey::to_key_pair_props(masked_key, pub_key.der.as_slice())?;
 
-    Ok((key_handle, priv_key_props, pub_key_props))
+    //check key properties before returning
+    if !priv_key_props.validate_dev_props(&dev_priv_key_props)
+        || !pub_key_props.validate_dev_props(&dev_pub_key_props)
+    {
+        //delete key
+        delete_key(&unwrapping_key.session(), key_handle)?;
+        Err(HsmError::InvalidKeyProps)?;
+    }
+    Ok((key_handle, dev_priv_key_props, dev_pub_key_props))
 }
 
 /// Performs RSA encryption using the specified RSA public key.

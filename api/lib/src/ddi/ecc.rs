@@ -69,6 +69,16 @@ pub(crate) fn ecc_generate_key(
     let masked_key = resp.data.masked_key.as_slice();
     let (priv_key_props, pub_key_props) = HsmMaskedKey::to_key_pair_props(masked_key, pub_key_der)?;
 
+    // Validate that the device returned properties match the requested properties.
+    if !priv_key_props.validate_dev_props(&priv_key_props)
+        || !pub_key_props.validate_dev_props(&pub_key_props)
+    {
+        //delete key
+        delete_key(session, key_id)?;
+        //return error
+        Err(HsmError::InvalidKeyProps)?;
+    }
+
     Ok((key_id, priv_key_props, pub_key_props))
 }
 
