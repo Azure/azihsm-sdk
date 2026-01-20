@@ -44,6 +44,22 @@ inline uint32_t get_curve_key_bits(azihsm_ecc_curve curve)
     }
 }
 
+// Helper function to get expected HMAC key size in bits from HMAC key kind.
+inline uint32_t get_hmac_key_bits(azihsm_key_kind hmac_key_kind)
+{
+    switch (hmac_key_kind)
+    {
+    case AZIHSM_KEY_KIND_HMAC_SHA256:
+        return 256;
+    case AZIHSM_KEY_KIND_HMAC_SHA384:
+        return 384;
+    case AZIHSM_KEY_KIND_HMAC_SHA512:
+        return 512;
+    default:
+        return 256;
+    }
+}
+
 azihsm_status generate_ec_key_pair_for_derive(
     azihsm_handle session_handle,
     azihsm_handle &pub_key_handle,
@@ -202,7 +218,8 @@ azihsm_status derive_hmac_key_via_ecdh_hkdf(
     bool hmac_verify_prop = true;
     azihsm_key_class hmac_key_class = AZIHSM_KEY_CLASS_SECRET;
     azihsm_key_kind hmac_kind = hmac_key_kind;
-    uint32_t hmac_key_bits = get_curve_key_bits(curve);
+    // For HMAC keys, the API expects the bit-length to match the digest size
+    uint32_t hmac_key_bits = get_hmac_key_bits(hmac_key_kind);
 
     std::vector<azihsm_key_prop> hmac_key_props;
     hmac_key_props.push_back(
