@@ -27,13 +27,13 @@ typedef _Return_type_success_(return == 1) int OSSL_STATUS;
 
 typedef struct
 {
-    azihsm_handle private;
+    azihsm_handle priv;
 } AZIHSM_KEY_OBJ;
 
 typedef struct
 {
-    azihsm_handle public;
-    azihsm_handle private;
+    azihsm_handle pub;
+    azihsm_handle priv;
 } AZIHSM_KEY_PAIR_OBJ;
 
 typedef struct

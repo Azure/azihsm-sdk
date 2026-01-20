@@ -81,18 +81,21 @@ static int azihsm_ossl_encoder_encode(
         return 0;
     }
 
-    azihsm_ossl_key_usage_list_to_str(&genctx->pub_key_usage, pub_usage, sizeof(pub_usage));
-    azihsm_ossl_key_usage_list_to_str(&genctx->priv_key_usage, priv_usage, sizeof(priv_usage));
+    const char *key_usage_str = azihsm_ossl_key_usage_to_str(genctx->key_usage);
 
     BIO_printf(bio, "\n");
     BIO_printf(bio, "==== Key Generation Details ====\n");
     BIO_printf(bio, "provider             : azihsm\n");
     BIO_printf(bio, "algorithm            : EC\n");
     BIO_printf(bio, "curve                : %s\n", curve_id_to_str(genctx->ec_curve_id));
-    BIO_printf(bio, "public-key usage     : %s\n", pub_usage);
-    BIO_printf(bio, "private-key usage    : %s\n", priv_usage);
-    BIO_printf(bio, "handle (public-key)  : %" PRIu32 "\n", ec_key->key.public);
-    BIO_printf(bio, "handle (private-key) : %" PRIu32 "\n", ec_key->key.private);
+    BIO_printf(bio, "session              : %s\n", genctx->session_flag ? "yes" : "no");
+    if (genctx->masked_key_file[0] != '\0')
+    {
+        BIO_printf(bio, "masked-key file      : %s\n", genctx->masked_key_file);
+    }
+    BIO_printf(bio, "key usage            : %s\n", key_usage_str);
+    BIO_printf(bio, "handle (public-key)  : %" PRIu32 "\n", ec_key->key.pub);
+    BIO_printf(bio, "handle (private-key) : %" PRIu32 "\n", ec_key->key.priv);
 
     BIO_free(bio);
     return 1;
@@ -158,7 +161,7 @@ static int azihsm_ossl_encoder_der_spki_encode(
     if (selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY)
     {
 
-        if ((spki = azihsm_ossl_get_der_spki(ctx->session, ec_key->key.public, &nbytes)) != NULL)
+        if ((spki = azihsm_ossl_get_der_spki(ctx->session, ec_key->key.pub, &nbytes)) != NULL)
         {
             BIO_write(bio, (const void *)spki, (int)nbytes);
             OPENSSL_clear_free(spki, nbytes);
@@ -229,18 +232,21 @@ static int azihsm_ossl_encoder_der_pki_encode(
     if (selection & OSSL_KEYMGMT_SELECT_PRIVATE_KEY)
     {
 
-        azihsm_ossl_key_usage_list_to_str(&genctx->pub_key_usage, pub_usage, sizeof(pub_usage));
-        azihsm_ossl_key_usage_list_to_str(&genctx->priv_key_usage, priv_usage, sizeof(priv_usage));
+        const char *key_usage_str = azihsm_ossl_key_usage_to_str(genctx->key_usage);
 
         BIO_printf(bio, "\n");
         BIO_printf(bio, "==== PrivateKeyInfo (PKCS#8) ====\n");
         BIO_printf(bio, "provider             : azihsm\n");
         BIO_printf(bio, "algorithm            : EC\n");
         BIO_printf(bio, "curve                : %s\n", curve_id_to_str(genctx->ec_curve_id));
-        BIO_printf(bio, "public-key usage     : %s\n", pub_usage);
-        BIO_printf(bio, "private-key usage    : %s\n", priv_usage);
-        BIO_printf(bio, "handle (public-key)  : %" PRIu32 "\n", ec_key->key.public);
-        BIO_printf(bio, "handle (private-key) : %" PRIu32 "\n", ec_key->key.private);
+        BIO_printf(bio, "session              : %s\n", genctx->session_flag ? "yes" : "no");
+        if (genctx->masked_key_file[0] != '\0')
+        {
+            BIO_printf(bio, "masked-key file      : %s\n", genctx->masked_key_file);
+        }
+        BIO_printf(bio, "key usage            : %s\n", key_usage_str);
+        BIO_printf(bio, "handle (public-key)  : %" PRIu32 "\n", ec_key->key.pub);
+        BIO_printf(bio, "handle (private-key) : %" PRIu32 "\n", ec_key->key.priv);
         BIO_printf(bio, "\n");
         BIO_printf(bio, "NOTE: Full PKCS#8 DER encoding is not implemented.\n");
         BIO_printf(bio, "      Keys remain in HSM and cannot be exported.\n");
