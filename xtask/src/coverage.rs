@@ -21,11 +21,14 @@ impl Xtask for Coverage {
         log::trace!("running code coverage");
 
         let sh = xshell::Shell::new()?;
-        
+
         // Set default value for CARGO_TARGET_DIR if not set
         if sh.var("CARGO_TARGET_DIR").is_err() {
             let target_dir = ctx.root.join("target");
-            log::info!("Env Variable CARGO_TARGET_DIR not set, defaulting to {}", target_dir.display());
+            log::info!(
+                "Env Variable CARGO_TARGET_DIR not set, defaulting to {}",
+                target_dir.display()
+            );
             sh.set_var("CARGO_TARGET_DIR", &target_dir);
         }
 
@@ -36,7 +39,7 @@ impl Xtask for Coverage {
         // Generate cobertura report
         log::info!("Gathering cobertura report");
         cmd!(
-            sh, 
+            sh,
             "cargo llvm-cov report --cobertura --output-path .\\target\\reports\\cobertura_sdk.xml --ignore-filename-regex \"xtask\""
         ).run()?;
 
