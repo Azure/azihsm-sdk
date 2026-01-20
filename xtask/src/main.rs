@@ -19,6 +19,7 @@ mod clean;
 mod clippy;
 pub mod common;
 mod copyright;
+mod coverage;
 mod fmt;
 mod install;
 mod native;
@@ -59,6 +60,7 @@ enum Commands {
     Clean(clean::Clean),
     Clippy(clippy::Clippy),
     Copyright(copyright::Copyright),
+    Coverage(coverage::Coverage),
     Fmt(fmt::Fmt),
     #[clap(alias = "nbt")]
     NativeBuildAndTest(native::NativeBuildAndTest),
@@ -96,6 +98,7 @@ fn try_main() -> anyhow::Result<()> {
         Commands::Clean(task) => task.run(ctx),
         Commands::Clippy(task) => task.run(ctx),
         Commands::Copyright(task) => task.run(ctx),
+        Commands::Coverage(task) => task.run(ctx),
         Commands::Fmt(task) => task.run(ctx),
         Commands::Precheck(task) => task.run(ctx),
         Commands::NativeBuildAndTest(task) => task.run(ctx),

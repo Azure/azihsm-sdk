@@ -10,6 +10,7 @@ use xshell::Shell;
 
 use crate::clippy;
 use crate::copyright;
+use crate::coverage;
 use crate::fmt;
 use crate::native;
 use crate::nextest;
@@ -31,6 +32,9 @@ struct Stage {
     /// Run clippy checks
     #[clap(long)]
     clippy: bool,
+    /// Run code coverage
+    #[clap(long)]
+    coverage: bool,
     /// Run native build and tests
     #[clap(long)]
     nbt: bool,
@@ -160,7 +164,7 @@ impl Xtask for Precheck {
                         no_default_features: false,
                         filterset: None,
                     };
-                    nextest.run(ctx)?;
+                    nextest.run(ctx.clone())?;
                 }
             } else {
                 let nextest = nextest::Nextest {
@@ -169,8 +173,14 @@ impl Xtask for Precheck {
                     no_default_features: false,
                     filterset: None,
                 };
-                nextest.run(ctx)?;
+                nextest.run(ctx.clone())?;
             }
+        }
+
+        // Run code coverage
+        if stage.coverage || stage.all {
+            let coverage = coverage::Coverage {};
+            coverage.run(ctx)?;
         }
 
         log::trace!("done precheck");
