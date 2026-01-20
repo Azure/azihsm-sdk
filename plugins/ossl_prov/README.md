@@ -38,15 +38,15 @@ OpenSSL 3.0.x only supports asymmetric key generation. Symmetric key generation 
 
 ### Code Example: Generate session EC key and export masked key
 ```
-openssl genpkey \
-  -algorithm EC \
-  -pkeyopt group:P-256 \
-  -pkeyopt azihsm.session_key:yes \
-  -pkeyopt azihsm.priv_key_usage:sign \
-  -pkeyopt azihsm.masked_private_key_out:./session_ec_key.masked \
-  -provider-path ./azihsm_provider \
-  -provider azihsm \
-  -provider default
+LD_LIBRARY_PATH=$(pwd)/openssl-build/lib64 ./openssl-build/bin/openssl genpkey -provider-path ./azihsm-sdk/target/debug/. \
+    -provider default \
+    -provider azihsm_provider \
+    -propquery "provider=azihsm" \
+    -pkeyopt azihsm.session:true \
+    -pkeyopt azihsm.masked_key:./masked_key.bin \
+    -algorithm EC \
+    -pkeyopt group:P-256 \
+    -outform DER | xxd
 ```
 
 ### Questions:
@@ -90,7 +90,7 @@ openssl dgst -sha256 \
 
 Tasks:
 - Sign EC with specific azihsm handle
-- Verify EC with speciic azihsm handle
+- Verify EC with specific azihsm handle
 
 # Sign and Verify RSA
 

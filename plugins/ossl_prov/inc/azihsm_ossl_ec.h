@@ -21,9 +21,10 @@ extern "C"
 typedef struct
 {
     azihsm_ecc_curve ec_curve_id;
-    AIHSM_KEY_USAGE_LIST pub_key_usage;
-    AIHSM_KEY_USAGE_LIST priv_key_usage;
+    AZIHSM_KEY_USAGE_TYPE key_usage;
     azihsm_handle session;
+    bool session_flag;
+    char masked_key_file[4096];
 } AIHSM_EC_GEN_CTX;
 
 typedef struct

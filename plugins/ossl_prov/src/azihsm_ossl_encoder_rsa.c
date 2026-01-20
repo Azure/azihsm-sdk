@@ -83,8 +83,8 @@ static int azihsm_ossl_encoder_encode(
     BIO_printf(bio, "provider             : azihsm\n");
     BIO_printf(bio, "algorithm            : %s\n", key_type_to_str(rsa_key->genctx.key_type));
     BIO_printf(bio, "public-key bit length: %" PRIu32 "\n", rsa_key->genctx.pubkey_bits);
-    BIO_printf(bio, "handle (public-key)  : %" PRIu32 "\n", rsa_key->key.public);
-    BIO_printf(bio, "handle (private-key) : %" PRIu32 "\n", rsa_key->key.private);
+    BIO_printf(bio, "handle (public-key)  : %" PRIu32 "\n", rsa_key->key.pub);
+    BIO_printf(bio, "handle (private-key) : %" PRIu32 "\n", rsa_key->key.priv);
 
     BIO_free(bio);
     return 1;
@@ -205,8 +205,8 @@ static int azihsm_ossl_encoder_der_pki_encode(
         BIO_printf(bio, "provider             : azihsm\n");
         BIO_printf(bio, "algorithm            : %s\n", key_type_to_str(rsa_key->genctx.key_type));
         BIO_printf(bio, "public-key bit length: %" PRIu32 "\n", rsa_key->genctx.pubkey_bits);
-        BIO_printf(bio, "handle (public-key)  : %" PRIu32 "\n", rsa_key->key.public);
-        BIO_printf(bio, "handle (private-key) : %" PRIu32 "\n", rsa_key->key.private);
+        BIO_printf(bio, "handle (public-key)  : %" PRIu32 "\n", rsa_key->key.pub);
+        BIO_printf(bio, "handle (private-key) : %" PRIu32 "\n", rsa_key->key.priv);
         BIO_printf(bio, "\n");
         BIO_printf(bio, "NOTE: Full PKCS#8 DER encoding is not implemented.\n");
         BIO_printf(bio, "      Keys remain in HSM and cannot be exported.\n");
