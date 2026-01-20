@@ -49,8 +49,8 @@ jobs:
     - name: Upload coverage report
       uses: actions/upload-artifact@v4
       with:
-        name: coverage-report
-        path: cobertura_sdk.xml
+        name: coverage-report-ubuntu
+        path: ./target/reports/
   
   build_windows:
 
@@ -83,5 +83,5 @@ jobs:
     - name: Upload coverage report
       uses: actions/upload-artifact@v4
       with:
-        name: coverage-report
-        path: cobertura_sdk.xml
+        name: coverage-report-windows
+        path: ./target/reports/
