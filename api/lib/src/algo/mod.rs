@@ -363,7 +363,7 @@ macro_rules! define_hsm_key_pair {
                 ) -> Result<usize, Self::Error> {
                     let handle = self.handle();
                     self.with_session(|s| {
-                         ddi::generate_key_report(s, handle, report_data, report)
+                        ddi::generate_key_report(s, handle, report_data, report)
                     })
                 }
             }
