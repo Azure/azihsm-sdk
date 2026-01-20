@@ -1,107 +1,115 @@
-# AZIHSM-OpenSSL-Provider
-The OpenSSL Provider in combination with the azihsm-sdk library enables secure cryptographic operations using OpenSSL and the Azure Integrated HSM.
+# OpenSSL Provider
 
-## Installation
+The overall goal is to implement an OpenSSL provider for the Azure HSM that works with OpenSSL 3.0.x and above - however current focus is 3.0.2 and upwards. We are focusing on symmetric (AES), asymmetric (EC, RSA) key generation and SHA-1/256/384/512 calculation and respectively HMAC generation.
 
-To install and test the Azure Integrated HSM OpenSSL Provider, follow these steps:
+## Generic
 
-## OpenSSL from Source
+### Masked Keys
 
-Set your current PWD as working directory and create a new directory for the OpenSSL build artifacts:
-```
-export OPENSSL_WORKSPACE=$(pwd)
-mkdir $OPENSSL_WORKSPACE/openssl-build
-```
+The HSM has storage restrictions thus most of the generated key material need to be _exported_ as masked keys. Masked keys are keys that have been encrypted with an HSM-specific key. This allows the key to be exported in a safe manner and reimported on the same machine-only. Masked keys are not transferable between different HSMs.
 
-Download the OpenSSL source from the Github repository:
-```
-git clone https://github.com/openssl/openssl.git
-cd openssl
-./Configure --prefix=$OPENSSL_WORKSPACE/openssl-build
-make -j$(nproc)
-```
+### Parameters
 
-Go back into your working directory:
-```
-cd $OPENSSL_WORKSPACE
-```
+For key generation we will pass in various parameters via the -pkeyopt flag. The parameters will always follow the following format: `azihsm.{varname}:{value}`. We currently have:
+- `azihsm.session:` which can be `true` or `false`. Example: `azihsm.session:true`
+- `azihsm.masked_key:` which points to the location where the masked key should be **written to**. Example: `azihsm.masked_key:./masked_key.bin`
+- `azihsm.priv_key_usage:` indicates what usage is allowed on the private key. Possible values are `sign` or `derive`.
+- `azihsm.pub_key_usage:` is similar to private key. Possible values are `verify` or `derive`.
 
-Export the path to the OpenSSL libraries that should be used for building the OpenSSL Provider:
-```
-export OPENSSL_DIR=$OPENSSL_WORKSPACE/openssl
-export OPENSSL_LIB_DIR=$OPENSSL_WORKSPACE/openssl/lib
-export OPENSSL_INCLUDE_DIR=$OPENSSL_WORKSPACE/openssl/include
-```
+When we pass in a key as parameter i.e. `-inkey` we will use `OSSL_STORE` to resolve the `azihsm://` URI. This will look like this: `-inkey azihsm://{file_location}` - `file_location` will be the location of the masked key.
 
-Clone the azihsm-sdk repository:
-```
-git clone https://github.com/Azure/azihsm-sdk.git
-cd azihsm-sdk
-```
+## AES Key Generation
 
-Build the azihsm-sdk library:
-```
-cargo build --package azihsm
-```
+OpenSSL 3.0.x only supports asymmetric key generation. Symmetric key generation was introduced in OpenSSL 3.5 with `skeyutl`. For now we have to write a custom tool that interfaces with the azihsm-sdk library in order to generate the different AES keys. Depending on the command, we might be able to add masked AES keys as a parameter.
 
-for development, you can use the mock library:
-```
-cargo build --features mock --package azihsm
-```
+# Generate AES Keys (custom tooling - later skeyutl)
 
-Both libraries are built in debug mode. Once the build is complete, build the OpenSSL Provider:
+- Generate Session AES Keys
+  - Export Masked AES Keys
+- Generate Permanent AES Keys
+
+# Generate RSA Keys
+
+- Generate Session RSA Keys
+  - Export Masked RSA Keys
+- Generate Permanent RSA Keys
+
+# Generate EC Keys
+
+### Code Example: Generate session EC key and export masked key
 ```
-cd plugins/openssl
-./build.sh build-type debug
+openssl genpkey \
+  -algorithm EC \
+  -pkeyopt group:P-256 \
+  -pkeyopt azihsm.session_key:yes \
+  -pkeyopt azihsm.priv_key_usage:sign \
+  -pkeyopt azihsm.masked_private_key_out:./session_ec_key.masked \
+  -provider-path ./azihsm_provider \
+  -provider azihsm \
+  -provider default
 ```
 
-All necessary components have been built. Now you have to move back to the $OPENSSL_WORKSPACE directory and bring it all together.
+### Questions:
+- Parameter Design: priv_key_usage for usage?
+- Parameter Design: session_key for session?
+
+### Tasks:
+- Generate Session EC Keys
+  - Export Masked EC Keys
+- Generate Permanent EC Keys
+
+# Import Masked Keys
+- Import Masked RSA Key
+- Import Masked EC Key
+- Import Masked AES Key (Custom Tooling)
+
+# Sign and Verify EC
+
+## OpenSSL Example: Sign a file with (masked) session key
 ```
-cd $OPENSSL_WORKSPACE
-
-mkdir -p "${OPENSSL_WORKSPACE}/openssl-build/bin"
-mkdir -p "${OPENSSL_WORKSPACE}/openssl-build/lib64/ossl-modules"
-mkdir -p "${OPENSSL_WORKSPACE}/openssl-build/lib64/pkgconfig"
-mkdir -p "${OPENSSL_WORKSPACE}/openssl-build/include"
-
-
-cp "${OPENSSL_WORKSPACE}/openssl/apps/openssl" "${OPENSSL_WORKSPACE}/openssl-build/bin/openssl"
-chmod +x "${OPENSSL_WORKSPACE}/openssl-build/bin/openssl"
-
-cp "${OPENSSL_WORKSPACE}/openssl/libssl.so.3" "${OPENSSL_WORKSPACE}/openssl-build/lib64/libssl.so.3"
-cp "${OPENSSL_WORKSPACE}/openssl/libssl.so.4" "${OPENSSL_WORKSPACE}/openssl-build/lib64/libssl.so.4"
-cp "${OPENSSL_WORKSPACE}/openssl/libcrypto.so.3" "${OPENSSL_WORKSPACE}/openssl-build/lib64/libcrypto.so"
-cp "${OPENSSL_WORKSPACE}/openssl/libcrypto.so.4" "${OPENSSL_WORKSPACE}/openssl-build/lib64/libcrypto.so.4"
-
-cd "${OPENSSL_WORKSPACE}/openssl-build/lib64"
-ln -sf libssl.so.3 libssl.so
-ln -sf libcrypto.so.3 libcrypto.so
-
-cd $OPENSSL_WORKSPACE
-cp "${OPENSSL_WORKSPACE}/openssl/libssl.a" "${OPENSSL_WORKSPACE}/openssl-build/lib64/libssl.a"
-cp "${OPENSSL_WORKSPACE}/openssl/libcrypto.a" "${OPENSSL_WORKSPACE}/openssl-build/lib64/libcrypto.a"
-
-cp "${OPENSSL_WORKSPACE}/openssl/providers/legacy.so" "${OPENSSL_WORKSPACE}/openssl-build/lib64/ossl-modules/legacy.so"
-cp "${OPENSSL_WORKSPACE}/azihsm-sdk/plugins/openssl/build/azihsm.so" "${OPENSSL_WORKSPACE}/openssl-build/lib64/ossl-modules/azihsm.so"
-
-cp "${OPENSSL_WORKSPACE}/azihsm-sdk/target/debug/libazihsm.so" "${OPENSSL_WORKSPACE}/openssl-build/lib64/libazihsm.so"
-
-cp -r "${OPENSSL_WORKSPACE}/openssl/include/openssl" "${OPENSSL_WORKSPACE}/openssl-build/include/"
-cp "${OPENSSL_WORKSPACE}/openssl/openssl.pc" "${OPENSSL_WORKSPACE}/openssl-build/lib64/pkgconfig/"
+openssl dgst -sha256 \
+  -sign 'azihsm://./session_ec_key.masked' \
+  -provider-path ./azihsm_provider \
+  -provider azihsm \
+  -provider default \
+  ./document.txt > document.sig
 ```
 
-And now export the necessary environment variables:
+## OpenSSL Example: Sign a file with a permanent key
 ```
-export PATH="${OPENSSL_WORKSPACE}/openssl-build/bin:${PATH}"
-export LD_LIBRARY_PATH="${OPENSSL_WORKSPACE}/openssl-build/lib64:${LD_LIBRARY_PATH}"
-export PKG_CONFIG_PATH="${OPENSSL_WORKSPACE}/openssl-build/lib64/pkgconfig:${PKG_CONFIG_PATH}"
-export OPENSSL_MODULES="${OPENSSL_WORKSPACE}/openssl-build/lib64/ossl-modules"
-```
-
-and run the following command to verify the installation:
-```
-openssl version -a
+openssl dgst -sha256 \
+  -sign 'azihsm://0x12345678' \
+  -provider-path ./azihsm_provider \
+  -provider azihsm \
+  -provider default \
+  ./document.txt > document.sig
 ```
 
-## Usage
-TBD
+### Questions
+- Do we need to support signing with permanent keys?
+
+Tasks:
+- Sign EC with specific azihsm handle
+- Verify EC with speciic azihsm handle
+
+# Sign and Verify RSA
+
+- Sign RSA with specific azihsm handle
+- Verify RSA with specific azihsm handle
+
+# HMAC
+
+## OpenSSL Example: Compute HMAC with (masked) session key
+
+```
+openssl mac -mac hmac \
+  -digest SHA256 \
+  -provider-path ./azihsm_provider \
+  -provider azihsm \
+  -provider default \
+  -key 'azihsm://./hmac_key.masked' \
+  < ./data.txt > data.hmac
+```
+
+## Questions
+- Do we need to support permanent keys?
