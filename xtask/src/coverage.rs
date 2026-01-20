@@ -22,19 +22,16 @@ impl Xtask for Coverage {
 
         let sh = xshell::Shell::new()?;
 
-        // Set default value for CARGO_TARGET_DIR if not set
-        if sh.var("CARGO_TARGET_DIR").is_err() {
-            let target_dir = ctx.root.join("target");
-            log::info!(
-                "Env Variable CARGO_TARGET_DIR not set, defaulting to {}",
-                target_dir.display()
-            );
-            sh.set_var("CARGO_TARGET_DIR", &target_dir);
-        }
-
         // Run tests with coverage
         log::info!("Building all tests and running them with coverage");
         cmd!(sh, "cargo llvm-cov nextest --features mock").run()?;
+
+        // Check for/create reports directory
+        let reports_dir = ctx.root.join("target").join("reports");
+        if !reports_dir.exists() {
+            log::info!("Creating reports directory at {}", reports_dir.display());
+            std::fs::create_dir_all(&reports_dir)?;
+        }
 
         // Generate cobertura report
         log::info!("Gathering cobertura report");
