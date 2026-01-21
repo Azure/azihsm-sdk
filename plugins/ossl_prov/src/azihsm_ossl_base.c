@@ -118,6 +118,9 @@ extern const OSSL_DISPATCH azihsm_ossl_ec_text_encoder_functions[];
 extern const OSSL_DISPATCH azihsm_ossl_ec_der_spki_encoder_functions[];
 extern const OSSL_DISPATCH azihsm_ossl_ec_der_pki_encoder_functions[];
 
+// Store
+extern const OSSL_DISPATCH azihsm_ossl_store_functions[];
+
 static const OSSL_ALGORITHM azihsm_ossl_encoders[] = {
     {
         "RSA",
@@ -173,7 +176,13 @@ static const OSSL_ALGORITHM azihsm_ossl_encoders[] = {
         azihsm_ossl_ec_der_pki_encoder_functions,
         NULL,
     },
-    { NULL, NULL, NULL, NULL },
+     { NULL, NULL, NULL, NULL },
+};
+
+// Store
+static const OSSL_ALGORITHM azihsm_ossl_store[] = {
+    { "azihsm", "provider=azihsm", azihsm_ossl_store_functions, NULL },
+    ALG_TABLE_END
 };
 
 static void azihsm_ossl_teardown(AZIHSM_OSSL_PROV_CTX *provctx)
@@ -251,11 +260,13 @@ static const OSSL_ALGORITHM *azihsm_ossl_query_operation(
         return azihsm_ossl_signature;
     case OSSL_OP_ASYM_CIPHER:
         return azihsm_ossl_asym_cipher;
-    case OSSL_OP_ENCODER:
-        return azihsm_ossl_encoders;
-    }
+     case OSSL_OP_ENCODER:
+         return azihsm_ossl_encoders;
+     case OSSL_OP_STORE:
+         return azihsm_ossl_store;
+     }
 
-    return NULL;
+     return NULL;
 }
 
 static OSSL_STATUS azihsm_ossl_get_capabilities(
