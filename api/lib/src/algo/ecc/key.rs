@@ -77,7 +77,7 @@ impl HsmEccPrivateKey {
     /// Returns [`HsmError::InvalidKeyProps`] if either side is invalid, if curves mismatch,
     /// or if the usage capabilities are not compatible.
     fn validate_key_pair_props(priv_props: &HsmKeyProps, pub_props: &HsmKeyProps) -> HsmResult<()> {
-        // Validate both privatekey properties.
+        // Validate both private key properties.
         Self::validate_props(priv_props)?;
 
         //validate public key properties

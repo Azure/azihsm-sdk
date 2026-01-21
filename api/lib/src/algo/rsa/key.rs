@@ -215,7 +215,8 @@ impl HsmKeyPairGenOp for HsmRsaKeyUnwrappingKeyGenAlgo {
             return Err(HsmError::InvalidKeyProps);
         }
 
-        let (handle, priv_key_props, pub_key_props) = ddi::get_rsa_unwrapping_key(session)?;
+        let (handle, priv_key_props, pub_key_props) =
+            ddi::get_rsa_unwrapping_key(session, priv_key_props, pub_key_props)?;
 
         // Extract the public key DER from the private key properties.
         let Some(pub_key_der) = pub_key_props.pub_key_der() else {
