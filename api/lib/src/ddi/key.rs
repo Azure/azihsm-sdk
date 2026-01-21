@@ -115,3 +115,57 @@ pub(crate) fn unmask_key_pair(
 
     Ok((key_id, priv_key_props, pub_key_props))
 }
+
+/// Generates a key report (attestation) for the specified key.
+///
+/// # Arguments
+///
+/// * `session` - The HSM session context
+/// * `key_handle` - The HSM key handle identifying the key to attest
+/// * `report_data` - Custom data to include in the attestation report
+/// * `report` - Optional mutable buffer to receive the attestation report
+///
+/// # Returns
+///
+/// Returns the size of the attestation report on success.
+pub(crate) fn generate_key_report(
+    session: &HsmSession,
+    key_handle: HsmKeyHandle,
+    report_data: &[u8],
+    report: Option<&mut [u8]>,
+) -> HsmResult<usize> {
+    if report_data.len() > DdiAttestKeyReq::MAX_REPORT_DATA_SIZE {
+        return Err(HsmError::InvalidArgument);
+    }
+
+    let Some(report) = report else {
+        return Ok(DdiAttestKeyResp::MAX_REPORT_SIZE);
+    };
+
+    if report.len() < DdiAttestKeyResp::MAX_REPORT_SIZE {
+        return Err(HsmError::BufferTooSmall);
+    }
+
+    let req = DdiAttestKeyCmdReq {
+        hdr: DdiReqHdr {
+            op: DdiOp::AttestKey,
+            rev: Some(session.api_rev().into()),
+            sess_id: Some(session.id()),
+        },
+        data: DdiAttestKeyReq {
+            key_id: key_handle,
+            report_data: MborByteArray::from_slice(report_data)
+                .map_hsm_err(HsmError::InternalError)?,
+        },
+        ext: None,
+    };
+
+    let resp = session.with_dev(|dev| {
+        dev.exec_op(&req, &mut None)
+            .map_hsm_err(HsmError::DdiCmdFailure)
+    })?;
+
+    let dev_report = resp.data.report.as_slice();
+    report[..dev_report.len()].copy_from_slice(dev_report);
+    Ok(dev_report.len())
+}

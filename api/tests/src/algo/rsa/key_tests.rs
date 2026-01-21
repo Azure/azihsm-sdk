@@ -502,3 +502,74 @@ fn test_rsa_3072_key_unmask(session: HsmSession) {
 fn test_rsa_4096_key_unmask(session: HsmSession) {
     test_rsa_key_unmask_for_bits(&session, 4096, 512, 16);
 }
+
+#[session_test]
+fn test_rsa_2048_imported_key_report(session: HsmSession) {
+    use crypto::*;
+
+    // Generate RSA key using azihsm_crypto
+    let priv_key = crypto::RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
+    let der = priv_key.to_vec().expect("Failed to export RSA Key");
+
+    // Get unwrapping key pair
+    let (unwrapping_priv_key, unwrapping_pub_key) = get_rsa_unwrapping_key_pair(&session);
+
+    // Wrap the generated key
+    let mut wrap_algo = HsmRsaAesWrapAlgo::new(HsmHashAlgo::Sha256, 32);
+    let wrapped_key = HsmEncrypter::encrypt_vec(&mut wrap_algo, &unwrapping_pub_key, &der)
+        .expect("Failed to wrap RSA Key");
+
+    // Define properties for the unwrapped key
+    let priv_key_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Private)
+        .key_kind(HsmKeyKind::Rsa)
+        .bits(2048)
+        .can_decrypt(true)
+        .is_session(true)
+        .build()
+        .expect("Failed to build unwrapping key props");
+
+    let pub_key_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Public)
+        .key_kind(HsmKeyKind::Rsa)
+        .bits(2048)
+        .can_encrypt(true)
+        .is_session(true)
+        .build()
+        .expect("Failed to build public key props");
+
+    // Unwrap the key pair (this is the "imported" key)
+    let mut unwrap_algo = HsmRsaKeyRsaAesKeyUnwrapAlgo::new(HsmHashAlgo::Sha256);
+    let (mut priv_key, pub_key) = HsmKeyManager::unwrap_key_pair(
+        &mut unwrap_algo,
+        &unwrapping_priv_key,
+        &wrapped_key,
+        priv_key_props,
+        pub_key_props,
+    )
+    .expect("Failed to unwrap RSA Key");
+
+    // Custom report data (128 bytes is the max)
+    let report_data = [0x42u8; 128];
+
+    // First call: get the required buffer size
+    let report_size = HsmKeyManager::generate_key_report(&mut priv_key, &report_data, None)
+        .expect("Failed to get key report size");
+
+    assert!(report_size > 0, "Report size should be greater than 0");
+
+    // Second call: generate the actual report
+    let mut report_buffer = vec![0u8; report_size];
+    let actual_size =
+        HsmKeyManager::generate_key_report(&mut priv_key, &report_data, Some(&mut report_buffer))
+            .expect("Failed to generate key report");
+    report_buffer.truncate(actual_size);
+
+    // Verify the report buffer was populated (not all zeros)
+    let non_zero_bytes = report_buffer.iter().filter(|&&b| b != 0).count();
+    assert!(non_zero_bytes > 0, "Report should contain non-zero data");
+
+    // Clean up: delete the keys
+    HsmKeyManager::delete_key(priv_key).expect("Failed to delete RSA private key");
+    HsmKeyManager::delete_key(pub_key).expect("Failed to delete RSA public key");
+}

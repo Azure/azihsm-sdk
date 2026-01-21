@@ -15,7 +15,11 @@ pub struct DdiAttestKeyReq {
 
     /// Report data to be included in the report
     #[ddi(id = 2)]
-    pub report_data: MborByteArray<128>,
+    pub report_data: MborByteArray<{ Self::MAX_REPORT_DATA_SIZE }>,
+}
+
+impl DdiAttestKeyReq {
+    pub const MAX_REPORT_DATA_SIZE: usize = 128;
 }
 
 /// DDI Generate Attestation Report Response Structure
@@ -25,7 +29,11 @@ pub struct DdiAttestKeyReq {
 pub struct DdiAttestKeyResp {
     /// Output data (attestation report)
     #[ddi(id = 1)]
-    pub report: MborByteArray<834>,
+    pub report: MborByteArray<{ Self::MAX_REPORT_SIZE }>,
+}
+
+impl DdiAttestKeyResp {
+    pub const MAX_REPORT_SIZE: usize = 834;
 }
 
 ddi_op_req_resp!(DdiAttestKey);

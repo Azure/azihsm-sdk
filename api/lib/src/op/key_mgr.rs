@@ -219,6 +219,48 @@ impl HsmKeyManager {
         algo.derive_key(session, base_key, props)
     }
 
+    /// Generates a key report for the specified key.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The key for which to generate the report
+    /// * `report_data` - Custom data to include in the key report
+    /// * `report` - Optional buffer to receive the key report data
+    ///
+    /// # Returns
+    ///
+    /// Returns the size of the generated report on success.
+    pub fn generate_key_report<Key: HsmKeyReportOp>(
+        key: &mut Key,
+        report_data: &[u8],
+        report: Option<&mut [u8]>,
+    ) -> Result<usize, Key::Error> {
+        key.generate_key_report(report_data, report)
+    }
+
+    /// Generates a key report for the specified key and returns it as a vector.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The key for which to generate the report
+    /// * `report_data` - Custom data to include in the key report
+    ///
+    /// # Returns
+    ///
+    /// Returns the generated report as a vector on success.
+    pub fn generate_key_report_vec<Key: HsmKeyReportOp>(
+        key: &mut Key,
+        report_data: &[u8],
+    ) -> Result<Vec<u8>, Key::Error> {
+        let report_size = key.generate_key_report(report_data, None)?;
+
+        let mut report_buffer = vec![0u8; report_size];
+        let actual_size = key.generate_key_report(report_data, Some(&mut report_buffer))?;
+
+        report_buffer.truncate(actual_size);
+        Ok(report_buffer)
+    }
+
     /// Deletes a key from the HSM.
     ///
     /// Removes the specified key from the HSM partition, making it no longer usable.
@@ -230,10 +272,6 @@ impl HsmKeyManager {
     /// # Returns
     ///
     /// Returns `Ok(())` on successful deletion.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the deletion operation fails
     pub fn delete_key<Key: HsmKeyDeleteOp>(key: Key) -> Result<(), Key::Error> {
         key.delete_key()
     }
