@@ -8,6 +8,7 @@
 
 use std::sync::*;
 
+use azihsm_ddi_types::{DdiOp, DdiReqHdr};
 use tracing::*;
 
 use super::*;
@@ -39,6 +40,26 @@ impl HsmSession {
             pub(crate) fn with_dev<F, R>(&self, f: F) -> HsmResult<R>
             where
                 F: FnOnce(&ddi::HsmDev) -> HsmResult<R>;
+        }
+    }
+
+    /// Builds a DDI request header for the given operation.
+    ///
+    /// Creates a `DdiReqHdr` with the session ID, API revision, and the specified operation.
+    /// This method provides a consistent way to construct request headers across all DDI operations.
+    ///
+    /// # Arguments
+    ///
+    /// * `op` - The DDI operation to include in the header
+    ///
+    /// # Returns
+    ///
+    /// A `DdiReqHdr` configured for this session and operation.
+    pub(crate) fn build_ddi_req_hdr(&self, op: DdiOp) -> DdiReqHdr {
+        DdiReqHdr {
+            op,
+            rev: Some(self.api_rev().into()),
+            sess_id: Some(self.id()),
         }
     }
 }

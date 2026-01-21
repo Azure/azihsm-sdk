@@ -15,11 +15,7 @@ pub(crate) fn get_rsa_unwrapping_key(
     session: &HsmSession,
 ) -> HsmResult<(HsmKeyHandle, HsmKeyProps, HsmKeyProps)> {
     let req = DdiGetUnwrappingKeyCmdReq {
-        hdr: DdiReqHdr {
-            op: DdiOp::GetUnwrappingKey,
-            rev: Some(session.api_rev().into()),
-            sess_id: Some(session.id()),
-        },
+        hdr: session.build_ddi_req_hdr(DdiOp::GetUnwrappingKey),
         data: DdiGetUnwrappingKeyReq {},
         ext: None,
     };
@@ -56,11 +52,7 @@ pub(crate) fn rsa_aes_unwrap_key(
     key_props: HsmKeyProps,
 ) -> HsmResult<(HsmKeyHandle, HsmKeyProps)> {
     let req = DdiRsaUnwrapCmdReq {
-        hdr: DdiReqHdr {
-            op: DdiOp::RsaUnwrap,
-            rev: Some(key.api_rev().into()),
-            sess_id: Some(key.sess_id()),
-        },
+        hdr: key.session().build_ddi_req_hdr(DdiOp::RsaUnwrap),
         data: DdiRsaUnwrapReq {
             key_id: key.handle(),
             wrapped_blob_key_class: key_props.kind().try_into()?,
@@ -106,11 +98,7 @@ pub(crate) fn rsa_aes_unwrap_key_pair(
     _pub_key_props: HsmKeyProps,
 ) -> HsmResult<(HsmKeyHandle, HsmKeyProps, HsmKeyProps)> {
     let req = DdiRsaUnwrapCmdReq {
-        hdr: DdiReqHdr {
-            op: DdiOp::RsaUnwrap,
-            rev: Some(unwrapping_key.api_rev().into()),
-            sess_id: Some(unwrapping_key.sess_id()),
-        },
+        hdr: unwrapping_key.session().build_ddi_req_hdr(DdiOp::RsaUnwrap),
         data: DdiRsaUnwrapReq {
             key_id: unwrapping_key.handle(),
             wrapped_blob_key_class: priv_key_props.kind().try_into()?,
@@ -200,11 +188,7 @@ fn rsa_mod_exp(
     output: &mut [u8],
 ) -> HsmResult<usize> {
     let req = DdiRsaModExpCmdReq {
-        hdr: DdiReqHdr {
-            op: DdiOp::RsaModExp,
-            rev: Some(key.api_rev().into()),
-            sess_id: Some(key.sess_id()),
-        },
+        hdr: key.session().build_ddi_req_hdr(DdiOp::RsaModExp),
         data: DdiRsaModExpReq {
             key_id: key.handle(),
             op_type: op,

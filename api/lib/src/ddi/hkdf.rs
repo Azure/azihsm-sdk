@@ -46,11 +46,7 @@ pub(crate) fn hkdf_derive(
 ) -> HsmResult<(HsmKeyHandle, HsmKeyProps)> {
     // Build the DDI HKDF derive key command request.
     let req = DdiHkdfDeriveCmdReq {
-        hdr: DdiReqHdr {
-            rev: Some(shared_secret.api_rev().into()),
-            sess_id: Some(shared_secret.sess_id()),
-            op: DdiOp::HkdfDerive,
-        },
+        hdr: shared_secret.session().build_ddi_req_hdr(DdiOp::HkdfDerive),
         data: DdiHkdfDeriveReq {
             key_id: shared_secret.handle(),
             hash_algorithm: hash_algo.into(),
