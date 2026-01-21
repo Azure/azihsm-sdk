@@ -57,6 +57,20 @@ pub(crate) fn build_ddi_req_hdr(
     }
 }
 
+/// Builds a DDI request header using the provided session.
+///
+/// # Arguments
+///
+/// * `op` - The DDI operation to include in the header
+/// * `sess` - The HSM session context
+///
+/// # Returns
+///
+/// A `DdiReqHdr` configured for the specified operation and session.
+pub(crate) fn build_ddi_req_hdr_sess(op: DdiOp, sess: &HsmSession) -> DdiReqHdr {
+    build_ddi_req_hdr(op, Some(sess.api_rev()), Some(sess.id()))
+}
+
 impl TryFrom<&HsmKeyProps> for DdiTargetKeyProperties {
     type Error = HsmError;
     fn try_from(props: &HsmKeyProps) -> Result<Self, Self::Error> {

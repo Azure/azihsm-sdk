@@ -270,11 +270,13 @@ macro_rules! define_hsm_key_pair {
                 }
 
                 /// Returns the session ID.
+                #[allow(unused)]
                 pub(crate) fn sess_id(&self) -> u16 {
                     self.with_session(|s| s.id())
                 }
 
                 /// Returns the API revision.
+                #[allow(unused)]
                 pub(crate) fn api_rev(&self) -> HsmApiRev {
                     self.with_session(|s| s.api_rev())
                 }
