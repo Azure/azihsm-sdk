@@ -370,12 +370,17 @@ impl DdiDev for DdiMockDev {
             }
         }
 
-        // Copy flattened destination buffers into dst_buf
+        // Copy flattened destination buffers into dst_buf, but do not exceed total_size
         let mut offset = 0;
         for chunk in destination_buffers {
+            if offset >= total_size {
+                break;
+            }
             let chunk_len = chunk.len();
-            dst_buf[offset..offset + chunk_len].copy_from_slice(&chunk);
-            offset += chunk_len;
+            let remaining = total_size - offset;
+            let copy_len = std::cmp::min(chunk_len, remaining);
+            dst_buf[offset..offset + copy_len].copy_from_slice(&chunk[..copy_len]);
+            offset += copy_len;
         }
 
         // Set output parameters
@@ -566,12 +571,17 @@ impl DdiDev for DdiMockDev {
             }
         }
 
-        // Copy flattened destination buffers into dst_buf
+        // Copy flattened destination buffers into dst_buf, but do not exceed total_size
         let mut offset = 0;
         for chunk in destination_buffers {
+            if offset >= total_size {
+                break;
+            }
             let chunk_len = chunk.len();
-            dst_buf[offset..offset + chunk_len].copy_from_slice(&chunk);
-            offset += chunk_len;
+            let remaining = total_size - offset;
+            let copy_len = std::cmp::min(chunk_len, remaining);
+            dst_buf[offset..offset + copy_len].copy_from_slice(&chunk[..copy_len]);
+            offset += copy_len;
         }
 
         *fips_approved = result.fips_approved;
