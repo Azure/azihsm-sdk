@@ -50,7 +50,11 @@ pub(crate) fn ecc_generate_key(
     };
 
     let req = DdiEccGenerateKeyPairCmdReq {
-        hdr: build_ddi_req_hdr(DdiOp::EccGenerateKeyPair, Some(session.api_rev()), Some(session.id())),
+        hdr: build_ddi_req_hdr(
+            DdiOp::EccGenerateKeyPair,
+            Some(session.api_rev()),
+            Some(session.id()),
+        ),
         data: DdiEccGenerateKeyPairReq {
             curve: curve.into(),
             key_tag: None,
@@ -172,7 +176,11 @@ pub(crate) fn ecdh_derive(
     // Build the DDI ECDH derive key command request.
     let session = base_key.session();
     let req = DdiEcdhKeyExchangeCmdReq {
-        hdr: build_ddi_req_hdr(DdiOp::EcdhKeyExchange, Some(session.api_rev()), Some(session.id())),
+        hdr: build_ddi_req_hdr(
+            DdiOp::EcdhKeyExchange,
+            Some(session.api_rev()),
+            Some(session.id()),
+        ),
         data: DdiEcdhKeyExchangeReq {
             priv_key_id: base_key.handle(),
             pub_key_der: MborByteArray::from_slice(peer_pub_der)

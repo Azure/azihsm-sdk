@@ -18,7 +18,11 @@ use super::*;
 ///
 pub(crate) fn delete_key(session: &HsmSession, key_id: u16) -> HsmResult<()> {
     let req = DdiDeleteKeyCmdReq {
-        hdr: build_ddi_req_hdr(DdiOp::DeleteKey, Some(session.api_rev()), Some(session.id())),
+        hdr: build_ddi_req_hdr(
+            DdiOp::DeleteKey,
+            Some(session.api_rev()),
+            Some(session.id()),
+        ),
         data: DdiDeleteKeyReq { key_id },
         ext: None,
     };
@@ -43,7 +47,11 @@ pub(crate) fn delete_key(session: &HsmSession, key_id: u16) -> HsmResult<()> {
 /// Returns the DDI unmask key command response.
 fn unmask_key_exec(session: &HsmSession, masked_key: &[u8]) -> HsmResult<DdiUnmaskKeyCmdResp> {
     let req = DdiUnmaskKeyCmdReq {
-        hdr: build_ddi_req_hdr(DdiOp::UnmaskKey, Some(session.api_rev()), Some(session.id())),
+        hdr: build_ddi_req_hdr(
+            DdiOp::UnmaskKey,
+            Some(session.api_rev()),
+            Some(session.id()),
+        ),
         data: DdiUnmaskKeyReq {
             masked_key: MborByteArray::from_slice(masked_key)
                 .map_hsm_err(HsmError::InternalError)?,
@@ -139,7 +147,11 @@ pub(crate) fn generate_key_report(
     }
 
     let req = DdiAttestKeyCmdReq {
-        hdr: build_ddi_req_hdr(DdiOp::AttestKey, Some(session.api_rev()), Some(session.id())),
+        hdr: build_ddi_req_hdr(
+            DdiOp::AttestKey,
+            Some(session.api_rev()),
+            Some(session.id()),
+        ),
         data: DdiAttestKeyReq {
             key_id: key_handle,
             report_data: MborByteArray::from_slice(report_data)

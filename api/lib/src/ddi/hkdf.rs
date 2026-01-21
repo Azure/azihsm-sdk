@@ -47,7 +47,11 @@ pub(crate) fn hkdf_derive(
     // Build the DDI HKDF derive key command request.
     let session = shared_secret.session();
     let req = DdiHkdfDeriveCmdReq {
-        hdr: build_ddi_req_hdr(DdiOp::HkdfDerive, Some(session.api_rev()), Some(session.id())),
+        hdr: build_ddi_req_hdr(
+            DdiOp::HkdfDerive,
+            Some(session.api_rev()),
+            Some(session.id()),
+        ),
         data: DdiHkdfDeriveReq {
             key_id: shared_secret.handle(),
             hash_algorithm: hash_algo.into(),

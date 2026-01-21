@@ -15,7 +15,11 @@ pub(crate) fn get_rsa_unwrapping_key(
     session: &HsmSession,
 ) -> HsmResult<(HsmKeyHandle, HsmKeyProps, HsmKeyProps)> {
     let req = DdiGetUnwrappingKeyCmdReq {
-        hdr: build_ddi_req_hdr(DdiOp::GetUnwrappingKey, Some(session.api_rev()), Some(session.id())),
+        hdr: build_ddi_req_hdr(
+            DdiOp::GetUnwrappingKey,
+            Some(session.api_rev()),
+            Some(session.id()),
+        ),
         data: DdiGetUnwrappingKeyReq {},
         ext: None,
     };
@@ -53,7 +57,11 @@ pub(crate) fn rsa_aes_unwrap_key(
 ) -> HsmResult<(HsmKeyHandle, HsmKeyProps)> {
     let session = key.session();
     let req = DdiRsaUnwrapCmdReq {
-        hdr: build_ddi_req_hdr(DdiOp::RsaUnwrap, Some(session.api_rev()), Some(session.id())),
+        hdr: build_ddi_req_hdr(
+            DdiOp::RsaUnwrap,
+            Some(session.api_rev()),
+            Some(session.id()),
+        ),
         data: DdiRsaUnwrapReq {
             key_id: key.handle(),
             wrapped_blob_key_class: key_props.kind().try_into()?,
@@ -100,7 +108,11 @@ pub(crate) fn rsa_aes_unwrap_key_pair(
 ) -> HsmResult<(HsmKeyHandle, HsmKeyProps, HsmKeyProps)> {
     let session = unwrapping_key.session();
     let req = DdiRsaUnwrapCmdReq {
-        hdr: build_ddi_req_hdr(DdiOp::RsaUnwrap, Some(session.api_rev()), Some(session.id())),
+        hdr: build_ddi_req_hdr(
+            DdiOp::RsaUnwrap,
+            Some(session.api_rev()),
+            Some(session.id()),
+        ),
         data: DdiRsaUnwrapReq {
             key_id: unwrapping_key.handle(),
             wrapped_blob_key_class: priv_key_props.kind().try_into()?,
@@ -191,7 +203,11 @@ fn rsa_mod_exp(
 ) -> HsmResult<usize> {
     let session = key.session();
     let req = DdiRsaModExpCmdReq {
-        hdr: build_ddi_req_hdr(DdiOp::RsaModExp, Some(session.api_rev()), Some(session.id())),
+        hdr: build_ddi_req_hdr(
+            DdiOp::RsaModExp,
+            Some(session.api_rev()),
+            Some(session.id()),
+        ),
         data: DdiRsaModExpReq {
             key_id: key.handle(),
             op_type: op,
