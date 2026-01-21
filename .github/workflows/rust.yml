@@ -50,7 +50,9 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: coverage-report-ubuntu
-        path: ./target/reports/
+        path: |
+          target/reports/cobertura_sdk.xml
+          target/reports/sdk-cov/
   
   build_windows:
 
@@ -84,4 +86,6 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: coverage-report-windows
-        path: ./target/reports/
+        path: |
+          target/reports/cobertura_sdk.xml
+          target/reports/sdk-cov/
