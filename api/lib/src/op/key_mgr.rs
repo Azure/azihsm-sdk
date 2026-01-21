@@ -231,7 +231,7 @@ impl HsmKeyManager {
     ///
     /// Returns the size of the generated report on success.
     pub fn generate_key_report<Key: HsmKeyReportOp>(
-        key: &mut Key,
+        key: &Key,
         report_data: &[u8],
         report: Option<&mut [u8]>,
     ) -> Result<usize, Key::Error> {

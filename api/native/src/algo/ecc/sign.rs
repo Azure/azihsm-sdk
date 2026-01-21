@@ -10,44 +10,6 @@ use crate::HANDLE_TABLE;
 use crate::handle_table::HandleType;
 use crate::utils::validate_output_buffer;
 
-impl TryFrom<&AzihsmAlgo> for HsmEccKeyGenAlgo {
-    type Error = AzihsmStatus;
-
-    /// Converts a C FFI algorithm specification to HsmEccKeyGenAlgo.
-    fn try_from(_algo: &AzihsmAlgo) -> Result<Self, Self::Error> {
-        Ok(HsmEccKeyGenAlgo::default())
-    }
-}
-
-/// Generates a new ECC key pair
-///
-/// Creates a new elliptic curve public/private key pair on the specified curve.
-///
-/// # Arguments
-/// * `session` - HSM session for key generation
-/// * `algo` - ECC key generation algorithm parameters (curve type)
-/// * `priv_key_props` - Properties for the generated private key (extractable, persistent, etc.)
-/// * `pub_key_props` - Properties for the generated public key
-///
-/// # Returns
-/// * `Ok((AzihsmHandle, AzihsmHandle))` - Handles to (private_key, public_key)
-/// * `Err(AzihsmStatus)` - On failure (e.g., unsupported curve)
-pub(crate) fn ecc_generate_key_pair(
-    session: &HsmSession,
-    algo: &AzihsmAlgo,
-    priv_key_props: HsmKeyProps,
-    pub_key_props: HsmKeyProps,
-) -> Result<(AzihsmHandle, AzihsmHandle), AzihsmStatus> {
-    let mut ecc_algo = HsmEccKeyGenAlgo::try_from(algo)?;
-    let (priv_key, pub_key) =
-        HsmKeyManager::generate_key_pair(session, &mut ecc_algo, priv_key_props, pub_key_props)?;
-
-    let priv_handle = HANDLE_TABLE.alloc_handle(HandleType::EccPrivKey, Box::new(priv_key));
-    let pub_handle = HANDLE_TABLE.alloc_handle(HandleType::EccPubKey, Box::new(pub_key));
-
-    Ok((priv_handle, pub_handle))
-}
-
 /// Generic helper function to perform ECC signing operation
 fn sign_with_algo<A>(
     mut algo: A,
@@ -350,32 +312,4 @@ pub(crate) fn ecc_verify_final(
     let is_valid = ctx.finish(signature)?;
 
     Ok(is_valid)
-}
-
-/// Unmasks a masked ECC key pair and returns handles to both keys
-///
-/// Takes a masked ECC key pair (typically received from external storage)
-/// and unmasks it within the HSM session, creating usable key handles.
-///
-/// # Arguments
-/// * `session` - HSM session where the keys will be unmasked
-/// * `masked_key_pair` - Byte slice containing the masked key pair material
-///
-/// # Returns
-/// * `Ok((AzihsmHandle, AzihsmHandle))` - Handles to (private_key, public_key)
-/// * `Err(AzihsmStatus)` - On failure (e.g., invalid masked key format, session error)
-pub(crate) fn ecc_unmask_key_pair(
-    session: &HsmSession,
-    masked_key: &[u8],
-) -> Result<(AzihsmHandle, AzihsmHandle), AzihsmStatus> {
-    let mut unmask_algo = HsmEccKeyUnmaskAlgo::default();
-
-    // Unmask ECC key pair
-    let (priv_key, pub_key): (HsmEccPrivateKey, HsmEccPublicKey) =
-        HsmKeyManager::unmask_key_pair(session, &mut unmask_algo, masked_key)?;
-
-    let priv_handle = HANDLE_TABLE.alloc_handle(HandleType::EccPrivKey, Box::new(priv_key));
-    let pub_handle = HANDLE_TABLE.alloc_handle(HandleType::EccPubKey, Box::new(pub_key));
-
-    Ok((priv_handle, pub_handle))
 }

@@ -3,6 +3,7 @@
 use azihsm_api::*;
 
 use super::*;
+use crate::AzihsmBuffer;
 use crate::AzihsmHandle;
 use crate::AzihsmStatus;
 use crate::HANDLE_TABLE;
@@ -257,4 +258,28 @@ pub(crate) fn rsa_unmask_key_pair(
     let pub_handle = HANDLE_TABLE.alloc_handle(HandleType::RsaPubKey, Box::new(pub_key));
 
     Ok((priv_handle, pub_handle))
+}
+
+/// Generate a key report for an RSA private key
+pub(crate) fn rsa_generate_key_report(
+    key_handle: AzihsmHandle,
+    report_data: &[u8],
+    output: &mut AzihsmBuffer,
+) -> Result<(), AzihsmStatus> {
+    // Get the key from handle
+    let key = &HsmRsaPrivateKey::try_from(key_handle)?;
+
+    // Determine required size
+    let required_size = HsmKeyManager::generate_key_report(key, report_data, None)?;
+
+    // Validate and get output buffer
+    let output_data = validate_output_buffer(output, required_size)?;
+
+    // Generate actual key report
+    let report_len = HsmKeyManager::generate_key_report(key, report_data, Some(output_data))?;
+
+    // Update output buffer length
+    output.len = report_len as u32;
+
+    Ok(())
 }
