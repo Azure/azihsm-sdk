@@ -10,9 +10,9 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build_ubuntu:
+  build_ubuntu_x64:
 
-    runs-on: ubuntu-${{ vars.UBUNTU_VER }}
+    runs-on: ubuntu-24.04
 
     defaults:
       run:
@@ -44,9 +44,72 @@ jobs:
       run: cargo xtask precheck --nextest --package azihsm_ddi --features mock,table-4
     - name: SDK Run all mock tests table-64
       run: cargo xtask precheck --nextest --package azihsm_ddi --features mock,table-64
-  build_windows:
 
-    runs-on: windows-latest
+  build_ubuntu_arm64:
+
+    runs-on: ubuntu-24.04-arm
+
+    defaults:
+      run:
+        working-directory: .
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install apt packages
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y pkg-config libssl-dev libbsd-dev
+    - name: Run Setup
+      run: cargo xtask precheck --setup
+    - name: Run Copyright
+      run: cargo xtask precheck --copyright
+    - name: Run Audit
+      run: cargo xtask precheck --audit
+    - name: Cargo format
+      run: |
+        cargo +nightly fmt --version
+        cargo xtask precheck --fmt --skip-clang
+    - name: Cargo Clippy
+      run: |
+        cargo clippy --version
+        cargo xtask precheck --clippy
+    - name: SDK Run all mock tests
+      run: cargo xtask precheck --nextest --features mock
+    - name: SDK Run all mock tests table-4
+      run: cargo xtask precheck --nextest --package azihsm_ddi --features mock,table-4
+    - name: SDK Run all mock tests table-64
+      run: cargo xtask precheck --nextest --package azihsm_ddi --features mock,table-64
+
+  build_windows_x64:
+
+    runs-on: windows-2025
+
+    defaults:
+      run:
+        working-directory: .
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Run Setup
+      run: cargo xtask precheck --setup
+    - name: Run Copyright
+      run: cargo xtask precheck --copyright
+    - name: Run Audit
+      run: cargo xtask precheck --audit
+    - name: Cargo format
+      run: |
+        cargo +nightly fmt --version --skip-clang
+        cargo xtask precheck --fmt
+    - name: Cargo Clippy
+      run: |
+        cargo clippy --version
+        cargo xtask precheck --clippy
+    - name: SDK Run all mock tests
+      run: cargo xtask precheck --nextest --features mock
+
+  build_windows_arm64:
+
+    runs-on: windows-11-arm
 
     defaults:
       run:
