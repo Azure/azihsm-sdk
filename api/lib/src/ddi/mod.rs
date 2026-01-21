@@ -29,70 +29,31 @@ use super::*;
 
 pub(crate) type HsmKeyHandle = u16;
 
-/// Builds a DDI request header for session-less operations.
+/// Builds a DDI request header with optional session ID and API revision.
 ///
-/// Creates a `DdiReqHdr` for operations that don't require an active session,
-/// such as `OpenSession` and `GetSessionEncryptionKey`.
-///
-/// # Arguments
-///
-/// * `op` - The DDI operation to include in the header
-/// * `rev` - The API revision to use
-///
-/// # Returns
-///
-/// A `DdiReqHdr` configured for the specified operation and API revision.
-pub(crate) fn build_ddi_req_hdr_sessionless(op: DdiOp, rev: HsmApiRev) -> DdiReqHdr {
-    DdiReqHdr {
-        op,
-        rev: Some(rev.into()),
-        sess_id: None,
-    }
-}
-
-/// Builds a DDI request header with explicit session ID and API revision.
-///
-/// Creates a `DdiReqHdr` for operations that need to specify a session ID
-/// but don't have a session object available, such as `CloseSession`.
+/// Creates a `DdiReqHdr` for various types of DDI operations:
+/// - Device-level operations: neither `rev` nor `sess_id` (e.g., `GetApiRev`)
+/// - Session-less operations: `rev` only (e.g., `OpenSession`, `GetSessionEncryptionKey`)
+/// - Operations with explicit session: both `rev` and `sess_id` (e.g., `CloseSession`)
 ///
 /// # Arguments
 ///
 /// * `op` - The DDI operation to include in the header
-/// * `sess_id` - The session ID to include
-/// * `rev` - The API revision to use
+/// * `rev` - Optional API revision to use
+/// * `sess_id` - Optional session ID to include
 ///
 /// # Returns
 ///
-/// A `DdiReqHdr` configured for the specified operation, session ID, and API revision.
-pub(crate) fn build_ddi_req_hdr_with_session_id(
+/// A `DdiReqHdr` configured for the specified operation and parameters.
+pub(crate) fn build_ddi_req_hdr(
     op: DdiOp,
-    sess_id: u16,
-    rev: HsmApiRev,
+    rev: Option<HsmApiRev>,
+    sess_id: Option<u16>,
 ) -> DdiReqHdr {
     DdiReqHdr {
         op,
-        rev: Some(rev.into()),
-        sess_id: Some(sess_id),
-    }
-}
-
-/// Builds a DDI request header for device-level operations.
-///
-/// Creates a `DdiReqHdr` for operations that don't require a session or API revision,
-/// such as `GetApiRev`.
-///
-/// # Arguments
-///
-/// * `op` - The DDI operation to include in the header
-///
-/// # Returns
-///
-/// A `DdiReqHdr` configured for the specified device operation.
-pub(crate) fn build_ddi_req_hdr_device(op: DdiOp) -> DdiReqHdr {
-    DdiReqHdr {
-        op,
-        rev: None,
-        sess_id: None,
+        rev: rev.map(|r| r.into()),
+        sess_id,
     }
 }
 

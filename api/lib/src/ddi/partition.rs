@@ -88,7 +88,7 @@ fn init_bk3(dev: &HsmDev, rev: HsmApiRev) -> HsmResult<Vec<u8>> {
     let bk3 = [1u8; 48];
     // Rng::rand_bytes(&mut bk3).map_hsm_err(HsmError::RngError)?;
     let req = DdiInitBk3CmdReq {
-        hdr: build_ddi_req_hdr_sessionless(DdiOp::InitBk3, rev),
+        hdr: build_ddi_req_hdr(DdiOp::InitBk3, Some(rev), None),
         data: DdiInitBk3Req {
             bk3: MborByteArray::from_slice(&bk3).map_hsm_err(HsmError::InternalError)?,
         },
@@ -122,7 +122,7 @@ fn get_establish_cred_encryption_key(
     rev: HsmApiRev,
 ) -> HsmResult<DdiGetEstablishCredEncryptionKeyCmdResp> {
     let req = DdiGetEstablishCredEncryptionKeyCmdReq {
-        hdr: build_ddi_req_hdr_sessionless(DdiOp::GetEstablishCredEncryptionKey, rev),
+        hdr: build_ddi_req_hdr(DdiOp::GetEstablishCredEncryptionKey, Some(rev), None),
         data: DdiGetEstablishCredEncryptionKeyReq {},
         ext: None,
     };
@@ -162,7 +162,7 @@ pub fn establish_credential(
     mobk: &[u8],
 ) -> HsmResult<Vec<u8>> {
     let req = DdiEstablishCredentialCmdReq {
-        hdr: build_ddi_req_hdr_sessionless(DdiOp::EstablishCredential, rev),
+        hdr: build_ddi_req_hdr(DdiOp::EstablishCredential, Some(rev), None),
         data: DdiEstablishCredentialReq {
             encrypted_credential: enc_creds,
             pub_key,

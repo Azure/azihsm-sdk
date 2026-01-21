@@ -42,7 +42,7 @@ static DDI: LazyLock<AzihsmDdi> = LazyLock::new(AzihsmDdi::default);
 /// - The device is not responding
 pub(crate) fn get_api_rev(dev: &HsmDev) -> HsmResult<(HsmApiRev, HsmApiRev)> {
     let req = DdiGetApiRevCmdReq {
-        hdr: build_ddi_req_hdr_device(DdiOp::GetApiRev),
+        hdr: build_ddi_req_hdr(DdiOp::GetApiRev, None, None),
         data: DdiGetApiRevReq {},
         ext: None,
     };
@@ -173,7 +173,7 @@ fn get_device_kind(dev: &HsmDev) -> HsmResult<DdiDeviceKind> {
     let (_, max_rev) = get_api_rev(dev)?;
 
     let req = DdiGetDeviceInfoCmdReq {
-        hdr: build_ddi_req_hdr_sessionless(DdiOp::GetDeviceInfo, max_rev),
+        hdr: build_ddi_req_hdr(DdiOp::GetDeviceInfo, Some(max_rev), None),
         data: DdiGetDeviceInfoReq {},
         ext: None,
     };
