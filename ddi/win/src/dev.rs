@@ -863,37 +863,60 @@ impl DdiDev for DdiWinDev {
         Ok(resp)
     }
 
-    /// exec_op_fp_gcm
-    /// Windows implementation of
-    /// fast path AES GCM encryption
-    /// decryption functionality
-    /// mode -> Encryption or decryption
-    /// gcm_params -> Parameters for operation
-    /// session id and short_app_id are application
-    /// specific
-    /// src_buf
-    ///   For encryption, this is the cleartext buffer
-    ///   For decryption, this is the encrypted content
-    fn exec_op_fp_gcm(
+    /// Execute AES GCM operation (encryption/decryption) with slice-based buffers
+    ///
+    /// This is a slice-based variant that allows the caller to provide pre-allocated
+    /// buffers, avoiding the extra allocation and copy overhead of the Vec-based API.
+    ///
+    /// # Arguments
+    /// * `mode`        - Encryption or decryption
+    /// * `gcm_params`  - Parameters for the operation (key ID, IV, tag, session info)
+    /// * `src_buf`     - Source buffer slice to encrypt or decrypt
+    /// * `dst_buf`     - Destination buffer slice to write encrypted or decrypted data
+    /// * `tag`         - Output parameter for encryption tag or input tag for decryption
+    /// * `iv`          - Output parameter for IV returned from device
+    /// * `fips_approved` - Output parameter set to indicate if operation was FIPS approved
+    ///
+    /// # Returns
+    /// * `usize` - Number of bytes written to the destination buffer
+    ///
+    /// # Error
+    /// * `DdiError` - Error that occurred during operation
+    ///
+    /// # Notes
+    /// - The destination buffer must be at least as large as the source buffer
+    /// - For decryption, the tag must be provided in `gcm_params`
+    /// - AAD data is automatically aligned to 32-byte boundaries as required by the driver
+    fn exec_op_fp_gcm_slice(
         &self,
         mode: DdiAesOp,
         gcm_params: DdiAesGcmParams,
-        src_buf: Vec<u8>,
-    ) -> Result<DdiAesGcmResult, DdiError> {
+        src_buf: &[u8],
+        dst_buf: &mut [u8],
+        tag: &mut Option<[u8; 16]>,
+        iv: &mut Option<[u8; 12]>,
+        fips_approved: &mut bool,
+    ) -> Result<usize, DdiError> {
         let src_buf_len = src_buf.len();
+
         // Validate input parameters
-        // Source buffer must not be empty
-        // if decryption tag must be provided
-        // session id and short app id are verified
-        // in the driver interface
         if src_buf_len == 0 {
-            return Err(DdiError::InvalidParameter);
+            Err(DdiError::InvalidParameter)?;
         }
 
-        // If this is a decryption operation, the tag must be provided. Return
-        // early with an error if the caller did not provide a tag.
+        // If this is a decryption operation, the tag must be provided
         if mode == DdiAesOp::Decrypt && gcm_params.tag.is_none() {
             Err(DdiError::DdiStatus(DdiStatus::NoTagProvided))?;
+        }
+
+        // Validate destination buffer size
+        if dst_buf.len() < src_buf_len {
+            tracing::error!(
+                "Destination buffer size ({}) is less than source buffer size ({})",
+                dst_buf.len(),
+                src_buf_len
+            );
+            return Err(DdiError::InvalidParameter);
         }
 
         let mut ioctl_in_buffer = McrFpIoctlIndata::default();
@@ -905,6 +928,7 @@ impl DdiDev for DdiWinDev {
         ioctl_in_buffer.ioctl_hdr.flags = 0;
 
         ioctl_in_buffer.context = 0;
+
         // Extract the aad
         let aad = gcm_params.aad.unwrap_or_default();
         let aad_len = aad.len();
@@ -920,12 +944,13 @@ impl DdiDev for DdiWinDev {
         ioctl_in_buffer.xts_or_gcm.gcm.aligned_aad_data_len = final_aad.len() as u32;
         ioctl_in_buffer.xts_or_gcm.gcm.enable_gcm_work_around = 1;
 
-        // Create a new buffer that concatenates
-        // aad and the cleartext
+        // Create a new buffer that concatenates aad and the source data
         let mut new_src_buf: Vec<u8> = Vec::new();
         new_src_buf.extend(&final_aad);
         new_src_buf.extend(src_buf);
-        let mut dest_buf: Vec<u8> = vec![0; new_src_buf.len()];
+
+        // Create temporary destination buffer that includes space for AAD
+        let mut temp_dest_buf: Vec<u8> = vec![0; new_src_buf.len()];
 
         if mode == DdiAesOp::Encrypt {
             ioctl_in_buffer.opc = MCR_FP_IOCTL_OP_TYPE_ENCRYPT;
@@ -943,7 +968,7 @@ impl DdiDev for DdiWinDev {
             })?;
         }
 
-        ioctl_in_buffer.cypher = MCR_FP_IOCTL_AES_CYPHER_GCM; /* gcm */
+        ioctl_in_buffer.cypher = MCR_FP_IOCTL_AES_CYPHER_GCM;
         let ioctl_code = CTL_CODE(
             0x3F,
             MCR_FP_IOCTL_CODE_GCM,
@@ -951,12 +976,10 @@ impl DdiDev for DdiWinDev {
             FILE_READ_ACCESS | FILE_WRITE_ACCESS,
         );
 
-        // fill up the fields in the ioctl buffer from the parameters
-        // TODO need to also copy the init_vec and tag
         ioctl_in_buffer.xts_or_gcm.gcm.kid = gcm_params.key_id;
         ioctl_in_buffer.xts_or_gcm.gcm.init_vec = gcm_params.iv;
 
-        ioctl_in_buffer.frame_type = MCR_FP_IOCTL_FRAME_TYPE_AES; /* aes frame type */
+        ioctl_in_buffer.frame_type = MCR_FP_IOCTL_FRAME_TYPE_AES;
         ioctl_in_buffer.session_id = gcm_params.session_id;
         ioctl_in_buffer.short_app_id = gcm_params.short_app_id;
 
@@ -967,11 +990,10 @@ impl DdiDev for DdiWinDev {
         // cleartext buffer length
         ioctl_in_buffer.user_buffers.src_length = new_src_buf.len() as u32;
         ioctl_in_buffer.user_buffers.src_buf = new_src_buf.as_ptr();
-        ioctl_in_buffer.user_buffers.dst_length = dest_buf.len() as u32;
-        ioctl_in_buffer.user_buffers.dst_buf = dest_buf.as_mut_ptr();
+        ioctl_in_buffer.user_buffers.dst_length = temp_dest_buf.len() as u32;
+        ioctl_in_buffer.user_buffers.dst_buf = temp_dest_buf.as_mut_ptr();
 
-        // SAFETY: WINAPI call requires unsafe call. The pointers to the buffers are valid and have been checked via
-        // debugging as well as code reviews.
+        // SAFETY: WINAPI call requires unsafe call
         let mut overlapped: OVERLAPPED = unsafe { mem::zeroed() };
         let mut bytes_returned: DWORD = 0;
         let in_ptr = ptr::addr_of!(ioctl_in_buffer);
@@ -981,8 +1003,7 @@ impl DdiDev for DdiWinDev {
         let event = IoEvent::new()?;
         overlapped.hEvent = event.handle();
 
-        // Safety: This is unsafe because of the call to
-        // system routine DeviceIoControl
+        // Safety: This is unsafe because of the call to system routine DeviceIoControl
         let _ioctl_ret = unsafe {
             DeviceIoControl(
                 self.file.read().as_raw_handle() as HANDLE,
@@ -1000,13 +1021,12 @@ impl DdiDev for DdiWinDev {
         if last_error.raw_os_error() != Some(ERROR_IO_PENDING as i32) {
             tracing::warn!(
                 ?last_error,
-                "DeviceIoControl returned error after exec_op_fp_gcm"
+                "DeviceIoControl returned error after exec_op_fp_gcm_slice"
             );
             Err(DdiError::IoError(last_error))?;
         }
 
-        // SAFETY: WINAPI call requires unsafe call. The pointers to the buffers are valid and have been checked via
-        // debugging as well as code reviews.
+        // SAFETY: WINAPI call requires unsafe call
         let result = unsafe {
             GetOverlappedResult(
                 self.file.read().as_raw_handle() as HANDLE,
@@ -1026,7 +1046,7 @@ impl DdiDev for DdiWinDev {
             let last_error = std::io::Error::last_os_error();
             tracing::warn!(
                 ?last_error,
-                "GetOverlappedResult returned error after exec_op_fp_gcm"
+                "GetOverlappedResult returned error after exec_op_fp_gcm_slice"
             );
             Err(DdiError::IoError(last_error))?;
         }
@@ -1043,13 +1063,80 @@ impl DdiDev for DdiWinDev {
             ))?
         }
 
-        dest_buf.drain(0..final_aad.len());
+        // Copy the actual data (excluding AAD) to the destination buffer
+        let aad_offset = final_aad.len();
+        let data_len = temp_dest_buf.len() - aad_offset;
+
+        if data_len > dst_buf.len() {
+            if mode == DdiAesOp::Encrypt {
+                tracing::error!(
+                    "AES GCM Encrypt: Device output length ({}) is greater than destination buffer size ({})",
+                    data_len,
+                    dst_buf.len()
+                );
+                Err(DdiError::DdiStatus(DdiStatus::AesEncryptFailed))?;
+            } else {
+                tracing::error!(
+                    "AES GCM Decrypt: Device output length ({}) is greater than destination buffer size ({})",
+                    data_len,
+                    dst_buf.len()
+                );
+                Err(DdiError::DdiStatus(DdiStatus::AesDecryptFailed))?;
+            }
+        }
+
+        dst_buf[..data_len].copy_from_slice(&temp_dest_buf[aad_offset..]);
+
+        // Set output parameters from device response
+        *tag = Some(ioctl_out_buffer.cmd_spec_data);
+        *iv = Some(ioctl_out_buffer.iv_from_device);
+        *fips_approved = ioctl_out_buffer.fips_approved;
+
+        Ok(data_len)
+    }
+
+    /// exec_op_fp_gcm
+    /// Windows implementation of
+    /// fast path AES GCM encryption
+    /// decryption functionality
+    /// mode -> Encryption or decryption
+    /// gcm_params -> Parameters for operation
+    /// session id and short_app_id are application
+    /// specific
+    /// src_buf
+    ///   For encryption, this is the cleartext buffer
+    ///   For decryption, this is the encrypted content
+    fn exec_op_fp_gcm(
+        &self,
+        mode: DdiAesOp,
+        gcm_params: DdiAesGcmParams,
+        src_buf: Vec<u8>,
+    ) -> Result<DdiAesGcmResult, DdiError> {
+        let src_buf_len = src_buf.len();
+        let mut dest_buf: Vec<u8> = vec![0; src_buf_len];
+        let mut fips_approved = false;
+        let mut tag = None;
+        let mut iv = None;
+
+        let total_size = self.exec_op_fp_gcm_slice(
+            mode,
+            gcm_params,
+            &src_buf,
+            &mut dest_buf,
+            &mut tag,
+            &mut iv,
+            &mut fips_approved,
+        )?;
+
+        if total_size < src_buf_len {
+            dest_buf.truncate(total_size);
+        }
 
         Ok(DdiAesGcmResult {
             data: dest_buf,
-            tag: Some(ioctl_out_buffer.cmd_spec_data),
-            iv: Some(ioctl_out_buffer.iv_from_device),
-            fips_approved: ioctl_out_buffer.fips_approved,
+            tag,
+            iv,
+            fips_approved,
         })
     }
 

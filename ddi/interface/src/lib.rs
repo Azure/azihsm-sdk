@@ -191,6 +191,31 @@ pub trait DdiDev {
     fn exec_op<T: DdiOpReq>(&self, req: &T, cookie: &mut Option<DdiCookie>)
         -> DdiResult<T::OpResp>;
 
+    /// Execute GCM operation (encryption / decryption) with slice buffers
+    ///
+    /// # Arguments
+    ///
+    /// * `mode`        -- Encryption / decryption
+    /// * `gcm_params` -- required. GCM parameters
+    /// * `src_buf` --- source buffer slice to encrypt or decrypt
+    /// * `dst_buf` --- destination buffer slice to write encrypted or decrypted data
+    /// * `fips_approved` -- output parameter to indicate if operation was FIPS approved
+    ///
+    /// # Returns
+    /// * `usize` - Number of bytes written to destination buffer
+    /// # Error
+    /// * `DdiError` - Error encountered while executing the command
+    fn exec_op_fp_gcm_slice(
+        &self,
+        mode: DdiAesOp,
+        gcm_params: DdiAesGcmParams,
+        src_buf: &[u8],
+        dst_buf: &mut [u8],
+        tag: &mut Option<[u8; 16]>,
+        iv: &mut Option<[u8; 12]>,
+        fips_approved: &mut bool,
+    ) -> Result<usize, DdiError>;
+
     /// Execute GCM operation (encryption / decryption)
     ///
     /// # Arguments
