@@ -176,7 +176,7 @@ static const OSSL_ALGORITHM azihsm_ossl_encoders[] = {
         azihsm_ossl_ec_der_pki_encoder_functions,
         NULL,
     },
-     { NULL, NULL, NULL, NULL },
+    { NULL, NULL, NULL, NULL },
 };
 
 // Store
@@ -260,13 +260,13 @@ static const OSSL_ALGORITHM *azihsm_ossl_query_operation(
         return azihsm_ossl_signature;
     case OSSL_OP_ASYM_CIPHER:
         return azihsm_ossl_asym_cipher;
-     case OSSL_OP_ENCODER:
-         return azihsm_ossl_encoders;
-     case OSSL_OP_STORE:
-         return azihsm_ossl_store;
-     }
+    case OSSL_OP_ENCODER:
+        return azihsm_ossl_encoders;
+    case OSSL_OP_STORE:
+        return azihsm_ossl_store;
+    }
 
-     return NULL;
+    return NULL;
 }
 
 static OSSL_STATUS azihsm_ossl_get_capabilities(
