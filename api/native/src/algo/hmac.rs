@@ -9,7 +9,18 @@ use crate::HANDLE_TABLE;
 use crate::handle_table::HandleType;
 use crate::utils::validate_output_buffer;
 
-/// Helper function to perform HMAC signing operation
+/// Computes an HMAC signature for the given data
+///
+/// Single-shot operation that signs data using HMAC with the specified key.
+///
+/// # Arguments
+/// * `key_handle` - Handle to the HMAC key
+/// * `data` - Input data to sign
+/// * `output` - Output buffer for the HMAC signature
+///
+/// # Returns
+/// * `Ok(())` - On successful signature generation
+/// * `Err(AzihsmStatus)` - On failure (e.g., invalid key, buffer too small)
 pub(crate) fn hmac_sign(
     key_handle: AzihsmHandle,
     input: &[u8],
@@ -36,7 +47,19 @@ pub(crate) fn hmac_sign(
     Ok(())
 }
 
-/// Helper function to perform HMAC verification operation
+/// Verifies an HMAC signature for the given data
+///
+/// Single-shot operation that verifies an HMAC signature matches the provided data.
+///
+/// # Arguments
+/// * `key_handle` - Handle to the HMAC key
+/// * `data` - Input data to verify
+/// * `signature` - Expected HMAC signature to verify against
+///
+/// # Returns
+/// * `Ok(true)` - If signature is valid
+/// * `Ok(false)` - If signature is invalid
+/// * `Err(AzihsmStatus)` - On failure (e.g., invalid key, invalid signature format)
 pub(crate) fn hmac_verify(
     key_handle: AzihsmHandle,
     data: &[u8],
@@ -52,7 +75,17 @@ pub(crate) fn hmac_verify(
     Ok(HsmVerifier::verify(&mut algo, key, data, sig)?)
 }
 
-/// Initialize streaming HMAC sign operation
+/// Initializes a streaming HMAC signing operation
+///
+/// Creates a context for incrementally computing an HMAC signature.
+/// Use with `hmac_sign_update` and `hmac_sign_final`.
+///
+/// # Arguments
+/// * `key_handle` - Handle to the HMAC key
+///
+/// # Returns
+/// * `Ok(AzihsmHandle)` - Handle to the signing context
+/// * `Err(AzihsmStatus)` - On failure (e.g., invalid key)
 pub(crate) fn hmac_sign_init(key_handle: AzihsmHandle) -> Result<AzihsmHandle, AzihsmStatus> {
     // Get the key from handle
     let key = HsmHmacKey::try_from(key_handle)?;
@@ -69,7 +102,17 @@ pub(crate) fn hmac_sign_init(key_handle: AzihsmHandle) -> Result<AzihsmHandle, A
     Ok(ctx_handle)
 }
 
-/// Update streaming HMAC sign operation with additional data
+/// Updates a streaming HMAC signing operation with additional data
+///
+/// Processes a chunk of data in an incremental HMAC signature computation.
+///
+/// # Arguments
+/// * `ctx_handle` - Handle to the signing context
+/// * `data` - Data chunk to include in the signature
+///
+/// # Returns
+/// * `Ok(())` - On success
+/// * `Err(AzihsmStatus)` - On failure (e.g., invalid context)
 pub(crate) fn hmac_sign_update(ctx_handle: AzihsmHandle, data: &[u8]) -> Result<(), AzihsmStatus> {
     // Get mutable reference to the context from handle table
     let ctx: &mut HsmHmacSignContext =
@@ -81,7 +124,17 @@ pub(crate) fn hmac_sign_update(ctx_handle: AzihsmHandle, data: &[u8]) -> Result<
     Ok(())
 }
 
-/// Finalize streaming HMAC sign operation and retrieve signature
+/// Finalizes a streaming HMAC signing operation
+///
+/// Completes the HMAC signature computation and returns the final signature.
+///
+/// # Arguments
+/// * `ctx_handle` - Handle to the signing context
+/// * `output` - Output buffer for the HMAC signature
+///
+/// # Returns
+/// * `Ok(())` - On successful signature generation
+/// * `Err(AzihsmStatus)` - On failure (e.g., buffer too small)
 pub(crate) fn hmac_sign_final(
     ctx_handle: AzihsmHandle,
     output: &mut AzihsmBuffer,
@@ -107,7 +160,17 @@ pub(crate) fn hmac_sign_final(
     Ok(())
 }
 
-/// Initialize streaming HMAC verify operation
+/// Initializes a streaming HMAC verification operation
+///
+/// Creates a context for incrementally verifying an HMAC signature.
+/// Use with `hmac_verify_update` and `hmac_verify_final`.
+///
+/// # Arguments
+/// * `key_handle` - Handle to the HMAC key
+///
+/// # Returns
+/// * `Ok(AzihsmHandle)` - Handle to the verification context
+/// * `Err(AzihsmStatus)` - On failure (e.g., invalid key)
 pub(crate) fn hmac_verify_init(key_handle: AzihsmHandle) -> Result<AzihsmHandle, AzihsmStatus> {
     // Get the key from handle
     let key = HsmHmacKey::try_from(key_handle)?;
@@ -124,7 +187,17 @@ pub(crate) fn hmac_verify_init(key_handle: AzihsmHandle) -> Result<AzihsmHandle,
     Ok(ctx_handle)
 }
 
-/// Update streaming HMAC verify operation with additional data
+/// Updates a streaming HMAC verification operation with additional data
+///
+/// Processes a chunk of data in an incremental HMAC signature verification.
+///
+/// # Arguments
+/// * `ctx_handle` - Handle to the verification context
+/// * `data` - Data chunk to include in the verification
+///
+/// # Returns
+/// * `Ok(())` - On success
+/// * `Err(AzihsmStatus)` - On failure (e.g., invalid context)
 pub(crate) fn hmac_verify_update(
     ctx_handle: AzihsmHandle,
     data: &[u8],
@@ -138,7 +211,18 @@ pub(crate) fn hmac_verify_update(
     Ok(())
 }
 
-/// Finalize streaming HMAC verify operation and verify signature
+/// Finalizes a streaming HMAC verification operation
+///
+/// Completes the HMAC verification and checks if the signature matches.
+///
+/// # Arguments
+/// * `ctx_handle` - Handle to the verification context
+/// * `signature` - Expected HMAC signature to verify against
+///
+/// # Returns
+/// * `Ok(true)` - If signature is valid
+/// * `Ok(false)` - If signature is invalid
+/// * `Err(AzihsmStatus)` - On failure
 pub(crate) fn hmac_verify_final(
     ctx_handle: AzihsmHandle,
     signature: &[u8],

@@ -9,7 +9,7 @@
 #include "handle/part_list_handle.hpp"
 #include "handle/session_handle.hpp"
 #include "helpers.hpp"
-#include "utils.hpp"
+#include "utils/auto_key.hpp"
 
 class azihsm_ecc_keygen : public ::testing::Test
 {
@@ -19,14 +19,11 @@ class azihsm_ecc_keygen : public ::testing::Test
 
 TEST_F(azihsm_ecc_keygen, generate_p256_keypair)
 {
-    part_list_.for_each_part([](std::vector<azihsm_char> &path) {
-        auto partition = PartitionHandle(path);
-        auto session = SessionHandle(partition.get());
-
-        AutoKey priv_key;
-        AutoKey pub_key;
+    part_list_.for_each_session([](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
         auto err = generate_ecc_keypair(
-            session.get(),
+            session,
             AZIHSM_ECC_CURVE_P256,
             true,
             priv_key.get_ptr(),
@@ -36,7 +33,7 @@ TEST_F(azihsm_ecc_keygen, generate_p256_keypair)
         ASSERT_NE(priv_key.get(), 0);
         ASSERT_NE(pub_key.get(), 0);
 
-        // Explicitly test deletion (AutoKey will also delete on scope exit as backup)
+        // Explicitly test deletion (auto_key will also delete on scope exit as backup)
         auto delete_priv_err = azihsm_key_delete(priv_key.get());
         ASSERT_EQ(delete_priv_err, AZIHSM_STATUS_SUCCESS);
         priv_key.release();
@@ -49,14 +46,11 @@ TEST_F(azihsm_ecc_keygen, generate_p256_keypair)
 
 TEST_F(azihsm_ecc_keygen, generate_p384_keypair)
 {
-    part_list_.for_each_part([](std::vector<azihsm_char> &path) {
-        auto partition = PartitionHandle(path);
-        auto session = SessionHandle(partition.get());
-
-        AutoKey priv_key;
-        AutoKey pub_key;
+    part_list_.for_each_session([](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
         auto err = generate_ecc_keypair(
-            session.get(),
+            session,
             AZIHSM_ECC_CURVE_P384,
             true,
             priv_key.get_ptr(),
@@ -66,7 +60,7 @@ TEST_F(azihsm_ecc_keygen, generate_p384_keypair)
         ASSERT_NE(priv_key.get(), 0);
         ASSERT_NE(pub_key.get(), 0);
 
-        // Explicitly test deletion (AutoKey will also delete on scope exit as backup)
+        // Explicitly test deletion (auto_key will also delete on scope exit as backup)
         auto delete_priv_err = azihsm_key_delete(priv_key.get());
         ASSERT_EQ(delete_priv_err, AZIHSM_STATUS_SUCCESS);
         priv_key.release();
@@ -79,14 +73,11 @@ TEST_F(azihsm_ecc_keygen, generate_p384_keypair)
 
 TEST_F(azihsm_ecc_keygen, generate_p521_keypair)
 {
-    part_list_.for_each_part([](std::vector<azihsm_char> &path) {
-        auto partition = PartitionHandle(path);
-        auto session = SessionHandle(partition.get());
-
-        AutoKey priv_key;
-        AutoKey pub_key;
+    part_list_.for_each_session([](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
         auto err = generate_ecc_keypair(
-            session.get(),
+            session,
             AZIHSM_ECC_CURVE_P521,
             true,
             priv_key.get_ptr(),
@@ -96,7 +87,7 @@ TEST_F(azihsm_ecc_keygen, generate_p521_keypair)
         ASSERT_NE(priv_key.get(), 0);
         ASSERT_NE(pub_key.get(), 0);
 
-        // Explicitly test deletion (AutoKey will also delete on scope exit as backup)
+        // Explicitly test deletion (auto_key will also delete on scope exit as backup)
         auto delete_priv_err = azihsm_key_delete(priv_key.get());
         ASSERT_EQ(delete_priv_err, AZIHSM_STATUS_SUCCESS);
         priv_key.release();
@@ -110,10 +101,7 @@ TEST_F(azihsm_ecc_keygen, generate_p521_keypair)
 // Parameter validation tests
 TEST_F(azihsm_ecc_keygen, null_algorithm)
 {
-    part_list_.for_each_part([](std::vector<azihsm_char> &path) {
-        auto partition = PartitionHandle(path);
-        auto session = SessionHandle(partition.get());
-
+    part_list_.for_each_session([](azihsm_handle session) {
         DummyEccPrivKeyProps priv_props;
         DummyEccPubKeyProps pub_props;
 
@@ -124,7 +112,7 @@ TEST_F(azihsm_ecc_keygen, null_algorithm)
         auto pub_prop_list = pub_props.get_prop_list();
 
         auto err = azihsm_key_gen_pair(
-            session.get(),
+            session,
             nullptr,
             &priv_prop_list,
             &pub_prop_list,
@@ -137,10 +125,7 @@ TEST_F(azihsm_ecc_keygen, null_algorithm)
 
 TEST_F(azihsm_ecc_keygen, null_priv_key_props)
 {
-    part_list_.for_each_part([](std::vector<azihsm_char> &path) {
-        auto partition = PartitionHandle(path);
-        auto session = SessionHandle(partition.get());
-
+    part_list_.for_each_session([](azihsm_handle session) {
         azihsm_algo keygen_algo{};
         keygen_algo.id = AZIHSM_ALGO_ID_EC_KEY_PAIR_GEN;
         keygen_algo.params = nullptr;
@@ -153,7 +138,7 @@ TEST_F(azihsm_ecc_keygen, null_priv_key_props)
         azihsm_handle pub_key_handle = 0;
 
         auto err = azihsm_key_gen_pair(
-            session.get(),
+            session,
             &keygen_algo,
             nullptr,
             &pub_prop_list,
@@ -166,10 +151,7 @@ TEST_F(azihsm_ecc_keygen, null_priv_key_props)
 
 TEST_F(azihsm_ecc_keygen, null_pub_key_props)
 {
-    part_list_.for_each_part([](std::vector<azihsm_char> &path) {
-        auto partition = PartitionHandle(path);
-        auto session = SessionHandle(partition.get());
-
+    part_list_.for_each_session([](azihsm_handle session) {
         azihsm_algo keygen_algo{};
         keygen_algo.id = AZIHSM_ALGO_ID_EC_KEY_PAIR_GEN;
         keygen_algo.params = nullptr;
@@ -182,7 +164,7 @@ TEST_F(azihsm_ecc_keygen, null_pub_key_props)
         azihsm_handle pub_key_handle = 0;
 
         auto err = azihsm_key_gen_pair(
-            session.get(),
+            session,
             &keygen_algo,
             &priv_prop_list,
             nullptr,
@@ -195,10 +177,7 @@ TEST_F(azihsm_ecc_keygen, null_pub_key_props)
 
 TEST_F(azihsm_ecc_keygen, null_priv_key_handle_output)
 {
-    part_list_.for_each_part([](std::vector<azihsm_char> &path) {
-        auto partition = PartitionHandle(path);
-        auto session = SessionHandle(partition.get());
-
+    part_list_.for_each_session([](azihsm_handle session) {
         azihsm_algo keygen_algo{};
         keygen_algo.id = AZIHSM_ALGO_ID_EC_KEY_PAIR_GEN;
         keygen_algo.params = nullptr;
@@ -212,7 +191,7 @@ TEST_F(azihsm_ecc_keygen, null_priv_key_handle_output)
         azihsm_handle pub_key_handle = 0;
 
         auto err = azihsm_key_gen_pair(
-            session.get(),
+            session,
             &keygen_algo,
             &priv_prop_list,
             &pub_prop_list,
@@ -225,10 +204,7 @@ TEST_F(azihsm_ecc_keygen, null_priv_key_handle_output)
 
 TEST_F(azihsm_ecc_keygen, null_pub_key_handle_output)
 {
-    part_list_.for_each_part([](std::vector<azihsm_char> &path) {
-        auto partition = PartitionHandle(path);
-        auto session = SessionHandle(partition.get());
-
+    part_list_.for_each_session([](azihsm_handle session) {
         azihsm_algo keygen_algo{};
         keygen_algo.id = AZIHSM_ALGO_ID_EC_KEY_PAIR_GEN;
         keygen_algo.params = nullptr;
@@ -242,7 +218,7 @@ TEST_F(azihsm_ecc_keygen, null_pub_key_handle_output)
         azihsm_handle priv_key_handle = 0;
 
         auto err = azihsm_key_gen_pair(
-            session.get(),
+            session,
             &keygen_algo,
             &priv_prop_list,
             &pub_prop_list,
@@ -281,10 +257,7 @@ TEST_F(azihsm_ecc_keygen, invalid_session_handle)
 
 TEST_F(azihsm_ecc_keygen, unsupported_algorithm)
 {
-    part_list_.for_each_part([](std::vector<azihsm_char> &path) {
-        auto partition = PartitionHandle(path);
-        auto session = SessionHandle(partition.get());
-
+    part_list_.for_each_session([](azihsm_handle session) {
         azihsm_algo keygen_algo{};
         keygen_algo.id = static_cast<azihsm_algo_id>(0xFFFFFFFF);
         keygen_algo.params = nullptr;
@@ -299,7 +272,7 @@ TEST_F(azihsm_ecc_keygen, unsupported_algorithm)
         azihsm_handle pub_key_handle = 0;
 
         auto err = azihsm_key_gen_pair(
-            session.get(),
+            session,
             &keygen_algo,
             &priv_prop_list,
             &pub_prop_list,
@@ -312,16 +285,12 @@ TEST_F(azihsm_ecc_keygen, unsupported_algorithm)
 
 TEST_F(azihsm_ecc_keygen, unmask_ecc_p256_keypair)
 {
-    part_list_.for_each_part([](std::vector<azihsm_char> &path) {
-        // Open partition and create session
-        auto partition = PartitionHandle(path);
-        auto session = SessionHandle(partition.get());
-
+    part_list_.for_each_session([](azihsm_handle session) {
         // Step 1: Generate ECC P256 key pair with sign/verify capabilities
-        AutoKey original_priv_key;
-        AutoKey original_pub_key;
+        auto_key original_priv_key;
+        auto_key original_pub_key;
         auto err = generate_ecc_keypair(
-            session.get(),
+            session,
             AZIHSM_ECC_CURVE_P256,
             true, // session key
             original_priv_key.get_ptr(),
@@ -355,10 +324,10 @@ TEST_F(azihsm_ecc_keygen, unmask_ecc_p256_keypair)
         masked_key_buf.ptr = masked_key_data.data();
         masked_key_buf.len = static_cast<uint32_t>(masked_key_data.size());
 
-        AutoKey unmasked_priv_key;
-        AutoKey unmasked_pub_key;
+        auto_key unmasked_priv_key;
+        auto_key unmasked_pub_key;
         err = azihsm_key_unmask_pair(
-            session.get(),
+            session,
             AZIHSM_KEY_KIND_ECC,
             &masked_key_buf,
             unmasked_priv_key.get_ptr(),

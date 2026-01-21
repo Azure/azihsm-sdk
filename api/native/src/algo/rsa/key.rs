@@ -73,7 +73,19 @@ impl<'a> TryFrom<&'a AzihsmAlgo> for &'a AzihsmAlgoRsaPkcsOaepParams {
     }
 }
 
-/// Generate an RSA key pair and return handles
+/// Generates a new RSA key pair
+///
+/// Creates a new RSA public/private key pair with the specified key size.
+///
+/// # Arguments
+/// * `session` - HSM session for key generation
+/// * `algo` - RSA key generation algorithm parameters (key size)
+/// * `priv_key_props` - Properties for the private key (extractable, persistent, etc.)
+/// * `pub_key_props` - Properties for the public key
+///
+/// # Returns
+/// * `Ok((AzihsmHandle, AzihsmHandle))` - Handles to (private_key, public_key)
+/// * `Err(AzihsmStatus)` - On failure (e.g., unsupported key size)
 pub(crate) fn rsa_generate_key_pair(
     session: &HsmSession,
     algo: &AzihsmAlgo,
@@ -90,7 +102,19 @@ pub(crate) fn rsa_generate_key_pair(
     Ok((priv_handle, pub_handle))
 }
 
-/// Unwrap a wrapped symmetric key using RSA-AES key wrapping
+/// Unwraps (decrypts) a wrapped symmetric key using an RSA private key
+///
+/// Decrypts a key that was wrapped (encrypted) for secure transport or storage.
+///
+/// # Arguments
+/// * `algo` - RSA unwrap algorithm (typically OAEP or PKCS#1 v1.5)
+/// * `wrapping_key_handle` - Handle to the RSA private key used for unwrapping
+/// * `wrapped_key` - Encrypted key material to unwrap
+/// * `unwrapped_key_props` - Properties for the unwrapped key
+///
+/// # Returns
+/// * `Ok(AzihsmHandle)` - Handle to the unwrapped key
+/// * `Err(AzihsmStatus)` - On failure (e.g., decryption failure, invalid wrapped key)
 pub(crate) fn rsa_unwrap_key(
     algo: &AzihsmAlgo,
     unwrapping_key_handle: AzihsmHandle,
@@ -130,7 +154,20 @@ pub(crate) fn rsa_unwrap_key(
     Ok(handle)
 }
 
-/// Unwrap a wrapped key pair using RSA-AES key wrapping
+/// Unwraps (decrypts) a wrapped RSA key pair using an RSA private key
+///
+/// Decrypts an RSA key pair that was wrapped for secure transport or storage.
+///
+/// # Arguments
+/// * `algo` - RSA unwrap algorithm (typically OAEP or PKCS#1 v1.5)
+/// * `wrapping_key_handle` - Handle to the RSA private key used for unwrapping
+/// * `wrapped_key_pair` - Encrypted key pair material to unwrap
+/// * `priv_key_props` - Properties for the unwrapped private key
+/// * `pub_key_props` - Properties for the unwrapped public key
+///
+/// # Returns
+/// * `Ok((AzihsmHandle, AzihsmHandle))` - Handles to (private_key, public_key)
+/// * `Err(AzihsmStatus)` - On failure
 pub(crate) fn rsa_unwrap_key_pair(
     algo: &AzihsmAlgo,
     unwrapping_key_handle: AzihsmHandle,
@@ -194,7 +231,18 @@ pub(crate) fn rsa_unwrap_key_pair(
     Ok((priv_handle, pub_handle))
 }
 
-/// Unmask a masked RSA key pair
+/// Unmasks a masked RSA key pair and returns handles to both keys
+///
+/// Takes a masked RSA key pair (typically received from external storage)
+/// and unmasks it within the HSM session, creating usable key handles.
+///
+/// # Arguments
+/// * `session` - HSM session where the keys will be unmasked
+/// * `masked_key_pair` - Byte slice containing the masked key pair material
+///
+/// # Returns
+/// * `Ok((AzihsmHandle, AzihsmHandle))` - Handles to (private_key, public_key)
+/// * `Err(AzihsmStatus)` - On failure (e.g., invalid masked key format, session error)
 pub(crate) fn rsa_unmask_key_pair(
     session: &HsmSession,
     masked_key: &[u8],

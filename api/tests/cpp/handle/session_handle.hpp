@@ -9,6 +9,9 @@
 #include <string>
 
 #include "part_handle.hpp"
+#include "test_creds.hpp"
+
+static int SESSION_COUNT = 0;
 
 class SessionHandle
 {
@@ -25,13 +28,29 @@ class SessionHandle
         {
             throw std::runtime_error("Failed to open session. Error: " + std::to_string(err));
         }
+        ++SESSION_COUNT;
+        printf(
+            "[SessionHandle] Opened session handle %u (Total sessions: %d)\n",
+            handle_,
+            SESSION_COUNT
+        );
     }
 
     ~SessionHandle() noexcept
     {
         if (handle_ != 0)
         {
-            azihsm_sess_close(handle_);
+            auto err = azihsm_sess_close(handle_);
+            if (err != AZIHSM_STATUS_SUCCESS)
+            {
+                printf("Warning: Failed to close session handle %u. Error: %d\n", handle_, err);
+            }
+            --SESSION_COUNT;
+            printf(
+                "[SessionHandle] Closed session handle %u (Total sessions: %d)\n",
+                handle_,
+                SESSION_COUNT
+            );
         }
     }
 
@@ -49,7 +68,11 @@ class SessionHandle
         {
             if (handle_ != 0)
             {
-                azihsm_sess_close(handle_);
+                auto err = azihsm_sess_close(handle_);
+                if (err != AZIHSM_STATUS_SUCCESS)
+                {
+                    printf("Warning: Failed to close session handle %u. Error: %d\n", handle_, err);
+                }
             }
             handle_ = other.handle_;
             other.handle_ = 0;

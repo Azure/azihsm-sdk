@@ -11,7 +11,7 @@
 
 /// Key properties for key generation.
 /// Mirrors the Rust HsmKeyProps structure.
-struct KeyProps
+struct key_props
 {
     uint32_t key_class;
     uint32_t key_kind;
@@ -25,7 +25,7 @@ struct KeyProps
     bool can_unwrap;
     bool can_derive;
 
-    KeyProps()
+    key_props()
         : key_class(0), key_kind(0), bits(0), is_session(true), can_encrypt(false),
           can_decrypt(false), can_sign(false), can_verify(false), can_wrap(false),
           can_unwrap(false), can_derive(false)
@@ -36,7 +36,7 @@ struct KeyProps
 class KeyHandle
 {
   public:
-    KeyHandle(azihsm_handle sess_handle, const azihsm_algo *algo, const KeyProps &props)
+    KeyHandle(azihsm_handle sess_handle, const azihsm_algo *algo, const key_props &props)
         : handle_(0), key_class_(props.key_class), key_kind_(props.key_kind), bits_(props.bits),
           session_(props.is_session ? 1 : 0), encrypt_(props.can_encrypt ? 1 : 0),
           decrypt_(props.can_decrypt ? 1 : 0), sign_(props.can_sign ? 1 : 0),

@@ -9,7 +9,10 @@
 #include "handle/part_list_handle.hpp"
 #include "handle/session_handle.hpp"
 #include "helpers.hpp"
-#include "utils.hpp"
+#include "utils/auto_key.hpp"
+#include "utils/key_import.hpp"
+#include "utils/key_props.hpp"
+#include "utils/rsa_keygen.hpp"
 
 class azihsm_rsa_sign_verify : public ::testing::Test
 {
@@ -19,10 +22,10 @@ class azihsm_rsa_sign_verify : public ::testing::Test
     // Helper function to setup wrapping and imported key pairs
     void setup_keys(
         azihsm_handle session,
-        AutoKey &wrapping_priv_key,
-        AutoKey &wrapping_pub_key,
-        AutoKey &imported_priv_key,
-        AutoKey &imported_pub_key
+        auto_key &wrapping_priv_key,
+        auto_key &wrapping_pub_key,
+        auto_key &imported_priv_key,
+        auto_key &imported_pub_key
     )
     {
         // Generate wrapping key pair
@@ -36,7 +39,7 @@ class azihsm_rsa_sign_verify : public ::testing::Test
         ASSERT_NE(wrapping_pub_key.get(), 0);
 
         // Import test key pair
-        KeyProps import_props = {
+        key_props import_props = {
             .key_kind = AZIHSM_KEY_KIND_RSA,
             .key_size_bits = 2048,
             .session_key = true,
@@ -175,14 +178,11 @@ TEST_F(azihsm_rsa_sign_verify, sign_verify_pkcs_all_hash_algorithms)
     {
         SCOPED_TRACE("Testing PKCS#1 with " + std::string(test_case.test_name));
 
-        part_list_.for_each_part([&](std::vector<azihsm_char> &path) {
-            auto partition = PartitionHandle(path);
-            auto session = SessionHandle(partition.get());
-
-            AutoKey wrapping_priv_key, wrapping_pub_key;
-            AutoKey imported_priv_key, imported_pub_key;
+        part_list_.for_each_session([&](azihsm_handle session) {
+            auto_key wrapping_priv_key, wrapping_pub_key;
+            auto_key imported_priv_key, imported_pub_key;
             setup_keys(
-                session.get(),
+                session,
                 wrapping_priv_key,
                 wrapping_pub_key,
                 imported_priv_key,
@@ -193,11 +193,13 @@ TEST_F(azihsm_rsa_sign_verify, sign_verify_pkcs_all_hash_algorithms)
                 std::string("Test RSA PKCS#1 v1.5 ") + test_case.test_name + " signing";
             std::vector<uint8_t> data_to_sign(test_data.begin(), test_data.end());
 
-            azihsm_algo sign_algo = { .id = test_case.algo_id,
-                                      .params = test_case.pss_params,
-                                      .len = test_case.pss_params
-                                                 ? sizeof(azihsm_algo_rsa_pkcs_pss_params)
-                                                 : 0 };
+            azihsm_algo sign_algo = {
+                .id = test_case.algo_id,
+                .params = test_case.pss_params,
+                .len = test_case.pss_params
+                           ? static_cast<uint32_t>(sizeof(azihsm_algo_rsa_pkcs_pss_params))
+                           : 0
+            };
 
             test_single_shot_sign_verify(
                 imported_priv_key.get(),
@@ -242,14 +244,11 @@ TEST_F(azihsm_rsa_sign_verify, sign_verify_pss_all_hash_algorithms)
     {
         SCOPED_TRACE("Testing PSS with " + std::string(test_case.test_name));
 
-        part_list_.for_each_part([&](std::vector<azihsm_char> &path) {
-            auto partition = PartitionHandle(path);
-            auto session = SessionHandle(partition.get());
-
-            AutoKey wrapping_priv_key, wrapping_pub_key;
-            AutoKey imported_priv_key, imported_pub_key;
+        part_list_.for_each_session([&](azihsm_handle session) {
+            auto_key wrapping_priv_key, wrapping_pub_key;
+            auto_key imported_priv_key, imported_pub_key;
             setup_keys(
-                session.get(),
+                session,
                 wrapping_priv_key,
                 wrapping_pub_key,
                 imported_priv_key,
@@ -314,14 +313,11 @@ TEST_F(azihsm_rsa_sign_verify, sign_verify_pss_prehashed_all_hash_algorithms)
     {
         SCOPED_TRACE("Testing PSS pre-hashed with " + std::string(test_case.test_name));
 
-        part_list_.for_each_part([&](std::vector<azihsm_char> &path) {
-            auto partition = PartitionHandle(path);
-            auto session = SessionHandle(partition.get());
-
-            AutoKey wrapping_priv_key, wrapping_pub_key;
-            AutoKey imported_priv_key, imported_pub_key;
+        part_list_.for_each_session([&](azihsm_handle session) {
+            auto_key wrapping_priv_key, wrapping_pub_key;
+            auto_key imported_priv_key, imported_pub_key;
             setup_keys(
-                session.get(),
+                session,
                 wrapping_priv_key,
                 wrapping_pub_key,
                 imported_priv_key,
@@ -361,25 +357,24 @@ TEST_F(azihsm_rsa_sign_verify, streaming_sign_verify_pkcs_all_hash_algorithms)
     {
         SCOPED_TRACE("Testing PKCS#1 streaming with " + std::string(test_case.test_name));
 
-        part_list_.for_each_part([&](std::vector<azihsm_char> &path) {
-            auto partition = PartitionHandle(path);
-            auto session = SessionHandle(partition.get());
-
-            AutoKey wrapping_priv_key, wrapping_pub_key;
-            AutoKey imported_priv_key, imported_pub_key;
+        part_list_.for_each_session([&](azihsm_handle session) {
+            auto_key wrapping_priv_key, wrapping_pub_key;
+            auto_key imported_priv_key, imported_pub_key;
             setup_keys(
-                session.get(),
+                session,
                 wrapping_priv_key,
                 wrapping_pub_key,
                 imported_priv_key,
                 imported_pub_key
             );
 
-            azihsm_algo sign_algo = { .id = test_case.algo_id,
-                                      .params = test_case.pss_params,
-                                      .len = test_case.pss_params
-                                                 ? sizeof(azihsm_algo_rsa_pkcs_pss_params)
-                                                 : 0 };
+            azihsm_algo sign_algo = {
+                .id = test_case.algo_id,
+                .params = test_case.pss_params,
+                .len = test_case.pss_params
+                           ? static_cast<uint32_t>(sizeof(azihsm_algo_rsa_pkcs_pss_params))
+                           : 0
+            };
 
             std::vector<const char *> chunks = { "Part1 ", "Part2 ", "Part3" };
             test_streaming_sign_verify(
@@ -425,14 +420,11 @@ TEST_F(azihsm_rsa_sign_verify, streaming_sign_verify_pss_all_hash_algorithms)
     {
         SCOPED_TRACE("Testing PSS streaming with " + std::string(test_case.test_name));
 
-        part_list_.for_each_part([&](std::vector<azihsm_char> &path) {
-            auto partition = PartitionHandle(path);
-            auto session = SessionHandle(partition.get());
-
-            AutoKey wrapping_priv_key, wrapping_pub_key;
-            AutoKey imported_priv_key, imported_pub_key;
+        part_list_.for_each_session([&](azihsm_handle session) {
+            auto_key wrapping_priv_key, wrapping_pub_key;
+            auto_key imported_priv_key, imported_pub_key;
             setup_keys(
-                session.get(),
+                session,
                 wrapping_priv_key,
                 wrapping_pub_key,
                 imported_priv_key,
