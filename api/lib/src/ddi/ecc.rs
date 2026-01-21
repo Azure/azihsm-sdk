@@ -50,7 +50,7 @@ pub(crate) fn ecc_generate_key(
     };
 
     let req = DdiEccGenerateKeyPairCmdReq {
-        hdr: session.build_ddi_req_hdr(DdiOp::EccGenerateKeyPair),
+        hdr: build_ddi_req_hdr(DdiOp::EccGenerateKeyPair, Some(session.api_rev()), Some(session.id())),
         data: DdiEccGenerateKeyPairReq {
             curve: curve.into(),
             key_tag: None,
@@ -116,8 +116,9 @@ pub(crate) fn ecc_sign(
         return Err(HsmError::KeyPropertyNotPresent);
     };
     // let session = key.session();
+    let session = key.session();
     let req = DdiEccSignCmdReq {
-        hdr: key.session().build_ddi_req_hdr(DdiOp::EccSign),
+        hdr: build_ddi_req_hdr(DdiOp::EccSign, Some(session.api_rev()), Some(session.id())),
         data: DdiEccSignReq {
             key_id: key.handle(),
             digest: MborByteArray::from_slice(hash).map_hsm_err(HsmError::InternalError)?,
@@ -170,8 +171,9 @@ pub(crate) fn ecdh_derive(
         return Err(HsmError::KeyPropertyNotPresent);
     };
     // Build the DDI ECDH derive key command request.
+    let session = base_key.session();
     let req = DdiEcdhKeyExchangeCmdReq {
-        hdr: base_key.session().build_ddi_req_hdr(DdiOp::EcdhKeyExchange),
+        hdr: build_ddi_req_hdr(DdiOp::EcdhKeyExchange, Some(session.api_rev()), Some(session.id())),
         data: DdiEcdhKeyExchangeReq {
             priv_key_id: base_key.handle(),
             pub_key_der: MborByteArray::from_slice(peer_pub_der)

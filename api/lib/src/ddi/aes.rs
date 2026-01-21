@@ -41,7 +41,7 @@ pub(crate) fn aes_generate_key(
     props: HsmKeyProps,
 ) -> HsmResult<(HsmKeyHandle, HsmKeyProps)> {
     let req = DdiAesGenerateKeyCmdReq {
-        hdr: session.build_ddi_req_hdr(DdiOp::AesGenerateKey),
+        hdr: build_ddi_req_hdr(DdiOp::AesGenerateKey, Some(session.api_rev()), Some(session.id())),
         data: DdiAesGenerateKeyReq {
             key_size: key_size_to_ddi(props.bits() as usize)?,
             key_tag: None,
@@ -202,8 +202,9 @@ fn aes_cbc_encrypt_decrypt(
     input: Vec<u8>,
     output: &mut [u8],
 ) -> HsmResult<usize> {
+    let session = key.session();
     let req = DdiAesEncryptDecryptCmdReq {
-        hdr: key.session().build_ddi_req_hdr(DdiOp::AesEncryptDecrypt),
+        hdr: build_ddi_req_hdr(DdiOp::AesEncryptDecrypt, Some(session.api_rev()), Some(session.id())),
         data: DdiAesEncryptDecryptReq {
             key_id: key.handle(),
             op,
