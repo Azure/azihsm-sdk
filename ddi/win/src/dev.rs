@@ -1053,35 +1053,52 @@ impl DdiDev for DdiWinDev {
         })
     }
 
-    /// Execute AES Xts Operation
-    ///     on fast path
+    /// Execute AES XTS operation (encryption/decryption) with slice-based buffers
+    ///
+    /// This is a slice-based variant that allows the caller to provide pre-allocated
+    /// buffers, avoiding the extra allocation and copy overhead of the Vec-based API.
+    ///
     /// # Arguments
     /// * `mode`        - Encryption or decryption
-    /// * `xts_params`  - Parameters for the operation
-    /// * `src_buf`     - User buffer for encryption or decryption
+    /// * `xts_params`  - Parameters for the operation (data unit length, keys, tweak, session info)
+    /// * `src_buf`     - Source buffer slice to encrypt or decrypt
+    /// * `dst_buf`     - Destination buffer slice to write encrypted or decrypted data
+    /// * `fips_approved` - Output parameter set to indicate if operation was FIPS approved
     ///
     /// # Returns
-    /// * `DdiAesXtsParams` - On success
+    /// * `usize` - Number of bytes written to the destination buffer
     ///
     /// # Error
     /// * `DdiError` - Error that occurred during operation
-    fn exec_op_fp_xts(
+    ///
+    /// # Notes
+    /// - The destination buffer must be at least as large as the source buffer
+    /// - The return value indicates how many bytes were actually written
+    fn exec_op_fp_xts_slice(
         &self,
         mode: DdiAesOp,
         xts_params: DdiAesXtsParams,
-        src_buf: Vec<u8>,
-    ) -> Result<DdiAesXtsResult, DdiError> {
+        src_buf: &[u8],
+        dst_buf: &mut [u8],
+        fips_approved: &mut bool,
+    ) -> Result<usize, DdiError> {
         let src_buf_len = src_buf.len();
+
         // Validate input parameters
-        // Source buffer must not be empty
-        // if decryption tag must be provided
-        // session id and short app id are verified
-        // in the driver interface
         if src_buf_len == 0 {
             return Err(DdiError::InvalidParameter);
         }
 
-        let mut dest_buf: Vec<u8> = vec![0; src_buf_len];
+        // Validate destination buffer size
+        if dst_buf.len() < src_buf_len {
+            tracing::error!(
+                "Destination buffer size ({}) is less than source buffer size ({})",
+                dst_buf.len(),
+                src_buf_len
+            );
+            return Err(DdiError::InvalidParameter);
+        }
+
         let mut ioctl_in_buffer = McrFpIoctlIndata::default();
         let ioctl_out_buffer = McrFpIoctlOutData::default();
 
@@ -1099,7 +1116,7 @@ impl DdiDev for DdiWinDev {
                     tracing::error!(
                         "FP AES XTS: Data unit length ({}) is not valid. Src buffer size: {}",
                         xts_params.data_unit_len,
-                        src_buf.len()
+                        src_buf_len
                     );
                     Err(DdiError::InvalidParameter)?;
                 }
@@ -1137,14 +1154,10 @@ impl DdiDev for DdiWinDev {
         ioctl_in_buffer.short_app_id = xts_params.short_app_id;
 
         // Initialize the source and destination buffers
-        // Note if aad is present, source buffer is different
-        // than the cleartext
-        // destination buffer length is always the same as the
-        // cleartext buffer length
-        ioctl_in_buffer.user_buffers.src_length = src_buf.len() as u32;
+        ioctl_in_buffer.user_buffers.src_length = src_buf_len as u32;
         ioctl_in_buffer.user_buffers.src_buf = src_buf.as_ptr();
         ioctl_in_buffer.user_buffers.dst_length = src_buf_len as u32;
-        ioctl_in_buffer.user_buffers.dst_buf = dest_buf.as_mut_ptr();
+        ioctl_in_buffer.user_buffers.dst_buf = dst_buf.as_mut_ptr();
 
         // SAFETY: WINAPI call requires unsafe call. The pointers to the buffers are valid and have been checked via
         // debugging as well as code reviews.
@@ -1176,7 +1189,7 @@ impl DdiDev for DdiWinDev {
         if last_error.raw_os_error() != Some(ERROR_IO_PENDING as i32) {
             tracing::warn!(
                 ?last_error,
-                "DeviceIoControl returned error after exec_op_fp_xts"
+                "DeviceIoControl returned error after exec_op_fp_xts_slice"
             );
             Err(DdiError::IoError(last_error))?;
         }
@@ -1192,17 +1205,11 @@ impl DdiDev for DdiWinDev {
             )
         };
 
-        /* There are 2 ways to deal with this ioctl
-         *  If the ioctl has failed, return the Winerror
-         *  If the ioctl has succeeded, the extended ioctl status
-         *  will further indicate success or failure
-         */
-
         if result == 0 {
             let last_error = std::io::Error::last_os_error();
             tracing::warn!(
                 ?last_error,
-                "GetOverlappedResult returned error after exec_op_fp_xts"
+                "GetOverlappedResult returned error after exec_op_fp_xts_slice"
             );
             Err(DdiError::IoError(last_error))?;
         }
@@ -1219,28 +1226,60 @@ impl DdiDev for DdiWinDev {
             ))?
         }
 
-        // Device has transferred data to output buffer
-        // Number of bytes is in byte_count
-
         let total_size = ioctl_out_buffer.byte_count as usize;
 
-        if total_size > src_buf_len {
+        if total_size > dst_buf.len() {
             if mode == DdiAesOp::Encrypt {
                 tracing::error!(
                     "AES XTS Encrypt: Device output length ({}) is greater than destination buffer size ({})",
                     total_size,
-                    dest_buf.len()
+                    dst_buf.len()
                 );
                 Err(DdiError::DdiStatus(DdiStatus::AesEncryptFailed))?;
             } else {
                 tracing::error!(
                     "AES XTS Decrypt: Device output length ({}) is greater than destination buffer size ({})",
                     total_size,
-                    dest_buf.len()
+                    dst_buf.len()
                 );
                 Err(DdiError::DdiStatus(DdiStatus::AesDecryptFailed))?;
             }
         }
+
+        *fips_approved = ioctl_out_buffer.fips_approved;
+
+        Ok(total_size)
+    }
+
+    /// Execute AES Xts Operation on fast path
+    ///
+    /// # Arguments
+    /// * `mode`        - Encryption or decryption
+    /// * `xts_params`  - Parameters for the operation
+    /// * `src_buf`     - User buffer for encryption or decryption
+    ///
+    /// # Returns
+    /// * `DdiAesXtsParams` - On success
+    ///
+    /// # Error
+    /// * `DdiError` - Error that occurred during operation
+    fn exec_op_fp_xts(
+        &self,
+        mode: DdiAesOp,
+        xts_params: DdiAesXtsParams,
+        src_buf: Vec<u8>,
+    ) -> Result<DdiAesXtsResult, DdiError> {
+        let src_buf_len = src_buf.len();
+        let mut dest_buf: Vec<u8> = vec![0; src_buf_len];
+        let mut fips_approved = false;
+
+        let total_size = self.exec_op_fp_xts_slice(
+            mode,
+            xts_params,
+            &src_buf,
+            &mut dest_buf,
+            &mut fips_approved,
+        )?;
 
         if total_size < src_buf_len {
             dest_buf.truncate(total_size);
@@ -1248,7 +1287,7 @@ impl DdiDev for DdiWinDev {
 
         Ok(DdiAesXtsResult {
             data: dest_buf,
-            fips_approved: ioctl_out_buffer.fips_approved,
+            fips_approved,
         })
     }
 
