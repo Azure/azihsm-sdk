@@ -67,19 +67,18 @@ pub(crate) fn ecc_generate_key(
     let key_id = resp.data.private_key_id;
     let pub_key_der = resp.data.pub_key.der.as_slice();
     let masked_key = resp.data.masked_key.as_slice();
-    let (priv_key_props, pub_key_props) = HsmMaskedKey::to_key_pair_props(masked_key, pub_key_der)?;
+    let (dev_priv_key_props, dev_pub_key_props) =
+        HsmMaskedKey::to_key_pair_props(masked_key, pub_key_der)?;
 
     // Validate that the device returned properties match the requested properties.
-    if !priv_key_props.validate_dev_props(&priv_key_props)
-        || !pub_key_props.validate_dev_props(&pub_key_props)
-    {
+    if !priv_key_props.validate_dev_props(&dev_priv_key_props) {
         //delete key
         delete_key(session, key_id)?;
         //return error
         Err(HsmError::InvalidKeyProps)?;
     }
 
-    Ok((key_id, priv_key_props, pub_key_props))
+    Ok((key_id, dev_priv_key_props, dev_pub_key_props))
 }
 
 /// Performs an ECC signature operation using a pre-computed hash.
@@ -173,7 +172,7 @@ pub(crate) fn ecc_sign(
 pub(crate) fn ecdh_derive(
     base_key: &HsmEccPrivateKey,
     peer_pub_der: &[u8],
-    mut derived_key_props: HsmKeyProps,
+    derived_key_props: HsmKeyProps,
 ) -> HsmResult<(HsmKeyHandle, HsmKeyProps)> {
     let Some(curve) = base_key.ecc_curve() else {
         return Err(HsmError::KeyPropertyNotPresent);
@@ -198,9 +197,16 @@ pub(crate) fn ecdh_derive(
     })?;
 
     let key_id = resp.data.key_id;
-    derived_key_props.set_masked_key(resp.data.masked_key.as_slice());
+    let dev_key_props = HsmMaskedKey::to_key_props(resp.data.masked_key.as_slice())?;
+    // Validate that the device returned properties match the requested properties.
+    if !derived_key_props.validate_dev_props(&dev_key_props) {
+        //delete key
+        delete_key(&base_key.session(), key_id)?;
+        //return error
+        Err(HsmError::InvalidKeyProps)?;
+    }
 
-    Ok((key_id, derived_key_props))
+    Ok((key_id, dev_key_props))
 }
 
 impl From<HsmEccCurve> for DdiEccCurve {
