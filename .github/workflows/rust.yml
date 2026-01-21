@@ -46,15 +46,11 @@ jobs:
       run: cargo xtask precheck --nextest --package azihsm_ddi --features mock,table-64
     - name: Run code coverage
       run: cargo xtask precheck --coverage
-    - name: (DEBUG) List coverage report files
-      run: ls -R target/reports/
     - name: Upload coverage report
       uses: actions/upload-artifact@v4
       with:
         name: coverage-report-ubuntu
-        path: |
-          target/reports/cobertura_sdk.xml
-          target/reports/sdk-cov/
+        path: ./target/reports/
   
   build_windows:
 
@@ -88,6 +84,4 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: coverage-report-windows
-        path: |
-          target/reports/cobertura_sdk.xml
-          target/reports/sdk-cov/
+        path: ./target/reports/
