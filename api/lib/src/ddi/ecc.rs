@@ -115,7 +115,6 @@ pub(crate) fn ecc_sign(
     let Some(curve) = key.ecc_curve() else {
         return Err(HsmError::KeyPropertyNotPresent);
     };
-    // let session = key.session();
     let session = key.session();
     let req = DdiEccSignCmdReq {
         hdr: build_ddi_req_hdr(DdiOp::EccSign, Some(session.api_rev()), Some(session.id())),
