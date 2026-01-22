@@ -1,15 +1,16 @@
 # AZIHSM SDK Repository
 
 ## Project Overview
-AZIHSM SDK is a modular, cross-platform software development kit (SDK) written in Rust. This repository is home to AZIHSM (Azure Integrated HSM) SDK, its simulator, and its OpenSSL Provider. The project focuses on creating secure, high-performance APIs.
+Azure Integrated HSM (AZIHSM) SDK is a modular, cross-platform software development kit (SDK) written in Rust. This repository is home to AZIHSM SDK, its simulator, and its OpenSSL Provider. The project focuses on creating secure, high-performance APIs.
 
 ## Technology Stack
-- **Language**: For AZIHSM SDK and simulator: Rust (using Cargo build system), C for OpenSSL Provider
+- **Language**: For AZIHSM SDK and simulator: Rust (using Cargo build system), C for OpenSSL Provider, C++ for Google test integration tests
 - **Build Tool**: Cargo with custom xtask automation
-- **Testing Framework**: Rust unit tests + cargo-nextest (recommended)
+- **Testing Framework**: Rust unit tests for Rust code + Google test unit tests for C and C++ code. All tests including Google test have to be run with cargo-nextest (recommended)
 
 ## Project Structure
 - `api/` - Core AZIHSM SDK implementation
+- `api/tests/cpp/` - Google test integration tests for AZIHSM SDK C API
 - `crates/` - Shared support libraries
 - `ddi/` - Device Data Interface components for interacting with AZIHSM hardware
 - `ddi/sim/` - AZIHSM functional simulator
