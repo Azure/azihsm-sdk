@@ -55,17 +55,19 @@ pub(crate) fn aes_generate_key(
             .map_hsm_err(HsmError::DdiCmdFailure)
     })?;
 
-    let key_id = resp.data.key_id;
+    let mut key_id = ddi::HsmKeyIdGuard::new(session, resp.data.key_id);
     let masked_key = resp.data.masked_key.as_slice();
     let key_props = HsmMaskedKey::to_key_props(masked_key)?;
     // Validate that the device returned properties match the requested properties.
     if !props.validate_dev_props(&key_props) {
-        //delete key
-        delete_key(session, key_id)?;
         //return error
         Err(HsmError::InvalidKeyProps)?;
     }
-    Ok((key_id, key_props))
+
+    //make sure to disarm the key guard to avoid deletion before returning
+    key_id.disarm();
+
+    Ok((key_id.key_id(), key_props))
 }
 
 /// Encrypts data using AES-CBC mode at the DDI layer.

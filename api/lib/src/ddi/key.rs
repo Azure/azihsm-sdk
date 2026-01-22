@@ -2,6 +2,67 @@
 
 use super::*;
 
+/// RAII guard for a newly-created HSM key handle.
+///
+/// Many DDI operations return a `key_id` plus some additional metadata (for example,
+/// masked key material that must be parsed into [`HsmKeyProps`]). If parsing/validation
+/// fails after the key has already been created in the device, the key would otherwise
+/// be leaked.
+///
+/// `HsmKeyIdGuard` deletes the key on drop unless it is explicitly disarmed.
+///
+/// # Behavior
+///
+/// - **Default:** on drop, calls [`delete_key`] for `key_id`.
+/// - **Disarmed:** does nothing on drop.
+/// - **Best effort:** any error from [`delete_key`] is ignored in `Drop`.
+///
+/// # Typical usage
+///
+/// Create the guard immediately after the DDI call returns a key id, then call
+/// [`HsmKeyIdGuard::disarm`] only after all fallible parsing/validation has succeeded.
+pub(crate) struct HsmKeyIdGuard<'a> {
+    session: &'a HsmSession,
+    key_id: u16,
+    disarmed: bool,
+}
+
+impl<'a> Drop for HsmKeyIdGuard<'a> {
+    /// Attempts to delete the guarded key on drop.
+    ///
+    /// This is intentionally best-effort: `Drop` cannot return an error, and callers
+    /// typically cannot recover meaningfully from a cleanup failure during unwinding.
+    fn drop(&mut self) {
+        if !self.disarmed {
+            let _ = delete_key(self.session, self.key_id);
+        }
+    }
+}
+
+impl<'a> HsmKeyIdGuard<'a> {
+    /// Creates a new guard for `key_id` in `session`.
+    pub(crate) fn new(session: &'a HsmSession, key_id: u16) -> Self {
+        Self {
+            session,
+            key_id,
+            disarmed: false,
+        }
+    }
+
+    /// Returns the guarded key id.
+    pub(crate) fn key_id(&self) -> u16 {
+        self.key_id
+    }
+
+    /// Disables deletion-on-drop.
+    ///
+    /// Call this once you have fully validated the response and you intend to return
+    /// or otherwise transfer ownership of the key id to a higher-level type.
+    pub(crate) fn disarm(&mut self) {
+        self.disarmed = true;
+    }
+}
+
 /// Deletes a key from the HSM.
 ///
 /// Removes the specified key from the HSM partition, making it no longer usable
@@ -71,10 +132,13 @@ pub(crate) fn unmask_key(session: &HsmSession, masked_key: &[u8]) -> HsmResult<(
     let resp = unmask_key_exec(session, masked_key)?;
 
     let masked_key = resp.data.masked_key.as_slice();
-    let key_id = resp.data.key_id;
+    let mut key_id = HsmKeyIdGuard::new(session, resp.data.key_id);
     let key_props = HsmMaskedKey::to_key_props(masked_key)?;
 
-    Ok((key_id, key_props))
+    //disarm the key guard to avoid deletion before returning
+    key_id.disarm();
+
+    Ok((key_id.key_id(), key_props))
 }
 
 /// Unmasks a masked key pair within the HSM.
@@ -95,6 +159,8 @@ pub(crate) fn unmask_key_pair(
 ) -> HsmResult<(u16, HsmKeyProps, HsmKeyProps)> {
     let resp = unmask_key_exec(session, masked_key)?;
 
+    let mut key_id = HsmKeyIdGuard::new(session, resp.data.key_id);
+
     let Some(pub_key) = resp.data.pub_key else {
         return Err(HsmError::InternalError);
     };
@@ -102,10 +168,12 @@ pub(crate) fn unmask_key_pair(
     let der = pub_key.der.as_slice();
 
     let masked_key_data = resp.data.masked_key.as_slice();
-    let key_id = resp.data.key_id;
     let (priv_key_props, pub_key_props) = HsmMaskedKey::to_key_pair_props(masked_key_data, der)?;
 
-    Ok((key_id, priv_key_props, pub_key_props))
+    //disarm the key guard to avoid deletion before returning
+    key_id.disarm();
+
+    Ok((key_id.key_id(), priv_key_props, pub_key_props))
 }
 
 /// Generates a key report (attestation) for the specified key.
