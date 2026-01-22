@@ -284,3 +284,24 @@ fn test_aes_192_key_unmask(session: HsmSession) {
 fn test_aes_256_key_unmask(session: HsmSession) {
     test_aes_key_unmask_common(&session, 256);
 }
+
+#[session_test]
+fn test_aes_xts_512_key_generation(session: HsmSession) {
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::AesXts)
+        .bits(512)
+        .can_encrypt(true)
+        .can_decrypt(true)
+        .is_session(true)
+        .build()
+        .expect("Failed to build key props");
+    let mut algo = HsmAesXtsKeyGenAlgo::default();
+    let key = HsmKeyManager::generate_key(&session, &mut algo, props)
+        .expect("Failed to generate AES XTS key");
+    assert_eq!(key.class(), HsmKeyClass::Secret, "Key class mismatch");
+    assert_eq!(key.kind(), HsmKeyKind::AesXts, "Key kind mismatch");
+    assert_eq!(key.bits(), 512, "Key bits mismatch");
+    assert_eq!(key.can_encrypt(), true, "Key should support encryption");
+    assert_eq!(key.can_decrypt(), true, "Key should support decryption");
+}

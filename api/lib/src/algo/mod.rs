@@ -18,6 +18,24 @@ pub use secret::*;
 
 use super::*;
 
+pub(crate) trait HsmKeyHandleDelOp: Copy {
+    fn delete_key(session: HsmSession, handle: Self) -> Result<(), HsmError>;
+}
+
+impl HsmKeyHandleDelOp for ddi::HsmKeyHandle {
+    fn delete_key(session: HsmSession, handle: Self) -> Result<(), HsmError> {
+        ddi::delete_key(&session, handle)
+    }
+}
+
+//impl delete op for key handle tuple ()
+impl HsmKeyHandleDelOp for (ddi::HsmKeyHandle, ddi::HsmKeyHandle) {
+    fn delete_key(_session: HsmSession, _handle: Self) -> Result<(), HsmError> {
+        // No-op for keys without device handles (e.g. session keys).
+        Ok(())
+    }
+}
+
 /// Shared state for HSM-backed key wrapper types.
 ///
 /// Many of the typed N-API/Rust wrappers (AES/HMAC/RSA/etc.) are *thin handles* to
@@ -33,23 +51,23 @@ use super::*;
 ///
 /// Typed wrappers contain an `Arc<RwLock<HsmKeyInner>>`, so cloning a wrapper clones
 /// only the pointer, not the device key.
-pub(crate) struct HsmKeyInner {
+pub(crate) struct HsmKeyInner<H: HsmKeyHandleDelOp> {
     /// Session used to perform operations on (and delete) the key.
     session: HsmSession,
     /// Device-reported key properties.
     props: HsmKeyProps,
     /// Opaque device handle for the key.
-    handle: ddi::HsmKeyHandle,
+    handle: H,
     /// Whether the key has already been deleted.
     deleted: bool,
 }
 
-impl HsmKeyInner {
+impl<H: HsmKeyHandleDelOp> HsmKeyInner<H> {
     /// Constructs the shared key state.
     ///
     /// This is only called by typed key wrapper constructors/macros after a key is
     /// created or imported into the HSM and a valid handle + properties are known.
-    fn new(session: HsmSession, props: HsmKeyProps, handle: ddi::HsmKeyHandle) -> Self {
+    fn new(session: HsmSession, props: HsmKeyProps, handle: H) -> Self {
         Self {
             session,
             props,
@@ -61,7 +79,7 @@ impl HsmKeyInner {
     /// Returns the underlying device handle for this key.
     ///
     /// The handle is opaque and only meaningful to the DDI/device layer.
-    fn handle(&self) -> ddi::HsmKeyHandle {
+    fn handle(&self) -> H {
         self.handle
     }
 
@@ -79,28 +97,31 @@ impl HsmKeyInner {
         if self.deleted {
             return Ok(());
         }
-        ddi::delete_key(&self.session, self.handle)?;
+        H::delete_key(self.session.clone(), self.handle)?;
         self.deleted = true;
         Ok(())
     }
 }
 
-impl Drop for HsmKeyInner {
+impl<H: HsmKeyHandleDelOp> Drop for HsmKeyInner<H> {
     fn drop(&mut self) {
         // Best-effort cleanup: dropping should never panic.
         if !self.deleted {
-            let _ = ddi::delete_key(&self.session, self.handle);
+            let _ = H::delete_key(self.session.clone(), self.handle);
         }
     }
 }
 
 macro_rules! define_hsm_key {
     ($vis:vis $name:ident) => {
+        define_hsm_key!($vis $name, ddi::HsmKeyHandle);
+    };
+    ($vis:vis $name:ident, $handle_ty:ty) => {
         pastey::paste! {
             /// Represents a $name key stored in the HSM.
             #[derive(Clone)]
             $vis struct $name {
-                inner: std::sync::Arc<std::sync::RwLock<HsmKeyInner>>,
+                inner: std::sync::Arc<std::sync::RwLock<HsmKeyInner<$handle_ty>>>,
             }
 
             #[allow(unused)]
@@ -119,10 +140,10 @@ macro_rules! define_hsm_key {
                 fn new(
                     session: HsmSession,
                     props: HsmKeyProps,
-                    handle: ddi::HsmKeyHandle,
+                    handle: $handle_ty,
                 ) -> Self {
                     Self {
-                        inner: std::sync::Arc::new(std::sync::RwLock::new(HsmKeyInner::new(
+                        inner: std::sync::Arc::new(std::sync::RwLock::new(HsmKeyInner::<$handle_ty>::new(
                             session, props, handle,
                         ))),
                     }
@@ -131,19 +152,19 @@ macro_rules! define_hsm_key {
                 /// Returns a clone of the shared key state for safe cross-type conversions.
                 pub(crate) fn inner(
                     &self,
-                ) -> std::sync::Arc<std::sync::RwLock<HsmKeyInner>> {
+                ) -> std::sync::Arc<std::sync::RwLock<HsmKeyInner<$handle_ty>>> {
                     self.inner.clone()
                 }
 
                 /// Creates a typed key wrapper from existing shared key state.
                 pub(crate) fn from_inner(
-                    inner: std::sync::Arc<std::sync::RwLock<HsmKeyInner>>,
+                    inner: std::sync::Arc<std::sync::RwLock<HsmKeyInner<$handle_ty>>>,
                 ) -> Self {
                     Self { inner }
                 }
 
                 /// Returns the key handle.
-                pub(crate) fn handle(&self) -> ddi::HsmKeyHandle {
+                pub(crate) fn handle(&self) -> $handle_ty {
                     self.inner.read().unwrap().handle()
                 }
 

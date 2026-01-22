@@ -256,6 +256,93 @@ fn key_size_to_ddi(size: usize) -> HsmResult<DdiAesKeySize> {
         128 => Ok(DdiAesKeySize::Aes128),
         192 => Ok(DdiAesKeySize::Aes192),
         256 => Ok(DdiAesKeySize::Aes256),
+        512 => Ok(DdiAesKeySize::AesXtsBulk256),
         _ => Err(HsmError::InvalidKeySize),
     }
+}
+
+// AES XTS DDI operations
+pub(crate) fn aes_xts_generate_key(
+    session: &HsmSession,
+    props: HsmKeyProps,
+) -> HsmResult<(HsmKeyHandle, HsmKeyHandle, HsmKeyProps)> {
+    // Generate first key
+    let (handle1, dev_key_props) = aes_generate_key(session, props.clone())?;
+
+    // Generate second key
+    let Ok((handle2, _)) = aes_generate_key(session, props.clone()) else {
+        //delete the first key created
+        let _ = ddi::delete_key(session, handle1);
+        return Err(HsmError::InternalError);
+    };
+
+    // make sure handles are different
+    if handle1 == handle2 {
+        //delete the keys created
+        let _ = ddi::delete_key(session, handle1);
+
+        Err(HsmError::InternalError)?;
+    }
+    //create a local copy of props to keep same key bits as input props
+    // XTS requires key generation of two keys, but the key size in props
+    // represents the total size (e.g., 512 bits for two 256-bit keys).
+
+    let mut props = props;
+
+    if let Some(masked_key) = dev_key_props.masked_key() {
+        props.set_masked_key(masked_key);
+    }
+
+    Ok((handle1, handle2, props))
+}
+
+pub(crate) fn aes_xts_encrypt(
+    key: &HsmAesXtsKey,
+    tweak: u128,
+    dul: usize,
+    plaintext: &[u8],
+    ciphertext: &mut [u8],
+) -> HsmResult<usize> {
+    aes_xts_encrypt_decrypt(key, DdiAesOp::Encrypt, tweak, dul, plaintext, ciphertext)
+}
+
+pub(crate) fn aes_xts_decrypt(
+    key: &HsmAesXtsKey,
+    tweak: u128,
+    dul: usize,
+    ciphertext: &[u8],
+    plaintext: &mut [u8],
+) -> HsmResult<usize> {
+    aes_xts_encrypt_decrypt(key, DdiAesOp::Decrypt, tweak, dul, ciphertext, plaintext)
+}
+
+fn aes_xts_encrypt_decrypt(
+    key: &HsmAesXtsKey,
+    op: DdiAesOp,
+    tweak: u128,
+    dul: usize,
+    input: &[u8],
+    output: &mut [u8],
+) -> HsmResult<usize> {
+    // Setup DDI params for AES XTS encrypt
+
+    let xts_params = DdiAesXtsParams {
+        key_id1: key.handle().0 as u32,
+        key_id2: key.handle().1 as u32,
+        data_unit_len: dul,
+        tweak: tweak.to_le_bytes(),
+        session_id: key.sess_id(),
+        short_app_id: 0,
+    };
+
+    let resp = key.with_dev(|dev| {
+        dev.exec_op_fp_xts(op, xts_params, input.to_vec())
+            .map_hsm_err(HsmError::DdiCmdFailure)
+    })?;
+
+    // Copy output data
+    let resp_msg = resp.data.as_slice();
+    let to_copy = resp_msg.len().min(output.len());
+    output[..to_copy].copy_from_slice(&resp_msg[..to_copy]);
+    Ok(to_copy)
 }
