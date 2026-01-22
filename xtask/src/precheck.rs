@@ -38,9 +38,6 @@ struct Stage {
     /// Run code coverage
     #[clap(long)]
     coverage: bool,
-    /// Run native build and tests
-    #[clap(long)]
-    nbt: bool,
     /// Run nextest tests
     #[clap(long)]
     nextest: bool,
@@ -79,10 +76,16 @@ impl Xtask for Precheck {
 
         let sh = Shell::new()?;
 
-        // if no specific checks are requested, run all
+        // if no specific stages are requested, run all stages except code coverage
         let stage = self.stage.unwrap_or(Stage {
-            all: true,
-            ..Default::default()
+            setup: true,
+            copyright: true,
+            audit: true,
+            fmt: true,
+            clippy: true,
+            coverage: false,
+            nextest: true,
+            all: false,
         });
 
         if stage.setup || stage.all {
