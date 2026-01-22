@@ -11,6 +11,7 @@ use xshell::Shell;
 use crate::audit;
 use crate::clippy;
 use crate::copyright;
+use crate::coverage;
 use crate::fmt;
 use crate::nextest;
 use crate::setup;
@@ -34,9 +35,9 @@ struct Stage {
     /// Run clippy checks
     #[clap(long)]
     clippy: bool,
-    /// Run native build and tests
+    /// Run code coverage
     #[clap(long)]
-    nbt: bool,
+    coverage: bool,
     /// Run nextest tests
     #[clap(long)]
     nextest: bool,
@@ -75,10 +76,16 @@ impl Xtask for Precheck {
 
         let sh = Shell::new()?;
 
-        // if no specific checks are requested, run all
+        // if no specific stages are requested, run all stages except code coverage
         let stage = self.stage.unwrap_or(Stage {
-            all: true,
-            ..Default::default()
+            setup: true,
+            copyright: true,
+            audit: true,
+            fmt: true,
+            clippy: true,
+            coverage: false,
+            nextest: true,
+            all: false,
         });
 
         if stage.setup || stage.all {
@@ -163,7 +170,7 @@ impl Xtask for Precheck {
                         no_default_features: false,
                         filterset: None,
                     };
-                    nextest.run(ctx)?;
+                    nextest.run(ctx.clone())?;
                 }
             } else {
                 let nextest = nextest::Nextest {
@@ -172,8 +179,14 @@ impl Xtask for Precheck {
                     no_default_features: false,
                     filterset: None,
                 };
-                nextest.run(ctx)?;
+                nextest.run(ctx.clone())?;
             }
+        }
+
+        // Run code coverage
+        if stage.coverage || stage.all {
+            let coverage = coverage::Coverage {};
+            coverage.run(ctx)?;
         }
 
         log::trace!("done precheck");
