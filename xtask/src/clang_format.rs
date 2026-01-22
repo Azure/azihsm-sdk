@@ -28,8 +28,8 @@ const DEFAULT_CLANG_FORMAT_IGNORE: &str = ".clang-format-ignore";
 #[derive(Parser)]
 #[clap(about = "Run clang-format on C/C++ files")]
 pub struct ClangFormat {
-    /// Path to the clang-format executable
-    #[clap(long, default_value = "clang-format")]
+    /// Path to the clang-format executable (pinned to version 18 by default)
+    #[clap(long, default_value = "clang-format-18")]
     pub clang_format_executable: String,
 
     /// Comma separated list of file extensions
@@ -69,10 +69,17 @@ impl Xtask for ClangFormat {
     fn run(self, _ctx: XtaskCtx) -> Result<()> {
         log::trace!("running clang-format");
 
-        // Check clang-format is available
-        Command::new(&self.clang_format_executable)
+        // Capture output of `clang-format --version`
+        let version_output = Command::new(&self.clang_format_executable)
             .arg("--version")
-            .output()
+            .output();
+
+        if let Ok(ref output) = version_output {
+            println!("{}", String::from_utf8_lossy(&output.stdout).trim());
+        }
+
+        // Check clang-format is available
+        version_output
             .context(format!(
                 "Failed to run '{}'. Is it installed?",
                 self.clang_format_executable
