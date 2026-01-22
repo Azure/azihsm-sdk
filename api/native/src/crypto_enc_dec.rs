@@ -4,13 +4,6 @@ use super::*;
 use crate::algo::aes::*;
 use crate::algo::rsa::*;
 
-/// Common cryptographic operation types
-#[derive(PartialEq)]
-pub(crate) enum CryptoOp {
-    Encrypt,
-    Decrypt,
-}
-
 /// Encrypt data using a cryptographic key and algorithm.
 ///
 /// @param[in] algo Pointer to algorithm specification
@@ -41,7 +34,7 @@ pub unsafe extern "C" fn azihsm_crypt_encrypt(
 
         match algo.id {
             AzihsmAlgoId::AesCbc | AzihsmAlgoId::AesCbcPad => {
-                aes_cbc_crypt(algo, key_handle, input_buf, output_buf, CryptoOp::Encrypt)?;
+                aes_cbc_encrypt(algo, key_handle, input_buf, output_buf)?;
             }
             AzihsmAlgoId::RsaPkcs | AzihsmAlgoId::RsaPkcsOaep | AzihsmAlgoId::RsaAesWrap => {
                 rsa_encrypt(algo, key_handle, input_buf, output_buf)?;
@@ -83,7 +76,7 @@ pub unsafe extern "C" fn azihsm_crypt_decrypt(
 
         match algo.id {
             AzihsmAlgoId::AesCbc | AzihsmAlgoId::AesCbcPad => {
-                aes_cbc_crypt(algo, key_handle, input_buf, output_buf, CryptoOp::Decrypt)?
+                aes_cbc_decrypt(algo, key_handle, input_buf, output_buf)?
             }
             AzihsmAlgoId::RsaPkcs | AzihsmAlgoId::RsaPkcsOaep => {
                 rsa_decrypt(algo, key_handle, input_buf, output_buf)?;
@@ -120,7 +113,7 @@ pub unsafe extern "C" fn azihsm_crypt_encrypt_init(
 
         let handle = match algo.id {
             AzihsmAlgoId::AesCbc | AzihsmAlgoId::AesCbcPad => {
-                aes_cbc_streaming_init(algo, key_handle, CryptoOp::Encrypt)?
+                aes_cbc_encrypt_init(algo, key_handle)?
             }
             _ => Err(AzihsmStatus::UnsupportedAlgorithm)?,
         };
@@ -159,8 +152,8 @@ pub unsafe extern "C" fn azihsm_crypt_encrypt_update(
         let output_buf = deref_mut_ptr(cipher_text)?;
 
         match ctx_type {
-            HandleType::AesCbcStreamingCtx => {
-                aes_cbc_streaming_update(ctx_handle, input_buf, output_buf)?
+            HandleType::AesCbcEncryptStreamingCtx => {
+                aes_cbc_encrypt_update(ctx_handle, input_buf, output_buf)?
             }
             _ => Err(AzihsmStatus::InvalidHandle)?,
         }
@@ -192,7 +185,7 @@ pub unsafe extern "C" fn azihsm_crypt_encrypt_final(
         let output_buf = deref_mut_ptr(cipher_text)?;
 
         match ctx_type {
-            HandleType::AesCbcStreamingCtx => aes_cbc_streaming_final(ctx_handle, output_buf)?,
+            HandleType::AesCbcEncryptStreamingCtx => aes_cbc_encrypt_final(ctx_handle, output_buf)?,
             _ => Err(AzihsmStatus::InvalidHandle)?,
         }
         Ok(())
@@ -224,7 +217,7 @@ pub unsafe extern "C" fn azihsm_crypt_decrypt_init(
 
         let handle = match algo.id {
             AzihsmAlgoId::AesCbc | AzihsmAlgoId::AesCbcPad => {
-                aes_cbc_streaming_init(algo, key_handle, CryptoOp::Decrypt)?
+                aes_cbc_decrypt_init(algo, key_handle)?
             }
             _ => Err(AzihsmStatus::UnsupportedAlgorithm)?,
         };
@@ -263,8 +256,8 @@ pub unsafe extern "C" fn azihsm_crypt_decrypt_update(
         let output_buf = deref_mut_ptr(plain_text)?;
 
         match ctx_type {
-            HandleType::AesCbcStreamingCtx => {
-                aes_cbc_streaming_update(ctx_handle, input_buf, output_buf)?
+            HandleType::AesCbcDecryptStreamingCtx => {
+                aes_cbc_decrypt_update(ctx_handle, input_buf, output_buf)?
             }
             _ => Err(AzihsmStatus::InvalidHandle)?,
         }
@@ -297,7 +290,7 @@ pub unsafe extern "C" fn azihsm_crypt_decrypt_final(
         let output_buf = deref_mut_ptr(plain_text)?;
 
         match ctx_type {
-            HandleType::AesCbcStreamingCtx => aes_cbc_streaming_final(ctx_handle, output_buf)?,
+            HandleType::AesCbcDecryptStreamingCtx => aes_cbc_decrypt_final(ctx_handle, output_buf)?,
             _ => Err(AzihsmStatus::InvalidHandle)?,
         }
         Ok(())

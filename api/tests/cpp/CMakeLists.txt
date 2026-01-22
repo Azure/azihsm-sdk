@@ -57,9 +57,9 @@ set(SOURCE
     algo/aes/keygen_tests.cpp
     algo/ecc/keygen_tests.cpp
     algo/ecc/sign_verify_tests.cpp
-    algo/ecc/keyattest_tests.cpp
+    algo/ecc/keyreport_tests.cpp
     algo/rsa/keygen_tests.cpp
-    algo/rsa/keyattest_tests.cpp
+    algo/rsa/keyreport_tests.cpp
     algo/rsa/enc_dec_tests.cpp
     algo/rsa/sign_verify_tests.cpp
     algo/sha/digest_tests.cpp
