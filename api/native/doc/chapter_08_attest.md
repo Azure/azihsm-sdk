@@ -1,11 +1,11 @@
 # Attestation Operation
 
-## azihsm_attest_key
+## azihsm_generate_key_report
 
 Retrieve the attestation report for a specified key
 
 ```cpp
-const azihsm_byte *azihsm_attest_key(
+const azihsm_byte *azihsm_generate_key_report(
     azihsm_handle key_handle, 
     const azihsm_buffer *report_data,
     azihsm_buffer *report

@@ -424,7 +424,7 @@ pub unsafe extern "C" fn azihsm_key_unmask_pair(
 /// This function is unsafe because it dereferences raw pointers.
 #[unsafe(no_mangle)]
 #[allow(unsafe_code)]
-pub unsafe extern "C" fn azihsm_attest_key(
+pub unsafe extern "C" fn azihsm_generate_key_report(
     key_handle: AzihsmHandle,
     report_data: *const AzihsmBuffer,
     report: *mut AzihsmBuffer,

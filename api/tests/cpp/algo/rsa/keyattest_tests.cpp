@@ -41,7 +41,7 @@ TEST_F(azihsm_rsa_keyattest, attest_rsa_2048_key)
         std::vector<uint8_t> report;
         azihsm_buffer report_buf{ nullptr, 0 };
 
-        auto attest_err = azihsm_attest_key(priv_key.get(), &report_data_buf, &report_buf);
+        auto attest_err = azihsm_generate_key_report(priv_key.get(), &report_data_buf, &report_buf);
         ASSERT_EQ(attest_err, AZIHSM_STATUS_SUCCESS);
         ASSERT_GT(report_buf.len, 0);
 
@@ -49,7 +49,7 @@ TEST_F(azihsm_rsa_keyattest, attest_rsa_2048_key)
         report.resize(report_buf.len);
         report_buf.ptr = report.data();
 
-        attest_err = azihsm_attest_key(priv_key.get(), &report_data_buf, &report_buf);
+        attest_err = azihsm_generate_key_report(priv_key.get(), &report_data_buf, &report_buf);
         ASSERT_EQ(attest_err, AZIHSM_STATUS_SUCCESS);
         ASSERT_GT(report_buf.len, 0);
 
@@ -90,7 +90,7 @@ TEST_F(azihsm_rsa_keyattest, attest_with_empty_report_data)
         std::vector<uint8_t> report;
         azihsm_buffer report_buf{ nullptr, 0 };
 
-        auto attest_err = azihsm_attest_key(priv_key.get(), &report_data_buf, &report_buf);
+        auto attest_err = azihsm_generate_key_report(priv_key.get(), &report_data_buf, &report_buf);
         ASSERT_EQ(attest_err, AZIHSM_STATUS_SUCCESS);
         ASSERT_GT(report_buf.len, 0);
 
@@ -98,7 +98,7 @@ TEST_F(azihsm_rsa_keyattest, attest_with_empty_report_data)
         report.resize(report_buf.len);
         report_buf.ptr = report.data();
 
-        attest_err = azihsm_attest_key(priv_key.get(), &report_data_buf, &report_buf);
+        attest_err = azihsm_generate_key_report(priv_key.get(), &report_data_buf, &report_buf);
         ASSERT_EQ(attest_err, AZIHSM_STATUS_SUCCESS);
         ASSERT_GT(report_buf.len, 0);
     });
@@ -120,7 +120,7 @@ TEST_F(azihsm_rsa_keyattest, attest_invalid_key_handle)
         std::vector<uint8_t> report(512);
         azihsm_buffer report_buf{ report.data(), static_cast<uint32_t>(report.size()) };
 
-        auto attest_err = azihsm_attest_key(invalid_key, &report_data_buf, &report_buf);
+        auto attest_err = azihsm_generate_key_report(invalid_key, &report_data_buf, &report_buf);
         ASSERT_NE(attest_err, AZIHSM_STATUS_SUCCESS);
     });
 }
@@ -148,7 +148,7 @@ TEST_F(azihsm_rsa_keyattest, attest_public_key_fails)
         std::vector<uint8_t> report(512);
         azihsm_buffer report_buf{ report.data(), static_cast<uint32_t>(report.size()) };
 
-        auto attest_err = azihsm_attest_key(pub_key.get(), &report_data_buf, &report_buf);
+        auto attest_err = azihsm_generate_key_report(pub_key.get(), &report_data_buf, &report_buf);
         ASSERT_EQ(attest_err, AZIHSM_STATUS_UNSUPPORTED_KEY_KIND);
     });
 }
