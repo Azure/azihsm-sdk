@@ -17,85 +17,49 @@ class azihsm_ecc_keygen : public ::testing::Test
     PartitionListHandle part_list_ = PartitionListHandle{};
 };
 
-TEST_F(azihsm_ecc_keygen, generate_p256_keypair)
+// Test data structure for ECC key generation tests
+struct KeygenTestParams
 {
-    part_list_.for_each_session([](azihsm_handle session) {
-        auto_key priv_key;
-        auto_key pub_key;
-        auto err = generate_ecc_keypair(
-            session,
-            AZIHSM_ECC_CURVE_P256,
-            true,
-            priv_key.get_ptr(),
-            pub_key.get_ptr()
-        );
-        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_NE(priv_key.get(), 0);
-        ASSERT_NE(pub_key.get(), 0);
+    azihsm_ecc_curve curve;
+    const char *test_name;
+};
 
-        // Explicitly test deletion (auto_key will also delete on scope exit as backup)
-        auto delete_priv_err = azihsm_key_delete(priv_key.get());
-        ASSERT_EQ(delete_priv_err, AZIHSM_STATUS_SUCCESS);
-        priv_key.release();
-
-        auto delete_pub_err = azihsm_key_delete(pub_key.get());
-        ASSERT_EQ(delete_pub_err, AZIHSM_STATUS_SUCCESS);
-        pub_key.release();
-    });
-}
-
-TEST_F(azihsm_ecc_keygen, generate_p384_keypair)
+TEST_F(azihsm_ecc_keygen, generate_keypair_all_curves)
 {
-    part_list_.for_each_session([](azihsm_handle session) {
-        auto_key priv_key;
-        auto_key pub_key;
-        auto err = generate_ecc_keypair(
-            session,
-            AZIHSM_ECC_CURVE_P384,
-            true,
-            priv_key.get_ptr(),
-            pub_key.get_ptr()
-        );
-        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_NE(priv_key.get(), 0);
-        ASSERT_NE(pub_key.get(), 0);
+    std::vector<KeygenTestParams> test_cases = {
+        { AZIHSM_ECC_CURVE_P256, "P256" },
+        { AZIHSM_ECC_CURVE_P384, "P384" },
+        { AZIHSM_ECC_CURVE_P521, "P521" },
+    };
 
-        // Explicitly test deletion (auto_key will also delete on scope exit as backup)
-        auto delete_priv_err = azihsm_key_delete(priv_key.get());
-        ASSERT_EQ(delete_priv_err, AZIHSM_STATUS_SUCCESS);
-        priv_key.release();
+    for (const auto &test_case : test_cases)
+    {
+        SCOPED_TRACE("Testing key generation with " + std::string(test_case.test_name));
 
-        auto delete_pub_err = azihsm_key_delete(pub_key.get());
-        ASSERT_EQ(delete_pub_err, AZIHSM_STATUS_SUCCESS);
-        pub_key.release();
-    });
-}
+        part_list_.for_each_session([&](azihsm_handle session) {
+            auto_key priv_key;
+            auto_key pub_key;
+            auto err = generate_ecc_keypair(
+                session,
+                test_case.curve,
+                true,
+                priv_key.get_ptr(),
+                pub_key.get_ptr()
+            );
+            ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+            ASSERT_NE(priv_key.get(), 0);
+            ASSERT_NE(pub_key.get(), 0);
 
-TEST_F(azihsm_ecc_keygen, generate_p521_keypair)
-{
-    part_list_.for_each_session([](azihsm_handle session) {
-        auto_key priv_key;
-        auto_key pub_key;
-        auto err = generate_ecc_keypair(
-            session,
-            AZIHSM_ECC_CURVE_P521,
-            true,
-            priv_key.get_ptr(),
-            pub_key.get_ptr()
-        );
-        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_NE(priv_key.get(), 0);
-        ASSERT_NE(pub_key.get(), 0);
+            // Explicitly test deletion (auto_key will also delete on scope exit as backup)
+            auto delete_priv_err = azihsm_key_delete(priv_key.get());
+            ASSERT_EQ(delete_priv_err, AZIHSM_STATUS_SUCCESS);
+            priv_key.release();
 
-        // Explicitly test deletion (auto_key will also delete on scope exit as backup)
-        auto delete_priv_err = azihsm_key_delete(priv_key.get());
-        ASSERT_EQ(delete_priv_err, AZIHSM_STATUS_SUCCESS);
-        priv_key.release();
-
-        auto delete_pub_err = azihsm_key_delete(pub_key.get());
-        ASSERT_EQ(delete_pub_err, AZIHSM_STATUS_SUCCESS);
-        pub_key.release();
-    });
+            auto delete_pub_err = azihsm_key_delete(pub_key.get());
+            ASSERT_EQ(delete_pub_err, AZIHSM_STATUS_SUCCESS);
+            pub_key.release();
+        });
+    }
 }
 
 // Parameter validation tests

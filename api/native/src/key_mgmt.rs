@@ -417,7 +417,6 @@ pub unsafe extern "C" fn azihsm_key_unmask_pair(
 /// - The function performs a two-pass operation: first to determine the required buffer
 ///   size, then to generate the actual report
 /// - The report buffer's length field will be updated with the actual report size
-/// - Currently only supports ECC private keys
 ///
 /// @internal
 /// # Safety

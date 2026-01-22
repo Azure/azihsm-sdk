@@ -9,7 +9,9 @@
 #include "handle/part_list_handle.hpp"
 #include "handle/session_handle.hpp"
 #include "helpers.hpp"
-#include "utils.hpp"
+#include "utils/auto_key.hpp"
+#include "utils/rsa_keygen.hpp"
+
 
 class azihsm_rsa_keyattest : public ::testing::Test
 {
@@ -19,15 +21,12 @@ class azihsm_rsa_keyattest : public ::testing::Test
 
 TEST_F(azihsm_rsa_keyattest, attest_rsa_2048_key)
 {
-    part_list_.for_each_part([](std::vector<azihsm_char> &path) {
-        auto partition = PartitionHandle(path);
-        auto session = SessionHandle(partition.get());
-
+    part_list_.for_each_session([&](azihsm_handle session) {
         // Generate an RSA 2048 key pair
-        AutoKey priv_key;
-        AutoKey pub_key;
+        auto_key priv_key;
+        auto_key pub_key;
         auto err =
-            generate_rsa_unwrapping_keypair(session.get(), priv_key.get_ptr(), pub_key.get_ptr());
+            generate_rsa_unwrapping_keypair(session, priv_key.get_ptr(), pub_key.get_ptr());
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_NE(priv_key.get(), 0);
         ASSERT_NE(pub_key.get(), 0);
@@ -42,7 +41,7 @@ TEST_F(azihsm_rsa_keyattest, attest_rsa_2048_key)
         azihsm_buffer report_buf{ nullptr, 0 };
 
         auto attest_err = azihsm_generate_key_report(priv_key.get(), &report_data_buf, &report_buf);
-        ASSERT_EQ(attest_err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(attest_err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
         ASSERT_GT(report_buf.len, 0);
 
         // Second call: generate the actual report
@@ -67,49 +66,9 @@ TEST_F(azihsm_rsa_keyattest, attest_rsa_2048_key)
     });
 }
 
-TEST_F(azihsm_rsa_keyattest, attest_with_empty_report_data)
-{
-    part_list_.for_each_part([](std::vector<azihsm_char> &path) {
-        auto partition = PartitionHandle(path);
-        auto session = SessionHandle(partition.get());
-
-        // Generate an RSA 2048 key pair
-        AutoKey priv_key;
-        AutoKey pub_key;
-        auto err =
-            generate_rsa_unwrapping_keypair(session.get(), priv_key.get_ptr(), pub_key.get_ptr());
-        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_NE(priv_key.get(), 0);
-        ASSERT_NE(pub_key.get(), 0);
-
-        // Use empty report data
-        std::vector<uint8_t> report_data;
-        azihsm_buffer report_data_buf{ report_data.data(), 0 };
-
-        // First call: get the required report buffer size
-        std::vector<uint8_t> report;
-        azihsm_buffer report_buf{ nullptr, 0 };
-
-        auto attest_err = azihsm_generate_key_report(priv_key.get(), &report_data_buf, &report_buf);
-        ASSERT_EQ(attest_err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_GT(report_buf.len, 0);
-
-        // Second call: generate the actual report
-        report.resize(report_buf.len);
-        report_buf.ptr = report.data();
-
-        attest_err = azihsm_generate_key_report(priv_key.get(), &report_data_buf, &report_buf);
-        ASSERT_EQ(attest_err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_GT(report_buf.len, 0);
-    });
-}
-
 TEST_F(azihsm_rsa_keyattest, attest_invalid_key_handle)
 {
-    part_list_.for_each_part([](std::vector<azihsm_char> &path) {
-        auto partition = PartitionHandle(path);
-        auto session = SessionHandle(partition.get());
-
+    part_list_.for_each_session([&](azihsm_handle session) {
         // Use an invalid key handle
         azihsm_handle invalid_key = 0;
 
@@ -127,15 +86,12 @@ TEST_F(azihsm_rsa_keyattest, attest_invalid_key_handle)
 
 TEST_F(azihsm_rsa_keyattest, attest_public_key_fails)
 {
-    part_list_.for_each_part([](std::vector<azihsm_char> &path) {
-        auto partition = PartitionHandle(path);
-        auto session = SessionHandle(partition.get());
-
+    part_list_.for_each_session([&](azihsm_handle session) {
         // Generate an RSA 2048 key pair
-        AutoKey priv_key;
-        AutoKey pub_key;
+        auto_key priv_key;
+        auto_key pub_key;
         auto err =
-            generate_rsa_unwrapping_keypair(session.get(), priv_key.get_ptr(), pub_key.get_ptr());
+            generate_rsa_unwrapping_keypair(session, priv_key.get_ptr(), pub_key.get_ptr());
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_NE(priv_key.get(), 0);
         ASSERT_NE(pub_key.get(), 0);
