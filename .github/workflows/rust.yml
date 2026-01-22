@@ -20,6 +20,8 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+    - name: Check clang-format version
+      run: clang-format --version
     - name: Install apt packages
       run: |
         sudo apt-get update
@@ -33,7 +35,6 @@ jobs:
     - name: Cargo format
       run: |
         cargo +nightly fmt --version
-        clang-format --version
         cargo xtask precheck --fmt
     - name: Cargo Clippy
       run: |
