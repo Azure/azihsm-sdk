@@ -519,10 +519,9 @@ impl Dispatcher {
         }
     }
 
-    /// Execute AES XTS Operation
-    ///     on fast path
-    /// Dispatcher entry point for mock
-    /// and device interfaces
+    /// Execute AES XTS Operation on fast path
+    /// Dispatcher entry point for mock and device interfaces
+    ///
     /// # Arguments
     /// * `mode`        - Encryption or decryption
     /// * `xts_request`  - Parameters for the operation

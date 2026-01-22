@@ -848,26 +848,41 @@ impl DdiDev for DdiNixDev {
         Ok(resp)
     }
 
-    /// exec_op_fp_gcm
-    /// Linux implementation of
-    /// fast path AES GCM encryption
-    /// decryption functionality
-    /// mode -> Encryption or decryption
-    /// gcm_params -> Parameters for operation
-    /// session id and short_app_id are application
-    /// specific
-    /// src_buf
-    ///   For encryption, this is the cleartext buffer
-    ///   For decryption, this is the encrypted content
-    fn exec_op_fp_gcm(
+    /// Execute AES GCM operation (encryption/decryption) with slice-based buffers
+    ///
+    /// This is a slice-based variant that allows the caller to provide pre-allocated
+    /// buffers, avoiding the extra allocation and copy overhead of the Vec-based API.
+    ///
+    /// # Arguments
+    /// * `mode`        - Encryption or decryption
+    /// * `gcm_params`  - Parameters for the operation (key ID, IV, tag, session info)
+    /// * `src_buf`     - Source buffer slice to encrypt or decrypt
+    /// * `dst_buf`     - Destination buffer slice to write encrypted or decrypted data
+    /// * `fips_approved` - Output parameter set to indicate if operation was FIPS approved
+    ///
+    /// # Returns
+    /// * `usize` - Number of bytes written to the destination buffer
+    ///
+    /// # Error
+    /// * `DdiError` - Error that occurred during operation
+    ///
+    /// # Notes
+    /// - The destination buffer must be at least as large as the source buffer
+    /// - For decryption, the tag must be provided in `gcm_params`
+    /// - AAD data is automatically aligned to 32-byte boundaries as required by the driver
+    fn exec_op_fp_gcm_slice(
         &self,
         mode: DdiAesOp,
         gcm_params: DdiAesGcmParams,
-        src_buf: Vec<u8>,
-    ) -> Result<DdiAesGcmResult, DdiError> {
+        src_buf: &[u8],
+        dst_buf: &mut [u8],
+        tag: &mut Option<[u8; 16]>,
+        iv: &mut Option<[u8; 12]>,
+        fips_approved: &mut bool,
+    ) -> Result<usize, DdiError> {
         let src_buf_len = src_buf.len();
         if src_buf_len == 0 {
-            return Err(DdiError::InvalidParameter);
+            Err(DdiError::InvalidParameter)?;
         }
 
         // If this is a decryption operation, the tag must be provided. Return
@@ -896,17 +911,28 @@ impl DdiDev for DdiNixDev {
         cmd.in_data.xts_or_gcm.gcm.aligned_aad_data_len = final_aad.len() as u32;
         cmd.in_data.xts_or_gcm.gcm.enable_gcm_work_around = 1;
 
-        // Create a new buffer that concatenates
-        // aad and the cleartext
+        // Create a new buffer that concatenates aad and the cleartext
         let mut new_src_buf: Vec<u8> = Vec::new();
         new_src_buf.extend(&final_aad);
         new_src_buf.extend(src_buf);
-        let mut dest_buf: Vec<u8> = vec![0; new_src_buf.len()];
+
+        // Validate destination buffer size (needs to hold at least src_buf.len() bytes)
+        if dst_buf.len() < src_buf_len {
+            tracing::error!(
+                "Destination buffer size ({}) is less than source buffer size ({})",
+                dst_buf.len(),
+                src_buf_len
+            );
+            Err(DdiError::InvalidParameter)?;
+        }
+
+        // Create temporary destination buffer that includes space for AAD
+        let mut temp_dest_buf: Vec<u8> = vec![0; new_src_buf.len()];
 
         cmd.in_data.user_buffers.src_length = new_src_buf.len() as u32;
         cmd.in_data.user_buffers.src_buf = new_src_buf.as_ptr();
-        cmd.in_data.user_buffers.dst_length = dest_buf.len() as u32;
-        cmd.in_data.user_buffers.dst_buf = dest_buf.as_mut_ptr();
+        cmd.in_data.user_buffers.dst_length = temp_dest_buf.len() as u32;
+        cmd.in_data.user_buffers.dst_buf = temp_dest_buf.as_mut_ptr();
         cmd.in_data.context = 0;
 
         if mode == DdiAesOp::Encrypt {
@@ -932,7 +958,6 @@ impl DdiDev for DdiNixDev {
         cmd.in_data.short_app_id = gcm_params.short_app_id;
 
         // fill up the fields in the ioctl buffer from the parameters
-        // TODO need to also copy the init_vec and tag
         cmd.in_data.xts_or_gcm.gcm.kid = gcm_params.key_id;
         cmd.in_data.xts_or_gcm.gcm.iv = gcm_params.iv;
 
@@ -953,45 +978,118 @@ impl DdiDev for DdiNixDev {
             Err(DdiError::FpCmdSpecificError(cmd.out_data.ioctl_status))?
         }
 
-        dest_buf.drain(0..final_aad.len());
+        // Copy the actual data (excluding AAD) to the destination buffer
+        let aad_offset = final_aad.len();
+        let data_len = temp_dest_buf.len() - aad_offset;
+
+        if data_len > dst_buf.len() {
+            if mode == DdiAesOp::Encrypt {
+                tracing::error!(
+                    "AES GCM Encrypt: Device output length ({}) is greater than destination buffer size ({})",
+                    data_len,
+                    dst_buf.len()
+                );
+                Err(DdiError::DdiStatus(DdiStatus::AesEncryptFailed))?;
+            } else {
+                tracing::error!(
+                    "AES GCM Decrypt: Device output length ({}) is greater than destination buffer size ({})",
+                    data_len,
+                    dst_buf.len()
+                );
+                Err(DdiError::DdiStatus(DdiStatus::AesDecryptFailed))?;
+            }
+        }
+
+        dst_buf[..data_len].copy_from_slice(&temp_dest_buf[aad_offset..]);
+
+        // Set output parameters from device response
+        *tag = Some(cmd.out_data.cmd_spec_data);
+        *iv = Some(cmd.out_data.iv_from_device);
+        *fips_approved = cmd.out_data.fips_approved;
+
+        Ok(data_len)
+    }
+
+    fn exec_op_fp_gcm(
+        &self,
+        mode: DdiAesOp,
+        gcm_params: DdiAesGcmParams,
+        src_buf: Vec<u8>,
+    ) -> Result<DdiAesGcmResult, DdiError> {
+        let src_buf_len = src_buf.len();
+        let mut dest_buf: Vec<u8> = vec![0; src_buf_len];
+        let mut fips_approved = false;
+        let mut tag = None;
+        let mut iv = None;
+
+        let total_size = self.exec_op_fp_gcm_slice(
+            mode,
+            gcm_params,
+            &src_buf,
+            &mut dest_buf,
+            &mut tag,
+            &mut iv,
+            &mut fips_approved,
+        )?;
+
+        if total_size < src_buf_len {
+            dest_buf.truncate(total_size);
+        }
 
         Ok(DdiAesGcmResult {
             data: dest_buf,
-            tag: Some(cmd.out_data.cmd_spec_data),
-            iv: Some(cmd.out_data.iv_from_device),
-            fips_approved: cmd.out_data.fips_approved,
+            tag,
+            iv,
+            fips_approved,
         })
     }
 
-    /// Execute AES Xts Operation
-    ///     on fast path
+    /// Execute AES XTS operation (encryption/decryption) with slice-based buffers
+    ///
+    /// This is a slice-based variant that allows the caller to provide pre-allocated
+    /// buffers, avoiding the extra allocation and copy overhead of the Vec-based API.
+    ///
     /// # Arguments
     /// * `mode`        - Encryption or decryption
-    /// * `xts_params`  - Parameters for the operation
-    /// * `src_buf`     - User buffer for encryption or decryption
+    /// * `xts_params`  - Parameters for the operation (data unit length, keys, tweak, session info)
+    /// * `src_buf`     - Source buffer slice to encrypt or decrypt
+    /// * `dst_buf`     - Destination buffer slice to write encrypted or decrypted data
+    /// * `fips_approved` - Output parameter set to indicate if operation was FIPS approved
     ///
     /// # Returns
-    /// * `DdiAesXtsParams` - On success
+    /// * `usize` - Number of bytes written to the destination buffer
     ///
     /// # Error
     /// * `DdiError` - Error that occurred during operation
-    fn exec_op_fp_xts(
+    ///
+    /// # Notes
+    /// - The destination buffer must be at least as large as the source buffer
+    /// - The return value indicates how many bytes were actually written
+    fn exec_op_fp_xts_slice(
         &self,
         mode: DdiAesOp,
         xts_params: DdiAesXtsParams,
-        src_buf: Vec<u8>,
-    ) -> Result<DdiAesXtsResult, DdiError> {
+        src_buf: &[u8],
+        dst_buf: &mut [u8],
+        fips_approved: &mut bool,
+    ) -> Result<usize, DdiError> {
         let src_buf_len = src_buf.len();
+
         // Validate input parameters
-        // Source buffer must not be empty
-        // if decryption tag must be provided
-        // session id and short app id are verified
-        // in the driver interface
         if src_buf_len == 0 {
             return Err(DdiError::InvalidParameter);
         }
 
-        let mut dest_buf: Vec<u8> = vec![0; src_buf_len];
+        // Validate destination buffer size
+        if dst_buf.len() < src_buf_len {
+            tracing::error!(
+                "Destination buffer size ({}) is less than source buffer size ({})",
+                dst_buf.len(),
+                src_buf_len
+            );
+            return Err(DdiError::InvalidParameter);
+        }
+
         let mut cmd = McrFpCmd::default();
 
         cmd.hdr.ioctl_data_size = mem::size_of::<McrFpCmd>() as u32;
@@ -1012,7 +1110,7 @@ impl DdiDev for DdiNixDev {
                     tracing::error!(
                         "FP AES XTS: Data unit length ({}) is not valid. Src buffer size: {}",
                         xts_params.data_unit_len,
-                        src_buf.len()
+                        src_buf_len
                     );
                     Err(DdiError::InvalidParameter)?;
                 }
@@ -1022,7 +1120,7 @@ impl DdiDev for DdiNixDev {
         cmd.in_data.user_buffers.src_length = src_buf_len as u32;
         cmd.in_data.user_buffers.src_buf = src_buf.as_ptr();
         cmd.in_data.user_buffers.dst_length = src_buf_len as u32;
-        cmd.in_data.user_buffers.dst_buf = dest_buf.as_mut_ptr();
+        cmd.in_data.user_buffers.dst_buf = dst_buf.as_mut_ptr();
         cmd.in_data.context = 0;
 
         if mode == DdiAesOp::Encrypt {
@@ -1061,23 +1159,58 @@ impl DdiDev for DdiNixDev {
 
         let total_size = cmd.out_data.byte_count as usize;
 
-        if total_size > src_buf_len {
+        if total_size > dst_buf.len() {
             if mode == DdiAesOp::Encrypt {
                 tracing::error!(
                     "AES XTS Encrypt: Device output length ({}) is greater than destination buffer size ({})",
                     total_size,
-                    dest_buf.len()
+                    dst_buf.len()
                 );
                 Err(DdiError::DdiStatus(DdiStatus::AesEncryptFailed))?;
             } else {
                 tracing::error!(
                     "AES XTS Decrypt: Device output length ({}) is greater than destination buffer size ({})",
                     total_size,
-                    dest_buf.len()
+                    dst_buf.len()
                 );
                 Err(DdiError::DdiStatus(DdiStatus::AesDecryptFailed))?;
             }
         }
+
+        *fips_approved = cmd.out_data.fips_approved;
+
+        Ok(total_size)
+    }
+
+    /// Execute AES Xts Operation on fast path
+    ///
+    /// # Arguments
+    /// * `mode`        - Encryption or decryption
+    /// * `xts_params`  - Parameters for the operation
+    /// * `src_buf`     - User buffer for encryption or decryption
+    ///
+    /// # Returns
+    /// * `DdiAesXtsParams` - On success
+    ///
+    /// # Error
+    /// * `DdiError` - Error that occurred during operation
+    fn exec_op_fp_xts(
+        &self,
+        mode: DdiAesOp,
+        xts_params: DdiAesXtsParams,
+        src_buf: Vec<u8>,
+    ) -> Result<DdiAesXtsResult, DdiError> {
+        let src_buf_len = src_buf.len();
+        let mut dest_buf: Vec<u8> = vec![0; src_buf_len];
+        let mut fips_approved = false;
+
+        let total_size = self.exec_op_fp_xts_slice(
+            mode,
+            xts_params,
+            &src_buf,
+            &mut dest_buf,
+            &mut fips_approved,
+        )?;
 
         if total_size < src_buf_len {
             dest_buf.truncate(total_size);
@@ -1085,7 +1218,7 @@ impl DdiDev for DdiNixDev {
 
         Ok(DdiAesXtsResult {
             data: dest_buf,
-            fips_approved: cmd.out_data.fips_approved,
+            fips_approved,
         })
     }
 
