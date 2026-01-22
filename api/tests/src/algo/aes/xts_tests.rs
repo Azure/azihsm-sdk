@@ -216,7 +216,7 @@ fn aes_xts_streaming_matches_single_shot(session: HsmSession) {
     let dul: usize = 512;
 
     let plaintext: Vec<u8> = vec![0x5Au8; dul * 6];
-    let chunk_sizes = [dul * 2, dul * 1, dul * 3];
+    let chunk_sizes = [dul * 2, dul, dul * 3];
 
     let (single_ct, _) = xts_encrypt(&key, &tweak, dul, &plaintext).expect("encrypt failed");
     let (stream_ct, stream_enc_tweak_after) =

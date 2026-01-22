@@ -21,12 +21,6 @@
 
 use super::*;
 
-/// Type alias for a DDI AES-XTS encrypt/decrypt operation.
-///
-/// The DDI layer takes a key, tweak, DUL, an input slice, and an output slice,
-/// and returns the number of bytes written.
-type DdiXtsCryptOp = fn(&HsmAesXtsKey, u128, usize, &[u8], &mut [u8]) -> HsmResult<usize>;
-
 /// An algorithm implementation for AES-XTS encryption and decryption.
 ///
 /// This struct provides both single-shot and streaming AES-XTS encryption and
@@ -108,7 +102,7 @@ impl HsmAesXtsAlgo {
     /// * `key` - AES-XTS key to use
     /// * `input` - Input data (must be DUL-aligned)
     /// * `output` - Optional output buffer. If `None`, only calculates size.
-    /// * `op` - DDI operation to apply per data unit
+    /// * `encrypt` - `true` to encrypt, `false` to decrypt
     ///
     /// # Returns
     ///
@@ -123,7 +117,7 @@ impl HsmAesXtsAlgo {
         key: &HsmAesXtsKey,
         input: &[u8],
         output: Option<&mut [u8]>,
-        op: DdiXtsCryptOp,
+        encrypt: bool,
     ) -> HsmResult<usize> {
         // Accept only full data units
         if !input.len().is_multiple_of(self.dul) {
@@ -147,7 +141,11 @@ impl HsmAesXtsAlgo {
 
         for unit in input.chunks(self.dul) {
             let end = offset + unit.len();
-            output_len += op(key, self.tweak, self.dul, unit, &mut output[offset..end])?;
+            output_len += if encrypt {
+                ddi::aes_xts_encrypt(key, self.tweak, self.dul, unit, &mut output[offset..end])?
+            } else {
+                ddi::aes_xts_decrypt(key, self.tweak, self.dul, unit, &mut output[offset..end])?
+            };
             self.increment_tweak(1)?;
             offset = end;
         }
@@ -233,7 +231,7 @@ impl HsmEncryptOp for HsmAesXtsAlgo {
         }
 
         // Perform encryption
-        self.crypt_data_units(key, plaintext, ciphertext, ddi::aes_xts_encrypt)
+        self.crypt_data_units(key, plaintext, ciphertext, true)
     }
 }
 
@@ -276,7 +274,7 @@ impl HsmDecryptOp for HsmAesXtsAlgo {
         }
 
         // Perform decryption
-        self.crypt_data_units(key, ciphertext, plaintext, ddi::aes_xts_decrypt)
+        self.crypt_data_units(key, ciphertext, plaintext, false)
     }
 }
 
@@ -358,7 +356,7 @@ impl HsmEncryptContext for HsmAesXtsEncryptContext {
 
         //perform encryption
         self.algo
-            .crypt_data_units(&self.key, plaintext, ciphertext, ddi::aes_xts_encrypt)
+            .crypt_data_units(&self.key, plaintext, ciphertext, true)
     }
 
     /// Finalizes the streaming AES-XTS encryption operation.
@@ -463,7 +461,7 @@ impl HsmDecryptContext for HsmAesXtsDecryptContext {
         }
         //perform decryption
         self.algo
-            .crypt_data_units(&self.key, ciphertext, plaintext, ddi::aes_xts_decrypt)
+            .crypt_data_units(&self.key, ciphertext, plaintext, false)
     }
 
     /// Finalizes the streaming AES-XTS decryption operation.
