@@ -33,6 +33,7 @@ jobs:
     - name: Cargo format
       run: |
         cargo +nightly fmt --version
+        clang-format --version
         cargo xtask precheck --fmt
     - name: Cargo Clippy
       run: |
