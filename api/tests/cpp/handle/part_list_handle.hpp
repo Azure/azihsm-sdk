@@ -4,6 +4,7 @@
 #define PART_LIST_HANDLE_HPP
 
 #include <azihsm_api.h>
+#include <functional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -154,6 +155,18 @@ class PartitionListHandle
             func(path);
         }
     }
+
+    /**
+     * @brief Iterates over each partition and provides a session handle to the callback.
+     *
+     * This method creates a partition handle and session for each partition,
+     * then invokes the provided function with the session handle.
+     *
+     * @param func The function to call for each session. It receives:
+     *             - session: The session handle for the partition
+     * @throws Any exception thrown by the callback function.
+     */
+    void for_each_session(const std::function<void(azihsm_handle)> &func) const;
 
     /**
      * @brief Checks if the partition list is valid (non-zero handle).

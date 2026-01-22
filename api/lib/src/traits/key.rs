@@ -515,3 +515,25 @@ pub trait HsmKeyDeleteOp {
     /// - Insufficient permissions to delete the key
     fn delete_key(self) -> Result<(), Self::Error>;
 }
+
+/// Key report generation operation trait.
+pub trait HsmKeyReportOp {
+    type Error: Error;
+
+    /// Generates a key report for the specified key.
+    ///
+    /// # Arguments
+    ///
+    /// * `report_data` - Custom data to include in the key report.
+    /// * `report` - Optional output buffer to write the key report into.
+    ///   If `None`, the method will return the required buffer size.
+    ///
+    /// # Returns
+    ///
+    /// Returns the size of the key report on success.
+    fn generate_key_report(
+        &mut self,
+        report_data: &[u8],
+        report: Option<&mut [u8]>,
+    ) -> Result<usize, Self::Error>;
+}

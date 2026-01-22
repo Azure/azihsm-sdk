@@ -101,11 +101,7 @@ class azihsm_aes_keygen : public ::testing::Test
 
 TEST_F(azihsm_aes_keygen, unmask_aes_128_key)
 {
-    part_list_.for_each_part([](std::vector<azihsm_char> &path) {
-        // Open partition and create session
-        auto partition = PartitionHandle(path);
-        auto session = SessionHandle(partition.get());
-
+    part_list_.for_each_session([](azihsm_handle session) {
         // Step 1: Generate AES-128 key
         azihsm_algo keygen_algo{};
         keygen_algo.id = AZIHSM_ALGO_ID_AES_KEY_GEN;
@@ -134,7 +130,7 @@ TEST_F(azihsm_aes_keygen, unmask_aes_128_key)
         };
 
         azihsm_handle original_key = 0;
-        azihsm_status err = azihsm_key_gen(session.get(), &keygen_algo, &prop_list, &original_key);
+        azihsm_status err = azihsm_key_gen(session, &keygen_algo, &prop_list, &original_key);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_NE(original_key, 0);
 
@@ -167,12 +163,7 @@ TEST_F(azihsm_aes_keygen, unmask_aes_128_key)
         masked_key_buf.len = static_cast<uint32_t>(masked_key_data.size());
 
         azihsm_handle unmasked_key = 0;
-        err = azihsm_key_unmask(
-            session.get(),
-            AZIHSM_KEY_KIND_AES,
-            &masked_key_buf,
-            &unmasked_key
-        );
+        err = azihsm_key_unmask(session, AZIHSM_KEY_KIND_AES, &masked_key_buf, &unmasked_key);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_NE(unmasked_key, 0);
 

@@ -19,7 +19,19 @@ impl TryFrom<&AzihsmAlgo> for HsmEccKeyGenAlgo {
     }
 }
 
-/// Helper function to generate an ECC key pair
+/// Generates a new ECC key pair
+///
+/// Creates a new elliptic curve public/private key pair on the specified curve.
+///
+/// # Arguments
+/// * `session` - HSM session for key generation
+/// * `algo` - ECC key generation algorithm parameters (curve type)
+/// * `priv_key_props` - Properties for the generated private key (extractable, persistent, etc.)
+/// * `pub_key_props` - Properties for the generated public key
+///
+/// # Returns
+/// * `Ok((AzihsmHandle, AzihsmHandle))` - Handles to (private_key, public_key)
+/// * `Err(AzihsmStatus)` - On failure (e.g., unsupported curve)
 pub(crate) fn ecc_generate_key_pair(
     session: &HsmSession,
     algo: &AzihsmAlgo,
@@ -80,7 +92,18 @@ where
     Ok(HsmVerifier::verify(&mut algo, key, data, sig)?)
 }
 
-/// Helper function to perform ECC signing operation with direct (pre-hashed) algorithm
+/// Signs pre-hashed data using ECDSA
+///
+/// Single-shot operation that signs already-hashed data with an ECC private key.
+///
+/// # Arguments
+/// * `key_handle` - Handle to the ECC private key
+/// * `hash` - Pre-computed hash of the message
+/// * `output` - Output buffer for the signature
+///
+/// # Returns
+/// * `Ok(())` - On successful signature generation
+/// * `Err(AzihsmStatus)` - On failure (e.g., invalid key, buffer too small)
 pub(crate) fn ecc_sign(
     key_handle: AzihsmHandle,
     input: &[u8],
@@ -89,8 +112,19 @@ pub(crate) fn ecc_sign(
     sign_with_algo(HsmEccSignAlgo::default(), key_handle, input, output)
 }
 
-/// Helper function to perform ECC signing operation with hash algorithm
-/// Hashing is performed internally as part of signing
+/// Signs a message using ECDSA with automatic hashing
+///
+/// Single-shot operation that hashes the message and signs with an ECC private key.
+///
+/// # Arguments
+/// * `hash_algo` - Hash algorithm to use for the message
+/// * `key_handle` - Handle to the ECC private key
+/// * `message` - Raw message to hash and sign
+/// * `output` - Output buffer for the signature
+///
+/// # Returns
+/// * `Ok(())` - On successful signature generation
+/// * `Err(AzihsmStatus)` - On failure
 pub(crate) fn ecc_hash_sign(
     hash_algo: AzihsmAlgoId,
     key_handle: AzihsmHandle,
@@ -101,7 +135,19 @@ pub(crate) fn ecc_hash_sign(
     sign_with_algo(HsmHashSignAlgo::new(hash_algo), key_handle, input, output)
 }
 
-/// Helper function to perform ECC verification operation with direct (pre-hashed) algorithm
+/// Verifies an ECDSA signature on pre-hashed data
+///
+/// Single-shot operation that verifies a signature against already-hashed data.
+///
+/// # Arguments
+/// * `key_handle` - Handle to the ECC public key
+/// * `hash` - Pre-computed hash of the message
+/// * `signature` - Signature to verify
+///
+/// # Returns
+/// * `Ok(true)` - If signature is valid
+/// * `Ok(false)` - If signature is invalid
+/// * `Err(AzihsmStatus)` - On failure
 pub(crate) fn ecc_verify(
     key_handle: AzihsmHandle,
     data: &[u8],
@@ -110,7 +156,20 @@ pub(crate) fn ecc_verify(
     verify_with_algo(HsmEccSignAlgo::default(), key_handle, data, sig)
 }
 
-/// Helper function to perform ECC verification operation with hash algorithm
+/// Verifies an ECDSA signature on a message with automatic hashing
+///
+/// Single-shot operation that hashes the message and verifies the signature.
+///
+/// # Arguments
+/// * `hash_algo` - Hash algorithm to use for the message
+/// * `key_handle` - Handle to the ECC public key
+/// * `message` - Raw message to hash and verify
+/// * `signature` - Signature to verify
+///
+/// # Returns
+/// * `Ok(true)` - If signature is valid
+/// * `Ok(false)` - If signature is invalid
+/// * `Err(AzihsmStatus)` - On failure
 pub(crate) fn ecc_hash_verify(
     hash_algo: AzihsmAlgoId,
     key_handle: AzihsmHandle,
@@ -121,6 +180,18 @@ pub(crate) fn ecc_hash_verify(
     verify_with_algo(HsmHashSignAlgo::new(hash_algo), key_handle, data, sig)
 }
 
+/// Initializes a streaming ECDSA signing operation
+///
+/// Creates a context for incrementally signing data with an ECC private key.
+/// Use with `ecc_sign_update` and `ecc_sign_final`.
+///
+/// # Arguments
+/// * `hash_algo` - Hash algorithm to use
+/// * `key_handle` - Handle to the ECC private key
+///
+/// # Returns
+/// * `Ok(AzihsmHandle)` - Handle to the signing context
+/// * `Err(AzihsmStatus)` - On failure
 pub(crate) fn ecc_sign_init(
     hash_algo: AzihsmAlgoId,
     key_handle: AzihsmHandle,
@@ -142,6 +213,17 @@ pub(crate) fn ecc_sign_init(
     Ok(ctx_handle)
 }
 
+/// Updates a streaming ECDSA signing operation with additional data
+///
+/// Processes a chunk of data in an incremental signing operation.
+///
+/// # Arguments
+/// * `ctx_handle` - Handle to the signing context
+/// * `data` - Data chunk to include in the signature
+///
+/// # Returns
+/// * `Ok(())` - On success
+/// * `Err(AzihsmStatus)` - On failure
 pub(crate) fn ecc_sign_update(ctx_handle: AzihsmHandle, data: &[u8]) -> Result<(), AzihsmStatus> {
     // Get mutable reference to the context from handle table
     let ctx: &mut HsmEccSignContext =
@@ -153,6 +235,17 @@ pub(crate) fn ecc_sign_update(ctx_handle: AzihsmHandle, data: &[u8]) -> Result<(
     Ok(())
 }
 
+/// Finalizes a streaming ECDSA signing operation
+///
+/// Completes the signature computation and returns the final signature.
+///
+/// # Arguments
+/// * `ctx_handle` - Handle to the signing context
+/// * `output` - Output buffer for the signature
+///
+/// # Returns
+/// * `Ok(())` - On successful signature generation
+/// * `Err(AzihsmStatus)` - On failure
 pub(crate) fn ecc_sign_final(
     ctx_handle: AzihsmHandle,
     output: &mut AzihsmBuffer,
@@ -178,6 +271,18 @@ pub(crate) fn ecc_sign_final(
     Ok(())
 }
 
+/// Initializes a streaming ECDSA verification operation
+///
+/// Creates a context for incrementally verifying a signature with an ECC public key.
+/// Use with `ecc_verify_update` and `ecc_verify_final`.
+///
+/// # Arguments
+/// * `hash_algo` - Hash algorithm to use
+/// * `key_handle` - Handle to the ECC public key
+///
+/// # Returns
+/// * `Ok(AzihsmHandle)` - Handle to the verification context
+/// * `Err(AzihsmStatus)` - On failure
 pub(crate) fn ecc_verify_init(
     hash_algo: AzihsmAlgoId,
     key_handle: AzihsmHandle,
@@ -199,6 +304,17 @@ pub(crate) fn ecc_verify_init(
     Ok(ctx_handle)
 }
 
+/// Updates a streaming ECDSA verification operation with additional data
+///
+/// Processes a chunk of data in an incremental verification operation.
+///
+/// # Arguments
+/// * `ctx_handle` - Handle to the verification context
+/// * `data` - Data chunk to include in the verification
+///
+/// # Returns
+/// * `Ok(())` - On success
+/// * `Err(AzihsmStatus)` - On failure
 pub(crate) fn ecc_verify_update(ctx_handle: AzihsmHandle, data: &[u8]) -> Result<(), AzihsmStatus> {
     // Get mutable reference to the context from handle table
     let ctx: &mut HsmEccVerifyContext =
@@ -210,6 +326,18 @@ pub(crate) fn ecc_verify_update(ctx_handle: AzihsmHandle, data: &[u8]) -> Result
     Ok(())
 }
 
+/// Finalizes a streaming ECDSA verification operation
+///
+/// Completes the verification and checks if the signature is valid.
+///
+/// # Arguments
+/// * `ctx_handle` - Handle to the verification context
+/// * `signature` - Signature to verify against
+///
+/// # Returns
+/// * `Ok(true)` - If signature is valid
+/// * `Ok(false)` - If signature is invalid
+/// * `Err(AzihsmStatus)` - On failure
 pub(crate) fn ecc_verify_final(
     ctx_handle: AzihsmHandle,
     signature: &[u8],
@@ -224,7 +352,18 @@ pub(crate) fn ecc_verify_final(
     Ok(is_valid)
 }
 
-/// Unmask a masked ECC key pair
+/// Unmasks a masked ECC key pair and returns handles to both keys
+///
+/// Takes a masked ECC key pair (typically received from external storage)
+/// and unmasks it within the HSM session, creating usable key handles.
+///
+/// # Arguments
+/// * `session` - HSM session where the keys will be unmasked
+/// * `masked_key_pair` - Byte slice containing the masked key pair material
+///
+/// # Returns
+/// * `Ok((AzihsmHandle, AzihsmHandle))` - Handles to (private_key, public_key)
+/// * `Err(AzihsmStatus)` - On failure (e.g., invalid masked key format, session error)
 pub(crate) fn ecc_unmask_key_pair(
     session: &HsmSession,
     masked_key: &[u8],

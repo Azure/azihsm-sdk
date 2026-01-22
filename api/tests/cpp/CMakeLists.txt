@@ -50,9 +50,10 @@ corrosion_experimental_cbindgen(
     )
 
 set(SOURCE 
+    handle/part_list_handle.cpp
     partition_tests.cpp 
     session_tests.cpp 
-    algo/aes/cbc_tests.cpp
+    algo/aes/cbc_enc_dec_tests.cpp
     algo/aes/keygen_tests.cpp
     algo/ecc/keygen_tests.cpp
     algo/ecc/sign_verify_tests.cpp

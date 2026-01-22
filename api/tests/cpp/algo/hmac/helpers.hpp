@@ -2,7 +2,7 @@
 
 #pragma once
 
-#include "utils.hpp"
+#include "utils/auto_key.hpp"
 #include <azihsm_api.h>
 #include <vector>
 
@@ -140,8 +140,8 @@ azihsm_status derive_hmac_key_via_ecdh_hkdf(
                               .len = sizeof(ecdh_params) };
 
     // Properties for the secret key from ECDH
-    // Use AutoKey to ensure cleanup even on error
-    AutoKey temp_base_secret;
+    // Use auto_key to ensure cleanup even on error
+    auto_key temp_base_secret;
     bool ecdh_derive_prop = true;
     azihsm_key_class base_secret_class = AZIHSM_KEY_CLASS_SECRET;
     azihsm_key_kind base_secret_kind = AZIHSM_KEY_KIND_SHARED_SECRET;
@@ -180,7 +180,7 @@ azihsm_status derive_hmac_key_via_ecdh_hkdf(
     );
     if (err != AZIHSM_STATUS_SUCCESS)
     {
-        return err; // AutoKey will clean up temp_base_secret automatically
+        return err; // auto_key will clean up temp_base_secret automatically
     }
 
     // Step 3: Use HKDF to derive HMAC key from base secret
@@ -239,9 +239,9 @@ azihsm_status derive_hmac_key_via_ecdh_hkdf(
     if (base_secret_handle != nullptr && err == AZIHSM_STATUS_SUCCESS)
     {
         *base_secret_handle = temp_base_secret.handle;
-        temp_base_secret.handle = 0; // Release ownership so AutoKey won't delete it
+        temp_base_secret.handle = 0; // Release ownership so auto_key won't delete it
     }
-    // Otherwise, temp_base_secret will be automatically deleted by AutoKey destructor
+    // Otherwise, temp_base_secret will be automatically deleted by auto_key destructor
 
     return err;
 }

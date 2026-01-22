@@ -72,7 +72,19 @@ where
     Ok(())
 }
 
-/// Helper function to perform RSA signing operation with hash algorithm
+/// Signs a pre-hashed message using RSA PKCS#1 v1.5
+///
+/// Single-shot operation that signs already-hashed data.
+///
+/// # Arguments
+/// * `hash_algo` - Hash algorithm used for the digest
+/// * `key_handle` - Handle to the RSA private key
+/// * `hash` - Pre-computed hash of the message
+/// * `output` - Output buffer for the signature
+///
+/// # Returns
+/// * `Ok(())` - On successful signature generation
+/// * `Err(AzihsmStatus)` - On failure (e.g., invalid key, buffer too small)
 pub(crate) fn rsa_pkcs1_hash_sign(
     hash_algo: AzihsmAlgoId,
     key_handle: AzihsmHandle,
@@ -88,7 +100,20 @@ pub(crate) fn rsa_pkcs1_hash_sign(
     )
 }
 
-/// Helper function to perform RSA PSS signing operation with direct (pre-hashed) algorithm
+/// Signs data using RSA-PSS
+///
+/// Single-shot operation that signs pre-hashed data using PSS padding.
+///
+/// # Arguments
+/// * `algo` - Algorithm specification containing PSS parameters
+/// * `key_handle` - Handle to the RSA private key
+/// * `pss_params` - PSS algorithm parameters (hash algorithm, MGF, salt length)
+/// * `hash` - Pre-computed hash of the message
+/// * `output` - Output buffer for the signature
+///
+/// # Returns
+/// * `Ok(())` - On successful signature generation
+/// * `Err(AzihsmStatus)` - On failure
 pub(crate) fn rsa_pss_sign(
     algo: &AzihsmAlgo,
     key_handle: AzihsmHandle,
@@ -107,8 +132,21 @@ pub(crate) fn rsa_pss_sign(
     sign_with_algo(pss_algo, key_handle, input, output)
 }
 
-/// Helper function to perform RSA PSS signing operation with hash algorithm
-/// Hashing is performed internally as part of signing
+/// Signs a message using RSA-PSS with automatic hashing
+///
+/// Single-shot operation that hashes the message and signs using PSS padding.
+///
+/// # Arguments
+/// * `hash_algo_from_id` - Hash algorithm identifier
+/// * `algo` - Algorithm specification containing PSS parameters
+/// * `key_handle` - Handle to the RSA private key
+/// * `pss_params` - PSS algorithm parameters (hash algorithm, MGF, salt length)
+/// * `message` - Raw message to hash and sign
+/// * `output` - Output buffer for the signature
+///
+/// # Returns
+/// * `Ok(())` - On successful signature generation
+/// * `Err(AzihsmStatus)` - On failure
 pub(crate) fn rsa_pss_hash_sign(
     hash_algo_from_id: AzihsmAlgoId,
     algo: &AzihsmAlgo,
@@ -151,7 +189,20 @@ where
     Ok(HsmVerifier::verify(&mut algo, key, data, sig)?)
 }
 
-/// Helper function to perform RSA verification operation with hash algorithm
+/// Verifies a signature on pre-hashed data using RSA PKCS#1 v1.5
+///
+/// Single-shot operation that verifies a signature against already-hashed data.
+///
+/// # Arguments
+/// * `hash_algo` - Hash algorithm used for the digest
+/// * `key_handle` - Handle to the RSA public key
+/// * `hash` - Pre-computed hash of the message
+/// * `signature` - Signature to verify
+///
+/// # Returns
+/// * `Ok(true)` - If signature is valid
+/// * `Ok(false)` - If signature is invalid
+/// * `Err(AzihsmStatus)` - On failure
 pub(crate) fn rsa_pkcs1_hash_verify(
     hash_algo: AzihsmAlgoId,
     key_handle: AzihsmHandle,
@@ -167,7 +218,21 @@ pub(crate) fn rsa_pkcs1_hash_verify(
     )
 }
 
-/// Helper function to perform RSA PSS verification operation with direct (pre-hashed) algorithm
+/// Verifies a signature using RSA-PSS
+///
+/// Single-shot operation that verifies a PSS signature against pre-hashed data.
+///
+/// # Arguments
+/// * `algo` - Algorithm specification containing PSS parameters
+/// * `key_handle` - Handle to the RSA public key
+/// * `pss_params` - PSS algorithm parameters (hash algorithm, MGF, salt length)
+/// * `hash` - Pre-computed hash of the message
+/// * `signature` - Signature to verify
+///
+/// # Returns
+/// * `Ok(true)` - If signature is valid
+/// * `Ok(false)` - If signature is invalid
+/// * `Err(AzihsmStatus)` - On failure
 pub(crate) fn rsa_pss_verify(
     algo: &AzihsmAlgo,
     key_handle: AzihsmHandle,
@@ -186,8 +251,22 @@ pub(crate) fn rsa_pss_verify(
     verify_with_algo(pss_algo, key_handle, data, sig)
 }
 
-/// Helper function to perform RSA PSS verification operation with hash algorithm
-/// Hashing is performed internally as part of verification
+/// Verifies a signature on a message using RSA-PSS with automatic hashing
+///
+/// Single-shot operation that hashes the message and verifies the PSS signature.
+///
+/// # Arguments
+/// * `hash_algo_from_id` - Hash algorithm identifier
+/// * `algo` - Algorithm specification containing PSS parameters
+/// * `key_handle` - Handle to the RSA public key
+/// * `pss_params` - PSS algorithm parameters (hash algorithm, MGF, salt length)
+/// * `message` - Raw message to hash and verify
+/// * `signature` - Signature to verify
+///
+/// # Returns
+/// * `Ok(true)` - If signature is valid
+/// * `Ok(false)` - If signature is invalid
+/// * `Err(AzihsmStatus)` - On failure
 pub(crate) fn rsa_pss_hash_verify(
     hash_algo_from_id: AzihsmAlgoId,
     algo: &AzihsmAlgo,
@@ -234,6 +313,18 @@ where
     Ok(ctx_handle)
 }
 
+/// Initializes a streaming RSA PKCS#1 v1.5 signing operation
+///
+/// Creates a context for incrementally signing data.
+/// Use with `rsa_sign_update` and `rsa_sign_final`.
+///
+/// # Arguments
+/// * `hash_algo` - Hash algorithm to use
+/// * `key_handle` - Handle to the RSA private key
+///
+/// # Returns
+/// * `Ok(AzihsmHandle)` - Handle to the signing context
+/// * `Err(AzihsmStatus)` - On failure
 pub(crate) fn rsa_pkcs1_hash_sign_init(
     hash_algo: AzihsmAlgoId,
     key_handle: AzihsmHandle,
@@ -243,6 +334,20 @@ pub(crate) fn rsa_pkcs1_hash_sign_init(
     sign_init_with_algo(sign_algo, key_handle)
 }
 
+/// Initializes a streaming RSA-PSS signing operation
+///
+/// Creates a context for incrementally signing data with PSS padding.
+/// Use with `rsa_sign_update` and `rsa_sign_final`.
+///
+/// # Arguments
+/// * `hash_algo_from_id` - Hash algorithm identifier
+/// * `algo` - Algorithm specification containing PSS parameters
+/// * `key_handle` - Handle to the RSA private key
+/// * `pss_params` - PSS algorithm parameters (hash algorithm, MGF, salt length)
+///
+/// # Returns
+/// * `Ok(AzihsmHandle)` - Handle to the signing context
+/// * `Err(AzihsmStatus)` - On failure
 pub(crate) fn rsa_pss_hash_sign_init(
     hash_algo_from_id: AzihsmAlgoId,
     algo: &AzihsmAlgo,
@@ -267,6 +372,17 @@ pub(crate) fn rsa_pss_hash_sign_init(
     sign_init_with_algo(sign_algo, key_handle)
 }
 
+/// Updates a streaming RSA signing operation with additional data
+///
+/// Processes a chunk of data in an incremental signing operation.
+///
+/// # Arguments
+/// * `ctx_handle` - Handle to the signing context
+/// * `data` - Data chunk to include in the signature
+///
+/// # Returns
+/// * `Ok(())` - On success
+/// * `Err(AzihsmStatus)` - On failure
 pub(crate) fn rsa_sign_update(ctx_handle: AzihsmHandle, data: &[u8]) -> Result<(), AzihsmStatus> {
     // Get mutable reference to the context from handle table
     let ctx: &mut HsmRsaSignContext =
@@ -278,6 +394,17 @@ pub(crate) fn rsa_sign_update(ctx_handle: AzihsmHandle, data: &[u8]) -> Result<(
     Ok(())
 }
 
+/// Finalizes a streaming RSA signing operation
+///
+/// Completes the signature computation and returns the final signature.
+///
+/// # Arguments
+/// * `ctx_handle` - Handle to the signing context
+/// * `output` - Output buffer for the signature
+///
+/// # Returns
+/// * `Ok(())` - On successful signature generation
+/// * `Err(AzihsmStatus)` - On failure
 pub(crate) fn rsa_sign_final(
     ctx_handle: AzihsmHandle,
     output: &mut AzihsmBuffer,
@@ -323,6 +450,18 @@ where
     Ok(ctx_handle)
 }
 
+/// Initializes a streaming RSA PKCS#1 v1.5 verification operation
+///
+/// Creates a context for incrementally verifying a signature.
+/// Use with `rsa_verify_update` and `rsa_verify_final`.
+///
+/// # Arguments
+/// * `hash_algo` - Hash algorithm to use
+/// * `key_handle` - Handle to the RSA public key
+///
+/// # Returns
+/// * `Ok(AzihsmHandle)` - Handle to the verification context
+/// * `Err(AzihsmStatus)` - On failure
 pub(crate) fn rsa_pkcs1_hash_verify_init(
     hash_algo: AzihsmAlgoId,
     key_handle: AzihsmHandle,
@@ -332,6 +471,20 @@ pub(crate) fn rsa_pkcs1_hash_verify_init(
     verify_init_with_algo(verify_algo, key_handle)
 }
 
+/// Initializes a streaming RSA-PSS verification operation
+///
+/// Creates a context for incrementally verifying a PSS signature.
+/// Use with `rsa_verify_update` and `rsa_verify_final`.
+///
+/// # Arguments
+/// * `hash_algo_from_id` - Hash algorithm identifier
+/// * `algo` - Algorithm specification containing PSS parameters
+/// * `key_handle` - Handle to the RSA public key
+/// * `pss_params` - PSS algorithm parameters (hash algorithm, MGF, salt length)
+///
+/// # Returns
+/// * `Ok(AzihsmHandle)` - Handle to the verification context
+/// * `Err(AzihsmStatus)` - On failure
 pub(crate) fn rsa_pss_hash_verify_init(
     hash_algo_from_id: AzihsmAlgoId,
     algo: &AzihsmAlgo,
@@ -356,6 +509,17 @@ pub(crate) fn rsa_pss_hash_verify_init(
     verify_init_with_algo(verify_algo, key_handle)
 }
 
+/// Updates a streaming RSA verification operation with additional data
+///
+/// Processes a chunk of data in an incremental verification operation.
+///
+/// # Arguments
+/// * `ctx_handle` - Handle to the verification context
+/// * `data` - Data chunk to include in the verification
+///
+/// # Returns
+/// * `Ok(())` - On success
+/// * `Err(AzihsmStatus)` - On failure
 pub(crate) fn rsa_verify_update(ctx_handle: AzihsmHandle, data: &[u8]) -> Result<(), AzihsmStatus> {
     // Get mutable reference to the context from handle table
     let ctx: &mut HsmRsaVerifyContext =
@@ -367,6 +531,18 @@ pub(crate) fn rsa_verify_update(ctx_handle: AzihsmHandle, data: &[u8]) -> Result
     Ok(())
 }
 
+/// Finalizes a streaming RSA verification operation
+///
+/// Completes the verification and checks if the signature is valid.
+///
+/// # Arguments
+/// * `ctx_handle` - Handle to the verification context
+/// * `sig` - Signature to verify against
+///
+/// # Returns
+/// * `Ok(true)` - If signature is valid
+/// * `Ok(false)` - If signature is invalid
+/// * `Err(AzihsmStatus)` - On failure
 pub(crate) fn rsa_verify_final(ctx_handle: AzihsmHandle, sig: &[u8]) -> Result<bool, AzihsmStatus> {
     // Take ownership of the context and finalize
     let mut ctx: Box<HsmRsaVerifyContext> =

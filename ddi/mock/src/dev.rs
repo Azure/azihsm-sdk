@@ -254,24 +254,33 @@ impl DdiDev for DdiMockDev {
         Ok(resp)
     }
 
-    /// Execute AES GCM Operation
-    ///     on fast path
+    /// Execute AES GCM Operation on fast path using slice-based buffers
+    ///
+    /// This is the slice-based variant that writes directly into a caller-provided buffer,
+    /// avoiding allocation. The caller must ensure the destination buffer is large enough.
+    ///
     /// # Arguments
-    /// * `mode`        - Encryption or decryption
-    /// * `gcm_params`  - Parameters for the operation
-    /// * `src_buf`     - User buffer for encryption or decryption
+    /// * `mode`           - Encryption or decryption
+    /// * `gcm_params`     - Parameters for the operation
+    /// * `src_buf`        - Source buffer for encryption or decryption
+    /// * `dst_buf`        - Destination buffer to write the result (must be at least src_buf.len())
+    /// * `fips_approved`  - Output parameter set to indicate if operation was FIPS approved
     ///
     /// # Returns
-    /// * `DdiAesGcmResult` - On success
+    /// * `usize` - Number of bytes written to dst_buf
     ///
     /// # Error
     /// * `DdiError` - Error that occurred during operation
-    fn exec_op_fp_gcm(
+    fn exec_op_fp_gcm_slice(
         &self,
         mode: DdiAesOp,
         gcm_params: DdiAesGcmParams,
-        src_buf: Vec<u8>,
-    ) -> Result<DdiAesGcmResult, DdiError> {
+        src_buf: &[u8],
+        dst_buf: &mut [u8],
+        tag: &mut Option<[u8; 16]>,
+        iv: &mut Option<[u8; 12]>,
+        fips_approved: &mut bool,
+    ) -> Result<usize, DdiError> {
         let encrypt_decrypt_mode: AesMode =
             mode.try_into().map_err(|_| DdiError::InvalidParameter)?;
         if src_buf.is_empty() {
@@ -296,20 +305,28 @@ impl DdiDev for DdiMockDev {
             Err(DdiError::DdiStatus(DdiStatus::NoTagProvided))?;
         }
 
-        // Define a closure for splitting vector into chunks given a size
-        // All elements in the list of chunks will be the same size except
-        // potentially the last one
-        let split_vector_into_chunks = |original_vec: Vec<u8>, chunk_size: usize| -> Vec<Vec<u8>> {
-            original_vec
-                .chunks(chunk_size) // Split the vector into chunks
+        // Validate destination buffer size
+        if dst_buf.len() < src_buf.len() {
+            tracing::error!(
+                "Destination buffer size ({}) is less than source buffer size ({})",
+                dst_buf.len(),
+                src_buf.len()
+            );
+            Err(DdiError::InvalidParameter)?;
+        }
+
+        // Define a closure for splitting slice into chunks given a size
+        let split_slice_into_chunks = |slice: &[u8], chunk_size: usize| -> Vec<Vec<u8>> {
+            slice
+                .chunks(chunk_size) // Split the slice into chunks
                 .map(|chunk| chunk.to_vec()) // Convert each chunk into a Vec<u8>
                 .collect() // Collect the chunks into a Vec<Vec<u8>>
         };
 
-        /* break up the source buffers into chunks of AES_CHUNK_SIZE each
+        /* break up the source buffer into chunks of AES_CHUNK_SIZE each
          *  The value of the constant is arbitrary
          */
-        let source_buffers = split_vector_into_chunks(src_buf, AES_CHUNK_SIZE);
+        let source_buffers = split_slice_into_chunks(src_buf, AES_CHUNK_SIZE);
         let mut destination_buffers: Vec<Vec<u8>> = source_buffers
             .iter()
             .map(|inner| vec![0; inner.len()])
@@ -333,60 +350,116 @@ impl DdiDev for DdiMockDev {
 
         let result = result.map_err(|err| DdiError::DdiStatus(DdiStatus::from(err)))?;
 
-        let mut dest_buffer: Vec<u8> = destination_buffers.into_iter().flatten().collect();
-
         let total_size: usize = result.total_size as usize;
 
-        if total_size > dest_buffer.len() {
+        if total_size > dst_buf.len() {
             if mode == DdiAesOp::Encrypt {
                 tracing::error!(
                     "AES GCM Encrypt: Device output length ({}) is greater than destination buffer size ({})",
                     total_size,
-                    dest_buffer.len()
+                    dst_buf.len()
                 );
                 Err(DdiError::DdiStatus(DdiStatus::AesEncryptFailed))?;
             } else {
                 tracing::error!(
                     "AES GCM Decrypt: Device output length ({}) is greater than destination buffer size ({})",
                     total_size,
-                    dest_buffer.len()
+                    dst_buf.len()
                 );
                 Err(DdiError::DdiStatus(DdiStatus::AesDecryptFailed))?;
             }
         }
 
-        if total_size < dest_buffer.len() {
-            dest_buffer.truncate(result.total_size as usize);
+        // Copy flattened destination buffers into dst_buf, but do not exceed total_size
+        let mut offset = 0;
+        for chunk in destination_buffers {
+            if offset >= total_size {
+                break;
+            }
+            let chunk_len = chunk.len();
+            let remaining = total_size - offset;
+            let copy_len = std::cmp::min(chunk_len, remaining);
+            dst_buf[offset..offset + copy_len].copy_from_slice(&chunk[..copy_len]);
+            offset += copy_len;
         }
 
+        // Set output parameters
+        *tag = result.tag;
+        *iv = result.iv;
+        *fips_approved = result.fips_approved;
+
+        Ok(total_size)
+    }
+
+    /// Execute AES GCM Operation on fast path
+    /// # Arguments
+    /// * `mode`        - Encryption or decryption
+    /// * `gcm_params`  - Parameters for the operation
+    /// * `src_buf`     - User buffer for encryption or decryption
+    ///
+    /// # Returns
+    /// * `DdiAesGcmResult` - On success
+    ///
+    /// # Error
+    /// * `DdiError` - Error that occurred during operation
+    fn exec_op_fp_gcm(
+        &self,
+        mode: DdiAesOp,
+        gcm_params: DdiAesGcmParams,
+        src_buf: Vec<u8>,
+    ) -> Result<DdiAesGcmResult, DdiError> {
+        let mut dst_buf = vec![0u8; src_buf.len()];
+        let mut fips_approved = false;
+        let mut tag = None;
+        let mut iv = None;
+
+        let total_size = self.exec_op_fp_gcm_slice(
+            mode,
+            gcm_params,
+            &src_buf,
+            &mut dst_buf,
+            &mut tag,
+            &mut iv,
+            &mut fips_approved,
+        )?;
+
+        dst_buf.truncate(total_size);
+
         let mcr_ddi_aes_gcm_result = DdiAesGcmResult {
-            tag: result.tag,
-            data: dest_buffer,
-            fips_approved: result.fips_approved,
-            iv: result.iv,
+            tag,
+            data: dst_buf,
+            fips_approved,
+            iv,
         };
 
         Ok(mcr_ddi_aes_gcm_result)
     }
 
-    /// Execute AES Xts Operation
-    ///     on fast path
+    /// Execute AES XTS Operation on fast path using slice-based buffers
+    ///
+    /// This is the slice-based variant that writes directly into a caller-provided buffer,
+    /// avoiding allocation. The caller must ensure the destination buffer is large enough.
+    ///
     /// # Arguments
-    /// * `mode`        - Encryption or decryption
-    /// * `xts_params`  - Parameters for the operation
-    /// * `src_buf`     - User buffer for encryption or decryption
+    /// * `mode`           - Encryption or decryption
+    /// * `xts_params`     - Parameters for the operation
+    /// * `src_buf`        - Source buffer for encryption or decryption
+    /// * `dst_buf`        - Destination buffer to write the result (must be at least src_buf.len())
+    /// * `fips_approved`  - Output parameter set to indicate if operation was FIPS approved
     ///
     /// # Returns
-    /// * `DdiAesXtsParams` - On success
+    /// * `usize` - Number of bytes written to dst_buf
     ///
     /// # Error
     /// * `DdiError` - Error that occurred during operation
-    fn exec_op_fp_xts(
+    fn exec_op_fp_xts_slice(
         &self,
         mode: DdiAesOp,
         xts_params: DdiAesXtsParams,
-        src_buf: Vec<u8>,
-    ) -> Result<DdiAesXtsResult, DdiError> {
+        src_buf: &[u8],
+        dst_buf: &mut [u8],
+        fips_approved: &mut bool,
+    ) -> Result<usize, DdiError> {
         let encrypt_decrypt_mode: AesMode =
             mode.try_into().map_err(|_| DdiError::InvalidParameter)?;
         if src_buf.is_empty() {
@@ -433,20 +506,28 @@ impl DdiDev for DdiMockDev {
             Err(DdiError::InvalidParameter)?;
         }
 
-        // Define a closure for splitting vector into chunks given a size
-        // All elements in the list of chunks will be the same size except
-        // potentially the last one
-        let split_vector_into_chunks = |original_vec: Vec<u8>, chunk_size: usize| -> Vec<Vec<u8>> {
-            original_vec
-                .chunks(chunk_size) // Split the vector into chunks
+        // Validate destination buffer size
+        if dst_buf.len() < src_buf.len() {
+            tracing::error!(
+                "Destination buffer size ({}) is less than source buffer size ({})",
+                dst_buf.len(),
+                src_buf.len()
+            );
+            Err(DdiError::InvalidParameter)?;
+        }
+
+        // Define a closure for splitting slice into chunks given a size
+        let split_slice_into_chunks = |slice: &[u8], chunk_size: usize| -> Vec<Vec<u8>> {
+            slice
+                .chunks(chunk_size) // Split the slice into chunks
                 .map(|chunk| chunk.to_vec()) // Convert each chunk into a Vec<u8>
                 .collect() // Collect the chunks into a Vec<Vec<u8>>
         };
 
-        /* break up the source buffer in chunks.
-         *  Each chunk is size of data unit length
+        /* Break up the source buffer in chunks.
+         * Each chunk is size of data unit length
          */
-        let source_buffers = split_vector_into_chunks(src_buf, xts_params.data_unit_len);
+        let source_buffers = split_slice_into_chunks(src_buf, xts_params.data_unit_len);
         let mut destination_buffers: Vec<Vec<u8>> = source_buffers
             .iter()
             .map(|inner| vec![0; inner.len()])
@@ -470,34 +551,78 @@ impl DdiDev for DdiMockDev {
 
         let result = result.map_err(|err| DdiError::DdiStatus(DdiStatus::from(err)))?;
 
-        let mut dest_buffer: Vec<u8> = destination_buffers.into_iter().flatten().collect();
         let total_size: usize = result.total_size as usize;
 
-        if total_size > dest_buffer.len() {
+        if total_size > dst_buf.len() {
             if mode == DdiAesOp::Encrypt {
                 tracing::error!(
-                    "AES XTS Encrypt: Device output length ({}) is greater than destination buffer size ({})",
-                    total_size,
-                    dest_buffer.len()
-                );
+                "AES XTS Encrypt: Device output length ({}) is greater than destination buffer size ({})",
+                total_size,
+                dst_buf.len()
+            );
                 Err(DdiError::DdiStatus(DdiStatus::AesEncryptFailed))?;
             } else {
                 tracing::error!(
-                    "AES XTS Decrypt: Device output length ({}) is greater than destination buffer size ({})",
-                    total_size,
-                    dest_buffer.len()
-                );
+                "AES XTS Decrypt: Device output length ({}) is greater than destination buffer size ({})",
+                total_size,
+                dst_buf.len()
+            );
                 Err(DdiError::DdiStatus(DdiStatus::AesDecryptFailed))?;
             }
         }
 
-        if total_size < dest_buffer.len() {
-            dest_buffer.truncate(result.total_size as usize);
+        // Copy flattened destination buffers into dst_buf, but do not exceed total_size
+        let mut offset = 0;
+        for chunk in destination_buffers {
+            if offset >= total_size {
+                break;
+            }
+            let chunk_len = chunk.len();
+            let remaining = total_size - offset;
+            let copy_len = std::cmp::min(chunk_len, remaining);
+            dst_buf[offset..offset + copy_len].copy_from_slice(&chunk[..copy_len]);
+            offset += copy_len;
         }
 
+        *fips_approved = result.fips_approved;
+
+        Ok(total_size)
+    }
+
+    /// Execute AES Xts Operation on fast path
+    ///
+    /// # Arguments
+    /// * `mode`        - Encryption or decryption
+    /// * `xts_params`  - Parameters for the operation
+    /// * `src_buf`     - User buffer for encryption or decryption
+    ///
+    /// # Returns
+    /// * `DdiAesXtsParams` - On success
+    ///
+    /// # Error
+    /// * `DdiError` - Error that occurred during operation
+    fn exec_op_fp_xts(
+        &self,
+        mode: DdiAesOp,
+        xts_params: DdiAesXtsParams,
+        src_buf: Vec<u8>,
+    ) -> Result<DdiAesXtsResult, DdiError> {
+        let mut dst_buf = vec![0u8; src_buf.len()];
+        let mut fips_approved = false;
+
+        let total_size = self.exec_op_fp_xts_slice(
+            mode,
+            xts_params,
+            &src_buf,
+            &mut dst_buf,
+            &mut fips_approved,
+        )?;
+
+        dst_buf.truncate(total_size);
+
         let mcr_ddi_aes_xts_result = DdiAesXtsResult {
-            data: dest_buffer,
-            fips_approved: false,
+            data: dst_buf,
+            fips_approved,
         };
 
         Ok(mcr_ddi_aes_xts_result)

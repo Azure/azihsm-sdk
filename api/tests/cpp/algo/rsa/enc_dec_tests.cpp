@@ -9,7 +9,10 @@
 #include "handle/part_list_handle.hpp"
 #include "handle/session_handle.hpp"
 #include "helpers.hpp"
-#include "utils.hpp"
+#include "utils/auto_key.hpp"
+#include "utils/key_import.hpp"
+#include "utils/key_props.hpp"
+#include "utils/rsa_keygen.hpp"
 
 class azihsm_rsa_encrypt_decrypt : public ::testing::Test
 {
@@ -19,15 +22,12 @@ class azihsm_rsa_encrypt_decrypt : public ::testing::Test
 
 TEST_F(azihsm_rsa_encrypt_decrypt, encrypt_decrypt_oaep_with_unwrapped_key)
 {
-    part_list_.for_each_part([this](std::vector<azihsm_char> &path) {
-        auto partition = PartitionHandle(path);
-        auto session = SessionHandle(partition.get());
-
+    part_list_.for_each_session([this](azihsm_handle session) {
         // Step 1: Generate an RSA key pair for wrapping/unwrapping
-        AutoKey wrapping_priv_key;
-        AutoKey wrapping_pub_key;
+        auto_key wrapping_priv_key;
+        auto_key wrapping_pub_key;
         auto err = generate_rsa_unwrapping_keypair(
-            session.get(),
+            session,
             wrapping_priv_key.get_ptr(),
             wrapping_pub_key.get_ptr()
         );
@@ -36,9 +36,9 @@ TEST_F(azihsm_rsa_encrypt_decrypt, encrypt_decrypt_oaep_with_unwrapped_key)
         ASSERT_NE(wrapping_pub_key.get(), 0);
 
         // Step 2: Import the hardcoded RSA key pair
-        AutoKey unwrapped_priv_key;
-        AutoKey unwrapped_pub_key;
-        KeyProps import_props = {
+        auto_key unwrapped_priv_key;
+        auto_key unwrapped_pub_key;
+        key_props import_props = {
             .key_kind = AZIHSM_KEY_KIND_RSA,
             .key_size_bits = 2048,
             .session_key = true,
@@ -114,15 +114,12 @@ TEST_F(azihsm_rsa_encrypt_decrypt, encrypt_decrypt_oaep_with_unwrapped_key)
 
 TEST_F(azihsm_rsa_encrypt_decrypt, encrypt_decrypt_pkcs1_with_unwrapped_key)
 {
-    part_list_.for_each_part([this](std::vector<azihsm_char> &path) {
-        auto partition = PartitionHandle(path);
-        auto session = SessionHandle(partition.get());
-
+    part_list_.for_each_session([this](azihsm_handle session) {
         // Step 1: Generate an RSA key pair for wrapping/unwrapping
-        AutoKey wrapping_priv_key;
-        AutoKey wrapping_pub_key;
+        auto_key wrapping_priv_key;
+        auto_key wrapping_pub_key;
         auto err = generate_rsa_unwrapping_keypair(
-            session.get(),
+            session,
             wrapping_priv_key.get_ptr(),
             wrapping_pub_key.get_ptr()
         );
@@ -131,9 +128,9 @@ TEST_F(azihsm_rsa_encrypt_decrypt, encrypt_decrypt_pkcs1_with_unwrapped_key)
         ASSERT_NE(wrapping_pub_key.get(), 0);
 
         // Step 2: Import the hardcoded RSA key pair
-        AutoKey unwrapped_priv_key;
-        AutoKey unwrapped_pub_key;
-        KeyProps import_props = {
+        auto_key unwrapped_priv_key;
+        auto_key unwrapped_pub_key;
+        key_props import_props = {
             .key_kind = AZIHSM_KEY_KIND_RSA,
             .key_size_bits = 2048,
             .session_key = true,
