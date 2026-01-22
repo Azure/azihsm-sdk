@@ -189,6 +189,34 @@ fn aes_xts_encrypt_decrypt_test(session: HsmSession) {
     );
 }
 
+/// AES-XTS roundtrip with DUL=16 (one AES block).
+#[session_test]
+fn aes_xts_encrypt_decrypt_dul_16(session: HsmSession) {
+    let key = aes_xts_generate_key(&session).expect("Failed to generate XTS key ");
+
+    let tweak: [u8; AES_XTS_TEST_TWEAK_SIZE] = [0x00; AES_XTS_TEST_TWEAK_SIZE];
+    let dul: usize = 16;
+
+    // 8 data units at DUL=16
+    let plaintext: Vec<u8> = (0u8..128u8).collect();
+
+    let (ciphertext, enc_tweak_after) =
+        xts_encrypt(&key, &tweak, dul, &plaintext).expect("Encryption failed");
+    assert_eq!(ciphertext.len(), plaintext.len(), "Encrypted size mismatch");
+    assert_eq!(
+        enc_tweak_after,
+        tweak_after_units(&tweak, plaintext.len() / dul)
+    );
+
+    let (decrypted_text, dec_tweak_after) =
+        xts_decrypt(&key, &tweak, dul, &ciphertext).expect("Decryption failed");
+    assert_eq!(decrypted_text, plaintext);
+    assert_eq!(
+        dec_tweak_after,
+        tweak_after_units(&tweak, plaintext.len() / dul)
+    );
+}
+
 /// AES-XTS roundtrip with DUL=4096 and 2 data units.
 #[session_test]
 fn aes_xts_encrypt_decrypt_dul_4096_two_units(session: HsmSession) {
@@ -283,12 +311,22 @@ fn aes_xts_new_rejects_invalid_dul() {
     let tweak: [u8; AES_XTS_TEST_TWEAK_SIZE] = [0u8; AES_XTS_TEST_TWEAK_SIZE];
 
     assert!(matches!(
+        HsmAesXtsAlgo::new(&tweak, 0),
+        Err(HsmError::InvalidArgument)
+    ));
+
+    assert!(matches!(
+        HsmAesXtsAlgo::new(&tweak, 15),
+        Err(HsmError::InvalidArgument)
+    ));
+
+    assert!(matches!(
         HsmAesXtsAlgo::new(&tweak, 511),
         Err(HsmError::InvalidArgument)
     ));
 
     assert!(matches!(
-        HsmAesXtsAlgo::new(&tweak, 1024),
+        HsmAesXtsAlgo::new(&tweak, 8208),
         Err(HsmError::InvalidArgument)
     ));
 }

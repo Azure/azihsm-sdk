@@ -40,6 +40,9 @@ pub struct HsmAesXtsAlgo {
 }
 
 impl HsmAesXtsAlgo {
+    /// Size of the tweak in bytes.
+    const TWEAK_SIZE: usize = 16;
+
     /// Validates the supported data unit lengths.
     ///
     /// # Arguments
@@ -50,7 +53,9 @@ impl HsmAesXtsAlgo {
     ///
     /// Returns [`HsmError::InvalidArgument`] if `dul` is not supported.
     fn validate_dul_size(dul: usize) -> HsmResult<()> {
-        if !matches!(dul, 512 | 4096 | 8192) {
+        // DUL must be a positive multiple of one AES block.
+        // We additionally cap DUL to keep per-unit requests bounded.
+        if dul == 0 || !dul.is_multiple_of(16) || dul > 8192 {
             Err(HsmError::InvalidArgument)?;
         }
         Ok(())
@@ -60,13 +65,13 @@ impl HsmAesXtsAlgo {
     ///
     /// # Arguments
     ///
-    /// * `plaintext` - Input buffer used to compute number of data units
+    /// * `input` - Input buffer used to compute number of data units
     ///
     /// # Errors
     ///
     /// Returns [`HsmError::InvalidTweak`] if incrementing would overflow.
-    fn validate_tweak_increment(&self, plaintext: &[u8]) -> HsmResult<()> {
-        let blocks = plaintext.len() / self.dul;
+    fn validate_tweak_increment(&self, input: &[u8]) -> HsmResult<()> {
+        let blocks = input.len() / self.dul;
         // Check if tweak + inc_val overflows u64.
         let current = self.tweak;
         current
@@ -83,12 +88,12 @@ impl HsmAesXtsAlgo {
     ///
     /// # Errors
     ///
-    /// Returns [`HsmError::InvalidArgument`] if the increment would overflow.
+    /// Returns [`HsmError::InvalidTweak`] if the increment would overflow.
     fn increment_tweak(&mut self, inc_val: usize) -> HsmResult<()> {
         self.tweak = self
             .tweak
             .checked_add(inc_val as u128)
-            .ok_or(HsmError::InvalidArgument)?;
+            .ok_or(HsmError::InvalidTweak)?;
         Ok(())
     }
 
@@ -158,7 +163,7 @@ impl HsmAesXtsAlgo {
     /// # Arguments
     ///
     /// * `tweak` - Initial tweak value (must be 16 bytes)
-    /// * `dul` - Data unit length in bytes (supported: 512, 4096, 8192)
+    /// * `dul` - Data unit length in bytes (supported: any non-zero multiple of 16 up to 8192)
     ///
     /// # Returns
     ///
@@ -168,6 +173,12 @@ impl HsmAesXtsAlgo {
     ///
     /// Returns [`HsmError::InvalidArgument`] if `tweak` is not 16 bytes or if `dul` is unsupported.
     pub fn new(tweak: &[u8], dul: usize) -> HsmResult<Self> {
+        //validate tweak size
+        if tweak.len() != Self::TWEAK_SIZE {
+            Err(HsmError::InvalidArgument)?;
+        }
+
+        //convert tweak to u128 little-endian
         let tweak_val = tweak
             .try_into()
             .map(u128::from_le_bytes)
@@ -370,14 +381,26 @@ impl HsmEncryptContext for HsmAesXtsEncryptContext {
         Ok(0)
     }
 
+    /// Returns an immutable reference to the underlying algorithm state.
+    ///
+    /// This can be used to inspect algorithm parameters/state (e.g. current tweak)
+    /// during a streaming operation.
     fn algo(&self) -> &Self::Algo {
         &self.algo
     }
 
+    /// Returns a mutable reference to the underlying algorithm state.
+    ///
+    /// This is primarily used by generic helpers that need to access or mutate the
+    /// algorithm while a streaming context is active.
     fn algo_mut(&mut self) -> &mut Self::Algo {
         &mut self.algo
     }
 
+    /// Consumes this context and returns the underlying algorithm.
+    ///
+    /// This is useful to retrieve the final algorithm state (including the current
+    /// tweak) after streaming completes.
     fn into_algo(self) -> Self::Algo {
         self.algo
     }
@@ -475,14 +498,26 @@ impl HsmDecryptContext for HsmAesXtsDecryptContext {
         Ok(0)
     }
 
+    /// Returns an immutable reference to the underlying algorithm state.
+    ///
+    /// This can be used to inspect algorithm parameters/state (e.g. current tweak)
+    /// during a streaming operation.
     fn algo(&self) -> &Self::Algo {
         &self.algo
     }
 
+    /// Returns a mutable reference to the underlying algorithm state.
+    ///
+    /// This is primarily used by generic helpers that need to access or mutate the
+    /// algorithm while a streaming context is active.
     fn algo_mut(&mut self) -> &mut Self::Algo {
         &mut self.algo
     }
 
+    /// Consumes this context and returns the underlying algorithm.
+    ///
+    /// This is useful to retrieve the final algorithm state (including the current
+    /// tweak) after streaming completes.
     fn into_algo(self) -> Self::Algo {
         self.algo
     }

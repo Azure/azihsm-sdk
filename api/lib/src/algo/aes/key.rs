@@ -231,7 +231,7 @@ impl HsmAesXtsKey {
     /// Returns whether `bits` is a supported AES XTS key size.
     ///
     /// The value is expressed in **bits** (not bytes). This layer only accepts
-    /// standard AES XTS key sizes: 256 and 512.
+    /// 64-byte AES XTS keys (512 bits).
     ///
     /// This is used by [`HsmAesXtsKey::validate_props`] to reject unsupported key
     /// sizes early.
@@ -252,7 +252,7 @@ impl HsmAesXtsKey {
     /// - AES XTS keys in this layer are restricted to encryption/decryption usage; we
     ///   reject signing/verifying/derivation and key wrap/unwrap usage flags.
     /// - Key material must not be extractable.
-    /// - Key size must be one of 256/512 bits.
+    /// - Key size must be 512 bits.
     fn validate_props(props: &HsmKeyProps) -> HsmResult<()> {
         let supported_flags = HsmKeyFlags::ENCRYPT | HsmKeyFlags::DECRYPT; //AES XTS Keys can be used for both encrypt and decrypt
 

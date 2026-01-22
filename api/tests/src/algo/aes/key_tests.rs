@@ -305,3 +305,26 @@ fn test_aes_xts_512_key_generation(session: HsmSession) {
     assert_eq!(key.can_encrypt(), true, "Key should support encryption");
     assert_eq!(key.can_decrypt(), true, "Key should support decryption");
 }
+
+#[session_test]
+fn test_aes_xts_key_generation_invalid_sizes_rejected(session: HsmSession) {
+    // AES-XTS is only supported for 64-byte keys (512 bits).
+    for bits in [0u32, 1, 128, 192, 256, 384, 511, 513, 1024] {
+        let props = HsmKeyPropsBuilder::default()
+            .class(HsmKeyClass::Secret)
+            .key_kind(HsmKeyKind::AesXts)
+            .bits(bits)
+            .can_encrypt(true)
+            .can_decrypt(true)
+            .is_session(true)
+            .build()
+            .expect("Failed to build key props");
+
+        let mut algo = HsmAesXtsKeyGenAlgo::default();
+        let result = HsmKeyManager::generate_key(&session, &mut algo, props);
+        assert!(
+            matches!(result, Err(HsmError::InvalidKeyProps)),
+            "XTS key generation should reject invalid key size {bits}"
+        );
+    }
+}

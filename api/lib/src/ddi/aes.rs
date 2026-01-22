@@ -287,10 +287,10 @@ pub(crate) fn aes_xts_generate_key(
     props: HsmKeyProps,
 ) -> HsmResult<(HsmKeyHandle, HsmKeyHandle, HsmKeyProps)> {
     // Generate first key
-    let (handle1, dev_key_props) = aes_generate_key(session, props.clone())?;
+    let (handle1, dev_key_props1) = aes_generate_key(session, props.clone())?;
 
     // Generate second key
-    let Ok((handle2, _)) = aes_generate_key(session, props.clone()) else {
+    let Ok((handle2, _dev_key_props2)) = aes_generate_key(session, props.clone()) else {
         //delete the first key created
         let _ = ddi::delete_key(session, handle1);
         return Err(HsmError::InternalError);
@@ -308,7 +308,7 @@ pub(crate) fn aes_xts_generate_key(
     // represents the total size (e.g., 512 bits for two 256-bit keys).
     let mut props = props;
 
-    if let Some(masked_key) = dev_key_props.masked_key() {
+    if let Some(masked_key) = dev_key_props1.masked_key() {
         props.set_masked_key(masked_key);
     }
 
