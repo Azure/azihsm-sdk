@@ -42,6 +42,10 @@ pub struct HsmAesXtsAlgo {
 impl HsmAesXtsAlgo {
     /// Size of the tweak in bytes.
     const TWEAK_SIZE: usize = 16;
+    /// AES block size in bytes.
+    const BLOCK_SIZE: usize = 16;
+    // Maximum supported DUL size in bytes.
+    const MAX_DUL_SIZE: usize = 8192;
 
     /// Validates the supported data unit lengths.
     ///
@@ -55,7 +59,7 @@ impl HsmAesXtsAlgo {
     fn validate_dul_size(dul: usize) -> HsmResult<()> {
         // DUL must be a positive multiple of one AES block.
         // We additionally cap DUL to keep per-unit requests bounded.
-        if dul == 0 || !dul.is_multiple_of(16) || dul > 8192 {
+        if dul == 0 || !dul.is_multiple_of(Self::BLOCK_SIZE) || dul > Self::MAX_DUL_SIZE {
             Err(HsmError::InvalidArgument)?;
         }
         Ok(())
