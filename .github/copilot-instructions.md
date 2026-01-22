@@ -73,11 +73,11 @@ cargo xtask copyright --fix
 It auto fixes copyright issues. This ensures all source code has correct copyright headers.
 
 ## Running all of the above checks
-You can run all checks (setup, buildformatting, copyright, linting, tests) against simulator with:
+You can run all checks (setup, build, formatting, copyright, linting, tests, code coverage etc.) against simulator with:
 ```bash
 cargo xtask precheck --all
 ```
-It will run all necessary checks to ensure code quality before committing. It will not auto fix liniting, formatting or copyright issues.
+It will run all necessary checks to ensure code quality before committing. It will not auto fix linting, formatting or copyright issues.
 
 
 ## Code Standards
