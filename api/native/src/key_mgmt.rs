@@ -402,3 +402,51 @@ pub unsafe extern "C" fn azihsm_key_unmask_pair(
         Ok(())
     })
 }
+
+/// Generate a key attestation report
+///
+/// This function generates an attestation report for a key.
+///
+/// @param[in] key_handle Handle to the key to attest
+/// @param[in] report_data Pointer to buffer containing custom data to include in the report (max 128 bytes)
+/// @param[out] report Pointer to buffer to receive the attestation report
+///
+/// @return 0 on success, or a negative error code on failure
+///
+/// # Notes
+/// - The function performs a two-pass operation: first to determine the required buffer
+///   size, then to generate the actual report
+/// - The report buffer's length field will be updated with the actual report size
+///
+/// @internal
+/// # Safety
+/// This function is unsafe because it dereferences raw pointers.
+#[unsafe(no_mangle)]
+#[allow(unsafe_code)]
+pub unsafe extern "C" fn azihsm_generate_key_report(
+    key_handle: AzihsmHandle,
+    report_data: *const AzihsmBuffer,
+    report: *mut AzihsmBuffer,
+) -> AzihsmStatus {
+    abi_boundary(|| {
+        validate_ptr(report)?;
+
+        let report_data = deref_ptr(report_data)?;
+        let report_data_buf: &[u8] = report_data.try_into()?;
+        let report_buf = deref_mut_ptr(report)?;
+
+        let key_type = HandleType::try_from(key_handle)?;
+
+        match key_type {
+            HandleType::EccPrivKey => {
+                ecc_generate_key_report(key_handle, report_data_buf, report_buf)?;
+            }
+            HandleType::RsaPrivKey => {
+                rsa_generate_key_report(key_handle, report_data_buf, report_buf)?;
+            }
+            _ => Err(AzihsmStatus::UnsupportedKeyKind)?,
+        }
+
+        Ok(())
+    })
+}

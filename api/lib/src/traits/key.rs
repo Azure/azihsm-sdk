@@ -532,7 +532,7 @@ pub trait HsmKeyReportOp {
     ///
     /// Returns the size of the key report on success.
     fn generate_key_report(
-        &mut self,
+        &self,
         report_data: &[u8],
         report: Option<&mut [u8]>,
     ) -> Result<usize, Self::Error>;

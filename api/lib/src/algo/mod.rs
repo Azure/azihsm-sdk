@@ -359,7 +359,7 @@ macro_rules! define_hsm_key_pair {
 
                 /// Generates an attestation report for the key.
                 fn generate_key_report(
-                    &mut self,
+                    &self,
                     report_data: &[u8],
                     report: Option<&mut [u8]>
                 ) -> Result<usize, Self::Error> {

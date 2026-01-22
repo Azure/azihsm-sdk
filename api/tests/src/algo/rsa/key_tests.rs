@@ -540,7 +540,7 @@ fn test_rsa_2048_imported_key_report(session: HsmSession) {
 
     // Unwrap the key pair (this is the "imported" key)
     let mut unwrap_algo = HsmRsaKeyRsaAesKeyUnwrapAlgo::new(HsmHashAlgo::Sha256);
-    let (mut priv_key, pub_key) = HsmKeyManager::unwrap_key_pair(
+    let (priv_key, pub_key) = HsmKeyManager::unwrap_key_pair(
         &mut unwrap_algo,
         &unwrapping_priv_key,
         &wrapped_key,
@@ -553,7 +553,7 @@ fn test_rsa_2048_imported_key_report(session: HsmSession) {
     let report_data = [0x42u8; 128];
 
     // First call: get the required buffer size
-    let report_size = HsmKeyManager::generate_key_report(&mut priv_key, &report_data, None)
+    let report_size = HsmKeyManager::generate_key_report(&priv_key, &report_data, None)
         .expect("Failed to get key report size");
 
     assert!(report_size > 0, "Report size should be greater than 0");
@@ -561,7 +561,7 @@ fn test_rsa_2048_imported_key_report(session: HsmSession) {
     // Second call: generate the actual report
     let mut report_buffer = vec![0u8; report_size];
     let actual_size =
-        HsmKeyManager::generate_key_report(&mut priv_key, &report_data, Some(&mut report_buffer))
+        HsmKeyManager::generate_key_report(&priv_key, &report_data, Some(&mut report_buffer))
             .expect("Failed to generate key report");
     report_buffer.truncate(actual_size);
 
