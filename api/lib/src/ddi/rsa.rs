@@ -245,6 +245,7 @@ impl TryFrom<HsmKeyKind> for DdiKeyClass {
     fn try_from(kind: HsmKeyKind) -> Result<Self, Self::Error> {
         match kind {
             HsmKeyKind::Aes => Ok(DdiKeyClass::Aes),
+            HsmKeyKind::AesXts => Ok(DdiKeyClass::AesXtsBulk),
             HsmKeyKind::Rsa => Ok(DdiKeyClass::Rsa),
             HsmKeyKind::Ecc => Ok(DdiKeyClass::Ecc),
             _ => Err(HsmError::UnsupportedKeyKind),

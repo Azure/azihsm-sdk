@@ -340,3 +340,51 @@ impl HsmKeyGenOp for HsmAesXtsKeyGenAlgo {
         ))
     }
 }
+
+pub struct HsmAesXtsKeyRsaAesKeyUnwrapAlgo {
+    hash_algo: HsmHashAlgo,
+}
+
+impl HsmAesXtsKeyRsaAesKeyUnwrapAlgo {
+    pub fn new(hash_algo: HsmHashAlgo) -> Self {
+        Self { hash_algo }
+    }
+}
+
+impl HsmKeyUnwrapOp for HsmAesXtsKeyRsaAesKeyUnwrapAlgo {
+    type UnwrappingKey = HsmRsaPrivateKey;
+    type Key = HsmAesXtsKey;
+    type Error = HsmError;
+
+    /// Unwraps an AES key using the provided RSA unwrapping key.
+    ///
+    /// # Arguments
+    ///
+    /// * `session` - The HSM session to use for the unwrapping operation.
+    /// * `unwrapping_key` - The RSA private key used to unwrap the AES
+    /// * `wrapped_key` - The wrapped AES key data.
+    /// * `key_props` - Properties for the unwrapped AES key.
+    ///
+    /// # Returns
+    ///
+    /// Returns the unwrapped AES key on success.
+    fn unwrap_key(
+        &mut self,
+        unwrapping_key: &Self::UnwrappingKey,
+        wrapped_key: &[u8],
+        key_props: HsmKeyProps,
+    ) -> Result<Self::Key, Self::Error> {
+        // Validate key properties before unwrapping, else handle will not be released properly
+        HsmAesXtsKey::validate_props(&key_props)?;
+
+        let (handle1, handle2, dev_key_props) =
+            ddi::aes_xts_unwrap_key(unwrapping_key, self.hash_algo, wrapped_key, key_props)?;
+
+        let key = HsmAesXtsKey::new(
+            unwrapping_key.session().clone(),
+            dev_key_props,
+            (handle1, handle2),
+        );
+        Ok(key)
+    }
+}

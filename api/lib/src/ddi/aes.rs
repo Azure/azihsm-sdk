@@ -7,7 +7,13 @@
 //! the construction of DDI requests and processing of responses for AES
 //! cryptographic operations.
 
+use core::mem::size_of;
 use itertools::Itertools;
+
+use zerocopy::Immutable;
+use zerocopy::IntoBytes;
+use zerocopy::KnownLayout;
+use zerocopy::TryFromBytes;
 
 use super::*;
 
@@ -408,4 +414,147 @@ fn aes_xts_encrypt_decrypt(
             .map_hsm_err(HsmError::DdiCmdFailure)
     })?;
     Ok(resp)
+}
+
+/// Unwraps an AES-XTS key from a wrapped blob at the DDI layer.
+///
+/// The `wrapped_key` format is: `header || key1_wrapped_blob || key2_wrapped_blob`, where
+/// the header is a fixed 16 bytes (little-endian fields) and the two key blobs are
+/// RSA-wrapped AES key payloads.
+///
+/// This function parses/validates the header, splits the two key blobs, unwraps both halves
+/// using `unwrapping_key`, and returns the two key handles plus updated properties.
+pub(crate) fn aes_xts_unwrap_key(
+    unwrapping_key: &HsmRsaPrivateKey,
+    hash_algo: HsmHashAlgo,
+    wrapped_key: &[u8],
+    key_props: HsmKeyProps,
+) -> HsmResult<(HsmKeyHandle, HsmKeyHandle, HsmKeyProps)> {
+    //Get Key1 and Key2 wrapped blobs
+    let (key1_wrapped_blob, key2_wrapped_blob) = HsmAesXtsWrappedBlob::parse_blob(wrapped_key)?;
+
+    let (handle1, dev_key_props1) = ddi::rsa_aes_unwrap_key(
+        unwrapping_key,
+        key1_wrapped_blob,
+        hash_algo,
+        key_props.clone(),
+    )?;
+
+    let (handle2, _dev_key_props2) = ddi::rsa_aes_unwrap_key(
+        unwrapping_key,
+        key2_wrapped_blob,
+        hash_algo,
+        key_props.clone(),
+    )?;
+
+    //make a local copy to keep the key bits as 512 for aes xts key
+    let mut props = key_props;
+    //set masked key from the dev returned props
+    if let Some(masked_key) = dev_key_props1.masked_key() {
+        props.set_masked_key(masked_key);
+    }
+    Ok((handle1, handle2, props))
+}
+
+#[repr(C, packed)]
+#[derive(Debug, Default, Clone, Copy, IntoBytes, KnownLayout, TryFromBytes, Immutable)]
+/// Fixed-size header for AES-XTS wrapped blobs.
+///
+/// The header is stored as little-endian byte arrays so the on-wire format remains stable
+/// across host endianness.
+pub struct HsmAesXtsWrapHeader {
+    // Stored as little-endian bytes (agnostic to host endianness).
+    magic_id: [u8; 8],
+    version: [u8; 2],
+    key1_len: [u8; 2],
+    key2_len: [u8; 2],
+    // Current size: 8 + 2 + 2 + 2 + 2 = 16 bytes.
+    _reserved: [u8; 2],
+}
+impl HsmAesXtsWrapHeader {
+    const LEN: usize = size_of::<Self>();
+
+    /// Magic and version identifiers for the wrapped blob format.
+    // Stored as a u64 for easy debug printing/comparisons. in le format:
+    // [0x55, 0xAA, b'H', b'S', b'M', b'X', b'T', b'S'].
+    const WRAP_BLOB_MAGIC: u64 = 0x5354_584D_5348_AA55;
+    const WRAP_BLOB_VERSION: u16 = 1;
+
+    /// Returns the header magic identifier decoded from little-endian bytes.
+    fn magic_id(&self) -> u64 {
+        u64::from_le_bytes(self.magic_id)
+    }
+
+    /// Returns the header version decoded from little-endian bytes.
+    fn version(&self) -> u16 {
+        u16::from_le_bytes(self.version)
+    }
+
+    /// Returns the byte length of the first wrapped-key blob.
+    fn key1_len(&self) -> usize {
+        u16::from_le_bytes(self.key1_len) as usize
+    }
+
+    /// Returns the byte length of the second wrapped-key blob.
+    fn key2_len(&self) -> usize {
+        u16::from_le_bytes(self.key2_len) as usize
+    }
+
+    /// Parses the fixed-size header and validates magic/version.
+    ///
+    /// Returns the decoded header plus the remaining payload slice.
+    fn parse_header(wrapped_key: &[u8]) -> HsmResult<(HsmAesXtsWrapHeader, &[u8])> {
+        if wrapped_key.len() < Self::LEN {
+            Err(HsmError::InvalidArgument)?;
+        }
+
+        let (header, payload) = HsmAesXtsWrapHeader::try_ref_from_prefix(wrapped_key)
+            .map_err(|_| HsmError::InvalidArgument)?;
+
+        // Validate header fields
+        Self::validate_header(header)?;
+
+        Ok((*header, payload))
+    }
+
+    /// Validates header invariants.
+    fn validate_header(header: &HsmAesXtsWrapHeader) -> HsmResult<()> {
+        if header.magic_id() != HsmAesXtsWrapHeader::WRAP_BLOB_MAGIC {
+            Err(HsmError::InternalError)?;
+        }
+
+        if header.version() != HsmAesXtsWrapHeader::WRAP_BLOB_VERSION {
+            Err(HsmError::InternalError)?;
+        }
+
+        Ok(())
+    }
+}
+
+/// Helper for parsing and validating an AES-XTS wrapped blob.
+///
+/// The wrapped blob contains a fixed-size header followed by two RSA-wrapped AES key blobs.
+struct HsmAesXtsWrappedBlob {}
+
+impl HsmAesXtsWrappedBlob {
+    /// Parses the wrapped blob and returns (key1_wrapped_blob, key2_wrapped_blob).
+    fn parse_blob(wrapped_key: &[u8]) -> HsmResult<(&[u8], &[u8])> {
+        // Parse the fixed-size header and retain the remainder as the blob payload.
+        let (header, payload) = HsmAesXtsWrapHeader::parse_header(wrapped_key)?;
+
+        // Get key1 and key2 wrapped blob lengths from header.
+        let key1_len = header.key1_len();
+        let key2_len = header.key2_len();
+        let total_len = key1_len + key2_len;
+
+        // The XTS wrap format is exactly: header || key1_blob || key2_blob.
+        // Reject truncated payloads and any unexpected trailing bytes.
+        if payload.len() != total_len {
+            Err(HsmError::InvalidArgument)?;
+        }
+
+        let (key1_blob, key2_blob) = payload.split_at(key1_len);
+
+        Ok((key1_blob, key2_blob))
+    }
 }
