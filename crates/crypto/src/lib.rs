@@ -11,6 +11,7 @@
 //! - **HMAC**: Hash-based Message Authentication Codes
 //! - **DER**: DER encoding/decoding for cryptographic keys
 //! - **RNG**: Cryptographically secure random number generation
+//! - **X509**: PEM/DER encoding and decoding for X.509 certificates
 //!
 //! # Platform Support
 //!
@@ -27,6 +28,7 @@ mod kdf;
 mod rand;
 mod rsa;
 mod secret;
+mod x509;
 
 mod op;
 mod traits;
@@ -43,6 +45,7 @@ pub use rsa::*;
 pub use secret::*;
 use thiserror::Error;
 pub use traits::*;
+pub use x509::*;
 
 /// Comprehensive error type for all cryptographic operations.
 ///

@@ -41,6 +41,7 @@ pub enum HsmError {
     InvalidSignature = -15,
     InvalidKeyProps = -16,
     UnsupportedKeyProperty = -17,
+    CertChainChanged = -18,
     Panic = i32::MIN,
 }
 
