@@ -198,15 +198,24 @@ pub(crate) fn get_cert_chain(
     slot_id: u8,
     cert_chain: Option<&mut [u8]>,
 ) -> HsmResult<usize> {
-    const MAX_CERT_SIZE: usize = 1024;
     let (count, thumbprint) = get_cert_chain_info(dev, rev, slot_id)?;
 
-    let len = count as usize * MAX_CERT_SIZE;
+    // Calculate exact size needed for PEM format
+    let mut total_size = 0;
+    for cert_id in 0..count {
+        if cert_id != 0 {
+            total_size += 1; // newline separator
+        }
+        let der = get_cert(dev, rev, slot_id, cert_id)?;
+        let pem = crypto::der_to_pem(&der).map_hsm_err(HsmError::InternalError)?;
+        total_size += pem.len();
+    }
+
     let Some(cert_chain) = cert_chain else {
-        return Ok(len);
+        return Ok(total_size);
     };
 
-    if cert_chain.len() < len {
+    if cert_chain.len() < total_size {
         return Err(HsmError::BufferTooSmall);
     }
 
@@ -219,9 +228,6 @@ pub(crate) fn get_cert_chain(
         let der = get_cert(dev, rev, slot_id, cert_id)?;
         let pem = crypto::der_to_pem(&der).map_hsm_err(HsmError::InternalError)?;
         let pem_bytes = pem.as_bytes();
-        if start + pem_bytes.len() > cert_chain.len() {
-            return Err(HsmError::BufferTooSmall);
-        }
         cert_chain[start..start + pem_bytes.len()].copy_from_slice(pem_bytes);
         start += pem_bytes.len();
     }
@@ -231,7 +237,7 @@ pub(crate) fn get_cert_chain(
         return Err(HsmError::CertChainChanged);
     }
 
-    Ok(len)
+    Ok(start)
 }
 
 /// Retrieves certificate chain information from the HSM device.
