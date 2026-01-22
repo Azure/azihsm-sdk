@@ -19,10 +19,21 @@ pub use secret::*;
 use super::*;
 
 pub(crate) trait HsmKeyHandleDelOp: Copy {
+    /// Deletes a key from the HSM.
+    ///
+    /// # Arguments
+    ///
+    /// * `session` - The HSM session used to perform the deletion.
+    /// * `handle` - The key handle identifying the key in the HSM.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` on success, otherwise an [`HsmError`].
     fn delete_key(session: HsmSession, handle: Self) -> Result<(), HsmError>;
 }
 
 impl HsmKeyHandleDelOp for ddi::HsmKeyHandle {
+    /// Deletes a single key handle from the HSM.
     fn delete_key(session: HsmSession, handle: Self) -> Result<(), HsmError> {
         ddi::delete_key(&session, handle)
     }
@@ -30,9 +41,14 @@ impl HsmKeyHandleDelOp for ddi::HsmKeyHandle {
 
 //impl delete op for key handle tuple ()
 impl HsmKeyHandleDelOp for (ddi::HsmKeyHandle, ddi::HsmKeyHandle) {
-    fn delete_key(_session: HsmSession, _handle: Self) -> Result<(), HsmError> {
-        // No-op for keys without device handles (e.g. session keys).
-        Ok(())
+    /// Deletes both key handles from the HSM.
+    fn delete_key(session: HsmSession, handle: Self) -> Result<(), HsmError> {
+        let res1 = ddi::delete_key(&session, handle.0);
+        let res2 = ddi::delete_key(&session, handle.1);
+
+        // Ok only if both deletions succeeded; otherwise return an error. If both fail,
+        // the first error is returned.
+        res1.and(res2)
     }
 }
 
@@ -427,7 +443,7 @@ macro_rules! define_hsm_key_pair {
                     }
                 }
 
-                // Returns the key properties.
+                /// Returns the key properties.
                 fn key_props(&self) -> &HsmKeyProps {
                     &self.props
                 }

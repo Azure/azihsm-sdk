@@ -261,7 +261,27 @@ fn key_size_to_ddi(size: usize) -> HsmResult<DdiAesKeySize> {
     }
 }
 
-// AES XTS DDI operations
+/// Generates an AES-XTS key within an HSM session.
+///
+/// AES-XTS keys are represented as a pair of AES keys. This helper generates two
+/// AES keys with the requested properties and returns both handles plus key
+/// properties containing the masked key material.
+///
+/// # Arguments
+///
+/// * `session` - The HSM session in which to generate the key
+/// * `props` - Key properties for the AES-XTS key (bits represent total key size)
+///
+/// # Returns
+///
+/// Returns a tuple containing:
+/// - First AES key handle
+/// - Second AES key handle
+/// - Updated key properties including masked key material
+///
+/// # Errors
+///
+/// Returns an error if key generation fails or if the generated handles are not valid.
 pub(crate) fn aes_xts_generate_key(
     session: &HsmSession,
     props: HsmKeyProps,
@@ -286,7 +306,6 @@ pub(crate) fn aes_xts_generate_key(
     //create a local copy of props to keep same key bits as input props
     // XTS requires key generation of two keys, but the key size in props
     // represents the total size (e.g., 512 bits for two 256-bit keys).
-
     let mut props = props;
 
     if let Some(masked_key) = dev_key_props.masked_key() {
@@ -296,6 +315,23 @@ pub(crate) fn aes_xts_generate_key(
     Ok((handle1, handle2, props))
 }
 
+/// Encrypts data using AES-XTS mode at the DDI layer.
+///
+/// # Arguments
+///
+/// * `key` - AES-XTS key to use
+/// * `tweak` - Initial tweak value (little-endian `u128`)
+/// * `dul` - Data unit length in bytes
+/// * `plaintext` - Data to encrypt (must be DUL-aligned)
+/// * `ciphertext` - Output buffer to receive ciphertext
+///
+/// # Returns
+///
+/// Returns the number of bytes written to `ciphertext`.
+///
+/// # Errors
+///
+/// Returns an error if the underlying DDI operation fails.
 pub(crate) fn aes_xts_encrypt(
     key: &HsmAesXtsKey,
     tweak: u128,
@@ -306,6 +342,23 @@ pub(crate) fn aes_xts_encrypt(
     aes_xts_encrypt_decrypt(key, DdiAesOp::Encrypt, tweak, dul, plaintext, ciphertext)
 }
 
+/// Decrypts data using AES-XTS mode at the DDI layer.
+///
+/// # Arguments
+///
+/// * `key` - AES-XTS key to use
+/// * `tweak` - Initial tweak value (little-endian `u128`)
+/// * `dul` - Data unit length in bytes
+/// * `ciphertext` - Data to decrypt (must be DUL-aligned)
+/// * `plaintext` - Output buffer to receive plaintext
+///
+/// # Returns
+///
+/// Returns the number of bytes written to `plaintext`.
+///
+/// # Errors
+///
+/// Returns an error if the underlying DDI operation fails.
 pub(crate) fn aes_xts_decrypt(
     key: &HsmAesXtsKey,
     tweak: u128,
@@ -316,6 +369,27 @@ pub(crate) fn aes_xts_decrypt(
     aes_xts_encrypt_decrypt(key, DdiAesOp::Decrypt, tweak, dul, ciphertext, plaintext)
 }
 
+/// Internal helper for AES-XTS encryption or decryption.
+///
+/// Builds a DDI fast-path XTS request using the two underlying key handles,
+/// the specified tweak and DUL, and copies the response bytes into `output`.
+///
+/// # Arguments
+///
+/// * `key` - AES-XTS key to use
+/// * `op` - Encrypt or decrypt operation selector
+/// * `tweak` - Initial tweak value (little-endian `u128`)
+/// * `dul` - Data unit length in bytes
+/// * `input` - Input buffer
+/// * `output` - Output buffer
+///
+/// # Returns
+///
+/// Returns the number of bytes copied to `output`.
+///
+/// # Errors
+///
+/// Returns an error if the DDI fast-path command fails.
 fn aes_xts_encrypt_decrypt(
     key: &HsmAesXtsKey,
     op: DdiAesOp,
@@ -324,8 +398,7 @@ fn aes_xts_encrypt_decrypt(
     input: &[u8],
     output: &mut [u8],
 ) -> HsmResult<usize> {
-    // Setup DDI params for AES XTS encrypt
-
+    // Setup DDI params for AES XTS encrypt/decrypt
     let xts_params = DdiAesXtsParams {
         key_id1: key.handle().0 as u32,
         key_id2: key.handle().1 as u32,
