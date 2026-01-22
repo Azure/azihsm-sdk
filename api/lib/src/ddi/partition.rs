@@ -211,7 +211,7 @@ pub(crate) fn get_cert_chain(
     }
 
     let mut start = 0;
-    for (i, cert_id) in (0..count).rev().enumerate() {
+    for (i, cert_id) in (0..count).enumerate() {
         if i != 0 {
             cert_chain[start] = b'\n';
             start += 1;
