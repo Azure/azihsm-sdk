@@ -60,11 +60,7 @@ pub(crate) fn open_session(
         .encrypt_session_credential(creds.id, creds.pin, seed, nonce)
         .map_err(|_| HsmError::InternalError)?;
     let req = DdiOpenSessionCmdReq {
-        hdr: DdiReqHdr {
-            op: DdiOp::OpenSession,
-            sess_id: None,
-            rev: Some(rev.into()),
-        },
+        hdr: build_ddi_req_hdr(DdiOp::OpenSession, Some(rev), None),
         data: DdiOpenSessionReq {
             encrypted_credential: ecreds,
             pub_key,
@@ -96,11 +92,7 @@ pub(crate) fn open_session(
 /// - The DDI operation returns an error
 pub(crate) fn close_session(dev: &HsmDev, id: u16, rev: HsmApiRev) -> HsmResult<()> {
     let req = DdiCloseSessionCmdReq {
-        hdr: DdiReqHdr {
-            op: DdiOp::CloseSession,
-            sess_id: Some(id),
-            rev: Some(rev.into()),
-        },
+        hdr: build_ddi_req_hdr(DdiOp::CloseSession, Some(rev), Some(id)),
         data: DdiCloseSessionReq {},
         ext: None,
     };
@@ -131,11 +123,7 @@ fn get_session_encryption_key(
     rev: HsmApiRev,
 ) -> HsmResult<DdiGetSessionEncryptionKeyCmdResp> {
     let req = DdiGetSessionEncryptionKeyCmdReq {
-        hdr: DdiReqHdr {
-            op: DdiOp::GetSessionEncryptionKey,
-            sess_id: None,
-            rev: Some(rev.into()),
-        },
+        hdr: build_ddi_req_hdr(DdiOp::GetSessionEncryptionKey, Some(rev), None),
         data: DdiGetSessionEncryptionKeyReq {},
         ext: None,
     };

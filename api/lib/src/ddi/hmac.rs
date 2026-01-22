@@ -43,11 +43,7 @@ use super::*;
 pub(crate) fn hmac_sign(key: &HsmHmacKey, data: &[u8], signature: &mut [u8]) -> HsmResult<usize> {
     // build hmac sign ddi request
     let req = DdiHmacCmdReq {
-        hdr: DdiReqHdr {
-            rev: Some(key.api_rev().into()),
-            op: DdiOp::Hmac,
-            sess_id: Some(key.sess_id()),
-        },
+        hdr: build_ddi_req_hdr_sess(DdiOp::Hmac, &key.session()),
         data: DdiHmacReq {
             key_id: key.handle(),
             msg: MborByteArray::from_slice(data).map_hsm_err(HsmError::InternalError)?,
