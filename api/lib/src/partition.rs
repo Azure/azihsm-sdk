@@ -152,7 +152,8 @@ impl From<DdiDeviceKind> for HsmPartType {
         match kind {
             DdiDeviceKind::Virtual => HsmPartType::Virtual,
             DdiDeviceKind::Physical => HsmPartType::Physical,
-            _ => unreachable!(),
+            // Default to Virtual for unknown kinds
+            _ => HsmPartType::Virtual,
         }
     }
 }
@@ -173,12 +174,9 @@ impl HsmPartitionManager {
     /// A vector of partition information structures.
     #[instrument]
     pub fn partition_info_list() -> Vec<HsmPartitionInfo> {
-        let vec: Vec<HsmPartitionInfo> = ddi::dev_paths()
+        let vec: Vec<HsmPartitionInfo> = ddi::dev_info_list()
             .into_iter()
-            .filter_map(|path| {
-                let dev_info = ddi::dev_info_by_path(&path).ok()?;
-                Some(HsmPartitionInfo::new(dev_info, None))
-            })
+            .map(|dev_info| HsmPartitionInfo::new(dev_info, None))
             .collect();
         debug!("Found {} partition(s)", vec.len());
         vec
@@ -206,8 +204,8 @@ impl HsmPartitionManager {
     /// - The underlying DDI operation fails
     #[instrument()]
     pub fn open_partition(path: &str) -> HsmResult<HsmPartition> {
-        let dev_info = ddi::dev_info_by_path(path)?;
         let dev = ddi::open_dev(path)?;
+        let dev_info = ddi::dev_info_by_path(path)?;
         let (min, max) = ddi::get_api_rev(&dev)?;
         let part_type = dev.device_kind().map(HsmPartType::from);
         Ok(HsmPartition::new(

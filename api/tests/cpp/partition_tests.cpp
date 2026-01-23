@@ -570,6 +570,7 @@ TEST(azihsm_part, get_prop_all_supported_properties)
             azihsm_part_prop_id id;
             const char *name;
         } supported_props[] = {
+            { AZIHSM_PART_PROP_ID_TYPE, "TYPE" },
             { AZIHSM_PART_PROP_ID_PATH, "PATH" },
             { AZIHSM_PART_PROP_ID_DRIVER_VERSION, "DRIVER_VERSION" },
             { AZIHSM_PART_PROP_ID_FIRMWARE_VERSION, "FIRMWARE_VERSION" },
