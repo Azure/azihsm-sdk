@@ -97,8 +97,15 @@ impl AzihsmStr {
     /// A byte slice containing the platform-specific string encoding:
     /// - Windows: UTF-16LE byte representation (cast from `u16` to `u8`)
     /// - Non-Windows: UTF-8 byte representation
+    ///
+    /// Returns an empty slice if the string pointer is null or the length is 0.
     pub(crate) fn as_bytes(&self) -> &[u8] {
-        // Safety: `self.str` is not null
+        // Guard against null pointer or invalid length to prevent UB
+        if self.str.is_null() || self.len == 0 {
+            return &[];
+        }
+
+        // Safety: We've checked that `self.str` is not null and `self.len > 0`
         #[allow(unsafe_code)]
         unsafe {
             #[cfg(target_os = "windows")]
