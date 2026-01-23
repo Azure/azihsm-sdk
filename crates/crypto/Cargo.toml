@@ -11,6 +11,7 @@ doctest = false
 [dependencies]
 asn1.workspace = true
 cfg-if.workspace = true
+pem-rfc7468 = { features = ["alloc"], workspace = true }
 thiserror.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
