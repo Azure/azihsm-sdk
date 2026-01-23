@@ -23,6 +23,12 @@ impl Xtask for Audit {
         let sh = xshell::Shell::new()?;
         let rust_toolchain = sh.var("RUST_TOOLCHAIN").map(|s| format!("+{s}")).ok();
 
+        // Check audit version
+        let rust_toolchain_version = rust_toolchain.clone();
+        cmd!(sh, "cargo {rust_toolchain_version...} audit --version")
+            .quiet()
+            .run()?;
+
         cmd!(sh, "cargo {rust_toolchain...} audit --deny warnings")
             .quiet()
             .run()?;

@@ -22,6 +22,11 @@ impl Xtask for Coverage {
 
         let sh = xshell::Shell::new()?;
 
+        // Check cargo-llvm-cov version
+        cmd!(sh, "cargo llvm-cov --version")
+            .quiet()
+            .run()?;
+
         // Run tests with coverage
         log::info!("Building all tests and running them with coverage");
         cmd!(sh, "cargo llvm-cov nextest --no-report --features mock").run()?;

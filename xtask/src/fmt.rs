@@ -45,6 +45,17 @@ impl Xtask for Fmt {
             .or_else(|| sh.var("RUST_TOOLCHAIN").ok())
             .map(|s| format!("+{s}"));
 
+        // Check Fmt version
+        let rust_toolchain_clone = rust_toolchain.clone();
+        cmd!(sh, "cargo {rust_toolchain_clone...} fmt --version")
+            .quiet()
+            .run()?;
+
+        // Check taplo-cli version
+        cmd!(sh, "taplo --version")
+            .quiet()
+            .run()?;
+
         if rust_toolchain.is_some() {
             log::trace!(
                 "fmt toolchain override: fmt --toolchain={}",

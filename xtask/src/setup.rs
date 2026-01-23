@@ -6,6 +6,8 @@
 //! Xtask to run various repo-specific checks
 
 use clap::Parser;
+use xshell::cmd;
+use xshell::Shell;
 
 use crate::install;
 use crate::rustup_component_add;
@@ -29,6 +31,8 @@ impl Xtask for Setup {
     fn run(self, ctx: XtaskCtx) -> anyhow::Result<()> {
         log::trace!("running setup");
 
+        let sh = Shell::new()?;
+
         // Run Install Cargo nextest
         let install_cargo_nextest = install::Install {
             crate_name: "cargo-nextest@0.9.108".to_string(),
@@ -37,6 +41,11 @@ impl Xtask for Setup {
         };
         install_cargo_nextest.run(ctx.clone())?;
 
+        // Check nextest version
+        cmd!(sh, "cargo nextest --version")
+            .quiet()
+            .run()?;
+
         // Run Install Cargo taplo-cli
         let install_cargo_taplo_cli = install::Install {
             crate_name: "taplo-cli@0.10.0".to_string(),
@@ -44,6 +53,11 @@ impl Xtask for Setup {
             config: self.config.clone(),
         };
         install_cargo_taplo_cli.run(ctx.clone())?;
+
+        // Check taplo-cli version
+        cmd!(sh, "taplo --version")
+            .quiet()
+            .run()?;
 
         #[cfg(not(target_os = "windows"))]
         {
@@ -54,6 +68,11 @@ impl Xtask for Setup {
                 config: self.config.clone(),
             };
             install_cargo_fuzz.run(ctx.clone())?;
+
+            // Check cargo-fuzz version
+            cmd!(sh, "cargo fuzz --version")
+                .quiet()
+                .run()?;
         }
 
         // Run Install cargo-audit
@@ -64,6 +83,11 @@ impl Xtask for Setup {
         };
         install_cargo_audit.run(ctx.clone())?;
 
+        // Check cargo-audit version
+        cmd!(sh, "cargo audit --version")
+            .quiet()
+            .run()?;
+
         // Run Install cargo-llvm-cov
         let install_cargo_llvm_cov = install::Install {
             crate_name: "cargo-llvm-cov@0.6.23".to_string(),
@@ -71,6 +95,11 @@ impl Xtask for Setup {
             config: self.config.clone(),
         };
         install_cargo_llvm_cov.run(ctx.clone())?;
+
+        // Check cargo-llvm-cov version
+        cmd!(sh, "cargo llvm-cov --version")
+            .quiet()
+            .run()?;
 
         // Add Clippy
         let add_clippy = rustup_component_add::RustupComponentAdd {
@@ -80,6 +109,11 @@ impl Xtask for Setup {
         // ignore failure in adding Clippy
         let _ = add_clippy.run(ctx.clone());
 
+        // Check Clippy version
+        cmd!(sh, "cargo clippy --version")
+            .quiet()
+            .run()?;
+
         // Add Fmt
         let add_fmt = rustup_component_add::RustupComponentAdd {
             component: "rustfmt".to_string(),
@@ -87,6 +121,11 @@ impl Xtask for Setup {
         };
         // ignore failure in adding Fmt
         let _ = add_fmt.run(ctx.clone());
+
+        // Check Fmt version
+        cmd!(sh, "cargo +nightly fmt --version")
+            .quiet()
+            .run()?;
 
         log::trace!("done setup");
         Ok(())
