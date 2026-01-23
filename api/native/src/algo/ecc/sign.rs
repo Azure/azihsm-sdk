@@ -170,7 +170,7 @@ pub(crate) fn ecc_sign_init(
     let ctx = HsmSigner::sign_init(sign_algo, key)?;
 
     // Allocate a handle for the context and return it
-    let ctx_handle = HANDLE_TABLE.alloc_handle(HandleType::EccSignStreamingCtx, Box::new(ctx));
+    let ctx_handle = HANDLE_TABLE.alloc_handle(HandleType::EccSignCtx, Box::new(ctx));
 
     Ok(ctx_handle)
 }
@@ -188,8 +188,7 @@ pub(crate) fn ecc_sign_init(
 /// * `Err(AzihsmStatus)` - On failure
 pub(crate) fn ecc_sign_update(ctx_handle: AzihsmHandle, data: &[u8]) -> Result<(), AzihsmStatus> {
     // Get mutable reference to the context from handle table
-    let ctx: &mut HsmEccSignContext =
-        HANDLE_TABLE.as_mut(ctx_handle, HandleType::EccSignStreamingCtx)?;
+    let ctx: &mut HsmEccSignContext = HANDLE_TABLE.as_mut(ctx_handle, HandleType::EccSignCtx)?;
 
     // Update the context with the data chunk
     ctx.update(data)?;
@@ -214,7 +213,7 @@ pub(crate) fn ecc_sign_final(
 ) -> Result<(), AzihsmStatus> {
     // Get a reference to determine the required signature size
     let ctx_ref: &mut HsmEccSignContext =
-        HANDLE_TABLE.as_mut(ctx_handle, HandleType::EccSignStreamingCtx)?;
+        HANDLE_TABLE.as_mut(ctx_handle, HandleType::EccSignCtx)?;
     let required_size = ctx_ref.finish(None)?;
 
     // Check if output buffer is large enough
@@ -222,7 +221,7 @@ pub(crate) fn ecc_sign_final(
 
     // Take ownership of the context and finalize
     let mut ctx: Box<HsmEccSignContext> =
-        HANDLE_TABLE.free_handle(ctx_handle, HandleType::EccSignStreamingCtx)?;
+        HANDLE_TABLE.free_handle(ctx_handle, HandleType::EccSignCtx)?;
 
     // Perform the final signing operation
     let sig_len = ctx.finish(Some(output_data))?;
@@ -261,7 +260,7 @@ pub(crate) fn ecc_verify_init(
     let ctx = HsmVerifier::verify_init(verify_algo, key)?;
 
     // Allocate a handle for the context and return it
-    let ctx_handle = HANDLE_TABLE.alloc_handle(HandleType::EccVerifyStreamingCtx, Box::new(ctx));
+    let ctx_handle = HANDLE_TABLE.alloc_handle(HandleType::EccVerifyCtx, Box::new(ctx));
 
     Ok(ctx_handle)
 }
@@ -280,7 +279,7 @@ pub(crate) fn ecc_verify_init(
 pub(crate) fn ecc_verify_update(ctx_handle: AzihsmHandle, data: &[u8]) -> Result<(), AzihsmStatus> {
     // Get mutable reference to the context from handle table
     let ctx: &mut HsmEccVerifyContext =
-        HANDLE_TABLE.as_mut(ctx_handle, HandleType::EccVerifyStreamingCtx)?;
+        HANDLE_TABLE.as_mut(ctx_handle, HandleType::EccVerifyCtx)?;
 
     // Update the context with the data chunk
     ctx.update(data)?;
@@ -306,7 +305,7 @@ pub(crate) fn ecc_verify_final(
 ) -> Result<bool, AzihsmStatus> {
     // Take ownership of the context and finalize
     let mut ctx: Box<HsmEccVerifyContext> =
-        HANDLE_TABLE.free_handle(ctx_handle, HandleType::EccVerifyStreamingCtx)?;
+        HANDLE_TABLE.free_handle(ctx_handle, HandleType::EccVerifyCtx)?;
 
     // Perform the final verification operation
     let is_valid = ctx.finish(signature)?;

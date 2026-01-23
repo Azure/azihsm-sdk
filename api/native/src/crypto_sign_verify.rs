@@ -226,13 +226,13 @@ pub unsafe extern "C" fn azihsm_crypt_sign_update(
         let ctx_type = HandleType::try_from(ctx_handle)?;
 
         match ctx_type {
-            HandleType::EccSignStreamingCtx => {
+            HandleType::EccSignCtx => {
                 ecc_sign_update(ctx_handle, input_data)?;
             }
-            HandleType::HmacSignStreamingCtx => {
+            HandleType::HmacSignCtx => {
                 hmac_sign_update(ctx_handle, input_data)?;
             }
-            HandleType::RsaSignStreamingCtx => {
+            HandleType::RsaSignCtx => {
                 rsa_sign_update(ctx_handle, input_data)?;
             }
             _ => Err(AzihsmStatus::InvalidHandle)?,
@@ -265,13 +265,13 @@ pub unsafe extern "C" fn azihsm_crypt_sign_final(
         let ctx_type = HandleType::try_from(ctx_handle)?;
 
         match ctx_type {
-            HandleType::EccSignStreamingCtx => {
+            HandleType::EccSignCtx => {
                 ecc_sign_final(ctx_handle, sig_buf)?;
             }
-            HandleType::HmacSignStreamingCtx => {
+            HandleType::HmacSignCtx => {
                 hmac_sign_final(ctx_handle, sig_buf)?;
             }
-            HandleType::RsaSignStreamingCtx => {
+            HandleType::RsaSignCtx => {
                 rsa_sign_final(ctx_handle, sig_buf)?;
             }
             _ => Err(AzihsmStatus::InvalidHandle)?,
@@ -363,13 +363,13 @@ pub unsafe extern "C" fn azihsm_crypt_verify_update(
         let ctx_type: HandleType = HandleType::try_from(ctx_handle)?;
 
         match ctx_type {
-            HandleType::EccVerifyStreamingCtx => {
+            HandleType::EccVerifyCtx => {
                 ecc_verify_update(ctx_handle, input_data)?;
             }
-            HandleType::HmacVerifyStreamingCtx => {
+            HandleType::HmacVerifyCtx => {
                 hmac_verify_update(ctx_handle, input_data)?;
             }
-            HandleType::RsaVerifyStreamingCtx => {
+            HandleType::RsaVerifyCtx => {
                 rsa_verify_update(ctx_handle, input_data)?;
             }
             _ => Err(AzihsmStatus::InvalidHandle)?,
@@ -401,9 +401,9 @@ pub unsafe extern "C" fn azihsm_crypt_verify_final(
         let ctx_type: HandleType = HandleType::try_from(ctx_handle)?;
 
         let is_valid = match ctx_type {
-            HandleType::EccVerifyStreamingCtx => ecc_verify_final(ctx_handle, signature)?,
-            HandleType::HmacVerifyStreamingCtx => hmac_verify_final(ctx_handle, signature)?,
-            HandleType::RsaVerifyStreamingCtx => rsa_verify_final(ctx_handle, signature)?,
+            HandleType::EccVerifyCtx => ecc_verify_final(ctx_handle, signature)?,
+            HandleType::HmacVerifyCtx => hmac_verify_final(ctx_handle, signature)?,
+            HandleType::RsaVerifyCtx => rsa_verify_final(ctx_handle, signature)?,
             _ => Err(AzihsmStatus::InvalidHandle)?,
         };
 

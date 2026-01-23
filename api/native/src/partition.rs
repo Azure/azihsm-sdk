@@ -186,6 +186,14 @@ pub unsafe extern "C" fn azihsm_part_open(
 
 /// Initialize an HSM partition
 ///
+/// @param[in] part_handle Handle to the HSM partition
+/// @param[in] creds Pointer to application credentials (ID and PIN)
+/// @param[in] bmk Optional backup masking key buffer (can be null)
+/// @param[in] muk Optional masked unwrapping key buffer (can be null)
+/// @param[in] mobk Optional masked owner backup key buffer (can be null)
+///
+/// @return 0 on success, or a negative error code on failure
+///
 /// @internal
 /// # Safety
 /// This function is unsafe because it dereferences raw pointers.
@@ -195,6 +203,9 @@ pub unsafe extern "C" fn azihsm_part_open(
 pub unsafe extern "C" fn azihsm_part_init(
     part_handle: AzihsmHandle,
     creds: *const AzihsmCredentials,
+    bmk: *const AzihsmBuffer,
+    muk: *const AzihsmBuffer,
+    mobk: *const AzihsmBuffer,
 ) -> AzihsmStatus {
     abi_boundary(|| {
         let creds = deref_ptr(creds)?;
@@ -202,7 +213,12 @@ pub unsafe extern "C" fn azihsm_part_init(
         // Get the partition from the handle
         let partition = &HsmPartition::try_from(part_handle)?;
 
-        partition.init(creds.into(), None, None, None)?;
+        // Convert optional buffers to Option<&[u8]>
+        let bmk_slice = buffer_to_optional_slice(bmk)?;
+        let muk_slice = buffer_to_optional_slice(muk)?;
+        let mobk_slice = buffer_to_optional_slice(mobk)?;
+
+        partition.init(creds.into(), bmk_slice, muk_slice, mobk_slice)?;
 
         Ok(())
     })

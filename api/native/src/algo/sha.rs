@@ -65,7 +65,7 @@ pub(crate) fn sha_digest_init(
     let context = HsmHasher::hash_init(session, hash_algo)?;
 
     // Allocate handle for the context
-    let handle = HANDLE_TABLE.alloc_handle(HandleType::ShaStreamingCtx, Box::new(context));
+    let handle = HANDLE_TABLE.alloc_handle(HandleType::ShaCtx, Box::new(context));
 
     Ok(handle)
 }
@@ -83,7 +83,7 @@ pub(crate) fn sha_digest_init(
 /// * `Err(AzihsmStatus)` - On failure (e.g., invalid context)
 pub(crate) fn sha_digest_update(ctx_handle: AzihsmHandle, data: &[u8]) -> Result<(), AzihsmStatus> {
     // Get mutable reference to the context from handle table
-    let ctx: &mut HsmHashContext = HANDLE_TABLE.as_mut(ctx_handle, HandleType::ShaStreamingCtx)?;
+    let ctx: &mut HsmHashContext = HANDLE_TABLE.as_mut(ctx_handle, HandleType::ShaCtx)?;
 
     // Update the context with the data chunk
     ctx.update(data)?;
@@ -107,16 +107,14 @@ pub(crate) fn sha_digest_final(
     output: &mut AzihsmBuffer,
 ) -> Result<(), AzihsmStatus> {
     // Get a reference to determine the required digest size
-    let ctx_ref: &mut HsmHashContext =
-        HANDLE_TABLE.as_mut(ctx_handle, HandleType::ShaStreamingCtx)?;
+    let ctx_ref: &mut HsmHashContext = HANDLE_TABLE.as_mut(ctx_handle, HandleType::ShaCtx)?;
     let required_size = ctx_ref.finish(None)?;
 
     // Validate output buffer and get mutable slice
     let output_data = validate_output_buffer(output, required_size)?;
 
     // Take ownership of the context and finalize
-    let mut ctx: Box<HsmHashContext> =
-        HANDLE_TABLE.free_handle(ctx_handle, HandleType::ShaStreamingCtx)?;
+    let mut ctx: Box<HsmHashContext> = HANDLE_TABLE.free_handle(ctx_handle, HandleType::ShaCtx)?;
 
     // Perform the final hash operation
     let digest_len = ctx.finish(Some(output_data))?;

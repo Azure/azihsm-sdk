@@ -120,7 +120,7 @@ pub unsafe extern "C" fn azihsm_crypt_digest_update(
         let ctx_type = HandleType::try_from(ctx_handle)?;
 
         match ctx_type {
-            HandleType::ShaStreamingCtx => {
+            HandleType::ShaCtx => {
                 sha_digest_update(ctx_handle, input_data)?;
             }
             // Add support for other context types here as needed (HMAC, etc.)
@@ -154,7 +154,7 @@ pub unsafe extern "C" fn azihsm_crypt_digest_final(
         let ctx_type = HandleType::try_from(ctx_handle)?;
 
         match ctx_type {
-            HandleType::ShaStreamingCtx => {
+            HandleType::ShaCtx => {
                 sha_digest_final(ctx_handle, digest_buf)?;
             }
             // Add support for other context types here as needed (HMAC, etc.)
