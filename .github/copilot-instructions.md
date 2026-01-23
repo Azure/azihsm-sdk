@@ -24,7 +24,7 @@ Azure Integrated HSM (AZIHSM) SDK is a modular, cross-platform software developm
 - Prefer existing patterns and APIs; avoid introducing new dependencies unless explicitly required.
 - Add or update tests when behavior changes, and update `api/native/doc/` for public API changes.
 - Run targeted checks for modified areas (see build, test, and formatting commands below).
-- Never commit generated artifacts (for example `target/`, `build/`, or `node_modules/`).
+- Never commit generated artifacts (for example `target/`, `bld/`, or `Generated Files/`).
 
 ## Initial Setup
 Before running any commands in this document for the first time, restore required dependencies using these steps:
