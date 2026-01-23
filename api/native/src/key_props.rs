@@ -4,6 +4,7 @@ use std::ffi::c_void;
 use std::slice;
 
 use azihsm_api::*;
+use open_enum::open_enum;
 use zerocopy::IntoBytes;
 
 use super::*;
@@ -16,6 +17,7 @@ use super::*;
 ///
 /// The enum is represented as a u32 to ensure compatibility with C APIs and consistent
 /// memory layout across different platforms.
+#[open_enum]
 #[repr(u32)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum AzihsmKeyPropId {
@@ -391,5 +393,6 @@ fn get_key_prop(
         AzihsmKeyPropId::Wrap => copy_to_key_prop(key_prop, key.can_wrap().as_bytes()),
         AzihsmKeyPropId::Unwrap => copy_to_key_prop(key_prop, key.can_unwrap().as_bytes()),
         AzihsmKeyPropId::Derive => copy_to_key_prop(key_prop, key.can_derive().as_bytes()),
+        _ => Err(AzihsmStatus::UnsupportedKeyProperty),
     }
 }

@@ -92,3 +92,16 @@ impl HsmEccCurve {
         }
     }
 }
+
+/// HSM partition type.
+///
+/// Indicates whether the partition is a virtual (simulated) or physical (hardware) device.
+#[repr(u32)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, IntoBytes, Immutable)]
+pub enum HsmPartType {
+    /// Virtual/simulated partition.
+    Virtual = 1,
+
+    /// Physical hardware partition.
+    Physical = 2,
+}
