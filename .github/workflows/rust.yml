@@ -37,7 +37,10 @@ jobs:
           target/
         key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
     - name: Check cache status
-      run: echo "Cache hit - ${{ steps.cache.outputs.cache-hit }}"
+      run: |
+        echo "Cache hit - ${{ steps.cache.outputs.cache-hit }}"
+        echo "Cache Primary Key - ${{ steps.cache.outputs.cache-primary-key }}"
+        echo "Cache Matched Key - ${{ steps.cache.outputs.cache-matched-key }}"
     - name: Run Setup
       if: steps.cache.outputs.cache-hit != true
       run: cargo xtask precheck --setup
@@ -98,7 +101,10 @@ jobs:
           target/
         key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
     - name: Check cache status
-      run: echo "Cache hit - ${{ steps.cache.outputs.cache-hit }}"
+      run: |
+        echo "Cache hit - ${{ steps.cache.outputs.cache-hit }}"
+        echo "Cache Primary Key - ${{ steps.cache.outputs.cache-primary-key }}"
+        echo "Cache Matched Key - ${{ steps.cache.outputs.cache-matched-key }}"
     - name: Run Setup
       if: steps.cache.outputs.cache-hit != true
       run: cargo xtask precheck --setup
