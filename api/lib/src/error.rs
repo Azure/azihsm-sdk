@@ -43,6 +43,8 @@ pub enum HsmError {
     UnsupportedKeyProperty = -17,
     CertChainChanged = -18,
     InvalidTweak = -19,
+    UnsupportedPartitionProperty = -20,
+    PartitionPropertyValueNotAvailable = -21,
     Panic = i32::MIN,
 }
 

@@ -8,6 +8,8 @@
 
 use std::sync::*;
 
+use azihsm_ddi::DevInfo;
+use azihsm_ddi_types::DdiDeviceKind;
 use tracing::*;
 
 use super::*;
@@ -64,19 +66,40 @@ impl HsmApiRevRange {
 /// Contains metadata about an HSM partition, including its device path.
 #[derive(Debug, Clone)]
 pub struct HsmPartitionInfo {
+    /// Partition type (Virtual or Physical).
+    pub part_type: Option<HsmPartType>,
+
     /// Device path for accessing the partition.
     pub path: String,
+
+    /// Driver version string.
+    pub driver_ver: String,
+
+    /// Firmware version string.
+    pub firmware_ver: String,
+
+    /// Hardware version string.
+    pub hardware_ver: String,
+
+    /// PCI BDF (Bus:Device:Function) information.
+    pub pci_info: String,
 }
 
 impl HsmPartitionInfo {
-    /// Creates new partition information.
+    /// Creates new partition information from DevInfo.
     ///
     /// # Arguments
     ///
-    /// * `path` - Device path string
-    fn new(path: &str) -> Self {
+    /// * `dev_info` - Device information from the DDI layer
+    /// * `part_type` - Optional partition type (Virtual or Physical)
+    fn new(dev_info: DevInfo, part_type: Option<HsmPartType>) -> Self {
         Self {
-            path: path.to_string(),
+            part_type,
+            path: dev_info.path,
+            driver_ver: dev_info.driver_ver,
+            firmware_ver: dev_info.firmware_ver,
+            hardware_ver: dev_info.hardware_ver,
+            pci_info: dev_info.pci_info,
         }
     }
 }
@@ -124,6 +147,16 @@ impl HsmCredentials {
     }
 }
 
+impl From<DdiDeviceKind> for HsmPartType {
+    fn from(kind: DdiDeviceKind) -> Self {
+        match kind {
+            DdiDeviceKind::Virtual => HsmPartType::Virtual,
+            DdiDeviceKind::Physical => HsmPartType::Physical,
+            _ => unreachable!(),
+        }
+    }
+}
+
 /// HSM partition manager.
 ///
 /// Provides operations for discovering and opening HSM partitions.
@@ -140,10 +173,13 @@ impl HsmPartitionManager {
     /// A vector of partition information structures.
     #[instrument]
     pub fn partition_info_list() -> Vec<HsmPartitionInfo> {
-        let vec = ddi::dev_paths()
+        let vec: Vec<HsmPartitionInfo> = ddi::dev_paths()
             .into_iter()
-            .map(|path| HsmPartitionInfo { path })
-            .collect::<Vec<HsmPartitionInfo>>();
+            .filter_map(|path| {
+                let dev_info = ddi::dev_info_by_path(&path).ok()?;
+                Some(HsmPartitionInfo::new(dev_info, None))
+            })
+            .collect();
         debug!("Found {} partition(s)", vec.len());
         vec
     }
@@ -170,12 +206,14 @@ impl HsmPartitionManager {
     /// - The underlying DDI operation fails
     #[instrument()]
     pub fn open_partition(path: &str) -> HsmResult<HsmPartition> {
+        let dev_info = ddi::dev_info_by_path(path)?;
         let dev = ddi::open_dev(path)?;
         let (min, max) = ddi::get_api_rev(&dev)?;
+        let part_type = dev.device_kind().map(HsmPartType::from);
         Ok(HsmPartition::new(
             dev,
             HsmApiRevRange::new(min, max),
-            HsmPartitionInfo::new(path),
+            HsmPartitionInfo::new(dev_info, part_type),
         ))
     }
 }

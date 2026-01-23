@@ -76,6 +76,15 @@ impl DdiMockDev {
             dispatcher: G_DISPATCHER.clone(),
         })
     }
+
+    /// Returns the device kind (Virtual or Physical).
+    ///
+    /// # Returns
+    ///
+    /// The device kind that was determined when the device was opened.
+    pub fn device_kind(&self) -> Option<DdiDeviceKind> {
+        Some(DdiDeviceKind::Virtual)
+    }
 }
 
 impl Drop for DdiMockDev {
