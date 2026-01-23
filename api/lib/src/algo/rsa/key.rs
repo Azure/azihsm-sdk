@@ -71,6 +71,44 @@ impl HsmRsaPrivateKey {
         }
         Ok(())
     }
+
+    /// Validates a requested RSA private/public key pair property set.
+    ///
+    /// This is a fail-fast validation used by RSA key-pair operations (generation, unwrap, unmask)
+    /// to ensure the provided private and public [`HsmKeyProps`] are individually valid and also
+    /// mutually compatible.
+    ///
+    /// It enforces:
+    /// - `priv_props` is a valid RSA private-key property set (see [`Self::validate_props`])
+    /// - `pub_props` is a valid RSA public-key property set (see [`HsmRsaPublicKey::validate_props`])
+    /// - both keys use the same modulus size (`bits`)
+    /// - usage flags are complementary (`DECRYPT`↔`ENCRYPT`, `SIGN`↔`VERIFY`, `UNWRAP`↔`WRAP`)
+    ///
+    /// # Errors
+    /// Returns [`HsmError::InvalidKeyProps`] if either side is invalid, if the key sizes differ,
+    /// or if usage flags are not complementary.
+    fn validate_key_pair_props(priv_props: &HsmKeyProps, pub_props: &HsmKeyProps) -> HsmResult<()> {
+        //validate private key props
+        Self::validate_props(priv_props)?;
+
+        //validate public key props
+        HsmRsaPublicKey::validate_props(pub_props)?;
+
+        // Both keys must have the same modulus size.
+        if priv_props.bits() != pub_props.bits() {
+            Err(HsmError::InvalidKeyProps)?;
+        }
+
+        // Private/Public key usage flags must be complementary.
+        if priv_props.can_decrypt() != pub_props.can_encrypt()
+            || priv_props.can_sign() != pub_props.can_verify()
+            || priv_props.can_unwrap() != pub_props.can_wrap()
+        {
+            Err(HsmError::InvalidKeyProps)?;
+        }
+
+        Ok(())
+    }
 }
 impl HsmRsaPublicKey {
     /// Validates key properties for an RSA **public** key.
@@ -165,10 +203,7 @@ impl HsmKeyPairGenOp for HsmRsaKeyUnwrappingKeyGenAlgo {
         Self::Error,
     > {
         // Validate the provided key properties.
-        HsmRsaPrivateKey::validate_props(&priv_key_props)?;
-
-        //validate public key props
-        HsmRsaPublicKey::validate_props(&pub_key_props)?;
+        HsmRsaPrivateKey::validate_key_pair_props(&priv_key_props, &pub_key_props)?;
 
         // DDI supports only unwrapping keys for RSA key pair generation.
         if !priv_key_props.can_unwrap() || !pub_key_props.can_wrap() {
@@ -180,7 +215,8 @@ impl HsmKeyPairGenOp for HsmRsaKeyUnwrappingKeyGenAlgo {
             return Err(HsmError::InvalidKeyProps);
         }
 
-        let (handle, priv_key_props, pub_key_props) = ddi::get_rsa_unwrapping_key(session)?;
+        let (handle, priv_key_props, pub_key_props) =
+            ddi::get_rsa_unwrapping_key(session, priv_key_props, pub_key_props)?;
 
         // Extract the public key DER from the private key properties.
         let Some(pub_key_der) = pub_key_props.pub_key_der() else {
@@ -255,11 +291,8 @@ impl HsmKeyPairUnwrapOp for HsmRsaKeyRsaAesKeyUnwrapAlgo {
             return Err(HsmError::InvalidKey);
         }
 
-        //check private key props
-        HsmRsaPrivateKey::validate_props(&priv_key_props)?;
-
-        //check public key props
-        HsmRsaPublicKey::validate_props(&pub_key_props)?;
+        //check private and public key properties
+        HsmRsaPrivateKey::validate_key_pair_props(&priv_key_props, &pub_key_props)?;
 
         let (handle, priv_key_props, pub_key_props) = ddi::rsa_aes_unwrap_key_pair(
             unwrapping_key,
@@ -320,8 +353,7 @@ impl HsmKeyPairUnmaskOp for HsmRsaKeyUnmaskAlgo {
     )> {
         let (handle, priv_props, pub_props) = ddi::unmask_key_pair(session, masked_key)?;
 
-        HsmRsaPrivateKey::validate_props(&priv_props)?;
-        HsmRsaPublicKey::validate_props(&pub_props)?;
+        HsmRsaPrivateKey::validate_key_pair_props(&priv_props, &pub_props)?;
 
         let Some(pub_key_der) = pub_props.pub_key_der() else {
             return Err(HsmError::InternalError);

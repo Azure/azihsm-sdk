@@ -58,6 +58,48 @@ impl HsmEccPrivateKey {
 
         Ok(())
     }
+
+    /// Validates a requested ECC private/public key pair property set.
+    ///
+    /// This is a fail-fast validation used by ECC key-pair operations (generation, unwrap, unmask)
+    /// to ensure the private and public [`HsmKeyProps`] are individually valid and mutually
+    /// compatible.
+    ///
+    /// It enforces:
+    /// - `priv_props` is a valid ECC private-key property set (see [`Self::validate_props`])
+    /// - `pub_props` is a valid ECC public-key property set (see [`HsmEccPublicKey::validate_props`])
+    /// - both keys specify the same ECC curve (`ecc_curve`)
+    /// - public-key usage does not exceed private-key capability:
+    ///   - if `pub_props` allows `VERIFY`, then `priv_props` must allow `SIGN`
+    ///   - if `pub_props` allows `DERIVE`, then `priv_props` must allow `DERIVE`
+    ///
+    /// # Errors
+    /// Returns [`HsmError::InvalidKeyProps`] if either side is invalid, if curves mismatch,
+    /// or if the usage capabilities are not compatible.
+    fn validate_key_pair_props(priv_props: &HsmKeyProps, pub_props: &HsmKeyProps) -> HsmResult<()> {
+        // Validate both private key properties.
+        Self::validate_props(priv_props)?;
+
+        //validate public key properties
+        HsmEccPublicKey::validate_props(pub_props)?;
+
+        // check compatibility between private and public key properties
+        if priv_props.ecc_curve() != pub_props.ecc_curve() {
+            Err(HsmError::InvalidKeyProps)?;
+        }
+
+        // private key must be able to sign if public key can verify
+        if pub_props.can_verify() && !priv_props.can_sign() {
+            Err(HsmError::InvalidKeyProps)?;
+        }
+
+        // private key must be able to derive if public key can derive
+        if pub_props.can_derive() && !priv_props.can_derive() {
+            Err(HsmError::InvalidKeyProps)?;
+        }
+
+        Ok(())
+    }
 }
 
 impl HsmEccPublicKey {
@@ -139,11 +181,8 @@ impl HsmKeyPairGenOp for HsmEccKeyGenAlgo {
         ),
         Self::Error,
     > {
-        //validate private key properties
-        HsmEccPrivateKey::validate_props(&priv_key_props)?;
-
-        //validate public key properties
-        HsmEccPublicKey::validate_props(&pub_key_props)?;
+        //validate private and public key properties
+        HsmEccPrivateKey::validate_key_pair_props(&priv_key_props, &pub_key_props)?;
 
         // Create the ECC Key in the HSM via DDI.
         let (handle, priv_key_props, pub_key_props) =
@@ -222,11 +261,7 @@ impl HsmKeyPairUnwrapOp for HsmEccKeyRsaAesKeyUnwrapAlgo {
             return Err(HsmError::InvalidKey);
         }
 
-        // Make sure private props are valid
-        HsmEccPrivateKey::validate_props(&priv_key_props)?;
-
-        // Make sure public props are valid
-        HsmEccPublicKey::validate_props(&pub_key_props)?;
+        HsmEccPrivateKey::validate_key_pair_props(&priv_key_props, &pub_key_props)?;
 
         //Make sure public key is verifiable key
         let (handle, priv_key_props, pub_key_props) = ddi::rsa_aes_unwrap_key_pair(
@@ -288,8 +323,7 @@ impl HsmKeyPairUnmaskOp for HsmEccKeyUnmaskAlgo {
     )> {
         let (handle, priv_props, pub_props) = ddi::unmask_key_pair(session, masked_key)?;
 
-        HsmEccPrivateKey::validate_props(&priv_props)?;
-        HsmEccPublicKey::validate_props(&pub_props)?;
+        HsmEccPrivateKey::validate_key_pair_props(&priv_props, &pub_props)?;
 
         let Some(pub_key_der) = pub_props.pub_key_der() else {
             return Err(HsmError::InternalError);

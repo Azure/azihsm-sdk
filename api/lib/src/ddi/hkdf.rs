@@ -42,7 +42,7 @@ pub(crate) fn hkdf_derive(
     hash_algo: HsmHashAlgo,
     salt: Option<&[u8]>,
     info: Option<&[u8]>,
-    mut derived_key_props: HsmKeyProps,
+    derived_key_props: HsmKeyProps,
 ) -> HsmResult<(HsmKeyHandle, HsmKeyProps)> {
     // Build the DDI HKDF derive key command request.
     let req = DdiHkdfDeriveCmdReq {
@@ -66,10 +66,20 @@ pub(crate) fn hkdf_derive(
         dev.exec_op(&req, &mut None)
             .map_hsm_err(HsmError::DdiCmdFailure)
     })?;
-    let key_id = resp.data.key_id;
-    derived_key_props.set_masked_key(resp.data.masked_key.as_slice());
 
-    Ok((key_id, derived_key_props))
+    let session = shared_secret.session();
+    let mut key_id = HsmKeyIdGuard::new(&session, resp.data.key_id);
+
+    let dev_key_props = HsmMaskedKey::to_key_props(resp.data.masked_key.as_slice())?;
+    // Validate that the device returned properties match the requested properties.
+    if !derived_key_props.validate_dev_props(&dev_key_props) {
+        Err(HsmError::InvalidKeyProps)?;
+    }
+
+    //disarm the key guard to avoid deletion before returning
+    key_id.disarm();
+
+    Ok((key_id.key_id(), dev_key_props))
 }
 
 impl TryFrom<&HsmKeyProps> for DdiKeyType {
