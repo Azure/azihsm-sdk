@@ -129,7 +129,7 @@ pub fn recreate_cert(
         new_der.push(DER_SEQ_TAG);
         new_der.push(0x82);
         new_der.push((total_len >> u8::BITS) as u8);
-        new_der.push((total_len as u8) & u8::MAX);
+        new_der.push(total_len as u8);
 
         // Add TBS portion
         new_der.extend_from_slice(&tbs);

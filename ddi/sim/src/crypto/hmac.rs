@@ -158,8 +158,6 @@ fn test_hmac_sha_256() {
     let result = hmac_key3.hmac(&data, HashAlgorithm::Sha256);
     assert!(result.is_ok());
     let sig5 = result.unwrap();
-    data[512] = !data[512];
-    key[16] = !key[16];
 
     // Check signatures
     assert_eq!(sig1, sig2);
