@@ -20,7 +20,7 @@ Azure Integrated HSM (AZIHSM) SDK is a modular, cross-platform software developm
 ## Initial Setup
 Before running any commands in this document for the first time, restore required dependencies using these steps:
 
-For Linux systems, first install the following 4 linux packages with the package manager of the distribution:
+For Linux systems, first install the following 4 Linux packages with the package manager of the distribution:
 ```
 clang-format-18
 libbsd-dev
