@@ -7,43 +7,9 @@ use crate::AzihsmBuffer;
 use crate::AzihsmHandle;
 use crate::AzihsmStatus;
 use crate::HANDLE_TABLE;
-use crate::crypto_enc_dec::CryptoOp;
 use crate::handle_table::HandleType;
 use crate::utils::validate_output_buffer;
 use crate::utils::validate_ptr;
-
-impl TryFrom<&AzihsmAlgo> for azihsm_api::HsmAesKeyGenAlgo {
-    type Error = AzihsmStatus;
-
-    /// Converts a C FFI algorithm specification to HsmAesKeyGenAlgo.
-    fn try_from(_algo: &AzihsmAlgo) -> Result<Self, Self::Error> {
-        Ok(HsmAesKeyGenAlgo::default())
-    }
-}
-
-/// Generates a new AES key
-///
-/// Creates a new AES symmetric key with the specified properties.
-///
-/// # Arguments
-/// * `session` - HSM session for key generation
-/// * `algo` - AES key generation algorithm parameters (key size)
-/// * `key_props` - Properties for the generated key (extractable, persistent, etc.)
-///
-/// # Returns
-/// * `Ok(AzihsmHandle)` - Handle to the generated AES key
-/// * `Err(AzihsmStatus)` - On failure (e.g., unsupported key size)
-pub(crate) fn aes_generate_key(
-    session: &HsmSession,
-    algo: &AzihsmAlgo,
-    key_props: HsmKeyProps,
-) -> Result<AzihsmHandle, AzihsmStatus> {
-    let mut aes_algo = HsmAesKeyGenAlgo::try_from(algo)?;
-    let key = HsmKeyManager::generate_key(session, &mut aes_algo, key_props)?;
-    let handle = HANDLE_TABLE.alloc_handle(HandleType::AesKey, Box::new(key));
-
-    Ok(handle)
-}
 
 /// AES CBC parameters.
 #[repr(C)]
@@ -73,94 +39,96 @@ impl<'a> TryFrom<&'a mut AzihsmAlgo> for &'a mut AzihsmAlgoAesCbcParams {
     }
 }
 
-/// Wrapper for AES CBC streaming contexts (encryption or decryption)
-struct AesCbcStreamingContext {
-    context: AesCbcContext,
+/// AES CBC encryption context
+struct AesCbcEncryptContext {
+    context: HsmAesCbcEncryptContext,
     params: *mut AzihsmAlgoAesCbcParams,
 }
 
-enum AesCbcContext {
-    Encrypt(HsmAesCbcEncryptContext),
-    Decrypt(HsmAesCbcDecryptContext),
-}
-
-impl AesCbcStreamingContext {
+impl AesCbcEncryptContext {
     /// Create a new encryption context
-    fn new_encrypt(ctx: HsmAesCbcEncryptContext, params: &mut AzihsmAlgoAesCbcParams) -> Self {
+    fn new(ctx: HsmAesCbcEncryptContext, params: &mut AzihsmAlgoAesCbcParams) -> Self {
         Self {
-            context: AesCbcContext::Encrypt(ctx),
+            context: ctx,
             params: params as *mut AzihsmAlgoAesCbcParams,
         }
     }
 
-    /// Create a new decryption context
-    fn new_decrypt(ctx: HsmAesCbcDecryptContext, params: &mut AzihsmAlgoAesCbcParams) -> Self {
-        Self {
-            context: AesCbcContext::Decrypt(ctx),
-            params: params as *mut AzihsmAlgoAesCbcParams,
-        }
-    }
-
-    /// Helper to execute an operation on the context and update IV
-    fn execute_and_update_iv<F>(&mut self, op: F) -> Result<usize, AzihsmStatus>
-    where
-        F: FnOnce(&mut AesCbcContext) -> Result<usize, AzihsmStatus>,
-    {
-        let bytes_written = op(&mut self.context)?;
+    /// Update the context with input data
+    fn update(&mut self, input: &[u8], output: Option<&mut [u8]>) -> Result<usize, AzihsmStatus> {
+        let bytes_written = self.context.update(input, output)?;
         self.update_iv()?;
         Ok(bytes_written)
     }
 
-    /// Update the streaming context with input data
-    fn update(&mut self, input: &[u8], output: Option<&mut [u8]>) -> Result<usize, AzihsmStatus> {
-        self.execute_and_update_iv(|ctx| match ctx {
-            AesCbcContext::Encrypt(c) => Ok(c.update(input, output)?),
-            AesCbcContext::Decrypt(c) => Ok(c.update(input, output)?),
-        })
-    }
-
-    /// Finalize the streaming context
+    /// Finalize the context
     fn finish(&mut self, output: Option<&mut [u8]>) -> Result<usize, AzihsmStatus> {
-        self.execute_and_update_iv(|ctx| match ctx {
-            AesCbcContext::Encrypt(c) => Ok(c.finish(output)?),
-            AesCbcContext::Decrypt(c) => Ok(c.finish(output)?),
-        })
-    }
-
-    /// Get the current IV from the context
-    fn iv(&self) -> &[u8] {
-        match &self.context {
-            AesCbcContext::Encrypt(ctx) => ctx.algo().iv(),
-            AesCbcContext::Decrypt(ctx) => ctx.algo().iv(),
-        }
+        let bytes_written = self.context.finish(output)?;
+        self.update_iv()?;
+        Ok(bytes_written)
     }
 
     /// Update the IV in the caller's parameters
     fn update_iv(&mut self) -> Result<(), AzihsmStatus> {
         let params = crate::utils::deref_mut_ptr(self.params)?;
-        params.iv.copy_from_slice(self.iv());
+        params.iv.copy_from_slice(self.context.algo().iv());
         Ok(())
     }
 }
 
-/// Common function for AES encryption/decryption operations
+/// AES CBC decryption context
+struct AesCbcDecryptContext {
+    context: HsmAesCbcDecryptContext,
+    params: *mut AzihsmAlgoAesCbcParams,
+}
+
+impl AesCbcDecryptContext {
+    /// Create a new decryption context
+    fn new(ctx: HsmAesCbcDecryptContext, params: &mut AzihsmAlgoAesCbcParams) -> Self {
+        Self {
+            context: ctx,
+            params: params as *mut AzihsmAlgoAesCbcParams,
+        }
+    }
+
+    /// Update the context with input data
+    fn update(&mut self, input: &[u8], output: Option<&mut [u8]>) -> Result<usize, AzihsmStatus> {
+        let bytes_written = self.context.update(input, output)?;
+        self.update_iv()?;
+        Ok(bytes_written)
+    }
+
+    /// Finalize the context
+    fn finish(&mut self, output: Option<&mut [u8]>) -> Result<usize, AzihsmStatus> {
+        let bytes_written = self.context.finish(output)?;
+        self.update_iv()?;
+        Ok(bytes_written)
+    }
+
+    /// Update the IV in the caller's parameters
+    fn update_iv(&mut self) -> Result<(), AzihsmStatus> {
+        let params = crate::utils::deref_mut_ptr(self.params)?;
+        params.iv.copy_from_slice(self.context.algo().iv());
+        Ok(())
+    }
+}
+
+/// Encrypt data using AES CBC
 ///
 /// # Arguments
 /// * `algo` - Algorithm specification (must be AES CBC)
 /// * `key_handle` - Handle to the AES key
-/// * `input` - Input data buffer (plaintext for encrypt, ciphertext for decrypt)
-/// * `output` - Output data buffer (ciphertext for encrypt, plaintext for decrypt)
-/// * `encrypt` - true for encryption, false for decryption
+/// * `plain_text` - Plaintext input buffer
+/// * `cipher_text` - Ciphertext output buffer
 ///
 /// # Returns
 /// * `Ok(())` on success
-/// * `Err(AzihsmError)` on failure
-pub(crate) fn aes_cbc_crypt(
+/// * `Err(AzihsmStatus)` on failure
+pub(crate) fn aes_cbc_encrypt(
     algo: &mut AzihsmAlgo,
     key_handle: AzihsmHandle,
-    input: &[u8],
-    output: &mut AzihsmBuffer,
-    op: CryptoOp,
+    plain_text: &[u8],
+    cipher_text: &mut AzihsmBuffer,
 ) -> Result<(), AzihsmStatus> {
     if algo.id != AzihsmAlgoId::AesCbc && algo.id != AzihsmAlgoId::AesCbcPad {
         Err(AzihsmStatus::UnsupportedAlgorithm)?;
@@ -175,30 +143,22 @@ pub(crate) fn aes_cbc_crypt(
 
     // Create AES-CBC algorithm based on padding mode
     let mut aes_algo = if algo_id == AzihsmAlgoId::AesCbcPad {
-        azihsm_api::HsmAesCbcAlgo::with_padding(iv)?
+        HsmAesCbcAlgo::with_padding(iv)?
     } else {
-        azihsm_api::HsmAesCbcAlgo::with_no_padding(iv)?
+        HsmAesCbcAlgo::with_no_padding(iv)?
     };
 
     // Query required output length first
-    let required_len = if op == CryptoOp::Encrypt {
-        HsmEncrypter::encrypt(&mut aes_algo, key, input, None)?
-    } else {
-        HsmDecrypter::decrypt(&mut aes_algo, key, input, None)?
-    };
+    let required_len = HsmEncrypter::encrypt(&mut aes_algo, key, plain_text, None)?;
 
     // Check if output buffer is large enough
-    let output_buf = validate_output_buffer(output, required_len)?;
+    let output_buf = validate_output_buffer(cipher_text, required_len)?;
 
-    // Perform actual encryption or decryption
-    let written = if op == CryptoOp::Encrypt {
-        HsmEncrypter::encrypt(&mut aes_algo, key, input, Some(output_buf))?
-    } else {
-        HsmDecrypter::decrypt(&mut aes_algo, key, input, Some(output_buf))?
-    };
+    // Perform actual encryption
+    let written = HsmEncrypter::encrypt(&mut aes_algo, key, plain_text, Some(output_buf))?;
 
-    // Update output buffer length with actual bytes written.
-    output.len = written as u32;
+    // Update output buffer length with actual bytes written
+    cipher_text.len = written as u32;
 
     // Update the IV
     params.iv.copy_from_slice(aes_algo.iv());
@@ -206,9 +166,62 @@ pub(crate) fn aes_cbc_crypt(
     Ok(())
 }
 
-/// Initialize AES CBC streaming encryption
+/// Decrypt data using AES CBC
 ///
-/// Creates a streaming encryption context that can process data incrementally.
+/// # Arguments
+/// * `algo` - Algorithm specification (must be AES CBC)
+/// * `key_handle` - Handle to the AES key
+/// * `cipher_text` - Ciphertext input buffer
+/// * `plain_text` - Plaintext output buffer
+///
+/// # Returns
+/// * `Ok(())` on success
+/// * `Err(AzihsmStatus)` on failure
+pub(crate) fn aes_cbc_decrypt(
+    algo: &mut AzihsmAlgo,
+    key_handle: AzihsmHandle,
+    cipher_text: &[u8],
+    plain_text: &mut AzihsmBuffer,
+) -> Result<(), AzihsmStatus> {
+    if algo.id != AzihsmAlgoId::AesCbc && algo.id != AzihsmAlgoId::AesCbcPad {
+        Err(AzihsmStatus::UnsupportedAlgorithm)?;
+    }
+
+    // Get the AES key from handle table
+    let key = &HsmAesKey::try_from(key_handle)?;
+
+    let algo_id = algo.id;
+    let params: &mut AzihsmAlgoAesCbcParams = algo.try_into()?;
+    let iv = params.iv.to_vec();
+
+    // Create AES-CBC algorithm based on padding mode
+    let mut aes_algo = if algo_id == AzihsmAlgoId::AesCbcPad {
+        HsmAesCbcAlgo::with_padding(iv)?
+    } else {
+        HsmAesCbcAlgo::with_no_padding(iv)?
+    };
+
+    // Query required output length first
+    let required_len = HsmDecrypter::decrypt(&mut aes_algo, key, cipher_text, None)?;
+
+    // Check if output buffer is large enough
+    let output_buf = validate_output_buffer(plain_text, required_len)?;
+
+    // Perform actual decryption
+    let written = HsmDecrypter::decrypt(&mut aes_algo, key, cipher_text, Some(output_buf))?;
+
+    // Update output buffer length with actual bytes written
+    plain_text.len = written as u32;
+
+    // Update the IV
+    params.iv.copy_from_slice(aes_algo.iv());
+
+    Ok(())
+}
+
+/// Initialize AES CBC encryption
+///
+/// Creates an encryption context that can process data incrementally.
 /// The context should be used with update and finalize operations.
 ///
 /// # Arguments
@@ -217,11 +230,10 @@ pub(crate) fn aes_cbc_crypt(
 ///
 /// # Returns
 /// * `Ok(AzihsmHandle)` - Handle to the encryption context for subsequent operations
-/// * `Err(AzihsmError)` - On failure
-pub(crate) fn aes_cbc_streaming_init(
+/// * `Err(AzihsmStatus)` - On failure
+pub(crate) fn aes_cbc_encrypt_init(
     algo: &mut AzihsmAlgo,
     key_handle: AzihsmHandle,
-    op: CryptoOp,
 ) -> Result<AzihsmHandle, AzihsmStatus> {
     // Get the AES key from handle table
     let key = &HsmAesKey::try_from(key_handle)?;
@@ -237,44 +249,78 @@ pub(crate) fn aes_cbc_streaming_init(
         HsmAesCbcAlgo::with_no_padding(iv)?
     };
 
-    // Initialize streaming context based on operation type
-    let context = if op == CryptoOp::Encrypt {
-        AesCbcStreamingContext::new_encrypt(aes_algo.encrypt_init(key.clone())?, params)
-    } else {
-        AesCbcStreamingContext::new_decrypt(aes_algo.decrypt_init(key.clone())?, params)
-    };
+    // Initialize context
+    let encrypt_context = aes_algo.encrypt_init(key.clone())?;
+    let context = AesCbcEncryptContext::new(encrypt_context, params);
 
     // Store context in handle table and return handle
-    let ctx_handle = HANDLE_TABLE.alloc_handle(HandleType::AesCbcStreamingCtx, Box::new(context));
+    let ctx_handle = HANDLE_TABLE.alloc_handle(HandleType::AesCbcEncryptCtx, Box::new(context));
 
     Ok(ctx_handle)
 }
 
-/// Update AES CBC streaming encryption with additional plaintext
+/// Initialize AES CBC decryption
 ///
-/// Processes a chunk of plaintext data in a streaming encryption operation.
+/// Creates a decryption context that can process data incrementally.
+/// The context should be used with update and finalize operations.
+///
+/// # Arguments
+/// * `algo` - Algorithm specification (must be AES CBC or AES CBC with padding)
+/// * `key_handle` - Handle to the AES key
+///
+/// # Returns
+/// * `Ok(AzihsmHandle)` - Handle to the decryption context for subsequent operations
+/// * `Err(AzihsmStatus)` - On failure
+pub(crate) fn aes_cbc_decrypt_init(
+    algo: &mut AzihsmAlgo,
+    key_handle: AzihsmHandle,
+) -> Result<AzihsmHandle, AzihsmStatus> {
+    // Get the AES key from handle table
+    let key = &HsmAesKey::try_from(key_handle)?;
+
+    let algo_id = algo.id;
+    let params: &mut AzihsmAlgoAesCbcParams = algo.try_into()?;
+    let iv = params.iv.to_vec();
+
+    // Create AES-CBC algorithm based on padding mode
+    let aes_algo = if algo_id == AzihsmAlgoId::AesCbcPad {
+        HsmAesCbcAlgo::with_padding(iv)?
+    } else {
+        HsmAesCbcAlgo::with_no_padding(iv)?
+    };
+
+    // Initialize context
+    let decrypt_context = aes_algo.decrypt_init(key.clone())?;
+    let context = AesCbcDecryptContext::new(decrypt_context, params);
+
+    // Store context in handle table and return handle
+    let ctx_handle = HANDLE_TABLE.alloc_handle(HandleType::AesCbcDecryptCtx, Box::new(context));
+
+    Ok(ctx_handle)
+}
+
+/// Update AES CBC encryption with additional data
+///
+/// Processes a chunk of plaintext data in an encryption operation.
 /// This function follows the two-phase pattern: first query the required buffer size,
-/// then perform the actual encryption if the buffer is sufficient.
+/// then perform the actual operation if the buffer is sufficient.
 ///
 /// # Arguments
 /// * `ctx_handle` - Handle to the encryption context
-/// * `input` - Reference to input buffer
-/// * `output` - Mutable reference to output buffer
+/// * `input` - Reference to plaintext input buffer
+/// * `output` - Mutable reference to ciphertext output buffer
 ///
 /// # Returns
 /// * `Ok(())` on success
-/// * `Err(AzihsmError)` on failure
-///
-/// # Safety
-/// This function dereferences raw pointers
-pub(crate) fn aes_cbc_streaming_update(
+/// * `Err(AzihsmStatus)` on failure
+pub(crate) fn aes_cbc_encrypt_update(
     ctx_handle: AzihsmHandle,
     input: &AzihsmBuffer,
     output: &mut AzihsmBuffer,
 ) -> Result<(), AzihsmStatus> {
-    // Get the streaming context from handle table
-    let ctx: &mut AesCbcStreamingContext =
-        HANDLE_TABLE.as_mut(ctx_handle, HandleType::AesCbcStreamingCtx)?;
+    // Get the context from handle table
+    let ctx: &mut AesCbcEncryptContext =
+        HANDLE_TABLE.as_mut(ctx_handle, HandleType::AesCbcEncryptCtx)?;
 
     // Get input data slice
     let input_slice: &[u8] = input.try_into()?;
@@ -294,23 +340,65 @@ pub(crate) fn aes_cbc_streaming_update(
     Ok(())
 }
 
-/// Finalize AES CBC streaming encryption/decryption
-/// Completes the streaming operation and processes any remaining data.
+/// Update AES CBC decryption with additional data
+///
+/// Processes a chunk of ciphertext data in a decryption operation.
+/// This function follows the two-phase pattern: first query the required buffer size,
+/// then perform the actual operation if the buffer is sufficient.
 ///
 /// # Arguments
-/// * `ctx_handle` - Handle to the encryption/decryption context
-/// * `output` - Mutable reference to output buffer
+/// * `ctx_handle` - Handle to the decryption context
+/// * `input` - Reference to ciphertext input buffer
+/// * `output` - Mutable reference to plaintext output buffer
 ///
 /// # Returns
 /// * `Ok(())` on success
-/// * `Err(AzihsmError)` on failure
-pub(crate) fn aes_cbc_streaming_final(
+/// * `Err(AzihsmStatus)` on failure
+pub(crate) fn aes_cbc_decrypt_update(
+    ctx_handle: AzihsmHandle,
+    input: &AzihsmBuffer,
+    output: &mut AzihsmBuffer,
+) -> Result<(), AzihsmStatus> {
+    // Get the context from handle table
+    let ctx: &mut AesCbcDecryptContext =
+        HANDLE_TABLE.as_mut(ctx_handle, HandleType::AesCbcDecryptCtx)?;
+
+    // Get input data slice
+    let input_slice: &[u8] = input.try_into()?;
+
+    // Query required output length first
+    let required_len = ctx.update(input_slice, None)?;
+
+    // Prepare output buffer and get slice
+    let output_slice = validate_output_buffer(output, required_len)?;
+
+    // Perform the update operation. This will also update the IV in algo params in the context.
+    let bytes_written = ctx.update(input_slice, Some(output_slice))?;
+
+    // Update output buffer length with actual bytes written
+    output.len = bytes_written as u32;
+
+    Ok(())
+}
+
+/// Finalize AES CBC encryption
+///
+/// Completes the encryption operation and processes any remaining data.
+///
+/// # Arguments
+/// * `ctx_handle` - Handle to the encryption context
+/// * `output` - Mutable reference to ciphertext output buffer
+///
+/// # Returns
+/// * `Ok(())` on success
+/// * `Err(AzihsmStatus)` on failure
+pub(crate) fn aes_cbc_encrypt_final(
     ctx_handle: AzihsmHandle,
     output: &mut AzihsmBuffer,
 ) -> Result<(), AzihsmStatus> {
-    // Get the streaming context from handle table
-    let ctx: &mut AesCbcStreamingContext =
-        HANDLE_TABLE.as_mut(ctx_handle, HandleType::AesCbcStreamingCtx)?;
+    // Get the context from handle table
+    let ctx: &mut AesCbcEncryptContext =
+        HANDLE_TABLE.as_mut(ctx_handle, HandleType::AesCbcEncryptCtx)?;
 
     // Query required output length first
     let required_len = ctx.finish(None)?;
@@ -327,28 +415,36 @@ pub(crate) fn aes_cbc_streaming_final(
     Ok(())
 }
 
-/// Unmasks a masked AES key and returns a handle to it
+/// Finalize AES CBC decryption
 ///
-/// Takes a masked AES key (typically received from external storage or transmission)
-/// and unmasks it within the HSM session, creating a usable key handle.
+/// Completes the decryption operation and processes any remaining data.
 ///
 /// # Arguments
-/// * `session` - Reference to the HSM session where the key will be unmasked
-/// * `masked_key` - Byte slice containing the masked key material
+/// * `ctx_handle` - Handle to the decryption context
+/// * `output` - Mutable reference to plaintext output buffer
 ///
 /// # Returns
-/// * `Ok(AzihsmHandle)` - Handle to the unmasked AES key for subsequent cryptographic operations
-/// * `Err(AzihsmStatus)` - On failure (e.g., invalid masked key format, session error)
-pub(crate) fn aes_unmask_key(
-    session: &HsmSession,
-    masked_key: &[u8],
-) -> Result<AzihsmHandle, AzihsmStatus> {
-    let mut unmask_algo = HsmAesKeyUnmaskAlgo::default();
+/// * `Ok(())` on success
+/// * `Err(AzihsmStatus)` on failure
+pub(crate) fn aes_cbc_decrypt_final(
+    ctx_handle: AzihsmHandle,
+    output: &mut AzihsmBuffer,
+) -> Result<(), AzihsmStatus> {
+    // Get the context from handle table
+    let ctx: &mut AesCbcDecryptContext =
+        HANDLE_TABLE.as_mut(ctx_handle, HandleType::AesCbcDecryptCtx)?;
 
-    // Unmask AES key
-    let key: HsmAesKey = HsmKeyManager::unmask_key(session, &mut unmask_algo, masked_key)?;
+    // Query required output length first
+    let required_len = ctx.finish(None)?;
 
-    let handle = HANDLE_TABLE.alloc_handle(HandleType::AesKey, Box::new(key));
+    // Prepare output buffer and get slice
+    let output_slice = validate_output_buffer(output, required_len)?;
 
-    Ok(handle)
+    // Perform the finalize operation. This will also update the IV in algo params in the context.
+    let bytes_written = ctx.finish(Some(output_slice))?;
+
+    // Update output buffer length with actual bytes written
+    output.len = bytes_written as u32;
+
+    Ok(())
 }

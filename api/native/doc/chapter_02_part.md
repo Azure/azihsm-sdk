@@ -112,16 +112,23 @@ Initialize a partition with credentials
 ```cpp
 azihsm_status azihsm_part_init(
     azihsm_handle handle,
-    const struct azihsm_credentials *creds
+    const struct azihsm_credentials *creds,
+    const struct azihsm_buffer *bmk,
+    const struct azihsm_buffer *muk,
+    const struct azihsm_buffer *mobk
     );
 ```
 
 **Parameters**
 
- | Parameter         | Name                                              | Description                |
- | ----------------- | ------------------------------------------------- | -------------------------- |
- | [in] handle       | [azihsm_handle](#azihsm_handle)                   | device handle              |
- | [in] creds        | [struct azihsm_credentials*](#azihsm_credentials) | device credential   &nbsp; |
+ | Parameter         | Name                                              | Description                                           |
+ | ----------------- | ------------------------------------------------- | ----------------------------------------------------- |
+ | [in] handle       | [azihsm_handle](#azihsm_handle)                   | device handle                                         |
+ | [in] creds        | [struct azihsm_credentials*](#azihsm_credentials) | device credential                                     |
+ | [in] bmk          | [struct azihsm_buffer*](#azihsm_buffer)           | optional backup masking key (can be NULL)             |
+ | [in] muk          | [struct azihsm_buffer*](#azihsm_buffer)           | optional masked unwrapping key (can be NULL)          |
+ | [in] mobk         | [struct azihsm_buffer*](#azihsm_buffer)           | optional masked owner backup key (can be NULL) &nbsp; |
+ 
 
 **Returns**
 

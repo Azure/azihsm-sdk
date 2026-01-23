@@ -124,3 +124,25 @@ pub(crate) fn copy_to_key_prop(
     key_prop.len = required_len;
     Ok(())
 }
+
+/// Converts an optional AzihsmBuffer pointer to Option<&[u8]>
+///
+/// # Arguments
+///
+/// * `buf` - Pointer to an AzihsmBuffer, may be null
+///
+/// # Returns
+///
+/// * `Ok(None)` - if the pointer is null
+/// * `Ok(Some(&[u8]))` - if the pointer is valid and contains data
+/// * `Err(AzihsmStatus)` - if the pointer is invalid or the buffer is malformed
+pub(crate) fn buffer_to_optional_slice<'a>(
+    buf: *const AzihsmBuffer,
+) -> Result<Option<&'a [u8]>, AzihsmStatus> {
+    if buf.is_null() {
+        Ok(None)
+    } else {
+        let buffer = deref_ptr(buf)?;
+        Ok(Some(buffer.try_into()?))
+    }
+}

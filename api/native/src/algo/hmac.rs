@@ -97,7 +97,7 @@ pub(crate) fn hmac_sign_init(key_handle: AzihsmHandle) -> Result<AzihsmHandle, A
     let ctx = HsmSigner::sign_init(algo, key)?;
 
     // Allocate a handle for the context and return it
-    let ctx_handle = HANDLE_TABLE.alloc_handle(HandleType::HmacSignStreamingCtx, Box::new(ctx));
+    let ctx_handle = HANDLE_TABLE.alloc_handle(HandleType::HmacSignCtx, Box::new(ctx));
 
     Ok(ctx_handle)
 }
@@ -115,8 +115,7 @@ pub(crate) fn hmac_sign_init(key_handle: AzihsmHandle) -> Result<AzihsmHandle, A
 /// * `Err(AzihsmStatus)` - On failure (e.g., invalid context)
 pub(crate) fn hmac_sign_update(ctx_handle: AzihsmHandle, data: &[u8]) -> Result<(), AzihsmStatus> {
     // Get mutable reference to the context from handle table
-    let ctx: &mut HsmHmacSignContext =
-        HANDLE_TABLE.as_mut(ctx_handle, HandleType::HmacSignStreamingCtx)?;
+    let ctx: &mut HsmHmacSignContext = HANDLE_TABLE.as_mut(ctx_handle, HandleType::HmacSignCtx)?;
 
     // Update the context with the data chunk
     ctx.update(data)?;
@@ -141,7 +140,7 @@ pub(crate) fn hmac_sign_final(
 ) -> Result<(), AzihsmStatus> {
     // Get a reference to determine the required signature size
     let ctx_ref: &mut HsmHmacSignContext =
-        HANDLE_TABLE.as_mut(ctx_handle, HandleType::HmacSignStreamingCtx)?;
+        HANDLE_TABLE.as_mut(ctx_handle, HandleType::HmacSignCtx)?;
     let required_size = ctx_ref.finish(None)?;
 
     // Check if output buffer is large enough
@@ -149,7 +148,7 @@ pub(crate) fn hmac_sign_final(
 
     // Take ownership of the context and finalize
     let mut ctx: Box<HsmHmacSignContext> =
-        HANDLE_TABLE.free_handle(ctx_handle, HandleType::HmacSignStreamingCtx)?;
+        HANDLE_TABLE.free_handle(ctx_handle, HandleType::HmacSignCtx)?;
 
     // Perform the final signing operation
     let sig_len = ctx.finish(Some(output_data))?;
@@ -182,7 +181,7 @@ pub(crate) fn hmac_verify_init(key_handle: AzihsmHandle) -> Result<AzihsmHandle,
     let ctx = HsmVerifier::verify_init(algo, key)?;
 
     // Allocate a handle for the context and return it
-    let ctx_handle = HANDLE_TABLE.alloc_handle(HandleType::HmacVerifyStreamingCtx, Box::new(ctx));
+    let ctx_handle = HANDLE_TABLE.alloc_handle(HandleType::HmacVerifyCtx, Box::new(ctx));
 
     Ok(ctx_handle)
 }
@@ -204,7 +203,7 @@ pub(crate) fn hmac_verify_update(
 ) -> Result<(), AzihsmStatus> {
     // Get mutable reference to the context from handle table
     let ctx: &mut HsmHmacVerifyContext =
-        HANDLE_TABLE.as_mut(ctx_handle, HandleType::HmacVerifyStreamingCtx)?;
+        HANDLE_TABLE.as_mut(ctx_handle, HandleType::HmacVerifyCtx)?;
 
     // Update the context with the data chunk
     ctx.update(data)?;
@@ -229,7 +228,7 @@ pub(crate) fn hmac_verify_final(
 ) -> Result<bool, AzihsmStatus> {
     // Take ownership of the context and finalize
     let mut ctx: Box<HsmHmacVerifyContext> =
-        HANDLE_TABLE.free_handle(ctx_handle, HandleType::HmacVerifyStreamingCtx)?;
+        HANDLE_TABLE.free_handle(ctx_handle, HandleType::HmacVerifyCtx)?;
 
     // Perform the final verification operation
     let is_valid = ctx.finish(signature)?;
