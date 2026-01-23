@@ -68,7 +68,7 @@ Before running any commands below, ensure you have finished the initial setup st
 ### Required Before Each Commit
 Always run formatting checks before committing:
 ```bash
-cargo xtask fmt --fix
+cargo +nightly xtask fmt --fix
 ```
 It auto fixes formatting issues. This ensures all source code follows rustfmt standards.
 
