@@ -103,14 +103,17 @@ impl Copyright {
         };
 
         let header = format!("{} {}", prefix, Self::COPYRIGHT_HEADER_TEXT);
-        let mut lines: Vec<String> = file_content
+        let mut replacement = None;
+        let mut offset = 0;
+        for line in file_content
             .split_inclusive('\n')
-            .map(str::to_string)
-            .collect();
-        let mut replaced = false;
-
-        for line in lines.iter_mut().take(Self::COPYRIGHT_PRESENT_IN_LINES) {
-            if line.contains("Copyright") && line.contains("Microsoft") {
+            .take(Self::COPYRIGHT_PRESENT_IN_LINES)
+        {
+            let line_end = offset + line.len();
+            let line_without_cr = line.trim_end_matches('\r');
+            if line_contains_word(line_without_cr, "Copyright")
+                && line_contains_word(line_without_cr, "Microsoft")
+            {
                 let line_ending = if line.ends_with("\r\n") {
                     "\r\n"
                 } else if line.ends_with('\n') {
@@ -118,22 +121,38 @@ impl Copyright {
                 } else {
                     ""
                 };
-                *line = format!("{header}{line_ending}");
-                replaced = true;
+                replacement = Some((offset, line_end, line_ending));
                 break;
             }
+            offset = line_end;
         }
 
-        if replaced {
-            file_content = lines.concat();
+        if let Some((line_start, line_end, line_ending)) = replacement {
+            debug_assert!(line_end >= line_start);
+            let _original_len = line_end - line_start;
+            let capacity = file_content
+                .len()
+                .checked_add(header.len())
+                .expect("capacity overflow");
+            let mut updated = String::with_capacity(capacity);
+            updated.push_str(&file_content[..line_start]);
+            updated.push_str(&header);
+            updated.push_str(line_ending);
+            updated.push_str(&file_content[line_end..]);
+            file_content = updated;
         } else {
             let header = format!("{header}\n");
-            file_content.insert_str(0, header.as_str());
+            file_content.insert_str(0, &header);
         }
 
         std::fs::write(path, file_content)?;
         Ok(())
     }
+}
+
+fn line_contains_word(line: &str, word: &str) -> bool {
+    line.split(|ch: char| !ch.is_alphanumeric())
+        .any(|token| token.eq_ignore_ascii_case(word))
 }
 
 #[cfg(test)]
@@ -143,14 +162,33 @@ mod tests {
 
     use super::Copyright;
 
+    struct TempFile {
+        path: PathBuf,
+    }
+
+    impl TempFile {
+        fn new(ext: &str) -> Self {
+            Self {
+                path: temp_path(ext),
+            }
+        }
+    }
+
+    impl Drop for TempFile {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+
     fn temp_path(ext: &str) -> PathBuf {
-        let nanos = SystemTime::now()
+        let duration = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
+            .expect("system time before unix epoch");
+        let timestamp = format!("{}_{}", duration.as_secs(), duration.subsec_nanos());
         let mut path = std::env::temp_dir();
         path.push(format!(
-            "xtask_copyright_{nanos}_{}.{}",
+            "xtask_copyright_{timestamp}_{:?}_{}.{}",
+            std::thread::current().id(),
             std::process::id(),
             ext
         ));
@@ -159,32 +197,30 @@ mod tests {
 
     #[test]
     fn fix_copyright_replaces_existing_header() {
-        let path = temp_path("rs");
+        let temp = TempFile::new("rs");
         let contents = "// Copyright 2024 Microsoft\n// Another line\nfn main() {}\n";
-        std::fs::write(&path, contents).expect("write temp file");
+        std::fs::write(&temp.path, contents).expect("write temp file");
 
-        Copyright::fix_copyright(&path).expect("fix copyright");
+        Copyright::fix_copyright(&temp.path).expect("fix copyright");
 
-        let updated = std::fs::read_to_string(&path).expect("read temp file");
+        let updated = std::fs::read_to_string(&temp.path).expect("read temp file");
         let expected = format!(
             "// {}\n// Another line\nfn main() {{}}\n",
             Copyright::COPYRIGHT_HEADER_TEXT
         );
-        std::fs::remove_file(&path).expect("remove temp file");
         assert_eq!(updated, expected);
     }
 
     #[test]
     fn fix_copyright_inserts_when_missing() {
-        let path = temp_path("rs");
+        let temp = TempFile::new("rs");
         let contents = "fn main() {}\n";
-        std::fs::write(&path, contents).expect("write temp file");
+        std::fs::write(&temp.path, contents).expect("write temp file");
 
-        Copyright::fix_copyright(&path).expect("fix copyright");
+        Copyright::fix_copyright(&temp.path).expect("fix copyright");
 
-        let updated = std::fs::read_to_string(&path).expect("read temp file");
+        let updated = std::fs::read_to_string(&temp.path).expect("read temp file");
         let expected = format!("// {}\nfn main() {{}}\n", Copyright::COPYRIGHT_HEADER_TEXT);
-        std::fs::remove_file(&path).expect("remove temp file");
         assert_eq!(updated, expected);
     }
 }
