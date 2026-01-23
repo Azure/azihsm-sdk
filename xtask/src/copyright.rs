@@ -158,7 +158,8 @@ fn line_contains_word(line: &str, word: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::time::SystemTime;
+    use std::time::UNIX_EPOCH;
 
     use super::Copyright;
 
