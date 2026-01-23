@@ -136,6 +136,12 @@ pub(crate) fn rsa_aes_unwrap_key_pair(
     })?;
 
     let key_handle = resp.data.key_id;
+
+    let session = unwrapping_key.session();
+
+    //guard to delete key if error occurs before disarming
+    let mut key_id = HsmKeyIdGuard::new(&session, key_handle);
+
     let Some(pub_key) = resp.data.pub_key else {
         return Err(HsmError::InternalError);
     };
@@ -147,10 +153,9 @@ pub(crate) fn rsa_aes_unwrap_key_pair(
     if !priv_key_props.validate_dev_props(&dev_priv_key_props)
         || !pub_key_props.validate_dev_props(&dev_pub_key_props)
     {
-        //delete key
-        delete_key(&unwrapping_key.session(), key_handle)?;
         Err(HsmError::InvalidKeyProps)?;
     }
+    key_id.disarm();
     Ok((key_handle, dev_priv_key_props, dev_pub_key_props))
 }
 

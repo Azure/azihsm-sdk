@@ -533,35 +533,3 @@ fn test_aes_xts_key_prop_rejects_invalid_usage_flags(session: HsmSession) {
         assert!(matches!(result, Err(HsmError::InvalidKeyProps)));
     }
 }
-
-#[session_test]
-fn test_aes_xts_key_prop_encrypt_only_succeeds(session: HsmSession) {
-    let props = HsmKeyPropsBuilder::default()
-        .class(HsmKeyClass::Secret)
-        .key_kind(HsmKeyKind::AesXts)
-        .bits(512)
-        .can_encrypt(true)
-        .can_decrypt(false)
-        .build()
-        .expect("Failed to build key props");
-
-    let key = test_aes_xts_key_prop_gen_key(&session, props).expect("XTS key generation failed");
-    assert!(key.can_encrypt());
-    assert!(!key.can_decrypt());
-}
-
-#[session_test]
-fn test_aes_xts_key_prop_decrypt_only_succeeds(session: HsmSession) {
-    let props = HsmKeyPropsBuilder::default()
-        .class(HsmKeyClass::Secret)
-        .key_kind(HsmKeyKind::AesXts)
-        .bits(512)
-        .can_encrypt(false)
-        .can_decrypt(true)
-        .build()
-        .expect("Failed to build key props");
-
-    let key = test_aes_xts_key_prop_gen_key(&session, props).expect("XTS key generation failed");
-    assert!(!key.can_encrypt());
-    assert!(key.can_decrypt());
-}

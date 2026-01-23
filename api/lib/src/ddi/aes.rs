@@ -289,30 +289,24 @@ pub(crate) fn aes_xts_generate_key(
     // Generate first key
     let (handle1, dev_key_props1) = aes_generate_key(session, props.clone())?;
 
+    let mut key_id1 = ddi::HsmKeyIdGuard::new(session, handle1);
+
     // Generate second key
-    let Ok((handle2, _dev_key_props2)) = aes_generate_key(session, props.clone()) else {
-        //delete the first key created
-        let _ = ddi::delete_key(session, handle1);
-        return Err(HsmError::InternalError);
-    };
+    let (handle2, _dev_key_props2) = aes_generate_key(session, props.clone())?;
+
+    // create key guard for second key
+    let mut key_id2 = ddi::HsmKeyIdGuard::new(session, handle2);
 
     // make sure handles are different
     if handle1 == handle2 {
-        //delete the keys created
-        let _ = ddi::delete_key(session, handle1);
-
         Err(HsmError::InternalError)?;
     }
-    //create a local copy of props to keep same key bits as input props
-    // XTS requires key generation of two keys, but the key size in props
-    // represents the total size (e.g., 512 bits for two 256-bit keys).
-    let mut props = props;
 
-    if let Some(masked_key) = dev_key_props1.masked_key() {
-        props.set_masked_key(masked_key);
-    }
+    // disarm the key guard to avoid deletion before returning
+    key_id1.disarm();
+    key_id2.disarm();
 
-    Ok((handle1, handle2, props))
+    Ok((handle1, handle2, dev_key_props1))
 }
 
 /// Encrypts data using AES-XTS mode at the DDI layer.
@@ -407,15 +401,11 @@ fn aes_xts_encrypt_decrypt(
         session_id: key.sess_id(),
         short_app_id: 0,
     };
+    let mut is_fips_approved = false;
 
     let resp = key.with_dev(|dev| {
-        dev.exec_op_fp_xts(op, xts_params, input.to_vec())
+        dev.exec_op_fp_xts_slice(op, xts_params, input, output, &mut is_fips_approved)
             .map_hsm_err(HsmError::DdiCmdFailure)
     })?;
-
-    // Copy output data
-    let resp_msg = resp.data.as_slice();
-    let to_copy = resp_msg.len().min(output.len());
-    output[..to_copy].copy_from_slice(&resp_msg[..to_copy]);
-    Ok(to_copy)
+    Ok(resp)
 }
