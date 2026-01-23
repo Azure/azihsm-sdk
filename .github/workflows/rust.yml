@@ -35,7 +35,7 @@ jobs:
           ~/.cargo/registry/cache/
           ~/.cargo/git/db/
           target/
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+        key: ${{ runner.os }}-cargo-${{ github.sha }}
     - name: Check cache status
       run: |
         echo "Cache hit - ${{ steps.cache.outputs.cache-hit }}"
@@ -54,7 +54,7 @@ jobs:
           ~/.cargo/registry/cache/
           ~/.cargo/git/db/
           target/
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+        key: ${{ runner.os }}-cargo-${{ github.sha }}
     - name: Run Copyright
       run: cargo xtask precheck --copyright
     - name: Run Audit
@@ -99,7 +99,7 @@ jobs:
           ~/.cargo/registry/cache/
           ~/.cargo/git/db/
           target/
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+        key: ${{ runner.os }}-cargo-${{ github.sha }}
     - name: Check cache status
       run: |
         echo "Cache hit - ${{ steps.cache.outputs.cache-hit }}"
@@ -118,7 +118,7 @@ jobs:
           ~/.cargo/registry/cache/
           ~/.cargo/git/db/
           target/
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+        key: ${{ runner.os }}-cargo-${{ github.sha }}
     - name: Run Copyright
       run: cargo xtask precheck --copyright
     - name: Run Audit
