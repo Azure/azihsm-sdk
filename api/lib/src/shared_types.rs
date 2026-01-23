@@ -38,6 +38,9 @@ pub enum HsmKeyKind {
     /// Advanced Encryption Standard (AES) symmetric key kind.
     Aes = 3,
 
+    /// AES XTS symmetric key kind.
+    AesXts = 4,
+
     /// Shared secret key kind.
     SharedSecret = 5,
 

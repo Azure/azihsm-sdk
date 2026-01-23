@@ -15,6 +15,14 @@ fn test_aes_key_prop_gen_key(
     HsmKeyManager::generate_key(session, &mut algo, props)
 }
 
+fn test_aes_xts_key_prop_gen_key(
+    session: &HsmSession,
+    props: HsmKeyProps,
+) -> Result<HsmAesXtsKey, HsmError> {
+    let mut algo = HsmAesXtsKeyGenAlgo::default();
+    HsmKeyManager::generate_key(session, &mut algo, props)
+}
+
 fn get_rsa_unwrapping_key_pair(session: &HsmSession) -> (HsmRsaPrivateKey, HsmRsaPublicKey) {
     let priv_key_props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Private)
@@ -402,4 +410,126 @@ fn test_aes_key_gen_non_session_succeeds(session: HsmSession) {
         !key.is_session(),
         "Generated key should not be a session key"
     );
+}
+
+/// Test AES-XTS key property validation.
+#[session_test]
+fn test_aes_xts_key_prop_class_validation(session: HsmSession) {
+    let invalid_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Public)
+        .key_kind(HsmKeyKind::AesXts)
+        .bits(512)
+        .can_encrypt(true)
+        .can_decrypt(true)
+        .build()
+        .expect("Failed to build key props");
+
+    let result = test_aes_xts_key_prop_gen_key(&session, invalid_props);
+    assert!(matches!(result, Err(HsmError::InvalidKeyProps)));
+}
+
+#[session_test]
+fn test_aes_xts_key_prop_kind_validation(session: HsmSession) {
+    let invalid_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::Aes)
+        .bits(512)
+        .can_encrypt(true)
+        .can_decrypt(true)
+        .build()
+        .expect("Failed to build key props");
+
+    let result = test_aes_xts_key_prop_gen_key(&session, invalid_props);
+    assert!(matches!(result, Err(HsmError::InvalidKeyProps)));
+}
+
+#[session_test]
+fn test_aes_xts_key_prop_requires_encrypt_or_decrypt(session: HsmSession) {
+    let invalid_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::AesXts)
+        .bits(512)
+        .can_encrypt(false)
+        .can_decrypt(false)
+        .build()
+        .expect("Failed to build key props");
+
+    let result = test_aes_xts_key_prop_gen_key(&session, invalid_props);
+    assert!(matches!(result, Err(HsmError::InvalidKeyProps)));
+}
+
+#[session_test]
+fn test_aes_xts_key_prop_size_valid_succeeds(session: HsmSession) {
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::AesXts)
+        .bits(512)
+        .can_encrypt(true)
+        .can_decrypt(true)
+        .build()
+        .expect("Failed to build key props");
+
+    let key = test_aes_xts_key_prop_gen_key(&session, props).expect("XTS key generation failed");
+    assert_eq!(key.class(), HsmKeyClass::Secret);
+    assert_eq!(key.kind(), HsmKeyKind::AesXts);
+    assert_eq!(key.bits(), 512);
+}
+
+#[session_test]
+fn test_aes_xts_key_prop_size_invalid_fails(session: HsmSession) {
+    for bits in [0u32, 1, 256, 511, 513, 1024] {
+        let invalid_props = HsmKeyPropsBuilder::default()
+            .class(HsmKeyClass::Secret)
+            .key_kind(HsmKeyKind::AesXts)
+            .bits(bits)
+            .can_encrypt(true)
+            .can_decrypt(true)
+            .build()
+            .expect("Failed to build key props");
+
+        let result = test_aes_xts_key_prop_gen_key(&session, invalid_props);
+        assert!(
+            matches!(result, Err(HsmError::InvalidKeyProps)),
+            "XTS key generation should reject invalid key size {bits}"
+        );
+    }
+}
+
+#[session_test]
+fn test_aes_xts_key_prop_rejects_invalid_usage_flags(session: HsmSession) {
+    // A few representative invalid flags; AES-XTS should only allow encrypt/decrypt.
+    let invalid_props_list = [
+        HsmKeyPropsBuilder::default()
+            .class(HsmKeyClass::Secret)
+            .key_kind(HsmKeyKind::AesXts)
+            .bits(512)
+            .can_encrypt(true)
+            .can_decrypt(true)
+            .can_sign(true)
+            .build()
+            .expect("Failed to build key props"),
+        HsmKeyPropsBuilder::default()
+            .class(HsmKeyClass::Secret)
+            .key_kind(HsmKeyKind::AesXts)
+            .bits(512)
+            .can_encrypt(true)
+            .can_decrypt(true)
+            .can_wrap(true)
+            .build()
+            .expect("Failed to build key props"),
+        HsmKeyPropsBuilder::default()
+            .class(HsmKeyClass::Secret)
+            .key_kind(HsmKeyKind::AesXts)
+            .bits(512)
+            .ecc_curve(HsmEccCurve::P256)
+            .can_encrypt(true)
+            .can_decrypt(true)
+            .build()
+            .expect("Failed to build key props"),
+    ];
+
+    for invalid_props in invalid_props_list {
+        let result = test_aes_xts_key_prop_gen_key(&session, invalid_props);
+        assert!(matches!(result, Err(HsmError::InvalidKeyProps)));
+    }
 }
