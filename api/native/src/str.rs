@@ -98,14 +98,16 @@ impl AzihsmStr {
     /// - Windows: UTF-16LE byte representation (cast from `u16` to `u8`)
     /// - Non-Windows: UTF-8 byte representation
     ///
-    /// Returns an empty slice if the string pointer is null or the length is 0.
+    /// Returns an empty slice if the string pointer is null or represents an empty/null string
+    /// (length <= 1, where length 1 means only the null terminator).
     pub(crate) fn as_bytes(&self) -> &[u8] {
         // Guard against null pointer or invalid length to prevent UB
-        if self.str.is_null() || self.len == 0 {
+        // Use `<= 1` to match is_null() behavior (len==1 means only null terminator)
+        if self.str.is_null() || self.len <= 1 {
             return &[];
         }
 
-        // Safety: We've checked that `self.str` is not null and `self.len > 0`
+        // Safety: We've checked that `self.str` is not null and `self.len > 1`
         #[allow(unsafe_code)]
         unsafe {
             #[cfg(target_os = "windows")]
