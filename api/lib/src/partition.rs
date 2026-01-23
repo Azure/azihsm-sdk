@@ -209,7 +209,7 @@ impl HsmPartitionManager {
     /// Establishes a connection to the HSM partition and retrieves its
     /// supported API revision range. Device information is retrieved on a
     /// best-effort basis; if enumeration fails, minimal partition info
-    /// (containing only the path) is used instead.
+    /// (containing the path and partition type) is used instead.
     ///
     /// # Arguments
     ///
