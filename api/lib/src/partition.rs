@@ -102,6 +102,26 @@ impl HsmPartitionInfo {
             pci_info: dev_info.pci_info,
         }
     }
+
+    /// Creates minimal partition information from a device path.
+    ///
+    /// Used as a fallback when device enumeration fails but the device
+    /// can still be opened directly.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Device path string
+    /// * `part_type` - Optional partition type (Virtual or Physical)
+    fn from_path(path: String, part_type: Option<HsmPartType>) -> Self {
+        Self {
+            part_type,
+            path,
+            driver_ver: String::new(),
+            firmware_ver: String::new(),
+            hardware_ver: String::new(),
+            pci_info: String::new(),
+        }
+    }
 }
 
 /// HSM application credentials.
@@ -187,7 +207,9 @@ impl HsmPartitionManager {
     /// Opens an HSM partition at the specified path.
     ///
     /// Establishes a connection to the HSM partition and retrieves its
-    /// supported API revision range.
+    /// supported API revision range. Device information is retrieved on a
+    /// best-effort basis; if enumeration fails, minimal partition info
+    /// (containing only the path) is used instead.
     ///
     /// # Arguments
     ///
@@ -206,14 +228,22 @@ impl HsmPartitionManager {
     /// - The underlying DDI operation fails
     #[instrument()]
     pub fn open_partition(path: &str) -> HsmResult<HsmPartition> {
-        let dev_info = ddi::dev_info_by_path(path)?;
+        // Open the device first to ensure it's accessible
         let dev = ddi::open_dev(path)?;
         let (min, max) = ddi::get_api_rev(&dev)?;
         let part_type = dev.device_kind().map(HsmPartType::from);
+
+        // Try to get detailed device info from enumeration, but fall back to
+        // minimal info if unavailable (e.g., device was omitted from enumeration
+        // due to info-query failure)
+        let part_info = ddi::dev_info_by_path(path)
+            .map(|dev_info| HsmPartitionInfo::new(dev_info, part_type))
+            .unwrap_or_else(|_| HsmPartitionInfo::from_path(path.to_string(), part_type));
+
         Ok(HsmPartition::new(
             dev,
             HsmApiRevRange::new(min, max),
-            HsmPartitionInfo::new(dev_info, part_type),
+            part_info,
         ))
     }
 }
