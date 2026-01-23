@@ -272,6 +272,25 @@ impl HsmKeyProps {
         // Returns `true` only if all currently-set flags are within `allowed_flags`.
         (self.flags & !allowed_flags).is_empty()
     }
+
+    pub(crate) fn validate_dev_props(&self, dev_props: &HsmKeyProps) -> bool {
+        // Compare user-settable properties with device-returned properties.
+        let user_settable_flags = HsmKeyFlags::SESSION
+            | HsmKeyFlags::ENCRYPT
+            | HsmKeyFlags::DECRYPT
+            | HsmKeyFlags::SIGN
+            | HsmKeyFlags::VERIFY
+            | HsmKeyFlags::WRAP
+            | HsmKeyFlags::UNWRAP
+            | HsmKeyFlags::DERIVE;
+
+        self.kind() == dev_props.kind()
+            && self.class() == dev_props.class()
+            && self.bits() == dev_props.bits()
+            && self.ecc_curve() == dev_props.ecc_curve()
+            && self.label() == dev_props.label()
+            && (self.flags() & user_settable_flags) == (dev_props.flags() & user_settable_flags)
+    }
 }
 
 /// Builder for constructing [`KeyProps`] instances.

@@ -49,6 +49,17 @@ impl HsmHmacKey {
             Err(HsmError::InvalidKeyProps)?;
         }
 
+        //check key size matches kind
+        let expected_bits = match props.kind() {
+            HsmKeyKind::HmacSha256 => 256,
+            HsmKeyKind::HmacSha384 => 384,
+            HsmKeyKind::HmacSha512 => 512,
+            _ => unreachable!(),
+        };
+        if props.bits() != expected_bits {
+            Err(HsmError::InvalidKeyProps)?;
+        }
+
         // Secret keys in this layer should not have an associated ECC curve.
         if props.ecc_curve().is_some() {
             Err(HsmError::InvalidKeyProps)?;
