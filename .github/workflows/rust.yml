@@ -36,6 +36,8 @@ jobs:
           ~/.cargo/git/db/
           target/
         key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+    - name: Check cache status
+      run: echo "Cache hit - ${{ steps.cache-cargo-restore.outputs.cache-hit }}"
     - name: Run Setup
       if: steps.cache-cargo-restore.outputs.cache-hit != 'true'
       run: cargo xtask precheck --setup
@@ -95,6 +97,8 @@ jobs:
           ~/.cargo/git/db/
           target/
         key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+    - name: Check cache status
+      run: echo "Cache hit - ${{ steps.cache-cargo-restore.outputs.cache-hit }}"
     - name: Run Setup
       if: steps.cache-cargo-restore.outputs.cache-hit != 'true'
       run: cargo xtask precheck --setup
@@ -115,8 +119,8 @@ jobs:
       run: cargo xtask precheck --audit
     - name: Cargo format
       run: |
-        cargo +nightly fmt --version --skip-clang
-        cargo xtask precheck --fmt
+        cargo +nightly fmt --version
+        cargo xtask precheck --fmt --skip-clang
     - name: Cargo Clippy
       run: |
         cargo clippy --version
