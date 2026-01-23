@@ -26,7 +26,7 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y pkg-config libssl-dev libbsd-dev
     - name: Restore Cargo cache
-      id: cache-cargo-restore
+      id: cache
       uses: actions/cache@v4
       with:
         path: |
@@ -37,12 +37,12 @@ jobs:
           target/
         key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
     - name: Check cache status
-      run: echo "Cache hit - ${{ steps.cache-cargo-restore.outputs.cache-hit }}"
+      run: echo "Cache hit - ${{ steps.cache.outputs.cache-hit }}"
     - name: Run Setup
-      if: steps.cache-cargo-restore.outputs.cache-hit != true
+      if: steps.cache.outputs.cache-hit != true
       run: cargo xtask precheck --setup
     - name: Save Cargo cache
-      if: steps.cache-cargo-restore.outputs.cache-hit != true
+      if: steps.cache.outputs.cache-hit != true
       uses: actions/cache/save@v4
       with:
         path: |
@@ -87,7 +87,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Restore Cargo cache
-      id: cache-cargo-restore
+      id: cache
       uses: actions/cache@v4
       with:
         path: |
@@ -98,12 +98,12 @@ jobs:
           target/
         key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
     - name: Check cache status
-      run: echo "Cache hit - ${{ steps.cache-cargo-restore.outputs.cache-hit }}"
+      run: echo "Cache hit - ${{ steps.cache.outputs.cache-hit }}"
     - name: Run Setup
-      if: steps.cache-cargo-restore.outputs.cache-hit != true
+      if: steps.cache.outputs.cache-hit != true
       run: cargo xtask precheck --setup
     - name: Save Cargo cache
-      if: steps.cache-cargo-restore.outputs.cache-hit != true
+      if: steps.cache.outputs.cache-hit != true
       uses: actions/cache/save@v4
       with:
         path: |
