@@ -112,10 +112,10 @@ impl HsmPartitionInfo {
     ///
     /// * `path` - Device path string
     /// * `part_type` - Optional partition type (Virtual or Physical)
-    fn from_path(path: String, part_type: Option<HsmPartType>) -> Self {
+    fn from_path(path: &str, part_type: Option<HsmPartType>) -> Self {
         Self {
             part_type,
-            path,
+            path: path.to_string(),
             driver_ver: String::new(),
             firmware_ver: String::new(),
             hardware_ver: String::new(),
@@ -238,7 +238,7 @@ impl HsmPartitionManager {
         // due to info-query failure)
         let part_info = ddi::dev_info_by_path(path)
             .map(|dev_info| HsmPartitionInfo::new(dev_info, part_type))
-            .unwrap_or_else(|_| HsmPartitionInfo::from_path(path.to_string(), part_type));
+            .unwrap_or_else(|_| HsmPartitionInfo::from_path(path, part_type));
 
         Ok(HsmPartition::new(
             dev,
