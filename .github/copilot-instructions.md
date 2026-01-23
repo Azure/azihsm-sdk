@@ -48,6 +48,22 @@ Build specific packages using:
 cargo xtask build --package <package-name>
 ```
 
+### CI Parity (GitHub Actions)
+The `Rust` workflow in `.github/workflows/rust.yml` runs these steps (use them when matching CI locally):
+```bash
+cargo xtask precheck --setup
+cargo xtask precheck --copyright
+cargo xtask precheck --audit
+# Linux uses --skip-clang when clang-format-18 is not available.
+cargo xtask precheck --fmt --skip-clang
+cargo xtask precheck --clippy
+cargo xtask precheck --nextest --features mock
+cargo xtask precheck --nextest --package azihsm_ddi --features mock,table-4
+cargo xtask precheck --nextest --package azihsm_ddi --features mock,table-64
+cargo xtask precheck --coverage
+```
+Coverage reports are written to `target/reports/`.
+
 ## Testing
 Before running any commands below, ensure you have finished the initial setup steps.
 
@@ -86,6 +102,10 @@ You can run all checks (setup, build, formatting, copyright, linting, tests, cod
 cargo xtask precheck --all
 ```
 It will run all necessary checks to ensure code quality before committing. It will not auto fix linting, formatting or copyright issues.
+
+## Known Issues & Workarounds (encountered locally)
+- `cargo xtask precheck --all` can take a long time in a fresh environment because it installs toolchain components, `cargo-nextest`, and `taplo`. In the sandbox it repeatedly synced the toolchain and did not complete in reasonable time. **Workaround:** stop the command and run `cargo xtask precheck --setup` first, then run the individual `precheck` subcommands from the CI parity list above.
+- If `clang-format-18` is missing, `cargo xtask precheck --fmt` will fail. **Workaround:** install `clang-format-18` or use `cargo xtask precheck --fmt --skip-clang` (matches CI Linux behavior).
 
 
 ## Code Standards
