@@ -17,6 +17,15 @@ Azure Integrated HSM (AZIHSM) SDK is a modular, cross-platform software developm
 - `plugins/ossl_prov/` - OpenSSL Provider implementation
 - `xtask/` - Custom build and automation tasks
 
+## Copilot Coding Agent Guidance
+- Read the full issue/task description and relevant comments before making changes.
+- If requirements are unclear or acceptance criteria are missing, ask for clarification instead of guessing.
+- Keep changes minimal and scoped to the request; avoid drive-by refactors or unrelated fixes.
+- Prefer existing patterns and APIs; avoid introducing new dependencies unless explicitly required.
+- Add or update tests when behavior changes, and update `api/native/doc/` for public API changes.
+- Run targeted checks for modified areas (see build, test, and formatting commands below).
+- Never commit generated artifacts (for example `target/`, `build/`, or `node_modules/`).
+
 ## Initial Setup
 Before running any commands in this document for the first time, restore required dependencies using these steps:
 
