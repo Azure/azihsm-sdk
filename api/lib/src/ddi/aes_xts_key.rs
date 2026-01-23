@@ -274,7 +274,7 @@ impl HsmAesXtsKeyPairHeader {
     /// # Returns
     ///
     /// Returns the header as a fixed 16-byte vector.
-    fn to_vec(&self) -> Vec<u8> {
+    fn to_vec(self) -> Vec<u8> {
         self.as_bytes().to_vec()
     }
 }
