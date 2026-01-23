@@ -256,8 +256,8 @@ impl HsmAesXtsKey {
     fn validate_props(props: &HsmKeyProps) -> HsmResult<()> {
         let supported_flags = HsmKeyFlags::ENCRYPT | HsmKeyFlags::DECRYPT; //AES XTS Keys can be used for both encrypt and decrypt
 
-        // check if key supports at least one of encrypt/decrypt
-        if !props.can_encrypt() && !props.can_decrypt() {
+        // AES-XTS requires both encrypt and decrypt permissions.
+        if !props.can_encrypt() || !props.can_decrypt() {
             Err(HsmError::InvalidKeyProps)?;
         }
 
@@ -386,5 +386,28 @@ impl HsmKeyUnwrapOp for HsmAesXtsKeyRsaAesKeyUnwrapAlgo {
             (handle1, handle2),
         );
         Ok(key)
+    }
+}
+
+#[derive(Default)]
+pub struct HsmAesXtsKeyUnmaskAlgo {}
+
+impl HsmKeyUnmaskOp for HsmAesXtsKeyUnmaskAlgo {
+    type Session = HsmSession;
+    type Key = HsmAesXtsKey;
+    type Error = HsmError;
+
+    /// Unmasks an AES-XTS key using the provided paired masked key data.
+    fn unmask_key(
+        &mut self,
+        session: &HsmSession,
+        masked_key: &[u8],
+    ) -> Result<Self::Key, Self::Error> {
+        let (handle1, handle2, props) = ddi::aes_xts_unmask_key(session, masked_key)?;
+        Ok(HsmAesXtsKey::new(
+            session.clone(),
+            props,
+            (handle1, handle2),
+        ))
     }
 }

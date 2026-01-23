@@ -116,6 +116,42 @@ fn compare_key_properties(original: &HsmAesKey, unmasked: &HsmAesKey) {
     );
 }
 
+fn compare_xts_key_properties(original: &HsmAesXtsKey, unmasked: &HsmAesXtsKey) {
+    assert_eq!(original.class(), unmasked.class(), "Key class mismatch");
+    assert_eq!(original.kind(), unmasked.kind(), "Key kind mismatch");
+    assert_eq!(original.bits(), unmasked.bits(), "Key bits mismatch");
+    assert_eq!(
+        original.can_encrypt(),
+        unmasked.can_encrypt(),
+        "Encrypt capability mismatch"
+    );
+    assert_eq!(
+        original.can_decrypt(),
+        unmasked.can_decrypt(),
+        "Decrypt capability mismatch"
+    );
+    assert_eq!(
+        original.is_session(),
+        unmasked.is_session(),
+        "Session flag mismatch"
+    );
+    assert_eq!(
+        original.is_local(),
+        unmasked.is_local(),
+        "Local flag mismatch"
+    );
+    assert_eq!(
+        original.is_sensitive(),
+        unmasked.is_sensitive(),
+        "Sensitive flag mismatch"
+    );
+    assert_eq!(
+        original.is_extractable(),
+        unmasked.is_extractable(),
+        "Extractable flag mismatch"
+    );
+}
+
 fn test_session_aes_key_generation_common(session: &HsmSession, bits: u32) {
     let props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Secret)
@@ -202,7 +238,7 @@ fn build_xts_wrapped_blob_header(key1_len: u16, key2_len: u16) -> [u8; 16] {
     // Keep tests agnostic to the internal Rust header struct.
     // On-wire header format:
     // magic (u64 LE) + version (u16 LE) + key1_len (u16 LE) + key2_len (u16 LE) + reserved (u16 LE)
-    const WRAP_BLOB_MAGIC: u64 = 0x5354_584D_5348_AA55;
+    const WRAP_BLOB_MAGIC: u64 = 0x55AA_4853_4D58_5453;
     const WRAP_BLOB_VERSION: u16 = 1;
 
     let mut hdr = [0u8; 16];
@@ -492,4 +528,64 @@ fn test_aes_xts_key_unwrap(session: HsmSession) {
         tweak_after_units(&tweak, 2).to_vec(),
         "Decrypt should increment tweak per data unit"
     );
+}
+
+#[session_test]
+fn test_aes_xts_key_unmask(session: HsmSession) {
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::AesXts)
+        .bits(512)
+        .can_encrypt(true)
+        .can_decrypt(true)
+        .is_session(true)
+        .build()
+        .expect("Failed to build key props");
+
+    let mut gen_algo = HsmAesXtsKeyGenAlgo::default();
+    let original_key = HsmKeyManager::generate_key(&session, &mut gen_algo, props)
+        .expect("Failed to generate AES-XTS key");
+
+    // Encrypt with the original generated key, then unmask and decrypt with the unmasked key.
+    let tweak: [u8; 16] = [0u8; 16];
+    let dul: usize = 64;
+    let plaintext: Vec<u8> = vec![0x33u8; 128];
+
+    let mut algo = HsmAesXtsAlgo::new(&tweak, dul).expect("Failed to create AES-XTS algo");
+    let out_len = algo
+        .encrypt(&original_key, &plaintext, None)
+        .expect("AES-XTS encrypt size query failed");
+    let mut ciphertext = vec![0u8; out_len];
+    let written = algo
+        .encrypt(&original_key, &plaintext, Some(&mut ciphertext))
+        .expect("AES-XTS encryption failed");
+    ciphertext.truncate(written);
+
+    let masked_key = original_key
+        .masked_key_vec()
+        .expect("Failed to get masked key");
+
+    let mut unmask_algo = HsmAesXtsKeyUnmaskAlgo::default();
+    let unmasked_key = HsmKeyManager::unmask_key(&session, &mut unmask_algo, &masked_key)
+        .expect("Failed to unmask AES-XTS key");
+
+    compare_xts_key_properties(&original_key, &unmasked_key);
+
+    // Prove the unmasked key is a different key ID by deleting the original key
+    // before using the unmasked key.
+    HsmKeyManager::delete_key(original_key).expect("Failed to delete original AES-XTS key");
+
+    let mut dec_algo = HsmAesXtsAlgo::new(&tweak, dul).expect("Failed to create AES-XTS algo");
+    let out_len = dec_algo
+        .decrypt(&unmasked_key, &ciphertext, None)
+        .expect("AES-XTS decrypt size query failed");
+    let mut decrypted = vec![0u8; out_len];
+    let written = dec_algo
+        .decrypt(&unmasked_key, &ciphertext, Some(&mut decrypted))
+        .expect("AES-XTS decryption failed");
+    decrypted.truncate(written);
+
+    assert_eq!(decrypted, plaintext, "XTS roundtrip mismatch");
+
+    HsmKeyManager::delete_key(unmasked_key).expect("Failed to delete unmasked AES-XTS key");
 }

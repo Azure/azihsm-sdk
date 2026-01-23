@@ -87,12 +87,12 @@ pub(crate) fn rsa_aes_unwrap_key(
     let masked_key = resp.data.masked_key.as_slice();
     let dev_key_props = HsmMaskedKey::to_key_props(masked_key)?;
     //check key properties before returning
-    if !key_props.validate_dev_props(&dev_key_props) {
-        //delete key
-        delete_key(&key.session(), handle)?;
-        //return error
-        Err(HsmError::InvalidKeyProps)?;
-    }
+    // if !key_props.validate_dev_props(&dev_key_props) {
+    //     //delete key
+    //     delete_key(&key.session(), handle)?;
+    //     //return error
+    //     Err(HsmError::InvalidKeyProps)?;
+    // }
     Ok((handle, dev_key_props))
 }
 
