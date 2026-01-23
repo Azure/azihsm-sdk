@@ -17,21 +17,24 @@ Azure Integrated HSM (AZIHSM) SDK is a modular, cross-platform software developm
 - `plugins/ossl_prov/` - OpenSSL Provider implementation
 - `xtask/` - Custom build and automation tasks
 
-## Build Commands
+## Initial Setup
+Before running any commands in this document for the first time, restore required dependencies using these steps:
 
-### Initial Setup
-Before building for the first time, restore required dependencies:
-Only Linux systems first install the following 3 packages:
+For Linux systems, first install the following 4 linux packages with the package manager of the distribution:
 ```
-pkg-config
-libssl-dev
+clang-format-18
 libbsd-dev
+libssl-dev
+pkg-config
 ```
 
-Run the following to install any other required dependencies:
+For both Linux and Windows systems, run the following to install all other required dependencies:
 ```bash
 cargo xtask precheck --setup
 ```
+
+## Build Commands
+Before running any commands below, ensure you have finished the initial setup steps.
 
 ### Building
 Build the project using Cargo xtask:
@@ -46,6 +49,7 @@ cargo xtask build --package <package-name>
 ```
 
 ## Testing
+Before running any commands below, ensure you have finished the initial setup steps.
 
 ### Unit Tests
 Use cargo-nextest (recommended):
@@ -59,6 +63,7 @@ cargo xtask nextest --features mock --package <package-name>
 - **AZIHSM Integration tests**: Integration tests are in `ddi/lib/tests/` and `api/tests/`
 
 ## Linting and Formatting
+Before running any commands below, ensure you have finished the initial setup steps.
 
 ### Required Before Each Commit
 Always run formatting checks before committing:
@@ -74,6 +79,8 @@ cargo xtask copyright --fix
 It auto fixes copyright issues. This ensures all source code has correct copyright headers.
 
 ## Running all of the above checks
+Before running any commands below, ensure you have finished the initial setup steps.
+
 You can run all checks (setup, build, formatting, copyright, linting, tests, code coverage etc.) against simulator with:
 ```bash
 cargo xtask precheck --all
