@@ -39,10 +39,10 @@ jobs:
     - name: Check cache status
       run: echo "Cache hit - ${{ steps.cache-cargo-restore.outputs.cache-hit }}"
     - name: Run Setup
-      if: steps.cache-cargo-restore.outputs.cache-hit != 'true'
+      if: steps.cache-cargo-restore.outputs.cache-hit != true
       run: cargo xtask precheck --setup
     - name: Save Cargo cache
-      if: steps.cache-cargo-restore.outputs.cache-hit != 'true'
+      if: steps.cache-cargo-restore.outputs.cache-hit != true
       uses: actions/cache/save@v4
       with:
         path: |
@@ -100,10 +100,10 @@ jobs:
     - name: Check cache status
       run: echo "Cache hit - ${{ steps.cache-cargo-restore.outputs.cache-hit }}"
     - name: Run Setup
-      if: steps.cache-cargo-restore.outputs.cache-hit != 'true'
+      if: steps.cache-cargo-restore.outputs.cache-hit != true
       run: cargo xtask precheck --setup
     - name: Save Cargo cache
-      if: steps.cache-cargo-restore.outputs.cache-hit != 'true'
+      if: steps.cache-cargo-restore.outputs.cache-hit != true
       uses: actions/cache/save@v4
       with:
         path: |
