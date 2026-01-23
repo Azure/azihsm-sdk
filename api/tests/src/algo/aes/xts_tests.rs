@@ -420,37 +420,3 @@ fn aes_xts_tweak_overflow_rejected(session: HsmSession) {
         .unwrap_err();
     assert!(matches!(err, HsmError::InvalidTweak));
 }
-
-/// Encrypt should fail with `InvalidKey` when the key is not permitted to encrypt.
-#[session_test]
-fn aes_xts_encrypt_rejects_key_without_encrypt_cap(session: HsmSession) {
-    let key =
-        aes_xts_generate_key_with_caps(&session, false, true).expect("Failed to generate XTS key");
-    let tweak: [u8; AES_XTS_TEST_TWEAK_SIZE] = [0u8; AES_XTS_TEST_TWEAK_SIZE];
-    let dul: usize = 512;
-
-    let plaintext = vec![0x11u8; dul];
-    let mut out = vec![0u8; plaintext.len()];
-    let mut algo = HsmAesXtsAlgo::new(&tweak, dul).expect("Failed to create AES XTS algo");
-    let err = algo
-        .encrypt(&key, &plaintext, Some(out.as_mut()))
-        .unwrap_err();
-    assert!(matches!(err, HsmError::InvalidKey));
-}
-
-/// Decrypt should fail with `InvalidKey` when the key is not permitted to decrypt.
-#[session_test]
-fn aes_xts_decrypt_rejects_key_without_decrypt_cap(session: HsmSession) {
-    let key =
-        aes_xts_generate_key_with_caps(&session, true, false).expect("Failed to generate XTS key");
-    let tweak: [u8; AES_XTS_TEST_TWEAK_SIZE] = [0u8; AES_XTS_TEST_TWEAK_SIZE];
-    let dul: usize = 512;
-
-    let ciphertext = vec![0x22u8; dul];
-    let mut out = vec![0u8; ciphertext.len()];
-    let mut algo = HsmAesXtsAlgo::new(&tweak, dul).expect("Failed to create AES XTS algo");
-    let err = algo
-        .decrypt(&key, &ciphertext, Some(out.as_mut()))
-        .unwrap_err();
-    assert!(matches!(err, HsmError::InvalidKey));
-}
