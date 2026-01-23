@@ -59,10 +59,10 @@ pub(crate) fn aes_generate_key(
     let masked_key = resp.data.masked_key.as_slice();
     let key_props = HsmMaskedKey::to_key_props(masked_key)?;
     // Validate that the device returned properties match the requested properties.
-    // if !props.validate_dev_props(&key_props) {
-    //     //return error
-    //     Err(HsmError::InvalidKeyProps)?;
-    // }
+    if !props.validate_dev_props(&key_props) {
+        //return error
+        Err(HsmError::InvalidKeyProps)?;
+    }
 
     //make sure to disarm the key guard to avoid deletion before returning
     key_id.disarm();
@@ -256,61 +256,8 @@ fn key_size_to_ddi(size: usize) -> HsmResult<DdiAesKeySize> {
         128 => Ok(DdiAesKeySize::Aes128),
         192 => Ok(DdiAesKeySize::Aes192),
         256 => Ok(DdiAesKeySize::Aes256),
-        512 => Ok(DdiAesKeySize::AesXtsBulk256),
         _ => Err(HsmError::InvalidKeySize),
     }
-}
-
-/// Generates an AES-XTS key within an HSM session.
-///
-/// AES-XTS keys are represented as a pair of AES keys. This helper generates two
-/// AES keys with the requested properties and returns both handles plus key
-/// properties containing the masked key material.
-///
-/// # Arguments
-///
-/// * `session` - The HSM session in which to generate the key
-/// * `props` - Key properties for the AES-XTS key (bits represent total key size)
-///
-/// # Returns
-///
-/// Returns a tuple containing:
-/// - First AES key handle
-/// - Second AES key handle
-/// - Updated key properties including masked key material
-///
-/// # Errors
-///
-/// Returns an error if key generation fails or if the generated handles are not valid.
-pub(crate) fn aes_xts_generate_key(
-    session: &HsmSession,
-    props: HsmKeyProps,
-) -> HsmResult<(HsmKeyHandle, HsmKeyHandle, HsmKeyProps)> {
-    // Generate first key
-    let (handle1, dev_key_props1) = aes_generate_key(session, props.clone())?;
-
-    // create key guard for first key
-    let mut key_id1 = ddi::HsmKeyIdGuard::new(session, handle1);
-
-    // Generate second key
-    let (handle2, dev_key_props2) = aes_generate_key(session, props.clone())?;
-
-    // create key guard for second key
-    let mut key_id2 = ddi::HsmKeyIdGuard::new(session, handle2);
-
-    // make sure handles are different
-    if handle1 == handle2 {
-        Err(HsmError::InternalError)?;
-    }
-
-    // Build combined XTS props from the two device-returned props
-    let xts_props = ddi::build_xts_props(&dev_key_props1, &dev_key_props2)?;
-
-    // disarm the key guard to avoid deletion before returning
-    key_id1.disarm();
-    key_id2.disarm();
-
-    Ok((handle1, handle2, xts_props))
 }
 
 /// Encrypts data using AES-XTS mode at the DDI layer.
