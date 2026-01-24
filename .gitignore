@@ -374,3 +374,7 @@ bld_engine_test*
 # API C++ build artifacts
 api/tests/cpp/build/
 api/tests/cpp/build-release/
+
+# CodeQL build artifacts
+_codeql_detected_source_root
+_codeql_build_dir/
