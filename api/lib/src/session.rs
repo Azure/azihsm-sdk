@@ -34,7 +34,7 @@ impl HsmSession {
         to self.inner.read().unwrap() {
             pub fn id(&self) -> u16;
             pub(crate) fn _app_id(&self) -> u8;
-            pub(crate) fn api_rev(&self) -> HsmApiRev;
+            pub fn api_rev(&self) -> HsmApiRev;
 
             pub(crate) fn with_dev<F, R>(&self, f: F) -> HsmResult<R>
             where

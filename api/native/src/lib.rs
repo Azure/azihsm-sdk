@@ -28,6 +28,7 @@ mod key_props;
 mod partition;
 mod partition_props;
 mod session;
+mod session_props;
 #[allow(unused)]
 #[path = "../../lib/src/shared_types.rs"]
 mod shared_types;

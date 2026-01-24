@@ -77,6 +77,19 @@ impl HandleTable {
         table.free_handle(handle, handle_type)
     }
 
+    /// Frees a handle without requiring the concrete type.
+    ///
+    /// This is used for generic cleanup operations where the caller
+    /// doesn't need to recover the underlying object.
+    pub(crate) fn drop_handle(&self, handle: AzihsmHandle) -> Result<(), AzihsmStatus> {
+        let mut table = self.table.write();
+        table
+            .table
+            .remove(&handle)
+            .ok_or(AzihsmStatus::InvalidHandle)?;
+        Ok(())
+    }
+
     /// Get the handle type for a given handle.
     ///
     /// # Parameters
@@ -160,4 +173,18 @@ impl HandleTableInner {
             .map(|entry| entry.handle_type)
             .ok_or(AzihsmStatus::InvalidHandle)
     }
+}
+
+/// Frees a handle and releases associated resources.
+///
+/// The handle is invalidated and must not be used after this call.
+///
+/// # Returns
+///
+/// * `AZIHSM_STATUS_SUCCESS` - Handle freed successfully
+/// * `AZIHSM_STATUS_INVALID_HANDLE` - Invalid or already freed handle
+#[unsafe(no_mangle)]
+#[allow(unsafe_code)]
+pub unsafe extern "C" fn azihsm_free_handle(handle: AzihsmHandle) -> AzihsmStatus {
+    abi_boundary(|| HANDLE_TABLE.drop_handle(handle))
 }

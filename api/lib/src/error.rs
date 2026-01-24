@@ -45,6 +45,7 @@ pub enum HsmError {
     InvalidTweak = -19,
     UnsupportedPartitionProperty = -20,
     PartitionPropertyValueNotAvailable = -21,
+    UnsupportedSessionProperty = -22,
     Panic = i32::MIN,
 }
 

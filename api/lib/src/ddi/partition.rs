@@ -200,8 +200,10 @@ pub(crate) fn get_cert_chain(
 ) -> HsmResult<usize> {
     let (count, thumbprint) = get_cert_chain_info(dev, rev, slot_id)?;
 
-    // Calculate exact size needed for PEM format
+    // Fetch and convert all certificates to PEM format once
+    let mut pem_certs = Vec::with_capacity(count as usize);
     let mut total_size = 0;
+
     for cert_id in 0..count {
         if cert_id != 0 {
             total_size += 1; // newline separator
@@ -209,6 +211,7 @@ pub(crate) fn get_cert_chain(
         let der = get_cert(dev, rev, slot_id, cert_id)?;
         let pem = crypto::der_to_pem(&der).map_hsm_err(HsmError::InternalError)?;
         total_size += pem.len();
+        pem_certs.push(pem);
     }
 
     let Some(cert_chain) = cert_chain else {
@@ -219,14 +222,13 @@ pub(crate) fn get_cert_chain(
         return Err(HsmError::BufferTooSmall);
     }
 
+    // Use the already-fetched PEM certificates
     let mut start = 0;
-    for (i, cert_id) in (0..count).enumerate() {
+    for (i, pem) in pem_certs.iter().enumerate() {
         if i != 0 {
             cert_chain[start] = b'\n';
             start += 1;
         }
-        let der = get_cert(dev, rev, slot_id, cert_id)?;
-        let pem = crypto::der_to_pem(&der).map_hsm_err(HsmError::InternalError)?;
         let pem_bytes = pem.as_bytes();
         cert_chain[start..start + pem_bytes.len()].copy_from_slice(pem_bytes);
         start += pem_bytes.len();
