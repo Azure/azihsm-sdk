@@ -41,6 +41,9 @@ pub unsafe extern "C" fn azihsm_key_gen(
             // AES family algorithms
             AzihsmAlgoId::AesKeyGen => aes_generate_key(&session, algo, key_props)?,
 
+            // AES XTS key generation
+            AzihsmAlgoId::AesXtsKeyGen => aes_xts_generate_key(&session, algo, key_props)?,
+
             // Unknown or unsupported algorithms
             _ => Err(AzihsmStatus::InvalidArgument)?,
         };
