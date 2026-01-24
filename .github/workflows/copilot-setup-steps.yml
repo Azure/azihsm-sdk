@@ -41,6 +41,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y clang-format-18 libbsd-dev libssl-dev pkg-config
       - name: Restore Cargo cache
+        id: cache-restore
         uses: actions/cache/restore@v5
         with:
           path: |
@@ -49,8 +50,6 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
           key: ${{ runner.os }}-cargo-${{ env.CACHE_KEY_ID }}
-          fail-on-cache-miss: true
-      - name: Install nightly rustfmt
-        run: cargo xtask rustup-component-add --component rustfmt --toolchain nightly
-      - name: Install clippy
-        run: cargo xtask rustup-component-add --component clippy
+      - name: Install Rust dependencies
+        if: steps.cache-restore.outputs.cache-hit != 'true'
+        run: cargo xtask precheck --setup
