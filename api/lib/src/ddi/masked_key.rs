@@ -310,6 +310,9 @@ impl TryFrom<DdiMaskedKeyMetadata> for HsmMaskedKeyMetadata {
             DdiKeyType::Aes192 => (HsmKeyKind::Aes, 192, None),
             DdiKeyType::Aes256 => (HsmKeyKind::Aes, 256, None),
             DdiKeyType::AesXtsBulk256 => (HsmKeyKind::AesXts, 512, None),
+            DdiKeyType::AesGcmBulk256 | DdiKeyType::AesGcmBulk256Unapproved => {
+                (HsmKeyKind::AesGcm, 256, None)
+            }
             DdiKeyType::Secret256 => (HsmKeyKind::SharedSecret, 256, None),
             DdiKeyType::Secret384 => (HsmKeyKind::SharedSecret, 384, None),
             DdiKeyType::Secret521 => (HsmKeyKind::SharedSecret, 521, None),

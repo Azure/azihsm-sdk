@@ -55,6 +55,9 @@ pub enum HsmKeyKind {
 
     /// HMAC SHA 512
     HmacSha512 = 9,
+
+    /// AES GCM symmetric key kind.
+    AesGcm = 10,
 }
 
 /// Elliptic Curve Cryptography (ECC) curve identifier.
