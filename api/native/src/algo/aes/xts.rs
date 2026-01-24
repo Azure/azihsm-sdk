@@ -85,13 +85,13 @@ pub(crate) fn aes_xts_encrypt(
     let mut aes_xts_algo = HsmAesXtsAlgo::new(&params.sector_num, params.dul as usize)?;
 
     // get required output buffer size
-    let cipher_text_size = aes_xts_algo.encrypt(&key, plain_text, None)?;
+    let cipher_text_size = aes_xts_algo.encrypt(key, plain_text, None)?;
 
     // validate output buffer
     let cipher_buffer = validate_output_buffer(cipher_text, cipher_text_size)?;
 
     // perform encryption
-    let written = aes_xts_algo.encrypt(&key, plain_text, Some(cipher_buffer))?;
+    let written = aes_xts_algo.encrypt(key, plain_text, Some(cipher_buffer))?;
 
     // set actual written size
     cipher_text.len = written as u32;
@@ -139,13 +139,13 @@ pub(crate) fn aes_xts_decrypt(
     let mut aes_xts_algo = HsmAesXtsAlgo::new(&params.sector_num, params.dul as usize)?;
 
     // get required output buffer size
-    let plain_text_size = aes_xts_algo.decrypt(&key, cipher_text, None)?;
+    let plain_text_size = aes_xts_algo.decrypt(key, cipher_text, None)?;
 
     // validate output buffer
     let plain_buffer = validate_output_buffer(plain_text, plain_text_size)?;
 
     // perform decryption
-    let written = aes_xts_algo.decrypt(&key, cipher_text, Some(plain_buffer))?;
+    let written = aes_xts_algo.decrypt(key, cipher_text, Some(plain_buffer))?;
 
     // set actual written size
     plain_text.len = written as u32;
@@ -185,7 +185,7 @@ impl AesXtsEncryptContext {
     /// A new `AesXtsEncryptContext` instance
     fn new(ctx: HsmAesXtsEncryptContext, params: &mut AzihsmAlgoAesXtsParams) -> Self {
         Self {
-            ctx: ctx,
+            ctx,
             params: params as *mut AzihsmAlgoAesXtsParams,
         }
     }
@@ -320,7 +320,7 @@ impl AesXtsDecryptContext {
     /// A new `AesXtsDecryptContext` instance
     fn new(ctx: HsmAesXtsDecryptContext, params: &mut AzihsmAlgoAesXtsParams) -> Self {
         Self {
-            ctx: ctx,
+            ctx,
             params: params as *mut AzihsmAlgoAesXtsParams,
         }
     }
