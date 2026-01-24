@@ -175,13 +175,13 @@ impl HsmEncryptOp for HsmAesGcmAlgo {
             return Err(HsmError::BufferTooSmall);
         }
 
-        let result = ddi::aes_gcm_encrypt(key, self.iv, self.aad.clone(), plaintext, ciphertext)?;
+        let (bytes_written, tag) =
+            ddi::aes_gcm_encrypt(key, self.iv, self.aad.clone(), plaintext, ciphertext)?;
 
-        // Store the tag and IV from the result
-        self.tag = Some(result.tag);
-        self.iv = result.iv;
+        // Store the tag from the result
+        self.tag = Some(tag);
 
-        Ok(result.bytes_written)
+        Ok(bytes_written)
     }
 }
 
@@ -344,7 +344,7 @@ impl HsmEncryptContext for HsmAesGcmEncryptContext {
         self.buffer.extend_from_slice(&plaintext[..to_buffer]);
 
         // Encrypt the full buffer
-        let result = ddi::aes_gcm_encrypt(
+        let (bytes_written, tag) = ddi::aes_gcm_encrypt(
             &self.key,
             self.algo.iv,
             self.algo.aad.clone(),
@@ -352,15 +352,14 @@ impl HsmEncryptContext for HsmAesGcmEncryptContext {
             ciphertext,
         )?;
 
-        // Update IV and tag
-        self.algo.iv = result.iv;
-        self.algo.tag = Some(result.tag);
+        // Update tag
+        self.algo.tag = Some(tag);
 
         // Clear buffer and add remaining data
         self.buffer.clear();
         self.buffer.extend_from_slice(remaining);
 
-        Ok(result.bytes_written)
+        Ok(bytes_written)
     }
 
     /// Finalizes the streaming encryption operation and produces final ciphertext.
@@ -394,7 +393,7 @@ impl HsmEncryptContext for HsmAesGcmEncryptContext {
             return Err(HsmError::BufferTooSmall);
         }
 
-        let result = ddi::aes_gcm_encrypt(
+        let (bytes_written, tag) = ddi::aes_gcm_encrypt(
             &self.key,
             self.algo.iv,
             self.algo.aad.clone(),
@@ -403,11 +402,10 @@ impl HsmEncryptContext for HsmAesGcmEncryptContext {
         )?;
 
         // Store the tag
-        self.algo.tag = Some(result.tag);
-        self.algo.iv = result.iv;
+        self.algo.tag = Some(tag);
         self.buffer.clear();
 
-        Ok(result.bytes_written)
+        Ok(bytes_written)
     }
 
     fn algo(&self) -> &Self::Algo {

@@ -17,6 +17,24 @@ impl TryFrom<&AzihsmAlgo> for azihsm_api::HsmAesKeyGenAlgo {
     }
 }
 
+impl TryFrom<&AzihsmAlgo> for azihsm_api::HsmAesXtsKeyGenAlgo {
+    type Error = AzihsmStatus;
+
+    /// Converts a C FFI algorithm specification to HsmAesXtsKeyGenAlgo.
+    fn try_from(_algo: &AzihsmAlgo) -> Result<Self, Self::Error> {
+        Ok(HsmAesXtsKeyGenAlgo::default())
+    }
+}
+
+impl TryFrom<&AzihsmAlgo> for azihsm_api::HsmAesGcmKeyGenAlgo {
+    type Error = AzihsmStatus;
+
+    /// Converts a C FFI algorithm specification to HsmAesGcmKeyGenAlgo.
+    fn try_from(_algo: &AzihsmAlgo) -> Result<Self, Self::Error> {
+        Ok(HsmAesGcmKeyGenAlgo::default())
+    }
+}
+
 /// Generates a new AES key
 ///
 /// Creates a new AES symmetric key with the specified properties.
@@ -34,9 +52,24 @@ pub(crate) fn aes_generate_key(
     algo: &AzihsmAlgo,
     key_props: HsmKeyProps,
 ) -> Result<AzihsmHandle, AzihsmStatus> {
-    let mut aes_algo = HsmAesKeyGenAlgo::try_from(algo)?;
-    let key = HsmKeyManager::generate_key(session, &mut aes_algo, key_props)?;
-    let handle = HANDLE_TABLE.alloc_handle(HandleType::AesKey, Box::new(key));
+    let handle = match key_props.kind() {
+        HsmKeyKind::Aes => {
+            let mut aes_algo = HsmAesKeyGenAlgo::try_from(algo)?;
+            let key = HsmKeyManager::generate_key(session, &mut aes_algo, key_props)?;
+            HANDLE_TABLE.alloc_handle(HandleType::AesKey, Box::new(key))
+        }
+        HsmKeyKind::AesXts => {
+            let mut aes_algo = HsmAesXtsKeyGenAlgo::try_from(algo)?;
+            let key = HsmKeyManager::generate_key(session, &mut aes_algo, key_props)?;
+            HANDLE_TABLE.alloc_handle(HandleType::AesKey, Box::new(key))
+        }
+        HsmKeyKind::AesGcm => {
+            let mut aes_algo = HsmAesGcmKeyGenAlgo::try_from(algo)?;
+            let key = HsmKeyManager::generate_key(session, &mut aes_algo, key_props)?;
+            HANDLE_TABLE.alloc_handle(HandleType::AesKey, Box::new(key))
+        }
+        _ => Err(AzihsmStatus::UnsupportedKeyKind)?,
+    };
 
     Ok(handle)
 }
@@ -57,12 +90,23 @@ pub(crate) fn aes_unmask_key(
     session: &HsmSession,
     masked_key: &[u8],
 ) -> Result<AzihsmHandle, AzihsmStatus> {
-    let mut unmask_algo = HsmAesKeyUnmaskAlgo::default();
-
-    // Unmask AES key
-    let key: HsmAesKey = HsmKeyManager::unmask_key(session, &mut unmask_algo, masked_key)?;
-
-    let handle = HANDLE_TABLE.alloc_handle(HandleType::AesKey, Box::new(key));
+    let key: HsmGenericSecretKey =
+        HsmKeyManager::unmask_key(session, &mut HsmAesKeyUnmaskAlgo::default(), masked_key)?;
+    let handle = match key.props().kind() {
+        HsmKeyKind::Aes => {
+            let aes_key: HsmAesKey = key.try_into()?;
+            HANDLE_TABLE.alloc_handle(HandleType::AesKey, Box::new(aes_key))
+        }
+        HsmKeyKind::AesXts => {
+            let xts_key: HsmAesXtsKey = key.try_into()?;
+            HANDLE_TABLE.alloc_handle(HandleType::AesKey, Box::new(xts_key))
+        }
+        HsmKeyKind::AesGcm => {
+            let gcm_key: HsmAesGcmKey = key.try_into()?;
+            HANDLE_TABLE.alloc_handle(HandleType::AesKey, Box::new(gcm_key))
+        }
+        _ => Err(AzihsmStatus::UnsupportedKeyKind)?,
+    };
 
     Ok(handle)
 }

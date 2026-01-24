@@ -39,7 +39,9 @@ pub unsafe extern "C" fn azihsm_key_gen(
         // Generate key based on algorithm ID
         let handle = match algo.id {
             // AES family algorithms
-            AzihsmAlgoId::AesKeyGen => aes_generate_key(&session, algo, key_props)?,
+            AzihsmAlgoId::AesKeyGen | AzihsmAlgoId::AesXtsKeyGen | AzihsmAlgoId::AesGcm => {
+                aes_generate_key(&session, algo, key_props)?
+            }
 
             // Unknown or unsupported algorithms
             _ => Err(AzihsmStatus::InvalidArgument)?,
@@ -345,7 +347,9 @@ pub unsafe extern "C" fn azihsm_key_unmask(
 
         // Dispatch based on key kind
         let handle = match key_kind {
-            AzihsmKeyKind::Aes => aes_unmask_key(&session, masked_key_buf)?,
+            AzihsmKeyKind::Aes | AzihsmKeyKind::AesXts | AzihsmKeyKind::AesGcm => {
+                aes_unmask_key(&session, masked_key_buf)?
+            }
             _ => Err(AzihsmStatus::UnsupportedKeyKind)?,
         };
 
