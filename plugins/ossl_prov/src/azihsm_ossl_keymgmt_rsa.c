@@ -42,8 +42,6 @@ static AZIHSM_RSA_KEY *azihsm_ossl_keymgmt_gen(
     azihsm_handle public, private;
     azihsm_status status;
 
-    printf("azihsm_ossl_keymgmt_gen: Generating RSA keypair with %u bits\n", genctx->pubkey_bits);
-
     struct azihsm_algo algo = {
         .id = AZIHSM_ALGO_ID_RSA_KEY_UNWRAPPING_KEY_PAIR_GEN,
         .params = NULL,
