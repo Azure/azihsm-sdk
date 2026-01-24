@@ -465,17 +465,6 @@ pub(crate) fn aes_gcm_generate_key(
     Ok((key_id.key_id(), key_props))
 }
 
-/// AES-GCM encryption result containing ciphertext and authentication tag.
-#[derive(Clone)]
-pub(crate) struct AesGcmEncryptResult {
-    /// The authentication tag generated during encryption.
-    pub tag: [u8; 16],
-    /// The IV used for encryption (returned by device).
-    pub iv: [u8; 12],
-    /// Number of bytes written to output buffer.
-    pub bytes_written: usize,
-}
-
 /// Encrypts data using AES-GCM mode at the DDI layer.
 ///
 /// Performs AES encryption in GCM (Galois/Counter Mode) using the specified
@@ -492,7 +481,7 @@ pub(crate) struct AesGcmEncryptResult {
 ///
 /// # Returns
 ///
-/// Returns an `AesGcmEncryptResult` containing the authentication tag and bytes written.
+/// Returns a tuple of (bytes_written, tag) where tag is the 16-byte authentication tag.
 ///
 /// # Errors
 ///
@@ -506,7 +495,7 @@ pub(crate) fn aes_gcm_encrypt(
     aad: Option<Vec<u8>>,
     plaintext: &[u8],
     ciphertext: &mut [u8],
-) -> HsmResult<AesGcmEncryptResult> {
+) -> HsmResult<(usize, [u8; 16])> {
     let gcm_params = DdiAesGcmParams {
         key_id: key.handle() as u32,
         iv,
@@ -533,11 +522,7 @@ pub(crate) fn aes_gcm_encrypt(
         .map_hsm_err(HsmError::DdiCmdFailure)
     })?;
 
-    Ok(AesGcmEncryptResult {
-        tag: tag.ok_or(HsmError::InternalError)?,
-        iv: returned_iv.unwrap_or(iv),
-        bytes_written,
-    })
+    Ok((bytes_written, tag.ok_or(HsmError::InternalError)?))
 }
 
 /// Decrypts data using AES-GCM mode at the DDI layer.
