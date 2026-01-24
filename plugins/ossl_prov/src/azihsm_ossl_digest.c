@@ -16,14 +16,14 @@
 /* Maximum digest output size (SHA512 = 64 bytes) */
 #define MAX_DIGEST_SIZE_BYTES 64
 
-#define AZIHSM_OSSL_SHA1_DIGEST_SIZE    20
-#define AZIHSM_OSSL_SHA1_BLOCK_SIZE     64
-#define AZIHSM_OSSL_SHA256_DIGEST_SIZE  32
-#define AZIHSM_OSSL_SHA256_BLOCK_SIZE   64
-#define AZIHSM_OSSL_SHA384_DIGEST_SIZE  48
-#define AZIHSM_OSSL_SHA384_BLOCK_SIZE   128
-#define AZIHSM_OSSL_SHA512_DIGEST_SIZE  64
-#define AZIHSM_OSSL_SHA512_BLOCK_SIZE   128
+#define AZIHSM_OSSL_SHA1_DIGEST_SIZE 20
+#define AZIHSM_OSSL_SHA1_BLOCK_SIZE 64
+#define AZIHSM_OSSL_SHA256_DIGEST_SIZE 32
+#define AZIHSM_OSSL_SHA256_BLOCK_SIZE 64
+#define AZIHSM_OSSL_SHA384_DIGEST_SIZE 48
+#define AZIHSM_OSSL_SHA384_BLOCK_SIZE 128
+#define AZIHSM_OSSL_SHA512_DIGEST_SIZE 64
+#define AZIHSM_OSSL_SHA512_BLOCK_SIZE 128
 
 /* Digest Context Structure for streaming operations */
 typedef struct
@@ -255,46 +255,78 @@ static int azihsm_ossl_digest_get_params(OSSL_PARAM params[], size_t blksize, si
 
 static void *azihsm_ossl_sha1_newctx(void *provctx)
 {
-    return azihsm_ossl_digest_newctx_algo(provctx, AZIHSM_ALGO_ID_SHA1, AZIHSM_OSSL_SHA1_DIGEST_SIZE);
+    return azihsm_ossl_digest_newctx_algo(
+        provctx,
+        AZIHSM_ALGO_ID_SHA1,
+        AZIHSM_OSSL_SHA1_DIGEST_SIZE
+    );
 }
 
 static void *azihsm_ossl_sha256_newctx(void *provctx)
 {
-    return azihsm_ossl_digest_newctx_algo(provctx, AZIHSM_ALGO_ID_SHA256, AZIHSM_OSSL_SHA256_DIGEST_SIZE);
+    return azihsm_ossl_digest_newctx_algo(
+        provctx,
+        AZIHSM_ALGO_ID_SHA256,
+        AZIHSM_OSSL_SHA256_DIGEST_SIZE
+    );
 }
 
 static void *azihsm_ossl_sha384_newctx(void *provctx)
 {
-    return azihsm_ossl_digest_newctx_algo(provctx, AZIHSM_ALGO_ID_SHA384, AZIHSM_OSSL_SHA384_DIGEST_SIZE);
+    return azihsm_ossl_digest_newctx_algo(
+        provctx,
+        AZIHSM_ALGO_ID_SHA384,
+        AZIHSM_OSSL_SHA384_DIGEST_SIZE
+    );
 }
 
 static void *azihsm_ossl_sha512_newctx(void *provctx)
 {
-    return azihsm_ossl_digest_newctx_algo(provctx, AZIHSM_ALGO_ID_SHA512, AZIHSM_OSSL_SHA512_DIGEST_SIZE);
+    return azihsm_ossl_digest_newctx_algo(
+        provctx,
+        AZIHSM_ALGO_ID_SHA512,
+        AZIHSM_OSSL_SHA512_DIGEST_SIZE
+    );
 }
 
 /* SHA1 */
 static int azihsm_ossl_sha1_get_params(OSSL_PARAM params[])
 {
-    return azihsm_ossl_digest_get_params(params, AZIHSM_OSSL_SHA1_BLOCK_SIZE, AZIHSM_OSSL_SHA1_DIGEST_SIZE);
+    return azihsm_ossl_digest_get_params(
+        params,
+        AZIHSM_OSSL_SHA1_BLOCK_SIZE,
+        AZIHSM_OSSL_SHA1_DIGEST_SIZE
+    );
 }
 
 /* SHA256 */
 static int azihsm_ossl_sha256_get_params(OSSL_PARAM params[])
 {
-    return azihsm_ossl_digest_get_params(params, AZIHSM_OSSL_SHA256_BLOCK_SIZE, AZIHSM_OSSL_SHA256_DIGEST_SIZE);
+    return azihsm_ossl_digest_get_params(
+        params,
+        AZIHSM_OSSL_SHA256_BLOCK_SIZE,
+        AZIHSM_OSSL_SHA256_DIGEST_SIZE
+    );
 }
 
 /* SHA384 */
 static int azihsm_ossl_sha384_get_params(OSSL_PARAM params[])
 {
-    return azihsm_ossl_digest_get_params(params, AZIHSM_OSSL_SHA384_BLOCK_SIZE, AZIHSM_OSSL_SHA384_DIGEST_SIZE);
+    return azihsm_ossl_digest_get_params(
+        params,
+        AZIHSM_OSSL_SHA384_BLOCK_SIZE,
+        AZIHSM_OSSL_SHA384_DIGEST_SIZE
+    );
 }
 
 /* SHA512 */
 static int azihsm_ossl_sha512_get_params(OSSL_PARAM params[])
 {
-    return azihsm_ossl_digest_get_params(params, AZIHSM_OSSL_SHA512_BLOCK_SIZE, AZIHSM_OSSL_SHA512_DIGEST_SIZE);
+    return azihsm_ossl_digest_get_params(
+        params,
+        AZIHSM_OSSL_SHA512_BLOCK_SIZE,
+        AZIHSM_OSSL_SHA512_DIGEST_SIZE
+    );
 }
 
 static int azihsm_ossl_digest_set_state(

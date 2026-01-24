@@ -1531,8 +1531,8 @@ fn extract_svn_from_bmk(bmk: &[u8]) -> Option<u64> {
     let mut decoder = MborDecoder::new(metadata, false);
 
     let metadata = DdiMaskedKeyMetadata::mbor_decode(&mut decoder);
-    if metadata.is_err() {
-        tracing::error!("mbor_decode error {:?}", metadata.unwrap_err());
+    if let Err(e) = &metadata {
+        tracing::error!("mbor_decode error {:?}", e);
 
         return None;
     }
@@ -1580,8 +1580,8 @@ fn update_svn_in_bmk(bmk: &mut [u8], svn: u64) {
     let mut decoder = MborDecoder::new(metadata, false);
 
     let metadata = DdiMaskedKeyMetadata::mbor_decode(&mut decoder);
-    if metadata.is_err() {
-        tracing::error!("mbor_decode error {:?}", metadata.unwrap_err());
+    if let Err(e) = &metadata {
+        tracing::error!("mbor_decode error {:?}", e);
         return;
     }
     let mut metadata = metadata.unwrap();
@@ -1590,7 +1590,7 @@ fn update_svn_in_bmk(bmk: &mut [u8], svn: u64) {
     let metadata_slot = &mut bmk[metadata_offset..metadata_offset + metadata_len];
     let mut encoder = MborEncoder::new(metadata_slot, false);
     let metadata = metadata.mbor_encode(&mut encoder);
-    if metadata.is_err() {
-        tracing::error!("mbor_encode error {:?}", metadata.unwrap_err());
+    if let Err(e) = &metadata {
+        tracing::error!("mbor_encode error {:?}", e);
     }
 }

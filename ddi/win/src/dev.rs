@@ -3,6 +3,7 @@
 //! DDI Implementation - MCR Windows Device - Device Module
 
 #![allow(unsafe_code)]
+#![allow(unused_assignments)]
 
 use std::fs::File;
 use std::fs::OpenOptions;

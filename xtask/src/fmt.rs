@@ -45,10 +45,10 @@ impl Xtask for Fmt {
             .or_else(|| sh.var("RUST_TOOLCHAIN").ok())
             .map(|s| format!("+{s}"));
 
-        if rust_toolchain.is_some() {
+        if let Some(toolchain) = rust_toolchain.as_ref() {
             log::trace!(
                 "fmt toolchain override: fmt --toolchain={}",
-                &rust_toolchain.as_ref().unwrap()[1..]
+                &toolchain[1..]
             );
         }
 

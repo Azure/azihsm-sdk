@@ -174,7 +174,8 @@ fn get_partition_prop(
             get_property_with_buffer(part_prop, |buf| partition.mobk(buf))
         }
         AzihsmPartPropId::ManufacturerCert => {
-            get_property_with_buffer(part_prop, |buf| partition.cert_chain(0, buf))
+            let cert_chain = AzihsmStr::from_string(&partition.cert_chain(0)?);
+            copy_to_part_prop(part_prop, cert_chain.as_bytes())
         }
         _ => Err(AzihsmStatus::UnsupportedProperty),
     }
