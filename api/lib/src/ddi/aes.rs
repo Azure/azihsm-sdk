@@ -457,7 +457,7 @@ pub(crate) fn aes_gcm_generate_key(
     let key_props = HsmMaskedKey::to_key_props(masked_key)?;
     // Validate that the device returned properties match the requested properties.
     if !props.validate_dev_props(&key_props) {
-        Err(HsmError::InvalidKeyProps)?;
+        return Err(HsmError::InvalidKeyProps);
     }
 
     key_id.disarm();

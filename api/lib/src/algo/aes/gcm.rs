@@ -56,6 +56,16 @@ pub struct HsmAesGcmAlgo {
 }
 
 impl HsmAesGcmAlgo {
+    /// Validates and converts an IV slice to a fixed-size array.
+    fn validate_iv(iv: &[u8]) -> HsmResult<[u8; GCM_IV_SIZE]> {
+        iv.try_into().map_err(|_| HsmError::InvalidArgument)
+    }
+
+    /// Validates and converts a tag slice to a fixed-size array.
+    fn validate_tag(tag: &[u8]) -> HsmResult<[u8; GCM_TAG_SIZE]> {
+        tag.try_into().map_err(|_| HsmError::InvalidArgument)
+    }
+
     /// Creates a new AES-GCM algorithm instance for encryption.
     ///
     /// The authentication tag will be generated during encryption and can be
@@ -71,16 +81,8 @@ impl HsmAesGcmAlgo {
     /// * `Ok(Self)` - A configured AES-GCM algorithm instance for encryption
     /// * `Err(HsmError::InvalidArgument)` - If the IV is not exactly 12 bytes
     pub fn new_for_encryption(iv: Vec<u8>, aad: Option<Vec<u8>>) -> HsmResult<Self> {
-        if iv.len() != GCM_IV_SIZE {
-            return Err(HsmError::InvalidArgument);
-        }
-        let mut iv_arr = [0u8; GCM_IV_SIZE];
-        iv_arr.copy_from_slice(&iv);
-        Ok(Self {
-            iv: iv_arr,
-            aad,
-            tag: None,
-        })
+        let iv = Self::validate_iv(&iv)?;
+        Ok(Self { iv, aad, tag: None })
     }
 
     /// Creates a new AES-GCM algorithm instance for decryption.
@@ -98,20 +100,12 @@ impl HsmAesGcmAlgo {
     /// * `Ok(Self)` - A configured AES-GCM algorithm instance for decryption
     /// * `Err(HsmError::InvalidArgument)` - If the IV or tag size is incorrect
     pub fn new_for_decryption(iv: Vec<u8>, tag: Vec<u8>, aad: Option<Vec<u8>>) -> HsmResult<Self> {
-        if iv.len() != GCM_IV_SIZE {
-            return Err(HsmError::InvalidArgument);
-        }
-        if tag.len() != GCM_TAG_SIZE {
-            return Err(HsmError::InvalidArgument);
-        }
-        let mut iv_arr = [0u8; GCM_IV_SIZE];
-        iv_arr.copy_from_slice(&iv);
-        let mut tag_arr = [0u8; GCM_TAG_SIZE];
-        tag_arr.copy_from_slice(&tag);
+        let iv = Self::validate_iv(&iv)?;
+        let tag = Self::validate_tag(&tag)?;
         Ok(Self {
-            iv: iv_arr,
+            iv,
             aad,
-            tag: Some(tag_arr),
+            tag: Some(tag),
         })
     }
 
