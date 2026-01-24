@@ -170,20 +170,20 @@ pub(crate) fn hkdf_derive_key(
     )?;
 
     // Determine the handle type based on the derived key kind
-        let handle = match derived_key_props.kind() {
-            HsmKeyKind::Aes => {
-                let aes_key: HsmAesKey = derived_key.try_into()?;
-                HANDLE_TABLE.alloc_handle(HandleType::AesKey, Box::new(aes_key))
-            }
-            HsmKeyKind::AesGcm => {
-                let aes_key: HsmAesGcmKey = derived_key.try_into()?;
-                HANDLE_TABLE.alloc_handle(HandleType::AesKey, Box::new(aes_key))
-            }
+    let handle = match derived_key_props.kind() {
+        HsmKeyKind::Aes => {
+            let aes_key: HsmAesKey = derived_key.try_into()?;
+            HANDLE_TABLE.alloc_handle(HandleType::AesKey, Box::new(aes_key))
+        }
+        HsmKeyKind::AesGcm => {
+            let aes_key: HsmAesGcmKey = derived_key.try_into()?;
+            HANDLE_TABLE.alloc_handle(HandleType::AesKey, Box::new(aes_key))
+        }
 
-            HsmKeyKind::HmacSha256 | HsmKeyKind::HmacSha384 | HsmKeyKind::HmacSha512 => {
-                let hmac_key: HsmHmacKey = derived_key.try_into()?;
-                HANDLE_TABLE.alloc_handle(HandleType::HmacKey, Box::new(hmac_key))
-            }
+        HsmKeyKind::HmacSha256 | HsmKeyKind::HmacSha384 | HsmKeyKind::HmacSha512 => {
+            let hmac_key: HsmHmacKey = derived_key.try_into()?;
+            HANDLE_TABLE.alloc_handle(HandleType::HmacKey, Box::new(hmac_key))
+        }
         _ => Err(AzihsmStatus::UnsupportedKeyKind)?,
     };
 
