@@ -208,10 +208,10 @@ static AZIHSM_EC_KEY *azihsm_ossl_keymgmt_gen(
 
     if (status != AZIHSM_STATUS_SUCCESS)
     {
+        azihsm_key_delete(public);
+        azihsm_key_delete(private);
         OPENSSL_free(ec_key);
-
-        printf("azihsm_ossl_keymgmt_gen: azihsm_key_gen_pair failed with error code %d\n", status);
-
+        ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GENERATE_KEY);
         return NULL;
     }
 
@@ -229,15 +229,11 @@ static AZIHSM_EC_KEY *azihsm_ossl_keymgmt_gen(
         uint8_t *masked_key_buffer = OPENSSL_malloc(masked_key_buffer_size);
         if (masked_key_buffer == NULL)
         {
-            printf(
-                "azihsm_ossl_keymgmt_gen: Failed to allocate masked key buffer (%u bytes)\n",
-                masked_key_buffer_size
-            );
-
             azihsm_key_delete(private);
             azihsm_key_delete(public);
 
             OPENSSL_free(ec_key);
+            ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
             return NULL;
         }
 
@@ -255,16 +251,12 @@ static AZIHSM_EC_KEY *azihsm_ossl_keymgmt_gen(
             FILE *f = fopen(genctx->masked_key_file, "wb");
             if (f == NULL)
             {
-                printf(
-                    "azihsm_ossl_keymgmt_gen: Failed to open masked key file: %s\n",
-                    genctx->masked_key_file
-                );
-
                 azihsm_key_delete(private);
                 azihsm_key_delete(public);
 
                 OPENSSL_free(masked_key_buffer);
                 OPENSSL_free(ec_key);
+                ERR_raise(ERR_LIB_PROV, ERR_R_OPERATION_FAIL);
                 return NULL;
             }
 
@@ -273,29 +265,23 @@ static AZIHSM_EC_KEY *azihsm_ossl_keymgmt_gen(
 
             if (written != prop.len)
             {
-                printf(
-                    "azihsm_ossl_keymgmt_gen: Failed to write complete masked key to file (%zu/%u "
-                    "bytes)\n",
-                    written,
-                    prop.len
-                );
-
                 azihsm_key_delete(private);
                 azihsm_key_delete(public);
 
                 OPENSSL_free(masked_key_buffer);
                 OPENSSL_free(ec_key);
+                ERR_raise(ERR_LIB_PROV, ERR_R_OPERATION_FAIL);
                 return NULL;
             }
         }
         else if (retrieve_status != AZIHSM_STATUS_KEY_PROPERTY_NOT_PRESENT)
         {
-            printf(
-                "azihsm_ossl_keymgmt_gen: Failed to retrieve masked key (status: %d)\n",
-                retrieve_status
-            );
+            azihsm_key_delete(private);
+            azihsm_key_delete(public);
+
             OPENSSL_free(masked_key_buffer);
             OPENSSL_free(ec_key);
+            ERR_raise(ERR_LIB_PROV, ERR_R_OPERATION_FAIL);
             return NULL;
         }
         /* If KEY_PROPERTY_NOT_PRESENT, just continue without masked key */
