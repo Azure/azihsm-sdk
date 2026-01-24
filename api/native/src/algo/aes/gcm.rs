@@ -258,8 +258,7 @@ pub(crate) fn aes_gcm_decrypt_init(
     let params: &mut AzihsmAlgoAesGcmParams = algo.try_into()?;
     let aad = buffer_to_optional_slice(params.aad)?.map(|slice| slice.to_vec());
 
-    let aes_algo =
-        HsmAesGcmAlgo::new_for_decryption(params.iv.to_vec(), params.tag.to_vec(), aad)?;
+    let aes_algo = HsmAesGcmAlgo::new_for_decryption(params.iv.to_vec(), params.tag.to_vec(), aad)?;
 
     // Initialize context
     let decrypt_context = aes_algo.decrypt_init(key)?;
