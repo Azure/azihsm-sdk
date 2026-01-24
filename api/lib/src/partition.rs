@@ -303,39 +303,12 @@ impl HsmPartition {
     /// # Arguments
     ///
     /// * `slot` - The certificate slot number.
-    /// * `cert_chain` - Optional output buffer to receive the certificate chain.
-    ///   If `None`, returns the exact size needed to hold the chain.
     ///
     /// # Returns
     ///
-    /// Returns the size of the certificate chain on success. When `cert_chain` is `None`,
-    /// this is the exact number of bytes needed. When `cert_chain` is provided, this is
-    /// the actual number of bytes written to the buffer.
-    pub fn cert_chain(&self, slot: u8, cert_chain: Option<&mut [u8]>) -> HsmResult<usize> {
-        self.with_dev(|dev| ddi::get_cert_chain(dev, self.api_rev_range().min(), slot, cert_chain))
-    }
-
-    /// Retrieves the certificate chain stored in the partition as a vector.
-    ///
-    /// Returns the certificate chain in PEM format (RFC 7468), with each certificate
-    /// encoded in Base64 with `-----BEGIN CERTIFICATE-----` and `-----END CERTIFICATE-----`
-    /// delimiters and LF line endings. Multiple certificates are separated by a single
-    /// newline character (`\n`). The certificates are ordered from leaf/partition certificate
-    /// (first) to root certificate (last).
-    ///
-    /// # Arguments
-    ///
-    /// * `slot` - The certificate slot number.
-    ///
-    /// # Returns
-    ///
-    /// Returns a vector containing the certificate chain bytes.
-    pub fn cert_chain_vec(&self, slot: u8) -> HsmResult<Vec<u8>> {
-        let cert_size = self.cert_chain(slot, None)?;
-        let mut cert_buffer = vec![0u8; cert_size];
-        let actual_size = self.cert_chain(slot, Some(&mut cert_buffer[..]))?;
-        cert_buffer.truncate(actual_size);
-        Ok(cert_buffer)
+    /// Returns the certificate chain as a PEM string.
+    pub fn cert_chain(&self, slot: u8) -> HsmResult<String> {
+        self.with_dev(|dev| ddi::get_cert_chain(dev, self.api_rev_range().min(), slot))
     }
 
     /// Retrieves the backup masking key that was set during partition initialization.

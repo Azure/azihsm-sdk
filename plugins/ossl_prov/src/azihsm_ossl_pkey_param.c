@@ -81,7 +81,7 @@ uint32_t azihsm_ossl_get_priv_key_property(AZIHSM_KEY_USAGE_TYPE usage_type)
     case KEY_USAGE_KEY_AGREEMENT:
         return AZIHSM_KEY_PROP_ID_DERIVE;
     default:
-        return AZIHSM_KEY_PROP_ID_SIGN;  /* Default to SIGN */
+        return AZIHSM_KEY_PROP_ID_SIGN; /* Default to SIGN */
     }
 }
 
@@ -94,7 +94,7 @@ uint32_t azihsm_ossl_get_pub_key_property(AZIHSM_KEY_USAGE_TYPE usage_type)
     case KEY_USAGE_KEY_AGREEMENT:
         return AZIHSM_KEY_PROP_ID_DERIVE;
     default:
-        return AZIHSM_KEY_PROP_ID_VERIFY;  /* Default to VERIFY */
+        return AZIHSM_KEY_PROP_ID_VERIFY; /* Default to VERIFY */
     }
 }
 
@@ -133,5 +133,3 @@ int azihsm_ossl_masked_key_filepath_validate(const char *filepath)
 
     return 0;
 }
-
-

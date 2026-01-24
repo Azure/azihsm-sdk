@@ -19,8 +19,8 @@ extern "C"
 /* Key usage types - single usage for the entire key pair */
 typedef enum
 {
-    KEY_USAGE_DIGITAL_SIGNATURE = 0,  /* Private: sign, Public: verify */
-    KEY_USAGE_KEY_AGREEMENT = 1,       /* Both: derive */
+    KEY_USAGE_DIGITAL_SIGNATURE = 0, /* Private: sign, Public: verify */
+    KEY_USAGE_KEY_AGREEMENT = 1,     /* Both: derive */
 } AZIHSM_KEY_USAGE_TYPE;
 
 /*

@@ -1,5 +1,7 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
 
+use azihsm_crypto::pem_to_der;
+
 use super::*;
 
 #[api_test]
@@ -55,30 +57,30 @@ fn test_cert_chain() {
         let part = HsmPartitionManager::open_partition(&part_info.path)
             .expect("Failed to open the partition");
 
-        // Test retrieving cert chain size (slot 0)
-        let cert_size = part
-            .cert_chain(0, None)
-            .expect("Failed to get cert chain size");
-
-        // Test retrieving cert chain using cert_chain_vec
-        let cert_chain_vec = part
-            .cert_chain_vec(0)
-            .expect("Failed to retrieve cert chain");
-        assert_eq!(cert_chain_vec.len(), cert_size, "Cert chain size mismatch");
-
-        // Test retrieving cert chain with buffer
-        let mut cert_buffer = vec![0u8; cert_size];
-        let actual_size = part
-            .cert_chain(0, Some(&mut cert_buffer[..]))
-            .expect("Failed to retrieve cert chain with buffer");
-        assert_eq!(
-            actual_size, cert_size,
-            "Retrieved cert chain size doesn't match expected size"
+        let cert_chain = part.cert_chain(0).expect("Failed to retrieve cert chain");
+        assert!(!cert_chain.is_empty(), "Cert chain is empty");
+        assert!(
+            cert_chain.contains("-----BEGIN CERTIFICATE-----"),
+            "Cert chain missing PEM header"
         );
-        assert_eq!(
-            cert_buffer[..actual_size],
-            cert_chain_vec[..],
-            "Cert chain content mismatch"
-        );
+
+        let blocks: Vec<String> = cert_chain
+            .split("-----BEGIN CERTIFICATE-----")
+            .filter(|part| part.contains("-----END CERTIFICATE-----"))
+            .filter_map(|part| {
+                part.split("-----END CERTIFICATE-----")
+                    .next()
+                    .map(|content| {
+                        format!(
+                            "-----BEGIN CERTIFICATE-----{}-----END CERTIFICATE-----",
+                            content
+                        )
+                    })
+            })
+            .collect();
+        assert!(!blocks.is_empty(), "Parsed cert chain is empty");
+        for block in blocks {
+            pem_to_der(block.as_bytes()).expect("Failed to parse certificate PEM");
+        }
     }
 }
