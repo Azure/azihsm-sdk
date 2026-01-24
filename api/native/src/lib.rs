@@ -110,10 +110,12 @@ impl TryFrom<u32> for AzihsmKeyKind {
             1 => Ok(AzihsmKeyKind::Rsa),
             2 => Ok(AzihsmKeyKind::Ecc),
             3 => Ok(AzihsmKeyKind::Aes),
+            4 => Ok(AzihsmKeyKind::AesXts),
             5 => Ok(AzihsmKeyKind::SharedSecret),
             7 => Ok(AzihsmKeyKind::HmacSha256),
             8 => Ok(AzihsmKeyKind::HmacSha384),
             9 => Ok(AzihsmKeyKind::HmacSha512),
+            11 => Ok(AzihsmKeyKind::AesGcm),
             _ => Err(AzihsmStatus::InvalidArgument),
         }
     }
@@ -340,6 +342,15 @@ impl TryFrom<AzihsmHandle> for api::HsmAesKey {
 
     fn try_from(value: AzihsmHandle) -> Result<api::HsmAesKey, Self::Error> {
         let key: &api::HsmAesKey = HANDLE_TABLE.as_ref(value, HandleType::AesKey)?;
+        Ok(key.clone())
+    }
+}
+
+impl TryFrom<AzihsmHandle> for api::HsmGenericSecretKey {
+    type Error = AzihsmStatus;
+
+    fn try_from(value: AzihsmHandle) -> Result<api::HsmGenericSecretKey, Self::Error> {
+        let key: &api::HsmGenericSecretKey = HANDLE_TABLE.as_ref(value, HandleType::AesKey)?;
         Ok(key.clone())
     }
 }
