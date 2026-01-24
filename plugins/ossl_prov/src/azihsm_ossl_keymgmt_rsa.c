@@ -78,9 +78,9 @@ static AZIHSM_RSA_KEY *azihsm_ossl_keymgmt_gen(
     }
 
     rsa_key->genctx = *genctx;
-    rsa_key->key.public = public;
+    rsa_key->key.pub = public;
     rsa_key->has_public = true;
-    rsa_key->key.private = private;
+    rsa_key->key.priv = private;
     rsa_key->has_private = true;
 
     return rsa_key;
@@ -93,8 +93,8 @@ static void azihsm_ossl_keymgmt_free(AZIHSM_RSA_KEY *rsa_key)
         return;
     }
 
-    azihsm_key_delete(rsa_key->key.public);
-    azihsm_key_delete(rsa_key->key.private);
+    azihsm_key_delete(rsa_key->key.pub);
+    azihsm_key_delete(rsa_key->key.priv);
 
     OPENSSL_free(rsa_key);
 }
@@ -238,12 +238,12 @@ static int azihsm_ossl_keymgmt_match(
         return 0;
     }
 
-    if (rsa_key1->key.public != rsa_key2->key.public)
+    if (rsa_key1->key.pub != rsa_key2->key.pub)
     {
         return 0;
     }
 
-    if (rsa_key1->key.private != rsa_key2->key.private)
+    if (rsa_key1->key.priv != rsa_key2->key.priv)
     {
         return 0;
     }

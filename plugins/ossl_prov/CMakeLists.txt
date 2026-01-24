@@ -129,6 +129,20 @@ target_link_libraries(azihsm_ossl_provider PUBLIC ${OPENSSL_CRYPTO_LIBRARY})
 target_link_libraries(azihsm_ossl_provider PUBLIC bsd)
 target_link_libraries(azihsm_ossl_provider PUBLIC azihsm_api_native)
 
+# Copy the provider .so to the Cargo target directory as a post-build step
+# AZIHSM_TARGET_DIR is passed from build.rs and points to target/debug or target/release
+if (DEFINED AZIHSM_TARGET_DIR)
+    add_custom_command(
+        TARGET azihsm_ossl_provider
+        POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy
+            "$<TARGET_FILE:azihsm_ossl_provider>"
+            "${AZIHSM_TARGET_DIR}/azihsm_provider.so"
+        COMMENT "Copying azihsm_provider.so to ${AZIHSM_TARGET_DIR}/"
+        VERBATIM
+    )
+endif()
+
 if (NOT DEFINED OPENSSL_PROVIDERS)
    set(OPENSSL_PROVIDERS "${CMAKE_INSTALL_LIBDIR}/ossl-modules" CACHE PATH "Path to OpenSSL providers")
 endif()
