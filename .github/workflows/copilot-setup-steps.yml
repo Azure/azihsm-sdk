@@ -4,11 +4,53 @@
 # Setup steps for GitHub Copilot coding agent
 # Learn more at https://docs.github.com/en/copilot/customizing-copilot/customizing-the-development-environment-for-copilot-coding-agent
 
-steps:
-  - name: Install Linux packages
-    run: |
-      sudo apt-get update
-      sudo apt-get install -y clang-format-18 libbsd-dev libssl-dev pkg-config
+name: "Copilot Setup Steps"
 
-  - name: Install Rust dependencies
-    run: cargo xtask precheck --setup
+# Automatically run the setup steps when they are changed to allow for easy validation, and
+# allow manual testing through the repository's "Actions" tab
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/copilot-setup-steps.yml
+  pull_request:
+    paths:
+      - .github/workflows/copilot-setup-steps.yml
+env:
+  CACHE_KEY_ID: 51818cf945d051b6d5c86fc0aa7447f9af01318d
+
+jobs:
+  # The job MUST be called `copilot-setup-steps` or it will not be picked up by Copilot.
+  copilot-setup-steps:
+    runs-on: ubuntu-24.04
+
+    # Set the permissions to the lowest permissions possible needed for your steps.
+    # Copilot will be given its own token for its operations.
+    permissions:
+      # If you want to clone the repository as part of your setup steps, for example to install dependencies, you'll need the `contents: read` permission. If you don't clone the repository in your setup steps, Copilot will do this for you automatically after the steps complete.
+      contents: read
+
+    # You can define any steps you want, and they will run before the agent starts.
+    # If you do not check out your code, Copilot will do this for you.
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Install Linux packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-format-18 libbsd-dev libssl-dev pkg-config
+      - name: Restore Cargo cache
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: ${{ runner.os }}-cargo-${{ env.CACHE_KEY_ID }}
+          fail-on-cache-miss: true
+      - name: Install nightly rustfmt
+        run: cargo xtask rustup-component-add --component rustfmt --toolchain nightly
+      - name: Install clippy
+        run: cargo xtask rustup-component-add --component clippy
