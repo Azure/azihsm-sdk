@@ -57,6 +57,7 @@ set(SOURCE
     handle_mgmt_tests.cpp
     multi_process_tests.cpp
     algo/aes/cbc_enc_dec_tests.cpp
+    algo/aes/gcm_enc_dec_tests.cpp
     algo/aes/xts_enc_dec_tests.cpp
     algo/aes/keygen_tests.cpp
     algo/ecc/keygen_tests.cpp

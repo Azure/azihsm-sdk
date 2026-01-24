@@ -42,7 +42,9 @@ pub unsafe extern "C" fn azihsm_key_gen(
         // Generate key based on algorithm ID
         let handle = match algo.id {
             // AES family algorithms
-            AzihsmAlgoId::AesKeyGen => aes_generate_key(&session, algo, key_props)?,
+            AzihsmAlgoId::AesKeyGen | AzihsmAlgoId::AesXtsKeyGen | AzihsmAlgoId::AesGcm => {
+                aes_generate_key(&session, algo, key_props)?
+            }
 
             // AES XTS key generation
             AzihsmAlgoId::AesXtsKeyGen => aes_xts_generate_key(&session, algo, key_props)?,
@@ -365,6 +367,7 @@ pub unsafe extern "C" fn azihsm_key_unmask(
         // Dispatch based on key kind
         let handle = match key_kind {
             AzihsmKeyKind::Aes => aes_unmask_key(&session, masked_key_buf)?,
+            AzihsmKeyKind::AesGcm => aes_gcm_unmask_key(&session, masked_key_buf)?,
             AzihsmKeyKind::AesXts => aes_xts_unmask_key(&session, masked_key_buf)?,
             AzihsmKeyKind::SharedSecret => secret_unmask_key(&session, masked_key_buf)?,
             AzihsmKeyKind::HmacSha256 | AzihsmKeyKind::HmacSha384 | AzihsmKeyKind::HmacSha512 => {

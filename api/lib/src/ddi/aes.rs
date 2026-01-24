@@ -360,3 +360,181 @@ fn aes_xts_encrypt_decrypt(
     })?;
     Ok(resp)
 }
+
+/// Generates an AES-GCM key within an HSM session.
+///
+/// Creates a new AES-GCM key using the specified key properties and returns both
+/// the key handle for performing operations and the masked key material for
+/// secure storage. AES-GCM keys are 256-bit only.
+///
+/// # Arguments
+///
+/// * `session` - The HSM session in which to generate the key
+/// * `props` - Key properties specifying usage permissions and attributes
+///
+/// # Returns
+///
+/// Returns a tuple containing:
+/// - `HsmKeyHandle` - Handle for performing cryptographic operations with the key
+/// - `HsmKeyProps` - Key properties including masked key material
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - Key properties cannot be converted to DDI format
+/// - The DDI operation fails
+/// - The session is invalid or closed
+pub(crate) fn aes_gcm_generate_key(
+    session: &HsmSession,
+    props: HsmKeyProps,
+) -> HsmResult<(HsmKeyHandle, HsmKeyProps)> {
+    let req = DdiAesGenerateKeyCmdReq {
+        hdr: build_ddi_req_hdr_sess(DdiOp::AesGenerateKey, session),
+        data: DdiAesGenerateKeyReq {
+            key_size: DdiAesKeySize::AesGcmBulk256,
+            key_tag: None,
+            key_properties: (&props).try_into()?,
+        },
+        ext: None,
+    };
+
+    let resp = session.with_dev(|dev| {
+        dev.exec_op(&req, &mut None)
+            .map_hsm_err(HsmError::DdiCmdFailure)
+    })?;
+
+    let mut key_id = ddi::HsmKeyIdGuard::new(session, resp.data.key_id);
+    let masked_key = resp.data.masked_key.as_slice();
+    let key_props = HsmMaskedKey::to_key_props(masked_key)?;
+    // Validate that the device returned properties match the requested properties.
+    if !props.validate_dev_props(&key_props) {
+        return Err(HsmError::InvalidKeyProps);
+    }
+
+    key_id.disarm();
+
+    Ok((key_id.key_id(), key_props))
+}
+
+/// Encrypts data using AES-GCM mode at the DDI layer.
+///
+/// Performs AES encryption in GCM (Galois/Counter Mode) using the specified
+/// key, initialization vector, and optional additional authenticated data.
+/// Uses the slice-based API for efficiency.
+///
+/// # Arguments
+///
+/// * `key` - The AES-GCM key to use for encryption
+/// * `iv` - The initialization vector (12 bytes)
+/// * `aad` - Optional additional authenticated data
+/// * `plaintext` - The data to be encrypted
+/// * `ciphertext` - Buffer to receive the encrypted output
+///
+/// # Returns
+///
+/// Returns a tuple of (bytes_written, tag) where tag is the 16-byte authentication tag.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - The session is invalid or closed
+/// - The key is invalid or unsuitable for GCM encryption
+/// - The DDI operation fails
+pub(crate) fn aes_gcm_encrypt(
+    key: &HsmAesGcmKey,
+    iv: [u8; 12],
+    aad: Option<Vec<u8>>,
+    plaintext: &[u8],
+    ciphertext: &mut [u8],
+) -> HsmResult<(usize, [u8; 16])> {
+    let gcm_params = DdiAesGcmParams {
+        key_id: key.handle() as u32,
+        iv,
+        aad,
+        tag: None, // Tag is output for encryption
+        session_id: key.sess_id(),
+        short_app_id: 0,
+    };
+
+    let mut tag: Option<[u8; 16]> = None;
+    let mut returned_iv: Option<[u8; 12]> = None;
+    let mut is_fips_approved = false;
+
+    let bytes_written = key.with_dev(|dev| {
+        dev.exec_op_fp_gcm_slice(
+            DdiAesOp::Encrypt,
+            gcm_params,
+            plaintext,
+            ciphertext,
+            &mut tag,
+            &mut returned_iv,
+            &mut is_fips_approved,
+        )
+        .map_hsm_err(HsmError::DdiCmdFailure)
+    })?;
+
+    Ok((bytes_written, tag.ok_or(HsmError::InternalError)?))
+}
+
+/// Decrypts data using AES-GCM mode at the DDI layer.
+///
+/// Performs AES decryption in GCM (Galois/Counter Mode) using the specified
+/// key, initialization vector, authentication tag, and optional additional
+/// authenticated data. Uses the slice-based API for efficiency.
+///
+/// # Arguments
+///
+/// * `key` - The AES-GCM key to use for decryption
+/// * `iv` - The initialization vector (12 bytes)
+/// * `tag` - The authentication tag for verification
+/// * `aad` - Optional additional authenticated data
+/// * `ciphertext` - The data to be decrypted
+/// * `plaintext` - Buffer to receive the decrypted output
+///
+/// # Returns
+///
+/// Returns the number of bytes written to the plaintext buffer.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - The session is invalid or closed
+/// - The key is invalid or unsuitable for GCM decryption
+/// - Authentication tag verification fails
+/// - The DDI operation fails
+pub(crate) fn aes_gcm_decrypt(
+    key: &HsmAesGcmKey,
+    iv: [u8; 12],
+    tag: [u8; 16],
+    aad: Option<Vec<u8>>,
+    ciphertext: &[u8],
+    plaintext: &mut [u8],
+) -> HsmResult<usize> {
+    let gcm_params = DdiAesGcmParams {
+        key_id: key.handle() as u32,
+        iv,
+        aad,
+        tag: Some(tag),
+        session_id: key.sess_id(),
+        short_app_id: 0,
+    };
+
+    let mut returned_tag: Option<[u8; 16]> = None;
+    let mut returned_iv: Option<[u8; 12]> = None;
+    let mut is_fips_approved = false;
+
+    let bytes_written = key.with_dev(|dev| {
+        dev.exec_op_fp_gcm_slice(
+            DdiAesOp::Decrypt,
+            gcm_params,
+            ciphertext,
+            plaintext,
+            &mut returned_tag,
+            &mut returned_iv,
+            &mut is_fips_approved,
+        )
+        .map_hsm_err(HsmError::DdiCmdFailure)
+    })?;
+
+    Ok(bytes_written)
+}

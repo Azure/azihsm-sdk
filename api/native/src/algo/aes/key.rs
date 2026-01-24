@@ -18,6 +18,13 @@ impl TryFrom<&AzihsmAlgo> for azihsm_api::HsmAesKeyGenAlgo {
     }
 }
 
+impl TryFrom<&AzihsmAlgo> for azihsm_api::HsmAesGcmKeyGenAlgo {
+    type Error = AzihsmStatus;
+
+    /// Converts a C FFI algorithm specification to HsmAesGcmKeyGenAlgo.
+    fn try_from(_algo: &AzihsmAlgo) -> Result<Self, Self::Error> {
+        Ok(HsmAesGcmKeyGenAlgo::default())
+        
 impl TryFrom<&AzihsmAlgo> for azihsm_api::HsmAesXtsKeyGenAlgo {
     type Error = AzihsmStatus;
 
@@ -44,9 +51,19 @@ pub(crate) fn aes_generate_key(
     algo: &AzihsmAlgo,
     key_props: HsmKeyProps,
 ) -> Result<AzihsmHandle, AzihsmStatus> {
-    let mut aes_algo = HsmAesKeyGenAlgo::try_from(algo)?;
-    let key = HsmKeyManager::generate_key(session, &mut aes_algo, key_props)?;
-    let handle = HANDLE_TABLE.alloc_handle(HandleType::AesKey, Box::new(key));
+    let handle = match key_props.kind() {
+        HsmKeyKind::Aes => {
+            let mut aes_algo = HsmAesKeyGenAlgo::try_from(algo)?;
+            let key = HsmKeyManager::generate_key(session, &mut aes_algo, key_props)?;
+            HANDLE_TABLE.alloc_handle(HandleType::AesKey, Box::new(key))
+        }
+        HsmKeyKind::AesGcm => {
+            let mut aes_algo = HsmAesGcmKeyGenAlgo::try_from(algo)?;
+            let key = HsmKeyManager::generate_key(session, &mut aes_algo, key_props)?;
+            HANDLE_TABLE.alloc_handle(HandleType::AesGcmKey, Box::new(key))
+        }
+        _ => Err(AzihsmStatus::UnsupportedKeyKind)?,
+    };
 
     Ok(handle)
 }
@@ -67,12 +84,32 @@ pub(crate) fn aes_unmask_key(
     session: &HsmSession,
     masked_key: &[u8],
 ) -> Result<AzihsmHandle, AzihsmStatus> {
-    let mut unmask_algo = HsmAesKeyUnmaskAlgo::default();
+    let aes_key: HsmAesKey =
+        HsmKeyManager::unmask_key(session, &mut HsmAesKeyUnmaskAlgo::default(), masked_key)?;
+    let handle = HANDLE_TABLE.alloc_handle(HandleType::AesKey, Box::new(aes_key));
 
-    // Unmask AES key
-    let key: HsmAesKey = HsmKeyManager::unmask_key(session, &mut unmask_algo, masked_key)?;
+    Ok(handle)
+}
 
-    let handle = HANDLE_TABLE.alloc_handle(HandleType::AesKey, Box::new(key));
+/// Unmasks a masked AES-GCM key and returns a handle to it
+///
+/// Takes a masked AES-GCM key (typically received from external storage or transmission)
+/// and unmasks it within the HSM session, creating a usable key handle.
+///
+/// # Arguments
+/// * `session` - Reference to the HSM session where the key will be unmasked
+/// * `masked_key` - Byte slice containing the masked key material
+///
+/// # Returns
+/// * `Ok(AzihsmHandle)` - Handle to the unmasked AES-GCM key for subsequent cryptographic operations
+/// * `Err(AzihsmStatus)` - On failure (e.g., invalid masked key format, session error)
+pub(crate) fn aes_gcm_unmask_key(
+    session: &HsmSession,
+    masked_key: &[u8],
+) -> Result<AzihsmHandle, AzihsmStatus> {
+    let gcm_key: HsmAesGcmKey =
+        HsmKeyManager::unmask_key(session, &mut HsmAesGcmKeyUnmaskAlgo::default(), masked_key)?;
+    let handle = HANDLE_TABLE.alloc_handle(HandleType::AesGcmKey, Box::new(gcm_key));
 
     Ok(handle)
 }

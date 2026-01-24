@@ -870,6 +870,48 @@ struct azihsm_algo algo = {
 };
 ```
 
+## AES GCM Encrypt & Decrypt
+
+AES-GCM is an authenticated encryption algorithm as defined by
+[NIST SP 800-38D](https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38d.pdf).
+
+|                            |                                                             |
+| -------------------------- | ----------------------------------------------------------- |
+| **Algorithm ID**           | `AZIHSM_ALGO_ID_AES_GCM`                                    |
+| **Params**                 | [azihsm_algo_aes_gcm_params](#azihsm_algo_aes_gcm_params)   |
+| **Required Properties**    | None                                                        |
+| **Contributed Properties** | None                                                        |
+| **Supported Operations**   | [azihsm_crypt_encrypt](#azihsm_crypt_encrypt)               |
+|                            | [azihsm_crypt_encrypt_init](#azihsm_crypt_encrypt_init)     |
+|                            | [azihsm_crypt_encrypt_update](#azihsm_crypt_encrypt_update) |
+|                            | [azihsm_crypt_encrypt_final](#azihsm_crypt_encrypt_final)   |
+|                            | [azihsm_crypt_decrypt](#azihsm_crypt_decrypt)               |
+|                            | [azihsm_crypt_decrypt_init](#azihsm_crypt_decrypt_init)     |
+|                            | [azihsm_crypt_decrypt_update](#azihsm_crypt_decrypt_update) |
+|                            | [azihsm_crypt_decrypt_final](#azihsm_crypt_decrypt_final)   |
+| **PKCS#11 Mechanism**      | CKM_AES_GCM                                         &nbsp;  |
+
+**Example**
+
+```cpp
+struct azihsm_buffer aad = {
+    .buf = some_aad,
+    .len = aad_len,
+};
+
+struct azihsm_algo_aes_gcm_params params = {
+    .iv = {0},
+    .tag = {0},
+    .aad = &aad,
+};
+
+struct azihsm_algo algo = {
+    .id = AZIHSM_ALGO_ID_AES_GCM,
+    .params = &params,
+    .len = sizeof(struct azihsm_algo_aes_gcm_params),
+};
+```
+
 ## SHA-1 Digest
 
 The SHA-1 is an algorithm for message digesting data. It generates a 160-bit message digest as defined in 
