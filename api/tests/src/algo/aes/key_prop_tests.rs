@@ -385,7 +385,7 @@ fn test_aes_key_props_builder_missing_bits_fails() {
         .can_decrypt(true)
         .build();
 
-    assert!(matches!(result, Err(HsmError::KeyPropertyNotPresent)));
+    assert!(matches!(result, Err(HsmError::PropertyNotPresent)));
 }
 
 #[session_test]

@@ -77,19 +77,6 @@ impl HandleTable {
         table.free_handle(handle, handle_type)
     }
 
-    /// Frees a handle without requiring the concrete type.
-    ///
-    /// This is used for generic cleanup operations where the caller
-    /// doesn't need to recover the underlying object.
-    pub(crate) fn drop_handle(&self, handle: AzihsmHandle) -> Result<(), AzihsmStatus> {
-        let mut table = self.table.write();
-        table
-            .table
-            .remove(&handle)
-            .ok_or(AzihsmStatus::InvalidHandle)?;
-        Ok(())
-    }
-
     /// Get the handle type for a given handle.
     ///
     /// # Parameters
@@ -175,7 +162,7 @@ impl HandleTableInner {
     }
 }
 
-/// Frees a handle and releases associated resources.
+/// Frees a context handle and releases associated resources.
 ///
 /// The handle is invalidated and must not be used after this call.
 ///
@@ -186,5 +173,22 @@ impl HandleTableInner {
 #[unsafe(no_mangle)]
 #[allow(unsafe_code)]
 pub unsafe extern "C" fn azihsm_free_handle(handle: AzihsmHandle) -> AzihsmStatus {
-    abi_boundary(|| HANDLE_TABLE.drop_handle(handle))
+    abi_boundary(|| {
+        let handle_type = HANDLE_TABLE.get_handle_type(handle)?;
+        match handle_type {
+            HandleType::AesCbcEncryptCtx
+            | HandleType::AesCbcDecryptCtx
+            | HandleType::EccSignCtx
+            | HandleType::EccVerifyCtx
+            | HandleType::ShaCtx
+            | HandleType::HmacSignCtx
+            | HandleType::HmacVerifyCtx
+            | HandleType::RsaSignCtx
+            | HandleType::RsaVerifyCtx => {
+                let _: Box<()> = HANDLE_TABLE.free_handle(handle, handle_type)?;
+                Ok(())
+            }
+            _ => Err(AzihsmStatus::InvalidHandle),
+        }
+    })
 }

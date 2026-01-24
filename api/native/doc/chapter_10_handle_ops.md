@@ -24,4 +24,4 @@ azihsm_status azihsm_free_handle(
 
 This function releases a context handle (digest, sign, verify, encrypt, or decrypt) without completing the operation. It should be used in error scenarios where a multi-step operation was initialized but cannot be completed normally.
 
-For successful completion of stremulti-stepaming operations, use the appropriate `_final` function instead (e.g., `azihsm_crypt_digest_final`, `azihsm_crypt_sign_final`, etc.).
+For successful completion of multi-step operations, use the appropriate `_final` function instead (e.g., `azihsm_crypt_digest_final`, `azihsm_crypt_sign_final`, etc.).

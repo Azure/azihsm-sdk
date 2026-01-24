@@ -206,7 +206,7 @@ pub enum AzihsmAlgoId {
     KbkdfCounterDerive = 0x00060002,
 }
 
-///  C FFI structure representing a cryptographic algorithm.
+/// Cryptographic algorithm structure for specifying algorithm parameters.
 ///
 /// This structure is used to specify the algorithm identifier and
 /// any associated parameters for cryptographic operations in the HSM.

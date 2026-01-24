@@ -74,7 +74,6 @@ impl TryFrom<&AzihsmAlgoRsaAesWrapParams> for HsmRsaAesWrapAlgo {
 ///
 /// The enum is represented as a u32 to ensure compatibility with C APIs and consistent
 /// memory layout across different platforms.
-#[open_enum]
 #[repr(u32)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum AzihsmMgf1Id {

@@ -553,7 +553,7 @@ TEST(azihsm_part, get_prop_unsupported_property)
         azihsm_part_prop prop = { static_cast<azihsm_part_prop_id>(-1), nullptr, 0 };
 
         auto err = azihsm_part_get_prop(part.get(), &prop);
-        ASSERT_EQ(err, AZIHSM_STATUS_UNSUPPORTED_PARTITION_PROPERTY);
+        ASSERT_EQ(err, AZIHSM_STATUS_UNSUPPORTED_PROPERTY);
     });
 }
 

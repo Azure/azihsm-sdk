@@ -392,7 +392,7 @@ impl HsmKeyPropsBuilder {
         } else if let Some(curve) = self.ecc_curve {
             curve.key_size_bits() as u32
         } else {
-            return Err(HsmError::KeyPropertyNotPresent);
+            return Err(HsmError::PropertyNotPresent);
         };
 
         Ok(HsmKeyProps {

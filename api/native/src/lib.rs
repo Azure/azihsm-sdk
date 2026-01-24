@@ -396,7 +396,7 @@ impl TryFrom<AzihsmHandle> for HandleType {
     }
 }
 
-/// C FFI structure for a buffer
+/// Buffer structure for passing data
 ///
 /// # Safety
 /// When using this struct from C code:

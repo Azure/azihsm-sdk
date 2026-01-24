@@ -325,7 +325,7 @@ TEST_F(azihsm_sess, get_prop_unsupported_property)
         azihsm_session_prop prop = { static_cast<azihsm_session_prop_id>(-1), nullptr, 0 };
 
         err = azihsm_session_get_prop(sess_handle, &prop);
-        ASSERT_EQ(err, AZIHSM_STATUS_UNSUPPORTED_SESSION_PROPERTY);
+        ASSERT_EQ(err, AZIHSM_STATUS_UNSUPPORTED_PROPERTY);
     });
 }
 

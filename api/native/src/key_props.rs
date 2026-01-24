@@ -94,7 +94,7 @@ pub enum AzihsmKeyPropId {
     Derive = 18,
 }
 
-/// C FFI structure for a single key property
+/// Key property
 ///
 /// # Safety
 /// When using this struct from C code:
@@ -114,7 +114,7 @@ pub struct AzihsmKeyProp {
     pub len: u32,
 }
 
-/// C FFI structure for a list of key properties
+/// List of key properties
 ///
 /// # Safety
 /// When using this struct from C code:
@@ -377,7 +377,7 @@ fn get_key_prop(
         AzihsmKeyPropId::PubKeyInfo => copy_to_key_prop(key_prop, &key.pub_key_der_vec()?),
         AzihsmKeyPropId::EcCurve => {
             let Some(curve) = key.ecc_curve() else {
-                Err(AzihsmStatus::KeyPropertyNotPresent)?
+                Err(AzihsmStatus::PropertyNotPresent)?
             };
             copy_to_key_prop(key_prop, curve.as_bytes())
         }
@@ -393,6 +393,6 @@ fn get_key_prop(
         AzihsmKeyPropId::Wrap => copy_to_key_prop(key_prop, key.can_wrap().as_bytes()),
         AzihsmKeyPropId::Unwrap => copy_to_key_prop(key_prop, key.can_unwrap().as_bytes()),
         AzihsmKeyPropId::Derive => copy_to_key_prop(key_prop, key.can_derive().as_bytes()),
-        _ => Err(AzihsmStatus::UnsupportedKeyProperty),
+        _ => Err(AzihsmStatus::UnsupportedProperty),
     }
 }

@@ -89,10 +89,10 @@ azihsm_status azihsm_session_get_prop(
 
 **Parameters**
 
- | Parameter   | Name                                                 | Description           |
- | ----------- | ---------------------------------------------------- | --------------------- |
- | [in] handle | [azihsm_handle](#azihsm_handle)                      | session handle        |
- | [out] prop  | [struct azihsm_session_prop *](#azihsm_session_prop) | property       &nbsp; |
+ | Parameter       | Name                                                 | Description           |
+ | --------------- | ---------------------------------------------------- | --------------------- |
+ | [in] handle     | [azihsm_handle](#azihsm_handle)                      | session handle        |
+ | [in, out] prop  | [struct azihsm_session_prop *](#azihsm_session_prop) | property       &nbsp; |
 
 **Returns**
 

@@ -118,7 +118,7 @@ pub trait HsmKeyCommonProps: HsmKeyPropsProvider {
     fn masked_key(&self, output: Option<&mut [u8]>) -> HsmResult<usize> {
         self.with_props(|p| {
             let Some(masked_key) = p.masked_key() else {
-                return Err(HsmError::KeyPropertyNotPresent);
+                return Err(HsmError::PropertyNotPresent);
             };
             let expected_len = masked_key.len();
             if let Some(buf) = output {
@@ -154,7 +154,7 @@ pub trait HsmKeyCommonProps: HsmKeyPropsProvider {
     fn pub_key_der(&self, output: Option<&mut [u8]>) -> HsmResult<usize> {
         self.with_props(|p| {
             let Some(pub_key_der) = p.pub_key_der() else {
-                return Err(HsmError::KeyPropertyNotPresent);
+                return Err(HsmError::PropertyNotPresent);
             };
             let expected_len = pub_key_der.len();
             if let Some(buf) = output {

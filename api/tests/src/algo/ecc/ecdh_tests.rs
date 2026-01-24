@@ -74,7 +74,7 @@ pub(crate) fn ecdh_derive_shared_secret_from_der(
     // curve size.
     let bits = private_key
         .ecc_curve()
-        .ok_or(HsmError::KeyPropertyNotPresent)?
+        .ok_or(HsmError::PropertyNotPresent)?
         .key_size_bits() as u32;
     let derived_key_props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Secret)

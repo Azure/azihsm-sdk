@@ -32,7 +32,7 @@ pub enum HsmError {
     RngError = -6,
     InvalidKeySize = -7,
     DdiCmdFailure = -8,
-    KeyPropertyNotPresent = -9,
+    PropertyNotPresent = -9,
     KeyClassNotSpecified = -10,
     KeyKindNotSpecified = -11,
     InvalidKey = -12,
@@ -40,12 +40,9 @@ pub enum HsmError {
     UnsupportedAlgorithm = -14,
     InvalidSignature = -15,
     InvalidKeyProps = -16,
-    UnsupportedKeyProperty = -17,
+    UnsupportedProperty = -17,
     CertChainChanged = -18,
     InvalidTweak = -19,
-    UnsupportedPartitionProperty = -20,
-    PartitionPropertyValueNotAvailable = -21,
-    UnsupportedSessionProperty = -22,
     Panic = i32::MIN,
 }
 

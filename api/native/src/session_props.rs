@@ -25,7 +25,7 @@ pub enum AzihsmSessionPropId {
     ApiRev = 1,
 }
 
-/// C FFI structure for a single session property.
+/// Session property structure for querying session attributes.
 ///
 /// # Safety
 /// When using this struct from C code:
@@ -84,7 +84,7 @@ fn get_session_prop(
             };
             copy_to_session_prop(session_prop, api_rev_ffi.as_bytes())
         }
-        _ => Err(AzihsmStatus::UnsupportedSessionProperty),
+        _ => Err(AzihsmStatus::UnsupportedProperty),
     }
 }
 

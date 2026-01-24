@@ -96,6 +96,25 @@ impl DerefMut for HsmDev {
     }
 }
 
+/// Retrieves the paths of all available HSM devices.
+///
+/// Queries the DDI layer for a list of all discoverable HSM devices
+/// and returns their device paths.
+///
+/// # Returns
+///
+/// A vector of device path strings.
+#[tracing::instrument(skip_all)]
+pub(crate) fn dev_paths() -> Vec<String> {
+    DDI.dev_info_list()
+        .iter()
+        .map(|info| {
+            tracing::debug!(path = ?info.path, "Found device");
+            info.path.clone()
+        })
+        .collect()
+}
+
 impl HsmDev {
     /// Returns the device kind (Virtual or Physical).
     ///
@@ -105,25 +124,6 @@ impl HsmDev {
     pub(crate) fn device_kind(&self) -> Option<DdiDeviceKind> {
         self.0.device_kind()
     }
-}
-
-/// Retrieves device information for all available HSM devices.
-///
-/// Returns the complete list of device information without requiring
-/// additional lookups. This is more efficient than calling `dev_paths()`
-/// followed by `dev_info_by_path()` for each path.
-///
-/// # Returns
-///
-/// A vector of `DevInfo` structures for all discovered devices.
-#[tracing::instrument(skip_all)]
-pub(crate) fn dev_info_list() -> Vec<DevInfo> {
-    let devices = DDI.dev_info_list();
-    tracing::debug!("Found {} device(s)", devices.len());
-    for info in &devices {
-        tracing::debug!(path = ?info.path, "Found device");
-    }
-    devices
 }
 
 /// Retrieves device information for a specific device path.
@@ -215,4 +215,15 @@ fn get_device_kind(dev: &HsmDev) -> HsmResult<DdiDeviceKind> {
         .map_hsm_err(HsmError::DdiCmdFailure)?;
 
     Ok(resp.data.kind)
+}
+
+/// Converts a DDI device kind to an HSM partition type.
+impl From<DdiDeviceKind> for HsmPartType {
+    fn from(kind: DdiDeviceKind) -> Self {
+        match kind {
+            DdiDeviceKind::Virtual => HsmPartType::Virtual,
+            DdiDeviceKind::Physical => HsmPartType::Physical,
+            _ => unreachable!(),
+        }
+    }
 }

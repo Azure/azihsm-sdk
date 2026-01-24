@@ -76,7 +76,7 @@ pub struct AzihsmUuid {
     pub bytes: [u8; 16],
 }
 
-/// C FFI structure for a single partition property.
+/// Partition property structure for querying partition attributes.
 ///
 /// # Safety
 /// When using this struct from C code:
@@ -126,40 +126,41 @@ fn get_partition_prop(
     partition: &HsmPartition,
     part_prop: &mut AzihsmPartProp,
 ) -> Result<(), AzihsmStatus> {
-    let info = partition.info();
     match part_prop.id {
         AzihsmPartPropId::Type => {
-            let part_type = info
-                .part_type
-                .ok_or(AzihsmStatus::PartitionPropertyValueNotAvailable)?;
+            let part_type = partition.part_type();
             copy_to_part_prop(part_prop, part_type.as_bytes())
         }
         AzihsmPartPropId::Path => {
-            let azihsm_str = AzihsmStr::from_string(&info.path);
-            copy_to_part_prop(part_prop, azihsm_str.as_bytes())
+            let path = AzihsmStr::from_string(&partition.path());
+            copy_to_part_prop(part_prop, path.as_bytes())
         }
         AzihsmPartPropId::DriverVersion => {
-            let azihsm_str = AzihsmStr::from_string(&info.driver_ver);
-            copy_to_part_prop(part_prop, azihsm_str.as_bytes())
+            let driver_version = AzihsmStr::from_string(&partition.driver_ver());
+            copy_to_part_prop(part_prop, driver_version.as_bytes())
         }
         AzihsmPartPropId::FirmwareVersion => {
-            let azihsm_str = AzihsmStr::from_string(&info.firmware_ver);
-            copy_to_part_prop(part_prop, azihsm_str.as_bytes())
+            let firmware_version = AzihsmStr::from_string(&partition.firmware_ver());
+            copy_to_part_prop(part_prop, firmware_version.as_bytes())
         }
         AzihsmPartPropId::HardwareVersion => {
-            let azihsm_str = AzihsmStr::from_string(&info.hardware_ver);
-            copy_to_part_prop(part_prop, azihsm_str.as_bytes())
+            let hardware_version = AzihsmStr::from_string(&partition.hardware_ver());
+            copy_to_part_prop(part_prop, hardware_version.as_bytes())
         }
         AzihsmPartPropId::PciHwId => {
-            let azihsm_str = AzihsmStr::from_string(&info.pci_info);
-            copy_to_part_prop(part_prop, azihsm_str.as_bytes())
+            let pci_info = AzihsmStr::from_string(&partition.pci_info());
+            copy_to_part_prop(part_prop, pci_info.as_bytes())
         }
-        AzihsmPartPropId::MinApiRev | AzihsmPartPropId::MaxApiRev => {
-            let api_rev = match part_prop.id {
-                AzihsmPartPropId::MinApiRev => partition.api_rev_range().min(),
-                AzihsmPartPropId::MaxApiRev => partition.api_rev_range().max(),
-                _ => unreachable!(),
+        AzihsmPartPropId::MinApiRev => {
+            let api_rev = partition.api_rev_range().min();
+            let api_rev_ffi = AzihsmApiRev {
+                major: api_rev.major,
+                minor: api_rev.minor,
             };
+            copy_to_part_prop(part_prop, api_rev_ffi.as_bytes())
+        }
+        AzihsmPartPropId::MaxApiRev => {
+            let api_rev = partition.api_rev_range().max();
             let api_rev_ffi = AzihsmApiRev {
                 major: api_rev.major,
                 minor: api_rev.minor,
@@ -175,7 +176,7 @@ fn get_partition_prop(
         AzihsmPartPropId::ManufacturerCert => {
             get_property_with_buffer(part_prop, |buf| partition.cert_chain(0, buf))
         }
-        _ => Err(AzihsmStatus::UnsupportedPartitionProperty),
+        _ => Err(AzihsmStatus::UnsupportedProperty),
     }
 }
 
@@ -250,14 +251,13 @@ where
     // Get required size first
     let required_size = getter(None)?;
 
-    // Check if user provided a buffer
-    if part_prop.val.is_null() {
-        part_prop.len = required_size as u32;
-        return Err(AzihsmStatus::BufferTooSmall);
+    // If the required size is zero, the property is not present
+    if required_size == 0 {
+        return Err(AzihsmStatus::PropertyNotPresent);
     }
 
-    // Validate buffer size
-    if (part_prop.len as usize) < required_size {
+    // Check if user provided a buffer or if buffer is too small
+    if part_prop.val.is_null() || (part_prop.len as usize) < required_size {
         part_prop.len = required_size as u32;
         return Err(AzihsmStatus::BufferTooSmall);
     }
