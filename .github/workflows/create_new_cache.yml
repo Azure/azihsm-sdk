@@ -1,0 +1,55 @@
+name: Create New Cache
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/create_new_cache.yml
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  create_new_cache_ubuntu:
+
+    runs-on: ubuntu-24.04
+
+    defaults:
+      run:
+        working-directory: .
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Run Setup
+      run: cargo xtask precheck --setup
+    - name: Save Cargo cache
+      uses: actions/cache/save@v5
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+        key: ${{ runner.os }}-cargo-${{ github.sha }}
+
+  create_new_cache_windows:
+
+    runs-on: windows-latest
+
+    defaults:
+      run:
+        working-directory: .
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Run Setup
+      run: cargo xtask precheck --setup
+    - name: Save Cargo cache
+      uses: actions/cache/save@v5
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+        key: ${{ runner.os }}-cargo-${{ github.sha }}
