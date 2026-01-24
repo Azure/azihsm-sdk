@@ -223,3 +223,120 @@ impl TryFrom<HsmGenericSecretKey> for HsmAesKey {
         Ok(HsmAesKey::from_inner(key.inner()))
     }
 }
+
+// HSM AES XTS key
+define_hsm_key!(pub HsmAesXtsKey, (ddi::HsmKeyHandle, ddi::HsmKeyHandle));
+
+impl HsmAesXtsKey {
+    /// Returns whether `bits` is a supported AES XTS key size.
+    ///
+    /// The value is expressed in **bits** (not bytes). This layer only accepts
+    /// 64-byte AES XTS keys (512 bits).
+    ///
+    /// This is used by [`HsmAesXtsKey::validate_props`] to reject unsupported key
+    /// sizes early.
+    fn validate_key_size(bits: usize) -> Result<(), HsmError> {
+        match bits {
+            512 => Ok(()),
+            _ => Err(HsmError::InvalidKeyProps),
+        }
+    }
+
+    /// Validates that `props` describe a supported HSM-backed AES XTS secret key.
+    ///
+    /// This is used as a defensive check at API boundaries (key generation,
+    /// unwrapping, and algorithm operations) so we fail fast with
+    /// [`HsmError::InvalidKeyProps`] instead of sending an invalid request to the device.
+    /// # Enforced invariants
+    /// - Key kind must be AES and class must be Secret.
+    /// - AES XTS keys in this layer are restricted to encryption/decryption usage; we
+    ///   reject signing/verifying/derivation and key wrap/unwrap usage flags.
+    /// - Key material must not be extractable.
+    /// - Key size must be 512 bits.
+    fn validate_props(props: &HsmKeyProps) -> HsmResult<()> {
+        let supported_flags = HsmKeyFlags::ENCRYPT | HsmKeyFlags::DECRYPT; //AES XTS Keys can be used for both encrypt and decrypt
+
+        // check if key supports at least one of encrypt/decrypt
+        if !props.can_encrypt() && !props.can_decrypt() {
+            Err(HsmError::InvalidKeyProps)?;
+        }
+
+        // Kind/class: ensure we're validating an AES *secret* key.
+        if props.kind() != HsmKeyKind::AesXts {
+            Err(HsmError::InvalidKeyProps)?;
+        }
+
+        // AES keys must be secret keys.
+        if props.class() != HsmKeyClass::Secret {
+            Err(HsmError::InvalidKeyProps)?;
+        }
+
+        // Only standard AES XTS key sizes are supported.
+        HsmAesXtsKey::validate_key_size(props.bits() as usize)?;
+
+        // check if Ecc curve is set
+        if props.ecc_curve().is_some() {
+            Err(HsmError::InvalidKeyProps)?;
+        }
+
+        // Ensure no invalid usage flags are set.
+        if !props.check_supported_flags(supported_flags) {
+            Err(HsmError::InvalidKeyProps)?;
+        }
+
+        Ok(())
+    }
+}
+impl HsmSecretKey for HsmAesXtsKey {}
+
+impl HsmEncryptionKey for HsmAesXtsKey {}
+
+impl HsmDecryptionKey for HsmAesXtsKey {}
+
+#[derive(Default)]
+pub struct HsmAesXtsKeyGenAlgo {}
+
+impl HsmKeyGenOp for HsmAesXtsKeyGenAlgo {
+    type Key = HsmAesXtsKey;
+    type Session = HsmSession;
+    type Error = HsmError;
+
+    /// Generates a new AES XTS key.
+    ///
+    /// Creates a new AES XTS key within the HSM session using the specified key
+    /// properties. The key is generated within the hardware security module
+    /// and returned with both a handle for operations and masked key material.
+    ///
+    /// # Arguments
+    ///
+    /// * `session` - The HSM session in which to generate the key
+    /// * `props` - Key properties defining attributes like size and usage permissions
+    ///
+    /// # Returns
+    ///
+    /// Returns an `AesXtsKey` instance on success.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The session is invalid or closed
+    /// - Key properties are invalid or unsupported
+    /// - Key generation fails in the HSM
+    /// - Resource limits are exceeded
+    fn generate_key(
+        &mut self,
+        session: &Self::Session,
+        props: HsmKeyProps,
+    ) -> Result<Self::Key, Self::Error> {
+        //check key properties before generating key
+        HsmAesXtsKey::validate_props(&props)?;
+
+        let (handle1, handle2, dev_key_props) = ddi::aes_xts_generate_key(session, props)?;
+
+        Ok(HsmAesXtsKey::new(
+            session.clone(),
+            dev_key_props,
+            (handle1, handle2),
+        ))
+    }
+}

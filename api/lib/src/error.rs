@@ -42,6 +42,7 @@ pub enum HsmError {
     InvalidKeyProps = -16,
     UnsupportedKeyProperty = -17,
     CertChainChanged = -18,
+    InvalidTweak = -19,
     Panic = i32::MIN,
 }
 
