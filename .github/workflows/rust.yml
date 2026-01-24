@@ -96,7 +96,7 @@ jobs:
       run: cargo xtask precheck --audit
     - name: Cargo format
       run: |
-        cargo +nightly fmt --version --skip-clang
+        cargo +nightly fmt --version
         cargo xtask precheck --fmt
     - name: Cargo Clippy
       run: |

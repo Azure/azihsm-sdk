@@ -1,5 +1,4 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
-#include <string.h>
 #include <openssl/core_dispatch.h>
 #include <openssl/core_names.h>
 #include <openssl/ec.h>
@@ -7,6 +6,7 @@
 #include <openssl/objects.h>
 #include <openssl/params.h>
 #include <openssl/proverr.h>
+#include <string.h>
 
 #include "azihsm_ossl_base.h"
 #include "azihsm_ossl_ec.h"
@@ -27,10 +27,8 @@
  *
  *   @azihsm.key_usage
  *   Description: Key usage type for the key pair
- *   Accepted values: digitalSignature (private: sign, public: verify) or keyAgreement (both: derive)
- *   Default value: digitalSignature
- *   Example:
- *      -pkeyopt azihsm.key_usage:digitalSignature
+ *   Accepted values: digitalSignature (private: sign, public: verify) or keyAgreement (both:
+ * derive) Default value: digitalSignature Example: -pkeyopt azihsm.key_usage:digitalSignature
  *      -pkeyopt azihsm.key_usage:keyAgreement
  *
  *   @azihsm.session
@@ -129,8 +127,8 @@ static AZIHSM_EC_KEY *azihsm_ossl_keymgmt_gen(
         .len = 0
     };
 
-    /* Now we only need 4 properties: class, kind, curve, and usage */
-    #define AZIHSM_KEY_PROPS_SIZE 5
+/* Now we only need 4 properties: class, kind, curve, and usage */
+#define AZIHSM_KEY_PROPS_SIZE 5
     struct azihsm_key_prop pub_key_props[AZIHSM_KEY_PROPS_SIZE] = {
         [0] = { .id = AZIHSM_KEY_PROP_ID_CLASS,
                 .val = (void *)&pub_class,
@@ -167,14 +165,14 @@ static AZIHSM_EC_KEY *azihsm_ossl_keymgmt_gen(
     /* Add SESSION property if requested */
     if (genctx->session_flag)
     {
-        pub_key_props[4] = (struct azihsm_key_prop) {
+        pub_key_props[4] = (struct azihsm_key_prop){
             .id = AZIHSM_KEY_PROP_ID_SESSION,
             .val = (void *)&enable,
             .len = sizeof(bool),
         };
         pub_key_prop_count++;
 
-        priv_key_props[4] = (struct azihsm_key_prop) {
+        priv_key_props[4] = (struct azihsm_key_prop){
             .id = AZIHSM_KEY_PROP_ID_SESSION,
             .val = (void *)&enable,
             .len = sizeof(bool),
@@ -231,8 +229,10 @@ static AZIHSM_EC_KEY *azihsm_ossl_keymgmt_gen(
         uint8_t *masked_key_buffer = OPENSSL_malloc(masked_key_buffer_size);
         if (masked_key_buffer == NULL)
         {
-            printf("azihsm_ossl_keymgmt_gen: Failed to allocate masked key buffer (%u bytes)\n",
-                   masked_key_buffer_size);
+            printf(
+                "azihsm_ossl_keymgmt_gen: Failed to allocate masked key buffer (%u bytes)\n",
+                masked_key_buffer_size
+            );
 
             azihsm_key_delete(private);
             azihsm_key_delete(public);
@@ -242,11 +242,9 @@ static AZIHSM_EC_KEY *azihsm_ossl_keymgmt_gen(
         }
 
         /* Retrieve masked key with the allocated buffer */
-        struct azihsm_key_prop prop = {
-            .id = AZIHSM_KEY_PROP_ID_MASKED_KEY,
-            .val = masked_key_buffer,
-            .len = masked_key_buffer_size
-        };
+        struct azihsm_key_prop prop = { .id = AZIHSM_KEY_PROP_ID_MASKED_KEY,
+                                        .val = masked_key_buffer,
+                                        .len = masked_key_buffer_size };
 
         azihsm_status retrieve_status = azihsm_key_get_prop(private, &prop);
 
@@ -257,8 +255,10 @@ static AZIHSM_EC_KEY *azihsm_ossl_keymgmt_gen(
             FILE *f = fopen(genctx->masked_key_file, "wb");
             if (f == NULL)
             {
-                printf("azihsm_ossl_keymgmt_gen: Failed to open masked key file: %s\n",
-                       genctx->masked_key_file);
+                printf(
+                    "azihsm_ossl_keymgmt_gen: Failed to open masked key file: %s\n",
+                    genctx->masked_key_file
+                );
 
                 azihsm_key_delete(private);
                 azihsm_key_delete(public);
@@ -273,8 +273,12 @@ static AZIHSM_EC_KEY *azihsm_ossl_keymgmt_gen(
 
             if (written != prop.len)
             {
-                printf("azihsm_ossl_keymgmt_gen: Failed to write complete masked key to file (%zu/%u bytes)\n",
-                       written, prop.len);
+                printf(
+                    "azihsm_ossl_keymgmt_gen: Failed to write complete masked key to file (%zu/%u "
+                    "bytes)\n",
+                    written,
+                    prop.len
+                );
 
                 azihsm_key_delete(private);
                 azihsm_key_delete(public);
@@ -286,7 +290,10 @@ static AZIHSM_EC_KEY *azihsm_ossl_keymgmt_gen(
         }
         else if (retrieve_status != AZIHSM_STATUS_KEY_PROPERTY_NOT_PRESENT)
         {
-            printf("azihsm_ossl_keymgmt_gen: Failed to retrieve masked key (status: %d)\n", retrieve_status);
+            printf(
+                "azihsm_ossl_keymgmt_gen: Failed to retrieve masked key (status: %d)\n",
+                retrieve_status
+            );
             OPENSSL_free(masked_key_buffer);
             OPENSSL_free(ec_key);
             return NULL;

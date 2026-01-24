@@ -191,18 +191,11 @@ pub fn establish_credential(
 /// # Returns
 ///
 /// Returns the certificate chain in PEM format.
-pub(crate) fn get_cert_chain(
-    dev: &HsmDev,
-    rev: HsmApiRev,
-    slot_id: u8,
-) -> HsmResult<String> {
+pub(crate) fn get_cert_chain(dev: &HsmDev, rev: HsmApiRev, slot_id: u8) -> HsmResult<String> {
     let (count, thumbprint) = get_cert_chain_info(dev, rev, slot_id)?;
 
     let mut cert_chain = String::new();
     for cert_id in 0..count {
-        if cert_id != 0 {
-            cert_chain.push('\n');
-        }
         let der = get_cert(dev, rev, slot_id, cert_id)?;
         let pem = crypto::der_to_pem(&der).map_hsm_err(HsmError::InternalError)?;
         cert_chain.push_str(&pem);

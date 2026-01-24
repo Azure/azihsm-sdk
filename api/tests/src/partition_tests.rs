@@ -1,5 +1,7 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
 
+use azihsm_crypto::pem_to_der;
+
 use super::*;
 
 #[api_test]
@@ -61,5 +63,24 @@ fn test_cert_chain() {
             cert_chain.contains("-----BEGIN CERTIFICATE-----"),
             "Cert chain missing PEM header"
         );
+
+        let blocks: Vec<String> = cert_chain
+            .split("-----BEGIN CERTIFICATE-----")
+            .filter(|part| part.contains("-----END CERTIFICATE-----"))
+            .filter_map(|part| {
+                part.split("-----END CERTIFICATE-----")
+                    .next()
+                    .map(|content| {
+                        format!(
+                            "-----BEGIN CERTIFICATE-----{}-----END CERTIFICATE-----",
+                            content
+                        )
+                    })
+            })
+            .collect();
+        assert!(!blocks.is_empty(), "Parsed cert chain is empty");
+        for block in blocks {
+            pem_to_der(block.as_bytes()).expect("Failed to parse certificate PEM");
+        }
     }
 }
