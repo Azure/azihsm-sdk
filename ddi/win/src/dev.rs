@@ -574,6 +574,15 @@ impl DdiWinDev {
         })
     }
 
+    /// Returns the device kind (Virtual or Physical).
+    ///
+    /// # Returns
+    ///
+    /// The device kind that was determined when the device was opened.
+    pub fn device_kind(&self) -> Option<DdiDeviceKind> {
+        self.device_kind
+    }
+
     fn map_ioctl_status(&self, ioctl_status: u32) -> Result<u32, DdiError> {
         match McrCpGenericIoctlErrorKind::try_from(ioctl_status) {
             Ok(McrCpGenericIoctlErrorKind::SessionLimitReached) => {

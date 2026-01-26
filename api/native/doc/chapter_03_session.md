@@ -70,4 +70,32 @@ azihsm_status azihsm_sess_set_pin(
 
 `AZIHSM_STATUS_OK` on success, error code otherwise
 
+## azihsm_session_get_prop
+
+Retrieve session property
+
+**Properties**
+
+| Description                               | Type                                     | Define                                      |
+| ----------------------------------------- | ---------------------------------------- | ------------------------------------------- |
+| api revision negotiated for the session   | [struct azihsm_api_rev](#azihsm_api_rev) | \scriptsize AZIHSM_SESSION_PROP_ID_API_REV  |
+
+```cpp
+azihsm_status azihsm_session_get_prop(
+    azihsm_handle handle, 
+    struct azihsm_session_prop *prop
+    );
+```
+
+**Parameters**
+
+ | Parameter       | Name                                                 | Description           |
+ | --------------- | ---------------------------------------------------- | --------------------- |
+ | [in] handle     | [azihsm_handle](#azihsm_handle)                      | session handle        |
+ | [in, out] prop  | [struct azihsm_session_prop *](#azihsm_session_prop) | property       &nbsp; |
+
+**Returns**
+
+`AZIHSM_STATUS_OK` on success, error code otherwise
+
 \pagebreak

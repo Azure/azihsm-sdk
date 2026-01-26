@@ -274,7 +274,7 @@ static AZIHSM_EC_KEY *azihsm_ossl_keymgmt_gen(
                 return NULL;
             }
         }
-        else if (retrieve_status != AZIHSM_STATUS_KEY_PROPERTY_NOT_PRESENT)
+        else if (retrieve_status != AZIHSM_STATUS_PROPERTY_NOT_PRESENT)
         {
             azihsm_key_delete(private);
             azihsm_key_delete(public);

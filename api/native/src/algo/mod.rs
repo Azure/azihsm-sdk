@@ -10,6 +10,7 @@ pub(crate) mod sha;
 use std::ffi::c_void;
 
 use azihsm_api::HsmHashAlgo;
+use open_enum::open_enum;
 
 use crate::AzihsmStatus;
 
@@ -27,6 +28,7 @@ use crate::AzihsmStatus;
 ///
 /// The enum is represented as a u32 to ensure compatibility with C APIs and consistent
 /// memory layout across different platforms.
+#[open_enum]
 #[repr(u32)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 #[allow(dead_code)]
@@ -204,7 +206,7 @@ pub enum AzihsmAlgoId {
     KbkdfCounterDerive = 0x00060002,
 }
 
-///  C FFI structure representing a cryptographic algorithm.
+/// Cryptographic algorithm structure for specifying algorithm parameters.
 ///
 /// This structure is used to specify the algorithm identifier and
 /// any associated parameters for cryptographic operations in the HSM.

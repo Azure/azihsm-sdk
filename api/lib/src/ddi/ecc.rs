@@ -46,7 +46,7 @@ pub(crate) fn ecc_generate_key(
     priv_key_props: HsmKeyProps,
 ) -> HsmResult<(HsmKeyHandle, HsmKeyProps, HsmKeyProps)> {
     let Some(curve) = priv_key_props.ecc_curve() else {
-        return Err(HsmError::KeyPropertyNotPresent);
+        return Err(HsmError::PropertyNotPresent);
     };
 
     let req = DdiEccGenerateKeyPairCmdReq {
@@ -122,7 +122,7 @@ pub(crate) fn ecc_sign(
     sig: &mut [u8],
 ) -> HsmResult<usize> {
     let Some(curve) = key.ecc_curve() else {
-        return Err(HsmError::KeyPropertyNotPresent);
+        return Err(HsmError::PropertyNotPresent);
     };
     let req = DdiEccSignCmdReq {
         hdr: build_ddi_req_hdr_sess(DdiOp::EccSign, &key.session()),
@@ -175,7 +175,7 @@ pub(crate) fn ecdh_derive(
     derived_key_props: HsmKeyProps,
 ) -> HsmResult<(HsmKeyHandle, HsmKeyProps)> {
     let Some(curve) = base_key.ecc_curve() else {
-        return Err(HsmError::KeyPropertyNotPresent);
+        return Err(HsmError::PropertyNotPresent);
     };
     // Build the DDI ECDH derive key command request.
     let req = DdiEcdhKeyExchangeCmdReq {

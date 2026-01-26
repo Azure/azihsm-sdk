@@ -64,5 +64,5 @@ where
 fn test_with_partition(partition: HsmPartition, creds: HsmCredentials) {
     assert_eq!(creds.id(), &APP_ID, "Invalid credentials ID");
     assert_eq!(creds.pin(), &APP_PIN, "Invalid credentials key");
-    info!("Testing with partition: {:?}", partition.info().path);
+    info!("Testing with partition: {:?}", partition.path());
 }

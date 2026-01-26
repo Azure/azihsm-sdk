@@ -42,6 +42,7 @@ include = [
   "HsmError",
   "HsmKeyClass",
   "HsmKeyKind",
+  "HsmPartType",
 ]
 
 item_types = ["constants", "enums", "functions", "structs", "typedefs"]
@@ -68,6 +69,11 @@ item_types = ["constants", "enums", "functions", "structs", "typedefs"]
 "AzihsmKeyPropId" = "azihsm_key_prop_id"
 "AzihsmKeyPropList" = "azihsm_key_prop_list"
 "AzihsmMgf1Id" = "azihsm_mgf1_id"
+"AzihsmPartProp" = "azihsm_part_prop"
+"AzihsmPartPropId" = "azihsm_part_prop_id"
+"AzihsmPartType" = "azihsm_part_type"
+"AzihsmSessionProp" = "azihsm_session_prop"
+"AzihsmSessionPropId" = "azihsm_session_prop_id"
 "AzihsmStatus" = "azihsm_status"
 "AzihsmStr" = "azihsm_str"
 "AzihsmWideChar" = "azihsm_char"
@@ -75,6 +81,7 @@ item_types = ["constants", "enums", "functions", "structs", "typedefs"]
 "HsmError" = "azihsm_status"
 "HsmKeyClass" = "azihsm_key_class"
 "HsmKeyKind" = "azihsm_key_kind"
+"HsmPartType" = "azihsm_part_type"
 
 [defines]
 "target_os = linux" = "__linux__ "

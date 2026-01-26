@@ -84,4 +84,48 @@ impl AzihsmStr {
     pub(crate) fn is_null(&self) -> bool {
         self.str.is_null() || self.len <= 1
     }
+
+    /// Returns the raw byte representation of the string.
+    ///
+    /// On Windows, this returns the UTF-16 encoded string as bytes (2 bytes per character).
+    /// On non-Windows platforms, this returns the UTF-8 encoded string as bytes.
+    ///
+    /// The returned slice includes the null terminator.
+    ///
+    /// # Returns
+    ///
+    /// A byte slice containing the platform-specific string encoding:
+    /// - Windows: UTF-16LE byte representation (cast from `u16` to `u8`)
+    /// - Non-Windows: UTF-8 byte representation
+    /// - Empty slice if the string pointer is null or length is 0
+    ///
+    /// # Safety
+    ///
+    /// This method is safe because it guards against null pointers and zero lengths.
+    /// If the internal pointer is null or the length is zero, an empty slice is returned.
+    pub(crate) fn as_bytes(&self) -> &[u8] {
+        // Guard against null pointer or zero/invalid length
+        if self.str.is_null() || self.len == 0 {
+            return &[];
+        }
+
+        // Safety: We've verified self.str is not null and self.len > 0.
+        // The caller (from_string) ensures the pointer and length are valid.
+        #[allow(unsafe_code)]
+        unsafe {
+            #[cfg(target_os = "windows")]
+            {
+                // On Windows, we cast u16 pointer to u8 pointer for byte representation
+                // Note: len here is the count of u16 elements, not bytes
+                std::slice::from_raw_parts(
+                    self.str as *const u8,
+                    self.len as usize * std::mem::size_of::<AzihsmWideChar>(),
+                )
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                std::slice::from_raw_parts(self.str as *const AzihsmChar, self.len as usize)
+            }
+        }
+    }
 }

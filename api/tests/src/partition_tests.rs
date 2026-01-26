@@ -17,27 +17,56 @@ fn test_open_partition() {
     for part_info in part_mgr.iter() {
         let part = HsmPartitionManager::open_partition(&part_info.path)
             .expect("Failed to open the parition");
-        assert_eq!(part.info().path, part_info.path);
+        assert_eq!(part.path(), part_info.path);
     }
 }
 
 #[api_test]
-fn test_paritition_info() {
+fn test_partition_properties() {
     let part_mgr = HsmPartitionManager::partition_info_list();
     assert!(!part_mgr.is_empty(), "No partitions found.");
+
     for part_info in part_mgr.iter() {
         let part = HsmPartitionManager::open_partition(&part_info.path)
-            .expect("Failed to open the parition");
-        assert_eq!(part.info().path, part_info.path);
+            .expect("Failed to open the partition");
+
+        // Test path getter
+        let path = part.path();
+        assert_eq!(path, part_info.path, "Path should match partition info");
+
+        // Test type getter
+        let part_type = part.part_type();
         assert!(
-            part.api_rev_range().min() <= part.api_rev_range().max(),
-            "Invalid API revision range"
+            matches!(part_type, HsmPartType::Virtual | HsmPartType::Physical),
+            "Partition type should be Virtual or Physical"
         );
+
+        // Test driver_ver getter
+        let driver_ver = part.driver_ver();
+        assert!(!driver_ver.is_empty(), "Driver version should not be empty");
+
+        // Test firmware_ver getter
+        let firmware_ver = part.firmware_ver();
+        assert!(
+            !firmware_ver.is_empty(),
+            "Firmware version should not be empty"
+        );
+
+        // Test hardware_ver getter
+        let hardware_ver = part.hardware_ver();
+        assert!(
+            !hardware_ver.is_empty(),
+            "Hardware version should not be empty"
+        );
+
+        // Test pci_info getter
+        let pci_info = part.pci_info();
+        assert!(!pci_info.is_empty(), "PCI info should not be empty");
     }
 }
 
 #[api_test]
-fn test_parition_init() {
+fn test_partition_init() {
     let part_mgr = HsmPartitionManager::partition_info_list();
     assert!(!part_mgr.is_empty(), "No partitions found.");
     for part_info in part_mgr.iter() {

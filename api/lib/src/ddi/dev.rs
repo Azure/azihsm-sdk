@@ -115,6 +115,38 @@ pub(crate) fn dev_paths() -> Vec<String> {
         .collect()
 }
 
+impl HsmDev {
+    /// Returns the device kind (Virtual or Physical).
+    ///
+    /// # Returns
+    ///
+    /// The device kind that was queried when the device was opened.
+    pub(crate) fn device_kind(&self) -> Option<DdiDeviceKind> {
+        self.0.device_kind()
+    }
+}
+
+/// Retrieves device information for a specific device path.
+///
+/// # Arguments
+///
+/// * `path` - The device path string
+///
+/// # Returns
+///
+/// Returns `DevInfo` for the specified path.
+///
+/// # Errors
+///
+/// Returns an error if the path is not found.
+#[tracing::instrument(skip_all, fields(path = path))]
+pub(crate) fn dev_info_by_path(path: &str) -> HsmResult<DevInfo> {
+    DDI.dev_info_list()
+        .into_iter()
+        .find(|info| info.path == path)
+        .ok_or(HsmError::InvalidArgument)
+}
+
 /// Opens an HSM device at the specified path.
 ///
 /// Attempts to open an HSM device using the DDI layer and wraps
@@ -183,4 +215,15 @@ fn get_device_kind(dev: &HsmDev) -> HsmResult<DdiDeviceKind> {
         .map_hsm_err(HsmError::DdiCmdFailure)?;
 
     Ok(resp.data.kind)
+}
+
+/// Converts a DDI device kind to an HSM partition type.
+impl From<DdiDeviceKind> for HsmPartType {
+    fn from(kind: DdiDeviceKind) -> Self {
+        match kind {
+            DdiDeviceKind::Virtual => HsmPartType::Virtual,
+            DdiDeviceKind::Physical => HsmPartType::Physical,
+            _ => unreachable!(),
+        }
+    }
 }

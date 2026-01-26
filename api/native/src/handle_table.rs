@@ -161,3 +161,34 @@ impl HandleTableInner {
             .ok_or(AzihsmStatus::InvalidHandle)
     }
 }
+
+/// Frees a context handle and releases associated resources.
+///
+/// The handle is invalidated and must not be used after this call.
+///
+/// # Returns
+///
+/// * `AZIHSM_STATUS_SUCCESS` - Handle freed successfully
+/// * `AZIHSM_STATUS_INVALID_HANDLE` - Invalid or already freed handle
+#[unsafe(no_mangle)]
+#[allow(unsafe_code)]
+pub unsafe extern "C" fn azihsm_free_handle(handle: AzihsmHandle) -> AzihsmStatus {
+    abi_boundary(|| {
+        let handle_type = HANDLE_TABLE.get_handle_type(handle)?;
+        match handle_type {
+            HandleType::AesCbcEncryptCtx
+            | HandleType::AesCbcDecryptCtx
+            | HandleType::EccSignCtx
+            | HandleType::EccVerifyCtx
+            | HandleType::ShaCtx
+            | HandleType::HmacSignCtx
+            | HandleType::HmacVerifyCtx
+            | HandleType::RsaSignCtx
+            | HandleType::RsaVerifyCtx => {
+                let _: Box<()> = HANDLE_TABLE.free_handle(handle, handle_type)?;
+                Ok(())
+            }
+            _ => Err(AzihsmStatus::InvalidHandle),
+        }
+    })
+}

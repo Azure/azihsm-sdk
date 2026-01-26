@@ -10,6 +10,7 @@
 #include "handle/part_handle.hpp"
 #include "handle/part_list_handle.hpp"
 #include "handle/session_handle.hpp"
+#include "helpers.hpp"
 #include <functional>
 
 class azihsm_aes_cbc : public ::testing::Test
@@ -178,25 +179,6 @@ class azihsm_aes_cbc : public ::testing::Test
         }
 
         return output;
-    }
-
-    // Helper to generate AES key
-    static KeyHandle generate_aes_key(azihsm_handle session, uint32_t bits)
-    {
-        azihsm_algo keygen_algo{};
-        keygen_algo.id = AZIHSM_ALGO_ID_AES_KEY_GEN;
-        keygen_algo.params = nullptr;
-        keygen_algo.len = 0;
-
-        key_props key_props;
-        key_props.key_kind = AZIHSM_KEY_KIND_AES;
-        key_props.key_class = AZIHSM_KEY_CLASS_SECRET;
-        key_props.bits = bits;
-        key_props.is_session = true;
-        key_props.can_encrypt = true;
-        key_props.can_decrypt = true;
-
-        return KeyHandle(session, &keygen_algo, key_props);
     }
 
     // Helper to test single-shot encrypt/decrypt roundtrip
