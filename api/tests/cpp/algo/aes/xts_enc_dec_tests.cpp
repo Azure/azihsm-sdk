@@ -414,3 +414,268 @@ TEST_F(azihsm_aes_xts, streaming_single_data_unit_chunks)
         );
     });
 }
+
+// Test: single-shot encrypt, streaming decrypt
+TEST_F(azihsm_aes_xts, single_shot_encrypt_streaming_decrypt)
+{
+    part_list_.for_each_session([this](azihsm_handle session) {
+        KeyHandle key = generate_aes_xts_key(session);
+
+        const size_t plaintext_len = 512;
+        const size_t dul = 128;  // Same DUL for both operations
+        std::vector<uint8_t> plaintext(plaintext_len);
+        for (size_t i = 0; i < plaintext_len; i++) {
+            plaintext[i] = static_cast<uint8_t>(i & 0xFF);
+        }
+
+        // Encrypt with single-shot (DUL = 128)
+        uint8_t sector_num[16] = { 0x00 };
+        azihsm_algo_aes_xts_params xts_params{};
+        std::memcpy(xts_params.sector_num, sector_num, sizeof(sector_num));
+        xts_params.dul = static_cast<uint32_t>(dul);
+
+        azihsm_algo crypt_algo{};
+        crypt_algo.id = AZIHSM_ALGO_ID_AES_XTS;
+        crypt_algo.params = &xts_params;
+        crypt_algo.len = sizeof(xts_params);
+
+        auto ciphertext = single_shot_xts_crypt(key.get(), &crypt_algo, plaintext.data(), plaintext_len, true);
+        ASSERT_EQ(ciphertext.size(), plaintext_len);
+
+        // Decrypt with streaming (same DUL = 128)
+        std::memcpy(xts_params.sector_num, sector_num, sizeof(sector_num));
+        xts_params.dul = static_cast<uint32_t>(dul);
+
+        auto decrypted = streaming_xts_crypt(key.get(), &crypt_algo, ciphertext.data(), ciphertext.size(), dul, false);
+
+        ASSERT_EQ(decrypted.size(), plaintext_len);
+        ASSERT_EQ(std::memcmp(decrypted.data(), plaintext.data(), plaintext_len), 0);
+    });
+}
+
+// Test: streaming encrypt, single-shot decrypt
+TEST_F(azihsm_aes_xts, streaming_encrypt_single_shot_decrypt)
+{
+    part_list_.for_each_session([this](azihsm_handle session) {
+        KeyHandle key = generate_aes_xts_key(session);
+
+        const size_t plaintext_len = 512;
+        const size_t dul = 128;  // Same DUL for both operations
+        std::vector<uint8_t> plaintext(plaintext_len);
+        for (size_t i = 0; i < plaintext_len; i++) {
+            plaintext[i] = static_cast<uint8_t>((i * 5) & 0xFF);
+        }
+
+        // Encrypt with streaming (DUL = 128)
+        uint8_t sector_num[16] = { 0x00 };
+        azihsm_algo_aes_xts_params xts_params{};
+        std::memcpy(xts_params.sector_num, sector_num, sizeof(sector_num));
+        xts_params.dul = static_cast<uint32_t>(dul);
+
+        azihsm_algo crypt_algo{};
+        crypt_algo.id = AZIHSM_ALGO_ID_AES_XTS;
+        crypt_algo.params = &xts_params;
+        crypt_algo.len = sizeof(xts_params);
+
+        auto ciphertext = streaming_xts_crypt(key.get(), &crypt_algo, plaintext.data(), plaintext_len, dul, true);
+        ASSERT_EQ(ciphertext.size(), plaintext_len);
+
+        // Decrypt with single-shot (same DUL = 128)
+        std::memcpy(xts_params.sector_num, sector_num, sizeof(sector_num));
+        xts_params.dul = static_cast<uint32_t>(dul);
+
+        auto decrypted = single_shot_xts_crypt(key.get(), &crypt_algo, ciphertext.data(), ciphertext.size(), false);
+
+        ASSERT_EQ(decrypted.size(), plaintext_len);
+        ASSERT_EQ(std::memcmp(decrypted.data(), plaintext.data(), plaintext_len), 0);
+    });
+}
+
+// Test: different tweaks produce different ciphertexts
+TEST_F(azihsm_aes_xts, different_tweaks_different_ciphertexts)
+{
+    part_list_.for_each_session([this](azihsm_handle session) {
+        KeyHandle key = generate_aes_xts_key(session);
+
+        const size_t plaintext_len = 256;
+        std::vector<uint8_t> plaintext(plaintext_len, 0xAB);
+
+        // Encrypt with tweak = 0
+        uint8_t sector_num1[16] = { 0x00 };
+        azihsm_algo_aes_xts_params xts_params1{};
+        std::memcpy(xts_params1.sector_num, sector_num1, sizeof(sector_num1));
+        xts_params1.dul = static_cast<uint32_t>(plaintext_len);
+
+        azihsm_algo crypt_algo1{};
+        crypt_algo1.id = AZIHSM_ALGO_ID_AES_XTS;
+        crypt_algo1.params = &xts_params1;
+        crypt_algo1.len = sizeof(xts_params1);
+
+        auto ciphertext1 = single_shot_xts_crypt(key.get(), &crypt_algo1, plaintext.data(), plaintext_len, true);
+
+        // Encrypt with tweak = 1
+        uint8_t sector_num2[16] = { 0x01, 0x00 };
+        azihsm_algo_aes_xts_params xts_params2{};
+        std::memcpy(xts_params2.sector_num, sector_num2, sizeof(sector_num2));
+        xts_params2.dul = static_cast<uint32_t>(plaintext_len);
+
+        azihsm_algo crypt_algo2{};
+        crypt_algo2.id = AZIHSM_ALGO_ID_AES_XTS;
+        crypt_algo2.params = &xts_params2;
+        crypt_algo2.len = sizeof(xts_params2);
+
+        auto ciphertext2 = single_shot_xts_crypt(key.get(), &crypt_algo2, plaintext.data(), plaintext_len, true);
+
+        // Ciphertexts should be different
+        ASSERT_EQ(ciphertext1.size(), ciphertext2.size());
+        ASSERT_NE(std::memcmp(ciphertext1.data(), ciphertext2.data(), ciphertext1.size()), 0);
+    });
+}
+
+// Test: tweak is updated after encryption
+TEST_F(azihsm_aes_xts, tweak_updated_after_encryption)
+{
+    part_list_.for_each_session([this](azihsm_handle session) {
+        KeyHandle key = generate_aes_xts_key(session);
+
+        const size_t plaintext_len = 128;
+        std::vector<uint8_t> plaintext(plaintext_len, 0xCC);
+
+        // Initial tweak
+        uint8_t sector_num[16] = { 0x05, 0x00 };
+        azihsm_algo_aes_xts_params xts_params{};
+        std::memcpy(xts_params.sector_num, sector_num, sizeof(sector_num));
+        xts_params.dul = static_cast<uint32_t>(plaintext_len);
+
+        azihsm_algo crypt_algo{};
+        crypt_algo.id = AZIHSM_ALGO_ID_AES_XTS;
+        crypt_algo.params = &xts_params;
+        crypt_algo.len = sizeof(xts_params);
+
+        auto ciphertext = single_shot_xts_crypt(key.get(), &crypt_algo, plaintext.data(), plaintext_len, true);
+
+        // Verify tweak was incremented (should be 0x06 now)
+        uint8_t expected_tweak[16] = { 0x06, 0x00 };
+        ASSERT_EQ(std::memcmp(xts_params.sector_num, expected_tweak, sizeof(expected_tweak)), 0);
+    });
+}
+
+// Test: minimum plaintext size (16 bytes)
+TEST_F(azihsm_aes_xts, minimum_plaintext_size)
+{
+    part_list_.for_each_session([this](azihsm_handle session) {
+        KeyHandle key = generate_aes_xts_key(session);
+
+        const size_t plaintext_len = 16;
+        std::vector<uint8_t> plaintext(plaintext_len, 0xEE);
+
+        uint8_t sector_num[16] = { 0x00 };
+        azihsm_algo_aes_xts_params xts_params{};
+        std::memcpy(xts_params.sector_num, sector_num, sizeof(sector_num));
+        xts_params.dul = static_cast<uint32_t>(plaintext_len);
+
+        azihsm_algo crypt_algo{};
+        crypt_algo.id = AZIHSM_ALGO_ID_AES_XTS;
+        crypt_algo.params = &xts_params;
+        crypt_algo.len = sizeof(xts_params);
+
+        auto ciphertext = single_shot_xts_crypt(key.get(), &crypt_algo, plaintext.data(), plaintext_len, true);
+        ASSERT_EQ(ciphertext.size(), plaintext_len);
+
+        // Decrypt and verify
+        std::memcpy(xts_params.sector_num, sector_num, sizeof(sector_num));
+        auto decrypted = single_shot_xts_crypt(key.get(), &crypt_algo, ciphertext.data(), ciphertext.size(), false);
+
+        ASSERT_EQ(decrypted.size(), plaintext_len);
+        ASSERT_EQ(std::memcmp(decrypted.data(), plaintext.data(), plaintext_len), 0);
+    });
+}
+
+// Test: plaintext too small (less than 16 bytes) should fail
+TEST_F(azihsm_aes_xts, plaintext_too_small_fails)
+{
+    part_list_.for_each_session([this](azihsm_handle session) {
+        KeyHandle key = generate_aes_xts_key(session);
+
+        const size_t plaintext_len = 8;  // Too small for XTS
+        std::vector<uint8_t> plaintext(plaintext_len, 0xAA);
+
+        uint8_t sector_num[16] = { 0x00 };
+        azihsm_algo_aes_xts_params xts_params{};
+        std::memcpy(xts_params.sector_num, sector_num, sizeof(sector_num));
+        xts_params.dul = static_cast<uint32_t>(plaintext_len);
+
+        azihsm_algo crypt_algo{};
+        crypt_algo.id = AZIHSM_ALGO_ID_AES_XTS;
+        crypt_algo.params = &xts_params;
+        crypt_algo.len = sizeof(xts_params);
+
+        azihsm_buffer input{ plaintext.data(), static_cast<uint32_t>(plaintext_len) };
+        azihsm_buffer output{ nullptr, 0 };
+
+        azihsm_status err = azihsm_crypt_encrypt(&crypt_algo, key.get(), &input, &output);
+        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+    });
+}
+
+// Test: DUL = 0 should fail
+TEST_F(azihsm_aes_xts, zero_dul_fails)
+{
+    part_list_.for_each_session([this](azihsm_handle session) {
+        KeyHandle key = generate_aes_xts_key(session);
+
+        const size_t plaintext_len = 128;
+        std::vector<uint8_t> plaintext(plaintext_len, 0xBB);
+
+        uint8_t sector_num[16] = { 0x00 };
+        azihsm_algo_aes_xts_params xts_params{};
+        std::memcpy(xts_params.sector_num, sector_num, sizeof(sector_num));
+        xts_params.dul = 0;  // Invalid DUL
+
+        azihsm_algo crypt_algo{};
+        crypt_algo.id = AZIHSM_ALGO_ID_AES_XTS;
+        crypt_algo.params = &xts_params;
+        crypt_algo.len = sizeof(xts_params);
+
+        azihsm_buffer input{ plaintext.data(), static_cast<uint32_t>(plaintext_len) };
+        azihsm_buffer output{ nullptr, 0 };
+
+        azihsm_status err = azihsm_crypt_encrypt(&crypt_algo, key.get(), &input, &output);
+        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+    });
+}
+
+// Test: plaintext not multiple of DUL should fail in streaming
+TEST_F(azihsm_aes_xts, streaming_non_dul_aligned_fails)
+{
+    part_list_.for_each_session([this](azihsm_handle session) {
+        KeyHandle key = generate_aes_xts_key(session);
+
+        const size_t plaintext_len = 257;  // Not a multiple of DUL=128
+        const size_t dul = 128;
+        std::vector<uint8_t> plaintext(plaintext_len, 0xDD);
+
+        uint8_t sector_num[16] = { 0x00 };
+        azihsm_algo_aes_xts_params xts_params{};
+        std::memcpy(xts_params.sector_num, sector_num, sizeof(sector_num));
+        xts_params.dul = static_cast<uint32_t>(dul);
+
+        azihsm_algo crypt_algo{};
+        crypt_algo.id = AZIHSM_ALGO_ID_AES_XTS;
+        crypt_algo.params = &xts_params;
+        crypt_algo.len = sizeof(xts_params);
+
+        azihsm_handle ctx = 0;
+        azihsm_status err = azihsm_crypt_encrypt_init(&crypt_algo, key.get(), &ctx);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        // Try to update with non-DUL-aligned data
+        azihsm_buffer input{ plaintext.data(), static_cast<uint32_t>(plaintext_len) };
+        azihsm_buffer output{ nullptr, 0 };
+
+        err = azihsm_crypt_encrypt_update(ctx, &input, &output);
+        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+    });
+}
