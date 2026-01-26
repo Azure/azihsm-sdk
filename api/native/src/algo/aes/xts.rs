@@ -72,6 +72,7 @@ pub(crate) fn aes_xts_encrypt(
     plain_text: &[u8],
     cipher_text: &mut AzihsmBuffer,
 ) -> Result<(), AzihsmStatus> {
+    // Validate algorithm ID
     if algo.id != AzihsmAlgoId::AesXts {
         Err(AzihsmStatus::UnsupportedAlgorithm)?;
     }
@@ -81,7 +82,7 @@ pub(crate) fn aes_xts_encrypt(
 
     let params: &mut AzihsmAlgoAesXtsParams = algo.try_into()?;
 
-    // create aes xts algorithm , DUL is plain_text length in single shot
+    //Create AES-XTS algorithm using DUL from params; for single-shot encryption,
     let mut aes_xts_algo = HsmAesXtsAlgo::new(&params.sector_num, params.dul as usize)?;
 
     // get required output buffer size
@@ -130,6 +131,10 @@ pub(crate) fn aes_xts_decrypt(
     cipher_text: &[u8],
     plain_text: &mut AzihsmBuffer,
 ) -> Result<(), AzihsmStatus> {
+    // Validate algorithm ID
+    if algo.id != AzihsmAlgoId::AesXts {
+        return Err(AzihsmStatus::InvalidArgument);
+    }
     // Get the AES key from handle table
     let key = &HsmAesXtsKey::try_from(key_handle)?;
 
@@ -462,7 +467,7 @@ pub(crate) fn aes_xts_encrypt_update(
     // Prepare output buffer and get slice
     let output_slice = validate_output_buffer(output, required_len)?;
 
-    // Perform the update operation. This will also update the IV in algo params in the context.
+    // Perform the update operation. This will also update the tweak in algo params in the context.
     let bytes_written = ctx.update(input_slice, Some(output_slice))?;
 
     // Update output buffer length with actual bytes written
