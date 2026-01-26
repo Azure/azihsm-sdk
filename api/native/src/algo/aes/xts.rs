@@ -26,7 +26,7 @@ pub struct AzihsmAlgoAesXtsParams {
     /// Data Unit Length in bytes.
     /// Specifies the size of each data unit to be encrypted/decrypted.
     /// Must be at least 16 bytes for XTS mode.
-    pub dul: u32,
+    pub data_unit_length: u32,
 }
 impl<'a> TryFrom<&'a mut AzihsmAlgo> for &'a mut AzihsmAlgoAesXtsParams {
     type Error = AzihsmStatus;
@@ -83,7 +83,8 @@ pub(crate) fn aes_xts_encrypt(
     let params: &mut AzihsmAlgoAesXtsParams = algo.try_into()?;
 
     //Create AES-XTS algorithm using DUL from params; for single-shot encryption,
-    let mut aes_xts_algo = HsmAesXtsAlgo::new(&params.sector_num, params.dul as usize)?;
+    let mut aes_xts_algo =
+        HsmAesXtsAlgo::new(&params.sector_num, params.data_unit_length as usize)?;
 
     // get required output buffer size
     let cipher_text_size = aes_xts_algo.encrypt(key, plain_text, None)?;
@@ -141,7 +142,8 @@ pub(crate) fn aes_xts_decrypt(
     let params: &mut AzihsmAlgoAesXtsParams = algo.try_into()?;
 
     // create aes xts algorithm
-    let mut aes_xts_algo = HsmAesXtsAlgo::new(&params.sector_num, params.dul as usize)?;
+    let mut aes_xts_algo =
+        HsmAesXtsAlgo::new(&params.sector_num, params.data_unit_length as usize)?;
 
     // get required output buffer size
     let plain_text_size = aes_xts_algo.decrypt(key, cipher_text, None)?;
@@ -282,7 +284,7 @@ pub(crate) fn aes_xts_encrypt_init(
     let params: &mut AzihsmAlgoAesXtsParams = algo.try_into()?;
 
     // create aes xts algorithm
-    let aes_xts_algo = HsmAesXtsAlgo::new(&params.sector_num, params.dul as usize)?;
+    let aes_xts_algo = HsmAesXtsAlgo::new(&params.sector_num, params.data_unit_length as usize)?;
 
     //Start XTS context management here for multi-part
     let hsm_ctx = aes_xts_algo.encrypt_init(key.clone())?;
@@ -414,7 +416,7 @@ pub(crate) fn aes_xts_decrypt_init(
     let params: &mut AzihsmAlgoAesXtsParams = algo.try_into()?;
 
     // create aes xts algorithm
-    let aes_xts_algo = HsmAesXtsAlgo::new(&params.sector_num, params.dul as usize)?;
+    let aes_xts_algo = HsmAesXtsAlgo::new(&params.sector_num, params.data_unit_length as usize)?;
 
     //Start XTS context management here for multi-part
     let hsm_ctx = aes_xts_algo.decrypt_init(key.clone())?;
