@@ -15,6 +15,9 @@ use crate::clang_format::*;
 use crate::Xtask;
 use crate::XtaskCtx;
 
+/// Command for running clang-format (pinned to version 18 by default)
+const CLANG_FORMAT_CMD: &str = "clang-format-18";
+
 /// Xtask to run various repo-specific formatting checks
 #[derive(Parser)]
 #[clap(about = "Run various formatting checks")]
@@ -75,13 +78,13 @@ impl Xtask for Fmt {
         if !self.skip_clang {
             log::trace!("running clang-format");
             // Check if clang-format is available
-            if Command::new("clang-format")
+            if Command::new(CLANG_FORMAT_CMD)
                 .arg("--version")
                 .output()
                 .is_ok()
             {
                 let clang_format = ClangFormat {
-                    clang_format_executable: "clang-format".to_string(),
+                    clang_format_executable: CLANG_FORMAT_CMD.to_string(),
                     extensions: "c,h,C,H,cpp,hpp,cc,hh,c++,h++,cxx,hxx".to_string(),
                     recursive: true,
                     dry_run: false,
