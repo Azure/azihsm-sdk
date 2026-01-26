@@ -42,9 +42,7 @@ impl Xtask for Setup {
         install_cargo_nextest.run(ctx.clone())?;
 
         // Check nextest version
-        cmd!(sh, "cargo nextest --version")
-            .quiet()
-            .run()?;
+        cmd!(sh, "cargo nextest --version").quiet().run()?;
 
         // Run Install Cargo taplo-cli
         let install_cargo_taplo_cli = install::Install {
@@ -55,9 +53,7 @@ impl Xtask for Setup {
         install_cargo_taplo_cli.run(ctx.clone())?;
 
         // Check taplo-cli version
-        cmd!(sh, "taplo --version")
-            .quiet()
-            .run()?;
+        cmd!(sh, "taplo --version").quiet().run()?;
 
         #[cfg(not(target_os = "windows"))]
         {
@@ -70,9 +66,7 @@ impl Xtask for Setup {
             install_cargo_fuzz.run(ctx.clone())?;
 
             // Check cargo-fuzz version
-            cmd!(sh, "cargo fuzz --version")
-                .quiet()
-                .run()?;
+            cmd!(sh, "cargo fuzz --version").quiet().run()?;
         }
 
         // Run Install cargo-audit
@@ -84,9 +78,7 @@ impl Xtask for Setup {
         install_cargo_audit.run(ctx.clone())?;
 
         // Check cargo-audit version
-        cmd!(sh, "cargo audit --version")
-            .quiet()
-            .run()?;
+        cmd!(sh, "cargo audit --version").quiet().run()?;
 
         // Run Install cargo-llvm-cov
         let install_cargo_llvm_cov = install::Install {
@@ -97,9 +89,7 @@ impl Xtask for Setup {
         install_cargo_llvm_cov.run(ctx.clone())?;
 
         // Check cargo-llvm-cov version
-        cmd!(sh, "cargo llvm-cov --version")
-            .quiet()
-            .run()?;
+        cmd!(sh, "cargo llvm-cov --version").quiet().run()?;
 
         // Add Clippy
         let add_clippy = rustup_component_add::RustupComponentAdd {
@@ -110,9 +100,7 @@ impl Xtask for Setup {
         let _ = add_clippy.run(ctx.clone());
 
         // Check Clippy version
-        cmd!(sh, "cargo clippy --version")
-            .quiet()
-            .run()?;
+        cmd!(sh, "cargo clippy --version").quiet().run()?;
 
         // Add Fmt
         let add_fmt = rustup_component_add::RustupComponentAdd {
@@ -123,9 +111,7 @@ impl Xtask for Setup {
         let _ = add_fmt.run(ctx.clone());
 
         // Check Fmt version
-        cmd!(sh, "cargo +nightly fmt --version")
-            .quiet()
-            .run()?;
+        cmd!(sh, "cargo +nightly fmt --version").quiet().run()?;
 
         log::trace!("done setup");
         Ok(())

@@ -52,9 +52,7 @@ impl Xtask for Fmt {
             .run()?;
 
         // Check taplo-cli version
-        cmd!(sh, "taplo --version")
-            .quiet()
-            .run()?;
+        cmd!(sh, "taplo --version").quiet().run()?;
 
         if let Some(toolchain) = rust_toolchain.as_ref() {
             log::trace!(
