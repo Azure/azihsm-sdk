@@ -356,18 +356,21 @@ impl HsmKeyUnwrapOp for HsmAesXtsKeyRsaAesKeyUnwrapAlgo {
     type Key = HsmAesXtsKey;
     type Error = HsmError;
 
-    /// Unwraps an AES key using the provided RSA unwrapping key.
+    /// Unwraps an AES-XTS key (key-pair blob) using the provided RSA private key.
+    ///
+    /// This operation uses the HSM session associated with the RSA private key
+    /// to unwrap a wrapped AES-XTS key blob into a new [`HsmAesXtsKey`].
     ///
     /// # Arguments
     ///
-    /// * `session` - The HSM session to use for the unwrapping operation.
-    /// * `unwrapping_key` - The RSA private key used to unwrap the AES
-    /// * `wrapped_key` - The wrapped AES key data.
-    /// * `key_props` - Properties for the unwrapped AES key.
+    /// * `unwrapping_key` - The RSA private key whose associated session performs
+    ///   the unwrap operation.
+    /// * `wrapped_key` - The wrapped AES-XTS key blob containing the key pair.
+    /// * `key_props` - Desired properties for the unwrapped AES-XTS key.
     ///
     /// # Returns
     ///
-    /// Returns the unwrapped AES key on success.
+    /// Returns the unwrapped [`HsmAesXtsKey`] on success.
     fn unwrap_key(
         &mut self,
         unwrapping_key: &Self::UnwrappingKey,
@@ -398,16 +401,53 @@ impl HsmKeyUnmaskOp for HsmAesXtsKeyUnmaskAlgo {
     type Error = HsmError;
 
     /// Unmasks an AES-XTS key using the provided paired masked key data.
+    ///
+    /// This operation takes masked key material (typically obtained during key generation
+    /// or export) and reconstructs the AES-XTS key pair within the HSM session, creating
+    /// two internal key handles for the tweak and data encryption keys.
+    ///
+    /// # Arguments
+    ///
+    /// * `session` - The HSM session in which to unmask and reconstruct the key pair.
+    /// * `masked_key` - The masked AES-XTS key material containing both keys in the pair.
+    ///
+    /// # Returns
+    ///
+    /// Returns an [`HsmAesXtsKey`] instance containing handles to both the tweak key
+    /// and data encryption key on success.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The session is invalid or closed
+    /// - The masked key data is malformed or corrupted
+    /// - Key properties extracted from masked data are invalid (e.g., wrong size, kind, or usage flags)
+    /// - The HSM fails to reconstruct the key pair
+    /// - Resource limits are exceeded
+    ///
+    /// # Notes
+    ///
+    /// If key property validation fails after unmasking, the allocated handles are
+    /// automatically cleaned up before returning the error.
     fn unmask_key(
         &mut self,
         session: &HsmSession,
         masked_key: &[u8],
     ) -> Result<Self::Key, Self::Error> {
         let (handle1, handle2, props) = ddi::aes_xts_unmask_key(session, masked_key)?;
-        Ok(HsmAesXtsKey::new(
-            session.clone(),
-            props,
-            (handle1, handle2),
-        ))
+
+        // Validate key properties before returning, else handle will not be released properly
+        match HsmAesXtsKey::validate_props(&props) {
+            Ok(()) => Ok(HsmAesXtsKey::new(
+                session.clone(),
+                props,
+                (handle1, handle2),
+            )),
+            Err(e) => {
+                // Clean up allocated handles in case of validation failure
+                let _ = HsmAesXtsKey::new(session.clone(), props, (handle1, handle2));
+                Err(e)
+            }
+        }
     }
 }

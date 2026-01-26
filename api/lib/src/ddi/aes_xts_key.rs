@@ -383,11 +383,11 @@ impl HsmAesXtsKeyPairHeader {
     /// Validates header invariants.
     fn validate_header(header: &HsmAesXtsKeyPairHeader) -> HsmResult<()> {
         if header.magic_id() != HsmAesXtsKeyPairHeader::WRAP_BLOB_MAGIC {
-            Err(HsmError::InternalError)?;
+            Err(HsmError::InvalidArgument)?;
         }
 
         if header.version() != HsmAesXtsKeyPairHeader::WRAP_BLOB_VERSION {
-            Err(HsmError::InternalError)?;
+            Err(HsmError::InvalidArgument)?;
         }
 
         Ok(())
