@@ -14,6 +14,13 @@ use crate::rustup_component_add;
 use crate::Xtask;
 use crate::XtaskCtx;
 
+/// Version constants for installed dependencies
+const CARGO_NEXTEST_VERSION: &str = "0.9.108";
+const TAPLO_CLI_VERSION: &str = "0.10.0";
+const CARGO_FUZZ_VERSION: &str = "0.13.1";
+const CARGO_AUDIT_VERSION: &str = "0.22.0";
+const CARGO_LLVM_COV_VERSION: &str = "0.6.23";
+
 /// Xtask to run various repo-specific checks
 #[derive(Parser)]
 #[clap(about = "Install all dependencies needed for project")]
@@ -35,7 +42,7 @@ impl Xtask for Setup {
 
         // Run Install Cargo nextest
         let install_cargo_nextest = install::Install {
-            crate_name: "cargo-nextest@0.9.108".to_string(),
+            crate_name: format!("cargo-nextest@{}", CARGO_NEXTEST_VERSION),
             force: self.force,
             config: self.config.clone(),
         };
@@ -46,7 +53,7 @@ impl Xtask for Setup {
 
         // Run Install Cargo taplo-cli
         let install_cargo_taplo_cli = install::Install {
-            crate_name: "taplo-cli@0.10.0".to_string(),
+            crate_name: format!("taplo-cli@{}", TAPLO_CLI_VERSION),
             force: self.force,
             config: self.config.clone(),
         };
@@ -59,7 +66,7 @@ impl Xtask for Setup {
         {
             // Cargo fuzz
             let install_cargo_fuzz = install::Install {
-                crate_name: "cargo-fuzz@0.13.1".to_string(),
+                crate_name: format!("cargo-fuzz@{}", CARGO_FUZZ_VERSION),
                 force: self.force,
                 config: self.config.clone(),
             };
@@ -71,7 +78,7 @@ impl Xtask for Setup {
 
         // Run Install cargo-audit
         let install_cargo_audit = install::Install {
-            crate_name: "cargo-audit@0.22.0".to_string(),
+            crate_name: format!("cargo-audit@{}", CARGO_AUDIT_VERSION),
             force: self.force,
             config: self.config.clone(),
         };
@@ -82,7 +89,7 @@ impl Xtask for Setup {
 
         // Run Install cargo-llvm-cov
         let install_cargo_llvm_cov = install::Install {
-            crate_name: "cargo-llvm-cov@0.6.23".to_string(),
+            crate_name: format!("cargo-llvm-cov@{}", CARGO_LLVM_COV_VERSION),
             force: self.force,
             config: self.config.clone(),
         };
