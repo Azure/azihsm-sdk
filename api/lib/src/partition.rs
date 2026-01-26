@@ -68,19 +68,6 @@ pub struct HsmPartitionInfo {
     pub path: String,
 }
 
-impl HsmPartitionInfo {
-    /// Creates new partition information.
-    ///
-    /// # Arguments
-    ///
-    /// * `path` - Device path string
-    fn new(path: &str) -> Self {
-        Self {
-            path: path.to_string(),
-        }
-    }
-}
-
 /// HSM application credentials.
 ///
 /// Contains authentication credentials for accessing HSM partition functionality,
@@ -171,11 +158,18 @@ impl HsmPartitionManager {
     #[instrument()]
     pub fn open_partition(path: &str) -> HsmResult<HsmPartition> {
         let dev = ddi::open_dev(path)?;
+        let dev_info = ddi::dev_info_by_path(path)?;
         let (min, max) = ddi::get_api_rev(&dev)?;
+        let part_type = HsmPartType::from(dev.device_kind().ok_or(HsmError::InternalError)?);
         Ok(HsmPartition::new(
             dev,
             HsmApiRevRange::new(min, max),
-            HsmPartitionInfo::new(path),
+            dev_info.path,
+            part_type,
+            dev_info.driver_ver,
+            dev_info.firmware_ver,
+            dev_info.hardware_ver,
+            dev_info.pci_info,
         ))
     }
 }
@@ -194,12 +188,31 @@ impl HsmPartition {
     ///
     /// * `dev` - HSM device handle
     /// * `api_rev_range` - Supported API revision range
-    /// * `part_info` - Partition metadata
-    fn new(dev: ddi::HsmDev, api_rev_range: HsmApiRevRange, part_info: HsmPartitionInfo) -> Self {
+    /// * `path` - Device path of the partition
+    /// * `part_type` - Type of the partition (Virtual or Physical)
+    /// * `driver_ver` - Driver version
+    /// * `firmware_ver` - Firmware version
+    /// * `hardware_ver` - Hardware version
+    /// * `pci_info` - PCI information
+    fn new(
+        dev: ddi::HsmDev,
+        api_rev_range: HsmApiRevRange,
+        path: String,
+        part_type: HsmPartType,
+        driver_ver: String,
+        firmware_ver: String,
+        hardware_ver: String,
+        pci_info: String,
+    ) -> Self {
         Self(Arc::new(RwLock::new(HsmPartitionInner::new(
             dev,
             api_rev_range,
-            part_info,
+            path,
+            part_type,
+            driver_ver,
+            firmware_ver,
+            hardware_ver,
+            pci_info,
         ))))
     }
 
@@ -221,7 +234,7 @@ impl HsmPartition {
     /// - Credentials are invalid
     /// - API revision retrieval fails
     /// - Partition initialization fails
-    #[instrument(skip_all,  fields(path = self.info().path.as_str()), err)]
+    #[instrument(skip_all,  fields(path = self.path().as_str()), err)]
     pub fn init(
         &self,
         creds: HsmCredentials,
@@ -261,7 +274,7 @@ impl HsmPartition {
     /// - The requested API revision is not supported
     /// - Session creation fails
     /// - Maximum number of sessions is reached
-    #[instrument(skip_all, err, fields(path = &self.info().path))]
+    #[instrument(skip_all, err, fields(path = self.path().as_str()))]
     pub fn open_session(
         &self,
         api_rev: HsmApiRev,
@@ -282,25 +295,125 @@ impl HsmPartition {
         self.inner().read().unwrap().api_rev_range()
     }
 
-    /// Returns partition information.
+    /// Returns the partition type (Virtual or Physical).
     ///
     /// # Returns
     ///
-    /// A clone of the partition information structure containing metadata
-    /// such as the device path.
-    pub fn info(&self) -> HsmPartitionInfo {
-        self.inner().read().unwrap().info().clone()
+    /// The type of partition - either Virtual (simulator/emulated) or Physical (hardware device).
+    pub fn part_type(&self) -> HsmPartType {
+        self.inner().read().unwrap().part_type()
     }
 
-    /// Returns the backup masking key (BMK).
+    /// Returns the device path.
     ///
+    /// # Returns
+    ///
+    /// The operating system device path used to access this partition.
+    pub fn path(&self) -> String {
+        self.inner().read().unwrap().path().to_string()
+    }
+
+    /// Returns the driver version.
+    ///
+    /// # Returns
+    ///
+    /// The version string of the device driver.
+    pub fn driver_ver(&self) -> String {
+        self.inner().read().unwrap().driver_ver().to_string()
+    }
+
+    /// Returns the firmware version.
+    ///
+    /// # Returns
+    ///
+    /// The version string of the device firmware.
+    pub fn firmware_ver(&self) -> String {
+        self.inner().read().unwrap().firmware_ver().to_string()
+    }
+
+    /// Returns the hardware version.
+    ///
+    /// # Returns
+    ///
+    /// The version string of the hardware device.
+    pub fn hardware_ver(&self) -> String {
+        self.inner().read().unwrap().hardware_ver().to_string()
+    }
+
+    /// Returns the PCI hardware information.
+    ///
+    /// # Returns
+    ///
+    /// The PCI hardware identifier in bus:device:function format.
+    pub fn pci_info(&self) -> String {
+        self.inner().read().unwrap().pci_info().to_string()
+    }
+
+    /// Retrieves the certificate chain stored in the partition.
+    ///
+    /// Returns the certificate chain in PEM format (RFC 7468), with each certificate
+    /// encoded in Base64 with `-----BEGIN CERTIFICATE-----` and `-----END CERTIFICATE-----`
+    /// delimiters and LF line endings. Multiple certificates are separated by a single
+    /// newline character (`\n`). The certificates are ordered from leaf/partition certificate
+    /// (first) to root certificate (last).
+    ///
+    /// # Arguments
+    ///
+    /// * `slot` - The certificate slot number.
+    ///
+    /// # Returns
+    ///
+    /// Returns the certificate chain as a PEM string.
+    pub fn cert_chain(&self, slot: u8) -> HsmResult<String> {
+        self.with_dev(|dev| ddi::get_cert_chain(dev, self.api_rev_range().min(), slot))
+    }
+
+    /// Retrieves the backup masking key that was set during partition initialization.
+    ///
+    /// # Arguments
+    ///
+    /// * `bmk` - Optional output buffer to receive the BMK.
+    ///
+    /// # Returns
+    ///
+    /// Returns the size of the BMK on success.
+    pub fn bmk(&self, bmk: Option<&mut [u8]>) -> HsmResult<usize> {
+        let len = self.inner().read().unwrap().bmk().len();
+        if let Some(buf) = bmk {
+            if buf.len() < len {
+                return Err(HsmError::BufferTooSmall);
+            }
+            buf[..len].copy_from_slice(self.inner().read().unwrap().bmk());
+        }
+        Ok(len)
+    }
+
     /// Retrieves the backup masking key that was set during partition initialization.
     ///
     /// # Returns
     ///
     /// A vector containing the BMK bytes.
-    pub fn bmk(&self) -> Vec<u8> {
+    pub fn bmk_vec(&self) -> Vec<u8> {
         self.inner().read().unwrap().bmk().to_vec()
+    }
+
+    /// Retrieves the masked owner backup key that was set during partition initialization.
+    ///
+    /// # Arguments
+    /// * `mobk` - Optional output buffer to receive the MOBK.
+    ///
+    /// # Returns
+    ///
+    /// Returns the size of the MOBK on success.
+    pub fn mobk(&self, mobk: Option<&mut [u8]>) -> HsmResult<usize> {
+        let len = self.inner().read().unwrap().mobk().len();
+        if let Some(buf) = mobk {
+            if buf.len() < len {
+                return Err(HsmError::BufferTooSmall);
+            }
+            buf[..len].copy_from_slice(self.inner().read().unwrap().mobk());
+        }
+        Ok(len)
     }
 
     /// Returns the masked owner backup key (MOBK).
@@ -310,7 +423,7 @@ impl HsmPartition {
     /// # Returns
     ///
     /// A vector containing the MOBK bytes.
-    pub fn mobk(&self) -> Vec<u8> {
+    pub fn mobk_vec(&self) -> Vec<u8> {
         self.inner().read().unwrap().mobk().to_vec()
     }
 
@@ -353,7 +466,7 @@ impl HsmPartition {
 ///
 /// Ensures proper cleanup and logging when the partition handle goes out of scope.
 impl Drop for HsmPartition {
-    #[instrument(skip_all, fields(path = self.info().path.as_str()) )]
+    #[instrument(skip_all, fields(path = self.path().as_str()) )]
     fn drop(&mut self) {}
 }
 
@@ -366,9 +479,14 @@ impl Drop for HsmPartition {
 pub(crate) struct HsmPartitionInner {
     dev: ddi::HsmDev,
     api_rev_range: HsmApiRevRange,
-    part_info: HsmPartitionInfo,
     bmk: Vec<u8>,
     mobk: Vec<u8>,
+    path: String,
+    part_type: HsmPartType,
+    driver_ver: String,
+    firmware_ver: String,
+    hardware_ver: String,
+    pci_info: String,
 }
 
 impl HsmPartitionInner {
@@ -378,12 +496,31 @@ impl HsmPartitionInner {
     ///
     /// * `dev` - HSM device handle
     /// * `api_rev_range` - Supported API revision range
-    /// * `part_info` - Partition metadata
-    fn new(dev: ddi::HsmDev, api_rev_range: HsmApiRevRange, part_info: HsmPartitionInfo) -> Self {
+    /// * `path` - Device path string
+    /// * `part_type` - Type of the partition (Virtual or Physical)
+    /// * `driver_ver` - Driver version string
+    /// * `firmware_ver` - Firmware version string
+    /// * `hardware_ver` - Hardware version string
+    /// * `pci_info` - PCI information string
+    fn new(
+        dev: ddi::HsmDev,
+        api_rev_range: HsmApiRevRange,
+        path: String,
+        part_type: HsmPartType,
+        driver_ver: String,
+        firmware_ver: String,
+        hardware_ver: String,
+        pci_info: String,
+    ) -> Self {
         Self {
             dev,
             api_rev_range,
-            part_info,
+            path,
+            part_type,
+            driver_ver,
+            firmware_ver,
+            hardware_ver,
+            pci_info,
             bmk: Vec::new(),
             mobk: Vec::new(),
         }
@@ -398,14 +535,34 @@ impl HsmPartitionInner {
         self.api_rev_range
     }
 
-    /// Returns partition information.
-    ///
-    /// # Returns
-    ///
-    /// A reference to the partition information structure containing metadata
-    /// such as the device path.
-    pub fn info(&self) -> &HsmPartitionInfo {
-        &self.part_info
+    /// Returns the partition type (Virtual or Physical).
+    pub fn part_type(&self) -> HsmPartType {
+        self.part_type
+    }
+
+    /// Returns the device path.
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
+    /// Returns the driver version.
+    pub fn driver_ver(&self) -> &str {
+        &self.driver_ver
+    }
+
+    /// Returns the firmware version.
+    pub fn firmware_ver(&self) -> &str {
+        &self.firmware_ver
+    }
+
+    /// Returns the hardware version.
+    pub fn hardware_ver(&self) -> &str {
+        &self.hardware_ver
+    }
+
+    /// Returns the PCI hardware information.
+    pub fn pci_info(&self) -> &str {
+        &self.pci_info
     }
 
     /// Returns the underlying device handle.

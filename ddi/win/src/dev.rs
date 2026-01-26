@@ -3,6 +3,7 @@
 //! DDI Implementation - MCR Windows Device - Device Module
 
 #![allow(unsafe_code)]
+#![allow(unused_assignments)]
 
 use std::fs::File;
 use std::fs::OpenOptions;
@@ -571,6 +572,15 @@ impl DdiWinDev {
             file: Arc::new(RwLock::new(file)),
             device_kind: None,
         })
+    }
+
+    /// Returns the device kind (Virtual or Physical).
+    ///
+    /// # Returns
+    ///
+    /// The device kind that was determined when the device was opened.
+    pub fn device_kind(&self) -> Option<DdiDeviceKind> {
+        self.device_kind
     }
 
     fn map_ioctl_status(&self, ioctl_status: u32) -> Result<u32, DdiError> {

@@ -81,7 +81,7 @@ azihsm_status azihsm_open_device_and_session(azihsm_handle *device, azihsm_handl
         return status;
     }
 
-    status = azihsm_part_init(*device, &creds);
+    status = azihsm_part_init(*device, &creds, NULL, NULL, NULL);
 
     if (status != AZIHSM_STATUS_SUCCESS)
     {

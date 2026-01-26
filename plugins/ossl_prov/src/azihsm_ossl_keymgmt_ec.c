@@ -6,6 +6,7 @@
 #include <openssl/objects.h>
 #include <openssl/params.h>
 #include <openssl/proverr.h>
+#include <string.h>
 
 #include "azihsm_ossl_base.h"
 #include "azihsm_ossl_ec.h"
@@ -24,19 +25,18 @@
  *   Example:
  *      -pkeyopt group:P-384
  *
- *   @azihsm.pub_key_usage
- *   Description: Comma-delimited list of key usage attributes of public key
- *   Accepted values: sign, verify, unwrap, derive, ...
- *   Default value: verify
- *   Example:
- *      -pkeyopt azihsm.priv_key_usage:derive,verify
+ *   @azihsm.key_usage
+ *   Description: Key usage type for the key pair
+ *   Accepted values: digitalSignature (private: sign, public: verify) or keyAgreement (both:
+ * derive) Default value: digitalSignature Example: -pkeyopt azihsm.key_usage:digitalSignature
+ *      -pkeyopt azihsm.key_usage:keyAgreement
  *
- *   @azihsm.priv_key_usage [mandatory]
- *   Description: Comma-delimited list of key usage attributes of private key
- *   Accepted values: sign, verify, unwrap, derive, ...
- *   Default value: sign
+ *   @azihsm.session
+ *   Description: Whether to create a session key or persistent key
+ *   Accepted values: true, false, 1, 0, yes, no
+ *   Default value: false
  *   Example:
- *      -pkeyopt azihsm.priv_key_usage:sign
+ *      -pkeyopt azihsm.session:true
  *
  * */
 
@@ -47,8 +47,7 @@
 #define AIHSM_EC_CURVE_ID_DEFAULT AZIHSM_ECC_CURVE_P256
 #define AIHSM_EC_CURVE_ID_NONE -1
 
-#define AIHSM_PUB_KEY_USAGE_DEFAULT AZIHSM_KEY_PROP_ID_VERIFY
-#define AIHSM_PRIV_KEY_USAGE_DEFAULT AZIHSM_KEY_PROP_ID_SIGN
+#define AIHSM_KEY_USAGE_DEFAULT KEY_USAGE_DIGITAL_SIGNATURE
 
 typedef struct
 {
@@ -128,7 +127,9 @@ static AZIHSM_EC_KEY *azihsm_ossl_keymgmt_gen(
         .len = 0
     };
 
-    struct azihsm_key_prop pub_key_props[KEY_USAGE_LIST_MAX + 1] = {
+/* Now we only need 4 properties: class, kind, curve, and usage */
+#define AZIHSM_KEY_PROPS_SIZE 5
+    struct azihsm_key_prop pub_key_props[AZIHSM_KEY_PROPS_SIZE] = {
         [0] = { .id = AZIHSM_KEY_PROP_ID_CLASS,
                 .val = (void *)&pub_class,
                 .len = sizeof(pub_class), },
@@ -137,11 +138,13 @@ static AZIHSM_EC_KEY *azihsm_ossl_keymgmt_gen(
                 .len = sizeof(key_kind), },
         [2] = { .id = AZIHSM_KEY_PROP_ID_EC_CURVE,
                 .val = (void *)&genctx->ec_curve_id,
-                .len = sizeof(genctx->ec_curve_id), }
+                .len = sizeof(genctx->ec_curve_id), },
+        [3] = { .id = (azihsm_key_prop_id)azihsm_ossl_get_pub_key_property(genctx->key_usage),
+                .val = (void *)&enable,
+                .len = sizeof(bool), },
     };
 
-    struct azihsm_key_prop priv_key_props[KEY_USAGE_LIST_MAX + 1] = {
-
+    struct azihsm_key_prop priv_key_props[AZIHSM_KEY_PROPS_SIZE] = {
         [0] = { .id = AZIHSM_KEY_PROP_ID_CLASS,
                 .val = (void *)&priv_class,
                 .len = sizeof(priv_class), },
@@ -150,32 +153,42 @@ static AZIHSM_EC_KEY *azihsm_ossl_keymgmt_gen(
                 .len = sizeof(key_kind), },
         [2] = { .id = AZIHSM_KEY_PROP_ID_EC_CURVE,
                 .val = (void *)&genctx->ec_curve_id,
-                .len = sizeof(genctx->ec_curve_id), }
+                .len = sizeof(genctx->ec_curve_id), },
+        [3] = { .id = (azihsm_key_prop_id)azihsm_ossl_get_priv_key_property(genctx->key_usage),
+                .val = (void *)&enable,
+                .len = sizeof(bool), },
     };
 
-    for (uint32_t i = 0; i < genctx->pub_key_usage.count; i++)
-    {
-        pub_key_props[3 + i].id = (azihsm_algo_id)genctx->pub_key_usage.elements[i];
-        pub_key_props[3 + i].val = (void *)&enable;
-        pub_key_props[3 + i].len = sizeof(bool);
-    }
+    uint32_t pub_key_prop_count = 4;
+    uint32_t priv_key_prop_count = 4;
 
-    for (uint32_t i = 0; i < genctx->priv_key_usage.count; i++)
+    /* Add SESSION property if requested */
+    if (genctx->session_flag)
     {
-        priv_key_props[3 + i].id = (azihsm_algo_id)genctx->priv_key_usage.elements[i];
-        priv_key_props[3 + i].val = (void *)&enable;
-        priv_key_props[3 + i].len = sizeof(bool);
+        pub_key_props[4] = (struct azihsm_key_prop){
+            .id = AZIHSM_KEY_PROP_ID_SESSION,
+            .val = (void *)&enable,
+            .len = sizeof(bool),
+        };
+        pub_key_prop_count++;
+
+        priv_key_props[4] = (struct azihsm_key_prop){
+            .id = AZIHSM_KEY_PROP_ID_SESSION,
+            .val = (void *)&enable,
+            .len = sizeof(bool),
+        };
+        priv_key_prop_count++;
     }
 
     struct azihsm_key_prop_list pub_key_prop_list = {
         .props = pub_key_props,
-        .count = genctx->pub_key_usage.count + 3,
+        .count = pub_key_prop_count,
     };
 
     struct azihsm_key_prop_list priv_key_prop_list = {
 
         .props = priv_key_props,
-        .count = genctx->priv_key_usage.count + 3,
+        .count = priv_key_prop_count,
     };
 
     if ((ec_key = OPENSSL_zalloc(sizeof(AZIHSM_EC_KEY))) == NULL)
@@ -195,18 +208,86 @@ static AZIHSM_EC_KEY *azihsm_ossl_keymgmt_gen(
 
     if (status != AZIHSM_STATUS_SUCCESS)
     {
+        azihsm_key_delete(public);
+        azihsm_key_delete(private);
         OPENSSL_free(ec_key);
-
-        printf("azihsm_ossl_keymgmt_gen: azihsm_key_gen_pair failed with error code %d\n", status);
-
+        ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GENERATE_KEY);
         return NULL;
     }
 
     ec_key->genctx = *genctx;
-    ec_key->key.public = public;
+    ec_key->key.pub = public;
     ec_key->has_public = true;
-    ec_key->key.private = private;
+    ec_key->key.priv = private;
     ec_key->has_private = true;
+
+    /* Handle masked key file output if requested */
+    if (genctx->masked_key_file[0] != '\0')
+    {
+        /* Allocate a 8192-byte buffer for the masked key */
+        const uint32_t masked_key_buffer_size = 8192;
+        uint8_t *masked_key_buffer = OPENSSL_malloc(masked_key_buffer_size);
+        if (masked_key_buffer == NULL)
+        {
+            azihsm_key_delete(private);
+            azihsm_key_delete(public);
+
+            OPENSSL_free(ec_key);
+            ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
+            return NULL;
+        }
+
+        /* Retrieve masked key with the allocated buffer */
+        struct azihsm_key_prop prop = { .id = AZIHSM_KEY_PROP_ID_MASKED_KEY,
+                                        .val = masked_key_buffer,
+                                        .len = masked_key_buffer_size };
+
+        azihsm_status retrieve_status = azihsm_key_get_prop(private, &prop);
+
+        /* Check if we got the masked key */
+        if (retrieve_status == AZIHSM_STATUS_SUCCESS && prop.len > 0)
+        {
+            /* Write masked key to file */
+            FILE *f = fopen(genctx->masked_key_file, "wb");
+            if (f == NULL)
+            {
+                azihsm_key_delete(private);
+                azihsm_key_delete(public);
+
+                OPENSSL_free(masked_key_buffer);
+                OPENSSL_free(ec_key);
+                ERR_raise(ERR_LIB_PROV, ERR_R_OPERATION_FAIL);
+                return NULL;
+            }
+
+            size_t written = fwrite(masked_key_buffer, 1, prop.len, f);
+            fclose(f);
+
+            if (written != prop.len)
+            {
+                azihsm_key_delete(private);
+                azihsm_key_delete(public);
+
+                OPENSSL_free(masked_key_buffer);
+                OPENSSL_free(ec_key);
+                ERR_raise(ERR_LIB_PROV, ERR_R_OPERATION_FAIL);
+                return NULL;
+            }
+        }
+        else if (retrieve_status != AZIHSM_STATUS_PROPERTY_NOT_PRESENT)
+        {
+            azihsm_key_delete(private);
+            azihsm_key_delete(public);
+
+            OPENSSL_free(masked_key_buffer);
+            OPENSSL_free(ec_key);
+            ERR_raise(ERR_LIB_PROV, ERR_R_OPERATION_FAIL);
+            return NULL;
+        }
+        /* If KEY_PROPERTY_NOT_PRESENT, just continue without masked key */
+
+        OPENSSL_free(masked_key_buffer);
+    }
 
     return ec_key;
 }
@@ -218,8 +299,8 @@ static void azihsm_ossl_keymgmt_free(AZIHSM_EC_KEY *ec_key)
         return;
     }
 
-    azihsm_key_delete(ec_key->key.public);
-    azihsm_key_delete(ec_key->key.private);
+    azihsm_key_delete(ec_key->key.pub);
+    azihsm_key_delete(ec_key->key.priv);
 
     OPENSSL_free(ec_key);
 }
@@ -243,6 +324,22 @@ static int azihsm_ossl_keymgmt_gen_set_params(AIHSM_EC_GEN_CTX *genctx, const OS
         return 1;
     }
 
+    /* Check for key_usage parameter specifically */
+    if ((p = OSSL_PARAM_locate_const(params, AZIHSM_OSSL_PKEY_PARAM_KEY_USAGE)) != NULL)
+    {
+        if (p->data_type != OSSL_PARAM_UTF8_STRING)
+        {
+            ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
+            return 0;
+        }
+
+        if (azihsm_ossl_key_usage_from_str(p->data, &genctx->key_usage) < 0)
+        {
+            ERR_raise(ERR_LIB_PROV, PROV_R_INVALID_KEY);
+            return 0;
+        }
+    }
+
     if ((p = OSSL_PARAM_locate_const(params, OSSL_PKEY_PARAM_GROUP_NAME)) != NULL)
     {
 
@@ -263,8 +360,10 @@ static int azihsm_ossl_keymgmt_gen_set_params(AIHSM_EC_GEN_CTX *genctx, const OS
         genctx->ec_curve_id = (uint32_t)curve_id;
     }
 
-    if ((p = OSSL_PARAM_locate_const(params, AZIHSM_OSSL_PKEY_PARAM_PUB_KEY_USAGE)) != NULL)
+    if ((p = OSSL_PARAM_locate_const(params, AZIHSM_OSSL_PKEY_PARAM_SESSION)) != NULL)
     {
+
+        int session_result;
 
         if (p->data_type != OSSL_PARAM_UTF8_STRING)
         {
@@ -272,14 +371,16 @@ static int azihsm_ossl_keymgmt_gen_set_params(AIHSM_EC_GEN_CTX *genctx, const OS
             return 0;
         }
 
-        if (azihsm_ossl_key_usage_list_from_str(p->data, &genctx->pub_key_usage) < 0)
+        if ((session_result = azihsm_ossl_session_from_str(p->data)) < 0)
         {
             ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
             return 0;
         }
+
+        genctx->session_flag = (bool)session_result;
     }
 
-    if ((p = OSSL_PARAM_locate_const(params, AZIHSM_OSSL_PKEY_PARAM_PRIV_KEY_USAGE)) != NULL)
+    if ((p = OSSL_PARAM_locate_const(params, AZIHSM_OSSL_PKEY_PARAM_MASKED_KEY)) != NULL)
     {
 
         if (p->data_type != OSSL_PARAM_UTF8_STRING)
@@ -288,11 +389,14 @@ static int azihsm_ossl_keymgmt_gen_set_params(AIHSM_EC_GEN_CTX *genctx, const OS
             return 0;
         }
 
-        if (azihsm_ossl_key_usage_list_from_str(p->data, &genctx->priv_key_usage) < 0)
+        if (azihsm_ossl_masked_key_filepath_validate(p->data) < 0)
         {
             ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
             return 0;
         }
+
+        strncpy(genctx->masked_key_file, p->data, sizeof(genctx->masked_key_file) - 1);
+        genctx->masked_key_file[sizeof(genctx->masked_key_file) - 1] = '\0';
     }
 
     return 1;
@@ -322,11 +426,10 @@ static AIHSM_EC_GEN_CTX *azihsm_ossl_keymgmt_gen_init(
 
     genctx->session = provctx->session;
 
-    genctx->pub_key_usage.count = 1;
-    genctx->pub_key_usage.elements[0] = AIHSM_PUB_KEY_USAGE_DEFAULT;
-    genctx->priv_key_usage.count = 1;
-    genctx->priv_key_usage.elements[0] = AIHSM_PRIV_KEY_USAGE_DEFAULT;
+    genctx->key_usage = AIHSM_KEY_USAGE_DEFAULT;
     genctx->ec_curve_id = AIHSM_EC_CURVE_ID_DEFAULT;
+    genctx->session_flag = false;
+    genctx->masked_key_file[0] = '\0';
 
     if (azihsm_ossl_keymgmt_gen_set_params(genctx, params) == 0)
     {
@@ -380,12 +483,12 @@ static int azihsm_ossl_keymgmt_match(
         return 0;
     }
 
-    if (ec_key1->key.public != ec_key2->key.public)
+    if (ec_key1->key.pub != ec_key2->key.pub)
     {
         return 0;
     }
 
-    if (ec_key1->key.private != ec_key2->key.private)
+    if (ec_key1->key.priv != ec_key2->key.priv)
     {
         return 0;
     }
@@ -461,8 +564,9 @@ static const OSSL_PARAM *azihsm_ossl_keymgmt_gen_settable_params(
 {
     static const OSSL_PARAM settable_params[] = {
         OSSL_PARAM_utf8_string(OSSL_PKEY_PARAM_GROUP_NAME, NULL, 0),
-        OSSL_PARAM_utf8_string(AZIHSM_OSSL_PKEY_PARAM_PUB_KEY_USAGE, NULL, 0),
-        OSSL_PARAM_utf8_string(AZIHSM_OSSL_PKEY_PARAM_PRIV_KEY_USAGE, NULL, 0),
+        OSSL_PARAM_utf8_string(AZIHSM_OSSL_PKEY_PARAM_KEY_USAGE, NULL, 0),
+        OSSL_PARAM_utf8_string(AZIHSM_OSSL_PKEY_PARAM_SESSION, NULL, 0),
+        OSSL_PARAM_utf8_string(AZIHSM_OSSL_PKEY_PARAM_MASKED_KEY, NULL, 0),
         OSSL_PARAM_END
     };
 

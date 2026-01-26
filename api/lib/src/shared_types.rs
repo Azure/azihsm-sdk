@@ -38,6 +38,9 @@ pub enum HsmKeyKind {
     /// Advanced Encryption Standard (AES) symmetric key kind.
     Aes = 3,
 
+    /// AES XTS symmetric key kind.
+    AesXts = 4,
+
     /// Shared secret key kind.
     SharedSecret = 5,
 
@@ -91,4 +94,17 @@ impl HsmEccCurve {
             HsmEccCurve::P521 => 66,
         }
     }
+}
+
+/// HSM partition type.
+///
+/// Indicates whether the partition is a virtual (simulated) or physical (hardware) device.
+#[repr(u32)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, IntoBytes, Immutable)]
+pub enum HsmPartType {
+    /// Virtual/simulated partition.
+    Virtual = 1,
+
+    /// Physical hardware partition.
+    Physical = 2,
 }

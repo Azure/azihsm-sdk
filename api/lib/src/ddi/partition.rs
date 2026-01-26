@@ -6,6 +6,7 @@
 //! application credentials and master key material.
 
 use azihsm_cred_encrypt::DeviceCredKey;
+use azihsm_crypto as crypto;
 use azihsm_ddi_mbor::*;
 
 use super::*;
@@ -177,4 +178,86 @@ pub fn establish_credential(
         .exec_op(&req, &mut None)
         .map_hsm_err(HsmError::DdiCmdFailure)?;
     Ok(resp.data.bmk.as_slice().to_vec())
+}
+
+/// Retrieves the certificate chain stored in the HSM device.
+///
+/// # Arguments
+///
+/// * `dev` - The HSM device handle
+/// * `rev` - The API revision to use
+/// * `slot_id` - The certificate slot number
+///
+/// # Returns
+///
+/// Returns the certificate chain in PEM format.
+pub(crate) fn get_cert_chain(dev: &HsmDev, rev: HsmApiRev, slot_id: u8) -> HsmResult<String> {
+    let (count, thumbprint) = get_cert_chain_info(dev, rev, slot_id)?;
+
+    let mut cert_chain = String::new();
+    for cert_id in 0..count {
+        let der = get_cert(dev, rev, slot_id, cert_id)?;
+        let pem = crypto::der_to_pem(&der).map_hsm_err(HsmError::InternalError)?;
+        cert_chain.push_str(&pem);
+    }
+
+    let (new_count, new_thumbprint) = get_cert_chain_info(dev, rev, slot_id)?;
+    if new_count != count || new_thumbprint != thumbprint {
+        return Err(HsmError::CertChainChanged);
+    }
+
+    Ok(cert_chain)
+}
+
+/// Retrieves certificate chain information from the HSM device.
+///
+/// # Arguments
+///
+/// * `dev` - The HSM device handle
+/// * `rev` - The API revision to use
+/// * `slot_id` - The certificate slot number
+///
+/// # Returns
+///
+/// Returns a tuple containing the number of certificates and the thumbprint.
+fn get_cert_chain_info(dev: &HsmDev, rev: HsmApiRev, slot_id: u8) -> HsmResult<(u8, Vec<u8>)> {
+    let req = DdiGetCertChainInfoCmdReq {
+        hdr: build_ddi_req_hdr(DdiOp::GetCertChainInfo, Some(rev), None),
+        data: DdiGetCertChainInfoReq { slot_id },
+        ext: None,
+    };
+
+    let resp = dev
+        .exec_op(&req, &mut None)
+        .map_hsm_err(HsmError::DdiCmdFailure)?;
+
+    let count = resp.data.num_certs;
+    let thumbprint = resp.data.thumbprint.as_slice().to_vec();
+
+    Ok((count, thumbprint))
+}
+
+/// Retrieves a certificate from the HSM device.
+///
+/// # Arguments
+///
+/// * `dev` - The HSM device handle
+/// * `rev` - The API revision to use
+/// * `slot_id` - The certificate slot number
+///
+/// # Returns
+///
+/// Returns a vector containing the certificate bytes.
+fn get_cert(dev: &HsmDev, rev: HsmApiRev, slot_id: u8, cert_id: u8) -> HsmResult<Vec<u8>> {
+    let req = DdiGetCertificateCmdReq {
+        hdr: build_ddi_req_hdr(DdiOp::GetCertificate, Some(rev), None),
+        data: DdiGetCertificateReq { slot_id, cert_id },
+        ext: None,
+    };
+
+    let resp = dev
+        .exec_op(&req, &mut None)
+        .map_hsm_err(HsmError::DdiCmdFailure)?;
+
+    Ok(resp.data.certificate.as_slice().to_vec())
 }

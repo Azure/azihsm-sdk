@@ -26,7 +26,9 @@ mod handle_table;
 mod key_mgmt;
 mod key_props;
 mod partition;
+mod partition_props;
 mod session;
+mod session_props;
 #[allow(unused)]
 #[path = "../../lib/src/shared_types.rs"]
 mod shared_types;
@@ -46,6 +48,7 @@ use handle_table::*;
 use key_props::*;
 use str::*;
 use utils::*;
+use zerocopy::*;
 
 /// Handle type for referencing HSM objects across the FFI boundary.
 ///
@@ -101,6 +104,11 @@ type AzihsmKeyKind = shared_types::HsmKeyKind;
 /// An alias for `HsmEccCurve` that represents the elliptic curve used for ECC keys.
 /// This type is used across the FFI boundary to specify curves like P-256, P-384, and P-521.
 type AzihsmEccCurve = shared_types::HsmEccCurve;
+
+/// Partition type used in the native API.
+/// An alias for `HsmPartType` that represents the type of HSM partition
+/// (virtual or physical).
+type AzihsmPartType = shared_types::HsmPartType;
 
 impl TryFrom<u32> for AzihsmKeyKind {
     type Error = AzihsmStatus;
@@ -258,6 +266,24 @@ impl From<AzihsmEccCurve> for api::HsmEccCurve {
     }
 }
 
+impl From<api::HsmPartType> for AzihsmPartType {
+    /// Converts an `api::HsmPartType` into an `AzihsmPartType`.
+    #[allow(unsafe_code)]
+    fn from(part_type: api::HsmPartType) -> Self {
+        // SAFETY: AzihsmPartType and api::HsmPartType have the same representation
+        unsafe { std::mem::transmute(part_type) }
+    }
+}
+
+impl From<AzihsmPartType> for api::HsmPartType {
+    /// Converts an `AzihsmPartType` into an `api::HsmPartType`.
+    #[allow(unsafe_code)]
+    fn from(part_type: AzihsmPartType) -> Self {
+        // SAFETY: AzihsmPartType and api::HsmPartType have the same representation
+        unsafe { std::mem::transmute(part_type) }
+    }
+}
+
 /// credentials structure used for authentication.
 ///
 /// This structure contains the identifier and PIN required
@@ -293,7 +319,7 @@ impl From<&AzihsmCredentials> for api::HsmCredentials {
 /// between different versions of the HSM API.
 ///
 #[repr(C)]
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, IntoBytes, Immutable)]
 pub struct AzihsmApiRev {
     /// Major version number
     pub major: u32,
@@ -370,7 +396,7 @@ impl TryFrom<AzihsmHandle> for HandleType {
     }
 }
 
-/// C FFI structure for a buffer
+/// Buffer structure for passing data
 ///
 /// # Safety
 /// When using this struct from C code:

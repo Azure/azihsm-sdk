@@ -14,35 +14,33 @@
 typedef struct
 {
     const char *name;
-    int id;
+    AZIHSM_KEY_USAGE_TYPE type;
 } KEY_USAGE_MAPPING_ENTRY;
 
-static const KEY_USAGE_MAPPING_ENTRY key_usecases[] = { { "sign", AZIHSM_KEY_PROP_ID_SIGN },
-                                                        { "verify", AZIHSM_KEY_PROP_ID_VERIFY },
-                                                        { "unwrap", AZIHSM_KEY_PROP_ID_UNWRAP },
-                                                        { "derive", AZIHSM_KEY_PROP_ID_DERIVE },
-                                                        { "null", -1 } };
+static const KEY_USAGE_MAPPING_ENTRY key_usage_map[] = {
+    { "digitalSignature", KEY_USAGE_DIGITAL_SIGNATURE },
+    { "keyAgreement", KEY_USAGE_KEY_AGREEMENT },
+    { NULL, -1 }
+};
 
-static int get_key_usage_id(const char *usage)
+static AZIHSM_KEY_USAGE_TYPE get_key_usage_type(const char *usage)
 {
-    for (const KEY_USAGE_MAPPING_ENTRY *it = key_usecases; it->id != -1; it++)
+    for (const KEY_USAGE_MAPPING_ENTRY *it = key_usage_map; it->name != NULL; it++)
     {
-
         if (strcmp(it->name, usage) == 0)
         {
-            return it->id;
+            return it->type;
         }
     }
 
     return -1;
 }
 
-static const char *get_key_usage_str(const int id)
+static const char *get_key_usage_str(AZIHSM_KEY_USAGE_TYPE type)
 {
-    for (const KEY_USAGE_MAPPING_ENTRY *it = key_usecases; it->id != -1; it++)
+    for (const KEY_USAGE_MAPPING_ENTRY *it = key_usage_map; it->name != NULL; it++)
     {
-
-        if (it->id == id)
+        if (it->type == type)
         {
             return it->name;
         }
@@ -51,49 +49,86 @@ static const char *get_key_usage_str(const int id)
     return "unknown";
 }
 
-void azihsm_ossl_key_usage_list_to_str(
-    const AIHSM_KEY_USAGE_LIST *ulist,
-    char *out,
-    const size_t out_len
-)
+const char *azihsm_ossl_key_usage_to_str(AZIHSM_KEY_USAGE_TYPE usage_type)
 {
-    for (uint32_t i = 0; i < ulist->count; i++)
+    return get_key_usage_str(usage_type);
+}
+
+int azihsm_ossl_key_usage_from_str(const char *value, AZIHSM_KEY_USAGE_TYPE *usage_type)
+{
+    if (value == NULL || usage_type == NULL)
     {
+        return -1;
+    }
 
-        if (i > 0)
-        {
-            strlcat(out, ",", out_len);
-        }
+    /* Directly check the return value as int before converting to enum */
+    int type_int = (int)get_key_usage_type(value);
+    if (type_int < 0)
+    {
+        return -1;
+    }
 
-        strlcat(out, get_key_usage_str((int)ulist->elements[i]), out_len);
+    *usage_type = (AZIHSM_KEY_USAGE_TYPE)type_int;
+    return 0;
+}
+
+uint32_t azihsm_ossl_get_priv_key_property(AZIHSM_KEY_USAGE_TYPE usage_type)
+{
+    switch (usage_type)
+    {
+    case KEY_USAGE_DIGITAL_SIGNATURE:
+        return AZIHSM_KEY_PROP_ID_SIGN;
+    case KEY_USAGE_KEY_AGREEMENT:
+        return AZIHSM_KEY_PROP_ID_DERIVE;
+    default:
+        return AZIHSM_KEY_PROP_ID_SIGN; /* Default to SIGN */
     }
 }
 
-int azihsm_ossl_key_usage_list_from_str(const char *value, AIHSM_KEY_USAGE_LIST *ulist)
+uint32_t azihsm_ossl_get_pub_key_property(AZIHSM_KEY_USAGE_TYPE usage_type)
 {
-    char *token;
-    char param_value[256];
-
-    strncpy(param_value, value, sizeof(param_value) - 1);
-    param_value[sizeof(param_value) - 1] = '\0';
-
-    token = strtok(param_value, ",");
-    ulist->count = 0;
-
-    while (token != NULL && ulist->count < KEY_USAGE_LIST_MAX)
+    switch (usage_type)
     {
+    case KEY_USAGE_DIGITAL_SIGNATURE:
+        return AZIHSM_KEY_PROP_ID_VERIFY;
+    case KEY_USAGE_KEY_AGREEMENT:
+        return AZIHSM_KEY_PROP_ID_DERIVE;
+    default:
+        return AZIHSM_KEY_PROP_ID_VERIFY; /* Default to VERIFY */
+    }
+}
 
-        int id;
+int azihsm_ossl_session_from_str(const char *value)
+{
+    if (value == NULL)
+    {
+        return -1;
+    }
 
-        if ((id = get_key_usage_id(token)) < 0)
-        {
-            return -1;
-        }
+    if (strcmp(value, "true") == 0 || strcmp(value, "1") == 0 || strcmp(value, "yes") == 0)
+    {
+        return 1;
+    }
 
-        ulist->elements[ulist->count] = (uint32_t)id;
-        ulist->count += 1;
+    if (strcmp(value, "false") == 0 || strcmp(value, "0") == 0 || strcmp(value, "no") == 0)
+    {
+        return 0;
+    }
 
-        token = strtok(NULL, ",");
+    return -1;
+}
+
+int azihsm_ossl_masked_key_filepath_validate(const char *filepath)
+{
+    if (filepath == NULL || filepath[0] == '\0')
+    {
+        return -1;
+    }
+
+    /* Check for reasonable path length (prevent path traversal issues) */
+    if (strlen(filepath) > 4096)
+    {
+        return -1;
     }
 
     return 0;

@@ -112,16 +112,23 @@ Initialize a partition with credentials
 ```cpp
 azihsm_status azihsm_part_init(
     azihsm_handle handle,
-    const struct azihsm_credentials *creds
+    const struct azihsm_credentials *creds,
+    const struct azihsm_buffer *bmk,
+    const struct azihsm_buffer *muk,
+    const struct azihsm_buffer *mobk
     );
 ```
 
 **Parameters**
 
- | Parameter         | Name                                              | Description                |
- | ----------------- | ------------------------------------------------- | -------------------------- |
- | [in] handle       | [azihsm_handle](#azihsm_handle)                   | device handle              |
- | [in] creds        | [struct azihsm_credentials*](#azihsm_credentials) | device credential   &nbsp; |
+ | Parameter         | Name                                              | Description                                           |
+ | ----------------- | ------------------------------------------------- | ----------------------------------------------------- |
+ | [in] handle       | [azihsm_handle](#azihsm_handle)                   | device handle                                         |
+ | [in] creds        | [struct azihsm_credentials*](#azihsm_credentials) | device credential                                     |
+ | [in] bmk          | [struct azihsm_buffer*](#azihsm_buffer)           | optional backup masking key (can be NULL)             |
+ | [in] muk          | [struct azihsm_buffer*](#azihsm_buffer)           | optional masked unwrapping key (can be NULL)          |
+ | [in] mobk         | [struct azihsm_buffer*](#azihsm_buffer)           | optional masked owner backup key (can be NULL) &nbsp; |
+ 
 
 **Returns**
 
@@ -161,15 +168,10 @@ Retrieve partition property
 | driver version                                     | [azihsm_char*](#azihsm_char)             | \scriptsize AZIHSM_PART_PROP_ID_DRIVER_VERSION    |
 | firmware version                                   | [azihsm_char*](#azihsm_char)             | \scriptsize AZIHSM_PART_PROP_ID_FIRMWARE_VERSION  |
 | hardware version                                   | [azihsm_char*](#azihsm_char)             | \scriptsize AZIHSM_PART_PROP_ID_HARDWARE_VERSION  |
-| device serial number                               | [azihsm_char*](#azihsm_char)             | \scriptsize AZIHSM_PART_PROP_ID_SERIAL_NUMBER     |
 | pci hardware id (bus:device:function)              | [azihsm_char*](#azihsm_char)             | \scriptsize AZIHSM_PART_PROP_ID_PCI_HW_ID         |
 | min api revision supported by the device           | [struct azihsm_api_rev](#azihsm_api_rev) | \scriptsize AZIHSM_PART_PROP_ID_MIN_API_REV       |
 | max api revision supported by the device           | [struct azihsm_api_rev](#azihsm_api_rev) | \scriptsize AZIHSM_PART_PROP_ID_MAX_API_REV       |
-| partition unique identifier                        | [struct azihsm_uuid](#azihsm_uuid)       | \scriptsize AZIHSM_PART_PROP_ID_UUID              |
 | manufacturer cert chain in PEM format              | [azihsm_char*](#azihsm_char)             | \scriptsize AZIHSM_PART_PROP_ID_MANUFACTURER_CERT |
-| device owner cert chain in PEM format              | [azihsm_char*](#azihsm_char)             | \scriptsize AZIHSM_PART_PROP_ID_DEV_OWNER_CERT    |
-| partition owner cert chain in PEM format           | [azihsm_char*](#azihsm_char)             | \scriptsize AZIHSM_PART_PROP_ID_PART_OWNER_CERT   |
-| partition owner cert signing request in PEM format | [azihsm_char*](#azihsm_char)             | \scriptsize AZIHSM_PART_PROP_ID_PART_OWNER_CSR    |
 
 ```cpp
 azihsm_status azihsm_part_get_prop(

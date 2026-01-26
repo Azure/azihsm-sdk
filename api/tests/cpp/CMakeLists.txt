@@ -53,13 +53,14 @@ set(SOURCE
     handle/part_list_handle.cpp
     partition_tests.cpp 
     session_tests.cpp 
+    handle_mgmt_tests.cpp
     algo/aes/cbc_enc_dec_tests.cpp
     algo/aes/keygen_tests.cpp
     algo/ecc/keygen_tests.cpp
     algo/ecc/sign_verify_tests.cpp
-    algo/ecc/keyattest_tests.cpp
+    algo/ecc/keyreport_tests.cpp
     algo/rsa/keygen_tests.cpp
-    algo/rsa/keyattest_tests.cpp
+    algo/rsa/keyreport_tests.cpp
     algo/rsa/enc_dec_tests.cpp
     algo/rsa/sign_verify_tests.cpp
     algo/sha/digest_tests.cpp

@@ -308,7 +308,7 @@ where
     let ctx = HsmSigner::sign_init(sign_algo, key)?;
 
     // Allocate a handle for the context and return it
-    let ctx_handle = HANDLE_TABLE.alloc_handle(HandleType::RsaSignStreamingCtx, Box::new(ctx));
+    let ctx_handle = HANDLE_TABLE.alloc_handle(HandleType::RsaSignCtx, Box::new(ctx));
 
     Ok(ctx_handle)
 }
@@ -385,8 +385,7 @@ pub(crate) fn rsa_pss_hash_sign_init(
 /// * `Err(AzihsmStatus)` - On failure
 pub(crate) fn rsa_sign_update(ctx_handle: AzihsmHandle, data: &[u8]) -> Result<(), AzihsmStatus> {
     // Get mutable reference to the context from handle table
-    let ctx: &mut HsmRsaSignContext =
-        HANDLE_TABLE.as_mut(ctx_handle, HandleType::RsaSignStreamingCtx)?;
+    let ctx: &mut HsmRsaSignContext = HANDLE_TABLE.as_mut(ctx_handle, HandleType::RsaSignCtx)?;
 
     // Update the context with the data chunk
     ctx.update(data)?;
@@ -411,7 +410,7 @@ pub(crate) fn rsa_sign_final(
 ) -> Result<(), AzihsmStatus> {
     // Get a reference to determine the required signature size
     let ctx_ref: &mut HsmRsaSignContext =
-        HANDLE_TABLE.as_mut(ctx_handle, HandleType::RsaSignStreamingCtx)?;
+        HANDLE_TABLE.as_mut(ctx_handle, HandleType::RsaSignCtx)?;
     let required_size = ctx_ref.finish(None)?;
 
     // Check if output buffer is large enough
@@ -419,7 +418,7 @@ pub(crate) fn rsa_sign_final(
 
     // Take ownership of the context and finalize
     let mut ctx: Box<HsmRsaSignContext> =
-        HANDLE_TABLE.free_handle(ctx_handle, HandleType::RsaSignStreamingCtx)?;
+        HANDLE_TABLE.free_handle(ctx_handle, HandleType::RsaSignCtx)?;
 
     // Perform the final signing operation
     let sig_len = ctx.finish(Some(output_data))?;
@@ -445,7 +444,7 @@ where
     let ctx = HsmVerifier::verify_init(verify_algo, key)?;
 
     // Allocate a handle for the context and return it
-    let ctx_handle = HANDLE_TABLE.alloc_handle(HandleType::RsaVerifyStreamingCtx, Box::new(ctx));
+    let ctx_handle = HANDLE_TABLE.alloc_handle(HandleType::RsaVerifyCtx, Box::new(ctx));
 
     Ok(ctx_handle)
 }
@@ -523,7 +522,7 @@ pub(crate) fn rsa_pss_hash_verify_init(
 pub(crate) fn rsa_verify_update(ctx_handle: AzihsmHandle, data: &[u8]) -> Result<(), AzihsmStatus> {
     // Get mutable reference to the context from handle table
     let ctx: &mut HsmRsaVerifyContext =
-        HANDLE_TABLE.as_mut(ctx_handle, HandleType::RsaVerifyStreamingCtx)?;
+        HANDLE_TABLE.as_mut(ctx_handle, HandleType::RsaVerifyCtx)?;
 
     // Update the context with the data chunk
     ctx.update(data)?;
@@ -546,7 +545,7 @@ pub(crate) fn rsa_verify_update(ctx_handle: AzihsmHandle, data: &[u8]) -> Result
 pub(crate) fn rsa_verify_final(ctx_handle: AzihsmHandle, sig: &[u8]) -> Result<bool, AzihsmStatus> {
     // Take ownership of the context and finalize
     let mut ctx: Box<HsmRsaVerifyContext> =
-        HANDLE_TABLE.free_handle(ctx_handle, HandleType::RsaVerifyStreamingCtx)?;
+        HANDLE_TABLE.free_handle(ctx_handle, HandleType::RsaVerifyCtx)?;
 
     // Perform the final verification operation
     let is_valid = ctx.finish(sig)?;

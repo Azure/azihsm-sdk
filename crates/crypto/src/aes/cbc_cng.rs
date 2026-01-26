@@ -187,9 +187,6 @@ impl CngAesCbcAlgo {
                 flags,
             )
         };
-        if status.is_err() {
-            println!("Error during bcrypt_encrypt: {:?}", status);
-        }
         status.ok().map_err(|_| CryptoError::AesEncryptError)?;
         Ok(out_len as usize)
     }
