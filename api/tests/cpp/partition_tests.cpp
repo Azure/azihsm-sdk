@@ -422,16 +422,22 @@ TEST(azihsm_part, get_prop_manufacturer_cert)
         ASSERT_GT(prop.len, 0);
 
         // Second call with properly sized buffer
-        std::vector<uint8_t> buffer(prop.len);
+        std::vector<azihsm_char> buffer(prop.len);
         prop.val = buffer.data();
         err = azihsm_part_get_prop(part.get(), &prop);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_GT(prop.len, 0);
 
         // Verify the certificate chain is in PEM format
+        #if defined(_WIN32)
+        std::wstring cert_chain(buffer.begin(), buffer.begin() + prop.len);
+        ASSERT_TRUE(cert_chain.find(L"-----BEGIN CERTIFICATE-----") != std::wstring::npos);
+        ASSERT_TRUE(cert_chain.find(L"-----END CERTIFICATE-----") != std::wstring::npos);
+        #else
         std::string cert_chain(buffer.begin(), buffer.begin() + prop.len);
         ASSERT_TRUE(cert_chain.find("-----BEGIN CERTIFICATE-----") != std::string::npos);
         ASSERT_TRUE(cert_chain.find("-----END CERTIFICATE-----") != std::string::npos);
+        #endif
     });
 }
 
