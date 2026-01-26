@@ -553,7 +553,7 @@ pub(crate) fn aes_xts_decrypt_update(
     // Prepare output buffer and get slice
     let output_slice = validate_output_buffer(output, required_len)?;
 
-    // Perform the update operation. This will also update the IV in algo params in the context.
+    // Perform the update operation. This will also update the tweak in algo params in the context.
     let bytes_written = ctx.update(input_slice, Some(output_slice))?;
 
     // Update output buffer length with actual bytes written
