@@ -46,8 +46,8 @@ impl Xtask for Fmt {
             .map(|s| format!("+{s}"));
 
         // Check Fmt version
-        let rust_toolchain_clone = rust_toolchain.clone();
-        cmd!(sh, "cargo {rust_toolchain_clone...} fmt --version")
+        let rust_toolchain_version = rust_toolchain.clone();
+        cmd!(sh, "cargo {rust_toolchain_version...} fmt --version")
             .quiet()
             .run()?;
 
