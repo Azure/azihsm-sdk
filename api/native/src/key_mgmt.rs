@@ -45,10 +45,6 @@ pub unsafe extern "C" fn azihsm_key_gen(
             AzihsmAlgoId::AesKeyGen | AzihsmAlgoId::AesXtsKeyGen => {
                 aes_generate_key(&session, algo, key_props)?
             }
-
-            // AES XTS key generation
-            AzihsmAlgoId::AesXtsKeyGen => aes_xts_generate_key(&session, algo, key_props)?,
-
             // Unknown or unsupported algorithms
             _ => Err(AzihsmStatus::InvalidArgument)?,
         };
@@ -137,6 +133,7 @@ pub unsafe extern "C" fn azihsm_key_delete(key_handle: AzihsmHandle) -> AzihsmSt
             }
             HandleType::AesGcmKey => {
                 let key: Box<HsmAesGcmKey> = HANDLE_TABLE.free_handle(key_handle, key_type)?;
+                key.delete_key()?;
             }
             HandleType::AesXtsKey => {
                 let key: Box<HsmAesXtsKey> = HANDLE_TABLE.free_handle(key_handle, key_type)?;

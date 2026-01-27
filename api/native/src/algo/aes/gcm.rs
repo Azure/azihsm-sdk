@@ -43,7 +43,9 @@ impl<'a> TryFrom<&'a mut AzihsmAlgo> for &'a mut AzihsmAlgoAesGcmParams {
         validate_ptr(algo.params)?;
 
         // Safety: algo.params is validated to be non-null
-        let params = unsafe { &mut *(algo.params as *mut AzihsmAlgoAesGcmParams) };
+        let params = crate::utils::deref_mut_ptr::<AzihsmAlgoAesGcmParams>(
+            algo.params as *mut AzihsmAlgoAesGcmParams,
+        )?;
 
         Ok(params)
     }

@@ -24,7 +24,9 @@ impl TryFrom<&AzihsmAlgo> for azihsm_api::HsmAesGcmKeyGenAlgo {
     /// Converts a C FFI algorithm specification to HsmAesGcmKeyGenAlgo.
     fn try_from(_algo: &AzihsmAlgo) -> Result<Self, Self::Error> {
         Ok(HsmAesGcmKeyGenAlgo::default())
-        
+    }
+}
+
 impl TryFrom<&AzihsmAlgo> for azihsm_api::HsmAesXtsKeyGenAlgo {
     type Error = AzihsmStatus;
 
@@ -61,6 +63,11 @@ pub(crate) fn aes_generate_key(
             let mut aes_algo = HsmAesGcmKeyGenAlgo::try_from(algo)?;
             let key = HsmKeyManager::generate_key(session, &mut aes_algo, key_props)?;
             HANDLE_TABLE.alloc_handle(HandleType::AesGcmKey, Box::new(key))
+        }
+        HsmKeyKind::AesXts => {
+            let mut aes_algo = HsmAesXtsKeyGenAlgo::try_from(algo)?;
+            let key = HsmKeyManager::generate_key(session, &mut aes_algo, key_props)?;
+            HANDLE_TABLE.alloc_handle(HandleType::AesXtsKey, Box::new(key))
         }
         _ => Err(AzihsmStatus::UnsupportedKeyKind)?,
     };
@@ -110,32 +117,6 @@ pub(crate) fn aes_gcm_unmask_key(
     let gcm_key: HsmAesGcmKey =
         HsmKeyManager::unmask_key(session, &mut HsmAesGcmKeyUnmaskAlgo::default(), masked_key)?;
     let handle = HANDLE_TABLE.alloc_handle(HandleType::AesGcmKey, Box::new(gcm_key));
-
-    Ok(handle)
-}
-
-/// Generates a new AES-XTS key
-///
-/// Creates a new AES-XTS symmetric key with the specified properties.
-/// AES-XTS mode requires a 512-bit key (for AES-256 XTS) which consists of
-/// two 256-bit keys used for tweak and data encryption.
-///
-/// # Arguments
-/// * `session` - HSM session for key generation
-/// * `algo` - AES-XTS key generation algorithm parameters
-/// * `key_props` - Properties for the generated key (extractable, persistent, etc.)
-///
-/// # Returns
-/// * `Ok(AzihsmHandle)` - Handle to the generated AES-XTS key
-/// * `Err(AzihsmStatus)` - On failure (e.g., unsupported key size, invalid properties)
-pub(crate) fn aes_xts_generate_key(
-    session: &HsmSession,
-    algo: &AzihsmAlgo,
-    key_props: HsmKeyProps,
-) -> Result<AzihsmHandle, AzihsmStatus> {
-    let mut aes_algo = HsmAesXtsKeyGenAlgo::try_from(algo)?;
-    let key = HsmKeyManager::generate_key(session, &mut aes_algo, key_props)?;
-    let handle = HANDLE_TABLE.alloc_handle(HandleType::AesXtsKey, Box::new(key));
 
     Ok(handle)
 }
