@@ -104,6 +104,7 @@ extern const OSSL_DISPATCH azihsm_ossl_ecdsa_signature_functions[];
 
 static const OSSL_ALGORITHM azihsm_ossl_signature[] = {
     ALG(AZIHSM_OSSL_ALG_NAME_RSA, azihsm_ossl_rsa_signature_functions),
+    ALG(AZIHSM_OSSL_ALG_NAME_EC, azihsm_ossl_ecdsa_signature_functions),
     ALG(AZIHSM_OSSL_ALG_NAME_ECDSA, azihsm_ossl_ecdsa_signature_functions),
     ALG_TABLE_END
 };

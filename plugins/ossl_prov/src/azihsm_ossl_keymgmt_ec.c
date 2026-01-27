@@ -104,6 +104,43 @@ static int azihsm_ossl_curve_id_to_nid(const int curve_id)
     return NID_undef;
 }
 
+/**
+ * Get the key size in bits for a given curve.
+ */
+static int azihsm_ossl_curve_id_to_bits(const int curve_id)
+{
+    switch (curve_id)
+    {
+    case AZIHSM_ECC_CURVE_P256:
+        return AZIHSM_EC_P256_KEY_BITS;
+    case AZIHSM_ECC_CURVE_P384:
+        return AZIHSM_EC_P384_KEY_BITS;
+    case AZIHSM_ECC_CURVE_P521:
+        return AZIHSM_EC_P521_KEY_BITS;
+    default:
+        return 0;
+    }
+}
+
+/**
+ * Get the ECDSA signature size for a given curve.
+ * Returns the raw signature size (r || s concatenated).
+ */
+static size_t azihsm_ossl_curve_id_to_sig_size(const int curve_id)
+{
+    switch (curve_id)
+    {
+    case AZIHSM_ECC_CURVE_P256:
+        return AZIHSM_EC_P256_SIG_SIZE;
+    case AZIHSM_ECC_CURVE_P384:
+        return AZIHSM_EC_P384_SIG_SIZE;
+    case AZIHSM_ECC_CURVE_P521:
+        return AZIHSM_EC_P521_SIG_SIZE;
+    default:
+        return 0;
+    }
+}
+
 /* Key Management Functions */
 
 static AZIHSM_EC_KEY *azihsm_ossl_keymgmt_gen(
@@ -558,8 +595,12 @@ static int azihsm_ossl_keymgmt_get_params(AZIHSM_EC_KEY *key, OSSL_PARAM params[
 {
     OSSL_PARAM *p;
 
-    p = OSSL_PARAM_locate(params, OSSL_PKEY_PARAM_GROUP_NAME);
+    if (key == NULL)
+    {
+        return 0;
+    }
 
+    p = OSSL_PARAM_locate(params, OSSL_PKEY_PARAM_GROUP_NAME);
     if (p != NULL && !OSSL_PARAM_set_utf8_string(
                          p,
                          OBJ_nid2sn(azihsm_ossl_curve_id_to_nid((int)key->genctx.ec_curve_id))
@@ -569,6 +610,28 @@ static int azihsm_ossl_keymgmt_get_params(AZIHSM_EC_KEY *key, OSSL_PARAM params[
         return 0;
     }
 
+    p = OSSL_PARAM_locate(params, OSSL_PKEY_PARAM_BITS);
+    if (p != NULL)
+    {
+        int bits = azihsm_ossl_curve_id_to_bits((int)key->genctx.ec_curve_id);
+        if (bits == 0 || !OSSL_PARAM_set_int(p, bits))
+        {
+            ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_SET_PARAMETER);
+            return 0;
+        }
+    }
+
+    p = OSSL_PARAM_locate(params, OSSL_PKEY_PARAM_MAX_SIZE);
+    if (p != NULL)
+    {
+        size_t sig_size = azihsm_ossl_curve_id_to_sig_size((int)key->genctx.ec_curve_id);
+        if (sig_size == 0 || !OSSL_PARAM_set_size_t(p, sig_size))
+        {
+            ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_SET_PARAMETER);
+            return 0;
+        }
+    }
+
     return 1;
 }
 
@@ -576,6 +639,8 @@ static const OSSL_PARAM *azihsm_ossl_keymgmt_gettable_params(ossl_unused void *c
 {
     static const OSSL_PARAM params[] = {
         OSSL_PARAM_utf8_string(OSSL_PKEY_PARAM_GROUP_NAME, NULL, 0),
+        OSSL_PARAM_int(OSSL_PKEY_PARAM_BITS, NULL),
+        OSSL_PARAM_size_t(OSSL_PKEY_PARAM_MAX_SIZE, NULL),
         OSSL_PARAM_END
     };
 
