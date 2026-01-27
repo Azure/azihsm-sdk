@@ -1,0 +1,30 @@
+# Copyright (C) Microsoft Corporation. All rights reserved.
+
+[package]
+description = "Rust core for TPM"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+name = "azihsm_tpm"
+version = "0.1.0"
+
+[lib]
+name = "azihsm_tpm"
+
+[dependencies]
+bitfield-struct.workspace = true
+
+# These dependencies are only used with "vtpm-tests" feature
+getrandom = { optional = true, version = "0.2" }
+
+# NOTE: this dependency uses OpenSSL which is not approved by CryptoBoard.
+# You can uncomment locally to use the vtpm-tests feature.
+# ms-tpm-20-ref = { git = "https://github.com/microsoft/ms-tpm-20-ref-rs", features = ["vendored"], optional = true }
+
+[features]
+default = []
+# Enable in-process reference TPM tests (pulls vendored OpenSSL via ms-tpm-20-ref)
+vtpm-tests = ["getrandom"]
+# vtpm-tests = ["ms-tpm-20-ref", "getrandom"]
+
+[dev-dependencies]
+num-bigint = "0.4"
