@@ -13,6 +13,8 @@
 //! - Configures library paths for dynamic linking
 //! - Executes each test individually and reports results
 
+#![allow(clippy::unwrap_used)]
+
 use std::env;
 use std::path::PathBuf;
 use std::process::Command;

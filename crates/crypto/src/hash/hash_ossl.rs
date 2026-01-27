@@ -147,6 +147,7 @@ impl OsslHashAlgo {
     ///
     /// A reference to the `MdRef` configured for this hash instance.
     pub(crate) fn md(&self) -> &MdRef {
+        #[allow(clippy::unwrap_used)]
         Md::from_nid(self.message_digest().type_()).unwrap()
     }
 

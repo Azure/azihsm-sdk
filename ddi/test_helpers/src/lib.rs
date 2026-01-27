@@ -1,5 +1,7 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
 
+#![allow(clippy::unwrap_used)]
+
 mod aes;
 mod api_rev;
 mod attest_key;

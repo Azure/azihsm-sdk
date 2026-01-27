@@ -1,5 +1,6 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
 
+#![allow(clippy::unwrap_used)]
 #![warn(missing_docs)]
 
 //! Virtual Manticore library
