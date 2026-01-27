@@ -1,5 +1,7 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
 
+#![allow(clippy::unwrap_used)]
+
 use super::*;
 
 mod hmac_sha1_tests;

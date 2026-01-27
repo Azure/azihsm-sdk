@@ -387,8 +387,8 @@ impl HsmKeyPropsBuilder {
 
     /// Builds the KeyProps instance.
     pub fn build(self) -> HsmResult<HsmKeyProps> {
-        let bits = if self.bit_len.is_some() {
-            self.bit_len.unwrap()
+        let bits = if let Some(bits) = self.bit_len {
+            bits
         } else if let Some(curve) = self.ecc_curve {
             curve.key_size_bits() as u32
         } else {

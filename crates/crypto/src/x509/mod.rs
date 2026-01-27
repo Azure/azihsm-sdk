@@ -56,6 +56,7 @@ pub fn pem_to_der(pem: &[u8]) -> Result<Vec<u8>, CryptoError> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
