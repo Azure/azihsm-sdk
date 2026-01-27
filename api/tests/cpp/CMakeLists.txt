@@ -55,6 +55,7 @@ set(SOURCE
     session_tests.cpp 
     handle_mgmt_tests.cpp
     algo/aes/cbc_enc_dec_tests.cpp
+    algo/aes/xts_enc_dec_tests.cpp
     algo/aes/keygen_tests.cpp
     algo/ecc/keygen_tests.cpp
     algo/ecc/sign_verify_tests.cpp

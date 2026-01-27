@@ -17,6 +17,15 @@ impl TryFrom<&AzihsmAlgo> for azihsm_api::HsmAesKeyGenAlgo {
     }
 }
 
+impl TryFrom<&AzihsmAlgo> for azihsm_api::HsmAesXtsKeyGenAlgo {
+    type Error = AzihsmStatus;
+
+    /// Converts a C FFI algorithm specification to HsmAesXtsKeyGenAlgo.
+    fn try_from(_algo: &AzihsmAlgo) -> Result<Self, Self::Error> {
+        Ok(HsmAesXtsKeyGenAlgo::default())
+    }
+}
+
 /// Generates a new AES key
 ///
 /// Creates a new AES symmetric key with the specified properties.
@@ -63,6 +72,32 @@ pub(crate) fn aes_unmask_key(
     let key: HsmAesKey = HsmKeyManager::unmask_key(session, &mut unmask_algo, masked_key)?;
 
     let handle = HANDLE_TABLE.alloc_handle(HandleType::AesKey, Box::new(key));
+
+    Ok(handle)
+}
+
+/// Generates a new AES-XTS key
+///
+/// Creates a new AES-XTS symmetric key with the specified properties.
+/// AES-XTS mode requires a 512-bit key (for AES-256 XTS) which consists of
+/// two 256-bit keys used for tweak and data encryption.
+///
+/// # Arguments
+/// * `session` - HSM session for key generation
+/// * `algo` - AES-XTS key generation algorithm parameters
+/// * `key_props` - Properties for the generated key (extractable, persistent, etc.)
+///
+/// # Returns
+/// * `Ok(AzihsmHandle)` - Handle to the generated AES-XTS key
+/// * `Err(AzihsmStatus)` - On failure (e.g., unsupported key size, invalid properties)
+pub(crate) fn aes_xts_generate_key(
+    session: &HsmSession,
+    algo: &AzihsmAlgo,
+    key_props: HsmKeyProps,
+) -> Result<AzihsmHandle, AzihsmStatus> {
+    let mut aes_algo = HsmAesXtsKeyGenAlgo::try_from(algo)?;
+    let key = HsmKeyManager::generate_key(session, &mut aes_algo, key_props)?;
+    let handle = HANDLE_TABLE.alloc_handle(HandleType::AesXtsKey, Box::new(key));
 
     Ok(handle)
 }
