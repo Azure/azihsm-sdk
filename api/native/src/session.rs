@@ -17,6 +17,13 @@ use super::*;
 ///
 /// @return `AzihsmError` indicating the result of the operation
 ///
+/// # Safety
+///
+/// - `dev_handle` must be a valid partition handle.
+/// - `api_rev` must be a valid pointer to an `AzihsmApiRev` structure.
+/// - `creds` must be a valid pointer to an `AzihsmCredentials` structure.
+/// - `sess_handle` must be a valid pointer to memory where the session handle
+///   will be written.
 #[unsafe(no_mangle)]
 #[allow(unsafe_code)]
 pub unsafe extern "C" fn azihsm_sess_open(
@@ -52,6 +59,12 @@ pub unsafe extern "C" fn azihsm_sess_open(
 ///
 /// @return `AzihsmError` indicating the result of the operation
 ///
+/// # Safety
+///
+/// - `handle` must be a valid session handle previously returned by
+///   `azihsm_sess_open`.
+/// - The handle must not have been previously closed.
+/// - After this call, the handle becomes invalid and must not be used.
 #[unsafe(no_mangle)]
 #[allow(unsafe_code)]
 pub unsafe extern "C" fn azihsm_sess_close(handle: AzihsmHandle) -> AzihsmStatus {

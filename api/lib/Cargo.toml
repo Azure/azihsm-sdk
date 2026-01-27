@@ -16,6 +16,7 @@ env_logger.workspace = true
 itertools.workspace = true
 log.workspace = true
 open-enum.workspace = true
+parking_lot.workspace = true
 pastey.workspace = true
 test_with_tracing.workspace = true
 tracing.workspace = true

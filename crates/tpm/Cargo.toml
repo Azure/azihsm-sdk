@@ -12,6 +12,7 @@ name = "azihsm_tpm"
 
 [dependencies]
 bitfield-struct.workspace = true
+parking_lot.workspace = true
 
 # These dependencies are only used with "vtpm-tests" feature
 getrandom = { optional = true, version = "0.2" }

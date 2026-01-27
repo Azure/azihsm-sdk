@@ -104,7 +104,8 @@ mod unix {
     use std::io;
     use std::io::Read;
     use std::io::Write;
-    use std::sync::Mutex;
+
+    use parking_lot::Mutex;
 
     pub struct Tpm {
         file: Mutex<std::fs::File>,
@@ -130,9 +131,7 @@ mod unix {
         }
 
         pub fn transmit(&self, command: &[u8]) -> io::Result<Vec<u8>> {
-            let mut f = self.file.lock().map_err(|err| {
-                io::Error::other(format!("Failed to acquire TPM file lock: {err}"))
-            })?;
+            let mut f = self.file.lock();
 
             // Write full command
             f.write_all(command)?;

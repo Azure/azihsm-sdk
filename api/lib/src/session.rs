@@ -6,8 +6,9 @@
 //! Sessions represent authenticated connections to an HSM partition, providing
 //! a context for performing cryptographic operations.
 
-use std::sync::*;
+use std::sync::Arc;
 
+use parking_lot::RwLock;
 use tracing::*;
 
 use super::*;
@@ -31,7 +32,7 @@ impl HsmSession {
     }
 
     delegate::delegate! {
-        to self.inner.read().unwrap() {
+        to self.inner.read() {
             pub fn id(&self) -> u16;
             pub(crate) fn _app_id(&self) -> u8;
             pub fn api_rev(&self) -> HsmApiRev;
@@ -148,7 +149,7 @@ impl HsmSessionInner {
     where
         F: FnOnce(&ddi::HsmDev) -> HsmResult<R>,
     {
-        let part = self.partition().inner().read().unwrap();
+        let part = self.partition().inner().read();
         let dev = part.dev();
         f(dev)
     }

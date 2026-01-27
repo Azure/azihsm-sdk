@@ -6,8 +6,9 @@
 //! Partitions represent logical divisions within an HSM device, each with its
 //! own API revision support and configuration.
 
-use std::sync::*;
+use std::sync::Arc;
 
+use parking_lot::RwLock;
 use tracing::*;
 
 use super::*;
@@ -247,7 +248,7 @@ impl HsmPartition {
                 ddi::init_part(dev, self.api_rev_range().min(), creds, bmk, muk, mobk)?;
             Ok((bmk, mobk))
         })?;
-        self.inner().write().unwrap().set_masked_keys(bmk, mobk);
+        self.inner().write().set_masked_keys(bmk, mobk);
         Ok(())
     }
 
@@ -292,7 +293,7 @@ impl HsmPartition {
     ///
     /// The supported API revision range with minimum and maximum versions.
     pub fn api_rev_range(&self) -> HsmApiRevRange {
-        self.inner().read().unwrap().api_rev_range()
+        self.inner().read().api_rev_range()
     }
 
     /// Returns the partition type (Virtual or Physical).
@@ -301,7 +302,7 @@ impl HsmPartition {
     ///
     /// The type of partition - either Virtual (simulator/emulated) or Physical (hardware device).
     pub fn part_type(&self) -> HsmPartType {
-        self.inner().read().unwrap().part_type()
+        self.inner().read().part_type()
     }
 
     /// Returns the device path.
@@ -310,7 +311,7 @@ impl HsmPartition {
     ///
     /// The operating system device path used to access this partition.
     pub fn path(&self) -> String {
-        self.inner().read().unwrap().path().to_string()
+        self.inner().read().path().to_string()
     }
 
     /// Returns the driver version.
@@ -319,7 +320,7 @@ impl HsmPartition {
     ///
     /// The version string of the device driver.
     pub fn driver_ver(&self) -> String {
-        self.inner().read().unwrap().driver_ver().to_string()
+        self.inner().read().driver_ver().to_string()
     }
 
     /// Returns the firmware version.
@@ -328,7 +329,7 @@ impl HsmPartition {
     ///
     /// The version string of the device firmware.
     pub fn firmware_ver(&self) -> String {
-        self.inner().read().unwrap().firmware_ver().to_string()
+        self.inner().read().firmware_ver().to_string()
     }
 
     /// Returns the hardware version.
@@ -337,7 +338,7 @@ impl HsmPartition {
     ///
     /// The version string of the hardware device.
     pub fn hardware_ver(&self) -> String {
-        self.inner().read().unwrap().hardware_ver().to_string()
+        self.inner().read().hardware_ver().to_string()
     }
 
     /// Returns the PCI hardware information.
@@ -346,7 +347,7 @@ impl HsmPartition {
     ///
     /// The PCI hardware identifier in bus:device:function format.
     pub fn pci_info(&self) -> String {
-        self.inner().read().unwrap().pci_info().to_string()
+        self.inner().read().pci_info().to_string()
     }
 
     /// Retrieves the certificate chain stored in the partition.
@@ -378,12 +379,12 @@ impl HsmPartition {
     ///
     /// Returns the size of the BMK on success.
     pub fn bmk(&self, bmk: Option<&mut [u8]>) -> HsmResult<usize> {
-        let len = self.inner().read().unwrap().bmk().len();
+        let len = self.inner().read().bmk().len();
         if let Some(buf) = bmk {
             if buf.len() < len {
                 return Err(HsmError::BufferTooSmall);
             }
-            buf[..len].copy_from_slice(self.inner().read().unwrap().bmk());
+            buf[..len].copy_from_slice(self.inner().read().bmk());
         }
         Ok(len)
     }
@@ -394,7 +395,7 @@ impl HsmPartition {
     ///
     /// A vector containing the BMK bytes.
     pub fn bmk_vec(&self) -> Vec<u8> {
-        self.inner().read().unwrap().bmk().to_vec()
+        self.inner().read().bmk().to_vec()
     }
 
     /// Retrieves the masked owner backup key that was set during partition initialization.
@@ -406,12 +407,12 @@ impl HsmPartition {
     ///
     /// Returns the size of the MOBK on success.
     pub fn mobk(&self, mobk: Option<&mut [u8]>) -> HsmResult<usize> {
-        let len = self.inner().read().unwrap().mobk().len();
+        let len = self.inner().read().mobk().len();
         if let Some(buf) = mobk {
             if buf.len() < len {
                 return Err(HsmError::BufferTooSmall);
             }
-            buf[..len].copy_from_slice(self.inner().read().unwrap().mobk());
+            buf[..len].copy_from_slice(self.inner().read().mobk());
         }
         Ok(len)
     }
@@ -424,7 +425,7 @@ impl HsmPartition {
     ///
     /// A vector containing the MOBK bytes.
     pub fn mobk_vec(&self) -> Vec<u8> {
-        self.inner().read().unwrap().mobk().to_vec()
+        self.inner().read().mobk().to_vec()
     }
 
     /// Executes a closure with access to the underlying device handle.
@@ -444,7 +445,7 @@ impl HsmPartition {
     where
         F: FnOnce(&ddi::HsmDev) -> T,
     {
-        let part = self.inner().read().unwrap();
+        let part = self.inner().read();
         let dev = part.dev();
         f(dev)
     }

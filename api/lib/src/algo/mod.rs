@@ -137,7 +137,7 @@ macro_rules! define_hsm_key {
             /// Represents a $name key stored in the HSM.
             #[derive(Clone)]
             $vis struct $name {
-                inner: std::sync::Arc<std::sync::RwLock<HsmKeyInner<$handle_ty>>>,
+                inner: std::sync::Arc<parking_lot::RwLock<HsmKeyInner<$handle_ty>>>,
             }
 
             #[allow(unused)]
@@ -159,7 +159,7 @@ macro_rules! define_hsm_key {
                     handle: $handle_ty,
                 ) -> Self {
                     Self {
-                        inner: std::sync::Arc::new(std::sync::RwLock::new(HsmKeyInner::<$handle_ty>::new(
+                        inner: std::sync::Arc::new(parking_lot::RwLock::new(HsmKeyInner::<$handle_ty>::new(
                             session, props, handle,
                         ))),
                     }
@@ -168,20 +168,20 @@ macro_rules! define_hsm_key {
                 /// Returns a clone of the shared key state for safe cross-type conversions.
                 pub(crate) fn inner(
                     &self,
-                ) -> std::sync::Arc<std::sync::RwLock<HsmKeyInner<$handle_ty>>> {
+                ) -> std::sync::Arc<parking_lot::RwLock<HsmKeyInner<$handle_ty>>> {
                     self.inner.clone()
                 }
 
                 /// Creates a typed key wrapper from existing shared key state.
                 pub(crate) fn from_inner(
-                    inner: std::sync::Arc<std::sync::RwLock<HsmKeyInner<$handle_ty>>>,
+                    inner: std::sync::Arc<parking_lot::RwLock<HsmKeyInner<$handle_ty>>>,
                 ) -> Self {
                     Self { inner }
                 }
 
                 /// Returns the key handle.
                 pub(crate) fn handle(&self) -> $handle_ty {
-                    self.inner.read().unwrap().handle()
+                    self.inner.read().handle()
                 }
 
                 /// Returns the session ID.
@@ -196,7 +196,7 @@ macro_rules! define_hsm_key {
 
                 /// Returns the key properties.
                 pub(crate) fn props(&self) -> HsmKeyProps {
-                    let guard = self.inner.read().unwrap();
+                    let guard = self.inner.read();
                     guard.key_props().clone()
                 }
 
@@ -217,7 +217,7 @@ macro_rules! define_hsm_key {
                 where
                     F: FnOnce(&HsmSession) -> R,
                 {
-                    let guard = self.inner.read().unwrap();
+                    let guard = self.inner.read();
                     f(&guard.session)
                 }
 
@@ -247,7 +247,7 @@ macro_rules! define_hsm_key {
                 where
                     F: FnOnce(&HsmKeyProps) -> R,
                 {
-                    let guard = self.inner.read().unwrap();
+                    let guard = self.inner.read();
                     f(guard.key_props())
                 }
             }
@@ -257,7 +257,7 @@ macro_rules! define_hsm_key {
 
                 /// Deletes the key from the HSM if applicable.
                 fn delete_key(self) -> Result<(), Self::Error> {
-                    let mut guard = self.inner.write().unwrap();
+                    let mut guard = self.inner.write();
                     guard.delete_key()
                 }
             }
@@ -271,7 +271,7 @@ macro_rules! define_hsm_key_pair {
             #[derive(Clone)]
             $priv_vis struct [<$priv_name>]
             {
-                inner: std::sync::Arc<std::sync::RwLock<[<$priv_name Inner>]>>,
+                inner: std::sync::Arc<parking_lot::RwLock<[<$priv_name Inner>]>>,
             }
 
             impl [<$priv_name>] {
@@ -295,7 +295,7 @@ macro_rules! define_hsm_key_pair {
                     pub_key: $pub_name,
                 ) -> Self {
                     Self {
-                        inner: std::sync::Arc::new(std::sync::RwLock::new([<$priv_name Inner>]::new(
+                        inner: std::sync::Arc::new(parking_lot::RwLock::new([<$priv_name Inner>]::new(
                             session, props, handle, pub_key,
                         ))),
                     }
@@ -303,7 +303,7 @@ macro_rules! define_hsm_key_pair {
 
                 /// Returns the key handle.
                 pub(crate) fn handle(&self) -> ddi::HsmKeyHandle {
-                    self.inner.read().unwrap().handle()
+                    self.inner.read().handle()
                 }
 
                 /// Returns the session ID.
@@ -336,7 +336,7 @@ macro_rules! define_hsm_key_pair {
                 where
                     F: FnOnce(&HsmSession) -> R,
                 {
-                    let guard = self.inner.read().unwrap();
+                    let guard = self.inner.read();
                     f(&guard.session)
                 }
 
@@ -364,7 +364,7 @@ macro_rules! define_hsm_key_pair {
 
                 /// Returns the associated public key.
                 fn public_key(&self) -> Self::PublicKey {
-                    let guard = self.inner.read().unwrap();
+                    let guard = self.inner.read();
                     guard.pub_key().clone()
                 }
             }
@@ -376,7 +376,7 @@ macro_rules! define_hsm_key_pair {
                 where
                     F: FnOnce(&HsmKeyProps) -> R,
                 {
-                    let inner = self.inner.read().unwrap();
+                    let inner = self.inner.read();
                     f(inner.key_props())
                 }
             }
@@ -386,7 +386,7 @@ macro_rules! define_hsm_key_pair {
 
                 /// Deletes the key from the HSM if applicable.
                 fn delete_key(self) -> Result<(), Self::Error> {
-                    let mut guard = self.inner.write().unwrap();
+                    let mut guard = self.inner.write();
                     guard.delete_key()
                 }
             }
@@ -480,7 +480,7 @@ macro_rules! define_hsm_key_pair {
 
             #[derive(Clone)]
             $pub_vis struct [<$pub_name>] {
-                inner: std::sync::Arc<std::sync::RwLock<[<$pub_name Inner>]>>,
+                inner: std::sync::Arc<parking_lot::RwLock<[<$pub_name Inner>]>>,
             }
 
             impl [<$pub_name>] {
@@ -495,7 +495,7 @@ macro_rules! define_hsm_key_pair {
                 /// A new [<$pub_name>] instance.
                 pub(crate) fn new(props: HsmKeyProps, crypto_key: $pub_key_ty) -> Self {
                     Self {
-                        inner: std::sync::Arc::new(std::sync::RwLock::new([<$pub_name Inner>]::new(
+                        inner: std::sync::Arc::new(parking_lot::RwLock::new([<$pub_name Inner>]::new(
                             props, crypto_key,
                         ))),
                     }
@@ -514,7 +514,7 @@ macro_rules! define_hsm_key_pair {
                 where
                     F: FnOnce(&$pub_key_ty) -> R,
                 {
-                    let guard = self.inner.read().unwrap();
+                    let guard = self.inner.read();
                     f(guard.crypto_key())
                 }
             }
@@ -530,7 +530,7 @@ macro_rules! define_hsm_key_pair {
                 where
                     F: FnOnce(&HsmKeyProps) -> R,
                 {
-                    let inner = self.inner.read().unwrap();
+                    let inner = self.inner.read();
                     f(inner.key_props())
                 }
             }
