@@ -9,6 +9,9 @@ on:
   pull_request:
     branches: [main, dev]
 
+env:
+  CACHE_KEY_ID: 51818cf945d051b6d5c86fc0aa7447f9af01318d
+
 jobs:
   analyze:
     name: Analyze (${{ matrix.language }})
@@ -32,6 +35,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Restore Cargo cache
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: ${{ runner.os }}-cargo-${{ env.CACHE_KEY_ID }}
+          fail-on-cache-miss: false
+
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
         with:
@@ -43,7 +57,7 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config libssl-dev libbsd-dev
+          sudo apt-get install -y pkg-config libssl-dev libbsd-dev cmake
           cargo xtask build
 
       - name: Perform CodeQL Analysis
