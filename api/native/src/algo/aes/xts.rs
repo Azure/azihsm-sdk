@@ -37,7 +37,9 @@ impl<'a> TryFrom<&'a mut AzihsmAlgo> for &'a mut AzihsmAlgoAesXtsParams {
         validate_ptr(algo.params)?;
 
         // Safety: algo.params is validated to be non-null
-        let params = unsafe { &mut *(algo.params as *mut AzihsmAlgoAesXtsParams) };
+        let params = crate::utils::deref_mut_ptr::<AzihsmAlgoAesXtsParams>(
+            algo.params as *mut AzihsmAlgoAesXtsParams,
+        )?;
 
         Ok(params)
     }
@@ -173,7 +175,7 @@ pub(crate) fn aes_xts_decrypt(
 /// The `params` pointer must remain valid for the lifetime of this context.
 /// The caller is responsible for ensuring the pointed-to memory is not freed
 /// while this context exists.
-pub struct AesXtsEncryptContext {
+struct AesXtsEncryptContext {
     /// Inner encryption context managing the XTS algorithm state
     ctx: HsmAesXtsEncryptContext,
     /// Raw pointer to caller's algorithm parameters for in-place tweak updates
@@ -308,7 +310,7 @@ pub(crate) fn aes_xts_encrypt_init(
 /// The `params` pointer must remain valid for the lifetime of this context.
 /// The caller is responsible for ensuring the pointed-to memory is not freed
 /// while this context exists.
-pub struct AesXtsDecryptContext {
+struct AesXtsDecryptContext {
     /// Inner decryption context managing the XTS algorithm state
     ctx: HsmAesXtsDecryptContext,
     /// Raw pointer to caller's algorithm parameters for in-place tweak updates

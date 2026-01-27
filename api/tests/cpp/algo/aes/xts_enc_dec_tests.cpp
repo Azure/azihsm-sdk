@@ -191,7 +191,7 @@ class azihsm_aes_xts : public ::testing::Test
         uint8_t sector_num[16] = { 0x00 };
         azihsm_algo_aes_xts_params xts_params{};
         std::memcpy(xts_params.sector_num, sector_num, sizeof(sector_num));
-        xts_params.dul = static_cast<uint32_t>(dul);
+       xts_params.data_unit_length = static_cast<uint32_t>(dul);
 
         azihsm_algo crypt_algo{};
         crypt_algo.id = algo_id;
@@ -226,7 +226,7 @@ class azihsm_aes_xts : public ::testing::Test
         uint8_t sector_num[16] = { 0x00 };
         azihsm_algo_aes_xts_params xts_params{};
         std::memcpy(xts_params.sector_num, sector_num, sizeof(sector_num));
-        xts_params.dul = static_cast<uint32_t>(plaintext_len);
+       xts_params.data_unit_length = static_cast<uint32_t>(plaintext_len);
 
         azihsm_algo crypt_algo{};
         crypt_algo.id = algo_id;
@@ -432,7 +432,7 @@ TEST_F(azihsm_aes_xts, single_shot_encrypt_streaming_decrypt)
         uint8_t sector_num[16] = { 0x00 };
         azihsm_algo_aes_xts_params xts_params{};
         std::memcpy(xts_params.sector_num, sector_num, sizeof(sector_num));
-        xts_params.dul = static_cast<uint32_t>(dul);
+       xts_params.data_unit_length = static_cast<uint32_t>(dul);
 
         azihsm_algo crypt_algo{};
         crypt_algo.id = AZIHSM_ALGO_ID_AES_XTS;
@@ -444,7 +444,7 @@ TEST_F(azihsm_aes_xts, single_shot_encrypt_streaming_decrypt)
 
         // Decrypt with streaming (same DUL = 128)
         std::memcpy(xts_params.sector_num, sector_num, sizeof(sector_num));
-        xts_params.dul = static_cast<uint32_t>(dul);
+       xts_params.data_unit_length = static_cast<uint32_t>(dul);
 
         auto decrypted = streaming_xts_crypt(key.get(), &crypt_algo, ciphertext.data(), ciphertext.size(), dul, false);
 
@@ -470,7 +470,7 @@ TEST_F(azihsm_aes_xts, streaming_encrypt_single_shot_decrypt)
         uint8_t sector_num[16] = { 0x00 };
         azihsm_algo_aes_xts_params xts_params{};
         std::memcpy(xts_params.sector_num, sector_num, sizeof(sector_num));
-        xts_params.dul = static_cast<uint32_t>(dul);
+       xts_params.data_unit_length = static_cast<uint32_t>(dul);
 
         azihsm_algo crypt_algo{};
         crypt_algo.id = AZIHSM_ALGO_ID_AES_XTS;
@@ -482,7 +482,7 @@ TEST_F(azihsm_aes_xts, streaming_encrypt_single_shot_decrypt)
 
         // Decrypt with single-shot (same DUL = 128)
         std::memcpy(xts_params.sector_num, sector_num, sizeof(sector_num));
-        xts_params.dul = static_cast<uint32_t>(dul);
+       xts_params.data_unit_length = static_cast<uint32_t>(dul);
 
         auto decrypted = single_shot_xts_crypt(key.get(), &crypt_algo, ciphertext.data(), ciphertext.size(), false);
 
@@ -504,7 +504,7 @@ TEST_F(azihsm_aes_xts, different_tweaks_different_ciphertexts)
         uint8_t sector_num1[16] = { 0x00 };
         azihsm_algo_aes_xts_params xts_params1{};
         std::memcpy(xts_params1.sector_num, sector_num1, sizeof(sector_num1));
-        xts_params1.dul = static_cast<uint32_t>(plaintext_len);
+        xts_params1.data_unit_length = static_cast<uint32_t>(plaintext_len);
 
         azihsm_algo crypt_algo1{};
         crypt_algo1.id = AZIHSM_ALGO_ID_AES_XTS;
@@ -517,7 +517,7 @@ TEST_F(azihsm_aes_xts, different_tweaks_different_ciphertexts)
         uint8_t sector_num2[16] = { 0x01, 0x00 };
         azihsm_algo_aes_xts_params xts_params2{};
         std::memcpy(xts_params2.sector_num, sector_num2, sizeof(sector_num2));
-        xts_params2.dul = static_cast<uint32_t>(plaintext_len);
+        xts_params2.data_unit_length = static_cast<uint32_t>(plaintext_len);
 
         azihsm_algo crypt_algo2{};
         crypt_algo2.id = AZIHSM_ALGO_ID_AES_XTS;
@@ -545,7 +545,7 @@ TEST_F(azihsm_aes_xts, tweak_updated_after_encryption)
         uint8_t sector_num[16] = { 0x05, 0x00 };
         azihsm_algo_aes_xts_params xts_params{};
         std::memcpy(xts_params.sector_num, sector_num, sizeof(sector_num));
-        xts_params.dul = static_cast<uint32_t>(plaintext_len);
+       xts_params.data_unit_length = static_cast<uint32_t>(plaintext_len);
 
         azihsm_algo crypt_algo{};
         crypt_algo.id = AZIHSM_ALGO_ID_AES_XTS;
@@ -572,7 +572,7 @@ TEST_F(azihsm_aes_xts, minimum_plaintext_size)
         uint8_t sector_num[16] = { 0x00 };
         azihsm_algo_aes_xts_params xts_params{};
         std::memcpy(xts_params.sector_num, sector_num, sizeof(sector_num));
-        xts_params.dul = static_cast<uint32_t>(plaintext_len);
+       xts_params.data_unit_length = static_cast<uint32_t>(plaintext_len);
 
         azihsm_algo crypt_algo{};
         crypt_algo.id = AZIHSM_ALGO_ID_AES_XTS;
@@ -603,7 +603,7 @@ TEST_F(azihsm_aes_xts, plaintext_too_small_fails)
         uint8_t sector_num[16] = { 0x00 };
         azihsm_algo_aes_xts_params xts_params{};
         std::memcpy(xts_params.sector_num, sector_num, sizeof(sector_num));
-        xts_params.dul = static_cast<uint32_t>(plaintext_len);
+       xts_params.data_unit_length = static_cast<uint32_t>(plaintext_len);
 
         azihsm_algo crypt_algo{};
         crypt_algo.id = AZIHSM_ALGO_ID_AES_XTS;
@@ -631,7 +631,7 @@ TEST_F(azihsm_aes_xts, zero_dul_fails)
         uint8_t sector_num[16] = { 0x00 };
         azihsm_algo_aes_xts_params xts_params{};
         std::memcpy(xts_params.sector_num, sector_num, sizeof(sector_num));
-        xts_params.dul = 0;  // Invalid DUL
+       xts_params.data_unit_length = 0;  // Invalid DUL
 
         azihsm_algo crypt_algo{};
         crypt_algo.id = AZIHSM_ALGO_ID_AES_XTS;
@@ -659,7 +659,7 @@ TEST_F(azihsm_aes_xts, streaming_non_dul_aligned_fails)
         uint8_t sector_num[16] = { 0x00 };
         azihsm_algo_aes_xts_params xts_params{};
         std::memcpy(xts_params.sector_num, sector_num, sizeof(sector_num));
-        xts_params.dul = static_cast<uint32_t>(dul);
+       xts_params.data_unit_length = static_cast<uint32_t>(dul);
 
         azihsm_algo crypt_algo{};
         crypt_algo.id = AZIHSM_ALGO_ID_AES_XTS;

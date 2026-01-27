@@ -130,6 +130,10 @@ pub unsafe extern "C" fn azihsm_key_delete(key_handle: AzihsmHandle) -> AzihsmSt
                 let key: Box<HsmAesKey> = HANDLE_TABLE.free_handle(key_handle, key_type)?;
                 key.delete_key()?;
             }
+            HandleType::AesXtsKey => {
+                let key: Box<HsmAesXtsKey> = HANDLE_TABLE.free_handle(key_handle, key_type)?;
+                key.delete_key()?;
+            }
             HandleType::EccPrivKey => {
                 let key: Box<HsmEccPrivateKey> = HANDLE_TABLE.free_handle(key_handle, key_type)?;
                 key.delete_key()?;
