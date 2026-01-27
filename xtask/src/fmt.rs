@@ -75,7 +75,6 @@ impl Xtask for Fmt {
             cmd!(sh, "taplo fmt {fmt_check...}").quiet().run()?;
         }
 
-        #[cfg(not(target_os = "windows"))]
         if !self.skip_clang {
             log::trace!("running clang-format");
             // Check if clang-format is available
