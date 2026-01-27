@@ -178,7 +178,7 @@ pub(crate) fn hkdf_derive_key(
         }
         HsmKeyKind::AesGcm => {
             let aes_key: HsmAesGcmKey = derived_key.try_into()?;
-            HANDLE_TABLE.alloc_handle(HandleType::AesKey, Box::new(aes_key))
+            HANDLE_TABLE.alloc_handle(HandleType::AesGcmKey, Box::new(aes_key))
         }
 
         HsmKeyKind::HmacSha256 | HsmKeyKind::HmacSha384 | HsmKeyKind::HmacSha512 => {

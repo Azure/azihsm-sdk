@@ -386,7 +386,8 @@ impl TryFrom<AzihsmHandle> for api::HsmGenericSecretKey {
     type Error = AzihsmStatus;
 
     fn try_from(value: AzihsmHandle) -> Result<api::HsmGenericSecretKey, Self::Error> {
-        let key: &api::HsmGenericSecretKey = HANDLE_TABLE.as_ref(value, HandleType::AesKey)?;
+        let key: &api::HsmGenericSecretKey =
+            HANDLE_TABLE.as_ref(value, HandleType::GenericSecretKey)?;
         Ok(key.clone())
     }
 }

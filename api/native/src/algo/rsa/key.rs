@@ -161,7 +161,7 @@ pub(crate) fn rsa_unwrap_key(
                 key_props,
             )?;
 
-            HANDLE_TABLE.alloc_handle(HandleType::AesKey, Box::new(unwrapped_key))
+            HANDLE_TABLE.alloc_handle(HandleType::AesGcmKey, Box::new(unwrapped_key))
         }
 
         // AesXts unwrapping

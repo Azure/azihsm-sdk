@@ -22,8 +22,7 @@ class azihsm_aes_gcm : public ::testing::Test
         azihsm_handle key_handle,
         azihsm_algo *algo,
         const uint8_t *input_data,
-        size_t input_len,
-        azihsm_algo_aes_gcm_params *params
+        size_t input_len
     )
     {
         azihsm_buffer input{ const_cast<uint8_t *>(input_data), static_cast<uint32_t>(input_len) };
@@ -286,7 +285,7 @@ class azihsm_aes_gcm : public ::testing::Test
 
         // Encrypt
         auto ciphertext =
-            single_shot_encrypt(key_handle, &crypt_algo, plaintext, plaintext_len, &gcm_params);
+            single_shot_encrypt(key_handle, &crypt_algo, plaintext, plaintext_len);
 
         // Ciphertext should be same length as plaintext for GCM (no padding)
         ASSERT_EQ(ciphertext.size(), plaintext_len);
@@ -379,6 +378,7 @@ struct AesGcmDataSizeTestParams
 
 // ==================== Single-Shot Tests ====================
 
+// Validate single-shot AES-GCM without AAD across key sizes and data sizes.
 TEST_F(azihsm_aes_gcm, single_shot_all_key_sizes_no_aad)
 {
     // Note: AES-GCM only supports 256-bit keys in this implementation
@@ -418,6 +418,7 @@ TEST_F(azihsm_aes_gcm, single_shot_all_key_sizes_no_aad)
     }
 }
 
+// Validate single-shot AES-GCM with AAD across key sizes and data sizes.
 TEST_F(azihsm_aes_gcm, single_shot_all_key_sizes_with_aad)
 {
     // Note: AES-GCM only supports 256-bit keys in this implementation
@@ -459,6 +460,7 @@ TEST_F(azihsm_aes_gcm, single_shot_all_key_sizes_with_aad)
 
 // ==================== Streaming Tests ====================
 
+// Validate streaming AES-GCM without AAD across key sizes.
 TEST_F(azihsm_aes_gcm, streaming_all_key_sizes_no_aad)
 {
     // Note: AES-GCM only supports 256-bit keys in this implementation
@@ -487,6 +489,7 @@ TEST_F(azihsm_aes_gcm, streaming_all_key_sizes_no_aad)
     }
 }
 
+// Validate streaming AES-GCM with AAD across key sizes.
 TEST_F(azihsm_aes_gcm, streaming_all_key_sizes_with_aad)
 {
     // Note: AES-GCM only supports 256-bit keys in this implementation
@@ -516,6 +519,7 @@ TEST_F(azihsm_aes_gcm, streaming_all_key_sizes_with_aad)
     }
 }
 
+// Validate streaming AES-GCM across multiple chunk sizes.
 TEST_F(azihsm_aes_gcm, streaming_various_chunk_sizes)
 {
     std::vector<size_t> chunk_sizes = { 1, 7, 16, 32, 64 };
@@ -543,6 +547,7 @@ TEST_F(azihsm_aes_gcm, streaming_various_chunk_sizes)
 
 // ==================== Edge Case Tests ====================
 
+// Validate AES-GCM handles empty plaintext and tag generation.
 TEST_F(azihsm_aes_gcm, empty_plaintext)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -609,6 +614,7 @@ TEST_F(azihsm_aes_gcm, empty_plaintext)
     });
 }
 
+// Validate AES-GCM rejects null parameters.
 TEST_F(azihsm_aes_gcm, null_params)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -628,6 +634,7 @@ TEST_F(azihsm_aes_gcm, null_params)
     });
 }
 
+// Validate AES-GCM rejects invalid key handles.
 TEST_F(azihsm_aes_gcm, invalid_key_handle)
 {
     uint8_t iv[12] = { 0xDD };
@@ -649,6 +656,7 @@ TEST_F(azihsm_aes_gcm, invalid_key_handle)
     ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
 }
 
+// Validate AES-GCM decryption fails on wrong tag.
 TEST_F(azihsm_aes_gcm, wrong_tag_fails_decryption)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -703,6 +711,7 @@ TEST_F(azihsm_aes_gcm, wrong_tag_fails_decryption)
     });
 }
 
+// Validate different IVs produce different ciphertexts.
 TEST_F(azihsm_aes_gcm, different_ivs_produce_different_ciphertexts)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -762,6 +771,7 @@ TEST_F(azihsm_aes_gcm, different_ivs_produce_different_ciphertexts)
     });
 }
 
+// Validate streaming AES-GCM with 4KB payload.
 TEST_F(azihsm_aes_gcm, large_data_streaming)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -811,6 +821,7 @@ TEST_F(azihsm_aes_gcm, large_data_streaming)
     });
 }
 
+// Validate streaming output matches single-shot for identical inputs.
 TEST_F(azihsm_aes_gcm, streaming_consistency_with_single_shot)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -835,8 +846,7 @@ TEST_F(azihsm_aes_gcm, streaming_consistency_with_single_shot)
             key.get(),
             &crypt_algo_single,
             plaintext.data(),
-            plaintext.size(),
-            &gcm_params_single
+            plaintext.size()
         );
 
         // Save tag
@@ -870,5 +880,56 @@ TEST_F(azihsm_aes_gcm, streaming_consistency_with_single_shot)
 
         // Tags should be identical
         ASSERT_EQ(std::memcmp(single_shot_tag, gcm_params_streaming.tag, 16), 0);
+    });
+}
+
+
+// Validate streaming AES-GCM with 8KB payload.
+TEST_F(azihsm_aes_gcm, large_data_streaming_8k)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        auto key = generate_aes_gcm_key(session, 256);
+
+        uint8_t iv[12] = { 0x22 };
+        azihsm_algo_aes_gcm_params gcm_params{};
+        std::memcpy(gcm_params.iv, iv, sizeof(iv));
+        std::memset(gcm_params.tag, 0, sizeof(gcm_params.tag));
+        gcm_params.aad = nullptr;
+
+        azihsm_algo crypt_algo{};
+        crypt_algo.id = AZIHSM_ALGO_ID_AES_GCM;
+        crypt_algo.params = &gcm_params;
+        crypt_algo.len = sizeof(gcm_params);
+
+        // Test with larger data (8KB)
+        std::vector<uint8_t> plaintext(8192);
+        for (size_t i = 0; i < plaintext.size(); ++i)
+        {
+            plaintext[i] = static_cast<uint8_t>(i & 0xFF);
+        }
+
+        // Encrypt
+        auto ciphertext =
+            streaming_encrypt(key.get(), &crypt_algo, plaintext.data(), plaintext.size(), 256);
+
+        // Save tag for decryption
+        uint8_t saved_tag[16];
+        std::memcpy(saved_tag, gcm_params.tag, sizeof(saved_tag));
+
+        // Reset IV and set tag for decryption
+        std::memcpy(gcm_params.iv, iv, sizeof(iv));
+        std::memcpy(gcm_params.tag, saved_tag, sizeof(saved_tag));
+
+        // Decrypt
+        auto decrypted = streaming_decrypt(
+            key.get(),
+            &crypt_algo,
+            ciphertext.data(),
+            ciphertext.size(),
+            256
+        );
+
+        ASSERT_EQ(decrypted.size(), plaintext.size());
+        ASSERT_EQ(std::memcmp(decrypted.data(), plaintext.data(), plaintext.size()), 0);
     });
 }

@@ -110,7 +110,7 @@ impl HsmAesGcmAlgo {
     }
 
     /// Returns a reference to the initialization vector.
-    pub fn iv(&self) -> &[u8] {
+    pub fn iv(&self) -> &[u8; GCM_IV_SIZE] {
         &self.iv
     }
 
@@ -161,7 +161,7 @@ impl HsmEncryptOp for HsmAesGcmAlgo {
     ) -> Result<usize, Self::Error> {
         // Check if key can encrypt
         if !key.props().can_encrypt() {
-            Err(HsmError::InvalidKey)?;
+            return Err(HsmError::InvalidKey);
         }
 
         // GCM ciphertext is same length as plaintext
@@ -215,7 +215,7 @@ impl HsmDecryptOp for HsmAesGcmAlgo {
     ) -> Result<usize, Self::Error> {
         // Check if key can decrypt
         if !key.props().can_decrypt() {
-            Err(HsmError::InvalidKey)?;
+            return Err(HsmError::InvalidKey);
         }
 
         // Tag must be provided for decryption
@@ -237,16 +237,19 @@ impl HsmDecryptOp for HsmAesGcmAlgo {
 }
 
 /// Maximum buffer size supported by DDI for AES-GCM operations.
-/// This is used for streaming operations to buffer data before sending to the device.
-const AES_GCM_MAX_BUFFER_SIZE: usize = 4096;
+/// This is used for streaming operations to buffer data before sending to the device.(10MB)
+const AES_GCM_MAX_BUFFER_SIZE: usize = 10 * 1024 * 1024;
 
 /// A context for streaming AES-GCM encryption operations.
 ///
 /// This struct maintains the state of an ongoing AES-GCM encryption operation,
 /// allowing data to be encrypted incrementally through multiple calls.
 ///
-/// Note: Since GCM is message-based and not block-chaining, the streaming API
-/// buffers data up to the maximum DDI buffer size before processing.
+/// **IMPORTANT**: GCM is a message-based AEAD scheme that produces a single
+/// authentication tag over the entire message. The streaming API buffers all
+/// data and performs encryption only in `finish()`. This ensures correct GCM
+/// semantics where one IV/AAD pair produces exactly one ciphertext+tag for the
+/// complete message.
 pub struct HsmAesGcmEncryptContext {
     /// The AES-GCM algorithm configuration.
     algo: HsmAesGcmAlgo,
@@ -279,7 +282,7 @@ impl HsmEncryptStreamingOp for HsmAesGcmAlgo {
     fn encrypt_init(self, key: Self::Key) -> Result<Self::Context, Self::Error> {
         // Check if key can encrypt
         if !key.props().can_encrypt() {
-            Err(HsmError::InvalidKey)?;
+            return Err(HsmError::InvalidKey);
         }
 
         Ok(HsmAesGcmEncryptContext {
@@ -293,73 +296,44 @@ impl HsmEncryptStreamingOp for HsmAesGcmAlgo {
 impl HsmEncryptContext for HsmAesGcmEncryptContext {
     type Algo = HsmAesGcmAlgo;
 
-    /// Encrypts a chunk of plaintext in the streaming operation.
+    /// Buffers a chunk of plaintext for encryption.
     ///
-    /// For AES-GCM, data is buffered until `finish` is called, since GCM
-    /// is message-based and the tag is computed over the entire message.
-    /// When the buffer reaches the maximum size, it is encrypted and output.
+    /// **IMPORTANT**: For AES-GCM, this method only buffers data without producing
+    /// any output. All encryption happens in `finish()`, which processes the entire
+    /// message and produces the authentication tag. This ensures correct GCM semantics
+    /// where one IV/AAD pair produces exactly one ciphertext+tag.
     ///
     /// # Arguments
     ///
-    /// * `plaintext` - The plaintext data to encrypt
-    /// * `ciphertext` - Optional buffer for encrypted output. If `None`, only calculates size.
+    /// * `plaintext` - The plaintext data to buffer
+    /// * `ciphertext` - Ignored (no output is produced until `finish()`)
     ///
     /// # Returns
     ///
-    /// * `Ok(usize)` - Number of bytes written (may be 0 if data is buffered)
+    /// * `Ok(0)` - Always returns 0 since no encryption occurs in `update()`
+    ///
+    /// # Errors
+    ///
+    /// * `Err(HsmError::InvalidArgument)` - If the total buffered data would exceed the maximum message size
     fn update(
         &mut self,
         plaintext: &[u8],
-        ciphertext: Option<&mut [u8]>,
+        _ciphertext: Option<&mut [u8]>,
     ) -> Result<usize, <Self::Algo as HsmEncryptStreamingOp>::Error> {
-        // Calculate how much we can buffer and how much needs to be processed
-        let space_in_buffer = AES_GCM_MAX_BUFFER_SIZE.saturating_sub(self.buffer.len());
-        let to_buffer = plaintext.len().min(space_in_buffer);
-        let remaining = &plaintext[to_buffer..];
-
-        // If buffer won't overflow and no ciphertext buffer is provided, just calculate size
-        if self.buffer.len() + plaintext.len() <= AES_GCM_MAX_BUFFER_SIZE {
-            // All data fits in buffer, no output yet
-            if ciphertext.is_none() {
-                return Ok(0);
-            }
-            self.buffer.extend_from_slice(plaintext);
+        // For size query (ciphertext is None), return 0 since GCM produces no output until finish()
+        if _ciphertext.is_none() {
             return Ok(0);
         }
 
-        // Buffer will overflow, need to encrypt current buffer + overflow
-        let total_to_encrypt = self.buffer.len() + to_buffer;
-
-        // For size query
-        let Some(ciphertext) = ciphertext else {
-            // Return size of what would be encrypted
-            return Ok(total_to_encrypt);
-        };
-
-        if ciphertext.len() < total_to_encrypt {
-            return Err(HsmError::BufferTooSmall);
+        // Check if adding this data would exceed the maximum message size
+        if self.buffer.len().saturating_add(plaintext.len()) > AES_GCM_MAX_BUFFER_SIZE {
+            return Err(HsmError::InvalidArgument);
         }
 
-        // Add data to buffer
-        self.buffer.extend_from_slice(&plaintext[..to_buffer]);
-
-        // Encrypt the full buffer
-        let (bytes_written, tag) = ddi::aes_gcm_encrypt(
-            &self.key,
-            self.algo.iv,
-            self.algo.aad.clone(),
-            &self.buffer,
-            ciphertext,
-        )?;
-
-        // Update tag
-        self.algo.tag = Some(tag);
-
-        // Clear buffer and add remaining data
-        self.buffer.clear();
-        self.buffer.extend_from_slice(remaining);
-
-        Ok(bytes_written)
+        // GCM must process the entire message at once to produce a valid tag.
+        // Buffer all data; encryption happens in finish().
+        self.buffer.extend_from_slice(plaintext);
+        Ok(0)
     }
 
     /// Finalizes the streaming encryption operation and produces final ciphertext.
@@ -379,10 +353,6 @@ impl HsmEncryptContext for HsmAesGcmEncryptContext {
         &mut self,
         ciphertext: Option<&mut [u8]>,
     ) -> Result<usize, <Self::Algo as HsmEncryptStreamingOp>::Error> {
-        if self.buffer.is_empty() {
-            return Ok(0);
-        }
-
         let expected_len = self.buffer.len();
 
         let Some(ciphertext) = ciphertext else {
@@ -426,8 +396,11 @@ impl HsmEncryptContext for HsmAesGcmEncryptContext {
 /// This struct maintains the state of an ongoing AES-GCM decryption operation,
 /// allowing data to be decrypted incrementally through multiple calls.
 ///
-/// Note: Since GCM is message-based and requires tag verification, the streaming
-/// API buffers data up to the maximum DDI buffer size before processing.
+/// **IMPORTANT**: GCM is a message-based AEAD scheme that verifies a single
+/// authentication tag over the entire message. The streaming API buffers all
+/// data and performs decryption+verification only in `finish()`. This ensures
+/// correct GCM semantics where one IV/AAD/tag triple authenticates exactly one
+/// complete message.
 pub struct HsmAesGcmDecryptContext {
     /// The AES-GCM algorithm configuration.
     algo: HsmAesGcmAlgo,
@@ -461,12 +434,12 @@ impl HsmDecryptStreamingOp for HsmAesGcmAlgo {
     fn decrypt_init(self, key: Self::Key) -> Result<Self::Context, Self::Error> {
         // Check if key can decrypt
         if !key.props().can_decrypt() {
-            Err(HsmError::InvalidKey)?;
+            return Err(HsmError::InvalidKey);
         }
 
         // Tag must be provided for decryption
         if self.tag.is_none() {
-            Err(HsmError::InvalidArgument)?;
+            return Err(HsmError::InvalidArgument);
         }
 
         Ok(HsmAesGcmDecryptContext {
@@ -480,73 +453,44 @@ impl HsmDecryptStreamingOp for HsmAesGcmAlgo {
 impl HsmDecryptContext for HsmAesGcmDecryptContext {
     type Algo = HsmAesGcmAlgo;
 
-    /// Decrypts a chunk of ciphertext in the streaming operation.
+    /// Buffers a chunk of ciphertext for decryption.
     ///
-    /// For AES-GCM, data is buffered until `finish` is called or the buffer
-    /// reaches the maximum size. Authentication is performed during processing.
+    /// **IMPORTANT**: For AES-GCM, this method only buffers data without producing
+    /// any output. All decryption and tag verification happen in `finish()`, which
+    /// processes the entire message. This ensures correct GCM semantics where one
+    /// IV/AAD/tag triple authenticates exactly one complete message.
     ///
     /// # Arguments
     ///
-    /// * `ciphertext` - The encrypted data to decrypt
-    /// * `plaintext` - Optional buffer for decrypted output. If `None`, only calculates size.
+    /// * `ciphertext` - The ciphertext data to buffer
+    /// * `plaintext` - Ignored (no output is produced until `finish()`)
     ///
     /// # Returns
     ///
-    /// * `Ok(usize)` - Number of bytes written (may be 0 if data is buffered)
+    /// * `Ok(0)` - Always returns 0 since no decryption occurs in `update()`
+    ///
+    /// # Errors
+    ///
+    /// * `Err(HsmError::InvalidArgument)` - If the total buffered data would exceed the maximum message size
     fn update(
         &mut self,
         ciphertext: &[u8],
-        plaintext: Option<&mut [u8]>,
+        _plaintext: Option<&mut [u8]>,
     ) -> Result<usize, <Self::Algo as HsmDecryptStreamingOp>::Error> {
-        // Calculate how much we can buffer and how much needs to be processed
-        let space_in_buffer = AES_GCM_MAX_BUFFER_SIZE.saturating_sub(self.buffer.len());
-        let to_buffer = ciphertext.len().min(space_in_buffer);
-        let remaining = &ciphertext[to_buffer..];
-
-        // If buffer won't overflow and no plaintext buffer is provided, just calculate size
-        if self.buffer.len() + ciphertext.len() <= AES_GCM_MAX_BUFFER_SIZE {
-            // All data fits in buffer, no output yet
-            if plaintext.is_none() {
-                return Ok(0);
-            }
-            self.buffer.extend_from_slice(ciphertext);
+        // For size query (plaintext is None), return 0 since GCM produces no output until finish()
+        if _plaintext.is_none() {
             return Ok(0);
         }
 
-        // Buffer will overflow, need to decrypt current buffer + overflow
-        let total_to_decrypt = self.buffer.len() + to_buffer;
-
-        // For size query
-        let Some(plaintext) = plaintext else {
-            // Return size of what would be decrypted
-            return Ok(total_to_decrypt);
-        };
-
-        if plaintext.len() < total_to_decrypt {
-            return Err(HsmError::BufferTooSmall);
+        // Check if adding this data would exceed the maximum message size
+        if self.buffer.len().saturating_add(ciphertext.len()) > AES_GCM_MAX_BUFFER_SIZE {
+            return Err(HsmError::InvalidArgument);
         }
 
-        // Add data to buffer
-        self.buffer.extend_from_slice(&ciphertext[..to_buffer]);
-
-        // Tag must be present (checked in decrypt_init)
-        let tag = self.algo.tag.ok_or(HsmError::InvalidArgument)?;
-
-        // Decrypt the full buffer
-        let bytes_written = ddi::aes_gcm_decrypt(
-            &self.key,
-            self.algo.iv,
-            tag,
-            self.algo.aad.clone(),
-            &self.buffer,
-            plaintext,
-        )?;
-
-        // Clear buffer and add remaining data
-        self.buffer.clear();
-        self.buffer.extend_from_slice(remaining);
-
-        Ok(bytes_written)
+        // GCM must verify the tag over the entire message at once.
+        // Buffer all data; decryption happens in finish().
+        self.buffer.extend_from_slice(ciphertext);
+        Ok(0)
     }
 
     /// Finalizes the streaming decryption operation and produces final plaintext.
@@ -565,10 +509,6 @@ impl HsmDecryptContext for HsmAesGcmDecryptContext {
         &mut self,
         plaintext: Option<&mut [u8]>,
     ) -> Result<usize, <Self::Algo as HsmDecryptStreamingOp>::Error> {
-        if self.buffer.is_empty() {
-            return Ok(0);
-        }
-
         let expected_len = self.buffer.len();
 
         let Some(plaintext) = plaintext else {

@@ -219,7 +219,8 @@ fn gcm_encrypt_streaming(
     let enc_algo = new_gcm_encrypt_algo(iv, aad);
     let mut enc_ctx = enc_algo.encrypt_init(key.clone())?;
 
-    let mut ciphertext = Vec::<u8>::new();
+    // For GCM, update() only buffers data and returns 0
+    // All encryption happens in finish()
     let mut offset = 0;
     let mut i = 0;
     while offset < plaintext.len() {
@@ -228,12 +229,13 @@ fn gcm_encrypt_streaming(
         offset += size;
         i += 1;
 
-        let out = enc_ctx.update_vec(chunk)?;
-        ciphertext.extend_from_slice(&out);
+        // update() buffers data, returns 0
+        let bytes = enc_ctx.update_vec(chunk)?;
+        assert_eq!(bytes.len(), 0, "GCM update() should return empty output");
     }
 
-    let out = enc_ctx.finish_vec()?;
-    ciphertext.extend_from_slice(&out);
+    // finish() performs the actual encryption and returns all ciphertext
+    let ciphertext = enc_ctx.finish_vec()?;
 
     let tag = enc_ctx
         .algo()
@@ -255,21 +257,24 @@ fn gcm_decrypt_streaming(
     let dec_algo = new_gcm_decrypt_algo(iv, tag, aad);
     let mut dec_ctx = dec_algo.decrypt_init(key.clone())?;
 
-    let mut plaintext = Vec::<u8>::new();
+    // For GCM, update() only buffers data and returns 0
+    // All decryption happens in finish()
     let mut offset = 0;
     let mut i = 0;
     while offset < ciphertext.len() {
         let size = chunk_sizes[i % chunk_sizes.len()].min(ciphertext.len() - offset);
         let chunk = &ciphertext[offset..offset + size];
+
         offset += size;
         i += 1;
 
-        let out = dec_ctx.update_vec(chunk)?;
-        plaintext.extend_from_slice(&out);
+        // update() buffers data, returns 0
+        let bytes = dec_ctx.update_vec(chunk)?;
+        assert_eq!(bytes.len(), 0, "GCM update() should return empty output");
     }
 
-    let out = dec_ctx.finish_vec()?;
-    plaintext.extend_from_slice(&out);
+    // finish() performs the actual decryption and returns all plaintext
+    let plaintext = dec_ctx.finish_vec()?;
 
     Ok(plaintext)
 }
@@ -337,4 +342,100 @@ fn test_gcm_streaming_with_aad(session: HsmSession) {
     let decrypted = gcm_decrypt_streaming(&key, &iv, &tag, aad, &ciphertext, &[300])
         .expect("Failed to decrypt");
     assert_eq!(decrypted, plaintext);
+}
+
+#[session_test]
+fn test_gcm_streaming_empty_plaintext_roundtrip(session: HsmSession) {
+    let iv = [0x33u8; AES_GCM_IV_SIZE];
+    let plaintext: Vec<u8> = vec![];
+
+    let key = aes_gcm_generate_streaming_key(&session);
+
+    let (ciphertext, tag) =
+        gcm_encrypt_streaming(&key, &iv, None, &plaintext, &[64]).expect("Failed to encrypt");
+    assert_eq!(ciphertext.len(), 0);
+    assert_eq!(tag.len(), AES_GCM_TAG_SIZE);
+
+    let decrypted = gcm_decrypt_streaming(&key, &iv, &tag, None, &ciphertext, &[64])
+        .expect("Failed to decrypt");
+    assert_eq!(decrypted, plaintext);
+}
+
+#[session_test]
+fn test_gcm_streaming_wrong_tag_fails(session: HsmSession) {
+    let iv = [0x44u8; AES_GCM_IV_SIZE];
+    let plaintext = vec![0x55u8; 1024];
+
+    let key = aes_gcm_generate_streaming_key(&session);
+
+    let (ciphertext, mut tag) =
+        gcm_encrypt_streaming(&key, &iv, None, &plaintext, &[128]).expect("Failed to encrypt");
+    tag[0] ^= 0xFF;
+
+    let result = gcm_decrypt_streaming(&key, &iv, &tag, None, &ciphertext, &[128]);
+    assert!(
+        result.is_err(),
+        "Streaming decryption should fail with wrong tag"
+    );
+}
+
+#[session_test]
+fn test_gcm_streaming_decrypt_8k(session: HsmSession) {
+    let iv = [0x88u8; AES_GCM_IV_SIZE];
+    let plaintext = vec![0x99u8; 8192]; // 8KB plaintext
+
+    let key = aes_gcm_generate_streaming_key(&session);
+
+    // Encrypt with single-shot
+    let (ciphertext, tag) = gcm_encrypt(&key, &iv, None, &plaintext).expect("Failed to encrypt");
+
+    // Decrypt with streaming using 512-byte chunks
+    let decrypted = gcm_decrypt_streaming(&key, &iv, &tag, None, &ciphertext, &[512])
+        .expect("Failed to decrypt");
+    assert_eq!(decrypted, plaintext);
+}
+
+#[session_test]
+fn test_gcm_empty_plaintext_roundtrip(session: HsmSession) {
+    let iv = [0x55u8; AES_GCM_IV_SIZE];
+    let plaintext: Vec<u8> = vec![];
+
+    let key = aes_gcm_generate_key(&session);
+
+    let (ciphertext, tag) = gcm_encrypt(&key, &iv, None, &plaintext).expect("Failed to encrypt");
+    assert_eq!(ciphertext.len(), 0);
+    assert_eq!(tag.len(), AES_GCM_TAG_SIZE);
+
+    let decrypted = gcm_decrypt(&key, &iv, &tag, None, &ciphertext).expect("Failed to decrypt");
+    assert_eq!(decrypted, plaintext);
+}
+
+#[session_test]
+fn test_gcm_wrong_tag_fails(session: HsmSession) {
+    let iv = [0x66u8; AES_GCM_IV_SIZE];
+    let plaintext = vec![0x77u8; 128];
+
+    let key = aes_gcm_generate_key(&session);
+
+    let (ciphertext, mut tag) =
+        gcm_encrypt(&key, &iv, None, &plaintext).expect("Failed to encrypt");
+    tag[0] ^= 0xFF;
+
+    let result = gcm_decrypt(&key, &iv, &tag, None, &ciphertext);
+    assert!(result.is_err(), "Decryption should fail with wrong tag");
+}
+
+#[session_test]
+fn test_gcm_wrong_aad_fails(session: HsmSession) {
+    let iv = [0x77u8; AES_GCM_IV_SIZE];
+    let plaintext = vec![0x88u8; 256];
+    let aad = Some(b"aad-value".to_vec());
+    let wrong_aad = Some(b"aad-wrong".to_vec());
+
+    let key = aes_gcm_generate_key(&session);
+
+    let (ciphertext, tag) = gcm_encrypt(&key, &iv, aad, &plaintext).expect("Failed to encrypt");
+
+    let result = gcm_decrypt(&key, &iv, &tag, wrong_aad, &ciphertext);
+    assert!(result.is_err(), "Decryption should fail with wrong AAD");
 }

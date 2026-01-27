@@ -42,7 +42,7 @@ pub unsafe extern "C" fn azihsm_key_gen(
         // Generate key based on algorithm ID
         let handle = match algo.id {
             // AES family algorithms
-            AzihsmAlgoId::AesKeyGen | AzihsmAlgoId::AesXtsKeyGen | AzihsmAlgoId::AesGcm => {
+            AzihsmAlgoId::AesKeyGen | AzihsmAlgoId::AesXtsKeyGen => {
                 aes_generate_key(&session, algo, key_props)?
             }
 
@@ -134,6 +134,9 @@ pub unsafe extern "C" fn azihsm_key_delete(key_handle: AzihsmHandle) -> AzihsmSt
             HandleType::AesKey => {
                 let key: Box<HsmAesKey> = HANDLE_TABLE.free_handle(key_handle, key_type)?;
                 key.delete_key()?;
+            }
+            HandleType::AesGcmKey => {
+                let key: Box<HsmAesGcmKey> = HANDLE_TABLE.free_handle(key_handle, key_type)?;
             }
             HandleType::AesXtsKey => {
                 let key: Box<HsmAesXtsKey> = HANDLE_TABLE.free_handle(key_handle, key_type)?;
