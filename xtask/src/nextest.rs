@@ -40,6 +40,12 @@ impl Xtask for Nextest {
         let sh = Shell::new()?;
         let rust_toolchain = sh.var("RUST_TOOLCHAIN").map(|s| format!("+{s}")).ok();
 
+        // Check nextest version
+        let rust_toolchain_version = rust_toolchain.clone();
+        cmd!(sh, "cargo {rust_toolchain_version...} nextest --version")
+            .quiet()
+            .run()?;
+
         // convert xtask parameters into cargo command arguments
         let mut command_args = Vec::new();
         let mut features_vec = Vec::new();
