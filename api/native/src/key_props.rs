@@ -351,6 +351,10 @@ pub unsafe extern "C" fn azihsm_key_get_prop(
                 let key = HsmAesKey::try_from(key_handle)?;
                 get_key_prop(key, prop)
             }
+            HandleType::AesXtsKey => {
+                let key = HsmAesXtsKey::try_from(key_handle)?;
+                get_key_prop(key, prop)
+            }
             HandleType::RsaPubKey => {
                 let key = HsmRsaPublicKey::try_from(key_handle)?;
                 get_key_prop(key, prop)

@@ -149,6 +149,19 @@ pub(crate) fn rsa_unwrap_key(
 
             HANDLE_TABLE.alloc_handle(HandleType::AesKey, Box::new(unwrapped_key))
         }
+
+        // AesXts unwrapping
+        HsmKeyKind::AesXts => {
+            let mut unwrap_algo = HsmAesXtsKeyRsaAesKeyUnwrapAlgo::new(hash_algo);
+            // Unwrap the AES-XTS key
+            let unwrapped_key = HsmKeyManager::unwrap_key(
+                &mut unwrap_algo,
+                &unwrapping_key,
+                wrapped_key,
+                key_props,
+            )?;
+            HANDLE_TABLE.alloc_handle(HandleType::AesXtsKey, Box::new(unwrapped_key))
+        }
         _ => return Err(AzihsmStatus::UnsupportedKeyKind),
     };
 
