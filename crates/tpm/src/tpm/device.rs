@@ -166,6 +166,7 @@ mod unix {
 #[cfg(windows)]
 mod windows {
     use std::io;
+
     use parking_lot::Mutex;
 
     pub struct Tpm {
@@ -307,6 +308,7 @@ mod windows {
 #[cfg(feature = "vtpm-tests")]
 mod vtpm {
     use std::io;
+
     use parking_lot::Mutex;
 
     use crate::tpm::device::Inner;
