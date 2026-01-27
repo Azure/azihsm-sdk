@@ -1,0 +1,11 @@
+# Copyright (C) Microsoft Corporation. All rights reserved.
+[package]
+edition = "2024"
+name = "azihsm_fw_pal_mgmt"
+version = "0.0.0"
+
+[dependencies]
+embassy-executor.workspace = true
+
+[lints]
+workspace = true

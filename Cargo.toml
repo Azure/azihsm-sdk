@@ -17,6 +17,13 @@ members = [
   "ddi/interface",
   "ddi/lib",
   "ddi/test_helpers",
+  "fw/app/hsm",
+  "fw/app/mgmt",
+  "fw/pal/hsm",
+  "fw/pal/mgmt",
+  "fw/plat/std/hsm",
+  "fw/plat/std/lib",
+  "fw/plat/std/mgmt",
   "plugins/ossl_prov",
   "xtask",
 ]
@@ -101,6 +108,21 @@ windows = "0.56"
 xshell = "0.2.7"
 zerocopy = "0.8.17"
 zeroize = "1.8.1"
+
+# Emulator-specific dependencies
+azihsm_fw_app_mgmt = { path = "fw/app/mgmt" }
+azihsm_fw_pal_mgmt = { path = "fw/pal/mgmt" }
+azihsm_fw_plat_std_hsm = { path = "fw/plat/std/hsm" }
+azihsm_fw_plat_std_mgmt = { path = "fw/plat/std/mgmt" }
+
+embassy-executor = { git = "https://github.com/embassy-rs/embassy.git", rev = "a68a1e1de6235a1e9b8ece6128cbecc96654b6f6" }
+embassy-sync = { git = "https://github.com/embassy-rs/embassy.git", rev = "a68a1e1de6235a1e9b8ece6128cbecc96654b6f6" }
+embassy-time = { git = "https://github.com/embassy-rs/embassy.git", rev = "a68a1e1de6235a1e9b8ece6128cbecc96654b6f6" }
+futures = "0.3.31"
+heapless = "0.9.2"
+static_cell = "2.1.1"
+strum = "0.27.2"
+strum_macros = "0.27.2"
 
 [workspace.lints.rust]
 future_incompatible = { level = "deny", priority = -1 }
