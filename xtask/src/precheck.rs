@@ -56,9 +56,6 @@ pub struct Precheck {
     /// Skip TOML formatting
     #[clap(long)]
     pub skip_toml: bool,
-    /// Skip Clang formatting
-    #[clap(long)]
-    pub skip_clang: bool,
     /// Skip specifying toolchain for formatting checks
     #[clap(long)]
     skip_toolchain: bool,
@@ -125,10 +122,6 @@ impl Xtask for Precheck {
             let fmt = fmt::Fmt {
                 fix: false,                // Do not fix formatting issues by default
                 skip_toml: self.skip_toml, // Pass through skip_toml flag
-                #[cfg(target_os = "windows")]
-                skip_clang: true, // Skip clang-format on Windows
-                #[cfg(not(target_os = "windows"))]
-                skip_clang: self.skip_clang, // Pass through skip_clang flag
                 toolchain: if self.skip_toolchain {
                     None
                 } else {

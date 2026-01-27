@@ -5,17 +5,19 @@
 
 //! Xtask to run various repo-specific formatting checks
 
+#[cfg(not(target_os = "windows"))]
 use std::path::PathBuf;
-use std::process::Command;
 
 use clap::Parser;
 use xshell::cmd;
 
-use crate::clang_format::*;
+#[cfg(not(target_os = "windows"))]
+use crate::clang_format::ClangFormat;
 use crate::Xtask;
 use crate::XtaskCtx;
 
 /// Command for running clang-format (pinned to version 18 by default)
+#[cfg(not(target_os = "windows"))]
 const CLANG_FORMAT_CMD: &str = "clang-format-18";
 
 /// Xtask to run various repo-specific formatting checks
@@ -30,17 +32,17 @@ pub struct Fmt {
     #[clap(long)]
     pub skip_toml: bool,
 
-    /// Skip C/C++ formatting
-    #[clap(long)]
-    pub skip_clang: bool,
-
     /// Override toolchain to use for formatting
     #[clap(long)]
     pub toolchain: Option<String>,
 }
 
 impl Xtask for Fmt {
-    fn run(self, ctx: XtaskCtx) -> anyhow::Result<()> {
+    fn run(
+        self,
+        #[cfg(target_os = "windows")] _ctx: XtaskCtx,
+        #[cfg(not(target_os = "windows"))] ctx: XtaskCtx,
+    ) -> anyhow::Result<()> {
         log::trace!("running fmt");
         let sh = xshell::Shell::new()?;
         let rust_toolchain = self
@@ -75,12 +77,14 @@ impl Xtask for Fmt {
             cmd!(sh, "taplo fmt {fmt_check...}").quiet().run()?;
         }
 
-        if !self.skip_clang {
+        // Only run clang-format on Linux
+        #[cfg(not(target_os = "windows"))]
+        {
             log::trace!("running clang-format");
             // Check if clang-format is available
-            if Command::new(CLANG_FORMAT_CMD)
-                .arg("--version")
-                .output()
+            if cmd!(sh, "{CLANG_FORMAT_CMD} --version")
+                .quiet()
+                .run()
                 .is_ok()
             {
                 let clang_format = ClangFormat {

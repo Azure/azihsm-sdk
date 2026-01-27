@@ -91,7 +91,7 @@ jobs:
     - name: Run Audit
       run: cargo xtask precheck --audit
     - name: Cargo format
-      run: cargo xtask precheck --fmt --skip-clang
+      run: cargo xtask precheck --fmt
     - name: Cargo Clippy
       run: cargo xtask precheck --clippy
     - name: Run all mock tests with code coverage
