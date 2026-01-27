@@ -166,7 +166,7 @@ mod unix {
 #[cfg(windows)]
 mod windows {
     use std::io;
-    use std::sync::Mutex;
+    use parking_lot::Mutex;
 
     pub struct Tpm {
         handle: u32, // TBS_HCONTEXT
@@ -213,10 +213,7 @@ mod windows {
                     "Command too large",
                 ));
             }
-            let _g = self
-                .lock
-                .lock()
-                .map_err(|err| io::Error::other(format!("Failed to acquire TPM lock: {err}")))?;
+            let _g = self.lock.lock();
             let mut buf = vec![0u8; 8192];
             let mut out_len: u32 = buf.len() as u32;
             // SAFETY: Make an FFI call.
@@ -310,7 +307,7 @@ mod windows {
 #[cfg(feature = "vtpm-tests")]
 mod vtpm {
     use std::io;
-    use std::sync::Mutex;
+    use parking_lot::Mutex;
 
     use crate::tpm::device::Inner;
     use crate::tpm::device::Tpm;
@@ -321,12 +318,7 @@ mod vtpm {
 
     impl RefTpm {
         pub fn transmit(&self, command: &[u8]) -> io::Result<Vec<u8>> {
-            let mut guard = self.inner.lock().map_err(|err| {
-                io::Error::new(
-                    io::ErrorKind::Other,
-                    format!("Failed to acquire TPM lock: {err}"),
-                )
-            })?;
+            let mut guard = self.inner.lock();
             let mut buf = [0u8; 8192];
             // ms-tpm-20-ref execute_command takes &mut self, a (possibly mutable) request buffer, and an output buffer.
             let mut req = command.to_vec();
