@@ -11,6 +11,7 @@ members = [
   "crates/cred_encrypt",
   "crates/crypto",
   "crates/test_with_tracing",
+  "crates/tpm",
   "crates/x509",
   "ddi/interface",
   "ddi/lib",
