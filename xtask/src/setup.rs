@@ -105,10 +105,10 @@ impl Xtask for Setup {
             toolchain: None,
         };
         // ignore failure in adding Clippy
-        let _ = add_clippy.run(ctx.clone());
-
-        // Check Clippy version
-        cmd!(sh, "cargo clippy --version").quiet().run()?;
+        if add_clippy.run(ctx.clone()).is_ok() {
+            // Check Clippy version
+            cmd!(sh, "cargo clippy --version").quiet().run()?;
+        }
 
         // Add Fmt
         let add_fmt = rustup_component_add::RustupComponentAdd {
@@ -116,10 +116,10 @@ impl Xtask for Setup {
             toolchain: Some("nightly".to_string()), // Use nightly toolchain by default
         };
         // ignore failure in adding Fmt
-        let _ = add_fmt.run(ctx.clone());
-
-        // Check Fmt version
-        cmd!(sh, "cargo +nightly fmt --version").quiet().run()?;
+        if add_fmt.run(ctx.clone()).is_ok() {
+            // Check Fmt version
+            cmd!(sh, "cargo +nightly fmt --version").quiet().run()?;
+        }
 
         log::trace!("done setup");
         Ok(())

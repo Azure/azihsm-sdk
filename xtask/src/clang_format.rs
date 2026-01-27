@@ -75,7 +75,9 @@ impl Xtask for ClangFormat {
             .output();
 
         if let Ok(ref output) = version_output {
-            println!("{}", String::from_utf8_lossy(&output.stdout).trim());
+            if !self.quiet {
+                println!("{}", String::from_utf8_lossy(&output.stdout).trim());
+            }
         }
 
         // Check clang-format is available

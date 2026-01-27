@@ -32,6 +32,10 @@ pub struct Fmt {
     #[clap(long)]
     pub skip_toml: bool,
 
+    /// Skip C/C++ formatting
+    #[clap(long)]
+    pub skip_clang: bool,
+
     /// Override toolchain to use for formatting
     #[clap(long)]
     pub toolchain: Option<String>,
@@ -77,45 +81,47 @@ impl Xtask for Fmt {
             cmd!(sh, "taplo fmt {fmt_check...}").quiet().run()?;
         }
 
-        // Only run clang-format on Linux
+        // Skip clang-format on Windows
         #[cfg(not(target_os = "windows"))]
         {
-            log::trace!("running clang-format");
-            // Check if clang-format is available
-            if cmd!(sh, "{CLANG_FORMAT_CMD} --version")
-                .quiet()
-                .run()
-                .is_ok()
-            {
-                let clang_format = ClangFormat {
-                    clang_format_executable: CLANG_FORMAT_CMD.to_string(),
-                    extensions: "c,h,C,H,cpp,hpp,cc,hh,c++,h++,cxx,hxx".to_string(),
-                    recursive: true,
-                    dry_run: false,
-                    in_place: self.fix,
-                    quiet: false,
-                    color: "auto".to_string(),
-                    exclude: vec![],
-                    files: vec![
-                        PathBuf::from(&ctx.root)
-                            .join("napi")
-                            .join("tests")
-                            .join("cpp"),
-                        #[cfg(target_os = "linux")]
-                        PathBuf::from(&ctx.root)
-                            .join("plugins")
-                            .join("ossl_prov")
-                            .join("src"),
-                        #[cfg(target_os = "linux")]
-                        PathBuf::from(&ctx.root)
-                            .join("plugins")
-                            .join("ossl_prov")
-                            .join("inc"),
-                    ],
-                };
-                clang_format.run(ctx)?;
-            } else {
-                log::warn!("clang-format not found, skipping C/C++ formatting");
+            if !self.skip_clang {
+                log::trace!("running clang-format");
+                // Check if clang-format is available
+                if cmd!(sh, "{CLANG_FORMAT_CMD} --version")
+                    .quiet()
+                    .run()
+                    .is_ok()
+                {
+                    let clang_format = ClangFormat {
+                        clang_format_executable: CLANG_FORMAT_CMD.to_string(),
+                        extensions: "c,h,C,H,cpp,hpp,cc,hh,c++,h++,cxx,hxx".to_string(),
+                        recursive: true,
+                        dry_run: false,
+                        in_place: self.fix,
+                        quiet: false,
+                        color: "auto".to_string(),
+                        exclude: vec![],
+                        files: vec![
+                            PathBuf::from(&ctx.root)
+                                .join("napi")
+                                .join("tests")
+                                .join("cpp"),
+                            #[cfg(target_os = "linux")]
+                            PathBuf::from(&ctx.root)
+                                .join("plugins")
+                                .join("ossl_prov")
+                                .join("src"),
+                            #[cfg(target_os = "linux")]
+                            PathBuf::from(&ctx.root)
+                                .join("plugins")
+                                .join("ossl_prov")
+                                .join("inc"),
+                        ],
+                    };
+                    clang_format.run(ctx)?;
+                } else {
+                    log::warn!("clang-format not found, skipping C/C++ formatting");
+                }
             }
         }
 
