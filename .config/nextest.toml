@@ -1,10 +1,20 @@
 # Copyright (C) Microsoft Corporation. All rights reserved.
-# Note on why multiple profiles are used to enable JUnit support: this is done as a workaround to prevent each nextest run from overwriting the same junit.xml file during the rust.yml workflow. Nextest saves the report to target/nextest/<profile>/<path>, so by having different profiles, each run saves to a different file. By keeping the JUnit reports seperate, their data can then collected and reported together in the github summary later in the rust.yml workflow
-[profile.ci-mock.junit]  # profile for running all mock tests
+# Note on why multiple profiles are used to enable JUnit support: this is done
+# as a workaround to prevent each nextest run from overwriting the same
+# output file during the rust.yml workflow. Nextest saves the report to
+# target/nextest/<profile>/<path>, so by having different profiles, each run
+# saves to a different file. By keeping the JUnit reports seperate, their data
+# can then be collected and reported together in the github summary later in
+# the rust.yml workflow.
+
+# profile for running all mock tests
+[profile.ci-mock.junit]
 path = "junit.xml"
 
-[profile.ci-mock-table-4.junit]  # profile for running all mock tests w/ table-4
+# profile for running all mock tests w/ table-4
+[profile.ci-mock-table-4.junit]
 path = "junit.xml"
 
-[profile.ci-mock-table-64.junit]  # profile for running all mock tests w/ table-64
+# profile for running all mock tests w/ table-64
+[profile.ci-mock-table-64.junit]
 path = "junit.xml"
