@@ -15,7 +15,7 @@
 // Format: magic (u64 LE) + version (u16 LE) + key1_len (u16 LE) + key2_len (u16 LE) + reserved (u16 LE)
 static std::vector<uint8_t> build_xts_wrapped_blob_header(uint16_t key1_len, uint16_t key2_len)
 {
-    const uint64_t WRAP_BLOB_MAGIC = 0x55AA4853'4D585453ULL; // "XTSM SH" in little-endian
+    const uint64_t WRAP_BLOB_MAGIC = 0x5354584D'53485A41ULL; // "AZHSMXTS" in little-endian
     const uint16_t WRAP_BLOB_VERSION = 1;
 
     std::vector<uint8_t> header(16, 0);

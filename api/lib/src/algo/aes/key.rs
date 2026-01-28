@@ -377,7 +377,7 @@ impl HsmKeyUnwrapOp for HsmAesXtsKeyRsaAesKeyUnwrapAlgo {
         wrapped_key: &[u8],
         key_props: HsmKeyProps,
     ) -> Result<Self::Key, Self::Error> {
-        // Validate key properties before unwrapping, else handle will not be released properly
+        //Validate key properties before unwrapping to ensure key props are for AES-XTS key
         HsmAesXtsKey::validate_props(&key_props)?;
 
         let (handle1, handle2, dev_key_props) =

@@ -78,6 +78,14 @@ pub(crate) fn aes_xts_generate_key(
 /// Unwraps an AES-XTS key from a key-pair wrapped blob at the DDI layer.
 ///
 /// The `wrapped_key` format is: `header || key1_wrapped_blob || key2_wrapped_blob`.
+///
+/// ```text
+/// +---------+-------------------+-------------------+
+/// | header  | key1_wrapped_blob | key2_wrapped_blob |
+/// +---------+-------------------+-------------------+
+///   16 bytes        key1_len             key2_len
+/// |Little-endian|RSA-wrapped AES key|RSA-wrapped AES key|
+/// ```
 /// The header is a fixed 16 bytes (little-endian fields) and the two key blobs are
 /// RSA-wrapped AES key payloads.
 ///
@@ -327,7 +335,7 @@ fn validate_xts_props_pair(key1_props: &HsmKeyProps, key2_props: &HsmKeyProps) -
 /// across host endianness.
 pub struct HsmAesXtsKeyPairHeader {
     // Stored as little-endian bytes (agnostic to host endianness).
-    magic_id: [u8; 8],
+    marker: [u8; 8],
     version: [u8; 2],
     key1_len: [u8; 2],
     key2_len: [u8; 2],
@@ -340,13 +348,13 @@ impl HsmAesXtsKeyPairHeader {
 
     /// Magic and version identifiers for the key-pair blob format.
     // Stored as a u64 for easy debug printing/comparisons. in le format:
-    // [0x55, 0xAA, b'H', b'S', b'M', b'X', b'T', b'S'].
-    const WRAP_BLOB_MAGIC: u64 = 0x55AA_4853_4D58_5453;
+    // [b'A', b'Z', b'H', b'S', b'M', b'X', b'T', b'S'].
+    const WRAP_BLOB_MAGIC: u64 = 0x5354_584D_5348_5A41;
     const WRAP_BLOB_VERSION: u16 = 1;
 
     /// Returns the header magic identifier decoded from little-endian bytes.
-    fn magic_id(&self) -> u64 {
-        u64::from_le_bytes(self.magic_id)
+    fn marker(&self) -> u64 {
+        u64::from_le_bytes(self.marker)
     }
 
     /// Returns the header version decoded from little-endian bytes.
@@ -382,7 +390,7 @@ impl HsmAesXtsKeyPairHeader {
 
     /// Validates header invariants.
     fn validate_header(header: &HsmAesXtsKeyPairHeader) -> HsmResult<()> {
-        if header.magic_id() != HsmAesXtsKeyPairHeader::WRAP_BLOB_MAGIC {
+        if header.marker() != HsmAesXtsKeyPairHeader::WRAP_BLOB_MAGIC {
             Err(HsmError::InvalidArgument)?;
         }
 
@@ -413,7 +421,7 @@ impl HsmAesXtsKeyPairHeader {
         }
 
         Ok(HsmAesXtsKeyPairHeader {
-            magic_id: HsmAesXtsKeyPairHeader::WRAP_BLOB_MAGIC.to_le_bytes(),
+            marker: HsmAesXtsKeyPairHeader::WRAP_BLOB_MAGIC.to_le_bytes(),
             version: HsmAesXtsKeyPairHeader::WRAP_BLOB_VERSION.to_le_bytes(),
             key1_len: (key1_len as u16).to_le_bytes(),
             key2_len: (key2_len as u16).to_le_bytes(),

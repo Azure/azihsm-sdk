@@ -238,7 +238,7 @@ fn build_xts_wrapped_blob_header(key1_len: u16, key2_len: u16) -> [u8; 16] {
     // Keep tests agnostic to the internal Rust header struct.
     // On-wire header format:
     // magic (u64 LE) + version (u16 LE) + key1_len (u16 LE) + key2_len (u16 LE) + reserved (u16 LE)
-    const WRAP_BLOB_MAGIC: u64 = 0x55AA_4853_4D58_5453;
+    const WRAP_BLOB_MAGIC: u64 = 0x5354_584D_5348_5A41;
     const WRAP_BLOB_VERSION: u16 = 1;
 
     let mut hdr = [0u8; 16];
