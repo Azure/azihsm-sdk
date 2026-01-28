@@ -65,6 +65,8 @@ jobs:
       with:
         name: coverage-report-ubuntu
         path: ./target/reports/
+    - name: Generate nextest report
+      run: cargo xtask precheck --nextest-report
   
   build_windows:
 
@@ -109,3 +111,5 @@ jobs:
       with:
         name: coverage-report-windows
         path: ./target/reports/
+    - name: Generate nextest report
+      run: cargo xtask precheck --nextest-report
