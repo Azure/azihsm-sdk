@@ -24,7 +24,7 @@ impl Xtask for Coverage {
 
         // Run tests with coverage
         log::info!("Building all tests and running them with coverage");
-        cmd!(sh, "cargo llvm-cov nextest --no-report --features mock").run()?;
+        cmd!(sh, "cargo llvm-cov nextest --no-report --features mock --profile ci-mock").run()?;
 
         // Check for/create reports directory
         let reports_dir = ctx.root.join("target").join("reports");

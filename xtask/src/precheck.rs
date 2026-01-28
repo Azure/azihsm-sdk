@@ -72,6 +72,9 @@ pub struct Precheck {
     /// Features to enable when running tests
     #[clap(long)]
     features: Option<String>,
+    /// The nextest profile to use
+    #[clap(long)]
+    profile: Option<String>,
 }
 
 impl Xtask for Precheck {
@@ -154,7 +157,7 @@ impl Xtask for Precheck {
                     package: None,
                     no_default_features: false,
                     filterset: None,
-                    profile: Some("ci-mock".to_string()),
+                    profile: None,
                 };
                 nextest.run(ctx.clone())?;
 
@@ -166,7 +169,7 @@ impl Xtask for Precheck {
                         package: Some("azihsm_ddi".to_string()),
                         no_default_features: false,
                         filterset: None,
-                        profile: Some("ci-mock-table-4".to_string()),
+                        profile: None,
                     };
                     nextest.run(ctx.clone())?;
 
@@ -176,7 +179,7 @@ impl Xtask for Precheck {
                         package: Some("azihsm_ddi".to_string()),
                         no_default_features: false,
                         filterset: None,
-                        profile: Some("ci-mock-table-64".to_string()),
+                        profile: None,
                     };
                     nextest.run(ctx.clone())?;
                 }
@@ -186,7 +189,7 @@ impl Xtask for Precheck {
                     package: self.package,
                     no_default_features: false,
                     filterset: None,
-                    profile: None,
+                    profile: self.profile,
                 };
                 nextest.run(ctx.clone())?;
             }
