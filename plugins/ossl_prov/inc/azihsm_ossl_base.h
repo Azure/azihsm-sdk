@@ -15,7 +15,7 @@ extern "C"
 #endif
 
 // Value provided by CMake, defined in top level CMakeLists.txt
-#define AZIHSM_OSSL_VERSION ""
+#define AZIHSM_OSSL_VERSION "1.0.0"
 #define AZIHSM_OSSL_NAME "azihsm"
 
 #ifndef _Return_type_success_
@@ -37,25 +37,12 @@ typedef struct
     azihsm_handle priv;
 } AZIHSM_KEY_PAIR_OBJ;
 
-/* Default file paths for partition keys */
-#define AZIHSM_DEFAULT_BMK_PATH "/var/lib/azihsm/bmk.bin"
-#define AZIHSM_DEFAULT_MUK_PATH "/var/lib/azihsm/muk.bin"
-#define AZIHSM_DEFAULT_MOBK_PATH "/var/lib/azihsm/mobk.bin"
-
-typedef struct
-{
-    char bmk_path[4096];
-    char muk_path[4096];
-    char mobk_path[4096];
-} AZIHSM_CONFIG;
-
 typedef struct
 {
     OSSL_LIB_CTX *libctx;
     const OSSL_CORE_HANDLE *handle;
     azihsm_handle device;
     azihsm_handle session;
-    AZIHSM_CONFIG config;
 } AZIHSM_OSSL_PROV_CTX;
 
 static const OSSL_PARAM azihsm_ossl_param_types[] = {
