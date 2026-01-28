@@ -42,7 +42,7 @@ impl Xtask for NextestReport {
         markdown.push_str(&format!("- **Total Tests**: {}\n", test_suites_total.tests));
         markdown.push_str(&format!("- **Failures**: {}\n", test_suites_total.failures));
         markdown.push_str(&format!("- **Skipped**: {}\n", test_suites_total.skipped));
-        markdown.push_str("\n");
+        markdown.push('\n');
         
         // Collect all failed test cases
         let mut failed_tests = Vec::new();
