@@ -11,6 +11,41 @@ use azihsm_api::HsmPartition;
 
 use super::*;
 
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct AzihsmOwnerBackupKeyConfig {
+    /// Source of the owner backup key
+    pub source: AzihsmOwnerBackupKeySource,
+
+    /// Pointer to the owner backup key buffer (if source is Caller)
+    pub owner_backup_key: *const AzihsmBuffer,
+}
+
+/// Helper to extract owner backup key buffer from AzihsmOwnerBackupKeyConfig
+#[allow(unsafe_code)]
+fn extract_owner_backup_key_from_config<'a>(
+    obk_config: &AzihsmOwnerBackupKeyConfig,
+) -> Result<Option<&'a [u8]>, AzihsmStatus> {
+    match obk_config.source {
+        AzihsmOwnerBackupKeySource::Caller => {
+            let slice = buffer_to_optional_slice(obk_config.owner_backup_key)?;
+            let slice = slice.ok_or(AzihsmStatus::InvalidArgument)?;
+            if slice.is_empty() {
+                return Err(AzihsmStatus::InvalidArgument);
+            }
+            Ok(Some(slice))
+        }
+        AzihsmOwnerBackupKeySource::Random | AzihsmOwnerBackupKeySource::Tpm => {
+            // No caller-provided key
+            Ok(None)
+        }
+        _ => {
+            // Unknown backup key source
+            Err(AzihsmStatus::InvalidArgument)
+        }
+    }
+}
+
 /// Get the list of HSM partitions
 ///
 /// @param[out] handle Handle to the HSM partition list
@@ -43,7 +78,7 @@ pub unsafe extern "C" fn azihsm_part_get_list(handle: *mut AzihsmHandle) -> Azih
 ///
 /// @internal
 /// # Safety
-/// This function is makred unsafe due to unsafe(no_mangle).
+/// This function is marked unsafe due to unsafe(no_mangle).
 ///
 #[unsafe(no_mangle)]
 #[allow(unsafe_code)]
@@ -191,7 +226,7 @@ pub unsafe extern "C" fn azihsm_part_open(
 /// @param[in] creds Pointer to application credentials (ID and PIN)
 /// @param[in] bmk Optional backup masking key buffer (can be null)
 /// @param[in] muk Optional masked unwrapping key buffer (can be null)
-/// @param[in] mobk Optional masked owner backup key buffer (can be null)
+/// @param[in] backup_key_config Configuration for owner backup key
 ///
 /// @return 0 on success, or a negative error code on failure
 ///
@@ -206,10 +241,11 @@ pub unsafe extern "C" fn azihsm_part_init(
     creds: *const AzihsmCredentials,
     bmk: *const AzihsmBuffer,
     muk: *const AzihsmBuffer,
-    mobk: *const AzihsmBuffer,
+    backup_key_config: *const AzihsmOwnerBackupKeyConfig,
 ) -> AzihsmStatus {
     abi_boundary(|| {
         let creds = deref_ptr(creds)?;
+        let obk_config = deref_ptr(backup_key_config)?;
 
         // Get the partition from the handle
         let partition = &HsmPartition::try_from(part_handle)?;
@@ -217,9 +253,15 @@ pub unsafe extern "C" fn azihsm_part_init(
         // Convert optional buffers to Option<&[u8]>
         let bmk_slice = buffer_to_optional_slice(bmk)?;
         let muk_slice = buffer_to_optional_slice(muk)?;
-        let mobk_slice = buffer_to_optional_slice(mobk)?;
+        let obk_slice = extract_owner_backup_key_from_config(obk_config)?;
 
-        partition.init(creds.into(), bmk_slice, muk_slice, mobk_slice)?;
+        partition.init(
+            creds.into(),
+            bmk_slice,
+            muk_slice,
+            obk_slice,
+            obk_config.source.into(),
+        )?;
 
         Ok(())
     })

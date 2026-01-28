@@ -60,7 +60,7 @@ where
         //init with test creds
         let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
         let rev = part.api_rev_range().max();
-        part.init(creds, None, None, None)
+        part.init(creds, None, None, None, HsmOwnerBackupKeySource::Random)
             .expect("Partition init failed");
         test(part, creds);
     }

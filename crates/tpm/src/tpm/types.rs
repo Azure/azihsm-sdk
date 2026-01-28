@@ -102,7 +102,7 @@ pub struct TpmaObjectBits {
 }
 
 #[repr(u16)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum TpmAlgId {
     Rsa = 0x0001,
     Aes = 0x0006,
@@ -643,7 +643,7 @@ pub struct CreateResponseParameters {
     pub out_public: Tpm2bBytes,
     pub creation_data: Tpm2bBytes,
     pub creation_hash: Tpm2bBytes,
-    pub creation_ticket: Vec<u8>, //?
+    pub creation_ticket: Vec<u8>,
 }
 
 impl TpmUnmarshal for CreateResponseParameters {
@@ -869,7 +869,7 @@ impl TpmUnmarshal for Tpm2bBytes {
         if *c + sz > d.len() {
             return Err(io::Error::new(
                 io::ErrorKind::UnexpectedEof,
-                "2b bytes dannytest",
+                "insufficient data to unmarshal TPM2B bytes",
             ));
         }
         let v = d[*c..*c + sz].to_vec();
@@ -997,14 +997,7 @@ impl TpmMarshal for KeyedHashScheme {
         match self {
             KeyedHashScheme::Null => {
                 0x0010u16.marshal(buf); /* details omitted */
-            } // RsaScheme::Rsassa(hash) => {
-              //     0x0014u16.marshal(buf);
-              //     hash.marshal(buf);
-              // }
-              // RsaScheme::Other(id, rest) => {
-              //     id.marshal(buf);
-              //     buf.extend_from_slice(rest);
-              // }
+            }
         }
     }
 }
@@ -1108,7 +1101,7 @@ impl TpmMarshal for KeyedHashDetail {
     fn marshal(&self, buf: &mut Vec<u8>) {
         self.scheme.marshal(buf);
         if self.scheme != KeyedHashScheme::Null {
-            (self.hash_alg.clone() as u16).marshal(buf);
+            (self.hash_alg as u16).marshal(buf);
         }
     }
 }
@@ -1122,12 +1115,6 @@ impl TpmUnmarshal for TpmtPublic {
         let object_attributes = u32::unmarshal(d, c)?;
         let auth_policy = Tpm2bBytes::unmarshal(d, c)?;
         let symmetric = SymDefObject::unmarshal(d, c)?;
-        // if symmetric.alg != 0x0010 {
-        //     return Err(io::Error::new(
-        //         io::ErrorKind::InvalidData,
-        //         "unexpected symmetric alg",
-        //     ));
-        // }
         // scheme
         let scheme_id = u16::unmarshal(d, c)?;
         let scheme = match scheme_id {

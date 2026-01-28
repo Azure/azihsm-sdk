@@ -229,7 +229,8 @@ impl HsmPartition {
     /// * `creds` - Application credentials (ID and PIN)
     /// * `bmk` - Optional backup masking key
     /// * `muk` - Optional masked unwrapping key
-    /// * `mobk` - Optional masked owner backup key
+    /// * `obk` - Optional owner backup key
+    /// * `obk_source` - Source of the owner backup key
     ///
     /// # Errors
     ///
@@ -243,10 +244,19 @@ impl HsmPartition {
         creds: HsmCredentials,
         bmk: Option<&[u8]>,
         muk: Option<&[u8]>,
-        mobk: Option<&[u8]>,
+        obk: Option<&[u8]>,
+        obk_source: HsmOwnerBackupKeySource,
     ) -> HsmResult<()> {
         let (bmk, mobk) = self.with_dev(|dev| {
-            ddi::init_part(dev, self.api_rev_range().min(), creds, bmk, muk, mobk)
+            ddi::init_part(
+                dev,
+                self.api_rev_range().min(),
+                creds,
+                bmk,
+                muk,
+                obk,
+                obk_source,
+            )
         })?;
         self.inner().write().set_masked_keys(bmk, mobk);
         Ok(())

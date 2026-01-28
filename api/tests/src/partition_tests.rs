@@ -77,8 +77,28 @@ fn test_partition_init() {
         part.reset().expect("Partition reset failed");
         //init with dummy creds
         let creds = HsmCredentials::new(&[1u8; 16], &[2u8; 16]);
-        part.init(creds, None, None, None)
+        part.init(creds, None, None, None, HsmOwnerBackupKeySource::Random)
             .expect("Partition init failed");
+    }
+}
+
+#[api_test]
+fn test_partition_init_caller_obk() {
+    let part_mgr = HsmPartitionManager::partition_info_list();
+    assert!(!part_mgr.is_empty(), "No partitions found.");
+    for part_info in part_mgr.iter() {
+        let part = HsmPartitionManager::open_partition(&part_info.path)
+            .expect("Failed to open the parition");
+        let creds = HsmCredentials::new(&[1u8; 16], &[2u8; 16]);
+        let obk = [0x2Au8; 48];
+        part.init(
+            creds,
+            None,
+            None,
+            Some(&obk),
+            HsmOwnerBackupKeySource::Caller,
+        )
+        .expect("Partition init failed");
     }
 }
 

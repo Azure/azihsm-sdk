@@ -6,6 +6,7 @@
 //! This module provides core type definitions including key classes, key kinds,
 //! and elliptic curve identifiers that are shared between the library and native layers.
 
+use open_enum::open_enum;
 use zerocopy::*;
 
 /// Cryptographic key class.
@@ -108,4 +109,21 @@ pub enum HsmPartType {
 
     /// Physical hardware partition.
     Physical = 2,
+}
+
+/// Owner backup key source.
+///
+/// Specifies the source of the owner backup key (OBK) during partition initialization.
+#[repr(u32)]
+#[open_enum]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, IntoBytes, Immutable)]
+pub enum HsmOwnerBackupKeySource {
+    /// Caller provided backup key.
+    Caller = 1,
+
+    /// TPM-sealed backup key (retrieved from device and unsealed).
+    Tpm = 2,
+
+    /// Randomly generated backup key.
+    Random = 3,
 }

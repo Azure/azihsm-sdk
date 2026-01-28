@@ -110,7 +110,11 @@ class PartitionHandle
             std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
             std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
 
-            err = azihsm_part_init(handle_, &creds, nullptr, nullptr, nullptr);
+            azihsm_owner_backup_key_config backup_config{};
+            backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_RANDOM;
+            backup_config.owner_backup_key = nullptr;
+
+            err = azihsm_part_init(handle_, &creds, nullptr, nullptr, &backup_config);
             if (err != AZIHSM_STATUS_SUCCESS)
             {
                 azihsm_part_close(handle_);
