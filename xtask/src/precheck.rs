@@ -14,6 +14,7 @@ use crate::copyright;
 use crate::coverage;
 use crate::fmt;
 use crate::nextest;
+use crate::nextest_report;
 use crate::setup;
 use crate::Xtask;
 use crate::XtaskCtx;
@@ -41,6 +42,9 @@ struct Stage {
     /// Run nextest tests
     #[clap(long)]
     nextest: bool,
+    /// Run nextest-report
+    #[clap(long)]
+    nextest_report: bool,
     /// Run all checks (default if no specific checks are selected)
     #[clap(long)]
     all: bool,
@@ -85,6 +89,7 @@ impl Xtask for Precheck {
             clippy: true,
             coverage: false,
             nextest: true,
+            nextest_report: false,
             all: false,
         });
 
@@ -149,6 +154,7 @@ impl Xtask for Precheck {
                     package: None,
                     no_default_features: false,
                     filterset: None,
+                    profile: Some("ci-mock".to_string()),
                 };
                 nextest.run(ctx.clone())?;
 
@@ -160,6 +166,7 @@ impl Xtask for Precheck {
                         package: Some("azihsm_ddi".to_string()),
                         no_default_features: false,
                         filterset: None,
+                        profile: Some("ci-mock-table-4".to_string()),
                     };
                     nextest.run(ctx.clone())?;
 
@@ -169,6 +176,7 @@ impl Xtask for Precheck {
                         package: Some("azihsm_ddi".to_string()),
                         no_default_features: false,
                         filterset: None,
+                        profile: Some("ci-mock-table-64".to_string()),
                     };
                     nextest.run(ctx.clone())?;
                 }
@@ -178,6 +186,7 @@ impl Xtask for Precheck {
                     package: self.package,
                     no_default_features: false,
                     filterset: None,
+                    profile: None,
                 };
                 nextest.run(ctx.clone())?;
             }
@@ -186,7 +195,13 @@ impl Xtask for Precheck {
         // Run code coverage
         if stage.coverage || stage.all {
             let coverage = coverage::Coverage {};
-            coverage.run(ctx)?;
+            coverage.run(ctx.clone())?;
+        }
+
+        // Run nextest report
+        if stage.nextest_report || stage.all {
+            let nextest_report = nextest_report::NextestReport {};
+            nextest_report.run(ctx)?;
         }
 
         log::trace!("done precheck");

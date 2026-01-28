@@ -11,6 +11,7 @@ clap = { features = ["derive", "env"], workspace = true }
 env_logger.workspace = true
 glob = { workspace = true }
 is-terminal = { workspace = true }
+junit-parser.workspace = true
 log.workspace = true
 similar = { features = ["text"], workspace = true }
 xshell.workspace = true

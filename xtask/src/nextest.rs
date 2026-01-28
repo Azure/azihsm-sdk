@@ -31,6 +31,10 @@ pub struct Nextest {
     /// Test filterset (see https://nexte.st/docs/filtersets)
     #[clap(long, short = 'E')]
     pub filterset: Option<String>,
+
+    /// The nextest profile to use
+    #[clap(long)]
+    pub profile: Option<String>,
 }
 
 impl Xtask for Nextest {
@@ -64,6 +68,11 @@ impl Xtask for Nextest {
         if self.filterset.is_some() {
             command_args.push("--filterset");
             command_args.push(&filterset_val);
+        }
+        let profile_val = self.profile.clone().unwrap_or_default();
+        if self.profile.is_some() {
+            command_args.push("--profile");
+            command_args.push(&profile_val);
         }
 
         cmd!(
