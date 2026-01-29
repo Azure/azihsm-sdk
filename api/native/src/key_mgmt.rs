@@ -353,6 +353,7 @@ pub unsafe extern "C" fn azihsm_key_unmask(
         // Dispatch based on key kind
         let handle = match key_kind {
             AzihsmKeyKind::Aes => aes_unmask_key(&session, masked_key_buf)?,
+            AzihsmKeyKind::AesXts => aes_xts_unmask_key(&session, masked_key_buf)?,
             _ => Err(AzihsmStatus::UnsupportedKeyKind)?,
         };
 

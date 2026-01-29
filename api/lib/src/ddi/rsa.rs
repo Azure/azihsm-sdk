@@ -86,7 +86,7 @@ pub(crate) fn rsa_aes_unwrap_key(
     let handle = resp.data.key_id;
     let masked_key = resp.data.masked_key.as_slice();
     let dev_key_props = HsmMaskedKey::to_key_props(masked_key)?;
-    //check key properties before returning
+    // check key properties before returning
     if !key_props.validate_dev_props(&dev_key_props) {
         //delete key
         delete_key(&key.session(), handle)?;
@@ -245,6 +245,7 @@ impl TryFrom<HsmKeyKind> for DdiKeyClass {
     fn try_from(kind: HsmKeyKind) -> Result<Self, Self::Error> {
         match kind {
             HsmKeyKind::Aes => Ok(DdiKeyClass::Aes),
+            HsmKeyKind::AesXts => Ok(DdiKeyClass::AesXtsBulk),
             HsmKeyKind::Rsa => Ok(DdiKeyClass::Rsa),
             HsmKeyKind::Ecc => Ok(DdiKeyClass::Ecc),
             _ => Err(HsmError::UnsupportedKeyKind),
