@@ -13,6 +13,7 @@ use super::*;
 /// @param[in] dev_handle Handle to the HSM partition
 /// @param[in] api_rev Pointer to the API revision structure
 /// @param[in] creds Pointer to the application credentials
+/// @param[in] seed Pointer to the optional seed buffer
 /// @param[out] sess_handle Pointer to the session handle to be allocated
 ///
 /// @return `AzihsmError` indicating the result of the operation
@@ -30,6 +31,7 @@ pub unsafe extern "C" fn azihsm_sess_open(
     dev_handle: AzihsmHandle,
     api_rev: *const AzihsmApiRev,
     creds: *const AzihsmCredentials,
+    seed: *const AzihsmBuffer,
     sess_handle: *mut AzihsmHandle,
 ) -> AzihsmStatus {
     abi_boundary(|| {
@@ -37,12 +39,13 @@ pub unsafe extern "C" fn azihsm_sess_open(
 
         let api_rev = deref_ptr(api_rev)?;
         let credentials = deref_ptr(creds)?;
+        let seed_slice = buffer_to_optional_slice(seed)?;
 
         // Get the partition from the handle
         let partition = &api::HsmPartition::try_from(dev_handle)?;
 
         let session =
-            Box::new(partition.open_session(api_rev.into(), &credentials.into(), None)?);
+            Box::new(partition.open_session(api_rev.into(), &credentials.into(), seed_slice)?);
 
         let handle = HANDLE_TABLE.alloc_handle(HandleType::Session, session);
 

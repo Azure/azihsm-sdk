@@ -21,4 +21,5 @@ const azihsm_byte *azihsm_generate_key_report(
 
 **Returns**
 
- `AZIHSM_STATUS_OK` on success, error code otherwise
+ `AZIHSM_STATUS_SUCCESS` on success, error code otherwise
+ 

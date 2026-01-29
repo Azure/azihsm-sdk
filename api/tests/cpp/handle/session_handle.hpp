@@ -8,10 +8,7 @@
 #include <stdexcept>
 #include <string>
 
-#include "part_handle.hpp"
 #include "test_creds.hpp"
-
-static int SESSION_COUNT = 0;
 
 class SessionHandle
 {
@@ -23,17 +20,11 @@ class SessionHandle
         std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
         std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
 
-        auto err = azihsm_sess_open(part_handle, &api_rev, &creds, &handle_);
+        auto err = azihsm_sess_open(part_handle, &api_rev, &creds, nullptr, &handle_);
         if (err != AZIHSM_STATUS_SUCCESS)
         {
             throw std::runtime_error("Failed to open session. Error: " + std::to_string(err));
         }
-        ++SESSION_COUNT;
-        printf(
-            "[SessionHandle] Opened session handle %u (Total sessions: %d)\n",
-            handle_,
-            SESSION_COUNT
-        );
     }
 
     ~SessionHandle() noexcept
@@ -45,12 +36,6 @@ class SessionHandle
             {
                 printf("Warning: Failed to close session handle %u. Error: %d\n", handle_, err);
             }
-            --SESSION_COUNT;
-            printf(
-                "[SessionHandle] Closed session handle %u (Total sessions: %d)\n",
-                handle_,
-                SESSION_COUNT
-            );
         }
     }
 

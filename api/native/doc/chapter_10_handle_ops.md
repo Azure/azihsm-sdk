@@ -18,7 +18,7 @@ azihsm_status azihsm_free_handle(
 
 **Returns**
 
-`AZIHSM_STATUS_OK` on success, error code otherwise
+`AZIHSM_STATUS_SUCCESS` on success, error code otherwise
 
 **Description**
 

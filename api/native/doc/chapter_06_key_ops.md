@@ -24,7 +24,7 @@ azihsm_status azihsm_key_gen(
 
 **Returns**
 
-`AZIHSM_STATUS_OK` on success, error code otherwise
+`AZIHSM_STATUS_SUCCESS` on success, error code otherwise
 
 ## azihsm_key_gen_pair
 
@@ -54,7 +54,7 @@ azihsm_status azihsm_key_gen_pair(
 
 **Returns**
 
-`AZIHSM_STATUS_OK` on success, error code otherwise
+`AZIHSM_STATUS_SUCCESS` on success, error code otherwise
 
 ## azihsm_key_unwrap
 
@@ -84,7 +84,7 @@ azihsm_status azihsm_key_unwrap(
 
 **Returns**
 
-`AZIHSM_STATUS_OK` on success, error code otherwise
+`AZIHSM_STATUS_SUCCESS` on success, error code otherwise
 
 ## azihsm_key_derive
 
@@ -112,7 +112,7 @@ azihsm_status azihsm_key_derive(
 
 **Returns**
 
-`AZIHSM_STATUS_OK` on success, error code otherwise
+`AZIHSM_STATUS_SUCCESS` on success, error code otherwise
 
 ## azihsm_key_delete
 
@@ -132,7 +132,7 @@ azihsm_status azihsm_key_delete(
 
 **Returns**
 
-`AZIHSM_STATUS_OK` on success, error code otherwise
+`AZIHSM_STATUS_SUCCESS` on success, error code otherwise
 
 ## azihsm_key_get_prop
 
@@ -154,7 +154,7 @@ azihsm_status azihsm_key_get_prop(
 
 **Returns**
 
-`AZIHSM_STATUS_OK` on success, error code otherwise
+`AZIHSM_STATUS_SUCCESS` on success, error code otherwise
 
 ## azihsm_key_set_prop
 
@@ -178,4 +178,4 @@ azihsm_status azihsm_key_set_prop(
 
 **Returns**
 
-`AZIHSM_STATUS_OK` on success, error code otherwise
+`AZIHSM_STATUS_SUCCESS` on success, error code otherwise

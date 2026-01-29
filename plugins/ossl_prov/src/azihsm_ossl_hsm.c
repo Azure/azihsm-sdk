@@ -89,7 +89,7 @@ azihsm_status azihsm_open_device_and_session(azihsm_handle *device, azihsm_handl
         return status;
     }
 
-    status = azihsm_sess_open(*device, &api_rev, &creds, session);
+    status = azihsm_sess_open(*device, &api_rev, &creds, NULL, session);
 
     if (status != AZIHSM_STATUS_SUCCESS)
     {
