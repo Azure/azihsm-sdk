@@ -146,37 +146,8 @@ pub fn common_cleanup(
         );
     }
 
-    let mut cleanup_dev = ddi.open_dev(path).unwrap();
-    set_device_kind(&mut cleanup_dev);
-
-    let _ =
-        helper_common_establish_credential_no_unwrap(&mut cleanup_dev, TEST_CRED_ID, TEST_CRED_PIN);
-
-    let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
-        &cleanup_dev,
-        TEST_CRED_ID,
-        TEST_CRED_PIN,
-        TEST_SESSION_SEED,
-    );
-
-    let resp = helper_open_session(
-        &cleanup_dev,
-        None,
-        Some(DdiApiRev { major: 1, minor: 0 }),
-        encrypted_credential,
-        pub_key,
-    );
-    assert!(resp.is_ok(), "resp {:?}", resp);
-
-    let resp = resp.unwrap();
-
-    let sess_id = resp.data.sess_id;
-
-    let resp = helper_reset_function(
-        &cleanup_dev,
-        Some(sess_id),
-        Some(DdiApiRev { major: 1, minor: 0 }),
-    );
+    let cleanup_dev = ddi.open_dev(path).unwrap();
+    let resp = cleanup_dev.simulate_nssr_after_lm();
 
     assert!(resp.is_ok(), "resp {:?}", resp);
 }
