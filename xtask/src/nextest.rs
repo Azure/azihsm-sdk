@@ -77,7 +77,7 @@ impl Xtask for Nextest {
 
         cmd!(
             sh,
-            "cargo {rust_toolchain...} nextest run --no-fail-fast {command_args...} -- --skip integration::aes_cbc::"
+            "cargo {rust_toolchain...} nextest run --no-fail-fast {command_args...}"
         )
         .quiet()
         .run()?;

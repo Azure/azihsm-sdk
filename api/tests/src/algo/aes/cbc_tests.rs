@@ -168,16 +168,13 @@ fn run_cbc_roundtrip(
 ) {
     let key = aes_generate_key(key_bits, session);
 
-    let mut ciphertext = cbc_encrypt(&key, padding, iv, plaintext).expect("Failed to encrypt");
+    let ciphertext = cbc_encrypt(&key, padding, iv, plaintext).expect("Failed to encrypt");
     assert!(ciphertext.len().is_multiple_of(AES_CBC_BLOCK_SIZE));
     if !padding {
         assert_eq!(ciphertext.len(), plaintext.len());
     } else {
         assert!(ciphertext.len() >= plaintext.len());
     }
-
-    // DEBUG: intentionally induce failure by flipping a bit to see test failure
-    ciphertext[0] ^= 0x01;
 
     let decrypted = cbc_decrypt(&key, padding, iv, &ciphertext).expect("Failed to decrypt");
     assert_eq!(decrypted, plaintext);
