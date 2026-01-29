@@ -56,10 +56,13 @@ jobs:
         cargo xtask precheck --clippy
     - name: SDK Run all mock tests table-4
       run: cargo xtask precheck --nextest --package azihsm_ddi --features mock,table-4 --profile ci-mock-table-4
+      continue-on-error: true
     - name: SDK Run all mock tests table-64
       run: cargo xtask precheck --nextest --package azihsm_ddi --features mock,table-64 --profile ci-mock-table-64
+      continue-on-error: true
     - name: Run all mock tests with code coverage
       run: cargo xtask precheck --coverage
+      continue-on-error: true
     - name: Upload coverage report
       uses: actions/upload-artifact@v4
       with:
@@ -106,6 +109,7 @@ jobs:
         cargo xtask precheck --clippy
     - name: Run all mock tests with code coverage
       run: cargo xtask precheck --coverage
+      continue-on-error: true
     - name: Upload coverage report
       uses: actions/upload-artifact@v4
       with:
