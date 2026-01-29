@@ -54,6 +54,7 @@ set(SOURCE
     partition_tests.cpp 
     session_tests.cpp 
     handle_mgmt_tests.cpp
+    multi_process_tests.cpp
     algo/aes/cbc_enc_dec_tests.cpp
     algo/aes/xts_enc_dec_tests.cpp
     algo/aes/keygen_tests.cpp
