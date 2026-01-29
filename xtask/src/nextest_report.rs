@@ -16,7 +16,11 @@ pub struct NextestReport {
 
 impl Xtask for NextestReport {
     fn run(self, _ctx: XtaskCtx) -> anyhow::Result<()> {
+        #[cfg(target_os = "windows")]
+        let nextest_profiles = ["ci-mock"];
+        #[cfg(not(target_os = "windows"))]
         let nextest_profiles = ["ci-mock", "ci-mock-table-4", "ci-mock-table-64"];
+
         let mut test_suites_total = TestSuites::default();
 
         for profile in &nextest_profiles {
@@ -28,7 +32,7 @@ impl Xtask for NextestReport {
             // Parse the JUnit XML
             let test_suites = junit_parser::from_reader(xml_content.as_bytes())?;
 
-            // Add data from JUnit XML to culumative data structure
+            // Add data from JUnit XML to total data structure
             test_suites_total.tests += test_suites.tests;
             test_suites_total.failures += test_suites.failures;
             test_suites_total.skipped += test_suites.skipped;
