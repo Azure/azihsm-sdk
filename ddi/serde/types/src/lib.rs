@@ -33,7 +33,6 @@ mod reopen_session;
 mod rsa;
 mod sessctrl;
 mod set_sealed_bk3;
-mod test_ops;
 
 pub use aes::*;
 pub use attest_key::*;
@@ -70,7 +69,6 @@ pub use reopen_session::*;
 pub use rsa::*;
 pub use sessctrl::*;
 pub use set_sealed_bk3::*;
-pub use test_ops::*;
 
 /// Maximum key label length
 pub const DDI_MAX_KEY_LABEL_LENGTH: usize = 128;
@@ -178,10 +176,6 @@ pub enum DdiOp {
 
     /// Provision Part
     ProvisionPart = 1114,
-
-    // Test only opcodes below
-    /// Reset function to default state for testing
-    ResetFunction = 2001,
 }
 
 /// DDI status code enumeration

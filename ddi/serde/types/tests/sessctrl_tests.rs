@@ -54,10 +54,6 @@ fn test_ddiop_to_sessioncontrolkind() {
         Into::<SessionControlKind>::into(DdiOp::CloseSession),
         SessionControlKind::Close
     );
-    assert_eq!(
-        Into::<SessionControlKind>::into(DdiOp::ResetFunction),
-        SessionControlKind::Close
-    );
 
     assert_eq!(
         Into::<SessionControlKind>::into(DdiOp::Invalid),

@@ -221,11 +221,6 @@ impl Function {
         self.inner.write().generate_attestation_key()
     }
 
-    /// Reset the function to clean state, preserving sealed BK3
-    pub(crate) fn reset_function(&self) -> Result<(), ManticoreError> {
-        self.inner.write().reset_function_state()
-    }
-
     /// Init the BK3
     pub(crate) fn init_bk3(&self, bk3: [u8; BK3_SIZE_BYTES]) -> Result<Vec<u8>, ManticoreError> {
         self.inner.write().init_bk3(bk3)
@@ -1672,48 +1667,6 @@ mod tests {
             let result = function.close_user_session(session_id);
             assert!(result.is_err(), "result {:?}", result); // already closed by previous test
         }
-    }
-
-    #[test]
-    fn test_reset_function() {
-        let function = create_function(2);
-        let api_rev = function.get_api_rev_range().max;
-
-        let result = function.get_function_state().get_vault(DEFAULT_VAULT_ID);
-        assert!(result.is_ok());
-        let vault = result.unwrap();
-
-        helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
-        let session_result =
-            helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
-        let session_id = session_result.session_id;
-        let (_rsa_private_key, rsa_public_key) = generate_rsa(2048).unwrap();
-        let key1 = vault
-            .add_key(
-                Uuid::from_bytes(TEST_CRED_ID),
-                Kind::Rsa2kPublic,
-                Key::RsaPublic(rsa_public_key.clone()),
-                EntryFlags::default(),
-                0,
-            )
-            .unwrap();
-
-        assert_eq!(function.tables_max(), 2);
-        let old_session = vault.get_session_entry(session_id).unwrap();
-        assert_eq!(old_session.kind(), Kind::Session);
-        assert!(vault.get_key_entry(key1).is_ok());
-
-        let result = function.reset_function();
-        assert!(result.is_ok());
-        let result = function.get_function_state().get_vault(DEFAULT_VAULT_ID);
-        assert!(result.is_ok());
-        let vault = result.unwrap();
-
-        assert_eq!(function.tables_max(), 2);
-
-        let fetch_old_session = vault.get_session_entry(session_id);
-        assert!(fetch_old_session.is_err() || fetch_old_session.unwrap().kind() != Kind::Session);
-        assert!(vault.get_key_entry(key1).is_err());
     }
 
     #[test]

@@ -57,7 +57,7 @@ impl From<DdiOp> for SessionControlKind {
 
             DdiOp::OpenSession => SessionControlKind::Open,
 
-            DdiOp::CloseSession | DdiOp::ResetFunction => SessionControlKind::Close,
+            DdiOp::CloseSession => SessionControlKind::Close,
 
             _ => SessionControlKind::InSession,
         }
