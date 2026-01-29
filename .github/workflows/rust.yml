@@ -55,12 +55,15 @@ jobs:
         cargo clippy --version
         cargo xtask precheck --clippy
     - name: SDK Run all mock tests table-4
+      id: test-mock-table-4
       run: cargo xtask precheck --nextest --package azihsm_ddi --features mock,table-4 --profile ci-mock-table-4
       continue-on-error: true
     - name: SDK Run all mock tests table-64
+      id: test-mock-table-64
       run: cargo xtask precheck --nextest --package azihsm_ddi --features mock,table-64 --profile ci-mock-table-64
       continue-on-error: true
     - name: Run all mock tests with code coverage
+      id: test-mock-coverage
       run: cargo xtask precheck --coverage
       continue-on-error: true
     - name: Upload coverage report
@@ -70,6 +73,11 @@ jobs:
         path: ./target/reports/
     - name: Generate nextest report
       run: cargo xtask precheck --nextest-report
+    - name: Fail if any tests failed
+      if: ${{ steps.test-mock-coverage.outcome == 'failure' || steps.test-mock-table-4.outcome == 'failure' || steps.test-mock-table-64.outcome == 'failure' }}
+      run: |
+        echo "One or more tests failed."
+        exit 1
   
   build_windows:
 
@@ -108,6 +116,7 @@ jobs:
         cargo clippy --version
         cargo xtask precheck --clippy
     - name: Run all mock tests with code coverage
+      id: test-mock-coverage
       run: cargo xtask precheck --coverage
       continue-on-error: true
     - name: Upload coverage report
@@ -117,3 +126,8 @@ jobs:
         path: ./target/reports/
     - name: Generate nextest report
       run: cargo xtask precheck --nextest-report
+    - name: Fail if any tests failed
+      if: ${{ steps.test-mock-coverage.outcome == 'failure' }}
+      run: |
+        echo "One or more tests failed."
+        exit 1

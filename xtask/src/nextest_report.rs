@@ -16,9 +16,8 @@ pub struct NextestReport {
 
 impl Xtask for NextestReport {
     fn run(self, _ctx: XtaskCtx) -> anyhow::Result<()> {
-        #[cfg(target_os = "windows")]
-        let nextest_profiles = ["ci-mock"];
-        #[cfg(not(target_os = "windows"))]
+        log::trace!("running nextest-report");
+
         let nextest_profiles = ["ci-mock", "ci-mock-table-4", "ci-mock-table-64"];
 
         let mut test_suites_total = TestSuites::default();
@@ -26,17 +25,17 @@ impl Xtask for NextestReport {
         for profile in &nextest_profiles {
             let junit_path = PathBuf::from(format!("./target/nextest/{}/junit.xml", profile));
 
-            // Read the JUnit XML file
-            let xml_content = fs::read_to_string(&junit_path)?;
+            // Read the JUnit XML file (ignore if it doesn't exist)
+            if let Ok(xml_content) = fs::read_to_string(&junit_path) {
+                // Parse the JUnit XML
+                let test_suites = junit_parser::from_reader(xml_content.as_bytes())?;
 
-            // Parse the JUnit XML
-            let test_suites = junit_parser::from_reader(xml_content.as_bytes())?;
-
-            // Add data from JUnit XML to total data structure
-            test_suites_total.tests += test_suites.tests;
-            test_suites_total.failures += test_suites.failures;
-            test_suites_total.skipped += test_suites.skipped;
-            test_suites_total.suites.extend(test_suites.suites);
+                // Add data from JUnit XML to total data structure
+                test_suites_total.tests += test_suites.tests;
+                test_suites_total.failures += test_suites.failures;
+                test_suites_total.skipped += test_suites.skipped;
+                test_suites_total.suites.extend(test_suites.suites);
+            }
         }
 
         // Generate markdown report
@@ -75,12 +74,13 @@ impl Xtask for NextestReport {
         // Write to GITHUB_STEP_SUMMARY environment variable
         if let Ok(summary_path) = std::env::var("GITHUB_STEP_SUMMARY") {
             fs::write(&summary_path, &markdown)?;
-            println!("Report written to GITHUB_STEP_SUMMARY");
+            log::trace!("Report written to GITHUB_STEP_SUMMARY");
         } else {
             // If not in GitHub Actions, just print to stdout
             println!("{}", markdown);
         }
 
+        log::trace!("done nextest-report");
         Ok(())
     }
 }
