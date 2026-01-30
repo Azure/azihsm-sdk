@@ -498,7 +498,6 @@ static int azihsm_ossl_keymgmt_match(
 
 static void *azihsm_ossl_keymgmt_load(const void *reference, size_t reference_sz)
 {
-    AZIHSM_EC_KEY *src_key;
     AZIHSM_EC_KEY *dst_key;
 
     /* Validate reference size matches our key object */

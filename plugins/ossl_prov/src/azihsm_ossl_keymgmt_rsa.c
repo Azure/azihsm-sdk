@@ -1,4 +1,6 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
+#include <string.h>
+
 #include <openssl/core_dispatch.h>
 #include <openssl/core_names.h>
 #include <openssl/err.h>
@@ -249,6 +251,28 @@ static int azihsm_ossl_keymgmt_match(
     return 1;
 }
 
+static void *azihsm_ossl_keymgmt_load(const void *reference, size_t reference_sz)
+{
+    AZIHSM_RSA_KEY *dst_key;
+
+    if (reference == NULL || reference_sz != sizeof(AZIHSM_RSA_KEY))
+    {
+        ERR_raise(ERR_LIB_PROV, ERR_R_PASSED_NULL_PARAMETER);
+        return NULL;
+    }
+
+    dst_key = OPENSSL_zalloc(sizeof(AZIHSM_RSA_KEY));
+    if (dst_key == NULL)
+    {
+        ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
+        return NULL;
+    }
+
+    memcpy(dst_key, reference, sizeof(AZIHSM_RSA_KEY));
+
+    return dst_key;
+}
+
 static int azihsm_ossl_keymgmt_import(
     ossl_unused void *keydata,
     ossl_unused int selection,
@@ -324,6 +348,7 @@ const OSSL_DISPATCH azihsm_ossl_rsa_keymgmt_functions[] = {
     { OSSL_FUNC_KEYMGMT_GEN_SETTABLE_PARAMS,
       (void (*)(void))azihsm_ossl_keymgmt_gen_settable_params },
     { OSSL_FUNC_KEYMGMT_FREE, (void (*)(void))azihsm_ossl_keymgmt_free },
+    { OSSL_FUNC_KEYMGMT_LOAD, (void (*)(void))azihsm_ossl_keymgmt_load },
     { OSSL_FUNC_KEYMGMT_HAS, (void (*)(void))azihsm_ossl_keymgmt_has },
     { OSSL_FUNC_KEYMGMT_MATCH, (void (*)(void))azihsm_ossl_keymgmt_match },
     { OSSL_FUNC_KEYMGMT_IMPORT, (void (*)(void))azihsm_ossl_keymgmt_import },
@@ -343,6 +368,7 @@ const OSSL_DISPATCH azihsm_ossl_rsa_pss_keymgmt_functions[] = {
     { OSSL_FUNC_KEYMGMT_GEN_SETTABLE_PARAMS,
       (void (*)(void))azihsm_ossl_keymgmt_gen_settable_params },
     { OSSL_FUNC_KEYMGMT_FREE, (void (*)(void))azihsm_ossl_keymgmt_free },
+    { OSSL_FUNC_KEYMGMT_LOAD, (void (*)(void))azihsm_ossl_keymgmt_load },
     { OSSL_FUNC_KEYMGMT_HAS, (void (*)(void))azihsm_ossl_keymgmt_has },
     { OSSL_FUNC_KEYMGMT_MATCH, (void (*)(void))azihsm_ossl_keymgmt_match },
     { OSSL_FUNC_KEYMGMT_IMPORT, (void (*)(void))azihsm_ossl_keymgmt_import },

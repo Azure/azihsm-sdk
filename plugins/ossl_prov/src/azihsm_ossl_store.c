@@ -94,8 +94,6 @@ static int parse_key_kind(const char *kind_str)
         return AZIHSM_KEY_KIND_ECC;
     else if (strcasecmp(kind_str, "rsa") == 0)
         return AZIHSM_KEY_KIND_RSA;
-    else if (strcasecmp(kind_str, "aes") == 0)
-        return 3; // AZIHSM_KEY_KIND_AES
 
     return -1;
 }
