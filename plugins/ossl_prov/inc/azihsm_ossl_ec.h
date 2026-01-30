@@ -43,6 +43,7 @@ typedef struct
     azihsm_handle session;
     bool session_flag;
     char masked_key_file[4096];
+    char input_key_file[4096];
 } AIHSM_EC_GEN_CTX;
 
 typedef struct
