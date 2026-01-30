@@ -38,6 +38,9 @@ impl<'a> TryFrom<&'a AzihsmOwnerBackupKeyConfig> for api::HsmOwnerBackupKeyConfi
                 Ok(api::HsmOwnerBackupKeyConfig::new(source, Some(obk)))
             }
             api::HsmOwnerBackupKeySource::Tpm | api::HsmOwnerBackupKeySource::Random => {
+                if !config.owner_backup_key.is_null() {
+                    return Err(AzihsmStatus::InvalidArgument);
+                }
                 Ok(api::HsmOwnerBackupKeyConfig::new(source, None))
             }
             _ => Err(AzihsmStatus::InvalidArgument),
