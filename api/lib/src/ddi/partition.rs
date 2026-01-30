@@ -25,8 +25,7 @@ use super::*;
 /// * `creds` - Application credentials (ID and PIN)
 /// * `bmk` - Optional backup masking key
 /// * `muk` - Optional masked unwrapping key
-/// * `obk` - Optional owner backup key (OBK/BK3)
-/// * `obk_source` - Source of the OBK
+/// * `obk_config` - Owner backup key (OBK/BK3) source and optional OBK
 ///
 /// # Errors
 ///
@@ -37,20 +36,20 @@ use super::*;
 /// - The API revision is not supported
 /// - Device communication fails
 /// - The DDI operation returns an error
-/// - TPM unsealing fails (when obk_source is TPM)
+/// - TPM unsealing fails (when obk_config source is TPM)
+/// - OBK is missing when obk_config source is Caller
 pub(crate) fn init_part(
     dev: &HsmDev,
     rev: HsmApiRev,
     creds: HsmCredentials,
     bmk: Option<&[u8]>,
     muk: Option<&[u8]>,
-    obk: Option<&[u8]>,
-    obk_source: HsmOwnerBackupKeySource,
+    obk_config: HsmOwnerBackupKeyConfig<'_>,
 ) -> HsmResult<(Vec<u8>, Vec<u8>)> {
-    let mobk = match obk_source {
+    let mobk = match obk_config.key_source() {
         HsmOwnerBackupKeySource::Caller => {
             // Caller provided the OBK
-            let obk = obk.ok_or(HsmError::InvalidArgument)?;
+            let obk = obk_config.key().ok_or(HsmError::InvalidArgument)?;
             init_bk3(dev, rev, Some(obk))?
         }
         HsmOwnerBackupKeySource::Tpm => {

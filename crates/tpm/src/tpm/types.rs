@@ -596,6 +596,37 @@ impl UnsealResponse {
     }
 }
 
+// TPM2_FlushContext ------------------------------------------------------
+define_handle_struct!(FlushContextCommandHandles { flush_handle });
+
+#[derive(Debug, Clone, Default)]
+pub struct FlushContextCommandParameters;
+
+impl TpmMarshal for FlushContextCommandParameters {
+    fn marshal(&self, _buf: &mut Vec<u8>) {}
+}
+
+#[derive(Debug, Clone)]
+pub struct FlushContextCommand {
+    pub header: TpmCommandHeader,
+    pub handles: FlushContextCommandHandles,
+    pub parameters: FlushContextCommandParameters,
+}
+
+impl FlushContextCommand {
+    pub fn new(flush_handle: u32) -> Self {
+        Self {
+            header: TpmCommandHeader::no_sessions(TpmCommandCode::FlushContext),
+            handles: FlushContextCommandHandles { flush_handle },
+            parameters: FlushContextCommandParameters,
+        }
+    }
+
+    pub fn handle_values(&self) -> [u32; 1] {
+        self.handles.to_array()
+    }
+}
+
 // TPM2_Create (Seal) ----------------------------------------------------
 define_handle_struct!(CreateCommandHandles { parent_handle });
 

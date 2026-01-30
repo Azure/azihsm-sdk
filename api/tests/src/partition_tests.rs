@@ -77,7 +77,8 @@ fn test_partition_init() {
         part.reset().expect("Partition reset failed");
         //init with dummy creds
         let creds = HsmCredentials::new(&[1u8; 16], &[2u8; 16]);
-        part.init(creds, None, None, None, HsmOwnerBackupKeySource::Random)
+        let obk_info = HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Random, None);
+        part.init(creds, None, None, obk_info)
             .expect("Partition init failed");
     }
 }
@@ -91,14 +92,9 @@ fn test_partition_init_caller_obk() {
             .expect("Failed to open the parition");
         let creds = HsmCredentials::new(&[1u8; 16], &[2u8; 16]);
         let obk = [0x2Au8; 48];
-        part.init(
-            creds,
-            None,
-            None,
-            Some(&obk),
-            HsmOwnerBackupKeySource::Caller,
-        )
-        .expect("Partition init failed");
+        let obk_info = HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Caller, Some(&obk));
+        part.init(creds, None, None, obk_info)
+            .expect("Partition init failed");
     }
 }
 

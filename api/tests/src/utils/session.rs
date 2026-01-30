@@ -48,7 +48,8 @@ where
         //init with test creds
         let creds = HsmCredentials::new(&[1u8; 16], &[2u8; 16]);
         let rev = part.api_rev_range().max();
-        part.init(creds, None, None, None, HsmOwnerBackupKeySource::Random)
+        let obk_info = HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Random, None);
+        part.init(creds, None, None, obk_info)
             .expect("Partition init failed");
         let mut session = part
             .open_session(rev, &creds, None)

@@ -4,8 +4,7 @@
 use std::io;
 
 use crate::tpm::device::RawTpm;
-use crate::tpm::helpers::build_command_pw_sessions;
-use crate::tpm::helpers::parse_tpm_rc_with_cmd;
+use crate::tpm::helpers::*;
 use crate::tpm::types::command_prelude::*;
 use crate::tpm::types::Tpm2b;
 use crate::tpm::types::TpmsSensitiveCreate;
@@ -59,6 +58,8 @@ pub trait TpmCommandExt: RawTpm {
         public_template: Tpm2bPublic,
         pcrs: &[u32],
     ) -> io::Result<SealedObject>;
+
+    fn flush_context(&self, handle: u32) -> io::Result<()>;
 }
 
 impl<T: RawTpm> TpmCommandExt for T {
@@ -324,6 +325,22 @@ impl<T: RawTpm> TpmCommandExt for T {
             creation_hash: parsed.parameters.creation_hash.0,
             creation_ticket: parsed.parameters.creation_ticket,
         })
+    }
+
+    /// Flushes a transient or loaded object handle from the TPM.
+    ///
+    /// This should be called on any handles returned by `create_primary`, `load`, or other
+    /// commands that create transient objects to avoid exhausting TPM handle slots.
+    fn flush_context(&self, handle: u32) -> io::Result<()> {
+        let cmd_body = FlushContextCommand::new(handle);
+        let handles = cmd_body.handle_values();
+        let cmd = build_command_no_sessions(TpmCommandCode::FlushContext, &handles, |b| {
+            cmd_body.parameters.marshal(b);
+        });
+
+        let resp = self.transmit_raw(&cmd)?;
+        parse_tpm_rc_with_cmd(&resp, TpmCommandCode::FlushContext)?;
+        Ok(())
     }
 }
 

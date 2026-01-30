@@ -114,6 +114,52 @@ impl HsmCredentials {
     }
 }
 
+/// Owner backup key config (OBK/BK3) containing source and optional OBK.
+#[derive(Debug, Clone)]
+pub struct HsmOwnerBackupKeyConfig<'a> {
+    /// Source of the OBK
+    key_source: HsmOwnerBackupKeySource,
+    /// Optional OBK (required when source is Caller, ignored otherwise)
+    key: Option<&'a [u8]>,
+}
+
+impl<'a> HsmOwnerBackupKeyConfig<'a> {
+    /// Creates a new owner backup key config instance.
+    ///
+    /// # Arguments
+    ///
+    /// * `source` - Source of the OBK
+    /// * `obk` - OBK data provided by the caller
+    ///
+    /// # Returns
+    ///
+    /// A new `HsmOwnerBackupKeyConfig` instance with the specified source and optional key.
+    pub fn new(source: HsmOwnerBackupKeySource, obk: Option<&'a [u8]>) -> Self {
+        Self {
+            key_source: source,
+            key: obk,
+        }
+    }
+
+    /// Returns the owner backup key source.
+    ///
+    /// # Returns
+    ///
+    /// The source of the owner backup key.
+    pub fn key_source(&self) -> HsmOwnerBackupKeySource {
+        self.key_source
+    }
+
+    /// Returns the owner backup key.
+    ///
+    /// # Returns
+    ///
+    /// Optional reference to the OBK.
+    pub fn key(&self) -> Option<&'a [u8]> {
+        self.key
+    }
+}
+
 /// HSM partition manager.
 ///
 /// Provides operations for discovering and opening HSM partitions.
@@ -229,8 +275,7 @@ impl HsmPartition {
     /// * `creds` - Application credentials (ID and PIN)
     /// * `bmk` - Optional backup masking key
     /// * `muk` - Optional masked unwrapping key
-    /// * `obk` - Optional owner backup key
-    /// * `obk_source` - Source of the owner backup key
+    /// * `obk_config` - Owner backup key (OBK/BK3) source and optional OBK
     ///
     /// # Errors
     ///
@@ -238,25 +283,17 @@ impl HsmPartition {
     /// - Credentials are invalid
     /// - API revision retrieval fails
     /// - Partition initialization fails
+    /// - OBK is missing when obk_info source is Caller
     #[instrument(skip_all,  fields(path = self.path().as_str()), err)]
     pub fn init(
         &self,
         creds: HsmCredentials,
         bmk: Option<&[u8]>,
         muk: Option<&[u8]>,
-        obk: Option<&[u8]>,
-        obk_source: HsmOwnerBackupKeySource,
+        obk_config: HsmOwnerBackupKeyConfig<'_>,
     ) -> HsmResult<()> {
         let (bmk, mobk) = self.with_dev(|dev| {
-            ddi::init_part(
-                dev,
-                self.api_rev_range().min(),
-                creds,
-                bmk,
-                muk,
-                obk,
-                obk_source,
-            )
+            ddi::init_part(dev, self.api_rev_range().min(), creds, bmk, muk, obk_config)
         })?;
         self.inner().write().set_masked_keys(bmk, mobk);
         Ok(())

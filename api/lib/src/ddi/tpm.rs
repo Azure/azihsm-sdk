@@ -186,12 +186,25 @@ impl TpmBk3Unsealer {
         let loaded = self
             .tpm
             .load(primary.handle, &policy.0, private_blob, public_blob)
-            .map_err(|_| HsmError::InternalError)?;
+            .map_err(|_| {
+                // Best-effort flush of the primary handle if load fails
+                let _ = self.tpm.flush_context(primary.handle);
+                HsmError::InternalError
+            })?;
 
         // Unseal data
-        self.tpm
-            .unseal(loaded.handle, &policy.0)
-            .map_err(|_| HsmError::InternalError)
+        let unsealed = self.tpm.unseal(loaded.handle, &policy.0).map_err(|_| {
+            // Best-effort flush of both handles if unseal fails
+            let _ = self.tpm.flush_context(loaded.handle);
+            let _ = self.tpm.flush_context(primary.handle);
+            HsmError::InternalError
+        })?;
+
+        // Best-effort flush of both handles after successful unseal
+        let _ = self.tpm.flush_context(loaded.handle);
+        let _ = self.tpm.flush_context(primary.handle);
+
+        Ok(unsealed)
     }
 
     /// Creates a TPM NULL hierarchy primary key for unsealing.
@@ -258,11 +271,14 @@ impl TpmBk3Unsealer {
             return Err(HsmError::InvalidArgument);
         }
 
-        // Verify padding bytes
+        // Verify padding bytes in (content) constant time
+        let mut mismatch: u8 = 0;
         for i in 0..pad_len {
-            if padded[padded.len() - 1 - i] != pad_len as u8 {
-                return Err(HsmError::InvalidArgument);
-            }
+            let byte = padded[padded.len() - 1 - i];
+            mismatch |= byte ^ (pad_len as u8);
+        }
+        if mismatch != 0 {
+            return Err(HsmError::InvalidArgument);
         }
 
         Ok(padded[..padded.len() - pad_len].to_vec())

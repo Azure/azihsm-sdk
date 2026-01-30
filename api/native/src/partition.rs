@@ -21,27 +21,26 @@ pub struct AzihsmOwnerBackupKeyConfig {
     pub owner_backup_key: *const AzihsmBuffer,
 }
 
-/// Helper to extract owner backup key buffer from AzihsmOwnerBackupKeyConfig
-#[allow(unsafe_code)]
-fn extract_owner_backup_key_from_config<'a>(
-    obk_config: &AzihsmOwnerBackupKeyConfig,
-) -> Result<Option<&'a [u8]>, AzihsmStatus> {
-    match obk_config.source {
-        AzihsmOwnerBackupKeySource::Caller => {
-            let slice = buffer_to_optional_slice(obk_config.owner_backup_key)?;
-            let slice = slice.ok_or(AzihsmStatus::InvalidArgument)?;
-            if slice.is_empty() {
-                return Err(AzihsmStatus::InvalidArgument);
+/// Convert AzihsmOwnerBackupKeyConfig to HsmOwnerBackupKeyConfig
+impl<'a> TryFrom<&'a AzihsmOwnerBackupKeyConfig> for api::HsmOwnerBackupKeyConfig<'a> {
+    type Error = AzihsmStatus;
+
+    fn try_from(config: &'a AzihsmOwnerBackupKeyConfig) -> Result<Self, Self::Error> {
+        let source: api::HsmOwnerBackupKeySource = config.source.into();
+
+        match source {
+            api::HsmOwnerBackupKeySource::Caller => {
+                let slice = buffer_to_optional_slice(config.owner_backup_key)?;
+                let obk = slice.ok_or(AzihsmStatus::InvalidArgument)?;
+                if obk.is_empty() {
+                    return Err(AzihsmStatus::InvalidArgument);
+                }
+                Ok(api::HsmOwnerBackupKeyConfig::new(source, Some(obk)))
             }
-            Ok(Some(slice))
-        }
-        AzihsmOwnerBackupKeySource::Random | AzihsmOwnerBackupKeySource::Tpm => {
-            // No caller-provided key
-            Ok(None)
-        }
-        _ => {
-            // Unknown backup key source
-            Err(AzihsmStatus::InvalidArgument)
+            api::HsmOwnerBackupKeySource::Tpm | api::HsmOwnerBackupKeySource::Random => {
+                Ok(api::HsmOwnerBackupKeyConfig::new(source, None))
+            }
+            _ => Err(AzihsmStatus::InvalidArgument),
         }
     }
 }
@@ -253,15 +252,11 @@ pub unsafe extern "C" fn azihsm_part_init(
         // Convert optional buffers to Option<&[u8]>
         let bmk_slice = buffer_to_optional_slice(bmk)?;
         let muk_slice = buffer_to_optional_slice(muk)?;
-        let obk_slice = extract_owner_backup_key_from_config(obk_config)?;
 
-        partition.init(
-            creds.into(),
-            bmk_slice,
-            muk_slice,
-            obk_slice,
-            obk_config.source.into(),
-        )?;
+        // Convert config to HsmOwnerBackupKeyConfig
+        let obk_info = api::HsmOwnerBackupKeyConfig::try_from(obk_config)?;
+
+        partition.init(creds.into(), bmk_slice, muk_slice, obk_info)?;
 
         Ok(())
     })
