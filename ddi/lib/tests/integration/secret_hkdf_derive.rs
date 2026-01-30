@@ -37,6 +37,7 @@ fn test_secret_hkdf_no_session() {
                 key_type,
                 key_tag,
                 key_properties,
+                Default::default(),
             );
 
             assert!(resp.is_err(), "resp {:?}", resp);
@@ -76,6 +77,7 @@ fn test_secret_hkdf_invalid_session() {
                 key_type,
                 key_tag,
                 key_properties,
+                Default::default(),
             );
 
             assert!(resp.is_err(), "resp {:?}", resp);
@@ -128,6 +130,7 @@ fn test_secret_hkdf_invalid_input_key_type() {
                 key_type,
                 key_tag,
                 key_properties,
+                Default::default(),
             );
 
             assert!(resp.is_err(), "resp {:?}", resp);
@@ -169,6 +172,7 @@ fn test_secret_hkdf_invalid_output_key_type() {
                 key_type,
                 key_tag,
                 key_properties,
+                Default::default(),
             );
 
             assert!(resp.is_err(), "resp {:?}", resp);
@@ -209,6 +213,7 @@ fn test_secret_hkdf_invalid_secret521_output_key_type() {
                 key_type,
                 key_tag,
                 key_properties,
+                Default::default(),
             );
             assert!(resp.is_err(), "resp {:?}", resp);
             assert!(matches!(
@@ -247,6 +252,7 @@ fn test_secret_hkdf_invalid_output_key_usage() {
                 key_type,
                 key_tag,
                 key_properties,
+                Default::default(),
             );
 
             assert!(resp.is_err(), "resp {:?}", resp);
@@ -297,6 +303,7 @@ fn test_secret_hkdf_different_info_len() {
                 key_type,
                 key_tag,
                 key_properties,
+                Default::default(),
             );
 
             assert!(resp.is_ok(), "resp {:?}", resp);
@@ -323,6 +330,7 @@ fn test_secret_hkdf_different_info_len() {
                 key_type,
                 key_tag,
                 key_properties,
+                Default::default(),
             );
 
             assert!(resp.is_ok(), "resp {:?}", resp);
@@ -422,6 +430,7 @@ fn test_secret_hkdf_helper(
         key_type,
         key_tag,
         key_properties,
+        Default::default(),
     );
 
     assert!(resp.is_ok(), "resp {:?}", resp);
@@ -440,6 +449,7 @@ fn test_secret_hkdf_helper(
         key_type,
         None,
         key_properties,
+        Default::default(),
     );
 
     assert!(resp.is_ok(), "resp {:?}", resp);
@@ -691,6 +701,7 @@ fn test_secret_hkdf_aes_gcm_helper(
         key_type,
         key_tag,
         key_properties,
+        Default::default(),
     );
 
     assert!(resp.is_ok(), "resp {:?}", resp);
@@ -708,6 +719,7 @@ fn test_secret_hkdf_aes_gcm_helper(
         key_type,
         None,
         key_properties,
+        Default::default(),
     );
 
     assert!(resp.is_ok(), "resp {:?}", resp);
@@ -800,6 +812,7 @@ fn test_secret_hkdf_aes_xts_helper(
         key_type,
         key_tag,
         key_properties,
+        Default::default(),
     );
 
     assert!(resp.is_ok(), "resp {:?}", resp);
@@ -816,6 +829,7 @@ fn test_secret_hkdf_aes_xts_helper(
         key_type,
         key_tag,
         key_properties,
+        Default::default(),
     );
 
     assert!(resp.is_ok(), "resp {:?}", resp);
@@ -834,6 +848,7 @@ fn test_secret_hkdf_aes_xts_helper(
         key_type,
         key_tag,
         key_properties,
+        Default::default(),
     );
 
     assert!(resp.is_ok(), "resp {:?}", resp);
@@ -850,6 +865,7 @@ fn test_secret_hkdf_aes_xts_helper(
         key_type,
         None,
         key_properties,
+        Default::default(),
     );
 
     assert!(resp.is_ok(), "resp {:?}", resp);
@@ -1223,6 +1239,7 @@ fn test_secret_hkdf_aes_hmac_helper(
         aes_key_type,
         None,
         key_properties,
+        Default::default(),
     );
 
     assert!(resp.is_ok(), "resp {:?}", resp);
@@ -1241,6 +1258,7 @@ fn test_secret_hkdf_aes_hmac_helper(
         aes_key_type,
         None,
         key_properties,
+        Default::default(),
     );
     assert!(resp.is_ok(), "resp {:?}", resp);
     let aes_key_id2 = resp.unwrap().data.key_id;
@@ -1260,6 +1278,7 @@ fn test_secret_hkdf_aes_hmac_helper(
         hmac_key_type,
         None,
         key_properties,
+        Default::default(),
     );
 
     assert!(resp.is_ok(), "resp {:?}", resp);
@@ -1281,6 +1300,7 @@ fn test_secret_hkdf_aes_hmac_helper(
         hmac_key_type,
         None,
         key_properties,
+        Default::default(),
     );
 
     assert!(resp.is_ok(), "resp {:?}", resp);
@@ -1520,6 +1540,7 @@ fn test_secret_hkdf_and_unmask() {
                 key_type,
                 key_tag,
                 key_properties,
+                Default::default(),
             );
 
             assert!(resp.is_ok(), "resp {:?}", resp);
@@ -1549,6 +1570,7 @@ fn test_secret_hkdf_and_unmask() {
                 key_type,
                 None,
                 key_properties,
+                Default::default(),
             );
 
             assert!(resp.is_ok(), "resp {:?}", resp);
@@ -1750,6 +1772,7 @@ fn test_secret_hkdf_and_unmask_ecdh_key() {
             key_type,
             key_tag,
             key_properties,
+            Default::default(),
         );
 
         assert!(resp.is_ok(), "resp {:?}", resp);
@@ -1768,6 +1791,7 @@ fn test_secret_hkdf_and_unmask_ecdh_key() {
             key_type,
             None,
             key_properties,
+            Default::default(),
         );
 
         assert!(resp.is_ok(), "resp {:?}", resp);

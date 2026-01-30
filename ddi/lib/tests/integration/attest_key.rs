@@ -570,7 +570,7 @@ fn test_attest_hmac_key() {
                 return;
             }
 
-            let hmac_key_id = create_hmac_key(session_id, DdiKeyType::HmacSha384, dev);
+            let hmac_key_id = create_hmac_key(session_id, DdiKeyType::HmacSha384, dev, None);
 
             // Hmac operation
             let resp = helper_hmac(

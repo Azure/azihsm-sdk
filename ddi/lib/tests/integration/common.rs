@@ -1034,11 +1034,12 @@ pub fn create_ecdh_secrets(
 
 // Uses Ecc generate, ECDH, KDF to create an HMAC key
 #[allow(dead_code)]
-pub fn create_hmac_key(
+pub fn create_hmac_key_ex(
     sess_id: u16,
     target_key_type: DdiKeyType,
     dev: &mut <DdiTest as Ddi>::Dev,
-) -> u16 {
+    target_key_len: Option<u8>,
+) -> Result<DdiHkdfDeriveCmdResp, DdiError> {
     // Generate ECC Key Pair 1
 
     let key_props = helper_key_properties(DdiKeyUsage::Derive, DdiKeyAvailability::App);
@@ -1096,7 +1097,7 @@ pub fn create_hmac_key(
     // Use HKDF to derive HMAC key
     let key_props = helper_key_properties(DdiKeyUsage::SignVerify, DdiKeyAvailability::Session);
 
-    let resp = helper_hkdf_derive(
+    helper_hkdf_derive(
         dev,
         Some(sess_id),
         Some(DdiApiRev { major: 1, minor: 0 }),
@@ -1107,7 +1108,19 @@ pub fn create_hmac_key(
         target_key_type,
         None,
         key_props,
-    );
+        target_key_len,
+    )
+}
+
+// Uses Ecc generate, ECDH, KDF to create an HMAC key
+#[allow(dead_code)]
+pub fn create_hmac_key(
+    sess_id: u16,
+    target_key_type: DdiKeyType,
+    dev: &mut <DdiTest as Ddi>::Dev,
+    target_key_len: Option<u8>,
+) -> u16 {
+    let resp = create_hmac_key_ex(sess_id, target_key_type, dev, target_key_len);
 
     assert!(resp.is_ok(), "resp {:?}", resp);
     resp.unwrap().data.key_id

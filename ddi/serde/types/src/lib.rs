@@ -933,6 +933,15 @@ pub enum DdiKeyType {
 
     /// KBKDF-SHA384 Secret key
     KbKdfSecretSha384 = 29,
+
+    /// HMAC 256 Key with variable length
+    VarHmac256 = 30,
+
+    /// HMAC 384 Key with variable length
+    VarHmac384 = 31,
+
+    /// HMAC 512 Key with variable length
+    VarHmac512 = 32,
 }
 
 /// DDI Session Kind Enumeration

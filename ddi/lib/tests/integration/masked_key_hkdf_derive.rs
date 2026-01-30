@@ -345,6 +345,7 @@ fn test_secret_hkdf_helper(
         key_type,
         key_tag,
         key_properties,
+        Default::default(),
     );
 
     assert!(resp.is_ok(), "resp {:?}", resp);
@@ -376,6 +377,7 @@ fn test_secret_hkdf_helper(
         key_type,
         None,
         key_properties,
+        Default::default(),
     );
 
     assert!(resp.is_ok(), "resp {:?}", resp);
@@ -457,6 +459,7 @@ fn test_secret_hkdf_aes_gcm_helper(
         key_type,
         key_tag,
         key_properties,
+        Default::default(),
     );
 
     assert!(resp.is_ok(), "resp {:?}", resp);
@@ -489,6 +492,7 @@ fn test_secret_hkdf_aes_gcm_helper(
         key_type,
         None,
         key_properties,
+        Default::default(),
     );
 
     assert!(resp.is_ok(), "resp {:?}", resp);

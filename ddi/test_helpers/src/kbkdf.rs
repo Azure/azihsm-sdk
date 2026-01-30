@@ -15,6 +15,7 @@ pub fn helper_kbkdf_derive(
     key_type: DdiKeyType,
     key_tag: Option<u16>,
     key_properties: DdiKeyProperties,
+    key_length: Option<u8>,
 ) -> Result<DdiKbkdfCounterHmacDeriveCmdResp, DdiError> {
     let req = DdiKbkdfCounterHmacDeriveCmdReq {
         hdr: DdiReqHdr {
@@ -32,6 +33,7 @@ pub fn helper_kbkdf_derive(
             key_properties: key_properties
                 .try_into()
                 .map_err(|_| DdiError::InvalidParameter)?,
+            key_length,
         },
         ext: None,
     };

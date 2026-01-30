@@ -216,6 +216,7 @@ impl LMKeyDerive {
         key_label: &[u8],
         metadata_len: &mut usize,
         encoded_metadata: &mut [u8],
+        key_length: u16,
     ) -> Result<(), ManticoreError> {
         // Mbor encode the metadata.
         let metadata = DdiMaskedKeyMetadata {
@@ -226,6 +227,7 @@ impl LMKeyDerive {
             key_tag,
             key_label: MborByteArray::<128>::from_slice(key_label)
                 .map_err(|_| ManticoreError::MborEncodeFailed)?,
+            key_length,
         };
 
         let mut accumulator = MborLenAccumulator::default();
@@ -570,6 +572,7 @@ mod tests {
     use super::*;
     use crate::crypto::sha::sha;
     use crate::crypto::sha::HashAlgorithm;
+    use crate::table::entry::Kind;
 
     const TEST_BKS1: [u8; BK_SEED_SIZE_BYTES] = [0x01; BK_SEED_SIZE_BYTES];
     const TEST_BKS2: [u8; BK_SEED_SIZE_BYTES] = [0x02; BK_SEED_SIZE_BYTES];
@@ -981,6 +984,7 @@ mod tests {
             b"Test BMK",
             &mut metadata.len(),
             &mut metadata,
+            bk_len as u16,
         );
         assert!(result.is_ok(), "Metadata encoding should succeed");
 
@@ -1038,6 +1042,7 @@ mod tests {
             b"Test BMK",
             &mut metadata.len(),
             &mut metadata,
+            bk.len() as u16,
         );
         assert!(result.is_ok(), "Metadata encoding should succeed");
 
@@ -1074,6 +1079,7 @@ mod tests {
             b"Test BMK",
             &mut metadata.len(),
             &mut metadata,
+            bk_short.len() as u16,
         );
         assert!(result.is_ok(), "Metadata encoding should succeed");
 
@@ -1123,6 +1129,7 @@ mod tests {
             b"Test BMK",
             &mut metadata.len(),
             &mut metadata,
+            bk_len as u16,
         );
         assert!(result.is_ok(), "Metadata encoding should succeed");
 
@@ -1207,6 +1214,7 @@ mod tests {
             b"Test BMK",
             &mut metadata.len(),
             &mut metadata,
+            bk_len as u16,
         );
         assert!(result.is_ok(), "Metadata encoding should succeed");
 
@@ -1290,6 +1298,7 @@ mod tests {
             b"Test BMK",
             &mut metadata.len(),
             &mut metadata,
+            bk_len as u16,
         );
         assert!(result.is_ok(), "Metadata encoding should succeed");
 
@@ -1446,6 +1455,7 @@ mod tests {
             b"Test BK3",
             &mut metadata.len(),
             &mut metadata,
+            TEST_BK3.len() as u16,
         );
         assert!(result.is_ok(), "Metadata encoding should succeed");
 
@@ -1483,6 +1493,7 @@ mod tests {
             b"Test BK3",
             &mut metadata.len(),
             &mut metadata,
+            TEST_BK3.len() as u16,
         );
         assert!(result.is_ok(), "Metadata encoding should succeed");
 
@@ -1540,6 +1551,7 @@ mod tests {
             b"Test BK3",
             &mut metadata.len(),
             &mut metadata,
+            TEST_BK3.len() as u16,
         );
         assert!(result.is_ok(), "Metadata encoding should succeed");
 
@@ -1576,6 +1588,7 @@ mod tests {
             b"Test BK3",
             &mut metadata.len(),
             &mut metadata,
+            empty_bk3.len() as u16,
         );
         assert!(result.is_ok(), "Metadata encoding should succeed");
 
@@ -1614,6 +1627,7 @@ mod tests {
             b"Test BK3",
             &mut metadata.len(),
             &mut metadata,
+            TEST_BK3.len() as u16,
         );
         assert!(result.is_ok(), "Metadata encoding should succeed");
 
@@ -1649,6 +1663,7 @@ mod tests {
             b"Test EMPHK",
             &mut metadata.len(),
             &mut metadata,
+            EMPH_MK_AES_CBC_256_HMAC384_SIZE_BYTES as u16,
         );
         assert!(result.is_ok(), "Metadata encoding should succeed");
 
@@ -1688,6 +1703,7 @@ mod tests {
             b"Test EMPHK",
             &mut metadata.len(),
             &mut metadata,
+            EMPH_MK_AES_CBC_256_HMAC384_SIZE_BYTES as u16,
         );
         assert!(result.is_ok(), "Metadata encoding should succeed");
 
@@ -1744,6 +1760,7 @@ mod tests {
             b"Test EMPHK",
             &mut metadata.len(),
             &mut metadata,
+            EMPH_MK_AES_CBC_256_HMAC384_SIZE_BYTES as u16,
         );
         assert!(result.is_ok(), "Metadata encoding should succeed");
 
@@ -1782,6 +1799,7 @@ mod tests {
             b"Test EMPHK",
             &mut metadata.len(),
             &mut metadata,
+            EMPH_MK_AES_CBC_256_HMAC384_SIZE_BYTES as u16,
         );
         assert!(result.is_ok(), "Metadata encoding should succeed");
 
@@ -1822,6 +1840,7 @@ mod tests {
             key_label,
             &mut metadata_len,
             &mut encoded_metadata,
+            EMPH_MK_AES_CBC_256_HMAC384_SIZE_BYTES as u16,
         );
 
         assert!(result.is_ok());
@@ -1865,6 +1884,7 @@ mod tests {
             key_label,
             &mut metadata_len,
             &mut encoded_metadata,
+            Kind::Aes256.size() as u16,
         );
 
         assert!(result.is_ok());
@@ -1894,6 +1914,7 @@ mod tests {
             key_label,
             &mut metadata_len,
             &mut encoded_metadata,
+            Kind::Aes256.size() as u16,
         );
 
         assert!(result.is_ok());
@@ -1923,6 +1944,7 @@ mod tests {
             key_label,
             &mut metadata_len,
             &mut encoded_metadata,
+            Kind::Aes256.size() as u16,
         );
 
         assert!(result.is_ok());
@@ -1952,6 +1974,7 @@ mod tests {
             key_label,
             &mut metadata_len,
             &mut encoded_metadata,
+            Kind::Aes256.size() as u16,
         );
 
         assert!(result.is_err());
@@ -1980,6 +2003,7 @@ mod tests {
             key_label,
             &mut metadata_len,
             &mut encoded_metadata,
+            Kind::Aes256.size() as u16,
         );
 
         assert!(result.is_ok());
@@ -2025,6 +2049,7 @@ mod tests {
             key_label,
             &mut metadata_len,
             &mut encoded_metadata,
+            Kind::Aes256.size() as u16,
         );
         assert!(encode_result.is_ok());
 
