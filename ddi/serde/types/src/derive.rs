@@ -38,6 +38,10 @@ pub struct DdiHkdfDeriveReq {
     /// Target key properties
     #[ddi(id = 7)]
     pub key_properties: DdiTargetKeyProperties,
+
+    /// Optional key length in bytes for variable length HMAC keys
+    #[ddi(id = 8)]
+    pub key_length: Option<u8>,
 }
 
 /// DDI HKDF Derive Function Response Structure
@@ -94,6 +98,10 @@ pub struct DdiKbkdfCounterHmacDeriveReq {
     /// Target key properties
     #[ddi(id = 7)]
     pub key_properties: DdiTargetKeyProperties,
+
+    /// Optional key length in bytes for variable length HMAC keys
+    #[ddi(id = 8)]
+    pub key_length: Option<u8>,
 }
 
 /// DDI KBKDF Counter HMAC Derive Function Response Structure
