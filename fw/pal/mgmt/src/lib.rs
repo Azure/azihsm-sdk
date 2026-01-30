@@ -3,5 +3,7 @@
 #![no_std]
 
 mod app;
+mod plat;
 
 pub use app::*;
+pub use plat::*;

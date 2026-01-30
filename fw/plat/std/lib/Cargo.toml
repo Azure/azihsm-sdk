@@ -5,7 +5,7 @@ name = "azihsm_fw_plat_std"
 version = "0.0.0"
 
 [dependencies]
-azihsm_fw_app_mgmt = { workspace = true, features = ["std"] }
+azihsm_fw_app_mgmt = { features = ["std"], workspace = true }
 azihsm_fw_plat_std_hsm.workspace = true
 azihsm_fw_plat_std_mgmt.workspace = true
 embassy-executor = { features = [
@@ -15,8 +15,10 @@ embassy-executor = { features = [
 ], workspace = true }
 embassy-sync = { features = ["log", "std"], workspace = true }
 embassy-time = { features = ["log", "std"], workspace = true }
+env_logger.workspace = true
 futures.workspace = true
 heapless.workspace = true
+log.workspace = true
 parking_lot.workspace = true
 static_cell.workspace = true
 strum.workspace = true

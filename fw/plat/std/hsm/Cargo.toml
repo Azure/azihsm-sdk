@@ -13,7 +13,7 @@ embassy-executor = { features = [
 ], workspace = true }
 embassy-sync = { features = ["log", "std"], workspace = true }
 embassy-time = { features = ["log", "std"], workspace = true }
-futures.workspace = true
+# futures.workspace = true
 tracing.workspace = true
 
 [lints]

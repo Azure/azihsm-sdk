@@ -6,6 +6,7 @@ version = "0.0.0"
 
 [dependencies]
 azihsm_fw_pal_mgmt.workspace = true
+bitvec.workspace = true
 embassy-executor = { features = [
   "arch-std",
   "executor-thread",
@@ -13,7 +14,8 @@ embassy-executor = { features = [
 ], workspace = true }
 embassy-sync = { features = ["log", "std"], workspace = true }
 embassy-time = { features = ["log", "std"], workspace = true }
-futures.workspace = true
+# futures.workspace = true
+parking_lot.workspace = true
 tracing.workspace = true
 
 [lints]

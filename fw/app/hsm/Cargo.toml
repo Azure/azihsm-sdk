@@ -15,13 +15,13 @@ tracing.workspace = true
 [features]
 default = []
 std = [
-    "embassy-executor/arch-std",
-    "embassy-executor/executor-thread",
-    "embassy-executor/log",
-    "embassy-sync/log",
-    "embassy-sync/std",
-    "embassy-time/log",
-    "embassy-time/std",
+  "embassy-executor/arch-std",
+  "embassy-executor/executor-thread",
+  "embassy-executor/log",
+  "embassy-sync/log",
+  "embassy-sync/std",
+  "embassy-time/log",
+  "embassy-time/std",
 ]
 
 [lints]

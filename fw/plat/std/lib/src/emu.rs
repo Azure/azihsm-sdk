@@ -147,6 +147,7 @@ mod tests {
     use std::thread::sleep;
     use std::time::Duration;
 
+    use azihsm_fw_plat_std_mgmt::PLAT;
     // use tracing_subscriber::{filter::{LevelFilter, Targets}, layer::SubscriberExt};
     use tracing::metadata::LevelFilter;
     use tracing_subscriber::filter::Targets;
@@ -157,11 +158,6 @@ mod tests {
     #[test]
     #[allow(unsafe_code)]
     fn test_emu_start() {
-        // env_logger::builder()
-        //     .format_timestamp_nanos()
-        //     .filter(None, log::LevelFilter::Trace)
-        //     .init();
-
         static ONCE: std::sync::Once = std::sync::Once::new();
 
         ONCE.call_once(|| {
@@ -183,7 +179,15 @@ mod tests {
         });
 
         AZIHSM_EMULATOR.start();
-        sleep(Duration::from_secs(10));
+        for _ in 0..5 {
+            sleep(Duration::from_secs(2));
+            PLAT.on_enable_ctrl(1);
+            while !PLAT.ctrl_ready(1) {}
+            sleep(Duration::from_secs(2));
+            PLAT.on_disable_ctrl(1);
+            while PLAT.ctrl_ready(1) {}
+        }
+        tracing::info!("Stopping emulator");
         AZIHSM_EMULATOR.stop();
     }
 }

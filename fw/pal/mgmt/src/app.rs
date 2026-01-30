@@ -1,7 +1,7 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
 
 /// Management application trait.
-pub trait MgmtApp: Send + Sync + 'static {
+pub trait MgmtApp {
     /// Starts the management application
     ///
     /// # Arguments
@@ -11,6 +11,8 @@ pub trait MgmtApp: Send + Sync + 'static {
 
     /// Stops the management application and cleans up its resources.
     fn stop(&self);
+
+    fn on_ctrl_event(&self);
 }
 
 // #[allow(unsafe_code)]
@@ -28,7 +30,7 @@ pub trait MgmtApp: Send + Sync + 'static {
 
 #[macro_export]
 macro_rules! mgmt_app_impl {
-    (static $name:ident: $ty:ty = $init:expr;) => {
+    (static $name:ident : $ty:ty = $init:expr;) => {
         static $name: $ty = $init;
 
         /// Starts the management application.
@@ -43,6 +45,12 @@ macro_rules! mgmt_app_impl {
         #[unsafe(no_mangle)]
         pub unsafe extern "Rust" fn _mgmt_app_stop() {
             <$ty as $crate::MgmtApp>::stop(&$name);
+        }
+
+        #[inline]
+        #[unsafe(no_mangle)]
+        pub unsafe extern "Rust" fn _mgmt_app_on_ctrl_event() {
+            <$ty as $crate::MgmtApp>::on_ctrl_event(&$name);
         }
     };
 }
@@ -61,6 +69,8 @@ macro_rules! mgmt_app_imports {
 
             /// Stops the management application.
             unsafe fn _mgmt_app_stop();
+
+            unsafe fn _mgmt_app_on_ctrl_event();
         }
 
         /// Starts the management application.
@@ -77,6 +87,11 @@ macro_rules! mgmt_app_imports {
         #[inline]
         pub(crate) fn mgmt_app_stop() {
             unsafe { _mgmt_app_stop() }
+        }
+
+        #[inline]
+        pub(crate) fn mgmt_app_on_ctrl_event() {
+            unsafe { _mgmt_app_on_ctrl_event() }
         }
     };
 }

@@ -10,18 +10,19 @@ embassy-executor.workspace = true
 embassy-sync.workspace = true
 embassy-time.workspace = true
 futures.workspace = true
+parking_lot.workspace = true
 tracing.workspace = true
 
 [features]
 default = []
 std = [
-    "embassy-executor/arch-std",
-    "embassy-executor/executor-thread",
-    "embassy-executor/log",
-    "embassy-sync/log",
-    "embassy-sync/std",
-    "embassy-time/log",
-    "embassy-time/std",
+  "embassy-executor/arch-std",
+  "embassy-executor/executor-thread",
+  "embassy-executor/log",
+  "embassy-sync/log",
+  "embassy-sync/std",
+  "embassy-time/log",
+  "embassy-time/std",
 ]
 
 [lints]
