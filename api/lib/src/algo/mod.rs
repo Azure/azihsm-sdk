@@ -264,6 +264,69 @@ macro_rules! define_hsm_key {
         }
     };
 }
+/// Shared state for paired-key wrapper types (private key + public key).
+///
+/// This mirrors `HsmKeyInner` but additionally stores the associated public key
+/// wrapper so both halves are tied to the same session and lifecycle.
+pub(crate) struct HsmKeyPairInner<H: HsmKeyHandleDelOp, P> {
+    /// Session used to perform operations on (and delete) the key.
+    session: HsmSession,
+    /// Device-reported key properties.
+    props: HsmKeyProps,
+    /// Opaque device handle for the key.
+    handle: H,
+    /// Associated public key wrapper.
+    pub_key: P,
+
+    /// Whether the key has already been deleted.
+    deleted: bool,
+}
+
+impl<H: HsmKeyHandleDelOp, P> HsmKeyPairInner<H, P> {
+    /// Creates a new instance of the shared key-pair state.
+    fn new(session: HsmSession, props: HsmKeyProps, handle: H, pub_key: P) -> Self {
+        Self {
+            session,
+            props,
+            handle,
+            pub_key,
+            deleted: false,
+        }
+    }
+
+    /// Returns the key properties.
+    fn key_props(&self) -> &HsmKeyProps {
+        &self.props
+    }
+
+    /// Returns the key handle.
+    fn handle(&self) -> H {
+        self.handle
+    }
+
+    /// Returns the associated public key.
+    fn pub_key(&self) -> &P {
+        &self.pub_key
+    }
+
+    /// Deletes the key from the HSM.
+    fn delete_key(&mut self) -> Result<(), HsmError> {
+        if self.deleted {
+            return Ok(());
+        }
+        H::delete_key(self.session.clone(), self.handle)?;
+        self.deleted = true;
+        Ok(())
+    }
+}
+
+impl<H: HsmKeyHandleDelOp, P> Drop for HsmKeyPairInner<H, P> {
+    fn drop(&mut self) {
+        if !self.deleted {
+            let _ = H::delete_key(self.session.clone(), self.handle);
+        }
+    }
+}
 
 macro_rules! define_hsm_key_pair {
     ($priv_vis:vis $priv_name:ident, $pub_vis:vis $pub_name:ident, $pub_key_ty:ty) => {
@@ -271,7 +334,7 @@ macro_rules! define_hsm_key_pair {
             #[derive(Clone)]
             $priv_vis struct [<$priv_name>]
             {
-                inner: std::sync::Arc<parking_lot::RwLock<[<$priv_name Inner>]>>,
+                inner: std::sync::Arc<parking_lot::RwLock<HsmKeyPairInner<ddi::HsmKeyHandle, $pub_name>>>,
             }
 
             impl [<$priv_name>] {
@@ -295,9 +358,9 @@ macro_rules! define_hsm_key_pair {
                     pub_key: $pub_name,
                 ) -> Self {
                     Self {
-                        inner: std::sync::Arc::new(parking_lot::RwLock::new([<$priv_name Inner>]::new(
-                            session, props, handle, pub_key,
-                        ))),
+                        inner: std::sync::Arc::new(parking_lot::RwLock::new(
+                            HsmKeyPairInner::new(session, props, handle, pub_key),
+                        )),
                     }
                 }
 
@@ -404,77 +467,6 @@ macro_rules! define_hsm_key_pair {
                     self.with_session(|s| {
                         ddi::generate_key_report(s, handle, report_data, report)
                     })
-                }
-            }
-
-            struct [<$priv_name Inner>] {
-                session: HsmSession,
-                props: HsmKeyProps,
-                handle: ddi::HsmKeyHandle,
-                pub_key: $pub_name,
-                deleted: bool,
-            }
-
-            impl [<$priv_name Inner>] {
-                /// Creates a new instance of the inner private key structure.
-                ///
-                /// # Arguments
-                ///
-                /// * `session` - The HSM session associated with the key.
-                /// * `props` - The properties of the key.
-                /// * `handle` - The handle identifying the key in the HSM.
-                /// * `pub_key` - The associated public key.
-                ///
-                /// # Returns
-                ///
-                /// A new instance of the inner private key structure.
-                fn new(
-                    session: HsmSession,
-                    props: HsmKeyProps,
-                    handle: ddi::HsmKeyHandle,
-                    pub_key: $pub_name,
-                ) -> Self {
-                    Self {
-                        session,
-                        props,
-                        handle,
-                        pub_key,
-                        deleted: false,
-                    }
-                }
-
-                /// Returns the key properties.
-                fn key_props(&self) -> &HsmKeyProps {
-                    &self.props
-                }
-
-                /// Returns the key handle.
-                fn handle(&self) -> ddi::HsmKeyHandle {
-                    self.handle
-                }
-
-                /// Returns the associated public key.
-                fn pub_key(&self) -> &$pub_name {
-                    &self.pub_key
-                }
-
-                /// Deletes the key from the HSM if it is not a session key.
-                fn delete_key(&mut self) -> Result<(), HsmError> {
-                    if self.deleted {
-                        return Ok(());
-                    }
-                    ddi::delete_key(&self.session, self.handle)?;
-                    self.deleted = true;
-                    Ok(())
-                }
-            }
-
-            impl Drop for [<$priv_name Inner>] {
-                /// Cleans up the key from the HSM if it is a session key.
-                fn drop(&mut self) {
-                    if !self.deleted {
-                        let _ = ddi::delete_key(&self.session, self.handle);
-                    }
                 }
             }
 
