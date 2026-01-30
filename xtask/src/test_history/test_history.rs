@@ -1,0 +1,192 @@
+// Licensed under the Apache-2.0 license
+
+use std::{
+    env::{self},
+    fs, io,
+    path::Path,
+};
+
+use caliptra_builder::{elf_size, firmware, FwId};
+use serde::{Deserialize, Serialize};
+
+mod cache;
+mod cache_gha;
+mod git;
+mod html;
+mod http;
+mod process;
+mod util;
+
+use crate::cache::{Cache, FsCache};
+use crate::{cache_gha::GithubActionCache, util::other_err};
+
+// Increment with non-backwards-compatible changes are made to the cache record
+// format
+const CACHE_FORMAT_VERSION: &str = "v2";
+
+#[derive(Clone, Copy, Default, Eq, PartialEq, Serialize, Deserialize)]
+struct Tests {
+    windows_total: Option<u64>,
+    windows_skipped: Option<u64>,
+    linux_total: Option<u64>,
+    linux_skipped: Option<u64>,
+}
+impl Tests {
+    fn update_from(&mut self, other: &Tests) {
+        self.windows_total = other.windows_total.or(self.windows_total);
+        self.windows_skipped = other.windows_skipped.or(self.windows_skipped);
+        self.linux_total = other.linux_total.or(self.linux_total);
+        self.linux_skipped = other.linux_skipped.or(self.linux_skipped);
+    }
+}
+
+#[derive(Clone, Eq, PartialEq, Serialize, Deserialize)]
+struct TestRecord {
+    commit: git::CommitInfo,
+    tests: Tests,
+}
+
+fn write_history() -> io::Result<()> {
+    let cache = GithubActionCache::new().map(box_cache).or_else(|e| {
+        let fs_cache_path = "/tmp/azihsm-sdk-test-cache";
+        println!(
+            "Unable to create github action cache: {e}; using fs-cache instead at {fs_cache_path}"
+        );
+        FsCache::new(fs_cache_path.into()).map(box_cache)
+    })?;
+
+    let worktree = git::WorkTree::new(Path::new("/tmp/azihsm-sdk-test-history-wt"))?;
+    let head_commit = worktree.head_commit_id()?;
+
+    let is_pr = env::var("EVENT_NAME").is_ok_and(|name| name == "pull_request")
+        && env::var("PR_BASE_COMMIT").is_ok();
+
+    // require linear history for PRs; non-linear is OK for main branches
+    if is_pr && !worktree.is_log_linear()? {
+        println!("git history is not linear; attempting to squash PR");
+        let (Ok(pull_request_title), Ok(base_ref)) =
+            (env::var("PR_TITLE"), env::var("PR_BASE_COMMIT"))
+        else {
+            return Err(other_err("cannot attempt squash outside of a PR"));
+        };
+        let mut rebase_onto: String = base_ref;
+        for merge_parents in worktree.merge_log()? {
+            for parent in merge_parents {
+                if worktree.is_ancestor(&parent, "remotes/origin/main")?
+                    && !worktree.is_ancestor(&parent, &rebase_onto)?
+                {
+                    println!(
+                        "Found more recent merge from main; will rebase onto {}",
+                        parent
+                    );
+                    rebase_onto = parent;
+                }
+            }
+        }
+        println!("Resetting to {}", rebase_onto);
+        worktree.reset_hard(&rebase_onto)?;
+        println!("Set fs contents to {}", head_commit);
+        worktree.set_fs_contents(&head_commit)?;
+        println!("Committing squashed commit {pull_request_title:?}");
+        worktree.commit(&pull_request_title)?;
+
+        // we can't guarantee linear history even after squashing, so we can't check here
+    }
+
+    let git_commits = worktree.commit_log()?;
+
+    env::set_current_dir(worktree.path)?;
+
+    let mut records = vec![];
+
+    let mut cached_commit = None;
+    for commit in git_commits.iter() {
+        match cache.get(&format_cache_key(&commit.id)) {
+            Ok(Some(cached_records)) => {
+                if let Ok(cached_records) =
+                    serde_json::from_slice::<Vec<TestRecord>>(&cached_records)
+                {
+                    println!("Found cache entry for remaining commits at {}", commit.id);
+                    records.extend(cached_records);
+                    cached_commit = Some(commit.id.clone());
+                    break;
+                } else {
+                    println!(
+                        "Error parsing cache entry {:?}",
+                        String::from_utf8_lossy(&cached_records)
+                    );
+                }
+            }
+            Ok(None) => {} // not found
+            Err(e) => println!("Error reading from cache: {e}"),
+        }
+        println!(
+            "Building firmware at commit {}: {}",
+            commit.id, commit.title
+        );
+        worktree.checkout(&commit.id)?;
+        worktree.submodule_update()?;
+
+        records.push(TestRecord {
+            commit: commit.clone(),
+            tests: compute_size(&worktree, &commit.id),
+        });
+    }
+    for (i, record) in records.iter().enumerate() {
+        if Some(&record.commit.id) == cached_commit.as_ref() {
+            break;
+        }
+        if let Err(e) = cache.set(
+            &format_cache_key(&record.commit.id),
+            &serde_json::to_vec(&records[i..]).unwrap(),
+        ) {
+            println!(
+                "Unable to write to cache for commit {}: {e}",
+                record.commit.id
+            );
+        }
+    }
+
+    let html = html::format_records(&records)?;
+
+    if let Ok(file) = env::var("GITHUB_STEP_SUMMARY") {
+        fs::write(file, &html)?;
+    } else {
+        println!("{html}");
+    }
+
+    Ok(())
+}
+
+fn compute_size(worktree: &git::WorkTree, commit_id: &str) -> Tests {
+    // TODO: consider using caliptra_builder from the same repo as the firmware
+    let fwid_elf_size = |fwid: &FwId| -> io::Result<u64> {
+        let workspace_dir = Some(worktree.path);
+        let elf_bytes = caliptra_builder::build_firmware_elf_uncached(workspace_dir, fwid)?;
+        elf_size(&elf_bytes)
+    };
+    let fwid_elf_size_or_none = |fwid: &FwId| -> Option<u64> {
+        match fwid_elf_size(fwid) {
+            Ok(result) => Some(result),
+            Err(err) => {
+                println!("Error building commit {}: {err}", commit_id);
+                None
+            }
+        }
+    };
+
+    Sizes {
+        rom_size_with_uart: fwid_elf_size_or_none(&firmware::ROM_WITH_UART),
+        rom_size_prod: fwid_elf_size_or_none(&firmware::ROM),
+        fmc_size_with_uart: fwid_elf_size_or_none(&firmware::FMC_WITH_UART),
+        app_size_with_uart: fwid_elf_size_or_none(&firmware::APP_WITH_UART),
+    }
+}
+
+fn box_cache(val: impl Cache + 'static) -> Box<dyn Cache> {
+    Box::new(val)
+}
+
+fn format_cache_key(commit: &str) -> String {
+    format!("{CACHE_FORMAT_VERSION}-{commit}")
+}
