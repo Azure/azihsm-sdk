@@ -133,6 +133,7 @@ mod tests {
             bks2_index: None,
             key_tag: None,
             key_label: MborByteArray::from_slice(b"DummyOne").unwrap(),
+            key_length: 32,
         };
         let encoded_metadata = encode_metadata(&metadata);
         let encoded_length = MaskedKey::encoded_length(
@@ -152,6 +153,7 @@ mod tests {
             bks2_index: None,
             key_tag: None,
             key_label: MborByteArray::from_slice(b"DummyTwo").unwrap(),
+            key_length: 32,
         };
         let encoded_metadata = encode_metadata(&metadata);
         let encoded_length =
@@ -169,6 +171,7 @@ mod tests {
             bks2_index: None,
             key_tag: None,
             key_label: MborByteArray::from_slice(b"DummyThree").unwrap(),
+            key_length: 32,
         };
 
         let encoded_metadata = encode_metadata(&metadata);
@@ -201,7 +204,7 @@ mod tests {
 
         assert_eq!(aes_key.iv().len(), AES_CBC_IV_SIZE);
         assert_eq!(aes_key.encrypted_key().len(), encrypted_key_len);
-        assert_eq!(aes_key.metadata().len(), 74);
+        assert_eq!(aes_key.metadata().len(), 79);
         assert_eq!(aes_key.tag().len(), AES_CBC_TAG_SIZE);
 
         aes_key.iv_mut().fill(0xAA);
@@ -230,6 +233,7 @@ mod tests {
             bks2_index: None,
             key_tag: None,
             key_label: MborByteArray::from_slice(b"DummyFive").unwrap(),
+            key_length: 32,
         };
 
         let encoded_metadata = encode_metadata(&metadata);
@@ -306,6 +310,7 @@ mod tests {
             key_tag: None,
             // max size 128 bytes
             key_label: MborByteArray::from_slice(b"DummyFive").unwrap(),
+            key_length: 32,
         };
 
         let encoded_metadata = encode_metadata(&metadata);
@@ -341,6 +346,7 @@ mod tests {
             key_tag: None,
             // max size 128 bytes
             key_label: MborByteArray::from_slice(b"DummyFive").unwrap(),
+            key_length: 32,
         };
 
         let encoded_metadata = encode_metadata(&metadata);

@@ -532,6 +532,7 @@ impl FunctionInner {
             key_tag: None,
             key_label: MborByteArray::from_slice(b"BK3")
                 .map_err(|_| ManticoreError::InternalError)?,
+            key_length: BK3_SIZE_BYTES as u16,
         };
 
         encode_masked_key(&bk3, &BK_BOOT, &metadata)
@@ -609,6 +610,7 @@ impl FunctionInner {
                     b"PARTITION_BK",
                     &mut metadata_len,
                     &mut metadata,
+                    BK_AES_CBC_256_HMAC384_SIZE_BYTES as u16,
                 )
                 .map_err(|err| {
                     tracing::error!("encode_masked_key_metadata error {:?}", err);
@@ -1213,6 +1215,20 @@ impl FunctionStateInner {
 
         let app_id = entry.app_id();
 
+        // Serialize the key from the entry
+        // Note the format is currently different from the FW implementation
+        let plaintext_key = entry.key().serialize()?;
+
+        if plaintext_key.len() > KEY_BLOB_MAX_SIZE {
+            tracing::error!(
+                error = ?ERR,
+                key_size = plaintext_key.len(),
+                max_allowed = KEY_BLOB_MAX_SIZE,
+                "Sealed key size exceeds maximum allowed size"
+            );
+            Err(ERR)?
+        }
+
         let metadata = DdiMaskedKeyMetadata {
             svn: Some(1),
             key_type: azihsm_ddi_types::DdiKeyType::try_from(entry.kind()).map_err(|_| ERR)?,
@@ -1229,21 +1245,8 @@ impl FunctionStateInner {
             key_tag: entry.key_tag(),
             key_label: MborByteArray::<DDI_MAX_KEY_LABEL_LENGTH>::from_slice(&[])
                 .map_err(|_| ERR)?,
+            key_length: plaintext_key.len() as u16,
         };
-
-        // Serialize the key from the entry
-        // Note the format is currently different from the FW implementation
-        let plaintext_key = entry.key().serialize()?;
-
-        if plaintext_key.len() > KEY_BLOB_MAX_SIZE {
-            tracing::error!(
-                error = ?ERR,
-                key_size = plaintext_key.len(),
-                max_allowed = KEY_BLOB_MAX_SIZE,
-                "Sealed key size exceeds maximum allowed size"
-            );
-            Err(ERR)?
-        }
 
         encode_masked_key(&plaintext_key, &masking_key_bytes, &metadata)
     }
@@ -2097,6 +2100,7 @@ mod tests {
             key_label: MborByteArray::from_slice(b"TEST")
                 .map_err(|_| ManticoreError::InternalError)
                 .unwrap(),
+            key_length: BK_AES_CBC_256_HMAC384_SIZE_BYTES as u16,
         };
 
         let buffer = encode_masked_key(&test_data, &masking_key, &metadata).unwrap();
@@ -2207,6 +2211,7 @@ mod tests {
                 key_label: MborByteArray::from_slice(format!("LEN{}", length).as_bytes())
                     .map_err(|_| ManticoreError::InternalError)
                     .unwrap(),
+                key_length: BK_AES_CBC_256_HMAC384_SIZE_BYTES as u16,
             };
 
             match encode_masked_key(&test_data, &masking_key, &metadata) {
