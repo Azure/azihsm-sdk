@@ -142,6 +142,13 @@ static int azihsm_ossl_ecdsa_sign(
         return OSSL_FAILURE;
     }
 
+    /* Size query: return required signature buffer size */
+    if (sig == NULL)
+    {
+        *siglen = azihsm_ossl_ecdsa_signature_size(ctx->key->genctx.ec_curve_id);
+        return (*siglen > 0) ? OSSL_SUCCESS : OSSL_FAILURE;
+    }
+
     /* Map hash algorithm to EcdsaSha* combined algorithm ID */
     algo_id = azihsm_ossl_evp_md_to_ecdsa_algo_id(ctx->md);
     if (algo_id == 0)
@@ -168,6 +175,7 @@ static int azihsm_ossl_ecdsa_sign(
         return OSSL_FAILURE;
     }
 
+    *siglen = sig_buf.len;
     return OSSL_SUCCESS;
 }
 
@@ -183,13 +191,6 @@ static int azihsm_ossl_ecdsa_verify_init(void *sctx, void *provkey, const OSSL_P
 
     /* Extract key from provider key object */
     ctx->key = (AZIHSM_EC_KEY *)provkey;
-
-    if (ctx->key == NULL)
-    {
-        ERR_raise(ERR_LIB_PROV, ERR_R_PASSED_NULL_PARAMETER);
-        return OSSL_FAILURE;
-    }
-
     ctx->operation = 0; /* Verify */
 
     /* Set default hash algorithm if not already set */
@@ -329,7 +330,7 @@ static int azihsm_ossl_ecdsa_digest_sign_update(
     struct azihsm_buffer data_buf;
     azihsm_status status;
 
-    if (ctx == NULL || ctx->sign_ctx == NULL)
+    if (ctx == NULL || ctx->sign_ctx == 0)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_PASSED_NULL_PARAMETER);
         return OSSL_FAILURE;
@@ -362,7 +363,7 @@ static int azihsm_ossl_ecdsa_digest_sign_final(
     struct azihsm_buffer sig_buf;
     azihsm_status status;
 
-    if (ctx == NULL || ctx->sign_ctx == NULL)
+    if (ctx == NULL || ctx->sign_ctx == 0)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_PASSED_NULL_PARAMETER);
         return OSSL_FAILURE;
@@ -441,18 +442,11 @@ static int azihsm_ossl_ecdsa_digest_verify_init(
     if (ctx == NULL || provkey == NULL)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_PASSED_NULL_PARAMETER);
-        return 0;
+        return OSSL_FAILURE;
     }
 
     /* Extract key from provider key object */
     ctx->key = (AZIHSM_EC_KEY *)provkey;
-
-    if (ctx->key == NULL)
-    {
-        ERR_raise(ERR_LIB_PROV, ERR_R_PASSED_NULL_PARAMETER);
-        return OSSL_FAILURE;
-    }
-
     ctx->operation = 0; /* Verify */
 
     /* Get hash algorithm by name */
@@ -496,7 +490,7 @@ static int azihsm_ossl_ecdsa_digest_verify_update(
     struct azihsm_buffer data_buf;
     azihsm_status status;
 
-    if (ctx == NULL || ctx->sign_ctx == NULL)
+    if (ctx == NULL || ctx->sign_ctx == 0)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_PASSED_NULL_PARAMETER);
         return OSSL_FAILURE;
@@ -528,7 +522,7 @@ static int azihsm_ossl_ecdsa_digest_verify_final(
     struct azihsm_buffer sig_buf;
     azihsm_status status;
 
-    if (ctx == NULL || ctx->sign_ctx == NULL)
+    if (ctx == NULL || ctx->sign_ctx == 0)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_PASSED_NULL_PARAMETER);
         return OSSL_FAILURE;

@@ -32,9 +32,9 @@ extern "C"
  * Raw ECDSA signature sizes (r || s concatenated, no DER encoding).
  * The HSM uses raw format and expects exact buffer sizes.
  */
-#define AZIHSM_EC_P256_SIG_SIZE (2 * AZIHSM_EC_P256_COORD_SIZE) /* 64 */
-#define AZIHSM_EC_P384_SIG_SIZE (2 * AZIHSM_EC_P384_COORD_SIZE) /* 96 */
-#define AZIHSM_EC_P521_SIG_SIZE (2 * AZIHSM_EC_P521_COORD_SIZE) /* 132 */
+#define AZIHSM_EC_P256_SIG_SIZE 64
+#define AZIHSM_EC_P384_SIG_SIZE 96
+#define AZIHSM_EC_P521_SIG_SIZE 132
 
 typedef struct
 {

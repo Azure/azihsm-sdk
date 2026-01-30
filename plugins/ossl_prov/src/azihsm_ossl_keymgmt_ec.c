@@ -6,6 +6,7 @@
 #include <openssl/objects.h>
 #include <openssl/params.h>
 #include <openssl/proverr.h>
+#include <openssl/store.h>
 #include <string.h>
 
 #include "azihsm_ossl_base.h"
@@ -358,7 +359,7 @@ static int azihsm_ossl_keymgmt_gen_set_params(AIHSM_EC_GEN_CTX *genctx, const OS
 
     if (params == NULL)
     {
-        return 1;
+        return OSSL_SUCCESS;
     }
 
     /* Check for key_usage parameter specifically */
@@ -367,13 +368,13 @@ static int azihsm_ossl_keymgmt_gen_set_params(AIHSM_EC_GEN_CTX *genctx, const OS
         if (p->data_type != OSSL_PARAM_UTF8_STRING)
         {
             ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
-            return 0;
+            return OSSL_FAILURE;
         }
 
         if (azihsm_ossl_key_usage_from_str(p->data, &genctx->key_usage) < 0)
         {
             ERR_raise(ERR_LIB_PROV, PROV_R_INVALID_KEY);
-            return 0;
+            return OSSL_FAILURE;
         }
     }
 
@@ -385,13 +386,13 @@ static int azihsm_ossl_keymgmt_gen_set_params(AIHSM_EC_GEN_CTX *genctx, const OS
         if (p->data_type != OSSL_PARAM_UTF8_STRING)
         {
             ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
-            return 0;
+            return OSSL_FAILURE;
         }
 
         if ((curve_id = azihsm_ossl_name_to_curve_id(p->data)) == AIHSM_EC_CURVE_ID_NONE)
         {
             ERR_raise(ERR_LIB_PROV, PROV_R_INVALID_CURVE);
-            return 0;
+            return OSSL_FAILURE;
         }
 
         genctx->ec_curve_id = (uint32_t)curve_id;
@@ -405,13 +406,13 @@ static int azihsm_ossl_keymgmt_gen_set_params(AIHSM_EC_GEN_CTX *genctx, const OS
         if (p->data_type != OSSL_PARAM_UTF8_STRING)
         {
             ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
-            return 0;
+            return OSSL_FAILURE;
         }
 
         if ((session_result = azihsm_ossl_session_from_str(p->data)) < 0)
         {
             ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
-            return 0;
+            return OSSL_FAILURE;
         }
 
         genctx->session_flag = (bool)session_result;
@@ -423,20 +424,20 @@ static int azihsm_ossl_keymgmt_gen_set_params(AIHSM_EC_GEN_CTX *genctx, const OS
         if (p->data_type != OSSL_PARAM_UTF8_STRING)
         {
             ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
-            return 0;
+            return OSSL_FAILURE;
         }
 
         if (azihsm_ossl_masked_key_filepath_validate(p->data) < 0)
         {
             ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
-            return 0;
+            return OSSL_FAILURE;
         }
 
         strncpy(genctx->masked_key_file, p->data, sizeof(genctx->masked_key_file) - 1);
         genctx->masked_key_file[sizeof(genctx->masked_key_file) - 1] = '\0';
     }
 
-    return 1;
+    return OSSL_SUCCESS;
 }
 
 static AIHSM_EC_GEN_CTX *azihsm_ossl_keymgmt_gen_init(
@@ -483,12 +484,12 @@ static int azihsm_ossl_keymgmt_has(const AZIHSM_EC_KEY *ec_key, int selection)
 
     if (ec_key == NULL)
     {
-        return 0;
+        return OSSL_FAILURE;
     }
 
     if ((selection & AIHSM_EC_POSSIBLE_SELECTIONS) == 0)
     {
-        return 1;
+        return OSSL_SUCCESS;
     }
 
     if ((selection & OSSL_KEYMGMT_SELECT_PRIVATE_KEY) != 0)
@@ -517,20 +518,20 @@ static int azihsm_ossl_keymgmt_match(
 {
     if (ec_key1 == NULL || ec_key2 == NULL)
     {
-        return 0;
+        return OSSL_FAILURE;
     }
 
     if (ec_key1->key.pub != ec_key2->key.pub)
     {
-        return 0;
+        return OSSL_FAILURE;
     }
 
     if (ec_key1->key.priv != ec_key2->key.priv)
     {
-        return 0;
+        return OSSL_FAILURE;
     }
 
-    return 1;
+    return OSSL_SUCCESS;
 }
 
 static void *azihsm_ossl_keymgmt_load(const void *reference, size_t reference_sz)
@@ -564,8 +565,7 @@ static int azihsm_ossl_keymgmt_import(
     ossl_unused const OSSL_PARAM params[]
 )
 {
-    // TODO: Import key from parameters
-    return 0;
+    return OSSL_FAILURE;
 }
 
 static int azihsm_ossl_keymgmt_export(
@@ -575,8 +575,7 @@ static int azihsm_ossl_keymgmt_export(
     ossl_unused void *cbarg
 )
 {
-    // TODO: Export key to parameters
-    return 0;
+    return OSSL_FAILURE;
 }
 
 static const OSSL_PARAM *azihsm_ossl_keymgmt_import_types(ossl_unused int selection)
@@ -597,7 +596,7 @@ static int azihsm_ossl_keymgmt_get_params(AZIHSM_EC_KEY *key, OSSL_PARAM params[
 
     if (key == NULL)
     {
-        return 0;
+        return OSSL_FAILURE;
     }
 
     p = OSSL_PARAM_locate(params, OSSL_PKEY_PARAM_GROUP_NAME);
@@ -607,7 +606,7 @@ static int azihsm_ossl_keymgmt_get_params(AZIHSM_EC_KEY *key, OSSL_PARAM params[
                      ))
     {
         ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_SET_PARAMETER);
-        return 0;
+        return OSSL_FAILURE;
     }
 
     p = OSSL_PARAM_locate(params, OSSL_PKEY_PARAM_BITS);
@@ -617,7 +616,7 @@ static int azihsm_ossl_keymgmt_get_params(AZIHSM_EC_KEY *key, OSSL_PARAM params[
         if (bits == 0 || !OSSL_PARAM_set_int(p, bits))
         {
             ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_SET_PARAMETER);
-            return 0;
+            return OSSL_FAILURE;
         }
     }
 
@@ -628,11 +627,11 @@ static int azihsm_ossl_keymgmt_get_params(AZIHSM_EC_KEY *key, OSSL_PARAM params[
         if (sig_size == 0 || !OSSL_PARAM_set_size_t(p, sig_size))
         {
             ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_SET_PARAMETER);
-            return 0;
+            return OSSL_FAILURE;
         }
     }
 
-    return 1;
+    return OSSL_SUCCESS;
 }
 
 static const OSSL_PARAM *azihsm_ossl_keymgmt_gettable_params(ossl_unused void *ctx)
