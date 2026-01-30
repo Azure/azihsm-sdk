@@ -6,10 +6,9 @@
 
 #include <azihsm_api.h>
 #include <cstring>
-#include <mutex>
+#include <iostream>
 #include <stdexcept>
 #include <string>
-#include <unordered_set>
 #include <vector>
 
 #include "part_list_handle.hpp"
@@ -66,18 +65,6 @@ class PartitionHandle
   private:
     azihsm_handle handle_;
 
-    static std::mutex &get_init_mutex()
-    {
-        static std::mutex mutex;
-        return mutex;
-    }
-
-    static std::unordered_set<uint32_t> &get_initialized_partitions()
-    {
-        static std::unordered_set<uint32_t> initialized;
-        return initialized;
-    }
-
     void open_and_init(std::vector<azihsm_char> &path, uint32_t index)
     {
         azihsm_str path_str;
@@ -90,37 +77,30 @@ class PartitionHandle
             throw std::runtime_error("Failed to open partition. Error: " + std::to_string(err));
         }
 
-        std::lock_guard<std::mutex> lock(get_init_mutex());
-        auto &initialized = get_initialized_partitions();
-
-        if (initialized.find(index) == initialized.end())
+        // Always reset partition state to ensure clean initialization
+        // This clears any previous credentials and state from prior test runs or failures
+        err = azihsm_part_reset(handle_);
+        if (err != AZIHSM_STATUS_SUCCESS)
         {
-            // Reset before initialization to clear any previous state
-            err = azihsm_part_reset(handle_);
-            if (err != AZIHSM_STATUS_SUCCESS)
-            {
-                azihsm_part_close(handle_);
-                handle_ = 0;
-                throw std::runtime_error(
-                    "Failed to reset partition. Error: " + std::to_string(err)
-                );
-            }
+            azihsm_part_close(handle_);
+            handle_ = 0;
+            throw std::runtime_error("Failed to reset partition. Error: " + std::to_string(err));
+        }
 
-            azihsm_credentials creds{};
-            std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
-            std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
+        // Always initialize after reset to ensure partition is ready for tests
 
-            err = azihsm_part_init(handle_, &creds, nullptr, nullptr, nullptr);
-            if (err != AZIHSM_STATUS_SUCCESS)
-            {
-                azihsm_part_close(handle_);
-                handle_ = 0;
-                throw std::runtime_error(
-                    "Failed to initialize partition. Error: " + std::to_string(err)
-                );
-            }
+        azihsm_credentials creds{};
+        std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
+        std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
 
-            initialized.insert(index);
+        err = azihsm_part_init(handle_, &creds, nullptr, nullptr, nullptr);
+        if (err != AZIHSM_STATUS_SUCCESS)
+        {
+            azihsm_part_close(handle_);
+            handle_ = 0;
+            throw std::runtime_error(
+                "Failed to initialize partition. Error: " + std::to_string(err)
+            );
         }
     }
 };

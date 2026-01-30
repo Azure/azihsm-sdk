@@ -245,10 +245,47 @@ impl HsmPartition {
         muk: Option<&[u8]>,
         mobk: Option<&[u8]>,
     ) -> HsmResult<()> {
+        debug!("Initializing partition with credentials");
         let (bmk, mobk) = self.with_dev(|dev| {
-            ddi::init_part(dev, self.api_rev_range().min(), creds, bmk, muk, mobk)
+            match ddi::init_part(dev, self.api_rev_range().min(), creds, bmk, muk, mobk) {
+                Ok((bmk, mobk)) => {
+                    debug!("Partition initialization successful");
+                    Ok((bmk, mobk))
+                }
+                Err(e) => {
+                    error!("Partition initialization failed: {:?}", e);
+                    Err(e)
+                }
+            }
         })?;
         self.inner().write().set_masked_keys(bmk, mobk);
+        Ok(())
+    }
+
+    /// Resets the HSM partition state.
+    ///
+    /// Simulates an NVMe Subsystem Reset (NSSR) to clear all partition state,
+    /// including established credentials and active sessions. This is useful for
+    /// test cleanup and recovery scenarios.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the reset operation fails.
+    #[instrument(skip_all, err, fields(path = self.path().as_str()))]
+    pub fn reset(&self) -> HsmResult<()> {
+        debug!("Resetting partition state");
+        self.with_dev(|dev| match dev.simulate_nssr_after_lm() {
+            Ok(_) => {
+                debug!("Partition reset successful");
+                Ok(())
+            }
+            Err(e) => {
+                error!("Partition reset failed: {:?}", e);
+                Err(HsmError::DdiCmdFailure)
+            }
+        })?;
+        // Clear cached masked keys after reset
+        self.inner().write().clear_masked_keys();
         Ok(())
     }
 
@@ -285,25 +322,6 @@ impl HsmPartition {
         let (id, app_id) =
             self.with_dev(|dev| ddi::open_session(dev, api_rev, credentials, seed))?;
         Ok(HsmSession::new(id, app_id, api_rev, self.clone()))
-    }
-
-    /// Resets the HSM partition state.
-    ///
-    /// including established credentials and active sessions. This is useful for
-    /// test cleanup and recovery scenarios.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the reset operation fails.
-    #[instrument(skip_all, err, fields(path = self.path().as_str()))]
-    pub fn reset(&self) -> HsmResult<()> {
-        self.with_dev(|dev| {
-            dev.simulate_nssr_after_lm()
-                .map_err(|_| HsmError::DdiCmdFailure)
-        })?;
-        // Clear cached masked keys after reset
-        self.inner().write().clear_masked_keys();
-        Ok(())
     }
 
     /// Returns the API revision range supported by this partition.

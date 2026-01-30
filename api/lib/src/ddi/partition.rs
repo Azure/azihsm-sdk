@@ -87,6 +87,18 @@ pub(crate) fn init_part(
 ///
 /// Returns an error if the BK3 initialization fails.
 fn init_bk3(dev: &HsmDev, rev: HsmApiRev) -> HsmResult<Vec<u8>> {
+    // First try to get the sealed BK3 (persists after reset)
+    let req = DdiGetSealedBk3CmdReq {
+        hdr: build_ddi_req_hdr(DdiOp::GetSealedBk3, Some(rev), None),
+        data: DdiGetSealedBk3Req {},
+        ext: None,
+    };
+
+    if let Ok(resp) = dev.exec_op(&req, &mut None) {
+        return Ok(resp.data.sealed_bk3.as_slice().to_vec());
+    }
+
+    // Sealed BK3 doesn't exist, initialize a new one
     let bk3 = [1u8; 48];
     // Rng::rand_bytes(&mut bk3).map_hsm_err(HsmError::RngError)?;
     let req = DdiInitBk3CmdReq {
@@ -96,10 +108,26 @@ fn init_bk3(dev: &HsmDev, rev: HsmApiRev) -> HsmResult<Vec<u8>> {
         },
         ext: None,
     };
+
     let resp = dev
         .exec_op(&req, &mut None)
         .map_hsm_err(HsmError::DdiCmdFailure)?;
-    Ok(resp.data.masked_bk3.as_slice().to_vec())
+
+    let masked_bk3 = resp.data.masked_bk3.as_slice().to_vec();
+
+    // Store as sealed BK3 for future use
+    let req = DdiSetSealedBk3CmdReq {
+        hdr: build_ddi_req_hdr(DdiOp::SetSealedBk3, Some(rev), None),
+        data: DdiSetSealedBk3Req {
+            sealed_bk3: MborByteArray::from_slice(&masked_bk3)
+                .map_hsm_err(HsmError::InternalError)?,
+        },
+        ext: None,
+    };
+
+    // Don't fail if we can't store it, we still have the masked BK3
+    let _ = dev.exec_op::<DdiSetSealedBk3CmdReq>(&req, &mut None);
+    Ok(masked_bk3)
 }
 
 /// Retrieves the encryption key for establishing credentials.
