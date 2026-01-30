@@ -375,7 +375,7 @@ fn test_secret_kbkdf_helper(
         label,
         context,
         key_type,
-        None,
+        Default::default(),
         key_properties,
         None,
     );
