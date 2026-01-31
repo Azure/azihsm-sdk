@@ -212,12 +212,12 @@ impl TableInner {
         }
 
         // Cannot create a session_only key for the internal app
-        if app_id == APP_ID_FOR_INTERNAL_KEYS && flags.session_only() {
+        if app_id == APP_ID_FOR_INTERNAL_KEYS && flags.session() {
             tracing::error!(id = ?app_id, sess_id_or_key_tag, "Cannot create a session_only key for the internal app");
             Err(ManticoreError::InvalidArgument)?
         }
 
-        if !flags.session_only() && sess_id_or_key_tag != 0 {
+        if !flags.session() && sess_id_or_key_tag != 0 {
             let key_tag_exists = self.get_index_by_tag(app_id, sess_id_or_key_tag);
             if key_tag_exists.is_ok() {
                 tracing::error!(key_tag = ?sess_id_or_key_tag, "Key tag already exists");
@@ -434,7 +434,7 @@ mod tests {
                     test_app_id,
                     Kind::Rsa2kPublic,
                     Key::RsaPublic(rsa_public_key.clone()),
-                    EntryFlags::default().with_session_only(true),
+                    EntryFlags::default().with_session(true),
                     key_tag,
                 )
                 .unwrap();
@@ -480,7 +480,7 @@ mod tests {
                     test_app_id,
                     entry_kind,
                     Key::EccPrivate(ecc_private_key.clone()),
-                    EntryFlags::default().with_session_only(true),
+                    EntryFlags::default().with_session(true),
                     key_tag,
                 )
                 .unwrap();
@@ -526,7 +526,7 @@ mod tests {
                     test_app_id,
                     entry_kind,
                     Key::RsaPublic(rsa_public_key.clone()),
-                    EntryFlags::default().with_session_only(true),
+                    EntryFlags::default().with_session(true),
                     key_tag,
                 )
                 .unwrap();
@@ -568,7 +568,7 @@ mod tests {
                 test_app_id,
                 Kind::Rsa2kPrivate,
                 Key::RsaPrivate(rsa_private_key.clone()),
-                EntryFlags::default().with_session_only(true),
+                EntryFlags::default().with_session(true),
                 key_tag,
             )
             .is_ok());
@@ -577,7 +577,7 @@ mod tests {
                 test_app_id,
                 Kind::Rsa2kPublic,
                 Key::RsaPublic(rsa_public_key.clone()),
-                EntryFlags::default().with_session_only(true),
+                EntryFlags::default().with_session(true),
                 key_tag,
             )
             .is_ok());
@@ -617,7 +617,7 @@ mod tests {
                     test_app_id,
                     Kind::Rsa4kPrivate,
                     Key::RsaPrivate(rsa_private_key.clone()),
-                    EntryFlags::default().with_session_only(true),
+                    EntryFlags::default().with_session(true),
                     key_tag,
                 )
                 .unwrap();
@@ -695,7 +695,7 @@ mod tests {
                     test_app_id,
                     Kind::Rsa4kPrivate,
                     Key::RsaPrivate(rsa_private_key.clone()),
-                    EntryFlags::default().with_session_only(true),
+                    EntryFlags::default().with_session(true),
                     key_tag,
                 )
                 .unwrap();
@@ -870,7 +870,7 @@ mod tests {
                     test_app_id,
                     Kind::Rsa4kPrivate,
                     Key::RsaPrivate(rsa_private_key.clone()),
-                    EntryFlags::default().with_session_only(true),
+                    EntryFlags::default().with_session(true),
                     key_tag,
                 )
                 .unwrap();
@@ -878,7 +878,7 @@ mod tests {
         }
 
         let mut flags = EntryFlags::default();
-        flags.set_session_only(true);
+        flags.set_session(true);
         // Create some session_only keys
         for i in 0..count_session_only_keys {
             let index = table
@@ -923,7 +923,7 @@ mod tests {
         let (rsa_private_key, _) = generate_rsa(4096).unwrap();
 
         let mut flags = EntryFlags::default();
-        flags.set_session_only(true);
+        flags.set_session(true);
         // Create some session_only keys
         for i in 0..4 {
             let index = table

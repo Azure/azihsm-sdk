@@ -31,6 +31,7 @@ bitflags::bitflags! {
 }
 
 /// HSM masked key metadata.
+#[derive(Debug)]
 struct HsmMaskedKeyMetadata {
     attrs: HsmMaskedKeyAttributes,
     label: Vec<u8>,
@@ -374,8 +375,7 @@ impl TryFrom<DdiMaskedKeyAttributes> for HsmMaskedKeyAttributes {
         }
 
         // Parse as 64-bit flags directly
-        let flags =
-            u64::from_le_bytes(buf[..8].try_into().map_err(|_| HsmError::InternalError)?);
+        let flags = u64::from_le_bytes(buf[..8].try_into().map_err(|_| HsmError::InternalError)?);
         Ok(HsmMaskedKeyAttributes::from_bits_truncate(flags))
     }
 }
