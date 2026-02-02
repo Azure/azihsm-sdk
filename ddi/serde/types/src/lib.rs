@@ -809,6 +809,9 @@ pub enum DdiStatus {
 
     /// Sealed BK3 already set
     SealedBk3AlreadySet = 141557975,
+
+    /// Partition ID Key Generation PCT failed
+    PartitionIdKeyGenerationPctFailed = 141557976,
 }
 
 /// DDI Key Class
