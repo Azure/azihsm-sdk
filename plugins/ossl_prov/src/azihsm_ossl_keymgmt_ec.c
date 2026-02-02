@@ -157,13 +157,6 @@ static size_t azihsm_ossl_curve_id_to_sig_size(const int curve_id)
 
 /*
  * Import an external DER-encoded EC private key into the HSM via wrap-then-unwrap.
- *
- * Flow:
- *   1. Read the DER file from disk
- *   2. Get the RSA wrapping key pair from the HSM
- *   3. Wrap the DER blob with azihsm_crypt_encrypt (RSA-AES-WRAP)
- *   4. Unwrap into the HSM with azihsm_key_unwrap_pair (RSA-AES-KEY-WRAP)
- *   5. Return the resulting key handles
  */
 static azihsm_status azihsm_ossl_keymgmt_gen_import(
     AIHSM_EC_GEN_CTX *genctx,
@@ -179,7 +172,7 @@ static azihsm_status azihsm_ossl_keymgmt_gen_import(
     long input_size = 0;
     FILE *f = NULL;
 
-    /* 1. Read the input DER file */
+    /* Read the DER file from disk */
     f = fopen(genctx->input_key_file, "rb");
     if (f == NULL)
     {
@@ -221,7 +214,7 @@ static azihsm_status azihsm_ossl_keymgmt_gen_import(
     }
     fclose(f);
 
-    /* Normalize to PKCS#8 DER (handles both SEC1 and PKCS#8 input) */
+    /* Normalize to PKCS#8 DER */
     {
         uint8_t *pkcs8_buf = NULL;
         int pkcs8_len = 0;
@@ -611,6 +604,17 @@ static AZIHSM_EC_KEY *azihsm_ossl_keymgmt_gen(
     return ec_key;
 }
 
+static AZIHSM_EC_KEY *azihsm_ossl_keymgmt_new(ossl_unused void *provctx)
+{
+    AZIHSM_EC_KEY *key = OPENSSL_zalloc(sizeof(AZIHSM_EC_KEY));
+    if (key == NULL)
+    {
+        ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
+        return NULL;
+    }
+    return key;
+}
+
 static void azihsm_ossl_keymgmt_free(AZIHSM_EC_KEY *ec_key)
 {
     if (ec_key == NULL)
@@ -627,6 +631,7 @@ static void azihsm_ossl_keymgmt_free(AZIHSM_EC_KEY *ec_key)
         azihsm_key_delete(ec_key->key.priv);
     }
 
+    OPENSSL_free(ec_key->pub_key_data);
     OPENSSL_free(ec_key);
 }
 
@@ -865,13 +870,60 @@ static void *azihsm_ossl_keymgmt_load(const void *reference, size_t reference_sz
     return dst_key;
 }
 
-static int azihsm_ossl_keymgmt_import(
-    ossl_unused void *keydata,
-    ossl_unused int selection,
-    ossl_unused const OSSL_PARAM params[]
-)
+static int azihsm_ossl_keymgmt_import(void *keydata, int selection, const OSSL_PARAM params[])
 {
-    return OSSL_FAILURE;
+    AZIHSM_EC_KEY *key = (AZIHSM_EC_KEY *)keydata;
+    const OSSL_PARAM *p;
+
+    if (key == NULL || params == NULL)
+    {
+        return OSSL_FAILURE;
+    }
+
+    if ((selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY) == 0)
+    {
+        return OSSL_FAILURE;
+    }
+
+    /* Read group name */
+    p = OSSL_PARAM_locate_const(params, OSSL_PKEY_PARAM_GROUP_NAME);
+    if (p != NULL)
+    {
+        const char *name = NULL;
+        if (!OSSL_PARAM_get_utf8_string_ptr(p, &name) || name == NULL)
+        {
+            return OSSL_FAILURE;
+        }
+
+        snprintf(key->group_name, sizeof(key->group_name), "%s", name);
+
+        int curve_id = azihsm_ossl_name_to_curve_id(name);
+        if (curve_id == AIHSM_EC_CURVE_ID_NONE)
+        {
+            ERR_raise(ERR_LIB_PROV, PROV_R_INVALID_CURVE);
+            return OSSL_FAILURE;
+        }
+        key->genctx.ec_curve_id = (uint32_t)curve_id;
+    }
+
+    /* Read raw public key (uncompressed EC point) */
+    p = OSSL_PARAM_locate_const(params, OSSL_PKEY_PARAM_PUB_KEY);
+    if (p != NULL)
+    {
+        OPENSSL_free(key->pub_key_data);
+        key->pub_key_data = NULL;
+        key->pub_key_data_len = 0;
+
+        if (!OSSL_PARAM_get_octet_string(p, (void **)&key->pub_key_data, 0, &key->pub_key_data_len))
+        {
+            return OSSL_FAILURE;
+        }
+
+        key->has_public = true;
+    }
+
+    key->is_imported = true;
+    return OSSL_SUCCESS;
 }
 
 static int azihsm_ossl_keymgmt_export(
@@ -884,9 +936,19 @@ static int azihsm_ossl_keymgmt_export(
     return OSSL_FAILURE;
 }
 
-static const OSSL_PARAM *azihsm_ossl_keymgmt_import_types(ossl_unused int selection)
+static const OSSL_PARAM *azihsm_ossl_keymgmt_import_types(int selection)
 {
-    // TODO: Return importable parameter types
+    static const OSSL_PARAM import_types[] = {
+        OSSL_PARAM_utf8_string(OSSL_PKEY_PARAM_GROUP_NAME, NULL, 0),
+        OSSL_PARAM_octet_string(OSSL_PKEY_PARAM_PUB_KEY, NULL, 0),
+        OSSL_PARAM_END
+    };
+
+    if ((selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY) != 0)
+    {
+        return import_types;
+    }
+
     return NULL;
 }
 
@@ -969,8 +1031,22 @@ static const OSSL_PARAM *azihsm_ossl_keymgmt_gen_settable_params(
     return settable_params;
 }
 
+static const char *azihsm_ossl_keymgmt_query_operation_name(int operation_id)
+{
+    switch (operation_id)
+    {
+    case OSSL_OP_KEYEXCH:
+        return "ECDH";
+    case OSSL_OP_SIGNATURE:
+        return "ECDSA";
+    default:
+        return NULL;
+    }
+}
+
 /* EC Key Management */
 const OSSL_DISPATCH azihsm_ossl_ec_keymgmt_functions[] = {
+    { OSSL_FUNC_KEYMGMT_NEW, (void (*)(void))azihsm_ossl_keymgmt_new },
     { OSSL_FUNC_KEYMGMT_GEN, (void (*)(void))azihsm_ossl_keymgmt_gen },
     { OSSL_FUNC_KEYMGMT_GEN_INIT, (void (*)(void))azihsm_ossl_keymgmt_gen_init },
     { OSSL_FUNC_KEYMGMT_GEN_CLEANUP, (void (*)(void))azihsm_ossl_keymgmt_gen_cleanup },
@@ -987,5 +1063,7 @@ const OSSL_DISPATCH azihsm_ossl_ec_keymgmt_functions[] = {
     { OSSL_FUNC_KEYMGMT_EXPORT_TYPES, (void (*)(void))azihsm_ossl_keymgmt_export_types },
     { OSSL_FUNC_KEYMGMT_GET_PARAMS, (void (*)(void))azihsm_ossl_keymgmt_get_params },
     { OSSL_FUNC_KEYMGMT_GETTABLE_PARAMS, (void (*)(void))azihsm_ossl_keymgmt_gettable_params },
+    { OSSL_FUNC_KEYMGMT_QUERY_OPERATION_NAME,
+      (void (*)(void))azihsm_ossl_keymgmt_query_operation_name },
     { 0, NULL }
 };
