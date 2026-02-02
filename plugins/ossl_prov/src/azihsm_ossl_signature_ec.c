@@ -9,27 +9,6 @@
 #include "azihsm_ossl_helpers.h"
 #include "azihsm_ossl_signature_ec.h"
 
-/**
- * Get the exact ECDSA signature size for a given curve.
- *
- * @param curve The ECC curve identifier
- * @return Signature size in bytes, or 0 if curve is unknown
- */
-static size_t azihsm_ossl_ecdsa_signature_size(azihsm_ecc_curve curve)
-{
-    switch (curve)
-    {
-    case AZIHSM_ECC_CURVE_P256:
-        return AZIHSM_EC_P256_SIG_SIZE;
-    case AZIHSM_ECC_CURVE_P384:
-        return AZIHSM_EC_P384_SIG_SIZE;
-    case AZIHSM_ECC_CURVE_P521:
-        return AZIHSM_EC_P521_SIG_SIZE;
-    default:
-        return 0;
-    }
-}
-
 /* ═══════════════════════════════════════════════════════════════════════════
    ECDSA CONTEXT LIFECYCLE
    ═══════════════════════════════════════════════════════════════════════════ */
@@ -142,13 +121,6 @@ static int azihsm_ossl_ecdsa_sign(
         return OSSL_FAILURE;
     }
 
-    /* Size query: return required signature buffer size */
-    if (sig == NULL)
-    {
-        *siglen = azihsm_ossl_ecdsa_signature_size(ctx->key->genctx.ec_curve_id);
-        return (*siglen > 0) ? OSSL_SUCCESS : OSSL_FAILURE;
-    }
-
     /* Map hash algorithm to EcdsaSha* combined algorithm ID */
     algo_id = azihsm_ossl_evp_md_to_ecdsa_algo_id(ctx->md);
     if (algo_id == 0)
@@ -160,9 +132,26 @@ static int azihsm_ossl_ecdsa_sign(
     /* Create algorithm structure */
     algo.id = algo_id;
 
-    /* Set up buffers */
+    /* Set up data buffer */
     data_buf.ptr = (uint8_t *)tbs;
     data_buf.len = (uint32_t)tbslen;
+
+    /* Size query: ask the HSM for the required signature buffer size */
+    if (sig == NULL)
+    {
+        sig_buf.ptr = NULL;
+        sig_buf.len = 0;
+        status = azihsm_crypt_sign(&algo, ctx->key->key.priv, &data_buf, &sig_buf);
+        if (status != AZIHSM_STATUS_BUFFER_TOO_SMALL || sig_buf.len == 0)
+        {
+            ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
+            return OSSL_FAILURE;
+        }
+        *siglen = sig_buf.len;
+        return OSSL_SUCCESS;
+    }
+
+    /* Set up signature buffer and sign */
     sig_buf.ptr = sig;
     sig_buf.len = (uint32_t)sigsize;
 
@@ -372,24 +361,17 @@ static int azihsm_ossl_ecdsa_digest_sign_final(
     /* If sig is NULL, caller is querying for signature size */
     if (sig == NULL)
     {
-        /* Return exact size for this key's curve if known, otherwise max size */
-        if (ctx->key == NULL)
+        /* Ask the HSM for the required signature buffer size */
+        sig_buf.ptr = NULL;
+        sig_buf.len = 0;
+        status = azihsm_crypt_sign_final(ctx->sign_ctx, &sig_buf);
+        if (status != AZIHSM_STATUS_BUFFER_TOO_SMALL || sig_buf.len == 0)
         {
-            *siglen = AZIHSM_EC_P521_SIG_SIZE;
+            ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
+            return OSSL_FAILURE;
         }
-        else
-        {
-            size_t exact_size = azihsm_ossl_ecdsa_signature_size(ctx->key->genctx.ec_curve_id);
-            if (exact_size > 0)
-            {
-                *siglen = exact_size;
-            }
-            else
-            {
-                *siglen = AZIHSM_EC_P521_SIG_SIZE;
-            }
-        }
-        return 1;
+        *siglen = sig_buf.len;
+        return OSSL_SUCCESS;
     }
 
     /* Query the HSM for the exact signature size */
