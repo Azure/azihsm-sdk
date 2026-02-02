@@ -245,18 +245,8 @@ impl HsmPartition {
         muk: Option<&[u8]>,
         mobk: Option<&[u8]>,
     ) -> HsmResult<()> {
-        debug!("Initializing partition with credentials");
         let (bmk, mobk) = self.with_dev(|dev| {
-            match ddi::init_part(dev, self.api_rev_range().min(), creds, bmk, muk, mobk) {
-                Ok((bmk, mobk)) => {
-                    debug!("Partition initialization successful");
-                    Ok((bmk, mobk))
-                }
-                Err(e) => {
-                    error!("Partition initialization failed: {:?}", e);
-                    Err(e)
-                }
-            }
+            ddi::init_part(dev, self.api_rev_range().min(), creds, bmk, muk, mobk)
         })?;
         self.inner().write().set_masked_keys(bmk, mobk);
         Ok(())
@@ -273,16 +263,9 @@ impl HsmPartition {
     /// Returns an error if the reset operation fails.
     #[instrument(skip_all, err, fields(path = self.path().as_str()))]
     pub fn reset(&self) -> HsmResult<()> {
-        debug!("Resetting partition state");
-        self.with_dev(|dev| match dev.simulate_nssr_after_lm() {
-            Ok(_) => {
-                debug!("Partition reset successful");
-                Ok(())
-            }
-            Err(e) => {
-                error!("Partition reset failed: {:?}", e);
-                Err(HsmError::DdiCmdFailure)
-            }
+        self.with_dev(|dev| {
+            dev.simulate_nssr_after_lm()
+                .map_err(|_| HsmError::DdiCmdFailure)
         })?;
         // Clear cached masked keys after reset
         self.inner().write().clear_masked_keys();
