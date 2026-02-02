@@ -9,11 +9,6 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-// Hardcoded file paths for partition keys (will be configurable later)
-#define AZIHSM_BMK_FILE_PATH "/var/lib/azihsm/bmk.bin"
-#define AZIHSM_MUK_FILE_PATH "/var/lib/azihsm/muk.bin"
-#define AZIHSM_MOBK_FILE_PATH "/var/lib/azihsm/mobk.bin"
-
 #define AZIHSM_MAX_KEY_FILE_SIZE (64 * 1024)
 
 /*
@@ -249,7 +244,11 @@ static azihsm_status azihsm_get_device_handle(azihsm_handle *device)
     return AZIHSM_STATUS_INTERNAL_ERROR;
 }
 
-azihsm_status azihsm_open_device_and_session(azihsm_handle *device, azihsm_handle *session)
+azihsm_status azihsm_open_device_and_session(
+    const AZIHSM_CONFIG *config,
+    azihsm_handle *device,
+    azihsm_handle *session
+)
 {
     azihsm_status status;
 
@@ -260,6 +259,11 @@ azihsm_status azihsm_open_device_and_session(azihsm_handle *device, azihsm_handl
     struct azihsm_buffer retrieved_mobk = { NULL, 0 };
 
     struct azihsm_api_rev api_rev = { .major = 1, .minor = 0 };
+
+    if (config == NULL)
+    {
+        return AZIHSM_STATUS_INTERNAL_ERROR;
+    }
 
     // clang-format off
 
@@ -279,20 +283,20 @@ azihsm_status azihsm_open_device_and_session(azihsm_handle *device, azihsm_handl
     // clang-format on
 
     // Load key files if they exist
-    status = load_file_to_buffer(AZIHSM_BMK_FILE_PATH, &bmk_buf);
+    status = load_file_to_buffer(config->bmk_path, &bmk_buf);
     if (status != AZIHSM_STATUS_SUCCESS)
     {
         return status;
     }
 
-    status = load_file_to_buffer(AZIHSM_MUK_FILE_PATH, &muk_buf);
+    status = load_file_to_buffer(config->muk_path, &muk_buf);
     if (status != AZIHSM_STATUS_SUCCESS)
     {
         free_buffer(&bmk_buf);
         return status;
     }
 
-    status = load_file_to_buffer(AZIHSM_MOBK_FILE_PATH, &mobk_buf);
+    status = load_file_to_buffer(config->mobk_path, &mobk_buf);
     if (status != AZIHSM_STATUS_SUCCESS)
     {
         free_buffer(&bmk_buf);
@@ -333,7 +337,7 @@ azihsm_status azihsm_open_device_and_session(azihsm_handle *device, azihsm_handl
     status = get_part_property(*device, AZIHSM_PART_PROP_ID_BACKUP_MASKING_KEY, &retrieved_bmk);
     if (status == AZIHSM_STATUS_SUCCESS && retrieved_bmk.ptr != NULL)
     {
-        status = write_buffer_to_file(AZIHSM_BMK_FILE_PATH, &retrieved_bmk);
+        status = write_buffer_to_file(config->bmk_path, &retrieved_bmk);
         if (status != AZIHSM_STATUS_SUCCESS)
         {
             free_buffer(&retrieved_bmk);
@@ -348,7 +352,7 @@ azihsm_status azihsm_open_device_and_session(azihsm_handle *device, azihsm_handl
         get_part_property(*device, AZIHSM_PART_PROP_ID_MASKED_OWNER_BACKUP_KEY, &retrieved_mobk);
     if (status == AZIHSM_STATUS_SUCCESS && retrieved_mobk.ptr != NULL)
     {
-        status = write_buffer_to_file(AZIHSM_MOBK_FILE_PATH, &retrieved_mobk);
+        status = write_buffer_to_file(config->mobk_path, &retrieved_mobk);
         if (status != AZIHSM_STATUS_SUCCESS)
         {
             free_buffer(&retrieved_mobk);
