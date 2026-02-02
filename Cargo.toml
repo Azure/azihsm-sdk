@@ -17,13 +17,10 @@ members = [
   "ddi/interface",
   "ddi/lib",
   "ddi/test_helpers",
-  "fw/app/hsm",
-  "fw/app/mgmt",
-  "fw/pal/hsm",
-  "fw/pal/mgmt",
-  "fw/plat/std/hsm",
-  "fw/plat/std/lib",
-  "fw/plat/std/mgmt",
+  "fw/mgmt/app",
+  "fw/mgmt/pal/std",
+  "fw/mgmt/pal/traits",
+  "fw/plat/std",
   "plugins/ossl_prov",
   "xtask",
 ]
@@ -61,7 +58,6 @@ asn1 = "0.23.0"
 bitfield = "0.19.1"
 bitfield-struct = "0.5"
 bitflags = "2.10.0"
-bitvec = "1.0.1"
 cfg-if = "1"
 chrono = "0.4.31"
 clap = "4.2"
@@ -111,12 +107,15 @@ zerocopy = "0.8.17"
 zeroize = "1.8.1"
 
 # Emulator-specific dependencies
-azihsm_fw_app_mgmt = { path = "fw/app/mgmt" }
-azihsm_fw_pal_mgmt = { path = "fw/pal/mgmt" }
-azihsm_fw_plat_std_hsm = { path = "fw/plat/std/hsm" }
-azihsm_fw_plat_std_mgmt = { path = "fw/plat/std/mgmt" }
+azihsm_fw_mgmt_app = { path = "fw/mgmt/app" }
+azihsm_fw_mgmt_pal_std = { path = "fw/mgmt/pal/std" }
+azihsm_fw_mgmt_pal_traits = { path = "fw/mgmt/pal/traits" }
+azihsm_fw_plat_std = { path = "fw/plat/std" }
 
+bitvec = "1.0.1"
+critical-section = "1.2.0"
 embassy-executor = { git = "https://github.com/embassy-rs/embassy.git", rev = "a68a1e1de6235a1e9b8ece6128cbecc96654b6f6" }
+embassy-futures = { git = "https://github.com/embassy-rs/embassy.git", rev = "a68a1e1de6235a1e9b8ece6128cbecc96654b6f6" }
 embassy-sync = { git = "https://github.com/embassy-rs/embassy.git", rev = "a68a1e1de6235a1e9b8ece6128cbecc96654b6f6" }
 embassy-time = { git = "https://github.com/embassy-rs/embassy.git", rev = "a68a1e1de6235a1e9b8ece6128cbecc96654b6f6" }
 futures = "0.3.31"

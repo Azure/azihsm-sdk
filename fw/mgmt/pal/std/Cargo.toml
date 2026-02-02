@@ -1,19 +1,19 @@
 # Copyright (C) Microsoft Corporation. All rights reserved.
-
 [package]
 edition = "2024"
-name = "azihsm_fw_plat_std_hsm"
+name = "azihsm_fw_mgmt_pal_std"
 version = "0.0.0"
 
 [dependencies]
-embassy-executor = { features = [
-  "arch-std",
-  "executor-thread",
-  "log",
-], workspace = true }
+azihsm_fw_mgmt_pal_traits = { workspace = true }
+bitfield-struct.workspace = true
+bitvec.workspace = true
+embassy-futures = { features = ["log"], workspace = true }
 embassy-sync = { features = ["log", "std"], workspace = true }
 embassy-time = { features = ["log", "std"], workspace = true }
-# futures.workspace = true
+parking_lot.workspace = true
+strum.workspace = true
+strum_macros.workspace = true
 tracing.workspace = true
 
 [lints]

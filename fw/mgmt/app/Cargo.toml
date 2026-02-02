@@ -1,20 +1,25 @@
 # Copyright (C) Microsoft Corporation. All rights reserved.
 [package]
 edition = "2024"
-name = "azihsm_fw_app_hsm"
+name = "azihsm_fw_mgmt_app"
 version = "0.0.0"
 
 [dependencies]
-azihsm_fw_pal_mgmt.workspace = true
+azihsm_fw_mgmt_pal_std = { optional = true, workspace = true }
+cfg-if.workspace = true
+critical-section = "1.2.0"
 embassy-executor.workspace = true
 embassy-sync.workspace = true
 embassy-time.workspace = true
 futures.workspace = true
+parking_lot.workspace = true
 tracing.workspace = true
 
 [features]
 default = []
-std = [
+pal-std = [
+  "critical-section/std",
+  "dep:azihsm_fw_mgmt_pal_std",
   "embassy-executor/arch-std",
   "embassy-executor/executor-thread",
   "embassy-executor/log",
