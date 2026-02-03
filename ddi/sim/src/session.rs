@@ -919,7 +919,6 @@ impl UserSessionInner {
 
         // Mark the keys as generated and locally created.
         let mut entry_flags = flags;
-        entry_flags.set_generated(true);
         entry_flags.set_local(true);
 
         let private_key_num = vault.add_key(
@@ -1312,7 +1311,6 @@ impl UserSessionInner {
 
         // Mark the keys as generated and locally created.
         let mut entry_flags = flags;
-        entry_flags.set_generated(true);
         entry_flags.set_local(true);
 
         let key_kind = match key_size {
@@ -1699,7 +1697,6 @@ mod tests {
 
             // Mark the keys as generated and locally created.
             let mut entry_flags = flags;
-            entry_flags.set_generated(true);
             entry_flags.set_local(true);
 
             if session_only {
@@ -2201,7 +2198,7 @@ mod tests {
         {
             let (ecc_private_key, _) = generate_ecc(EccCurve::P384).expect("generate_ecc failed");
 
-            let entry_flags = EntryFlags::new().with_generated(true);
+            let entry_flags = EntryFlags::new().with_local(true);
 
             let result = vault.add_key(
                 Uuid::from_bytes(TEST_CRED_ID),
@@ -2219,7 +2216,7 @@ mod tests {
         {
             let (ecc_private_key, _) = generate_ecc(EccCurve::P384).expect("generate_ecc failed");
 
-            let entry_flags = EntryFlags::new().with_generated(true);
+            let entry_flags = EntryFlags::new().with_local(true);
 
             let result = vault.add_key(
                 Uuid::from_bytes(TEST_CRED_ID),
@@ -2575,7 +2572,7 @@ mod tests {
             generate_rsa(bits as u32).expect("generate_rsa failed");
 
         let entry_flags = EntryFlags::new()
-            .with_generated(true)
+            .with_local(true)
             .with_encrypt(true)
             .with_decrypt(true);
 

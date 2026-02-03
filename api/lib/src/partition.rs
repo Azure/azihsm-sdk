@@ -254,7 +254,6 @@ impl HsmPartition {
 
     /// Resets the HSM partition state.
     ///
-    /// Simulates an NVMe Subsystem Reset (NSSR) to clear all partition state,
     /// including established credentials and active sessions. This is useful for
     /// test cleanup and recovery scenarios.
     ///

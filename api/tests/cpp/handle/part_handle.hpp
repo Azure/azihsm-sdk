@@ -7,6 +7,7 @@
 #include <azihsm_api.h>
 #include <cstring>
 #include <iostream>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -65,6 +66,12 @@ class PartitionHandle
   private:
     azihsm_handle handle_;
 
+        static std::mutex &get_init_mutex()
+        {
+                static std::mutex mutex;
+                return mutex;
+        }
+
     void open_and_init(std::vector<azihsm_char> &path, uint32_t index)
     {
         azihsm_str path_str;
@@ -76,6 +83,8 @@ class PartitionHandle
         {
             throw std::runtime_error("Failed to open partition. Error: " + std::to_string(err));
         }
+
+        std::lock_guard<std::mutex> lock(get_init_mutex());
 
         // Always reset partition state to ensure clean initialization
         // This clears any previous credentials and state from prior test runs or failures

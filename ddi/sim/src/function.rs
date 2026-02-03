@@ -428,8 +428,7 @@ impl FunctionInner {
             .with_is_attestation_key(true)
             .with_sign(true)
             .with_verify(true)
-            .with_local(true)
-            .with_generated(true);
+            .with_local(true);
 
         let private_key_num = vault.add_key(
             APP_ID_FOR_INTERNAL_KEYS,
@@ -458,8 +457,7 @@ impl FunctionInner {
         let key_flags = EntryFlags::new()
             .with_unwrap(true)
             .with_wrap(true)
-            .with_local(true)
-            .with_generated(true);
+            .with_local(true);
 
         let private_key_id = vault.add_key(
             APP_ID_FOR_INTERNAL_KEYS,
@@ -512,7 +510,7 @@ impl FunctionInner {
         let key_flags = EntryFlags::new()
             .with_encrypt(true)
             .with_decrypt(true)
-            .with_generated(true);
+            .with_local(true);
 
         let key_id = vault.add_key(
             APP_ID_FOR_INTERNAL_KEYS,
@@ -1306,17 +1304,7 @@ impl FunctionStateInner {
             ERR
         })?;
 
-        let flags_bytes = &metadata.key_attributes.blob[0..8];
-        let flags = EntryFlags::from(u64::from_le_bytes([
-            flags_bytes[0],
-            flags_bytes[1],
-            flags_bytes[2],
-            flags_bytes[3],
-            flags_bytes[4],
-            flags_bytes[5],
-            flags_bytes[6],
-            flags_bytes[7],
-        ]));
+        let flags = Self::entry_flags_from_bytes(&metadata.key_attributes.blob)?;
         Ok(flags.session())
     }
 
@@ -1349,17 +1337,7 @@ impl FunctionStateInner {
             })?;
 
         // Extract original entry information from metadata
-        let flags_bytes = &metadata.key_attributes.blob[0..8];
-        let flags = EntryFlags::from(u64::from_le_bytes([
-            flags_bytes[0],
-            flags_bytes[1],
-            flags_bytes[2],
-            flags_bytes[3],
-            flags_bytes[4],
-            flags_bytes[5],
-            flags_bytes[6],
-            flags_bytes[7],
-        ]));
+        let flags = Self::entry_flags_from_bytes(&metadata.key_attributes.blob)?;
 
         let sess_id_or_key_tag_bytes = &metadata.key_attributes.blob[8..10];
         let sess_id_or_key_tag =
@@ -1424,6 +1402,20 @@ impl FunctionStateInner {
             "Key unmasked and imported successfully"
         );
         Ok(key_num)
+    }
+
+    /// Extract EntryFlags from the first 8 bytes of the provided buffer
+    fn entry_flags_from_bytes(buf: &[u8]) -> Result<EntryFlags, ManticoreError> {
+        const ENTRY_FLAGS_LEN: usize = size_of::<u64>();
+
+        if buf.len() < ENTRY_FLAGS_LEN {
+            return Err(ManticoreError::MaskedKeyDecodeFailed);
+        }
+
+        let bytes: [u8; ENTRY_FLAGS_LEN] = buf[..ENTRY_FLAGS_LEN]
+            .try_into()
+            .map_err(|_| ManticoreError::MaskedKeyDecodeFailed)?;
+        Ok(EntryFlags::from(u64::from_le_bytes(bytes)))
     }
 
     fn get_certificate(&mut self) -> Result<Vec<u8>, ManticoreError> {
@@ -1565,7 +1557,7 @@ mod tests {
         assert!(entry.allow_sign_verify());
         assert!(!entry.allow_unwrap());
 
-        assert!(entry.generated());
+        assert!(entry.is_local());
         assert!(!entry.imported());
         assert!(!entry.session_only());
 
@@ -1595,7 +1587,7 @@ mod tests {
         assert!(!entry.allow_sign_verify());
         assert!(entry.allow_unwrap());
 
-        assert!(entry.generated());
+        assert!(entry.is_local());
         assert!(!entry.imported());
         assert!(!entry.session_only());
 

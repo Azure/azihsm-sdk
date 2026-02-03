@@ -6,32 +6,76 @@ use zerocopy::*;
 use super::*;
 
 bitflags::bitflags! {
-    /// Hardware device masked key attribute flags(newly defined).
     /// Masked key attributes flags.
     #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
     struct HsmMaskedKeyAttributes: u64 {
-        const INTERNAL = 1 << 0;
-        const SESSION = 1 << 1;
-        const PRIVATE = 1 << 2;
-        const MODIFIABLE = 1 << 3;
-        const DESTROYABLE = 1 << 4;
-        const LOCAL = 1 << 5;
-        const EXTRACTABLE = 1 << 6;
-        const NEVER_EXTRACTABLE = 1 << 7;
-        const TRUSTED = 1 << 8;
-        const WRAP_WITH_TRUSTED = 1 << 9;
-        const ENCRYPT = 1 << 10;
-        const DECRYPT = 1 << 11;
-        const SIGN = 1 << 12;
-        const VERIFY = 1 << 13;
-        const WRAP = 1 << 14;
-        const UNWRAP = 1 << 15;
-        const DERIVE = 1 << 16;
+    /// Flag indicating if the key is internal or not. Internal keys are used by the device
+    /// internally and are not destroyable by the user.
+    const INTERNAL = 1 << 0;
+
+    /// Flag indicating if the key is a session key.
+    const SESSION = 1 << 1;
+
+    /// Flag indicating the key is private or not. If the key is private an authenticated session
+    /// must be established. All keys generated within the session are private. This flag is set
+    /// by the device for keys that can be accessed with establishing a session.
+    const PRIVATE = 1 << 2;
+
+    /// Flag indicating the key is modifiable or not.
+    const MODIFIABLE = 1 << 3;
+
+    /// Flag indicating the key is destroyable or not. All keys created in a session are
+    /// destroyable. Device generated keys may be marked as not destroyable.
+    const DESTROYABLE = 1 << 4;
+
+    /// Flag indicating the key is locally generated or imported. The flag is set by the device
+    /// and cannot be changed via the API.
+    const LOCAL = 1 << 5;
+    /// Flag indicating the value of the key is extractable from the device or not. All session
+    /// keys are always extractable. Device generated keys may be marked as not extractable.
+    const EXTRACTABLE = 1 << 6;
+
+    /// Flag indicating the key has ever been marked not extractable. All session keys are
+    /// marked always extractable. Device generated keys may be marked as never extractable.
+    const NEVER_EXTRACTABLE = 1 << 7;
+
+    /// Flag indicating the key can be trusted to wrap keys. This flag can only be specified for
+    /// Public Keys. Private & Shared keys will report this flag as not set.
+    const TRUSTED = 1 << 8;
+    /// Flag indicating that a key can only be wrapped with a key that is marked trusted. This
+    /// property is applicable to Private and Shared keys. All private and secret keys generate
+    /// in session are marked with this property.
+    const WRAP_WITH_TRUSTED = 1 << 9;
+
+    /// Flag indicating if the key can be used for encrypt operations. This flag can be
+    /// specified only for Public Keys and Secret Keys.
+    const ENCRYPT = 1 << 10;
+    /// Flag indicating if the key can be used for decrypt operations. This flag can be
+    /// specified only for Private and Secret Keys.
+    const DECRYPT = 1 << 11;
+
+    /// Flag indicating if the key can be used for sign operations. This flag can be
+    /// specified only for Private Keys and Secret Keys.
+    const SIGN = 1 << 12;
+    /// Flag indicating if the key can be used for verify operations. This flag can be
+    /// specified only for Public and Secret Keys.
+    const VERIFY = 1 << 13;
+
+    /// Flag indicating if the key can be used for wrap operations. This flag can be
+    /// specified only for Public Keys and Secret Keys.
+    const WRAP = 1 << 14;
+
+    /// Flag indicating if the key can be used for unwrap operations. This flag can be
+    /// specified only for Private and Secret Keys.
+    const UNWRAP = 1 << 15;
+
+    /// Flag indicating if the key can be used for derive operations. This flag can be
+    /// specified only for Secret Keys.
+   const DERIVE = 1 << 16;
     }
 }
 
 /// HSM masked key metadata.
-#[derive(Debug)]
 struct HsmMaskedKeyMetadata {
     attrs: HsmMaskedKeyAttributes,
     label: Vec<u8>,

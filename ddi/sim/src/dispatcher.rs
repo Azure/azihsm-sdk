@@ -1258,14 +1258,7 @@ impl Dispatcher {
                 flags.set_encrypt(true);
                 flags.set_decrypt(true);
             }
-            DdiKeyUsage::Unwrap => {
-                flags.set_unwrap(true);
-                // RSA unwrap is implemented via RSA decryption, so set encrypt/decrypt for RSA keys
-                if matches!(key_class, KeyClass::RsaPrivate | KeyClass::RsaCrtPrivate) {
-                    flags.set_encrypt(true);
-                    flags.set_decrypt(true);
-                }
-            }
+            DdiKeyUsage::Unwrap => flags.set_unwrap(true),
             DdiKeyUsage::Derive => flags.set_derive(true),
             _ => Err(ManticoreError::InvalidArgument)?,
         }

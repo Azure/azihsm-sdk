@@ -638,7 +638,7 @@ impl VaultInner {
         let (ecc_key, _) = crate::crypto::ecc::generate_ecc(crate::crypto::ecc::EccCurve::P384)?;
 
         // Store key in vault without an associated app session
-        let key_flags = EntryFlags::new().with_derive(true).with_generated(true);
+        let key_flags = EntryFlags::new().with_derive(true).with_local(true);
 
         let private_key_id = self.add_key(
             APP_ID_FOR_INTERNAL_KEYS,
@@ -658,7 +658,7 @@ impl VaultInner {
         let (ecc_key, _) = crate::crypto::ecc::generate_ecc(crate::crypto::ecc::EccCurve::P384)?;
 
         // Store key in vault without an associated app session
-        let key_flags = EntryFlags::new().with_derive(true).with_generated(true);
+        let key_flags = EntryFlags::new().with_derive(true).with_local(true);
 
         let private_key_id = self.add_key(
             APP_ID_FOR_INTERNAL_KEYS,
@@ -885,7 +885,7 @@ impl VaultInner {
         }
 
         // Mark the keys as generated.
-        let entry_flags = EntryFlags::new().with_generated(true);
+        let entry_flags = EntryFlags::new().with_local(true);
 
         let key_kind = Kind::Session;
 
@@ -2576,7 +2576,7 @@ pub(crate) mod tests {
         helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
 
         let (_rsa_private_key, rsa_public_key) = generate_rsa(2048).unwrap();
-        let flags = EntryFlags::new().with_generated(true);
+        let flags = EntryFlags::new().with_local(true);
         let kind = Kind::Rsa2kPublic;
 
         // Fill the vault so no space left
@@ -2652,7 +2652,7 @@ pub(crate) mod tests {
         helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
 
         let (_rsa_private_key, rsa_public_key) = generate_rsa(2048).unwrap();
-        let flags = EntryFlags::new().with_generated(true);
+        let flags = EntryFlags::new().with_local(true);
         let kind = Kind::Rsa2kPublic;
 
         // Fill the vault so no space left

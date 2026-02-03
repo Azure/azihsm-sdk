@@ -579,16 +579,13 @@ pub(crate) struct EntryFlags {
     /// specified only for Secret Keys.
     pub(crate) derive: bool,
 
-    // Bits 17+: Simulator-internal flags (not in hardware blob)
-    /// Tells if the Entry is generated or not (internal only)
-    pub(crate) generated: bool, // bit 17
+    #[bits(45)]
+    reserved: u64,
+
     /// Tells if the Entry was disabled or not (internal only)
     disabled: bool, // bit 18
     /// Tells if this Entry is a key for signing/verifying attestation report (internal only)
     pub(crate) is_attestation_key: bool, // bit 19
-
-    #[bits(44)]
-    reserved: u64,
 }
 
 /// Convert EntryFlags to KeyAttestationReport's flags bitfield representation
@@ -596,26 +593,30 @@ impl From<EntryFlags> for KeyFlags {
     fn from(entry_flags: EntryFlags) -> Self {
         let mut flags = KeyFlags::new();
 
-        if !entry_flags.local() {
-            flags.set_is_imported(true);
-        }
+        flags.set_is_generated(entry_flags.local());
+        flags.set_is_imported(!entry_flags.local());
 
         if entry_flags.session() {
             flags.set_is_session_key(true);
         }
 
-        if entry_flags.generated() {
-            flags.set_is_generated(true);
-        }
-
         if entry_flags.encrypt() {
             flags.set_can_encrypt(true);
+        }
+
+        if entry_flags.decrypt() {
             flags.set_can_decrypt(true);
         }
 
         if entry_flags.sign() {
             flags.set_can_sign(true);
+        }
+        if entry_flags.verify() {
             flags.set_can_verify(true);
+        }
+
+        if entry_flags.wrap() {
+            flags.set_can_wrap(true);
         }
 
         if entry_flags.unwrap() {
@@ -755,13 +756,13 @@ impl Entry {
         self.inner.read().session_only()
     }
 
-    /// Returns the generated flag for the Entry.
+    /// Returns the locally generated flag for the Entry.
     ///
     /// # Returns
     /// * Generated flag for the Entry.
     #[allow(unused)]
-    pub(crate) fn generated(&self) -> bool {
-        self.inner.read().generated()
+    pub(crate) fn is_local(&self) -> bool {
+        self.inner.read().is_local()
     }
 
     /// Returns the imported flag for the Entry.
@@ -888,12 +889,9 @@ impl EntryInner {
     fn session_only(&self) -> bool {
         self.flags.session()
     }
-
-    #[allow(unused)]
-    fn generated(&self) -> bool {
-        self.flags.generated()
+    fn is_local(&self) -> bool {
+        self.flags.local()
     }
-
     #[allow(unused)]
     fn imported(&self) -> bool {
         !self.flags.local()
@@ -995,9 +993,8 @@ mod tests {
     fn test_to_keyflags() {
         let (rsa_private_key, _) = generate_rsa(2048).unwrap();
         let mut flags = EntryFlags::default();
-        flags.set_local(false);
+        flags.set_local(true);
         flags.set_session(true);
-        flags.set_generated(true);
         flags.set_encrypt(true);
         flags.set_decrypt(true);
         flags.set_sign(true);
@@ -1013,9 +1010,9 @@ mod tests {
         );
 
         let keyflags: KeyFlags = entry.flags().into();
-        assert!(keyflags.is_imported());
-        assert!(keyflags.is_session_key());
+        assert!(!keyflags.is_imported());
         assert!(keyflags.is_generated());
+        assert!(keyflags.is_session_key());
         assert!(keyflags.can_encrypt());
         assert!(keyflags.can_decrypt());
         assert!(keyflags.can_sign());

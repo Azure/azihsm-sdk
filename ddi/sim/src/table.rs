@@ -723,7 +723,7 @@ mod tests {
         let table = Table::new();
 
         let (_rsa_private_key, rsa_public_key) = generate_rsa(2048).unwrap();
-        let flags = EntryFlags::new().with_generated(true);
+        let flags = EntryFlags::new().with_local(true);
         let kind = Kind::Rsa2kPublic;
 
         // Fill the table so no space left
@@ -792,7 +792,7 @@ mod tests {
         let table = Table::new();
 
         let (_rsa_private_key, rsa_public_key) = generate_rsa(2048).unwrap();
-        let flags = EntryFlags::new().with_generated(true);
+        let flags = EntryFlags::new().with_local(true);
         let kind = Kind::Rsa2kPublic;
 
         // Fill the table so no space left
