@@ -648,3 +648,43 @@ fn test_ecc_p256_key_report(session: HsmSession) {
     HsmKeyManager::delete_key(priv_key).expect("Failed to delete ECC private key");
     HsmKeyManager::delete_key(pub_key).expect("Failed to delete ECC public key");
 }
+
+/// Test ECC key pair unmasking with derive capability.
+///
+/// Generates an ECC P-256 key pair with derive enabled, retrieves the masked key data,
+/// unmasks it, and verifies all properties match the original keys.
+#[session_test]
+fn test_ecc_p256_key_unmask_with_derive(session: HsmSession) {
+    let priv_key_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Private)
+        .key_kind(HsmKeyKind::Ecc)
+        .ecc_curve(HsmEccCurve::P256)
+        .can_derive(true)
+        .build()
+        .expect("Failed to build private key props");
+
+    let pub_key_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Public)
+        .key_kind(HsmKeyKind::Ecc)
+        .ecc_curve(HsmEccCurve::P256)
+        .can_derive(true)
+        .build()
+        .expect("Failed to build public key props");
+
+    let mut gen_algo = HsmEccKeyGenAlgo::default();
+    let (original_priv_key, original_pub_key) =
+        HsmKeyManager::generate_key_pair(&session, &mut gen_algo, priv_key_props, pub_key_props)
+            .expect("Failed to generate ECC key pair");
+
+    let masked_key_pair = original_priv_key
+        .masked_key_vec()
+        .expect("Failed to get masked private key");
+
+    let mut unmask_algo = HsmEccKeyUnmaskAlgo::default();
+    let (unmasked_priv_key, unmasked_pub_key) =
+        HsmKeyManager::unmask_key_pair(&session, &mut unmask_algo, &masked_key_pair)
+            .expect("Failed to unmask ECC key pair");
+
+    compare_ecc_private_key_properties(&original_priv_key, &unmasked_priv_key);
+    compare_ecc_public_key_properties(&original_pub_key, &unmasked_pub_key);
+}

@@ -117,7 +117,12 @@ impl HsmEccPublicKey {
     /// or if unsupported usage flags are present.
     fn validate_props(props: &HsmKeyProps) -> HsmResult<()> {
         // Supported usage flags for ECC public keys in this layer.
-        let supported_flag = HsmKeyFlags::VERIFY;
+        let supported_flag = HsmKeyFlags::VERIFY | HsmKeyFlags::DERIVE;
+
+        //check if public key is verifiable or derivable
+        if props.can_verify() == props.can_derive() {
+            Err(HsmError::InvalidKeyProps)?;
+        }
 
         // Kind/class: ensure we're validating an ECC *public* key.
         if props.kind() != HsmKeyKind::Ecc {
