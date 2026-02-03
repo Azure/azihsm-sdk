@@ -656,6 +656,7 @@ fn test_ecc_p256_key_report(session: HsmSession) {
 #[session_test]
 fn test_ecc_p256_key_unmask_with_derive(session: HsmSession) {
     let priv_key_props = HsmKeyPropsBuilder::default()
+        .is_session(true)
         .class(HsmKeyClass::Private)
         .key_kind(HsmKeyKind::Ecc)
         .ecc_curve(HsmEccCurve::P256)
@@ -664,6 +665,7 @@ fn test_ecc_p256_key_unmask_with_derive(session: HsmSession) {
         .expect("Failed to build private key props");
 
     let pub_key_props = HsmKeyPropsBuilder::default()
+        .is_session(true)
         .class(HsmKeyClass::Public)
         .key_kind(HsmKeyKind::Ecc)
         .ecc_curve(HsmEccCurve::P256)
@@ -687,4 +689,9 @@ fn test_ecc_p256_key_unmask_with_derive(session: HsmSession) {
 
     compare_ecc_private_key_properties(&original_priv_key, &unmasked_priv_key);
     compare_ecc_public_key_properties(&original_pub_key, &unmasked_pub_key);
+
+    HsmKeyManager::delete_key(original_priv_key).expect("Failed to delete original private key");
+    HsmKeyManager::delete_key(original_pub_key).expect("Failed to delete original public key");
+    HsmKeyManager::delete_key(unmasked_priv_key).expect("Failed to delete unmasked private key");
+    HsmKeyManager::delete_key(unmasked_pub_key).expect("Failed to delete unmasked public key");
 }

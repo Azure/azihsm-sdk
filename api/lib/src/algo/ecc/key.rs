@@ -110,7 +110,7 @@ impl HsmEccPublicKey {
     /// - `kind` must be [`HsmKeyKind::Ecc`]
     /// - `class` must be [`HsmKeyClass::Public`]
     /// - an ECC curve must be present (`ecc_curve`)
-    /// - only supported usage flags may be set (typically `VERIFY`)
+    /// - only supported usage flags may be set (`VERIFY` or `DERIVE`)
     ///
     /// # Errors
     /// Returns [`HsmError::InvalidKeyProps`] if any required property is missing/invalid,
