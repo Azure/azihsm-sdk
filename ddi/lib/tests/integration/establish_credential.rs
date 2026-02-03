@@ -40,6 +40,8 @@ fn helper_init_bk3_and_establish_credential(
         masked_bk3,
         MborByteArray::from_slice(&[]).expect("Failed to create empty BMK"),
         MborByteArray::from_slice(&[]).expect("Failed to create empty masked unwrapping key"),
+        MborByteArray::from_slice(&[]).expect("Failed to create signed PID"),
+        DdiDerPublicKey { der: MborByteArray::from_slice(&[]).expect("Failed to create empty DER"), key_kind: DdiKeyType::Ecc384Public },
     )
 }
 
@@ -74,6 +76,8 @@ fn test_establish_credential_success_prov_failure_bad_masked_bk3() {
                 MborByteArray::from_slice(&[]).expect("Failed to create empty BMK"),
                 MborByteArray::from_slice(&[])
                     .expect("Failed to create empty masked unwrapping key"),
+                MborByteArray::from_slice(&[]).expect("Failed to create signed PID"),
+                DdiDerPublicKey { der: MborByteArray::from_slice(&[]).expect("Failed to create empty DER"), key_kind: DdiKeyType::Ecc384Public },
             );
 
             assert!(resp.is_err());
@@ -92,6 +96,8 @@ fn test_establish_credential_success_prov_failure_bad_masked_bk3() {
                 MborByteArray::from_slice(&[]).expect("Failed to create empty BMK"),
                 MborByteArray::from_slice(&[])
                     .expect("Failed to create empty masked unwrapping key"),
+                MborByteArray::from_slice(&[]).expect("Failed to create signed PID"),
+                DdiDerPublicKey { der: MborByteArray::from_slice(&[]).expect("Failed to create empty DER"), key_kind: DdiKeyType::Ecc384Public },
             );
             assert!(resp.is_ok(), "resp {:?}", resp);
             let resp = resp.unwrap();
@@ -682,6 +688,8 @@ fn test_thread_fn(_thread_id: u8, device_path: String, masked_bk3: MborByteArray
         masked_bk3,
         MborByteArray::from_slice(&[]).expect("Failed to create empty BMK"),
         MborByteArray::from_slice(&[]).expect("Failed to create empty masked unwrapping key"),
+        MborByteArray::from_slice(&[]).expect("Failed to create signed PID"),
+        DdiDerPublicKey { der: MborByteArray::from_slice(&[]).expect("Failed to create empty DER"), key_kind: DdiKeyType::Ecc384Public },
     )
     .unwrap();
 }

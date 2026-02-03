@@ -28,6 +28,14 @@ pub struct DdiEstablishCredentialReq {
     /// Masked unwrapping key, if available
     #[ddi(id = 5)]
     pub masked_unwrapping_key: MborByteArray<1024>,
+
+    /// Partition ID signed by the TPM
+    #[ddi(id = 6)]
+    pub signed_pid: MborByteArray<1024>,
+
+    /// TPM Public Key
+    #[ddi(id = 7)]
+    pub tpm_pub_key: DdiDerPublicKey,
 }
 
 /// DDI Get Param Encryption Key Response Structure

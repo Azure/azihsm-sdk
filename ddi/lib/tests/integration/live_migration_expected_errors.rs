@@ -65,6 +65,8 @@ fn test_establish_credential_after_lm() {
             masked_bk3,
             MborByteArray::from_slice(&[0u8; 1024]).unwrap(),
             MborByteArray::from_slice(&[0u8; 1024]).unwrap(),
+            MborByteArray::from_slice(&[]).expect("Failed to create signed PID"),
+            DdiDerPublicKey { der: MborByteArray::from_slice(&[]).expect("Failed to create empty DER"), key_kind: DdiKeyType::Ecc384Public },
         );
 
         assert!(resp.is_err(), "resp {:?}", resp);

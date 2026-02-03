@@ -11,6 +11,8 @@ pub fn helper_establish_credential(
     masked_bk3: MborByteArray<1024>,
     bmk: MborByteArray<1024>,
     masked_unwrapping_key: MborByteArray<1024>,
+    signed_pid: MborByteArray<1024>,
+    tpm_pub_key: DdiDerPublicKey,
 ) -> Result<DdiEstablishCredentialCmdResp, DdiError> {
     let req = DdiEstablishCredentialCmdReq {
         hdr: DdiReqHdr {
@@ -24,6 +26,8 @@ pub fn helper_establish_credential(
             masked_bk3,
             bmk,
             masked_unwrapping_key,
+            signed_pid,
+            tpm_pub_key,
         },
         ext: None,
     };

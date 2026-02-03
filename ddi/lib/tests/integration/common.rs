@@ -333,6 +333,8 @@ pub fn helper_common_establish_credential_no_unwrap(
         masked_bk3,
         MborByteArray::from_slice(&[]).expect("Failed to create empty BMK"),
         MborByteArray::from_slice(&[]).expect("Failed to create empty masked unwrapping key"),
+        MborByteArray::from_slice(&[]).expect("Failed to create signed PID"),
+        DdiDerPublicKey { der: MborByteArray::from_slice(&[]).expect("Failed to create empty DER"), key_kind: DdiKeyType::Ecc384Public },
     )?;
 
     Ok(())
@@ -371,6 +373,8 @@ pub fn helper_common_establish_credential_with_bmk(
         masked_bk3,
         bmk,
         unwrapping_key,
+        MborByteArray::from_slice(&[]).expect("Failed to create signed PID"),
+        DdiDerPublicKey { der: MborByteArray::from_slice(&[]).expect("Failed to create empty DER"), key_kind: DdiKeyType::Ecc384Public },
     );
 
     resp.unwrap().data.bmk
@@ -409,6 +413,8 @@ pub fn helper_common_establish_credential_with_bmk_no_unwrap(
         masked_bk3,
         bmk,
         unwrapping_key,
+        MborByteArray::from_slice(&[]).expect("Failed to create signed PID"),
+        DdiDerPublicKey { der: MborByteArray::from_slice(&[]).expect("Failed to create empty DER"), key_kind: DdiKeyType::Ecc384Public },
     )
 }
 
@@ -514,6 +520,8 @@ pub fn helper_common_establish_credential(
         masked_bk3,
         MborByteArray::from_slice(&[]).expect("Failed to create empty BMK"),
         MborByteArray::from_slice(&[]).expect("Failed to create empty masked unwrapping key"),
+        MborByteArray::from_slice(&[]).expect("Failed to create signed PID"),
+        DdiDerPublicKey { der: MborByteArray::from_slice(&[]).expect("Failed to create empty DER"), key_kind: DdiKeyType::Ecc384Public },
     );
     assert!(resp.is_ok(), "resp {:?}", resp);
     resp.unwrap();
