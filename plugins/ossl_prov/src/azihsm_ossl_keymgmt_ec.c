@@ -296,7 +296,7 @@ static azihsm_status azihsm_ossl_keymgmt_gen_import(
     }
     if (status != AZIHSM_STATUS_SUCCESS)
     {
-        OPENSSL_cleanse(input_buf, input_size);
+        OPENSSL_cleanse(input_buf, (size_t)input_size);
         OPENSSL_free(input_buf);
         return status;
     }
@@ -616,8 +616,14 @@ static void azihsm_ossl_keymgmt_free(AZIHSM_EC_KEY *ec_key)
         return;
     }
 
-    azihsm_key_delete(ec_key->key.pub);
-    azihsm_key_delete(ec_key->key.priv);
+    if (ec_key->key.pub != 0)
+    {
+        azihsm_key_delete(ec_key->key.pub);
+    }
+    if (ec_key->key.priv != 0)
+    {
+        azihsm_key_delete(ec_key->key.priv);
+    }
 
     OPENSSL_free(ec_key);
 }

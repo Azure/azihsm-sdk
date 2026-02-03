@@ -330,6 +330,13 @@ static int azihsm_ossl_ecdsa_digest_sign_update(
         return OSSL_FAILURE;
     }
 
+    /* Bounds check to prevent truncation when casting to uint32_t */
+    if (datalen > UINT32_MAX)
+    {
+        ERR_raise(ERR_LIB_PROV, PROV_R_BAD_LENGTH);
+        return OSSL_FAILURE;
+    }
+
     /* Set up buffer */
     data_buf.ptr = (uint8_t *)data;
     data_buf.len = (uint32_t)datalen;
@@ -476,6 +483,13 @@ static int azihsm_ossl_ecdsa_digest_verify_update(
     if (ctx == NULL || ctx->sign_ctx == 0)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_PASSED_NULL_PARAMETER);
+        return OSSL_FAILURE;
+    }
+
+    /* Bounds check to prevent truncation when casting to uint32_t */
+    if (datalen > UINT32_MAX)
+    {
+        ERR_raise(ERR_LIB_PROV, PROV_R_BAD_LENGTH);
         return OSSL_FAILURE;
     }
 
