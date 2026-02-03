@@ -30,6 +30,7 @@ pub(crate) fn generate_ecc_keypair_with_derive(
         .class(HsmKeyClass::Public)
         .key_kind(HsmKeyKind::Ecc)
         .ecc_curve(curve)
+        .can_derive(can_derive)
         .can_verify(!can_derive)
         .build()?;
 

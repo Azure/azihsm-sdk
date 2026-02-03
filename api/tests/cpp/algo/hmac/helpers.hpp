@@ -73,7 +73,8 @@ azihsm_status generate_ec_key_pair_for_derive(
 
     // Common properties
     azihsm_key_kind key_kind = AZIHSM_KEY_KIND_ECC;
-
+    bool derive_prop = true;
+    
     // Public key properties
     azihsm_key_class pub_key_class = AZIHSM_KEY_CLASS_PUBLIC;
     std::vector<azihsm_key_prop> pub_props;
@@ -84,10 +85,13 @@ azihsm_status generate_ec_key_pair_for_derive(
         { .id = AZIHSM_KEY_PROP_ID_KIND, .val = &key_kind, .len = sizeof(key_kind) }
     );
     pub_props.push_back({ .id = AZIHSM_KEY_PROP_ID_EC_CURVE, .val = &curve, .len = sizeof(curve) });
+    pub_props.push_back(
+        { .id = AZIHSM_KEY_PROP_ID_DERIVE, .val = &derive_prop, .len = sizeof(derive_prop) }
+    );
 
     // Private key properties
     azihsm_key_class priv_key_class = AZIHSM_KEY_CLASS_PRIVATE;
-    bool derive_prop = true;
+
     std::vector<azihsm_key_prop> priv_props;
     priv_props.push_back(
         { .id = AZIHSM_KEY_PROP_ID_CLASS, .val = &priv_key_class, .len = sizeof(priv_key_class) }
