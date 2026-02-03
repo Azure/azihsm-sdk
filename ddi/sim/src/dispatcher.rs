@@ -1983,6 +1983,10 @@ impl Dispatcher {
             .get_function_state()
             .get_vault(DEFAULT_VAULT_ID)?;
 
+        if req.tpm_pub_key.key_kind != DdiKeyType::Ecc384Public {
+            Err(ManticoreError::InvalidArgument)?
+        }
+
         let attest_entry = vault.get_key_entry(attest_key_num)?;
         let crate::table::entry::key::Key::EccPrivate(attest_key) = attest_entry.key() else {
             tracing::error!("Attestation key is not ECC private key.");
@@ -1993,13 +1997,18 @@ impl Dispatcher {
         let mut ecdsa_algo = EcdsaAlgo::new(hash_algo);
         let tpm_pub_key = azihsm_crypto::EccPublicKey::from_bytes(req.tpm_pub_key.der.as_slice())
             .map_err(|_| ManticoreError::InvalidArgument)?;
-        Verifier::verify(
+        let verify_result = Verifier::verify(
             &mut ecdsa_algo,
             &tpm_pub_key,
             &attest_key_pub_der,
             req.signed_pid.as_slice(),
         )
         .map_err(|_| ManticoreError::InvalidArgument)?;
+
+        if !verify_result {
+            tracing::error!("TPM public key verification failed in establish_credential.");
+            Err(ManticoreError::InvalidArgument)?
+        }
 
         let encrypted_credential = EncryptedCredential {
             id: req.encrypted_credential.encrypted_id.data_take(),

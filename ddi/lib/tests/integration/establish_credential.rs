@@ -573,6 +573,186 @@ fn test_establish_credential_tamper_pub_key() {
 }
 
 #[test]
+fn test_establish_credential_tamper_signed_pid() {
+    ddi_dev_test(
+        setup,
+        common_cleanup,
+        |dev, _ddi, _path, _incorrect_session_id| {
+            let (encrypted_credential, pub_key) =
+                encrypt_userid_pin_for_establish_cred(dev, TEST_CRED_ID, TEST_CRED_PIN);
+
+            let masked_bk3 = helper_get_or_init_bk3(dev);
+
+            let get_cert_chain_info = helper_get_cert_chain_info(dev).unwrap();
+            // Get last cert
+            let cert_resp =
+                helper_get_certificate(dev, get_cert_chain_info.data.num_certs - 1).unwrap();
+            let cert = cert_resp.data.certificate.as_slice();
+            let cert = X509Certificate::from_der(cert).unwrap();
+            let cert_pub_key = cert.get_public_key_der().unwrap();
+
+            let hash_algo = HashAlgo::sha384();
+            let mut ecdsa_algo = EcdsaAlgo::new(hash_algo);
+            let tpm_priv_key =
+                azihsm_crypto::EccPrivateKey::from_bytes(&TEST_TPM_ECC_PRIVATE_KEY).unwrap();
+            let sig_len =
+                Signer::sign(&mut ecdsa_algo, &tpm_priv_key, &cert_pub_key, None).unwrap();
+            let mut signature = vec![0u8; sig_len];
+            let _ = Signer::sign(
+                &mut ecdsa_algo,
+                &tpm_priv_key,
+                &cert_pub_key,
+                Some(&mut signature),
+            )
+            .unwrap();
+
+            let mut tampered_signature = signature.clone();
+            tampered_signature[signature.len() / 2] =
+                tampered_signature[signature.len() / 2].wrapping_add(1);
+
+            let resp = helper_establish_credential(
+                dev,
+                None,
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                encrypted_credential,
+                pub_key,
+                masked_bk3,
+                MborByteArray::from_slice(&[]).expect("Failed to create empty BMK"),
+                MborByteArray::from_slice(&[])
+                    .expect("Failed to create empty masked unwrapping key"),
+                MborByteArray::from_slice(&tampered_signature)
+                    .expect("Failed to create signed PID"),
+                DdiDerPublicKey {
+                    der: MborByteArray::from_slice(&TEST_TPM_ECC_PUB_KEY)
+                        .expect("Failed to create MborByteArray from TPM ECC public key"),
+                    key_kind: DdiKeyType::Ecc384Public,
+                },
+            );
+
+            assert!(resp.is_err(), "resp {:?}", resp);
+        },
+    );
+}
+
+#[test]
+fn test_establish_credential_tamper_tpm_pub_key() {
+    ddi_dev_test(
+        setup,
+        common_cleanup,
+        |dev, _ddi, _path, _incorrect_session_id| {
+            let (encrypted_credential, pub_key) =
+                encrypt_userid_pin_for_establish_cred(dev, TEST_CRED_ID, TEST_CRED_PIN);
+
+            let masked_bk3 = helper_get_or_init_bk3(dev);
+
+            let get_cert_chain_info = helper_get_cert_chain_info(dev).unwrap();
+            // Get last cert
+            let cert_resp =
+                helper_get_certificate(dev, get_cert_chain_info.data.num_certs - 1).unwrap();
+            let cert = cert_resp.data.certificate.as_slice();
+            let cert = X509Certificate::from_der(cert).unwrap();
+            let cert_pub_key = cert.get_public_key_der().unwrap();
+
+            let hash_algo = HashAlgo::sha384();
+            let mut ecdsa_algo = EcdsaAlgo::new(hash_algo);
+            let tpm_priv_key =
+                azihsm_crypto::EccPrivateKey::from_bytes(&TEST_TPM_ECC_PRIVATE_KEY).unwrap();
+            let sig_len =
+                Signer::sign(&mut ecdsa_algo, &tpm_priv_key, &cert_pub_key, None).unwrap();
+            let mut signature = vec![0u8; sig_len];
+            let _ = Signer::sign(
+                &mut ecdsa_algo,
+                &tpm_priv_key,
+                &cert_pub_key,
+                Some(&mut signature),
+            )
+            .unwrap();
+
+            let mut tampered_tpm_pub_key = TEST_TPM_ECC_PUB_KEY.clone();
+            tampered_tpm_pub_key[TEST_TPM_ECC_PUB_KEY.len() / 2] =
+                tampered_tpm_pub_key[TEST_TPM_ECC_PUB_KEY.len() / 2].wrapping_add(1);
+
+            let resp = helper_establish_credential(
+                dev,
+                None,
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                encrypted_credential,
+                pub_key,
+                masked_bk3,
+                MborByteArray::from_slice(&[]).expect("Failed to create empty BMK"),
+                MborByteArray::from_slice(&[])
+                    .expect("Failed to create empty masked unwrapping key"),
+                MborByteArray::from_slice(&signature).expect("Failed to create signed PID"),
+                DdiDerPublicKey {
+                    der: MborByteArray::from_slice(&tampered_tpm_pub_key)
+                        .expect("Failed to create MborByteArray from TPM ECC public key"),
+                    key_kind: DdiKeyType::Ecc384Public,
+                },
+            );
+
+            assert!(resp.is_err(), "resp {:?}", resp);
+        },
+    );
+}
+
+#[test]
+fn test_establish_credential_tamper_tpm_pub_key_type() {
+    ddi_dev_test(
+        setup,
+        common_cleanup,
+        |dev, _ddi, _path, _incorrect_session_id| {
+            let (encrypted_credential, pub_key) =
+                encrypt_userid_pin_for_establish_cred(dev, TEST_CRED_ID, TEST_CRED_PIN);
+
+            let masked_bk3 = helper_get_or_init_bk3(dev);
+
+            let get_cert_chain_info = helper_get_cert_chain_info(dev).unwrap();
+            // Get last cert
+            let cert_resp =
+                helper_get_certificate(dev, get_cert_chain_info.data.num_certs - 1).unwrap();
+            let cert = cert_resp.data.certificate.as_slice();
+            let cert = X509Certificate::from_der(cert).unwrap();
+            let cert_pub_key = cert.get_public_key_der().unwrap();
+
+            let hash_algo = HashAlgo::sha384();
+            let mut ecdsa_algo = EcdsaAlgo::new(hash_algo);
+            let tpm_priv_key =
+                azihsm_crypto::EccPrivateKey::from_bytes(&TEST_TPM_ECC_PRIVATE_KEY).unwrap();
+            let sig_len =
+                Signer::sign(&mut ecdsa_algo, &tpm_priv_key, &cert_pub_key, None).unwrap();
+            let mut signature = vec![0u8; sig_len];
+            let _ = Signer::sign(
+                &mut ecdsa_algo,
+                &tpm_priv_key,
+                &cert_pub_key,
+                Some(&mut signature),
+            )
+            .unwrap();
+
+            let resp = helper_establish_credential(
+                dev,
+                None,
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                encrypted_credential,
+                pub_key,
+                masked_bk3,
+                MborByteArray::from_slice(&[]).expect("Failed to create empty BMK"),
+                MborByteArray::from_slice(&[])
+                    .expect("Failed to create empty masked unwrapping key"),
+                MborByteArray::from_slice(&signature).expect("Failed to create signed PID"),
+                DdiDerPublicKey {
+                    der: MborByteArray::from_slice(&TEST_TPM_ECC_PUB_KEY)
+                        .expect("Failed to create MborByteArray from TPM ECC public key"),
+                    key_kind: DdiKeyType::Ecc521Public,
+                },
+            );
+
+            assert!(resp.is_err(), "resp {:?}", resp);
+        },
+    );
+}
+
+#[test]
 fn test_establish_credential_null_id() {
     ddi_dev_test(
         setup,
