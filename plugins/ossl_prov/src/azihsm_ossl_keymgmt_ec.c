@@ -405,7 +405,7 @@ static AZIHSM_EC_KEY *azihsm_ossl_keymgmt_gen(
 )
 {
     AZIHSM_EC_KEY *ec_key;
-    azihsm_handle public, private;
+    azihsm_handle public = 0, private = 0;
     azihsm_status status;
     const bool enable = true;
     const azihsm_key_class priv_class = AZIHSM_KEY_CLASS_PRIVATE;
@@ -515,8 +515,14 @@ static AZIHSM_EC_KEY *azihsm_ossl_keymgmt_gen(
 
     if (status != AZIHSM_STATUS_SUCCESS)
     {
-        azihsm_key_delete(public);
-        azihsm_key_delete(private);
+        if (public != 0)
+        {
+            azihsm_key_delete(public);
+        }
+        if (private != 0)
+        {
+            azihsm_key_delete(private);
+        }
         OPENSSL_free(ec_key);
         ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GENERATE_KEY);
         return NULL;

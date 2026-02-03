@@ -4,6 +4,8 @@
 #include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/params.h>
+#include <openssl/proverr.h>
+#include <stdint.h>
 #include <string.h>
 
 #include "azihsm_ossl_helpers.h"
@@ -110,7 +112,7 @@ static int azihsm_ossl_ecdsa_sign(
 )
 {
     azihsm_ec_sig_ctx *ctx = (azihsm_ec_sig_ctx *)sctx;
-    struct azihsm_algo algo;
+    struct azihsm_algo algo = { 0 };
     struct azihsm_buffer data_buf, sig_buf;
     azihsm_status status;
 
@@ -120,7 +122,14 @@ static int azihsm_ossl_ecdsa_sign(
         return OSSL_FAILURE;
     }
 
-    /* Use raw ECDSA algorithm — data is already hashed by OpenSSL */
+    /* Bounds check to prevent truncation when casting to uint32_t */
+    if (tbslen > UINT32_MAX)
+    {
+        ERR_raise(ERR_LIB_PROV, PROV_R_BAD_LENGTH);
+        return OSSL_FAILURE;
+    }
+
+    /* Use raw ECDSA algorithm — data has to come in already hashed by the user */
     algo.id = AZIHSM_ALGO_ID_ECDSA;
     algo.params = NULL;
     algo.len = 0;
@@ -142,6 +151,13 @@ static int azihsm_ossl_ecdsa_sign(
         }
         *siglen = sig_buf.len;
         return OSSL_SUCCESS;
+    }
+
+    /* Bounds check for signature buffer size */
+    if (sigsize > UINT32_MAX)
+    {
+        ERR_raise(ERR_LIB_PROV, PROV_R_BAD_LENGTH);
+        return OSSL_FAILURE;
     }
 
     /* Set up signature buffer and sign */
@@ -192,13 +208,20 @@ static int azihsm_ossl_ecdsa_verify(
 )
 {
     azihsm_ec_sig_ctx *ctx = (azihsm_ec_sig_ctx *)sctx;
-    struct azihsm_algo algo;
+    struct azihsm_algo algo = { 0 };
     struct azihsm_buffer data_buf, sig_buf;
     azihsm_status status;
 
     if (ctx == NULL || ctx->key == NULL)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_PASSED_NULL_PARAMETER);
+        return OSSL_FAILURE;
+    }
+
+    /* Bounds check to prevent truncation when casting to uint32_t */
+    if (tbslen > UINT32_MAX || siglen > UINT32_MAX)
+    {
+        ERR_raise(ERR_LIB_PROV, PROV_R_BAD_LENGTH);
         return OSSL_FAILURE;
     }
 
@@ -240,7 +263,7 @@ static int azihsm_ossl_ecdsa_digest_sign_init(
 {
     azihsm_ec_sig_ctx *ctx = (azihsm_ec_sig_ctx *)sctx;
     azihsm_algo_id algo_id;
-    struct azihsm_algo algo;
+    struct azihsm_algo algo = { 0 };
     azihsm_status status;
 
     if (provkey == NULL)
@@ -399,7 +422,7 @@ static int azihsm_ossl_ecdsa_digest_verify_init(
 )
 {
     azihsm_ec_sig_ctx *ctx = (azihsm_ec_sig_ctx *)sctx;
-    struct azihsm_algo algo;
+    struct azihsm_algo algo = { 0 };
     azihsm_status status;
 
     if (ctx == NULL || provkey == NULL)
@@ -485,6 +508,13 @@ static int azihsm_ossl_ecdsa_digest_verify_final(
     if (ctx == NULL || ctx->sign_ctx == 0)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_PASSED_NULL_PARAMETER);
+        return OSSL_FAILURE;
+    }
+
+    /* Bounds check to prevent truncation when casting to uint32_t */
+    if (siglen > UINT32_MAX)
+    {
+        ERR_raise(ERR_LIB_PROV, PROV_R_BAD_LENGTH);
         return OSSL_FAILURE;
     }
 
