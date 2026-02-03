@@ -324,6 +324,26 @@ pub fn helper_common_establish_credential_no_unwrap(
     Rng::rand_bytes(&mut bk3).unwrap();
     let masked_bk3 = helper_get_or_init_bk3(dev);
 
+    let get_cert_chain_info = helper_get_cert_chain_info(dev).unwrap();
+    // Get last cert
+    let cert_resp = helper_get_certificate(dev, get_cert_chain_info.data.num_certs - 1).unwrap();
+    let cert = cert_resp.data.certificate.as_slice();
+    let cert = X509Certificate::from_der(cert).unwrap();
+    let cert_pub_key = cert.get_public_key_der().unwrap();
+
+    let hash_algo = HashAlgo::sha384();
+    let mut ecdsa_algo = EcdsaAlgo::new(hash_algo);
+    let tpm_priv_key = azihsm_crypto::EccPrivateKey::from_bytes(&TEST_TPM_ECC_PRIVATE_KEY).unwrap();
+    let sig_len = Signer::sign(&mut ecdsa_algo, &tpm_priv_key, &cert_pub_key, None).unwrap();
+    let mut signature = vec![0u8; sig_len];
+    let _ = Signer::sign(
+        &mut ecdsa_algo,
+        &tpm_priv_key,
+        &cert_pub_key,
+        Some(&mut signature),
+    )
+    .unwrap();
+
     let _ = helper_establish_credential(
         dev,
         None,
@@ -333,8 +353,12 @@ pub fn helper_common_establish_credential_no_unwrap(
         masked_bk3,
         MborByteArray::from_slice(&[]).expect("Failed to create empty BMK"),
         MborByteArray::from_slice(&[]).expect("Failed to create empty masked unwrapping key"),
-        MborByteArray::from_slice(&[]).expect("Failed to create signed PID"),
-        DdiDerPublicKey { der: MborByteArray::from_slice(&[]).expect("Failed to create empty DER"), key_kind: DdiKeyType::Ecc384Public },
+        MborByteArray::from_slice(&signature).expect("Failed to create signed PID"),
+        DdiDerPublicKey {
+            der: MborByteArray::from_slice(&TEST_TPM_ECC_PUB_KEY)
+                .expect("Failed to create MborByteArray from TPM ECC public key"),
+            key_kind: DdiKeyType::Ecc384Public,
+        },
     )?;
 
     Ok(())
@@ -364,6 +388,26 @@ pub fn helper_common_establish_credential_with_bmk(
         .encrypt_establish_credential(id, pin, nonce)
         .unwrap();
 
+    let get_cert_chain_info = helper_get_cert_chain_info(dev).unwrap();
+    // Get last cert
+    let cert_resp = helper_get_certificate(dev, get_cert_chain_info.data.num_certs - 1).unwrap();
+    let cert = cert_resp.data.certificate.as_slice();
+    let cert = X509Certificate::from_der(cert).unwrap();
+    let cert_pub_key = cert.get_public_key_der().unwrap();
+
+    let hash_algo = HashAlgo::sha384();
+    let mut ecdsa_algo = EcdsaAlgo::new(hash_algo);
+    let tpm_priv_key = azihsm_crypto::EccPrivateKey::from_bytes(&TEST_TPM_ECC_PRIVATE_KEY).unwrap();
+    let sig_len = Signer::sign(&mut ecdsa_algo, &tpm_priv_key, &cert_pub_key, None).unwrap();
+    let mut signature = vec![0u8; sig_len];
+    let _ = Signer::sign(
+        &mut ecdsa_algo,
+        &tpm_priv_key,
+        &cert_pub_key,
+        Some(&mut signature),
+    )
+    .unwrap();
+
     let resp = helper_establish_credential(
         dev,
         None,
@@ -373,8 +417,12 @@ pub fn helper_common_establish_credential_with_bmk(
         masked_bk3,
         bmk,
         unwrapping_key,
-        MborByteArray::from_slice(&[]).expect("Failed to create signed PID"),
-        DdiDerPublicKey { der: MborByteArray::from_slice(&[]).expect("Failed to create empty DER"), key_kind: DdiKeyType::Ecc384Public },
+        MborByteArray::from_slice(&signature).expect("Failed to create signed PID"),
+        DdiDerPublicKey {
+            der: MborByteArray::from_slice(&TEST_TPM_ECC_PUB_KEY)
+                .expect("Failed to create MborByteArray from TPM ECC public key"),
+            key_kind: DdiKeyType::Ecc384Public,
+        },
     );
 
     resp.unwrap().data.bmk
@@ -414,7 +462,10 @@ pub fn helper_common_establish_credential_with_bmk_no_unwrap(
         bmk,
         unwrapping_key,
         MborByteArray::from_slice(&[]).expect("Failed to create signed PID"),
-        DdiDerPublicKey { der: MborByteArray::from_slice(&[]).expect("Failed to create empty DER"), key_kind: DdiKeyType::Ecc384Public },
+        DdiDerPublicKey {
+            der: MborByteArray::from_slice(&[]).expect("Failed to create empty DER"),
+            key_kind: DdiKeyType::Ecc384Public,
+        },
     )
 }
 
@@ -511,6 +562,26 @@ pub fn helper_common_establish_credential(
 
     let masked_bk3 = helper_get_or_init_bk3(dev);
 
+    let get_cert_chain_info = helper_get_cert_chain_info(dev).unwrap();
+    // Get last cert
+    let cert_resp = helper_get_certificate(dev, get_cert_chain_info.data.num_certs - 1).unwrap();
+    let cert = cert_resp.data.certificate.as_slice();
+    let cert = X509Certificate::from_der(cert).unwrap();
+    let cert_pub_key = cert.get_public_key_der().unwrap();
+
+    let hash_algo = HashAlgo::sha384();
+    let mut ecdsa_algo = EcdsaAlgo::new(hash_algo);
+    let tpm_priv_key = azihsm_crypto::EccPrivateKey::from_bytes(&TEST_TPM_ECC_PRIVATE_KEY).unwrap();
+    let sig_len = Signer::sign(&mut ecdsa_algo, &tpm_priv_key, &cert_pub_key, None).unwrap();
+    let mut signature = vec![0u8; sig_len];
+    let _ = Signer::sign(
+        &mut ecdsa_algo,
+        &tpm_priv_key,
+        &cert_pub_key,
+        Some(&mut signature),
+    )
+    .unwrap();
+
     let resp = helper_establish_credential(
         dev,
         None,
@@ -520,8 +591,12 @@ pub fn helper_common_establish_credential(
         masked_bk3,
         MborByteArray::from_slice(&[]).expect("Failed to create empty BMK"),
         MborByteArray::from_slice(&[]).expect("Failed to create empty masked unwrapping key"),
-        MborByteArray::from_slice(&[]).expect("Failed to create signed PID"),
-        DdiDerPublicKey { der: MborByteArray::from_slice(&[]).expect("Failed to create empty DER"), key_kind: DdiKeyType::Ecc384Public },
+        MborByteArray::from_slice(&signature).expect("Failed to create signed PID"),
+        DdiDerPublicKey {
+            der: MborByteArray::from_slice(&TEST_TPM_ECC_PUB_KEY)
+                .expect("Failed to create MborByteArray from TPM ECC public key"),
+            key_kind: DdiKeyType::Ecc384Public,
+        },
     );
     assert!(resp.is_ok(), "resp {:?}", resp);
     resp.unwrap();
@@ -1884,6 +1959,34 @@ pub(crate) const TEST_ECC_521_PUBLIC_KEY: [u8; 158] = [
     0x0e, 0xc5, 0x94, 0xe0, 0xb4, 0x97, 0x72, 0x31, 0x3b, 0x7c, 0x76, 0xe8, 0xee, 0x88, 0xaf, 0xc4,
     0x47, 0x28, 0x12, 0xcc, 0xe3, 0xd2, 0x7e, 0x6d, 0x7c, 0xa6, 0x5f, 0x96, 0x59, 0xe3, 0x9d, 0xea,
     0xd0, 0x7e, 0x19, 0x82, 0xfe, 0x53, 0x30, 0x39, 0x3e, 0xe0, 0xaa, 0x75, 0x95, 0xe7,
+];
+
+#[allow(dead_code)]
+pub(crate) const TEST_TPM_ECC_PRIVATE_KEY: [u8; 185] = [
+    0x30, 0x81, 0xb6, 0x02, 0x01, 0x00, 0x30, 0x10, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02,
+    0x01, 0x06, 0x05, 0x2b, 0x81, 0x04, 0x00, 0x22, 0x04, 0x81, 0x9e, 0x30, 0x81, 0x9b, 0x02, 0x01,
+    0x01, 0x04, 0x30, 0x17, 0xe9, 0x1c, 0xac, 0xf7, 0xb7, 0x21, 0xd7, 0x75, 0x20, 0x02, 0x07, 0xbc,
+    0xaa, 0x94, 0x2c, 0xe3, 0xb5, 0x5b, 0x78, 0x13, 0xcc, 0x8b, 0xde, 0x87, 0x65, 0x6b, 0xe1, 0x7b,
+    0xc2, 0xa8, 0xcc, 0x89, 0x33, 0x4e, 0xcd, 0xaa, 0x9d, 0x1d, 0x09, 0xf1, 0xc7, 0x01, 0x1b, 0x64,
+    0xeb, 0x78, 0x5b, 0xa1, 0x64, 0x03, 0x62, 0x00, 0x04, 0x1f, 0x42, 0x0d, 0x73, 0xeb, 0xf0, 0x67,
+    0xc2, 0xf9, 0x77, 0xbd, 0x51, 0xab, 0xfb, 0xe1, 0xf6, 0x53, 0x19, 0xb7, 0x57, 0xe0, 0xa9, 0x20,
+    0xce, 0x4f, 0x21, 0xbb, 0xd4, 0xa7, 0x84, 0x1c, 0x93, 0x45, 0xf1, 0xea, 0xd9, 0x5f, 0xe5, 0x90,
+    0xab, 0x57, 0xe1, 0xea, 0xfc, 0xd2, 0x06, 0xef, 0x21, 0xa2, 0xad, 0x10, 0xd3, 0x17, 0x6e, 0x99,
+    0xc8, 0x22, 0x26, 0x23, 0x08, 0x57, 0xa7, 0x56, 0x08, 0x45, 0xe3, 0xda, 0x12, 0xc7, 0xdc, 0x3a,
+    0xee, 0x01, 0xfc, 0x37, 0xab, 0x1c, 0x8d, 0xc6, 0xd0, 0x64, 0x7a, 0x7d, 0xc2, 0x67, 0xfc, 0x02,
+    0x7d, 0x8d, 0xa3, 0xc8, 0x01, 0x4b, 0xa4, 0x0d, 0x98,
+];
+
+#[allow(dead_code)]
+pub(crate) const TEST_TPM_ECC_PUB_KEY: [u8; 120] = [
+    0x30, 0x76, 0x30, 0x10, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, 0x06, 0x05, 0x2b,
+    0x81, 0x04, 0x00, 0x22, 0x03, 0x62, 0x00, 0x04, 0x1f, 0x42, 0x0d, 0x73, 0xeb, 0xf0, 0x67, 0xc2,
+    0xf9, 0x77, 0xbd, 0x51, 0xab, 0xfb, 0xe1, 0xf6, 0x53, 0x19, 0xb7, 0x57, 0xe0, 0xa9, 0x20, 0xce,
+    0x4f, 0x21, 0xbb, 0xd4, 0xa7, 0x84, 0x1c, 0x93, 0x45, 0xf1, 0xea, 0xd9, 0x5f, 0xe5, 0x90, 0xab,
+    0x57, 0xe1, 0xea, 0xfc, 0xd2, 0x06, 0xef, 0x21, 0xa2, 0xad, 0x10, 0xd3, 0x17, 0x6e, 0x99, 0xc8,
+    0x22, 0x26, 0x23, 0x08, 0x57, 0xa7, 0x56, 0x08, 0x45, 0xe3, 0xda, 0x12, 0xc7, 0xdc, 0x3a, 0xee,
+    0x01, 0xfc, 0x37, 0xab, 0x1c, 0x8d, 0xc6, 0xd0, 0x64, 0x7a, 0x7d, 0xc2, 0x67, 0xfc, 0x02, 0x7d,
+    0x8d, 0xa3, 0xc8, 0x01, 0x4b, 0xa4, 0x0d, 0x98,
 ];
 
 // Steps to generate collateral for CKM HSM RSA unwrap test. Use openssl utility in Linux/WSL:

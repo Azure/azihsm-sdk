@@ -254,10 +254,11 @@ impl Function {
         masked_bk3: &[u8],
         bmk: Option<&[u8]>,
         masked_unwrapping_key: Option<&[u8]>,
+        tpm_pub_key: &[u8],
     ) -> Result<Vec<u8>, ManticoreError> {
         self.inner
             .write()
-            .provision(masked_bk3, bmk, masked_unwrapping_key)
+            .provision(masked_bk3, bmk, masked_unwrapping_key, tpm_pub_key)
     }
 
     /// Returns the API revision range supported.
@@ -554,6 +555,7 @@ impl FunctionInner {
         masked_bk3: &[u8],
         bmk: Option<&[u8]>,
         masked_unwrapping_key: Option<&[u8]>,
+        tpm_pub_key: &[u8],
     ) -> Result<Vec<u8>, ManticoreError> {
         if self.state.is_provisioned() {
             return Err(ManticoreError::PartitionAlreadyProvisioned);
@@ -585,6 +587,7 @@ impl FunctionInner {
             &BKS1,
             &BKS2,
             &unmasked_bk3,
+            tpm_pub_key,
             &mut bk_partition_len,
             &mut bk_partition,
         )

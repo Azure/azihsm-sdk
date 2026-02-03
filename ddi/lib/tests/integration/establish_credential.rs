@@ -10,6 +10,8 @@ use azihsm_ddi_mbor::MborByteArray;
 use azihsm_ddi_types::MborError;
 use azihsm_ddi_types::*;
 use test_with_tracing::test;
+use x509::X509Certificate;
+use x509::X509CertificateOp;
 
 use super::common::*;
 use super::invalid_ecc_pub_key_vectors::*;
@@ -31,6 +33,26 @@ fn helper_init_bk3_and_establish_credential(
 ) -> Result<DdiEstablishCredentialCmdResp, DdiError> {
     let masked_bk3 = helper_get_or_init_bk3(dev);
 
+    let get_cert_chain_info = helper_get_cert_chain_info(dev).unwrap();
+    // Get last cert
+    let cert_resp = helper_get_certificate(dev, get_cert_chain_info.data.num_certs - 1).unwrap();
+    let cert = cert_resp.data.certificate.as_slice();
+    let cert = X509Certificate::from_der(cert).unwrap();
+    let cert_pub_key = cert.get_public_key_der().unwrap();
+
+    let hash_algo = HashAlgo::sha384();
+    let mut ecdsa_algo = EcdsaAlgo::new(hash_algo);
+    let tpm_priv_key = azihsm_crypto::EccPrivateKey::from_bytes(&TEST_TPM_ECC_PRIVATE_KEY).unwrap();
+    let sig_len = Signer::sign(&mut ecdsa_algo, &tpm_priv_key, &cert_pub_key, None).unwrap();
+    let mut signature = vec![0u8; sig_len];
+    let _ = Signer::sign(
+        &mut ecdsa_algo,
+        &tpm_priv_key,
+        &cert_pub_key,
+        Some(&mut signature),
+    )
+    .unwrap();
+
     helper_establish_credential(
         dev,
         sess_id,
@@ -40,8 +62,12 @@ fn helper_init_bk3_and_establish_credential(
         masked_bk3,
         MborByteArray::from_slice(&[]).expect("Failed to create empty BMK"),
         MborByteArray::from_slice(&[]).expect("Failed to create empty masked unwrapping key"),
-        MborByteArray::from_slice(&[]).expect("Failed to create signed PID"),
-        DdiDerPublicKey { der: MborByteArray::from_slice(&[]).expect("Failed to create empty DER"), key_kind: DdiKeyType::Ecc384Public },
+        MborByteArray::from_slice(&signature).expect("Failed to create signed PID"),
+        DdiDerPublicKey {
+            der: MborByteArray::from_slice(&TEST_TPM_ECC_PUB_KEY)
+                .expect("Failed to create MborByteArray from TPM ECC public key"),
+            key_kind: DdiKeyType::Ecc384Public,
+        },
     )
 }
 
@@ -77,7 +103,10 @@ fn test_establish_credential_success_prov_failure_bad_masked_bk3() {
                 MborByteArray::from_slice(&[])
                     .expect("Failed to create empty masked unwrapping key"),
                 MborByteArray::from_slice(&[]).expect("Failed to create signed PID"),
-                DdiDerPublicKey { der: MborByteArray::from_slice(&[]).expect("Failed to create empty DER"), key_kind: DdiKeyType::Ecc384Public },
+                DdiDerPublicKey {
+                    der: MborByteArray::from_slice(&[]).expect("Failed to create empty DER"),
+                    key_kind: DdiKeyType::Ecc384Public,
+                },
             );
 
             assert!(resp.is_err());
@@ -97,7 +126,10 @@ fn test_establish_credential_success_prov_failure_bad_masked_bk3() {
                 MborByteArray::from_slice(&[])
                     .expect("Failed to create empty masked unwrapping key"),
                 MborByteArray::from_slice(&[]).expect("Failed to create signed PID"),
-                DdiDerPublicKey { der: MborByteArray::from_slice(&[]).expect("Failed to create empty DER"), key_kind: DdiKeyType::Ecc384Public },
+                DdiDerPublicKey {
+                    der: MborByteArray::from_slice(&[]).expect("Failed to create empty DER"),
+                    key_kind: DdiKeyType::Ecc384Public,
+                },
             );
             assert!(resp.is_ok(), "resp {:?}", resp);
             let resp = resp.unwrap();
@@ -679,6 +711,26 @@ fn test_thread_fn(_thread_id: u8, device_path: String, masked_bk3: MborByteArray
     let (encrypted_credential, pub_key) =
         encrypt_userid_pin_for_establish_cred(&dev, TEST_CRED_ID, TEST_CRED_PIN);
 
+    let get_cert_chain_info = helper_get_cert_chain_info(&dev).unwrap();
+    // Get last cert
+    let cert_resp = helper_get_certificate(&dev, get_cert_chain_info.data.num_certs - 1).unwrap();
+    let cert = cert_resp.data.certificate.as_slice();
+    let cert = X509Certificate::from_der(cert).unwrap();
+    let cert_pub_key = cert.get_public_key_der().unwrap();
+
+    let hash_algo = HashAlgo::sha384();
+    let mut ecdsa_algo = EcdsaAlgo::new(hash_algo);
+    let tpm_priv_key = azihsm_crypto::EccPrivateKey::from_bytes(&TEST_TPM_ECC_PRIVATE_KEY).unwrap();
+    let sig_len = Signer::sign(&mut ecdsa_algo, &tpm_priv_key, &cert_pub_key, None).unwrap();
+    let mut signature = vec![0u8; sig_len];
+    let _ = Signer::sign(
+        &mut ecdsa_algo,
+        &tpm_priv_key,
+        &cert_pub_key,
+        Some(&mut signature),
+    )
+    .unwrap();
+
     helper_establish_credential(
         &dev,
         None,
@@ -688,8 +740,12 @@ fn test_thread_fn(_thread_id: u8, device_path: String, masked_bk3: MborByteArray
         masked_bk3,
         MborByteArray::from_slice(&[]).expect("Failed to create empty BMK"),
         MborByteArray::from_slice(&[]).expect("Failed to create empty masked unwrapping key"),
-        MborByteArray::from_slice(&[]).expect("Failed to create signed PID"),
-        DdiDerPublicKey { der: MborByteArray::from_slice(&[]).expect("Failed to create empty DER"), key_kind: DdiKeyType::Ecc384Public },
+        MborByteArray::from_slice(&signature).expect("Failed to create signed PID"),
+        DdiDerPublicKey {
+            der: MborByteArray::from_slice(&TEST_TPM_ECC_PUB_KEY)
+                .expect("Failed to create MborByteArray from TPM ECC public key"),
+            key_kind: DdiKeyType::Ecc384Public,
+        },
     )
     .unwrap();
 }

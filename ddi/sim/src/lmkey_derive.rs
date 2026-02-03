@@ -36,6 +36,7 @@ pub(crate) const FW_SECRET_SIZE_BYTES: usize = 48;
 pub(crate) const MK_SEED_SIZE_BYTES: usize = 48;
 pub(crate) const BK_SEED_SIZE_BYTES: usize = 32;
 pub(crate) const SESSION_SEED_SIZE_BYTES: usize = 48;
+pub(crate) const BK_LABEL_LENGTH: usize = 256;
 pub(crate) const PARTITION_BK_LABEL: &[u8] = b"PARTITION_BK";
 pub(crate) const SESSION_BK_LABEL: &[u8] = b"SESSION_BK";
 pub(crate) const MK_DEFAULT_LABEL: &[u8] = b"MK_DEFAULT";
@@ -77,6 +78,7 @@ impl LMKeyDerive {
         bks1: &[u8; BK_SEED_SIZE_BYTES],
         bks2: &[u8; BK_SEED_SIZE_BYTES],
         bk3: &[u8; BK3_SIZE_BYTES],
+        tpm_pub_key: &[u8],
         bk_partition_len: &mut usize,
         bk_partition_out: &mut [u8],
     ) -> Result<(), ManticoreError> {
@@ -98,9 +100,16 @@ impl LMKeyDerive {
         bks1_2[BK_SEED_SIZE_BYTES..].copy_from_slice(bks2);
 
         // Derive BK via KBKDF using BK3 as key and BKS1_2 as context.
+        if BK_LABEL_LENGTH < PARTITION_BK_LABEL.len() + tpm_pub_key.len() {
+            Err(ManticoreError::InvalidArgument)?;
+        }
+        let mut label = [0u8; BK_LABEL_LENGTH];
+        label[..PARTITION_BK_LABEL.len()].copy_from_slice(PARTITION_BK_LABEL);
+        label[PARTITION_BK_LABEL.len()..PARTITION_BK_LABEL.len() + tpm_pub_key.len()]
+            .copy_from_slice(tpm_pub_key);
         crypto_env.kbkdf_sha384(
             bk3,
-            Some(PARTITION_BK_LABEL),
+            Some(&label),
             Some(&bks1_2),
             BK_AES_CBC_256_HMAC384_SIZE_BYTES,
             &mut bk_partition_out[..BK_AES_CBC_256_HMAC384_SIZE_BYTES],

@@ -2,6 +2,10 @@
 
 //! Module for handling the incoming request, processing them and sending the response back.
 
+use azihsm_crypto::EcdsaAlgo;
+use azihsm_crypto::HashAlgo;
+use azihsm_crypto::ImportableKey;
+use azihsm_crypto::Verifier;
 use azihsm_ddi_mbor::MborByteArray;
 use azihsm_ddi_mbor::*;
 use azihsm_ddi_types::*;
@@ -1970,10 +1974,32 @@ impl Dispatcher {
 
         let _ = hdr.rev.ok_or(ManticoreError::UnsupportedRevision)?;
 
+        let attest_key_num = self
+            .function
+            .get_function_state()
+            .get_attestation_key_num()?;
         let vault = self
             .function
             .get_function_state()
             .get_vault(DEFAULT_VAULT_ID)?;
+
+        let attest_entry = vault.get_key_entry(attest_key_num)?;
+        let crate::table::entry::key::Key::EccPrivate(attest_key) = attest_entry.key() else {
+            tracing::error!("Attestation key is not ECC private key.");
+            Err(ManticoreError::InternalError)?
+        };
+        let attest_key_pub_der = attest_key.extract_pub_key_der()?;
+        let hash_algo = HashAlgo::sha384();
+        let mut ecdsa_algo = EcdsaAlgo::new(hash_algo);
+        let tpm_pub_key = azihsm_crypto::EccPublicKey::from_bytes(req.tpm_pub_key.der.as_slice())
+            .map_err(|_| ManticoreError::InvalidArgument)?;
+        Verifier::verify(
+            &mut ecdsa_algo,
+            &tpm_pub_key,
+            &attest_key_pub_der,
+            req.signed_pid.as_slice(),
+        )
+        .map_err(|_| ManticoreError::InvalidArgument)?;
 
         let encrypted_credential = EncryptedCredential {
             id: req.encrypted_credential.encrypted_id.data_take(),
@@ -2009,6 +2035,7 @@ impl Dispatcher {
                 req.masked_bk3.as_slice(),
                 bmk_option,
                 masked_unwrapping_key_option,
+                req.tpm_pub_key.der.as_slice(),
             )?;
 
             tracing::debug!(bmk_size = bmk.len(), "Successfully provisioned partition");

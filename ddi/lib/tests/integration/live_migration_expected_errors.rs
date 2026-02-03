@@ -2,10 +2,12 @@
 
 #![cfg(test)]
 
+use azihsm_crypto::{EcdsaAlgo, HashAlgo, ImportableKey, Signer};
 use azihsm_ddi::*;
 use azihsm_ddi_mbor::MborByteArray;
 use azihsm_ddi_types::*;
 use test_with_tracing::test;
+use x509::{X509Certificate, X509CertificateOp};
 
 use super::common::*;
 
@@ -55,6 +57,28 @@ fn test_establish_credential_after_lm() {
 
         let masked_bk3 = helper_get_or_init_bk3(dev);
 
+        let get_cert_chain_info = helper_get_cert_chain_info(dev).unwrap();
+        // Get last cert
+        let cert_resp =
+            helper_get_certificate(dev, get_cert_chain_info.data.num_certs - 1).unwrap();
+        let cert = cert_resp.data.certificate.as_slice();
+        let cert = X509Certificate::from_der(cert).unwrap();
+        let cert_pub_key = cert.get_public_key_der().unwrap();
+
+        let hash_algo = HashAlgo::sha384();
+        let mut ecdsa_algo = EcdsaAlgo::new(hash_algo);
+        let tpm_priv_key =
+            azihsm_crypto::EccPrivateKey::from_bytes(&TEST_TPM_ECC_PRIVATE_KEY).unwrap();
+        let sig_len = Signer::sign(&mut ecdsa_algo, &tpm_priv_key, &cert_pub_key, None).unwrap();
+        let mut signature = vec![0u8; sig_len];
+        let _ = Signer::sign(
+            &mut ecdsa_algo,
+            &tpm_priv_key,
+            &cert_pub_key,
+            Some(&mut signature),
+        )
+        .unwrap();
+
         // Confirm fails with NonceMismatch
         let resp = helper_establish_credential(
             dev,
@@ -65,8 +89,12 @@ fn test_establish_credential_after_lm() {
             masked_bk3,
             MborByteArray::from_slice(&[0u8; 1024]).unwrap(),
             MborByteArray::from_slice(&[0u8; 1024]).unwrap(),
-            MborByteArray::from_slice(&[]).expect("Failed to create signed PID"),
-            DdiDerPublicKey { der: MborByteArray::from_slice(&[]).expect("Failed to create empty DER"), key_kind: DdiKeyType::Ecc384Public },
+            MborByteArray::from_slice(&signature).expect("Failed to create signed PID"),
+            DdiDerPublicKey {
+                der: MborByteArray::from_slice(&TEST_TPM_ECC_PUB_KEY)
+                    .expect("Failed to create MborByteArray from TPM ECC public key"),
+                key_kind: DdiKeyType::Ecc384Public,
+            },
         );
 
         assert!(resp.is_err(), "resp {:?}", resp);
