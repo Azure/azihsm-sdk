@@ -28,7 +28,6 @@ mod masked_key;
 mod metadata;
 mod open_key;
 mod open_session;
-mod provision_part;
 mod reopen_session;
 mod rsa;
 mod sessctrl;
@@ -64,7 +63,6 @@ use open_enum::open_enum;
 pub use open_key::*;
 pub use open_session::*;
 use pastey::paste;
-pub use provision_part::*;
 pub use reopen_session::*;
 pub use rsa::*;
 pub use sessctrl::*;
@@ -173,9 +171,6 @@ pub enum DdiOp {
 
     /// Set Sealed BK3
     SetSealedBk3 = 1113,
-
-    /// Provision Part
-    ProvisionPart = 1114,
 }
 
 /// DDI status code enumeration
