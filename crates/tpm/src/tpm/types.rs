@@ -101,7 +101,7 @@ pub struct TpmaObjectBits {
 }
 
 #[repr(u16)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum TpmAlgId {
     Rsa = 0x0001,
     Aes = 0x0006,
@@ -126,8 +126,10 @@ pub enum TpmCommandCode {
     Load = 0x00000157,
     Quote = 0x00000158,
     RsaDecrypt = 0x00000159,
+    Sign = 0x0000015D,
     FlushContext = 0x00000165,
     Unseal = 0x0000015E,
+    VerifySignature = 0x00000177,
     ReadPublic = 0x00000173,
     PcrRead = 0x0000017E,
     PolicyPCR = 0x0000017F,
@@ -642,7 +644,7 @@ pub struct CreateResponseParameters {
     pub out_public: Tpm2bBytes,
     pub creation_data: Tpm2bBytes,
     pub creation_hash: Tpm2bBytes,
-    pub creation_ticket: Vec<u8>, //?
+    pub creation_ticket: Vec<u8>,
 }
 
 impl TpmUnmarshal for CreateResponseParameters {
@@ -868,7 +870,7 @@ impl TpmUnmarshal for Tpm2bBytes {
         if *c + sz > d.len() {
             return Err(io::Error::new(
                 io::ErrorKind::UnexpectedEof,
-                "2b bytes dannytest",
+                "insufficient data to unmarshal TPM2B bytes",
             ));
         }
         let v = d[*c..*c + sz].to_vec();
@@ -943,7 +945,7 @@ impl TpmUnmarshal for PcrSelectionList {
             if *c + size as usize > d.len() {
                 return Err(io::Error::new(
                     io::ErrorKind::UnexpectedEof,
-                    "pcr select bytes",
+                    "insufficient data to unmarshal PCR select bytes",
                 ));
             }
             let mut arr = [0u8; 3];
@@ -996,14 +998,7 @@ impl TpmMarshal for KeyedHashScheme {
         match self {
             KeyedHashScheme::Null => {
                 0x0010u16.marshal(buf); /* details omitted */
-            } // RsaScheme::Rsassa(hash) => {
-              //     0x0014u16.marshal(buf);
-              //     hash.marshal(buf);
-              // }
-              // RsaScheme::Other(id, rest) => {
-              //     id.marshal(buf);
-              //     buf.extend_from_slice(rest);
-              // }
+            }
         }
     }
 }
@@ -1107,7 +1102,7 @@ impl TpmMarshal for KeyedHashDetail {
     fn marshal(&self, buf: &mut Vec<u8>) {
         self.scheme.marshal(buf);
         if self.scheme != KeyedHashScheme::Null {
-            (self.hash_alg.clone() as u16).marshal(buf);
+            (self.hash_alg as u16).marshal(buf);
         }
     }
 }
@@ -1121,12 +1116,6 @@ impl TpmUnmarshal for TpmtPublic {
         let object_attributes = u32::unmarshal(d, c)?;
         let auth_policy = Tpm2bBytes::unmarshal(d, c)?;
         let symmetric = SymDefObject::unmarshal(d, c)?;
-        // if symmetric.alg != 0x0010 {
-        //     return Err(io::Error::new(
-        //         io::ErrorKind::InvalidData,
-        //         "unexpected symmetric alg",
-        //     ));
-        // }
         // scheme
         let scheme_id = u16::unmarshal(d, c)?;
         let scheme = match scheme_id {
@@ -1174,6 +1163,418 @@ impl TpmUnmarshal for Tpm2bPublic {
             inner,
             cached: std::cell::RefCell::new(None),
         })
+    }
+}
+
+/// ECC Point structure (TPMS_ECC_POINT)
+#[derive(Debug, Clone)]
+pub struct TpmsEccPoint {
+    pub x: Vec<u8>,
+    pub y: Vec<u8>,
+}
+
+impl TpmMarshal for TpmsEccPoint {
+    fn marshal(&self, buf: &mut Vec<u8>) {
+        (self.x.len() as u16).marshal(buf);
+        buf.extend_from_slice(&self.x);
+        (self.y.len() as u16).marshal(buf);
+        buf.extend_from_slice(&self.y);
+    }
+}
+
+impl TpmUnmarshal for TpmsEccPoint {
+    fn unmarshal(d: &[u8], c: &mut usize) -> io::Result<Self> {
+        let x_size = u16::unmarshal(d, c)? as usize;
+        if *c + x_size > d.len() {
+            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "ecc point x"));
+        }
+        let x = d[*c..*c + x_size].to_vec();
+        *c += x_size;
+        let y_size = u16::unmarshal(d, c)? as usize;
+        if *c + y_size > d.len() {
+            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "ecc point y"));
+        }
+        let y = d[*c..*c + y_size].to_vec();
+        *c += y_size;
+        Ok(TpmsEccPoint { x, y })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum TpmtSigScheme {
+    Null,
+    Rsassa(u16),
+}
+
+impl TpmMarshal for TpmtSigScheme {
+    fn marshal(&self, buf: &mut Vec<u8>) {
+        match self {
+            TpmtSigScheme::Null => {
+                0x0010u16.marshal(buf); /* details omitted */
+            }
+            TpmtSigScheme::Rsassa(hash) => {
+                0x0014u16.marshal(buf);
+                hash.marshal(buf);
+            }
+        }
+    }
+}
+
+/// ECDSA signature (TPMS_SIGNATURE_ECDSA)
+#[derive(Debug, Clone)]
+pub struct TpmsSignatureEcdsa {
+    pub hash_alg: u16,
+    pub signature_r: Vec<u8>,
+    pub signature_s: Vec<u8>,
+}
+
+impl TpmMarshal for TpmsSignatureEcdsa {
+    fn marshal(&self, buf: &mut Vec<u8>) {
+        self.hash_alg.marshal(buf);
+        (self.signature_r.len() as u16).marshal(buf);
+        buf.extend_from_slice(&self.signature_r);
+        (self.signature_s.len() as u16).marshal(buf);
+        buf.extend_from_slice(&self.signature_s);
+    }
+}
+
+impl TpmUnmarshal for TpmsSignatureEcdsa {
+    fn unmarshal(d: &[u8], c: &mut usize) -> io::Result<Self> {
+        let hash_alg = u16::unmarshal(d, c)?;
+        let r_size = u16::unmarshal(d, c)? as usize;
+        if *c + r_size > d.len() {
+            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "ecdsa r"));
+        }
+        let signature_r = d[*c..*c + r_size].to_vec();
+        *c += r_size;
+        let s_size = u16::unmarshal(d, c)? as usize;
+        if *c + s_size > d.len() {
+            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "ecdsa s"));
+        }
+        let signature_s = d[*c..*c + s_size].to_vec();
+        *c += s_size;
+        Ok(TpmsSignatureEcdsa {
+            hash_alg,
+            signature_r,
+            signature_s,
+        })
+    }
+}
+
+// ECC public template structure (TPMT_PUBLIC for ECC keys)
+#[derive(Debug, Clone)]
+pub struct TpmtPublicEcc {
+    pub type_alg: u16, // 0x0023 for ECC
+    pub name_alg: u16, // typically 0x000B SHA256
+    pub object_attributes: u32,
+    pub auth_policy: Tpm2bBytes,
+    pub symmetric: SymDefObject,
+    pub scheme: EccScheme,
+    pub curve_id: u16,   // TPM_ECC_NIST_P256 = 0x0003
+    pub kdf_scheme: u16, // typically TPM_ALG_NULL
+    pub unique: TpmsEccPoint,
+}
+
+/// ECC Signature Scheme
+#[derive(Debug, Clone)]
+pub enum EccScheme {
+    Null,
+    Ecdsa(u16), // hash algorithm
+}
+
+impl TpmMarshal for EccScheme {
+    fn marshal(&self, buf: &mut Vec<u8>) {
+        match self {
+            EccScheme::Null => {
+                0x0010u16.marshal(buf); // TPM_ALG_NULL
+            }
+            EccScheme::Ecdsa(hash) => {
+                0x0018u16.marshal(buf); // TPM_ALG_ECDSA
+                hash.marshal(buf);
+            }
+        }
+    }
+}
+
+impl TpmMarshal for TpmtPublicEcc {
+    fn marshal(&self, buf: &mut Vec<u8>) {
+        self.type_alg.marshal(buf);
+        self.name_alg.marshal(buf);
+        self.object_attributes.marshal(buf);
+        self.auth_policy.marshal(buf);
+        self.symmetric.marshal(buf);
+        self.scheme.marshal(buf);
+        self.curve_id.marshal(buf);
+        self.kdf_scheme.marshal(buf);
+        self.unique.marshal(buf);
+    }
+}
+
+pub type Tpm2bPublicEcc = Tpm2b<TpmtPublicEcc>;
+
+// TPMT_SIGNATURE (support RSASSA and ECDSA)
+#[derive(Debug, Clone)]
+pub enum TpmtSignature {
+    Rsassa { hash_alg: u16, sig: Vec<u8> },
+    Ecdsa(TpmsSignatureEcdsa),
+    Null,
+    OtherRaw(Vec<u8>),
+}
+
+impl TpmUnmarshal for TpmtSignature {
+    fn unmarshal(d: &[u8], c: &mut usize) -> io::Result<Self> {
+        // scheme
+        if *c + 2 > d.len() {
+            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "sig scheme"));
+        }
+        let scheme = u16::unmarshal(d, c)?;
+        match scheme {
+            0x0014 => {
+                // RSASSA
+                let hash_alg = u16::unmarshal(d, c)?; // hashAlg
+                let size = u16::unmarshal(d, c)? as usize;
+                if *c + size > d.len() {
+                    return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "sig rsassa"));
+                }
+                let sig = d[*c..*c + size].to_vec();
+                *c += size;
+                Ok(TpmtSignature::Rsassa { hash_alg, sig })
+            }
+            0x0018 => {
+                // ECDSA
+                let ecdsa = TpmsSignatureEcdsa::unmarshal(d, c)?;
+                Ok(TpmtSignature::Ecdsa(ecdsa))
+            }
+            0x0010 => {
+                // TPM_ALG_NULL
+                Ok(TpmtSignature::Null)
+            }
+            _ => {
+                // fallback: capture rest
+                let rest = d[*c..].to_vec();
+                *c = d.len();
+                Ok(TpmtSignature::OtherRaw(rest))
+            }
+        }
+    }
+}
+
+impl TpmMarshal for TpmtSignature {
+    fn marshal(&self, buf: &mut Vec<u8>) {
+        match self {
+            TpmtSignature::Rsassa { hash_alg, sig } => {
+                0x0014u16.marshal(buf); // RSASSA
+                hash_alg.marshal(buf);
+                (sig.len() as u16).marshal(buf);
+                buf.extend_from_slice(sig);
+            }
+            TpmtSignature::Ecdsa(ecdsa) => {
+                0x0018u16.marshal(buf); // ECDSA
+                ecdsa.marshal(buf);
+            }
+            TpmtSignature::Null => {
+                0x0010u16.marshal(buf); // TPM_ALG_NULL
+            }
+            TpmtSignature::OtherRaw(raw) => {
+                buf.extend_from_slice(raw); // Already raw TPMT_SIGNATURE bytes
+            }
+        }
+    }
+}
+
+// TPM2_Sign command -----------------------------------------------------------
+define_handle_struct!(SignCommandHandles { key_handle });
+
+/// TPMT_TK_HASHCHECK structure for Sign command validation ticket
+#[derive(Debug, Clone)]
+pub struct TpmtTkHashcheck {
+    pub tag: u16,
+    pub hierarchy: u32,
+    pub digest: Tpm2bBytes,
+}
+
+impl TpmMarshal for TpmtTkHashcheck {
+    fn marshal(&self, buf: &mut Vec<u8>) {
+        self.tag.marshal(buf);
+        self.hierarchy.marshal(buf);
+        self.digest.marshal(buf);
+    }
+}
+
+impl TpmtTkHashcheck {
+    /// Create a NULL ticket (for unrestricted keys)
+    pub fn null_ticket() -> Self {
+        Self {
+            tag: 0x8024,            // TPM_ST_HASHCHECK
+            hierarchy: 0x4000_0007, // TPM_RH_NULL
+            digest: Tpm2bBytes(Vec::new()),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SignCommandParameters {
+    pub digest: Tpm2bBytes,
+    pub scheme: TpmtSigScheme,
+    pub validation: TpmtTkHashcheck,
+}
+
+impl TpmMarshal for SignCommandParameters {
+    fn marshal(&self, buf: &mut Vec<u8>) {
+        self.digest.marshal(buf);
+        self.scheme.marshal(buf);
+        self.validation.marshal(buf);
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SignCommand {
+    pub header: TpmCommandHeader,
+    pub handles: SignCommandHandles,
+    pub parameters: SignCommandParameters,
+}
+
+impl SignCommand {
+    pub fn new(key_handle: u32, parameters: SignCommandParameters) -> Self {
+        Self {
+            header: TpmCommandHeader::sessions(TpmCommandCode::Sign),
+            handles: SignCommandHandles { key_handle },
+            parameters,
+        }
+    }
+
+    pub fn handle_values(&self) -> [u32; 1] {
+        self.handles.to_array()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SignResponseParameters {
+    pub signature: TpmtSignature,
+}
+
+impl TpmUnmarshal for SignResponseParameters {
+    fn unmarshal(d: &[u8], c: &mut usize) -> io::Result<Self> {
+        let signature = TpmtSignature::unmarshal(d, c)?;
+        Ok(SignResponseParameters { signature })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SignResponse {
+    pub header: TpmResponseHeader,
+    pub parameters: SignResponseParameters,
+}
+
+impl SignResponse {
+    pub fn from_bytes(bytes: &[u8]) -> io::Result<Self> {
+        let (header, mut cursor) = TpmResponseHeader::parse(bytes)?;
+        if header.return_code != 0 {
+            return Err(io::Error::other(format!(
+                "Sign returned error 0x{:08x}",
+                header.return_code
+            )));
+        }
+
+        // Skip paramSize for sessions response
+        if header.has_sessions() {
+            let _param_size = u32::unmarshal(bytes, &mut cursor)?;
+        }
+
+        let parameters = SignResponseParameters::unmarshal(bytes, &mut cursor)?;
+        Ok(SignResponse { header, parameters })
+    }
+}
+
+// TPM2_VerifySignature command ------------------------------------------------
+define_handle_struct!(VerifySignatureCommandHandles { key_handle });
+
+#[derive(Debug, Clone)]
+pub struct VerifySignatureCommandParameters {
+    pub digest: Tpm2bBytes,
+    pub signature: TpmtSignature,
+}
+
+impl TpmMarshal for VerifySignatureCommandParameters {
+    fn marshal(&self, buf: &mut Vec<u8>) {
+        self.digest.marshal(buf);
+        self.signature.marshal(buf);
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct VerifySignatureCommand {
+    pub header: TpmCommandHeader,
+    pub handles: VerifySignatureCommandHandles,
+    pub parameters: VerifySignatureCommandParameters,
+}
+
+impl VerifySignatureCommand {
+    pub fn new(key_handle: u32, parameters: VerifySignatureCommandParameters) -> Self {
+        Self {
+            header: TpmCommandHeader::no_sessions(TpmCommandCode::VerifySignature),
+            handles: VerifySignatureCommandHandles { key_handle },
+            parameters,
+        }
+    }
+
+    pub fn handle_values(&self) -> [u32; 1] {
+        self.handles.to_array()
+    }
+}
+
+/// TPMT_TK_VERIFIED structure returned by VerifySignature
+#[derive(Debug, Clone)]
+pub struct TpmtTkVerified {
+    pub tag: u16,
+    pub hierarchy: u32,
+    pub digest: Tpm2bBytes,
+}
+
+impl TpmUnmarshal for TpmtTkVerified {
+    fn unmarshal(d: &[u8], c: &mut usize) -> io::Result<Self> {
+        let tag = u16::unmarshal(d, c)?;
+        let hierarchy = u32::unmarshal(d, c)?;
+        let digest = Tpm2bBytes::unmarshal(d, c)?;
+        Ok(TpmtTkVerified {
+            tag,
+            hierarchy,
+            digest,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct VerifySignatureResponseParameters {
+    pub validation: TpmtTkVerified,
+}
+
+impl TpmUnmarshal for VerifySignatureResponseParameters {
+    fn unmarshal(d: &[u8], c: &mut usize) -> io::Result<Self> {
+        let validation = TpmtTkVerified::unmarshal(d, c)?;
+        Ok(VerifySignatureResponseParameters { validation })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct VerifySignatureResponse {
+    pub header: TpmResponseHeader,
+    pub parameters: VerifySignatureResponseParameters,
+}
+
+impl VerifySignatureResponse {
+    pub fn from_bytes(bytes: &[u8]) -> io::Result<Self> {
+        let (header, mut cursor) = TpmResponseHeader::parse(bytes)?;
+        if header.return_code != 0 {
+            return Err(io::Error::other(format!(
+                "VerifySignature returned error 0x{:08x}",
+                header.return_code
+            )));
+        }
+
+        // VerifySignature uses no sessions so no paramSize
+        let parameters = VerifySignatureResponseParameters::unmarshal(bytes, &mut cursor)?;
+        Ok(VerifySignatureResponse { header, parameters })
     }
 }
 
@@ -1393,5 +1794,292 @@ mod tests {
         assert!(parsed.parameters.creation_hash.0.is_empty());
         assert!(parsed.parameters.name.0.is_empty());
         assert!(parsed.parameters.qualified_name.0.is_empty());
+    }
+
+    #[test]
+    fn marshal_rsa_restricted_public_nonzero() {
+        let pub_area = rsa_unrestricted_sign_decrypt_public();
+        let mut buf = Vec::new();
+        pub_area.marshal(&mut buf);
+        assert!(buf.len() > 10, "expected reasonably sized public area");
+        // size prefix matches
+        let sz = u16::from_be_bytes([buf[0], buf[1]]) as usize;
+        assert_eq!(sz + 2, buf.len());
+    }
+
+    #[test]
+    fn marshal_empty_sensitive_create_size() {
+        let sc = empty_sensitive_create();
+        let mut buf = Vec::new();
+        sc.marshal(&mut buf);
+        // inner structure has two empty size fields (0,0) so total inner size = 4
+        assert_eq!(u16::from_be_bytes([buf[0], buf[1]]), 4);
+        assert_eq!(&buf[2..6], &[0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn marshal_pcr_selection_list() {
+        let mut sel = [0u8; 3];
+        sel[0] = 0b0000_0011; // PCR0, PCR1
+        let list = PcrSelectionList(vec![PcrSelection {
+            hash_alg: 0x000B,
+            size_of_select: 3,
+            select: sel,
+        }]);
+        let mut buf = Vec::new();
+        list.marshal(&mut buf);
+        // count
+        assert_eq!(&buf[0..4], &1u32.to_be_bytes());
+        // hash alg
+        assert_eq!(&buf[4..6], &0x000B_u16.to_be_bytes());
+        assert_eq!(buf[6], 3);
+        assert_eq!(&buf[7..10], &sel);
+    }
+
+    #[test]
+    fn unmarshal_public_roundtrip() {
+        let p = rsa_unrestricted_sign_decrypt_public();
+        let mut buf = Vec::new();
+        p.marshal(&mut buf);
+        let mut c = 0usize;
+        let parsed = Tpm2bPublic::unmarshal(&buf, &mut c).expect("unmarshal public");
+        assert_eq!(c, buf.len());
+        let key_bits = match parsed.inner.detail {
+            TpmtPublicDetail::RsaDetail(ref rsa) => rsa.key_bits,
+            _ => panic!("expected RSA detail"),
+        };
+        assert_eq!(key_bits, 2048);
+    }
+
+    #[test]
+    fn unmarshal_signature_rsassa() {
+        // Build a fake RSASSA signature blob: scheme=0x0014, hash=0x000B, size=4, data=deadbeef
+        let mut blob = Vec::new();
+        0x0014u16.marshal(&mut blob);
+        0x000Bu16.marshal(&mut blob);
+        (4u16).marshal(&mut blob);
+        blob.extend_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]);
+        let mut cur = 0usize;
+        let sig = TpmtSignature::unmarshal(&blob, &mut cur).expect("sig parse");
+        match sig {
+            TpmtSignature::Rsassa { hash_alg, ref sig } => {
+                assert_eq!(hash_alg, 0x000B);
+                assert_eq!(sig, &vec![0xDE, 0xAD, 0xBE, 0xEF]);
+            }
+            _ => panic!("unexpected variant"),
+        }
+        assert_eq!(cur, blob.len());
+    }
+
+    #[test]
+    fn sign_response_unmarshal_ecdsa() {
+        // Test ECDSA signature response parsing
+        let mut params = Vec::new();
+        // ECDSA signature: scheme=0x0018, hash=0x000B, r_size=32, r_data, s_size=32, s_data
+        0x0018u16.marshal(&mut params);
+        0x000Bu16.marshal(&mut params); // hash_alg
+        (32u16).marshal(&mut params);
+        params.extend_from_slice(&[0xAA; 32]); // signature_r
+        (32u16).marshal(&mut params);
+        params.extend_from_slice(&[0xBB; 32]); // signature_s
+
+        let param_size = params.len() as u32;
+        let mut response = Vec::new();
+        response.extend_from_slice(&TPM_ST_SESSIONS.to_be_bytes());
+        let total_size = (10 + 4 + params.len()) as u32;
+        response.extend_from_slice(&total_size.to_be_bytes());
+        response.extend_from_slice(&0u32.to_be_bytes());
+        response.extend_from_slice(&param_size.to_be_bytes());
+        response.extend_from_slice(&params);
+
+        let parsed = SignResponse::from_bytes(&response).expect("sign resp");
+        match parsed.parameters.signature {
+            TpmtSignature::Ecdsa(ecdsa) => {
+                assert_eq!(ecdsa.hash_alg, 0x000B);
+                assert_eq!(ecdsa.signature_r.len(), 32);
+                assert_eq!(ecdsa.signature_s.len(), 32);
+                assert!(ecdsa.signature_r.iter().all(|&b| b == 0xAA));
+                assert!(ecdsa.signature_s.iter().all(|&b| b == 0xBB));
+            }
+            _ => panic!("expected ECDSA signature"),
+        }
+    }
+
+    #[test]
+    fn sign_response_unmarshal_rsassa() {
+        // Test RSASSA signature response parsing
+        let mut params = Vec::new();
+        0x0014u16.marshal(&mut params); // RSASSA
+        0x000Bu16.marshal(&mut params); // hash_alg SHA256
+        (4u16).marshal(&mut params);
+        params.extend_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]);
+
+        let param_size = params.len() as u32;
+        let mut response = Vec::new();
+        response.extend_from_slice(&TPM_ST_SESSIONS.to_be_bytes());
+        let total_size = (10 + 4 + params.len()) as u32;
+        response.extend_from_slice(&total_size.to_be_bytes());
+        response.extend_from_slice(&0u32.to_be_bytes());
+        response.extend_from_slice(&param_size.to_be_bytes());
+        response.extend_from_slice(&params);
+
+        let parsed = SignResponse::from_bytes(&response).expect("sign resp");
+        match parsed.parameters.signature {
+            TpmtSignature::Rsassa { hash_alg, ref sig } => {
+                assert_eq!(hash_alg, 0x000B);
+                assert_eq!(sig, &vec![0xDE, 0xAD, 0xBE, 0xEF]);
+            }
+            _ => panic!("expected RSASSA signature"),
+        }
+    }
+
+    #[test]
+    fn verify_signature_response_unmarshal() {
+        // Build validation ticket
+        let mut body = Vec::new();
+        0x8018u16.marshal(&mut body); // tag TPM_ST_VERIFIED
+        0x4000_0007u32.marshal(&mut body); // hierarchy TPM_RH_NULL
+        (0u16).marshal(&mut body); // empty digest
+
+        let mut response = Vec::new();
+        response.extend_from_slice(&TPM_ST_NO_SESSIONS.to_be_bytes());
+        let total_size = (10 + body.len()) as u32;
+        response.extend_from_slice(&total_size.to_be_bytes());
+        response.extend_from_slice(&0u32.to_be_bytes());
+        response.extend_from_slice(&body);
+
+        let parsed = VerifySignatureResponse::from_bytes(&response).expect("verify sig resp");
+        assert_eq!(parsed.parameters.validation.tag, 0x8018);
+        assert_eq!(parsed.parameters.validation.hierarchy, 0x4000_0007);
+    }
+
+    #[test]
+    fn ecc_point_marshal_unmarshal_roundtrip() {
+        let point = TpmsEccPoint {
+            x: vec![1, 2, 3, 4],
+            y: vec![5, 6, 7, 8],
+        };
+        let mut buf = Vec::new();
+        point.marshal(&mut buf);
+        let mut cursor = 0;
+        let parsed = TpmsEccPoint::unmarshal(&buf, &mut cursor).unwrap();
+        assert_eq!(cursor, buf.len());
+        assert_eq!(parsed.x, point.x);
+        assert_eq!(parsed.y, point.y);
+    }
+
+    #[test]
+    fn ecdsa_signature_marshal_unmarshal_roundtrip() {
+        let sig = TpmsSignatureEcdsa {
+            hash_alg: 0x000B,
+            signature_r: vec![0x11; 32],
+            signature_s: vec![0x22; 32],
+        };
+        let mut buf = Vec::new();
+        sig.marshal(&mut buf);
+        let mut cursor = 0;
+        let parsed = TpmsSignatureEcdsa::unmarshal(&buf, &mut cursor).unwrap();
+        assert_eq!(cursor, buf.len());
+        assert_eq!(parsed.hash_alg, sig.hash_alg);
+        assert_eq!(parsed.signature_r, sig.signature_r);
+        assert_eq!(parsed.signature_s, sig.signature_s);
+    }
+
+    #[test]
+    fn tpmt_signature_ecdsa_marshal_unmarshal_roundtrip() {
+        let sig = TpmtSignature::Ecdsa(TpmsSignatureEcdsa {
+            hash_alg: 0x000B,
+            signature_r: vec![0xAA; 32],
+            signature_s: vec![0xBB; 32],
+        });
+        let mut buf = Vec::new();
+        sig.marshal(&mut buf);
+        let mut cursor = 0;
+        let parsed = TpmtSignature::unmarshal(&buf, &mut cursor).unwrap();
+        assert_eq!(cursor, buf.len());
+        match parsed {
+            TpmtSignature::Ecdsa(ecdsa) => {
+                assert_eq!(ecdsa.hash_alg, 0x000B);
+                assert_eq!(ecdsa.signature_r.len(), 32);
+                assert_eq!(ecdsa.signature_s.len(), 32);
+            }
+            _ => panic!("expected ECDSA"),
+        }
+    }
+
+    #[test]
+    fn tpmt_tk_hashcheck_null_ticket() {
+        let ticket = TpmtTkHashcheck::null_ticket();
+        assert_eq!(ticket.tag, 0x8024);
+        assert_eq!(ticket.hierarchy, 0x4000_0007);
+        assert!(ticket.digest.0.is_empty());
+
+        let mut buf = Vec::new();
+        ticket.marshal(&mut buf);
+        // tag (2) + hierarchy (4) + digest size (2) = 8 bytes
+        assert_eq!(buf.len(), 8);
+    }
+
+    #[test]
+    fn sign_command_parameters_marshal() {
+        let params = SignCommandParameters {
+            digest: Tpm2bBytes(vec![0x11; 32]),
+            scheme: TpmtSigScheme::Null,
+            validation: TpmtTkHashcheck::null_ticket(),
+        };
+        let mut buf = Vec::new();
+        params.marshal(&mut buf);
+        // digest: 2 + 32 = 34
+        // scheme (NULL): 2
+        // validation: 8
+        // total = 44
+        assert_eq!(buf.len(), 44);
+    }
+
+    #[test]
+    fn ecc_scheme_marshal() {
+        let null_scheme = EccScheme::Null;
+        let mut buf = Vec::new();
+        null_scheme.marshal(&mut buf);
+        assert_eq!(buf, vec![0x00, 0x10]); // TPM_ALG_NULL
+
+        let ecdsa_scheme = EccScheme::Ecdsa(0x000B); // SHA256
+        let mut buf2 = Vec::new();
+        ecdsa_scheme.marshal(&mut buf2);
+        assert_eq!(buf2, vec![0x00, 0x18, 0x00, 0x0B]); // TPM_ALG_ECDSA + SHA256
+    }
+
+    #[test]
+    fn tpmt_public_ecc_marshal() {
+        let pub_ecc = TpmtPublicEcc {
+            type_alg: 0x0023, // TPM_ALG_ECC
+            name_alg: 0x000B, // SHA256
+            object_attributes: TpmaObjectBits::new()
+                .with_fixed_tpm(true)
+                .with_fixed_parent(true)
+                .with_sensitive_data_origin(true)
+                .with_user_with_auth(true)
+                .with_sign_encrypt(true)
+                .into(),
+            auth_policy: Tpm2bBytes(Vec::new()),
+            symmetric: SymDefObject {
+                alg: TpmAlgId::Null.into(),
+                key_bits: 0,
+                mode: 0,
+            },
+            scheme: EccScheme::Ecdsa(0x000B),
+            curve_id: 0x0003,   // TPM_ECC_NIST_P256
+            kdf_scheme: 0x0010, // TPM_ALG_NULL
+            unique: TpmsEccPoint {
+                x: vec![0; 32],
+                y: vec![0; 32],
+            },
+        };
+        let tpm2b = Tpm2b::new(pub_ecc);
+        let mut buf = Vec::new();
+        tpm2b.marshal(&mut buf);
+        // Should have size prefix + marshaled content
+        let sz = u16::from_be_bytes([buf[0], buf[1]]) as usize;
+        assert_eq!(sz + 2, buf.len());
     }
 }

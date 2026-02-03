@@ -3,8 +3,7 @@
 use std::io;
 
 use crate::tpm::device::RawTpm;
-use crate::tpm::helpers::build_command_pw_sessions;
-use crate::tpm::helpers::parse_tpm_rc_with_cmd;
+use crate::tpm::helpers::*;
 use crate::tpm::types::command_prelude::*;
 use crate::tpm::types::Tpm2b;
 use crate::tpm::types::TpmsSensitiveCreate;
@@ -58,6 +57,24 @@ pub trait TpmCommandExt: RawTpm {
         public_template: Tpm2bPublic,
         pcrs: &[u32],
     ) -> io::Result<SealedObject>;
+
+    /// Create a primary ECC key in the specified hierarchy.
+    fn create_primary_ecc(
+        &self,
+        hierarchy: Hierarchy,
+        public_template: Tpm2bPublicEcc,
+    ) -> io::Result<CreatedPrimary>;
+
+    /// Sign a digest using the specified key handle. Returns the signature.
+    fn sign(&self, key_handle: u32, digest: &[u8]) -> io::Result<TpmtSignature>;
+
+    /// Verify a signature using the specified key handle. Returns Ok(()) if valid.
+    fn verify_signature(
+        &self,
+        key_handle: u32,
+        digest: &[u8],
+        signature: &TpmtSignature,
+    ) -> io::Result<()>;
 }
 
 impl<T: RawTpm> TpmCommandExt for T {
@@ -323,6 +340,120 @@ impl<T: RawTpm> TpmCommandExt for T {
             creation_hash: parsed.parameters.creation_hash.0,
             creation_ticket: parsed.parameters.creation_ticket,
         })
+    }
+
+    fn create_primary_ecc(
+        &self,
+        hierarchy: Hierarchy,
+        public_template: Tpm2bPublicEcc,
+    ) -> io::Result<CreatedPrimary> {
+        // ECC CreatePrimary: marshal the ECC public template
+        let mut template_buf = Vec::new();
+        public_template.marshal(&mut template_buf);
+
+        // Build command with marshalled ECC template
+        let mut params_buf = Vec::new();
+        // in_sensitive (empty)
+        empty_sensitive_create().marshal(&mut params_buf);
+        // in_public (ECC template)
+        params_buf.extend_from_slice(&template_buf);
+        // outside_info (empty)
+        Tpm2bBytes(Vec::new()).marshal(&mut params_buf);
+        // creation_pcr (empty list)
+        PcrSelectionList::from_pcrs(&[]).marshal(&mut params_buf);
+
+        let handles = [hierarchy.handle()];
+        let cmd = build_command_pw_sessions(TpmCommandCode::CreatePrimary, &handles, &[&[]], |b| {
+            b.extend_from_slice(&params_buf);
+        });
+
+        let resp = self.transmit_raw(&cmd)?;
+        parse_tpm_rc_with_cmd(&resp, TpmCommandCode::CreatePrimary)?;
+
+        if resp.len() < 14 {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "CreatePrimary ECC short response",
+            ));
+        }
+
+        // Parse response: header (10) + handle (4) + paramSize (4) + parameters
+        let (header, mut cursor) = crate::tpm::types::TpmResponseHeader::parse(&resp)?;
+        if header.return_code != 0 {
+            return Err(io::Error::other(format!(
+                "CreatePrimary ECC error 0x{:08x}",
+                header.return_code
+            )));
+        }
+
+        let object_handle = u32::from_be_bytes([
+            resp[cursor],
+            resp[cursor + 1],
+            resp[cursor + 2],
+            resp[cursor + 3],
+        ]);
+        cursor += 4;
+
+        // Skip paramSize
+        let _param_size = u32::from_be_bytes([
+            resp[cursor],
+            resp[cursor + 1],
+            resp[cursor + 2],
+            resp[cursor + 3],
+        ]);
+        cursor += 4;
+
+        // Read the outPublic size-prefixed blob
+        let out_public_size = u16::from_be_bytes([resp[cursor], resp[cursor + 1]]) as usize;
+        let out_public = resp[cursor..cursor + 2 + out_public_size].to_vec();
+
+        Ok(CreatedPrimary {
+            handle: object_handle,
+            public: out_public,
+        })
+    }
+
+    fn sign(&self, key_handle: u32, digest: &[u8]) -> io::Result<TpmtSignature> {
+        let parameters = SignCommandParameters {
+            digest: Tpm2bBytes(digest.to_vec()),
+            scheme: TpmtSigScheme::Null, // Use key's default scheme
+            validation: TpmtTkHashcheck::null_ticket(),
+        };
+        let cmd_body = SignCommand::new(key_handle, parameters);
+        let handles = cmd_body.handle_values();
+        let cmd = build_command_pw_sessions(TpmCommandCode::Sign, &handles, &[&[]], |b| {
+            cmd_body.parameters.marshal(b);
+        });
+
+        let resp = self.transmit_raw(&cmd)?;
+        parse_tpm_rc_with_cmd(&resp, TpmCommandCode::Sign)?;
+
+        let parsed = SignResponse::from_bytes(&resp)?;
+        Ok(parsed.parameters.signature)
+    }
+
+    fn verify_signature(
+        &self,
+        key_handle: u32,
+        digest: &[u8],
+        signature: &TpmtSignature,
+    ) -> io::Result<()> {
+        let parameters = VerifySignatureCommandParameters {
+            digest: Tpm2bBytes(digest.to_vec()),
+            signature: signature.clone(),
+        };
+        let cmd_body = VerifySignatureCommand::new(key_handle, parameters);
+        let handles = cmd_body.handle_values();
+        let cmd = build_command_no_sessions(TpmCommandCode::VerifySignature, &handles, |b| {
+            cmd_body.parameters.marshal(b);
+        });
+
+        let resp = self.transmit_raw(&cmd)?;
+        parse_tpm_rc_with_cmd(&resp, TpmCommandCode::VerifySignature)?;
+
+        // If we get here without error, the signature is valid
+        let _ = VerifySignatureResponse::from_bytes(&resp)?;
+        Ok(())
     }
 }
 
