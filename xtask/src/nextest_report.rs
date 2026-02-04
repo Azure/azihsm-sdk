@@ -87,7 +87,7 @@ impl Xtask for NextestReport {
             output.push_str(&format!("SKIPPED_TESTS={}\n", test_suites_total.skipped));
             fs::write(&output_path, &output)?;
             log::trace!("Output written to GITHUB_OUTPUT");
-        } 
+        }
 
         log::trace!("done nextest-report");
         Ok(())

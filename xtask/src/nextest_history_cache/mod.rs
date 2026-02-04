@@ -1,5 +1,5 @@
-mod cache_gha;
 mod cache;
+mod cache_gha;
 mod git;
 mod html;
 mod http;

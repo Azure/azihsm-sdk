@@ -7,9 +7,9 @@ use ghac::v1::{
 use prost::Message;
 
 use crate::nextest_history_cache::{
+    cache::Cache,
     http::{self, Content},
     util::{hex, other_err},
-    cache::Cache,
 };
 
 // The server complains with an unhelpful message if VERSION is not a hex string

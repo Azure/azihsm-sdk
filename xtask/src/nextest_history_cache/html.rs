@@ -24,7 +24,6 @@ static TEMPLATE: &str = r#"
 "#;
 
 pub(crate) fn format_records(records: &[TestRecord]) -> io::Result<String> {
-
     let mut tt = TinyTemplate::new();
     tt.add_formatter("name_only", |val, out| {
         if let Some(s) = val.as_str() {
