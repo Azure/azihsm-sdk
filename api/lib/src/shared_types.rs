@@ -5,6 +5,7 @@
 //! This module provides core type definitions including key classes, key kinds,
 //! and elliptic curve identifiers that are shared between the library and native layers.
 
+use open_enum::open_enum;
 use zerocopy::*;
 
 /// Cryptographic key class.
@@ -107,4 +108,19 @@ pub enum HsmPartType {
 
     /// Physical hardware partition.
     Physical = 2,
+}
+
+/// HSM partition owner trust anchor (aka POTA) endorsement source.
+#[repr(u32)]
+#[open_enum]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, IntoBytes, Immutable)]
+pub enum HsmPotaEndorsementSource {
+    /// Caller provided endorsement.
+    Caller = 1,
+
+    /// TPM-generated endorsement.
+    Tpm = 2,
+
+    /// Randomly generated key-pair for endorsement.
+    Random = 3,
 }

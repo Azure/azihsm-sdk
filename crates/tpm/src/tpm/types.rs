@@ -15,7 +15,14 @@ pub const TPM_ST_NO_SESSIONS: u16 = 0x8001;
 pub const TPM_ST_SESSIONS: u16 = 0x8002;
 pub const TPM_RS_PW: u32 = 0x4000_0009;
 pub const ALG_SHA256: u16 = 0x000B;
+pub const ALG_SHA384: u16 = 0x000C;
 pub const ALG_RSAES: u16 = 0x0005;
+pub const ALG_ECC: u16 = 0x0023;
+pub const ALG_ECDSA: u16 = 0x0018;
+
+/// ECC curve identifiers
+pub const TPM_ECC_NIST_P256: u16 = 0x0003;
+pub const TPM_ECC_NIST_P384: u16 = 0x0004;
 pub const TPMA_NV_OWNERWRITE: u32 = 1 << 1;
 pub const TPMA_NV_AUTHWRITE: u32 = 1 << 2;
 pub const TPMA_NV_OWNERREAD: u32 = 1 << 17;
@@ -614,6 +621,37 @@ impl TpmMarshal for CreateCommandParameters {
         self.in_public.marshal(buf);
         self.outside_info.marshal(buf);
         self.creation_pcr.marshal(buf);
+    }
+}
+
+// TPM2_FlushContext ------------------------------------------------------
+define_handle_struct!(FlushContextCommandHandles { flush_handle });
+
+#[derive(Debug, Clone, Default)]
+pub struct FlushContextCommandParameters;
+
+impl TpmMarshal for FlushContextCommandParameters {
+    fn marshal(&self, _buf: &mut Vec<u8>) {}
+}
+
+#[derive(Debug, Clone)]
+pub struct FlushContextCommand {
+    pub header: TpmCommandHeader,
+    pub handles: FlushContextCommandHandles,
+    pub parameters: FlushContextCommandParameters,
+}
+
+impl FlushContextCommand {
+    pub fn new(flush_handle: u32) -> Self {
+        Self {
+            header: TpmCommandHeader::no_sessions(TpmCommandCode::FlushContext),
+            handles: FlushContextCommandHandles { flush_handle },
+            parameters: FlushContextCommandParameters,
+        }
+    }
+
+    pub fn handle_values(&self) -> [u32; 1] {
+        self.handles.to_array()
     }
 }
 
@@ -1311,6 +1349,41 @@ impl TpmMarshal for TpmtPublicEcc {
 }
 
 pub type Tpm2bPublicEcc = Tpm2b<TpmtPublicEcc>;
+
+/// Unrestricted signing ECC P-384 template: fixedTPM|fixedParent|sensitiveDataOrigin|userWithAuth|sign
+pub fn ecc_unrestricted_signing_public() -> Tpm2bPublicEcc {
+    ecc_unrestricted_signing_public_with_policy(Vec::new())
+}
+
+/// Unrestricted signing ECC P-384 template with policy
+pub fn ecc_unrestricted_signing_public_with_policy(policy: Vec<u8>) -> Tpm2bPublicEcc {
+    let object_attributes = TpmaObjectBits::new()
+        .with_fixed_tpm(true)
+        .with_fixed_parent(true)
+        .with_sensitive_data_origin(true)
+        .with_user_with_auth(true)
+        .with_no_da(true)
+        .with_sign_encrypt(true);
+
+    Tpm2b::new(TpmtPublicEcc {
+        type_alg: ALG_ECC,
+        name_alg: ALG_SHA384,
+        object_attributes: object_attributes.into(),
+        auth_policy: Tpm2bBytes(policy),
+        symmetric: SymDefObject {
+            alg: TpmAlgId::Null.into(),
+            key_bits: 0,
+            mode: 0,
+        },
+        scheme: EccScheme::Ecdsa(ALG_SHA384),
+        curve_id: TPM_ECC_NIST_P384,
+        kdf_scheme: TpmAlgId::Null.into(),
+        unique: TpmsEccPoint {
+            x: vec![0u8; 48],
+            y: vec![0u8; 48],
+        },
+    })
+}
 
 // TPMT_SIGNATURE (support RSASSA and ECDSA)
 #[derive(Debug, Clone)]

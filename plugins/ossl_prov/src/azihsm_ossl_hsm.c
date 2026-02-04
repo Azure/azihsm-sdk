@@ -313,13 +313,20 @@ azihsm_status azihsm_open_device_and_session(
         return status;
     }
 
+    // Use Random source for POTA endorsement - signature and public key will be generated
+    // internally
+    struct azihsm_pota_endorsement pota_endorsement = { .source =
+                                                            AZIHSM_POTA_ENDORSEMENT_SOURCE_RANDOM,
+                                                        .endorsement = NULL };
+
     // Initialize partition with loaded keys (or NULL if not available)
     status = azihsm_part_init(
         *device,
         &creds,
         bmk_buf.ptr != NULL ? &bmk_buf : NULL,
         muk_buf.ptr != NULL ? &muk_buf : NULL,
-        mobk_buf.ptr != NULL ? &mobk_buf : NULL
+        mobk_buf.ptr != NULL ? &mobk_buf : NULL,
+        &pota_endorsement
     );
 
     // Input buffers no longer needed after part_init

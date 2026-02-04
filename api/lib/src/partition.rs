@@ -112,6 +112,95 @@ impl HsmCredentials {
     }
 }
 
+/// HSM POTA endorsement data containing signature and public key for verification.
+///
+/// This structure holds the cryptographic proof for partition owner trust anchor
+/// endorsement, including the ECDSA signature over the PID hash and the public
+/// key needed to verify the signature.
+#[derive(Debug, Clone)]
+pub struct HsmPotaEndorsementData<'a> {
+    /// ECDSA signature over the PID hash
+    signature: &'a [u8],
+
+    /// Public key for signature verification (DER-encoded)
+    public_key: &'a [u8],
+}
+
+/// HSM partition owner trust anchor (aka POTA) endorsement.
+#[derive(Debug, Clone)]
+pub struct HsmPotaEndorsement<'a> {
+    /// Source of the POTA endorsement
+    source: HsmPotaEndorsementSource,
+
+    /// Optional POTA endorsement data (required when source is Caller, ignored otherwise)
+    endorsement: Option<HsmPotaEndorsementData<'a>>,
+}
+
+impl<'a> HsmPotaEndorsementData<'a> {
+    /// Creates a new POTA endorsement data instance.
+    ///
+    /// # Arguments
+    ///
+    /// * `signature` - ECDSA signature over the PID hash
+    /// * `public_key` - Public key for signature verification (DER-encoded)
+    pub fn new(signature: &'a [u8], public_key: &'a [u8]) -> Self {
+        Self {
+            signature,
+            public_key,
+        }
+    }
+
+    /// Returns the ECDSA signature.
+    pub fn signature(&self) -> &[u8] {
+        self.signature
+    }
+
+    /// Returns the public key for signature verification.
+    pub fn public_key(&self) -> &[u8] {
+        self.public_key
+    }
+}
+
+impl<'a> HsmPotaEndorsement<'a> {
+    /// Creates a new POTA endorsement instance.
+    ///
+    /// # Arguments
+    ///
+    /// * `source` - Source of the POTA endorsement
+    /// * `endorsement` - POTA endorsement data provided by the caller
+    ///
+    /// # Returns
+    ///
+    /// A new `HsmPotaEndorsement` instance with the specified source and optional endorsement.
+    pub fn new(
+        source: HsmPotaEndorsementSource,
+        endorsement: Option<HsmPotaEndorsementData<'a>>,
+    ) -> Self {
+        Self {
+            source,
+            endorsement,
+        }
+    }
+
+    /// Returns the POTA endorsement source.
+    ///
+    /// # Returns
+    ///
+    /// The source of the POTA endorsement.
+    pub fn source(&self) -> HsmPotaEndorsementSource {
+        self.source
+    }
+
+    /// Returns the POTA endorsement data.
+    ///
+    /// # Returns
+    ///
+    /// Optional reference to the POTA endorsement data.
+    pub fn endorsement(&self) -> Option<&HsmPotaEndorsementData<'a>> {
+        self.endorsement.as_ref()
+    }
+}
+
 /// HSM partition manager.
 ///
 /// Provides operations for discovering and opening HSM partitions.
@@ -242,10 +331,18 @@ impl HsmPartition {
         bmk: Option<&[u8]>,
         muk: Option<&[u8]>,
         mobk: Option<&[u8]>,
+        pota_endorsement: HsmPotaEndorsement<'_>,
     ) -> HsmResult<()> {
         let (bmk, mobk) = self.with_dev(|dev| {
-            let (bmk, mobk) =
-                ddi::init_part(dev, self.api_rev_range().min(), creds, bmk, muk, mobk)?;
+            let (bmk, mobk) = ddi::init_part(
+                dev,
+                self.api_rev_range().min(),
+                creds,
+                bmk,
+                muk,
+                mobk,
+                pota_endorsement,
+            )?;
             Ok((bmk, mobk))
         })?;
         self.inner().write().set_masked_keys(bmk, mobk);

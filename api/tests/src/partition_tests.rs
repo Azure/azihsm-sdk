@@ -73,7 +73,8 @@ fn test_partition_init() {
         let part = HsmPartitionManager::open_partition(&part_info.path)
             .expect("Failed to open the parition");
         let creds = HsmCredentials::new(&[1u8; 16], &[2u8; 16]);
-        part.init(creds, None, None, None)
+        let pota_endorsement = HsmPotaEndorsement::new(HsmPotaEndorsementSource::Random, None);
+        part.init(creds, None, None, None, pota_endorsement)
             .expect("Partition init failed");
     }
 }

@@ -110,6 +110,11 @@ type AzihsmEccCurve = shared_types::HsmEccCurve;
 /// (virtual or physical).
 type AzihsmPartType = shared_types::HsmPartType;
 
+/// POTA endorsement source used in the native API.
+/// An alias for `HsmPotaEndorsementSource` that represents the source of the POTA endorsement
+/// (caller-provided or TPM-generated).
+type AzihsmPotaEndorsementSource = shared_types::HsmPotaEndorsementSource;
+
 impl TryFrom<u32> for AzihsmKeyKind {
     type Error = AzihsmStatus;
 
@@ -282,6 +287,24 @@ impl From<AzihsmPartType> for api::HsmPartType {
     fn from(part_type: AzihsmPartType) -> Self {
         // SAFETY: AzihsmPartType and api::HsmPartType have the same representation
         unsafe { std::mem::transmute(part_type) }
+    }
+}
+
+impl From<api::HsmPotaEndorsementSource> for AzihsmPotaEndorsementSource {
+    /// Converts an `api::HsmPotaEndorsementSource` into an `AzihsmPotaEndorsementSource`.
+    #[allow(unsafe_code)]
+    fn from(source: api::HsmPotaEndorsementSource) -> Self {
+        // SAFETY: AzihsmPotaEndorsementSource and api::HsmPotaEndorsementSource have the same representation
+        unsafe { std::mem::transmute(source) }
+    }
+}
+
+impl From<AzihsmPotaEndorsementSource> for api::HsmPotaEndorsementSource {
+    /// Converts an `AzihsmPotaEndorsementSource` into an `api::HsmPotaEndorsementSource`.
+    #[allow(unsafe_code)]
+    fn from(source: AzihsmPotaEndorsementSource) -> Self {
+        // SAFETY: AzihsmPotaEndorsementSource and api::HsmPotaEndorsementSource have the same representation
+        unsafe { std::mem::transmute(source) }
     }
 }
 

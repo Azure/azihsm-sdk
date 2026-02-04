@@ -42,7 +42,8 @@ where
             .expect("Failed to open the parition");
         let creds = HsmCredentials::new(&[1u8; 16], &[2u8; 16]);
         let rev = part.api_rev_range().max();
-        part.init(creds, None, None, None)
+        let pota_endorsement = HsmPotaEndorsement::new(HsmPotaEndorsementSource::Random, None);
+        part.init(creds, None, None, None, pota_endorsement)
             .expect("Partition init failed");
         let mut session = part
             .open_session(rev, &creds, None)

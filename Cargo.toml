@@ -41,6 +41,7 @@ azihsm_ddi_types = { features = [
   "pre_encode",
 ], path = "ddi/serde/types" }
 azihsm_ddi_win = { path = "ddi/win" }
+azihsm_tpm = { path = "crates/tpm" }
 test_with_tracing = { path = "crates/test_with_tracing" }
 test_with_tracing_macro = { path = "crates/test_with_tracing/test_with_tracing_macro" }
 x509 = { path = "crates/x509" }

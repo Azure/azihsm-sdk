@@ -98,7 +98,11 @@ class PartitionHandle
             std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
             std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
 
-            err = azihsm_part_init(handle_, &creds, nullptr, nullptr, nullptr);
+            struct azihsm_pota_endorsement pota_endorsement = {
+                .source = AZIHSM_POTA_ENDORSEMENT_SOURCE_RANDOM,
+                .endorsement = nullptr
+            };
+            err = azihsm_part_init(handle_, &creds, nullptr, nullptr, nullptr, &pota_endorsement);
             if (err != AZIHSM_STATUS_SUCCESS)
             {
                 azihsm_part_close(handle_);
