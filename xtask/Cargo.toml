@@ -10,10 +10,15 @@ anyhow.workspace = true
 clap = { features = ["derive", "env"], workspace = true }
 env_logger.workspace = true
 glob = { workspace = true }
+ghac.workspace = true
 is-terminal = { workspace = true }
 junit-parser.workspace = true
 log.workspace = true
+prost.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
 similar = { features = ["text"], workspace = true }
+tinytemplate.workspace = true
 xshell.workspace = true
 
 [lints]

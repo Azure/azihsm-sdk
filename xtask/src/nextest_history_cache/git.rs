@@ -4,7 +4,7 @@ use std::{io, path::Path, process::Command};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{
+use crate::nextest_history_cache::{
     process::{run_cmd, run_cmd_stdout},
     util::{bytes_to_string, expect_line, expect_line_with_prefix, other_err},
 };

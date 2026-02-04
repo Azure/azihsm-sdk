@@ -18,6 +18,10 @@ jobs:
 
     runs-on: ubuntu-24.04
 
+    outputs:
+      LINUX_TOTAL_TESTS: ${{ steps.nextest-report.outputs.TOTAL_TESTS }}
+      LINUX_SKIPPED_TESTS: ${{ steps.nextest-report.outputs.SKIPPED_TESTS }}
+
     defaults:
       run:
         working-directory: .
@@ -72,6 +76,7 @@ jobs:
         name: coverage-report-ubuntu
         path: ./target/reports/
     - name: Generate nextest report
+      id: nextest-report
       run: cargo xtask precheck --nextest-report
     - name: Fail if any tests failed
       if: ${{ steps.test-mock-coverage.outcome == 'failure' || steps.test-mock-table-4.outcome == 'failure' || steps.test-mock-table-64.outcome == 'failure' }}
@@ -82,6 +87,10 @@ jobs:
   build_windows:
 
     runs-on: windows-latest
+
+    outputs:
+      WINDOWS_TOTAL_TESTS: ${{ steps.nextest-report.outputs.TOTAL_TESTS }}
+      WINDOWS_SKIPPED_TESTS: ${{ steps.nextest-report.outputs.SKIPPED_TESTS }}
 
     defaults:
       run:
@@ -125,9 +134,27 @@ jobs:
         name: coverage-report-windows
         path: ./target/reports/
     - name: Generate nextest report
+      id: nextest-report
       run: cargo xtask precheck --nextest-report
     - name: Fail if any tests failed
       if: ${{ steps.test-mock-coverage.outcome == 'failure' }}
       run: |
         echo "One or more tests failed."
         exit 1
+
+  write_test_history:
+
+    runs-on: ubuntu-24.04
+
+    defaults:
+      run:
+        working-directory: .
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install apt packages
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y pkg-config libssl-dev libbsd-dev
+    - name: Write test history to workflow summary
+      run: cargo xtask precheck --nextest-history

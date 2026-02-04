@@ -6,42 +6,34 @@ use std::{
     path::Path,
 };
 
-use caliptra_builder::{elf_size, firmware, FwId};
 use serde::{Deserialize, Serialize};
 
-mod cache;
-mod cache_gha;
-mod git;
-mod html;
-mod http;
-mod process;
-mod util;
+use crate::nextest_history_cache::cache::{Cache, FsCache};
+use crate::nextest_history_cache::{cache_gha::GithubActionCache, util::other_err};
+use crate::nextest_history_cache::{git, html};
 
-use crate::cache::{Cache, FsCache};
-use crate::{cache_gha::GithubActionCache, util::other_err};
-
-// Increment with non-backwards-compatible changes are made to the cache record
+// Increment when non-backwards-compatible changes are made to the cache record
 // format
 const CACHE_FORMAT_VERSION: &str = "v2";
 
 #[derive(Clone, Copy, Default, Eq, PartialEq, Serialize, Deserialize)]
 struct Tests {
-    windows_total: Option<u64>,
-    windows_skipped: Option<u64>,
-    linux_total: Option<u64>,
-    linux_skipped: Option<u64>,
+    windows_total: i32,
+    windows_skipped: i32,
+    linux_total: i32,
+    linux_skipped: i32,
 }
 impl Tests {
     fn update_from(&mut self, other: &Tests) {
-        self.windows_total = other.windows_total.or(self.windows_total);
-        self.windows_skipped = other.windows_skipped.or(self.windows_skipped);
-        self.linux_total = other.linux_total.or(self.linux_total);
-        self.linux_skipped = other.linux_skipped.or(self.linux_skipped);
+        self.windows_total = other.windows_total;
+        self.windows_skipped = other.windows_skipped;
+        self.linux_total = other.linux_total;
+        self.linux_skipped = other.linux_skipped;
     }
 }
 
 #[derive(Clone, Eq, PartialEq, Serialize, Deserialize)]
-struct TestRecord {
+pub struct TestRecord {
     commit: git::CommitInfo,
     tests: Tests,
 }
@@ -129,7 +121,7 @@ fn write_history() -> io::Result<()> {
 
         records.push(TestRecord {
             commit: commit.clone(),
-            tests: compute_size(&worktree, &commit.id),
+            tests: get_tests(),
         });
     }
     for (i, record) in records.iter().enumerate() {
@@ -158,29 +150,31 @@ fn write_history() -> io::Result<()> {
     Ok(())
 }
 
-fn compute_size(worktree: &git::WorkTree, commit_id: &str) -> Tests {
-    // TODO: consider using caliptra_builder from the same repo as the firmware
-    let fwid_elf_size = |fwid: &FwId| -> io::Result<u64> {
-        let workspace_dir = Some(worktree.path);
-        let elf_bytes = caliptra_builder::build_firmware_elf_uncached(workspace_dir, fwid)?;
-        elf_size(&elf_bytes)
-    };
-    let fwid_elf_size_or_none = |fwid: &FwId| -> Option<u64> {
-        match fwid_elf_size(fwid) {
-            Ok(result) => Some(result),
-            Err(err) => {
-                println!("Error building commit {}: {err}", commit_id);
-                None
-            }
-        }
+fn get_tests() -> Tests {
+    let mut tests = Tests {
+        windows_total: 0,
+        windows_skipped: 0,
+        linux_total: 0,
+        linux_skipped: 0,
     };
 
-    Sizes {
-        rom_size_with_uart: fwid_elf_size_or_none(&firmware::ROM_WITH_UART),
-        rom_size_prod: fwid_elf_size_or_none(&firmware::ROM),
-        fmc_size_with_uart: fwid_elf_size_or_none(&firmware::FMC_WITH_UART),
-        app_size_with_uart: fwid_elf_size_or_none(&firmware::APP_WITH_UART),
+    if let Ok(windows_total) = env::var("WINDOWS_TOTAL_TESTS") {
+        tests.windows_total = windows_total.parse().unwrap_or(0);
     }
+
+    if let Ok(windows_skipped) = env::var("WINDOWS_SKIPPED_TESTS") {
+        tests.windows_skipped = windows_skipped.parse().unwrap_or(0);
+    }
+
+    if let Ok(linux_total) = env::var("LINUX_TOTAL_TESTS") {
+        tests.linux_total = linux_total.parse().unwrap_or(0);
+    }
+
+    if let Ok(linux_skipped) = env::var("LINUX_SKIPPED_TESTS") {
+        tests.linux_skipped = linux_skipped.parse().unwrap_or(0);
+    }
+
+    tests
 }
 
 fn box_cache(val: impl Cache + 'static) -> Box<dyn Cache> {

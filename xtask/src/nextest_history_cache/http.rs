@@ -3,8 +3,8 @@
 use std::str::FromStr;
 use std::{borrow::Cow, io, process::Command};
 
-use crate::util::expect_line_with_prefix_ignore_case;
-use crate::{
+use crate::nextest_history_cache::util::expect_line_with_prefix_ignore_case;
+use crate::nextest_history_cache::{
     process::run_cmd_stdout,
     util::{expect_line_with_prefix, other_err},
 };

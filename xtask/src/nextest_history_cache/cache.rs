@@ -2,7 +2,7 @@
 
 use std::{fs, io, path::PathBuf};
 
-use crate::util::hex;
+use crate::nextest_history_cache::util::hex;
 
 pub trait Cache {
     fn set(&self, key: &str, val: &[u8]) -> io::Result<()>;

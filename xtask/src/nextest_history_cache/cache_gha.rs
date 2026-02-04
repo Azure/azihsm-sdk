@@ -6,10 +6,10 @@ use ghac::v1::{
 };
 use prost::Message;
 
-use crate::{
+use crate::nextest_history_cache::{
     http::{self, Content},
     util::{hex, other_err},
-    Cache,
+    cache::Cache,
 };
 
 // The server complains with an unhelpful message if VERSION is not a hex string
@@ -100,5 +100,5 @@ impl Cache for GithubActionCache {
 }
 
 fn format_key(key: &str) -> String {
-    format!("size-history-{}", hex(key.as_bytes()))
+    format!("test-history-{}", hex(key.as_bytes()))
 }
