@@ -429,3 +429,39 @@ fn test_cbc_streaming_encrypt_streaming_decrypt_no_pad_128_diff_boundaries(sessi
         .expect("Failed to decrypt via streaming");
     assert_eq!(out, plaintext);
 }
+
+/// Streaming context state validation: finishing twice or updating after finish should fail.
+#[session_test]
+fn test_cbc_streaming_context_state_finish_twice_fails(session: HsmSession) {
+    let iv = [0xADu8; AES_CBC_BLOCK_SIZE];
+    let plaintext = vec![0xEFu8; 33];
+
+    let key = aes_generate_streaming_key(128, &session);
+    let enc_algo = new_cbc_algo(true, &iv);
+    let mut enc_ctx = enc_algo.encrypt_init(key).expect("Failed to init encrypt");
+
+    let out_len = enc_ctx
+        .update(&plaintext, None)
+        .expect("Length query failed");
+    let mut out = vec![0u8; out_len];
+    let written = enc_ctx
+        .update(&plaintext, Some(&mut out))
+        .expect("Update failed");
+    assert!(written > 0);
+
+    let finish_len = enc_ctx.finish(None).expect("Finish length query failed");
+    let mut finish_out = vec![0u8; finish_len];
+    let finish_written = enc_ctx
+        .finish(Some(&mut finish_out))
+        .expect("Finish failed");
+    assert!(finish_written > 0);
+
+    let update_after_finish = enc_ctx.update(&[0x01], None);
+    assert!(matches!(
+        update_after_finish,
+        Err(HsmError::InvalidContextState)
+    ));
+
+    let finish_again = enc_ctx.finish(None);
+    assert!(matches!(finish_again, Err(HsmError::InvalidContextState)));
+}

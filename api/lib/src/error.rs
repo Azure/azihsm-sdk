@@ -43,6 +43,7 @@ pub enum HsmError {
     UnsupportedProperty = -17,
     CertChainChanged = -18,
     InvalidTweak = -19,
+    InvalidContextState = -20,
     Panic = i32::MIN,
 }
 

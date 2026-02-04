@@ -18,6 +18,62 @@ pub use secret::*;
 
 use super::*;
 
+// Represents the internal state of a streaming encryption/decryption context.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HsmContextState {
+    /// Initial state before any data has been processed.
+    Initialized,
+
+    /// Update state after processing at least one block of data, but before finalization.
+    Updated,
+
+    /// Final state after finalization, where no further updates are allowed.
+    Finished,
+}
+
+impl HsmContextState {
+    /// Returns an error if the context is already finished.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(HsmError::InvalidContextState)` when the context has been
+    /// finalized and can no longer be updated or finished again.
+    pub(crate) fn is_finished(self) -> HsmResult<()> {
+        if self == HsmContextState::Finished {
+            return Err(HsmError::InvalidContextState);
+        }
+        Ok(())
+    }
+
+    /// Marks the context as updated after processing data.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(HsmError::InvalidContextState)` if the context is already
+    /// finished.
+    pub(crate) fn mark_updated(&mut self) -> HsmResult<()> {
+        if *self == HsmContextState::Finished {
+            return Err(HsmError::InvalidContextState);
+        }
+        *self = HsmContextState::Updated;
+        Ok(())
+    }
+
+    /// Marks the context as finished after finalization.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(HsmError::InvalidContextState)` if the context is already
+    /// finished.
+    pub(crate) fn mark_finished(&mut self) -> HsmResult<()> {
+        if *self == HsmContextState::Finished {
+            return Err(HsmError::InvalidContextState);
+        }
+        *self = HsmContextState::Finished;
+        Ok(())
+    }
+}
+
 pub(crate) trait HsmKeyHandleDelOp: Copy {
     /// Deletes a key from the HSM.
     ///

@@ -174,6 +174,7 @@ impl HsmEncryptStreamingOp for HsmAesCbcAlgo {
             algo: self,
             key,
             block: AesCbcBlock::default(),
+            state: HsmContextState::Initialized,
         })
     }
 }
@@ -191,6 +192,9 @@ pub struct HsmAesCbcEncryptContext {
 
     /// Internal block buffer for managing partial blocks during streaming.
     block: AesCbcBlock,
+
+    /// Internal context state
+    state: HsmContextState,
 }
 
 impl HsmEncryptContext for HsmAesCbcEncryptContext {
@@ -221,6 +225,9 @@ impl HsmEncryptContext for HsmAesCbcEncryptContext {
         plaintext: &[u8],
         ciphertext: Option<&mut [u8]>,
     ) -> Result<usize, <Self::Algo as HsmEncryptStreamingOp>::Error> {
+        //change state to updated even if update fails, as the context has been used and is no longer in initialized state
+        self.state.mark_updated()?;
+
         let exepected_len = self.block.update_len(plaintext)?;
         let Some(ciphertext) = ciphertext else {
             return Ok(exepected_len);
@@ -263,6 +270,8 @@ impl HsmEncryptContext for HsmAesCbcEncryptContext {
         &mut self,
         ciphertext: Option<&mut [u8]>,
     ) -> Result<usize, <Self::Algo as HsmEncryptStreamingOp>::Error> {
+        //check if context state is finished, if so return error as we cannot finish finished context
+        self.state.is_finished()?;
         let exepected_len = self.block.finish_len(self.algo.pad)?;
         let Some(ciphertext) = ciphertext else {
             return Ok(exepected_len);
@@ -270,7 +279,7 @@ impl HsmEncryptContext for HsmAesCbcEncryptContext {
         if ciphertext.len() < exepected_len {
             return Err(HsmError::BufferTooSmall);
         }
-        self.block.finish(|input: &[u8]| {
+        let resp = self.block.finish(|input: &[u8]| {
             let padding = pkcs7_pad(input, self.algo.pad);
             ddi::aes_cbc_encrypt(
                 &self.key,
@@ -278,7 +287,12 @@ impl HsmEncryptContext for HsmAesCbcEncryptContext {
                 &[input, &padding],
                 &mut ciphertext[..input.len() + padding.len()],
             )
-        })
+        });
+        // mark context as finished if encryption succeedded
+        if resp.is_ok() {
+            self.state.mark_finished()?;
+        }
+        resp
     }
 
     /// Returns a reference to the underlying hash algorithm.
