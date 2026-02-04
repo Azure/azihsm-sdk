@@ -363,6 +363,10 @@ pub unsafe extern "C" fn azihsm_key_get_prop(
                 let key = HsmRsaPrivateKey::try_from(key_handle)?;
                 get_key_prop(key, prop)
             }
+            HandleType::GenericSecretKey => {
+                let key = HsmGenericSecretKey::try_from(key_handle)?;
+                get_key_prop(key, prop)
+            }
             _ => Err(AzihsmStatus::InvalidHandle),
         }
     })

@@ -78,3 +78,36 @@ impl HsmGenericSecretKey {
 }
 
 impl HsmDerivationKey for HsmGenericSecretKey {}
+
+impl HsmSecretKey for HsmGenericSecretKey {}
+
+/// Algorithm for unmasking a generic secret key.
+#[derive(Default)]
+pub struct HsmGenericSecretKeyUnmaskAlgo {}
+
+impl HsmKeyUnmaskOp for HsmGenericSecretKeyUnmaskAlgo {
+    type Session = HsmSession;
+    type Key = HsmGenericSecretKey;
+    type Error = HsmError;
+
+    /// Unmasks a generic secret key using the provided masked key data.
+    ///
+    /// # Arguments
+    ///
+    /// * `session` - The HSM session to use for the unmasking operation.
+    /// * `masked_key` - The masked secret key data.
+    ///
+    /// # Returns
+    ///
+    /// Returns the unmasked generic secret key on success.
+    fn unmask_key(
+        &mut self,
+        session: &HsmSession,
+        masked_key: &[u8],
+    ) -> Result<Self::Key, Self::Error> {
+        let (handle, props) = ddi::unmask_key(session, masked_key)?;
+        HsmGenericSecretKey::validate_props(&props)?;
+        let key = HsmGenericSecretKey::new(session.clone(), props, handle);
+        Ok(key)
+    }
+}

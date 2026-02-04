@@ -3,46 +3,10 @@
 #pragma once
 
 #include "utils/auto_key.hpp"
+#include "utils/shared_secret.hpp"
 #include <azihsm_api.h>
+#include <cstring>
 #include <vector>
-
-// Helper struct to manage ECDH key pairs with automatic cleanup
-struct EcdhKeyPairs
-{
-    azihsm_handle server_pub_key = 0;
-    azihsm_handle server_priv_key = 0;
-    azihsm_handle client_pub_key = 0;
-    azihsm_handle client_priv_key = 0;
-    azihsm_handle session_handle = 0;
-
-    ~EcdhKeyPairs()
-    {
-        if (server_pub_key != 0)
-            azihsm_key_delete(server_pub_key);
-        if (server_priv_key != 0)
-            azihsm_key_delete(server_priv_key);
-        if (client_pub_key != 0)
-            azihsm_key_delete(client_pub_key);
-        if (client_priv_key != 0)
-            azihsm_key_delete(client_priv_key);
-    }
-};
-
-// Helper function to get key size in bits from EC curve
-inline uint32_t get_curve_key_bits(azihsm_ecc_curve curve)
-{
-    switch (curve)
-    {
-    case AZIHSM_ECC_CURVE_P256:
-        return 256;
-    case AZIHSM_ECC_CURVE_P384:
-        return 384;
-    case AZIHSM_ECC_CURVE_P521:
-        return 521;
-    default:
-        return 256; // Default to P256
-    }
-}
 
 // Helper function to get expected HMAC key size in bits from HMAC key kind.
 inline uint32_t get_hmac_key_bits(azihsm_key_kind hmac_key_kind)
@@ -60,67 +24,6 @@ inline uint32_t get_hmac_key_bits(azihsm_key_kind hmac_key_kind)
     }
 }
 
-azihsm_status generate_ec_key_pair_for_derive(
-    azihsm_handle session_handle,
-    azihsm_handle &pub_key_handle,
-    azihsm_handle &priv_key_handle,
-    azihsm_ecc_curve curve
-)
-{
-    azihsm_algo ec_keygen_algo = { .id = AZIHSM_ALGO_ID_EC_KEY_PAIR_GEN,
-                                   .params = nullptr,
-                                   .len = 0 };
-
-    // Common properties
-    azihsm_key_kind key_kind = AZIHSM_KEY_KIND_ECC;
-    bool derive_prop = true;
-    
-    // Public key properties
-    azihsm_key_class pub_key_class = AZIHSM_KEY_CLASS_PUBLIC;
-    std::vector<azihsm_key_prop> pub_props;
-    pub_props.push_back(
-        { .id = AZIHSM_KEY_PROP_ID_CLASS, .val = &pub_key_class, .len = sizeof(pub_key_class) }
-    );
-    pub_props.push_back(
-        { .id = AZIHSM_KEY_PROP_ID_KIND, .val = &key_kind, .len = sizeof(key_kind) }
-    );
-    pub_props.push_back({ .id = AZIHSM_KEY_PROP_ID_EC_CURVE, .val = &curve, .len = sizeof(curve) });
-    pub_props.push_back(
-        { .id = AZIHSM_KEY_PROP_ID_DERIVE, .val = &derive_prop, .len = sizeof(derive_prop) }
-    );
-
-    // Private key properties
-    azihsm_key_class priv_key_class = AZIHSM_KEY_CLASS_PRIVATE;
-
-    std::vector<azihsm_key_prop> priv_props;
-    priv_props.push_back(
-        { .id = AZIHSM_KEY_PROP_ID_CLASS, .val = &priv_key_class, .len = sizeof(priv_key_class) }
-    );
-    priv_props.push_back(
-        { .id = AZIHSM_KEY_PROP_ID_KIND, .val = &key_kind, .len = sizeof(key_kind) }
-    );
-    priv_props.push_back(
-        { .id = AZIHSM_KEY_PROP_ID_EC_CURVE, .val = &curve, .len = sizeof(curve) }
-    );
-    priv_props.push_back(
-        { .id = AZIHSM_KEY_PROP_ID_DERIVE, .val = &derive_prop, .len = sizeof(derive_prop) }
-    );
-
-    azihsm_key_prop_list pub_prop_list = { .props = pub_props.data(),
-                                           .count = static_cast<uint32_t>(pub_props.size()) };
-    azihsm_key_prop_list priv_prop_list = { .props = priv_props.data(),
-                                            .count = static_cast<uint32_t>(priv_props.size()) };
-
-    return azihsm_key_gen_pair(
-        session_handle,
-        &ec_keygen_algo,
-        &priv_prop_list,
-        &pub_prop_list,
-        &priv_key_handle,
-        &pub_key_handle
-    );
-}
-
 azihsm_status derive_hmac_key_via_ecdh_hkdf(
     azihsm_handle session_handle,
     azihsm_handle server_priv_key,
@@ -133,77 +36,21 @@ azihsm_status derive_hmac_key_via_ecdh_hkdf(
 {
     azihsm_status err;
 
-    // Step 1: Get client's public key in DER format for ECDH
-    std::vector<uint8_t> client_pub_key_data(512);
-    uint32_t client_pub_key_len = static_cast<uint32_t>(client_pub_key_data.size());
-
-    azihsm_buffer pub_key_buffer = { .ptr = client_pub_key_data.data(), .len = client_pub_key_len };
-
-    azihsm_key_prop pub_key_prop = { .id = AZIHSM_KEY_PROP_ID_PUB_KEY_INFO,
-                                     .val = client_pub_key_data.data(),
-                                     .len = client_pub_key_len };
-
-    err = azihsm_key_get_prop(client_pub_key, &pub_key_prop);
+    // Step 1: Derive shared secret via ECDH using common helper
+    auto_key temp_base_secret;
+    err = derive_shared_secret_via_ecdh(
+        session_handle,
+        server_priv_key,
+        client_pub_key,
+        curve,
+        temp_base_secret.handle
+    );
     if (err != AZIHSM_STATUS_SUCCESS)
     {
         return err;
     }
 
-    // Update the actual length returned
-    client_pub_key_len = pub_key_prop.len;
-    pub_key_buffer.len = client_pub_key_len;
-
-    // Step 2: Perform ECDH derivation to get base secret
-    azihsm_algo_ecdh_params ecdh_params = { .pub_key = &pub_key_buffer };
-    azihsm_algo ecdh_algo = { .id = AZIHSM_ALGO_ID_ECDH,
-                              .params = &ecdh_params,
-                              .len = sizeof(ecdh_params) };
-
-    // Properties for the secret key from ECDH
-    // Use auto_key to ensure cleanup even on error
-    auto_key temp_base_secret;
-    bool ecdh_derive_prop = true;
-    azihsm_key_class base_secret_class = AZIHSM_KEY_CLASS_SECRET;
-    azihsm_key_kind base_secret_kind = AZIHSM_KEY_KIND_SHARED_SECRET;
-
-    std::vector<azihsm_key_prop> base_secret_props;
-    base_secret_props.push_back(
-        { .id = AZIHSM_KEY_PROP_ID_CLASS,
-          .val = &base_secret_class,
-          .len = sizeof(base_secret_class) }
-    );
-    base_secret_props.push_back(
-        { .id = AZIHSM_KEY_PROP_ID_KIND, .val = &base_secret_kind, .len = sizeof(base_secret_kind) }
-    );
-    base_secret_props.push_back(
-        { .id = AZIHSM_KEY_PROP_ID_DERIVE,
-          .val = &ecdh_derive_prop,
-          .len = sizeof(ecdh_derive_prop) }
-    );
-    // Get key bits from the EC curve
-    uint32_t key_bits = get_curve_key_bits(curve);
-    base_secret_props.push_back(
-        { .id = AZIHSM_KEY_PROP_ID_BIT_LEN, .val = &key_bits, .len = sizeof(key_bits) }
-    );
-
-    azihsm_key_prop_list base_secret_prop_list = {
-        .props = base_secret_props.data(),
-        .count = static_cast<uint32_t>(base_secret_props.size())
-    };
-
-    err = azihsm_key_derive(
-        session_handle,
-        &ecdh_algo,
-        server_priv_key,
-        &base_secret_prop_list,
-        &temp_base_secret.handle
-    );
-    if (err != AZIHSM_STATUS_SUCCESS)
-    {
-        return err; // auto_key will clean up temp_base_secret automatically
-    }
-
-    // Step 3: Use HKDF to derive HMAC key from base secret
+    // Step 2: Use HKDF to derive HMAC key from base secret
     const char *salt = "test-salt-hmac-key";
     const char *info = "test-info-hmac-key";
 
@@ -271,38 +118,21 @@ azihsm_status derive_hmac_key_via_ecdh_hkdf(
 inline azihsm_status generate_ecdh_keys_and_derive_hmac(
     azihsm_handle session_handle,
     azihsm_key_kind hmac_key_type,
-    EcdhKeyPairs &key_pairs,
+    EcdhKeyPairSet &key_pairs,
     azihsm_handle &hmac_key_handle,
     azihsm_ecc_curve curve
 )
 {
-    key_pairs.session_handle = session_handle;
-
-    // Generate server EC key pair
-    azihsm_status err = generate_ec_key_pair_for_derive(
-        session_handle,
-        key_pairs.server_pub_key,
-        key_pairs.server_priv_key,
-        curve
-    );
+    // Generate two EC key pairs using common helper
+    azihsm_status err = key_pairs.generate(session_handle, curve);
     if (err != AZIHSM_STATUS_SUCCESS)
         return err;
 
-    // Generate client EC key pair
-    err = generate_ec_key_pair_for_derive(
-        session_handle,
-        key_pairs.client_pub_key,
-        key_pairs.client_priv_key,
-        curve
-    );
-    if (err != AZIHSM_STATUS_SUCCESS)
-        return err;
-
-    // Derive HMAC key
+    // Derive HMAC key using party A as server, party B as client
     err = derive_hmac_key_via_ecdh_hkdf(
         session_handle,
-        key_pairs.server_priv_key,
-        key_pairs.client_pub_key,
+        key_pairs.priv_key_a.handle,
+        key_pairs.pub_key_b.handle,
         hmac_key_type,
         hmac_key_handle,
         curve

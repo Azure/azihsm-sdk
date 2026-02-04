@@ -7,6 +7,7 @@ use crate::algo::aes::*;
 use crate::algo::ecc::*;
 use crate::algo::kdf::*;
 use crate::algo::rsa::*;
+use crate::algo::secret::*;
 
 /// Generate a symmetric key
 ///
@@ -149,6 +150,11 @@ pub unsafe extern "C" fn azihsm_key_delete(key_handle: AzihsmHandle) -> AzihsmSt
             }
             HandleType::RsaPubKey => {
                 let key: Box<HsmRsaPublicKey> = HANDLE_TABLE.free_handle(key_handle, key_type)?;
+                key.delete_key()?;
+            }
+            HandleType::GenericSecretKey => {
+                let key: Box<HsmGenericSecretKey> =
+                    HANDLE_TABLE.free_handle(key_handle, key_type)?;
                 key.delete_key()?;
             }
             _ => Err(AzihsmStatus::UnsupportedKeyKind)?,
@@ -354,6 +360,7 @@ pub unsafe extern "C" fn azihsm_key_unmask(
         let handle = match key_kind {
             AzihsmKeyKind::Aes => aes_unmask_key(&session, masked_key_buf)?,
             AzihsmKeyKind::AesXts => aes_xts_unmask_key(&session, masked_key_buf)?,
+            AzihsmKeyKind::SharedSecret => secret_unmask_key(&session, masked_key_buf)?,
             _ => Err(AzihsmStatus::UnsupportedKeyKind)?,
         };
 
