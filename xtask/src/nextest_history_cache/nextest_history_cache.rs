@@ -1,16 +1,19 @@
 // Licensed under the Apache-2.0 license
 
-use std::{
-    env::{self},
-    fs, io,
-    path::Path,
-};
+use std::env::{self};
+use std::fs;
+use std::io;
+use std::path::Path;
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 
-use crate::nextest_history_cache::cache::{Cache, FsCache};
-use crate::nextest_history_cache::{cache_gha::GithubActionCache, util::other_err};
-use crate::nextest_history_cache::{git, html};
+use crate::nextest_history_cache::cache::Cache;
+use crate::nextest_history_cache::cache::FsCache;
+use crate::nextest_history_cache::cache_gha::GithubActionCache;
+use crate::nextest_history_cache::git;
+use crate::nextest_history_cache::html;
+use crate::nextest_history_cache::util::other_err;
 
 // Increment when non-backwards-compatible changes are made to the cache record
 // format
@@ -23,14 +26,6 @@ struct Tests {
     linux_total: i32,
     linux_skipped: i32,
 }
-impl Tests {
-    fn update_from(&mut self, other: &Tests) {
-        self.windows_total = other.windows_total;
-        self.windows_skipped = other.windows_skipped;
-        self.linux_total = other.linux_total;
-        self.linux_skipped = other.linux_skipped;
-    }
-}
 
 #[derive(Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct TestRecord {
@@ -38,7 +33,7 @@ pub struct TestRecord {
     tests: Tests,
 }
 
-fn write_history() -> io::Result<()> {
+pub fn write_history() -> io::Result<()> {
     let cache = GithubActionCache::new().map(box_cache).or_else(|e| {
         let fs_cache_path = "/tmp/azihsm-sdk-test-cache";
         println!(

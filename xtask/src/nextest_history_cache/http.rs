@@ -1,13 +1,14 @@
 // Licensed under the Apache-2.0 license
 
+use std::borrow::Cow;
+use std::io;
+use std::process::Command;
 use std::str::FromStr;
-use std::{borrow::Cow, io, process::Command};
 
+use crate::nextest_history_cache::process::run_cmd_stdout;
+use crate::nextest_history_cache::util::expect_line_with_prefix;
 use crate::nextest_history_cache::util::expect_line_with_prefix_ignore_case;
-use crate::nextest_history_cache::{
-    process::run_cmd_stdout,
-    util::{expect_line_with_prefix, other_err},
-};
+use crate::nextest_history_cache::util::other_err;
 
 pub struct Content<'a> {
     mime_type: Cow<'a, str>,
@@ -105,7 +106,7 @@ pub fn raw_get_ok(url: &str) -> io::Result<HttpResponse> {
     Ok(response)
 }
 
-pub fn api_post(url: &str, content: Option<&Content>) -> io::Result<HttpResponse> {
+pub fn api_post(url: &str, content: Option<&Content<'_>>) -> io::Result<HttpResponse> {
     let mut cmd = Command::new("curl");
     cmd.arg("-sSi");
     cmd.arg("-X").arg("POST");
@@ -124,7 +125,7 @@ pub fn api_post(url: &str, content: Option<&Content>) -> io::Result<HttpResponse
     }
 }
 
-pub fn api_post_ok(url: &str, content: Option<&Content>) -> io::Result<HttpResponse> {
+pub fn api_post_ok(url: &str, content: Option<&Content<'_>>) -> io::Result<HttpResponse> {
     let response = api_post(url, content)?;
     if !status_ok(response.status) {
         return Err(other_err(format!(
@@ -134,7 +135,7 @@ pub fn api_post_ok(url: &str, content: Option<&Content>) -> io::Result<HttpRespo
     Ok(response)
 }
 
-pub fn api_put(url: &str, content: &Content) -> io::Result<HttpResponse> {
+pub fn api_put(url: &str, content: &Content<'_>) -> io::Result<HttpResponse> {
     HttpResponse::parse(run_cmd_stdout(
         Command::new("curl")
             .arg("-sSi")
@@ -153,7 +154,7 @@ pub fn api_put(url: &str, content: &Content) -> io::Result<HttpResponse> {
     )?)
 }
 
-pub fn api_put_ok(url: &str, content: &Content) -> io::Result<HttpResponse> {
+pub fn api_put_ok(url: &str, content: &Content<'_>) -> io::Result<HttpResponse> {
     let response = api_put(url, content)?;
     if !status_ok(response.status) {
         return Err(other_err(format!(

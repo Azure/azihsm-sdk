@@ -1,16 +1,16 @@
 // Licensed under the Apache-2.0 license
 
-use ghac::v1::{
-    self as ghac_types, CreateCacheEntryResponse, FinalizeCacheEntryUploadResponse,
-    GetCacheEntryDownloadUrlResponse,
-};
+use ghac::v1::CreateCacheEntryResponse;
+use ghac::v1::FinalizeCacheEntryUploadResponse;
+use ghac::v1::GetCacheEntryDownloadUrlResponse;
+use ghac::v1::{self as ghac_types};
 use prost::Message;
 
-use crate::nextest_history_cache::{
-    cache::Cache,
-    http::{self, Content},
-    util::{hex, other_err},
-};
+use crate::nextest_history_cache::cache::Cache;
+use crate::nextest_history_cache::http::Content;
+use crate::nextest_history_cache::http::{self};
+use crate::nextest_history_cache::util::hex;
+use crate::nextest_history_cache::util::other_err;
 
 // The server complains with an unhelpful message if VERSION is not a hex string
 const VERSION: &str = "a02f6dd76ad9bbe075065ed95abff21f02c1789ecbdbf8753bc823b0be6d99b3";

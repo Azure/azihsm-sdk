@@ -1,6 +1,8 @@
 // Licensed under the Apache-2.0 license
 
-use std::{fs, io, path::PathBuf};
+use std::fs;
+use std::io;
+use std::path::PathBuf;
 
 use crate::nextest_history_cache::util::hex;
 

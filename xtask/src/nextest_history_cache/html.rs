@@ -1,6 +1,7 @@
 // Licensed under the Apache-2.0 license
 
-use std::{fmt::Write, io};
+use std::fmt::Write;
+use std::io;
 
 use serde::Serialize;
 use tinytemplate::TinyTemplate;

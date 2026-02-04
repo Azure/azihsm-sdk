@@ -1,9 +1,8 @@
 // Licensed under the Apache-2.0 license
 
-use std::{
-    io,
-    process::{Command, Stdio},
-};
+use std::io;
+use std::process::Command;
+use std::process::Stdio;
 
 pub fn run_cmd(cmd: &mut Command) -> io::Result<()> {
     let status = cmd.status()?;

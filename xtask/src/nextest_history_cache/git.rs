@@ -1,13 +1,18 @@
 // Licensed under the Apache-2.0 license
 
-use std::{io, path::Path, process::Command};
+use std::io;
+use std::path::Path;
+use std::process::Command;
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 
-use crate::nextest_history_cache::{
-    process::{run_cmd, run_cmd_stdout},
-    util::{bytes_to_string, expect_line, expect_line_with_prefix, other_err},
-};
+use crate::nextest_history_cache::process::run_cmd;
+use crate::nextest_history_cache::process::run_cmd_stdout;
+use crate::nextest_history_cache::util::bytes_to_string;
+use crate::nextest_history_cache::util::expect_line;
+use crate::nextest_history_cache::util::expect_line_with_prefix;
+use crate::nextest_history_cache::util::other_err;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct CommitInfo {

@@ -1,5 +1,6 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
 
+use crate::nextest_history_cache::nextest_history_cache::write_history;
 use crate::Xtask;
 use crate::XtaskCtx;
 
@@ -12,6 +13,8 @@ pub struct NextestHistory {
 impl Xtask for NextestHistory {
     fn run(self, _ctx: XtaskCtx) -> anyhow::Result<()> {
         log::trace!("running nextest-history");
+
+        write_history()?;
 
         log::trace!("done nextest-history");
         Ok(())
