@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 mod hmac_sha1_nist_test_vectors;
 mod hmac_sha256_nist_test_vectors;

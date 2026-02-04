@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 mod kbkdf_hmac_sha1_test_vectors;
 mod kbkdf_hmac_sha256_test_vectors;

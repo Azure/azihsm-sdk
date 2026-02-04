@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 //! ECDH (Elliptic Curve Diffie-Hellman) key derivation implementation.
 //! This module provides ECDH key agreement operations using platform-specific

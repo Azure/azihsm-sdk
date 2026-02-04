@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 //! RSA PKCS#1 v1.5 signature padding implementation.
 //!
 //! This module implements the PKCS#1 v1.5 signature padding scheme as specified in

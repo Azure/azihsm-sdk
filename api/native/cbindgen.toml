@@ -1,6 +1,7 @@
-language = "C"
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
 
-header = "/* Copyright (C) Microsoft Corporation. All rights reserved. */"
+language = "C"
 
 cpp_compat = true
 

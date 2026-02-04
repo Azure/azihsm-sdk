@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 use super::*;
 
 /// Converts test vector hash algorithm enum to runtime Hash object.

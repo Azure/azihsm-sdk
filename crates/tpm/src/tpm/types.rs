@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 //! Minimal TPM2 type definitions with binary (un)marshalling helpers.
 //! These are intentionally partial and only cover what current code paths need.

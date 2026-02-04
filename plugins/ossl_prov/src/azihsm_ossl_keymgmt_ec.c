@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 #include <openssl/core_dispatch.h>
 #include <openssl/core_names.h>
 #include <openssl/ec.h>

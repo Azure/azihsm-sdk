@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 use super::*;
 use crate::hmac::tests::testvectors::HMAC_SHA512_NIST_TEST_VECTORS;
