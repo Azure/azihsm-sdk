@@ -157,6 +157,10 @@ pub unsafe extern "C" fn azihsm_key_delete(key_handle: AzihsmHandle) -> AzihsmSt
                     HANDLE_TABLE.free_handle(key_handle, key_type)?;
                 key.delete_key()?;
             }
+            HandleType::HmacKey => {
+                let key: Box<HsmHmacKey> = HANDLE_TABLE.free_handle(key_handle, key_type)?;
+                key.delete_key()?;
+            }
             _ => Err(AzihsmStatus::UnsupportedKeyKind)?,
         }
 
