@@ -8,6 +8,7 @@
 #include "handle/part_list_handle.hpp"
 #include "helpers.hpp"
 #include "utils/auto_key.hpp"
+#include "utils/shared_secret.hpp"
 
 class azihsm_hmac_keygen : public ::testing::Test
 {
