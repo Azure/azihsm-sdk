@@ -7,7 +7,7 @@ use std::io;
 use serde::Serialize;
 use tinytemplate::TinyTemplate;
 
-use crate::nextest_history_cache::nextest_history_cache::TestRecord;
+use crate::nextest_history_cache::write_history::TestRecord;
 
 // The GitHub "HTML sanitizer" is incredibly sensitive to whitespace; do not attempt to break newlines.
 static TEMPLATE: &str = r#"

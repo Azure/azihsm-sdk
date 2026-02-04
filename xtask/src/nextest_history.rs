@@ -1,6 +1,6 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
 
-use crate::nextest_history_cache::nextest_history_cache::write_history;
+use crate::nextest_history_cache::write_history::write_history;
 use crate::Xtask;
 use crate::XtaskCtx;
 
