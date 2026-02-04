@@ -24,7 +24,7 @@ inline uint32_t get_hmac_key_bits(azihsm_key_kind hmac_key_kind)
     }
 }
 
-azihsm_status derive_hmac_key_via_ecdh_hkdf(
+inline azihsm_status derive_hmac_key_via_ecdh_hkdf(
     azihsm_handle session_handle,
     azihsm_handle server_priv_key,
     azihsm_handle client_pub_key,
