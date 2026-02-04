@@ -1,0 +1,35 @@
+# Contributing
+
+Welcome and thank you for your interest in contributing to **Azure Integrated HSM SDK**! Before contributing to this
+project, please review this document for policies and procedures which
+will ease the contribution and review process for everyone. If you have
+questions, please contact **AziHSM_OSS@Microsoft.com**. 
+
+## Issues and Feature Requests
+
+When reporting issues, please include:
+* A clear and descriptive title.
+* Steps to reproduce the issue.
+* Expected and actual behavior.
+* Screenshots or logs if applicable.
+* Your environment details (OS, Python version, Tools used etc.).
+
+## Style Guidelines
+
+* Follow PEP8 coding standards.
+* Use meaningful variable and function names.
+* Include comments and documentation where necessary.
+* Keep functions small and focused.
+
+## Pull Request Process
+
+Give very detailed instructions on your PR procedure to ensure contributions are made in the way your teams wants/expects them. This eases the process for everyone. An example process could include the following but this should align with your team's processes.
+
+1. Ensure builds are still successful and tests, including any added or updated tests, pass prior to submitting the pull request.
+2. Update any documentation, user and contributor, that is impacted by your changes.
+3. Increase the version numbers in any examples and the `README.md` to the new version that this pull request would represent. 
+4. You may merge the pull request in once you have the sign-off of two other developers. 
+
+## License Information
+
+This driver is licensed under **MIT**. See `LICENSE.md` for details.
