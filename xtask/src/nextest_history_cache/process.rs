@@ -10,8 +10,7 @@ pub fn run_cmd(cmd: &mut Command) -> io::Result<()> {
     if status.success() {
         Ok(())
     } else {
-        Err(io::Error::new(
-            io::ErrorKind::Other,
+        Err(io::Error::other(
             format!(
                 "Process {:?} {:?} exited with status code {:?}",
                 cmd.get_program(),
@@ -34,8 +33,7 @@ pub fn run_cmd_stdout(cmd: &mut Command, input: Option<&[u8]>) -> io::Result<Vec
     if out.status.success() {
         Ok(out.stdout)
     } else {
-        Err(io::Error::new(
-            io::ErrorKind::Other,
+        Err(io::Error::other(
             format!(
                 "Process {:?} {:?} exited with status code {:?} stdout {} stderr {}",
                 cmd.get_program(),

@@ -1,12 +1,11 @@
 // Licensed under the Apache-2.0 license
 
-use std::{cmp::Ordering, fmt::Write, io};
+use std::{fmt::Write, io};
 
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde::Serialize;
 use tinytemplate::TinyTemplate;
 
-use crate::nextest_history_cache::{git, nextest_history_cache::TestRecord};
+use crate::nextest_history_cache::nextest_history_cache::TestRecord;
 
 // The GitHub "HTML sanitizer" is incredibly sensitive to whitespace; do not attempt to break newlines.
 static TEMPLATE: &str = r#"
