@@ -144,7 +144,7 @@ TEST_F(azihsm_hmac_sign_verify, sign_verify_hmac_all_algorithms)
 
         part_list_.for_each_session([&](azihsm_handle session) {
             // Generate EC key pairs and derive HMAC key
-            EcdhKeyPairs key_pairs;
+            EcdhKeyPairSet key_pairs;
             auto_key hmac_key;
 
             auto err = generate_ecdh_keys_and_derive_hmac(
@@ -192,7 +192,7 @@ TEST_F(azihsm_hmac_sign_verify, sign_verify_hmac_streaming_all_algorithms)
 
         part_list_.for_each_session([&](azihsm_handle session) {
             // Generate EC key pairs and derive HMAC key
-            EcdhKeyPairs key_pairs;
+            EcdhKeyPairSet key_pairs;
             auto_key hmac_key;
 
             auto err = generate_ecdh_keys_and_derive_hmac(

@@ -67,6 +67,7 @@ set(SOURCE
     algo/rsa/sign_verify_tests.cpp
     algo/sha/digest_tests.cpp
     algo/hmac/sign_verify_tests.cpp
+    algo/secret/unmask_tests.cpp
 )
 add_executable(azihsm_api_cpp_tests ${SOURCE})
 target_include_directories(azihsm_api_cpp_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
