@@ -17,7 +17,7 @@ cargo build --workspace --all-targets
 ```
 ### Run formatting, linting, code hygiene:  
 ```bash
-cargo fmt --all
+cargo xtask fmt --all
 cargo clippy --workspace
 cargo xtask precheck
 ```
@@ -27,7 +27,7 @@ cargo build -p azi_hsm_native
 ```
 ### Build the OpenSSL Provider
 ```bash
-cd plugins/ossl_provider
+cd plugins/ossl_prov
 cargo build --release
 ```
 ### Build the Windows KSP (Key Storage Provider)
