@@ -14,6 +14,7 @@ use crate::copyright;
 use crate::coverage;
 use crate::fmt;
 use crate::nextest;
+use crate::nextest_history;
 use crate::nextest_report;
 use crate::setup;
 use crate::Xtask;
@@ -42,6 +43,9 @@ struct Stage {
     /// Run nextest tests
     #[clap(long)]
     nextest: bool,
+    /// Run nextest-history
+    #[clap(long)]
+    nextest_history: bool,
     /// Run nextest-report
     #[clap(long)]
     nextest_report: bool,
@@ -92,6 +96,7 @@ impl Xtask for Precheck {
             clippy: true,
             coverage: false,
             nextest: true,
+            nextest_history: false,
             nextest_report: false,
             all: false,
         });
@@ -204,7 +209,13 @@ impl Xtask for Precheck {
         // Run nextest report
         if stage.nextest_report || stage.all {
             let nextest_report = nextest_report::NextestReport {};
-            nextest_report.run(ctx)?;
+            nextest_report.run(ctx.clone())?;
+        }
+
+        // Run nextest history
+        if stage.nextest_history || stage.all {
+            let nextest_history = nextest_history::NextestHistory {};
+            nextest_history.run(ctx)?;
         }
 
         log::trace!("done precheck");
