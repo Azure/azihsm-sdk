@@ -95,6 +95,7 @@ fn compute_pota_endorsement(
 
             // Sign with TPM
             let (signature, tpm_public_key) = tpm_ecc_sign_digest(&pub_key_hash)?;
+            // Signature is in raw r||s format, TPM public key is DER-encoded
             Ok((signature, tpm_public_key))
         }
 
@@ -313,9 +314,11 @@ pub fn establish_credential(
     mobk: &[u8],
     pota_endorsement: &HsmPotaEndorsementData<'_>,
 ) -> HsmResult<Vec<u8>> {
-    // Use pota_endorsement data
-    let _pota_sig = pota_endorsement.signature();
-    let _pota_pub_key = pota_endorsement.public_key();
+    let pota_endorsement_pub_key = DdiDerPublicKey {
+        der: MborByteArray::from_slice(pota_endorsement.public_key())
+            .map_hsm_err(HsmError::InternalError)?,
+        key_kind: DdiKeyType::Ecc384Public,
+    };
 
     let req = DdiEstablishCredentialCmdReq {
         hdr: build_ddi_req_hdr(DdiOp::EstablishCredential, Some(rev), None),
@@ -326,6 +329,9 @@ pub fn establish_credential(
             bmk: MborByteArray::from_slice(bmk).map_hsm_err(HsmError::InternalError)?,
             masked_unwrapping_key: MborByteArray::from_slice(muk)
                 .map_hsm_err(HsmError::InternalError)?,
+            signed_pid: MborByteArray::from_slice(pota_endorsement.signature())
+                .map_hsm_err(HsmError::InternalError)?,
+            tpm_pub_key: pota_endorsement_pub_key,
         },
         ext: None,
     };

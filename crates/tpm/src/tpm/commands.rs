@@ -366,24 +366,17 @@ impl<T: RawTpm> TpmCommandExt for T {
         hierarchy: Hierarchy,
         public_template: Tpm2bPublicEcc,
     ) -> io::Result<CreatedPrimary> {
-        // ECC CreatePrimary: marshal the ECC public template
-        let mut template_buf = Vec::new();
-        public_template.marshal(&mut template_buf);
-
-        // Build command with marshalled ECC template
-        let mut params_buf = Vec::new();
-        // in_sensitive (empty)
-        empty_sensitive_create().marshal(&mut params_buf);
-        // in_public (ECC template)
-        params_buf.extend_from_slice(&template_buf);
-        // outside_info (empty)
-        Tpm2bBytes(Vec::new()).marshal(&mut params_buf);
-        // creation_pcr (empty list)
-        PcrSelectionList::from_pcrs(&[]).marshal(&mut params_buf);
+        // Build ECC CreatePrimary parameters using a structured command parameter type
+        let params = EccCreatePrimaryCommandParameters {
+            in_sensitive: empty_sensitive_create(),
+            in_public: public_template,
+            outside_info: Tpm2bBytes(Vec::new()),
+            creation_pcr: PcrSelectionList::from_pcrs(&[]),
+        };
 
         let handles = [hierarchy.handle()];
         let cmd = build_command_pw_sessions(TpmCommandCode::CreatePrimary, &handles, &[&[]], |b| {
-            b.extend_from_slice(&params_buf);
+            params.marshal(b);
         });
 
         let resp = self.transmit_raw(&cmd)?;
@@ -396,39 +389,17 @@ impl<T: RawTpm> TpmCommandExt for T {
             ));
         }
 
-        // Parse response: header (10) + handle (4) + paramSize (4) + parameters
-        let (header, mut cursor) = crate::tpm::types::TpmResponseHeader::parse(&resp)?;
-        if header.return_code != 0 {
-            return Err(io::Error::other(format!(
-                "CreatePrimary ECC error 0x{:08x}",
-                header.return_code
-            )));
-        }
-
-        let object_handle = u32::from_be_bytes([
-            resp[cursor],
-            resp[cursor + 1],
-            resp[cursor + 2],
-            resp[cursor + 3],
-        ]);
-        cursor += 4;
-
-        // Skip paramSize
-        let _param_size = u32::from_be_bytes([
-            resp[cursor],
-            resp[cursor + 1],
-            resp[cursor + 2],
-            resp[cursor + 3],
-        ]);
-        cursor += 4;
-
-        // Read the outPublic size-prefixed blob
-        let out_public_size = u16::from_be_bytes([resp[cursor], resp[cursor + 1]]) as usize;
-        let out_public = resp[cursor..cursor + 2 + out_public_size].to_vec();
-
+        // Use the same parsing logic as create_primary
+        let parsed = CreatePrimaryResponse::from_bytes(&resp)?;
+        let public_bytes = {
+            // Re-marshal the returned out_public to return canonical TPM2B form
+            let mut b = Vec::new();
+            parsed.parameters.out_public.marshal(&mut b);
+            b
+        };
         Ok(CreatedPrimary {
-            handle: object_handle,
-            public: out_public,
+            handle: parsed.handles.object_handle,
+            public: public_bytes,
         })
     }
 

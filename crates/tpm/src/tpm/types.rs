@@ -293,6 +293,29 @@ impl TpmMarshal for CreatePrimaryCommandParameters {
     }
 }
 
+/// ECC variant of CreatePrimary command parameters.
+/// Mirrors CreatePrimaryCommandParameters but uses Tpm2bPublicEcc for the public template.
+#[derive(Debug, Clone)]
+pub struct EccCreatePrimaryCommandParameters {
+    /// inSensitive: wrapped TPMS_SENSITIVE_CREATE structure
+    pub in_sensitive: Tpm2bSensitiveCreate,
+    /// inPublic: ECC public area template
+    pub in_public: Tpm2bPublicEcc,
+    /// outsideInfo: optional user data
+    pub outside_info: Tpm2bBytes,
+    /// creationPCR: list of PCRs used for creation
+    pub creation_pcr: PcrSelectionList,
+}
+
+impl TpmMarshal for EccCreatePrimaryCommandParameters {
+    fn marshal(&self, buf: &mut Vec<u8>) {
+        self.in_sensitive.marshal(buf);
+        self.in_public.marshal(buf);
+        self.outside_info.marshal(buf);
+        self.creation_pcr.marshal(buf);
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct CreatePrimaryCommand {
     pub header: TpmCommandHeader,
@@ -1224,13 +1247,19 @@ impl TpmUnmarshal for TpmsEccPoint {
     fn unmarshal(d: &[u8], c: &mut usize) -> io::Result<Self> {
         let x_size = u16::unmarshal(d, c)? as usize;
         if *c + x_size > d.len() {
-            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "ecc point x"));
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "Insufficient data to unmarshal ECC point X coordinate",
+            ));
         }
         let x = d[*c..*c + x_size].to_vec();
         *c += x_size;
         let y_size = u16::unmarshal(d, c)? as usize;
         if *c + y_size > d.len() {
-            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "ecc point y"));
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "Insufficient data to unmarshal ECC point Y coordinate",
+            ));
         }
         let y = d[*c..*c + y_size].to_vec();
         *c += y_size;
@@ -1281,13 +1310,19 @@ impl TpmUnmarshal for TpmsSignatureEcdsa {
         let hash_alg = u16::unmarshal(d, c)?;
         let r_size = u16::unmarshal(d, c)? as usize;
         if *c + r_size > d.len() {
-            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "ecdsa r"));
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "Insufficient data to unmarshal ECDSA signature R component",
+            ));
         }
         let signature_r = d[*c..*c + r_size].to_vec();
         *c += r_size;
         let s_size = u16::unmarshal(d, c)? as usize;
         if *c + s_size > d.len() {
-            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "ecdsa s"));
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "Insufficient data to unmarshal ECDSA signature S component",
+            ));
         }
         let signature_s = d[*c..*c + s_size].to_vec();
         *c += s_size;
@@ -1391,14 +1426,17 @@ pub enum TpmtSignature {
     Rsassa { hash_alg: u16, sig: Vec<u8> },
     Ecdsa(TpmsSignatureEcdsa),
     Null,
-    OtherRaw(Vec<u8>),
+    OtherRaw(u16, Vec<u8>), // (scheme_id, remaining bytes)
 }
 
 impl TpmUnmarshal for TpmtSignature {
     fn unmarshal(d: &[u8], c: &mut usize) -> io::Result<Self> {
         // scheme
         if *c + 2 > d.len() {
-            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "sig scheme"));
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "Insufficient data to unmarshal signature scheme",
+            ));
         }
         let scheme = u16::unmarshal(d, c)?;
         match scheme {
@@ -1407,7 +1445,10 @@ impl TpmUnmarshal for TpmtSignature {
                 let hash_alg = u16::unmarshal(d, c)?; // hashAlg
                 let size = u16::unmarshal(d, c)? as usize;
                 if *c + size > d.len() {
-                    return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "sig rsassa"));
+                    return Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "Insufficient data to unmarshal RSASSA signature",
+                    ));
                 }
                 let sig = d[*c..*c + size].to_vec();
                 *c += size;
@@ -1423,10 +1464,10 @@ impl TpmUnmarshal for TpmtSignature {
                 Ok(TpmtSignature::Null)
             }
             _ => {
-                // fallback: capture rest
+                // fallback: capture scheme ID and remaining bytes for round-trip support
                 let rest = d[*c..].to_vec();
                 *c = d.len();
-                Ok(TpmtSignature::OtherRaw(rest))
+                Ok(TpmtSignature::OtherRaw(scheme, rest))
             }
         }
     }
@@ -1448,8 +1489,9 @@ impl TpmMarshal for TpmtSignature {
             TpmtSignature::Null => {
                 0x0010u16.marshal(buf); // TPM_ALG_NULL
             }
-            TpmtSignature::OtherRaw(raw) => {
-                buf.extend_from_slice(raw); // Already raw TPMT_SIGNATURE bytes
+            TpmtSignature::OtherRaw(scheme_id, raw) => {
+                scheme_id.marshal(buf); // Write the scheme ID first
+                buf.extend_from_slice(raw); // Then the remaining bytes
             }
         }
     }
