@@ -233,7 +233,13 @@ static int azihsm_ossl_keyexch_set_ctx_params(void *kectx, const OSSL_PARAM para
             ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
             return OSSL_FAILURE;
         }
-        snprintf(ctx->output_file, sizeof(ctx->output_file), "%s", path);
+
+        int ret = snprintf(ctx->output_file, sizeof(ctx->output_file), "%s", path);
+        if (ret < 0 || (size_t)ret >= sizeof(ctx->output_file))
+        {
+            ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
+            return OSSL_FAILURE;
+        }
     }
 
     return OSSL_SUCCESS;
