@@ -8,16 +8,6 @@ use crate::AzihsmStatus;
 use crate::HANDLE_TABLE;
 use crate::handle_table::HandleType;
 
-impl TryFrom<AzihsmHandle> for HsmGenericSecretKey {
-    type Error = AzihsmStatus;
-
-    fn try_from(handle: AzihsmHandle) -> Result<Self, Self::Error> {
-        let key: &HsmGenericSecretKey =
-            HANDLE_TABLE.as_ref(handle, HandleType::GenericSecretKey)?;
-        Ok(key.clone())
-    }
-}
-
 /// Unmasks a generic secret key
 ///
 /// Imports a previously masked (encrypted/protected) generic secret key back into the HSM.
