@@ -112,13 +112,13 @@ pub fn write_history() -> io::Result<()> {
             "Building firmware at commit {}: {}",
             commit.id, commit.title
         );
-        worktree.checkout(&commit.id)?;
-        worktree.submodule_update()?;
+        // worktree.checkout(&commit.id)?;
+        // worktree.submodule_update()?;
 
-        records.push(TestRecord {
-            commit: commit.clone(),
-            tests: get_tests(),
-        });
+        // records.push(TestRecord {
+        //     commit: commit.clone(),
+        //     tests: get_tests(),
+        // });
     }
     for (i, record) in records.iter().enumerate() {
         if Some(&record.commit.id) == cached_commit.as_ref() {

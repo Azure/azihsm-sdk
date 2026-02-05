@@ -15,9 +15,9 @@ static TEMPLATE: &str = r#"
   <tr><th>Commit</th><th>Author</th><th>Commit</th><th>Windows Total</th><th>Windows Skipped</th><th>Linux Total</th><th>Linux Skipped</th></tr>
 {{ for record in records }}
   <tr>
-    <td><a href="https://github.com/chipsalliance/caliptra-sw/commit/{ record.commit.id }">{ record.commit.id | trim_8 }</a></td>
+    <td><a href="https://github.com/Azure/azihsm-sdk/commit/{ record.commit.id }">{ record.commit.id | trim_8 }</a></td>
     <td>{ record.commit.author | name_only }</td>
-    {{ if record.important }}<td><strong>{ record.commit.title }</strong></td>{{ else }}<td>{ record.commit.title }</td>{{ endif }}
+    <td>{ record.commit.title }</td>
     <td>{{ if record.tests.windows_total }}{ record.tests.windows_total }{{ else }}build error{{ endif }}</td><td>{{ if record.tests.windows_skipped }}{ record.tests.windows_skipped }{{ else }}build error{{ endif }}</td><td>{{ if record.tests.linux_total }}{ record.tests.linux_total }{{ else }}build error{{ endif }}</td><td>{{ if record.tests.linux_skipped }}{ record.tests.linux_skipped }{{ else }}build error{{ endif }}</td>
   </tr>
 {{ endfor }}
