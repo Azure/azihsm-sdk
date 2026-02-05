@@ -445,7 +445,7 @@ impl HsmKeyUnmaskOp for HsmAesXtsKeyUnmaskAlgo {
         let key_id1 = ddi::HsmKeyIdGuard::new(session, handle1);
         let key_id2 = ddi::HsmKeyIdGuard::new(session, handle2);
 
-        // Validate after constructing the wrapper so a failure drops and deletes the handle.
+        // Validate before constructing the wrapper so the guards can clean up on failure.
         HsmAesXtsKey::validate_props(&props)?;
 
         //construct key wrapper first
