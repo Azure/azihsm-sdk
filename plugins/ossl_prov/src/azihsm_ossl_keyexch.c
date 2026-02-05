@@ -57,44 +57,52 @@ static int ec_point_to_der_spki(
     group = EC_GROUP_new_by_curve_name(nid);
     if (group == NULL)
     {
+        ERR_raise(ERR_LIB_PROV, ERR_R_EC_LIB);
         goto err;
     }
 
     point = EC_POINT_new(group);
     if (point == NULL)
     {
+        ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
         goto err;
     }
 
     if (!EC_POINT_oct2point(group, point, pub_point, pub_point_len, NULL))
     {
+        ERR_raise(ERR_LIB_PROV, ERR_R_EC_LIB);
         goto err;
     }
 
     ec_key = EC_KEY_new();
     if (ec_key == NULL)
     {
+        ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
         goto err;
     }
 
     if (!EC_KEY_set_group(ec_key, group))
     {
+        ERR_raise(ERR_LIB_PROV, ERR_R_EC_LIB);
         goto err;
     }
 
     if (!EC_KEY_set_public_key(ec_key, point))
     {
+        ERR_raise(ERR_LIB_PROV, ERR_R_EC_LIB);
         goto err;
     }
 
     pkey = EVP_PKEY_new();
     if (pkey == NULL)
     {
+        ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
         goto err;
     }
 
     if (!EVP_PKEY_assign_EC_KEY(pkey, ec_key))
     {
+        ERR_raise(ERR_LIB_PROV, ERR_R_EVP_LIB);
         goto err;
     }
     ec_key = NULL; /* Ownership transferred to pkey */
@@ -104,6 +112,7 @@ static int ec_point_to_der_spki(
     {
         *der_out = NULL;
         *der_len = 0;
+        ERR_raise(ERR_LIB_PROV, ERR_R_ASN1_LIB);
         goto err;
     }
 
@@ -171,6 +180,8 @@ static void *azihsm_ossl_keyexch_dupctx(void *kectx)
         if (dup->peer_key == NULL)
         {
             OPENSSL_free(dup);
+
+            ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
             return NULL;
         }
         memcpy(dup->peer_key, ctx->peer_key, sizeof(AZIHSM_EC_KEY));
@@ -183,6 +194,8 @@ static void *azihsm_ossl_keyexch_dupctx(void *kectx)
             {
                 OPENSSL_free(dup->peer_key);
                 OPENSSL_free(dup);
+
+                ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
                 return NULL;
             }
             memcpy(
@@ -454,6 +467,7 @@ static int azihsm_ossl_keyexch_derive(
 
     if (written < 0 || (uint32_t)written != masked_prop.len)
     {
+        unlink(ctx->output_file);
         ERR_raise(ERR_LIB_PROV, ERR_R_SYS_LIB);
         goto err;
     }

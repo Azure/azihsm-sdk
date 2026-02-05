@@ -102,36 +102,6 @@ static int azihsm_ossl_name_to_curve_id(const char *name)
     return AIHSM_EC_CURVE_ID_NONE;
 }
 
-static int azihsm_ossl_curve_id_to_nid(const int curve_id)
-{
-    for (const CURVE_MAPPING_ENTRY *it = curves; it->nid != NID_undef; it++)
-    {
-
-        if (it->curve_id == curve_id)
-            return it->nid;
-    }
-
-    return NID_undef;
-}
-
-/**
- * Get the key size in bits for a given curve.
- */
-static int azihsm_ossl_curve_id_to_bits(const int curve_id)
-{
-    switch (curve_id)
-    {
-    case AZIHSM_ECC_CURVE_P256:
-        return AZIHSM_EC_P256_KEY_BITS;
-    case AZIHSM_ECC_CURVE_P384:
-        return AZIHSM_EC_P384_KEY_BITS;
-    case AZIHSM_ECC_CURVE_P521:
-        return AZIHSM_EC_P521_KEY_BITS;
-    default:
-        return 0;
-    }
-}
-
 /**
  * Get the ECDSA signature size for a given curve.
  * Returns the raw signature size (r || s concatenated).
@@ -867,6 +837,21 @@ static void *azihsm_ossl_keymgmt_load(const void *reference, size_t reference_sz
     /* Copy the key structure from reference */
     memcpy(dst_key, reference, sizeof(AZIHSM_EC_KEY));
 
+    /* Deep copy pub_key_data to avoid double-free */
+    dst_key->pub_key_data = NULL;
+    const AZIHSM_EC_KEY *src_key = (const AZIHSM_EC_KEY *)reference;
+    if (src_key->pub_key_data != NULL && src_key->pub_key_data_len > 0)
+    {
+        dst_key->pub_key_data = OPENSSL_malloc(src_key->pub_key_data_len);
+        if (dst_key->pub_key_data == NULL)
+        {
+            ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
+            OPENSSL_free(dst_key);
+            return NULL;
+        }
+        memcpy(dst_key->pub_key_data, src_key->pub_key_data, src_key->pub_key_data_len);
+    }
+
     return dst_key;
 }
 
@@ -970,7 +955,7 @@ static int azihsm_ossl_keymgmt_get_params(AZIHSM_EC_KEY *key, OSSL_PARAM params[
     p = OSSL_PARAM_locate(params, OSSL_PKEY_PARAM_GROUP_NAME);
     if (p != NULL && !OSSL_PARAM_set_utf8_string(
                          p,
-                         OBJ_nid2sn(azihsm_ossl_curve_id_to_nid((int)key->genctx.ec_curve_id))
+                         OBJ_nid2sn(azihsm_ossl_ec_curve_id_to_nid((int)key->genctx.ec_curve_id))
                      ))
     {
         ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_SET_PARAMETER);
@@ -980,7 +965,7 @@ static int azihsm_ossl_keymgmt_get_params(AZIHSM_EC_KEY *key, OSSL_PARAM params[
     p = OSSL_PARAM_locate(params, OSSL_PKEY_PARAM_BITS);
     if (p != NULL)
     {
-        int bits = azihsm_ossl_curve_id_to_bits((int)key->genctx.ec_curve_id);
+        int bits = azihsm_ossl_ec_curve_id_to_bits((int)key->genctx.ec_curve_id);
         if (bits == 0 || !OSSL_PARAM_set_int(p, bits))
         {
             ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_SET_PARAMETER);
