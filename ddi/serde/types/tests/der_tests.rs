@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 use azihsm_crypto::*;
 #[cfg(any(feature = "pre_encode", feature = "post_decode"))]

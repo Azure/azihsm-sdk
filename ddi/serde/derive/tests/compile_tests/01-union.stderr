@@ -1,5 +1,5 @@
 error: deriving `mcr-ddi-derive::Ddi` for a `union` is not supported
- --> tests/compile_tests/01-union.rs:4:1
+ --> tests/compile_tests/01-union.rs:5:1
   |
-4 | union A {
+5 | union A {
   | ^^^^^

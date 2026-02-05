@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 //! RSA signature generation and verification with pre-hashed data using OpenSSL.
 //!

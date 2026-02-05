@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 //! Module for Table. This is analogous to resource group in the physical Manticore.
 //! It stores the keys and their metadata. There can be maximum 256 keys in a table

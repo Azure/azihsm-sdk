@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 //! Tests for validating RSA signing and verification with PKCS#1 v1.5 padding.
 use super::*;
 

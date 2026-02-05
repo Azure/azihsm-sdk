@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 //! Tests for KBKDF (Key-Based Key Derivation Function) implementation.
 //! Validates correctness against official NIST SP 800-108 test vectors
