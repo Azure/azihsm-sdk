@@ -66,8 +66,8 @@ fn test_establish_credential_after_lm() {
         let cert_pub_key_der = cert.get_public_key_der().unwrap();
         let cert_pub_key_obj = azihsm_crypto::DerEccPublicKey::from_der(&cert_pub_key_der).unwrap();
         let mut cert_pub_key_tbs = vec![0x04u8];
-        cert_pub_key_tbs.extend_from_slice(&cert_pub_key_obj.x());
-        cert_pub_key_tbs.extend_from_slice(&cert_pub_key_obj.y());
+        cert_pub_key_tbs.extend_from_slice(cert_pub_key_obj.x());
+        cert_pub_key_tbs.extend_from_slice(cert_pub_key_obj.y());
 
         let hash_algo = HashAlgo::sha384();
         let mut ecdsa_algo = EcdsaAlgo::new(hash_algo);
