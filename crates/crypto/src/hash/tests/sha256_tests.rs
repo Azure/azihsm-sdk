@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 use super::*;
 use crate::hash::tests::testvectors::SHA256_LONG_MSG_TEST_VECTORS;

@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 #![warn(missing_docs)]
 #![forbid(unsafe_code)]
@@ -48,8 +49,8 @@ impl Xtask for Copyright {
 }
 
 impl Copyright {
-    const COPYRIGHT_PRESENT_IN_LINES: usize = 3;
-    const COPYRIGHT_HEADER_TEXT: &str = "Copyright (C) Microsoft Corporation. All rights reserved.";
+    const COPYRIGHT_PRESENT_IN_LINES: usize = 4;
+    const COPYRIGHT_HEADER_TEXT: &str = "Copyright (c) Microsoft Corporation.\nLicensed under the MIT License.";
 
     fn check_copyright(path: &Path, fix: bool) -> anyhow::Result<()> {
         let ext = path
@@ -65,13 +66,25 @@ impl Copyright {
         }
 
         let f = BufReader::new(File::open(path)?);
-        let lines = f.lines().take(Self::COPYRIGHT_PRESENT_IN_LINES);
+        let lines: Vec<_> = f.lines()
+            .take(Self::COPYRIGHT_PRESENT_IN_LINES)
+            .collect::<Result<_, _>>()?;
 
-        for line in lines {
-            let line = line?;
-            if line.contains(Self::COPYRIGHT_HEADER_TEXT) {
-                return Ok(());
+        // Check if the copyright header is present (both lines)
+        let header_parts: Vec<&str> = Self::COPYRIGHT_HEADER_TEXT.split('\n').collect();
+        let mut found_parts = 0;
+        
+        for line in &lines {
+            for part in &header_parts {
+                if line.contains(part) {
+                    found_parts += 1;
+                }
             }
+        }
+
+        // All parts of the header must be present
+        if found_parts >= header_parts.len() {
+            return Ok(());
         }
 
         if fix {
@@ -102,34 +115,73 @@ impl Copyright {
             ))?,
         };
 
-        let header = format!("{} {}", prefix, Self::COPYRIGHT_HEADER_TEXT);
+        // Split the header text into lines and add prefix to each
+        let header_lines: Vec<String> = Self::COPYRIGHT_HEADER_TEXT
+            .split('\n')
+            .map(|line| format!("{} {}", prefix, line))
+            .collect();
+        let header = header_lines.join("\n");
+
+        // Find Microsoft copyright header to replace (may span multiple lines)
         let mut replacement = None;
         let mut offset = 0;
-        for line in file_content
+        let mut found_copyright_line = None;
+        
+        for (idx, line) in file_content
             .split_inclusive('\n')
             .take(Self::COPYRIGHT_PRESENT_IN_LINES)
+            .enumerate()
         {
             let line_end = offset + line.len();
             let line_without_cr = line.trim_end_matches('\r');
+            
             if line_contains_word(line_without_cr, "Copyright")
                 && line_contains_word(line_without_cr, "Microsoft")
             {
-                let line_ending = if line.ends_with("\r\n") {
-                    "\r\n"
-                } else if line.ends_with('\n') {
-                    "\n"
-                } else {
-                    ""
-                };
-                replacement = Some((offset, line_end, line_ending));
+                found_copyright_line = Some((idx, offset, line_end));
                 break;
             }
             offset = line_end;
         }
 
+        if let Some((_start_idx, start_offset, mut end_offset)) = found_copyright_line {
+            // Determine line ending style
+            let line_ending = if file_content[start_offset..end_offset].ends_with("\r\n") {
+                "\r\n"
+            } else if file_content[start_offset..end_offset].ends_with('\n') {
+                "\n"
+            } else {
+                ""
+            };
+
+            // Check if the next line(s) contain "Licensed" or "All rights reserved" 
+            // to replace them as part of the old header
+            let mut lines_iter = file_content[end_offset..]
+                .split_inclusive('\n')
+                .take(2);
+            
+            while let Some(next_line) = lines_iter.next() {
+                let next_line_trimmed = next_line.trim_end_matches('\r').trim_end_matches('\n').trim();
+                if next_line_trimmed.starts_with(prefix) {
+                    let content = next_line_trimmed.trim_start_matches(prefix).trim();
+                    if content.contains("Licensed") 
+                        || content.contains("All rights reserved")
+                        || content.is_empty()
+                    {
+                        end_offset += next_line.len();
+                    } else {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            }
+
+            replacement = Some((start_offset, end_offset, line_ending));
+        }
+
         if let Some((line_start, line_end, line_ending)) = replacement {
             debug_assert!(line_end >= line_start);
-            let _original_len = line_end - line_start;
             let capacity = file_content
                 .len()
                 .checked_add(header.len())
@@ -205,9 +257,13 @@ mod tests {
         Copyright::fix_copyright(&temp.path).expect("fix copyright");
 
         let updated = std::fs::read_to_string(&temp.path).expect("read temp file");
+        let header_lines: Vec<String> = Copyright::COPYRIGHT_HEADER_TEXT
+            .split('\n')
+            .map(|line| format!("// {}", line))
+            .collect();
         let expected = format!(
-            "// {}\n// Another line\nfn main() {{}}\n",
-            Copyright::COPYRIGHT_HEADER_TEXT
+            "{}\n// Another line\nfn main() {{}}\n",
+            header_lines.join("\n")
         );
         assert_eq!(updated, expected);
     }
@@ -221,7 +277,11 @@ mod tests {
         Copyright::fix_copyright(&temp.path).expect("fix copyright");
 
         let updated = std::fs::read_to_string(&temp.path).expect("read temp file");
-        let expected = format!("// {}\nfn main() {{}}\n", Copyright::COPYRIGHT_HEADER_TEXT);
+        let header_lines: Vec<String> = Copyright::COPYRIGHT_HEADER_TEXT
+            .split('\n')
+            .map(|line| format!("// {}", line))
+            .collect();
+        let expected = format!("{}\nfn main() {{}}\n", header_lines.join("\n"));
         assert_eq!(updated, expected);
     }
 }

@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 // Test vectors from RFC 5869 - HMAC-based Extract-and-Expand Key Derivation Function (HKDF)
 // Source: https://tools.ietf.org/rfc/rfc5869.txt
 // Test vectors are located in Appendix A of RFC 5869

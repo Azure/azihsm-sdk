@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 //! Module for Function. This is the root level data structure of the HSM.
 //! It maintains state relevant at the virtual function level or operations which don't need a session.

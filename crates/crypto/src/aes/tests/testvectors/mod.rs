@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 mod cbc_128_nist_gf_sbox_test_vectors;
 mod cbc_128_nist_mct_test_vectors;

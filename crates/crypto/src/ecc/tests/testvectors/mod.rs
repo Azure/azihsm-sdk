@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 mod ecc_p256_test_vectors;
 mod ecc_p384_test_vectors;
 mod ecc_p521_test_vectors;
