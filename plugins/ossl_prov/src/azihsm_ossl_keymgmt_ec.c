@@ -901,6 +901,7 @@ static int azihsm_ossl_keymgmt_import(void *keydata, int selection, const OSSL_P
 
         if (!OSSL_PARAM_get_octet_string(p, (void **)&key->pub_key_data, 0, &key->pub_key_data_len))
         {
+            ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
             return OSSL_FAILURE;
         }
 
