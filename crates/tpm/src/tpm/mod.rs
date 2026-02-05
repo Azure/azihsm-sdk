@@ -8,4 +8,4 @@ pub mod types;
 pub use commands::TpmCommandExt;
 pub use device::RawTpm;
 pub use device::Tpm;
-pub use types::TpmCommandCode;
+pub use types::*;

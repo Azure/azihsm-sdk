@@ -296,7 +296,13 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_child)
     azihsm_buffer bmk_buf = { bmk.data(), static_cast<uint32_t>(bmk.size()) };
     azihsm_buffer mobk_buf = { mobk.data(), static_cast<uint32_t>(mobk.size()) };
 
-    auto init_err = azihsm_part_init(part_handle, &creds, &bmk_buf, nullptr, &mobk_buf);
+    struct azihsm_buffer pota_endorsement_buf = { .ptr = nullptr, .len = 0 };
+    struct azihsm_pota_endorsement pota_endorsement = { .source =
+                                                            AZIHSM_POTA_ENDORSEMENT_SOURCE_RANDOM,
+                                                        .endorsement = nullptr };
+
+    auto init_err =
+        azihsm_part_init(part_handle, &creds, &bmk_buf, nullptr, &mobk_buf, &pota_endorsement);
     ASSERT_EQ(init_err, AZIHSM_STATUS_SUCCESS);
 
     azihsm_buffer seed_buf = { seed.data(), static_cast<uint32_t>(seed.size()) };

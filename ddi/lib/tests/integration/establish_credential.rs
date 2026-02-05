@@ -682,7 +682,7 @@ fn test_establish_credential_tamper_tpm_pub_key() {
             )
             .unwrap();
 
-            let mut tampered_tpm_pub_key = TEST_TPM_ECC_PUB_KEY.clone();
+            let mut tampered_tpm_pub_key = TEST_TPM_ECC_PUB_KEY;
             tampered_tpm_pub_key[TEST_TPM_ECC_PUB_KEY.len() / 2] =
                 tampered_tpm_pub_key[TEST_TPM_ECC_PUB_KEY.len() / 2].wrapping_add(1);
 
