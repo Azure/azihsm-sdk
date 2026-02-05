@@ -111,7 +111,7 @@ impl HsmKeyUnmaskOp for HsmGenericSecretKeyUnmaskAlgo {
         //construct key guard first to ensure handles are released if validation fails
         let key_id = ddi::HsmKeyIdGuard::new(session, handle);
 
-        // Validate after constructing the wrapper so a failure drops and deletes the handle.
+        // Validate key props
         HsmGenericSecretKey::validate_props(&props)?;
 
         let key = HsmGenericSecretKey::new(session.clone(), props.clone(), key_id.release());

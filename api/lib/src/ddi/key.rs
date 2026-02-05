@@ -55,6 +55,11 @@ impl<'a> HsmKeyIdGuard<'a> {
         self.key_id
     }
 
+    /// Releases ownership of the key id without deleting the key on drop.
+    ///
+    /// Call this once all fallible parsing/validation has succeeded and the
+    /// caller is transferring the key id to a higher-level wrapper that will
+    /// manage its lifecycle.
     pub(crate) fn release(mut self) -> u16 {
         self.released = true;
         self.key_id
