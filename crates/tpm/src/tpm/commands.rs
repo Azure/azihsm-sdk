@@ -389,16 +389,41 @@ impl<T: RawTpm> TpmCommandExt for T {
             ));
         }
 
-        // Use the same parsing logic as create_primary
-        let parsed = CreatePrimaryResponse::from_bytes(&resp)?;
-        let public_bytes = {
-            // Re-marshal the returned out_public to return canonical TPM2B form
-            let mut b = Vec::new();
-            parsed.parameters.out_public.marshal(&mut b);
-            b
-        };
+        // Parse response header and handle manually to preserve raw ECC public bytes
+        // Response layout: header (10) + handle (4) + paramSize (4) + parameters
+        let (header, mut cursor) = crate::tpm::types::TpmResponseHeader::parse(&resp)?;
+        if header.return_code != 0 {
+            return Err(io::Error::other(format!(
+                "CreatePrimary ECC error 0x{:08x}",
+                header.return_code
+            )));
+        }
+
+        // Extract object handle
+        let object_handle = u32::unmarshal(&resp, &mut cursor)?;
+
+        // Skip paramSize
+        let _param_size = u32::unmarshal(&resp, &mut cursor)?;
+
+        // Extract outPublic as raw TPM2B bytes (preserving ECC structure)
+        if cursor + 2 > resp.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "CreatePrimary ECC short response (outPublic size)",
+            ));
+        }
+        let out_public_size = u16::from_be_bytes([resp[cursor], resp[cursor + 1]]) as usize;
+        if cursor + 2 + out_public_size > resp.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "CreatePrimary ECC short response (outPublic data)",
+            ));
+        }
+        // Include the size prefix in the returned bytes
+        let public_bytes = resp[cursor..cursor + 2 + out_public_size].to_vec();
+
         Ok(CreatedPrimary {
-            handle: parsed.handles.object_handle,
+            handle: object_handle,
             public: public_bytes,
         })
     }

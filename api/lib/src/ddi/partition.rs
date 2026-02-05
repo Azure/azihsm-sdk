@@ -39,6 +39,43 @@ fn get_partition_public_key(dev: &HsmDev, rev: HsmApiRev) -> HsmResult<Vec<u8>> 
     Ok(pub_key_der)
 }
 
+/// Gets the SHA-384 hash of the partition's public key in uncompressed point format.
+///
+/// Retrieves the public key from the partition certificate, converts it to
+/// uncompressed point format (0x04 || x || y), and hashes it with SHA-384.
+/// This is used for POTA endorsement signing.
+///
+/// # Arguments
+///
+/// * `dev` - The HSM device handle
+/// * `rev` - The API revision to use
+///
+/// # Returns
+///
+/// Returns the SHA-384 hash of the uncompressed public key point (48 bytes).
+fn get_partition_public_key_hash(dev: &HsmDev, rev: HsmApiRev) -> HsmResult<Vec<u8>> {
+    let cert_pub_key_der = get_partition_public_key(dev, rev)?;
+
+    // Parse the DER-encoded public key and convert to uncompressed point format
+    let cert_pub_key_obj =
+        DerEccPublicKey::from_der(&cert_pub_key_der).map_hsm_err(HsmError::InternalError)?;
+    let mut cert_pub_key_tbs = vec![0x04u8];
+    cert_pub_key_tbs.extend_from_slice(cert_pub_key_obj.x());
+    cert_pub_key_tbs.extend_from_slice(cert_pub_key_obj.y());
+
+    // Hash the uncompressed point with SHA-384
+    let mut hasher = crypto::HashAlgo::sha384();
+    let hash_len = hasher
+        .hash(&cert_pub_key_tbs, None)
+        .map_hsm_err(HsmError::InternalError)?;
+    let mut pub_key_hash = vec![0u8; hash_len];
+    hasher
+        .hash(&cert_pub_key_tbs, Some(&mut pub_key_hash))
+        .map_hsm_err(HsmError::InternalError)?;
+
+    Ok(pub_key_hash)
+}
+
 /// Computes the POTA endorsement signature and public key based on the source.
 ///
 /// This function handles all three POTA endorsement sources:
@@ -47,7 +84,7 @@ fn get_partition_public_key(dev: &HsmDev, rev: HsmApiRev) -> HsmResult<Vec<u8>> 
 /// - **Random**: Generates a random ECC P-384 key pair and signs the hash
 ///
 /// For TPM and Random sources, the data being signed is the SHA-384 hash of the
-/// DER-encoded public key from the partition's certificate.
+/// uncompressed public key point (0x04 || x || y) from the partition's certificate.
 ///
 /// # Arguments
 ///
@@ -80,18 +117,7 @@ fn compute_pota_endorsement(
         }
 
         HsmPotaEndorsementSource::Tpm => {
-            // Get the public key from the partition certificate
-            let cert_pub_key = get_partition_public_key(dev, rev)?;
-
-            // Hash the public key with SHA-384
-            let mut hasher = crypto::HashAlgo::sha384();
-            let hash_len = hasher
-                .hash(&cert_pub_key, None)
-                .map_hsm_err(HsmError::InternalError)?;
-            let mut pub_key_hash = vec![0u8; hash_len];
-            hasher
-                .hash(&cert_pub_key, Some(&mut pub_key_hash))
-                .map_hsm_err(HsmError::InternalError)?;
+            let pub_key_hash = get_partition_public_key_hash(dev, rev)?;
 
             // Sign with TPM
             let (signature, tpm_public_key) = tpm_ecc_sign_digest(&pub_key_hash)?;
@@ -100,8 +126,7 @@ fn compute_pota_endorsement(
         }
 
         HsmPotaEndorsementSource::Random => {
-            // Get the public key from the partition certificate
-            let cert_pub_key = get_partition_public_key(dev, rev)?;
+            let pub_key_hash = get_partition_public_key_hash(dev, rev)?;
 
             // Generate a random ECC P-384 key pair
             let private_key =
@@ -124,19 +149,18 @@ fn compute_pota_endorsement(
                 .to_der(Some(&mut public_key_der))
                 .map_hsm_err(HsmError::InternalError)?;
 
-            // Sign the certificate public key using ECDSA with SHA-384
-            let hash_algo = crypto::HashAlgo::sha384();
-            let mut ecdsa_algo = EcdsaAlgo::new(hash_algo);
+            // Sign the pre-computed hash directly (no additional hashing)
+            let mut sign_algo = EccAlgo::default();
 
             // First call to get signature size
-            let sig_len = ecdsa_algo
-                .sign(&private_key, &cert_pub_key, None)
+            let sig_len = sign_algo
+                .sign(&private_key, &pub_key_hash, None)
                 .map_hsm_err(HsmError::InternalError)?;
 
             // Second call to actually sign
             let mut signature = vec![0u8; sig_len];
-            ecdsa_algo
-                .sign(&private_key, &cert_pub_key, Some(&mut signature))
+            sign_algo
+                .sign(&private_key, &pub_key_hash, Some(&mut signature))
                 .map_hsm_err(HsmError::InternalError)?;
 
             Ok((signature, public_key_der))
