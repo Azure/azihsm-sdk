@@ -66,11 +66,11 @@ class PartitionHandle
   private:
     azihsm_handle handle_;
 
-        static std::mutex &get_init_mutex()
-        {
-                static std::mutex mutex;
-                return mutex;
-        }
+    static std::mutex &get_init_mutex()
+    {
+        static std::mutex mutex;
+        return mutex;
+    }
 
     void open_and_init(std::vector<azihsm_char> &path, uint32_t index)
     {
