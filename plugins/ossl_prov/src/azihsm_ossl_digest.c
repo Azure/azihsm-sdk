@@ -228,6 +228,8 @@ static int azihsm_ossl_digest(
 {
     /* One-shot digest operations are not supported by this provider implementation. */
     ERR_raise(ERR_LIB_PROV, PROV_R_NOT_SUPPORTED);
+
+    return OSSL_FAILURE;
 }
 
 /* Digest Parameter Functions */

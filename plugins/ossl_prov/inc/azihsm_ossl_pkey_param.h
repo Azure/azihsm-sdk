@@ -15,6 +15,7 @@ extern "C"
 #define AZIHSM_OSSL_PKEY_PARAM_KEY_USAGE "azihsm.key_usage"
 #define AZIHSM_OSSL_PKEY_PARAM_MASKED_KEY "azihsm.masked_key"
 #define AZIHSM_OSSL_PKEY_PARAM_SESSION "azihsm.session"
+#define AZIHSM_OSSL_PKEY_PARAM_INPUT_KEY "azihsm.input_key"
 
 /* Key usage types - single usage for the entire key pair */
 typedef enum
@@ -54,6 +55,14 @@ int azihsm_ossl_session_from_str(const char *value);
  * @returns 0 on success (valid path), -1 on failure (invalid path)
  * */
 int azihsm_ossl_masked_key_filepath_validate(const char *filepath);
+
+/*
+ * validate an input key file path parameter
+ * @filepath   string containing the file path of the key to import
+ *
+ * @returns 0 on success (valid path), -1 on failure (invalid path)
+ * */
+int azihsm_ossl_input_key_filepath_validate(const char *filepath);
 
 /*
  * Get private key property ID for a given key usage type

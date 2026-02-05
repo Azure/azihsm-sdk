@@ -69,6 +69,27 @@ static inline azihsm_algo_id azihsm_ossl_evp_md_to_ecdsa_algo_id(const EVP_MD *m
     }
 }
 
+/*
+ * Normalize a private key DER blob to PKCS#8 format.
+ *
+ * The HSM expects PKCS#8 (PrivateKeyInfo) DER encoding. Users may provide
+ * keys in traditional format (e.g. SEC1 for EC, PKCS#1 for RSA) or PKCS#8.
+ * This function auto-detects the format and re-encodes as PKCS#8 DER if needed.
+ *
+ * @in_buf     Input DER bytes (traditional or PKCS#8)
+ * @in_len     Length of input
+ * @out_buf    Output PKCS#8 DER buffer (caller must OPENSSL_free)
+ * @out_len    Output length
+ *
+ * @returns OSSL_SUCCESS (1) on success, OSSL_FAILURE (0) on failure
+ */
+OSSL_STATUS azihsm_ossl_normalize_der_to_pkcs8(
+    const uint8_t *in_buf,
+    long in_len,
+    uint8_t **out_buf,
+    int *out_len
+);
+
 #ifdef __cplusplus
 }
 #endif
