@@ -48,16 +48,16 @@ pub(crate) fn aes_xts_generate_key(
     let (handle1, dev_key_props1) = aes_xts_generate_half_key(session, props.clone())?;
 
     // create key guard for first key
-    let mut key_id1 = ddi::HsmKeyIdGuard::new(session, handle1);
+    let key_id1 = ddi::HsmKeyIdGuard::new(session, handle1);
 
     // Generate second key
     let (handle2, dev_key_props2) = aes_xts_generate_half_key(session, props.clone())?;
 
     // create key guard for second key
-    let mut key_id2 = ddi::HsmKeyIdGuard::new(session, handle2);
+    let key_id2 = ddi::HsmKeyIdGuard::new(session, handle2);
 
     // make sure handles are different
-    if handle1 == handle2 {
+    if key_id1.key_id() == key_id2.key_id() {
         Err(HsmError::InternalError)?;
     }
 
@@ -69,11 +69,7 @@ pub(crate) fn aes_xts_generate_key(
         Err(HsmError::InvalidKeyProps)?;
     }
 
-    // disarm the key guard to avoid deletion before returning
-    key_id1.disarm();
-    key_id2.disarm();
-
-    Ok((handle1, handle2, xts_props))
+    Ok((key_id1.release(), key_id2.release(), xts_props))
 }
 
 /// Unwraps an AES-XTS key from a key-pair wrapped blob at the DDI layer.
@@ -114,14 +110,14 @@ pub(crate) fn aes_xts_unwrap_key(
         ddi::rsa_aes_unwrap_key(unwrapping_key, key1_wrapped_blob, hash_algo, key1_props)?;
 
     //guard to delete key1 if error occurs before disarming
-    let mut key_id1 = ddi::HsmKeyIdGuard::new(&unwrap_key_session, handle1);
+    let key_id1 = ddi::HsmKeyIdGuard::new(&unwrap_key_session, handle1);
 
     //unwrap second key
     let (handle2, dev_key_props2) =
         ddi::rsa_aes_unwrap_key(unwrapping_key, key2_wrapped_blob, hash_algo, key2_props)?;
 
     //guard to delete key2 if error occurs before disarming
-    let mut key_id2 = ddi::HsmKeyIdGuard::new(&unwrap_key_session, handle2);
+    let key_id2 = ddi::HsmKeyIdGuard::new(&unwrap_key_session, handle2);
 
     // Build combined AES-XTS key properties.
     let dev_props = build_xts_props(&dev_key_props1, &dev_key_props2)?;
@@ -131,11 +127,7 @@ pub(crate) fn aes_xts_unwrap_key(
         Err(HsmError::InvalidKeyProps)?;
     }
 
-    // disarm the key guards to avoid deletion before returning
-    key_id1.disarm();
-    key_id2.disarm();
-
-    Ok((handle1, handle2, dev_props))
+    Ok((key_id1.release(), key_id2.release(), dev_props))
 }
 
 /// Unmasks an AES-XTS key from a key-pair masked blob at the DDI layer.
@@ -153,21 +145,17 @@ pub(crate) fn aes_xts_unmask_key(
     let (handle1, key1_props) = ddi::unmask_key(session, key1_masked_blob)?;
 
     //guard to delete key1 if error occurs before disarming
-    let mut key_id1 = ddi::HsmKeyIdGuard::new(session, handle1);
+    let key_id1 = ddi::HsmKeyIdGuard::new(session, handle1);
 
     let (handle2, key2_props) = ddi::unmask_key(session, key2_masked_blob)?;
 
     //guard to delete key2 if error occurs before disarming
-    let mut key_id2 = ddi::HsmKeyIdGuard::new(session, handle2);
+    let key_id2 = ddi::HsmKeyIdGuard::new(session, handle2);
 
     // Build combined AES-XTS key properties.
     let xts_props = build_xts_props(&key1_props, &key2_props)?;
 
-    // disarm the key guards to avoid deletion before returning
-    key_id1.disarm();
-    key_id2.disarm();
-
-    Ok((handle1, handle2, xts_props))
+    Ok((key_id1.release(), key_id2.release(), xts_props))
 }
 
 /// Builds a combined `HsmKeyProps` for an AES-XTS key from the device-returned per-half props.
@@ -283,14 +271,11 @@ fn aes_xts_generate_half_key(
             .map_hsm_err(HsmError::DdiCmdFailure)
     })?;
 
-    let mut key_id = ddi::HsmKeyIdGuard::new(session, resp.data.key_id);
+    let key_id = ddi::HsmKeyIdGuard::new(session, resp.data.key_id);
     let masked_key = resp.data.masked_key.as_slice();
     let key_props = HsmMaskedKey::to_key_props(masked_key)?;
 
-    //make sure to disarm the key guard to avoid deletion before returning
-    key_id.disarm();
-
-    Ok((key_id.key_id(), key_props))
+    Ok((key_id.release(), key_props))
 }
 
 /// Validates that both halves of an AES-XTS key have matching properties.
