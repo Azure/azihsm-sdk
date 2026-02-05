@@ -5,6 +5,7 @@ use azihsm_api::*;
 use super::*;
 use crate::algo::aes::*;
 use crate::algo::ecc::*;
+use crate::algo::hmac::*;
 use crate::algo::kdf::*;
 use crate::algo::rsa::*;
 use crate::algo::secret::*;
@@ -365,6 +366,9 @@ pub unsafe extern "C" fn azihsm_key_unmask(
             AzihsmKeyKind::Aes => aes_unmask_key(&session, masked_key_buf)?,
             AzihsmKeyKind::AesXts => aes_xts_unmask_key(&session, masked_key_buf)?,
             AzihsmKeyKind::SharedSecret => secret_unmask_key(&session, masked_key_buf)?,
+            AzihsmKeyKind::HmacSha256 | AzihsmKeyKind::HmacSha384 | AzihsmKeyKind::HmacSha512 => {
+                hmac_unmask_key(&session, masked_key_buf)?
+            }
             _ => Err(AzihsmStatus::UnsupportedKeyKind)?,
         };
 
