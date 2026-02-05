@@ -1,4 +1,6 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 #define _DEFAULT_SOURCE
 #include <openssl/core_dispatch.h>
 #include <openssl/err.h>

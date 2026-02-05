@@ -1,4 +1,5 @@
-# Copyright (C) Microsoft Corporation. All rights reserved.
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
 
 cmake_minimum_required(VERSION 3.14)
 project(azihsm_api_cpp_tests VERSION 0.1.0)
