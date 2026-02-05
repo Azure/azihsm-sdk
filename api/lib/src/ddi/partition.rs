@@ -99,8 +99,8 @@ fn init_bk3(dev: &HsmDev, rev: HsmApiRev) -> HsmResult<Vec<u8>> {
     }
 
     // Sealed BK3 doesn't exist, initialize a new one
-    let bk3 = [1u8; 48];
-    // Rng::rand_bytes(&mut bk3).map_hsm_err(HsmError::RngError)?;
+    let mut bk3 = [1u8; 48];
+    crypto::Rng::rand_bytes(&mut bk3).map_hsm_err(HsmError::RngError)?;
     let req = DdiInitBk3CmdReq {
         hdr: build_ddi_req_hdr(DdiOp::InitBk3, Some(rev), None),
         data: DdiInitBk3Req {
