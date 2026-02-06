@@ -115,7 +115,7 @@ pub(crate) fn sha_digest_finish(
     let output_data = validate_output_buffer(output, required_size)?;
 
     // Perform the final hash operation
-    let digest_len = ctx.finish(Some(output_data))?;
+    let digest_len = ctx_ref.finish(Some(output_data))?;
 
     // Update output buffer length with actual digest length
     output.len = digest_len as u32;
