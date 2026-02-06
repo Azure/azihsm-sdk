@@ -42,7 +42,7 @@ pub unsafe extern "C" fn azihsm_key_gen(
         // Generate key based on algorithm ID
         let handle = match algo.id {
             // AES family algorithms
-            AzihsmAlgoId::AesKeyGen | AzihsmAlgoId::AesXtsKeyGen => {
+            AzihsmAlgoId::AesKeyGen | AzihsmAlgoId::AesGcmKeyGen | AzihsmAlgoId::AesXtsKeyGen => {
                 aes_generate_key(&session, algo, key_props)?
             }
             // Unknown or unsupported algorithms

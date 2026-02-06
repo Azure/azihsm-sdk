@@ -462,7 +462,7 @@ TEST_F(azihsm_aes_keygen, generate_aes_gcm_256_key)
     part_list_.for_each_session([](azihsm_handle session) {
         // Step 1: Generate AES-GCM-256 key
         azihsm_algo keygen_algo{};
-        keygen_algo.id = AZIHSM_ALGO_ID_AES_KEY_GEN;
+        keygen_algo.id = AZIHSM_ALGO_ID_AES_GCM_KEY_GEN;
         keygen_algo.params = nullptr;
         keygen_algo.len = 0;
 
@@ -546,7 +546,7 @@ TEST_F(azihsm_aes_keygen, unmask_aes_gcm_256_key)
     part_list_.for_each_session([](azihsm_handle session) {
         // Step 1: Generate AES-GCM-256 key
         azihsm_algo keygen_algo{};
-        keygen_algo.id = AZIHSM_ALGO_ID_AES_KEY_GEN;
+        keygen_algo.id = AZIHSM_ALGO_ID_AES_GCM_KEY_GEN;
         keygen_algo.params = nullptr;
         keygen_algo.len = 0;
 
@@ -953,7 +953,7 @@ TEST_F(azihsm_aes_keygen, unmask_aes_gcm_wrong_kind_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {
         azihsm_algo keygen_algo{};
-        keygen_algo.id = AZIHSM_ALGO_ID_AES_KEY_GEN;
+        keygen_algo.id = AZIHSM_ALGO_ID_AES_GCM_KEY_GEN;
         keygen_algo.params = nullptr;
         keygen_algo.len = 0;
 

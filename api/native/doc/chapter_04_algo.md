@@ -869,6 +869,36 @@ struct azihsm_algo algo = {
     .len = sizeof(struct azihsm_algo_aes_xts_params),
 };
 ```
+## AES GCM Key Generation
+
+The AES-GCM key generation is an algorithm for generating AES keys used with the GCM (Galois/Counter Mode) authenticated encryption mode as defined by [NIST SP 800-38D](https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38d.pdf).
+
+|                            |                                                              |
+| -------------------------- | ------------------------------------------------------------ |
+| **Algorithm ID**           | `AZIHSM_ALGO_ID_AES_GCM_KEY_GEN`                             |
+| **Params**                 | None                                                         |
+| **Required Properties**    | ***Public Key Properties***                                  |
+|                            | \small - `AZIHSM_KEY_PROP_ID_BIT_LEN`                        |
+|                            | ***Private Key  Properties***                                |
+|                            | \small - none                                                |
+| **Contributed Properties** | ***Public Key Properties***                                  |
+|                            | \small - `AZIHSM_KEY_PROP_ID_CLASS`                          |
+|                            | \small - `AZIHSM_KEY_PROP_ID_TYPE`                           |
+|                            | ***Private Key Properties***                                 |
+|                            | \small - `AZIHSM_KEY_PROP_ID_CLASS`                          |
+|                            | \small - `AZIHSM_KEY_PROP_ID_TYPE`                           |
+| **Supported Operations**   | [azihsm_key_gen](#azihsm_key_gen)                            |
+| **PKCS#11 Mechanism**      | CKM_AES_GCM_KEY_GEN                                   &nbsp; |
+
+**Example**
+
+```cpp
+struct azihsm_algo algo = {
+    .id = AZIHSM_ALGO_ID_AES_GCM_KEY_GEN,
+    .params = NULL,
+    .len = 0,
+};
+```
 
 ## AES GCM Encrypt & Decrypt
 
