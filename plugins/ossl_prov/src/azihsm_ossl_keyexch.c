@@ -317,6 +317,26 @@ static int azihsm_ossl_keyexch_set_peer(void *kectx, void *provkey)
     return OSSL_SUCCESS;
 }
 
+/*
+ * azihsm_ossl_keyexch_derive
+ *
+ * Perform a key exchange using the Azure IoT HSM and produce a shared secret.
+ *
+ * Parameters:
+ *   kectx     - Pointer to the AZIHSM_KEYEXCH_CTX containing our private key,
+ *               the peer public key, and provider context.
+ *   secret    - Optional buffer where the derived secret will be written. May
+ *               be NULL when the caller only wants to learn the required size.
+ *   secretlen - In/out: on entry, may contain the size of the 'secret' buffer;
+ *               on successful return, set to the number of bytes in the
+ *               derived secret.
+ *   outlen    - Unused by this implementation (required by the OpenSSL
+ *               provider interface); present only for API compatibility.
+ *
+ * Returns OSSL_SUCCESS (1) on success or OSSL_FAILURE (0) on error.  On
+ * failure, an appropriate error is raised on the OpenSSL error stack and any
+ * temporary resources are freed.
+ */
 static int azihsm_ossl_keyexch_derive(
     void *kectx,
     unsigned char *secret,
@@ -324,6 +344,7 @@ static int azihsm_ossl_keyexch_derive(
     ossl_unused size_t outlen
 )
 {
+    /* Retrieve the key exchange context and initialize temporary state. */
     AZIHSM_KEYEXCH_CTX *ctx = (AZIHSM_KEYEXCH_CTX *)kectx;
     unsigned char *der_spki = NULL;
     int der_spki_len = 0;
