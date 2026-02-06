@@ -646,8 +646,12 @@ impl HsmKeyUnmaskOp for HsmAesGcmKeyUnmaskAlgo {
         masked_key: &[u8],
     ) -> Result<Self::Key, Self::Error> {
         let (handle, props) = ddi::unmask_key(session, masked_key)?;
+
+        // Create key guard first to ensure handle is released if validation fails
+        let key_id = ddi::HsmKeyIdGuard::new(session, handle);
+
         HsmAesGcmKey::validate_props(&props)?;
-        let key = HsmAesGcmKey::new(session.clone(), props, handle);
+        let key = HsmAesGcmKey::new(session.clone(), props, key_id.release());
         Ok(key)
     }
 }

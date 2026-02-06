@@ -403,7 +403,7 @@ pub(crate) fn aes_gcm_generate_key(
             .map_hsm_err(HsmError::DdiCmdFailure)
     })?;
 
-    let mut key_id = ddi::HsmKeyIdGuard::new(session, resp.data.key_id);
+    let key_id = ddi::HsmKeyIdGuard::new(session, resp.data.key_id);
     let masked_key = resp.data.masked_key.as_slice();
     let key_props = HsmMaskedKey::to_key_props(masked_key)?;
     // Validate that the device returned properties match the requested properties.
@@ -411,9 +411,7 @@ pub(crate) fn aes_gcm_generate_key(
         return Err(HsmError::InvalidKeyProps);
     }
 
-    key_id.disarm();
-
-    Ok((key_id.key_id(), key_props))
+    Ok((key_id.release(), key_props))
 }
 
 /// Encrypts data using AES-GCM mode at the DDI layer.
