@@ -316,8 +316,27 @@ static const char *strip_file_prefix(const char *path)
 }
 
 /*
+ * Validate that all required config fields are non-NULL.
+ * Returns 1 if valid, 0 if any required field is NULL.
+ */
+static int azihsm_config_is_valid(const AZIHSM_CONFIG *config)
+{
+    if (config == NULL)
+    {
+        return 0;
+    }
+    return config->credentials_id_path != NULL && config->credentials_pin_path != NULL &&
+           config->bmk_path != NULL && config->muk_path != NULL && config->mobk_path != NULL;
+}
+
+/*
  * Parse configuration parameters from OpenSSL config file.
- * Returns a populated AZIHSM_CONFIG structure.
+ * Returns a populated AZIHSM_CONFIG structure with all path fields set.
+ *
+ * If OPENSSL_strdup fails for any allocation, the corresponding field will be NULL.
+ * Caller MUST check azihsm_config_is_valid() after this call to detect allocation
+ * failures before using the config. On validation failure, caller should call
+ * azihsm_config_free() to clean up any partially allocated fields.
  */
 static AZIHSM_CONFIG parse_provider_config(
     const OSSL_CORE_HANDLE *handle,
@@ -348,31 +367,29 @@ static AZIHSM_CONFIG parse_provider_config(
         OSSL_PARAM_construct_end()
     };
 
-    /* Fetch parameters from OpenSSL core (skip if no getter available) */
-    if (get_params != NULL && get_params(handle, core_params) != 0)
+    /* Fetch parameters from OpenSSL core (returns 1 on success, 0 on failure) */
+    if (get_params != NULL && get_params(handle, core_params) == 1)
     {
-        /* Copy values with file: prefix handling */
+        /* Copy values with file: prefix handling for all paths */
         if (credentials_id != NULL)
         {
-            const char *path = strip_file_prefix(credentials_id);
-            config.credentials_id_path = OPENSSL_strdup(path);
+            config.credentials_id_path = OPENSSL_strdup(strip_file_prefix(credentials_id));
         }
         if (credentials_pin != NULL)
         {
-            const char *path = strip_file_prefix(credentials_pin);
-            config.credentials_pin_path = OPENSSL_strdup(path);
+            config.credentials_pin_path = OPENSSL_strdup(strip_file_prefix(credentials_pin));
         }
         if (bmk_path != NULL)
         {
-            config.bmk_path = OPENSSL_strdup(bmk_path);
+            config.bmk_path = OPENSSL_strdup(strip_file_prefix(bmk_path));
         }
         if (muk_path != NULL)
         {
-            config.muk_path = OPENSSL_strdup(muk_path);
+            config.muk_path = OPENSSL_strdup(strip_file_prefix(muk_path));
         }
         if (mobk_path != NULL)
         {
-            config.mobk_path = OPENSSL_strdup(mobk_path);
+            config.mobk_path = OPENSSL_strdup(strip_file_prefix(mobk_path));
         }
     }
 
@@ -440,6 +457,16 @@ OSSL_STATUS OSSL_provider_init(
 
     /* Parse configuration from openssl.cnf */
     config = parse_provider_config(handle, core_get_params);
+
+    /* Validate configuration (check for allocation failures) */
+    if (!azihsm_config_is_valid(&config))
+    {
+        ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
+        azihsm_config_free(&config);
+        OSSL_LIB_CTX_free(ctx->libctx);
+        OPENSSL_free(ctx);
+        return OSSL_FAILURE;
+    }
 
     /* Open device and session with configuration */
     status = azihsm_open_device_and_session(&config, &ctx->device, &ctx->session);

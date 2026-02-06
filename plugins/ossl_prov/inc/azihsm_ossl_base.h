@@ -15,7 +15,7 @@ extern "C"
 #endif
 
 // Value provided by CMake, defined in top level CMakeLists.txt
-#define AZIHSM_OSSL_VERSION "1.0.0"
+#define AZIHSM_OSSL_VERSION "0.0.1"
 #define AZIHSM_OSSL_NAME "azihsm"
 
 #ifndef _Return_type_success_

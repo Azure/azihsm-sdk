@@ -200,13 +200,15 @@ static void free_buffer(struct azihsm_buffer *buffer)
 
 /*
  * Loads credentials from a file.
- * The file must contain exactly AZIHSM_CREDENTIALS_SIZE (16) bytes.
- * Returns AZIHSM_STATUS_SUCCESS on success.
+ * The file must contain exactly AZIHSM_CREDENTIALS_SIZE (16) bytes of raw binary data.
+ * This is the binary representation of the credential (ID or PIN), not hex-encoded.
+ * Returns AZIHSM_STATUS_SUCCESS on success, AZIHSM_STATUS_INTERNAL_ERROR on failure.
  */
 static azihsm_status load_credentials_from_file(const char *path, uint8_t *output)
 {
     FILE *file = NULL;
     size_t bytes_read = 0;
+    int extra_byte;
 
     if (path == NULL || output == NULL)
     {
@@ -220,9 +222,19 @@ static azihsm_status load_credentials_from_file(const char *path, uint8_t *outpu
     }
 
     bytes_read = fread(output, 1, AZIHSM_CREDENTIALS_SIZE, file);
-    fclose(file);
 
     if (bytes_read != AZIHSM_CREDENTIALS_SIZE)
+    {
+        fclose(file);
+        OPENSSL_cleanse(output, AZIHSM_CREDENTIALS_SIZE);
+        return AZIHSM_STATUS_INTERNAL_ERROR;
+    }
+
+    /* Verify file contains exactly the expected size (no extra data) */
+    extra_byte = fgetc(file);
+    fclose(file);
+
+    if (extra_byte != EOF)
     {
         OPENSSL_cleanse(output, AZIHSM_CREDENTIALS_SIZE);
         return AZIHSM_STATUS_INTERNAL_ERROR;
@@ -233,6 +245,8 @@ static azihsm_status load_credentials_from_file(const char *path, uint8_t *outpu
 
 /*
  * Frees the configuration structure contents.
+ * All pointer members are set to NULL after freeing to prevent double-free.
+ * Safe to call multiple times on the same config.
  */
 void azihsm_config_free(AZIHSM_CONFIG *config)
 {
@@ -333,6 +347,11 @@ azihsm_status azihsm_open_device_and_session(
 
     struct azihsm_api_rev api_rev = { .major = 1, .minor = 0 };
     struct azihsm_credentials creds = { { 0 }, { 0 } };
+
+    if (config == NULL || device == NULL || session == NULL)
+    {
+        return AZIHSM_STATUS_INVALID_ARGUMENT;
+    }
 
     /* Load credentials from files */
     status = load_credentials_from_file(config->credentials_id_path, creds.id);
