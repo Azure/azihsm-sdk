@@ -146,32 +146,32 @@ pub fn write_history() -> io::Result<()> {
     Ok(())
 }
 
-fn get_tests() -> Tests {
-    let mut tests = Tests {
-        windows_total: 0,
-        windows_skipped: 0,
-        linux_total: 0,
-        linux_skipped: 0,
-    };
+// fn get_tests() -> Tests {
+//     let mut tests = Tests {
+//         windows_total: 0,
+//         windows_skipped: 0,
+//         linux_total: 0,
+//         linux_skipped: 0,
+//     };
 
-    if let Ok(windows_total) = env::var("WINDOWS_TOTAL_TESTS") {
-        tests.windows_total = windows_total.parse().unwrap_or(0);
-    }
+//     if let Ok(windows_total) = env::var("WINDOWS_TOTAL_TESTS") {
+//         tests.windows_total = windows_total.parse().unwrap_or(0);
+//     }
 
-    if let Ok(windows_skipped) = env::var("WINDOWS_SKIPPED_TESTS") {
-        tests.windows_skipped = windows_skipped.parse().unwrap_or(0);
-    }
+//     if let Ok(windows_skipped) = env::var("WINDOWS_SKIPPED_TESTS") {
+//         tests.windows_skipped = windows_skipped.parse().unwrap_or(0);
+//     }
 
-    if let Ok(linux_total) = env::var("LINUX_TOTAL_TESTS") {
-        tests.linux_total = linux_total.parse().unwrap_or(0);
-    }
+//     if let Ok(linux_total) = env::var("LINUX_TOTAL_TESTS") {
+//         tests.linux_total = linux_total.parse().unwrap_or(0);
+//     }
 
-    if let Ok(linux_skipped) = env::var("LINUX_SKIPPED_TESTS") {
-        tests.linux_skipped = linux_skipped.parse().unwrap_or(0);
-    }
+//     if let Ok(linux_skipped) = env::var("LINUX_SKIPPED_TESTS") {
+//         tests.linux_skipped = linux_skipped.parse().unwrap_or(0);
+//     }
 
-    tests
-}
+//     tests
+// }
 
 fn box_cache(val: impl Cache + 'static) -> Box<dyn Cache> {
     Box::new(val)
