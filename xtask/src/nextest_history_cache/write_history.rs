@@ -87,8 +87,15 @@ pub fn write_history() -> io::Result<()> {
 
     let mut records = vec![];
 
+    // First record should always be pulled from current workflow's data to ensure it's up to date
+    records.push(TestRecord {
+        commit: git_commits[0].clone(),
+        tests: get_tests(),
+    });
+
+    // Check cache for second record onward
     let mut cached_commit = None;
-    for commit in git_commits.iter() {
+    for commit in git_commits.iter().skip(1) {
         match cache.get(&format_cache_key(&commit.id)) {
             Ok(Some(cached_records)) => {
                 if let Ok(cached_records) =
@@ -108,18 +115,9 @@ pub fn write_history() -> io::Result<()> {
             Ok(None) => {} // not found
             Err(e) => println!("Error reading from cache: {e}"),
         }
-        println!(
-            "Building firmware at commit {}: {}",
-            commit.id, commit.title
-        );
-        // worktree.checkout(&commit.id)?;
-        // worktree.submodule_update()?;
-
-        // records.push(TestRecord {
-        //     commit: commit.clone(),
-        //     tests: get_tests(),
-        // });
     }
+
+    // Write all records back to cache, starting with most recent and stopping when we hit the cached commit (if any)
     for (i, record) in records.iter().enumerate() {
         if Some(&record.commit.id) == cached_commit.as_ref() {
             break;
@@ -146,32 +144,32 @@ pub fn write_history() -> io::Result<()> {
     Ok(())
 }
 
-// fn get_tests() -> Tests {
-//     let mut tests = Tests {
-//         windows_total: 0,
-//         windows_skipped: 0,
-//         linux_total: 0,
-//         linux_skipped: 0,
-//     };
+fn get_tests() -> Tests {
+    let mut tests = Tests {
+        windows_total: 0,
+        windows_skipped: 0,
+        linux_total: 0,
+        linux_skipped: 0,
+    };
 
-//     if let Ok(windows_total) = env::var("WINDOWS_TOTAL_TESTS") {
-//         tests.windows_total = windows_total.parse().unwrap_or(0);
-//     }
+    if let Ok(windows_total) = env::var("WINDOWS_TOTAL_TESTS") {
+        tests.windows_total = windows_total.parse().unwrap_or(0);
+    }
 
-//     if let Ok(windows_skipped) = env::var("WINDOWS_SKIPPED_TESTS") {
-//         tests.windows_skipped = windows_skipped.parse().unwrap_or(0);
-//     }
+    if let Ok(windows_skipped) = env::var("WINDOWS_SKIPPED_TESTS") {
+        tests.windows_skipped = windows_skipped.parse().unwrap_or(0);
+    }
 
-//     if let Ok(linux_total) = env::var("LINUX_TOTAL_TESTS") {
-//         tests.linux_total = linux_total.parse().unwrap_or(0);
-//     }
+    if let Ok(linux_total) = env::var("LINUX_TOTAL_TESTS") {
+        tests.linux_total = linux_total.parse().unwrap_or(0);
+    }
 
-//     if let Ok(linux_skipped) = env::var("LINUX_SKIPPED_TESTS") {
-//         tests.linux_skipped = linux_skipped.parse().unwrap_or(0);
-//     }
+    if let Ok(linux_skipped) = env::var("LINUX_SKIPPED_TESTS") {
+        tests.linux_skipped = linux_skipped.parse().unwrap_or(0);
+    }
 
-//     tests
-// }
+    tests
+}
 
 fn box_cache(val: impl Cache + 'static) -> Box<dyn Cache> {
     Box::new(val)
