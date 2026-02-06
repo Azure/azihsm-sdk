@@ -56,6 +56,7 @@ typedef struct
     azihsm_handle device;
     azihsm_handle session;
     AZIHSM_CONFIG config;
+    AZIHSM_KEY_PAIR_OBJ unwrapping_key; /* Cached MUK handles */
 } AZIHSM_OSSL_PROV_CTX;
 
 static const OSSL_PARAM azihsm_ossl_param_types[] = {
