@@ -108,28 +108,6 @@ impl<'a> WorkTree<'a> {
         )?)?)
     }
 
-    pub fn checkout(&self, commit_id: &str) -> io::Result<()> {
-        run_cmd_stdout(
-            Command::new("git")
-                .current_dir(self.path)
-                .arg("checkout")
-                .arg("--no-recurse-submodule")
-                .arg("--quiet")
-                .arg(commit_id),
-            None,
-        )?;
-        Ok(())
-    }
-    pub fn submodule_update(&self) -> io::Result<()> {
-        run_cmd_stdout(
-            Command::new("git")
-                .current_dir(self.path)
-                .arg("submodule")
-                .arg("update"),
-            None,
-        )?;
-        Ok(())
-    }
     pub fn head_commit_id(&self) -> io::Result<String> {
         Ok(to_utf8(run_cmd_stdout(
             Command::new("git")
