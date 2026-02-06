@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 //! Adapter implementing crypto_env::CryptEnv for the SIM, built on the shared crypto crate.
 

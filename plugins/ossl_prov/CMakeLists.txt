@@ -1,9 +1,11 @@
-# Copyright (C) Microsoft Corporation. All rights reserved.
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 cmake_minimum_required(VERSION 3.13.0)
 
 project(azihsm_ossl_provider
     VERSION 0.0.1
-    DESCRIPTION "Azure Integrated HSM provider for OpenSSL")
+    DESCRIPTION "AziHSM OpenSSL Provider")
 
 # Generate compile_commands.json for LSP
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -31,7 +33,7 @@ corrosion_import_crate(
     )
 
 corrosion_experimental_cbindgen(
-    TARGET azihsm_api_native 
+    TARGET azihsm_api_native
     HEADER_NAME "azihsm.h"
     )
 
@@ -101,6 +103,7 @@ configure_file(
 set(AZIHSM_OSSL_SOURCES
     ./src/azihsm_ossl_hsm.c
     ./src/azihsm_ossl_base.c
+    ./src/azihsm_ossl_store.c
     ./src/azihsm_ossl_digest.c
     ./src/azihsm_ossl_cipher.c
     ./src/azihsm_ossl_mac.c
@@ -108,7 +111,8 @@ set(AZIHSM_OSSL_SOURCES
     ./src/azihsm_ossl_keymgmt_rsa.c
     ./src/azihsm_ossl_keymgmt_ec.c
     ./src/azihsm_ossl_keyexch.c
-    ./src/azihsm_ossl_signature.c
+    ./src/azihsm_ossl_signature_ec.c
+    ./src/azihsm_ossl_signature_rsa.c
     ./src/azihsm_ossl_asym_cipher.c
     ./src/azihsm_ossl_pkey_param.c
     ./src/azihsm_ossl_encoder_rsa.c

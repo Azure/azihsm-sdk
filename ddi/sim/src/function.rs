@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 //! Module for Function. This is the root level data structure of the HSM.
 //! It maintains state relevant at the virtual function level or operations which don't need a session.
@@ -219,11 +220,6 @@ impl Function {
     #[instrument(skip(self))]
     fn generate_attestation_key(&self) -> Result<(), ManticoreError> {
         self.inner.write().generate_attestation_key()
-    }
-
-    /// Reset the function to clean state, preserving sealed BK3
-    pub(crate) fn reset_function(&self) -> Result<(), ManticoreError> {
-        self.inner.write().reset_function_state()
     }
 
     /// Init the BK3
@@ -537,6 +533,7 @@ impl FunctionInner {
             key_tag: None,
             key_label: MborByteArray::from_slice(b"BK3")
                 .map_err(|_| ManticoreError::InternalError)?,
+            key_length: BK3_SIZE_BYTES as u16,
         };
 
         encode_masked_key(&bk3, &BK_BOOT, &metadata)
@@ -614,6 +611,7 @@ impl FunctionInner {
                     b"PARTITION_BK",
                     &mut metadata_len,
                     &mut metadata,
+                    BK_AES_CBC_256_HMAC384_SIZE_BYTES as u16,
                 )
                 .map_err(|err| {
                     tracing::error!("encode_masked_key_metadata error {:?}", err);
@@ -1218,6 +1216,20 @@ impl FunctionStateInner {
 
         let app_id = entry.app_id();
 
+        // Serialize the key from the entry
+        // Note the format is currently different from the FW implementation
+        let plaintext_key = entry.key().serialize()?;
+
+        if plaintext_key.len() > KEY_BLOB_MAX_SIZE {
+            tracing::error!(
+                error = ?ERR,
+                key_size = plaintext_key.len(),
+                max_allowed = KEY_BLOB_MAX_SIZE,
+                "Sealed key size exceeds maximum allowed size"
+            );
+            Err(ERR)?
+        }
+
         let metadata = DdiMaskedKeyMetadata {
             svn: Some(1),
             key_type: azihsm_ddi_types::DdiKeyType::try_from(entry.kind()).map_err(|_| ERR)?,
@@ -1234,21 +1246,8 @@ impl FunctionStateInner {
             key_tag: entry.key_tag(),
             key_label: MborByteArray::<DDI_MAX_KEY_LABEL_LENGTH>::from_slice(&[])
                 .map_err(|_| ERR)?,
+            key_length: plaintext_key.len() as u16,
         };
-
-        // Serialize the key from the entry
-        // Note the format is currently different from the FW implementation
-        let plaintext_key = entry.key().serialize()?;
-
-        if plaintext_key.len() > KEY_BLOB_MAX_SIZE {
-            tracing::error!(
-                error = ?ERR,
-                key_size = plaintext_key.len(),
-                max_allowed = KEY_BLOB_MAX_SIZE,
-                "Sealed key size exceeds maximum allowed size"
-            );
-            Err(ERR)?
-        }
 
         encode_masked_key(&plaintext_key, &masking_key_bytes, &metadata)
     }
@@ -1672,48 +1671,6 @@ mod tests {
             let result = function.close_user_session(session_id);
             assert!(result.is_err(), "result {:?}", result); // already closed by previous test
         }
-    }
-
-    #[test]
-    fn test_reset_function() {
-        let function = create_function(2);
-        let api_rev = function.get_api_rev_range().max;
-
-        let result = function.get_function_state().get_vault(DEFAULT_VAULT_ID);
-        assert!(result.is_ok());
-        let vault = result.unwrap();
-
-        helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
-        let session_result =
-            helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
-        let session_id = session_result.session_id;
-        let (_rsa_private_key, rsa_public_key) = generate_rsa(2048).unwrap();
-        let key1 = vault
-            .add_key(
-                Uuid::from_bytes(TEST_CRED_ID),
-                Kind::Rsa2kPublic,
-                Key::RsaPublic(rsa_public_key.clone()),
-                EntryFlags::default(),
-                0,
-            )
-            .unwrap();
-
-        assert_eq!(function.tables_max(), 2);
-        let old_session = vault.get_session_entry(session_id).unwrap();
-        assert_eq!(old_session.kind(), Kind::Session);
-        assert!(vault.get_key_entry(key1).is_ok());
-
-        let result = function.reset_function();
-        assert!(result.is_ok());
-        let result = function.get_function_state().get_vault(DEFAULT_VAULT_ID);
-        assert!(result.is_ok());
-        let vault = result.unwrap();
-
-        assert_eq!(function.tables_max(), 2);
-
-        let fetch_old_session = vault.get_session_entry(session_id);
-        assert!(fetch_old_session.is_err() || fetch_old_session.unwrap().kind() != Kind::Session);
-        assert!(vault.get_key_entry(key1).is_err());
     }
 
     #[test]
@@ -2144,6 +2101,7 @@ mod tests {
             key_label: MborByteArray::from_slice(b"TEST")
                 .map_err(|_| ManticoreError::InternalError)
                 .unwrap(),
+            key_length: BK_AES_CBC_256_HMAC384_SIZE_BYTES as u16,
         };
 
         let buffer = encode_masked_key(&test_data, &masking_key, &metadata).unwrap();
@@ -2254,6 +2212,7 @@ mod tests {
                 key_label: MborByteArray::from_slice(format!("LEN{}", length).as_bytes())
                     .map_err(|_| ManticoreError::InternalError)
                     .unwrap(),
+                key_length: BK_AES_CBC_256_HMAC384_SIZE_BYTES as u16,
             };
 
             match encode_masked_key(&test_data, &masking_key, &metadata) {

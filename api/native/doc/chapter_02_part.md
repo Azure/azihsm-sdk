@@ -18,7 +18,7 @@ azihsm_status azihsm_part_get_list(
 
 **Returns**
 
- `AZIHSM_STATUS_OK` on success, error code otherwise
+ `AZIHSM_STATUS_SUCCESS` on success, error code otherwise
 
 ## azihsm_part_free_list
 
@@ -38,7 +38,7 @@ azihsm_status azihsm_part_free_list(
 
 **Returns**
 
- `AZIHSM_STATUS_OK` on success, error code otherwise
+ `AZIHSM_STATUS_SUCCESS` on success, error code otherwise
 
 ## azihsm_part_get_count
 
@@ -103,7 +103,7 @@ azihsm_status azihsm_part_open(
 
 **Returns**
 
-`AZIHSM_STATUS_OK` on success, error code otherwise
+`AZIHSM_STATUS_SUCCESS` on success, error code otherwise
 
 ## azihsm_part_init
 
@@ -132,7 +132,7 @@ azihsm_status azihsm_part_init(
 
 **Returns**
 
-`AZIHSM_STATUS_OK` on success, error code otherwise
+`AZIHSM_STATUS_SUCCESS` on success, error code otherwise
 
 ## azihsm_part_close
 
@@ -153,7 +153,7 @@ azihsm_status azihsm_part_close(
 
 **Returns**
 
-`AZIHSM_STATUS_OK` on success, error code otherwise
+`AZIHSM_STATUS_SUCCESS` on success, error code otherwise
 
 ## azihsm_part_get_prop
 
@@ -189,7 +189,7 @@ azihsm_status azihsm_part_get_prop(
 
 **Returns**
 
-`AZIHSM_STATUS_OK` on success, error code otherwise
+`AZIHSM_STATUS_SUCCESS` on success, error code otherwise
 
 ## azihsm_part_reset
 
@@ -208,4 +208,4 @@ azihsm_status azihsm_part_reset(
 
 **Returns**
 
-`AZIHSM_STATUS_OK` on success, error code otherwise
+`AZIHSM_STATUS_SUCCESS` on success, error code otherwise

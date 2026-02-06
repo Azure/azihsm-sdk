@@ -1,4 +1,6 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 use crate::hash::tests::ShaTestVector;
 
 // Auto-generated file. Do not edit manually.

@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 //! ECC key structures and generation.
 //!
@@ -110,14 +111,19 @@ impl HsmEccPublicKey {
     /// - `kind` must be [`HsmKeyKind::Ecc`]
     /// - `class` must be [`HsmKeyClass::Public`]
     /// - an ECC curve must be present (`ecc_curve`)
-    /// - only supported usage flags may be set (typically `VERIFY`)
+    /// - only supported usage flags may be set (`VERIFY` or `DERIVE`)
     ///
     /// # Errors
     /// Returns [`HsmError::InvalidKeyProps`] if any required property is missing/invalid,
     /// or if unsupported usage flags are present.
     fn validate_props(props: &HsmKeyProps) -> HsmResult<()> {
         // Supported usage flags for ECC public keys in this layer.
-        let supported_flag = HsmKeyFlags::VERIFY;
+        let supported_flag = HsmKeyFlags::VERIFY | HsmKeyFlags::DERIVE;
+
+        //check if public key is verifiable or derivable
+        if props.can_verify() == props.can_derive() {
+            Err(HsmError::InvalidKeyProps)?;
+        }
 
         // Kind/class: ensure we're validating an ECC *public* key.
         if props.kind() != HsmKeyKind::Ecc {

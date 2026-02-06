@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 #![warn(missing_docs)]
 
@@ -57,7 +58,7 @@ impl From<DdiOp> for SessionControlKind {
 
             DdiOp::OpenSession => SessionControlKind::Open,
 
-            DdiOp::CloseSession | DdiOp::ResetFunction => SessionControlKind::Close,
+            DdiOp::CloseSession => SessionControlKind::Close,
 
             _ => SessionControlKind::InSession,
         }

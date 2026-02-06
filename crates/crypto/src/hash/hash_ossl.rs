@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 //! OpenSSL-based cryptographic hash function implementations for Linux systems.
 //!
@@ -147,6 +148,7 @@ impl OsslHashAlgo {
     ///
     /// A reference to the `MdRef` configured for this hash instance.
     pub(crate) fn md(&self) -> &MdRef {
+        #[allow(clippy::unwrap_used)]
         Md::from_nid(self.message_digest().type_()).unwrap()
     }
 

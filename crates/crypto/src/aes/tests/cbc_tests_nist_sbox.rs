@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 use super::cbc_tests_helper::CbcTestVectorFailure;
 use super::cbc_tests_helper::assert_cbc_vector_success;

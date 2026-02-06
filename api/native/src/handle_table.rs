@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 #![allow(dead_code)]
 use std::collections::HashMap;
 
@@ -168,6 +169,13 @@ impl HandleTableInner {
 /// Frees a context handle and releases associated resources.
 ///
 /// The handle is invalidated and must not be used after this call.
+///
+/// # Safety
+///
+/// - The `handle` must be a valid handle previously returned by one of the
+///   context creation functions.
+/// - The handle must not have been previously freed.
+/// - After this call, the handle becomes invalid and must not be used.
 ///
 /// # Returns
 ///

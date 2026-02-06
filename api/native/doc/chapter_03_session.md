@@ -10,6 +10,7 @@ azihsm_status azihsm_sess_open(
     azihsm_handle dev_handle,
     const struct azihsm_api_rev *api_rev,
     const struct azihsm_credentials *creds,
+    const struct azihsm_buffer *seed,
     azihsm_handle *sess_handle
     );
 ```
@@ -21,11 +22,12 @@ azihsm_status azihsm_sess_open(
  | [in] dev_handle   | [azihsm_handle](#azihsm_handle)                   | device handle                                    |
  | [in] api_rev      | [struct azihsm_api_rev *](#azihsm_api_rev)        | api revision to open the session with            |
  | [in] creds        | [struct azihsm_credentials*](#azihsm_credentials) | application credential                           |
+ | [in] seed         | [struct azihsm_buffer*](#azihsm_buffer)           | optional seed buffer (can be NULL)               |
  | [out] sess_handle | [azihsm_handle *](#azihsm_handle)                 | new session handle                               |
 
 **Returns**
 
-`AZIHSM_STATUS_OK` on success, error code otherwise
+`AZIHSM_STATUS_SUCCESS` on success, error code otherwise
 
 ## azihsm_sess_close
 
@@ -45,7 +47,7 @@ azihsm_status azihsm_sess_close(
 
 **Returns**
 
-`AZIHSM_STATUS_OK` on success, error code otherwise
+`AZIHSM_STATUS_SUCCESS` on success, error code otherwise
 
 ## azihsm_sess_set_pin
 
@@ -68,7 +70,7 @@ azihsm_status azihsm_sess_set_pin(
 
 **Returns**
 
-`AZIHSM_STATUS_OK` on success, error code otherwise
+`AZIHSM_STATUS_SUCCESS` on success, error code otherwise
 
 ## azihsm_session_get_prop
 
@@ -96,6 +98,6 @@ azihsm_status azihsm_session_get_prop(
 
 **Returns**
 
-`AZIHSM_STATUS_OK` on success, error code otherwise
+`AZIHSM_STATUS_SUCCESS` on success, error code otherwise
 
 \pagebreak

@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 //! Module for handling the incoming request, processing them and sending the response back.
 
@@ -136,6 +137,14 @@ impl Dispatcher {
             tracing::debug!(response = ?session_info_response, "flushing VaultAppSession");
             Ok(session_info_response)
         } else {
+            let resp = self.function.close_user_session(session_id);
+
+            if resp.is_ok() {
+                session_info_response.session_id = Some(session_id);
+                tracing::debug!(response = ?session_info_response, "flushing VaultSession");
+                return Ok(session_info_response);
+            }
+
             tracing::error!(error = ?ManticoreError::InvalidArgument, session_id, "Cannot find any session related to session id");
             Err(ManticoreError::InvalidArgument)
         }
@@ -882,13 +891,6 @@ impl Dispatcher {
                 DdiOp::GetCertificate => {
                     dispatch_handler!(
                         self.dispatch_get_certificate(&mut decoder, &hdr, out_data),
-                        resp_header
-                    )
-                }
-
-                DdiOp::ResetFunction => {
-                    dispatch_handler!(
-                        self.dispatch_reset_function(&mut decoder, &hdr, out_data),
                         resp_header
                     )
                 }
@@ -2393,37 +2395,6 @@ impl Dispatcher {
             certificate: MborByteArray::from_slice(&certificate)
                 .map_err(|_| ManticoreError::InternalError)?,
         };
-
-        self.send_response(resp_header, resp, None, out_data)
-    }
-
-    fn dispatch_reset_function(
-        &self,
-        decoder: &mut DdiDecoder<'_>,
-        hdr: &DdiReqHdr,
-        out_data: &mut [u8],
-    ) -> Result<SessionInfoResponse, ManticoreError> {
-        let resp_header = DdiRespHdr {
-            rev: hdr.rev,
-            op: hdr.op,
-            sess_id: hdr.sess_id,
-            status: DdiStatus::Success,
-            fips_approved: false,
-        };
-
-        decoder
-            .decode_data::<DdiResetFunctionReq>()
-            .map_err(|_| ManticoreError::CborDecodeError)?;
-
-        let session_id = hdr.sess_id.ok_or(ManticoreError::SessionExpected)?;
-
-        self.function.get_user_session(session_id, false)?;
-        let span = tracing::debug_span!("vault_manager_session", session_id);
-        let _guard = span.enter();
-
-        self.function.reset_function()?;
-
-        let resp = DdiResetFunctionResp {};
 
         self.send_response(resp_header, resp, None, out_data)
     }

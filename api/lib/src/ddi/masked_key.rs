@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 use zerocopy::*;
 
@@ -309,7 +310,7 @@ impl TryFrom<DdiMaskedKeyMetadata> for HsmMaskedKeyMetadata {
             DdiKeyType::Aes128 => (HsmKeyKind::Aes, 128, None),
             DdiKeyType::Aes192 => (HsmKeyKind::Aes, 192, None),
             DdiKeyType::Aes256 => (HsmKeyKind::Aes, 256, None),
-            DdiKeyType::AesXtsBulk256 => (HsmKeyKind::AesXts, 512, None),
+            DdiKeyType::AesXtsBulk256 => (HsmKeyKind::AesXts, 256, None),
             DdiKeyType::Secret256 => (HsmKeyKind::SharedSecret, 256, None),
             DdiKeyType::Secret384 => (HsmKeyKind::SharedSecret, 384, None),
             DdiKeyType::Secret521 => (HsmKeyKind::SharedSecret, 521, None),

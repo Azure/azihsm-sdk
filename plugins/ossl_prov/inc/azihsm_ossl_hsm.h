@@ -1,4 +1,6 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 #pragma once
 
 #ifdef __cplusplus
@@ -8,8 +10,14 @@ extern "C"
 
 #include <azihsm.h>
 
+#include "azihsm_ossl_base.h"
+
 void azihsm_close_device_and_session(azihsm_handle device, azihsm_handle session);
-azihsm_status azihsm_open_device_and_session(azihsm_handle *device, azihsm_handle *session);
+azihsm_status azihsm_open_device_and_session(
+    const AZIHSM_CONFIG *config,
+    azihsm_handle *device,
+    azihsm_handle *session
+);
 
 #ifdef __cplusplus
 }

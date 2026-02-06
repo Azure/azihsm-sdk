@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 //! Errors reported by Manticore operations.
 
@@ -326,6 +327,9 @@ pub enum ManticoreError {
 
     /// Sealed BK3 already set
     SealedBk3AlreadySet,
+
+    /// Partition ID Key Generation PCT failed
+    PartitionIdKeyGenerationPctFailed,
 }
 
 impl From<ManticoreError> for DdiStatus {
@@ -433,6 +437,9 @@ impl From<ManticoreError> for DdiStatus {
             ManticoreError::ReportSignatureMismatch => DdiStatus::InvalidArg,
             ManticoreError::Bk3AlreadyInitialized => DdiStatus::Bk3AlreadyInitialized,
             ManticoreError::SealedBk3AlreadySet => DdiStatus::SealedBk3AlreadySet,
+            ManticoreError::PartitionIdKeyGenerationPctFailed => {
+                DdiStatus::PartitionIdKeyGenerationPctFailed
+            }
         }
     }
 }

@@ -1,4 +1,6 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 #pragma once
 
 #ifdef __cplusplus
@@ -18,6 +20,24 @@ extern "C"
  * between multiple subsystems like keymgmt, encoder, ...
  * */
 
+/* EC curve key sizes in bits */
+#define AZIHSM_EC_P256_KEY_BITS 256
+#define AZIHSM_EC_P384_KEY_BITS 384
+#define AZIHSM_EC_P521_KEY_BITS 521
+
+/* EC curve coordinate sizes in bytes (ceil(bits/8)) */
+#define AZIHSM_EC_P256_COORD_SIZE 32
+#define AZIHSM_EC_P384_COORD_SIZE 48
+#define AZIHSM_EC_P521_COORD_SIZE 66
+
+/*
+ * Raw ECDSA signature sizes (r || s concatenated, no DER encoding).
+ * The HSM uses raw format and expects exact buffer sizes.
+ */
+#define AZIHSM_EC_P256_SIG_SIZE 64
+#define AZIHSM_EC_P384_SIG_SIZE 96
+#define AZIHSM_EC_P521_SIG_SIZE 132
+
 typedef struct
 {
     azihsm_ecc_curve ec_curve_id;
@@ -25,6 +45,7 @@ typedef struct
     azihsm_handle session;
     bool session_flag;
     char masked_key_file[4096];
+    char input_key_file[4096];
 } AIHSM_EC_GEN_CTX;
 
 typedef struct

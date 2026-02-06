@@ -27,7 +27,7 @@ azihsm_status azihsm_crypt_encrypt(
 
 **Returns**
 
-`AZIHSM_STATUS_OK` on success, error code otherwise
+`AZIHSM_STATUS_SUCCESS` on success, error code otherwise
 
 ### azihsm_crypt_encrypt_init
 
@@ -49,7 +49,7 @@ azihsm_status azihsm_crypt_encrypt_init(
 
 **Returns**
 
-`AZIHSM_STATUS_OK` on success, error code otherwise
+`AZIHSM_STATUS_SUCCESS` on success, error code otherwise
 
 ### azihsm_crypt_encrypt_update
 
@@ -71,7 +71,7 @@ azihsm_status azihsm_crypt_encrypt_update(
 
 **Returns**
 
-`AZIHSM_STATUS_OK` on success, error code otherwise
+`AZIHSM_STATUS_SUCCESS` on success, error code otherwise
 
 ### azihsm_crypt_encrypt_final
 
@@ -91,7 +91,7 @@ azihsm_status azihsm_crypt_encrypt_final(
 
 **Returns**
 
-`AZIHSM_STATUS_OK` on success, error code otherwise
+`AZIHSM_STATUS_SUCCESS` on success, error code otherwise
 
 ## Decrypt
 
@@ -117,7 +117,7 @@ azihsm_status azihsm_crypt_decrypt(
 
 **Returns**
 
-`AZIHSM_STATUS_OK` on success, error code otherwise
+`AZIHSM_STATUS_SUCCESS` on success, error code otherwise
 
 ### azihsm_crypt_decrypt_init
 
@@ -139,7 +139,7 @@ azihsm_status azihsm_crypt_decrypt_init(
 
 **Returns**
 
-`AZIHSM_STATUS_OK` on success, error code otherwise
+`AZIHSM_STATUS_SUCCESS` on success, error code otherwise
 
 ### azihsm_crypt_decrypt_update
 
@@ -161,7 +161,7 @@ azihsm_status azihsm_crypt_decrypt_update(
 
 **Returns**
 
-`AZIHSM_STATUS_OK` on success, error code otherwise
+`AZIHSM_STATUS_SUCCESS` on success, error code otherwise
 
 ### azihsm_crypt_decrypt_final
 
@@ -181,7 +181,7 @@ azihsm_status azihsm_crypt_decrypt_final(
 
 **Returns**
 
-`AZIHSM_STATUS_OK` on success, error code otherwise
+`AZIHSM_STATUS_SUCCESS` on success, error code otherwise
 
 ## Sign
 
@@ -207,7 +207,7 @@ azihsm_status azihsm_crypt_sign(
 
 **Returns**
 
-`AZIHSM_STATUS_OK` on success, error code otherwise
+`AZIHSM_STATUS_SUCCESS` on success, error code otherwise
 
 ### azihsm_crypt_sign_init
 
@@ -229,7 +229,7 @@ azihsm_status azihsm_crypt_sign_init(
 
 **Returns**
 
-`AZIHSM_STATUS_OK` on success, error code otherwise
+`AZIHSM_STATUS_SUCCESS` on success, error code otherwise
 
 ### azihsm_crypt_sign_update
 
@@ -249,7 +249,7 @@ azihsm_status azihsm_crypt_sign_update(
 
 **Returns**
 
-`AZIHSM_STATUS_OK` on success, error code otherwise
+`AZIHSM_STATUS_SUCCESS` on success, error code otherwise
 
 ### azihsm_crypt_sign_final
 
@@ -269,7 +269,7 @@ azihsm_status azihsm_crypt_sign_final(
 
 **Returns**
 
-`AZIHSM_STATUS_OK` on success, error code otherwise
+`AZIHSM_STATUS_SUCCESS` on success, error code otherwise
 
 ## Verify
 
@@ -295,7 +295,7 @@ azihsm_status azihsm_crypt_verify(
 
 **Returns**
 
-`AZIHSM_STATUS_OK` on success, error code otherwise
+`AZIHSM_STATUS_SUCCESS` on success, error code otherwise
 
 ### azihsm_crypt_verify_init
 
@@ -317,7 +317,7 @@ azihsm_status azihsm_crypt_verify_init(
 
 **Returns**
 
-`AZIHSM_STATUS_OK` on success, error code otherwise
+`AZIHSM_STATUS_SUCCESS` on success, error code otherwise
 
 ### azihsm_crypt_verify_update
 
@@ -337,7 +337,7 @@ azihsm_status azihsm_crypt_verify_update(
 
 **Returns**
 
-`AZIHSM_STATUS_OK` on success, error code otherwise
+`AZIHSM_STATUS_SUCCESS` on success, error code otherwise
 
 ### azihsm_crypt_verify_final
 
@@ -357,7 +357,7 @@ azihsm_status azihsm_crypt_verify_final(
 
 **Returns**
 
-`AZIHSM_STATUS_OK` on success, error code otherwise
+`AZIHSM_STATUS_SUCCESS` on success, error code otherwise
 
 ## Digest
 
@@ -383,7 +383,7 @@ azihsm_status azihsm_crypt_digest(
 
 **Returns**
 
-`AZIHSM_STATUS_OK` on success, error code otherwise
+`AZIHSM_STATUS_SUCCESS` on success, error code otherwise
 
 ### azihsm_crypt_digest_init
 
@@ -405,7 +405,7 @@ azihsm_status azihsm_crypt_digest_init(
 
 **Returns**
 
-`AZIHSM_STATUS_OK` on success, error code otherwise
+`AZIHSM_STATUS_SUCCESS` on success, error code otherwise
 
 ### azihsm_crypt_digest_update
 
@@ -425,7 +425,7 @@ azihsm_status azihsm_crypt_digest_update(
 
 **Returns**
 
-`AZIHSM_STATUS_OK` on success, error code otherwise
+`AZIHSM_STATUS_SUCCESS` on success, error code otherwise
 
 ### azihsm_crypt_digest_final
 
@@ -445,4 +445,4 @@ azihsm_status azihsm_crypt_decrypt_final(
 
 **Returns**
 
-`AZIHSM_STATUS_OK` on success, error code otherwise
+`AZIHSM_STATUS_SUCCESS` on success, error code otherwise

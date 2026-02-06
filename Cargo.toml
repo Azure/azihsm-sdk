@@ -1,4 +1,5 @@
-# Copyright (C) Microsoft Corporation. All rights reserved.
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
 
 [workspace]
 resolver = "2"
@@ -135,6 +136,7 @@ rest_pat_in_fully_bound_structs = "warn"
 suboptimal_flops = "warn"
 undocumented_unsafe_blocks = "warn"
 unnecessary_box_returns = "warn"
+unwrap_used = "warn"
 
 # Possible future additions:
 #

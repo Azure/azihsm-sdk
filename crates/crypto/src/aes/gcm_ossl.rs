@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 use openssl::cipher::*;
 use openssl::cipher_ctx::*;
@@ -538,13 +539,11 @@ impl<'a> DecryptOpContext<'a> for OsslAesGcmDecryptContext {
     /// The authentication tag is verified during finalization. If verification
     /// fails, the entire decryption is considered invalid and an error is returned.
     fn finish(&mut self, output: Option<&mut [u8]>) -> Result<usize, CryptoError> {
-        if output.is_none() {
-            // GCM finalize typically produces no additional output
+        let Some(output) = output else {
             return Ok(0);
-        }
+        };
 
         // Finalize the decryption and verify the tag
-        let output = output.unwrap();
         let count = self
             .ctx
             .cipher_final(output)

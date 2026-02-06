@@ -1,4 +1,7 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+#![allow(clippy::unwrap_used)]
 
 mod testvectors;
 

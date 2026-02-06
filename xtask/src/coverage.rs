@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 #![warn(missing_docs)]
 #![forbid(unsafe_code)]
@@ -21,6 +22,9 @@ impl Xtask for Coverage {
         log::trace!("running code coverage");
 
         let sh = xshell::Shell::new()?;
+
+        // Check cargo-llvm-cov version
+        cmd!(sh, "cargo llvm-cov --version").quiet().run()?;
 
         // Run tests with coverage
         log::info!("Building all tests and running them with coverage");

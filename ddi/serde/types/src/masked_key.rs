@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 use azihsm_ddi_derive::Ddi;
 use zerocopy::Immutable;
@@ -811,6 +812,10 @@ pub struct DdiMaskedKeyMetadata {
     /// Key label
     #[ddi(id = 6)]
     pub key_label: MborByteArray<DDI_MAX_KEY_LABEL_LENGTH>,
+
+    /// Key Length (which will be stored in the vault) in bytes
+    #[ddi(id = 7)]
+    pub key_length: u16,
 }
 
 /// DDI Key Properties Structure

@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 #![cfg(test)]
 
@@ -357,59 +358,6 @@ fn test_attest_rsa_decryption_key() {
 }
 
 #[test]
-fn test_attest_aes_key_negative() {
-    ddi_dev_test(
-        common_setup,
-        common_cleanup,
-        |dev, _ddi, _path, session_id| {
-            // TODO: remove once virtual device supports cert chain ddi commands
-            let device_kind = get_device_kind(dev);
-            if device_kind != DdiDeviceKind::Physical {
-                tracing::debug!("Skipped test_attest_aes_key_negative for virtual device");
-                return;
-            }
-
-            let report_data = [2u8; REPORT_DATA_SIZE];
-            let raw_msg = [1u8; 512];
-            let msg_len = raw_msg.len() as u16;
-            let mut msg = [0u8; 1024];
-            msg[..msg_len as usize].clone_from_slice(&raw_msg);
-
-            // Generate AES key
-            let key_props =
-                helper_key_properties(DdiKeyUsage::EncryptDecrypt, DdiKeyAvailability::App);
-
-            let result = helper_aes_generate(
-                dev,
-                Some(session_id),
-                Some(DdiApiRev { major: 1, minor: 0 }),
-                DdiAesKeySize::Aes128,
-                None,
-                key_props,
-            );
-            assert!(result.is_ok(), "result {:?}", result);
-
-            let resp = result.unwrap();
-
-            let key_id = resp.data.key_id;
-
-            let result = helper_attest_key_cmd(
-                dev,
-                Some(session_id),
-                Some(DdiApiRev { major: 1, minor: 0 }),
-                report_data,
-                key_id,
-            );
-            assert!(result.is_err(), "result {:?}", result);
-            assert!(matches!(
-                result.unwrap_err(),
-                DdiError::DdiStatus(DdiStatus::InvalidKeyType)
-            ));
-        },
-    );
-}
-
-#[test]
 fn test_attest_masked_key_rsa_2k_no_crt_der_import() {
     ddi_dev_test(
         common_setup,
@@ -471,6 +419,294 @@ fn test_attest_masked_key_rsa_4k_der_import() {
         common_cleanup,
         |dev, _ddi, _path, session_id| {
             test_attest_rsa_der_import(dev, session_id, 4, false);
+        },
+    );
+}
+
+#[test]
+fn test_attest_aes_key() {
+    ddi_dev_test(
+        common_setup,
+        common_cleanup,
+        |dev, _ddi, _path, session_id| {
+            // TODO: remove once virtual device supports cert chain ddi commands
+            let device_kind = get_device_kind(dev);
+            if device_kind != DdiDeviceKind::Physical {
+                tracing::debug!("Skipped test_attest_aes_key for virtual device");
+                return;
+            }
+
+            let key_props =
+                helper_key_properties(DdiKeyUsage::EncryptDecrypt, DdiKeyAvailability::App);
+            let resp = helper_aes_generate(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                DdiAesKeySize::Aes128,
+                None,
+                key_props,
+            );
+            assert!(resp.is_ok(), "resp {:?}", resp);
+            let key_id = resp.unwrap().data.key_id;
+
+            let report_data = [2u8; REPORT_DATA_SIZE];
+            let result = helper_attest_key_cmd(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                report_data,
+                key_id,
+            );
+            assert!(result.is_ok(), "result {:?}", result);
+            let resp = result.unwrap();
+            let report = resp.data.report.data_take();
+            let report_len = resp.data.report.len();
+            assert!(report_len <= TAGGED_COSE_SIGN1_OBJECT_MAX_SIZE);
+
+            let cert_chain = helper_get_cert_chain(dev);
+            assert!(helper_verify_cert_chain(&cert_chain).is_ok());
+            let report_payload = verify_report(&report, &cert_chain);
+
+            assert_eq!(report_payload.report_data, report_data);
+
+            let keyflags: KeyFlags = report_payload.flags.into();
+            assert!(!keyflags.is_imported());
+            // App key
+            assert!(!keyflags.is_session_key());
+            assert!(keyflags.is_generated());
+            assert!(keyflags.can_encrypt());
+            assert!(keyflags.can_decrypt());
+            assert!(!keyflags.can_sign());
+            assert!(!keyflags.can_verify());
+            assert!(!keyflags.can_wrap());
+            assert!(!keyflags.can_unwrap());
+            assert!(!keyflags.can_derive());
+
+            assert_eq!(report_payload.public_key_size, 0);
+            // contents of public_key should be 0s
+            for byte in report_payload.public_key.iter() {
+                assert_eq!(*byte, 0);
+            }
+        },
+    );
+}
+
+#[test]
+fn test_attest_aes_xts_bulk_key() {
+    ddi_dev_test(
+        common_setup,
+        common_cleanup,
+        |dev, _ddi, _path, session_id| {
+            // TODO: remove once virtual device supports cert chain ddi commands
+            let device_kind = get_device_kind(dev);
+            if device_kind != DdiDeviceKind::Physical {
+                tracing::debug!("Skipped test_attest_aes_xts_bulk_key for virtual device");
+                return;
+            }
+
+            let key_props =
+                helper_key_properties(DdiKeyUsage::EncryptDecrypt, DdiKeyAvailability::Session);
+            let resp = helper_aes_generate(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                DdiAesKeySize::AesXtsBulk256,
+                None,
+                key_props,
+            );
+            assert!(resp.is_ok(), "resp {:?}", resp);
+            let key_id = resp.unwrap().data.key_id;
+
+            let report_data = [2u8; REPORT_DATA_SIZE];
+            let result = helper_attest_key_cmd(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                report_data,
+                key_id,
+            );
+            assert!(result.is_ok(), "result {:?}", result);
+            let resp = result.unwrap();
+            let report = resp.data.report.data_take();
+            let report_len = resp.data.report.len();
+            assert!(report_len <= TAGGED_COSE_SIGN1_OBJECT_MAX_SIZE);
+
+            let cert_chain = helper_get_cert_chain(dev);
+            assert!(helper_verify_cert_chain(&cert_chain).is_ok());
+            let report_payload = verify_report(&report, &cert_chain);
+
+            assert_eq!(report_payload.report_data, report_data);
+
+            let keyflags: KeyFlags = report_payload.flags.into();
+            assert!(keyflags.is_imported());
+            assert!(keyflags.is_session_key());
+            assert!(!keyflags.is_generated());
+            assert!(keyflags.can_encrypt());
+            assert!(keyflags.can_decrypt());
+            assert!(!keyflags.can_sign());
+            assert!(!keyflags.can_verify());
+            assert!(!keyflags.can_wrap());
+            assert!(!keyflags.can_unwrap());
+            assert!(!keyflags.can_derive());
+
+            assert_eq!(report_payload.public_key_size, 0);
+            // contents of public_key should be 0s
+            for byte in report_payload.public_key.iter() {
+                assert_eq!(*byte, 0);
+            }
+        },
+    );
+}
+
+#[test]
+fn test_attest_hmac_key() {
+    ddi_dev_test(
+        common_setup,
+        common_cleanup,
+        |dev, _ddi, _path, session_id| {
+            // TODO: remove once virtual device supports cert chain ddi commands
+            let device_kind = get_device_kind(dev);
+            if device_kind != DdiDeviceKind::Physical {
+                tracing::debug!("Skipped test_attest_hmac_key for virtual device");
+                return;
+            }
+
+            let hmac_key_id = create_hmac_key(session_id, DdiKeyType::HmacSha384, dev, None);
+
+            // Hmac operation
+            let resp = helper_hmac(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                hmac_key_id,
+                MborByteArray::from_slice(&[0u8; 64]).expect("failed to create byte array"),
+            );
+
+            assert!(resp.is_ok(), "resp {:?}", resp);
+            let resp = resp.unwrap();
+
+            assert_eq!(resp.data.tag.len(), 48);
+
+            let report_data = [2u8; REPORT_DATA_SIZE];
+            let result = helper_attest_key_cmd(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                report_data,
+                hmac_key_id,
+            );
+            assert!(result.is_ok(), "result {:?}", result);
+            let resp = result.unwrap();
+            let report = resp.data.report.data_take();
+            let report_len = resp.data.report.len();
+            assert!(report_len <= TAGGED_COSE_SIGN1_OBJECT_MAX_SIZE);
+
+            let cert_chain = helper_get_cert_chain(dev);
+            assert!(helper_verify_cert_chain(&cert_chain).is_ok());
+            let report_payload = verify_report(&report, &cert_chain);
+
+            assert_eq!(report_payload.report_data, report_data);
+
+            let keyflags: KeyFlags = report_payload.flags.into();
+            assert!(!keyflags.is_imported());
+            // App key
+            assert!(keyflags.is_session_key());
+            assert!(keyflags.is_generated());
+            assert!(!keyflags.can_encrypt());
+            assert!(!keyflags.can_decrypt());
+            assert!(!keyflags.can_sign());
+            assert!(!keyflags.can_verify());
+            assert!(!keyflags.can_wrap());
+            assert!(!keyflags.can_unwrap());
+            assert!(!keyflags.can_derive());
+
+            assert_eq!(report_payload.public_key_size, 0);
+            // contents of public_key should be 0s
+            for byte in report_payload.public_key.iter() {
+                assert_eq!(*byte, 0);
+            }
+        },
+    );
+}
+
+#[test]
+fn test_attest_secret_key() {
+    ddi_dev_test(
+        common_setup,
+        common_cleanup,
+        |dev, _ddi, _path, session_id| {
+            // TODO: remove once virtual device supports cert chain ddi commands
+            let device_kind = get_device_kind(dev);
+            if device_kind != DdiDeviceKind::Physical {
+                tracing::debug!("Skipped test_attest_secret_key for virtual device");
+                return;
+            }
+
+            let (priv_key_id1, _, _, _, pub_key2, pub_key2_len) = helper_create_ecc_key_pairs(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                DdiEccCurve::P256,
+                None,
+            );
+
+            let key_props = helper_key_properties(DdiKeyUsage::Derive, DdiKeyAvailability::App);
+            let resp = helper_ecdh_key_exchange(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                priv_key_id1,
+                MborByteArray::new(pub_key2, pub_key2_len).expect("failed to create byte array"),
+                None,
+                DdiKeyType::Secret256,
+                key_props,
+            );
+
+            assert!(resp.is_ok(), "resp {:?}", resp);
+
+            let resp = resp.unwrap();
+            let resp = resp.data;
+            assert_ne!(resp.key_id, 0);
+            let secret_key_id = resp.key_id;
+
+            let report_data = [2u8; REPORT_DATA_SIZE];
+            let result = helper_attest_key_cmd(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                report_data,
+                secret_key_id,
+            );
+            assert!(result.is_ok(), "result {:?}", result);
+            let resp = result.unwrap();
+            let report = resp.data.report.data_take();
+            let report_len = resp.data.report.len();
+            assert!(report_len <= TAGGED_COSE_SIGN1_OBJECT_MAX_SIZE);
+
+            let cert_chain = helper_get_cert_chain(dev);
+            assert!(helper_verify_cert_chain(&cert_chain).is_ok());
+            let report_payload = verify_report(&report, &cert_chain);
+
+            assert_eq!(report_payload.report_data, report_data);
+
+            let keyflags: KeyFlags = report_payload.flags.into();
+            assert!(!keyflags.is_imported());
+            // App key
+            assert!(!keyflags.is_session_key());
+            assert!(keyflags.is_generated());
+            assert!(!keyflags.can_encrypt());
+            assert!(!keyflags.can_decrypt());
+            assert!(!keyflags.can_sign());
+            assert!(!keyflags.can_verify());
+            assert!(!keyflags.can_wrap());
+            assert!(!keyflags.can_unwrap());
+            assert!(keyflags.can_derive());
+
+            assert_eq!(report_payload.public_key_size, 0);
+            // contents of public_key should be 0s
+            for byte in report_payload.public_key.iter() {
+                assert_eq!(*byte, 0);
+            }
         },
     );
 }

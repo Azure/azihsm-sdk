@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 use azihsm_ddi_types::*;
 
@@ -52,10 +53,6 @@ fn test_ddiop_to_sessioncontrolkind() {
 
     assert_eq!(
         Into::<SessionControlKind>::into(DdiOp::CloseSession),
-        SessionControlKind::Close
-    );
-    assert_eq!(
-        Into::<SessionControlKind>::into(DdiOp::ResetFunction),
         SessionControlKind::Close
     );
 

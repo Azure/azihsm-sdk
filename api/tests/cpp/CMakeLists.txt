@@ -1,4 +1,5 @@
-# Copyright (C) Microsoft Corporation. All rights reserved.
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
 
 cmake_minimum_required(VERSION 3.14)
 project(azihsm_api_cpp_tests VERSION 0.1.0)
@@ -54,6 +55,7 @@ set(SOURCE
     partition_tests.cpp 
     session_tests.cpp 
     handle_mgmt_tests.cpp
+    multi_process_tests.cpp
     algo/aes/cbc_enc_dec_tests.cpp
     algo/aes/xts_enc_dec_tests.cpp
     algo/aes/keygen_tests.cpp
@@ -66,6 +68,8 @@ set(SOURCE
     algo/rsa/sign_verify_tests.cpp
     algo/sha/digest_tests.cpp
     algo/hmac/sign_verify_tests.cpp
+    algo/hmac/keygen_tests.cpp
+    algo/secret/unmask_tests.cpp
 )
 add_executable(azihsm_api_cpp_tests ${SOURCE})
 target_include_directories(azihsm_api_cpp_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

@@ -1,6 +1,8 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 mod aes;
+mod aes_xts_key;
 mod dev;
 mod ecc;
 mod hkdf;
@@ -12,6 +14,7 @@ mod rsa;
 mod session;
 
 pub(crate) use aes::*;
+pub(crate) use aes_xts_key::*;
 use azihsm_ddi::*;
 use azihsm_ddi_mbor::*;
 use azihsm_ddi_types::*;

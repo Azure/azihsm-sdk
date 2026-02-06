@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 #![warn(missing_docs)]
 #![forbid(unsafe_code)]
@@ -22,6 +23,12 @@ impl Xtask for Clippy {
 
         let sh = xshell::Shell::new()?;
         let rust_toolchain = sh.var("RUST_TOOLCHAIN").map(|s| format!("+{s}")).ok();
+
+        // Check Clippy version
+        let rust_toolchain_version = rust_toolchain.clone();
+        cmd!(sh, "cargo {rust_toolchain_version...} clippy --version")
+            .quiet()
+            .run()?;
 
         cmd!(
             sh,

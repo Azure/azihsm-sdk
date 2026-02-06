@@ -1,4 +1,6 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 #define _DEFAULT_SOURCE
 #include <openssl/core_dispatch.h>
 #include <openssl/err.h>
@@ -104,6 +106,7 @@ extern const OSSL_DISPATCH azihsm_ossl_ecdsa_signature_functions[];
 
 static const OSSL_ALGORITHM azihsm_ossl_signature[] = {
     ALG(AZIHSM_OSSL_ALG_NAME_RSA, azihsm_ossl_rsa_signature_functions),
+    ALG(AZIHSM_OSSL_ALG_NAME_EC, azihsm_ossl_ecdsa_signature_functions),
     ALG(AZIHSM_OSSL_ALG_NAME_ECDSA, azihsm_ossl_ecdsa_signature_functions),
     ALG_TABLE_END
 };
@@ -123,6 +126,9 @@ extern const OSSL_DISPATCH azihsm_ossl_rsa_der_pki_encoder_functions[];
 extern const OSSL_DISPATCH azihsm_ossl_ec_text_encoder_functions[];
 extern const OSSL_DISPATCH azihsm_ossl_ec_der_spki_encoder_functions[];
 extern const OSSL_DISPATCH azihsm_ossl_ec_der_pki_encoder_functions[];
+
+// Store
+extern const OSSL_DISPATCH azihsm_ossl_store_functions[];
 
 static const OSSL_ALGORITHM azihsm_ossl_encoders[] = {
     {
@@ -180,6 +186,12 @@ static const OSSL_ALGORITHM azihsm_ossl_encoders[] = {
         NULL,
     },
     { NULL, NULL, NULL, NULL },
+};
+
+// Store
+static const OSSL_ALGORITHM azihsm_ossl_store[] = {
+    { "azihsm", "provider=azihsm", azihsm_ossl_store_functions, NULL },
+    ALG_TABLE_END
 };
 
 static void azihsm_ossl_teardown(AZIHSM_OSSL_PROV_CTX *provctx)
@@ -259,6 +271,8 @@ static const OSSL_ALGORITHM *azihsm_ossl_query_operation(
         return azihsm_ossl_asym_cipher;
     case OSSL_OP_ENCODER:
         return azihsm_ossl_encoders;
+    case OSSL_OP_STORE:
+        return azihsm_ossl_store;
     }
 
     return NULL;
@@ -308,10 +322,17 @@ OSSL_STATUS OSSL_provider_init(
         return OSSL_FAILURE;
     }
 
-    status = azihsm_open_device_and_session(&ctx->device, &ctx->session);
+    /* Initialize config with hardcoded default paths */
+    snprintf(ctx->config.bmk_path, sizeof(ctx->config.bmk_path), "%s", AZIHSM_DEFAULT_BMK_PATH);
+    snprintf(ctx->config.muk_path, sizeof(ctx->config.muk_path), "%s", AZIHSM_DEFAULT_MUK_PATH);
+    snprintf(ctx->config.mobk_path, sizeof(ctx->config.mobk_path), "%s", AZIHSM_DEFAULT_MOBK_PATH);
+
+    status = azihsm_open_device_and_session(&ctx->config, &ctx->device, &ctx->session);
 
     if (status != AZIHSM_STATUS_SUCCESS)
     {
+        ERR_raise(ERR_LIB_PROV, ERR_R_INIT_FAIL);
+
         OSSL_LIB_CTX_free(ctx->libctx);
         OPENSSL_free(ctx);
         return OSSL_FAILURE;

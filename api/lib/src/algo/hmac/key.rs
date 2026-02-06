@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 //! HMAC key wrapper.
 //!
@@ -106,5 +107,36 @@ impl TryFrom<HsmGenericSecretKey> for HsmHmacKey {
         // Re-wrap the existing inner key state so typed wrappers share the same
         // underlying handle + drop semantics.
         Ok(HsmHmacKey::from_inner(key.inner()))
+    }
+}
+
+/// Algorithm for unmasking an HMAC key.
+#[derive(Default)]
+pub struct HsmHmacKeyUnmaskAlgo {}
+
+impl HsmKeyUnmaskOp for HsmHmacKeyUnmaskAlgo {
+    type Session = HsmSession;
+    type Key = HsmHmacKey;
+    type Error = HsmError;
+
+    /// Unmasks an HMAC key using the provided masked key data.
+    ///
+    /// # Arguments
+    ///
+    /// * `session` - The HSM session to use for the unmasking operation.
+    /// * `masked_key` - The masked HMAC key data.
+    ///
+    /// # Returns
+    ///
+    /// Returns the unmasked HMAC key on success.
+    fn unmask_key(
+        &mut self,
+        session: &HsmSession,
+        masked_key: &[u8],
+    ) -> Result<Self::Key, Self::Error> {
+        let (handle, props) = ddi::unmask_key(session, masked_key)?;
+        HsmHmacKey::validate_props(&props)?;
+        let key = HsmHmacKey::new(session.clone(), props, handle);
+        Ok(key)
     }
 }

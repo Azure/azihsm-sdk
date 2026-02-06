@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 //! X.509 certificate encoding and decoding utilities.
 //!
@@ -56,6 +57,7 @@ pub fn pem_to_der(pem: &[u8]) -> Result<Vec<u8>, CryptoError> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

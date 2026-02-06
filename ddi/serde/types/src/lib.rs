@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 #![cfg_attr(not(feature = "fuzzing"), no_std)]
 
@@ -33,7 +34,6 @@ mod reopen_session;
 mod rsa;
 mod sessctrl;
 mod set_sealed_bk3;
-mod test_ops;
 
 pub use aes::*;
 pub use attest_key::*;
@@ -70,7 +70,6 @@ pub use reopen_session::*;
 pub use rsa::*;
 pub use sessctrl::*;
 pub use set_sealed_bk3::*;
-pub use test_ops::*;
 
 /// Maximum key label length
 pub const DDI_MAX_KEY_LABEL_LENGTH: usize = 128;
@@ -178,10 +177,6 @@ pub enum DdiOp {
 
     /// Provision Part
     ProvisionPart = 1114,
-
-    // Test only opcodes below
-    /// Reset function to default state for testing
-    ResetFunction = 2001,
 }
 
 /// DDI status code enumeration
@@ -815,6 +810,9 @@ pub enum DdiStatus {
 
     /// Sealed BK3 already set
     SealedBk3AlreadySet = 141557975,
+
+    /// Partition ID Key Generation PCT failed
+    PartitionIdKeyGenerationPctFailed = 141557976,
 }
 
 /// DDI Key Class
@@ -939,6 +937,15 @@ pub enum DdiKeyType {
 
     /// KBKDF-SHA384 Secret key
     KbKdfSecretSha384 = 29,
+
+    /// HMAC 256 Key with variable length
+    VarHmac256 = 30,
+
+    /// HMAC 384 Key with variable length
+    VarHmac384 = 31,
+
+    /// HMAC 512 Key with variable length
+    VarHmac512 = 32,
 }
 
 /// DDI Session Kind Enumeration

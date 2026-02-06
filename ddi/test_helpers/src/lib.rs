@@ -1,4 +1,7 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+#![allow(clippy::unwrap_used)]
 
 mod aes;
 mod api_rev;
@@ -9,7 +12,6 @@ mod device;
 mod ecc;
 mod ecdh;
 mod error;
-mod func;
 mod get_cert;
 mod get_sealed_bk3;
 mod hkdf;
@@ -36,7 +38,6 @@ pub use device::*;
 pub use ecc::*;
 pub use ecdh::*;
 pub use error::*;
-pub use func::*;
 pub use get_cert::*;
 pub use get_sealed_bk3::*;
 pub use hkdf::*;

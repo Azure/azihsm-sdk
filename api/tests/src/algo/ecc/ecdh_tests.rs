@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 use azihsm_api::*;
 use azihsm_api_tests_macro::*;
@@ -30,6 +31,7 @@ pub(crate) fn generate_ecc_keypair_with_derive(
         .class(HsmKeyClass::Public)
         .key_kind(HsmKeyKind::Ecc)
         .ecc_curve(curve)
+        .can_derive(can_derive)
         .can_verify(!can_derive)
         .build()?;
 

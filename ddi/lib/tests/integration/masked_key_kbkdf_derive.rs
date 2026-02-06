@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 #![cfg(test)]
 
@@ -345,6 +346,7 @@ fn test_secret_kbkdf_helper(
         key_type,
         key_tag,
         key_properties,
+        Default::default(),
     );
 
     assert!(resp.is_ok(), "resp {:?}", resp);
@@ -374,8 +376,9 @@ fn test_secret_kbkdf_helper(
         label,
         context,
         key_type,
-        None,
+        Default::default(),
         key_properties,
+        None,
     );
 
     assert!(resp.is_ok(), "resp {:?}", resp);
@@ -461,6 +464,7 @@ fn test_secret_kbkdf_aes_gcm_helper(
         key_type,
         key_tag,
         key_properties,
+        Default::default(),
     );
 
     assert!(resp.is_ok(), "resp {:?}", resp);
@@ -493,6 +497,7 @@ fn test_secret_kbkdf_aes_gcm_helper(
         key_type,
         None,
         key_properties,
+        Default::default(),
     );
 
     assert!(resp.is_ok(), "resp {:?}", resp);

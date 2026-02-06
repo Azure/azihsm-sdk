@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 //! Manage a [Function](crate::function::Function) and its vaults.
 
@@ -3522,7 +3523,9 @@ mod tests {
 
         // Simulate live migration: reset function to clean state
         // This preserves sealed BK3 but clears masking keys and provisioned state
-        function.reset_function().expect("Reset should succeed");
+        function
+            .simulate_migration()
+            .expect("Migration should succeed");
 
         // After reset, we should not be provisioned anymore
         assert!(

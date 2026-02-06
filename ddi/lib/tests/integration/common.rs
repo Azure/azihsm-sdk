@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 #![cfg(test)]
 #[path = "common/helpers/mod.rs"]
@@ -146,37 +147,8 @@ pub fn common_cleanup(
         );
     }
 
-    let mut cleanup_dev = ddi.open_dev(path).unwrap();
-    set_device_kind(&mut cleanup_dev);
-
-    let _ =
-        helper_common_establish_credential_no_unwrap(&mut cleanup_dev, TEST_CRED_ID, TEST_CRED_PIN);
-
-    let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
-        &cleanup_dev,
-        TEST_CRED_ID,
-        TEST_CRED_PIN,
-        TEST_SESSION_SEED,
-    );
-
-    let resp = helper_open_session(
-        &cleanup_dev,
-        None,
-        Some(DdiApiRev { major: 1, minor: 0 }),
-        encrypted_credential,
-        pub_key,
-    );
-    assert!(resp.is_ok(), "resp {:?}", resp);
-
-    let resp = resp.unwrap();
-
-    let sess_id = resp.data.sess_id;
-
-    let resp = helper_reset_function(
-        &cleanup_dev,
-        Some(sess_id),
-        Some(DdiApiRev { major: 1, minor: 0 }),
-    );
+    let cleanup_dev = ddi.open_dev(path).unwrap();
+    let resp = cleanup_dev.simulate_nssr_after_lm();
 
     assert!(resp.is_ok(), "resp {:?}", resp);
 }
@@ -1063,11 +1035,12 @@ pub fn create_ecdh_secrets(
 
 // Uses Ecc generate, ECDH, KDF to create an HMAC key
 #[allow(dead_code)]
-pub fn create_hmac_key(
+pub fn create_hmac_key_ex(
     sess_id: u16,
     target_key_type: DdiKeyType,
     dev: &mut <DdiTest as Ddi>::Dev,
-) -> u16 {
+    target_key_len: Option<u8>,
+) -> Result<DdiHkdfDeriveCmdResp, DdiError> {
     // Generate ECC Key Pair 1
 
     let key_props = helper_key_properties(DdiKeyUsage::Derive, DdiKeyAvailability::App);
@@ -1125,7 +1098,7 @@ pub fn create_hmac_key(
     // Use HKDF to derive HMAC key
     let key_props = helper_key_properties(DdiKeyUsage::SignVerify, DdiKeyAvailability::Session);
 
-    let resp = helper_hkdf_derive(
+    helper_hkdf_derive(
         dev,
         Some(sess_id),
         Some(DdiApiRev { major: 1, minor: 0 }),
@@ -1136,7 +1109,19 @@ pub fn create_hmac_key(
         target_key_type,
         None,
         key_props,
-    );
+        target_key_len,
+    )
+}
+
+// Uses Ecc generate, ECDH, KDF to create an HMAC key
+#[allow(dead_code)]
+pub fn create_hmac_key(
+    sess_id: u16,
+    target_key_type: DdiKeyType,
+    dev: &mut <DdiTest as Ddi>::Dev,
+    target_key_len: Option<u8>,
+) -> u16 {
+    let resp = create_hmac_key_ex(sess_id, target_key_type, dev, target_key_len);
 
     assert!(resp.is_ok(), "resp {:?}", resp);
     resp.unwrap().data.key_id

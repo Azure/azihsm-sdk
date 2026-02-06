@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 //! HKDF key derivation operations at the DDI layer.
 //!
@@ -59,6 +60,7 @@ pub(crate) fn hkdf_derive(
             key_type: (&derived_key_props).try_into()?,
             key_tag: None,
             key_properties: (&derived_key_props).try_into()?,
+            key_length: u8::try_from(derived_key_props.bits() / 8).ok(),
         },
         ext: None,
     };

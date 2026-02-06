@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 #ifndef TEST_CREDENTIALS_HPP
 #define TEST_CREDENTIALS_HPP

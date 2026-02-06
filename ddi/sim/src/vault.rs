@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 //! Module for Vault.
 
@@ -932,6 +933,7 @@ impl VaultInner {
             b"SMK",
             &mut metadata_len,
             &mut metadata,
+            bk_session.len() as u16,
         )
         .map_err(|err| {
             tracing::error!("encode_masked_key_metadata error {:?}", err);

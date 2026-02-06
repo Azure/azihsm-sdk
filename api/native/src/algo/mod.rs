@@ -1,10 +1,12 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 pub(crate) mod aes;
 pub(crate) mod ecc;
 pub(crate) mod hmac;
 pub(crate) mod kdf;
 pub(crate) mod rsa;
+pub(crate) mod secret;
 pub(crate) mod sha;
 
 use std::ffi::c_void;

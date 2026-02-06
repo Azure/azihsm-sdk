@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 //! https://csrc.nist.rip/groups/STM/cavp/block-cipher-modes.html#xtsvs
 //! Auto-generated file. Do not edit manually.

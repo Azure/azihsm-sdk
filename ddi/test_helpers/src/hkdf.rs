@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 use super::*;
 
@@ -15,6 +16,7 @@ pub fn helper_hkdf_derive(
     key_type: DdiKeyType,
     key_tag: Option<u16>,
     key_properties: DdiKeyProperties,
+    key_length: Option<u8>,
 ) -> Result<DdiHkdfDeriveCmdResp, DdiError> {
     let req = DdiHkdfDeriveCmdReq {
         hdr: DdiReqHdr {
@@ -32,6 +34,7 @@ pub fn helper_hkdf_derive(
             key_properties: key_properties
                 .try_into()
                 .map_err(|_| DdiError::InvalidParameter)?,
+            key_length,
         },
         ext: None,
     };

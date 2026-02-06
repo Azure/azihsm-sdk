@@ -1,4 +1,6 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 //! Tests for Elliptic Curve Cryptography (ECC) operations.
 mod ecc_helpers;
 mod ecc_p256;

@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 //! C++ test runner for HSM api integration tests.
 //!
@@ -12,6 +13,8 @@
 //! - Discovers available tests by parsing gtest's list output
 //! - Configures library paths for dynamic linking
 //! - Executes each test individually and reports results
+
+#![allow(clippy::unwrap_used)]
 
 use std::env;
 use std::path::PathBuf;

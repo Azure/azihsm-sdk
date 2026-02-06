@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 #![cfg(test)]
 
@@ -37,6 +38,7 @@ fn test_secret_kbkdf_no_session() {
                 key_type,
                 key_tag,
                 key_properties,
+                Default::default(),
             );
 
             assert!(resp.is_err(), "resp {:?}", resp);
@@ -76,6 +78,7 @@ fn test_secret_kbkdf_invalid_session() {
                 key_type,
                 key_tag,
                 key_properties,
+                Default::default(),
             );
 
             assert!(resp.is_err(), "resp {:?}", resp);
@@ -130,6 +133,7 @@ fn test_secret_kbkdf_invalid_input_key_type() {
                 key_type,
                 key_tag,
                 key_properties,
+                Default::default(),
             );
 
             assert!(resp.is_err(), "resp {:?}", resp);
@@ -170,6 +174,7 @@ fn test_secret_kbkdf_invalid_output_key_type() {
                 key_type,
                 key_tag,
                 key_properties,
+                Default::default(),
             );
 
             assert!(resp.is_err(), "resp {:?}", resp);
@@ -210,6 +215,7 @@ fn test_secret_kbkdf_invalid_secret521_output_key_type() {
                 key_type,
                 key_tag,
                 key_properties,
+                Default::default(),
             );
 
             assert!(resp.is_err(), "resp {:?}", resp);
@@ -249,6 +255,7 @@ fn test_secret_kbkdf_invalid_output_key_usage() {
                 key_type,
                 key_tag,
                 key_properties,
+                Default::default(),
             );
 
             assert!(resp.is_err(), "resp {:?}", resp);
@@ -298,6 +305,7 @@ fn test_secret_kbkdf_different_label_len() {
                 key_type,
                 key_tag,
                 key_properties,
+                Default::default(),
             );
 
             assert!(resp.is_ok(), "resp {:?}", resp);
@@ -326,6 +334,7 @@ fn test_secret_kbkdf_different_label_len() {
                 key_type,
                 key_tag,
                 key_properties,
+                Default::default(),
             );
 
             assert!(resp.is_ok(), "resp {:?}", resp);
@@ -409,6 +418,7 @@ fn test_secret_kbkdf_different_context_len() {
                 key_type,
                 key_tag,
                 key_properties,
+                Default::default(),
             );
 
             assert!(resp.is_ok(), "resp {:?}", resp);
@@ -437,6 +447,7 @@ fn test_secret_kbkdf_different_context_len() {
                 key_type,
                 key_tag,
                 key_properties,
+                Default::default(),
             );
 
             assert!(resp.is_ok(), "resp {:?}", resp);
@@ -539,6 +550,7 @@ fn test_secret_kbkdf_helper(
         key_type,
         key_tag,
         key_properties,
+        Default::default(),
     );
 
     assert!(resp.is_ok(), "resp {:?}", resp);
@@ -558,6 +570,7 @@ fn test_secret_kbkdf_helper(
         key_type,
         None,
         key_properties,
+        Default::default(),
     );
 
     assert!(resp.is_ok(), "resp {:?}", resp);
@@ -854,6 +867,7 @@ fn test_secret_kbkdf_aes_gcm_helper(
         key_type,
         key_tag,
         key_properties,
+        Default::default(),
     );
 
     assert!(resp.is_ok(), "resp {:?}", resp);
@@ -871,6 +885,7 @@ fn test_secret_kbkdf_aes_gcm_helper(
         key_type,
         None,
         key_properties,
+        Default::default(),
     );
 
     assert!(resp.is_ok(), "resp {:?}", resp);
@@ -965,6 +980,7 @@ fn test_secret_kbkdf_aes_xts_helper(
         key_type,
         key_tag,
         key_properties,
+        Default::default(),
     );
 
     assert!(resp.is_ok(), "resp {:?}", resp);
@@ -981,6 +997,7 @@ fn test_secret_kbkdf_aes_xts_helper(
         key_type,
         key_tag,
         key_properties,
+        Default::default(),
     );
 
     assert!(resp.is_ok(), "resp {:?}", resp);
@@ -998,6 +1015,7 @@ fn test_secret_kbkdf_aes_xts_helper(
         key_type,
         key_tag,
         key_properties,
+        Default::default(),
     );
 
     assert!(resp.is_ok(), "resp {:?}", resp);
@@ -1014,6 +1032,7 @@ fn test_secret_kbkdf_aes_xts_helper(
         key_type,
         key_tag,
         key_properties,
+        Default::default(),
     );
     assert!(resp.is_ok(), "resp {:?}", resp);
     let derived_aes_xts_tweak_key_id2 = resp.unwrap().data.bulk_key_id.unwrap();
@@ -1345,6 +1364,7 @@ fn test_secret_kbkdf_aes_hmac_helper(
         aes_key_type,
         None,
         key_properties,
+        Default::default(),
     );
 
     assert!(resp.is_ok(), "resp {:?}", resp);
@@ -1362,6 +1382,7 @@ fn test_secret_kbkdf_aes_hmac_helper(
         aes_key_type,
         None,
         key_properties,
+        Default::default(),
     );
 
     assert!(resp.is_ok(), "resp {:?}", resp);
@@ -1383,6 +1404,7 @@ fn test_secret_kbkdf_aes_hmac_helper(
         hmac_key_type,
         None,
         key_properties,
+        Default::default(),
     );
 
     assert!(resp.is_ok(), "resp {:?}", resp);
@@ -1401,6 +1423,7 @@ fn test_secret_kbkdf_aes_hmac_helper(
         hmac_key_type,
         None,
         key_properties,
+        Default::default(),
     );
 
     assert!(resp.is_ok(), "resp {:?}", resp);
@@ -1639,6 +1662,7 @@ fn test_secret_kbkdf_and_unmask() {
                 key_type,
                 key_tag,
                 key_properties,
+                Default::default(),
             );
 
             assert!(resp.is_ok(), "resp {:?}", resp);
@@ -1669,6 +1693,7 @@ fn test_secret_kbkdf_and_unmask() {
                 key_type,
                 None,
                 key_properties,
+                Default::default(),
             );
 
             assert!(resp.is_ok(), "resp {:?}", resp);
