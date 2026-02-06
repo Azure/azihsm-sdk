@@ -141,7 +141,7 @@ pub(crate) fn rsa_aes_unwrap_key_pair(
     let session = unwrapping_key.session();
 
     //guard to delete key if error occurs before disarming
-    let mut key_id = HsmKeyIdGuard::new(&session, key_handle);
+    let key_id = HsmKeyIdGuard::new(&session, key_handle);
 
     let Some(pub_key) = resp.data.pub_key else {
         return Err(HsmError::InternalError);
@@ -156,8 +156,8 @@ pub(crate) fn rsa_aes_unwrap_key_pair(
     {
         Err(HsmError::InvalidKeyProps)?;
     }
-    key_id.disarm();
-    Ok((key_handle, dev_priv_key_props, dev_pub_key_props))
+
+    Ok((key_id.release(), dev_priv_key_props, dev_pub_key_props))
 }
 
 /// Performs RSA encryption using the specified RSA public key.

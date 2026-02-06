@@ -10,22 +10,22 @@ use super::*;
 /// fails after the key has already been created in the device, the key would otherwise
 /// be leaked.
 ///
-/// `HsmKeyIdGuard` deletes the key on drop unless it is explicitly disarmed.
+/// `HsmKeyIdGuard` deletes the key on drop unless it is explicitly released.
 ///
 /// # Behavior
 ///
 /// - **Default:** on drop, calls [`delete_key`] for `key_id`.
-/// - **Disarmed:** does nothing on drop.
+/// - **Released:** does nothing on drop.
 /// - **Best effort:** any error from [`delete_key`] is ignored in `Drop`.
 ///
 /// # Typical usage
 ///
 /// Create the guard immediately after the DDI call returns a key id, then call
-/// [`HsmKeyIdGuard::disarm`] only after all fallible parsing/validation has succeeded.
+/// [`HsmKeyIdGuard::release`] only after all fallible parsing/validation has succeeded.
 pub(crate) struct HsmKeyIdGuard<'a> {
     session: &'a HsmSession,
     key_id: u16,
-    disarmed: bool,
+    released: bool,
 }
 
 impl<'a> Drop for HsmKeyIdGuard<'a> {
@@ -34,7 +34,7 @@ impl<'a> Drop for HsmKeyIdGuard<'a> {
     /// This is intentionally best-effort: `Drop` cannot return an error, and callers
     /// typically cannot recover meaningfully from a cleanup failure during unwinding.
     fn drop(&mut self) {
-        if !self.disarmed {
+        if !self.released {
             let _ = delete_key(self.session, self.key_id);
         }
     }
@@ -46,7 +46,7 @@ impl<'a> HsmKeyIdGuard<'a> {
         Self {
             session,
             key_id,
-            disarmed: false,
+            released: false,
         }
     }
 
@@ -55,12 +55,14 @@ impl<'a> HsmKeyIdGuard<'a> {
         self.key_id
     }
 
-    /// Disables deletion-on-drop.
+    /// Releases ownership of the key id without deleting the key on drop.
     ///
-    /// Call this once you have fully validated the response and you intend to return
-    /// or otherwise transfer ownership of the key id to a higher-level type.
-    pub(crate) fn disarm(&mut self) {
-        self.disarmed = true;
+    /// Call this once all fallible parsing/validation has succeeded and the
+    /// caller is transferring the key id to a higher-level wrapper that will
+    /// manage its lifecycle.
+    pub(crate) fn release(mut self) -> u16 {
+        self.released = true;
+        self.key_id
     }
 }
 
@@ -132,14 +134,14 @@ fn unmask_key_exec(session: &HsmSession, masked_key: &[u8]) -> HsmResult<DdiUnma
 pub(crate) fn unmask_key(session: &HsmSession, masked_key: &[u8]) -> HsmResult<(u16, HsmKeyProps)> {
     let resp = unmask_key_exec(session, masked_key)?;
 
+    //create key guard to delete key if error occurs before disarming
+    let key_id = HsmKeyIdGuard::new(session, resp.data.key_id);
+
     let masked_key = resp.data.masked_key.as_slice();
-    let mut key_id = HsmKeyIdGuard::new(session, resp.data.key_id);
+
     let key_props = HsmMaskedKey::to_key_props(masked_key)?;
 
-    //disarm the key guard to avoid deletion before returning
-    key_id.disarm();
-
-    Ok((key_id.key_id(), key_props))
+    Ok((key_id.release(), key_props))
 }
 
 /// Unmasks a masked key pair within the HSM.
@@ -160,7 +162,7 @@ pub(crate) fn unmask_key_pair(
 ) -> HsmResult<(u16, HsmKeyProps, HsmKeyProps)> {
     let resp = unmask_key_exec(session, masked_key)?;
 
-    let mut key_id = HsmKeyIdGuard::new(session, resp.data.key_id);
+    let key_id = HsmKeyIdGuard::new(session, resp.data.key_id);
 
     let Some(pub_key) = resp.data.pub_key else {
         return Err(HsmError::InternalError);
@@ -171,10 +173,7 @@ pub(crate) fn unmask_key_pair(
     let masked_key_data = resp.data.masked_key.as_slice();
     let (priv_key_props, pub_key_props) = HsmMaskedKey::to_key_pair_props(masked_key_data, der)?;
 
-    //disarm the key guard to avoid deletion before returning
-    key_id.disarm();
-
-    Ok((key_id.key_id(), priv_key_props, pub_key_props))
+    Ok((key_id.release(), priv_key_props, pub_key_props))
 }
 
 /// Generates a key report (attestation) for the specified key.

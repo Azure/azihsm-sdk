@@ -354,7 +354,8 @@ impl HsmKeyPairUnmaskOp for HsmRsaKeyUnmaskAlgo {
     )> {
         let (handle, priv_props, pub_props) = ddi::unmask_key_pair(session, masked_key)?;
 
-        HsmRsaPrivateKey::validate_key_pair_props(&priv_props, &pub_props)?;
+        //construct key guard first to ensure handles are released if validation fails
+        let key_id = ddi::HsmKeyIdGuard::new(session, handle);
 
         let Some(pub_key_der) = pub_props.pub_key_der() else {
             return Err(HsmError::InternalError);
@@ -364,8 +365,16 @@ impl HsmKeyPairUnmaskOp for HsmRsaKeyUnmaskAlgo {
         let crypto_key =
             crypto::RsaPublicKey::from_bytes(pub_key_der).map_hsm_err(HsmError::InternalError)?;
 
-        let pub_key = HsmRsaPublicKey::new(pub_props, crypto_key);
-        let priv_key = HsmRsaPrivateKey::new(session.clone(), priv_props, handle, pub_key.clone());
+        let pub_key = HsmRsaPublicKey::new(pub_props.clone(), crypto_key);
+        let priv_key = HsmRsaPrivateKey::new(
+            session.clone(),
+            priv_props.clone(),
+            key_id.release(),
+            pub_key.clone(),
+        );
+
+        // Validate after constructing the wrapper so a failure drops and deletes the handle.
+        HsmRsaPrivateKey::validate_key_pair_props(&priv_props, &pub_props)?;
 
         Ok((priv_key, pub_key))
     }
