@@ -511,45 +511,21 @@ impl Kind {
 /// Bits 17+ are simulator-internal flags not serialized to hardware.
 #[bitfield(u64)]
 pub(crate) struct EntryFlags {
-    /// Flag indicating if the key is internal or not. Internal keys are used by the device
-    /// internally and are not destroyable by the user.
-    pub(crate) internal: bool,
+    #[bits(1)]
+    _reserved_bit_0: u64,
 
     /// Flag indicating if the key is a session key.
     pub(crate) session: bool,
 
-    /// Flag indicating the key is private or not. If the key is private an authenticated session
-    /// must be established. All keys generated within the session are private. This flag is set
-    /// by the device for keys that can be accessed with establishing a session.
-    pub(crate) private: bool,
-
-    /// Flag indicating the key is modifiable or not.
-    pub(crate) modifiable: bool,
-
-    /// Flag indicating the key is destroyable or not. All keys created in a session are
-    /// destroyable. Device generated keys may be marked as not destroyable.
-    pub(crate) destroyable: bool,
+    #[bits(3)]
+    _reserved_bits_2_4: u64,
 
     /// Flag indicating the key is locally generated or imported. The flag is set by the device
     /// and cannot be changed via the API.
     pub(crate) local: bool,
 
-    /// Flag indicating the value of the key is extractable from the device or not. All session
-    /// keys are always extractable. Device generated keys may be marked as not extractable.
-    pub(crate) extractable: bool,
-
-    /// Flag indicating the key has ever been marked not extractable. All session keys are
-    /// marked always extractable. Device generated keys may be marked as never extractable.
-    pub(crate) never_extractable: bool,
-
-    /// Flag indicating the key can be trusted to wrap keys. This flag can only be specified for
-    /// Public Keys. Private & Shared keys will report this flag as not set.
-    pub(crate) trusted: bool,
-
-    /// Flag indicating that a key can only be wrapped with a key that is marked trusted. This
-    /// property is applicable to Private and Shared keys. All private and secret keys generate
-    /// in session are marked with this property.
-    pub(crate) wrap_with_trusted: bool,
+    #[bits(4)]
+    _reserved_bits_6_9: u64,
 
     /// Flag indicating if the key can be used for encrypt operations. This flag can be
     /// specified only for Public Keys and Secret Keys.
@@ -580,12 +556,12 @@ pub(crate) struct EntryFlags {
     pub(crate) derive: bool,
 
     #[bits(45)]
-    reserved: u64,
+    _reserved_bits_17_61: u64,
 
     /// Tells if the Entry was disabled or not (internal only)
-    disabled: bool, // bit 18
+    disabled: bool, // bit 62
     /// Tells if this Entry is a key for signing/verifying attestation report (internal only)
-    pub(crate) is_attestation_key: bool, // bit 19
+    pub(crate) is_attestation_key: bool, // bit 63
 }
 
 /// Convert EntryFlags to KeyAttestationReport's flags bitfield representation
