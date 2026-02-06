@@ -73,6 +73,9 @@ fn test_partition_init() {
     for part_info in part_mgr.iter() {
         let part = HsmPartitionManager::open_partition(&part_info.path)
             .expect("Failed to open the parition");
+        //reset before init
+        part.reset().expect("Partition reset failed");
+        //init with dummy creds
         let creds = HsmCredentials::new(&[1u8; 16], &[2u8; 16]);
         part.init(creds, None, None, None)
             .expect("Partition init failed");

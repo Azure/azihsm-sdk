@@ -41,6 +41,11 @@ where
     for part_info in part_mgr.iter() {
         let part = HsmPartitionManager::open_partition(&part_info.path)
             .expect("Failed to open the parition");
+
+        //reset before init
+        part.reset().expect("Partition reset failed");
+
+        //init with test creds
         let creds = HsmCredentials::new(&[1u8; 16], &[2u8; 16]);
         let rev = part.api_rev_range().max();
         part.init(creds, None, None, None)

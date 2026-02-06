@@ -9,6 +9,7 @@
 
 use std::sync::Arc;
 
+use azihsm_ddi::DdiDev;
 use parking_lot::RwLock;
 use tracing::*;
 
@@ -245,9 +246,7 @@ impl HsmPartition {
         mobk: Option<&[u8]>,
     ) -> HsmResult<()> {
         let (bmk, mobk) = self.with_dev(|dev| {
-            let (bmk, mobk) =
-                ddi::init_part(dev, self.api_rev_range().min(), creds, bmk, muk, mobk)?;
-            Ok((bmk, mobk))
+            ddi::init_part(dev, self.api_rev_range().min(), creds, bmk, muk, mobk)
         })?;
         self.inner().write().set_masked_keys(bmk, mobk);
         Ok(())
@@ -286,6 +285,25 @@ impl HsmPartition {
         let (id, app_id) =
             self.with_dev(|dev| ddi::open_session(dev, api_rev, credentials, seed))?;
         Ok(HsmSession::new(id, app_id, api_rev, self.clone()))
+    }
+
+    /// Resets the HSM partition state.
+    ///
+    /// including established credentials and active sessions. This is useful for
+    /// test cleanup and recovery scenarios.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the reset operation fails.
+    #[instrument(skip_all, err, fields(path = self.path().as_str()))]
+    pub fn reset(&self) -> HsmResult<()> {
+        self.with_dev(|dev| {
+            dev.simulate_nssr_after_lm()
+                .map_err(|_| HsmError::DdiCmdFailure)
+        })?;
+        // Clear cached masked keys after reset
+        self.inner().write().clear_masked_keys();
+        Ok(())
     }
 
     /// Returns the API revision range supported by this partition.
@@ -583,6 +601,12 @@ impl HsmPartitionInner {
     pub(crate) fn set_masked_keys(&mut self, bmk: Vec<u8>, mobk: Vec<u8>) {
         self.bmk = bmk;
         self.mobk = mobk;
+    }
+
+    /// Clears the cached masked keys after partition reset.
+    pub(crate) fn clear_masked_keys(&mut self) {
+        self.bmk.clear();
+        self.mobk.clear();
     }
 
     /// Returns the backup masking key (BMK).
