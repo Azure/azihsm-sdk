@@ -10,18 +10,18 @@ use super::*;
 /// fails after the key has already been created in the device, the key would otherwise
 /// be leaked.
 ///
-/// `HsmKeyIdGuard` deletes the key on drop unless it is explicitly disarmed.
+/// `HsmKeyIdGuard` deletes the key on drop unless it is explicitly released.
 ///
 /// # Behavior
 ///
 /// - **Default:** on drop, calls [`delete_key`] for `key_id`.
-/// - **Disarmed:** does nothing on drop.
+/// - **Released:** does nothing on drop.
 /// - **Best effort:** any error from [`delete_key`] is ignored in `Drop`.
 ///
 /// # Typical usage
 ///
 /// Create the guard immediately after the DDI call returns a key id, then call
-/// [`HsmKeyIdGuard::disarm`] only after all fallible parsing/validation has succeeded.
+/// [`HsmKeyIdGuard::release`] only after all fallible parsing/validation has succeeded.
 pub(crate) struct HsmKeyIdGuard<'a> {
     session: &'a HsmSession,
     key_id: u16,
