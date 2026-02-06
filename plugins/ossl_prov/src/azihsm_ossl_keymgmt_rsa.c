@@ -95,8 +95,14 @@ static void azihsm_ossl_keymgmt_free(AZIHSM_RSA_KEY *rsa_key)
         return;
     }
 
-    azihsm_key_delete(rsa_key->key.pub);
-    azihsm_key_delete(rsa_key->key.priv);
+    if (rsa_key->key.pub != 0)
+    {
+        azihsm_key_delete(rsa_key->key.pub);
+    }
+    if (rsa_key->key.priv != 0)
+    {
+        azihsm_key_delete(rsa_key->key.priv);
+    }
 
     OPENSSL_free(rsa_key);
 }
