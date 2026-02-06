@@ -156,7 +156,7 @@ pub unsafe extern "C" fn azihsm_crypt_digest_final(
 
         match ctx_type {
             HandleType::ShaCtx => {
-                sha_digest_final(ctx_handle, digest_buf)?;
+                sha_digest_finish(ctx_handle, digest_buf)?;
             }
             // Add support for other context types here as needed (HMAC, etc.)
             _ => Err(AzihsmStatus::InvalidHandle)?,

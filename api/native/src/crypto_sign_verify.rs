@@ -267,13 +267,13 @@ pub unsafe extern "C" fn azihsm_crypt_sign_final(
 
         match ctx_type {
             HandleType::EccSignCtx => {
-                ecc_sign_final(ctx_handle, sig_buf)?;
+                ecc_sign_finish(ctx_handle, sig_buf)?;
             }
             HandleType::HmacSignCtx => {
-                hmac_sign_final(ctx_handle, sig_buf)?;
+                hmac_sign_finish(ctx_handle, sig_buf)?;
             }
             HandleType::RsaSignCtx => {
-                rsa_sign_final(ctx_handle, sig_buf)?;
+                rsa_sign_finish(ctx_handle, sig_buf)?;
             }
             _ => Err(AzihsmStatus::InvalidHandle)?,
         }
@@ -402,9 +402,9 @@ pub unsafe extern "C" fn azihsm_crypt_verify_final(
         let ctx_type: HandleType = HandleType::try_from(ctx_handle)?;
 
         let is_valid = match ctx_type {
-            HandleType::EccVerifyCtx => ecc_verify_final(ctx_handle, signature)?,
-            HandleType::HmacVerifyCtx => hmac_verify_final(ctx_handle, signature)?,
-            HandleType::RsaVerifyCtx => rsa_verify_final(ctx_handle, signature)?,
+            HandleType::EccVerifyCtx => ecc_verify_finish(ctx_handle, signature)?,
+            HandleType::HmacVerifyCtx => hmac_verify_finish(ctx_handle, signature)?,
+            HandleType::RsaVerifyCtx => rsa_verify_finish(ctx_handle, signature)?,
             _ => Err(AzihsmStatus::InvalidHandle)?,
         };
 

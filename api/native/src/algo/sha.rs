@@ -103,7 +103,7 @@ pub(crate) fn sha_digest_update(ctx_handle: AzihsmHandle, data: &[u8]) -> Result
 /// # Returns
 /// * `Ok(())` - On successful hash computation
 /// * `Err(AzihsmStatus)` - On failure (e.g., buffer too small)
-pub(crate) fn sha_digest_final(
+pub(crate) fn sha_digest_finish(
     ctx_handle: AzihsmHandle,
     output: &mut AzihsmBuffer,
 ) -> Result<(), AzihsmStatus> {
@@ -114,11 +114,8 @@ pub(crate) fn sha_digest_final(
     // Validate output buffer and get mutable slice
     let output_data = validate_output_buffer(output, required_size)?;
 
-    // Take ownership of the context and finalize
-    let mut ctx: Box<HsmHashContext> = HANDLE_TABLE.free_handle(ctx_handle, HandleType::ShaCtx)?;
-
     // Perform the final hash operation
-    let digest_len = ctx.finish(Some(output_data))?;
+    let digest_len = ctx_ref.finish(Some(output_data))?;
 
     // Update output buffer length with actual digest length
     output.len = digest_len as u32;

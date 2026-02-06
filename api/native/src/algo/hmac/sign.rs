@@ -135,7 +135,7 @@ pub(crate) fn hmac_sign_update(ctx_handle: AzihsmHandle, data: &[u8]) -> Result<
 /// # Returns
 /// * `Ok(())` - On successful signature generation
 /// * `Err(AzihsmStatus)` - On failure (e.g., buffer too small)
-pub(crate) fn hmac_sign_final(
+pub(crate) fn hmac_sign_finish(
     ctx_handle: AzihsmHandle,
     output: &mut AzihsmBuffer,
 ) -> Result<(), AzihsmStatus> {
@@ -147,12 +147,8 @@ pub(crate) fn hmac_sign_final(
     // Check if output buffer is large enough
     let output_data = validate_output_buffer(output, required_size)?;
 
-    // Take ownership of the context and finalize
-    let mut ctx: Box<HsmHmacSignContext> =
-        HANDLE_TABLE.free_handle(ctx_handle, HandleType::HmacSignCtx)?;
-
     // Perform the final signing operation
-    let sig_len = ctx.finish(Some(output_data))?;
+    let sig_len = ctx_ref.finish(Some(output_data))?;
 
     // Update the output buffer length with actual signature length
     output.len = sig_len as u32;
@@ -223,13 +219,13 @@ pub(crate) fn hmac_verify_update(
 /// * `Ok(true)` - If signature is valid
 /// * `Ok(false)` - If signature is invalid
 /// * `Err(AzihsmStatus)` - On failure
-pub(crate) fn hmac_verify_final(
+pub(crate) fn hmac_verify_finish(
     ctx_handle: AzihsmHandle,
     signature: &[u8],
 ) -> Result<bool, AzihsmStatus> {
-    // Take ownership of the context and finalize
-    let mut ctx: Box<HsmHmacVerifyContext> =
-        HANDLE_TABLE.free_handle(ctx_handle, HandleType::HmacVerifyCtx)?;
+    // Get mutable reference to the context from handle table
+    let ctx: &mut HsmHmacVerifyContext =
+        HANDLE_TABLE.as_mut(ctx_handle, HandleType::HmacVerifyCtx)?;
 
     // Perform the final verification operation
     let is_valid = ctx.finish(signature)?;
