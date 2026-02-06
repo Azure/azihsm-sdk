@@ -1,5 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
-// Licensed under the Apache-2.0 license
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 use std::env::{self};
 use std::fs;
