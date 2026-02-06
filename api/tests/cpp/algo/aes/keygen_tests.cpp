@@ -1091,10 +1091,16 @@ TEST_F(azihsm_aes_keygen, unwrap_local_aes_gcm_256_key_corrupted_fails)
     });
 }
 
-// Round-trip test: unwrap AES-GCM key and use it for encrypt/decrypt.
+// Purpose: Validate the complete lifecycle of an AES-GCM-256 key by:
+// 1. Wrapping a locally generated AES-GCM key using RSA-AES key wrap
+// 2. Unwrapping it into the HSM
+// 3. Using the unwrapped key for authenticated encryption
+// 4. Decrypting the ciphertext and verifying it matches the original plaintext
+// This ensures the key material is correctly transported and functional for cryptographic operations.
 TEST_F(azihsm_aes_keygen, unwrap_local_aes_gcm_256_key_roundtrip)
 {
     part_list_.for_each_session([](azihsm_handle session) {
+        // Generate RSA wrapping key pair in the HSM for secure key transport
         azihsm_handle wrapping_priv_key = 0;
         azihsm_handle wrapping_pub_key = 0;
         generate_rsa_wrapping_keypair(session, wrapping_priv_key, wrapping_pub_key);
@@ -1104,6 +1110,7 @@ TEST_F(azihsm_aes_keygen, unwrap_local_aes_gcm_256_key_roundtrip)
             azihsm_key_delete(wrapping_priv_key);
         });
 
+        // Create a local AES-GCM-256 key (32 bytes) to be imported into the HSM
         std::vector<uint8_t> local_aes_gcm_key = {
             0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
             0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
@@ -1111,14 +1118,17 @@ TEST_F(azihsm_aes_keygen, unwrap_local_aes_gcm_256_key_roundtrip)
             0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f
         };
 
+        // Configure OAEP parameters for RSA-AES wrap operation
         azihsm_algo_rsa_pkcs_oaep_params oaep_params{};
         oaep_params.hash_algo_id = AZIHSM_ALGO_ID_SHA256;
         oaep_params.mgf1_hash_algo_id = AZIHSM_MGF1_ID_SHA256;
         oaep_params.label = nullptr;
 
+        // Wrap the local AES-GCM key using the RSA public key
         std::vector<uint8_t> wrapped_data =
             wrap_local_aes_key(wrapping_pub_key, local_aes_gcm_key, 256, oaep_params);
 
+        // Prepare unwrap algorithm and parameters
         azihsm_algo_rsa_aes_key_wrap_params unwrap_params{};
         unwrap_params.oaep_params = &oaep_params;
 
@@ -1127,6 +1137,7 @@ TEST_F(azihsm_aes_keygen, unwrap_local_aes_gcm_256_key_roundtrip)
         unwrap_algo.params = &unwrap_params;
         unwrap_algo.len = sizeof(unwrap_params);
 
+        // Define properties for the unwrapped AES-GCM key
         azihsm_key_kind aes_kind = AZIHSM_KEY_KIND_AES_GCM;
         azihsm_key_class aes_class = AZIHSM_KEY_CLASS_SECRET;
         uint32_t aes_bits = 256;
@@ -1151,6 +1162,7 @@ TEST_F(azihsm_aes_keygen, unwrap_local_aes_gcm_256_key_roundtrip)
         wrapped_key_buf.ptr = wrapped_data.data();
         wrapped_key_buf.len = static_cast<uint32_t>(wrapped_data.size());
 
+        // Unwrap the key into the HSM using the RSA private key
         azihsm_handle unwrapped_key = 0;
         azihsm_status err = azihsm_key_unwrap(
             &unwrap_algo,
@@ -1166,6 +1178,7 @@ TEST_F(azihsm_aes_keygen, unwrap_local_aes_gcm_256_key_roundtrip)
             azihsm_key_delete(unwrapped_key);
         });
 
+        // Configure AES-GCM encryption parameters (IV and tag)
         uint8_t iv[12] = { 0xA1 };
         azihsm_algo_aes_gcm_params gcm_params{};
         std::memcpy(gcm_params.iv, iv, sizeof(iv));
@@ -1177,36 +1190,45 @@ TEST_F(azihsm_aes_keygen, unwrap_local_aes_gcm_256_key_roundtrip)
         crypt_algo.params = &gcm_params;
         crypt_algo.len = sizeof(gcm_params);
 
+        // Prepare plaintext for encryption test
         std::vector<uint8_t> plaintext(64, 0x5A);
         azihsm_buffer input{ plaintext.data(), static_cast<uint32_t>(plaintext.size()) };
         azihsm_buffer output{ nullptr, 0 };
 
+        // Query required output buffer size for encryption
         err = azihsm_crypt_encrypt(&crypt_algo, unwrapped_key, &input, &output);
         ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
         ASSERT_GT(output.len, 0);
 
+        // Perform AES-GCM encryption with the unwrapped key
         std::vector<uint8_t> ciphertext(output.len);
         output.ptr = ciphertext.data();
         err = azihsm_crypt_encrypt(&crypt_algo, unwrapped_key, &input, &output);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
+        // Save the authentication tag generated during encryption
         uint8_t saved_tag[16];
         std::memcpy(saved_tag, gcm_params.tag, sizeof(saved_tag));
+        
+        // Reset GCM parameters with same IV and authentication tag for decryption
         std::memcpy(gcm_params.iv, iv, sizeof(iv));
         std::memcpy(gcm_params.tag, saved_tag, sizeof(saved_tag));
 
         azihsm_buffer cipher_buf{ ciphertext.data(), static_cast<uint32_t>(ciphertext.size()) };
         azihsm_buffer plain_buf{ nullptr, 0 };
 
+        // Query required output buffer size for decryption
         err = azihsm_crypt_decrypt(&crypt_algo, unwrapped_key, &cipher_buf, &plain_buf);
         ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
         ASSERT_GT(plain_buf.len, 0);
 
+        // Perform AES-GCM decryption and verify authentication tag
         std::vector<uint8_t> decrypted(plain_buf.len);
         plain_buf.ptr = decrypted.data();
         err = azihsm_crypt_decrypt(&crypt_algo, unwrapped_key, &cipher_buf, &plain_buf);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
+        // Verify the decrypted plaintext matches the original
         decrypted.resize(plain_buf.len);
         ASSERT_EQ(decrypted.size(), plaintext.size());
         ASSERT_EQ(std::memcmp(decrypted.data(), plaintext.data(), plaintext.size()), 0);
