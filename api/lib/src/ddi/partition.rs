@@ -50,16 +50,12 @@ pub(crate) fn init_part(
         HsmOwnerBackupKeySource::Caller => {
             // Caller provided the OBK
             let obk = obk_config.key().ok_or(HsmError::InvalidArgument)?;
-            init_bk3(dev, rev, Some(obk))?
+            init_bk3(dev, rev, obk)?
         }
         HsmOwnerBackupKeySource::Tpm => {
             // Retrieve sealed BK3 from device and unseal with TPM
             let sealed_bk3 = get_sealed_bk3(dev, rev)?;
             unseal_tpm_backup_key(&sealed_bk3)?
-        }
-        HsmOwnerBackupKeySource::Random => {
-            // Randomly generate BK3
-            init_bk3(dev, rev, None)?
         }
         _ => return Err(HsmError::InvalidArgument),
     };
@@ -86,13 +82,13 @@ pub(crate) fn init_part(
 
 /// Initializes the backup key 3 (BK3) for the partition.
 ///
-/// Generates or initializes the third-level backup key used in the key
-/// hierarchy for partition security.
+/// Sends the caller-provided BK3 to the device and returns the masked BK3.
 ///
 /// # Arguments
 ///
 /// * `dev` - The HSM device handle
 /// * `rev` - The API revision to use
+/// * `bk3` - The owner backup key (BK3) provided by the caller
 ///
 /// # Returns
 ///
@@ -101,16 +97,7 @@ pub(crate) fn init_part(
 /// # Errors
 ///
 /// Returns an error if the BK3 initialization fails.
-fn init_bk3(dev: &HsmDev, rev: HsmApiRev, bk3: Option<&[u8]>) -> HsmResult<Vec<u8>> {
-    let bk3_data = [1u8; 48];
-    let bk3 = match bk3 {
-        Some(val) => val,
-        None => {
-            // Rng::rand_bytes(&mut bk3).map_hsm_err(HsmError::RngError)?;
-            &bk3_data
-        }
-    };
-
+fn init_bk3(dev: &HsmDev, rev: HsmApiRev, bk3: &[u8]) -> HsmResult<Vec<u8>> {
     let req = DdiInitBk3CmdReq {
         hdr: build_ddi_req_hdr(DdiOp::InitBk3, Some(rev), None),
         data: DdiInitBk3Req {

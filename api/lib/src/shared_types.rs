@@ -123,7 +123,4 @@ pub enum HsmOwnerBackupKeySource {
 
     /// TPM-sealed backup key (retrieved from device and unsealed).
     Tpm = 2,
-
-    /// Randomly generated backup key.
-    Random = 3,
 }

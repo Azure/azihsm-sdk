@@ -4,6 +4,7 @@
 use azihsm_crypto::pem_to_der;
 
 use super::*;
+use crate::utils::partition::*;
 
 #[api_test]
 fn test_parittion_info_list() {
@@ -76,23 +77,12 @@ fn test_partition_init() {
         //reset before init
         part.reset().expect("Partition reset failed");
         //init with dummy creds
-        let creds = HsmCredentials::new(&[1u8; 16], &[2u8; 16]);
-        let obk_info = HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Random, None);
-        part.init(creds, None, None, obk_info)
-            .expect("Partition init failed");
-    }
-}
-
-#[api_test]
-fn test_partition_init_caller_obk() {
-    let part_mgr = HsmPartitionManager::partition_info_list();
-    assert!(!part_mgr.is_empty(), "No partitions found.");
-    for part_info in part_mgr.iter() {
-        let part = HsmPartitionManager::open_partition(&part_info.path)
-            .expect("Failed to open the parition");
-        let creds = HsmCredentials::new(&[1u8; 16], &[2u8; 16]);
-        let obk = [0x2Au8; 48];
-        let obk_info = HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Caller, Some(&obk));
+        let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
+        let obk_info = if std::env::var("use_tpm").is_ok() {
+            HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, None)
+        } else {
+            HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Caller, Some(&TEST_OBK))
+        };
         part.init(creds, None, None, obk_info)
             .expect("Partition init failed");
     }

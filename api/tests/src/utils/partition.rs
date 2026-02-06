@@ -16,14 +16,22 @@ use tracing::*;
 /// This constant defines a test application ID consisting of 16 bytes,
 /// each set to the value 1. Used as the credential identifier when
 /// initializing partitions in test scenarios.
-const APP_ID: [u8; 16] = [1u8; 16];
+pub(crate) const APP_ID: [u8; 16] = [1u8; 16];
 
 /// Application PIN used for partition authentication.
 ///
 /// This constant defines a test PIN consisting of 16 bytes, each set to
 /// the value 2. Used as the credential PIN when initializing partitions
 /// in test scenarios.
-const APP_PIN: [u8; 16] = [2u8; 16];
+pub(crate) const APP_PIN: [u8; 16] = [2u8; 16];
+
+/// Constant 48-byte owner backup key for non-TPM test environments.
+/// Matches the C++ TEST_OBK in test_creds.hpp.
+pub(crate) const TEST_OBK: [u8; 48] = [
+    0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
+    0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F, 0x20,
+    0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F, 0x30,
+];
 
 /// Executes a test function with an initialized HSM partition.
 ///
@@ -59,8 +67,11 @@ where
 
         //init with test creds
         let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
-        let rev = part.api_rev_range().max();
-        let backup_key_info = HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Random, None);
+        let backup_key_info = if std::env::var("use_tpm").is_ok() {
+            HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, None)
+        } else {
+            HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Caller, Some(&TEST_OBK))
+        };
         part.init(creds, None, None, backup_key_info)
             .expect("Partition init failed");
         test(part, creds);

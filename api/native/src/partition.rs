@@ -33,13 +33,13 @@ impl<'a> TryFrom<&'a AzihsmOwnerBackupKeyConfig> for api::HsmOwnerBackupKeyConfi
                 let slice = buffer_to_optional_slice(config.owner_backup_key)?;
                 let obk = slice.ok_or(AzihsmStatus::InvalidArgument)?;
                 if obk.is_empty() {
-                    return Err(AzihsmStatus::InvalidArgument);
+                    Err(AzihsmStatus::InvalidArgument)?;
                 }
                 Ok(api::HsmOwnerBackupKeyConfig::new(source, Some(obk)))
             }
-            api::HsmOwnerBackupKeySource::Tpm | api::HsmOwnerBackupKeySource::Random => {
+            api::HsmOwnerBackupKeySource::Tpm => {
                 if !config.owner_backup_key.is_null() {
-                    return Err(AzihsmStatus::InvalidArgument);
+                    Err(AzihsmStatus::InvalidArgument)?;
                 }
                 Ok(api::HsmOwnerBackupKeyConfig::new(source, None))
             }

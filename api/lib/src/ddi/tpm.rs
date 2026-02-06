@@ -1,18 +1,76 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+//! TPM backup key unsealing operations.
+//!
+//! This module provides functionality for unsealing backup keys (BK3) that
+//! were sealed by UEFI firmware using the TPM NULL hierarchy. It handles
+//! the complete workflow of creating a TPM primary key, loading and unsealing
+//! the sealed object, and decrypting the resulting AES-CBC encrypted data.
 
 use azihsm_crypto::*;
 use azihsm_tpm::*;
+use zerocopy::*;
 
 use crate::HsmError;
 
 const MIN_SEALED_BK3_SIZE: usize = 4;
-const AZIHSM_KEY_IV_RECORD_HEADER_SIZE: usize = 3; // record_size(2) + version(1)
 const RSA_KEY_BITS: u16 = 2048;
-const AES_KEY_BITS: u16 = 128;
+const TPM_PRIMARY_AES_KEY_BITS: u16 = 128; // AES-128-CFB for TPM primary key symmetric protection
 const AES_BLOCK_SIZE: usize = 16;
+const BK3_AES_KEY_SIZE: usize = 32; // AES-256-CBC key size for BK3 data encryption
 const AZIHSM_KEY_IV_RECORD_VERSION: u8 = 1;
-const U16_SIZE: usize = std::mem::size_of::<u16>();
-const U8_SIZE: usize = std::mem::size_of::<u8>();
+
+/// Packed AES key/IV record matching AZIHSM_KEY_IV_RECORD from UEFI firmware.
+///
+/// Defined in AziHsmDxe.h in hyperv.uefi:
+/// https://microsoft.visualstudio.com/OS/_git/hyperv.uefi?path=/MsvmPkg/AziHsmDxe/AziHsmDxe.h
+#[repr(C, packed)]
+#[derive(Debug, Clone, Copy, TryFromBytes, KnownLayout, Immutable)]
+struct AzihsmKeyIvRecord {
+    /// Record size (does not include the size of this field itself)
+    record_size: [u8; 2],
+    /// Key version
+    key_version: u8,
+    /// Length of key in bytes
+    key_size: u8,
+    /// AES-256 key
+    key: [u8; BK3_AES_KEY_SIZE],
+    /// Length of IV in bytes
+    iv_size: u8,
+    /// AES IV
+    iv: [u8; AES_BLOCK_SIZE],
+}
+
+impl AzihsmKeyIvRecord {
+    /// Parses and validates an AZIHSM_KEY_IV_RECORD from a byte slice.
+    ///
+    /// Uses `try_ref_from_prefix` to tolerate trailing bytes beyond the
+    /// fixed-size struct layout.
+    fn from_bytes_validated(data: &[u8]) -> Result<&Self, HsmError> {
+        let (record, _remaining) =
+            Self::try_ref_from_prefix(data).map_err(|_| HsmError::InvalidArgument)?;
+
+        if record.key_version != AZIHSM_KEY_IV_RECORD_VERSION {
+            return Err(HsmError::InvalidArgument);
+        }
+
+        let record_size = u16::from_le_bytes(record.record_size) as usize;
+        if record_size + size_of::<u16>() != data.len() {
+            return Err(HsmError::InvalidArgument);
+        }
+
+        if record.key_size as usize > BK3_AES_KEY_SIZE {
+            return Err(HsmError::InvalidArgument);
+        }
+
+        if record.iv_size as usize != AES_BLOCK_SIZE {
+            return Err(HsmError::InvalidArgument);
+        }
+
+        Ok(record)
+    }
+}
 
 /// Helper for unsealing TPM-sealed backup keys.
 ///
@@ -67,9 +125,9 @@ impl TpmBk3Unsealer {
         let mut offset = 0;
         let sealed_aes_len =
             u16::from_le_bytes([sealed_bk3[offset], sealed_bk3[offset + 1]]) as usize;
-        offset += U16_SIZE;
+        offset += size_of::<u16>();
 
-        if sealed_aes_len + offset + U16_SIZE > sealed_bk3.len() {
+        if sealed_aes_len + offset + size_of::<u16>() > sealed_bk3.len() {
             return Err(HsmError::InvalidArgument);
         }
         let sealed_aes_secret = &sealed_bk3[offset..offset + sealed_aes_len];
@@ -77,7 +135,7 @@ impl TpmBk3Unsealer {
 
         let encrypted_data_len =
             u16::from_le_bytes([sealed_bk3[offset], sealed_bk3[offset + 1]]) as usize;
-        offset += U16_SIZE;
+        offset += size_of::<u16>();
 
         if encrypted_data_len + offset > sealed_bk3.len() {
             return Err(HsmError::InvalidArgument);
@@ -88,46 +146,13 @@ impl TpmBk3Unsealer {
         let aes_key_struct = self.unseal_null_hierarchy(sealed_aes_secret)?;
 
         // Parse AZIHSM_KEY_IV_RECORD
-        if aes_key_struct.len() < AZIHSM_KEY_IV_RECORD_HEADER_SIZE + U8_SIZE {
-            return Err(HsmError::InvalidArgument);
-        }
+        let record = AzihsmKeyIvRecord::from_bytes_validated(&aes_key_struct)?;
 
-        let record_size = u16::from_le_bytes([aes_key_struct[0], aes_key_struct[1]]) as usize;
-        let record_version = aes_key_struct[2];
-        if record_version != AZIHSM_KEY_IV_RECORD_VERSION {
-            return Err(HsmError::InvalidArgument);
-        }
-        if record_size + U16_SIZE != aes_key_struct.len() {
-            return Err(HsmError::InvalidArgument);
-        }
-
-        let mut offset = AZIHSM_KEY_IV_RECORD_HEADER_SIZE;
-        let key_len = aes_key_struct[offset] as usize;
-        offset += U8_SIZE;
-
-        if key_len != (AES_KEY_BITS as usize / 8) {
-            return Err(HsmError::InvalidArgument);
-        }
-        if key_len + offset + U8_SIZE > aes_key_struct.len() {
-            return Err(HsmError::InvalidArgument);
-        }
-        let aes_key_bytes = &aes_key_struct[offset..offset + key_len];
-        offset += key_len;
-
-        let iv_len = aes_key_struct[offset] as usize;
-        offset += U8_SIZE;
-
-        if iv_len != AES_BLOCK_SIZE {
-            return Err(HsmError::InvalidArgument);
-        }
-        if iv_len + offset > aes_key_struct.len() {
-            return Err(HsmError::InvalidArgument);
-        }
-        let iv_bytes = &aes_key_struct[offset..offset + iv_len];
-
-        // Decrypt with AES-CBC
-        let aes_key = AesKey::from_bytes(aes_key_bytes).map_err(|_| HsmError::InternalError)?;
-        let mut algo = AesCbcAlgo::with_padding(iv_bytes);
+        // Decrypt with AES-CBC — use key_size to slice the actual key bytes,
+        // since the key array is fixed at 32 bytes but the actual key may be smaller.
+        let aes_key = AesKey::from_bytes(&record.key[..record.key_size as usize])
+            .map_err(|_| HsmError::InternalError)?;
+        let mut algo = AesCbcAlgo::with_padding(&record.iv);
 
         let mut output = vec![0u8; encrypted_data.len() + AES_BLOCK_SIZE];
         let len = algo
@@ -135,9 +160,7 @@ impl TpmBk3Unsealer {
             .map_err(|_| HsmError::InternalError)?;
 
         output.truncate(len);
-
-        // Remove PKCS7 padding
-        Self::pkcs7_unpad(&output)
+        Ok(output)
     }
 
     /// Unseals data using the TPM NULL hierarchy.
@@ -152,18 +175,20 @@ impl TpmBk3Unsealer {
     /// * `Ok(Vec<u8>)` - The unsealed data
     /// * `Err(HsmError)` - If unsealing fails
     fn unseal_null_hierarchy(&self, sealed_data: &[u8]) -> Result<Vec<u8>, HsmError> {
-        if sealed_data.len() < U16_SIZE {
+        if sealed_data.len() < size_of::<u16>() {
             return Err(HsmError::InvalidArgument);
         }
 
         // Parse sealed_data into TPM2B_PRIVATE and TPM2B_PUBLIC
+        // Unpacking is based on packing implemented on AziHsmTpmSealBuffer in AziHsmBKS3.c
+        // https://microsoft.visualstudio.com/OS/_git/hyperv.uefi?path=/MsvmPkg/AziHsmDxe/AziHsmBKS3.c
         let mut offset = 0;
 
         let private_len =
             u16::from_le_bytes([sealed_data[offset], sealed_data[offset + 1]]) as usize;
-        offset += U16_SIZE;
+        offset += size_of::<u16>();
 
-        if private_len + offset + U16_SIZE > sealed_data.len() {
+        if private_len + offset + size_of::<u16>() > sealed_data.len() {
             return Err(HsmError::InvalidArgument);
         }
         let private_blob = &sealed_data[offset..offset + private_len];
@@ -171,7 +196,7 @@ impl TpmBk3Unsealer {
 
         let public_len =
             u16::from_le_bytes([sealed_data[offset], sealed_data[offset + 1]]) as usize;
-        offset += U16_SIZE;
+        offset += size_of::<u16>();
 
         if public_len + offset > sealed_data.len() {
             return Err(HsmError::InvalidArgument);
@@ -235,7 +260,7 @@ impl TpmBk3Unsealer {
             detail: TpmtPublicDetail::RsaDetail(RsaDetail {
                 symmetric: SymDefObject {
                     alg: TpmAlgId::Aes.into(),
-                    key_bits: AES_KEY_BITS,
+                    key_bits: TPM_PRIMARY_AES_KEY_BITS,
                     mode: TpmAlgId::Cfb.into(),
                 },
                 scheme: RsaScheme::Null,
@@ -248,40 +273,6 @@ impl TpmBk3Unsealer {
         self.tpm
             .create_primary(Hierarchy::Null, Tpm2b::new(public_template), &[])
             .map_err(|_| HsmError::InternalError)
-    }
-
-    /// Removes PKCS7 padding from decrypted data.
-    ///
-    /// # Arguments
-    ///
-    /// * `padded` - Data with PKCS7 padding
-    ///
-    /// # Returns
-    ///
-    /// * `Ok(Vec<u8>)` - Data with padding removed
-    /// * `Err(HsmError)` - If padding is invalid
-    fn pkcs7_unpad(padded: &[u8]) -> Result<Vec<u8>, HsmError> {
-        if padded.is_empty() || !padded.len().is_multiple_of(AES_BLOCK_SIZE) {
-            return Err(HsmError::InvalidArgument);
-        }
-
-        let pad_len = padded[padded.len() - 1] as usize;
-
-        if pad_len == 0 || pad_len > AES_BLOCK_SIZE {
-            return Err(HsmError::InvalidArgument);
-        }
-
-        // Verify padding bytes in (content) constant time
-        let mut mismatch: u8 = 0;
-        for i in 0..pad_len {
-            let byte = padded[padded.len() - 1 - i];
-            mismatch |= byte ^ (pad_len as u8);
-        }
-        if mismatch != 0 {
-            return Err(HsmError::InvalidArgument);
-        }
-
-        Ok(padded[..padded.len() - pad_len].to_vec())
     }
 }
 

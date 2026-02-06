@@ -131,13 +131,12 @@ Specifies the source of the owner backup key (OBK).
 typedef enum azihsm_owner_backup_key_source {
     AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER = 1,
     AZIHSM_OWNER_BACKUP_KEY_SOURCE_TPM    = 2,
-    AZIHSM_OWNER_BACKUP_KEY_SOURCE_RANDOM = 3,
 } azihsm_owner_backup_key_source;
 ```
 
 **Notes**
 - When `source` is `AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER`, `owner_backup_key` must be non-NULL and non-empty.
-- When `source` is `AZIHSM_OWNER_BACKUP_KEY_SOURCE_TPM` or `AZIHSM_OWNER_BACKUP_KEY_SOURCE_RANDOM`, `owner_backup_key` must be NULL.
+- When `source` is `AZIHSM_OWNER_BACKUP_KEY_SOURCE_TPM`, `owner_backup_key` must be NULL.
 
 ## azihsm_part_init
 
