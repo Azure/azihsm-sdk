@@ -1,61 +1,84 @@
-# azihsm-sdk
+# Azure Integrated HSM SDK
 
-The SDK is designed as the client‑side software stack that applications or crypto providers use to talk to the Azure Integrated HSM (AziHSM) device. The azihsm‑sdk is built in Rust as a cross‑platform cryptographic access layer for the Azure Integrated HSM, dynamically linking SymCrypt for missing public‑key crypto, and providing consumption surfaces for NCrypt (Windows), OpenSSL (Linux), and the DDI device interface; its build system compiles Rust crates, integrates native dependencies, produces provider modules and KSP binaries, and is run through GitHub CI with linting, formatting, and cross‑arch builds including ARM64.
+## Project Overview
+Azure Integrated HSM (AZIHSM) SDK is a modular, cross-platform software development kit (SDK) written in Rust. This repository is home to AZIHSM SDK, its simulator, and its OpenSSL Provider.
 
-## Build Steps
-The repo has multiple components:
+## Project Structure
+- `api/` - Core AZIHSM SDK implementation
+- `crates/` - Shared support libraries
+- `ddi/` - Device Data Interface components for interacting with AZIHSM hardware
+- `ddi/sim/` - AZIHSM functional simulator
+- `plugins/ossl_prov/` - OpenSSL Provider implementation
+- `xtask/` - Custom build and automation tasks
 
-/api — Native API
-/crates — Supporting Rust crates
-/ddi — Device driver interface bindings
-/plugins/ossl_provider — OpenSSL provider
-/xtask — Developer automation
+## Initial Setup
+Before running any commands in this document for the first time, restore required dependencies using these steps:
 
-### To build everything:
-```bash
-cargo build --workspace --all-targets
+For Linux systems, first install the following 4 Linux packages with the package manager of the distribution:
 ```
-### Run formatting, linting, code hygiene:  
-```bash
-cargo fmt --allExpand commentComment on line R20Resolved
-cargo clippy --workspace
-cargo xtask precheck
-```
-### Build the DDI layer
-```bash
-cargo build -p azi_hsm_native
-```
-### Build the OpenSSL Provider
-```bash
-cd plugins/ossl_providerExpand commentComment on line R30Resolved
-cargo build --release
-```
-### Build the Windows KSP (Key Storage Provider)
-```bash
-cargo build -p azi_hsm_ksp --release
+clang-format-18
+libbsd-dev
+libssl-dev
+pkg-config
 ```
 
-### Build Platform‑Specific Outputs:
-#### Windows x64:
-- ```bash
-  cargo build --release --target x86_64-pc-windows-msvc'
-  ```
-#### Windows ARM64:
-- ```bash
-  cargo build --release --target aarch64-pc-windows-msvc
-  ```
-#### Linux:
+For both Linux and Windows systems, run the following to install all other required dependencies:
 ```bash
-cargo build --release --target x86_64-unknown-linux-gnu
+cargo xtask precheck --setup
 ```
 
-### Run Tests:
-- ```bash
-  cargo test --workspace
-  ```
+## Build Commands
+Before running any commands below, ensure you have finished the initial setup steps.
 
-# License
-See LICENSE.md for details.
+### Building
+Build the project using Cargo xtask:
+```bash
+cargo xtask build
+```
+
+Build specific packages using:
+```bash
+# Build specific packages you are modifying
+cargo xtask build --package <package-name>
+```
+
+## Testing
+Before running any commands below, ensure you have finished the initial setup steps.
+
+### Unit Tests
+Use cargo-nextest (recommended):
+```bash
+# Run tests in specific packages you are modifying against simulator
+cargo xtask nextest --features mock --package <package-name>
+```
+
+## Linting and Formatting
+Before running any commands below, ensure you have finished the initial setup steps.
+
+### Required Before Each Commit
+Always run formatting checks before committing:
+```bash
+cargo +nightly xtask fmt --fix
+```
+It auto fixes formatting issues. This ensures all source code follows rustfmt standards.
+
+Always run copyright checks before committing:
+```bash
+cargo xtask copyright --fix
+```
+It auto fixes copyright issues. This ensures all source code has correct copyright headers.
+
+## Precheckin Steps
+Before running any commands below, ensure you have finished the initial setup steps.
+
+You can run all checks (setup, build, formatting, copyright, linting, tests, code coverage etc.) against simulator with:
+```bash
+cargo xtask precheck --all
+```
+It will run all necessary checks to ensure code quality before committing. It will not auto fix linting, formatting or copyright issues.
+
+## License
+See [LICENSE](./LICENSE) for details.
 
 ## Contributing
 
