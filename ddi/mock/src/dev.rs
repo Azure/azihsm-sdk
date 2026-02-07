@@ -293,9 +293,6 @@ impl DdiDev for DdiMockDev {
     ) -> Result<usize, DdiError> {
         let encrypt_decrypt_mode: AesMode =
             mode.try_into().map_err(|_| DdiError::InvalidParameter)?;
-        if src_buf.is_empty() {
-            return Err(DdiError::InvalidParameter);
-        }
 
         // Check the session id in the file handle context
         let current_session_id = self
@@ -325,22 +322,30 @@ impl DdiDev for DdiMockDev {
             Err(DdiError::InvalidParameter)?;
         }
 
-        // Define a closure for splitting slice into chunks given a size
-        let split_slice_into_chunks = |slice: &[u8], chunk_size: usize| -> Vec<Vec<u8>> {
-            slice
-                .chunks(chunk_size) // Split the slice into chunks
-                .map(|chunk| chunk.to_vec()) // Convert each chunk into a Vec<u8>
-                .collect() // Collect the chunks into a Vec<Vec<u8>>
-        };
+        // Handle empty source buffer for GCM (valid for empty plaintext/ciphertext)
+        // GCM can encrypt/decrypt empty data and still produce/verify a tag
+        let (source_buffers, mut destination_buffers) = if src_buf.is_empty() {
+            // For empty input, create a single empty buffer
+            (vec![Vec::new()], vec![Vec::new()])
+        } else {
+            // Define a closure for splitting slice into chunks given a size
+            let split_slice_into_chunks = |slice: &[u8], chunk_size: usize| -> Vec<Vec<u8>> {
+                slice
+                    .chunks(chunk_size) // Split the slice into chunks
+                    .map(|chunk| chunk.to_vec()) // Convert each chunk into a Vec<u8>
+                    .collect() // Collect the chunks into a Vec<Vec<u8>>
+            };
 
-        /* break up the source buffer into chunks of AES_CHUNK_SIZE each
-         *  The value of the constant is arbitrary
-         */
-        let source_buffers = split_slice_into_chunks(src_buf, AES_CHUNK_SIZE);
-        let mut destination_buffers: Vec<Vec<u8>> = source_buffers
-            .iter()
-            .map(|inner| vec![0; inner.len()])
-            .collect();
+            /* break up the source buffer into chunks of AES_CHUNK_SIZE each
+             *  The value of the constant is arbitrary
+             */
+            let source_buffers = split_slice_into_chunks(src_buf, AES_CHUNK_SIZE);
+            let destination_buffers: Vec<Vec<u8>> = source_buffers
+                .iter()
+                .map(|inner| vec![0; inner.len()])
+                .collect();
+            (source_buffers, destination_buffers)
+        };
 
         let session_aes_gcm_request = SessionAesGcmRequest {
             key_id: gcm_params.key_id,

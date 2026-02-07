@@ -124,6 +124,7 @@ impl TryFrom<u32> for AzihsmKeyKind {
             7 => Ok(AzihsmKeyKind::HmacSha256),
             8 => Ok(AzihsmKeyKind::HmacSha384),
             9 => Ok(AzihsmKeyKind::HmacSha512),
+            10 => Ok(AzihsmKeyKind::AesGcm),
             _ => Err(AzihsmStatus::InvalidArgument),
         }
     }
@@ -381,6 +382,16 @@ impl TryFrom<AzihsmHandle> for api::HsmAesXtsKey {
     }
 }
 
+impl TryFrom<AzihsmHandle> for api::HsmGenericSecretKey {
+    type Error = AzihsmStatus;
+
+    fn try_from(value: AzihsmHandle) -> Result<api::HsmGenericSecretKey, Self::Error> {
+        let key: &api::HsmGenericSecretKey =
+            HANDLE_TABLE.as_ref(value, HandleType::GenericSecretKey)?;
+        Ok(key.clone())
+    }
+}
+
 impl TryFrom<AzihsmHandle> for api::HsmEccPrivateKey {
     type Error = AzihsmStatus;
 
@@ -430,9 +441,13 @@ impl<'a> TryFrom<&'a AzihsmBuffer> for &'a [u8] {
     /// containing at least `buffer.len` bytes.
     #[allow(unsafe_code)]
     fn try_from(buffer: &'a AzihsmBuffer) -> Result<Self, Self::Error> {
-        // Check for null pointer
+        // Check for null pointer - allow null only if length is 0 (empty buffer)
         if buffer.ptr.is_null() {
-            return Err(AzihsmStatus::InvalidArgument);
+            if buffer.len == 0 {
+                return Ok(&[]);
+            } else {
+                return Err(AzihsmStatus::InvalidArgument);
+            }
         }
 
         // Safety: Caller ensures buffer.buf points to valid memory

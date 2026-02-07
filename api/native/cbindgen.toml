@@ -35,6 +35,7 @@ usize_is_size_t = true
 exclude = []
 include = [
   "AzihsmAlgoAesCbcParams",
+  "AzihsmAlgoAesGcmParams",
   "AzihsmAlgoAesXtsParams",
   "AzihsmAlgoEcdhParams",
   "AzihsmAlgoHkdfParams",
@@ -52,8 +53,11 @@ include = [
 item_types = ["constants", "enums", "functions", "structs", "typedefs"]
 
 [export.rename]
+"AES_GCM_IV_SIZE" = "AZIHSM_AES_GCM_IV_SIZE"
+"AES_GCM_TAG_SIZE" = "AZIHSM_AES_GCM_TAG_SIZE"
 "AzihsmAlgo" = "azihsm_algo"
 "AzihsmAlgoAesCbcParams" = "azihsm_algo_aes_cbc_params"
+"AzihsmAlgoAesGcmParams" = "azihsm_algo_aes_gcm_params"
 "AzihsmAlgoAesXtsParams" = "azihsm_algo_aes_xts_params"
 "AzihsmAlgoEcdhParams" = "azihsm_algo_ecdh_params"
 "AzihsmAlgoHkdfParams" = "azihsm_algo_hkdf_params"

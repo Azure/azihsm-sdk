@@ -37,6 +37,11 @@ pub unsafe extern "C" fn azihsm_crypt_encrypt(
             AzihsmAlgoId::AesCbc | AzihsmAlgoId::AesCbcPad => {
                 aes_cbc_encrypt(algo, key_handle, input_buf, output_buf)?;
             }
+
+            AzihsmAlgoId::AesGcm => {
+                aes_gcm_encrypt(algo, key_handle, input_buf, output_buf)?;
+            }
+
             AzihsmAlgoId::AesXts => {
                 aes_xts_encrypt(algo, key_handle, input_buf, output_buf)?;
             }
@@ -82,6 +87,7 @@ pub unsafe extern "C" fn azihsm_crypt_decrypt(
             AzihsmAlgoId::AesCbc | AzihsmAlgoId::AesCbcPad => {
                 aes_cbc_decrypt(algo, key_handle, input_buf, output_buf)?
             }
+            AzihsmAlgoId::AesGcm => aes_gcm_decrypt(algo, key_handle, input_buf, output_buf)?,
             AzihsmAlgoId::AesXts => {
                 aes_xts_decrypt(algo, key_handle, input_buf, output_buf)?;
             }
@@ -122,6 +128,7 @@ pub unsafe extern "C" fn azihsm_crypt_encrypt_init(
             AzihsmAlgoId::AesCbc | AzihsmAlgoId::AesCbcPad => {
                 aes_cbc_encrypt_init(algo, key_handle)?
             }
+            AzihsmAlgoId::AesGcm => aes_gcm_encrypt_init(algo, key_handle)?,
             AzihsmAlgoId::AesXts => aes_xts_encrypt_init(algo, key_handle)?,
             _ => Err(AzihsmStatus::UnsupportedAlgorithm)?,
         };
@@ -163,6 +170,9 @@ pub unsafe extern "C" fn azihsm_crypt_encrypt_update(
             HandleType::AesCbcEncryptCtx => {
                 aes_cbc_encrypt_update(ctx_handle, input_buf, output_buf)?
             }
+            HandleType::AesGcmEncryptCtx => {
+                aes_gcm_encrypt_update(ctx_handle, input_buf, output_buf)?
+            }
             HandleType::AesXtsEncryptCtx => {
                 aes_xts_encrypt_update(ctx_handle, input_buf, output_buf)?
             }
@@ -197,6 +207,7 @@ pub unsafe extern "C" fn azihsm_crypt_encrypt_final(
 
         match ctx_type {
             HandleType::AesCbcEncryptCtx => aes_cbc_encrypt_final(ctx_handle, output_buf)?,
+            HandleType::AesGcmEncryptCtx => aes_gcm_encrypt_final(ctx_handle, output_buf)?,
             HandleType::AesXtsEncryptCtx => aes_xts_encrypt_finish(ctx_handle, output_buf)?,
             _ => Err(AzihsmStatus::InvalidHandle)?,
         }
@@ -231,6 +242,7 @@ pub unsafe extern "C" fn azihsm_crypt_decrypt_init(
             AzihsmAlgoId::AesCbc | AzihsmAlgoId::AesCbcPad => {
                 aes_cbc_decrypt_init(algo, key_handle)?
             }
+            AzihsmAlgoId::AesGcm => aes_gcm_decrypt_init(algo, key_handle)?,
             AzihsmAlgoId::AesXts => aes_xts_decrypt_init(algo, key_handle)?,
             _ => Err(AzihsmStatus::UnsupportedAlgorithm)?,
         };
@@ -272,6 +284,9 @@ pub unsafe extern "C" fn azihsm_crypt_decrypt_update(
             HandleType::AesCbcDecryptCtx => {
                 aes_cbc_decrypt_update(ctx_handle, input_buf, output_buf)?
             }
+            HandleType::AesGcmDecryptCtx => {
+                aes_gcm_decrypt_update(ctx_handle, input_buf, output_buf)?
+            }
             HandleType::AesXtsDecryptCtx => {
                 aes_xts_decrypt_update(ctx_handle, input_buf, output_buf)?
             }
@@ -307,6 +322,7 @@ pub unsafe extern "C" fn azihsm_crypt_decrypt_final(
 
         match ctx_type {
             HandleType::AesCbcDecryptCtx => aes_cbc_decrypt_final(ctx_handle, output_buf)?,
+            HandleType::AesGcmDecryptCtx => aes_gcm_decrypt_final(ctx_handle, output_buf)?,
             HandleType::AesXtsDecryptCtx => aes_xts_decrypt_finish(ctx_handle, output_buf)?,
             _ => Err(AzihsmStatus::InvalidHandle)?,
         }

@@ -540,13 +540,21 @@ impl AesOp for AesKey {
         tag_array.copy_from_slice(tag);
 
         // Distribute ciphertext back into output buffers
-        let chunk_size = ciphertext.len().div_ceil(encrypted_buffers.len());
-        for (chunk, encrypted_buffer) in ciphertext
-            .chunks(chunk_size)
-            .zip(encrypted_buffers.iter_mut())
-        {
-            *encrypted_buffer = chunk.to_vec();
-            encrypted_size += chunk.len();
+        // Handle empty ciphertext case (empty plaintext encryption)
+        if !ciphertext.is_empty() {
+            let chunk_size = ciphertext.len().div_ceil(encrypted_buffers.len());
+            for (chunk, encrypted_buffer) in ciphertext
+                .chunks(chunk_size)
+                .zip(encrypted_buffers.iter_mut())
+            {
+                *encrypted_buffer = chunk.to_vec();
+                encrypted_size += chunk.len();
+            }
+        } else {
+            // For empty plaintext, just clear all output buffers
+            for encrypted_buffer in encrypted_buffers.iter_mut() {
+                encrypted_buffer.clear();
+            }
         }
 
         tracing::debug!(
@@ -606,13 +614,21 @@ impl AesOp for AesKey {
             .map_err(|_| ManticoreError::AesDecryptError)?;
 
         // Distribute plaintext back into output buffers
-        let chunk_size = plaintext.len().div_ceil(decrypted_buffers.len());
-        for (chunk, decrypted_buffer) in plaintext
-            .chunks(chunk_size)
-            .zip(decrypted_buffers.iter_mut())
-        {
-            *decrypted_buffer = chunk.to_vec();
-            decrypted_size += chunk.len();
+        // Handle empty plaintext case (empty ciphertext decryption)
+        if !plaintext.is_empty() {
+            let chunk_size = plaintext.len().div_ceil(decrypted_buffers.len());
+            for (chunk, decrypted_buffer) in plaintext
+                .chunks(chunk_size)
+                .zip(decrypted_buffers.iter_mut())
+            {
+                *decrypted_buffer = chunk.to_vec();
+                decrypted_size += chunk.len();
+            }
+        } else {
+            // For empty ciphertext, just clear all output buffers
+            for decrypted_buffer in decrypted_buffers.iter_mut() {
+                decrypted_buffer.clear();
+            }
         }
 
         tracing::debug!(
