@@ -917,7 +917,7 @@ impl UserSessionInner {
         let (ecc_private_key, ecc_public_key) = generate_ecc(curve)?;
         let ecc_public_key_der = ecc_public_key.to_der()?;
 
-        // Mark the keys as generated and locally created.
+        // Mark the keys locally generated.
         let mut entry_flags = flags;
         entry_flags.set_local(true);
 
@@ -1309,7 +1309,7 @@ impl UserSessionInner {
         );
         let aes_key = generate_aes(key_size)?;
 
-        // Mark the keys as generated and locally created.
+        // Mark the keys locally generated.
         let mut entry_flags = flags;
         entry_flags.set_local(true);
 
@@ -1695,7 +1695,7 @@ mod tests {
             let (rsa_private_key, rsa_public_key) = generate_rsa(bits as u32)?;
             let rsa_public_key_der = rsa_public_key.to_der()?;
 
-            // Mark the keys as generated and locally created.
+            // Mark the keys locally generated.
             let mut entry_flags = flags;
             entry_flags.set_local(true);
 

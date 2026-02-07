@@ -737,7 +737,7 @@ impl Entry {
     /// # Returns
     /// * Generated flag for the Entry.
     #[allow(unused)]
-    pub(crate) fn is_local(&self) -> bool {
+    pub(crate) fn local(&self) -> bool {
         self.inner.read().is_local()
     }
 

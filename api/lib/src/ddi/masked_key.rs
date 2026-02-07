@@ -5,6 +5,9 @@ use zerocopy::*;
 
 use super::*;
 
+/// Size of the masked key attributes flags in bytes.
+const MASKED_KEY_ATTRIBUTES_FLAGS_SIZE: usize = size_of::<u64>();
+
 bitflags::bitflags! {
     /// Masked key attributes flags.
     #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -383,12 +386,16 @@ impl TryFrom<DdiMaskedKeyAttributes> for HsmMaskedKeyAttributes {
 
     fn try_from(attrs: DdiMaskedKeyAttributes) -> Result<Self, Self::Error> {
         let buf = &attrs.blob;
-        if buf.len() < 8 {
+        if buf.len() < MASKED_KEY_ATTRIBUTES_FLAGS_SIZE {
             return Err(HsmError::InternalError);
         }
 
         // Parse as 64-bit flags directly
-        let flags = u64::from_le_bytes(buf[..8].try_into().map_err(|_| HsmError::InternalError)?);
+        let flags = u64::from_le_bytes(
+            buf[..MASKED_KEY_ATTRIBUTES_FLAGS_SIZE]
+                .try_into()
+                .map_err(|_| HsmError::InternalError)?,
+        );
         Ok(HsmMaskedKeyAttributes::from_bits_truncate(flags))
     }
 }

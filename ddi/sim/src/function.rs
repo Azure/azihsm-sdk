@@ -23,6 +23,7 @@ use azihsm_ddi_types::DDI_MAX_KEY_LABEL_LENGTH;
 use parking_lot::RwLock;
 use tracing::instrument;
 use uuid::Uuid;
+use zerocopy::FromBytes;
 
 use crate::crypto::aeshmac::AesHmacKey;
 use crate::crypto::aeshmac::AesHmacOp;
@@ -1406,14 +1407,8 @@ impl FunctionStateInner {
 
     /// Extract EntryFlags from the first 8 bytes of the provided buffer
     fn entry_flags_from_bytes(buf: &[u8]) -> Result<EntryFlags, ManticoreError> {
-        const ENTRY_FLAGS_LEN: usize = size_of::<u64>();
-
-        if buf.len() < ENTRY_FLAGS_LEN {
-            return Err(ManticoreError::MaskedKeyDecodeFailed);
-        }
-
-        let bytes: [u8; ENTRY_FLAGS_LEN] = buf[..ENTRY_FLAGS_LEN]
-            .try_into()
+        const ENTRY_FLAGS_SIZE: usize = size_of::<u64>();
+        let (bytes, _) = <[u8; ENTRY_FLAGS_SIZE]>::read_from_prefix(buf)
             .map_err(|_| ManticoreError::MaskedKeyDecodeFailed)?;
         Ok(EntryFlags::from(u64::from_le_bytes(bytes)))
     }
@@ -1557,7 +1552,7 @@ mod tests {
         assert!(entry.allow_sign_verify());
         assert!(!entry.allow_unwrap());
 
-        assert!(entry.is_local());
+        assert!(entry.local());
         assert!(!entry.imported());
         assert!(!entry.session_only());
 
@@ -1587,7 +1582,7 @@ mod tests {
         assert!(!entry.allow_sign_verify());
         assert!(entry.allow_unwrap());
 
-        assert!(entry.is_local());
+        assert!(entry.local());
         assert!(!entry.imported());
         assert!(!entry.session_only());
 
