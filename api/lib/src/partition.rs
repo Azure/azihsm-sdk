@@ -252,25 +252,6 @@ impl HsmPartition {
         Ok(())
     }
 
-    /// Resets the HSM partition state.
-    ///
-    /// including established credentials and active sessions. This is useful for
-    /// test cleanup and recovery scenarios.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the reset operation fails.
-    #[instrument(skip_all, err, fields(path = self.path().as_str()))]
-    pub fn reset(&self) -> HsmResult<()> {
-        self.with_dev(|dev| {
-            dev.simulate_nssr_after_lm()
-                .map_err(|_| HsmError::DdiCmdFailure)
-        })?;
-        // Clear cached masked keys after reset
-        self.inner().write().clear_masked_keys();
-        Ok(())
-    }
-
     /// Opens a new session on the HSM partition.
     ///
     /// Creates a new cryptographic session with the specified API revision and
@@ -304,6 +285,25 @@ impl HsmPartition {
         let (id, app_id) =
             self.with_dev(|dev| ddi::open_session(dev, api_rev, credentials, seed))?;
         Ok(HsmSession::new(id, app_id, api_rev, self.clone()))
+    }
+
+    /// Resets the HSM partition state.
+    ///
+    /// including established credentials and active sessions. This is useful for
+    /// test cleanup and recovery scenarios.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the reset operation fails.
+    #[instrument(skip_all, err, fields(path = self.path().as_str()))]
+    pub fn reset(&self) -> HsmResult<()> {
+        self.with_dev(|dev| {
+            dev.simulate_nssr_after_lm()
+                .map_err(|_| HsmError::DdiCmdFailure)
+        })?;
+        // Clear cached masked keys after reset
+        self.inner().write().clear_masked_keys();
+        Ok(())
     }
 
     /// Returns the API revision range supported by this partition.

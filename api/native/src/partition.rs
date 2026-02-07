@@ -225,32 +225,6 @@ pub unsafe extern "C" fn azihsm_part_init(
     })
 }
 
-/// Reset the HSM partition state
-///
-/// including established credentials and active sessions. This is useful for
-/// test cleanup and recovery scenarios.
-///
-/// @param[in] part_handle Handle to the HSM partition
-/// @return 0 on success, or a negative error code on failure
-///
-/// @internal
-/// # Safety
-/// This function is unsafe because it dereferences a raw pointer.
-/// This function is marked unsafe due to unsafe(no_mangle).
-///
-#[unsafe(no_mangle)]
-#[allow(unsafe_code)]
-pub unsafe extern "C" fn azihsm_part_reset(part_handle: AzihsmHandle) -> AzihsmStatus {
-    abi_boundary(|| {
-        // Get the partition from the handle
-        let partition = &HsmPartition::try_from(part_handle)?;
-
-        partition.reset()?;
-
-        Ok(())
-    })
-}
-
 /// Close an HSM partition
 ///
 /// @param[in] handle Handle to the HSM partition
