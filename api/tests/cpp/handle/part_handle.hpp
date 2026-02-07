@@ -95,6 +95,17 @@ class PartitionHandle
 
         if (initialized.find(index) == initialized.end())
         {
+            // Reset before initialization to clear any previous state
+            err = azihsm_part_reset(handle_);
+            if (err != AZIHSM_STATUS_SUCCESS)
+            {
+                azihsm_part_close(handle_);
+                handle_ = 0;
+                throw std::runtime_error(
+                    "Failed to reset partition. Error: " + std::to_string(err)
+                );
+            }
+
             azihsm_credentials creds{};
             std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
             std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));

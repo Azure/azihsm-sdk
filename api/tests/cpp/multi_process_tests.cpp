@@ -294,6 +294,10 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_child)
     std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
     azihsm_api_rev api_rev{ 1, 0 };
 
+    // Reset partition before initialization to clear any previous state
+    auto reset_err = azihsm_part_reset(part_handle);
+    ASSERT_EQ(reset_err, AZIHSM_STATUS_SUCCESS);
+
     azihsm_buffer bmk_buf = { bmk.data(), static_cast<uint32_t>(bmk.size()) };
     azihsm_buffer mobk_buf = { mobk.data(), static_cast<uint32_t>(mobk.size()) };
 
