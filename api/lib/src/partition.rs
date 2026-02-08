@@ -275,7 +275,7 @@ impl HsmPartition {
     /// * `creds` - Application credentials (ID and PIN)
     /// * `bmk` - Optional backup masking key
     /// * `muk` - Optional masked unwrapping key
-    /// * `obk_config` - Owner backup key (OBK/BK3) source and optional OBK
+    /// * `obk_config` - Owner backup key (OBK) configuration
     ///
     /// # Errors
     ///

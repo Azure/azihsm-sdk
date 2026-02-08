@@ -393,7 +393,7 @@ impl CreatePrimaryResponse {
     }
 }
 
-// TPM2_Load --------------------------------------------------------------
+// Load Command
 define_handle_struct!(LoadCommandHandles { parent_handle });
 
 #[derive(Debug, Clone)]
@@ -508,7 +508,7 @@ impl LoadResponse {
     }
 }
 
-// TPM2_Unseal ------------------------------------------------------------
+// Unseal Command
 define_handle_struct!(UnsealCommandHandles { item_handle });
 
 #[derive(Debug, Clone, Default)]
@@ -596,7 +596,7 @@ impl UnsealResponse {
     }
 }
 
-// TPM2_FlushContext ------------------------------------------------------
+// FlushContext Command
 define_handle_struct!(FlushContextCommandHandles { flush_handle });
 
 #[derive(Debug, Clone, Default)]
@@ -627,7 +627,7 @@ impl FlushContextCommand {
     }
 }
 
-// TPM2_Create (Seal) ----------------------------------------------------
+// Create Command
 define_handle_struct!(CreateCommandHandles { parent_handle });
 
 #[derive(Debug, Clone)]

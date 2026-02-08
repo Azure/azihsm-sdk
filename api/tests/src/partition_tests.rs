@@ -78,7 +78,7 @@ fn test_partition_init() {
         part.reset().expect("Partition reset failed");
         //init with dummy creds
         let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
-        let obk_info = if std::env::var("use_tpm").is_ok() {
+        let obk_info = if std::env::var("AZIHSM_USE_TPM").is_ok() {
             HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, None)
         } else {
             HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Caller, Some(&TEST_OBK))

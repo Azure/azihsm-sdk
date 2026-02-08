@@ -67,7 +67,7 @@ where
 
         //init with test creds
         let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
-        let backup_key_info = if std::env::var("use_tpm").is_ok() {
+        let backup_key_info = if std::env::var("AZIHSM_USE_TPM").is_ok() {
             HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, None)
         } else {
             HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Caller, Some(&TEST_OBK))

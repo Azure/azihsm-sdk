@@ -112,7 +112,7 @@ class PartitionHandle
 
             azihsm_owner_backup_key_config backup_config{};
             azihsm_buffer obk_buf{};
-            const char *use_tpm = std::getenv("use_tpm");
+            const char *use_tpm = std::getenv("AZIHSM_USE_TPM");
             if (use_tpm != nullptr)
             {
                 backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_TPM;
