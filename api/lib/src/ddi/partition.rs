@@ -101,7 +101,7 @@ fn init_bk3(dev: &HsmDev, rev: HsmApiRev, bk3: &[u8]) -> HsmResult<Vec<u8>> {
     let req = DdiInitBk3CmdReq {
         hdr: build_ddi_req_hdr(DdiOp::InitBk3, Some(rev), None),
         data: DdiInitBk3Req {
-            bk3: MborByteArray::from_slice(bk3).map_hsm_err(HsmError::InternalError)?,
+            bk3: MborByteArray::from_slice(bk3).map_hsm_err(HsmError::InvalidArgument)?,
         },
         ext: None,
     };
@@ -177,10 +177,10 @@ pub fn establish_credential(
         data: DdiEstablishCredentialReq {
             encrypted_credential: enc_creds,
             pub_key,
-            masked_bk3: MborByteArray::from_slice(mobk).map_hsm_err(HsmError::InternalError)?,
-            bmk: MborByteArray::from_slice(bmk).map_hsm_err(HsmError::InternalError)?,
+            masked_bk3: MborByteArray::from_slice(mobk).map_hsm_err(HsmError::InvalidArgument)?,
+            bmk: MborByteArray::from_slice(bmk).map_hsm_err(HsmError::InvalidArgument)?,
             masked_unwrapping_key: MborByteArray::from_slice(muk)
-                .map_hsm_err(HsmError::InternalError)?,
+                .map_hsm_err(HsmError::InvalidArgument)?,
         },
         ext: None,
     };

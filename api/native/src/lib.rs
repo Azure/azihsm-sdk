@@ -113,7 +113,7 @@ type AzihsmPartType = shared_types::HsmPartType;
 
 /// Owner backup key source used in the native API.
 /// An alias for `HsmOwnerBackupKeySource` that represents the source of the owner backup key
-/// (caller-provided, TPM-sealed, or randomly generated).
+/// (caller-provided or TPM-sealed).
 type AzihsmOwnerBackupKeySource = shared_types::HsmOwnerBackupKeySource;
 
 impl TryFrom<u32> for AzihsmKeyKind {

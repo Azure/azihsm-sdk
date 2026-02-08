@@ -111,6 +111,7 @@ class PartitionHandle
             std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
 
             azihsm_owner_backup_key_config backup_config{};
+            azihsm_buffer obk_buf{};
             const char *use_tpm = std::getenv("use_tpm");
             if (use_tpm != nullptr)
             {
@@ -119,7 +120,7 @@ class PartitionHandle
             }
             else
             {
-                azihsm_buffer obk_buf = { const_cast<uint8_t *>(TEST_OBK), sizeof(TEST_OBK) };
+                obk_buf = { const_cast<uint8_t *>(TEST_OBK), sizeof(TEST_OBK) };
                 backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER;
                 backup_config.owner_backup_key = &obk_buf;
             }

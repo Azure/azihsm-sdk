@@ -45,8 +45,9 @@ struct AzihsmKeyIvRecord {
 impl AzihsmKeyIvRecord {
     /// Parses and validates an AZIHSM_KEY_IV_RECORD from a byte slice.
     ///
-    /// Uses `try_ref_from_prefix` to tolerate trailing bytes beyond the
-    /// fixed-size struct layout.
+    /// Uses `try_ref_from_prefix` for the initial parse, then validates
+    /// that `record_size` accounts for the entire input with no
+    /// unexpected trailing bytes.
     fn from_bytes_validated(data: &[u8]) -> Result<&Self, HsmError> {
         let (record, _remaining) =
             Self::try_ref_from_prefix(data).map_err(|_| HsmError::InvalidArgument)?;
