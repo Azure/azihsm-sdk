@@ -111,6 +111,11 @@ type AzihsmEccCurve = shared_types::HsmEccCurve;
 /// (virtual or physical).
 type AzihsmPartType = shared_types::HsmPartType;
 
+/// Owner backup key source used in the native API.
+/// An alias for `HsmOwnerBackupKeySource` that represents the source of the owner backup key
+/// (caller-provided or TPM-sealed).
+type AzihsmOwnerBackupKeySource = shared_types::HsmOwnerBackupKeySource;
+
 impl TryFrom<u32> for AzihsmKeyKind {
     type Error = AzihsmStatus;
 
@@ -284,6 +289,24 @@ impl From<AzihsmPartType> for api::HsmPartType {
     fn from(part_type: AzihsmPartType) -> Self {
         // SAFETY: AzihsmPartType and api::HsmPartType have the same representation
         unsafe { std::mem::transmute(part_type) }
+    }
+}
+
+impl From<api::HsmOwnerBackupKeySource> for AzihsmOwnerBackupKeySource {
+    /// Converts an `api::HsmOwnerBackupKeySource` into an `AzihsmOwnerBackupKeySource`.
+    #[allow(unsafe_code)]
+    fn from(source: api::HsmOwnerBackupKeySource) -> Self {
+        // SAFETY: AzihsmOwnerBackupKeySource and api::HsmOwnerBackupKeySource have the same representation
+        unsafe { std::mem::transmute(source) }
+    }
+}
+
+impl From<AzihsmOwnerBackupKeySource> for api::HsmOwnerBackupKeySource {
+    /// Converts an `AzihsmOwnerBackupKeySource` into an `api::HsmOwnerBackupKeySource`.
+    #[allow(unsafe_code)]
+    fn from(source: AzihsmOwnerBackupKeySource) -> Self {
+        // SAFETY: AzihsmOwnerBackupKeySource and api::HsmOwnerBackupKeySource have the same representation
+        unsafe { std::mem::transmute(source) }
     }
 }
 

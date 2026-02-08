@@ -4,6 +4,7 @@
 use azihsm_crypto::pem_to_der;
 
 use super::*;
+use crate::utils::partition::*;
 
 #[api_test]
 fn test_parittion_info_list() {
@@ -76,8 +77,13 @@ fn test_partition_init() {
         //reset before init
         part.reset().expect("Partition reset failed");
         //init with dummy creds
-        let creds = HsmCredentials::new(&[1u8; 16], &[2u8; 16]);
-        part.init(creds, None, None, None)
+        let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
+        let obk_info = if std::env::var("AZIHSM_USE_TPM").is_ok() {
+            HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, None)
+        } else {
+            HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Caller, Some(&TEST_OBK))
+        };
+        part.init(creds, None, None, obk_info)
             .expect("Partition init failed");
     }
 }

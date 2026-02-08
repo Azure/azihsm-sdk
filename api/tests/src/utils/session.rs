@@ -11,6 +11,8 @@ use azihsm_api::*;
 use azihsm_api_tests_macro::*;
 use tracing::*;
 
+use crate::utils::partition::TEST_OBK;
+
 /// Executes a test function with an initialized HSM session.
 ///
 /// This utility function discovers available HSM partitions, opens each one,
@@ -48,7 +50,12 @@ where
         //init with test creds
         let creds = HsmCredentials::new(&[1u8; 16], &[2u8; 16]);
         let rev = part.api_rev_range().max();
-        part.init(creds, None, None, None)
+        let obk_info = if std::env::var("AZIHSM_USE_TPM").is_ok() {
+            HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, None)
+        } else {
+            HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Caller, Some(&TEST_OBK))
+        };
+        part.init(creds, None, None, obk_info)
             .expect("Partition init failed");
         let mut session = part
             .open_session(rev, &creds, None)

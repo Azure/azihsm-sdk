@@ -78,6 +78,8 @@ item_types = ["constants", "enums", "functions", "structs", "typedefs"]
 "AzihsmKeyPropId" = "azihsm_key_prop_id"
 "AzihsmKeyPropList" = "azihsm_key_prop_list"
 "AzihsmMgf1Id" = "azihsm_mgf1_id"
+"AzihsmOwnerBackupKeyConfig" = "azihsm_owner_backup_key_config"
+"AzihsmOwnerBackupKeySource" = "azihsm_owner_backup_key_source"
 "AzihsmPartProp" = "azihsm_part_prop"
 "AzihsmPartPropId" = "azihsm_part_prop_id"
 "AzihsmPartType" = "azihsm_part_type"
@@ -90,6 +92,7 @@ item_types = ["constants", "enums", "functions", "structs", "typedefs"]
 "HsmError" = "azihsm_status"
 "HsmKeyClass" = "azihsm_key_class"
 "HsmKeyKind" = "azihsm_key_kind"
+"HsmOwnerBackupKeySource" = "azihsm_owner_backup_key_source"
 "HsmPartType" = "azihsm_part_type"
 
 [defines]

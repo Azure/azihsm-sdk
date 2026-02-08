@@ -12,6 +12,7 @@ azihsm_crypto.workspace = true
 azihsm_ddi.workspace = true
 azihsm_ddi_mbor.workspace = true
 azihsm_ddi_types.workspace = true
+azihsm_tpm.workspace = true
 bitflags.workspace = true
 delegate.workspace = true
 env_logger.workspace = true
