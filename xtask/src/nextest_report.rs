@@ -23,6 +23,10 @@ impl Xtask for NextestReport {
 
         let mut test_suites_total = TestSuites::default();
 
+        let mut vec_tests = Vec::new();
+        let mut vec_failures = Vec::new();
+        let mut vec_skipped = Vec::new();
+
         for profile in &nextest_profiles {
             let junit_path = PathBuf::from(format!("./target/nextest/{}/junit.xml", profile));
 
@@ -32,19 +36,41 @@ impl Xtask for NextestReport {
                 let test_suites = junit_parser::from_reader(xml_content.as_bytes())?;
 
                 // Add data from JUnit XML to total data structure
-                test_suites_total.tests += test_suites.tests;
-                test_suites_total.failures += test_suites.failures;
-                test_suites_total.skipped += test_suites.skipped;
                 test_suites_total.suites.extend(test_suites.suites);
+
+                vec_tests.push(test_suites.tests);
+                vec_failures.push(test_suites.failures);
+                vec_skipped.push(test_suites.skipped);
             }
         }
 
         // Generate markdown report
         let mut markdown = String::new();
         markdown.push_str("# Test Results\n\n");
-        markdown.push_str(&format!("- **Total Tests**: {}\n", test_suites_total.tests));
-        markdown.push_str(&format!("- **Failures**: {}\n", test_suites_total.failures));
-        markdown.push_str(&format!("- **Skipped**: {}\n", test_suites_total.skipped));
+        markdown.push_str(&format!(
+            "- **Total Tests**: {}\n",
+            vec_tests.iter().sum::<u64>()
+        ));
+        for (i, val) in nextest_profiles.iter().enumerate() {
+            markdown.push_str(&format!("  - {}: {}\n", val, vec_tests[i]));
+        }
+
+        markdown.push_str(&format!(
+            "- **Failures**: {}\n",
+            vec_failures.iter().sum::<u64>()
+        ));
+        for (i, val) in nextest_profiles.iter().enumerate() {
+            markdown.push_str(&format!("  - {}: {}\n", val, vec_failures[i]));
+        }
+
+        markdown.push_str(&format!(
+            "- **Skipped**: {}\n",
+            vec_skipped.iter().sum::<u64>()
+        ));
+        for (i, val) in nextest_profiles.iter().enumerate() {
+            markdown.push_str(&format!("  - {}: {}\n", val, vec_skipped[i]));
+        }
+
         markdown.push('\n');
 
         // Collect all failed test cases

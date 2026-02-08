@@ -18,7 +18,7 @@ static TEMPLATE: &str = r#"
     <td><a href="https://github.com/Azure/azihsm-sdk/commit/{ record.commit.id }">{ record.commit.id | trim_8 }</a></td>
     <td>{ record.commit.author | name_only }</td>
     <td>{ record.commit.title }</td>
-    <td>{{ if record.tests.windows_total }}{ record.tests.windows_total }{{ else }}build error{{ endif }}</td><td>{{ if record.tests.windows_skipped }}{ record.tests.windows_skipped }{{ else }}build error{{ endif }}</td><td>{{ if record.tests.linux_total }}{ record.tests.linux_total }{{ else }}build error{{ endif }}</td><td>{{ if record.tests.linux_skipped }}{ record.tests.linux_skipped }{{ else }}build error{{ endif }}</td>
+    <td>{ record.tests.windows_total }</td><td>{ record.tests.windows_skipped }</td><td>{ record.tests.linux_total }</td><td>{ record.tests.linux_skipped }</td>
   </tr>
 {{ endfor }}
 </table>
