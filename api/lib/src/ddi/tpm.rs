@@ -22,9 +22,6 @@ const BK3_AES_KEY_SIZE: usize = 32; // AES-256-CBC key size for BK3 data encrypt
 const AZIHSM_KEY_IV_RECORD_VERSION: u8 = 1;
 
 /// Packed AES key/IV record matching AZIHSM_KEY_IV_RECORD from UEFI firmware.
-///
-/// Defined in AziHsmDxe.h in hyperv.uefi:
-/// https://microsoft.visualstudio.com/OS/_git/hyperv.uefi?path=/MsvmPkg/AziHsmDxe/AziHsmDxe.h
 #[repr(C, packed)]
 #[derive(Debug, Clone, Copy, TryFromBytes, KnownLayout, Immutable)]
 struct AzihsmKeyIvRecord {
@@ -180,9 +177,7 @@ impl TpmBk3Unsealer {
             return Err(HsmError::InvalidArgument);
         }
 
-        // Parse sealed_data into TPM2B_PRIVATE and TPM2B_PUBLIC
-        // Unpacking is based on packing implemented on AziHsmTpmSealBuffer in AziHsmBKS3.c
-        // https://microsoft.visualstudio.com/OS/_git/hyperv.uefi?path=/MsvmPkg/AziHsmDxe/AziHsmBKS3.c
+        // Parse sealed_data into TPM2B_PRIVATE and TPM2B_PUBLIC blobs
         let mut offset = 0;
 
         let private_len =
