@@ -2,11 +2,11 @@ name: Rust
 
 on:
   push:
-    branches: [ main, dev, napi ]
+    branches: [ main ]
   pull_request:
-    branches: [ main, dev, napi ]
+    branches: [ main ]
   merge_group:
-    branches: [ main, dev, napi ]
+    branches: [ main ]
   schedule:
     - cron: '0 8 * * *'  # Daily at midnight PST (8 AM UTC)
 env:
