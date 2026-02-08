@@ -473,13 +473,13 @@ impl VaultInner {
         }
 
         // Cannot create a session_only key for the internal app
-        if app_id == APP_ID_FOR_INTERNAL_KEYS && flags.session_only() {
+        if app_id == APP_ID_FOR_INTERNAL_KEYS && flags.session() {
             tracing::error!(id = ?app_id, sess_id_or_key_tag, "Cannot create a session_only key for the internal app");
             Err(ManticoreError::InvalidArgument)?
         }
 
         // For session-only keys, convert virtual session ID to physical session ID
-        let actual_sess_id_or_key_tag = if flags.session_only() {
+        let actual_sess_id_or_key_tag = if flags.session() {
             self.session_table
                 .get_target_session(sess_id_or_key_tag)
                 .ok_or_else(|| {
@@ -489,7 +489,7 @@ impl VaultInner {
             sess_id_or_key_tag
         };
 
-        if !flags.session_only() && actual_sess_id_or_key_tag != 0 {
+        if !flags.session() && actual_sess_id_or_key_tag != 0 {
             let key_tag_exists = self.get_key_num_by_tag(app_id, actual_sess_id_or_key_tag);
             if key_tag_exists.is_ok() {
                 tracing::error!(key_tag = ?actual_sess_id_or_key_tag, "Key tag already exists");
@@ -638,9 +638,7 @@ impl VaultInner {
         let (ecc_key, _) = crate::crypto::ecc::generate_ecc(crate::crypto::ecc::EccCurve::P384)?;
 
         // Store key in vault without an associated app session
-        let key_flags = EntryFlags::new()
-            .with_allow_derive(true)
-            .with_generated(true);
+        let key_flags = EntryFlags::new().with_derive(true).with_local(true);
 
         let private_key_id = self.add_key(
             APP_ID_FOR_INTERNAL_KEYS,
@@ -660,9 +658,7 @@ impl VaultInner {
         let (ecc_key, _) = crate::crypto::ecc::generate_ecc(crate::crypto::ecc::EccCurve::P384)?;
 
         // Store key in vault without an associated app session
-        let key_flags = EntryFlags::new()
-            .with_allow_derive(true)
-            .with_generated(true);
+        let key_flags = EntryFlags::new().with_derive(true).with_local(true);
 
         let private_key_id = self.add_key(
             APP_ID_FOR_INTERNAL_KEYS,
@@ -889,7 +885,7 @@ impl VaultInner {
         }
 
         // Mark the keys as generated.
-        let entry_flags = EntryFlags::new().with_generated(true);
+        let entry_flags = EntryFlags::new().with_local(true);
 
         let key_kind = Kind::Session;
 
@@ -2192,7 +2188,7 @@ pub(crate) mod tests {
         }
 
         let mut flags = EntryFlags::default();
-        flags.set_session_only(true);
+        flags.set_session(true);
         // Add 2 session_only keys, key IDs 4 and key 5.
         for i in 0..2 {
             let result = vault
@@ -2244,7 +2240,7 @@ pub(crate) mod tests {
         let (_rsa_private_key, rsa_public_key) = generate_rsa(2048).unwrap();
 
         let mut flags = EntryFlags::default();
-        flags.set_session_only(true);
+        flags.set_session(true);
         // Add 3 session_only keys
         let key1 = vault
             .add_key(
@@ -2580,7 +2576,7 @@ pub(crate) mod tests {
         helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
 
         let (_rsa_private_key, rsa_public_key) = generate_rsa(2048).unwrap();
-        let flags = EntryFlags::new().with_generated(true);
+        let flags = EntryFlags::new().with_local(true);
         let kind = Kind::Rsa2kPublic;
 
         // Fill the vault so no space left
@@ -2656,7 +2652,7 @@ pub(crate) mod tests {
         helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
 
         let (_rsa_private_key, rsa_public_key) = generate_rsa(2048).unwrap();
-        let flags = EntryFlags::new().with_generated(true);
+        let flags = EntryFlags::new().with_local(true);
         let kind = Kind::Rsa2kPublic;
 
         // Fill the vault so no space left
@@ -2763,7 +2759,7 @@ pub(crate) mod tests {
         helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
 
         let mut flags = EntryFlags::default();
-        flags.set_session_only(true);
+        flags.set_session(true);
         let (_rsa_private_key, rsa_public_key) = generate_rsa(2048).unwrap();
         let result = vault.add_key(
             APP_ID_FOR_INTERNAL_KEYS,
@@ -2875,7 +2871,7 @@ pub(crate) mod tests {
         // Add session-only keys to both sessions
         let (_rsa_private_key, rsa_public_key) = generate_rsa(2048).unwrap();
         let mut flags = EntryFlags::default();
-        flags.set_session_only(true);
+        flags.set_session(true);
 
         let key_1 = vault
             .add_key(
@@ -2996,7 +2992,7 @@ pub(crate) mod tests {
 
         // Add session-only keys
         let mut flags = EntryFlags::default();
-        flags.set_session_only(true);
+        flags.set_session(true);
 
         let session_key_1 = vault
             .add_key(
@@ -3114,7 +3110,7 @@ pub(crate) mod tests {
         // Add session-only keys
         let (_rsa_private_key, rsa_public_key) = generate_rsa(2048).unwrap();
         let mut flags = EntryFlags::default();
-        flags.set_session_only(true);
+        flags.set_session(true);
 
         let _key_1 = vault
             .add_key(
@@ -3322,7 +3318,7 @@ pub(crate) mod tests {
 
         // Add ECC signing key to session 1
         let mut flags = EntryFlags::default();
-        flags.set_session_only(true);
+        flags.set_session(true);
 
         let key_1 = vault
             .add_key(

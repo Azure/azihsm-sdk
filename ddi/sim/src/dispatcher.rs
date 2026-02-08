@@ -1234,7 +1234,7 @@ impl Dispatcher {
         // Save the unwrapped key (PKCS#8 DER format) to the vault.
         // TODO: there're code repeat below from dispatch_der_key_import
         tracing::debug!("Saving the unwrapped key (PKCS#8 DER format) to the vault");
-        let mut flags = EntryFlags::new().with_imported(true);
+        let mut flags = EntryFlags::new().with_local(false);
 
         let key_class: KeyClass = req.wrapped_blob_key_class.try_into()?;
 
@@ -1250,15 +1250,21 @@ impl Dispatcher {
         }
 
         match usage {
-            DdiKeyUsage::SignVerify => flags.set_allow_sign_verify(true),
-            DdiKeyUsage::EncryptDecrypt => flags.set_allow_encrypt_decrypt(true),
-            DdiKeyUsage::Unwrap => flags.set_allow_unwrap(true),
-            DdiKeyUsage::Derive => flags.set_allow_derive(true),
+            DdiKeyUsage::SignVerify => {
+                flags.set_sign(true);
+                flags.set_verify(true);
+            }
+            DdiKeyUsage::EncryptDecrypt => {
+                flags.set_encrypt(true);
+                flags.set_decrypt(true);
+            }
+            DdiKeyUsage::Unwrap => flags.set_unwrap(true),
+            DdiKeyUsage::Derive => flags.set_derive(true),
             _ => Err(ManticoreError::InvalidArgument)?,
         }
 
         if req.key_properties.key_metadata.session() {
-            flags.set_session_only(true);
+            flags.set_session(true);
         }
 
         let key_num = app_session.import_key(
@@ -1382,15 +1388,21 @@ impl Dispatcher {
 
         let mut flags = EntryFlags::default();
         match usage {
-            DdiKeyUsage::SignVerify => flags.set_allow_sign_verify(true),
-            DdiKeyUsage::EncryptDecrypt => flags.set_allow_encrypt_decrypt(true),
-            DdiKeyUsage::Unwrap => flags.set_allow_unwrap(true),
-            DdiKeyUsage::Derive => flags.set_allow_derive(true),
+            DdiKeyUsage::SignVerify => {
+                flags.set_sign(true);
+                flags.set_verify(true);
+            }
+            DdiKeyUsage::EncryptDecrypt => {
+                flags.set_encrypt(true);
+                flags.set_decrypt(true);
+            }
+            DdiKeyUsage::Unwrap => flags.set_unwrap(true),
+            DdiKeyUsage::Derive => flags.set_derive(true),
             _ => Err(ManticoreError::InvalidArgument)?,
         }
 
         if req.key_properties.key_metadata.session() {
-            flags.set_session_only(true);
+            flags.set_session(true);
         }
 
         let (private_key_id, der_vec) =
@@ -1506,15 +1518,21 @@ impl Dispatcher {
 
         let mut flags = EntryFlags::default();
         match usage {
-            DdiKeyUsage::SignVerify => flags.set_allow_sign_verify(true),
-            DdiKeyUsage::EncryptDecrypt => flags.set_allow_encrypt_decrypt(true),
-            DdiKeyUsage::Unwrap => flags.set_allow_unwrap(true),
-            DdiKeyUsage::Derive => flags.set_allow_derive(true),
+            DdiKeyUsage::SignVerify => {
+                flags.set_sign(true);
+                flags.set_verify(true);
+            }
+            DdiKeyUsage::EncryptDecrypt => {
+                flags.set_encrypt(true);
+                flags.set_decrypt(true);
+            }
+            DdiKeyUsage::Unwrap => flags.set_unwrap(true),
+            DdiKeyUsage::Derive => flags.set_derive(true),
             _ => Err(ManticoreError::InvalidArgument)?,
         }
 
         if req.key_properties.key_metadata.session() {
-            flags.set_session_only(true);
+            flags.set_session(true);
         }
 
         // Check if req.pub_key_der_len is valid
@@ -1592,15 +1610,21 @@ impl Dispatcher {
 
         let mut flags = EntryFlags::default();
         match usage {
-            DdiKeyUsage::SignVerify => flags.set_allow_sign_verify(true),
-            DdiKeyUsage::EncryptDecrypt => flags.set_allow_encrypt_decrypt(true),
-            DdiKeyUsage::Unwrap => flags.set_allow_unwrap(true),
-            DdiKeyUsage::Derive => flags.set_allow_derive(true),
+            DdiKeyUsage::SignVerify => {
+                flags.set_sign(true);
+                flags.set_verify(true);
+            }
+            DdiKeyUsage::EncryptDecrypt => {
+                flags.set_encrypt(true);
+                flags.set_decrypt(true);
+            }
+            DdiKeyUsage::Unwrap => flags.set_unwrap(true),
+            DdiKeyUsage::Derive => flags.set_derive(true),
             _ => Err(ManticoreError::InvalidArgument)?,
         }
 
         if req.key_properties.key_metadata.session() {
-            flags.set_session_only(true);
+            flags.set_session(true);
         };
 
         let info_slice = req
@@ -1683,15 +1707,21 @@ impl Dispatcher {
 
         let mut flags = EntryFlags::default();
         match usage {
-            DdiKeyUsage::SignVerify => flags.set_allow_sign_verify(true),
-            DdiKeyUsage::EncryptDecrypt => flags.set_allow_encrypt_decrypt(true),
-            DdiKeyUsage::Unwrap => flags.set_allow_unwrap(true),
-            DdiKeyUsage::Derive => flags.set_allow_derive(true),
+            DdiKeyUsage::SignVerify => {
+                flags.set_sign(true);
+                flags.set_verify(true);
+            }
+            DdiKeyUsage::EncryptDecrypt => {
+                flags.set_encrypt(true);
+                flags.set_decrypt(true);
+            }
+            DdiKeyUsage::Unwrap => flags.set_unwrap(true),
+            DdiKeyUsage::Derive => flags.set_derive(true),
             _ => Err(ManticoreError::InvalidArgument)?,
         }
 
         if req.key_properties.key_metadata.session() {
-            flags.set_session_only(true);
+            flags.set_session(true);
         }
 
         // Convert option of array to option of slice
@@ -1801,15 +1831,21 @@ impl Dispatcher {
 
         let mut flags = EntryFlags::default();
         match usage {
-            DdiKeyUsage::SignVerify => flags.set_allow_sign_verify(true),
-            DdiKeyUsage::EncryptDecrypt => flags.set_allow_encrypt_decrypt(true),
-            DdiKeyUsage::Unwrap => flags.set_allow_unwrap(true),
+            DdiKeyUsage::SignVerify => {
+                flags.set_sign(true);
+                flags.set_verify(true);
+            }
+            DdiKeyUsage::EncryptDecrypt => {
+                flags.set_encrypt(true);
+                flags.set_decrypt(true);
+            }
+            DdiKeyUsage::Unwrap => flags.set_unwrap(true),
             DdiKeyUsage::Derive => Err(ManticoreError::InvalidPermissions)?,
             _ => Err(ManticoreError::InvalidArgument)?,
         }
 
         if req.key_properties.key_metadata.session() {
-            flags.set_session_only(true);
+            flags.set_session(true);
         }
 
         let key_id = app_session.aes_generate_key(req.key_size.try_into()?, flags, req.key_tag)?;
@@ -2834,11 +2870,7 @@ mod tests {
 
         // Create a session-only key
         let (session_key_id, _) = app_session
-            .ecc_generate_key(
-                EccCurve::P256,
-                EntryFlags::new().with_session_only(true),
-                None,
-            )
+            .ecc_generate_key(EccCurve::P256, EntryFlags::new().with_session(true), None)
             .expect("Failed to generate session key");
 
         // Verify keys exist before migration
