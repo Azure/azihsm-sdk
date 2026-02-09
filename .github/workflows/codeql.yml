@@ -2,9 +2,9 @@ name: "CodeQL Advanced"
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ main, dev ]
   pull_request:
-    branches: [ "main" ]
+    branches: [ main, dev ]
     paths-ignore:
       - '**/*.md'
   schedule:
@@ -58,6 +58,8 @@ jobs:
         languages: ${{ matrix.language }}
         build-mode: ${{ matrix.build-mode }}
         queries: security-extended,security-and-quality
+      env:
+        CODEQL_EXTRACTOR_RUST_OPTION_CARGO_CFG_OVERRIDES: "-test" 
 
     - name: Run manual build steps
       if: matrix.build-mode == 'manual'
