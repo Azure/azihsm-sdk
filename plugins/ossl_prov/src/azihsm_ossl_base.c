@@ -381,11 +381,13 @@ static AZIHSM_CONFIG parse_provider_config(
     OSSL_FUNC_core_get_params_fn *get_params
 )
 {
-    AZIHSM_CONFIG config = {
-        NULL, NULL, NULL, NULL, NULL,
-        AZIHSM_API_REVISION_DEFAULT_MAJOR,
-        AZIHSM_API_REVISION_DEFAULT_MINOR
-    };
+    AZIHSM_CONFIG config = { NULL,
+                             NULL,
+                             NULL,
+                             NULL,
+                             NULL,
+                             AZIHSM_API_REVISION_DEFAULT_MAJOR,
+                             AZIHSM_API_REVISION_DEFAULT_MINOR };
     const char *bmk_path = NULL;
     const char *muk_path = NULL;
     const char *mobk_path = NULL;
@@ -434,9 +436,13 @@ static AZIHSM_CONFIG parse_provider_config(
      * Credentials: environment variable > hardcoded default (not in openssl.cnf)
      * Key paths: openssl.cnf > hardcoded default */
     config.credentials_id_path = get_path_from_env_or_default(
-        AZIHSM_ENV_CREDENTIALS_ID_PATH, AZIHSM_DEFAULT_CREDENTIALS_ID_PATH);
+        AZIHSM_ENV_CREDENTIALS_ID_PATH,
+        AZIHSM_DEFAULT_CREDENTIALS_ID_PATH
+    );
     config.credentials_pin_path = get_path_from_env_or_default(
-        AZIHSM_ENV_CREDENTIALS_PIN_PATH, AZIHSM_DEFAULT_CREDENTIALS_PIN_PATH);
+        AZIHSM_ENV_CREDENTIALS_PIN_PATH,
+        AZIHSM_DEFAULT_CREDENTIALS_PIN_PATH
+    );
     if (config.bmk_path == NULL)
     {
         config.bmk_path = OPENSSL_strdup(AZIHSM_DEFAULT_BMK_PATH);
@@ -461,7 +467,9 @@ OSSL_STATUS OSSL_provider_init(
 )
 {
     AZIHSM_OSSL_PROV_CTX *ctx;
-    AZIHSM_CONFIG config = { NULL, NULL, NULL, NULL, NULL };
+    AZIHSM_CONFIG config = {
+        NULL, NULL, NULL, NULL, NULL,
+    };
     azihsm_status status;
     const OSSL_DISPATCH *in_iter;
 

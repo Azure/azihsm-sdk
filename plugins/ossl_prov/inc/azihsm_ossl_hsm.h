@@ -40,11 +40,11 @@ extern "C"
 /* Provider configuration structure */
 typedef struct
 {
-    char *credentials_id_path;  /* Path to credentials ID file */
-    char *credentials_pin_path; /* Path to credentials PIN file */
-    char *bmk_path;             /* Path to BMK file */
-    char *muk_path;             /* Path to MUK file */
-    char *mobk_path;            /* Path to MOBK file */
+    char *credentials_id_path;   /* Path to credentials ID file */
+    char *credentials_pin_path;  /* Path to credentials PIN file */
+    char *bmk_path;              /* Path to BMK file */
+    char *muk_path;              /* Path to MUK file */
+    char *mobk_path;             /* Path to MOBK file */
     uint16_t api_revision_major; /* API revision major version */
     uint16_t api_revision_minor; /* API revision minor version */
 } AZIHSM_CONFIG;
