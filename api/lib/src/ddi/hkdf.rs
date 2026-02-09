@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 //! HKDF key derivation operations at the DDI layer.
 //!
@@ -69,7 +70,7 @@ pub(crate) fn hkdf_derive(
     })?;
 
     let session = shared_secret.session();
-    let mut key_id = HsmKeyIdGuard::new(&session, resp.data.key_id);
+    let key_id = HsmKeyIdGuard::new(&session, resp.data.key_id);
 
     let dev_key_props = HsmMaskedKey::to_key_props(resp.data.masked_key.as_slice())?;
     // Validate that the device returned properties match the requested properties.
@@ -77,10 +78,7 @@ pub(crate) fn hkdf_derive(
         Err(HsmError::InvalidKeyProps)?;
     }
 
-    //disarm the key guard to avoid deletion before returning
-    key_id.disarm();
-
-    Ok((key_id.key_id(), dev_key_props))
+    Ok((key_id.release(), dev_key_props))
 }
 
 impl TryFrom<&HsmKeyProps> for DdiKeyType {

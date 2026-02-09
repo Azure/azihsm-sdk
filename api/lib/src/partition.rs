@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 //! HSM partition management.
 //!
@@ -8,6 +9,7 @@
 
 use std::sync::Arc;
 
+use azihsm_ddi::DdiDev;
 use parking_lot::RwLock;
 use tracing::*;
 
@@ -109,6 +111,52 @@ impl HsmCredentials {
     /// Returns the application PIN.
     pub fn pin(&self) -> &[u8; 16] {
         &self.pin
+    }
+}
+
+/// Owner backup key config (OBK/BK3) containing source and optional OBK.
+#[derive(Debug, Clone)]
+pub struct HsmOwnerBackupKeyConfig<'a> {
+    /// Source of the OBK
+    key_source: HsmOwnerBackupKeySource,
+    /// Optional OBK (required when source is Caller, ignored otherwise)
+    key: Option<&'a [u8]>,
+}
+
+impl<'a> HsmOwnerBackupKeyConfig<'a> {
+    /// Creates a new owner backup key config instance.
+    ///
+    /// # Arguments
+    ///
+    /// * `source` - Source of the OBK
+    /// * `obk` - OBK data provided by the caller
+    ///
+    /// # Returns
+    ///
+    /// A new `HsmOwnerBackupKeyConfig` instance with the specified source and optional key.
+    pub fn new(source: HsmOwnerBackupKeySource, obk: Option<&'a [u8]>) -> Self {
+        Self {
+            key_source: source,
+            key: obk,
+        }
+    }
+
+    /// Returns the owner backup key source.
+    ///
+    /// # Returns
+    ///
+    /// The source of the owner backup key.
+    pub fn key_source(&self) -> HsmOwnerBackupKeySource {
+        self.key_source
+    }
+
+    /// Returns the owner backup key.
+    ///
+    /// # Returns
+    ///
+    /// Optional reference to the OBK.
+    pub fn key(&self) -> Option<&'a [u8]> {
+        self.key
     }
 }
 
@@ -316,7 +364,7 @@ impl HsmPartition {
     /// * `creds` - Application credentials (ID and PIN)
     /// * `bmk` - Optional backup masking key
     /// * `muk` - Optional masked unwrapping key
-    /// * `mobk` - Optional masked owner backup key
+    /// * `obk_config` - Owner backup key (OBK) configuration
     ///
     /// # Errors
     ///
@@ -324,13 +372,14 @@ impl HsmPartition {
     /// - Credentials are invalid
     /// - API revision retrieval fails
     /// - Partition initialization fails
+    /// - OBK is missing when obk_info source is Caller
     #[instrument(skip_all,  fields(path = self.path().as_str()), err)]
     pub fn init(
         &self,
         creds: HsmCredentials,
         bmk: Option<&[u8]>,
         muk: Option<&[u8]>,
-        mobk: Option<&[u8]>,
+        obk_config: HsmOwnerBackupKeyConfig<'_>,
         pota_endorsement: HsmPotaEndorsement<'_>,
     ) -> HsmResult<()> {
         let (bmk, mobk) = self.with_dev(|dev| {
@@ -340,7 +389,7 @@ impl HsmPartition {
                 creds,
                 bmk,
                 muk,
-                mobk,
+                obk_config,
                 pota_endorsement,
             )?;
             Ok((bmk, mobk))
@@ -382,6 +431,25 @@ impl HsmPartition {
         let (id, app_id) =
             self.with_dev(|dev| ddi::open_session(dev, api_rev, credentials, seed))?;
         Ok(HsmSession::new(id, app_id, api_rev, self.clone()))
+    }
+
+    /// Resets the HSM partition state.
+    ///
+    /// including established credentials and active sessions. This is useful for
+    /// test cleanup and recovery scenarios.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the reset operation fails.
+    #[instrument(skip_all, err, fields(path = self.path().as_str()))]
+    pub fn reset(&self) -> HsmResult<()> {
+        self.with_dev(|dev| {
+            dev.simulate_nssr_after_lm()
+                .map_err(|_| HsmError::DdiCmdFailure)
+        })?;
+        // Clear cached masked keys after reset
+        self.inner().write().clear_masked_keys();
+        Ok(())
     }
 
     /// Returns the API revision range supported by this partition.
@@ -679,6 +747,12 @@ impl HsmPartitionInner {
     pub(crate) fn set_masked_keys(&mut self, bmk: Vec<u8>, mobk: Vec<u8>) {
         self.bmk = bmk;
         self.mobk = mobk;
+    }
+
+    /// Clears the cached masked keys after partition reset.
+    pub(crate) fn clear_masked_keys(&mut self) {
+        self.bmk.clear();
+        self.mobk.clear();
     }
 
     /// Returns the backup masking key (BMK).

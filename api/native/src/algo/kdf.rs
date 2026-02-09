@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 use azihsm_api::*;
 
@@ -174,6 +175,10 @@ pub(crate) fn hkdf_derive_key(
         HsmKeyKind::Aes => {
             let aes_key: HsmAesKey = derived_key.try_into()?;
             HANDLE_TABLE.alloc_handle(HandleType::AesKey, Box::new(aes_key))
+        }
+        HsmKeyKind::AesGcm => {
+            let aes_key: HsmAesGcmKey = derived_key.try_into()?;
+            HANDLE_TABLE.alloc_handle(HandleType::AesGcmKey, Box::new(aes_key))
         }
 
         HsmKeyKind::HmacSha256 | HsmKeyKind::HmacSha384 | HsmKeyKind::HmacSha512 => {

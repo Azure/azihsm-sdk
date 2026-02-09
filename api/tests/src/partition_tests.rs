@@ -1,8 +1,10 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 use azihsm_crypto::pem_to_der;
 
 use super::*;
+use crate::utils::partition::*;
 
 #[api_test]
 fn test_parittion_info_list() {
@@ -72,9 +74,17 @@ fn test_partition_init() {
     for part_info in part_mgr.iter() {
         let part = HsmPartitionManager::open_partition(&part_info.path)
             .expect("Failed to open the parition");
-        let creds = HsmCredentials::new(&[1u8; 16], &[2u8; 16]);
+        //reset before init
+        part.reset().expect("Partition reset failed");
+        //init with dummy creds
+        let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
+        let obk_info = if std::env::var("AZIHSM_USE_TPM").is_ok() {
+            HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, None)
+        } else {
+            HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Caller, Some(&TEST_OBK))
+        };
         let pota_endorsement = HsmPotaEndorsement::new(HsmPotaEndorsementSource::Random, None);
-        part.init(creds, None, None, None, pota_endorsement)
+        part.init(creds, None, None, obk_info, pota_endorsement)
             .expect("Partition init failed");
     }
 }

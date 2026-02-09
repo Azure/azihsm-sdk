@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 //! AES (Advanced Encryption Standard) Cipher Block Chaining (CBC) implementation.
 //!

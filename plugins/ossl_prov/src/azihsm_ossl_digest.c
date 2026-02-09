@@ -1,4 +1,6 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 #include <azihsm.h>
 #include <openssl/core_dispatch.h>
 #include <openssl/core_names.h>
@@ -228,6 +230,8 @@ static int azihsm_ossl_digest(
 {
     /* One-shot digest operations are not supported by this provider implementation. */
     ERR_raise(ERR_LIB_PROV, PROV_R_NOT_SUPPORTED);
+
+    return OSSL_FAILURE;
 }
 
 /* Digest Parameter Functions */

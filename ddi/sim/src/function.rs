@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 //! Module for Function. This is the root level data structure of the HSM.
 //! It maintains state relevant at the virtual function level or operations which don't need a session.
@@ -22,6 +23,7 @@ use azihsm_ddi_types::DDI_MAX_KEY_LABEL_LENGTH;
 use parking_lot::RwLock;
 use tracing::instrument;
 use uuid::Uuid;
+use zerocopy::FromBytes;
 
 use crate::crypto::aeshmac::AesHmacKey;
 use crate::crypto::aeshmac::AesHmacOp;
@@ -426,8 +428,9 @@ impl FunctionInner {
         // Add the key to the vault without an associated app session
         let flag = EntryFlags::new()
             .with_is_attestation_key(true)
-            .with_allow_sign_verify(true)
-            .with_generated(true);
+            .with_sign(true)
+            .with_verify(true)
+            .with_local(true);
 
         let private_key_num = vault.add_key(
             APP_ID_FOR_INTERNAL_KEYS,
@@ -454,8 +457,9 @@ impl FunctionInner {
 
         // Store key in vault without an associated app session
         let key_flags = EntryFlags::new()
-            .with_allow_unwrap(true)
-            .with_generated(true);
+            .with_unwrap(true)
+            .with_wrap(true)
+            .with_local(true);
 
         let private_key_id = vault.add_key(
             APP_ID_FOR_INTERNAL_KEYS,
@@ -506,8 +510,9 @@ impl FunctionInner {
 
         // Store key in vault without an associated app session
         let key_flags = EntryFlags::new()
-            .with_allow_encrypt_decrypt(true)
-            .with_generated(true);
+            .with_encrypt(true)
+            .with_decrypt(true)
+            .with_local(true);
 
         let key_id = vault.add_key(
             APP_ID_FOR_INTERNAL_KEYS,
@@ -1238,9 +1243,9 @@ impl FunctionStateInner {
             key_attributes: DdiMaskedKeyAttributes {
                 blob: {
                     let mut blob = [0u8; 32];
-                    blob[0..2].copy_from_slice(&(u16::from(entry.flags())).to_le_bytes());
-                    blob[2..4].copy_from_slice(&sess_id_or_key_tag.to_le_bytes());
-                    blob[4..20].copy_from_slice(&app_id.into_bytes());
+                    blob[0..8].copy_from_slice(&(u64::from(entry.flags())).to_le_bytes());
+                    blob[8..10].copy_from_slice(&sess_id_or_key_tag.to_le_bytes());
+                    blob[10..26].copy_from_slice(&app_id.into_bytes());
                     blob
                 },
             },
@@ -1303,9 +1308,8 @@ impl FunctionStateInner {
             ERR
         })?;
 
-        let flags_bytes = &metadata.key_attributes.blob[0..2];
-        let flags = EntryFlags::from(u16::from_le_bytes([flags_bytes[0], flags_bytes[1]]));
-        Ok(flags.session_only())
+        let flags = Self::entry_flags_from_bytes(&metadata.key_attributes.blob)?;
+        Ok(flags.session())
     }
 
     fn unmask_and_import_key_internal(
@@ -1337,20 +1341,19 @@ impl FunctionStateInner {
             })?;
 
         // Extract original entry information from metadata
-        let flags_bytes = &metadata.key_attributes.blob[0..2];
-        let flags = EntryFlags::from(u16::from_le_bytes([flags_bytes[0], flags_bytes[1]]));
+        let flags = Self::entry_flags_from_bytes(&metadata.key_attributes.blob)?;
 
-        let sess_id_or_key_tag_bytes = &metadata.key_attributes.blob[2..4];
+        let sess_id_or_key_tag_bytes = &metadata.key_attributes.blob[8..10];
         let sess_id_or_key_tag =
             u16::from_le_bytes([sess_id_or_key_tag_bytes[0], sess_id_or_key_tag_bytes[1]]);
 
-        let app_id_bytes = &metadata.key_attributes.blob[4..20];
+        let app_id_bytes = &metadata.key_attributes.blob[10..26];
         let extracted_app_id = Uuid::from_bytes(app_id_bytes.try_into().map_err(|err| {
             tracing::error!("app_id_bytes.try_into() error {:?}", err);
             ERR
         })?);
 
-        if flags.session_only() {
+        if flags.session() {
             // Verify session ID matches
             if sess_id_or_key_tag != session_id {
                 tracing::error!(
@@ -1403,6 +1406,14 @@ impl FunctionStateInner {
             "Key unmasked and imported successfully"
         );
         Ok(key_num)
+    }
+
+    /// Extract EntryFlags from the first 8 bytes of the provided buffer
+    fn entry_flags_from_bytes(buf: &[u8]) -> Result<EntryFlags, ManticoreError> {
+        const ENTRY_FLAGS_SIZE: usize = size_of::<u64>();
+        let (bytes, _) = <[u8; ENTRY_FLAGS_SIZE]>::read_from_prefix(buf)
+            .map_err(|_| ManticoreError::MaskedKeyDecodeFailed)?;
+        Ok(EntryFlags::from(u64::from_le_bytes(bytes)))
     }
 
     fn get_certificate(&mut self) -> Result<Vec<u8>, ManticoreError> {
@@ -1555,7 +1566,7 @@ mod tests {
         assert!(entry.allow_sign_verify());
         assert!(!entry.allow_unwrap());
 
-        assert!(entry.generated());
+        assert!(entry.local());
         assert!(!entry.imported());
         assert!(!entry.session_only());
 
@@ -1585,7 +1596,7 @@ mod tests {
         assert!(!entry.allow_sign_verify());
         assert!(entry.allow_unwrap());
 
-        assert!(entry.generated());
+        assert!(entry.local());
         assert!(!entry.imported());
         assert!(!entry.session_only());
 
@@ -1839,7 +1850,7 @@ mod tests {
         let session_id = session_result.session_id;
 
         // Create a session-only key
-        let key_flags = EntryFlags::default().with_session_only(true);
+        let key_flags = EntryFlags::default().with_session(true);
         let key_id = vault
             .add_key(
                 Uuid::from_bytes(TEST_CRED_ID),

@@ -1,6 +1,9 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 language = "C"
 
-header = "/* Copyright (C) Microsoft Corporation. All rights reserved. */"
+header = "/*\r * Copyright (c) Microsoft Corporation.\r * Licensed under the MIT License\r */"
 
 cpp_compat = true
 
@@ -32,6 +35,7 @@ usize_is_size_t = true
 exclude = []
 include = [
   "AzihsmAlgoAesCbcParams",
+  "AzihsmAlgoAesGcmParams",
   "AzihsmAlgoAesXtsParams",
   "AzihsmAlgoEcdhParams",
   "AzihsmAlgoHkdfParams",
@@ -49,8 +53,11 @@ include = [
 item_types = ["constants", "enums", "functions", "structs", "typedefs"]
 
 [export.rename]
+"AES_GCM_IV_SIZE" = "AZIHSM_AES_GCM_IV_SIZE"
+"AES_GCM_TAG_SIZE" = "AZIHSM_AES_GCM_TAG_SIZE"
 "AzihsmAlgo" = "azihsm_algo"
 "AzihsmAlgoAesCbcParams" = "azihsm_algo_aes_cbc_params"
+"AzihsmAlgoAesGcmParams" = "azihsm_algo_aes_gcm_params"
 "AzihsmAlgoAesXtsParams" = "azihsm_algo_aes_xts_params"
 "AzihsmAlgoEcdhParams" = "azihsm_algo_ecdh_params"
 "AzihsmAlgoHkdfParams" = "azihsm_algo_hkdf_params"
@@ -71,6 +78,8 @@ item_types = ["constants", "enums", "functions", "structs", "typedefs"]
 "AzihsmKeyPropId" = "azihsm_key_prop_id"
 "AzihsmKeyPropList" = "azihsm_key_prop_list"
 "AzihsmMgf1Id" = "azihsm_mgf1_id"
+"AzihsmOwnerBackupKeyConfig" = "azihsm_owner_backup_key_config"
+"AzihsmOwnerBackupKeySource" = "azihsm_owner_backup_key_source"
 "AzihsmPartProp" = "azihsm_part_prop"
 "AzihsmPartPropId" = "azihsm_part_prop_id"
 "AzihsmPartType" = "azihsm_part_type"
@@ -86,6 +95,7 @@ item_types = ["constants", "enums", "functions", "structs", "typedefs"]
 "HsmError" = "azihsm_status"
 "HsmKeyClass" = "azihsm_key_class"
 "HsmKeyKind" = "azihsm_key_kind"
+"HsmOwnerBackupKeySource" = "azihsm_owner_backup_key_source"
 "HsmPartType" = "azihsm_part_type"
 "HsmPotaEndorsementSource" = "azihsm_pota_endorsement_source"
 

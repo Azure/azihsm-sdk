@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 //! Minimal TPM2 type definitions with binary (un)marshalling helpers.
 //! These are intentionally partial and only cover what current code paths need.
@@ -424,7 +425,7 @@ impl CreatePrimaryResponse {
     }
 }
 
-// TPM2_Load --------------------------------------------------------------
+// Load Command
 define_handle_struct!(LoadCommandHandles { parent_handle });
 
 #[derive(Debug, Clone)]
@@ -539,7 +540,7 @@ impl LoadResponse {
     }
 }
 
-// TPM2_Unseal ------------------------------------------------------------
+// Unseal Command
 define_handle_struct!(UnsealCommandHandles { item_handle });
 
 #[derive(Debug, Clone, Default)]
@@ -627,27 +628,7 @@ impl UnsealResponse {
     }
 }
 
-// TPM2_Create (Seal) ----------------------------------------------------
-define_handle_struct!(CreateCommandHandles { parent_handle });
-
-#[derive(Debug, Clone)]
-pub struct CreateCommandParameters {
-    pub in_sensitive: Tpm2bSensitiveCreate,
-    pub in_public: Tpm2bPublic,
-    pub outside_info: Tpm2bBytes,
-    pub creation_pcr: PcrSelectionList,
-}
-
-impl TpmMarshal for CreateCommandParameters {
-    fn marshal(&self, buf: &mut Vec<u8>) {
-        self.in_sensitive.marshal(buf);
-        self.in_public.marshal(buf);
-        self.outside_info.marshal(buf);
-        self.creation_pcr.marshal(buf);
-    }
-}
-
-// TPM2_FlushContext ------------------------------------------------------
+// FlushContext Command
 define_handle_struct!(FlushContextCommandHandles { flush_handle });
 
 #[derive(Debug, Clone, Default)]
@@ -675,6 +656,26 @@ impl FlushContextCommand {
 
     pub fn handle_values(&self) -> [u32; 1] {
         self.handles.to_array()
+    }
+}
+
+// Create Command
+define_handle_struct!(CreateCommandHandles { parent_handle });
+
+#[derive(Debug, Clone)]
+pub struct CreateCommandParameters {
+    pub in_sensitive: Tpm2bSensitiveCreate,
+    pub in_public: Tpm2bPublic,
+    pub outside_info: Tpm2bBytes,
+    pub creation_pcr: PcrSelectionList,
+}
+
+impl TpmMarshal for CreateCommandParameters {
+    fn marshal(&self, buf: &mut Vec<u8>) {
+        self.in_sensitive.marshal(buf);
+        self.in_public.marshal(buf);
+        self.outside_info.marshal(buf);
+        self.creation_pcr.marshal(buf);
     }
 }
 

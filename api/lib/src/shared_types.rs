@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 //! Common types used across the HSM library.
 //!
@@ -56,6 +57,9 @@ pub enum HsmKeyKind {
 
     /// HMAC SHA 512
     HmacSha512 = 9,
+
+    /// AES GCM symmetric key kind.
+    AesGcm = 10,
 }
 
 /// Elliptic Curve Cryptography (ECC) curve identifier.
@@ -108,6 +112,20 @@ pub enum HsmPartType {
 
     /// Physical hardware partition.
     Physical = 2,
+}
+
+/// Owner backup key source.
+///
+/// Specifies the source of the owner backup key (OBK) during partition initialization.
+#[repr(u32)]
+#[open_enum]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, IntoBytes, Immutable)]
+pub enum HsmOwnerBackupKeySource {
+    /// Caller provided backup key.
+    Caller = 1,
+
+    /// TPM-sealed backup key (retrieved from device and unsealed).
+    Tpm = 2,
 }
 
 /// HSM partition owner trust anchor (aka POTA) endorsement source.

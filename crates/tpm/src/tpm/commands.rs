@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 use std::io;
 
@@ -130,6 +131,7 @@ impl<T: RawTpm> TpmCommandExt for T {
                 "CreatePrimary short response",
             ));
         }
+
         // Response layout: header (10) + handle (4) + paramSize (4) + parameters.
         let parsed = CreatePrimaryResponse::from_bytes(&resp)?;
         let public_bytes = {

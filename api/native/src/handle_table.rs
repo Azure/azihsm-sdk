@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 #![allow(dead_code)]
 use std::collections::HashMap;
 
@@ -13,9 +14,12 @@ pub(crate) enum HandleType {
     Partition,
     Session,
     AesKey,
+    AesGcmKey,
     AesXtsKey,
     AesCbcEncryptCtx,
     AesCbcDecryptCtx,
+    AesGcmEncryptCtx,
+    AesGcmDecryptCtx,
     AesXtsEncryptCtx,
     AesXtsDecryptCtx,
     EccPrivKey,

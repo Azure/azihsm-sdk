@@ -254,12 +254,13 @@ Key type values
 #define AZIHSM_KEY_TYPE_EC 2
 #define AZIHSM_KEY_TYPE_AES 3
 #define AZIHSM_KEY_TYPE_AES_XTS 4
-#define AZIHSM_KEY_TYPE_GENERIC 5
-#define AZIHSM_KEY_TYPE_HMAC_SHA1 6
-#define AZIHSM_KEY_TYPE_HMAC_SHA256 7
-#define AZIHSM_KEY_TYPE_HMAC_SHA384 8
-#define AZIHSM_KEY_TYPE_HMAC_SHA512 9
-#define AZIHSM_KEY_TYPE_MASKING 10
+#define AZIHSM_KEY_TYPE_AES_GCM 5
+#define AZIHSM_KEY_TYPE_GENERIC 6
+#define AZIHSM_KEY_TYPE_HMAC_SHA1 7
+#define AZIHSM_KEY_TYPE_HMAC_SHA256 8
+#define AZIHSM_KEY_TYPE_HMAC_SHA384 9
+#define AZIHSM_KEY_TYPE_HMAC_SHA512 10
+#define AZIHSM_KEY_TYPE_MASKING 11
 ```
 
 ### AZIHSM_KEY_PROP_ID_XXX
@@ -320,6 +321,8 @@ Algorithm ID type values
 #define AZIHSM_ALGO_ID_AES_CBC_PAD 0x00030003
 #define AZIHSM_ALGO_ID_AES_XTS_KEY_GEN 0x00030004
 #define AZIHSM_ALGO_ID_AES_XTS 0x00030005
+#define AZIHSM_ALGO_ID_AES_GCM_KEY_GEN 0x00030006
+#define AZIHSM_ALGO_ID_AES_GCM 0x00030007
 #define AZIHSM_ALGO_ID_SHA1 0x00040001
 #define AZIHSM_ALGO_ID_SHA256 0x00040002
 #define AZIHSM_ALGO_ID_SHA384 0x00040003
@@ -610,6 +613,24 @@ struct azihsm_algo_aes_cbc_params {
 | Field | Type                              | Description                                       |
 | ----- | --------------------------------- | ------------------------------------------------- |
 | iv    | [azihsm_buffer *](#azihsm_buffer) | initialization vector. must be 16 bytes    &nbsp; |
+
+### azihsm_algo_aes_gcm_params
+
+Parameters for AES GCM Algorithm
+
+```cpp
+struct azihsm_algo_aes_gcm_params {
+    uint8_t iv[12];
+    uint8_t tag[16];
+    azihsm_buffer *aad;
+};
+```
+
+| Field | Type                              | Description                                                               |
+| ----- | --------------------------------- | ------------------------------------------------------------------------- |
+| iv    | uint8_t[12]                       | initialization vector. must be 12 bytes                            &nbsp; |
+| tag   | uint8_t[16]                       | authentication tag (16 bytes). required for decrypt                &nbsp; |
+| aad   | [azihsm_buffer *](#azihsm_buffer) | additional authenticated data (optional). may be NULL             &nbsp;  |
 
 
 ### azihsm_algo_aes_xts_params

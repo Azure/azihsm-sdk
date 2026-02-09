@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 #include <azihsm_api.h>
 #include <gtest/gtest.h>
@@ -163,19 +164,43 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_parent)
 {
     cleanup_temp_files();
     part_list_.for_each_part([](std::vector<azihsm_char> &path) {
-        auto partition = PartitionHandle(path);
+        azihsm_str path_str = { path.data(), static_cast<uint32_t>(path.size()) };
+        azihsm_handle part_handle = 0;
+        auto err = azihsm_part_open(&path_str, &part_handle);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        auto part_guard = scope_guard::make_scope_exit([&] {
+            ASSERT_EQ(azihsm_part_close(part_handle), AZIHSM_STATUS_SUCCESS);
+        });
 
         azihsm_api_rev api_rev{ 1, 0 };
         azihsm_credentials creds{};
         std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
         std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
 
-        auto bmk = get_part_prop_bytes(partition.get(), AZIHSM_PART_PROP_ID_BACKUP_MASKING_KEY);
-        auto mobk =
-            get_part_prop_bytes(partition.get(), AZIHSM_PART_PROP_ID_MASKED_OWNER_BACKUP_KEY);
+        // User-provided owner backup key (OBK)
+        std::array<uint8_t, 48> obk{};
+        std::random_device rd;
+        for (auto &b : obk)
+        {
+            b = static_cast<uint8_t>(rd());
+        }
+        azihsm_buffer obk_buf = { obk.data(), static_cast<uint32_t>(obk.size()) };
+        azihsm_owner_backup_key_config backup_config{};
+        backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER;
+        backup_config.owner_backup_key = &obk_buf;
+
+        // POTA endorsement with random data
+        struct azihsm_buffer pota_endorsement_buf = { .ptr = nullptr, .len = 0 };
+        struct azihsm_pota_endorsement pota_endorsement = { .source =
+                                                            AZIHSM_POTA_ENDORSEMENT_SOURCE_RANDOM,
+                                                        .endorsement = nullptr };
+
+        err = azihsm_part_init(part_handle, &creds, nullptr, nullptr, &backup_config, &pota_endorsement);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        auto bmk = get_part_prop_bytes(part_handle, AZIHSM_PART_PROP_ID_BACKUP_MASKING_KEY);
 
         std::array<uint8_t, 48> seed{};
-        std::random_device rd;
         for (auto &b : seed)
         {
             b = static_cast<uint8_t>(rd());
@@ -183,7 +208,7 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_parent)
         azihsm_buffer seed_buf = { seed.data(), static_cast<uint32_t>(seed.size()) };
 
         azihsm_handle sess_handle = 0;
-        auto err = azihsm_sess_open(partition.get(), &api_rev, &creds, &seed_buf, &sess_handle);
+        err = azihsm_sess_open(part_handle, &api_rev, &creds, &seed_buf, &sess_handle);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         auto sess_guard = scope_guard::make_scope_exit([&sess_handle] {
@@ -231,7 +256,7 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_parent)
         ASSERT_TRUE(out.is_open());
         write_blob(out, path_bytes);
         write_blob(out, bmk);
-        write_blob(out, mobk);
+        write_blob(out, std::vector<uint8_t>(obk.begin(), obk.end()));
         write_blob(out, std::vector<uint8_t>(seed.begin(), seed.end()));
         write_blob(out, message);
         write_blob(out, signature);
@@ -268,7 +293,7 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_child)
 
     auto path_bytes = read_blob(in);
     auto bmk = read_blob(in);
-    auto mobk = read_blob(in);
+    auto obk = read_blob(in);
     auto seed = read_blob(in);
     auto message = read_blob(in);
     auto signature = read_blob(in);
@@ -293,16 +318,23 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_child)
     std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
     azihsm_api_rev api_rev{ 1, 0 };
 
-    azihsm_buffer bmk_buf = { bmk.data(), static_cast<uint32_t>(bmk.size()) };
-    azihsm_buffer mobk_buf = { mobk.data(), static_cast<uint32_t>(mobk.size()) };
+    // Reset partition before initialization to clear any previous state
+    auto reset_err = azihsm_part_reset(part_handle);
+    ASSERT_EQ(reset_err, AZIHSM_STATUS_SUCCESS);
 
+    azihsm_buffer bmk_buf = { bmk.data(), static_cast<uint32_t>(bmk.size()) };
+    azihsm_buffer obk_buf = { obk.data(), static_cast<uint32_t>(obk.size()) };
+
+    azihsm_owner_backup_key_config backup_config{};
+    backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER;
+    backup_config.owner_backup_key = &obk_buf;
     struct azihsm_buffer pota_endorsement_buf = { .ptr = nullptr, .len = 0 };
     struct azihsm_pota_endorsement pota_endorsement = { .source =
                                                             AZIHSM_POTA_ENDORSEMENT_SOURCE_RANDOM,
                                                         .endorsement = nullptr };
 
     auto init_err =
-        azihsm_part_init(part_handle, &creds, &bmk_buf, nullptr, &mobk_buf, &pota_endorsement);
+        azihsm_part_init(part_handle, &creds, &bmk_buf, nullptr, &backup_config, &pota_endorsement);
     ASSERT_EQ(init_err, AZIHSM_STATUS_SUCCESS);
 
     azihsm_buffer seed_buf = { seed.data(), static_cast<uint32_t>(seed.size()) };
@@ -316,11 +348,7 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_child)
     });
 
     auto bmk_actual = get_part_prop_bytes(part_handle, AZIHSM_PART_PROP_ID_BACKUP_MASKING_KEY);
-    auto mobk_actual =
-        get_part_prop_bytes(part_handle, AZIHSM_PART_PROP_ID_MASKED_OWNER_BACKUP_KEY);
-
     ASSERT_EQ(bmk_actual, bmk);
-    ASSERT_EQ(mobk_actual, mobk);
 
     azihsm_buffer masked_buf = { masked_key.data(), static_cast<uint32_t>(masked_key.size()) };
     auto_key priv_key;

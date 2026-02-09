@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 //! HKDF (HMAC-based Extract-and-Expand Key Derivation Function) implementation.
 //!

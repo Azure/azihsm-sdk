@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 #ifndef PARTITION_HANDLE_HPP
 #define PARTITION_HANDLE_HPP
@@ -94,6 +95,17 @@ class PartitionHandle
 
         if (initialized.find(index) == initialized.end())
         {
+            // Reset before initialization to clear any previous state
+            err = azihsm_part_reset(handle_);
+            if (err != AZIHSM_STATUS_SUCCESS)
+            {
+                azihsm_part_close(handle_);
+                handle_ = 0;
+                throw std::runtime_error(
+                    "Failed to reset partition. Error: " + std::to_string(err)
+                );
+            }
+
             azihsm_credentials creds{};
             std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
             std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
@@ -102,7 +114,22 @@ class PartitionHandle
                 .source = AZIHSM_POTA_ENDORSEMENT_SOURCE_RANDOM,
                 .endorsement = nullptr
             };
-            err = azihsm_part_init(handle_, &creds, nullptr, nullptr, nullptr, &pota_endorsement);
+            azihsm_owner_backup_key_config backup_config{};
+            azihsm_buffer obk_buf{};
+            const char *use_tpm = std::getenv("AZIHSM_USE_TPM");
+            if (use_tpm != nullptr)
+            {
+                backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_TPM;
+                backup_config.owner_backup_key = nullptr;
+            }
+            else
+            {
+                obk_buf = { const_cast<uint8_t *>(TEST_OBK), sizeof(TEST_OBK) };
+                backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER;
+                backup_config.owner_backup_key = &obk_buf;
+            }
+
+            err = azihsm_part_init(handle_, &creds, nullptr, nullptr, &backup_config, &pota_endorsement);
             if (err != AZIHSM_STATUS_SUCCESS)
             {
                 azihsm_part_close(handle_);

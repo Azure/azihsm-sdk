@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 //! ECC (Elliptic Curve Cryptography) operations through the Device Driver Interface (DDI).
 //!
@@ -64,7 +65,8 @@ pub(crate) fn ecc_generate_key(
             .map_hsm_err(HsmError::DdiCmdFailure)
     })?;
 
-    let mut key_id = HsmKeyIdGuard::new(session, resp.data.private_key_id);
+    // Create a key guard to ensure the generated key is deleted if any errors occur before returning.
+    let key_id = HsmKeyIdGuard::new(session, resp.data.private_key_id);
 
     let pub_key_der = resp.data.pub_key.der.as_slice();
     let masked_key = resp.data.masked_key.as_slice();
@@ -76,9 +78,7 @@ pub(crate) fn ecc_generate_key(
         Err(HsmError::InvalidKeyProps)?;
     }
 
-    //disarm the key guard to avoid deletion before returning
-    key_id.disarm();
-    Ok((key_id.key_id(), dev_priv_key_props, dev_pub_key_props))
+    Ok((key_id.release(), dev_priv_key_props, dev_pub_key_props))
 }
 
 /// Performs an ECC signature operation using a pre-computed hash.
@@ -197,17 +197,14 @@ pub(crate) fn ecdh_derive(
     })?;
 
     let session = base_key.session();
-    let mut key_id = HsmKeyIdGuard::new(&session, resp.data.key_id);
+    let key_id = HsmKeyIdGuard::new(&session, resp.data.key_id);
     let dev_key_props = HsmMaskedKey::to_key_props(resp.data.masked_key.as_slice())?;
     // Validate that the device returned properties match the requested properties.
     if !derived_key_props.validate_dev_props(&dev_key_props) {
         Err(HsmError::InvalidKeyProps)?;
     }
 
-    //disarm the key guard to avoid deletion before returning
-    key_id.disarm();
-
-    Ok((key_id.key_id(), dev_key_props))
+    Ok((key_id.release(), dev_key_props))
 }
 
 impl From<HsmEccCurve> for DdiEccCurve {

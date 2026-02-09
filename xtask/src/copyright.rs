@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 #![warn(missing_docs)]
 #![forbid(unsafe_code)]
@@ -49,7 +50,8 @@ impl Xtask for Copyright {
 
 impl Copyright {
     const COPYRIGHT_PRESENT_IN_LINES: usize = 3;
-    const COPYRIGHT_HEADER_TEXT: &str = "Copyright (C) Microsoft Corporation. All rights reserved.";
+    const COPYRIGHT_LINE1: &str = "Copyright (c) Microsoft Corporation.";
+    const COPYRIGHT_LINE2: &str = "Licensed under the MIT License.";
 
     fn check_copyright(path: &Path, fix: bool) -> anyhow::Result<()> {
         let ext = path
@@ -59,19 +61,23 @@ impl Copyright {
 
         if !matches!(
             ext,
-            "rs" | "toml" | "h" | "c" | "cpp" | "sh" | "py" | "ps1" | "psm1" | "txt"
+            "rs" | "toml" | "h" | "hpp" | "c" | "cpp" | "sh" | "py" | "ps1" | "psm1" | "txt"
         ) {
             return Ok(());
         }
 
         let f = BufReader::new(File::open(path)?);
-        let lines = f.lines().take(Self::COPYRIGHT_PRESENT_IN_LINES);
+        let lines: Vec<_> = f
+            .lines()
+            .take(Self::COPYRIGHT_PRESENT_IN_LINES)
+            .collect::<Result<_, _>>()?;
 
-        for line in lines {
-            let line = line?;
-            if line.contains(Self::COPYRIGHT_HEADER_TEXT) {
-                return Ok(());
-            }
+        // Check for both copyright lines
+        let has_line1 = lines.iter().any(|l| l.contains(Self::COPYRIGHT_LINE1));
+        let has_line2 = lines.iter().any(|l| l.contains(Self::COPYRIGHT_LINE2));
+
+        if has_line1 && has_line2 {
+            return Ok(());
         }
 
         if fix {
@@ -94,7 +100,7 @@ impl Copyright {
         let mut file_content = std::fs::read_to_string(path)?;
 
         let prefix = match ext {
-            "rs" | "h" | "c" | "cpp" => "//",
+            "rs" | "h" | "hpp" | "c" | "cpp" => "//",
             "toml" | "sh" | "py" | "ps1" | "psm1" | "txt" => "#",
             _ => Err(anyhow::anyhow!(
                 "Unsupported file type for copyright fix: {}",
@@ -102,46 +108,57 @@ impl Copyright {
             ))?,
         };
 
-        let header = format!("{} {}", prefix, Self::COPYRIGHT_HEADER_TEXT);
-        let mut replacement = None;
+        let header_line1 = format!("{} {}", prefix, Self::COPYRIGHT_LINE1);
+        let header_line2 = format!("{} {}", prefix, Self::COPYRIGHT_LINE2);
+
+        // Find existing copyright lines to replace
+        let mut copyright_start: Option<usize> = None;
+        let mut copyright_end: Option<usize> = None;
+        let mut line_ending = "\n";
         let mut offset = 0;
+
         for line in file_content
             .split_inclusive('\n')
             .take(Self::COPYRIGHT_PRESENT_IN_LINES)
         {
             let line_end = offset + line.len();
             let line_without_cr = line.trim_end_matches('\r');
-            if line_contains_word(line_without_cr, "Copyright")
-                && line_contains_word(line_without_cr, "Microsoft")
-            {
-                let line_ending = if line.ends_with("\r\n") {
-                    "\r\n"
-                } else if line.ends_with('\n') {
-                    "\n"
-                } else {
-                    ""
-                };
-                replacement = Some((offset, line_end, line_ending));
+
+            // Detect line ending style
+            if line.ends_with("\r\n") {
+                line_ending = "\r\n";
+            }
+
+            let is_copyright_line = (line_contains_word(line_without_cr, "Copyright")
+                && line_contains_word(line_without_cr, "Microsoft"))
+                || line_contains_word(line_without_cr, "Licensed");
+
+            if is_copyright_line {
+                if copyright_start.is_none() {
+                    copyright_start = Some(offset);
+                }
+                copyright_end = Some(line_end);
+            } else if copyright_start.is_some() {
+                // Stop once we've passed the copyright block
                 break;
             }
             offset = line_end;
         }
 
-        if let Some((line_start, line_end, line_ending)) = replacement {
-            debug_assert!(line_end >= line_start);
-            let _original_len = line_end - line_start;
-            let capacity = file_content
-                .len()
-                .checked_add(header.len())
-                .expect("capacity overflow");
-            let mut updated = String::with_capacity(capacity);
-            updated.push_str(&file_content[..line_start]);
-            updated.push_str(&header);
+        if let (Some(start), Some(end)) = (copyright_start, copyright_end) {
+            // Replace existing copyright block
+            let mut updated =
+                String::with_capacity(file_content.len() + header_line1.len() + header_line2.len());
+            updated.push_str(&file_content[..start]);
+            updated.push_str(&header_line1);
             updated.push_str(line_ending);
-            updated.push_str(&file_content[line_end..]);
+            updated.push_str(&header_line2);
+            updated.push_str(line_ending);
+            updated.push_str(&file_content[end..]);
             file_content = updated;
         } else {
-            let header = format!("{header}\n");
+            // Insert new copyright header
+            let header = format!("{header_line1}\n{header_line2}\n");
             file_content.insert_str(0, &header);
         }
 
@@ -206,8 +223,26 @@ mod tests {
 
         let updated = std::fs::read_to_string(&temp.path).expect("read temp file");
         let expected = format!(
-            "// {}\n// Another line\nfn main() {{}}\n",
-            Copyright::COPYRIGHT_HEADER_TEXT
+            "// {}\n// {}\n// Another line\nfn main() {{}}\n",
+            Copyright::COPYRIGHT_LINE1,
+            Copyright::COPYRIGHT_LINE2
+        );
+        assert_eq!(updated, expected);
+    }
+
+    #[test]
+    fn fix_copyright_replaces_old_two_line_header() {
+        let temp = TempFile::new("rs");
+        let contents = "// Copyright 2024 Microsoft\n// Licensed under Apache\nfn main() {}\n";
+        std::fs::write(&temp.path, contents).expect("write temp file");
+
+        Copyright::fix_copyright(&temp.path).expect("fix copyright");
+
+        let updated = std::fs::read_to_string(&temp.path).expect("read temp file");
+        let expected = format!(
+            "// {}\n// {}\nfn main() {{}}\n",
+            Copyright::COPYRIGHT_LINE1,
+            Copyright::COPYRIGHT_LINE2
         );
         assert_eq!(updated, expected);
     }
@@ -221,7 +256,11 @@ mod tests {
         Copyright::fix_copyright(&temp.path).expect("fix copyright");
 
         let updated = std::fs::read_to_string(&temp.path).expect("read temp file");
-        let expected = format!("// {}\nfn main() {{}}\n", Copyright::COPYRIGHT_HEADER_TEXT);
+        let expected = format!(
+            "// {}\n// {}\nfn main() {{}}\n",
+            Copyright::COPYRIGHT_LINE1,
+            Copyright::COPYRIGHT_LINE2
+        );
         assert_eq!(updated, expected);
     }
 }

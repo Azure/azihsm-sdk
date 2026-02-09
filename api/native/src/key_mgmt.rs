@@ -1,12 +1,15 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 use azihsm_api::*;
 
 use super::*;
 use crate::algo::aes::*;
 use crate::algo::ecc::*;
+use crate::algo::hmac::*;
 use crate::algo::kdf::*;
 use crate::algo::rsa::*;
+use crate::algo::secret::*;
 
 /// Generate a symmetric key
 ///
@@ -39,11 +42,9 @@ pub unsafe extern "C" fn azihsm_key_gen(
         // Generate key based on algorithm ID
         let handle = match algo.id {
             // AES family algorithms
-            AzihsmAlgoId::AesKeyGen => aes_generate_key(&session, algo, key_props)?,
-
-            // AES XTS key generation
-            AzihsmAlgoId::AesXtsKeyGen => aes_xts_generate_key(&session, algo, key_props)?,
-
+            AzihsmAlgoId::AesKeyGen | AzihsmAlgoId::AesGcmKeyGen | AzihsmAlgoId::AesXtsKeyGen => {
+                aes_generate_key(&session, algo, key_props)?
+            }
             // Unknown or unsupported algorithms
             _ => Err(AzihsmStatus::InvalidArgument)?,
         };
@@ -130,6 +131,10 @@ pub unsafe extern "C" fn azihsm_key_delete(key_handle: AzihsmHandle) -> AzihsmSt
                 let key: Box<HsmAesKey> = HANDLE_TABLE.free_handle(key_handle, key_type)?;
                 key.delete_key()?;
             }
+            HandleType::AesGcmKey => {
+                let key: Box<HsmAesGcmKey> = HANDLE_TABLE.free_handle(key_handle, key_type)?;
+                key.delete_key()?;
+            }
             HandleType::AesXtsKey => {
                 let key: Box<HsmAesXtsKey> = HANDLE_TABLE.free_handle(key_handle, key_type)?;
                 key.delete_key()?;
@@ -149,6 +154,15 @@ pub unsafe extern "C" fn azihsm_key_delete(key_handle: AzihsmHandle) -> AzihsmSt
             }
             HandleType::RsaPubKey => {
                 let key: Box<HsmRsaPublicKey> = HANDLE_TABLE.free_handle(key_handle, key_type)?;
+                key.delete_key()?;
+            }
+            HandleType::GenericSecretKey => {
+                let key: Box<HsmGenericSecretKey> =
+                    HANDLE_TABLE.free_handle(key_handle, key_type)?;
+                key.delete_key()?;
+            }
+            HandleType::HmacKey => {
+                let key: Box<HsmHmacKey> = HANDLE_TABLE.free_handle(key_handle, key_type)?;
                 key.delete_key()?;
             }
             _ => Err(AzihsmStatus::UnsupportedKeyKind)?,
@@ -353,7 +367,12 @@ pub unsafe extern "C" fn azihsm_key_unmask(
         // Dispatch based on key kind
         let handle = match key_kind {
             AzihsmKeyKind::Aes => aes_unmask_key(&session, masked_key_buf)?,
+            AzihsmKeyKind::AesGcm => aes_gcm_unmask_key(&session, masked_key_buf)?,
             AzihsmKeyKind::AesXts => aes_xts_unmask_key(&session, masked_key_buf)?,
+            AzihsmKeyKind::SharedSecret => secret_unmask_key(&session, masked_key_buf)?,
+            AzihsmKeyKind::HmacSha256 | AzihsmKeyKind::HmacSha384 | AzihsmKeyKind::HmacSha512 => {
+                hmac_unmask_key(&session, masked_key_buf)?
+            }
             _ => Err(AzihsmStatus::UnsupportedKeyKind)?,
         };
 

@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 //! ECC key structures and generation.
 //!
@@ -110,14 +111,19 @@ impl HsmEccPublicKey {
     /// - `kind` must be [`HsmKeyKind::Ecc`]
     /// - `class` must be [`HsmKeyClass::Public`]
     /// - an ECC curve must be present (`ecc_curve`)
-    /// - only supported usage flags may be set (typically `VERIFY`)
+    /// - only supported usage flags may be set (`VERIFY` or `DERIVE`)
     ///
     /// # Errors
     /// Returns [`HsmError::InvalidKeyProps`] if any required property is missing/invalid,
     /// or if unsupported usage flags are present.
     fn validate_props(props: &HsmKeyProps) -> HsmResult<()> {
         // Supported usage flags for ECC public keys in this layer.
-        let supported_flag = HsmKeyFlags::VERIFY;
+        let supported_flag = HsmKeyFlags::VERIFY | HsmKeyFlags::DERIVE;
+
+        //check if public key is verifiable or derivable
+        if props.can_verify() == props.can_derive() {
+            Err(HsmError::InvalidKeyProps)?;
+        }
 
         // Kind/class: ensure we're validating an ECC *public* key.
         if props.kind() != HsmKeyKind::Ecc {
@@ -323,9 +329,13 @@ impl HsmKeyPairUnmaskOp for HsmEccKeyUnmaskAlgo {
     )> {
         let (handle, priv_props, pub_props) = ddi::unmask_key_pair(session, masked_key)?;
 
-        HsmEccPrivateKey::validate_key_pair_props(&priv_props, &pub_props)?;
+        //construct key guard first to ensure handles are released if validation fails
+        let key_id = ddi::HsmKeyIdGuard::new(session, handle);
 
+        //create a guard for handl
         let Some(pub_key_der) = pub_props.pub_key_der() else {
+            // NOTE: This should never happen because the DDI unmask_key_pair should guarantee the presence of pub_key_der,
+            // no need to drop the handle here
             return Err(HsmError::InternalError);
         };
 
@@ -333,8 +343,16 @@ impl HsmKeyPairUnmaskOp for HsmEccKeyUnmaskAlgo {
         let crypto_key =
             crypto::EccPublicKey::from_bytes(pub_key_der).map_hsm_err(HsmError::InternalError)?;
 
-        let pub_key = HsmEccPublicKey::new(pub_props, crypto_key);
-        let priv_key = HsmEccPrivateKey::new(session.clone(), priv_props, handle, pub_key.clone());
+        let pub_key = HsmEccPublicKey::new(pub_props.clone(), crypto_key);
+        let priv_key = HsmEccPrivateKey::new(
+            session.clone(),
+            priv_props.clone(),
+            key_id.release(),
+            pub_key.clone(),
+        );
+
+        // Validate after constructing the wrapper so a failure drops and deletes the handle.
+        HsmEccPrivateKey::validate_key_pair_props(&priv_props, &pub_props)?;
 
         Ok((priv_key, pub_key))
     }

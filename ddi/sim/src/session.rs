@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 //! Manage a [Function](crate::function::Function) and its vaults.
 
@@ -753,7 +754,7 @@ impl UserSessionInner {
             }
         };
 
-        if flags.session_only() && key_tag.is_some() {
+        if flags.session() && key_tag.is_some() {
             tracing::error!("Session_only keys cannot have a tag");
             Err(ManticoreError::InvalidArgument)?
         }
@@ -765,7 +766,7 @@ impl UserSessionInner {
             }
         }
 
-        let sess_id_or_key_tag = if flags.session_only() {
+        let sess_id_or_key_tag = if flags.session() {
             self.id
         } else {
             key_tag.unwrap_or(0)
@@ -796,7 +797,7 @@ impl UserSessionInner {
         let physical_sess_id = entry.physical_sess_id();
         tracing::trace!(entry_sess_id = physical_sess_id);
 
-        if entry.flags().session_only() {
+        if entry.flags().session() {
             // For session_only key, the session id must match.
             let target_session_id = vault.get_target_session_id(self.id).ok();
             if target_session_id != physical_sess_id {
@@ -916,9 +917,9 @@ impl UserSessionInner {
         let (ecc_private_key, ecc_public_key) = generate_ecc(curve)?;
         let ecc_public_key_der = ecc_public_key.to_der()?;
 
-        // Mark the keys as generated.
+        // Mark the keys locally generated.
         let mut entry_flags = flags;
-        entry_flags.set_generated(true);
+        entry_flags.set_local(true);
 
         let private_key_num = vault.add_key(
             app_id,
@@ -939,12 +940,12 @@ impl UserSessionInner {
         key_tag: Option<u16>,
     ) -> Result<GenerateResponse, ManticoreError> {
         tracing::trace!(?curve, ?flags, key_tag, "ecc_generate_key");
-        if flags.session_only() && key_tag.is_some() {
+        if flags.session() && key_tag.is_some() {
             tracing::error!(error = ?ManticoreError::InvalidArgument, "Session_only keys cannot have a tag");
             Err(ManticoreError::InvalidArgument)?
         }
 
-        let sess_id_or_key_tag = if flags.session_only() {
+        let sess_id_or_key_tag = if flags.session() {
             self.id
         } else {
             key_tag.unwrap_or(0)
@@ -993,7 +994,7 @@ impl UserSessionInner {
             Err(ManticoreError::InvalidArgument)?
         }
 
-        if flags.session_only() && key_tag.is_some() {
+        if flags.session() && key_tag.is_some() {
             tracing::error!(error = ?ManticoreError::InvalidArgument, "Session_only keys cannot have a tag");
             Err(ManticoreError::InvalidArgument)?
         }
@@ -1020,7 +1021,7 @@ impl UserSessionInner {
         // Create ECC Public Key, validate if the size of the key is the same as the private key
         let peer_pub_key = EccPublicKey::from_der(peer_pub_key_der, Some(expected_pub_key_type))?;
 
-        let sess_id_or_key_tag = if flags.session_only() {
+        let sess_id_or_key_tag = if flags.session() {
             self.id
         } else {
             key_tag.unwrap_or(0)
@@ -1086,7 +1087,7 @@ impl UserSessionInner {
             Err(ManticoreError::InternalError)?
         }
 
-        if target_key_flags.session_only() && target_key_tag.is_some() {
+        if target_key_flags.session() && target_key_tag.is_some() {
             tracing::error!(error = ?ManticoreError::InvalidArgument, "Session_only keys cannot have a tag");
             Err(ManticoreError::InvalidArgument)?
         }
@@ -1098,7 +1099,7 @@ impl UserSessionInner {
             }
         }
 
-        let sess_id_or_key_tag = if target_key_flags.session_only() {
+        let sess_id_or_key_tag = if target_key_flags.session() {
             self.id
         } else {
             target_key_tag.unwrap_or(0)
@@ -1180,7 +1181,7 @@ impl UserSessionInner {
             Err(ManticoreError::InternalError)?
         }
 
-        if target_key_flags.session_only() && target_key_tag.is_some() {
+        if target_key_flags.session() && target_key_tag.is_some() {
             tracing::error!(error = ?ManticoreError::InvalidArgument, "Session_only keys cannot have a tag");
             Err(ManticoreError::InvalidArgument)?
         }
@@ -1192,7 +1193,7 @@ impl UserSessionInner {
             }
         }
 
-        let sess_id_or_key_tag = if target_key_flags.session_only() {
+        let sess_id_or_key_tag = if target_key_flags.session() {
             self.id
         } else {
             target_key_tag.unwrap_or(0)
@@ -1308,9 +1309,9 @@ impl UserSessionInner {
         );
         let aes_key = generate_aes(key_size)?;
 
-        // Mark the keys as generated.
+        // Mark the keys locally generated.
         let mut entry_flags = flags;
-        entry_flags.set_generated(true);
+        entry_flags.set_local(true);
 
         let key_kind = match key_size {
             AesKeySize::Aes128 => Kind::Aes128,
@@ -1340,12 +1341,12 @@ impl UserSessionInner {
         key_tag: Option<u16>,
     ) -> Result<u16, ManticoreError> {
         tracing::trace!(key_size = ?key_size, flags = ?flags, key_tag, "aes_generate_key");
-        if flags.session_only() && key_tag.is_some() {
+        if flags.session() && key_tag.is_some() {
             tracing::error!(error = ?ManticoreError::InvalidArgument, "Session_only keys cannot have a tag");
             Err(ManticoreError::InvalidArgument)?
         }
 
-        let sess_id_or_key_tag = if flags.session_only() {
+        let sess_id_or_key_tag = if flags.session() {
             self.id
         } else {
             key_tag.unwrap_or(0)
@@ -1705,12 +1706,12 @@ mod tests {
             let (rsa_private_key, rsa_public_key) = generate_rsa(bits as u32)?;
             let rsa_public_key_der = rsa_public_key.to_der()?;
 
-            // Mark the keys as generated.
+            // Mark the keys locally generated.
             let mut entry_flags = flags;
-            entry_flags.set_generated(true);
+            entry_flags.set_local(true);
 
             if session_only {
-                entry_flags.set_session_only(true);
+                entry_flags.set_session(true);
             }
             tracing::debug!(entry_flags = ?entry_flags);
 
@@ -1944,11 +1945,7 @@ mod tests {
 
         // Create some session_only keys.
         let (key_num, _) = app_session
-            .ecc_generate_key(
-                EccCurve::P384,
-                EntryFlags::new().with_session_only(true),
-                None,
-            )
+            .ecc_generate_key(EccCurve::P384, EntryFlags::new().with_session(true), None)
             .expect("ecc_generate_key failed");
 
         // Check key_num exists
@@ -1982,11 +1979,7 @@ mod tests {
 
         // Create some session_only keys.
         let (key_num, _) = app_session
-            .ecc_generate_key(
-                EccCurve::P384,
-                EntryFlags::new().with_session_only(true),
-                None,
-            )
+            .ecc_generate_key(EccCurve::P384, EntryFlags::new().with_session(true), None)
             .expect("ecc_generate_key failed");
 
         // Hold ref to Entry
@@ -2218,7 +2211,7 @@ mod tests {
         {
             let (ecc_private_key, _) = generate_ecc(EccCurve::P384).expect("generate_ecc failed");
 
-            let entry_flags = EntryFlags::new().with_generated(true);
+            let entry_flags = EntryFlags::new().with_local(true);
 
             let result = vault.add_key(
                 Uuid::from_bytes(TEST_CRED_ID),
@@ -2236,7 +2229,7 @@ mod tests {
         {
             let (ecc_private_key, _) = generate_ecc(EccCurve::P384).expect("generate_ecc failed");
 
-            let entry_flags = EntryFlags::new().with_generated(true);
+            let entry_flags = EntryFlags::new().with_local(true);
 
             let result = vault.add_key(
                 Uuid::from_bytes(TEST_CRED_ID),
@@ -2254,7 +2247,7 @@ mod tests {
         {
             let aes_key = AesKey::from_bytes(&[1u8; 16]).expect("import AES key failed");
 
-            let entry_flags = EntryFlags::new().with_imported(true);
+            let entry_flags = EntryFlags::new().with_local(false);
 
             let result = vault.add_key(
                 Uuid::from_bytes(TEST_CRED_ID),
@@ -2275,7 +2268,7 @@ mod tests {
         {
             let secret = SecretKey::from_bytes(&[1u8; 32]).expect("import secret failed");
 
-            let entry_flags = EntryFlags::new().with_imported(true);
+            let entry_flags = EntryFlags::new().with_local(false);
 
             let result = vault.add_key(
                 Uuid::from_bytes(TEST_CRED_ID),
@@ -2349,11 +2342,7 @@ mod tests {
             .ecc_generate_key(EccCurve::P384, EntryFlags::new(), None)
             .expect("ecc_generate_key failed");
         let (key_num_session_only, _) = app_session_client_session_only_keys
-            .ecc_generate_key(
-                EccCurve::P384,
-                EntryFlags::new().with_session_only(true),
-                None,
-            )
+            .ecc_generate_key(EccCurve::P384, EntryFlags::new().with_session(true), None)
             .expect("ecc_generate_key failed");
 
         // Check key_num exists
@@ -2399,11 +2388,7 @@ mod tests {
 
         // Client adds some key.
         let (key_num, _) = app_session_client
-            .ecc_generate_key(
-                EccCurve::P384,
-                EntryFlags::new().with_session_only(true),
-                None,
-            )
+            .ecc_generate_key(EccCurve::P384, EntryFlags::new().with_session(true), None)
             .expect("ecc_generate_key failed");
 
         // Check key_num exists
@@ -2493,7 +2478,7 @@ mod tests {
         let app_session = function.get_user_session(session_id, false).unwrap();
 
         let bits = 2048;
-        let flags = EntryFlags::new().with_allow_encrypt_decrypt(true);
+        let flags = EntryFlags::new().with_encrypt(true).with_decrypt(true);
         let (private_key_num, public_key) = app_session
             .rsa_generate_key(bits, false, flags, None)
             .expect("rsa_generate_key failed");
@@ -2539,8 +2524,9 @@ mod tests {
         // Generate credentials in first session.
         let bits = 2048;
         let flags = EntryFlags::new()
-            .with_allow_encrypt_decrypt(true)
-            .with_session_only(true);
+            .with_encrypt(true)
+            .with_decrypt(true)
+            .with_session(true);
         let (private_key_num, _) = app_session[0]
             .rsa_generate_key(bits, false, flags, None)
             .expect("rsa_generate_key failed");
@@ -2601,8 +2587,9 @@ mod tests {
             generate_rsa(bits as u32).expect("generate_rsa failed");
 
         let entry_flags = EntryFlags::new()
-            .with_generated(true)
-            .with_allow_encrypt_decrypt(true);
+            .with_local(true)
+            .with_encrypt(true)
+            .with_decrypt(true);
 
         let result = vault.add_key(
             Uuid::from_bytes(TEST_CRED_ID),
@@ -2914,7 +2901,7 @@ mod tests {
         let result = app_session.import_key(
             &[1u8; 16],
             KeyClass::Aes,
-            EntryFlags::new().with_imported(true),
+            EntryFlags::new().with_local(false),
             None,
         );
         assert!(result.is_ok());
@@ -2931,7 +2918,7 @@ mod tests {
         let result = app_session.import_key(
             &rsa_private_der,
             KeyClass::RsaPrivate,
-            EntryFlags::new().with_imported(true),
+            EntryFlags::new().with_local(false),
             None,
         );
         assert!(result.is_ok());
@@ -2944,7 +2931,7 @@ mod tests {
         //let result = app_session.import_key(
         //&rsa_public_der,
         //Kind::Rsa2kPublic,
-        //EntryFlags::new().with_imported(true),
+        //EntryFlags::new().with_local(false),
         //None,
         //);
         //assert_eq!(result, Err(ManticoreError::InvalidArgument));
@@ -2961,7 +2948,7 @@ mod tests {
         let result = app_session.import_key(
             &ecc_private_der,
             KeyClass::EccPrivate,
-            EntryFlags::new().with_imported(true),
+            EntryFlags::new().with_local(false),
             None,
         );
         assert!(result.is_ok());
@@ -2974,7 +2961,7 @@ mod tests {
         //let result = app_session.import_key(
         //&ecc_public_der,
         //Kind::Ecc384Public,
-        //EntryFlags::new().with_imported(true),
+        //EntryFlags::new().with_local(false),
         //None,
         //);
         //assert_eq!(result, Err(ManticoreError::InvalidArgument));
@@ -2988,7 +2975,7 @@ mod tests {
         let function_state = function.get_function_state();
         let vault = function_state.get_vault(DEFAULT_VAULT_ID).unwrap();
 
-        let flags = EntryFlags::new().with_allow_sign_verify(true);
+        let flags = EntryFlags::new().with_sign(true).with_verify(true);
 
         // Each session generates an RSA key with 2048 bits and session_only=true
         let bits = 2048u16;
@@ -3078,7 +3065,7 @@ mod tests {
         let function_state = function.get_function_state();
         let vault = function_state.get_vault(DEFAULT_VAULT_ID).unwrap();
 
-        let flags = EntryFlags::new().with_allow_sign_verify(true);
+        let flags = EntryFlags::new().with_sign(true).with_verify(true);
 
         // Each session generates an RSA key with 2048 bits and session_only=true
         let bits = 2048u16;
@@ -3172,8 +3159,9 @@ mod tests {
         let api_rev = function.get_api_rev_range().max;
 
         let flags = EntryFlags::new()
-            .with_allow_encrypt_decrypt(true)
-            .with_session_only(true); // Make keys session-only
+            .with_encrypt(true)
+            .with_decrypt(true)
+            .with_session(true); // Make keys session-only
 
         let session_result =
             helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
@@ -3223,8 +3211,9 @@ mod tests {
         let api_rev = function.get_api_rev_range().max;
 
         let flags = EntryFlags::new()
-            .with_allow_encrypt_decrypt(true)
-            .with_session_only(true); // Make keys session-only
+            .with_encrypt(true)
+            .with_decrypt(true)
+            .with_session(true); // Make keys session-only
 
         let session_result =
             helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev).unwrap();
@@ -3274,8 +3263,9 @@ mod tests {
         let vault = function_state.get_vault(DEFAULT_VAULT_ID).unwrap();
 
         let flags = EntryFlags::new()
-            .with_allow_encrypt_decrypt(true)
-            .with_session_only(true); // Make keys session-only
+            .with_encrypt(true)
+            .with_decrypt(true)
+            .with_session(true); // Make keys session-only
 
         // AES 256-bit key for testing
         let key_size = AesKeySize::Aes256;

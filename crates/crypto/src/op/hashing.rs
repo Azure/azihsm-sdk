@@ -1,4 +1,6 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 //! Traits for cryptographic hash operations.
 //!
 //! This module provides trait definitions for both single-operation and streaming

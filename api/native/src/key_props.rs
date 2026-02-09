@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 use std::ffi::c_void;
 use std::slice;
@@ -351,6 +352,10 @@ pub unsafe extern "C" fn azihsm_key_get_prop(
                 let key = HsmAesKey::try_from(key_handle)?;
                 get_key_prop(key, prop)
             }
+            HandleType::AesGcmKey => {
+                let key = HsmAesGcmKey::try_from(key_handle)?;
+                get_key_prop(key, prop)
+            }
             HandleType::AesXtsKey => {
                 let key = HsmAesXtsKey::try_from(key_handle)?;
                 get_key_prop(key, prop)
@@ -361,6 +366,14 @@ pub unsafe extern "C" fn azihsm_key_get_prop(
             }
             HandleType::RsaPrivKey => {
                 let key = HsmRsaPrivateKey::try_from(key_handle)?;
+                get_key_prop(key, prop)
+            }
+            HandleType::GenericSecretKey => {
+                let key = HsmGenericSecretKey::try_from(key_handle)?;
+                get_key_prop(key, prop)
+            }
+            HandleType::HmacKey => {
+                let key = HsmHmacKey::try_from(key_handle)?;
                 get_key_prop(key, prop)
             }
             _ => Err(AzihsmStatus::InvalidHandle),

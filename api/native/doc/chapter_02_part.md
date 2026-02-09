@@ -105,6 +105,39 @@ azihsm_status azihsm_part_open(
 
 `AZIHSM_STATUS_SUCCESS` on success, error code otherwise
 
+## azihsm_owner_backup_key_config
+
+Configuration for owner backup key (OBK) selection during partition initialization.
+
+```cpp
+struct azihsm_owner_backup_key_config {
+    azihsm_owner_backup_key_source source;
+    const struct azihsm_buffer *owner_backup_key;
+};
+```
+
+**Fields**
+
+| Field             | Type                                                  | Description |
+| ----------------- | ----------------------------------------------------- | ----------- |
+| source            | [azihsm_owner_backup_key_source](#azihsm_owner_backup_key_source) | OBK source selection |
+| owner_backup_key  | [struct azihsm_buffer*](#azihsm_buffer)               | Optional OBK buffer; required when `source` is `AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER`, must be NULL otherwise |
+
+## azihsm_owner_backup_key_source
+
+Specifies the source of the owner backup key (OBK).
+
+```cpp
+typedef enum azihsm_owner_backup_key_source {
+    AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER = 1,
+    AZIHSM_OWNER_BACKUP_KEY_SOURCE_TPM    = 2,
+} azihsm_owner_backup_key_source;
+```
+
+**Notes**
+- When `source` is `AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER`, `owner_backup_key` must be non-NULL and non-empty.
+- When `source` is `AZIHSM_OWNER_BACKUP_KEY_SOURCE_TPM`, `owner_backup_key` must be NULL.
+
 ## azihsm_part_init
 
 Initialize a partition with credentials
@@ -115,20 +148,19 @@ azihsm_status azihsm_part_init(
     const struct azihsm_credentials *creds,
     const struct azihsm_buffer *bmk,
     const struct azihsm_buffer *muk,
-    const struct azihsm_buffer *mobk
+    const struct azihsm_owner_backup_key_config *backup_key_config
     );
 ```
 
 **Parameters**
 
- | Parameter         | Name                                              | Description                                           |
- | ----------------- | ------------------------------------------------- | ----------------------------------------------------- |
- | [in] handle       | [azihsm_handle](#azihsm_handle)                   | device handle                                         |
- | [in] creds        | [struct azihsm_credentials*](#azihsm_credentials) | device credential                                     |
- | [in] bmk          | [struct azihsm_buffer*](#azihsm_buffer)           | optional backup masking key (can be NULL)             |
- | [in] muk          | [struct azihsm_buffer*](#azihsm_buffer)           | optional masked unwrapping key (can be NULL)          |
- | [in] mobk         | [struct azihsm_buffer*](#azihsm_buffer)           | optional masked owner backup key (can be NULL) &nbsp; |
- 
+| Parameter               | Name                                                        | Description                                                      |
+| ----------------------- | ----------------------------------------------------------- | ---------------------------------------------------------------- |
+| [in] handle             | [azihsm_handle](#azihsm_handle)                             | device handle                                                    |
+| [in] creds              | [struct azihsm_credentials*](#azihsm_credentials)           | device credential                                                |
+| [in] bmk                | [struct azihsm_buffer*](#azihsm_buffer)                     | optional backup masking key (can be NULL)                        |
+| [in] muk                | [struct azihsm_buffer*](#azihsm_buffer)                     | optional masked unwrapping key (can be NULL)                     |
+| [in] backup_key_config  | [struct azihsm_owner_backup_key_config*](#azihsm_owner_backup_key_config) | owner backup key configuration (must be non-NULL)      |
 
 **Returns**
 
