@@ -126,47 +126,6 @@ fn compute_pota_endorsement(
             Ok((signature, tpm_public_key))
         }
 
-        HsmPotaEndorsementSource::Random => {
-            let pub_key_hash = get_partition_public_key_hash(dev, rev)?;
-
-            // Generate a random ECC P-384 key pair
-            let private_key =
-                EccPrivateKey::from_curve(EccCurve::P384).map_hsm_err(HsmError::InternalError)?;
-
-            // Get the public key and encode to DER
-            let pub_key = private_key
-                .public_key()
-                .map_hsm_err(HsmError::InternalError)?;
-            let (x, y) = pub_key.coord_vec().map_hsm_err(HsmError::InternalError)?;
-            let der_pub_key = DerEccPublicKey::new(EccCurve::P384, &x, &y)
-                .map_hsm_err(HsmError::InternalError)?;
-
-            // Get DER size first, then allocate and encode
-            let der_len = der_pub_key
-                .to_der(None)
-                .map_hsm_err(HsmError::InternalError)?;
-            let mut public_key_der = vec![0u8; der_len];
-            der_pub_key
-                .to_der(Some(&mut public_key_der))
-                .map_hsm_err(HsmError::InternalError)?;
-
-            // Sign the pre-computed hash directly (no additional hashing)
-            let mut sign_algo = EccAlgo::default();
-
-            // First call to get signature size
-            let sig_len = sign_algo
-                .sign(&private_key, &pub_key_hash, None)
-                .map_hsm_err(HsmError::InternalError)?;
-
-            // Second call to actually sign
-            let mut signature = vec![0u8; sig_len];
-            sign_algo
-                .sign(&private_key, &pub_key_hash, Some(&mut signature))
-                .map_hsm_err(HsmError::InternalError)?;
-
-            Ok((signature, public_key_der))
-        }
-
         _ => Err(HsmError::InvalidArgument),
     }
 }

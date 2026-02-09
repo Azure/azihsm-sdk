@@ -138,7 +138,4 @@ pub enum HsmPotaEndorsementSource {
 
     /// TPM-generated endorsement.
     Tpm = 2,
-
-    /// Randomly generated key-pair for endorsement.
-    Random = 3,
 }

@@ -8,6 +8,7 @@
 #include <openssl/crypto.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -257,6 +258,32 @@ static const uint8_t DEFAULT_OBK[48] = {
     0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F, 0x30
 };
 
+// Raw r||s ECC-384 signature (96 bytes) from NIST P-384 test vector.
+static const uint8_t DEFAULT_POTA_SIGNATURE[96] = {
+    0x50, 0x83, 0x5a, 0x92, 0x51, 0xba, 0xd0, 0x08, 0x10, 0x61, 0x77, 0xef,
+    0x00, 0x4b, 0x09, 0x1a, 0x1e, 0x42, 0x35, 0xcd, 0x0d, 0xa8, 0x4f, 0xff,
+    0x54, 0x54, 0x2b, 0x0e, 0xd7, 0x55, 0xc1, 0xd6, 0xf2, 0x51, 0x60, 0x9d,
+    0x14, 0xec, 0xf1, 0x8f, 0x9e, 0x1d, 0xdf, 0xe6, 0x9b, 0x94, 0x6e, 0x32,
+    0x04, 0x75, 0xf3, 0xd3, 0x0c, 0x64, 0x63, 0xb6, 0x46, 0xe8, 0xd3, 0xbf,
+    0x24, 0x55, 0x83, 0x03, 0x14, 0x61, 0x1c, 0xbd, 0xe4, 0x04, 0xbe, 0x51,
+    0x8b, 0x14, 0x46, 0x4f, 0xdb, 0x19, 0x5f, 0xdc, 0xc9, 0x2e, 0xb2, 0x22,
+    0xe6, 0x1f, 0x42, 0x6a, 0x4a, 0x59, 0x2c, 0x00, 0xa6, 0xa8, 0x97, 0x21
+};
+
+// DER-encoded SubjectPublicKeyInfo ECC-384 public key (120 bytes) from NIST P-384 test vector.
+static const uint8_t DEFAULT_POTA_PUBLIC_KEY_DER[120] = {
+    0x30, 0x76, 0x30, 0x10, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02,
+    0x01, 0x06, 0x05, 0x2b, 0x81, 0x04, 0x00, 0x22, 0x03, 0x62, 0x00, 0x04,
+    0xc2, 0xb4, 0x79, 0x44, 0xfb, 0x5d, 0xe3, 0x42, 0xd0, 0x32, 0x85, 0x88,
+    0x01, 0x77, 0xca, 0x5f, 0x7d, 0x0f, 0x2f, 0xca, 0xd7, 0x67, 0x8c, 0xce,
+    0x42, 0x29, 0xd6, 0xe1, 0x93, 0x2f, 0xca, 0xc1, 0x1b, 0xfc, 0x3c, 0x3e,
+    0x97, 0xd9, 0x42, 0xa3, 0xc5, 0x6b, 0xf3, 0x41, 0x23, 0x01, 0x3d, 0xbf,
+    0x37, 0x25, 0x79, 0x06, 0xa8, 0x22, 0x38, 0x66, 0xed, 0xa0, 0x74, 0x3c,
+    0x51, 0x96, 0x16, 0xa7, 0x6a, 0x75, 0x8a, 0xe5, 0x8a, 0xee, 0x81, 0xc5,
+    0xfd, 0x35, 0xfb, 0xf3, 0xa8, 0x55, 0xb7, 0x75, 0x4a, 0x36, 0xd4, 0xa0,
+    0x67, 0x2d, 0xf9, 0x5d, 0x6c, 0x44, 0xa8, 0x1c, 0xf7, 0x62, 0x0c, 0x2d
+};
+
 // clang-format on
 
 azihsm_status azihsm_open_device_and_session(
@@ -328,27 +355,48 @@ azihsm_status azihsm_open_device_and_session(
         return status;
     }
 
-    // Build owner backup key config: use loaded OBK file if available, otherwise hardcoded default
+    // Configure OBK and POTA based on whether TPM is available
+    const char *use_tpm = getenv("AZIHSM_USE_TPM");
+
+    struct azihsm_owner_backup_key_config backup_config = { 0 };
     struct azihsm_buffer obk_buf = { 0 };
-    if (mobk_buf.ptr != NULL)
+    struct azihsm_pota_endorsement pota_endorsement = { 0 };
+    struct azihsm_buffer pota_sig_buf = { 0 };
+    struct azihsm_buffer pota_pubkey_buf = { 0 };
+    struct azihsm_pota_endorsement_data pota_data = { 0 };
+
+    if (use_tpm != NULL)
     {
-        obk_buf = mobk_buf;
+        backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_TPM;
+        backup_config.owner_backup_key = NULL;
+
+        pota_endorsement.source = AZIHSM_POTA_ENDORSEMENT_SOURCE_TPM;
+        pota_endorsement.endorsement = NULL;
     }
     else
     {
-        obk_buf.ptr = (uint8_t *)DEFAULT_OBK;
-        obk_buf.len = sizeof(DEFAULT_OBK);
+        // Use loaded OBK file if available, otherwise hardcoded default
+        if (mobk_buf.ptr != NULL)
+        {
+            obk_buf = mobk_buf;
+        }
+        else
+        {
+            obk_buf.ptr = (uint8_t *)DEFAULT_OBK;
+            obk_buf.len = sizeof(DEFAULT_OBK);
+        }
+        backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER;
+        backup_config.owner_backup_key = &obk_buf;
+
+        pota_sig_buf.ptr = (uint8_t *)DEFAULT_POTA_SIGNATURE;
+        pota_sig_buf.len = sizeof(DEFAULT_POTA_SIGNATURE);
+        pota_pubkey_buf.ptr = (uint8_t *)DEFAULT_POTA_PUBLIC_KEY_DER;
+        pota_pubkey_buf.len = sizeof(DEFAULT_POTA_PUBLIC_KEY_DER);
+        pota_data.signature = &pota_sig_buf;
+        pota_data.public_key = &pota_pubkey_buf;
+        pota_endorsement.source = AZIHSM_POTA_ENDORSEMENT_SOURCE_CALLER;
+        pota_endorsement.endorsement = &pota_data;
     }
-
-    struct azihsm_owner_backup_key_config backup_config = { 0 };
-    backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER;
-    backup_config.owner_backup_key = &obk_buf;
-
-    // Use Random source for POTA endorsement - signature and public key will be generated
-    // internally
-    struct azihsm_pota_endorsement pota_endorsement = { .source =
-                                                            AZIHSM_POTA_ENDORSEMENT_SOURCE_RANDOM,
-                                                        .endorsement = NULL };
 
     // Initialize partition with loaded keys (or NULL if not available)
     status = azihsm_part_init(

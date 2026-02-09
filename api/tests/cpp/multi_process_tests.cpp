@@ -189,11 +189,26 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_parent)
         backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER;
         backup_config.owner_backup_key = &obk_buf;
 
-        // POTA endorsement with random data
-        struct azihsm_buffer pota_endorsement_buf = { .ptr = nullptr, .len = 0 };
-        struct azihsm_pota_endorsement pota_endorsement = { .source =
-                                                            AZIHSM_POTA_ENDORSEMENT_SOURCE_RANDOM,
-                                                        .endorsement = nullptr };
+        azihsm_pota_endorsement pota_endorsement{};
+        azihsm_buffer pota_sig_buf{};
+        azihsm_buffer pota_pubkey_buf{};
+        azihsm_pota_endorsement_data pota_data{};
+        const char *use_tpm = std::getenv("AZIHSM_USE_TPM");
+        if (use_tpm != nullptr)
+        {
+            pota_endorsement.source = AZIHSM_POTA_ENDORSEMENT_SOURCE_TPM;
+            pota_endorsement.endorsement = nullptr;
+        }
+        else
+        {
+            pota_sig_buf = { const_cast<uint8_t *>(TEST_POTA_SIGNATURE),
+                             sizeof(TEST_POTA_SIGNATURE) };
+            pota_pubkey_buf = { const_cast<uint8_t *>(TEST_POTA_PUBLIC_KEY_DER),
+                                sizeof(TEST_POTA_PUBLIC_KEY_DER) };
+            pota_data = { .signature = &pota_sig_buf, .public_key = &pota_pubkey_buf };
+            pota_endorsement.source = AZIHSM_POTA_ENDORSEMENT_SOURCE_CALLER;
+            pota_endorsement.endorsement = &pota_data;
+        }
 
         err = azihsm_part_init(part_handle, &creds, nullptr, nullptr, &backup_config, &pota_endorsement);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
@@ -328,10 +343,26 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_child)
     azihsm_owner_backup_key_config backup_config{};
     backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER;
     backup_config.owner_backup_key = &obk_buf;
-    struct azihsm_buffer pota_endorsement_buf = { .ptr = nullptr, .len = 0 };
-    struct azihsm_pota_endorsement pota_endorsement = { .source =
-                                                            AZIHSM_POTA_ENDORSEMENT_SOURCE_RANDOM,
-                                                        .endorsement = nullptr };
+
+    azihsm_pota_endorsement pota_endorsement{};
+    azihsm_buffer pota_sig_buf{};
+    azihsm_buffer pota_pubkey_buf{};
+    azihsm_pota_endorsement_data pota_data{};
+    const char *use_tpm = std::getenv("AZIHSM_USE_TPM");
+    if (use_tpm != nullptr)
+    {
+        pota_endorsement.source = AZIHSM_POTA_ENDORSEMENT_SOURCE_TPM;
+        pota_endorsement.endorsement = nullptr;
+    }
+    else
+    {
+        pota_sig_buf = { const_cast<uint8_t *>(TEST_POTA_SIGNATURE), sizeof(TEST_POTA_SIGNATURE) };
+        pota_pubkey_buf = { const_cast<uint8_t *>(TEST_POTA_PUBLIC_KEY_DER),
+                            sizeof(TEST_POTA_PUBLIC_KEY_DER) };
+        pota_data = { .signature = &pota_sig_buf, .public_key = &pota_pubkey_buf };
+        pota_endorsement.source = AZIHSM_POTA_ENDORSEMENT_SOURCE_CALLER;
+        pota_endorsement.endorsement = &pota_data;
+    }
 
     auto init_err =
         azihsm_part_init(part_handle, &creds, &bmk_buf, nullptr, &backup_config, &pota_endorsement);

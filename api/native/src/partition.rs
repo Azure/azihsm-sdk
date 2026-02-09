@@ -97,8 +97,8 @@ impl<'a> TryFrom<&'a AzihsmPotaEndorsement> for api::HsmPotaEndorsement<'a> {
                 let data = api::HsmPotaEndorsementData::new(signature, public_key);
                 Ok(api::HsmPotaEndorsement::new(source, Some(data)))
             }
-            api::HsmPotaEndorsementSource::Tpm | api::HsmPotaEndorsementSource::Random => {
-                // Endorsement data must be null for TPM and Random sources
+            api::HsmPotaEndorsementSource::Tpm => {
+                // Endorsement data must be null for TPM source
                 if !config.endorsement.is_null() {
                     return Err(AzihsmStatus::InvalidArgument);
                 }

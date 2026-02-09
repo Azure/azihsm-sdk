@@ -714,7 +714,7 @@ TEST(azihsm_part, init_tpm_source_with_endorsement_fails)
     });
 }
 
-TEST(azihsm_part, init_random_source_with_endorsement_fails)
+TEST(azihsm_part, init_invalid_source_with_endorsement_fails)
 {
     auto part_list = PartitionListHandle();
 
@@ -733,7 +733,7 @@ TEST(azihsm_part, init_random_source_with_endorsement_fails)
         std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
         std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
 
-        // Random source with non-null endorsement should fail
+        // Invalid source value should fail
         uint8_t signature_data[96] = { 0 };
         uint8_t public_key_data[97] = { 0 };
         struct azihsm_buffer signature_buf = { .ptr = signature_data,
@@ -743,7 +743,7 @@ TEST(azihsm_part, init_random_source_with_endorsement_fails)
         struct azihsm_pota_endorsement_data endorsement_data = { .signature = &signature_buf,
                                                                  .public_key = &public_key_buf };
         struct azihsm_pota_endorsement pota_endorsement = {
-            .source = AZIHSM_POTA_ENDORSEMENT_SOURCE_RANDOM,
+            .source = static_cast<azihsm_pota_endorsement_source>(99),
             .endorsement = &endorsement_data
         };
         err = azihsm_part_init(part_handle, &creds, nullptr, nullptr, nullptr, &pota_endorsement);

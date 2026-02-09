@@ -78,12 +78,20 @@ fn test_partition_init() {
         part.reset().expect("Partition reset failed");
         //init with dummy creds
         let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
-        let obk_info = if std::env::var("AZIHSM_USE_TPM").is_ok() {
-            HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, None)
+        let use_tpm = std::env::var("AZIHSM_USE_TPM").is_ok();
+        let (obk_info, pota_endorsement) = if use_tpm {
+            (
+                HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, None),
+                HsmPotaEndorsement::new(HsmPotaEndorsementSource::Tpm, None),
+            )
         } else {
-            HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Caller, Some(&TEST_OBK))
+            let pota_data =
+                HsmPotaEndorsementData::new(&TEST_POTA_SIGNATURE, &TEST_POTA_PUBLIC_KEY_DER);
+            (
+                HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Caller, Some(&TEST_OBK)),
+                HsmPotaEndorsement::new(HsmPotaEndorsementSource::Caller, Some(pota_data)),
+            )
         };
-        let pota_endorsement = HsmPotaEndorsement::new(HsmPotaEndorsementSource::Random, None);
         part.init(creds, None, None, obk_info, pota_endorsement)
             .expect("Partition init failed");
     }
