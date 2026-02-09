@@ -341,6 +341,14 @@ static const OSSL_PARAM *azihsm_ossl_keymgmt_gen_settable_params(
     return settable_params;
 }
 
+/* For any RSA key, we use the "RSA" algorithms regardless of sub-type. */
+static const char *azihsm_ossl_keymgmt_rsa_query_operation_name(
+    ossl_unused int operation_id
+)
+{
+    return "RSA";
+}
+
 /* RSA Key Management */
 const OSSL_DISPATCH azihsm_ossl_rsa_keymgmt_functions[] = {
     { OSSL_FUNC_KEYMGMT_GEN, (void (*)(void))azihsm_ossl_keymgmt_gen },
@@ -359,6 +367,8 @@ const OSSL_DISPATCH azihsm_ossl_rsa_keymgmt_functions[] = {
     { OSSL_FUNC_KEYMGMT_EXPORT_TYPES, (void (*)(void))azihsm_ossl_keymgmt_export_types },
     { OSSL_FUNC_KEYMGMT_GET_PARAMS, (void (*)(void))azihsm_ossl_keymgmt_get_params },
     { OSSL_FUNC_KEYMGMT_GETTABLE_PARAMS, (void (*)(void))azihsm_ossl_keymgmt_gettable_params },
+    { OSSL_FUNC_KEYMGMT_QUERY_OPERATION_NAME,
+      (void (*)(void))azihsm_ossl_keymgmt_rsa_query_operation_name },
     { 0, NULL }
 };
 
@@ -379,5 +389,7 @@ const OSSL_DISPATCH azihsm_ossl_rsa_pss_keymgmt_functions[] = {
     { OSSL_FUNC_KEYMGMT_EXPORT_TYPES, (void (*)(void))azihsm_ossl_keymgmt_export_types },
     { OSSL_FUNC_KEYMGMT_GET_PARAMS, (void (*)(void))azihsm_ossl_keymgmt_get_params },
     { OSSL_FUNC_KEYMGMT_GETTABLE_PARAMS, (void (*)(void))azihsm_ossl_keymgmt_gettable_params },
+    { OSSL_FUNC_KEYMGMT_QUERY_OPERATION_NAME,
+      (void (*)(void))azihsm_ossl_keymgmt_rsa_query_operation_name },
     { 0, NULL }
 };

@@ -975,6 +975,18 @@ static const OSSL_PARAM *azihsm_ossl_keymgmt_gen_settable_params(
     return settable_params;
 }
 
+static const char *azihsm_ossl_keymgmt_ec_query_operation_name(int operation_id)
+{
+    switch (operation_id)
+    {
+    case OSSL_OP_KEYEXCH:
+        return "ECDH";
+    case OSSL_OP_SIGNATURE:
+        return "ECDSA";
+    }
+    return "EC";
+}
+
 /* EC Key Management */
 const OSSL_DISPATCH azihsm_ossl_ec_keymgmt_functions[] = {
     { OSSL_FUNC_KEYMGMT_GEN, (void (*)(void))azihsm_ossl_keymgmt_gen },
@@ -993,5 +1005,7 @@ const OSSL_DISPATCH azihsm_ossl_ec_keymgmt_functions[] = {
     { OSSL_FUNC_KEYMGMT_EXPORT_TYPES, (void (*)(void))azihsm_ossl_keymgmt_export_types },
     { OSSL_FUNC_KEYMGMT_GET_PARAMS, (void (*)(void))azihsm_ossl_keymgmt_get_params },
     { OSSL_FUNC_KEYMGMT_GETTABLE_PARAMS, (void (*)(void))azihsm_ossl_keymgmt_gettable_params },
+    { OSSL_FUNC_KEYMGMT_QUERY_OPERATION_NAME,
+      (void (*)(void))azihsm_ossl_keymgmt_ec_query_operation_name },
     { 0, NULL }
 };
