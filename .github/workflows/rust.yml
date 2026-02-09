@@ -62,6 +62,133 @@ jobs:
         name: coverage-report-ubuntu
         path: ./target/reports/
   
+  nginx_integration:
+
+    runs-on: ubuntu-24.04
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install apt packages
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          build-essential cmake pkg-config libssl-dev libbsd-dev \
+          ca-certificates curl gnupg
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Restore Cargo cache
+      uses: actions/cache/restore@v5
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+        key: ${{ runner.os }}-cargo-${{ env.CACHE_KEY_ID }}
+        fail-on-cache-miss: true
+
+    - name: Cache static OpenSSL
+      id: cache-openssl
+      uses: actions/cache@v5
+      with:
+        path: /opt/openssl-static
+        key: openssl-static-3.0.16-linux-x64
+
+    - name: Build static OpenSSL 3.0.16
+      if: steps.cache-openssl.outputs.cache-hit != 'true'
+      run: |
+        curl -fsSL "https://github.com/openssl/openssl/releases/download/openssl-3.0.16/openssl-3.0.16.tar.gz" \
+          | tar xz -C /tmp
+        cd /tmp/openssl-3.0.16
+        ./Configure --prefix=/opt/openssl-static --libdir=lib \
+          no-shared no-dso -fvisibility=hidden -fPIC
+        make -j"$(nproc)"
+        sudo make install_sw
+
+    - name: Build azihsm with static OpenSSL
+      env:
+        OPENSSL_DIR: /opt/openssl-static
+        OPENSSL_STATIC: "1"
+      run: |
+        cargo build -p azihsm_api_native --features mock
+        cargo build -p azihsm_ossl_provider --features mock
+
+    - name: Install provider
+      run: |
+        sudo mkdir -p /usr/lib/ossl-modules
+        sudo cp target/debug/azihsm_provider.so /usr/lib/ossl-modules/
+        sudo cp target/debug/libazihsm_api_native.so /usr/lib/
+        sudo ldconfig
+
+    - name: Install nginx mainline
+      run: |
+        curl -fsSL https://nginx.org/keys/nginx_signing.key \
+          | sudo gpg --dearmor -o /usr/share/keyrings/nginx-archive-keyring.gpg
+        echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] \
+          http://nginx.org/packages/mainline/ubuntu noble nginx" \
+          | sudo tee /etc/apt/sources.list.d/nginx.list
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends nginx
+
+    - name: Generate key and certificate
+      run: |
+        sudo mkdir -p /etc/azihsm /var/lib/azihsm
+        sudo cp plugins/ossl_prov/nginx-example/openssl-provider.cnf /etc/azihsm/
+        sudo cp plugins/ossl_prov/nginx-example/nginx.conf.template /etc/azihsm/
+
+        openssl genpkey \
+          -provider-path /usr/lib/ossl-modules \
+          -provider default -provider azihsm_provider \
+          -propquery "?provider=azihsm" \
+          -algorithm EC \
+          -pkeyopt group:P-384 \
+          -pkeyopt "azihsm.masked_key:/etc/azihsm/masked_key_p384.bin" \
+          -outform DER -out /dev/null
+
+        openssl req -new -x509 \
+          -provider-path /usr/lib/ossl-modules \
+          -provider default -provider azihsm_provider \
+          -propquery "?provider=azihsm" \
+          -key "azihsm:///etc/azihsm/masked_key_p384.bin;type=ec" \
+          -subj "/CN=localhost" \
+          -days 365 -sha384 \
+          -out /etc/azihsm/server.crt
+
+    - name: Start nginx
+      run: |
+        sudo cp /etc/azihsm/nginx.conf.template /etc/nginx/nginx.conf
+        sudo OPENSSL_CONF=/etc/azihsm/openssl-provider.cnf \
+          nginx -c /etc/nginx/nginx.conf
+        sleep 2
+
+    - name: Verify TLS endpoint
+      run: |
+        curl -fsk https://localhost:8443/ | grep "azihsm"
+        curl -fsk https://localhost:8443/health | grep "healthy"
+
+    - name: Verify certificate properties
+      run: |
+        CERT=$(echo | openssl s_client -connect localhost:8443 -servername localhost 2>/dev/null \
+          | openssl x509 -noout -text)
+        echo "$CERT"
+        echo "$CERT" | grep -q "Signature Algorithm: ecdsa-with-SHA384"
+        echo "$CERT" | grep -q "NIST CURVE: P-384"
+        echo "$CERT" | grep -q "ASN1 OID: secp384r1"
+        echo "$CERT" | grep -q "Subject: CN.*=.*localhost"
+
+    - name: Negative test — provider required
+      run: |
+        sudo nginx -s stop || true
+        sudo rm /usr/lib/ossl-modules/azihsm_provider.so
+        # Unset OPENSSL_CONF to avoid DSO load errors from the missing provider.
+        # This ensures the failure comes from resolving the azihsm:// URI.
+        sudo env -u OPENSSL_CONF \
+          nginx -t -c /etc/nginx/nginx.conf 2>&1 \
+          | grep -q "unregistered scheme"
+
   build_windows:
 
     runs-on: windows-latest
