@@ -53,27 +53,27 @@ impl Xtask for NextestReport {
         let mut markdown = String::new();
         markdown.push_str("# Test Results\n\n");
         markdown.push_str(&format!(
-            "- **Total Tests**: {}\n",
+            "-**Total Tests**: {}\n",
             vec_tests.iter().sum::<u64>()
         ));
-        for (i, val) in nextest_cmds.iter().enumerate() {
-            markdown.push_str(&format!("  - {}: {}\n", val, vec_tests[i]));
+        for (i, val) in vec_tests.iter().enumerate() {
+            markdown.push_str(&format!("  -{}\n    -{}\n", nextest_cmds[i], val));
         }
 
         markdown.push_str(&format!(
-            "- **Failures**: {}\n",
+            "-**Total Failures**: {}\n",
             vec_failures.iter().sum::<u64>()
         ));
-        for (i, val) in nextest_cmds.iter().enumerate() {
-            markdown.push_str(&format!("  - {}: {}\n", val, vec_failures[i]));
+        for (i, val) in vec_failures.iter().enumerate() {
+            markdown.push_str(&format!("  -{}\n    -{}\n", nextest_cmds[i], val));
         }
 
         markdown.push_str(&format!(
-            "- **Skipped**: {}\n",
+            "-**Total Skipped**: {}\n",
             vec_skipped.iter().sum::<u64>()
         ));
-        for (i, val) in nextest_cmds.iter().enumerate() {
-            markdown.push_str(&format!("  - {}: {}\n", val, vec_skipped[i]));
+        for (i, val) in vec_skipped.iter().enumerate() {
+            markdown.push_str(&format!("  -{}\n    -{}\n", nextest_cmds[i], val));
         }
 
         markdown.push('\n');
