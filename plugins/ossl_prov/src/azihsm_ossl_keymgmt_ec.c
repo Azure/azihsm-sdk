@@ -9,6 +9,7 @@
 #include <openssl/objects.h>
 #include <openssl/params.h>
 #include <openssl/proverr.h>
+#include <openssl/x509.h>
 #include <string.h>
 
 #include "azihsm_ossl_base.h"
@@ -626,6 +627,11 @@ static void azihsm_ossl_keymgmt_free(AZIHSM_EC_KEY *ec_key)
         azihsm_key_delete(ec_key->key.priv);
     }
 
+    if (ec_key->imported_pub_key != NULL)
+    {
+        OPENSSL_free(ec_key->imported_pub_key);
+    }
+
     OPENSSL_free(ec_key);
 }
 
@@ -815,10 +821,65 @@ static int azihsm_ossl_keymgmt_has(const AZIHSM_EC_KEY *ec_key, int selection)
     return has_selection;
 }
 
+/* Retrieve the raw EC point (uncompressed) for an HSM-backed key by
+ * fetching the SubjectPublicKeyInfo DER and extracting the BIT STRING
+ * contents.  Caller must OPENSSL_free() the returned buffer. */
+static unsigned char *azihsm_ossl_keymgmt_get_pub_point(
+    const AZIHSM_EC_KEY *ec_key,
+    size_t *out_len
+)
+{
+    const uint32_t spki_max_len = 2048;
+    unsigned char *point = NULL;
+
+    *out_len = 0;
+
+    uint8_t *spki_buf = OPENSSL_zalloc(spki_max_len);
+
+    if (spki_buf == NULL)
+    {
+        return NULL;
+    }
+
+    struct azihsm_key_prop prop = { .id = AZIHSM_KEY_PROP_ID_PUB_KEY_INFO,
+                                    .val = spki_buf,
+                                    .len = spki_max_len };
+
+    if (azihsm_key_get_prop(ec_key->key.pub, &prop) != AZIHSM_STATUS_SUCCESS)
+    {
+        OPENSSL_free(spki_buf);
+        return NULL;
+    }
+
+    const unsigned char *der = spki_buf;
+    X509_PUBKEY *xpub = d2i_X509_PUBKEY(NULL, &der, (long)prop.len);
+
+    if (xpub == NULL)
+    {
+        OPENSSL_free(spki_buf);
+        return NULL;
+    }
+
+    const unsigned char *pk_data = NULL;
+    int pk_len = 0;
+
+    X509_PUBKEY_get0_param(NULL, &pk_data, &pk_len, NULL, xpub);
+
+    if (pk_data != NULL && pk_len > 0)
+    {
+        point = OPENSSL_memdup(pk_data, (size_t)pk_len);
+        *out_len = (size_t)pk_len;
+    }
+
+    X509_PUBKEY_free(xpub);
+    OPENSSL_free(spki_buf);
+    return point;
+}
+
 static int azihsm_ossl_keymgmt_match(
     const AZIHSM_EC_KEY *ec_key1,
     const AZIHSM_EC_KEY *ec_key2,
-    ossl_unused int selection
+    int selection
 )
 {
     if (ec_key1 == NULL || ec_key2 == NULL)
@@ -826,14 +887,81 @@ static int azihsm_ossl_keymgmt_match(
         return OSSL_FAILURE;
     }
 
-    if (ec_key1->key.pub != ec_key2->key.pub)
+    /* Domain parameters: curves must match */
+    if ((selection & OSSL_KEYMGMT_SELECT_DOMAIN_PARAMETERS) != 0)
     {
-        return OSSL_FAILURE;
+        if (ec_key1->genctx.ec_curve_id != ec_key2->genctx.ec_curve_id)
+        {
+            return OSSL_FAILURE;
+        }
     }
 
-    if (ec_key1->key.priv != ec_key2->key.priv)
+    /* Public key comparison */
+    if ((selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY) != 0)
     {
-        return OSSL_FAILURE;
+        /* Both have HSM handles — quick compare by handle identity */
+        if (ec_key1->key.pub != 0 && ec_key2->key.pub != 0
+            && ec_key1->imported_pub_key == NULL
+            && ec_key2->imported_pub_key == NULL)
+        {
+            if (ec_key1->key.pub != ec_key2->key.pub)
+            {
+                return OSSL_FAILURE;
+            }
+        }
+        else
+        {
+            /* At least one key is imported — compare raw EC point bytes.
+             * For HSM-backed keys, retrieve the point from SPKI DER. */
+            const unsigned char *p1 = ec_key1->imported_pub_key;
+            size_t p1_len = ec_key1->imported_pub_key_len;
+            unsigned char *alloc1 = NULL;
+
+            if (p1 == NULL && ec_key1->key.pub != 0)
+            {
+                alloc1 = azihsm_ossl_keymgmt_get_pub_point(ec_key1, &p1_len);
+                p1 = alloc1;
+            }
+
+            const unsigned char *p2 = ec_key2->imported_pub_key;
+            size_t p2_len = ec_key2->imported_pub_key_len;
+            unsigned char *alloc2 = NULL;
+
+            if (p2 == NULL && ec_key2->key.pub != 0)
+            {
+                alloc2 = azihsm_ossl_keymgmt_get_pub_point(ec_key2, &p2_len);
+                p2 = alloc2;
+            }
+
+            int ok = (p1 != NULL && p2 != NULL
+                      && p1_len == p2_len
+                      && CRYPTO_memcmp(p1, p2, p1_len) == 0);
+
+            OPENSSL_free(alloc1);
+            OPENSSL_free(alloc2);
+
+            if (!ok)
+            {
+                return OSSL_FAILURE;
+            }
+        }
+    }
+
+    /* Private key comparison */
+    if ((selection & OSSL_KEYMGMT_SELECT_PRIVATE_KEY) != 0)
+    {
+        /* Both must have HSM-backed private keys to compare */
+        if (ec_key1->key.priv == 0 || ec_key2->key.priv == 0)
+        {
+            /* At least one key is imported (public-only) — cannot match private keys */
+            return OSSL_FAILURE;
+        }
+
+        /* Compare by HSM handle identity */
+        if (ec_key1->key.priv != ec_key2->key.priv)
+        {
+            return OSSL_FAILURE;
+        }
     }
 
     return OSSL_SUCCESS;
@@ -861,16 +989,109 @@ static void *azihsm_ossl_keymgmt_load(const void *reference, size_t reference_sz
     /* Copy the key structure from reference */
     memcpy(dst_key, reference, sizeof(AZIHSM_EC_KEY));
 
+    /* Deep-copy the imported public key buffer to avoid double-free */
+    if (dst_key->imported_pub_key != NULL)
+    {
+        dst_key->imported_pub_key = OPENSSL_memdup(
+            dst_key->imported_pub_key, dst_key->imported_pub_key_len);
+
+        if (dst_key->imported_pub_key == NULL)
+        {
+            ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
+            OPENSSL_free(dst_key);
+            return NULL;
+        }
+    }
+
     return dst_key;
 }
 
+static void *azihsm_ossl_keymgmt_new(ossl_unused void *provctx)
+{
+    AZIHSM_EC_KEY *ec_key = OPENSSL_zalloc(sizeof(AZIHSM_EC_KEY));
+
+    if (ec_key == NULL)
+    {
+        ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
+    }
+
+    return ec_key;
+}
+
 static int azihsm_ossl_keymgmt_import(
-    ossl_unused void *keydata,
-    ossl_unused int selection,
-    ossl_unused const OSSL_PARAM params[]
+    void *keydata,
+    int selection,
+    const OSSL_PARAM params[]
 )
 {
-    return OSSL_FAILURE;
+    AZIHSM_EC_KEY *ec_key = keydata;
+
+    if (ec_key == NULL || params == NULL)
+    {
+        return OSSL_FAILURE;
+    }
+
+    /* Import domain parameters (curve name) */
+    if (selection & OSSL_KEYMGMT_SELECT_DOMAIN_PARAMETERS)
+    {
+        const OSSL_PARAM *p = OSSL_PARAM_locate_const(
+            params, OSSL_PKEY_PARAM_GROUP_NAME);
+
+        if (p != NULL)
+        {
+            const char *name = NULL;
+
+            if (!OSSL_PARAM_get_utf8_string_ptr(p, &name) || name == NULL)
+            {
+                ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
+                return OSSL_FAILURE;
+            }
+
+            int curve_id = azihsm_ossl_name_to_curve_id(name);
+
+            if (curve_id == AIHSM_EC_CURVE_ID_NONE)
+            {
+                ERR_raise(ERR_LIB_PROV, PROV_R_INVALID_CURVE);
+                return OSSL_FAILURE;
+            }
+
+            ec_key->genctx.ec_curve_id = (azihsm_ecc_curve)curve_id;
+        }
+    }
+
+    /* Import public key (raw EC point: 0x04 || x || y) */
+    if (selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY)
+    {
+        const OSSL_PARAM *p = OSSL_PARAM_locate_const(
+            params, OSSL_PKEY_PARAM_PUB_KEY);
+
+        if (p != NULL)
+        {
+            const void *data = NULL;
+            size_t data_len = 0;
+
+            if (!OSSL_PARAM_get_octet_string_ptr(p, &data, &data_len)
+                || data == NULL || data_len == 0)
+            {
+                ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
+                return OSSL_FAILURE;
+            }
+
+            OPENSSL_free(ec_key->imported_pub_key);
+            ec_key->imported_pub_key = OPENSSL_memdup(data, data_len);
+
+            if (ec_key->imported_pub_key == NULL)
+            {
+                ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
+                return OSSL_FAILURE;
+            }
+
+            ec_key->imported_pub_key_len = data_len;
+            ec_key->has_public = true;
+        }
+    }
+
+    return OSSL_SUCCESS;
 }
 
 static int azihsm_ossl_keymgmt_export(
@@ -880,17 +1101,39 @@ static int azihsm_ossl_keymgmt_export(
     ossl_unused void *cbarg
 )
 {
-    /* Export not supported — public-key DER encoding is handled by the
-     * SubjectPublicKeyInfo encoder registered in azihsm_ossl_base.c. */
+    /* Export is intentionally not supported.  The private key lives in the
+     * HSM and cannot be extracted.  Exporting just the public portion would
+     * cause OpenSSL to cache a public-only copy of the key in the default
+     * provider's keymgmt, and later signing operations would mistakenly use
+     * that cached copy (which has no private key) instead of the original
+     * HSM-backed key.
+     *
+     * Key comparison (EVP_PKEY_eq) works via the reverse path: the default
+     * provider exports the certificate's public key, which is then imported
+     * into our keymgmt via NEW + IMPORT, and compared using our MATCH. */
     return OSSL_FAILURE;
 }
 
-static const OSSL_PARAM *azihsm_ossl_keymgmt_import_types(ossl_unused int selection)
+static const OSSL_PARAM *azihsm_ossl_keymgmt_import_types(int selection)
 {
+    static const OSSL_PARAM import_types[] = {
+        OSSL_PARAM_utf8_string(OSSL_PKEY_PARAM_GROUP_NAME, NULL, 0),
+        OSSL_PARAM_octet_string(OSSL_PKEY_PARAM_PUB_KEY, NULL, 0),
+        OSSL_PARAM_END
+    };
+
+    if (selection & (OSSL_KEYMGMT_SELECT_PUBLIC_KEY
+                     | OSSL_KEYMGMT_SELECT_DOMAIN_PARAMETERS))
+    {
+        return import_types;
+    }
+
     return NULL;
 }
 
-static const OSSL_PARAM *azihsm_ossl_keymgmt_export_types(ossl_unused int selection)
+static const OSSL_PARAM *azihsm_ossl_keymgmt_export_types(
+    ossl_unused int selection
+)
 {
     return NULL;
 }
@@ -989,6 +1232,7 @@ static const char *azihsm_ossl_keymgmt_ec_query_operation_name(int operation_id)
 
 /* EC Key Management */
 const OSSL_DISPATCH azihsm_ossl_ec_keymgmt_functions[] = {
+    { OSSL_FUNC_KEYMGMT_NEW, (void (*)(void))azihsm_ossl_keymgmt_new },
     { OSSL_FUNC_KEYMGMT_GEN, (void (*)(void))azihsm_ossl_keymgmt_gen },
     { OSSL_FUNC_KEYMGMT_GEN_INIT, (void (*)(void))azihsm_ossl_keymgmt_gen_init },
     { OSSL_FUNC_KEYMGMT_GEN_CLEANUP, (void (*)(void))azihsm_ossl_keymgmt_gen_cleanup },
