@@ -9,7 +9,6 @@
 #include <openssl/objects.h>
 #include <openssl/params.h>
 #include <openssl/proverr.h>
-#include <openssl/store.h>
 #include <string.h>
 
 #include "azihsm_ossl_base.h"
@@ -881,18 +880,18 @@ static int azihsm_ossl_keymgmt_export(
     ossl_unused void *cbarg
 )
 {
+    /* Export not supported — public-key DER encoding is handled by the
+     * SubjectPublicKeyInfo encoder registered in azihsm_ossl_base.c. */
     return OSSL_FAILURE;
 }
 
 static const OSSL_PARAM *azihsm_ossl_keymgmt_import_types(ossl_unused int selection)
 {
-    // TODO: Return importable parameter types
     return NULL;
 }
 
 static const OSSL_PARAM *azihsm_ossl_keymgmt_export_types(ossl_unused int selection)
 {
-    // TODO: Return exportable parameter types
     return NULL;
 }
 
@@ -929,8 +928,15 @@ static int azihsm_ossl_keymgmt_get_params(AZIHSM_EC_KEY *key, OSSL_PARAM params[
     p = OSSL_PARAM_locate(params, OSSL_PKEY_PARAM_MAX_SIZE);
     if (p != NULL)
     {
-        size_t sig_size = azihsm_ossl_curve_id_to_sig_size((int)key->genctx.ec_curve_id);
-        if (sig_size == 0 || !OSSL_PARAM_set_size_t(p, sig_size))
+        /*
+         * Report the maximum DER-encoded ECDSA-Sig-Value size.
+         * SEQUENCE { INTEGER r, INTEGER s } — each INTEGER may have a
+         * leading zero byte.  OpenSSL uses this for buffer allocation.
+         */
+        size_t raw = azihsm_ossl_curve_id_to_sig_size((int)key->genctx.ec_curve_id);
+        size_t coord = raw / 2;
+        size_t der_max = 2 * (coord + 3) + 3;
+        if (raw == 0 || !OSSL_PARAM_set_size_t(p, der_max))
         {
             ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_SET_PARAMETER);
             return OSSL_FAILURE;
