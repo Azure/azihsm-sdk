@@ -855,10 +855,30 @@ static void *azihsm_ossl_keymgmt_load(const void *reference, size_t reference_sz
     return dst_key;
 }
 
+/*
+ * Get the expected uncompressed EC point size for a given curve.
+ * Returns the expected size (1 + 2*coord_size) or 0 for unknown curves.
+ */
+static size_t azihsm_ossl_ec_curve_id_to_point_size(int curve_id)
+{
+    switch (curve_id)
+    {
+    case AZIHSM_ECC_CURVE_P256:
+        return 1 + 2 * AZIHSM_EC_P256_COORD_SIZE; /* 65 bytes */
+    case AZIHSM_ECC_CURVE_P384:
+        return 1 + 2 * AZIHSM_EC_P384_COORD_SIZE; /* 97 bytes */
+    case AZIHSM_ECC_CURVE_P521:
+        return 1 + 2 * AZIHSM_EC_P521_COORD_SIZE; /* 133 bytes */
+    default:
+        return 0;
+    }
+}
+
 static int azihsm_ossl_keymgmt_import(void *keydata, int selection, const OSSL_PARAM params[])
 {
     AZIHSM_EC_KEY *key = (AZIHSM_EC_KEY *)keydata;
     const OSSL_PARAM *p;
+    int curve_id = AIHSM_EC_CURVE_ID_NONE;
 
     if (key == NULL || params == NULL)
     {
@@ -870,41 +890,60 @@ static int azihsm_ossl_keymgmt_import(void *keydata, int selection, const OSSL_P
         return OSSL_FAILURE;
     }
 
-    /* Read group name */
+    /* Read group name - mandatory for public key import */
     p = OSSL_PARAM_locate_const(params, OSSL_PKEY_PARAM_GROUP_NAME);
-    if (p != NULL)
+    if (p == NULL)
     {
-        const char *name = NULL;
-        if (!OSSL_PARAM_get_utf8_string_ptr(p, &name) || name == NULL)
-        {
-            return OSSL_FAILURE;
-        }
-
-        snprintf(key->group_name, sizeof(key->group_name), "%s", name);
-
-        int curve_id = azihsm_ossl_name_to_curve_id(name);
-        if (curve_id == AIHSM_EC_CURVE_ID_NONE)
-        {
-            ERR_raise(ERR_LIB_PROV, PROV_R_INVALID_CURVE);
-            return OSSL_FAILURE;
-        }
-        key->genctx.ec_curve_id = (uint32_t)curve_id;
+        ERR_raise(ERR_LIB_PROV, PROV_R_NO_PARAMETERS_SET);
+        return OSSL_FAILURE;
     }
+
+    const char *name = NULL;
+    if (!OSSL_PARAM_get_utf8_string_ptr(p, &name) || name == NULL)
+    {
+        ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
+        return OSSL_FAILURE;
+    }
+
+    snprintf(key->group_name, sizeof(key->group_name), "%s", name);
+
+    curve_id = azihsm_ossl_name_to_curve_id(name);
+    if (curve_id == AIHSM_EC_CURVE_ID_NONE)
+    {
+        ERR_raise(ERR_LIB_PROV, PROV_R_INVALID_CURVE);
+        return OSSL_FAILURE;
+    }
+    key->genctx.ec_curve_id = (uint32_t)curve_id;
 
     /* Read raw public key (uncompressed EC point) */
     p = OSSL_PARAM_locate_const(params, OSSL_PKEY_PARAM_PUB_KEY);
     if (p != NULL)
     {
+        size_t expected_point_size = azihsm_ossl_ec_curve_id_to_point_size(curve_id);
+        void *tmp_data = NULL;
+        size_t tmp_len = 0;
+
         OPENSSL_free(key->pub_key_data);
         key->pub_key_data = NULL;
         key->pub_key_data_len = 0;
 
-        if (!OSSL_PARAM_get_octet_string(p, (void **)&key->pub_key_data, 0, &key->pub_key_data_len))
+        /* Use a temporary buffer with max_len to prevent unbounded allocation */
+        if (!OSSL_PARAM_get_octet_string(p, &tmp_data, expected_point_size, &tmp_len))
         {
             ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
             return OSSL_FAILURE;
         }
 
+        /* Validate point size matches curve */
+        if (tmp_len != expected_point_size)
+        {
+            OPENSSL_free(tmp_data);
+            ERR_raise(ERR_LIB_PROV, PROV_R_INVALID_KEY);
+            return OSSL_FAILURE;
+        }
+
+        key->pub_key_data = tmp_data;
+        key->pub_key_data_len = tmp_len;
         key->has_public = true;
     }
 

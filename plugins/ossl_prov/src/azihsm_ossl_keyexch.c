@@ -17,6 +17,7 @@
 
 #include "azihsm_ossl_base.h"
 #include "azihsm_ossl_ec.h"
+#include "azihsm_ossl_pkey_param.h"
 
 typedef struct
 {
@@ -236,12 +237,14 @@ static int azihsm_ossl_keyexch_set_ctx_params(void *kectx, const OSSL_PARAM para
             return OSSL_FAILURE;
         }
 
-        int ret = snprintf(ctx->output_file, sizeof(ctx->output_file), "%s", path);
-        if (ret < 0 || (size_t)ret >= sizeof(ctx->output_file))
+        if (azihsm_ossl_masked_key_filepath_validate(path) < 0)
         {
             ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
             return OSSL_FAILURE;
         }
+
+        strncpy(ctx->output_file, path, sizeof(ctx->output_file) - 1);
+        ctx->output_file[sizeof(ctx->output_file) - 1] = '\0';
     }
 
     return OSSL_SUCCESS;
@@ -427,6 +430,11 @@ static int azihsm_ossl_keyexch_derive(
     const bool enable_derive = true;
 
     curve_bits = azihsm_ossl_ec_curve_id_to_bits((int)ctx->our_key->genctx.ec_curve_id);
+    if (curve_bits <= 0)
+    {
+        ERR_raise(ERR_LIB_PROV, PROV_R_INVALID_CURVE);
+        goto err;
+    }
     uint32_t bit_len_val = (uint32_t)curve_bits;
 
     struct azihsm_key_prop derive_props[] = {
