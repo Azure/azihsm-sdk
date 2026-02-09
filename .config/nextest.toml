@@ -1,12 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 # Note on why multiple profiles are used to enable JUnit support: this is done
-# as a workaround to prevent each nextest run from overwriting the same
-# output file during the rust.yml workflow. Nextest saves the report to
-# target/nextest/<profile>/<path>, so by having different profiles, each run
-# saves to a different file. By keeping the JUnit reports seperate, their data
-# can then be collected and reported together in the github summary later in
-# the rust.yml workflow.
+# as a workaround to prevent each nextest run from overwriting the same output
+# file (saved to target/nextest/<profile>/<path>) during the rust.yml workflow.
 
 # profile for running all mock tests
 [profile.ci-mock.junit]

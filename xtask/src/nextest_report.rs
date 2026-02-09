@@ -20,6 +20,11 @@ impl Xtask for NextestReport {
         log::trace!("running nextest-report");
 
         let nextest_profiles = ["ci-mock", "ci-mock-table-4", "ci-mock-table-64"];
+        let nextest_cmds = [
+            "cargo nextest run --no-fail-fast --features mock",
+            "cargo nextest run --no-fail-fast --features mock,table-4 --package azihsm_ddi",
+            "cargo nextest run --no-fail-fast --features mock,table-64 --package azihsm_ddi",
+        ];
 
         let mut test_suites_total = TestSuites::default();
 
@@ -51,7 +56,7 @@ impl Xtask for NextestReport {
             "- **Total Tests**: {}\n",
             vec_tests.iter().sum::<u64>()
         ));
-        for (i, val) in nextest_profiles.iter().enumerate() {
+        for (i, val) in nextest_cmds.iter().enumerate() {
             markdown.push_str(&format!("  - {}: {}\n", val, vec_tests[i]));
         }
 
@@ -59,7 +64,7 @@ impl Xtask for NextestReport {
             "- **Failures**: {}\n",
             vec_failures.iter().sum::<u64>()
         ));
-        for (i, val) in nextest_profiles.iter().enumerate() {
+        for (i, val) in nextest_cmds.iter().enumerate() {
             markdown.push_str(&format!("  - {}: {}\n", val, vec_failures[i]));
         }
 
@@ -67,7 +72,7 @@ impl Xtask for NextestReport {
             "- **Skipped**: {}\n",
             vec_skipped.iter().sum::<u64>()
         ));
-        for (i, val) in nextest_profiles.iter().enumerate() {
+        for (i, val) in nextest_cmds.iter().enumerate() {
             markdown.push_str(&format!("  - {}: {}\n", val, vec_skipped[i]));
         }
 
