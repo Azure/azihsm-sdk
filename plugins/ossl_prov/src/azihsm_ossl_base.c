@@ -330,6 +330,29 @@ static int azihsm_config_is_valid(const AZIHSM_CONFIG *config)
 }
 
 /*
+ * Validate that the API revision is within the supported range.
+ * Returns 1 if valid, 0 if out of range.
+ */
+static int azihsm_api_revision_is_valid(const AZIHSM_CONFIG *config)
+{
+    uint32_t version;
+    uint32_t min_version;
+    uint32_t max_version;
+
+    if (config == NULL)
+    {
+        return 0;
+    }
+
+    /* Combine major.minor into a single comparable value */
+    version = ((uint32_t)config->api_revision_major << 16) | config->api_revision_minor;
+    min_version = ((uint32_t)AZIHSM_API_REVISION_MIN_MAJOR << 16) | AZIHSM_API_REVISION_MIN_MINOR;
+    max_version = ((uint32_t)AZIHSM_API_REVISION_MAX_MAJOR << 16) | AZIHSM_API_REVISION_MAX_MINOR;
+
+    return version >= min_version && version <= max_version;
+}
+
+/*
  * Parse configuration parameters from OpenSSL config file.
  * Returns a populated AZIHSM_CONFIG structure with all path fields set.
  *
@@ -343,12 +366,17 @@ static AZIHSM_CONFIG parse_provider_config(
     OSSL_FUNC_core_get_params_fn *get_params
 )
 {
-    AZIHSM_CONFIG config = { NULL, NULL, NULL, NULL, NULL };
+    AZIHSM_CONFIG config = {
+        NULL, NULL, NULL, NULL, NULL,
+        AZIHSM_API_REVISION_DEFAULT_MAJOR,
+        AZIHSM_API_REVISION_DEFAULT_MINOR
+    };
     const char *credentials_id = NULL;
     const char *credentials_pin = NULL;
     const char *bmk_path = NULL;
     const char *muk_path = NULL;
     const char *mobk_path = NULL;
+    const char *api_revision = NULL;
 
     OSSL_PARAM core_params[] = {
         OSSL_PARAM_construct_utf8_ptr(
@@ -364,6 +392,11 @@ static AZIHSM_CONFIG parse_provider_config(
         OSSL_PARAM_construct_utf8_ptr(AZIHSM_CFG_BMK_PATH, (char **)&bmk_path, sizeof(void *)),
         OSSL_PARAM_construct_utf8_ptr(AZIHSM_CFG_MUK_PATH, (char **)&muk_path, sizeof(void *)),
         OSSL_PARAM_construct_utf8_ptr(AZIHSM_CFG_MOBK_PATH, (char **)&mobk_path, sizeof(void *)),
+        OSSL_PARAM_construct_utf8_ptr(
+            AZIHSM_CFG_API_REVISION,
+            (char **)&api_revision,
+            sizeof(void *)
+        ),
         OSSL_PARAM_construct_end()
     };
 
@@ -390,6 +423,15 @@ static AZIHSM_CONFIG parse_provider_config(
         if (mobk_path != NULL)
         {
             config.mobk_path = OPENSSL_strdup(strip_file_prefix(mobk_path));
+        }
+        if (api_revision != NULL)
+        {
+            unsigned int major = 0, minor = 0;
+            if (sscanf(api_revision, "%u.%u", &major, &minor) == 2)
+            {
+                config.api_revision_major = (uint16_t)major;
+                config.api_revision_minor = (uint16_t)minor;
+            }
         }
     }
 
@@ -462,6 +504,16 @@ OSSL_STATUS OSSL_provider_init(
     if (!azihsm_config_is_valid(&config))
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
+        azihsm_config_free(&config);
+        OSSL_LIB_CTX_free(ctx->libctx);
+        OPENSSL_free(ctx);
+        return OSSL_FAILURE;
+    }
+
+    /* Validate API revision is within supported range */
+    if (!azihsm_api_revision_is_valid(&config))
+    {
+        ERR_raise(ERR_LIB_PROV, PROV_R_INVALID_CONFIG_DATA);
         azihsm_config_free(&config);
         OSSL_LIB_CTX_free(ctx->libctx);
         OPENSSL_free(ctx);

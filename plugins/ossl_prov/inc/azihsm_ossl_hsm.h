@@ -9,6 +9,7 @@ extern "C"
 #endif
 
 #include <azihsm.h>
+#include <stdint.h>
 
 /* Default file paths for partition keys */
 #define AZIHSM_DEFAULT_BMK_PATH "/var/lib/azihsm/bmk.bin"
@@ -23,6 +24,15 @@ extern "C"
 #define AZIHSM_CFG_BMK_PATH "azihsm-bmk-path"
 #define AZIHSM_CFG_MUK_PATH "azihsm-muk-path"
 #define AZIHSM_CFG_MOBK_PATH "azihsm-mobk-path"
+#define AZIHSM_CFG_API_REVISION "azihsm-api-revision"
+
+/* Supported API revision range */
+#define AZIHSM_API_REVISION_MIN_MAJOR 1
+#define AZIHSM_API_REVISION_MIN_MINOR 0
+#define AZIHSM_API_REVISION_MAX_MAJOR 1
+#define AZIHSM_API_REVISION_MAX_MINOR 0
+#define AZIHSM_API_REVISION_DEFAULT_MAJOR 1
+#define AZIHSM_API_REVISION_DEFAULT_MINOR 0
 
 /* Provider configuration structure */
 typedef struct
@@ -32,6 +42,8 @@ typedef struct
     char *bmk_path;             /* Path to BMK file */
     char *muk_path;             /* Path to MUK file */
     char *mobk_path;            /* Path to MOBK file */
+    uint16_t api_revision_major; /* API revision major version */
+    uint16_t api_revision_minor; /* API revision minor version */
 } AZIHSM_CONFIG;
 
 void azihsm_config_free(AZIHSM_CONFIG *config);

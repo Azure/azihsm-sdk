@@ -345,13 +345,17 @@ azihsm_status azihsm_open_device_and_session(
     struct azihsm_buffer retrieved_bmk = { NULL, 0 };
     struct azihsm_buffer retrieved_mobk = { NULL, 0 };
 
-    struct azihsm_api_rev api_rev = { .major = 1, .minor = 0 };
+    struct azihsm_api_rev api_rev = { 0 };
     struct azihsm_credentials creds = { { 0 }, { 0 } };
 
     if (config == NULL || device == NULL || session == NULL)
     {
         return AZIHSM_STATUS_INVALID_ARGUMENT;
     }
+
+    /* Use API revision from config */
+    api_rev.major = config->api_revision_major;
+    api_rev.minor = config->api_revision_minor;
 
     /* Load credentials from files */
     status = load_credentials_from_file(config->credentials_id_path, creds.id);
