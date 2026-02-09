@@ -49,31 +49,33 @@ impl Xtask for NextestReport {
             }
         }
 
+        // Calculate total tests, failures, and skipped
+        test_suites_total.tests = vec_tests.iter().sum();
+        test_suites_total.failures = vec_failures.iter().sum();
+        test_suites_total.skipped = vec_skipped.iter().sum();
+
         // Generate markdown report
         let mut markdown = String::new();
         markdown.push_str("# Test Results\n\n");
-        markdown.push_str(&format!(
-            "-**Total Tests**: {}\n",
-            vec_tests.iter().sum::<u64>()
-        ));
+        markdown.push_str(&format!("- **Total Tests**: {}\n", test_suites_total.tests));
         for (i, val) in vec_tests.iter().enumerate() {
-            markdown.push_str(&format!("  -{}\n    -{}\n", nextest_cmds[i], val));
+            markdown.push_str(&format!("  - {}\n    - {}\n", nextest_cmds[i], val));
         }
 
         markdown.push_str(&format!(
-            "-**Total Failures**: {}\n",
-            vec_failures.iter().sum::<u64>()
+            "- **Total Failures**: {}\n",
+            test_suites_total.failures
         ));
         for (i, val) in vec_failures.iter().enumerate() {
-            markdown.push_str(&format!("  -{}\n    -{}\n", nextest_cmds[i], val));
+            markdown.push_str(&format!("  - {}\n    - {}\n", nextest_cmds[i], val));
         }
 
         markdown.push_str(&format!(
-            "-**Total Skipped**: {}\n",
-            vec_skipped.iter().sum::<u64>()
+            "- **Total Skipped**: {}\n",
+            test_suites_total.skipped
         ));
         for (i, val) in vec_skipped.iter().enumerate() {
-            markdown.push_str(&format!("  -{}\n    -{}\n", nextest_cmds[i], val));
+            markdown.push_str(&format!("  - {}\n    - {}\n", nextest_cmds[i], val));
         }
 
         markdown.push('\n');
