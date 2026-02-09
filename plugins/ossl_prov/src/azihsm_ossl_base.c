@@ -7,6 +7,7 @@
 #include <openssl/evp.h>
 #include <openssl/prov_ssl.h>
 #include <openssl/proverr.h>
+#include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 
@@ -353,6 +354,20 @@ static int azihsm_api_revision_is_valid(const AZIHSM_CONFIG *config)
 }
 
 /*
+ * Get path from environment variable, falling back to default if not set.
+ * Returns a newly allocated string that must be freed with OPENSSL_free.
+ */
+static char *get_path_from_env_or_default(const char *env_var, const char *default_path)
+{
+    const char *env_value = getenv(env_var);
+    if (env_value != NULL && env_value[0] != '\0')
+    {
+        return OPENSSL_strdup(env_value);
+    }
+    return OPENSSL_strdup(default_path);
+}
+
+/*
  * Parse configuration parameters from OpenSSL config file.
  * Returns a populated AZIHSM_CONFIG structure with all path fields set.
  *
@@ -371,24 +386,12 @@ static AZIHSM_CONFIG parse_provider_config(
         AZIHSM_API_REVISION_DEFAULT_MAJOR,
         AZIHSM_API_REVISION_DEFAULT_MINOR
     };
-    const char *credentials_id = NULL;
-    const char *credentials_pin = NULL;
     const char *bmk_path = NULL;
     const char *muk_path = NULL;
     const char *mobk_path = NULL;
     const char *api_revision = NULL;
 
     OSSL_PARAM core_params[] = {
-        OSSL_PARAM_construct_utf8_ptr(
-            AZIHSM_CFG_CREDENTIALS_ID,
-            (char **)&credentials_id,
-            sizeof(void *)
-        ),
-        OSSL_PARAM_construct_utf8_ptr(
-            AZIHSM_CFG_CREDENTIALS_PIN,
-            (char **)&credentials_pin,
-            sizeof(void *)
-        ),
         OSSL_PARAM_construct_utf8_ptr(AZIHSM_CFG_BMK_PATH, (char **)&bmk_path, sizeof(void *)),
         OSSL_PARAM_construct_utf8_ptr(AZIHSM_CFG_MUK_PATH, (char **)&muk_path, sizeof(void *)),
         OSSL_PARAM_construct_utf8_ptr(AZIHSM_CFG_MOBK_PATH, (char **)&mobk_path, sizeof(void *)),
@@ -403,15 +406,7 @@ static AZIHSM_CONFIG parse_provider_config(
     /* Fetch parameters from OpenSSL core (returns 1 on success, 0 on failure) */
     if (get_params != NULL && get_params(handle, core_params) == 1)
     {
-        /* Copy values with file: prefix handling for all paths */
-        if (credentials_id != NULL)
-        {
-            config.credentials_id_path = OPENSSL_strdup(strip_file_prefix(credentials_id));
-        }
-        if (credentials_pin != NULL)
-        {
-            config.credentials_pin_path = OPENSSL_strdup(strip_file_prefix(credentials_pin));
-        }
+        /* Copy values with file: prefix handling for key paths */
         if (bmk_path != NULL)
         {
             config.bmk_path = OPENSSL_strdup(strip_file_prefix(bmk_path));
@@ -435,15 +430,13 @@ static AZIHSM_CONFIG parse_provider_config(
         }
     }
 
-    /* Apply defaults for any paths not provided in config */
-    if (config.credentials_id_path == NULL)
-    {
-        config.credentials_id_path = OPENSSL_strdup(AZIHSM_DEFAULT_CREDENTIALS_ID_PATH);
-    }
-    if (config.credentials_pin_path == NULL)
-    {
-        config.credentials_pin_path = OPENSSL_strdup(AZIHSM_DEFAULT_CREDENTIALS_PIN_PATH);
-    }
+    /* Apply defaults for any paths not provided in config.
+     * Credentials: environment variable > hardcoded default (not in openssl.cnf)
+     * Key paths: openssl.cnf > hardcoded default */
+    config.credentials_id_path = get_path_from_env_or_default(
+        AZIHSM_ENV_CREDENTIALS_ID_PATH, AZIHSM_DEFAULT_CREDENTIALS_ID_PATH);
+    config.credentials_pin_path = get_path_from_env_or_default(
+        AZIHSM_ENV_CREDENTIALS_PIN_PATH, AZIHSM_DEFAULT_CREDENTIALS_PIN_PATH);
     if (config.bmk_path == NULL)
     {
         config.bmk_path = OPENSSL_strdup(AZIHSM_DEFAULT_BMK_PATH);

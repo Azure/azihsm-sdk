@@ -11,6 +11,11 @@ extern "C"
 #include <azihsm.h>
 #include <stdint.h>
 
+/* Environment variable names for credentials paths.
+ * These are checked first, before falling back to hardcoded defaults. */
+#define AZIHSM_ENV_CREDENTIALS_ID_PATH "AZIHSM_CREDENTIALS_ID_PATH"
+#define AZIHSM_ENV_CREDENTIALS_PIN_PATH "AZIHSM_CREDENTIALS_PIN_PATH"
+
 /* Default file paths for partition keys */
 #define AZIHSM_DEFAULT_BMK_PATH "/var/lib/azihsm/bmk.bin"
 #define AZIHSM_DEFAULT_MUK_PATH "/var/lib/azihsm/muk.bin"
@@ -19,8 +24,6 @@ extern "C"
 #define AZIHSM_DEFAULT_CREDENTIALS_PIN_PATH "/var/lib/azihsm/credentials_pin.bin"
 
 /* Configuration parameter names for openssl.cnf */
-#define AZIHSM_CFG_CREDENTIALS_ID "azihsm-credentials-id"
-#define AZIHSM_CFG_CREDENTIALS_PIN "azihsm-credentials-pin"
 #define AZIHSM_CFG_BMK_PATH "azihsm-bmk-path"
 #define AZIHSM_CFG_MUK_PATH "azihsm-muk-path"
 #define AZIHSM_CFG_MOBK_PATH "azihsm-mobk-path"
