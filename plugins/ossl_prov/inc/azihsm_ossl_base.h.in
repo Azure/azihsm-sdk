@@ -5,6 +5,7 @@
 
 #include <azihsm.h>
 #include <openssl/core_names.h>
+#include <openssl/crypto.h>
 #include <openssl/params.h>
 
 #include "azihsm_ossl_helpers.h"
@@ -56,7 +57,12 @@ typedef struct
     azihsm_handle device;
     azihsm_handle session;
     AZIHSM_CONFIG config;
-    AZIHSM_KEY_PAIR_OBJ unwrapping_key; /* Cached MUK handles */
+    struct
+    {
+        CRYPTO_RWLOCK *lock;
+        azihsm_handle pub;
+        azihsm_handle priv;
+    } unwrapping_key; /* Cached MUK handles (thread-safe) */
 } AZIHSM_OSSL_PROV_CTX;
 
 static const OSSL_PARAM azihsm_ossl_param_types[] = {

@@ -413,11 +413,26 @@ azihsm_status azihsm_get_unwrapping_key(
         return AZIHSM_STATUS_INVALID_ARGUMENT;
     }
 
-    /* Return cached handles if available */
-    if (provctx->unwrapping_key.pub != 0 && provctx->unwrapping_key.priv != 0)
+    /* Fast path: return cached handles if available */
+    if (provctx->unwrapping_key.priv != 0)
     {
         *out_pub = provctx->unwrapping_key.pub;
         *out_priv = provctx->unwrapping_key.priv;
+        return AZIHSM_STATUS_SUCCESS;
+    }
+
+    /* Slow path: acquire lock and check again */
+    if (!CRYPTO_THREAD_write_lock(provctx->unwrapping_key.lock))
+    {
+        return AZIHSM_STATUS_INTERNAL_ERROR;
+    }
+
+    if (provctx->unwrapping_key.priv != 0)
+    {
+        /* Another thread initialized while we waited */
+        *out_pub = provctx->unwrapping_key.pub;
+        *out_priv = provctx->unwrapping_key.priv;
+        CRYPTO_THREAD_unlock(provctx->unwrapping_key.lock);
         return AZIHSM_STATUS_SUCCESS;
     }
 
@@ -459,24 +474,31 @@ azihsm_status azihsm_get_unwrapping_key(
         .count = 4,
     };
 
+    azihsm_handle pub = 0;
+    azihsm_handle priv = 0;
+
     status = azihsm_key_gen_pair(
         provctx->session,
         &algo,
         &priv_key_prop_list,
         &pub_key_prop_list,
-        out_priv,
-        out_pub
+        &priv,
+        &pub
     );
     if (status != AZIHSM_STATUS_SUCCESS)
     {
         ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GENERATE_KEY);
+        CRYPTO_THREAD_unlock(provctx->unwrapping_key.lock);
         return status;
     }
 
     /* Cache the handles for future use */
-    provctx->unwrapping_key.pub = *out_pub;
-    provctx->unwrapping_key.priv = *out_priv;
+    provctx->unwrapping_key.pub = pub;
+    provctx->unwrapping_key.priv = priv;
+    *out_pub = pub;
+    *out_priv = priv;
 
+    CRYPTO_THREAD_unlock(provctx->unwrapping_key.lock);
     return AZIHSM_STATUS_SUCCESS;
 }
 
