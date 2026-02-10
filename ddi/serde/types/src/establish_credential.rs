@@ -32,7 +32,7 @@ pub struct DdiEstablishCredentialReq {
 
     /// TPM or Caller Partition ID endorsement
     #[ddi(id = 6)]
-    #[ddi(pre_encode_fn = "signature_pre_encode")]
+    #[ddi(pre_encode_fn = "pid_sig_pre_encode")]
     pub pid_sig: MborByteArray<1024>,
 
     /// TPM or Caller Partition ID Endorsement Public Key
@@ -42,7 +42,7 @@ pub struct DdiEstablishCredentialReq {
 
 impl DdiEstablishCredentialReq {
     #[cfg(feature = "pre_encode")]
-    pub fn signature_pre_encode(
+    pub fn pid_sig_pre_encode(
         &self,
         input_array: &MborByteArray<1024>,
     ) -> Result<MborByteArray<1024>, MborEncodeError> {
