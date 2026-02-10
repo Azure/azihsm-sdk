@@ -79,14 +79,19 @@ fn test_partition_init() {
         //init with dummy creds
         let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
         let use_tpm = std::env::var("AZIHSM_USE_TPM").is_ok();
+        let pota_result = if use_tpm {
+            None
+        } else {
+            Some(generate_pota_endorsement(&part))
+        };
         let (obk_info, pota_endorsement) = if use_tpm {
             (
                 HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, None),
                 HsmPotaEndorsement::new(HsmPotaEndorsementSource::Tpm, None),
             )
         } else {
-            let pota_data =
-                HsmPotaEndorsementData::new(&TEST_POTA_SIGNATURE, &TEST_POTA_PUBLIC_KEY_DER);
+            let (pota_sig, pota_pub_key_der) = pota_result.as_ref().unwrap();
+            let pota_data = HsmPotaEndorsementData::new(pota_sig, pota_pub_key_der);
             (
                 HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Caller, Some(&TEST_OBK)),
                 HsmPotaEndorsement::new(HsmPotaEndorsementSource::Caller, Some(pota_data)),

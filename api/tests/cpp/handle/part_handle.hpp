@@ -13,6 +13,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "../utils/part_init_config.hpp"
 #include "part_list_handle.hpp"
 #include "test_creds.hpp"
 
@@ -111,35 +112,17 @@ class PartitionHandle
             std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
             std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
 
-            azihsm_pota_endorsement pota_endorsement{};
-            azihsm_buffer pota_sig_buf{};
-            azihsm_buffer pota_pubkey_buf{};
-            azihsm_pota_endorsement_data pota_data{};
-            azihsm_owner_backup_key_config backup_config{};
-            azihsm_buffer obk_buf{};
-            const char *use_tpm = std::getenv("AZIHSM_USE_TPM");
-            if (use_tpm != nullptr)
-            {
-                backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_TPM;
-                backup_config.owner_backup_key = nullptr;
-                pota_endorsement.source = AZIHSM_POTA_ENDORSEMENT_SOURCE_TPM;
-                pota_endorsement.endorsement = nullptr;
-            }
-            else
-            {
-                obk_buf = { const_cast<uint8_t *>(TEST_OBK), sizeof(TEST_OBK) };
-                backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER;
-                backup_config.owner_backup_key = &obk_buf;
-                pota_sig_buf = { const_cast<uint8_t *>(TEST_POTA_SIGNATURE),
-                                 sizeof(TEST_POTA_SIGNATURE) };
-                pota_pubkey_buf = { const_cast<uint8_t *>(TEST_POTA_PUBLIC_KEY_DER),
-                                    sizeof(TEST_POTA_PUBLIC_KEY_DER) };
-                pota_data = { .signature = &pota_sig_buf, .public_key = &pota_pubkey_buf };
-                pota_endorsement.source = AZIHSM_POTA_ENDORSEMENT_SOURCE_CALLER;
-                pota_endorsement.endorsement = &pota_data;
-            }
+            PartInitConfig init_config{};
+            make_part_init_config(handle_, init_config);
 
-            err = azihsm_part_init(handle_, &creds, nullptr, nullptr, &backup_config, &pota_endorsement);
+            err = azihsm_part_init(
+                handle_,
+                &creds,
+                nullptr,
+                nullptr,
+                &init_config.backup_config,
+                &init_config.pota_endorsement
+            );
             if (err != AZIHSM_STATUS_SUCCESS)
             {
                 azihsm_part_close(handle_);

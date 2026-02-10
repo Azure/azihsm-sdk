@@ -534,6 +534,15 @@ impl HsmPartition {
         self.with_dev(|dev| ddi::get_cert_chain(dev, self.api_rev_range().min(), slot))
     }
 
+    /// Retrieves the public key of the partition's identity (PID) certificate.
+    ///
+    /// # Returns
+    ///
+    /// Returns the DER-encoded public key of the PID certificate.
+    pub fn pid_pub_key(&self) -> HsmResult<Vec<u8>> {
+        self.with_dev(|dev| ddi::get_pid_pub_key(dev, self.api_rev_range().min()))
+    }
+
     /// Retrieves the backup masking key that was set during partition initialization.
     ///
     /// # Arguments

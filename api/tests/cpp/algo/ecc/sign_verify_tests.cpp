@@ -12,6 +12,7 @@
 #include "handle/session_handle.hpp"
 #include "helpers.hpp"
 #include "utils/auto_key.hpp"
+#include "utils/part_init_config.hpp"
 #include "utils/rsa_keygen.hpp"
 
 class azihsm_ecc_sign_verify : public ::testing::Test
@@ -873,35 +874,17 @@ TEST_F(azihsm_ecc_sign_verify, persist_key_and_signature)
     std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
     std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
 
-    azihsm_owner_backup_key_config backup_config{};
-    azihsm_buffer obk_buf{};
-    azihsm_pota_endorsement pota_endorsement{};
-    azihsm_buffer pota_sig_buf{};
-    azihsm_buffer pota_pubkey_buf{};
-    azihsm_pota_endorsement_data pota_data{};
-    const char *use_tpm = std::getenv("AZIHSM_USE_TPM");
-    if (use_tpm != nullptr)
-    {
-        backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_TPM;
-        backup_config.owner_backup_key = nullptr;
-        pota_endorsement.source = AZIHSM_POTA_ENDORSEMENT_SOURCE_TPM;
-        pota_endorsement.endorsement = nullptr;
-    }
-    else
-    {
-        obk_buf = { const_cast<uint8_t *>(TEST_OBK), sizeof(TEST_OBK) };
-        backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER;
-        backup_config.owner_backup_key = &obk_buf;
-        pota_sig_buf = { const_cast<uint8_t *>(TEST_POTA_SIGNATURE), sizeof(TEST_POTA_SIGNATURE) };
-        pota_pubkey_buf = { const_cast<uint8_t *>(TEST_POTA_PUBLIC_KEY_DER),
-                            sizeof(TEST_POTA_PUBLIC_KEY_DER) };
-        pota_data = { .signature = &pota_sig_buf, .public_key = &pota_pubkey_buf };
-        pota_endorsement.source = AZIHSM_POTA_ENDORSEMENT_SOURCE_CALLER;
-        pota_endorsement.endorsement = &pota_data;
-    }
+    PartInitConfig init_config{};
+    make_part_init_config(part_handle, init_config);
 
-    err =
-        azihsm_part_init(part_handle, &creds, nullptr, nullptr, &backup_config, &pota_endorsement);
+    err = azihsm_part_init(
+        part_handle,
+        &creds,
+        nullptr,
+        nullptr,
+        &init_config.backup_config,
+        &init_config.pota_endorsement
+    );
     std::cout << "azihsm_part_init returned: " << err << std::endl;
 
     // Step 4: Get BMK and MOBK for persistence (needed for restore)
@@ -1043,36 +1026,17 @@ TEST_F(azihsm_ecc_sign_verify, DISABLED_MANUAL_restore_key_and_verify)
     azihsm_buffer bmk_buf = { bmk.data(), static_cast<uint32_t>(bmk.size()) };
     azihsm_buffer mobk_buf = { mobk.data(), static_cast<uint32_t>(mobk.size()) };
 
-    azihsm_owner_backup_key_config backup_config{};
-    azihsm_buffer obk_buf{};
-    azihsm_pota_endorsement pota_endorsement{};
-    azihsm_buffer pota_sig_buf{};
-    azihsm_buffer pota_pubkey_buf{};
-    azihsm_pota_endorsement_data pota_data{};
-    const char *use_tpm = std::getenv("AZIHSM_USE_TPM");
-    if (use_tpm != nullptr)
-    {
-        backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_TPM;
-        backup_config.owner_backup_key = nullptr;
-        pota_endorsement.source = AZIHSM_POTA_ENDORSEMENT_SOURCE_TPM;
-        pota_endorsement.endorsement = nullptr;
-    }
-    else
-    {
-        obk_buf = { const_cast<uint8_t *>(TEST_OBK), sizeof(TEST_OBK) };
-        backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER;
-        backup_config.owner_backup_key = &obk_buf;
-        pota_sig_buf = { const_cast<uint8_t *>(TEST_POTA_SIGNATURE), sizeof(TEST_POTA_SIGNATURE) };
-        pota_pubkey_buf = { const_cast<uint8_t *>(TEST_POTA_PUBLIC_KEY_DER),
-                            sizeof(TEST_POTA_PUBLIC_KEY_DER) };
-        pota_data = { .signature = &pota_sig_buf, .public_key = &pota_pubkey_buf };
-        pota_endorsement.source = AZIHSM_POTA_ENDORSEMENT_SOURCE_CALLER;
-        pota_endorsement.endorsement = &pota_data;
-    }
+    PartInitConfig init_config{};
+    make_part_init_config(part_handle, init_config);
 
-    // err = azihsm_part_init(part_handle, &creds, &bmk_buf, nullptr, &mobk_buf, &pota_endorsement);
-    err =
-        azihsm_part_init(part_handle, &creds, &bmk_buf, nullptr, &backup_config, &pota_endorsement);
+    err = azihsm_part_init(
+        part_handle,
+        &creds,
+        &bmk_buf,
+        nullptr,
+        &init_config.backup_config,
+        &init_config.pota_endorsement
+    );
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS) << "azihsm_part_init with BMK/MOBK failed";
     std::cout << "azihsm_part_init with BMK/MOBK returned: " << err << std::endl;
 

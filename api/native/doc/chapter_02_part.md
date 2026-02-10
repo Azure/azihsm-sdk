@@ -203,7 +203,8 @@ Retrieve partition property
 | pci hardware id (bus:device:function)              | [azihsm_char*](#azihsm_char)             | \scriptsize AZIHSM_PART_PROP_ID_PCI_HW_ID         |
 | min api revision supported by the device           | [struct azihsm_api_rev](#azihsm_api_rev) | \scriptsize AZIHSM_PART_PROP_ID_MIN_API_REV       |
 | max api revision supported by the device           | [struct azihsm_api_rev](#azihsm_api_rev) | \scriptsize AZIHSM_PART_PROP_ID_MAX_API_REV       |
-| manufacturer cert chain in PEM format              | [azihsm_char*](#azihsm_char)             | \scriptsize AZIHSM_PART_PROP_ID_MANUFACTURER_CERT |
+| manufacturer cert chain in PEM format              | [azihsm_char*](#azihsm_char)             | \scriptsize AZIHSM_PART_PROP_ID_MANUFACTURER_CERT_CHAIN |
+| partition identity (PID) public key in DER format  | uint8_t*                                 | \scriptsize AZIHSM_PART_PROP_ID_PARTITION_IDENTITY_PUBLIC_KEY    |
 
 ```cpp
 azihsm_status azihsm_part_get_prop(
