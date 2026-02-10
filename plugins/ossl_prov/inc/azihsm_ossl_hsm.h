@@ -20,8 +20,9 @@ azihsm_status azihsm_open_device_and_session(
 );
 
 /*
- * Get the RSA unwrapping key pair (MUK) handles.
- * Uses cached handles from provctx if available, otherwise retrieves from HSM.
+ * Get cached RSA unwrapping key pair handles for wrap/unwrap operations.
+ * Returns cached handles from provctx if available, otherwise retrieves
+ * the established unwrapping key from the HSM (generating on first use if needed).
  * The returned handles are owned by provctx and should NOT be deleted by caller.
  */
 azihsm_status azihsm_get_unwrapping_key(

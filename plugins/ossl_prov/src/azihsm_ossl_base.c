@@ -206,6 +206,18 @@ static void azihsm_ossl_teardown(AZIHSM_OSSL_PROV_CTX *provctx)
         OSSL_LIB_CTX_free(provctx->libctx);
     }
 
+    /* Delete cached unwrapping key handles before closing session */
+    if (provctx->unwrapping_key.pub != 0)
+    {
+        azihsm_key_delete(provctx->unwrapping_key.pub);
+        provctx->unwrapping_key.pub = 0;
+    }
+    if (provctx->unwrapping_key.priv != 0)
+    {
+        azihsm_key_delete(provctx->unwrapping_key.priv);
+        provctx->unwrapping_key.priv = 0;
+    }
+
     azihsm_close_device_and_session(provctx->device, provctx->session);
     OPENSSL_free(provctx);
 }

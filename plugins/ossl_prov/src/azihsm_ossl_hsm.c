@@ -421,17 +421,55 @@ azihsm_status azihsm_get_unwrapping_key(
         return AZIHSM_STATUS_SUCCESS;
     }
 
-    /* Retrieve the established unwrapping key from the HSM */
+    /* Build property lists for RSA unwrapping key pair */
+    const uint32_t key_bits = 2048;
+    const azihsm_key_class priv_class = AZIHSM_KEY_CLASS_PRIVATE;
+    const azihsm_key_class pub_class = AZIHSM_KEY_CLASS_PUBLIC;
+    const azihsm_key_kind key_kind = AZIHSM_KEY_KIND_RSA;
+    const bool can_unwrap = true;
+    const bool can_wrap = true;
+
     struct azihsm_algo algo = {
         .id = AZIHSM_ALGO_ID_RSA_KEY_UNWRAPPING_KEY_PAIR_GEN,
         .params = NULL,
         .len = 0,
     };
 
-    status = azihsm_key_gen_pair(provctx->session, &algo, NULL, NULL, out_priv, out_pub);
+    struct azihsm_key_prop priv_key_props[] = {
+        { .id = AZIHSM_KEY_PROP_ID_CLASS, .val = (void *)&priv_class, .len = sizeof(priv_class) },
+        { .id = AZIHSM_KEY_PROP_ID_KIND, .val = (void *)&key_kind, .len = sizeof(key_kind) },
+        { .id = AZIHSM_KEY_PROP_ID_BIT_LEN, .val = (void *)&key_bits, .len = sizeof(key_bits) },
+        { .id = AZIHSM_KEY_PROP_ID_UNWRAP, .val = (void *)&can_unwrap, .len = sizeof(can_unwrap) },
+    };
+
+    struct azihsm_key_prop pub_key_props[] = {
+        { .id = AZIHSM_KEY_PROP_ID_CLASS, .val = (void *)&pub_class, .len = sizeof(pub_class) },
+        { .id = AZIHSM_KEY_PROP_ID_KIND, .val = (void *)&key_kind, .len = sizeof(key_kind) },
+        { .id = AZIHSM_KEY_PROP_ID_BIT_LEN, .val = (void *)&key_bits, .len = sizeof(key_bits) },
+        { .id = AZIHSM_KEY_PROP_ID_WRAP, .val = (void *)&can_wrap, .len = sizeof(can_wrap) },
+    };
+
+    struct azihsm_key_prop_list priv_key_prop_list = {
+        .props = priv_key_props,
+        .count = 4,
+    };
+
+    struct azihsm_key_prop_list pub_key_prop_list = {
+        .props = pub_key_props,
+        .count = 4,
+    };
+
+    status = azihsm_key_gen_pair(
+        provctx->session,
+        &algo,
+        &priv_key_prop_list,
+        &pub_key_prop_list,
+        out_priv,
+        out_pub
+    );
     if (status != AZIHSM_STATUS_SUCCESS)
     {
-        ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
+        ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GENERATE_KEY);
         return status;
     }
 

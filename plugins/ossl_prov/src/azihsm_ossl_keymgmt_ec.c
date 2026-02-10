@@ -248,8 +248,7 @@ static azihsm_status azihsm_ossl_keymgmt_gen_import(
     {
         OPENSSL_cleanse(input_buf, (size_t)input_size);
         OPENSSL_free(input_buf);
-        azihsm_key_delete(wrapping_pub);
-        azihsm_key_delete(wrapping_priv);
+        /* Note: wrapping keys are cached in provctx, do not delete */
         return (status == AZIHSM_STATUS_SUCCESS) ? AZIHSM_STATUS_INTERNAL_ERROR : status;
     }
 
@@ -260,8 +259,7 @@ static azihsm_status azihsm_ossl_keymgmt_gen_import(
     {
         OPENSSL_cleanse(input_buf, (size_t)input_size);
         OPENSSL_free(input_buf);
-        azihsm_key_delete(wrapping_pub);
-        azihsm_key_delete(wrapping_priv);
+        /* Note: wrapping keys are cached in provctx, do not delete */
         return AZIHSM_STATUS_INVALID_ARGUMENT;
     }
 
@@ -277,8 +275,7 @@ static azihsm_status azihsm_ossl_keymgmt_gen_import(
     {
         OPENSSL_cleanse(wrapped_data, wrapped_size);
         OPENSSL_free(wrapped_data);
-        azihsm_key_delete(wrapping_pub);
-        azihsm_key_delete(wrapping_priv);
+        /* Note: wrapping keys are cached in provctx, do not delete */
         return status;
     }
 
@@ -302,8 +299,7 @@ static azihsm_status azihsm_ossl_keymgmt_gen_import(
         out_priv,
         out_pub
     );
-    azihsm_key_delete(wrapping_pub);
-    azihsm_key_delete(wrapping_priv);
+    /* Note: wrapping keys are cached in provctx, do not delete */
 
     OPENSSL_cleanse(wrapped_data, wrapped_size);
     OPENSSL_free(wrapped_data);
