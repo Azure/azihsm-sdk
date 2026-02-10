@@ -245,6 +245,7 @@ impl Function {
     /// * `masked_bk3` - The raw bytes of the masked BK3 data
     /// * `bmk` - Optional partition backup masking key, should be None before live migration.
     /// * `masked_unwrapping_key` - Optional masked unwrapping key for restoration after live migration.
+    /// * `pota_pub_key` - The public key for the partition endorsement, used to verify the endorsement signature.
     ///
     /// # Returns
     /// * `Result<Vec<u8>, ManticoreError>` - The masked BMK on success, or an error
@@ -256,11 +257,11 @@ impl Function {
         masked_bk3: &[u8],
         bmk: Option<&[u8]>,
         masked_unwrapping_key: Option<&[u8]>,
-        tpm_pub_key: &[u8],
+        pota_pub_key: &[u8],
     ) -> Result<Vec<u8>, ManticoreError> {
         self.inner
             .write()
-            .provision(masked_bk3, bmk, masked_unwrapping_key, tpm_pub_key)
+            .provision(masked_bk3, bmk, masked_unwrapping_key, pota_pub_key)
     }
 
     /// Returns the API revision range supported.
@@ -560,7 +561,7 @@ impl FunctionInner {
         masked_bk3: &[u8],
         bmk: Option<&[u8]>,
         masked_unwrapping_key: Option<&[u8]>,
-        tpm_pub_key: &[u8],
+        pota_pub_key: &[u8],
     ) -> Result<Vec<u8>, ManticoreError> {
         if self.state.is_provisioned() {
             return Err(ManticoreError::PartitionAlreadyProvisioned);
@@ -592,7 +593,7 @@ impl FunctionInner {
             &BKS1,
             &BKS2,
             &unmasked_bk3,
-            tpm_pub_key,
+            pota_pub_key,
             &mut bk_partition_len,
             &mut bk_partition,
         )

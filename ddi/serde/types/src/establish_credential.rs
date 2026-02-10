@@ -30,14 +30,14 @@ pub struct DdiEstablishCredentialReq {
     #[ddi(id = 5)]
     pub masked_unwrapping_key: MborByteArray<1024>,
 
-    /// Partition ID signed by the TPM/Caller/Ephemeral key
+    /// TPM or Caller Partition ID endorsement
     #[ddi(id = 6)]
     #[ddi(pre_encode_fn = "signature_pre_encode")]
-    pub signed_pid: MborByteArray<1024>,
+    pub pid_sig: MborByteArray<1024>,
 
-    /// TPM/Caller/Ephemeral Partition ID Endorsement Public Key
+    /// TPM or Caller Partition ID Endorsement Public Key
     #[ddi(id = 7)]
-    pub tpm_pub_key: DdiDerPublicKey,
+    pub pota_pub_key: DdiDerPublicKey,
 }
 
 impl DdiEstablishCredentialReq {

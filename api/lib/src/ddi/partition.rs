@@ -322,9 +322,9 @@ pub fn establish_credential(
             bmk: MborByteArray::from_slice(bmk).map_hsm_err(HsmError::InvalidArgument)?,
             masked_unwrapping_key: MborByteArray::from_slice(muk)
                 .map_hsm_err(HsmError::InvalidArgument)?,
-            signed_pid: MborByteArray::from_slice(pota_endorsement.signature())
+            pid_sig: MborByteArray::from_slice(pota_endorsement.signature())
                 .map_hsm_err(HsmError::InternalError)?,
-            tpm_pub_key: pota_endorsement_pub_key,
+            pota_pub_key: pota_endorsement_pub_key,
         },
         ext: None,
     };

@@ -65,6 +65,7 @@ impl LMKeyDerive {
     /// * `bks1` - The first backup seed (BKS1).
     /// * `bks2` - The second backup seed (BKS2).
     /// * `bk3` - The backup key (BK3).
+    /// * `pota_pub_key` - The public key for the partition endorsement, used to bind the generated BK to the specific partition.
     /// * `bk_partition_len` - In/out parameter for the length of the partition backup key.
     ///   On input, it specifies the bk_out buffer size.
     ///   On output, it will contain the actual length of the generated backup key.
@@ -80,7 +81,7 @@ impl LMKeyDerive {
         bks1: &[u8; BK_SEED_SIZE_BYTES],
         bks2: &[u8; BK_SEED_SIZE_BYTES],
         bk3: &[u8; BK3_SIZE_BYTES],
-        tpm_pub_key: &[u8],
+        pota_pub_key: &[u8],
         bk_partition_len: &mut usize,
         bk_partition_out: &mut [u8],
     ) -> Result<(), ManticoreError> {
@@ -102,13 +103,13 @@ impl LMKeyDerive {
         bks1_2[BK_SEED_SIZE_BYTES..].copy_from_slice(bks2);
 
         // Derive BK via KBKDF using BK3 as key and BKS1_2 as context.
-        if BK_LABEL_LENGTH < PARTITION_BK_LABEL.len() + tpm_pub_key.len() {
+        if BK_LABEL_LENGTH < PARTITION_BK_LABEL.len() + pota_pub_key.len() {
             Err(ManticoreError::InvalidArgument)?;
         }
         let mut label = [0u8; BK_LABEL_LENGTH];
         label[..PARTITION_BK_LABEL.len()].copy_from_slice(PARTITION_BK_LABEL);
-        label[PARTITION_BK_LABEL.len()..PARTITION_BK_LABEL.len() + tpm_pub_key.len()]
-            .copy_from_slice(tpm_pub_key);
+        label[PARTITION_BK_LABEL.len()..PARTITION_BK_LABEL.len() + pota_pub_key.len()]
+            .copy_from_slice(pota_pub_key);
         crypto_env.kbkdf_sha384(
             bk3,
             Some(&label),

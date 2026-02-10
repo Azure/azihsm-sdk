@@ -2020,7 +2020,7 @@ impl Dispatcher {
             .get_function_state()
             .get_vault(DEFAULT_VAULT_ID)?;
 
-        if req.tpm_pub_key.key_kind != DdiKeyType::Ecc384Public {
+        if req.pota_pub_key.key_kind != DdiKeyType::Ecc384Public {
             Err(ManticoreError::InvalidArgument)?
         }
 
@@ -2036,18 +2036,18 @@ impl Dispatcher {
         attest_key_tbs.extend_from_slice(attest_key_obj.y());
         let hash_algo = HashAlgo::sha384();
         let mut ecdsa_algo = EcdsaAlgo::new(hash_algo);
-        let tpm_pub_key = azihsm_crypto::EccPublicKey::from_bytes(req.tpm_pub_key.der.as_slice())
+        let pota_pub_key = azihsm_crypto::EccPublicKey::from_bytes(req.pota_pub_key.der.as_slice())
             .map_err(|_| ManticoreError::InvalidArgument)?;
         let verify_result = Verifier::verify(
             &mut ecdsa_algo,
-            &tpm_pub_key,
+            &pota_pub_key,
             &attest_key_tbs,
-            req.signed_pid.as_slice(),
+            req.pid_sig.as_slice(),
         )
         .map_err(|_| ManticoreError::InvalidArgument)?;
 
         if !verify_result {
-            tracing::error!("TPM public key verification failed in establish_credential.");
+            tracing::error!("POTA public key verification failed in establish_credential.");
             Err(ManticoreError::InvalidArgument)?
         }
 
@@ -2085,7 +2085,7 @@ impl Dispatcher {
                 req.masked_bk3.as_slice(),
                 bmk_option,
                 masked_unwrapping_key_option,
-                req.tpm_pub_key.der.as_slice(),
+                req.pota_pub_key.der.as_slice(),
             )?;
 
             tracing::debug!(bmk_size = bmk.len(), "Successfully provisioned partition");
