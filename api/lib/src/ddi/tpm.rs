@@ -457,7 +457,8 @@ fn normalize_signature_component(
 /// * `Ok(TpmsEccPoint)` - The ECC point containing x and y coordinates
 /// * `Err` - If parsing fails
 fn parse_tpm_ecc_public_key(public_blob: &[u8]) -> std::io::Result<TpmsEccPoint> {
-    use std::io::{Error, ErrorKind};
+    use std::io::Error;
+    use std::io::ErrorKind;
 
     if public_blob.len() < 4 {
         return Err(Error::new(ErrorKind::InvalidData, "public blob too short"));

@@ -1345,7 +1345,10 @@ fn test_reopen_session_dest_smaller_svn() {
                 MborByteArray::from_slice(&[])
                     .expect("Failed to create empty masked unwrapping key"),
                 MborByteArray::from_slice(&[]).expect("Failed to create signed PID"),
-                DdiDerPublicKey { der: MborByteArray::from_slice(&[]).expect("Failed to create empty DER"), key_kind: DdiKeyType::Ecc384Public },
+                DdiDerPublicKey {
+                    der: MborByteArray::from_slice(&[]).expect("Failed to create empty DER"),
+                    key_kind: DdiKeyType::Ecc384Public,
+                },
             );
             // Cannot establish credential when destination SVN is smaller than source SVN
             assert!(resp.is_err(), "resp {:?}", resp);
