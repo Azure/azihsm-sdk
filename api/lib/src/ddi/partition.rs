@@ -60,18 +60,18 @@ fn get_partition_public_key_hash(dev: &HsmDev, rev: HsmApiRev) -> HsmResult<Vec<
     // Parse the DER-encoded public key and convert to uncompressed point format
     let cert_pub_key_obj =
         DerEccPublicKey::from_der(&cert_pub_key_der).map_hsm_err(HsmError::InternalError)?;
-    let mut cert_pub_key_tbs = vec![0x04u8];
-    cert_pub_key_tbs.extend_from_slice(cert_pub_key_obj.x());
-    cert_pub_key_tbs.extend_from_slice(cert_pub_key_obj.y());
+    let mut cert_pub_uncomp = vec![0x04u8];
+    cert_pub_uncomp.extend_from_slice(cert_pub_key_obj.x());
+    cert_pub_uncomp.extend_from_slice(cert_pub_key_obj.y());
 
     // Hash the uncompressed point with SHA-384
     let mut hasher = crypto::HashAlgo::sha384();
     let hash_len = hasher
-        .hash(&cert_pub_key_tbs, None)
+        .hash(&cert_pub_uncomp, None)
         .map_hsm_err(HsmError::InternalError)?;
     let mut pub_key_hash = vec![0u8; hash_len];
     hasher
-        .hash(&cert_pub_key_tbs, Some(&mut pub_key_hash))
+        .hash(&cert_pub_uncomp, Some(&mut pub_key_hash))
         .map_hsm_err(HsmError::InternalError)?;
 
     Ok(pub_key_hash)

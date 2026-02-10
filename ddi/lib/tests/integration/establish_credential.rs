@@ -41,19 +41,19 @@ fn helper_init_bk3_and_establish_credential(
     let cert = X509Certificate::from_der(cert).unwrap();
     let cert_pub_key_der = cert.get_public_key_der().unwrap();
     let cert_pub_key_obj = azihsm_crypto::DerEccPublicKey::from_der(&cert_pub_key_der).unwrap();
-    let mut cert_pub_key_tbs = vec![0x04u8];
-    cert_pub_key_tbs.extend_from_slice(cert_pub_key_obj.x());
-    cert_pub_key_tbs.extend_from_slice(cert_pub_key_obj.y());
+    let mut cert_pub_uncomp = vec![0x04u8];
+    cert_pub_uncomp.extend_from_slice(cert_pub_key_obj.x());
+    cert_pub_uncomp.extend_from_slice(cert_pub_key_obj.y());
 
     let hash_algo = HashAlgo::sha384();
     let mut ecdsa_algo = EcdsaAlgo::new(hash_algo);
     let tpm_priv_key = azihsm_crypto::EccPrivateKey::from_bytes(&TEST_TPM_ECC_PRIVATE_KEY).unwrap();
-    let sig_len = Signer::sign(&mut ecdsa_algo, &tpm_priv_key, &cert_pub_key_tbs, None).unwrap();
+    let sig_len = Signer::sign(&mut ecdsa_algo, &tpm_priv_key, &cert_pub_uncomp, None).unwrap();
     let mut signature = vec![0u8; sig_len];
     let _ = Signer::sign(
         &mut ecdsa_algo,
         &tpm_priv_key,
-        &cert_pub_key_tbs,
+        &cert_pub_uncomp,
         Some(&mut signature),
     )
     .unwrap();
@@ -597,21 +597,21 @@ fn test_establish_credential_tamper_signed_pid() {
             let cert_pub_key_der = cert.get_public_key_der().unwrap();
             let cert_pub_key_obj =
                 azihsm_crypto::DerEccPublicKey::from_der(&cert_pub_key_der).unwrap();
-            let mut cert_pub_key_tbs = vec![0x04u8];
-            cert_pub_key_tbs.extend_from_slice(cert_pub_key_obj.x());
-            cert_pub_key_tbs.extend_from_slice(cert_pub_key_obj.y());
+            let mut cert_pub_uncomp = vec![0x04u8];
+            cert_pub_uncomp.extend_from_slice(cert_pub_key_obj.x());
+            cert_pub_uncomp.extend_from_slice(cert_pub_key_obj.y());
 
             let hash_algo = HashAlgo::sha384();
             let mut ecdsa_algo = EcdsaAlgo::new(hash_algo);
             let tpm_priv_key =
                 azihsm_crypto::EccPrivateKey::from_bytes(&TEST_TPM_ECC_PRIVATE_KEY).unwrap();
             let sig_len =
-                Signer::sign(&mut ecdsa_algo, &tpm_priv_key, &cert_pub_key_tbs, None).unwrap();
+                Signer::sign(&mut ecdsa_algo, &tpm_priv_key, &cert_pub_uncomp, None).unwrap();
             let mut signature = vec![0u8; sig_len];
             let _ = Signer::sign(
                 &mut ecdsa_algo,
                 &tpm_priv_key,
-                &cert_pub_key_tbs,
+                &cert_pub_uncomp,
                 Some(&mut signature),
             )
             .unwrap();
@@ -664,21 +664,21 @@ fn test_establish_credential_tamper_tpm_pub_key() {
             let cert_pub_key_der = cert.get_public_key_der().unwrap();
             let cert_pub_key_obj =
                 azihsm_crypto::DerEccPublicKey::from_der(&cert_pub_key_der).unwrap();
-            let mut cert_pub_key_tbs = vec![0x04u8];
-            cert_pub_key_tbs.extend_from_slice(cert_pub_key_obj.x());
-            cert_pub_key_tbs.extend_from_slice(cert_pub_key_obj.y());
+            let mut cert_pub_uncomp = vec![0x04u8];
+            cert_pub_uncomp.extend_from_slice(cert_pub_key_obj.x());
+            cert_pub_uncomp.extend_from_slice(cert_pub_key_obj.y());
 
             let hash_algo = HashAlgo::sha384();
             let mut ecdsa_algo = EcdsaAlgo::new(hash_algo);
             let tpm_priv_key =
                 azihsm_crypto::EccPrivateKey::from_bytes(&TEST_TPM_ECC_PRIVATE_KEY).unwrap();
             let sig_len =
-                Signer::sign(&mut ecdsa_algo, &tpm_priv_key, &cert_pub_key_tbs, None).unwrap();
+                Signer::sign(&mut ecdsa_algo, &tpm_priv_key, &cert_pub_uncomp, None).unwrap();
             let mut signature = vec![0u8; sig_len];
             let _ = Signer::sign(
                 &mut ecdsa_algo,
                 &tpm_priv_key,
-                &cert_pub_key_tbs,
+                &cert_pub_uncomp,
                 Some(&mut signature),
             )
             .unwrap();
@@ -730,21 +730,21 @@ fn test_establish_credential_tamper_tpm_pub_key_type() {
             let cert_pub_key_der = cert.get_public_key_der().unwrap();
             let cert_pub_key_obj =
                 azihsm_crypto::DerEccPublicKey::from_der(&cert_pub_key_der).unwrap();
-            let mut cert_pub_key_tbs = vec![0x04u8];
-            cert_pub_key_tbs.extend_from_slice(cert_pub_key_obj.x());
-            cert_pub_key_tbs.extend_from_slice(cert_pub_key_obj.y());
+            let mut cert_pub_uncomp = vec![0x04u8];
+            cert_pub_uncomp.extend_from_slice(cert_pub_key_obj.x());
+            cert_pub_uncomp.extend_from_slice(cert_pub_key_obj.y());
 
             let hash_algo = HashAlgo::sha384();
             let mut ecdsa_algo = EcdsaAlgo::new(hash_algo);
             let tpm_priv_key =
                 azihsm_crypto::EccPrivateKey::from_bytes(&TEST_TPM_ECC_PRIVATE_KEY).unwrap();
             let sig_len =
-                Signer::sign(&mut ecdsa_algo, &tpm_priv_key, &cert_pub_key_tbs, None).unwrap();
+                Signer::sign(&mut ecdsa_algo, &tpm_priv_key, &cert_pub_uncomp, None).unwrap();
             let mut signature = vec![0u8; sig_len];
             let _ = Signer::sign(
                 &mut ecdsa_algo,
                 &tpm_priv_key,
-                &cert_pub_key_tbs,
+                &cert_pub_uncomp,
                 Some(&mut signature),
             )
             .unwrap();
@@ -918,19 +918,19 @@ fn test_thread_fn(_thread_id: u8, device_path: String, masked_bk3: MborByteArray
     let cert = X509Certificate::from_der(cert).unwrap();
     let cert_pub_key_der = cert.get_public_key_der().unwrap();
     let cert_pub_key_obj = azihsm_crypto::DerEccPublicKey::from_der(&cert_pub_key_der).unwrap();
-    let mut cert_pub_key_tbs = vec![0x04u8];
-    cert_pub_key_tbs.extend_from_slice(cert_pub_key_obj.x());
-    cert_pub_key_tbs.extend_from_slice(cert_pub_key_obj.y());
+    let mut cert_pub_uncomp = vec![0x04u8];
+    cert_pub_uncomp.extend_from_slice(cert_pub_key_obj.x());
+    cert_pub_uncomp.extend_from_slice(cert_pub_key_obj.y());
 
     let hash_algo = HashAlgo::sha384();
     let mut ecdsa_algo = EcdsaAlgo::new(hash_algo);
     let tpm_priv_key = azihsm_crypto::EccPrivateKey::from_bytes(&TEST_TPM_ECC_PRIVATE_KEY).unwrap();
-    let sig_len = Signer::sign(&mut ecdsa_algo, &tpm_priv_key, &cert_pub_key_tbs, None).unwrap();
+    let sig_len = Signer::sign(&mut ecdsa_algo, &tpm_priv_key, &cert_pub_uncomp, None).unwrap();
     let mut signature = vec![0u8; sig_len];
     let _ = Signer::sign(
         &mut ecdsa_algo,
         &tpm_priv_key,
-        &cert_pub_key_tbs,
+        &cert_pub_uncomp,
         Some(&mut signature),
     )
     .unwrap();

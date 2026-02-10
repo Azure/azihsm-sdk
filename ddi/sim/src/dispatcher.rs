@@ -2031,9 +2031,9 @@ impl Dispatcher {
         };
         let attest_key_pub_der = attest_key.extract_pub_key_der()?;
         let attest_key_obj = azihsm_crypto::DerEccPublicKey::from_der(&attest_key_pub_der)?;
-        let mut attest_key_tbs = vec![0x04u8];
-        attest_key_tbs.extend_from_slice(attest_key_obj.x());
-        attest_key_tbs.extend_from_slice(attest_key_obj.y());
+        let mut attest_key_uncomp = vec![0x04u8];
+        attest_key_uncomp.extend_from_slice(attest_key_obj.x());
+        attest_key_uncomp.extend_from_slice(attest_key_obj.y());
         let hash_algo = HashAlgo::sha384();
         let mut ecdsa_algo = EcdsaAlgo::new(hash_algo);
         let pota_pub_key = azihsm_crypto::EccPublicKey::from_bytes(req.pota_pub_key.der.as_slice())
@@ -2041,7 +2041,7 @@ impl Dispatcher {
         let verify_result = Verifier::verify(
             &mut ecdsa_algo,
             &pota_pub_key,
-            &attest_key_tbs,
+            &attest_key_uncomp,
             req.pid_sig.as_slice(),
         )
         .map_err(|_| ManticoreError::InvalidArgument)?;
