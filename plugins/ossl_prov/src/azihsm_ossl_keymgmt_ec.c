@@ -446,36 +446,48 @@ static AZIHSM_EC_KEY *azihsm_ossl_keymgmt_gen(
     /* Handle masked key file output if requested */
     if (genctx->masked_key_file[0] != '\0')
     {
-        /* Allocate a 8192-byte buffer for the masked key */
-        const uint32_t masked_key_buffer_size = 8192;
-        uint8_t *masked_key_buffer = OPENSSL_malloc(masked_key_buffer_size);
-        if (masked_key_buffer == NULL)
-        {
-            azihsm_key_delete(private);
-            azihsm_key_delete(public);
-
-            OPENSSL_free(ec_key);
-            ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
-            return NULL;
-        }
-
-        /* Retrieve masked key with the allocated buffer */
+        /* First call to get required buffer size */
         struct azihsm_key_prop prop = { .id = AZIHSM_KEY_PROP_ID_MASKED_KEY,
-                                        .val = masked_key_buffer,
-                                        .len = masked_key_buffer_size };
+                                        .val = NULL,
+                                        .len = 0 };
 
         azihsm_status retrieve_status = azihsm_key_get_prop(private, &prop);
 
-        /* Check if we got the masked key */
-        if (retrieve_status == AZIHSM_STATUS_SUCCESS && prop.len > 0)
+        if (retrieve_status == AZIHSM_STATUS_BUFFER_TOO_SMALL && prop.len > 0)
         {
+            /* Allocate buffer of exact size */
+            uint32_t masked_key_buffer_size = prop.len;
+            uint8_t *masked_key_buffer = OPENSSL_malloc(masked_key_buffer_size);
+            if (masked_key_buffer == NULL)
+            {
+                azihsm_key_delete(private);
+                azihsm_key_delete(public);
+                OPENSSL_free(ec_key);
+                ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
+                return NULL;
+            }
+
+            /* Second call to retrieve the masked key */
+            prop.val = masked_key_buffer;
+            retrieve_status = azihsm_key_get_prop(private, &prop);
+
+            if (retrieve_status != AZIHSM_STATUS_SUCCESS)
+            {
+                azihsm_key_delete(private);
+                azihsm_key_delete(public);
+                OPENSSL_cleanse(masked_key_buffer, masked_key_buffer_size);
+                OPENSSL_free(masked_key_buffer);
+                OPENSSL_free(ec_key);
+                ERR_raise(ERR_LIB_PROV, ERR_R_OPERATION_FAIL);
+                return NULL;
+            }
+
             /* Write masked key to file */
             FILE *f = fopen(genctx->masked_key_file, "wb");
             if (f == NULL)
             {
                 azihsm_key_delete(private);
                 azihsm_key_delete(public);
-
                 OPENSSL_cleanse(masked_key_buffer, masked_key_buffer_size);
                 OPENSSL_free(masked_key_buffer);
                 OPENSSL_free(ec_key);
@@ -490,29 +502,26 @@ static AZIHSM_EC_KEY *azihsm_ossl_keymgmt_gen(
             {
                 azihsm_key_delete(private);
                 azihsm_key_delete(public);
-
                 OPENSSL_cleanse(masked_key_buffer, masked_key_buffer_size);
                 OPENSSL_free(masked_key_buffer);
                 OPENSSL_free(ec_key);
                 ERR_raise(ERR_LIB_PROV, ERR_R_OPERATION_FAIL);
                 return NULL;
             }
-        }
-        else if (retrieve_status != AZIHSM_STATUS_PROPERTY_NOT_PRESENT)
-        {
-            azihsm_key_delete(private);
-            azihsm_key_delete(public);
 
             OPENSSL_cleanse(masked_key_buffer, masked_key_buffer_size);
             OPENSSL_free(masked_key_buffer);
+        }
+        else if (retrieve_status != AZIHSM_STATUS_PROPERTY_NOT_PRESENT)
+        {
+            /* Unexpected error - not BUFFER_TOO_SMALL and not PROPERTY_NOT_PRESENT */
+            azihsm_key_delete(private);
+            azihsm_key_delete(public);
             OPENSSL_free(ec_key);
             ERR_raise(ERR_LIB_PROV, ERR_R_OPERATION_FAIL);
             return NULL;
         }
-        /* If KEY_PROPERTY_NOT_PRESENT, just continue without masked key */
-
-        OPENSSL_cleanse(masked_key_buffer, masked_key_buffer_size);
-        OPENSSL_free(masked_key_buffer);
+        /* If PROPERTY_NOT_PRESENT, continue without masked key */
     }
 
     return ec_key;
