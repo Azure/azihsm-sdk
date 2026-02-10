@@ -1,0 +1,38 @@
+worker_processes 1;
+
+# Pass OPENSSL_CONF into the nginx worker so the provider is loaded.
+env OPENSSL_CONF;
+
+# Docker entrypoint passes -g 'daemon off;' to keep nginx in the foreground.
+
+error_log /var/log/nginx/error.log info;
+pid       /run/nginx.pid;
+
+events {
+    worker_connections 1024;
+}
+
+http {
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;
+    ssl_session_cache   shared:SSL:10m;
+    ssl_session_tickets off;
+
+    server {
+        listen      8443 ssl;
+        server_name localhost;
+
+        ssl_certificate     /etc/azihsm/server.crt;
+        ssl_certificate_key "store:azihsm:///etc/azihsm/masked_key_p384.bin;type=ec";
+
+        location / {
+            default_type text/plain;
+            return 200 'nginx + azihsm provider\n';
+        }
+
+        location /health {
+            default_type application/json;
+            return 200 '{"status":"healthy","provider":"azihsm"}\n';
+        }
+    }
+}

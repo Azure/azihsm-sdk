@@ -53,6 +53,12 @@ typedef struct
     AZIHSM_KEY_PAIR_OBJ key;
     AIHSM_EC_GEN_CTX genctx;
     bool has_public, has_private;
+
+    /* Raw EC point (uncompressed: 0x04 || x || y) for imported (non-HSM)
+     * keys.  Used when the default provider exports a certificate's public
+     * key into our keymgmt for comparison via EVP_PKEY_eq(). */
+    unsigned char *imported_pub_key;
+    size_t imported_pub_key_len;
 } AZIHSM_EC_KEY;
 
 #ifdef __cplusplus

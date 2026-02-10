@@ -175,7 +175,7 @@ static const OSSL_ALGORITHM azihsm_ossl_encoders[] = {
     },
     {
         "EC",
-        "provider=azihsm,output=der,structure=type-specific",
+        "provider=azihsm,output=der,structure=SubjectPublicKeyInfo",
         azihsm_ossl_ec_der_spki_encoder_functions,
         NULL,
     },
@@ -285,7 +285,11 @@ static OSSL_STATUS azihsm_ossl_get_capabilities(
     ossl_unused void *arg
 )
 {
-    return OSSL_FAILURE;
+    /* Return SUCCESS to indicate "no capabilities to report" rather than
+     * FAILURE which signals an error.  Returning FAILURE breaks SSL_CTX_new()
+     * because OpenSSL interprets it as a TLS-GROUP query error and aborts
+     * cipher suite setup. */
+    return OSSL_SUCCESS;
 }
 
 static const OSSL_DISPATCH azihsm_ossl_base_dispatch[] = {

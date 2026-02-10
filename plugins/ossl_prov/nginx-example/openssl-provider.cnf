@@ -1,0 +1,26 @@
+# Copyright (C) Microsoft Corporation. All rights reserved.
+#
+# Used by nginx (via OPENSSL_CONF) to load the provider so that the
+# store:azihsm:// URI in ssl_certificate_key resolves automatically.
+
+openssl_conf = openssl_init
+
+[openssl_init]
+providers = provider_sect
+
+[provider_sect]
+# default must come first so that normal RSA/EC public-key operations
+# (e.g. certificate loading) are handled by the default provider.
+default = default_sect
+base = base_sect
+azihsm_provider = azihsm_provider_sect
+
+[default_sect]
+activate = 1
+
+[base_sect]
+activate = 1
+
+[azihsm_provider_sect]
+module = /usr/lib/ossl-modules/azihsm_provider.so
+activate = 1
