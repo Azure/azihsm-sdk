@@ -7,6 +7,8 @@
 #include <openssl/evp.h>
 #include <openssl/prov_ssl.h>
 #include <openssl/proverr.h>
+#include <stdlib.h>
+#include <string.h>
 #include <strings.h>
 
 #include "azihsm_ossl_base.h"
@@ -297,6 +299,166 @@ static const OSSL_DISPATCH azihsm_ossl_base_dispatch[] = {
     { 0, NULL },
 };
 
+/*
+ * Helper to strip "file:" prefix from path if present.
+ * Returns pointer to the actual path (may be the original string or offset by 5).
+ */
+static const char *strip_file_prefix(const char *path)
+{
+    if (path == NULL)
+    {
+        return NULL;
+    }
+    if (strncmp(path, "file:", 5) == 0)
+    {
+        return path + 5;
+    }
+    return path;
+}
+
+/*
+ * Validate that all required config fields are non-NULL.
+ * Returns 1 if valid, 0 if any required field is NULL.
+ */
+static int azihsm_config_is_valid(const AZIHSM_CONFIG *config)
+{
+    if (config == NULL)
+    {
+        return 0;
+    }
+    return config->credentials_id_path != NULL && config->credentials_pin_path != NULL &&
+           config->bmk_path != NULL && config->muk_path != NULL && config->mobk_path != NULL;
+}
+
+/*
+ * Validate that the API revision is within the supported range.
+ * Returns 1 if valid, 0 if out of range.
+ */
+static int azihsm_api_revision_is_valid(const AZIHSM_CONFIG *config)
+{
+    uint32_t version;
+    uint32_t min_version;
+    uint32_t max_version;
+
+    if (config == NULL)
+    {
+        return 0;
+    }
+
+    /* Combine major.minor into a single comparable value */
+    version = ((uint32_t)config->api_revision_major << 16) | config->api_revision_minor;
+    min_version = ((uint32_t)AZIHSM_API_REVISION_MIN_MAJOR << 16) | AZIHSM_API_REVISION_MIN_MINOR;
+    max_version = ((uint32_t)AZIHSM_API_REVISION_MAX_MAJOR << 16) | AZIHSM_API_REVISION_MAX_MINOR;
+
+    return version >= min_version && version <= max_version;
+}
+
+/*
+ * Get path from environment variable, falling back to default if not set.
+ * Returns a newly allocated string that must be freed with OPENSSL_free.
+ */
+static char *get_path_from_env_or_default(const char *env_var, const char *default_path)
+{
+    const char *env_value = getenv(env_var);
+    if (env_value != NULL && env_value[0] != '\0')
+    {
+        return OPENSSL_strdup(env_value);
+    }
+    return OPENSSL_strdup(default_path);
+}
+
+/*
+ * Parse configuration parameters from OpenSSL config file.
+ * Returns a populated AZIHSM_CONFIG structure with all path fields set.
+ *
+ * If OPENSSL_strdup fails for any allocation, the corresponding field will be NULL.
+ * Caller MUST check azihsm_config_is_valid() after this call to detect allocation
+ * failures before using the config. On validation failure, caller should call
+ * azihsm_config_free() to clean up any partially allocated fields.
+ */
+static AZIHSM_CONFIG parse_provider_config(
+    const OSSL_CORE_HANDLE *handle,
+    OSSL_FUNC_core_get_params_fn *get_params
+)
+{
+    AZIHSM_CONFIG config = { NULL,
+                             NULL,
+                             NULL,
+                             NULL,
+                             NULL,
+                             AZIHSM_API_REVISION_DEFAULT_MAJOR,
+                             AZIHSM_API_REVISION_DEFAULT_MINOR };
+    const char *bmk_path = NULL;
+    const char *muk_path = NULL;
+    const char *mobk_path = NULL;
+    const char *api_revision = NULL;
+
+    OSSL_PARAM core_params[] = {
+        OSSL_PARAM_construct_utf8_ptr(AZIHSM_CFG_BMK_PATH, (char **)&bmk_path, sizeof(void *)),
+        OSSL_PARAM_construct_utf8_ptr(AZIHSM_CFG_MUK_PATH, (char **)&muk_path, sizeof(void *)),
+        OSSL_PARAM_construct_utf8_ptr(AZIHSM_CFG_MOBK_PATH, (char **)&mobk_path, sizeof(void *)),
+        OSSL_PARAM_construct_utf8_ptr(
+            AZIHSM_CFG_API_REVISION,
+            (char **)&api_revision,
+            sizeof(void *)
+        ),
+        OSSL_PARAM_construct_end()
+    };
+
+    /* Fetch parameters from OpenSSL core (returns 1 on success, 0 on failure) */
+    if (get_params != NULL && get_params(handle, core_params) == 1)
+    {
+        /* Copy values with file: prefix handling for key paths */
+        if (bmk_path != NULL)
+        {
+            config.bmk_path = OPENSSL_strdup(strip_file_prefix(bmk_path));
+        }
+        if (muk_path != NULL)
+        {
+            config.muk_path = OPENSSL_strdup(strip_file_prefix(muk_path));
+        }
+        if (mobk_path != NULL)
+        {
+            config.mobk_path = OPENSSL_strdup(strip_file_prefix(mobk_path));
+        }
+        if (api_revision != NULL)
+        {
+            unsigned int major = 0, minor = 0;
+            if (sscanf(api_revision, "%u.%u", &major, &minor) == 2)
+            {
+                config.api_revision_major = (uint16_t)major;
+                config.api_revision_minor = (uint16_t)minor;
+            }
+        }
+    }
+
+    /* Apply defaults for any paths not provided in config.
+     * Credentials: environment variable > hardcoded default (not in openssl.cnf)
+     * Key paths: openssl.cnf > hardcoded default */
+    config.credentials_id_path = get_path_from_env_or_default(
+        AZIHSM_ENV_CREDENTIALS_ID_PATH,
+        AZIHSM_DEFAULT_CREDENTIALS_ID_PATH
+    );
+    config.credentials_pin_path = get_path_from_env_or_default(
+        AZIHSM_ENV_CREDENTIALS_PIN_PATH,
+        AZIHSM_DEFAULT_CREDENTIALS_PIN_PATH
+    );
+    if (config.bmk_path == NULL)
+    {
+        config.bmk_path = OPENSSL_strdup(AZIHSM_DEFAULT_BMK_PATH);
+    }
+    if (config.muk_path == NULL)
+    {
+        config.muk_path = OPENSSL_strdup(AZIHSM_DEFAULT_MUK_PATH);
+    }
+    if (config.mobk_path == NULL)
+    {
+        config.mobk_path = OPENSSL_strdup(AZIHSM_DEFAULT_MOBK_PATH);
+    }
+
+    return config;
+}
+
 OSSL_STATUS OSSL_provider_init(
     const OSSL_CORE_HANDLE *handle,
     const OSSL_DISPATCH *in,
@@ -305,7 +467,11 @@ OSSL_STATUS OSSL_provider_init(
 )
 {
     AZIHSM_OSSL_PROV_CTX *ctx;
+    AZIHSM_CONFIG config = {
+        NULL, NULL, NULL, NULL, NULL,
+    };
     azihsm_status status;
+    const OSSL_DISPATCH *in_iter;
 
     if ((ctx = OPENSSL_zalloc(sizeof(AZIHSM_OSSL_PROV_CTX))) == NULL)
     {
@@ -322,12 +488,44 @@ OSSL_STATUS OSSL_provider_init(
         return OSSL_FAILURE;
     }
 
-    /* Initialize config with hardcoded default paths */
-    snprintf(ctx->config.bmk_path, sizeof(ctx->config.bmk_path), "%s", AZIHSM_DEFAULT_BMK_PATH);
-    snprintf(ctx->config.muk_path, sizeof(ctx->config.muk_path), "%s", AZIHSM_DEFAULT_MUK_PATH);
-    snprintf(ctx->config.mobk_path, sizeof(ctx->config.mobk_path), "%s", AZIHSM_DEFAULT_MOBK_PATH);
+    /* First pass: find core_get_params function */
+    for (in_iter = in; in_iter->function_id != 0; in_iter++)
+    {
+        if (in_iter->function_id == OSSL_FUNC_CORE_GET_PARAMS)
+        {
+            core_get_params = OSSL_FUNC_core_get_params(in_iter);
+            break;
+        }
+    }
 
-    status = azihsm_open_device_and_session(&ctx->config, &ctx->device, &ctx->session);
+    /* Parse configuration from openssl.cnf */
+    config = parse_provider_config(handle, core_get_params);
+
+    /* Validate configuration (check for allocation failures) */
+    if (!azihsm_config_is_valid(&config))
+    {
+        ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
+        azihsm_config_free(&config);
+        OSSL_LIB_CTX_free(ctx->libctx);
+        OPENSSL_free(ctx);
+        return OSSL_FAILURE;
+    }
+
+    /* Validate API revision is within supported range */
+    if (!azihsm_api_revision_is_valid(&config))
+    {
+        ERR_raise(ERR_LIB_PROV, PROV_R_INVALID_CONFIG_DATA);
+        azihsm_config_free(&config);
+        OSSL_LIB_CTX_free(ctx->libctx);
+        OPENSSL_free(ctx);
+        return OSSL_FAILURE;
+    }
+
+    /* Open device and session with configuration */
+    status = azihsm_open_device_and_session(&config, &ctx->device, &ctx->session);
+
+    /* Free configuration (no longer needed) */
+    azihsm_config_free(&config);
 
     if (status != AZIHSM_STATUS_SUCCESS)
     {
@@ -336,18 +534,6 @@ OSSL_STATUS OSSL_provider_init(
         OSSL_LIB_CTX_free(ctx->libctx);
         OPENSSL_free(ctx);
         return OSSL_FAILURE;
-    }
-
-    for (; in->function_id != 0; in++)
-    {
-
-        switch (in->function_id)
-        {
-
-        case OSSL_FUNC_CORE_GET_PARAMS:
-            core_get_params = OSSL_FUNC_core_get_params(in);
-            break;
-        }
     }
 
     *provctx = ctx;

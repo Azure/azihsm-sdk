@@ -8,10 +8,12 @@
 #include <openssl/crypto.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
 #define AZIHSM_MAX_KEY_FILE_SIZE (64 * 1024)
+#define AZIHSM_CREDENTIALS_SIZE 16
 
 /*
  * Loads a file into an azihsm_buffer structure.
@@ -197,6 +199,76 @@ static void free_buffer(struct azihsm_buffer *buffer)
 }
 
 /*
+ * Loads credentials from a file.
+ * The file must contain exactly AZIHSM_CREDENTIALS_SIZE (16) bytes of raw binary data.
+ * This is the binary representation of the credential (ID or PIN), not hex-encoded.
+ * Returns AZIHSM_STATUS_SUCCESS on success, AZIHSM_STATUS_INTERNAL_ERROR on failure.
+ */
+static azihsm_status load_credentials_from_file(const char *path, uint8_t *output)
+{
+    FILE *file = NULL;
+    size_t bytes_read = 0;
+    int extra_byte;
+
+    if (path == NULL || output == NULL)
+    {
+        return AZIHSM_STATUS_INTERNAL_ERROR;
+    }
+
+    file = fopen(path, "rb");
+    if (file == NULL)
+    {
+        return AZIHSM_STATUS_INTERNAL_ERROR;
+    }
+
+    bytes_read = fread(output, 1, AZIHSM_CREDENTIALS_SIZE, file);
+
+    if (bytes_read != AZIHSM_CREDENTIALS_SIZE)
+    {
+        fclose(file);
+        OPENSSL_cleanse(output, AZIHSM_CREDENTIALS_SIZE);
+        return AZIHSM_STATUS_INTERNAL_ERROR;
+    }
+
+    /* Verify file contains exactly the expected size (no extra data) */
+    extra_byte = fgetc(file);
+    fclose(file);
+
+    if (extra_byte != EOF)
+    {
+        OPENSSL_cleanse(output, AZIHSM_CREDENTIALS_SIZE);
+        return AZIHSM_STATUS_INTERNAL_ERROR;
+    }
+
+    return AZIHSM_STATUS_SUCCESS;
+}
+
+/*
+ * Frees the configuration structure contents.
+ * All pointer members are set to NULL after freeing to prevent double-free.
+ * Safe to call multiple times on the same config.
+ */
+void azihsm_config_free(AZIHSM_CONFIG *config)
+{
+    if (config == NULL)
+    {
+        return;
+    }
+
+    OPENSSL_free(config->credentials_id_path);
+    OPENSSL_free(config->credentials_pin_path);
+    OPENSSL_free(config->bmk_path);
+    OPENSSL_free(config->muk_path);
+    OPENSSL_free(config->mobk_path);
+
+    config->credentials_id_path = NULL;
+    config->credentials_pin_path = NULL;
+    config->bmk_path = NULL;
+    config->muk_path = NULL;
+    config->mobk_path = NULL;
+}
+
+/*
  * picks and opens the first possible HSM device
  * */
 static azihsm_status azihsm_get_device_handle(azihsm_handle *device)
@@ -273,40 +345,44 @@ azihsm_status azihsm_open_device_and_session(
     struct azihsm_buffer retrieved_bmk = { NULL, 0 };
     struct azihsm_buffer retrieved_mobk = { NULL, 0 };
 
-    struct azihsm_api_rev api_rev = { .major = 1, .minor = 0 };
+    struct azihsm_api_rev api_rev = { 0 };
+    struct azihsm_credentials creds = { { 0 }, { 0 } };
 
-    if (config == NULL)
+    if (config == NULL || device == NULL || session == NULL)
     {
-        return AZIHSM_STATUS_INTERNAL_ERROR;
+        return AZIHSM_STATUS_INVALID_ARGUMENT;
     }
 
-    // clang-format off
+    /* Use API revision from config */
+    api_rev.major = config->api_revision_major;
+    api_rev.minor = config->api_revision_minor;
 
-    struct azihsm_credentials creds = {
-        .id =
-        {
-            0x70, 0xFC, 0xF7, 0x30, 0xB8, 0x76, 0x42, 0x38, 0xB8, 0x35, 0x80, 0x10, 0xCE, 0x8A,
-            0x3F, 0x76
-        },
-        .pin =
-        {
-            0xDB, 0x3D, 0xC7, 0x7F, 0xC2, 0x2E, 0x43, 0x00, 0x80, 0xD4, 0x1B, 0x31, 0xB6, 0xF0,
-            0x48, 0x00
-        }
-    };
+    /* Load credentials from files */
+    status = load_credentials_from_file(config->credentials_id_path, creds.id);
+    if (status != AZIHSM_STATUS_SUCCESS)
+    {
+        return status;
+    }
 
-    // clang-format on
+    status = load_credentials_from_file(config->credentials_pin_path, creds.pin);
+    if (status != AZIHSM_STATUS_SUCCESS)
+    {
+        OPENSSL_cleanse(&creds, sizeof(creds));
+        return status;
+    }
 
-    // Load key files if they exist
+    /* Load key files if they exist */
     status = load_file_to_buffer(config->bmk_path, &bmk_buf);
     if (status != AZIHSM_STATUS_SUCCESS)
     {
+        OPENSSL_cleanse(&creds, sizeof(creds));
         return status;
     }
 
     status = load_file_to_buffer(config->muk_path, &muk_buf);
     if (status != AZIHSM_STATUS_SUCCESS)
     {
+        OPENSSL_cleanse(&creds, sizeof(creds));
         free_buffer(&bmk_buf);
         return status;
     }
@@ -314,6 +390,7 @@ azihsm_status azihsm_open_device_and_session(
     status = load_file_to_buffer(config->mobk_path, &mobk_buf);
     if (status != AZIHSM_STATUS_SUCCESS)
     {
+        OPENSSL_cleanse(&creds, sizeof(creds));
         free_buffer(&bmk_buf);
         free_buffer(&muk_buf);
         return status;
@@ -322,6 +399,7 @@ azihsm_status azihsm_open_device_and_session(
     status = azihsm_get_device_handle(device);
     if (status != AZIHSM_STATUS_SUCCESS)
     {
+        OPENSSL_cleanse(&creds, sizeof(creds));
         free_buffer(&bmk_buf);
         free_buffer(&muk_buf);
         free_buffer(&mobk_buf);
@@ -353,24 +431,26 @@ azihsm_status azihsm_open_device_and_session(
         &backup_config
     );
 
-    // Input buffers no longer needed after part_init
+    /* Input buffers no longer needed after part_init */
     free_buffer(&bmk_buf);
     free_buffer(&muk_buf);
     free_buffer(&mobk_buf);
 
     if (status != AZIHSM_STATUS_SUCCESS)
     {
+        OPENSSL_cleanse(&creds, sizeof(creds));
         azihsm_part_close(*device);
         return status;
     }
 
-    // Retrieve and persist BMK property
+    /* Retrieve and persist BMK property */
     status = get_part_property(*device, AZIHSM_PART_PROP_ID_BACKUP_MASKING_KEY, &retrieved_bmk);
     if (status == AZIHSM_STATUS_SUCCESS && retrieved_bmk.ptr != NULL)
     {
         status = write_buffer_to_file(config->bmk_path, &retrieved_bmk);
         if (status != AZIHSM_STATUS_SUCCESS)
         {
+            OPENSSL_cleanse(&creds, sizeof(creds));
             free_buffer(&retrieved_bmk);
             azihsm_part_close(*device);
             return status;
@@ -378,7 +458,7 @@ azihsm_status azihsm_open_device_and_session(
     }
     free_buffer(&retrieved_bmk);
 
-    // Retrieve and persist MOBK property
+    /* Retrieve and persist MOBK property */
     status =
         get_part_property(*device, AZIHSM_PART_PROP_ID_MASKED_OWNER_BACKUP_KEY, &retrieved_mobk);
     if (status == AZIHSM_STATUS_SUCCESS && retrieved_mobk.ptr != NULL)
@@ -386,6 +466,7 @@ azihsm_status azihsm_open_device_and_session(
         status = write_buffer_to_file(config->mobk_path, &retrieved_mobk);
         if (status != AZIHSM_STATUS_SUCCESS)
         {
+            OPENSSL_cleanse(&creds, sizeof(creds));
             free_buffer(&retrieved_mobk);
             azihsm_part_close(*device);
             return status;
