@@ -22,8 +22,8 @@
 typedef struct
 {
     AZIHSM_OSSL_PROV_CTX *provctx;
-    AZIHSM_EC_KEY *our_key;  /* Not owned */
-    AZIHSM_EC_KEY *peer_key; /* Owned, deep copy */
+    const AZIHSM_EC_KEY *our_key; /* Not owned */
+    AZIHSM_EC_KEY *peer_key;      /* Owned, deep copy */
     char output_file[4096];
 } AZIHSM_KEYEXCH_CTX;
 
@@ -39,7 +39,8 @@ static void keyexch_free_peer(AZIHSM_KEYEXCH_CTX *ctx)
     ctx->peer_key = NULL;
 }
 
-/* Convert raw EC point to DER-encoded SPKI. Caller must OPENSSL_free(*der_out). */
+/* Convert raw EC point to DER-encoded SPKI. Caller must call
+ * OPENSSL_free(*der_out). */
 static int ec_point_to_der_spki(
     int nid,
     const unsigned char *pub_point,
@@ -61,52 +62,92 @@ static int ec_point_to_der_spki(
     if (group == NULL)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_EC_LIB);
-        goto err;
+
+        EVP_PKEY_free(pkey);
+        EC_KEY_free(ec_key);
+        EC_POINT_free(point);
+        EC_GROUP_free(group);
+        return ret;
     }
 
     point = EC_POINT_new(group);
     if (point == NULL)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
-        goto err;
+
+        EVP_PKEY_free(pkey);
+        EC_KEY_free(ec_key);
+        EC_POINT_free(point);
+        EC_GROUP_free(group);
+        return ret;
     }
 
     if (!EC_POINT_oct2point(group, point, pub_point, pub_point_len, NULL))
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_EC_LIB);
-        goto err;
+
+        EVP_PKEY_free(pkey);
+        EC_KEY_free(ec_key);
+        EC_POINT_free(point);
+        EC_GROUP_free(group);
+        return ret;
     }
 
     ec_key = EC_KEY_new();
     if (ec_key == NULL)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
-        goto err;
+
+        EVP_PKEY_free(pkey);
+        EC_KEY_free(ec_key);
+        EC_POINT_free(point);
+        EC_GROUP_free(group);
+        return ret;
     }
 
     if (!EC_KEY_set_group(ec_key, group))
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_EC_LIB);
-        goto err;
+
+        EVP_PKEY_free(pkey);
+        EC_KEY_free(ec_key);
+        EC_POINT_free(point);
+        EC_GROUP_free(group);
+        return ret;
     }
 
     if (!EC_KEY_set_public_key(ec_key, point))
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_EC_LIB);
-        goto err;
+
+        EVP_PKEY_free(pkey);
+        EC_KEY_free(ec_key);
+        EC_POINT_free(point);
+        EC_GROUP_free(group);
+        return ret;
     }
 
     pkey = EVP_PKEY_new();
     if (pkey == NULL)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
-        goto err;
+
+        EVP_PKEY_free(pkey);
+        EC_KEY_free(ec_key);
+        EC_POINT_free(point);
+        EC_GROUP_free(group);
+        return ret;
     }
 
     if (!EVP_PKEY_assign_EC_KEY(pkey, ec_key))
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_EVP_LIB);
-        goto err;
+
+        EVP_PKEY_free(pkey);
+        EC_KEY_free(ec_key);
+        EC_POINT_free(point);
+        EC_GROUP_free(group);
+        return ret;
     }
     ec_key = NULL; /* Ownership transferred to pkey */
 
@@ -116,17 +157,22 @@ static int ec_point_to_der_spki(
         *der_out = NULL;
         *der_len = 0;
         ERR_raise(ERR_LIB_PROV, ERR_R_ASN1_LIB);
-        goto err;
+
+        EVP_PKEY_free(pkey);
+        EC_KEY_free(ec_key);
+        EC_POINT_free(point);
+        EC_GROUP_free(group);
+        return ret;
     }
 
-    ret = OSSL_SUCCESS;
-
-err:
     EVP_PKEY_free(pkey);
     EC_KEY_free(ec_key);
     EC_POINT_free(point);
     EC_GROUP_free(group);
     return ret;
+
+    ret = OSSL_SUCCESS;
+
 }
 
 static void *azihsm_ossl_keyexch_newctx(void *provctx)
@@ -323,7 +369,7 @@ static int azihsm_ossl_keyexch_set_peer(void *kectx, void *provkey)
 /*
  * azihsm_ossl_keyexch_derive
  *
- * Perform a key exchange using the Azure IoT HSM and produce a shared secret.
+ * Perform a key exchange using the Azure Integrated HSM and produce a shared secret.
  *
  * Parameters:
  *   kectx     - Pointer to the AZIHSM_KEYEXCH_CTX containing our private key,
@@ -368,6 +414,8 @@ static int azihsm_ossl_keyexch_derive(
     {
         if (secretlen != NULL)
         {
+            /* Shared secret will be written to the azihsm:output_file parameter
+             * thus we return 1 */
             *secretlen = 1;
         }
         return OSSL_SUCCESS;
@@ -454,7 +502,7 @@ static int azihsm_ossl_keyexch_derive(
 
     struct azihsm_key_prop_list derive_prop_list = {
         .props = derive_props,
-        .count = 4,
+        .count = sizeof(derive_props) / sizeof(derive_props[0]),
     };
 
     status = azihsm_key_derive(

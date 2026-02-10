@@ -905,8 +905,6 @@ static int azihsm_ossl_keymgmt_import(void *keydata, int selection, const OSSL_P
         return OSSL_FAILURE;
     }
 
-    snprintf(key->group_name, sizeof(key->group_name), "%s", name);
-
     curve_id = azihsm_ossl_name_to_curve_id(name);
     if (curve_id == AIHSM_EC_CURVE_ID_NONE)
     {
