@@ -141,15 +141,9 @@ jobs:
     needs: [build_ubuntu, build_windows]
 
     env:
-      CARGO_INCREMENTAL: 0
-      CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
       EVENT_NAME: ${{github.event_name}}
       PR_TITLE: ${{github.event.pull_request.title}}
       PR_BASE_COMMIT: ${{github.event.pull_request.base.sha}}
-      GIT_AUTHOR_NAME: ${{github.event.pull_request.user.login}}
-      GIT_AUTHOR_EMAIL: ${{github.event.pull_request.user.id}}+${{github.event.pull_request.user.login}}@users.noreply.github.com
-      GIT_COMMITTER_NAME: ${{github.event.pull_request.user.login}}
-      GIT_COMMITTER_EMAIL: ${{github.event.pull_request.user.id}}+${{github.event.pull_request.user.login}}@users.noreply.github.com
       WINDOWS_TOTAL_TESTS: ${{needs.build_windows.outputs.WINDOWS_TOTAL_TESTS}}
       WINDOWS_SKIPPED_TESTS: ${{needs.build_windows.outputs.WINDOWS_SKIPPED_TESTS}}
       LINUX_TOTAL_TESTS: ${{needs.build_ubuntu.outputs.LINUX_TOTAL_TESTS}}
