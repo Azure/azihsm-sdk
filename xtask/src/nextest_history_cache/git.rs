@@ -13,7 +13,7 @@ use crate::nextest_history_cache::process::run_cmd_stdout;
 use crate::nextest_history_cache::util::bytes_to_string;
 use crate::nextest_history_cache::util::expect_line;
 use crate::nextest_history_cache::util::expect_line_with_prefix;
-// use crate::nextest_history_cache::util::other_err;
+use crate::nextest_history_cache::util::other_err;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct CommitInfo {
@@ -65,9 +65,9 @@ impl CommitInfo {
     }
 }
 
-// fn to_utf8(bytes: Vec<u8>) -> io::Result<String> {
-//     String::from_utf8(bytes).map_err(|_| other_err("git output is not utf-8"))
-// }
+fn to_utf8(bytes: Vec<u8>) -> io::Result<String> {
+    String::from_utf8(bytes).map_err(|_| other_err("git output is not utf-8"))
+}
 
 pub struct WorkTree<'a> {
     pub path: &'a Path,
@@ -84,18 +84,18 @@ impl<'a> WorkTree<'a> {
         Ok(Self { path })
     }
 
-    // pub fn is_log_linear(&self) -> io::Result<bool> {
-    //     let stdout = to_utf8(run_cmd_stdout(
-    //         Command::new("git")
-    //             .current_dir(self.path)
-    //             .arg("rev-list")
-    //             .arg("--min-parents=2")
-    //             .arg("--count")
-    //             .arg("HEAD"),
-    //         None,
-    //     )?)?;
-    //     Ok(stdout.trim() == "0")
-    // }
+    pub fn is_log_linear(&self) -> io::Result<bool> {
+        let stdout = to_utf8(run_cmd_stdout(
+            Command::new("git")
+                .current_dir(self.path)
+                .arg("rev-list")
+                .arg("--min-parents=2")
+                .arg("--count")
+                .arg("HEAD"),
+            None,
+        )?)?;
+        Ok(stdout.trim() == "0")
+    }
 
     pub fn commit_log(&self) -> io::Result<Vec<CommitInfo>> {
         CommitInfo::parse_multiple(&bytes_to_string(run_cmd_stdout(
@@ -108,81 +108,81 @@ impl<'a> WorkTree<'a> {
         )?)?)
     }
 
-    // pub fn head_commit_id(&self) -> io::Result<String> {
-    //     Ok(to_utf8(run_cmd_stdout(
-    //         Command::new("git")
-    //             .current_dir(self.path)
-    //             .arg("rev-parse")
-    //             .arg("HEAD"),
-    //         None,
-    //     )?)?
-    //     .trim()
-    //     .into())
-    // }
-    // pub fn reset_hard(&self, commit_id: &str) -> io::Result<()> {
-    //     run_cmd_stdout(
-    //         Command::new("git")
-    //             .current_dir(self.path)
-    //             .arg("reset")
-    //             .arg("--hard")
-    //             .arg(commit_id),
-    //         None,
-    //     )?;
-    //     Ok(())
-    // }
-    // pub fn set_fs_contents(&self, commit_id: &str) -> io::Result<()> {
-    //     run_cmd_stdout(
-    //         Command::new("git")
-    //             .current_dir(self.path)
-    //             .arg("checkout")
-    //             .arg(commit_id)
-    //             .arg("--")
-    //             .arg("."),
-    //         None,
-    //     )?;
-    //     Ok(())
-    // }
-    // pub fn commit(&self, message: &str) -> io::Result<()> {
-    //     run_cmd_stdout(
-    //         Command::new("git")
-    //             .current_dir(self.path)
-    //             .arg("commit")
-    //             .arg("-a")
-    //             .arg("-m")
-    //             .arg(message),
-    //         None,
-    //     )?;
-    //     Ok(())
-    // }
-    // pub fn is_ancestor(&self, possible_ancestor: &str, commit: &str) -> io::Result<bool> {
-    //     Ok(Command::new("git")
-    //         .current_dir(self.path)
-    //         .arg("merge-base")
-    //         .arg("--is-ancestor")
-    //         .arg(possible_ancestor)
-    //         .arg(commit)
-    //         .status()?
-    //         .code()
-    //         == Some(0))
-    // }
-    // pub fn merge_log(&self) -> io::Result<Vec<Vec<String>>> {
-    //     let stdout = to_utf8(run_cmd_stdout(
-    //         Command::new("git")
-    //             .current_dir(self.path)
-    //             .arg("log")
-    //             .arg("--merges")
-    //             .arg("--pretty=%P"),
-    //         None,
-    //     )?)?;
-    //     let mut result = vec![];
-    //     for line in stdout.lines() {
-    //         let parents: Vec<String> = line.split(' ').map(|s| s.to_string()).collect();
-    //         if !parents.is_empty() {
-    //             result.push(parents);
-    //         }
-    //     }
-    //     Ok(result)
-    // }
+    pub fn head_commit_id(&self) -> io::Result<String> {
+        Ok(to_utf8(run_cmd_stdout(
+            Command::new("git")
+                .current_dir(self.path)
+                .arg("rev-parse")
+                .arg("HEAD"),
+            None,
+        )?)?
+        .trim()
+        .into())
+    }
+    pub fn reset_hard(&self, commit_id: &str) -> io::Result<()> {
+        run_cmd_stdout(
+            Command::new("git")
+                .current_dir(self.path)
+                .arg("reset")
+                .arg("--hard")
+                .arg(commit_id),
+            None,
+        )?;
+        Ok(())
+    }
+    pub fn set_fs_contents(&self, commit_id: &str) -> io::Result<()> {
+        run_cmd_stdout(
+            Command::new("git")
+                .current_dir(self.path)
+                .arg("checkout")
+                .arg(commit_id)
+                .arg("--")
+                .arg("."),
+            None,
+        )?;
+        Ok(())
+    }
+    pub fn commit(&self, message: &str) -> io::Result<()> {
+        run_cmd_stdout(
+            Command::new("git")
+                .current_dir(self.path)
+                .arg("commit")
+                .arg("-a")
+                .arg("-m")
+                .arg(message),
+            None,
+        )?;
+        Ok(())
+    }
+    pub fn is_ancestor(&self, possible_ancestor: &str, commit: &str) -> io::Result<bool> {
+        Ok(Command::new("git")
+            .current_dir(self.path)
+            .arg("merge-base")
+            .arg("--is-ancestor")
+            .arg(possible_ancestor)
+            .arg(commit)
+            .status()?
+            .code()
+            == Some(0))
+    }
+    pub fn merge_log(&self) -> io::Result<Vec<Vec<String>>> {
+        let stdout = to_utf8(run_cmd_stdout(
+            Command::new("git")
+                .current_dir(self.path)
+                .arg("log")
+                .arg("--merges")
+                .arg("--pretty=%P"),
+            None,
+        )?)?;
+        let mut result = vec![];
+        for line in stdout.lines() {
+            let parents: Vec<String> = line.split(' ').map(|s| s.to_string()).collect();
+            if !parents.is_empty() {
+                result.push(parents);
+            }
+        }
+        Ok(result)
+    }
 }
 impl Drop for WorkTree<'_> {
     fn drop(&mut self) {

@@ -30,7 +30,7 @@ impl Xtask for Coverage {
         log::info!("Building all tests and running them with coverage");
         cmd!(
             sh,
-            "cargo llvm-cov nextest --no-report --no-fail-fast --features mock --profile ci-mock -- --skip algo::ecc::ecdh_tests"
+            "cargo llvm-cov nextest --no-report --no-fail-fast --features mock --profile ci-mock"
         )
         .run()?;
 

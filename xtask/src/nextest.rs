@@ -84,7 +84,7 @@ impl Xtask for Nextest {
 
         cmd!(
             sh,
-            "cargo {rust_toolchain...} nextest run --no-fail-fast {command_args...} -- --skip algo::ecc::ecdh_tests"
+            "cargo {rust_toolchain...} nextest run --no-fail-fast {command_args...}"
         )
         .quiet()
         .run()?;

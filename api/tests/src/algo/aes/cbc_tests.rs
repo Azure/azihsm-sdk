@@ -169,17 +169,13 @@ fn run_cbc_roundtrip(
 ) {
     let key = aes_generate_key(key_bits, session);
 
-    // REMOVE THIS: inducing intentional failure to test https://github.com/Azure/azihsm-sdk/pull/108
-    let mut ciphertext = cbc_encrypt(&key, padding, iv, plaintext).expect("Failed to encrypt");
+    let ciphertext = cbc_encrypt(&key, padding, iv, plaintext).expect("Failed to encrypt");
     assert!(ciphertext.len().is_multiple_of(AES_CBC_BLOCK_SIZE));
     if !padding {
         assert_eq!(ciphertext.len(), plaintext.len());
     } else {
         assert!(ciphertext.len() >= plaintext.len());
     }
-
-    // REMOVE THIS: inducing intentional failure to test https://github.com/Azure/azihsm-sdk/pull/108
-    ciphertext[0] ^= 0xFF;
 
     let decrypted = cbc_decrypt(&key, padding, iv, &ciphertext).expect("Failed to decrypt");
     assert_eq!(decrypted, plaintext);
