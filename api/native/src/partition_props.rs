@@ -54,8 +54,8 @@ pub enum AzihsmPartPropId {
     MaxApiRev = 8,
 
     /// Manufacturer certificate chain in PEM format.
-    // Corresponds to AZIHSM_PART_PROP_ID_MANUFACTURER_CERT
-    ManufacturerCert = 9,
+    // Corresponds to AZIHSM_PART_PROP_ID_MANUFACTURER_CERT_CHAIN
+    ManufacturerCertChain = 9,
 
     /// Backup masking key (BMK).
     // Corresponds to AZIHSM_PART_PROP_ID_BACKUP_MASKING_KEY
@@ -64,6 +64,10 @@ pub enum AzihsmPartPropId {
     /// Masked owner backup key (MOBK).
     // Corresponds to AZIHSM_PART_PROP_ID_MASKED_OWNER_BACKUP_KEY
     MaskedOwnerBackupKey = 11,
+
+    /// Partition identity (PID) public key in DER format.
+    // Corresponds to AZIHSM_PART_PROP_ID_PARTITION_IDENTITY_PUBLIC_KEY
+    PartitionIdentityPublicKey = 12,
 }
 
 /// UUID structure.
@@ -174,9 +178,13 @@ fn get_partition_prop(
         AzihsmPartPropId::MaskedOwnerBackupKey => {
             get_property_with_buffer(part_prop, |buf| partition.mobk(buf))
         }
-        AzihsmPartPropId::ManufacturerCert => {
+        AzihsmPartPropId::ManufacturerCertChain => {
             let cert_chain = AzihsmStr::from_string(&partition.cert_chain(0)?);
             copy_to_part_prop(part_prop, cert_chain.as_bytes())
+        }
+        AzihsmPartPropId::PartitionIdentityPublicKey => {
+            let pub_key = partition.pid_pub_key()?;
+            copy_to_part_prop(part_prop, &pub_key)
         }
         _ => Err(AzihsmStatus::UnsupportedProperty),
     }

@@ -24,7 +24,7 @@ use super::*;
 /// # Returns
 ///
 /// Returns the DER-encoded public key from the last certificate.
-fn get_partition_public_key(dev: &HsmDev, rev: HsmApiRev) -> HsmResult<Vec<u8>> {
+pub(crate) fn get_pid_pub_key(dev: &HsmDev, rev: HsmApiRev) -> HsmResult<Vec<u8>> {
     let (cert_count, _thumbprint) = get_cert_chain_info(dev, rev, 0)?;
     if cert_count == 0 {
         return Err(HsmError::InternalError);
@@ -55,7 +55,7 @@ fn get_partition_public_key(dev: &HsmDev, rev: HsmApiRev) -> HsmResult<Vec<u8>> 
 ///
 /// Returns the SHA-384 hash of the uncompressed public key point (48 bytes).
 fn get_partition_public_key_hash(dev: &HsmDev, rev: HsmApiRev) -> HsmResult<Vec<u8>> {
-    let cert_pub_key_der = get_partition_public_key(dev, rev)?;
+    let cert_pub_key_der = get_pid_pub_key(dev, rev)?;
 
     // Parse the DER-encoded public key and convert to uncompressed point format
     let cert_pub_key_obj =

@@ -1490,7 +1490,7 @@ mod tests {
     use crate::table::entry::Kind;
     use crate::vault::tests::*;
 
-    const TEST_TPM_ECC_PUB_KEY: [u8; 120] = [
+    const TEST_POTA_ECC_PUB_KEY: [u8; 120] = [
         0x30, 0x76, 0x30, 0x10, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, 0x06, 0x05,
         0x2b, 0x81, 0x04, 0x00, 0x22, 0x03, 0x62, 0x00, 0x04, 0x1f, 0x42, 0x0d, 0x73, 0xeb, 0xf0,
         0x67, 0xc2, 0xf9, 0x77, 0xbd, 0x51, 0xab, 0xfb, 0xe1, 0xf6, 0x53, 0x19, 0xb7, 0x57, 0xe0,
@@ -1578,7 +1578,7 @@ mod tests {
         // After provision, unwrapping key should be available
         // Create some dummy BK3 data for testing
         let dummy_bk3 = function.init_bk3([0u8; BK3_SIZE_BYTES]).unwrap();
-        let provision_result = function.provision(&dummy_bk3, None, None, &TEST_TPM_ECC_PUB_KEY);
+        let provision_result = function.provision(&dummy_bk3, None, None, &TEST_POTA_ECC_PUB_KEY);
         assert!(provision_result.is_ok());
 
         // Now unwrapping key should be available
@@ -1716,7 +1716,7 @@ mod tests {
 
         // Provision the function first to enable unwrapping key
         let dummy_bk3 = function.init_bk3([0u8; BK3_SIZE_BYTES]).unwrap();
-        let provision_result = function.provision(&dummy_bk3, None, None, &TEST_TPM_ECC_PUB_KEY);
+        let provision_result = function.provision(&dummy_bk3, None, None, &TEST_POTA_ECC_PUB_KEY);
         assert!(provision_result.is_ok());
 
         let result = function.get_function_state().get_vault(DEFAULT_VAULT_ID);
@@ -1891,7 +1891,7 @@ mod tests {
 
         // Provision the function first to enable unwrapping key
         let dummy_bk3 = function.init_bk3([0u8; BK3_SIZE_BYTES]).unwrap();
-        let provision_result = function.provision(&dummy_bk3, None, None, &TEST_TPM_ECC_PUB_KEY);
+        let provision_result = function.provision(&dummy_bk3, None, None, &TEST_POTA_ECC_PUB_KEY);
         assert!(provision_result.is_ok());
 
         let result = function.get_function_state().get_vault(DEFAULT_VAULT_ID);

@@ -599,7 +599,7 @@ mod tests {
     const TEST_METADATA_MAX_SIZE_BYTES: usize = 128;
 
     #[allow(unused)]
-    const TEST_TPM_ECC_PRIVATE_KEY: [u8; 185] = [
+    const TEST_POTA_ECC_PRIVATE_KEY: [u8; 185] = [
         0x30, 0x81, 0xb6, 0x02, 0x01, 0x00, 0x30, 0x10, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d,
         0x02, 0x01, 0x06, 0x05, 0x2b, 0x81, 0x04, 0x00, 0x22, 0x04, 0x81, 0x9e, 0x30, 0x81, 0x9b,
         0x02, 0x01, 0x01, 0x04, 0x30, 0x17, 0xe9, 0x1c, 0xac, 0xf7, 0xb7, 0x21, 0xd7, 0x75, 0x20,
@@ -615,7 +615,7 @@ mod tests {
         0x01, 0x4b, 0xa4, 0x0d, 0x98,
     ];
 
-    const TEST_TPM_ECC_PUB_KEY: [u8; 120] = [
+    const TEST_POTA_ECC_PUB_KEY: [u8; 120] = [
         0x30, 0x76, 0x30, 0x10, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, 0x06, 0x05,
         0x2b, 0x81, 0x04, 0x00, 0x22, 0x03, 0x62, 0x00, 0x04, 0x1f, 0x42, 0x0d, 0x73, 0xeb, 0xf0,
         0x67, 0xc2, 0xf9, 0x77, 0xbd, 0x51, 0xab, 0xfb, 0xe1, 0xf6, 0x53, 0x19, 0xb7, 0x57, 0xe0,
@@ -754,7 +754,7 @@ mod tests {
             &TEST_BKS1,
             &TEST_BKS2,
             &TEST_BK3,
-            &TEST_TPM_ECC_PUB_KEY,
+            &TEST_POTA_ECC_PUB_KEY,
             &mut bk_len,
             &mut bk_out,
         );
@@ -786,7 +786,7 @@ mod tests {
             &TEST_BKS1,
             &TEST_BKS2,
             &TEST_BK3,
-            &TEST_TPM_ECC_PUB_KEY,
+            &TEST_POTA_ECC_PUB_KEY,
             &mut bk_len1,
             &mut bk_out1,
         );
@@ -797,7 +797,7 @@ mod tests {
             &TEST_BKS1,
             &TEST_BKS2,
             &TEST_BK3,
-            &TEST_TPM_ECC_PUB_KEY,
+            &TEST_POTA_ECC_PUB_KEY,
             &mut bk_len2,
             &mut bk_out2,
         );
@@ -826,7 +826,7 @@ mod tests {
             &TEST_BKS1,
             &TEST_BKS2,
             &TEST_BK3,
-            &TEST_TPM_ECC_PUB_KEY,
+            &TEST_POTA_ECC_PUB_KEY,
             &mut bk_len,
             &mut bk_out1,
         );
@@ -838,7 +838,7 @@ mod tests {
             &TEST_BKS1,
             &TEST_BKS2,
             &bk3_alt,
-            &TEST_TPM_ECC_PUB_KEY,
+            &TEST_POTA_ECC_PUB_KEY,
             &mut bk_len,
             &mut bk_out2,
         );
@@ -866,7 +866,7 @@ mod tests {
             &TEST_BKS1,
             &TEST_BKS2,
             &TEST_BK3,
-            &TEST_TPM_ECC_PUB_KEY,
+            &TEST_POTA_ECC_PUB_KEY,
             &mut bk_len,
             &mut bk_out,
         );
@@ -1014,7 +1014,7 @@ mod tests {
             &TEST_BKS1,
             &TEST_BKS2,
             &TEST_BK3,
-            &TEST_TPM_ECC_PUB_KEY,
+            &TEST_POTA_ECC_PUB_KEY,
             &mut bk_len,
             &mut bk,
         );
@@ -1159,7 +1159,7 @@ mod tests {
             &TEST_BKS1,
             &TEST_BKS2,
             &TEST_BK3,
-            &TEST_TPM_ECC_PUB_KEY,
+            &TEST_POTA_ECC_PUB_KEY,
             &mut bk_len,
             &mut bk,
         );
@@ -1245,7 +1245,7 @@ mod tests {
             &TEST_BKS1,
             &TEST_BKS2,
             &TEST_BK3,
-            &TEST_TPM_ECC_PUB_KEY,
+            &TEST_POTA_ECC_PUB_KEY,
             &mut bk_len,
             &mut bk,
         );
@@ -1330,7 +1330,7 @@ mod tests {
             &TEST_BKS1,
             &TEST_BKS2,
             &TEST_BK3,
-            &TEST_TPM_ECC_PUB_KEY,
+            &TEST_POTA_ECC_PUB_KEY,
             &mut bk_len,
             &mut bk,
         );

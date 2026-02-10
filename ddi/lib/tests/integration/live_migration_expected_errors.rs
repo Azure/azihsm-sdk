@@ -76,13 +76,14 @@ fn test_establish_credential_after_lm() {
 
         let hash_algo = HashAlgo::sha384();
         let mut ecdsa_algo = EcdsaAlgo::new(hash_algo);
-        let tpm_priv_key =
-            azihsm_crypto::EccPrivateKey::from_bytes(&TEST_TPM_ECC_PRIVATE_KEY).unwrap();
-        let sig_len = Signer::sign(&mut ecdsa_algo, &tpm_priv_key, &cert_pub_uncomp, None).unwrap();
+        let pota_priv_key =
+            azihsm_crypto::EccPrivateKey::from_bytes(&TEST_POTA_ECC_PRIVATE_KEY).unwrap();
+        let sig_len =
+            Signer::sign(&mut ecdsa_algo, &pota_priv_key, &cert_pub_uncomp, None).unwrap();
         let mut signature = vec![0u8; sig_len];
         let _ = Signer::sign(
             &mut ecdsa_algo,
-            &tpm_priv_key,
+            &pota_priv_key,
             &cert_pub_uncomp,
             Some(&mut signature),
         )
@@ -100,7 +101,7 @@ fn test_establish_credential_after_lm() {
             MborByteArray::from_slice(&[0u8; 1024]).unwrap(),
             MborByteArray::from_slice(&signature).expect("Failed to create signed PID"),
             DdiDerPublicKey {
-                der: MborByteArray::from_slice(&TEST_TPM_ECC_PUB_KEY)
+                der: MborByteArray::from_slice(&TEST_POTA_ECC_PUB_KEY)
                     .expect("Failed to create MborByteArray from TPM ECC public key"),
                 key_kind: DdiKeyType::Ecc384Public,
             },

@@ -337,12 +337,13 @@ pub fn helper_common_establish_credential_no_unwrap(
     cert_pub_uncomp.extend_from_slice(cert_pub_key_obj.y());
     let hash_algo = HashAlgo::sha384();
     let mut ecdsa_algo = EcdsaAlgo::new(hash_algo);
-    let tpm_priv_key = azihsm_crypto::EccPrivateKey::from_bytes(&TEST_TPM_ECC_PRIVATE_KEY).unwrap();
-    let sig_len = Signer::sign(&mut ecdsa_algo, &tpm_priv_key, &cert_pub_uncomp, None).unwrap();
+    let pota_priv_key =
+        azihsm_crypto::EccPrivateKey::from_bytes(&TEST_POTA_ECC_PRIVATE_KEY).unwrap();
+    let sig_len = Signer::sign(&mut ecdsa_algo, &pota_priv_key, &cert_pub_uncomp, None).unwrap();
     let mut signature = vec![0u8; sig_len];
     let _ = Signer::sign(
         &mut ecdsa_algo,
-        &tpm_priv_key,
+        &pota_priv_key,
         &cert_pub_uncomp,
         Some(&mut signature),
     )
@@ -359,7 +360,7 @@ pub fn helper_common_establish_credential_no_unwrap(
         MborByteArray::from_slice(&[]).expect("Failed to create empty masked unwrapping key"),
         MborByteArray::from_slice(&signature).expect("Failed to create signed PID"),
         DdiDerPublicKey {
-            der: MborByteArray::from_slice(&TEST_TPM_ECC_PUB_KEY)
+            der: MborByteArray::from_slice(&TEST_POTA_ECC_PUB_KEY)
                 .expect("Failed to create MborByteArray from TPM ECC public key"),
             key_kind: DdiKeyType::Ecc384Public,
         },
@@ -405,12 +406,13 @@ pub fn helper_common_establish_credential_with_bmk(
 
     let hash_algo = HashAlgo::sha384();
     let mut ecdsa_algo = EcdsaAlgo::new(hash_algo);
-    let tpm_priv_key = azihsm_crypto::EccPrivateKey::from_bytes(&TEST_TPM_ECC_PRIVATE_KEY).unwrap();
-    let sig_len = Signer::sign(&mut ecdsa_algo, &tpm_priv_key, &cert_pub_uncomp, None).unwrap();
+    let pota_priv_key =
+        azihsm_crypto::EccPrivateKey::from_bytes(&TEST_POTA_ECC_PRIVATE_KEY).unwrap();
+    let sig_len = Signer::sign(&mut ecdsa_algo, &pota_priv_key, &cert_pub_uncomp, None).unwrap();
     let mut signature = vec![0u8; sig_len];
     let _ = Signer::sign(
         &mut ecdsa_algo,
-        &tpm_priv_key,
+        &pota_priv_key,
         &cert_pub_uncomp,
         Some(&mut signature),
     )
@@ -427,7 +429,7 @@ pub fn helper_common_establish_credential_with_bmk(
         unwrapping_key,
         MborByteArray::from_slice(&signature).expect("Failed to create signed PID"),
         DdiDerPublicKey {
-            der: MborByteArray::from_slice(&TEST_TPM_ECC_PUB_KEY)
+            der: MborByteArray::from_slice(&TEST_POTA_ECC_PUB_KEY)
                 .expect("Failed to create MborByteArray from TPM ECC public key"),
             key_kind: DdiKeyType::Ecc384Public,
         },
@@ -583,12 +585,13 @@ pub fn helper_common_establish_credential(
 
     let hash_algo = HashAlgo::sha384();
     let mut ecdsa_algo = EcdsaAlgo::new(hash_algo);
-    let tpm_priv_key = azihsm_crypto::EccPrivateKey::from_bytes(&TEST_TPM_ECC_PRIVATE_KEY).unwrap();
-    let sig_len = Signer::sign(&mut ecdsa_algo, &tpm_priv_key, &cert_pub_uncomp, None).unwrap();
+    let pota_priv_key =
+        azihsm_crypto::EccPrivateKey::from_bytes(&TEST_POTA_ECC_PRIVATE_KEY).unwrap();
+    let sig_len = Signer::sign(&mut ecdsa_algo, &pota_priv_key, &cert_pub_uncomp, None).unwrap();
     let mut signature = vec![0u8; sig_len];
     let _ = Signer::sign(
         &mut ecdsa_algo,
-        &tpm_priv_key,
+        &pota_priv_key,
         &cert_pub_uncomp,
         Some(&mut signature),
     )
@@ -605,7 +608,7 @@ pub fn helper_common_establish_credential(
         MborByteArray::from_slice(&[]).expect("Failed to create empty masked unwrapping key"),
         MborByteArray::from_slice(&signature).expect("Failed to create signed PID"),
         DdiDerPublicKey {
-            der: MborByteArray::from_slice(&TEST_TPM_ECC_PUB_KEY)
+            der: MborByteArray::from_slice(&TEST_POTA_ECC_PUB_KEY)
                 .expect("Failed to create MborByteArray from TPM ECC public key"),
             key_kind: DdiKeyType::Ecc384Public,
         },
@@ -1974,7 +1977,7 @@ pub(crate) const TEST_ECC_521_PUBLIC_KEY: [u8; 158] = [
 ];
 
 #[allow(dead_code)]
-pub(crate) const TEST_TPM_ECC_PRIVATE_KEY: [u8; 185] = [
+pub(crate) const TEST_POTA_ECC_PRIVATE_KEY: [u8; 185] = [
     0x30, 0x81, 0xb6, 0x02, 0x01, 0x00, 0x30, 0x10, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02,
     0x01, 0x06, 0x05, 0x2b, 0x81, 0x04, 0x00, 0x22, 0x04, 0x81, 0x9e, 0x30, 0x81, 0x9b, 0x02, 0x01,
     0x01, 0x04, 0x30, 0x17, 0xe9, 0x1c, 0xac, 0xf7, 0xb7, 0x21, 0xd7, 0x75, 0x20, 0x02, 0x07, 0xbc,
@@ -1990,7 +1993,7 @@ pub(crate) const TEST_TPM_ECC_PRIVATE_KEY: [u8; 185] = [
 ];
 
 #[allow(dead_code)]
-pub(crate) const TEST_TPM_ECC_PUB_KEY: [u8; 120] = [
+pub(crate) const TEST_POTA_ECC_PUB_KEY: [u8; 120] = [
     0x30, 0x76, 0x30, 0x10, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, 0x06, 0x05, 0x2b,
     0x81, 0x04, 0x00, 0x22, 0x03, 0x62, 0x00, 0x04, 0x1f, 0x42, 0x0d, 0x73, 0xeb, 0xf0, 0x67, 0xc2,
     0xf9, 0x77, 0xbd, 0x51, 0xab, 0xfb, 0xe1, 0xf6, 0x53, 0x19, 0xb7, 0x57, 0xe0, 0xa9, 0x20, 0xce,

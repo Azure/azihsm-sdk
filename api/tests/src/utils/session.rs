@@ -51,20 +51,25 @@ where
         let creds = HsmCredentials::new(&[1u8; 16], &[2u8; 16]);
         let rev = part.api_rev_range().max();
         let use_tpm = std::env::var("AZIHSM_USE_TPM").is_ok();
+
+        let pota_data = if !use_tpm {
+            Some(generate_pota_endorsement(&part))
+        } else {
+            None
+        };
+
         let (obk_info, pota_endorsement) = if use_tpm {
             (
                 HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, None),
                 HsmPotaEndorsement::new(HsmPotaEndorsementSource::Tpm, None),
             )
         } else {
+            let (ref pota_sig, ref pota_pub_key_der) = *pota_data.as_ref().unwrap();
             (
                 HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Caller, Some(&TEST_OBK)),
                 HsmPotaEndorsement::new(
                     HsmPotaEndorsementSource::Caller,
-                    Some(HsmPotaEndorsementData::new(
-                        &TEST_POTA_SIGNATURE,
-                        &TEST_POTA_PUBLIC_KEY_DER,
-                    )),
+                    Some(HsmPotaEndorsementData::new(pota_sig, pota_pub_key_der)),
                 ),
             )
         };

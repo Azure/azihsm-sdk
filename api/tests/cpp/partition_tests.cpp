@@ -417,7 +417,7 @@ TEST(azihsm_part, get_prop_manufacturer_cert)
         auto part = PartitionHandle(path);
 
         // First call to get required size
-        azihsm_part_prop prop = { AZIHSM_PART_PROP_ID_MANUFACTURER_CERT, nullptr, 0 };
+        azihsm_part_prop prop = { AZIHSM_PART_PROP_ID_MANUFACTURER_CERT_CHAIN, nullptr, 0 };
         auto err = azihsm_part_get_prop(part.get(), &prop);
         ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
         ASSERT_GT(prop.len, 0);
@@ -450,7 +450,7 @@ TEST(azihsm_part, get_prop_manufacturer_cert_buffer_too_small)
         auto part = PartitionHandle(path);
 
         // First get the required size
-        azihsm_part_prop prop = { AZIHSM_PART_PROP_ID_MANUFACTURER_CERT, nullptr, 0 };
+        azihsm_part_prop prop = { AZIHSM_PART_PROP_ID_MANUFACTURER_CERT_CHAIN, nullptr, 0 };
         auto err = azihsm_part_get_prop(part.get(), &prop);
         ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
         uint32_t required_size = prop.len;
@@ -497,6 +497,27 @@ TEST(azihsm_part, get_prop_masked_owner_backup_key)
 
         // First call to get required size
         azihsm_part_prop prop = { AZIHSM_PART_PROP_ID_MASKED_OWNER_BACKUP_KEY, nullptr, 0 };
+        auto err = azihsm_part_get_prop(part.get(), &prop);
+        ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+
+        // Second call with properly sized buffer
+        std::vector<uint8_t> buffer(prop.len);
+        prop.val = buffer.data();
+        err = azihsm_part_get_prop(part.get(), &prop);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_GT(prop.len, 0);
+    });
+}
+
+TEST(azihsm_part, get_prop_pid_public_key)
+{
+    auto part_list = PartitionListHandle();
+
+    part_list.for_each_part([](std::vector<azihsm_char> &path) {
+        auto part = PartitionHandle(path);
+
+        // First call to get required size
+        azihsm_part_prop prop = { AZIHSM_PART_PROP_ID_PARTITION_IDENTITY_PUBLIC_KEY, nullptr, 0 };
         auto err = azihsm_part_get_prop(part.get(), &prop);
         ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
 
@@ -585,9 +606,10 @@ TEST(azihsm_part, get_prop_all_supported_properties)
             { AZIHSM_PART_PROP_ID_PCI_HW_ID, "PCI_HW_ID" },
             { AZIHSM_PART_PROP_ID_MIN_API_REV, "MIN_API_REV" },
             { AZIHSM_PART_PROP_ID_MAX_API_REV, "MAX_API_REV" },
-            { AZIHSM_PART_PROP_ID_MANUFACTURER_CERT, "MANUFACTURER_CERT" },
+            { AZIHSM_PART_PROP_ID_MANUFACTURER_CERT_CHAIN, "MANUFACTURER_CERT_CHAIN" },
             { AZIHSM_PART_PROP_ID_BACKUP_MASKING_KEY, "BACKUP_MASKING_KEY" },
             { AZIHSM_PART_PROP_ID_MASKED_OWNER_BACKUP_KEY, "MASKED_OWNER_BACKUP_KEY" },
+            { AZIHSM_PART_PROP_ID_PARTITION_IDENTITY_PUBLIC_KEY, "PARTITION_IDENTITY_PUBLIC_KEY" },
         };
 
         for (const auto &test_prop : supported_props)

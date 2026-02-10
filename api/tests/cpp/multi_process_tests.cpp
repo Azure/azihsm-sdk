@@ -26,6 +26,7 @@
 #include "handle/part_handle.hpp"
 #include "handle/part_list_handle.hpp"
 #include "utils/auto_key.hpp"
+#include "utils/part_init_config.hpp"
 
 namespace
 {
@@ -177,44 +178,21 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_parent)
         std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
         std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
 
-        // User-provided owner backup key (OBK)
-        std::array<uint8_t, 48> obk{};
-        std::random_device rd;
-        for (auto &b : obk)
-        {
-            b = static_cast<uint8_t>(rd());
-        }
-        azihsm_buffer obk_buf = { obk.data(), static_cast<uint32_t>(obk.size()) };
-        azihsm_owner_backup_key_config backup_config{};
-        backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER;
-        backup_config.owner_backup_key = &obk_buf;
-
-        azihsm_pota_endorsement pota_endorsement{};
-        azihsm_buffer pota_sig_buf{};
-        azihsm_buffer pota_pubkey_buf{};
-        azihsm_pota_endorsement_data pota_data{};
-        const char *use_tpm = std::getenv("AZIHSM_USE_TPM");
-        if (use_tpm != nullptr)
-        {
-            pota_endorsement.source = AZIHSM_POTA_ENDORSEMENT_SOURCE_TPM;
-            pota_endorsement.endorsement = nullptr;
-        }
-        else
-        {
-            pota_sig_buf = { const_cast<uint8_t *>(TEST_POTA_SIGNATURE),
-                             sizeof(TEST_POTA_SIGNATURE) };
-            pota_pubkey_buf = { const_cast<uint8_t *>(TEST_POTA_PUBLIC_KEY_DER),
-                                sizeof(TEST_POTA_PUBLIC_KEY_DER) };
-            pota_data = { .signature = &pota_sig_buf, .public_key = &pota_pubkey_buf };
-            pota_endorsement.source = AZIHSM_POTA_ENDORSEMENT_SOURCE_CALLER;
-            pota_endorsement.endorsement = &pota_data;
-        }
-
-        err = azihsm_part_init(part_handle, &creds, nullptr, nullptr, &backup_config, &pota_endorsement);
+        PartInitConfig init_config{};
+        make_part_init_config(part_handle, init_config);
+        err = azihsm_part_init(
+            part_handle,
+            &creds,
+            nullptr,
+            nullptr,
+            &init_config.backup_config,
+            &init_config.pota_endorsement
+        );
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         auto bmk = get_part_prop_bytes(part_handle, AZIHSM_PART_PROP_ID_BACKUP_MASKING_KEY);
 
+        std::random_device rd;
         std::array<uint8_t, 48> seed{};
         for (auto &b : seed)
         {
@@ -271,7 +249,11 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_parent)
         ASSERT_TRUE(out.is_open());
         write_blob(out, path_bytes);
         write_blob(out, bmk);
-        write_blob(out, std::vector<uint8_t>(obk.begin(), obk.end()));
+        auto *obk_ptr = static_cast<uint8_t *>(init_config.backup_config.owner_backup_key->ptr);
+        write_blob(
+            out,
+            std::vector<uint8_t>(obk_ptr, obk_ptr + init_config.backup_config.owner_backup_key->len)
+        );
         write_blob(out, std::vector<uint8_t>(seed.begin(), seed.end()));
         write_blob(out, message);
         write_blob(out, signature);
@@ -338,34 +320,22 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_child)
     ASSERT_EQ(reset_err, AZIHSM_STATUS_SUCCESS);
 
     azihsm_buffer bmk_buf = { bmk.data(), static_cast<uint32_t>(bmk.size()) };
+
+    PartInitConfig init_config{};
+    make_part_init_config(part_handle, init_config);
+    // Override OBK with the deserialized key from parent process
     azihsm_buffer obk_buf = { obk.data(), static_cast<uint32_t>(obk.size()) };
+    init_config.backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER;
+    init_config.backup_config.owner_backup_key = &obk_buf;
 
-    azihsm_owner_backup_key_config backup_config{};
-    backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER;
-    backup_config.owner_backup_key = &obk_buf;
-
-    azihsm_pota_endorsement pota_endorsement{};
-    azihsm_buffer pota_sig_buf{};
-    azihsm_buffer pota_pubkey_buf{};
-    azihsm_pota_endorsement_data pota_data{};
-    const char *use_tpm = std::getenv("AZIHSM_USE_TPM");
-    if (use_tpm != nullptr)
-    {
-        pota_endorsement.source = AZIHSM_POTA_ENDORSEMENT_SOURCE_TPM;
-        pota_endorsement.endorsement = nullptr;
-    }
-    else
-    {
-        pota_sig_buf = { const_cast<uint8_t *>(TEST_POTA_SIGNATURE), sizeof(TEST_POTA_SIGNATURE) };
-        pota_pubkey_buf = { const_cast<uint8_t *>(TEST_POTA_PUBLIC_KEY_DER),
-                            sizeof(TEST_POTA_PUBLIC_KEY_DER) };
-        pota_data = { .signature = &pota_sig_buf, .public_key = &pota_pubkey_buf };
-        pota_endorsement.source = AZIHSM_POTA_ENDORSEMENT_SOURCE_CALLER;
-        pota_endorsement.endorsement = &pota_data;
-    }
-
-    auto init_err =
-        azihsm_part_init(part_handle, &creds, &bmk_buf, nullptr, &backup_config, &pota_endorsement);
+    auto init_err = azihsm_part_init(
+        part_handle,
+        &creds,
+        &bmk_buf,
+        nullptr,
+        &init_config.backup_config,
+        &init_config.pota_endorsement
+    );
     ASSERT_EQ(init_err, AZIHSM_STATUS_SUCCESS);
 
     azihsm_buffer seed_buf = { seed.data(), static_cast<uint32_t>(seed.size()) };
