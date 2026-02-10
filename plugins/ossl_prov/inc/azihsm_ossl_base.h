@@ -40,7 +40,7 @@ typedef struct
 /* Default file paths for partition keys */
 #define AZIHSM_DEFAULT_BMK_PATH "/var/lib/azihsm/bmk.bin"
 #define AZIHSM_DEFAULT_MUK_PATH "/var/lib/azihsm/muk.bin"
-#define AZIHSM_DEFAULT_OBK_PATH "/var/lib/azihsm/mobk.bin"
+#define AZIHSM_DEFAULT_OBK_PATH "/var/lib/azihsm/obk.bin"
 
 typedef struct
 {

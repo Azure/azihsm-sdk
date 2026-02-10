@@ -276,6 +276,7 @@ azihsm_status azihsm_open_device_and_session(
     struct azihsm_buffer muk_buf = { NULL, 0 };
     struct azihsm_buffer obk_buf = { NULL, 0 };
     struct azihsm_buffer retrieved_bmk = { NULL, 0 };
+    bool default_obk = false;
 
     struct azihsm_api_rev api_rev = { .major = 1, .minor = 0 };
 
@@ -328,12 +329,11 @@ azihsm_status azihsm_open_device_and_session(
 
     // Use static default when no OBK file was provided.
     // default_obk tracks whether obk_buf points to static memory (must not be freed).
-    int default_obk = 0;
     if (obk_buf.ptr == NULL)
     {
         obk_buf.ptr = (uint8_t *)DEFAULT_OBK;
         obk_buf.len = sizeof(DEFAULT_OBK);
-        default_obk = 1;
+        default_obk = true;
     }
 
     status = azihsm_get_device_handle(device);
@@ -350,7 +350,6 @@ azihsm_status azihsm_open_device_and_session(
 
     // Configure OBK and POTA
     struct azihsm_owner_backup_key_config backup_config = { 0 };
-    struct azihsm_buffer obk_buf = { 0 };
     struct azihsm_pota_endorsement pota_endorsement = { 0 };
     struct azihsm_buffer pota_sig_buf = { 0 };
     struct azihsm_buffer pota_pubkey_buf = { 0 };
