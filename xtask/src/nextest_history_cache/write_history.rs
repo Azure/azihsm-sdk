@@ -14,7 +14,7 @@ use crate::nextest_history_cache::cache::FsCache;
 use crate::nextest_history_cache::cache_gha::GithubActionCache;
 use crate::nextest_history_cache::git;
 use crate::nextest_history_cache::html;
-use crate::nextest_history_cache::util::other_err;
+//use crate::nextest_history_cache::util::other_err;
 
 // Increment when non-backwards-compatible changes are made to the cache record
 // format
@@ -44,13 +44,13 @@ pub fn write_history() -> io::Result<()> {
     })?;
 
     let worktree = git::WorkTree::new(Path::new("/tmp/azihsm-sdk-test-history-wt"))?;
-    let head_commit = worktree.head_commit_id()?;
+    /*let head_commit = worktree.head_commit_id()?;
 
     let is_pr = env::var("EVENT_NAME").is_ok_and(|name| name == "pull_request")
         && env::var("PR_BASE_COMMIT").is_ok();
 
     // require linear history for PRs; non-linear is OK for main branches
-    /*if is_pr && !worktree.is_log_linear()? {
+    if is_pr && !worktree.is_log_linear()? {
         println!("git history is not linear; attempting to squash PR");
         let (Ok(pull_request_title), Ok(base_ref)) =
             (env::var("PR_TITLE"), env::var("PR_BASE_COMMIT"))
