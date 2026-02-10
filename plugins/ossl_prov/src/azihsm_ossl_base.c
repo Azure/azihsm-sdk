@@ -325,7 +325,7 @@ OSSL_STATUS OSSL_provider_init(
     /* Initialize config with hardcoded default paths */
     snprintf(ctx->config.bmk_path, sizeof(ctx->config.bmk_path), "%s", AZIHSM_DEFAULT_BMK_PATH);
     snprintf(ctx->config.muk_path, sizeof(ctx->config.muk_path), "%s", AZIHSM_DEFAULT_MUK_PATH);
-    snprintf(ctx->config.mobk_path, sizeof(ctx->config.mobk_path), "%s", AZIHSM_DEFAULT_MOBK_PATH);
+    snprintf(ctx->config.obk_path, sizeof(ctx->config.obk_path), "%s", AZIHSM_DEFAULT_OBK_PATH);
 
     status = azihsm_open_device_and_session(&ctx->config, &ctx->device, &ctx->session);
 
