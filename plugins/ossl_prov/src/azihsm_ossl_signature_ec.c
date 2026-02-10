@@ -93,6 +93,13 @@ static int azihsm_ossl_ecdsa_sign_init(void *sctx, void *provkey, const OSSL_PAR
     /* Extract key from provider key object */
     ctx->key = (AZIHSM_EC_KEY *)provkey;
 
+    /* Verify the key has a private component for signing */
+    if (!ctx->key->has_private)
+    {
+        ERR_raise(ERR_LIB_PROV, PROV_R_NOT_A_PRIVATE_KEY);
+        return OSSL_FAILURE;
+    }
+
     ctx->operation = 1; /* Sign */
 
     /* Set default hash algorithm if not already set */
@@ -282,6 +289,13 @@ static int azihsm_ossl_ecdsa_digest_sign_init(
 
     /* Extract key from provider key object */
     ctx->key = (AZIHSM_EC_KEY *)provkey;
+
+    /* Verify the key has a private component for signing */
+    if (!ctx->key->has_private)
+    {
+        ERR_raise(ERR_LIB_PROV, PROV_R_NOT_A_PRIVATE_KEY);
+        return OSSL_FAILURE;
+    }
 
     ctx->operation = 1; /* Sign */
 
