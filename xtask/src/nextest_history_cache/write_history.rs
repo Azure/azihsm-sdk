@@ -50,7 +50,7 @@ pub fn write_history() -> io::Result<()> {
         && env::var("PR_BASE_COMMIT").is_ok();
 
     // require linear history for PRs; non-linear is OK for main branches
-    if is_pr && !worktree.is_log_linear()? {
+    /*if is_pr && !worktree.is_log_linear()? {
         println!("git history is not linear; attempting to squash PR");
         let (Ok(pull_request_title), Ok(base_ref)) =
             (env::var("PR_TITLE"), env::var("PR_BASE_COMMIT"))
@@ -79,7 +79,7 @@ pub fn write_history() -> io::Result<()> {
         worktree.commit(&pull_request_title)?;
 
         // we can't guarantee linear history even after squashing, so we can't check here
-    }
+    }*/
 
     let git_commits = worktree.commit_log()?;
 
