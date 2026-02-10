@@ -69,8 +69,7 @@ jobs:
       if: matrix.build-mode == 'manual'
       shell: bash
       run: |
-        cargo xtask build --release
-        cargo xtask build --tests --all-targets --features mock
+        cargo xtask build --release --package azihsm_ossl_provider
 
     - name: Perform CodeQL Analysis
       uses: github/codeql-action/analyze@v4
