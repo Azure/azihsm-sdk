@@ -42,6 +42,7 @@ jobs:
         sudo apt-get install -y pkg-config libssl-dev libbsd-dev
 
     - name: Restore Cargo cache
+      id: cargo-cache
       uses: actions/cache/restore@v5
       with:
         path: |
@@ -50,7 +51,10 @@ jobs:
           ~/.cargo/registry/cache/
           ~/.cargo/git/db/
         key: ${{ runner.os }}-cargo-${{ env.CACHE_KEY_ID }}
-        fail-on-cache-miss: true
+
+    - name: Setup on cache miss
+      if: steps.cargo-cache.outputs.cache-hit != 'true'
+      run: cargo xtask precheck --setup
 
     - name: Initialize CodeQL
       uses: github/codeql-action/init@v4
