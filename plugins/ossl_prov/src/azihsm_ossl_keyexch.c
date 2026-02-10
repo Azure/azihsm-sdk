@@ -39,8 +39,27 @@ static void keyexch_free_peer(AZIHSM_KEYEXCH_CTX *ctx)
     ctx->peer_key = NULL;
 }
 
-/* Convert raw EC point to DER-encoded SPKI. Caller must call
- * OPENSSL_free(*der_out). */
+/*
+ * Convert a raw EC public point into a DER-encoded SubjectPublicKeyInfo (SPKI).
+ *
+ * Parameters:
+ *   nid           - OpenSSL NID identifying the EC curve (for example, NID_X9_62_prime256v1).
+ *   pub_point     - Buffer containing the encoded EC public point for the given curve.
+ *   pub_point_len - Length in bytes of the pub_point buffer.
+ *   der_out       - On success, set to a newly allocated buffer containing the DER-encoded
+ *                   SPKI structure for the EC public key.
+ *   der_len       - On success, set to the length in bytes of *der_out.
+ *
+ * Memory ownership:
+ *   On success, *der_out is allocated by OpenSSL (for example via i2d_* routines) and the
+ *   caller is responsible for freeing it by calling OPENSSL_free(*der_out). On failure,
+ *   *der_out and *der_len are not guaranteed to be modified.
+ *
+ * Returns:
+ *   OSSL_SUCCESS on success, OSSL_FAILURE on failure.
+ *   On failure, no DER-encoded SPKI is returned and appropriate OpenSSL error
+ *   information may be queued for diagnostic purposes.
+ */
 static int ec_point_to_der_spki(
     int nid,
     const unsigned char *pub_point,
@@ -172,7 +191,6 @@ static int ec_point_to_der_spki(
     return ret;
 
     ret = OSSL_SUCCESS;
-
 }
 
 static void *azihsm_ossl_keyexch_newctx(void *provctx)
