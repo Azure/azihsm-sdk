@@ -94,8 +94,20 @@ jobs:
       run: cargo xtask precheck --fmt
     - name: Cargo Clippy
       run: cargo xtask precheck --clippy
+    - name: Locate clang and llvm tools
+      shell: pwsh
+      run: |
+        where clang
+        where clang++
+        where llvm-cov
+        where llvm-profdata
     - name: Run all mock tests with code coverage
       run: cargo xtask precheck --coverage
+      env:
+        CC: clang
+        CXX: clang++
+        LLVM_COV: llvm-cov
+        LLVM_PROFDATA: llvm-profdata
     - name: Upload coverage report
       uses: actions/upload-artifact@v4
       with:
