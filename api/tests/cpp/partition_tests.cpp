@@ -668,10 +668,9 @@ TEST(azihsm_part, init_caller_source_with_empty_endorsement_fails)
             .endorsement = &empty_endorsement_data
         };
 
-        azihsm_api_rev api_rev{ 1, 0 };
         err = azihsm_part_init(
             part_handle,
-            api_rev,
+            &TEST_API_REV,
             &creds,
             nullptr,
             nullptr,
@@ -714,10 +713,9 @@ TEST(azihsm_part, init_caller_source_with_null_endorsement_fails)
             .endorsement = nullptr
         };
 
-        azihsm_api_rev api_rev{ 1, 0 };
         err = azihsm_part_init(
             part_handle,
-            api_rev,
+            &TEST_API_REV,
             &creds,
             nullptr,
             nullptr,
@@ -766,10 +764,9 @@ TEST(azihsm_part, init_tpm_source_with_endorsement_fails)
         struct azihsm_pota_endorsement pota_endorsement = { .source =
                                                                 AZIHSM_POTA_ENDORSEMENT_SOURCE_TPM,
                                                             .endorsement = &endorsement_data };
-        azihsm_api_rev api_rev{ 1, 0 };
         err = azihsm_part_init(
             part_handle,
-            api_rev,
+            &TEST_API_REV,
             &creds,
             nullptr,
             nullptr,
@@ -819,10 +816,9 @@ TEST(azihsm_part, init_invalid_source_with_endorsement_fails)
             .source = static_cast<azihsm_pota_endorsement_source>(99),
             .endorsement = &endorsement_data
         };
-        azihsm_api_rev api_rev{ 1, 0 };
         err = azihsm_part_init(
             part_handle,
-            api_rev,
+            &TEST_API_REV,
             &creds,
             nullptr,
             nullptr,

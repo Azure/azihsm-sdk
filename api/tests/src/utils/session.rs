@@ -49,7 +49,7 @@ where
 
         //init with test creds
         let creds = HsmCredentials::new(&[1u8; 16], &[2u8; 16]);
-        let rev = HsmApiRev { major: 1, minor: 0 };
+        let rev = TEST_API_REV;
         let use_tpm = std::env::var("AZIHSM_USE_TPM").is_ok();
 
         let pota_data = if !use_tpm {

@@ -170,7 +170,6 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_parent)
             ASSERT_EQ(azihsm_part_close(part_handle), AZIHSM_STATUS_SUCCESS);
         });
 
-        azihsm_api_rev api_rev{ 1, 0 };
         azihsm_credentials creds{};
         std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
         std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
@@ -179,7 +178,7 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_parent)
         make_part_init_config(part_handle, init_config);
         err = azihsm_part_init(
             part_handle,
-            api_rev,
+            &TEST_API_REV,
             &creds,
             nullptr,
             nullptr,
@@ -199,7 +198,7 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_parent)
         azihsm_buffer seed_buf = { seed.data(), static_cast<uint32_t>(seed.size()) };
 
         azihsm_handle sess_handle = 0;
-        err = azihsm_sess_open(part_handle, &api_rev, &creds, &seed_buf, &sess_handle);
+        err = azihsm_sess_open(part_handle, &TEST_API_REV, &creds, &seed_buf, &sess_handle);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         auto sess_guard = scope_guard::make_scope_exit([&sess_handle] {
@@ -311,7 +310,6 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_child)
     azihsm_credentials creds{};
     std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
     std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
-    azihsm_api_rev api_rev{ 1, 0 };
 
     // Reset partition before initialization to clear any previous state
     auto reset_err = azihsm_part_reset(part_handle);
@@ -328,7 +326,7 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_child)
 
     auto init_err = azihsm_part_init(
         part_handle,
-        api_rev,
+        &TEST_API_REV,
         &creds,
         &bmk_buf,
         nullptr,
@@ -340,7 +338,7 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_child)
     azihsm_buffer seed_buf = { seed.data(), static_cast<uint32_t>(seed.size()) };
 
     azihsm_handle sess_handle = 0;
-    err = azihsm_sess_open(part_handle, &api_rev, &creds, &seed_buf, &sess_handle);
+    err = azihsm_sess_open(part_handle, &TEST_API_REV, &creds, &seed_buf, &sess_handle);
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
     auto sess_guard = scope_guard::make_scope_exit([&] {

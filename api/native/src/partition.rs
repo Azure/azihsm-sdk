@@ -302,7 +302,7 @@ pub unsafe extern "C" fn azihsm_part_open(
 #[allow(unsafe_code)]
 pub unsafe extern "C" fn azihsm_part_init(
     part_handle: AzihsmHandle,
-    api_rev: AzihsmApiRev,
+    api_rev: *const AzihsmApiRev,
     creds: *const AzihsmCredentials,
     bmk: *const AzihsmBuffer,
     muk: *const AzihsmBuffer,
@@ -310,6 +310,7 @@ pub unsafe extern "C" fn azihsm_part_init(
     pota_endorsement: *const AzihsmPotaEndorsement,
 ) -> AzihsmStatus {
     abi_boundary(|| {
+        let api_rev = deref_ptr(api_rev)?;
         let creds = deref_ptr(creds)?;
         let obk_config = deref_ptr(backup_key_config)?;
         let pota_endorsement = deref_ptr(pota_endorsement)?;

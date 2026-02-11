@@ -16,12 +16,11 @@ class SessionHandle
   public:
     SessionHandle(azihsm_handle part_handle) : handle_(0)
     {
-        azihsm_api_rev api_rev{ 1, 0 };
         azihsm_credentials creds{};
         std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
         std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
 
-        auto err = azihsm_sess_open(part_handle, &api_rev, &creds, nullptr, &handle_);
+        auto err = azihsm_sess_open(part_handle, &TEST_API_REV, &creds, nullptr, &handle_);
         if (err != AZIHSM_STATUS_SUCCESS)
         {
             throw std::runtime_error("Failed to open session. Error: " + std::to_string(err));

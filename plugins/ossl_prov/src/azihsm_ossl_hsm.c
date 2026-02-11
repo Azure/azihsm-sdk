@@ -632,7 +632,7 @@ azihsm_status azihsm_open_device_and_session(
     // Initialize partition with loaded keys (or NULL if not available)
     status = azihsm_part_init(
         *device,
-        api_rev,
+        &api_rev,
         &creds,
         bmk_buf.ptr != NULL ? &bmk_buf : NULL,
         muk_buf.ptr != NULL ? &muk_buf : NULL,

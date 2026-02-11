@@ -34,6 +34,10 @@ pub(crate) const TEST_OBK: [u8; 48] = [
     0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F, 0x30,
 ];
 
+/// Test API revision for partition and session initialization.
+/// Matches the C++ TEST_API_REV in test_creds.hpp.
+pub(crate) const TEST_API_REV: HsmApiRev = HsmApiRev { major: 1, minor: 0 };
+
 /// Test POTA endorsement private key (DER-encoded ECC P-384, 185 bytes).
 /// This is the same key used by DDI integration tests (TEST_POTA_ECC_PRIVATE_KEY).
 const TEST_POTA_PRIVATE_KEY: [u8; 185] = [
@@ -149,7 +153,7 @@ where
 
         //init with test creds
         let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
-        let rev = HsmApiRev { major: 1, minor: 0 };
+        let rev = TEST_API_REV;
         let use_tpm = std::env::var("AZIHSM_USE_TPM").is_ok();
 
         let pota_owned = if !use_tpm {

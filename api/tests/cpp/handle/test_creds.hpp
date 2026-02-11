@@ -4,7 +4,11 @@
 #ifndef TEST_CREDENTIALS_HPP
 #define TEST_CREDENTIALS_HPP
 
+#include <azihsm_api.h>
 #include <cstdint>
+
+// Test API revision for use in unit tests.
+constexpr azihsm_api_rev TEST_API_REV{ 1, 0 };
 
 // Test credentials for use in unit tests.
 constexpr uint8_t TEST_CRED_ID[16] = { 0x70, 0xFC, 0xF7, 0x30, 0xB8, 0x76, 0x42, 0x38,
