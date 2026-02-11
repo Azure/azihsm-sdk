@@ -38,7 +38,10 @@ impl Xtask for NextestReport {
                     .parent()
                     .and_then(|p| p.file_name())
                     .and_then(|n| n.to_str())
-                    .unwrap_or("unknown");
+                    .unwrap_or_else(|| {
+                        log::warn!("Could not extract profile name from path: {:?}", junit_path);
+                        "unknown"
+                    });
 
                 // Add data from JUnit XML to total data structure
                 test_suites_total.suites.extend(test_suites.suites);
@@ -53,9 +56,14 @@ impl Xtask for NextestReport {
         }
 
         // Calculate total tests, failures, and skipped
-        test_suites_total.tests = profile_data.iter().map(|(_, t, _, _)| t).sum();
-        test_suites_total.failures = profile_data.iter().map(|(_, _, f, _)| f).sum();
-        test_suites_total.skipped = profile_data.iter().map(|(_, _, _, s)| s).sum();
+        let (total_tests, total_failures, total_skipped) = profile_data
+            .iter()
+            .fold((0, 0, 0), |(tests, failures, skipped), (_, t, f, s)| {
+                (tests + t, failures + f, skipped + s)
+            });
+        test_suites_total.tests = total_tests;
+        test_suites_total.failures = total_failures;
+        test_suites_total.skipped = total_skipped;
 
         // Generate markdown report
         let mut markdown = String::new();
