@@ -330,7 +330,7 @@ impl HsmKeyPairUnmaskOp for HsmEccKeyUnmaskAlgo {
         let (handle, priv_props, pub_props) = ddi::unmask_key_pair(session, masked_key)?;
 
         //construct key guard first to ensure handles are released if validation fails
-        let key_id = ddi::HsmKeyIdGuard::new(session, handle);
+        let key_handle_guard = ddi::HsmKeyHandleGuard::new(session, handle);
 
         //create a guard for handl
         let Some(pub_key_der) = pub_props.pub_key_der() else {
@@ -347,7 +347,7 @@ impl HsmKeyPairUnmaskOp for HsmEccKeyUnmaskAlgo {
         let priv_key = HsmEccPrivateKey::new(
             session.clone(),
             priv_props.clone(),
-            key_id.release(),
+            key_handle_guard.release(),
             pub_key.clone(),
         );
 

@@ -49,7 +49,7 @@ pub(crate) fn hkdf_derive(
     let req = DdiHkdfDeriveCmdReq {
         hdr: build_ddi_req_hdr_sess(DdiOp::HkdfDerive, &shared_secret.session()),
         data: DdiHkdfDeriveReq {
-            key_id: shared_secret.handle(),
+            key_id: shared_secret.handle().key_id,
             hash_algorithm: hash_algo.into(),
             salt: salt
                 .map(|salt| MborByteArray::from_slice(salt).map_hsm_err(HsmError::InternalError))
@@ -70,7 +70,11 @@ pub(crate) fn hkdf_derive(
     })?;
 
     let session = shared_secret.session();
-    let key_id = HsmKeyIdGuard::new(&session, resp.data.key_id);
+    let key_handle = HsmKeyHandle {
+        key_id: resp.data.key_id,
+        bulk_key_id: resp.data.bulk_key_id,
+    };
+    let key_handle_guard = HsmKeyHandleGuard::new(&session, key_handle);
 
     let dev_key_props = HsmMaskedKey::to_key_props(resp.data.masked_key.as_slice())?;
     // Validate that the device returned properties match the requested properties.
@@ -78,7 +82,7 @@ pub(crate) fn hkdf_derive(
         Err(HsmError::InvalidKeyProps)?;
     }
 
-    Ok((key_id.release(), dev_key_props))
+    Ok((key_handle_guard.release(), dev_key_props))
 }
 
 impl TryFrom<&HsmKeyProps> for DdiKeyType {

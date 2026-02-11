@@ -32,7 +32,21 @@ pub(crate) use tpm::*;
 
 use super::*;
 
-pub(crate) type HsmKeyHandle = u16;
+/// Key handle returned by HSM DDI operations.
+///
+/// This structure encapsulates the key identifier(s) returned by the device. Most keys
+/// have only a regular `key_id`, but certain bulk operation keys (AES-GCM, AES-XTS) also
+/// include a `bulk_key_id` for optimized hardware operations.
+///
+/// # Fields
+///
+/// * `key_id` - The primary key identifier used for most cryptographic operations
+/// * `bulk_key_id` - Optional bulk operation key ID for hardware-accelerated operations
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) struct HsmKeyHandle {
+    pub(crate) key_id: u16,
+    pub(crate) bulk_key_id: Option<u16>,
+}
 
 /// Builds a DDI request header with optional session ID and API revision.
 ///
