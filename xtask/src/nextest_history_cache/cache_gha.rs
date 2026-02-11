@@ -25,7 +25,9 @@ impl GithubActionCache {
             |_| other_err("ACTIONS_RESULTS_URL environment variable not set".to_string());
         let actions_results_url = std::env::var("ACTIONS_RESULTS_URL").map_err(wrap_err)?;
         if actions_results_url.is_empty() {
-            return Err(other_err("ACTIONS_RESULTS_URL environment variable is empty".to_string()));
+            return Err(other_err(
+                "ACTIONS_RESULTS_URL environment variable is empty".to_string(),
+            ));
         }
         let prefix = format!(
             "{}twirp/github.actions.results.api.v1.CacheService",
