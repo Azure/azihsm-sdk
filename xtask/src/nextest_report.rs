@@ -2,8 +2,8 @@
 // Licensed under the MIT License.
 
 use std::fs;
-use std::path::PathBuf;
 
+use glob::glob;
 use junit_parser::TestSuites;
 
 use crate::Xtask;
@@ -19,63 +19,66 @@ impl Xtask for NextestReport {
     fn run(self, _ctx: XtaskCtx) -> anyhow::Result<()> {
         log::trace!("running nextest-report");
 
-        let nextest_profiles = ["ci-mock", "ci-mock-table-4", "ci-mock-table-64"];
-        let nextest_cmds = [
-            "cargo nextest run --no-fail-fast --features mock",
-            "cargo nextest run --no-fail-fast --features mock,table-4 --package azihsm_ddi",
-            "cargo nextest run --no-fail-fast --features mock,table-64 --package azihsm_ddi",
-        ];
-
         let mut test_suites_total = TestSuites::default();
 
-        let mut vec_tests = Vec::new();
-        let mut vec_failures = Vec::new();
-        let mut vec_skipped = Vec::new();
+        let mut profile_data = Vec::new();
 
-        for profile in &nextest_profiles {
-            let junit_path = PathBuf::from(format!("./target/nextest/{}/junit.xml", profile));
+        // Discover all junit.xml files under target/nextest/**/junit.xml
+        for entry in glob("./target/nextest/**/junit.xml")? {
+            let junit_path = entry?;
 
-            // Read the JUnit XML file (ignore if it doesn't exist)
+            // Read the JUnit XML file
             if let Ok(xml_content) = fs::read_to_string(&junit_path) {
                 // Parse the JUnit XML
                 let test_suites = junit_parser::from_reader(xml_content.as_bytes())?;
 
+                // Extract profile name from the path
+                // Path format: ./target/nextest/{profile}/junit.xml
+                let profile_name = junit_path
+                    .parent()
+                    .and_then(|p| p.file_name())
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("unknown");
+
                 // Add data from JUnit XML to total data structure
                 test_suites_total.suites.extend(test_suites.suites);
 
-                vec_tests.push(test_suites.tests);
-                vec_failures.push(test_suites.failures);
-                vec_skipped.push(test_suites.skipped);
+                profile_data.push((
+                    profile_name.to_string(),
+                    test_suites.tests,
+                    test_suites.failures,
+                    test_suites.skipped,
+                ));
             }
         }
 
         // Calculate total tests, failures, and skipped
-        test_suites_total.tests = vec_tests.iter().sum();
-        test_suites_total.failures = vec_failures.iter().sum();
-        test_suites_total.skipped = vec_skipped.iter().sum();
+        test_suites_total.tests = profile_data.iter().map(|(_, t, _, _)| t).sum();
+        test_suites_total.failures = profile_data.iter().map(|(_, _, f, _)| f).sum();
+        test_suites_total.skipped = profile_data.iter().map(|(_, _, _, s)| s).sum();
 
         // Generate markdown report
         let mut markdown = String::new();
         markdown.push_str("# Test Results\n\n");
         markdown.push_str(&format!("- **Total Tests**: {}\n", test_suites_total.tests));
-        for (i, val) in vec_tests.iter().enumerate() {
-            markdown.push_str(&format!("  - {}\n    - {}\n", nextest_cmds[i], val));
+        for (profile, tests, _, _) in &profile_data {
+            markdown.push_str(&format!("  - {}: {}\n", profile, tests));
         }
 
         markdown.push_str(&format!(
             "- **Total Failures**: {}\n",
             test_suites_total.failures
         ));
-        for (i, val) in vec_failures.iter().enumerate() {
-            markdown.push_str(&format!("  - {}\n    - {}\n", nextest_cmds[i], val));
+        for (profile, _, failures, _) in &profile_data {
+            markdown.push_str(&format!("  - {}: {}\n", profile, failures));
         }
 
         markdown.push_str(&format!(
             "- **Total Skipped**: {}\n",
             test_suites_total.skipped
         ));
-        for (i, val) in vec_skipped.iter().enumerate() {
-            markdown.push_str(&format!("  - {}\n    - {}\n", nextest_cmds[i], val));
+        for (profile, _, _, skipped) in &profile_data {
+            markdown.push_str(&format!("  - {}: {}\n", profile, skipped));
         }
 
         markdown.push('\n');
