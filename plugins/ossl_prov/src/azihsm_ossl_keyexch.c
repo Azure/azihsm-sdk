@@ -72,7 +72,6 @@ static int ec_point_to_der_spki(
     EC_POINT *point = NULL;
     EC_KEY *ec_key = NULL;
     EVP_PKEY *pkey = NULL;
-    int ret = OSSL_FAILURE;
 
     *der_out = NULL;
     *der_len = 0;
@@ -86,7 +85,7 @@ static int ec_point_to_der_spki(
         EC_KEY_free(ec_key);
         EC_POINT_free(point);
         EC_GROUP_free(group);
-        return ret;
+        return OSSL_FAILURE;
     }
 
     point = EC_POINT_new(group);
@@ -98,7 +97,7 @@ static int ec_point_to_der_spki(
         EC_KEY_free(ec_key);
         EC_POINT_free(point);
         EC_GROUP_free(group);
-        return ret;
+        return OSSL_FAILURE;
     }
 
     if (!EC_POINT_oct2point(group, point, pub_point, pub_point_len, NULL))
@@ -109,7 +108,7 @@ static int ec_point_to_der_spki(
         EC_KEY_free(ec_key);
         EC_POINT_free(point);
         EC_GROUP_free(group);
-        return ret;
+        return OSSL_FAILURE;
     }
 
     ec_key = EC_KEY_new();
@@ -121,7 +120,7 @@ static int ec_point_to_der_spki(
         EC_KEY_free(ec_key);
         EC_POINT_free(point);
         EC_GROUP_free(group);
-        return ret;
+        return OSSL_FAILURE;
     }
 
     if (!EC_KEY_set_group(ec_key, group))
@@ -132,7 +131,7 @@ static int ec_point_to_der_spki(
         EC_KEY_free(ec_key);
         EC_POINT_free(point);
         EC_GROUP_free(group);
-        return ret;
+        return OSSL_FAILURE;
     }
 
     if (!EC_KEY_set_public_key(ec_key, point))
@@ -143,7 +142,7 @@ static int ec_point_to_der_spki(
         EC_KEY_free(ec_key);
         EC_POINT_free(point);
         EC_GROUP_free(group);
-        return ret;
+        return OSSL_FAILURE;
     }
 
     pkey = EVP_PKEY_new();
@@ -155,7 +154,7 @@ static int ec_point_to_der_spki(
         EC_KEY_free(ec_key);
         EC_POINT_free(point);
         EC_GROUP_free(group);
-        return ret;
+        return OSSL_FAILURE;
     }
 
     if (!EVP_PKEY_assign_EC_KEY(pkey, ec_key))
@@ -166,7 +165,7 @@ static int ec_point_to_der_spki(
         EC_KEY_free(ec_key);
         EC_POINT_free(point);
         EC_GROUP_free(group);
-        return ret;
+        return OSSL_FAILURE;
     }
     ec_key = NULL; /* Ownership transferred to pkey */
 
@@ -181,16 +180,15 @@ static int ec_point_to_der_spki(
         EC_KEY_free(ec_key);
         EC_POINT_free(point);
         EC_GROUP_free(group);
-        return ret;
+        return OSSL_FAILURE;
     }
 
     EVP_PKEY_free(pkey);
     EC_KEY_free(ec_key);
     EC_POINT_free(point);
     EC_GROUP_free(group);
-    return ret;
 
-    ret = OSSL_SUCCESS;
+    return OSSL_SUCCESS;
 }
 
 static void *azihsm_ossl_keyexch_newctx(void *provctx)
