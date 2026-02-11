@@ -24,6 +24,7 @@
 #endif
 
 #include "algo/ecc/helpers.hpp"
+#include "algo/hmac/helpers.hpp"
 #include "handle/part_handle.hpp"
 #include "handle/part_list_handle.hpp"
 #include "utils/auto_key.hpp"
@@ -400,4 +401,86 @@ TEST_F(azihsm_multi_process_child, aes_cbc_sign_verify_cross_process)
     // Verify decrypted plaintext matches original message
     ASSERT_EQ(plaintext.size(), test_params.message.size());
     ASSERT_EQ(plaintext, test_params.message);
+}
+
+TEST_F(azihsm_multi_process_parent, hmac_sign_verify_cross_process)
+{
+    part_list_.for_each_part([this](std::vector<azihsm_char> &path) {
+        parent_common_setup(path);
+
+        // Generate EC key pairs and derive HMAC-SHA256 key
+        // Note: The derived key must be non-session to support backup/restore
+        EcdhKeyPairSet key_pairs;
+        auto err = key_pairs.generate(sess_handle, AZIHSM_ECC_CURVE_P256);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        // Derive HMAC key with non-session property (is_session = false)
+        auto_key hmac_key;
+        err = derive_hmac_key_via_ecdh_hkdf(
+            sess_handle,
+            key_pairs.priv_key_a.handle,
+            key_pairs.pub_key_b.handle,
+            AZIHSM_KEY_KIND_HMAC_SHA256,
+            hmac_key.handle,
+            AZIHSM_ECC_CURVE_P256,
+            nullptr,
+            false  // is_session = false for cross-process backup/restore
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(hmac_key.get(), 0);
+
+        // Get masked key for transfer
+        auto masked_key = get_key_prop_bytes(hmac_key.get(), AZIHSM_KEY_PROP_ID_MASKED_KEY);
+
+        // Sign a message with HMAC-SHA256
+        std::vector<uint8_t> message(64, 0x2A);
+        azihsm_buffer msg_buf = { message.data(), static_cast<uint32_t>(message.size()) };
+
+        azihsm_algo hmac_algo = { AZIHSM_ALGO_ID_HMAC_SHA256, nullptr, 0 };
+
+        azihsm_buffer mac_buf = { nullptr, 0 };
+        err = azihsm_crypt_sign(&hmac_algo, hmac_key.get(), &msg_buf, &mac_buf);
+        ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+
+        std::vector<uint8_t> mac(mac_buf.len);
+        mac_buf.ptr = mac.data();
+        err = azihsm_crypt_sign(&hmac_algo, hmac_key.get(), &msg_buf, &mac_buf);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        std::vector<uint8_t> path_bytes(
+            reinterpret_cast<uint8_t *>(path.data()),
+            reinterpret_cast<uint8_t *>(path.data()) + (path.size() * sizeof(azihsm_char))
+        );
+        cross_process_test_params params(
+            "azihsm_multi_process_child.hmac_sign_verify_cross_process",
+            path_bytes,
+            bmk,
+            std::vector<uint8_t>(obk.begin(), obk.end()),
+            std::vector<uint8_t>(seed.begin(), seed.end()),
+            message,
+            mac,
+            masked_key
+        );
+        int rc = run_child_test(params);
+        ASSERT_EQ(rc, 0)
+            << "If running on real hardware, set AZIHSM_DISABLE_MULTI_PROCESS_TESTS=1 to skip";
+    });
+}
+
+TEST_F(azihsm_multi_process_child, hmac_sign_verify_cross_process)
+{
+    child_common_setup();
+
+    // Unmask the HMAC key
+    azihsm_buffer masked_buf = { test_params.masked_key.data(), static_cast<uint32_t>(test_params.masked_key.size()) };
+    auto_key hmac_key;
+    auto err = azihsm_key_unmask(sess_handle, AZIHSM_KEY_KIND_HMAC_SHA256, &masked_buf, hmac_key.get_ptr());
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+    // Verify the HMAC signature
+    azihsm_algo hmac_algo = { AZIHSM_ALGO_ID_HMAC_SHA256, nullptr, 0 };
+    azihsm_buffer msg_buf = { test_params.message.data(), static_cast<uint32_t>(test_params.message.size()) };
+    azihsm_buffer mac_buf = { test_params.signature_or_ciphertext.data(), static_cast<uint32_t>(test_params.signature_or_ciphertext.size()) };
+    err = azihsm_crypt_verify(&hmac_algo, hmac_key.get(), &msg_buf, &mac_buf);
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 }
