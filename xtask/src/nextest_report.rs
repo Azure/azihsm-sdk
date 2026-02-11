@@ -92,9 +92,13 @@ impl Xtask for NextestReport {
         // Generate markdown report
         let mut markdown = String::new();
         markdown.push_str("# Test Results\n\n");
+
+        // Helper closure to format command entries
+        let format_entry = |cmd: &str, value: u64| format!("  - {}\n    - {}\n", cmd, value);
+
         markdown.push_str(&format!("- **Total Tests**: {}\n", test_suites_total.tests));
         for (command, tests, _, _) in &profile_data {
-            markdown.push_str(&format!("  - {}\n    - {}\n", command, tests));
+            markdown.push_str(&format_entry(command, *tests));
         }
 
         markdown.push_str(&format!(
@@ -102,7 +106,7 @@ impl Xtask for NextestReport {
             test_suites_total.failures
         ));
         for (command, _, failures, _) in &profile_data {
-            markdown.push_str(&format!("  - {}\n    - {}\n", command, failures));
+            markdown.push_str(&format_entry(command, *failures));
         }
 
         markdown.push_str(&format!(
@@ -110,7 +114,7 @@ impl Xtask for NextestReport {
             test_suites_total.skipped
         ));
         for (command, _, _, skipped) in &profile_data {
-            markdown.push_str(&format!("  - {}\n    - {}\n", command, skipped));
+            markdown.push_str(&format_entry(command, *skipped));
         }
 
         markdown.push('\n');
