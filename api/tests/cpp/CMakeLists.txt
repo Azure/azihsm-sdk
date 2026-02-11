@@ -56,6 +56,7 @@ set(SOURCE
     utils/rsa_keygen.cpp
     utils/shared_secret.cpp
     utils/part_init_config.cpp
+    utils/multi_process.cpp
     partition_tests.cpp 
     session_tests.cpp 
     handle_mgmt_tests.cpp

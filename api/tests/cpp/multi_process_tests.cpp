@@ -12,6 +12,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <random>
 #include <string>
 #include <vector>
@@ -28,80 +29,10 @@
 #include "utils/auto_key.hpp"
 #include "utils/part_init_config.hpp"
 #include "utils/utils.hpp"
+#include "utils/multi_process.hpp"
 
 namespace
 {
-constexpr const char *kHelperEnv = "AZIHSM_HELPER_INPUT";
-constexpr const char *kTmpPrefix = "azihsm_multi_proc_";
-
-static void write_u32(std::ofstream &out, uint32_t v)
-{
-    out.write(reinterpret_cast<const char *>(&v), sizeof(v));
-}
-
-static uint32_t read_u32(std::ifstream &in)
-{
-    uint32_t v = 0;
-    in.read(reinterpret_cast<char *>(&v), sizeof(v));
-    return v;
-}
-
-static void write_blob(std::ofstream &out, const std::vector<uint8_t> &data)
-{
-    write_u32(out, static_cast<uint32_t>(data.size()));
-    if (!data.empty())
-    {
-        out.write(reinterpret_cast<const char *>(data.data()), data.size());
-    }
-}
-
-static std::vector<uint8_t> read_blob(std::ifstream &in)
-{
-    uint32_t len = read_u32(in);
-    std::vector<uint8_t> data(len);
-    if (len != 0)
-    {
-        in.read(reinterpret_cast<char *>(data.data()), len);
-    }
-    return data;
-}
-
-static std::string self_exe_path()
-{
-#if defined(_WIN32)
-    std::wstring buffer(MAX_PATH, L'\0');
-    DWORD size = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
-    buffer.resize(size);
-    return std::string(buffer.begin(), buffer.end());
-#else
-    return std::filesystem::read_symlink("/proc/self/exe").string();
-#endif
-}
-
-static int run_child_test(const std::filesystem::path &input_path, const std::string &gtest_filter)
-{
-#if defined(_WIN32)
-    _putenv_s(kHelperEnv, input_path.string().c_str());
-#else
-    setenv(kHelperEnv, input_path.string().c_str(), 1);
-#endif
-
-    std::string cmd = "\"" + self_exe_path() + "\" --gtest_filter=" + gtest_filter;
-    int rc = std::system(cmd.c_str());
-
-#if defined(_WIN32)
-    _putenv_s(kHelperEnv, "");
-#else
-    unsetenv(kHelperEnv);
-    if (rc != -1)
-    {
-        rc = WEXITSTATUS(rc);
-    }
-#endif
-
-    return rc;
-}
-
 static std::vector<uint8_t> get_part_prop_bytes(azihsm_handle part, azihsm_part_prop_id id)
 {
     azihsm_part_prop prop = { id, nullptr, 0 };
@@ -127,29 +58,6 @@ static std::vector<uint8_t> get_key_prop_bytes(azihsm_handle key, azihsm_key_pro
     buffer.resize(prop.len);
     return buffer;
 }
-
-static void cleanup_temp_files()
-{
-    std::error_code ec;
-    auto tmp_dir = get_test_tmp_dir();
-
-    for (const auto &entry : std::filesystem::directory_iterator(tmp_dir, ec))
-    {
-        if (ec)
-        {
-            break;
-        }
-        if (!entry.is_regular_file(ec))
-        {
-            continue;
-        }
-        const auto name = entry.path().filename().string();
-        if (name.rfind(kTmpPrefix, 0) == 0 && entry.path().extension() == ".bin")
-        {
-            std::filesystem::remove(entry.path(), ec);
-        }
-    }
-}
 } // namespace
 
 class azihsm_multi_process : public ::testing::Test
@@ -160,7 +68,6 @@ class azihsm_multi_process : public ::testing::Test
 
 TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_parent)
 {
-    cleanup_temp_files();
     part_list_.for_each_part([](std::vector<azihsm_char> &path) {
         azihsm_str path_str = { path.data(), static_cast<uint32_t>(path.size()) };
         azihsm_handle part_handle = 0;
@@ -236,66 +143,29 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_parent)
             reinterpret_cast<uint8_t *>(path.data()),
             reinterpret_cast<uint8_t *>(path.data()) + (path.size() * sizeof(azihsm_char))
         );
-
-        auto tmp_path =
-            get_test_tmp_dir() /
-            ("azihsm_multi_proc_" +
-             std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".bin");
-
-        std::ofstream out(tmp_path, std::ios::binary);
-        ASSERT_TRUE(out.is_open());
-        write_blob(out, path_bytes);
-        write_blob(out, bmk);
-        auto *obk_ptr = static_cast<uint8_t *>(init_config.backup_config.owner_backup_key->ptr);
-        write_blob(
-            out,
-            std::vector<uint8_t>(obk_ptr, obk_ptr + init_config.backup_config.owner_backup_key->len)
+        cross_process_test_params params(
+            "azihsm_multi_process.ecc_sign_verify_cross_process_child",
+            path_bytes,
+            bmk,
+            std::vector<uint8_t>(obk.begin(), obk.end()),
+            std::vector<uint8_t>(seed.begin(), seed.end()),
+            message,
+            signature,
+            masked_key
         );
-        write_blob(out, std::vector<uint8_t>(seed.begin(), seed.end()));
-        write_blob(out, message);
-        write_blob(out, signature);
-        write_blob(out, masked_key);
-        out.close();
-
-        int rc =
-            run_child_test(tmp_path, "azihsm_multi_process.ecc_sign_verify_cross_process_child");
+        int rc = run_child_test(params);
         ASSERT_EQ(rc, 0)
             << "If running on real hardware, set AZIHSM_DISABLE_MULTI_PROCESS_TESTS=1 to skip";
-
-        std::error_code ec;
-        std::filesystem::remove(tmp_path, ec);
     });
 }
 
 TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_child)
 {
-    const char *input_path = std::getenv(kHelperEnv);
-    if (input_path == nullptr || input_path[0] == '\0')
-    {
-        GTEST_SKIP();
-    }
+    auto test_params = get_cross_process_test_params();
 
-    ASSERT_TRUE(std::filesystem::exists(input_path)) << "Missing input file: " << input_path;
-
-    std::ifstream in(input_path, std::ios::binary);
-    if (!in.is_open())
-    {
-        ADD_FAILURE() << "Failed to open input file: " << input_path << " errno=" << errno << " ("
-                      << std::strerror(errno) << ")";
-        return;
-    }
-
-    auto path_bytes = read_blob(in);
-    auto bmk = read_blob(in);
-    auto obk = read_blob(in);
-    auto seed = read_blob(in);
-    auto message = read_blob(in);
-    auto signature = read_blob(in);
-    auto masked_key = read_blob(in);
-
-    ASSERT_EQ(path_bytes.size() % sizeof(azihsm_char), 0u);
-    std::vector<azihsm_char> path_chars(path_bytes.size() / sizeof(azihsm_char));
-    std::memcpy(path_chars.data(), path_bytes.data(), path_bytes.size());
+    ASSERT_EQ(test_params.path_bytes.size() % sizeof(azihsm_char), 0u);
+    std::vector<azihsm_char> path_chars(test_params.path_bytes.size() / sizeof(azihsm_char));
+    std::memcpy(path_chars.data(), test_params.path_bytes.data(), test_params.path_bytes.size());
 
     azihsm_str path_str = { path_chars.data(), static_cast<uint32_t>(path_chars.size()) };
 
@@ -316,26 +186,16 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_child)
     auto reset_err = azihsm_part_reset(part_handle);
     ASSERT_EQ(reset_err, AZIHSM_STATUS_SUCCESS);
 
-    azihsm_buffer bmk_buf = { bmk.data(), static_cast<uint32_t>(bmk.size()) };
+    azihsm_buffer bmk_buf = { test_params.bmk.data(), static_cast<uint32_t>(test_params.bmk.size()) };
+    azihsm_buffer obk_buf = { test_params.obk.data(), static_cast<uint32_t>(test_params.obk.size()) };
 
-    PartInitConfig init_config{};
-    make_part_init_config(part_handle, init_config);
-    // Override OBK with the deserialized key from parent process
-    azihsm_buffer obk_buf = { obk.data(), static_cast<uint32_t>(obk.size()) };
-    init_config.backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER;
-    init_config.backup_config.owner_backup_key = &obk_buf;
-
-    auto init_err = azihsm_part_init(
-        part_handle,
-        &creds,
-        &bmk_buf,
-        nullptr,
-        &init_config.backup_config,
-        &init_config.pota_endorsement
-    );
+    azihsm_owner_backup_key_config backup_config{};
+    backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER;
+    backup_config.owner_backup_key = &obk_buf;
+    auto init_err = azihsm_part_init(part_handle, &creds, &bmk_buf, nullptr, &backup_config);
     ASSERT_EQ(init_err, AZIHSM_STATUS_SUCCESS);
 
-    azihsm_buffer seed_buf = { seed.data(), static_cast<uint32_t>(seed.size()) };
+    azihsm_buffer seed_buf = { test_params.seed.data(), static_cast<uint32_t>(test_params.seed.size()) };
 
     azihsm_handle sess_handle = 0;
     err = azihsm_sess_open(part_handle, &api_rev, &creds, &seed_buf, &sess_handle);
@@ -346,9 +206,9 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_child)
     });
 
     auto bmk_actual = get_part_prop_bytes(part_handle, AZIHSM_PART_PROP_ID_BACKUP_MASKING_KEY);
-    ASSERT_EQ(bmk_actual, bmk);
+    ASSERT_EQ(bmk_actual, test_params.bmk);
 
-    azihsm_buffer masked_buf = { masked_key.data(), static_cast<uint32_t>(masked_key.size()) };
+    azihsm_buffer masked_buf = { test_params.masked_key.data(), static_cast<uint32_t>(test_params.masked_key.size()) };
     auto_key priv_key;
     auto_key pub_key;
     err = azihsm_key_unmask_pair(
@@ -361,8 +221,8 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_child)
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
     azihsm_algo sign_algo = { AZIHSM_ALGO_ID_ECDSA_SHA256, nullptr, 0 };
-    azihsm_buffer msg_buf = { message.data(), static_cast<uint32_t>(message.size()) };
-    azihsm_buffer sig_buf = { signature.data(), static_cast<uint32_t>(signature.size()) };
+    azihsm_buffer msg_buf = { test_params.message.data(), static_cast<uint32_t>(test_params.message.size()) };
+    azihsm_buffer sig_buf = { test_params.signature_or_ciphertext.data(), static_cast<uint32_t>(test_params.signature_or_ciphertext.size()) };
 
     err = azihsm_crypt_verify(&sign_algo, pub_key.get(), &msg_buf, &sig_buf);
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
