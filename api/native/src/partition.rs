@@ -286,6 +286,7 @@ pub unsafe extern "C" fn azihsm_part_open(
 /// Initialize an HSM partition
 ///
 /// @param[in] part_handle Handle to the HSM partition
+/// @param[in] api_rev Pointer to the API revision structure
 /// @param[in] creds Pointer to application credentials (ID and PIN)
 /// @param[in] bmk Optional backup masking key buffer (can be null)
 /// @param[in] muk Optional masked unwrapping key buffer (can be null)
@@ -301,6 +302,7 @@ pub unsafe extern "C" fn azihsm_part_open(
 #[allow(unsafe_code)]
 pub unsafe extern "C" fn azihsm_part_init(
     part_handle: AzihsmHandle,
+    api_rev: AzihsmApiRev,
     creds: *const AzihsmCredentials,
     bmk: *const AzihsmBuffer,
     muk: *const AzihsmBuffer,
@@ -326,6 +328,7 @@ pub unsafe extern "C" fn azihsm_part_init(
         let pota_endorsement = api::HsmPotaEndorsement::try_from(pota_endorsement)?;
 
         partition.init(
+            api_rev.into(),
             creds.into(),
             bmk_slice,
             muk_slice,

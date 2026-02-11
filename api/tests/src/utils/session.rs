@@ -49,7 +49,7 @@ where
 
         //init with test creds
         let creds = HsmCredentials::new(&[1u8; 16], &[2u8; 16]);
-        let rev = part.api_rev_range().max();
+        let rev = HsmApiRev { major: 1, minor: 0 };
         let use_tpm = std::env::var("AZIHSM_USE_TPM").is_ok();
 
         let pota_data = if !use_tpm {
@@ -73,7 +73,7 @@ where
                 ),
             )
         };
-        part.init(creds, None, None, obk_info, pota_endorsement)
+        part.init(rev, creds, None, None, obk_info, pota_endorsement)
             .expect("Partition init failed");
         let mut session = part
             .open_session(rev, &creds, None)

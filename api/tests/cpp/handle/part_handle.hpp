@@ -124,8 +124,10 @@ class PartitionHandle
             PartInitConfig init_config{};
             make_part_init_config(handle_, init_config);
 
+            azihsm_api_rev api_rev{ 1, 0 };
             err = azihsm_part_init(
                 handle_,
+                api_rev,
                 &creds,
                 nullptr,
                 nullptr,

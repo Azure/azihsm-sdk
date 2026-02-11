@@ -113,8 +113,15 @@ fn test_partition_init() {
                 ),
             )
         };
-        part.init(creds, None, None, obk_info, pota_endorsement)
-            .expect("Partition init failed");
+        part.init(
+            HsmApiRev { major: 1, minor: 0 },
+            creds,
+            None,
+            None,
+            obk_info,
+            pota_endorsement,
+        )
+        .expect("Partition init failed");
     }
 }
 
@@ -169,6 +176,7 @@ fn test_init_caller_source_with_null_obk_fails() {
         let pota = HsmPotaEndorsement::new(HsmPotaEndorsementSource::Caller, Some(pota_data));
 
         let result = part.init(
+            HsmApiRev { major: 1, minor: 0 },
             HsmCredentials::new(&APP_ID, &APP_PIN),
             None,
             None,
@@ -194,6 +202,7 @@ fn test_init_caller_source_with_empty_obk_fails() {
         let pota = HsmPotaEndorsement::new(HsmPotaEndorsementSource::Caller, Some(pota_data));
 
         let result = part.init(
+            HsmApiRev { major: 1, minor: 0 },
             HsmCredentials::new(&APP_ID, &APP_PIN),
             None,
             None,
@@ -220,6 +229,7 @@ fn test_init_tpm_obk_source_with_obk_provided_fails() {
         let pota = HsmPotaEndorsement::new(HsmPotaEndorsementSource::Caller, Some(pota_data));
 
         let result = part.init(
+            HsmApiRev { major: 1, minor: 0 },
             HsmCredentials::new(&APP_ID, &APP_PIN),
             None,
             None,
@@ -248,6 +258,7 @@ fn test_init_invalid_obk_source_fails() {
         let pota = HsmPotaEndorsement::new(HsmPotaEndorsementSource::Caller, Some(pota_data));
 
         let result = part.init(
+            HsmApiRev { major: 1, minor: 0 },
             HsmCredentials::new(&APP_ID, &APP_PIN),
             None,
             None,
@@ -272,6 +283,7 @@ fn test_init_caller_source_with_empty_endorsement_fails() {
         let pota = HsmPotaEndorsement::new(HsmPotaEndorsementSource::Caller, Some(pota_data));
 
         let result = part.init(
+            HsmApiRev { major: 1, minor: 0 },
             HsmCredentials::new(&APP_ID, &APP_PIN),
             None,
             None,
@@ -295,6 +307,7 @@ fn test_init_caller_source_with_null_endorsement_fails() {
         let pota = HsmPotaEndorsement::new(HsmPotaEndorsementSource::Caller, None);
 
         let result = part.init(
+            HsmApiRev { major: 1, minor: 0 },
             HsmCredentials::new(&APP_ID, &APP_PIN),
             None,
             None,
@@ -319,6 +332,7 @@ fn test_init_invalid_pota_source_fails() {
         let pota = HsmPotaEndorsement::new(HsmPotaEndorsementSource(99), Some(pota_data));
 
         let result = part.init(
+            HsmApiRev { major: 1, minor: 0 },
             HsmCredentials::new(&APP_ID, &APP_PIN),
             None,
             None,

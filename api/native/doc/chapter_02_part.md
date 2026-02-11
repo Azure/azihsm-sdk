@@ -197,6 +197,7 @@ Initialize a partition with credentials
 ```cpp
 azihsm_status azihsm_part_init(
     azihsm_handle handle,
+    struct azihsm_api_rev api_rev,
     const struct azihsm_credentials *creds,
     const struct azihsm_buffer *bmk,
     const struct azihsm_buffer *muk,
@@ -210,6 +211,7 @@ azihsm_status azihsm_part_init(
 | Parameter               | Name                                                                      | Description                                                      |
 | ----------------------- | ------------------------------------------------------------------------- | ---------------------------------------------------------------- |
 | [in] handle             | [azihsm_handle](#azihsm_handle)                                           | device handle                                                    |
+| [in] api_rev            | [struct azihsm_api_rev](#azihsm_api_rev)                                  | API revision to use for initialization                           |
 | [in] creds              | [struct azihsm_credentials*](#azihsm_credentials)                         | device credential                                                |
 | [in] bmk                | [struct azihsm_buffer*](#azihsm_buffer)                                   | optional backup masking key (can be NULL)                        |
 | [in] muk                | [struct azihsm_buffer*](#azihsm_buffer)                                   | optional masked unwrapping key (can be NULL)                     |

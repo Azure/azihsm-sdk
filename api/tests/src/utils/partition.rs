@@ -149,6 +149,7 @@ where
 
         //init with test creds
         let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
+        let rev = HsmApiRev { major: 1, minor: 0 };
         let use_tpm = std::env::var("AZIHSM_USE_TPM").is_ok();
 
         let pota_owned = if !use_tpm {
@@ -170,7 +171,7 @@ where
                 HsmPotaEndorsement::new(HsmPotaEndorsementSource::Caller, Some(pota_data)),
             )
         };
-        part.init(creds, None, None, backup_key_info, pota_endorsement)
+        part.init(rev, creds, None, None, backup_key_info, pota_endorsement)
             .expect("Partition init failed");
         test(part, creds);
     }

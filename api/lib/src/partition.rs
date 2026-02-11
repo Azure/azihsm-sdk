@@ -361,6 +361,7 @@ impl HsmPartition {
     ///
     /// # Arguments
     ///
+    /// * `api_rev` - The API revision to use for initialization
     /// * `creds` - Application credentials (ID and PIN)
     /// * `bmk` - Optional backup masking key
     /// * `muk` - Optional masked unwrapping key
@@ -370,12 +371,13 @@ impl HsmPartition {
     ///
     /// Returns an error if:
     /// - Credentials are invalid
-    /// - API revision retrieval fails
+    /// - The requested API revision is not supported
     /// - Partition initialization fails
     /// - OBK is missing when obk_info source is Caller
     #[instrument(skip_all,  fields(path = self.path().as_str()), err)]
     pub fn init(
         &self,
+        api_rev: HsmApiRev,
         creds: HsmCredentials,
         bmk: Option<&[u8]>,
         muk: Option<&[u8]>,
@@ -383,15 +385,8 @@ impl HsmPartition {
         pota_endorsement: HsmPotaEndorsement<'_>,
     ) -> HsmResult<()> {
         let (bmk, mobk) = self.with_dev(|dev| {
-            let (bmk, mobk) = ddi::init_part(
-                dev,
-                self.api_rev_range().min(),
-                creds,
-                bmk,
-                muk,
-                obk_config,
-                pota_endorsement,
-            )?;
+            let (bmk, mobk) =
+                ddi::init_part(dev, api_rev, creds, bmk, muk, obk_config, pota_endorsement)?;
             Ok((bmk, mobk))
         })?;
         self.inner().write().set_masked_keys(bmk, mobk);

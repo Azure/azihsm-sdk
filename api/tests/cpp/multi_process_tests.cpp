@@ -179,6 +179,7 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_parent)
         make_part_init_config(part_handle, init_config);
         err = azihsm_part_init(
             part_handle,
+            api_rev,
             &creds,
             nullptr,
             nullptr,
@@ -327,6 +328,7 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_child)
 
     auto init_err = azihsm_part_init(
         part_handle,
+        api_rev,
         &creds,
         &bmk_buf,
         nullptr,
