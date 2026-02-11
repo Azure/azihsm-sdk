@@ -5,7 +5,7 @@ use crate::nextest_history_cache::write_history::write_history;
 use crate::Xtask;
 use crate::XtaskCtx;
 
-/// Run nextest report
+/// Generates nextest history & writes to GITHUB_STEP_SUMMARY or stdout
 #[derive(clap::Parser)]
 pub struct NextestHistory {
     // Add command-line arguments here as needed

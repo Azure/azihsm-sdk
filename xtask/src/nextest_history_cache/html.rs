@@ -12,7 +12,7 @@ use crate::nextest_history_cache::write_history::TestRecord;
 // The GitHub "HTML sanitizer" is incredibly sensitive to whitespace; do not attempt to break newlines.
 static TEMPLATE: &str = r#"
 <table>
-  <tr><th>Commit</th><th>Author</th><th>Commit</th><th>Windows Total</th><th>Windows Skipped</th><th>Linux Total</th><th>Linux Skipped</th></tr>
+  <tr><th>Commit</th><th>Author</th><th>Title</th><th>Windows Total</th><th>Windows Skipped</th><th>Linux Total</th><th>Linux Skipped</th></tr>
 {{ for record in records }}
   <tr>
     <td><a href="https://github.com/Azure/azihsm-sdk/commit/{ record.commit.id }">{ record.commit.id | trim_8 }</a></td>
