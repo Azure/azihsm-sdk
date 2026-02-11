@@ -517,7 +517,7 @@ TEST(azihsm_part, get_prop_pid_public_key)
         auto part = PartitionHandle(path);
 
         // First call to get required size
-        azihsm_part_prop prop = { AZIHSM_PART_PROP_ID_PARTITION_IDENTITY_PUBLIC_KEY, nullptr, 0 };
+        azihsm_part_prop prop = { AZIHSM_PART_PROP_ID_PART_PUB_KEY, nullptr, 0 };
         auto err = azihsm_part_get_prop(part.get(), &prop);
         ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
 
@@ -609,7 +609,7 @@ TEST(azihsm_part, get_prop_all_supported_properties)
             { AZIHSM_PART_PROP_ID_MANUFACTURER_CERT_CHAIN, "MANUFACTURER_CERT_CHAIN" },
             { AZIHSM_PART_PROP_ID_BACKUP_MASKING_KEY, "BACKUP_MASKING_KEY" },
             { AZIHSM_PART_PROP_ID_MASKED_OWNER_BACKUP_KEY, "MASKED_OWNER_BACKUP_KEY" },
-            { AZIHSM_PART_PROP_ID_PARTITION_IDENTITY_PUBLIC_KEY, "PARTITION_IDENTITY_PUBLIC_KEY" },
+            { AZIHSM_PART_PROP_ID_PART_PUB_KEY, "PARTITION_IDENTITY_PUBLIC_KEY" },
         };
 
         for (const auto &test_prop : supported_props)
@@ -631,8 +631,6 @@ TEST(azihsm_part, get_prop_all_supported_properties)
     });
 }
 
-// Add these tests at the end of the file
-
 TEST(azihsm_part, init_caller_source_with_empty_endorsement_fails)
 {
     auto part_list = PartitionListHandle();
@@ -652,6 +650,13 @@ TEST(azihsm_part, init_caller_source_with_empty_endorsement_fails)
         std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
         std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
 
+        // Provide a valid OBK config so the failure is attributable to POTA endorsement
+        struct azihsm_buffer obk_buf = { const_cast<uint8_t *>(TEST_OBK), sizeof(TEST_OBK) };
+        struct azihsm_owner_backup_key_config backup_config = {
+            .source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER,
+            .owner_backup_key = &obk_buf
+        };
+
         // Caller source with empty endorsement buffer should fail
         struct azihsm_buffer empty_sig_buf = { .ptr = nullptr, .len = 0 };
         struct azihsm_buffer empty_pubkey_buf = { .ptr = nullptr, .len = 0 };
@@ -663,7 +668,14 @@ TEST(azihsm_part, init_caller_source_with_empty_endorsement_fails)
             .endorsement = &empty_endorsement_data
         };
 
-        err = azihsm_part_init(part_handle, &creds, nullptr, nullptr, nullptr, &pota_endorsement);
+        err = azihsm_part_init(
+            part_handle,
+            &creds,
+            nullptr,
+            nullptr,
+            &backup_config,
+            &pota_endorsement
+        );
         ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
 }
@@ -687,18 +699,30 @@ TEST(azihsm_part, init_caller_source_with_null_endorsement_fails)
         std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
         std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
 
+        // Provide a valid OBK config so the failure is attributable to POTA endorsement
+        struct azihsm_buffer obk_buf = { const_cast<uint8_t *>(TEST_OBK), sizeof(TEST_OBK) };
+        struct azihsm_owner_backup_key_config backup_config = {
+            .source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER,
+            .owner_backup_key = &obk_buf
+        };
+
         // Caller source with null endorsement pointer should fail
         struct azihsm_pota_endorsement pota_endorsement = {
             .source = AZIHSM_POTA_ENDORSEMENT_SOURCE_CALLER,
             .endorsement = nullptr
         };
 
-        err = azihsm_part_init(part_handle, &creds, nullptr, nullptr, nullptr, &pota_endorsement);
+        err = azihsm_part_init(
+            part_handle,
+            &creds,
+            nullptr,
+            nullptr,
+            &backup_config,
+            &pota_endorsement
+        );
         ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
 }
-
-// Add this test at the end of the file, after the other negative tests
 
 TEST(azihsm_part, init_tpm_source_with_endorsement_fails)
 {
@@ -719,6 +743,13 @@ TEST(azihsm_part, init_tpm_source_with_endorsement_fails)
         std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
         std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
 
+        // Provide a valid OBK config so the failure is attributable to POTA endorsement
+        struct azihsm_buffer obk_buf = { const_cast<uint8_t *>(TEST_OBK), sizeof(TEST_OBK) };
+        struct azihsm_owner_backup_key_config backup_config = {
+            .source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER,
+            .owner_backup_key = &obk_buf
+        };
+
         // TPM source with non-null endorsement should fail
         uint8_t signature_data[96] = { 0 };
         uint8_t public_key_data[97] = { 0 };
@@ -731,7 +762,14 @@ TEST(azihsm_part, init_tpm_source_with_endorsement_fails)
         struct azihsm_pota_endorsement pota_endorsement = { .source =
                                                                 AZIHSM_POTA_ENDORSEMENT_SOURCE_TPM,
                                                             .endorsement = &endorsement_data };
-        err = azihsm_part_init(part_handle, &creds, nullptr, nullptr, nullptr, &pota_endorsement);
+        err = azihsm_part_init(
+            part_handle,
+            &creds,
+            nullptr,
+            nullptr,
+            &backup_config,
+            &pota_endorsement
+        );
         ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
 }
@@ -755,6 +793,13 @@ TEST(azihsm_part, init_invalid_source_with_endorsement_fails)
         std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
         std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
 
+        // Provide a valid OBK config so the failure is attributable to POTA endorsement
+        struct azihsm_buffer obk_buf = { const_cast<uint8_t *>(TEST_OBK), sizeof(TEST_OBK) };
+        struct azihsm_owner_backup_key_config backup_config = {
+            .source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER,
+            .owner_backup_key = &obk_buf
+        };
+
         // Invalid source value should fail
         uint8_t signature_data[96] = { 0 };
         uint8_t public_key_data[97] = { 0 };
@@ -768,7 +813,14 @@ TEST(azihsm_part, init_invalid_source_with_endorsement_fails)
             .source = static_cast<azihsm_pota_endorsement_source>(99),
             .endorsement = &endorsement_data
         };
-        err = azihsm_part_init(part_handle, &creds, nullptr, nullptr, nullptr, &pota_endorsement);
+        err = azihsm_part_init(
+            part_handle,
+            &creds,
+            nullptr,
+            nullptr,
+            &backup_config,
+            &pota_endorsement
+        );
         ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
 }

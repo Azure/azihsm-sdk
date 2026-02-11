@@ -171,7 +171,7 @@ pub struct HsmPotaEndorsementData<'a> {
     signature: &'a [u8],
 
     /// Public key for signature verification (DER-encoded)
-    public_key: &'a [u8],
+    pub_key: &'a [u8],
 }
 
 /// HSM partition owner trust anchor (aka POTA) endorsement.
@@ -194,7 +194,7 @@ impl<'a> HsmPotaEndorsementData<'a> {
     pub fn new(signature: &'a [u8], public_key: &'a [u8]) -> Self {
         Self {
             signature,
-            public_key,
+            pub_key: public_key,
         }
     }
 
@@ -204,8 +204,8 @@ impl<'a> HsmPotaEndorsementData<'a> {
     }
 
     /// Returns the public key for signature verification.
-    pub fn public_key(&self) -> &[u8] {
-        self.public_key
+    pub fn pub_key(&self) -> &[u8] {
+        self.pub_key
     }
 }
 
@@ -534,13 +534,13 @@ impl HsmPartition {
         self.with_dev(|dev| ddi::get_cert_chain(dev, self.api_rev_range().min(), slot))
     }
 
-    /// Retrieves the public key of the partition's identity (PID) certificate.
+    /// Retrieves the public key of the partition identity (PID) certificate.
     ///
     /// # Returns
     ///
     /// Returns the DER-encoded public key of the PID certificate.
-    pub fn pid_pub_key(&self) -> HsmResult<Vec<u8>> {
-        self.with_dev(|dev| ddi::get_pid_pub_key(dev, self.api_rev_range().min()))
+    pub fn pub_key(&self) -> HsmResult<Vec<u8>> {
+        self.with_dev(|dev| ddi::get_part_pub_key(dev, self.api_rev_range().min()))
     }
 
     /// Retrieves the backup masking key that was set during partition initialization.

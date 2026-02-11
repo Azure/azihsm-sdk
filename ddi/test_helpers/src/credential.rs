@@ -27,7 +27,7 @@ pub fn helper_establish_credential(
             masked_bk3,
             bmk,
             masked_unwrapping_key,
-            pid_sig: signed_pid,
+            pota_sig: signed_pid,
             pota_pub_key,
         },
         ext: None,

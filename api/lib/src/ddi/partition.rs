@@ -24,7 +24,7 @@ use super::*;
 /// # Returns
 ///
 /// Returns the DER-encoded public key from the last certificate.
-pub(crate) fn get_pid_pub_key(dev: &HsmDev, rev: HsmApiRev) -> HsmResult<Vec<u8>> {
+pub(crate) fn get_part_pub_key(dev: &HsmDev, rev: HsmApiRev) -> HsmResult<Vec<u8>> {
     let (cert_count, _thumbprint) = get_cert_chain_info(dev, rev, 0)?;
     if cert_count == 0 {
         return Err(HsmError::InternalError);
@@ -40,7 +40,7 @@ pub(crate) fn get_pid_pub_key(dev: &HsmDev, rev: HsmApiRev) -> HsmResult<Vec<u8>
     Ok(pub_key_der)
 }
 
-/// Gets the SHA-384 hash of the partition's public key in uncompressed point format.
+/// Gets the SHA-384 digest of the partition's public key in uncompressed point format.
 ///
 /// Retrieves the public key from the partition certificate, converts it to
 /// uncompressed point format (0x04 || x || y), and hashes it with SHA-384.
@@ -53,9 +53,9 @@ pub(crate) fn get_pid_pub_key(dev: &HsmDev, rev: HsmApiRev) -> HsmResult<Vec<u8>
 ///
 /// # Returns
 ///
-/// Returns the SHA-384 hash of the uncompressed public key point (48 bytes).
-fn get_partition_public_key_hash(dev: &HsmDev, rev: HsmApiRev) -> HsmResult<Vec<u8>> {
-    let cert_pub_key_der = get_pid_pub_key(dev, rev)?;
+/// Returns the SHA-384 digest of the uncompressed public key point (48 bytes).
+fn get_part_pub_key_digest(dev: &HsmDev, rev: HsmApiRev) -> HsmResult<Vec<u8>> {
+    let cert_pub_key_der = get_part_pub_key(dev, rev)?;
 
     // Parse the DER-encoded public key and convert to uncompressed point format
     let cert_pub_key_obj =
@@ -69,15 +69,15 @@ fn get_partition_public_key_hash(dev: &HsmDev, rev: HsmApiRev) -> HsmResult<Vec<
     let hash_len = hasher
         .hash(&cert_pub_uncomp, None)
         .map_hsm_err(HsmError::InternalError)?;
-    let mut pub_key_hash = vec![0u8; hash_len];
+    let mut pub_key_digest = vec![0u8; hash_len];
     hasher
-        .hash(&cert_pub_uncomp, Some(&mut pub_key_hash))
+        .hash(&cert_pub_uncomp, Some(&mut pub_key_digest))
         .map_hsm_err(HsmError::InternalError)?;
 
-    Ok(pub_key_hash)
+    Ok(pub_key_digest)
 }
 
-/// Computes the POTA endorsement signature and public key based on the source.
+/// Gets the POTA endorsement signature and public key based on the specified source.
 ///
 /// This function handles all three POTA endorsement sources:
 /// - **Caller**: Uses the provided endorsement data directly
@@ -104,7 +104,7 @@ fn get_partition_public_key_hash(dev: &HsmDev, rev: HsmApiRev) -> HsmResult<Vec<
 /// - Certificate retrieval fails
 /// - TPM signing fails (for TPM source)
 /// - Key generation or signing fails (for Random source)
-fn compute_pota_endorsement(
+fn get_pota_endorsement(
     dev: &HsmDev,
     rev: HsmApiRev,
     pota_endorsement: &HsmPotaEndorsement<'_>,
@@ -114,14 +114,14 @@ fn compute_pota_endorsement(
             let data = pota_endorsement
                 .endorsement()
                 .ok_or(HsmError::InvalidArgument)?;
-            Ok((data.signature().to_vec(), data.public_key().to_vec()))
+            Ok((data.signature().to_vec(), data.pub_key().to_vec()))
         }
 
         HsmPotaEndorsementSource::Tpm => {
-            let pub_key_hash = get_partition_public_key_hash(dev, rev)?;
+            let pub_key_digest = get_part_pub_key_digest(dev, rev)?;
 
             // Sign with TPM
-            let (signature, tpm_public_key) = tpm_ecc_sign_digest(&pub_key_hash)?;
+            let (signature, tpm_public_key) = tpm_ecc_sign_digest(&pub_key_digest)?;
             // Signature is in raw r||s format, TPM public key is DER-encoded
             Ok((signature, tpm_public_key))
         }
@@ -181,8 +181,8 @@ pub(crate) fn init_part(
     };
 
     // Compute POTA endorsement based on source
-    let (pota_signature, pota_public_key) = compute_pota_endorsement(dev, rev, &pota_endorsement)?;
-    let pota_endorsement_data = HsmPotaEndorsementData::new(&pota_signature, &pota_public_key);
+    let (pota_signature, pota_public_key) = get_pota_endorsement(dev, rev, &pota_endorsement)?;
+    let pota_endorsement = HsmPotaEndorsementData::new(&pota_signature, &pota_public_key);
 
     let resp = get_establish_cred_encryption_key(dev, rev)?;
 
@@ -207,7 +207,7 @@ pub(crate) fn init_part(
         bmk,
         muk,
         &mobk,
-        &pota_endorsement_data,
+        &pota_endorsement,
     )?;
 
     Ok((bmk, mobk))
@@ -308,7 +308,7 @@ pub fn establish_credential(
     pota_endorsement: &HsmPotaEndorsementData<'_>,
 ) -> HsmResult<Vec<u8>> {
     let pota_endorsement_pub_key = DdiDerPublicKey {
-        der: MborByteArray::from_slice(pota_endorsement.public_key())
+        der: MborByteArray::from_slice(pota_endorsement.pub_key())
             .map_hsm_err(HsmError::InternalError)?,
         key_kind: DdiKeyType::Ecc384Public,
     };
@@ -322,7 +322,7 @@ pub fn establish_credential(
             bmk: MborByteArray::from_slice(bmk).map_hsm_err(HsmError::InvalidArgument)?,
             masked_unwrapping_key: MborByteArray::from_slice(muk)
                 .map_hsm_err(HsmError::InvalidArgument)?,
-            pid_sig: MborByteArray::from_slice(pota_endorsement.signature())
+            pota_sig: MborByteArray::from_slice(pota_endorsement.signature())
                 .map_hsm_err(HsmError::InternalError)?,
             pota_pub_key: pota_endorsement_pub_key,
         },

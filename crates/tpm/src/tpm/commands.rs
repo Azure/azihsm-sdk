@@ -11,6 +11,7 @@ use crate::tpm::types::TpmsSensitiveCreate;
 
 const TPM_RESPONSE_HEADER_SIZE: usize = 10;
 const TPM_HANDLE_SIZE: usize = 4;
+const TPM_MIN_RESPONSE_WITH_HANDLE_SIZE: usize = TPM_RESPONSE_HEADER_SIZE + TPM_HANDLE_SIZE;
 
 pub struct CreatedPrimary {
     pub handle: u32,
@@ -125,7 +126,7 @@ impl<T: RawTpm> TpmCommandExt for T {
         let resp = self.transmit_raw(&cmd)?;
         parse_tpm_rc_with_cmd(&resp, TpmCommandCode::CreatePrimary)?;
 
-        if resp.len() < 14 {
+        if resp.len() < TPM_MIN_RESPONSE_WITH_HANDLE_SIZE {
             return Err(io::Error::new(
                 io::ErrorKind::UnexpectedEof,
                 "CreatePrimary short response",
@@ -252,7 +253,7 @@ impl<T: RawTpm> TpmCommandExt for T {
 
         let resp = self.transmit_raw(&cmd)?;
         parse_tpm_rc_with_cmd(&resp, TpmCommandCode::Unseal)?;
-        if resp.len() < 14 {
+        if resp.len() < TPM_MIN_RESPONSE_WITH_HANDLE_SIZE {
             return Err(io::Error::new(
                 io::ErrorKind::UnexpectedEof,
                 "Unseal short response",
@@ -322,7 +323,7 @@ impl<T: RawTpm> TpmCommandExt for T {
 
         parse_tpm_rc_with_cmd(&resp, TpmCommandCode::Create)?;
 
-        if resp.len() < 14 {
+        if resp.len() < TPM_MIN_RESPONSE_WITH_HANDLE_SIZE {
             return Err(io::Error::new(
                 io::ErrorKind::UnexpectedEof,
                 "Create short response",
@@ -384,7 +385,7 @@ impl<T: RawTpm> TpmCommandExt for T {
         let resp = self.transmit_raw(&cmd)?;
         parse_tpm_rc_with_cmd(&resp, TpmCommandCode::CreatePrimary)?;
 
-        if resp.len() < 14 {
+        if resp.len() < TPM_MIN_RESPONSE_WITH_HANDLE_SIZE {
             return Err(io::Error::new(
                 io::ErrorKind::UnexpectedEof,
                 "CreatePrimary ECC short response",

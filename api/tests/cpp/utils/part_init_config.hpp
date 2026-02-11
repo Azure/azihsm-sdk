@@ -85,7 +85,7 @@ static const uint8_t TEST_POTA_PUBLIC_KEY_DER[] = {
 inline PotaEndorsement generate_pota_endorsement(azihsm_handle part_handle)
 {
     // Step 1: Get PID public key DER from partition
-    azihsm_part_prop prop = { AZIHSM_PART_PROP_ID_PID_PUBLIC_KEY, nullptr, 0 };
+    azihsm_part_prop prop = { AZIHSM_PART_PROP_ID_PART_PUB_KEY, nullptr, 0 };
     auto err = azihsm_part_get_prop(part_handle, &prop);
     if (err != AZIHSM_STATUS_BUFFER_TOO_SMALL)
     {
@@ -247,7 +247,7 @@ inline PotaEndorsement generate_pota_endorsement(azihsm_handle part_handle)
 inline PotaEndorsement generate_pota_endorsement(azihsm_handle part_handle)
 {
     // Step 1: Get PID public key DER from partition
-    azihsm_part_prop prop = { AZIHSM_PART_PROP_ID_PARTITION_IDENTITY_PUBLIC_KEY, nullptr, 0 };
+    azihsm_part_prop prop = { AZIHSM_PART_PROP_ID_PART_PUB_KEY, nullptr, 0 };
     auto err = azihsm_part_get_prop(part_handle, &prop);
     if (err != AZIHSM_STATUS_BUFFER_TOO_SMALL)
     {

@@ -2042,7 +2042,7 @@ impl Dispatcher {
             &mut ecdsa_algo,
             &pota_pub_key,
             &attest_key_uncomp,
-            req.pid_sig.as_slice(),
+            req.pota_sig.as_slice(),
         )
         .map_err(|_| ManticoreError::InvalidArgument)?;
 

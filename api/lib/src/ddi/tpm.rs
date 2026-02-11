@@ -336,7 +336,7 @@ impl TpmEccSigner {
 
         // Extract the ECC public key coordinates from the TPM public blob
         let ecc_point =
-            parse_tpm_ecc_public_key(&primary.public).map_err(|_| HsmError::InternalError)?;
+            parse_tpm_ecc_pub_key(&primary.public).map_err(|_| HsmError::InternalError)?;
 
         // Sign the digest
         let signature = self.tpm.sign(primary.handle, digest).map_err(|_| {
@@ -349,7 +349,7 @@ impl TpmEccSigner {
         let _ = self.tpm.flush_context(primary.handle);
 
         // Convert TPM signature to raw r||s format
-        let signature_raw = convert_tpm_signature_to_raw(&signature)?;
+        let signature_raw = sig_to_raw(&signature)?;
 
         // Convert public key coordinates to DER format
         let der_pub_key = DerEccPublicKey::new(EccCurve::P384, &ecc_point.x, &ecc_point.y)
@@ -381,12 +381,12 @@ impl TpmEccSigner {
 ///
 /// * `Ok(Vec<u8>)` - Raw signature in r||s format (96 bytes for P-384)
 /// * `Err(HsmError)` - If the signature is not ECDSA or conversion fails
-fn convert_tpm_signature_to_raw(signature: &TpmtSignature) -> Result<Vec<u8>, HsmError> {
+fn sig_to_raw(signature: &TpmtSignature) -> Result<Vec<u8>, HsmError> {
     match signature {
         TpmtSignature::Ecdsa(ecdsa) => {
             // Normalize r and s to fixed P-384 point size (48 bytes each)
-            let r = normalize_signature_component(&ecdsa.signature_r, ECC_P384_POINT_SIZE)?;
-            let s = normalize_signature_component(&ecdsa.signature_s, ECC_P384_POINT_SIZE)?;
+            let r = pad_sig_comp(&ecdsa.signature_r, ECC_P384_POINT_SIZE)?;
+            let s = pad_sig_comp(&ecdsa.signature_s, ECC_P384_POINT_SIZE)?;
 
             // Concatenate r || s
             let mut raw_sig = Vec::with_capacity(ECC_P384_POINT_SIZE * 2);
@@ -413,10 +413,7 @@ fn convert_tpm_signature_to_raw(signature: &TpmtSignature) -> Result<Vec<u8>, Hs
 ///
 /// * `Ok(Vec<u8>)` - Normalized component of exactly `expected_len` bytes
 /// * `Err(HsmError)` - If the component is too large
-fn normalize_signature_component(
-    component: &[u8],
-    expected_len: usize,
-) -> Result<Vec<u8>, HsmError> {
+fn pad_sig_comp(component: &[u8], expected_len: usize) -> Result<Vec<u8>, HsmError> {
     if component.len() == expected_len {
         return Ok(component.to_vec());
     }
@@ -456,7 +453,7 @@ fn normalize_signature_component(
 ///
 /// * `Ok(TpmsEccPoint)` - The ECC point containing x and y coordinates
 /// * `Err` - If parsing fails
-fn parse_tpm_ecc_public_key(public_blob: &[u8]) -> std::io::Result<TpmsEccPoint> {
+fn parse_tpm_ecc_pub_key(public_blob: &[u8]) -> std::io::Result<TpmsEccPoint> {
     use std::io::Error;
     use std::io::ErrorKind;
 

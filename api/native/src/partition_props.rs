@@ -66,8 +66,8 @@ pub enum AzihsmPartPropId {
     MaskedOwnerBackupKey = 11,
 
     /// Partition identity (PID) public key in DER format.
-    // Corresponds to AZIHSM_PART_PROP_ID_PARTITION_IDENTITY_PUBLIC_KEY
-    PartitionIdentityPublicKey = 12,
+    // Corresponds to AZIHSM_PART_PROP_ID_PART_PUB_KEY
+    PartPubKey = 12,
 }
 
 /// UUID structure.
@@ -182,8 +182,8 @@ fn get_partition_prop(
             let cert_chain = AzihsmStr::from_string(&partition.cert_chain(0)?);
             copy_to_part_prop(part_prop, cert_chain.as_bytes())
         }
-        AzihsmPartPropId::PartitionIdentityPublicKey => {
-            let pub_key = partition.pid_pub_key()?;
+        AzihsmPartPropId::PartPubKey => {
+            let pub_key = partition.pub_key()?;
             copy_to_part_prop(part_prop, &pub_key)
         }
         _ => Err(AzihsmStatus::UnsupportedProperty),

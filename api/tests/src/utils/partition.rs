@@ -89,7 +89,7 @@ const TEST_POTA_PUBLIC_KEY_DER: [u8; 120] = [
 #[allow(clippy::expect_used)]
 pub(crate) fn generate_pota_endorsement(part: &HsmPartition) -> (Vec<u8>, Vec<u8>) {
     // Get PID public key DER from partition
-    let pid_pub_key_der = part.pid_pub_key().expect("Failed to get PID public key");
+    let pid_pub_key_der = part.pub_key().expect("Failed to get PID public key");
 
     // Parse DER to get x,y coordinates
     let pid_pub_key_obj =

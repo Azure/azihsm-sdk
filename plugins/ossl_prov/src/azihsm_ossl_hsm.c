@@ -249,7 +249,7 @@ static azihsm_status azihsm_get_device_handle(azihsm_handle *device)
 
 // clang-format off
 
-// Fallback owner backup key when no MOBK file is available
+/* Fallback owner backup key when no MOBK file is available */
 static const uint8_t DEFAULT_OBK[48] = {
     0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A,
     0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14,
@@ -258,10 +258,10 @@ static const uint8_t DEFAULT_OBK[48] = {
     0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F, 0x30
 };
 
-// Placeholder POTA signature (96 bytes, zeroed)
+/* Placeholder POTA signature (96 bytes, zeroed) */
 static const uint8_t DEFAULT_POTA_SIGNATURE[96] = { 0 };
 
-// Placeholder POTA public key DER (120 bytes, zeroed)
+/* Placeholder POTA public key DER (120 bytes, zeroed) */
 static const uint8_t DEFAULT_POTA_PUBLIC_KEY_DER[120] = { 0 };
 
 // clang-format on
@@ -335,9 +335,7 @@ azihsm_status azihsm_open_device_and_session(
         return status;
     }
 
-    // Configure OBK and POTA based on whether TPM is available
-    const char *use_tpm = getenv("AZIHSM_USE_TPM");
-
+    // Configure OBK and POTA
     struct azihsm_owner_backup_key_config backup_config = { 0 };
     struct azihsm_buffer obk_buf = { 0 };
     struct azihsm_pota_endorsement pota_endorsement = { 0 };
@@ -345,40 +343,29 @@ azihsm_status azihsm_open_device_and_session(
     struct azihsm_buffer pota_pubkey_buf = { 0 };
     struct azihsm_pota_endorsement_data pota_data = { 0 };
 
-    if (use_tpm != NULL)
+    // Use loaded OBK file if available, otherwise hardcoded default
+    if (mobk_buf.ptr != NULL)
     {
-        backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_TPM;
-        backup_config.owner_backup_key = NULL;
-
-        pota_endorsement.source = AZIHSM_POTA_ENDORSEMENT_SOURCE_TPM;
-        pota_endorsement.endorsement = NULL;
+        obk_buf = mobk_buf;
     }
     else
     {
-        // Use loaded OBK file if available, otherwise hardcoded default
-        if (mobk_buf.ptr != NULL)
-        {
-            obk_buf = mobk_buf;
-        }
-        else
-        {
-            obk_buf.ptr = (uint8_t *)DEFAULT_OBK;
-            obk_buf.len = sizeof(DEFAULT_OBK);
-        }
-        backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER;
-        backup_config.owner_backup_key = &obk_buf;
-
-        // [TODO] Replace placeholder POTA endorsement with real pid signature and pota public key
-        // when available
-        pota_sig_buf.ptr = (uint8_t *)DEFAULT_POTA_SIGNATURE;
-        pota_sig_buf.len = sizeof(DEFAULT_POTA_SIGNATURE);
-        pota_pubkey_buf.ptr = (uint8_t *)DEFAULT_POTA_PUBLIC_KEY_DER;
-        pota_pubkey_buf.len = sizeof(DEFAULT_POTA_PUBLIC_KEY_DER);
-        pota_data.signature = &pota_sig_buf;
-        pota_data.public_key = &pota_pubkey_buf;
-        pota_endorsement.source = AZIHSM_POTA_ENDORSEMENT_SOURCE_CALLER;
-        pota_endorsement.endorsement = &pota_data;
+        obk_buf.ptr = (uint8_t *)DEFAULT_OBK;
+        obk_buf.len = sizeof(DEFAULT_OBK);
     }
+    backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER;
+    backup_config.owner_backup_key = &obk_buf;
+
+    // [TODO] Replace placeholder POTA endorsement with real pid signature and pota public key
+    // when available
+    pota_sig_buf.ptr = (uint8_t *)DEFAULT_POTA_SIGNATURE;
+    pota_sig_buf.len = sizeof(DEFAULT_POTA_SIGNATURE);
+    pota_pubkey_buf.ptr = (uint8_t *)DEFAULT_POTA_PUBLIC_KEY_DER;
+    pota_pubkey_buf.len = sizeof(DEFAULT_POTA_PUBLIC_KEY_DER);
+    pota_data.signature = &pota_sig_buf;
+    pota_data.public_key = &pota_pubkey_buf;
+    pota_endorsement.source = AZIHSM_POTA_ENDORSEMENT_SOURCE_CALLER;
+    pota_endorsement.endorsement = &pota_data;
 
     // Initialize partition with loaded keys (or NULL if not available)
     status = azihsm_part_init(
