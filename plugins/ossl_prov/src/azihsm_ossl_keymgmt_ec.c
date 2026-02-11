@@ -102,36 +102,6 @@ static int azihsm_ossl_name_to_curve_id(const char *name)
     return AIHSM_EC_CURVE_ID_NONE;
 }
 
-static int azihsm_ossl_curve_id_to_nid(const int curve_id)
-{
-    for (const CURVE_MAPPING_ENTRY *it = curves; it->nid != NID_undef; it++)
-    {
-
-        if (it->curve_id == curve_id)
-            return it->nid;
-    }
-
-    return NID_undef;
-}
-
-/**
- * Get the key size in bits for a given curve.
- */
-static int azihsm_ossl_curve_id_to_bits(const int curve_id)
-{
-    switch (curve_id)
-    {
-    case AZIHSM_ECC_CURVE_P256:
-        return AZIHSM_EC_P256_KEY_BITS;
-    case AZIHSM_ECC_CURVE_P384:
-        return AZIHSM_EC_P384_KEY_BITS;
-    case AZIHSM_ECC_CURVE_P521:
-        return AZIHSM_EC_P521_KEY_BITS;
-    default:
-        return 0;
-    }
-}
-
 /**
  * Get the ECDSA signature size for a given curve.
  * Returns the raw signature size (r || s concatenated).
@@ -157,13 +127,6 @@ static size_t azihsm_ossl_curve_id_to_sig_size(const int curve_id)
 
 /*
  * Import an external DER-encoded EC private key into the HSM via wrap-then-unwrap.
- *
- * Flow:
- *   1. Read the DER file from disk
- *   2. Get the RSA wrapping key pair from the HSM
- *   3. Wrap the DER blob with azihsm_crypt_encrypt (RSA-AES-WRAP)
- *   4. Unwrap into the HSM with azihsm_key_unwrap_pair (RSA-AES-KEY-WRAP)
- *   5. Return the resulting key handles
  */
 static azihsm_status azihsm_ossl_keymgmt_gen_import(
     AIHSM_EC_GEN_CTX *genctx,
@@ -179,7 +142,7 @@ static azihsm_status azihsm_ossl_keymgmt_gen_import(
     long input_size = 0;
     FILE *f = NULL;
 
-    /* 1. Read the input DER file */
+    /* Read the DER file from disk */
     f = fopen(genctx->input_key_file, "rb");
     if (f == NULL)
     {
@@ -221,7 +184,7 @@ static azihsm_status azihsm_ossl_keymgmt_gen_import(
     }
     fclose(f);
 
-    /* Normalize to PKCS#8 DER (handles both SEC1 and PKCS#8 input) */
+    /* Normalize to PKCS#8 DER */
     {
         uint8_t *pkcs8_buf = NULL;
         int pkcs8_len = 0;
@@ -611,6 +574,17 @@ static AZIHSM_EC_KEY *azihsm_ossl_keymgmt_gen(
     return ec_key;
 }
 
+static AZIHSM_EC_KEY *azihsm_ossl_keymgmt_new(ossl_unused void *provctx)
+{
+    AZIHSM_EC_KEY *key = OPENSSL_zalloc(sizeof(AZIHSM_EC_KEY));
+    if (key == NULL)
+    {
+        ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
+        return NULL;
+    }
+    return key;
+}
+
 static void azihsm_ossl_keymgmt_free(AZIHSM_EC_KEY *ec_key)
 {
     if (ec_key == NULL)
@@ -627,6 +601,7 @@ static void azihsm_ossl_keymgmt_free(AZIHSM_EC_KEY *ec_key)
         azihsm_key_delete(ec_key->key.priv);
     }
 
+    OPENSSL_free(ec_key->pub_key_data);
     OPENSSL_free(ec_key);
 }
 
@@ -862,16 +837,116 @@ static void *azihsm_ossl_keymgmt_load(const void *reference, size_t reference_sz
     /* Copy the key structure from reference */
     memcpy(dst_key, reference, sizeof(AZIHSM_EC_KEY));
 
+    /* Deep copy pub_key_data to avoid double-free */
+    dst_key->pub_key_data = NULL;
+    const AZIHSM_EC_KEY *src_key = (const AZIHSM_EC_KEY *)reference;
+    if (src_key->pub_key_data != NULL && src_key->pub_key_data_len > 0)
+    {
+        dst_key->pub_key_data = OPENSSL_malloc(src_key->pub_key_data_len);
+        if (dst_key->pub_key_data == NULL)
+        {
+            ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
+            OPENSSL_free(dst_key);
+            return NULL;
+        }
+        memcpy(dst_key->pub_key_data, src_key->pub_key_data, src_key->pub_key_data_len);
+    }
+
     return dst_key;
 }
 
-static int azihsm_ossl_keymgmt_import(
-    ossl_unused void *keydata,
-    ossl_unused int selection,
-    ossl_unused const OSSL_PARAM params[]
-)
+/*
+ * Get the expected uncompressed EC point size for a given curve.
+ * Returns the expected size (1 + 2*coord_size) or 0 for unknown curves.
+ */
+static size_t azihsm_ossl_ec_curve_id_to_point_size(int curve_id)
 {
-    return OSSL_FAILURE;
+    switch (curve_id)
+    {
+    case AZIHSM_ECC_CURVE_P256:
+        return 1 + 2 * AZIHSM_EC_P256_COORD_SIZE; /* 65 bytes */
+    case AZIHSM_ECC_CURVE_P384:
+        return 1 + 2 * AZIHSM_EC_P384_COORD_SIZE; /* 97 bytes */
+    case AZIHSM_ECC_CURVE_P521:
+        return 1 + 2 * AZIHSM_EC_P521_COORD_SIZE; /* 133 bytes */
+    default:
+        return 0;
+    }
+}
+
+static int azihsm_ossl_keymgmt_import(void *keydata, int selection, const OSSL_PARAM params[])
+{
+    AZIHSM_EC_KEY *key = (AZIHSM_EC_KEY *)keydata;
+    const OSSL_PARAM *p;
+    int curve_id = AIHSM_EC_CURVE_ID_NONE;
+
+    if (key == NULL || params == NULL)
+    {
+        return OSSL_FAILURE;
+    }
+
+    if ((selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY) == 0)
+    {
+        return OSSL_FAILURE;
+    }
+
+    /* Read group name - mandatory for public key import */
+    p = OSSL_PARAM_locate_const(params, OSSL_PKEY_PARAM_GROUP_NAME);
+    if (p == NULL)
+    {
+        ERR_raise(ERR_LIB_PROV, PROV_R_NO_PARAMETERS_SET);
+        return OSSL_FAILURE;
+    }
+
+    const char *name = NULL;
+    if (!OSSL_PARAM_get_utf8_string_ptr(p, &name) || name == NULL)
+    {
+        ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
+        return OSSL_FAILURE;
+    }
+
+    curve_id = azihsm_ossl_name_to_curve_id(name);
+    if (curve_id == AIHSM_EC_CURVE_ID_NONE)
+    {
+        ERR_raise(ERR_LIB_PROV, PROV_R_INVALID_CURVE);
+        return OSSL_FAILURE;
+    }
+    key->genctx.ec_curve_id = (uint32_t)curve_id;
+
+    /* Read raw public key (uncompressed EC point) */
+    p = OSSL_PARAM_locate_const(params, OSSL_PKEY_PARAM_PUB_KEY);
+    if (p != NULL)
+    {
+        size_t expected_point_size = azihsm_ossl_ec_curve_id_to_point_size(curve_id);
+        void *tmp_data = NULL;
+        size_t tmp_len = 0;
+
+        OPENSSL_free(key->pub_key_data);
+        key->pub_key_data = NULL;
+        key->pub_key_data_len = 0;
+
+        /* Use a temporary buffer with max_len to prevent unbounded allocation */
+        if (!OSSL_PARAM_get_octet_string(p, &tmp_data, expected_point_size, &tmp_len))
+        {
+            ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
+            return OSSL_FAILURE;
+        }
+
+        /* Validate point size matches curve */
+        if (tmp_len != expected_point_size)
+        {
+            OPENSSL_free(tmp_data);
+            ERR_raise(ERR_LIB_PROV, PROV_R_INVALID_KEY);
+            return OSSL_FAILURE;
+        }
+
+        key->pub_key_data = tmp_data;
+        key->pub_key_data_len = tmp_len;
+        key->has_public = true;
+    }
+
+    key->is_imported = true;
+    return OSSL_SUCCESS;
 }
 
 static int azihsm_ossl_keymgmt_export(
@@ -884,9 +959,19 @@ static int azihsm_ossl_keymgmt_export(
     return OSSL_FAILURE;
 }
 
-static const OSSL_PARAM *azihsm_ossl_keymgmt_import_types(ossl_unused int selection)
+static const OSSL_PARAM *azihsm_ossl_keymgmt_import_types(int selection)
 {
-    // TODO: Return importable parameter types
+    static const OSSL_PARAM import_types[] = {
+        OSSL_PARAM_utf8_string(OSSL_PKEY_PARAM_GROUP_NAME, NULL, 0),
+        OSSL_PARAM_octet_string(OSSL_PKEY_PARAM_PUB_KEY, NULL, 0),
+        OSSL_PARAM_END
+    };
+
+    if ((selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY) != 0)
+    {
+        return import_types;
+    }
+
     return NULL;
 }
 
@@ -908,7 +993,7 @@ static int azihsm_ossl_keymgmt_get_params(AZIHSM_EC_KEY *key, OSSL_PARAM params[
     p = OSSL_PARAM_locate(params, OSSL_PKEY_PARAM_GROUP_NAME);
     if (p != NULL && !OSSL_PARAM_set_utf8_string(
                          p,
-                         OBJ_nid2sn(azihsm_ossl_curve_id_to_nid((int)key->genctx.ec_curve_id))
+                         OBJ_nid2sn(azihsm_ossl_ec_curve_id_to_nid((int)key->genctx.ec_curve_id))
                      ))
     {
         ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_SET_PARAMETER);
@@ -918,7 +1003,7 @@ static int azihsm_ossl_keymgmt_get_params(AZIHSM_EC_KEY *key, OSSL_PARAM params[
     p = OSSL_PARAM_locate(params, OSSL_PKEY_PARAM_BITS);
     if (p != NULL)
     {
-        int bits = azihsm_ossl_curve_id_to_bits((int)key->genctx.ec_curve_id);
+        int bits = azihsm_ossl_ec_curve_id_to_bits((int)key->genctx.ec_curve_id);
         if (bits == 0 || !OSSL_PARAM_set_int(p, bits))
         {
             ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_SET_PARAMETER);
@@ -969,8 +1054,22 @@ static const OSSL_PARAM *azihsm_ossl_keymgmt_gen_settable_params(
     return settable_params;
 }
 
+static const char *azihsm_ossl_keymgmt_query_operation_name(int operation_id)
+{
+    switch (operation_id)
+    {
+    case OSSL_OP_KEYEXCH:
+        return "ECDH";
+    case OSSL_OP_SIGNATURE:
+        return "ECDSA";
+    default:
+        return NULL;
+    }
+}
+
 /* EC Key Management */
 const OSSL_DISPATCH azihsm_ossl_ec_keymgmt_functions[] = {
+    { OSSL_FUNC_KEYMGMT_NEW, (void (*)(void))azihsm_ossl_keymgmt_new },
     { OSSL_FUNC_KEYMGMT_GEN, (void (*)(void))azihsm_ossl_keymgmt_gen },
     { OSSL_FUNC_KEYMGMT_GEN_INIT, (void (*)(void))azihsm_ossl_keymgmt_gen_init },
     { OSSL_FUNC_KEYMGMT_GEN_CLEANUP, (void (*)(void))azihsm_ossl_keymgmt_gen_cleanup },
@@ -987,5 +1086,7 @@ const OSSL_DISPATCH azihsm_ossl_ec_keymgmt_functions[] = {
     { OSSL_FUNC_KEYMGMT_EXPORT_TYPES, (void (*)(void))azihsm_ossl_keymgmt_export_types },
     { OSSL_FUNC_KEYMGMT_GET_PARAMS, (void (*)(void))azihsm_ossl_keymgmt_get_params },
     { OSSL_FUNC_KEYMGMT_GETTABLE_PARAMS, (void (*)(void))azihsm_ossl_keymgmt_gettable_params },
+    { OSSL_FUNC_KEYMGMT_QUERY_OPERATION_NAME,
+      (void (*)(void))azihsm_ossl_keymgmt_query_operation_name },
     { 0, NULL }
 };
