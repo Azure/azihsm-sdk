@@ -15,6 +15,24 @@ pub struct NextestReport {
     // Add command-line arguments here as needed
 }
 
+/// Derive the likely cargo nextest command from a profile name
+fn profile_to_command(profile_name: &str) -> String {
+    // Map known profile names to their corresponding commands
+    match profile_name {
+        "ci-mock" => "cargo nextest run --no-fail-fast --features mock".to_string(),
+        "ci-mock-table-4" => {
+            "cargo nextest run --no-fail-fast --features mock,table-4 --package azihsm_ddi"
+                .to_string()
+        }
+        "ci-mock-table-64" => {
+            "cargo nextest run --no-fail-fast --features mock,table-64 --package azihsm_ddi"
+                .to_string()
+        }
+        // For unknown profiles, construct a generic command showing the profile
+        _ => format!("cargo nextest run --profile {}", profile_name),
+    }
+}
+
 impl Xtask for NextestReport {
     fn run(self, _ctx: XtaskCtx) -> anyhow::Result<()> {
         log::trace!("running nextest-report");
@@ -45,11 +63,14 @@ impl Xtask for NextestReport {
                         format!("unknown-{}", path_str)
                     });
 
+                // Derive the command for this profile
+                let command = profile_to_command(&profile_name);
+
                 // Add data from JUnit XML to total data structure
                 test_suites_total.suites.extend(test_suites.suites);
 
                 profile_data.push((
-                    profile_name,
+                    command,
                     test_suites.tests,
                     test_suites.failures,
                     test_suites.skipped,
@@ -60,7 +81,7 @@ impl Xtask for NextestReport {
         // Calculate total tests, failures, and skipped
         let (total_tests, total_failures, total_skipped) = profile_data.iter().fold(
             (0, 0, 0),
-            |(tests, failures, skipped), (_profile, t, f, s)| {
+            |(tests, failures, skipped), (_command, t, f, s)| {
                 (tests + t, failures + f, skipped + s)
             },
         );
@@ -72,24 +93,24 @@ impl Xtask for NextestReport {
         let mut markdown = String::new();
         markdown.push_str("# Test Results\n\n");
         markdown.push_str(&format!("- **Total Tests**: {}\n", test_suites_total.tests));
-        for (profile, tests, _, _) in &profile_data {
-            markdown.push_str(&format!("  - {}: {}\n", profile, tests));
+        for (command, tests, _, _) in &profile_data {
+            markdown.push_str(&format!("  - {}\n    - {}\n", command, tests));
         }
 
         markdown.push_str(&format!(
             "- **Total Failures**: {}\n",
             test_suites_total.failures
         ));
-        for (profile, _, failures, _) in &profile_data {
-            markdown.push_str(&format!("  - {}: {}\n", profile, failures));
+        for (command, _, failures, _) in &profile_data {
+            markdown.push_str(&format!("  - {}\n    - {}\n", command, failures));
         }
 
         markdown.push_str(&format!(
             "- **Total Skipped**: {}\n",
             test_suites_total.skipped
         ));
-        for (profile, _, _, skipped) in &profile_data {
-            markdown.push_str(&format!("  - {}: {}\n", profile, skipped));
+        for (command, _, _, skipped) in &profile_data {
+            markdown.push_str(&format!("  - {}\n    - {}\n", command, skipped));
         }
 
         markdown.push('\n');
