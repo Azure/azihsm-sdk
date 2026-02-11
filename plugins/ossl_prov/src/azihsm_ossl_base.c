@@ -206,7 +206,8 @@ static void azihsm_ossl_teardown(AZIHSM_OSSL_PROV_CTX *provctx)
         OSSL_LIB_CTX_free(provctx->libctx);
     }
 
-    /* Delete cached unwrapping key handles before closing session */
+    /* Delete cached unwrapping key handles before closing session.
+     * No lock needed: OpenSSL guarantees no operations are in flight at teardown. */
     if (provctx->unwrapping_key.pub != 0)
     {
         azihsm_key_delete(provctx->unwrapping_key.pub);
