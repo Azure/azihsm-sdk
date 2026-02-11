@@ -70,26 +70,21 @@ mod tests {
     // Helper to create a TestRecord for testing
     fn create_test_record(id: &str, author: &str, title: &str) -> TestRecord {
         // We need to use serde to create Tests since it's private
-        // Use the public TestRecord with git::CommitInfo
-        serde_json::from_str(&format!(
-            r#"{{
-                "commit": {{
-                    "id": "{}",
-                    "author": "{}",
-                    "title": "{}"
-                }},
-                "tests": {{
-                    "windows_total": 0,
-                    "windows_skipped": 0,
-                    "linux_total": 0,
-                    "linux_skipped": 0
-                }}
-            }}"#,
-            id.replace('"', "\\\""),
-            author.replace('"', "\\\""),
-            title.replace('"', "\\\"")
-        ))
-        .unwrap()
+        // Build JSON using proper serialization to avoid escaping issues
+        let json_value = serde_json::json!({
+            "commit": {
+                "id": id,
+                "author": author,
+                "title": title
+            },
+            "tests": {
+                "windows_total": 0,
+                "windows_skipped": 0,
+                "linux_total": 0,
+                "linux_skipped": 0
+            }
+        });
+        serde_json::from_value(json_value).unwrap()
     }
 
     #[test]
