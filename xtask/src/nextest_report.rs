@@ -23,8 +23,8 @@ impl Xtask for NextestReport {
 
         let mut profile_data = Vec::new();
 
-        // Discover all junit.xml files under target/nextest/**/junit.xml
-        for entry in glob("./target/nextest/**/junit.xml")? {
+        // Discover all junit.xml files under target/nextest/*/junit.xml
+        for entry in glob("./target/nextest/*/junit.xml")? {
             let junit_path = entry?;
 
             // Read the JUnit XML file
@@ -38,16 +38,18 @@ impl Xtask for NextestReport {
                     .parent()
                     .and_then(|p| p.file_name())
                     .and_then(|n| n.to_str())
+                    .map(|s| s.to_string())
                     .unwrap_or_else(|| {
-                        log::warn!("Could not extract profile name from path: {:?}", junit_path);
-                        "unknown"
+                        let path_str = junit_path.to_string_lossy();
+                        log::warn!("Could not extract profile name from path: {}", path_str);
+                        format!("unknown-{}", path_str)
                     });
 
                 // Add data from JUnit XML to total data structure
                 test_suites_total.suites.extend(test_suites.suites);
 
                 profile_data.push((
-                    profile_name.to_string(),
+                    profile_name,
                     test_suites.tests,
                     test_suites.failures,
                     test_suites.skipped,
