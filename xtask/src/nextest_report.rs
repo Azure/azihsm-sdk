@@ -94,7 +94,8 @@ impl Xtask for NextestReport {
         markdown.push_str("# Test Results\n\n");
 
         // Helper closure to format command entries in the report
-        let format_command_entry = |cmd: &str, value: u64| format!("  - {}\n    - {}\n", cmd, value);
+        let format_command_entry =
+            |cmd: &str, value: u64| format!("  - {}\n    - {}\n", cmd, value);
 
         markdown.push_str(&format!("- **Total Tests**: {}\n", test_suites_total.tests));
         for (command, tests, _, _) in &profile_data {
