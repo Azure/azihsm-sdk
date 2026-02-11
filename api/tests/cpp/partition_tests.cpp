@@ -417,7 +417,7 @@ TEST(azihsm_part, get_prop_manufacturer_cert)
         auto part = PartitionHandle(path);
 
         // First call to get required size
-        azihsm_part_prop prop = { AZIHSM_PART_PROP_ID_MANUFACTURER_CERT, nullptr, 0 };
+        azihsm_part_prop prop = { AZIHSM_PART_PROP_ID_MANUFACTURER_CERT_CHAIN, nullptr, 0 };
         auto err = azihsm_part_get_prop(part.get(), &prop);
         ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
         ASSERT_GT(prop.len, 0);
@@ -450,7 +450,7 @@ TEST(azihsm_part, get_prop_manufacturer_cert_buffer_too_small)
         auto part = PartitionHandle(path);
 
         // First get the required size
-        azihsm_part_prop prop = { AZIHSM_PART_PROP_ID_MANUFACTURER_CERT, nullptr, 0 };
+        azihsm_part_prop prop = { AZIHSM_PART_PROP_ID_MANUFACTURER_CERT_CHAIN, nullptr, 0 };
         auto err = azihsm_part_get_prop(part.get(), &prop);
         ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
         uint32_t required_size = prop.len;
@@ -497,6 +497,27 @@ TEST(azihsm_part, get_prop_masked_owner_backup_key)
 
         // First call to get required size
         azihsm_part_prop prop = { AZIHSM_PART_PROP_ID_MASKED_OWNER_BACKUP_KEY, nullptr, 0 };
+        auto err = azihsm_part_get_prop(part.get(), &prop);
+        ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+
+        // Second call with properly sized buffer
+        std::vector<uint8_t> buffer(prop.len);
+        prop.val = buffer.data();
+        err = azihsm_part_get_prop(part.get(), &prop);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_GT(prop.len, 0);
+    });
+}
+
+TEST(azihsm_part, get_prop_pid_public_key)
+{
+    auto part_list = PartitionListHandle();
+
+    part_list.for_each_part([](std::vector<azihsm_char> &path) {
+        auto part = PartitionHandle(path);
+
+        // First call to get required size
+        azihsm_part_prop prop = { AZIHSM_PART_PROP_ID_PART_PUB_KEY, nullptr, 0 };
         auto err = azihsm_part_get_prop(part.get(), &prop);
         ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
 
@@ -585,9 +606,10 @@ TEST(azihsm_part, get_prop_all_supported_properties)
             { AZIHSM_PART_PROP_ID_PCI_HW_ID, "PCI_HW_ID" },
             { AZIHSM_PART_PROP_ID_MIN_API_REV, "MIN_API_REV" },
             { AZIHSM_PART_PROP_ID_MAX_API_REV, "MAX_API_REV" },
-            { AZIHSM_PART_PROP_ID_MANUFACTURER_CERT, "MANUFACTURER_CERT" },
+            { AZIHSM_PART_PROP_ID_MANUFACTURER_CERT_CHAIN, "MANUFACTURER_CERT_CHAIN" },
             { AZIHSM_PART_PROP_ID_BACKUP_MASKING_KEY, "BACKUP_MASKING_KEY" },
             { AZIHSM_PART_PROP_ID_MASKED_OWNER_BACKUP_KEY, "MASKED_OWNER_BACKUP_KEY" },
+            { AZIHSM_PART_PROP_ID_PART_PUB_KEY, "PARTITION_IDENTITY_PUBLIC_KEY" },
         };
 
         for (const auto &test_prop : supported_props)
@@ -606,5 +628,199 @@ TEST(azihsm_part, get_prop_all_supported_properties)
             err = azihsm_part_get_prop(part.get(), &prop);
             ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         }
+    });
+}
+
+TEST(azihsm_part, init_caller_source_with_empty_endorsement_fails)
+{
+    auto part_list = PartitionListHandle();
+
+    part_list.for_each_part([](std::vector<azihsm_char> &path) {
+        azihsm_str path_str;
+        path_str.str = path.data();
+        path_str.len = static_cast<uint32_t>(path.size());
+
+        azihsm_handle part_handle = 0;
+        auto err = azihsm_part_open(&path_str, &part_handle);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        auto guard =
+            scope_guard::make_scope_exit([&part_handle] { azihsm_part_close(part_handle); });
+
+        azihsm_credentials creds{};
+        std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
+        std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
+
+        // Provide a valid OBK config so the failure is attributable to POTA endorsement
+        struct azihsm_buffer obk_buf = { const_cast<uint8_t *>(TEST_OBK), sizeof(TEST_OBK) };
+        struct azihsm_owner_backup_key_config backup_config = {
+            .source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER,
+            .owner_backup_key = &obk_buf
+        };
+
+        // Caller source with empty endorsement buffer should fail
+        struct azihsm_buffer empty_sig_buf = { .ptr = nullptr, .len = 0 };
+        struct azihsm_buffer empty_pubkey_buf = { .ptr = nullptr, .len = 0 };
+        struct azihsm_pota_endorsement_data empty_endorsement_data = { .signature = &empty_sig_buf,
+                                                                       .public_key =
+                                                                           &empty_pubkey_buf };
+        struct azihsm_pota_endorsement pota_endorsement = {
+            .source = AZIHSM_POTA_ENDORSEMENT_SOURCE_CALLER,
+            .endorsement = &empty_endorsement_data
+        };
+
+        err = azihsm_part_init(
+            part_handle,
+            &creds,
+            nullptr,
+            nullptr,
+            &backup_config,
+            &pota_endorsement
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
+    });
+}
+
+TEST(azihsm_part, init_caller_source_with_null_endorsement_fails)
+{
+    auto part_list = PartitionListHandle();
+
+    part_list.for_each_part([](std::vector<azihsm_char> &path) {
+        azihsm_str path_str;
+        path_str.str = path.data();
+        path_str.len = static_cast<uint32_t>(path.size());
+
+        azihsm_handle part_handle = 0;
+        auto err = azihsm_part_open(&path_str, &part_handle);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        auto guard =
+            scope_guard::make_scope_exit([&part_handle] { azihsm_part_close(part_handle); });
+
+        azihsm_credentials creds{};
+        std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
+        std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
+
+        // Provide a valid OBK config so the failure is attributable to POTA endorsement
+        struct azihsm_buffer obk_buf = { const_cast<uint8_t *>(TEST_OBK), sizeof(TEST_OBK) };
+        struct azihsm_owner_backup_key_config backup_config = {
+            .source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER,
+            .owner_backup_key = &obk_buf
+        };
+
+        // Caller source with null endorsement pointer should fail
+        struct azihsm_pota_endorsement pota_endorsement = {
+            .source = AZIHSM_POTA_ENDORSEMENT_SOURCE_CALLER,
+            .endorsement = nullptr
+        };
+
+        err = azihsm_part_init(
+            part_handle,
+            &creds,
+            nullptr,
+            nullptr,
+            &backup_config,
+            &pota_endorsement
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
+    });
+}
+
+TEST(azihsm_part, init_tpm_source_with_endorsement_fails)
+{
+    auto part_list = PartitionListHandle();
+
+    part_list.for_each_part([](std::vector<azihsm_char> &path) {
+        azihsm_str path_str;
+        path_str.str = path.data();
+        path_str.len = static_cast<uint32_t>(path.size());
+
+        azihsm_handle part_handle = 0;
+        auto err = azihsm_part_open(&path_str, &part_handle);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        auto guard =
+            scope_guard::make_scope_exit([&part_handle] { azihsm_part_close(part_handle); });
+
+        azihsm_credentials creds{};
+        std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
+        std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
+
+        // Provide a valid OBK config so the failure is attributable to POTA endorsement
+        struct azihsm_buffer obk_buf = { const_cast<uint8_t *>(TEST_OBK), sizeof(TEST_OBK) };
+        struct azihsm_owner_backup_key_config backup_config = {
+            .source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER,
+            .owner_backup_key = &obk_buf
+        };
+
+        // TPM source with non-null endorsement should fail
+        uint8_t signature_data[96] = { 0 };
+        uint8_t public_key_data[97] = { 0 };
+        struct azihsm_buffer signature_buf = { .ptr = signature_data,
+                                               .len = sizeof(signature_data) };
+        struct azihsm_buffer public_key_buf = { .ptr = public_key_data,
+                                                .len = sizeof(public_key_data) };
+        struct azihsm_pota_endorsement_data endorsement_data = { .signature = &signature_buf,
+                                                                 .public_key = &public_key_buf };
+        struct azihsm_pota_endorsement pota_endorsement = { .source =
+                                                                AZIHSM_POTA_ENDORSEMENT_SOURCE_TPM,
+                                                            .endorsement = &endorsement_data };
+        err = azihsm_part_init(
+            part_handle,
+            &creds,
+            nullptr,
+            nullptr,
+            &backup_config,
+            &pota_endorsement
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
+    });
+}
+
+TEST(azihsm_part, init_invalid_source_with_endorsement_fails)
+{
+    auto part_list = PartitionListHandle();
+
+    part_list.for_each_part([](std::vector<azihsm_char> &path) {
+        azihsm_str path_str;
+        path_str.str = path.data();
+        path_str.len = static_cast<uint32_t>(path.size());
+
+        azihsm_handle part_handle = 0;
+        auto err = azihsm_part_open(&path_str, &part_handle);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        auto guard =
+            scope_guard::make_scope_exit([&part_handle] { azihsm_part_close(part_handle); });
+
+        azihsm_credentials creds{};
+        std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
+        std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
+
+        // Provide a valid OBK config so the failure is attributable to POTA endorsement
+        struct azihsm_buffer obk_buf = { const_cast<uint8_t *>(TEST_OBK), sizeof(TEST_OBK) };
+        struct azihsm_owner_backup_key_config backup_config = {
+            .source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER,
+            .owner_backup_key = &obk_buf
+        };
+
+        // Invalid source value should fail
+        uint8_t signature_data[96] = { 0 };
+        uint8_t public_key_data[97] = { 0 };
+        struct azihsm_buffer signature_buf = { .ptr = signature_data,
+                                               .len = sizeof(signature_data) };
+        struct azihsm_buffer public_key_buf = { .ptr = public_key_data,
+                                                .len = sizeof(public_key_data) };
+        struct azihsm_pota_endorsement_data endorsement_data = { .signature = &signature_buf,
+                                                                 .public_key = &public_key_buf };
+        struct azihsm_pota_endorsement pota_endorsement = {
+            .source = static_cast<azihsm_pota_endorsement_source>(99),
+            .endorsement = &endorsement_data
+        };
+        err = azihsm_part_init(
+            part_handle,
+            &creds,
+            nullptr,
+            nullptr,
+            &backup_config,
+            &pota_endorsement
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
 }

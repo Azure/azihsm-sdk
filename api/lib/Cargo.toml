@@ -23,6 +23,7 @@ parking_lot.workspace = true
 pastey.workspace = true
 test_with_tracing.workspace = true
 tracing.workspace = true
+x509.workspace = true
 zerocopy = { features = ["derive"], workspace = true }
 
 [features]

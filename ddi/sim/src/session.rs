@@ -1593,6 +1593,17 @@ mod tests {
         0x20,
     ];
 
+    const TEST_POTA_ECC_PUB_KEY: [u8; 120] = [
+        0x30, 0x76, 0x30, 0x10, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, 0x06, 0x05,
+        0x2b, 0x81, 0x04, 0x00, 0x22, 0x03, 0x62, 0x00, 0x04, 0x1f, 0x42, 0x0d, 0x73, 0xeb, 0xf0,
+        0x67, 0xc2, 0xf9, 0x77, 0xbd, 0x51, 0xab, 0xfb, 0xe1, 0xf6, 0x53, 0x19, 0xb7, 0x57, 0xe0,
+        0xa9, 0x20, 0xce, 0x4f, 0x21, 0xbb, 0xd4, 0xa7, 0x84, 0x1c, 0x93, 0x45, 0xf1, 0xea, 0xd9,
+        0x5f, 0xe5, 0x90, 0xab, 0x57, 0xe1, 0xea, 0xfc, 0xd2, 0x06, 0xef, 0x21, 0xa2, 0xad, 0x10,
+        0xd3, 0x17, 0x6e, 0x99, 0xc8, 0x22, 0x26, 0x23, 0x08, 0x57, 0xa7, 0x56, 0x08, 0x45, 0xe3,
+        0xda, 0x12, 0xc7, 0xdc, 0x3a, 0xee, 0x01, 0xfc, 0x37, 0xab, 0x1c, 0x8d, 0xc6, 0xd0, 0x64,
+        0x7a, 0x7d, 0xc2, 0x67, 0xfc, 0x02, 0x7d, 0x8d, 0xa3, 0xc8, 0x01, 0x4b, 0xa4, 0x0d, 0x98,
+    ];
+
     impl UserSession {
         /// Generate an [RSA](https://en.wikipedia.org/wiki/RSA_(cryptosystem)) key-pair.
         ///
@@ -2135,7 +2146,9 @@ mod tests {
         let api_rev = function.get_api_rev_range().max;
 
         let dummy_bk3 = function.init_bk3([0u8; 48]).unwrap(); // Create properly masked BK3
-        function.provision(&dummy_bk3, None, None).unwrap();
+        function
+            .provision(&dummy_bk3, None, None, &TEST_POTA_ECC_PUB_KEY)
+            .unwrap();
 
         let function_state = function.get_function_state();
         let vault = function_state.get_vault(DEFAULT_VAULT_ID).unwrap();
@@ -2398,7 +2411,9 @@ mod tests {
         let api_rev = function.get_api_rev_range().max;
 
         let dummy_bk3 = function.init_bk3([0u8; 48]).unwrap(); // Create properly masked BK3
-        function.provision(&dummy_bk3, None, None).unwrap();
+        function
+            .provision(&dummy_bk3, None, None, &TEST_POTA_ECC_PUB_KEY)
+            .unwrap();
 
         let function_state = function.get_function_state();
         let vault = function_state.get_vault(DEFAULT_VAULT_ID).unwrap();
@@ -3135,7 +3150,9 @@ mod tests {
         // Initialize masking key: init_bk3 followed by provision
         let original_bk3 = [0x77u8; 48];
         let masked_bk3 = function.init_bk3(original_bk3).unwrap();
-        let _bmk_result = function.provision(&masked_bk3, None, None).unwrap();
+        let _bmk_result = function
+            .provision(&masked_bk3, None, None, &TEST_POTA_ECC_PUB_KEY)
+            .unwrap();
 
         let function_state = function.get_function_state();
         let vault = function_state.get_vault(DEFAULT_VAULT_ID).unwrap();
@@ -3185,7 +3202,9 @@ mod tests {
         // Initialize masking key: init_bk3 followed by provision
         let original_bk3 = [0x77u8; 48];
         let masked_bk3 = function.init_bk3(original_bk3).unwrap();
-        let _bmk_result = function.provision(&masked_bk3, None, None).unwrap();
+        let _bmk_result = function
+            .provision(&masked_bk3, None, None, &TEST_POTA_ECC_PUB_KEY)
+            .unwrap();
 
         let function_state = function.get_function_state();
         let vault = function_state.get_vault(DEFAULT_VAULT_ID).unwrap();
@@ -3236,7 +3255,9 @@ mod tests {
         // Initialize masking key: init_bk3 followed by provision
         let original_bk3 = [0x77u8; 48];
         let masked_bk3 = function.init_bk3(original_bk3).unwrap();
-        let _bmk_result = function.provision(&masked_bk3, None, None).unwrap();
+        let _bmk_result = function
+            .provision(&masked_bk3, None, None, &TEST_POTA_ECC_PUB_KEY)
+            .unwrap();
 
         let function_state = function.get_function_state();
         let vault = function_state.get_vault(DEFAULT_VAULT_ID).unwrap();
@@ -3488,7 +3509,7 @@ mod tests {
 
         // First provision to generate an unwrapping key
         let bmk = function
-            .provision(&masked_bk3, None, None)
+            .provision(&masked_bk3, None, None, &TEST_POTA_ECC_PUB_KEY)
             .expect("Initial provision failed");
 
         let original_key_num = function
@@ -3524,7 +3545,12 @@ mod tests {
 
         // Now provision again with the BMK and real masked unwrapping key
         // This simulates restoring after live migration
-        let result = function.provision(&masked_bk3, Some(&bmk), Some(&real_masked_unwrapping_key));
+        let result = function.provision(
+            &masked_bk3,
+            Some(&bmk),
+            Some(&real_masked_unwrapping_key),
+            &TEST_POTA_ECC_PUB_KEY,
+        );
 
         assert!(result.is_ok());
         // verify that unwrapping key is restored

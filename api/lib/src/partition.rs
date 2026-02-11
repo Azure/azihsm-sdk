@@ -160,6 +160,95 @@ impl<'a> HsmOwnerBackupKeyConfig<'a> {
     }
 }
 
+/// HSM POTA endorsement data containing signature and public key for verification.
+///
+/// This structure holds the cryptographic proof for partition owner trust anchor
+/// endorsement, including the ECDSA signature over the PID hash and the public
+/// key needed to verify the signature.
+#[derive(Debug, Clone)]
+pub struct HsmPotaEndorsementData<'a> {
+    /// ECDSA signature over the PID hash
+    signature: &'a [u8],
+
+    /// Public key for signature verification (DER-encoded)
+    pub_key: &'a [u8],
+}
+
+/// HSM partition owner trust anchor (aka POTA) endorsement.
+#[derive(Debug, Clone)]
+pub struct HsmPotaEndorsement<'a> {
+    /// Source of the POTA endorsement
+    source: HsmPotaEndorsementSource,
+
+    /// Optional POTA endorsement data (required when source is Caller, ignored otherwise)
+    endorsement: Option<HsmPotaEndorsementData<'a>>,
+}
+
+impl<'a> HsmPotaEndorsementData<'a> {
+    /// Creates a new POTA endorsement data instance.
+    ///
+    /// # Arguments
+    ///
+    /// * `signature` - ECDSA signature over the PID hash
+    /// * `public_key` - Public key for signature verification (DER-encoded)
+    pub fn new(signature: &'a [u8], public_key: &'a [u8]) -> Self {
+        Self {
+            signature,
+            pub_key: public_key,
+        }
+    }
+
+    /// Returns the ECDSA signature.
+    pub fn signature(&self) -> &[u8] {
+        self.signature
+    }
+
+    /// Returns the public key for signature verification.
+    pub fn pub_key(&self) -> &[u8] {
+        self.pub_key
+    }
+}
+
+impl<'a> HsmPotaEndorsement<'a> {
+    /// Creates a new POTA endorsement instance.
+    ///
+    /// # Arguments
+    ///
+    /// * `source` - Source of the POTA endorsement
+    /// * `endorsement` - POTA endorsement data provided by the caller
+    ///
+    /// # Returns
+    ///
+    /// A new `HsmPotaEndorsement` instance with the specified source and optional endorsement.
+    pub fn new(
+        source: HsmPotaEndorsementSource,
+        endorsement: Option<HsmPotaEndorsementData<'a>>,
+    ) -> Self {
+        Self {
+            source,
+            endorsement,
+        }
+    }
+
+    /// Returns the POTA endorsement source.
+    ///
+    /// # Returns
+    ///
+    /// The source of the POTA endorsement.
+    pub fn source(&self) -> HsmPotaEndorsementSource {
+        self.source
+    }
+
+    /// Returns the POTA endorsement data.
+    ///
+    /// # Returns
+    ///
+    /// Optional reference to the POTA endorsement data.
+    pub fn endorsement(&self) -> Option<&HsmPotaEndorsementData<'a>> {
+        self.endorsement.as_ref()
+    }
+}
+
 /// HSM partition manager.
 ///
 /// Provides operations for discovering and opening HSM partitions.
@@ -291,9 +380,19 @@ impl HsmPartition {
         bmk: Option<&[u8]>,
         muk: Option<&[u8]>,
         obk_config: HsmOwnerBackupKeyConfig<'_>,
+        pota_endorsement: HsmPotaEndorsement<'_>,
     ) -> HsmResult<()> {
         let (bmk, mobk) = self.with_dev(|dev| {
-            ddi::init_part(dev, self.api_rev_range().min(), creds, bmk, muk, obk_config)
+            let (bmk, mobk) = ddi::init_part(
+                dev,
+                self.api_rev_range().min(),
+                creds,
+                bmk,
+                muk,
+                obk_config,
+                pota_endorsement,
+            )?;
+            Ok((bmk, mobk))
         })?;
         self.inner().write().set_masked_keys(bmk, mobk);
         Ok(())
@@ -433,6 +532,15 @@ impl HsmPartition {
     /// Returns the certificate chain as a PEM string.
     pub fn cert_chain(&self, slot: u8) -> HsmResult<String> {
         self.with_dev(|dev| ddi::get_cert_chain(dev, self.api_rev_range().min(), slot))
+    }
+
+    /// Retrieves the public key of the partition identity (PID) certificate.
+    ///
+    /// # Returns
+    ///
+    /// Returns the DER-encoded public key of the PID certificate.
+    pub fn pub_key(&self) -> HsmResult<Vec<u8>> {
+        self.with_dev(|dev| ddi::get_part_pub_key(dev, self.api_rev_range().min()))
     }
 
     /// Retrieves the backup masking key that was set during partition initialization.

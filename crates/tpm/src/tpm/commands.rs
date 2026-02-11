@@ -11,6 +11,7 @@ use crate::tpm::types::TpmsSensitiveCreate;
 
 const TPM_RESPONSE_HEADER_SIZE: usize = 10;
 const TPM_HANDLE_SIZE: usize = 4;
+const TPM_MIN_RESPONSE_WITH_HANDLE_SIZE: usize = TPM_RESPONSE_HEADER_SIZE + TPM_HANDLE_SIZE;
 
 pub struct CreatedPrimary {
     pub handle: u32,
@@ -59,7 +60,26 @@ pub trait TpmCommandExt: RawTpm {
         pcrs: &[u32],
     ) -> io::Result<SealedObject>;
 
+    /// Flushes a transient or loaded object handle from the TPM.
     fn flush_context(&self, handle: u32) -> io::Result<()>;
+
+    /// Create a primary ECC key in the specified hierarchy.
+    fn create_primary_ecc(
+        &self,
+        hierarchy: Hierarchy,
+        public_template: Tpm2bPublicEcc,
+    ) -> io::Result<CreatedPrimary>;
+
+    /// Sign a digest using the specified key handle. Returns the signature.
+    fn sign(&self, key_handle: u32, digest: &[u8]) -> io::Result<TpmtSignature>;
+
+    /// Verify a signature using the specified key handle. Returns Ok(()) if valid.
+    fn verify_signature(
+        &self,
+        key_handle: u32,
+        digest: &[u8],
+        signature: &TpmtSignature,
+    ) -> io::Result<()>;
 }
 
 impl<T: RawTpm> TpmCommandExt for T {
@@ -106,7 +126,7 @@ impl<T: RawTpm> TpmCommandExt for T {
         let resp = self.transmit_raw(&cmd)?;
         parse_tpm_rc_with_cmd(&resp, TpmCommandCode::CreatePrimary)?;
 
-        if resp.len() < 14 {
+        if resp.len() < TPM_MIN_RESPONSE_WITH_HANDLE_SIZE {
             return Err(io::Error::new(
                 io::ErrorKind::UnexpectedEof,
                 "CreatePrimary short response",
@@ -233,7 +253,7 @@ impl<T: RawTpm> TpmCommandExt for T {
 
         let resp = self.transmit_raw(&cmd)?;
         parse_tpm_rc_with_cmd(&resp, TpmCommandCode::Unseal)?;
-        if resp.len() < 14 {
+        if resp.len() < TPM_MIN_RESPONSE_WITH_HANDLE_SIZE {
             return Err(io::Error::new(
                 io::ErrorKind::UnexpectedEof,
                 "Unseal short response",
@@ -303,7 +323,7 @@ impl<T: RawTpm> TpmCommandExt for T {
 
         parse_tpm_rc_with_cmd(&resp, TpmCommandCode::Create)?;
 
-        if resp.len() < 14 {
+        if resp.len() < TPM_MIN_RESPONSE_WITH_HANDLE_SIZE {
             return Err(io::Error::new(
                 io::ErrorKind::UnexpectedEof,
                 "Create short response",
@@ -341,6 +361,116 @@ impl<T: RawTpm> TpmCommandExt for T {
 
         let resp = self.transmit_raw(&cmd)?;
         parse_tpm_rc_with_cmd(&resp, TpmCommandCode::FlushContext)?;
+        Ok(())
+    }
+
+    fn create_primary_ecc(
+        &self,
+        hierarchy: Hierarchy,
+        public_template: Tpm2bPublicEcc,
+    ) -> io::Result<CreatedPrimary> {
+        // Build ECC CreatePrimary parameters using a structured command parameter type
+        let params = EccCreatePrimaryCommandParameters {
+            in_sensitive: empty_sensitive_create(),
+            in_public: public_template,
+            outside_info: Tpm2bBytes(Vec::new()),
+            creation_pcr: PcrSelectionList::from_pcrs(&[]),
+        };
+
+        let handles = [hierarchy.handle()];
+        let cmd = build_command_pw_sessions(TpmCommandCode::CreatePrimary, &handles, &[&[]], |b| {
+            params.marshal(b);
+        });
+
+        let resp = self.transmit_raw(&cmd)?;
+        parse_tpm_rc_with_cmd(&resp, TpmCommandCode::CreatePrimary)?;
+
+        if resp.len() < TPM_MIN_RESPONSE_WITH_HANDLE_SIZE {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "CreatePrimary ECC short response",
+            ));
+        }
+
+        // Parse response header and handle manually to preserve raw ECC public bytes
+        // Response layout: header (10) + handle (4) + paramSize (4) + parameters
+        let (header, mut cursor) = crate::tpm::types::TpmResponseHeader::parse(&resp)?;
+        if header.return_code != 0 {
+            return Err(io::Error::other(format!(
+                "CreatePrimary ECC error 0x{:08x}",
+                header.return_code
+            )));
+        }
+
+        // Extract object handle
+        let object_handle = u32::unmarshal(&resp, &mut cursor)?;
+
+        // Skip paramSize
+        let _param_size = u32::unmarshal(&resp, &mut cursor)?;
+
+        // Extract outPublic as raw TPM2B bytes (preserving ECC structure)
+        if cursor + 2 > resp.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "CreatePrimary ECC short response (outPublic size)",
+            ));
+        }
+        let out_public_size = u16::from_be_bytes([resp[cursor], resp[cursor + 1]]) as usize;
+        if cursor + 2 + out_public_size > resp.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "CreatePrimary ECC short response (outPublic data)",
+            ));
+        }
+        // Include the size prefix in the returned bytes
+        let public_bytes = resp[cursor..cursor + 2 + out_public_size].to_vec();
+
+        Ok(CreatedPrimary {
+            handle: object_handle,
+            public: public_bytes,
+        })
+    }
+
+    fn sign(&self, key_handle: u32, digest: &[u8]) -> io::Result<TpmtSignature> {
+        let parameters = SignCommandParameters {
+            digest: Tpm2bBytes(digest.to_vec()),
+            scheme: TpmtSigScheme::Null, // Use key's default scheme
+            validation: TpmtTkHashcheck::null_ticket(),
+        };
+        let cmd_body = SignCommand::new(key_handle, parameters);
+        let handles = cmd_body.handle_values();
+        let cmd = build_command_pw_sessions(TpmCommandCode::Sign, &handles, &[&[]], |b| {
+            cmd_body.parameters.marshal(b);
+        });
+
+        let resp = self.transmit_raw(&cmd)?;
+        parse_tpm_rc_with_cmd(&resp, TpmCommandCode::Sign)?;
+
+        let parsed = SignResponse::from_bytes(&resp)?;
+        Ok(parsed.parameters.signature)
+    }
+
+    fn verify_signature(
+        &self,
+        key_handle: u32,
+        digest: &[u8],
+        signature: &TpmtSignature,
+    ) -> io::Result<()> {
+        let parameters = VerifySignatureCommandParameters {
+            digest: Tpm2bBytes(digest.to_vec()),
+            signature: signature.clone(),
+        };
+        let cmd_body = VerifySignatureCommand::new(key_handle, parameters);
+        let handles = cmd_body.handle_values();
+        let cmd = build_command_no_sessions(TpmCommandCode::VerifySignature, &handles, |b| {
+            cmd_body.parameters.marshal(b);
+        });
+
+        let resp = self.transmit_raw(&cmd)?;
+        parse_tpm_rc_with_cmd(&resp, TpmCommandCode::VerifySignature)?;
+
+        // If we get here without error, the signature is valid
+        let _ = VerifySignatureResponse::from_bytes(&resp)?;
         Ok(())
     }
 }

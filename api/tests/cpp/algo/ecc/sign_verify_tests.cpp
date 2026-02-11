@@ -3,6 +3,7 @@
 
 #include <azihsm_api.h>
 #include <cstring>
+#include <fstream>
 #include <gtest/gtest.h>
 #include <vector>
 
@@ -11,6 +12,7 @@
 #include "handle/session_handle.hpp"
 #include "helpers.hpp"
 #include "utils/auto_key.hpp"
+#include "utils/part_init_config.hpp"
 #include "utils/rsa_keygen.hpp"
 
 class azihsm_ecc_sign_verify : public ::testing::Test
@@ -665,4 +667,460 @@ TEST_F(azihsm_ecc_sign_verify, streaming_sign_consistency_with_single_shot)
             AZIHSM_STATUS_SUCCESS
         );
     });
+}
+
+//! ECC key persistence tests for resiliency scenarios.
+//!
+//! These tests verify that ECC keys can be:
+//! 1. Generated and their masked blobs persisted to disk
+//! 2. Restored from disk and used to verify previously created signatures
+//!
+//! Test 1 (persist_key_and_signature) generates a key pair, signs data,
+//! and saves everything to a binary file including BMK and MOBK.
+//!
+//! Test 2 (MANUAL_restore_key_and_verify) is DISABLED for manual execution.
+//! It reads the persisted data, unmasks the key, and verifies the signature.
+
+// Cross-platform temp file path
+static std::string get_persistence_file_path()
+{
+#ifdef _WIN32
+    const char *temp = std::getenv("TEMP");
+    if (!temp)
+        temp = std::getenv("TMP");
+    if (!temp)
+        temp = "C:\\Temp";
+    return std::string(temp) + "\\azihsm_ecc_persistence_test.bin";
+#else
+    return "/var/tmp/azihsm_ecc_persistence_test.bin";
+#endif
+}
+
+// Simple binary file format:
+// [4 bytes] bmk_len
+// [bmk_len bytes] bmk (backup masking key)
+// [4 bytes] mobk_len
+// [mobk_len bytes] mobk (masked owner backup key)
+// [4 bytes] masked_key_len
+// [masked_key_len bytes] masked_key
+// [4 bytes] signature_len
+// [signature_len bytes] signature
+// [4 bytes] message_len
+// [message_len bytes] message
+
+static bool write_persistence_file(
+    const std::string &path,
+    const std::vector<uint8_t> &bmk,
+    const std::vector<uint8_t> &mobk,
+    const std::vector<uint8_t> &masked_key,
+    const std::vector<uint8_t> &signature,
+    const std::string &message
+)
+{
+    std::ofstream file(path, std::ios::binary);
+    if (!file)
+        return false;
+
+    auto write_blob = [&file](const std::vector<uint8_t> &data) {
+        uint32_t len = static_cast<uint32_t>(data.size());
+        file.write(reinterpret_cast<const char *>(&len), sizeof(len));
+        if (!data.empty())
+        {
+            file.write(reinterpret_cast<const char *>(data.data()), len);
+        }
+    };
+
+    write_blob(bmk);
+    write_blob(mobk);
+    write_blob(masked_key);
+    write_blob(signature);
+
+    // Write message
+    uint32_t msg_len = static_cast<uint32_t>(message.size());
+    file.write(reinterpret_cast<const char *>(&msg_len), sizeof(msg_len));
+    file.write(message.data(), msg_len);
+
+    return file.good();
+}
+
+static bool read_persistence_file(
+    const std::string &path,
+    std::vector<uint8_t> &bmk,
+    std::vector<uint8_t> &mobk,
+    std::vector<uint8_t> &masked_key,
+    std::vector<uint8_t> &signature,
+    std::string &message
+)
+{
+    std::ifstream file(path, std::ios::binary);
+    if (!file)
+        return false;
+
+    auto read_blob = [&file](std::vector<uint8_t> &data) -> bool {
+        uint32_t len = 0;
+        file.read(reinterpret_cast<char *>(&len), sizeof(len));
+        if (!file)
+            return false;
+        data.resize(len);
+        if (len > 0)
+        {
+            file.read(reinterpret_cast<char *>(data.data()), len);
+        }
+        return file.good() || file.eof();
+    };
+
+    if (!read_blob(bmk))
+        return false;
+    if (!read_blob(mobk))
+        return false;
+    if (!read_blob(masked_key))
+        return false;
+    if (!read_blob(signature))
+        return false;
+
+    // Read message
+    uint32_t msg_len = 0;
+    file.read(reinterpret_cast<char *>(&msg_len), sizeof(msg_len));
+    if (!file)
+        return false;
+    message.resize(msg_len);
+    if (msg_len > 0)
+    {
+        file.read(&message[0], msg_len);
+    }
+
+    return true;
+}
+
+// Helper to get first partition path from list
+static std::vector<azihsm_char> get_first_partition_path()
+{
+    azihsm_handle list_handle = 0;
+    auto err = azihsm_part_get_list(&list_handle);
+    if (err != AZIHSM_STATUS_SUCCESS)
+    {
+        throw std::runtime_error("Failed to get partition list. Error: " + std::to_string(err));
+    }
+
+    uint32_t count = 0;
+    err = azihsm_part_get_count(list_handle, &count);
+    if (err != AZIHSM_STATUS_SUCCESS || count == 0)
+    {
+        azihsm_part_free_list(list_handle);
+        throw std::runtime_error("No partitions available");
+    }
+
+    // Get path size first
+    azihsm_str path = { nullptr, 0 };
+    err = azihsm_part_get_path(list_handle, 0, &path);
+    if (err != AZIHSM_STATUS_BUFFER_TOO_SMALL)
+    {
+        azihsm_part_free_list(list_handle);
+        throw std::runtime_error("Failed to get path size. Error: " + std::to_string(err));
+    }
+
+    std::vector<azihsm_char> buffer(path.len);
+    path.str = buffer.data();
+    err = azihsm_part_get_path(list_handle, 0, &path);
+    azihsm_part_free_list(list_handle);
+
+    if (err != AZIHSM_STATUS_SUCCESS)
+    {
+        throw std::runtime_error("Failed to get partition path. Error: " + std::to_string(err));
+    }
+
+    return buffer;
+}
+
+// Helper to get partition property as bytes
+static std::vector<uint8_t> get_part_prop_bytes(azihsm_handle part, azihsm_part_prop_id id)
+{
+    azihsm_part_prop prop = { id, nullptr, 0 };
+    auto err = azihsm_part_get_prop(part, &prop);
+    if (err != AZIHSM_STATUS_BUFFER_TOO_SMALL)
+    {
+        throw std::runtime_error("Failed to get part prop size. Error: " + std::to_string(err));
+    }
+    std::vector<uint8_t> buffer(prop.len);
+    prop.val = buffer.data();
+    err = azihsm_part_get_prop(part, &prop);
+    if (err != AZIHSM_STATUS_SUCCESS)
+    {
+        throw std::runtime_error("Failed to get part prop. Error: " + std::to_string(err));
+    }
+    return buffer;
+}
+
+// Test 1: Generate ECC key pair, sign data, and persist to disk.
+// Uses ECDSA_SHA384 which hashes and signs in one operation.
+// Explicitly calls azihsm_part_open, azihsm_part_init, and azihsm_sess_open.
+// Persists BMK and MOBK for proper restoration.
+TEST_F(azihsm_ecc_sign_verify, persist_key_and_signature)
+{
+    const std::string message = "Test message for ECC key persistence and resiliency verification";
+
+    // Step 1: Get partition path
+    auto path = get_first_partition_path();
+    azihsm_str path_str = { path.data(), static_cast<uint32_t>(path.size()) };
+
+    // Step 2: Open partition
+    azihsm_handle part_handle = 0;
+    auto err = azihsm_part_open(&path_str, &part_handle);
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS) << "azihsm_part_open failed";
+    ASSERT_NE(part_handle, 0u);
+
+    // Step 3: Initialize partition with credentials
+    azihsm_credentials creds{};
+    std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
+    std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
+
+    PartInitConfig init_config{};
+    make_part_init_config(part_handle, init_config);
+
+    err = azihsm_part_init(
+        part_handle,
+        &creds,
+        nullptr,
+        nullptr,
+        &init_config.backup_config,
+        &init_config.pota_endorsement
+    );
+    std::cout << "azihsm_part_init returned: " << err << std::endl;
+
+    // Step 4: Get BMK and MOBK for persistence (needed for restore)
+    auto bmk = get_part_prop_bytes(part_handle, AZIHSM_PART_PROP_ID_BACKUP_MASKING_KEY);
+    auto mobk = get_part_prop_bytes(part_handle, AZIHSM_PART_PROP_ID_MASKED_OWNER_BACKUP_KEY);
+
+    std::cout << "=== ECC Key Persistence Test ===" << std::endl;
+    std::cout << "BMK length: " << bmk.size() << " bytes" << std::endl;
+    std::cout << "MOBK length: " << mobk.size() << " bytes" << std::endl;
+
+    // Step 5: Open session
+    azihsm_api_rev api_rev{ 1, 0 };
+    azihsm_handle session = 0;
+    err = azihsm_sess_open(part_handle, &api_rev, &creds, nullptr, &session);
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS) << "azihsm_sess_open failed";
+    ASSERT_NE(session, 0u);
+
+    std::cout << "Partition opened and session established" << std::endl;
+
+    // Step 6: Generate ECC P384 key pair (matches SHA384)
+    auto_key priv_key;
+    auto_key pub_key;
+    err = generate_ecc_keypair(
+        session,
+        AZIHSM_ECC_CURVE_P384,
+        false, // Token key
+        priv_key.get_ptr(),
+        pub_key.get_ptr()
+    );
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+    ASSERT_NE(priv_key.get(), 0);
+    ASSERT_NE(pub_key.get(), 0);
+
+    // Step 7: Sign the message using ECDSA_SHA384 (hashes and signs in one operation)
+    azihsm_algo sign_algo{};
+    sign_algo.id = AZIHSM_ALGO_ID_ECDSA_SHA384;
+    sign_algo.params = nullptr;
+    sign_algo.len = 0;
+
+    azihsm_buffer msg_buf{};
+    msg_buf.ptr = const_cast<uint8_t *>(reinterpret_cast<const uint8_t *>(message.data()));
+    msg_buf.len = static_cast<uint32_t>(message.size());
+
+    // Get signature size
+    azihsm_buffer sig_buf{ nullptr, 0 };
+    err = azihsm_crypt_sign(&sign_algo, priv_key.get(), &msg_buf, &sig_buf);
+    ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+
+    std::vector<uint8_t> signature(sig_buf.len);
+    sig_buf.ptr = signature.data();
+    err = azihsm_crypt_sign(&sign_algo, priv_key.get(), &msg_buf, &sig_buf);
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+    // Step 8: Get masked key from private key
+    azihsm_key_prop masked_prop{};
+    masked_prop.id = AZIHSM_KEY_PROP_ID_MASKED_KEY;
+    masked_prop.val = nullptr;
+    masked_prop.len = 0;
+
+    err = azihsm_key_get_prop(priv_key.get(), &masked_prop);
+    ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+    ASSERT_GT(masked_prop.len, 0u);
+
+    std::vector<uint8_t> masked_key(masked_prop.len);
+    masked_prop.val = masked_key.data();
+    err = azihsm_key_get_prop(priv_key.get(), &masked_prop);
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS) << "azihsm_key_get_prop failed";
+
+    // Print the entire masked key
+    std::cout << "Masked key (" << masked_key.size() << " bytes): ";
+    for (size_t i = 0; i < masked_key.size(); ++i)
+    {
+        std::printf("%02x", masked_key[i]);
+    }
+    std::cout << std::endl;
+
+    // Step 10: Write to disk
+    std::string file_path = get_persistence_file_path();
+    bool write_ok = write_persistence_file(file_path, bmk, mobk, masked_key, signature, message);
+    ASSERT_TRUE(write_ok) << "Failed to write persistence file: " << file_path;
+
+    std::cout << "Persisted key data to: " << file_path << std::endl;
+    std::cout << "Curve: P384, Algorithm: ECDSA_SHA384" << std::endl;
+    std::cout << "Masked key length: " << masked_key.size() << " bytes" << std::endl;
+    std::cout << "Signature length: " << signature.size() << " bytes" << std::endl;
+    std::cout << std::endl;
+    std::cout << "To verify, run the restore test:" << std::endl;
+    std::cout << "  ctest -R MANUAL_restore_key_and_verify --verbose" << std::endl;
+
+    // Step 11: Cleanup - close session and partition
+    err = azihsm_sess_close(session);
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS) << "azihsm_sess_close failed";
+
+    err = azihsm_part_close(part_handle);
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS) << "azihsm_part_close failed";
+
+    std::cout << "Session and partition closed successfully" << std::endl;
+}
+
+// Test 2: Restore ECC key from disk and verify signature.
+// DISABLED by default - run manually after Test 1.
+// Explicitly calls azihsm_part_open, azihsm_part_init (with BMK/MOBK), and azihsm_sess_open.
+// To run: ctest -R MANUAL_restore_key_and_verify --verbose
+TEST_F(azihsm_ecc_sign_verify, DISABLED_MANUAL_restore_key_and_verify)
+{
+    // Step 1: Read persistence file
+    std::string file_path = get_persistence_file_path();
+    std::vector<uint8_t> bmk;
+    std::vector<uint8_t> mobk;
+    std::vector<uint8_t> masked_key;
+    std::vector<uint8_t> original_signature;
+    std::string message;
+
+    bool read_ok =
+        read_persistence_file(file_path, bmk, mobk, masked_key, original_signature, message);
+    ASSERT_TRUE(read_ok) << "Failed to read persistence file: " << file_path
+                         << ". Run persist_key_and_signature test first.";
+
+    std::cout << "=== ECC Key Restore Test ===" << std::endl;
+    std::cout << "Read persisted data from: " << file_path << std::endl;
+    std::cout << "BMK length: " << bmk.size() << " bytes" << std::endl;
+    std::cout << "MOBK length: " << mobk.size() << " bytes" << std::endl;
+
+    // Step 2: Get partition path (discover it, not from file)
+    auto path = get_first_partition_path();
+    azihsm_str path_str = { path.data(), static_cast<uint32_t>(path.size()) };
+
+    // Step 3: Open partition
+    azihsm_handle part_handle = 0;
+    auto err = azihsm_part_open(&path_str, &part_handle);
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS) << "azihsm_part_open failed";
+    ASSERT_NE(part_handle, 0u);
+
+    // Step 4: Initialize partition with credentials AND BMK/MOBK
+    azihsm_credentials creds{};
+    std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
+    std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
+
+    azihsm_buffer bmk_buf = { bmk.data(), static_cast<uint32_t>(bmk.size()) };
+    azihsm_buffer mobk_buf = { mobk.data(), static_cast<uint32_t>(mobk.size()) };
+
+    PartInitConfig init_config{};
+    make_part_init_config(part_handle, init_config);
+
+    err = azihsm_part_init(
+        part_handle,
+        &creds,
+        &bmk_buf,
+        nullptr,
+        &init_config.backup_config,
+        &init_config.pota_endorsement
+    );
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS) << "azihsm_part_init with BMK/MOBK failed";
+    std::cout << "azihsm_part_init with BMK/MOBK returned: " << err << std::endl;
+
+    // Step 5: Open session
+    azihsm_api_rev api_rev{ 1, 0 };
+    azihsm_handle session = 0;
+    err = azihsm_sess_open(part_handle, &api_rev, &creds, nullptr, &session);
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS) << "azihsm_sess_open failed";
+    ASSERT_NE(session, 0u);
+
+    std::cout << "Partition opened and session established" << std::endl;
+
+    // Step 6: Unmask the key pair (returns both private and public keys)
+    azihsm_buffer masked_key_buf{};
+    masked_key_buf.ptr = masked_key.data();
+    masked_key_buf.len = static_cast<uint32_t>(masked_key.size());
+
+    // Print the entire masked key
+    std::cout << "Retrieved Masked key (" << masked_key.size() << " bytes): ";
+    for (size_t i = 0; i < masked_key.size(); ++i)
+    {
+        std::printf("%02x", masked_key[i]);
+    }
+    std::cout << std::endl;
+
+    auto_key restored_priv_key;
+    auto_key restored_pub_key;
+    err = azihsm_key_unmask_pair(
+        session,
+        AZIHSM_KEY_KIND_ECC,
+        &masked_key_buf,
+        restored_priv_key.get_ptr(),
+        restored_pub_key.get_ptr()
+    );
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS) << "azihsm_key_unmask_pair failed";
+    ASSERT_NE(restored_priv_key.get(), 0);
+    ASSERT_NE(restored_pub_key.get(), 0);
+
+    std::cout << "Successfully unmasked key pair" << std::endl;
+
+    // Step 7: Verify the original signature using the restored public key
+    azihsm_algo sign_algo{};
+    sign_algo.id = AZIHSM_ALGO_ID_ECDSA_SHA384;
+    sign_algo.params = nullptr;
+    sign_algo.len = 0;
+
+    azihsm_buffer msg_buf{};
+    msg_buf.ptr = const_cast<uint8_t *>(reinterpret_cast<const uint8_t *>(message.data()));
+    msg_buf.len = static_cast<uint32_t>(message.size());
+
+    azihsm_buffer sig_buf{};
+    sig_buf.ptr = original_signature.data();
+    sig_buf.len = static_cast<uint32_t>(original_signature.size());
+
+    err = azihsm_crypt_verify(&sign_algo, restored_pub_key.get(), &msg_buf, &sig_buf);
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS) << "Original signature verification failed";
+    std::cout << "Original signature verified successfully" << std::endl;
+
+    // Step 8: Sign the same message again with restored private key
+    azihsm_buffer new_sig_buf{ nullptr, 0 };
+    err = azihsm_crypt_sign(&sign_algo, restored_priv_key.get(), &msg_buf, &new_sig_buf);
+    ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+
+    std::vector<uint8_t> new_signature(new_sig_buf.len);
+    new_sig_buf.ptr = new_signature.data();
+    err = azihsm_crypt_sign(&sign_algo, restored_priv_key.get(), &msg_buf, &new_sig_buf);
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS) << "azihsm_crypt_sign failed";
+
+    std::cout << "Created new signature (" << new_signature.size() << " bytes) with restored key"
+              << std::endl;
+
+    // Step 9: Verify the new signature
+    err = azihsm_crypt_verify(&sign_algo, restored_pub_key.get(), &msg_buf, &new_sig_buf);
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS) << "New signature verification failed";
+    std::cout << "New signature verified successfully" << std::endl;
+
+    // Step 10: Cleanup - close session and partition
+    err = azihsm_sess_close(session);
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS) << "azihsm_sess_close failed";
+
+    err = azihsm_part_close(part_handle);
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS) << "azihsm_part_close failed";
+
+    std::cout << std::endl;
+    std::cout << "=== All verifications passed! ===" << std::endl;
+    std::cout << "Session and partition closed successfully" << std::endl;
 }

@@ -127,3 +127,15 @@ pub enum HsmOwnerBackupKeySource {
     /// TPM-sealed backup key (retrieved from device and unsealed).
     Tpm = 2,
 }
+
+/// HSM partition owner trust anchor (aka POTA) endorsement source.
+#[repr(u32)]
+#[open_enum]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, IntoBytes, Immutable)]
+pub enum HsmPotaEndorsementSource {
+    /// Caller provided endorsement.
+    Caller = 1,
+
+    /// TPM-generated endorsement.
+    Tpm = 2,
+}

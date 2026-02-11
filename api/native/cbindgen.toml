@@ -83,6 +83,9 @@ item_types = ["constants", "enums", "functions", "structs", "typedefs"]
 "AzihsmPartProp" = "azihsm_part_prop"
 "AzihsmPartPropId" = "azihsm_part_prop_id"
 "AzihsmPartType" = "azihsm_part_type"
+"AzihsmPotaEndorsement" = "azihsm_pota_endorsement"
+"AzihsmPotaEndorsementData" = "azihsm_pota_endorsement_data"
+"AzihsmPotaEndorsementSource" = "azihsm_pota_endorsement_source"
 "AzihsmSessionProp" = "azihsm_session_prop"
 "AzihsmSessionPropId" = "azihsm_session_prop_id"
 "AzihsmStatus" = "azihsm_status"
@@ -94,6 +97,7 @@ item_types = ["constants", "enums", "functions", "structs", "typedefs"]
 "HsmKeyKind" = "azihsm_key_kind"
 "HsmOwnerBackupKeySource" = "azihsm_owner_backup_key_source"
 "HsmPartType" = "azihsm_part_type"
+"HsmPotaEndorsementSource" = "azihsm_pota_endorsement_source"
 
 [defines]
 "target_os = linux" = "__linux__ "

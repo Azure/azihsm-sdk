@@ -74,13 +74,27 @@ set(SOURCE
 )
 add_executable(azihsm_api_cpp_tests ${SOURCE})
 target_include_directories(azihsm_api_cpp_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(
-    azihsm_api_cpp_tests
-    PUBLIC
-        azihsm_api_native
-        GTest::gtest_main
-        scope_guard::scope_guard 
-)
+
+if(UNIX)
+    find_package(OpenSSL REQUIRED)
+    target_link_libraries(
+        azihsm_api_cpp_tests
+        PUBLIC
+            azihsm_api_native
+            GTest::gtest_main
+            scope_guard::scope_guard
+            OpenSSL::Crypto
+    )
+else()
+    target_link_libraries(
+        azihsm_api_cpp_tests
+        PUBLIC
+            azihsm_api_native
+            GTest::gtest_main
+            scope_guard::scope_guard
+            bcrypt
+    )
+endif()
 
 include(GoogleTest)
 gtest_discover_tests(azihsm_api_cpp_tests)
