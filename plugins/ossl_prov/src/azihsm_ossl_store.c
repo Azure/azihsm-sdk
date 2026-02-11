@@ -72,12 +72,38 @@ static void azihsm_uri_info_free(AZIHSM_URI_INFO *info)
         OPENSSL_free(info->file_path);
 }
 
+/*
+ * Delete HSM key handles if they are still owned by the store context.
+ * Handles are zeroed after deletion to prevent double-free.
+ */
+static void store_ctx_delete_key_handles(AZIHSM_STORE_CTX *ctx)
+{
+    if (ctx == NULL)
+    {
+        return;
+    }
+
+    if (ctx->key_handles.pub != 0)
+    {
+        azihsm_key_delete(ctx->key_handles.pub);
+        ctx->key_handles.pub = 0;
+    }
+    if (ctx->key_handles.priv != 0)
+    {
+        azihsm_key_delete(ctx->key_handles.priv);
+        ctx->key_handles.priv = 0;
+    }
+}
+
 static void store_ctx_free(AZIHSM_STORE_CTX *ctx)
 {
     if (ctx == NULL)
     {
         return;
     }
+
+    /* Delete any HSM handles still owned by store (not transferred to keymgmt) */
+    store_ctx_delete_key_handles(ctx);
 
     azihsm_uri_info_free(&ctx->uri_info);
     if (ctx->key_obj != NULL)
@@ -322,6 +348,7 @@ static int load_and_unmask_key(AZIHSM_STORE_CTX *ctx)
 
     if (status != AZIHSM_STATUS_SUCCESS)
     {
+        store_ctx_delete_key_handles(ctx);
         OPENSSL_free(masked_key_data);
         return OSSL_FAILURE;
     }
@@ -499,7 +526,22 @@ static int azihsm_store_load(
     ctx->eof = 1;
 
     // Call OpenSSL's callback with the object description
-    return object_cb(params, object_cbarg);
+    int cb_result = object_cb(params, object_cbarg);
+
+    if (cb_result)
+    {
+        /*
+         * Callback succeeded - keymgmt_load has copied the handles.
+         * Transfer ownership by zeroing our handles to prevent double-delete.
+         * keymgmt_free will delete the handles when the key is released.
+         */
+        ctx->key_handles.pub = 0;
+        ctx->key_handles.priv = 0;
+    }
+    /* If callback failed, handles remain owned by store and will be
+     * deleted in store_ctx_free */
+
+    return cb_result;
 }
 
 static int azihsm_store_eof(void *loaderctx)
