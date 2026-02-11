@@ -38,7 +38,7 @@ impl Xtask for NextestReport {
                     .parent()
                     .and_then(|p| p.file_name())
                     .and_then(|n| n.to_str())
-                    .map(|s| s.to_string())
+                    .map(String::from)
                     .unwrap_or_else(|| {
                         let path_str = junit_path.to_string_lossy();
                         log::warn!("Could not extract profile name from path: {}", path_str);
@@ -58,11 +58,12 @@ impl Xtask for NextestReport {
         }
 
         // Calculate total tests, failures, and skipped
-        let (total_tests, total_failures, total_skipped) = profile_data
-            .iter()
-            .fold((0, 0, 0), |(tests, failures, skipped), (_, t, f, s)| {
+        let (total_tests, total_failures, total_skipped) = profile_data.iter().fold(
+            (0, 0, 0),
+            |(tests, failures, skipped), (_profile, t, f, s)| {
                 (tests + t, failures + f, skipped + s)
-            });
+            },
+        );
         test_suites_total.tests = total_tests;
         test_suites_total.failures = total_failures;
         test_suites_total.skipped = total_skipped;
