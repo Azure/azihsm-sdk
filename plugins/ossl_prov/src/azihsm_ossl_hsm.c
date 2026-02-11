@@ -9,10 +9,10 @@
 #include <openssl/core_names.h>
 #include <openssl/crypto.h>
 #include <openssl/ecdsa.h>
-#include <openssl/evp.h>
-#include <openssl/x509.h>
 #include <openssl/err.h>
+#include <openssl/evp.h>
 #include <openssl/proverr.h>
+#include <openssl/x509.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -766,7 +766,7 @@ azihsm_status azihsm_open_device_and_session(
     struct azihsm_buffer muk_buf = { NULL, 0 };
     struct azihsm_buffer obk_buf = { NULL, 0 };
     struct azihsm_buffer retrieved_bmk = { NULL, 0 };
-    struct azihsm_buffer retrieved_mobk = { NULL, 0 };
+
     bool default_obk = false;
     bool muk_was_loaded = false;
 

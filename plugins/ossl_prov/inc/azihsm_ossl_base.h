@@ -62,7 +62,7 @@ typedef struct
         CRYPTO_RWLOCK *lock;
         azihsm_handle pub;
         azihsm_handle priv;
-    } unwrapping_key; /* Cached MUK handles (thread-safe) */
+    } unwrapping_key; /* Cached UK handles (thread-safe) */
 } AZIHSM_OSSL_PROV_CTX;
 
 static const OSSL_PARAM azihsm_ossl_param_types[] = {
