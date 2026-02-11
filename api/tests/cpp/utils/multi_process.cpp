@@ -66,9 +66,8 @@ static std::string self_exe_path()
     return std::filesystem::read_symlink("/proc/self/exe").string();
 #endif
 }
-} // namespace
 
-void cross_process_test_params::write_to_file(const std::string &file_path, const cross_process_test_params & params) {
+static void write_to_file(const std::string &file_path, const cross_process_test_params & params) {
     std::ofstream out(file_path, std::ios::binary);
     if (!out.is_open()) {
         throw std::runtime_error("Failed to open file for writing: " + file_path);
@@ -93,7 +92,7 @@ void cross_process_test_params::write_to_file(const std::string &file_path, cons
     out.close();
 }
 
-cross_process_test_params cross_process_test_params::read_from_file(const std::string &file_path) {
+static cross_process_test_params read_from_file(const std::string &file_path) {
     std::ifstream in(file_path, std::ios::binary);
     if (!in.is_open()) {
         throw std::runtime_error("Failed to open file for reading: " + file_path);
@@ -120,6 +119,9 @@ cross_process_test_params cross_process_test_params::read_from_file(const std::s
         test_name, path_bytes, bmk, obk, seed, message, signature_or_ciphertext, masked_key, iv
     );
 }
+} // namespace
+
+
 
 // Invoke the specified test in a child process, passing necessary
 // parameters via a temporary file.
@@ -128,7 +130,7 @@ cross_process_test_params cross_process_test_params::read_from_file(const std::s
 int run_child_test(const cross_process_test_params & params) {
     // Write parameters to a temporary file that the child process can read
     auto tmp_file = std::filesystem::temp_directory_path() / (kTmpPrefix + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".bin");
-    cross_process_test_params::write_to_file(tmp_file.string(), params);
+    write_to_file(tmp_file.string(), params);
 
     // Set environment variable to pass the file path to the child process
 #if defined(_WIN32)
@@ -177,5 +179,5 @@ cross_process_test_params get_cross_process_test_params() {
     if (!tmp_file) {
         throw std::runtime_error("Environment variable " + std::string(kHelperEnv) + " not set");
     }
-    return cross_process_test_params::read_from_file(tmp_file);
+    return read_from_file(tmp_file);
 }

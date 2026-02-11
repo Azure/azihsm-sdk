@@ -54,10 +54,7 @@ struct cross_process_test_params
         iv(iv)
     {}
 
-    cross_process_test_params() = delete;
-
-    static void write_to_file(const std::string &file_path, const cross_process_test_params & params);
-    static cross_process_test_params read_from_file(const std::string &file_path);
+    cross_process_test_params() = default;
 };
 
 // Invoke the specified test in a child process, passing necessary

@@ -60,61 +60,157 @@ static std::vector<uint8_t> get_key_prop_bytes(azihsm_handle key, azihsm_key_pro
 }
 } // namespace
 
-class azihsm_multi_process : public ::testing::Test
+class azihsm_multi_process_parent : public ::testing::Test
 {
   protected:
     PartitionListHandle part_list_ = PartitionListHandle{};
-};
+    azihsm_handle part_handle = 0;
+    azihsm_handle sess_handle = 0;
+    azihsm_handle symmetric_key = 0;
+    azihsm_str path_str = { nullptr, 0 };
+    std::array<uint8_t, 48> obk{};
+    std::vector<uint8_t> bmk;
+    std::vector<uint8_t> seed;
 
-TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_parent)
-{
-    part_list_.for_each_part([](std::vector<azihsm_char> &path) {
-        azihsm_str path_str = { path.data(), static_cast<uint32_t>(path.size()) };
-        azihsm_handle part_handle = 0;
+
+    void SetUp() override
+    {}
+
+    void TearDown() override
+    {
+        // Clean up handles if they were opened
+        if (sess_handle != 0)
+        {
+            azihsm_sess_close(sess_handle);
+            sess_handle = 0;
+        }
+        if (part_handle != 0)
+        {
+            azihsm_part_close(part_handle);
+            part_handle = 0;
+        }
+        if (symmetric_key != 0)
+        {
+            azihsm_key_delete(symmetric_key);
+            symmetric_key = 0;
+        }
+    }
+
+    void parent_common_setup(std::vector<azihsm_char> &path) {
+        path_str = { path.data(), static_cast<uint32_t>(path.size()) };
+        part_handle = 0;
         auto err = azihsm_part_open(&path_str, &part_handle);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        auto part_guard = scope_guard::make_scope_exit([&] {
-            ASSERT_EQ(azihsm_part_close(part_handle), AZIHSM_STATUS_SUCCESS);
-        });
 
         azihsm_api_rev api_rev{ 1, 0 };
         azihsm_credentials creds{};
         std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
         std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
 
-        PartInitConfig init_config{};
-        make_part_init_config(part_handle, init_config);
-        err = azihsm_part_init(
-            part_handle,
-            &creds,
-            nullptr,
-            nullptr,
-            &init_config.backup_config,
-            &init_config.pota_endorsement
-        );
+        std::random_device rd;
+        for (auto &b : obk)
+        {
+            b = static_cast<uint8_t>(rd());
+        }
+        azihsm_buffer obk_buf = { obk.data(), static_cast<uint32_t>(obk.size()) };
+        azihsm_owner_backup_key_config backup_config{};
+        backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER;
+        backup_config.owner_backup_key = &obk_buf;
+
+        err = azihsm_part_init(part_handle, &creds, nullptr, nullptr, &backup_config);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
-        auto bmk = get_part_prop_bytes(part_handle, AZIHSM_PART_PROP_ID_BACKUP_MASKING_KEY);
+        bmk = get_part_prop_bytes(part_handle, AZIHSM_PART_PROP_ID_BACKUP_MASKING_KEY);
 
-        std::random_device rd;
-        std::array<uint8_t, 48> seed{};
+        seed.resize(48);
         for (auto &b : seed)
         {
             b = static_cast<uint8_t>(rd());
         }
         azihsm_buffer seed_buf = { seed.data(), static_cast<uint32_t>(seed.size()) };
 
-        azihsm_handle sess_handle = 0;
+        sess_handle = 0;
+        err = azihsm_sess_open(part_handle, &api_rev, &creds, &seed_buf, &sess_handle);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+    }
+};
+
+class azihsm_multi_process_child : public ::testing::Test
+{
+  protected:
+    PartitionListHandle part_list_ = PartitionListHandle{};
+    cross_process_test_params test_params;
+    azihsm_handle part_handle = 0;
+    azihsm_handle sess_handle = 0;
+    azihsm_str path_str = { nullptr, 0 };
+
+    void SetUp() override
+    {}
+
+    void TearDown() override
+    {
+        // Clean up handles if they were opened
+        if (sess_handle != 0)
+        {
+            azihsm_sess_close(sess_handle);
+            sess_handle = 0;
+        }
+        if (part_handle != 0)
+        {
+            azihsm_part_close(part_handle);
+            part_handle = 0;
+        }
+    }
+
+    void child_common_setup() {
+        test_params = get_cross_process_test_params();
+
+        ASSERT_EQ(test_params.path_bytes.size() % sizeof(azihsm_char), 0u);
+        std::vector<azihsm_char> path_chars(test_params.path_bytes.size() / sizeof(azihsm_char));
+        std::memcpy(path_chars.data(), test_params.path_bytes.data(), test_params.path_bytes.size());
+
+        path_str = { path_chars.data(), static_cast<uint32_t>(path_chars.size()) };
+
+        part_handle = 0;
+        auto err = azihsm_part_open(&path_str, &part_handle);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        azihsm_credentials creds{};
+        std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
+        std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
+        azihsm_api_rev api_rev{ 1, 0 };
+
+        auto reset_err = azihsm_part_reset(part_handle);
+        ASSERT_EQ(reset_err, AZIHSM_STATUS_SUCCESS);
+
+        azihsm_buffer bmk_buf = { test_params.bmk.data(), static_cast<uint32_t>(test_params.bmk.size()) };
+        azihsm_buffer obk_buf = { test_params.obk.data(), static_cast<uint32_t>(test_params.obk.size()) };
+
+        azihsm_owner_backup_key_config backup_config{};
+        backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER;
+        backup_config.owner_backup_key = &obk_buf;
+        auto init_err = azihsm_part_init(part_handle, &creds, &bmk_buf, nullptr, &backup_config);
+        ASSERT_EQ(init_err, AZIHSM_STATUS_SUCCESS);
+
+        azihsm_buffer seed_buf = { test_params.seed.data(), static_cast<uint32_t>(test_params.seed.size()) };
+
+        sess_handle = 0;
         err = azihsm_sess_open(part_handle, &api_rev, &creds, &seed_buf, &sess_handle);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
-        auto sess_guard = scope_guard::make_scope_exit([&sess_handle] {
-            ASSERT_EQ(azihsm_sess_close(sess_handle), AZIHSM_STATUS_SUCCESS);
-        });
+        auto bmk_actual = get_part_prop_bytes(part_handle, AZIHSM_PART_PROP_ID_BACKUP_MASKING_KEY);
+        ASSERT_EQ(bmk_actual, test_params.bmk);
+    }
+};
+
+TEST_F(azihsm_multi_process_parent, ecc_sign_verify_cross_process)
+{
+    part_list_.for_each_part([this](std::vector<azihsm_char> &path) {
+        parent_common_setup(path);
 
         auto_key priv_key;
         auto_key pub_key;
-        err = generate_ecc_keypair(
+        auto err = generate_ecc_keypair(
             sess_handle,
             AZIHSM_ECC_CURVE_P256,
             false,
@@ -144,7 +240,7 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_parent)
             reinterpret_cast<uint8_t *>(path.data()) + (path.size() * sizeof(azihsm_char))
         );
         cross_process_test_params params(
-            "azihsm_multi_process.ecc_sign_verify_cross_process_child",
+            "azihsm_multi_process_child.ecc_sign_verify_cross_process",
             path_bytes,
             bmk,
             std::vector<uint8_t>(obk.begin(), obk.end()),
@@ -159,59 +255,14 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_parent)
     });
 }
 
-TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_child)
+TEST_F(azihsm_multi_process_child, ecc_sign_verify_cross_process)
 {
-    auto test_params = get_cross_process_test_params();
-
-    ASSERT_EQ(test_params.path_bytes.size() % sizeof(azihsm_char), 0u);
-    std::vector<azihsm_char> path_chars(test_params.path_bytes.size() / sizeof(azihsm_char));
-    std::memcpy(path_chars.data(), test_params.path_bytes.data(), test_params.path_bytes.size());
-
-    azihsm_str path_str = { path_chars.data(), static_cast<uint32_t>(path_chars.size()) };
-
-    azihsm_handle part_handle = 0;
-    auto err = azihsm_part_open(&path_str, &part_handle);
-    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-
-    auto part_guard = scope_guard::make_scope_exit([&] {
-        ASSERT_EQ(azihsm_part_close(part_handle), AZIHSM_STATUS_SUCCESS);
-    });
-
-    azihsm_credentials creds{};
-    std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
-    std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
-    azihsm_api_rev api_rev{ 1, 0 };
-
-    // Reset partition before initialization to clear any previous state
-    auto reset_err = azihsm_part_reset(part_handle);
-    ASSERT_EQ(reset_err, AZIHSM_STATUS_SUCCESS);
-
-    azihsm_buffer bmk_buf = { test_params.bmk.data(), static_cast<uint32_t>(test_params.bmk.size()) };
-    azihsm_buffer obk_buf = { test_params.obk.data(), static_cast<uint32_t>(test_params.obk.size()) };
-
-    azihsm_owner_backup_key_config backup_config{};
-    backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER;
-    backup_config.owner_backup_key = &obk_buf;
-    auto init_err = azihsm_part_init(part_handle, &creds, &bmk_buf, nullptr, &backup_config);
-    ASSERT_EQ(init_err, AZIHSM_STATUS_SUCCESS);
-
-    azihsm_buffer seed_buf = { test_params.seed.data(), static_cast<uint32_t>(test_params.seed.size()) };
-
-    azihsm_handle sess_handle = 0;
-    err = azihsm_sess_open(part_handle, &api_rev, &creds, &seed_buf, &sess_handle);
-    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-
-    auto sess_guard = scope_guard::make_scope_exit([&] {
-        ASSERT_EQ(azihsm_sess_close(sess_handle), AZIHSM_STATUS_SUCCESS);
-    });
-
-    auto bmk_actual = get_part_prop_bytes(part_handle, AZIHSM_PART_PROP_ID_BACKUP_MASKING_KEY);
-    ASSERT_EQ(bmk_actual, test_params.bmk);
+    child_common_setup();
 
     azihsm_buffer masked_buf = { test_params.masked_key.data(), static_cast<uint32_t>(test_params.masked_key.size()) };
     auto_key priv_key;
     auto_key pub_key;
-    err = azihsm_key_unmask_pair(
+    auto err = azihsm_key_unmask_pair(
         sess_handle,
         AZIHSM_KEY_KIND_ECC,
         &masked_buf,
@@ -223,58 +274,14 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_child)
     azihsm_algo sign_algo = { AZIHSM_ALGO_ID_ECDSA_SHA256, nullptr, 0 };
     azihsm_buffer msg_buf = { test_params.message.data(), static_cast<uint32_t>(test_params.message.size()) };
     azihsm_buffer sig_buf = { test_params.signature_or_ciphertext.data(), static_cast<uint32_t>(test_params.signature_or_ciphertext.size()) };
-
     err = azihsm_crypt_verify(&sign_algo, pub_key.get(), &msg_buf, &sig_buf);
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 }
 
-TEST_F(azihsm_multi_process, aes_cbc_sign_verify_cross_process_parent)
+TEST_F(azihsm_multi_process_parent, aes_cbc_sign_verify_cross_process)
 {
-    part_list_.for_each_part([](std::vector<azihsm_char> &path) {
-        azihsm_str path_str = { path.data(), static_cast<uint32_t>(path.size()) };
-        azihsm_handle part_handle = 0;
-        auto err = azihsm_part_open(&path_str, &part_handle);
-        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        auto part_guard = scope_guard::make_scope_exit([&] {
-            ASSERT_EQ(azihsm_part_close(part_handle), AZIHSM_STATUS_SUCCESS);
-        });
-
-        azihsm_api_rev api_rev{ 1, 0 };
-        azihsm_credentials creds{};
-        std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
-        std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
-
-        // User-provided owner backup key (OBK)
-        std::array<uint8_t, 48> obk{};
-        std::random_device rd;
-        for (auto &b : obk)
-        {
-            b = static_cast<uint8_t>(rd());
-        }
-        azihsm_buffer obk_buf = { obk.data(), static_cast<uint32_t>(obk.size()) };
-        azihsm_owner_backup_key_config backup_config{};
-        backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER;
-        backup_config.owner_backup_key = &obk_buf;
-
-        err = azihsm_part_init(part_handle, &creds, nullptr, nullptr, &backup_config);
-        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-
-        auto bmk = get_part_prop_bytes(part_handle, AZIHSM_PART_PROP_ID_BACKUP_MASKING_KEY);
-
-        std::array<uint8_t, 48> seed{};
-        for (auto &b : seed)
-        {
-            b = static_cast<uint8_t>(rd());
-        }
-        azihsm_buffer seed_buf = { seed.data(), static_cast<uint32_t>(seed.size()) };
-
-        azihsm_handle sess_handle = 0;
-        err = azihsm_sess_open(part_handle, &api_rev, &creds, &seed_buf, &sess_handle);
-        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-
-        auto sess_guard = scope_guard::make_scope_exit([&sess_handle] {
-            ASSERT_EQ(azihsm_sess_close(sess_handle), AZIHSM_STATUS_SUCCESS);
-        });
+    part_list_.for_each_part([this](std::vector<azihsm_char> &path) {
+        parent_common_setup(path);
 
         // Generate AES-128 key
         azihsm_algo keygen_algo{};
@@ -302,15 +309,10 @@ TEST_F(azihsm_multi_process, aes_cbc_sign_verify_cross_process_parent)
             .props = props_vec.data(),
             .count = static_cast<uint32_t>(props_vec.size())
         };
-        azihsm_handle symmetric_key = 0;
-        err = azihsm_key_gen(sess_handle, &keygen_algo, &prop_list, &symmetric_key);
+        symmetric_key = 0;
+        auto err = azihsm_key_gen(sess_handle, &keygen_algo, &prop_list, &symmetric_key);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_NE(symmetric_key, 0);
-
-        auto cleanup_symmetric = scope_guard::make_scope_exit([symmetric_key] {
-            azihsm_key_delete(symmetric_key);
-        });
-
         auto masked_key = get_key_prop_bytes(symmetric_key, AZIHSM_KEY_PROP_ID_MASKED_KEY);
 
         // Message must be multiple of AES block size (16 bytes)
@@ -318,6 +320,7 @@ TEST_F(azihsm_multi_process, aes_cbc_sign_verify_cross_process_parent)
         azihsm_buffer msg_buf = { message.data(), static_cast<uint32_t>(message.size()) };
 
         // Generate IV for AES-CBC
+        std::random_device rd;
         uint8_t iv[16] = { 0 };
         for (size_t i = 0; i < sizeof(iv); ++i)
         {
@@ -346,7 +349,7 @@ TEST_F(azihsm_multi_process, aes_cbc_sign_verify_cross_process_parent)
             reinterpret_cast<uint8_t *>(path.data()) + (path.size() * sizeof(azihsm_char))
         );
         cross_process_test_params params(
-            "azihsm_multi_process.aes_cbc_sign_verify_cross_process_child",
+            "azihsm_multi_process_child.aes_cbc_sign_verify_cross_process",
             path_bytes,
             bmk,
             std::vector<uint8_t>(obk.begin(), obk.end()),
@@ -362,59 +365,14 @@ TEST_F(azihsm_multi_process, aes_cbc_sign_verify_cross_process_parent)
     });
 }
 
-TEST_F(azihsm_multi_process, aes_cbc_sign_verify_cross_process_child)
+TEST_F(azihsm_multi_process_child, aes_cbc_sign_verify_cross_process)
 {
-    auto test_params = get_cross_process_test_params();
-
-    ASSERT_EQ(test_params.path_bytes.size() % sizeof(azihsm_char), 0u);
-    std::vector<azihsm_char> path_chars(test_params.path_bytes.size() / sizeof(azihsm_char));
-    std::memcpy(path_chars.data(), test_params.path_bytes.data(), test_params.path_bytes.size());
-
-    azihsm_str path_str = { path_chars.data(), static_cast<uint32_t>(path_chars.size()) };
-
-    azihsm_handle part_handle = 0;
-    auto err = azihsm_part_open(&path_str, &part_handle);
-    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-
-    auto part_guard = scope_guard::make_scope_exit([&] {
-        ASSERT_EQ(azihsm_part_close(part_handle), AZIHSM_STATUS_SUCCESS);
-    });
-
-    azihsm_credentials creds{};
-    std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
-    std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
-    azihsm_api_rev api_rev{ 1, 0 };
-
-    // Reset partition before initialization to clear any previous state
-    auto reset_err = azihsm_part_reset(part_handle);
-    ASSERT_EQ(reset_err, AZIHSM_STATUS_SUCCESS);
-
-    azihsm_buffer bmk_buf = { test_params.bmk.data(), static_cast<uint32_t>(test_params.bmk.size()) };
-    azihsm_buffer obk_buf = { test_params.obk.data(), static_cast<uint32_t>(test_params.obk.size()) };
-
-    azihsm_owner_backup_key_config backup_config{};
-    backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER;
-    backup_config.owner_backup_key = &obk_buf;
-    auto init_err = azihsm_part_init(part_handle, &creds, &bmk_buf, nullptr, &backup_config);
-    ASSERT_EQ(init_err, AZIHSM_STATUS_SUCCESS);
-
-    azihsm_buffer seed_buf = { test_params.seed.data(), static_cast<uint32_t>(test_params.seed.size()) };
-
-    azihsm_handle sess_handle = 0;
-    err = azihsm_sess_open(part_handle, &api_rev, &creds, &seed_buf, &sess_handle);
-    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-
-    auto sess_guard = scope_guard::make_scope_exit([&] {
-        ASSERT_EQ(azihsm_sess_close(sess_handle), AZIHSM_STATUS_SUCCESS);
-    });
-
-    auto bmk_actual = get_part_prop_bytes(part_handle, AZIHSM_PART_PROP_ID_BACKUP_MASKING_KEY);
-    ASSERT_EQ(bmk_actual, test_params.bmk);
+    child_common_setup();
 
     // Unmask the AES key (symmetric key, no key pair)
     azihsm_buffer masked_buf = { test_params.masked_key.data(), static_cast<uint32_t>(test_params.masked_key.size()) };
     auto_key aes_key;
-    err = azihsm_key_unmask(sess_handle, AZIHSM_KEY_KIND_AES, &masked_buf, aes_key.get_ptr());
+    auto err = azihsm_key_unmask(sess_handle, AZIHSM_KEY_KIND_AES, &masked_buf, aes_key.get_ptr());
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
     // Set up CBC params with the IV for decryption
