@@ -2,8 +2,8 @@
 // Licensed under the MIT License.
 
 use std::fs;
-use std::path::PathBuf;
 
+use glob::glob;
 use junit_parser::TestSuites;
 
 use crate::Xtask;
@@ -15,67 +15,106 @@ pub struct NextestReport {
     // Add command-line arguments here as needed
 }
 
+/// Derive the likely cargo nextest command from a profile name
+fn profile_to_command(profile_name: &str) -> String {
+    // Map known profile names to their corresponding commands
+    match profile_name {
+        "ci-mock" => "cargo nextest run --no-fail-fast --features mock".to_string(),
+        "ci-mock-table-4" => {
+            "cargo nextest run --no-fail-fast --features mock,table-4 --package azihsm_ddi"
+                .to_string()
+        }
+        "ci-mock-table-64" => {
+            "cargo nextest run --no-fail-fast --features mock,table-64 --package azihsm_ddi"
+                .to_string()
+        }
+        // For unknown profiles, construct a generic command showing the profile
+        _ => format!("cargo nextest run --profile {}", profile_name),
+    }
+}
+
 impl Xtask for NextestReport {
     fn run(self, _ctx: XtaskCtx) -> anyhow::Result<()> {
         log::trace!("running nextest-report");
 
-        let nextest_profiles = ["ci-mock", "ci-mock-table-4", "ci-mock-table-64"];
-        let nextest_cmds = [
-            "cargo nextest run --no-fail-fast --features mock",
-            "cargo nextest run --no-fail-fast --features mock,table-4 --package azihsm_ddi",
-            "cargo nextest run --no-fail-fast --features mock,table-64 --package azihsm_ddi",
-        ];
-
         let mut test_suites_total = TestSuites::default();
 
-        let mut vec_tests = Vec::new();
-        let mut vec_failures = Vec::new();
-        let mut vec_skipped = Vec::new();
+        let mut profile_data = Vec::new();
 
-        for profile in &nextest_profiles {
-            let junit_path = PathBuf::from(format!("./target/nextest/{}/junit.xml", profile));
+        // Discover all junit.xml files under target/nextest/*/junit.xml
+        for entry in glob("./target/nextest/*/junit.xml")? {
+            let junit_path = entry?;
 
-            // Read the JUnit XML file (ignore if it doesn't exist)
+            // Read the JUnit XML file
             if let Ok(xml_content) = fs::read_to_string(&junit_path) {
                 // Parse the JUnit XML
                 let test_suites = junit_parser::from_reader(xml_content.as_bytes())?;
 
+                // Extract profile name from the path
+                // Path format: ./target/nextest/{profile}/junit.xml
+                let profile_name = junit_path
+                    .parent()
+                    .and_then(|p| p.file_name())
+                    .and_then(|n| n.to_str())
+                    .map(String::from)
+                    .unwrap_or_else(|| {
+                        let path_str = junit_path.to_string_lossy();
+                        log::warn!("Could not extract profile name from path: {}", path_str);
+                        format!("unknown-{}", path_str)
+                    });
+
+                // Derive the command for this profile
+                let command = profile_to_command(&profile_name);
+
                 // Add data from JUnit XML to total data structure
                 test_suites_total.suites.extend(test_suites.suites);
 
-                vec_tests.push(test_suites.tests);
-                vec_failures.push(test_suites.failures);
-                vec_skipped.push(test_suites.skipped);
+                profile_data.push((
+                    command,
+                    test_suites.tests,
+                    test_suites.failures,
+                    test_suites.skipped,
+                ));
             }
         }
 
         // Calculate total tests, failures, and skipped
-        test_suites_total.tests = vec_tests.iter().sum();
-        test_suites_total.failures = vec_failures.iter().sum();
-        test_suites_total.skipped = vec_skipped.iter().sum();
+        let (total_tests, total_failures, total_skipped) = profile_data.iter().fold(
+            (0, 0, 0),
+            |(tests, failures, skipped), (_command, t, f, s)| {
+                (tests + t, failures + f, skipped + s)
+            },
+        );
+        test_suites_total.tests = total_tests;
+        test_suites_total.failures = total_failures;
+        test_suites_total.skipped = total_skipped;
 
         // Generate markdown report
         let mut markdown = String::new();
         markdown.push_str("# Test Results\n\n");
+
+        // Helper closure to format command entries in the report
+        let format_command_entry = |cmd: &str, value: u64| format!("  - {}\n    - {}\n", cmd, value);
+
         markdown.push_str(&format!("- **Total Tests**: {}\n", test_suites_total.tests));
-        for (i, val) in vec_tests.iter().enumerate() {
-            markdown.push_str(&format!("  - {}\n    - {}\n", nextest_cmds[i], val));
+        for (command, tests, _, _) in &profile_data {
+            markdown.push_str(&format_command_entry(command, *tests));
         }
 
         markdown.push_str(&format!(
             "- **Total Failures**: {}\n",
             test_suites_total.failures
         ));
-        for (i, val) in vec_failures.iter().enumerate() {
-            markdown.push_str(&format!("  - {}\n    - {}\n", nextest_cmds[i], val));
+        for (command, _, failures, _) in &profile_data {
+            markdown.push_str(&format_command_entry(command, *failures));
         }
 
         markdown.push_str(&format!(
             "- **Total Skipped**: {}\n",
             test_suites_total.skipped
         ));
-        for (i, val) in vec_skipped.iter().enumerate() {
-            markdown.push_str(&format!("  - {}\n    - {}\n", nextest_cmds[i], val));
+        for (command, _, _, skipped) in &profile_data {
+            markdown.push_str(&format_command_entry(command, *skipped));
         }
 
         markdown.push('\n');
