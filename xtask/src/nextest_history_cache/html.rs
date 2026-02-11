@@ -98,7 +98,10 @@ mod tests {
         let result = format_records(&records).unwrap();
 
         // Verify that dangerous HTML is escaped in title
-        assert!(!result.contains("<script>"), "Script tags should be escaped");
+        assert!(
+            !result.contains("<script>"),
+            "Script tags should be escaped"
+        );
         assert!(
             result.contains("&lt;script&gt;"),
             "Should contain escaped script tags"
@@ -114,7 +117,10 @@ mod tests {
 
         // Verify other HTML tags are escaped
         assert!(!result.contains("<tags>"), "HTML tags should be escaped");
-        assert!(result.contains("&lt;tags&gt;"), "Should contain escaped tags");
+        assert!(
+            result.contains("&lt;tags&gt;"),
+            "Should contain escaped tags"
+        );
 
         // Verify ampersands are escaped
         assert!(result.contains("&amp;"), "Ampersands should be escaped");
