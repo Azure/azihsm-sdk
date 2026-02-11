@@ -71,6 +71,13 @@ class SessionHandle
         return handle_;
     }
 
+    azihsm_handle release() noexcept
+    {
+        azihsm_handle temp = handle_;
+        handle_ = 0;
+        return temp;
+    }
+
     explicit operator bool() const noexcept
     {
         return handle_ != 0;

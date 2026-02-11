@@ -62,7 +62,7 @@ impl TryFrom<AzihsmHandle> for HsmAesGcmKey {
 }
 
 /// AES GCM encryption context
-struct AesGcmEncryptContext {
+pub(crate) struct AesGcmEncryptContext {
     context: HsmAesGcmEncryptContext,
     params: *mut AzihsmAlgoAesGcmParams,
 }
@@ -108,7 +108,7 @@ impl AesGcmEncryptContext {
 }
 
 /// AES GCM decryption context
-struct AesGcmDecryptContext {
+pub(crate) struct AesGcmDecryptContext {
     context: HsmAesGcmDecryptContext,
 }
 

@@ -192,6 +192,12 @@ pub unsafe extern "C" fn azihsm_free_ctx_handle(handle: AzihsmHandle) -> AzihsmS
     abi_boundary(|| {
         let handle_type = HANDLE_TABLE.get_handle_type(handle)?;
         match handle_type {
+            HandleType::AesGcmEncryptCtx => {
+                let _: Box<AesGcmEncryptContext> = HANDLE_TABLE.free_handle(handle, handle_type)?;
+            }
+            HandleType::AesGcmDecryptCtx => {
+                let _: Box<AesGcmDecryptContext> = HANDLE_TABLE.free_handle(handle, handle_type)?;
+            }
             HandleType::AesCbcEncryptCtx => {
                 let _: Box<AesCbcEncryptContext> = HANDLE_TABLE.free_handle(handle, handle_type)?;
             }
