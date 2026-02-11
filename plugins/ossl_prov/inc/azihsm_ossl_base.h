@@ -40,13 +40,13 @@ typedef struct
 /* Default file paths for partition keys */
 #define AZIHSM_DEFAULT_BMK_PATH "/var/lib/azihsm/bmk.bin"
 #define AZIHSM_DEFAULT_MUK_PATH "/var/lib/azihsm/muk.bin"
-#define AZIHSM_DEFAULT_MOBK_PATH "/var/lib/azihsm/mobk.bin"
+#define AZIHSM_DEFAULT_OBK_PATH "/var/lib/azihsm/obk.bin"
 
 typedef struct
 {
     char bmk_path[4096];
     char muk_path[4096];
-    char mobk_path[4096];
+    char obk_path[4096];
 } AZIHSM_CONFIG;
 
 typedef struct

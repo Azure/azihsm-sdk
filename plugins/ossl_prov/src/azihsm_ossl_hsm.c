@@ -207,14 +207,12 @@ static azihsm_status azihsm_get_device_handle(azihsm_handle *device)
     uint32_t device_count = 0;
 
     status = azihsm_part_get_list(&device_list);
-
     if (status != 0)
     {
         return status;
     }
 
     status = azihsm_part_get_count(device_list, &device_count);
-
     if (status != AZIHSM_STATUS_SUCCESS)
     {
         azihsm_part_free_list(device_list);
@@ -276,9 +274,9 @@ azihsm_status azihsm_open_device_and_session(
 
     struct azihsm_buffer bmk_buf = { NULL, 0 };
     struct azihsm_buffer muk_buf = { NULL, 0 };
-    struct azihsm_buffer mobk_buf = { NULL, 0 };
+    struct azihsm_buffer obk_buf = { NULL, 0 };
     struct azihsm_buffer retrieved_bmk = { NULL, 0 };
-    struct azihsm_buffer retrieved_mobk = { NULL, 0 };
+    bool default_obk = false;
 
     struct azihsm_api_rev api_rev = { .major = 1, .minor = 0 };
 
@@ -318,12 +316,24 @@ azihsm_status azihsm_open_device_and_session(
         return status;
     }
 
-    status = load_file_to_buffer(config->mobk_path, &mobk_buf);
+    // Load custom OBK from file if provided, otherwise use hardcoded default.
+    // Note: the OBK is the raw owner backup key for init_bk3, NOT the masked
+    // owner backup key (MOBK) returned by the HSM.
+    status = load_file_to_buffer(config->obk_path, &obk_buf);
     if (status != AZIHSM_STATUS_SUCCESS)
     {
         free_buffer(&bmk_buf);
         free_buffer(&muk_buf);
         return status;
+    }
+
+    // Use static default when no OBK file was provided.
+    // default_obk tracks whether obk_buf points to static memory (must not be freed).
+    if (obk_buf.ptr == NULL)
+    {
+        obk_buf.ptr = (uint8_t *)DEFAULT_OBK;
+        obk_buf.len = sizeof(DEFAULT_OBK);
+        default_obk = true;
     }
 
     status = azihsm_get_device_handle(device);
@@ -331,28 +341,20 @@ azihsm_status azihsm_open_device_and_session(
     {
         free_buffer(&bmk_buf);
         free_buffer(&muk_buf);
-        free_buffer(&mobk_buf);
+        if (!default_obk)
+        {
+            free_buffer(&obk_buf);
+        }
         return status;
     }
 
     // Configure OBK and POTA
     struct azihsm_owner_backup_key_config backup_config = { 0 };
-    struct azihsm_buffer obk_buf = { 0 };
     struct azihsm_pota_endorsement pota_endorsement = { 0 };
     struct azihsm_buffer pota_sig_buf = { 0 };
     struct azihsm_buffer pota_pubkey_buf = { 0 };
     struct azihsm_pota_endorsement_data pota_data = { 0 };
 
-    // Use loaded OBK file if available, otherwise hardcoded default
-    if (mobk_buf.ptr != NULL)
-    {
-        obk_buf = mobk_buf;
-    }
-    else
-    {
-        obk_buf.ptr = (uint8_t *)DEFAULT_OBK;
-        obk_buf.len = sizeof(DEFAULT_OBK);
-    }
     backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER;
     backup_config.owner_backup_key = &obk_buf;
 
@@ -380,7 +382,10 @@ azihsm_status azihsm_open_device_and_session(
     // Input buffers no longer needed after part_init
     free_buffer(&bmk_buf);
     free_buffer(&muk_buf);
-    free_buffer(&mobk_buf);
+    if (!default_obk)
+    {
+        free_buffer(&obk_buf);
+    }
 
     if (status != AZIHSM_STATUS_SUCCESS)
     {
@@ -401,21 +406,6 @@ azihsm_status azihsm_open_device_and_session(
         }
     }
     free_buffer(&retrieved_bmk);
-
-    // Retrieve and persist MOBK property
-    status =
-        get_part_property(*device, AZIHSM_PART_PROP_ID_MASKED_OWNER_BACKUP_KEY, &retrieved_mobk);
-    if (status == AZIHSM_STATUS_SUCCESS && retrieved_mobk.ptr != NULL)
-    {
-        status = write_buffer_to_file(config->mobk_path, &retrieved_mobk);
-        if (status != AZIHSM_STATUS_SUCCESS)
-        {
-            free_buffer(&retrieved_mobk);
-            azihsm_part_close(*device);
-            return status;
-        }
-    }
-    free_buffer(&retrieved_mobk);
 
     // Open session (seed=NULL lets the library generate random bytes internally)
     status = azihsm_sess_open(*device, &api_rev, &creds, NULL, session);
