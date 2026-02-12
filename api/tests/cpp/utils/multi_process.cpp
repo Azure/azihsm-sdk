@@ -20,8 +20,8 @@
 
 namespace
 {
-constexpr const char *kHelperEnv = "AZIHSM_HELPER_INPUT";
-constexpr const char *kTmpPrefix = "azihsm_multi_proc_";
+constexpr const char kHelperEnv[] = "AZIHSM_HELPER_INPUT";
+constexpr const char kTmpPrefix[] = "azihsm_multi_proc_";
 
 static void write_u32(std::ofstream &out, uint32_t v)
 {
@@ -151,12 +151,6 @@ static cross_process_test_params read_from_file(const std::string &file_path) {
 }
 } // namespace
 
-
-
-// Invoke the specified test in a child process, passing necessary
-// parameters via a temporary file.
-//
-// Returns the exit code of the child process (0 for success, non-zero for failure).
 int run_child_test(const cross_process_test_params & params) {
     // Write parameters to a temporary file that the child process can read
     auto tmp_file = std::filesystem::temp_directory_path() / (kTmpPrefix + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".bin");
@@ -203,7 +197,10 @@ int run_child_test(const cross_process_test_params & params) {
     return rc;
 }
 
-// Called by the child process to collect test parameters set by the parent process.
+bool is_child_process() {
+    return std::getenv(kHelperEnv) != nullptr;
+}
+
 cross_process_test_params get_cross_process_test_params() {
     const char *tmp_file = std::getenv(kHelperEnv);
     if (!tmp_file) {

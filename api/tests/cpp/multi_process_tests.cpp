@@ -36,8 +36,20 @@
 #include "utils/multi_process.hpp"
 #include "utils/rsa_keygen.hpp"
 
+// See utils/multi_process.hpp for a description of multi-process tests.
+
 namespace
 {
+constexpr size_t TEST_MESSAGE_SIZE = 64;
+constexpr uint8_t TEST_MESSAGE_FILL_BYTE = 0x2A;
+constexpr const char CHILD_PROCESS_SKIP_MSG[] = "This test should only run when invoked by the parent test";
+constexpr const char HARDWARE_SKIP_MSG[] = "If running on real hardware, set AZIHSM_DISABLE_MULTI_PROCESS_TESTS=1 to skip";
+constexpr size_t GCM_TAG_SIZE = 16;
+constexpr size_t AES_CBC_IV_SIZE = 16;
+constexpr size_t AES_GCM_IV_SIZE = 12;
+constexpr size_t AES_XTS_TWEAK_SIZE = 16;
+constexpr uint8_t TEST_AAD[] = { 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08 };
+
 static std::vector<uint8_t> get_part_prop_bytes(azihsm_handle part, azihsm_part_prop_id id)
 {
     azihsm_part_prop prop = { id, nullptr, 0 };
@@ -63,6 +75,64 @@ static std::vector<uint8_t> get_key_prop_bytes(azihsm_handle key, azihsm_key_pro
     buffer.resize(prop.len);
     return buffer;
 }
+
+static std::vector<uint8_t> path_to_bytes(const std::vector<azihsm_char>& path)
+{
+    return std::vector<uint8_t>(
+        reinterpret_cast<const uint8_t*>(path.data()),
+        reinterpret_cast<const uint8_t*>(path.data()) + (path.size() * sizeof(azihsm_char))
+    );
+}
+
+static azihsm_buffer create_buffer(std::vector<uint8_t>& data)
+{
+    return azihsm_buffer{ data.data(), static_cast<uint32_t>(data.size()) };
+}
+
+static azihsm_status generate_symmetric_key(
+    azihsm_handle sess_handle,
+    azihsm_algo_id algo_id,
+    azihsm_key_kind key_kind,
+    uint32_t bits,
+    azihsm_handle* key_handle)
+{
+    azihsm_algo keygen_algo = { algo_id, nullptr, 0 };
+    azihsm_key_class key_class = AZIHSM_KEY_CLASS_SECRET;
+    bool is_session = false;  // Must be false to allow backup/restore across processes
+    bool can_encrypt = true;
+    bool can_decrypt = true;
+
+    std::vector<azihsm_key_prop> props_vec = {
+        { AZIHSM_KEY_PROP_ID_KIND, &key_kind, sizeof(key_kind) },
+        { AZIHSM_KEY_PROP_ID_CLASS, &key_class, sizeof(key_class) },
+        { AZIHSM_KEY_PROP_ID_BIT_LEN, &bits, sizeof(bits) },
+        { AZIHSM_KEY_PROP_ID_SESSION, &is_session, sizeof(is_session) },
+        { AZIHSM_KEY_PROP_ID_ENCRYPT, &can_encrypt, sizeof(can_encrypt) },
+        { AZIHSM_KEY_PROP_ID_DECRYPT, &can_decrypt, sizeof(can_decrypt) }
+    };
+
+    azihsm_key_prop_list prop_list{
+        props_vec.data(),
+        static_cast<uint32_t>(props_vec.size())
+    };
+
+    return azihsm_key_gen(sess_handle, &keygen_algo, &prop_list, key_handle);
+}
+
+template<size_t N>
+static void generate_random_bytes(uint8_t (&buffer)[N])
+{
+    std::random_device rd;
+    for (size_t i = 0; i < N; ++i)
+    {
+        buffer[i] = static_cast<uint8_t>(rd());
+    }
+}
+
+static std::vector<uint8_t> get_masked_key(azihsm_handle key)
+{
+    return get_key_prop_bytes(key, AZIHSM_KEY_PROP_ID_MASKED_KEY);
+}
 } // namespace
 
 class azihsm_multi_process_parent : public ::testing::Test
@@ -83,7 +153,6 @@ class azihsm_multi_process_parent : public ::testing::Test
 
     void TearDown() override
     {
-        // Clean up handles if they were opened
         if (sess_handle != 0)
         {
             azihsm_sess_close(sess_handle);
@@ -109,8 +178,8 @@ class azihsm_multi_process_parent : public ::testing::Test
 
         azihsm_api_rev api_rev{ 1, 0 };
         azihsm_credentials creds{};
-        std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
-        std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
+        std::memcpy(creds.id, TEST_CRED_ID, sizeof(creds.id));
+        std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(creds.pin));
 
         std::random_device rd;
         for (auto &b : obk)
@@ -154,7 +223,6 @@ class azihsm_multi_process_child : public ::testing::Test
 
     void TearDown() override
     {
-        // Clean up handles if they were opened
         if (sess_handle != 0)
         {
             azihsm_sess_close(sess_handle);
@@ -181,8 +249,8 @@ class azihsm_multi_process_child : public ::testing::Test
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         azihsm_credentials creds{};
-        std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
-        std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
+        std::memcpy(creds.id, TEST_CRED_ID, sizeof(creds.id));
+        std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(creds.pin));
         azihsm_api_rev api_rev{ 1, 0 };
 
         auto reset_err = azihsm_part_reset(part_handle);
@@ -224,29 +292,24 @@ TEST_F(azihsm_multi_process_parent, ecc_sign_verify_cross_process)
         );
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
-        auto masked_key = get_key_prop_bytes(priv_key.get(), AZIHSM_KEY_PROP_ID_MASKED_KEY);
+        auto masked_key = get_masked_key(priv_key.get());
 
-        std::vector<uint8_t> message(64, 0x2A);
-        azihsm_buffer msg_buf = { message.data(), static_cast<uint32_t>(message.size()) };
+        std::vector<uint8_t> message(TEST_MESSAGE_SIZE, TEST_MESSAGE_FILL_BYTE);
+        auto msg_buf = create_buffer(message);
 
         azihsm_algo sign_algo = { AZIHSM_ALGO_ID_ECDSA_SHA256, nullptr, 0 };
 
         azihsm_buffer sig_buf = { nullptr, 0 };
         err = azihsm_crypt_sign(&sign_algo, priv_key.get(), &msg_buf, &sig_buf);
         ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
-
         std::vector<uint8_t> signature(sig_buf.len);
         sig_buf.ptr = signature.data();
         err = azihsm_crypt_sign(&sign_algo, priv_key.get(), &msg_buf, &sig_buf);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
-        std::vector<uint8_t> path_bytes(
-            reinterpret_cast<uint8_t *>(path.data()),
-            reinterpret_cast<uint8_t *>(path.data()) + (path.size() * sizeof(azihsm_char))
-        );
         cross_process_test_params params(
             "azihsm_multi_process_child.ecc_sign_verify_cross_process",
-            path_bytes,
+            path_to_bytes(path),
             bmk,
             std::vector<uint8_t>(obk.begin(), obk.end()),
             std::vector<uint8_t>(seed.begin(), seed.end()),
@@ -255,16 +318,18 @@ TEST_F(azihsm_multi_process_parent, ecc_sign_verify_cross_process)
             masked_key
         );
         int rc = run_child_test(params);
-        ASSERT_EQ(rc, 0)
-            << "If running on real hardware, set AZIHSM_DISABLE_MULTI_PROCESS_TESTS=1 to skip";
+        ASSERT_EQ(rc, 0) << HARDWARE_SKIP_MSG;
     });
 }
 
 TEST_F(azihsm_multi_process_child, ecc_sign_verify_cross_process)
 {
+    if (!is_child_process()) {
+        GTEST_SKIP() << CHILD_PROCESS_SKIP_MSG;
+    }
     child_common_setup();
 
-    azihsm_buffer masked_buf = { test_params.masked_key.data(), static_cast<uint32_t>(test_params.masked_key.size()) };
+    auto masked_buf = create_buffer(test_params.masked_key);
     auto_key priv_key;
     auto_key pub_key;
     auto err = azihsm_key_unmask_pair(
@@ -277,132 +342,98 @@ TEST_F(azihsm_multi_process_child, ecc_sign_verify_cross_process)
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
     azihsm_algo sign_algo = { AZIHSM_ALGO_ID_ECDSA_SHA256, nullptr, 0 };
-    azihsm_buffer msg_buf = { test_params.message.data(), static_cast<uint32_t>(test_params.message.size()) };
-    azihsm_buffer sig_buf = { test_params.signature_or_ciphertext.data(), static_cast<uint32_t>(test_params.signature_or_ciphertext.size()) };
+    auto msg_buf = create_buffer(test_params.message);
+    auto sig_buf = create_buffer(test_params.signature_or_ciphertext);
     err = azihsm_crypt_verify(&sign_algo, pub_key.get(), &msg_buf, &sig_buf);
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 }
 
-TEST_F(azihsm_multi_process_parent, aes_cbc_sign_verify_cross_process)
+TEST_F(azihsm_multi_process_parent, aes_cbc_encrypt_decrypt_cross_process)
 {
     part_list_.for_each_part([this](std::vector<azihsm_char> &path) {
         parent_common_setup(path);
 
-        // Generate AES-128 key
-        azihsm_algo keygen_algo{};
-        keygen_algo.id = AZIHSM_ALGO_ID_AES_KEY_GEN;
-        keygen_algo.params = nullptr;
-        keygen_algo.len = 0;
-
-        azihsm_key_kind key_kind = AZIHSM_KEY_KIND_AES;
-        azihsm_key_class key_class = AZIHSM_KEY_CLASS_SECRET;
-        uint32_t bits = 128;
-        bool is_session = false;  // Must be false to allow backup/restore across processes
-        bool can_encrypt = true;
-        bool can_decrypt = true;
-
-        std::vector<azihsm_key_prop> props_vec = {
-            { .id = AZIHSM_KEY_PROP_ID_KIND, .val = &key_kind, .len = sizeof(key_kind) },
-            { .id = AZIHSM_KEY_PROP_ID_CLASS, .val = &key_class, .len = sizeof(key_class) },
-            { .id = AZIHSM_KEY_PROP_ID_BIT_LEN, .val = &bits, .len = sizeof(bits) },
-            { .id = AZIHSM_KEY_PROP_ID_SESSION, .val = &is_session, .len = sizeof(is_session) },
-            { .id = AZIHSM_KEY_PROP_ID_ENCRYPT, .val = &can_encrypt, .len = sizeof(can_encrypt) },
-            { .id = AZIHSM_KEY_PROP_ID_DECRYPT, .val = &can_decrypt, .len = sizeof(can_decrypt) }
-        };
-
-        azihsm_key_prop_list prop_list{
-            .props = props_vec.data(),
-            .count = static_cast<uint32_t>(props_vec.size())
-        };
         symmetric_key = 0;
-        auto err = azihsm_key_gen(sess_handle, &keygen_algo, &prop_list, &symmetric_key);
+        auto err = generate_symmetric_key(
+            sess_handle,
+            AZIHSM_ALGO_ID_AES_KEY_GEN,
+            AZIHSM_KEY_KIND_AES,
+            128,
+            &symmetric_key
+        );
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_NE(symmetric_key, 0);
-        auto masked_key = get_key_prop_bytes(symmetric_key, AZIHSM_KEY_PROP_ID_MASKED_KEY);
+        auto masked_key = get_masked_key(symmetric_key);
 
         // Message must be multiple of AES block size (16 bytes)
-        std::vector<uint8_t> message(64, 0x2A);
-        azihsm_buffer msg_buf = { message.data(), static_cast<uint32_t>(message.size()) };
+        std::vector<uint8_t> message(TEST_MESSAGE_SIZE, TEST_MESSAGE_FILL_BYTE);
+        auto msg_buf = create_buffer(message);
 
-        // Generate IV for AES-CBC
-        std::random_device rd;
-        uint8_t iv[16] = { 0 };
-        for (size_t i = 0; i < sizeof(iv); ++i)
-        {
-            iv[i] = static_cast<uint8_t>(rd());
-        }
+        uint8_t iv[AES_CBC_IV_SIZE] = { 0 };
+        generate_random_bytes(iv);
         azihsm_algo_aes_cbc_params cbc_params{};
-        std::memcpy(cbc_params.iv, iv, sizeof(iv));
+        std::memcpy(cbc_params.iv, iv, sizeof(cbc_params.iv));
         
         azihsm_algo encrypt_algo{};
         encrypt_algo.id = AZIHSM_ALGO_ID_AES_CBC;
         encrypt_algo.params = &cbc_params;
         encrypt_algo.len = sizeof(cbc_params);
 
-        // Encrypt the message
         azihsm_buffer ciphertext_buf = { nullptr, 0 };
         err = azihsm_crypt_encrypt(&encrypt_algo, symmetric_key, &msg_buf, &ciphertext_buf);
         ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
-
         std::vector<uint8_t> ciphertext(ciphertext_buf.len);
         ciphertext_buf.ptr = ciphertext.data();
         err = azihsm_crypt_encrypt(&encrypt_algo, symmetric_key, &msg_buf, &ciphertext_buf);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
-        std::vector<uint8_t> path_bytes(
-            reinterpret_cast<uint8_t *>(path.data()),
-            reinterpret_cast<uint8_t *>(path.data()) + (path.size() * sizeof(azihsm_char))
-        );
         cross_process_test_params params(
-            "azihsm_multi_process_child.aes_cbc_sign_verify_cross_process",
-            path_bytes,
+            "azihsm_multi_process_child.aes_cbc_encrypt_decrypt_cross_process",
+            path_to_bytes(path),
             bmk,
             std::vector<uint8_t>(obk.begin(), obk.end()),
             std::vector<uint8_t>(seed.begin(), seed.end()),
             message,
             ciphertext,
             masked_key,
-            std::vector<uint8_t>(iv, iv + sizeof(iv))  // Pass IV for AES-CBC
+            std::vector<uint8_t>(iv, iv + sizeof(cbc_params.iv))
         );
         int rc = run_child_test(params);
-        ASSERT_EQ(rc, 0)
-            << "If running on real hardware, set AZIHSM_DISABLE_MULTI_PROCESS_TESTS=1 to skip";
+        ASSERT_EQ(rc, 0) << HARDWARE_SKIP_MSG;
     });
 }
 
-TEST_F(azihsm_multi_process_child, aes_cbc_sign_verify_cross_process)
+TEST_F(azihsm_multi_process_child, aes_cbc_encrypt_decrypt_cross_process)
 {
+    if (!is_child_process()) {
+        GTEST_SKIP() << CHILD_PROCESS_SKIP_MSG;
+    }
     child_common_setup();
 
-    // Unmask the AES key (symmetric key, no key pair)
-    azihsm_buffer masked_buf = { test_params.masked_key.data(), static_cast<uint32_t>(test_params.masked_key.size()) };
+    auto masked_buf = create_buffer(test_params.masked_key);
     auto_key aes_key;
     auto err = azihsm_key_unmask(sess_handle, AZIHSM_KEY_KIND_AES, &masked_buf, aes_key.get_ptr());
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
-    // Set up CBC params with the IV for decryption
     ASSERT_TRUE(test_params.iv.has_value()) << "IV is required for AES-CBC";
     azihsm_algo_aes_cbc_params cbc_params{};
-    std::memcpy(cbc_params.iv, test_params.iv->data(), std::min(sizeof(cbc_params.iv), test_params.iv->size()));
+    std::memcpy(cbc_params.iv, test_params.iv->data(), (std::min)(sizeof(cbc_params.iv), test_params.iv->size()));
     
     azihsm_algo decrypt_algo{};
     decrypt_algo.id = AZIHSM_ALGO_ID_AES_CBC;
     decrypt_algo.params = &cbc_params;
     decrypt_algo.len = sizeof(cbc_params);
 
-    // Decrypt the ciphertext
-    azihsm_buffer ciphertext_buf = { test_params.signature_or_ciphertext.data(), static_cast<uint32_t>(test_params.signature_or_ciphertext.size()) };
+    auto ciphertext_buf = create_buffer(test_params.signature_or_ciphertext);
     azihsm_buffer plaintext_buf = { nullptr, 0 };
 
     err = azihsm_crypt_decrypt(&decrypt_algo, aes_key.get(), &ciphertext_buf, &plaintext_buf);
     ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
-
     std::vector<uint8_t> plaintext(plaintext_buf.len);
     plaintext_buf.ptr = plaintext.data();
     err = azihsm_crypt_decrypt(&decrypt_algo, aes_key.get(), &ciphertext_buf, &plaintext_buf);
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
-    // Verify decrypted plaintext matches original message
     ASSERT_EQ(plaintext.size(), test_params.message.size());
     ASSERT_EQ(plaintext, test_params.message);
 }
@@ -412,105 +443,78 @@ TEST_F(azihsm_multi_process_parent, aes_gcm_encrypt_decrypt_cross_process)
     part_list_.for_each_part([this](std::vector<azihsm_char> &path) {
         parent_common_setup(path);
 
-        // Generate AES-256-GCM key (non-session for backup/restore)
-        azihsm_algo keygen_algo = { AZIHSM_ALGO_ID_AES_KEY_GEN, nullptr, 0 };
-        
-        azihsm_key_kind key_kind = AZIHSM_KEY_KIND_AES_GCM;
-        azihsm_key_class key_class = AZIHSM_KEY_CLASS_SECRET;
-        uint32_t bits = 256;
-        bool is_session = false;
-        bool can_encrypt = true;
-        bool can_decrypt = true;
-
-        std::vector<azihsm_key_prop> props_vec;
-        props_vec.push_back({ AZIHSM_KEY_PROP_ID_KIND, &key_kind, sizeof(key_kind) });
-        props_vec.push_back({ AZIHSM_KEY_PROP_ID_CLASS, &key_class, sizeof(key_class) });
-        props_vec.push_back({ AZIHSM_KEY_PROP_ID_BIT_LEN, &bits, sizeof(bits) });
-        props_vec.push_back({ AZIHSM_KEY_PROP_ID_SESSION, &is_session, sizeof(is_session) });
-        props_vec.push_back({ AZIHSM_KEY_PROP_ID_ENCRYPT, &can_encrypt, sizeof(can_encrypt) });
-        props_vec.push_back({ AZIHSM_KEY_PROP_ID_DECRYPT, &can_decrypt, sizeof(can_decrypt) });
-
-        azihsm_key_prop_list prop_list{ props_vec.data(), static_cast<uint32_t>(props_vec.size()) };
         symmetric_key = 0;
-        auto err = azihsm_key_gen(sess_handle, &keygen_algo, &prop_list, &symmetric_key);
+        auto err = generate_symmetric_key(
+            sess_handle,
+            AZIHSM_ALGO_ID_AES_KEY_GEN,
+            AZIHSM_KEY_KIND_AES_GCM,
+            256,
+            &symmetric_key
+        );
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         
-        auto masked_key = get_key_prop_bytes(symmetric_key, AZIHSM_KEY_PROP_ID_MASKED_KEY);
+        auto masked_key = get_masked_key(symmetric_key);
 
-        // Prepare plaintext and AAD
-        std::vector<uint8_t> message(64, 0x2A);
-        std::vector<uint8_t> aad = { 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08 };
+        std::vector<uint8_t> message(TEST_MESSAGE_SIZE, TEST_MESSAGE_FILL_BYTE);
+        std::vector<uint8_t> aad(TEST_AAD, TEST_AAD + sizeof(TEST_AAD));
 
-        // Generate IV
-        std::random_device rd;
-        uint8_t iv[12];
-        for (size_t i = 0; i < sizeof(iv); ++i)
-        {
-            iv[i] = static_cast<uint8_t>(rd());
-        }
+        uint8_t iv[AES_GCM_IV_SIZE];
+        generate_random_bytes(iv);
 
-        // Set up GCM params
-        azihsm_buffer aad_buf = { aad.data(), static_cast<uint32_t>(aad.size()) };
+        auto aad_buf = create_buffer(aad);
         azihsm_algo_aes_gcm_params gcm_params{};
-        std::memcpy(gcm_params.iv, iv, sizeof(iv));
+        std::memcpy(gcm_params.iv, iv, sizeof(gcm_params.iv));
         std::memset(gcm_params.tag, 0, sizeof(gcm_params.tag));
         gcm_params.aad = &aad_buf;
 
         azihsm_algo encrypt_algo = { AZIHSM_ALGO_ID_AES_GCM, &gcm_params, sizeof(gcm_params) };
 
-        // Encrypt
-        azihsm_buffer msg_buf = { message.data(), static_cast<uint32_t>(message.size()) };
+        auto msg_buf = create_buffer(message);
         azihsm_buffer ciphertext_buf = { nullptr, 0 };
         err = azihsm_crypt_encrypt(&encrypt_algo, symmetric_key, &msg_buf, &ciphertext_buf);
         ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
-
         std::vector<uint8_t> ciphertext(ciphertext_buf.len);
         ciphertext_buf.ptr = ciphertext.data();
         err = azihsm_crypt_encrypt(&encrypt_algo, symmetric_key, &msg_buf, &ciphertext_buf);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
-        // Extract tag
-        std::vector<uint8_t> tag(gcm_params.tag, gcm_params.tag + 16);
+        std::vector<uint8_t> tag(gcm_params.tag, gcm_params.tag + sizeof(gcm_params.tag));
 
-        std::vector<uint8_t> path_bytes(
-            reinterpret_cast<uint8_t *>(path.data()),
-            reinterpret_cast<uint8_t *>(path.data()) + (path.size() * sizeof(azihsm_char))
-        );
         cross_process_test_params params(
             "azihsm_multi_process_child.aes_gcm_encrypt_decrypt_cross_process",
-            path_bytes,
+            path_to_bytes(path),
             bmk,
             std::vector<uint8_t>(obk.begin(), obk.end()),
             std::vector<uint8_t>(seed.begin(), seed.end()),
             message,
             ciphertext,
             masked_key,
-            std::vector<uint8_t>(iv, iv + sizeof(iv)),
+            std::vector<uint8_t>(iv, iv + sizeof(gcm_params.iv)),
             tag,
             aad
         );
         int rc = run_child_test(params);
-        ASSERT_EQ(rc, 0)
-            << "If running on real hardware, set AZIHSM_DISABLE_MULTI_PROCESS_TESTS=1 to skip";
+        ASSERT_EQ(rc, 0) << HARDWARE_SKIP_MSG;
     });
 }
 
 TEST_F(azihsm_multi_process_child, aes_gcm_encrypt_decrypt_cross_process)
 {
+    if (!is_child_process()) {
+        GTEST_SKIP() << CHILD_PROCESS_SKIP_MSG;
+    }
     child_common_setup();
 
-    // Unmask the AES-GCM key
-    azihsm_buffer masked_buf = { test_params.masked_key.data(), static_cast<uint32_t>(test_params.masked_key.size()) };
+    auto masked_buf = create_buffer(test_params.masked_key);
     auto_key aes_key;
     auto err = azihsm_key_unmask(sess_handle, AZIHSM_KEY_KIND_AES_GCM, &masked_buf, aes_key.get_ptr());
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
-    // Set up GCM params with IV, tag, and AAD for decryption
     ASSERT_TRUE(test_params.iv.has_value()) << "IV is required for AES-GCM";
     ASSERT_TRUE(test_params.tag.has_value()) << "Tag is required for AES-GCM";
     ASSERT_TRUE(test_params.aad.has_value()) << "AAD is expected for this test";
 
-    azihsm_buffer aad_buf = { test_params.aad->data(), static_cast<uint32_t>(test_params.aad->size()) };
+    auto aad_buf = create_buffer(*test_params.aad);
     azihsm_algo_aes_gcm_params gcm_params{};
     std::memcpy(gcm_params.iv, test_params.iv->data(), (std::min)(sizeof(gcm_params.iv), test_params.iv->size()));
     std::memcpy(gcm_params.tag, test_params.tag->data(), (std::min)(sizeof(gcm_params.tag), test_params.tag->size()));
@@ -518,19 +522,16 @@ TEST_F(azihsm_multi_process_child, aes_gcm_encrypt_decrypt_cross_process)
 
     azihsm_algo decrypt_algo = { AZIHSM_ALGO_ID_AES_GCM, &gcm_params, sizeof(gcm_params) };
 
-    // Decrypt the ciphertext
-    azihsm_buffer ciphertext_buf = { test_params.signature_or_ciphertext.data(), static_cast<uint32_t>(test_params.signature_or_ciphertext.size()) };
+    auto ciphertext_buf = create_buffer(test_params.signature_or_ciphertext);
     azihsm_buffer plaintext_buf = { nullptr, 0 };
 
     err = azihsm_crypt_decrypt(&decrypt_algo, aes_key.get(), &ciphertext_buf, &plaintext_buf);
     ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
-
     std::vector<uint8_t> plaintext(plaintext_buf.len);
     plaintext_buf.ptr = plaintext.data();
     err = azihsm_crypt_decrypt(&decrypt_algo, aes_key.get(), &ciphertext_buf, &plaintext_buf);
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
-    // Verify decrypted plaintext matches original message
     ASSERT_EQ(plaintext.size(), test_params.message.size());
     ASSERT_EQ(plaintext, test_params.message);
 }
@@ -540,67 +541,41 @@ TEST_F(azihsm_multi_process_parent, aes_xts_encrypt_decrypt_cross_process)
     part_list_.for_each_part([this](std::vector<azihsm_char> &path) {
         parent_common_setup(path);
 
-        // Generate AES-256-XTS key (512 bits, non-session for backup/restore)
-        azihsm_algo keygen_algo = { AZIHSM_ALGO_ID_AES_XTS_KEY_GEN, nullptr, 0 };
-        
-        azihsm_key_kind key_kind = AZIHSM_KEY_KIND_AES_XTS;
-        azihsm_key_class key_class = AZIHSM_KEY_CLASS_SECRET;
-        uint32_t bits = 512;
-        bool is_session = false;
-        bool can_encrypt = true;
-        bool can_decrypt = true;
-
-        std::vector<azihsm_key_prop> props_vec;
-        props_vec.push_back({ AZIHSM_KEY_PROP_ID_KIND, &key_kind, sizeof(key_kind) });
-        props_vec.push_back({ AZIHSM_KEY_PROP_ID_CLASS, &key_class, sizeof(key_class) });
-        props_vec.push_back({ AZIHSM_KEY_PROP_ID_BIT_LEN, &bits, sizeof(bits) });
-        props_vec.push_back({ AZIHSM_KEY_PROP_ID_SESSION, &is_session, sizeof(is_session) });
-        props_vec.push_back({ AZIHSM_KEY_PROP_ID_ENCRYPT, &can_encrypt, sizeof(can_encrypt) });
-        props_vec.push_back({ AZIHSM_KEY_PROP_ID_DECRYPT, &can_decrypt, sizeof(can_decrypt) });
-
-        azihsm_key_prop_list prop_list{ props_vec.data(), static_cast<uint32_t>(props_vec.size()) };
         symmetric_key = 0;
-        auto err = azihsm_key_gen(sess_handle, &keygen_algo, &prop_list, &symmetric_key);
+        auto err = generate_symmetric_key(
+            sess_handle,
+            AZIHSM_ALGO_ID_AES_XTS_KEY_GEN,
+            AZIHSM_KEY_KIND_AES_XTS,
+            512,
+            &symmetric_key
+        );
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         
-        auto masked_key = get_key_prop_bytes(symmetric_key, AZIHSM_KEY_PROP_ID_MASKED_KEY);
+        auto masked_key = get_masked_key(symmetric_key);
 
-        // Prepare plaintext (must be at least 16 bytes for XTS)
-        std::vector<uint8_t> message(64, 0x2A);
+        std::vector<uint8_t> message(TEST_MESSAGE_SIZE, TEST_MESSAGE_FILL_BYTE);
 
-        // Generate tweak (sector number)
-        uint8_t tweak[16] = { 0 };
-        std::random_device rd;
-        for (size_t i = 0; i < sizeof(tweak); ++i)
-        {
-            tweak[i] = static_cast<uint8_t>(rd());
-        }
+        uint8_t tweak[AES_XTS_TWEAK_SIZE] = { 0 };
+        generate_random_bytes(tweak);
 
-        // Set up XTS params
         azihsm_algo_aes_xts_params xts_params{};
-        std::memcpy(xts_params.sector_num, tweak, sizeof(tweak));
+        std::memcpy(xts_params.sector_num, tweak, sizeof(xts_params.sector_num));
         xts_params.data_unit_length = static_cast<uint32_t>(message.size());
 
         azihsm_algo encrypt_algo = { AZIHSM_ALGO_ID_AES_XTS, &xts_params, sizeof(xts_params) };
 
-        // Encrypt
-        azihsm_buffer msg_buf = { message.data(), static_cast<uint32_t>(message.size()) };
+        auto msg_buf = create_buffer(message);
         azihsm_buffer ciphertext_buf = { nullptr, 0 };
         err = azihsm_crypt_encrypt(&encrypt_algo, symmetric_key, &msg_buf, &ciphertext_buf);
         ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
-
         std::vector<uint8_t> ciphertext(ciphertext_buf.len);
         ciphertext_buf.ptr = ciphertext.data();
         err = azihsm_crypt_encrypt(&encrypt_algo, symmetric_key, &msg_buf, &ciphertext_buf);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
-        std::vector<uint8_t> path_bytes(
-            reinterpret_cast<uint8_t *>(path.data()),
-            reinterpret_cast<uint8_t *>(path.data()) + (path.size() * sizeof(azihsm_char))
-        );
         cross_process_test_params params(
             "azihsm_multi_process_child.aes_xts_encrypt_decrypt_cross_process",
-            path_bytes,
+            path_to_bytes(path),
             bmk,
             std::vector<uint8_t>(obk.begin(), obk.end()),
             std::vector<uint8_t>(seed.begin(), seed.end()),
@@ -610,22 +585,22 @@ TEST_F(azihsm_multi_process_parent, aes_xts_encrypt_decrypt_cross_process)
             std::vector<uint8_t>(tweak, tweak + sizeof(tweak))  // Pass tweak via iv field
         );
         int rc = run_child_test(params);
-        ASSERT_EQ(rc, 0)
-            << "If running on real hardware, set AZIHSM_DISABLE_MULTI_PROCESS_TESTS=1 to skip";
+        ASSERT_EQ(rc, 0) << HARDWARE_SKIP_MSG;
     });
 }
 
 TEST_F(azihsm_multi_process_child, aes_xts_encrypt_decrypt_cross_process)
 {
+    if (!is_child_process()) {
+        GTEST_SKIP() << CHILD_PROCESS_SKIP_MSG;
+    }
     child_common_setup();
 
-    // Unmask the AES-XTS key
-    azihsm_buffer masked_buf = { test_params.masked_key.data(), static_cast<uint32_t>(test_params.masked_key.size()) };
+    auto masked_buf = create_buffer(test_params.masked_key);
     auto_key aes_key;
     auto err = azihsm_key_unmask(sess_handle, AZIHSM_KEY_KIND_AES_XTS, &masked_buf, aes_key.get_ptr());
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
-    // Set up XTS params with tweak for decryption
     ASSERT_TRUE(test_params.iv.has_value()) << "Tweak is required for AES-XTS";
 
     azihsm_algo_aes_xts_params xts_params{};
@@ -634,19 +609,16 @@ TEST_F(azihsm_multi_process_child, aes_xts_encrypt_decrypt_cross_process)
 
     azihsm_algo decrypt_algo = { AZIHSM_ALGO_ID_AES_XTS, &xts_params, sizeof(xts_params) };
 
-    // Decrypt the ciphertext
-    azihsm_buffer ciphertext_buf = { test_params.signature_or_ciphertext.data(), static_cast<uint32_t>(test_params.signature_or_ciphertext.size()) };
+    auto ciphertext_buf = create_buffer(test_params.signature_or_ciphertext);
     azihsm_buffer plaintext_buf = { nullptr, 0 };
 
     err = azihsm_crypt_decrypt(&decrypt_algo, aes_key.get(), &ciphertext_buf, &plaintext_buf);
     ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
-
     std::vector<uint8_t> plaintext(plaintext_buf.len);
     plaintext_buf.ptr = plaintext.data();
     err = azihsm_crypt_decrypt(&decrypt_algo, aes_key.get(), &ciphertext_buf, &plaintext_buf);
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
-    // Verify decrypted plaintext matches original message
     ASSERT_EQ(plaintext.size(), test_params.message.size());
     ASSERT_EQ(plaintext, test_params.message);
 }
@@ -656,13 +628,10 @@ TEST_F(azihsm_multi_process_parent, hmac_sign_verify_cross_process)
     part_list_.for_each_part([this](std::vector<azihsm_char> &path) {
         parent_common_setup(path);
 
-        // Generate EC key pairs and derive HMAC-SHA256 key
-        // Note: The derived key must be non-session to support backup/restore
         EcdhKeyPairSet key_pairs;
         auto err = key_pairs.generate(sess_handle, AZIHSM_ECC_CURVE_P256);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
-        // Derive HMAC key with non-session property (is_session = false)
         auto_key hmac_key;
         err = derive_hmac_key_via_ecdh_hkdf(
             sess_handle,
@@ -677,31 +646,24 @@ TEST_F(azihsm_multi_process_parent, hmac_sign_verify_cross_process)
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_NE(hmac_key.get(), 0);
 
-        // Get masked key for transfer
-        auto masked_key = get_key_prop_bytes(hmac_key.get(), AZIHSM_KEY_PROP_ID_MASKED_KEY);
+        auto masked_key = get_masked_key(hmac_key.get());
 
-        // Sign a message with HMAC-SHA256
-        std::vector<uint8_t> message(64, 0x2A);
-        azihsm_buffer msg_buf = { message.data(), static_cast<uint32_t>(message.size()) };
+        std::vector<uint8_t> message(TEST_MESSAGE_SIZE, TEST_MESSAGE_FILL_BYTE);
+        auto msg_buf = create_buffer(message);
 
         azihsm_algo hmac_algo = { AZIHSM_ALGO_ID_HMAC_SHA256, nullptr, 0 };
 
         azihsm_buffer mac_buf = { nullptr, 0 };
         err = azihsm_crypt_sign(&hmac_algo, hmac_key.get(), &msg_buf, &mac_buf);
         ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
-
         std::vector<uint8_t> mac(mac_buf.len);
         mac_buf.ptr = mac.data();
         err = azihsm_crypt_sign(&hmac_algo, hmac_key.get(), &msg_buf, &mac_buf);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
-        std::vector<uint8_t> path_bytes(
-            reinterpret_cast<uint8_t *>(path.data()),
-            reinterpret_cast<uint8_t *>(path.data()) + (path.size() * sizeof(azihsm_char))
-        );
         cross_process_test_params params(
             "azihsm_multi_process_child.hmac_sign_verify_cross_process",
-            path_bytes,
+            path_to_bytes(path),
             bmk,
             std::vector<uint8_t>(obk.begin(), obk.end()),
             std::vector<uint8_t>(seed.begin(), seed.end()),
@@ -710,25 +672,25 @@ TEST_F(azihsm_multi_process_parent, hmac_sign_verify_cross_process)
             masked_key
         );
         int rc = run_child_test(params);
-        ASSERT_EQ(rc, 0)
-            << "If running on real hardware, set AZIHSM_DISABLE_MULTI_PROCESS_TESTS=1 to skip";
+        ASSERT_EQ(rc, 0) << HARDWARE_SKIP_MSG;
     });
 }
 
 TEST_F(azihsm_multi_process_child, hmac_sign_verify_cross_process)
 {
+    if (!is_child_process()) {
+        GTEST_SKIP() << CHILD_PROCESS_SKIP_MSG;
+    }
     child_common_setup();
 
-    // Unmask the HMAC key
-    azihsm_buffer masked_buf = { test_params.masked_key.data(), static_cast<uint32_t>(test_params.masked_key.size()) };
+    auto masked_buf = create_buffer(test_params.masked_key);
     auto_key hmac_key;
     auto err = azihsm_key_unmask(sess_handle, AZIHSM_KEY_KIND_HMAC_SHA256, &masked_buf, hmac_key.get_ptr());
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
-    // Verify the HMAC signature
     azihsm_algo hmac_algo = { AZIHSM_ALGO_ID_HMAC_SHA256, nullptr, 0 };
-    azihsm_buffer msg_buf = { test_params.message.data(), static_cast<uint32_t>(test_params.message.size()) };
-    azihsm_buffer mac_buf = { test_params.signature_or_ciphertext.data(), static_cast<uint32_t>(test_params.signature_or_ciphertext.size()) };
+    auto msg_buf = create_buffer(test_params.message);
+    auto mac_buf = create_buffer(test_params.signature_or_ciphertext);
     err = azihsm_crypt_verify(&hmac_algo, hmac_key.get(), &msg_buf, &mac_buf);
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 }
@@ -738,7 +700,6 @@ TEST_F(azihsm_multi_process_parent, rsa_sign_verify_cross_process)
     part_list_.for_each_part([this](std::vector<azihsm_char> &path) {
         parent_common_setup(path);
 
-        // Generate RSA wrapping key pair for import
         auto_key wrapping_priv_key;
         auto_key wrapping_pub_key;
         auto err = generate_rsa_unwrapping_keypair(
@@ -748,7 +709,6 @@ TEST_F(azihsm_multi_process_parent, rsa_sign_verify_cross_process)
         );
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
-        // Import RSA key pair (non-session for backup/restore)
         key_props import_props = {
             .key_kind = AZIHSM_KEY_KIND_RSA,
             .key_size_bits = 2048,
@@ -770,31 +730,24 @@ TEST_F(azihsm_multi_process_parent, rsa_sign_verify_cross_process)
         );
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
-        // Get masked key for transfer
-        auto masked_key = get_key_prop_bytes(imported_priv_key.get(), AZIHSM_KEY_PROP_ID_MASKED_KEY);
+        auto masked_key = get_masked_key(imported_priv_key.get());
 
-        // Sign a message with RSA-PKCS-SHA256
-        std::vector<uint8_t> message(64, 0x2A);
-        azihsm_buffer msg_buf = { message.data(), static_cast<uint32_t>(message.size()) };
+        std::vector<uint8_t> message(TEST_MESSAGE_SIZE, TEST_MESSAGE_FILL_BYTE);
+        auto msg_buf = create_buffer(message);
 
         azihsm_algo sign_algo = { AZIHSM_ALGO_ID_RSA_PKCS_SHA256, nullptr, 0 };
 
         azihsm_buffer sig_buf = { nullptr, 0 };
         err = azihsm_crypt_sign(&sign_algo, imported_priv_key.get(), &msg_buf, &sig_buf);
         ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
-
         std::vector<uint8_t> signature(sig_buf.len);
         sig_buf.ptr = signature.data();
         err = azihsm_crypt_sign(&sign_algo, imported_priv_key.get(), &msg_buf, &sig_buf);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
-        std::vector<uint8_t> path_bytes(
-            reinterpret_cast<uint8_t *>(path.data()),
-            reinterpret_cast<uint8_t *>(path.data()) + (path.size() * sizeof(azihsm_char))
-        );
         cross_process_test_params params(
             "azihsm_multi_process_child.rsa_sign_verify_cross_process",
-            path_bytes,
+            path_to_bytes(path),
             bmk,
             std::vector<uint8_t>(obk.begin(), obk.end()),
             std::vector<uint8_t>(seed.begin(), seed.end()),
@@ -803,17 +756,18 @@ TEST_F(azihsm_multi_process_parent, rsa_sign_verify_cross_process)
             masked_key
         );
         int rc = run_child_test(params);
-        ASSERT_EQ(rc, 0)
-            << "If running on real hardware, set AZIHSM_DISABLE_MULTI_PROCESS_TESTS=1 to skip";
+        ASSERT_EQ(rc, 0) << HARDWARE_SKIP_MSG;
     });
 }
 
 TEST_F(azihsm_multi_process_child, rsa_sign_verify_cross_process)
 {
+    if (!is_child_process()) {
+        GTEST_SKIP() << CHILD_PROCESS_SKIP_MSG;
+    }
     child_common_setup();
 
-    // Unmask the RSA key pair (both private and public keys from one masked blob)
-    azihsm_buffer masked_buf = { test_params.masked_key.data(), static_cast<uint32_t>(test_params.masked_key.size()) };
+    auto masked_buf = create_buffer(test_params.masked_key);
     auto_key priv_key;
     auto_key pub_key;
     auto err = azihsm_key_unmask_pair(
@@ -825,10 +779,9 @@ TEST_F(azihsm_multi_process_child, rsa_sign_verify_cross_process)
     );
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
-    // Verify the RSA signature
     azihsm_algo sign_algo = { AZIHSM_ALGO_ID_RSA_PKCS_SHA256, nullptr, 0 };
-    azihsm_buffer msg_buf = { test_params.message.data(), static_cast<uint32_t>(test_params.message.size()) };
-    azihsm_buffer sig_buf = { test_params.signature_or_ciphertext.data(), static_cast<uint32_t>(test_params.signature_or_ciphertext.size()) };
+    auto msg_buf = create_buffer(test_params.message);
+    auto sig_buf = create_buffer(test_params.signature_or_ciphertext);
     err = azihsm_crypt_verify(&sign_algo, pub_key.get(), &msg_buf, &sig_buf);
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 }

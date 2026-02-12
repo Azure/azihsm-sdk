@@ -69,5 +69,8 @@ struct cross_process_test_params
 // Returns the exit code of the child process (0 for success, non-zero for failure).
 int run_child_test(const cross_process_test_params & params);
 
+// Check if currently running as a child process (invoked by a parent test).
+bool is_child_process();
+
 // Called by the child process to collect test parameters set by the parent process.
 cross_process_test_params get_cross_process_test_params();
