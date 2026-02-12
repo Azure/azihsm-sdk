@@ -65,9 +65,7 @@ jobs:
         name: coverage-report-ubuntu
         path: ./target/reports/
     - name: Code Coverage Summary Report
-      uses: irongut/CodeCoverageSummary@v1.3.0
-      with:
-        filename: ./target/reports/cobertura_sdk.xml
+      run: cargo xtask coverage-report
   
   build_windows:
 
@@ -112,6 +110,4 @@ jobs:
         name: coverage-report-windows
         path: ./target/reports/
     - name: Code Coverage Summary Report
-      uses: irongut/CodeCoverageSummary@v1.3.0
-      with:
-        filename: ./target/reports/cobertura_sdk.xml
+      run: cargo xtask coverage-report
