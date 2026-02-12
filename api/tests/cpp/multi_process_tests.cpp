@@ -142,7 +142,6 @@ class azihsm_multi_process_parent : public ::testing::Test
     azihsm_handle part_handle = 0;
     azihsm_handle sess_handle = 0;
     azihsm_handle symmetric_key = 0;
-    azihsm_str path_str = { nullptr, 0 };
     std::array<uint8_t, 48> obk{};
     std::vector<uint8_t> bmk;
     std::vector<uint8_t> seed;
@@ -171,7 +170,7 @@ class azihsm_multi_process_parent : public ::testing::Test
     }
 
     void parent_common_setup(std::vector<azihsm_char> &path) {
-        path_str = { path.data(), static_cast<uint32_t>(path.size()) };
+        azihsm_str path_str = { path.data(), static_cast<uint32_t>(path.size()) };
         part_handle = 0;
         auto err = azihsm_part_open(&path_str, &part_handle);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
@@ -224,7 +223,6 @@ class azihsm_multi_process_child : public ::testing::Test
     cross_process_test_params test_params;
     azihsm_handle part_handle = 0;
     azihsm_handle sess_handle = 0;
-    azihsm_str path_str = { nullptr, 0 };
 
     void SetUp() override
     {}
@@ -249,8 +247,7 @@ class azihsm_multi_process_child : public ::testing::Test
         ASSERT_EQ(test_params.path_bytes.size() % sizeof(azihsm_char), 0u);
         std::vector<azihsm_char> path_chars(test_params.path_bytes.size() / sizeof(azihsm_char));
         std::memcpy(path_chars.data(), test_params.path_bytes.data(), test_params.path_bytes.size());
-
-        path_str = { path_chars.data(), static_cast<uint32_t>(path_chars.size()) };
+        azihsm_str path_str = { path_chars.data(), static_cast<uint32_t>(path_chars.size()) };
 
         part_handle = 0;
         auto err = azihsm_part_open(&path_str, &part_handle);

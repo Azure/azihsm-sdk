@@ -11,6 +11,8 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include <optional>
+#include <stdexcept>
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -198,12 +200,13 @@ int run_child_test(const cross_process_test_params & params) {
 }
 
 bool is_child_process() {
-    return std::getenv(kHelperEnv) != nullptr;
+    const char *tmp_file = std::getenv(kHelperEnv);
+    return tmp_file != nullptr && tmp_file[0] != '\0';
 }
 
 cross_process_test_params get_cross_process_test_params() {
     const char *tmp_file = std::getenv(kHelperEnv);
-    if (!tmp_file) {
+    if (!tmp_file || tmp_file[0] == '\0') {
         throw std::runtime_error("Environment variable " + std::string(kHelperEnv) + " not set");
     }
     return read_from_file(tmp_file);

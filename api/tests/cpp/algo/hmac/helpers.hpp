@@ -8,6 +8,7 @@
 #include <azihsm_api.h>
 #include <cstring>
 #include <vector>
+#include <optional>
 
 // Helper function to get expected HMAC key size in bits from HMAC key kind.
 inline uint32_t get_hmac_key_bits(azihsm_key_kind hmac_key_kind)
