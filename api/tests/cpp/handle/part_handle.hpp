@@ -65,8 +65,17 @@ class PartitionHandle
         return handle_ != 0;
     }
 
+    // Wrap a pre-opened partition handle for RAII cleanup only (no open/reset/init).
+    static PartitionHandle from_raw(azihsm_handle handle)
+    {
+        return PartitionHandle(handle);
+    }
+
   private:
     azihsm_handle handle_;
+
+    // Private constructor for wrapping a pre-opened handle
+    explicit PartitionHandle(azihsm_handle handle) : handle_(handle) {}
 
     static std::mutex &get_init_mutex()
     {
