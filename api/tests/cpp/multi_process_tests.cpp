@@ -190,8 +190,16 @@ class azihsm_multi_process_parent : public ::testing::Test
         azihsm_owner_backup_key_config backup_config{};
         backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER;
         backup_config.owner_backup_key = &obk_buf;
-
-        err = azihsm_part_init(part_handle, &creds, nullptr, nullptr, &backup_config);
+        PartInitConfig init_config{};
+        make_part_init_config(part_handle, init_config);
+        err = azihsm_part_init(
+            part_handle,
+            &creds,
+            nullptr,
+            nullptr,
+            &backup_config,
+            &init_config.pota_endorsement
+        );
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         bmk = get_part_prop_bytes(part_handle, AZIHSM_PART_PROP_ID_BACKUP_MASKING_KEY);
@@ -262,7 +270,16 @@ class azihsm_multi_process_child : public ::testing::Test
         azihsm_owner_backup_key_config backup_config{};
         backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER;
         backup_config.owner_backup_key = &obk_buf;
-        auto init_err = azihsm_part_init(part_handle, &creds, &bmk_buf, nullptr, &backup_config);
+        PartInitConfig init_config{};
+        make_part_init_config(part_handle, init_config);
+        auto init_err = azihsm_part_init(
+            part_handle,
+            &creds,
+            &bmk_buf,
+            nullptr,
+            &backup_config,
+            &init_config.pota_endorsement
+        );
         ASSERT_EQ(init_err, AZIHSM_STATUS_SUCCESS);
 
         azihsm_buffer seed_buf = { test_params.seed.data(), static_cast<uint32_t>(test_params.seed.size()) };
