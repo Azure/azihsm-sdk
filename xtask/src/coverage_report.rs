@@ -54,7 +54,10 @@ impl Xtask for CoverageReport {
             .join("cobertura_sdk.xml");
 
         let xml = fs::read_to_string(&cobertura_path).with_context(|| {
-            format!("Failed to read cobertura report at {}", cobertura_path.display())
+            format!(
+                "Failed to read cobertura report at {}",
+                cobertura_path.display()
+            )
         })?;
 
         let per_file = parse_cobertura(&xml)?;
@@ -79,60 +82,60 @@ fn parse_cobertura(xml: &str) -> anyhow::Result<BTreeMap<String, CoverageCounts>
 
     loop {
         match reader.read_event_into(&mut buf) {
-            Ok(Event::Start(ref e)) => {
-                match e.name().as_ref() {
-                    b"class" => {
-                        if let Some(filename) = get_attr_value(e, b"filename")? {
-                            current_file = Some(filename.to_string());
-                            per_file.entry(filename.to_string()).or_default();
-                        }
+            Ok(Event::Start(ref e)) => match e.name().as_ref() {
+                b"class" => {
+                    if let Some(filename) = get_attr_value(e, b"filename")? {
+                        current_file = Some(filename.to_string());
+                        per_file.entry(filename.to_string()).or_default();
                     }
-                    b"method" => {
-                        if current_file.is_some() {
-                            in_method = true;
-                            method_has_hit = false;
-                            if let Some(entry) = current_file.as_ref().and_then(|f| per_file.get_mut(f)) {
-                                entry.functions_total += 1;
-                            }
-                        }
-                    }
-                    b"line" => {
-                        if let Some(file) = current_file.as_ref() {
-                            if let Some(entry) = per_file.get_mut(file) {
-                                let hits = get_attr_value(e, b"hits")?
-                                    .and_then(|v| v.parse::<u64>().ok())
-                                    .unwrap_or(0);
-
-                                entry.lines_total += 1;
-                                if hits > 0 {
-                                    entry.lines_covered += 1;
-                                }
-
-                                if in_method && hits > 0 {
-                                    method_has_hit = true;
-                                }
-
-                                let has_branch = get_attr_value(e, b"branch")?
-                                    .map(|v| v == "true")
-                                    .unwrap_or(false);
-
-                                if let Some((covered, total)) = get_attr_value(e, b"condition-coverage")?
-                                    .and_then(|v| parse_condition_coverage(&v))
-                                {
-                                    entry.regions_total += total;
-                                    entry.regions_covered += covered;
-                                } else if has_branch {
-                                    entry.regions_total += 1;
-                                    if hits > 0 {
-                                        entry.regions_covered += 1;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    _ => {}
                 }
-            }
+                b"method" => {
+                    if current_file.is_some() {
+                        in_method = true;
+                        method_has_hit = false;
+                        if let Some(entry) = current_file.as_ref().and_then(|f| per_file.get_mut(f))
+                        {
+                            entry.functions_total += 1;
+                        }
+                    }
+                }
+                b"line" => {
+                    if let Some(file) = current_file.as_ref() {
+                        if let Some(entry) = per_file.get_mut(file) {
+                            let hits = get_attr_value(e, b"hits")?
+                                .and_then(|v| v.parse::<u64>().ok())
+                                .unwrap_or(0);
+
+                            entry.lines_total += 1;
+                            if hits > 0 {
+                                entry.lines_covered += 1;
+                            }
+
+                            if in_method && hits > 0 {
+                                method_has_hit = true;
+                            }
+
+                            let has_branch = get_attr_value(e, b"branch")?
+                                .map(|v| v == "true")
+                                .unwrap_or(false);
+
+                            if let Some((covered, total)) =
+                                get_attr_value(e, b"condition-coverage")?
+                                    .and_then(|v| parse_condition_coverage(&v))
+                            {
+                                entry.regions_total += total;
+                                entry.regions_covered += covered;
+                            } else if has_branch {
+                                entry.regions_total += 1;
+                                if hits > 0 {
+                                    entry.regions_covered += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            },
             Ok(Event::End(ref e)) => match e.name().as_ref() {
                 b"method" => {
                     if in_method {
@@ -153,12 +156,7 @@ fn parse_cobertura(xml: &str) -> anyhow::Result<BTreeMap<String, CoverageCounts>
                 _ => {}
             },
             Ok(Event::Eof) => break,
-            Err(e) => {
-                return Err(anyhow::anyhow!(
-                    "Failed to parse Cobertura XML: {}",
-                    e
-                ))
-            }
+            Err(e) => return Err(anyhow::anyhow!("Failed to parse Cobertura XML: {}", e)),
             _ => {}
         }
 
