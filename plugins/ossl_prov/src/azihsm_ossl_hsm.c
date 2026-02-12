@@ -334,15 +334,8 @@ static azihsm_status get_pid_uncompressed_point(
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
 
-    qx = BN_new();
-    qy = BN_new();
-    if (qx == NULL || qy == NULL)
-    {
-        BN_free(qx);
-        BN_free(qy);
-        EVP_PKEY_free(pid_pkey);
-        return AZIHSM_STATUS_INTERNAL_ERROR;
-    }
+    qx = NULL;
+    qy = NULL;
 
     if (!EVP_PKEY_get_bn_param(pid_pkey, OSSL_PKEY_PARAM_EC_PUB_X, &qx) ||
         !EVP_PKEY_get_bn_param(pid_pkey, OSSL_PKEY_PARAM_EC_PUB_Y, &qy))
