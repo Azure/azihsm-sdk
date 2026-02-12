@@ -453,6 +453,12 @@ static azihsm_status sign_with_pota_key(
 
     ECDSA_SIG_get0(ecdsa_sig, &sig_r, &sig_s);
 
+    if (sig_r == NULL || sig_s == NULL)
+    {
+        ECDSA_SIG_free(ecdsa_sig);
+        return AZIHSM_STATUS_INTERNAL_ERROR;
+    }
+
     sig_out->ptr = OPENSSL_zalloc(P384_RAW_SIG_SIZE);
     if (sig_out->ptr == NULL)
     {
