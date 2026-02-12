@@ -117,7 +117,7 @@ fn parse_cobertura(xml: &str) -> anyhow::Result<BTreeMap<String, CoverageCounts>
                                     .unwrap_or(false);
 
                                 if let Some((covered, total)) = get_attr_value(e, b"condition-coverage")?
-                                    .and_then(parse_condition_coverage)
+                                    .and_then(|v| parse_condition_coverage(&v))
                                 {
                                     entry.regions_total += total;
                                     entry.regions_covered += covered;
@@ -168,15 +168,15 @@ fn parse_cobertura(xml: &str) -> anyhow::Result<BTreeMap<String, CoverageCounts>
     Ok(per_file)
 }
 
-fn get_attr_value<'a>(
-    e: &'a quick_xml::events::BytesStart<'a>,
+fn get_attr_value(
+    e: &quick_xml::events::BytesStart<'_>,
     key: &[u8],
-) -> anyhow::Result<Option<&'a str>> {
+) -> anyhow::Result<Option<String>> {
     for attr in e.attributes() {
         let attr = attr?;
         if attr.key.as_ref() == key {
             let value = std::str::from_utf8(&attr.value)?;
-            return Ok(Some(value));
+            return Ok(Some(value.to_string()));
         }
     }
     Ok(None)
