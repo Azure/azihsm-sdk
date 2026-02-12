@@ -89,6 +89,22 @@ static void write_to_file(const std::string &file_path, const cross_process_test
         write_u32(out, 0);  // No value
     }
     
+    // Write optional tag with a flag
+    if (params.tag.has_value()) {
+        write_u32(out, 1);  // Has value
+        write_blob(out, params.tag.value());
+    } else {
+        write_u32(out, 0);  // No value
+    }
+    
+    // Write optional aad with a flag
+    if (params.aad.has_value()) {
+        write_u32(out, 1);  // Has value
+        write_blob(out, params.aad.value());
+    } else {
+        write_u32(out, 0);  // No value
+    }
+    
     out.close();
 }
 
@@ -114,9 +130,23 @@ static cross_process_test_params read_from_file(const std::string &file_path) {
         iv = read_blob(in);
     }
     
+    // Read optional tag
+    std::optional<std::vector<uint8_t>> tag;
+    uint32_t has_tag = read_u32(in);
+    if (has_tag) {
+        tag = read_blob(in);
+    }
+    
+    // Read optional aad
+    std::optional<std::vector<uint8_t>> aad;
+    uint32_t has_aad = read_u32(in);
+    if (has_aad) {
+        aad = read_blob(in);
+    }
+    
     in.close();
     return cross_process_test_params(
-        test_name, path_bytes, bmk, obk, seed, message, signature_or_ciphertext, masked_key, iv
+        test_name, path_bytes, bmk, obk, seed, message, signature_or_ciphertext, masked_key, iv, tag, aad
     );
 }
 } // namespace

@@ -403,6 +403,134 @@ TEST_F(azihsm_multi_process_child, aes_cbc_sign_verify_cross_process)
     ASSERT_EQ(plaintext, test_params.message);
 }
 
+TEST_F(azihsm_multi_process_parent, aes_gcm_encrypt_decrypt_cross_process)
+{
+    part_list_.for_each_part([this](std::vector<azihsm_char> &path) {
+        parent_common_setup(path);
+
+        // Generate AES-256-GCM key (non-session for backup/restore)
+        azihsm_algo keygen_algo = { AZIHSM_ALGO_ID_AES_KEY_GEN, nullptr, 0 };
+        
+        azihsm_key_kind key_kind = AZIHSM_KEY_KIND_AES_GCM;
+        azihsm_key_class key_class = AZIHSM_KEY_CLASS_SECRET;
+        uint32_t bits = 256;
+        bool is_session = false;
+        bool can_encrypt = true;
+        bool can_decrypt = true;
+
+        std::vector<azihsm_key_prop> props_vec;
+        props_vec.push_back({ AZIHSM_KEY_PROP_ID_KIND, &key_kind, sizeof(key_kind) });
+        props_vec.push_back({ AZIHSM_KEY_PROP_ID_CLASS, &key_class, sizeof(key_class) });
+        props_vec.push_back({ AZIHSM_KEY_PROP_ID_BIT_LEN, &bits, sizeof(bits) });
+        props_vec.push_back({ AZIHSM_KEY_PROP_ID_SESSION, &is_session, sizeof(is_session) });
+        props_vec.push_back({ AZIHSM_KEY_PROP_ID_ENCRYPT, &can_encrypt, sizeof(can_encrypt) });
+        props_vec.push_back({ AZIHSM_KEY_PROP_ID_DECRYPT, &can_decrypt, sizeof(can_decrypt) });
+
+        azihsm_key_prop_list prop_list{ props_vec.data(), static_cast<uint32_t>(props_vec.size()) };
+        symmetric_key = 0;
+        auto err = azihsm_key_gen(sess_handle, &keygen_algo, &prop_list, &symmetric_key);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        
+        auto masked_key = get_key_prop_bytes(symmetric_key, AZIHSM_KEY_PROP_ID_MASKED_KEY);
+
+        // Prepare plaintext and AAD
+        std::vector<uint8_t> message(64, 0x2A);
+        std::vector<uint8_t> aad = { 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08 };
+
+        // Generate IV
+        std::random_device rd;
+        uint8_t iv[12];
+        for (size_t i = 0; i < sizeof(iv); ++i)
+        {
+            iv[i] = static_cast<uint8_t>(rd());
+        }
+
+        // Set up GCM params
+        azihsm_buffer aad_buf = { aad.data(), static_cast<uint32_t>(aad.size()) };
+        azihsm_algo_aes_gcm_params gcm_params{};
+        std::memcpy(gcm_params.iv, iv, sizeof(iv));
+        std::memset(gcm_params.tag, 0, sizeof(gcm_params.tag));
+        gcm_params.aad = &aad_buf;
+
+        azihsm_algo encrypt_algo = { AZIHSM_ALGO_ID_AES_GCM, &gcm_params, sizeof(gcm_params) };
+
+        // Encrypt
+        azihsm_buffer msg_buf = { message.data(), static_cast<uint32_t>(message.size()) };
+        azihsm_buffer ciphertext_buf = { nullptr, 0 };
+        err = azihsm_crypt_encrypt(&encrypt_algo, symmetric_key, &msg_buf, &ciphertext_buf);
+        ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+
+        std::vector<uint8_t> ciphertext(ciphertext_buf.len);
+        ciphertext_buf.ptr = ciphertext.data();
+        err = azihsm_crypt_encrypt(&encrypt_algo, symmetric_key, &msg_buf, &ciphertext_buf);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        // Extract tag
+        std::vector<uint8_t> tag(gcm_params.tag, gcm_params.tag + 16);
+
+        std::vector<uint8_t> path_bytes(
+            reinterpret_cast<uint8_t *>(path.data()),
+            reinterpret_cast<uint8_t *>(path.data()) + (path.size() * sizeof(azihsm_char))
+        );
+        cross_process_test_params params(
+            "azihsm_multi_process_child.aes_gcm_encrypt_decrypt_cross_process",
+            path_bytes,
+            bmk,
+            std::vector<uint8_t>(obk.begin(), obk.end()),
+            std::vector<uint8_t>(seed.begin(), seed.end()),
+            message,
+            ciphertext,
+            masked_key,
+            std::vector<uint8_t>(iv, iv + sizeof(iv)),
+            tag,
+            aad
+        );
+        int rc = run_child_test(params);
+        ASSERT_EQ(rc, 0)
+            << "If running on real hardware, set AZIHSM_DISABLE_MULTI_PROCESS_TESTS=1 to skip";
+    });
+}
+
+TEST_F(azihsm_multi_process_child, aes_gcm_encrypt_decrypt_cross_process)
+{
+    child_common_setup();
+
+    // Unmask the AES-GCM key
+    azihsm_buffer masked_buf = { test_params.masked_key.data(), static_cast<uint32_t>(test_params.masked_key.size()) };
+    auto_key aes_key;
+    auto err = azihsm_key_unmask(sess_handle, AZIHSM_KEY_KIND_AES_GCM, &masked_buf, aes_key.get_ptr());
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+    // Set up GCM params with IV, tag, and AAD for decryption
+    ASSERT_TRUE(test_params.iv.has_value()) << "IV is required for AES-GCM";
+    ASSERT_TRUE(test_params.tag.has_value()) << "Tag is required for AES-GCM";
+    ASSERT_TRUE(test_params.aad.has_value()) << "AAD is expected for this test";
+
+    azihsm_buffer aad_buf = { test_params.aad->data(), static_cast<uint32_t>(test_params.aad->size()) };
+    azihsm_algo_aes_gcm_params gcm_params{};
+    std::memcpy(gcm_params.iv, test_params.iv->data(), (std::min)(sizeof(gcm_params.iv), test_params.iv->size()));
+    std::memcpy(gcm_params.tag, test_params.tag->data(), (std::min)(sizeof(gcm_params.tag), test_params.tag->size()));
+    gcm_params.aad = &aad_buf;
+
+    azihsm_algo decrypt_algo = { AZIHSM_ALGO_ID_AES_GCM, &gcm_params, sizeof(gcm_params) };
+
+    // Decrypt the ciphertext
+    azihsm_buffer ciphertext_buf = { test_params.signature_or_ciphertext.data(), static_cast<uint32_t>(test_params.signature_or_ciphertext.size()) };
+    azihsm_buffer plaintext_buf = { nullptr, 0 };
+
+    err = azihsm_crypt_decrypt(&decrypt_algo, aes_key.get(), &ciphertext_buf, &plaintext_buf);
+    ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+
+    std::vector<uint8_t> plaintext(plaintext_buf.len);
+    plaintext_buf.ptr = plaintext.data();
+    err = azihsm_crypt_decrypt(&decrypt_algo, aes_key.get(), &ciphertext_buf, &plaintext_buf);
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+    // Verify decrypted plaintext matches original message
+    ASSERT_EQ(plaintext.size(), test_params.message.size());
+    ASSERT_EQ(plaintext, test_params.message);
+}
+
 TEST_F(azihsm_multi_process_parent, hmac_sign_verify_cross_process)
 {
     part_list_.for_each_part([this](std::vector<azihsm_char> &path) {

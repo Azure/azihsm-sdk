@@ -31,7 +31,9 @@ struct cross_process_test_params
     std::vector<uint8_t> masked_key;
     
     // Algorithm-specific parameters
-    std::optional<std::vector<uint8_t>> iv;  // For symmetric encryption (AES-CBC, etc.)
+    std::optional<std::vector<uint8_t>> iv;   // For symmetric encryption (AES-CBC, AES-GCM)
+    std::optional<std::vector<uint8_t>> tag;  // For authenticated encryption (AES-GCM)
+    std::optional<std::vector<uint8_t>> aad;  // Additional Authenticated Data (AES-GCM)
 
     cross_process_test_params(
         const std::string &test_name,
@@ -42,7 +44,9 @@ struct cross_process_test_params
         const std::vector<uint8_t> &message,
         const std::vector<uint8_t> &signature_or_ciphertext,
         const std::vector<uint8_t> &masked_key,
-        const std::optional<std::vector<uint8_t>> &iv = std::nullopt
+        const std::optional<std::vector<uint8_t>> &iv = std::nullopt,
+        const std::optional<std::vector<uint8_t>> &tag = std::nullopt,
+        const std::optional<std::vector<uint8_t>> &aad = std::nullopt
     ) : test_name(test_name),
         path_bytes(path_bytes),
         bmk(bmk),
@@ -51,7 +55,9 @@ struct cross_process_test_params
         message(message),
         signature_or_ciphertext(signature_or_ciphertext),
         masked_key(masked_key),
-        iv(iv)
+        iv(iv),
+        tag(tag),
+        aad(aad)
     {}
 
     cross_process_test_params() = default;
