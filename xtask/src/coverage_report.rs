@@ -63,7 +63,15 @@ impl Xtask for CoverageReport {
         let per_file = parse_cobertura(&xml)?;
 
         let table = render_markdown_table(&per_file);
-        println!("{}", table);
+
+        // Write to GITHUB_STEP_SUMMARY environment variable
+        if let Ok(summary_path) = std::env::var("GITHUB_STEP_SUMMARY") {
+            fs::write(&summary_path, &table)?;
+            log::trace!("Report written to GITHUB_STEP_SUMMARY");
+        } else {
+            // If not in GitHub Actions, just print to stdout
+            println!("{}", table);
+        }
 
         Ok(())
     }
