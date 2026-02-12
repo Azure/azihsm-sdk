@@ -25,12 +25,16 @@
 
 #include "algo/ecc/helpers.hpp"
 #include "algo/hmac/helpers.hpp"
+#include "algo/rsa/helpers.hpp"
 #include "handle/part_handle.hpp"
 #include "handle/part_list_handle.hpp"
 #include "utils/auto_key.hpp"
+#include "utils/key_import.hpp"
+#include "utils/key_props.hpp"
 #include "utils/part_init_config.hpp"
 #include "utils/utils.hpp"
 #include "utils/multi_process.hpp"
+#include "utils/rsa_keygen.hpp"
 
 namespace
 {
@@ -726,5 +730,105 @@ TEST_F(azihsm_multi_process_child, hmac_sign_verify_cross_process)
     azihsm_buffer msg_buf = { test_params.message.data(), static_cast<uint32_t>(test_params.message.size()) };
     azihsm_buffer mac_buf = { test_params.signature_or_ciphertext.data(), static_cast<uint32_t>(test_params.signature_or_ciphertext.size()) };
     err = azihsm_crypt_verify(&hmac_algo, hmac_key.get(), &msg_buf, &mac_buf);
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+}
+
+TEST_F(azihsm_multi_process_parent, rsa_sign_verify_cross_process)
+{
+    part_list_.for_each_part([this](std::vector<azihsm_char> &path) {
+        parent_common_setup(path);
+
+        // Generate RSA wrapping key pair for import
+        auto_key wrapping_priv_key;
+        auto_key wrapping_pub_key;
+        auto err = generate_rsa_unwrapping_keypair(
+            sess_handle,
+            wrapping_priv_key.get_ptr(),
+            wrapping_pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        // Import RSA key pair (non-session for backup/restore)
+        key_props import_props = {
+            .key_kind = AZIHSM_KEY_KIND_RSA,
+            .key_size_bits = 2048,
+            .session_key = false,
+            .sign = true,
+            .verify = true,
+            .encrypt = false,
+            .decrypt = false,
+        };
+        auto_key imported_priv_key;
+        auto_key imported_pub_key;
+        err = import_keypair(
+            wrapping_pub_key.get(),
+            wrapping_priv_key.get(),
+            rsa_private_key_der,
+            import_props,
+            imported_priv_key.get_ptr(),
+            imported_pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        // Get masked key for transfer
+        auto masked_key = get_key_prop_bytes(imported_priv_key.get(), AZIHSM_KEY_PROP_ID_MASKED_KEY);
+
+        // Sign a message with RSA-PKCS-SHA256
+        std::vector<uint8_t> message(64, 0x2A);
+        azihsm_buffer msg_buf = { message.data(), static_cast<uint32_t>(message.size()) };
+
+        azihsm_algo sign_algo = { AZIHSM_ALGO_ID_RSA_PKCS_SHA256, nullptr, 0 };
+
+        azihsm_buffer sig_buf = { nullptr, 0 };
+        err = azihsm_crypt_sign(&sign_algo, imported_priv_key.get(), &msg_buf, &sig_buf);
+        ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+
+        std::vector<uint8_t> signature(sig_buf.len);
+        sig_buf.ptr = signature.data();
+        err = azihsm_crypt_sign(&sign_algo, imported_priv_key.get(), &msg_buf, &sig_buf);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        std::vector<uint8_t> path_bytes(
+            reinterpret_cast<uint8_t *>(path.data()),
+            reinterpret_cast<uint8_t *>(path.data()) + (path.size() * sizeof(azihsm_char))
+        );
+        cross_process_test_params params(
+            "azihsm_multi_process_child.rsa_sign_verify_cross_process",
+            path_bytes,
+            bmk,
+            std::vector<uint8_t>(obk.begin(), obk.end()),
+            std::vector<uint8_t>(seed.begin(), seed.end()),
+            message,
+            signature,
+            masked_key
+        );
+        int rc = run_child_test(params);
+        ASSERT_EQ(rc, 0)
+            << "If running on real hardware, set AZIHSM_DISABLE_MULTI_PROCESS_TESTS=1 to skip";
+    });
+}
+
+TEST_F(azihsm_multi_process_child, rsa_sign_verify_cross_process)
+{
+    child_common_setup();
+
+    // Unmask the RSA key pair (both private and public keys from one masked blob)
+    azihsm_buffer masked_buf = { test_params.masked_key.data(), static_cast<uint32_t>(test_params.masked_key.size()) };
+    auto_key priv_key;
+    auto_key pub_key;
+    auto err = azihsm_key_unmask_pair(
+        sess_handle,
+        AZIHSM_KEY_KIND_RSA,
+        &masked_buf,
+        priv_key.get_ptr(),
+        pub_key.get_ptr()
+    );
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+    // Verify the RSA signature
+    azihsm_algo sign_algo = { AZIHSM_ALGO_ID_RSA_PKCS_SHA256, nullptr, 0 };
+    azihsm_buffer msg_buf = { test_params.message.data(), static_cast<uint32_t>(test_params.message.size()) };
+    azihsm_buffer sig_buf = { test_params.signature_or_ciphertext.data(), static_cast<uint32_t>(test_params.signature_or_ciphertext.size()) };
+    err = azihsm_crypt_verify(&sign_algo, pub_key.get(), &msg_buf, &sig_buf);
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 }
