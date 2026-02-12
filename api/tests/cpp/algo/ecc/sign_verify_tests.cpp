@@ -985,7 +985,7 @@ TEST_F(azihsm_ecc_sign_verify, DISABLED_MANUAL_restore_key_and_verify)
     masked_key_buf.ptr = masked_key.data();
     masked_key_buf.len = static_cast<uint32_t>(masked_key.size());
 
-        auto_key restored_priv_key;
+    auto_key restored_priv_key;
     auto_key restored_pub_key;
     err = azihsm_key_unmask_pair(
         session.get(),
