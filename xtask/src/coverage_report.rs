@@ -85,8 +85,8 @@ fn parse_cobertura(xml: &str) -> anyhow::Result<BTreeMap<String, CoverageCounts>
             Ok(Event::Start(ref e)) => match e.name().as_ref() {
                 b"class" => {
                     if let Some(filename) = get_attr_value(e, b"filename")? {
-                        current_file = Some(filename.to_string());
-                        per_file.entry(filename.to_string()).or_default();
+                        current_file = Some(filename.clone());
+                        per_file.entry(filename).or_default();
                     }
                 }
                 b"method" => {
