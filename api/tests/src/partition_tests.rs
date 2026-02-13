@@ -89,6 +89,16 @@ fn test_partition_init() {
             .expect("Failed to open the partition");
         part.reset().expect("Partition reset failed");
 
+        // Verify TEST_API_REV is within the partition's supported range
+        let rev_range = part.api_rev_range();
+        assert!(
+            TEST_API_REV >= rev_range.min() && TEST_API_REV <= rev_range.max(),
+            "TEST_API_REV ({:?}) is outside the supported range ({:?}..={:?})",
+            TEST_API_REV,
+            rev_range.min(),
+            rev_range.max(),
+        );
+
         let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
         let use_tpm = std::env::var("AZIHSM_USE_TPM").is_ok();
 
