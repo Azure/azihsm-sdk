@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 /// Error type for PAL operations.
 ///
@@ -8,7 +9,7 @@ pub type PalMgmtError = u32;
 /// Result type for PAL operations.
 ///
 /// Returns the success value `T` or a [`PalError`] on failure.
-pub type PalMgmtResult<T> = Result<T, PalMgmtError>;
+pub type MgmtPalResult<T> = Result<T, PalMgmtError>;
 
 #[repr(u32)]
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]

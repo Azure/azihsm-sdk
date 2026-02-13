@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 use super::*;
 
@@ -9,13 +10,11 @@ pub(crate) fn handle_ctrl_event(event: CtrlEvent) -> Result<(), u32> {
     match event {
         CtrlEvent::Enable { ctrl_id } => {
             tracing::info!("CtrlEvent::Enable({})", ctrl_id);
-            let csts = pal.read_csts_reg(ctrl_id)?.with_rdy(true);
-            pal.write_csts_reg(ctrl_id, csts)
+            pal.set_ctrl_enable(ctrl_id)
         }
         CtrlEvent::Disable { ctrl_id } => {
             tracing::info!("CtrlEvent::Disable({})", ctrl_id);
-            let csts = pal.read_csts_reg(ctrl_id)?.with_rdy(false);
-            pal.write_csts_reg(ctrl_id, csts)
+            pal.set_ctrl_disable(ctrl_id)
         }
     }
 }

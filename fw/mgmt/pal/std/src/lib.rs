@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 //! Standard Platform Abstraction Layer implementation.
 //!
@@ -13,7 +14,7 @@ use std::future::*;
 use std::task::*;
 
 pub use azihsm_fw_mgmt_pal_traits::*;
-use ctrl::*;
+pub use ctrl::*;
 use parking_lot::Mutex;
 use pcie::*;
 use tracing::*;
@@ -36,12 +37,12 @@ impl Default for StdPal {
     }
 }
 
-impl Pal for StdPal {
+impl MgmtPal for StdPal {
     /// Initializes the standard PAL.
     ///
     /// Currently performs no initialization and always succeeds.
     #[instrument(skip(self), ret)]
-    fn init(&self) -> PalMgmtResult<()> {
+    fn init(&self) -> MgmtPalResult<()> {
         Ok(())
     }
 
@@ -63,7 +64,7 @@ impl Pal for StdPal {
     ///
     /// Currently performs no cleanup and always succeeds.
     #[instrument(skip(self), ret)]
-    fn deinit(&self) -> PalMgmtResult<()> {
+    fn deinit(&self) -> MgmtPalResult<()> {
         Ok(())
     }
 }
@@ -144,7 +145,7 @@ impl StdPal {
     ///
     /// # Parameters
     /// - `ctrl_id`: The identifier of the controller to read from.
-    pub fn ctrl_read_cap_reg(&self, ctrl_id: CtrlId) -> PalMgmtResult<CtrlCapReg> {
+    pub fn ctrl_read_cap_reg(&self, ctrl_id: CtrlId) -> MgmtPalResult<CtrlCapReg> {
         self.with_ctrl_mgr(|mgr| mgr.read_cap_reg(ctrl_id))
     }
 
@@ -152,7 +153,7 @@ impl StdPal {
     ///
     /// # Parameters
     /// - `ctrl_id`: The identifier of the controller to read from.
-    pub fn ctrl_read_vs_reg(&self, ctrl_id: CtrlId) -> PalMgmtResult<CtrlVsReg> {
+    pub fn ctrl_read_vs_reg(&self, ctrl_id: CtrlId) -> MgmtPalResult<CtrlVsReg> {
         self.with_ctrl_mgr(|mgr| mgr.read_vs_reg(ctrl_id))
     }
 
@@ -160,7 +161,7 @@ impl StdPal {
     ///
     /// # Parameters
     /// - `ctrl_id`: The identifier of the controller to read from.
-    pub fn ctrl_read_cc_reg(&self, ctrl_id: CtrlId) -> PalMgmtResult<CtrlCcReg> {
+    pub fn ctrl_read_cc_reg(&self, ctrl_id: CtrlId) -> MgmtPalResult<CtrlCcReg> {
         self.with_ctrl_mgr(|mgr| mgr.read_cc_reg(ctrl_id))
     }
 
@@ -169,7 +170,7 @@ impl StdPal {
     /// # Parameters
     /// - `ctrl_id`: The identifier of the controller to write to.
     /// - `reg`: The configuration register value to write.
-    pub fn ctrl_write_cc_reg(&self, ctrl_id: CtrlId, reg: CtrlCcReg) -> PalMgmtResult<()> {
+    pub fn ctrl_write_cc_reg(&self, ctrl_id: CtrlId, reg: CtrlCcReg) -> MgmtPalResult<()> {
         self.with_ctrl_mgr(|mgr| mgr.write_cc_reg(ctrl_id, reg))
     }
 
@@ -177,7 +178,7 @@ impl StdPal {
     ///
     /// # Parameters
     /// - `ctrl_id`: The identifier of the controller to read from.
-    pub fn ctrl_read_csts_reg(&self, ctrl_id: CtrlId) -> PalMgmtResult<CtrlCstsReg> {
+    pub fn ctrl_read_csts_reg(&self, ctrl_id: CtrlId) -> MgmtPalResult<CtrlCstsReg> {
         self.with_ctrl_mgr(|mgr| mgr.read_csts_reg(ctrl_id))
     }
 
@@ -185,7 +186,7 @@ impl StdPal {
     ///
     /// # Parameters
     /// - `ctrl_id`: The identifier of the controller to read from.
-    pub fn ctrl_read_aqa_reg(&self, ctrl_id: CtrlId) -> PalMgmtResult<CtrlAqaReg> {
+    pub fn ctrl_read_aqa_reg(&self, ctrl_id: CtrlId) -> MgmtPalResult<CtrlAqaReg> {
         self.with_ctrl_mgr(|mgr| mgr.read_aqa_reg(ctrl_id))
     }
 
@@ -194,7 +195,7 @@ impl StdPal {
     /// # Parameters
     /// - `ctrl_id`: The identifier of the controller to write to.
     /// - `reg`: The admin queue attribute register value to write.
-    pub fn ctrl_write_aqa_reg(&self, ctrl_id: CtrlId, reg: CtrlAqaReg) -> PalMgmtResult<()> {
+    pub fn ctrl_write_aqa_reg(&self, ctrl_id: CtrlId, reg: CtrlAqaReg) -> MgmtPalResult<()> {
         self.with_ctrl_mgr(|mgr| mgr.write_aqa_reg(ctrl_id, reg))
     }
 
@@ -202,7 +203,7 @@ impl StdPal {
     ///
     /// # Parameters
     /// - `ctrl_id`: The identifier of the controller to read from.
-    pub fn ctrl_read_asq_reg(&self, ctrl_id: CtrlId) -> PalMgmtResult<CtrlAsqReg> {
+    pub fn ctrl_read_asq_reg(&self, ctrl_id: CtrlId) -> MgmtPalResult<CtrlAsqReg> {
         self.with_ctrl_mgr(|mgr| mgr.read_asq_reg(ctrl_id))
     }
 
@@ -211,7 +212,7 @@ impl StdPal {
     /// # Parameters
     /// - `ctrl_id`: The identifier of the controller to write to.
     /// - `reg`: The admin submission queue base address register value to write.
-    pub fn ctrl_write_asq_reg(&self, ctrl_id: CtrlId, reg: CtrlAsqReg) -> PalMgmtResult<()> {
+    pub fn ctrl_write_asq_reg(&self, ctrl_id: CtrlId, reg: CtrlAsqReg) -> MgmtPalResult<()> {
         self.with_ctrl_mgr(|mgr| mgr.write_asq_reg(ctrl_id, reg))
     }
 
@@ -219,7 +220,7 @@ impl StdPal {
     ///
     /// # Parameters
     /// - `ctrl_id`: The identifier of the controller to read from.
-    pub fn ctrl_read_acq_reg(&self, ctrl_id: CtrlId) -> PalMgmtResult<CtrlAcqReg> {
+    pub fn ctrl_read_acq_reg(&self, ctrl_id: CtrlId) -> MgmtPalResult<CtrlAcqReg> {
         self.with_ctrl_mgr(|mgr| mgr.read_acq_reg(ctrl_id))
     }
 
@@ -228,7 +229,7 @@ impl StdPal {
     /// # Parameters
     /// - `ctrl_id`: The identifier of the controller to write to.
     /// - `reg`: The admin completion queue base address register value to write.
-    pub fn ctrl_write_acq_reg(&self, ctrl_id: CtrlId, reg: CtrlAcqReg) -> PalMgmtResult<()> {
+    pub fn ctrl_write_acq_reg(&self, ctrl_id: CtrlId, reg: CtrlAcqReg) -> MgmtPalResult<()> {
         self.with_ctrl_mgr(|mgr| mgr.write_acq_reg(ctrl_id, reg))
     }
 

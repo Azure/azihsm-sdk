@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 //! PCIe management types and traits for the Platform Abstraction Layer (PAL).
 //!
@@ -37,17 +38,17 @@ pub trait PcieMgr {
     /// Signals that PERST assertion handling is complete.
     ///
     /// Call this after processing a [`PcieEvent::PerstUp`] event.
-    fn perst_up_done(&self) -> PalMgmtResult<()>;
+    fn perst_up_done(&self) -> MgmtPalResult<()>;
 
     /// Signals that PERST deassertion handling is complete.
     ///
     /// Call this after processing a [`PcieEvent::PerstDown`] event.
-    fn perst_down_done(&self) -> PalMgmtResult<()>;
+    fn perst_down_done(&self) -> MgmtPalResult<()>;
 
     /// Signals that Function Level Reset handling is complete.
     ///
     /// Call this after processing a [`PcieEvent::FuncReset`] event.
-    fn flr_done(&self) -> PalMgmtResult<()>;
+    fn flr_done(&self) -> MgmtPalResult<()>;
 
     /// Signals that Virtual Function Level Reset handling is complete.
     ///
@@ -55,5 +56,5 @@ pub trait PcieMgr {
     ///
     /// # Parameters
     /// - `ctrl_id`: The identifier of the virtual function's controller that was reset.
-    fn vflr_done(&self, ctrl_id: CtrlId) -> PalMgmtResult<()>;
+    fn vflr_done(&self, ctrl_id: CtrlId) -> MgmtPalResult<()>;
 }

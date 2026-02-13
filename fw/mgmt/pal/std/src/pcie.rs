@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 //! PCIe manager implementation for the standard PAL.
 //!
@@ -192,7 +193,7 @@ impl PcieMgr for StdPal {
     /// Signals that PERST up handling is complete.
     ///
     /// Clears the PERST up pending state.
-    fn perst_up_done(&self) -> PalMgmtResult<()> {
+    fn perst_up_done(&self) -> MgmtPalResult<()> {
         self.with_pcie_mgr(|mgr| mgr.clear_perst_up());
         Ok(())
     }
@@ -200,7 +201,7 @@ impl PcieMgr for StdPal {
     /// Signals that PERST down handling is complete.
     ///
     /// Clears the PERST down pending state.
-    fn perst_down_done(&self) -> PalMgmtResult<()> {
+    fn perst_down_done(&self) -> MgmtPalResult<()> {
         self.with_pcie_mgr(|mgr| mgr.clear_perst_down());
         Ok(())
     }
@@ -208,7 +209,7 @@ impl PcieMgr for StdPal {
     /// Signals that Function Level Reset handling is complete.
     ///
     /// Clears the FLR pending state.
-    fn flr_done(&self) -> PalMgmtResult<()> {
+    fn flr_done(&self) -> MgmtPalResult<()> {
         self.with_pcie_mgr(|mgr| mgr.clear_flr());
         Ok(())
     }
@@ -219,7 +220,7 @@ impl PcieMgr for StdPal {
     ///
     /// # Parameters
     /// - `ctrl_id`: The controller ID whose VFLR handling is complete.
-    fn vflr_done(&self, ctrl_id: CtrlId) -> PalMgmtResult<()> {
+    fn vflr_done(&self, ctrl_id: CtrlId) -> MgmtPalResult<()> {
         self.with_pcie_mgr(|mgr| mgr.clear_vflr(ctrl_id));
         Ok(())
     }

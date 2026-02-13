@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 //! Management firmware application library.
 //!
@@ -24,10 +25,10 @@ use tracing::*;
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "pal-std")] {
-        use azihsm_fw_mgmt_pal_std::Pal as _;
+        use azihsm_fw_mgmt_pal_std::MgmtPal as _;
         pub use azihsm_fw_mgmt_pal_std::*;
         /// The Platform Abstraction Layer type selected by feature flags.
-        pub type Pal = azihsm_fw_mgmt_pal_std::StdPal;
+        pub type MgmtPal = azihsm_fw_mgmt_pal_std::StdPal;
     } else {
         compile_error!("No PAL implementation selected. Please enable a PAL feature.");
     }
@@ -55,6 +56,6 @@ pub async fn run(spawner: Spawner) {
 ///
 /// Provides access to the PAL for performing platform-specific operations
 /// such as controller management, queue management, and I/O operations.
-pub fn pal() -> &'static Pal {
+pub fn pal() -> &'static MgmtPal {
     MGMT_APP.get().pal()
 }

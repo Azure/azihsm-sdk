@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 //! Standard Platform Abstraction Layer (PAL) controller management implementation.
 //!
@@ -6,6 +7,7 @@
 //! for managing hardware controllers, including register access and event polling.
 
 use super::*;
+use bitfield_struct::bitfield;
 use bitvec::vec::BitVec;
 use embassy_sync::waitqueue::WakerRegistration;
 
@@ -58,7 +60,7 @@ impl StdCtrlMgr {
     ///
     /// # Parameters
     /// - `ctrl_id`: The identifier of the controller to read from.
-    pub fn read_cap_reg(&self, ctrl_id: CtrlId) -> PalMgmtResult<CtrlCapReg> {
+    pub fn read_cap_reg(&self, ctrl_id: CtrlId) -> MgmtPalResult<CtrlCapReg> {
         if ctrl_id as usize >= Self::CTRL_COUNT {
             Err(CtrlMgrError::InvalidCtrlId)?;
         }
@@ -70,7 +72,7 @@ impl StdCtrlMgr {
     /// # Parameters
     /// - `ctrl_id`: The identifier of the controller to write to.
     /// - `reg`: The capability register value to write.
-    fn write_cap_reg(&mut self, ctrl_id: CtrlId, reg: CtrlCapReg) -> PalMgmtResult<()> {
+    fn _write_cap_reg(&mut self, ctrl_id: CtrlId, reg: CtrlCapReg) -> MgmtPalResult<()> {
         if ctrl_id as usize >= Self::CTRL_COUNT {
             Err(CtrlMgrError::InvalidCtrlId)?;
         }
@@ -82,7 +84,7 @@ impl StdCtrlMgr {
     ///
     /// # Parameters
     /// - `ctrl_id`: The identifier of the controller to read from.
-    pub fn read_vs_reg(&self, ctrl_id: CtrlId) -> PalMgmtResult<CtrlVsReg> {
+    pub fn read_vs_reg(&self, ctrl_id: CtrlId) -> MgmtPalResult<CtrlVsReg> {
         if ctrl_id as usize >= Self::CTRL_COUNT {
             Err(CtrlMgrError::InvalidCtrlId)?;
         }
@@ -94,7 +96,7 @@ impl StdCtrlMgr {
     /// # Parameters
     /// - `ctrl_id`: The identifier of the controller to write to.
     /// - `reg`: The version register value to write.
-    fn write_vs_reg(&mut self, ctrl_id: CtrlId, reg: CtrlVsReg) -> PalMgmtResult<()> {
+    fn _write_vs_reg(&mut self, ctrl_id: CtrlId, reg: CtrlVsReg) -> MgmtPalResult<()> {
         if ctrl_id as usize >= Self::CTRL_COUNT {
             Err(CtrlMgrError::InvalidCtrlId)?;
         }
@@ -106,7 +108,7 @@ impl StdCtrlMgr {
     ///
     /// # Parameters
     /// - `ctrl_id`: The identifier of the controller to read from.
-    pub fn read_cc_reg(&self, ctrl_id: CtrlId) -> PalMgmtResult<CtrlCcReg> {
+    pub fn read_cc_reg(&self, ctrl_id: CtrlId) -> MgmtPalResult<CtrlCcReg> {
         if ctrl_id as usize >= Self::CTRL_COUNT {
             Err(CtrlMgrError::InvalidCtrlId)?;
         }
@@ -118,7 +120,7 @@ impl StdCtrlMgr {
     /// # Parameters
     /// - `ctrl_id`: The identifier of the controller to write to.
     /// - `reg`: The configuration register value to write.
-    pub fn write_cc_reg(&mut self, ctrl_id: CtrlId, reg: CtrlCcReg) -> PalMgmtResult<()> {
+    pub fn write_cc_reg(&mut self, ctrl_id: CtrlId, reg: CtrlCcReg) -> MgmtPalResult<()> {
         if ctrl_id as usize >= Self::CTRL_COUNT {
             Err(CtrlMgrError::InvalidCtrlId)?;
         }
@@ -130,7 +132,7 @@ impl StdCtrlMgr {
     ///
     /// # Parameters
     /// - `ctrl_id`: The identifier of the controller to read from.
-    pub fn read_csts_reg(&self, ctrl_id: CtrlId) -> PalMgmtResult<CtrlCstsReg> {
+    pub fn read_csts_reg(&self, ctrl_id: CtrlId) -> MgmtPalResult<CtrlCstsReg> {
         if ctrl_id as usize >= Self::CTRL_COUNT {
             Err(CtrlMgrError::InvalidCtrlId)?;
         }
@@ -142,7 +144,7 @@ impl StdCtrlMgr {
     /// # Parameters
     /// - `ctrl_id`: The identifier of the controller to write to.
     /// - `reg`: The status register value to write.
-    fn write_csts_reg(&mut self, ctrl_id: CtrlId, reg: CtrlCstsReg) -> PalMgmtResult<()> {
+    fn write_csts_reg(&mut self, ctrl_id: CtrlId, reg: CtrlCstsReg) -> MgmtPalResult<()> {
         if ctrl_id as usize >= Self::CTRL_COUNT {
             Err(CtrlMgrError::InvalidCtrlId)?;
         }
@@ -154,7 +156,7 @@ impl StdCtrlMgr {
     ///
     /// # Parameters
     /// - `ctrl_id`: The identifier of the controller to read from.
-    pub fn read_aqa_reg(&self, ctrl_id: CtrlId) -> PalMgmtResult<CtrlAqaReg> {
+    pub fn read_aqa_reg(&self, ctrl_id: CtrlId) -> MgmtPalResult<CtrlAqaReg> {
         if ctrl_id as usize >= Self::CTRL_COUNT {
             Err(CtrlMgrError::InvalidCtrlId)?;
         }
@@ -166,7 +168,7 @@ impl StdCtrlMgr {
     /// # Parameters
     /// - `ctrl_id`: The identifier of the controller to write to.
     /// - `reg`: The admin queue attribute register value to write.
-    pub fn write_aqa_reg(&mut self, ctrl_id: CtrlId, reg: CtrlAqaReg) -> PalMgmtResult<()> {
+    pub fn write_aqa_reg(&mut self, ctrl_id: CtrlId, reg: CtrlAqaReg) -> MgmtPalResult<()> {
         if ctrl_id as usize >= Self::CTRL_COUNT {
             Err(CtrlMgrError::InvalidCtrlId)?;
         }
@@ -178,7 +180,7 @@ impl StdCtrlMgr {
     ///
     /// # Parameters
     /// - `ctrl_id`: The identifier of the controller to read from.
-    pub fn read_asq_reg(&self, ctrl_id: CtrlId) -> PalMgmtResult<CtrlAsqReg> {
+    pub fn read_asq_reg(&self, ctrl_id: CtrlId) -> MgmtPalResult<CtrlAsqReg> {
         if ctrl_id as usize >= Self::CTRL_COUNT {
             Err(CtrlMgrError::InvalidCtrlId)?;
         }
@@ -190,7 +192,7 @@ impl StdCtrlMgr {
     /// # Parameters
     /// - `ctrl_id`: The identifier of the controller to write to.
     /// - `reg`: The admin submission queue base address register value to write.
-    pub fn write_asq_reg(&mut self, ctrl_id: CtrlId, reg: CtrlAsqReg) -> PalMgmtResult<()> {
+    pub fn write_asq_reg(&mut self, ctrl_id: CtrlId, reg: CtrlAsqReg) -> MgmtPalResult<()> {
         if ctrl_id as usize >= Self::CTRL_COUNT {
             Err(CtrlMgrError::InvalidCtrlId)?;
         }
@@ -202,7 +204,7 @@ impl StdCtrlMgr {
     ///
     /// # Parameters
     /// - `ctrl_id`: The identifier of the controller to read from.
-    pub fn read_acq_reg(&self, ctrl_id: CtrlId) -> PalMgmtResult<CtrlAcqReg> {
+    pub fn read_acq_reg(&self, ctrl_id: CtrlId) -> MgmtPalResult<CtrlAcqReg> {
         if ctrl_id as usize >= Self::CTRL_COUNT {
             Err(CtrlMgrError::InvalidCtrlId)?;
         }
@@ -214,7 +216,7 @@ impl StdCtrlMgr {
     /// # Parameters
     /// - `ctrl_id`: The identifier of the controller to write to.
     /// - `reg`: The admin completion queue base address register value to write.
-    pub fn write_acq_reg(&mut self, ctrl_id: CtrlId, reg: CtrlAcqReg) -> PalMgmtResult<()> {
+    pub fn write_acq_reg(&mut self, ctrl_id: CtrlId, reg: CtrlAcqReg) -> MgmtPalResult<()> {
         if ctrl_id as usize >= Self::CTRL_COUNT {
             Err(CtrlMgrError::InvalidCtrlId)?;
         }
@@ -267,86 +269,217 @@ impl CtrlMgr for StdPal {
         })
     }
 
-    /// Reads the controller capability register.
-    ///
-    /// # Parameters
-    /// - `ctrl_id`: The identifier of the controller to read from.
-    fn read_cap_reg(&self, ctrl_id: CtrlId) -> PalMgmtResult<CtrlCapReg> {
-        self.with_ctrl_mgr(|mgr| mgr.read_cap_reg(ctrl_id))
+    /// Retrieves the Admin Submission Queue (SQ) information for the specified controller.
+    fn asq_info(&self, ctrl_id: CtrlId) -> MgmtPalResult<SqInfo> {
+        let inner = self.inner.lock();
+        let aqa = inner.ctrl_mgr.read_aqa_reg(ctrl_id)?;
+        let asq = inner.ctrl_mgr.read_asq_reg(ctrl_id)?;
+        Ok(SqInfo {
+            id: 0, // Admin SQ always has ID 0
+            size: aqa.asqs(),
+            addr: asq.asqb(),
+        })
     }
 
-    /// Writes to the controller capability register.
-    ///
-    /// # Parameters
-    /// - `ctrl_id`: The identifier of the controller to write to.
-    /// - `reg`: The capability register value to write.
-    fn write_cap_reg(&self, ctrl_id: CtrlId, reg: CtrlCapReg) -> PalMgmtResult<()> {
-        self.with_ctrl_mgr(|mgr| mgr.write_cap_reg(ctrl_id, reg))
+    /// Retrieves the Admin Completion Queue (CQ) information for the specified controller.
+    fn acq_info(&self, ctrl_id: CtrlId) -> MgmtPalResult<CqInfo> {
+        let inner = self.inner.lock();
+        let aqa = inner.ctrl_mgr.read_aqa_reg(ctrl_id)?;
+        let acq = inner.ctrl_mgr.read_acq_reg(ctrl_id)?;
+        Ok(CqInfo {
+            id: 0, // Admin CQ always has ID 0
+            size: aqa.acqs(),
+            addr: acq.acqb(),
+            vec: 0, // Admin CQ always has vector 0
+        })
     }
 
-    /// Reads the controller version register.
-    ///
-    /// # Parameters
-    /// - `ctrl_id`: The identifier of the controller to read from.
-    fn read_vs_reg(&self, ctrl_id: CtrlId) -> PalMgmtResult<CtrlVsReg> {
-        self.with_ctrl_mgr(|mgr| mgr.read_vs_reg(ctrl_id))
+    /// Enables the specified controller.
+    fn set_ctrl_enable(&self, ctrl_id: CtrlId) -> MgmtPalResult<()> {
+        self.with_ctrl_mgr(|mgr| {
+            let mut csts = mgr.read_csts_reg(ctrl_id)?;
+            csts.set_rdy(true);
+            csts.set_cfs(false);
+            mgr.write_csts_reg(ctrl_id, csts)
+        })?;
+        Ok(())
     }
 
-    /// Writes to the controller version register.
-    ///
-    /// # Parameters
-    /// - `ctrl_id`: The identifier of the controller to write to.
-    /// - `reg`: The version register value to write.
-    fn write_vs_reg(&self, ctrl_id: CtrlId, reg: CtrlVsReg) -> PalMgmtResult<()> {
-        self.with_ctrl_mgr(|mgr| mgr.write_vs_reg(ctrl_id, reg))
+    /// Disables the specified controller.
+    fn set_ctrl_disable(&self, ctrl_id: CtrlId) -> MgmtPalResult<()> {
+        self.with_ctrl_mgr(|mgr| {
+            let mut csts = mgr.read_csts_reg(ctrl_id)?;
+            csts.set_rdy(false);
+            csts.set_cfs(false);
+            mgr.write_csts_reg(ctrl_id, csts)
+        })?;
+        Ok(())
     }
 
-    /// Reads the controller configuration register.
-    ///
-    /// # Parameters
-    /// - `ctrl_id`: The identifier of the controller to read from.
-    fn read_cc_reg(&self, ctrl_id: CtrlId) -> PalMgmtResult<CtrlCcReg> {
-        self.with_ctrl_mgr(|mgr| mgr.read_cc_reg(ctrl_id))
+    /// Sets the fatal status for the specified controller.
+    fn set_ctrl_fatal_status(&self, ctrl_id: CtrlId) {
+        let _ = self.with_ctrl_mgr(|mgr| {
+            let mut csts = mgr.read_csts_reg(ctrl_id)?;
+            csts.set_cfs(true);
+            csts.set_rdy(false);
+            mgr.write_csts_reg(ctrl_id, csts)
+        });
     }
+}
 
-    /// Reads the controller status register.
-    ///
-    /// # Parameters
-    /// - `ctrl_id`: The identifier of the controller to read from.
-    fn read_csts_reg(&self, ctrl_id: CtrlId) -> PalMgmtResult<CtrlCstsReg> {
-        self.with_ctrl_mgr(|mgr| mgr.read_csts_reg(ctrl_id))
-    }
+/// Controller Capability Register.
+///
+/// Contains the controller's capabilities and configuration limits.
+#[bitfield(u64)]
+pub struct CtrlCapReg {
+    /// Maximum queue entries supported
+    pub mqes: u16,
 
-    /// Writes to the controller status register.
-    ///
-    /// # Parameters
-    /// - `ctrl_id`: The identifier of the controller to write to.
-    /// - `reg`: The status register value to write.
-    fn write_csts_reg(&self, ctrl_id: CtrlId, reg: CtrlCstsReg) -> PalMgmtResult<()> {
-        self.with_ctrl_mgr(|mgr| mgr.write_csts_reg(ctrl_id, reg))
-    }
+    /// Contiguous queue required
+    pub cqr: bool,
 
-    /// Reads the controller admin queue attribute register.
-    ///
-    /// # Parameters
-    /// - `ctrl_id`: The identifier of the controller to read from.
-    fn read_aqa_reg(&self, ctrl_id: CtrlId) -> PalMgmtResult<CtrlAqaReg> {
-        self.with_ctrl_mgr(|mgr| mgr.read_aqa_reg(ctrl_id))
-    }
+    /// Reserved
+    #[bits(7)]
+    _rsvd1: u8,
 
-    /// Reads the admin submission queue base address register.
-    ///
-    /// # Parameters
-    /// - `ctrl_id`: The identifier of the controller to read from.
-    fn read_asq_reg(&self, ctrl_id: CtrlId) -> PalMgmtResult<CtrlAsqReg> {
-        self.with_ctrl_mgr(|mgr| mgr.read_asq_reg(ctrl_id))
-    }
+    /// Timeout
+    pub to: u8,
 
-    /// Reads the admin completion queue base address register.
-    ///
-    /// # Parameters
-    /// - `ctrl_id`: The identifier of the controller to read from.
-    fn read_acq_reg(&self, ctrl_id: CtrlId) -> PalMgmtResult<CtrlAcqReg> {
-        self.with_ctrl_mgr(|mgr| mgr.read_acq_reg(ctrl_id))
-    }
+    /// Doorbell stride
+    #[bits(4)]
+    pub dstrd: u8,
+
+    /// Manticore subsystem reset supported
+    pub mssrs: bool,
+
+    /// Reserved
+    #[bits(11)]
+    _rsvd2: u16,
+
+    /// Memory page size minimum
+    #[bits(4)]
+    pub mpsmin: u8,
+
+    /// Memory page size maximum
+    #[bits(4)]
+    pub mpsmax: u8,
+
+    /// Reserved
+    _rsvd3: u8,
+}
+
+/// Controller Version Register
+#[bitfield(u32)]
+pub struct CtrlVsReg {
+    /// Tertiary version number
+    pub ter: u8,
+
+    /// Minor version number
+    pub min: u8,
+
+    /// Major version number
+    pub maj: u16,
+}
+
+/// Controller Configuration Register
+#[bitfield(u32)]
+//#[derive(Default)]
+pub struct CtrlCcReg {
+    /// Enable controller
+    pub en: bool,
+
+    /// Reserved
+    #[bits(6)]
+    _rsvd1: u8,
+
+    /// Memory page size
+    #[bits(4)]
+    pub mps: u8,
+
+    /// Reserved
+    #[bits(5)]
+    _rsvd2: u8,
+
+    /// IO submission queue entry size
+    #[bits(4)]
+    pub iosqes: u8,
+
+    /// IO completion queue entry size
+    #[bits(4)]
+    pub iocqes: u8,
+
+    /// Reserved
+    _rsvd3: u8,
+}
+
+/// Controller Status Register
+#[bitfield(u32)]
+//#[derive(Default)]
+pub struct CtrlCstsReg {
+    /// Controller ready
+    pub rdy: bool,
+
+    /// Controller fatal status
+    pub cfs: bool,
+
+    /// Reserved
+    #[bits(2)]
+    _rsvd1: u8,
+
+    /// Manticore subsystem reset occurred
+    pub mssro: bool,
+
+    /// Processing paused
+    pub pp: bool,
+
+    /// Reserved
+    #[bits(26)]
+    _rsvd2: u32,
+}
+
+/// Controller Admin Queue Attribute Register
+#[bitfield(u32)]
+//#[derive(Default)]
+pub struct CtrlAqaReg {
+    /// Admin submission queue size
+    #[bits(12)]
+    pub asqs: u16,
+
+    /// Reserved
+    #[bits(4)]
+    _rsvd1: u8,
+
+    /// Admin completion queue size
+    #[bits(12)]
+    pub acqs: u16,
+
+    /// Reserved
+    #[bits(4)]
+    _rsvd2: u8,
+}
+
+/// Admin Submission Queue Base Address Register
+#[bitfield(u64)]
+//#[derive(Default)]
+pub struct CtrlAsqReg {
+    /// Reserved
+    #[bits(12)]
+    _rsvd1: u16,
+
+    /// Admin submission queue base
+    #[bits(52)]
+    pub asqb: u64,
+}
+
+/// Admin Completion Queue Base Address Register
+#[bitfield(u64)]
+//#[derive(Default)]
+pub struct CtrlAcqReg {
+    /// Reserved
+    #[bits(12)]
+    _rsvd1: u16,
+
+    /// Admin completion queue base
+    #[bits(52)]
+    pub acqb: u64,
 }

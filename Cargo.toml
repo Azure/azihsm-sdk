@@ -23,6 +23,9 @@ members = [
   "fw/plat/std",
   "plugins/ossl_prov",
   "xtask",
+  "fw/hsm/pal/traits",
+  "fw/hsm/pal/std",
+  "fw/hsm/app",
 ]
 
 [workspace.dependencies]

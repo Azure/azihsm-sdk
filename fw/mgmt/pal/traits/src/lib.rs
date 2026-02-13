@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 //! Platform Abstraction Layer (PAL) traits and types.
 //!
@@ -27,12 +28,12 @@ pub use queue::*;
 /// This trait combines [`PcieMgr`] capabilities,
 /// providing a unified interface for platform initialization, event processing,
 /// and deinitialization.
-pub trait Pal: PcieMgr + CtrlMgr {
+pub trait MgmtPal: PcieMgr + CtrlMgr {
     /// Initializes the platform abstraction layer.
     ///
     /// This should be called before any other PAL operations to set up
     /// required hardware resources and state.
-    fn init(&self) -> PalMgmtResult<()>;
+    fn init(&self) -> MgmtPalResult<()>;
 
     /// Runs the main event loop for processing platform events.
     ///
@@ -44,7 +45,7 @@ pub trait Pal: PcieMgr + CtrlMgr {
     ///
     /// This should be called during shutdown to release hardware resources
     /// and perform cleanup operations.
-    fn deinit(&self) -> PalMgmtResult<()>;
+    fn deinit(&self) -> MgmtPalResult<()>;
 }
 
 /// Unique identifier for a controller.

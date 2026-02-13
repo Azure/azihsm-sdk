@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 //! Management application core implementation.
 //!
@@ -16,13 +17,13 @@ use super::*;
 /// lifecycle from initialization through event processing to shutdown.
 pub struct MgmtApp {
     /// The platform abstraction layer instance.
-    pal: Pal,
+    pal: MgmtPal,
 }
 
 impl Default for MgmtApp {
     fn default() -> Self {
         Self {
-            pal: Pal::default(),
+            pal: MgmtPal::default(),
         }
     }
 }
@@ -46,7 +47,7 @@ impl MgmtApp {
     }
 
     /// Returns a reference to the Platform Abstraction Layer.
-    pub fn pal(&self) -> &Pal {
+    pub fn pal(&self) -> &MgmtPal {
         &self.pal
     }
 }

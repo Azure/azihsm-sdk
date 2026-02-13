@@ -1,12 +1,11 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 [package]
-edition = "2024"
-name = "azihsm_fw_mgmt_pal_traits"
+name = "azihsm_fw_hsm_pal_std"
 version = "0.0.0"
+edition = "2024"
 
 [dependencies]
-open-enum.workspace = true
 
 [lints]
 workspace = true
