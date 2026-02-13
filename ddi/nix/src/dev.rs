@@ -891,9 +891,7 @@ impl DdiDev for DdiNixDev {
         fips_approved: &mut bool,
     ) -> Result<usize, DdiError> {
         let src_buf_len = src_buf.len();
-        if src_buf_len == 0 {
-            Err(DdiError::InvalidParameter)?;
-        }
+        // Note: src_buf_len == 0 is valid for GCM (AAD-only authentication)
 
         // If this is a decryption operation, the tag must be provided. Return
         // early with an error if the caller did not provide a tag.
@@ -926,8 +924,9 @@ impl DdiDev for DdiNixDev {
         new_src_buf.extend(&final_aad);
         new_src_buf.extend(src_buf);
 
-        // Validate destination buffer size (needs to hold at least src_buf.len() bytes)
-        if dst_buf.len() < src_buf_len {
+        // Validate destination buffer size
+        // For zero-length input, dst_buf can be empty
+        if src_buf_len > 0 && dst_buf.len() < src_buf_len {
             tracing::error!(
                 "Destination buffer size ({}) is less than source buffer size ({})",
                 dst_buf.len(),
@@ -937,6 +936,7 @@ impl DdiDev for DdiNixDev {
         }
 
         // Create temporary destination buffer that includes space for AAD
+        // For zero-length data, the driver accepts dst_length = 0 and returns tag in output structure
         let mut temp_dest_buf: Vec<u8> = vec![0; new_src_buf.len()];
 
         cmd.in_data.user_buffers.src_length = new_src_buf.len() as u32;
@@ -973,8 +973,12 @@ impl DdiDev for DdiNixDev {
 
         // SAFETY: IOCTL call requires unsafe call. The pointers to the buffers are valid and have been checked via
         // debugging as well as code reviews.
+        eprintln!(
+            "Issuing ioctl with src_buf_len: {}, dst_buf_len: {}",
+            cmd.in_data.user_buffers.src_length, cmd.in_data.user_buffers.dst_length,
+        );
         let resp = unsafe { mcr_fp_ioctl_cmd_gcm(self.file.read().as_raw_fd(), &mut cmd) };
-
+        eprintln!("Ioctl returned");
         if resp.is_err() {
             self.map_ioctl_status(cmd.out_data.ioctl_status)?;
             resp.map_err(DdiError::NixError)?;
@@ -990,30 +994,34 @@ impl DdiDev for DdiNixDev {
 
         // Copy the actual data (excluding AAD) to the destination buffer
         let aad_offset = final_aad.len();
-        let data_len = temp_dest_buf.len() - aad_offset;
+        let data_len = temp_dest_buf.len().saturating_sub(aad_offset);
 
-        if data_len > dst_buf.len() {
-            if mode == DdiAesOp::Encrypt {
-                tracing::error!(
-                    "AES GCM Encrypt: Device output length ({}) is greater than destination buffer size ({})",
-                    data_len,
-                    dst_buf.len()
-                );
-                Err(DdiError::DdiStatus(DdiStatus::AesEncryptFailed))?;
-            } else {
-                tracing::error!(
-                    "AES GCM Decrypt: Device output length ({}) is greater than destination buffer size ({})",
-                    data_len,
-                    dst_buf.len()
-                );
-                Err(DdiError::DdiStatus(DdiStatus::AesDecryptFailed))?;
+        // Only copy if there's actual data (not just AAD)
+        if data_len > 0 {
+            if data_len > dst_buf.len() {
+                if mode == DdiAesOp::Encrypt {
+                    eprintln!(
+                        "AES GCM Encrypt: Device output length ({}) is greater than destination buffer size ({})",
+                        data_len,
+                        dst_buf.len()
+                    );
+                    Err(DdiError::DdiStatus(DdiStatus::AesEncryptFailed))?;
+                } else {
+                    eprintln!(
+                        "AES GCM Decrypt: Device output length ({}) is greater than destination buffer size ({})",
+                        data_len,
+                        dst_buf.len()
+                    );
+                    Err(DdiError::DdiStatus(DdiStatus::AesDecryptFailed))?;
+                }
             }
-        }
 
-        dst_buf[..data_len].copy_from_slice(&temp_dest_buf[aad_offset..]);
+            dst_buf[..data_len].copy_from_slice(&temp_dest_buf[aad_offset..]);
+        }
 
         // Set output parameters from device response
         *tag = Some(cmd.out_data.cmd_spec_data);
+        eprintln!("Tag from driver : {:02x?}", cmd.out_data.cmd_spec_data);
         *iv = Some(cmd.out_data.iv_from_device);
         *fips_approved = cmd.out_data.fips_approved;
 
