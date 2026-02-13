@@ -175,6 +175,10 @@ impl HandleTableInner {
 ///
 /// The handle is invalidated and must not be used after this call.
 ///
+/// Callers **must** call this function for every valid context handle once it
+/// is no longer needed, regardless of whether the associated operation
+/// completed successfully or encountered an error.
+///
 /// # Safety
 ///
 /// - The `handle` must be a valid handle previously returned by one of the
