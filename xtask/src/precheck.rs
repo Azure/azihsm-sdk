@@ -210,13 +210,7 @@ impl Xtask for Precheck {
         // Run nextest report
         if stage.nextest_report || stage.all {
             let nextest_report = nextest_report::NextestReport {};
-            nextest_report.run(ctx.clone())?;
-        }
-
-        // Run nextest history
-        if stage.nextest_history || stage.all {
-            let nextest_history = nextest_history::NextestHistory {};
-            nextest_history.run(ctx)?;
+            nextest_report.run(ctx)?;
         }
 
         log::trace!("done precheck");

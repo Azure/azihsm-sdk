@@ -27,8 +27,6 @@ mod coverage;
 mod fmt;
 mod install;
 mod nextest;
-mod nextest_history;
-mod nextest_history_cache;
 mod nextest_report;
 mod precheck;
 mod rustup_component_add;
@@ -69,7 +67,6 @@ enum Commands {
     Coverage(coverage::Coverage),
     Fmt(fmt::Fmt),
     Nextest(nextest::Nextest),
-    NextestHistory(nextest_history::NextestHistory),
     NextestReport(nextest_report::NextestReport),
     Setup(setup::Setup),
     Install(install::Install),
@@ -109,7 +106,6 @@ fn try_main() -> anyhow::Result<()> {
         Commands::Fmt(task) => task.run(ctx),
         Commands::Precheck(task) => task.run(ctx),
         Commands::Nextest(task) => task.run(ctx),
-        Commands::NextestHistory(task) => task.run(ctx),
         Commands::NextestReport(task) => task.run(ctx),
         Commands::Setup(task) => task.run(ctx),
         Commands::Install(task) => task.run(ctx),
