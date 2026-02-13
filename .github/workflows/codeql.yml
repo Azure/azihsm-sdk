@@ -2,9 +2,9 @@ name: "CodeQL Advanced"
 
 on:
   push:
-    branches: [ main, dev ]
+    branches: [ main, dev, codeql_test ]
   pull_request:
-    branches: [ main, dev ]
+    branches: [ main, dev, codeql_test ]
     paths-ignore:
       - '**/*.md'
   schedule:
