@@ -249,7 +249,7 @@ class azihsm_aes_gcm : public ::testing::Test
         key_props.key_kind = AZIHSM_KEY_KIND_AES_GCM;
         key_props.key_class = AZIHSM_KEY_CLASS_SECRET;
         key_props.bits = bits;
-        key_props.is_session = false;
+        key_props.is_session = true;
         key_props.can_encrypt = true;
         key_props.can_decrypt = true;
 
