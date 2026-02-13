@@ -9,7 +9,9 @@
 #include <openssl/core_names.h>
 #include <openssl/crypto.h>
 #include <openssl/ecdsa.h>
+#include <openssl/err.h>
 #include <openssl/evp.h>
+#include <openssl/proverr.h>
 #include <openssl/x509.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -265,6 +267,242 @@ static const uint8_t DEFAULT_OBK[48] = {
 };
 
 // clang-format on
+/*
+ * Generate RSA unwrapping key pair, extract masked key (MUK), and save to file.
+ * This is called when no MUK file exists to bootstrap the unwrapping key.
+ */
+/*
+ * Extracts the masked key from a private key handle and saves it to a file.
+ */
+static azihsm_status extract_and_save_masked_key(azihsm_handle priv_key, const char *muk_path)
+{
+    azihsm_status status;
+    struct azihsm_buffer muk_buf = { NULL, 0 };
+
+    struct azihsm_key_prop masked_prop = {
+        .id = AZIHSM_KEY_PROP_ID_MASKED_KEY,
+        .val = NULL,
+        .len = 0,
+    };
+
+    /* First call to get required size (expect BUFFER_TOO_SMALL, which sets len) */
+    status = azihsm_key_get_prop(priv_key, &masked_prop);
+    if (status != AZIHSM_STATUS_BUFFER_TOO_SMALL)
+    {
+        ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
+        return status;
+    }
+
+    if (masked_prop.len == 0)
+    {
+        ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
+        return AZIHSM_STATUS_INTERNAL_ERROR;
+    }
+
+    muk_buf.ptr = OPENSSL_malloc(masked_prop.len);
+    if (muk_buf.ptr == NULL)
+    {
+        ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
+        return AZIHSM_STATUS_INTERNAL_ERROR;
+    }
+    muk_buf.len = masked_prop.len;
+
+    /* Second call to get the actual masked key data */
+    masked_prop.val = muk_buf.ptr;
+    status = azihsm_key_get_prop(priv_key, &masked_prop);
+    if (status != AZIHSM_STATUS_SUCCESS)
+    {
+        ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
+        free_buffer(&muk_buf);
+        return status;
+    }
+
+    muk_buf.len = masked_prop.len;
+
+    status = write_buffer_to_file(muk_path, &muk_buf);
+    if (status != AZIHSM_STATUS_SUCCESS)
+    {
+        ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
+    }
+
+    free_buffer(&muk_buf);
+    return status;
+}
+
+static azihsm_status generate_and_save_muk(azihsm_handle session, const char *muk_path)
+{
+    azihsm_status status;
+    azihsm_handle priv_key = 0;
+    azihsm_handle pub_key = 0;
+
+    const uint32_t key_bits = 2048;
+    const azihsm_key_class priv_class = AZIHSM_KEY_CLASS_PRIVATE;
+    const azihsm_key_class pub_class = AZIHSM_KEY_CLASS_PUBLIC;
+    const azihsm_key_kind key_kind = AZIHSM_KEY_KIND_RSA;
+    const bool can_unwrap = true;
+    const bool can_wrap = true;
+
+    struct azihsm_algo algo = {
+        .id = AZIHSM_ALGO_ID_RSA_KEY_UNWRAPPING_KEY_PAIR_GEN,
+        .params = NULL,
+        .len = 0,
+    };
+
+    struct azihsm_key_prop priv_key_props[] = {
+        { .id = AZIHSM_KEY_PROP_ID_CLASS, .val = (void *)&priv_class, .len = sizeof(priv_class) },
+        { .id = AZIHSM_KEY_PROP_ID_KIND, .val = (void *)&key_kind, .len = sizeof(key_kind) },
+        { .id = AZIHSM_KEY_PROP_ID_BIT_LEN, .val = (void *)&key_bits, .len = sizeof(key_bits) },
+        { .id = AZIHSM_KEY_PROP_ID_UNWRAP, .val = (void *)&can_unwrap, .len = sizeof(can_unwrap) },
+    };
+
+    struct azihsm_key_prop pub_key_props[] = {
+        { .id = AZIHSM_KEY_PROP_ID_CLASS, .val = (void *)&pub_class, .len = sizeof(pub_class) },
+        { .id = AZIHSM_KEY_PROP_ID_KIND, .val = (void *)&key_kind, .len = sizeof(key_kind) },
+        { .id = AZIHSM_KEY_PROP_ID_BIT_LEN, .val = (void *)&key_bits, .len = sizeof(key_bits) },
+        { .id = AZIHSM_KEY_PROP_ID_WRAP, .val = (void *)&can_wrap, .len = sizeof(can_wrap) },
+    };
+
+    struct azihsm_key_prop_list priv_key_prop_list = {
+        .props = priv_key_props,
+        .count = sizeof(priv_key_props) / sizeof(priv_key_props[0]),
+    };
+
+    struct azihsm_key_prop_list pub_key_prop_list = {
+        .props = pub_key_props,
+        .count = sizeof(pub_key_props) / sizeof(pub_key_props[0]),
+    };
+
+    /* Generate RSA unwrapping key pair */
+    status = azihsm_key_gen_pair(
+        session,
+        &algo,
+        &priv_key_prop_list,
+        &pub_key_prop_list,
+        &priv_key,
+        &pub_key
+    );
+    if (status != AZIHSM_STATUS_SUCCESS)
+    {
+        ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GENERATE_KEY);
+        return status;
+    }
+
+    status = extract_and_save_masked_key(priv_key, muk_path);
+
+    azihsm_key_delete(priv_key);
+    azihsm_key_delete(pub_key);
+    return status;
+}
+
+azihsm_status azihsm_get_unwrapping_key(
+    AZIHSM_OSSL_PROV_CTX *provctx,
+    azihsm_handle *out_pub,
+    azihsm_handle *out_priv
+)
+{
+    azihsm_status status;
+
+    if (provctx == NULL || out_pub == NULL || out_priv == NULL)
+    {
+        return AZIHSM_STATUS_INVALID_ARGUMENT;
+    }
+
+    /* Fast path: return cached handles if available */
+    if (!CRYPTO_THREAD_read_lock(provctx->unwrapping_key.lock))
+    {
+        return AZIHSM_STATUS_INTERNAL_ERROR;
+    }
+
+    if (provctx->unwrapping_key.priv != 0)
+    {
+        *out_pub = provctx->unwrapping_key.pub;
+        *out_priv = provctx->unwrapping_key.priv;
+        CRYPTO_THREAD_unlock(provctx->unwrapping_key.lock);
+        return AZIHSM_STATUS_SUCCESS;
+    }
+
+    CRYPTO_THREAD_unlock(provctx->unwrapping_key.lock);
+
+    /* Slow path: acquire lock and check again */
+    if (!CRYPTO_THREAD_write_lock(provctx->unwrapping_key.lock))
+    {
+        return AZIHSM_STATUS_INTERNAL_ERROR;
+    }
+
+    if (provctx->unwrapping_key.priv != 0)
+    {
+        /* Another thread initialized while we waited */
+        *out_pub = provctx->unwrapping_key.pub;
+        *out_priv = provctx->unwrapping_key.priv;
+        CRYPTO_THREAD_unlock(provctx->unwrapping_key.lock);
+        return AZIHSM_STATUS_SUCCESS;
+    }
+
+    /* Build property lists for RSA unwrapping key pair */
+    const uint32_t key_bits = 2048;
+    const azihsm_key_class priv_class = AZIHSM_KEY_CLASS_PRIVATE;
+    const azihsm_key_class pub_class = AZIHSM_KEY_CLASS_PUBLIC;
+    const azihsm_key_kind key_kind = AZIHSM_KEY_KIND_RSA;
+    const bool can_unwrap = true;
+    const bool can_wrap = true;
+
+    struct azihsm_algo algo = {
+        .id = AZIHSM_ALGO_ID_RSA_KEY_UNWRAPPING_KEY_PAIR_GEN,
+        .params = NULL,
+        .len = 0,
+    };
+
+    struct azihsm_key_prop priv_key_props[] = {
+        { .id = AZIHSM_KEY_PROP_ID_CLASS, .val = (void *)&priv_class, .len = sizeof(priv_class) },
+        { .id = AZIHSM_KEY_PROP_ID_KIND, .val = (void *)&key_kind, .len = sizeof(key_kind) },
+        { .id = AZIHSM_KEY_PROP_ID_BIT_LEN, .val = (void *)&key_bits, .len = sizeof(key_bits) },
+        { .id = AZIHSM_KEY_PROP_ID_UNWRAP, .val = (void *)&can_unwrap, .len = sizeof(can_unwrap) },
+    };
+
+    struct azihsm_key_prop pub_key_props[] = {
+        { .id = AZIHSM_KEY_PROP_ID_CLASS, .val = (void *)&pub_class, .len = sizeof(pub_class) },
+        { .id = AZIHSM_KEY_PROP_ID_KIND, .val = (void *)&key_kind, .len = sizeof(key_kind) },
+        { .id = AZIHSM_KEY_PROP_ID_BIT_LEN, .val = (void *)&key_bits, .len = sizeof(key_bits) },
+        { .id = AZIHSM_KEY_PROP_ID_WRAP, .val = (void *)&can_wrap, .len = sizeof(can_wrap) },
+    };
+
+    struct azihsm_key_prop_list priv_key_prop_list = {
+        .props = priv_key_props,
+        .count = sizeof(priv_key_props) / sizeof(priv_key_props[0]),
+    };
+
+    struct azihsm_key_prop_list pub_key_prop_list = {
+        .props = pub_key_props,
+        .count = sizeof(pub_key_props) / sizeof(pub_key_props[0]),
+    };
+
+    azihsm_handle pub = 0;
+    azihsm_handle priv = 0;
+
+    status = azihsm_key_gen_pair(
+        provctx->session,
+        &algo,
+        &priv_key_prop_list,
+        &pub_key_prop_list,
+        &priv,
+        &pub
+    );
+    if (status != AZIHSM_STATUS_SUCCESS)
+    {
+        ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GENERATE_KEY);
+        CRYPTO_THREAD_unlock(provctx->unwrapping_key.lock);
+        return status;
+    }
+
+    /* Cache the handles for future use */
+    provctx->unwrapping_key.pub = pub;
+    provctx->unwrapping_key.priv = priv;
+    *out_pub = pub;
+    *out_priv = priv;
+
+    CRYPTO_THREAD_unlock(provctx->unwrapping_key.lock);
+    return AZIHSM_STATUS_SUCCESS;
+}
 
 /* Fixed POTA private key (DER-encoded PKCS#8 ECC P-384, 185 bytes).
  * Matches TEST_POTA_ECC_PRIVATE_KEY / TEST_POTA_PRIVATE_KEY in the Rust test suite. */
@@ -528,7 +766,9 @@ azihsm_status azihsm_open_device_and_session(
     struct azihsm_buffer muk_buf = { NULL, 0 };
     struct azihsm_buffer obk_buf = { NULL, 0 };
     struct azihsm_buffer retrieved_bmk = { NULL, 0 };
+
     bool default_obk = false;
+    bool muk_was_loaded = false;
 
     struct azihsm_api_rev api_rev = { .major = 1, .minor = 0 };
 
@@ -567,6 +807,7 @@ azihsm_status azihsm_open_device_and_session(
         free_buffer(&bmk_buf);
         return status;
     }
+    muk_was_loaded = (muk_buf.ptr != NULL);
 
     // Load custom OBK from file if provided, otherwise use hardcoded default.
     // Note: the OBK is the raw owner backup key for init_bk3, NOT the masked
@@ -675,6 +916,18 @@ azihsm_status azihsm_open_device_and_session(
     {
         azihsm_part_close(*device);
         return status;
+    }
+
+    // If MUK wasn't loaded from file, generate and save it
+    if (!muk_was_loaded)
+    {
+        status = generate_and_save_muk(*session, config->muk_path);
+        if (status != AZIHSM_STATUS_SUCCESS)
+        {
+            azihsm_sess_close(*session);
+            azihsm_part_close(*device);
+            return status;
+        }
     }
 
     return AZIHSM_STATUS_SUCCESS;

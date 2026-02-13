@@ -206,6 +206,20 @@ static void azihsm_ossl_teardown(AZIHSM_OSSL_PROV_CTX *provctx)
         OSSL_LIB_CTX_free(provctx->libctx);
     }
 
+    /* Delete cached unwrapping key handles before closing session.
+     * No lock needed: OpenSSL guarantees no operations are in flight at teardown. */
+    if (provctx->unwrapping_key.pub != 0)
+    {
+        azihsm_key_delete(provctx->unwrapping_key.pub);
+        provctx->unwrapping_key.pub = 0;
+    }
+    if (provctx->unwrapping_key.priv != 0)
+    {
+        azihsm_key_delete(provctx->unwrapping_key.priv);
+        provctx->unwrapping_key.priv = 0;
+    }
+    CRYPTO_THREAD_lock_free(provctx->unwrapping_key.lock);
+
     azihsm_close_device_and_session(provctx->device, provctx->session);
     OPENSSL_free(provctx);
 }
@@ -318,6 +332,14 @@ OSSL_STATUS OSSL_provider_init(
 
     if (ctx->libctx == NULL)
     {
+        OPENSSL_free(ctx);
+        return OSSL_FAILURE;
+    }
+
+    ctx->unwrapping_key.lock = CRYPTO_THREAD_lock_new();
+    if (ctx->unwrapping_key.lock == NULL)
+    {
+        OSSL_LIB_CTX_free(ctx->libctx);
         OPENSSL_free(ctx);
         return OSSL_FAILURE;
     }
