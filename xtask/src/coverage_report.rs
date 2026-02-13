@@ -7,7 +7,9 @@
 //! Xtask to generate a markdown coverage report from Cobertura XML.
 
 use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::fs;
+use std::hash::Hash;
 
 use anyhow::Context;
 use clap::Parser;
@@ -22,24 +24,29 @@ use crate::XtaskCtx;
 #[clap(about = "Generate a markdown coverage report from Cobertura XML")]
 pub struct CoverageReport {}
 
-#[derive(Default, Debug, Clone, Copy)]
+#[derive(Default, Debug, Clone)]
 struct CoverageCounts {
-    functions_total: u64,
-    functions_covered: u64,
-    lines_total: u64,
-    lines_covered: u64,
-    regions_total: u64,
-    regions_covered: u64,
+    functions: HashMap<String, (u64, u64)>, // function name -> (covered, total)
+    lines: HashMap<u64, u64>,      // line number -> hits
+    regions: HashMap<String, (u64, u64)>,   // region identifier -> (covered, total)
 }
 
 impl CoverageCounts {
     fn add(&mut self, other: CoverageCounts) {
-        self.functions_total += other.functions_total;
-        self.functions_covered += other.functions_covered;
-        self.lines_total += other.lines_total;
-        self.lines_covered += other.lines_covered;
-        self.regions_total += other.regions_total;
-        self.regions_covered += other.regions_covered;
+        for (k, v) in other.functions {
+            let entry = self.functions.entry(k).or_insert((0, 0));
+            entry.0 += v.0;
+            entry.1 += v.1;
+        }
+        for (k, v) in other.lines {
+            let entry = self.lines.entry(k).or_insert(0);
+            *entry += v;
+        }
+        for (k, v) in other.regions {
+            let entry = self.regions.entry(k).or_insert((0, 0));
+            entry.0 += v.0;
+            entry.1 += v.1;
+        }
     }
 }
 
@@ -103,7 +110,8 @@ fn parse_cobertura(xml: &str) -> anyhow::Result<BTreeMap<String, CoverageCounts>
                         method_has_hit = false;
                         if let Some(entry) = current_file.as_ref().and_then(|f| per_file.get_mut(f))
                         {
-                            entry.functions_total += 1;
+                            let func_entry = entry.functions.entry("".to_string()).or_insert((0, 0));
+                            func_entry.1 += 1; // total functions
                         }
                     }
                 }
@@ -114,7 +122,11 @@ fn parse_cobertura(xml: &str) -> anyhow::Result<BTreeMap<String, CoverageCounts>
                                 .and_then(|v| v.parse::<u64>().ok())
                                 .unwrap_or(0);
 
-                            entry.lines_total += 1;
+                            let number = get_attr_value(e, b"number")?
+                                .and_then(|v| v.parse::<u64>().ok())
+                                .unwrap_or(0);
+
+                            entry.lines.entry(number).or_insert(0) += hits;
                             if hits > 0 {
                                 entry.lines_covered += 1;
                             }
