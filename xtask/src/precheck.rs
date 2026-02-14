@@ -15,7 +15,6 @@ use crate::copyright;
 use crate::coverage;
 use crate::fmt;
 use crate::nextest;
-use crate::nextest_history;
 use crate::nextest_report;
 use crate::setup;
 use crate::Xtask;
