@@ -79,8 +79,8 @@ static azihsm_status load_file_to_buffer(const char *path, struct azihsm_buffer 
         return AZIHSM_STATUS_SUCCESS;
     }
 
-    // Check for maximum file size and uint32_t overflow
-    if (file_size > AZIHSM_MAX_KEY_FILE_SIZE || file_size > UINT32_MAX)
+    // Check for maximum file size
+    if (file_size > AZIHSM_MAX_KEY_FILE_SIZE)
     {
         fclose(file);
         return AZIHSM_STATUS_INTERNAL_ERROR;
@@ -624,6 +624,7 @@ static azihsm_status sign_with_pota_key(
     sig_out->ptr = NULL;
     sig_out->len = 0;
 
+    /* Decode the fixed POTA private key from its DER representation */
     pota_pkey = d2i_AutoPrivateKey(NULL, &der_ptr, (long)sizeof(POTA_PRIVATE_KEY_DER));
     if (pota_pkey == NULL)
     {
@@ -644,6 +645,7 @@ static azihsm_status sign_with_pota_key(
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
 
+    /* Determine required DER signature buffer size */
     if (EVP_DigestSign(md_ctx, NULL, &der_sig_len, data, data_len) != 1)
     {
         EVP_MD_CTX_free(md_ctx);
@@ -690,6 +692,7 @@ static azihsm_status sign_with_pota_key(
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
 
+    /* Serialize r and s components into a fixed-size raw buffer */
     sig_out->ptr = OPENSSL_zalloc(P384_RAW_SIG_SIZE);
     if (sig_out->ptr == NULL)
     {

@@ -76,6 +76,7 @@ static int ec_point_to_der_spki(
     *der_out = NULL;
     *der_len = 0;
 
+    /* Build an EC_GROUP for the requested curve */
     group = EC_GROUP_new_by_curve_name(nid);
     if (group == NULL)
     {
@@ -100,6 +101,7 @@ static int ec_point_to_der_spki(
         return OSSL_FAILURE;
     }
 
+    /* Decode the uncompressed EC point from its octet-string form */
     if (!EC_POINT_oct2point(group, point, pub_point, pub_point_len, NULL))
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_EC_LIB);
@@ -169,6 +171,7 @@ static int ec_point_to_der_spki(
     }
     ec_key = NULL; /* Ownership transferred to pkey */
 
+    /* Encode the public key as a DER SubjectPublicKeyInfo */
     *der_len = i2d_PUBKEY(pkey, der_out);
     if (*der_len <= 0)
     {
