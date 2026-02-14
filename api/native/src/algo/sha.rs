@@ -108,14 +108,14 @@ pub(crate) fn sha_digest_finish(
     output: &mut AzihsmBuffer,
 ) -> Result<(), AzihsmStatus> {
     // Get a reference to determine the required digest size
-    let ctx_ref: &mut HsmHashContext = HANDLE_TABLE.as_mut(ctx_handle, HandleType::ShaCtx)?;
-    let required_size = ctx_ref.finish(None)?;
+    let ctx: &mut HsmHashContext = HANDLE_TABLE.as_mut(ctx_handle, HandleType::ShaCtx)?;
+    let required_size = ctx.finish(None)?;
 
     // Validate output buffer and get mutable slice
     let output_data = validate_output_buffer(output, required_size)?;
 
     // Perform the final hash operation
-    let digest_len = ctx_ref.finish(Some(output_data))?;
+    let digest_len = ctx.finish(Some(output_data))?;
 
     // Update output buffer length with actual digest length
     output.len = digest_len as u32;
