@@ -50,6 +50,7 @@ pub(crate) fn sha_digest(
 ///
 /// Creates a context for incrementally computing a hash digest.
 /// Use with `sha_digest_update` and `sha_digest_finish`.
+/// Use with `sha_digest_update` and `sha_digest_finish`.
 ///
 /// # Arguments
 /// * `session` - HSM session for the operation
@@ -92,7 +93,7 @@ pub(crate) fn sha_digest_update(ctx_handle: AzihsmHandle, data: &[u8]) -> Result
     Ok(())
 }
 
-/// Finalizes a streaming SHA hash operation
+/// Finishes a streaming SHA hash operation
 ///
 /// Completes the hash computation and returns the final digest.
 ///

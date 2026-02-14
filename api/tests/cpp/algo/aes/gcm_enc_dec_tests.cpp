@@ -132,9 +132,9 @@ class azihsm_aes_gcm : public ::testing::Test
             offset += current_chunk;
         }
 
-        // Finalize
+        // Finish
         azihsm_buffer final_out{ nullptr, 0 };
-        err = azihsm_crypt_encrypt_final(ctx.get(), &final_out);
+        err = azihsm_crypt_encrypt_finish(ctx.get(), &final_out);
 
         if (err == AZIHSM_STATUS_BUFFER_TOO_SMALL)
         {
@@ -143,7 +143,7 @@ class azihsm_aes_gcm : public ::testing::Test
             output.resize(current_pos + final_out.len);
             final_out.ptr = output.data() + current_pos;
 
-            err = azihsm_crypt_encrypt_final(ctx.get(), &final_out);
+            err = azihsm_crypt_encrypt_finish(ctx.get(), &final_out);
             EXPECT_EQ(err, AZIHSM_STATUS_SUCCESS);
             // Adjust output size to actual bytes written
             output.resize(current_pos + final_out.len);
@@ -213,9 +213,9 @@ class azihsm_aes_gcm : public ::testing::Test
             offset += current_chunk;
         }
 
-        // Finalize
+        // Finish
         azihsm_buffer final_out{ nullptr, 0 };
-        err = azihsm_crypt_decrypt_final(ctx.get(), &final_out);
+        err = azihsm_crypt_decrypt_finish(ctx.get(), &final_out);
 
         if (err == AZIHSM_STATUS_BUFFER_TOO_SMALL)
         {
@@ -224,7 +224,7 @@ class azihsm_aes_gcm : public ::testing::Test
             output.resize(current_pos + final_out.len);
             final_out.ptr = output.data() + current_pos;
 
-            err = azihsm_crypt_decrypt_final(ctx.get(), &final_out);
+            err = azihsm_crypt_decrypt_finish(ctx.get(), &final_out);
             EXPECT_EQ(err, AZIHSM_STATUS_SUCCESS);
             // Adjust output size to actual bytes written
             output.resize(current_pos + final_out.len);

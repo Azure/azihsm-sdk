@@ -193,7 +193,7 @@ static int azihsm_ossl_digest_generic_final(
     digest_buf.ptr = digest_data;
     digest_buf.len = MAX_DIGEST_SIZE_BYTES;
 
-    status = azihsm_crypt_digest_final(ctx->ctx_handle, &digest_buf);
+    status = azihsm_crypt_digest_finish(ctx->ctx_handle, &digest_buf);
 
     if (status != AZIHSM_STATUS_SUCCESS)
     {

@@ -73,10 +73,10 @@ azihsm_status azihsm_crypt_encrypt_update(
 
 `AZIHSM_STATUS_SUCCESS` on success, error code otherwise
 
-### azihsm_crypt_encrypt_final
+### azihsm_crypt_encrypt_finish
 
 ```cpp
-azihsm_status azihsm_crypt_encrypt_final(
+azihsm_status azihsm_crypt_encrypt_finish(
     azihsm_handle ctx_handle,
     azihsm_buffer *cipher_text,
     );
@@ -163,10 +163,10 @@ azihsm_status azihsm_crypt_decrypt_update(
 
 `AZIHSM_STATUS_SUCCESS` on success, error code otherwise
 
-### azihsm_crypt_decrypt_final
+### azihsm_crypt_decrypt_finish
 
 ```cpp
-azihsm_status azihsm_crypt_decrypt_final(
+azihsm_status azihsm_crypt_decrypt_finish(
     azihsm_handle ctx_handle,
     azihsm_buffer *plain_text,
     );
@@ -251,10 +251,10 @@ azihsm_status azihsm_crypt_sign_update(
 
 `AZIHSM_STATUS_SUCCESS` on success, error code otherwise
 
-### azihsm_crypt_sign_final
+### azihsm_crypt_sign_finish
 
 ```cpp
-azihsm_status azihsm_crypt_sign_final(
+azihsm_status azihsm_crypt_sign_finish(
     azihsm_handle ctx_handle,
     azihsm_buffer *sig,
     );
@@ -339,10 +339,10 @@ azihsm_status azihsm_crypt_verify_update(
 
 `AZIHSM_STATUS_SUCCESS` on success, error code otherwise
 
-### azihsm_crypt_verify_final
+### azihsm_crypt_verify_finish
 
 ```cpp
-azihsm_status azihsm_crypt_verify_final(
+azihsm_status azihsm_crypt_verify_finish(
     azihsm_handle ctx_handle,
     const azihsm_buffer *sig,
     );
@@ -427,10 +427,10 @@ azihsm_status azihsm_crypt_digest_update(
 
 `AZIHSM_STATUS_SUCCESS` on success, error code otherwise
 
-### azihsm_crypt_digest_final
+### azihsm_crypt_digest_finish
 
 ```cpp
-azihsm_status azihsm_crypt_decrypt_final(
+azihsm_status azihsm_crypt_decrypt_finish(
     azihsm_handle ctx_handle,
     azihsm_buffer *digest
     );

@@ -85,14 +85,14 @@ class azihsm_ecc_sign_verify : public ::testing::Test
 
         // First call to get required signature size
         azihsm_buffer sig_buf = { .ptr = nullptr, .len = 0 };
-        auto size_err = azihsm_crypt_sign_final(sign_ctx, &sig_buf);
+        auto size_err = azihsm_crypt_sign_finish(sign_ctx, &sig_buf);
         ASSERT_EQ(size_err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
         ASSERT_GT(sig_buf.len, 0);
 
-        // Allocate buffer and finalize
+        // Allocate buffer and finish
         std::vector<uint8_t> signature_data(sig_buf.len);
         sig_buf.ptr = signature_data.data();
-        auto final_err = azihsm_crypt_sign_final(sign_ctx, &sig_buf);
+        auto final_err = azihsm_crypt_sign_finish(sign_ctx, &sig_buf);
         ASSERT_EQ(final_err, AZIHSM_STATUS_SUCCESS);
         ASSERT_GT(sig_buf.len, 0);
 
@@ -110,7 +110,7 @@ class azihsm_ecc_sign_verify : public ::testing::Test
         }
 
         azihsm_buffer verify_sig_buf = { .ptr = signature_data.data(), .len = sig_buf.len };
-        ASSERT_EQ(azihsm_crypt_verify_final(verify_ctx, &verify_sig_buf), AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(azihsm_crypt_verify_finish(verify_ctx, &verify_sig_buf), AZIHSM_STATUS_SUCCESS);
 
         // Verify fails with modified data
         auto_ctx verify_fail_ctx;
@@ -129,7 +129,7 @@ class azihsm_ecc_sign_verify : public ::testing::Test
         }
 
         ASSERT_NE(
-            azihsm_crypt_verify_final(verify_fail_ctx, &verify_sig_buf),
+            azihsm_crypt_verify_finish(verify_fail_ctx, &verify_sig_buf),
             AZIHSM_STATUS_SUCCESS
         );
     }
@@ -527,7 +527,7 @@ TEST_F(azihsm_ecc_sign_verify, streaming_verify_fails_with_invalid_signature)
 
         std::vector<uint8_t> signature(64);
         azihsm_buffer sig_buf{ signature.data(), static_cast<uint32_t>(signature.size()) };
-        ASSERT_EQ(azihsm_crypt_sign_final(sign_ctx, &sig_buf), AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(azihsm_crypt_sign_finish(sign_ctx, &sig_buf), AZIHSM_STATUS_SUCCESS);
 
         // Corrupt signature
         signature[0] ^= 0xFF;
@@ -539,7 +539,7 @@ TEST_F(azihsm_ecc_sign_verify, streaming_verify_fails_with_invalid_signature)
             AZIHSM_STATUS_SUCCESS
         );
         ASSERT_EQ(azihsm_crypt_verify_update(verify_ctx, &msg_buf), AZIHSM_STATUS_SUCCESS);
-        ASSERT_NE(azihsm_crypt_verify_final(verify_ctx, &sig_buf), AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(azihsm_crypt_verify_finish(verify_ctx, &sig_buf), AZIHSM_STATUS_SUCCESS);
     });
 }
 
@@ -577,7 +577,7 @@ TEST_F(azihsm_ecc_sign_verify, streaming_verify_fails_with_wrong_data)
 
         std::vector<uint8_t> signature(64);
         azihsm_buffer sig_buf{ signature.data(), static_cast<uint32_t>(signature.size()) };
-        ASSERT_EQ(azihsm_crypt_sign_final(sign_ctx, &sig_buf), AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(azihsm_crypt_sign_finish(sign_ctx, &sig_buf), AZIHSM_STATUS_SUCCESS);
 
         // Verify with different data
         const char *wrong_message = "Wrong message";
@@ -592,11 +592,11 @@ TEST_F(azihsm_ecc_sign_verify, streaming_verify_fails_with_wrong_data)
             AZIHSM_STATUS_SUCCESS
         );
         ASSERT_EQ(azihsm_crypt_verify_update(verify_ctx, &wrong_buf), AZIHSM_STATUS_SUCCESS);
-        ASSERT_NE(azihsm_crypt_verify_final(verify_ctx, &sig_buf), AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(azihsm_crypt_verify_finish(verify_ctx, &sig_buf), AZIHSM_STATUS_SUCCESS);
     });
 }
 
-TEST_F(azihsm_ecc_sign_verify, streaming_sign_final_buffer_too_small)
+TEST_F(azihsm_ecc_sign_verify, streaming_sign_finish_buffer_too_small)
 {
     part_list_.for_each_session([](azihsm_handle session) {
         auto_key priv_key;
@@ -629,7 +629,7 @@ TEST_F(azihsm_ecc_sign_verify, streaming_sign_final_buffer_too_small)
 
         std::vector<uint8_t> signature(32); // Too small for P-256 (needs 64)
         azihsm_buffer sig_buf{ signature.data(), static_cast<uint32_t>(signature.size()) };
-        ASSERT_EQ(azihsm_crypt_sign_final(sign_ctx, &sig_buf), AZIHSM_STATUS_BUFFER_TOO_SMALL);
+        ASSERT_EQ(azihsm_crypt_sign_finish(sign_ctx, &sig_buf), AZIHSM_STATUS_BUFFER_TOO_SMALL);
     });
 }
 
@@ -676,7 +676,7 @@ TEST_F(azihsm_ecc_sign_verify, streaming_sign_consistency_with_single_shot)
         std::vector<uint8_t> streaming_sig(64);
         azihsm_buffer streaming_sig_buf{ streaming_sig.data(),
                                          static_cast<uint32_t>(streaming_sig.size()) };
-        ASSERT_EQ(azihsm_crypt_sign_final(sign_ctx, &streaming_sig_buf), AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(azihsm_crypt_sign_finish(sign_ctx, &streaming_sig_buf), AZIHSM_STATUS_SUCCESS);
 
         // Both signatures should verify successfully
         azihsm_buffer verify_single_buf{ single_shot_sig.data(), single_sig_buf.len };

@@ -80,14 +80,14 @@ class azihsm_hmac_sign_verify : public ::testing::Test
 
         // First call to get required signature size
         azihsm_buffer sig_buf = { .ptr = nullptr, .len = 0 };
-        auto size_err = azihsm_crypt_sign_final(sign_op_handle, &sig_buf);
+        auto size_err = azihsm_crypt_sign_finish(sign_op_handle, &sig_buf);
         ASSERT_EQ(size_err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
         ASSERT_GT(sig_buf.len, 0);
 
-        // Allocate buffer and finalize
+        // Allocate buffer and finish
         std::vector<uint8_t> signature(sig_buf.len);
         sig_buf.ptr = signature.data();
-        auto final_err = azihsm_crypt_sign_final(sign_op_handle, &sig_buf);
+        auto final_err = azihsm_crypt_sign_finish(sign_op_handle, &sig_buf);
         ASSERT_EQ(final_err, AZIHSM_STATUS_SUCCESS);
         ASSERT_GT(sig_buf.len, 0);
 
@@ -115,10 +115,7 @@ class azihsm_hmac_sign_verify : public ::testing::Test
             );
         }
 
-        ASSERT_EQ(
-            azihsm_crypt_verify_final(verify_op_handle, &sig_buf),
-            AZIHSM_STATUS_SUCCESS
-        );
+        ASSERT_EQ(azihsm_crypt_verify_finish(verify_op_handle, &sig_buf), AZIHSM_STATUS_SUCCESS);
     }
 };
 
