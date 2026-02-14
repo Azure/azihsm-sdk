@@ -890,8 +890,8 @@ impl DdiDev for DdiNixDev {
         iv: &mut Option<[u8; 12]>,
         fips_approved: &mut bool,
     ) -> Result<usize, DdiError> {
-        let src_buf_len = src_buf.len();
         // Note: src_buf_len == 0 is valid for GCM (AAD-only authentication)
+        let src_buf_len = src_buf.len();
 
         // If this is a decryption operation, the tag must be provided. Return
         // early with an error if the caller did not provide a tag.
@@ -973,12 +973,7 @@ impl DdiDev for DdiNixDev {
 
         // SAFETY: IOCTL call requires unsafe call. The pointers to the buffers are valid and have been checked via
         // debugging as well as code reviews.
-        eprintln!(
-            "Issuing ioctl with src_buf_len: {}, dst_buf_len: {}",
-            cmd.in_data.user_buffers.src_length, cmd.in_data.user_buffers.dst_length,
-        );
         let resp = unsafe { mcr_fp_ioctl_cmd_gcm(self.file.read().as_raw_fd(), &mut cmd) };
-        eprintln!("Ioctl returned");
         if resp.is_err() {
             self.map_ioctl_status(cmd.out_data.ioctl_status)?;
             resp.map_err(DdiError::NixError)?;
@@ -1000,14 +995,14 @@ impl DdiDev for DdiNixDev {
         if data_len > 0 {
             if data_len > dst_buf.len() {
                 if mode == DdiAesOp::Encrypt {
-                    eprintln!(
+                    tracing::error!(
                         "AES GCM Encrypt: Device output length ({}) is greater than destination buffer size ({})",
                         data_len,
                         dst_buf.len()
                     );
                     Err(DdiError::DdiStatus(DdiStatus::AesEncryptFailed))?;
                 } else {
-                    eprintln!(
+                    tracing::error!(
                         "AES GCM Decrypt: Device output length ({}) is greater than destination buffer size ({})",
                         data_len,
                         dst_buf.len()
@@ -1021,7 +1016,6 @@ impl DdiDev for DdiNixDev {
 
         // Set output parameters from device response
         *tag = Some(cmd.out_data.cmd_spec_data);
-        eprintln!("Tag from driver : {:02x?}", cmd.out_data.cmd_spec_data);
         *iv = Some(cmd.out_data.iv_from_device);
         *fips_approved = cmd.out_data.fips_approved;
 
