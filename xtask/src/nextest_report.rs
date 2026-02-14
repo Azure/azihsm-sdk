@@ -19,13 +19,13 @@ pub struct NextestReport {
 fn profile_to_command(profile_name: &str) -> String {
     // Map known profile names to their corresponding commands
     match profile_name {
-        "ci-mock" => "cargo nextest run --no-fail-fast --features mock".to_string(),
+        "ci-mock" => "cargo nextest run --no-fail-fast --features mock --profile ci-mock".to_string(),
         "ci-mock-table-4" => {
-            "cargo nextest run --no-fail-fast --features mock,table-4 --package azihsm_ddi"
+            "cargo nextest run --no-fail-fast --features mock,table-4 --package azihsm_ddi --profile ci-mock-table-4"
                 .to_string()
         }
         "ci-mock-table-64" => {
-            "cargo nextest run --no-fail-fast --features mock,table-64 --package azihsm_ddi"
+            "cargo nextest run --no-fail-fast --features mock,table-64 --package azihsm_ddi --profile ci-mock-table-64"
                 .to_string()
         }
         // For unknown profiles, construct a generic command showing the profile
