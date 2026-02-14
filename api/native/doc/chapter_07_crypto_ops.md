@@ -430,7 +430,7 @@ azihsm_status azihsm_crypt_digest_update(
 ### azihsm_crypt_digest_finish
 
 ```cpp
-azihsm_status azihsm_crypt_decrypt_finish(
+azihsm_status azihsm_crypt_digest_finish(
     azihsm_handle ctx_handle,
     azihsm_buffer *digest
     );
