@@ -94,7 +94,6 @@ impl Xtask for Precheck {
             clippy: true,
             coverage: false,
             nextest: true,
-            nextest_history: false,
             nextest_report: false,
             all: false,
         });
@@ -160,7 +159,7 @@ impl Xtask for Precheck {
                     package: None,
                     no_default_features: false,
                     filterset: None,
-                    profile: Some("ci-mock".to_string()),
+                    profile: self.profile.or(Some("ci-mock".to_string())),
                 };
                 nextest.run(ctx.clone())?;
 
@@ -172,7 +171,7 @@ impl Xtask for Precheck {
                         package: Some("azihsm_ddi".to_string()),
                         no_default_features: false,
                         filterset: None,
-                        profile: Some("ci-mock-table-4".to_string()),
+                        profile: self.profile.or(Some("ci-mock-table-4".to_string())),
                     };
                     nextest.run(ctx.clone())?;
 
@@ -182,7 +181,7 @@ impl Xtask for Precheck {
                         package: Some("azihsm_ddi".to_string()),
                         no_default_features: false,
                         filterset: None,
-                        profile: Some("ci-mock-table-64".to_string()),
+                        profile: self.profile.or(Some("ci-mock-table-64".to_string())),
                     };
                     nextest.run(ctx.clone())?;
                 }

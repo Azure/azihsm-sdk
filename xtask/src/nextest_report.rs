@@ -79,13 +79,13 @@ impl Xtask for NextestReport {
                 }
                 Err(err) => {
                     let path_str = junit_path.to_string_lossy();
-                    log::warn!(
-                        "Failed to read JUnit XML file at '{}': {}",
-                        path_str,
-                        err
-                    );
+                    log::warn!("Failed to read JUnit XML file at '{}': {}", path_str, err);
                 }
             }
+        }
+
+        if profile_data.is_empty() {
+            log::warn!("No JUnit XML files found. Ensure that tests were run with nextest and that the output directory is correct.");
         }
 
         // Calculate total tests, failures, and skipped
