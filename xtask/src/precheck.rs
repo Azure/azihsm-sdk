@@ -43,9 +43,7 @@ struct Stage {
     /// Run nextest tests
     #[clap(long)]
     nextest: bool,
-    /// Run nextest-history
-    #[clap(long)]
-    nextest_history: bool,
+
     /// Run nextest-report
     #[clap(long)]
     nextest_report: bool,

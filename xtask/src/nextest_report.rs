@@ -46,35 +46,45 @@ impl Xtask for NextestReport {
             let junit_path = entry?;
 
             // Read the JUnit XML file
-            if let Ok(xml_content) = fs::read_to_string(&junit_path) {
-                // Parse the JUnit XML
-                let test_suites = junit_parser::from_reader(xml_content.as_bytes())?;
+            match fs::read_to_string(&junit_path) {
+                Ok(xml_content) => {
+                    // Parse the JUnit XML
+                    let test_suites = junit_parser::from_reader(xml_content.as_bytes())?;
 
-                // Extract profile name from the path
-                // Path format: ./target/nextest/{profile}/junit.xml
-                let profile_name = junit_path
-                    .parent()
-                    .and_then(|p| p.file_name())
-                    .and_then(|n| n.to_str())
-                    .map(String::from)
-                    .unwrap_or_else(|| {
-                        let path_str = junit_path.to_string_lossy();
-                        log::warn!("Could not extract profile name from path: {}", path_str);
-                        format!("unknown-{}", path_str)
-                    });
+                    // Extract profile name from the path
+                    // Path format: ./target/nextest/{profile}/junit.xml
+                    let profile_name = junit_path
+                        .parent()
+                        .and_then(|p| p.file_name())
+                        .and_then(|n| n.to_str())
+                        .map(String::from)
+                        .unwrap_or_else(|| {
+                            let path_str = junit_path.to_string_lossy();
+                            log::warn!("Could not extract profile name from path: {}", path_str);
+                            format!("unknown-{}", path_str)
+                        });
 
-                // Derive the command for this profile
-                let command = profile_to_command(&profile_name);
+                    // Derive the command for this profile
+                    let command = profile_to_command(&profile_name);
 
-                // Add data from JUnit XML to total data structure
-                test_suites_total.suites.extend(test_suites.suites);
+                    // Add data from JUnit XML to total data structure
+                    test_suites_total.suites.extend(test_suites.suites);
 
-                profile_data.push((
-                    command,
-                    test_suites.tests,
-                    test_suites.failures,
-                    test_suites.skipped,
-                ));
+                    profile_data.push((
+                        command,
+                        test_suites.tests,
+                        test_suites.failures,
+                        test_suites.skipped,
+                    ));
+                }
+                Err(err) => {
+                    let path_str = junit_path.to_string_lossy();
+                    log::warn!(
+                        "Failed to read JUnit XML file at '{}': {}",
+                        path_str,
+                        err
+                    );
+                }
             }
         }
 
