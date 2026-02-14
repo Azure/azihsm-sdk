@@ -140,8 +140,9 @@ pub(crate) fn hmac_sign_finish(
     output: &mut AzihsmBuffer,
 ) -> Result<(), AzihsmStatus> {
     // Get a reference to determine the required signature size
-    let ctx: &mut HsmHmacSignContext = HANDLE_TABLE.as_mut(ctx_handle, HandleType::HmacSignCtx)?;
-    let required_size = ctx.finish(None)?;
+    let ctx_ref: &mut HsmHmacSignContext =
+        HANDLE_TABLE.as_mut(ctx_handle, HandleType::HmacSignCtx)?;
+    let required_size = ctx_ref.finish(None)?;
 
     // Check if output buffer is large enough
     let output_data = validate_output_buffer(output, required_size)?;
