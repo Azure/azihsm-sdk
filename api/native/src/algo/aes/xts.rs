@@ -176,7 +176,7 @@ pub(crate) fn aes_xts_decrypt(
 /// The `params` pointer must remain valid for the lifetime of this context.
 /// The caller is responsible for ensuring the pointed-to memory is not freed
 /// while this context exists.
-struct AesXtsEncryptContext {
+pub(crate) struct AesXtsEncryptContext {
     /// Inner encryption context managing the XTS algorithm state
     ctx: HsmAesXtsEncryptContext,
     /// Raw pointer to caller's algorithm parameters for in-place tweak updates
@@ -311,7 +311,7 @@ pub(crate) fn aes_xts_encrypt_init(
 /// The `params` pointer must remain valid for the lifetime of this context.
 /// The caller is responsible for ensuring the pointed-to memory is not freed
 /// while this context exists.
-struct AesXtsDecryptContext {
+pub(crate) struct AesXtsDecryptContext {
     /// Inner decryption context managing the XTS algorithm state
     ctx: HsmAesXtsDecryptContext,
     /// Raw pointer to caller's algorithm parameters for in-place tweak updates

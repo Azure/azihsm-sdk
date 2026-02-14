@@ -146,7 +146,7 @@ pub(crate) fn ecc_hash_verify(
 /// Initializes a streaming ECDSA signing operation
 ///
 /// Creates a context for incrementally signing data with an ECC private key.
-/// Use with `ecc_sign_update` and `ecc_sign_final`.
+/// Use with `ecc_sign_update` and `ecc_sign_finish`.
 ///
 /// # Arguments
 /// * `hash_algo` - Hash algorithm to use
@@ -208,21 +208,16 @@ pub(crate) fn ecc_sign_update(ctx_handle: AzihsmHandle, data: &[u8]) -> Result<(
 /// # Returns
 /// * `Ok(())` - On successful signature generation
 /// * `Err(AzihsmStatus)` - On failure
-pub(crate) fn ecc_sign_final(
+pub(crate) fn ecc_sign_finish(
     ctx_handle: AzihsmHandle,
     output: &mut AzihsmBuffer,
 ) -> Result<(), AzihsmStatus> {
     // Get a reference to determine the required signature size
-    let ctx_ref: &mut HsmEccSignContext =
-        HANDLE_TABLE.as_mut(ctx_handle, HandleType::EccSignCtx)?;
-    let required_size = ctx_ref.finish(None)?;
+    let ctx: &mut HsmEccSignContext = HANDLE_TABLE.as_mut(ctx_handle, HandleType::EccSignCtx)?;
+    let required_size = ctx.finish(None)?;
 
     // Check if output buffer is large enough
     let output_data = validate_output_buffer(output, required_size)?;
-
-    // Take ownership of the context and finalize
-    let mut ctx: Box<HsmEccSignContext> =
-        HANDLE_TABLE.free_handle(ctx_handle, HandleType::EccSignCtx)?;
 
     // Perform the final signing operation
     let sig_len = ctx.finish(Some(output_data))?;
@@ -236,7 +231,7 @@ pub(crate) fn ecc_sign_final(
 /// Initializes a streaming ECDSA verification operation
 ///
 /// Creates a context for incrementally verifying a signature with an ECC public key.
-/// Use with `ecc_verify_update` and `ecc_verify_final`.
+/// Use with `ecc_verify_update` and `ecc_verify_finish`.
 ///
 /// # Arguments
 /// * `hash_algo` - Hash algorithm to use
@@ -300,13 +295,13 @@ pub(crate) fn ecc_verify_update(ctx_handle: AzihsmHandle, data: &[u8]) -> Result
 /// * `Ok(true)` - If signature is valid
 /// * `Ok(false)` - If signature is invalid
 /// * `Err(AzihsmStatus)` - On failure
-pub(crate) fn ecc_verify_final(
+pub(crate) fn ecc_verify_finish(
     ctx_handle: AzihsmHandle,
     signature: &[u8],
 ) -> Result<bool, AzihsmStatus> {
-    // Take ownership of the context and finalize
-    let mut ctx: Box<HsmEccVerifyContext> =
-        HANDLE_TABLE.free_handle(ctx_handle, HandleType::EccVerifyCtx)?;
+    // Get mutable reference to the context from handle table
+    let ctx: &mut HsmEccVerifyContext =
+        HANDLE_TABLE.as_mut(ctx_handle, HandleType::EccVerifyCtx)?;
 
     // Perform the final verification operation
     let is_valid = ctx.finish(signature)?;

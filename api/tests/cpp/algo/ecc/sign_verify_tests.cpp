@@ -11,6 +11,7 @@
 #include "handle/part_list_handle.hpp"
 #include "handle/session_handle.hpp"
 #include "helpers.hpp"
+#include "utils/auto_ctx.hpp"
 #include "utils/auto_key.hpp"
 #include "utils/part_init_config.hpp"
 #include "utils/rsa_keygen.hpp"
@@ -70,8 +71,11 @@ class azihsm_ecc_sign_verify : public ::testing::Test
     )
     {
         // Streaming sign
-        azihsm_handle sign_ctx = 0;
-        ASSERT_EQ(azihsm_crypt_sign_init(&sign_algo, priv_key, &sign_ctx), AZIHSM_STATUS_SUCCESS);
+        auto_ctx sign_ctx;
+        ASSERT_EQ(
+            azihsm_crypt_sign_init(&sign_algo, priv_key, sign_ctx.get_ptr()),
+            AZIHSM_STATUS_SUCCESS
+        );
 
         for (const char *chunk : data_chunks)
         {
@@ -93,9 +97,9 @@ class azihsm_ecc_sign_verify : public ::testing::Test
         ASSERT_GT(sig_buf.len, 0);
 
         // Streaming verify
-        azihsm_handle verify_ctx = 0;
+        auto_ctx verify_ctx;
         ASSERT_EQ(
-            azihsm_crypt_verify_init(&sign_algo, pub_key, &verify_ctx),
+            azihsm_crypt_verify_init(&sign_algo, pub_key, verify_ctx.get_ptr()),
             AZIHSM_STATUS_SUCCESS
         );
 
@@ -109,9 +113,9 @@ class azihsm_ecc_sign_verify : public ::testing::Test
         ASSERT_EQ(azihsm_crypt_verify_final(verify_ctx, &verify_sig_buf), AZIHSM_STATUS_SUCCESS);
 
         // Verify fails with modified data
-        azihsm_handle verify_fail_ctx = 0;
+        auto_ctx verify_fail_ctx;
         ASSERT_EQ(
-            azihsm_crypt_verify_init(&sign_algo, pub_key, &verify_fail_ctx),
+            azihsm_crypt_verify_init(&sign_algo, pub_key, verify_fail_ctx.get_ptr()),
             AZIHSM_STATUS_SUCCESS
         );
 
@@ -511,8 +515,11 @@ TEST_F(azihsm_ecc_sign_verify, streaming_verify_fails_with_invalid_signature)
         algo.len = 0;
 
         // Streaming sign
-        azihsm_handle sign_ctx = 0;
-        ASSERT_EQ(azihsm_crypt_sign_init(&algo, priv_key, &sign_ctx), AZIHSM_STATUS_SUCCESS);
+        auto_ctx sign_ctx;
+        ASSERT_EQ(
+            azihsm_crypt_sign_init(&algo, priv_key, sign_ctx.get_ptr()),
+            AZIHSM_STATUS_SUCCESS
+        );
 
         azihsm_buffer msg_buf{ const_cast<uint8_t *>(reinterpret_cast<const uint8_t *>(message)),
                                static_cast<uint32_t>(strlen(message)) };
@@ -526,8 +533,11 @@ TEST_F(azihsm_ecc_sign_verify, streaming_verify_fails_with_invalid_signature)
         signature[0] ^= 0xFF;
 
         // Streaming verify with corrupted signature
-        azihsm_handle verify_ctx = 0;
-        ASSERT_EQ(azihsm_crypt_verify_init(&algo, pub_key, &verify_ctx), AZIHSM_STATUS_SUCCESS);
+        auto_ctx verify_ctx;
+        ASSERT_EQ(
+            azihsm_crypt_verify_init(&algo, pub_key, verify_ctx.get_ptr()),
+            AZIHSM_STATUS_SUCCESS
+        );
         ASSERT_EQ(azihsm_crypt_verify_update(verify_ctx, &msg_buf), AZIHSM_STATUS_SUCCESS);
         ASSERT_NE(azihsm_crypt_verify_final(verify_ctx, &sig_buf), AZIHSM_STATUS_SUCCESS);
     });
@@ -555,8 +565,11 @@ TEST_F(azihsm_ecc_sign_verify, streaming_verify_fails_with_wrong_data)
         algo.len = 0;
 
         // Streaming sign
-        azihsm_handle sign_ctx = 0;
-        ASSERT_EQ(azihsm_crypt_sign_init(&algo, priv_key, &sign_ctx), AZIHSM_STATUS_SUCCESS);
+        auto_ctx sign_ctx;
+        ASSERT_EQ(
+            azihsm_crypt_sign_init(&algo, priv_key, sign_ctx.get_ptr()),
+            AZIHSM_STATUS_SUCCESS
+        );
 
         azihsm_buffer msg_buf{ const_cast<uint8_t *>(reinterpret_cast<const uint8_t *>(message)),
                                static_cast<uint32_t>(strlen(message)) };
@@ -573,8 +586,11 @@ TEST_F(azihsm_ecc_sign_verify, streaming_verify_fails_with_wrong_data)
             static_cast<uint32_t>(strlen(wrong_message))
         };
 
-        azihsm_handle verify_ctx = 0;
-        ASSERT_EQ(azihsm_crypt_verify_init(&algo, pub_key, &verify_ctx), AZIHSM_STATUS_SUCCESS);
+        auto_ctx verify_ctx;
+        ASSERT_EQ(
+            azihsm_crypt_verify_init(&algo, pub_key, verify_ctx.get_ptr()),
+            AZIHSM_STATUS_SUCCESS
+        );
         ASSERT_EQ(azihsm_crypt_verify_update(verify_ctx, &wrong_buf), AZIHSM_STATUS_SUCCESS);
         ASSERT_NE(azihsm_crypt_verify_final(verify_ctx, &sig_buf), AZIHSM_STATUS_SUCCESS);
     });
@@ -601,8 +617,11 @@ TEST_F(azihsm_ecc_sign_verify, streaming_sign_final_buffer_too_small)
         algo.params = nullptr;
         algo.len = 0;
 
-        azihsm_handle sign_ctx = 0;
-        ASSERT_EQ(azihsm_crypt_sign_init(&algo, priv_key, &sign_ctx), AZIHSM_STATUS_SUCCESS);
+        auto_ctx sign_ctx;
+        ASSERT_EQ(
+            azihsm_crypt_sign_init(&algo, priv_key, sign_ctx.get_ptr()),
+            AZIHSM_STATUS_SUCCESS
+        );
 
         azihsm_buffer msg_buf{ const_cast<uint8_t *>(reinterpret_cast<const uint8_t *>(message)),
                                static_cast<uint32_t>(strlen(message)) };
@@ -647,8 +666,11 @@ TEST_F(azihsm_ecc_sign_verify, streaming_sign_consistency_with_single_shot)
         );
 
         // Streaming sign
-        azihsm_handle sign_ctx = 0;
-        ASSERT_EQ(azihsm_crypt_sign_init(&algo, priv_key, &sign_ctx), AZIHSM_STATUS_SUCCESS);
+        auto_ctx sign_ctx;
+        ASSERT_EQ(
+            azihsm_crypt_sign_init(&algo, priv_key, sign_ctx.get_ptr()),
+            AZIHSM_STATUS_SUCCESS
+        );
         ASSERT_EQ(azihsm_crypt_sign_update(sign_ctx, &data_buf), AZIHSM_STATUS_SUCCESS);
 
         std::vector<uint8_t> streaming_sig(64);

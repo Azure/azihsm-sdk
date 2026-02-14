@@ -10,6 +10,7 @@
 #include "handle/part_list_handle.hpp"
 #include "handle/session_handle.hpp"
 #include "helpers.hpp"
+#include "utils/auto_ctx.hpp"
 #include "utils/auto_key.hpp"
 
 class azihsm_hmac_sign_verify : public ::testing::Test
@@ -53,8 +54,11 @@ class azihsm_hmac_sign_verify : public ::testing::Test
     )
     {
         // Initialize streaming sign operation
-        azihsm_handle sign_op_handle = 0;
-        ASSERT_EQ(azihsm_crypt_sign_init(&algo, hmac_key, &sign_op_handle), AZIHSM_STATUS_SUCCESS);
+        auto_ctx sign_op_handle;
+        ASSERT_EQ(
+            azihsm_crypt_sign_init(&algo, hmac_key, sign_op_handle.get_ptr()),
+            AZIHSM_STATUS_SUCCESS
+        );
 
         // Update with chunks
         for (const char *chunk : data_chunks)
@@ -68,7 +72,10 @@ class azihsm_hmac_sign_verify : public ::testing::Test
                 std::cout << reinterpret_cast<char *>(chunk_buf.ptr)[i];
             }
             std::cout << std::endl;
-            ASSERT_EQ(azihsm_crypt_sign_update(sign_op_handle, &chunk_buf), AZIHSM_STATUS_SUCCESS);
+            ASSERT_EQ(
+                azihsm_crypt_sign_update(sign_op_handle, &chunk_buf),
+                AZIHSM_STATUS_SUCCESS
+            );
         }
 
         // First call to get required signature size
@@ -85,9 +92,9 @@ class azihsm_hmac_sign_verify : public ::testing::Test
         ASSERT_GT(sig_buf.len, 0);
 
         // Verify using streaming
-        azihsm_handle verify_op_handle = 0;
+        auto_ctx verify_op_handle;
         ASSERT_EQ(
-            azihsm_crypt_verify_init(&algo, hmac_key, &verify_op_handle),
+            azihsm_crypt_verify_init(&algo, hmac_key, verify_op_handle.get_ptr()),
             AZIHSM_STATUS_SUCCESS
         );
 
@@ -108,7 +115,10 @@ class azihsm_hmac_sign_verify : public ::testing::Test
             );
         }
 
-        ASSERT_EQ(azihsm_crypt_verify_final(verify_op_handle, &sig_buf), AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(
+            azihsm_crypt_verify_final(verify_op_handle, &sig_buf),
+            AZIHSM_STATUS_SUCCESS
+        );
     }
 };
 

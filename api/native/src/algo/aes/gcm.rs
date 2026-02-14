@@ -62,7 +62,7 @@ impl TryFrom<AzihsmHandle> for HsmAesGcmKey {
 }
 
 /// AES GCM encryption context
-struct AesGcmEncryptContext {
+pub(crate) struct AesGcmEncryptContext {
     context: HsmAesGcmEncryptContext,
     params: *mut AzihsmAlgoAesGcmParams,
 }
@@ -108,7 +108,7 @@ impl AesGcmEncryptContext {
 }
 
 /// AES GCM decryption context
-struct AesGcmDecryptContext {
+pub(crate) struct AesGcmDecryptContext {
     context: HsmAesGcmDecryptContext,
 }
 
@@ -383,7 +383,7 @@ pub(crate) fn aes_gcm_decrypt_update(
 /// # Returns
 /// * `Ok(())` on success
 /// * `Err(AzihsmStatus)` on failure
-pub(crate) fn aes_gcm_encrypt_final(
+pub(crate) fn aes_gcm_encrypt_finish(
     ctx_handle: AzihsmHandle,
     output: &mut AzihsmBuffer,
 ) -> Result<(), AzihsmStatus> {
@@ -417,7 +417,7 @@ pub(crate) fn aes_gcm_encrypt_final(
 /// # Returns
 /// * `Ok(())` on success
 /// * `Err(AzihsmStatus)` on failure
-pub(crate) fn aes_gcm_decrypt_final(
+pub(crate) fn aes_gcm_decrypt_finish(
     ctx_handle: AzihsmHandle,
     output: &mut AzihsmBuffer,
 ) -> Result<(), AzihsmStatus> {

@@ -206,8 +206,8 @@ pub unsafe extern "C" fn azihsm_crypt_encrypt_final(
         let output_buf = deref_mut_ptr(cipher_text)?;
 
         match ctx_type {
-            HandleType::AesCbcEncryptCtx => aes_cbc_encrypt_final(ctx_handle, output_buf)?,
-            HandleType::AesGcmEncryptCtx => aes_gcm_encrypt_final(ctx_handle, output_buf)?,
+            HandleType::AesCbcEncryptCtx => aes_cbc_encrypt_finish(ctx_handle, output_buf)?,
+            HandleType::AesGcmEncryptCtx => aes_gcm_encrypt_finish(ctx_handle, output_buf)?,
             HandleType::AesXtsEncryptCtx => aes_xts_encrypt_finish(ctx_handle, output_buf)?,
             _ => Err(AzihsmStatus::InvalidHandle)?,
         }
@@ -321,8 +321,8 @@ pub unsafe extern "C" fn azihsm_crypt_decrypt_final(
         let output_buf = deref_mut_ptr(plain_text)?;
 
         match ctx_type {
-            HandleType::AesCbcDecryptCtx => aes_cbc_decrypt_final(ctx_handle, output_buf)?,
-            HandleType::AesGcmDecryptCtx => aes_gcm_decrypt_final(ctx_handle, output_buf)?,
+            HandleType::AesCbcDecryptCtx => aes_cbc_decrypt_finish(ctx_handle, output_buf)?,
+            HandleType::AesGcmDecryptCtx => aes_gcm_decrypt_finish(ctx_handle, output_buf)?,
             HandleType::AesXtsDecryptCtx => aes_xts_decrypt_finish(ctx_handle, output_buf)?,
             _ => Err(AzihsmStatus::InvalidHandle)?,
         }

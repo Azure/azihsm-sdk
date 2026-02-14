@@ -10,6 +10,7 @@
 #include "handle/part_handle.hpp"
 #include "handle/part_list_handle.hpp"
 #include "handle/session_handle.hpp"
+#include "utils/auto_ctx.hpp"
 
 class azihsm_sha_digest : public ::testing::Test
 {
@@ -52,10 +53,10 @@ class azihsm_sha_digest : public ::testing::Test
     )
     {
         // Initialize streaming context
-        azihsm_handle ctx_handle = 0;
-        auto err = azihsm_crypt_digest_init(session, &algo, &ctx_handle);
+        auto_ctx ctx_handle;
+        auto err = azihsm_crypt_digest_init(session, &algo, ctx_handle.get_ptr());
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_NE(ctx_handle, 0u);
+        ASSERT_NE(ctx_handle.get(), 0u);
 
         // Update with chunks
         for (size_t offset = 0; offset < data_len; offset += chunk_size)
@@ -345,8 +346,8 @@ TEST_F(azihsm_sha_digest, streaming_empty_data)
         algo.len = 0;
 
         // Initialize
-        azihsm_handle ctx_handle = 0;
-        auto err = azihsm_crypt_digest_init(session, &algo, &ctx_handle);
+        auto_ctx ctx_handle;
+        auto err = azihsm_crypt_digest_init(session, &algo, ctx_handle.get_ptr());
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         // Finalize without any update (hash of empty data)
@@ -369,8 +370,8 @@ TEST_F(azihsm_sha_digest, streaming_insufficient_buffer)
         algo.len = 0;
 
         // Initialize
-        azihsm_handle ctx_handle = 0;
-        auto err = azihsm_crypt_digest_init(session, &algo, &ctx_handle);
+        auto_ctx ctx_handle;
+        auto err = azihsm_crypt_digest_init(session, &algo, ctx_handle.get_ptr());
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         // Update
@@ -447,8 +448,8 @@ TEST_F(azihsm_sha_digest, streaming_consistency_with_one_shot)
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         // Streaming digest
-        azihsm_handle ctx_handle = 0;
-        err = azihsm_crypt_digest_init(session, &algo, &ctx_handle);
+        auto_ctx ctx_handle;
+        err = azihsm_crypt_digest_init(session, &algo, ctx_handle.get_ptr());
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         err = azihsm_crypt_digest_update(ctx_handle, &data_buf);

@@ -1,11 +1,11 @@
 # Handle Operations
 
-## azihsm_free_handle
+## azihsm_free_ctx_handle
 
 Free a streaming context handle
 
 ```cpp
-azihsm_status azihsm_free_handle(
+azihsm_status azihsm_free_ctx_handle(
     azihsm_handle handle
     );
 ```
@@ -22,6 +22,6 @@ azihsm_status azihsm_free_handle(
 
 **Description**
 
-This function releases a context handle (digest, sign, verify, encrypt, or decrypt) without completing the operation. It should be used in error scenarios where a multi-step operation was initialized but cannot be completed normally.
+This function releases a context handle (digest, sign, verify, encrypt, decrypt, HMAC sign, HMAC verify, RSA sign, or RSA verify) and frees all associated resources. The handle is invalidated and must not be used after this call.
 
-For successful completion of multi-step operations, use the appropriate `_final` function instead (e.g., `azihsm_crypt_digest_final`, `azihsm_crypt_sign_final`, etc.).
+Callers **must** call `azihsm_free_ctx_handle` for every valid context handle once it is no longer needed, whether the multi-step operation completed successfully, was abandoned due to an error, or was never fully executed.

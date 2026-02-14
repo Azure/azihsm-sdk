@@ -317,7 +317,7 @@ where
 /// Initializes a streaming RSA PKCS#1 v1.5 signing operation
 ///
 /// Creates a context for incrementally signing data.
-/// Use with `rsa_sign_update` and `rsa_sign_final`.
+/// Use with `rsa_sign_update` and `rsa_sign_finish`.
 ///
 /// # Arguments
 /// * `hash_algo` - Hash algorithm to use
@@ -338,7 +338,7 @@ pub(crate) fn rsa_pkcs1_hash_sign_init(
 /// Initializes a streaming RSA-PSS signing operation
 ///
 /// Creates a context for incrementally signing data with PSS padding.
-/// Use with `rsa_sign_update` and `rsa_sign_final`.
+/// Use with `rsa_sign_update` and `rsa_sign_finish`.
 ///
 /// # Arguments
 /// * `hash_algo_from_id` - Hash algorithm identifier
@@ -405,21 +405,16 @@ pub(crate) fn rsa_sign_update(ctx_handle: AzihsmHandle, data: &[u8]) -> Result<(
 /// # Returns
 /// * `Ok(())` - On successful signature generation
 /// * `Err(AzihsmStatus)` - On failure
-pub(crate) fn rsa_sign_final(
+pub(crate) fn rsa_sign_finish(
     ctx_handle: AzihsmHandle,
     output: &mut AzihsmBuffer,
 ) -> Result<(), AzihsmStatus> {
     // Get a reference to determine the required signature size
-    let ctx_ref: &mut HsmRsaSignContext =
-        HANDLE_TABLE.as_mut(ctx_handle, HandleType::RsaSignCtx)?;
-    let required_size = ctx_ref.finish(None)?;
+    let ctx: &mut HsmRsaSignContext = HANDLE_TABLE.as_mut(ctx_handle, HandleType::RsaSignCtx)?;
+    let required_size = ctx.finish(None)?;
 
     // Check if output buffer is large enough
     let output_data = validate_output_buffer(output, required_size)?;
-
-    // Take ownership of the context and finalize
-    let mut ctx: Box<HsmRsaSignContext> =
-        HANDLE_TABLE.free_handle(ctx_handle, HandleType::RsaSignCtx)?;
 
     // Perform the final signing operation
     let sig_len = ctx.finish(Some(output_data))?;
@@ -453,7 +448,7 @@ where
 /// Initializes a streaming RSA PKCS#1 v1.5 verification operation
 ///
 /// Creates a context for incrementally verifying a signature.
-/// Use with `rsa_verify_update` and `rsa_verify_final`.
+/// Use with `rsa_verify_update` and `rsa_verify_finish`.
 ///
 /// # Arguments
 /// * `hash_algo` - Hash algorithm to use
@@ -474,7 +469,7 @@ pub(crate) fn rsa_pkcs1_hash_verify_init(
 /// Initializes a streaming RSA-PSS verification operation
 ///
 /// Creates a context for incrementally verifying a PSS signature.
-/// Use with `rsa_verify_update` and `rsa_verify_final`.
+/// Use with `rsa_verify_update` and `rsa_verify_finish`.
 ///
 /// # Arguments
 /// * `hash_algo_from_id` - Hash algorithm identifier
@@ -543,10 +538,13 @@ pub(crate) fn rsa_verify_update(ctx_handle: AzihsmHandle, data: &[u8]) -> Result
 /// * `Ok(true)` - If signature is valid
 /// * `Ok(false)` - If signature is invalid
 /// * `Err(AzihsmStatus)` - On failure
-pub(crate) fn rsa_verify_final(ctx_handle: AzihsmHandle, sig: &[u8]) -> Result<bool, AzihsmStatus> {
-    // Take ownership of the context and finalize
-    let mut ctx: Box<HsmRsaVerifyContext> =
-        HANDLE_TABLE.free_handle(ctx_handle, HandleType::RsaVerifyCtx)?;
+pub(crate) fn rsa_verify_finish(
+    ctx_handle: AzihsmHandle,
+    sig: &[u8],
+) -> Result<bool, AzihsmStatus> {
+    // Get mutable reference to the context from handle table
+    let ctx: &mut HsmRsaVerifyContext =
+        HANDLE_TABLE.as_mut(ctx_handle, HandleType::RsaVerifyCtx)?;
 
     // Perform the final verification operation
     let is_valid = ctx.finish(sig)?;
