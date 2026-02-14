@@ -219,7 +219,7 @@ impl AesXtsEncryptContext {
         Ok(bytes_written)
     }
 
-    /// Finalize the encryption operation.
+    /// Finish the encryption operation.
     ///
     /// Completes the encryption and flushes any remaining data. Updates the
     /// sector number in the caller's parameters.
@@ -352,7 +352,7 @@ impl AesXtsDecryptContext {
         self.update_tweak()?;
         Ok(bytes_written)
     }
-    /// Finalize the decryption operation.
+    /// Finish the decryption operation.
     ///
     /// Completes the decryption and flushes any remaining data. Updates the
     /// sector number in the caller's parameters.
@@ -481,7 +481,7 @@ pub(crate) fn aes_xts_encrypt_update(
     Ok(())
 }
 
-/// Finalize streaming AES-XTS encryption.
+/// Finish streaming AES-XTS encryption.
 ///
 /// Completes the encryption operation and outputs any remaining ciphertext.
 /// The sector number in the algorithm parameters is updated with the final tweak value.
@@ -493,13 +493,13 @@ pub(crate) fn aes_xts_encrypt_update(
 ///
 /// # Returns
 ///
-/// * `Ok(())` - Finalization successful
-/// * `Err(AzihsmStatus)` - Error occurred during finalization
+/// * `Ok(())` - Completion successful
+/// * `Err(AzihsmStatus)` - Error occurred during completion
 ///
 /// # Errors
 ///
 /// * `InvalidHandle` - Invalid or wrong type of context handle
-/// * Other errors from encryption finalization
+/// * Other errors from encryption completion
 pub(crate) fn aes_xts_encrypt_finish(
     ctx_handle: AzihsmHandle,
     output: &mut AzihsmBuffer,
@@ -566,7 +566,7 @@ pub(crate) fn aes_xts_decrypt_update(
 
     Ok(())
 }
-/// Finalize streaming AES-XTS decryption.
+/// Finish streaming AES-XTS decryption.
 ///
 /// Completes the decryption operation and outputs any remaining plaintext.
 /// The sector number in the algorithm parameters is updated with the final tweak value.
@@ -578,13 +578,13 @@ pub(crate) fn aes_xts_decrypt_update(
 ///
 /// # Returns
 ///
-/// * `Ok(())` - Finalization successful
-/// * `Err(AzihsmStatus)` - Error occurred during finalization
+/// * `Ok(())` - Completion successful
+/// * `Err(AzihsmStatus)` - Error occurred during completion
 ///
 /// # Errors
 ///
 /// * `InvalidHandle` - Invalid or wrong type of context handle
-/// * Other errors from decryption finalization
+/// * Other errors from decryption completion
 pub(crate) fn aes_xts_decrypt_finish(
     ctx_handle: AzihsmHandle,
     output: &mut AzihsmBuffer,

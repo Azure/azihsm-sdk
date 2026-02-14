@@ -122,7 +122,7 @@ class azihsm_rsa_sign_verify : public ::testing::Test
 
         std::vector<uint8_t> signature_data(256);
         azihsm_buffer sig_buf = { .ptr = signature_data.data(), .len = 256 };
-        ASSERT_EQ(azihsm_crypt_sign_final(sign_ctx, &sig_buf), AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(azihsm_crypt_sign_finish(sign_ctx, &sig_buf), AZIHSM_STATUS_SUCCESS);
         ASSERT_GT(sig_buf.len, 0);
 
         // Streaming verify
@@ -139,7 +139,7 @@ class azihsm_rsa_sign_verify : public ::testing::Test
         }
 
         azihsm_buffer verify_sig_buf = { .ptr = signature_data.data(), .len = sig_buf.len };
-        ASSERT_EQ(azihsm_crypt_verify_final(verify_ctx, &verify_sig_buf), AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(azihsm_crypt_verify_finish(verify_ctx, &verify_sig_buf), AZIHSM_STATUS_SUCCESS);
 
         // Verify fails with modified data
         auto_ctx verify_fail_ctx;
@@ -158,7 +158,7 @@ class azihsm_rsa_sign_verify : public ::testing::Test
         }
 
         ASSERT_NE(
-            azihsm_crypt_verify_final(verify_fail_ctx, &verify_sig_buf),
+            azihsm_crypt_verify_finish(verify_fail_ctx, &verify_sig_buf),
             AZIHSM_STATUS_SUCCESS
         );
     }

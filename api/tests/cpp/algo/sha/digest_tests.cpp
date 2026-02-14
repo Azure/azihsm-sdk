@@ -74,14 +74,14 @@ class azihsm_sha_digest : public ::testing::Test
 
         // First call to get required digest size
         azihsm_buffer digest_buf = { .ptr = nullptr, .len = 0 };
-        auto size_err = azihsm_crypt_digest_final(ctx_handle, &digest_buf);
+        auto size_err = azihsm_crypt_digest_finish(ctx_handle, &digest_buf);
         ASSERT_EQ(size_err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
         ASSERT_GT(digest_buf.len, 0);
 
-        // Allocate buffer and finalize
+        // Allocate buffer and finish
         std::vector<uint8_t> digest(digest_buf.len);
         digest_buf.ptr = digest.data();
-        err = azihsm_crypt_digest_final(ctx_handle, &digest_buf);
+        err = azihsm_crypt_digest_finish(ctx_handle, &digest_buf);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_GT(digest_buf.len, 0);
     }
@@ -350,12 +350,12 @@ TEST_F(azihsm_sha_digest, streaming_empty_data)
         auto err = azihsm_crypt_digest_init(session, &algo, ctx_handle.get_ptr());
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
-        // Finalize without any update (hash of empty data)
+        // Finish without any update (hash of empty data)
         std::array<uint8_t, 32> digest;
         azihsm_buffer digest_buf{};
         digest_buf.ptr = digest.data();
         digest_buf.len = static_cast<uint32_t>(digest.size());
-        err = azihsm_crypt_digest_final(ctx_handle, &digest_buf);
+        err = azihsm_crypt_digest_finish(ctx_handle, &digest_buf);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_EQ(digest_buf.len, 32u);
     });
@@ -381,13 +381,13 @@ TEST_F(azihsm_sha_digest, streaming_insufficient_buffer)
         err = azihsm_crypt_digest_update(ctx_handle, &data_buf);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
-        // Finalize with insufficient buffer
+        // Finish with insufficient buffer
         std::array<uint8_t, 16> small_digest;
         azihsm_buffer digest_buf{};
         digest_buf.ptr = small_digest.data();
         digest_buf.len = 16; // Too small for SHA-256
 
-        err = azihsm_crypt_digest_final(ctx_handle, &digest_buf);
+        err = azihsm_crypt_digest_finish(ctx_handle, &digest_buf);
         ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
         ASSERT_EQ(digest_buf.len, 32u); // Updated to required size
     });
@@ -409,7 +409,7 @@ TEST_F(azihsm_sha_digest, streaming_invalid_context_handle)
     digest_buf.ptr = digest.data();
     digest_buf.len = static_cast<uint32_t>(digest.size());
 
-    err = azihsm_crypt_digest_final(0xDEADBEEF, &digest_buf);
+    err = azihsm_crypt_digest_finish(0xDEADBEEF, &digest_buf);
     ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
 }
 
@@ -460,7 +460,7 @@ TEST_F(azihsm_sha_digest, streaming_consistency_with_one_shot)
         streaming_buf.ptr = streaming_digest.data();
         streaming_buf.len = static_cast<uint32_t>(streaming_digest.size());
 
-        err = azihsm_crypt_digest_final(ctx_handle, &streaming_buf);
+        err = azihsm_crypt_digest_finish(ctx_handle, &streaming_buf);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         // Compare results - they should be identical

@@ -92,7 +92,7 @@ pub(crate) fn sha_digest_update(ctx_handle: AzihsmHandle, data: &[u8]) -> Result
     Ok(())
 }
 
-/// Finalizes a streaming SHA hash operation
+/// Finishes a streaming SHA hash operation
 ///
 /// Completes the hash computation and returns the final digest.
 ///

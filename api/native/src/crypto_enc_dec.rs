@@ -183,7 +183,7 @@ pub unsafe extern "C" fn azihsm_crypt_encrypt_update(
     })
 }
 
-/// Finalize streaming encryption operation and retrieve any remaining ciphertext.
+/// Finish streaming encryption operation and retrieve any remaining ciphertext.
 ///
 /// @param[in] ctx_handle Handle to the streaming encryption context (consumed by this call)
 /// @param[out] cipher_text Pointer to ciphertext output buffer
@@ -197,7 +197,7 @@ pub unsafe extern "C" fn azihsm_crypt_encrypt_update(
 /// This function is unsafe because it dereferences raw pointers.
 #[unsafe(no_mangle)]
 #[allow(unsafe_code)]
-pub unsafe extern "C" fn azihsm_crypt_encrypt_final(
+pub unsafe extern "C" fn azihsm_crypt_encrypt_finish(
     ctx_handle: AzihsmHandle,
     cipher_text: *mut AzihsmBuffer,
 ) -> AzihsmStatus {
@@ -297,7 +297,7 @@ pub unsafe extern "C" fn azihsm_crypt_decrypt_update(
     })
 }
 
-/// Finalize streaming decryption operation and retrieve any remaining plaintext.
+/// Finish streaming decryption operation and retrieve any remaining plaintext.
 ///
 /// @param[in] sess_handle Handle to the HSM session
 /// @param[in] ctx_handle Handle to the streaming decryption context (consumed by this call)
@@ -312,7 +312,7 @@ pub unsafe extern "C" fn azihsm_crypt_decrypt_update(
 /// This function is unsafe because it dereferences raw pointers.
 #[unsafe(no_mangle)]
 #[allow(unsafe_code)]
-pub unsafe extern "C" fn azihsm_crypt_decrypt_final(
+pub unsafe extern "C" fn azihsm_crypt_decrypt_finish(
     ctx_handle: AzihsmHandle,
     plain_text: *mut AzihsmBuffer,
 ) -> AzihsmStatus {

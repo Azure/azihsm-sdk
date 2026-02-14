@@ -243,7 +243,7 @@ pub unsafe extern "C" fn azihsm_crypt_sign_update(
     })
 }
 
-/// Finalize streaming sign operation and retrieve signature.
+/// Finish streaming sign operation and retrieve signature.
 ///
 /// @param[in] ctx_handle Handle to the streaming sign context
 /// @param[out] sig Pointer to signature output buffer
@@ -257,7 +257,7 @@ pub unsafe extern "C" fn azihsm_crypt_sign_update(
 /// This function is unsafe because it dereferences raw pointers.
 #[unsafe(no_mangle)]
 #[allow(unsafe_code)]
-pub unsafe extern "C" fn azihsm_crypt_sign_final(
+pub unsafe extern "C" fn azihsm_crypt_sign_finish(
     ctx_handle: AzihsmHandle,
     sig: *mut AzihsmBuffer,
 ) -> AzihsmStatus {
@@ -380,7 +380,7 @@ pub unsafe extern "C" fn azihsm_crypt_verify_update(
     })
 }
 
-/// Finalize streaming verify operation and verify signature.
+/// Finish streaming verify operation and verify signature.
 ///
 /// @param[in] ctx_handle Handle to the streaming verify context
 /// @param[in] sig Pointer to signature buffer to verify
@@ -392,7 +392,7 @@ pub unsafe extern "C" fn azihsm_crypt_verify_update(
 /// This function is unsafe because it dereferences raw pointers.
 #[unsafe(no_mangle)]
 #[allow(unsafe_code)]
-pub unsafe extern "C" fn azihsm_crypt_verify_final(
+pub unsafe extern "C" fn azihsm_crypt_verify_finish(
     ctx_handle: AzihsmHandle,
     sig: *const AzihsmBuffer,
 ) -> AzihsmStatus {

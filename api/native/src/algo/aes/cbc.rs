@@ -64,7 +64,7 @@ impl AesCbcEncryptContext {
         Ok(bytes_written)
     }
 
-    /// Finalize the context
+    /// Finish the context
     fn finish(&mut self, output: Option<&mut [u8]>) -> Result<usize, AzihsmStatus> {
         let bytes_written = self.context.finish(output)?;
         self.update_iv()?;
@@ -101,7 +101,7 @@ impl AesCbcDecryptContext {
         Ok(bytes_written)
     }
 
-    /// Finalize the context
+    /// Finish the context
     fn finish(&mut self, output: Option<&mut [u8]>) -> Result<usize, AzihsmStatus> {
         let bytes_written = self.context.finish(output)?;
         self.update_iv()?;
@@ -225,7 +225,7 @@ pub(crate) fn aes_cbc_decrypt(
 /// Initialize AES CBC encryption
 ///
 /// Creates an encryption context that can process data incrementally.
-/// The context should be used with update and finalize operations.
+/// The context should be used with update and finish operations.
 ///
 /// # Arguments
 /// * `algo` - Algorithm specification (must be AES CBC or AES CBC with padding)
@@ -265,7 +265,7 @@ pub(crate) fn aes_cbc_encrypt_init(
 /// Initialize AES CBC decryption
 ///
 /// Creates a decryption context that can process data incrementally.
-/// The context should be used with update and finalize operations.
+/// The context should be used with update and finish operations.
 ///
 /// # Arguments
 /// * `algo` - Algorithm specification (must be AES CBC or AES CBC with padding)
@@ -384,7 +384,7 @@ pub(crate) fn aes_cbc_decrypt_update(
     Ok(())
 }
 
-/// Finalize AES CBC encryption
+/// Finish AES CBC encryption
 ///
 /// Completes the encryption operation and processes any remaining data.
 ///
@@ -409,7 +409,7 @@ pub(crate) fn aes_cbc_encrypt_finish(
     // Prepare output buffer and get slice
     let output_slice = validate_output_buffer(output, required_len)?;
 
-    // Perform the finalize operation. This will also update the IV in algo params in the context.
+    // Perform the finish operation. This will also update the IV in algo params in the context.
     let bytes_written = ctx.finish(Some(output_slice))?;
 
     // Update output buffer length with actual bytes written
@@ -418,7 +418,7 @@ pub(crate) fn aes_cbc_encrypt_finish(
     Ok(())
 }
 
-/// Finalize AES CBC decryption
+/// Finish AES CBC decryption
 ///
 /// Completes the decryption operation and processes any remaining data.
 ///
@@ -443,7 +443,7 @@ pub(crate) fn aes_cbc_decrypt_finish(
     // Prepare output buffer and get slice
     let output_slice = validate_output_buffer(output, required_len)?;
 
-    // Perform the finalize operation. This will also update the IV in algo params in the context.
+    // Perform the finish operation. This will also update the IV in algo params in the context.
     let bytes_written = ctx.finish(Some(output_slice))?;
 
     // Update output buffer length with actual bytes written

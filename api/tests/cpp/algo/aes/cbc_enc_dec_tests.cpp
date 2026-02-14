@@ -145,15 +145,15 @@ class azihsm_aes_cbc : public ::testing::Test
             offset += current_chunk;
         }
 
-        // Finalize
+        // Finish
         azihsm_buffer final_out{ nullptr, 0 };
         if (encrypt)
         {
-            err = azihsm_crypt_encrypt_final(ctx, &final_out);
+            err = azihsm_crypt_encrypt_finish(ctx, &final_out);
         }
         else
         {
-            err = azihsm_crypt_decrypt_final(ctx, &final_out);
+            err = azihsm_crypt_decrypt_finish(ctx, &final_out);
         }
 
         if (err == AZIHSM_STATUS_BUFFER_TOO_SMALL)
@@ -165,11 +165,11 @@ class azihsm_aes_cbc : public ::testing::Test
 
             if (encrypt)
             {
-                err = azihsm_crypt_encrypt_final(ctx, &final_out);
+                err = azihsm_crypt_encrypt_finish(ctx, &final_out);
             }
             else
             {
-                err = azihsm_crypt_decrypt_final(ctx, &final_out);
+                err = azihsm_crypt_decrypt_finish(ctx, &final_out);
             }
             EXPECT_EQ(err, AZIHSM_STATUS_SUCCESS);
             // Adjust output size to actual bytes written

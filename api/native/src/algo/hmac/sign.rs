@@ -124,7 +124,7 @@ pub(crate) fn hmac_sign_update(ctx_handle: AzihsmHandle, data: &[u8]) -> Result<
     Ok(())
 }
 
-/// Finalizes a streaming HMAC signing operation
+/// Finishes a streaming HMAC signing operation
 ///
 /// Completes the HMAC signature computation and returns the final signature.
 ///
@@ -206,7 +206,7 @@ pub(crate) fn hmac_verify_update(
     Ok(())
 }
 
-/// Finalizes a streaming HMAC verification operation
+/// Finishes a streaming HMAC verification operation
 ///
 /// Completes the HMAC verification and checks if the signature matches.
 ///

@@ -81,7 +81,7 @@ impl AesGcmEncryptContext {
         self.context.update(input, output).map_err(Into::into)
     }
 
-    /// Finalize the context
+    /// Finish the context
     fn finish(&mut self, output: Option<&mut [u8]>) -> Result<usize, AzihsmStatus> {
         let bytes_written = self
             .context
@@ -123,7 +123,7 @@ impl AesGcmDecryptContext {
         self.context.update(input, output).map_err(Into::into)
     }
 
-    /// Finalize the context
+    /// Finish the context
     fn finish(&mut self, output: Option<&mut [u8]>) -> Result<usize, AzihsmStatus> {
         self.context.finish(output).map_err(Into::into)
     }
@@ -225,7 +225,7 @@ pub(crate) fn aes_gcm_decrypt(
 /// Initialize AES GCM encryption
 ///
 /// Creates an encryption context that can process data incrementally.
-/// The context should be used with update and finalize operations.
+/// The context should be used with update and finish operations.
 ///
 /// # Arguments
 /// * `algo` - Algorithm specification (must be AES GCM)
@@ -259,7 +259,7 @@ pub(crate) fn aes_gcm_encrypt_init(
 /// Initialize AES GCM decryption
 ///
 /// Creates a decryption context that can process data incrementally.
-/// The context should be used with update and finalize operations.
+/// The context should be used with update and finish operations.
 ///
 /// # Arguments
 /// * `algo` - Algorithm specification (must be AES GCM)
@@ -372,7 +372,7 @@ pub(crate) fn aes_gcm_decrypt_update(
     Ok(())
 }
 
-/// Finalize AES GCM encryption
+/// Finish AES GCM encryption
 ///
 /// Completes the encryption operation and processes any remaining data.
 ///
@@ -397,7 +397,7 @@ pub(crate) fn aes_gcm_encrypt_finish(
     // Prepare output buffer and get slice
     let output_slice = validate_output_buffer(output, required_len)?;
 
-    // Perform the finalize operation.
+    // Perform the finish operation.
     let bytes_written = ctx.finish(Some(output_slice))?;
 
     // Update output buffer length with actual bytes written
@@ -406,7 +406,7 @@ pub(crate) fn aes_gcm_encrypt_finish(
     Ok(())
 }
 
-/// Finalize AES GCM decryption
+/// Finish AES GCM decryption
 ///
 /// Completes the decryption operation and processes any remaining data.
 ///
@@ -431,7 +431,7 @@ pub(crate) fn aes_gcm_decrypt_finish(
     // Prepare output buffer and get slice
     let output_slice = validate_output_buffer(output, required_len)?;
 
-    // Perform the finalize operation.
+    // Perform the finish operation.
     let bytes_written = ctx.finish(Some(output_slice))?;
 
     // Update output buffer length with actual bytes written
