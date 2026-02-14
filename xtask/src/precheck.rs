@@ -171,7 +171,7 @@ impl Xtask for Precheck {
                         package: Some("azihsm_ddi".to_string()),
                         no_default_features: false,
                         filterset: None,
-                        profile: self.profile.or(Some("ci-mock-table-4".to_string())),
+                        profile: self.profile.clone().or(Some("ci-mock-table-4".to_string())),
                     };
                     nextest.run(ctx.clone())?;
 
@@ -181,7 +181,7 @@ impl Xtask for Precheck {
                         package: Some("azihsm_ddi".to_string()),
                         no_default_features: false,
                         filterset: None,
-                        profile: self.profile.or(Some("ci-mock-table-64".to_string())),
+                        profile: self.profile.clone().or(Some("ci-mock-table-64".to_string())),
                     };
                     nextest.run(ctx.clone())?;
                 }
