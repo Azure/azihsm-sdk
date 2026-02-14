@@ -317,7 +317,7 @@ where
 /// Initializes a streaming RSA PKCS#1 v1.5 signing operation
 ///
 /// Creates a context for incrementally signing data.
-/// Use with `rsa_sign_update` and `rsa_sign_final`.
+/// Use with `rsa_sign_update` and `rsa_sign_finish`.
 ///
 /// # Arguments
 /// * `hash_algo` - Hash algorithm to use
@@ -338,7 +338,7 @@ pub(crate) fn rsa_pkcs1_hash_sign_init(
 /// Initializes a streaming RSA-PSS signing operation
 ///
 /// Creates a context for incrementally signing data with PSS padding.
-/// Use with `rsa_sign_update` and `rsa_sign_final`.
+/// Use with `rsa_sign_update` and `rsa_sign_finish`.
 ///
 /// # Arguments
 /// * `hash_algo_from_id` - Hash algorithm identifier
@@ -410,15 +410,14 @@ pub(crate) fn rsa_sign_finish(
     output: &mut AzihsmBuffer,
 ) -> Result<(), AzihsmStatus> {
     // Get a reference to determine the required signature size
-    let ctx_ref: &mut HsmRsaSignContext =
-        HANDLE_TABLE.as_mut(ctx_handle, HandleType::RsaSignCtx)?;
-    let required_size = ctx_ref.finish(None)?;
+    let ctx: &mut HsmRsaSignContext = HANDLE_TABLE.as_mut(ctx_handle, HandleType::RsaSignCtx)?;
+    let required_size = ctx.finish(None)?;
 
     // Check if output buffer is large enough
     let output_data = validate_output_buffer(output, required_size)?;
 
     // Perform the final signing operation
-    let sig_len = ctx_ref.finish(Some(output_data))?;
+    let sig_len = ctx.finish(Some(output_data))?;
 
     // Update the output buffer length with actual signature length
     output.len = sig_len as u32;
@@ -449,7 +448,7 @@ where
 /// Initializes a streaming RSA PKCS#1 v1.5 verification operation
 ///
 /// Creates a context for incrementally verifying a signature.
-/// Use with `rsa_verify_update` and `rsa_verify_final`.
+/// Use with `rsa_verify_update` and `rsa_verify_finish`.
 ///
 /// # Arguments
 /// * `hash_algo` - Hash algorithm to use
@@ -470,7 +469,7 @@ pub(crate) fn rsa_pkcs1_hash_verify_init(
 /// Initializes a streaming RSA-PSS verification operation
 ///
 /// Creates a context for incrementally verifying a PSS signature.
-/// Use with `rsa_verify_update` and `rsa_verify_final`.
+/// Use with `rsa_verify_update` and `rsa_verify_finish`.
 ///
 /// # Arguments
 /// * `hash_algo_from_id` - Hash algorithm identifier

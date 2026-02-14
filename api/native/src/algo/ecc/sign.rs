@@ -146,7 +146,7 @@ pub(crate) fn ecc_hash_verify(
 /// Initializes a streaming ECDSA signing operation
 ///
 /// Creates a context for incrementally signing data with an ECC private key.
-/// Use with `ecc_sign_update` and `ecc_sign_final`.
+/// Use with `ecc_sign_update` and `ecc_sign_finish`.
 ///
 /// # Arguments
 /// * `hash_algo` - Hash algorithm to use
@@ -213,15 +213,14 @@ pub(crate) fn ecc_sign_finish(
     output: &mut AzihsmBuffer,
 ) -> Result<(), AzihsmStatus> {
     // Get a reference to determine the required signature size
-    let ctx_ref: &mut HsmEccSignContext =
-        HANDLE_TABLE.as_mut(ctx_handle, HandleType::EccSignCtx)?;
-    let required_size = ctx_ref.finish(None)?;
+    let ctx: &mut HsmEccSignContext = HANDLE_TABLE.as_mut(ctx_handle, HandleType::EccSignCtx)?;
+    let required_size = ctx.finish(None)?;
 
     // Check if output buffer is large enough
     let output_data = validate_output_buffer(output, required_size)?;
 
     // Perform the final signing operation
-    let sig_len = ctx_ref.finish(Some(output_data))?;
+    let sig_len = ctx.finish(Some(output_data))?;
 
     // Update the output buffer length with actual signature length
     output.len = sig_len as u32;
@@ -232,7 +231,7 @@ pub(crate) fn ecc_sign_finish(
 /// Initializes a streaming ECDSA verification operation
 ///
 /// Creates a context for incrementally verifying a signature with an ECC public key.
-/// Use with `ecc_verify_update` and `ecc_verify_final`.
+/// Use with `ecc_verify_update` and `ecc_verify_finish`.
 ///
 /// # Arguments
 /// * `hash_algo` - Hash algorithm to use

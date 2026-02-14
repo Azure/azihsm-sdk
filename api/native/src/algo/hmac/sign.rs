@@ -79,7 +79,7 @@ pub(crate) fn hmac_verify(
 /// Initializes a streaming HMAC signing operation
 ///
 /// Creates a context for incrementally computing an HMAC signature.
-/// Use with `hmac_sign_update` and `hmac_sign_final`.
+/// Use with `hmac_sign_update` and `hmac_sign_finish`.
 ///
 /// # Arguments
 /// * `key_handle` - Handle to the HMAC key
@@ -140,15 +140,14 @@ pub(crate) fn hmac_sign_finish(
     output: &mut AzihsmBuffer,
 ) -> Result<(), AzihsmStatus> {
     // Get a reference to determine the required signature size
-    let ctx_ref: &mut HsmHmacSignContext =
-        HANDLE_TABLE.as_mut(ctx_handle, HandleType::HmacSignCtx)?;
-    let required_size = ctx_ref.finish(None)?;
+    let ctx: &mut HsmHmacSignContext = HANDLE_TABLE.as_mut(ctx_handle, HandleType::HmacSignCtx)?;
+    let required_size = ctx.finish(None)?;
 
     // Check if output buffer is large enough
     let output_data = validate_output_buffer(output, required_size)?;
 
     // Perform the final signing operation
-    let sig_len = ctx_ref.finish(Some(output_data))?;
+    let sig_len = ctx.finish(Some(output_data))?;
 
     // Update the output buffer length with actual signature length
     output.len = sig_len as u32;
@@ -159,7 +158,7 @@ pub(crate) fn hmac_sign_finish(
 /// Initializes a streaming HMAC verification operation
 ///
 /// Creates a context for incrementally verifying an HMAC signature.
-/// Use with `hmac_verify_update` and `hmac_verify_final`.
+/// Use with `hmac_verify_update` and `hmac_verify_finish`.
 ///
 /// # Arguments
 /// * `key_handle` - Handle to the HMAC key
