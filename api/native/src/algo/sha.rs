@@ -50,7 +50,6 @@ pub(crate) fn sha_digest(
 ///
 /// Creates a context for incrementally computing a hash digest.
 /// Use with `sha_digest_update` and `sha_digest_finish`.
-/// Use with `sha_digest_update` and `sha_digest_finish`.
 ///
 /// # Arguments
 /// * `session` - HSM session for the operation
