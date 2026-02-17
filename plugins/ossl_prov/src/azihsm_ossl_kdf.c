@@ -31,7 +31,7 @@
  *
  * Parameters:
  * - OSSL_KDF_PARAM_DIGEST: Hash algorithm name (default: "SHA256")
- * - OSSL_KDF_PARAM_KEY: Path to masked shared secret file (IKM source)
+ * - azihsm.ikm_file: Path to masked shared secret file (IKM source)
  * - OSSL_KDF_PARAM_SALT: Optional salt (octet string)
  * - OSSL_KDF_PARAM_INFO: Optional info/context (octet string)
  * - output_file: Path to write derived masked key (azihsm-specific)
@@ -537,8 +537,8 @@ static int azihsm_ossl_hkdf_set_ctx_params(void *kctx, const OSSL_PARAM params[]
         }
     }
 
-    /* IKM file path (azihsm-specific: OSSL_KDF_PARAM_KEY is treated as file path) */
-    p = OSSL_PARAM_locate_const(params, OSSL_KDF_PARAM_KEY);
+    /* IKM file path (azihsm-specific: path to masked shared secret file) */
+    p = OSSL_PARAM_locate_const(params, "azihsm.ikm_file");
     if (p != NULL)
     {
         const char *path = NULL;
@@ -878,7 +878,7 @@ static const OSSL_PARAM *azihsm_ossl_hkdf_settable_ctx_params(
 {
     static const OSSL_PARAM params[] = {
         OSSL_PARAM_utf8_string(OSSL_KDF_PARAM_DIGEST, NULL, 0),
-        OSSL_PARAM_utf8_string(OSSL_KDF_PARAM_KEY, NULL, 0),
+        OSSL_PARAM_utf8_string("azihsm.ikm_file", NULL, 0),
         OSSL_PARAM_octet_string(OSSL_KDF_PARAM_SALT, NULL, 0),
         OSSL_PARAM_octet_string(OSSL_KDF_PARAM_INFO, NULL, 0),
         OSSL_PARAM_utf8_string("output_file", NULL, 0),
