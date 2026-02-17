@@ -487,7 +487,11 @@ static AZIHSM_EC_KEY *azihsm_ossl_keymgmt_gen(
             }
 
             /* Write masked key to file with restricted permissions (owner-only) */
-            int fd = open(genctx->masked_key_file, O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR);
+            int fd = open(
+                genctx->masked_key_file,
+                O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW,
+                S_IRUSR | S_IWUSR
+            );
             if (fd < 0)
             {
                 azihsm_key_delete(private);
