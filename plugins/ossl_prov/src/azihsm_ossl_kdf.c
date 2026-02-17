@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#include <errno.h>
 #include <fcntl.h>
 #include <openssl/core_dispatch.h>
 #include <openssl/core_names.h>
@@ -15,6 +16,7 @@
 
 #include "azihsm_ossl_base.h"
 #include "azihsm_ossl_helpers.h"
+#include "azihsm_ossl_pkey_param.h"
 
 /*
  * HKDF (HMAC-based Key Derivation Function) Implementation
@@ -27,11 +29,15 @@
  * - Output is a masked key blob written to a file (not raw bytes)
  * - Only full HKDF mode (Extract-and-Expand) is supported
  *
- * Custom Parameters (azihsm-specific):
- * - ikm_file: Path to masked shared secret file (IKM source)
- * - output_file: Path to write derived masked key
- * - derived_key_type: "aes" or "hmac" (default: "aes")
- * - derived_key_bits: Key size in bits (default: 256)
+ * Parameters:
+ * - OSSL_KDF_PARAM_DIGEST: Hash algorithm name (default: "SHA256")
+ * - OSSL_KDF_PARAM_KEY: Path to masked shared secret file (IKM source)
+ * - OSSL_KDF_PARAM_SALT: Optional salt (octet string)
+ * - OSSL_KDF_PARAM_INFO: Optional info/context (octet string)
+ * - output_file: Path to write derived masked key (azihsm-specific)
+ * - derived_key_type: "aes" or "hmac" (default: "aes", azihsm-specific)
+ * - derived_key_bits: Key size in bits, must be >0 and divisible by 8
+ *   (default: 256, azihsm-specific)
  */
 
 /* Derived key type constants */
@@ -75,8 +81,6 @@ static azihsm_algo_id evp_md_to_hmac_algo_id(const EVP_MD *md)
 
     switch (EVP_MD_type(md))
     {
-    case NID_sha1:
-        return AZIHSM_ALGO_ID_HMAC_SHA1;
     case NID_sha256:
         return AZIHSM_ALGO_ID_HMAC_SHA256;
     case NID_sha384:
@@ -216,30 +220,45 @@ static int load_and_unmask_ikm(AZIHSM_HKDF_CTX *ctx)
  */
 static int extract_and_write_masked_key(azihsm_handle derived_handle, const char *output_file)
 {
-    const uint32_t buffer_size = 8192;
     uint8_t *buffer = NULL;
     azihsm_status status;
     int fd;
-    ssize_t written;
+    int ret = OSSL_FAILURE;
 
-    buffer = OPENSSL_malloc(buffer_size);
+    struct azihsm_key_prop masked_prop = {
+        .id = AZIHSM_KEY_PROP_ID_MASKED_KEY,
+        .val = NULL,
+        .len = 0,
+    };
+
+    /* First call to get required size (expect BUFFER_TOO_SMALL, which sets len) */
+    status = azihsm_key_get_prop(derived_handle, &masked_prop);
+    if (status != AZIHSM_STATUS_BUFFER_TOO_SMALL)
+    {
+        ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
+        return OSSL_FAILURE;
+    }
+
+    if (masked_prop.len == 0)
+    {
+        ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
+        return OSSL_FAILURE;
+    }
+
+    buffer = OPENSSL_malloc(masked_prop.len);
     if (buffer == NULL)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
         return OSSL_FAILURE;
     }
 
-    struct azihsm_key_prop masked_prop = {
-        .id = AZIHSM_KEY_PROP_ID_MASKED_KEY,
-        .val = buffer,
-        .len = buffer_size,
-    };
-
+    /* Second call to get the actual masked key data */
+    masked_prop.val = buffer;
     status = azihsm_key_get_prop(derived_handle, &masked_prop);
     if (status != AZIHSM_STATUS_SUCCESS || masked_prop.len == 0)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
-        OPENSSL_cleanse(buffer, buffer_size);
+        OPENSSL_cleanse(buffer, masked_prop.len);
         OPENSSL_free(buffer);
         return OSSL_FAILURE;
     }
@@ -248,25 +267,41 @@ static int extract_and_write_masked_key(azihsm_handle derived_handle, const char
     if (fd < 0)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_SYS_LIB);
-        OPENSSL_cleanse(buffer, buffer_size);
+        OPENSSL_cleanse(buffer, masked_prop.len);
         OPENSSL_free(buffer);
         return OSSL_FAILURE;
     }
 
-    written = write(fd, buffer, masked_prop.len);
-    close(fd);
-
-    OPENSSL_cleanse(buffer, buffer_size);
-    OPENSSL_free(buffer);
-
-    if (written < 0 || (uint32_t)written != masked_prop.len)
+    /* Write all bytes, retrying on short writes and EINTR */
+    uint32_t total_written = 0;
+    while (total_written < masked_prop.len)
     {
-        unlink(output_file);
-        ERR_raise(ERR_LIB_PROV, ERR_R_SYS_LIB);
-        return OSSL_FAILURE;
+        ssize_t written = write(fd, buffer + total_written, masked_prop.len - total_written);
+        if (written < 0)
+        {
+            if (errno == EINTR)
+            {
+                continue;
+            }
+            ERR_raise(ERR_LIB_PROV, ERR_R_SYS_LIB);
+            goto cleanup;
+        }
+        total_written += (uint32_t)written;
     }
 
-    return OSSL_SUCCESS;
+    ret = OSSL_SUCCESS;
+
+cleanup:
+    close(fd);
+
+    if (ret != OSSL_SUCCESS)
+    {
+        unlink(output_file);
+    }
+
+    OPENSSL_cleanse(buffer, masked_prop.len);
+    OPENSSL_free(buffer);
+    return ret;
 }
 
 /* Context Management Functions */
@@ -513,13 +548,14 @@ static int azihsm_ossl_hkdf_set_ctx_params(void *kctx, const OSSL_PARAM params[]
             return OSSL_FAILURE;
         }
 
-        if (strlen(path) >= sizeof(ctx->ikm_file))
+        if (azihsm_ossl_masked_key_filepath_validate(path) < 0)
         {
             ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
             return OSSL_FAILURE;
         }
 
-        snprintf(ctx->ikm_file, sizeof(ctx->ikm_file), "%s", path);
+        strncpy(ctx->ikm_file, path, sizeof(ctx->ikm_file) - 1);
+        ctx->ikm_file[sizeof(ctx->ikm_file) - 1] = '\0';
 
         /* Reset IKM loaded state since path changed */
         if (ctx->ikm_loaded && ctx->ikm_handle != 0)
@@ -541,13 +577,14 @@ static int azihsm_ossl_hkdf_set_ctx_params(void *kctx, const OSSL_PARAM params[]
             return OSSL_FAILURE;
         }
 
-        if (strlen(path) >= sizeof(ctx->output_file))
+        if (azihsm_ossl_masked_key_filepath_validate(path) < 0)
         {
             ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
             return OSSL_FAILURE;
         }
 
-        snprintf(ctx->output_file, sizeof(ctx->output_file), "%s", path);
+        strncpy(ctx->output_file, path, sizeof(ctx->output_file) - 1);
+        ctx->output_file[sizeof(ctx->output_file) - 1] = '\0';
     }
 
     /* Derived key type (azihsm-specific) */
@@ -584,6 +621,11 @@ static int azihsm_ossl_hkdf_set_ctx_params(void *kctx, const OSSL_PARAM params[]
         if (!OSSL_PARAM_get_uint32(p, &bits))
         {
             ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
+            return OSSL_FAILURE;
+        }
+        if (bits == 0 || bits % 8 != 0)
+        {
+            ERR_raise(ERR_LIB_PROV, PROV_R_BAD_LENGTH);
             return OSSL_FAILURE;
         }
         ctx->derived_key_bits = bits;
