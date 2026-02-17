@@ -31,7 +31,10 @@
  *
  * Parameters:
  * - OSSL_KDF_PARAM_DIGEST: Hash algorithm name (default: "SHA256")
- * - azihsm.ikm_file: Path to masked shared secret file (IKM source)
+ * - OSSL_KDF_PARAM_KEY: Masked key bytes as octet string (standard API)
+ * - azihsm.ikm_file: Path to masked key file (azihsm-specific, CLI use)
+ *   Note: OSSL_KDF_PARAM_KEY and azihsm.ikm_file are mutually exclusive.
+ *   Setting both is an error.
  * - OSSL_KDF_PARAM_SALT: Optional salt (octet string)
  * - OSSL_KDF_PARAM_INFO: Optional info/context (octet string)
  * - output_file: Path to write derived masked key (azihsm-specific)
@@ -52,8 +55,10 @@ typedef struct
     const EVP_MD *md;
     azihsm_algo_id hmac_algo_id;
 
-    /* IKM - Input Keying Material (from masked key file) */
+    /* IKM - Input Keying Material (mutually exclusive: file path or raw bytes) */
     char ikm_file[4096];
+    unsigned char *ikm_data;
+    size_t ikm_data_len;
     azihsm_handle ikm_handle;
     bool ikm_loaded;
 
@@ -153,11 +158,12 @@ static unsigned char *read_file(const char *path, size_t *out_len)
     return buf;
 }
 
-/* Helper: Load and unmask IKM from file */
+/* Helper: Load and unmask IKM from in-memory bytes or file */
 static int load_and_unmask_ikm(AZIHSM_HKDF_CTX *ctx)
 {
     unsigned char *masked_key_data = NULL;
     size_t masked_key_size = 0;
+    bool free_data = false;
     struct azihsm_buffer masked_buf;
     azihsm_status status;
 
@@ -166,24 +172,36 @@ static int load_and_unmask_ikm(AZIHSM_HKDF_CTX *ctx)
         return OSSL_SUCCESS;
     }
 
-    if (ctx->ikm_file[0] == '\0')
+    /* Use in-memory IKM bytes if available, otherwise read from file */
+    if (ctx->ikm_data != NULL && ctx->ikm_data_len > 0)
+    {
+        masked_key_data = ctx->ikm_data;
+        masked_key_size = ctx->ikm_data_len;
+    }
+    else if (ctx->ikm_file[0] != '\0')
+    {
+        masked_key_data = read_file(ctx->ikm_file, &masked_key_size);
+        if (masked_key_data == NULL)
+        {
+            ERR_raise(ERR_LIB_PROV, ERR_R_SYS_LIB);
+            return OSSL_FAILURE;
+        }
+        free_data = true;
+    }
+    else
     {
         ERR_raise(ERR_LIB_PROV, PROV_R_MISSING_KEY);
-        return OSSL_FAILURE;
-    }
-
-    masked_key_data = read_file(ctx->ikm_file, &masked_key_size);
-    if (masked_key_data == NULL)
-    {
-        ERR_raise(ERR_LIB_PROV, ERR_R_SYS_LIB);
         return OSSL_FAILURE;
     }
 
     /* Bounds check to prevent truncation when casting to uint32_t */
     if (masked_key_size > UINT32_MAX)
     {
-        OPENSSL_cleanse(masked_key_data, masked_key_size);
-        OPENSSL_free(masked_key_data);
+        if (free_data)
+        {
+            OPENSSL_cleanse(masked_key_data, masked_key_size);
+            OPENSSL_free(masked_key_data);
+        }
         ERR_raise(ERR_LIB_PROV, PROV_R_BAD_LENGTH);
         return OSSL_FAILURE;
     }
@@ -199,8 +217,11 @@ static int load_and_unmask_ikm(AZIHSM_HKDF_CTX *ctx)
         &ctx->ikm_handle
     );
 
-    OPENSSL_cleanse(masked_key_data, masked_key_size);
-    OPENSSL_free(masked_key_data);
+    if (free_data)
+    {
+        OPENSSL_cleanse(masked_key_data, masked_key_size);
+        OPENSSL_free(masked_key_data);
+    }
 
     if (status != AZIHSM_STATUS_SUCCESS)
     {
@@ -341,6 +362,13 @@ static void azihsm_ossl_hkdf_freectx(void *kctx)
         azihsm_key_delete(ctx->ikm_handle);
     }
 
+    /* Cleanse and free IKM data */
+    if (ctx->ikm_data != NULL)
+    {
+        OPENSSL_cleanse(ctx->ikm_data, ctx->ikm_data_len);
+        OPENSSL_free(ctx->ikm_data);
+    }
+
     /* Cleanse and free salt */
     if (ctx->salt != NULL)
     {
@@ -377,6 +405,20 @@ static void *azihsm_ossl_hkdf_dupctx(void *kctx)
 
     memcpy(dup, ctx, sizeof(AZIHSM_HKDF_CTX));
 
+    /* Deep copy IKM data */
+    dup->ikm_data = NULL;
+    if (ctx->ikm_data != NULL && ctx->ikm_data_len > 0)
+    {
+        dup->ikm_data = OPENSSL_malloc(ctx->ikm_data_len);
+        if (dup->ikm_data == NULL)
+        {
+            ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
+            OPENSSL_clear_free(dup, sizeof(AZIHSM_HKDF_CTX));
+            return NULL;
+        }
+        memcpy(dup->ikm_data, ctx->ikm_data, ctx->ikm_data_len);
+    }
+
     /* Deep copy salt */
     dup->salt = NULL;
     if (ctx->salt != NULL && ctx->salt_len > 0)
@@ -385,6 +427,11 @@ static void *azihsm_ossl_hkdf_dupctx(void *kctx)
         if (dup->salt == NULL)
         {
             ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
+            if (dup->ikm_data != NULL)
+            {
+                OPENSSL_cleanse(dup->ikm_data, dup->ikm_data_len);
+                OPENSSL_free(dup->ikm_data);
+            }
             OPENSSL_clear_free(dup, sizeof(AZIHSM_HKDF_CTX));
             return NULL;
         }
@@ -399,6 +446,11 @@ static void *azihsm_ossl_hkdf_dupctx(void *kctx)
         if (dup->info == NULL)
         {
             ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
+            if (dup->ikm_data != NULL)
+            {
+                OPENSSL_cleanse(dup->ikm_data, dup->ikm_data_len);
+                OPENSSL_free(dup->ikm_data);
+            }
             OPENSSL_cleanse(dup->salt, ctx->salt_len);
             OPENSSL_free(dup->salt);
             OPENSSL_clear_free(dup, sizeof(AZIHSM_HKDF_CTX));
@@ -407,7 +459,7 @@ static void *azihsm_ossl_hkdf_dupctx(void *kctx)
         memcpy(dup->info, ctx->info, ctx->info_len);
     }
 
-    /* IKM handle cannot be shared - dup must reload from file */
+    /* IKM handle cannot be shared - dup must reload from file or bytes */
     dup->ikm_loaded = false;
     dup->ikm_handle = 0;
 
@@ -430,6 +482,13 @@ static void azihsm_ossl_hkdf_reset(void *kctx)
     if (ctx->ikm_loaded && ctx->ikm_handle != 0)
     {
         azihsm_key_delete(ctx->ikm_handle);
+    }
+
+    /* Cleanse and free IKM data */
+    if (ctx->ikm_data != NULL)
+    {
+        OPENSSL_cleanse(ctx->ikm_data, ctx->ikm_data_len);
+        OPENSSL_free(ctx->ikm_data);
     }
 
     /* Cleanse and free salt */
@@ -537,10 +596,51 @@ static int azihsm_ossl_hkdf_set_ctx_params(void *kctx, const OSSL_PARAM params[]
         }
     }
 
+    /* IKM as raw masked key bytes (standard OSSL_KDF_PARAM_KEY, octet string) */
+    p = OSSL_PARAM_locate_const(params, OSSL_KDF_PARAM_KEY);
+    if (p != NULL)
+    {
+        /* Mutually exclusive with azihsm.ikm_file */
+        if (ctx->ikm_file[0] != '\0')
+        {
+            ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
+            return OSSL_FAILURE;
+        }
+
+        if (ctx->ikm_data != NULL)
+        {
+            OPENSSL_cleanse(ctx->ikm_data, ctx->ikm_data_len);
+            OPENSSL_free(ctx->ikm_data);
+        }
+        ctx->ikm_data = NULL;
+        ctx->ikm_data_len = 0;
+
+        if (!OSSL_PARAM_get_octet_string(p, (void **)&ctx->ikm_data, 0, &ctx->ikm_data_len))
+        {
+            ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
+            return OSSL_FAILURE;
+        }
+
+        /* Reset IKM loaded state since key data changed */
+        if (ctx->ikm_loaded && ctx->ikm_handle != 0)
+        {
+            azihsm_key_delete(ctx->ikm_handle);
+            ctx->ikm_handle = 0;
+            ctx->ikm_loaded = false;
+        }
+    }
+
     /* IKM file path (azihsm-specific: path to masked shared secret file) */
     p = OSSL_PARAM_locate_const(params, "azihsm.ikm_file");
     if (p != NULL)
     {
+        /* Mutually exclusive with OSSL_KDF_PARAM_KEY */
+        if (ctx->ikm_data != NULL)
+        {
+            ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
+            return OSSL_FAILURE;
+        }
+
         const char *path = NULL;
         if (!OSSL_PARAM_get_utf8_string_ptr(p, &path) || path == NULL)
         {
@@ -704,7 +804,7 @@ static int azihsm_ossl_hkdf_derive(
     }
 
     /* Validate required parameters */
-    if (ctx->ikm_file[0] == '\0')
+    if (ctx->ikm_file[0] == '\0' && ctx->ikm_data == NULL)
     {
         ERR_raise(ERR_LIB_PROV, PROV_R_MISSING_KEY);
         return OSSL_FAILURE;
@@ -878,6 +978,7 @@ static const OSSL_PARAM *azihsm_ossl_hkdf_settable_ctx_params(
 {
     static const OSSL_PARAM params[] = {
         OSSL_PARAM_utf8_string(OSSL_KDF_PARAM_DIGEST, NULL, 0),
+        OSSL_PARAM_octet_string(OSSL_KDF_PARAM_KEY, NULL, 0),
         OSSL_PARAM_utf8_string("azihsm.ikm_file", NULL, 0),
         OSSL_PARAM_octet_string(OSSL_KDF_PARAM_SALT, NULL, 0),
         OSSL_PARAM_octet_string(OSSL_KDF_PARAM_INFO, NULL, 0),
