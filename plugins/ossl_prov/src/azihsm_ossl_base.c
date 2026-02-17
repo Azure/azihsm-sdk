@@ -70,13 +70,12 @@ static const OSSL_ALGORITHM azihsm_ossl_mac[] = {
 
 // KDF
 extern const OSSL_DISPATCH azihsm_ossl_hkdf_functions[];
-extern const OSSL_DISPATCH azihsm_ossl_kbkdf_functions[];
+// KBKDF not yet implemented - empty dispatch table would cause OpenSSL to reject all KDFs
+// extern const OSSL_DISPATCH azihsm_ossl_kbkdf_functions[];
 
-static const OSSL_ALGORITHM azihsm_ossl_kdf[] = {
-    ALG(AZIHSM_OSSL_ALG_NAME_HKDF, azihsm_ossl_hkdf_functions),
-    ALG(AZIHSM_OSSL_ALG_NAME_KBKDF, azihsm_ossl_kbkdf_functions),
-    ALG_TABLE_END
-};
+static const OSSL_ALGORITHM azihsm_ossl_kdf[] = { ALG(AZIHSM_OSSL_ALG_NAME_HKDF,
+                                                      azihsm_ossl_hkdf_functions),
+                                                  ALG_TABLE_END };
 
 static const OSSL_ALGORITHM azihsm_ossl_rand[] = { ALG_TABLE_END };
 

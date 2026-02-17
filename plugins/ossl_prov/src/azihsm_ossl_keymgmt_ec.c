@@ -867,11 +867,12 @@ static int azihsm_ossl_keymgmt_import(void *keydata, int selection, const OSSL_P
     }
     key->genctx.ec_curve_id = (uint32_t)curve_id;
 
-    /* Read raw public key (uncompressed EC point) */
+    /* Read raw public key (compressed or uncompressed EC point) */
     p = OSSL_PARAM_locate_const(params, OSSL_PKEY_PARAM_PUB_KEY);
     if (p != NULL)
     {
-        size_t expected_point_size = azihsm_ossl_ec_curve_id_to_point_size(curve_id);
+        size_t uncompressed_size = azihsm_ossl_ec_curve_id_to_point_size(curve_id);
+        size_t compressed_size = (uncompressed_size + 1) / 2;
         void *tmp_data = NULL;
         size_t tmp_len = 0;
 
@@ -879,15 +880,14 @@ static int azihsm_ossl_keymgmt_import(void *keydata, int selection, const OSSL_P
         key->pub_key_data = NULL;
         key->pub_key_data_len = 0;
 
-        /* Use a temporary buffer with max_len to prevent unbounded allocation */
-        if (!OSSL_PARAM_get_octet_string(p, &tmp_data, expected_point_size, &tmp_len))
+        if (!OSSL_PARAM_get_octet_string(p, &tmp_data, uncompressed_size, &tmp_len))
         {
             ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
             return OSSL_FAILURE;
         }
 
-        /* Validate point size matches curve */
-        if (tmp_len != expected_point_size)
+        /* Accept both compressed (1 + coord) and uncompressed (1 + 2*coord) */
+        if (tmp_len != uncompressed_size && tmp_len != compressed_size)
         {
             OPENSSL_free(tmp_data);
             ERR_raise(ERR_LIB_PROV, PROV_R_INVALID_KEY);
