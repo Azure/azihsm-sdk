@@ -13,12 +13,22 @@
 #include "azihsm_ossl_base.h"
 #include "azihsm_ossl_ec.h"
 #include "azihsm_ossl_pkey_param.h"
+#include "azihsm_ossl_rsa.h"
 #include "azihsm_ossl_store.h"
+
+/* Storage-domain key types (mapped to HSM key kinds when needed) */
+typedef enum
+{
+    AZIHSM_STORE_KEY_TYPE_EC = 1,
+    AZIHSM_STORE_KEY_TYPE_RSA,
+    AZIHSM_STORE_KEY_TYPE_RSA_PSS,
+    AZIHSM_STORE_KEY_TYPE_AES,
+} azihsm_store_key_type;
 
 typedef struct
 {
     char *file_path;
-    int key_kind;
+    azihsm_store_key_type key_type;
 } AZIHSM_URI_INFO;
 
 typedef struct
@@ -33,6 +43,7 @@ typedef struct
 
     /* Properties queried from unmasked key */
     azihsm_ecc_curve ec_curve; /* EC curve ID for ECC keys */
+    uint32_t rsa_bits;         /* RSA key bit length */
     bool is_session_key;       /* Whether this is a session key */
 } AZIHSM_STORE_CTX;
 
@@ -53,7 +64,7 @@ static AZIHSM_STORE_CTX *store_ctx_new(AZIHSM_OSSL_PROV_CTX *provctx)
 
     ctx->provctx = provctx;
     ctx->uri_info.file_path = NULL;
-    ctx->uri_info.key_kind = -1;
+    ctx->uri_info.key_type = 0;
     ctx->eof = 0;
     ctx->key_type = -1; // Uninitialized
     ctx->expect = 0;    // No expectation set
@@ -113,17 +124,38 @@ static void store_ctx_free(AZIHSM_STORE_CTX *ctx)
     OPENSSL_clear_free(ctx, sizeof(AZIHSM_STORE_CTX));
 }
 
-static int parse_key_kind(const char *kind_str)
+static azihsm_store_key_type parse_key_type(const char *type_str)
 {
-    if (kind_str == NULL)
-        return -1;
+    if (type_str == NULL)
+        return 0;
 
-    if (strcasecmp(kind_str, "ec") == 0)
+    if (strcasecmp(type_str, "ec") == 0)
+        return AZIHSM_STORE_KEY_TYPE_EC;
+    else if (strcasecmp(type_str, "rsa") == 0)
+        return AZIHSM_STORE_KEY_TYPE_RSA;
+    else if (strcasecmp(type_str, "rsa-pss") == 0)
+        return AZIHSM_STORE_KEY_TYPE_RSA_PSS;
+    else if (strcasecmp(type_str, "aes") == 0)
+        return AZIHSM_STORE_KEY_TYPE_AES;
+
+    return 0;
+}
+
+/* Map storage key type to HSM key kind for unmask operations */
+static azihsm_key_kind store_type_to_hsm_kind(azihsm_store_key_type type)
+{
+    switch (type)
+    {
+    case AZIHSM_STORE_KEY_TYPE_EC:
         return AZIHSM_KEY_KIND_ECC;
-    else if (strcasecmp(kind_str, "rsa") == 0)
+    case AZIHSM_STORE_KEY_TYPE_RSA:
+    case AZIHSM_STORE_KEY_TYPE_RSA_PSS:
         return AZIHSM_KEY_KIND_RSA;
-
-    return -1;
+    case AZIHSM_STORE_KEY_TYPE_AES:
+        return AZIHSM_KEY_KIND_AES;
+    default:
+        return 0;
+    }
 }
 
 static int parse_uri_attribute(const char *attr_str, char **out_key, char **out_val)
@@ -172,7 +204,7 @@ static int parse_azihsm_uri(const char *uri, AZIHSM_URI_INFO *out_info)
 
     // Initialize output structure
     out_info->file_path = NULL;
-    out_info->key_kind = -1;
+    out_info->key_type = 0;
 
     // Check URI starts with "azihsm://"
     if (strncmp(uri, scheme, scheme_len) != 0)
@@ -224,7 +256,7 @@ static int parse_azihsm_uri(const char *uri, AZIHSM_URI_INFO *out_info)
             {
                 if (strcasecmp(attr_name, "type") == 0)
                 {
-                    out_info->key_kind = parse_key_kind(attr_value);
+                    out_info->key_type = parse_key_type(attr_value);
                 }
 
                 OPENSSL_free(attr_name);
@@ -238,7 +270,7 @@ static int parse_azihsm_uri(const char *uri, AZIHSM_URI_INFO *out_info)
     }
 
     // Validate that type was provided
-    if (out_info->key_kind == -1)
+    if (out_info->key_type == 0)
     {
         return OSSL_FAILURE;
     }
@@ -291,6 +323,7 @@ static unsigned char *read_key_file(const char *path, size_t *out_len)
 
     if (bytes_read != (size_t)size)
     {
+        OPENSSL_cleanse(buf, (size_t)size);
         OPENSSL_free(buf);
         return NULL;
     }
@@ -326,7 +359,7 @@ static int load_and_unmask_key(AZIHSM_STORE_CTX *ctx)
     /* Unmask the key - fail if unmask operation fails */
     status = azihsm_key_unmask_pair(
         ctx->provctx->session,
-        ctx->uri_info.key_kind,
+        store_type_to_hsm_kind(ctx->uri_info.key_type),
         &masked_buf,
         &ctx->key_handles.priv,
         &ctx->key_handles.pub
@@ -334,6 +367,7 @@ static int load_and_unmask_key(AZIHSM_STORE_CTX *ctx)
 
     if (status != AZIHSM_STATUS_SUCCESS)
     {
+        OPENSSL_cleanse(masked_key_data, masked_key_size);
         OPENSSL_free(masked_key_data);
         return OSSL_FAILURE;
     }
@@ -349,6 +383,7 @@ static int load_and_unmask_key(AZIHSM_STORE_CTX *ctx)
     if (status != AZIHSM_STATUS_SUCCESS)
     {
         store_ctx_delete_key_handles(ctx);
+        OPENSSL_cleanse(masked_key_data, masked_key_size);
         OPENSSL_free(masked_key_data);
         return OSSL_FAILURE;
     }
@@ -382,20 +417,50 @@ static int load_and_unmask_key(AZIHSM_STORE_CTX *ctx)
             ctx->is_session_key = (is_session != 0);
         }
     }
+    /* For RSA keys, query bit length and session flag */
+    else if (actual_kind == AZIHSM_KEY_KIND_RSA)
+    {
+        /* Query RSA bit length */
+        uint32_t bit_len = 0;
+        prop.id = AZIHSM_KEY_PROP_ID_BIT_LEN;
+        prop.val = &bit_len;
+        prop.len = sizeof(uint32_t);
 
+        status = azihsm_key_get_prop(ctx->key_handles.priv, &prop);
+        if (status == AZIHSM_STATUS_SUCCESS)
+        {
+            ctx->rsa_bits = bit_len;
+        }
+
+        /* Query session flag */
+        uint8_t is_session = 0;
+        prop.id = AZIHSM_KEY_PROP_ID_SESSION;
+        prop.val = &is_session;
+        prop.len = sizeof(uint8_t);
+
+        status = azihsm_key_get_prop(ctx->key_handles.priv, &prop);
+        if (status == AZIHSM_STATUS_SUCCESS)
+        {
+            ctx->is_session_key = (is_session != 0);
+        }
+    }
+
+    OPENSSL_cleanse(masked_key_data, masked_key_size);
     OPENSSL_free(masked_key_data);
 
     return OSSL_SUCCESS;
 }
 
-static const char *key_kind_to_string(int key_kind)
+static const char *store_type_to_ossl_name(azihsm_store_key_type type)
 {
-    switch (key_kind)
+    switch (type)
     {
-    case AZIHSM_KEY_KIND_ECC:
+    case AZIHSM_STORE_KEY_TYPE_EC:
         return "EC";
-    case AZIHSM_KEY_KIND_RSA:
+    case AZIHSM_STORE_KEY_TYPE_RSA:
         return "RSA";
+    case AZIHSM_STORE_KEY_TYPE_RSA_PSS:
+        return "RSA-PSS";
     default:
         return NULL;
     }
@@ -447,6 +512,7 @@ static int azihsm_store_load(
     int object_type = OSSL_OBJECT_PKEY;
     const char *data_type;
     AZIHSM_EC_KEY *ec_key = NULL;
+    AZIHSM_RSA_KEY *rsa_key = NULL;
 
     if (ctx == NULL || ctx->eof)
         return OSSL_FAILURE;
@@ -457,7 +523,8 @@ static int azihsm_store_load(
         return OSSL_FAILURE;
     }
 
-    data_type = key_kind_to_string(ctx->key_type);
+    /* Get OpenSSL data type name from URI storage type */
+    data_type = store_type_to_ossl_name(ctx->uri_info.key_type);
     if (data_type == NULL)
     {
         ctx->eof = 1;
@@ -465,7 +532,7 @@ static int azihsm_store_load(
     }
 
     // For EC keys, construct an AZIHSM_EC_KEY object
-    if (ctx->key_type == AZIHSM_KEY_KIND_ECC)
+    if (ctx->uri_info.key_type == AZIHSM_STORE_KEY_TYPE_EC)
     {
         ec_key = OPENSSL_zalloc(sizeof(AZIHSM_EC_KEY));
         if (ec_key == NULL)
@@ -508,18 +575,50 @@ static int azihsm_store_load(
         );
         params[3] = OSSL_PARAM_construct_end();
     }
-    else
+    else if (ctx->uri_info.key_type == AZIHSM_STORE_KEY_TYPE_RSA ||
+             ctx->uri_info.key_type == AZIHSM_STORE_KEY_TYPE_RSA_PSS)
     {
-        // For non-EC keys, return raw reference (RSA, AES, etc.)
+        rsa_key = OPENSSL_zalloc(sizeof(AZIHSM_RSA_KEY));
+        if (rsa_key == NULL)
+        {
+            ctx->eof = 1;
+            return OSSL_FAILURE;
+        }
+
+        /* Copy key handles */
+        rsa_key->key.pub = ctx->key_handles.pub;
+        rsa_key->key.priv = ctx->key_handles.priv;
+        rsa_key->has_public = true;
+        rsa_key->has_private = (ctx->expect != OSSL_STORE_INFO_PUBKEY);
+
+        /* Initialize genctx using queried properties */
+        rsa_key->genctx.pubkey_bits = ctx->rsa_bits;
+        /* Set key_type based on URI: RSA-PSS keys use PSS padding by default */
+        rsa_key->genctx.key_type = (ctx->uri_info.key_type == AZIHSM_STORE_KEY_TYPE_RSA_PSS)
+                                       ? AIHSM_KEY_TYPE_RSA_PSS
+                                       : AIHSM_KEY_TYPE_RSA;
+        rsa_key->genctx.key_usage = KEY_USAGE_DIGITAL_SIGNATURE;
+        rsa_key->genctx.session = ctx->provctx->session;
+        rsa_key->genctx.session_flag = ctx->is_session_key;
+
+        /* Store key object in context */
+        ctx->key_obj = rsa_key;
+
         params[0] = OSSL_PARAM_construct_int(OSSL_OBJECT_PARAM_TYPE, &object_type);
         params[1] =
             OSSL_PARAM_construct_utf8_string(OSSL_OBJECT_PARAM_DATA_TYPE, (char *)data_type, 0);
         params[2] = OSSL_PARAM_construct_octet_string(
             OSSL_OBJECT_PARAM_REFERENCE,
-            &ctx->key_handles,
-            sizeof(AZIHSM_KEY_PAIR_OBJ)
+            rsa_key,
+            sizeof(AZIHSM_RSA_KEY)
         );
         params[3] = OSSL_PARAM_construct_end();
+    }
+    else
+    {
+        /* Unsupported key type */
+        ctx->eof = 1;
+        return OSSL_FAILURE;
     }
 
     // Mark as EOF (single object per store)

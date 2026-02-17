@@ -74,17 +74,26 @@ static int azihsm_ossl_encoder_encode(
 )
 {
     BIO *bio;
+    const AZIHSM_RSA_GEN_CTX *genctx = &rsa_key->genctx;
 
     if ((bio = BIO_new_from_core_bio(ctx->libctx, out)) == NULL)
     {
         return 0;
     }
 
+    const char *key_usage_str = azihsm_ossl_key_usage_to_str(genctx->key_usage);
+
     BIO_printf(bio, "\n");
     BIO_printf(bio, "==== Key Generation Details ====\n");
     BIO_printf(bio, "provider             : azihsm\n");
-    BIO_printf(bio, "algorithm            : %s\n", key_type_to_str(rsa_key->genctx.key_type));
-    BIO_printf(bio, "public-key bit length: %" PRIu32 "\n", rsa_key->genctx.pubkey_bits);
+    BIO_printf(bio, "algorithm            : %s\n", key_type_to_str(genctx->key_type));
+    BIO_printf(bio, "public-key bit length: %" PRIu32 "\n", genctx->pubkey_bits);
+    BIO_printf(bio, "session              : %s\n", genctx->session_flag ? "yes" : "no");
+    if (genctx->masked_key_file[0] != '\0')
+    {
+        BIO_printf(bio, "masked-key file      : %s\n", genctx->masked_key_file);
+    }
+    BIO_printf(bio, "key usage            : %s\n", key_usage_str);
     BIO_printf(bio, "handle (public-key)  : %" PRIu32 "\n", rsa_key->key.pub);
     BIO_printf(bio, "handle (private-key) : %" PRIu32 "\n", rsa_key->key.priv);
 
@@ -194,6 +203,7 @@ static int azihsm_ossl_encoder_der_pki_encode(
 )
 {
     BIO *bio;
+    const AZIHSM_RSA_GEN_CTX *genctx = &rsa_key->genctx;
 
     if ((bio = BIO_new_from_core_bio(ctx->libctx, out)) == NULL)
     {
@@ -202,11 +212,19 @@ static int azihsm_ossl_encoder_der_pki_encode(
 
     if (selection & OSSL_KEYMGMT_SELECT_PRIVATE_KEY)
     {
+        const char *key_usage_str = azihsm_ossl_key_usage_to_str(genctx->key_usage);
+
         BIO_printf(bio, "\n");
         BIO_printf(bio, "==== PrivateKeyInfo (PKCS#8) ====\n");
         BIO_printf(bio, "provider             : azihsm\n");
-        BIO_printf(bio, "algorithm            : %s\n", key_type_to_str(rsa_key->genctx.key_type));
-        BIO_printf(bio, "public-key bit length: %" PRIu32 "\n", rsa_key->genctx.pubkey_bits);
+        BIO_printf(bio, "algorithm            : %s\n", key_type_to_str(genctx->key_type));
+        BIO_printf(bio, "public-key bit length: %" PRIu32 "\n", genctx->pubkey_bits);
+        BIO_printf(bio, "session              : %s\n", genctx->session_flag ? "yes" : "no");
+        if (genctx->masked_key_file[0] != '\0')
+        {
+            BIO_printf(bio, "masked-key file      : %s\n", genctx->masked_key_file);
+        }
+        BIO_printf(bio, "key usage            : %s\n", key_usage_str);
         BIO_printf(bio, "handle (public-key)  : %" PRIu32 "\n", rsa_key->key.pub);
         BIO_printf(bio, "handle (private-key) : %" PRIu32 "\n", rsa_key->key.priv);
         BIO_printf(bio, "\n");
