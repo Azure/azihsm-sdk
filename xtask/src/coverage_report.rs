@@ -25,23 +25,23 @@ pub struct CoverageReport {}
 
 #[derive(Default, Debug, Clone)]
 struct CoverageCounts {
-    functions: HashMap<String, bool>, // function name -> covered
-    lines: HashMap<u64, u64>,      // line number -> hits
-    regions: HashMap<String, (u64, u64)>,   // region identifier -> (covered, total)
+    functions: HashMap<String, bool>,     // function name -> covered
+    lines: HashMap<u64, u64>,             // line number -> hits
+    regions: HashMap<String, (u64, u64)>, // region identifier -> (covered, total)
 }
 
 impl CoverageCounts {
-    fn add(&mut self, other: CoverageCounts) {
-        for (k, v) in other.functions {
-            let entry = self.functions.entry(k).or_insert(false);
-            *entry |= v;
+    fn add(&mut self, other: &CoverageCounts) {
+        for (k, v) in &other.functions {
+            let entry = self.functions.entry(k.clone()).or_insert(false);
+            *entry |= *v;
         }
-        for (k, v) in other.lines {
-            let entry = self.lines.entry(k).or_insert(0);
-            *entry += v;
+        for (k, v) in &other.lines {
+            let entry = self.lines.entry(*k).or_insert(0);
+            *entry += *v;
         }
-        for (k, v) in other.regions {
-            let entry = self.regions.entry(k).or_insert((0, 0));
+        for (k, v) in &other.regions {
+            let entry = self.regions.entry(k.clone()).or_insert((0, 0));
             entry.0 += v.0;
             entry.1 += v.1;
         }
@@ -88,9 +88,9 @@ fn parse_cobertura(xml: &str) -> anyhow::Result<BTreeMap<String, CoverageCounts>
 
     let mut buf = Vec::new();
     let mut current_file: Option<String> = None;
-    let mut in_method = false;
-    let mut method_has_hit = false;
-    let mut method_entry;
+    let mut in_function = false;
+    let mut function_has_hit = false;
+    let mut function_name: Option<String> = None;
 
     let mut per_file: BTreeMap<String, CoverageCounts> = BTreeMap::new();
 
@@ -105,14 +105,15 @@ fn parse_cobertura(xml: &str) -> anyhow::Result<BTreeMap<String, CoverageCounts>
                 }
                 b"method" => {
                     if current_file.is_some() {
-                        in_method = true;
-                        method_has_hit = false;
+                        in_function = true;
+                        function_has_hit = false;
+                        function_name = get_attr_value(e, b"name")?;
                         if let Some(entry) = current_file.as_ref().and_then(|f| per_file.get_mut(f))
                         {
-                            let name = get_attr_value(e, b"name")?.unwrap_or_default();
-
-                            method_entry = entry.functions.entry(name);
-                            method_entry.or_insert(false);
+                            entry
+                                .functions
+                                .entry(function_name.clone().unwrap_or_default())
+                                .or_insert(false);
                         }
                     }
                 }
@@ -129,8 +130,8 @@ fn parse_cobertura(xml: &str) -> anyhow::Result<BTreeMap<String, CoverageCounts>
 
                             *entry.lines.entry(number).or_insert(0) += hits;
 
-                            if in_method && hits > 0 {
-                                method_has_hit = true;
+                            if in_function && hits > 0 {
+                                function_has_hit = true;
                             }
                         }
                     }
@@ -139,17 +140,20 @@ fn parse_cobertura(xml: &str) -> anyhow::Result<BTreeMap<String, CoverageCounts>
             },
             Ok(Event::End(ref e)) => match e.name().as_ref() {
                 b"method" => {
-                    if in_method {
-                        if let Some(file) = current_file.as_ref() {
-                            if let Some(entry) = per_file.get_mut(file) {
-                                if method_has_hit {
-                                    method_entry.or_insert(true);
-                                }
+                    if in_function {
+                        if function_has_hit {
+                            if let Some(entry) =
+                                current_file.as_ref().and_then(|f| per_file.get_mut(f))
+                            {
+                                entry
+                                    .functions
+                                    .entry(function_name.clone().unwrap_or_default())
+                                    .or_insert(true);
                             }
                         }
-                        in_method = false;
-                        method_has_hit = false;
                     }
+                    in_function = false;
+                    function_has_hit = false;
                 }
                 b"class" => {
                     current_file = None;
@@ -181,15 +185,15 @@ fn get_attr_value(
     Ok(None)
 }
 
-fn parse_condition_coverage(value: &str) -> Option<(u64, u64)> {
-    let start = value.find('(')? + 1;
-    let end = value.find(')')?;
-    let inner = value.get(start..end)?;
-    let mut parts = inner.split('/');
-    let covered = parts.next()?.trim().parse::<u64>().ok()?;
-    let total = parts.next()?.trim().parse::<u64>().ok()?;
-    Some((covered, total))
-}
+// fn parse_condition_coverage(value: &str) -> Option<(u64, u64)> {
+//     let start = value.find('(')? + 1;
+//     let end = value.find(')')?;
+//     let inner = value.get(start..end)?;
+//     let mut parts = inner.split('/');
+//     let covered = parts.next()?.trim().parse::<u64>().ok()?;
+//     let total = parts.next()?.trim().parse::<u64>().ok()?;
+//     Some((covered, total))
+// }
 
 fn render_markdown_table(per_file: &BTreeMap<String, CoverageCounts>) -> String {
     let mut totals = CoverageCounts::default();
@@ -199,9 +203,13 @@ fn render_markdown_table(per_file: &BTreeMap<String, CoverageCounts>) -> String 
     lines.push("| --- | --- | --- | --- |".to_string());
 
     for (file, counts) in per_file {
-        let functions_covered = counts.functions.values().filter(|&&covered| covered).count() as u64;
+        let functions_covered = counts
+            .functions
+            .values()
+            .filter(|&&covered| covered)
+            .count() as u64;
         let lines_covered = counts.lines.values().filter(|&&hits| hits > 0).count() as u64;
-        totals.add(*counts);
+        totals.add(counts);
         lines.push(format!(
             "| {} | {} | {} | {} |",
             file,
