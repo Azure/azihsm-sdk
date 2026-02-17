@@ -115,8 +115,7 @@ impl CredentialEncryptionKey {
         pin: [u8; 16],
         nonce: [u8; 32],
     ) -> Result<DdiEncryptedEstablishCredential, CredEncErr> {
-        let mut iv = [0; 16];
-        Rng::rand_bytes(&mut iv).map_err(|_| CredEncErr::RngError)?;
+        let iv = Rng::rand_vec(16).map_err(|_| CredEncErr::RngError)?;
 
         let mut algo = AesCbcAlgo::with_no_padding(&iv);
         let encrypted_id = self.aes_cbc_encrypt(&mut algo, &id)?;
@@ -148,8 +147,7 @@ impl CredentialEncryptionKey {
         seed: [u8; 48],
         nonce: [u8; 32],
     ) -> Result<DdiEncryptedSessionCredential, CredEncErr> {
-        let mut iv = [0; 16];
-        Rng::rand_bytes(&mut iv).map_err(|_| CredEncErr::RngError)?;
+        let iv = Rng::rand_vec(16).map_err(|_| CredEncErr::RngError)?;
 
         let mut algo = AesCbcAlgo::with_no_padding(&iv);
         let encrypted_id = self.aes_cbc_encrypt(&mut algo, &id)?;
@@ -183,8 +181,7 @@ impl CredentialEncryptionKey {
         pin: [u8; 16],
         nonce: [u8; 32],
     ) -> Result<DdiEncryptedPin, CredEncErr> {
-        let mut iv = [0; 16];
-        Rng::rand_bytes(&mut iv).map_err(|_| CredEncErr::RngError)?;
+        let iv = Rng::rand_vec(16).map_err(|_| CredEncErr::RngError)?;
 
         let mut algo = AesCbcAlgo::with_no_padding(&iv);
         let encrypted_pin = self.aes_cbc_encrypt(&mut algo, &pin)?;
