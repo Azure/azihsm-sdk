@@ -1,0 +1,28 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+[package]
+autotests = false
+edition = "2021"
+name = "azihsm_ddi_derive"
+version = "0.1.0"
+
+[lib]
+doctest = false
+proc-macro = true
+
+[dependencies]
+darling.workspace = true
+proc-macro2.workspace = true
+quote.workspace = true
+syn.workspace = true
+
+[dev-dependencies]
+azihsm_ddi_mbor.workspace = true
+open-enum.workspace = true
+rand.workspace = true
+trybuild.workspace = true
+
+[[test]]
+name = "compile_tests"
+path = "tests/compile_tests.rs"

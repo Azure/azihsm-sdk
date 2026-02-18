@@ -1,0 +1,28 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+[package]
+edition = "2021"
+name = "azihsm_ddi_mock"
+version = "0.1.0"
+
+[features]
+default = []
+table-4 = []
+table-64 = []
+
+[lib]
+doctest = false
+
+[dependencies]
+azihsm_ddi_interface.workspace = true
+azihsm_ddi_mbor.workspace = true
+azihsm_ddi_sim.workspace = true
+azihsm_ddi_types.workspace = true
+lazy_static = { workspace = true }
+parking_lot.workspace = true
+rand.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

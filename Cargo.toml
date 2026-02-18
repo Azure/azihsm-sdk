@@ -1,0 +1,188 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+[workspace]
+resolver = "2"
+
+members = [
+  "api/lib",
+  "api/native",
+  "api/tests",
+  "api/tests/macro",
+  "crates/cred_encrypt",
+  "crates/crypto",
+  "crates/test_with_tracing",
+  "crates/tpm",
+  "crates/x509",
+  "ddi/interface",
+  "ddi/lib",
+  "ddi/test_helpers",
+  "plugins/ossl_prov",
+  "xtask",
+]
+
+[workspace.dependencies]
+# Internal crates
+azihsm_api = { path = "api/lib" }
+azihsm_api_native = { path = "api/native" }
+azihsm_api_tests_macro = { path = "api/tests/macro" }
+azihsm_cred_encrypt = { path = "crates/cred_encrypt" }
+azihsm_crypto = { path = "crates/crypto" }
+azihsm_ddi = { path = "ddi/lib" }
+azihsm_ddi_derive = { path = "ddi/serde/derive" }
+azihsm_ddi_interface = { path = "ddi/interface" }
+azihsm_ddi_mbor = { path = "ddi/serde/mbor" }
+azihsm_ddi_mock = { path = "ddi/mock" }
+azihsm_ddi_nix = { path = "ddi/nix" }
+azihsm_ddi_sim = { path = "ddi/sim" }
+azihsm_ddi_test_helpers = { path = "ddi/test_helpers" }
+azihsm_ddi_types = { features = [
+  "array",
+  "post_decode",
+  "pre_encode",
+], path = "ddi/serde/types" }
+azihsm_ddi_win = { path = "ddi/win" }
+azihsm_tpm = { path = "crates/tpm" }
+test_with_tracing = { path = "crates/test_with_tracing" }
+test_with_tracing_macro = { path = "crates/test_with_tracing/test_with_tracing_macro" }
+x509 = { path = "crates/x509" }
+
+# Public crates
+anyhow = "1.0"
+arbitrary = "1"
+asn1 = "0.23.0"
+bitfield = "0.19.1"
+bitfield-struct = "0.5"
+bitflags = "2.10.0"
+cfg-if = "1"
+chrono = "0.4.31"
+clap = "4.2"
+cmake = "0.1.57"
+convert_case = "0.6.0"
+darling = "0.20.11"
+delegate = "0.13.3"
+der = "0.7.8"
+env_logger = "0.11.8"
+glob = "0.3"
+hex = "0.4.3"
+is-terminal = "0.4"
+itertools = "0.14.0"
+lazy_static = "1.5.0"
+libc = "0.2"
+libtest-mimic = "0.8.1"
+log = "0.4"
+minicbor = "0.19.1"
+nix = "0.26"
+open-enum = "0.3.0"
+openssl = "0.10.68"
+openssl-sys = "0.9"
+p384 = "0.13.0"
+parking_lot = "0.12"
+pastey = "0.2.1"
+pem-rfc7468 = "0.7.0"
+pkcs1 = "0.7.5"
+pkcs8 = "0.10.2"
+proc-macro2 = "1.0.103"
+quote = "1.0"
+rand = "0.8"
+sec1 = "=0.8.0-rc.10"
+similar = "2.4"
+spki = "0.7.3"
+syn = "2"
+test-log = "0.2.8"
+thiserror = "1.0"
+tracing = "0.1"
+tracing-subscriber = "0.3.16"
+tracing-tree = "0.4.1"
+trybuild = "1.0.114"
+uuid = "1.3.1"
+winapi = "0.3"
+windows = "0.56"
+xshell = "0.2.7"
+zerocopy = "0.8.17"
+zeroize = "1.8.1"
+
+[workspace.lints.rust]
+future_incompatible = { level = "deny", priority = -1 }
+nonstandard_style = { level = "deny", priority = -1 }
+rust_2018_idioms = { level = "deny", priority = -1 }
+
+# Code that needs unsafe should opt-in via a module-scoped allow.
+unsafe_code = "deny"
+unsafe_op_in_unsafe_fn = "warn"
+
+[workspace.lints.clippy]
+await_holding_lock = "warn"
+dbg_macro = "warn"
+debug_assert_with_mut_call = "warn"
+filter_map_next = "warn"
+fn_params_excessive_bools = "warn"
+implicit_clone = "warn"
+imprecise_flops = "warn"
+inefficient_to_string = "warn"
+linkedlist = "warn"
+lossy_float_literal = "warn"
+macro_use_imports = "warn"
+needless_continue = "warn"
+option_option = "warn"
+ref_option_ref = "warn"
+rest_pat_in_fully_bound_structs = "warn"
+suboptimal_flops = "warn"
+undocumented_unsafe_blocks = "warn"
+unnecessary_box_returns = "warn"
+unwrap_used = "warn"
+
+# Possible future additions:
+#
+# useful, but _very_ tedious to fix
+#   doc_markdown = "warn"
+# will be useful to weed-out stubbed codepaths in production
+#   todo = "warn"
+#   unimplemented = "warn"
+# useful, but will require a follow-up PR to enable
+#   map_err_ignore = "warn"
+# useful, but requires a follow-up PR to enable
+#   unused_self = "warn"
+
+# Nested if / else if statements can be easier to read than an equivalent
+# flattened statements.
+collapsible_else_if = "allow"
+collapsible_if = "allow"
+# There are types where it makes sense to define the length, but it can never
+# be empty. This lint is reasonable for container-like data-structures, but
+# makes less sense for hardware-backed data structures.
+len_without_is_empty = "allow"
+# While it's generally a good idea to derive / implement `Default` when
+# appropriate, there are many types in the HvLite codebase where a type has a
+# `new()` method, but no sensible "Default".
+new_without_default = "allow"
+# This is the #1 most commonly ignored lint for a reason (at least according
+# to [this famous issue](https://github.com/rust-lang/rust-clippy/issues/5418)
+# on the clippy GitHub repo)! There are plenty of perfectly reasonable
+# functions that require a large number of non-optional arguments,
+# particularly when working with low-level hardware APIs.
+too_many_arguments = "allow"
+# This is a heuristic based lint that isn't always appropriate. While it's
+# often a good to decompose complex types into more digestible chunks, there
+# are many cases where a one-off complex type is required, and suppressing
+# this lint will simply add line-noise.
+type_complexity = "allow"
+# This lint attempts to simplify usages of if let usage in a loop where only
+# one variant type is used. While somewhat useful, its suggestions can lead to
+# throwing away potentially useful error information in non-obvious ways.
+manual_flatten = "allow"
+# This lint warns about comparing boolean values in an `assert_eq!` statement when `assert!`
+# could be used instead. While shorter, the explicit comparison can be more obvious to read
+# in certain cases than unary operators with `assert!`.
+bool_assert_comparison = "allow"
+# This lint suggests collapsing Box::new(Foo::default()) into Box::default(). We often
+# prefer to specify types completely for local code clarity's sake.
+box_default = "allow"
+# This lint is purely style, and we are ok with inlined and uninlined format args.
+uninlined_format_args = "allow"
+# Needed for bitflags 1.x compatibility. Remove when we update to bitflags 2.x
+bad_bit_mask = "allow"
+# Besides the misleading name (this lint also triggers on arrays), we believe that it
+# doesn't provide value. If a developer gets their type wrong they'll notice and fix it.
+# Sometimes you do want a list of a single range.
+single_range_in_vec_init = "allow"

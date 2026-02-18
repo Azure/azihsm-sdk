@@ -1,0 +1,580 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+mod aes;
+mod ecc;
+mod hash;
+mod hmac;
+mod kdf;
+mod rsa;
+mod secret;
+
+pub use aes::*;
+pub use ecc::*;
+pub use hash::*;
+pub use hmac::*;
+pub use kdf::*;
+pub use rsa::*;
+pub use secret::*;
+
+use super::*;
+
+pub(crate) trait HsmKeyHandleDelOp: Copy {
+    /// Deletes a key from the HSM.
+    ///
+    /// # Arguments
+    ///
+    /// * `session` - The HSM session used to perform the deletion.
+    /// * `handle` - The key handle identifying the key in the HSM.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` on success, otherwise an [`HsmError`].
+    fn delete_key(session: HsmSession, handle: Self) -> Result<(), HsmError>;
+}
+
+impl HsmKeyHandleDelOp for ddi::HsmKeyHandle {
+    /// Deletes a single key handle from the HSM.
+    fn delete_key(session: HsmSession, handle: Self) -> Result<(), HsmError> {
+        ddi::delete_key(&session, handle)
+    }
+}
+
+//impl delete op for key handle tuple ()
+impl HsmKeyHandleDelOp for (ddi::HsmKeyHandle, ddi::HsmKeyHandle) {
+    /// Deletes both key handles from the HSM.
+    fn delete_key(session: HsmSession, handle: Self) -> Result<(), HsmError> {
+        let res1 = ddi::delete_key(&session, handle.0);
+        let res2 = ddi::delete_key(&session, handle.1);
+
+        // Ok only if both deletions succeeded; otherwise return an error. If both fail,
+        // the first error is returned.
+        res1.and(res2)
+    }
+}
+
+/// Shared state for HSM-backed key wrapper types.
+///
+/// Many of the typed N-API/Rust wrappers (AES/HMAC/RSA/etc.) are *thin handles* to
+/// keys that live inside the HSM. Those typed wrappers often need to convert between
+/// each other (e.g. a generic key handle into a typed AES key) without creating a
+/// second owner that would double-delete the underlying device handle.
+///
+/// `HsmKeyInner` is that single shared owner:
+/// - It holds the `session` used to talk to the device.
+/// - It holds the device `handle` that identifies the key.
+/// - It holds the `props` returned by the device for the key.
+/// - It tracks whether deletion has already been performed.
+///
+/// Typed wrappers contain an `Arc<RwLock<HsmKeyInner>>`, so cloning a wrapper clones
+/// only the pointer, not the device key.
+pub(crate) struct HsmKeyInner<H: HsmKeyHandleDelOp> {
+    /// Session used to perform operations on (and delete) the key.
+    session: HsmSession,
+    /// Device-reported key properties.
+    props: HsmKeyProps,
+    /// Opaque device handle for the key.
+    handle: H,
+    /// Whether the key has already been deleted.
+    deleted: bool,
+}
+
+impl<H: HsmKeyHandleDelOp> HsmKeyInner<H> {
+    /// Constructs the shared key state.
+    ///
+    /// This is only called by typed key wrapper constructors/macros after a key is
+    /// created or imported into the HSM and a valid handle + properties are known.
+    fn new(session: HsmSession, props: HsmKeyProps, handle: H) -> Self {
+        Self {
+            session,
+            props,
+            handle,
+            deleted: false,
+        }
+    }
+
+    /// Returns the underlying device handle for this key.
+    ///
+    /// The handle is opaque and only meaningful to the DDI/device layer.
+    fn handle(&self) -> H {
+        self.handle
+    }
+
+    /// Returns the device-reported key properties.
+    fn key_props(&self) -> &HsmKeyProps {
+        &self.props
+    }
+
+    /// Deletes the device-side key handle.
+    ///
+    /// This is idempotent: after successful deletion, subsequent calls return `Ok(())`.
+    /// The `deleted` flag also prevents `Drop` from attempting deletion again.
+    fn delete_key(&mut self) -> Result<(), HsmError> {
+        // Idempotent deletion: safe to call multiple times.
+        if self.deleted {
+            return Ok(());
+        }
+        H::delete_key(self.session.clone(), self.handle)?;
+        self.deleted = true;
+        Ok(())
+    }
+}
+
+impl<H: HsmKeyHandleDelOp> Drop for HsmKeyInner<H> {
+    fn drop(&mut self) {
+        // Best-effort cleanup: dropping should never panic.
+        if !self.deleted {
+            let _ = H::delete_key(self.session.clone(), self.handle);
+        }
+    }
+}
+
+macro_rules! define_hsm_key {
+    ($vis:vis $name:ident) => {
+        define_hsm_key!($vis $name, ddi::HsmKeyHandle);
+    };
+    ($vis:vis $name:ident, $handle_ty:ty) => {
+        pastey::paste! {
+            /// Represents a $name key stored in the HSM.
+            #[derive(Clone)]
+            $vis struct $name {
+                inner: std::sync::Arc<parking_lot::RwLock<HsmKeyInner<$handle_ty>>>,
+            }
+
+            #[allow(unused)]
+            impl $name {
+                /// Creates a new instance of the $name .
+                ///
+                /// # Arguments
+                ///
+                /// * `session` - The HSM session associated with the key.
+                /// * `props` - The properties of the key.
+                /// * `handle` - The handle identifying the key in the HSM.
+                ///
+                /// # Returns
+                /// A new $name instance.
+                pub(crate)
+                fn new(
+                    session: HsmSession,
+                    props: HsmKeyProps,
+                    handle: $handle_ty,
+                ) -> Self {
+                    Self {
+                        inner: std::sync::Arc::new(parking_lot::RwLock::new(HsmKeyInner::<$handle_ty>::new(
+                            session, props, handle,
+                        ))),
+                    }
+                }
+
+                /// Returns a clone of the shared key state for safe cross-type conversions.
+                pub(crate) fn inner(
+                    &self,
+                ) -> std::sync::Arc<parking_lot::RwLock<HsmKeyInner<$handle_ty>>> {
+                    self.inner.clone()
+                }
+
+                /// Creates a typed key wrapper from existing shared key state.
+                pub(crate) fn from_inner(
+                    inner: std::sync::Arc<parking_lot::RwLock<HsmKeyInner<$handle_ty>>>,
+                ) -> Self {
+                    Self { inner }
+                }
+
+                /// Returns the key handle.
+                pub(crate) fn handle(&self) -> $handle_ty {
+                    self.inner.read().handle()
+                }
+
+                /// Returns the session ID.
+                pub(crate) fn sess_id(&self) -> u16 {
+                    self.with_session(|s| s.id())
+                }
+
+                /// Returns the HSM session.
+                pub(crate) fn session(&self) -> HsmSession {
+                    self.with_session(|s| s.clone())
+                }
+
+                /// Returns the key properties.
+                pub(crate) fn props(&self) -> HsmKeyProps {
+                    let guard = self.inner.read();
+                    guard.key_props().clone()
+                }
+
+                /// Returns the API revision.
+                pub(crate) fn api_rev(&self) -> HsmApiRev {
+                    self.with_session(|s| s.api_rev())
+                }
+
+                /// Executes a closure with access to the HSM session.
+                ///
+                /// # Arguments
+                ///
+                /// * `f` - The closure to execute with the session.
+                ///
+                /// # Returns
+                /// The result of the closure execution.
+                pub(crate) fn with_session<F, R>(&self, f: F) -> R
+                where
+                    F: FnOnce(&HsmSession) -> R,
+                {
+                    let guard = self.inner.read();
+                    f(&guard.session)
+                }
+
+                /// Executes a closure with access to the HSM device.
+                ///
+                /// # Arguments
+                ///
+                /// * `f` - The closure to execute with the device.
+                ///
+                /// # Returns
+                ///
+                /// The result of the closure execution.
+                pub(crate) fn with_dev<F, R>(&self, f: F) -> HsmResult<R>
+                where
+                    F: FnOnce(&crate::ddi::HsmDev) -> HsmResult<R>,
+                {
+                    self.with_session(|s| s.with_dev(f))
+                }
+            }
+
+            impl HsmKey for $name {}
+
+            impl HsmKeyCommonProps for $name {}
+
+            impl HsmKeyPropsProvider for $name {
+                fn with_props<F, R>(&self, f: F) -> R
+                where
+                    F: FnOnce(&HsmKeyProps) -> R,
+                {
+                    let guard = self.inner.read();
+                    f(guard.key_props())
+                }
+            }
+
+            impl HsmKeyDeleteOp for $name {
+                type Error = HsmError;
+
+                /// Deletes the key from the HSM if applicable.
+                fn delete_key(self) -> Result<(), Self::Error> {
+                    let mut guard = self.inner.write();
+                    guard.delete_key()
+                }
+            }
+        }
+    };
+}
+/// Shared state for paired-key wrapper types (private key + public key).
+///
+/// This mirrors `HsmKeyInner` but additionally stores the associated public key
+/// wrapper so both halves are tied to the same session and lifecycle.
+pub(crate) struct HsmKeyPairInner<H: HsmKeyHandleDelOp, P> {
+    /// Session used to perform operations on (and delete) the key.
+    session: HsmSession,
+    /// Device-reported key properties.
+    props: HsmKeyProps,
+    /// Opaque device handle for the key.
+    handle: H,
+    /// Associated public key wrapper.
+    pub_key: P,
+
+    /// Whether the key has already been deleted.
+    deleted: bool,
+}
+
+impl<H: HsmKeyHandleDelOp, P> HsmKeyPairInner<H, P> {
+    /// Creates a new instance of the shared key-pair state.
+    fn new(session: HsmSession, props: HsmKeyProps, handle: H, pub_key: P) -> Self {
+        Self {
+            session,
+            props,
+            handle,
+            pub_key,
+            deleted: false,
+        }
+    }
+
+    /// Returns the key properties.
+    fn key_props(&self) -> &HsmKeyProps {
+        &self.props
+    }
+
+    /// Returns the key handle.
+    fn handle(&self) -> H {
+        self.handle
+    }
+
+    /// Returns the associated public key.
+    fn pub_key(&self) -> &P {
+        &self.pub_key
+    }
+
+    /// Deletes the key from the HSM.
+    fn delete_key(&mut self) -> Result<(), HsmError> {
+        if self.deleted {
+            return Ok(());
+        }
+        H::delete_key(self.session.clone(), self.handle)?;
+        self.deleted = true;
+        Ok(())
+    }
+}
+
+impl<H: HsmKeyHandleDelOp, P> Drop for HsmKeyPairInner<H, P> {
+    fn drop(&mut self) {
+        if !self.deleted {
+            let _ = H::delete_key(self.session.clone(), self.handle);
+        }
+    }
+}
+
+macro_rules! define_hsm_key_pair {
+    ($priv_vis:vis $priv_name:ident, $pub_vis:vis $pub_name:ident, $pub_key_ty:ty) => {
+        pastey::paste! {
+            #[derive(Clone)]
+            $priv_vis struct [<$priv_name>]
+            {
+                inner: std::sync::Arc<parking_lot::RwLock<HsmKeyPairInner<ddi::HsmKeyHandle, $pub_name>>>,
+            }
+
+            impl [<$priv_name>] {
+                /// Creates a new instance of the [<Hsm $name PrivateKey>].
+                ///
+                /// # Arguments
+                ///
+                /// * `session` - The HSM session associated with the key.
+                /// * `props` - The properties of the key.
+                /// * `handle` - The handle identifying the key in the HSM.
+                /// * `masked_key` - The masked key material.
+                /// * `pub_key` - The associated public key.
+                ///
+                /// # Returns
+                /// A new [<Hsm $name PrivateKey>] instance.
+                pub(crate)
+                fn new(
+                    session: HsmSession,
+                    props: HsmKeyProps,
+                    handle: ddi::HsmKeyHandle,
+                    pub_key: $pub_name,
+                ) -> Self {
+                    Self {
+                        inner: std::sync::Arc::new(parking_lot::RwLock::new(
+                            HsmKeyPairInner::new(session, props, handle, pub_key),
+                        )),
+                    }
+                }
+
+                /// Returns the key handle.
+                pub(crate) fn handle(&self) -> ddi::HsmKeyHandle {
+                    self.inner.read().handle()
+                }
+
+                /// Returns the session ID.
+                #[allow(unused)]
+                pub(crate) fn sess_id(&self) -> u16 {
+                    self.with_session(|s| s.id())
+                }
+
+                /// Returns the API revision.
+                #[allow(unused)]
+                pub(crate) fn api_rev(&self) -> HsmApiRev {
+                    self.with_session(|s| s.api_rev())
+                }
+
+                /// Returns the HSM session.
+                #[allow(unused)]
+                pub(crate) fn session(&self) -> HsmSession {
+                    self.with_session(|s| s.clone())
+                }
+
+                /// Executes a closure with access to the HSM session.
+                ///
+                /// # Arguments
+                ///
+                /// * `f` - The closure to execute with the session.
+                ///
+                /// # Returns
+                /// The result of the closure execution.
+                pub(crate) fn with_session<F, R>(&self, f: F) -> R
+                where
+                    F: FnOnce(&HsmSession) -> R,
+                {
+                    let guard = self.inner.read();
+                    f(&guard.session)
+                }
+
+                /// Executes a closure with access to the HSM device.
+                ///
+                /// # Arguments
+                ///
+                /// * `f` - The closure to execute with the device.
+                ///
+                /// # Returns
+                ///
+                /// The result of the closure execution.
+                pub(crate) fn with_dev<F, R>(&self, f: F) -> HsmResult<R>
+                where
+                    F: FnOnce(&crate::ddi::HsmDev) -> HsmResult<R>,
+                {
+                    self.with_session(|s| s.with_dev(f))
+                }
+            }
+
+            impl HsmKey for [<$priv_name>] {}
+
+            impl HsmPrivateKey for [<$priv_name>] {
+                type PublicKey = $pub_name;
+
+                /// Returns the associated public key.
+                fn public_key(&self) -> Self::PublicKey {
+                    let guard = self.inner.read();
+                    guard.pub_key().clone()
+                }
+            }
+
+            impl HsmKeyCommonProps for [<$priv_name>] {}
+
+            impl HsmKeyPropsProvider for [<$priv_name>] {
+                fn with_props<F, R>(&self, f: F) -> R
+                where
+                    F: FnOnce(&HsmKeyProps) -> R,
+                {
+                    let inner = self.inner.read();
+                    f(inner.key_props())
+                }
+            }
+
+            impl HsmKeyDeleteOp for $priv_name {
+                type Error = HsmError;
+
+                /// Deletes the key from the HSM if applicable.
+                fn delete_key(self) -> Result<(), Self::Error> {
+                    let mut guard = self.inner.write();
+                    guard.delete_key()
+                }
+            }
+
+            impl HsmKeyReportOp for $priv_name {
+                type Error = HsmError;
+
+                /// Generates an attestation report for the key.
+                fn generate_key_report(
+                    &self,
+                    report_data: &[u8],
+                    report: Option<&mut [u8]>
+                ) -> Result<usize, Self::Error> {
+                    let handle = self.handle();
+                    self.with_session(|s| {
+                        ddi::generate_key_report(s, handle, report_data, report)
+                    })
+                }
+            }
+
+            #[derive(Clone)]
+            $pub_vis struct [<$pub_name>] {
+                inner: std::sync::Arc<parking_lot::RwLock<[<$pub_name Inner>]>>,
+            }
+
+            impl [<$pub_name>] {
+                /// Creates a new instance of the [<$pub_name>].
+                ///
+                /// # Arguments
+                ///
+                /// * `props` - The properties of the key.
+                /// * `crypto_key` - crypto key
+                ///
+                /// # Returns
+                /// A new [<$pub_name>] instance.
+                pub(crate) fn new(props: HsmKeyProps, crypto_key: $pub_key_ty) -> Self {
+                    Self {
+                        inner: std::sync::Arc::new(parking_lot::RwLock::new([<$pub_name Inner>]::new(
+                            props, crypto_key,
+                        ))),
+                    }
+                }
+
+                /// Executes a closure with access to the crypto key.
+                ///
+                /// # Arguments
+                ///
+                /// * `f` - The closure to execute with the crypto key.
+                ///
+                /// # Returns
+                ///
+                /// The result of the closure execution.
+                pub(crate) fn with_crypto_key<F, R>(&self, f: F) -> R
+                where
+                    F: FnOnce(&$pub_key_ty) -> R,
+                {
+                    let guard = self.inner.read();
+                    f(guard.crypto_key())
+                }
+            }
+
+            impl HsmKey for [<$pub_name>] {}
+
+            impl HsmPublicKey for [<$pub_name>] {}
+
+            impl HsmKeyCommonProps for [<$pub_name>] {}
+
+            impl HsmKeyPropsProvider for [<$pub_name>] {
+                fn with_props<F, R>(&self, f: F) -> R
+                where
+                    F: FnOnce(&HsmKeyProps) -> R,
+                {
+                    let inner = self.inner.read();
+                    f(inner.key_props())
+                }
+            }
+
+            impl HsmKeyDeleteOp for $pub_name {
+                type Error = HsmError;
+
+                /// Deletes the key from the HSM if applicable.
+                ///
+                /// Public-key wrappers created by this macro do not own a device-side
+                /// key handle. They hold a software `crypto_key` plus properties, so
+                /// there is nothing to delete in the HSM and this is intentionally a
+                /// no-op.
+                fn delete_key(self) -> Result<(), Self::Error> {
+                    Ok(())
+                }
+            }
+
+            #[derive(Clone)]
+            struct [<$pub_name Inner>] {
+                props: HsmKeyProps,
+                crypto_key: $pub_key_ty,
+            }
+
+            impl [<$pub_name Inner>] {
+                /// Creates a new instance of the [<$pub_name>].
+                ///
+                /// # Arguments
+                ///
+                /// * `props` - The properties of the key.
+                /// * `crypto_key` - crypto key
+                ///
+                /// # Returns
+                /// A new [<$pub_name>] instance.
+                fn new(props: HsmKeyProps, crypto_key: $pub_key_ty) -> Self {
+                    Self { props, crypto_key }
+                }
+
+                /// Returns the key properties.
+                fn key_props(&self) -> &HsmKeyProps {
+                    &self.props
+                }
+
+                /// Returns the crypto key.
+                fn crypto_key(&self) -> &$pub_key_ty {
+                    &self.crypto_key
+                }
+            }
+        }
+    };
+}
+
+pub(crate) use define_hsm_key;
+pub(crate) use define_hsm_key_pair;

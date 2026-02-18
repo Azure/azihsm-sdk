@@ -1,0 +1,9 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+disallowed-types = [
+  { path = "std::sync::Mutex", reason = "use parking_lot::Mutex" },
+  { path = "std::sync::RwLock", reason = "use parking_lot::RwLock" },
+]
+
+check-private-items = true

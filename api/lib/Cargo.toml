@@ -1,0 +1,34 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+[package]
+edition = "2024"
+name = "azihsm_api"
+version = "0.0.0"
+
+[dependencies]
+azihsm_cred_encrypt.workspace = true
+azihsm_crypto.workspace = true
+azihsm_ddi.workspace = true
+azihsm_ddi_mbor.workspace = true
+azihsm_ddi_types.workspace = true
+azihsm_tpm.workspace = true
+bitflags.workspace = true
+delegate.workspace = true
+env_logger.workspace = true
+itertools.workspace = true
+log.workspace = true
+open-enum.workspace = true
+parking_lot.workspace = true
+pastey.workspace = true
+test_with_tracing.workspace = true
+tracing.workspace = true
+x509.workspace = true
+zerocopy = { features = ["derive"], workspace = true }
+
+[features]
+default = []
+mock = ["azihsm_ddi/mock"]
+
+[lints]
+workspace = true

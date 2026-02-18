@@ -1,0 +1,33 @@
+error: deriving `mcr-ddi-derive::Ddi` for an `enum` is not supported
+ --> tests/compile_tests/03-enum-invalid.rs:8:1
+  |
+8 | enum InvalidEnum2 {
+  | ^^^^
+
+error: Unsupported shape `unnamed fields`. Expected one unnamed field.
+  --> tests/compile_tests/03-enum-invalid.rs:12:10
+   |
+12 | #[derive(Ddi)]
+   |          ^^^
+   |
+   = note: this error originates in the derive macro `Ddi` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: #[ddi(enumeration)] attribute provided but is not u32 IncorrectEnumDataType.
+  --> tests/compile_tests/03-enum-invalid.rs:18:8
+   |
+18 | struct IncorrectEnumDataType(u16);
+   |        ^^^^^^^^^^^^^^^^^^^^^
+
+error: #[ddi(enumeration)] attribute provided but is not u32 InvalidOpenEnumDataType.
+  --> tests/compile_tests/03-enum-invalid.rs:24:10
+   |
+24 | pub enum InvalidOpenEnumDataType {
+   |          ^^^^^^^^^^^^^^^^^^^^^^^
+
+error: Missing field `enumeration`
+  --> tests/compile_tests/03-enum-invalid.rs:29:10
+   |
+29 | #[derive(Ddi)]
+   |          ^^^
+   |
+   = note: this error originates in the derive macro `Ddi` (in Nightly builds, run with -Z macro-backtrace for more info)

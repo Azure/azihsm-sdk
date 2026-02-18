@@ -1,0 +1,50 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+[package]
+edition = "2021"
+name = "azihsm_ddi_sim"
+version = "0.1.0"
+
+[features]
+default = []
+fuzzing = ["arbitrary"]
+rust_analyzer_fix = []
+
+[dependencies]
+#crate specific subcrates
+azihsm_crypto.workspace = true
+azihsm_ddi_types.workspace = true
+
+#external crates
+azihsm_ddi_mbor.workspace = true
+bitfield.workspace = true
+bitfield-struct.workspace = true
+minicbor = { features = ["derive"], workspace = true }
+parking_lot.workspace = true
+rand.workspace = true
+tracing.workspace = true
+uuid = { features = ["v4"], workspace = true }
+zerocopy.workspace = true
+zeroize.workspace = true
+
+# The following crates are not included in workspace, as they may have
+# crypto usage that shouldn't be included in client library
+der = { workspace = true }
+p384 = { features = ["pkcs8"], workspace = true }
+
+# fuzzing dependencies
+arbitrary = { optional = true, workspace = true }
+
+[dev-dependencies]
+#support crates
+test_with_tracing.workspace = true
+
+#external crates
+hex.workspace = true
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+openssl.workspace = true
+
+[lints]
+workspace = true

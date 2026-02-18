@@ -1,0 +1,21 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+[package]
+edition = "2024"
+name = "azihsm_ossl_provider"
+version = "0.1.0"
+
+[dependencies]
+
+[build-dependencies]
+azihsm_api_native.workspace = true
+cmake.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = []
+mock = []
+provider = []

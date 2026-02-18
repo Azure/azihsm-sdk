@@ -1,0 +1,22 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+[package]
+edition = "2021"
+name = "azihsm_ddi_mbor"
+version = "0.1.0"
+
+[lib]
+doctest = false
+
+[dependencies]
+arbitrary = { optional = true, workspace = true }
+
+[dev-dependencies]
+rand.workspace = true
+
+[features]
+array = []
+fuzzing = ["arbitrary"]
+post_decode = []
+pre_encode = []

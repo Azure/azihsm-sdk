@@ -1,0 +1,77 @@
+name: "CodeQL Advanced"
+
+on:
+  push:
+    branches: [ main, dev ]
+  pull_request:
+    branches: [ main, dev ]
+    paths-ignore:
+      - '**/*.md'
+  schedule:
+    - cron: '0 8 * * *'  # Daily at midnight PST (8 AM UTC)
+env:
+  CARGO_TERM_COLOR: always
+  CACHE_KEY_ID: 51818cf945d051b6d5c86fc0aa7447f9af01318d
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-24.04
+    permissions:
+      security-events: write
+      packages: read
+      actions: read
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: c-cpp
+            build-mode: manual
+          - language: rust
+            build-mode: none
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Install apt packages
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y pkg-config libssl-dev libbsd-dev
+
+    - name: Restore Cargo cache
+      id: cargo-cache
+      uses: actions/cache/restore@v5
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+        key: ${{ runner.os }}-cargo-${{ env.CACHE_KEY_ID }}
+
+    - name: Setup on cache miss
+      if: steps.cargo-cache.outputs.cache-hit != 'true'
+      run: cargo xtask precheck --setup
+
+    - name: Initialize CodeQL
+      uses: github/codeql-action/init@v4
+      with:
+        languages: ${{ matrix.language }}
+        build-mode: ${{ matrix.build-mode }}
+        queries: security-extended,security-and-quality
+      env:
+        CODEQL_EXTRACTOR_RUST_OPTION_CARGO_CFG_OVERRIDES: "-test" 
+
+    - name: Run manual build steps
+      if: matrix.build-mode == 'manual'
+      shell: bash
+      run: |
+        cargo xtask build --release --package azihsm_ossl_provider
+
+    - name: Perform CodeQL Analysis
+      uses: github/codeql-action/analyze@v4
+      with:
+        category: "/language:${{matrix.language}}"

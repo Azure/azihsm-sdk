@@ -1,0 +1,108 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+language = "C"
+
+header = "/*\r * Copyright (c) Microsoft Corporation.\r * Licensed under the MIT License\r */"
+
+cpp_compat = true
+
+include_guard = "__AZIHSM_API_H__"
+
+documentation_style = "c"
+
+# Codegen Options
+
+# When generating a C header, the kind of declaration style to use for structs
+# or enums.
+#
+# possible values:
+# * "type": typedef struct { ... } MyType;
+# * "tag": struct MyType { ... };
+# * "both": typedef struct MyType { ... } MyType;
+#
+# default: "both"
+style = "tag"
+
+# If this option is true `usize` and `isize` will be converted into `size_t` and `ptrdiff_t`
+# instead of `uintptr_t` and `intptr_t` respectively.
+usize_is_size_t = true
+
+[export]
+
+# A list of items to not include in the generated bindings
+# default: []
+exclude = []
+include = [
+  "AzihsmAlgoAesCbcParams",
+  "AzihsmAlgoAesGcmParams",
+  "AzihsmAlgoAesXtsParams",
+  "AzihsmAlgoEcdhParams",
+  "AzihsmAlgoHkdfParams",
+  "AzihsmAlgoRsaAesKeyWrapParams",
+  "AzihsmAlgoRsaAesWrapParams",
+  "AzihsmAlgoRsaPkcsOaepParams",
+  "AzihsmAlgoRsaPkcsPssParams",
+  "HsmEccCurve",
+  "HsmError",
+  "HsmKeyClass",
+  "HsmKeyKind",
+  "HsmPartType",
+]
+
+item_types = ["constants", "enums", "functions", "structs", "typedefs"]
+
+[export.rename]
+"AES_GCM_IV_SIZE" = "AZIHSM_AES_GCM_IV_SIZE"
+"AES_GCM_TAG_SIZE" = "AZIHSM_AES_GCM_TAG_SIZE"
+"AzihsmAlgo" = "azihsm_algo"
+"AzihsmAlgoAesCbcParams" = "azihsm_algo_aes_cbc_params"
+"AzihsmAlgoAesGcmParams" = "azihsm_algo_aes_gcm_params"
+"AzihsmAlgoAesXtsParams" = "azihsm_algo_aes_xts_params"
+"AzihsmAlgoEcdhParams" = "azihsm_algo_ecdh_params"
+"AzihsmAlgoHkdfParams" = "azihsm_algo_hkdf_params"
+"AzihsmAlgoId" = "azihsm_algo_id"
+"AzihsmAlgoRsaAesKeyWrapParams" = "azihsm_algo_rsa_aes_key_wrap_params"
+"AzihsmAlgoRsaAesWrapParams" = "azihsm_algo_rsa_aes_wrap_params"
+"AzihsmAlgoRsaPkcsOaepParams" = "azihsm_algo_rsa_pkcs_oaep_params"
+"AzihsmAlgoRsaPkcsPssParams" = "azihsm_algo_rsa_pkcs_pss_params"
+"AzihsmApiRev" = "azihsm_api_rev"
+"AzihsmBuffer" = "azihsm_buffer"
+"AzihsmChar" = "azihsm_char"
+"AzihsmCredentials" = "azihsm_credentials"
+"AzihsmEccCurve" = "azihsm_ecc_curve"
+"AzihsmHandle" = "azihsm_handle"
+"AzihsmKeyClass" = "azihsm_key_class"
+"AzihsmKeyKind" = "azihsm_key_kind"
+"AzihsmKeyProp" = "azihsm_key_prop"
+"AzihsmKeyPropId" = "azihsm_key_prop_id"
+"AzihsmKeyPropList" = "azihsm_key_prop_list"
+"AzihsmMgf1Id" = "azihsm_mgf1_id"
+"AzihsmOwnerBackupKeyConfig" = "azihsm_owner_backup_key_config"
+"AzihsmOwnerBackupKeySource" = "azihsm_owner_backup_key_source"
+"AzihsmPartProp" = "azihsm_part_prop"
+"AzihsmPartPropId" = "azihsm_part_prop_id"
+"AzihsmPartType" = "azihsm_part_type"
+"AzihsmPotaEndorsement" = "azihsm_pota_endorsement"
+"AzihsmPotaEndorsementData" = "azihsm_pota_endorsement_data"
+"AzihsmPotaEndorsementSource" = "azihsm_pota_endorsement_source"
+"AzihsmSessionProp" = "azihsm_session_prop"
+"AzihsmSessionPropId" = "azihsm_session_prop_id"
+"AzihsmStatus" = "azihsm_status"
+"AzihsmStr" = "azihsm_str"
+"AzihsmWideChar" = "azihsm_char"
+"HsmEccCurve" = "azihsm_ecc_curve"
+"HsmError" = "azihsm_status"
+"HsmKeyClass" = "azihsm_key_class"
+"HsmKeyKind" = "azihsm_key_kind"
+"HsmOwnerBackupKeySource" = "azihsm_owner_backup_key_source"
+"HsmPartType" = "azihsm_part_type"
+"HsmPotaEndorsementSource" = "azihsm_pota_endorsement_source"
+
+[defines]
+"target_os = linux" = "__linux__ "
+"target_os = windows" = "_WIN32"
+
+[enum]
+enum_class = false
+rename_variants = "QualifiedScreamingSnakeCase"

@@ -1,0 +1,30 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+[package]
+edition = "2024"
+name = "azihsm_crypto"
+version = "0.1.0"
+
+[lib]
+doctest = false
+
+[dependencies]
+asn1.workspace = true
+cfg-if.workspace = true
+pem-rfc7468 = { features = ["alloc"], workspace = true }
+thiserror.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+openssl.workspace = true
+openssl-sys.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { features = ["Win32_Security_Cryptography"], workspace = true }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+hex.workspace = true
+rand.workspace = true

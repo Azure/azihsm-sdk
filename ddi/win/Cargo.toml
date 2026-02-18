@@ -1,0 +1,36 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+[package]
+edition = "2021"
+name = "azihsm_ddi_win"
+version = "0.1.0"
+
+[lib]
+doctest = false
+
+[dependencies]
+azihsm_ddi_interface.workspace = true
+azihsm_ddi_mbor.workspace = true
+azihsm_ddi_types.workspace = true
+bitfield-struct.workspace = true
+cfg-if.workspace = true
+libc.workspace = true
+parking_lot.workspace = true
+tracing.workspace = true
+winapi = { features = [
+  "errhandlingapi",
+  "fileapi",
+  "handleapi",
+  "ioapiset",
+  "minwindef",
+  "setupapi",
+  "synchapi",
+  "winbase",
+  "winerror",
+  "winioctl",
+  "winnt",
+], workspace = true }
+
+[lints]
+workspace = true

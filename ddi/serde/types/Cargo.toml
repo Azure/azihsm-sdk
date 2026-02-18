@@ -1,0 +1,37 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+[package]
+edition = "2021"
+name = "azihsm_ddi_types"
+version = "0.1.0"
+
+[dependencies]
+azihsm_ddi_derive.workspace = true
+azihsm_ddi_mbor.workspace = true
+open-enum.workspace = true
+pastey.workspace = true
+zerocopy = { features = ["derive"], workspace = true }
+
+# dependencies for fuzzing
+arbitrary = { optional = true, workspace = true }
+
+# dependencies for pre_encode and/or post_decode
+pkcs1 = { optional = true, workspace = true }
+sec1 = { features = ["alloc"], optional = true, workspace = true }
+spki = { features = ["alloc"], optional = true, workspace = true }
+tracing = { optional = true, workspace = true }
+
+[dev-dependencies]
+azihsm_crypto.workspace = true
+minicbor.workspace = true
+
+[lib]
+doctest = false
+
+[features]
+array = ["azihsm_ddi_mbor/array"]
+featuregroup-crypto = ["pkcs1", "sec1", "spki"]
+fuzzing = ["arbitrary", "azihsm_ddi_mbor/fuzzing"]
+post_decode = ["azihsm_ddi_mbor/post_decode", "featuregroup-crypto", "tracing"]
+pre_encode = ["azihsm_ddi_mbor/pre_encode", "featuregroup-crypto", "tracing"]

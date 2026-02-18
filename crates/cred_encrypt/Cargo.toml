@@ -1,0 +1,19 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+[package]
+edition = "2024"
+name = "azihsm_cred_encrypt"
+version = "0.1.0"
+
+[dependencies]
+azihsm_crypto.workspace = true
+azihsm_ddi_mbor.workspace = true
+azihsm_ddi_types.workspace = true
+thiserror.workspace = true
+
+[features]
+default = []
+
+[lints]
+workspace = true

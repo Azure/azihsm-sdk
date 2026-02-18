@@ -1,0 +1,23 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+[package]
+edition = "2021"
+name = "test_with_tracing"
+version = "0.1.0"
+
+[dependencies]
+test_with_tracing_macro.workspace = true
+
+tracing.workspace = true
+# Enable the ANSI feature in order to ensure that we can disable it at runtime
+# to avoid polluting the logs with ANSI control sequences... Otherwise, if the
+# feature gets enabled via some other peer crate, there will be no way to turn
+# it off at runtime.
+tracing-subscriber = { features = ["ansi"], workspace = true }
+
+[dev-dependencies]
+log.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,34 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+[package]
+edition = "2024"
+name = "x509"
+version = "0.1.0"
+
+[dependencies]
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_Security_Cryptography",
+], version = "0.58.0" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+openssl = { workspace = true }
+
+# The local crypto crate is needed for testing purposes. We use it to ensure an
+# X509 certificate can be parsed and turned into a usable public key.
+[dev-dependencies]
+azihsm_crypto.workspace = true
+
+[features]
+default = []
+
+# The Windows implementation of this crate inovkes unsafe functions from Windows
+# API, and thus requires unsafe code.
+[lints.rust]
+unsafe_code = { level = "allow" }
