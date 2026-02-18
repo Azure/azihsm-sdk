@@ -9,10 +9,7 @@
 
 use azihsm_api::*;
 use azihsm_api_tests_macro::*;
-<<<<<<< HEAD
-=======
 use azihsm_crypto::*;
->>>>>>> main
 use tracing::*;
 
 /// Application identifier used for partition authentication.
@@ -20,20 +17,13 @@ use tracing::*;
 /// This constant defines a test application ID consisting of 16 bytes,
 /// each set to the value 1. Used as the credential identifier when
 /// initializing partitions in test scenarios.
-<<<<<<< HEAD
-const APP_ID: [u8; 16] = [1u8; 16];
-=======
 pub(crate) const APP_ID: [u8; 16] = [1u8; 16];
->>>>>>> main
 
 /// Application PIN used for partition authentication.
 ///
 /// This constant defines a test PIN consisting of 16 bytes, each set to
 /// the value 2. Used as the credential PIN when initializing partitions
 /// in test scenarios.
-<<<<<<< HEAD
-const APP_PIN: [u8; 16] = [2u8; 16];
-=======
 pub(crate) const APP_PIN: [u8; 16] = [2u8; 16];
 
 /// Constant 48-byte owner backup key for non-TPM test environments.
@@ -124,7 +114,6 @@ pub(crate) fn generate_pota_endorsement(part: &HsmPartition) -> (Vec<u8>, Vec<u8
     // Return hardcoded public key DER (SubjectPublicKeyInfo)
     (signature, TEST_POTA_PUBLIC_KEY_DER.to_vec())
 }
->>>>>>> main
 
 /// Executes a test function with an initialized HSM partition.
 ///
@@ -153,12 +142,6 @@ where
     assert!(!part_mgr.is_empty(), "No partitions found.");
     for part_info in part_mgr.iter() {
         let part = HsmPartitionManager::open_partition(&part_info.path)
-<<<<<<< HEAD
-            .expect("Failed to open the parition");
-        let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
-        let rev = part.api_rev_range().max();
-        part.init(creds, None, None, None)
-=======
             .expect("Failed to open the partition");
 
         //reset before init
@@ -188,7 +171,6 @@ where
             )
         };
         part.init(creds, None, None, backup_key_info, pota_endorsement)
->>>>>>> main
             .expect("Partition init failed");
         test(part, creds);
     }

@@ -4,11 +4,6 @@
 use azihsm_crypto::pem_to_der;
 
 use super::*;
-<<<<<<< HEAD
-
-#[api_test]
-fn test_parittion_info_list() {
-=======
 use crate::utils::partition::*;
 
 /// Builds a valid caller-source OBK config using the test OBK.
@@ -26,7 +21,6 @@ fn make_valid_pota_parts(part: &HsmPartition) -> (Vec<u8>, Vec<u8>) {
 
 #[api_test]
 fn test_partition_info_list() {
->>>>>>> main
     let part_mgr = HsmPartitionManager::partition_info_list();
     assert!(!part_mgr.is_empty(), "No partitions found.");
 }
@@ -37,11 +31,7 @@ fn test_open_partition() {
     assert!(!part_mgr.is_empty(), "No partitions found.");
     for part_info in part_mgr.iter() {
         let part = HsmPartitionManager::open_partition(&part_info.path)
-<<<<<<< HEAD
-            .expect("Failed to open the parition");
-=======
             .expect("Failed to open the partition");
->>>>>>> main
         assert_eq!(part.path(), part_info.path);
     }
 }
@@ -96,11 +86,6 @@ fn test_partition_init() {
     assert!(!part_mgr.is_empty(), "No partitions found.");
     for part_info in part_mgr.iter() {
         let part = HsmPartitionManager::open_partition(&part_info.path)
-<<<<<<< HEAD
-            .expect("Failed to open the parition");
-        let creds = HsmCredentials::new(&[1u8; 16], &[2u8; 16]);
-        part.init(creds, None, None, None)
-=======
             .expect("Failed to open the partition");
         part.reset().expect("Partition reset failed");
 
@@ -129,7 +114,6 @@ fn test_partition_init() {
             )
         };
         part.init(creds, None, None, obk_info, pota_endorsement)
->>>>>>> main
             .expect("Partition init failed");
     }
 }
@@ -169,8 +153,6 @@ fn test_cert_chain() {
         }
     }
 }
-<<<<<<< HEAD
-=======
 
 #[api_test]
 fn test_init_caller_source_with_null_obk_fails() {
@@ -346,4 +328,3 @@ fn test_init_invalid_pota_source_fails() {
         assert_eq!(result.unwrap_err(), HsmError::InvalidArgument);
     }
 }
->>>>>>> main
