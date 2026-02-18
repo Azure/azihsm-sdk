@@ -88,7 +88,7 @@ static const uint8_t CBC_PAD_KAT_CIPHERTEXT_16[] = {
 	0x68, 0x2E, 0x6E, 0x39, 0xAA, 0xEB, 0x73, 0x1C,
 };
 
-static const std::vector<CbcKnownAnswerVector> CBC_KNOWN_ANSWER_VECTORS = {
+static const std::vector<CbcKnownAnswerTestCase> CBC_KNOWN_ANSWER_TEST_CASES = {
 	{
 		128,
 		CBC_KAT_KEY_128,
@@ -127,7 +127,7 @@ static const std::vector<CbcKnownAnswerVector> CBC_KNOWN_ANSWER_VECTORS = {
 	},
 };
 
-static const std::vector<CbcKnownAnswerVector> CBC_PAD_BOUNDARY_KNOWN_ANSWER_VECTORS = {
+static const std::vector<CbcKnownAnswerTestCase> CBC_PAD_BOUNDARY_KNOWN_ANSWER_TEST_CASES = {
 	{
 		128,
 		CBC_KAT_KEY_128,
@@ -155,14 +155,14 @@ static const std::vector<CbcKnownAnswerVector> CBC_PAD_BOUNDARY_KNOWN_ANSWER_VEC
 };
 } // namespace
 
-const std::vector<CbcKnownAnswerVector> &cbc_known_answer_vectors()
+const std::vector<CbcKnownAnswerTestCase> &cbc_known_answer_test_cases()
 {
-	return CBC_KNOWN_ANSWER_VECTORS;
+	return CBC_KNOWN_ANSWER_TEST_CASES;
 }
 
-const std::vector<CbcKnownAnswerVector> &cbc_pad_boundary_known_answer_vectors()
+const std::vector<CbcKnownAnswerTestCase> &cbc_pad_boundary_known_answer_test_cases()
 {
-	return CBC_PAD_BOUNDARY_KNOWN_ANSWER_VECTORS;
+	return CBC_PAD_BOUNDARY_KNOWN_ANSWER_TEST_CASES;
 }
 
 auto_key import_local_aes_key_for_kat(

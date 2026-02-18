@@ -16,7 +16,6 @@
 #include "utils/known_answer_tests.hpp"
 #include <functional>
 
-// High-level suite map and matrix: see cbc_test_coverage.md in this folder.
 class azihsm_aes_cbc : public ::testing::Test
 {
   protected:
@@ -106,12 +105,85 @@ class azihsm_aes_cbc : public ::testing::Test
         return azihsm_crypt_decrypt_final(ctx, output);
     }
 
+    // Runs single-shot operation and returns the final status.
+    // If output sizing reports BUFFER_TOO_SMALL, retries once with a sized buffer.
+    static azihsm_status single_shot_status_with_sizing(
+        CryptOperation operation,
+        azihsm_algo *algo,
+        azihsm_handle key_handle,
+        azihsm_buffer *input
+    )
+    {
+        azihsm_buffer output{ nullptr, 0 };
+        auto err = crypt_call(operation, algo, key_handle, input, &output);
+        if (err == AZIHSM_STATUS_BUFFER_TOO_SMALL)
+        {
+            std::vector<uint8_t> candidate(output.len);
+            output.ptr = candidate.data();
+            err = crypt_call(operation, algo, key_handle, input, &output);
+        }
+
+        return err;
+    }
+
+    // Runs streaming update and returns final status.
+    // If output sizing reports BUFFER_TOO_SMALL, retries once with a sized buffer.
+    static azihsm_status streaming_update_status_with_sizing(
+        CryptOperation operation,
+        azihsm_handle ctx,
+        azihsm_buffer *input
+    )
+    {
+        azihsm_buffer output{ nullptr, 0 };
+        auto err = crypt_update_call(operation, ctx, input, &output);
+        if (err == AZIHSM_STATUS_BUFFER_TOO_SMALL)
+        {
+            std::vector<uint8_t> out_buf(output.len);
+            output.ptr = out_buf.data();
+            err = crypt_update_call(operation, ctx, input, &output);
+        }
+
+        return err;
+    }
+
+    // Runs streaming final and returns final status.
+    // If output sizing reports BUFFER_TOO_SMALL, retries once with a sized buffer.
+    static azihsm_status streaming_final_status_with_sizing(
+        CryptOperation operation,
+        azihsm_handle ctx
+    )
+    {
+        azihsm_buffer output{ nullptr, 0 };
+        auto err = crypt_final_call(operation, ctx, &output);
+        if (err == AZIHSM_STATUS_BUFFER_TOO_SMALL)
+        {
+            std::vector<uint8_t> out_buf(output.len);
+            output.ptr = out_buf.data();
+            err = crypt_final_call(operation, ctx, &output);
+        }
+
+        return err;
+    }
+
+    // Returns AES-CBC-PAD ciphertext length for a plaintext length.
     static size_t padded_ciphertext_len(size_t plaintext_len)
     {
         return ((plaintext_len / AES_BLOCK_SIZE) + 1) * AES_BLOCK_SIZE;
     }
 
-    // Helper function for single-shot encryption/decryption
+    // Builds deterministic incrementing bytes: 0x00, 0x01, 0x02, ...
+    static std::vector<uint8_t> make_incrementing_bytes(size_t len)
+    {
+        std::vector<uint8_t> bytes(len);
+        for (size_t i = 0; i < len; ++i)
+        {
+            bytes[i] = static_cast<uint8_t>(i & 0xFF);
+        }
+
+        return bytes;
+    }
+
+    // Executes single-shot encrypt/decrypt with two-call output sizing flow.
     static std::vector<uint8_t> single_shot_crypt(
         azihsm_handle key_handle,
         azihsm_algo *algo,
@@ -155,7 +227,7 @@ class azihsm_aes_cbc : public ::testing::Test
         return result;
     }
 
-    // Helper function for streaming encryption/decryption
+    // Executes streaming encrypt/decrypt with chunked update and final sizing flow.
     static std::vector<uint8_t> streaming_crypt(
         azihsm_handle key_handle,
         azihsm_algo *algo,
@@ -274,7 +346,7 @@ class azihsm_aes_cbc : public ::testing::Test
         return output;
     }
 
-    // Helper to test single-shot encrypt/decrypt roundtrip
+    // Verifies single-shot encrypt/decrypt roundtrip and expected ciphertext length.
     void test_single_shot_roundtrip(
         azihsm_handle key_handle,
         azihsm_algo_id algo_id,
@@ -283,14 +355,9 @@ class azihsm_aes_cbc : public ::testing::Test
         size_t expected_ciphertext_len
     )
     {
-        uint8_t iv[16] = { 0xCC };
         azihsm_algo_aes_cbc_params cbc_params{};
-        std::memcpy(cbc_params.iv, iv, sizeof(iv));
-
         azihsm_algo crypt_algo{};
-        crypt_algo.id = algo_id;
-        crypt_algo.params = &cbc_params;
-        crypt_algo.len = sizeof(cbc_params);
+        init_cbc_algo(crypt_algo, cbc_params, algo_id, 0xCC);
 
         // Encrypt
         auto ciphertext = single_shot_crypt(
@@ -303,7 +370,7 @@ class azihsm_aes_cbc : public ::testing::Test
         ASSERT_EQ(ciphertext.size(), expected_ciphertext_len);
 
         // Reset IV for decryption
-        std::memcpy(cbc_params.iv, iv, sizeof(iv));
+        init_cbc_algo(crypt_algo, cbc_params, algo_id, 0xCC);
 
         // Decrypt
         auto decrypted = single_shot_crypt(
@@ -318,7 +385,7 @@ class azihsm_aes_cbc : public ::testing::Test
         ASSERT_EQ(std::memcmp(decrypted.data(), plaintext, plaintext_len), 0);
     }
 
-    // Helper to test streaming encrypt/decrypt roundtrip
+    // Verifies streaming encrypt/decrypt roundtrip and expected ciphertext length.
     void test_streaming_roundtrip(
         azihsm_handle key_handle,
         azihsm_algo_id algo_id,
@@ -328,14 +395,9 @@ class azihsm_aes_cbc : public ::testing::Test
         size_t expected_ciphertext_len
     )
     {
-        uint8_t iv[16] = { 0xAA };
         azihsm_algo_aes_cbc_params cbc_params{};
-        std::memcpy(cbc_params.iv, iv, sizeof(iv));
-
         azihsm_algo crypt_algo{};
-        crypt_algo.id = algo_id;
-        crypt_algo.params = &cbc_params;
-        crypt_algo.len = sizeof(cbc_params);
+        init_cbc_algo(crypt_algo, cbc_params, algo_id, 0xAA);
 
         // Encrypt
         auto ciphertext = streaming_crypt(
@@ -349,7 +411,7 @@ class azihsm_aes_cbc : public ::testing::Test
         ASSERT_EQ(ciphertext.size(), expected_ciphertext_len);
 
         // Reset IV for decryption
-        std::memcpy(cbc_params.iv, iv, sizeof(iv));
+        init_cbc_algo(crypt_algo, cbc_params, algo_id, 0xAA);
 
         // Decrypt
         auto decrypted = streaming_crypt(
@@ -363,6 +425,128 @@ class azihsm_aes_cbc : public ::testing::Test
 
         ASSERT_EQ(decrypted.size(), plaintext_len);
         ASSERT_EQ(std::memcmp(decrypted.data(), plaintext, plaintext_len), 0);
+    }
+
+    // Runs CBC KAT test cases in either single-shot or streaming mode.
+    // Known Answer Test (KAT) cases have fixed plaintext, key, IV, and expected ciphertext values.
+    // - chunk_sizes == nullptr: run single-shot encrypt/decrypt checks.
+    // - chunk_sizes != nullptr: run streaming checks for each provided chunk size.
+    void run_cbc_kat_cases(
+        azihsm_algo_id algo_id,
+        const std::vector<CbcKnownAnswerTestCase> &test_cases,
+        const std::vector<size_t> *chunk_sizes
+    )
+    {
+        part_list_.for_each_session([&](azihsm_handle session) {
+            for (const auto &test_case : test_cases)
+            {
+                auto key =
+                    import_local_aes_key_for_kat(
+                        session,
+                        test_case.key,
+                        test_case.key_len,
+                        test_case.bits
+                    );
+                ASSERT_NE(key.get(), 0);
+
+                azihsm_algo_aes_cbc_params cbc_params{};
+                std::memcpy(cbc_params.iv, test_case.iv, test_case.iv_len);
+
+                azihsm_algo crypt_algo{};
+                crypt_algo.id = algo_id;
+                crypt_algo.params = &cbc_params;
+                crypt_algo.len = sizeof(cbc_params);
+
+                if (chunk_sizes == nullptr)
+                {
+                    // Single-shot path: validate exact ciphertext bytes and roundtrip plaintext.
+                    SCOPED_TRACE(test_case.test_name);
+
+                    auto ciphertext = single_shot_crypt(
+                        key.get(),
+                        &crypt_algo,
+                        test_case.plaintext,
+                        test_case.plaintext_len,
+                        CryptOperation::Encrypt
+                    );
+                    ASSERT_EQ(ciphertext.size(), test_case.ciphertext_len);
+                    ASSERT_EQ(
+                        std::memcmp(
+                            ciphertext.data(),
+                            test_case.ciphertext,
+                            test_case.ciphertext_len
+                        ),
+                        0
+                    );
+
+                    std::memcpy(cbc_params.iv, test_case.iv, test_case.iv_len);
+                    auto plaintext = single_shot_crypt(
+                        key.get(),
+                        &crypt_algo,
+                        test_case.ciphertext,
+                        test_case.ciphertext_len,
+                        CryptOperation::Decrypt
+                    );
+                    ASSERT_EQ(plaintext.size(), test_case.plaintext_len);
+                    ASSERT_EQ(
+                        std::memcmp(
+                            plaintext.data(),
+                            test_case.plaintext,
+                            test_case.plaintext_len
+                        ),
+                        0
+                    );
+                    continue;
+                }
+
+                // Streaming path: repeat KAT per chunk size to exercise chunk boundary handling.
+                for (auto chunk_size : *chunk_sizes)
+                {
+                    SCOPED_TRACE(
+                        std::string(test_case.test_name) +
+                        " chunk_size=" +
+                        std::to_string(chunk_size)
+                    );
+
+                    auto ciphertext = streaming_crypt(
+                        key.get(),
+                        &crypt_algo,
+                        test_case.plaintext,
+                        test_case.plaintext_len,
+                        chunk_size,
+                        CryptOperation::Encrypt
+                    );
+                    ASSERT_EQ(ciphertext.size(), test_case.ciphertext_len);
+                    ASSERT_EQ(
+                        std::memcmp(
+                            ciphertext.data(),
+                            test_case.ciphertext,
+                            test_case.ciphertext_len
+                        ),
+                        0
+                    );
+
+                    std::memcpy(cbc_params.iv, test_case.iv, test_case.iv_len);
+                    auto plaintext = streaming_crypt(
+                        key.get(),
+                        &crypt_algo,
+                        test_case.ciphertext,
+                        test_case.ciphertext_len,
+                        chunk_size,
+                        CryptOperation::Decrypt
+                    );
+                    ASSERT_EQ(plaintext.size(), test_case.plaintext_len);
+                    ASSERT_EQ(
+                        std::memcmp(
+                            plaintext.data(),
+                            test_case.plaintext,
+                            test_case.plaintext_len
+                        ),
+                        0
+                    );
+                }
+            }
+        });
     }
 };
 
@@ -381,16 +565,131 @@ struct DataSizeTestParams
     const char *test_name;
 };
 
-// ==================== Single-Shot Tests ====================
-
-TEST_F(azihsm_aes_cbc, single_shot_no_padding_all_key_sizes)
+struct StreamingRoundtripCase
 {
-    std::vector<AesKeyTestParams> key_sizes = {
+    size_t plaintext_len;
+    size_t chunk_size;
+    size_t expected_ciphertext_len;
+    uint8_t plaintext_fill;
+    const char *test_name;
+};
+
+static const std::vector<AesKeyTestParams> &aes_key_sizes()
+{
+    static const std::vector<AesKeyTestParams> key_sizes = {
         { 128, "AES-128" },
         { 192, "AES-192" },
         { 256, "AES-256" },
     };
+    return key_sizes;
+}
 
+// Returns plaintext lengths used by streaming padding size sweep tests.
+static const std::vector<size_t> &padding_sweep_plaintext_sizes()
+{
+    static const std::vector<size_t> sizes = [] {
+        std::vector<size_t> values;
+        for (size_t value = 0; value <= 32; ++value)
+        {
+            values.push_back(value);
+        }
+        values.push_back(63);
+        values.push_back(64);
+        values.push_back(65);
+        values.push_back(127);
+        values.push_back(128);
+        values.push_back(129);
+        return values;
+    }();
+
+    return sizes;
+}
+
+// Returns chunk sizes used by streaming padding size sweep tests.
+static const std::vector<size_t> &padding_sweep_chunk_sizes()
+{
+    static const std::vector<size_t> sizes = {
+        1, 2, 3, 5, 7, 8, 15, 16, 17, 31, 32, 33, 64, 256
+    };
+
+    return sizes;
+}
+
+// Runs single-shot roundtrip checks across all AES key sizes and input cases.
+static void run_single_shot_key_size(
+    PartitionListHandle &part_list,
+    azihsm_algo_id algo_id,
+    const std::vector<DataSizeTestParams> &data_sizes,
+    uint8_t plaintext_fill,
+    const std::function<void(azihsm_handle, azihsm_algo_id, const uint8_t *, size_t, size_t)> &
+        roundtrip_runner
+)
+{
+    for (const auto &key_param : aes_key_sizes())
+    {
+        for (const auto &data_param : data_sizes)
+        {
+            SCOPED_TRACE(std::string(key_param.test_name) + " " + data_param.test_name);
+
+            part_list.for_each_session([&](azihsm_handle session) {
+                auto key = generate_aes_key(session, key_param.bits);
+
+                std::vector<uint8_t> plaintext(data_param.data_size, plaintext_fill);
+                size_t expected_ciphertext_len = (algo_id == AZIHSM_ALGO_ID_AES_CBC_PAD)
+                    ? data_param.expected_output_size_with_pad
+                    : data_param.expected_output_size_no_pad;
+
+                roundtrip_runner(
+                    key.get(),
+                    algo_id,
+                    plaintext.data(),
+                    plaintext.size(),
+                    expected_ciphertext_len
+                );
+            });
+        }
+    }
+}
+
+// Runs streaming roundtrip checks across all AES key sizes and input cases.
+static void run_streaming_case_list(
+    PartitionListHandle &part_list,
+    azihsm_algo_id algo_id,
+    const std::function<
+        void(azihsm_handle, azihsm_algo_id, const uint8_t *, size_t, size_t, size_t)> &
+        roundtrip_runner,
+    const std::vector<StreamingRoundtripCase> &test_cases
+)
+{
+    // Applies every streaming test case to each supported AES key size (128/192/256).
+    for (const auto &key_param : aes_key_sizes())
+    {
+        for (const auto &test_case : test_cases)
+        {
+            SCOPED_TRACE(std::string(key_param.test_name) + " " + test_case.test_name);
+
+            part_list.for_each_session([&](azihsm_handle session) {
+                auto key = generate_aes_key(session, key_param.bits);
+
+                std::vector<uint8_t> plaintext(test_case.plaintext_len, test_case.plaintext_fill);
+
+                roundtrip_runner(
+                    key.get(),
+                    algo_id,
+                    plaintext.data(),
+                    plaintext.size(),
+                    test_case.chunk_size,
+                    test_case.expected_ciphertext_len
+                );
+            });
+        }
+    }
+}
+
+// ==================== Correctness and Known-Answer Coverage ====================
+
+TEST_F(azihsm_aes_cbc, single_shot_no_padding_all_key_sizes)
+{
     std::vector<DataSizeTestParams> data_sizes = {
         { 16, 16, 32, "1_block" },  // Exactly 1 block
         { 32, 32, 48, "2_blocks" }, // Exactly 2 blocks
@@ -398,37 +697,19 @@ TEST_F(azihsm_aes_cbc, single_shot_no_padding_all_key_sizes)
         { 64, 64, 80, "4_blocks" }, // Exactly 4 blocks
     };
 
-    for (const auto &key_param : key_sizes)
-    {
-        for (const auto &data_param : data_sizes)
-        {
-            SCOPED_TRACE(std::string(key_param.test_name) + " no_padding " + data_param.test_name);
-
-            part_list_.for_each_session([&](azihsm_handle session) {
-                auto key = generate_aes_key(session, key_param.bits);
-
-                std::vector<uint8_t> plaintext(data_param.data_size, 0xAB);
-
-                test_single_shot_roundtrip(
-                    key.get(),
-                    AZIHSM_ALGO_ID_AES_CBC,
-                    plaintext.data(),
-                    plaintext.size(),
-                    data_param.expected_output_size_no_pad
-                );
-            });
+    run_single_shot_key_size(
+        part_list_,
+        AZIHSM_ALGO_ID_AES_CBC,
+        data_sizes,
+        0xAB,
+        [&](azihsm_handle key, azihsm_algo_id algo, const uint8_t *input, size_t len, size_t expected) {
+            test_single_shot_roundtrip(key, algo, input, len, expected);
         }
-    }
+    );
 }
 
 TEST_F(azihsm_aes_cbc, single_shot_with_padding_all_key_sizes)
 {
-    std::vector<AesKeyTestParams> key_sizes = {
-        { 128, "AES-128" },
-        { 192, "AES-192" },
-        { 256, "AES-256" },
-    };
-
     std::vector<DataSizeTestParams> data_sizes = {
         { 1, 16, 16, "1_byte" },    // Much smaller than block
         { 13, 16, 16, "13_bytes" }, // Just under 1 block
@@ -440,524 +721,112 @@ TEST_F(azihsm_aes_cbc, single_shot_with_padding_all_key_sizes)
         { 63, 64, 64, "63_bytes" }, // 1 byte short of 4 blocks
     };
 
-    for (const auto &key_param : key_sizes)
-    {
-        for (const auto &data_param : data_sizes)
-        {
-            SCOPED_TRACE(
-                std::string(key_param.test_name) + " with_padding " + data_param.test_name
-            );
-
-            part_list_.for_each_session([&](azihsm_handle session) {
-                auto key = generate_aes_key(session, key_param.bits);
-
-                std::vector<uint8_t> plaintext(data_param.data_size, 0xCD);
-
-                test_single_shot_roundtrip(
-                    key.get(),
-                    AZIHSM_ALGO_ID_AES_CBC_PAD,
-                    plaintext.data(),
-                    plaintext.size(),
-                    data_param.expected_output_size_with_pad
-                );
-            });
+    run_single_shot_key_size(
+        part_list_,
+        AZIHSM_ALGO_ID_AES_CBC_PAD,
+        data_sizes,
+        0xCD,
+        [&](azihsm_handle key, azihsm_algo_id algo, const uint8_t *input, size_t len, size_t expected) {
+            test_single_shot_roundtrip(key, algo, input, len, expected);
         }
-    }
+    );
 }
 
-// ==================== Streaming Tests - No Padding ====================
-
-TEST_F(azihsm_aes_cbc, streaming_no_padding_exact_blocks)
+TEST_F(azihsm_aes_cbc, streaming_no_padding_cases)
 {
-    std::vector<AesKeyTestParams> key_sizes = {
-        { 128, "AES-128" },
-        { 192, "AES-192" },
-        { 256, "AES-256" },
+    std::vector<StreamingRoundtripCase> test_cases = {
+        { 32, 16, 32, 0xEF, "exact_blocks" },
+        { 64, 16, 64, 0xEF, "multiple_blocks" },
+        { 64, 32, 64, 0xEF, "larger_chunks" },
+        { 48, 10, 48, 0xEF, "non_aligned_chunks" },
     };
 
-    for (const auto &key_param : key_sizes)
-    {
-        SCOPED_TRACE("Testing " + std::string(key_param.test_name));
-
-        part_list_.for_each_session([&](azihsm_handle session) {
-            auto key = generate_aes_key(session, key_param.bits);
-
-            std::vector<uint8_t> plaintext(32, 0xEF);
-
-            test_streaming_roundtrip(
-                key.get(),
-                AZIHSM_ALGO_ID_AES_CBC,
-                plaintext.data(),
-                plaintext.size(),
-                16, // Process in exact blocks
-                32
-            );
-        });
-    }
+    run_streaming_case_list(
+        part_list_,
+        AZIHSM_ALGO_ID_AES_CBC,
+        [&](azihsm_handle key,
+            azihsm_algo_id algo,
+            const uint8_t *input,
+            size_t len,
+            size_t chunk_size,
+            size_t expected_ciphertext_len) {
+            test_streaming_roundtrip(key, algo, input, len, chunk_size, expected_ciphertext_len);
+        },
+        test_cases
+    );
 }
 
-TEST_F(azihsm_aes_cbc, streaming_no_padding_multiple_blocks)
+TEST_F(azihsm_aes_cbc, streaming_with_padding_cases)
 {
-    std::vector<AesKeyTestParams> key_sizes = {
-        { 128, "AES-128" },
-        { 192, "AES-192" },
-        { 256, "AES-256" },
+    std::vector<StreamingRoundtripCase> test_cases = {
+        { 13, 5, 16, 0x12, "small_data_small_chunks" },
+        { 27, 10, 32, 0x12, "non_aligned_data_and_chunks" },
+        { 31, 16, 32, 0x12, "almost_two_blocks" },
+        { 50, 15, 64, 0x12, "odd_chunk_size" },
+        { 100, 33, 112, 0x12, "larger_data_odd_chunks" },
     };
 
-    for (const auto &key_param : key_sizes)
-    {
-        SCOPED_TRACE("Testing " + std::string(key_param.test_name));
-
-        part_list_.for_each_session([&](azihsm_handle session) {
-            auto key = generate_aes_key(session, key_param.bits);
-
-            std::vector<uint8_t> plaintext(64, 0xEF);
-
-            test_streaming_roundtrip(
-                key.get(),
-                AZIHSM_ALGO_ID_AES_CBC,
-                plaintext.data(),
-                plaintext.size(),
-                16, // Multiple blocks
-                64
-            );
-        });
-    }
+    run_streaming_case_list(
+        part_list_,
+        AZIHSM_ALGO_ID_AES_CBC_PAD,
+        [&](azihsm_handle key,
+            azihsm_algo_id algo,
+            const uint8_t *input,
+            size_t len,
+            size_t chunk_size,
+            size_t expected_ciphertext_len) {
+            test_streaming_roundtrip(key, algo, input, len, chunk_size, expected_ciphertext_len);
+        },
+        test_cases
+    );
 }
 
-TEST_F(azihsm_aes_cbc, streaming_no_padding_larger_chunks)
+// AES-CBC KAT (single-shot): verifies exact expected ciphertext and decrypt roundtrip
+// against fixed test cases across key sizes.
+TEST_F(azihsm_aes_cbc, single_shot_known_answer_cases)
 {
-    std::vector<AesKeyTestParams> key_sizes = {
-        { 128, "AES-128" },
-        { 192, "AES-192" },
-        { 256, "AES-256" },
-    };
-
-    for (const auto &key_param : key_sizes)
-    {
-        SCOPED_TRACE("Testing " + std::string(key_param.test_name));
-
-        part_list_.for_each_session([&](azihsm_handle session) {
-            auto key = generate_aes_key(session, key_param.bits);
-
-            std::vector<uint8_t> plaintext(64, 0xEF);
-
-            test_streaming_roundtrip(
-                key.get(),
-                AZIHSM_ALGO_ID_AES_CBC,
-                plaintext.data(),
-                plaintext.size(),
-                32, // Larger chunks
-                64
-            );
-        });
-    }
+    run_cbc_kat_cases(AZIHSM_ALGO_ID_AES_CBC, cbc_known_answer_test_cases(), nullptr);
 }
 
-TEST_F(azihsm_aes_cbc, streaming_no_padding_non_aligned_chunks)
-{
-    std::vector<AesKeyTestParams> key_sizes = {
-        { 128, "AES-128" },
-        { 192, "AES-192" },
-        { 256, "AES-256" },
-    };
-
-    for (const auto &key_param : key_sizes)
-    {
-        SCOPED_TRACE("Testing " + std::string(key_param.test_name));
-
-        part_list_.for_each_session([&](azihsm_handle session) {
-            auto key = generate_aes_key(session, key_param.bits);
-
-            std::vector<uint8_t> plaintext(48, 0xEF);
-
-            test_streaming_roundtrip(
-                key.get(),
-                AZIHSM_ALGO_ID_AES_CBC,
-                plaintext.data(),
-                plaintext.size(),
-                10, // Non-aligned chunks
-                48
-            );
-        });
-    }
-}
-
-// ==================== Streaming Tests - With Padding ====================
-
-TEST_F(azihsm_aes_cbc, streaming_with_padding_small_data_small_chunks)
-{
-    std::vector<AesKeyTestParams> key_sizes = {
-        { 128, "AES-128" },
-        { 192, "AES-192" },
-        { 256, "AES-256" },
-    };
-
-    for (const auto &key_param : key_sizes)
-    {
-        SCOPED_TRACE("Testing " + std::string(key_param.test_name));
-
-        part_list_.for_each_session([&](azihsm_handle session) {
-            auto key = generate_aes_key(session, key_param.bits);
-
-            std::vector<uint8_t> plaintext(13, 0x12);
-
-            test_streaming_roundtrip(
-                key.get(),
-                AZIHSM_ALGO_ID_AES_CBC_PAD,
-                plaintext.data(),
-                plaintext.size(),
-                5, // Small chunks
-                16
-            );
-        });
-    }
-}
-
-TEST_F(azihsm_aes_cbc, streaming_with_padding_non_aligned_data_and_chunks)
-{
-    std::vector<AesKeyTestParams> key_sizes = {
-        { 128, "AES-128" },
-        { 192, "AES-192" },
-        { 256, "AES-256" },
-    };
-
-    for (const auto &key_param : key_sizes)
-    {
-        SCOPED_TRACE("Testing " + std::string(key_param.test_name));
-
-        part_list_.for_each_session([&](azihsm_handle session) {
-            auto key = generate_aes_key(session, key_param.bits);
-
-            std::vector<uint8_t> plaintext(27, 0x12);
-
-            test_streaming_roundtrip(
-                key.get(),
-                AZIHSM_ALGO_ID_AES_CBC_PAD,
-                plaintext.data(),
-                plaintext.size(),
-                10, // Non-aligned chunks
-                32
-            );
-        });
-    }
-}
-
-TEST_F(azihsm_aes_cbc, streaming_with_padding_almost_two_blocks)
-{
-    std::vector<AesKeyTestParams> key_sizes = {
-        { 128, "AES-128" },
-        { 192, "AES-192" },
-        { 256, "AES-256" },
-    };
-
-    for (const auto &key_param : key_sizes)
-    {
-        SCOPED_TRACE("Testing " + std::string(key_param.test_name));
-
-        part_list_.for_each_session([&](azihsm_handle session) {
-            auto key = generate_aes_key(session, key_param.bits);
-
-            std::vector<uint8_t> plaintext(31, 0x12);
-
-            test_streaming_roundtrip(
-                key.get(),
-                AZIHSM_ALGO_ID_AES_CBC_PAD,
-                plaintext.data(),
-                plaintext.size(),
-                16, // Block-sized chunks
-                32
-            );
-        });
-    }
-}
-
-TEST_F(azihsm_aes_cbc, streaming_with_padding_odd_chunk_size)
-{
-    std::vector<AesKeyTestParams> key_sizes = {
-        { 128, "AES-128" },
-        { 192, "AES-192" },
-        { 256, "AES-256" },
-    };
-
-    for (const auto &key_param : key_sizes)
-    {
-        SCOPED_TRACE("Testing " + std::string(key_param.test_name));
-
-        part_list_.for_each_session([&](azihsm_handle session) {
-            auto key = generate_aes_key(session, key_param.bits);
-
-            std::vector<uint8_t> plaintext(50, 0x12);
-
-            test_streaming_roundtrip(
-                key.get(),
-                AZIHSM_ALGO_ID_AES_CBC_PAD,
-                plaintext.data(),
-                plaintext.size(),
-                15, // Odd chunk size
-                64
-            );
-        });
-    }
-}
-
-TEST_F(azihsm_aes_cbc, streaming_with_padding_larger_data_odd_chunks)
-{
-    std::vector<AesKeyTestParams> key_sizes = {
-        { 128, "AES-128" },
-        { 192, "AES-192" },
-        { 256, "AES-256" },
-    };
-
-    for (const auto &key_param : key_sizes)
-    {
-        SCOPED_TRACE("Testing " + std::string(key_param.test_name));
-
-        part_list_.for_each_session([&](azihsm_handle session) {
-            auto key = generate_aes_key(session, key_param.bits);
-
-            std::vector<uint8_t> plaintext(100, 0x12);
-
-            test_streaming_roundtrip(
-                key.get(),
-                AZIHSM_ALGO_ID_AES_CBC_PAD,
-                plaintext.data(),
-                plaintext.size(),
-                33, // Odd chunk size
-                112
-            );
-        });
-    }
-}
-
-// Verifies AES-CBC output matches standard known-answer vectors for all key sizes.
-TEST_F(azihsm_aes_cbc, single_shot_known_answer_vectors_match)
-{
-    const auto &vectors = cbc_known_answer_vectors();
-
-    part_list_.for_each_session([&](azihsm_handle session) {
-        for (const auto &vector : vectors)
-        {
-            SCOPED_TRACE(vector.test_name);
-
-            auto key =
-                import_local_aes_key_for_kat(session, vector.key, vector.key_len, vector.bits);
-            ASSERT_NE(key.get(), 0);
-
-            azihsm_algo_aes_cbc_params cbc_params{};
-            std::memcpy(cbc_params.iv, vector.iv, vector.iv_len);
-
-            azihsm_algo crypt_algo{};
-            crypt_algo.id = AZIHSM_ALGO_ID_AES_CBC;
-            crypt_algo.params = &cbc_params;
-            crypt_algo.len = sizeof(cbc_params);
-
-            auto ciphertext = single_shot_crypt(
-                key.get(),
-                &crypt_algo,
-                vector.plaintext,
-                vector.plaintext_len,
-                CryptOperation::Encrypt
-            );
-            ASSERT_EQ(ciphertext.size(), vector.ciphertext_len);
-            ASSERT_EQ(std::memcmp(ciphertext.data(), vector.ciphertext, vector.ciphertext_len), 0);
-
-            std::memcpy(cbc_params.iv, vector.iv, vector.iv_len);
-            auto plaintext = single_shot_crypt(
-                key.get(),
-                &crypt_algo,
-                vector.ciphertext,
-                vector.ciphertext_len,
-                CryptOperation::Decrypt
-            );
-            ASSERT_EQ(plaintext.size(), vector.plaintext_len);
-            ASSERT_EQ(std::memcmp(plaintext.data(), vector.plaintext, vector.plaintext_len), 0);
-        }
-    });
-}
-
-// Verifies streaming AES-CBC matches known-answer vectors across varied chunk sizes.
-TEST_F(azihsm_aes_cbc, streaming_known_answer_vectors_match)
+// AES-CBC KAT (streaming): verifies fixed test cases across varied chunk sizes,
+// ensuring chunk boundaries do not change ciphertext or decrypt behavior.
+TEST_F(azihsm_aes_cbc, streaming_known_answer_cases)
 {
     std::vector<size_t> chunk_sizes = { 1, 16, 17, 64 };
-    const auto &vectors = cbc_known_answer_vectors();
-
-    part_list_.for_each_session([&](azihsm_handle session) {
-        for (const auto &vector : vectors)
-        {
-            for (auto chunk_size : chunk_sizes)
-            {
-                SCOPED_TRACE(
-                    std::string(vector.test_name) + " chunk_size=" + std::to_string(chunk_size)
-                );
-
-                auto key = import_local_aes_key_for_kat(
-                    session,
-                    vector.key,
-                    vector.key_len,
-                    vector.bits
-                );
-                ASSERT_NE(key.get(), 0);
-
-                azihsm_algo_aes_cbc_params cbc_params{};
-                std::memcpy(cbc_params.iv, vector.iv, vector.iv_len);
-
-                azihsm_algo crypt_algo{};
-                crypt_algo.id = AZIHSM_ALGO_ID_AES_CBC;
-                crypt_algo.params = &cbc_params;
-                crypt_algo.len = sizeof(cbc_params);
-
-                auto ciphertext = streaming_crypt(
-                    key.get(),
-                    &crypt_algo,
-                    vector.plaintext,
-                    vector.plaintext_len,
-                    chunk_size,
-                    CryptOperation::Encrypt
-                );
-                ASSERT_EQ(ciphertext.size(), vector.ciphertext_len);
-                ASSERT_EQ(
-                    std::memcmp(ciphertext.data(), vector.ciphertext, vector.ciphertext_len),
-                    0
-                );
-
-                std::memcpy(cbc_params.iv, vector.iv, vector.iv_len);
-                auto plaintext = streaming_crypt(
-                    key.get(),
-                    &crypt_algo,
-                    vector.ciphertext,
-                    vector.ciphertext_len,
-                    chunk_size,
-                    CryptOperation::Decrypt
-                );
-                ASSERT_EQ(plaintext.size(), vector.plaintext_len);
-                ASSERT_EQ(
-                    std::memcmp(plaintext.data(), vector.plaintext, vector.plaintext_len),
-                    0
-                );
-            }
-        }
-    });
+    run_cbc_kat_cases(AZIHSM_ALGO_ID_AES_CBC, cbc_known_answer_test_cases(), &chunk_sizes);
 }
 
-// Verifies CBC-PAD produces fixed expected ciphertext on 15-byte and 16-byte boundaries.
-TEST_F(azihsm_aes_cbc, single_shot_with_padding_known_answer_boundary_vectors_match)
+// CBC-PAD KAT (single-shot): verifies exact expected ciphertext and decrypt roundtrip
+// for boundary-length plaintext test cases (e.g., 15-byte and 16-byte cases).
+TEST_F(azihsm_aes_cbc, single_shot_padding_known_answer_cases)
 {
-    const auto &vectors = cbc_pad_boundary_known_answer_vectors();
-
-    part_list_.for_each_session([&](azihsm_handle session) {
-        for (const auto &vector : vectors)
-        {
-            SCOPED_TRACE(vector.test_name);
-
-            auto key =
-                import_local_aes_key_for_kat(session, vector.key, vector.key_len, vector.bits);
-            ASSERT_NE(key.get(), 0);
-
-            azihsm_algo_aes_cbc_params cbc_params{};
-            std::memcpy(cbc_params.iv, vector.iv, vector.iv_len);
-
-            azihsm_algo crypt_algo{};
-            crypt_algo.id = AZIHSM_ALGO_ID_AES_CBC_PAD;
-            crypt_algo.params = &cbc_params;
-            crypt_algo.len = sizeof(cbc_params);
-
-            auto ciphertext = single_shot_crypt(
-                key.get(),
-                &crypt_algo,
-                vector.plaintext,
-                vector.plaintext_len,
-                CryptOperation::Encrypt
-            );
-            ASSERT_EQ(ciphertext.size(), vector.ciphertext_len);
-            ASSERT_EQ(std::memcmp(ciphertext.data(), vector.ciphertext, vector.ciphertext_len), 0);
-
-            std::memcpy(cbc_params.iv, vector.iv, vector.iv_len);
-            auto plaintext = single_shot_crypt(
-                key.get(),
-                &crypt_algo,
-                vector.ciphertext,
-                vector.ciphertext_len,
-                CryptOperation::Decrypt
-            );
-            ASSERT_EQ(plaintext.size(), vector.plaintext_len);
-            ASSERT_EQ(std::memcmp(plaintext.data(), vector.plaintext, vector.plaintext_len), 0);
-        }
-    });
+    run_cbc_kat_cases(
+        AZIHSM_ALGO_ID_AES_CBC_PAD,
+        cbc_pad_boundary_known_answer_test_cases(),
+        nullptr
+    );
 }
 
-// Verifies streaming CBC-PAD boundary vectors match fixed expected ciphertext across chunking.
-TEST_F(azihsm_aes_cbc, streaming_with_padding_known_answer_boundary_vectors_match)
+// CBC-PAD KAT (streaming): verifies the same boundary test cases across varied chunk sizes,
+// ensuring chunking does not alter expected ciphertext or decrypt behavior.
+TEST_F(azihsm_aes_cbc, streaming_padding_known_answer_cases)
 {
-    const auto &vectors = cbc_pad_boundary_known_answer_vectors();
     std::vector<size_t> chunk_sizes = { 1, 15, 16, 17 };
-
-    part_list_.for_each_session([&](azihsm_handle session) {
-        for (const auto &vector : vectors)
-        {
-            for (auto chunk_size : chunk_sizes)
-            {
-                SCOPED_TRACE(
-                    std::string(vector.test_name) + " chunk_size=" + std::to_string(chunk_size)
-                );
-
-                auto key =
-                    import_local_aes_key_for_kat(session, vector.key, vector.key_len, vector.bits);
-                ASSERT_NE(key.get(), 0);
-
-                azihsm_algo_aes_cbc_params cbc_params{};
-                std::memcpy(cbc_params.iv, vector.iv, vector.iv_len);
-
-                azihsm_algo crypt_algo{};
-                crypt_algo.id = AZIHSM_ALGO_ID_AES_CBC_PAD;
-                crypt_algo.params = &cbc_params;
-                crypt_algo.len = sizeof(cbc_params);
-
-                auto ciphertext = streaming_crypt(
-                    key.get(),
-                    &crypt_algo,
-                    vector.plaintext,
-                    vector.plaintext_len,
-                    chunk_size,
-                    CryptOperation::Encrypt
-                );
-                ASSERT_EQ(ciphertext.size(), vector.ciphertext_len);
-                ASSERT_EQ(
-                    std::memcmp(ciphertext.data(), vector.ciphertext, vector.ciphertext_len),
-                    0
-                );
-
-                std::memcpy(cbc_params.iv, vector.iv, vector.iv_len);
-                auto plaintext = streaming_crypt(
-                    key.get(),
-                    &crypt_algo,
-                    vector.ciphertext,
-                    vector.ciphertext_len,
-                    chunk_size,
-                    CryptOperation::Decrypt
-                );
-                ASSERT_EQ(plaintext.size(), vector.plaintext_len);
-                ASSERT_EQ(std::memcmp(plaintext.data(), vector.plaintext, vector.plaintext_len), 0);
-            }
-        }
-    });
+    run_cbc_kat_cases(
+        AZIHSM_ALGO_ID_AES_CBC_PAD,
+        cbc_pad_boundary_known_answer_test_cases(),
+        &chunk_sizes
+    );
 }
-
-// ==================== Edge Case Tests ====================
 
 TEST_F(azihsm_aes_cbc, empty_data_with_padding)
 {
     part_list_.for_each_session([](azihsm_handle session) {
         auto key = generate_aes_key(session, 128);
 
-        uint8_t iv[16] = { 0xFF };
         azihsm_algo_aes_cbc_params cbc_params{};
-        std::memcpy(cbc_params.iv, iv, sizeof(iv));
-
         azihsm_algo crypt_algo{};
-        crypt_algo.id = AZIHSM_ALGO_ID_AES_CBC_PAD;
-        crypt_algo.params = &cbc_params;
-        crypt_algo.len = sizeof(cbc_params);
+        init_cbc_algo(crypt_algo, cbc_params, AZIHSM_ALGO_ID_AES_CBC_PAD, 0xFF);
 
         // Encrypt empty data - should produce one block of padding
         uint8_t empty[1] = { 0 };
@@ -974,7 +843,7 @@ TEST_F(azihsm_aes_cbc, empty_data_with_padding)
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         // Decrypt should return empty data
-        std::memcpy(cbc_params.iv, iv, sizeof(iv));
+        init_cbc_algo(crypt_algo, cbc_params, AZIHSM_ALGO_ID_AES_CBC_PAD, 0xFF);
         azihsm_buffer cipher_buf{ ciphertext.data(), static_cast<uint32_t>(ciphertext.size()) };
         azihsm_buffer plain_buf{ nullptr, 0 };
 
@@ -989,83 +858,14 @@ TEST_F(azihsm_aes_cbc, empty_data_with_padding)
     });
 }
 
-TEST_F(azihsm_aes_cbc, null_iv)
-{
-    part_list_.for_each_part([](std::vector<azihsm_char> &path) {
-        auto partition = PartitionHandle(path);
-        auto session = SessionHandle(partition.get());
-        auto key = generate_aes_key(session.get(), 128);
-
-        azihsm_algo crypt_algo{};
-        crypt_algo.id = AZIHSM_ALGO_ID_AES_CBC;
-        crypt_algo.params = nullptr; // No IV provided
-        crypt_algo.len = 0;
-
-        uint8_t plaintext[16] = { 0xAA };
-        azihsm_buffer input{ plaintext, sizeof(plaintext) };
-        azihsm_buffer output{ nullptr, 0 };
-
-        auto err = azihsm_crypt_encrypt(&crypt_algo, key.get(), &input, &output);
-        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
-    });
-}
-
-TEST_F(azihsm_aes_cbc, non_block_aligned_no_padding)
-{
-    part_list_.for_each_session([](azihsm_handle session) {
-        auto key = generate_aes_key(session, 128);
-
-        uint8_t iv[16] = { 0xBB };
-        azihsm_algo_aes_cbc_params cbc_params{};
-        std::memcpy(cbc_params.iv, iv, sizeof(iv));
-
-        azihsm_algo crypt_algo{};
-        crypt_algo.id = AZIHSM_ALGO_ID_AES_CBC; // No padding
-        crypt_algo.params = &cbc_params;
-        crypt_algo.len = sizeof(cbc_params);
-
-        // Try to encrypt non-block-aligned data without padding
-        uint8_t plaintext[13] = { 0xCC }; // Not a multiple of 16
-        azihsm_buffer input{ plaintext, sizeof(plaintext) };
-        azihsm_buffer output{ nullptr, 0 };
-
-        auto err = azihsm_crypt_encrypt(&crypt_algo, key.get(), &input, &output);
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
-    });
-}
-
-TEST_F(azihsm_aes_cbc, invalid_key_handle)
-{
-    uint8_t iv[16] = { 0xDD };
-    azihsm_algo_aes_cbc_params cbc_params{};
-    std::memcpy(cbc_params.iv, iv, sizeof(iv));
-
-    azihsm_algo crypt_algo{};
-    crypt_algo.id = AZIHSM_ALGO_ID_AES_CBC;
-    crypt_algo.params = &cbc_params;
-    crypt_algo.len = sizeof(cbc_params);
-
-    uint8_t plaintext[16] = { 0xEE };
-    azihsm_buffer input{ plaintext, sizeof(plaintext) };
-    azihsm_buffer output{ nullptr, 0 };
-
-    auto err = azihsm_crypt_encrypt(&crypt_algo, 0xDEADBEEF, &input, &output);
-    ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
-}
-
 TEST_F(azihsm_aes_cbc, streaming_consistency_with_single_shot)
 {
     part_list_.for_each_session([](azihsm_handle session) {
         auto key = generate_aes_key(session, 256);
 
-        uint8_t iv[16] = { 0xFF };
         azihsm_algo_aes_cbc_params cbc_params{};
-        std::memcpy(cbc_params.iv, iv, sizeof(iv));
-
         azihsm_algo crypt_algo{};
-        crypt_algo.id = AZIHSM_ALGO_ID_AES_CBC_PAD;
-        crypt_algo.params = &cbc_params;
-        crypt_algo.len = sizeof(cbc_params);
+        init_cbc_algo(crypt_algo, cbc_params, AZIHSM_ALGO_ID_AES_CBC_PAD, 0xFF);
 
         std::vector<uint8_t> plaintext(100, 0x55);
 
@@ -1079,7 +879,7 @@ TEST_F(azihsm_aes_cbc, streaming_consistency_with_single_shot)
         );
 
         // Reset IV for streaming
-        std::memcpy(cbc_params.iv, iv, sizeof(iv));
+        init_cbc_algo(crypt_algo, cbc_params, AZIHSM_ALGO_ID_AES_CBC_PAD, 0xFF);
 
         // Streaming encrypt
         auto streaming_ciphertext = streaming_crypt(
@@ -1109,21 +909,12 @@ TEST_F(azihsm_aes_cbc, large_data_streaming)
     part_list_.for_each_session([](azihsm_handle session) {
         auto key = generate_aes_key(session, 256);
 
-        uint8_t iv[16] = { 0x11 };
         azihsm_algo_aes_cbc_params cbc_params{};
-        std::memcpy(cbc_params.iv, iv, sizeof(iv));
-
         azihsm_algo crypt_algo{};
-        crypt_algo.id = AZIHSM_ALGO_ID_AES_CBC_PAD;
-        crypt_algo.params = &cbc_params;
-        crypt_algo.len = sizeof(cbc_params);
+        init_cbc_algo(crypt_algo, cbc_params, AZIHSM_ALGO_ID_AES_CBC_PAD, 0x11);
 
         // Test with larger data (4KB)
-        std::vector<uint8_t> plaintext(4096);
-        for (size_t i = 0; i < plaintext.size(); ++i)
-        {
-            plaintext[i] = static_cast<uint8_t>(i & 0xFF);
-        }
+        std::vector<uint8_t> plaintext = make_incrementing_bytes(4096);
 
         // Encrypt
         auto ciphertext = streaming_crypt(
@@ -1136,7 +927,7 @@ TEST_F(azihsm_aes_cbc, large_data_streaming)
         );
 
         // Reset IV for decryption
-        std::memcpy(cbc_params.iv, iv, sizeof(iv));
+        init_cbc_algo(crypt_algo, cbc_params, AZIHSM_ALGO_ID_AES_CBC_PAD, 0x11);
 
         // Decrypt
         auto decrypted = streaming_crypt(
@@ -1159,20 +950,11 @@ TEST_F(azihsm_aes_cbc, large_data_single_shot)
     part_list_.for_each_session([](azihsm_handle session) {
         auto key = generate_aes_key(session, 256);
 
-        uint8_t iv[16] = { 0x21 };
         azihsm_algo_aes_cbc_params cbc_params{};
-        std::memcpy(cbc_params.iv, iv, sizeof(iv));
-
         azihsm_algo crypt_algo{};
-        crypt_algo.id = AZIHSM_ALGO_ID_AES_CBC_PAD;
-        crypt_algo.params = &cbc_params;
-        crypt_algo.len = sizeof(cbc_params);
+        init_cbc_algo(crypt_algo, cbc_params, AZIHSM_ALGO_ID_AES_CBC_PAD, 0x21);
 
-        std::vector<uint8_t> plaintext(4096);
-        for (size_t i = 0; i < plaintext.size(); ++i)
-        {
-            plaintext[i] = static_cast<uint8_t>(i & 0xFF);
-        }
+        std::vector<uint8_t> plaintext = make_incrementing_bytes(4096);
 
         auto ciphertext = single_shot_crypt(
             key.get(),
@@ -1183,7 +965,7 @@ TEST_F(azihsm_aes_cbc, large_data_single_shot)
         );
         ASSERT_EQ(ciphertext.size(), padded_ciphertext_len(plaintext.size()));
 
-        std::memcpy(cbc_params.iv, iv, sizeof(iv));
+        init_cbc_algo(crypt_algo, cbc_params, AZIHSM_ALGO_ID_AES_CBC_PAD, 0x21);
         auto decrypted = single_shot_crypt(
             key.get(),
             &crypt_algo,
@@ -1194,60 +976,6 @@ TEST_F(azihsm_aes_cbc, large_data_single_shot)
 
         ASSERT_EQ(decrypted.size(), plaintext.size());
         ASSERT_EQ(std::memcmp(decrypted.data(), plaintext.data(), plaintext.size()), 0);
-    });
-}
-
-// Verifies streaming no-padding rejects partial final blocks for both encrypt and decrypt flows.
-TEST_F(azihsm_aes_cbc, streaming_no_padding_partial_block_input_is_rejected)
-{
-    part_list_.for_each_session([&](azihsm_handle session) {
-        auto key = generate_aes_key(session, 128);
-
-        auto run_expect_failure = [&](CryptOperation operation, std::vector<uint8_t> input_bytes) {
-            azihsm_algo_aes_cbc_params cbc_params{};
-            azihsm_algo crypt_algo{};
-            init_cbc_algo(crypt_algo, cbc_params, AZIHSM_ALGO_ID_AES_CBC, 0x22);
-
-            azihsm_handle ctx = 0;
-            auto err = crypt_init_call(operation, &crypt_algo, key.get(), &ctx);
-            ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-
-            azihsm_buffer input{ input_bytes.data(), static_cast<uint32_t>(input_bytes.size()) };
-            azihsm_buffer output{ nullptr, 0 };
-
-            bool saw_failure = false;
-            err = crypt_update_call(operation, ctx, &input, &output);
-            if (err == AZIHSM_STATUS_BUFFER_TOO_SMALL)
-            {
-                std::vector<uint8_t> out_buf(output.len);
-                output.ptr = out_buf.data();
-                err = crypt_update_call(operation, ctx, &input, &output);
-            }
-
-            if (err != AZIHSM_STATUS_SUCCESS)
-            {
-                saw_failure = true;
-            }
-
-            if (!saw_failure)
-            {
-                azihsm_buffer final_out{ nullptr, 0 };
-                err = crypt_final_call(operation, ctx, &final_out);
-                if (err == AZIHSM_STATUS_BUFFER_TOO_SMALL)
-                {
-                    std::vector<uint8_t> out_buf(final_out.len);
-                    final_out.ptr = out_buf.data();
-                    err = crypt_final_call(operation, ctx, &final_out);
-                }
-                ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
-            }
-        };
-
-        std::vector<uint8_t> bad_plaintext(17, 0xA1);
-        run_expect_failure(CryptOperation::Encrypt, std::move(bad_plaintext));
-
-        std::vector<uint8_t> bad_ciphertext(17, 0xA2);
-        run_expect_failure(CryptOperation::Decrypt, std::move(bad_ciphertext));
     });
 }
 
@@ -1300,9 +1028,72 @@ TEST_F(azihsm_aes_cbc, different_ivs_produce_different_ciphertexts)
     });
 }
 
-// ==================== Invalid Argument Tests ====================
+TEST_F(azihsm_aes_cbc, single_shot_padding_size_sweep)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto key = generate_aes_key(session, 256);
 
-// -------------------- Single-Shot --------------------
+        for (size_t plaintext_len = 0; plaintext_len <= 64; ++plaintext_len)
+        {
+            std::vector<uint8_t> plaintext(plaintext_len, 0x5A);
+
+            azihsm_algo_aes_cbc_params cbc_params{};
+            azihsm_algo crypt_algo{};
+            init_cbc_algo(crypt_algo, cbc_params, AZIHSM_ALGO_ID_AES_CBC_PAD, 0x89);
+
+            auto ciphertext = single_shot_crypt(
+                key.get(),
+                &crypt_algo,
+                plaintext.data(),
+                plaintext.size(),
+                CryptOperation::Encrypt
+            );
+            ASSERT_EQ(ciphertext.size(), padded_ciphertext_len(plaintext_len));
+
+            init_cbc_algo(crypt_algo, cbc_params, AZIHSM_ALGO_ID_AES_CBC_PAD, 0x89);
+            auto decrypted = single_shot_crypt(
+                key.get(),
+                &crypt_algo,
+                ciphertext.data(),
+                ciphertext.size(),
+                CryptOperation::Decrypt
+            );
+            ASSERT_EQ(decrypted.size(), plaintext.size());
+            ASSERT_EQ(std::memcmp(decrypted.data(), plaintext.data(), plaintext.size()), 0);
+        }
+    });
+}
+
+TEST_F(azihsm_aes_cbc, streaming_padding_size_and_chunk_sweep)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto key = generate_aes_key(session, 256);
+
+        for (auto plaintext_len : padding_sweep_plaintext_sizes())
+        {
+            std::vector<uint8_t> plaintext = make_incrementing_bytes(plaintext_len);
+
+            for (auto chunk_size : padding_sweep_chunk_sizes())
+            {
+                SCOPED_TRACE(
+                    "plaintext_len=" + std::to_string(plaintext_len) +
+                    " chunk_size=" + std::to_string(chunk_size)
+                );
+
+                test_streaming_roundtrip(
+                    key.get(),
+                    AZIHSM_ALGO_ID_AES_CBC_PAD,
+                    plaintext.data(),
+                    plaintext.size(),
+                    chunk_size,
+                    padded_ciphertext_len(plaintext_len)
+                );
+            }
+        }
+    });
+}
+
+// ==================== Argument Validation and API Behavior ====================
 
 TEST_F(azihsm_aes_cbc, single_shot_null_pointers_are_rejected)
 {
@@ -1375,7 +1166,40 @@ TEST_F(azihsm_aes_cbc, single_shot_invalid_algo_param_len_is_rejected)
     });
 }
 
-// -------------------- Streaming --------------------
+TEST_F(azihsm_aes_cbc, single_shot_null_iv_is_rejected)
+{
+    part_list_.for_each_part([](std::vector<azihsm_char> &path) {
+        auto partition = PartitionHandle(path);
+        auto session = SessionHandle(partition.get());
+        auto key = generate_aes_key(session.get(), 128);
+
+        azihsm_algo crypt_algo{};
+        crypt_algo.id = AZIHSM_ALGO_ID_AES_CBC;
+        crypt_algo.params = nullptr; // No IV provided
+        crypt_algo.len = 0;
+
+        uint8_t plaintext[16] = { 0xAA };
+        azihsm_buffer input{ plaintext, sizeof(plaintext) };
+        azihsm_buffer output{ nullptr, 0 };
+
+        auto err = azihsm_crypt_encrypt(&crypt_algo, key.get(), &input, &output);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
+    });
+}
+
+TEST_F(azihsm_aes_cbc, single_shot_invalid_key_handle_is_rejected)
+{
+    azihsm_algo_aes_cbc_params cbc_params{};
+    azihsm_algo crypt_algo{};
+    init_cbc_algo(crypt_algo, cbc_params, AZIHSM_ALGO_ID_AES_CBC, 0xDD);
+
+    uint8_t plaintext[16] = { 0xEE };
+    azihsm_buffer input{ plaintext, sizeof(plaintext) };
+    azihsm_buffer output{ nullptr, 0 };
+
+    auto err = azihsm_crypt_encrypt(&crypt_algo, 0xDEADBEEF, &input, &output);
+    ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
+}
 
 // Validates streaming init rejects null mandatory pointers.
 TEST_F(azihsm_aes_cbc, streaming_init_null_pointers_are_rejected)
@@ -1466,7 +1290,7 @@ TEST_F(azihsm_aes_cbc, streaming_init_invalid_key_handle_is_rejected)
 }
 
 // Validates streaming update/final reject null buffers.
-TEST_F(azihsm_aes_cbc, streaming_update_and_final_null_pointers_are_rejected)
+TEST_F(azihsm_aes_cbc, streaming_update_final_null_pointers_are_rejected)
 {
     part_list_.for_each_session([&](azihsm_handle session) {
         auto key = generate_aes_key(session, 128);
@@ -1495,7 +1319,7 @@ TEST_F(azihsm_aes_cbc, streaming_update_and_final_null_pointers_are_rejected)
 }
 
 // Validates update/final reject malformed buffer shapes (null pointer with non-zero len).
-TEST_F(azihsm_aes_cbc, streaming_update_and_final_invalid_buffer_shapes_are_rejected)
+TEST_F(azihsm_aes_cbc, streaming_update_final_invalid_buffer_shapes_are_rejected)
 {
     part_list_.for_each_session([&](azihsm_handle session) {
         auto key = generate_aes_key(session, 128);
@@ -1538,8 +1362,8 @@ TEST_F(azihsm_aes_cbc, streaming_update_and_final_invalid_buffer_shapes_are_reje
     });
 }
 
-// Validates single-shot output-buffer contract for no-padding mode (query/exact/too-small).
-TEST_F(azihsm_aes_cbc, single_shot_output_buffer_contract_no_padding)
+// Validates single-shot output-buffer sizing behavior for no-padding mode (query/exact/too-small).
+TEST_F(azihsm_aes_cbc, single_shot_output_buffer_sizing_no_padding)
 {
     part_list_.for_each_session([&](azihsm_handle session) {
         auto key = generate_aes_key(session, 128);
@@ -1570,8 +1394,8 @@ TEST_F(azihsm_aes_cbc, single_shot_output_buffer_contract_no_padding)
     });
 }
 
-// Validates single-shot output-buffer contract for padding mode across boundary lengths.
-TEST_F(azihsm_aes_cbc, single_shot_output_buffer_contract_with_padding)
+// Validates single-shot output-buffer sizing behavior for padding mode across boundary lengths.
+TEST_F(azihsm_aes_cbc, single_shot_output_buffer_sizing_with_padding)
 {
     part_list_.for_each_session([&](azihsm_handle session) {
         auto key = generate_aes_key(session, 128);
@@ -1611,6 +1435,101 @@ TEST_F(azihsm_aes_cbc, single_shot_output_buffer_contract_with_padding)
             ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
             ASSERT_EQ(too_small.len, expected_len);
         }
+    });
+}
+
+// Validates update() output-buffer sizing behavior for no-padding mode (query/too-small/exact-size).
+TEST_F(azihsm_aes_cbc, streaming_update_output_buffer_sizing_no_padding)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto key = generate_aes_key(session, 128);
+
+        azihsm_algo_aes_cbc_params cbc_params{};
+        azihsm_algo crypt_algo{};
+        init_cbc_algo(crypt_algo, cbc_params, AZIHSM_ALGO_ID_AES_CBC, 0x7B);
+
+        azihsm_handle ctx = 0;
+        auto err = crypt_init_call(CryptOperation::Encrypt, &crypt_algo, key.get(), &ctx);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        uint8_t data[AES_BLOCK_SIZE] = { 0x22 };
+        azihsm_buffer input{ data, sizeof(data) };
+        azihsm_buffer output{ nullptr, 0 };
+
+        err = crypt_update_call(CryptOperation::Encrypt, ctx, &input, &output);
+        ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+        ASSERT_EQ(output.len, AES_BLOCK_SIZE);
+
+        std::vector<uint8_t> too_small(AES_BLOCK_SIZE - 1);
+        azihsm_buffer short_output{ too_small.data(), static_cast<uint32_t>(too_small.size()) };
+        err = crypt_update_call(CryptOperation::Encrypt, ctx, &input, &short_output);
+        ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+        ASSERT_EQ(short_output.len, AES_BLOCK_SIZE);
+
+        std::vector<uint8_t> exact(AES_BLOCK_SIZE);
+        azihsm_buffer exact_output{ exact.data(), static_cast<uint32_t>(exact.size()) };
+        err = crypt_update_call(CryptOperation::Encrypt, ctx, &input, &exact_output);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(exact_output.len, AES_BLOCK_SIZE);
+
+        azihsm_buffer final_output{ nullptr, 0 };
+        err = crypt_final_call(CryptOperation::Encrypt, ctx, &final_output);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(final_output.len, 0u);
+    });
+}
+
+// Validates final() output-buffer sizing behavior for padding mode (query/too-small/exact-size).
+TEST_F(azihsm_aes_cbc, streaming_final_output_buffer_sizing_with_padding)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto key = generate_aes_key(session, 128);
+
+        azihsm_algo_aes_cbc_params cbc_params{};
+        azihsm_algo crypt_algo{};
+        init_cbc_algo(crypt_algo, cbc_params, AZIHSM_ALGO_ID_AES_CBC_PAD, 0x7C);
+
+        azihsm_handle ctx = 0;
+        auto err = crypt_init_call(CryptOperation::Encrypt, &crypt_algo, key.get(), &ctx);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        azihsm_buffer final_out{ nullptr, 0 };
+        err = crypt_final_call(CryptOperation::Encrypt, ctx, &final_out);
+        ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+        ASSERT_EQ(final_out.len, AES_BLOCK_SIZE);
+
+        std::vector<uint8_t> too_small(AES_BLOCK_SIZE - 1);
+        azihsm_buffer short_out{ too_small.data(), static_cast<uint32_t>(too_small.size()) };
+        err = crypt_final_call(CryptOperation::Encrypt, ctx, &short_out);
+        ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+        ASSERT_EQ(short_out.len, AES_BLOCK_SIZE);
+
+        std::vector<uint8_t> exact(AES_BLOCK_SIZE);
+        azihsm_buffer exact_out{ exact.data(), static_cast<uint32_t>(exact.size()) };
+        err = crypt_final_call(CryptOperation::Encrypt, ctx, &exact_out);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(exact_out.len, AES_BLOCK_SIZE);
+    });
+}
+
+// ==================== Malformed Input and Padding Rejection ====================
+
+TEST_F(azihsm_aes_cbc, encrypt_non_block_aligned_plaintext_no_padding_fails)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        auto key = generate_aes_key(session, 128);
+
+        azihsm_algo_aes_cbc_params cbc_params{};
+        azihsm_algo crypt_algo{};
+        init_cbc_algo(crypt_algo, cbc_params, AZIHSM_ALGO_ID_AES_CBC, 0xBB);
+
+        // Try to encrypt non-block-aligned data without padding
+        uint8_t plaintext[13] = { 0xCC }; // Not a multiple of 16
+        azihsm_buffer input{ plaintext, sizeof(plaintext) };
+        azihsm_buffer output{ nullptr, 0 };
+
+        auto err = azihsm_crypt_encrypt(&crypt_algo, key.get(), &input, &output);
+        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
     });
 }
 
@@ -1660,16 +1579,8 @@ TEST_F(azihsm_aes_cbc, decrypt_invalid_padding_fails)
 
         init_cbc_algo(crypt_algo, cbc_params, AZIHSM_ALGO_ID_AES_CBC_PAD, 0x67);
         azihsm_buffer input{ ciphertext.data(), static_cast<uint32_t>(ciphertext.size()) };
-        azihsm_buffer output{ nullptr, 0 };
-
-        auto err = crypt_call(CryptOperation::Decrypt, &crypt_algo, key.get(), &input, &output);
-        if (err == AZIHSM_STATUS_BUFFER_TOO_SMALL)
-        {
-            std::vector<uint8_t> candidate(output.len);
-            output.ptr = candidate.data();
-            err = crypt_call(CryptOperation::Decrypt, &crypt_algo, key.get(), &input, &output);
-        }
-
+        auto err =
+            single_shot_status_with_sizing(CryptOperation::Decrypt, &crypt_algo, key.get(), &input);
         ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
     });
 }
@@ -1704,17 +1615,12 @@ TEST_F(azihsm_aes_cbc, decrypt_invalid_padding_variants_fail)
                 // Reinitialize algo/IV so each mutation is evaluated from the same decrypt state.
                 init_cbc_algo(crypt_algo, cbc_params, AZIHSM_ALGO_ID_AES_CBC_PAD, 0x68);
                 azihsm_buffer input{ mutated.data(), static_cast<uint32_t>(mutated.size()) };
-                azihsm_buffer output{ nullptr, 0 };
-
-                // Accept either immediate failure or failure after buffer-size probing.
-                auto err = crypt_call(CryptOperation::Decrypt, &crypt_algo, key.get(), &input, &output);
-                if (err == AZIHSM_STATUS_BUFFER_TOO_SMALL)
-                {
-                    std::vector<uint8_t> candidate(output.len);
-                    output.ptr = candidate.data();
-                    err =
-                        crypt_call(CryptOperation::Decrypt, &crypt_algo, key.get(), &input, &output);
-                }
+                auto err = single_shot_status_with_sizing(
+                    CryptOperation::Decrypt,
+                    &crypt_algo,
+                    key.get(),
+                    &input
+                );
 
                 ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
             };
@@ -1736,7 +1642,7 @@ TEST_F(azihsm_aes_cbc, decrypt_invalid_padding_variants_fail)
 }
 
 // Validates chunked CBC-PAD decrypt still rejects tampered padding regardless of chunk boundaries.
-TEST_F(azihsm_aes_cbc, streaming_decrypt_invalid_padding_fails_for_varied_chunks)
+TEST_F(azihsm_aes_cbc, streaming_decrypt_invalid_padding_fails_across_chunk_sizes)
 {
     part_list_.for_each_session([&](azihsm_handle session) {
         auto key = generate_aes_key(session, 128);
@@ -1777,15 +1683,9 @@ TEST_F(azihsm_aes_cbc, streaming_decrypt_invalid_padding_fails_for_varied_chunks
                     ciphertext.data() + offset,
                     static_cast<uint32_t>(current_chunk),
                 };
-                azihsm_buffer output{ nullptr, 0 };
 
-                err = crypt_update_call(CryptOperation::Decrypt, ctx, &input, &output);
-                if (err == AZIHSM_STATUS_BUFFER_TOO_SMALL)
-                {
-                    std::vector<uint8_t> out_buf(output.len);
-                    output.ptr = out_buf.data();
-                    err = crypt_update_call(CryptOperation::Decrypt, ctx, &input, &output);
-                }
+                err =
+                    streaming_update_status_with_sizing(CryptOperation::Decrypt, ctx, &input);
 
                 if (err != AZIHSM_STATUS_SUCCESS)
                 {
@@ -1799,14 +1699,7 @@ TEST_F(azihsm_aes_cbc, streaming_decrypt_invalid_padding_fails_for_varied_chunks
             if (!saw_failure)
             {
                 // If update accepted all chunks, final must still reject invalid PKCS#7 state.
-                azihsm_buffer final_out{ nullptr, 0 };
-                err = crypt_final_call(CryptOperation::Decrypt, ctx, &final_out);
-                if (err == AZIHSM_STATUS_BUFFER_TOO_SMALL)
-                {
-                    std::vector<uint8_t> out_buf(final_out.len);
-                    final_out.ptr = out_buf.data();
-                    err = crypt_final_call(CryptOperation::Decrypt, ctx, &final_out);
-                }
+                err = streaming_final_status_with_sizing(CryptOperation::Decrypt, ctx);
 
                 ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
             }
@@ -1814,8 +1707,50 @@ TEST_F(azihsm_aes_cbc, streaming_decrypt_invalid_padding_fails_for_varied_chunks
     });
 }
 
+// Verifies streaming no-padding rejects partial final blocks for both encrypt and decrypt flows.
+TEST_F(azihsm_aes_cbc, streaming_no_padding_partial_block_input_is_rejected)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto key = generate_aes_key(session, 128);
+
+        auto run_expect_failure = [&](CryptOperation operation, std::vector<uint8_t> input_bytes) {
+            azihsm_algo_aes_cbc_params cbc_params{};
+            azihsm_algo crypt_algo{};
+            init_cbc_algo(crypt_algo, cbc_params, AZIHSM_ALGO_ID_AES_CBC, 0x22);
+
+            azihsm_handle ctx = 0;
+            auto err = crypt_init_call(operation, &crypt_algo, key.get(), &ctx);
+            ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+            azihsm_buffer input{ input_bytes.data(), static_cast<uint32_t>(input_bytes.size()) };
+
+            bool saw_failure = false;
+            err = streaming_update_status_with_sizing(operation, ctx, &input);
+
+            if (err != AZIHSM_STATUS_SUCCESS)
+            {
+                saw_failure = true;
+            }
+
+            if (!saw_failure)
+            {
+                err = streaming_final_status_with_sizing(operation, ctx);
+                ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+            }
+        };
+
+        std::vector<uint8_t> bad_plaintext(17, 0xA1);
+        run_expect_failure(CryptOperation::Encrypt, std::move(bad_plaintext));
+
+        std::vector<uint8_t> bad_ciphertext(17, 0xA2);
+        run_expect_failure(CryptOperation::Decrypt, std::move(bad_ciphertext));
+    });
+}
+
+// ==================== Streaming Lifecycle and Context Rules ====================
+
 // Verifies zero-length update is a no-op for CBC-PAD and output is emitted only at final.
-TEST_F(azihsm_aes_cbc, streaming_zero_length_update_with_padding_is_noop_until_final)
+TEST_F(azihsm_aes_cbc, streaming_zero_length_update_with_padding_noop_until_final)
 {
     part_list_.for_each_session([&](azihsm_handle session) {
         auto key = generate_aes_key(session, 128);
@@ -1882,14 +1817,7 @@ TEST_F(azihsm_aes_cbc, streaming_use_after_final_is_rejected)
         auto err = crypt_init_call(CryptOperation::Encrypt, &crypt_algo, key.get(), &ctx);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
-        azihsm_buffer output{ nullptr, 0 };
-        err = crypt_final_call(CryptOperation::Encrypt, ctx, &output);
-        if (err == AZIHSM_STATUS_BUFFER_TOO_SMALL)
-        {
-            std::vector<uint8_t> out_buf(output.len);
-            output.ptr = out_buf.data();
-            err = crypt_final_call(CryptOperation::Encrypt, ctx, &output);
-        }
+        err = streaming_final_status_with_sizing(CryptOperation::Encrypt, ctx);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         uint8_t data[AES_BLOCK_SIZE] = { 0x33 };
@@ -1928,19 +1856,13 @@ TEST_F(azihsm_aes_cbc, streaming_operation_mismatch_on_context_is_rejected)
         err = crypt_final_call(CryptOperation::Decrypt, ctx, &output);
         ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
 
-        err = crypt_final_call(CryptOperation::Encrypt, ctx, &output);
-        if (err == AZIHSM_STATUS_BUFFER_TOO_SMALL)
-        {
-            std::vector<uint8_t> out_buf(output.len);
-            output.ptr = out_buf.data();
-            err = crypt_final_call(CryptOperation::Encrypt, ctx, &output);
-        }
+        err = streaming_final_status_with_sizing(CryptOperation::Encrypt, ctx);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
     });
 }
 
 // Checks PKCS#7 behavior in streaming mode: final without update emits one full padding block.
-TEST_F(azihsm_aes_cbc, streaming_encrypt_final_without_update_with_padding_outputs_padding_block)
+TEST_F(azihsm_aes_cbc, streaming_encrypt_final_without_update_with_padding_outputs_block)
 {
     part_list_.for_each_session([&](azihsm_handle session) {
         auto key = generate_aes_key(session, 128);
@@ -1963,167 +1885,5 @@ TEST_F(azihsm_aes_cbc, streaming_encrypt_final_without_update_with_padding_outpu
         err = crypt_final_call(CryptOperation::Encrypt, ctx, &output);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_EQ(output.len, AES_BLOCK_SIZE);
-    });
-}
-
-// Validates update() output-buffer contract for no-padding mode (query/too-small/exact-size).
-TEST_F(azihsm_aes_cbc, streaming_update_output_buffer_contract_no_padding)
-{
-    part_list_.for_each_session([&](azihsm_handle session) {
-        auto key = generate_aes_key(session, 128);
-
-        azihsm_algo_aes_cbc_params cbc_params{};
-        azihsm_algo crypt_algo{};
-        init_cbc_algo(crypt_algo, cbc_params, AZIHSM_ALGO_ID_AES_CBC, 0x7B);
-
-        azihsm_handle ctx = 0;
-        auto err = crypt_init_call(CryptOperation::Encrypt, &crypt_algo, key.get(), &ctx);
-        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-
-        uint8_t data[AES_BLOCK_SIZE] = { 0x22 };
-        azihsm_buffer input{ data, sizeof(data) };
-        azihsm_buffer output{ nullptr, 0 };
-
-        err = crypt_update_call(CryptOperation::Encrypt, ctx, &input, &output);
-        ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
-        ASSERT_EQ(output.len, AES_BLOCK_SIZE);
-
-        std::vector<uint8_t> too_small(AES_BLOCK_SIZE - 1);
-        azihsm_buffer short_output{ too_small.data(), static_cast<uint32_t>(too_small.size()) };
-        err = crypt_update_call(CryptOperation::Encrypt, ctx, &input, &short_output);
-        ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
-        ASSERT_EQ(short_output.len, AES_BLOCK_SIZE);
-
-        std::vector<uint8_t> exact(AES_BLOCK_SIZE);
-        azihsm_buffer exact_output{ exact.data(), static_cast<uint32_t>(exact.size()) };
-        err = crypt_update_call(CryptOperation::Encrypt, ctx, &input, &exact_output);
-        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_EQ(exact_output.len, AES_BLOCK_SIZE);
-
-        azihsm_buffer final_output{ nullptr, 0 };
-        err = crypt_final_call(CryptOperation::Encrypt, ctx, &final_output);
-        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_EQ(final_output.len, 0u);
-    });
-}
-
-// Validates final() output-buffer contract for padding mode (query/too-small/exact-size).
-TEST_F(azihsm_aes_cbc, streaming_final_output_buffer_contract_with_padding)
-{
-    part_list_.for_each_session([&](azihsm_handle session) {
-        auto key = generate_aes_key(session, 128);
-
-        azihsm_algo_aes_cbc_params cbc_params{};
-        azihsm_algo crypt_algo{};
-        init_cbc_algo(crypt_algo, cbc_params, AZIHSM_ALGO_ID_AES_CBC_PAD, 0x7C);
-
-        azihsm_handle ctx = 0;
-        auto err = crypt_init_call(CryptOperation::Encrypt, &crypt_algo, key.get(), &ctx);
-        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-
-        azihsm_buffer final_out{ nullptr, 0 };
-        err = crypt_final_call(CryptOperation::Encrypt, ctx, &final_out);
-        ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
-        ASSERT_EQ(final_out.len, AES_BLOCK_SIZE);
-
-        std::vector<uint8_t> too_small(AES_BLOCK_SIZE - 1);
-        azihsm_buffer short_out{ too_small.data(), static_cast<uint32_t>(too_small.size()) };
-        err = crypt_final_call(CryptOperation::Encrypt, ctx, &short_out);
-        ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
-        ASSERT_EQ(short_out.len, AES_BLOCK_SIZE);
-
-        std::vector<uint8_t> exact(AES_BLOCK_SIZE);
-        azihsm_buffer exact_out{ exact.data(), static_cast<uint32_t>(exact.size()) };
-        err = crypt_final_call(CryptOperation::Encrypt, ctx, &exact_out);
-        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_EQ(exact_out.len, AES_BLOCK_SIZE);
-    });
-}
-
-TEST_F(azihsm_aes_cbc, single_shot_padding_size_sweep)
-{
-    part_list_.for_each_session([&](azihsm_handle session) {
-        auto key = generate_aes_key(session, 256);
-
-        for (size_t plaintext_len = 0; plaintext_len <= 64; ++plaintext_len)
-        {
-            std::vector<uint8_t> plaintext(plaintext_len, 0x5A);
-
-            uint8_t iv[AES_BLOCK_SIZE] = { 0x89 };
-            azihsm_algo_aes_cbc_params cbc_params{};
-            std::memcpy(cbc_params.iv, iv, sizeof(iv));
-
-            azihsm_algo crypt_algo{};
-            crypt_algo.id = AZIHSM_ALGO_ID_AES_CBC_PAD;
-            crypt_algo.params = &cbc_params;
-            crypt_algo.len = sizeof(cbc_params);
-
-            auto ciphertext = single_shot_crypt(
-                key.get(),
-                &crypt_algo,
-                plaintext.data(),
-                plaintext.size(),
-                CryptOperation::Encrypt
-            );
-            ASSERT_EQ(ciphertext.size(), padded_ciphertext_len(plaintext_len));
-
-            std::memcpy(cbc_params.iv, iv, sizeof(iv));
-            auto decrypted = single_shot_crypt(
-                key.get(),
-                &crypt_algo,
-                ciphertext.data(),
-                ciphertext.size(),
-                CryptOperation::Decrypt
-            );
-            ASSERT_EQ(decrypted.size(), plaintext.size());
-            ASSERT_EQ(std::memcmp(decrypted.data(), plaintext.data(), plaintext.size()), 0);
-        }
-    });
-}
-
-TEST_F(azihsm_aes_cbc, streaming_padding_size_and_chunk_sweep)
-{
-    part_list_.for_each_session([&](azihsm_handle session) {
-        auto key = generate_aes_key(session, 256);
-
-        std::vector<size_t> sizes;
-        for (size_t value = 0; value <= 32; ++value)
-        {
-            sizes.push_back(value);
-        }
-        sizes.push_back(63);
-        sizes.push_back(64);
-        sizes.push_back(65);
-        sizes.push_back(127);
-        sizes.push_back(128);
-        sizes.push_back(129);
-
-        std::vector<size_t> chunk_sizes = { 1, 2, 3, 5, 7, 8, 15, 16, 17, 31, 32, 33, 64, 256 };
-
-        for (auto plaintext_len : sizes)
-        {
-            std::vector<uint8_t> plaintext(plaintext_len);
-            for (size_t i = 0; i < plaintext_len; ++i)
-            {
-                plaintext[i] = static_cast<uint8_t>(i & 0xFF);
-            }
-
-            for (auto chunk_size : chunk_sizes)
-            {
-                SCOPED_TRACE(
-                    "plaintext_len=" + std::to_string(plaintext_len) +
-                    " chunk_size=" + std::to_string(chunk_size)
-                );
-
-                test_streaming_roundtrip(
-                    key.get(),
-                    AZIHSM_ALGO_ID_AES_CBC_PAD,
-                    plaintext.data(),
-                    plaintext.size(),
-                    chunk_size,
-                    padded_ciphertext_len(plaintext_len)
-                );
-            }
-        }
     });
 }
