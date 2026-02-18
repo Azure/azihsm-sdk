@@ -26,8 +26,8 @@ pub struct CoverageReport {}
 
 #[derive(Default, Debug, Clone)]
 struct CoverageCounts {
-    functions: HashMap<String, bool>,     // function name -> covered
-    lines: HashMap<u64, u64>,             // line number -> hits
+    functions: HashMap<String, bool>, // function name -> covered
+    lines: HashMap<u64, u64>,         // line number -> hits
 }
 
 impl Xtask for CoverageReport {
@@ -94,7 +94,8 @@ fn parse_cobertura(xml: &str) -> anyhow::Result<BTreeMap<String, CoverageCounts>
                         if !closure_pattern.matches(function_name.as_deref().unwrap_or_default()) {
                             in_function = true;
                             function_has_hit = false;
-                            if let Some(entry) = current_file.as_ref().and_then(|f| per_file.get_mut(f))
+                            if let Some(entry) =
+                                current_file.as_ref().and_then(|f| per_file.get_mut(f))
                             {
                                 entry
                                     .functions
