@@ -12,6 +12,7 @@ use std::fs;
 
 use anyhow::Context;
 use clap::Parser;
+use glob::Pattern;
 use quick_xml::events::Event;
 use quick_xml::Reader;
 
@@ -27,25 +28,6 @@ pub struct CoverageReport {}
 struct CoverageCounts {
     functions: HashMap<String, bool>,     // function name -> covered
     lines: HashMap<u64, u64>,             // line number -> hits
-    regions: HashMap<String, (u64, u64)>, // region identifier -> (covered, total)
-}
-
-impl CoverageCounts {
-    fn add(&mut self, other: &CoverageCounts) {
-        for (k, v) in &other.functions {
-            let entry = self.functions.entry(k.clone()).or_insert(false);
-            *entry |= *v;
-        }
-        for (k, v) in &other.lines {
-            let entry = self.lines.entry(*k).or_insert(0);
-            *entry += *v;
-        }
-        for (k, v) in &other.regions {
-            let entry = self.regions.entry(k.clone()).or_insert((0, 0));
-            entry.0 += v.0;
-            entry.1 += v.1;
-        }
-    }
 }
 
 impl Xtask for CoverageReport {
@@ -91,6 +73,7 @@ fn parse_cobertura(xml: &str) -> anyhow::Result<BTreeMap<String, CoverageCounts>
     let mut in_function = false;
     let mut function_has_hit = false;
     let mut function_name: Option<String> = None;
+    let closure_pattern = Pattern::new("*{closure#[0-9]}*")?;
 
     let mut per_file: BTreeMap<String, CoverageCounts> = BTreeMap::new();
 
@@ -105,18 +88,47 @@ fn parse_cobertura(xml: &str) -> anyhow::Result<BTreeMap<String, CoverageCounts>
                 }
                 b"method" => {
                     if current_file.is_some() {
-                        in_function = true;
-                        function_has_hit = false;
                         function_name = get_attr_value(e, b"name")?;
-                        if let Some(entry) = current_file.as_ref().and_then(|f| per_file.get_mut(f))
-                        {
-                            entry
-                                .functions
-                                .entry(function_name.clone().unwrap_or_default())
-                                .or_insert(false);
+
+                        // ignore closure functions
+                        if !closure_pattern.matches(function_name.as_deref().unwrap_or_default()) {
+                            in_function = true;
+                            function_has_hit = false;
+                            if let Some(entry) = current_file.as_ref().and_then(|f| per_file.get_mut(f))
+                            {
+                                entry
+                                    .functions
+                                    .entry(function_name.clone().unwrap_or_default())
+                                    .or_insert(false);
+                            }
                         }
                     }
                 }
+                _ => {}
+            },
+            Ok(Event::End(ref e)) => match e.name().as_ref() {
+                b"method" => {
+                    if in_function {
+                        if function_has_hit {
+                            if let Some(entry) =
+                                current_file.as_ref().and_then(|f| per_file.get_mut(f))
+                            {
+                                entry
+                                    .functions
+                                    .entry(function_name.clone().unwrap_or_default())
+                                    .insert_entry(true);
+                            }
+                        }
+                    }
+                    in_function = false;
+                    function_has_hit = false;
+                }
+                b"class" => {
+                    current_file = None;
+                }
+                _ => {}
+            },
+            Ok(Event::Empty(ref e)) => match e.name().as_ref() {
                 b"line" => {
                     if let Some(file) = current_file.as_ref() {
                         if let Some(entry) = per_file.get_mut(file) {
@@ -135,28 +147,6 @@ fn parse_cobertura(xml: &str) -> anyhow::Result<BTreeMap<String, CoverageCounts>
                             }
                         }
                     }
-                }
-                _ => {}
-            },
-            Ok(Event::End(ref e)) => match e.name().as_ref() {
-                b"method" => {
-                    if in_function {
-                        if function_has_hit {
-                            if let Some(entry) =
-                                current_file.as_ref().and_then(|f| per_file.get_mut(f))
-                            {
-                                entry
-                                    .functions
-                                    .entry(function_name.clone().unwrap_or_default())
-                                    .or_insert(true);
-                            }
-                        }
-                    }
-                    in_function = false;
-                    function_has_hit = false;
-                }
-                b"class" => {
-                    current_file = None;
                 }
                 _ => {}
             },
@@ -185,22 +175,15 @@ fn get_attr_value(
     Ok(None)
 }
 
-// fn parse_condition_coverage(value: &str) -> Option<(u64, u64)> {
-//     let start = value.find('(')? + 1;
-//     let end = value.find(')')?;
-//     let inner = value.get(start..end)?;
-//     let mut parts = inner.split('/');
-//     let covered = parts.next()?.trim().parse::<u64>().ok()?;
-//     let total = parts.next()?.trim().parse::<u64>().ok()?;
-//     Some((covered, total))
-// }
-
 fn render_markdown_table(per_file: &BTreeMap<String, CoverageCounts>) -> String {
-    let mut totals = CoverageCounts::default();
     let mut lines = Vec::new();
+    let mut total_functions_covered = 0;
+    let mut total_lines_covered = 0;
+    let mut total_functions = 0;
+    let mut total_lines = 0;
 
-    lines.push("| Filename | Function Coverage | Line Coverage | Region Coverage |".to_string());
-    lines.push("| --- | --- | --- | --- |".to_string());
+    lines.push("| Filename | Function Coverage | Line Coverage |".to_string());
+    lines.push("| --- | --- | --- |".to_string());
 
     for (file, counts) in per_file {
         let functions_covered = counts
@@ -209,22 +192,25 @@ fn render_markdown_table(per_file: &BTreeMap<String, CoverageCounts>) -> String 
             .filter(|&&covered| covered)
             .count() as u64;
         let lines_covered = counts.lines.values().filter(|&&hits| hits > 0).count() as u64;
-        totals.add(counts);
+
+        total_functions_covered += functions_covered;
+        total_lines_covered += lines_covered;
+        total_functions += counts.functions.len() as u64;
+        total_lines += counts.lines.len() as u64;
+
         lines.push(format!(
-            "| {} | {} | {} | {} |",
+            "| {} | {} | {} |",
             file,
             format_ratio(functions_covered, counts.functions.len() as u64),
-            format_ratio(lines_covered, counts.lines.len() as u64),
-            format_ratio(0, 0)
+            format_ratio(lines_covered, counts.lines.len() as u64)
         ));
     }
 
-    /*lines.push(format!(
-        "| **Totals** | {} | {} | {} |",
-        format_ratio(totals.functions_covered, totals.functions_total),
-        format_ratio(totals.lines_covered, totals.lines_total),
-        format_ratio(totals.regions_covered, totals.regions_total)
-    ));*/
+    lines.push(format!(
+        "| **Totals** | {} | {} |",
+        format_ratio(total_functions_covered, total_functions),
+        format_ratio(total_lines_covered, total_lines)
+    ));
 
     lines.join("\n")
 }
