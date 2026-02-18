@@ -30,6 +30,11 @@ impl<'a> TryFrom<&'a mut AzihsmAlgo> for &'a mut AzihsmAlgoAesCbcParams {
     /// when the algorithm ID is AES-CBC or AES-CBC with padding.
     #[allow(unsafe_code)]
     fn try_from(algo: &'a mut AzihsmAlgo) -> Result<Self, Self::Error> {
+        // Enforce exact parameter struct size before casting `algo.params`.
+        if algo.len != std::mem::size_of::<AzihsmAlgoAesCbcParams>() as u32 {
+            Err(AzihsmStatus::InvalidArgument)?;
+        }
+
         // Check for null pointer
         validate_ptr(algo.params)?;
 
