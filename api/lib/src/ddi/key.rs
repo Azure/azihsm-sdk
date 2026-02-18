@@ -220,7 +220,7 @@ pub(crate) fn generate_key_report(
     let req = DdiAttestKeyCmdReq {
         hdr: build_ddi_req_hdr_sess(DdiOp::AttestKey, session),
         data: DdiAttestKeyReq {
-            key_id: (key_handle & 0x00FF) as u16,
+            key_id: ddi::get_key_id(key_handle),
             report_data: MborByteArray::from_slice(report_data)
                 .map_hsm_err(HsmError::InternalError)?,
         },

@@ -38,7 +38,7 @@ pub(crate) type HsmKeyHandle = u32;
 ///
 /// The key ID is stored in the low 16 bits of the handle.
 pub(crate) fn get_key_id(handle: HsmKeyHandle) -> u16 {
-    (handle & 0x00FF) as u16
+    (handle & 0xFFFF) as u16
 }
 
 /// Extracts the optional bulk key ID from a packed HSM key handle.

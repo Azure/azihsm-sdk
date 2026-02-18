@@ -515,7 +515,7 @@ pub(crate) fn aes_gcm_decrypt(
     plaintext: &mut [u8],
 ) -> HsmResult<usize> {
     let gcm_params = DdiAesGcmParams {
-        key_id: ddi::get_bulk_key_id(key.handle()).ok_or(HsmError::InvalidKeyProps)? as u32,
+        key_id: ddi::get_bulk_key_id(key.handle()).ok_or(HsmError::InvalidKey)? as u32,
         iv,
         aad,
         tag: Some(tag),
