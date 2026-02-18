@@ -43,7 +43,6 @@ namespace
 constexpr size_t TEST_MESSAGE_SIZE = 64;
 constexpr uint8_t TEST_MESSAGE_FILL_BYTE = 0x2A;
 constexpr const char CHILD_PROCESS_SKIP_MSG[] = "This test should only run when invoked by the parent test";
-constexpr const char HARDWARE_SKIP_MSG[] = "If running on real hardware, set AZIHSM_DISABLE_MULTI_PROCESS_TESTS=1 to skip";
 constexpr size_t GCM_TAG_SIZE = 16;
 constexpr size_t AES_CBC_IV_SIZE = 16;
 constexpr size_t AES_GCM_IV_SIZE = 12;
@@ -332,7 +331,7 @@ TEST_F(azihsm_multi_process_parent, ecc_sign_verify_cross_process)
             masked_key
         );
         int rc = run_child_test(params);
-        ASSERT_EQ(rc, 0) << HARDWARE_SKIP_MSG;
+        ASSERT_EQ(rc, 0);
     });
 }
 
@@ -413,7 +412,7 @@ TEST_F(azihsm_multi_process_parent, aes_cbc_encrypt_decrypt_cross_process)
             std::vector<uint8_t>(iv, iv + sizeof(cbc_params.iv))
         );
         int rc = run_child_test(params);
-        ASSERT_EQ(rc, 0) << HARDWARE_SKIP_MSG;
+        ASSERT_EQ(rc, 0);
     });
 }
 
@@ -430,8 +429,9 @@ TEST_F(azihsm_multi_process_child, aes_cbc_encrypt_decrypt_cross_process)
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
     ASSERT_TRUE(test_params.iv.has_value()) << "IV is required for AES-CBC";
+    ASSERT_EQ(test_params.iv->size(), AES_CBC_IV_SIZE);
     azihsm_algo_aes_cbc_params cbc_params{};
-    std::memcpy(cbc_params.iv, test_params.iv->data(), (std::min)(sizeof(cbc_params.iv), test_params.iv->size()));
+    std::memcpy(cbc_params.iv, test_params.iv->data(), AES_CBC_IV_SIZE);
     
     azihsm_algo decrypt_algo{};
     decrypt_algo.id = AZIHSM_ALGO_ID_AES_CBC;
@@ -508,7 +508,7 @@ TEST_F(azihsm_multi_process_parent, aes_gcm_encrypt_decrypt_cross_process)
             aad
         );
         int rc = run_child_test(params);
-        ASSERT_EQ(rc, 0) << HARDWARE_SKIP_MSG;
+        ASSERT_EQ(rc, 0);
     });
 }
 
@@ -527,11 +527,13 @@ TEST_F(azihsm_multi_process_child, aes_gcm_encrypt_decrypt_cross_process)
     ASSERT_TRUE(test_params.iv.has_value()) << "IV is required for AES-GCM";
     ASSERT_TRUE(test_params.tag.has_value()) << "Tag is required for AES-GCM";
     ASSERT_TRUE(test_params.aad.has_value()) << "AAD is expected for this test";
+    ASSERT_EQ(test_params.iv->size(), AES_GCM_IV_SIZE);
+    ASSERT_EQ(test_params.tag->size(), GCM_TAG_SIZE);
 
     auto aad_buf = create_buffer(*test_params.aad);
     azihsm_algo_aes_gcm_params gcm_params{};
-    std::memcpy(gcm_params.iv, test_params.iv->data(), (std::min)(sizeof(gcm_params.iv), test_params.iv->size()));
-    std::memcpy(gcm_params.tag, test_params.tag->data(), (std::min)(sizeof(gcm_params.tag), test_params.tag->size()));
+    std::memcpy(gcm_params.iv, test_params.iv->data(), AES_GCM_IV_SIZE);
+    std::memcpy(gcm_params.tag, test_params.tag->data(), GCM_TAG_SIZE);
     gcm_params.aad = &aad_buf;
 
     azihsm_algo decrypt_algo = { AZIHSM_ALGO_ID_AES_GCM, &gcm_params, sizeof(gcm_params) };
@@ -599,7 +601,7 @@ TEST_F(azihsm_multi_process_parent, aes_xts_encrypt_decrypt_cross_process)
             std::vector<uint8_t>(tweak, tweak + sizeof(tweak))  // Pass tweak via iv field
         );
         int rc = run_child_test(params);
-        ASSERT_EQ(rc, 0) << HARDWARE_SKIP_MSG;
+        ASSERT_EQ(rc, 0);
     });
 }
 
@@ -616,9 +618,10 @@ TEST_F(azihsm_multi_process_child, aes_xts_encrypt_decrypt_cross_process)
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
     ASSERT_TRUE(test_params.iv.has_value()) << "Tweak is required for AES-XTS";
+    ASSERT_EQ(test_params.iv->size(), AES_XTS_TWEAK_SIZE);
 
     azihsm_algo_aes_xts_params xts_params{};
-    std::memcpy(xts_params.sector_num, test_params.iv->data(), (std::min)(sizeof(xts_params.sector_num), test_params.iv->size()));
+    std::memcpy(xts_params.sector_num, test_params.iv->data(), AES_XTS_TWEAK_SIZE);
     xts_params.data_unit_length = static_cast<uint32_t>(test_params.signature_or_ciphertext.size());
 
     azihsm_algo decrypt_algo = { AZIHSM_ALGO_ID_AES_XTS, &xts_params, sizeof(xts_params) };
@@ -686,7 +689,7 @@ TEST_F(azihsm_multi_process_parent, hmac_sign_verify_cross_process)
             masked_key
         );
         int rc = run_child_test(params);
-        ASSERT_EQ(rc, 0) << HARDWARE_SKIP_MSG;
+        ASSERT_EQ(rc, 0);
     });
 }
 
@@ -770,7 +773,7 @@ TEST_F(azihsm_multi_process_parent, rsa_sign_verify_cross_process)
             masked_key
         );
         int rc = run_child_test(params);
-        ASSERT_EQ(rc, 0) << HARDWARE_SKIP_MSG;
+        ASSERT_EQ(rc, 0);
     });
 }
 

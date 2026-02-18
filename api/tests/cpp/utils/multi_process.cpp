@@ -63,7 +63,12 @@ static std::string self_exe_path()
     std::wstring buffer(MAX_PATH, L'\0');
     DWORD size = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
     buffer.resize(size);
-    return std::string(buffer.begin(), buffer.end());
+    if (buffer.empty())
+    {
+        return {};
+    }
+    auto utf8_path = std::filesystem::path(buffer).u8string();
+    return std::string(utf8_path.begin(), utf8_path.end());
 #else
     return std::filesystem::read_symlink("/proc/self/exe").string();
 #endif
@@ -187,8 +192,24 @@ int run_child_test(const cross_process_test_params & params) {
     unsetenv(kHelperEnv);
     if (rc != -1)
     {
-        rc = WEXITSTATUS(rc);
-        std::cout << "Extracted exit status: " << rc << "\n" << std::flush;
+        if (WIFEXITED(rc))
+        {
+            rc = WEXITSTATUS(rc);
+            std::cout << "Extracted exit status: " << rc << "\n" << std::flush;
+        }
+        else if (WIFSIGNALED(rc))
+        {
+            int signal_number = WTERMSIG(rc);
+            rc = 128 + signal_number;
+            std::cout << "Child process terminated by signal: " << signal_number
+                      << " (mapped exit code: " << rc << ")\n" << std::flush;
+        }
+        else
+        {
+            rc = 1;
+            std::cout << "Child process exited with unhandled wait status (mapped exit code: 1)\n"
+                      << std::flush;
+        }
     }
 #endif
 
