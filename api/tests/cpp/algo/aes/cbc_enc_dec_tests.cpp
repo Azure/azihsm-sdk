@@ -91,7 +91,7 @@ class azihsm_aes_cbc : public ::testing::Test
         return azihsm_crypt_decrypt_update(ctx, input, output);
     }
 
-    static azihsm_status crypt_final_call(
+    static azihsm_status crypt_finish_call(
         CryptOperation operation,
         azihsm_handle ctx,
         azihsm_buffer *output
@@ -99,13 +99,13 @@ class azihsm_aes_cbc : public ::testing::Test
     {
         if (operation == CryptOperation::Encrypt)
         {
-            return azihsm_crypt_encrypt_final(ctx, output);
+            return azihsm_crypt_encrypt_finish(ctx, output);
         }
 
-        return azihsm_crypt_decrypt_final(ctx, output);
+        return azihsm_crypt_decrypt_finish(ctx, output);
     }
 
-    // Runs single-shot operation and returns the final status.
+    // Runs single-shot operation and returns the finish status.
     // If output sizing reports BUFFER_TOO_SMALL, retries once with a sized buffer.
     static azihsm_status single_shot_status_with_sizing(
         CryptOperation operation,
@@ -126,7 +126,7 @@ class azihsm_aes_cbc : public ::testing::Test
         return err;
     }
 
-    // Runs streaming update and returns final status.
+    // Runs streaming update and returns finish status.
     // If output sizing reports BUFFER_TOO_SMALL, retries once with a sized buffer.
     static azihsm_status streaming_update_status_with_sizing(
         CryptOperation operation,
@@ -146,20 +146,20 @@ class azihsm_aes_cbc : public ::testing::Test
         return err;
     }
 
-    // Runs streaming final and returns final status.
+    // Runs streaming finish and returns finish status.
     // If output sizing reports BUFFER_TOO_SMALL, retries once with a sized buffer.
-    static azihsm_status streaming_final_status_with_sizing(
+    static azihsm_status streaming_finish_status_with_sizing(
         CryptOperation operation,
         azihsm_handle ctx
     )
     {
         azihsm_buffer output{ nullptr, 0 };
-        auto err = crypt_final_call(operation, ctx, &output);
+        auto err = crypt_finish_call(operation, ctx, &output);
         if (err == AZIHSM_STATUS_BUFFER_TOO_SMALL)
         {
             std::vector<uint8_t> out_buf(output.len);
             output.ptr = out_buf.data();
-            err = crypt_final_call(operation, ctx, &output);
+            err = crypt_finish_call(operation, ctx, &output);
         }
 
         return err;
@@ -227,7 +227,7 @@ class azihsm_aes_cbc : public ::testing::Test
         return result;
     }
 
-    // Executes streaming encrypt/decrypt with chunked update and final sizing flow.
+    // Executes streaming encrypt/decrypt with chunked update and finish sizing flow.
     static std::vector<uint8_t> streaming_crypt(
         azihsm_handle key_handle,
         azihsm_algo *algo,
@@ -309,34 +309,34 @@ class azihsm_aes_cbc : public ::testing::Test
         }
 
         // Finish
-        azihsm_buffer final_out{ nullptr, 0 };
+        azihsm_buffer finish_out{ nullptr, 0 };
         if (operation == CryptOperation::Encrypt)
         {
-            err = azihsm_crypt_encrypt_finish(ctx, &final_out);
+            err = azihsm_crypt_encrypt_finish(ctx, &finish_out);
         }
         else
         {
-            err = azihsm_crypt_decrypt_finish(ctx, &final_out);
+            err = azihsm_crypt_decrypt_finish(ctx, &finish_out);
         }
 
         if (err == AZIHSM_STATUS_BUFFER_TOO_SMALL)
         {
-            EXPECT_GT(final_out.len, 0);
+            EXPECT_GT(finish_out.len, 0);
             size_t current_pos = output.size();
-            output.resize(current_pos + final_out.len);
-            final_out.ptr = output.data() + current_pos;
+            output.resize(current_pos + finish_out.len);
+            finish_out.ptr = output.data() + current_pos;
 
             if (operation == CryptOperation::Encrypt)
             {
-                err = azihsm_crypt_encrypt_finish(ctx, &final_out);
+                err = azihsm_crypt_encrypt_finish(ctx, &finish_out);
             }
             else
             {
-                err = azihsm_crypt_decrypt_finish(ctx, &final_out);
+                err = azihsm_crypt_decrypt_finish(ctx, &finish_out);
             }
             EXPECT_EQ(err, AZIHSM_STATUS_SUCCESS);
             // Adjust output size to actual bytes written
-            output.resize(current_pos + final_out.len);
+            output.resize(current_pos + finish_out.len);
         }
         else
         {
@@ -1289,8 +1289,8 @@ TEST_F(azihsm_aes_cbc, streaming_init_invalid_key_handle_is_rejected)
     ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
 }
 
-// Validates streaming update/final reject null buffers.
-TEST_F(azihsm_aes_cbc, streaming_update_final_null_pointers_are_rejected)
+// Validates streaming update/finish reject null buffers.
+TEST_F(azihsm_aes_cbc, streaming_update_finish_null_pointers_are_rejected)
 {
     part_list_.for_each_session([&](azihsm_handle session) {
         auto key = generate_aes_key(session, 128);
@@ -1313,13 +1313,13 @@ TEST_F(azihsm_aes_cbc, streaming_update_final_null_pointers_are_rejected)
         err = crypt_update_call(CryptOperation::Encrypt, ctx, &input, nullptr);
         ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
 
-        err = crypt_final_call(CryptOperation::Encrypt, ctx, nullptr);
+        err = crypt_finish_call(CryptOperation::Encrypt, ctx, nullptr);
         ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
 }
 
-// Validates update/final reject malformed buffer shapes (null pointer with non-zero len).
-TEST_F(azihsm_aes_cbc, streaming_update_final_invalid_buffer_shapes_are_rejected)
+// Validates update/finish reject malformed buffer shapes (null pointer with non-zero len).
+TEST_F(azihsm_aes_cbc, streaming_update_finish_invalid_buffer_shapes_are_rejected)
 {
     part_list_.for_each_session([&](azihsm_handle session) {
         auto key = generate_aes_key(session, 128);
@@ -1354,10 +1354,10 @@ TEST_F(azihsm_aes_cbc, streaming_update_final_invalid_buffer_shapes_are_rejected
         err = crypt_update_call(CryptOperation::Decrypt, dec_ctx, &good_input, &bad_output);
         ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
 
-        err = crypt_final_call(CryptOperation::Encrypt, enc_ctx, &bad_output);
+        err = crypt_finish_call(CryptOperation::Encrypt, enc_ctx, &bad_output);
         ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
 
-        err = crypt_final_call(CryptOperation::Decrypt, dec_ctx, &bad_output);
+        err = crypt_finish_call(CryptOperation::Decrypt, dec_ctx, &bad_output);
         ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
 }
@@ -1472,15 +1472,15 @@ TEST_F(azihsm_aes_cbc, streaming_update_output_buffer_sizing_no_padding)
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_EQ(exact_output.len, AES_BLOCK_SIZE);
 
-        azihsm_buffer final_output{ nullptr, 0 };
-        err = crypt_final_call(CryptOperation::Encrypt, ctx, &final_output);
+        azihsm_buffer finish_output{ nullptr, 0 };
+        err = crypt_finish_call(CryptOperation::Encrypt, ctx, &finish_output);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_EQ(final_output.len, 0u);
+        ASSERT_EQ(finish_output.len, 0u);
     });
 }
 
-// Validates final() output-buffer sizing behavior for padding mode (query/too-small/exact-size).
-TEST_F(azihsm_aes_cbc, streaming_final_output_buffer_sizing_with_padding)
+// Validates finish() output-buffer sizing behavior for padding mode (query/too-small/exact-size).
+TEST_F(azihsm_aes_cbc, streaming_finish_output_buffer_sizing_with_padding)
 {
     part_list_.for_each_session([&](azihsm_handle session) {
         auto key = generate_aes_key(session, 128);
@@ -1493,20 +1493,20 @@ TEST_F(azihsm_aes_cbc, streaming_final_output_buffer_sizing_with_padding)
         auto err = crypt_init_call(CryptOperation::Encrypt, &crypt_algo, key.get(), &ctx);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
-        azihsm_buffer final_out{ nullptr, 0 };
-        err = crypt_final_call(CryptOperation::Encrypt, ctx, &final_out);
+        azihsm_buffer finish_out{ nullptr, 0 };
+        err = crypt_finish_call(CryptOperation::Encrypt, ctx, &finish_out);
         ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
-        ASSERT_EQ(final_out.len, AES_BLOCK_SIZE);
+        ASSERT_EQ(finish_out.len, AES_BLOCK_SIZE);
 
         std::vector<uint8_t> too_small(AES_BLOCK_SIZE - 1);
         azihsm_buffer short_out{ too_small.data(), static_cast<uint32_t>(too_small.size()) };
-        err = crypt_final_call(CryptOperation::Encrypt, ctx, &short_out);
+        err = crypt_finish_call(CryptOperation::Encrypt, ctx, &short_out);
         ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
         ASSERT_EQ(short_out.len, AES_BLOCK_SIZE);
 
         std::vector<uint8_t> exact(AES_BLOCK_SIZE);
         azihsm_buffer exact_out{ exact.data(), static_cast<uint32_t>(exact.size()) };
-        err = crypt_final_call(CryptOperation::Encrypt, ctx, &exact_out);
+        err = crypt_finish_call(CryptOperation::Encrypt, ctx, &exact_out);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_EQ(exact_out.len, AES_BLOCK_SIZE);
     });
@@ -1593,7 +1593,7 @@ TEST_F(azihsm_aes_cbc, decrypt_invalid_padding_variants_fail)
 
         for (size_t pad_len = 1; pad_len <= AES_BLOCK_SIZE; ++pad_len)
         {
-            // Build plaintext so PKCS#7 pad length in the final block is exactly `pad_len`.
+            // Build plaintext so PKCS#7 pad length in the finish block is exactly `pad_len`.
             const size_t plaintext_len = (2 * AES_BLOCK_SIZE) - pad_len;
             std::vector<uint8_t> plaintext(plaintext_len, 0x2A);
 
@@ -1660,7 +1660,7 @@ TEST_F(azihsm_aes_cbc, streaming_decrypt_invalid_padding_fails_across_chunk_size
             CryptOperation::Encrypt
         );
 
-        // Corrupt terminal padding byte so rejection can happen during update or final.
+        // Corrupt terminal padding byte so rejection can happen during update or finish.
         ciphertext.back() ^= 0xFF;
 
         std::vector<size_t> chunk_sizes = { 1, 7, 16, 31 };
@@ -1698,8 +1698,8 @@ TEST_F(azihsm_aes_cbc, streaming_decrypt_invalid_padding_fails_across_chunk_size
 
             if (!saw_failure)
             {
-                // If update accepted all chunks, final must still reject invalid PKCS#7 state.
-                err = streaming_final_status_with_sizing(CryptOperation::Decrypt, ctx);
+                // If update accepted all chunks, finish must still reject invalid PKCS#7 state.
+                err = streaming_finish_status_with_sizing(CryptOperation::Decrypt, ctx);
 
                 ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
             }
@@ -1707,7 +1707,7 @@ TEST_F(azihsm_aes_cbc, streaming_decrypt_invalid_padding_fails_across_chunk_size
     });
 }
 
-// Verifies streaming no-padding rejects partial final blocks for both encrypt and decrypt flows.
+// Verifies streaming no-padding rejects partial finish blocks for both encrypt and decrypt flows.
 TEST_F(azihsm_aes_cbc, streaming_no_padding_partial_block_input_is_rejected)
 {
     part_list_.for_each_session([&](azihsm_handle session) {
@@ -1734,7 +1734,7 @@ TEST_F(azihsm_aes_cbc, streaming_no_padding_partial_block_input_is_rejected)
 
             if (!saw_failure)
             {
-                err = streaming_final_status_with_sizing(operation, ctx);
+                err = streaming_finish_status_with_sizing(operation, ctx);
                 ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
             }
         };
@@ -1749,8 +1749,8 @@ TEST_F(azihsm_aes_cbc, streaming_no_padding_partial_block_input_is_rejected)
 
 // ==================== Streaming Lifecycle and Context Rules ====================
 
-// Verifies zero-length update is a no-op for CBC-PAD and output is emitted only at final.
-TEST_F(azihsm_aes_cbc, streaming_zero_length_update_with_padding_noop_until_final)
+// Verifies zero-length update is a no-op for CBC-PAD and output is emitted only at finish.
+TEST_F(azihsm_aes_cbc, streaming_zero_length_update_with_padding_noop_until_finish)
 {
     part_list_.for_each_session([&](azihsm_handle session) {
         auto key = generate_aes_key(session, 128);
@@ -1770,16 +1770,16 @@ TEST_F(azihsm_aes_cbc, streaming_zero_length_update_with_padding_noop_until_fina
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_EQ(update_out.len, 0u);
 
-        azihsm_buffer final_out{ nullptr, 0 };
-        err = crypt_final_call(CryptOperation::Encrypt, ctx, &final_out);
+        azihsm_buffer finish_out{ nullptr, 0 };
+        err = crypt_finish_call(CryptOperation::Encrypt, ctx, &finish_out);
         ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
-        ASSERT_EQ(final_out.len, AES_BLOCK_SIZE);
+        ASSERT_EQ(finish_out.len, AES_BLOCK_SIZE);
 
-        std::vector<uint8_t> final_buf(final_out.len);
-        final_out.ptr = final_buf.data();
-        err = crypt_final_call(CryptOperation::Encrypt, ctx, &final_out);
+        std::vector<uint8_t> finish_buf(finish_out.len);
+        finish_out.ptr = finish_buf.data();
+        err = crypt_finish_call(CryptOperation::Encrypt, ctx, &finish_out);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_EQ(final_out.len, AES_BLOCK_SIZE);
+        ASSERT_EQ(finish_out.len, AES_BLOCK_SIZE);
     });
 }
 
@@ -1796,15 +1796,15 @@ TEST_F(azihsm_aes_cbc, streaming_invalid_context_handles_are_rejected)
     err = crypt_update_call(CryptOperation::Decrypt, 0xDEADBEEF, &input, &output);
     ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
 
-    err = crypt_final_call(CryptOperation::Encrypt, 0xDEADBEEF, &output);
+    err = crypt_finish_call(CryptOperation::Encrypt, 0xDEADBEEF, &output);
     ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
 
-    err = crypt_final_call(CryptOperation::Decrypt, 0xDEADBEEF, &output);
+    err = crypt_finish_call(CryptOperation::Decrypt, 0xDEADBEEF, &output);
     ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
 }
 
-// Verifies context state is terminal after final, so further update/final calls fail.
-TEST_F(azihsm_aes_cbc, streaming_use_after_final_is_rejected)
+// Verifies context state is terminal after finish, so further update/finish calls fail.
+TEST_F(azihsm_aes_cbc, streaming_use_after_finish_is_rejected)
 {
     part_list_.for_each_session([&](azihsm_handle session) {
         auto key = generate_aes_key(session, 128);
@@ -1817,22 +1817,22 @@ TEST_F(azihsm_aes_cbc, streaming_use_after_final_is_rejected)
         auto err = crypt_init_call(CryptOperation::Encrypt, &crypt_algo, key.get(), &ctx);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
-        err = streaming_final_status_with_sizing(CryptOperation::Encrypt, ctx);
+        err = streaming_finish_status_with_sizing(CryptOperation::Encrypt, ctx);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         uint8_t data[AES_BLOCK_SIZE] = { 0x33 };
         azihsm_buffer input{ data, sizeof(data) };
-        azihsm_buffer after_final_output{ nullptr, 0 };
+        azihsm_buffer after_finish_output{ nullptr, 0 };
 
-        err = crypt_update_call(CryptOperation::Encrypt, ctx, &input, &after_final_output);
+        err = crypt_update_call(CryptOperation::Encrypt, ctx, &input, &after_finish_output);
         ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
 
-        err = crypt_final_call(CryptOperation::Encrypt, ctx, &after_final_output);
+        err = crypt_finish_call(CryptOperation::Encrypt, ctx, &after_finish_output);
         ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
     });
 }
 
-// Verifies an encrypt-initialized context cannot be used through decrypt update/final APIs.
+// Verifies an encrypt-initialized context cannot be used through decrypt update/finish APIs.
 TEST_F(azihsm_aes_cbc, streaming_operation_mismatch_on_context_is_rejected)
 {
     part_list_.for_each_session([&](azihsm_handle session) {
@@ -1853,16 +1853,16 @@ TEST_F(azihsm_aes_cbc, streaming_operation_mismatch_on_context_is_rejected)
         err = crypt_update_call(CryptOperation::Decrypt, ctx, &input, &output);
         ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
 
-        err = crypt_final_call(CryptOperation::Decrypt, ctx, &output);
+        err = crypt_finish_call(CryptOperation::Decrypt, ctx, &output);
         ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
 
-        err = streaming_final_status_with_sizing(CryptOperation::Encrypt, ctx);
+        err = streaming_finish_status_with_sizing(CryptOperation::Encrypt, ctx);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
     });
 }
 
-// Checks PKCS#7 behavior in streaming mode: final without update emits one full padding block.
-TEST_F(azihsm_aes_cbc, streaming_encrypt_final_without_update_with_padding_outputs_block)
+// Checks PKCS#7 behavior in streaming mode: finish without update emits one full padding block.
+TEST_F(azihsm_aes_cbc, streaming_encrypt_finish_without_update_with_padding_outputs_block)
 {
     part_list_.for_each_session([&](azihsm_handle session) {
         auto key = generate_aes_key(session, 128);
@@ -1876,13 +1876,13 @@ TEST_F(azihsm_aes_cbc, streaming_encrypt_final_without_update_with_padding_outpu
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         azihsm_buffer output{ nullptr, 0 };
-        err = crypt_final_call(CryptOperation::Encrypt, ctx, &output);
+        err = crypt_finish_call(CryptOperation::Encrypt, ctx, &output);
         ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
         ASSERT_EQ(output.len, AES_BLOCK_SIZE);
 
         std::vector<uint8_t> out_buf(output.len);
         output.ptr = out_buf.data();
-        err = crypt_final_call(CryptOperation::Encrypt, ctx, &output);
+        err = crypt_finish_call(CryptOperation::Encrypt, ctx, &output);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_EQ(output.len, AES_BLOCK_SIZE);
     });
