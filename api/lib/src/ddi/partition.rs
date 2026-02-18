@@ -9,11 +9,6 @@
 use azihsm_cred_encrypt::DeviceCredKey;
 use azihsm_crypto as crypto;
 use azihsm_ddi_mbor::*;
-<<<<<<< HEAD
-
-use super::*;
-
-=======
 use crypto::*;
 use x509::*;
 
@@ -135,7 +130,6 @@ fn get_pota_endorsement(
     }
 }
 
->>>>>>> main
 /// Initializes an HSM partition with credentials and master keys.
 ///
 /// Configures the partition for use by setting up authentication credentials
@@ -149,12 +143,8 @@ fn get_pota_endorsement(
 /// * `creds` - Application credentials (ID and PIN)
 /// * `bmk` - Optional backup masking key
 /// * `muk` - Optional masked unwrapping key
-<<<<<<< HEAD
-/// * `mobk` - Optional masked owner backup key
-=======
 /// * `obk_config` - Owner backup key (OBK) configuration
 /// * `pota_endorsement` - The partition owner trust anchor endorsement
->>>>>>> main
 ///
 /// # Errors
 ///
@@ -165,26 +155,14 @@ fn get_pota_endorsement(
 /// - The API revision is not supported
 /// - Device communication fails
 /// - The DDI operation returns an error
-<<<<<<< HEAD
-=======
 /// - TPM unsealing fails (when obk_config source is TPM)
 /// - OBK is missing when obk_config source is Caller
->>>>>>> main
 pub(crate) fn init_part(
     dev: &HsmDev,
     rev: HsmApiRev,
     creds: HsmCredentials,
     bmk: Option<&[u8]>,
     muk: Option<&[u8]>,
-<<<<<<< HEAD
-    mobk: Option<&[u8]>,
-) -> HsmResult<(Vec<u8>, Vec<u8>)> {
-    let mobk = match mobk {
-        Some(mobk) => mobk.to_vec(),
-        None => init_bk3(dev, rev)?,
-    };
-
-=======
     obk_config: HsmOwnerBackupKeyConfig<'_>,
     pota_endorsement: HsmPotaEndorsement<'_>,
 ) -> HsmResult<(Vec<u8>, Vec<u8>)> {
@@ -206,7 +184,6 @@ pub(crate) fn init_part(
     let (pota_signature, pota_public_key) = get_pota_endorsement(dev, rev, &pota_endorsement)?;
     let pota_endorsement = HsmPotaEndorsementData::new(&pota_signature, &pota_public_key);
 
->>>>>>> main
     let resp = get_establish_cred_encryption_key(dev, rev)?;
 
     let nonce = resp.data.nonce;
@@ -222,9 +199,6 @@ pub(crate) fn init_part(
 
     let bmk = bmk.unwrap_or_default();
     let muk = muk.unwrap_or_default();
-<<<<<<< HEAD
-    let bmk = establish_credential(dev, rev, ecreds, pub_key, bmk, muk, &mobk)?;
-=======
     let bmk = establish_credential(
         dev,
         rev,
@@ -235,28 +209,19 @@ pub(crate) fn init_part(
         &mobk,
         &pota_endorsement,
     )?;
->>>>>>> main
 
     Ok((bmk, mobk))
 }
 
 /// Initializes the backup key 3 (BK3) for the partition.
 ///
-<<<<<<< HEAD
-/// Generates or initializes the third-level backup key used in the key
-/// hierarchy for partition security.
-=======
 /// Sends the caller-provided BK3 to the device and returns the masked BK3.
->>>>>>> main
 ///
 /// # Arguments
 ///
 /// * `dev` - The HSM device handle
 /// * `rev` - The API revision to use
-<<<<<<< HEAD
-=======
 /// * `bk3` - The owner backup key (BK3) provided by the caller
->>>>>>> main
 ///
 /// # Returns
 ///
@@ -265,21 +230,11 @@ pub(crate) fn init_part(
 /// # Errors
 ///
 /// Returns an error if the BK3 initialization fails.
-<<<<<<< HEAD
-fn init_bk3(dev: &HsmDev, rev: HsmApiRev) -> HsmResult<Vec<u8>> {
-    let bk3 = [1u8; 48];
-    // Rng::rand_bytes(&mut bk3).map_hsm_err(HsmError::RngError)?;
-    let req = DdiInitBk3CmdReq {
-        hdr: build_ddi_req_hdr(DdiOp::InitBk3, Some(rev), None),
-        data: DdiInitBk3Req {
-            bk3: MborByteArray::from_slice(&bk3).map_hsm_err(HsmError::InternalError)?,
-=======
 fn init_bk3(dev: &HsmDev, rev: HsmApiRev, bk3: &[u8]) -> HsmResult<Vec<u8>> {
     let req = DdiInitBk3CmdReq {
         hdr: build_ddi_req_hdr(DdiOp::InitBk3, Some(rev), None),
         data: DdiInitBk3Req {
             bk3: MborByteArray::from_slice(bk3).map_hsm_err(HsmError::InvalidArgument)?,
->>>>>>> main
         },
         ext: None,
     };
@@ -333,10 +288,7 @@ fn get_establish_cred_encryption_key(
 /// * `bmk` - Backup masking key
 /// * `muk` - Masked unwrapping key
 /// * `mobk` - Masked owner backup key (BK3)
-<<<<<<< HEAD
-=======
 /// * `pota_endorsement` - POTA endorsement data containing signature and public key
->>>>>>> main
 ///
 /// # Returns
 ///
@@ -353,9 +305,6 @@ pub fn establish_credential(
     bmk: &[u8],
     muk: &[u8],
     mobk: &[u8],
-<<<<<<< HEAD
-) -> HsmResult<Vec<u8>> {
-=======
     pota_endorsement: &HsmPotaEndorsementData<'_>,
 ) -> HsmResult<Vec<u8>> {
     let pota_endorsement_pub_key = DdiDerPublicKey {
@@ -364,18 +313,11 @@ pub fn establish_credential(
         key_kind: DdiKeyType::Ecc384Public,
     };
 
->>>>>>> main
     let req = DdiEstablishCredentialCmdReq {
         hdr: build_ddi_req_hdr(DdiOp::EstablishCredential, Some(rev), None),
         data: DdiEstablishCredentialReq {
             encrypted_credential: enc_creds,
             pub_key,
-<<<<<<< HEAD
-            masked_bk3: MborByteArray::from_slice(mobk).map_hsm_err(HsmError::InternalError)?,
-            bmk: MborByteArray::from_slice(bmk).map_hsm_err(HsmError::InternalError)?,
-            masked_unwrapping_key: MborByteArray::from_slice(muk)
-                .map_hsm_err(HsmError::InternalError)?,
-=======
             masked_bk3: MborByteArray::from_slice(mobk).map_hsm_err(HsmError::InvalidArgument)?,
             bmk: MborByteArray::from_slice(bmk).map_hsm_err(HsmError::InvalidArgument)?,
             masked_unwrapping_key: MborByteArray::from_slice(muk)
@@ -383,7 +325,6 @@ pub fn establish_credential(
             pota_sig: MborByteArray::from_slice(pota_endorsement.signature())
                 .map_hsm_err(HsmError::InternalError)?,
             pota_pub_key: pota_endorsement_pub_key,
->>>>>>> main
         },
         ext: None,
     };
@@ -474,8 +415,6 @@ fn get_cert(dev: &HsmDev, rev: HsmApiRev, slot_id: u8, cert_id: u8) -> HsmResult
 
     Ok(resp.data.certificate.as_slice().to_vec())
 }
-<<<<<<< HEAD
-=======
 
 /// Retrieves the TPM-sealed backup key 3 (BK3) from the device.
 ///
@@ -507,4 +446,3 @@ fn get_sealed_bk3(dev: &HsmDev, rev: HsmApiRev) -> HsmResult<Vec<u8>> {
 
     Ok(resp.data.sealed_bk3.as_slice().to_vec())
 }
->>>>>>> main

@@ -202,17 +202,12 @@ impl HsmKeyUnmaskOp for HsmAesKeyUnmaskAlgo {
         masked_key: &[u8],
     ) -> Result<Self::Key, Self::Error> {
         let (handle, props) = ddi::unmask_key(session, masked_key)?;
-<<<<<<< HEAD
-        HsmAesKey::validate_props(&props)?;
-        let key = HsmAesKey::new(session.clone(), props, handle);
-=======
 
         //construct key wrapper first
         let key = HsmAesKey::new(session.clone(), props.clone(), handle);
 
         // Validate after constructing the wrapper so a failure drops and deletes the handle.
         HsmAesKey::validate_props(&props)?;
->>>>>>> main
         Ok(key)
     }
 }
@@ -446,21 +441,6 @@ impl HsmKeyUnmaskOp for HsmAesXtsKeyUnmaskAlgo {
     ) -> Result<Self::Key, Self::Error> {
         let (handle1, handle2, props) = ddi::aes_xts_unmask_key(session, masked_key)?;
 
-<<<<<<< HEAD
-        // Validate key properties before returning, else handle will not be released properly
-        match HsmAesXtsKey::validate_props(&props) {
-            Ok(()) => Ok(HsmAesXtsKey::new(
-                session.clone(),
-                props,
-                (handle1, handle2),
-            )),
-            Err(e) => {
-                // Clean up allocated handles in case of validation failure
-                let _ = HsmAesXtsKey::new(session.clone(), props, (handle1, handle2));
-                Err(e)
-            }
-        }
-=======
         //construct key guard first to ensure handles are released if validation fails
         let key_id1 = ddi::HsmKeyIdGuard::new(session, handle1);
         let key_id2 = ddi::HsmKeyIdGuard::new(session, handle2);
@@ -690,6 +670,5 @@ impl TryFrom<HsmGenericSecretKey> for HsmAesGcmKey {
         // Re-wrap the existing inner key state so typed wrappers share the same
         // underlying handle + drop semantics.
         Ok(HsmAesGcmKey::from_inner(key.inner()))
->>>>>>> main
     }
 }

@@ -5,19 +5,6 @@ use zerocopy::*;
 
 use super::*;
 
-<<<<<<< HEAD
-bitflags::bitflags! {
-    /// Masked key attributes flags.
-    #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-    struct HsmMaskedKeyAttributes : u16 {
-        const LOCAL = 1 << 0;
-        const IMPORTED = 1 << 1;
-        const SIGN_VERIFY = 1 << 2;
-        const ENCRYPT_DECRYPT = 1 << 3;
-        const UNWRAP = 1 << 4;
-        const DERIVE = 1 << 5;
-        const SESSION = 1 << 6;
-=======
 /// Size of the masked key attributes flags in bytes.
 const MASKED_KEY_ATTRIBUTES_FLAGS_SIZE: usize = size_of::<u64>();
 
@@ -57,7 +44,6 @@ bitflags::bitflags! {
     /// Flag indicating if the key can be used for derive operations. This flag can be
     /// specified only for Secret Keys.
     const DERIVE = 1 << 16;
->>>>>>> main
     }
 }
 
@@ -253,16 +239,6 @@ impl HsmMaskedKey {
     fn key_props(metadata: &HsmMaskedKeyMetadata, class: HsmKeyClass) -> HsmResult<HsmKeyProps> {
         let mut flags = HsmKeyFlags::default();
 
-<<<<<<< HEAD
-        // check if both generated and imported are not set
-        if metadata.attrs.contains(HsmMaskedKeyAttributes::LOCAL)
-            && metadata.attrs.contains(HsmMaskedKeyAttributes::IMPORTED)
-        {
-            return Err(HsmError::InternalError);
-        }
-
-=======
->>>>>>> main
         if metadata.attrs.contains(HsmMaskedKeyAttributes::LOCAL) {
             flags |= HsmKeyFlags::LOCAL;
         }
@@ -271,18 +247,12 @@ impl HsmMaskedKey {
             flags |= HsmKeyFlags::SESSION;
         }
 
-<<<<<<< HEAD
-        if metadata.attrs.contains(HsmMaskedKeyAttributes::SIGN_VERIFY) {
-=======
         // Handle individual sign/verify flags
         if metadata.attrs.contains(HsmMaskedKeyAttributes::SIGN) {
->>>>>>> main
             match class {
                 HsmKeyClass::Private => {
                     flags |= HsmKeyFlags::SIGN;
                 }
-<<<<<<< HEAD
-=======
                 HsmKeyClass::Public => {}
                 HsmKeyClass::Secret => {
                     flags |= HsmKeyFlags::SIGN;
@@ -293,44 +263,24 @@ impl HsmMaskedKey {
         if metadata.attrs.contains(HsmMaskedKeyAttributes::VERIFY) {
             match class {
                 HsmKeyClass::Private => {}
->>>>>>> main
                 HsmKeyClass::Public => {
                     flags |= HsmKeyFlags::VERIFY;
                 }
                 HsmKeyClass::Secret => {
-<<<<<<< HEAD
-                    flags |= HsmKeyFlags::SIGN;
-=======
->>>>>>> main
                     flags |= HsmKeyFlags::VERIFY;
                 }
             }
         }
 
-<<<<<<< HEAD
-        if metadata
-            .attrs
-            .contains(HsmMaskedKeyAttributes::ENCRYPT_DECRYPT)
-        {
-            match class {
-                HsmKeyClass::Private => {
-                    flags |= HsmKeyFlags::DECRYPT;
-                }
-=======
         // Handle individual encrypt/decrypt flags
         if metadata.attrs.contains(HsmMaskedKeyAttributes::ENCRYPT) {
             match class {
                 HsmKeyClass::Private => {}
->>>>>>> main
                 HsmKeyClass::Public => {
                     flags |= HsmKeyFlags::ENCRYPT;
                 }
                 HsmKeyClass::Secret => {
                     flags |= HsmKeyFlags::ENCRYPT;
-<<<<<<< HEAD
-                    flags |= HsmKeyFlags::DECRYPT;
-                }
-=======
                 }
             }
         }
@@ -357,7 +307,6 @@ impl HsmMaskedKey {
                 HsmKeyClass::Secret => {
                     flags |= HsmKeyFlags::WRAP;
                 }
->>>>>>> main
             }
         }
 
@@ -366,16 +315,8 @@ impl HsmMaskedKey {
                 HsmKeyClass::Private => {
                     flags |= HsmKeyFlags::UNWRAP;
                 }
-<<<<<<< HEAD
-                HsmKeyClass::Public => {
-                    flags |= HsmKeyFlags::WRAP;
-                }
-                HsmKeyClass::Secret => {
-                    flags |= HsmKeyFlags::WRAP;
-=======
                 HsmKeyClass::Public => {}
                 HsmKeyClass::Secret => {
->>>>>>> main
                     flags |= HsmKeyFlags::UNWRAP;
                 }
             }
@@ -417,12 +358,9 @@ impl TryFrom<DdiMaskedKeyMetadata> for HsmMaskedKeyMetadata {
             DdiKeyType::Aes128 => (HsmKeyKind::Aes, 128, None),
             DdiKeyType::Aes192 => (HsmKeyKind::Aes, 192, None),
             DdiKeyType::Aes256 => (HsmKeyKind::Aes, 256, None),
-<<<<<<< HEAD
-=======
             DdiKeyType::AesGcmBulk256 | DdiKeyType::AesGcmBulk256Unapproved => {
                 (HsmKeyKind::AesGcm, 256, None)
             }
->>>>>>> main
             DdiKeyType::AesXtsBulk256 => (HsmKeyKind::AesXts, 256, None),
             DdiKeyType::Secret256 => (HsmKeyKind::SharedSecret, 256, None),
             DdiKeyType::Secret384 => (HsmKeyKind::SharedSecret, 384, None),
@@ -448,13 +386,6 @@ impl TryFrom<DdiMaskedKeyAttributes> for HsmMaskedKeyAttributes {
 
     fn try_from(attrs: DdiMaskedKeyAttributes) -> Result<Self, Self::Error> {
         let buf = &attrs.blob;
-<<<<<<< HEAD
-        if buf.len() < 2 {
-            return Err(HsmError::InternalError);
-        }
-        let flags = u16::from_le_bytes([buf[0], buf[1]]);
-        HsmMaskedKeyAttributes::from_bits(flags).ok_or(HsmError::InternalError)
-=======
         if buf.len() < MASKED_KEY_ATTRIBUTES_FLAGS_SIZE {
             return Err(HsmError::InternalError);
         }
@@ -466,6 +397,5 @@ impl TryFrom<DdiMaskedKeyAttributes> for HsmMaskedKeyAttributes {
                 .map_err(|_| HsmError::InternalError)?,
         );
         Ok(HsmMaskedKeyAttributes::from_bits_truncate(flags))
->>>>>>> main
     }
 }

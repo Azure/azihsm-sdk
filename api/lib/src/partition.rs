@@ -9,10 +9,7 @@
 
 use std::sync::Arc;
 
-<<<<<<< HEAD
-=======
 use azihsm_ddi::DdiDev;
->>>>>>> main
 use parking_lot::RwLock;
 use tracing::*;
 
@@ -117,8 +114,6 @@ impl HsmCredentials {
     }
 }
 
-<<<<<<< HEAD
-=======
 /// Owner backup key config (OBK/BK3) containing source and optional OBK.
 #[derive(Debug, Clone)]
 pub struct HsmOwnerBackupKeyConfig<'a> {
@@ -254,7 +249,6 @@ impl<'a> HsmPotaEndorsement<'a> {
     }
 }
 
->>>>>>> main
 /// HSM partition manager.
 ///
 /// Provides operations for discovering and opening HSM partitions.
@@ -370,11 +364,7 @@ impl HsmPartition {
     /// * `creds` - Application credentials (ID and PIN)
     /// * `bmk` - Optional backup masking key
     /// * `muk` - Optional masked unwrapping key
-<<<<<<< HEAD
-    /// * `mobk` - Optional masked owner backup key
-=======
     /// * `obk_config` - Owner backup key (OBK) configuration
->>>>>>> main
     ///
     /// # Errors
     ///
@@ -382,23 +372,13 @@ impl HsmPartition {
     /// - Credentials are invalid
     /// - API revision retrieval fails
     /// - Partition initialization fails
-<<<<<<< HEAD
-=======
     /// - OBK is missing when obk_info source is Caller
->>>>>>> main
     #[instrument(skip_all,  fields(path = self.path().as_str()), err)]
     pub fn init(
         &self,
         creds: HsmCredentials,
         bmk: Option<&[u8]>,
         muk: Option<&[u8]>,
-<<<<<<< HEAD
-        mobk: Option<&[u8]>,
-    ) -> HsmResult<()> {
-        let (bmk, mobk) = self.with_dev(|dev| {
-            let (bmk, mobk) =
-                ddi::init_part(dev, self.api_rev_range().min(), creds, bmk, muk, mobk)?;
-=======
         obk_config: HsmOwnerBackupKeyConfig<'_>,
         pota_endorsement: HsmPotaEndorsement<'_>,
     ) -> HsmResult<()> {
@@ -412,7 +392,6 @@ impl HsmPartition {
                 obk_config,
                 pota_endorsement,
             )?;
->>>>>>> main
             Ok((bmk, mobk))
         })?;
         self.inner().write().set_masked_keys(bmk, mobk);
@@ -454,8 +433,6 @@ impl HsmPartition {
         Ok(HsmSession::new(id, app_id, api_rev, self.clone()))
     }
 
-<<<<<<< HEAD
-=======
     /// Resets the HSM partition state.
     ///
     /// including established credentials and active sessions. This is useful for
@@ -475,7 +452,6 @@ impl HsmPartition {
         Ok(())
     }
 
->>>>>>> main
     /// Returns the API revision range supported by this partition.
     ///
     /// # Returns
@@ -558,8 +534,6 @@ impl HsmPartition {
         self.with_dev(|dev| ddi::get_cert_chain(dev, self.api_rev_range().min(), slot))
     }
 
-<<<<<<< HEAD
-=======
     /// Retrieves the public key of the partition identity (PID) certificate.
     ///
     /// # Returns
@@ -569,7 +543,6 @@ impl HsmPartition {
         self.with_dev(|dev| ddi::get_part_pub_key(dev, self.api_rev_range().min()))
     }
 
->>>>>>> main
     /// Retrieves the backup masking key that was set during partition initialization.
     ///
     /// # Arguments
@@ -785,15 +758,12 @@ impl HsmPartitionInner {
         self.mobk = mobk;
     }
 
-<<<<<<< HEAD
-=======
     /// Clears the cached masked keys after partition reset.
     pub(crate) fn clear_masked_keys(&mut self) {
         self.bmk.clear();
         self.mobk.clear();
     }
 
->>>>>>> main
     /// Returns the backup masking key (BMK).
     ///
     /// # Returns

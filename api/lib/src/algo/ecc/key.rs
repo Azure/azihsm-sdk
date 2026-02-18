@@ -329,11 +329,6 @@ impl HsmKeyPairUnmaskOp for HsmEccKeyUnmaskAlgo {
     )> {
         let (handle, priv_props, pub_props) = ddi::unmask_key_pair(session, masked_key)?;
 
-<<<<<<< HEAD
-        HsmEccPrivateKey::validate_key_pair_props(&priv_props, &pub_props)?;
-
-        let Some(pub_key_der) = pub_props.pub_key_der() else {
-=======
         //construct key guard first to ensure handles are released if validation fails
         let key_id = ddi::HsmKeyIdGuard::new(session, handle);
 
@@ -341,7 +336,6 @@ impl HsmKeyPairUnmaskOp for HsmEccKeyUnmaskAlgo {
         let Some(pub_key_der) = pub_props.pub_key_der() else {
             // NOTE: This should never happen because the DDI unmask_key_pair should guarantee the presence of pub_key_der,
             // no need to drop the handle here
->>>>>>> main
             return Err(HsmError::InternalError);
         };
 
@@ -349,10 +343,6 @@ impl HsmKeyPairUnmaskOp for HsmEccKeyUnmaskAlgo {
         let crypto_key =
             crypto::EccPublicKey::from_bytes(pub_key_der).map_hsm_err(HsmError::InternalError)?;
 
-<<<<<<< HEAD
-        let pub_key = HsmEccPublicKey::new(pub_props, crypto_key);
-        let priv_key = HsmEccPrivateKey::new(session.clone(), priv_props, handle, pub_key.clone());
-=======
         let pub_key = HsmEccPublicKey::new(pub_props.clone(), crypto_key);
         let priv_key = HsmEccPrivateKey::new(
             session.clone(),
@@ -363,7 +353,6 @@ impl HsmKeyPairUnmaskOp for HsmEccKeyUnmaskAlgo {
 
         // Validate after constructing the wrapper so a failure drops and deletes the handle.
         HsmEccPrivateKey::validate_key_pair_props(&priv_props, &pub_props)?;
->>>>>>> main
 
         Ok((priv_key, pub_key))
     }

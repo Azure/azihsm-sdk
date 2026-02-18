@@ -6,10 +6,7 @@
 //! This module provides core type definitions including key classes, key kinds,
 //! and elliptic curve identifiers that are shared between the library and native layers.
 
-<<<<<<< HEAD
-=======
 use open_enum::open_enum;
->>>>>>> main
 use zerocopy::*;
 
 /// Cryptographic key class.
@@ -60,12 +57,9 @@ pub enum HsmKeyKind {
 
     /// HMAC SHA 512
     HmacSha512 = 9,
-<<<<<<< HEAD
-=======
 
     /// AES GCM symmetric key kind.
     AesGcm = 10,
->>>>>>> main
 }
 
 /// Elliptic Curve Cryptography (ECC) curve identifier.
@@ -119,8 +113,6 @@ pub enum HsmPartType {
     /// Physical hardware partition.
     Physical = 2,
 }
-<<<<<<< HEAD
-=======
 
 /// Owner backup key source.
 ///
@@ -147,4 +139,3 @@ pub enum HsmPotaEndorsementSource {
     /// TPM-generated endorsement.
     Tpm = 2,
 }
->>>>>>> main
