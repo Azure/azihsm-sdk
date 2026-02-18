@@ -129,25 +129,27 @@ fn parse_cobertura(xml: &str) -> anyhow::Result<BTreeMap<String, CoverageCounts>
                 }
                 _ => {}
             },
-            Ok(Event::Empty(ref e)) => if e.name().as_ref() == b"line" {
-                if let Some(file) = current_file.as_ref() {
-                    if let Some(entry) = per_file.get_mut(file) {
-                        let hits = get_attr_value(e, b"hits")?
-                            .and_then(|v| v.parse::<u64>().ok())
-                            .unwrap_or(0);
+            Ok(Event::Empty(ref e)) => {
+                if e.name().as_ref() == b"line" {
+                    if let Some(file) = current_file.as_ref() {
+                        if let Some(entry) = per_file.get_mut(file) {
+                            let hits = get_attr_value(e, b"hits")?
+                                .and_then(|v| v.parse::<u64>().ok())
+                                .unwrap_or(0);
 
-                        let number = get_attr_value(e, b"number")?
-                            .and_then(|v| v.parse::<u64>().ok())
-                            .unwrap_or(0);
+                            let number = get_attr_value(e, b"number")?
+                                .and_then(|v| v.parse::<u64>().ok())
+                                .unwrap_or(0);
 
-                        *entry.lines.entry(number).or_insert(0) += hits;
+                            *entry.lines.entry(number).or_insert(0) += hits;
 
-                        if in_function && hits > 0 {
-                            function_has_hit = true;
+                            if in_function && hits > 0 {
+                                function_has_hit = true;
+                            }
                         }
                     }
                 }
-            },
+            }
             Ok(Event::Eof) => break,
             Err(e) => return Err(anyhow::anyhow!("Failed to parse Cobertura XML: {}", e)),
             _ => {}
