@@ -824,15 +824,10 @@ static int azihsm_ossl_hkdf_derive(
     }
 
     /*
-     * Output destination: output_file or key buffer, mutually exclusive.
-     * If output_file is set, write masked key blob to file.
+     * Output destination: output_file takes priority over the key buffer.
+     * If output_file is set, write masked key blob to file (key buffer is ignored).
      * If output_file is not set, write masked key blob into key buffer.
      */
-    if (ctx->output_file[0] != '\0' && keylen > 0)
-    {
-        ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
-        return OSSL_FAILURE;
-    }
 
     /* Step 1: Load and unmask IKM */
     if (!load_and_unmask_ikm(ctx))
