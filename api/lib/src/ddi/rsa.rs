@@ -28,10 +28,9 @@ pub(crate) fn get_rsa_unwrapping_key(
             .map_hsm_err(HsmError::DdiCmdFailure)
     })?;
 
-    let key_handle = HsmKeyHandle {
-        key_id: resp.data.key_id,
-        bulk_key_id: None,
-    };
+    let handle = to_key_handle(resp.data.key_id, None);
+    let key_guard = HsmKeyIdGuard::new(session, handle);
+
     let masked_key = resp.data.masked_key.as_slice();
     let pub_key = resp.data.pub_key;
     let (dev_priv_key_props, dev_pub_key_props) =
@@ -41,13 +40,11 @@ pub(crate) fn get_rsa_unwrapping_key(
     if !priv_key_props.validate_dev_props(&dev_priv_key_props)
         || !pub_key_props.validate_dev_props(&dev_pub_key_props)
     {
-        //delete key
-        delete_key(session, key_handle.key_id)?;
         //return error
         Err(HsmError::InvalidKeyProps)?;
     }
 
-    Ok((key_handle, dev_priv_key_props, dev_pub_key_props))
+    Ok((key_guard.release(), dev_priv_key_props, dev_pub_key_props))
 }
 
 /// Performs RSA AES key unwrapping using the specified RSA private key.
@@ -70,7 +67,7 @@ pub(crate) fn rsa_aes_unwrap_key(
     let req = DdiRsaUnwrapCmdReq {
         hdr: build_ddi_req_hdr_sess(DdiOp::RsaUnwrap, &key.session()),
         data: DdiRsaUnwrapReq {
-            key_id: key.handle().key_id,
+            key_id: ddi::get_key_id(key.handle()),
             wrapped_blob_key_class: key_props.kind().try_into()?,
             wrapped_blob_padding: DdiRsaCryptoPadding::Oaep,
             wrapped_blob_hash_algorithm: hash_algo.into(),
@@ -87,20 +84,18 @@ pub(crate) fn rsa_aes_unwrap_key(
             .map_hsm_err(HsmError::DdiCmdFailure)
     })?;
 
-    let key_handle = HsmKeyHandle {
-        key_id: resp.data.key_id,
-        bulk_key_id: resp.data.bulk_key_id,
-    };
+    let handle = ddi::to_key_handle(resp.data.key_id, resp.data.bulk_key_id);
+    let session = key.session();
+    let key_guard = HsmKeyIdGuard::new(&session, handle);
+
     let masked_key = resp.data.masked_key.as_slice();
     let dev_key_props = HsmMaskedKey::to_key_props(masked_key)?;
     // check key properties before returning
     if !key_props.validate_dev_props(&dev_key_props) {
-        //delete key
-        delete_key(&key.session(), key_handle.key_id)?;
         //return error
         Err(HsmError::InvalidKeyProps)?;
     }
-    Ok((key_handle, dev_key_props))
+    Ok((key_guard.release(), dev_key_props))
 }
 
 /// Performs RSA AES key pair unwrapping using the specified RSA private key.
@@ -125,7 +120,7 @@ pub(crate) fn rsa_aes_unwrap_key_pair(
     let req = DdiRsaUnwrapCmdReq {
         hdr: build_ddi_req_hdr_sess(DdiOp::RsaUnwrap, &unwrapping_key.session()),
         data: DdiRsaUnwrapReq {
-            key_id: unwrapping_key.handle().key_id,
+            key_id: ddi::get_key_id(unwrapping_key.handle()),
             wrapped_blob_key_class: priv_key_props.kind().try_into()?,
             wrapped_blob_padding: DdiRsaCryptoPadding::Oaep,
             wrapped_blob_hash_algorithm: hash_algo.into(),
@@ -142,15 +137,12 @@ pub(crate) fn rsa_aes_unwrap_key_pair(
             .map_hsm_err(HsmError::DdiCmdFailure)
     })?;
 
-    let key_handle = HsmKeyHandle {
-        key_id: resp.data.key_id,
-        bulk_key_id: resp.data.bulk_key_id, //Unwrap pair should not have bulk key id, but include in guard just in case
-    };
+    let key_handle = resp.data.key_id;
 
     let session = unwrapping_key.session();
 
     //guard to delete key if error occurs before disarming
-    let key_id = HsmKeyHandleGuard::new(&session, key_handle);
+    let key_id = HsmKeyIdGuard::new(&session, to_key_handle(key_handle, None));
 
     let Some(pub_key) = resp.data.pub_key else {
         return Err(HsmError::InternalError);
@@ -231,7 +223,7 @@ fn rsa_mod_exp(
     let req = DdiRsaModExpCmdReq {
         hdr: build_ddi_req_hdr_sess(DdiOp::RsaModExp, &key.session()),
         data: DdiRsaModExpReq {
-            key_id: key.handle().key_id,
+            key_id: get_key_id(key.handle()),
             op_type: op,
             y: MborByteArray::from_slice(input).map_hsm_err(HsmError::InternalError)?,
         },

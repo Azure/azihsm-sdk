@@ -442,8 +442,8 @@ impl HsmKeyUnmaskOp for HsmAesXtsKeyUnmaskAlgo {
         let (handle1, handle2, props) = ddi::aes_xts_unmask_key(session, masked_key)?;
 
         //construct key guard first to ensure handles are released if validation fails
-        let key_handle1_guard = ddi::HsmKeyHandleGuard::new(session, handle1);
-        let key_handle2_guard = ddi::HsmKeyHandleGuard::new(session, handle2);
+        let key_id1 = ddi::HsmKeyIdGuard::new(session, handle1);
+        let key_id2 = ddi::HsmKeyIdGuard::new(session, handle2);
 
         // Validate before constructing the wrapper so the guards can clean up on failure.
         HsmAesXtsKey::validate_props(&props)?;
@@ -452,7 +452,7 @@ impl HsmKeyUnmaskOp for HsmAesXtsKeyUnmaskAlgo {
         let key = HsmAesXtsKey::new(
             session.clone(),
             props.clone(),
-            (key_handle1_guard.release(), key_handle2_guard.release()),
+            (key_id1.release(), key_id2.release()),
         );
 
         Ok(key)
@@ -648,7 +648,7 @@ impl HsmKeyUnmaskOp for HsmAesGcmKeyUnmaskAlgo {
         let (handle, props) = ddi::unmask_key(session, masked_key)?;
 
         // Create key guard first to ensure handle is released if validation fails
-        let key_id = ddi::HsmKeyHandleGuard::new(session, handle);
+        let key_id = ddi::HsmKeyIdGuard::new(session, handle);
 
         HsmAesGcmKey::validate_props(&props)?;
         let key = HsmAesGcmKey::new(session.clone(), props, key_id.release());

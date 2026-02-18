@@ -64,12 +64,9 @@ pub(crate) fn ecc_generate_key(
         dev.exec_op(&req, &mut None)
             .map_hsm_err(HsmError::DdiCmdFailure)
     })?;
-    let key_handle = HsmKeyHandle {
-        key_id: resp.data.private_key_id,
-        bulk_key_id: None,
-    };
+
     // Create a key guard to ensure the generated key is deleted if any errors occur before returning.
-    let key_handle_guard = HsmKeyHandleGuard::new(session, key_handle);
+    let key_id = HsmKeyIdGuard::new(session, to_key_handle(resp.data.private_key_id, None));
 
     let pub_key_der = resp.data.pub_key.der.as_slice();
     let masked_key = resp.data.masked_key.as_slice();
@@ -81,11 +78,7 @@ pub(crate) fn ecc_generate_key(
         Err(HsmError::InvalidKeyProps)?;
     }
 
-    Ok((
-        key_handle_guard.release(),
-        dev_priv_key_props,
-        dev_pub_key_props,
-    ))
+    Ok((key_id.release(), dev_priv_key_props, dev_pub_key_props))
 }
 
 /// Performs an ECC signature operation using a pre-computed hash.
@@ -134,7 +127,7 @@ pub(crate) fn ecc_sign(
     let req = DdiEccSignCmdReq {
         hdr: build_ddi_req_hdr_sess(DdiOp::EccSign, &key.session()),
         data: DdiEccSignReq {
-            key_id: key.handle().key_id,
+            key_id: ddi::get_key_id(key.handle()),
             digest: MborByteArray::from_slice(hash).map_hsm_err(HsmError::InternalError)?,
             digest_algo: hash_algo.into(),
         },
@@ -188,7 +181,7 @@ pub(crate) fn ecdh_derive(
     let req = DdiEcdhKeyExchangeCmdReq {
         hdr: build_ddi_req_hdr_sess(DdiOp::EcdhKeyExchange, &base_key.session()),
         data: DdiEcdhKeyExchangeReq {
-            priv_key_id: base_key.handle().key_id,
+            priv_key_id: ddi::get_key_id(base_key.handle()),
             pub_key_der: MborByteArray::from_slice(peer_pub_der)
                 .map_hsm_err(HsmError::InternalError)?,
             key_tag: None,
@@ -204,18 +197,14 @@ pub(crate) fn ecdh_derive(
     })?;
 
     let session = base_key.session();
-    let key_handle = HsmKeyHandle {
-        key_id: resp.data.key_id,
-        bulk_key_id: None,
-    };
-    let key_handle_guard = HsmKeyHandleGuard::new(&session, key_handle);
+    let key_id = HsmKeyIdGuard::new(&session, to_key_handle(resp.data.key_id, None));
     let dev_key_props = HsmMaskedKey::to_key_props(resp.data.masked_key.as_slice())?;
     // Validate that the device returned properties match the requested properties.
     if !derived_key_props.validate_dev_props(&dev_key_props) {
         Err(HsmError::InvalidKeyProps)?;
     }
 
-    Ok((key_handle_guard.release(), dev_key_props))
+    Ok((key_id.release(), dev_key_props))
 }
 
 impl From<HsmEccCurve> for DdiEccCurve {

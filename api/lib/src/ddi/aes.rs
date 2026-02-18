@@ -55,12 +55,12 @@ pub(crate) fn aes_generate_key(
         dev.exec_op(&req, &mut None)
             .map_hsm_err(HsmError::DdiCmdFailure)
     })?;
-    let key_handle = HsmKeyHandle {
-        key_id: resp.data.key_id,
-        bulk_key_id: resp.data.bulk_key_id,
-    };
+
     // Create a key guard to ensure the generated key is deleted if any errors occur before returning.
-    let key_id = ddi::HsmKeyHandleGuard::new(session, key_handle);
+    let key_id = ddi::HsmKeyIdGuard::new(
+        session,
+        to_key_handle(resp.data.key_id, resp.data.bulk_key_id),
+    );
 
     let masked_key = resp.data.masked_key.as_slice();
     let key_props = HsmMaskedKey::to_key_props(masked_key)?;
@@ -216,7 +216,7 @@ fn aes_cbc_encrypt_decrypt(
     let req = DdiAesEncryptDecryptCmdReq {
         hdr: build_ddi_req_hdr_sess(DdiOp::AesEncryptDecrypt, &key.session()),
         data: DdiAesEncryptDecryptReq {
-            key_id: key.handle().key_id,
+            key_id: ddi::get_key_id(key.handle()),
             op,
             msg: MborByteArray::from_slice(&input).map_hsm_err(HsmError::InternalError)?,
             iv: MborByteArray::from_slice(iv).map_hsm_err(HsmError::InternalError)?,
@@ -348,12 +348,12 @@ fn aes_xts_encrypt_decrypt(
 ) -> HsmResult<usize> {
     // Setup DDI params for AES XTS encrypt/decrypt
     let xts_params = DdiAesXtsParams {
-        key_id1: key.handle().0.bulk_key_id.ok_or(HsmError::InvalidKey)? as u32,
-        key_id2: key.handle().1.bulk_key_id.ok_or(HsmError::InvalidKey)? as u32,
+        key_id1: ddi::get_bulk_key_id(key.handle().0).ok_or(HsmError::InvalidKey)? as u32,
+        key_id2: ddi::get_bulk_key_id(key.handle().1).ok_or(HsmError::InvalidKey)? as u32,
         data_unit_len: dul,
         tweak: tweak.to_le_bytes(),
         session_id: key.sess_id(),
-        short_app_id: key.with_session(|s| s._app_id()),
+        short_app_id: 0,
     };
     let mut is_fips_approved = false;
 
@@ -405,11 +405,11 @@ pub(crate) fn aes_gcm_generate_key(
         dev.exec_op(&req, &mut None)
             .map_hsm_err(HsmError::DdiCmdFailure)
     })?;
-    let key_handle = HsmKeyHandle {
-        key_id: resp.data.key_id,
-        bulk_key_id: resp.data.bulk_key_id,
-    };
-    let key_handle_guard = ddi::HsmKeyHandleGuard::new(session, key_handle);
+
+    let key_id = ddi::HsmKeyIdGuard::new(
+        session,
+        to_key_handle(resp.data.key_id, resp.data.bulk_key_id),
+    );
     let masked_key = resp.data.masked_key.as_slice();
     let key_props = HsmMaskedKey::to_key_props(masked_key)?;
     // Validate that the device returned properties match the requested properties.
@@ -417,7 +417,7 @@ pub(crate) fn aes_gcm_generate_key(
         return Err(HsmError::InvalidKeyProps);
     }
 
-    Ok((key_handle_guard.release(), key_props))
+    Ok((key_id.release(), key_props))
 }
 
 /// Encrypts data using AES-GCM mode at the DDI layer.
@@ -452,7 +452,7 @@ pub(crate) fn aes_gcm_encrypt(
     ciphertext: &mut [u8],
 ) -> HsmResult<(usize, [u8; 16])> {
     let gcm_params = DdiAesGcmParams {
-        key_id: key.handle().bulk_key_id.ok_or(HsmError::InvalidKey)? as u32,
+        key_id: ddi::get_bulk_key_id(key.handle()).ok_or(HsmError::InvalidKey)? as u32,
         iv,
         aad,
         tag: None, // Tag is output for encryption
@@ -515,7 +515,7 @@ pub(crate) fn aes_gcm_decrypt(
     plaintext: &mut [u8],
 ) -> HsmResult<usize> {
     let gcm_params = DdiAesGcmParams {
-        key_id: key.handle().bulk_key_id.ok_or(HsmError::InvalidKey)? as u32,
+        key_id: ddi::get_bulk_key_id(key.handle()).ok_or(HsmError::InvalidKeyProps)? as u32,
         iv,
         aad,
         tag: Some(tag),

@@ -36,7 +36,7 @@ pub(crate) trait HsmKeyHandleDelOp: Copy {
 impl HsmKeyHandleDelOp for ddi::HsmKeyHandle {
     /// Deletes a single key handle from the HSM.
     fn delete_key(session: HsmSession, handle: Self) -> Result<(), HsmError> {
-        ddi::delete_key(&session, handle.key_id)
+        ddi::delete_key(&session, handle)
     }
 }
 
@@ -44,8 +44,8 @@ impl HsmKeyHandleDelOp for ddi::HsmKeyHandle {
 impl HsmKeyHandleDelOp for (ddi::HsmKeyHandle, ddi::HsmKeyHandle) {
     /// Deletes both key handles from the HSM.
     fn delete_key(session: HsmSession, handle: Self) -> Result<(), HsmError> {
-        let res1 = ddi::delete_key(&session, handle.0.key_id);
-        let res2 = ddi::delete_key(&session, handle.1.key_id);
+        let res1 = ddi::delete_key(&session, handle.0);
+        let res2 = ddi::delete_key(&session, handle.1);
 
         // Ok only if both deletions succeeded; otherwise return an error. If both fail,
         // the first error is returned.
