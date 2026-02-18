@@ -61,12 +61,6 @@ static void *azihsm_ossl_digest_newctx_algo(void *provctx, int algo_id, uint32_t
     return (void *)dctx;
 }
 
-static void *azihsm_ossl_newctx(ossl_unused void *provctx)
-{
-    /* This is called for SHA1, SHA256, etc. - we need the specific MD */
-    return NULL;
-}
-
 static void azihsm_ossl_digest_freectx(void *dctx)
 {
     AZIHSM_HSM_DIGEST_CTX *ctx = (AZIHSM_HSM_DIGEST_CTX *)dctx;

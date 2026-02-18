@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#include <fcntl.h>
 #include <openssl/core_dispatch.h>
 #include <openssl/core_names.h>
 #include <openssl/crypto.h>
@@ -11,6 +12,8 @@
 #include <openssl/proverr.h>
 #include <openssl/store.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include "azihsm_ossl_base.h"
 #include "azihsm_ossl_ec.h"
@@ -475,6 +478,7 @@ static AZIHSM_EC_KEY *azihsm_ossl_keymgmt_gen(
             {
                 azihsm_key_delete(private);
                 azihsm_key_delete(public);
+
                 OPENSSL_cleanse(masked_key_buffer, masked_key_buffer_size);
                 OPENSSL_free(masked_key_buffer);
                 OPENSSL_free(ec_key);
@@ -482,10 +486,28 @@ static AZIHSM_EC_KEY *azihsm_ossl_keymgmt_gen(
                 return NULL;
             }
 
-            /* Write masked key to file */
-            FILE *f = fopen(genctx->masked_key_file, "wb");
+            /* Write masked key to file with restricted permissions (owner-only) */
+            int fd = open(
+                genctx->masked_key_file,
+                O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW,
+                S_IRUSR | S_IWUSR
+            );
+            if (fd < 0)
+            {
+                azihsm_key_delete(private);
+                azihsm_key_delete(public);
+
+                OPENSSL_cleanse(masked_key_buffer, masked_key_buffer_size);
+                OPENSSL_free(masked_key_buffer);
+                OPENSSL_free(ec_key);
+                ERR_raise(ERR_LIB_PROV, ERR_R_OPERATION_FAIL);
+                return NULL;
+            }
+
+            FILE *f = fdopen(fd, "wb");
             if (f == NULL)
             {
+                close(fd);
                 azihsm_key_delete(private);
                 azihsm_key_delete(public);
                 OPENSSL_cleanse(masked_key_buffer, masked_key_buffer_size);
@@ -577,7 +599,7 @@ static int azihsm_ossl_keymgmt_gen_set_params(AIHSM_EC_GEN_CTX *genctx, const OS
         return OSSL_SUCCESS;
     }
 
-    /* Check for key_usage parameter specifically */
+    /* Parse key_usage: determines whether the key is for signing or key agreement */
     if ((p = OSSL_PARAM_locate_const(params, AZIHSM_OSSL_PKEY_PARAM_KEY_USAGE)) != NULL)
     {
         if (p->data_type != OSSL_PARAM_UTF8_STRING)
@@ -593,9 +615,9 @@ static int azihsm_ossl_keymgmt_gen_set_params(AIHSM_EC_GEN_CTX *genctx, const OS
         }
     }
 
+    /* Parse group name: maps the curve string (e.g. "P-384") to an internal curve ID */
     if ((p = OSSL_PARAM_locate_const(params, OSSL_PKEY_PARAM_GROUP_NAME)) != NULL)
     {
-
         int curve_id;
 
         if (p->data_type != OSSL_PARAM_UTF8_STRING)
@@ -613,9 +635,9 @@ static int azihsm_ossl_keymgmt_gen_set_params(AIHSM_EC_GEN_CTX *genctx, const OS
         genctx->ec_curve_id = (uint32_t)curve_id;
     }
 
+    /* Parse session flag: controls whether the key is bound to the current HSM session */
     if ((p = OSSL_PARAM_locate_const(params, AZIHSM_OSSL_PKEY_PARAM_SESSION)) != NULL)
     {
-
         int session_result;
 
         if (p->data_type != OSSL_PARAM_UTF8_STRING)
@@ -633,9 +655,9 @@ static int azihsm_ossl_keymgmt_gen_set_params(AIHSM_EC_GEN_CTX *genctx, const OS
         genctx->session_flag = (bool)session_result;
     }
 
+    /* Parse masked key output path: file where the HSM-encrypted key blob is stored */
     if ((p = OSSL_PARAM_locate_const(params, AZIHSM_OSSL_PKEY_PARAM_MASKED_KEY)) != NULL)
     {
-
         if (p->data_type != OSSL_PARAM_UTF8_STRING)
         {
             ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
