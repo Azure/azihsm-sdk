@@ -40,11 +40,7 @@ impl<'a> TryFrom<&'a AzihsmAlgo> for &'a AzihsmAlgoRsaAesWrapParams {
 
     #[allow(unsafe_code)]
     fn try_from(algo: &'a AzihsmAlgo) -> Result<Self, Self::Error> {
-        if algo.len != std::mem::size_of::<AzihsmAlgoRsaAesWrapParams>() as u32 {
-            Err(AzihsmStatus::InvalidArgument)?;
-        }
-
-        let params = cast_ptr::<AzihsmAlgoRsaAesWrapParams>(algo.params)?;
+        let params = validate_and_cast_algo_params::<AzihsmAlgoRsaAesWrapParams>(algo)?;
 
         // Validate OAEP parameters pointer
         validate_ptr(params.oaep_params)?;

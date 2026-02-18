@@ -13,6 +13,27 @@ pub(crate) fn validate_ptr<T>(ptr: *const T) -> Result<(), AzihsmStatus> {
     }
 }
 
+pub(crate) fn validate_algo_params<T>(algo: &AzihsmAlgo) -> Result<(), AzihsmStatus> {
+    if algo.len != std::mem::size_of::<T>() as u32 {
+        return Err(AzihsmStatus::InvalidArgument);
+    }
+    validate_ptr(algo.params)
+}
+
+pub(crate) fn validate_and_cast_algo_params<'a, T>(
+    algo: &'a AzihsmAlgo,
+) -> Result<&'a T, AzihsmStatus> {
+    validate_algo_params::<T>(algo)?;
+    cast_ptr::<T>(algo.params)
+}
+
+pub(crate) fn validate_and_cast_algo_params_mut<'a, T>(
+    algo: &'a mut AzihsmAlgo,
+) -> Result<&'a mut T, AzihsmStatus> {
+    validate_algo_params::<T>(algo)?;
+    deref_mut_ptr::<T>(algo.params as *mut T)
+}
+
 /// Safely dereference a mutable pointer
 ///
 /// # Safety
