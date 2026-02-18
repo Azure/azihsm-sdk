@@ -941,6 +941,9 @@ pub enum DdiKeyType {
 
     /// HMAC 512 Key with variable length
     VarHmac512 = 32,
+
+    /// Internal key type
+    RsaUnwrap = 0xffff,
 }
 
 /// DDI Session Kind Enumeration

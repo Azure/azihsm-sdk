@@ -303,6 +303,11 @@ impl HsmKeyPairUnwrapOp for HsmRsaKeyRsaAesKeyUnwrapAlgo {
             pub_key_props,
         )?;
 
+        let session = unwrapping_key.session();
+
+        // Construct key guard first to ensure handles are released if validation fails
+        let key_handle_guard = ddi::HsmKeyHandleGuard::new(&session, handle);
+
         // Extract the public key DER from the private key properties.
         let Some(pub_key_der) = pub_key_props.pub_key_der() else {
             return Err(HsmError::InternalError);
@@ -316,9 +321,9 @@ impl HsmKeyPairUnwrapOp for HsmRsaKeyRsaAesKeyUnwrapAlgo {
         // Construct the HSM RSA key objects.
         let pub_key = HsmRsaPublicKey::new(pub_key_props, crypto_key);
         let priv_key = HsmRsaPrivateKey::new(
-            unwrapping_key.session().clone(),
+            session.clone(),
             priv_key_props,
-            handle,
+            key_handle_guard.release(),
             pub_key.clone(),
         );
 
@@ -355,7 +360,7 @@ impl HsmKeyPairUnmaskOp for HsmRsaKeyUnmaskAlgo {
         let (handle, priv_props, pub_props) = ddi::unmask_key_pair(session, masked_key)?;
 
         //construct key guard first to ensure handles are released if validation fails
-        let key_id = ddi::HsmKeyIdGuard::new(session, handle);
+        let key_handle_guard = ddi::HsmKeyHandleGuard::new(session, handle);
 
         let Some(pub_key_der) = pub_props.pub_key_der() else {
             return Err(HsmError::InternalError);
@@ -369,7 +374,7 @@ impl HsmKeyPairUnmaskOp for HsmRsaKeyUnmaskAlgo {
         let priv_key = HsmRsaPrivateKey::new(
             session.clone(),
             priv_props.clone(),
-            key_id.release(),
+            key_handle_guard.release(),
             pub_key.clone(),
         );
 
