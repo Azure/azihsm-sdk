@@ -8,7 +8,7 @@
 #include "utils/auto_key.hpp"
 
 // Holds hard-coded data for a known-answer test (KAT).
-struct CbcKnownAnswerVector
+struct CbcKnownAnswerTestCase
 {
 	uint32_t bits;
 	const uint8_t *key;
@@ -22,11 +22,18 @@ struct CbcKnownAnswerVector
 	const char *test_name;
 };
 
-// Shared NIST-style AES-CBC known-answer vectors used across test suites.
-const std::vector<CbcKnownAnswerVector> &cbc_known_answer_vectors();
+// Shared NIST-style AES-CBC (no padding) known-answer test cases used across test suites.
+const std::vector<CbcKnownAnswerTestCase> &cbc_known_answer_test_cases();
 
-// Shared AES-CBC-PAD boundary vectors (15-byte and 16-byte plaintext cases).
-const std::vector<CbcKnownAnswerVector> &cbc_pad_boundary_known_answer_vectors();
+// Shared AES-CBC-PAD boundary test cases.
+//
+// These are intentionally separate from no-padding CBC KAT cases because they validate
+// PKCS#7 boundary semantics in AES_CBC_PAD specifically:
+// - 15-byte plaintext -> pad length 1
+// - 16-byte plaintext -> full padding block (pad length 16)
+//
+// Broader plaintext-length behavior is covered by non-KAT padding sweeps in algorithm tests.
+const std::vector<CbcKnownAnswerTestCase> &cbc_pad_boundary_known_answer_test_cases();
 
 // Imports fixed local AES key bytes as an HSM key for deterministic validation.
 //
