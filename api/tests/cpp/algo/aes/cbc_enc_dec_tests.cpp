@@ -1455,30 +1455,76 @@ TEST_F(azihsm_aes_cbc, streaming_update_output_buffer_sizing_no_padding)
         auto err = crypt_init_call(CryptOperation::Encrypt, &crypt_algo, key.get(), &ctx);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
-        uint8_t data[AES_BLOCK_SIZE] = { 0x22 };
-        azihsm_buffer input{ data, sizeof(data) };
+        std::vector<uint8_t> block_a = make_incrementing_bytes(AES_BLOCK_SIZE);
+        std::vector<uint8_t> block_b(AES_BLOCK_SIZE, 0xA7);
+        azihsm_buffer input_a{ block_a.data(), static_cast<uint32_t>(block_a.size()) };
+        azihsm_buffer input_b{ block_b.data(), static_cast<uint32_t>(block_b.size()) };
         azihsm_buffer output{ nullptr, 0 };
 
-        err = crypt_update_call(CryptOperation::Encrypt, ctx, &input, &output);
+        // The output length is 0 because no-padding CBC keeps one trailing
+        // full block until more input or finish() so update() can stay
+        // consistent at block boundaries.
+        err = crypt_update_call(CryptOperation::Encrypt, ctx, &input_a, &output);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(output.len, 0u);
+
+        // Feeding a different second block should not change the required output size for the first block.
+        err = crypt_update_call(CryptOperation::Encrypt, ctx, &input_b, &output);
         ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
         ASSERT_EQ(output.len, AES_BLOCK_SIZE);
 
         std::vector<uint8_t> too_small(AES_BLOCK_SIZE - 1);
         azihsm_buffer short_output{ too_small.data(), static_cast<uint32_t>(too_small.size()) };
-        err = crypt_update_call(CryptOperation::Encrypt, ctx, &input, &short_output);
+        err = crypt_update_call(CryptOperation::Encrypt, ctx, &input_b, &short_output);
         ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
         ASSERT_EQ(short_output.len, AES_BLOCK_SIZE);
 
         std::vector<uint8_t> exact(AES_BLOCK_SIZE);
         azihsm_buffer exact_output{ exact.data(), static_cast<uint32_t>(exact.size()) };
-        err = crypt_update_call(CryptOperation::Encrypt, ctx, &input, &exact_output);
+        err = crypt_update_call(CryptOperation::Encrypt, ctx, &input_b, &exact_output);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_EQ(exact_output.len, AES_BLOCK_SIZE);
 
         azihsm_buffer finish_output{ nullptr, 0 };
+        // The final deferred block is emitted at finish().
+        err = crypt_finish_call(CryptOperation::Encrypt, ctx, &finish_output);
+        ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+        ASSERT_EQ(finish_output.len, AES_BLOCK_SIZE);
+
+        std::vector<uint8_t> finish_exact(AES_BLOCK_SIZE);
+        finish_output.ptr = finish_exact.data();
         err = crypt_finish_call(CryptOperation::Encrypt, ctx, &finish_output);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_EQ(finish_output.len, 0u);
+        ASSERT_EQ(finish_output.len, AES_BLOCK_SIZE);
+
+        // Streamed output should match single-shot ciphertext for A + B.
+        std::vector<uint8_t> plaintext;
+        plaintext.reserve(2 * AES_BLOCK_SIZE);
+        plaintext.insert(plaintext.end(), block_a.begin(), block_a.end());
+        plaintext.insert(plaintext.end(), block_b.begin(), block_b.end());
+
+        init_cbc_algo(crypt_algo, cbc_params, AZIHSM_ALGO_ID_AES_CBC, 0x7B);
+        auto single_shot_ciphertext = single_shot_crypt(
+            key.get(),
+            &crypt_algo,
+            plaintext.data(),
+            plaintext.size(),
+            CryptOperation::Encrypt
+        );
+        ASSERT_EQ(single_shot_ciphertext.size(), 2 * AES_BLOCK_SIZE);
+
+        ASSERT_EQ(
+            std::memcmp(exact.data(), single_shot_ciphertext.data(), AES_BLOCK_SIZE),
+            0
+        );
+        ASSERT_EQ(
+            std::memcmp(
+                finish_exact.data(),
+                single_shot_ciphertext.data() + AES_BLOCK_SIZE,
+                AES_BLOCK_SIZE
+            ),
+            0
+        );
     });
 }
 
