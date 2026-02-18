@@ -34,7 +34,7 @@ static void keyexch_free_peer(AZIHSM_KEYEXCH_CTX *ctx)
         return;
     }
 
-    OPENSSL_free(ctx->peer_key->pub_key_data);
+    OPENSSL_free(ctx->peer_key->imported_pub_key);
     OPENSSL_free(ctx->peer_key);
     ctx->peer_key = NULL;
 }
@@ -253,12 +253,12 @@ static void *azihsm_ossl_keyexch_dupctx(void *kectx)
             return NULL;
         }
         memcpy(dup->peer_key, ctx->peer_key, sizeof(AZIHSM_EC_KEY));
-        dup->peer_key->pub_key_data = NULL;
+        dup->peer_key->imported_pub_key = NULL;
 
-        if (ctx->peer_key->pub_key_data != NULL && ctx->peer_key->pub_key_data_len > 0)
+        if (ctx->peer_key->imported_pub_key != NULL && ctx->peer_key->imported_pub_key_len > 0)
         {
-            dup->peer_key->pub_key_data = OPENSSL_malloc(ctx->peer_key->pub_key_data_len);
-            if (dup->peer_key->pub_key_data == NULL)
+            dup->peer_key->imported_pub_key = OPENSSL_malloc(ctx->peer_key->imported_pub_key_len);
+            if (dup->peer_key->imported_pub_key == NULL)
             {
                 OPENSSL_free(dup->peer_key);
                 OPENSSL_free(dup);
@@ -267,9 +267,9 @@ static void *azihsm_ossl_keyexch_dupctx(void *kectx)
                 return NULL;
             }
             memcpy(
-                dup->peer_key->pub_key_data,
-                ctx->peer_key->pub_key_data,
-                ctx->peer_key->pub_key_data_len
+                dup->peer_key->imported_pub_key,
+                ctx->peer_key->imported_pub_key,
+                ctx->peer_key->imported_pub_key_len
             );
         }
     }
@@ -366,18 +366,18 @@ static int azihsm_ossl_keyexch_set_peer(void *kectx, void *provkey)
     }
 
     memcpy(copy, key, sizeof(AZIHSM_EC_KEY));
-    copy->pub_key_data = NULL;
+    copy->imported_pub_key = NULL;
 
-    if (key->pub_key_data != NULL && key->pub_key_data_len > 0)
+    if (key->imported_pub_key != NULL && key->imported_pub_key_len > 0)
     {
-        copy->pub_key_data = OPENSSL_malloc(key->pub_key_data_len);
-        if (copy->pub_key_data == NULL)
+        copy->imported_pub_key = OPENSSL_malloc(key->imported_pub_key_len);
+        if (copy->imported_pub_key == NULL)
         {
             OPENSSL_free(copy);
             ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
             return OSSL_FAILURE;
         }
-        memcpy(copy->pub_key_data, key->pub_key_data, key->pub_key_data_len);
+        memcpy(copy->imported_pub_key, key->imported_pub_key, key->imported_pub_key_len);
     }
 
     keyexch_free_peer(ctx);
@@ -446,7 +446,7 @@ static int azihsm_ossl_keyexch_derive(
         return OSSL_FAILURE;
     }
 
-    if (ctx->peer_key->pub_key_data == NULL || ctx->peer_key->pub_key_data_len == 0)
+    if (ctx->peer_key->imported_pub_key == NULL || ctx->peer_key->imported_pub_key_len == 0)
     {
         ERR_raise(ERR_LIB_PROV, PROV_R_MISSING_KEY);
         return OSSL_FAILURE;
@@ -467,8 +467,8 @@ static int azihsm_ossl_keyexch_derive(
 
     if (!ec_point_to_der_spki(
             nid,
-            ctx->peer_key->pub_key_data,
-            ctx->peer_key->pub_key_data_len,
+            ctx->peer_key->imported_pub_key,
+            ctx->peer_key->imported_pub_key_len,
             &der_spki,
             &der_spki_len
         ))

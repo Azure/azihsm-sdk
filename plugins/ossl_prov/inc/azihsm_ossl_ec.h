@@ -57,10 +57,11 @@ typedef struct
     AIHSM_EC_GEN_CTX genctx;
     bool has_public, has_private;
 
-    unsigned char *pub_key_data; /* Imported peer public key */
-    size_t pub_key_data_len;
-    char group_name[64];
-    bool is_imported;
+    /* Raw EC point (uncompressed: 0x04 || x || y) for imported (non-HSM)
+     * keys.  Used when the default provider exports a certificate's public
+     * key into our keymgmt for comparison via EVP_PKEY_eq(). */
+    unsigned char *imported_pub_key;
+    size_t imported_pub_key_len;
 } AZIHSM_EC_KEY;
 
 static inline int azihsm_ossl_ec_curve_id_to_nid(int curve_id)

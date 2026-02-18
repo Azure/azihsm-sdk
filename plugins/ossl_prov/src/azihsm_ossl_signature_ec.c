@@ -557,6 +557,26 @@ static int azihsm_ossl_ecdsa_digest_sign_init(
 
     ctx->operation = 1; /* Sign */
 
+    /* If no digest name was provided, pick a curve-matched default */
+    if (mdname == NULL || mdname[0] == '\0')
+    {
+        switch (ctx->key->genctx.ec_curve_id)
+        {
+        case AZIHSM_ECC_CURVE_P256:
+            mdname = "SHA256";
+            break;
+        case AZIHSM_ECC_CURVE_P384:
+            mdname = "SHA384";
+            break;
+        case AZIHSM_ECC_CURVE_P521:
+            mdname = "SHA512";
+            break;
+        default:
+            ERR_raise(ERR_LIB_PROV, ERR_R_OPERATION_FAIL);
+            return OSSL_FAILURE;
+        }
+    }
+
     /* Get hash algorithm by name */
     ctx->md = EVP_get_digestbyname(mdname);
     if (ctx->md == NULL)
@@ -690,7 +710,7 @@ static int azihsm_ossl_ecdsa_digest_sign_final(
         sig_buf.ptr = raw_buf;
         sig_buf.len = raw_size;
 
-        status = azihsm_crypt_sign_final(ctx->sign_ctx, &sig_buf);
+        status = azihsm_crypt_sign_finish(ctx->sign_ctx, &sig_buf);
         ctx->sign_ctx = 0; /* Context consumed */
 
         if (status != AZIHSM_STATUS_SUCCESS)
@@ -737,6 +757,26 @@ static int azihsm_ossl_ecdsa_digest_verify_init(
     /* Extract key from provider key object */
     ctx->key = (AZIHSM_EC_KEY *)provkey;
     ctx->operation = 0; /* Verify */
+
+    /* If no digest name was provided, pick a curve-matched default */
+    if (mdname == NULL || mdname[0] == '\0')
+    {
+        switch (ctx->key->genctx.ec_curve_id)
+        {
+        case AZIHSM_ECC_CURVE_P256:
+            mdname = "SHA256";
+            break;
+        case AZIHSM_ECC_CURVE_P384:
+            mdname = "SHA384";
+            break;
+        case AZIHSM_ECC_CURVE_P521:
+            mdname = "SHA512";
+            break;
+        default:
+            ERR_raise(ERR_LIB_PROV, ERR_R_OPERATION_FAIL);
+            return OSSL_FAILURE;
+        }
+    }
 
     /* Get hash algorithm by name */
     ctx->md = EVP_get_digestbyname(mdname);
