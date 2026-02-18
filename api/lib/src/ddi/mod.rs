@@ -12,6 +12,10 @@ mod masked_key;
 mod partition;
 mod rsa;
 mod session;
+<<<<<<< HEAD
+=======
+mod tpm;
+>>>>>>> main
 
 pub(crate) use aes::*;
 pub(crate) use aes_xts_key::*;
@@ -27,6 +31,10 @@ pub(crate) use masked_key::*;
 pub(crate) use partition::*;
 pub(crate) use rsa::*;
 pub(crate) use session::*;
+<<<<<<< HEAD
+=======
+pub(crate) use tpm::*;
+>>>>>>> main
 
 use super::*;
 

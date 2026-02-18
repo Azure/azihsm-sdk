@@ -52,11 +52,16 @@ corrosion_experimental_cbindgen(
 
 set(SOURCE 
     handle/part_list_handle.cpp
+    utils/key_import.cpp
+    utils/rsa_keygen.cpp
+    utils/shared_secret.cpp
+    utils/part_init_config.cpp
     partition_tests.cpp 
     session_tests.cpp 
     handle_mgmt_tests.cpp
     multi_process_tests.cpp
     algo/aes/cbc_enc_dec_tests.cpp
+    algo/aes/gcm_enc_dec_tests.cpp
     algo/aes/xts_enc_dec_tests.cpp
     algo/aes/keygen_tests.cpp
     algo/ecc/keygen_tests.cpp
@@ -73,13 +78,27 @@ set(SOURCE
 )
 add_executable(azihsm_api_cpp_tests ${SOURCE})
 target_include_directories(azihsm_api_cpp_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(
-    azihsm_api_cpp_tests
-    PUBLIC
-        azihsm_api_native
-        GTest::gtest_main
-        scope_guard::scope_guard 
-)
+
+if(UNIX)
+    find_package(OpenSSL REQUIRED)
+    target_link_libraries(
+        azihsm_api_cpp_tests
+        PUBLIC
+            azihsm_api_native
+            GTest::gtest_main
+            scope_guard::scope_guard
+            OpenSSL::Crypto
+    )
+else()
+    target_link_libraries(
+        azihsm_api_cpp_tests
+        PUBLIC
+            azihsm_api_native
+            GTest::gtest_main
+            scope_guard::scope_guard
+            bcrypt
+    )
+endif()
 
 include(GoogleTest)
 gtest_discover_tests(azihsm_api_cpp_tests)

@@ -5,6 +5,7 @@
 
 #include <azihsm.h>
 #include <openssl/core_names.h>
+#include <openssl/crypto.h>
 #include <openssl/params.h>
 
 #include "azihsm_ossl_helpers.h"
@@ -40,13 +41,13 @@ typedef struct
 /* Default file paths for partition keys */
 #define AZIHSM_DEFAULT_BMK_PATH "/var/lib/azihsm/bmk.bin"
 #define AZIHSM_DEFAULT_MUK_PATH "/var/lib/azihsm/muk.bin"
-#define AZIHSM_DEFAULT_MOBK_PATH "/var/lib/azihsm/mobk.bin"
+#define AZIHSM_DEFAULT_OBK_PATH "/var/lib/azihsm/obk.bin"
 
 typedef struct
 {
     char bmk_path[4096];
     char muk_path[4096];
-    char mobk_path[4096];
+    char obk_path[4096];
 } AZIHSM_CONFIG;
 
 typedef struct
@@ -56,6 +57,12 @@ typedef struct
     azihsm_handle device;
     azihsm_handle session;
     AZIHSM_CONFIG config;
+    struct
+    {
+        CRYPTO_RWLOCK *lock;
+        azihsm_handle pub;
+        azihsm_handle priv;
+    } unwrapping_key; /* Cached UK handles (thread-safe) */
 } AZIHSM_OSSL_PROV_CTX;
 
 static const OSSL_PARAM azihsm_ossl_param_types[] = {

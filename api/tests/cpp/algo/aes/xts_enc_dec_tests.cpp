@@ -11,6 +11,7 @@
 #include "handle/part_handle.hpp"
 #include "handle/part_list_handle.hpp"
 #include "handle/session_handle.hpp"
+#include "utils/auto_ctx.hpp"
 #include <functional>
 
 class azihsm_aes_xts : public ::testing::Test
@@ -71,20 +72,20 @@ class azihsm_aes_xts : public ::testing::Test
         bool encrypt
     )
     {
-        azihsm_handle ctx = 0;
+        auto_ctx ctx;
         azihsm_status err;
 
         // Initialize context
         if (encrypt)
         {
-            err = azihsm_crypt_encrypt_init(algo, key_handle, &ctx);
+            err = azihsm_crypt_encrypt_init(algo, key_handle, ctx.get_ptr());
         }
         else
         {
-            err = azihsm_crypt_decrypt_init(algo, key_handle, &ctx);
+            err = azihsm_crypt_decrypt_init(algo, key_handle, ctx.get_ptr());
         }
         EXPECT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        EXPECT_NE(ctx, 0);
+        EXPECT_NE(ctx.get(), 0);
 
         std::vector<uint8_t> output;
         size_t offset = 0;
@@ -140,15 +141,15 @@ class azihsm_aes_xts : public ::testing::Test
             offset += current_chunk;
         }
 
-        // Finalize
+        // Finish
         azihsm_buffer final_out{ nullptr, 0 };
         if (encrypt)
         {
-            err = azihsm_crypt_encrypt_final(ctx, &final_out);
+            err = azihsm_crypt_encrypt_finish(ctx, &final_out);
         }
         else
         {
-            err = azihsm_crypt_decrypt_final(ctx, &final_out);
+            err = azihsm_crypt_decrypt_finish(ctx, &final_out);
         }
 
         if (err == AZIHSM_STATUS_BUFFER_TOO_SMALL)
@@ -160,11 +161,11 @@ class azihsm_aes_xts : public ::testing::Test
 
             if (encrypt)
             {
-                err = azihsm_crypt_encrypt_final(ctx, &final_out);
+                err = azihsm_crypt_encrypt_finish(ctx, &final_out);
             }
             else
             {
-                err = azihsm_crypt_decrypt_final(ctx, &final_out);
+                err = azihsm_crypt_decrypt_finish(ctx, &final_out);
             }
             EXPECT_EQ(err, AZIHSM_STATUS_SUCCESS);
             // Adjust output size to actual bytes written
@@ -667,8 +668,8 @@ TEST_F(azihsm_aes_xts, streaming_non_dul_aligned_fails)
         crypt_algo.params = &xts_params;
         crypt_algo.len = sizeof(xts_params);
 
-        azihsm_handle ctx = 0;
-        azihsm_status err = azihsm_crypt_encrypt_init(&crypt_algo, key.get(), &ctx);
+        auto_ctx ctx;
+        azihsm_status err = azihsm_crypt_encrypt_init(&crypt_algo, key.get(), ctx.get_ptr());
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         // Try to update with non-DUL-aligned data

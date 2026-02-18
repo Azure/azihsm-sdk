@@ -6,6 +6,10 @@
 //! This module provides core type definitions including key classes, key kinds,
 //! and elliptic curve identifiers that are shared between the library and native layers.
 
+<<<<<<< HEAD
+=======
+use open_enum::open_enum;
+>>>>>>> main
 use zerocopy::*;
 
 /// Cryptographic key class.
@@ -56,6 +60,12 @@ pub enum HsmKeyKind {
 
     /// HMAC SHA 512
     HmacSha512 = 9,
+<<<<<<< HEAD
+=======
+
+    /// AES GCM symmetric key kind.
+    AesGcm = 10,
+>>>>>>> main
 }
 
 /// Elliptic Curve Cryptography (ECC) curve identifier.
@@ -109,3 +119,32 @@ pub enum HsmPartType {
     /// Physical hardware partition.
     Physical = 2,
 }
+<<<<<<< HEAD
+=======
+
+/// Owner backup key source.
+///
+/// Specifies the source of the owner backup key (OBK) during partition initialization.
+#[repr(u32)]
+#[open_enum]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, IntoBytes, Immutable)]
+pub enum HsmOwnerBackupKeySource {
+    /// Caller provided backup key.
+    Caller = 1,
+
+    /// TPM-sealed backup key (retrieved from device and unsealed).
+    Tpm = 2,
+}
+
+/// HSM partition owner trust anchor (aka POTA) endorsement source.
+#[repr(u32)]
+#[open_enum]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, IntoBytes, Immutable)]
+pub enum HsmPotaEndorsementSource {
+    /// Caller provided endorsement.
+    Caller = 1,
+
+    /// TPM-generated endorsement.
+    Tpm = 2,
+}
+>>>>>>> main

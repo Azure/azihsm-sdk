@@ -26,6 +26,8 @@
 #include "handle/part_handle.hpp"
 #include "handle/part_list_handle.hpp"
 #include "utils/auto_key.hpp"
+#include "utils/part_init_config.hpp"
+#include "utils/utils.hpp"
 
 namespace
 {
@@ -129,11 +131,7 @@ static std::vector<uint8_t> get_key_prop_bytes(azihsm_handle key, azihsm_key_pro
 static void cleanup_temp_files()
 {
     std::error_code ec;
-    auto tmp_dir = std::filesystem::temp_directory_path(ec);
-    if (ec)
-    {
-        return;
-    }
+    auto tmp_dir = get_test_tmp_dir();
 
     for (const auto &entry : std::filesystem::directory_iterator(tmp_dir, ec))
     {
@@ -164,19 +162,35 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_parent)
 {
     cleanup_temp_files();
     part_list_.for_each_part([](std::vector<azihsm_char> &path) {
-        auto partition = PartitionHandle(path);
+        azihsm_str path_str = { path.data(), static_cast<uint32_t>(path.size()) };
+        azihsm_handle part_handle = 0;
+        auto err = azihsm_part_open(&path_str, &part_handle);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        auto part_guard = scope_guard::make_scope_exit([&] {
+            ASSERT_EQ(azihsm_part_close(part_handle), AZIHSM_STATUS_SUCCESS);
+        });
 
         azihsm_api_rev api_rev{ 1, 0 };
         azihsm_credentials creds{};
         std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
         std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
 
-        auto bmk = get_part_prop_bytes(partition.get(), AZIHSM_PART_PROP_ID_BACKUP_MASKING_KEY);
-        auto mobk =
-            get_part_prop_bytes(partition.get(), AZIHSM_PART_PROP_ID_MASKED_OWNER_BACKUP_KEY);
+        PartInitConfig init_config{};
+        make_part_init_config(part_handle, init_config);
+        err = azihsm_part_init(
+            part_handle,
+            &creds,
+            nullptr,
+            nullptr,
+            &init_config.backup_config,
+            &init_config.pota_endorsement
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
-        std::array<uint8_t, 48> seed{};
+        auto bmk = get_part_prop_bytes(part_handle, AZIHSM_PART_PROP_ID_BACKUP_MASKING_KEY);
+
         std::random_device rd;
+        std::array<uint8_t, 48> seed{};
         for (auto &b : seed)
         {
             b = static_cast<uint8_t>(rd());
@@ -184,7 +198,7 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_parent)
         azihsm_buffer seed_buf = { seed.data(), static_cast<uint32_t>(seed.size()) };
 
         azihsm_handle sess_handle = 0;
-        auto err = azihsm_sess_open(partition.get(), &api_rev, &creds, &seed_buf, &sess_handle);
+        err = azihsm_sess_open(part_handle, &api_rev, &creds, &seed_buf, &sess_handle);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         auto sess_guard = scope_guard::make_scope_exit([&sess_handle] {
@@ -224,7 +238,7 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_parent)
         );
 
         auto tmp_path =
-            std::filesystem::temp_directory_path() /
+            get_test_tmp_dir() /
             ("azihsm_multi_proc_" +
              std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".bin");
 
@@ -232,7 +246,11 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_parent)
         ASSERT_TRUE(out.is_open());
         write_blob(out, path_bytes);
         write_blob(out, bmk);
-        write_blob(out, mobk);
+        auto *obk_ptr = static_cast<uint8_t *>(init_config.backup_config.owner_backup_key->ptr);
+        write_blob(
+            out,
+            std::vector<uint8_t>(obk_ptr, obk_ptr + init_config.backup_config.owner_backup_key->len)
+        );
         write_blob(out, std::vector<uint8_t>(seed.begin(), seed.end()));
         write_blob(out, message);
         write_blob(out, signature);
@@ -269,7 +287,7 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_child)
 
     auto path_bytes = read_blob(in);
     auto bmk = read_blob(in);
-    auto mobk = read_blob(in);
+    auto obk = read_blob(in);
     auto seed = read_blob(in);
     auto message = read_blob(in);
     auto signature = read_blob(in);
@@ -294,10 +312,27 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_child)
     std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
     azihsm_api_rev api_rev{ 1, 0 };
 
-    azihsm_buffer bmk_buf = { bmk.data(), static_cast<uint32_t>(bmk.size()) };
-    azihsm_buffer mobk_buf = { mobk.data(), static_cast<uint32_t>(mobk.size()) };
+    // Reset partition before initialization to clear any previous state
+    auto reset_err = azihsm_part_reset(part_handle);
+    ASSERT_EQ(reset_err, AZIHSM_STATUS_SUCCESS);
 
-    auto init_err = azihsm_part_init(part_handle, &creds, &bmk_buf, nullptr, &mobk_buf);
+    azihsm_buffer bmk_buf = { bmk.data(), static_cast<uint32_t>(bmk.size()) };
+
+    PartInitConfig init_config{};
+    make_part_init_config(part_handle, init_config);
+    // Override OBK with the deserialized key from parent process
+    azihsm_buffer obk_buf = { obk.data(), static_cast<uint32_t>(obk.size()) };
+    init_config.backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER;
+    init_config.backup_config.owner_backup_key = &obk_buf;
+
+    auto init_err = azihsm_part_init(
+        part_handle,
+        &creds,
+        &bmk_buf,
+        nullptr,
+        &init_config.backup_config,
+        &init_config.pota_endorsement
+    );
     ASSERT_EQ(init_err, AZIHSM_STATUS_SUCCESS);
 
     azihsm_buffer seed_buf = { seed.data(), static_cast<uint32_t>(seed.size()) };
@@ -311,11 +346,7 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_child)
     });
 
     auto bmk_actual = get_part_prop_bytes(part_handle, AZIHSM_PART_PROP_ID_BACKUP_MASKING_KEY);
-    auto mobk_actual =
-        get_part_prop_bytes(part_handle, AZIHSM_PART_PROP_ID_MASKED_OWNER_BACKUP_KEY);
-
     ASSERT_EQ(bmk_actual, bmk);
-    ASSERT_EQ(mobk_actual, mobk);
 
     azihsm_buffer masked_buf = { masked_key.data(), static_cast<uint32_t>(masked_key.size()) };
     auto_key priv_key;

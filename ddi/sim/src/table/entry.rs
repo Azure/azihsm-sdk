@@ -507,43 +507,61 @@ impl Kind {
 }
 
 /// Metadata flags for an Entry.
-#[bitfield(u16)]
+/// Bits 0-16 MUST match hardware HsmMaskedKeyAttributes bit positions exactly.
+/// Bits 17+ are simulator-internal flags not serialized to hardware.
+#[bitfield(u64)]
 pub(crate) struct EntryFlags {
-    // Public flags that can be set by the caller.
-    /// Tells if the Entry is generated or not
-    pub(crate) generated: bool,
+    #[bits(1)]
+    _reserved_bit_0: u64,
 
-    /// Tells if the Entry was imported or not
-    pub(crate) imported: bool,
+    /// Flag indicating if the key is a session key.
+    pub(crate) session: bool,
 
-    /// Below 4 bits are mutually exclusive
-    /// Below 4 bits are set by user
-    /// Tells if the Entry can sign and verify attestation report
-    pub(crate) allow_sign_verify: bool,
+    #[bits(3)]
+    _reserved_bits_2_4: u64,
 
-    /// Tells if the Entry can encrypt and decrypt
-    pub(crate) allow_encrypt_decrypt: bool,
+    /// Flag indicating the key is locally generated or imported. The flag is set by the device
+    /// and cannot be changed via the API.
+    pub(crate) local: bool,
 
-    /// Tells if the Entry can unwrap key.
-    /// There is no use case for wrapping key for now, so flag for wrapping key is omnitted.
-    pub(crate) allow_unwrap: bool,
+    #[bits(4)]
+    _reserved_bits_6_9: u64,
 
-    /// Tells if the Entry can be used to derive other keys
-    pub(crate) allow_derive: bool,
+    /// Flag indicating if the key can be used for encrypt operations. This flag can be
+    /// specified only for Public Keys and Secret Keys.
+    pub(crate) encrypt: bool,
 
-    /// Tells if the Entry is available for session only or not
-    pub(crate) session_only: bool,
+    /// Flag indicating if the key can be used for decrypt operations. This flag can be
+    /// specified only for Private and Secret Keys.
+    pub(crate) decrypt: bool,
 
-    // Private flags internal to Entry.
-    /// Tells if the Entry was disabled or not
-    disabled: bool,
+    /// Flag indicating if the key can be used for sign operations. This flag can be
+    /// specified only for Private Keys and Secret Keys.
+    pub(crate) sign: bool,
 
-    /// Internal use
-    /// Tells if this Entry is a key for signing/verifying attestation report
-    pub(crate) is_attestation_key: bool,
+    /// Flag indicating if the key can be used for verify operations. This flag can be
+    /// specified only for Public and Secret Keys.
+    pub(crate) verify: bool,
 
-    #[bits(7)]
-    reserved: u16,
+    /// Flag indicating if the key can be used for wrap operations. This flag can be
+    /// specified only for Public Keys and Secret Keys.
+    pub(crate) wrap: bool,
+
+    /// Flag indicating if the key can be used for unwrap operations. This flag can be
+    /// specified only for Private and Secret Keys.
+    pub(crate) unwrap: bool,
+
+    /// Flag indicating if the key can be used for derive operations. This flag can be
+    /// specified only for Secret Keys.
+    pub(crate) derive: bool,
+
+    #[bits(45)]
+    _reserved_bits_17_61: u64,
+
+    /// Tells if the Entry was disabled or not (internal only)
+    disabled: bool, // bit 62
+    /// Tells if this Entry is a key for signing/verifying attestation report (internal only)
+    pub(crate) is_attestation_key: bool, // bit 63
 }
 
 /// Convert EntryFlags to KeyAttestationReport's flags bitfield representation
@@ -551,33 +569,37 @@ impl From<EntryFlags> for KeyFlags {
     fn from(entry_flags: EntryFlags) -> Self {
         let mut flags = KeyFlags::new();
 
-        if entry_flags.imported() {
-            flags.set_is_imported(true);
-        }
+        flags.set_is_generated(entry_flags.local());
+        flags.set_is_imported(!entry_flags.local());
 
-        if entry_flags.session_only() {
+        if entry_flags.session() {
             flags.set_is_session_key(true);
         }
 
-        if entry_flags.generated() {
-            flags.set_is_generated(true);
+        if entry_flags.encrypt() {
+            flags.set_can_encrypt(true);
         }
 
-        if entry_flags.allow_encrypt_decrypt() {
-            flags.set_can_encrypt(true);
+        if entry_flags.decrypt() {
             flags.set_can_decrypt(true);
         }
 
-        if entry_flags.allow_sign_verify() {
+        if entry_flags.sign() {
             flags.set_can_sign(true);
+        }
+        if entry_flags.verify() {
             flags.set_can_verify(true);
         }
 
-        if entry_flags.allow_unwrap() {
+        if entry_flags.wrap() {
+            flags.set_can_wrap(true);
+        }
+
+        if entry_flags.unwrap() {
             flags.set_can_unwrap(true);
         }
 
-        if entry_flags.allow_derive() {
+        if entry_flags.derive() {
             flags.set_can_derive(true);
         }
 
@@ -710,13 +732,13 @@ impl Entry {
         self.inner.read().session_only()
     }
 
-    /// Returns the generated flag for the Entry.
+    /// Returns the locally generated flag for the Entry.
     ///
     /// # Returns
     /// * Generated flag for the Entry.
     #[allow(unused)]
-    pub(crate) fn generated(&self) -> bool {
-        self.inner.read().generated()
+    pub(crate) fn local(&self) -> bool {
+        self.inner.read().is_local()
     }
 
     /// Returns the imported flag for the Entry.
@@ -808,7 +830,7 @@ impl EntryInner {
     }
 
     fn physical_sess_id(&self) -> Option<u16> {
-        if self.flags.session_only() {
+        if self.flags.session() {
             Some(self.sess_id_or_key_tag)
         } else {
             None
@@ -816,7 +838,7 @@ impl EntryInner {
     }
 
     fn key_tag(&self) -> Option<u16> {
-        if !self.flags.session_only() && self.sess_id_or_key_tag != 0 {
+        if !self.flags.session() && self.sess_id_or_key_tag != 0 {
             Some(self.sess_id_or_key_tag)
         } else {
             None
@@ -841,33 +863,30 @@ impl EntryInner {
     }
 
     fn session_only(&self) -> bool {
-        self.flags.session_only()
+        self.flags.session()
     }
-
-    #[allow(unused)]
-    fn generated(&self) -> bool {
-        self.flags.generated()
+    fn is_local(&self) -> bool {
+        self.flags.local()
     }
-
     #[allow(unused)]
     fn imported(&self) -> bool {
-        self.flags.imported()
+        !self.flags.local()
     }
 
     fn allow_sign_verify(&self) -> bool {
-        self.flags.allow_sign_verify()
+        self.flags.sign() && self.flags.verify()
     }
 
     fn allow_encrypt_decrypt(&self) -> bool {
-        self.flags.allow_encrypt_decrypt()
+        self.flags.encrypt() && self.flags.decrypt()
     }
 
     fn allow_unwrap(&self) -> bool {
-        self.flags.allow_unwrap()
+        self.flags.unwrap()
     }
 
     fn allow_derive(&self) -> bool {
-        self.flags.allow_derive()
+        self.flags.derive()
     }
 
     fn is_attestation_key(&self) -> bool {
@@ -934,7 +953,7 @@ mod tests {
     fn test_create_session_only_entry() {
         let (rsa_private_key, _rsa_public_key) = generate_rsa(2048).unwrap();
         let mut flags = EntryFlags::default();
-        flags.set_session_only(true);
+        flags.set_session(true);
         let entry = Entry::new(
             Uuid::from_bytes([0x1; 16]),
             flags,
@@ -950,13 +969,14 @@ mod tests {
     fn test_to_keyflags() {
         let (rsa_private_key, _) = generate_rsa(2048).unwrap();
         let mut flags = EntryFlags::default();
-        flags.set_imported(true);
-        flags.set_session_only(true);
-        flags.set_generated(true);
-        flags.set_allow_encrypt_decrypt(true);
-        flags.set_allow_sign_verify(true);
-        flags.set_allow_unwrap(true);
-        flags.set_allow_derive(true);
+        flags.set_local(true);
+        flags.set_session(true);
+        flags.set_encrypt(true);
+        flags.set_decrypt(true);
+        flags.set_sign(true);
+        flags.set_verify(true);
+        flags.set_unwrap(true);
+        flags.set_derive(true);
         let entry = Entry::new(
             Uuid::from_bytes([0x1; 16]),
             flags,
@@ -966,9 +986,9 @@ mod tests {
         );
 
         let keyflags: KeyFlags = entry.flags().into();
-        assert!(keyflags.is_imported());
-        assert!(keyflags.is_session_key());
+        assert!(!keyflags.is_imported());
         assert!(keyflags.is_generated());
+        assert!(keyflags.is_session_key());
         assert!(keyflags.can_encrypt());
         assert!(keyflags.can_decrypt());
         assert!(keyflags.can_sign());

@@ -157,7 +157,7 @@ TEST_F(azihsm_rsa_encrypt_decrypt, encrypt_decrypt_pkcs1_with_unwrapped_key)
         std::vector<uint8_t> plaintext_data(plaintext, plaintext + strlen(plaintext));
 
         azihsm_algo encrypt_algo = {};
-        encrypt_algo.id = AZIHSM_ALGO_ID_RSA_PKCS; // [TODO] Confirm the algorithm ID
+        encrypt_algo.id = AZIHSM_ALGO_ID_RSA_PKCS; 
         encrypt_algo.params = nullptr;
         encrypt_algo.len = 0;
 

@@ -215,15 +215,13 @@ Device property identifiers
 #define AZIHSM_PART_PROP_ID_DRIVER_VERSION 3
 #define AZIHSM_PART_PROP_ID_FIRMWARE_VERSION 4
 #define AZIHSM_PART_PROP_ID_HARDWARE_VERSION 5
-#define AZIHSM_PART_PROP_ID_SERIAL_NUMBER 6
-#define AZIHSM_PART_PROP_ID_PCI_HW_ID 7
-#define AZIHSM_PART_PROP_ID_MIN_API_REV 8
-#define AZIHSM_PART_PROP_ID_MAX_API_REV 9
-#define AZIHSM_PART_PROP_ID_UUID 10
-#define AZIHSM_PART_PROP_ID_MANUFACTURER_CERT 11
-#define AZIHSM_PART_PROP_ID_DEV_OWNER_CERT 12
-#define AZIHSM_PART_PROP_ID_PART_OWNER_CERT 13
-#define AZIHSM_PART_PROP_ID_PART_OWNER_CSR 14
+#define AZIHSM_PART_PROP_ID_PCI_HW_ID 6
+#define AZIHSM_PART_PROP_ID_MIN_API_REV 7
+#define AZIHSM_PART_PROP_ID_MAX_API_REV 8
+#define AZIHSM_PART_PROP_ID_MANUFACTURER_CERT_CHAIN 9
+#define AZIHSM_PART_PROP_ID_BACKUP_MASKING_KEY 10
+#define AZIHSM_PART_PROP_ID_MASKED_OWNER_BACKUP_KEY 11
+#define AZIHSM_PART_PROP_ID_PART_PUB_KEY 12
 ```
 
 ### AZIHSM_PART_TYPE_XXX
@@ -254,12 +252,13 @@ Key type values
 #define AZIHSM_KEY_TYPE_EC 2
 #define AZIHSM_KEY_TYPE_AES 3
 #define AZIHSM_KEY_TYPE_AES_XTS 4
-#define AZIHSM_KEY_TYPE_GENERIC 5
-#define AZIHSM_KEY_TYPE_HMAC_SHA1 6
-#define AZIHSM_KEY_TYPE_HMAC_SHA256 7
-#define AZIHSM_KEY_TYPE_HMAC_SHA384 8
-#define AZIHSM_KEY_TYPE_HMAC_SHA512 9
-#define AZIHSM_KEY_TYPE_MASKING 10
+#define AZIHSM_KEY_TYPE_AES_GCM 5
+#define AZIHSM_KEY_TYPE_GENERIC 6
+#define AZIHSM_KEY_TYPE_HMAC_SHA1 7
+#define AZIHSM_KEY_TYPE_HMAC_SHA256 8
+#define AZIHSM_KEY_TYPE_HMAC_SHA384 9
+#define AZIHSM_KEY_TYPE_HMAC_SHA512 10
+#define AZIHSM_KEY_TYPE_MASKING 11
 ```
 
 ### AZIHSM_KEY_PROP_ID_XXX
@@ -320,6 +319,8 @@ Algorithm ID type values
 #define AZIHSM_ALGO_ID_AES_CBC_PAD 0x00030003
 #define AZIHSM_ALGO_ID_AES_XTS_KEY_GEN 0x00030004
 #define AZIHSM_ALGO_ID_AES_XTS 0x00030005
+#define AZIHSM_ALGO_ID_AES_GCM_KEY_GEN 0x00030006
+#define AZIHSM_ALGO_ID_AES_GCM 0x00030007
 #define AZIHSM_ALGO_ID_SHA1 0x00040001
 #define AZIHSM_ALGO_ID_SHA256 0x00040002
 #define AZIHSM_ALGO_ID_SHA384 0x00040003
@@ -610,6 +611,24 @@ struct azihsm_algo_aes_cbc_params {
 | Field | Type                              | Description                                       |
 | ----- | --------------------------------- | ------------------------------------------------- |
 | iv    | [azihsm_buffer *](#azihsm_buffer) | initialization vector. must be 16 bytes    &nbsp; |
+
+### azihsm_algo_aes_gcm_params
+
+Parameters for AES GCM Algorithm
+
+```cpp
+struct azihsm_algo_aes_gcm_params {
+    uint8_t iv[12];
+    uint8_t tag[16];
+    azihsm_buffer *aad;
+};
+```
+
+| Field | Type                              | Description                                                               |
+| ----- | --------------------------------- | ------------------------------------------------------------------------- |
+| iv    | uint8_t[12]                       | initialization vector. must be 12 bytes                            &nbsp; |
+| tag   | uint8_t[16]                       | authentication tag (16 bytes). required for decrypt                &nbsp; |
+| aad   | [azihsm_buffer *](#azihsm_buffer) | additional authenticated data (optional). may be NULL             &nbsp;  |
 
 
 ### azihsm_algo_aes_xts_params

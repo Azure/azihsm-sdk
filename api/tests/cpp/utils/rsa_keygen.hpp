@@ -3,6 +3,7 @@
 
 #pragma once
 
+<<<<<<< HEAD
 #include "key_props.hpp"
 #include <azihsm_api.h>
 #include <vector>
@@ -71,3 +72,13 @@ inline azihsm_status generate_rsa_unwrapping_keypair(
         pub_key_handle
     );
 }
+=======
+#include <azihsm_api.h>
+
+/// Helper function to generate RSA unwrapping key pair for testing
+azihsm_status generate_rsa_unwrapping_keypair(
+    azihsm_handle session,
+    azihsm_handle *priv_key_handle,
+    azihsm_handle *pub_key_handle
+);
+>>>>>>> main

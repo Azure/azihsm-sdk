@@ -10,6 +10,7 @@
 #include "handle/part_list_handle.hpp"
 #include "handle/session_handle.hpp"
 #include "helpers.hpp"
+#include "utils/auto_ctx.hpp"
 #include "utils/auto_key.hpp"
 #include "utils/key_import.hpp"
 #include "utils/key_props.hpp"
@@ -107,8 +108,11 @@ class azihsm_rsa_sign_verify : public ::testing::Test
     )
     {
         // Streaming sign
-        azihsm_handle sign_ctx = 0;
-        ASSERT_EQ(azihsm_crypt_sign_init(&sign_algo, priv_key, &sign_ctx), AZIHSM_STATUS_SUCCESS);
+        auto_ctx sign_ctx;
+        ASSERT_EQ(
+            azihsm_crypt_sign_init(&sign_algo, priv_key, sign_ctx.get_ptr()),
+            AZIHSM_STATUS_SUCCESS
+        );
 
         for (const char *chunk : data_chunks)
         {
@@ -118,12 +122,15 @@ class azihsm_rsa_sign_verify : public ::testing::Test
 
         std::vector<uint8_t> signature_data(256);
         azihsm_buffer sig_buf = { .ptr = signature_data.data(), .len = 256 };
-        ASSERT_EQ(azihsm_crypt_sign_final(sign_ctx, &sig_buf), AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(azihsm_crypt_sign_finish(sign_ctx, &sig_buf), AZIHSM_STATUS_SUCCESS);
         ASSERT_GT(sig_buf.len, 0);
 
         // Streaming verify
-        azihsm_handle verify_ctx = 0;
-        ASSERT_EQ(azihsm_crypt_verify_init(&sign_algo, pub_key, &verify_ctx), AZIHSM_STATUS_SUCCESS);
+        auto_ctx verify_ctx;
+        ASSERT_EQ(
+            azihsm_crypt_verify_init(&sign_algo, pub_key, verify_ctx.get_ptr()),
+            AZIHSM_STATUS_SUCCESS
+        );
 
         for (const char *chunk : data_chunks)
         {
@@ -132,12 +139,12 @@ class azihsm_rsa_sign_verify : public ::testing::Test
         }
 
         azihsm_buffer verify_sig_buf = { .ptr = signature_data.data(), .len = sig_buf.len };
-        ASSERT_EQ(azihsm_crypt_verify_final(verify_ctx, &verify_sig_buf), AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(azihsm_crypt_verify_finish(verify_ctx, &verify_sig_buf), AZIHSM_STATUS_SUCCESS);
 
         // Verify fails with modified data
-        azihsm_handle verify_fail_ctx = 0;
+        auto_ctx verify_fail_ctx;
         ASSERT_EQ(
-            azihsm_crypt_verify_init(&sign_algo, pub_key, &verify_fail_ctx),
+            azihsm_crypt_verify_init(&sign_algo, pub_key, verify_fail_ctx.get_ptr()),
             AZIHSM_STATUS_SUCCESS
         );
 
@@ -151,7 +158,7 @@ class azihsm_rsa_sign_verify : public ::testing::Test
         }
 
         ASSERT_NE(
-            azihsm_crypt_verify_final(verify_fail_ctx, &verify_sig_buf),
+            azihsm_crypt_verify_finish(verify_fail_ctx, &verify_sig_buf),
             AZIHSM_STATUS_SUCCESS
         );
     }

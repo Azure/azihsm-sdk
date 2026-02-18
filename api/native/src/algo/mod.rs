@@ -158,6 +158,14 @@ pub enum AzihsmAlgoId {
     // Corresponds to AZIHSM_ALGO_ID_AES_XTS
     AesXts = 0x00030005,
 
+    /// AES GCM Key Generation.
+    // Corresponds to AZIHSM_ALGO_ID_AES_GCM_KEY_GEN
+    AesGcmKeyGen = 0x00030006,
+
+    /// AES GCM Encrypt & Decrypt.
+    // Corresponds to AZIHSM_ALGO_ID_AES_GCM
+    AesGcm = 0x00030007,
+
     // ======================================================
     // Hash Algorithms (0x0004xxxx)
     // ======================================================

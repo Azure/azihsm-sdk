@@ -37,6 +37,7 @@ pub(crate) const FW_SECRET_SIZE_BYTES: usize = 48;
 pub(crate) const MK_SEED_SIZE_BYTES: usize = 48;
 pub(crate) const BK_SEED_SIZE_BYTES: usize = 32;
 pub(crate) const SESSION_SEED_SIZE_BYTES: usize = 48;
+pub(crate) const BK_LABEL_LENGTH: usize = 256;
 pub(crate) const PARTITION_BK_LABEL: &[u8] = b"PARTITION_BK";
 pub(crate) const SESSION_BK_LABEL: &[u8] = b"SESSION_BK";
 pub(crate) const MK_DEFAULT_LABEL: &[u8] = b"MK_DEFAULT";
@@ -64,6 +65,7 @@ impl LMKeyDerive {
     /// * `bks1` - The first backup seed (BKS1).
     /// * `bks2` - The second backup seed (BKS2).
     /// * `bk3` - The backup key (BK3).
+    /// * `pota_pub_key` - The public key for the partition endorsement, used to bind the generated BK to the specific partition.
     /// * `bk_partition_len` - In/out parameter for the length of the partition backup key.
     ///   On input, it specifies the bk_out buffer size.
     ///   On output, it will contain the actual length of the generated backup key.
@@ -72,12 +74,14 @@ impl LMKeyDerive {
     /// # Returns
     /// * `Ok(())` - If the backup key is successfully generated.
     /// * `Err(ManticoreError)` - If there is an error during the generation process.
+    #[allow(clippy::too_many_arguments)]
     pub fn bk_partition_gen<Env: CryptEnv>(
         crypto_env: &Env,
         algo: MaskingKeyAlgorithm,
         bks1: &[u8; BK_SEED_SIZE_BYTES],
         bks2: &[u8; BK_SEED_SIZE_BYTES],
         bk3: &[u8; BK3_SIZE_BYTES],
+        pota_pub_key: &[u8],
         bk_partition_len: &mut usize,
         bk_partition_out: &mut [u8],
     ) -> Result<(), ManticoreError> {
@@ -99,9 +103,16 @@ impl LMKeyDerive {
         bks1_2[BK_SEED_SIZE_BYTES..].copy_from_slice(bks2);
 
         // Derive BK via KBKDF using BK3 as key and BKS1_2 as context.
+        if BK_LABEL_LENGTH < PARTITION_BK_LABEL.len() + pota_pub_key.len() {
+            Err(ManticoreError::InvalidArgument)?;
+        }
+        let mut label = [0u8; BK_LABEL_LENGTH];
+        label[..PARTITION_BK_LABEL.len()].copy_from_slice(PARTITION_BK_LABEL);
+        label[PARTITION_BK_LABEL.len()..PARTITION_BK_LABEL.len() + pota_pub_key.len()]
+            .copy_from_slice(pota_pub_key);
         crypto_env.kbkdf_sha384(
             bk3,
-            Some(PARTITION_BK_LABEL),
+            Some(&label),
             Some(&bks1_2),
             BK_AES_CBC_256_HMAC384_SIZE_BYTES,
             &mut bk_partition_out[..BK_AES_CBC_256_HMAC384_SIZE_BYTES],
@@ -587,6 +598,34 @@ mod tests {
     const TEST_OUTPUT_BUFFER_SIZE: usize = 1024;
     const TEST_METADATA_MAX_SIZE_BYTES: usize = 128;
 
+    #[allow(unused)]
+    const TEST_POTA_ECC_PRIVATE_KEY: [u8; 185] = [
+        0x30, 0x81, 0xb6, 0x02, 0x01, 0x00, 0x30, 0x10, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d,
+        0x02, 0x01, 0x06, 0x05, 0x2b, 0x81, 0x04, 0x00, 0x22, 0x04, 0x81, 0x9e, 0x30, 0x81, 0x9b,
+        0x02, 0x01, 0x01, 0x04, 0x30, 0x17, 0xe9, 0x1c, 0xac, 0xf7, 0xb7, 0x21, 0xd7, 0x75, 0x20,
+        0x02, 0x07, 0xbc, 0xaa, 0x94, 0x2c, 0xe3, 0xb5, 0x5b, 0x78, 0x13, 0xcc, 0x8b, 0xde, 0x87,
+        0x65, 0x6b, 0xe1, 0x7b, 0xc2, 0xa8, 0xcc, 0x89, 0x33, 0x4e, 0xcd, 0xaa, 0x9d, 0x1d, 0x09,
+        0xf1, 0xc7, 0x01, 0x1b, 0x64, 0xeb, 0x78, 0x5b, 0xa1, 0x64, 0x03, 0x62, 0x00, 0x04, 0x1f,
+        0x42, 0x0d, 0x73, 0xeb, 0xf0, 0x67, 0xc2, 0xf9, 0x77, 0xbd, 0x51, 0xab, 0xfb, 0xe1, 0xf6,
+        0x53, 0x19, 0xb7, 0x57, 0xe0, 0xa9, 0x20, 0xce, 0x4f, 0x21, 0xbb, 0xd4, 0xa7, 0x84, 0x1c,
+        0x93, 0x45, 0xf1, 0xea, 0xd9, 0x5f, 0xe5, 0x90, 0xab, 0x57, 0xe1, 0xea, 0xfc, 0xd2, 0x06,
+        0xef, 0x21, 0xa2, 0xad, 0x10, 0xd3, 0x17, 0x6e, 0x99, 0xc8, 0x22, 0x26, 0x23, 0x08, 0x57,
+        0xa7, 0x56, 0x08, 0x45, 0xe3, 0xda, 0x12, 0xc7, 0xdc, 0x3a, 0xee, 0x01, 0xfc, 0x37, 0xab,
+        0x1c, 0x8d, 0xc6, 0xd0, 0x64, 0x7a, 0x7d, 0xc2, 0x67, 0xfc, 0x02, 0x7d, 0x8d, 0xa3, 0xc8,
+        0x01, 0x4b, 0xa4, 0x0d, 0x98,
+    ];
+
+    const TEST_POTA_ECC_PUB_KEY: [u8; 120] = [
+        0x30, 0x76, 0x30, 0x10, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, 0x06, 0x05,
+        0x2b, 0x81, 0x04, 0x00, 0x22, 0x03, 0x62, 0x00, 0x04, 0x1f, 0x42, 0x0d, 0x73, 0xeb, 0xf0,
+        0x67, 0xc2, 0xf9, 0x77, 0xbd, 0x51, 0xab, 0xfb, 0xe1, 0xf6, 0x53, 0x19, 0xb7, 0x57, 0xe0,
+        0xa9, 0x20, 0xce, 0x4f, 0x21, 0xbb, 0xd4, 0xa7, 0x84, 0x1c, 0x93, 0x45, 0xf1, 0xea, 0xd9,
+        0x5f, 0xe5, 0x90, 0xab, 0x57, 0xe1, 0xea, 0xfc, 0xd2, 0x06, 0xef, 0x21, 0xa2, 0xad, 0x10,
+        0xd3, 0x17, 0x6e, 0x99, 0xc8, 0x22, 0x26, 0x23, 0x08, 0x57, 0xa7, 0x56, 0x08, 0x45, 0xe3,
+        0xda, 0x12, 0xc7, 0xdc, 0x3a, 0xee, 0x01, 0xfc, 0x37, 0xab, 0x1c, 0x8d, 0xc6, 0xd0, 0x64,
+        0x7a, 0x7d, 0xc2, 0x67, 0xfc, 0x02, 0x7d, 0x8d, 0xa3, 0xc8, 0x01, 0x4b, 0xa4, 0x0d, 0x98,
+    ];
+
     enum CryptoFunc {
         Hmac384Tag,
         AesCbc256Encrypt,
@@ -715,6 +754,7 @@ mod tests {
             &TEST_BKS1,
             &TEST_BKS2,
             &TEST_BK3,
+            &TEST_POTA_ECC_PUB_KEY,
             &mut bk_len,
             &mut bk_out,
         );
@@ -746,6 +786,7 @@ mod tests {
             &TEST_BKS1,
             &TEST_BKS2,
             &TEST_BK3,
+            &TEST_POTA_ECC_PUB_KEY,
             &mut bk_len1,
             &mut bk_out1,
         );
@@ -756,6 +797,7 @@ mod tests {
             &TEST_BKS1,
             &TEST_BKS2,
             &TEST_BK3,
+            &TEST_POTA_ECC_PUB_KEY,
             &mut bk_len2,
             &mut bk_out2,
         );
@@ -784,6 +826,7 @@ mod tests {
             &TEST_BKS1,
             &TEST_BKS2,
             &TEST_BK3,
+            &TEST_POTA_ECC_PUB_KEY,
             &mut bk_len,
             &mut bk_out1,
         );
@@ -795,6 +838,7 @@ mod tests {
             &TEST_BKS1,
             &TEST_BKS2,
             &bk3_alt,
+            &TEST_POTA_ECC_PUB_KEY,
             &mut bk_len,
             &mut bk_out2,
         );
@@ -822,6 +866,7 @@ mod tests {
             &TEST_BKS1,
             &TEST_BKS2,
             &TEST_BK3,
+            &TEST_POTA_ECC_PUB_KEY,
             &mut bk_len,
             &mut bk_out,
         );
@@ -969,6 +1014,7 @@ mod tests {
             &TEST_BKS1,
             &TEST_BKS2,
             &TEST_BK3,
+            &TEST_POTA_ECC_PUB_KEY,
             &mut bk_len,
             &mut bk,
         );
@@ -1113,6 +1159,7 @@ mod tests {
             &TEST_BKS1,
             &TEST_BKS2,
             &TEST_BK3,
+            &TEST_POTA_ECC_PUB_KEY,
             &mut bk_len,
             &mut bk,
         );
@@ -1198,6 +1245,7 @@ mod tests {
             &TEST_BKS1,
             &TEST_BKS2,
             &TEST_BK3,
+            &TEST_POTA_ECC_PUB_KEY,
             &mut bk_len,
             &mut bk,
         );
@@ -1282,6 +1330,7 @@ mod tests {
             &TEST_BKS1,
             &TEST_BKS2,
             &TEST_BK3,
+            &TEST_POTA_ECC_PUB_KEY,
             &mut bk_len,
             &mut bk,
         );

@@ -23,6 +23,7 @@ use azihsm_ddi_types::DDI_MAX_KEY_LABEL_LENGTH;
 use parking_lot::RwLock;
 use tracing::instrument;
 use uuid::Uuid;
+use zerocopy::FromBytes;
 
 use crate::crypto::aeshmac::AesHmacKey;
 use crate::crypto::aeshmac::AesHmacOp;
@@ -244,6 +245,7 @@ impl Function {
     /// * `masked_bk3` - The raw bytes of the masked BK3 data
     /// * `bmk` - Optional partition backup masking key, should be None before live migration.
     /// * `masked_unwrapping_key` - Optional masked unwrapping key for restoration after live migration.
+    /// * `pota_pub_key` - The public key for the partition endorsement, used to verify the endorsement signature.
     ///
     /// # Returns
     /// * `Result<Vec<u8>, ManticoreError>` - The masked BMK on success, or an error
@@ -255,10 +257,11 @@ impl Function {
         masked_bk3: &[u8],
         bmk: Option<&[u8]>,
         masked_unwrapping_key: Option<&[u8]>,
+        pota_pub_key: &[u8],
     ) -> Result<Vec<u8>, ManticoreError> {
         self.inner
             .write()
-            .provision(masked_bk3, bmk, masked_unwrapping_key)
+            .provision(masked_bk3, bmk, masked_unwrapping_key, pota_pub_key)
     }
 
     /// Returns the API revision range supported.
@@ -426,8 +429,9 @@ impl FunctionInner {
         // Add the key to the vault without an associated app session
         let flag = EntryFlags::new()
             .with_is_attestation_key(true)
-            .with_allow_sign_verify(true)
-            .with_generated(true);
+            .with_sign(true)
+            .with_verify(true)
+            .with_local(true);
 
         let private_key_num = vault.add_key(
             APP_ID_FOR_INTERNAL_KEYS,
@@ -454,8 +458,9 @@ impl FunctionInner {
 
         // Store key in vault without an associated app session
         let key_flags = EntryFlags::new()
-            .with_allow_unwrap(true)
-            .with_generated(true);
+            .with_unwrap(true)
+            .with_wrap(true)
+            .with_local(true);
 
         let private_key_id = vault.add_key(
             APP_ID_FOR_INTERNAL_KEYS,
@@ -506,8 +511,9 @@ impl FunctionInner {
 
         // Store key in vault without an associated app session
         let key_flags = EntryFlags::new()
-            .with_allow_encrypt_decrypt(true)
-            .with_generated(true);
+            .with_encrypt(true)
+            .with_decrypt(true)
+            .with_local(true);
 
         let key_id = vault.add_key(
             APP_ID_FOR_INTERNAL_KEYS,
@@ -555,6 +561,7 @@ impl FunctionInner {
         masked_bk3: &[u8],
         bmk: Option<&[u8]>,
         masked_unwrapping_key: Option<&[u8]>,
+        pota_pub_key: &[u8],
     ) -> Result<Vec<u8>, ManticoreError> {
         if self.state.is_provisioned() {
             return Err(ManticoreError::PartitionAlreadyProvisioned);
@@ -586,6 +593,7 @@ impl FunctionInner {
             &BKS1,
             &BKS2,
             &unmasked_bk3,
+            pota_pub_key,
             &mut bk_partition_len,
             &mut bk_partition,
         )
@@ -1236,9 +1244,9 @@ impl FunctionStateInner {
             key_attributes: DdiMaskedKeyAttributes {
                 blob: {
                     let mut blob = [0u8; 32];
-                    blob[0..2].copy_from_slice(&(u16::from(entry.flags())).to_le_bytes());
-                    blob[2..4].copy_from_slice(&sess_id_or_key_tag.to_le_bytes());
-                    blob[4..20].copy_from_slice(&app_id.into_bytes());
+                    blob[0..8].copy_from_slice(&(u64::from(entry.flags())).to_le_bytes());
+                    blob[8..10].copy_from_slice(&sess_id_or_key_tag.to_le_bytes());
+                    blob[10..26].copy_from_slice(&app_id.into_bytes());
                     blob
                 },
             },
@@ -1301,9 +1309,8 @@ impl FunctionStateInner {
             ERR
         })?;
 
-        let flags_bytes = &metadata.key_attributes.blob[0..2];
-        let flags = EntryFlags::from(u16::from_le_bytes([flags_bytes[0], flags_bytes[1]]));
-        Ok(flags.session_only())
+        let flags = Self::entry_flags_from_bytes(&metadata.key_attributes.blob)?;
+        Ok(flags.session())
     }
 
     fn unmask_and_import_key_internal(
@@ -1335,20 +1342,19 @@ impl FunctionStateInner {
             })?;
 
         // Extract original entry information from metadata
-        let flags_bytes = &metadata.key_attributes.blob[0..2];
-        let flags = EntryFlags::from(u16::from_le_bytes([flags_bytes[0], flags_bytes[1]]));
+        let flags = Self::entry_flags_from_bytes(&metadata.key_attributes.blob)?;
 
-        let sess_id_or_key_tag_bytes = &metadata.key_attributes.blob[2..4];
+        let sess_id_or_key_tag_bytes = &metadata.key_attributes.blob[8..10];
         let sess_id_or_key_tag =
             u16::from_le_bytes([sess_id_or_key_tag_bytes[0], sess_id_or_key_tag_bytes[1]]);
 
-        let app_id_bytes = &metadata.key_attributes.blob[4..20];
+        let app_id_bytes = &metadata.key_attributes.blob[10..26];
         let extracted_app_id = Uuid::from_bytes(app_id_bytes.try_into().map_err(|err| {
             tracing::error!("app_id_bytes.try_into() error {:?}", err);
             ERR
         })?);
 
-        if flags.session_only() {
+        if flags.session() {
             // Verify session ID matches
             if sess_id_or_key_tag != session_id {
                 tracing::error!(
@@ -1401,6 +1407,14 @@ impl FunctionStateInner {
             "Key unmasked and imported successfully"
         );
         Ok(key_num)
+    }
+
+    /// Extract EntryFlags from the first 8 bytes of the provided buffer
+    fn entry_flags_from_bytes(buf: &[u8]) -> Result<EntryFlags, ManticoreError> {
+        const ENTRY_FLAGS_SIZE: usize = size_of::<u64>();
+        let (bytes, _) = <[u8; ENTRY_FLAGS_SIZE]>::read_from_prefix(buf)
+            .map_err(|_| ManticoreError::MaskedKeyDecodeFailed)?;
+        Ok(EntryFlags::from(u64::from_le_bytes(bytes)))
     }
 
     fn get_certificate(&mut self) -> Result<Vec<u8>, ManticoreError> {
@@ -1476,6 +1490,17 @@ mod tests {
     use crate::table::entry::Kind;
     use crate::vault::tests::*;
 
+    const TEST_POTA_ECC_PUB_KEY: [u8; 120] = [
+        0x30, 0x76, 0x30, 0x10, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, 0x06, 0x05,
+        0x2b, 0x81, 0x04, 0x00, 0x22, 0x03, 0x62, 0x00, 0x04, 0x1f, 0x42, 0x0d, 0x73, 0xeb, 0xf0,
+        0x67, 0xc2, 0xf9, 0x77, 0xbd, 0x51, 0xab, 0xfb, 0xe1, 0xf6, 0x53, 0x19, 0xb7, 0x57, 0xe0,
+        0xa9, 0x20, 0xce, 0x4f, 0x21, 0xbb, 0xd4, 0xa7, 0x84, 0x1c, 0x93, 0x45, 0xf1, 0xea, 0xd9,
+        0x5f, 0xe5, 0x90, 0xab, 0x57, 0xe1, 0xea, 0xfc, 0xd2, 0x06, 0xef, 0x21, 0xa2, 0xad, 0x10,
+        0xd3, 0x17, 0x6e, 0x99, 0xc8, 0x22, 0x26, 0x23, 0x08, 0x57, 0xa7, 0x56, 0x08, 0x45, 0xe3,
+        0xda, 0x12, 0xc7, 0xdc, 0x3a, 0xee, 0x01, 0xfc, 0x37, 0xab, 0x1c, 0x8d, 0xc6, 0xd0, 0x64,
+        0x7a, 0x7d, 0xc2, 0x67, 0xfc, 0x02, 0x7d, 0x8d, 0xa3, 0xc8, 0x01, 0x4b, 0xa4, 0x0d, 0x98,
+    ];
+
     fn create_function(table_count: usize) -> Function {
         let result = Function::new(table_count);
         assert!(result.is_ok());
@@ -1542,7 +1567,7 @@ mod tests {
         assert!(entry.allow_sign_verify());
         assert!(!entry.allow_unwrap());
 
-        assert!(entry.generated());
+        assert!(entry.local());
         assert!(!entry.imported());
         assert!(!entry.session_only());
 
@@ -1553,7 +1578,7 @@ mod tests {
         // After provision, unwrapping key should be available
         // Create some dummy BK3 data for testing
         let dummy_bk3 = function.init_bk3([0u8; BK3_SIZE_BYTES]).unwrap();
-        let provision_result = function.provision(&dummy_bk3, None, None);
+        let provision_result = function.provision(&dummy_bk3, None, None, &TEST_POTA_ECC_PUB_KEY);
         assert!(provision_result.is_ok());
 
         // Now unwrapping key should be available
@@ -1572,7 +1597,7 @@ mod tests {
         assert!(!entry.allow_sign_verify());
         assert!(entry.allow_unwrap());
 
-        assert!(entry.generated());
+        assert!(entry.local());
         assert!(!entry.imported());
         assert!(!entry.session_only());
 
@@ -1691,7 +1716,7 @@ mod tests {
 
         // Provision the function first to enable unwrapping key
         let dummy_bk3 = function.init_bk3([0u8; BK3_SIZE_BYTES]).unwrap();
-        let provision_result = function.provision(&dummy_bk3, None, None);
+        let provision_result = function.provision(&dummy_bk3, None, None, &TEST_POTA_ECC_PUB_KEY);
         assert!(provision_result.is_ok());
 
         let result = function.get_function_state().get_vault(DEFAULT_VAULT_ID);
@@ -1826,7 +1851,7 @@ mod tests {
         let session_id = session_result.session_id;
 
         // Create a session-only key
-        let key_flags = EntryFlags::default().with_session_only(true);
+        let key_flags = EntryFlags::default().with_session(true);
         let key_id = vault
             .add_key(
                 Uuid::from_bytes(TEST_CRED_ID),
@@ -1866,7 +1891,7 @@ mod tests {
 
         // Provision the function first to enable unwrapping key
         let dummy_bk3 = function.init_bk3([0u8; BK3_SIZE_BYTES]).unwrap();
-        let provision_result = function.provision(&dummy_bk3, None, None);
+        let provision_result = function.provision(&dummy_bk3, None, None, &TEST_POTA_ECC_PUB_KEY);
         assert!(provision_result.is_ok());
 
         let result = function.get_function_state().get_vault(DEFAULT_VAULT_ID);

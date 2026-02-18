@@ -9,6 +9,10 @@
 
 use std::sync::Arc;
 
+<<<<<<< HEAD
+=======
+use azihsm_ddi::DdiDev;
+>>>>>>> main
 use parking_lot::RwLock;
 use tracing::*;
 
@@ -113,6 +117,144 @@ impl HsmCredentials {
     }
 }
 
+<<<<<<< HEAD
+=======
+/// Owner backup key config (OBK/BK3) containing source and optional OBK.
+#[derive(Debug, Clone)]
+pub struct HsmOwnerBackupKeyConfig<'a> {
+    /// Source of the OBK
+    key_source: HsmOwnerBackupKeySource,
+    /// Optional OBK (required when source is Caller, ignored otherwise)
+    key: Option<&'a [u8]>,
+}
+
+impl<'a> HsmOwnerBackupKeyConfig<'a> {
+    /// Creates a new owner backup key config instance.
+    ///
+    /// # Arguments
+    ///
+    /// * `source` - Source of the OBK
+    /// * `obk` - OBK data provided by the caller
+    ///
+    /// # Returns
+    ///
+    /// A new `HsmOwnerBackupKeyConfig` instance with the specified source and optional key.
+    pub fn new(source: HsmOwnerBackupKeySource, obk: Option<&'a [u8]>) -> Self {
+        Self {
+            key_source: source,
+            key: obk,
+        }
+    }
+
+    /// Returns the owner backup key source.
+    ///
+    /// # Returns
+    ///
+    /// The source of the owner backup key.
+    pub fn key_source(&self) -> HsmOwnerBackupKeySource {
+        self.key_source
+    }
+
+    /// Returns the owner backup key.
+    ///
+    /// # Returns
+    ///
+    /// Optional reference to the OBK.
+    pub fn key(&self) -> Option<&'a [u8]> {
+        self.key
+    }
+}
+
+/// HSM POTA endorsement data containing signature and public key for verification.
+///
+/// This structure holds the cryptographic proof for partition owner trust anchor
+/// endorsement, including the ECDSA signature over the PID hash and the public
+/// key needed to verify the signature.
+#[derive(Debug, Clone)]
+pub struct HsmPotaEndorsementData<'a> {
+    /// ECDSA signature over the PID hash
+    signature: &'a [u8],
+
+    /// Public key for signature verification (DER-encoded)
+    pub_key: &'a [u8],
+}
+
+/// HSM partition owner trust anchor (aka POTA) endorsement.
+#[derive(Debug, Clone)]
+pub struct HsmPotaEndorsement<'a> {
+    /// Source of the POTA endorsement
+    source: HsmPotaEndorsementSource,
+
+    /// Optional POTA endorsement data (required when source is Caller, ignored otherwise)
+    endorsement: Option<HsmPotaEndorsementData<'a>>,
+}
+
+impl<'a> HsmPotaEndorsementData<'a> {
+    /// Creates a new POTA endorsement data instance.
+    ///
+    /// # Arguments
+    ///
+    /// * `signature` - ECDSA signature over the PID hash
+    /// * `public_key` - Public key for signature verification (DER-encoded)
+    pub fn new(signature: &'a [u8], public_key: &'a [u8]) -> Self {
+        Self {
+            signature,
+            pub_key: public_key,
+        }
+    }
+
+    /// Returns the ECDSA signature.
+    pub fn signature(&self) -> &[u8] {
+        self.signature
+    }
+
+    /// Returns the public key for signature verification.
+    pub fn pub_key(&self) -> &[u8] {
+        self.pub_key
+    }
+}
+
+impl<'a> HsmPotaEndorsement<'a> {
+    /// Creates a new POTA endorsement instance.
+    ///
+    /// # Arguments
+    ///
+    /// * `source` - Source of the POTA endorsement
+    /// * `endorsement` - POTA endorsement data provided by the caller
+    ///
+    /// # Returns
+    ///
+    /// A new `HsmPotaEndorsement` instance with the specified source and optional endorsement.
+    pub fn new(
+        source: HsmPotaEndorsementSource,
+        endorsement: Option<HsmPotaEndorsementData<'a>>,
+    ) -> Self {
+        Self {
+            source,
+            endorsement,
+        }
+    }
+
+    /// Returns the POTA endorsement source.
+    ///
+    /// # Returns
+    ///
+    /// The source of the POTA endorsement.
+    pub fn source(&self) -> HsmPotaEndorsementSource {
+        self.source
+    }
+
+    /// Returns the POTA endorsement data.
+    ///
+    /// # Returns
+    ///
+    /// Optional reference to the POTA endorsement data.
+    pub fn endorsement(&self) -> Option<&HsmPotaEndorsementData<'a>> {
+        self.endorsement.as_ref()
+    }
+}
+
+>>>>>>> main
 /// HSM partition manager.
 ///
 /// Provides operations for discovering and opening HSM partitions.
@@ -228,7 +370,11 @@ impl HsmPartition {
     /// * `creds` - Application credentials (ID and PIN)
     /// * `bmk` - Optional backup masking key
     /// * `muk` - Optional masked unwrapping key
+<<<<<<< HEAD
     /// * `mobk` - Optional masked owner backup key
+=======
+    /// * `obk_config` - Owner backup key (OBK) configuration
+>>>>>>> main
     ///
     /// # Errors
     ///
@@ -236,17 +382,37 @@ impl HsmPartition {
     /// - Credentials are invalid
     /// - API revision retrieval fails
     /// - Partition initialization fails
+<<<<<<< HEAD
+=======
+    /// - OBK is missing when obk_info source is Caller
+>>>>>>> main
     #[instrument(skip_all,  fields(path = self.path().as_str()), err)]
     pub fn init(
         &self,
         creds: HsmCredentials,
         bmk: Option<&[u8]>,
         muk: Option<&[u8]>,
+<<<<<<< HEAD
         mobk: Option<&[u8]>,
     ) -> HsmResult<()> {
         let (bmk, mobk) = self.with_dev(|dev| {
             let (bmk, mobk) =
                 ddi::init_part(dev, self.api_rev_range().min(), creds, bmk, muk, mobk)?;
+=======
+        obk_config: HsmOwnerBackupKeyConfig<'_>,
+        pota_endorsement: HsmPotaEndorsement<'_>,
+    ) -> HsmResult<()> {
+        let (bmk, mobk) = self.with_dev(|dev| {
+            let (bmk, mobk) = ddi::init_part(
+                dev,
+                self.api_rev_range().min(),
+                creds,
+                bmk,
+                muk,
+                obk_config,
+                pota_endorsement,
+            )?;
+>>>>>>> main
             Ok((bmk, mobk))
         })?;
         self.inner().write().set_masked_keys(bmk, mobk);
@@ -288,6 +454,28 @@ impl HsmPartition {
         Ok(HsmSession::new(id, app_id, api_rev, self.clone()))
     }
 
+<<<<<<< HEAD
+=======
+    /// Resets the HSM partition state.
+    ///
+    /// including established credentials and active sessions. This is useful for
+    /// test cleanup and recovery scenarios.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the reset operation fails.
+    #[instrument(skip_all, err, fields(path = self.path().as_str()))]
+    pub fn reset(&self) -> HsmResult<()> {
+        self.with_dev(|dev| {
+            dev.simulate_nssr_after_lm()
+                .map_err(|_| HsmError::DdiCmdFailure)
+        })?;
+        // Clear cached masked keys after reset
+        self.inner().write().clear_masked_keys();
+        Ok(())
+    }
+
+>>>>>>> main
     /// Returns the API revision range supported by this partition.
     ///
     /// # Returns
@@ -370,6 +558,18 @@ impl HsmPartition {
         self.with_dev(|dev| ddi::get_cert_chain(dev, self.api_rev_range().min(), slot))
     }
 
+<<<<<<< HEAD
+=======
+    /// Retrieves the public key of the partition identity (PID) certificate.
+    ///
+    /// # Returns
+    ///
+    /// Returns the DER-encoded public key of the PID certificate.
+    pub fn pub_key(&self) -> HsmResult<Vec<u8>> {
+        self.with_dev(|dev| ddi::get_part_pub_key(dev, self.api_rev_range().min()))
+    }
+
+>>>>>>> main
     /// Retrieves the backup masking key that was set during partition initialization.
     ///
     /// # Arguments
@@ -585,6 +785,15 @@ impl HsmPartitionInner {
         self.mobk = mobk;
     }
 
+<<<<<<< HEAD
+=======
+    /// Clears the cached masked keys after partition reset.
+    pub(crate) fn clear_masked_keys(&mut self) {
+        self.bmk.clear();
+        self.mobk.clear();
+    }
+
+>>>>>>> main
     /// Returns the backup masking key (BMK).
     ///
     /// # Returns

@@ -5,6 +5,7 @@
 #define PARTITION_HANDLE_HPP
 
 #include <azihsm_api.h>
+#include <cstdlib>
 #include <cstring>
 #include <mutex>
 #include <stdexcept>
@@ -12,6 +13,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "../utils/part_init_config.hpp"
 #include "part_list_handle.hpp"
 #include "test_creds.hpp"
 
@@ -63,8 +65,17 @@ class PartitionHandle
         return handle_ != 0;
     }
 
+    // Wrap a pre-opened partition handle for RAII cleanup only (no open/reset/init).
+    static PartitionHandle from_raw(azihsm_handle handle)
+    {
+        return PartitionHandle(handle);
+    }
+
   private:
     azihsm_handle handle_;
+
+    // Private constructor for wrapping a pre-opened handle
+    explicit PartitionHandle(azihsm_handle handle) : handle_(handle) {}
 
     static std::mutex &get_init_mutex()
     {
@@ -95,11 +106,32 @@ class PartitionHandle
 
         if (initialized.find(index) == initialized.end())
         {
+            // Reset before initialization to clear any previous state
+            err = azihsm_part_reset(handle_);
+            if (err != AZIHSM_STATUS_SUCCESS)
+            {
+                azihsm_part_close(handle_);
+                handle_ = 0;
+                throw std::runtime_error(
+                    "Failed to reset partition. Error: " + std::to_string(err)
+                );
+            }
+
             azihsm_credentials creds{};
             std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
             std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
 
-            err = azihsm_part_init(handle_, &creds, nullptr, nullptr, nullptr);
+            PartInitConfig init_config{};
+            make_part_init_config(handle_, init_config);
+
+            err = azihsm_part_init(
+                handle_,
+                &creds,
+                nullptr,
+                nullptr,
+                &init_config.backup_config,
+                &init_config.pota_endorsement
+            );
             if (err != AZIHSM_STATUS_SUCCESS)
             {
                 azihsm_part_close(handle_);

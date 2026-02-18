@@ -111,6 +111,16 @@ type AzihsmEccCurve = shared_types::HsmEccCurve;
 /// (virtual or physical).
 type AzihsmPartType = shared_types::HsmPartType;
 
+/// Owner backup key source used in the native API.
+/// An alias for `HsmOwnerBackupKeySource` that represents the source of the owner backup key
+/// (caller-provided or TPM-sealed).
+type AzihsmOwnerBackupKeySource = shared_types::HsmOwnerBackupKeySource;
+
+/// POTA endorsement source used in the native API.
+/// An alias for `HsmPotaEndorsementSource` that represents the source of the POTA endorsement
+/// (caller-provided or TPM-generated).
+type AzihsmPotaEndorsementSource = shared_types::HsmPotaEndorsementSource;
+
 impl TryFrom<u32> for AzihsmKeyKind {
     type Error = AzihsmStatus;
 
@@ -124,6 +134,7 @@ impl TryFrom<u32> for AzihsmKeyKind {
             7 => Ok(AzihsmKeyKind::HmacSha256),
             8 => Ok(AzihsmKeyKind::HmacSha384),
             9 => Ok(AzihsmKeyKind::HmacSha512),
+            10 => Ok(AzihsmKeyKind::AesGcm),
             _ => Err(AzihsmStatus::InvalidArgument),
         }
     }
@@ -286,6 +297,42 @@ impl From<AzihsmPartType> for api::HsmPartType {
     }
 }
 
+impl From<api::HsmOwnerBackupKeySource> for AzihsmOwnerBackupKeySource {
+    /// Converts an `api::HsmOwnerBackupKeySource` into an `AzihsmOwnerBackupKeySource`.
+    #[allow(unsafe_code)]
+    fn from(source: api::HsmOwnerBackupKeySource) -> Self {
+        // SAFETY: AzihsmOwnerBackupKeySource and api::HsmOwnerBackupKeySource have the same representation
+        unsafe { std::mem::transmute(source) }
+    }
+}
+
+impl From<AzihsmOwnerBackupKeySource> for api::HsmOwnerBackupKeySource {
+    /// Converts an `AzihsmOwnerBackupKeySource` into an `api::HsmOwnerBackupKeySource`.
+    #[allow(unsafe_code)]
+    fn from(source: AzihsmOwnerBackupKeySource) -> Self {
+        // SAFETY: AzihsmOwnerBackupKeySource and api::HsmOwnerBackupKeySource have the same representation
+        unsafe { std::mem::transmute(source) }
+    }
+}
+
+impl From<api::HsmPotaEndorsementSource> for AzihsmPotaEndorsementSource {
+    /// Converts an `api::HsmPotaEndorsementSource` into an `AzihsmPotaEndorsementSource`.
+    #[allow(unsafe_code)]
+    fn from(source: api::HsmPotaEndorsementSource) -> Self {
+        // SAFETY: AzihsmPotaEndorsementSource and api::HsmPotaEndorsementSource have the same representation
+        unsafe { std::mem::transmute(source) }
+    }
+}
+
+impl From<AzihsmPotaEndorsementSource> for api::HsmPotaEndorsementSource {
+    /// Converts an `AzihsmPotaEndorsementSource` into an `api::HsmPotaEndorsementSource`.
+    #[allow(unsafe_code)]
+    fn from(source: AzihsmPotaEndorsementSource) -> Self {
+        // SAFETY: AzihsmPotaEndorsementSource and api::HsmPotaEndorsementSource have the same representation
+        unsafe { std::mem::transmute(source) }
+    }
+}
+
 /// credentials structure used for authentication.
 ///
 /// This structure contains the identifier and PIN required
@@ -381,6 +428,16 @@ impl TryFrom<AzihsmHandle> for api::HsmAesXtsKey {
     }
 }
 
+impl TryFrom<AzihsmHandle> for api::HsmGenericSecretKey {
+    type Error = AzihsmStatus;
+
+    fn try_from(value: AzihsmHandle) -> Result<api::HsmGenericSecretKey, Self::Error> {
+        let key: &api::HsmGenericSecretKey =
+            HANDLE_TABLE.as_ref(value, HandleType::GenericSecretKey)?;
+        Ok(key.clone())
+    }
+}
+
 impl TryFrom<AzihsmHandle> for api::HsmEccPrivateKey {
     type Error = AzihsmStatus;
 
@@ -430,9 +487,13 @@ impl<'a> TryFrom<&'a AzihsmBuffer> for &'a [u8] {
     /// containing at least `buffer.len` bytes.
     #[allow(unsafe_code)]
     fn try_from(buffer: &'a AzihsmBuffer) -> Result<Self, Self::Error> {
-        // Check for null pointer
+        // Check for null pointer - allow null only if length is 0 (empty buffer)
         if buffer.ptr.is_null() {
-            return Err(AzihsmStatus::InvalidArgument);
+            if buffer.len == 0 {
+                return Ok(&[]);
+            } else {
+                return Err(AzihsmStatus::InvalidArgument);
+            }
         }
 
         // Safety: Caller ensures buffer.buf points to valid memory

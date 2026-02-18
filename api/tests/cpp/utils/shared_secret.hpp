@@ -8,6 +8,7 @@
 #include <vector>
 
 // Helper function to get key size in bits from EC curve
+<<<<<<< HEAD
 inline uint32_t get_curve_key_bits(azihsm_ecc_curve curve)
 {
     switch (curve)
@@ -25,10 +26,17 @@ inline uint32_t get_curve_key_bits(azihsm_ecc_curve curve)
 
 // Helper function to generate an EC key pair for derivation operations
 inline azihsm_status generate_ec_key_pair_for_derive(
+=======
+uint32_t get_curve_key_bits(azihsm_ecc_curve curve);
+
+// Helper function to generate an EC key pair for derivation operations
+azihsm_status generate_ec_key_pair_for_derive(
+>>>>>>> main
     azihsm_handle session_handle,
     azihsm_handle &pub_key_handle,
     azihsm_handle &priv_key_handle,
     azihsm_ecc_curve curve
+<<<<<<< HEAD
 )
 {
     azihsm_algo ec_keygen_algo = { .id = AZIHSM_ALGO_ID_EC_KEY_PAIR_GEN,
@@ -88,11 +96,19 @@ inline azihsm_status generate_ec_key_pair_for_derive(
 // Helper function to derive a shared secret key via ECDH
 // Returns the shared secret key handle via out_shared_secret_handle
 inline azihsm_status derive_shared_secret_via_ecdh(
+=======
+);
+
+// Helper function to derive a shared secret key via ECDH
+// Returns the shared secret key handle via out_shared_secret_handle
+azihsm_status derive_shared_secret_via_ecdh(
+>>>>>>> main
     azihsm_handle session_handle,
     azihsm_handle priv_key_handle,
     azihsm_handle peer_pub_key_handle,
     azihsm_ecc_curve curve,
     azihsm_handle &out_shared_secret_handle
+<<<<<<< HEAD
 )
 {
     azihsm_status err;
@@ -159,6 +175,9 @@ inline azihsm_status derive_shared_secret_via_ecdh(
         &out_shared_secret_handle
     );
 }
+=======
+);
+>>>>>>> main
 
 // Helper struct to manage ECDH key pairs with automatic cleanup
 struct EcdhKeyPairSet

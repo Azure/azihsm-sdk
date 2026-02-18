@@ -116,10 +116,6 @@ fn test_ddiop_to_sessioncontrolkind() {
         Into::<SessionControlKind>::into(DdiOp::ChangePin),
         SessionControlKind::InSession
     );
-    assert_eq!(
-        Into::<SessionControlKind>::into(DdiOp::ProvisionPart),
-        SessionControlKind::InSession
-    );
 }
 
 #[test]

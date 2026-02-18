@@ -49,7 +49,7 @@ pub(crate) fn sha_digest(
 /// Initializes a streaming SHA hash operation
 ///
 /// Creates a context for incrementally computing a hash digest.
-/// Use with `sha_digest_update` and `sha_digest_final`.
+/// Use with `sha_digest_update` and `sha_digest_finish`.
 ///
 /// # Arguments
 /// * `session` - HSM session for the operation
@@ -92,7 +92,7 @@ pub(crate) fn sha_digest_update(ctx_handle: AzihsmHandle, data: &[u8]) -> Result
     Ok(())
 }
 
-/// Finalizes a streaming SHA hash operation
+/// Finishes a streaming SHA hash operation
 ///
 /// Completes the hash computation and returns the final digest.
 ///
@@ -103,19 +103,16 @@ pub(crate) fn sha_digest_update(ctx_handle: AzihsmHandle, data: &[u8]) -> Result
 /// # Returns
 /// * `Ok(())` - On successful hash computation
 /// * `Err(AzihsmStatus)` - On failure (e.g., buffer too small)
-pub(crate) fn sha_digest_final(
+pub(crate) fn sha_digest_finish(
     ctx_handle: AzihsmHandle,
     output: &mut AzihsmBuffer,
 ) -> Result<(), AzihsmStatus> {
     // Get a reference to determine the required digest size
-    let ctx_ref: &mut HsmHashContext = HANDLE_TABLE.as_mut(ctx_handle, HandleType::ShaCtx)?;
-    let required_size = ctx_ref.finish(None)?;
+    let ctx: &mut HsmHashContext = HANDLE_TABLE.as_mut(ctx_handle, HandleType::ShaCtx)?;
+    let required_size = ctx.finish(None)?;
 
     // Validate output buffer and get mutable slice
     let output_data = validate_output_buffer(output, required_size)?;
-
-    // Take ownership of the context and finalize
-    let mut ctx: Box<HsmHashContext> = HANDLE_TABLE.free_handle(ctx_handle, HandleType::ShaCtx)?;
 
     // Perform the final hash operation
     let digest_len = ctx.finish(Some(output_data))?;

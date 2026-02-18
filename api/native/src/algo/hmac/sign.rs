@@ -79,7 +79,7 @@ pub(crate) fn hmac_verify(
 /// Initializes a streaming HMAC signing operation
 ///
 /// Creates a context for incrementally computing an HMAC signature.
-/// Use with `hmac_sign_update` and `hmac_sign_final`.
+/// Use with `hmac_sign_update` and `hmac_sign_finish`.
 ///
 /// # Arguments
 /// * `key_handle` - Handle to the HMAC key
@@ -124,7 +124,7 @@ pub(crate) fn hmac_sign_update(ctx_handle: AzihsmHandle, data: &[u8]) -> Result<
     Ok(())
 }
 
-/// Finalizes a streaming HMAC signing operation
+/// Finishes a streaming HMAC signing operation
 ///
 /// Completes the HMAC signature computation and returns the final signature.
 ///
@@ -135,21 +135,16 @@ pub(crate) fn hmac_sign_update(ctx_handle: AzihsmHandle, data: &[u8]) -> Result<
 /// # Returns
 /// * `Ok(())` - On successful signature generation
 /// * `Err(AzihsmStatus)` - On failure (e.g., buffer too small)
-pub(crate) fn hmac_sign_final(
+pub(crate) fn hmac_sign_finish(
     ctx_handle: AzihsmHandle,
     output: &mut AzihsmBuffer,
 ) -> Result<(), AzihsmStatus> {
     // Get a reference to determine the required signature size
-    let ctx_ref: &mut HsmHmacSignContext =
-        HANDLE_TABLE.as_mut(ctx_handle, HandleType::HmacSignCtx)?;
-    let required_size = ctx_ref.finish(None)?;
+    let ctx: &mut HsmHmacSignContext = HANDLE_TABLE.as_mut(ctx_handle, HandleType::HmacSignCtx)?;
+    let required_size = ctx.finish(None)?;
 
     // Check if output buffer is large enough
     let output_data = validate_output_buffer(output, required_size)?;
-
-    // Take ownership of the context and finalize
-    let mut ctx: Box<HsmHmacSignContext> =
-        HANDLE_TABLE.free_handle(ctx_handle, HandleType::HmacSignCtx)?;
 
     // Perform the final signing operation
     let sig_len = ctx.finish(Some(output_data))?;
@@ -163,7 +158,7 @@ pub(crate) fn hmac_sign_final(
 /// Initializes a streaming HMAC verification operation
 ///
 /// Creates a context for incrementally verifying an HMAC signature.
-/// Use with `hmac_verify_update` and `hmac_verify_final`.
+/// Use with `hmac_verify_update` and `hmac_verify_finish`.
 ///
 /// # Arguments
 /// * `key_handle` - Handle to the HMAC key
@@ -211,7 +206,7 @@ pub(crate) fn hmac_verify_update(
     Ok(())
 }
 
-/// Finalizes a streaming HMAC verification operation
+/// Finishes a streaming HMAC verification operation
 ///
 /// Completes the HMAC verification and checks if the signature matches.
 ///
@@ -223,13 +218,13 @@ pub(crate) fn hmac_verify_update(
 /// * `Ok(true)` - If signature is valid
 /// * `Ok(false)` - If signature is invalid
 /// * `Err(AzihsmStatus)` - On failure
-pub(crate) fn hmac_verify_final(
+pub(crate) fn hmac_verify_finish(
     ctx_handle: AzihsmHandle,
     signature: &[u8],
 ) -> Result<bool, AzihsmStatus> {
-    // Take ownership of the context and finalize
-    let mut ctx: Box<HsmHmacVerifyContext> =
-        HANDLE_TABLE.free_handle(ctx_handle, HandleType::HmacVerifyCtx)?;
+    // Get mutable reference to the context from handle table
+    let ctx: &mut HsmHmacVerifyContext =
+        HANDLE_TABLE.as_mut(ctx_handle, HandleType::HmacVerifyCtx)?;
 
     // Perform the final verification operation
     let is_valid = ctx.finish(signature)?;

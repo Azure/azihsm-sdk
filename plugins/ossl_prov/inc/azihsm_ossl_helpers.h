@@ -71,6 +71,90 @@ static inline azihsm_algo_id azihsm_ossl_evp_md_to_ecdsa_algo_id(const EVP_MD *m
     }
 }
 
+/* Helper function: Convert OpenSSL EVP_MD to RSA PKCS#1 v1.5 + Hash combined algorithm ID */
+static inline azihsm_algo_id azihsm_ossl_evp_md_to_rsa_pkcs_algo_id(const EVP_MD *md)
+{
+    int type;
+
+    if (md == NULL)
+        return 0;
+
+    type = EVP_MD_type(md);
+
+    switch (type)
+    {
+    case NID_sha1:
+        return AZIHSM_ALGO_ID_RSA_PKCS_SHA1;
+    case NID_sha256:
+        return AZIHSM_ALGO_ID_RSA_PKCS_SHA256;
+    case NID_sha384:
+        return AZIHSM_ALGO_ID_RSA_PKCS_SHA384;
+    case NID_sha512:
+        return AZIHSM_ALGO_ID_RSA_PKCS_SHA512;
+    default:
+        return 0;
+    }
+}
+
+/* Helper function: Convert OpenSSL EVP_MD to RSA-PSS + Hash combined algorithm ID */
+static inline azihsm_algo_id azihsm_ossl_evp_md_to_rsa_pss_algo_id(const EVP_MD *md)
+{
+    int type;
+
+    if (md == NULL)
+        return 0;
+
+    type = EVP_MD_type(md);
+
+    switch (type)
+    {
+    case NID_sha1:
+        return AZIHSM_ALGO_ID_RSA_PKCS_PSS_SHA1;
+    case NID_sha256:
+        return AZIHSM_ALGO_ID_RSA_PKCS_PSS_SHA256;
+    case NID_sha384:
+        return AZIHSM_ALGO_ID_RSA_PKCS_PSS_SHA384;
+    case NID_sha512:
+        return AZIHSM_ALGO_ID_RSA_PKCS_PSS_SHA512;
+    default:
+        return 0;
+    }
+}
+
+/* Helper function: Convert OpenSSL EVP_MD to MGF1 ID for PSS/OAEP */
+static inline azihsm_mgf1_id azihsm_ossl_evp_md_to_mgf1_id(const EVP_MD *md)
+{
+    int type;
+
+    if (md == NULL)
+        return 0;
+
+    type = EVP_MD_type(md);
+
+    switch (type)
+    {
+    case NID_sha1:
+        return AZIHSM_MGF1_ID_SHA1;
+    case NID_sha256:
+        return AZIHSM_MGF1_ID_SHA256;
+    case NID_sha384:
+        return AZIHSM_MGF1_ID_SHA384;
+    case NID_sha512:
+        return AZIHSM_MGF1_ID_SHA512;
+    default:
+        return 0;
+    }
+}
+
+/* Helper function: Get default salt length for a hash algorithm (equals hash output size) */
+static inline uint32_t azihsm_ossl_evp_md_to_salt_len(const EVP_MD *md)
+{
+    if (md == NULL)
+        return 0;
+
+    return (uint32_t)EVP_MD_size(md);
+}
+
 /*
  * Normalize a private key DER blob to PKCS#8 format.
  *

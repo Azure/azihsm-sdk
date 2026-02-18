@@ -8,13 +8,18 @@
 #include <vector>
 
 /// Helper function to import a key pair (RSA or ECC) using RSA-AES key wrapping
+<<<<<<< HEAD
 inline azihsm_status import_keypair(
+=======
+azihsm_status import_keypair(
+>>>>>>> main
     azihsm_handle wrapping_pub_key,
     azihsm_handle wrapping_priv_key,
     const std::vector<uint8_t> &key_der,
     key_props props,
     azihsm_handle *imported_priv_key,
     azihsm_handle *imported_pub_key
+<<<<<<< HEAD
 )
 {
     // Step 1: Setup RSA-AES wrapping algorithm
@@ -174,3 +179,6 @@ inline azihsm_status import_keypair(
         imported_pub_key
     );
 }
+=======
+);
+>>>>>>> main
