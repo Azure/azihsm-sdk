@@ -508,6 +508,9 @@ class azihsm_aes_cbc : public ::testing::Test
                         std::to_string(chunk_size)
                     );
 
+                    // We need to reset IV because CBC updates IV in-place,
+                    // but each run must start from the test case's original IV.
+                    std::memcpy(cbc_params.iv, test_case.iv, test_case.iv_len);
                     auto ciphertext = streaming_crypt(
                         key.get(),
                         &crypt_algo,
