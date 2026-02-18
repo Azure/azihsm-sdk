@@ -93,6 +93,13 @@ static int azihsm_ossl_ecdsa_sign_init(void *sctx, void *provkey, const OSSL_PAR
     /* Extract key from provider key object */
     ctx->key = (AZIHSM_EC_KEY *)provkey;
 
+    /* Verify the key has a private component for signing */
+    if (!ctx->key->has_private)
+    {
+        ERR_raise(ERR_LIB_PROV, PROV_R_NOT_A_PRIVATE_KEY);
+        return OSSL_FAILURE;
+    }
+
     ctx->operation = 1; /* Sign */
 
     /* Set default hash algorithm if not already set */
@@ -283,6 +290,13 @@ static int azihsm_ossl_ecdsa_digest_sign_init(
     /* Extract key from provider key object */
     ctx->key = (AZIHSM_EC_KEY *)provkey;
 
+    /* Verify the key has a private component for signing */
+    if (!ctx->key->has_private)
+    {
+        ERR_raise(ERR_LIB_PROV, PROV_R_NOT_A_PRIVATE_KEY);
+        return OSSL_FAILURE;
+    }
+
     ctx->operation = 1; /* Sign */
 
     /* Get hash algorithm by name */
@@ -378,7 +392,7 @@ static int azihsm_ossl_ecdsa_digest_sign_final(
         /* Ask the HSM for the required signature buffer size */
         sig_buf.ptr = NULL;
         sig_buf.len = 0;
-        status = azihsm_crypt_sign_final(ctx->sign_ctx, &sig_buf);
+        status = azihsm_crypt_sign_finish(ctx->sign_ctx, &sig_buf);
         if (status != AZIHSM_STATUS_BUFFER_TOO_SMALL || sig_buf.len == 0)
         {
             ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
@@ -391,7 +405,7 @@ static int azihsm_ossl_ecdsa_digest_sign_final(
     /* Query the HSM for the exact signature size */
     sig_buf.ptr = NULL;
     sig_buf.len = 0;
-    status = azihsm_crypt_sign_final(ctx->sign_ctx, &sig_buf);
+    status = azihsm_crypt_sign_finish(ctx->sign_ctx, &sig_buf);
     if (status != AZIHSM_STATUS_BUFFER_TOO_SMALL || sig_buf.len == 0)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
@@ -409,7 +423,7 @@ static int azihsm_ossl_ecdsa_digest_sign_final(
 
     /* Finalize streaming sign with exact size required by HSM */
     sig_buf.ptr = sig;
-    status = azihsm_crypt_sign_final(ctx->sign_ctx, &sig_buf);
+    status = azihsm_crypt_sign_finish(ctx->sign_ctx, &sig_buf);
 
     if (status != AZIHSM_STATUS_SUCCESS)
     {
@@ -539,7 +553,7 @@ static int azihsm_ossl_ecdsa_digest_verify_final(
     sig_buf.len = (uint32_t)siglen;
 
     /* Finalize streaming verify */
-    status = azihsm_crypt_verify_final(ctx->sign_ctx, &sig_buf);
+    status = azihsm_crypt_verify_finish(ctx->sign_ctx, &sig_buf);
     ctx->sign_ctx = 0;
 
     if (status == AZIHSM_STATUS_SUCCESS)

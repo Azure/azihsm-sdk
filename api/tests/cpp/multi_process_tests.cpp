@@ -27,6 +27,7 @@
 #include "handle/part_list_handle.hpp"
 #include "utils/auto_key.hpp"
 #include "utils/part_init_config.hpp"
+#include "utils/utils.hpp"
 
 namespace
 {
@@ -130,11 +131,7 @@ static std::vector<uint8_t> get_key_prop_bytes(azihsm_handle key, azihsm_key_pro
 static void cleanup_temp_files()
 {
     std::error_code ec;
-    auto tmp_dir = std::filesystem::temp_directory_path(ec);
-    if (ec)
-    {
-        return;
-    }
+    auto tmp_dir = get_test_tmp_dir();
 
     for (const auto &entry : std::filesystem::directory_iterator(tmp_dir, ec))
     {
@@ -241,7 +238,7 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_parent)
         );
 
         auto tmp_path =
-            std::filesystem::temp_directory_path() /
+            get_test_tmp_dir() /
             ("azihsm_multi_proc_" +
              std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".bin");
 

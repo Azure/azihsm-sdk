@@ -70,13 +70,12 @@ static const OSSL_ALGORITHM azihsm_ossl_mac[] = {
 
 // KDF
 extern const OSSL_DISPATCH azihsm_ossl_hkdf_functions[];
-extern const OSSL_DISPATCH azihsm_ossl_kbkdf_functions[];
+// KBKDF not yet implemented - empty dispatch table would cause OpenSSL to reject all KDFs
+// extern const OSSL_DISPATCH azihsm_ossl_kbkdf_functions[];
 
-static const OSSL_ALGORITHM azihsm_ossl_kdf[] = {
-    ALG(AZIHSM_OSSL_ALG_NAME_HKDF, azihsm_ossl_hkdf_functions),
-    ALG(AZIHSM_OSSL_ALG_NAME_KBKDF, azihsm_ossl_kbkdf_functions),
-    ALG_TABLE_END
-};
+static const OSSL_ALGORITHM azihsm_ossl_kdf[] = { ALG(AZIHSM_OSSL_ALG_NAME_HKDF,
+                                                      azihsm_ossl_hkdf_functions),
+                                                  ALG_TABLE_END };
 
 static const OSSL_ALGORITHM azihsm_ossl_rand[] = { ALG_TABLE_END };
 
@@ -106,6 +105,7 @@ extern const OSSL_DISPATCH azihsm_ossl_ecdsa_signature_functions[];
 
 static const OSSL_ALGORITHM azihsm_ossl_signature[] = {
     ALG(AZIHSM_OSSL_ALG_NAME_RSA, azihsm_ossl_rsa_signature_functions),
+    ALG(AZIHSM_OSSL_ALG_NAME_RSA_PSS, azihsm_ossl_rsa_signature_functions),
     ALG(AZIHSM_OSSL_ALG_NAME_EC, azihsm_ossl_ecdsa_signature_functions),
     ALG(AZIHSM_OSSL_ALG_NAME_ECDSA, azihsm_ossl_ecdsa_signature_functions),
     ALG_TABLE_END
@@ -205,6 +205,20 @@ static void azihsm_ossl_teardown(AZIHSM_OSSL_PROV_CTX *provctx)
     {
         OSSL_LIB_CTX_free(provctx->libctx);
     }
+
+    /* Delete cached unwrapping key handles before closing session.
+     * No lock needed: OpenSSL guarantees no operations are in flight at teardown. */
+    if (provctx->unwrapping_key.pub != 0)
+    {
+        azihsm_key_delete(provctx->unwrapping_key.pub);
+        provctx->unwrapping_key.pub = 0;
+    }
+    if (provctx->unwrapping_key.priv != 0)
+    {
+        azihsm_key_delete(provctx->unwrapping_key.priv);
+        provctx->unwrapping_key.priv = 0;
+    }
+    CRYPTO_THREAD_lock_free(provctx->unwrapping_key.lock);
 
     azihsm_close_device_and_session(provctx->device, provctx->session);
     OPENSSL_free(provctx);
@@ -322,6 +336,14 @@ OSSL_STATUS OSSL_provider_init(
         return OSSL_FAILURE;
     }
 
+    ctx->unwrapping_key.lock = CRYPTO_THREAD_lock_new();
+    if (ctx->unwrapping_key.lock == NULL)
+    {
+        OSSL_LIB_CTX_free(ctx->libctx);
+        OPENSSL_free(ctx);
+        return OSSL_FAILURE;
+    }
+
     /* Initialize config with hardcoded default paths */
     snprintf(ctx->config.bmk_path, sizeof(ctx->config.bmk_path), "%s", AZIHSM_DEFAULT_BMK_PATH);
     snprintf(ctx->config.muk_path, sizeof(ctx->config.muk_path), "%s", AZIHSM_DEFAULT_MUK_PATH);
@@ -341,12 +363,9 @@ OSSL_STATUS OSSL_provider_init(
     for (; in->function_id != 0; in++)
     {
 
-        switch (in->function_id)
+        if (in->function_id == OSSL_FUNC_CORE_GET_PARAMS)
         {
-
-        case OSSL_FUNC_CORE_GET_PARAMS:
             core_get_params = OSSL_FUNC_core_get_params(in);
-            break;
         }
     }
 

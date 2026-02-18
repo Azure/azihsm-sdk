@@ -45,6 +45,7 @@ typedef struct
     azihsm_ecc_curve ec_curve_id;
     AZIHSM_KEY_USAGE_TYPE key_usage;
     azihsm_handle session;
+    AZIHSM_OSSL_PROV_CTX *provctx;
     bool session_flag;
     char masked_key_file[4096];
     char input_key_file[4096];

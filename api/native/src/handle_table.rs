@@ -3,9 +3,11 @@
 #![allow(dead_code)]
 use std::collections::HashMap;
 
+use azihsm_api::*;
 use parking_lot::RwLock;
 
 use super::*;
+use crate::aes::*;
 
 #[repr(u32)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -173,6 +175,10 @@ impl HandleTableInner {
 ///
 /// The handle is invalidated and must not be used after this call.
 ///
+/// Callers **must** call this function for every valid context handle once it
+/// is no longer needed, regardless of whether the associated operation
+/// completed successfully or encountered an error.
+///
 /// # Safety
 ///
 /// - The `handle` must be a valid handle previously returned by one of the
@@ -186,23 +192,51 @@ impl HandleTableInner {
 /// * `AZIHSM_STATUS_INVALID_HANDLE` - Invalid or already freed handle
 #[unsafe(no_mangle)]
 #[allow(unsafe_code)]
-pub unsafe extern "C" fn azihsm_free_handle(handle: AzihsmHandle) -> AzihsmStatus {
+pub unsafe extern "C" fn azihsm_free_ctx_handle(handle: AzihsmHandle) -> AzihsmStatus {
     abi_boundary(|| {
         let handle_type = HANDLE_TABLE.get_handle_type(handle)?;
         match handle_type {
-            HandleType::AesCbcEncryptCtx
-            | HandleType::AesCbcDecryptCtx
-            | HandleType::EccSignCtx
-            | HandleType::EccVerifyCtx
-            | HandleType::ShaCtx
-            | HandleType::HmacSignCtx
-            | HandleType::HmacVerifyCtx
-            | HandleType::RsaSignCtx
-            | HandleType::RsaVerifyCtx => {
-                let _: Box<()> = HANDLE_TABLE.free_handle(handle, handle_type)?;
-                Ok(())
+            HandleType::AesGcmEncryptCtx => {
+                let _: Box<AesGcmEncryptContext> = HANDLE_TABLE.free_handle(handle, handle_type)?;
             }
-            _ => Err(AzihsmStatus::InvalidHandle),
+            HandleType::AesGcmDecryptCtx => {
+                let _: Box<AesGcmDecryptContext> = HANDLE_TABLE.free_handle(handle, handle_type)?;
+            }
+            HandleType::AesCbcEncryptCtx => {
+                let _: Box<AesCbcEncryptContext> = HANDLE_TABLE.free_handle(handle, handle_type)?;
+            }
+            HandleType::AesCbcDecryptCtx => {
+                let _: Box<AesCbcDecryptContext> = HANDLE_TABLE.free_handle(handle, handle_type)?;
+            }
+            HandleType::AesXtsEncryptCtx => {
+                let _: Box<AesXtsEncryptContext> = HANDLE_TABLE.free_handle(handle, handle_type)?;
+            }
+            HandleType::AesXtsDecryptCtx => {
+                let _: Box<AesXtsDecryptContext> = HANDLE_TABLE.free_handle(handle, handle_type)?;
+            }
+            HandleType::EccSignCtx => {
+                let _: Box<HsmEccSignContext> = HANDLE_TABLE.free_handle(handle, handle_type)?;
+            }
+            HandleType::EccVerifyCtx => {
+                let _: Box<HsmEccVerifyContext> = HANDLE_TABLE.free_handle(handle, handle_type)?;
+            }
+            HandleType::ShaCtx => {
+                let _: Box<HsmHashContext> = HANDLE_TABLE.free_handle(handle, handle_type)?;
+            }
+            HandleType::HmacSignCtx => {
+                let _: Box<HsmHmacSignContext> = HANDLE_TABLE.free_handle(handle, handle_type)?;
+            }
+            HandleType::HmacVerifyCtx => {
+                let _: Box<HsmHmacVerifyContext> = HANDLE_TABLE.free_handle(handle, handle_type)?;
+            }
+            HandleType::RsaSignCtx => {
+                let _: Box<HsmRsaSignContext> = HANDLE_TABLE.free_handle(handle, handle_type)?;
+            }
+            HandleType::RsaVerifyCtx => {
+                let _: Box<HsmRsaVerifyContext> = HANDLE_TABLE.free_handle(handle, handle_type)?;
+            }
+            _ => return Err(AzihsmStatus::InvalidHandle),
         }
+        Ok(())
     })
 }

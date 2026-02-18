@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#include <fcntl.h>
 #include <openssl/core_dispatch.h>
 #include <openssl/core_names.h>
 #include <openssl/crypto.h>
@@ -11,10 +12,13 @@
 #include <openssl/proverr.h>
 #include <openssl/store.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include "azihsm_ossl_base.h"
 #include "azihsm_ossl_ec.h"
 #include "azihsm_ossl_helpers.h"
+#include "azihsm_ossl_hsm.h"
 #include "azihsm_ossl_pkey_param.h"
 
 /*
@@ -205,60 +209,7 @@ static azihsm_status azihsm_ossl_keymgmt_gen_import(
     }
 
     /* 2. Retrieve the RSA unwrapping key pair from the HSM */
-    {
-        struct azihsm_algo rsa_keygen_algo = {
-            .id = AZIHSM_ALGO_ID_RSA_KEY_UNWRAPPING_KEY_PAIR_GEN,
-            .params = NULL,
-            .len = 0,
-        };
-
-        const uint32_t rsa_bits = 2048;
-        const azihsm_key_class rsa_priv_class = AZIHSM_KEY_CLASS_PRIVATE;
-        const azihsm_key_class rsa_pub_class = AZIHSM_KEY_CLASS_PUBLIC;
-        const azihsm_key_kind rsa_kind = AZIHSM_KEY_KIND_RSA;
-        const bool rsa_enable = true;
-
-        struct azihsm_key_prop rsa_priv_props[] = {
-            { .id = AZIHSM_KEY_PROP_ID_BIT_LEN, .val = (void *)&rsa_bits, .len = sizeof(rsa_bits) },
-            { .id = AZIHSM_KEY_PROP_ID_CLASS,
-              .val = (void *)&rsa_priv_class,
-              .len = sizeof(rsa_priv_class) },
-            { .id = AZIHSM_KEY_PROP_ID_KIND, .val = (void *)&rsa_kind, .len = sizeof(rsa_kind) },
-            { .id = AZIHSM_KEY_PROP_ID_UNWRAP,
-              .val = (void *)&rsa_enable,
-              .len = sizeof(rsa_enable) },
-        };
-
-        struct azihsm_key_prop rsa_pub_props[] = {
-            { .id = AZIHSM_KEY_PROP_ID_BIT_LEN, .val = (void *)&rsa_bits, .len = sizeof(rsa_bits) },
-            { .id = AZIHSM_KEY_PROP_ID_CLASS,
-              .val = (void *)&rsa_pub_class,
-              .len = sizeof(rsa_pub_class) },
-            { .id = AZIHSM_KEY_PROP_ID_KIND, .val = (void *)&rsa_kind, .len = sizeof(rsa_kind) },
-            { .id = AZIHSM_KEY_PROP_ID_WRAP,
-              .val = (void *)&rsa_enable,
-              .len = sizeof(rsa_enable) },
-        };
-
-        struct azihsm_key_prop_list rsa_priv_prop_list = {
-            .props = rsa_priv_props,
-            .count = 4,
-        };
-
-        struct azihsm_key_prop_list rsa_pub_prop_list = {
-            .props = rsa_pub_props,
-            .count = 4,
-        };
-
-        status = azihsm_key_gen_pair(
-            genctx->session,
-            &rsa_keygen_algo,
-            &rsa_priv_prop_list,
-            &rsa_pub_prop_list,
-            &wrapping_priv,
-            &wrapping_pub
-        );
-    }
+    status = azihsm_get_unwrapping_key(genctx->provctx, &wrapping_pub, &wrapping_priv);
     if (status != AZIHSM_STATUS_SUCCESS)
     {
         OPENSSL_cleanse(input_buf, (size_t)input_size);
@@ -300,8 +251,7 @@ static azihsm_status azihsm_ossl_keymgmt_gen_import(
     {
         OPENSSL_cleanse(input_buf, (size_t)input_size);
         OPENSSL_free(input_buf);
-        azihsm_key_delete(wrapping_pub);
-        azihsm_key_delete(wrapping_priv);
+        /* Note: wrapping keys are cached in provctx, do not delete */
         return (status == AZIHSM_STATUS_SUCCESS) ? AZIHSM_STATUS_INTERNAL_ERROR : status;
     }
 
@@ -312,8 +262,7 @@ static azihsm_status azihsm_ossl_keymgmt_gen_import(
     {
         OPENSSL_cleanse(input_buf, (size_t)input_size);
         OPENSSL_free(input_buf);
-        azihsm_key_delete(wrapping_pub);
-        azihsm_key_delete(wrapping_priv);
+        /* Note: wrapping keys are cached in provctx, do not delete */
         return AZIHSM_STATUS_INVALID_ARGUMENT;
     }
 
@@ -329,8 +278,7 @@ static azihsm_status azihsm_ossl_keymgmt_gen_import(
     {
         OPENSSL_cleanse(wrapped_data, wrapped_size);
         OPENSSL_free(wrapped_data);
-        azihsm_key_delete(wrapping_pub);
-        azihsm_key_delete(wrapping_priv);
+        /* Note: wrapping keys are cached in provctx, do not delete */
         return status;
     }
 
@@ -354,8 +302,7 @@ static azihsm_status azihsm_ossl_keymgmt_gen_import(
         out_priv,
         out_pub
     );
-    azihsm_key_delete(wrapping_pub);
-    azihsm_key_delete(wrapping_priv);
+    /* Note: wrapping keys are cached in provctx, do not delete */
 
     OPENSSL_cleanse(wrapped_data, wrapped_size);
     OPENSSL_free(wrapped_data);
@@ -502,36 +449,67 @@ static AZIHSM_EC_KEY *azihsm_ossl_keymgmt_gen(
     /* Handle masked key file output if requested */
     if (genctx->masked_key_file[0] != '\0')
     {
-        /* Allocate a 8192-byte buffer for the masked key */
-        const uint32_t masked_key_buffer_size = 8192;
-        uint8_t *masked_key_buffer = OPENSSL_malloc(masked_key_buffer_size);
-        if (masked_key_buffer == NULL)
-        {
-            azihsm_key_delete(private);
-            azihsm_key_delete(public);
-
-            OPENSSL_free(ec_key);
-            ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
-            return NULL;
-        }
-
-        /* Retrieve masked key with the allocated buffer */
+        /* First call to get required buffer size */
         struct azihsm_key_prop prop = { .id = AZIHSM_KEY_PROP_ID_MASKED_KEY,
-                                        .val = masked_key_buffer,
-                                        .len = masked_key_buffer_size };
+                                        .val = NULL,
+                                        .len = 0 };
 
         azihsm_status retrieve_status = azihsm_key_get_prop(private, &prop);
 
-        /* Check if we got the masked key */
-        if (retrieve_status == AZIHSM_STATUS_SUCCESS && prop.len > 0)
+        if (retrieve_status == AZIHSM_STATUS_BUFFER_TOO_SMALL && prop.len > 0)
         {
-            /* Write masked key to file */
-            FILE *f = fopen(genctx->masked_key_file, "wb");
-            if (f == NULL)
+            /* Allocate buffer of exact size */
+            uint32_t masked_key_buffer_size = prop.len;
+            uint8_t *masked_key_buffer = OPENSSL_malloc(masked_key_buffer_size);
+            if (masked_key_buffer == NULL)
+            {
+                azihsm_key_delete(private);
+                azihsm_key_delete(public);
+                OPENSSL_free(ec_key);
+                ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
+                return NULL;
+            }
+
+            /* Second call to retrieve the masked key */
+            prop.val = masked_key_buffer;
+            retrieve_status = azihsm_key_get_prop(private, &prop);
+
+            if (retrieve_status != AZIHSM_STATUS_SUCCESS)
             {
                 azihsm_key_delete(private);
                 azihsm_key_delete(public);
 
+                OPENSSL_cleanse(masked_key_buffer, masked_key_buffer_size);
+                OPENSSL_free(masked_key_buffer);
+                OPENSSL_free(ec_key);
+                ERR_raise(ERR_LIB_PROV, ERR_R_OPERATION_FAIL);
+                return NULL;
+            }
+
+            /* Write masked key to file with restricted permissions (owner-only) */
+            int fd = open(
+                genctx->masked_key_file,
+                O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW,
+                S_IRUSR | S_IWUSR
+            );
+            if (fd < 0)
+            {
+                azihsm_key_delete(private);
+                azihsm_key_delete(public);
+
+                OPENSSL_cleanse(masked_key_buffer, masked_key_buffer_size);
+                OPENSSL_free(masked_key_buffer);
+                OPENSSL_free(ec_key);
+                ERR_raise(ERR_LIB_PROV, ERR_R_OPERATION_FAIL);
+                return NULL;
+            }
+
+            FILE *f = fdopen(fd, "wb");
+            if (f == NULL)
+            {
+                close(fd);
+                azihsm_key_delete(private);
+                azihsm_key_delete(public);
                 OPENSSL_cleanse(masked_key_buffer, masked_key_buffer_size);
                 OPENSSL_free(masked_key_buffer);
                 OPENSSL_free(ec_key);
@@ -546,29 +524,26 @@ static AZIHSM_EC_KEY *azihsm_ossl_keymgmt_gen(
             {
                 azihsm_key_delete(private);
                 azihsm_key_delete(public);
-
                 OPENSSL_cleanse(masked_key_buffer, masked_key_buffer_size);
                 OPENSSL_free(masked_key_buffer);
                 OPENSSL_free(ec_key);
                 ERR_raise(ERR_LIB_PROV, ERR_R_OPERATION_FAIL);
                 return NULL;
             }
-        }
-        else if (retrieve_status != AZIHSM_STATUS_PROPERTY_NOT_PRESENT)
-        {
-            azihsm_key_delete(private);
-            azihsm_key_delete(public);
 
             OPENSSL_cleanse(masked_key_buffer, masked_key_buffer_size);
             OPENSSL_free(masked_key_buffer);
+        }
+        else if (retrieve_status != AZIHSM_STATUS_PROPERTY_NOT_PRESENT)
+        {
+            /* Unexpected error - not BUFFER_TOO_SMALL and not PROPERTY_NOT_PRESENT */
+            azihsm_key_delete(private);
+            azihsm_key_delete(public);
             OPENSSL_free(ec_key);
             ERR_raise(ERR_LIB_PROV, ERR_R_OPERATION_FAIL);
             return NULL;
         }
-        /* If KEY_PROPERTY_NOT_PRESENT, just continue without masked key */
-
-        OPENSSL_cleanse(masked_key_buffer, masked_key_buffer_size);
-        OPENSSL_free(masked_key_buffer);
+        /* If PROPERTY_NOT_PRESENT, continue without masked key */
     }
 
     return ec_key;
@@ -624,7 +599,7 @@ static int azihsm_ossl_keymgmt_gen_set_params(AIHSM_EC_GEN_CTX *genctx, const OS
         return OSSL_SUCCESS;
     }
 
-    /* Check for key_usage parameter specifically */
+    /* Parse key_usage: determines whether the key is for signing or key agreement */
     if ((p = OSSL_PARAM_locate_const(params, AZIHSM_OSSL_PKEY_PARAM_KEY_USAGE)) != NULL)
     {
         if (p->data_type != OSSL_PARAM_UTF8_STRING)
@@ -640,9 +615,9 @@ static int azihsm_ossl_keymgmt_gen_set_params(AIHSM_EC_GEN_CTX *genctx, const OS
         }
     }
 
+    /* Parse group name: maps the curve string (e.g. "P-384") to an internal curve ID */
     if ((p = OSSL_PARAM_locate_const(params, OSSL_PKEY_PARAM_GROUP_NAME)) != NULL)
     {
-
         int curve_id;
 
         if (p->data_type != OSSL_PARAM_UTF8_STRING)
@@ -660,9 +635,9 @@ static int azihsm_ossl_keymgmt_gen_set_params(AIHSM_EC_GEN_CTX *genctx, const OS
         genctx->ec_curve_id = (uint32_t)curve_id;
     }
 
+    /* Parse session flag: controls whether the key is bound to the current HSM session */
     if ((p = OSSL_PARAM_locate_const(params, AZIHSM_OSSL_PKEY_PARAM_SESSION)) != NULL)
     {
-
         int session_result;
 
         if (p->data_type != OSSL_PARAM_UTF8_STRING)
@@ -680,9 +655,9 @@ static int azihsm_ossl_keymgmt_gen_set_params(AIHSM_EC_GEN_CTX *genctx, const OS
         genctx->session_flag = (bool)session_result;
     }
 
+    /* Parse masked key output path: file where the HSM-encrypted key blob is stored */
     if ((p = OSSL_PARAM_locate_const(params, AZIHSM_OSSL_PKEY_PARAM_MASKED_KEY)) != NULL)
     {
-
         if (p->data_type != OSSL_PARAM_UTF8_STRING)
         {
             ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
@@ -743,6 +718,7 @@ static AIHSM_EC_GEN_CTX *azihsm_ossl_keymgmt_gen_init(
     }
 
     genctx->session = provctx->session;
+    genctx->provctx = provctx;
 
     genctx->key_usage = AIHSM_KEY_USAGE_DEFAULT;
     genctx->ec_curve_id = AIHSM_EC_CURVE_ID_DEFAULT;
@@ -913,11 +889,12 @@ static int azihsm_ossl_keymgmt_import(void *keydata, int selection, const OSSL_P
     }
     key->genctx.ec_curve_id = (uint32_t)curve_id;
 
-    /* Read raw public key (uncompressed EC point) */
+    /* Read raw public key (compressed or uncompressed EC point) */
     p = OSSL_PARAM_locate_const(params, OSSL_PKEY_PARAM_PUB_KEY);
     if (p != NULL)
     {
-        size_t expected_point_size = azihsm_ossl_ec_curve_id_to_point_size(curve_id);
+        size_t uncompressed_size = azihsm_ossl_ec_curve_id_to_point_size(curve_id);
+        size_t compressed_size = (uncompressed_size + 1) / 2;
         void *tmp_data = NULL;
         size_t tmp_len = 0;
 
@@ -925,15 +902,14 @@ static int azihsm_ossl_keymgmt_import(void *keydata, int selection, const OSSL_P
         key->pub_key_data = NULL;
         key->pub_key_data_len = 0;
 
-        /* Use a temporary buffer with max_len to prevent unbounded allocation */
-        if (!OSSL_PARAM_get_octet_string(p, &tmp_data, expected_point_size, &tmp_len))
+        if (!OSSL_PARAM_get_octet_string(p, &tmp_data, uncompressed_size, &tmp_len))
         {
             ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
             return OSSL_FAILURE;
         }
 
-        /* Validate point size matches curve */
-        if (tmp_len != expected_point_size)
+        /* Accept both compressed (1 + coord) and uncompressed (1 + 2*coord) */
+        if (tmp_len != uncompressed_size && tmp_len != compressed_size)
         {
             OPENSSL_free(tmp_data);
             ERR_raise(ERR_LIB_PROV, PROV_R_INVALID_KEY);

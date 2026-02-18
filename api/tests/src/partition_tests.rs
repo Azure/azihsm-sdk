@@ -6,8 +6,21 @@ use azihsm_crypto::pem_to_der;
 use super::*;
 use crate::utils::partition::*;
 
+/// Builds a valid caller-source OBK config using the test OBK.
+fn make_valid_obk() -> HsmOwnerBackupKeyConfig<'static> {
+    HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Caller, Some(&TEST_OBK))
+}
+
+/// Generates valid POTA endorsement buffers (signature, public key DER) for
+/// the given partition. Callers use these owned buffers to construct an
+/// `HsmPotaEndorsementData` that borrows them, so the buffers must outlive
+/// the endorsement.
+fn make_valid_pota_parts(part: &HsmPartition) -> (Vec<u8>, Vec<u8>) {
+    generate_pota_endorsement(part)
+}
+
 #[api_test]
-fn test_parittion_info_list() {
+fn test_partition_info_list() {
     let part_mgr = HsmPartitionManager::partition_info_list();
     assert!(!part_mgr.is_empty(), "No partitions found.");
 }
@@ -18,7 +31,7 @@ fn test_open_partition() {
     assert!(!part_mgr.is_empty(), "No partitions found.");
     for part_info in part_mgr.iter() {
         let part = HsmPartitionManager::open_partition(&part_info.path)
-            .expect("Failed to open the parition");
+            .expect("Failed to open the partition");
         assert_eq!(part.path(), part_info.path);
     }
 }
@@ -73,28 +86,31 @@ fn test_partition_init() {
     assert!(!part_mgr.is_empty(), "No partitions found.");
     for part_info in part_mgr.iter() {
         let part = HsmPartitionManager::open_partition(&part_info.path)
-            .expect("Failed to open the parition");
-        //reset before init
+            .expect("Failed to open the partition");
         part.reset().expect("Partition reset failed");
-        //init with dummy creds
+
         let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
         let use_tpm = std::env::var("AZIHSM_USE_TPM").is_ok();
-        let pota_result = if use_tpm {
-            None
+
+        let pota_data = if !use_tpm {
+            Some(make_valid_pota_parts(&part))
         } else {
-            Some(generate_pota_endorsement(&part))
+            None
         };
+
         let (obk_info, pota_endorsement) = if use_tpm {
             (
                 HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, None),
                 HsmPotaEndorsement::new(HsmPotaEndorsementSource::Tpm, None),
             )
         } else {
-            let (pota_sig, pota_pub_key_der) = pota_result.as_ref().unwrap();
-            let pota_data = HsmPotaEndorsementData::new(pota_sig, pota_pub_key_der);
+            let (ref sig, ref pubkey) = *pota_data.as_ref().unwrap();
             (
-                HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Caller, Some(&TEST_OBK)),
-                HsmPotaEndorsement::new(HsmPotaEndorsementSource::Caller, Some(pota_data)),
+                make_valid_obk(),
+                HsmPotaEndorsement::new(
+                    HsmPotaEndorsementSource::Caller,
+                    Some(HsmPotaEndorsementData::new(sig, pubkey)),
+                ),
             )
         };
         part.init(creds, None, None, obk_info, pota_endorsement)
@@ -147,24 +163,19 @@ fn test_init_caller_source_with_null_obk_fails() {
             .expect("Failed to open the partition");
         part.reset().expect("Partition reset failed");
 
-        let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
-
-        // Caller source with no OBK should fail
         let obk_config = HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Caller, None);
+        let (sig, pubkey) = make_valid_pota_parts(&part);
+        let pota_data = HsmPotaEndorsementData::new(&sig, &pubkey);
+        let pota = HsmPotaEndorsement::new(HsmPotaEndorsementSource::Caller, Some(pota_data));
 
-        // Provide a valid POTA endorsement so the failure is attributable to OBK
-        let (pota_sig, pota_pub_key_der) = generate_pota_endorsement(&part);
-        let pota_data = HsmPotaEndorsementData::new(&pota_sig, &pota_pub_key_der);
-        let pota_endorsement =
-            HsmPotaEndorsement::new(HsmPotaEndorsementSource::Caller, Some(pota_data));
-
-        let result = part.init(creds, None, None, obk_config, pota_endorsement);
-        assert!(result.is_err(), "Init with null OBK should fail");
-        assert_eq!(
-            result.unwrap_err(),
-            HsmError::InvalidArgument,
-            "Expected InvalidArgument error"
+        let result = part.init(
+            HsmCredentials::new(&APP_ID, &APP_PIN),
+            None,
+            None,
+            obk_config,
+            pota,
         );
+        assert_eq!(result.unwrap_err(), HsmError::InvalidArgument);
     }
 }
 
@@ -177,20 +188,18 @@ fn test_init_caller_source_with_empty_obk_fails() {
             .expect("Failed to open the partition");
         part.reset().expect("Partition reset failed");
 
-        let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
+        let obk_config = HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Caller, Some(&[]));
+        let (sig, pubkey) = make_valid_pota_parts(&part);
+        let pota_data = HsmPotaEndorsementData::new(&sig, &pubkey);
+        let pota = HsmPotaEndorsement::new(HsmPotaEndorsementSource::Caller, Some(pota_data));
 
-        // Caller source with empty OBK should fail
-        let empty_obk: [u8; 0] = [];
-        let obk_config =
-            HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Caller, Some(&empty_obk));
-
-        // Provide a valid POTA endorsement so the failure is attributable to OBK
-        let (pota_sig, pota_pub_key_der) = generate_pota_endorsement(&part);
-        let pota_data = HsmPotaEndorsementData::new(&pota_sig, &pota_pub_key_der);
-        let pota_endorsement =
-            HsmPotaEndorsement::new(HsmPotaEndorsementSource::Caller, Some(pota_data));
-
-        let result = part.init(creds, None, None, obk_config, pota_endorsement);
+        let result = part.init(
+            HsmCredentials::new(&APP_ID, &APP_PIN),
+            None,
+            None,
+            obk_config,
+            pota,
+        );
         assert!(result.is_err(), "Init with empty OBK should fail");
     }
 }
@@ -204,20 +213,19 @@ fn test_init_tpm_obk_source_with_obk_provided_fails() {
             .expect("Failed to open the partition");
         part.reset().expect("Partition reset failed");
 
-        let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
-
-        // TPM source ignores the caller-provided OBK at the Rust API level and
-        // attempts TPM operations, which fail without TPM hardware (e.g., in simulator).
         let obk_config =
             HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, Some(&TEST_OBK));
+        let (sig, pubkey) = make_valid_pota_parts(&part);
+        let pota_data = HsmPotaEndorsementData::new(&sig, &pubkey);
+        let pota = HsmPotaEndorsement::new(HsmPotaEndorsementSource::Caller, Some(pota_data));
 
-        // Provide a valid POTA endorsement so the failure is attributable to OBK
-        let (pota_sig, pota_pub_key_der) = generate_pota_endorsement(&part);
-        let pota_data = HsmPotaEndorsementData::new(&pota_sig, &pota_pub_key_der);
-        let pota_endorsement =
-            HsmPotaEndorsement::new(HsmPotaEndorsementSource::Caller, Some(pota_data));
-
-        let result = part.init(creds, None, None, obk_config, pota_endorsement);
+        let result = part.init(
+            HsmCredentials::new(&APP_ID, &APP_PIN),
+            None,
+            None,
+            obk_config,
+            pota,
+        );
         assert!(
             result.is_err(),
             "Init with TPM OBK source and caller-provided OBK should fail"
@@ -234,24 +242,19 @@ fn test_init_invalid_obk_source_fails() {
             .expect("Failed to open the partition");
         part.reset().expect("Partition reset failed");
 
-        let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
-
-        // Invalid OBK source value should fail
         let obk_config = HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource(99), Some(&TEST_OBK));
+        let (sig, pubkey) = make_valid_pota_parts(&part);
+        let pota_data = HsmPotaEndorsementData::new(&sig, &pubkey);
+        let pota = HsmPotaEndorsement::new(HsmPotaEndorsementSource::Caller, Some(pota_data));
 
-        // Provide a valid POTA endorsement so the failure is attributable to OBK
-        let (pota_sig, pota_pub_key_der) = generate_pota_endorsement(&part);
-        let pota_data = HsmPotaEndorsementData::new(&pota_sig, &pota_pub_key_der);
-        let pota_endorsement =
-            HsmPotaEndorsement::new(HsmPotaEndorsementSource::Caller, Some(pota_data));
-
-        let result = part.init(creds, None, None, obk_config, pota_endorsement);
-        assert!(result.is_err(), "Init with invalid OBK source should fail");
-        assert_eq!(
-            result.unwrap_err(),
-            HsmError::InvalidArgument,
-            "Expected InvalidArgument error"
+        let result = part.init(
+            HsmCredentials::new(&APP_ID, &APP_PIN),
+            None,
+            None,
+            obk_config,
+            pota,
         );
+        assert_eq!(result.unwrap_err(), HsmError::InvalidArgument);
     }
 }
 
@@ -264,20 +267,17 @@ fn test_init_caller_source_with_empty_endorsement_fails() {
             .expect("Failed to open the partition");
         part.reset().expect("Partition reset failed");
 
-        let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
+        let obk_config = make_valid_obk();
+        let pota_data = HsmPotaEndorsementData::new(&[], &[]);
+        let pota = HsmPotaEndorsement::new(HsmPotaEndorsementSource::Caller, Some(pota_data));
 
-        // Provide a valid OBK config so the failure is attributable to POTA endorsement
-        let obk_config =
-            HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Caller, Some(&TEST_OBK));
-
-        // Caller source with empty endorsement buffers should fail
-        let empty_sig: [u8; 0] = [];
-        let empty_pubkey: [u8; 0] = [];
-        let pota_data = HsmPotaEndorsementData::new(&empty_sig, &empty_pubkey);
-        let pota_endorsement =
-            HsmPotaEndorsement::new(HsmPotaEndorsementSource::Caller, Some(pota_data));
-
-        let result = part.init(creds, None, None, obk_config, pota_endorsement);
+        let result = part.init(
+            HsmCredentials::new(&APP_ID, &APP_PIN),
+            None,
+            None,
+            obk_config,
+            pota,
+        );
         assert!(result.is_err(), "Init with empty endorsement should fail");
     }
 }
@@ -291,22 +291,17 @@ fn test_init_caller_source_with_null_endorsement_fails() {
             .expect("Failed to open the partition");
         part.reset().expect("Partition reset failed");
 
-        let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
+        let obk_config = make_valid_obk();
+        let pota = HsmPotaEndorsement::new(HsmPotaEndorsementSource::Caller, None);
 
-        // Provide a valid OBK config so the failure is attributable to POTA endorsement
-        let obk_config =
-            HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Caller, Some(&TEST_OBK));
-
-        // Caller source with no endorsement data should fail
-        let pota_endorsement = HsmPotaEndorsement::new(HsmPotaEndorsementSource::Caller, None);
-
-        let result = part.init(creds, None, None, obk_config, pota_endorsement);
-        assert!(result.is_err(), "Init with null endorsement should fail");
-        assert_eq!(
-            result.unwrap_err(),
-            HsmError::InvalidArgument,
-            "Expected InvalidArgument error"
+        let result = part.init(
+            HsmCredentials::new(&APP_ID, &APP_PIN),
+            None,
+            None,
+            obk_config,
+            pota,
         );
+        assert_eq!(result.unwrap_err(), HsmError::InvalidArgument);
     }
 }
 
@@ -319,25 +314,17 @@ fn test_init_invalid_pota_source_fails() {
             .expect("Failed to open the partition");
         part.reset().expect("Partition reset failed");
 
-        let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
+        let obk_config = make_valid_obk();
+        let pota_data = HsmPotaEndorsementData::new(&[0u8; 96], &[0u8; 97]);
+        let pota = HsmPotaEndorsement::new(HsmPotaEndorsementSource(99), Some(pota_data));
 
-        // Provide a valid OBK config so the failure is attributable to POTA endorsement
-        let obk_config =
-            HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Caller, Some(&TEST_OBK));
-
-        // Invalid source value should fail
-        let signature_data = [0u8; 96];
-        let public_key_data = [0u8; 97];
-        let pota_data = HsmPotaEndorsementData::new(&signature_data, &public_key_data);
-        let pota_endorsement =
-            HsmPotaEndorsement::new(HsmPotaEndorsementSource(99), Some(pota_data));
-
-        let result = part.init(creds, None, None, obk_config, pota_endorsement);
-        assert!(result.is_err(), "Init with invalid POTA source should fail");
-        assert_eq!(
-            result.unwrap_err(),
-            HsmError::InvalidArgument,
-            "Expected InvalidArgument error"
+        let result = part.init(
+            HsmCredentials::new(&APP_ID, &APP_PIN),
+            None,
+            None,
+            obk_config,
+            pota,
         );
+        assert_eq!(result.unwrap_err(), HsmError::InvalidArgument);
     }
 }

@@ -76,7 +76,6 @@ static int azihsm_ossl_encoder_encode(
 {
     BIO *bio;
     const AIHSM_EC_GEN_CTX *genctx = &ec_key->genctx;
-    char pub_usage[256] = {}, priv_usage[256] = {};
 
     if ((bio = BIO_new_from_core_bio(ctx->libctx, out)) == NULL)
     {
@@ -224,7 +223,6 @@ static int azihsm_ossl_encoder_der_pki_encode(
 {
     BIO *bio;
     const AIHSM_EC_GEN_CTX *genctx = &ec_key->genctx;
-    char pub_usage[256] = {}, priv_usage[256] = {};
 
     if ((bio = BIO_new_from_core_bio(ctx->libctx, out)) == NULL)
     {

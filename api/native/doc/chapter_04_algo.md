@@ -55,11 +55,11 @@ This algorithm does not compute a message digest as specified in PKCS #1 v1.5.
 | **Supported Operations**   | [azihsm_crypt_sign](#azihsm_crypt_sign)                     |
 |                            | [azihsm_crypt_sign_init](#azihsm_crypt_sign_init)           |
 |                            | [azihsm_crypt_sign_update](#azihsm_crypt_sign_update)       |
-|                            | [azihsm_crypt_sign_final](#azihsm_crypt_sign_final)         |
+|                            | [azihsm_crypt_sign_finish](#azihsm_crypt_sign_finish)         |
 |                            | [azihsm_crypt_verify](#azihsm_crypt_verify)                 |
 |                            | [azihsm_crypt_verify_init](#azihsm_crypt_verify_init)       |
 |                            | [azihsm_crypt_verify_update](#azihsm_crypt_verify_update)   |
-|                            | [azihsm_crypt_verify_final](#azihsm_crypt_verify_final)     |
+|                            | [azihsm_crypt_verify_finish](#azihsm_crypt_verify_finish)     |
 | **PKCS#11 Mechanism**      | CKM_RSA_PKCS                                         &nbsp; |
 
 **Example**
@@ -86,11 +86,11 @@ digest operation on the data using SHA-1 algorithm.
 | **Supported Operations**   | [azihsm_crypt_sign](#azihsm_crypt_sign)                   |
 |                            | [azihsm_crypt_sign_init](#azihsm_crypt_sign_init)         |
 |                            | [azihsm_crypt_sign_update](#azihsm_crypt_sign_update)     |
-|                            | [azihsm_crypt_sign_final](#azihsm_crypt_sign_final)       |
+|                            | [azihsm_crypt_sign_finish](#azihsm_crypt_sign_finish)       |
 |                            | [azihsm_crypt_verify](#azihsm_crypt_verify)               |
 |                            | [azihsm_crypt_verify_init](#azihsm_crypt_verify_init)     |
 |                            | [azihsm_crypt_verify_update](#azihsm_crypt_verify_update) |
-|                            | [azihsm_crypt_verify_final](#azihsm_crypt_verify_final)   |
+|                            | [azihsm_crypt_verify_finish](#azihsm_crypt_verify_finish)   |
 | **PKCS#11 Mechanism**      | CKM_SHA1_RSA_PKCS                                  &nbsp; |
 
 
@@ -118,11 +118,11 @@ digest operation on the data using SHA-256 algorithm.
 | **Supported Operations**   | [azihsm_crypt_sign](#azihsm_crypt_sign)                     |
 |                            | [azihsm_crypt_sign_init](#azihsm_crypt_sign_init)           |
 |                            | [azihsm_crypt_sign_update](#azihsm_crypt_sign_update)       |
-|                            | [azihsm_crypt_sign_final](#azihsm_crypt_sign_final)         |
+|                            | [azihsm_crypt_sign_finish](#azihsm_crypt_sign_finish)         |
 |                            | [azihsm_crypt_verify](#azihsm_crypt_verify)                 |
 |                            | [azihsm_crypt_verify_init](#azihsm_crypt_verify_init)       |
 |                            | [azihsm_crypt_verify_update](#azihsm_crypt_verify_update)   |
-|                            | [azihsm_crypt_verify_final](#azihsm_crypt_verify_final)     |
+|                            | [azihsm_crypt_verify_finish](#azihsm_crypt_verify_finish)     |
 | **PKCS#11 Mechanism**      | CKM_SHA256_RSA_PKCS                                  &nbsp; |
 
 
@@ -150,11 +150,11 @@ digest operation on the data using SHA-384 algorithm.
 | **Supported Operations**   | [azihsm_crypt_sign](#azihsm_crypt_sign)                     |
 |                            | [azihsm_crypt_sign_init](#azihsm_crypt_sign_init)           |
 |                            | [azihsm_crypt_sign_update](#azihsm_crypt_sign_update)       |
-|                            | [azihsm_crypt_sign_final](#azihsm_crypt_sign_final)         |
+|                            | [azihsm_crypt_sign_finish](#azihsm_crypt_sign_finish)         |
 |                            | [azihsm_crypt_verify](#azihsm_crypt_verify)                 |
 |                            | [azihsm_crypt_verify_init](#azihsm_crypt_verify_init)       |
 |                            | [azihsm_crypt_verify_update](#azihsm_crypt_verify_update)   |
-|                            | [azihsm_crypt_verify_final](#azihsm_crypt_verify_final)     |
+|                            | [azihsm_crypt_verify_finish](#azihsm_crypt_verify_finish)     |
 | **PKCS#11 Mechanism**      | CKM_SHA384_RSA_PKCS                                  &nbsp; |
 
 **Example**
@@ -181,11 +181,11 @@ digest operation on the data using SHA-512 algorithm.
 | **Supported Operations**   | [azihsm_crypt_sign](#azihsm_crypt_sign)                     |
 |                            | [azihsm_crypt_sign_init](#azihsm_crypt_sign_init)           |
 |                            | [azihsm_crypt_sign_update](#azihsm_crypt_sign_update)       |
-|                            | [azihsm_crypt_sign_final](#azihsm_crypt_sign_final)         |
+|                            | [azihsm_crypt_sign_finish](#azihsm_crypt_sign_finish)         |
 |                            | [azihsm_crypt_verify](#azihsm_crypt_verify)                 |
 |                            | [azihsm_crypt_verify_init](#azihsm_crypt_verify_init)       |
 |                            | [azihsm_crypt_verify_update](#azihsm_crypt_verify_update)   |
-|                            | [azihsm_crypt_verify_final](#azihsm_crypt_verify_final)     |
+|                            | [azihsm_crypt_verify_finish](#azihsm_crypt_verify_finish)     |
 | **PKCS#11 Mechanism**      | CKM_SHA512_RSA_PKCS                                  &nbsp; |
 
 **Example**
@@ -214,11 +214,11 @@ This algorithm does not compute a message digest as specified in PKCS #1 v1.5.
 | **Supported Operations**   | [azihsm_crypt_sign](#azihsm_crypt_sign)                             |
 |                            | [azihsm_crypt_sign_init](#azihsm_crypt_sign_init)                   |
 |                            | [azihsm_crypt_sign_update](#azihsm_crypt_sign_update)               |
-|                            | [azihsm_crypt_sign_final](#azihsm_crypt_sign_final)                 |
+|                            | [azihsm_crypt_sign_finish](#azihsm_crypt_sign_finish)                 |
 |                            | [azihsm_crypt_verify](#azihsm_crypt_verify)                         |
 |                            | [azihsm_crypt_verify_init](#azihsm_crypt_verify_init)               |
 |                            | [azihsm_crypt_verify_update](#azihsm_crypt_verify_update)           |
-|                            | [azihsm_crypt_verify_final](#azihsm_crypt_verify_final)             |
+|                            | [azihsm_crypt_verify_finish](#azihsm_crypt_verify_finish)             |
 | **PKCS#11 Mechanism**      | CKM_RSA_PKCS_PSS                                                    |
 
 
@@ -251,11 +251,11 @@ digest operation on the data using SHA-1 algorithm.
 | **Supported Operations**   | [azihsm_crypt_sign](#azihsm_crypt_sign)                             |
 |                            | [azihsm_crypt_sign_init](#azihsm_crypt_sign_init)                   |
 |                            | [azihsm_crypt_sign_update](#azihsm_crypt_sign_update)               |
-|                            | [azihsm_crypt_sign_final](#azihsm_crypt_sign_final)                 |
+|                            | [azihsm_crypt_sign_finish](#azihsm_crypt_sign_finish)                 |
 |                            | [azihsm_crypt_verify](#azihsm_crypt_verify)                         |
 |                            | [azihsm_crypt_verify_init](#azihsm_crypt_verify_init)               |
 |                            | [azihsm_crypt_verify_update](#azihsm_crypt_verify_update)           |
-|                            | [azihsm_crypt_verify_final](#azihsm_crypt_verify_final)             |
+|                            | [azihsm_crypt_verify_finish](#azihsm_crypt_verify_finish)             |
 | **PKCS#11 Mechanism**      | CKM_SHA1_RSA_PKCS_PSS                                               |
 
 
@@ -289,11 +289,11 @@ digest operation on the data using SHA-256 algorithm.
 | **Supported Operations**   | [azihsm_crypt_sign](#azihsm_crypt_sign)                             |
 |                            | [azihsm_crypt_sign_init](#azihsm_crypt_sign_init)                   |
 |                            | [azihsm_crypt_sign_update](#azihsm_crypt_sign_update)               |
-|                            | [azihsm_crypt_sign_final](#azihsm_crypt_sign_final)                 |
+|                            | [azihsm_crypt_sign_finish](#azihsm_crypt_sign_finish)                 |
 |                            | [azihsm_crypt_verify](#azihsm_crypt_verify)                         |
 |                            | [azihsm_crypt_verify_init](#azihsm_crypt_verify_init)               |
 |                            | [azihsm_crypt_verify_update](#azihsm_crypt_verify_update)           |
-|                            | [azihsm_crypt_verify_final](#azihsm_crypt_verify_final)             |
+|                            | [azihsm_crypt_verify_finish](#azihsm_crypt_verify_finish)             |
 | **PKCS#11 Mechanism**      | CKM_SHA256_RSA_PKCS_PSS                                             |
 
 
@@ -327,11 +327,11 @@ digest operation on the data using SHA-384 algorithm.
 | **Supported Operations**   | [azihsm_crypt_sign](#azihsm_crypt_sign)                             |
 |                            | [azihsm_crypt_sign_init](#azihsm_crypt_sign_init)                   |
 |                            | [azihsm_crypt_sign_update](#azihsm_crypt_sign_update)               |
-|                            | [azihsm_crypt_sign_final](#azihsm_crypt_sign_final)                 |
+|                            | [azihsm_crypt_sign_finish](#azihsm_crypt_sign_finish)                 |
 |                            | [azihsm_crypt_verify](#azihsm_crypt_verify)                         |
 |                            | [azihsm_crypt_verify_init](#azihsm_crypt_verify_init)               |
 |                            | [azihsm_crypt_verify_update](#azihsm_crypt_verify_update)           |
-|                            | [azihsm_crypt_verify_final](#azihsm_crypt_verify_final)             |
+|                            | [azihsm_crypt_verify_finish](#azihsm_crypt_verify_finish)             |
 | **PKCS#11 Mechanism**      | CKM_SHA384_RSA_PKCS_PSS                                             |
 
 
@@ -365,11 +365,11 @@ digest operation on the data using SHA-512 algorithm.
 | **Supported Operations**   | [azihsm_crypt_sign](#azihsm_crypt_sign)                             |
 |                            | [azihsm_crypt_sign_init](#azihsm_crypt_sign_init)                   |
 |                            | [azihsm_crypt_sign_update](#azihsm_crypt_sign_update)               |
-|                            | [azihsm_crypt_sign_final](#azihsm_crypt_sign_final)                 |
+|                            | [azihsm_crypt_sign_finish](#azihsm_crypt_sign_finish)                 |
 |                            | [azihsm_crypt_verify](#azihsm_crypt_verify)                         |
 |                            | [azihsm_crypt_verify_init](#azihsm_crypt_verify_init)               |
 |                            | [azihsm_crypt_verify_update](#azihsm_crypt_verify_update)           |
-|                            | [azihsm_crypt_verify_final](#azihsm_crypt_verify_final)             |
+|                            | [azihsm_crypt_verify_finish](#azihsm_crypt_verify_finish)             |
 | **PKCS#11 Mechanism**      | CKM_SHA512_RSA_PKCS_PSS                                             |
 
 
@@ -403,11 +403,11 @@ OAEP block format defined in PKCS#1.  It supports single-part encryption and dec
 | **Supported Operations**   | [azihsm_crypt_encrypt](#azihsm_crypt_encrypt)                         |
 |                            | [azihsm_crypt_encrypt_init](#azihsm_crypt_encrypt_init)               |
 |                            | [azihsm_crypt_encrypt_update](#azihsm_crypt_encrypt_update)           |
-|                            | [azihsm_crypt_encrypt_final](#azihsm_crypt_encrypt_final)             |
+|                            | [azihsm_crypt_encrypt_finish](#azihsm_crypt_encrypt_finish)             |
 |                            | [azihsm_crypt_decrypt](#azihsm_crypt_decrypt)                         |
 |                            | [azihsm_crypt_decrypt_init](#azihsm_crypt_decrypt_init)               |
 |                            | [azihsm_crypt_decrypt_update](#azihsm_crypt_decrypt_update)           |
-|                            | [azihsm_crypt_decrypt_final](#azihsm_crypt_decrypt_final)             |
+|                            | [azihsm_crypt_decrypt_finish](#azihsm_crypt_decrypt_finish)             |
 | **PKCS#11 Mechanism**      | CKM_RSA_PKCS_OAEP                                                     |
 
 **Example**
@@ -520,11 +520,11 @@ ECDSA without hashing is an algorithm for single-part signatures and verificatio
 | **Supported Operations**   | [azihsm_crypt_sign](#azihsm_crypt_sign)                   |
 |                            | [azihsm_crypt_sign_init](#azihsm_crypt_sign_init)         |
 |                            | [azihsm_crypt_sign_update](#azihsm_crypt_sign_update)     |
-|                            | [azihsm_crypt_sign_final](#azihsm_crypt_sign_final)       |
+|                            | [azihsm_crypt_sign_finish](#azihsm_crypt_sign_finish)       |
 |                            | [azihsm_crypt_verify](#azihsm_crypt_verify)               |
 |                            | [azihsm_crypt_verify_init](#azihsm_crypt_verify_init)     |
 |                            | [azihsm_crypt_verify_update](#azihsm_crypt_verify_update) |
-|                            | [azihsm_crypt_verify_final](#azihsm_crypt_verify_final)   |
+|                            | [azihsm_crypt_verify_finish](#azihsm_crypt_verify_finish)   |
 | **PKCS#11 Mechanism**      | CKM_ECDSA                                         &nbsp;  |
 
 **Example**
@@ -552,11 +552,11 @@ with SHA-1
 | **Supported Operations**   | [azihsm_crypt_sign](#azihsm_crypt_sign)                        |
 |                            | [azihsm_crypt_sign_init](#azihsm_crypt_sign_init)              |
 |                            | [azihsm_crypt_sign_update](#azihsm_crypt_sign_update)          |
-|                            | [azihsm_crypt_sign_final](#azihsm_crypt_sign_final)            |
+|                            | [azihsm_crypt_sign_finish](#azihsm_crypt_sign_finish)            |
 |                            | [azihsm_crypt_verify](#azihsm_crypt_verify)                    |
 |                            | [azihsm_crypt_verify_init](#azihsm_crypt_verify_init)          |
 |                            | [azihsm_crypt_verify_update](#azihsm_crypt_verify_update)      |
-|                            | [azihsm_crypt_verify_final](#azihsm_crypt_verify_final)        |
+|                            | [azihsm_crypt_verify_finish](#azihsm_crypt_verify_finish)        |
 | **PKCS#11 Mechanism**      | CKM_ECDSA_SHA_1                                         &nbsp; |
 
 **Example**
@@ -584,11 +584,11 @@ with SHA-256
 | **Supported Operations**   | [azihsm_crypt_sign](#azihsm_crypt_sign)                      |
 |                            | [azihsm_crypt_sign_init](#azihsm_crypt_sign_init)            |
 |                            | [azihsm_crypt_sign_update](#azihsm_crypt_sign_update)        |
-|                            | [azihsm_crypt_sign_final](#azihsm_crypt_sign_final)          |
+|                            | [azihsm_crypt_sign_finish](#azihsm_crypt_sign_finish)          |
 |                            | [azihsm_crypt_verify](#azihsm_crypt_verify)                  |
 |                            | [azihsm_crypt_verify_init](#azihsm_crypt_verify_init)        |
 |                            | [azihsm_crypt_verify_update](#azihsm_crypt_verify_update)    |
-|                            | [azihsm_crypt_verify_final](#azihsm_crypt_verify_final)      |
+|                            | [azihsm_crypt_verify_finish](#azihsm_crypt_verify_finish)      |
 | **PKCS#11 Mechanism**      | CKM_ECDSA_256                                         &nbsp; |
 
 **Example**
@@ -616,11 +616,11 @@ with SHA-384
 | **Supported Operations**   | [azihsm_crypt_sign](#azihsm_crypt_sign)                      |
 |                            | [azihsm_crypt_sign_init](#azihsm_crypt_sign_init)            |
 |                            | [azihsm_crypt_sign_update](#azihsm_crypt_sign_update)        |
-|                            | [azihsm_crypt_sign_final](#azihsm_crypt_sign_final)          |
+|                            | [azihsm_crypt_sign_finish](#azihsm_crypt_sign_finish)          |
 |                            | [azihsm_crypt_verify](#azihsm_crypt_verify)                  |
 |                            | [azihsm_crypt_verify_init](#azihsm_crypt_verify_init)        |
 |                            | [azihsm_crypt_verify_update](#azihsm_crypt_verify_update)    |
-|                            | [azihsm_crypt_verify_final](#azihsm_crypt_verify_final)      |
+|                            | [azihsm_crypt_verify_finish](#azihsm_crypt_verify_finish)      |
 | **PKCS#11 Mechanism**      | CKM_ECDSA_384                                         &nbsp; |
 
 **Example**
@@ -648,11 +648,11 @@ with SHA-512
 | **Supported Operations**   | [azihsm_crypt_sign](#azihsm_crypt_sign)                      |
 |                            | [azihsm_crypt_sign_init](#azihsm_crypt_sign_init)            |
 |                            | [azihsm_crypt_sign_update](#azihsm_crypt_sign_update)        |
-|                            | [azihsm_crypt_sign_final](#azihsm_crypt_sign_final)          |
+|                            | [azihsm_crypt_sign_finish](#azihsm_crypt_sign_finish)          |
 |                            | [azihsm_crypt_verify](#azihsm_crypt_verify)                  |
 |                            | [azihsm_crypt_verify_init](#azihsm_crypt_verify_init)        |
 |                            | [azihsm_crypt_verify_update](#azihsm_crypt_verify_update)    |
-|                            | [azihsm_crypt_verify_final](#azihsm_crypt_verify_final)      |
+|                            | [azihsm_crypt_verify_finish](#azihsm_crypt_verify_finish)      |
 | **PKCS#11 Mechanism**      | CKM_ECDSA_512                                         &nbsp; |
 
 **Example**
@@ -741,11 +741,11 @@ AES-CBC is an algorithm for symmetric block encryption as defined by
 | **Supported Operations**   | [azihsm_crypt_encrypt](#azihsm_crypt_encrypt)               |
 |                            | [azihsm_crypt_encrypt_init](#azihsm_crypt_encrypt_init)     |
 |                            | [azihsm_crypt_encrypt_update](#azihsm_crypt_encrypt_update) |
-|                            | [azihsm_crypt_encrypt_final](#azihsm_crypt_encrypt_final)   |
+|                            | [azihsm_crypt_encrypt_finish](#azihsm_crypt_encrypt_finish)   |
 |                            | [azihsm_crypt_decrypt](#azihsm_crypt_decrypt)               |
 |                            | [azihsm_crypt_decrypt_init](#azihsm_crypt_decrypt_init)     |
 |                            | [azihsm_crypt_decrypt_update](#azihsm_crypt_decrypt_update) |
-|                            | [azihsm_crypt_decrypt_final](#azihsm_crypt_decrypt_final)   |
+|                            | [azihsm_crypt_decrypt_finish](#azihsm_crypt_decrypt_finish)   |
 | **PKCS#11 Mechanism**      | CKM_AES_CBC                                         &nbsp;  |
 
 **Example**
@@ -782,11 +782,11 @@ This algorithm performs padding based on [PKCS#7](https://datatracker.ietf.org/d
 | **Supported Operations**   | [azihsm_crypt_encrypt](#azihsm_crypt_encrypt)               |
 |                            | [azihsm_crypt_encrypt_init](#azihsm_crypt_encrypt_init)     |
 |                            | [azihsm_crypt_encrypt_update](#azihsm_crypt_encrypt_update) |
-|                            | [azihsm_crypt_encrypt_final](#azihsm_crypt_encrypt_final)   |
+|                            | [azihsm_crypt_encrypt_finish](#azihsm_crypt_encrypt_finish)   |
 |                            | [azihsm_crypt_decrypt](#azihsm_crypt_decrypt)               |
 |                            | [azihsm_crypt_decrypt_init](#azihsm_crypt_decrypt_init)     |
 |                            | [azihsm_crypt_decrypt_update](#azihsm_crypt_decrypt_update) |
-|                            | [azihsm_crypt_decrypt_final](#azihsm_crypt_decrypt_final)   |
+|                            | [azihsm_crypt_decrypt_finish](#azihsm_crypt_decrypt_finish)   |
 | **PKCS#11 Mechanism**      | CKM_AES_CBC_PAD                                      &nbsp; |
 
 **Example**
@@ -849,11 +849,11 @@ encryption and decryption. It is specified in [NIST SP800-38E](https://nvlpubs.n
 | **Supported Operations**   | [azihsm_crypt_encrypt](#azihsm_crypt_encrypt)               |
 |                            | [azihsm_crypt_encrypt_init](#azihsm_crypt_encrypt_init)     |
 |                            | [azihsm_crypt_encrypt_update](#azihsm_crypt_encrypt_update) |
-|                            | [azihsm_crypt_encrypt_final](#azihsm_crypt_encrypt_final)   |
+|                            | [azihsm_crypt_encrypt_finish](#azihsm_crypt_encrypt_finish)   |
 |                            | [azihsm_crypt_decrypt](#azihsm_crypt_decrypt)               |
 |                            | [azihsm_crypt_decrypt_init](#azihsm_crypt_decrypt_init)     |
 |                            | [azihsm_crypt_decrypt_update](#azihsm_crypt_decrypt_update) |
-|                            | [azihsm_crypt_decrypt_final](#azihsm_crypt_decrypt_final)   |
+|                            | [azihsm_crypt_decrypt_finish](#azihsm_crypt_decrypt_finish)   |
 | **PKCS#11 Mechanism**      | CKM_AES_XTS                                         &nbsp;  |
 
 **Example**
@@ -914,11 +914,11 @@ AES-GCM is an authenticated encryption algorithm as defined by
 | **Supported Operations**   | [azihsm_crypt_encrypt](#azihsm_crypt_encrypt)               |
 |                            | [azihsm_crypt_encrypt_init](#azihsm_crypt_encrypt_init)     |
 |                            | [azihsm_crypt_encrypt_update](#azihsm_crypt_encrypt_update) |
-|                            | [azihsm_crypt_encrypt_final](#azihsm_crypt_encrypt_final)   |
+|                            | [azihsm_crypt_encrypt_finish](#azihsm_crypt_encrypt_finish)   |
 |                            | [azihsm_crypt_decrypt](#azihsm_crypt_decrypt)               |
 |                            | [azihsm_crypt_decrypt_init](#azihsm_crypt_decrypt_init)     |
 |                            | [azihsm_crypt_decrypt_update](#azihsm_crypt_decrypt_update) |
-|                            | [azihsm_crypt_decrypt_final](#azihsm_crypt_decrypt_final)   |
+|                            | [azihsm_crypt_decrypt_finish](#azihsm_crypt_decrypt_finish)   |
 | **PKCS#11 Mechanism**      | CKM_AES_GCM                                         &nbsp;  |
 
 **Example**
@@ -956,7 +956,7 @@ The SHA-1 is an algorithm for message digesting data. It generates a 160-bit mes
 | **Supported Operations**   | [azihsm_crypt_digest](#azihsm_crypt_digest)                  |
 |                            | [azihsm_crypt_digest_init](#azihsm_crypt_digest_init)        |
 |                            | [azihsm_crypt_digest_update](#azihsm_crypt_digest_update)    |
-|                            | [azihsm_crypt_digest_final](#azihsm_crypt_digest_final)      |
+|                            | [azihsm_crypt_digest_finish](#azihsm_crypt_digest_finish)      |
 | **PKCS#11 Mechanism**      | CKM_SHA_1                                             &nbsp; |
 
 **Example**
@@ -983,7 +983,7 @@ The SHA-256 is an algorithm for message digesting data. It generates a 256-bit m
 | **Supported Operations**   | [azihsm_crypt_digest](#azihsm_crypt_digest)                   |
 |                            | [azihsm_crypt_digest_init](#azihsm_crypt_digest_init)         |
 |                            | [azihsm_crypt_digest_update](#azihsm_crypt_digest_update)     |
-|                            | [azihsm_crypt_digest_final](#azihsm_crypt_digest_final)       |
+|                            | [azihsm_crypt_digest_finish](#azihsm_crypt_digest_finish)       |
 | **PKCS#11 Mechanism**      | CKM_SHA256                                             &nbsp; |
 
 **Example**
@@ -1010,7 +1010,7 @@ The SHA-384 is an algorithm for message digesting data. It generates a 384-bit m
 | **Supported Operations**   | [azihsm_crypt_digest](#azihsm_crypt_digest)                   |
 |                            | [azihsm_crypt_digest_init](#azihsm_crypt_digest_init)         |
 |                            | [azihsm_crypt_digest_update](#azihsm_crypt_digest_update)     |
-|                            | [azihsm_crypt_digest_final](#azihsm_crypt_digest_final)       |
+|                            | [azihsm_crypt_digest_finish](#azihsm_crypt_digest_finish)       |
 | **PKCS#11 Mechanism**      | CKM_SHA384                                             &nbsp; |
 
 **Example**
@@ -1037,7 +1037,7 @@ The SHA-512 is an algorithm for message digesting data. It generates a 512-bit m
 | **Supported Operations**   | [azihsm_crypt_digest](#azihsm_crypt_digest)                   |
 |                            | [azihsm_crypt_digest_init](#azihsm_crypt_digest_init)         |
 |                            | [azihsm_crypt_digest_update](#azihsm_crypt_digest_update)     |
-|                            | [azihsm_crypt_digest_final](#azihsm_crypt_digest_final)       |
+|                            | [azihsm_crypt_digest_finish](#azihsm_crypt_digest_finish)       |
 | **PKCS#11 Mechanism**      | CKM_SHA512                                             &nbsp; |
 
 **Example**
@@ -1064,11 +1064,11 @@ based on the SHA-1 hash function.
 | **Supported Operations**   | [azihsm_crypt_sign](#azihsm_crypt_sign)                       |
 |                            | [azihsm_crypt_sign_init](#azihsm_crypt_sign_init)             |
 |                            | [azihsm_crypt_sign_update](#azihsm_crypt_sign_update)         |
-|                            | [azihsm_crypt_sign_final](#azihsm_crypt_sign_final)           |
+|                            | [azihsm_crypt_sign_finish](#azihsm_crypt_sign_finish)           |
 |                            | [azihsm_crypt_verify](#azihsm_crypt_verify)                   |
 |                            | [azihsm_crypt_verify_init](#azihsm_crypt_verify_init)         |
 |                            | [azihsm_crypt_verify_update](#azihsm_crypt_verify_update)     |
-|                            | [azihsm_crypt_verify_final](#azihsm_crypt_verify_final)       |
+|                            | [azihsm_crypt_verify_finish](#azihsm_crypt_verify_finish)       |
 | **PKCS#11 Mechanism**      | CKM_SHA_1_HMAC                                         &nbsp; |
 
 **Example**
@@ -1095,11 +1095,11 @@ based on the SHA-256 hash function.
 | **Supported Operations**   | [azihsm_crypt_sign](#azihsm_crypt_sign)                        |
 |                            | [azihsm_crypt_sign_init](#azihsm_crypt_sign_init)              |
 |                            | [azihsm_crypt_sign_update](#azihsm_crypt_sign_update)          |
-|                            | [azihsm_crypt_sign_final](#azihsm_crypt_sign_final)            |
+|                            | [azihsm_crypt_sign_finish](#azihsm_crypt_sign_finish)            |
 |                            | [azihsm_crypt_verify](#azihsm_crypt_verify)                    |
 |                            | [azihsm_crypt_verify_init](#azihsm_crypt_verify_init)          |
 |                            | [azihsm_crypt_verify_update](#azihsm_crypt_verify_update)      |
-|                            | [azihsm_crypt_verify_final](#azihsm_crypt_verify_final)        |
+|                            | [azihsm_crypt_verify_finish](#azihsm_crypt_verify_finish)        |
 | **PKCS#11 Mechanism**      | CKM_SHA256_HMAC                                         &nbsp; |
 
 **Example**
@@ -1126,11 +1126,11 @@ based on the SHA-384 hash function.
 | **Supported Operations**   | [azihsm_crypt_sign](#azihsm_crypt_sign)                        |
 |                            | [azihsm_crypt_sign_init](#azihsm_crypt_sign_init)              |
 |                            | [azihsm_crypt_sign_update](#azihsm_crypt_sign_update)          |
-|                            | [azihsm_crypt_sign_final](#azihsm_crypt_sign_final)            |
+|                            | [azihsm_crypt_sign_finish](#azihsm_crypt_sign_finish)            |
 |                            | [azihsm_crypt_verify](#azihsm_crypt_verify)                    |
 |                            | [azihsm_crypt_verify_init](#azihsm_crypt_verify_init)          |
 |                            | [azihsm_crypt_verify_update](#azihsm_crypt_verify_update)      |
-|                            | [azihsm_crypt_verify_final](#azihsm_crypt_verify_final)        |
+|                            | [azihsm_crypt_verify_finish](#azihsm_crypt_verify_finish)        |
 | **PKCS#11 Mechanism**      | CKM_SHA384_HMAC                                         &nbsp; |
 
 **Example**
@@ -1157,11 +1157,11 @@ based on the SHA-512 hash function.
 | **Supported Operations**   | [azihsm_crypt_sign](#azihsm_crypt_sign)                        |
 |                            | [azihsm_crypt_sign_init](#azihsm_crypt_sign_init)              |
 |                            | [azihsm_crypt_sign_update](#azihsm_crypt_sign_update)          |
-|                            | [azihsm_crypt_sign_final](#azihsm_crypt_sign_final)            |
+|                            | [azihsm_crypt_sign_finish](#azihsm_crypt_sign_finish)            |
 |                            | [azihsm_crypt_verify](#azihsm_crypt_verify)                    |
 |                            | [azihsm_crypt_verify_init](#azihsm_crypt_verify_init)          |
 |                            | [azihsm_crypt_verify_update](#azihsm_crypt_verify_update)      |
-|                            | [azihsm_crypt_verify_final](#azihsm_crypt_verify_final)        |
+|                            | [azihsm_crypt_verify_finish](#azihsm_crypt_verify_finish)        |
 | **PKCS#11 Mechanism**      | CKM_SHA512_HMAC                                         &nbsp; |
 
 **Example**

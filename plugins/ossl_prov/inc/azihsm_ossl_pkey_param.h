@@ -24,11 +24,12 @@ typedef enum
 {
     KEY_USAGE_DIGITAL_SIGNATURE = 0, /* Private: sign, Public: verify */
     KEY_USAGE_KEY_AGREEMENT = 1,     /* Both: derive */
+    KEY_USAGE_KEY_ENCIPHERMENT = 2,  /* Private: decrypt, Public: encrypt */
 } AZIHSM_KEY_USAGE_TYPE;
 
 /*
  * Parse a key usage string and return the corresponding type
- * @value   string containing key usage ("digitalSignature" or "keyAgreement")
+ * @value   string containing key usage ("digitalSignature", "keyAgreement", or "keyEncipherment")
  * @usage_type output parameter for the key usage type
  *
  * @returns 0 on success, -1 on failure
@@ -38,7 +39,8 @@ int azihsm_ossl_key_usage_from_str(const char *value, AZIHSM_KEY_USAGE_TYPE *usa
 /*
  * Convert key usage type to string representation
  * @usage_type the key usage type to convert
- * @returns string representation ("digitalSignature" or "keyAgreement"), or "unknown"
+ * @returns string representation ("digitalSignature", "keyAgreement", or "keyEncipherment"), or
+ * "unknown"
  * */
 const char *azihsm_ossl_key_usage_to_str(AZIHSM_KEY_USAGE_TYPE usage_type);
 
@@ -69,14 +71,14 @@ int azihsm_ossl_input_key_filepath_validate(const char *filepath);
 /*
  * Get private key property ID for a given key usage type
  * @usage_type the key usage type
- * @returns the private key property ID (SIGN or DERIVE)
+ * @returns the private key property ID (SIGN, DERIVE, or DECRYPT)
  * */
 uint32_t azihsm_ossl_get_priv_key_property(AZIHSM_KEY_USAGE_TYPE usage_type);
 
 /*
  * Get public key property ID for a given key usage type
  * @usage_type the key usage type
- * @returns the public key property ID (VERIFY or DERIVE)
+ * @returns the public key property ID (VERIFY, DERIVE, or ENCRYPT)
  * */
 uint32_t azihsm_ossl_get_pub_key_property(AZIHSM_KEY_USAGE_TYPE usage_type);
 

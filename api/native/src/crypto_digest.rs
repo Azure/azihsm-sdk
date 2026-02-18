@@ -132,7 +132,7 @@ pub unsafe extern "C" fn azihsm_crypt_digest_update(
     })
 }
 
-/// Finalize a streaming digest operation and produce the digest.
+/// Finish a streaming digest operation and produce the digest.
 ///
 /// @param[in] ctx_handle Handle to the digest context
 /// @param[out] digest Pointer to digest output buffer
@@ -146,7 +146,7 @@ pub unsafe extern "C" fn azihsm_crypt_digest_update(
 /// This function is unsafe because it dereferences raw pointers.
 #[unsafe(no_mangle)]
 #[allow(unsafe_code)]
-pub unsafe extern "C" fn azihsm_crypt_digest_final(
+pub unsafe extern "C" fn azihsm_crypt_digest_finish(
     ctx_handle: AzihsmHandle,
     digest: *mut AzihsmBuffer,
 ) -> AzihsmStatus {
@@ -156,7 +156,7 @@ pub unsafe extern "C" fn azihsm_crypt_digest_final(
 
         match ctx_type {
             HandleType::ShaCtx => {
-                sha_digest_final(ctx_handle, digest_buf)?;
+                sha_digest_finish(ctx_handle, digest_buf)?;
             }
             // Add support for other context types here as needed (HMAC, etc.)
             _ => Err(AzihsmStatus::InvalidHandle)?,

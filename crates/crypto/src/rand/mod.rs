@@ -141,6 +141,26 @@ impl Rng {
     pub fn rand_bytes(buf: &mut [u8]) -> Result<(), CryptoError> {
         PlatformRng::rand_bytes(buf)
     }
+
+    /// Generates a vector of cryptographically secure random bytes.
+    ///
+    /// This method creates a new vector of the specified length and fills it
+    /// with cryptographically strong random bytes using the platform-specific
+    /// implementation.
+    ///
+    /// # Arguments
+    ///
+    /// * `len` - The desired length of the random byte vector.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(Vec<u8>)` - A vector filled with random bytes
+    /// * `Err(CryptoError::RngError)` - If random number generation fails
+    pub fn rand_vec(len: usize) -> Result<Vec<u8>, CryptoError> {
+        let mut buf = vec![0u8; len];
+        Self::rand_bytes(&mut buf)?;
+        Ok(buf)
+    }
 }
 
 /// Integration tests for random number generation functionality.
