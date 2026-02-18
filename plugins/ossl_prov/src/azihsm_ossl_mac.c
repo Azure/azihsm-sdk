@@ -11,13 +11,14 @@
 
 #include "azihsm_ossl_base.h"
 #include "azihsm_ossl_helpers.h"
+#include "azihsm_ossl_pkey_param.h"
 
 /*
  * HMAC (Hash-based Message Authentication Code) Implementation
  *
  * This provider implements HMAC-SHA256, HMAC-SHA384, and HMAC-SHA512,
  * delegating the actual cryptographic operations to the HSM via the
- * streaming sign API (azihsm_crypt_sign_init/update/final).
+ * streaming sign API (azihsm_crypt_sign_init/update/finish).
  *
  * HMAC-SHA1 is intentionally unsupported as a security best practice
  * (no AZIHSM_KEY_KIND_HMAC_SHA1 is defined).
@@ -156,12 +157,7 @@ static int load_and_unmask_key(AZIHSM_HMAC_CTX *ctx)
     masked_buf.len = (uint32_t)masked_key_size;
 
     /* Unmask the HMAC key */
-    status = azihsm_key_unmask(
-        ctx->provctx->session,
-        ctx->key_kind,
-        &masked_buf,
-        &ctx->key_handle
-    );
+    status = azihsm_key_unmask(ctx->provctx->session, ctx->key_kind, &masked_buf, &ctx->key_handle);
 
     OPENSSL_cleanse(masked_key_data, masked_key_size);
     OPENSSL_free(masked_key_data);
@@ -359,12 +355,7 @@ static int azihsm_ossl_mac_update(void *mctx, const unsigned char *in, size_t in
     return OSSL_SUCCESS;
 }
 
-static int azihsm_ossl_mac_final(
-    void *mctx,
-    unsigned char *out,
-    size_t *outl,
-    size_t outsize
-)
+static int azihsm_ossl_mac_final(void *mctx, unsigned char *out, size_t *outl, size_t outsize)
 {
     AZIHSM_HMAC_CTX *ctx = (AZIHSM_HMAC_CTX *)mctx;
     struct azihsm_buffer mac_buf;
@@ -458,7 +449,7 @@ static int azihsm_ossl_mac_get_ctx_params(void *mctx, OSSL_PARAM params[])
     p = OSSL_PARAM_locate(params, OSSL_MAC_PARAM_BLOCK_SIZE);
     if (p != NULL)
     {
-        /* Block size depends on digest: SHA-256/384/512 all use 128-byte blocks */
+        /* Block size depends on digest: SHA-256 uses 64, SHA-384/512 use 128 */
         size_t block_size;
         switch (ctx->hmac_algo_id)
         {
@@ -574,6 +565,13 @@ static int azihsm_ossl_mac_set_ctx_params(void *mctx, const OSSL_PARAM params[])
 
         memcpy(ctx->key_file, key_data, key_len);
         ctx->key_file[key_len] = '\0';
+
+        if (azihsm_ossl_masked_key_filepath_validate(ctx->key_file) < 0)
+        {
+            ctx->key_file[0] = '\0';
+            ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
+            return OSSL_FAILURE;
+        }
 
         /* Reset key loaded state since path changed */
         if (ctx->key_loaded)
