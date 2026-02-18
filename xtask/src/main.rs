@@ -31,6 +31,7 @@ mod nextest_report;
 mod precheck;
 mod rustup_component_add;
 mod setup;
+
 /// Common context passed into every Xtask
 #[derive(Clone)]
 pub struct XtaskCtx {
