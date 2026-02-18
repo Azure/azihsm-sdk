@@ -211,7 +211,7 @@ static void azihsm_ossl_mac_freectx(void *mctx)
     /* Free streaming context handle if initialized */
     if (ctx->ctx_initialized && ctx->ctx_handle != 0)
     {
-        azihsm_free_handle(ctx->ctx_handle);
+        azihsm_free_ctx_handle(ctx->ctx_handle);
     }
 
     /* Delete key handle if loaded */
@@ -288,7 +288,7 @@ static int azihsm_ossl_mac_init(
     /* Clean up previous context if reinitializing */
     if (ctx->ctx_initialized && ctx->ctx_handle != 0)
     {
-        azihsm_free_handle(ctx->ctx_handle);
+        azihsm_free_ctx_handle(ctx->ctx_handle);
         ctx->ctx_handle = 0;
         ctx->ctx_initialized = false;
     }
@@ -399,7 +399,7 @@ static int azihsm_ossl_mac_final(
     mac_buf.ptr = out;
     mac_buf.len = (uint32_t)ctx->mac_size;
 
-    status = azihsm_crypt_sign_final(ctx->ctx_handle, &mac_buf);
+    status = azihsm_crypt_sign_finish(ctx->ctx_handle, &mac_buf);
 
     /* Context is consumed after final */
     ctx->ctx_handle = 0;
