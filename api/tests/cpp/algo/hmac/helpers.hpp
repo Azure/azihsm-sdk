@@ -8,6 +8,7 @@
 #include <azihsm_api.h>
 #include <cstring>
 #include <vector>
+#include <optional>
 
 // Helper function to get expected HMAC key size in bits from HMAC key kind.
 inline uint32_t get_hmac_key_bits(azihsm_key_kind hmac_key_kind)
@@ -32,7 +33,8 @@ inline azihsm_status derive_hmac_key_via_ecdh_hkdf(
     azihsm_key_kind hmac_key_kind,
     azihsm_handle &hmac_key_handle,
     azihsm_ecc_curve curve,
-    azihsm_handle *base_secret_handle = nullptr
+    azihsm_handle *base_secret_handle = nullptr,
+    std::optional<bool> is_session = std::nullopt
 )
 {
     azihsm_status err;
@@ -83,6 +85,15 @@ inline azihsm_status derive_hmac_key_via_ecdh_hkdf(
     hmac_key_props.push_back(
         { .id = AZIHSM_KEY_PROP_ID_BIT_LEN, .val = &hmac_key_bits, .len = sizeof(hmac_key_bits) }
     );
+    // Optionally set session property if explicitly specified
+    bool session_prop_val = false;
+    if (is_session.has_value())
+    {
+        session_prop_val = is_session.value();
+        hmac_key_props.push_back(
+            { .id = AZIHSM_KEY_PROP_ID_SESSION, .val = &session_prop_val, .len = sizeof(session_prop_val) }
+        );
+    }
     hmac_key_props.push_back(
         { .id = AZIHSM_KEY_PROP_ID_SIGN, .val = &hmac_sign_prop, .len = sizeof(hmac_sign_prop) }
     );
