@@ -363,12 +363,9 @@ OSSL_STATUS OSSL_provider_init(
     for (; in->function_id != 0; in++)
     {
 
-        switch (in->function_id)
+        if (in->function_id == OSSL_FUNC_CORE_GET_PARAMS)
         {
-
-        case OSSL_FUNC_CORE_GET_PARAMS:
             core_get_params = OSSL_FUNC_core_get_params(in);
-            break;
         }
     }
 
