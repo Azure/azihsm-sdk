@@ -175,7 +175,7 @@ static const OSSL_ALGORITHM azihsm_ossl_encoders[] = {
     },
     {
         "EC",
-        "provider=azihsm,output=der,structure=type-specific",
+        "provider=azihsm,output=der,structure=SubjectPublicKeyInfo",
         azihsm_ossl_ec_der_spki_encoder_functions,
         NULL,
     },
