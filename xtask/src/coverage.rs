@@ -38,10 +38,17 @@ impl Xtask for Coverage {
         }
 
         // Generate cobertura report
-        log::info!("Gathering cobertura report");
+        log::info!("Generating cobertura report");
         cmd!(
             sh,
             "cargo llvm-cov report --cobertura --output-path ./target/reports/cobertura_sdk.xml --ignore-filename-regex xtask*"
+        ).run()?;
+
+        // Generate json report
+        log::info!("Generating json report");
+        cmd!(
+            sh,
+            "cargo llvm-cov report --json --summary-only --output-path ./target/reports/sdk-cov.json --ignore-filename-regex xtask*"
         ).run()?;
 
         // Generate HTML report

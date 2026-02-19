@@ -12,6 +12,7 @@ clap = { features = ["derive", "env"], workspace = true }
 env_logger.workspace = true
 glob = { workspace = true }
 is-terminal = { workspace = true }
+jzon.workspace = true
 log.workspace = true
 quick-xml = "0.31"
 similar = { features = ["text"], workspace = true }
