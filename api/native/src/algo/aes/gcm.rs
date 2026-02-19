@@ -57,6 +57,7 @@ impl TryFrom<AzihsmHandle> for HsmAesGcmKey {
 pub(crate) struct AesGcmEncryptContext {
     context: HsmAesGcmEncryptContext,
     params: *mut AzihsmAlgoAesGcmParams,
+    is_finished: bool,
 }
 
 impl AesGcmEncryptContext {
@@ -65,16 +66,25 @@ impl AesGcmEncryptContext {
         Self {
             context: ctx,
             params: params as *mut AzihsmAlgoAesGcmParams,
+            is_finished: false,
         }
     }
 
     /// Update the context with input data
     fn update(&mut self, input: &[u8], output: Option<&mut [u8]>) -> Result<usize, AzihsmStatus> {
+        if self.is_finished {
+            return Err(AzihsmStatus::InvalidArgument);
+        }
         self.context.update(input, output).map_err(Into::into)
     }
 
     /// Finish the context
     fn finish(&mut self, output: Option<&mut [u8]>) -> Result<usize, AzihsmStatus> {
+        if self.is_finished {
+            return Err(AzihsmStatus::InvalidArgument);
+        }
+        // finish(None) is a sizing check; only finish(Some(..)) should be the last call.
+        let last_call = output.is_some();
         let bytes_written = self
             .context
             .finish(output)
@@ -82,6 +92,9 @@ impl AesGcmEncryptContext {
         // Only update tag if we actually performed encryption (tag will be present)
         if self.context.algo().tag().is_some() {
             self.update_tag()?;
+        }
+        if last_call {
+            self.is_finished = true;
         }
         Ok(bytes_written)
     }
@@ -102,22 +115,41 @@ impl AesGcmEncryptContext {
 /// AES GCM decryption context
 pub(crate) struct AesGcmDecryptContext {
     context: HsmAesGcmDecryptContext,
+    is_finished: bool,
 }
 
 impl AesGcmDecryptContext {
     /// Create a new decryption context
     fn new(ctx: HsmAesGcmDecryptContext) -> Self {
-        Self { context: ctx }
+        Self {
+            context: ctx,
+            is_finished: false,
+        }
     }
 
     /// Update the context with input data
     fn update(&mut self, input: &[u8], output: Option<&mut [u8]>) -> Result<usize, AzihsmStatus> {
+        if self.is_finished {
+            return Err(AzihsmStatus::InvalidArgument);
+        }
         self.context.update(input, output).map_err(Into::into)
     }
 
     /// Finish the context
     fn finish(&mut self, output: Option<&mut [u8]>) -> Result<usize, AzihsmStatus> {
-        self.context.finish(output).map_err(Into::into)
+        if self.is_finished {
+            return Err(AzihsmStatus::InvalidArgument);
+        }
+        // finish(None) is a sizing check; only finish(Some(..)) should be the last call.
+        let last_call = output.is_some();
+        let bytes_written = self
+            .context
+            .finish(output)
+            .map_err(|e| -> AzihsmStatus { e.into() })?;
+        if last_call {
+            self.is_finished = true;
+        }
+        Ok(bytes_written)
     }
 }
 
