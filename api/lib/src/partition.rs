@@ -116,14 +116,15 @@ impl HsmCredentials {
 
 /// Owner backup key config (OBK/BK3) containing source and optional OBK.
 #[derive(Debug, Clone)]
-pub struct HsmOwnerBackupKeyConfig<'a> {
+pub struct HsmOwnerBackupKeyConfig {
     /// Source of the OBK
     key_source: HsmOwnerBackupKeySource,
+
     /// Optional OBK (required when source is Caller, ignored otherwise)
-    key: Option<&'a [u8]>,
+    key: Option<Vec<u8>>,
 }
 
-impl<'a> HsmOwnerBackupKeyConfig<'a> {
+impl HsmOwnerBackupKeyConfig {
     /// Creates a new owner backup key config instance.
     ///
     /// # Arguments
@@ -134,10 +135,10 @@ impl<'a> HsmOwnerBackupKeyConfig<'a> {
     /// # Returns
     ///
     /// A new `HsmOwnerBackupKeyConfig` instance with the specified source and optional key.
-    pub fn new(source: HsmOwnerBackupKeySource, obk: Option<&'a [u8]>) -> Self {
+    pub fn new(source: HsmOwnerBackupKeySource, obk: Option<&[u8]>) -> Self {
         Self {
             key_source: source,
-            key: obk,
+            key: obk.map(|b| b.to_vec()),
         }
     }
 
@@ -155,8 +156,8 @@ impl<'a> HsmOwnerBackupKeyConfig<'a> {
     /// # Returns
     ///
     /// Optional reference to the OBK.
-    pub fn key(&self) -> Option<&'a [u8]> {
-        self.key
+    pub fn key(&self) -> Option<&[u8]> {
+        self.key.as_deref()
     }
 }
 
@@ -166,50 +167,50 @@ impl<'a> HsmOwnerBackupKeyConfig<'a> {
 /// endorsement, including the ECDSA signature over the PID hash and the public
 /// key needed to verify the signature.
 #[derive(Debug, Clone)]
-pub struct HsmPotaEndorsementData<'a> {
+pub struct HsmPotaEndorsementData {
     /// ECDSA signature over the PID hash
-    signature: &'a [u8],
+    signature: Vec<u8>,
 
     /// Public key for signature verification (DER-encoded)
-    pub_key: &'a [u8],
+    pub_key: Vec<u8>,
 }
 
 /// HSM partition owner trust anchor (aka POTA) endorsement.
 #[derive(Debug, Clone)]
-pub struct HsmPotaEndorsement<'a> {
+pub struct HsmPotaEndorsement {
     /// Source of the POTA endorsement
     source: HsmPotaEndorsementSource,
 
     /// Optional POTA endorsement data (required when source is Caller, ignored otherwise)
-    endorsement: Option<HsmPotaEndorsementData<'a>>,
+    endorsement: Option<HsmPotaEndorsementData>,
 }
 
-impl<'a> HsmPotaEndorsementData<'a> {
+impl HsmPotaEndorsementData {
     /// Creates a new POTA endorsement data instance.
     ///
     /// # Arguments
     ///
     /// * `signature` - ECDSA signature over the PID hash
     /// * `public_key` - Public key for signature verification (DER-encoded)
-    pub fn new(signature: &'a [u8], public_key: &'a [u8]) -> Self {
+    pub fn new(signature: &[u8], public_key: &[u8]) -> Self {
         Self {
-            signature,
-            pub_key: public_key,
+            signature: signature.to_vec(),
+            pub_key: public_key.to_vec(),
         }
     }
 
     /// Returns the ECDSA signature.
     pub fn signature(&self) -> &[u8] {
-        self.signature
+        &self.signature
     }
 
     /// Returns the public key for signature verification.
     pub fn pub_key(&self) -> &[u8] {
-        self.pub_key
+        &self.pub_key
     }
 }
 
-impl<'a> HsmPotaEndorsement<'a> {
+impl HsmPotaEndorsement {
     /// Creates a new POTA endorsement instance.
     ///
     /// # Arguments
@@ -222,7 +223,7 @@ impl<'a> HsmPotaEndorsement<'a> {
     /// A new `HsmPotaEndorsement` instance with the specified source and optional endorsement.
     pub fn new(
         source: HsmPotaEndorsementSource,
-        endorsement: Option<HsmPotaEndorsementData<'a>>,
+        endorsement: Option<HsmPotaEndorsementData>,
     ) -> Self {
         Self {
             source,
@@ -244,7 +245,7 @@ impl<'a> HsmPotaEndorsement<'a> {
     /// # Returns
     ///
     /// Optional reference to the POTA endorsement data.
-    pub fn endorsement(&self) -> Option<&HsmPotaEndorsementData<'a>> {
+    pub fn endorsement(&self) -> Option<&HsmPotaEndorsementData> {
         self.endorsement.as_ref()
     }
 }
@@ -365,6 +366,8 @@ impl HsmPartition {
     /// * `bmk` - Optional backup masking key
     /// * `muk` - Optional masked unwrapping key
     /// * `obk_config` - Owner backup key (OBK) configuration
+    /// * `pota_endorsement` - POTA endorsement data
+    /// * `resiliency_config` - Optional resiliency configuration
     ///
     /// # Errors
     ///
@@ -379,9 +382,15 @@ impl HsmPartition {
         creds: HsmCredentials,
         bmk: Option<&[u8]>,
         muk: Option<&[u8]>,
-        obk_config: HsmOwnerBackupKeyConfig<'_>,
-        pota_endorsement: HsmPotaEndorsement<'_>,
+        obk_config: HsmOwnerBackupKeyConfig,
+        pota_endorsement: HsmPotaEndorsement,
+        resiliency_config: Option<HsmResiliencyConfig>,
     ) -> HsmResult<()> {
+        // Clone configs before moving them into ddi::init_part, so we can
+        // reuse them for resiliency state setup if needed.
+        let obk_config_clone = obk_config.clone();
+        let pota_endorsement_clone = pota_endorsement.clone();
+
         let (bmk, mobk) = self.with_dev(|dev| {
             let (bmk, mobk) = ddi::init_part(
                 dev,
@@ -395,6 +404,13 @@ impl HsmPartition {
             Ok((bmk, mobk))
         })?;
         self.inner().write().set_masked_keys(bmk, mobk);
+
+        // Set up resiliency state if config was provided
+        if let Some(config) = resiliency_config {
+            let resiliency_state =
+                ResiliencyState::new(config, creds, obk_config_clone, pota_endorsement_clone)?;
+            self.inner().write().set_resiliency_state(resiliency_state);
+        }
         Ok(())
     }
 
@@ -662,6 +678,7 @@ pub(crate) struct HsmPartitionInner {
     firmware_ver: String,
     hardware_ver: String,
     pci_info: String,
+    resiliency_state: Option<ResiliencyState>,
 }
 
 impl HsmPartitionInner {
@@ -698,6 +715,7 @@ impl HsmPartitionInner {
             pci_info,
             bmk: Vec::new(),
             mobk: Vec::new(),
+            resiliency_state: None,
         }
     }
 
@@ -780,5 +798,9 @@ impl HsmPartitionInner {
     /// A byte slice containing the MOBK.
     pub fn mobk(&self) -> &[u8] {
         &self.mobk
+    }
+
+    pub(crate) fn set_resiliency_state(&mut self, resiliency: ResiliencyState) {
+        self.resiliency_state = Some(resiliency);
     }
 }

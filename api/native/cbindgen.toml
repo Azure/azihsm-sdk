@@ -43,6 +43,10 @@ include = [
   "AzihsmAlgoRsaAesWrapParams",
   "AzihsmAlgoRsaPkcsOaepParams",
   "AzihsmAlgoRsaPkcsPssParams",
+  "AzihsmPotaCallbackOps",
+  "AzihsmResiliencyConfig",
+  "AzihsmResiliencyLockOps",
+  "AzihsmResiliencyStorageOps",
   "HsmEccCurve",
   "HsmError",
   "HsmKeyClass",
@@ -83,9 +87,13 @@ item_types = ["constants", "enums", "functions", "structs", "typedefs"]
 "AzihsmPartProp" = "azihsm_part_prop"
 "AzihsmPartPropId" = "azihsm_part_prop_id"
 "AzihsmPartType" = "azihsm_part_type"
+"AzihsmPotaCallbackOps" = "azihsm_pota_callback_ops"
 "AzihsmPotaEndorsement" = "azihsm_pota_endorsement"
 "AzihsmPotaEndorsementData" = "azihsm_pota_endorsement_data"
 "AzihsmPotaEndorsementSource" = "azihsm_pota_endorsement_source"
+"AzihsmResiliencyConfig" = "azihsm_resiliency_config"
+"AzihsmResiliencyLockOps" = "azihsm_resiliency_lock_ops"
+"AzihsmResiliencyStorageOps" = "azihsm_resiliency_storage_ops"
 "AzihsmSessionProp" = "azihsm_session_prop"
 "AzihsmSessionPropId" = "azihsm_session_prop_id"
 "AzihsmStatus" = "azihsm_status"

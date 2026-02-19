@@ -183,7 +183,8 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_parent)
             nullptr,
             nullptr,
             &init_config.backup_config,
-            &init_config.pota_endorsement
+            &init_config.pota_endorsement,
+            nullptr
         );
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
@@ -331,7 +332,8 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_child)
         &bmk_buf,
         nullptr,
         &init_config.backup_config,
-        &init_config.pota_endorsement
+        &init_config.pota_endorsement,
+        nullptr
     );
     ASSERT_EQ(init_err, AZIHSM_STATUS_SUCCESS);
 
