@@ -66,12 +66,6 @@ class azihsm_hmac_sign_verify : public ::testing::Test
             azihsm_buffer chunk_buf = { .ptr = (uint8_t *)chunk,
                                         .len = static_cast<uint32_t>(strlen(chunk)) };
 
-            // Print the chunk being processed
-            for (size_t i = 0; i < chunk_buf.len; ++i)
-            {
-                std::cout << reinterpret_cast<char *>(chunk_buf.ptr)[i];
-            }
-            std::cout << std::endl;
             ASSERT_EQ(
                 azihsm_crypt_sign_update(sign_op_handle, &chunk_buf),
                 AZIHSM_STATUS_SUCCESS
@@ -102,13 +96,6 @@ class azihsm_hmac_sign_verify : public ::testing::Test
         {
             azihsm_buffer chunk_buf = { .ptr = (uint8_t *)chunk,
                                         .len = static_cast<uint32_t>(strlen(chunk)) };
-
-            // Print the chunk being processed
-            for (size_t i = 0; i < chunk_buf.len; ++i)
-            {
-                std::cout << reinterpret_cast<char *>(chunk_buf.ptr)[i];
-            }
-            std::cout << std::endl;
             ASSERT_EQ(
                 azihsm_crypt_verify_update(verify_op_handle, &chunk_buf),
                 AZIHSM_STATUS_SUCCESS

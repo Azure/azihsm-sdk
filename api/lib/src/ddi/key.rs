@@ -24,7 +24,7 @@ use super::*;
 /// [`HsmKeyIdGuard::release`] only after all fallible parsing/validation has succeeded.
 pub(crate) struct HsmKeyIdGuard<'a> {
     session: &'a HsmSession,
-    key_id: u16,
+    key_id: HsmKeyHandle,
     released: bool,
 }
 
@@ -42,7 +42,7 @@ impl<'a> Drop for HsmKeyIdGuard<'a> {
 
 impl<'a> HsmKeyIdGuard<'a> {
     /// Creates a new guard for `key_id` in `session`.
-    pub(crate) fn new(session: &'a HsmSession, key_id: u16) -> Self {
+    pub(crate) fn new(session: &'a HsmSession, key_id: HsmKeyHandle) -> Self {
         Self {
             session,
             key_id,
@@ -51,7 +51,7 @@ impl<'a> HsmKeyIdGuard<'a> {
     }
 
     /// Returns the guarded key id.
-    pub(crate) fn key_id(&self) -> u16 {
+    pub(crate) fn key_id(&self) -> HsmKeyHandle {
         self.key_id
     }
 
@@ -60,7 +60,7 @@ impl<'a> HsmKeyIdGuard<'a> {
     /// Call this once all fallible parsing/validation has succeeded and the
     /// caller is transferring the key id to a higher-level wrapper that will
     /// manage its lifecycle.
-    pub(crate) fn release(mut self) -> u16 {
+    pub(crate) fn release(mut self) -> HsmKeyHandle {
         self.released = true;
         self.key_id
     }
@@ -80,10 +80,12 @@ impl<'a> HsmKeyIdGuard<'a> {
 ///
 /// Returns `Ok(())` on successful deletion.
 ///
-pub(crate) fn delete_key(session: &HsmSession, key_id: u16) -> HsmResult<()> {
+pub(crate) fn delete_key(session: &HsmSession, key_id: HsmKeyHandle) -> HsmResult<()> {
     let req = DdiDeleteKeyCmdReq {
         hdr: build_ddi_req_hdr_sess(DdiOp::DeleteKey, session),
-        data: DdiDeleteKeyReq { key_id },
+        data: DdiDeleteKeyReq {
+            key_id: ddi::get_key_id(key_id),
+        },
         ext: None,
     };
 
@@ -131,11 +133,17 @@ fn unmask_key_exec(session: &HsmSession, masked_key: &[u8]) -> HsmResult<DdiUnma
 /// # Returns
 ///
 /// Returns a tuple containing the key handle and key properties.
-pub(crate) fn unmask_key(session: &HsmSession, masked_key: &[u8]) -> HsmResult<(u16, HsmKeyProps)> {
+pub(crate) fn unmask_key(
+    session: &HsmSession,
+    masked_key: &[u8],
+) -> HsmResult<(HsmKeyHandle, HsmKeyProps)> {
     let resp = unmask_key_exec(session, masked_key)?;
 
     //create key guard to delete key if error occurs before disarming
-    let key_id = HsmKeyIdGuard::new(session, resp.data.key_id);
+    let key_id = HsmKeyIdGuard::new(
+        session,
+        to_key_handle(resp.data.key_id, resp.data.bulk_key_id),
+    );
 
     let masked_key = resp.data.masked_key.as_slice();
 
@@ -159,10 +167,13 @@ pub(crate) fn unmask_key(session: &HsmSession, masked_key: &[u8]) -> HsmResult<(
 pub(crate) fn unmask_key_pair(
     session: &HsmSession,
     masked_key: &[u8],
-) -> HsmResult<(u16, HsmKeyProps, HsmKeyProps)> {
+) -> HsmResult<(HsmKeyHandle, HsmKeyProps, HsmKeyProps)> {
     let resp = unmask_key_exec(session, masked_key)?;
 
-    let key_id = HsmKeyIdGuard::new(session, resp.data.key_id);
+    let key_id = HsmKeyIdGuard::new(
+        session,
+        to_key_handle(resp.data.key_id, resp.data.bulk_key_id),
+    );
 
     let Some(pub_key) = resp.data.pub_key else {
         return Err(HsmError::InternalError);
@@ -209,7 +220,7 @@ pub(crate) fn generate_key_report(
     let req = DdiAttestKeyCmdReq {
         hdr: build_ddi_req_hdr_sess(DdiOp::AttestKey, session),
         data: DdiAttestKeyReq {
-            key_id: key_handle,
+            key_id: ddi::get_key_id(key_handle),
             report_data: MborByteArray::from_slice(report_data)
                 .map_hsm_err(HsmError::InternalError)?,
         },
