@@ -12,7 +12,7 @@ An [OpenSSL 3.0 provider](https://docs.openssl.org/3.0/man7/provider/) that dele
 | **Asymmetric Encryption** | RSA-OAEP, RSA PKCS#1 v1.5 |
 | **Digest** | SHA-1, SHA-256, SHA-384, SHA-512 |
 | **KDF** | HKDF (RFC 5869) |
-| **Encoder** | DER (SubjectPublicKeyInfo, PrivateKeyInfo), Text |
+| **Encoder** | DER (SubjectPublicKeyInfo for public keys only), Text |
 | **Store** | `azihsm://` URI scheme for masked key loading |
 
 > **Note:** EC keys are generated natively inside the HSM. RSA keys must be generated externally and **imported** into the HSM via the `azihsm.input_key` parameter.
@@ -242,7 +242,7 @@ openssl genpkey ${PROV} \
 | `rsa_keygen_bits` | Yes | Key size: `2048`, `3072`, or `4096` |
 | `azihsm.input_key` | Yes | Path to DER-encoded private key (PKCS#1 or PKCS#8) |
 | `azihsm.masked_key` | Yes | Output path for masked key blob |
-| `azihsm.key_usage` | No | `digitalSignature` (default), `keyEncipherment`, or `keyAgreement` |
+| `azihsm.key_usage` | No | `digitalSignature` (default) or `keyEncipherment` |
 
 RSA-PSS keys are imported the same way using `-algorithm RSA-PSS`.
 
