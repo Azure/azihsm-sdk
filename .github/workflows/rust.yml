@@ -1,8 +1,10 @@
 name: Rust
 
 on:
+  workflow_dispatch:
   push:
-    branches: [ main, dev ]
+    paths:
+      - .github/workflows/rust.yml
   pull_request:
     branches: [ main, dev ]
   merge_group:
@@ -11,7 +13,7 @@ on:
     - cron: '0 8 * * *'  # Daily at midnight PST (8 AM UTC)
 env:
   CARGO_TERM_COLOR: always
-  CACHE_KEY_ID: 84f8acac52412db91407ab9f85776987da17d42f
+  CACHE_KEY_ID: 17a95b8ee88a5252831700850a14457749384af5
 
 jobs:
   build_ubuntu:
@@ -28,6 +30,13 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y pkg-config libssl-dev libbsd-dev
+    - name: Update paths for tools
+      run: |
+        echo "${{ runner.tool_cache }}/cargo-nextest/bin" >> $GITHUB_PATH
+        echo "${{ runner.tool_cache }}/taplo-cli/bin" >> $GITHUB_PATH
+        echo "${{ runner.tool_cache }}/cargo-fuzz/bin" >> $GITHUB_PATH
+        echo "${{ runner.tool_cache }}/cargo-audit/bin" >> $GITHUB_PATH
+        echo "${{ runner.tool_cache }}/cargo-llvm-cov/bin" >> $GITHUB_PATH
     - name: Restore Cargo cache
       id: cargo-cache
       uses: actions/cache/restore@v5
@@ -37,10 +46,14 @@ jobs:
           ~/.cargo/registry/index/
           ~/.cargo/registry/cache/
           ~/.cargo/git/db/
+          ${{ runner.temp }}/tool_cache.tar.gz
         key: ${{ runner.os }}-cargo-${{ env.CACHE_KEY_ID }}
+    - name: Extract tool cache
+      if: steps.cargo-cache.outputs.cache-hit == 'true'
+      run: tar -xzf ${{ runner.temp }}/tool_cache.tar.gz -C ${{ runner.tool_cache }}
     - name: Setup on cache miss
       if: steps.cargo-cache.outputs.cache-hit != 'true'
-      run: cargo xtask precheck --setup
+      run: cargo xtask precheck --setup --tool-cache ${{ runner.tool_cache }}
     - name: Install nightly rustfmt
       run: cargo xtask rustup-component-add --component rustfmt --toolchain nightly
     - name: Install clippy
@@ -75,6 +88,13 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+    - name: Update paths for tools
+      run: |
+        echo "${{ runner.tool_cache }}\cargo-nextest\bin" >> $env:GITHUB_PATH
+        echo "${{ runner.tool_cache }}\taplo-cli\bin" >> $env:GITHUB_PATH
+        echo "${{ runner.tool_cache }}\cargo-fuzz\bin" >> $env:GITHUB_PATH
+        echo "${{ runner.tool_cache }}\cargo-audit\bin" >> $env:GITHUB_PATH
+        echo "${{ runner.tool_cache }}\cargo-llvm-cov\bin" >> $env:GITHUB_PATH
     - name: Restore Cargo cache
       id: cargo-cache
       uses: actions/cache/restore@v5
@@ -84,10 +104,14 @@ jobs:
           ~/.cargo/registry/index/
           ~/.cargo/registry/cache/
           ~/.cargo/git/db/
+          ${{ runner.temp }}/tool_cache.tar.gz
         key: ${{ runner.os }}-cargo-${{ env.CACHE_KEY_ID }}
+    - name: Extract tool cache
+      if: steps.cargo-cache.outputs.cache-hit == 'true'
+      run: tar -xzf ${{ runner.temp }}/tool_cache.tar.gz -C ${{ runner.tool_cache }}
     - name: Setup on cache miss
       if: steps.cargo-cache.outputs.cache-hit != 'true'
-      run: cargo xtask precheck --setup
+      run: cargo xtask precheck --setup --tool-cache ${{ runner.tool_cache }}
     - name: Install nightly rustfmt
       run: cargo xtask rustup-component-add --component rustfmt --toolchain nightly
     - name: Install clippy
