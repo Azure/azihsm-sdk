@@ -60,10 +60,7 @@ pub(crate) fn ecc_generate_key(
         ext: None,
     };
 
-    let resp = session.with_dev(|dev| {
-        dev.exec_op(&req, &mut None)
-            .map_hsm_err(HsmError::DdiCmdFailure)
-    })?;
+    let resp = session.with_dev(|dev| dev.exec_op(&req, &mut None).map_err(HsmError::from))?;
 
     // Create a key guard to ensure the generated key is deleted if any errors occur before returning.
     let key_id = HsmKeyIdGuard::new(session, resp.data.private_key_id);
@@ -134,10 +131,7 @@ pub(crate) fn ecc_sign(
         ext: None,
     };
 
-    let resp = key.with_dev(|dev| {
-        dev.exec_op(&req, &mut None)
-            .map_hsm_err(HsmError::DdiCmdFailure)
-    })?;
+    let resp = key.with_dev(|dev| dev.exec_op(&req, &mut None).map_err(HsmError::from))?;
 
     let sig_len = curve.signature_size();
     sig[..sig_len].copy_from_slice(&resp.data.signature.as_slice()[..sig_len]);
@@ -191,10 +185,7 @@ pub(crate) fn ecdh_derive(
         ext: None,
     };
 
-    let resp = base_key.with_dev(|dev| {
-        dev.exec_op(&req, &mut None)
-            .map_hsm_err(HsmError::DdiCmdFailure)
-    })?;
+    let resp = base_key.with_dev(|dev| dev.exec_op(&req, &mut None).map_err(HsmError::from))?;
 
     let session = base_key.session();
     let key_id = HsmKeyIdGuard::new(&session, resp.data.key_id);

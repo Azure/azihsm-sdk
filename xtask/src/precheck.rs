@@ -162,6 +162,16 @@ impl Xtask for Precheck {
                 };
                 nextest.run(ctx.clone())?;
 
+                // SDK Run resiliency-mock tests (only the resiliency test suite)
+                let nextest = nextest::Nextest {
+                    features: Some("resiliency-mock".to_string()),
+                    package: Some("azihsm_api_tests".to_string()),
+                    no_default_features: false,
+                    filterset: Some("test(resiliency::)".to_string()),
+                    profile: self.profile.clone(),
+                };
+                nextest.run(ctx.clone())?;
+
                 #[cfg(not(target_os = "windows"))]
                 {
                     // SDK Run azihsm_ddi mock tests table-4

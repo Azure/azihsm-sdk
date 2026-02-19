@@ -11,11 +11,13 @@ members = [
   "api/tests/macro",
   "crates/cred_encrypt",
   "crates/crypto",
+  "crates/retry_macro",
   "crates/test_with_tracing",
   "crates/tpm",
   "crates/x509",
   "ddi/interface",
   "ddi/lib",
+  "ddi/resiliency_mock",
   "ddi/test_helpers",
   "plugins/ossl_prov",
   "xtask",
@@ -34,6 +36,7 @@ azihsm_ddi_interface = { path = "ddi/interface" }
 azihsm_ddi_mbor = { path = "ddi/serde/mbor" }
 azihsm_ddi_mock = { path = "ddi/mock" }
 azihsm_ddi_nix = { path = "ddi/nix" }
+azihsm_ddi_resiliency_mock = { path = "ddi/resiliency_mock" }
 azihsm_ddi_sim = { path = "ddi/sim" }
 azihsm_ddi_test_helpers = { path = "ddi/test_helpers" }
 azihsm_ddi_types = { features = [
@@ -43,6 +46,7 @@ azihsm_ddi_types = { features = [
 ], path = "ddi/serde/types" }
 azihsm_ddi_win = { path = "ddi/win" }
 azihsm_tpm = { path = "crates/tpm" }
+retry_macro = { path = "crates/retry_macro" }
 test_with_tracing = { path = "crates/test_with_tracing" }
 test_with_tracing_macro = { path = "crates/test_with_tracing/test_with_tracing_macro" }
 x509 = { path = "crates/x509" }

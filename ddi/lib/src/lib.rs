@@ -11,6 +11,9 @@ cfg_if::cfg_if! {
     if #[cfg(feature = "mock")] {
         /// Azihsm DDI implementation
         pub type AzihsmDdi = azihsm_ddi_mock::DdiMock;
+    } else if #[cfg(feature = "resiliency-mock")] {
+        /// Azihsm DDI implementation (resiliency mock with fault injection)
+        pub type AzihsmDdi = azihsm_ddi_resiliency_mock::DdiResiliencyMock;
     } else if #[cfg(target_os = "linux")] {
         /// Azihsm DDI implementation
         pub type AzihsmDdi = azihsm_ddi_nix::DdiNix;

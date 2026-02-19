@@ -51,10 +51,7 @@ pub(crate) fn hmac_sign(key: &HsmHmacKey, data: &[u8], signature: &mut [u8]) -> 
         },
         ext: None,
     };
-    let resp = key.with_dev(|dev| {
-        dev.exec_op(&req, &mut None)
-            .map_hsm_err(HsmError::DdiCmdFailure)
-    })?;
+    let resp = key.with_dev(|dev| dev.exec_op(&req, &mut None).map_err(HsmError::from))?;
 
     // check if signature buffer is large enough
     if signature.len() < resp.data.tag.len() {

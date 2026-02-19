@@ -51,10 +51,7 @@ pub(crate) fn aes_generate_key(
         ext: None,
     };
 
-    let resp = session.with_dev(|dev| {
-        dev.exec_op(&req, &mut None)
-            .map_hsm_err(HsmError::DdiCmdFailure)
-    })?;
+    let resp = session.with_dev(|dev| dev.exec_op(&req, &mut None).map_err(HsmError::from))?;
 
     // Create a key guard to ensure the generated key is deleted if any errors occur before returning.
     let key_id = ddi::HsmKeyIdGuard::new(session, resp.data.key_id);
@@ -221,10 +218,7 @@ fn aes_cbc_encrypt_decrypt(
         ext: None,
     };
 
-    let resp = key.with_dev(|dev| {
-        dev.exec_op(&req, &mut None)
-            .map_hsm_err(HsmError::DdiCmdFailure)
-    })?;
+    let resp = key.with_dev(|dev| dev.exec_op(&req, &mut None).map_err(HsmError::from))?;
 
     // Update IV for chaining
     let resp_iv = resp.data.iv.as_slice();
@@ -356,7 +350,7 @@ fn aes_xts_encrypt_decrypt(
 
     let resp = key.with_dev(|dev| {
         dev.exec_op_fp_xts_slice(op, xts_params, input, output, &mut is_fips_approved)
-            .map_hsm_err(HsmError::DdiCmdFailure)
+            .map_err(HsmError::from)
     })?;
     Ok(resp)
 }
@@ -398,10 +392,7 @@ pub(crate) fn aes_gcm_generate_key(
         ext: None,
     };
 
-    let resp = session.with_dev(|dev| {
-        dev.exec_op(&req, &mut None)
-            .map_hsm_err(HsmError::DdiCmdFailure)
-    })?;
+    let resp = session.with_dev(|dev| dev.exec_op(&req, &mut None).map_err(HsmError::from))?;
 
     let key_id = ddi::HsmKeyIdGuard::new(session, resp.data.key_id);
     let masked_key = resp.data.masked_key.as_slice();
@@ -468,7 +459,7 @@ pub(crate) fn aes_gcm_encrypt(
             &mut returned_iv,
             &mut is_fips_approved,
         )
-        .map_hsm_err(HsmError::DdiCmdFailure)
+        .map_err(HsmError::from)
     })?;
 
     Ok((bytes_written, tag.ok_or(HsmError::InternalError)?))
@@ -531,7 +522,7 @@ pub(crate) fn aes_gcm_decrypt(
             &mut returned_iv,
             &mut is_fips_approved,
         )
-        .map_hsm_err(HsmError::DdiCmdFailure)
+        .map_err(HsmError::from)
     })?;
 
     Ok(bytes_written)
