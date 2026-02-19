@@ -38,6 +38,7 @@ impl<'a> TryFrom<&'a mut AzihsmAlgo> for &'a mut AzihsmAlgoAesCbcParams {
 pub(crate) struct AesCbcEncryptContext {
     context: HsmAesCbcEncryptContext,
     params: *mut AzihsmAlgoAesCbcParams,
+    is_finished: bool,
 }
 
 impl AesCbcEncryptContext {
@@ -46,11 +47,15 @@ impl AesCbcEncryptContext {
         Self {
             context: ctx,
             params: params as *mut AzihsmAlgoAesCbcParams,
+            is_finished: false,
         }
     }
 
     /// Update the context with input data
     fn update(&mut self, input: &[u8], output: Option<&mut [u8]>) -> Result<usize, AzihsmStatus> {
+        if self.is_finished {
+            return Err(AzihsmStatus::InvalidArgument);
+        }
         let bytes_written = self.context.update(input, output)?;
         self.update_iv()?;
         Ok(bytes_written)
@@ -58,8 +63,16 @@ impl AesCbcEncryptContext {
 
     /// Finish the context
     fn finish(&mut self, output: Option<&mut [u8]>) -> Result<usize, AzihsmStatus> {
+        if self.is_finished {
+            return Err(AzihsmStatus::InvalidArgument);
+        }
+        // finish(None) is a sizing check; only finish(Some(..)) should be the last call.
+        let last_call = output.is_some();
         let bytes_written = self.context.finish(output)?;
         self.update_iv()?;
+        if last_call {
+            self.is_finished = true;
+        }
         Ok(bytes_written)
     }
 
@@ -75,6 +88,7 @@ impl AesCbcEncryptContext {
 pub(crate) struct AesCbcDecryptContext {
     context: HsmAesCbcDecryptContext,
     params: *mut AzihsmAlgoAesCbcParams,
+    is_finished: bool,
 }
 
 impl AesCbcDecryptContext {
@@ -83,11 +97,15 @@ impl AesCbcDecryptContext {
         Self {
             context: ctx,
             params: params as *mut AzihsmAlgoAesCbcParams,
+            is_finished: false,
         }
     }
 
     /// Update the context with input data
     fn update(&mut self, input: &[u8], output: Option<&mut [u8]>) -> Result<usize, AzihsmStatus> {
+        if self.is_finished {
+            return Err(AzihsmStatus::InvalidArgument);
+        }
         let bytes_written = self.context.update(input, output)?;
         self.update_iv()?;
         Ok(bytes_written)
@@ -95,8 +113,16 @@ impl AesCbcDecryptContext {
 
     /// Finish the context
     fn finish(&mut self, output: Option<&mut [u8]>) -> Result<usize, AzihsmStatus> {
+        if self.is_finished {
+            return Err(AzihsmStatus::InvalidArgument);
+        }
+        // finish(None) is a sizing check; only finish(Some(..)) should be the last call.
+        let last_call = output.is_some();
         let bytes_written = self.context.finish(output)?;
         self.update_iv()?;
+        if last_call {
+            self.is_finished = true;
+        }
         Ok(bytes_written)
     }
 
