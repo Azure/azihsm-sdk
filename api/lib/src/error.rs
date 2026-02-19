@@ -47,6 +47,11 @@ pub enum HsmError {
     NotFound = -20,
     IoAborted = -21,
     IoAbortInProgress = -22,
+    CredentialsNotEstablished = -23,
+    NonceMismatch = -24,
+    PartitionNotProvisioned = -25,
+    MaskedKeyDecodeFailed = -26,
+    EccVerifyFailed = -27,
     Panic = i32::MIN,
 }
 

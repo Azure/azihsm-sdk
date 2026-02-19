@@ -47,8 +47,14 @@ impl<D: DdiDev> DdiDev for DdiResTestDev<D> {
         cookie: &mut Option<DdiCookie>,
     ) -> DdiResult<T::OpResp> {
         // Check fault rules before delegating.
-        if let Some(err) = fault::check_faults(req.get_opcode()) {
-            return Err(err);
+        match fault::check_faults(req.get_opcode()) {
+            Some(fault::FaultAction::ReturnError(err)) => return Err(err.into_ddi_error()),
+            Some(fault::FaultAction::TriggerReset) => {
+                // Trigger device reset — wipes credentials, then let the op proceed
+                // so it fails naturally with CredentialsNotEstablished.
+                self.inner.simulate_nssr_after_lm()?;
+            }
+            None => {}
         }
         self.inner.exec_op(req, cookie)
     }

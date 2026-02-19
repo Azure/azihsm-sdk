@@ -7,4 +7,5 @@
 //! resiliency DDI device to inject transient faults, verifying
 //! that the retry-with-backoff machinery recovers correctly.
 
+mod init_part;
 mod open_part;

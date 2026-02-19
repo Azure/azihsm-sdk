@@ -2044,11 +2044,11 @@ impl Dispatcher {
             &attest_key_uncomp,
             req.pota_sig.as_slice(),
         )
-        .map_err(|_| ManticoreError::InvalidArgument)?;
+        .map_err(|_| ManticoreError::EccVerifyError)?;
 
         if !verify_result {
             tracing::error!("POTA public key verification failed in establish_credential.");
-            Err(ManticoreError::InvalidArgument)?
+            Err(ManticoreError::EccVerifyError)?
         }
 
         let encrypted_credential = EncryptedCredential {

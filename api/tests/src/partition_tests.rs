@@ -91,29 +91,7 @@ fn test_partition_init() {
         part.reset().expect("Partition reset failed");
 
         let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
-        let use_tpm = std::env::var("AZIHSM_USE_TPM").is_ok();
-
-        let pota_data = if !use_tpm {
-            Some(make_valid_pota_parts(&part))
-        } else {
-            None
-        };
-
-        let (obk_info, pota_endorsement) = if use_tpm {
-            (
-                HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, None),
-                HsmPotaEndorsement::new(HsmPotaEndorsementSource::Tpm, None),
-            )
-        } else {
-            let (ref sig, ref pubkey) = *pota_data.as_ref().unwrap();
-            (
-                make_valid_obk(),
-                HsmPotaEndorsement::new(
-                    HsmPotaEndorsementSource::Caller,
-                    Some(HsmPotaEndorsementData::new(sig, pubkey)),
-                ),
-            )
-        };
+        let (obk_info, pota_endorsement) = make_init_params(&part);
         part.init(creds, None, None, obk_info, pota_endorsement, None)
             .expect("Partition init failed");
     }
@@ -347,31 +325,9 @@ fn test_init_with_resiliency_config() {
         part.reset().expect("Partition reset failed");
 
         let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
-        let use_tpm = std::env::var("AZIHSM_USE_TPM").is_ok();
+        let (obk_info, pota_endorsement) = make_init_params(&part);
 
-        let pota_data = if !use_tpm {
-            Some(make_valid_pota_parts(&part))
-        } else {
-            None
-        };
-
-        let (obk_info, pota_endorsement) = if use_tpm {
-            (
-                HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, None),
-                HsmPotaEndorsement::new(HsmPotaEndorsementSource::Tpm, None),
-            )
-        } else {
-            let (ref sig, ref pubkey) = *pota_data.as_ref().unwrap();
-            (
-                make_valid_obk(),
-                HsmPotaEndorsement::new(
-                    HsmPotaEndorsementSource::Caller,
-                    Some(HsmPotaEndorsementData::new(sig, pubkey)),
-                ),
-            )
-        };
-
-        let (resiliency_config, _ctx) = make_resiliency_config();
+        let (resiliency_config, _ctx) = make_resiliency_config(&part);
         part.init(
             creds,
             None,
@@ -404,7 +360,7 @@ fn test_init_with_resiliency_caller_pota_null_callback_fails() {
 
         // Build a resiliency config with pota_callback = None.
         // When POTA source is Caller, this must fail with InvalidArgument.
-        let (mut resiliency_config, _ctx) = make_resiliency_config();
+        let (mut resiliency_config, _ctx) = make_resiliency_config(&part);
         resiliency_config.pota_callback = None;
 
         let result = part.init(
@@ -454,7 +410,7 @@ fn test_double_init_with_resiliency() {
         };
 
         let ctx = ResiliencyTestCtx::new();
-        let resiliency_config = make_resiliency_config_in(ctx.dir());
+        let resiliency_config = make_resiliency_config_in(ctx.dir(), &part);
         part.init(
             creds,
             None,
@@ -489,7 +445,7 @@ fn test_double_init_with_resiliency() {
             )
         };
 
-        let resiliency_config2 = make_resiliency_config_in(ctx.dir());
+        let resiliency_config2 = make_resiliency_config_in(ctx.dir(), &part);
         part.init(
             creds,
             None,
@@ -516,7 +472,7 @@ fn test_init_with_resiliency_invalid_pota_source_fails() {
         let pota_data = HsmPotaEndorsementData::new(&[0u8; 96], &[0u8; 97]);
         let pota = HsmPotaEndorsement::new(HsmPotaEndorsementSource(99), Some(pota_data));
 
-        let (resiliency_config, _ctx) = make_resiliency_config();
+        let (resiliency_config, _ctx) = make_resiliency_config(&part);
 
         let result = part.init(creds, None, None, obk_info, pota, Some(resiliency_config));
         assert_eq!(result.unwrap_err(), HsmError::InvalidArgument);
@@ -537,7 +493,7 @@ fn test_init_with_resiliency_tpm_pota_with_callback_fails() {
         let pota_endorsement = HsmPotaEndorsement::new(HsmPotaEndorsementSource::Tpm, None);
 
         // TPM source + callback provided → should fail with InvalidArgument.
-        let (resiliency_config, _ctx) = make_resiliency_config();
+        let (resiliency_config, _ctx) = make_resiliency_config(&part);
         // resiliency_config already has pota_callback = Some(...) from make_resiliency_config
 
         let result = part.init(

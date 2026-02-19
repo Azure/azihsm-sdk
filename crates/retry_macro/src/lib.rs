@@ -30,16 +30,13 @@
 //! #[retry_open_part]
 //! pub fn open_partition(path: &str) -> HsmResult<HsmPartition> { /* ... */ }
 //!
+//! // Dedicated macro for init_part (predicate + condition baked in)
+//! #[retry_init_part]
+//! pub(crate) fn init_part(..., resiliency_config: Option<&HsmResiliencyConfig>) -> HsmResult<InitPartResult> { /* ... */ }
+//!
 //! // Generic macro with explicit predicate
 //! #[retry_with_backoff(predicate = is_io_abort_error)]
 //! pub fn some_other_op() -> HsmResult<()> { /* ... */ }
-//!
-//! // Conditional retry (only when resiliency is enabled)
-//! #[retry_with_backoff(
-//!     predicate = is_io_abort_error,
-//!     condition = "self.resiliency_enabled()",
-//! )]
-//! pub fn open_session(&self, ...) -> HsmResult<HsmSession> { /* ... */ }
 //! ```
 
 use darling::FromMeta;
@@ -172,6 +169,97 @@ pub fn retry_open_part(attr: TokenStream, item: TokenStream) -> TokenStream {
         .into()
 }
 
+/// Parsed attribute arguments for `#[retry_init_part(...)]`.
+///
+/// Same optional overrides as [`RetryArgs`] but with the predicate
+/// hard-wired to `crate::resiliency::is_init_retryable_error` and the
+/// condition hard-wired to `resiliency_config.is_some()`.
+#[derive(Debug, Default, FromMeta)]
+struct InitPartRetryArgs {
+    /// Maximum number of retry attempts.
+    #[darling(default)]
+    max_retries: Option<u32>,
+
+    /// Base delay in milliseconds for exponential backoff.
+    #[darling(default)]
+    backoff_base_ms: Option<u64>,
+
+    /// Maximum random jitter in milliseconds added to each backoff delay.
+    #[darling(default)]
+    backoff_jitter_ms: Option<u64>,
+}
+
+/// Retry macro for `init_part`.
+///
+/// Equivalent to:
+/// ```ignore
+/// #[retry_with_backoff(
+///     predicate = crate::resiliency::is_init_retryable_error,
+///     condition = "resiliency_config.is_some()",
+/// )]
+/// ```
+///
+/// The predicate covers the transient errors specific to partition
+/// initialization (credential establishment, POTA endorsement, etc.)
+/// and the condition gates retries on the caller having opted in to
+/// resiliency.
+///
+/// The annotated function must have a parameter named
+/// `resiliency_config: Option<&HsmResiliencyConfig>` for the baked-in
+/// condition to compile.
+///
+/// # Optional parameters
+///
+/// `max_retries`, `backoff_base_ms`, and `backoff_jitter_ms` are
+/// accepted as optional overrides.
+///
+/// # Example
+///
+/// ```ignore
+/// #[retry_init_part]
+/// pub(crate) fn init_part(
+///     dev: &HsmDev,
+///     ...,
+///     resiliency_config: Option<&HsmResiliencyConfig>,
+/// ) -> HsmResult<InitPartResult> { /* ... */ }
+/// ```
+#[proc_macro_attribute]
+pub fn retry_init_part(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let item = parse_macro_input!(item as ItemFn);
+
+    let args = if attr.is_empty() {
+        InitPartRetryArgs::default()
+    } else {
+        let attr_args = match darling::ast::NestedMeta::parse_meta_list(attr.into()) {
+            Ok(v) => v,
+            Err(e) => return TokenStream::from(darling::Error::from(e).write_errors()),
+        };
+        match InitPartRetryArgs::from_list(&attr_args) {
+            Ok(v) => v,
+            Err(e) => return e.write_errors().into(),
+        }
+    };
+
+    let full_args = RetryArgs {
+        // Predicate for init_part retries. Covers transient errors from
+        // credential establishment and POTA endorsement (IoAborted,
+        // IoAbortInProgress, CredentialsNotEstablished, NonceMismatch,
+        // PartitionNotProvisioned, EccVerifyFailed).
+        predicate: syn::parse_str("crate::resiliency::is_init_retryable_error")
+            .expect("hardcoded predicate path must parse"),
+        max_retries: args.max_retries,
+        backoff_base_ms: args.backoff_base_ms,
+        backoff_jitter_ms: args.backoff_jitter_ms,
+        // Condition baked in: retries only when resiliency is enabled.
+        // The annotated function must have a `resiliency_config` parameter.
+        condition: Some("resiliency_config.is_some()".to_string()),
+    };
+
+    expand_retry(full_args, item)
+        .unwrap_or_else(|err| err.to_compile_error())
+        .into()
+}
+
 fn expand_retry(args: RetryArgs, item: ItemFn) -> syn::Result<proc_macro2::TokenStream> {
     // Validate: must not be async.
     if item.sig.asyncness.is_some() {
@@ -248,7 +336,7 @@ fn expand_retry(args: RetryArgs, item: ItemFn) -> syn::Result<proc_macro2::Token
     // receiver parameter.
     let retry_call = quote! {
         crate::resiliency::execute_with_backoff(
-            || #body,
+            |__prev_error: Option<&crate::HsmError>| #body,
             #predicate,
             #max_retries,
             #backoff_base_ms,
@@ -270,8 +358,10 @@ fn expand_retry(args: RetryArgs, item: ItemFn) -> syn::Result<proc_macro2::Token
             let __should_retry = #cond_expr;
             if __should_retry {
                 #retry_call
-            } else
+            } else {
+                let __prev_error: Option<&crate::HsmError> = None;
                 #body
+            }
         }
     } else {
         // Unconditional retry.

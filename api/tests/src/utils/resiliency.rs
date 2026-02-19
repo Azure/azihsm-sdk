@@ -14,7 +14,7 @@
 //!
 //! **Single-thread / single-process tests** — use [`make_resiliency_config`]:
 //! ```ignore
-//! let (config, _ctx) = make_resiliency_config();
+//! let (config, _ctx) = make_resiliency_config(&part);
 //! // _ctx cleans up the directory on drop.
 //! ```
 //!
@@ -24,7 +24,7 @@
 //! ```ignore
 //! let ctx = ResiliencyTestCtx::new();
 //! // spawn threads / processes, each calls:
-//! let config = make_resiliency_config_in(ctx.dir());
+//! let config = make_resiliency_config_in(ctx.dir(), &part);
 //! // after all join, ctx drops and cleans up.
 //! ```
 
@@ -33,17 +33,18 @@ use std::io::Read;
 use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::AtomicU32;
 use std::sync::atomic::Ordering;
 
 use azihsm_api::*;
+use azihsm_crypto::*;
 use fs2::FileExt;
 
 /// Well-known directory name for resiliency test data.
 const RESILIENCY_DIR_NAME: &str = "azihsm_resiliency_test";
 
 /// Monotonic counter for unique directory names across all threads.
-static DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
+static DIR_COUNTER: AtomicU32 = AtomicU32::new(0);
 
 /// File-backed [`ResiliencyStorage`]: one file per key under `dir`.
 struct FileStorage {
@@ -103,12 +104,39 @@ impl ResiliencyLock for FileLock {
     }
 }
 
-/// Dummy POTA callback that returns zeroed signature and public key.
-struct DummyPotaCallback;
+/// Test POTA callback that retrieves the PID public key from the
+/// partition's certificate and signs it using the hardcoded test
+/// ECC P-384 key pair (same as [`super::partition::generate_pota_endorsement`]).
+///
+/// The `pub_key` parameter (caller's original endorsement key) is
+/// ignored — this callback always re-derives the endorsement from the
+/// current device's PID cert.
+struct TestPotaCallback {
+    part: HsmPartition,
+}
 
-impl PotaEndorsementCallback for DummyPotaCallback {
+impl PotaEndorsementCallback for TestPotaCallback {
     fn endorse(&self, _pub_key: &[u8]) -> HsmResult<HsmPotaEndorsementData> {
-        Ok(HsmPotaEndorsementData::new(&[0u8; 96], &[0u8; 120]))
+        // Retrieve the current device's PID cert public key
+        let pid_pub_key_der = self.part.pub_key()?;
+
+        let pub_key_obj =
+            DerEccPublicKey::from_der(&pid_pub_key_der).map_err(|_| HsmError::InternalError)?;
+        let mut uncompressed = vec![0x04u8];
+        uncompressed.extend_from_slice(pub_key_obj.x());
+        uncompressed.extend_from_slice(pub_key_obj.y());
+
+        let priv_key = EccPrivateKey::from_bytes(&super::partition::TEST_POTA_PRIVATE_KEY)
+            .map_err(|_| HsmError::InternalError)?;
+        let hash_algo = HashAlgo::sha384();
+        let mut ecdsa = EcdsaAlgo::new(hash_algo);
+        let signature = Signer::sign_vec(&mut ecdsa, &priv_key, &uncompressed)
+            .map_err(|_| HsmError::InternalError)?;
+
+        Ok(HsmPotaEndorsementData::new(
+            &signature,
+            &super::partition::TEST_POTA_PUBLIC_KEY_DER,
+        ))
     }
 }
 
@@ -158,7 +186,7 @@ impl Drop for ResiliencyTestCtx {
 /// The directory must already exist (created by [`ResiliencyTestCtx::new`]).
 /// Each thread or process should call this to get its own config handle
 /// pointing at the shared storage and lock file.
-pub(crate) fn make_resiliency_config_in(dir: &Path) -> HsmResiliencyConfig {
+pub(crate) fn make_resiliency_config_in(dir: &Path, part: &HsmPartition) -> HsmResiliencyConfig {
     let lock_path = dir.join(".lock");
     let lock_file = fs::OpenOptions::new()
         .read(true)
@@ -173,7 +201,7 @@ pub(crate) fn make_resiliency_config_in(dir: &Path) -> HsmResiliencyConfig {
             dir: dir.to_path_buf(),
         }),
         lock: Box::new(FileLock { file: lock_file }),
-        pota_callback: Some(Box::new(DummyPotaCallback)),
+        pota_callback: Some(Box::new(TestPotaCallback { part: part.clone() })),
     }
 }
 
@@ -184,23 +212,54 @@ pub(crate) fn make_resiliency_config_in(dir: &Path) -> HsmResiliencyConfig {
 /// [`ResiliencyTestCtx::new`] + [`make_resiliency_config_in`] instead.
 ///
 /// The returned `ResiliencyTestCtx` must outlive the config.
-pub(crate) fn make_resiliency_config() -> (HsmResiliencyConfig, ResiliencyTestCtx) {
+pub(crate) fn make_resiliency_config(
+    part: &HsmPartition,
+) -> (HsmResiliencyConfig, ResiliencyTestCtx) {
     let ctx = ResiliencyTestCtx::new();
-    let config = make_resiliency_config_in(ctx.dir());
+    let config = make_resiliency_config_in(ctx.dir(), part);
     (config, ctx)
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::AtomicU32;
-    use std::sync::atomic::Ordering;
-
     use super::*;
 
     /// Per-process counter to give every test a unique directory,
     /// avoiding interference when nextest runs tests in parallel
     /// (each `#[test]` is a separate process).
     static TEST_SEQ: AtomicU32 = AtomicU32::new(0);
+
+    /// Dummy POTA callback for unit tests that don't exercise the
+    /// actual POTA signing flow.
+    struct DummyPotaCallback;
+
+    impl PotaEndorsementCallback for DummyPotaCallback {
+        fn endorse(&self, _pub_key: &[u8]) -> HsmResult<HsmPotaEndorsementData> {
+            Ok(HsmPotaEndorsementData::new(&[0u8; 96], &[0u8; 120]))
+        }
+    }
+
+    /// Build a resiliency config for unit tests that exercise storage
+    /// and locking without interacting with a partition. Uses
+    /// [`DummyPotaCallback`] since the POTA callback is not exercised.
+    fn make_unit_test_config(dir: &Path) -> HsmResiliencyConfig {
+        let lock_path = dir.join(".lock");
+        let lock_file = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&lock_path)
+            .expect("Failed to open lock file");
+
+        HsmResiliencyConfig {
+            storage: Box::new(FileStorage {
+                dir: dir.to_path_buf(),
+            }),
+            lock: Box::new(FileLock { file: lock_file }),
+            pota_callback: Some(Box::new(DummyPotaCallback)),
+        }
+    }
 
     /// RAII helper that creates a unique temp directory for a single
     /// unit test and removes it on drop.
@@ -304,14 +363,14 @@ mod tests {
     #[test]
     fn lock_and_unlock() {
         let dir = TestDir::new();
-        let config = make_resiliency_config_in(dir.path());
+        let config = make_unit_test_config(dir.path());
 
         config.lock.lock().unwrap();
         config.lock.unlock().unwrap();
     }
 
     #[test]
-    fn pota_callback_returns_expected_sizes() {
+    fn pota_dummy_callback_returns_expected_sizes() {
         let callback = DummyPotaCallback;
         let result = callback.endorse(&[0u8; 32]).unwrap();
         assert_eq!(result.signature().len(), 96);
@@ -321,7 +380,7 @@ mod tests {
     #[test]
     fn make_resiliency_config_returns_valid_config() {
         let dir = TestDir::new();
-        let config = make_resiliency_config_in(dir.path());
+        let config = make_unit_test_config(dir.path());
 
         // Storage should work
         config.storage.write("test", b"value").unwrap();
@@ -354,7 +413,7 @@ mod tests {
             .map(|_| {
                 let dir = dir_path.clone();
                 std::thread::spawn(move || {
-                    let config = make_resiliency_config_in(&dir);
+                    let config = make_unit_test_config(&dir);
                     let storage = FileStorage { dir: dir.clone() };
 
                     for _ in 0..increments_per_thread {
@@ -434,7 +493,12 @@ mod tests {
 
     #[test]
     fn make_resiliency_config_convenience_creates_valid_config() {
-        let (config, _ctx) = make_resiliency_config();
+        let part_infos = HsmPartitionManager::partition_info_list();
+        assert!(!part_infos.is_empty(), "No partitions found.");
+        let part = HsmPartitionManager::open_partition(&part_infos[0].path)
+            .expect("Failed to open partition");
+
+        let (config, _ctx) = make_resiliency_config(&part);
 
         // Storage should work
         config.storage.write("conv_test", b"data").unwrap();

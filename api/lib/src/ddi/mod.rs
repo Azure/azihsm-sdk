@@ -37,13 +37,31 @@ use super::*;
 /// `DriverError::IoAborted` and `DriverError::IoAbortInProgress` are mapped
 /// to their dedicated `HsmError` variants so that higher layers (e.g., the
 /// `open_partition` retry loop) can distinguish transient IO-abort conditions
-/// from other DDI failures. All remaining `DdiError` variants are collapsed
-/// into `HsmError::DdiCmdFailure`.
+/// from other DDI failures.
+///
+/// `DdiStatus::CredentialsNotEstablished`, `DdiStatus::NonceMismatch`,
+/// `DdiStatus::PartitionNotProvisioned`, `DdiStatus::MaskedKeyDecodeFailed`,
+/// and `DdiStatus::EccVerifyFailed` are surfaced as distinct `HsmError`
+/// variants to enable targeted retry logic during partition initialization.
+///
+/// All remaining `DdiError` variants are collapsed into
+/// `HsmError::DdiCmdFailure`.
 impl From<DdiError> for HsmError {
     fn from(err: DdiError) -> Self {
         match err {
             DdiError::DriverError(DriverError::IoAborted) => HsmError::IoAborted,
             DdiError::DriverError(DriverError::IoAbortInProgress) => HsmError::IoAbortInProgress,
+            DdiError::DdiStatus(DdiStatus::CredentialsNotEstablished) => {
+                HsmError::CredentialsNotEstablished
+            }
+            DdiError::DdiStatus(DdiStatus::NonceMismatch) => HsmError::NonceMismatch,
+            DdiError::DdiStatus(DdiStatus::PartitionNotProvisioned) => {
+                HsmError::PartitionNotProvisioned
+            }
+            DdiError::DdiStatus(DdiStatus::MaskedKeyDecodeFailed) => {
+                HsmError::MaskedKeyDecodeFailed
+            }
+            DdiError::DdiStatus(DdiStatus::EccVerifyFailed) => HsmError::EccVerifyFailed,
             _ => HsmError::DdiCmdFailure,
         }
     }
