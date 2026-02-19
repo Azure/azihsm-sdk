@@ -34,6 +34,10 @@ pub struct Setup {
     /// Override a configuration value in install::Install subtasks
     #[clap(long)]
     pub config: Option<String>,
+
+    /// Override the directory to install packages into
+    #[clap(long)]
+    pub tool_cache: Option<String>,
 }
 
 impl Xtask for Setup {
@@ -44,9 +48,11 @@ impl Xtask for Setup {
 
         // Run Install Cargo nextest
         let install_cargo_nextest = install::Install {
-            crate_name: format!("cargo-nextest@{}", CARGO_NEXTEST_VERSION),
+            crate_name: String::from("cargo-nextest"),
+            version: Some(String::from(CARGO_NEXTEST_VERSION)),
             force: self.force,
             config: self.config.clone(),
+            tool_cache: self.tool_cache.clone(),
         };
         install_cargo_nextest.run(ctx.clone())?;
 
@@ -55,9 +61,11 @@ impl Xtask for Setup {
 
         // Run Install Cargo taplo-cli
         let install_cargo_taplo_cli = install::Install {
-            crate_name: format!("taplo-cli@{}", TAPLO_CLI_VERSION),
+            crate_name: String::from("taplo-cli"),
+            version: Some(String::from(TAPLO_CLI_VERSION)),
             force: self.force,
             config: self.config.clone(),
+            tool_cache: self.tool_cache.clone(),
         };
         install_cargo_taplo_cli.run(ctx.clone())?;
 
@@ -68,9 +76,11 @@ impl Xtask for Setup {
         {
             // Cargo fuzz
             let install_cargo_fuzz = install::Install {
-                crate_name: format!("cargo-fuzz@{}", CARGO_FUZZ_VERSION),
+                crate_name: String::from("cargo-fuzz"),
+                version: Some(String::from(CARGO_FUZZ_VERSION)),
                 force: self.force,
                 config: self.config.clone(),
+                tool_cache: self.tool_cache.clone(),
             };
             install_cargo_fuzz.run(ctx.clone())?;
 
@@ -80,9 +90,11 @@ impl Xtask for Setup {
 
         // Run Install cargo-audit
         let install_cargo_audit = install::Install {
-            crate_name: format!("cargo-audit@{}", CARGO_AUDIT_VERSION),
+            crate_name: String::from("cargo-audit"),
+            version: Some(String::from(CARGO_AUDIT_VERSION)),
             force: self.force,
             config: self.config.clone(),
+            tool_cache: self.tool_cache.clone(),
         };
         install_cargo_audit.run(ctx.clone())?;
 
@@ -91,9 +103,11 @@ impl Xtask for Setup {
 
         // Run Install cargo-llvm-cov
         let install_cargo_llvm_cov = install::Install {
-            crate_name: format!("cargo-llvm-cov@{}", CARGO_LLVM_COV_VERSION),
+            crate_name: String::from("cargo-llvm-cov"),
+            version: Some(String::from(CARGO_LLVM_COV_VERSION)),
             force: self.force,
             config: self.config.clone(),
+            tool_cache: self.tool_cache.clone(),
         };
         install_cargo_llvm_cov.run(ctx.clone())?;
 

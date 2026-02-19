@@ -20,8 +20,17 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+    - name: Update paths for tools
+      run: |
+        echo "${{ runner.tool_cache }}/cargo-nextest/bin" >> $GITHUB_PATH
+        echo "${{ runner.tool_cache }}/taplo-cli/bin" >> $GITHUB_PATH
+        echo "${{ runner.tool_cache }}/cargo-fuzz/bin" >> $GITHUB_PATH
+        echo "${{ runner.tool_cache }}/cargo-audit/bin" >> $GITHUB_PATH
+        echo "${{ runner.tool_cache }}/cargo-llvm-cov/bin" >> $GITHUB_PATH
     - name: Run Setup
-      run: cargo xtask precheck --setup
+      run: cargo xtask precheck --setup --tool-cache ${{ runner.tool_cache }}
+    - name: Compress tool cache
+      run: tar -czf ${{ runner.temp }}/tool_cache.tar.gz -C ${{ runner.tool_cache }} .
     - name: Save Cargo cache
       uses: actions/cache/save@v5
       with:
@@ -30,6 +39,7 @@ jobs:
           ~/.cargo/registry/index/
           ~/.cargo/registry/cache/
           ~/.cargo/git/db/
+          ${{ runner.temp }}/tool_cache.tar.gz
         key: ${{ runner.os }}-cargo-${{ github.sha }}
 
   create_new_cache_windows:
@@ -42,8 +52,20 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+    - name: Update paths for tools
+      run: |
+        echo "${{ runner.tool_cache }}\cargo-nextest\bin" >> $env:GITHUB_PATH
+        echo "${{ runner.tool_cache }}\taplo-cli\bin" >> $env:GITHUB_PATH
+        echo "${{ runner.tool_cache }}\cargo-fuzz\bin" >> $env:GITHUB_PATH
+        echo "${{ runner.tool_cache }}\cargo-audit\bin" >> $env:GITHUB_PATH
+        echo "${{ runner.tool_cache }}\cargo-llvm-cov\bin" >> $env:GITHUB_PATH
+    - name: Get Path
+      run: |
+        echo $env:GITHUB_PATH
     - name: Run Setup
-      run: cargo xtask precheck --setup
+      run: cargo xtask precheck --setup --tool-cache ${{ runner.tool_cache }}
+    - name: Compress tool cache
+      run: tar -czf ${{ runner.temp }}/tool_cache.tar.gz -C ${{ runner.tool_cache }} .
     - name: Save Cargo cache
       uses: actions/cache/save@v5
       with:
@@ -52,4 +74,5 @@ jobs:
           ~/.cargo/registry/index/
           ~/.cargo/registry/cache/
           ~/.cargo/git/db/
+          ${{ runner.temp }}/tool_cache.tar.gz
         key: ${{ runner.os }}-cargo-${{ github.sha }}

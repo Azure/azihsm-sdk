@@ -54,21 +54,30 @@ pub struct Precheck {
     /// Specify which checks to run
     #[clap(flatten)]
     stage: Option<Stage>,
+
     /// Skip TOML formatting
     #[clap(long)]
     pub skip_toml: bool,
+
     /// Skip Clang formatting
     #[clap(long)]
     pub skip_clang: bool,
+
     /// Skip specifying toolchain for formatting checks
     #[clap(long)]
     skip_toolchain: bool,
+
     /// Package to run tests for
     #[clap(long)]
     package: Option<String>,
+
     /// Features to enable when running tests
     #[clap(long)]
     features: Option<String>,
+
+    /// Override the directory to install packages into
+    #[clap(long)]
+    pub tool_cache: Option<String>,
 }
 
 impl Xtask for Precheck {
@@ -105,6 +114,7 @@ impl Xtask for Precheck {
             let setup = setup::Setup {
                 force: false,
                 config: Some(config_path),
+                tool_cache: self.tool_cache.clone(),
             };
             setup.run(ctx.clone())?;
         }

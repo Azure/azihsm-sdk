@@ -21,6 +21,10 @@ pub struct Install {
     #[clap(long)]
     pub crate_name: String,
 
+    /// Specify the version of the crate to install
+    #[clap(long)]
+    pub version: Option<String>,
+
     /// Force overwriting existing crates or binaries
     #[clap(long)]
     pub force: bool,
@@ -28,6 +32,10 @@ pub struct Install {
     /// Override a configuration value
     #[clap(long)]
     pub config: Option<String>,
+
+    /// Override the parent directory to install packages into
+    #[clap(long)]
+    pub tool_cache: Option<String>,
 }
 
 impl Xtask for Install {
@@ -44,11 +52,28 @@ impl Xtask for Install {
         if self.force {
             command_args.push("--force");
         }
+
         let config_val;
         if self.config.is_some() {
             command_args.push("--config");
             config_val = self.config.unwrap_or_default();
             command_args.push(&config_val);
+        }
+
+        let version_val;
+        if self.version.is_some() {
+            command_args.push("--version");
+            version_val = self.version.unwrap_or_default();
+            command_args.push(&version_val);
+        }
+
+        let mut root_val;
+        if self.tool_cache.is_some() {
+            command_args.push("--root");
+            root_val = self.tool_cache.unwrap_or_default();
+            root_val.push(std::path::MAIN_SEPARATOR);
+            root_val.push_str(&self.crate_name);
+            command_args.push(&root_val);
         }
 
         cmd!(sh, "cargo {rust_toolchain...} install {command_args...}")
