@@ -68,9 +68,7 @@ pub(crate) fn open_session(
         },
         ext: None,
     };
-    let resp = dev
-        .exec_op(&req, &mut None)
-        .map_hsm_err(HsmError::DdiCmdFailure)?;
+    let resp = dev.exec_op(&req, &mut None).map_err(HsmError::from)?;
     Ok((resp.data.sess_id, resp.data.short_app_id))
 }
 
@@ -97,8 +95,7 @@ pub(crate) fn close_session(dev: &HsmDev, id: u16, rev: HsmApiRev) -> HsmResult<
         data: DdiCloseSessionReq {},
         ext: None,
     };
-    dev.exec_op(&req, &mut None)
-        .map_hsm_err(HsmError::DdiCmdFailure)?;
+    dev.exec_op(&req, &mut None).map_err(HsmError::from)?;
     Ok(())
 }
 
@@ -128,8 +125,6 @@ fn get_session_encryption_key(
         data: DdiGetSessionEncryptionKeyReq {},
         ext: None,
     };
-    let resp = dev
-        .exec_op(&req, &mut None)
-        .map_hsm_err(HsmError::DdiCmdFailure)?;
+    let resp = dev.exec_op(&req, &mut None).map_err(HsmError::from)?;
     Ok(resp)
 }

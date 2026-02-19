@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use azihsm_ddi::DdiDev;
 use parking_lot::RwLock;
+use retry_macro::retry_with_backoff;
 use tracing::*;
 
 use super::*;
@@ -279,6 +280,12 @@ impl HsmPartitionManager {
     /// Establishes a connection to the HSM partition and retrieves its
     /// supported API revision range.
     ///
+    /// If the device returns a transient IO-abort error
+    /// ([`HsmError::IoAborted`] or [`HsmError::IoAbortInProgress`]),
+    /// the operation is automatically retried with exponential backoff
+    /// (up to 5 retries, i.e. 6 attempts in total). This handles transient driver
+    /// states during live migration or firmware crash recovery.
+    ///
     /// # Arguments
     ///
     /// * `path` - Device path of the partition to open
@@ -294,6 +301,8 @@ impl HsmPartitionManager {
     /// - The device cannot be opened or is already in use
     /// - API revision retrieval fails
     /// - The underlying DDI operation fails
+    /// - All retry attempts are exhausted for transient IO-abort errors
+    #[retry_with_backoff(predicate = crate::resiliency::is_io_abort_error)]
     #[instrument()]
     pub fn open_partition(path: &str) -> HsmResult<HsmPartition> {
         let dev = ddi::open_dev(path)?;
@@ -391,7 +400,7 @@ impl HsmPartition {
         let obk_config_clone = obk_config.clone();
         let pota_endorsement_clone = pota_endorsement.clone();
 
-        let (bmk, mobk) = self.with_dev(|dev| {
+        let (bmk, mobk) = self.with_dev(|dev| -> HsmResult<(Vec<u8>, Vec<u8>)> {
             let (bmk, mobk) = ddi::init_part(
                 dev,
                 self.api_rev_range().min(),
@@ -650,6 +659,16 @@ impl HsmPartition {
     /// A reference to the wrapped partition inner state.
     pub(crate) fn inner(&self) -> &Arc<RwLock<HsmPartitionInner>> {
         &self.0
+    }
+
+    /// Returns `true` if resiliency was configured for this partition
+    /// (i.e., a non-`None` [`HsmResiliencyConfig`] was passed to [`init`]).
+    ///
+    /// Used by `#[retry_with_backoff(condition = "...")]` to gate retry
+    /// logic on whether the caller opted in to resiliency.
+    #[allow(dead_code)]
+    pub(crate) fn resiliency_enabled(&self) -> bool {
+        self.inner().read().resiliency_state.is_some()
     }
 }
 

@@ -21,6 +21,7 @@ log.workspace = true
 open-enum.workspace = true
 parking_lot.workspace = true
 pastey.workspace = true
+retry_macro.workspace = true
 test_with_tracing.workspace = true
 tracing.workspace = true
 x509.workspace = true

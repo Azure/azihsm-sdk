@@ -7,6 +7,10 @@
 //! The entire resiliency feature is opt-in. When `None` is passed for the
 //! resiliency config in `HsmPartition::init()`, behavior is unchanged.
 
+use std::time::Duration;
+
+use tracing::*;
+
 use crate::HsmError;
 use crate::HsmOwnerBackupKeyConfig;
 use crate::HsmPotaEndorsement;
@@ -152,5 +156,196 @@ impl ResiliencyState {
             cached_pota_endorsement: pota_endorsement,
             restore_epoch: 0,
         })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Retry-with-backoff runtime support
+// ---------------------------------------------------------------------------
+
+/// Default maximum number of retry attempts.
+pub(crate) const MAX_RETRIES: u32 = 5;
+
+/// Default base delay in milliseconds for exponential backoff.
+/// Each iteration doubles: 400 → 800 → 1600 → 3200 → 6400 ms.
+pub(crate) const BACKOFF_BASE_MS: u64 = 400;
+
+/// Executes `operation` with exponential-backoff retry.
+///
+/// The operation is called once.  If it fails and `predicate` returns `true`
+/// for the error, the call is retried up to `max_retries` additional times
+/// with exponentially increasing delays (`backoff_base_ms * 2^iter`).
+///
+/// Emits [`tracing::warn!`] on each retry and [`tracing::error!`] when all
+/// attempts are exhausted.
+///
+/// # Arguments
+///
+/// * `operation`      – Closure that performs the fallible work.
+/// * `predicate`      – Returns `true` for errors that are worth retrying.
+/// * `max_retries`    – Maximum number of **additional** attempts after the first failure.
+/// * `backoff_base_ms`– Base delay in milliseconds; doubled each iteration.
+pub(crate) fn execute_with_backoff<T>(
+    mut operation: impl FnMut() -> HsmResult<T>,
+    predicate: fn(&HsmResult<T>) -> bool,
+    max_retries: u32,
+    backoff_base_ms: u64,
+) -> HsmResult<T> {
+    let mut result = operation();
+    let mut iter = 0u32;
+
+    while predicate(&result) && iter < max_retries {
+        let backoff_ms = backoff_base_ms * (1 << iter);
+        if let Err(ref err) = result {
+            warn!(
+                ?err,
+                iter, backoff_ms, "Transient error, backing off before retry.",
+            );
+        }
+        std::thread::sleep(Duration::from_millis(backoff_ms));
+        result = operation();
+        iter += 1;
+    }
+
+    if let Err(ref err) = result {
+        if iter > 0 {
+            error!(
+                ?err,
+                retries = iter,
+                "Operation failed after retries, giving up.",
+            );
+        }
+    }
+
+    result
+}
+
+/// Returns `true` when the error indicates a transient IO-abort condition
+/// that may resolve after a short backoff (e.g., live migration or firmware
+/// crash recovery in progress).
+pub(crate) fn is_io_abort_error<T>(result: &HsmResult<T>) -> bool {
+    matches!(
+        result,
+        Err(HsmError::IoAborted) | Err(HsmError::IoAbortInProgress)
+    )
+}
+
+#[cfg(test)]
+mod retry_tests {
+    use std::sync::atomic::AtomicU32;
+    use std::sync::atomic::Ordering;
+
+    use super::*;
+
+    /// Helper: always-retryable predicate.
+    fn always_retry<T>(result: &HsmResult<T>) -> bool {
+        result.is_err()
+    }
+
+    /// Helper: never-retryable predicate.
+    fn never_retry<T>(_result: &HsmResult<T>) -> bool {
+        false
+    }
+
+    #[test]
+    fn succeeds_on_first_try_no_retry() {
+        let call_count = AtomicU32::new(0);
+        let result = execute_with_backoff(
+            || {
+                call_count.fetch_add(1, Ordering::SeqCst);
+                Ok(42)
+            },
+            always_retry,
+            5,
+            1, // 1 ms base for fast tests
+        );
+        assert_eq!(result, Ok(42));
+        assert_eq!(call_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn retries_up_to_max_then_returns_error() {
+        let call_count = AtomicU32::new(0);
+        let max = 3u32;
+        let result: HsmResult<()> = execute_with_backoff(
+            || {
+                call_count.fetch_add(1, Ordering::SeqCst);
+                Err(HsmError::IoAborted)
+            },
+            always_retry,
+            max,
+            1,
+        );
+        assert_eq!(result, Err(HsmError::IoAborted));
+        // 1 initial + max retries
+        assert_eq!(call_count.load(Ordering::SeqCst), 1 + max);
+    }
+
+    #[test]
+    fn recovers_after_transient_failures() {
+        let call_count = AtomicU32::new(0);
+        let result = execute_with_backoff(
+            || {
+                let n = call_count.fetch_add(1, Ordering::SeqCst);
+                if n < 2 {
+                    Err(HsmError::IoAbortInProgress)
+                } else {
+                    Ok(99)
+                }
+            },
+            is_io_abort_error,
+            5,
+            1,
+        );
+        assert_eq!(result, Ok(99));
+        assert_eq!(call_count.load(Ordering::SeqCst), 3); // 1 initial + 2 retries
+    }
+
+    #[test]
+    fn non_retryable_error_returns_immediately() {
+        let call_count = AtomicU32::new(0);
+        let result: HsmResult<()> = execute_with_backoff(
+            || {
+                call_count.fetch_add(1, Ordering::SeqCst);
+                Err(HsmError::InvalidArgument)
+            },
+            is_io_abort_error,
+            5,
+            1,
+        );
+        assert_eq!(result, Err(HsmError::InvalidArgument));
+        assert_eq!(call_count.load(Ordering::SeqCst), 1); // no retries
+    }
+
+    #[test]
+    fn predicate_never_retry_runs_once() {
+        let call_count = AtomicU32::new(0);
+        let result: HsmResult<()> = execute_with_backoff(
+            || {
+                call_count.fetch_add(1, Ordering::SeqCst);
+                Err(HsmError::IoAborted)
+            },
+            never_retry,
+            5,
+            1,
+        );
+        assert_eq!(result, Err(HsmError::IoAborted));
+        assert_eq!(call_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn zero_max_retries_runs_once() {
+        let call_count = AtomicU32::new(0);
+        let result: HsmResult<()> = execute_with_backoff(
+            || {
+                call_count.fetch_add(1, Ordering::SeqCst);
+                Err(HsmError::IoAborted)
+            },
+            always_retry,
+            0,
+            1,
+        );
+        assert_eq!(result, Err(HsmError::IoAborted));
+        assert_eq!(call_count.load(Ordering::SeqCst), 1);
     }
 }

@@ -1,0 +1,19 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+[package]
+edition = "2021"
+name = "retry_macro"
+version = "0.1.0"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+darling.workspace = true
+proc-macro2.workspace = true
+quote.workspace = true
+syn = { features = ["full"], workspace = true }
+
+[lints]
+workspace = true
