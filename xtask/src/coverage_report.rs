@@ -62,10 +62,14 @@ impl Xtask for CoverageReport {
                                     };
 
                                     // strip repo root prefix from filename if present
-                                    let filename = filename.strip_prefix(&*ctx.root.to_string_lossy()).unwrap_or(filename);
+                                    let filename = filename
+                                        .strip_prefix(&*ctx.root.to_string_lossy())
+                                        .unwrap_or(filename);
 
                                     // strip leading slash if present
-                                    let filename = filename.strip_prefix(path::MAIN_SEPARATOR).unwrap_or(filename);
+                                    let filename = filename
+                                        .strip_prefix(path::MAIN_SEPARATOR)
+                                        .unwrap_or(filename);
 
                                     // Extract summary.lines data
                                     let mut summary = LineSummary::default();
