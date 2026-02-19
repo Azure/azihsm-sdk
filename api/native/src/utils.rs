@@ -20,16 +20,14 @@ pub(crate) fn validate_algo_params<T>(algo: &AzihsmAlgo) -> Result<(), AzihsmSta
     validate_ptr(algo.params)
 }
 
-pub(crate) fn validate_and_cast_algo_params<'a, T>(
-    algo: &'a AzihsmAlgo,
-) -> Result<&'a T, AzihsmStatus> {
+pub(crate) fn validate_and_cast_algo_params<T>(algo: &AzihsmAlgo) -> Result<&T, AzihsmStatus> {
     validate_algo_params::<T>(algo)?;
     cast_ptr::<T>(algo.params)
 }
 
-pub(crate) fn validate_and_cast_algo_params_mut<'a, T>(
-    algo: &'a mut AzihsmAlgo,
-) -> Result<&'a mut T, AzihsmStatus> {
+pub(crate) fn validate_and_cast_algo_params_mut<T>(
+    algo: &mut AzihsmAlgo,
+) -> Result<&mut T, AzihsmStatus> {
     validate_algo_params::<T>(algo)?;
     deref_mut_ptr::<T>(algo.params as *mut T)
 }
