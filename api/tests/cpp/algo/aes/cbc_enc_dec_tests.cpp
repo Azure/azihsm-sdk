@@ -1674,16 +1674,20 @@ TEST_F(azihsm_aes_cbc, decrypt_invalid_padding_variants_fail)
                 ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
             };
 
-            // Case 1: invalid PKCS#7 terminal byte (0 is never a valid padding value).
+            // We intentionally mutate the second to last (C[n-1]) block with deterministic flips here.
+            // This change was made because direct last (C[n]) block tampering can produce
+            // flaky test failures, where padding occasionally still appears valid.
+
+            // Case 1: force pad length byte to 0 (always invalid in PKCS#7).
             auto zero_pad = ciphertext;
-            zero_pad.back() = 0x00;
+            zero_pad[zero_pad.size() - AES_BLOCK_SIZE - 1] ^= static_cast<uint8_t>(pad_len);
             assert_decrypt_fails(std::move(zero_pad));
 
             if (pad_len > 1)
             {
-                // Case 2: break pad-byte consistency while keeping ciphertext block aligned.
+                // Case 2: break pad-byte consistency while keeping final pad length byte intact.
                 auto inconsistent_pad = ciphertext;
-                inconsistent_pad[inconsistent_pad.size() - 2] ^= 0x01;
+                inconsistent_pad[inconsistent_pad.size() - AES_BLOCK_SIZE - 2] ^= 0x01;
                 assert_decrypt_fails(std::move(inconsistent_pad));
             }
         }
