@@ -174,6 +174,10 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_parent)
         azihsm_credentials creds{};
         std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
         std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
+        
+        // Reset partition before initialization to clear any previous state
+        auto reset_err = azihsm_part_reset(part_handle);
+        ASSERT_EQ(reset_err, AZIHSM_STATUS_SUCCESS);
 
         PartInitConfig init_config{};
         make_part_init_config(part_handle, init_config);
@@ -246,11 +250,24 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_parent)
         ASSERT_TRUE(out.is_open());
         write_blob(out, path_bytes);
         write_blob(out, bmk);
-        auto *obk_ptr = static_cast<uint8_t *>(init_config.backup_config.owner_backup_key->ptr);
-        write_blob(
-            out,
-            std::vector<uint8_t>(obk_ptr, obk_ptr + init_config.backup_config.owner_backup_key->len)
-        );
+        if (init_config.backup_config.owner_backup_key != nullptr &&
+            init_config.backup_config.owner_backup_key->ptr != nullptr &&
+            init_config.backup_config.owner_backup_key->len > 0)
+        {
+            auto *obk_ptr =
+                static_cast<uint8_t *>(init_config.backup_config.owner_backup_key->ptr);
+            write_blob(
+                out,
+                std::vector<uint8_t>(
+                    obk_ptr,
+                    obk_ptr + init_config.backup_config.owner_backup_key->len
+                )
+            );
+        }
+        else
+        {
+            write_blob(out, {});
+        }
         write_blob(out, std::vector<uint8_t>(seed.begin(), seed.end()));
         write_blob(out, message);
         write_blob(out, signature);
@@ -320,10 +337,13 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_child)
 
     PartInitConfig init_config{};
     make_part_init_config(part_handle, init_config);
-    // Override OBK with the deserialized key from parent process
-    azihsm_buffer obk_buf = { obk.data(), static_cast<uint32_t>(obk.size()) };
-    init_config.backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER;
-    init_config.backup_config.owner_backup_key = &obk_buf;
+    if (!obk.empty())
+    {
+        // Override OBK with the deserialized key from parent process
+        azihsm_buffer obk_buf = { obk.data(), static_cast<uint32_t>(obk.size()) };
+        init_config.backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER;
+        init_config.backup_config.owner_backup_key = &obk_buf;
+    }
 
     auto init_err = azihsm_part_init(
         part_handle,
