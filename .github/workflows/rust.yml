@@ -64,6 +64,8 @@ jobs:
       with:
         name: coverage-report-ubuntu
         path: ./target/reports/
+    - name: Code Coverage Summary Report
+      run: cargo xtask precheck --coverage-report
   
   build_windows:
 
@@ -107,3 +109,5 @@ jobs:
       with:
         name: coverage-report-windows
         path: ./target/reports/
+    - name: Code Coverage Summary Report
+      run: cargo xtask precheck --coverage-report
