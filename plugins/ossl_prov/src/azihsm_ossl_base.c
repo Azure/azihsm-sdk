@@ -77,8 +77,6 @@ static const OSSL_ALGORITHM azihsm_ossl_kdf[] = { ALG(AZIHSM_OSSL_ALG_NAME_HKDF,
                                                       azihsm_ossl_hkdf_functions),
                                                   ALG_TABLE_END };
 
-static const OSSL_ALGORITHM azihsm_ossl_rand[] = { ALG_TABLE_END };
-
 // Key Management
 extern const OSSL_DISPATCH azihsm_ossl_rsa_keymgmt_functions[];
 extern const OSSL_DISPATCH azihsm_ossl_rsa_pss_keymgmt_functions[];
@@ -123,9 +121,11 @@ static const OSSL_ALGORITHM azihsm_ossl_asym_cipher[] = {
 extern const OSSL_DISPATCH azihsm_ossl_rsa_text_encoder_functions[];
 extern const OSSL_DISPATCH azihsm_ossl_rsa_der_spki_encoder_functions[];
 extern const OSSL_DISPATCH azihsm_ossl_rsa_der_pki_encoder_functions[];
+extern const OSSL_DISPATCH azihsm_ossl_rsa_pem_encoder_functions[];
 extern const OSSL_DISPATCH azihsm_ossl_ec_text_encoder_functions[];
 extern const OSSL_DISPATCH azihsm_ossl_ec_der_spki_encoder_functions[];
 extern const OSSL_DISPATCH azihsm_ossl_ec_der_pki_encoder_functions[];
+extern const OSSL_DISPATCH azihsm_ossl_ec_pem_encoder_functions[];
 
 // Store
 extern const OSSL_DISPATCH azihsm_ossl_store_functions[];
@@ -150,6 +150,12 @@ static const OSSL_ALGORITHM azihsm_ossl_encoders[] = {
         NULL,
     },
     {
+        "RSA",
+        "provider=azihsm,output=pem,structure=PrivateKeyInfo",
+        azihsm_ossl_rsa_pem_encoder_functions,
+        NULL,
+    },
+    {
         "RSA-PSS",
         "provider=azihsm,output=text",
         azihsm_ossl_rsa_text_encoder_functions,
@@ -168,6 +174,12 @@ static const OSSL_ALGORITHM azihsm_ossl_encoders[] = {
         NULL,
     },
     {
+        "RSA-PSS",
+        "provider=azihsm,output=pem,structure=PrivateKeyInfo",
+        azihsm_ossl_rsa_pem_encoder_functions,
+        NULL,
+    },
+    {
         "EC",
         "provider=azihsm,output=text",
         azihsm_ossl_ec_text_encoder_functions,
@@ -175,7 +187,7 @@ static const OSSL_ALGORITHM azihsm_ossl_encoders[] = {
     },
     {
         "EC",
-        "provider=azihsm,output=der,structure=type-specific",
+        "provider=azihsm,output=der,structure=SubjectPublicKeyInfo",
         azihsm_ossl_ec_der_spki_encoder_functions,
         NULL,
     },
@@ -183,6 +195,12 @@ static const OSSL_ALGORITHM azihsm_ossl_encoders[] = {
         "EC",
         "provider=azihsm,output=der,structure=PrivateKeyInfo",
         azihsm_ossl_ec_der_pki_encoder_functions,
+        NULL,
+    },
+    {
+        "EC",
+        "provider=azihsm,output=pem,structure=PrivateKeyInfo",
+        azihsm_ossl_ec_pem_encoder_functions,
         NULL,
     },
     { NULL, NULL, NULL, NULL },
@@ -273,8 +291,6 @@ static const OSSL_ALGORITHM *azihsm_ossl_query_operation(
         return azihsm_ossl_mac;
     case OSSL_OP_KDF:
         return azihsm_ossl_kdf;
-    case OSSL_OP_RAND:
-        return azihsm_ossl_rand;
     case OSSL_OP_KEYMGMT:
         return azihsm_ossl_keymgmt;
     case OSSL_OP_KEYEXCH:
@@ -299,7 +315,11 @@ static OSSL_STATUS azihsm_ossl_get_capabilities(
     ossl_unused void *arg
 )
 {
-    return OSSL_FAILURE;
+    /* Return SUCCESS to indicate "no capabilities to report" rather than
+     * FAILURE which signals an error.  Returning FAILURE breaks SSL_CTX_new()
+     * because OpenSSL interprets it as a TLS-GROUP query error and aborts
+     * cipher suite setup. */
+    return OSSL_SUCCESS;
 }
 
 static const OSSL_DISPATCH azihsm_ossl_base_dispatch[] = {

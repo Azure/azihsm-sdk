@@ -5,6 +5,7 @@
 #include <openssl/core_names.h>
 #include <openssl/err.h>
 #include <openssl/params.h>
+#include <openssl/pem.h>
 #include <openssl/proverr.h>
 
 #include "azihsm_ossl_base.h"
@@ -281,5 +282,85 @@ const OSSL_DISPATCH azihsm_ossl_ec_der_pki_encoder_functions[] = {
     { OSSL_FUNC_ENCODER_DOES_SELECTION,
       (void (*)(void))azihsm_ossl_encoder_der_pki_does_selection },
     { OSSL_FUNC_ENCODER_ENCODE, (void (*)(void))azihsm_ossl_encoder_der_pki_encode },
+    { 0, NULL }
+};
+
+/* --- ENCODER (PEM) --- */
+
+static int azihsm_ossl_encoder_pem_encode(
+    AIHSM_ENCODER_CTX *ctx,
+    OSSL_CORE_BIO *out,
+    const AZIHSM_EC_KEY *ec_key,
+    ossl_unused const OSSL_PARAM key_abstract[],
+    int selection,
+    ossl_unused OSSL_PASSPHRASE_CALLBACK *cb,
+    ossl_unused void *cbarg
+)
+{
+    BIO *bio;
+    const AIHSM_EC_GEN_CTX *genctx = &ec_key->genctx;
+    int rc = 0;
+
+    if ((bio = BIO_new_from_core_bio(ctx->libctx, out)) == NULL)
+    {
+        return 0;
+    }
+
+    if (selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY)
+    {
+        uint8_t *spki;
+        uint32_t nbytes = 0;
+
+        if ((spki = azihsm_ossl_get_der_spki(ctx->session, ec_key->key.pub, &nbytes)) != NULL)
+        {
+            PEM_write_bio(bio, "PUBLIC KEY", "", spki, nbytes);
+            OPENSSL_clear_free(spki, nbytes);
+            rc = 1;
+        }
+    }
+    else if (selection & OSSL_KEYMGMT_SELECT_PRIVATE_KEY)
+    {
+        BIO_printf(bio, "-----BEGIN AZIHSM PRIVATE KEY-----\n");
+        BIO_printf(bio, "HSM-backed private key - not exportable\n");
+        BIO_printf(bio, "\n");
+        BIO_printf(bio, "algorithm            : EC\n");
+        BIO_printf(bio, "curve                : %s\n", curve_id_to_str(genctx->ec_curve_id));
+        if (genctx->masked_key_file[0] != '\0')
+        {
+            BIO_printf(bio, "\n");
+            BIO_printf(bio, "A masked key blob has been saved to:\n");
+            BIO_printf(bio, "  %s\n", genctx->masked_key_file);
+            BIO_printf(bio, "\n");
+            BIO_printf(bio, "Use the store URI to reload this key:\n");
+            BIO_printf(bio, "  azihsm://%s;type=ec\n", genctx->masked_key_file);
+        }
+        BIO_printf(bio, "-----END AZIHSM PRIVATE KEY-----\n");
+        rc = 1;
+    }
+
+    BIO_free(bio);
+    return rc;
+}
+
+static int azihsm_ossl_encoder_pem_does_selection(ossl_unused void *provctx, int selection)
+{
+    if (selection & OSSL_KEYMGMT_SELECT_PRIVATE_KEY)
+    {
+        return 1;
+    }
+
+    if (selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY)
+    {
+        return 1;
+    }
+
+    return 0;
+}
+
+const OSSL_DISPATCH azihsm_ossl_ec_pem_encoder_functions[] = {
+    { OSSL_FUNC_ENCODER_NEWCTX, (void (*)(void))azihsm_ossl_encoder_newctx },
+    { OSSL_FUNC_ENCODER_FREECTX, (void (*)(void))azihsm_ossl_encoder_freectx },
+    { OSSL_FUNC_ENCODER_DOES_SELECTION, (void (*)(void))azihsm_ossl_encoder_pem_does_selection },
+    { OSSL_FUNC_ENCODER_ENCODE, (void (*)(void))azihsm_ossl_encoder_pem_encode },
     { 0, NULL }
 };
