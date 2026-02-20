@@ -109,7 +109,12 @@ openssl version -m
 
 # Install the provider
 sudo cp target/debug/azihsm_provider.so /usr/lib64/ossl-modules/
+
+# Create the working directory for masked key material
+sudo mkdir -p /var/lib/azihsm
 ```
+
+The provider stores and loads masked key blobs from `/var/lib/azihsm`. This directory must exist before running any key generation or import commands.
 
 Once installed, the `-provider-path` flag is no longer needed — OpenSSL will find the provider automatically. All command examples below omit `-provider-path` and assume the provider is installed system-wide.
 
@@ -129,19 +134,23 @@ Every `openssl` command that uses the provider requires these flags:
 
 ```bash
 openssl <command> \
+    -propquery "?provider=azihsm" \
     -provider default \
     -provider azihsm_provider \
-    -propquery "?provider=azihsm" \
     ...
 ```
 
 | Flag | Purpose |
 |------|---------|
+| `-propquery "?provider=azihsm"` | Route operations to the HSM provider when available; the `?` prefix allows fallback to the default provider for operations the HSM doesn't handle |
 | `-provider default` | Load the default OpenSSL provider (needed for hashing, PEM encoding, etc.) |
 | `-provider azihsm_provider` | Load the HSM provider |
-| `-propquery "?provider=azihsm"` | Route operations to the HSM provider when available; the `?` prefix allows fallback to the default provider for operations the HSM doesn't handle |
+
+> **Important:** `-propquery` **must** come before the `-provider` flags. OpenSSL processes CLI arguments left to right. Loading the provider triggers an HSM session that instantiates the DRBG (random number generator). If `-propquery` is applied afterwards, `RAND_set_DRBG_type` fails because the DRBG is already running. The error message from OpenSSL 3.0.x is misleading — it reports "odd number of digits" due to an upstream error code collision (`RAND_R_ALREADY_INSTANTIATED` and `CRYPTO_R_ODD_NUMBER_OF_DIGITS` are both 103, and the code uses `ERR_LIB_CRYPTO` instead of `ERR_LIB_RAND`).
 
 > **Note:** If the provider is not installed system-wide, add `-provider-path /path/to/directory` pointing to the directory containing `azihsm_provider.so`.
+
+> **Note:** On physical hardware, provider commands require `sudo` to access TPM operations.
 
 For brevity, the examples below use `${PROV}` as shorthand for these three flags.
 
