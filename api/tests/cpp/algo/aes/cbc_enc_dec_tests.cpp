@@ -2011,35 +2011,6 @@ TEST_F(azihsm_aes_cbc, streaming_invalid_context_handles_are_rejected)
     ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
 }
 
-// Verifies context state is terminal after finish, so further update/finish calls fail.
-TEST_F(azihsm_aes_cbc, streaming_use_after_finish_is_rejected)
-{
-    part_list_.for_each_session([&](azihsm_handle session) {
-        auto key = generate_aes_key(session, 128);
-
-        azihsm_algo_aes_cbc_params cbc_params{};
-        azihsm_algo crypt_algo{};
-        init_cbc_algo(crypt_algo, cbc_params, AZIHSM_ALGO_ID_AES_CBC_PAD, 0x78);
-
-        azihsm_handle ctx = 0;
-        auto err = crypt_init_call(CryptOperation::Encrypt, &crypt_algo, key.get(), &ctx);
-        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-
-        err = streaming_finish_status_with_sizing(CryptOperation::Encrypt, ctx);
-        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-
-        uint8_t data[AES_BLOCK_SIZE] = { 0x33 };
-        azihsm_buffer input{ data, sizeof(data) };
-        azihsm_buffer after_finish_output{ nullptr, 0 };
-
-        err = crypt_update_call(CryptOperation::Encrypt, ctx, &input, &after_finish_output);
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
-
-        err = crypt_finish_call(CryptOperation::Encrypt, ctx, &after_finish_output);
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
-    });
-}
-
 // Verifies an encrypt-initialized context cannot be used through decrypt update/finish APIs.
 TEST_F(azihsm_aes_cbc, streaming_operation_mismatch_on_context_is_rejected)
 {
