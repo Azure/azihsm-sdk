@@ -880,7 +880,8 @@ azihsm_status azihsm_open_device_and_session(
         bmk_buf.ptr != NULL ? &bmk_buf : NULL,
         muk_buf.ptr != NULL ? &muk_buf : NULL,
         &backup_config,
-        &pota_endorsement
+        &pota_endorsement,
+        NULL
     );
 
     // Input buffers no longer needed after part_init
