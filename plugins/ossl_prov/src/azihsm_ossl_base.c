@@ -123,9 +123,11 @@ static const OSSL_ALGORITHM azihsm_ossl_asym_cipher[] = {
 extern const OSSL_DISPATCH azihsm_ossl_rsa_text_encoder_functions[];
 extern const OSSL_DISPATCH azihsm_ossl_rsa_der_spki_encoder_functions[];
 extern const OSSL_DISPATCH azihsm_ossl_rsa_der_pki_encoder_functions[];
+extern const OSSL_DISPATCH azihsm_ossl_rsa_pem_encoder_functions[];
 extern const OSSL_DISPATCH azihsm_ossl_ec_text_encoder_functions[];
 extern const OSSL_DISPATCH azihsm_ossl_ec_der_spki_encoder_functions[];
 extern const OSSL_DISPATCH azihsm_ossl_ec_der_pki_encoder_functions[];
+extern const OSSL_DISPATCH azihsm_ossl_ec_pem_encoder_functions[];
 
 // Store
 extern const OSSL_DISPATCH azihsm_ossl_store_functions[];
@@ -150,6 +152,12 @@ static const OSSL_ALGORITHM azihsm_ossl_encoders[] = {
         NULL,
     },
     {
+        "RSA",
+        "provider=azihsm,output=pem,structure=PrivateKeyInfo",
+        azihsm_ossl_rsa_pem_encoder_functions,
+        NULL,
+    },
+    {
         "RSA-PSS",
         "provider=azihsm,output=text",
         azihsm_ossl_rsa_text_encoder_functions,
@@ -168,6 +176,12 @@ static const OSSL_ALGORITHM azihsm_ossl_encoders[] = {
         NULL,
     },
     {
+        "RSA-PSS",
+        "provider=azihsm,output=pem,structure=PrivateKeyInfo",
+        azihsm_ossl_rsa_pem_encoder_functions,
+        NULL,
+    },
+    {
         "EC",
         "provider=azihsm,output=text",
         azihsm_ossl_ec_text_encoder_functions,
@@ -183,6 +197,12 @@ static const OSSL_ALGORITHM azihsm_ossl_encoders[] = {
         "EC",
         "provider=azihsm,output=der,structure=PrivateKeyInfo",
         azihsm_ossl_ec_der_pki_encoder_functions,
+        NULL,
+    },
+    {
+        "EC",
+        "provider=azihsm,output=pem,structure=PrivateKeyInfo",
+        azihsm_ossl_ec_pem_encoder_functions,
         NULL,
     },
     { NULL, NULL, NULL, NULL },

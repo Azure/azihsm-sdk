@@ -5,6 +5,7 @@
 #include <openssl/core_names.h>
 #include <openssl/err.h>
 #include <openssl/params.h>
+#include <openssl/pem.h>
 #include <openssl/proverr.h>
 
 #include "azihsm_ossl_base.h"
@@ -33,6 +34,30 @@ static const char *key_type_to_str(const int key_type)
     }
 
     return "unknown";
+}
+
+static uint8_t *azihsm_ossl_rsa_get_der_spki(azihsm_handle key_handle, uint32_t *nbytes)
+{
+    void *spki;
+    const uint32_t spki_max_len = 2048;
+
+    if ((spki = OPENSSL_zalloc(spki_max_len)) == NULL)
+    {
+        return NULL;
+    }
+
+    struct azihsm_key_prop prop = { .id = AZIHSM_KEY_PROP_ID_PUB_KEY_INFO,
+                                    .val = spki,
+                                    .len = spki_max_len };
+
+    if (azihsm_key_get_prop(key_handle, &prop) != AZIHSM_STATUS_SUCCESS)
+    {
+        OPENSSL_free(spki);
+        return NULL;
+    }
+
+    *nbytes = prop.len;
+    return (uint8_t *)prop.val;
 }
 
 /* --- ENCODER (TEXT) --- */
@@ -113,14 +138,16 @@ const OSSL_DISPATCH azihsm_ossl_rsa_text_encoder_functions[] = {
 static int azihsm_ossl_encoder_der_spki_encode(
     AIHSM_ENCODER_CTX *ctx,
     OSSL_CORE_BIO *out,
-    ossl_unused const AZIHSM_RSA_KEY *rsa_key,
+    const AZIHSM_RSA_KEY *rsa_key,
     ossl_unused const OSSL_PARAM key_abstract[],
-    ossl_unused int selection,
+    int selection,
     ossl_unused OSSL_PASSPHRASE_CALLBACK *cb,
     ossl_unused void *cbarg
 )
 {
     BIO *bio;
+    uint8_t *spki;
+    uint32_t nbytes = 0;
     int rc = 0;
 
     if ((bio = BIO_new_from_core_bio(ctx->libctx, out)) == NULL)
@@ -130,27 +157,15 @@ static int azihsm_ossl_encoder_der_spki_encode(
 
     if (selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY)
     {
-
-        /*
-         * There is currently no way to retrieve DER-encoded
-         * SPKI for RSA keys.
-         *
-         * Calls to azihsm_key_get_prop with AZIHSM_KEY_PROP_ID_PUB_KEY_INFO
-         * fail with -2 on RSA keys but succeed on EC keys. That might be a
-         * limitation of the libazihsm-mock library or it was never intended to
-         * be used on RSA keys - we currently don't know.
-         *
-         * If we ever manage to retrieve the DER-encoded SPKI for RSA keys,
-         * we could implement it analogously to the EC encoder, but right now,
-         * it is ok to print a small info message.
-         * */
-
-        BIO_printf(bio, "info: DER-encoded SPKI not available for RSA/RSA-PSS\n");
-        rc = 1;
+        if ((spki = azihsm_ossl_rsa_get_der_spki(rsa_key->key.pub, &nbytes)) != NULL)
+        {
+            BIO_write(bio, (const void *)spki, (int)nbytes);
+            OPENSSL_clear_free(spki, nbytes);
+            rc = 1;
+        }
     }
     else if (selection & OSSL_KEYMGMT_SELECT_PRIVATE_KEY)
     {
-
         BIO_printf(bio, "info: DER-encoded SPKI not available for private keys\n");
         rc = 1;
     }
@@ -261,5 +276,86 @@ const OSSL_DISPATCH azihsm_ossl_rsa_der_pki_encoder_functions[] = {
     { OSSL_FUNC_ENCODER_DOES_SELECTION,
       (void (*)(void))azihsm_ossl_encoder_der_pki_does_selection },
     { OSSL_FUNC_ENCODER_ENCODE, (void (*)(void))azihsm_ossl_encoder_der_pki_encode },
+    { 0, NULL }
+};
+
+/* --- ENCODER (PEM) --- */
+
+static int azihsm_ossl_encoder_pem_encode(
+    AIHSM_ENCODER_CTX *ctx,
+    OSSL_CORE_BIO *out,
+    const AZIHSM_RSA_KEY *rsa_key,
+    ossl_unused const OSSL_PARAM key_abstract[],
+    int selection,
+    ossl_unused OSSL_PASSPHRASE_CALLBACK *cb,
+    ossl_unused void *cbarg
+)
+{
+    BIO *bio;
+    const AZIHSM_RSA_GEN_CTX *genctx = &rsa_key->genctx;
+    int rc = 0;
+
+    if ((bio = BIO_new_from_core_bio(ctx->libctx, out)) == NULL)
+    {
+        return 0;
+    }
+
+    if (selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY)
+    {
+        uint8_t *spki;
+        uint32_t nbytes = 0;
+
+        if ((spki = azihsm_ossl_rsa_get_der_spki(rsa_key->key.pub, &nbytes)) != NULL)
+        {
+            PEM_write_bio(bio, "PUBLIC KEY", "", spki, nbytes);
+            OPENSSL_clear_free(spki, nbytes);
+            rc = 1;
+        }
+    }
+    else if (selection & OSSL_KEYMGMT_SELECT_PRIVATE_KEY)
+    {
+        BIO_printf(bio, "-----BEGIN AZIHSM PRIVATE KEY-----\n");
+        BIO_printf(bio, "HSM-backed private key - not exportable\n");
+        BIO_printf(bio, "\n");
+        BIO_printf(bio, "algorithm            : %s\n", key_type_to_str(genctx->key_type));
+        BIO_printf(bio, "public-key bit length: %" PRIu32 "\n", genctx->pubkey_bits);
+        if (genctx->masked_key_file[0] != '\0')
+        {
+            const char *uri_type = (genctx->key_type == AIHSM_KEY_TYPE_RSA_PSS) ? "rsa-pss" : "rsa";
+            BIO_printf(bio, "\n");
+            BIO_printf(bio, "A masked key blob has been saved to:\n");
+            BIO_printf(bio, "  %s\n", genctx->masked_key_file);
+            BIO_printf(bio, "\n");
+            BIO_printf(bio, "Use the store URI to reload this key:\n");
+            BIO_printf(bio, "  azihsm://%s;type=%s\n", genctx->masked_key_file, uri_type);
+        }
+        BIO_printf(bio, "-----END AZIHSM PRIVATE KEY-----\n");
+        rc = 1;
+    }
+
+    BIO_free(bio);
+    return rc;
+}
+
+static int azihsm_ossl_encoder_pem_does_selection(ossl_unused void *provctx, int selection)
+{
+    if (selection & OSSL_KEYMGMT_SELECT_PRIVATE_KEY)
+    {
+        return 1;
+    }
+
+    if (selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY)
+    {
+        return 1;
+    }
+
+    return 0;
+}
+
+const OSSL_DISPATCH azihsm_ossl_rsa_pem_encoder_functions[] = {
+    { OSSL_FUNC_ENCODER_NEWCTX, (void (*)(void))azihsm_ossl_encoder_newctx },
+    { OSSL_FUNC_ENCODER_FREECTX, (void (*)(void))azihsm_ossl_encoder_freectx },
+    { OSSL_FUNC_ENCODER_DOES_SELECTION, (void (*)(void))azihsm_ossl_encoder_pem_does_selection },
+    { OSSL_FUNC_ENCODER_ENCODE, (void (*)(void))azihsm_ossl_encoder_pem_encode },
     { 0, NULL }
 };
