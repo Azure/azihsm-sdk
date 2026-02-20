@@ -170,7 +170,7 @@ where
                 HsmPotaEndorsement::new(HsmPotaEndorsementSource::Caller, Some(pota_data)),
             )
         };
-        part.init(creds, None, None, backup_key_info, pota_endorsement)
+        part.init(creds, None, None, backup_key_info, pota_endorsement, None)
             .expect("Partition init failed");
         test(part, creds);
     }
