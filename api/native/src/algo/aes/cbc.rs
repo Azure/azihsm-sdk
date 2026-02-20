@@ -9,8 +9,8 @@ use crate::AzihsmHandle;
 use crate::AzihsmStatus;
 use crate::HANDLE_TABLE;
 use crate::handle_table::HandleType;
+use crate::utils::validate_and_cast_algo_params_mut;
 use crate::utils::validate_output_buffer;
-use crate::utils::validate_ptr;
 
 /// AES CBC parameters.
 #[repr(C)]
@@ -30,15 +30,7 @@ impl<'a> TryFrom<&'a mut AzihsmAlgo> for &'a mut AzihsmAlgoAesCbcParams {
     /// when the algorithm ID is AES-CBC or AES-CBC with padding.
     #[allow(unsafe_code)]
     fn try_from(algo: &'a mut AzihsmAlgo) -> Result<Self, Self::Error> {
-        // Check for null pointer
-        validate_ptr(algo.params)?;
-
-        // Safety: algo.params is validated to be non-null
-        let params = crate::utils::deref_mut_ptr::<AzihsmAlgoAesCbcParams>(
-            algo.params as *mut AzihsmAlgoAesCbcParams,
-        )?;
-
-        Ok(params)
+        validate_and_cast_algo_params_mut::<AzihsmAlgoAesCbcParams>(algo)
     }
 }
 

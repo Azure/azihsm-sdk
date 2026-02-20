@@ -10,8 +10,8 @@ use crate::AzihsmStatus;
 use crate::HANDLE_TABLE;
 use crate::handle_table::HandleType;
 use crate::utils::buffer_to_optional_slice;
+use crate::utils::validate_and_cast_algo_params_mut;
 use crate::utils::validate_output_buffer;
-use crate::utils::validate_ptr;
 
 /// Size of AES-GCM IV in bytes.
 pub const AES_GCM_IV_SIZE: usize = 12;
@@ -40,15 +40,7 @@ impl<'a> TryFrom<&'a mut AzihsmAlgo> for &'a mut AzihsmAlgoAesGcmParams {
     /// when the algorithm ID is AES-GCM.
     #[allow(unsafe_code)]
     fn try_from(algo: &'a mut AzihsmAlgo) -> Result<Self, Self::Error> {
-        // Check for null pointer
-        validate_ptr(algo.params)?;
-
-        // Safety: algo.params is validated to be non-null
-        let params = crate::utils::deref_mut_ptr::<AzihsmAlgoAesGcmParams>(
-            algo.params as *mut AzihsmAlgoAesGcmParams,
-        )?;
-
-        Ok(params)
+        validate_and_cast_algo_params_mut::<AzihsmAlgoAesGcmParams>(algo)
     }
 }
 

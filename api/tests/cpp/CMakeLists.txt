@@ -64,6 +64,7 @@ set(SOURCE
     algo/aes/gcm_enc_dec_tests.cpp
     algo/aes/xts_enc_dec_tests.cpp
     algo/aes/keygen_tests.cpp
+    algo/aes/kat.cpp
     algo/ecc/keygen_tests.cpp
     algo/ecc/sign_verify_tests.cpp
     algo/ecc/keyreport_tests.cpp

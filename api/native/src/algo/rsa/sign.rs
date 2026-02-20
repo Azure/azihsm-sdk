@@ -35,13 +35,7 @@ impl<'a> TryFrom<&'a AzihsmAlgo> for &'a AzihsmAlgoRsaPkcsPssParams {
     type Error = AzihsmStatus;
 
     fn try_from(algo: &'a AzihsmAlgo) -> Result<Self, Self::Error> {
-        if algo.len != std::mem::size_of::<AzihsmAlgoRsaPkcsPssParams>() as u32 {
-            Err(AzihsmStatus::InvalidArgument)?;
-        }
-
-        let params = cast_ptr::<AzihsmAlgoRsaPkcsPssParams>(algo.params)?;
-
-        Ok(params)
+        validate_and_cast_algo_params::<AzihsmAlgoRsaPkcsPssParams>(algo)
     }
 }
 

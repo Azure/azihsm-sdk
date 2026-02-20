@@ -185,7 +185,7 @@ pub unsafe extern "C" fn azihsm_crypt_encrypt_update(
 
 /// Finish streaming encryption operation and retrieve any remaining ciphertext.
 ///
-/// @param[in] ctx_handle Handle to the streaming encryption context (consumed by this call)
+/// @param[in] ctx_handle Handle to the streaming encryption context
 /// @param[out] cipher_text Pointer to ciphertext output buffer
 ///
 /// @return 0 on success, or a negative error code on failure.
@@ -300,7 +300,7 @@ pub unsafe extern "C" fn azihsm_crypt_decrypt_update(
 /// Finish streaming decryption operation and retrieve any remaining plaintext.
 ///
 /// @param[in] sess_handle Handle to the HSM session
-/// @param[in] ctx_handle Handle to the streaming decryption context (consumed by this call)
+/// @param[in] ctx_handle Handle to the streaming decryption context
 /// @param[out] plain_text Pointer to plaintext output buffer
 ///
 /// @return 0 on success, or a negative error code on failure.

@@ -13,6 +13,25 @@ pub(crate) fn validate_ptr<T>(ptr: *const T) -> Result<(), AzihsmStatus> {
     }
 }
 
+pub(crate) fn validate_algo_params<T>(algo: &AzihsmAlgo) -> Result<(), AzihsmStatus> {
+    if algo.len != std::mem::size_of::<T>() as u32 {
+        Err(AzihsmStatus::InvalidArgument)?;
+    }
+    validate_ptr(algo.params)
+}
+
+pub(crate) fn validate_and_cast_algo_params<T>(algo: &AzihsmAlgo) -> Result<&T, AzihsmStatus> {
+    validate_algo_params::<T>(algo)?;
+    cast_ptr::<T>(algo.params)
+}
+
+pub(crate) fn validate_and_cast_algo_params_mut<T>(
+    algo: &mut AzihsmAlgo,
+) -> Result<&mut T, AzihsmStatus> {
+    validate_algo_params::<T>(algo)?;
+    deref_mut_ptr::<T>(algo.params as *mut T)
+}
+
 /// Safely dereference a mutable pointer
 ///
 /// # Safety
@@ -66,6 +85,11 @@ pub(crate) fn validate_output_buffer(
     output_buf: &mut crate::AzihsmBuffer,
     required_len: usize,
 ) -> Result<&mut [u8], AzihsmStatus> {
+    if output_buf.ptr.is_null() && output_buf.len != 0 {
+        // Only allow null buffer if length is 0 (for size-query case)
+        Err(AzihsmStatus::InvalidArgument)?;
+    }
+
     // Check if output buffer is large enough
     if output_buf.len < required_len as u32 {
         output_buf.len = required_len as u32;
