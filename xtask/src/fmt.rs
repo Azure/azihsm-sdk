@@ -31,7 +31,7 @@ pub struct Fmt {
 
     /// Skip TOML formatting
     #[clap(long)]
-    pub skip_toml: bool,
+    pub skip_taplo: bool,
 
     /// Skip C/C++ formatting
     #[clap(long)]
@@ -62,7 +62,9 @@ impl Xtask for Fmt {
             .run()?;
 
         // Check taplo-cli version
-        cmd!(sh, "taplo --version").quiet().run()?;
+        if !self.skip_taplo {
+            cmd!(sh, "taplo --version").quiet().run()?;
+        }
 
         if let Some(toolchain) = rust_toolchain.as_ref() {
             log::trace!(
@@ -77,7 +79,7 @@ impl Xtask for Fmt {
             .quiet()
             .run()?;
 
-        if !self.skip_toml {
+        if !self.skip_taplo {
             log::trace!("running taplo fmt");
             cmd!(sh, "taplo fmt {fmt_check...}").quiet().run()?;
         }

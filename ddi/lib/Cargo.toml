@@ -31,6 +31,7 @@ azihsm_ddi_nix.workspace = true
 azihsm_ddi_test_helpers.workspace = true
 azihsm_ddi_types.workspace = true
 azihsm_ddi_win.workspace = true
+bitflags.workspace = true
 chrono.workspace = true
 minicbor.workspace = true
 parking_lot.workspace = true

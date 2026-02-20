@@ -924,6 +924,21 @@ fn test_secret_kbkdf_aes_gcm_helper(
     // use derived_key_id2 for decryption
     mcr_fp_gcm_params.key_id = derived_key_id2 as u32;
 
+    // If the key type we're using is a FIPS-approved AES-GCM key, then we need
+    // to use the IV (Initialization Vector) that was returned by the device
+    // during the encryption operation.
+    //
+    // FIPS-approved AES-GCM keys do not allow the caller to specify the IV for
+    // encryption operations (any provided IV is ignored). Instead, the device
+    // generates a random IV internally and returns it as part of the encryption
+    // response. So, in order to decrypt the ciphertext, we must ensure we are
+    // using the IV returned by the device.
+    if key_type == DdiKeyType::AesGcmBulk256 {
+        mcr_fp_gcm_params.iv = encrypted_resp.iv.expect(
+            "IV was not returned by the device during a FIPS-approved AES-GCM encrypt operation",
+        );
+    }
+
     let resp = dev.exec_op_fp_gcm(
         DdiAesOp::Decrypt,
         mcr_fp_gcm_params.clone(),
@@ -1084,16 +1099,11 @@ fn test_secret_kbkdf_aes_xts_helper(
 }
 
 #[test]
-fn test_secret_kbkdf_aes_gcm_secret256() {
+fn test_secret_kbkdf_aes_gcm_unapproved_secret256() {
     ddi_dev_test(
         common_setup,
         common_cleanup,
         |dev, _ddi, _path, session_id| {
-            if get_device_kind(dev) != DdiDeviceKind::Physical {
-                println!("Physical device NOT found. Test only supported on physical device.");
-                return;
-            }
-
             let (session_id, short_app_id) = reopen_session_with_short_app_id(dev, session_id);
 
             let hash_algorithm = DdiHashAlgorithm::Sha256;
@@ -1121,16 +1131,11 @@ fn test_secret_kbkdf_aes_gcm_secret256() {
 }
 
 #[test]
-fn test_secret_kbkdf_aes_gcm_secret384() {
+fn test_secret_kbkdf_aes_gcm_unapproved_secret384() {
     ddi_dev_test(
         common_setup,
         common_cleanup,
         |dev, _ddi, _path, session_id| {
-            if get_device_kind(dev) != DdiDeviceKind::Physical {
-                println!("Physical device NOT found. Test only supported on physical device.");
-                return;
-            }
-
             let (session_id, short_app_id) = reopen_session_with_short_app_id(dev, session_id);
 
             let hash_algorithm = DdiHashAlgorithm::Sha256;
@@ -1158,16 +1163,11 @@ fn test_secret_kbkdf_aes_gcm_secret384() {
 }
 
 #[test]
-fn test_secret_kbkdf_aes_gcm_secret521() {
+fn test_secret_kbkdf_aes_gcm_unapproved_secret521() {
     ddi_dev_test(
         common_setup,
         common_cleanup,
         |dev, _ddi, _path, session_id| {
-            if get_device_kind(dev) != DdiDeviceKind::Physical {
-                println!("Physical device NOT found. Test only supported on physical device.");
-                return;
-            }
-
             let (session_id, short_app_id) = reopen_session_with_short_app_id(dev, session_id);
 
             let hash_algorithm = DdiHashAlgorithm::Sha256;
@@ -1195,16 +1195,107 @@ fn test_secret_kbkdf_aes_gcm_secret521() {
 }
 
 #[test]
+fn test_secret_kbkdf_aes_gcm_approved_secret256() {
+    ddi_dev_test(
+        common_setup,
+        common_cleanup,
+        |dev, _ddi, _path, session_id| {
+            let (session_id, short_app_id) = reopen_session_with_short_app_id(dev, session_id);
+
+            let hash_algorithm = DdiHashAlgorithm::Sha256;
+            let label_vec = "label".as_bytes().to_vec();
+            let context_vec = "context".as_bytes().to_vec();
+            let key_type = DdiKeyType::AesGcmBulk256;
+            let key_tag = None;
+            let key_properties =
+                helper_key_properties(DdiKeyUsage::EncryptDecrypt, DdiKeyAvailability::App);
+
+            test_secret_kbkdf_aes_gcm_helper(
+                dev,
+                session_id,
+                short_app_id,
+                hash_algorithm,
+                context_vec,
+                label_vec,
+                key_type,
+                key_tag,
+                key_properties,
+                DdiKeyType::Secret256,
+            );
+        },
+    );
+}
+
+#[test]
+fn test_secret_kbkdf_aes_gcm_approved_secret384() {
+    ddi_dev_test(
+        common_setup,
+        common_cleanup,
+        |dev, _ddi, _path, session_id| {
+            let (session_id, short_app_id) = reopen_session_with_short_app_id(dev, session_id);
+
+            let hash_algorithm = DdiHashAlgorithm::Sha256;
+            let label_vec = "label".as_bytes().to_vec();
+            let context_vec = "context".as_bytes().to_vec();
+            let key_type = DdiKeyType::AesGcmBulk256;
+            let key_tag = None;
+            let key_properties =
+                helper_key_properties(DdiKeyUsage::EncryptDecrypt, DdiKeyAvailability::App);
+
+            test_secret_kbkdf_aes_gcm_helper(
+                dev,
+                session_id,
+                short_app_id,
+                hash_algorithm,
+                context_vec,
+                label_vec,
+                key_type,
+                key_tag,
+                key_properties,
+                DdiKeyType::Secret384,
+            );
+        },
+    );
+}
+
+#[test]
+fn test_secret_kbkdf_aes_gcm_approved_secret521() {
+    ddi_dev_test(
+        common_setup,
+        common_cleanup,
+        |dev, _ddi, _path, session_id| {
+            let (session_id, short_app_id) = reopen_session_with_short_app_id(dev, session_id);
+
+            let hash_algorithm = DdiHashAlgorithm::Sha256;
+            let label_vec = "label".as_bytes().to_vec();
+            let context_vec = "context".as_bytes().to_vec();
+            let key_type = DdiKeyType::AesGcmBulk256;
+            let key_tag = None;
+            let key_properties =
+                helper_key_properties(DdiKeyUsage::EncryptDecrypt, DdiKeyAvailability::App);
+
+            test_secret_kbkdf_aes_gcm_helper(
+                dev,
+                session_id,
+                short_app_id,
+                hash_algorithm,
+                context_vec,
+                label_vec,
+                key_type,
+                key_tag,
+                key_properties,
+                DdiKeyType::Secret521,
+            );
+        },
+    );
+}
+
+#[test]
 fn test_secret_kbkdf_aes_xts_secret256() {
     ddi_dev_test(
         common_setup,
         common_cleanup,
         |dev, _ddi, _path, session_id| {
-            if get_device_kind(dev) != DdiDeviceKind::Physical {
-                println!("Physical device NOT found. Test only supported on physical device.");
-                return;
-            }
-
             let (session_id, short_app_id) = reopen_session_with_short_app_id(dev, session_id);
 
             let hash_algorithm = DdiHashAlgorithm::Sha256;
@@ -1237,11 +1328,6 @@ fn test_secret_kbkdf_aes_xts_secret384() {
         common_setup,
         common_cleanup,
         |dev, _ddi, _path, session_id| {
-            if get_device_kind(dev) != DdiDeviceKind::Physical {
-                println!("Physical device NOT found. Test only supported on physical device.");
-                return;
-            }
-
             let (session_id, short_app_id) = reopen_session_with_short_app_id(dev, session_id);
 
             let hash_algorithm = DdiHashAlgorithm::Sha256;
@@ -1274,11 +1360,6 @@ fn test_secret_kbkdf_aes_xts_secret521() {
         common_setup,
         common_cleanup,
         |dev, _ddi, _path, session_id| {
-            if get_device_kind(dev) != DdiDeviceKind::Physical {
-                println!("Physical device NOT found. Test only supported on physical device.");
-                return;
-            }
-
             let (session_id, short_app_id) = reopen_session_with_short_app_id(dev, session_id);
 
             let hash_algorithm = DdiHashAlgorithm::Sha256;

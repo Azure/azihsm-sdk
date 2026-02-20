@@ -1334,6 +1334,8 @@ fn test_reopen_session_dest_smaller_svn() {
             let ddi_encrypted_credential = establish_cred_encryption_key
                 .encrypt_establish_credential(TEST_CRED_ID, TEST_CRED_PIN, nonce)
                 .unwrap();
+            let (signature, pota_pub_key) = helper_get_pota_endorsement(dev);
+
             let resp = helper_establish_credential(
                 dev,
                 None,
@@ -1344,9 +1346,10 @@ fn test_reopen_session_dest_smaller_svn() {
                 partition_bmk_copy,
                 MborByteArray::from_slice(&[])
                     .expect("Failed to create empty masked unwrapping key"),
-                MborByteArray::from_slice(&[]).expect("Failed to create signed PID"),
+                MborByteArray::from_slice(&signature).expect("Failed to create signed PID"),
                 DdiDerPublicKey {
-                    der: MborByteArray::from_slice(&[]).expect("Failed to create empty DER"),
+                    der: MborByteArray::from_slice(&pota_pub_key)
+                        .expect("Failed to create MborByteArray from TPM ECC public key"),
                     key_kind: DdiKeyType::Ecc384Public,
                 },
             );

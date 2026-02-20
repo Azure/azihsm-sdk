@@ -909,11 +909,7 @@ impl DdiDev for DdiWinDev {
         fips_approved: &mut bool,
     ) -> Result<usize, DdiError> {
         let src_buf_len = src_buf.len();
-
-        // Validate input parameters
-        if src_buf_len == 0 {
-            Err(DdiError::InvalidParameter)?;
-        }
+        // Note: src_buf_len == 0 is valid for GCM (AAD-only authentication)
 
         // If this is a decryption operation, the tag must be provided
         if mode == DdiAesOp::Decrypt && gcm_params.tag.is_none() {
@@ -921,7 +917,8 @@ impl DdiDev for DdiWinDev {
         }
 
         // Validate destination buffer size
-        if dst_buf.len() < src_buf_len {
+        // For zero-length input, dst_buf can be empty
+        if src_buf_len > 0 && dst_buf.len() < src_buf_len {
             tracing::error!(
                 "Destination buffer size ({}) is less than source buffer size ({})",
                 dst_buf.len(),
@@ -961,6 +958,7 @@ impl DdiDev for DdiWinDev {
         new_src_buf.extend(src_buf);
 
         // Create temporary destination buffer that includes space for AAD
+        // For zero-length data, the driver accepts dst_length = 0 and returns tag in output structure
         let mut temp_dest_buf: Vec<u8> = vec![0; new_src_buf.len()];
 
         if mode == DdiAesOp::Encrypt {
@@ -1003,6 +1001,16 @@ impl DdiDev for DdiWinDev {
         ioctl_in_buffer.user_buffers.src_buf = new_src_buf.as_ptr();
         ioctl_in_buffer.user_buffers.dst_length = temp_dest_buf.len() as u32;
         ioctl_in_buffer.user_buffers.dst_buf = temp_dest_buf.as_mut_ptr();
+
+        // Explicitly set src buffer pointer to null if buffer is empty
+        if new_src_buf.is_empty() {
+            ioctl_in_buffer.user_buffers.src_buf = ptr::null();
+        }
+
+        // Explicitly set dst buffer pointer to null if buffer is empty
+        if temp_dest_buf.is_empty() {
+            ioctl_in_buffer.user_buffers.dst_buf = ptr::null_mut();
+        }
 
         // SAFETY: WINAPI call requires unsafe call
         let mut overlapped: OVERLAPPED = unsafe { mem::zeroed() };
@@ -1076,27 +1084,30 @@ impl DdiDev for DdiWinDev {
 
         // Copy the actual data (excluding AAD) to the destination buffer
         let aad_offset = final_aad.len();
-        let data_len = temp_dest_buf.len() - aad_offset;
+        let data_len = temp_dest_buf.len().saturating_sub(aad_offset);
 
-        if data_len > dst_buf.len() {
-            if mode == DdiAesOp::Encrypt {
-                tracing::error!(
-                    "AES GCM Encrypt: Device output length ({}) is greater than destination buffer size ({})",
-                    data_len,
-                    dst_buf.len()
-                );
-                Err(DdiError::DdiStatus(DdiStatus::AesEncryptFailed))?;
-            } else {
-                tracing::error!(
-                    "AES GCM Decrypt: Device output length ({}) is greater than destination buffer size ({})",
-                    data_len,
-                    dst_buf.len()
-                );
-                Err(DdiError::DdiStatus(DdiStatus::AesDecryptFailed))?;
+        // Only copy if there's actual data (not just AAD)
+        if data_len > 0 {
+            if data_len > dst_buf.len() {
+                if mode == DdiAesOp::Encrypt {
+                    tracing::error!(
+                        "AES GCM Encrypt: Device output length ({}) is greater than destination buffer size ({})",
+                        data_len,
+                        dst_buf.len()
+                    );
+                    Err(DdiError::DdiStatus(DdiStatus::AesEncryptFailed))?;
+                } else {
+                    tracing::error!(
+                        "AES GCM Decrypt: Device output length ({}) is greater than destination buffer size ({})",
+                        data_len,
+                        dst_buf.len()
+                    );
+                    Err(DdiError::DdiStatus(DdiStatus::AesDecryptFailed))?;
+                }
             }
-        }
 
-        dst_buf[..data_len].copy_from_slice(&temp_dest_buf[aad_offset..]);
+            dst_buf[..data_len].copy_from_slice(&temp_dest_buf[aad_offset..]);
+        }
 
         // Set output parameters from device response
         *tag = Some(ioctl_out_buffer.cmd_spec_data);

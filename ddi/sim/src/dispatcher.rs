@@ -302,11 +302,6 @@ impl Dispatcher {
         session_id: u16,
         short_app_id: u8,
     ) -> Result<(), ManticoreError> {
-        if source_buffers.is_empty() {
-            tracing::error!("FP AES: Empty source buffer");
-            Err(ManticoreError::AesGcmInvalidBufSize)?;
-        }
-
         if destination_buffers.is_empty() {
             tracing::error!("FP AES: Empty destination buffer");
             Err(ManticoreError::AesGcmInvalidBufSize)?;
@@ -554,6 +549,10 @@ impl Dispatcher {
         destination_buffers: &mut [Vec<u8>],
     ) -> Result<SessionAesXtsResponse, ManticoreError> {
         tracing::debug!("FP AES XTS {:?}", mode);
+        if source_buffers.is_empty() {
+            tracing::error!("FP AES XTS: Empty source buffer");
+            Err(ManticoreError::AesXtsInvalidBufSize)?;
+        }
         // Perform validation on input and output buffers
         // and session id and short app id
         self.fp_aes_validate_params(
@@ -1591,11 +1590,14 @@ impl Dispatcher {
         if req.key_type != DdiKeyType::Aes128
             && req.key_type != DdiKeyType::Aes192
             && req.key_type != DdiKeyType::Aes256
+            && req.key_type != DdiKeyType::AesXtsBulk256
+            && req.key_type != DdiKeyType::AesGcmBulk256
+            && req.key_type != DdiKeyType::AesGcmBulk256Unapproved
             && req.key_type != DdiKeyType::HmacSha256
             && req.key_type != DdiKeyType::HmacSha384
             && req.key_type != DdiKeyType::HmacSha512
         {
-            tracing::error!(error = ?ManticoreError::InvalidKeyType, key_type = ?req.key_type, "Output Key type is invalid");
+            tracing::error!(error = ?ManticoreError::InvalidKeyType, key_type = ?req.key_type, "Requested key type is invalid for HKDF derive");
             Err(ManticoreError::InvalidKeyType)?
         }
 
@@ -1657,7 +1659,14 @@ impl Dispatcher {
             key_id,
             masked_key: MborByteArray::from_slice(&masked_key)
                 .map_err(|_| ManticoreError::InvalidArgument)?,
-            bulk_key_id: None,
+            // The physical device maintains different key ID and bulk key ID
+            // values, but in a mock implementation, we use the same value
+            // for both key IDs.
+            bulk_key_id: if key_kind.is_bulk_key() {
+                Some(key_id)
+            } else {
+                None
+            },
         };
 
         self.send_response(resp_header, resp, None, out_data)
@@ -1688,11 +1697,14 @@ impl Dispatcher {
         if req.key_type != DdiKeyType::Aes128
             && req.key_type != DdiKeyType::Aes192
             && req.key_type != DdiKeyType::Aes256
+            && req.key_type != DdiKeyType::AesXtsBulk256
+            && req.key_type != DdiKeyType::AesGcmBulk256
+            && req.key_type != DdiKeyType::AesGcmBulk256Unapproved
             && req.key_type != DdiKeyType::HmacSha256
             && req.key_type != DdiKeyType::HmacSha384
             && req.key_type != DdiKeyType::HmacSha512
         {
-            tracing::error!(error = ?ManticoreError::InvalidKeyType, key_type = ?req.key_type, "Output key type is not valid");
+            tracing::error!(error = ?ManticoreError::InvalidKeyType, key_type = ?req.key_type, "Requested key type is invalid for KBKDF derive");
             Err(ManticoreError::InvalidKeyType)?
         }
 
@@ -1755,7 +1767,14 @@ impl Dispatcher {
             key_id,
             masked_key: MborByteArray::from_slice(&masked_key)
                 .map_err(|_| ManticoreError::InvalidArgument)?,
-            bulk_key_id: None,
+            // The physical device maintains different key ID and bulk key ID
+            // values, but in a mock implementation, we use the same value
+            // for both key IDs.
+            bulk_key_id: if key_kind.is_bulk_key() {
+                Some(key_id)
+            } else {
+                None
+            },
         };
 
         self.send_response(resp_header, resp, None, out_data)

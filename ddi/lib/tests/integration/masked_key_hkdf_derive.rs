@@ -3,8 +3,12 @@
 
 #![cfg(test)]
 
+#[cfg(not(feature = "mock"))]
+use azihsm_crypto::Rng;
 use azihsm_ddi::*;
 use azihsm_ddi_mbor::MborByteArray;
+use azihsm_ddi_mbor::MborDecode;
+use azihsm_ddi_mbor::MborDecoder;
 use azihsm_ddi_types::*;
 use test_with_tracing::test;
 
@@ -289,6 +293,330 @@ fn test_masked_key_secret_hkdf_aes_gcm_secret521() {
     );
 }
 
+#[test]
+fn test_masked_key_hmac_sha256() {
+    ddi_dev_test(
+        common_setup,
+        common_cleanup,
+        |dev, _ddi, _path, session_id| {
+            let res = create_hmac_key_ex(session_id, DdiKeyType::HmacSha256, dev, None);
+            assert!(res.is_ok(), "create_hmac_key_ex failed: {:?}", res);
+
+            let res = res.unwrap();
+            let key_id = res.data.key_id;
+            let masked_key = res.data.masked_key;
+
+            // Delete that key
+            let resp = helper_delete_key(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                key_id,
+            );
+
+            assert!(resp.is_ok(), "resp {:?}", resp);
+
+            // Import that key with masked key (Unmask this key)
+            let resp = helper_unmask_key(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                masked_key,
+            );
+
+            assert!(resp.is_ok(), "resp {:?}", resp);
+
+            let masked_key = resp.unwrap().data.masked_key;
+            let metadata = extract_metadata_from_masked_key(masked_key.as_slice());
+            assert!(
+                metadata.is_some(),
+                "failed to extract metadata from masked key"
+            );
+            let metadata = metadata.unwrap();
+            let key_usage = get_key_usage_from_attributes(&metadata.key_attributes);
+            assert!(
+                key_usage.is_some(),
+                "failed to get key usage from masked key attributes"
+            );
+            let key_usage = key_usage.unwrap();
+            assert_eq!(key_usage, DdiKeyUsage::SignVerify);
+        },
+    );
+}
+
+#[test]
+fn test_masked_key_hmac_sha384() {
+    ddi_dev_test(
+        common_setup,
+        common_cleanup,
+        |dev, _ddi, _path, session_id| {
+            let res = create_hmac_key_ex(session_id, DdiKeyType::HmacSha384, dev, None);
+            assert!(res.is_ok(), "create_hmac_key_ex failed: {:?}", res);
+
+            let res = res.unwrap();
+            let key_id = res.data.key_id;
+            let masked_key = res.data.masked_key;
+
+            // Delete that key
+            let resp = helper_delete_key(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                key_id,
+            );
+
+            assert!(resp.is_ok(), "resp {:?}", resp);
+
+            // Import that key with masked key (Unmask this key)
+            let resp = helper_unmask_key(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                masked_key,
+            );
+
+            assert!(resp.is_ok(), "resp {:?}", resp);
+
+            let masked_key = resp.unwrap().data.masked_key;
+            let metadata = extract_metadata_from_masked_key(masked_key.as_slice());
+            assert!(
+                metadata.is_some(),
+                "failed to extract metadata from masked key"
+            );
+            let metadata = metadata.unwrap();
+            let key_usage = get_key_usage_from_attributes(&metadata.key_attributes);
+            assert!(
+                key_usage.is_some(),
+                "failed to get key usage from masked key attributes"
+            );
+            let key_usage = key_usage.unwrap();
+            assert_eq!(key_usage, DdiKeyUsage::SignVerify);
+        },
+    );
+}
+
+#[test]
+fn test_masked_key_hmac_sha512() {
+    ddi_dev_test(
+        common_setup,
+        common_cleanup,
+        |dev, _ddi, _path, session_id| {
+            let res = create_hmac_key_ex(session_id, DdiKeyType::HmacSha512, dev, None);
+            assert!(res.is_ok(), "create_hmac_key_ex failed: {:?}", res);
+
+            let res = res.unwrap();
+            let key_id = res.data.key_id;
+            let masked_key = res.data.masked_key;
+
+            // Delete that key
+            let resp = helper_delete_key(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                key_id,
+            );
+
+            assert!(resp.is_ok(), "resp {:?}", resp);
+
+            // Import that key with masked key (Unmask this key)
+            let resp = helper_unmask_key(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                masked_key,
+            );
+
+            assert!(resp.is_ok(), "resp {:?}", resp);
+
+            let masked_key = resp.unwrap().data.masked_key;
+            let metadata = extract_metadata_from_masked_key(masked_key.as_slice());
+            assert!(
+                metadata.is_some(),
+                "failed to extract metadata from masked key"
+            );
+            let metadata = metadata.unwrap();
+            let key_usage = get_key_usage_from_attributes(&metadata.key_attributes);
+            assert!(
+                key_usage.is_some(),
+                "failed to get key usage from masked key attributes"
+            );
+            let key_usage = key_usage.unwrap();
+            assert_eq!(key_usage, DdiKeyUsage::SignVerify);
+        },
+    );
+}
+
+#[cfg(not(feature = "mock"))]
+#[test]
+fn test_masked_key_var_hmac_sha256() {
+    ddi_dev_test(
+        common_setup,
+        common_cleanup,
+        |dev, _ddi, _path, session_id| {
+            let mut bytes = [0u8; 1];
+            Rng::rand_bytes(&mut bytes).expect("rand_bytes failure");
+
+            let key_len = (bytes[0] % 33) + 32; // 32-64
+            let res = create_hmac_key_ex(session_id, DdiKeyType::VarHmac256, dev, Some(key_len));
+            assert!(res.is_ok(), "create_hmac_key_ex failed: {:?}", res);
+
+            let res = res.unwrap();
+            let key_id = res.data.key_id;
+            let masked_key = res.data.masked_key;
+
+            // Delete that key
+            let resp = helper_delete_key(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                key_id,
+            );
+
+            assert!(resp.is_ok(), "resp {:?}", resp);
+
+            // Import that key with masked key (Unmask this key)
+            let resp = helper_unmask_key(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                masked_key,
+            );
+
+            assert!(resp.is_ok(), "resp {:?}", resp);
+
+            let masked_key = resp.unwrap().data.masked_key;
+            let metadata = extract_metadata_from_masked_key(masked_key.as_slice());
+            assert!(
+                metadata.is_some(),
+                "failed to extract metadata from masked key"
+            );
+            let metadata = metadata.unwrap();
+            let key_usage = get_key_usage_from_attributes(&metadata.key_attributes);
+            assert!(
+                key_usage.is_some(),
+                "failed to get key usage from masked key attributes"
+            );
+            let key_usage = key_usage.unwrap();
+            assert_eq!(key_usage, DdiKeyUsage::SignVerify);
+            assert_eq!(metadata.key_length, key_len.into());
+        },
+    );
+}
+
+#[cfg(not(feature = "mock"))]
+#[test]
+fn test_masked_key_var_hmac_sha384() {
+    ddi_dev_test(
+        common_setup,
+        common_cleanup,
+        |dev, _ddi, _path, session_id| {
+            let mut bytes = [0u8; 1];
+            Rng::rand_bytes(&mut bytes).expect("rand_bytes failure");
+
+            let key_len = (bytes[0] % 81) + 48; // 48-128
+            let res = create_hmac_key_ex(session_id, DdiKeyType::VarHmac384, dev, Some(key_len));
+            assert!(res.is_ok(), "create_hmac_key_ex failed: {:?}", res);
+
+            let res = res.unwrap();
+            let key_id = res.data.key_id;
+            let masked_key = res.data.masked_key;
+
+            // Delete that key
+            let resp = helper_delete_key(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                key_id,
+            );
+
+            assert!(resp.is_ok(), "resp {:?}", resp);
+
+            // Import that key with masked key (Unmask this key)
+            let resp = helper_unmask_key(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                masked_key,
+            );
+
+            assert!(resp.is_ok(), "resp {:?}", resp);
+
+            let masked_key = resp.unwrap().data.masked_key;
+            let metadata = extract_metadata_from_masked_key(masked_key.as_slice());
+            assert!(
+                metadata.is_some(),
+                "failed to extract metadata from masked key"
+            );
+            let metadata = metadata.unwrap();
+            let key_usage = get_key_usage_from_attributes(&metadata.key_attributes);
+            assert!(
+                key_usage.is_some(),
+                "failed to get key usage from masked key attributes"
+            );
+            let key_usage = key_usage.unwrap();
+            assert_eq!(key_usage, DdiKeyUsage::SignVerify);
+            assert_eq!(metadata.key_length, key_len.into());
+        },
+    );
+}
+
+#[cfg(not(feature = "mock"))]
+#[test]
+fn test_masked_key_var_hmac_sha512() {
+    ddi_dev_test(
+        common_setup,
+        common_cleanup,
+        |dev, _ddi, _path, session_id| {
+            let mut bytes = [0u8; 1];
+            Rng::rand_bytes(&mut bytes).expect("rand_bytes failure");
+
+            let key_len = (bytes[0] % 65) + 64; // 64-128
+            let res = create_hmac_key_ex(session_id, DdiKeyType::VarHmac512, dev, Some(key_len));
+            assert!(res.is_ok(), "create_hmac_key_ex failed: {:?}", res);
+
+            let res = res.unwrap();
+            let key_id = res.data.key_id;
+            let masked_key = res.data.masked_key;
+
+            // Delete that key
+            let resp = helper_delete_key(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                key_id,
+            );
+
+            assert!(resp.is_ok(), "resp {:?}", resp);
+
+            // Import that key with masked key (Unmask this key)
+            let resp = helper_unmask_key(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                masked_key,
+            );
+
+            assert!(resp.is_ok(), "resp {:?}", resp);
+
+            let masked_key = resp.unwrap().data.masked_key;
+            let metadata = extract_metadata_from_masked_key(masked_key.as_slice());
+            assert!(
+                metadata.is_some(),
+                "failed to extract metadata from masked key"
+            );
+            let metadata = metadata.unwrap();
+            let key_usage = get_key_usage_from_attributes(&metadata.key_attributes);
+            assert!(
+                key_usage.is_some(),
+                "failed to get key usage from masked key attributes"
+            );
+            let key_usage = key_usage.unwrap();
+            assert_eq!(key_usage, DdiKeyUsage::SignVerify);
+            assert_eq!(metadata.key_length, key_len.into());
+        },
+    );
+}
+
 // Uses HKDF to derive derived_key_id1 and derived_key_id2
 // from secret_key_id1 and secret_key_id2, respectively.
 // Then delete one of the key and unmask it.
@@ -545,4 +873,78 @@ fn test_secret_hkdf_aes_gcm_helper(
     assert_eq!(decrypted_resp.data, data);
 
     close_app_session(dev, session_id);
+}
+
+fn extract_metadata_from_masked_key(masked_key: &[u8]) -> Option<DdiMaskedKeyMetadata> {
+    const FORMAT_OFFSET: usize = 2;
+    const ALGORITHM_OFFSET: usize = FORMAT_OFFSET + 2;
+    const IV_LEN_OFFSET: usize = ALGORITHM_OFFSET + 2;
+    const IV_PADDING_OFFSET: usize = IV_LEN_OFFSET + 2;
+    const METADATA_LEN_OFFSET: usize = IV_PADDING_OFFSET + 2;
+    const METADATA_PADDING_OFFSET: usize = METADATA_LEN_OFFSET + 2;
+    const ENCRYPTED_KEY_LEN_OFFSET: usize = METADATA_PADDING_OFFSET + 2;
+    const ENCRYPTED_KEY_PADDING_OFFSET: usize = ENCRYPTED_KEY_LEN_OFFSET + 2;
+    const TAG_LEN_OFFSET: usize = ENCRYPTED_KEY_PADDING_OFFSET + 2;
+    const RESERVED_OFFSET: usize = TAG_LEN_OFFSET + 34;
+
+    if masked_key.len() < RESERVED_OFFSET {
+        return None;
+    }
+
+    let iv_len: usize = u16::from_le_bytes(
+        masked_key[ALGORITHM_OFFSET..IV_LEN_OFFSET]
+            .try_into()
+            .unwrap(),
+    )
+    .into();
+    let iv_padding_len: usize = u16::from_le_bytes(
+        masked_key[IV_LEN_OFFSET..IV_PADDING_OFFSET]
+            .try_into()
+            .unwrap(),
+    )
+    .into();
+    let metadata_len: usize = u16::from_le_bytes(
+        masked_key[IV_PADDING_OFFSET..METADATA_LEN_OFFSET]
+            .try_into()
+            .unwrap(),
+    )
+    .into();
+
+    let metadata_offset = RESERVED_OFFSET + iv_len + iv_padding_len;
+
+    if masked_key.len() < metadata_offset + metadata_len {
+        return None;
+    }
+
+    let metadata = &masked_key[metadata_offset..metadata_offset + metadata_len];
+    let mut decoder = MborDecoder::new(metadata, false);
+
+    let metadata = DdiMaskedKeyMetadata::mbor_decode(&mut decoder);
+    if let Err(e) = &metadata {
+        tracing::error!("mbor_decode error {:?}", e);
+
+        return None;
+    }
+
+    metadata.ok()
+}
+
+fn get_key_usage_from_attributes(attributes: &DdiMaskedKeyAttributes) -> Option<DdiKeyUsage> {
+    let masked_key_attributes = MaskedKeyAttributes::try_from(attributes).ok()?;
+
+    if masked_key_attributes.contains(MaskedKeyAttributes::DERIVE) {
+        Some(DdiKeyUsage::Derive)
+    } else if masked_key_attributes.contains(MaskedKeyAttributes::ENCRYPT)
+        && masked_key_attributes.contains(MaskedKeyAttributes::DECRYPT)
+    {
+        Some(DdiKeyUsage::EncryptDecrypt)
+    } else if masked_key_attributes.contains(MaskedKeyAttributes::SIGN)
+        && masked_key_attributes.contains(MaskedKeyAttributes::VERIFY)
+    {
+        Some(DdiKeyUsage::SignVerify)
+    } else if masked_key_attributes.contains(MaskedKeyAttributes::UNWRAP) {
+        Some(DdiKeyUsage::Unwrap)
+    } else {
+        None
+    }
 }

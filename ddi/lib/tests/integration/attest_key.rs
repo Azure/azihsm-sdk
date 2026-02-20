@@ -614,8 +614,8 @@ fn test_attest_hmac_key() {
             assert!(keyflags.is_generated());
             assert!(!keyflags.can_encrypt());
             assert!(!keyflags.can_decrypt());
-            assert!(!keyflags.can_sign());
-            assert!(!keyflags.can_verify());
+            assert!(keyflags.can_sign());
+            assert!(keyflags.can_verify());
             assert!(!keyflags.can_wrap());
             assert!(!keyflags.can_unwrap());
             assert!(!keyflags.can_derive());

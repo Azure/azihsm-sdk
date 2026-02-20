@@ -34,6 +34,14 @@ pub struct Setup {
     /// Override a configuration value in install::Install subtasks
     #[clap(long)]
     pub config: Option<String>,
+
+    /// Skip installing taplo-cli (TOML formatter)
+    #[clap(long)]
+    pub skip_taplo: bool,
+
+    /// Skip installing cargo-audit
+    #[clap(long)]
+    pub skip_audit: bool,
 }
 
 impl Xtask for Setup {
@@ -54,15 +62,17 @@ impl Xtask for Setup {
         cmd!(sh, "cargo nextest --version").quiet().run()?;
 
         // Run Install Cargo taplo-cli
-        let install_cargo_taplo_cli = install::Install {
-            crate_name: format!("taplo-cli@{}", TAPLO_CLI_VERSION),
-            force: self.force,
-            config: self.config.clone(),
-        };
-        install_cargo_taplo_cli.run(ctx.clone())?;
+        if !self.skip_taplo {
+            let install_cargo_taplo_cli = install::Install {
+                crate_name: format!("taplo-cli@{}", TAPLO_CLI_VERSION),
+                force: self.force,
+                config: self.config.clone(),
+            };
+            install_cargo_taplo_cli.run(ctx.clone())?;
 
-        // Check taplo-cli version
-        cmd!(sh, "taplo --version").quiet().run()?;
+            // Check taplo-cli version
+            cmd!(sh, "taplo --version").quiet().run()?;
+        }
 
         #[cfg(not(target_os = "windows"))]
         {
@@ -79,15 +89,17 @@ impl Xtask for Setup {
         }
 
         // Run Install cargo-audit
-        let install_cargo_audit = install::Install {
-            crate_name: format!("cargo-audit@{}", CARGO_AUDIT_VERSION),
-            force: self.force,
-            config: self.config.clone(),
-        };
-        install_cargo_audit.run(ctx.clone())?;
+        if !self.skip_audit {
+            let install_cargo_audit = install::Install {
+                crate_name: format!("cargo-audit@{}", CARGO_AUDIT_VERSION),
+                force: self.force,
+                config: self.config.clone(),
+            };
+            install_cargo_audit.run(ctx.clone())?;
 
-        // Check cargo-audit version
-        cmd!(sh, "cargo audit --version").quiet().run()?;
+            // Check cargo-audit version
+            cmd!(sh, "cargo audit --version").quiet().run()?;
+        }
 
         // Run Install cargo-llvm-cov
         let install_cargo_llvm_cov = install::Install {
@@ -108,7 +120,7 @@ impl Xtask for Setup {
         // ignore failure in adding Clippy
         if add_clippy.run(ctx.clone()).is_ok() {
             // Check Clippy version
-            cmd!(sh, "cargo clippy --version").quiet().run()?;
+            let _ = cmd!(sh, "cargo clippy --version").quiet().run();
         }
 
         // Add Fmt
@@ -119,7 +131,7 @@ impl Xtask for Setup {
         // ignore failure in adding Fmt
         if add_fmt.run(ctx.clone()).is_ok() {
             // Check Fmt version
-            cmd!(sh, "cargo +nightly fmt --version").quiet().run()?;
+            let _ = cmd!(sh, "cargo +nightly fmt --version").quiet().run();
         }
 
         log::trace!("done setup");
