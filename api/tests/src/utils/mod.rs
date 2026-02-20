@@ -3,4 +3,5 @@
 
 pub(crate) mod api;
 pub(crate) mod partition;
+pub(crate) mod resiliency;
 pub(crate) mod session;

@@ -8,6 +8,7 @@
 
 #include "handle/part_handle.hpp"
 #include "handle/part_list_handle.hpp"
+#include "utils/resiliency_config.hpp"
 
 TEST(azihsm_part, get_list)
 {
@@ -674,7 +675,8 @@ TEST(azihsm_part, init_caller_source_with_empty_endorsement_fails)
             nullptr,
             nullptr,
             &backup_config,
-            &pota_endorsement
+            &pota_endorsement,
+            nullptr
         );
         ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
@@ -718,7 +720,8 @@ TEST(azihsm_part, init_caller_source_with_null_endorsement_fails)
             nullptr,
             nullptr,
             &backup_config,
-            &pota_endorsement
+            &pota_endorsement,
+            nullptr
         );
         ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
@@ -768,7 +771,8 @@ TEST(azihsm_part, init_tpm_source_with_endorsement_fails)
             nullptr,
             nullptr,
             &backup_config,
-            &pota_endorsement
+            &pota_endorsement,
+            nullptr
         );
         ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
@@ -819,7 +823,187 @@ TEST(azihsm_part, init_invalid_source_with_endorsement_fails)
             nullptr,
             nullptr,
             &backup_config,
-            &pota_endorsement
+            &pota_endorsement,
+            nullptr
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
+    });
+}
+
+TEST(azihsm_part, init_with_resiliency_config)
+{
+    auto part_list = PartitionListHandle();
+
+    part_list.for_each_part([](std::vector<azihsm_char> &path) {
+        azihsm_str path_str;
+        path_str.str = path.data();
+        path_str.len = static_cast<uint32_t>(path.size());
+
+        azihsm_handle part_handle = 0;
+        auto err = azihsm_part_open(&path_str, &part_handle);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        auto guard =
+            scope_guard::make_scope_exit([&part_handle] { azihsm_part_close(part_handle); });
+
+        err = azihsm_part_reset(part_handle);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        azihsm_credentials creds{};
+        std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
+        std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
+
+        PartInitConfig init_config{};
+        make_part_init_config(part_handle, init_config);
+
+        azihsm_resiliency_config resiliency_config{};
+        auto resiliency_ctx = make_resiliency_config(resiliency_config);
+
+        err = azihsm_part_init(
+            part_handle,
+            &creds,
+            nullptr,
+            nullptr,
+            &init_config.backup_config,
+            &init_config.pota_endorsement,
+            &resiliency_config
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+    });
+}
+
+TEST(azihsm_part, init_with_resiliency_caller_pota_null_callback_fails)
+{
+    auto part_list = PartitionListHandle();
+
+    part_list.for_each_part([](std::vector<azihsm_char> &path) {
+        azihsm_str path_str;
+        path_str.str = path.data();
+        path_str.len = static_cast<uint32_t>(path.size());
+
+        azihsm_handle part_handle = 0;
+        auto err = azihsm_part_open(&path_str, &part_handle);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        auto guard =
+            scope_guard::make_scope_exit([&part_handle] { azihsm_part_close(part_handle); });
+
+        err = azihsm_part_reset(part_handle);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        azihsm_credentials creds{};
+        std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
+        std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
+
+        PartInitConfig init_config{};
+        make_part_init_config(part_handle, init_config);
+
+        // Build a resiliency config with pota_callback_ops = nullptr.
+        // When POTA source is Caller, this must fail with InvalidArgument.
+        azihsm_resiliency_config resiliency_config{};
+        auto resiliency_ctx = make_resiliency_config(resiliency_config);
+        resiliency_config.pota_callback_ops = nullptr;
+
+        // Force POTA source to Caller so the validation triggers.
+        init_config.pota_endorsement.source = AZIHSM_POTA_ENDORSEMENT_SOURCE_CALLER;
+
+        err = azihsm_part_init(
+            part_handle,
+            &creds,
+            nullptr,
+            nullptr,
+            &init_config.backup_config,
+            &init_config.pota_endorsement,
+            &resiliency_config
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
+    });
+}
+
+TEST(azihsm_part, init_with_resiliency_invalid_pota_source_fails)
+{
+    auto part_list = PartitionListHandle();
+
+    part_list.for_each_part([](std::vector<azihsm_char> &path) {
+        azihsm_str path_str;
+        path_str.str = path.data();
+        path_str.len = static_cast<uint32_t>(path.size());
+
+        azihsm_handle part_handle = 0;
+        auto err = azihsm_part_open(&path_str, &part_handle);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        auto guard =
+            scope_guard::make_scope_exit([&part_handle] { azihsm_part_close(part_handle); });
+
+        err = azihsm_part_reset(part_handle);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        azihsm_credentials creds{};
+        std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
+        std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
+
+        PartInitConfig init_config{};
+        make_part_init_config(part_handle, init_config);
+
+        // Force invalid POTA source
+        init_config.pota_endorsement.source = static_cast<azihsm_pota_endorsement_source>(99);
+
+        azihsm_resiliency_config resiliency_config{};
+        auto resiliency_ctx = make_resiliency_config(resiliency_config);
+
+        err = azihsm_part_init(
+            part_handle,
+            &creds,
+            nullptr,
+            nullptr,
+            &init_config.backup_config,
+            &init_config.pota_endorsement,
+            &resiliency_config
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
+    });
+}
+
+TEST(azihsm_part, init_with_resiliency_tpm_pota_with_callback_fails)
+{
+    auto part_list = PartitionListHandle();
+
+    part_list.for_each_part([](std::vector<azihsm_char> &path) {
+        azihsm_str path_str;
+        path_str.str = path.data();
+        path_str.len = static_cast<uint32_t>(path.size());
+
+        azihsm_handle part_handle = 0;
+        auto err = azihsm_part_open(&path_str, &part_handle);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        auto guard =
+            scope_guard::make_scope_exit([&part_handle] { azihsm_part_close(part_handle); });
+
+        err = azihsm_part_reset(part_handle);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        azihsm_credentials creds{};
+        std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
+        std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
+
+        PartInitConfig init_config{};
+        make_part_init_config(part_handle, init_config);
+
+        // Force TPM POTA source — callback is still set by make_resiliency_config.
+        // TPM + callback is now rejected as InvalidArgument.
+        init_config.pota_endorsement.source = AZIHSM_POTA_ENDORSEMENT_SOURCE_TPM;
+        init_config.pota_endorsement.endorsement = nullptr;
+
+        azihsm_resiliency_config resiliency_config{};
+        auto resiliency_ctx = make_resiliency_config(resiliency_config);
+        // pota_callback_ops is non-null (set by make_resiliency_config)
+
+        err = azihsm_part_init(
+            part_handle,
+            &creds,
+            nullptr,
+            nullptr,
+            &init_config.backup_config,
+            &init_config.pota_endorsement,
+            &resiliency_config
         );
         ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });

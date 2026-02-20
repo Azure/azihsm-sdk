@@ -15,6 +15,7 @@ cmake.workspace = true
 azihsm_api.workspace = true
 azihsm_api_tests_macro.workspace = true
 azihsm_crypto.workspace = true
+fs2.workspace = true
 hex.workspace = true
 libtest-mimic.workspace = true
 tracing.workspace = true

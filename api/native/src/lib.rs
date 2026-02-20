@@ -28,6 +28,7 @@ mod key_mgmt;
 mod key_props;
 mod partition;
 mod partition_props;
+mod resiliency;
 mod session;
 mod session_props;
 #[allow(unused)]
@@ -47,6 +48,7 @@ use algo::*;
 use azihsm_api as api;
 use handle_table::*;
 use key_props::*;
+use resiliency::*;
 use str::*;
 use utils::*;
 use zerocopy::*;

@@ -73,7 +73,7 @@ where
                 ),
             )
         };
-        part.init(creds, None, None, obk_info, pota_endorsement)
+        part.init(creds, None, None, obk_info, pota_endorsement, None)
             .expect("Partition init failed");
         let mut session = part
             .open_session(rev, &creds, None)

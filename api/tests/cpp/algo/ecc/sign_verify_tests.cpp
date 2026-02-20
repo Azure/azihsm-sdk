@@ -995,7 +995,8 @@ TEST_F(azihsm_ecc_sign_verify, DISABLED_MANUAL_restore_key_and_verify)
         &bmk_buf,
         nullptr,
         &init_config.backup_config,
-        &init_config.pota_endorsement
+        &init_config.pota_endorsement,
+        nullptr
     );
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS) << "azihsm_part_init with BMK/MOBK failed";
 

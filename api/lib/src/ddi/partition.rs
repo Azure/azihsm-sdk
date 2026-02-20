@@ -107,7 +107,7 @@ fn get_part_pub_key_digest(dev: &HsmDev, rev: HsmApiRev) -> HsmResult<Vec<u8>> {
 fn get_pota_endorsement(
     dev: &HsmDev,
     rev: HsmApiRev,
-    pota_endorsement: &HsmPotaEndorsement<'_>,
+    pota_endorsement: &HsmPotaEndorsement,
 ) -> HsmResult<(Vec<u8>, Vec<u8>)> {
     match pota_endorsement.source() {
         HsmPotaEndorsementSource::Caller => {
@@ -163,8 +163,8 @@ pub(crate) fn init_part(
     creds: HsmCredentials,
     bmk: Option<&[u8]>,
     muk: Option<&[u8]>,
-    obk_config: HsmOwnerBackupKeyConfig<'_>,
-    pota_endorsement: HsmPotaEndorsement<'_>,
+    obk_config: &HsmOwnerBackupKeyConfig,
+    pota_endorsement: &HsmPotaEndorsement,
 ) -> HsmResult<(Vec<u8>, Vec<u8>)> {
     let mobk = match obk_config.key_source() {
         HsmOwnerBackupKeySource::Caller => {
@@ -181,7 +181,7 @@ pub(crate) fn init_part(
     };
 
     // Compute POTA endorsement based on source
-    let (pota_signature, pota_public_key) = get_pota_endorsement(dev, rev, &pota_endorsement)?;
+    let (pota_signature, pota_public_key) = get_pota_endorsement(dev, rev, pota_endorsement)?;
     let pota_endorsement = HsmPotaEndorsementData::new(&pota_signature, &pota_public_key);
 
     let resp = get_establish_cred_encryption_key(dev, rev)?;
@@ -305,7 +305,7 @@ pub fn establish_credential(
     bmk: &[u8],
     muk: &[u8],
     mobk: &[u8],
-    pota_endorsement: &HsmPotaEndorsementData<'_>,
+    pota_endorsement: &HsmPotaEndorsementData,
 ) -> HsmResult<Vec<u8>> {
     let pota_endorsement_pub_key = DdiDerPublicKey {
         der: MborByteArray::from_slice(pota_endorsement.pub_key())
