@@ -15,7 +15,7 @@ pub(crate) fn validate_ptr<T>(ptr: *const T) -> Result<(), AzihsmStatus> {
 
 pub(crate) fn validate_algo_params<T>(algo: &AzihsmAlgo) -> Result<(), AzihsmStatus> {
     if algo.len != std::mem::size_of::<T>() as u32 {
-        return Err(AzihsmStatus::InvalidArgument);
+        Err(AzihsmStatus::InvalidArgument)?;
     }
     validate_ptr(algo.params)
 }
@@ -88,7 +88,7 @@ pub(crate) fn validate_output_buffer(
     if output_buf.ptr.is_null() {
         // Only allow null buffer if length is 0 (for size-query case)
         if output_buf.len != 0 {
-            return Err(AzihsmStatus::InvalidArgument);
+            Err(AzihsmStatus::InvalidArgument)?;
         }
     }
 

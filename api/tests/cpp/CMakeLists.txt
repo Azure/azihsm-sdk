@@ -53,7 +53,7 @@ corrosion_experimental_cbindgen(
 set(SOURCE 
     handle/part_list_handle.cpp
     utils/key_import.cpp
-    utils/known_answer_tests.cpp
+    utils/known_answer.cpp
     utils/rsa_keygen.cpp
     utils/shared_secret.cpp
     utils/part_init_config.cpp
