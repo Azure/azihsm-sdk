@@ -77,8 +77,6 @@ static const OSSL_ALGORITHM azihsm_ossl_kdf[] = { ALG(AZIHSM_OSSL_ALG_NAME_HKDF,
                                                       azihsm_ossl_hkdf_functions),
                                                   ALG_TABLE_END };
 
-static const OSSL_ALGORITHM azihsm_ossl_rand[] = { ALG_TABLE_END };
-
 // Key Management
 extern const OSSL_DISPATCH azihsm_ossl_rsa_keymgmt_functions[];
 extern const OSSL_DISPATCH azihsm_ossl_rsa_pss_keymgmt_functions[];
@@ -293,8 +291,6 @@ static const OSSL_ALGORITHM *azihsm_ossl_query_operation(
         return azihsm_ossl_mac;
     case OSSL_OP_KDF:
         return azihsm_ossl_kdf;
-    case OSSL_OP_RAND:
-        return azihsm_ossl_rand;
     case OSSL_OP_KEYMGMT:
         return azihsm_ossl_keymgmt;
     case OSSL_OP_KEYEXCH:
