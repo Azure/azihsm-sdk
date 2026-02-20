@@ -64,23 +64,12 @@ RSA genpkey (keyEncipherment)  ──> masked_key.bin ──> pkeyutl -encrypt /
 - CMake, GCC/Clang, pkg-config
 - `libbsd-dev`, `libssl-dev` (system OpenSSL 3.x headers)
 
-### Quick Build (Mock HSM)
+### Build
 
-For development and testing without physical HSM hardware, build with the `mock` feature:
-
-```bash
-cd azihsm-sdk
-cargo build --features mock,provider
-```
-
-This produces `target/debug/azihsm_provider.so`.
-
-### Production Build (Static OpenSSL Linkage)
-
-For deployment alongside applications that ship their own OpenSSL (e.g., nginx), the Rust HSM library must be statically linked against a dedicated OpenSSL build to avoid symbol conflicts:
+The provider consists of two shared libraries. `libazihsm_api_native.so` (the Rust HSM API) **must** be built against a static OpenSSL to avoid a circular dependency — the system `libcrypto.so` loads the provider, so if the HSM library also linked dynamically against `libcrypto.so`, its OpenSSL calls would route back through itself. The static build uses `-fvisibility=hidden` to keep all OpenSSL symbols internal.
 
 ```bash
-# 1. Build a static OpenSSL (no-shared, hidden visibility)
+# 1. Build a static OpenSSL
 OPENSSL_VERSION=3.0.16
 curl -fsSL "https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VERSION}/openssl-${OPENSSL_VERSION}.tar.gz" \
     | tar xz -C /tmp
@@ -98,46 +87,40 @@ OPENSSL_DIR=/opt/openssl-static OPENSSL_STATIC=1 \
 cargo build -p azihsm_ossl_provider --features mock
 ```
 
+On real hardware, omit `mock` from both build commands.
+
+This produces two shared libraries in `target/debug/`:
+- `azihsm_provider.so` — the OpenSSL provider
+- `libazihsm_api_native.so` — the Rust HSM API (runtime dependency of the provider)
+
 ### Installation
 
-After building, copy the provider shared library into the system OpenSSL modules directory so it can be loaded without `-provider-path`:
+Install the provider and its runtime dependency:
 
 ```bash
 # Find the system modules directory
 openssl version -m
-# MODULESDIR: "/usr/lib64/ossl-modules"
+# MODULESDIR: "/usr/lib/x86_64-linux-gnu/ossl-modules"
 
 # Install the provider
-sudo cp target/debug/azihsm_provider.so /usr/lib64/ossl-modules/
+sudo cp target/debug/azihsm_provider.so /usr/lib/x86_64-linux-gnu/ossl-modules/
+
+# Install the Rust HSM API library
+sudo cp target/debug/libazihsm_api_native.so /usr/lib/
+sudo ldconfig
 
 # Create the working directory for masked key material
 sudo mkdir -p /var/lib/azihsm
 ```
 
-The provider stores and loads masked key blobs from `/var/lib/azihsm`. This directory must exist before running any key generation or import commands.
-
 Once installed, the `-provider-path` flag is no longer needed — OpenSSL will find the provider automatically. All command examples below omit `-provider-path` and assume the provider is installed system-wide.
-
-### Docker (nginx Example)
-
-A complete Dockerfile is provided under `plugins/ossl_prov/nginx-example/`:
-
-```bash
-docker build -f plugins/ossl_prov/nginx-example/Dockerfile -t azihsm-nginx .
-docker run --rm -p 8443:8443 azihsm-nginx
-curl -k https://localhost:8443/
-```
 
 ## Provider Flags
 
-Every `openssl` command that uses the provider requires these flags:
+Every `openssl` command that uses the provider requires these flags. Define them once in your shell:
 
 ```bash
-openssl <command> \
-    -propquery "?provider=azihsm" \
-    -provider default \
-    -provider azihsm_provider \
-    ...
+PROV="-propquery ?provider=azihsm -provider default -provider azihsm_provider"
 ```
 
 | Flag | Purpose |
@@ -152,7 +135,7 @@ openssl <command> \
 
 > **Note:** On physical hardware, provider commands require `sudo` to access TPM operations.
 
-For brevity, the examples below use `${PROV}` as shorthand for these three flags.
+All examples below use `${PROV}` as shorthand for these three flags.
 
 ## Commands
 
@@ -169,6 +152,8 @@ openssl genpkey ${PROV} \
     -pkeyopt azihsm.masked_key:./ec_p384.bin \
     -outform DER -out /dev/null
 ```
+
+> `-out /dev/null` discards the standard OpenSSL key output. The real output is the masked key blob written to the path specified by `azihsm.masked_key`.
 
 **Parameters:**
 
