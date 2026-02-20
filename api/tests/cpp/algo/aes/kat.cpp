@@ -31,7 +31,7 @@ auto_key import_local_aes_key_for_kat(
 
 	azihsm_algo_rsa_aes_wrap_params wrap_params{};
 	wrap_params.oaep_params = &oaep_params;
-	wrap_params.aes_key_bits = 256;
+	wrap_params.aes_key_bits = aes_key_bits;
 
 	azihsm_algo wrap_algo{};
 	wrap_algo.id = AZIHSM_ALGO_ID_RSA_AES_WRAP;
