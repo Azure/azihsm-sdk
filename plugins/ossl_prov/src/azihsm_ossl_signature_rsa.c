@@ -6,8 +6,10 @@
 #include <openssl/core_names.h>
 #include <openssl/err.h>
 #include <openssl/evp.h>
+#include <openssl/objects.h>
 #include <openssl/params.h>
 #include <openssl/proverr.h>
+#include <openssl/x509.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -25,6 +27,32 @@
 static size_t azihsm_ossl_rsa_signature_size(uint32_t key_bits)
 {
     return key_bits / 8;
+}
+
+/*
+ * Map a digest EVP_MD to the NID of the combined RSA PKCS#1 v1.5
+ * AlgorithmIdentifier (for X.509 signatureAlgorithm).
+ */
+static int azihsm_ossl_rsa_pkcs1_sig_nid(const EVP_MD *md)
+{
+    if (md == NULL)
+    {
+        return NID_undef;
+    }
+
+    switch (EVP_MD_type(md))
+    {
+    case NID_sha1:
+        return NID_sha1WithRSAEncryption;
+    case NID_sha256:
+        return NID_sha256WithRSAEncryption;
+    case NID_sha384:
+        return NID_sha384WithRSAEncryption;
+    case NID_sha512:
+        return NID_sha512WithRSAEncryption;
+    default:
+        return NID_undef;
+    }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -953,6 +981,163 @@ static int azihsm_ossl_rsa_get_ctx_params(void *sctx, OSSL_PARAM params[])
         }
     }
 
+    p = OSSL_PARAM_locate(params, OSSL_SIGNATURE_PARAM_ALGORITHM_ID);
+    if (p != NULL)
+    {
+        /*
+         * Return the DER-encoded AlgorithmIdentifier for the combined
+         * RSA+hash signature (e.g., sha256WithRSAEncryption).  OpenSSL
+         * needs this to embed the signatureAlgorithm in X.509 certificates.
+         */
+        int sig_nid;
+        X509_ALGOR *algor = NULL;
+        unsigned char *aid_der = NULL;
+        int aid_len;
+
+        if (ctx->pad_mode == AZIHSM_RSA_PAD_MODE_PSS)
+        {
+            sig_nid = NID_rsassaPss;
+        }
+        else
+        {
+            sig_nid = azihsm_ossl_rsa_pkcs1_sig_nid(ctx->md);
+        }
+
+        if (sig_nid == NID_undef)
+        {
+            ERR_raise(ERR_LIB_PROV, ERR_R_OPERATION_FAIL);
+            return OSSL_FAILURE;
+        }
+
+        algor = X509_ALGOR_new();
+        if (algor == NULL)
+        {
+            ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
+            return OSSL_FAILURE;
+        }
+
+        if (sig_nid == NID_rsassaPss)
+        {
+            /* PSS needs parameters in the AlgorithmIdentifier */
+            RSA_PSS_PARAMS *pss = RSA_PSS_PARAMS_new();
+            if (pss == NULL)
+            {
+                X509_ALGOR_free(algor);
+                ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
+                return OSSL_FAILURE;
+            }
+
+            const EVP_MD *mgf1_md = (ctx->mgf1_md != NULL) ? ctx->mgf1_md : ctx->md;
+            int hash_nid = EVP_MD_type(ctx->md);
+            int mgf1_nid = EVP_MD_type(mgf1_md);
+
+            /* Set hash algorithm (omit if SHA-1 per RFC 4055) */
+            if (hash_nid != NID_sha1)
+            {
+                pss->hashAlgorithm = X509_ALGOR_new();
+                X509_ALGOR_set0(pss->hashAlgorithm, OBJ_nid2obj(hash_nid), V_ASN1_NULL, NULL);
+            }
+
+            /* Set MGF1 algorithm (omit if SHA-1 per RFC 4055) */
+            if (mgf1_nid != NID_sha1)
+            {
+                pss->maskGenAlgorithm = X509_ALGOR_new();
+                X509_ALGOR *mgf1_inner = X509_ALGOR_new();
+                X509_ALGOR_set0(mgf1_inner, OBJ_nid2obj(mgf1_nid), V_ASN1_NULL, NULL);
+
+                unsigned char *mgf1_der = NULL;
+                int mgf1_der_len = i2d_X509_ALGOR(mgf1_inner, &mgf1_der);
+                X509_ALGOR_free(mgf1_inner);
+
+                if (mgf1_der_len > 0)
+                {
+                    ASN1_STRING *mgf1_str = ASN1_STRING_new();
+                    ASN1_STRING_set0(mgf1_str, mgf1_der, mgf1_der_len);
+                    X509_ALGOR_set0(
+                        pss->maskGenAlgorithm,
+                        OBJ_nid2obj(NID_mgf1),
+                        V_ASN1_SEQUENCE,
+                        mgf1_str
+                    );
+                }
+                else
+                {
+                    X509_ALGOR_free(pss->maskGenAlgorithm);
+                    pss->maskGenAlgorithm = NULL;
+                    OPENSSL_free(mgf1_der);
+                }
+            }
+
+            /* Set salt length */
+            int actual_salt;
+            if (ctx->salt_len == AZIHSM_RSA_PSS_SALTLEN_DIGEST)
+            {
+                actual_salt = EVP_MD_size(ctx->md);
+            }
+            else if (ctx->salt_len == AZIHSM_RSA_PSS_SALTLEN_MAX && ctx->key != NULL)
+            {
+                actual_salt = (int)(ctx->key->genctx.pubkey_bits / 8) - EVP_MD_size(ctx->md) - 2;
+            }
+            else if (ctx->salt_len >= 0)
+            {
+                actual_salt = ctx->salt_len;
+            }
+            else
+            {
+                actual_salt = EVP_MD_size(ctx->md);
+            }
+
+            /* Omit if default (20 = SHA-1 digest length, per RFC 4055) */
+            if (actual_salt != 20)
+            {
+                pss->saltLength = ASN1_INTEGER_new();
+                ASN1_INTEGER_set(pss->saltLength, actual_salt);
+            }
+
+            unsigned char *pss_der = NULL;
+            int pss_der_len = i2d_RSA_PSS_PARAMS(pss, &pss_der);
+            RSA_PSS_PARAMS_free(pss);
+
+            if (pss_der_len > 0)
+            {
+                ASN1_STRING *pss_str = ASN1_STRING_new();
+                ASN1_STRING_set0(pss_str, pss_der, pss_der_len);
+                X509_ALGOR_set0(algor, OBJ_nid2obj(sig_nid), V_ASN1_SEQUENCE, pss_str);
+            }
+            else
+            {
+                OPENSSL_free(pss_der);
+                X509_ALGOR_free(algor);
+                ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
+                return OSSL_FAILURE;
+            }
+        }
+        else
+        {
+            /* PKCS#1 v1.5: AlgorithmIdentifier with NULL parameter */
+            X509_ALGOR_set0(algor, OBJ_nid2obj(sig_nid), V_ASN1_NULL, NULL);
+        }
+
+        aid_len = i2d_X509_ALGOR(algor, &aid_der);
+        X509_ALGOR_free(algor);
+
+        if (aid_len <= 0)
+        {
+            OPENSSL_free(aid_der);
+            ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
+            return OSSL_FAILURE;
+        }
+
+        if (!OSSL_PARAM_set_octet_string(p, aid_der, (size_t)aid_len))
+        {
+            OPENSSL_free(aid_der);
+            ERR_raise(ERR_LIB_PROV, ERR_R_OPERATION_FAIL);
+            return OSSL_FAILURE;
+        }
+
+        OPENSSL_free(aid_der);
+    }
+
     return OSSL_SUCCESS;
 }
 
@@ -975,6 +1160,7 @@ static const OSSL_PARAM *azihsm_ossl_rsa_gettable_ctx_params(void *sctx, void *p
         OSSL_PARAM_utf8_string(OSSL_SIGNATURE_PARAM_PAD_MODE, NULL, 0),
         OSSL_PARAM_int(OSSL_SIGNATURE_PARAM_PSS_SALTLEN, NULL),
         OSSL_PARAM_utf8_string(OSSL_SIGNATURE_PARAM_MGF1_DIGEST, NULL, 0),
+        OSSL_PARAM_octet_string(OSSL_SIGNATURE_PARAM_ALGORITHM_ID, NULL, 0),
         OSSL_PARAM_END,
     };
     return gettable;
