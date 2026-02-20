@@ -1,7 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-#include <fcntl.h>
 #include <openssl/core_dispatch.h>
 #include <openssl/core_names.h>
 #include <openssl/ec.h>
@@ -12,12 +11,16 @@
 #include <openssl/proverr.h>
 #include <openssl/x509.h>
 #include <string.h>
-#include <sys/stat.h>
-#include <unistd.h>
 
 #include "azihsm_ossl_base.h"
 #include "azihsm_ossl_ec.h"
+#include "azihsm_ossl_masked_key.h"
 #include "azihsm_ossl_pkey_param.h"
+
+/* Upper bound for masked key blob output buffer.
+ * Callers that do not use output_file receive the masked blob in their buffer.
+ * This must be large enough for any masked key the HSM can produce. */
+#define MASKED_KEY_MAX_BUFFER 8192
 
 typedef struct
 {
@@ -388,37 +391,42 @@ static int azihsm_ossl_keyexch_set_peer(void *kectx, void *provkey)
 /*
  * azihsm_ossl_keyexch_derive
  *
- * Perform a key exchange using the Azure Integrated HSM and produce a shared secret.
+ * Perform an ECDH key exchange using the Azure Integrated HSM.
+ *
+ * The derived shared secret is always a masked key blob. Output mode depends
+ * on whether the caller supplied the "output_file" context parameter:
+ *
+ *   - output_file set:   masked blob is written to that file; *secretlen is
+ *                         set to 0 (no bytes returned in the buffer).
+ *   - output_file unset: masked blob is copied into the caller's buffer and
+ *                         *secretlen is set to the number of bytes written.
+ *
+ * Size query (secret == NULL): sets *secretlen to MASKED_KEY_MAX_BUFFER when
+ * no output_file is configured, or 1 when output_file is set (the caller
+ * still needs to supply a non-NULL buffer to trigger the actual derive).
  *
  * Parameters:
- *   kectx     - Pointer to the AZIHSM_KEYEXCH_CTX containing our private key,
- *               the peer public key, and provider context.
- *   secret    - Optional buffer where the derived secret will be written. May
- *               be NULL when the caller only wants to learn the required size.
- *   secretlen - In/out: on entry, may contain the size of the 'secret' buffer;
- *               on successful return, set to the number of bytes in the
- *               derived secret.
- *   outlen    - Unused by this implementation (required by the OpenSSL
- *               provider interface); present only for API compatibility.
+ *   kectx     - Pointer to the AZIHSM_KEYEXCH_CTX.
+ *   secret    - Caller's buffer, or NULL for a size query.
+ *   secretlen - On return, the number of bytes written to secret.
+ *   outlen    - Size of the caller's buffer in bytes.
  *
- * Returns OSSL_SUCCESS (1) on success or OSSL_FAILURE (0) on error.  On
- * failure, an appropriate error is raised on the OpenSSL error stack and any
- * temporary resources are freed.
+ * Returns OSSL_SUCCESS (1) on success or OSSL_FAILURE (0) on error.
  */
 static int azihsm_ossl_keyexch_derive(
     void *kectx,
     unsigned char *secret,
     size_t *secretlen,
-    ossl_unused size_t outlen
+    size_t outlen
 )
 {
-    /* Retrieve the key exchange context and initialize temporary state. */
     AZIHSM_KEYEXCH_CTX *ctx = (AZIHSM_KEYEXCH_CTX *)kectx;
     unsigned char *der_spki = NULL;
     int der_spki_len = 0;
     azihsm_handle derived_handle = 0;
     azihsm_status status;
-    uint8_t *masked_key_buffer = NULL;
+    uint8_t *masked_buf = NULL;
+    uint32_t masked_len = 0;
     int ret = OSSL_FAILURE;
     int nid;
     int curve_bits;
@@ -429,21 +437,24 @@ static int azihsm_ossl_keyexch_derive(
         return OSSL_FAILURE;
     }
 
+    /* Size query: return the expected output size without performing the derive */
     if (secret == NULL)
     {
         if (secretlen != NULL)
         {
-            /* Shared secret will be written to the azihsm:output_file parameter
-             * thus we return 1 */
-            *secretlen = 1;
+            if (ctx->output_file[0] != '\0')
+            {
+                /* File output mode — caller still needs a non-NULL buffer to
+                 * trigger the derive, but no bytes are returned in it. */
+                *secretlen = 1;
+            }
+            else
+            {
+                /* Buffer output mode — caller must provide this much space. */
+                *secretlen = MASKED_KEY_MAX_BUFFER;
+            }
         }
         return OSSL_SUCCESS;
-    }
-
-    if (ctx->output_file[0] == '\0')
-    {
-        ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
-        return OSSL_FAILURE;
     }
 
     if (ctx->peer_key->pub_key_data == NULL || ctx->peer_key->pub_key_data_len == 0)
@@ -500,7 +511,8 @@ static int azihsm_ossl_keyexch_derive(
     if (curve_bits <= 0)
     {
         ERR_raise(ERR_LIB_PROV, PROV_R_INVALID_CURVE);
-        goto err;
+        OPENSSL_free(der_spki);
+        return OSSL_FAILURE;
     }
     uint32_t bit_len_val = (uint32_t)curve_bits;
 
@@ -535,65 +547,49 @@ static int azihsm_ossl_keyexch_derive(
     if (status != AZIHSM_STATUS_SUCCESS)
     {
         ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GENERATE_KEY);
-        goto err;
+        OPENSSL_free(der_spki);
+        return OSSL_FAILURE;
     }
 
-    const uint32_t masked_key_buffer_size = 8192;
-    masked_key_buffer = OPENSSL_malloc(masked_key_buffer_size);
-    if (masked_key_buffer == NULL)
-    {
-        ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
-        goto err;
-    }
-
-    struct azihsm_key_prop masked_prop = {
-        .id = AZIHSM_KEY_PROP_ID_MASKED_KEY,
-        .val = masked_key_buffer,
-        .len = masked_key_buffer_size,
-    };
-
-    status = azihsm_key_get_prop(derived_handle, &masked_prop);
-    if (status != AZIHSM_STATUS_SUCCESS || masked_prop.len == 0)
-    {
-        ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
-        goto err;
-    }
-
-    int fd = open(ctx->output_file, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW, S_IRUSR | S_IWUSR);
-    if (fd < 0)
-    {
-        ERR_raise(ERR_LIB_PROV, ERR_R_SYS_LIB);
-        goto err;
-    }
-
-    ssize_t written = write(fd, masked_key_buffer, masked_prop.len);
-    close(fd);
-
-    if (written < 0 || (uint32_t)written != masked_prop.len)
-    {
-        unlink(ctx->output_file);
-        ERR_raise(ERR_LIB_PROV, ERR_R_SYS_LIB);
-        goto err;
-    }
-
-    if (secretlen != NULL)
-    {
-        *secretlen = 0;
-    }
-
-    ret = OSSL_SUCCESS;
-
-err:
-    if (masked_key_buffer != NULL)
-    {
-        OPENSSL_cleanse(masked_key_buffer, masked_key_buffer_size);
-        OPENSSL_free(masked_key_buffer);
-    }
-    OPENSSL_free(der_spki);
-    if (derived_handle != 0)
+    /* Extract masked key using two-call pattern */
+    if (!azihsm_ossl_extract_masked_key(derived_handle, &masked_buf, &masked_len))
     {
         azihsm_key_delete(derived_handle);
+        OPENSSL_free(der_spki);
+        return OSSL_FAILURE;
     }
+
+    /* Output masked key to file or buffer */
+    if (ctx->output_file[0] != '\0')
+    {
+        ret = azihsm_ossl_write_masked_key_to_file(masked_buf, masked_len, ctx->output_file);
+        if (ret == OSSL_SUCCESS && secretlen != NULL)
+        {
+            *secretlen = 0;
+        }
+    }
+    else
+    {
+        if (outlen < masked_len)
+        {
+            ERR_raise(ERR_LIB_PROV, PROV_R_OUTPUT_BUFFER_TOO_SMALL);
+            ret = OSSL_FAILURE;
+        }
+        else
+        {
+            memcpy(secret, masked_buf, masked_len);
+            if (secretlen != NULL)
+            {
+                *secretlen = masked_len;
+            }
+            ret = OSSL_SUCCESS;
+        }
+    }
+
+    OPENSSL_cleanse(masked_buf, masked_len);
+    OPENSSL_free(masked_buf);
+    OPENSSL_free(der_spki);
+    azihsm_key_delete(derived_handle);
     return ret;
 }
 
