@@ -85,11 +85,9 @@ pub(crate) fn validate_output_buffer(
     output_buf: &mut crate::AzihsmBuffer,
     required_len: usize,
 ) -> Result<&mut [u8], AzihsmStatus> {
-    if output_buf.ptr.is_null() {
+    if output_buf.ptr.is_null() && output_buf.len != 0 {
         // Only allow null buffer if length is 0 (for size-query case)
-        if output_buf.len != 0 {
-            Err(AzihsmStatus::InvalidArgument)?;
-        }
+        Err(AzihsmStatus::InvalidArgument)?;
     }
 
     // Check if output buffer is large enough

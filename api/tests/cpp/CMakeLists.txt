@@ -53,7 +53,6 @@ corrosion_experimental_cbindgen(
 set(SOURCE 
     handle/part_list_handle.cpp
     utils/key_import.cpp
-    utils/known_answer.cpp
     utils/rsa_keygen.cpp
     utils/shared_secret.cpp
     utils/part_init_config.cpp
@@ -65,6 +64,7 @@ set(SOURCE
     algo/aes/gcm_enc_dec_tests.cpp
     algo/aes/xts_enc_dec_tests.cpp
     algo/aes/keygen_tests.cpp
+    algo/aes/kat.cpp
     algo/ecc/keygen_tests.cpp
     algo/ecc/sign_verify_tests.cpp
     algo/ecc/keyreport_tests.cpp

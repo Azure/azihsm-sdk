@@ -12,8 +12,8 @@
 #include "handle/part_list_handle.hpp"
 #include "handle/session_handle.hpp"
 #include "helpers.hpp"
+#include "kat.hpp"
 #include "utils/auto_ctx.hpp"
-#include "utils/known_answer.hpp"
 #include <functional>
 
 class azihsm_aes_cbc : public ::testing::Test
@@ -433,7 +433,7 @@ class azihsm_aes_cbc : public ::testing::Test
     // - chunk_sizes != nullptr: run streaming checks for each provided chunk size.
     void run_cbc_kat_cases(
         azihsm_algo_id algo_id,
-        const std::vector<CbcKnownAnswerTestCase> &test_cases,
+        const std::vector<KnownAnswerTestCase> &test_cases,
         const std::vector<size_t> *chunk_sizes
     )
     {
@@ -770,7 +770,7 @@ static const uint8_t CBC_PAD_KAT_CIPHERTEXT_16[] = {
 	0x68, 0x2E, 0x6E, 0x39, 0xAA, 0xEB, 0x73, 0x1C,
 };
 
-static const std::vector<CbcKnownAnswerTestCase> CBC_KNOWN_ANSWER_TEST_CASES = {
+static const std::vector<KnownAnswerTestCase> CBC_KNOWN_ANSWER_TEST_CASES = {
 	{
 		128,
 		CBC_KAT_KEY_128,
@@ -809,7 +809,7 @@ static const std::vector<CbcKnownAnswerTestCase> CBC_KNOWN_ANSWER_TEST_CASES = {
 	},
 };
 
-static const std::vector<CbcKnownAnswerTestCase> CBC_PAD_BOUNDARY_KNOWN_ANSWER_TEST_CASES = {
+static const std::vector<KnownAnswerTestCase> CBC_PAD_BOUNDARY_KNOWN_ANSWER_TEST_CASES = {
 	{
 		128,
 		CBC_KAT_KEY_128,
@@ -836,12 +836,12 @@ static const std::vector<CbcKnownAnswerTestCase> CBC_PAD_BOUNDARY_KNOWN_ANSWER_T
 	},
 };
 
-static const std::vector<CbcKnownAnswerTestCase> &cbc_known_answer_test_cases()
+static const std::vector<KnownAnswerTestCase> &cbc_known_answer_test_cases()
 {
 	return CBC_KNOWN_ANSWER_TEST_CASES;
 }
 
-static const std::vector<CbcKnownAnswerTestCase> &cbc_pad_boundary_known_answer_test_cases()
+static const std::vector<KnownAnswerTestCase> &cbc_pad_boundary_known_answer_test_cases()
 {
 	return CBC_PAD_BOUNDARY_KNOWN_ANSWER_TEST_CASES;
 }

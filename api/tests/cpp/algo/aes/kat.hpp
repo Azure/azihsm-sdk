@@ -7,10 +7,10 @@
 #include <vector>
 #include "utils/auto_key.hpp"
 
-// Common utilities to support known-answer tests (KATs).
+// Common utilities to support known-answer tests (KATs) for AES.
 
 // Holds hard-coded data for a KAT.
-struct CbcKnownAnswerTestCase
+struct KnownAnswerTestCase
 {
 	uint32_t bits;
 	const uint8_t *key;

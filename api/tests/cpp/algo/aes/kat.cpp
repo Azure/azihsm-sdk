@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-#include "known_answer.hpp"
+#include "kat.hpp"
 #include "utils/rsa_keygen.hpp"
 #include <vector>
 
