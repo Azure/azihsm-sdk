@@ -32,7 +32,34 @@ pub(crate) use tpm::*;
 
 use super::*;
 
-pub(crate) type HsmKeyHandle = u16;
+pub(crate) type HsmKeyHandle = u32;
+
+/// Extracts the key ID from a packed HSM key handle.
+///
+/// The key ID is stored in the low 16 bits of the handle.
+pub(crate) fn get_key_id(handle: HsmKeyHandle) -> u16 {
+    (handle & 0xFFFF) as u16
+}
+
+/// Extracts the optional bulk key ID from a packed HSM key handle.
+///
+/// Returns `None` when the bulk ID field is set to `0xFFFF`.
+pub(crate) fn get_bulk_key_id(handle: HsmKeyHandle) -> Option<u16> {
+    let bulk_id = (handle >> 16) as u16;
+    if bulk_id == 0xFFFF {
+        None
+    } else {
+        Some(bulk_id)
+    }
+}
+
+/// Packs a key ID and optional bulk key ID into an HSM key handle.
+///
+/// When `bulk_key_id` is `None`, the bulk field is set to `0xFFFF`.
+pub(crate) fn to_key_handle(key_id: u16, bulk_key_id: Option<u16>) -> HsmKeyHandle {
+    let bulk_part = (bulk_key_id.unwrap_or(0xFFFF) as u32) << 16;
+    bulk_part | (key_id as u32)
+}
 
 /// Builds a DDI request header with optional session ID and API revision.
 ///
