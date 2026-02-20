@@ -74,9 +74,10 @@ pub trait PotaEndorsementCallback: Send + Sync {
 ///
 /// # Validation rules
 ///
-/// - If POTA endorsement source is `Caller`, `pota_callback` **must** be
+/// - If POTA endorsement source is `Caller`, `pota_callback` must be
 ///   `Some`. Otherwise `init()` returns `HsmError::InvalidArgument`.
-/// - If POTA endorsement source is `Tpm`, `pota_callback` is ignored.
+/// - If POTA endorsement source is `Tpm`, `pota_callback` must be
+///   `None`. Otherwise `init()` returns `HsmError::InvalidArgument`.
 pub struct HsmResiliencyConfig {
     /// Persistent storage for BMK, MUK, and masked app keys.
     pub storage: Box<dyn ResiliencyStorage>,
@@ -127,23 +128,34 @@ impl std::fmt::Debug for ResiliencyState {
 }
 
 impl ResiliencyState {
+    /// Validates the resiliency config against the POTA endorsement.
+    ///
+    /// Returns `InvalidArgument` if:
+    /// - Caller-sourced POTA is missing a callback, or
+    /// - TPM-sourced POTA has a callback.
+    pub(crate) fn validate_config(
+        config: &HsmResiliencyConfig,
+        pota_endorsement: &HsmPotaEndorsement,
+    ) -> HsmResult<()> {
+        let is_caller = pota_endorsement.source() == HsmPotaEndorsementSource::Caller;
+        if is_caller != config.pota_callback.is_some() {
+            Err(HsmError::InvalidArgument)?;
+        }
+        Ok(())
+    }
+
     /// Creates a new resiliency state from the config and init parameters.
     ///
-    /// Validates that the POTA callback is provided when required.
+    /// The caller must have already called [`Self::validate_config`]
+    /// before invoking DDI operations. This constructor trusts that the
+    /// config has been validated.
     pub(crate) fn new(
         config: HsmResiliencyConfig,
         credentials: HsmCredentials,
         obk_config: HsmOwnerBackupKeyConfig,
         pota_endorsement: HsmPotaEndorsement,
-    ) -> HsmResult<Self> {
-        // Validate: Caller-sourced POTA requires a callback
-        if pota_endorsement.source() == HsmPotaEndorsementSource::Caller
-            && config.pota_callback.is_none()
-        {
-            Err(HsmError::InvalidArgument)?;
-        }
-
-        Ok(Self {
+    ) -> Self {
+        Self {
             storage: config.storage,
             lock: config.lock,
             pota_callback: config.pota_callback,
@@ -151,6 +163,157 @@ impl ResiliencyState {
             cached_obk_config: obk_config,
             cached_pota_endorsement: pota_endorsement,
             restore_epoch: 0,
-        })
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::HsmOwnerBackupKeySource;
+
+    // Minimal mock implementations for testing ResiliencyState construction and validation logic.
+    struct MockStorage;
+    impl ResiliencyStorage for MockStorage {
+        fn read(&self, _key: &str) -> HsmResult<Vec<u8>> {
+            Err(HsmError::NotFound)
+        }
+        fn write(&self, _key: &str, _data: &[u8]) -> HsmResult<()> {
+            Ok(())
+        }
+        fn clear(&self, _key: &str) -> HsmResult<()> {
+            Ok(())
+        }
+    }
+
+    struct MockLock;
+    impl ResiliencyLock for MockLock {
+        fn lock(&self) -> HsmResult<()> {
+            Ok(())
+        }
+        fn unlock(&self) -> HsmResult<()> {
+            Ok(())
+        }
+    }
+
+    struct MockPotaCallback;
+    impl PotaEndorsementCallback for MockPotaCallback {
+        fn endorse(&self, _pub_key: &[u8]) -> HsmResult<HsmPotaEndorsementData> {
+            Ok(HsmPotaEndorsementData::new(&[0u8; 96], &[0u8; 120]))
+        }
+    }
+
+    fn mock_config(with_callback: bool) -> HsmResiliencyConfig {
+        HsmResiliencyConfig {
+            storage: Box::new(MockStorage),
+            lock: Box::new(MockLock),
+            pota_callback: if with_callback {
+                Some(Box::new(MockPotaCallback))
+            } else {
+                None
+            },
+        }
+    }
+
+    fn test_creds() -> HsmCredentials {
+        HsmCredentials::new(&[1u8; 16], &[2u8; 16])
+    }
+
+    fn caller_obk() -> HsmOwnerBackupKeyConfig {
+        HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Caller, Some(&[3u8; 32]))
+    }
+
+    fn caller_pota() -> HsmPotaEndorsement {
+        HsmPotaEndorsement::new(
+            HsmPotaEndorsementSource::Caller,
+            Some(HsmPotaEndorsementData::new(&[4u8; 96], &[5u8; 120])),
+        )
+    }
+
+    fn tpm_pota() -> HsmPotaEndorsement {
+        HsmPotaEndorsement::new(HsmPotaEndorsementSource::Tpm, None)
+    }
+
+    #[test]
+    fn resiliency_state_caller_pota_with_callback_succeeds() {
+        let config = mock_config(true);
+        let pota = caller_pota();
+        ResiliencyState::validate_config(&config, &pota)
+            .expect("caller POTA with callback should be valid");
+        let _state = ResiliencyState::new(config, test_creds(), caller_obk(), pota);
+    }
+
+    #[test]
+    fn resiliency_state_caller_pota_without_callback_fails() {
+        let config = mock_config(false);
+        let pota = caller_pota();
+        let err = ResiliencyState::validate_config(&config, &pota)
+            .expect_err("caller POTA without callback should fail");
+        assert_eq!(err, HsmError::InvalidArgument);
+    }
+
+    #[test]
+    fn resiliency_state_tpm_pota_without_callback_succeeds() {
+        let config = mock_config(false);
+        let pota = tpm_pota();
+        ResiliencyState::validate_config(&config, &pota)
+            .expect("TPM POTA without callback should be valid");
+        let _state = ResiliencyState::new(config, test_creds(), caller_obk(), pota);
+    }
+
+    #[test]
+    fn resiliency_state_tpm_pota_with_callback_fails() {
+        // TPM handles POTA endorsement itself; providing a callback is a config error.
+        let config = mock_config(true);
+        let pota = tpm_pota();
+        let err = ResiliencyState::validate_config(&config, &pota)
+            .expect_err("TPM POTA with callback should fail");
+        assert_eq!(err, HsmError::InvalidArgument);
+    }
+
+    #[test]
+    fn resiliency_state_initial_epoch_is_zero() {
+        let state =
+            ResiliencyState::new(mock_config(true), test_creds(), caller_obk(), caller_pota());
+        assert_eq!(state.restore_epoch, 0);
+    }
+
+    #[test]
+    fn resiliency_state_caches_credentials() {
+        let creds = test_creds();
+        let state = ResiliencyState::new(mock_config(true), creds, caller_obk(), caller_pota());
+        assert_eq!(state.cached_credentials, creds);
+    }
+
+    #[test]
+    fn resiliency_state_caches_obk_config() {
+        let obk = caller_obk();
+        let state =
+            ResiliencyState::new(mock_config(true), test_creds(), obk.clone(), caller_pota());
+        assert_eq!(
+            state.cached_obk_config.key_source(),
+            HsmOwnerBackupKeySource::Caller
+        );
+        assert_eq!(state.cached_obk_config.key(), obk.key());
+    }
+
+    #[test]
+    fn resiliency_state_caches_pota_endorsement() {
+        let pota = caller_pota();
+        let state =
+            ResiliencyState::new(mock_config(true), test_creds(), caller_obk(), pota.clone());
+        assert_eq!(
+            state.cached_pota_endorsement.source(),
+            HsmPotaEndorsementSource::Caller
+        );
+        let cached = state
+            .cached_pota_endorsement
+            .endorsement()
+            .expect("cached POTA endorsement should be present");
+        let orig = pota
+            .endorsement()
+            .expect("original POTA endorsement should be present");
+        assert_eq!(cached.signature(), orig.signature());
+        assert_eq!(cached.pub_key(), orig.pub_key());
     }
 }

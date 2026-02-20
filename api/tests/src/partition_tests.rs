@@ -5,7 +5,7 @@ use azihsm_crypto::pem_to_der;
 
 use super::*;
 use crate::utils::partition::*;
-use crate::utils::resiliency::make_resiliency_config;
+use crate::utils::resiliency::*;
 
 /// Builds a valid caller-source OBK config using the test OBK.
 fn make_valid_obk() -> HsmOwnerBackupKeyConfig {
@@ -417,4 +417,211 @@ fn test_init_with_resiliency_caller_pota_null_callback_fails() {
         );
         assert_eq!(result.unwrap_err(), HsmError::InvalidArgument);
     }
+}
+
+#[api_test]
+fn test_double_init_with_resiliency() {
+    let part_mgr = HsmPartitionManager::partition_info_list();
+    assert!(!part_mgr.is_empty(), "No partitions found.");
+    for part_info in part_mgr.iter() {
+        let part = HsmPartitionManager::open_partition(&part_info.path)
+            .expect("Failed to open the partition");
+        part.reset().expect("Partition reset failed");
+
+        let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
+        let use_tpm = std::env::var("AZIHSM_USE_TPM").is_ok();
+
+        // First init with resiliency
+        let pota_data = if !use_tpm {
+            Some(make_valid_pota_parts(&part))
+        } else {
+            None
+        };
+        let (obk_info, pota_endorsement) = if use_tpm {
+            (
+                HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, None),
+                HsmPotaEndorsement::new(HsmPotaEndorsementSource::Tpm, None),
+            )
+        } else {
+            let (ref sig, ref pubkey) = *pota_data.as_ref().unwrap();
+            (
+                make_valid_obk(),
+                HsmPotaEndorsement::new(
+                    HsmPotaEndorsementSource::Caller,
+                    Some(HsmPotaEndorsementData::new(sig, pubkey)),
+                ),
+            )
+        };
+
+        let ctx = ResiliencyTestCtx::new();
+        let resiliency_config = make_resiliency_config_in(ctx.dir());
+        part.init(
+            creds,
+            None,
+            None,
+            obk_info,
+            pota_endorsement,
+            Some(resiliency_config),
+        )
+        .expect("First init with resiliency failed");
+
+        // Reset and re-init (replaces resiliency state — must not deadlock)
+        part.reset().expect("Partition reset failed");
+
+        let pota_data2 = if !use_tpm {
+            Some(make_valid_pota_parts(&part))
+        } else {
+            None
+        };
+        let (obk_info2, pota_endorsement2) = if use_tpm {
+            (
+                HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, None),
+                HsmPotaEndorsement::new(HsmPotaEndorsementSource::Tpm, None),
+            )
+        } else {
+            let (ref sig, ref pubkey) = *pota_data2.as_ref().unwrap();
+            (
+                make_valid_obk(),
+                HsmPotaEndorsement::new(
+                    HsmPotaEndorsementSource::Caller,
+                    Some(HsmPotaEndorsementData::new(sig, pubkey)),
+                ),
+            )
+        };
+
+        let resiliency_config2 = make_resiliency_config_in(ctx.dir());
+        part.init(
+            creds,
+            None,
+            None,
+            obk_info2,
+            pota_endorsement2,
+            Some(resiliency_config2),
+        )
+        .expect("Second init with resiliency failed (should replace state without deadlock)");
+    }
+}
+
+#[api_test]
+fn test_init_with_resiliency_invalid_pota_source_fails() {
+    let part_mgr = HsmPartitionManager::partition_info_list();
+    assert!(!part_mgr.is_empty(), "No partitions found.");
+    for part_info in part_mgr.iter() {
+        let part = HsmPartitionManager::open_partition(&part_info.path)
+            .expect("Failed to open the partition");
+        part.reset().expect("Partition reset failed");
+
+        let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
+        let obk_info = make_valid_obk();
+        let pota_data = HsmPotaEndorsementData::new(&[0u8; 96], &[0u8; 97]);
+        let pota = HsmPotaEndorsement::new(HsmPotaEndorsementSource(99), Some(pota_data));
+
+        let (resiliency_config, _ctx) = make_resiliency_config();
+
+        let result = part.init(creds, None, None, obk_info, pota, Some(resiliency_config));
+        assert_eq!(result.unwrap_err(), HsmError::InvalidArgument);
+    }
+}
+
+#[api_test]
+fn test_init_with_resiliency_tpm_pota_with_callback_fails() {
+    let part_mgr = HsmPartitionManager::partition_info_list();
+    assert!(!part_mgr.is_empty(), "No partitions found.");
+    for part_info in part_mgr.iter() {
+        let part = HsmPartitionManager::open_partition(&part_info.path)
+            .expect("Failed to open the partition");
+        part.reset().expect("Partition reset failed");
+
+        let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
+        let obk_info = make_valid_obk();
+        let pota_endorsement = HsmPotaEndorsement::new(HsmPotaEndorsementSource::Tpm, None);
+
+        // TPM source + callback provided → should fail with InvalidArgument.
+        let (resiliency_config, _ctx) = make_resiliency_config();
+        // resiliency_config already has pota_callback = Some(...) from make_resiliency_config
+
+        let result = part.init(
+            creds,
+            None,
+            None,
+            obk_info,
+            pota_endorsement,
+            Some(resiliency_config),
+        );
+        assert_eq!(result.unwrap_err(), HsmError::InvalidArgument);
+    }
+}
+
+#[test]
+fn test_obk_config_key_returns_none_for_tpm() {
+    let config = HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, None);
+    assert!(config.key().is_none());
+    assert_eq!(config.key_source(), HsmOwnerBackupKeySource::Tpm);
+}
+
+#[test]
+fn test_obk_config_key_returns_data_for_caller() {
+    let data = [0xABu8; 48];
+    let config = HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Caller, Some(&data));
+    assert_eq!(config.key(), Some(data.as_slice()));
+    assert_eq!(config.key_source(), HsmOwnerBackupKeySource::Caller);
+}
+
+#[test]
+fn test_obk_config_clone_is_independent() {
+    let original = HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Caller, Some(&[1u8; 32]));
+    let cloned = original.clone();
+
+    // Both have the same values
+    assert_eq!(cloned.key_source(), original.key_source());
+    assert_eq!(cloned.key(), original.key());
+
+    // Dropping the original doesn't affect the clone
+    drop(original);
+    assert_eq!(cloned.key(), Some([1u8; 32].as_slice()));
+}
+
+#[test]
+fn test_pota_endorsement_data_clone_is_independent() {
+    let sig = [0x10u8; 96];
+    let pk = [0x20u8; 120];
+    let original = HsmPotaEndorsementData::new(&sig, &pk);
+    let cloned = original.clone();
+
+    assert_eq!(cloned.signature(), original.signature());
+    assert_eq!(cloned.pub_key(), original.pub_key());
+
+    // Dropping the original doesn't affect the clone
+    drop(original);
+    assert_eq!(cloned.signature(), &sig);
+    assert_eq!(cloned.pub_key(), &pk);
+}
+
+#[test]
+fn test_pota_endorsement_clone_is_independent() {
+    let sig = [0x10u8; 96];
+    let pk = [0x20u8; 120];
+    let original = HsmPotaEndorsement::new(
+        HsmPotaEndorsementSource::Caller,
+        Some(HsmPotaEndorsementData::new(&sig, &pk)),
+    );
+    let cloned = original.clone();
+
+    assert_eq!(cloned.source(), original.source());
+    assert!(cloned.endorsement().is_some());
+    let cloned_data = cloned.endorsement().unwrap();
+    let orig_data = original.endorsement().unwrap();
+    assert_eq!(cloned_data.signature(), orig_data.signature());
+    assert_eq!(cloned_data.pub_key(), orig_data.pub_key());
+
+    // Dropping the original doesn't affect the clone
+    drop(original);
+    assert_eq!(cloned.source(), HsmPotaEndorsementSource::Caller);
+    assert_eq!(cloned.endorsement().unwrap().signature(), &sig);
+}
+
+#[test]
+fn test_not_found_error_variant() {
+    let err = HsmError::NotFound;
+    assert_eq!(err as i32, -20);
 }

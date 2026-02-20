@@ -33,12 +33,17 @@ use std::io::Read;
 use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
 
 use azihsm_api::*;
 use fs2::FileExt;
 
 /// Well-known directory name for resiliency test data.
 const RESILIENCY_DIR_NAME: &str = "azihsm_resiliency_test";
+
+/// Monotonic counter for unique directory names across all threads.
+static DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// File-backed [`ResiliencyStorage`]: one file per key under `dir`.
 struct FileStorage {
@@ -118,12 +123,18 @@ pub(crate) struct ResiliencyTestCtx {
 }
 
 impl ResiliencyTestCtx {
-    /// Creates (or resets) the well-known resiliency test directory.
+    /// Creates a unique resiliency test directory.
     ///
-    /// Any stale data from a previous crashed run is wiped and the
-    /// directory is recreated empty.
+    /// Each invocation gets its own subdirectory under the system temp dir,
+    /// so parallel tests never interfere with each other. The directory is
+    /// removed when this context is dropped.
     pub(crate) fn new() -> Self {
-        let temp_dir = std::env::temp_dir().join(RESILIENCY_DIR_NAME);
+        let id = DIR_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let temp_dir = std::env::temp_dir().join(RESILIENCY_DIR_NAME).join(format!(
+            "{}_{}",
+            std::process::id(),
+            id
+        ));
         // Wipe any stale data, then recreate empty.
         let _ = fs::remove_dir_all(&temp_dir);
         fs::create_dir_all(&temp_dir).expect("Failed to create resiliency test dir");
@@ -368,5 +379,93 @@ mod tests {
         let data = storage.read("counter").unwrap();
         let final_value: u32 = String::from_utf8(data).unwrap().parse().unwrap();
         assert_eq!(final_value, num_threads * increments_per_thread);
+    }
+
+    #[test]
+    fn storage_large_data() {
+        let dir = TestDir::new();
+        let storage = FileStorage {
+            dir: dir.path().to_path_buf(),
+        };
+
+        let large = vec![0xABu8; 64 * 1024]; // 64 KiB
+        storage.write("large", &large).unwrap();
+        let data = storage.read("large").unwrap();
+        assert_eq!(data.len(), large.len());
+        assert_eq!(data, large);
+    }
+
+    #[test]
+    fn storage_multiple_keys_independent() {
+        let dir = TestDir::new();
+        let storage = FileStorage {
+            dir: dir.path().to_path_buf(),
+        };
+
+        storage.write("key_a", b"alpha").unwrap();
+        storage.write("key_b", b"bravo").unwrap();
+        storage.write("key_c", b"charlie").unwrap();
+
+        assert_eq!(storage.read("key_a").unwrap(), b"alpha");
+        assert_eq!(storage.read("key_b").unwrap(), b"bravo");
+        assert_eq!(storage.read("key_c").unwrap(), b"charlie");
+
+        // Clearing one key doesn't affect others
+        storage.clear("key_b").unwrap();
+        assert_eq!(storage.read("key_a").unwrap(), b"alpha");
+        assert_eq!(storage.read("key_b").unwrap_err(), HsmError::NotFound);
+        assert_eq!(storage.read("key_c").unwrap(), b"charlie");
+    }
+
+    #[test]
+    fn pota_callback_ignores_input_pub_key() {
+        let callback = DummyPotaCallback;
+
+        // Call with different input keys — output should be the same
+        let result1 = callback.endorse(&[0xAAu8; 64]).unwrap();
+        let result2 = callback.endorse(&[0xBBu8; 32]).unwrap();
+        let result3 = callback.endorse(&[]).unwrap();
+
+        assert_eq!(result1.signature(), result2.signature());
+        assert_eq!(result2.signature(), result3.signature());
+        assert_eq!(result1.pub_key(), result2.pub_key());
+        assert_eq!(result2.pub_key(), result3.pub_key());
+    }
+
+    #[test]
+    fn make_resiliency_config_convenience_creates_valid_config() {
+        let (config, _ctx) = make_resiliency_config();
+
+        // Storage should work
+        config.storage.write("conv_test", b"data").unwrap();
+        let data = config.storage.read("conv_test").unwrap();
+        assert_eq!(data, b"data");
+
+        // Lock should work
+        config.lock.lock().unwrap();
+        config.lock.unlock().unwrap();
+
+        // POTA callback should be present
+        assert!(config.pota_callback.is_some());
+    }
+
+    #[test]
+    fn resiliency_test_ctx_cleanup_on_drop() {
+        let dir_path;
+        {
+            let ctx = ResiliencyTestCtx::new();
+            dir_path = ctx.dir().to_path_buf();
+
+            // Directory exists while ctx is alive
+            assert!(dir_path.exists());
+
+            // Write a file to verify it gets cleaned up
+            let storage = FileStorage {
+                dir: dir_path.clone(),
+            };
+            storage.write("cleanup_test", b"data").unwrap();
+        }
+        // After ctx drops, directory should be removed
+        assert!(!dir_path.exists());
     }
 }

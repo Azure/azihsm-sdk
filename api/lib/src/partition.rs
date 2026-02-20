@@ -386,10 +386,10 @@ impl HsmPartition {
         pota_endorsement: HsmPotaEndorsement,
         resiliency_config: Option<HsmResiliencyConfig>,
     ) -> HsmResult<()> {
-        // Clone configs before moving them into ddi::init_part, so we can
-        // reuse them for resiliency state setup if needed.
-        let obk_config_clone = obk_config.clone();
-        let pota_endorsement_clone = pota_endorsement.clone();
+        // Validate resiliency config
+        if let Some(ref config) = resiliency_config {
+            ResiliencyState::validate_config(config, &pota_endorsement)?;
+        }
 
         let (bmk, mobk) = self.with_dev(|dev| {
             let (bmk, mobk) = ddi::init_part(
@@ -398,17 +398,17 @@ impl HsmPartition {
                 creds,
                 bmk,
                 muk,
-                obk_config,
-                pota_endorsement,
+                &obk_config,
+                &pota_endorsement,
             )?;
             Ok((bmk, mobk))
         })?;
         self.inner().write().set_masked_keys(bmk, mobk);
 
-        // Set up resiliency state if config was provided
+        // Set up resiliency state — config already validated above.
         if let Some(config) = resiliency_config {
             let resiliency_state =
-                ResiliencyState::new(config, creds, obk_config_clone, pota_endorsement_clone)?;
+                ResiliencyState::new(config, creds, obk_config, pota_endorsement);
             self.inner().write().set_resiliency_state(resiliency_state);
         }
         Ok(())
