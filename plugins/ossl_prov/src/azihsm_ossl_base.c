@@ -139,7 +139,7 @@ static const OSSL_ALGORITHM azihsm_ossl_encoders[] = {
     },
     {
         "RSA",
-        "provider=azihsm,output=der,structure=type-specific",
+        "provider=azihsm,output=der,structure=SubjectPublicKeyInfo",
         azihsm_ossl_rsa_der_spki_encoder_functions,
         NULL,
     },
@@ -163,7 +163,7 @@ static const OSSL_ALGORITHM azihsm_ossl_encoders[] = {
     },
     {
         "RSA-PSS",
-        "provider=azihsm,output=der,structure=type-specific",
+        "provider=azihsm,output=der,structure=SubjectPublicKeyInfo",
         azihsm_ossl_rsa_der_spki_encoder_functions,
         NULL,
     },
