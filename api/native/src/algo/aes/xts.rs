@@ -173,7 +173,6 @@ pub(crate) struct AesXtsEncryptContext {
     ctx: HsmAesXtsEncryptContext,
     /// Raw pointer to caller's algorithm parameters for in-place tweak updates
     params: *mut AzihsmAlgoAesXtsParams,
-    is_finished: bool,
 }
 impl AesXtsEncryptContext {
     /// Create a new encryption context.
@@ -190,7 +189,6 @@ impl AesXtsEncryptContext {
         Self {
             ctx,
             params: params as *mut AzihsmAlgoAesXtsParams,
-            is_finished: false,
         }
     }
 
@@ -208,9 +206,6 @@ impl AesXtsEncryptContext {
     ///
     /// Number of bytes written (or required if `output` is `None`)
     fn update(&mut self, input: &[u8], output: Option<&mut [u8]>) -> Result<usize, AzihsmStatus> {
-        if self.is_finished {
-            return Err(AzihsmStatus::InvalidArgument);
-        }
         let bytes_written = self.ctx.update(input, output)?;
         self.update_tweak()?;
         Ok(bytes_written)
@@ -229,16 +224,8 @@ impl AesXtsEncryptContext {
     ///
     /// Number of bytes written (or required if `output` is `None`)
     fn finish(&mut self, output: Option<&mut [u8]>) -> Result<usize, AzihsmStatus> {
-        if self.is_finished {
-            return Err(AzihsmStatus::InvalidArgument);
-        }
-        // finish(None) is a sizing check; only finish(Some(..)) should be the last call.
-        let last_call = output.is_some();
         let bytes_written = self.ctx.finish(output)?;
         self.update_tweak()?;
-        if last_call {
-            self.is_finished = true;
-        }
         Ok(bytes_written)
     }
 
@@ -321,7 +308,6 @@ pub(crate) struct AesXtsDecryptContext {
     ctx: HsmAesXtsDecryptContext,
     /// Raw pointer to caller's algorithm parameters for in-place tweak updates
     params: *mut AzihsmAlgoAesXtsParams,
-    is_finished: bool,
 }
 impl AesXtsDecryptContext {
     /// Create a new decryption context.
@@ -338,7 +324,6 @@ impl AesXtsDecryptContext {
         Self {
             ctx,
             params: params as *mut AzihsmAlgoAesXtsParams,
-            is_finished: false,
         }
     }
     /// Update the decryption context with additional ciphertext data.
@@ -355,9 +340,6 @@ impl AesXtsDecryptContext {
     ///
     /// Number of bytes written (or required if `output` is `None`)
     fn update(&mut self, input: &[u8], output: Option<&mut [u8]>) -> Result<usize, AzihsmStatus> {
-        if self.is_finished {
-            return Err(AzihsmStatus::InvalidArgument);
-        }
         let bytes_written = self.ctx.update(input, output)?;
         self.update_tweak()?;
         Ok(bytes_written)
@@ -375,16 +357,8 @@ impl AesXtsDecryptContext {
     ///
     /// Number of bytes written (or required if `output` is `None`)
     fn finish(&mut self, output: Option<&mut [u8]>) -> Result<usize, AzihsmStatus> {
-        if self.is_finished {
-            return Err(AzihsmStatus::InvalidArgument);
-        }
-        // finish(None) is a sizing check; only finish(Some(..)) should be the last call.
-        let last_call = output.is_some();
         let bytes_written = self.ctx.finish(output)?;
         self.update_tweak()?;
-        if last_call {
-            self.is_finished = true;
-        }
         Ok(bytes_written)
     }
     /// Update the sector number (tweak) in the caller's algorithm parameters.
