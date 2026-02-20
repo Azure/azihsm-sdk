@@ -22,7 +22,7 @@ pub struct AzihsmOwnerBackupKeyConfig {
 }
 
 /// Convert AzihsmOwnerBackupKeyConfig to HsmOwnerBackupKeyConfig
-impl<'a> TryFrom<&'a AzihsmOwnerBackupKeyConfig> for api::HsmOwnerBackupKeyConfig<'a> {
+impl<'a> TryFrom<&'a AzihsmOwnerBackupKeyConfig> for api::HsmOwnerBackupKeyConfig {
     type Error = AzihsmStatus;
 
     fn try_from(config: &'a AzihsmOwnerBackupKeyConfig) -> Result<Self, Self::Error> {
@@ -72,7 +72,7 @@ pub struct AzihsmPotaEndorsement {
 ///
 /// The returned HsmPotaEndorsement borrows from the original C buffers,
 /// which must remain valid for the lifetime of the returned value.
-impl<'a> TryFrom<&'a AzihsmPotaEndorsement> for api::HsmPotaEndorsement<'a> {
+impl<'a> TryFrom<&'a AzihsmPotaEndorsement> for api::HsmPotaEndorsement {
     type Error = AzihsmStatus;
 
     fn try_from(config: &'a AzihsmPotaEndorsement) -> Result<Self, Self::Error> {
@@ -107,6 +107,23 @@ impl<'a> TryFrom<&'a AzihsmPotaEndorsement> for api::HsmPotaEndorsement<'a> {
             _ => Err(AzihsmStatus::InvalidArgument),
         }
     }
+}
+
+/// Convert a nullable C resiliency config pointer to an optional Rust config.
+///
+/// Returns `Ok(None)` when `ptr` is null, `Ok(Some(...))` when valid,
+/// or `Err(...)` if the config is malformed.
+#[allow(unsafe_code)]
+pub(crate) fn resiliency_config_from_ptr(
+    ptr: *const AzihsmResiliencyConfig,
+) -> Result<Option<api::HsmResiliencyConfig>, AzihsmStatus> {
+    if ptr.is_null() {
+        return Ok(None);
+    }
+
+    let config = deref_ptr(ptr)?;
+
+    Ok(Some(api::HsmResiliencyConfig::try_from(config)?))
 }
 
 /// Get the list of HSM partitions
@@ -306,6 +323,7 @@ pub unsafe extern "C" fn azihsm_part_init(
     muk: *const AzihsmBuffer,
     backup_key_config: *const AzihsmOwnerBackupKeyConfig,
     pota_endorsement: *const AzihsmPotaEndorsement,
+    resiliency_config: *const AzihsmResiliencyConfig,
 ) -> AzihsmStatus {
     abi_boundary(|| {
         let creds = deref_ptr(creds)?;
@@ -325,12 +343,16 @@ pub unsafe extern "C" fn azihsm_part_init(
         // Convert to HsmPotaEndorsement
         let pota_endorsement = api::HsmPotaEndorsement::try_from(pota_endorsement)?;
 
+        // Convert resiliency config
+        let resiliency_config = resiliency_config_from_ptr(resiliency_config)?;
+
         partition.init(
             creds.into(),
             bmk_slice,
             muk_slice,
             obk_info,
             pota_endorsement,
+            resiliency_config,
         )?;
 
         Ok(())
