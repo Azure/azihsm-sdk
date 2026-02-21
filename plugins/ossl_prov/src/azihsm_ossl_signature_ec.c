@@ -252,6 +252,9 @@ static void azihsm_ossl_ecdsa_freectx(void *sctx)
     if (ctx == NULL)
         return;
 
+    /* Free streaming HSM context if still active */
+    azihsm_ossl_release_hsm_ctx(&ctx->sign_ctx);
+
     /* Note: Don't free key - caller owns it */
     OPENSSL_free(ctx);
 }
@@ -274,8 +277,25 @@ static void *azihsm_ossl_ecdsa_dupctx(void *sctx)
         return NULL;
     }
 
-    /* Copy all fields INCLUDING sign_ctx handle */
+    /*
+     * Copy all fields, then transfer HSM handle ownership to the duplicate.
+     *
+     * OpenSSL 3.x's EVP_DigestSignFinal / EVP_DigestVerifyFinal duplicate
+     * the PKEY_CTX (calling this dupctx) and run the actual _finish on the
+     * duplicate — preserving the original for potential reuse.  The HSM
+     * streaming handle is a non-duplicatable opaque ID in a global handle
+     * table; it cannot be shared or reference-counted.
+     *
+     * By transferring ownership (moving the handle to the duplicate and
+     * zeroing the source), we ensure:
+     *   - The duplicate can complete the streaming operation (_finish + free).
+     *   - The source remains valid: freectx sees sign_ctx == 0 (no-op),
+     *     and any subsequent _init creates a fresh HSM handle.
+     *   - The 1:1 ownership invariant is preserved — exactly one context
+     *     owns the handle at any time.
+     */
     *dst_ctx = *src_ctx;
+    src_ctx->sign_ctx = 0;
 
     return dst_ctx;
 }
@@ -533,16 +553,16 @@ static int azihsm_ossl_ecdsa_digest_sign_init(
     struct azihsm_algo algo = { 0 };
     azihsm_status status;
 
-    if (provkey == NULL)
-    {
-        /* Silently succeed - this is a cleanup/reset operation, not an active signing operation */
-        return OSSL_SUCCESS;
-    }
-
     if (ctx == NULL)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_PASSED_NULL_PARAMETER);
         return OSSL_FAILURE;
+    }
+
+    if (provkey == NULL)
+    {
+        /* OpenSSL reinit with existing key — keep streaming context intact */
+        return OSSL_SUCCESS;
     }
 
     /* Extract key from provider key object */
@@ -596,6 +616,9 @@ static int azihsm_ossl_ecdsa_digest_sign_init(
 
     /* Create algorithm structure */
     algo.id = algo_id;
+
+    /* Free previous HSM context if reinitializing */
+    azihsm_ossl_release_hsm_ctx(&ctx->sign_ctx);
 
     status = azihsm_crypt_sign_init(&algo, ctx->key->key.priv, &ctx->sign_ctx);
 
@@ -678,7 +701,7 @@ static int azihsm_ossl_ecdsa_digest_sign_final(
     if (status != AZIHSM_STATUS_BUFFER_TOO_SMALL || sig_buf.len == 0)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
-        ctx->sign_ctx = 0;
+        azihsm_ossl_release_hsm_ctx(&ctx->sign_ctx);
         return OSSL_FAILURE;
     }
 
@@ -688,7 +711,7 @@ static int azihsm_ossl_ecdsa_digest_sign_final(
         if (sigsize < der_max)
         {
             ERR_raise(ERR_LIB_PROV, ERR_R_PASSED_INVALID_ARGUMENT);
-            ctx->sign_ctx = 0;
+            azihsm_ossl_release_hsm_ctx(&ctx->sign_ctx);
             return OSSL_FAILURE;
         }
     }
@@ -703,7 +726,7 @@ static int azihsm_ossl_ecdsa_digest_sign_final(
         if (raw_buf == NULL)
         {
             ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
-            ctx->sign_ctx = 0;
+            azihsm_ossl_release_hsm_ctx(&ctx->sign_ctx);
             return OSSL_FAILURE;
         }
 
@@ -711,7 +734,7 @@ static int azihsm_ossl_ecdsa_digest_sign_final(
         sig_buf.len = raw_size;
 
         status = azihsm_crypt_sign_finish(ctx->sign_ctx, &sig_buf);
-        ctx->sign_ctx = 0; /* Context consumed */
+        azihsm_ossl_release_hsm_ctx(&ctx->sign_ctx);
 
         if (status != AZIHSM_STATUS_SUCCESS)
         {
@@ -748,10 +771,16 @@ static int azihsm_ossl_ecdsa_digest_verify_init(
     struct azihsm_algo algo = { 0 };
     azihsm_status status;
 
-    if (ctx == NULL || provkey == NULL)
+    if (ctx == NULL)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_PASSED_NULL_PARAMETER);
         return OSSL_FAILURE;
+    }
+
+    if (provkey == NULL)
+    {
+        /* OpenSSL reinit with existing key — keep streaming context intact */
+        return OSSL_SUCCESS;
     }
 
     /* Extract key from provider key object */
@@ -793,6 +822,9 @@ static int azihsm_ossl_ecdsa_digest_verify_init(
         ERR_raise(ERR_LIB_PROV, ERR_R_OPERATION_FAIL);
         return OSSL_FAILURE;
     }
+
+    /* Free previous HSM context if reinitializing */
+    azihsm_ossl_release_hsm_ctx(&ctx->sign_ctx);
 
     /* Initialize streaming verify context */
     status = azihsm_crypt_verify_init(&algo, ctx->key->key.pub, &ctx->sign_ctx);
@@ -877,7 +909,7 @@ static int azihsm_ossl_ecdsa_digest_verify_final(
     if (coord_size == 0)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
-        ctx->sign_ctx = 0;
+        azihsm_ossl_release_hsm_ctx(&ctx->sign_ctx);
         return OSSL_FAILURE;
     }
 
@@ -885,7 +917,7 @@ static int azihsm_ossl_ecdsa_digest_verify_final(
     if (ecdsa_der_to_raw(sig, siglen, coord_size, &raw_sig, &raw_sig_len) != OSSL_SUCCESS)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
-        ctx->sign_ctx = 0;
+        azihsm_ossl_release_hsm_ctx(&ctx->sign_ctx);
         return OSSL_FAILURE;
     }
 
@@ -895,7 +927,7 @@ static int azihsm_ossl_ecdsa_digest_verify_final(
 
     /* Finalize streaming verify */
     status = azihsm_crypt_verify_finish(ctx->sign_ctx, &sig_buf);
-    ctx->sign_ctx = 0;
+    azihsm_ossl_release_hsm_ctx(&ctx->sign_ctx);
 
     OPENSSL_free(raw_sig);
 

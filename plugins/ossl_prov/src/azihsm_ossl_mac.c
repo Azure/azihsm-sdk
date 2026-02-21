@@ -204,11 +204,8 @@ static void azihsm_ossl_mac_freectx(void *mctx)
         return;
     }
 
-    /* Free streaming context handle if initialized */
-    if (ctx->ctx_initialized && ctx->ctx_handle != 0)
-    {
-        azihsm_free_ctx_handle(ctx->ctx_handle);
-    }
+    /* Free streaming HSM context handle if active */
+    azihsm_ossl_release_hsm_ctx(&ctx->ctx_handle);
 
     /* Delete key handle if loaded */
     if (ctx->key_loaded && ctx->key_handle != 0)
@@ -281,13 +278,9 @@ static int azihsm_ossl_mac_init(
         }
     }
 
-    /* Clean up previous context if reinitializing */
-    if (ctx->ctx_initialized && ctx->ctx_handle != 0)
-    {
-        azihsm_free_ctx_handle(ctx->ctx_handle);
-        ctx->ctx_handle = 0;
-        ctx->ctx_initialized = false;
-    }
+    /* Clean up previous HSM context if reinitializing */
+    azihsm_ossl_release_hsm_ctx(&ctx->ctx_handle);
+    ctx->ctx_initialized = false;
 
     /* Load key from file if not already loaded */
     if (!load_and_unmask_key(ctx))
@@ -392,8 +385,8 @@ static int azihsm_ossl_mac_final(void *mctx, unsigned char *out, size_t *outl, s
 
     status = azihsm_crypt_sign_finish(ctx->ctx_handle, &mac_buf);
 
-    /* Context is consumed after final */
-    ctx->ctx_handle = 0;
+    /* Release HSM context after finish */
+    azihsm_ossl_release_hsm_ctx(&ctx->ctx_handle);
     ctx->ctx_initialized = false;
 
     if (status != AZIHSM_STATUS_SUCCESS)
