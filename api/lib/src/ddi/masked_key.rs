@@ -312,14 +312,11 @@ impl HsmMaskedKey {
 
         if metadata.attrs.contains(HsmMaskedKeyAttributes::UNWRAP) {
             match class {
-                HsmKeyClass::Private => {
+                HsmKeyClass::Private | HsmKeyClass::Secret => {
                     flags |= HsmKeyFlags::UNWRAP;
                 }
                 HsmKeyClass::Public => {
                     flags |= HsmKeyFlags::WRAP;
-                }
-                HsmKeyClass::Secret => {
-                    flags |= HsmKeyFlags::UNWRAP;
                 }
             }
         }
