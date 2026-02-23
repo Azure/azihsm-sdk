@@ -129,7 +129,7 @@ fn render_markdown_table(line_summaries: BTreeMap<String, LineSummary>) -> Strin
     let mut total_lines_covered = 0;
     let mut total_lines_count = 0;
 
-    lines.push("# Test Results\n".to_string());
+    lines.push("# Code Coverage\n".to_string());
     lines.push("| Filename | Line Coverage |".to_string());
     lines.push("| --- | --- |".to_string());
 
