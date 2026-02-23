@@ -1,8 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-#include <errno.h>
-#include <fcntl.h>
 #include <openssl/core_dispatch.h>
 #include <openssl/core_names.h>
 #include <openssl/crypto.h>
@@ -11,11 +9,10 @@
 #include <openssl/params.h>
 #include <openssl/proverr.h>
 #include <string.h>
-#include <sys/stat.h>
-#include <unistd.h>
 
 #include "azihsm_ossl_base.h"
 #include "azihsm_ossl_helpers.h"
+#include "azihsm_ossl_masked_key.h"
 #include "azihsm_ossl_pkey_param.h"
 
 /*
@@ -231,109 +228,6 @@ static int load_and_unmask_ikm(AZIHSM_HKDF_CTX *ctx)
 
     ctx->ikm_loaded = true;
     return OSSL_SUCCESS;
-}
-
-/*
- * Helper: Extract masked key bytes from a derived key handle.
- *
- * Uses the two-call pattern to query the required size and then retrieve
- * the masked key data. On success, *out_buf and *out_len are set and the
- * caller must OPENSSL_cleanse + OPENSSL_free the buffer.
- */
-static int extract_masked_key(azihsm_handle derived_handle, uint8_t **out_buf, uint32_t *out_len)
-{
-    uint8_t *buffer = NULL;
-    azihsm_status status;
-
-    struct azihsm_key_prop masked_prop = {
-        .id = AZIHSM_KEY_PROP_ID_MASKED_KEY,
-        .val = NULL,
-        .len = 0,
-    };
-
-    /* First call to get required size (expect BUFFER_TOO_SMALL, which sets len) */
-    status = azihsm_key_get_prop(derived_handle, &masked_prop);
-    if (status != AZIHSM_STATUS_BUFFER_TOO_SMALL)
-    {
-        ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
-        return OSSL_FAILURE;
-    }
-
-    if (masked_prop.len == 0)
-    {
-        ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
-        return OSSL_FAILURE;
-    }
-
-    buffer = OPENSSL_malloc(masked_prop.len);
-    if (buffer == NULL)
-    {
-        ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
-        return OSSL_FAILURE;
-    }
-
-    /* Second call to get the actual masked key data */
-    masked_prop.val = buffer;
-    status = azihsm_key_get_prop(derived_handle, &masked_prop);
-    if (status != AZIHSM_STATUS_SUCCESS || masked_prop.len == 0)
-    {
-        ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
-        OPENSSL_cleanse(buffer, masked_prop.len);
-        OPENSSL_free(buffer);
-        return OSSL_FAILURE;
-    }
-
-    *out_buf = buffer;
-    *out_len = masked_prop.len;
-    return OSSL_SUCCESS;
-}
-
-/*
- * Helper: Write a buffer to a file with proper error handling.
- *
- * Loops write() to handle short writes and EINTR. On failure, removes
- * the partially written file.
- */
-static int write_masked_key_to_file(const uint8_t *buffer, uint32_t len, const char *output_file)
-{
-    int fd;
-    int ret = OSSL_FAILURE;
-
-    fd = open(output_file, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW, S_IRUSR | S_IWUSR);
-    if (fd < 0)
-    {
-        ERR_raise(ERR_LIB_PROV, ERR_R_SYS_LIB);
-        return OSSL_FAILURE;
-    }
-
-    /* Write all bytes, retrying on short writes and EINTR */
-    uint32_t total_written = 0;
-    while (total_written < len)
-    {
-        ssize_t written = write(fd, buffer + total_written, len - total_written);
-        if (written < 0)
-        {
-            if (errno == EINTR)
-            {
-                continue;
-            }
-            ERR_raise(ERR_LIB_PROV, ERR_R_SYS_LIB);
-            goto cleanup;
-        }
-        total_written += (uint32_t)written;
-    }
-
-    ret = OSSL_SUCCESS;
-
-cleanup:
-    close(fd);
-
-    if (ret != OSSL_SUCCESS)
-    {
-        unlink(output_file);
-    }
-
-    return ret;
 }
 
 /* Context Management Functions */
@@ -937,7 +831,7 @@ static int azihsm_ossl_hkdf_derive(
     }
 
     /* Step 5: Extract masked key bytes from HSM */
-    if (!extract_masked_key(derived_handle, &masked_buf, &masked_len))
+    if (!azihsm_ossl_extract_masked_key(derived_handle, &masked_buf, &masked_len))
     {
         azihsm_key_delete(derived_handle);
         return OSSL_FAILURE;
@@ -946,7 +840,7 @@ static int azihsm_ossl_hkdf_derive(
     /* Step 6: Output masked key to file or buffer */
     if (ctx->output_file[0] != '\0')
     {
-        ret = write_masked_key_to_file(masked_buf, masked_len, ctx->output_file);
+        ret = azihsm_ossl_write_masked_key_to_file(masked_buf, masked_len, ctx->output_file);
     }
     else
     {

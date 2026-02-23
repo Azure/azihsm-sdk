@@ -1,12 +1,15 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#include <fcntl.h>
 #include <openssl/core_dispatch.h>
 #include <openssl/core_names.h>
 #include <openssl/err.h>
 #include <openssl/params.h>
 #include <openssl/proverr.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include "azihsm_ossl_base.h"
 #include "azihsm_ossl_helpers.h"
@@ -472,10 +475,27 @@ static AZIHSM_RSA_KEY *azihsm_ossl_keymgmt_gen(
                 return NULL;
             }
 
-            /* Write masked key to file */
-            FILE *f = fopen(genctx->masked_key_file, "wb");
+            /* Write masked key to file with restricted permissions (owner-only) */
+            int fd = open(
+                genctx->masked_key_file,
+                O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW,
+                S_IRUSR | S_IWUSR
+            );
+            if (fd < 0)
+            {
+                azihsm_key_delete(private);
+                azihsm_key_delete(public);
+                OPENSSL_cleanse(masked_key_buffer, masked_key_buffer_size);
+                OPENSSL_free(masked_key_buffer);
+                OPENSSL_free(rsa_key);
+                ERR_raise(ERR_LIB_PROV, ERR_R_OPERATION_FAIL);
+                return NULL;
+            }
+
+            FILE *f = fdopen(fd, "wb");
             if (f == NULL)
             {
+                close(fd);
                 azihsm_key_delete(private);
                 azihsm_key_delete(public);
                 OPENSSL_cleanse(masked_key_buffer, masked_key_buffer_size);
@@ -515,6 +535,17 @@ static AZIHSM_RSA_KEY *azihsm_ossl_keymgmt_gen(
     }
 
     return rsa_key;
+}
+
+static AZIHSM_RSA_KEY *azihsm_ossl_keymgmt_new(ossl_unused void *provctx)
+{
+    AZIHSM_RSA_KEY *key = OPENSSL_zalloc(sizeof(AZIHSM_RSA_KEY));
+    if (key == NULL)
+    {
+        ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
+        return NULL;
+    }
+    return key;
 }
 
 static void azihsm_ossl_keymgmt_free(AZIHSM_RSA_KEY *rsa_key)
@@ -735,7 +766,7 @@ static int azihsm_ossl_keymgmt_has(const AZIHSM_RSA_KEY *rsa_key, int selection)
 static int azihsm_ossl_keymgmt_match(
     const AZIHSM_RSA_KEY *rsa_key1,
     const AZIHSM_RSA_KEY *rsa_key2,
-    ossl_unused int selection
+    int selection
 )
 {
     if (rsa_key1 == NULL || rsa_key2 == NULL)
@@ -743,14 +774,20 @@ static int azihsm_ossl_keymgmt_match(
         return OSSL_FAILURE;
     }
 
-    if (rsa_key1->key.pub != rsa_key2->key.pub)
+    if ((selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY) != 0)
     {
-        return OSSL_FAILURE;
+        if (rsa_key1->key.pub != rsa_key2->key.pub)
+        {
+            return OSSL_FAILURE;
+        }
     }
 
-    if (rsa_key1->key.priv != rsa_key2->key.priv)
+    if ((selection & OSSL_KEYMGMT_SELECT_PRIVATE_KEY) != 0)
     {
-        return OSSL_FAILURE;
+        if (rsa_key1->key.priv != rsa_key2->key.priv)
+        {
+            return OSSL_FAILURE;
+        }
     }
 
     return OSSL_SUCCESS;
@@ -781,14 +818,33 @@ static void *azihsm_ossl_keymgmt_load(const void *reference, size_t reference_sz
     return dst_key;
 }
 
-static int azihsm_ossl_keymgmt_import(
-    ossl_unused void *keydata,
-    ossl_unused int selection,
-    ossl_unused const OSSL_PARAM params[]
-)
+static int azihsm_ossl_keymgmt_import(void *keydata, int selection, const OSSL_PARAM params[])
 {
-    // TODO: Import key from parameters
-    return 0;
+    AZIHSM_RSA_KEY *rsa_key = keydata;
+
+    if (rsa_key == NULL || params == NULL)
+    {
+        return OSSL_FAILURE;
+    }
+
+    if (selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY)
+    {
+        const OSSL_PARAM *p;
+
+        p = OSSL_PARAM_locate_const(params, OSSL_PKEY_PARAM_RSA_BITS);
+        if (p != NULL)
+        {
+            if (!OSSL_PARAM_get_uint32(p, &rsa_key->genctx.pubkey_bits))
+            {
+                ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
+                return OSSL_FAILURE;
+            }
+        }
+
+        rsa_key->has_public = true;
+    }
+
+    return OSSL_SUCCESS;
 }
 
 static int azihsm_ossl_keymgmt_export(
@@ -798,13 +854,19 @@ static int azihsm_ossl_keymgmt_export(
     ossl_unused void *cbarg
 )
 {
-    // TODO: Export key to parameters
-    return 0;
+    return OSSL_FAILURE;
 }
 
-static const OSSL_PARAM *azihsm_ossl_keymgmt_import_types(ossl_unused int selection)
+static const OSSL_PARAM *azihsm_ossl_keymgmt_import_types(int selection)
 {
-    // TODO: Return importable parameter types
+    static const OSSL_PARAM import_types[] = { OSSL_PARAM_uint32(OSSL_PKEY_PARAM_RSA_BITS, NULL),
+                                               OSSL_PARAM_END };
+
+    if (selection & OSSL_KEYMGMT_SELECT_PUBLIC_KEY)
+    {
+        return import_types;
+    }
+
     return NULL;
 }
 
@@ -866,8 +928,31 @@ static const OSSL_PARAM *azihsm_ossl_keymgmt_gen_settable_params(
     return settable_params;
 }
 
+static const char *azihsm_ossl_keymgmt_rsa_query_operation_name(int operation_id)
+{
+    switch (operation_id)
+    {
+    case OSSL_OP_SIGNATURE:
+        return "RSA";
+    case OSSL_OP_ASYM_CIPHER:
+        return "RSA";
+    }
+    return "RSA";
+}
+
+static const char *azihsm_ossl_keymgmt_rsa_pss_query_operation_name(int operation_id)
+{
+    switch (operation_id)
+    {
+    case OSSL_OP_SIGNATURE:
+        return "RSA-PSS";
+    }
+    return "RSA-PSS";
+}
+
 /* RSA Key Management */
 const OSSL_DISPATCH azihsm_ossl_rsa_keymgmt_functions[] = {
+    { OSSL_FUNC_KEYMGMT_NEW, (void (*)(void))azihsm_ossl_keymgmt_new },
     { OSSL_FUNC_KEYMGMT_GEN, (void (*)(void))azihsm_ossl_keymgmt_gen },
     { OSSL_FUNC_KEYMGMT_GEN_INIT, (void (*)(void))azihsm_ossl_keymgmt_gen_init_rsa },
     { OSSL_FUNC_KEYMGMT_GEN_CLEANUP, (void (*)(void))azihsm_ossl_keymgmt_gen_cleanup },
@@ -884,10 +969,13 @@ const OSSL_DISPATCH azihsm_ossl_rsa_keymgmt_functions[] = {
     { OSSL_FUNC_KEYMGMT_EXPORT_TYPES, (void (*)(void))azihsm_ossl_keymgmt_export_types },
     { OSSL_FUNC_KEYMGMT_GET_PARAMS, (void (*)(void))azihsm_ossl_keymgmt_get_params },
     { OSSL_FUNC_KEYMGMT_GETTABLE_PARAMS, (void (*)(void))azihsm_ossl_keymgmt_gettable_params },
+    { OSSL_FUNC_KEYMGMT_QUERY_OPERATION_NAME,
+      (void (*)(void))azihsm_ossl_keymgmt_rsa_query_operation_name },
     { 0, NULL }
 };
 
 const OSSL_DISPATCH azihsm_ossl_rsa_pss_keymgmt_functions[] = {
+    { OSSL_FUNC_KEYMGMT_NEW, (void (*)(void))azihsm_ossl_keymgmt_new },
     { OSSL_FUNC_KEYMGMT_GEN, (void (*)(void))azihsm_ossl_keymgmt_gen },
     { OSSL_FUNC_KEYMGMT_GEN_INIT, (void (*)(void))azihsm_ossl_keymgmt_gen_init_rsa_pss },
     { OSSL_FUNC_KEYMGMT_GEN_CLEANUP, (void (*)(void))azihsm_ossl_keymgmt_gen_cleanup },
@@ -904,5 +992,7 @@ const OSSL_DISPATCH azihsm_ossl_rsa_pss_keymgmt_functions[] = {
     { OSSL_FUNC_KEYMGMT_EXPORT_TYPES, (void (*)(void))azihsm_ossl_keymgmt_export_types },
     { OSSL_FUNC_KEYMGMT_GET_PARAMS, (void (*)(void))azihsm_ossl_keymgmt_get_params },
     { OSSL_FUNC_KEYMGMT_GETTABLE_PARAMS, (void (*)(void))azihsm_ossl_keymgmt_gettable_params },
+    { OSSL_FUNC_KEYMGMT_QUERY_OPERATION_NAME,
+      (void (*)(void))azihsm_ossl_keymgmt_rsa_pss_query_operation_name },
     { 0, NULL }
 };

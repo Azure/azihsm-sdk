@@ -16,6 +16,7 @@ use crate::coverage;
 use crate::coverage_report;
 use crate::fmt;
 use crate::nextest;
+use crate::nextest_report;
 use crate::setup;
 use crate::Xtask;
 use crate::XtaskCtx;
@@ -46,6 +47,9 @@ struct Stage {
     /// Run nextest tests
     #[clap(long)]
     nextest: bool,
+    /// Run nextest-report
+    #[clap(long)]
+    nextest_report: bool,
     /// Run all checks (default if no specific checks are selected)
     #[clap(long)]
     all: bool,
@@ -73,6 +77,9 @@ pub struct Precheck {
     /// Features to enable when running tests
     #[clap(long)]
     features: Option<String>,
+    /// The nextest profile to use
+    #[clap(long)]
+    profile: Option<String>,
 }
 
 impl Xtask for Precheck {
@@ -91,6 +98,7 @@ impl Xtask for Precheck {
             coverage: false,
             coverage_report: false,
             nextest: true,
+            nextest_report: false,
             all: false,
         });
 
@@ -155,6 +163,7 @@ impl Xtask for Precheck {
                     package: None,
                     no_default_features: false,
                     filterset: None,
+                    profile: self.profile.clone().or(Some("ci-mock".to_string())),
                 };
                 nextest.run(ctx.clone())?;
 
@@ -166,6 +175,7 @@ impl Xtask for Precheck {
                         package: Some("azihsm_ddi".to_string()),
                         no_default_features: false,
                         filterset: None,
+                        profile: self.profile.clone().or(Some("ci-mock-table-4".to_string())),
                     };
                     nextest.run(ctx.clone())?;
 
@@ -175,6 +185,7 @@ impl Xtask for Precheck {
                         package: Some("azihsm_ddi".to_string()),
                         no_default_features: false,
                         filterset: None,
+                        profile: self.profile.or(Some("ci-mock-table-64".to_string())),
                     };
                     nextest.run(ctx.clone())?;
                 }
@@ -184,6 +195,7 @@ impl Xtask for Precheck {
                     package: self.package,
                     no_default_features: false,
                     filterset: None,
+                    profile: self.profile,
                 };
                 nextest.run(ctx.clone())?;
             }
@@ -193,6 +205,12 @@ impl Xtask for Precheck {
         if stage.coverage || stage.all {
             let coverage = coverage::Coverage {};
             coverage.run(ctx.clone())?;
+        }
+
+        // Run nextest report
+        if stage.nextest_report || stage.all {
+            let nextest_report = nextest_report::NextestReport {};
+            nextest_report.run(ctx.clone())?;
         }
 
         // Run code coverage report

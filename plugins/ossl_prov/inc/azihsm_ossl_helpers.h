@@ -156,6 +156,24 @@ static inline uint32_t azihsm_ossl_evp_md_to_salt_len(const EVP_MD *md)
 }
 
 /*
+ * Release a streaming HSM operation context handle if active, then
+ * clear the caller's copy.  Safe to call when *handle_ptr == 0 (no-op).
+ *
+ * This wraps the AZIHSM API function azihsm_free_ctx_handle(), which
+ * frees HSM-internal resources for streaming crypto operations (digest,
+ * sign, verify, encrypt, decrypt).  It does NOT apply to provider-level
+ * context structs (AZIHSM_OSSL_PROV_CTX) or key handles.
+ */
+static inline void azihsm_ossl_release_hsm_ctx(azihsm_handle *handle_ptr)
+{
+    if (*handle_ptr != 0)
+    {
+        azihsm_free_ctx_handle(*handle_ptr);
+        *handle_ptr = 0;
+    }
+}
+
+/*
  * Normalize a private key DER blob to PKCS#8 format.
  *
  * The HSM expects PKCS#8 (PrivateKeyInfo) DER encoding. Users may provide

@@ -10,7 +10,7 @@ use crate::AzihsmStatus;
 use crate::HANDLE_TABLE;
 use crate::handle_table::HandleType;
 use crate::utils::deref_ptr;
-use crate::utils::validate_ptr;
+use crate::utils::validate_and_cast_algo_params;
 
 /// ECDH parameter structure matching C API
 #[repr(C)]
@@ -28,13 +28,7 @@ impl<'a> TryFrom<&'a AzihsmAlgo> for &'a AzihsmAlgoEcdhParams {
     /// when the algorithm ID is ECDH.
     #[allow(unsafe_code)]
     fn try_from(algo: &'a AzihsmAlgo) -> Result<Self, Self::Error> {
-        // Check for null pointer
-        validate_ptr(algo.params)?;
-
-        // Safety: algo.params is validated to be non-null
-        let params = unsafe { &*(algo.params as *const AzihsmAlgoEcdhParams) };
-
-        Ok(params)
+        validate_and_cast_algo_params::<AzihsmAlgoEcdhParams>(algo)
     }
 }
 
@@ -56,13 +50,7 @@ impl<'a> TryFrom<&'a AzihsmAlgo> for &'a AzihsmAlgoHkdfParams {
     /// when the algorithm ID is HKDF.
     #[allow(unsafe_code)]
     fn try_from(algo: &'a AzihsmAlgo) -> Result<Self, Self::Error> {
-        // Check for null pointer
-        validate_ptr(algo.params)?;
-
-        // Safety: algo.params is validated to be non-null
-        let params = unsafe { &*(algo.params as *const AzihsmAlgoHkdfParams) };
-
-        Ok(params)
+        validate_and_cast_algo_params::<AzihsmAlgoHkdfParams>(algo)
     }
 }
 

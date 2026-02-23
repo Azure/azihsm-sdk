@@ -1,0 +1,17 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+# Note on why multiple profiles are used to enable JUnit support: this is done
+# as a workaround to prevent each nextest run from overwriting the same output
+# file (saved to target/nextest/<profile>/<path>) during the rust.yml workflow.
+
+# profile for running all mock tests
+[profile.ci-mock.junit]
+path = "junit.xml"
+
+# profile for running all mock tests w/ table-4
+[profile.ci-mock-table-4.junit]
+path = "junit.xml"
+
+# profile for running all mock tests w/ table-64
+[profile.ci-mock-table-64.junit]
+path = "junit.xml"

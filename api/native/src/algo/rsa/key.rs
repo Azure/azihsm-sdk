@@ -31,11 +31,7 @@ impl<'a> TryFrom<&'a AzihsmAlgo> for &'a AzihsmAlgoRsaAesKeyWrapParams {
 
     #[allow(unsafe_code)]
     fn try_from(algo: &'a AzihsmAlgo) -> Result<Self, Self::Error> {
-        if algo.len != std::mem::size_of::<AzihsmAlgoRsaAesKeyWrapParams>() as u32 {
-            Err(AzihsmStatus::InvalidArgument)?;
-        }
-
-        let params = cast_ptr::<AzihsmAlgoRsaAesKeyWrapParams>(algo.params)?;
+        let params = validate_and_cast_algo_params::<AzihsmAlgoRsaAesKeyWrapParams>(algo)?;
 
         // Validate OAEP parameters pointer
         validate_ptr(params.oaep_params)?;
@@ -49,11 +45,7 @@ impl<'a> TryFrom<&'a AzihsmAlgo> for &'a AzihsmAlgoRsaPkcsOaepParams {
 
     #[allow(unsafe_code)]
     fn try_from(algo: &'a AzihsmAlgo) -> Result<Self, Self::Error> {
-        if algo.len != std::mem::size_of::<AzihsmAlgoRsaPkcsOaepParams>() as u32 {
-            Err(AzihsmStatus::InvalidArgument)?;
-        }
-
-        let params = cast_ptr::<AzihsmAlgoRsaPkcsOaepParams>(algo.params)?;
+        let params = validate_and_cast_algo_params::<AzihsmAlgoRsaPkcsOaepParams>(algo)?;
 
         // Validate hash algorithm ID
         match params.hash_algo_id {

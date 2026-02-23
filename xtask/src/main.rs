@@ -28,6 +28,7 @@ mod coverage_report;
 mod fmt;
 mod install;
 mod nextest;
+mod nextest_report;
 mod precheck;
 mod rustup_component_add;
 mod setup;
@@ -69,6 +70,7 @@ enum Commands {
     CoverageReport(coverage_report::CoverageReport),
     Fmt(fmt::Fmt),
     Nextest(nextest::Nextest),
+    NextestReport(nextest_report::NextestReport),
     Setup(setup::Setup),
     Install(install::Install),
     RustupComponentAdd(rustup_component_add::RustupComponentAdd),
@@ -108,6 +110,7 @@ fn try_main() -> anyhow::Result<()> {
         Commands::Fmt(task) => task.run(ctx),
         Commands::Precheck(task) => task.run(ctx),
         Commands::Nextest(task) => task.run(ctx),
+        Commands::NextestReport(task) => task.run(ctx),
         Commands::Setup(task) => task.run(ctx),
         Commands::Install(task) => task.run(ctx),
         Commands::RustupComponentAdd(task) => task.run(ctx),

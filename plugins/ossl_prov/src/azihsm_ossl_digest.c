@@ -67,6 +67,7 @@ static void azihsm_ossl_digest_freectx(void *dctx)
 
     if (ctx != NULL)
     {
+        azihsm_ossl_release_hsm_ctx(&ctx->ctx_handle);
         OPENSSL_free(ctx);
     }
 }
@@ -97,6 +98,9 @@ static int azihsm_ossl_digest_init(void *dctx, ossl_unused const OSSL_PARAM para
 
     /* Set up algorithm structure */
     algo.id = ctx->algo_id;
+
+    /* Free previous HSM context if reinitializing */
+    azihsm_ossl_release_hsm_ctx(&ctx->ctx_handle);
 
     status = azihsm_crypt_digest_init(ctx->session_handle, &algo, &ctx->ctx_handle);
 
@@ -191,6 +195,8 @@ static int azihsm_ossl_digest_generic_final(
 
     if (status != AZIHSM_STATUS_SUCCESS)
     {
+        OPENSSL_cleanse(digest_data, sizeof(digest_data));
+        azihsm_ossl_release_hsm_ctx(&ctx->ctx_handle);
         ERR_raise(ERR_LIB_PROV, PROV_R_CIPHER_OPERATION_FAILED);
         return OSSL_FAILURE;
     }
@@ -199,7 +205,7 @@ static int azihsm_ossl_digest_generic_final(
     {
         ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
         OPENSSL_cleanse(digest_data, sizeof(digest_data));
-        ctx->ctx_handle = 0;
+        azihsm_ossl_release_hsm_ctx(&ctx->ctx_handle);
         return OSSL_FAILURE;
     }
 
@@ -208,7 +214,7 @@ static int azihsm_ossl_digest_generic_final(
 
     OPENSSL_cleanse(digest_data, sizeof(digest_data));
 
-    ctx->ctx_handle = 0;
+    azihsm_ossl_release_hsm_ctx(&ctx->ctx_handle);
 
     return OSSL_SUCCESS;
 }
