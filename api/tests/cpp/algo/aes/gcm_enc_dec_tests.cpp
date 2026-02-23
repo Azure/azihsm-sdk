@@ -11,6 +11,7 @@
 #include "handle/part_handle.hpp"
 #include "handle/part_list_handle.hpp"
 #include "handle/session_handle.hpp"
+#include "helpers.hpp"
 #include "utils/auto_ctx.hpp"
 #include <functional>
 
@@ -18,243 +19,6 @@ class azihsm_aes_gcm : public ::testing::Test
 {
   protected:
     PartitionListHandle part_list_ = PartitionListHandle{};
-
-    // Helper function for single-shot encryption
-    static std::vector<uint8_t> single_shot_encrypt(
-        azihsm_handle key_handle,
-        azihsm_algo *algo,
-        const uint8_t *input_data,
-        size_t input_len
-    )
-    {
-        azihsm_buffer input{ const_cast<uint8_t *>(input_data), static_cast<uint32_t>(input_len) };
-        azihsm_buffer output{ nullptr, 0 };
-
-        // Query required buffer size
-        auto err = azihsm_crypt_encrypt(algo, key_handle, &input, &output);
-        EXPECT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
-        EXPECT_GT(output.len, 0);
-
-        // Allocate buffer and perform operation
-        std::vector<uint8_t> result(output.len);
-        output.ptr = result.data();
-
-        err = azihsm_crypt_encrypt(algo, key_handle, &input, &output);
-        EXPECT_EQ(err, AZIHSM_STATUS_SUCCESS);
-
-        // Resize to actual bytes written
-        result.resize(output.len);
-        return result;
-    }
-
-    // Helper function for single-shot decryption
-    static std::vector<uint8_t> single_shot_decrypt(
-        azihsm_handle key_handle,
-        azihsm_algo *algo,
-        const uint8_t *input_data,
-        size_t input_len
-    )
-    {
-        azihsm_buffer input{ const_cast<uint8_t *>(input_data), static_cast<uint32_t>(input_len) };
-        azihsm_buffer output{ nullptr, 0 };
-
-        // Query required buffer size
-        auto err = azihsm_crypt_decrypt(algo, key_handle, &input, &output);
-        EXPECT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
-        EXPECT_GT(output.len, 0);
-
-        // Allocate buffer and perform operation
-        std::vector<uint8_t> result(output.len);
-        output.ptr = result.data();
-
-        err = azihsm_crypt_decrypt(algo, key_handle, &input, &output);
-        EXPECT_EQ(err, AZIHSM_STATUS_SUCCESS);
-
-        // Resize to actual bytes written
-        result.resize(output.len);
-        return result;
-    }
-
-    // Helper function for streaming encryption
-    static std::vector<uint8_t> streaming_encrypt(
-        azihsm_handle key_handle,
-        azihsm_algo *algo,
-        const uint8_t *input_data,
-        size_t input_len,
-        size_t chunk_size
-    )
-    {
-        auto_ctx ctx;
-        azihsm_status err;
-
-        // Initialize context
-        err = azihsm_crypt_encrypt_init(algo, key_handle, ctx.get_ptr());
-        EXPECT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        EXPECT_NE(ctx.get(), 0);
-
-        std::vector<uint8_t> output;
-        size_t offset = 0;
-
-        // Process in chunks
-        while (offset < input_len)
-        {
-            size_t current_chunk = std::min(chunk_size, input_len - offset);
-            azihsm_buffer input{ const_cast<uint8_t *>(input_data + offset),
-                                 static_cast<uint32_t>(current_chunk) };
-            azihsm_buffer out_buf{ nullptr, 0 };
-
-            err = azihsm_crypt_encrypt_update(ctx.get(), &input, &out_buf);
-
-            if (err == AZIHSM_STATUS_BUFFER_TOO_SMALL)
-            {
-                // Buffer too small, allocate and retry with same input
-                EXPECT_GT(out_buf.len, 0);
-                size_t current_pos = output.size();
-                output.resize(current_pos + out_buf.len);
-                out_buf.ptr = output.data() + current_pos;
-
-                err = azihsm_crypt_encrypt_update(ctx.get(), &input, &out_buf);
-                EXPECT_EQ(err, AZIHSM_STATUS_SUCCESS);
-                // Adjust output size to actual bytes written
-                output.resize(current_pos + out_buf.len);
-            }
-            else if (err == AZIHSM_STATUS_SUCCESS)
-            {
-                // Success - data may or may not have been produced
-            }
-            else
-            {
-                ADD_FAILURE() << "Unexpected error: " << err;
-                break;
-            }
-
-            // Move to next chunk regardless of whether output was produced
-            offset += current_chunk;
-        }
-
-        // Finish
-        azihsm_buffer final_out{ nullptr, 0 };
-        err = azihsm_crypt_encrypt_finish(ctx.get(), &final_out);
-
-        if (err == AZIHSM_STATUS_BUFFER_TOO_SMALL)
-        {
-            EXPECT_GT(final_out.len, 0);
-            size_t current_pos = output.size();
-            output.resize(current_pos + final_out.len);
-            final_out.ptr = output.data() + current_pos;
-
-            err = azihsm_crypt_encrypt_finish(ctx.get(), &final_out);
-            EXPECT_EQ(err, AZIHSM_STATUS_SUCCESS);
-            // Adjust output size to actual bytes written
-            output.resize(current_pos + final_out.len);
-        }
-        else
-        {
-            EXPECT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        }
-
-        return output;
-    }
-
-    // Helper function for streaming decryption
-    static std::vector<uint8_t> streaming_decrypt(
-        azihsm_handle key_handle,
-        azihsm_algo *algo,
-        const uint8_t *input_data,
-        size_t input_len,
-        size_t chunk_size
-    )
-    {
-        auto_ctx ctx;
-        azihsm_status err;
-
-        // Initialize context
-        err = azihsm_crypt_decrypt_init(algo, key_handle, ctx.get_ptr());
-        EXPECT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        EXPECT_NE(ctx.get(), 0);
-
-        std::vector<uint8_t> output;
-        size_t offset = 0;
-
-        // Process in chunks
-        while (offset < input_len)
-        {
-            size_t current_chunk = std::min(chunk_size, input_len - offset);
-            azihsm_buffer input{ const_cast<uint8_t *>(input_data + offset),
-                                 static_cast<uint32_t>(current_chunk) };
-            azihsm_buffer out_buf{ nullptr, 0 };
-
-            err = azihsm_crypt_decrypt_update(ctx.get(), &input, &out_buf);
-
-            if (err == AZIHSM_STATUS_BUFFER_TOO_SMALL)
-            {
-                // Buffer too small, allocate and retry with same input
-                EXPECT_GT(out_buf.len, 0);
-                size_t current_pos = output.size();
-                output.resize(current_pos + out_buf.len);
-                out_buf.ptr = output.data() + current_pos;
-
-                err = azihsm_crypt_decrypt_update(ctx.get(), &input, &out_buf);
-                EXPECT_EQ(err, AZIHSM_STATUS_SUCCESS);
-                // Adjust output size to actual bytes written
-                output.resize(current_pos + out_buf.len);
-            }
-            else if (err == AZIHSM_STATUS_SUCCESS)
-            {
-                // Success - data may or may not have been produced
-            }
-            else
-            {
-                ADD_FAILURE() << "Unexpected error: " << err;
-                break;
-            }
-
-            // Move to next chunk regardless of whether output was produced
-            offset += current_chunk;
-        }
-
-        // Finish
-        azihsm_buffer final_out{ nullptr, 0 };
-        err = azihsm_crypt_decrypt_finish(ctx.get(), &final_out);
-
-        if (err == AZIHSM_STATUS_BUFFER_TOO_SMALL)
-        {
-            EXPECT_GT(final_out.len, 0);
-            size_t current_pos = output.size();
-            output.resize(current_pos + final_out.len);
-            final_out.ptr = output.data() + current_pos;
-
-            err = azihsm_crypt_decrypt_finish(ctx.get(), &final_out);
-            EXPECT_EQ(err, AZIHSM_STATUS_SUCCESS);
-            // Adjust output size to actual bytes written
-            output.resize(current_pos + final_out.len);
-        }
-        else
-        {
-            EXPECT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        }
-
-        return output;
-    }
-
-    // Helper to generate AES GCM key
-    static KeyHandle generate_aes_gcm_key(azihsm_handle session, uint32_t bits)
-    {
-        azihsm_algo keygen_algo{};
-        keygen_algo.id = AZIHSM_ALGO_ID_AES_KEY_GEN;
-        keygen_algo.params = nullptr;
-        keygen_algo.len = 0;
-
-        key_props key_props;
-        key_props.key_kind = AZIHSM_KEY_KIND_AES_GCM;
-        key_props.key_class = AZIHSM_KEY_CLASS_SECRET;
-        key_props.bits = bits;
-        key_props.is_session = true;
-        key_props.can_encrypt = true;
-        key_props.can_decrypt = true;
-
-        return KeyHandle(session, &keygen_algo, key_props);
-    }
 
     static void with_unwrapped_aes_gcm_key(
         azihsm_handle session,
@@ -451,7 +215,7 @@ class azihsm_aes_gcm : public ::testing::Test
 
         // Encrypt
         auto ciphertext =
-            single_shot_encrypt(key_handle, &crypt_algo, plaintext, plaintext_len);
+            single_shot_crypt(CryptOperation::Encrypt, key_handle, &crypt_algo, plaintext, plaintext_len);
 
         // Ciphertext should be same length as plaintext for GCM (no padding)
         ASSERT_EQ(ciphertext.size(), plaintext_len);
@@ -466,7 +230,7 @@ class azihsm_aes_gcm : public ::testing::Test
 
         // Decrypt
         auto decrypted =
-            single_shot_decrypt(key_handle, &crypt_algo, ciphertext.data(), ciphertext.size());
+            single_shot_crypt(CryptOperation::Decrypt, key_handle, &crypt_algo, ciphertext.data(), ciphertext.size());
 
         ASSERT_EQ(decrypted.size(), plaintext_len);
         ASSERT_EQ(std::memcmp(decrypted.data(), plaintext, plaintext_len), 0);
@@ -504,7 +268,7 @@ class azihsm_aes_gcm : public ::testing::Test
 
         // Encrypt
         auto ciphertext =
-            streaming_encrypt(key_handle, &crypt_algo, plaintext, plaintext_len, chunk_size);
+            streaming_crypt(CryptOperation::Encrypt, key_handle, &crypt_algo, plaintext, plaintext_len, chunk_size);
         ASSERT_EQ(ciphertext.size(), plaintext_len);
 
         // Save the tag from encryption for decryption
@@ -516,13 +280,7 @@ class azihsm_aes_gcm : public ::testing::Test
         std::memcpy(gcm_params.tag, saved_tag, sizeof(saved_tag));
 
         // Decrypt
-        auto decrypted = streaming_decrypt(
-            key_handle,
-            &crypt_algo,
-            ciphertext.data(),
-            ciphertext.size(),
-            chunk_size
-        );
+        auto decrypted = streaming_crypt(CryptOperation::Decrypt, key_handle, &crypt_algo, ciphertext.data(), ciphertext.size(), chunk_size);
 
         ASSERT_EQ(decrypted.size(), plaintext_len);
         ASSERT_EQ(std::memcmp(decrypted.data(), plaintext, plaintext_len), 0);
@@ -542,7 +300,7 @@ struct AesGcmDataSizeTestParams
     const char *test_name;
 };
 
-// ==================== Single-Shot Tests ====================
+// ==================== Correctness and Known-Answer Coverage ====================
 
 // Validate single-shot AES-GCM without AAD across key sizes and data sizes.
 TEST_F(azihsm_aes_gcm, single_shot_all_key_sizes_no_aad)
@@ -623,8 +381,6 @@ TEST_F(azihsm_aes_gcm, single_shot_all_key_sizes_with_aad)
         }
     }
 }
-
-// ==================== Streaming Tests ====================
 
 // Validate streaming AES-GCM without AAD across key sizes.
 TEST_F(azihsm_aes_gcm, streaming_all_key_sizes_no_aad)
@@ -710,8 +466,6 @@ TEST_F(azihsm_aes_gcm, streaming_various_chunk_sizes)
         });
     }
 }
-
-// ==================== Edge Case Tests ====================
 
 // Validate AES-GCM handles empty plaintext and tag generation.
 TEST_F(azihsm_aes_gcm, empty_plaintext)
@@ -994,102 +748,220 @@ TEST_F(azihsm_aes_gcm, empty_plaintext_wrong_tag_fails)
     });
 }
 
-// Validate AES-GCM rejects null parameters.
-TEST_F(azihsm_aes_gcm, null_params)
+// Validate AES-GCM empty plaintext with various AAD sizes and AAD mismatch failure.
+TEST_F(azihsm_aes_gcm, empty_plaintext_with_aad_sizes)
 {
-    part_list_.for_each_session([](azihsm_handle session) {
-        auto key = generate_aes_gcm_key(session, 256);
+    std::vector<size_t> aad_sizes = { 1, 15, 16, 17, 31, 32, 33 };
 
-        azihsm_algo crypt_algo{};
-        crypt_algo.id = AZIHSM_ALGO_ID_AES_GCM;
-        crypt_algo.params = nullptr; // No parameters provided
-        crypt_algo.len = 0;
+    part_list_.for_each_session([&](azihsm_handle session) {
+        for_each_aes_gcm_key(session, [&](azihsm_handle key_handle) {
+            for (size_t aad_len : aad_sizes)
+            {
+                SCOPED_TRACE("aad_len=" + std::to_string(aad_len));
 
-        uint8_t plaintext[16] = { 0xAA };
-        azihsm_buffer input{ plaintext, sizeof(plaintext) };
-        azihsm_buffer output{ nullptr, 0 };
+                std::vector<uint8_t> aad(aad_len);
+                for (size_t i = 0; i < aad.size(); ++i)
+                {
+                    aad[i] = static_cast<uint8_t>(0xA0 + (i & 0x3F));
+                }
 
-        auto err = azihsm_crypt_encrypt(&crypt_algo, key.get(), &input, &output);
-        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
+                azihsm_buffer aad_buf{ aad.data(), static_cast<uint32_t>(aad.size()) };
+
+                uint8_t iv[12] = { 0x10, 0x20, 0x30, 0x40, 0x50, 0x60,
+                                   0x70, 0x80, 0x90, 0xA0, 0xB0, 0xC0 };
+
+                azihsm_algo_aes_gcm_params gcm_params{};
+                std::memcpy(gcm_params.iv, iv, sizeof(iv));
+                std::memset(gcm_params.tag, 0, sizeof(gcm_params.tag));
+                gcm_params.aad = &aad_buf;
+
+                azihsm_algo crypt_algo{};
+                crypt_algo.id = AZIHSM_ALGO_ID_AES_GCM;
+                crypt_algo.params = &gcm_params;
+                crypt_algo.len = sizeof(gcm_params);
+
+                azihsm_buffer input{ nullptr, 0 };
+                azihsm_buffer output{ nullptr, 0 };
+
+                auto err = azihsm_crypt_encrypt(&crypt_algo, key_handle, &input, &output);
+                if (err == AZIHSM_STATUS_BUFFER_TOO_SMALL)
+                {
+                    ASSERT_EQ(output.len, 0u);
+                    err = azihsm_crypt_encrypt(&crypt_algo, key_handle, &input, &output);
+                }
+                ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+                uint8_t saved_tag[16];
+                std::memcpy(saved_tag, gcm_params.tag, sizeof(saved_tag));
+
+                std::memcpy(gcm_params.iv, iv, sizeof(iv));
+                std::memcpy(gcm_params.tag, saved_tag, sizeof(saved_tag));
+
+                azihsm_buffer cipher_buf{ nullptr, 0 };
+                azihsm_buffer plain_buf{ nullptr, 0 };
+
+                err = azihsm_crypt_decrypt(&crypt_algo, key_handle, &cipher_buf, &plain_buf);
+                if (err == AZIHSM_STATUS_BUFFER_TOO_SMALL)
+                {
+                    ASSERT_EQ(plain_buf.len, 0u);
+                    err = azihsm_crypt_decrypt(&crypt_algo, key_handle, &cipher_buf, &plain_buf);
+                }
+                ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+                std::vector<uint8_t> aad_bad = aad;
+                aad_bad[0] ^= 0xFF;
+                azihsm_buffer aad_bad_buf{ aad_bad.data(), static_cast<uint32_t>(aad_bad.size()) };
+                gcm_params.aad = &aad_bad_buf;
+
+                std::memcpy(gcm_params.iv, iv, sizeof(iv));
+                std::memcpy(gcm_params.tag, saved_tag, sizeof(saved_tag));
+
+                err = azihsm_crypt_decrypt(&crypt_algo, key_handle, &cipher_buf, &plain_buf);
+                if (err == AZIHSM_STATUS_BUFFER_TOO_SMALL)
+                {
+                    ASSERT_EQ(plain_buf.len, 0u);
+                    err = azihsm_crypt_decrypt(&crypt_algo, key_handle, &cipher_buf, &plain_buf);
+                }
+                ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+            }
+        });
     });
 }
 
-// Validate AES-GCM rejects invalid key handles.
-TEST_F(azihsm_aes_gcm, invalid_key_handle)
-{
-    uint8_t iv[12] = { 0xDD };
-    azihsm_algo_aes_gcm_params gcm_params{};
-    std::memcpy(gcm_params.iv, iv, sizeof(iv));
-    std::memset(gcm_params.tag, 0, sizeof(gcm_params.tag));
-    gcm_params.aad = nullptr;
-
-    azihsm_algo crypt_algo{};
-    crypt_algo.id = AZIHSM_ALGO_ID_AES_GCM;
-    crypt_algo.params = &gcm_params;
-    crypt_algo.len = sizeof(gcm_params);
-
-    uint8_t plaintext[16] = { 0xEE };
-    azihsm_buffer input{ plaintext, sizeof(plaintext) };
-    azihsm_buffer output{ nullptr, 0 };
-
-    auto err = azihsm_crypt_encrypt(&crypt_algo, 0xDEADBEEF, &input, &output);
-    ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
-}
-
-// Validate AES-GCM decryption fails on wrong tag.
-TEST_F(azihsm_aes_gcm, wrong_tag_fails_decryption)
+// Validate AES-GCM empty plaintext with an empty AAD buffer (non-null, zero length).
+TEST_F(azihsm_aes_gcm, empty_plaintext_with_empty_aad_buffer)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        auto key = generate_aes_gcm_key(session, 256);
+        for_each_aes_gcm_key(session, [&](azihsm_handle key_handle) {
+            uint8_t iv[12] = { 0x21, 0x22, 0x23, 0x24, 0x25, 0x26,
+                               0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C };
 
-        uint8_t iv[12] = { 0x11, 0x22, 0x33, 0x44, 0x55, 0x66,
-                           0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC };
+            std::vector<uint8_t> aad(1, 0x5A);
+            azihsm_buffer aad_buf{ aad.data(), 0 };
 
-        azihsm_algo_aes_gcm_params gcm_params{};
-        std::memcpy(gcm_params.iv, iv, sizeof(iv));
-        std::memset(gcm_params.tag, 0, sizeof(gcm_params.tag));
-        gcm_params.aad = nullptr;
+            azihsm_algo_aes_gcm_params gcm_params{};
+            std::memcpy(gcm_params.iv, iv, sizeof(iv));
+            std::memset(gcm_params.tag, 0, sizeof(gcm_params.tag));
+            gcm_params.aad = &aad_buf;
 
-        azihsm_algo crypt_algo{};
-        crypt_algo.id = AZIHSM_ALGO_ID_AES_GCM;
-        crypt_algo.params = &gcm_params;
-        crypt_algo.len = sizeof(gcm_params);
+            azihsm_algo crypt_algo{};
+            crypt_algo.id = AZIHSM_ALGO_ID_AES_GCM;
+            crypt_algo.params = &gcm_params;
+            crypt_algo.len = sizeof(gcm_params);
 
-        // Encrypt
-        std::vector<uint8_t> plaintext = { 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08 };
-        azihsm_buffer input{ plaintext.data(), static_cast<uint32_t>(plaintext.size()) };
-        azihsm_buffer output{ nullptr, 0 };
+            azihsm_buffer input{ nullptr, 0 };
+            azihsm_buffer output{ nullptr, 0 };
 
-        auto err = azihsm_crypt_encrypt(&crypt_algo, key.get(), &input, &output);
-        ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+            auto err = azihsm_crypt_encrypt(&crypt_algo, key_handle, &input, &output);
+            if (err == AZIHSM_STATUS_BUFFER_TOO_SMALL)
+            {
+                ASSERT_EQ(output.len, 0u);
+                err = azihsm_crypt_encrypt(&crypt_algo, key_handle, &input, &output);
+            }
+            ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
-        std::vector<uint8_t> ciphertext(output.len);
-        output.ptr = ciphertext.data();
-        err = azihsm_crypt_encrypt(&crypt_algo, key.get(), &input, &output);
-        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+            uint8_t saved_tag[16];
+            std::memcpy(saved_tag, gcm_params.tag, sizeof(saved_tag));
 
-        // Corrupt the tag
-        gcm_params.tag[0] ^= 0xFF;
+            std::memcpy(gcm_params.iv, iv, sizeof(iv));
+            std::memcpy(gcm_params.tag, saved_tag, sizeof(saved_tag));
 
-        // Reset IV for decryption
-        std::memcpy(gcm_params.iv, iv, sizeof(iv));
+            azihsm_buffer cipher_buf{ nullptr, 0 };
+            azihsm_buffer plain_buf{ nullptr, 0 };
 
-        // Decrypt with corrupted tag should fail
-        azihsm_buffer cipher_buf{ ciphertext.data(), static_cast<uint32_t>(ciphertext.size()) };
-        azihsm_buffer plain_buf{ nullptr, 0 };
-
-        err = azihsm_crypt_decrypt(&crypt_algo, key.get(), &cipher_buf, &plain_buf);
-        // Even the size query might fail or succeed depending on implementation
-        // But actual decryption should fail authentication
-        if (err == AZIHSM_STATUS_BUFFER_TOO_SMALL)
-        {
-            std::vector<uint8_t> decrypted(plain_buf.len);
-            plain_buf.ptr = decrypted.data();
-            err = azihsm_crypt_decrypt(&crypt_algo, key.get(), &cipher_buf, &plain_buf);
-        }
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+            err = azihsm_crypt_decrypt(&crypt_algo, key_handle, &cipher_buf, &plain_buf);
+            if (err == AZIHSM_STATUS_BUFFER_TOO_SMALL)
+            {
+                ASSERT_EQ(plain_buf.len, 0u);
+                err = azihsm_crypt_decrypt(&crypt_algo, key_handle, &cipher_buf, &plain_buf);
+            }
+            ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        });
     });
 }
+
+// Validate streaming AES-GCM empty plaintext with AAD and tag verification.
+TEST_F(azihsm_aes_gcm, streaming_empty_plaintext_with_aad)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        for_each_aes_gcm_key(session, [&](azihsm_handle key_handle) {
+            uint8_t iv[12] = { 0x31, 0x32, 0x33, 0x34, 0x35, 0x36,
+                               0x37, 0x38, 0x39, 0x3A, 0x3B, 0x3C };
+
+            std::vector<uint8_t> aad = { 0x01, 0x02, 0x03, 0x04, 0x05 };
+            azihsm_buffer aad_buf{ aad.data(), static_cast<uint32_t>(aad.size()) };
+
+            azihsm_algo_aes_gcm_params gcm_params{};
+            std::memcpy(gcm_params.iv, iv, sizeof(iv));
+            std::memset(gcm_params.tag, 0, sizeof(gcm_params.tag));
+            gcm_params.aad = &aad_buf;
+
+            azihsm_algo crypt_algo{};
+            crypt_algo.id = AZIHSM_ALGO_ID_AES_GCM;
+            crypt_algo.params = &gcm_params;
+            crypt_algo.len = sizeof(gcm_params);
+
+            auto ciphertext = streaming_encrypt(key_handle, &crypt_algo, nullptr, 0, 16);
+            ASSERT_EQ(ciphertext.size(), 0u);
+
+            uint8_t saved_tag[16];
+            std::memcpy(saved_tag, gcm_params.tag, sizeof(saved_tag));
+
+            std::memcpy(gcm_params.iv, iv, sizeof(iv));
+            std::memcpy(gcm_params.tag, saved_tag, sizeof(saved_tag));
+
+            auto decrypted = streaming_decrypt(key_handle, &crypt_algo, nullptr, 0, 16);
+            ASSERT_EQ(decrypted.size(), 0u);
+        });
+    });
+}
+
+// Validate AES-GCM empty plaintext fails on wrong tag.
+TEST_F(azihsm_aes_gcm, empty_plaintext_wrong_tag_fails)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        for_each_aes_gcm_key(session, [&](azihsm_handle key_handle) {
+            uint8_t iv[12] = { 0x41, 0x42, 0x43, 0x44, 0x45, 0x46,
+                               0x47, 0x48, 0x49, 0x4A, 0x4B, 0x4C };
+
+            azihsm_algo_aes_gcm_params gcm_params{};
+            std::memcpy(gcm_params.iv, iv, sizeof(iv));
+            std::memset(gcm_params.tag, 0, sizeof(gcm_params.tag));
+            gcm_params.aad = nullptr;
+
+            azihsm_algo crypt_algo{};
+            crypt_algo.id = AZIHSM_ALGO_ID_AES_GCM;
+            crypt_algo.params = &gcm_params;
+            crypt_algo.len = sizeof(gcm_params);
+
+            azihsm_buffer input{ nullptr, 0 };
+            azihsm_buffer output{ nullptr, 0 };
+
+            auto err = azihsm_crypt_encrypt(&crypt_algo, key_handle, &input, &output);
+            if (err == AZIHSM_STATUS_BUFFER_TOO_SMALL)
+            {
+                ASSERT_EQ(output.len, 0u);
+                err = azihsm_crypt_encrypt(&crypt_algo, key_handle, &input, &output);
+            }
+            ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+            std::memcpy(gcm_params.iv, iv, sizeof(iv));
+            gcm_params.tag[0] ^= 0xFF;
+
+            azihsm_buffer cipher_buf{ nullptr, 0 };
+            azihsm_buffer plain_buf{ nullptr, 0 };
+
+            err = azihsm_crypt_decrypt(&crypt_algo, key_handle, &cipher_buf, &plain_buf);
+            if (err == AZIHSM_STATUS_BUFFER_TOO_SMALL)
+            {
+                ASSERT_EQ(plain_buf.len, 0u);
+                err = azihsm_crypt_decrypt(&crypt_algo, key_handle, &cipher_buf, &plain_buf);
+            }
+            ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        });
+    });
+}
+
 
 // Validate different IVs produce different ciphertexts.
 TEST_F(azihsm_aes_gcm, different_ivs_produce_different_ciphertexts)
@@ -1176,8 +1048,14 @@ TEST_F(azihsm_aes_gcm, large_data_streaming)
         }
 
         // Encrypt
-        auto ciphertext =
-            streaming_encrypt(key.get(), &crypt_algo, plaintext.data(), plaintext.size(), 256);
+        auto ciphertext = ::streaming_crypt(
+            CryptOperation::Encrypt,
+            key.get(),
+            &crypt_algo,
+            plaintext.data(),
+            plaintext.size(),
+            256
+        );
 
         // Save tag for decryption
         uint8_t saved_tag[16];
@@ -1188,7 +1066,8 @@ TEST_F(azihsm_aes_gcm, large_data_streaming)
         std::memcpy(gcm_params.tag, saved_tag, sizeof(saved_tag));
 
         // Decrypt
-        auto decrypted = streaming_decrypt(
+        auto decrypted = ::streaming_crypt(
+            CryptOperation::Decrypt,
             key.get(),
             &crypt_algo,
             ciphertext.data(),
@@ -1222,7 +1101,8 @@ TEST_F(azihsm_aes_gcm, streaming_consistency_with_single_shot)
         crypt_algo_single.params = &gcm_params_single;
         crypt_algo_single.len = sizeof(gcm_params_single);
 
-        auto single_shot_ciphertext = single_shot_encrypt(
+        auto single_shot_ciphertext = single_shot_crypt(
+            CryptOperation::Encrypt,
             key.get(),
             &crypt_algo_single,
             plaintext.data(),
@@ -1244,8 +1124,14 @@ TEST_F(azihsm_aes_gcm, streaming_consistency_with_single_shot)
         crypt_algo_streaming.params = &gcm_params_streaming;
         crypt_algo_streaming.len = sizeof(gcm_params_streaming);
 
-        auto streaming_ciphertext =
-            streaming_encrypt(key.get(), &crypt_algo_streaming, plaintext.data(), plaintext.size(), 17);
+        auto streaming_ciphertext = ::streaming_crypt(
+            CryptOperation::Encrypt,
+            key.get(),
+            &crypt_algo_streaming,
+            plaintext.data(),
+            plaintext.size(),
+            17
+        );
 
         // Ciphertexts should be identical
         ASSERT_EQ(single_shot_ciphertext.size(), streaming_ciphertext.size());
@@ -1289,8 +1175,14 @@ TEST_F(azihsm_aes_gcm, large_data_streaming_8k)
         }
 
         // Encrypt
-        auto ciphertext =
-            streaming_encrypt(key.get(), &crypt_algo, plaintext.data(), plaintext.size(), 256);
+        auto ciphertext = ::streaming_crypt(
+            CryptOperation::Encrypt,
+            key.get(),
+            &crypt_algo,
+            plaintext.data(),
+            plaintext.size(),
+            256
+        );
 
         // Save tag for decryption
         uint8_t saved_tag[16];
@@ -1301,7 +1193,8 @@ TEST_F(azihsm_aes_gcm, large_data_streaming_8k)
         std::memcpy(gcm_params.tag, saved_tag, sizeof(saved_tag));
 
         // Decrypt
-        auto decrypted = streaming_decrypt(
+        auto decrypted = ::streaming_crypt(
+            CryptOperation::Decrypt,
             key.get(),
             &crypt_algo,
             ciphertext.data(),
@@ -1331,4 +1224,374 @@ TEST_F(azihsm_aes_gcm, unwrap_and_encrypt_decrypt_roundtrip)
             );
         });
     });
+}
+
+// Validate single-shot AES-GCM with 4KB payload.
+TEST_F(azihsm_aes_gcm, large_data_single_shot)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        auto key = generate_aes_gcm_key(session, 256);
+
+        uint8_t iv[12] = { 0x31 };
+        azihsm_algo_aes_gcm_params gcm_params{};
+        std::memcpy(gcm_params.iv, iv, sizeof(iv));
+        std::memset(gcm_params.tag, 0, sizeof(gcm_params.tag));
+        gcm_params.aad = nullptr;
+
+        azihsm_algo crypt_algo{};
+        crypt_algo.id = AZIHSM_ALGO_ID_AES_GCM;
+        crypt_algo.params = &gcm_params;
+        crypt_algo.len = sizeof(gcm_params);
+
+        std::vector<uint8_t> plaintext = make_incrementing_bytes(4096);
+
+        auto ciphertext = ::single_shot_crypt(
+            CryptOperation::Encrypt,
+            key.get(),
+            &crypt_algo,
+            plaintext.data(),
+            plaintext.size()
+        );
+        ASSERT_EQ(ciphertext.size(), plaintext.size());
+
+        uint8_t saved_tag[16];
+        std::memcpy(saved_tag, gcm_params.tag, sizeof(saved_tag));
+
+        std::memcpy(gcm_params.iv, iv, sizeof(iv));
+        std::memcpy(gcm_params.tag, saved_tag, sizeof(saved_tag));
+
+        auto decrypted = ::single_shot_crypt(
+            CryptOperation::Decrypt,
+            key.get(),
+            &crypt_algo,
+            ciphertext.data(),
+            ciphertext.size()
+        );
+
+        ASSERT_EQ(decrypted.size(), plaintext.size());
+        ASSERT_EQ(std::memcmp(decrypted.data(), plaintext.data(), plaintext.size()), 0);
+    });
+}
+
+TEST_F(azihsm_aes_gcm, single_shot_known_answer_cases)
+{
+    GTEST_SKIP() << "Skeleton: add fixed AES-GCM KAT vectors and verify ciphertext and tag";
+}
+
+TEST_F(azihsm_aes_gcm, single_shot_known_answer_cases_with_aad)
+{
+    GTEST_SKIP() << "Skeleton: add fixed AES-GCM KAT vectors with AAD and verify ciphertext and tag";
+}
+
+TEST_F(azihsm_aes_gcm, streaming_known_answer_cases)
+{
+    GTEST_SKIP() << "Skeleton: run AES-GCM KAT vectors across chunk sizes";
+}
+
+TEST_F(azihsm_aes_gcm, streaming_known_answer_cases_with_aad)
+{
+    GTEST_SKIP() << "Skeleton: run AES-GCM KAT vectors with AAD across chunk sizes";
+}
+
+TEST_F(azihsm_aes_gcm, single_shot_size_sweep_and_aad_sweep)
+{
+    GTEST_SKIP() << "Skeleton: sweep plaintext and AAD sizes for roundtrip and tag behavior";
+}
+
+TEST_F(azihsm_aes_gcm, streaming_size_and_chunk_sweep)
+{
+    GTEST_SKIP() << "Skeleton: sweep plaintext and AAD sizes across chunk sizes";
+}
+
+// ==================== Argument Validation and API Behavior ====================
+
+// Validate AES-GCM rejects null parameters.
+TEST_F(azihsm_aes_gcm, single_shot_null_params_are_rejected)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        auto key = generate_aes_gcm_key(session, 256);
+
+        azihsm_algo crypt_algo{};
+        crypt_algo.id = AZIHSM_ALGO_ID_AES_GCM;
+        crypt_algo.params = nullptr;
+        crypt_algo.len = 0;
+
+        uint8_t plaintext[16] = { 0xAA };
+        azihsm_buffer input{ plaintext, sizeof(plaintext) };
+        azihsm_buffer output{ nullptr, 0 };
+
+        auto err = azihsm_crypt_encrypt(&crypt_algo, key.get(), &input, &output);
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
+    });
+}
+
+// Validate AES-GCM rejects invalid key handles.
+TEST_F(azihsm_aes_gcm, single_shot_invalid_key_handle_is_rejected)
+{
+    uint8_t iv[12] = { 0xDD };
+    azihsm_algo_aes_gcm_params gcm_params{};
+    std::memcpy(gcm_params.iv, iv, sizeof(iv));
+    std::memset(gcm_params.tag, 0, sizeof(gcm_params.tag));
+    gcm_params.aad = nullptr;
+
+    azihsm_algo crypt_algo{};
+    crypt_algo.id = AZIHSM_ALGO_ID_AES_GCM;
+    crypt_algo.params = &gcm_params;
+    crypt_algo.len = sizeof(gcm_params);
+
+    uint8_t plaintext[16] = { 0xEE };
+    azihsm_buffer input{ plaintext, sizeof(plaintext) };
+    azihsm_buffer output{ nullptr, 0 };
+
+    auto err = azihsm_crypt_encrypt(&crypt_algo, 0xDEADBEEF, &input, &output);
+    ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
+}
+
+TEST_F(azihsm_aes_gcm, single_shot_null_pointers_are_rejected)
+{
+    GTEST_SKIP() << "Skeleton: mirror CBC null pointer argument validation for GCM";
+}
+
+TEST_F(azihsm_aes_gcm, single_shot_invalid_buffer_shapes_are_rejected)
+{
+    GTEST_SKIP() << "Skeleton: reject null pointer with non-zero buffer length";
+}
+
+TEST_F(azihsm_aes_gcm, single_shot_invalid_aad_pointer_shapes_are_rejected)
+{
+    GTEST_SKIP() << "Skeleton: reject invalid AAD pointer/length combinations";
+}
+
+TEST_F(azihsm_aes_gcm, single_shot_invalid_algo_param_len_is_rejected)
+{
+    GTEST_SKIP() << "Skeleton: reject invalid azihsm_algo.len for GCM params";
+}
+
+TEST_F(azihsm_aes_gcm, single_shot_invalid_key_kind_is_rejected)
+{
+    GTEST_SKIP() << "Skeleton: reject non-AES-GCM key kinds for AES-GCM single-shot operations";
+}
+
+TEST_F(azihsm_aes_gcm, streaming_init_null_pointers_are_rejected)
+{
+    GTEST_SKIP() << "Skeleton: validate init null argument handling";
+}
+
+TEST_F(azihsm_aes_gcm, streaming_init_invalid_algo_params_are_rejected)
+{
+    GTEST_SKIP() << "Skeleton: reject invalid/unsupported GCM algo params at init";
+}
+
+TEST_F(azihsm_aes_gcm, streaming_init_invalid_algo_param_len_is_rejected)
+{
+    GTEST_SKIP() << "Skeleton: reject invalid azihsm_algo.len in streaming init";
+}
+
+TEST_F(azihsm_aes_gcm, streaming_init_invalid_key_handle_is_rejected)
+{
+    GTEST_SKIP() << "Skeleton: reject invalid key handles in streaming init";
+}
+
+TEST_F(azihsm_aes_gcm, streaming_init_invalid_key_kind_is_rejected)
+{
+    GTEST_SKIP() << "Skeleton: reject non-AES-GCM key kinds in streaming init";
+}
+
+TEST_F(azihsm_aes_gcm, streaming_update_finish_null_pointers_are_rejected)
+{
+    GTEST_SKIP() << "Skeleton: validate update and finish null argument handling";
+}
+
+TEST_F(azihsm_aes_gcm, streaming_update_finish_invalid_buffer_shapes_are_rejected)
+{
+    GTEST_SKIP() << "Skeleton: reject null pointer with non-zero length and other invalid buffers";
+}
+
+TEST_F(azihsm_aes_gcm, streaming_invalid_aad_pointer_shapes_are_rejected)
+{
+    GTEST_SKIP() << "Skeleton: reject invalid AAD pointer/length combinations in streaming APIs";
+}
+
+TEST_F(azihsm_aes_gcm, single_shot_output_buffer_sizing_behavior)
+{
+    GTEST_SKIP() << "Skeleton: add explicit single-shot buffer-too-small and exact-size behavior checks";
+}
+
+TEST_F(azihsm_aes_gcm, streaming_update_output_buffer_sizing_behavior)
+{
+    GTEST_SKIP() << "Skeleton: add explicit streaming update buffer-too-small and exact-size checks";
+}
+
+TEST_F(azihsm_aes_gcm, streaming_finish_output_buffer_sizing_behavior)
+{
+    GTEST_SKIP() << "Skeleton: add explicit streaming finish buffer-too-small and exact-size checks";
+}
+
+// ==================== Malformed Input and Authentication Rejection ====================
+
+// Validate AES-GCM decryption fails on wrong tag.
+TEST_F(azihsm_aes_gcm, wrong_tag_fails_decryption)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        auto key = generate_aes_gcm_key(session, 256);
+
+        uint8_t iv[12] = { 0x11, 0x22, 0x33, 0x44, 0x55, 0x66,
+                           0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC };
+
+        azihsm_algo_aes_gcm_params gcm_params{};
+        std::memcpy(gcm_params.iv, iv, sizeof(iv));
+        std::memset(gcm_params.tag, 0, sizeof(gcm_params.tag));
+        gcm_params.aad = nullptr;
+
+        azihsm_algo crypt_algo{};
+        crypt_algo.id = AZIHSM_ALGO_ID_AES_GCM;
+        crypt_algo.params = &gcm_params;
+        crypt_algo.len = sizeof(gcm_params);
+
+        std::vector<uint8_t> plaintext = { 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08 };
+        azihsm_buffer input{ plaintext.data(), static_cast<uint32_t>(plaintext.size()) };
+        azihsm_buffer output{ nullptr, 0 };
+
+        auto err = azihsm_crypt_encrypt(&crypt_algo, key.get(), &input, &output);
+        ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+
+        std::vector<uint8_t> ciphertext(output.len);
+        output.ptr = ciphertext.data();
+        err = azihsm_crypt_encrypt(&crypt_algo, key.get(), &input, &output);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        gcm_params.tag[0] ^= 0xFF;
+        std::memcpy(gcm_params.iv, iv, sizeof(iv));
+
+        azihsm_buffer cipher_buf{ ciphertext.data(), static_cast<uint32_t>(ciphertext.size()) };
+        azihsm_buffer plain_buf{ nullptr, 0 };
+
+        err = azihsm_crypt_decrypt(&crypt_algo, key.get(), &cipher_buf, &plain_buf);
+        if (err == AZIHSM_STATUS_BUFFER_TOO_SMALL)
+        {
+            std::vector<uint8_t> decrypted(plain_buf.len);
+            plain_buf.ptr = decrypted.data();
+            err = azihsm_crypt_decrypt(&crypt_algo, key.get(), &cipher_buf, &plain_buf);
+        }
+        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+    });
+}
+
+TEST_F(azihsm_aes_gcm, decrypt_tampered_ciphertext_fails)
+{
+    GTEST_SKIP() << "Skeleton: mutate ciphertext and verify authentication failure";
+}
+
+TEST_F(azihsm_aes_gcm, decrypt_tampered_aad_fails)
+{
+    GTEST_SKIP() << "Skeleton: mutate AAD and verify authentication failure";
+}
+
+TEST_F(azihsm_aes_gcm, decrypt_wrong_iv_fails)
+{
+    GTEST_SKIP() << "Skeleton: decrypt with wrong IV and verify authentication failure";
+}
+
+TEST_F(azihsm_aes_gcm, decrypt_wrong_key_fails)
+{
+    GTEST_SKIP() << "Skeleton: decrypt with different key and verify authentication failure";
+}
+
+TEST_F(azihsm_aes_gcm, decrypt_truncated_ciphertext_fails)
+{
+    GTEST_SKIP() << "Skeleton: truncate ciphertext and verify decryption/authentication failure";
+}
+
+TEST_F(azihsm_aes_gcm, decrypt_missing_tag_fails)
+{
+    GTEST_SKIP() << "Skeleton: clear or omit tag bytes and verify authentication failure";
+}
+
+// ==================== Streaming Lifecycle and Context Rules ====================
+
+TEST_F(azihsm_aes_gcm, streaming_invalid_context_handles_are_rejected)
+{
+    GTEST_SKIP() << "Skeleton: reject invalid context handles for update and finish";
+}
+
+TEST_F(azihsm_aes_gcm, streaming_operation_mismatch_on_context_is_rejected)
+{
+    GTEST_SKIP() << "Skeleton: encrypt context must reject decrypt update/finish";
+}
+
+TEST_F(azihsm_aes_gcm, streaming_use_after_finish_is_rejected)
+{
+    GTEST_SKIP() << "Skeleton: context should reject update and finish after completion";
+}
+
+TEST_F(azihsm_aes_gcm, streaming_zero_length_update_is_noop_until_finish)
+{
+    GTEST_SKIP() << "Skeleton: zero-length update should be a no-op and finish should finalize correctly";
+}
+
+TEST_F(azihsm_aes_gcm, streaming_finish_without_update_with_aad_only)
+{
+    GTEST_SKIP() << "Skeleton: init then finish without update should handle AAD-only authentication";
+}
+
+// ==================== GCM-Specific Integrity and AAD Semantics ====================
+
+TEST_F(azihsm_aes_gcm, aad_only_message_authentication_roundtrip)
+{
+    GTEST_SKIP() << "Skeleton: verify empty plaintext with non-empty AAD authenticates and decrypts";
+}
+
+TEST_F(azihsm_aes_gcm, streaming_aad_only_message_authentication_roundtrip)
+{
+    GTEST_SKIP() << "Skeleton: verify streaming empty plaintext with non-empty AAD authenticates and decrypts";
+}
+
+TEST_F(azihsm_aes_gcm, same_plaintext_iv_different_aad_changes_tag)
+{
+    GTEST_SKIP() << "Skeleton: verify AAD influences authentication tag for same key/IV/plaintext";
+}
+
+TEST_F(azihsm_aes_gcm, same_key_iv_plaintext_produces_same_ciphertext_and_tag)
+{
+    GTEST_SKIP() << "Skeleton: verify deterministic ciphertext/tag for identical key/IV/plaintext without AAD";
+}
+
+TEST_F(azihsm_aes_gcm, streaming_consistency_with_single_shot_with_aad)
+{
+    GTEST_SKIP() << "Skeleton: single-shot and streaming should match for identical key/IV/plaintext/AAD";
+}
+
+TEST_F(azihsm_aes_gcm, same_inputs_with_same_aad_produces_same_tag_single_shot)
+{
+    GTEST_SKIP() << "Skeleton: verify deterministic tag when key/IV/plaintext/AAD are unchanged";
+}
+
+TEST_F(azihsm_aes_gcm, same_inputs_with_same_aad_produces_same_tag_streaming)
+{
+    GTEST_SKIP() << "Skeleton: verify deterministic tag in streaming for identical key/IV/plaintext/AAD";
+}
+
+TEST_F(azihsm_aes_gcm, decrypt_with_missing_aad_fails)
+{
+    GTEST_SKIP() << "Skeleton: encrypt with AAD then decrypt without AAD should fail authentication";
+}
+
+TEST_F(azihsm_aes_gcm, decrypt_with_unexpected_aad_fails)
+{
+    GTEST_SKIP() << "Skeleton: encrypt without AAD then decrypt with AAD should fail authentication";
+}
+
+TEST_F(azihsm_aes_gcm, streaming_decrypt_tampered_aad_fails_across_chunk_sizes)
+{
+    GTEST_SKIP() << "Skeleton: verify AAD-only tamper fails across streaming chunk boundaries";
+}
+
+TEST_F(azihsm_aes_gcm, streaming_decrypt_wrong_iv_fails_across_chunk_sizes)
+{
+    GTEST_SKIP() << "Skeleton: verify wrong-IV authentication failure is consistent across streaming chunk boundaries";
+}
+
+TEST_F(azihsm_aes_gcm, tampered_tag_fails_across_chunk_sizes)
+{
+    GTEST_SKIP() << "Skeleton: verify auth failure is consistent across streaming chunk boundaries";
 }

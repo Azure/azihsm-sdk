@@ -4,23 +4,157 @@
 #pragma once
 
 #include "handle/key_handle.hpp"
+#include "handle/part_list_handle.hpp"
+#include "utils/auto_key.hpp"
 #include <azihsm_api.h>
+#include <functional>
+#include <vector>
 
-// Helper function to generate AES key for testing
-static KeyHandle generate_aes_key(azihsm_handle session, uint32_t bits)
+enum class CryptOperation
 {
-    azihsm_algo keygen_algo{};
-    keygen_algo.id = AZIHSM_ALGO_ID_AES_KEY_GEN;
-    keygen_algo.params = nullptr;
-    keygen_algo.len = 0;
+    Encrypt,
+    Decrypt,
+};
 
-    key_props key_props;
-    key_props.key_kind = AZIHSM_KEY_KIND_AES;
-    key_props.key_class = AZIHSM_KEY_CLASS_SECRET;
-    key_props.bits = bits;
-    key_props.is_session = true;
-    key_props.can_encrypt = true;
-    key_props.can_decrypt = true;
+struct AesKeyTestParams
+{
+    uint32_t bits;
+    const char *test_name;
+};
 
-    return KeyHandle(session, &keygen_algo, key_props);
-}
+struct DataSizeTestParams
+{
+    size_t data_size;
+    size_t expected_output_size_no_pad;
+    size_t expected_output_size_with_pad;
+    const char *test_name;
+};
+
+struct StreamingRoundtripCase
+{
+    size_t plaintext_len;
+    size_t chunk_size;
+    size_t expected_ciphertext_len;
+    uint8_t plaintext_fill;
+    const char *test_name;
+};
+
+// Holds hard-coded data for a known-answer test (KAT).
+struct KnownAnswerTestCase
+{
+    uint32_t bits;
+    const uint8_t *key;
+    size_t key_len;
+    const uint8_t *iv;
+    size_t iv_len;
+    const uint8_t *plaintext;
+    size_t plaintext_len;
+    const uint8_t *ciphertext;
+    size_t ciphertext_len;
+    const char *test_name;
+};
+
+azihsm_status crypt_call(
+    CryptOperation operation,
+    azihsm_algo *algo,
+    azihsm_handle key_handle,
+    azihsm_buffer *input,
+    azihsm_buffer *output
+);
+
+azihsm_status crypt_init_call(
+    CryptOperation operation,
+    azihsm_algo *algo,
+    azihsm_handle key_handle,
+    azihsm_handle *ctx
+);
+
+azihsm_status crypt_update_call(
+    CryptOperation operation,
+    azihsm_handle ctx,
+    azihsm_buffer *input,
+    azihsm_buffer *output
+);
+
+azihsm_status crypt_finish_call(
+    CryptOperation operation,
+    azihsm_handle ctx,
+    azihsm_buffer *output
+);
+
+azihsm_status single_shot_status_with_sizing(
+    CryptOperation operation,
+    azihsm_algo *algo,
+    azihsm_handle key_handle,
+    azihsm_buffer *input
+);
+
+azihsm_status streaming_update_status_with_sizing(
+    CryptOperation operation,
+    azihsm_handle ctx,
+    azihsm_buffer *input
+);
+
+azihsm_status streaming_finish_status_with_sizing(CryptOperation operation, azihsm_handle ctx);
+
+std::vector<uint8_t> single_shot_crypt(
+    CryptOperation operation,
+    azihsm_handle key_handle,
+    azihsm_algo *algo,
+    const uint8_t *input_data,
+    size_t input_len
+);
+
+std::vector<uint8_t> streaming_crypt(
+    CryptOperation operation,
+    azihsm_handle key_handle,
+    azihsm_algo *algo,
+    const uint8_t *input_data,
+    size_t input_len,
+    size_t chunk_size
+);
+
+// Builds deterministic incrementing bytes: 0x00, 0x01, 0x02, ...
+std::vector<uint8_t> make_incrementing_bytes(size_t len);
+
+const std::vector<AesKeyTestParams> &aes_key_sizes();
+
+const std::vector<size_t> &padding_sweep_plaintext_sizes();
+
+const std::vector<size_t> &padding_sweep_chunk_sizes();
+
+void run_single_shot_key_size(
+    PartitionListHandle &part_list,
+    azihsm_algo_id algo_id,
+    const std::vector<DataSizeTestParams> &data_sizes,
+    uint8_t plaintext_fill,
+    const std::function<void(azihsm_handle, azihsm_algo_id, const uint8_t *, size_t, size_t)> &
+        roundtrip_runner,
+    const std::function<KeyHandle(azihsm_handle, uint32_t)> &key_generator
+);
+
+void run_streaming_case_list(
+    PartitionListHandle &part_list,
+    azihsm_algo_id algo_id,
+    const std::function<
+        void(azihsm_handle, azihsm_algo_id, const uint8_t *, size_t, size_t, size_t)> &
+        roundtrip_runner,
+    const std::vector<StreamingRoundtripCase> &test_cases,
+    const std::function<KeyHandle(azihsm_handle, uint32_t)> &key_generator
+);
+
+// Generate an AES key for testing.
+KeyHandle generate_aes_cbc_key(azihsm_handle session, uint32_t bits);
+KeyHandle generate_aes_gcm_key(azihsm_handle session, uint32_t bits);
+KeyHandle generate_aes_xts_key(azihsm_handle session, uint32_t bits);
+
+// Imports fixed local AES key bytes as an HSM key for deterministic validation.
+//
+// This is test harness setup: KATs require an exact key value, while normal keygen in tests
+// produces random keys. The helper uses the supported RSA-AES wrap/unwrap ingest path.
+auto_key import_local_aes_key_for_kat(
+    azihsm_handle session,
+    const uint8_t *local_key_data,
+    size_t local_key_len,
+    uint32_t aes_key_bits
+);

@@ -114,7 +114,7 @@ TEST_F(azihsm_handle_mgmt, free_encrypt_context_on_error)
 {
     part_list_.for_each_session([&](azihsm_handle session) {
         // Generate AES key
-        auto key = generate_aes_key(session, 128);
+        auto key = generate_aes_cbc_key(session, 128);
 
         // Init encrypt context
         auto_ctx encrypt_ctx;
@@ -145,7 +145,7 @@ TEST_F(azihsm_handle_mgmt, free_decrypt_context_on_error)
 {
     part_list_.for_each_session([&](azihsm_handle session) {
         // Generate AES key
-        auto key = generate_aes_key(session, 128);
+        auto key = generate_aes_cbc_key(session, 128);
 
         // Init decrypt context
         auto_ctx decrypt_ctx;
