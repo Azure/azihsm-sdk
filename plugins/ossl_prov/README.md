@@ -12,7 +12,7 @@ An [OpenSSL 3.0 provider](https://docs.openssl.org/3.0/man7/provider/) that dele
 | **Asymmetric Encryption** | RSA-OAEP, RSA PKCS#1 v1.5 |
 | **Digest** | SHA-1, SHA-256, SHA-384, SHA-512 |
 | **KDF** | HKDF (RFC 5869) |
-| **Encoder** | DER (SubjectPublicKeyInfo for public keys only), Text |
+| **Encoder** | DER (SubjectPublicKeyInfo for public keys; PrivateKeyInfo metadata-only — keys are not exportable), Text |
 | **Store** | `azihsm://` URI scheme for masked key loading |
 
 > **Note:** EC keys are generated natively inside the HSM. RSA keys must be generated externally and **imported** into the HSM via the `azihsm.input_key` parameter.
@@ -33,13 +33,13 @@ The following diagram shows how operations chain together. Each arrow represents
 EC genpkey (digitalSignature) ──> masked_key.bin ──> dgst -sign / pkeyutl -sign
                                                  ──> req -new -x509
 
-EC genpkey (keyAgreement) ──> ecdh_key.bin ──> pkeyutl -derive ──> shared_secret.bin
-                                                                        │
-                                                                        ▼
-                                                                   kdf HKDF
-                                                                    │       │
-                                                          (aes) ◄───┘       └───► (hmac)
-                                                     aes_key.bin         hmac_key.bin
+EC genpkey (keyAgreement) ──> ecdh_masked.bin ──> pkeyutl -derive ──> shared_masked.bin
+                                                                            │
+                                                                            ▼
+                                                                       kdf HKDF
+                                                                        │       │
+                                                              (aes) ◄───┘       └───► (hmac)
+                                                        aes_masked.bin         hmac_masked.bin
 
 RSA genpkey (digitalSignature) ──> masked_key.bin ──> dgst -sign / pkeyutl -sign
                                                   ──> req -new -x509
@@ -52,7 +52,7 @@ RSA genpkey (keyEncipherment)  ──> masked_key.bin ──> pkeyutl -encrypt /
 - **ECDSA / RSA Sign & Verify** require a key generated or imported with `digitalSignature` (the default).
 - **RSA Encrypt & Decrypt** require a key imported with `keyEncipherment`. A `digitalSignature` key cannot be used for encryption.
 - **ECDH** requires an EC key generated with `keyAgreement`. A `digitalSignature` EC key cannot be used for ECDH.
-- **HKDF** requires a masked key file as input (`azihsm.ikm_file`). In practice this is the output of an ECDH derive (`shared_secret.bin`). There is no other way to provide the input keying material from the CLI besides using a masked key file.
+- **HKDF** requires a masked key file as input (`azihsm.ikm_file`). In practice this is the output of an ECDH derive (`shared_masked.bin`). There is no other way to provide the input keying material from the CLI besides using a masked key file.
 - **HMAC** (once merged) will require a masked HMAC key derived via HKDF with `derived_key_type:hmac`. The HKDF `digest` parameter determines the HMAC key kind baked into the masked blob (SHA256 → HMAC-SHA256, SHA384 → HMAC-SHA384, SHA512 → HMAC-SHA512). When using the key, the MAC digest must match — e.g., a key derived with `digest:SHA384` can only be used with `-macopt digest:SHA384`. The `derived_key_bits` should match the hash output size (256, 384, or 512).
 
 ## Building
@@ -171,7 +171,7 @@ openssl genpkey ${PROV} \
 openssl genpkey ${PROV} \
     -algorithm EC -pkeyopt group:P-384 \
     -pkeyopt azihsm.key_usage:keyAgreement \
-    -pkeyopt azihsm.masked_key:./ec_p384_ecdh.bin \
+    -pkeyopt azihsm.masked_key:./ec_p384_ecdh_masked.bin \
     -outform DER -out /dev/null
 
 # Ephemeral session key (deleted when HSM session ends)
@@ -362,7 +362,7 @@ openssl pkeyutl -encrypt ${PROV} \
 
 ### ECDH Key Exchange
 
-Derive a shared secret with a peer's public key. The output is always a masked key blob written to a file (not raw bytes) — `output_file` is mandatory. The caller's output buffer is not used; `secretlen` is set to 0. This masked key file is the required input for HKDF key derivation.
+Derive a shared secret with a peer's public key. The output is a masked key blob (not raw bytes). The provider supports two output modes: when `output_file` is set, the masked blob is written to that file and `secretlen` is set to 0; when `output_file` is not set, the masked blob is written into the caller's buffer. This masked key is the required input for HKDF key derivation.
 
 **Requires:** An EC key generated with `keyAgreement` usage. A `digitalSignature` EC key cannot be used for ECDH.
 
@@ -373,16 +373,16 @@ openssl pkey -in peer_priv.pem -pubout -out peer_pub.pem
 
 # Derive shared secret (output is a masked key blob)
 openssl pkeyutl -derive ${PROV} \
-    -inkey "azihsm://./ec_p384_ecdh.bin;type=ec" \
+    -inkey "azihsm://./ec_p384_ecdh_masked.bin;type=ec" \
     -peerkey peer_pub.pem \
-    -pkeyopt output_file:shared_secret.bin
+    -pkeyopt output_file:shared_masked.bin
 ```
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
-| `output_file` | Yes | Path for output masked key blob. Unlike HKDF, there is no buffer fallback — the derive call fails if this is not set |
+| `output_file` | No | Path for output masked key blob. When set, the blob is written to the file and `secretlen` is set to 0. When not set, the blob is written into the caller's buffer |
 
-> **API note:** This breaks the standard `EVP_PKEY_derive` contract, which expects the shared secret to be written into the caller's buffer. The azihsm provider ignores the buffer and sets `secretlen` to 0 instead. This is by design — the HSM cannot expose raw shared secret bytes, so the only output path is a masked key file. Existing code using `EVP_PKEY_derive` must be adapted to read the masked key from `output_file` rather than from the returned buffer.
+> **API note:** The azihsm provider returns a masked key blob instead of the raw shared secret. When `output_file` is set, the blob is written to the file and `secretlen` is set to 0 — callers must read from the file rather than the buffer. When `output_file` is not set, the blob is copied into the caller's buffer and `secretlen` reflects the blob size. In both cases, the output is an opaque masked key, not raw key material.
 
 ### HKDF Key Derivation
 
@@ -395,8 +395,8 @@ Derive AES or HMAC keys from a masked key file using HKDF (RFC 5869). The input 
 openssl kdf ${PROV} \
     -keylen 4096 \
     -kdfopt digest:SHA256 \
-    -kdfopt azihsm.ikm_file:./shared_secret.bin \
-    -kdfopt output_file:./derived_aes_key.bin \
+    -kdfopt azihsm.ikm_file:./shared_masked.bin \
+    -kdfopt output_file:./aes_masked.bin \
     -kdfopt derived_key_type:aes \
     -kdfopt derived_key_bits:256 \
     -binary -out /dev/null \
@@ -406,8 +406,8 @@ openssl kdf ${PROV} \
 openssl kdf ${PROV} \
     -keylen 4096 \
     -kdfopt digest:SHA384 \
-    -kdfopt azihsm.ikm_file:./shared_secret.bin \
-    -kdfopt output_file:./derived_hmac_key.bin \
+    -kdfopt azihsm.ikm_file:./shared_masked.bin \
+    -kdfopt output_file:./hmac_masked.bin \
     -kdfopt derived_key_type:hmac \
     -kdfopt derived_key_bits:384 \
     -kdfopt hexsalt:000102030405060708090a0b0c \
@@ -468,7 +468,7 @@ azihsm://<file_path>;type=<key_type>
 | Component | Required | Description |
 |-----------|----------|-------------|
 | `<file_path>` | Yes | Path to the masked key file (relative or absolute) |
-| `type` | Yes | Key type: `ec`, `rsa`, or `rsa-pss` |
+| `type` | Yes | Key type: `ec`, `rsa`, `rsa-pss`, or `aes` |
 
 ### Examples
 
@@ -509,22 +509,22 @@ A typical workflow combining key agreement and key derivation:
 # 1. Generate an ECDH key
 openssl genpkey ${PROV} -algorithm EC -pkeyopt group:P-384 \
     -pkeyopt azihsm.key_usage:keyAgreement \
-    -pkeyopt azihsm.masked_key:./ecdh_key.bin -outform DER -out /dev/null
+    -pkeyopt azihsm.masked_key:./ecdh_masked.bin -outform DER -out /dev/null
 
 # 2. Generate a peer key and perform ECDH
 openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-384 -out peer.pem
 openssl pkey -in peer.pem -pubout -out peer_pub.pem
 
 openssl pkeyutl -derive ${PROV} \
-    -inkey "azihsm://./ecdh_key.bin;type=ec" \
+    -inkey "azihsm://./ecdh_masked.bin;type=ec" \
     -peerkey peer_pub.pem \
-    -pkeyopt output_file:shared_secret.bin
+    -pkeyopt output_file:shared_masked.bin
 
 # 3. Derive an AES key via HKDF
 openssl kdf ${PROV} -keylen 4096 \
     -kdfopt digest:SHA384 \
-    -kdfopt azihsm.ikm_file:./shared_secret.bin \
-    -kdfopt output_file:./aes_key.bin \
+    -kdfopt azihsm.ikm_file:./shared_masked.bin \
+    -kdfopt output_file:./aes_masked.bin \
     -kdfopt derived_key_type:aes -kdfopt derived_key_bits:256 \
     -binary -out /dev/null HKDF
 ```
