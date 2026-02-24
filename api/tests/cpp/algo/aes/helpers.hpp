@@ -156,5 +156,6 @@ auto_key import_local_aes_key_for_kat(
     azihsm_handle session,
     const uint8_t *local_key_data,
     size_t local_key_len,
-    uint32_t aes_key_bits
+    uint32_t aes_key_bits,
+    azihsm_key_kind key_kind
 );

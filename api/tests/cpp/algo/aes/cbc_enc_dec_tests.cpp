@@ -143,7 +143,8 @@ class azihsm_aes_cbc : public ::testing::Test
                         session,
                         test_case.key,
                         test_case.key_len,
-                        test_case.bits
+                        test_case.bits,
+                        AZIHSM_KEY_KIND_AES
                     );
                 ASSERT_NE(key.get(), 0);
 

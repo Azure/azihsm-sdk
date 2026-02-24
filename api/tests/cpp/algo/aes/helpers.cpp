@@ -381,7 +381,8 @@ auto_key import_local_aes_key_for_kat(
 	azihsm_handle session,
 	const uint8_t *local_key_data,
 	size_t local_key_len,
-	uint32_t aes_key_bits
+	uint32_t aes_key_bits,
+	azihsm_key_kind key_kind
 )
 {
 	auto_key wrapping_priv_key;
@@ -441,7 +442,7 @@ auto_key import_local_aes_key_for_kat(
 	unwrap_algo.params = &unwrap_params;
 	unwrap_algo.len = sizeof(unwrap_params);
 
-	azihsm_key_kind aes_kind = AZIHSM_KEY_KIND_AES;
+	azihsm_key_kind aes_kind = key_kind;
 	azihsm_key_class aes_class = AZIHSM_KEY_CLASS_SECRET;
 	bool aes_is_session = true;
 	bool can_encrypt = true;
