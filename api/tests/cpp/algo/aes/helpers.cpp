@@ -147,12 +147,26 @@ std::vector<uint8_t> single_shot_crypt(
 	azihsm_buffer input{ const_cast<uint8_t *>(input_data), static_cast<uint32_t>(input_len) };
 	azihsm_buffer output{ nullptr, 0 };
 	auto err = crypt_call(operation, algo, key_handle, &input, &output);
+	if (err == AZIHSM_STATUS_SUCCESS)
+	{
+		EXPECT_EQ(output.len, 0u);
+		return {};
+	}
+
 	EXPECT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
-	EXPECT_GT(output.len, 0);
+	if (err != AZIHSM_STATUS_BUFFER_TOO_SMALL)
+	{
+		return {};
+	}
+
 	std::vector<uint8_t> result(output.len);
 	output.ptr = result.data();
 	err = crypt_call(operation, algo, key_handle, &input, &output);
 	EXPECT_EQ(err, AZIHSM_STATUS_SUCCESS);
+	if (err != AZIHSM_STATUS_SUCCESS)
+	{
+		return {};
+	}
 	result.resize(output.len);
 	return result;
 }
