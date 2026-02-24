@@ -255,6 +255,44 @@ fn test_aes_gcm_256_empty_plaintext() {
 }
 
 #[test]
+fn test_aes_gcm_256_empty_plaintext_and_aad() {
+    // Test encryption and decryption with both empty plaintext and empty AAD
+    let key_bytes = [0x66; 32];
+    let key = AesKey::from_bytes(&key_bytes).expect("Failed to create AES key");
+    let iv = [0x33; 12];
+    let plaintext = b"";
+    let aad = b"";
+
+    // Encrypt
+    let mut encrypt_algo =
+        AesGcmAlgo::for_encrypt(&iv, Some(aad)).expect("Failed to create encryption algo");
+    let mut ciphertext = vec![0u8; plaintext.len()];
+    let encrypted_len = encrypt_algo
+        .encrypt(&key, plaintext, Some(&mut ciphertext))
+        .expect("Failed to encrypt");
+
+    assert_eq!(encrypted_len, 0, "Empty plaintext should produce no output");
+
+    let tag = encrypt_algo.tag().to_vec();
+    println!("Tag for empty plaintext and AAD: {:02x?}", tag);
+    assert_eq!(tag.len(), 16, "Tag should be 16 bytes");
+    assert!(tag.iter().any(|&b| b != 0), "Tag should not be all zeros");
+
+    // Decrypt
+    let mut decrypt_algo =
+        AesGcmAlgo::for_decrypt(&iv, &tag, Some(aad)).expect("Failed to create decryption algo");
+    let mut decrypted = vec![0u8; ciphertext.len()];
+    let decrypted_len = decrypt_algo
+        .decrypt(&key, &ciphertext, Some(&mut decrypted))
+        .expect("Failed to decrypt");
+
+    assert_eq!(
+        decrypted_len, 0,
+        "Empty ciphertext should produce no output"
+    );
+}
+
+#[test]
 fn test_aes_gcm_256_streaming_vs_single_shot() {
     // Verify streaming and single-shot produce same results
     let key_bytes = [0x33; 32];

@@ -908,12 +908,8 @@ impl DdiDev for DdiWinDev {
         iv: &mut Option<[u8; 12]>,
         fips_approved: &mut bool,
     ) -> Result<usize, DdiError> {
+        // Note: src_buf_len == 0 is valid for GCM (AAD-only authentication)
         let src_buf_len = src_buf.len();
-
-        // Validate input parameters
-        if src_buf_len == 0 {
-            Err(DdiError::InvalidParameter)?;
-        }
 
         // If this is a decryption operation, the tag must be provided
         if mode == DdiAesOp::Decrypt && gcm_params.tag.is_none() {
@@ -921,7 +917,8 @@ impl DdiDev for DdiWinDev {
         }
 
         // Validate destination buffer size
-        if dst_buf.len() < src_buf_len {
+        // For zero-length input, dst_buf can be empty
+        if src_buf_len > 0 && dst_buf.len() < src_buf_len {
             tracing::error!(
                 "Destination buffer size ({}) is less than source buffer size ({})",
                 dst_buf.len(),
@@ -1076,27 +1073,29 @@ impl DdiDev for DdiWinDev {
 
         // Copy the actual data (excluding AAD) to the destination buffer
         let aad_offset = final_aad.len();
-        let data_len = temp_dest_buf.len() - aad_offset;
+        let data_len = temp_dest_buf.len().saturating_sub(aad_offset);
 
-        if data_len > dst_buf.len() {
-            if mode == DdiAesOp::Encrypt {
-                tracing::error!(
-                    "AES GCM Encrypt: Device output length ({}) is greater than destination buffer size ({})",
-                    data_len,
-                    dst_buf.len()
-                );
-                Err(DdiError::DdiStatus(DdiStatus::AesEncryptFailed))?;
-            } else {
-                tracing::error!(
-                    "AES GCM Decrypt: Device output length ({}) is greater than destination buffer size ({})",
-                    data_len,
-                    dst_buf.len()
-                );
-                Err(DdiError::DdiStatus(DdiStatus::AesDecryptFailed))?;
+        // Only copy if there's actual data (not just AAD)
+        if data_len > 0 {
+            if data_len > dst_buf.len() {
+                if mode == DdiAesOp::Encrypt {
+                    tracing::error!(
+                        "AES GCM Encrypt: Device output length ({}) is greater than destination buffer size ({})",
+                        data_len,
+                        dst_buf.len()
+                    );
+                    Err(DdiError::DdiStatus(DdiStatus::AesEncryptFailed))?;
+                } else {
+                    tracing::error!(
+                        "AES GCM Decrypt: Device output length ({}) is greater than destination buffer size ({})",
+                        data_len,
+                        dst_buf.len()
+                    );
+                    Err(DdiError::DdiStatus(DdiStatus::AesDecryptFailed))?;
+                }
             }
+            dst_buf[..data_len].copy_from_slice(&temp_dest_buf[aad_offset..]);
         }
-
-        dst_buf[..data_len].copy_from_slice(&temp_dest_buf[aad_offset..]);
 
         // Set output parameters from device response
         *tag = Some(ioctl_out_buffer.cmd_spec_data);

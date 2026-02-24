@@ -312,12 +312,11 @@ impl HsmMaskedKey {
 
         if metadata.attrs.contains(HsmMaskedKeyAttributes::UNWRAP) {
             match class {
-                HsmKeyClass::Private => {
+                HsmKeyClass::Private | HsmKeyClass::Secret => {
                     flags |= HsmKeyFlags::UNWRAP;
                 }
-                HsmKeyClass::Public => {}
-                HsmKeyClass::Secret => {
-                    flags |= HsmKeyFlags::UNWRAP;
+                HsmKeyClass::Public => {
+                    flags |= HsmKeyFlags::WRAP;
                 }
             }
         }
@@ -349,6 +348,7 @@ impl TryFrom<DdiMaskedKeyMetadata> for HsmMaskedKeyMetadata {
     fn try_from(value: DdiMaskedKeyMetadata) -> Result<Self, Self::Error> {
         let attrs = HsmMaskedKeyAttributes::try_from(value.key_attributes)?;
         let (kind, bits, curve) = match value.key_type {
+            DdiKeyType::RsaUnwrap => (HsmKeyKind::Rsa, 2048, None), // Special internal key type for RSA unwrapping
             DdiKeyType::Rsa2kPrivate => (HsmKeyKind::Rsa, 2048, None),
             DdiKeyType::Rsa3kPrivate => (HsmKeyKind::Rsa, 3072, None),
             DdiKeyType::Rsa4kPrivate => (HsmKeyKind::Rsa, 4096, None),

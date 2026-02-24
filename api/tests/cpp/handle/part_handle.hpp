@@ -83,12 +83,6 @@ class PartitionHandle
         return mutex;
     }
 
-    static std::unordered_set<uint32_t> &get_initialized_partitions()
-    {
-        static std::unordered_set<uint32_t> initialized;
-        return initialized;
-    }
-
     void open_and_init(std::vector<azihsm_char> &path, uint32_t index)
     {
         azihsm_str path_str;
@@ -102,46 +96,40 @@ class PartitionHandle
         }
 
         std::lock_guard<std::mutex> lock(get_init_mutex());
-        auto &initialized = get_initialized_partitions();
 
-        if (initialized.find(index) == initialized.end())
+        // Reset before initialization to clear any previous state and ensure clean state for each test
+        err = azihsm_part_reset(handle_);
+        if (err != AZIHSM_STATUS_SUCCESS)
         {
-            // Reset before initialization to clear any previous state
-            err = azihsm_part_reset(handle_);
-            if (err != AZIHSM_STATUS_SUCCESS)
-            {
-                azihsm_part_close(handle_);
-                handle_ = 0;
-                throw std::runtime_error(
-                    "Failed to reset partition. Error: " + std::to_string(err)
-                );
-            }
-
-            azihsm_credentials creds{};
-            std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
-            std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
-
-            PartInitConfig init_config{};
-            make_part_init_config(handle_, init_config);
-
-            err = azihsm_part_init(
-                handle_,
-                &creds,
-                nullptr,
-                nullptr,
-                &init_config.backup_config,
-                &init_config.pota_endorsement
+            azihsm_part_close(handle_);
+            handle_ = 0;
+            throw std::runtime_error(
+                "Failed to reset partition. Error: " + std::to_string(err)
             );
-            if (err != AZIHSM_STATUS_SUCCESS)
-            {
-                azihsm_part_close(handle_);
-                handle_ = 0;
-                throw std::runtime_error(
-                    "Failed to initialize partition. Error: " + std::to_string(err)
-                );
-            }
+        }
 
-            initialized.insert(index);
+        azihsm_credentials creds{};
+        std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
+        std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
+
+        PartInitConfig init_config{};
+        make_part_init_config(handle_, init_config);
+
+        err = azihsm_part_init(
+            handle_,
+            &creds,
+            nullptr,
+            nullptr,
+            &init_config.backup_config,
+            &init_config.pota_endorsement
+        );
+        if (err != AZIHSM_STATUS_SUCCESS)
+        {
+            azihsm_part_close(handle_);
+            handle_ = 0;
+            throw std::runtime_error(
+                "Failed to initialize partition. Error: " + std::to_string(err)
+            );
         }
     }
 };
