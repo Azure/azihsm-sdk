@@ -20,9 +20,11 @@ use jzon::JsonValue;
 use crate::Xtask;
 use crate::XtaskCtx;
 
-/// Xtask to generate markdown coverage report from JSON output of coverage xtask
+/// (Intended for use in Github Actions CI) Xtask to generate markdown coverage report from JSON output of coverage xtask
 #[derive(Parser)]
-#[clap(about = "(Intended for use in Github Actions CI) Generate a markdown coverage report from JSON output of coverage xtask")]
+#[clap(
+    about = "(Intended for use in Github Actions CI) Generate a markdown coverage report from JSON output of coverage xtask"
+)]
 pub struct CoverageReport {}
 
 #[derive(Default, Debug, Clone)]
