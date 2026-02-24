@@ -74,6 +74,7 @@ jobs:
       id: nextest-report
       run: cargo xtask precheck --nextest-report
     - name: Code Coverage Summary Report
+      if: ${{ steps.test-mock-coverage.outcome == 'success' }}
       run: cargo xtask precheck --coverage-report
     - name: Fail if any tests failed
       if: ${{ steps.test-mock-coverage.outcome == 'failure' || steps.test-mock-table-4.outcome == 'failure' || steps.test-mock-table-64.outcome == 'failure' }}
@@ -129,6 +130,7 @@ jobs:
       id: nextest-report
       run: cargo xtask precheck --nextest-report
     - name: Code Coverage Summary Report
+      if: ${{ steps.test-mock-coverage.outcome == 'success' }}
       run: cargo xtask precheck --coverage-report
     - name: Fail if any tests failed
       if: ${{ steps.test-mock-coverage.outcome == 'failure' }}
