@@ -687,7 +687,14 @@ TEST_F(azihsm_aes_gcm, streaming_empty_plaintext_with_aad)
             crypt_algo.params = &gcm_params;
             crypt_algo.len = sizeof(gcm_params);
 
-            auto ciphertext = streaming_encrypt(key_handle, &crypt_algo, nullptr, 0, 16);
+            auto ciphertext = streaming_crypt(
+                CryptOperation::Encrypt,
+                key_handle,
+                &crypt_algo,
+                nullptr,
+                0,
+                16
+            );
             ASSERT_EQ(ciphertext.size(), 0u);
 
             uint8_t saved_tag[16];
@@ -696,7 +703,14 @@ TEST_F(azihsm_aes_gcm, streaming_empty_plaintext_with_aad)
             std::memcpy(gcm_params.iv, iv, sizeof(iv));
             std::memcpy(gcm_params.tag, saved_tag, sizeof(saved_tag));
 
-            auto decrypted = streaming_decrypt(key_handle, &crypt_algo, nullptr, 0, 16);
+            auto decrypted = streaming_crypt(
+                CryptOperation::Decrypt,
+                key_handle,
+                &crypt_algo,
+                nullptr,
+                0,
+                16
+            );
             ASSERT_EQ(decrypted.size(), 0u);
         });
     });
@@ -747,221 +761,6 @@ TEST_F(azihsm_aes_gcm, empty_plaintext_wrong_tag_fails)
         });
     });
 }
-
-// Validate AES-GCM empty plaintext with various AAD sizes and AAD mismatch failure.
-TEST_F(azihsm_aes_gcm, empty_plaintext_with_aad_sizes)
-{
-    std::vector<size_t> aad_sizes = { 1, 15, 16, 17, 31, 32, 33 };
-
-    part_list_.for_each_session([&](azihsm_handle session) {
-        for_each_aes_gcm_key(session, [&](azihsm_handle key_handle) {
-            for (size_t aad_len : aad_sizes)
-            {
-                SCOPED_TRACE("aad_len=" + std::to_string(aad_len));
-
-                std::vector<uint8_t> aad(aad_len);
-                for (size_t i = 0; i < aad.size(); ++i)
-                {
-                    aad[i] = static_cast<uint8_t>(0xA0 + (i & 0x3F));
-                }
-
-                azihsm_buffer aad_buf{ aad.data(), static_cast<uint32_t>(aad.size()) };
-
-                uint8_t iv[12] = { 0x10, 0x20, 0x30, 0x40, 0x50, 0x60,
-                                   0x70, 0x80, 0x90, 0xA0, 0xB0, 0xC0 };
-
-                azihsm_algo_aes_gcm_params gcm_params{};
-                std::memcpy(gcm_params.iv, iv, sizeof(iv));
-                std::memset(gcm_params.tag, 0, sizeof(gcm_params.tag));
-                gcm_params.aad = &aad_buf;
-
-                azihsm_algo crypt_algo{};
-                crypt_algo.id = AZIHSM_ALGO_ID_AES_GCM;
-                crypt_algo.params = &gcm_params;
-                crypt_algo.len = sizeof(gcm_params);
-
-                azihsm_buffer input{ nullptr, 0 };
-                azihsm_buffer output{ nullptr, 0 };
-
-                auto err = azihsm_crypt_encrypt(&crypt_algo, key_handle, &input, &output);
-                if (err == AZIHSM_STATUS_BUFFER_TOO_SMALL)
-                {
-                    ASSERT_EQ(output.len, 0u);
-                    err = azihsm_crypt_encrypt(&crypt_algo, key_handle, &input, &output);
-                }
-                ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-
-                uint8_t saved_tag[16];
-                std::memcpy(saved_tag, gcm_params.tag, sizeof(saved_tag));
-
-                std::memcpy(gcm_params.iv, iv, sizeof(iv));
-                std::memcpy(gcm_params.tag, saved_tag, sizeof(saved_tag));
-
-                azihsm_buffer cipher_buf{ nullptr, 0 };
-                azihsm_buffer plain_buf{ nullptr, 0 };
-
-                err = azihsm_crypt_decrypt(&crypt_algo, key_handle, &cipher_buf, &plain_buf);
-                if (err == AZIHSM_STATUS_BUFFER_TOO_SMALL)
-                {
-                    ASSERT_EQ(plain_buf.len, 0u);
-                    err = azihsm_crypt_decrypt(&crypt_algo, key_handle, &cipher_buf, &plain_buf);
-                }
-                ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-
-                std::vector<uint8_t> aad_bad = aad;
-                aad_bad[0] ^= 0xFF;
-                azihsm_buffer aad_bad_buf{ aad_bad.data(), static_cast<uint32_t>(aad_bad.size()) };
-                gcm_params.aad = &aad_bad_buf;
-
-                std::memcpy(gcm_params.iv, iv, sizeof(iv));
-                std::memcpy(gcm_params.tag, saved_tag, sizeof(saved_tag));
-
-                err = azihsm_crypt_decrypt(&crypt_algo, key_handle, &cipher_buf, &plain_buf);
-                if (err == AZIHSM_STATUS_BUFFER_TOO_SMALL)
-                {
-                    ASSERT_EQ(plain_buf.len, 0u);
-                    err = azihsm_crypt_decrypt(&crypt_algo, key_handle, &cipher_buf, &plain_buf);
-                }
-                ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
-            }
-        });
-    });
-}
-
-// Validate AES-GCM empty plaintext with an empty AAD buffer (non-null, zero length).
-TEST_F(azihsm_aes_gcm, empty_plaintext_with_empty_aad_buffer)
-{
-    part_list_.for_each_session([](azihsm_handle session) {
-        for_each_aes_gcm_key(session, [&](azihsm_handle key_handle) {
-            uint8_t iv[12] = { 0x21, 0x22, 0x23, 0x24, 0x25, 0x26,
-                               0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C };
-
-            std::vector<uint8_t> aad(1, 0x5A);
-            azihsm_buffer aad_buf{ aad.data(), 0 };
-
-            azihsm_algo_aes_gcm_params gcm_params{};
-            std::memcpy(gcm_params.iv, iv, sizeof(iv));
-            std::memset(gcm_params.tag, 0, sizeof(gcm_params.tag));
-            gcm_params.aad = &aad_buf;
-
-            azihsm_algo crypt_algo{};
-            crypt_algo.id = AZIHSM_ALGO_ID_AES_GCM;
-            crypt_algo.params = &gcm_params;
-            crypt_algo.len = sizeof(gcm_params);
-
-            azihsm_buffer input{ nullptr, 0 };
-            azihsm_buffer output{ nullptr, 0 };
-
-            auto err = azihsm_crypt_encrypt(&crypt_algo, key_handle, &input, &output);
-            if (err == AZIHSM_STATUS_BUFFER_TOO_SMALL)
-            {
-                ASSERT_EQ(output.len, 0u);
-                err = azihsm_crypt_encrypt(&crypt_algo, key_handle, &input, &output);
-            }
-            ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-
-            uint8_t saved_tag[16];
-            std::memcpy(saved_tag, gcm_params.tag, sizeof(saved_tag));
-
-            std::memcpy(gcm_params.iv, iv, sizeof(iv));
-            std::memcpy(gcm_params.tag, saved_tag, sizeof(saved_tag));
-
-            azihsm_buffer cipher_buf{ nullptr, 0 };
-            azihsm_buffer plain_buf{ nullptr, 0 };
-
-            err = azihsm_crypt_decrypt(&crypt_algo, key_handle, &cipher_buf, &plain_buf);
-            if (err == AZIHSM_STATUS_BUFFER_TOO_SMALL)
-            {
-                ASSERT_EQ(plain_buf.len, 0u);
-                err = azihsm_crypt_decrypt(&crypt_algo, key_handle, &cipher_buf, &plain_buf);
-            }
-            ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        });
-    });
-}
-
-// Validate streaming AES-GCM empty plaintext with AAD and tag verification.
-TEST_F(azihsm_aes_gcm, streaming_empty_plaintext_with_aad)
-{
-    part_list_.for_each_session([](azihsm_handle session) {
-        for_each_aes_gcm_key(session, [&](azihsm_handle key_handle) {
-            uint8_t iv[12] = { 0x31, 0x32, 0x33, 0x34, 0x35, 0x36,
-                               0x37, 0x38, 0x39, 0x3A, 0x3B, 0x3C };
-
-            std::vector<uint8_t> aad = { 0x01, 0x02, 0x03, 0x04, 0x05 };
-            azihsm_buffer aad_buf{ aad.data(), static_cast<uint32_t>(aad.size()) };
-
-            azihsm_algo_aes_gcm_params gcm_params{};
-            std::memcpy(gcm_params.iv, iv, sizeof(iv));
-            std::memset(gcm_params.tag, 0, sizeof(gcm_params.tag));
-            gcm_params.aad = &aad_buf;
-
-            azihsm_algo crypt_algo{};
-            crypt_algo.id = AZIHSM_ALGO_ID_AES_GCM;
-            crypt_algo.params = &gcm_params;
-            crypt_algo.len = sizeof(gcm_params);
-
-            auto ciphertext = streaming_encrypt(key_handle, &crypt_algo, nullptr, 0, 16);
-            ASSERT_EQ(ciphertext.size(), 0u);
-
-            uint8_t saved_tag[16];
-            std::memcpy(saved_tag, gcm_params.tag, sizeof(saved_tag));
-
-            std::memcpy(gcm_params.iv, iv, sizeof(iv));
-            std::memcpy(gcm_params.tag, saved_tag, sizeof(saved_tag));
-
-            auto decrypted = streaming_decrypt(key_handle, &crypt_algo, nullptr, 0, 16);
-            ASSERT_EQ(decrypted.size(), 0u);
-        });
-    });
-}
-
-// Validate AES-GCM empty plaintext fails on wrong tag.
-TEST_F(azihsm_aes_gcm, empty_plaintext_wrong_tag_fails)
-{
-    part_list_.for_each_session([](azihsm_handle session) {
-        for_each_aes_gcm_key(session, [&](azihsm_handle key_handle) {
-            uint8_t iv[12] = { 0x41, 0x42, 0x43, 0x44, 0x45, 0x46,
-                               0x47, 0x48, 0x49, 0x4A, 0x4B, 0x4C };
-
-            azihsm_algo_aes_gcm_params gcm_params{};
-            std::memcpy(gcm_params.iv, iv, sizeof(iv));
-            std::memset(gcm_params.tag, 0, sizeof(gcm_params.tag));
-            gcm_params.aad = nullptr;
-
-            azihsm_algo crypt_algo{};
-            crypt_algo.id = AZIHSM_ALGO_ID_AES_GCM;
-            crypt_algo.params = &gcm_params;
-            crypt_algo.len = sizeof(gcm_params);
-
-            azihsm_buffer input{ nullptr, 0 };
-            azihsm_buffer output{ nullptr, 0 };
-
-            auto err = azihsm_crypt_encrypt(&crypt_algo, key_handle, &input, &output);
-            if (err == AZIHSM_STATUS_BUFFER_TOO_SMALL)
-            {
-                ASSERT_EQ(output.len, 0u);
-                err = azihsm_crypt_encrypt(&crypt_algo, key_handle, &input, &output);
-            }
-            ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-
-            std::memcpy(gcm_params.iv, iv, sizeof(iv));
-            gcm_params.tag[0] ^= 0xFF;
-
-            azihsm_buffer cipher_buf{ nullptr, 0 };
-            azihsm_buffer plain_buf{ nullptr, 0 };
-
-            err = azihsm_crypt_decrypt(&crypt_algo, key_handle, &cipher_buf, &plain_buf);
-            if (err == AZIHSM_STATUS_BUFFER_TOO_SMALL)
-            {
-                ASSERT_EQ(plain_buf.len, 0u);
-                err = azihsm_crypt_decrypt(&crypt_algo, key_handle, &cipher_buf, &plain_buf);
-            }
-            ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
-        });
-    });
-}
-
 
 // Validate different IVs produce different ciphertexts.
 TEST_F(azihsm_aes_gcm, different_ivs_produce_different_ciphertexts)
