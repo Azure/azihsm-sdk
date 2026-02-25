@@ -30,7 +30,7 @@ zerocopy = { features = ["derive"], workspace = true }
 [features]
 default = []
 mock = ["azihsm_ddi/mock"]
-resiliency-mock = ["azihsm_ddi/resiliency-mock"]
+resiliency = ["azihsm_ddi/resiliency"]
 
 [lints]
 workspace = true

@@ -17,7 +17,7 @@ members = [
   "crates/x509",
   "ddi/interface",
   "ddi/lib",
-  "ddi/resiliency_mock",
+  "ddi/resiliency",
   "ddi/test_helpers",
   "plugins/ossl_prov",
   "xtask",
@@ -36,7 +36,7 @@ azihsm_ddi_interface = { path = "ddi/interface" }
 azihsm_ddi_mbor = { path = "ddi/serde/mbor" }
 azihsm_ddi_mock = { path = "ddi/mock" }
 azihsm_ddi_nix = { path = "ddi/nix" }
-azihsm_ddi_resiliency_mock = { path = "ddi/resiliency_mock" }
+azihsm_ddi_resiliency = { path = "ddi/resiliency" }
 azihsm_ddi_sim = { path = "ddi/sim" }
 azihsm_ddi_test_helpers = { path = "ddi/test_helpers" }
 azihsm_ddi_types = { features = [

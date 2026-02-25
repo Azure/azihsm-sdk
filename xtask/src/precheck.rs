@@ -162,9 +162,9 @@ impl Xtask for Precheck {
                 };
                 nextest.run(ctx.clone())?;
 
-                // SDK Run resiliency-mock tests (only the resiliency test suite)
+                // SDK Run resiliency tests (only the resiliency test suite)
                 let nextest = nextest::Nextest {
-                    features: Some("resiliency-mock".to_string()),
+                    features: Some("mock,resiliency".to_string()),
                     package: Some("azihsm_api_tests".to_string()),
                     no_default_features: false,
                     filterset: Some("test(resiliency::)".to_string()),

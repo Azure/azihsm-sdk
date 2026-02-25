@@ -6,7 +6,7 @@
 
 mod algo;
 mod partition_tests;
-#[cfg(feature = "resiliency-mock")]
+#[cfg(feature = "resiliency")]
 mod resiliency;
 mod session_tests;
 mod utils;

@@ -3,20 +3,14 @@
 
 [package]
 edition = "2021"
-name = "azihsm_ddi_resiliency_mock"
+name = "azihsm_ddi_resiliency"
 version = "0.1.0"
-
-[features]
-default = []
-table-4 = ["azihsm_ddi_mock/table-4"]
-table-64 = ["azihsm_ddi_mock/table-64"]
 
 [lib]
 doctest = false
 
 [dependencies]
 azihsm_ddi_interface.workspace = true
-azihsm_ddi_mock.workspace = true
 azihsm_ddi_types.workspace = true
 parking_lot.workspace = true
 tracing.workspace = true

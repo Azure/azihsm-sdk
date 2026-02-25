@@ -8,11 +8,7 @@
 //! faults through the resiliency mock device.
 //!
 
-use azihsm_ddi_resiliency_mock::DdiOp;
-use azihsm_ddi_resiliency_mock::DriverError;
-use azihsm_ddi_resiliency_mock::FaultRule;
-use azihsm_ddi_resiliency_mock::clear_faults;
-use azihsm_ddi_resiliency_mock::inject_fault;
+use azihsm_ddi_resiliency::*;
 
 use crate::*;
 

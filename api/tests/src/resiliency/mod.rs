@@ -4,7 +4,7 @@
 //! Resiliency integration tests.
 //!
 //! Each sub-module targets a specific API surface and uses the
-//! resiliency-mock DDI device to inject transient faults, verifying
+//! resiliency DDI device to inject transient faults, verifying
 //! that the retry-with-backoff machinery recovers correctly.
 
 mod open_part;

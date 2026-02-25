@@ -1,40 +1,41 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Resiliency mock device — wraps [`DdiMockDev`] with fault injection.
+//! Resiliency device — wraps any [`DdiDev`] implementation with fault injection.
 
 use azihsm_ddi_interface::*;
-use azihsm_ddi_mock::DdiMockDev;
 use azihsm_ddi_types::DdiAesOp;
-use azihsm_ddi_types::DdiDeviceKind;
 use azihsm_ddi_types::DdiOpReq;
 
 use crate::fault;
 
-/// A DDI device that delegates to [`DdiMockDev`] but can inject
+/// A DDI device that delegates to an inner [`DdiDev`] but can inject
 /// faults into `exec_op` calls based on globally configured rules.
 ///
 /// See [`crate::inject_fault`] and [`crate::clear_faults`] for the
 /// fault injection API.
 #[derive(Debug, Clone)]
-pub struct DdiResiliencyMockDev {
-    inner: DdiMockDev,
+pub struct DdiResiliencyDev<D: DdiDev> {
+    inner: D,
 }
 
-impl DdiResiliencyMockDev {
-    /// Wraps an existing [`DdiMockDev`].
-    pub(crate) fn new(inner: DdiMockDev) -> Self {
+impl<D: DdiDev> DdiResiliencyDev<D> {
+    /// Wraps an existing [`DdiDev`] implementation.
+    pub(crate) fn new(inner: D) -> Self {
         Self { inner }
     }
 
-    /// Returns the device kind (Virtual or Physical).
-    pub fn device_kind(&self) -> Option<DdiDeviceKind> {
-        self.inner.device_kind()
+    /// Returns the device kind (Virtual).
+    ///
+    /// The resiliency wrapper is only used for testing, so this
+    /// always returns [`DdiDeviceKind::Virtual`].
+    pub fn device_kind(&self) -> Option<azihsm_ddi_types::DdiDeviceKind> {
+        Some(azihsm_ddi_types::DdiDeviceKind::Virtual)
     }
 }
 
-impl DdiDev for DdiResiliencyMockDev {
-    fn set_device_kind(&mut self, kind: DdiDeviceKind) {
+impl<D: DdiDev> DdiDev for DdiResiliencyDev<D> {
+    fn set_device_kind(&mut self, kind: azihsm_ddi_types::DdiDeviceKind) {
         self.inner.set_device_kind(kind);
     }
 

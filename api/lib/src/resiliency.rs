@@ -330,13 +330,13 @@ pub const MAX_RETRIES: u32 = 5;
 /// Default base delay in milliseconds for exponential backoff.
 /// Each iteration doubles: 400 → 800 → 1600 → 3200 → 6400 ms.
 ///
-/// When compiled with `resiliency-mock` (test builds only) the base is
+/// When compiled with `resiliency` (test builds only) the base is
 /// reduced to 1 ms so that retry tests complete in milliseconds instead
 /// of ~12 s.
-#[cfg(not(feature = "resiliency-mock"))]
+#[cfg(not(feature = "resiliency"))]
 pub(crate) const BACKOFF_BASE_MS: u64 = 400;
 
-#[cfg(feature = "resiliency-mock")]
+#[cfg(feature = "resiliency")]
 pub(crate) const BACKOFF_BASE_MS: u64 = 1;
 
 /// Executes `operation` with exponential-backoff retry.
