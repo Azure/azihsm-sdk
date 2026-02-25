@@ -7,6 +7,7 @@
 
 use std::time::Duration;
 
+use rand::Rng;
 use tracing::*;
 
 use crate::HsmError;
@@ -328,16 +329,31 @@ mod tests {
 pub const MAX_RETRIES: u32 = 5;
 
 /// Default base delay in milliseconds for exponential backoff.
-/// Each iteration doubles: 400 → 800 → 1600 → 3200 → 6400 ms.
+/// Each iteration doubles: 400 → 800 → 1600 → 3200 → 6400 ms, plus
+/// random jitter of 0–[`BACKOFF_JITTER_MS`] to avoid thundering-herd retries.
 ///
-/// When compiled with `resiliency` (test builds only) the base is
+/// When compiled with `mock` (test builds only) the base is
 /// reduced to 1 ms so that retry tests complete in milliseconds instead
 /// of ~12 s.
-#[cfg(not(feature = "resiliency"))]
+#[cfg(not(feature = "mock"))]
 pub(crate) const BACKOFF_BASE_MS: u64 = 400;
 
-#[cfg(feature = "resiliency")]
+#[cfg(feature = "mock")]
 pub(crate) const BACKOFF_BASE_MS: u64 = 1;
+
+/// Maximum random jitter added to each backoff delay (in milliseconds).
+///
+/// A uniform random value in `0..=BACKOFF_JITTER_MS` is added on top of
+/// the exponential delay so that concurrent callers don't all retry at
+/// exactly the same instant.
+///
+/// When compiled with `mock` (test builds only) jitter is zero so
+/// that test timings remain deterministic.
+#[cfg(not(feature = "mock"))]
+pub(crate) const BACKOFF_JITTER_MS: u64 = 100;
+
+#[cfg(feature = "mock")]
+pub(crate) const BACKOFF_JITTER_MS: u64 = 0;
 
 /// Executes `operation` with exponential-backoff retry.
 ///
@@ -365,13 +381,15 @@ pub(crate) fn execute_with_backoff<T>(
 
     while predicate(&result) && iter < max_retries {
         let backoff_ms = backoff_base_ms * (1 << iter);
+        let jitter_ms = rand::thread_rng().gen_range(0..=BACKOFF_JITTER_MS);
+        let total_ms = backoff_ms + jitter_ms;
         if let Err(ref err) = result {
             warn!(
                 ?err,
-                iter, backoff_ms, "Transient error, backing off before retry.",
+                iter, backoff_ms, jitter_ms, total_ms, "Transient error, backing off before retry.",
             );
         }
-        std::thread::sleep(Duration::from_millis(backoff_ms));
+        std::thread::sleep(Duration::from_millis(total_ms));
         result = operation();
         iter += 1;
     }
