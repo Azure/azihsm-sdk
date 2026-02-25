@@ -24,6 +24,7 @@ mod clippy;
 pub mod common;
 mod copyright;
 mod coverage;
+mod coverage_report;
 mod fmt;
 mod install;
 mod nextest;
@@ -66,6 +67,7 @@ enum Commands {
     Clippy(clippy::Clippy),
     Copyright(copyright::Copyright),
     Coverage(coverage::Coverage),
+    CoverageReport(coverage_report::CoverageReport),
     Fmt(fmt::Fmt),
     Nextest(nextest::Nextest),
     NextestReport(nextest_report::NextestReport),
@@ -104,6 +106,7 @@ fn try_main() -> anyhow::Result<()> {
         Commands::Clippy(task) => task.run(ctx),
         Commands::Copyright(task) => task.run(ctx),
         Commands::Coverage(task) => task.run(ctx),
+        Commands::CoverageReport(task) => task.run(ctx),
         Commands::Fmt(task) => task.run(ctx),
         Commands::Precheck(task) => task.run(ctx),
         Commands::Nextest(task) => task.run(ctx),

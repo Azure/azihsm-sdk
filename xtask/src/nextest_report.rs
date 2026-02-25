@@ -2,6 +2,8 @@
 // Licensed under the MIT License.
 
 use std::fs;
+use std::fs::OpenOptions;
+use std::io::Write;
 
 use glob::glob;
 use junit_parser::TestSuites;
@@ -157,7 +159,8 @@ impl Xtask for NextestReport {
 
         // Write to GITHUB_STEP_SUMMARY environment variable
         if let Ok(summary_path) = std::env::var("GITHUB_STEP_SUMMARY") {
-            fs::write(&summary_path, &markdown)?;
+            let mut file = OpenOptions::new().append(true).open(&summary_path)?;
+            file.write_all(markdown.as_bytes())?;
             log::trace!("Report written to GITHUB_STEP_SUMMARY");
         } else {
             // If not in GitHub Actions, just print to stdout
