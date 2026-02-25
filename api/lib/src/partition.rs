@@ -637,14 +637,6 @@ impl HsmPartition {
     }
 }
 
-/// Cleans up resources when the partition is dropped.
-///
-/// Ensures proper cleanup and logging when the partition handle goes out of scope.
-impl Drop for HsmPartition {
-    #[instrument(skip_all, fields(path = self.path().as_str()) )]
-    fn drop(&mut self) {}
-}
-
 /// HSM partition handle.
 ///
 /// Represents an open connection to an HSM partition. This handle provides
@@ -781,4 +773,13 @@ impl HsmPartitionInner {
     pub fn mobk(&self) -> &[u8] {
         &self.mobk
     }
+}
+
+/// Cleans up resources when the last partition reference is dropped.
+///
+/// Fires exactly once when the final `Arc` reference is released and the
+/// inner state is consumed — no `RwLock` acquisition needed.
+impl Drop for HsmPartitionInner {
+    #[instrument(skip_all, fields(path = self.path.as_str()))]
+    fn drop(&mut self) {}
 }
