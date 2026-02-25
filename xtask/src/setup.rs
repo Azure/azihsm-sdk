@@ -101,9 +101,6 @@ impl Xtask for Setup {
             cmd!(sh, "cargo audit --version").quiet().run()?;
         }
 
-        // Check cargo-audit version
-        cmd!(sh, "cargo audit --version").quiet().run()?;
-
         // Run Install cargo-llvm-cov
         let install_cargo_llvm_cov = install::Install {
             crate_name: format!("cargo-llvm-cov@{}", CARGO_LLVM_COV_VERSION),
