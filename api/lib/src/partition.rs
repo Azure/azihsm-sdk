@@ -780,6 +780,6 @@ impl HsmPartitionInner {
 /// Fires exactly once when the final `Arc` reference is released and the
 /// inner state is consumed — no `RwLock` acquisition needed.
 impl Drop for HsmPartitionInner {
-    #[instrument(skip_all, fields(path = self.path))]
+    #[instrument(skip_all, fields(path = self.path.as_str()))]
     fn drop(&mut self) {}
 }
