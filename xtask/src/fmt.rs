@@ -29,7 +29,7 @@ pub struct Fmt {
     #[clap(long)]
     pub fix: bool,
 
-    /// Skip taplo (TOML formatting) 
+    /// Skip taplo (TOML formatting)
     #[clap(long)]
     pub skip_taplo: bool,
 
