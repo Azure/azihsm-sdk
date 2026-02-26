@@ -10,7 +10,6 @@
 #include <openssl/rsa.h>
 #include <stdint.h>
 #include <string.h>
-#include <strings.h>
 
 #include "azihsm_ossl_helpers.h"
 #include "azihsm_ossl_rsa.h"
@@ -18,6 +17,9 @@
 /* RSA padding modes for asymmetric cipher */
 #define AZIHSM_RSA_CIPHER_PAD_MODE_PKCS1 0
 #define AZIHSM_RSA_CIPHER_PAD_MODE_OAEP 1
+
+/* Maximum OAEP label size to prevent unbounded allocation from caller-controlled params */
+#define AZIHSM_OAEP_LABEL_MAX_LEN 65536
 
 /* Asymmetric cipher context for RSA operations */
 typedef struct
@@ -155,11 +157,11 @@ static int azihsm_ossl_asym_cipher_set_ctx_params(void *cctx, const OSSL_PARAM p
                 return OSSL_FAILURE;
             }
 
-            if (strcasecmp(pad_mode_str, OSSL_PKEY_RSA_PAD_MODE_OAEP) == 0)
+            if (OPENSSL_strcasecmp(pad_mode_str, OSSL_PKEY_RSA_PAD_MODE_OAEP) == 0)
             {
                 ctx->pad_mode = AZIHSM_RSA_CIPHER_PAD_MODE_OAEP;
             }
-            else if (strcasecmp(pad_mode_str, OSSL_PKEY_RSA_PAD_MODE_PKCSV15) == 0)
+            else if (OPENSSL_strcasecmp(pad_mode_str, OSSL_PKEY_RSA_PAD_MODE_PKCSV15) == 0)
             {
                 ctx->pad_mode = AZIHSM_RSA_CIPHER_PAD_MODE_PKCS1;
             }
@@ -191,6 +193,11 @@ static int azihsm_ossl_asym_cipher_set_ctx_params(void *cctx, const OSSL_PARAM p
                 ERR_raise(ERR_LIB_PROV, PROV_R_ILLEGAL_OR_UNSUPPORTED_PADDING_MODE);
                 return OSSL_FAILURE;
             }
+        }
+        else
+        {
+            ERR_raise(ERR_LIB_PROV, ERR_R_PASSED_INVALID_ARGUMENT);
+            return OSSL_FAILURE;
         }
     }
 
@@ -245,6 +252,12 @@ static int azihsm_ossl_asym_cipher_set_ctx_params(void *cctx, const OSSL_PARAM p
             OPENSSL_clear_free(ctx->oaep_label, ctx->oaep_label_len);
             ctx->oaep_label = NULL;
             ctx->oaep_label_len = 0;
+        }
+
+        if (p->data_size > AZIHSM_OAEP_LABEL_MAX_LEN)
+        {
+            ERR_raise(ERR_LIB_PROV, PROV_R_BAD_LENGTH);
+            return OSSL_FAILURE;
         }
 
         if (!OSSL_PARAM_get_octet_string(p, &label_data, 0, &label_len))
@@ -421,7 +434,7 @@ static int azihsm_ossl_asym_cipher_encrypt(
     }
 
     /* Calculate key size in bytes */
-    key_size = ctx->key->genctx.pubkey_bits / 8;
+    key_size = (ctx->key->genctx.pubkey_bits + 7) / 8;
 
     /* Size query: return the maximum output size (equals key size for RSA) */
     if (out == NULL)
@@ -581,7 +594,7 @@ static int azihsm_ossl_asym_cipher_decrypt(
     }
 
     /* Calculate key size in bytes */
-    key_size = ctx->key->genctx.pubkey_bits / 8;
+    key_size = (ctx->key->genctx.pubkey_bits + 7) / 8;
 
     /* Size query: return key size as safe upper bound */
     if (out == NULL)
