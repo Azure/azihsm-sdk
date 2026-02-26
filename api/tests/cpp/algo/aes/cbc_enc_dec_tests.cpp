@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 #include <azihsm_api.h>
+#include <algorithm>
 #include <cstring>
 #include <gtest/gtest.h>
 #include <scope_guard.hpp>
