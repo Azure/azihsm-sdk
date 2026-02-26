@@ -1107,7 +1107,22 @@ impl UserSessionInner {
 
         let key = match entry.key() {
             Key::Secret(secret_key) => {
-                let out_len = target_key_kind.size();
+                // Determine the number of bytes needed to derive, based on the
+                // target key kind.
+                //
+                // If we're deriving an AES bulk key (GCM or XTS), the below
+                // `size()` function call will not return the true size of the
+                // key, so we handle those cases separately.
+                // (See the comments in the `Kind::size()` function for more
+                // details.)
+                let out_len = if target_key_kind.is_bulk_key() {
+                    32
+                } else {
+                    target_key_kind.size()
+                };
+
+                // Derive the number of bytes needed, and use them to initialize
+                // the appropriate key object.
                 let derived_bytes = secret_key.hkdf_derive(hash_algorithm, salt, info, out_len)?;
                 match target_key_kind {
                     Kind::Aes128 | Kind::Aes192 | Kind::Aes256 => {
@@ -1201,7 +1216,22 @@ impl UserSessionInner {
 
         let key = match entry.key() {
             Key::Secret(secret_key) => {
-                let out_len = target_key_kind.size();
+                // Determine the number of bytes needed to derive, based on the
+                // target key kind.
+                //
+                // If we're deriving an AES bulk key (GCM or XTS), the below
+                // `size()` function call will not return the true size of the
+                // key, so we handle those cases separately.
+                // (See the comments in the `Kind::size()` function for more
+                // details.)
+                let out_len = if target_key_kind.is_bulk_key() {
+                    32
+                } else {
+                    target_key_kind.size()
+                };
+
+                // Derive the number of bytes needed, and use them to initialize
+                // the appropriate key object.
                 let derived_bytes = secret_key.kbkdf_counter_hmac_derive(
                     hash_algorithm,
                     label,
@@ -1438,17 +1468,40 @@ impl UserSessionInner {
             Err(ManticoreError::InvalidPermissions)?
         }
 
-        if entry.kind() != Kind::AesGcmBulk256 && entry.kind() != Kind::AesGcmBulk256Unapproved {
-            tracing::error!(error = ?ManticoreError::AesInvalidKeyType, "AES GCM: Key type is not AES GCM Bulk type");
-            Err(ManticoreError::AesInvalidKeyType)?
-        }
+        // Depending on the type of AES-GCM key that was provided (FIPS-approved
+        // or FIPS-unapproved), we will either ignore the provided IV
+        // (Initialization Vector) or pass it through to the encryption
+        // function.
+        //
+        // 1. If the key is FIPS-approved (`AesGcmBulk256`), we will discard any
+        //    caller-provided IVs and instead have the underlying AES-GCM
+        //    implementation generate a random IV for this operation.
+        // 2. If the key is FIPS-unapproved (`AesGcmBulk256Unapproved`), we will
+        //    use the caller-provided IV as-is for the AES-GCM operation.
+        //
+        // (This implementation mirrors the behavior of the physical AziHSM
+        // device.)
+        //
+        // If we are *decrypting*, then we will always pass the caller-provided
+        // IV into the decryption function, regardless of key type. This is
+        // because AES-GCM decryption must use the same IV that was used during
+        // encryption (it's the caller's job to pass this along).
+        let iv_encrypt_opt = match entry.kind() {
+            Kind::AesGcmBulk256 => None, // <-- FIPS-approved: discard caller-provided IV
+            Kind::AesGcmBulk256Unapproved => Some(iv), // <-- FIPS-unapproved: use caller-provided IV
+            _ => {
+                tracing::error!(error = ?ManticoreError::AesInvalidKeyType, "AES GCM: Key type is not AES GCM Bulk type");
+                return Err(ManticoreError::AesInvalidKeyType);
+            }
+        };
 
+        // Invoke the appropriate AES-GCM encrypt or decrypt function.
         match entry.key() {
             Key::Aes(key) => {
                 if mode == AesMode::Encrypt {
                     let result = key.aes_gcm_encrypt_mb(
                         &source_buffers,
-                        Some(iv),
+                        iv_encrypt_opt,
                         aad,
                         destination_buffers,
                     )?;
@@ -1457,7 +1510,7 @@ impl UserSessionInner {
                 } else {
                     let result = key.aes_gcm_decrypt_mb(
                         &source_buffers,
-                        Some(iv),
+                        Some(iv), // <-- Always pass caller-provided IV for decryption
                         aad,
                         tag,
                         destination_buffers,

@@ -120,7 +120,7 @@ impl Xtask for Setup {
         // ignore failure in adding Clippy
         if add_clippy.run(ctx.clone()).is_ok() {
             // Check Clippy version
-            cmd!(sh, "cargo clippy --version").quiet().run()?;
+            let _ = cmd!(sh, "cargo clippy --version").quiet().run();
         }
 
         // Add Fmt
@@ -131,7 +131,7 @@ impl Xtask for Setup {
         // ignore failure in adding Fmt
         if add_fmt.run(ctx.clone()).is_ok() {
             // Check Fmt version
-            cmd!(sh, "cargo +nightly fmt --version").quiet().run()?;
+            let _ = cmd!(sh, "cargo +nightly fmt --version").quiet().run();
         }
 
         log::trace!("done setup");

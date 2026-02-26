@@ -384,7 +384,14 @@ impl Kind {
             Kind::Aes128 => 16,
             Kind::Aes192 => 24,
             Kind::Aes256 => 32,
-            // In physical manticore, AesBulk256 is just a forwarding key of 2 bytes into the bulk vault.
+            // In physical Manticore, AES bulk keys (GCM/XTS) are stored in a
+            // separate key vault from other keys. However, the IDs of the bulk
+            // keys are stored in the main vault; these IDs only require 2 bytes
+            // of space.
+            //
+            // In order to simulate the space needed to store these bulk key IDs
+            // in the main vault, this function returns 2 bytes for bulk key
+            // types.
             Kind::AesXtsBulk256 | Kind::AesGcmBulk256 | Kind::AesGcmBulk256Unapproved => 2,
             Kind::AesHmac640 => 80,
             Kind::Secret256 => 32,

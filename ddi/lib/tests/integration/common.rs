@@ -298,6 +298,34 @@ pub fn helper_verify_leaf_cert(
     helper_verify_cert_chain(&cert_chain)
 }
 
+pub fn helper_get_pota_endorsement(dev: &<DdiTest as Ddi>::Dev) -> (Vec<u8>, Vec<u8>) {
+    let get_cert_chain_info = helper_get_cert_chain_info(dev).unwrap();
+    // Get last cert
+    let cert_resp = helper_get_certificate(dev, get_cert_chain_info.data.num_certs - 1).unwrap();
+    let cert = cert_resp.data.certificate.as_slice();
+    let cert = X509Certificate::from_der(cert).unwrap();
+    let cert_pub_key_der = cert.get_public_key_der().unwrap();
+    let cert_pub_key_obj = azihsm_crypto::DerEccPublicKey::from_der(&cert_pub_key_der).unwrap();
+    let mut cert_pub_uncomp = vec![0x04u8];
+    cert_pub_uncomp.extend_from_slice(cert_pub_key_obj.x());
+    cert_pub_uncomp.extend_from_slice(cert_pub_key_obj.y());
+    let hash_algo = HashAlgo::sha384();
+    let mut ecdsa_algo = EcdsaAlgo::new(hash_algo);
+    let pota_priv_key =
+        azihsm_crypto::EccPrivateKey::from_bytes(&TEST_POTA_ECC_PRIVATE_KEY).unwrap();
+    let sig_len = Signer::sign(&mut ecdsa_algo, &pota_priv_key, &cert_pub_uncomp, None).unwrap();
+    let mut signature = vec![0u8; sig_len];
+    let _ = Signer::sign(
+        &mut ecdsa_algo,
+        &pota_priv_key,
+        &cert_pub_uncomp,
+        Some(&mut signature),
+    )
+    .unwrap();
+
+    (signature, TEST_POTA_ECC_PUB_KEY.to_vec())
+}
+
 #[allow(dead_code)]
 pub fn helper_common_establish_credential_no_unwrap(
     dev: &mut <DdiTest as Ddi>::Dev,
@@ -325,29 +353,7 @@ pub fn helper_common_establish_credential_no_unwrap(
     Rng::rand_bytes(&mut bk3).unwrap();
     let masked_bk3 = helper_get_or_init_bk3(dev);
 
-    let get_cert_chain_info = helper_get_cert_chain_info(dev).unwrap();
-    // Get last cert
-    let cert_resp = helper_get_certificate(dev, get_cert_chain_info.data.num_certs - 1).unwrap();
-    let cert = cert_resp.data.certificate.as_slice();
-    let cert = X509Certificate::from_der(cert).unwrap();
-    let cert_pub_key_der = cert.get_public_key_der().unwrap();
-    let cert_pub_key_obj = azihsm_crypto::DerEccPublicKey::from_der(&cert_pub_key_der).unwrap();
-    let mut cert_pub_uncomp = vec![0x04u8];
-    cert_pub_uncomp.extend_from_slice(cert_pub_key_obj.x());
-    cert_pub_uncomp.extend_from_slice(cert_pub_key_obj.y());
-    let hash_algo = HashAlgo::sha384();
-    let mut ecdsa_algo = EcdsaAlgo::new(hash_algo);
-    let pota_priv_key =
-        azihsm_crypto::EccPrivateKey::from_bytes(&TEST_POTA_ECC_PRIVATE_KEY).unwrap();
-    let sig_len = Signer::sign(&mut ecdsa_algo, &pota_priv_key, &cert_pub_uncomp, None).unwrap();
-    let mut signature = vec![0u8; sig_len];
-    let _ = Signer::sign(
-        &mut ecdsa_algo,
-        &pota_priv_key,
-        &cert_pub_uncomp,
-        Some(&mut signature),
-    )
-    .unwrap();
+    let (signature, pota_pub_key) = helper_get_pota_endorsement(dev);
 
     let _ = helper_establish_credential(
         dev,
@@ -360,7 +366,7 @@ pub fn helper_common_establish_credential_no_unwrap(
         MborByteArray::from_slice(&[]).expect("Failed to create empty masked unwrapping key"),
         MborByteArray::from_slice(&signature).expect("Failed to create signed PID"),
         DdiDerPublicKey {
-            der: MborByteArray::from_slice(&TEST_POTA_ECC_PUB_KEY)
+            der: MborByteArray::from_slice(&pota_pub_key)
                 .expect("Failed to create MborByteArray from TPM ECC public key"),
             key_kind: DdiKeyType::Ecc384Public,
         },
@@ -393,30 +399,7 @@ pub fn helper_common_establish_credential_with_bmk(
         .encrypt_establish_credential(id, pin, nonce)
         .unwrap();
 
-    let get_cert_chain_info = helper_get_cert_chain_info(dev).unwrap();
-    // Get last cert
-    let cert_resp = helper_get_certificate(dev, get_cert_chain_info.data.num_certs - 1).unwrap();
-    let cert = cert_resp.data.certificate.as_slice();
-    let cert = X509Certificate::from_der(cert).unwrap();
-    let cert_pub_key_der = cert.get_public_key_der().unwrap();
-    let cert_pub_key_obj = azihsm_crypto::DerEccPublicKey::from_der(&cert_pub_key_der).unwrap();
-    let mut cert_pub_uncomp = vec![0x04u8];
-    cert_pub_uncomp.extend_from_slice(cert_pub_key_obj.x());
-    cert_pub_uncomp.extend_from_slice(cert_pub_key_obj.y());
-
-    let hash_algo = HashAlgo::sha384();
-    let mut ecdsa_algo = EcdsaAlgo::new(hash_algo);
-    let pota_priv_key =
-        azihsm_crypto::EccPrivateKey::from_bytes(&TEST_POTA_ECC_PRIVATE_KEY).unwrap();
-    let sig_len = Signer::sign(&mut ecdsa_algo, &pota_priv_key, &cert_pub_uncomp, None).unwrap();
-    let mut signature = vec![0u8; sig_len];
-    let _ = Signer::sign(
-        &mut ecdsa_algo,
-        &pota_priv_key,
-        &cert_pub_uncomp,
-        Some(&mut signature),
-    )
-    .unwrap();
+    let (signature, pota_pub_key) = helper_get_pota_endorsement(dev);
 
     let resp = helper_establish_credential(
         dev,
@@ -429,7 +412,7 @@ pub fn helper_common_establish_credential_with_bmk(
         unwrapping_key,
         MborByteArray::from_slice(&signature).expect("Failed to create signed PID"),
         DdiDerPublicKey {
-            der: MborByteArray::from_slice(&TEST_POTA_ECC_PUB_KEY)
+            der: MborByteArray::from_slice(&pota_pub_key)
                 .expect("Failed to create MborByteArray from TPM ECC public key"),
             key_kind: DdiKeyType::Ecc384Public,
         },
@@ -462,6 +445,8 @@ pub fn helper_common_establish_credential_with_bmk_no_unwrap(
         .encrypt_establish_credential(id, pin, nonce)
         .unwrap();
 
+    let (signature, pota_pub_key) = helper_get_pota_endorsement(dev);
+
     helper_establish_credential(
         dev,
         None,
@@ -471,9 +456,10 @@ pub fn helper_common_establish_credential_with_bmk_no_unwrap(
         masked_bk3,
         bmk,
         unwrapping_key,
-        MborByteArray::from_slice(&[]).expect("Failed to create signed PID"),
+        MborByteArray::from_slice(&signature).expect("Failed to create signed PID"),
         DdiDerPublicKey {
-            der: MborByteArray::from_slice(&[]).expect("Failed to create empty DER"),
+            der: MborByteArray::from_slice(&pota_pub_key)
+                .expect("Failed to create MborByteArray from TPM ECC public key"),
             key_kind: DdiKeyType::Ecc384Public,
         },
     )
@@ -572,30 +558,7 @@ pub fn helper_common_establish_credential(
 
     let masked_bk3 = helper_get_or_init_bk3(dev);
 
-    let get_cert_chain_info = helper_get_cert_chain_info(dev).unwrap();
-    // Get last cert
-    let cert_resp = helper_get_certificate(dev, get_cert_chain_info.data.num_certs - 1).unwrap();
-    let cert = cert_resp.data.certificate.as_slice();
-    let cert = X509Certificate::from_der(cert).unwrap();
-    let cert_pub_key_der = cert.get_public_key_der().unwrap();
-    let cert_pub_key_obj = azihsm_crypto::DerEccPublicKey::from_der(&cert_pub_key_der).unwrap();
-    let mut cert_pub_uncomp = vec![0x04u8];
-    cert_pub_uncomp.extend_from_slice(cert_pub_key_obj.x());
-    cert_pub_uncomp.extend_from_slice(cert_pub_key_obj.y());
-
-    let hash_algo = HashAlgo::sha384();
-    let mut ecdsa_algo = EcdsaAlgo::new(hash_algo);
-    let pota_priv_key =
-        azihsm_crypto::EccPrivateKey::from_bytes(&TEST_POTA_ECC_PRIVATE_KEY).unwrap();
-    let sig_len = Signer::sign(&mut ecdsa_algo, &pota_priv_key, &cert_pub_uncomp, None).unwrap();
-    let mut signature = vec![0u8; sig_len];
-    let _ = Signer::sign(
-        &mut ecdsa_algo,
-        &pota_priv_key,
-        &cert_pub_uncomp,
-        Some(&mut signature),
-    )
-    .unwrap();
+    let (signature, pota_pub_key) = helper_get_pota_endorsement(dev);
 
     let resp = helper_establish_credential(
         dev,
@@ -608,7 +571,7 @@ pub fn helper_common_establish_credential(
         MborByteArray::from_slice(&[]).expect("Failed to create empty masked unwrapping key"),
         MborByteArray::from_slice(&signature).expect("Failed to create signed PID"),
         DdiDerPublicKey {
-            der: MborByteArray::from_slice(&TEST_POTA_ECC_PUB_KEY)
+            der: MborByteArray::from_slice(&pota_pub_key)
                 .expect("Failed to create MborByteArray from TPM ECC public key"),
             key_kind: DdiKeyType::Ecc384Public,
         },

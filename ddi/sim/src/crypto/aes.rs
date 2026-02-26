@@ -517,22 +517,59 @@ impl AesOp for AesKey {
         encrypted_buffers: &mut [Vec<u8>],
     ) -> Result<FPAesGcmEncryptDecryptResult, ManticoreError> {
         tracing::debug!("AES GCM Encrypt MB: Beginning");
+        const IV_LEN: usize = 12;
 
-        let iv = iv.ok_or(ManticoreError::AesEncryptError)?;
-        let key =
-            AzihsmAesKey::from_bytes(&self.key).map_err(|_| ManticoreError::AesEncryptError)?;
+        // Create a buffer containing IV (Initialization Vector) data to use for
+        // encryption.
+        //
+        // To mirror the behavior of the physical AziHSM device, if the caller
+        // does not provide an IV, we will generate a random one for AES-GCM
+        // encryption operations.
+        let iv_data: [u8; IV_LEN] = match iv {
+            // If the caller provided an IV, use it.
+            Some(provided_iv_data) => provided_iv_data.try_into()
+                .inspect(|_| {
+                    tracing::debug!("AES GCM Encrypt MB: Using provided IV");
+                })
+                .map_err(|_| {
+                    tracing::error!("AES GCM Encrypt MB: Provided IV has invalid length (expected length: {}, actual length: {})", IV_LEN, provided_iv_data.len());
+                    ManticoreError::InvalidArgument
+                })?,
+            // If an IV is not provided, generate a random one to use (we will
+            // return this generated IV to the caller in this function's return
+            // value).
+            None => {
+                tracing::debug!("AES GCM Encrypt MB: IV not provided; generating random IV");
+                let mut generated_iv_data = [0u8; IV_LEN];
+                Rng::rand_bytes(&mut generated_iv_data).map_err(|_| {
+                    tracing::error!("AES GCM Encrypt MB: Failed to generate random bytes for IV");
+                    ManticoreError::AesEncryptError
+                })?;
+                generated_iv_data
+            }
+        };
 
-        let mut algo =
-            AesGcmAlgo::for_encrypt(iv, aad).map_err(|_| ManticoreError::AesEncryptError)?;
-
-        let mut encrypted_size = 0;
+        // Create an AES key object, and an enrcyption algorithm instance (using
+        // the AAD and IV) to use for encryption.
+        let key = AzihsmAesKey::from_bytes(&self.key).map_err(|_| {
+            tracing::error!("AES GCM Encrypt MB: Failed to create AzihsmAesKey from bytes");
+            ManticoreError::AesEncryptError
+        })?;
+        let mut algo = AesGcmAlgo::for_encrypt(&iv_data, aad).map_err(|_| {
+            tracing::error!("AES GCM Encrypt MB: Failed to create AesGcmAlgo");
+            ManticoreError::AesEncryptError
+        })?;
 
         // Concatenate all plaintext buffers
         let plaintext: Vec<u8> = plaintext_buffers.iter().flatten().copied().collect();
         let mut ciphertext = vec![0u8; plaintext.len()];
 
+        // Perform encryption
         algo.encrypt(&key, &plaintext, Some(&mut ciphertext))
-            .map_err(|_| ManticoreError::AesEncryptError)?;
+            .map_err(|_| {
+                tracing::error!("AES GCM Encrypt MB: Failed to encrypt data");
+                ManticoreError::AesEncryptError
+            })?;
 
         // Get the authentication tag
         let tag = algo.tag();
@@ -541,6 +578,7 @@ impl AesOp for AesKey {
 
         // Distribute ciphertext back into output buffers
         // Handle empty ciphertext case (empty plaintext encryption)
+        let mut encrypted_size = 0;
         if !ciphertext.is_empty() {
             let chunk_size = ciphertext.len().div_ceil(encrypted_buffers.len());
             for (chunk, encrypted_buffer) in ciphertext
@@ -562,12 +600,10 @@ impl AesOp for AesKey {
             encrypted_size,
         );
 
-        let iv = Some(iv.try_into().map_err(|_| ManticoreError::InvalidArgument)?);
-
         Ok(FPAesGcmEncryptDecryptResult {
             final_size: encrypted_size,
             tag: Some(tag_array),
-            iv,
+            iv: Some(iv_data),
             fips_approved: false,
         })
     }
@@ -596,25 +632,45 @@ impl AesOp for AesKey {
     ) -> Result<FPAesGcmEncryptDecryptResult, ManticoreError> {
         tracing::debug!("AES GCM Decrypt MB: Beginning");
 
-        let iv = iv.ok_or(ManticoreError::AesDecryptError)?;
-        let tag = tag.ok_or(ManticoreError::AesDecryptError)?;
-        let key =
-            AzihsmAesKey::from_bytes(&self.key).map_err(|_| ManticoreError::AesDecryptError)?;
+        // Make sure an IV (Initialization Vector) is provided. The caller must
+        // provide the IV for decryption operations, to ensure the IV used
+        // matches the one used during encryption.
+        let iv = iv.ok_or_else(|| {
+            tracing::error!("AES GCM Decrypt MB: IV not provided");
+            ManticoreError::AesDecryptError
+        })?;
 
-        let mut algo =
-            AesGcmAlgo::for_decrypt(iv, tag, aad).map_err(|_| ManticoreError::AesDecryptError)?;
+        // Make sure a tag is provided.
+        let tag = tag.ok_or_else(|| {
+            tracing::error!("AES GCM Decrypt MB: Tag not provided");
+            ManticoreError::AesDecryptError
+        })?;
 
-        let mut decrypted_size = 0;
+        // Create an AES key object, and a decryption algorithm instance (using
+        // the AAD, IV, and tag) to use for decryption.
+        let key = AzihsmAesKey::from_bytes(&self.key).map_err(|_| {
+            tracing::error!("AES GCM Decrypt MB: Failed to create AzihsmAesKey from bytes");
+            ManticoreError::AesDecryptError
+        })?;
+        let mut algo = AesGcmAlgo::for_decrypt(iv, tag, aad).map_err(|_| {
+            tracing::error!("AES GCM Decrypt MB: Failed to create AesGcmAlgo");
+            ManticoreError::AesDecryptError
+        })?;
 
         // Concatenate all encrypted buffers
         let ciphertext: Vec<u8> = encrypted_buffers.iter().flatten().copied().collect();
         let mut plaintext = vec![0u8; ciphertext.len()];
 
+        // Perform decryption
         algo.decrypt(&key, &ciphertext, Some(&mut plaintext))
-            .map_err(|_| ManticoreError::AesDecryptError)?;
+            .map_err(|_| {
+                tracing::error!("AES GCM Decrypt MB: Failed to decrypt data");
+                ManticoreError::AesDecryptError
+            })?;
 
         // Distribute plaintext back into output buffers
         // Handle empty plaintext case (empty ciphertext decryption)
+        let mut decrypted_size = 0;
         if !plaintext.is_empty() {
             let chunk_size = plaintext.len().div_ceil(decrypted_buffers.len());
             for (chunk, decrypted_buffer) in plaintext
@@ -1045,7 +1101,167 @@ mod tests {
         cipher: &'a str,
     }
 
-    fn test_cng_aes_xts(plaintext_size: usize, dul: usize) {
+    // Splits a vector into chunks of the specified size and returns a vector
+    // containing the resulting chunks.
+    fn split_vector_into_chunks(original_vec: Vec<u8>, chunk_size: usize) -> Vec<Vec<u8>> {
+        original_vec
+            .chunks(chunk_size) // Split the vector into chunks
+            .map(|chunk| chunk.to_vec()) // Convert each chunk into a Vec<u8>
+            .collect() // Collect the chunks into a Vec<Vec<u8>>
+    }
+
+    fn fill_buffer_with_rand_bytes(buffer: &mut [u8]) {
+        Rng::rand_bytes(buffer).expect("Failed to generate random bytes");
+    }
+
+    // Generates and returns a random `AesKey` object of the specified size.
+    fn generate_rand_aes_key(size: AesKeySize) -> AesKey {
+        let key_len = match size {
+            AesKeySize::Aes128 => 16,
+            AesKeySize::Aes192 => 24,
+            AesKeySize::Aes256
+            | AesKeySize::AesXtsBulk256
+            | AesKeySize::AesGcmBulk256
+            | AesKeySize::AesGcmBulk256Unapproved => 32,
+        };
+        let mut key_bytes = vec![0u8; key_len];
+        fill_buffer_with_rand_bytes(&mut key_bytes);
+        AesKey::from_bytes(&key_bytes).expect("Failed to create AesKey object from bytes")
+    }
+
+    // Tests the implementation of AES-GCM.
+    fn test_aes_gcm(plaintext_size: usize, provide_iv: bool) {
+        // Generate a random AES key
+        let key = generate_rand_aes_key(AesKeySize::Aes256);
+
+        // Generate random plaintext
+        let mut plaintext = vec![0u8; plaintext_size];
+        fill_buffer_with_rand_bytes(&mut plaintext);
+
+        // Generate random AAD
+        let mut aad = vec![0u8; 32];
+        fill_buffer_with_rand_bytes(&mut aad);
+
+        // Generate random IV
+        let mut iv = vec![0u8; 12];
+        fill_buffer_with_rand_bytes(&mut iv);
+
+        // Collect the plaintext into a series of buffers that can be passed
+        // into the AES-GCM encryption implementation.
+        //
+        // Make two copies of these buffers; one for the encrypted output
+        // (`encrypted_buffers`), and one for the decrypted output
+        // (`decrypted_buffers`).
+        let chunk_len = plaintext.len();
+        let plaintext_buffers = split_vector_into_chunks(plaintext, chunk_len);
+        let mut encrypted_buffers: Vec<Vec<u8>> = plaintext_buffers
+            .iter()
+            .map(|inner| vec![0; inner.len()])
+            .collect();
+        let mut decrypted_buffers: Vec<Vec<u8>> = plaintext_buffers
+            .iter()
+            .map(|inner| vec![0; inner.len()])
+            .collect();
+
+        // Perform AES-GCM encryption on the buffers.
+        //
+        // If `iv_size` is zero, then we'll pass in `None` its parameter.
+        let enc_result = key.aes_gcm_encrypt_mb(
+            &plaintext_buffers,
+            match provide_iv {
+                false => None,
+                true => Some(&iv),
+            },
+            Some(&aad),
+            &mut encrypted_buffers,
+        );
+        assert!(
+            enc_result.is_ok(),
+            "AES-GCM encryption failed: {:?}",
+            enc_result.err()
+        );
+        let enc_info = enc_result.unwrap();
+
+        // Make sure a tag was returned
+        let tag = enc_info
+            .tag
+            .expect("AES-GCM encryption did not return a tag");
+
+        // Make sure an IV was returned
+        let iv_returned = enc_info
+            .iv
+            .expect("AES-GCM encryption did not return an IV");
+        // If an IV was provided, make sure the returned IV matches the one we
+        // generated earlier.
+        if provide_iv {
+            assert_eq!(
+                iv_returned.as_slice(),
+                iv.as_slice(),
+                "Returned IV does not match provided IV: expected: {:?}, received: {:?}",
+                iv.as_slice(),
+                iv_returned.as_slice()
+            );
+        }
+
+        // Perform AES-GCM decryption on the encrypted buffers.
+        //
+        // Pass in the tag and the IV returned by the encryption operation.
+        let dec_result = key.aes_gcm_decrypt_mb(
+            &encrypted_buffers,
+            Some(&iv_returned),
+            Some(&aad),
+            Some(&tag),
+            &mut decrypted_buffers,
+        );
+        assert!(dec_result.is_ok());
+
+        // Finally, compare the full original plaintext with the full decrypted
+        // data. They should be identical
+        let plaintext_buf = plaintext_buffers.into_iter().flatten().collect::<Vec<u8>>();
+        let decrypted_buf: Vec<u8> = decrypted_buffers.into_iter().flatten().collect();
+        assert_eq!(plaintext_buf, decrypted_buf);
+    }
+
+    // Tests AES-GCM encrypt/decrypt operations with an IV (Initialization
+    // Vector) provided by the caller.
+    #[test]
+    fn test_aes_gcm_encrypt_decrypt_one_block_with_provided_iv() {
+        test_aes_gcm(1, true);
+        test_aes_gcm(10, true);
+        test_aes_gcm(16, true);
+    }
+    // Tests AES-GCM encrypt/decrypt operations with an IV (Initialization
+    // Vector) provided by the caller.
+    #[test]
+    fn test_aes_gcm_encrypt_decrypt_multi_block_with_provided_iv() {
+        test_aes_gcm(17, true);
+        test_aes_gcm(25, true);
+        test_aes_gcm(32, true);
+        test_aes_gcm(500, true);
+    }
+
+    // Tests AES-GCM encrypt/decrypt operations with an IV (Initialization
+    // Vector) generated by the encryption operation (i.e. not provided by the
+    // caller).
+    #[test]
+    fn test_aes_gcm_encrypt_decrypt_one_block_with_generated_iv() {
+        test_aes_gcm(1, false);
+        test_aes_gcm(10, false);
+        test_aes_gcm(16, false);
+    }
+
+    // Tests AES-GCM encrypt/decrypt operations with an IV (Initialization
+    // Vector) generated by the encryption operation (i.e. not provided by the
+    // caller).
+    #[test]
+    fn test_aes_gcm_encrypt_decrypt_multi_block_with_generated_iv() {
+        test_aes_gcm(17, false);
+        test_aes_gcm(25, false);
+        test_aes_gcm(32, false);
+        test_aes_gcm(500, false);
+    }
+
+    fn test_aes_xts(plaintext_size: usize, dul: usize) {
         use rand::Rng;
         // Generate random keys
         let key1 = AesKey::from_bytes(&rand::thread_rng().gen::<[u8; 32]>()).unwrap();
@@ -1057,13 +1273,6 @@ mod tests {
 
         // Prepare buffers
         let tweak = [0x01; 16];
-        let split_vector_into_chunks = |original_vec: Vec<u8>, chunk_size: usize| -> Vec<Vec<u8>> {
-            original_vec
-                .chunks(chunk_size) // Split the vector into chunks
-                .map(|chunk| chunk.to_vec()) // Convert each chunk into a Vec<u8>
-                .collect() // Collect the chunks into a Vec<Vec<u8>>
-        };
-
         let chunk_len = plaintext.len();
         let plaintext_buffers = split_vector_into_chunks(plaintext, chunk_len);
         let mut encrypted_buffers: Vec<Vec<u8>> = plaintext_buffers
@@ -1104,39 +1313,39 @@ mod tests {
 
     #[test]
     fn test_xts_encrypt_decrypt_roundtrip() {
-        test_cng_aes_xts(512, 512);
-        test_cng_aes_xts(1024, 512);
-        test_cng_aes_xts(8192, 4096);
+        test_aes_xts(512, 512);
+        test_aes_xts(1024, 512);
+        test_aes_xts(8192, 4096);
     }
 
     #[test]
     #[should_panic]
     fn test_xts_encrypt_decrypt_unaligned_data_527_dul_512() {
-        test_cng_aes_xts(527, 512);
+        test_aes_xts(527, 512);
     }
 
     #[test]
     #[should_panic]
     fn test_xts_encrypt_decrypt_invalid_data_15_dul_4096() {
-        test_cng_aes_xts(15, 4096);
+        test_aes_xts(15, 4096);
     }
 
     #[test]
     #[should_panic]
     fn test_xts_encrypt_decrypt_unaligned_data_17_dul_4096() {
-        test_cng_aes_xts(17, 4096);
+        test_aes_xts(17, 4096);
     }
 
     #[test]
     #[should_panic]
     fn test_xts_encrypt_decrypt_unaligned_data_17_dul_17() {
-        test_cng_aes_xts(17, 17);
+        test_aes_xts(17, 17);
     }
 
     #[test]
     #[should_panic]
     fn test_xts_encrypt_decrypt_unaligned_data_544_dul_17() {
-        test_cng_aes_xts(544, 17);
+        test_aes_xts(544, 17);
     }
 
     fn test_aes(params: AesTestParam<'_>) {

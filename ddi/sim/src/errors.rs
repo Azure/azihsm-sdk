@@ -385,7 +385,7 @@ impl From<ManticoreError> for DdiStatus {
             ManticoreError::EccToDerError => DdiStatus::EccToDerError,
             ManticoreError::EccGenerateError => DdiStatus::EccGenerateError,
             ManticoreError::EccSignError => DdiStatus::EccSignFailed,
-            ManticoreError::EccVerifyError => DdiStatus::InternalError, // only internal-facing API will throw ManticoreError::EccVerifyError
+            ManticoreError::EccVerifyError => DdiStatus::EccVerifyFailed,
             ManticoreError::EccDeriveError => DdiStatus::EccDeriveError,
             ManticoreError::EccGetCurveError => DdiStatus::EccGetCurveError,
             ManticoreError::EccGetCoordinatesError => DdiStatus::EccGetCoordinatesError,
