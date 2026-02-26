@@ -89,10 +89,7 @@ pub(crate) fn delete_key(session: &HsmSession, key_id: HsmKeyHandle) -> HsmResul
         ext: None,
     };
 
-    session.with_dev(|dev| {
-        dev.exec_op(&req, &mut None)
-            .map_hsm_err(HsmError::DdiCmdFailure)
-    })?;
+    session.with_dev(|dev| dev.exec_op(&req, &mut None).map_err(HsmError::from))?;
 
     Ok(())
 }
@@ -117,10 +114,7 @@ fn unmask_key_exec(session: &HsmSession, masked_key: &[u8]) -> HsmResult<DdiUnma
         ext: None,
     };
 
-    session.with_dev(|dev| {
-        dev.exec_op(&req, &mut None)
-            .map_hsm_err(HsmError::DdiCmdFailure)
-    })
+    session.with_dev(|dev| dev.exec_op(&req, &mut None).map_err(HsmError::from))
 }
 
 /// Unmasks a masked key within the HSM.
@@ -227,10 +221,7 @@ pub(crate) fn generate_key_report(
         ext: None,
     };
 
-    let resp = session.with_dev(|dev| {
-        dev.exec_op(&req, &mut None)
-            .map_hsm_err(HsmError::DdiCmdFailure)
-    })?;
+    let resp = session.with_dev(|dev| dev.exec_op(&req, &mut None).map_err(HsmError::from))?;
 
     let dev_report = resp.data.report.as_slice();
     report[..dev_report.len()].copy_from_slice(dev_report);

@@ -6,6 +6,8 @@
 
 mod algo;
 mod partition_tests;
+#[cfg(feature = "res-test")]
+mod resiliency;
 mod session_tests;
 mod utils;
 

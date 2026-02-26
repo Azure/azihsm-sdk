@@ -45,6 +45,8 @@ pub enum HsmError {
     CertChainChanged = -18,
     InvalidTweak = -19,
     NotFound = -20,
+    IoAborted = -21,
+    IoAbortInProgress = -22,
     Panic = i32::MIN,
 }
 
