@@ -9,14 +9,13 @@ pub use azihsm_ddi_interface::*;
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "mock")] {
-        /// Azihsm DDI implementation
+        /// Azihsm DDI mock implementation.
         pub type AzihsmDdi = azihsm_ddi_mock::DdiMock;
     } else if #[cfg(target_os = "linux")] {
-        /// Azihsm DDI implementation
+        /// Azihsm DDI Linux implementation.
         pub type AzihsmDdi = azihsm_ddi_nix::DdiNix;
-    }
-    else if #[cfg(target_os = "windows")] {
-        /// Azihsm DDI implementation
+    } else if #[cfg(target_os = "windows")] {
+        /// Azihsm DDI Windows implementation.
         pub type AzihsmDdi = azihsm_ddi_win::DdiWin;
     }
 }
