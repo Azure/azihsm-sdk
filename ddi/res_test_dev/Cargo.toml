@@ -3,7 +3,7 @@
 
 [package]
 edition = "2021"
-name = "azihsm_ddi_resiliency"
+name = "azihsm_res_test_dev"
 version = "0.1.0"
 
 [lib]

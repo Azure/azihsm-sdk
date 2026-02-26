@@ -8,7 +8,7 @@
 //! faults through the resiliency mock device.
 //!
 
-use azihsm_ddi_resiliency::*;
+use azihsm_res_test_dev::*;
 
 use crate::*;
 

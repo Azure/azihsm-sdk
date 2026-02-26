@@ -4,7 +4,7 @@
 //! Fault injection types and global state for resiliency testing.
 //!
 //! Tests configure faults before calling the API under test.
-//! Every `exec_op` call on [`super::DdiResiliencyDev`] checks
+//! Every `exec_op` call on [`super::DdiResTestDev`] checks
 //! the global fault list. If a rule matches the current opcode, the
 //! configured error is returned instead of delegating to the inner mock.
 //!

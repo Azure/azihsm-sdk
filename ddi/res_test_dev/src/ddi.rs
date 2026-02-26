@@ -3,21 +3,19 @@
 
 //! Resiliency DDI — wraps any [`Ddi`] implementation with fault injection.
 
-use azihsm_ddi_interface::Ddi;
-use azihsm_ddi_interface::DdiResult;
-use azihsm_ddi_interface::DevInfo;
+use azihsm_ddi_interface::*;
 
-use crate::dev::DdiResiliencyDev;
+use crate::dev::DdiResTestDev;
 
 /// DDI implementation that delegates to an inner [`Ddi`] but wraps
-/// returned devices in [`DdiResiliencyDev`] for fault injection.
+/// returned devices in [`DdiResTestDev`] for fault injection.
 #[derive(Default, Debug)]
-pub struct DdiResiliency<I: Ddi + Default> {
+pub struct DdiResTest<I: Ddi + Default> {
     inner: I,
 }
 
-impl<I: Ddi + Default> Ddi for DdiResiliency<I> {
-    type Dev = DdiResiliencyDev<I::Dev>;
+impl<I: Ddi + Default> Ddi for DdiResTest<I> {
+    type Dev = DdiResTestDev<I::Dev>;
 
     fn dev_info_list(&self) -> Vec<DevInfo> {
         self.inner.dev_info_list()
@@ -25,6 +23,6 @@ impl<I: Ddi + Default> Ddi for DdiResiliency<I> {
 
     fn open_dev(&self, path: &str) -> DdiResult<Self::Dev> {
         let inner_dev = self.inner.open_dev(path)?;
-        Ok(DdiResiliencyDev::new(inner_dev))
+        Ok(DdiResTestDev::new(inner_dev))
     }
 }

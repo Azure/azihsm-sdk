@@ -15,27 +15,29 @@ use crate::fault;
 /// See [`crate::inject_fault`] and [`crate::clear_faults`] for the
 /// fault injection API.
 #[derive(Debug, Clone)]
-pub struct DdiResiliencyDev<D: DdiDev> {
+pub struct DdiResTestDev<D: DdiDev> {
     inner: D,
+    device_kind: Option<azihsm_ddi_types::DdiDeviceKind>,
 }
 
-impl<D: DdiDev> DdiResiliencyDev<D> {
+impl<D: DdiDev> DdiResTestDev<D> {
     /// Wraps an existing [`DdiDev`] implementation.
     pub(crate) fn new(inner: D) -> Self {
-        Self { inner }
+        Self {
+            inner,
+            device_kind: None,
+        }
     }
 
-    /// Returns the device kind (Virtual).
-    ///
-    /// The resiliency wrapper is only used for testing, so this
-    /// always returns [`DdiDeviceKind::Virtual`].
+    /// Returns the device kind, as set by [`DdiDev::set_device_kind`].
     pub fn device_kind(&self) -> Option<azihsm_ddi_types::DdiDeviceKind> {
-        Some(azihsm_ddi_types::DdiDeviceKind::Virtual)
+        self.device_kind
     }
 }
 
-impl<D: DdiDev> DdiDev for DdiResiliencyDev<D> {
+impl<D: DdiDev> DdiDev for DdiResTestDev<D> {
     fn set_device_kind(&mut self, kind: azihsm_ddi_types::DdiDeviceKind) {
+        self.device_kind = Some(kind);
         self.inner.set_device_kind(kind);
     }
 

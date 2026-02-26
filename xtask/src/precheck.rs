@@ -164,7 +164,7 @@ impl Xtask for Precheck {
 
                 // SDK Run resiliency tests (only the resiliency test suite)
                 let nextest = nextest::Nextest {
-                    features: Some("mock,resiliency".to_string()),
+                    features: Some("mock,res-test".to_string()),
                     package: Some("azihsm_api_tests".to_string()),
                     no_default_features: false,
                     filterset: Some("test(resiliency::)".to_string()),

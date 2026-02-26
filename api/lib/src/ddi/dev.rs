@@ -12,14 +12,15 @@ use std::ops::DerefMut;
 use std::sync::LazyLock;
 
 use super::*;
+use crate::resiliency::HsmDdi;
 
 /// Type alias for the Azihsm DDI device type.
-pub(in crate::ddi) type AzishmDev = <AzihsmDdi as Ddi>::Dev;
+pub(in crate::ddi) type AzishmDev = <HsmDdi as Ddi>::Dev;
 
 /// Global DDI instance for device operations.
 ///
 /// Lazily initialized singleton providing access to the DDI implementation.
-static DDI: LazyLock<AzihsmDdi> = LazyLock::new(AzihsmDdi::default);
+static DDI: LazyLock<HsmDdi> = LazyLock::new(HsmDdi::default);
 
 /// Retrieves the API revision range supported by the HSM device.
 ///

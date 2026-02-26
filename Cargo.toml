@@ -17,7 +17,7 @@ members = [
   "crates/x509",
   "ddi/interface",
   "ddi/lib",
-  "ddi/resiliency",
+  "ddi/res_test_dev",
   "ddi/test_helpers",
   "plugins/ossl_prov",
   "xtask",
@@ -36,7 +36,6 @@ azihsm_ddi_interface = { path = "ddi/interface" }
 azihsm_ddi_mbor = { path = "ddi/serde/mbor" }
 azihsm_ddi_mock = { path = "ddi/mock" }
 azihsm_ddi_nix = { path = "ddi/nix" }
-azihsm_ddi_resiliency = { path = "ddi/resiliency" }
 azihsm_ddi_sim = { path = "ddi/sim" }
 azihsm_ddi_test_helpers = { path = "ddi/test_helpers" }
 azihsm_ddi_types = { features = [
@@ -45,6 +44,7 @@ azihsm_ddi_types = { features = [
   "pre_encode",
 ], path = "ddi/serde/types" }
 azihsm_ddi_win = { path = "ddi/win" }
+azihsm_res_test_dev = { path = "ddi/res_test_dev" }
 azihsm_tpm = { path = "crates/tpm" }
 retry_macro = { path = "crates/retry_macro" }
 test_with_tracing = { path = "crates/test_with_tracing" }
