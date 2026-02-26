@@ -12,14 +12,15 @@ use std::ops::DerefMut;
 use std::sync::LazyLock;
 
 use super::*;
+use crate::resiliency::HsmDdi;
 
 /// Type alias for the Azihsm DDI device type.
-pub(in crate::ddi) type AzishmDev = <AzihsmDdi as Ddi>::Dev;
+pub(in crate::ddi) type AzishmDev = <HsmDdi as Ddi>::Dev;
 
 /// Global DDI instance for device operations.
 ///
 /// Lazily initialized singleton providing access to the DDI implementation.
-static DDI: LazyLock<AzihsmDdi> = LazyLock::new(AzihsmDdi::default);
+static DDI: LazyLock<HsmDdi> = LazyLock::new(HsmDdi::default);
 
 /// Retrieves the API revision range supported by the HSM device.
 ///
@@ -48,9 +49,7 @@ pub(crate) fn get_api_rev(dev: &HsmDev) -> HsmResult<(HsmApiRev, HsmApiRev)> {
         ext: None,
     };
 
-    let resp: DdiGetApiRevCmdResp = dev
-        .exec_op(&req, &mut None)
-        .map_hsm_err(HsmError::DdiCmdFailure)?;
+    let resp: DdiGetApiRevCmdResp = dev.exec_op(&req, &mut None).map_err(HsmError::from)?;
 
     Ok((resp.data.min.into(), resp.data.max.into()))
 }
@@ -170,10 +169,7 @@ pub(crate) fn dev_info_by_path(path: &str) -> HsmResult<DevInfo> {
 /// - The underlying DDI operation fails
 #[tracing::instrument(skip_all, fields(path = path))]
 pub(crate) fn open_dev(path: &str) -> HsmResult<HsmDev> {
-    let mut dev = DDI
-        .open_dev(path)
-        .map(HsmDev)
-        .map_hsm_err(HsmError::DdiCmdFailure)?;
+    let mut dev = DDI.open_dev(path).map(HsmDev).map_err(HsmError::from)?;
 
     // Retrieve and set the device kind for the opened device.
     let dev_kind = get_device_kind(&dev)?;
@@ -211,9 +207,7 @@ fn get_device_kind(dev: &HsmDev) -> HsmResult<DdiDeviceKind> {
         ext: None,
     };
 
-    let resp = dev
-        .exec_op(&req, &mut None)
-        .map_hsm_err(HsmError::DdiCmdFailure)?;
+    let resp = dev.exec_op(&req, &mut None).map_err(HsmError::from)?;
 
     Ok(resp.data.kind)
 }
