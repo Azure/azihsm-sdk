@@ -57,6 +57,7 @@ pub struct FaultRule {
 impl FaultRule {
     /// Fail the next `n` calls to `op` with the given error.
     pub fn fail_next(op: DdiOp, n: u32, error: DriverError) -> Self {
+        assert!(n > 0, "fail_next: n must be > 0");
         Self {
             op,
             trigger: FaultTrigger::NextNCalls(n),
@@ -66,6 +67,7 @@ impl FaultRule {
 
     /// Fail exactly the *n*-th call (1-based) to `op` with the given error.
     pub fn fail_nth(op: DdiOp, n: u32, error: DriverError) -> Self {
+        assert!(n > 0, "fail_nth: n must be > 0 (counters are 1-based)");
         Self {
             op,
             trigger: FaultTrigger::OnNthCall(n),
@@ -73,8 +75,6 @@ impl FaultRule {
         }
     }
 }
-
-// ── Public API ───────────────────────────────────────────────────
 
 /// Adds a fault rule to the global list.
 pub fn inject_fault(rule: FaultRule) {

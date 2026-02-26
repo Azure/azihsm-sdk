@@ -154,3 +154,100 @@ fn test_open_partition_recovers_from_get_device_info_io_aborted_last_retry() {
         "open_partition should recover on the last retry after {MAX_RETRIES} consecutive IoAborted on GetDeviceInfo, got: {result:?}"
     );
 }
+
+// Retry Exhaustion tests
+//
+// These tests inject MAX_RETRIES + 1 consecutive faults so that
+// every retry is consumed and the operation ultimately fails.
+
+/// `open_partition` fails when `GetApiRev` returns `IoAborted` for
+/// `MAX_RETRIES + 1` consecutive calls (initial attempt + all retries).
+#[api_test]
+fn test_open_partition_fails_after_get_api_rev_io_aborted_exhausted() {
+    let path = first_partition_path();
+
+    inject_fault(FaultRule::fail_next(
+        DdiOp::GetApiRev,
+        MAX_RETRIES + 1,
+        DriverError::IoAborted,
+    ));
+
+    let result = HsmPartitionManager::open_partition(&path);
+
+    clear_faults();
+
+    assert_eq!(
+        result.unwrap_err(),
+        HsmError::IoAborted,
+        "open_partition should fail with IoAborted after exhausting all {MAX_RETRIES} retries on GetApiRev"
+    );
+}
+
+/// `open_partition` fails when `GetApiRev` returns `IoAbortInProgress`
+/// for `MAX_RETRIES + 1` consecutive calls.
+#[api_test]
+fn test_open_partition_fails_after_get_api_rev_io_abort_in_progress_exhausted() {
+    let path = first_partition_path();
+
+    inject_fault(FaultRule::fail_next(
+        DdiOp::GetApiRev,
+        MAX_RETRIES + 1,
+        DriverError::IoAbortInProgress,
+    ));
+
+    let result = HsmPartitionManager::open_partition(&path);
+
+    clear_faults();
+
+    assert_eq!(
+        result.unwrap_err(),
+        HsmError::IoAbortInProgress,
+        "open_partition should fail with IoAbortInProgress after exhausting all {MAX_RETRIES} retries on GetApiRev"
+    );
+}
+
+/// `open_partition` fails when `GetDeviceInfo` returns `IoAborted` for
+/// `MAX_RETRIES + 1` consecutive calls.
+#[api_test]
+fn test_open_partition_fails_after_get_device_info_io_aborted_exhausted() {
+    let path = first_partition_path();
+
+    inject_fault(FaultRule::fail_next(
+        DdiOp::GetDeviceInfo,
+        MAX_RETRIES + 1,
+        DriverError::IoAborted,
+    ));
+
+    let result = HsmPartitionManager::open_partition(&path);
+
+    clear_faults();
+
+    assert_eq!(
+        result.unwrap_err(),
+        HsmError::IoAborted,
+        "open_partition should fail with IoAborted after exhausting all {MAX_RETRIES} retries on GetDeviceInfo"
+    );
+}
+
+/// `open_partition` fails when `GetDeviceInfo` returns
+/// `IoAbortInProgress` for `MAX_RETRIES + 1` consecutive calls.
+#[api_test]
+fn test_open_partition_fails_after_get_device_info_io_abort_in_progress_exhausted() {
+    let path = first_partition_path();
+
+    inject_fault(FaultRule::fail_next(
+        DdiOp::GetDeviceInfo,
+        MAX_RETRIES + 1,
+        DriverError::IoAbortInProgress,
+    ));
+
+    let result = HsmPartitionManager::open_partition(&path);
+
+    clear_faults();
+
+    assert_eq!(
+        result.unwrap_err(),
+        HsmError::IoAbortInProgress,
+        "open_partition should fail with IoAbortInProgress after exhausting all {MAX_RETRIES} retries on GetDeviceInfo"
+    );
+}
