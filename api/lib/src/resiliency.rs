@@ -343,13 +343,13 @@ pub const MAX_RETRIES: u32 = 5;
 /// random jitter of 0–[`BACKOFF_JITTER_MS`] to avoid thundering-herd retries.
 ///
 /// When compiled with `mock` (test builds only) the base is
-/// reduced to 1 ms so that retry tests complete in milliseconds instead
-/// of ~12 s.
+/// reduced to 8 ms so that retry tests complete quickly while
+/// still exercising realistic backoff behavior.
 #[cfg(not(feature = "mock"))]
 pub(crate) const BACKOFF_BASE_MS: u64 = 400;
 
 #[cfg(feature = "mock")]
-pub(crate) const BACKOFF_BASE_MS: u64 = 1;
+pub(crate) const BACKOFF_BASE_MS: u64 = 8;
 
 /// Maximum random jitter added to each backoff delay (in milliseconds).
 ///
@@ -357,41 +357,45 @@ pub(crate) const BACKOFF_BASE_MS: u64 = 1;
 /// the exponential delay so that concurrent callers don't all retry at
 /// exactly the same instant.
 ///
-/// When compiled with `mock` (test builds only) jitter is zero so
-/// that test timings remain deterministic.
+/// When compiled with `mock` (test builds only) jitter is reduced
+/// to 2 ms, preserving the 4:1 base-to-jitter ratio while keeping
+/// tests fast.
 #[cfg(not(feature = "mock"))]
 pub(crate) const BACKOFF_JITTER_MS: u64 = 100;
 
 #[cfg(feature = "mock")]
-pub(crate) const BACKOFF_JITTER_MS: u64 = 0;
+pub(crate) const BACKOFF_JITTER_MS: u64 = 2;
 
 /// Executes `operation` with exponential-backoff retry.
 ///
 /// The operation is called once.  If it fails and `predicate` returns `true`
 /// for the error, the call is retried up to `max_retries` additional times
-/// with exponentially increasing delays (`backoff_base_ms * 2^iter`).
+/// with exponentially increasing delays (`backoff_base_ms * 2^iter`), plus
+/// random jitter in `0..=backoff_jitter_ms`.
 ///
 /// Emits [`tracing::warn!`] on each retry and [`tracing::error!`] when all
 /// attempts are exhausted.
 ///
 /// # Arguments
 ///
-/// * `operation`      – Closure that performs the fallible work.
-/// * `predicate`      – Returns `true` for errors that are worth retrying.
-/// * `max_retries`    – Maximum number of **additional** attempts after the first failure.
-/// * `backoff_base_ms`– Base delay in milliseconds; doubled each iteration.
+/// * `operation`        – Closure that performs the fallible work.
+/// * `predicate`        – Returns `true` for errors that are worth retrying.
+/// * `max_retries`      – Maximum number of **additional** attempts after the first failure.
+/// * `backoff_base_ms`  – Base delay in milliseconds; doubled each iteration.
+/// * `backoff_jitter_ms`– Maximum random jitter added to each delay (ms).
 pub(crate) fn execute_with_backoff<T>(
     mut operation: impl FnMut() -> HsmResult<T>,
     predicate: fn(&HsmResult<T>) -> bool,
     max_retries: u32,
     backoff_base_ms: u64,
+    backoff_jitter_ms: u64,
 ) -> HsmResult<T> {
     let mut result = operation();
     let mut iter = 0u32;
 
     while predicate(&result) && iter < max_retries {
         let backoff_ms = backoff_base_ms * (1 << iter);
-        let jitter_ms = rand::thread_rng().gen_range(0..=BACKOFF_JITTER_MS);
+        let jitter_ms = rand::thread_rng().gen_range(0..=backoff_jitter_ms);
         let total_ms = backoff_ms + jitter_ms;
         if let Err(ref err) = result {
             warn!(
@@ -455,6 +459,7 @@ mod retry_tests {
             always_retry,
             5,
             1, // 1 ms base for fast tests
+            0, // no jitter for deterministic tests
         );
         assert_eq!(result, Ok(42));
         assert_eq!(call_count.load(Ordering::SeqCst), 1);
@@ -472,6 +477,7 @@ mod retry_tests {
             always_retry,
             max,
             1,
+            0,
         );
         assert_eq!(result, Err(HsmError::IoAborted));
         // 1 initial + max retries
@@ -493,6 +499,7 @@ mod retry_tests {
             is_io_abort_error,
             5,
             1,
+            0,
         );
         assert_eq!(result, Ok(99));
         assert_eq!(call_count.load(Ordering::SeqCst), 3); // 1 initial + 2 retries
@@ -509,6 +516,7 @@ mod retry_tests {
             is_io_abort_error,
             5,
             1,
+            0,
         );
         assert_eq!(result, Err(HsmError::InvalidArgument));
         assert_eq!(call_count.load(Ordering::SeqCst), 1); // no retries
@@ -525,6 +533,7 @@ mod retry_tests {
             never_retry,
             5,
             1,
+            0,
         );
         assert_eq!(result, Err(HsmError::IoAborted));
         assert_eq!(call_count.load(Ordering::SeqCst), 1);
@@ -541,6 +550,7 @@ mod retry_tests {
             always_retry,
             0,
             1,
+            0,
         );
         assert_eq!(result, Err(HsmError::IoAborted));
         assert_eq!(call_count.load(Ordering::SeqCst), 1);
