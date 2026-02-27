@@ -1457,8 +1457,8 @@ TEST_F(azihsm_aes_cbc, streaming_update_finish_null_pointers_are_rejected)
         azihsm_algo crypt_algo{};
         init_cbc_algo(crypt_algo, cbc_params, AZIHSM_ALGO_ID_AES_CBC, 0x39);
 
-        azihsm_handle ctx = 0;
-        auto err = crypt_init_call(CryptOperation::Encrypt, &crypt_algo, key.get(), &ctx);
+        auto_ctx ctx;
+        auto err = crypt_init_call(CryptOperation::Encrypt, &crypt_algo, key.get(), ctx.get_ptr());
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         uint8_t data[AES_BLOCK_SIZE] = { 0x44 };
@@ -1486,12 +1486,12 @@ TEST_F(azihsm_aes_cbc, streaming_update_finish_invalid_buffer_shapes_are_rejecte
         azihsm_algo crypt_algo{};
         init_cbc_algo(crypt_algo, cbc_params, AZIHSM_ALGO_ID_AES_CBC_PAD, 0x3A);
 
-        azihsm_handle enc_ctx = 0;
-        auto err = crypt_init_call(CryptOperation::Encrypt, &crypt_algo, key.get(), &enc_ctx);
+        auto_ctx enc_ctx;
+        auto err = crypt_init_call(CryptOperation::Encrypt, &crypt_algo, key.get(), enc_ctx.get_ptr());
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
-        azihsm_handle dec_ctx = 0;
-        err = crypt_init_call(CryptOperation::Decrypt, &crypt_algo, key.get(), &dec_ctx);
+        auto_ctx dec_ctx;
+        err = crypt_init_call(CryptOperation::Decrypt, &crypt_algo, key.get(), dec_ctx.get_ptr());
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         uint8_t byte = 0x01;
@@ -1606,8 +1606,8 @@ TEST_F(azihsm_aes_cbc, streaming_update_output_buffer_sizing_no_padding)
         azihsm_algo crypt_algo{};
         init_cbc_algo(crypt_algo, cbc_params, AZIHSM_ALGO_ID_AES_CBC, 0x7B);
 
-        azihsm_handle ctx = 0;
-        auto err = crypt_init_call(CryptOperation::Encrypt, &crypt_algo, key.get(), &ctx);
+        auto_ctx ctx;
+        auto err = crypt_init_call(CryptOperation::Encrypt, &crypt_algo, key.get(), ctx.get_ptr());
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         std::vector<uint8_t> block_a = make_incrementing_bytes(AES_BLOCK_SIZE);
@@ -1693,8 +1693,8 @@ TEST_F(azihsm_aes_cbc, streaming_finish_output_buffer_sizing_with_padding)
         azihsm_algo crypt_algo{};
         init_cbc_algo(crypt_algo, cbc_params, AZIHSM_ALGO_ID_AES_CBC_PAD, 0x7C);
 
-        azihsm_handle ctx = 0;
-        auto err = crypt_init_call(CryptOperation::Encrypt, &crypt_algo, key.get(), &ctx);
+        auto_ctx ctx;
+        auto err = crypt_init_call(CryptOperation::Encrypt, &crypt_algo, key.get(), ctx.get_ptr());
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         azihsm_buffer finish_out{ nullptr, 0 };
@@ -1877,8 +1877,8 @@ TEST_F(azihsm_aes_cbc, streaming_decrypt_invalid_padding_fails_across_chunk_size
             SCOPED_TRACE("chunk_size=" + std::to_string(chunk_size));
             init_cbc_algo(crypt_algo, cbc_params, AZIHSM_ALGO_ID_AES_CBC_PAD, 0x69);
 
-            azihsm_handle ctx = 0;
-            auto err = crypt_init_call(CryptOperation::Decrypt, &crypt_algo, key.get(), &ctx);
+            auto_ctx ctx;
+            auto err = crypt_init_call(CryptOperation::Decrypt, &crypt_algo, key.get(), ctx.get_ptr());
             ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
             bool saw_failure = false;
@@ -1926,8 +1926,8 @@ TEST_F(azihsm_aes_cbc, streaming_no_padding_partial_block_input_is_rejected)
             azihsm_algo crypt_algo{};
             init_cbc_algo(crypt_algo, cbc_params, AZIHSM_ALGO_ID_AES_CBC, 0x22);
 
-            azihsm_handle ctx = 0;
-            auto err = crypt_init_call(operation, &crypt_algo, key.get(), &ctx);
+            auto_ctx ctx;
+            auto err = crypt_init_call(operation, &crypt_algo, key.get(), ctx.get_ptr());
             ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
             azihsm_buffer input{ input_bytes.data(), static_cast<uint32_t>(input_bytes.size()) };
@@ -1967,8 +1967,8 @@ TEST_F(azihsm_aes_cbc, streaming_zero_length_update_with_padding_noop_until_fini
         azihsm_algo crypt_algo{};
         init_cbc_algo(crypt_algo, cbc_params, AZIHSM_ALGO_ID_AES_CBC_PAD, 0x6A);
 
-        azihsm_handle ctx = 0;
-        auto err = crypt_init_call(CryptOperation::Encrypt, &crypt_algo, key.get(), &ctx);
+        auto_ctx ctx;
+        auto err = crypt_init_call(CryptOperation::Encrypt, &crypt_algo, key.get(), ctx.get_ptr());
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         uint8_t dummy = 0x00;
@@ -2021,8 +2021,8 @@ TEST_F(azihsm_aes_cbc, streaming_operation_mismatch_on_context_is_rejected)
         azihsm_algo crypt_algo{};
         init_cbc_algo(crypt_algo, cbc_params, AZIHSM_ALGO_ID_AES_CBC_PAD, 0x79);
 
-        azihsm_handle ctx = 0;
-        auto err = crypt_init_call(CryptOperation::Encrypt, &crypt_algo, key.get(), &ctx);
+        auto_ctx ctx;
+        auto err = crypt_init_call(CryptOperation::Encrypt, &crypt_algo, key.get(), ctx.get_ptr());
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         uint8_t data[AES_BLOCK_SIZE] = { 0x41 };
@@ -2050,8 +2050,8 @@ TEST_F(azihsm_aes_cbc, streaming_encrypt_finish_without_update_with_padding_outp
         azihsm_algo crypt_algo{};
         init_cbc_algo(crypt_algo, cbc_params, AZIHSM_ALGO_ID_AES_CBC_PAD, 0x7A);
 
-        azihsm_handle ctx = 0;
-        auto err = crypt_init_call(CryptOperation::Encrypt, &crypt_algo, key.get(), &ctx);
+        auto_ctx ctx;
+        auto err = crypt_init_call(CryptOperation::Encrypt, &crypt_algo, key.get(), ctx.get_ptr());
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         azihsm_buffer output{ nullptr, 0 };
