@@ -6,10 +6,10 @@ An [OpenSSL 3.0 provider](https://docs.openssl.org/3.0/man7/provider/) that dele
 
 | Operation | Algorithms |
 |-----------|-----------|
-| **Key Management** | EC (P-256, P-384, P-521), RSA (2048, 3072, 4096), RSA-PSS |
+| **Key Management** | EC (P-256, P-384, P-521), RSA (2048, 3072, 4096) |
 | **Signature** | ECDSA, RSA PKCS#1 v1.5, RSA-PSS |
 | **Key Exchange** | ECDH |
-| **Asymmetric Encryption** | RSA-OAEP, RSA PKCS#1 v1.5 |
+| **Asymmetric Encryption** | RSA-OAEP |
 | **Digest** | SHA-1, SHA-256, SHA-384, SHA-512 |
 | **KDF** | HKDF (RFC 5869) |
 | **Encoder** | DER (SubjectPublicKeyInfo for public keys; PrivateKeyInfo metadata-only — keys are not exportable), Text |
@@ -61,7 +61,7 @@ RSA genpkey (keyEncipherment)  ──> masked_key.bin ──> pkeyutl -encrypt /
 
 - Linux (x86_64)
 - Rust toolchain (1.92+)
-- CMake, GCC/Clang, pkg-config
+- CMake, GCC/Clang, pkg-config, curl
 - `libbsd-dev`, `libssl-dev` (system OpenSSL 3.x headers)
 
 ### Build
@@ -100,7 +100,6 @@ Install the provider and its runtime dependency:
 ```bash
 # Find the system modules directory
 openssl version -m
-# MODULESDIR: "/usr/lib/x86_64-linux-gnu/ossl-modules"
 
 # Install the provider
 sudo cp target/debug/azihsm_provider.so /usr/lib/x86_64-linux-gnu/ossl-modules/
@@ -131,7 +130,7 @@ PROV="-propquery ?provider=azihsm -provider default -provider azihsm_provider"
 
 > **Important:** `-propquery` **must** come before the `-provider` flags. OpenSSL processes CLI arguments left to right. Loading the provider triggers an HSM session that instantiates the DRBG (random number generator). If `-propquery` is applied afterwards, `RAND_set_DRBG_type` fails because the DRBG is already running. The error message from OpenSSL 3.0.x is misleading — it reports "odd number of digits" due to an upstream error code collision (`RAND_R_ALREADY_INSTANTIATED` and `CRYPTO_R_ODD_NUMBER_OF_DIGITS` are both 103, and the code uses `ERR_LIB_CRYPTO` instead of `ERR_LIB_RAND`).
 
-> **Note:** If the provider is not installed system-wide, add `-provider-path /path/to/directory` pointing to the directory containing `azihsm_provider.so`.
+> **Note:** If the provider is not installed system-wide, add `-provider-path /path/to/directory` pointing to the directory containing `azihsm_provider.so`. If `libazihsm_api_native.so` is also not in a system library path, set `LD_LIBRARY_PATH` to include its directory (e.g., `export LD_LIBRARY_PATH=/path/to/target/debug:$LD_LIBRARY_PATH`).
 
 > **Note:** On physical hardware, provider commands require `sudo` to access TPM operations.
 
@@ -244,7 +243,7 @@ RSA-PSS keys are imported the same way using `-algorithm RSA-PSS`.
 
 **Requires:** An EC key generated or imported with `digitalSignature` usage (the default).
 
-**Streaming (digest + sign in one pass):**
+**Digest + Sign (single command):**
 
 ```bash
 # Sign
@@ -260,7 +259,7 @@ openssl dgst -sha384 ${PROV} \
     data.bin
 ```
 
-**One-shot (pre-hashed data):**
+**Pre-hashed (sign raw digest):**
 
 ```bash
 # Pre-hash
@@ -343,20 +342,11 @@ openssl pkeyutl -decrypt ${PROV} \
     -in ciphertext.bin -out decrypted.bin
 ```
 
-**PKCS#1 v1.5:**
-
-```bash
-openssl pkeyutl -encrypt ${PROV} \
-    -inkey "azihsm://./rsa_4096_enc.bin;type=rsa" \
-    -pkeyopt rsa_padding_mode:pkcs1 \
-    -in plaintext.bin -out ciphertext.bin
-```
-
 **Encryption options:**
 
 | Option | Values |
 |--------|--------|
-| `rsa_padding_mode` | `oaep` (recommended) or `pkcs1` |
+| `rsa_padding_mode` | `oaep` |
 | `rsa_oaep_md` | Hash for OAEP: `sha256`, `sha384`, `sha512` (SHA-1 rejected) |
 | `rsa_mgf1_md` | MGF1 hash (defaults to `rsa_oaep_md`) |
 
@@ -371,18 +361,27 @@ Derive a shared secret with a peer's public key. The output is a masked key blob
 openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-384 -out peer_priv.pem
 openssl pkey -in peer_priv.pem -pubout -out peer_pub.pem
 
-# Derive shared secret (output is a masked key blob)
+# Derive shared secret — write masked blob to a named file
 openssl pkeyutl -derive ${PROV} \
     -inkey "azihsm://./ec_p384_ecdh_masked.bin;type=ec" \
     -peerkey peer_pub.pem \
     -pkeyopt output_file:shared_masked.bin
+
+# Derive shared secret — write masked blob via the caller's buffer
+openssl pkeyutl -derive ${PROV} \
+    -inkey "azihsm://./ec_p384_ecdh_masked.bin;type=ec" \
+    -peerkey peer_pub.pem \
+    -out shared_masked.bin
 ```
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
-| `output_file` | No | Path for output masked key blob. When set, the blob is written to the file and `secretlen` is set to 0. When not set, the blob is written into the caller's buffer |
+| `output_file` | No | Path for output masked key blob. When set, the blob is written directly to the file and `secretlen` is set to 0. When not set, the blob is returned in the caller's buffer (written to `-out` on the CLI) and `secretlen` reflects the blob size |
 
-> **API note:** The azihsm provider returns a masked key blob instead of the raw shared secret. When `output_file` is set, the blob is written to the file and `secretlen` is set to 0 — callers must read from the file rather than the buffer. When `output_file` is not set, the blob is copied into the caller's buffer and `secretlen` reflects the blob size. In both cases, the output is an opaque masked key, not raw key material.
+> **API note:** The azihsm provider returns a masked key blob instead of the raw shared secret. Both output modes produce the same opaque blob — the difference is only in how it reaches the caller:
+>
+> - **With `output_file`:** The blob is written directly to the named file. `secretlen` is set to 0, so the caller's buffer is empty — read from the file instead.
+> - **Without `output_file`:** The blob is copied into the caller's buffer and `secretlen` reflects the blob size. On the CLI, `-out` writes this buffer to a file.
 
 ### HKDF Key Derivation
 
@@ -468,7 +467,7 @@ azihsm://<file_path>;type=<key_type>
 | Component | Required | Description |
 |-----------|----------|-------------|
 | `<file_path>` | Yes | Path to the masked key file (relative or absolute) |
-| `type` | Yes | Key type: `ec`, `rsa`, `rsa-pss`, or `aes` |
+| `type` | Yes | Key type: `ec`, `rsa`, or `rsa-pss` |
 
 ### Examples
 
