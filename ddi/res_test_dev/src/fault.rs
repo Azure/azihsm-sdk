@@ -57,6 +57,8 @@ pub enum FaultError {
     Driver(DriverError),
     /// A DDI status code (maps to [`DdiError::DdiStatus`]).
     Status(DdiStatus),
+    /// Device not ready (maps to [`DdiError::DeviceNotReady`]).
+    DeviceNotReady,
 }
 
 impl From<DriverError> for FaultError {
@@ -77,6 +79,7 @@ impl FaultError {
         match self {
             Self::Driver(e) => DdiError::DriverError(e),
             Self::Status(s) => DdiError::DdiStatus(s),
+            Self::DeviceNotReady => DdiError::DeviceNotReady,
         }
     }
 }

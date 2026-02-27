@@ -12,6 +12,7 @@
 
 use core::mem::size_of;
 
+use resiliency_macro::*;
 use zerocopy::Immutable;
 use zerocopy::IntoBytes;
 use zerocopy::KnownLayout;
@@ -40,6 +41,7 @@ use super::*;
 /// # Errors
 ///
 /// Returns an error if key generation fails or if the generated handles are not valid.
+#[resiliency_key_gen(session = "session")]
 pub(crate) fn aes_xts_generate_key(
     session: &HsmSession,
     props: HsmKeyProps,
@@ -91,6 +93,7 @@ pub(crate) fn aes_xts_generate_key(
 ///
 /// On success, the returned `HsmKeyProps.masked_key` contains a *single* encoded blob
 /// `header || part1_masked || part2_masked`.
+#[resiliency_key_op(key = "unwrapping_key")]
 pub(crate) fn aes_xts_unwrap_key(
     unwrapping_key: &HsmRsaPrivateKey,
     hash_algo: HsmHashAlgo,
@@ -136,6 +139,7 @@ pub(crate) fn aes_xts_unwrap_key(
 ///
 /// This function unmasks both halves and returns two key handles plus combined XTS properties.
 /// On success, the returned `HsmKeyProps.masked_key` contains the same encoded key-pair blob.
+#[resiliency_key_gen(session = "session")]
 pub(crate) fn aes_xts_unmask_key(
     session: &HsmSession,
     masked_key: &[u8],

@@ -19,7 +19,7 @@ pub use secret::*;
 
 use super::*;
 
-pub(crate) trait HsmKeyHandleDelOp: Copy {
+pub(crate) trait HsmKeyHandleDelOp: Copy + PartialEq {
     /// Deletes a key from the HSM.
     ///
     /// # Arguments
@@ -40,7 +40,6 @@ impl HsmKeyHandleDelOp for ddi::HsmKeyHandle {
     }
 }
 
-//impl delete op for key handle tuple ()
 impl HsmKeyHandleDelOp for (ddi::HsmKeyHandle, ddi::HsmKeyHandle) {
     /// Deletes both key handles from the HSM.
     fn delete_key(session: HsmSession, handle: Self) -> Result<(), HsmError> {
@@ -77,6 +76,11 @@ pub(crate) struct HsmKeyInner<H: HsmKeyHandleDelOp> {
     handle: H,
     /// Whether the key has already been deleted.
     deleted: bool,
+    /// Partition restore epoch at which this handle was last created or
+    /// refreshed. Compared against `HsmPartition::restore_epoch()` before
+    /// every DDI call to detect stale handles and prevent the ABA problem
+    /// where a handle index is reused for a different key after a resiliency event.
+    last_refresh_epoch: u64,
 }
 
 impl<H: HsmKeyHandleDelOp> HsmKeyInner<H> {
@@ -85,11 +89,13 @@ impl<H: HsmKeyHandleDelOp> HsmKeyInner<H> {
     /// This is only called by typed key wrapper constructors/macros after a key is
     /// created or imported into the HSM and a valid handle + properties are known.
     fn new(session: HsmSession, props: HsmKeyProps, handle: H) -> Self {
+        let epoch = session.partition().restore_epoch();
         Self {
             session,
             props,
             handle,
             deleted: false,
+            last_refresh_epoch: epoch,
         }
     }
 
@@ -105,18 +111,55 @@ impl<H: HsmKeyHandleDelOp> HsmKeyInner<H> {
         &self.props
     }
 
+    /// Returns the partition restore epoch at which this handle was last
+    /// created or refreshed.
+    fn last_refresh_epoch(&self) -> u64 {
+        self.last_refresh_epoch
+    }
+
     /// Deletes the device-side key handle.
     ///
     /// This is idempotent: after successful deletion, subsequent calls return `Ok(())`.
     /// The `deleted` flag also prevents `Drop` from attempting deletion again.
+    ///
+    /// After a resiliency event, the device key table is wiped.
+    /// If this handle is stale (its epoch is behind the
+    /// partition's restore epoch), the DDI call is skipped to avoid the
+    /// ABA problem where a recycled handle index addresses a different key.
     fn delete_key(&mut self) -> Result<(), HsmError> {
         // Idempotent deletion: safe to call multiple times.
         if self.deleted {
             return Ok(());
         }
+
+        let partition_epoch = self.session.partition().restore_epoch();
+        if self.last_refresh_epoch < partition_epoch {
+            self.deleted = true;
+            return Ok(());
+        }
+
+        // ddi::delete_key already treats retryable errors as success,
+        // so no additional error handling is needed here.
         H::delete_key(self.session.clone(), self.handle)?;
         self.deleted = true;
         Ok(())
+    }
+
+    /// Replaces the device handle and properties after an unmask operation.
+    ///
+    /// Called during key-operation resiliency recovery to refresh a stale
+    /// handle that was invalidated by a resiliency event.
+    ///
+    /// The old handle is not deleted: Resiliency event already wiped the device
+    /// key table, so the old index is either gone or has been recycled
+    /// for a different key's fresh handle. Attempting to delete it
+    /// would risk destroying another key.
+    fn refresh(&mut self, handle: H, props: HsmKeyProps) {
+        let new_epoch = self.session.partition().restore_epoch();
+        self.handle = handle;
+        self.props = props;
+        self.deleted = false;
+        self.last_refresh_epoch = new_epoch;
     }
 }
 
@@ -124,6 +167,12 @@ impl<H: HsmKeyHandleDelOp> Drop for HsmKeyInner<H> {
     fn drop(&mut self) {
         // Best-effort cleanup: dropping should never panic.
         if !self.deleted {
+            // After a resiliency event the device key table is wiped
+            // Skip the DDI call to avoid deleting a recycled handle.
+            let partition_epoch = self.session.partition().restore_epoch();
+            if self.last_refresh_epoch < partition_epoch {
+                return;
+            }
             let _ = H::delete_key(self.session.clone(), self.handle);
         }
     }
@@ -132,6 +181,48 @@ impl<H: HsmKeyHandleDelOp> Drop for HsmKeyInner<H> {
 macro_rules! define_hsm_key {
     ($vis:vis $name:ident) => {
         define_hsm_key!($vis $name, ddi::HsmKeyHandle);
+
+        // Single-handle keys get a standard refresh_from_masked
+        // implementation using ddi::unmask_key.
+        #[allow(unused)]
+        impl $name {
+            /// Refreshes the device handle by unmasking the key's cached
+            /// masked-key blob.
+            ///
+            /// Used during key-operation resiliency recovery after a live
+            /// migration or firmware crash recovery event invalidates the
+            /// current device handle.
+            ///
+            /// The write lock is held across the DDI unmask call so that
+            /// only one thread performs the unmask when multiple threads
+            /// race to recover the same key after a resiliency event.
+            /// Waiting threads see the updated epoch and return immediately.
+            pub(crate) fn refresh_from_masked(&self) -> HsmResult<()> {
+                let session = self.session();
+                let current_epoch = session.partition().restore_epoch();
+
+                // Fast path (no lock): another thread already refreshed.
+                if self.last_refresh_epoch() >= current_epoch {
+                    return Ok(());
+                }
+
+                // Acquire write lock before the DDI call so only one
+                // thread unmasks; others block and then see the updated epoch.
+                let mut inner = self.inner.write();
+                if inner.last_refresh_epoch() >= current_epoch {
+                    return Ok(());
+                }
+
+                let masked_key = inner.key_props()
+                    .masked_key()
+                    .ok_or(HsmError::InternalError)?
+                    .to_vec();
+                let (new_handle, new_props) = ddi::unmask_key(&session, &masked_key)?;
+
+                inner.refresh(new_handle, new_props);
+                Ok(())
+            }
+        }
     };
     ($vis:vis $name:ident, $handle_ty:ty) => {
         pastey::paste! {
@@ -183,6 +274,12 @@ macro_rules! define_hsm_key {
                 /// Returns the key handle.
                 pub(crate) fn handle(&self) -> $handle_ty {
                     self.inner.read().handle()
+                }
+
+                /// Returns the partition restore epoch at which this
+                /// key's device handle was last created or refreshed.
+                pub(crate) fn last_refresh_epoch(&self) -> u64 {
+                    self.inner.read().last_refresh_epoch()
                 }
 
                 /// Returns the session ID.
@@ -278,20 +375,24 @@ pub(crate) struct HsmKeyPairInner<H: HsmKeyHandleDelOp, P> {
     handle: H,
     /// Associated public key wrapper.
     pub_key: P,
-
     /// Whether the key has already been deleted.
     deleted: bool,
+    /// Partition restore epoch at which this handle was last created or
+    /// refreshed.  See [`HsmKeyInner::last_refresh_epoch`] for details.
+    last_refresh_epoch: u64,
 }
 
 impl<H: HsmKeyHandleDelOp, P> HsmKeyPairInner<H, P> {
     /// Creates a new instance of the shared key-pair state.
     fn new(session: HsmSession, props: HsmKeyProps, handle: H, pub_key: P) -> Self {
+        let epoch = session.partition().restore_epoch();
         Self {
             session,
             props,
             handle,
             pub_key,
             deleted: false,
+            last_refresh_epoch: epoch,
         }
     }
 
@@ -310,20 +411,64 @@ impl<H: HsmKeyHandleDelOp, P> HsmKeyPairInner<H, P> {
         &self.pub_key
     }
 
+    /// Returns the partition restore epoch at which this handle was last
+    /// created or refreshed.
+    fn last_refresh_epoch(&self) -> u64 {
+        self.last_refresh_epoch
+    }
+
     /// Deletes the key from the HSM.
+    ///
+    /// After a resiliency event, the device key table is wiped.
+    /// If this handle is stale (its epoch is behind the
+    /// partition's restore epoch), the DDI call is skipped to avoid the
+    /// ABA problem where a recycled handle index addresses a different key.
     fn delete_key(&mut self) -> Result<(), HsmError> {
         if self.deleted {
             return Ok(());
         }
+
+        let partition_epoch = self.session.partition().restore_epoch();
+        if self.last_refresh_epoch < partition_epoch {
+            self.deleted = true;
+            return Ok(());
+        }
+
+        // ddi::delete_key already treats retryable errors as success
+        // (resiliency event wipes the device key table), so no additional error handling is
+        // needed here.
         H::delete_key(self.session.clone(), self.handle)?;
         self.deleted = true;
         Ok(())
+    }
+
+    /// Replaces the device handle and private-key properties after an
+    /// unmask operation during resiliency recovery.
+    ///
+    /// The public key is not refreshed because it is a software-only
+    /// object that remains valid across resiliency events.
+    ///
+    /// The old handle is not deleted: resiliency events already wiped the device
+    /// key table, so the old index is either gone or has been recycled
+    /// for a different key's fresh handle.
+    fn refresh(&mut self, handle: H, props: HsmKeyProps) {
+        let new_epoch = self.session.partition().restore_epoch();
+        self.handle = handle;
+        self.props = props;
+        self.deleted = false;
+        self.last_refresh_epoch = new_epoch;
     }
 }
 
 impl<H: HsmKeyHandleDelOp, P> Drop for HsmKeyPairInner<H, P> {
     fn drop(&mut self) {
         if !self.deleted {
+            // After a resiliency event the device key table is wiped,
+            // skip the DDI call to avoid deleting a recycled handle.
+            let partition_epoch = self.session.partition().restore_epoch();
+            if self.last_refresh_epoch < partition_epoch {
+                return;
+            }
             let _ = H::delete_key(self.session.clone(), self.handle);
         }
     }
@@ -368,6 +513,12 @@ macro_rules! define_hsm_key_pair {
                 /// Returns the key handle.
                 pub(crate) fn handle(&self) -> ddi::HsmKeyHandle {
                     self.inner.read().handle()
+                }
+
+                /// Returns the partition restore epoch at which this
+                /// key's device handle was last created or refreshed.
+                pub(crate) fn last_refresh_epoch(&self) -> u64 {
+                    self.inner.read().last_refresh_epoch()
                 }
 
                 /// Returns the session ID.
@@ -419,6 +570,44 @@ macro_rules! define_hsm_key_pair {
                 {
                     self.with_session(|s| s.with_dev(f))
                 }
+
+                /// Refreshes the device handle by unmasking the key pair's
+                /// cached masked-key blob.
+                ///
+                /// Only the private-key handle and properties are updated.
+                /// The public key is a software-only object and remains valid
+                /// across resiliency events.
+                ///
+                /// The write lock is held across the DDI call so that only
+                /// one thread performs the unmask when multiple threads race.
+                /// Waiting threads see the updated epoch and return immediately.
+                pub(crate) fn refresh_from_masked(&self) -> HsmResult<()> {
+                    let session = self.session();
+                    let current_epoch = session.partition().restore_epoch();
+
+                    // Fast path (no lock): another thread already refreshed.
+                    if self.last_refresh_epoch() >= current_epoch {
+                        return Ok(());
+                    }
+
+                    // Acquire write lock before the DDI call so only one
+                    // thread unmasks; others block and then see the updated epoch.
+                    let mut inner = self.inner.write();
+                    if inner.last_refresh_epoch() >= current_epoch {
+                        return Ok(());
+                    }
+
+                    let old_props = inner.key_props().clone();
+                    let masked_key = old_props
+                        .masked_key()
+                        .ok_or(HsmError::InternalError)?
+                        .to_vec();
+                    let (new_handle, new_props, _pub_props) =
+                        ddi::refresh_key_pair(&session, &old_props, &masked_key)?;
+
+                    inner.refresh(new_handle, new_props);
+                    Ok(())
+                }
             }
 
             impl HsmKey for [<$priv_name>] {}
@@ -452,22 +641,6 @@ macro_rules! define_hsm_key_pair {
                 fn delete_key(self) -> Result<(), Self::Error> {
                     let mut guard = self.inner.write();
                     guard.delete_key()
-                }
-            }
-
-            impl HsmKeyReportOp for $priv_name {
-                type Error = HsmError;
-
-                /// Generates an attestation report for the key.
-                fn generate_key_report(
-                    &self,
-                    report_data: &[u8],
-                    report: Option<&mut [u8]>
-                ) -> Result<usize, Self::Error> {
-                    let handle = self.handle();
-                    self.with_session(|s| {
-                        ddi::generate_key_report(s, handle, report_data, report)
-                    })
                 }
             }
 

@@ -1,0 +1,1782 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+//! Multi-threaded stress tests for key-operation resiliency.
+//!
+//! These tests exercise the resiliency retry path (proc macros
+//! `#[resiliency_key_gen]` and `#[resiliency_key_op]`) under concurrent Reset
+//! pressure. Unlike the fault-injection tests in `resiliency/`, these
+//! tests use the mock device directly and trigger real simulated
+//! Resets via [`HsmPartition::reset`].
+//!
+//! # Architecture
+//!
+//! Each test follows this pattern:
+//!
+//! 1. Initialize a partition with resiliency enabled.
+//! 2. Open a session and generate keys.
+//! 3. Spawn N worker threads that repeatedly perform key operations.
+//! 4. Spawn 1 Reset thread that continuously calls
+//!    `partition.reset()`.
+//! 5. All threads synchronize at a [`Barrier`] and run for a fixed
+//!    number of iterations.
+//! 6. Workers assert that every operation eventually succeeds (the
+//!    retry macros recover from transient Reset failures).
+//!
+//! # Feature gate
+//!
+//! This module is compiled under `#[cfg(feature = "res-test")]`.
+//! It does not depend on `azihsm_ddi_resiliency_mock` (no fault
+//! injection); Reset is triggered directly via `partition.reset()`.
+
+use std::sync::Arc;
+use std::sync::Barrier;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
+use std::thread;
+use std::time::Duration;
+
+use azihsm_crypto as crypto;
+
+use super::helpers::*;
+use crate::utils::partition::*;
+use crate::utils::resiliency::*;
+use crate::*;
+
+// Constants
+
+/// Number of worker threads per test.
+const NUM_WORKERS: usize = 4;
+
+/// Number of iterations each worker performs.
+const ITERATIONS_PER_WORKER: usize = 100;
+
+/// Delay between Reset triggers (ms).
+///
+/// Mock: the retry backoff base is 400 ms, and
+/// `SessionNeedsRenegotiation` retries without backoff.
+/// With 4 workers all serializing through `restore_partition`
+/// recovery takes up to ~500 ms. 3 seconds is high enough that
+/// recovery always completes before the next Reset, but low
+/// enough that workers encounter multiple Resets during their run.
+///
+/// Real hardware: Reset may take up to ~5 seconds to complete.
+/// The interval must be longer than that to avoid spurious `IOAbortInProgress` errors.
+#[cfg(feature = "mock")]
+const RESET_INTERVAL_MS: u64 = 3000;
+#[cfg(not(feature = "mock"))]
+const RESET_INTERVAL_MS: u64 = 7000;
+
+/// Small inter-iteration sleep (ms) so that the worker loop
+/// runs long enough to span several Reset cycles.
+const WORKER_ITER_SLEEP_MS: u64 = 50;
+
+// ── Setup helpers ────────────────────────────────────────────────────────
+
+/// Initialize a partition with resiliency enabled and open a session.
+///
+/// Returns the partition, credentials, session, and the RAII context
+/// that owns the resiliency temp directory.
+fn init_partition_and_session() -> (HsmPartition, HsmCredentials, HsmSession, ResiliencyTestCtx) {
+    let list = HsmPartitionManager::partition_info_list();
+    assert!(!list.is_empty(), "No partitions found.");
+
+    let part =
+        HsmPartitionManager::open_partition(&list[0].path).expect("Failed to open partition");
+    part.reset().expect("Partition reset failed");
+
+    let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
+    let (obk_info, pota_endorsement) = make_init_params(&part);
+    let (resiliency_config, ctx) = make_resiliency_config(&part);
+    part.init(
+        creds,
+        None,
+        None,
+        obk_info,
+        pota_endorsement,
+        Some(resiliency_config),
+    )
+    .expect("Partition init failed");
+
+    let rev = part.api_rev_range().max();
+    let session = part
+        .open_session(rev, &creds, None)
+        .expect("Failed to open session");
+
+    (part, creds, session, ctx)
+}
+
+// Key-generation and crypto-operation helpers imported from
+// `crate::utils::key_helpers`.
+
+/// Derive an HMAC-SHA256 key from a shared secret via HKDF.
+fn hkdf_derive_hmac_key(session: &HsmSession, shared_secret: &HsmGenericSecretKey) -> HsmHmacKey {
+    let hmac_key_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::HmacSha256)
+        .bits(256)
+        .can_sign(true)
+        .can_verify(true)
+        .is_session(true)
+        .build()
+        .expect("Failed to build HMAC key props");
+
+    let mut hkdf_algo = HsmHkdfAlgo::new(
+        HsmHashAlgo::Sha256,
+        Some(b"stress_salt"),
+        Some(b"stress_info"),
+    )
+    .expect("Failed to create HKDF algo");
+
+    let derived_key =
+        HsmKeyManager::derive_key(session, &mut hkdf_algo, shared_secret, hmac_key_props)
+            .expect("Failed to derive HMAC key via HKDF");
+
+    derived_key
+        .try_into()
+        .expect("Failed to convert derived key to HsmHmacKey")
+}
+
+// Reset thread
+
+/// Spawn a background thread that continuously triggers Reset until the
+/// stop flag is set.
+///
+/// Opens a separate `HsmPartition` handle from the given `path` so
+/// that `reset()`'s partition WRITE lock does not contend with the
+/// workers' READ locks on the shared `RwLock`. The reset still affects
+/// the underlying device, which is what the workers need to recover from.
+fn spawn_reset_thread(
+    path: String,
+    stop: Arc<AtomicBool>,
+    barrier: Arc<Barrier>,
+) -> thread::JoinHandle<u32> {
+    thread::spawn(move || {
+        let partition = HsmPartitionManager::open_partition(&path)
+            .expect("Failed to open partition for reset thread");
+        barrier.wait();
+        let tid = std::thread::current().id();
+        let mut count = 0u32;
+        while !stop.load(Ordering::Relaxed) {
+            eprintln!("[Reset tid={tid:?}] firing reset #{}", count + 1);
+            let result = partition.reset();
+            eprintln!("[Reset tid={tid:?}] reset #{} result={result:?}", count + 1);
+            if result.is_ok() {
+                count += 1;
+            }
+            thread::sleep(Duration::from_millis(RESET_INTERVAL_MS));
+        }
+        eprintln!("[Reset tid={tid:?}] exiting, total Resets={count}");
+        count
+    })
+}
+
+// =========================================================================
+// Test: AES-CBC encrypt under continuous Reset
+// =========================================================================
+
+/// Multiple threads perform AES-CBC encrypt while a dedicated thread
+/// fires Resets continuously. Every operation must eventually succeed
+/// via the retry path.
+#[api_test]
+fn test_stress_aes_cbc_encrypt_under_reset() {
+    let (part, _creds, session, _ctx) = init_partition_and_session();
+    let key = generate_aes_key(&session);
+    let iv = [0u8; 16];
+    let plaintext = b"stress test data!!!!!!!!!!!!!!!!"; // 32 bytes
+
+    let stop = Arc::new(AtomicBool::new(false));
+    // +1 for the Reset thread.
+    let barrier = Arc::new(Barrier::new(NUM_WORKERS + 1));
+
+    // Spawn Reset thread.
+    let reset_handle = spawn_reset_thread(part.path(), stop.clone(), barrier.clone());
+
+    // Spawn worker threads.
+    let workers: Vec<_> = (0..NUM_WORKERS)
+        .map(|id| {
+            let key = key.clone();
+            let barrier = barrier.clone();
+            let iv = iv;
+            let plaintext = plaintext.to_vec();
+            thread::spawn(move || {
+                barrier.wait();
+                let mut successes = 0u32;
+                for i in 0..ITERATIONS_PER_WORKER {
+                    let result = cbc_encrypt(&key, &iv, &plaintext);
+                    if let Err(ref e) = result {
+                        eprintln!("Worker {id} iteration {i}: AES-CBC encrypt error: {e:?}");
+                    }
+                    assert!(
+                        result.is_ok(),
+                        "Worker {id} iteration {i}: AES-CBC encrypt failed: {:?}",
+                        result.unwrap_err()
+                    );
+                    successes += 1;
+                    thread::sleep(Duration::from_millis(WORKER_ITER_SLEEP_MS));
+                }
+                successes
+            })
+        })
+        .collect();
+
+    // Wait for workers to finish, then stop the Reset thread.
+    let mut total_successes = 0u32;
+    for w in workers {
+        total_successes += w.join().expect("Worker thread panicked");
+    }
+    stop.store(true, Ordering::Relaxed);
+    let reset_count = reset_handle.join().expect("Reset thread panicked");
+
+    let expected = (NUM_WORKERS * ITERATIONS_PER_WORKER) as u32;
+    assert_eq!(
+        total_successes, expected,
+        "Expected {expected} total successes, got {total_successes}"
+    );
+    assert!(
+        reset_count > 0,
+        "Reset thread should have triggered at least one Reset"
+    );
+}
+
+// =========================================================================
+// Test: AES-CBC encrypt + decrypt round-trip under Reset
+// =========================================================================
+
+/// Workers encrypt then decrypt under continuous Reset, verifying
+/// round-trip correctness.
+#[api_test]
+fn test_stress_aes_cbc_round_trip_under_reset() {
+    let (part, _creds, session, _ctx) = init_partition_and_session();
+    let key = generate_aes_key(&session);
+    let iv = [0u8; 16];
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let barrier = Arc::new(Barrier::new(NUM_WORKERS + 1));
+
+    let reset_handle = spawn_reset_thread(part.path(), stop.clone(), barrier.clone());
+
+    let workers: Vec<_> = (0..NUM_WORKERS)
+        .map(|id| {
+            let key = key.clone();
+            let barrier = barrier.clone();
+            let iv = iv;
+            thread::spawn(move || {
+                barrier.wait();
+                let mut successes = 0u32;
+                for i in 0..ITERATIONS_PER_WORKER {
+                    let plaintext = format!("worker {id} iteration {i} data!!");
+                    let plaintext_bytes = plaintext.as_bytes();
+
+                    let ciphertext = match cbc_encrypt(&key, &iv, plaintext_bytes) {
+                        Ok(ct) => ct,
+                        Err(e) => panic!("Worker {id} iteration {i}: encrypt failed: {e:?}"),
+                    };
+
+                    match cbc_decrypt(&key, &iv, &ciphertext) {
+                        Ok(decrypted) => {
+                            assert_eq!(
+                                decrypted, plaintext_bytes,
+                                "Worker {id} iteration {i}: round-trip mismatch"
+                            );
+                            successes += 1;
+                        }
+                        Err(e) => panic!("Worker {id} iteration {i}: decrypt failed: {e:?}"),
+                    }
+                    thread::sleep(Duration::from_millis(WORKER_ITER_SLEEP_MS));
+                }
+                successes
+            })
+        })
+        .collect();
+
+    let mut total = 0u32;
+    for w in workers {
+        total += w.join().expect("Worker thread panicked");
+    }
+    stop.store(true, Ordering::Relaxed);
+    let reset_count = reset_handle.join().expect("Reset thread panicked");
+    assert!(
+        reset_count > 0,
+        "Reset thread should have triggered at least one Reset"
+    );
+    let expected = (NUM_WORKERS * ITERATIONS_PER_WORKER) as u32;
+    assert_eq!(
+        total, expected,
+        "Expected {expected} total successes, got {total}"
+    );
+}
+
+// =========================================================================
+// Test: ECC sign under continuous Reset
+// =========================================================================
+
+/// Multiple threads perform ECC sign while Resets fire continuously.
+#[api_test]
+fn test_stress_ecc_sign_under_reset() {
+    let (part, _creds, session, _ctx) = init_partition_and_session();
+    let (priv_key, _pub_key) = generate_ecc_sign_key_pair(&session);
+    let hash = hash_data(&session, b"stress test data for ECC signing");
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let barrier = Arc::new(Barrier::new(NUM_WORKERS + 1));
+
+    let reset_handle = spawn_reset_thread(part.path(), stop.clone(), barrier.clone());
+
+    let workers: Vec<_> = (0..NUM_WORKERS)
+        .map(|id| {
+            let priv_key = priv_key.clone();
+            let hash = hash.clone();
+            let barrier = barrier.clone();
+            thread::spawn(move || {
+                barrier.wait();
+                for i in 0..ITERATIONS_PER_WORKER {
+                    let mut sign_algo = HsmEccSignAlgo::default();
+                    let result = HsmSigner::sign_vec(&mut sign_algo, &priv_key, &hash);
+                    if let Err(ref e) = result {
+                        eprintln!("Worker {id} iteration {i}: ECC sign error: {e:?}");
+                    }
+                    assert!(
+                        result.is_ok(),
+                        "Worker {id} iteration {i}: ECC sign failed: {:?}",
+                        result.unwrap_err()
+                    );
+                    thread::sleep(Duration::from_millis(WORKER_ITER_SLEEP_MS));
+                }
+            })
+        })
+        .collect();
+
+    for w in workers {
+        w.join().expect("Worker thread panicked");
+    }
+    stop.store(true, Ordering::Relaxed);
+    let reset_count = reset_handle.join().expect("Reset thread panicked");
+    assert!(
+        reset_count > 0,
+        "Reset thread should have triggered at least one Reset"
+    );
+}
+
+// =========================================================================
+// Test: HMAC sign under continuous Reset
+// =========================================================================
+
+/// Multiple threads perform HMAC sign while Resets fire continuously.
+#[api_test]
+fn test_stress_hmac_sign_under_reset() {
+    let (part, _creds, session, _ctx) = init_partition_and_session();
+
+    // Generate HMAC key via ECDH + HKDF.
+    let (priv_key_a, _pub_key_a) = generate_ecc_derive_key_pair(&session, HsmEccCurve::P256);
+    let (_priv_key_b, pub_key_b) = generate_ecc_derive_key_pair(&session, HsmEccCurve::P256);
+    let shared_secret = ecdh_derive(&session, &priv_key_a, &pub_key_b);
+    let hmac_key = hkdf_derive_hmac_key(&session, &shared_secret);
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let barrier = Arc::new(Barrier::new(NUM_WORKERS + 1));
+
+    let reset_handle = spawn_reset_thread(part.path(), stop.clone(), barrier.clone());
+
+    let workers: Vec<_> = (0..NUM_WORKERS)
+        .map(|id| {
+            let hmac_key = hmac_key.clone();
+            let barrier = barrier.clone();
+            thread::spawn(move || {
+                barrier.wait();
+                for i in 0..ITERATIONS_PER_WORKER {
+                    let msg = format!("worker {id} iteration {i} hmac msg");
+                    let mut sign_algo = HsmHmacAlgo::new();
+                    let result = HsmSigner::sign_vec(&mut sign_algo, &hmac_key, msg.as_bytes());
+                    if let Err(ref e) = result {
+                        eprintln!("Worker {id} iteration {i}: HMAC sign error: {e:?}");
+                    }
+                    assert!(
+                        result.is_ok(),
+                        "Worker {id} iteration {i}: HMAC sign failed: {:?}",
+                        result.unwrap_err()
+                    );
+                    thread::sleep(Duration::from_millis(WORKER_ITER_SLEEP_MS));
+                }
+            })
+        })
+        .collect();
+
+    for w in workers {
+        w.join().expect("Worker thread panicked");
+    }
+    stop.store(true, Ordering::Relaxed);
+    let reset_count = reset_handle.join().expect("Reset thread panicked");
+    assert!(
+        reset_count > 0,
+        "Reset thread should have triggered at least one Reset"
+    );
+}
+
+// =========================================================================
+// Test: Mixed operations under continuous Reset
+// =========================================================================
+
+/// Workers perform different key operations (AES-CBC encrypt, ECC sign,
+/// HMAC sign, RSA hash-sign) concurrently while Resets fire continuously.
+#[api_test]
+fn test_stress_mixed_ops_under_reset() {
+    let (part, _creds, session, _ctx) = init_partition_and_session();
+
+    // Generate all key types up front.
+    let aes_key = generate_aes_key(&session);
+    let (ecc_priv, _ecc_pub) = generate_ecc_sign_key_pair(&session);
+    let ecc_hash = hash_data(&session, b"mixed test ECC data");
+
+    let (priv_key_a, _pub_key_a) = generate_ecc_derive_key_pair(&session, HsmEccCurve::P256);
+    let (_priv_key_b, pub_key_b) = generate_ecc_derive_key_pair(&session, HsmEccCurve::P256);
+    let shared_secret = ecdh_derive(&session, &priv_key_a, &pub_key_b);
+    let hmac_key = hkdf_derive_hmac_key(&session, &shared_secret);
+    let (rsa_priv, _rsa_pub) = generate_rsa_sign_key_pair(&session);
+
+    let stop = Arc::new(AtomicBool::new(false));
+    // 4 worker threads (one per op type) + 1 Reset thread.
+    let barrier = Arc::new(Barrier::new(5));
+
+    let reset_handle = spawn_reset_thread(part.path(), stop.clone(), barrier.clone());
+
+    // Worker 0: AES-CBC encrypt
+    let aes_barrier = barrier.clone();
+    let aes_key_c = aes_key.clone();
+    let aes_worker = thread::spawn(move || {
+        aes_barrier.wait();
+        let iv = [0u8; 16];
+        let plaintext = b"mixed test aes data!!!!!!!!!!!!!"; // 32 bytes
+        let mut successes = 0u32;
+        for _i in 0..ITERATIONS_PER_WORKER {
+            match cbc_encrypt(&aes_key_c, &iv, plaintext) {
+                Ok(_) => successes += 1,
+                Err(e) => panic!("AES worker unexpected error: {e:?}"),
+            }
+            thread::sleep(Duration::from_millis(WORKER_ITER_SLEEP_MS));
+        }
+        successes
+    });
+
+    // Worker 1: ECC sign
+    let ecc_barrier = barrier.clone();
+    let ecc_priv_c = ecc_priv.clone();
+    let ecc_hash_c = ecc_hash.clone();
+    let ecc_worker = thread::spawn(move || {
+        ecc_barrier.wait();
+        let mut successes = 0u32;
+        for _i in 0..ITERATIONS_PER_WORKER {
+            let mut sign_algo = HsmEccSignAlgo::default();
+            match HsmSigner::sign_vec(&mut sign_algo, &ecc_priv_c, &ecc_hash_c) {
+                Ok(_) => successes += 1,
+                Err(e) => panic!("ECC worker unexpected error: {e:?}"),
+            }
+            thread::sleep(Duration::from_millis(WORKER_ITER_SLEEP_MS));
+        }
+        successes
+    });
+
+    // Worker 2: HMAC sign
+    let hmac_barrier = barrier.clone();
+    let hmac_key_c = hmac_key.clone();
+    let hmac_worker = thread::spawn(move || {
+        hmac_barrier.wait();
+        let mut successes = 0u32;
+        for _i in 0..ITERATIONS_PER_WORKER {
+            let mut sign_algo = HsmHmacAlgo::new();
+            match HsmSigner::sign_vec(&mut sign_algo, &hmac_key_c, b"mixed test hmac data") {
+                Ok(_) => successes += 1,
+                Err(e) => panic!("HMAC worker unexpected error: {e:?}"),
+            }
+            thread::sleep(Duration::from_millis(WORKER_ITER_SLEEP_MS));
+        }
+        successes
+    });
+
+    // Worker 3: RSA hash-sign
+    let rsa_barrier = barrier.clone();
+    let rsa_priv_c = rsa_priv.clone();
+    let rsa_worker = thread::spawn(move || {
+        rsa_barrier.wait();
+        let message = b"mixed test rsa data!!!!!!!!!!!!!";
+        let mut successes = 0u32;
+        for _i in 0..ITERATIONS_PER_WORKER {
+            let mut sign_algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+            match HsmSigner::sign_vec(&mut sign_algo, &rsa_priv_c, message) {
+                Ok(_) => successes += 1,
+                Err(e) => panic!("RSA worker unexpected error: {e:?}"),
+            }
+            thread::sleep(Duration::from_millis(WORKER_ITER_SLEEP_MS));
+        }
+        successes
+    });
+
+    let aes_ok = aes_worker.join().expect("AES worker panicked");
+    let ecc_ok = ecc_worker.join().expect("ECC worker panicked");
+    let hmac_ok = hmac_worker.join().expect("HMAC worker panicked");
+    let rsa_ok = rsa_worker.join().expect("RSA worker panicked");
+
+    stop.store(true, Ordering::Relaxed);
+    let reset_count = reset_handle.join().expect("Reset thread panicked");
+    assert!(
+        reset_count > 0,
+        "Reset thread should have triggered at least one Reset"
+    );
+
+    // Each worker must complete all iterations successfully.
+    let expected = ITERATIONS_PER_WORKER as u32;
+    assert_eq!(
+        aes_ok, expected,
+        "AES worker succeeded {aes_ok}/{ITERATIONS_PER_WORKER}, expected {expected}"
+    );
+    assert_eq!(
+        ecc_ok, expected,
+        "ECC worker succeeded {ecc_ok}/{ITERATIONS_PER_WORKER}, expected {expected}"
+    );
+    assert_eq!(
+        hmac_ok, expected,
+        "HMAC worker succeeded {hmac_ok}/{ITERATIONS_PER_WORKER}, expected {expected}"
+    );
+    assert_eq!(
+        rsa_ok, expected,
+        "RSA worker succeeded {rsa_ok}/{ITERATIONS_PER_WORKER}, expected {expected}"
+    );
+}
+
+// =========================================================================
+// Test: Key generation under continuous Reset
+// =========================================================================
+
+/// Workers repeatedly generate AES keys while Resets fire, verifying
+/// that `#[resiliency_key_gen]` recovers.
+#[api_test]
+fn test_stress_key_gen_under_reset() {
+    let (part, _creds, session, _ctx) = init_partition_and_session();
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let barrier = Arc::new(Barrier::new(NUM_WORKERS + 1));
+
+    let reset_handle = spawn_reset_thread(part.path(), stop.clone(), barrier.clone());
+
+    let workers: Vec<_> = (0..NUM_WORKERS)
+        .map(|id| {
+            let session = session.clone();
+            let barrier = barrier.clone();
+            thread::spawn(move || {
+                barrier.wait();
+                for i in 0..ITERATIONS_PER_WORKER {
+                    let props = HsmKeyPropsBuilder::default()
+                        .class(HsmKeyClass::Secret)
+                        .key_kind(HsmKeyKind::Aes)
+                        .bits(256)
+                        .can_encrypt(true)
+                        .can_decrypt(true)
+                        .is_session(true)
+                        .build()
+                        .expect("Failed to build AES key props");
+                    let mut algo = HsmAesKeyGenAlgo::default();
+                    let result: HsmResult<HsmAesKey> =
+                        HsmKeyManager::generate_key(&session, &mut algo, props);
+                    if let Err(ref e) = result {
+                        eprintln!("Worker {id} iteration {i}: key gen error: {e:?}");
+                    }
+                    assert!(
+                        result.is_ok(),
+                        "Worker {id} iteration {i}: key gen failed: {:?}",
+                        result.err()
+                    );
+                    thread::sleep(Duration::from_millis(WORKER_ITER_SLEEP_MS));
+                }
+            })
+        })
+        .collect();
+
+    for w in workers {
+        w.join().expect("Worker thread panicked");
+    }
+    stop.store(true, Ordering::Relaxed);
+    let reset_count = reset_handle.join().expect("Reset thread panicked");
+    assert!(
+        reset_count > 0,
+        "Reset thread should have triggered at least one Reset"
+    );
+}
+
+// =========================================================================
+// Test: Rapid Reset bursts between operations
+// =========================================================================
+
+/// A single worker alternates between performing an AES-CBC encrypt and
+/// triggering an Reset, validating recovery after every single reset.
+#[api_test]
+fn test_stress_rapid_reset_between_ops() {
+    let (part, _creds, session, _ctx) = init_partition_and_session();
+    let key = generate_aes_key(&session);
+    let iv = [0u8; 16];
+    let plaintext = b"rapid reset test data!!!!!!!!!!!!"; // 32 bytes
+
+    const RAPID_RESET_ITERATIONS: usize = 10;
+    for i in 0..RAPID_RESET_ITERATIONS {
+        // Fire an Reset.
+        part.reset()
+            .unwrap_or_else(|e| panic!("Reset {i} failed: {e:?}"));
+
+        // Wait for the device to settle before attempting recovery,
+        // using the same interval as the multi-threaded stress tests.
+        thread::sleep(Duration::from_millis(RESET_INTERVAL_MS));
+
+        // The next encrypt must recover via the retry path.
+        let result = cbc_encrypt(&key, &iv, plaintext);
+        assert!(
+            result.is_ok(),
+            "Iteration {i}: AES-CBC encrypt after Reset failed: {:?}",
+            result.unwrap_err()
+        );
+    }
+}
+
+// =========================================================================
+// Test: AES-GCM round-trip under continuous Reset
+// =========================================================================
+
+/// Generate an AES-GCM-256 session key.
+fn generate_aes_gcm_key(session: &HsmSession) -> HsmAesGcmKey {
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::AesGcm)
+        .bits(256)
+        .can_encrypt(true)
+        .can_decrypt(true)
+        .is_session(true)
+        .build()
+        .expect("Failed to build AES-GCM key props");
+    let mut algo = HsmAesGcmKeyGenAlgo::default();
+    HsmKeyManager::generate_key(session, &mut algo, props).expect("Failed to generate AES-GCM key")
+}
+
+/// AES-GCM encrypt (returns ciphertext + tag).
+fn gcm_encrypt(
+    key: &HsmAesGcmKey,
+    iv: &[u8],
+    aad: Option<&[u8]>,
+    plaintext: &[u8],
+) -> HsmResult<(Vec<u8>, Vec<u8>)> {
+    let ct_len = {
+        let mut algo = HsmAesGcmAlgo::new_for_encryption(iv.to_vec(), aad.map(|a| a.to_vec()))
+            .expect("Failed to create AES-GCM algo");
+        HsmEncrypter::encrypt(&mut algo, key, plaintext, None)?
+    };
+
+    let mut out = vec![0u8; ct_len];
+    let mut algo = HsmAesGcmAlgo::new_for_encryption(iv.to_vec(), aad.map(|a| a.to_vec()))
+        .expect("Failed to create AES-GCM algo");
+    let written = HsmEncrypter::encrypt(&mut algo, key, plaintext, Some(&mut out))?;
+    out.truncate(written);
+    let tag = algo.tag().expect("GCM tag missing after encrypt").to_vec();
+    Ok((out, tag))
+}
+
+/// AES-GCM decrypt.
+fn gcm_decrypt(
+    key: &HsmAesGcmKey,
+    iv: &[u8],
+    tag: &[u8],
+    aad: Option<&[u8]>,
+    ciphertext: &[u8],
+) -> HsmResult<Vec<u8>> {
+    let pt_len = {
+        let mut algo =
+            HsmAesGcmAlgo::new_for_decryption(iv.to_vec(), tag.to_vec(), aad.map(|a| a.to_vec()))
+                .expect("Failed to create AES-GCM decrypt algo");
+        HsmDecrypter::decrypt(&mut algo, key, ciphertext, None)?
+    };
+
+    let mut out = vec![0u8; pt_len];
+    let mut algo =
+        HsmAesGcmAlgo::new_for_decryption(iv.to_vec(), tag.to_vec(), aad.map(|a| a.to_vec()))
+            .expect("Failed to create AES-GCM decrypt algo");
+    let written = HsmDecrypter::decrypt(&mut algo, key, ciphertext, Some(&mut out))?;
+    out.truncate(written);
+    Ok(out)
+}
+
+/// Workers encrypt then decrypt with AES-GCM under continuous Reset,
+/// verifying round-trip correctness including authenticated data.
+#[api_test]
+fn test_stress_aes_gcm_round_trip_under_reset() {
+    let (part, _creds, session, _ctx) = init_partition_and_session();
+    let key = generate_aes_gcm_key(&session);
+    let iv = [0u8; 12]; // GCM uses 12-byte IV
+    let aad = b"stress test additional data";
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let barrier = Arc::new(Barrier::new(NUM_WORKERS + 1));
+
+    let reset_handle = spawn_reset_thread(part.path(), stop.clone(), barrier.clone());
+
+    let workers: Vec<_> = (0..NUM_WORKERS)
+        .map(|id| {
+            let key = key.clone();
+            let barrier = barrier.clone();
+            thread::spawn(move || {
+                barrier.wait();
+                let mut successes = 0u32;
+                for i in 0..ITERATIONS_PER_WORKER {
+                    let plaintext = format!("gcm worker {id} iteration {i} data");
+                    let pt_bytes = plaintext.as_bytes();
+
+                    let (ciphertext, tag) = match gcm_encrypt(&key, &iv, Some(aad), pt_bytes) {
+                        Ok(pair) => pair,
+                        Err(e) => panic!("Worker {id} iteration {i}: GCM encrypt failed: {e:?}"),
+                    };
+
+                    match gcm_decrypt(&key, &iv, &tag, Some(aad), &ciphertext) {
+                        Ok(decrypted) => {
+                            assert_eq!(
+                                decrypted, pt_bytes,
+                                "Worker {id} iteration {i}: GCM round-trip mismatch"
+                            );
+                            successes += 1;
+                        }
+                        Err(e) => panic!("Worker {id} iteration {i}: GCM decrypt failed: {e:?}"),
+                    }
+                    thread::sleep(Duration::from_millis(WORKER_ITER_SLEEP_MS));
+                }
+                successes
+            })
+        })
+        .collect();
+
+    let mut total = 0u32;
+    for w in workers {
+        total += w.join().expect("Worker thread panicked");
+    }
+    stop.store(true, Ordering::Relaxed);
+    let reset_count = reset_handle.join().expect("Reset thread panicked");
+    assert!(
+        reset_count > 0,
+        "Reset thread should have triggered at least one Reset"
+    );
+    let expected = (NUM_WORKERS * ITERATIONS_PER_WORKER) as u32;
+    assert_eq!(
+        total, expected,
+        "Expected {expected} total successes, got {total}"
+    );
+}
+
+// =========================================================================
+// Test: AES-XTS round-trip under continuous Reset
+// =========================================================================
+
+/// Generate an AES-XTS-512 session key.
+fn generate_aes_xts_key(session: &HsmSession) -> HsmAesXtsKey {
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::AesXts)
+        .bits(512)
+        .can_encrypt(true)
+        .can_decrypt(true)
+        .is_session(true)
+        .build()
+        .expect("Failed to build AES-XTS key props");
+    let mut algo = HsmAesXtsKeyGenAlgo::default();
+    HsmKeyManager::generate_key(session, &mut algo, props).expect("Failed to generate AES-XTS key")
+}
+
+/// AES-XTS encrypt.
+fn xts_encrypt(
+    key: &HsmAesXtsKey,
+    tweak: &[u8],
+    dul: usize,
+    plaintext: &[u8],
+) -> HsmResult<Vec<u8>> {
+    let ct_len = {
+        let mut algo = HsmAesXtsAlgo::new(tweak, dul).expect("Failed to create AES-XTS algo");
+        HsmEncrypter::encrypt(&mut algo, key, plaintext, None)?
+    };
+
+    let mut out = vec![0u8; ct_len];
+    let written = {
+        let mut algo = HsmAesXtsAlgo::new(tweak, dul).expect("Failed to create AES-XTS algo");
+        HsmEncrypter::encrypt(&mut algo, key, plaintext, Some(&mut out))?
+    };
+    out.truncate(written);
+    Ok(out)
+}
+
+/// AES-XTS decrypt.
+fn xts_decrypt(
+    key: &HsmAesXtsKey,
+    tweak: &[u8],
+    dul: usize,
+    ciphertext: &[u8],
+) -> HsmResult<Vec<u8>> {
+    let pt_len = {
+        let mut algo = HsmAesXtsAlgo::new(tweak, dul).expect("Failed to create AES-XTS algo");
+        HsmDecrypter::decrypt(&mut algo, key, ciphertext, None)?
+    };
+
+    let mut out = vec![0u8; pt_len];
+    let written = {
+        let mut algo = HsmAesXtsAlgo::new(tweak, dul).expect("Failed to create AES-XTS algo");
+        HsmDecrypter::decrypt(&mut algo, key, ciphertext, Some(&mut out))?
+    };
+    out.truncate(written);
+    Ok(out)
+}
+
+/// Workers encrypt then decrypt with AES-XTS under continuous Reset,
+/// verifying round-trip correctness.
+#[api_test]
+fn test_stress_aes_xts_round_trip_under_reset() {
+    let (part, _creds, session, _ctx) = init_partition_and_session();
+    let key = generate_aes_xts_key(&session);
+    let tweak = [0u8; 16]; // 16-byte tweak
+    let dul: usize = 512; // data unit length: multiple of 16, max 8192
+    // Plaintext must be a multiple of DUL.
+    let plaintext = vec![0xABu8; dul];
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let barrier = Arc::new(Barrier::new(NUM_WORKERS + 1));
+
+    let reset_handle = spawn_reset_thread(part.path(), stop.clone(), barrier.clone());
+
+    let workers: Vec<_> = (0..NUM_WORKERS)
+        .map(|id| {
+            let key = key.clone();
+            let barrier = barrier.clone();
+            let plaintext = plaintext.clone();
+            thread::spawn(move || {
+                barrier.wait();
+                let mut successes = 0u32;
+                for i in 0..ITERATIONS_PER_WORKER {
+                    let ciphertext = match xts_encrypt(&key, &tweak, dul, &plaintext) {
+                        Ok(ct) => ct,
+                        Err(e) => {
+                            panic!("Worker {id} iteration {i}: XTS encrypt failed: {e:?}")
+                        }
+                    };
+
+                    match xts_decrypt(&key, &tweak, dul, &ciphertext) {
+                        Ok(decrypted) => {
+                            assert_eq!(
+                                decrypted, plaintext,
+                                "Worker {id} iteration {i}: XTS round-trip mismatch"
+                            );
+                            successes += 1;
+                        }
+                        Err(e) => {
+                            panic!("Worker {id} iteration {i}: XTS decrypt failed: {e:?}")
+                        }
+                    }
+                    thread::sleep(Duration::from_millis(WORKER_ITER_SLEEP_MS));
+                }
+                successes
+            })
+        })
+        .collect();
+
+    let mut total = 0u32;
+    for w in workers {
+        total += w.join().expect("Worker thread panicked");
+    }
+    stop.store(true, Ordering::Relaxed);
+    let reset_count = reset_handle.join().expect("Reset thread panicked");
+    assert!(
+        reset_count > 0,
+        "Reset thread should have triggered at least one Reset"
+    );
+    let expected = (NUM_WORKERS * ITERATIONS_PER_WORKER) as u32;
+    assert_eq!(
+        total, expected,
+        "Expected {expected} total successes, got {total}"
+    );
+}
+
+// =========================================================================
+// Test: ECC sign + verify under continuous Reset
+// =========================================================================
+
+/// Workers sign with the private key and verify with the public key
+/// under continuous Reset, ensuring both operations recover.
+#[api_test]
+fn test_stress_ecc_sign_verify_under_reset() {
+    let (part, _creds, session, _ctx) = init_partition_and_session();
+    let (priv_key, pub_key) = generate_ecc_sign_key_pair(&session);
+    let hash = hash_data(&session, b"stress test data for ECC sign+verify");
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let barrier = Arc::new(Barrier::new(NUM_WORKERS + 1));
+
+    let reset_handle = spawn_reset_thread(part.path(), stop.clone(), barrier.clone());
+
+    let workers: Vec<_> = (0..NUM_WORKERS)
+        .map(|id| {
+            let priv_key = priv_key.clone();
+            let pub_key = pub_key.clone();
+            let hash = hash.clone();
+            let barrier = barrier.clone();
+            thread::spawn(move || {
+                barrier.wait();
+                let mut successes = 0u32;
+                for i in 0..ITERATIONS_PER_WORKER {
+                    let mut sign_algo = HsmEccSignAlgo::default();
+                    let signature = match HsmSigner::sign_vec(&mut sign_algo, &priv_key, &hash) {
+                        Ok(sig) => sig,
+                        Err(e) => {
+                            panic!("Worker {id} iteration {i}: ECC sign failed: {e:?}")
+                        }
+                    };
+
+                    let mut verify_algo = HsmEccSignAlgo::default();
+                    match HsmVerifier::verify(&mut verify_algo, &pub_key, &hash, &signature) {
+                        Ok(valid) => {
+                            assert!(
+                                valid,
+                                "Worker {id} iteration {i}: ECC verify returned false"
+                            );
+                            successes += 1;
+                        }
+                        Err(e) => {
+                            panic!("Worker {id} iteration {i}: ECC verify failed: {e:?}")
+                        }
+                    }
+                    thread::sleep(Duration::from_millis(WORKER_ITER_SLEEP_MS));
+                }
+                successes
+            })
+        })
+        .collect();
+
+    let mut total = 0u32;
+    for w in workers {
+        total += w.join().expect("Worker thread panicked");
+    }
+    stop.store(true, Ordering::Relaxed);
+    let reset_count = reset_handle.join().expect("Reset thread panicked");
+    assert!(
+        reset_count > 0,
+        "Reset thread should have triggered at least one Reset"
+    );
+    let expected = (NUM_WORKERS * ITERATIONS_PER_WORKER) as u32;
+    assert_eq!(
+        total, expected,
+        "Expected {expected} total successes, got {total}"
+    );
+}
+
+// =========================================================================
+// Test: HMAC sign + verify under continuous Reset
+// =========================================================================
+
+/// Workers sign and verify HMAC tags under continuous Reset.
+#[api_test]
+fn test_stress_hmac_sign_verify_under_reset() {
+    let (part, _creds, session, _ctx) = init_partition_and_session();
+
+    // Generate HMAC key via ECDH + HKDF.
+    let (priv_key_a, _pub_key_a) = generate_ecc_derive_key_pair(&session, HsmEccCurve::P256);
+    let (_priv_key_b, pub_key_b) = generate_ecc_derive_key_pair(&session, HsmEccCurve::P256);
+    let shared_secret = ecdh_derive(&session, &priv_key_a, &pub_key_b);
+    let hmac_key = hkdf_derive_hmac_key(&session, &shared_secret);
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let barrier = Arc::new(Barrier::new(NUM_WORKERS + 1));
+
+    let reset_handle = spawn_reset_thread(part.path(), stop.clone(), barrier.clone());
+
+    let workers: Vec<_> = (0..NUM_WORKERS)
+        .map(|id| {
+            let hmac_key = hmac_key.clone();
+            let barrier = barrier.clone();
+            thread::spawn(move || {
+                barrier.wait();
+                let mut successes = 0u32;
+                for i in 0..ITERATIONS_PER_WORKER {
+                    let msg = format!("worker {id} iteration {i} hmac verify");
+                    let msg_bytes = msg.as_bytes();
+
+                    let mut sign_algo = HsmHmacAlgo::new();
+                    let tag = match HsmSigner::sign_vec(&mut sign_algo, &hmac_key, msg_bytes) {
+                        Ok(t) => t,
+                        Err(e) => {
+                            panic!("Worker {id} iteration {i}: HMAC sign failed: {e:?}")
+                        }
+                    };
+
+                    let mut verify_algo = HsmHmacAlgo::new();
+                    match HsmVerifier::verify(&mut verify_algo, &hmac_key, msg_bytes, &tag) {
+                        Ok(valid) => {
+                            assert!(
+                                valid,
+                                "Worker {id} iteration {i}: HMAC verify returned false"
+                            );
+                            successes += 1;
+                        }
+                        Err(e) => {
+                            panic!("Worker {id} iteration {i}: HMAC verify failed: {e:?}")
+                        }
+                    }
+                    thread::sleep(Duration::from_millis(WORKER_ITER_SLEEP_MS));
+                }
+                successes
+            })
+        })
+        .collect();
+
+    let mut total = 0u32;
+    for w in workers {
+        total += w.join().expect("Worker thread panicked");
+    }
+    stop.store(true, Ordering::Relaxed);
+    let reset_count = reset_handle.join().expect("Reset thread panicked");
+    assert!(
+        reset_count > 0,
+        "Reset thread should have triggered at least one Reset"
+    );
+    let expected = (NUM_WORKERS * ITERATIONS_PER_WORKER) as u32;
+    assert_eq!(
+        total, expected,
+        "Expected {expected} total successes, got {total}"
+    );
+}
+
+// =========================================================================
+// Test: ECC key-pair generation under continuous Reset
+// =========================================================================
+
+/// Workers repeatedly generate ECC P-256 key pairs while Resets fire,
+/// verifying that `#[resiliency_key_gen]` recovers.
+#[api_test]
+fn test_stress_ecc_key_gen_under_reset() {
+    let (part, _creds, session, _ctx) = init_partition_and_session();
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let barrier = Arc::new(Barrier::new(NUM_WORKERS + 1));
+
+    let reset_handle = spawn_reset_thread(part.path(), stop.clone(), barrier.clone());
+
+    let workers: Vec<_> = (0..NUM_WORKERS)
+        .map(|id| {
+            let session = session.clone();
+            let barrier = barrier.clone();
+            thread::spawn(move || {
+                barrier.wait();
+                for i in 0..ITERATIONS_PER_WORKER {
+                    let priv_props = HsmKeyPropsBuilder::default()
+                        .class(HsmKeyClass::Private)
+                        .key_kind(HsmKeyKind::Ecc)
+                        .ecc_curve(HsmEccCurve::P256)
+                        .can_sign(true)
+                        .is_session(true)
+                        .build()
+                        .expect("Failed to build ECC private key props");
+
+                    let pub_props = HsmKeyPropsBuilder::default()
+                        .class(HsmKeyClass::Public)
+                        .key_kind(HsmKeyKind::Ecc)
+                        .ecc_curve(HsmEccCurve::P256)
+                        .can_verify(true)
+                        .is_session(true)
+                        .build()
+                        .expect("Failed to build ECC public key props");
+
+                    let mut algo = HsmEccKeyGenAlgo::default();
+                    let result: HsmResult<(HsmEccPrivateKey, HsmEccPublicKey)> =
+                        HsmKeyManager::generate_key_pair(
+                            &session, &mut algo, priv_props, pub_props,
+                        );
+                    assert!(
+                        result.is_ok(),
+                        "Worker {id} iteration {i}: ECC key gen failed: {:?}",
+                        result.err()
+                    );
+                    thread::sleep(Duration::from_millis(WORKER_ITER_SLEEP_MS));
+                }
+            })
+        })
+        .collect();
+
+    for w in workers {
+        w.join().expect("Worker thread panicked");
+    }
+    stop.store(true, Ordering::Relaxed);
+    let reset_count = reset_handle.join().expect("Reset thread panicked");
+    assert!(
+        reset_count > 0,
+        "Reset thread should have triggered at least one Reset"
+    );
+}
+
+// =========================================================================
+// Test: AES-GCM key generation under continuous Reset
+// =========================================================================
+
+/// Workers repeatedly generate AES-GCM keys while Resets fire.
+#[api_test]
+fn test_stress_aes_gcm_key_gen_under_reset() {
+    let (part, _creds, session, _ctx) = init_partition_and_session();
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let barrier = Arc::new(Barrier::new(NUM_WORKERS + 1));
+
+    let reset_handle = spawn_reset_thread(part.path(), stop.clone(), barrier.clone());
+
+    let workers: Vec<_> = (0..NUM_WORKERS)
+        .map(|id| {
+            let session = session.clone();
+            let barrier = barrier.clone();
+            thread::spawn(move || {
+                barrier.wait();
+                for i in 0..ITERATIONS_PER_WORKER {
+                    let props = HsmKeyPropsBuilder::default()
+                        .class(HsmKeyClass::Secret)
+                        .key_kind(HsmKeyKind::AesGcm)
+                        .bits(256)
+                        .can_encrypt(true)
+                        .can_decrypt(true)
+                        .is_session(true)
+                        .build()
+                        .expect("Failed to build AES-GCM key props");
+                    let mut algo = HsmAesGcmKeyGenAlgo::default();
+                    let result: HsmResult<HsmAesGcmKey> =
+                        HsmKeyManager::generate_key(&session, &mut algo, props);
+                    assert!(
+                        result.is_ok(),
+                        "Worker {id} iteration {i}: AES-GCM key gen failed: {:?}",
+                        result.err()
+                    );
+                    thread::sleep(Duration::from_millis(WORKER_ITER_SLEEP_MS));
+                }
+            })
+        })
+        .collect();
+
+    for w in workers {
+        w.join().expect("Worker thread panicked");
+    }
+    stop.store(true, Ordering::Relaxed);
+    let reset_count = reset_handle.join().expect("Reset thread panicked");
+    assert!(
+        reset_count > 0,
+        "Reset thread should have triggered at least one Reset"
+    );
+}
+
+// =========================================================================
+// Test: ECDH derivation under continuous Reset
+// =========================================================================
+
+/// Workers repeatedly perform ECDH key derivation while Resets fire.
+#[api_test]
+fn test_stress_ecdh_derive_under_reset() {
+    let (part, _creds, session, _ctx) = init_partition_and_session();
+
+    // Generate two ECC key pairs for ECDH.
+    let (priv_key_a, _pub_key_a) = generate_ecc_derive_key_pair(&session, HsmEccCurve::P256);
+    let (_priv_key_b, pub_key_b) = generate_ecc_derive_key_pair(&session, HsmEccCurve::P256);
+
+    let peer_pub_key_der = pub_key_b
+        .pub_key_der_vec()
+        .expect("Failed to get peer public key DER");
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let barrier = Arc::new(Barrier::new(NUM_WORKERS + 1));
+
+    let reset_handle = spawn_reset_thread(part.path(), stop.clone(), barrier.clone());
+
+    let workers: Vec<_> = (0..NUM_WORKERS)
+        .map(|id| {
+            let priv_key = priv_key_a.clone();
+            let peer_der = peer_pub_key_der.clone();
+            let session = session.clone();
+            let barrier = barrier.clone();
+            thread::spawn(move || {
+                barrier.wait();
+                for i in 0..ITERATIONS_PER_WORKER {
+                    let bits = priv_key
+                        .ecc_curve()
+                        .expect("ECC curve missing")
+                        .key_size_bits() as u32;
+                    let secret_props = HsmKeyPropsBuilder::default()
+                        .class(HsmKeyClass::Secret)
+                        .key_kind(HsmKeyKind::SharedSecret)
+                        .bits(bits)
+                        .can_derive(true)
+                        .is_session(true)
+                        .build()
+                        .expect("Failed to build secret key props");
+                    let mut algo = EcdhAlgo::new(&peer_der);
+                    let result: HsmResult<HsmGenericSecretKey> =
+                        HsmKeyManager::derive_key(&session, &mut algo, &priv_key, secret_props);
+                    if let Err(ref e) = result {
+                        eprintln!("Worker {id} iteration {i}: ECDH derive error: {e:?}");
+                    }
+                    assert!(
+                        result.is_ok(),
+                        "Worker {id} iteration {i}: ECDH derive failed: {:?}",
+                        result.err()
+                    );
+                    thread::sleep(Duration::from_millis(WORKER_ITER_SLEEP_MS));
+                }
+            })
+        })
+        .collect();
+
+    for w in workers {
+        w.join().expect("Worker thread panicked");
+    }
+    stop.store(true, Ordering::Relaxed);
+    let reset_count = reset_handle.join().expect("Reset thread panicked");
+    assert!(
+        reset_count > 0,
+        "Reset thread should have triggered at least one Reset"
+    );
+}
+
+// =========================================================================
+// Test: HKDF derivation under continuous Reset
+// =========================================================================
+
+/// Workers repeatedly perform HKDF key derivation while Resets fire.
+#[api_test]
+fn test_stress_hkdf_derive_under_reset() {
+    let (part, _creds, session, _ctx) = init_partition_and_session();
+
+    // Pre-derive a shared secret for HKDF base key.
+    let (priv_key_a, _pub_key_a) = generate_ecc_derive_key_pair(&session, HsmEccCurve::P256);
+    let (_priv_key_b, pub_key_b) = generate_ecc_derive_key_pair(&session, HsmEccCurve::P256);
+    let shared_secret = ecdh_derive(&session, &priv_key_a, &pub_key_b);
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let barrier = Arc::new(Barrier::new(NUM_WORKERS + 1));
+
+    let reset_handle = spawn_reset_thread(part.path(), stop.clone(), barrier.clone());
+
+    let workers: Vec<_> = (0..NUM_WORKERS)
+        .map(|id| {
+            let base_key = shared_secret.clone();
+            let session = session.clone();
+            let barrier = barrier.clone();
+            thread::spawn(move || {
+                barrier.wait();
+                for i in 0..ITERATIONS_PER_WORKER {
+                    let aes_key_props = HsmKeyPropsBuilder::default()
+                        .class(HsmKeyClass::Secret)
+                        .key_kind(HsmKeyKind::Aes)
+                        .bits(256)
+                        .can_encrypt(true)
+                        .can_decrypt(true)
+                        .is_session(true)
+                        .build()
+                        .expect("Failed to build AES key props");
+                    let mut hkdf_algo = HsmHkdfAlgo::new(
+                        HsmHashAlgo::Sha256,
+                        Some(b"stress_salt"),
+                        Some(b"stress_info"),
+                    )
+                    .expect("Failed to create HKDF algo");
+                    let result: HsmResult<HsmGenericSecretKey> = HsmKeyManager::derive_key(
+                        &session,
+                        &mut hkdf_algo,
+                        &base_key,
+                        aes_key_props,
+                    );
+                    if let Err(ref e) = result {
+                        eprintln!("Worker {id} iteration {i}: HKDF derive error: {e:?}");
+                    }
+                    assert!(
+                        result.is_ok(),
+                        "Worker {id} iteration {i}: HKDF derive failed: {:?}",
+                        result.err()
+                    );
+                    thread::sleep(Duration::from_millis(WORKER_ITER_SLEEP_MS));
+                }
+            })
+        })
+        .collect();
+
+    for w in workers {
+        w.join().expect("Worker thread panicked");
+    }
+    stop.store(true, Ordering::Relaxed);
+    let reset_count = reset_handle.join().expect("Reset thread panicked");
+    assert!(
+        reset_count > 0,
+        "Reset thread should have triggered at least one Reset"
+    );
+}
+
+// =========================================================================
+// Test: RSA hash-sign under continuous Reset
+// =========================================================================
+
+/// Generate an RSA sign key pair by importing a software-generated
+/// key through the wrap/unwrap path.
+fn generate_rsa_sign_key_pair(session: &HsmSession) -> (HsmRsaPrivateKey, HsmRsaPublicKey) {
+    use crypto::*;
+
+    // 1. Generate RSA key in software.
+    let sw_key = crypto::RsaPrivateKey::generate(256).expect("Failed to generate RSA key");
+    let der = sw_key.to_vec().expect("Failed to export RSA key DER");
+
+    // 2. Generate an HSM unwrapping key pair.
+    let unwrap_priv_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Private)
+        .key_kind(HsmKeyKind::Rsa)
+        .bits(2048)
+        .can_unwrap(true)
+        .build()
+        .expect("Failed to build unwrapping key props");
+    let unwrap_pub_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Public)
+        .key_kind(HsmKeyKind::Rsa)
+        .bits(2048)
+        .can_wrap(true)
+        .build()
+        .expect("Failed to build wrapping key props");
+    let mut gen_algo = HsmRsaKeyUnwrappingKeyGenAlgo::default();
+    let (unwrap_priv, unwrap_pub) = HsmKeyManager::generate_key_pair(
+        session,
+        &mut gen_algo,
+        unwrap_priv_props,
+        unwrap_pub_props,
+    )
+    .expect("Failed to generate RSA unwrapping key pair");
+
+    // 3. Wrap the software key with the HSM public key.
+    let mut wrap_algo = HsmRsaAesWrapAlgo::new(HsmHashAlgo::Sha384, 32);
+    let wrapped = HsmEncrypter::encrypt_vec(&mut wrap_algo, &unwrap_pub, &der)
+        .expect("Failed to wrap RSA key");
+
+    // 4. Unwrap into the HSM as a sign-capable key.
+    let sign_priv_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Private)
+        .key_kind(HsmKeyKind::Rsa)
+        .bits(2048)
+        .can_sign(true)
+        .build()
+        .expect("Failed to build RSA sign private key props");
+    let verify_pub_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Public)
+        .key_kind(HsmKeyKind::Rsa)
+        .bits(2048)
+        .can_verify(true)
+        .build()
+        .expect("Failed to build RSA verify public key props");
+    let mut unwrap_algo = HsmRsaKeyRsaAesKeyUnwrapAlgo::new(HsmHashAlgo::Sha384);
+    let (priv_key, pub_key) = unwrap_algo
+        .unwrap_key_pair(&unwrap_priv, &wrapped, sign_priv_props, verify_pub_props)
+        .expect("Failed to unwrap RSA sign key pair");
+
+    (priv_key, pub_key)
+}
+
+/// Workers repeatedly perform RSA hash-sign while Resets fire.
+#[api_test]
+fn test_stress_rsa_hash_sign_under_reset() {
+    let (part, _creds, session, _ctx) = init_partition_and_session();
+    let (priv_key, pub_key) = generate_rsa_sign_key_pair(&session);
+    let message = b"stress test data for RSA signing!";
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let barrier = Arc::new(Barrier::new(NUM_WORKERS + 1));
+
+    let reset_handle = spawn_reset_thread(part.path(), stop.clone(), barrier.clone());
+
+    let workers: Vec<_> = (0..NUM_WORKERS)
+        .map(|id| {
+            let priv_key = priv_key.clone();
+            let pub_key = pub_key.clone();
+            let barrier = barrier.clone();
+            thread::spawn(move || {
+                barrier.wait();
+                for i in 0..ITERATIONS_PER_WORKER {
+                    // Sign
+                    let mut sign_algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+                    let result = HsmSigner::sign_vec(&mut sign_algo, &priv_key, message);
+                    if let Err(ref e) = result {
+                        eprintln!("Worker {id} iteration {i}: RSA sign error: {e:?}");
+                    }
+                    assert!(
+                        result.is_ok(),
+                        "Worker {id} iteration {i}: RSA sign failed: {:?}",
+                        result.unwrap_err()
+                    );
+                    let signature = result.unwrap();
+
+                    // Verify
+                    let mut verify_algo =
+                        HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+                    let valid =
+                        HsmVerifier::verify(&mut verify_algo, &pub_key, message, &signature);
+                    assert!(
+                        valid.is_ok() && valid.unwrap(),
+                        "Worker {id} iteration {i}: RSA verify failed"
+                    );
+                    thread::sleep(Duration::from_millis(WORKER_ITER_SLEEP_MS));
+                }
+            })
+        })
+        .collect();
+
+    for w in workers {
+        w.join().expect("Worker thread panicked");
+    }
+    stop.store(true, Ordering::Relaxed);
+    let reset_count = reset_handle.join().expect("Reset thread panicked");
+    assert!(
+        reset_count > 0,
+        "Reset thread should have triggered at least one Reset"
+    );
+}
+
+// =========================================================================
+// Test: RSA key-pair unwrap under continuous Reset
+// =========================================================================
+
+/// Workers repeatedly unwrap an RSA key pair using the HSM unwrapping key
+/// while Resets fire.
+///
+/// This exercises the `#[resiliency_key_op(key = "unwrapping_key")]`
+/// recovery path, which requires MUK persistence.  After Reset, the
+/// device needs the MUK (persisted by `generate_key_pair`) to
+/// reconstruct the unwrapping key state, then `refresh_from_masked`
+/// restores the device handle so the next `unwrap_key_pair` succeeds.
+#[api_test]
+fn test_stress_rsa_unwrap_under_reset() {
+    use crypto::*;
+
+    let (part, _creds, session, _ctx) = init_partition_and_session();
+
+    // 1. Generate an HSM RSA unwrapping key pair.
+    let unwrap_priv_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Private)
+        .key_kind(HsmKeyKind::Rsa)
+        .bits(2048)
+        .can_unwrap(true)
+        .build()
+        .expect("Failed to build unwrapping key props");
+    let unwrap_pub_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Public)
+        .key_kind(HsmKeyKind::Rsa)
+        .bits(2048)
+        .can_wrap(true)
+        .build()
+        .expect("Failed to build wrapping key props");
+    let mut gen_algo = HsmRsaKeyUnwrappingKeyGenAlgo::default();
+    let (unwrap_priv, unwrap_pub) = HsmKeyManager::generate_key_pair(
+        &session,
+        &mut gen_algo,
+        unwrap_priv_props,
+        unwrap_pub_props,
+    )
+    .expect("Failed to generate RSA unwrapping key pair");
+
+    // 2. Generate a software RSA key and wrap it with the HSM public key.
+    let sw_key = crypto::RsaPrivateKey::generate(256).expect("Failed to generate RSA key");
+    let sw_key_der = sw_key.to_vec().expect("Failed to export RSA key DER");
+    let mut wrap_algo = HsmRsaAesWrapAlgo::new(HsmHashAlgo::Sha384, 32);
+    let wrapped = HsmEncrypter::encrypt_vec(&mut wrap_algo, &unwrap_pub, &sw_key_der)
+        .expect("Failed to wrap RSA key");
+
+    // Target key properties for each unwrap.
+    let sign_priv_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Private)
+        .key_kind(HsmKeyKind::Rsa)
+        .bits(2048)
+        .can_sign(true)
+        .build()
+        .expect("Failed to build RSA sign private key props");
+    let verify_pub_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Public)
+        .key_kind(HsmKeyKind::Rsa)
+        .bits(2048)
+        .can_verify(true)
+        .build()
+        .expect("Failed to build RSA verify public key props");
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let barrier = Arc::new(Barrier::new(NUM_WORKERS + 1));
+
+    let reset_handle = spawn_reset_thread(part.path(), stop.clone(), barrier.clone());
+
+    let workers: Vec<_> = (0..NUM_WORKERS)
+        .map(|id| {
+            let unwrap_priv = unwrap_priv.clone();
+            let wrapped = wrapped.clone();
+            let sign_priv_props = sign_priv_props.clone();
+            let verify_pub_props = verify_pub_props.clone();
+            let barrier = barrier.clone();
+            thread::spawn(move || {
+                barrier.wait();
+                for i in 0..ITERATIONS_PER_WORKER {
+                    let mut unwrap_algo = HsmRsaKeyRsaAesKeyUnwrapAlgo::new(HsmHashAlgo::Sha384);
+                    let result = unwrap_algo.unwrap_key_pair(
+                        &unwrap_priv,
+                        &wrapped,
+                        sign_priv_props.clone(),
+                        verify_pub_props.clone(),
+                    );
+                    if let Err(ref e) = result {
+                        eprintln!("Worker {id} iteration {i}: RSA unwrap error: {e:?}");
+                    }
+                    assert!(
+                        result.is_ok(),
+                        "Worker {id} iteration {i}: RSA unwrap failed: {:?}",
+                        result.err()
+                    );
+                    thread::sleep(Duration::from_millis(WORKER_ITER_SLEEP_MS));
+                }
+            })
+        })
+        .collect();
+
+    for w in workers {
+        w.join().expect("Worker thread panicked");
+    }
+    stop.store(true, Ordering::Relaxed);
+    let reset_count = reset_handle.join().expect("Reset thread panicked");
+    assert!(
+        reset_count > 0,
+        "Reset thread should have triggered at least one Reset"
+    );
+}
+
+// =========================================================================
+// Test: ECC key-pair unmask under continuous Reset
+// =========================================================================
+
+/// Workers repeatedly unmask an ECC key pair from a masked blob while
+/// Resets fire.
+#[api_test]
+fn test_stress_ecc_unmask_under_reset() {
+    let (part, _creds, session, _ctx) = init_partition_and_session();
+
+    // Generate an ECC sign key pair and grab its masked blob.
+    let (priv_key, _pub_key) = generate_ecc_sign_key_pair(&session);
+    let masked_blob = priv_key
+        .masked_key_vec()
+        .expect("Failed to get masked ECC key pair");
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let barrier = Arc::new(Barrier::new(NUM_WORKERS + 1));
+
+    let reset_handle = spawn_reset_thread(part.path(), stop.clone(), barrier.clone());
+
+    let workers: Vec<_> = (0..NUM_WORKERS)
+        .map(|id| {
+            let session = session.clone();
+            let blob = masked_blob.clone();
+            let barrier = barrier.clone();
+            thread::spawn(move || {
+                barrier.wait();
+                for i in 0..ITERATIONS_PER_WORKER {
+                    let mut unmask_algo = HsmEccKeyUnmaskAlgo::default();
+                    let result: HsmResult<(HsmEccPrivateKey, HsmEccPublicKey)> =
+                        HsmKeyManager::unmask_key_pair(&session, &mut unmask_algo, &blob);
+                    if let Err(ref e) = result {
+                        eprintln!("Worker {id} iteration {i}: ECC unmask error: {e:?}");
+                    }
+                    assert!(
+                        result.is_ok(),
+                        "Worker {id} iteration {i}: ECC unmask failed: {:?}",
+                        result.err()
+                    );
+                    thread::sleep(Duration::from_millis(WORKER_ITER_SLEEP_MS));
+                }
+            })
+        })
+        .collect();
+
+    for w in workers {
+        w.join().expect("Worker thread panicked");
+    }
+    stop.store(true, Ordering::Relaxed);
+    let reset_count = reset_handle.join().expect("Reset thread panicked");
+    assert!(
+        reset_count > 0,
+        "Reset thread should have triggered at least one Reset"
+    );
+}
+
+// =========================================================================
+// Test: Generic secret unmask under continuous Reset
+// =========================================================================
+
+/// Workers repeatedly unmask a shared secret (from ECDH) while Resets fire.
+#[api_test]
+fn test_stress_generic_secret_unmask_under_reset() {
+    let (part, _creds, session, _ctx) = init_partition_and_session();
+
+    // Derive a shared secret and grab its masked blob.
+    let (priv_key_a, _pub_key_a) = generate_ecc_derive_key_pair(&session, HsmEccCurve::P256);
+    let (_priv_key_b, pub_key_b) = generate_ecc_derive_key_pair(&session, HsmEccCurve::P256);
+    let shared_secret = ecdh_derive(&session, &priv_key_a, &pub_key_b);
+    let masked_blob = shared_secret
+        .masked_key_vec()
+        .expect("Failed to get masked shared secret");
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let barrier = Arc::new(Barrier::new(NUM_WORKERS + 1));
+
+    let reset_handle = spawn_reset_thread(part.path(), stop.clone(), barrier.clone());
+
+    let workers: Vec<_> = (0..NUM_WORKERS)
+        .map(|id| {
+            let session = session.clone();
+            let blob = masked_blob.clone();
+            let barrier = barrier.clone();
+            thread::spawn(move || {
+                barrier.wait();
+                for i in 0..ITERATIONS_PER_WORKER {
+                    let mut unmask_algo = HsmGenericSecretKeyUnmaskAlgo::default();
+                    let result: HsmResult<HsmGenericSecretKey> =
+                        HsmKeyManager::unmask_key(&session, &mut unmask_algo, &blob);
+                    if let Err(ref e) = result {
+                        eprintln!("Worker {id} iteration {i}: generic secret unmask error: {e:?}");
+                    }
+                    assert!(
+                        result.is_ok(),
+                        "Worker {id} iteration {i}: generic secret unmask failed: {:?}",
+                        result.err()
+                    );
+                    thread::sleep(Duration::from_millis(WORKER_ITER_SLEEP_MS));
+                }
+            })
+        })
+        .collect();
+
+    for w in workers {
+        w.join().expect("Worker thread panicked");
+    }
+    stop.store(true, Ordering::Relaxed);
+    let reset_count = reset_handle.join().expect("Reset thread panicked");
+    assert!(
+        reset_count > 0,
+        "Reset thread should have triggered at least one Reset"
+    );
+}
+
+// =========================================================================
+// Test: ECC key attestation under continuous Reset
+// =========================================================================
+
+/// Workers repeatedly perform ECC key attestation while Resets fire.
+#[api_test]
+fn test_stress_ecc_key_report_under_reset() {
+    let (part, _creds, session, _ctx) = init_partition_and_session();
+    let (priv_key, _pub_key) = generate_ecc_sign_key_pair(&session);
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let barrier = Arc::new(Barrier::new(NUM_WORKERS + 1));
+
+    let reset_handle = spawn_reset_thread(part.path(), stop.clone(), barrier.clone());
+
+    let workers: Vec<_> = (0..NUM_WORKERS)
+        .map(|id| {
+            let mut priv_key = priv_key.clone();
+            let barrier = barrier.clone();
+            thread::spawn(move || {
+                barrier.wait();
+                for i in 0..ITERATIONS_PER_WORKER {
+                    let report_data = [0x42u8; 64];
+                    let result =
+                        HsmKeyManager::generate_key_report_vec(&mut priv_key, &report_data);
+                    if let Err(ref e) = result {
+                        eprintln!("Worker {id} iteration {i}: ECC key report error: {e:?}");
+                    }
+                    assert!(
+                        result.is_ok(),
+                        "Worker {id} iteration {i}: ECC key report failed: {:?}",
+                        result.err()
+                    );
+                    thread::sleep(Duration::from_millis(WORKER_ITER_SLEEP_MS));
+                }
+            })
+        })
+        .collect();
+
+    for w in workers {
+        w.join().expect("Worker thread panicked");
+    }
+    stop.store(true, Ordering::Relaxed);
+    let reset_count = reset_handle.join().expect("Reset thread panicked");
+    assert!(
+        reset_count > 0,
+        "Reset thread should have triggered at least one Reset"
+    );
+}
+
+// =========================================================================
+// Test: Key deletion after Reset (epoch-aware)
+// =========================================================================
+
+/// Workers generate keys and delete them while Resets fire. The epoch
+/// check in `delete_key` ensures stale handles are not sent to the
+/// device.
+#[api_test]
+fn test_stress_delete_key_under_reset() {
+    let (part, _creds, session, _ctx) = init_partition_and_session();
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let barrier = Arc::new(Barrier::new(NUM_WORKERS + 1));
+
+    let reset_handle = spawn_reset_thread(part.path(), stop.clone(), barrier.clone());
+
+    let workers: Vec<_> = (0..NUM_WORKERS)
+        .map(|id| {
+            let session = session.clone();
+            let barrier = barrier.clone();
+            thread::spawn(move || {
+                barrier.wait();
+                for i in 0..ITERATIONS_PER_WORKER {
+                    // Generate a session AES key.
+                    let props = HsmKeyPropsBuilder::default()
+                        .class(HsmKeyClass::Secret)
+                        .key_kind(HsmKeyKind::Aes)
+                        .bits(256)
+                        .can_encrypt(true)
+                        .can_decrypt(true)
+                        .is_session(true)
+                        .build()
+                        .expect("Failed to build AES key props");
+                    let mut algo = HsmAesKeyGenAlgo::default();
+                    let key_result = HsmKeyManager::generate_key(&session, &mut algo, props);
+                    if let Err(ref e) = key_result {
+                        eprintln!("Worker {id} iteration {i}: AES key gen error: {e:?}");
+                    }
+                    assert!(
+                        key_result.is_ok(),
+                        "Worker {id} iteration {i}: AES key gen failed: {:?}",
+                        key_result.err()
+                    );
+                    let key = key_result.unwrap();
+
+                    // Explicit delete — should succeed even after Reset
+                    // (epoch check skips the DDI call for stale handles).
+                    let del_result = HsmKeyManager::delete_key(key);
+                    if let Err(ref e) = del_result {
+                        eprintln!("Worker {id} iteration {i}: delete_key error: {e:?}");
+                    }
+                    assert!(
+                        del_result.is_ok(),
+                        "Worker {id} iteration {i}: delete_key failed: {:?}",
+                        del_result.err()
+                    );
+                    thread::sleep(Duration::from_millis(WORKER_ITER_SLEEP_MS));
+                }
+            })
+        })
+        .collect();
+
+    for w in workers {
+        w.join().expect("Worker thread panicked");
+    }
+    stop.store(true, Ordering::Relaxed);
+    let reset_count = reset_handle.join().expect("Reset thread panicked");
+    assert!(
+        reset_count > 0,
+        "Reset thread should have triggered at least one Reset"
+    );
+}

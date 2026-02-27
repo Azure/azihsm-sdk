@@ -52,6 +52,13 @@ pub enum HsmError {
     PartitionNotProvisioned = -25,
     MaskedKeyDecodeFailed = -26,
     EccVerifyFailed = -27,
+    RestorePartitionFailed = -28,
+    SessionNeedsRenegotiation = -29,
+    PendingKeyGeneration = -30,
+    KeyNotFound = -31,
+    DeviceNotReady = -32,
+    PartitionAlreadyProvisioned = -33,
+    VaultAppLimitReached = -34,
     Panic = i32::MIN,
 }
 

@@ -12,6 +12,12 @@ use azihsm_api_tests_macro::*;
 use azihsm_crypto::*;
 use tracing::*;
 
+/// Returns `true` when the `AZIHSM_USE_TPM` environment variable is set,
+/// indicating we are running against real hardware with TPM-sourced keys.
+pub(crate) fn use_tpm() -> bool {
+    std::env::var("AZIHSM_USE_TPM").is_ok()
+}
+
 /// Application identifier used for partition authentication.
 ///
 /// This constant defines a test application ID consisting of 16 bytes,
@@ -63,11 +69,6 @@ pub(crate) const TEST_POTA_PUBLIC_KEY_DER: [u8; 120] = [
     0x01, 0xfc, 0x37, 0xab, 0x1c, 0x8d, 0xc6, 0xd0, 0x64, 0x7a, 0x7d, 0xc2, 0x67, 0xfc, 0x02, 0x7d,
     0x8d, 0xa3, 0xc8, 0x01, 0x4b, 0xa4, 0x0d, 0x98,
 ];
-
-/// Returns `true` when the `AZIHSM_USE_TPM` environment variable is set.
-pub(crate) fn use_tpm() -> bool {
-    std::env::var("AZIHSM_USE_TPM").is_ok()
-}
 
 /// Dynamically generates a POTA endorsement (signature + public key DER) for a partition.
 ///
@@ -128,8 +129,7 @@ pub(crate) fn generate_pota_endorsement(part: &HsmPartition) -> (Vec<u8>, Vec<u8
 pub(crate) fn make_init_params(
     part: &HsmPartition,
 ) -> (HsmOwnerBackupKeyConfig, HsmPotaEndorsement) {
-    let use_tpm = use_tpm();
-    if use_tpm {
+    if use_tpm() {
         (
             HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, None),
             HsmPotaEndorsement::new(HsmPotaEndorsementSource::Tpm, None),

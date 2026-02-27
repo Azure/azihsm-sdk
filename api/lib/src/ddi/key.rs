@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+use resiliency_macro::resiliency_key_gen;
+
 use super::*;
 
 /// RAII guard for a newly-created HSM key handle.
@@ -71,6 +73,18 @@ impl<'a> HsmKeyIdGuard<'a> {
 /// Removes the specified key from the HSM partition, making it no longer usable
 /// for cryptographic operations. This is a permanent operation that cannot be undone.
 ///
+/// # Resiliency
+///
+/// Unlike other DDI operations, `delete_key` does not use the
+/// `#[resiliency_key_op]` retry macro.  Instead it silently treats retryable
+/// errors (those returned by [`is_key_op_retryable_error`]) as success.
+///
+/// Rationale: Every retryable error indicates that the device has been
+/// through a resiliency event. Such events destroy all session keys on the device,
+/// so the key this call intended to delete is already gone. Retrying would be pointless — the
+/// `key_id` handle is stale and would fail again — and the caller's intent
+/// of deleting the key has been satisfied by the reset itself.
+///
 /// # Arguments
 ///
 /// * `session` - The HSM session context
@@ -78,7 +92,8 @@ impl<'a> HsmKeyIdGuard<'a> {
 ///
 /// # Returns
 ///
-/// Returns `Ok(())` on successful deletion.
+/// Returns `Ok(())` on successful deletion, or if the device has undergone a
+/// resiliency event that already destroyed the key.
 ///
 pub(crate) fn delete_key(session: &HsmSession, key_id: HsmKeyHandle) -> HsmResult<()> {
     let req = DdiDeleteKeyCmdReq {
@@ -89,9 +104,20 @@ pub(crate) fn delete_key(session: &HsmSession, key_id: HsmKeyHandle) -> HsmResul
         ext: None,
     };
 
-    session.with_dev(|dev| dev.exec_op(&req, &mut None).map_err(HsmError::from))?;
+    let result = session.with_dev(|dev| dev.exec_op(&req, &mut None).map_err(HsmError::from));
 
-    Ok(())
+    match result {
+        Ok(_) => Ok(()),
+        Err(ref err) if crate::resiliency::is_key_op_retryable_error(err) => {
+            tracing::debug!(
+                ?err,
+                "delete_key: retryable error treated as success — \
+                 the device reset already destroyed all session keys"
+            );
+            Ok(())
+        }
+        Err(err) => Err(err),
+    }
 }
 
 /// Executes the unmask key operation.
@@ -127,6 +153,7 @@ fn unmask_key_exec(session: &HsmSession, masked_key: &[u8]) -> HsmResult<DdiUnma
 /// # Returns
 ///
 /// Returns a tuple containing the key handle and key properties.
+#[resiliency_key_gen(session = "session")]
 pub(crate) fn unmask_key(
     session: &HsmSession,
     masked_key: &[u8],
@@ -158,6 +185,7 @@ pub(crate) fn unmask_key(
 /// # Returns
 ///
 /// Returns a tuple containing the key handle, private key properties, and public key properties.
+#[resiliency_key_gen(session = "session")]
 pub(crate) fn unmask_key_pair(
     session: &HsmSession,
     masked_key: &[u8],
@@ -226,4 +254,55 @@ pub(crate) fn generate_key_report(
     let dev_report = resp.data.report.as_slice();
     report[..dev_report.len()].copy_from_slice(dev_report);
     Ok(dev_report.len())
+}
+
+/// Refreshes a key pair after a resiliency restore.
+///
+/// Session-level keys that were restored from a cached masked-key blob
+/// can simply be unmasked via [`unmask_key_pair`].
+///
+/// RSA unwrapping keys are the exception: they are token-level
+/// (non-session) keys tied to the partition identity. After a resiliency event, the
+/// device key table is rebuilt with a new identity, so [`unmask_key_pair`]
+/// fails with an "App ID mismatch". Instead, the device already knows the
+/// unwrapping key internally (restored via `establish_credential` with the
+/// MUK), so we ask for a fresh handle via [`get_rsa_unwrapping_key`].
+/// The new masked-key blob is persisted to resiliency storage so that
+/// future `establish_credential` calls use the latest MUK.
+pub(crate) fn refresh_key_pair(
+    session: &HsmSession,
+    old_props: &HsmKeyProps,
+    masked_key: &[u8],
+) -> HsmResult<(HsmKeyHandle, HsmKeyProps, HsmKeyProps)> {
+    // RSA unwrapping keys need special handling.
+    if old_props.kind() == HsmKeyKind::Rsa && old_props.can_unwrap() {
+        let priv_key_props = HsmKeyPropsBuilder::default()
+            .class(HsmKeyClass::Private)
+            .key_kind(old_props.kind())
+            .bits(old_props.bits())
+            .can_unwrap(true)
+            .build()?;
+
+        let pub_key_props = HsmKeyPropsBuilder::default()
+            .class(HsmKeyClass::Public)
+            .key_kind(old_props.kind())
+            .bits(old_props.bits())
+            .can_wrap(true)
+            .build()?;
+
+        let (handle, priv_props, pub_props) =
+            get_rsa_unwrapping_key(session, priv_key_props, pub_key_props)?;
+
+        // Persist the fresh MUK so that the next establish_credential uses it.
+        if let Some(muk) = priv_props.masked_key() {
+            session
+                .partition()
+                .write_resiliency_storage(crate::resiliency::AZIHSM_STORAGE_MUK, muk)?;
+        }
+
+        return Ok((handle, priv_props, pub_props));
+    }
+
+    // All other key pairs — normal unmask path.
+    unmask_key_pair(session, masked_key)
 }

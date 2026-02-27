@@ -291,6 +291,44 @@ impl HsmAesXtsKey {
 
         Ok(())
     }
+
+    /// Refreshes both device handles by unmasking the key's cached
+    /// masked-key blob.
+    ///
+    /// Used during key-operation resiliency recovery. AES-XTS keys are
+    /// stored as a pair of masked blobs, so this calls
+    /// [`ddi::aes_xts_unmask_key`] which unmasks both halves.
+    ///
+    /// The write lock is held across the DDI call so that only one
+    /// thread performs the unmask when multiple threads race to recover
+    /// the same key after a resiliency event. Waiting threads see the
+    /// updated epoch and return immediately.
+    pub(crate) fn refresh_from_masked(&self) -> HsmResult<()> {
+        let session = self.session();
+        let current_epoch = session.partition().restore_epoch();
+
+        // Fast path (no lock): another thread already refreshed this key.
+        if self.last_refresh_epoch() >= current_epoch {
+            return Ok(());
+        }
+
+        // Acquire write lock before the DDI call so only one
+        // thread unmasks; others block and then see the updated epoch.
+        let mut inner = self.inner.write();
+        if inner.last_refresh_epoch() >= current_epoch {
+            return Ok(());
+        }
+
+        let masked_key = inner
+            .key_props()
+            .masked_key()
+            .ok_or(HsmError::InternalError)?
+            .to_vec();
+        let (h1, h2, new_props) = ddi::aes_xts_unmask_key(&session, &masked_key)?;
+
+        inner.refresh((h1, h2), new_props);
+        Ok(())
+    }
 }
 impl HsmSecretKey for HsmAesXtsKey {}
 

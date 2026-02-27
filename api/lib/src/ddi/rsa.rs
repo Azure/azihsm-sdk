@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+use resiliency_macro::*;
+
 use super::*;
 
 /// Retrieves an RSA unwrapping key pair from the HSM.
@@ -12,6 +14,7 @@ use super::*;
 /// # Returns
 ///
 /// Returns a tuple containing the key handle, private key properties, and public key properties.
+#[resiliency_key_gen(session = "session")]
 pub(crate) fn get_rsa_unwrapping_key(
     session: &HsmSession,
     priv_key_props: HsmKeyProps,
@@ -55,6 +58,7 @@ pub(crate) fn get_rsa_unwrapping_key(
 /// # Returns
 ///
 /// Returns a tuple containing the key handle and properties of the unwrapped AES key.
+#[resiliency_key_op(key = "key")]
 pub(crate) fn rsa_aes_unwrap_key(
     key: &HsmRsaPrivateKey,
     wrapped_key: &[u8],
@@ -104,6 +108,7 @@ pub(crate) fn rsa_aes_unwrap_key(
 /// # Returns
 ///
 /// Returns a tuple containing the key handle, private key properties, and public key properties.
+#[resiliency_key_op(key = "unwrapping_key")]
 pub(crate) fn rsa_aes_unwrap_key_pair(
     unwrapping_key: &HsmRsaPrivateKey,
     wrapped_key: &[u8],
@@ -166,6 +171,7 @@ pub(crate) fn rsa_aes_unwrap_key_pair(
 ///
 /// Returns the number of bytes written to the output buffer, or the required
 /// buffer size if `output` is `None`.
+#[resiliency_key_op(key = "key")]
 pub(crate) fn rsa_decrypt(
     key: &HsmRsaPrivateKey,
     input: &[u8],
@@ -185,12 +191,37 @@ pub(crate) fn rsa_decrypt(
 /// # Returns
 ///
 /// Returns the number of bytes written to the signature buffer.
+#[resiliency_key_op(key = "key")]
 pub(crate) fn rsa_sign(
     key: &HsmRsaPrivateKey,
     data: &[u8],
     signature: &mut [u8],
 ) -> HsmResult<usize> {
     rsa_mod_exp(key, DdiRsaOpType::Sign, data, signature)
+}
+
+/// Generates a key report (attestation) for the specified RSA private key.
+///
+/// This is a typed wrapper around [`generate_key_report`] that enables the
+/// `#[resiliency_key_op]` proc macro to automatically handle partition restore,
+/// session reopen, and key refresh on retryable errors.
+///
+/// # Arguments
+///
+/// * `key` - The RSA private key to attest.
+/// * `report_data` - Custom data to include in the attestation report.
+/// * `report` - Optional mutable buffer to receive the attestation report.
+///
+/// # Returns
+///
+/// Returns the size of the attestation report on success.
+#[resiliency_key_op(key = "key")]
+pub(crate) fn rsa_generate_key_report(
+    key: &HsmRsaPrivateKey,
+    report_data: &[u8],
+    report: Option<&mut [u8]>,
+) -> HsmResult<usize> {
+    generate_key_report(&key.session(), key.handle(), report_data, report)
 }
 
 /// Performs an RSA modular exponentiation operation.

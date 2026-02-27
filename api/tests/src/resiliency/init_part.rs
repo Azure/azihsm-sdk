@@ -62,6 +62,7 @@ const INIT_RETRYABLE_ERRORS: &[FaultError] = &[
     // IO-abort errors (shared with open_partition, open_session, etc.)
     FaultError::Driver(DriverError::IoAborted),
     FaultError::Driver(DriverError::IoAbortInProgress),
+    FaultError::DeviceNotReady,
     FaultError::Status(DdiStatus::CredentialsNotEstablished),
     FaultError::Status(DdiStatus::NonceMismatch),
     FaultError::Status(DdiStatus::PartitionNotProvisioned),

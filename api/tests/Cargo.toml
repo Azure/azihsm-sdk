@@ -19,6 +19,7 @@ azihsm_res_test_dev.workspace = true
 fs2.workspace = true
 hex.workspace = true
 libtest-mimic.workspace = true
+parking_lot.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 tracing-tree.workspace = true

@@ -398,15 +398,14 @@ fn test_double_init_with_resiliency() {
         part.reset().expect("Partition reset failed");
 
         let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
-        let use_tpm = use_tpm();
 
         // First init with resiliency
-        let pota_data = if !use_tpm {
+        let pota_data = if !use_tpm() {
             Some(make_valid_pota_parts(&part))
         } else {
             None
         };
-        let (obk_info, pota_endorsement) = if use_tpm {
+        let (obk_info, pota_endorsement) = if use_tpm() {
             (
                 HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, None),
                 HsmPotaEndorsement::new(HsmPotaEndorsementSource::Tpm, None),
@@ -437,12 +436,12 @@ fn test_double_init_with_resiliency() {
         // Reset and re-init (replaces resiliency state — must not deadlock)
         part.reset().expect("Partition reset failed");
 
-        let pota_data2 = if !use_tpm {
+        let pota_data2 = if !use_tpm() {
             Some(make_valid_pota_parts(&part))
         } else {
             None
         };
-        let (obk_info2, pota_endorsement2) = if use_tpm {
+        let (obk_info2, pota_endorsement2) = if use_tpm() {
             (
                 HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, None),
                 HsmPotaEndorsement::new(HsmPotaEndorsementSource::Tpm, None),
@@ -481,8 +480,7 @@ fn test_init_with_resiliency_invalid_pota_source_fails() {
         part.reset().expect("Partition reset failed");
 
         let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
-        let use_tpm = use_tpm();
-        let obk_info = if use_tpm {
+        let obk_info = if use_tpm() {
             HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, None)
         } else {
             make_valid_obk()

@@ -32,6 +32,7 @@ use crate::*;
 const OPEN_PART_RETRYABLE_ERRORS: &[FaultError] = &[
     FaultError::Driver(DriverError::IoAborted),
     FaultError::Driver(DriverError::IoAbortInProgress),
+    FaultError::DeviceNotReady,
 ];
 
 /// Returns `true` when `error` is one of the open_partition-retryable
