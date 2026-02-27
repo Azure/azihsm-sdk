@@ -647,18 +647,20 @@ static azihsm_status get_pid_uncompressed_point(
 }
 
 /*
- * Signs data with the fixed POTA private key using ECDSA-SHA384 and returns
+ * Signs data with a POTA private key using ECDSA-SHA384 and returns
  * the signature in raw r||s format (96 bytes for P-384).
  *
  * The caller must free sig_out->ptr with OPENSSL_cleanse + OPENSSL_free.
  */
 static azihsm_status sign_with_pota_key(
+    const uint8_t *priv_key_der,
+    size_t priv_key_der_len,
     const unsigned char *data,
     size_t data_len,
     struct azihsm_buffer *sig_out
 )
 {
-    const unsigned char *der_ptr = POTA_PRIVATE_KEY_DER;
+    const unsigned char *der_ptr = priv_key_der;
     EVP_PKEY *pota_pkey = NULL;
     EVP_MD_CTX *md_ctx = NULL;
     unsigned char *der_sig_buf = NULL;
@@ -670,8 +672,8 @@ static azihsm_status sign_with_pota_key(
     sig_out->ptr = NULL;
     sig_out->len = 0;
 
-    /* Decode the fixed POTA private key from its DER representation */
-    pota_pkey = d2i_AutoPrivateKey(NULL, &der_ptr, (long)sizeof(POTA_PRIVATE_KEY_DER));
+    /* Decode the POTA private key from its DER representation */
+    pota_pkey = d2i_AutoPrivateKey(NULL, &der_ptr, (long)priv_key_der_len);
     if (pota_pkey == NULL)
     {
         return AZIHSM_STATUS_INTERNAL_ERROR;
@@ -765,14 +767,16 @@ static azihsm_status sign_with_pota_key(
  * Computes POTA endorsement for partition initialization.
  *
  * Retrieves the partition's PID public key, builds its uncompressed EC point,
- * and signs it with the fixed POTA private key using ECDSA-SHA384. The signature
- * is returned in raw r||s format and the public key points to static data.
+ * and signs it with the provided POTA private key using ECDSA-SHA384. The
+ * signature is returned in raw r||s format.
  *
  * On success, caller must free sig_out->ptr with OPENSSL_cleanse + OPENSSL_free.
- * pubkey_out points to static POTA_PUBLIC_KEY_DER and must NOT be freed.
+ * pubkey_out is set to point to pub_key_buf's data (caller manages lifetime).
  */
 static azihsm_status compute_pota_endorsement(
     azihsm_handle device,
+    const struct azihsm_buffer *priv_key_buf,
+    const struct azihsm_buffer *pub_key_buf,
     struct azihsm_buffer *sig_out,
     struct azihsm_buffer *pubkey_out
 )
@@ -791,14 +795,20 @@ static azihsm_status compute_pota_endorsement(
         return status;
     }
 
-    status = sign_with_pota_key(uncompressed_point, sizeof(uncompressed_point), sig_out);
+    status = sign_with_pota_key(
+        priv_key_buf->ptr,
+        priv_key_buf->len,
+        uncompressed_point,
+        sizeof(uncompressed_point),
+        sig_out
+    );
     if (status != AZIHSM_STATUS_SUCCESS)
     {
         return status;
     }
 
-    pubkey_out->ptr = (uint8_t *)POTA_PUBLIC_KEY_DER;
-    pubkey_out->len = sizeof(POTA_PUBLIC_KEY_DER);
+    pubkey_out->ptr = pub_key_buf->ptr;
+    pubkey_out->len = pub_key_buf->len;
 
     return AZIHSM_STATUS_SUCCESS;
 }
@@ -862,25 +872,39 @@ azihsm_status azihsm_open_device_and_session(
     }
     muk_was_loaded = (muk_buf.ptr != NULL);
 
-    // Load custom OBK from file if provided, otherwise use hardcoded default.
-    // Note: the OBK is the raw owner backup key for init_bk3, NOT the masked
-    // owner backup key (MOBK) returned by the HSM.
-    status = load_file_to_buffer(config->obk_path, &obk_buf);
-    if (status != AZIHSM_STATUS_SUCCESS)
-    {
-        free_buffer(&bmk_buf);
-        free_buffer(&muk_buf);
-        OPENSSL_cleanse(&creds, sizeof(creds));
-        return status;
-    }
+    // Configure OBK based on source selection
+    struct azihsm_owner_backup_key_config backup_config = { 0 };
 
-    // Use static default when no OBK file was provided.
-    // default_obk tracks whether obk_buf points to static memory (must not be freed).
-    if (obk_buf.ptr == NULL)
+    if (config->use_tpm_obk)
     {
-        obk_buf.ptr = (uint8_t *)DEFAULT_OBK;
-        obk_buf.len = sizeof(DEFAULT_OBK);
-        default_obk = true;
+        backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_TPM;
+        backup_config.owner_backup_key = NULL;
+    }
+    else
+    {
+        // Load custom OBK from file if provided, otherwise use hardcoded default.
+        // Note: the OBK is the raw owner backup key for init_bk3, NOT the masked
+        // owner backup key (MOBK) returned by the HSM.
+        status = load_file_to_buffer(config->obk_path, &obk_buf);
+        if (status != AZIHSM_STATUS_SUCCESS)
+        {
+            free_buffer(&bmk_buf);
+            free_buffer(&muk_buf);
+            OPENSSL_cleanse(&creds, sizeof(creds));
+            return status;
+        }
+
+        // Use static default when no OBK file was provided.
+        // default_obk tracks whether obk_buf points to static memory (must not be freed).
+        if (obk_buf.ptr == NULL)
+        {
+            obk_buf.ptr = (uint8_t *)DEFAULT_OBK;
+            obk_buf.len = sizeof(DEFAULT_OBK);
+            default_obk = true;
+        }
+
+        backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER;
+        backup_config.owner_backup_key = &obk_buf;
     }
 
     status = azihsm_get_device_handle(device);
@@ -896,35 +920,105 @@ azihsm_status azihsm_open_device_and_session(
         return status;
     }
 
-    // Configure OBK and POTA
-    struct azihsm_owner_backup_key_config backup_config = { 0 };
+    // Configure POTA endorsement based on source selection
     struct azihsm_pota_endorsement pota_endorsement = { 0 };
     struct azihsm_buffer pota_sig_buf = { 0 };
     struct azihsm_buffer pota_pubkey_buf = { 0 };
     struct azihsm_pota_endorsement_data pota_data = { 0 };
 
-    backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER;
-    backup_config.owner_backup_key = &obk_buf;
+    struct azihsm_buffer pota_priv_buf = { NULL, 0 };
+    struct azihsm_buffer pota_pub_buf = { NULL, 0 };
+    bool default_pota_priv = false;
+    bool default_pota_pub = false;
 
-    // Compute POTA endorsement: sign PID public key with fixed POTA key
-    status = compute_pota_endorsement(*device, &pota_sig_buf, &pota_pubkey_buf);
-    if (status != AZIHSM_STATUS_SUCCESS)
+    if (config->use_tpm_pota)
     {
-        free_buffer(&bmk_buf);
-        free_buffer(&muk_buf);
-        if (!default_obk)
-        {
-            free_buffer(&obk_buf);
-        }
-        OPENSSL_cleanse(&creds, sizeof(creds));
-        azihsm_part_close(*device);
-        return status;
+        pota_endorsement.source = AZIHSM_POTA_ENDORSEMENT_SOURCE_TPM;
+        pota_endorsement.endorsement = NULL;
     }
+    else
+    {
+        // Load POTA keys from files; fall back to hardcoded keys if files don't exist
+        status = load_file_to_buffer(config->pota_private_key_path, &pota_priv_buf);
+        if (status != AZIHSM_STATUS_SUCCESS)
+        {
+            free_buffer(&bmk_buf);
+            free_buffer(&muk_buf);
+            if (!default_obk)
+            {
+                free_buffer(&obk_buf);
+            }
+            OPENSSL_cleanse(&creds, sizeof(creds));
+            azihsm_part_close(*device);
+            return status;
+        }
 
-    pota_data.signature = &pota_sig_buf;
-    pota_data.public_key = &pota_pubkey_buf;
-    pota_endorsement.source = AZIHSM_POTA_ENDORSEMENT_SOURCE_CALLER;
-    pota_endorsement.endorsement = &pota_data;
+        status = load_file_to_buffer(config->pota_public_key_path, &pota_pub_buf);
+        if (status != AZIHSM_STATUS_SUCCESS)
+        {
+            if (!default_pota_priv)
+            {
+                free_buffer(&pota_priv_buf);
+            }
+            free_buffer(&bmk_buf);
+            free_buffer(&muk_buf);
+            if (!default_obk)
+            {
+                free_buffer(&obk_buf);
+            }
+            OPENSSL_cleanse(&creds, sizeof(creds));
+            azihsm_part_close(*device);
+            return status;
+        }
+
+        // Fall back to hardcoded keys when files don't exist
+        if (pota_priv_buf.ptr == NULL)
+        {
+            pota_priv_buf.ptr = (uint8_t *)POTA_PRIVATE_KEY_DER;
+            pota_priv_buf.len = sizeof(POTA_PRIVATE_KEY_DER);
+            default_pota_priv = true;
+        }
+        if (pota_pub_buf.ptr == NULL)
+        {
+            pota_pub_buf.ptr = (uint8_t *)POTA_PUBLIC_KEY_DER;
+            pota_pub_buf.len = sizeof(POTA_PUBLIC_KEY_DER);
+            default_pota_pub = true;
+        }
+
+        // Compute POTA endorsement: sign PID public key with POTA key
+        status = compute_pota_endorsement(
+            *device,
+            &pota_priv_buf,
+            &pota_pub_buf,
+            &pota_sig_buf,
+            &pota_pubkey_buf
+        );
+        if (status != AZIHSM_STATUS_SUCCESS)
+        {
+            if (!default_pota_priv)
+            {
+                free_buffer(&pota_priv_buf);
+            }
+            if (!default_pota_pub)
+            {
+                free_buffer(&pota_pub_buf);
+            }
+            free_buffer(&bmk_buf);
+            free_buffer(&muk_buf);
+            if (!default_obk)
+            {
+                free_buffer(&obk_buf);
+            }
+            OPENSSL_cleanse(&creds, sizeof(creds));
+            azihsm_part_close(*device);
+            return status;
+        }
+
+        pota_data.signature = &pota_sig_buf;
+        pota_data.public_key = &pota_pubkey_buf;
+        pota_endorsement.source = AZIHSM_POTA_ENDORSEMENT_SOURCE_CALLER;
+        pota_endorsement.endorsement = &pota_data;
+    }
 
     // Initialize partition with loaded keys (or NULL if not available)
     status = azihsm_part_init(
@@ -940,7 +1034,14 @@ azihsm_status azihsm_open_device_and_session(
     free_buffer(&bmk_buf);
     free_buffer(&muk_buf);
     free_buffer(&pota_sig_buf);
-    // pota_pubkey_buf points to static POTA_PUBLIC_KEY_DER, do not free
+    if (!default_pota_priv)
+    {
+        free_buffer(&pota_priv_buf);
+    }
+    if (!default_pota_pub)
+    {
+        free_buffer(&pota_pub_buf);
+    }
     if (!default_obk)
     {
         free_buffer(&obk_buf);

@@ -404,14 +404,32 @@ static void parse_provider_config(
     char *bmk_path = NULL;
     char *muk_path = NULL;
     char *obk_path = NULL;
+    char *obk_source = NULL;
+    char *pota_source = NULL;
+    char *pota_private_key_path = NULL;
+    char *pota_public_key_path = NULL;
     char *api_revision = NULL;
 
     /* Set defaults for all fields */
     snprintf(config->bmk_path, sizeof(config->bmk_path), "%s", AZIHSM_DEFAULT_BMK_PATH);
     snprintf(config->muk_path, sizeof(config->muk_path), "%s", AZIHSM_DEFAULT_MUK_PATH);
     snprintf(config->obk_path, sizeof(config->obk_path), "%s", AZIHSM_DEFAULT_OBK_PATH);
+    snprintf(
+        config->pota_private_key_path,
+        sizeof(config->pota_private_key_path),
+        "%s",
+        AZIHSM_DEFAULT_POTA_PRIVATE_KEY_PATH
+    );
+    snprintf(
+        config->pota_public_key_path,
+        sizeof(config->pota_public_key_path),
+        "%s",
+        AZIHSM_DEFAULT_POTA_PUBLIC_KEY_PATH
+    );
     config->api_revision_major = AZIHSM_API_REVISION_DEFAULT_MAJOR;
     config->api_revision_minor = AZIHSM_API_REVISION_DEFAULT_MINOR;
+    config->use_tpm_obk = false;
+    config->use_tpm_pota = false;
 
     /* Credentials: env vars only (security-sensitive, not in openssl.cnf) */
     load_path_from_env_or_default(
@@ -432,12 +450,18 @@ static void parse_provider_config(
         return;
     }
 
-    /* Query key paths and API revision from openssl.cnf */
-    OSSL_PARAM config_params[] = { OSSL_PARAM_utf8_ptr(AZIHSM_CFG_BMK_PATH, &bmk_path, 0),
-                                   OSSL_PARAM_utf8_ptr(AZIHSM_CFG_MUK_PATH, &muk_path, 0),
-                                   OSSL_PARAM_utf8_ptr(AZIHSM_CFG_OBK_PATH, &obk_path, 0),
-                                   OSSL_PARAM_utf8_ptr(AZIHSM_CFG_API_REVISION, &api_revision, 0),
-                                   OSSL_PARAM_END };
+    /* Query key paths, source selections, and API revision from openssl.cnf */
+    OSSL_PARAM config_params[] = {
+        OSSL_PARAM_utf8_ptr(AZIHSM_CFG_BMK_PATH, &bmk_path, 0),
+        OSSL_PARAM_utf8_ptr(AZIHSM_CFG_MUK_PATH, &muk_path, 0),
+        OSSL_PARAM_utf8_ptr(AZIHSM_CFG_OBK_PATH, &obk_path, 0),
+        OSSL_PARAM_utf8_ptr(AZIHSM_CFG_OBK_SOURCE, &obk_source, 0),
+        OSSL_PARAM_utf8_ptr(AZIHSM_CFG_POTA_SOURCE, &pota_source, 0),
+        OSSL_PARAM_utf8_ptr(AZIHSM_CFG_POTA_PRIVATE_KEY_PATH, &pota_private_key_path, 0),
+        OSSL_PARAM_utf8_ptr(AZIHSM_CFG_POTA_PUBLIC_KEY_PATH, &pota_public_key_path, 0),
+        OSSL_PARAM_utf8_ptr(AZIHSM_CFG_API_REVISION, &api_revision, 0),
+        OSSL_PARAM_END,
+    };
 
     if (get_params_fn(handle, config_params) != 1)
     {
@@ -456,6 +480,34 @@ static void parse_provider_config(
     if (obk_path != NULL)
     {
         snprintf(config->obk_path, sizeof(config->obk_path), "%s", strip_file_prefix(obk_path));
+    }
+    if (pota_private_key_path != NULL)
+    {
+        snprintf(
+            config->pota_private_key_path,
+            sizeof(config->pota_private_key_path),
+            "%s",
+            strip_file_prefix(pota_private_key_path)
+        );
+    }
+    if (pota_public_key_path != NULL)
+    {
+        snprintf(
+            config->pota_public_key_path,
+            sizeof(config->pota_public_key_path),
+            "%s",
+            strip_file_prefix(pota_public_key_path)
+        );
+    }
+
+    /* Parse source selections: "caller" (default) or "tpm" */
+    if (obk_source != NULL && OPENSSL_strcasecmp(obk_source, "tpm") == 0)
+    {
+        config->use_tpm_obk = true;
+    }
+    if (pota_source != NULL && OPENSSL_strcasecmp(pota_source, "tpm") == 0)
+    {
+        config->use_tpm_pota = true;
     }
 
     /* Parse API revision in "major.minor" format */

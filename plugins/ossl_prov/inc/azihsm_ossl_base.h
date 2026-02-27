@@ -41,12 +41,14 @@ typedef struct
 /* Maximum file path length for key and config file paths */
 #define AZIHSM_MAX_FILE_PATH 4096
 
-/* Default file paths for partition keys and credentials */
+/* Default file paths for partition keys, credentials, and POTA keys */
 #define AZIHSM_DEFAULT_BMK_PATH "/var/lib/azihsm/bmk.bin"
 #define AZIHSM_DEFAULT_MUK_PATH "/var/lib/azihsm/muk.bin"
 #define AZIHSM_DEFAULT_OBK_PATH "/var/lib/azihsm/obk.bin"
 #define AZIHSM_DEFAULT_CREDENTIALS_ID_PATH "/var/lib/azihsm/credentials_id.bin"
 #define AZIHSM_DEFAULT_CREDENTIALS_PIN_PATH "/var/lib/azihsm/credentials_pin.bin"
+#define AZIHSM_DEFAULT_POTA_PRIVATE_KEY_PATH "/var/lib/azihsm/pota_private_key.der"
+#define AZIHSM_DEFAULT_POTA_PUBLIC_KEY_PATH "/var/lib/azihsm/pota_public_key.der"
 
 /* Size of binary credential files (ID and PIN) in bytes */
 #define AZIHSM_CREDENTIALS_SIZE 16
@@ -55,6 +57,10 @@ typedef struct
 #define AZIHSM_CFG_BMK_PATH "azihsm-bmk-path"
 #define AZIHSM_CFG_MUK_PATH "azihsm-muk-path"
 #define AZIHSM_CFG_OBK_PATH "azihsm-obk-path"
+#define AZIHSM_CFG_OBK_SOURCE "azihsm-obk-source"
+#define AZIHSM_CFG_POTA_SOURCE "azihsm-pota-source"
+#define AZIHSM_CFG_POTA_PRIVATE_KEY_PATH "azihsm-pota-private-key-path"
+#define AZIHSM_CFG_POTA_PUBLIC_KEY_PATH "azihsm-pota-public-key-path"
 #define AZIHSM_CFG_API_REVISION "azihsm-api-revision"
 
 /* Environment variable names for credentials (not in openssl.cnf for security) */
@@ -76,8 +82,12 @@ typedef struct
     char obk_path[AZIHSM_MAX_FILE_PATH];
     char credentials_id_path[AZIHSM_MAX_FILE_PATH];
     char credentials_pin_path[AZIHSM_MAX_FILE_PATH];
+    char pota_private_key_path[AZIHSM_MAX_FILE_PATH];
+    char pota_public_key_path[AZIHSM_MAX_FILE_PATH];
     uint16_t api_revision_major;
     uint16_t api_revision_minor;
+    bool use_tpm_obk;
+    bool use_tpm_pota;
 } AZIHSM_CONFIG;
 
 typedef struct
