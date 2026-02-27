@@ -41,16 +41,43 @@ typedef struct
 /* Maximum file path length for key and config file paths */
 #define AZIHSM_MAX_FILE_PATH 4096
 
-/* Default file paths for partition keys */
+/* Default file paths for partition keys and credentials */
 #define AZIHSM_DEFAULT_BMK_PATH "/var/lib/azihsm/bmk.bin"
 #define AZIHSM_DEFAULT_MUK_PATH "/var/lib/azihsm/muk.bin"
 #define AZIHSM_DEFAULT_OBK_PATH "/var/lib/azihsm/obk.bin"
+#define AZIHSM_DEFAULT_CREDENTIALS_ID_PATH "/var/lib/azihsm/credentials_id.bin"
+#define AZIHSM_DEFAULT_CREDENTIALS_PIN_PATH "/var/lib/azihsm/credentials_pin.bin"
+
+/* Size of binary credential files (ID and PIN) in bytes */
+#define AZIHSM_CREDENTIALS_SIZE 16
+
+/* Configuration parameter names for openssl.cnf */
+#define AZIHSM_CFG_BMK_PATH "azihsm-bmk-path"
+#define AZIHSM_CFG_MUK_PATH "azihsm-muk-path"
+#define AZIHSM_CFG_OBK_PATH "azihsm-obk-path"
+#define AZIHSM_CFG_API_REVISION "azihsm-api-revision"
+
+/* Environment variable names for credentials (not in openssl.cnf for security) */
+#define AZIHSM_ENV_CREDENTIALS_ID_PATH "AZIHSM_CREDENTIALS_ID_PATH"
+#define AZIHSM_ENV_CREDENTIALS_PIN_PATH "AZIHSM_CREDENTIALS_PIN_PATH"
+
+/* Supported API revision range */
+#define AZIHSM_API_REVISION_MIN_MAJOR 1
+#define AZIHSM_API_REVISION_MIN_MINOR 0
+#define AZIHSM_API_REVISION_MAX_MAJOR 1
+#define AZIHSM_API_REVISION_MAX_MINOR 0
+#define AZIHSM_API_REVISION_DEFAULT_MAJOR 1
+#define AZIHSM_API_REVISION_DEFAULT_MINOR 0
 
 typedef struct
 {
     char bmk_path[AZIHSM_MAX_FILE_PATH];
     char muk_path[AZIHSM_MAX_FILE_PATH];
     char obk_path[AZIHSM_MAX_FILE_PATH];
+    char credentials_id_path[AZIHSM_MAX_FILE_PATH];
+    char credentials_pin_path[AZIHSM_MAX_FILE_PATH];
+    uint16_t api_revision_major;
+    uint16_t api_revision_minor;
 } AZIHSM_CONFIG;
 
 typedef struct

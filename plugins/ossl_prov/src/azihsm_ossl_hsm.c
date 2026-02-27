@@ -210,6 +210,41 @@ static void free_buffer(struct azihsm_buffer *buffer)
 }
 
 /*
+ * Loads a binary credential file (ID or PIN) into a fixed-size output buffer.
+ * The file must contain exactly AZIHSM_CREDENTIALS_SIZE bytes.
+ * Returns AZIHSM_STATUS_SUCCESS on success, AZIHSM_STATUS_INTERNAL_ERROR on error.
+ */
+static azihsm_status load_credentials_from_file(const char *path, uint8_t *output)
+{
+    FILE *file = NULL;
+    size_t bytes_read = 0;
+
+    if (path == NULL || output == NULL)
+    {
+        return AZIHSM_STATUS_INTERNAL_ERROR;
+    }
+
+    file = fopen(path, "rb");
+    if (file == NULL)
+    {
+        return AZIHSM_STATUS_INTERNAL_ERROR;
+    }
+
+    bytes_read = fread(output, 1, AZIHSM_CREDENTIALS_SIZE, file);
+
+    /* Verify file contains exactly the expected number of bytes */
+    if (bytes_read != AZIHSM_CREDENTIALS_SIZE || fgetc(file) != EOF)
+    {
+        OPENSSL_cleanse(output, AZIHSM_CREDENTIALS_SIZE);
+        fclose(file);
+        return AZIHSM_STATUS_INTERNAL_ERROR;
+    }
+
+    fclose(file);
+    return AZIHSM_STATUS_SUCCESS;
+}
+
+/*
  * picks and opens the first possible HSM device
  * */
 static azihsm_status azihsm_get_device_handle(azihsm_handle *device)
@@ -775,34 +810,37 @@ azihsm_status azihsm_open_device_and_session(
     bool default_obk = false;
     bool muk_was_loaded = false;
 
-    struct azihsm_api_rev api_rev = { .major = 1, .minor = 0 };
+    struct azihsm_api_rev api_rev = { 0 };
+    struct azihsm_credentials creds = { 0 };
 
-    if (config == NULL)
+    if (config == NULL || device == NULL || session == NULL)
     {
-        return AZIHSM_STATUS_INTERNAL_ERROR;
+        return AZIHSM_STATUS_INVALID_ARGUMENT;
     }
 
-    // clang-format off
+    /* Use API revision from configuration */
+    api_rev.major = config->api_revision_major;
+    api_rev.minor = config->api_revision_minor;
 
-    struct azihsm_credentials creds = {
-        .id =
-        {
-            0x70, 0xFC, 0xF7, 0x30, 0xB8, 0x76, 0x42, 0x38, 0xB8, 0x35, 0x80, 0x10, 0xCE, 0x8A,
-            0x3F, 0x76
-        },
-        .pin =
-        {
-            0xDB, 0x3D, 0xC7, 0x7F, 0xC2, 0x2E, 0x43, 0x00, 0x80, 0xD4, 0x1B, 0x31, 0xB6, 0xF0,
-            0x48, 0x00
-        }
-    };
+    /* Load credentials from files */
+    status = load_credentials_from_file(config->credentials_id_path, creds.id);
+    if (status != AZIHSM_STATUS_SUCCESS)
+    {
+        return status;
+    }
 
-    // clang-format on
+    status = load_credentials_from_file(config->credentials_pin_path, creds.pin);
+    if (status != AZIHSM_STATUS_SUCCESS)
+    {
+        OPENSSL_cleanse(&creds, sizeof(creds));
+        return status;
+    }
 
     // Load key files if they exist
     status = load_file_to_buffer(config->bmk_path, &bmk_buf);
     if (status != AZIHSM_STATUS_SUCCESS)
     {
+        OPENSSL_cleanse(&creds, sizeof(creds));
         return status;
     }
 
@@ -810,6 +848,7 @@ azihsm_status azihsm_open_device_and_session(
     if (status != AZIHSM_STATUS_SUCCESS)
     {
         free_buffer(&bmk_buf);
+        OPENSSL_cleanse(&creds, sizeof(creds));
         return status;
     }
     muk_was_loaded = (muk_buf.ptr != NULL);
@@ -822,6 +861,7 @@ azihsm_status azihsm_open_device_and_session(
     {
         free_buffer(&bmk_buf);
         free_buffer(&muk_buf);
+        OPENSSL_cleanse(&creds, sizeof(creds));
         return status;
     }
 
@@ -843,6 +883,7 @@ azihsm_status azihsm_open_device_and_session(
         {
             free_buffer(&obk_buf);
         }
+        OPENSSL_cleanse(&creds, sizeof(creds));
         return status;
     }
 
@@ -866,6 +907,7 @@ azihsm_status azihsm_open_device_and_session(
         {
             free_buffer(&obk_buf);
         }
+        OPENSSL_cleanse(&creds, sizeof(creds));
         azihsm_part_close(*device);
         return status;
     }
@@ -897,6 +939,7 @@ azihsm_status azihsm_open_device_and_session(
 
     if (status != AZIHSM_STATUS_SUCCESS)
     {
+        OPENSSL_cleanse(&creds, sizeof(creds));
         azihsm_part_close(*device);
         return status;
     }
@@ -909,6 +952,7 @@ azihsm_status azihsm_open_device_and_session(
         if (status != AZIHSM_STATUS_SUCCESS)
         {
             free_buffer(&retrieved_bmk);
+            OPENSSL_cleanse(&creds, sizeof(creds));
             azihsm_part_close(*device);
             return status;
         }
@@ -917,6 +961,7 @@ azihsm_status azihsm_open_device_and_session(
 
     // Open session (seed=NULL lets the library generate random bytes internally)
     status = azihsm_sess_open(*device, &api_rev, &creds, NULL, session);
+    OPENSSL_cleanse(&creds, sizeof(creds));
     if (status != AZIHSM_STATUS_SUCCESS)
     {
         azihsm_part_close(*device);
