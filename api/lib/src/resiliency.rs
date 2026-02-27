@@ -5,6 +5,7 @@
 //! IO aborts, and firmware crash recovery.
 //!
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use rand::Rng;
@@ -31,12 +32,20 @@ cfg_if::cfg_if! {
 /// Well-known storage key for the backup masking key.
 pub(crate) const AZIHSM_STORAGE_BMK: &str = "azihsm_bmk";
 
+/// Well-known storage key for the restore epoch.
+///
+/// Persisted by [`restore_partition`] each time the epoch is bumped so
+/// that other processes can detect a restore even when the BMK does not
+/// change (e.g. device crash-and-restart without key rotation).
+pub(crate) const AZIHSM_STORAGE_EPOCH: &str = "azihsm_epoch";
+
 /// Well-known storage key for the masked unwrapping key.
 ///
-/// [TODO] Not yet written during `init_part`. MUK is persisted when the
-/// unwrapping key is fetched during a session operation.
-/// This constant is reserved for that future implementation.
-#[allow(dead_code)]
+/// Written by [`generate_key_pair`] (RSA unwrapping key generation) so
+/// that `establish_credential` can restore the device's unwrapping key
+/// state after a device reset. Read during [`init_part_raw`] and
+/// [`restore_partition`] to provide the MUK to the device. Cleared
+/// alongside BMK when `MaskedKeyDecodeFailed` indicates stale keys.
 pub(crate) const AZIHSM_STORAGE_MUK: &str = "azihsm_muk";
 
 /// Persistent key-value storage for resiliency data.
@@ -96,33 +105,33 @@ pub trait PotaEndorsementCallback: Send + Sync {
 /// Acquires the lock on construction and releases it on drop, ensuring the
 /// lock is always released even when the caller returns early due to an error.
 ///
-/// When constructed with `None` (resiliency disabled), the guard is a no-op.
-pub(crate) struct ResiliencyLockGuard<'a> {
-    lock: Option<&'a dyn ResiliencyLock>,
+/// Owns an `Arc` clone of the lock so it does not borrow the
+/// [`HsmResiliencyConfig`], allowing the config to be moved or consumed
+/// while the guard is still alive.
+pub(crate) struct ResiliencyLockGuard {
+    lock: Arc<dyn ResiliencyLock>,
 }
 
-impl<'a> ResiliencyLockGuard<'a> {
-    /// Acquire the resiliency lock and return a guard that releases it on drop.
-    ///
-    /// When `config` is `None`, returns a no-op guard.
-    pub(crate) fn acquire(config: Option<&'a HsmResiliencyConfig>) -> HsmResult<Self> {
-        if let Some(cfg) = config {
-            cfg.lock.lock()?;
-            Ok(Self {
-                lock: Some(cfg.lock.as_ref()),
-            })
-        } else {
-            Ok(Self { lock: None })
-        }
+impl ResiliencyLockGuard {
+    /// Clone the lock `Arc` out of `config`, acquire it, and return a guard
+    /// that releases it on drop.
+    pub(crate) fn acquire(config: &HsmResiliencyConfig) -> HsmResult<Self> {
+        let lock = Arc::clone(&config.lock);
+        lock.lock()?;
+        Ok(Self { lock })
+    }
+
+    /// Try to acquire the resiliency lock from a pre-cloned `Arc`.
+    pub(crate) fn acquire_arc(lock: Arc<dyn ResiliencyLock>) -> HsmResult<Self> {
+        lock.lock()?;
+        Ok(Self { lock })
     }
 }
 
-impl Drop for ResiliencyLockGuard<'_> {
+impl Drop for ResiliencyLockGuard {
     fn drop(&mut self) {
-        if let Some(lock) = self.lock {
-            if let Err(e) = lock.unlock() {
-                warn!("Failed to release resiliency lock on drop: {e:?}");
-            }
+        if let Err(e) = self.lock.unlock() {
+            warn!("Failed to release resiliency lock on drop: {e:?}");
         }
     }
 }
@@ -143,7 +152,7 @@ pub struct HsmResiliencyConfig {
     pub storage: Box<dyn ResiliencyStorage>,
 
     /// Cross-process/thread lock for restore coordination.
-    pub lock: Box<dyn ResiliencyLock>,
+    pub lock: Arc<dyn ResiliencyLock>,
 
     /// POTA re-endorsement callback (required when source is Caller).
     pub pota_callback: Option<Box<dyn PotaEndorsementCallback>>,
@@ -152,16 +161,9 @@ pub struct HsmResiliencyConfig {
 /// Internal resiliency state cached during partition init.
 ///
 /// Stored inside `HsmPartitionInner` when resiliency is enabled.
-#[allow(dead_code)]
 pub(crate) struct ResiliencyState {
-    /// Persistent storage interface.
-    pub(crate) storage: Box<dyn ResiliencyStorage>,
-
-    /// Cross-process/thread lock interface.
-    pub(crate) lock: Box<dyn ResiliencyLock>,
-
-    /// Optional POTA callback.
-    pub(crate) pota_callback: Option<Box<dyn PotaEndorsementCallback>>,
+    /// Resiliency configuration (storage, lock, POTA callback).
+    pub(crate) config: HsmResiliencyConfig,
 
     /// Cached credentials for re-establishing during restore.
     pub(crate) cached_credentials: HsmCredentials,
@@ -180,6 +182,7 @@ pub(crate) struct ResiliencyState {
 impl std::fmt::Debug for ResiliencyState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ResiliencyState")
+            .field("has_pota_callback", &self.config.pota_callback.is_some())
             .field("cached_obk_config", &self.cached_obk_config)
             .field("cached_pota_endorsement", &self.cached_pota_endorsement)
             .field("restore_epoch", &self.restore_epoch)
@@ -206,6 +209,14 @@ impl ResiliencyState {
 
     /// Creates a new resiliency state from the config and init parameters.
     ///
+    /// Seeds `restore_epoch` from persistent storage so that a newly
+    /// initialised process picks up the epoch left by a prior process.
+    /// Falls back to `0` when no stored epoch exists.
+    ///
+    /// Returns an error if persistent storage cannot be read (IO
+    /// failure, corruption, etc.) so that initialisation fails fast
+    /// rather than silently resetting the epoch to zero.
+    ///
     /// The caller must have already called [`Self::validate_config`]
     /// before invoking DDI operations. This constructor trusts that the
     /// config has been validated.
@@ -214,16 +225,42 @@ impl ResiliencyState {
         credentials: HsmCredentials,
         obk_config: HsmOwnerBackupKeyConfig,
         pota_endorsement: HsmPotaEndorsement,
-    ) -> Self {
-        Self {
-            storage: config.storage,
-            lock: config.lock,
-            pota_callback: config.pota_callback,
+    ) -> HsmResult<Self> {
+        let restore_epoch = Self::read_epoch(&*config.storage)?.unwrap_or(0);
+
+        Ok(Self {
+            config,
             cached_credentials: credentials,
             cached_obk_config: obk_config,
             cached_pota_endorsement: pota_endorsement,
-            restore_epoch: 0,
+            restore_epoch,
+        })
+    }
+
+    /// Reads the persisted restore epoch from resiliency storage.
+    ///
+    /// Returns `None` when the key does not exist (first init, or older
+    /// storage that predates persisted epochs).
+    pub(crate) fn read_epoch(storage: &dyn ResiliencyStorage) -> HsmResult<Option<u64>> {
+        match storage.read(AZIHSM_STORAGE_EPOCH) {
+            Ok(b) => {
+                let bytes: [u8; 8] = b
+                    .as_slice()
+                    .try_into()
+                    .map_err(|_| HsmError::InternalError)?;
+                Ok(Some(u64::from_le_bytes(bytes)))
+            }
+            Err(HsmError::NotFound) => Ok(None),
+            Err(e) => Err(e),
         }
+    }
+
+    /// Persists the restore epoch to resiliency storage.
+    ///
+    /// Called after bumping `restore_epoch` so that other processes can
+    /// detect the restore even when the BMK does not change.
+    pub(crate) fn write_epoch(storage: &dyn ResiliencyStorage, epoch: u64) -> HsmResult<()> {
+        storage.write(AZIHSM_STORAGE_EPOCH, &epoch.to_le_bytes())
     }
 }
 
@@ -266,7 +303,7 @@ mod tests {
     fn mock_config(with_callback: bool) -> HsmResiliencyConfig {
         HsmResiliencyConfig {
             storage: Box::new(MockStorage),
-            lock: Box::new(MockLock),
+            lock: Arc::new(MockLock),
             pota_callback: if with_callback {
                 Some(Box::new(MockPotaCallback))
             } else {
@@ -300,7 +337,8 @@ mod tests {
         let pota = caller_pota();
         ResiliencyState::validate_config(&config, &pota)
             .expect("caller POTA with callback should be valid");
-        let _state = ResiliencyState::new(config, test_creds(), caller_obk(), pota);
+        let _state = ResiliencyState::new(config, test_creds(), caller_obk(), pota)
+            .expect("ResiliencyState::new should succeed");
     }
 
     #[test]
@@ -318,7 +356,8 @@ mod tests {
         let pota = tpm_pota();
         ResiliencyState::validate_config(&config, &pota)
             .expect("TPM POTA without callback should be valid");
-        let _state = ResiliencyState::new(config, test_creds(), caller_obk(), pota);
+        let _state = ResiliencyState::new(config, test_creds(), caller_obk(), pota)
+            .expect("ResiliencyState::new should succeed");
     }
 
     #[test]
@@ -334,14 +373,16 @@ mod tests {
     #[test]
     fn resiliency_state_initial_epoch_is_zero() {
         let state =
-            ResiliencyState::new(mock_config(true), test_creds(), caller_obk(), caller_pota());
+            ResiliencyState::new(mock_config(true), test_creds(), caller_obk(), caller_pota())
+                .expect("ResiliencyState::new should succeed");
         assert_eq!(state.restore_epoch, 0);
     }
 
     #[test]
     fn resiliency_state_caches_credentials() {
         let creds = test_creds();
-        let state = ResiliencyState::new(mock_config(true), creds, caller_obk(), caller_pota());
+        let state = ResiliencyState::new(mock_config(true), creds, caller_obk(), caller_pota())
+            .expect("ResiliencyState::new should succeed");
         assert_eq!(state.cached_credentials, creds);
     }
 
@@ -349,7 +390,8 @@ mod tests {
     fn resiliency_state_caches_obk_config() {
         let obk = caller_obk();
         let state =
-            ResiliencyState::new(mock_config(true), test_creds(), obk.clone(), caller_pota());
+            ResiliencyState::new(mock_config(true), test_creds(), obk.clone(), caller_pota())
+                .expect("ResiliencyState::new should succeed");
         assert_eq!(
             state.cached_obk_config.key_source(),
             HsmOwnerBackupKeySource::Caller
@@ -361,7 +403,8 @@ mod tests {
     fn resiliency_state_caches_pota_endorsement() {
         let pota = caller_pota();
         let state =
-            ResiliencyState::new(mock_config(true), test_creds(), caller_obk(), pota.clone());
+            ResiliencyState::new(mock_config(true), test_creds(), caller_obk(), pota.clone())
+                .expect("ResiliencyState::new should succeed");
         assert_eq!(
             state.cached_pota_endorsement.source(),
             HsmPotaEndorsementSource::Caller
@@ -413,6 +456,15 @@ pub(crate) const BACKOFF_JITTER_MS: u64 = 100;
 #[cfg(feature = "mock")]
 pub(crate) const BACKOFF_JITTER_MS: u64 = 2;
 
+/// Applies exponential backoff with jitter and sleeps for the computed
+/// duration.
+pub(crate) fn apply_backoff(attempt: u32, base_ms: u64, jitter_max_ms: u64) {
+    let backoff_ms = base_ms.saturating_mul(1u64 << attempt.min(63));
+    let jitter_ms = rand::thread_rng().gen_range(0..=jitter_max_ms);
+    let total_ms = backoff_ms + jitter_ms;
+    std::thread::sleep(Duration::from_millis(total_ms));
+}
+
 /// Executes `operation` with exponential-backoff retry.
 ///
 /// The operation is called once.  If it fails and `predicate` returns `true`
@@ -420,8 +472,7 @@ pub(crate) const BACKOFF_JITTER_MS: u64 = 2;
 /// with exponentially increasing delays (`backoff_base_ms * 2^iter`), plus
 /// random jitter in `0..=backoff_jitter_ms`.
 ///
-/// Emits [`tracing::warn!`] on each retry and [`tracing::error!`] when all
-/// attempts are exhausted.
+/// Emits [`tracing::error!`] when all attempts are exhausted.
 ///
 /// # Arguments
 ///
@@ -443,20 +494,7 @@ pub(crate) fn execute_with_backoff<T>(
     let mut result = operation(None);
 
     while predicate(&result) && attempt < max_retries {
-        let backoff_ms = backoff_base_ms.saturating_mul(1u64 << attempt.min(63));
-        let jitter_ms = rand::thread_rng().gen_range(0..=backoff_jitter_ms);
-        let total_ms = backoff_ms + jitter_ms;
-        if let Err(ref err) = result {
-            warn!(
-                ?err,
-                attempt,
-                backoff_ms,
-                jitter_ms,
-                total_ms,
-                "Transient error, backing off before retry.",
-            );
-        }
-        std::thread::sleep(Duration::from_millis(total_ms));
+        apply_backoff(attempt, backoff_base_ms, backoff_jitter_ms);
         let prev_err = result.err();
         attempt += 1;
         result = operation(prev_err.as_ref());
@@ -475,9 +513,9 @@ pub(crate) fn execute_with_backoff<T>(
     result
 }
 
-/// Returns `true` when the error indicates a transient IO-abort condition
-/// that may resolve after a short backoff (e.g., live migration or firmware
-/// crash recovery in progress).
+/// Returns `true` when the error is a transient IO / device-readiness
+/// error that may resolve after a short backoff (e.g., live migration,
+/// firmware crash recovery in progress, or device submission failure).
 pub(crate) fn is_io_abort_error<T>(result: &HsmResult<T>) -> bool {
     matches!(
         result,
@@ -515,6 +553,233 @@ pub(crate) fn is_init_retryable_error<T>(result: &HsmResult<T>) -> bool {
             | Err(HsmError::PartitionNotProvisioned)
             | Err(HsmError::EccVerifyFailed)
     )
+}
+
+/// Returns `true` when the error is retryable during session opening.
+///
+/// - `IoAborted` / `IoAbortInProgress` — transient driver-level IO-abort
+///   conditions (e.g., live migration, firmware crash recovery).
+/// - `CredentialsNotEstablished` — credentials were lost (e.g., after migration).
+/// - `NonceMismatch` — nonce mismatch during credential negotiation.
+/// - `PartitionNotProvisioned` — partition state was lost.
+pub(crate) fn is_open_session_retryable_error<T>(result: &HsmResult<T>) -> bool {
+    matches!(
+        result,
+        Err(HsmError::IoAborted)
+            | Err(HsmError::IoAbortInProgress)
+            | Err(HsmError::CredentialsNotEstablished)
+            | Err(HsmError::NonceMismatch)
+            | Err(HsmError::PartitionNotProvisioned)
+    )
+}
+
+/// Returns `true` when the error indicates the key's device handle is
+/// stale and the key needs to be restored (unmasked) before it can be
+/// used again.
+///
+/// These errors occur when a resiliency event (live migration, firmware
+/// crash recovery) has invalidated the device state, making existing
+/// key handles unusable.
+///
+pub(crate) fn key_needs_restoration(err: &HsmError) -> bool {
+    matches!(
+        err,
+        HsmError::IoAborted | HsmError::IoAbortInProgress | HsmError::SessionNeedsRenegotiation
+    )
+}
+
+/// Returns `true` when the error is retryable during an in-session key
+/// operation (e.g., sign, encrypt, decrypt, derive, key generation).
+///
+/// - `SessionNeedsRenegotiation` — the session was invalidated by a
+///   resiliency event. The caller must restore the partition,
+///   reopen the session, unmask the key, and retry.
+/// - `PendingKeyGeneration` — the device is still regenerating the
+///   unwrapping key after live migration. Retrying after a backoff
+///   delay allows the operation to succeed once key generation completes.
+/// - `IoAborted` / `IoAbortInProgress` — transient driver-level IO-abort
+///   conditions (e.g., live migration or firmware crash recovery).
+/// - `KeyNotFound` — the key handle may have been invalidated mid-call
+///   by a concurrent resiliency event.
+///
+/// Note: `InvalidPermissions` and `InvalidKeyType` are not retried.
+/// The pre-DDI epoch guard prevents the ABA problem where a stale
+/// handle index is reused for a different key. If these errors occur
+/// they indicate a real bug and must surface immediately.
+pub(crate) fn is_key_op_retryable_error(err: &HsmError) -> bool {
+    matches!(
+        err,
+        HsmError::SessionNeedsRenegotiation
+            | HsmError::PendingKeyGeneration
+            | HsmError::IoAborted
+            | HsmError::IoAbortInProgress
+            | HsmError::KeyNotFound
+    )
+}
+
+/// Returns `true` for errors that indicate credentials are already
+/// established on the partition (i.e., a prior `init_part` or another
+/// process's restore has already run).
+pub(crate) fn is_credentials_already_established(err: &HsmError) -> bool {
+    matches!(
+        err,
+        HsmError::KeyNotFound
+            | HsmError::PartitionAlreadyProvisioned
+            | HsmError::VaultAppLimitReached
+    )
+}
+
+/// Executes a key-generation operation with restore-partition and
+/// session-reopen recovery on transient errors.
+///
+/// This is the runtime support function called by the
+/// `#[resiliency_key_gen]` proc macro.
+///
+/// The DDI operation runs under the key-ops barrier read lock so that a
+/// concurrent restore cannot reassign device handles during the DDI call
+/// itself.  Key-wrapper construction (`HsmKeyInner::new`) happens after
+/// the barrier is released and captures the epoch at that point; a
+/// restore that races in between may cause the wrapper to record a newer
+/// epoch than the one under which the handle was created.  This is
+/// benign: the handle is stale, so the first key-op DDI call will fail
+/// with a retryable error and trigger normal recovery.
+///
+/// On each retry iteration:
+/// 1. Applies exponential backoff.
+/// 2. Calls `partition.restore_partition()` to re-establish credentials.
+/// 3. Calls `partition.reopen_session_if_needed(session)` to reopen the
+///    session if its epoch is stale.
+/// 4. Retries the operation under a fresh read lock.
+pub(crate) fn execute_key_gen_with_retry<T>(
+    mut operation: impl FnMut() -> HsmResult<T>,
+    session: &crate::HsmSession,
+    partition: &crate::HsmPartition,
+    max_retries: u32,
+    backoff_base_ms: u64,
+) -> HsmResult<T> {
+    let mut result = {
+        let _barrier = partition.key_ops_lock_read();
+        operation()
+    };
+    let mut attempt = 0u32;
+
+    while result.as_ref().is_err_and(is_key_op_retryable_error) && attempt < max_retries {
+        apply_backoff(attempt, backoff_base_ms, BACKOFF_JITTER_MS);
+
+        if partition.restore_partition().is_err() {
+            attempt += 1;
+            continue;
+        }
+        if partition.reopen_session_if_needed(session).is_err() {
+            attempt += 1;
+            continue;
+        }
+        result = {
+            let _barrier = partition.key_ops_lock_read();
+            operation()
+        };
+        attempt += 1;
+    }
+
+    result
+}
+
+/// Executes a key operation with restore-partition, session-reopen, and
+/// key-refresh recovery on transient errors.
+///
+/// This is the runtime support function called by the
+/// `#[resiliency_key_op]` proc macro.
+///
+/// The function uses a restore barrier (partition-level `RwLock`) to
+/// prevent the ABA problem where a stale handle index could silently
+/// address a different key after a resiliency event:
+///
+/// - Phase 1 (read lock): checks whether the key's epoch is current.
+///   If yes, calls the DDI operation under the read lock so that no
+///   concurrent restore can reassign handles mid-call.  If the epoch is
+///   stale, skips the DDI and falls through to recovery.
+/// - Phase 2 (no lock): evaluates the result — breaks on success,
+///   on non-retryable error, or when the retry budget is exhausted.
+///   Retryable errors apply backoff and count against the budget.
+///   Stale-epoch entry is free (no backoff, no attempt count), but
+///   failed recovery in phase 3 still counts against the budget.
+/// - Phase 3 (write lock): restores the partition, reopens the
+///   session, and refreshes the key.  The write lock blocks until all
+///   in-flight operations (read-lock holders) finish, then prevents any
+///   new operation from starting until recovery is complete.
+pub(crate) fn execute_key_op_with_retry<T>(
+    mut operation: impl FnMut() -> HsmResult<T>,
+    session: &crate::HsmSession,
+    partition: &crate::HsmPartition,
+    mut restore_key: impl FnMut() -> HsmResult<()>,
+    key_epoch: impl Fn() -> u64,
+    max_retries: u32,
+    backoff_base_ms: u64,
+) -> HsmResult<T> {
+    let mut attempt = 0u32;
+
+    loop {
+        // Phase 1: read lock — epoch check + operation
+        let result = {
+            let _barrier = partition.key_ops_lock_read();
+            if key_epoch() < partition.restore_epoch() {
+                None // stale handle — skip DDI, go to recovery
+            } else if key_epoch() > partition.restore_epoch() {
+                // This should never happen — it would indicate a logic bug
+                // where the epoch was bumped without proper synchronization.
+                debug_assert!(
+                    false,
+                    "execute_key_op_with_retry: key_epoch ({}) > restore_epoch ({}); \
+                     epoch must never go backwards",
+                    key_epoch(),
+                    partition.restore_epoch(),
+                );
+                break Err(HsmError::InternalError);
+            } else {
+                Some(operation())
+            }
+        };
+
+        // Phase 2: evaluate result and decide whether to break, retry, or recover
+        match result {
+            Some(Ok(value)) => {
+                // Key operation succeeded, return the value.
+                break Ok(value);
+            }
+            Some(Err(err)) if is_key_op_retryable_error(&err) && attempt < max_retries => {
+                apply_backoff(attempt, backoff_base_ms, BACKOFF_JITTER_MS);
+                attempt += 1;
+            }
+            Some(Err(err)) => {
+                // Key operation failed with a non-retryable error. Break and return the error.
+                break Err(err);
+            }
+            None => {
+                // Stale epoch — skip to recovery, but respect the retry budget.
+                if attempt >= max_retries {
+                    break Err(HsmError::SessionNeedsRenegotiation);
+                }
+            }
+        }
+
+        // Phase 3: write lock — key restoration.
+        {
+            let _barrier = partition.key_ops_lock_write();
+            if partition.restore_partition().is_err() {
+                attempt += 1;
+                continue;
+            }
+            if partition.reopen_session_if_needed(session).is_err() {
+                // Session reopen failed, continue to retry.
+                attempt += 1;
+                continue;
+            }
+            if restore_key().is_err() {
+                // Key restoration failed, continue to retry.
+                attempt += 1;
+            }
+        }
+    }
 }
 
 #[cfg(test)]

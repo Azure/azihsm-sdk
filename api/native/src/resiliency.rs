@@ -19,6 +19,7 @@
 use std::ffi::CString;
 use std::ffi::c_char;
 use std::ffi::c_void;
+use std::sync::Arc;
 
 use azihsm_api as api;
 
@@ -320,7 +321,7 @@ impl TryFrom<&AzihsmResiliencyConfig> for api::HsmResiliencyConfig {
             ops: config.storage_ops,
         });
 
-        let lock = Box::new(ResiliencyLockAdapter {
+        let lock = Arc::new(ResiliencyLockAdapter {
             ctx: config.ctx,
             ops: config.lock_ops,
         });

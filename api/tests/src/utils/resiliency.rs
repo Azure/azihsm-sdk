@@ -33,14 +33,29 @@ use std::io::Read;
 use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::atomic::AtomicU32;
 use std::sync::atomic::Ordering;
 
 use azihsm_api::*;
 use azihsm_crypto::*;
+#[cfg(feature = "res-test")]
+use azihsm_res_test_dev::DdiOp;
 use fs2::FileExt;
+use parking_lot::Mutex;
 
-use crate::utils::partition::use_tpm;
+use crate::utils::partition::*;
+
+/// Returns the BK3-related DDI op used by `init_part` / `restore_partition`:
+/// `GetSealedBk3` on the TPM path, `InitBk3` on the Caller path.
+#[cfg(feature = "res-test")]
+pub(crate) fn bk3_op() -> DdiOp {
+    if use_tpm() {
+        DdiOp::GetSealedBk3
+    } else {
+        DdiOp::InitBk3
+    }
+}
 
 /// Well-known directory name for resiliency test data.
 const RESILIENCY_DIR_NAME: &str = "azihsm_resiliency_test";
@@ -84,25 +99,54 @@ impl ResiliencyStorage for FileStorage {
     }
 }
 
-/// Cross-process [`ResiliencyLock`] backed by `fs2` file locking.
+/// Cross-process and cross-thread [`ResiliencyLock`] backed by `fs2`
+/// file locking.
 ///
-/// Uses `flock(2)` on Linux and `LockFileEx` on Windows under the hood.
-/// The lock file lives inside the shared test directory. Multiple
-/// threads and processes coordinate by blocking on an exclusive file lock.
-/// The underlying `File` is closed automatically when dropped.
+/// Opens a **new file descriptor** on each [`lock()`] call and acquires an
+/// exclusive `flock` on it.  This is critical because `flock(2)` on Linux
+/// operates per *open file description* (kernel-level fd): two threads
+/// calling `flock(LOCK_EX)` on the **same** fd see a single lock and the
+/// second call silently succeeds instead of blocking.  By opening a fresh
+/// fd each time, each caller gets its own independent lock that truly
+/// serializes both cross-thread and cross-process.
+///
+/// On Windows the underlying `LockFileEx` has the same per-handle
+/// semantics, so the same approach applies.
 struct FileLock {
-    file: fs::File,
+    /// Path to the lock file (opened anew on each [`lock()`] call).
+    path: PathBuf,
+    /// The currently-held file descriptor, if any.
+    active: Mutex<Option<fs::File>>,
+}
+
+impl FileLock {
+    fn new(path: PathBuf) -> Self {
+        Self {
+            path,
+            active: Mutex::new(None),
+        }
+    }
 }
 
 impl ResiliencyLock for FileLock {
     fn lock(&self) -> HsmResult<()> {
-        self.file
-            .lock_exclusive()
-            .map_err(|_| HsmError::InternalError)
+        let file = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&self.path)
+            .map_err(|_| HsmError::InternalError)?;
+        file.lock_exclusive().map_err(|_| HsmError::InternalError)?;
+        *self.active.lock() = Some(file);
+        Ok(())
     }
 
     fn unlock(&self) -> HsmResult<()> {
-        self.file.unlock().map_err(|_| HsmError::InternalError)
+        if let Some(file) = self.active.lock().take() {
+            file.unlock().map_err(|_| HsmError::InternalError)?;
+        }
+        Ok(())
     }
 }
 
@@ -190,13 +234,6 @@ impl Drop for ResiliencyTestCtx {
 /// pointing at the shared storage and lock file.
 pub(crate) fn make_resiliency_config_in(dir: &Path, part: &HsmPartition) -> HsmResiliencyConfig {
     let lock_path = dir.join(".lock");
-    let lock_file = fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(&lock_path)
-        .expect("Failed to open lock file");
 
     // When TPM is used, the POTA source is Tpm and no callback is needed
     // (validate_config rejects TPM + callback). When Caller is used, the
@@ -211,7 +248,7 @@ pub(crate) fn make_resiliency_config_in(dir: &Path, part: &HsmPartition) -> HsmR
         storage: Box::new(FileStorage {
             dir: dir.to_path_buf(),
         }),
-        lock: Box::new(FileLock { file: lock_file }),
+        lock: Arc::new(FileLock::new(lock_path)),
         pota_callback,
     }
 }
@@ -234,7 +271,6 @@ pub(crate) fn make_resiliency_config(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::utils::partition::*;
 
     /// Per-process counter to give every test a unique directory,
     /// avoiding interference when nextest runs tests in parallel
@@ -259,19 +295,12 @@ mod tests {
     /// [`DummyPotaCallback`] since the POTA callback is not exercised.
     fn make_unit_test_config(dir: &Path) -> HsmResiliencyConfig {
         let lock_path = dir.join(".lock");
-        let lock_file = fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(&lock_path)
-            .expect("Failed to open lock file");
 
         HsmResiliencyConfig {
             storage: Box::new(FileStorage {
                 dir: dir.to_path_buf(),
             }),
-            lock: Box::new(FileLock { file: lock_file }),
+            lock: Arc::new(FileLock::new(lock_path)),
             pota_callback: Some(Box::new(DummyPotaCallback)),
         }
     }

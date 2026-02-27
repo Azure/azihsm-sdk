@@ -150,11 +150,7 @@ fn get_pota_endorsement(
                     .pota_callback
                     .as_ref()
                     .ok_or(HsmError::InvalidArgument)?;
-                let caller_pub_key = pota_endorsement
-                    .endorsement()
-                    .map(|d| d.pub_key())
-                    .unwrap_or(&[]);
-                let data = callback.endorse(caller_pub_key)?;
+                let data = invoke_pota_callback(callback.as_ref(), pota_endorsement)?;
                 return Ok((data.signature().to_vec(), data.pub_key().to_vec()));
             }
 
@@ -179,6 +175,21 @@ fn get_pota_endorsement(
     }
 }
 
+/// Invokes a [`PotaEndorsementCallback`] to produce fresh endorsement data.
+///
+/// Passes the caller's original endorsement public key to the callback
+/// for identification.
+pub(crate) fn invoke_pota_callback(
+    callback: &dyn PotaEndorsementCallback,
+    pota_endorsement: &HsmPotaEndorsement,
+) -> HsmResult<HsmPotaEndorsementData> {
+    let caller_pub_key = pota_endorsement
+        .endorsement()
+        .map(|d| d.pub_key())
+        .unwrap_or(&[]);
+    callback.endorse(caller_pub_key)
+}
+
 /// Initializes an HSM partition with credentials and master keys.
 ///
 /// Configures the partition for use by setting up authentication credentials
@@ -195,7 +206,9 @@ fn get_pota_endorsement(
 /// * `obk_config` - Owner backup key (OBK) configuration
 /// * `pota_endorsement` - The partition owner trust anchor endorsement
 /// * `resiliency_config` - Optional resiliency configuration; when `Some`,
-///   enables retry with backoff on transient errors and invokes the `PotaEndorsementCallback` on retries
+///   enables retry with backoff on transient errors and invokes the `PotaEndorsementCallback` on retries.
+///   The caller must hold the resiliency lock before calling;
+///   this function does not acquire it internally.
 ///
 /// # Errors
 ///
@@ -219,13 +232,53 @@ pub(crate) fn init_part(
     pota_endorsement: &HsmPotaEndorsement,
     resiliency_config: Option<&HsmResiliencyConfig>,
 ) -> HsmResult<InitPartResult> {
-    // Acquire the resiliency lock for the current init attempt to prevent
-    // races with concurrent init_part / restore_partition calls. The lock
-    // is acquired per retry attempt (not across the whole retry sequence)
-    // because `#[resiliency_init_part]` wraps the function body. The RAII
-    // guard ensures the lock is released even if we return early.
-    let _lock_guard = ResiliencyLockGuard::acquire(resiliency_config)?;
+    // Derive the re-endorsement flag from the macro-injected
+    // `__prev_error`.  When the previous retry attempt failed with
+    // `EccVerifyFailed`, the device's attestation key changed (e.g.
+    // after live migration) and we need to re-sign POTA.
+    let reendorse = matches!(__prev_error, Some(HsmError::EccVerifyFailed));
+    init_part_raw(
+        dev,
+        rev,
+        creds,
+        bmk,
+        muk,
+        obk_config,
+        pota_endorsement,
+        resiliency_config,
+        reendorse,
+    )
+}
 
+/// Bare DDI partition initialization — no retry macro, no lock.
+///
+/// This is the core credential-establishment logic extracted from
+/// [`init_part`] so that callers who manage their own serialization
+/// (e.g., [`restore_partition`](crate::HsmPartition::restore_partition))
+/// can invoke it without the `#[resiliency_init_part]` retry wrapper.
+///
+/// **Callers are responsible for acquiring the resiliency / cross-process
+/// lock before calling this function.**
+///
+/// # Arguments
+///
+/// Same as [`init_part`], plus:
+///
+/// * `reendorse` — When `true` *and* the POTA source is `Caller` with
+///   resiliency enabled, the [`PotaEndorsementCallback`] is invoked to
+///   re-sign over the current device's PID public key.  Set to `true`
+///   when retrying after `EccVerifyFailed`.
+pub(crate) fn init_part_raw(
+    dev: &HsmDev,
+    rev: HsmApiRev,
+    creds: HsmCredentials,
+    bmk: Option<&[u8]>,
+    muk: Option<&[u8]>,
+    obk_config: &HsmOwnerBackupKeyConfig,
+    pota_endorsement: &HsmPotaEndorsement,
+    resiliency_config: Option<&HsmResiliencyConfig>,
+    reendorse: bool,
+) -> HsmResult<InitPartResult> {
     let mobk = match obk_config.key_source() {
         HsmOwnerBackupKeySource::Caller => {
             // Caller provided the OBK
@@ -241,10 +294,6 @@ pub(crate) fn init_part(
     };
 
     // Compute POTA endorsement based on source.
-    // When the previous attempt failed with EccVerifyFailed, the device's
-    // attestation key changed (e.g. after live migration). Re-endorse
-    // over the new PID public key via the PotaEndorsementCallback.
-    let reendorse = matches!(__prev_error, Some(HsmError::EccVerifyFailed));
     let (pota_signature, pota_public_key) =
         get_pota_endorsement(dev, rev, pota_endorsement, resiliency_config, reendorse)?;
     let pota_endorsement = HsmPotaEndorsementData::new(&pota_signature, &pota_public_key);
@@ -262,12 +311,20 @@ pub(crate) fn init_part(
         .encrypt_establish_credential(creds.id, creds.pin, nonce)
         .map_hsm_err(HsmError::InternalError)?;
 
-    // Resolve BMK from resiliency storage when the caller did not provide
-    // a cached key. MUK is not cached in storage during init — it is
-    // persisted later when the unwrapping key is fetched during a session
-    // operation.
-    let resolved_bmk = resolve_cached_bmk(bmk, resiliency_config)?;
-    let resolved_muk = muk.unwrap_or_default();
+    // Resolve BMK and MUK from resiliency storage when the caller did
+    // not provide cached values. BMK is persisted by
+    // `try_establish_credential`; MUK is persisted by
+    // `generate_key_pair` (RSA unwrapping key generation).
+    let resolved_bmk = resolve_cached_key(
+        bmk,
+        resiliency_config,
+        crate::resiliency::AZIHSM_STORAGE_BMK,
+    )?;
+    let resolved_muk = resolve_cached_key(
+        muk,
+        resiliency_config,
+        crate::resiliency::AZIHSM_STORAGE_MUK,
+    )?;
 
     let bmk = try_establish_credential(
         dev,
@@ -275,7 +332,7 @@ pub(crate) fn init_part(
         &ecreds,
         &pub_key,
         &resolved_bmk,
-        resolved_muk,
+        &resolved_muk,
         &mobk,
         &pota_endorsement,
         resiliency_config,
@@ -288,53 +345,43 @@ pub(crate) fn init_part(
     })
 }
 
-/// Resolves the cached BMK value for credential establishment.
+/// Resolves a cached key value (BMK or MUK) for credential establishment.
 ///
-/// When the caller provides a cached BMK, it is returned directly.
-/// When the caller passes `None` and resiliency is enabled, the BMK is
-/// read from resiliency storage (where it was persisted by a previous
-/// successful `establish_credential`).
-///
-/// MUK is intentionally **not** resolved from storage here. The MUK is
-/// only persisted when the unwrapping key is fetched during a session
-/// operation (mirroring Martichoras's `try_get_unwrapping_key`), which
-/// is outside the scope of `init_part`.
+/// When the caller provides a cached value, it is returned directly.
+/// When the caller passes `None` and resiliency is enabled, the value is
+/// read from resiliency storage using the given `storage_key`.
 ///
 /// Returns an owned `Vec<u8>` so the caller does not need to manage
 /// borrow lifetimes for storage-backed data.
-fn resolve_cached_bmk(
-    bmk: Option<&[u8]>,
+fn resolve_cached_key(
+    cached: Option<&[u8]>,
     resiliency_config: Option<&HsmResiliencyConfig>,
+    storage_key: &str,
 ) -> HsmResult<Vec<u8>> {
-    let bmk = match (bmk, resiliency_config) {
-        (Some(b), _) => b.to_vec(),
-        (None, Some(cfg)) => match cfg.storage.read(crate::resiliency::AZIHSM_STORAGE_BMK) {
+    let value = match (cached, resiliency_config) {
+        (Some(v), _) => v.to_vec(),
+        (None, Some(cfg)) => match cfg.storage.read(storage_key) {
             Ok(value) => value,
             Err(HsmError::NotFound) => Vec::new(),
             Err(e) => return Err(e),
         },
         (None, None) => Vec::new(),
     };
-    Ok(bmk)
+    Ok(value)
 }
 
 /// Tries to establish credentials, retrying once with empty BMK/MUK on
 /// `MaskedKeyDecodeFailed` when resiliency is enabled.
 ///
 /// When the device returns `MaskedKeyDecodeFailed` it means the cached
-/// BMK on disk is stale (e.g. after a migration).  This helper mirrors
-/// the Martichoras behaviour:
+/// BMK/MUK on disk are stale (e.g. after a migration).
 ///
 /// 1. Try `establish_credential` with the caller-supplied BMK/MUK.
-/// 2. On `MaskedKeyDecodeFailed` **and** resiliency is enabled, clear the
-///    stale BMK from resiliency storage and retry with empty BMK/MUK.
+/// 2. On `MaskedKeyDecodeFailed` and resiliency is enabled, clear
+///    both the stale BMK and MUK from resiliency storage and retry with
+///    empty BMK and MUK.
 /// 3. If resiliency is not enabled, the error is returned as-is.
 /// 4. On success, persist the new BMK to resiliency storage.
-///
-/// MUK is not cleared from storage here because it is not persisted
-/// during `init_part`. MUK persistence is handled by a separate
-/// session operation (equivalent to Martichoras's
-/// `try_get_unwrapping_key`).
 ///
 /// All other errors are returned immediately.
 fn try_establish_credential(
@@ -355,11 +402,12 @@ fn try_establish_credential(
         (Err(HsmError::MaskedKeyDecodeFailed), Some(cfg)) => {
             tracing::warn!(
                 "MaskedKeyDecodeFailed during establish_credential, \
-                 indicating cached BMK is stale. Clearing BMK from storage \
-                 and retrying with empty bmk and muk."
+                 indicating cached BMK/MUK are stale. Clearing both from \
+                 storage and retrying with empty bmk and muk."
             );
 
             cfg.storage.clear(crate::resiliency::AZIHSM_STORAGE_BMK)?;
+            cfg.storage.clear(crate::resiliency::AZIHSM_STORAGE_MUK)?;
 
             establish_credential(dev, rev, ecreds, pub_key, &[], &[], mobk, pota_endorsement)
         }
