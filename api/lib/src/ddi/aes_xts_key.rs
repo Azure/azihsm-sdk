@@ -120,8 +120,8 @@ pub(crate) fn aes_xts_unwrap_key(
     let key_id2 = ddi::HsmKeyIdGuard::new(&unwrap_key_session, handle2);
 
     // Ensure the pair is operational as XTS with a minimal one-block precheck.
-    // This catches invalid pairings (for example identical halves) that can pass
-    // metadata checks but fail at first real cryptographic use.
+    // This catches pairings that are unusable by the device/backend at first
+    // real cryptographic use, even when metadata checks pass.
     validate_xts_pair_operability(&unwrap_key_session, handle1, handle2)?;
 
     // Build combined AES-XTS key properties.
@@ -335,9 +335,15 @@ fn validate_xts_props_pair(key1_props: &HsmKeyProps, key2_props: &HsmKeyProps) -
 /// - Keep this check as lightweight as possible for hot paths.
 /// - Use a single one-block XTS encrypt call (`16` bytes, `DUL=16`, zero tweak),
 ///   which is the smallest valid XTS operation and sufficient to detect unusable pairs.
+/// - This helper does not compare key material directly; any identical-halves
+///   rejection is enforced by backend/device XTS key validation surfaced here.
 ///
-/// Any cryptographic precheck failure is normalized to `InvalidKeyProps` so callers
-/// fail early during unwrap/unmask rather than returning a handle that fails later.
+/// Error mapping policy:
+/// - Local handle-shape validation failures return `InvalidKeyProps`.
+/// - Device/transport execution failures return `DdiCmdFailure`.
+///
+/// This keeps pair-validation errors explicit while preserving retry/recovery
+/// signals for operational failures.
 fn validate_xts_pair_operability(
     session: &HsmSession,
     handle1: HsmKeyHandle,
@@ -368,7 +374,23 @@ fn validate_xts_pair_operability(
                 &mut output,
                 &mut is_fips_approved,
             )
-            .map_hsm_err(HsmError::InvalidKeyProps)
+            .map_err(|err| match err {
+                // This precheck is specifically used during unwrap/unmask admission to reject
+                // unusable XTS key pairs early. In this context, these statuses indicate
+                // key/blob problems and should surface as InvalidKeyProps.
+                DdiError::DdiStatus(
+                    DdiStatus::InvalidKeyType
+                    | DdiStatus::KeyNotFound
+                    | DdiStatus::InvalidPermissions
+                    | DdiStatus::KeyStructuralValidationFailed
+                    | DdiStatus::AesEncryptFailed
+                    | DdiStatus::AesDecryptFailed,
+                )
+                | DdiError::InvalidParameter => HsmError::InvalidKeyProps,
+
+                // Preserve operational/transport failures so higher layers can apply retry/resiliency.
+                _ => HsmError::DdiCmdFailure,
+            })
         })
         .map(|_| ())
 }

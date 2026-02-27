@@ -2225,8 +2225,8 @@ TEST_F(azihsm_aes_xts, unwrap_xts_blob_mismatched_half_properties_is_rejected)
     });
 }
 
-// XTS requires two independent halves (data/cipher key separation); rejecting
-// identical halves at unwrap prevents creating a handle that may later fail at use time.
+// Contract in this SDK: identical halves are rejected at unwrap admission.
+// The unwrap precheck surfaces backend/device XTS-key validation for this case.
 TEST_F(azihsm_aes_xts, unwrap_xts_blob_identical_halves_is_rejected)
 {
     part_list_.for_each_session([&](azihsm_handle session) {
