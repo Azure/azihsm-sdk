@@ -127,6 +127,12 @@ fn run_gcm_roundtrip(session: &HsmSession, iv: &[u8], aad: Option<Vec<u8>>, plai
     assert_eq!(decrypted, plaintext);
 }
 
+fn test_iv() -> [u8; AES_GCM_IV_SIZE] {
+    let mut iv = [0u8; AES_GCM_IV_SIZE];
+    getrandom::getrandom(&mut iv).unwrap();
+    iv
+}
+
 // Key generation tests
 #[session_test]
 fn test_aes_gcm_key_gen_256_session(session: HsmSession) {
@@ -143,14 +149,14 @@ fn test_aes_gcm_key_gen_256_non_session(session: HsmSession) {
 // Basic encryption/decryption tests
 #[session_test]
 fn test_gcm_crypt_basic(session: HsmSession) {
-    let iv = [0x00u8; AES_GCM_IV_SIZE];
+    let iv = test_iv();
     let plaintext = vec![0x11u8; 16];
     run_gcm_roundtrip(&session, &iv, None, &plaintext);
 }
 
 #[session_test]
 fn test_gcm_crypt_with_aad(session: HsmSession) {
-    let iv = [0x10u8; AES_GCM_IV_SIZE];
+    let iv = test_iv();
     let plaintext = vec![0x22u8; 32];
     let aad = Some(b"additional authenticated data".to_vec());
     run_gcm_roundtrip(&session, &iv, aad, &plaintext);
@@ -158,14 +164,14 @@ fn test_gcm_crypt_with_aad(session: HsmSession) {
 
 #[session_test]
 fn test_gcm_crypt_large_data(session: HsmSession) {
-    let iv = [0x20u8; AES_GCM_IV_SIZE];
+    let iv = test_iv();
     let plaintext = vec![0xAAu8; 4096];
     run_gcm_roundtrip(&session, &iv, None, &plaintext);
 }
 
 #[session_test]
 fn test_gcm_crypt_large_data_with_aad(session: HsmSession) {
-    let iv = [0x30u8; AES_GCM_IV_SIZE];
+    let iv = test_iv();
     let plaintext = vec![0xBBu8; 4096];
     let aad = Some(vec![0xCCu8; 256]);
     run_gcm_roundtrip(&session, &iv, aad, &plaintext);
@@ -173,7 +179,7 @@ fn test_gcm_crypt_large_data_with_aad(session: HsmSession) {
 
 #[session_test]
 fn test_gcm_crypt_small_data(session: HsmSession) {
-    let iv = [0x40u8; AES_GCM_IV_SIZE];
+    let iv = test_iv();
     let plaintext = vec![0x55u8; 1];
     run_gcm_roundtrip(&session, &iv, None, &plaintext);
 }
@@ -283,7 +289,7 @@ fn gcm_decrypt_streaming(
 
 #[session_test]
 fn test_gcm_streaming_encrypt(session: HsmSession) {
-    let iv = [0xAAu8; AES_GCM_IV_SIZE];
+    let iv = test_iv();
     let plaintext = vec![0xBBu8; 2048];
 
     let key = aes_gcm_generate_streaming_key(&session);
@@ -301,7 +307,7 @@ fn test_gcm_streaming_encrypt(session: HsmSession) {
 
 #[session_test]
 fn test_gcm_streaming_decrypt(session: HsmSession) {
-    let iv = [0xCCu8; AES_GCM_IV_SIZE];
+    let iv = test_iv();
     let plaintext = vec![0xDDu8; 2048];
 
     let key = aes_gcm_generate_streaming_key(&session);
@@ -317,7 +323,7 @@ fn test_gcm_streaming_decrypt(session: HsmSession) {
 
 #[session_test]
 fn test_gcm_streaming_roundtrip(session: HsmSession) {
-    let iv = [0xEEu8; AES_GCM_IV_SIZE];
+    let iv = test_iv();
     let plaintext = vec![0xFFu8; 3000];
 
     let key = aes_gcm_generate_streaming_key(&session);
@@ -332,7 +338,7 @@ fn test_gcm_streaming_roundtrip(session: HsmSession) {
 
 #[session_test]
 fn test_gcm_streaming_with_aad(session: HsmSession) {
-    let iv = [0x11u8; AES_GCM_IV_SIZE];
+    let iv = test_iv();
     let plaintext = vec![0x22u8; 1500];
     let aad = Some(b"streaming aad test".to_vec());
 
@@ -348,7 +354,7 @@ fn test_gcm_streaming_with_aad(session: HsmSession) {
 
 #[session_test]
 fn test_gcm_streaming_empty_plaintext_roundtrip(session: HsmSession) {
-    let iv = [0x33u8; AES_GCM_IV_SIZE];
+    let iv = test_iv();
     let plaintext: Vec<u8> = vec![];
 
     let key = aes_gcm_generate_streaming_key(&session);
@@ -365,7 +371,7 @@ fn test_gcm_streaming_empty_plaintext_roundtrip(session: HsmSession) {
 
 #[session_test]
 fn test_gcm_streaming_wrong_tag_fails(session: HsmSession) {
-    let iv = [0x44u8; AES_GCM_IV_SIZE];
+    let iv = test_iv();
     let plaintext = vec![0x55u8; 1024];
 
     let key = aes_gcm_generate_streaming_key(&session);
@@ -383,7 +389,7 @@ fn test_gcm_streaming_wrong_tag_fails(session: HsmSession) {
 
 #[session_test]
 fn test_gcm_streaming_decrypt_8k(session: HsmSession) {
-    let iv = [0x88u8; AES_GCM_IV_SIZE];
+    let iv = test_iv();
     let plaintext = vec![0x99u8; 8192]; // 8KB plaintext
 
     let key = aes_gcm_generate_streaming_key(&session);
@@ -399,7 +405,7 @@ fn test_gcm_streaming_decrypt_8k(session: HsmSession) {
 
 #[session_test]
 fn test_gcm_empty_plaintext_roundtrip(session: HsmSession) {
-    let iv = [0x55u8; AES_GCM_IV_SIZE];
+    let iv = test_iv();
     let plaintext: Vec<u8> = vec![];
 
     let key = aes_gcm_generate_key(&session);
@@ -414,7 +420,7 @@ fn test_gcm_empty_plaintext_roundtrip(session: HsmSession) {
 
 #[session_test]
 fn test_gcm_wrong_tag_fails(session: HsmSession) {
-    let iv = [0x66u8; AES_GCM_IV_SIZE];
+    let iv = test_iv();
     let plaintext = vec![0x77u8; 128];
 
     let key = aes_gcm_generate_key(&session);
@@ -429,7 +435,7 @@ fn test_gcm_wrong_tag_fails(session: HsmSession) {
 
 #[session_test]
 fn test_gcm_wrong_aad_fails(session: HsmSession) {
-    let iv = [0x77u8; AES_GCM_IV_SIZE];
+    let iv = test_iv();
     let plaintext = vec![0x88u8; 256];
     let aad = Some(b"aad-value".to_vec());
     let wrong_aad = Some(b"aad-wrong".to_vec());
@@ -444,7 +450,7 @@ fn test_gcm_wrong_aad_fails(session: HsmSession) {
 
 #[session_test]
 fn test_gcm_tampered_ciphertext_fails(session: HsmSession) {
-    let iv = [0x01u8; AES_GCM_IV_SIZE];
+    let iv = test_iv();
     let plaintext = vec![0xABu8; 256];
     let aad = Some(b"aad".to_vec());
 
@@ -460,7 +466,7 @@ fn test_gcm_tampered_ciphertext_fails(session: HsmSession) {
 
 #[session_test]
 fn test_gcm_wrong_iv_fails(session: HsmSession) {
-    let iv = [0x02u8; AES_GCM_IV_SIZE];
+    let iv = test_iv();
     let plaintext = vec![0xCDu8; 128];
 
     let key = aes_gcm_generate_key(&session);
@@ -475,7 +481,7 @@ fn test_gcm_wrong_iv_fails(session: HsmSession) {
 
 #[session_test]
 fn test_gcm_wrong_key_fails(session: HsmSession) {
-    let iv = [0x03u8; AES_GCM_IV_SIZE];
+    let iv = test_iv();
     let plaintext = vec![0xEEu8; 64];
 
     let key1 = aes_gcm_generate_key(&session);
@@ -489,7 +495,7 @@ fn test_gcm_wrong_key_fails(session: HsmSession) {
 
 #[session_test]
 fn test_gcm_truncated_ciphertext_fails(session: HsmSession) {
-    let iv = [0x04u8; AES_GCM_IV_SIZE];
+    let iv = test_iv();
     let plaintext = vec![0x11u8; 128];
 
     let key = aes_gcm_generate_key(&session);
@@ -503,7 +509,7 @@ fn test_gcm_truncated_ciphertext_fails(session: HsmSession) {
 
 #[session_test]
 fn test_gcm_missing_tag_fails(session: HsmSession) {
-    let iv = [0x05u8; AES_GCM_IV_SIZE];
+    let iv = test_iv();
     let plaintext = vec![0x22u8; 64];
 
     let key = aes_gcm_generate_key(&session);
@@ -520,7 +526,7 @@ fn test_gcm_missing_tag_fails(session: HsmSession) {
 
 #[session_test]
 fn test_gcm_missing_aad_fails(session: HsmSession) {
-    let iv = [0x06u8; AES_GCM_IV_SIZE];
+    let iv = test_iv();
     let plaintext = vec![0x33u8; 128];
     let aad = Some(b"expected aad".to_vec());
 
@@ -533,7 +539,7 @@ fn test_gcm_missing_aad_fails(session: HsmSession) {
 
 #[session_test]
 fn test_gcm_unexpected_aad_fails(session: HsmSession) {
-    let iv = [0x07u8; AES_GCM_IV_SIZE];
+    let iv = test_iv();
     let plaintext = vec![0x44u8; 128];
 
     let key = aes_gcm_generate_key(&session);
@@ -547,7 +553,7 @@ fn test_gcm_unexpected_aad_fails(session: HsmSession) {
 
 #[session_test]
 fn test_gcm_same_inputs_same_ciphertext_and_tag(session: HsmSession) {
-    let iv = [0x08u8; AES_GCM_IV_SIZE];
+    let iv = test_iv();
     let plaintext = vec![0x55u8; 128];
     let aad = Some(b"aad".to_vec());
 
@@ -580,7 +586,7 @@ fn test_gcm_different_ivs_produce_different_ciphertext(session: HsmSession) {
 
 #[session_test]
 fn test_gcm_same_plaintext_iv_different_aad_changes_tag(session: HsmSession) {
-    let iv = [0x0Au8; AES_GCM_IV_SIZE];
+    let iv = test_iv();
     let plaintext = vec![0x77u8; 128];
     let key = aes_gcm_generate_key(&session);
 
@@ -592,7 +598,7 @@ fn test_gcm_same_plaintext_iv_different_aad_changes_tag(session: HsmSession) {
 }
 #[session_test]
 fn test_gcm_single_shot_size_sweep(session: HsmSession) {
-    let iv = [0x0Bu8; AES_GCM_IV_SIZE];
+    let iv = test_iv();
     let key = aes_gcm_generate_key(&session);
 
     for size in [0usize, 1, 15, 16, 31, 32, 127, 128, 1024, 4096] {
@@ -605,7 +611,7 @@ fn test_gcm_single_shot_size_sweep(session: HsmSession) {
 
 #[session_test]
 fn test_gcm_streaming_size_and_chunk_sweep(session: HsmSession) {
-    let iv = [0x0Cu8; AES_GCM_IV_SIZE];
+    let iv = test_iv();
     let key = aes_gcm_generate_streaming_key(&session);
 
     for &size in &[0usize, 1, 31, 32, 127, 128, 1024] {
@@ -627,7 +633,7 @@ fn test_gcm_streaming_size_and_chunk_sweep(session: HsmSession) {
 }
 #[session_test]
 fn test_gcm_streaming_matches_single_shot(session: HsmSession) {
-    let iv = [0x0Du8; AES_GCM_IV_SIZE];
+    let iv = test_iv();
     let plaintext = vec![0x99u8; 2048];
 
     let key = aes_gcm_generate_streaming_key(&session);
@@ -640,7 +646,7 @@ fn test_gcm_streaming_matches_single_shot(session: HsmSession) {
 }
 #[session_test]
 fn test_gcm_streaming_finish_drains_buffer(session: HsmSession) {
-    let iv = [0x0Eu8; AES_GCM_IV_SIZE];
+    let iv = test_iv();
     let plaintext = vec![0x11u8; 128];
 
     let key = aes_gcm_generate_streaming_key(&session);
@@ -658,7 +664,7 @@ fn test_gcm_streaming_finish_drains_buffer(session: HsmSession) {
 
 #[session_test]
 fn test_gcm_streaming_update_after_finish_is_noop(session: HsmSession) {
-    let iv = [0x0Fu8; AES_GCM_IV_SIZE];
+    let iv = test_iv();
     let plaintext = vec![0x22u8; 64];
 
     let key = aes_gcm_generate_streaming_key(&session);
@@ -680,7 +686,7 @@ fn test_gcm_streaming_update_after_finish_is_noop(session: HsmSession) {
 
 #[session_test]
 fn test_gcm_encrypt_buffer_too_small_fails(session: HsmSession) {
-    let iv = [0xA1u8; AES_GCM_IV_SIZE];
+    let iv = test_iv();
     let plaintext = vec![0xB2u8; 64];
     let key = aes_gcm_generate_key(&session);
 
@@ -695,7 +701,7 @@ fn test_gcm_encrypt_buffer_too_small_fails(session: HsmSession) {
 
 #[session_test]
 fn test_gcm_decrypt_buffer_too_small_fails(session: HsmSession) {
-    let iv = [0xA2u8; AES_GCM_IV_SIZE];
+    let iv = test_iv();
     let plaintext = vec![0xC3u8; 64];
     let key = aes_gcm_generate_key(&session);
 
@@ -712,7 +718,7 @@ fn test_gcm_decrypt_buffer_too_small_fails(session: HsmSession) {
 
 #[session_test]
 fn test_gcm_encrypt_overwrites_previous_tag(session: HsmSession) {
-    let iv = [0xA3u8; AES_GCM_IV_SIZE];
+    let iv = test_iv();
     let key = aes_gcm_generate_key(&session);
 
     let mut algo = new_gcm_encrypt_algo(&iv, None);
@@ -738,7 +744,7 @@ fn test_gcm_encrypt_overwrites_previous_tag(session: HsmSession) {
 
 #[session_test]
 fn test_gcm_streaming_exceeds_max_buffer_fails(session: HsmSession) {
-    let iv = [0xA4u8; AES_GCM_IV_SIZE];
+    let iv = test_iv();
     let key = aes_gcm_generate_streaming_key(&session);
 
     let enc_algo = new_gcm_encrypt_algo(&iv, None);
@@ -759,7 +765,7 @@ fn test_gcm_streaming_exceeds_max_buffer_fails(session: HsmSession) {
 
 #[session_test]
 fn test_gcm_streaming_update_size_query_returns_zero(session: HsmSession) {
-    let iv = [0xA5u8; AES_GCM_IV_SIZE];
+    let iv = test_iv();
     let key = aes_gcm_generate_streaming_key(&session);
 
     let enc_algo = new_gcm_encrypt_algo(&iv, None);
@@ -773,7 +779,7 @@ fn test_gcm_streaming_update_size_query_returns_zero(session: HsmSession) {
 
 #[session_test]
 fn test_gcm_streaming_finish_size_query(session: HsmSession) {
-    let iv = [0xA6u8; AES_GCM_IV_SIZE];
+    let iv = test_iv();
     let plaintext = vec![0x55u8; 256];
     let key = aes_gcm_generate_streaming_key(&session);
 
@@ -792,7 +798,7 @@ fn test_gcm_streaming_finish_size_query(session: HsmSession) {
 
 #[session_test]
 fn test_gcm_streaming_decrypt_buffer_too_small_fails(session: HsmSession) {
-    let iv = [0xA7u8; AES_GCM_IV_SIZE];
+    let iv = test_iv();
     let plaintext = vec![0x66u8; 128];
     let key = aes_gcm_generate_streaming_key(&session);
 
@@ -811,7 +817,7 @@ fn test_gcm_streaming_decrypt_buffer_too_small_fails(session: HsmSession) {
 
 #[session_test]
 fn test_gcm_aad_only_message_roundtrip(session: HsmSession) {
-    let iv = [0xA8u8; AES_GCM_IV_SIZE];
+    let iv = test_iv();
     let plaintext: Vec<u8> = vec![];
     let aad = Some(b"aad-only-message".to_vec());
 
@@ -827,7 +833,7 @@ fn test_gcm_aad_only_message_roundtrip(session: HsmSession) {
 
 #[session_test]
 fn test_gcm_streaming_decrypt_init_without_tag_fails(session: HsmSession) {
-    let iv = [0xA9u8; AES_GCM_IV_SIZE];
+    let iv = test_iv();
     let key = aes_gcm_generate_streaming_key(&session);
 
     let algo = new_gcm_encrypt_algo(&iv, None);
@@ -838,7 +844,7 @@ fn test_gcm_streaming_decrypt_init_without_tag_fails(session: HsmSession) {
 
 #[session_test]
 fn test_gcm_streaming_wrong_key_fails(session: HsmSession) {
-    let iv = [0xB0u8; AES_GCM_IV_SIZE];
+    let iv = test_iv();
     let plaintext = vec![0xAAu8; 256];
 
     let key1 = aes_gcm_generate_streaming_key(&session);
@@ -853,7 +859,7 @@ fn test_gcm_streaming_wrong_key_fails(session: HsmSession) {
 
 #[session_test]
 fn test_gcm_streaming_wrong_iv_fails(session: HsmSession) {
-    let iv = [0xB1u8; AES_GCM_IV_SIZE];
+    let iv = test_iv();
     let plaintext = vec![0xBBu8; 256];
 
     let key = aes_gcm_generate_streaming_key(&session);
@@ -869,7 +875,7 @@ fn test_gcm_streaming_wrong_iv_fails(session: HsmSession) {
 
 #[session_test]
 fn test_gcm_streaming_tampered_ciphertext_fails(session: HsmSession) {
-    let iv = [0xB2u8; AES_GCM_IV_SIZE];
+    let iv = test_iv();
     let plaintext = vec![0xCCu8; 256];
 
     let key = aes_gcm_generate_streaming_key(&session);
@@ -884,7 +890,7 @@ fn test_gcm_streaming_tampered_ciphertext_fails(session: HsmSession) {
 
 #[session_test]
 fn test_gcm_decrypt_without_tag_in_algo_fails(session: HsmSession) {
-    let iv = [0xB3u8; AES_GCM_IV_SIZE];
+    let iv = test_iv();
     let plaintext = vec![0xDDu8; 64];
     let key = aes_gcm_generate_key(&session);
 
@@ -898,7 +904,7 @@ fn test_gcm_decrypt_without_tag_in_algo_fails(session: HsmSession) {
 
 #[session_test]
 fn test_gcm_streaming_decrypt_finish_is_single_use(session: HsmSession) {
-    let iv = [0xB4u8; AES_GCM_IV_SIZE];
+    let iv = test_iv();
     let plaintext = vec![0xEEu8; 128];
 
     let key = aes_gcm_generate_streaming_key(&session);
@@ -922,7 +928,7 @@ fn test_gcm_streaming_decrypt_finish_is_single_use(session: HsmSession) {
 
 #[session_test]
 fn test_gcm_streaming_aad_only_roundtrip(session: HsmSession) {
-    let iv = [0xB5u8; AES_GCM_IV_SIZE];
+    let iv = test_iv();
     let plaintext: Vec<u8> = vec![];
     let aad = Some(b"streaming aad".to_vec());
 
@@ -938,7 +944,7 @@ fn test_gcm_streaming_aad_only_roundtrip(session: HsmSession) {
 
 #[session_test]
 fn test_gcm_streaming_same_inputs_deterministic(session: HsmSession) {
-    let iv = [0xB6u8; AES_GCM_IV_SIZE];
+    let iv = test_iv();
     let plaintext = vec![0x99u8; 512];
 
     let key = aes_gcm_generate_streaming_key(&session);
@@ -956,7 +962,7 @@ fn test_gcm_streaming_same_inputs_deterministic(session: HsmSession) {
 
 #[session_test]
 fn test_gcm_streaming_wrong_aad_fails(session: HsmSession) {
-    let iv = [0xC1u8; AES_GCM_IV_SIZE];
+    let iv = test_iv();
     let plaintext = vec![0x22u8; 256];
 
     let key = aes_gcm_generate_streaming_key(&session);
@@ -971,7 +977,7 @@ fn test_gcm_streaming_wrong_aad_fails(session: HsmSession) {
 
 #[session_test]
 fn test_gcm_streaming_truncated_ciphertext_fails(session: HsmSession) {
-    let iv = [0xC2u8; AES_GCM_IV_SIZE];
+    let iv = test_iv();
     let plaintext = vec![0x33u8; 256];
 
     let key = aes_gcm_generate_streaming_key(&session);
@@ -987,7 +993,7 @@ fn test_gcm_streaming_truncated_ciphertext_fails(session: HsmSession) {
 
 #[session_test]
 fn test_gcm_single_shot_decrypt_without_tag_in_algo_fails(session: HsmSession) {
-    let iv = [0xC6u8; AES_GCM_IV_SIZE];
+    let iv = test_iv();
     let key = aes_gcm_generate_key(&session);
 
     let mut algo = new_gcm_encrypt_algo(&iv, None); // no tag set
