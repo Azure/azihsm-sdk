@@ -82,6 +82,84 @@ jobs:
         echo "One or more tests failed."
         exit 1
   
+  provider_integration:
+
+    runs-on: ubuntu-24.04
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install apt packages
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          build-essential cmake pkg-config libssl-dev libbsd-dev
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Restore Cargo cache
+      uses: actions/cache/restore@v5
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+        key: ${{ runner.os }}-cargo-${{ env.CACHE_KEY_ID }}
+        fail-on-cache-miss: false
+
+    - name: Cache OpenSSL 3.0.3
+      id: cache-openssl
+      uses: actions/cache@v5
+      with:
+        path: /opt/openssl-3.0.3
+        key: openssl-3.0.3-linux-x64
+
+    - name: Build OpenSSL 3.0.3
+      if: steps.cache-openssl.outputs.cache-hit != 'true'
+      run: |
+        curl -fsSL "https://github.com/openssl/openssl/releases/download/openssl-3.0.3/openssl-3.0.3.tar.gz" \
+          | tar xz -C /tmp
+        cd /tmp/openssl-3.0.3
+        ./Configure --prefix=/opt/openssl-3.0.3 --libdir=lib \
+          no-shared -fvisibility=hidden -fPIC
+        make -j"$(nproc)"
+        sudo make install_sw
+
+    - name: Build azihsm with static OpenSSL
+      env:
+        OPENSSL_DIR: /opt/openssl-3.0.3
+        OPENSSL_STATIC: "1"
+      run: |
+        cargo build -p azihsm_api_native --features mock
+        cargo build -p azihsm_ossl_provider --features mock
+
+    - name: Install provider
+      run: |
+        sudo mkdir -p /usr/lib/ossl-modules /var/lib/azihsm
+        sudo chmod 777 /var/lib/azihsm
+        sudo cp target/debug/azihsm_provider.so /usr/lib/ossl-modules/
+        sudo cp target/debug/libazihsm_api_native.so /usr/lib/
+        sudo ldconfig
+
+    - name: Smoke test provider
+      run: |
+        /opt/openssl-3.0.3/bin/openssl genpkey \
+          -provider-path /usr/lib/ossl-modules \
+          -provider default -provider azihsm_provider \
+          -propquery "?provider=azihsm" \
+          -algorithm EC -pkeyopt group:P-384 \
+          -outform DER -out /dev/null -text
+
+    - name: Run integration tests
+      env:
+        OPENSSL_BIN: /opt/openssl-3.0.3/bin/openssl
+        OPENSSL_LIB: ""
+        PROVIDER_PATH: /usr/lib/ossl-modules
+        PROPQUERY: "?provider=azihsm"
+      run: cargo test -p integration-tests
+
   build_windows:
 
     runs-on: windows-latest

@@ -27,6 +27,7 @@ mod coverage;
 mod coverage_report;
 mod fmt;
 mod install;
+mod integration_tests;
 mod nextest;
 mod nextest_report;
 mod precheck;
@@ -69,6 +70,7 @@ enum Commands {
     Coverage(coverage::Coverage),
     CoverageReport(coverage_report::CoverageReport),
     Fmt(fmt::Fmt),
+    IntegrationTests(integration_tests::IntegrationTest),
     Nextest(nextest::Nextest),
     NextestReport(nextest_report::NextestReport),
     Setup(setup::Setup),
@@ -108,6 +110,7 @@ fn try_main() -> anyhow::Result<()> {
         Commands::Coverage(task) => task.run(ctx),
         Commands::CoverageReport(task) => task.run(ctx),
         Commands::Fmt(task) => task.run(ctx),
+        Commands::IntegrationTests(task) => task.run(ctx),
         Commands::Precheck(task) => task.run(ctx),
         Commands::Nextest(task) => task.run(ctx),
         Commands::NextestReport(task) => task.run(ctx),
