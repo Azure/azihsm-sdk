@@ -468,6 +468,15 @@ static void parse_provider_config(
             config->api_revision_major = (uint16_t)major;
             config->api_revision_minor = (uint16_t)minor;
         }
+        else
+        {
+            ERR_raise_data(
+                ERR_LIB_PROV,
+                PROV_R_INVALID_CONFIG_DATA,
+                "invalid api-revision format '%s', expected 'major.minor' (e.g. '1.0')",
+                api_revision
+            );
+        }
     }
 }
 
@@ -523,7 +532,17 @@ OSSL_STATUS OSSL_provider_init(
     /* Validate API revision is within supported range */
     if (!azihsm_api_revision_is_valid(&ctx->config))
     {
-        ERR_raise(ERR_LIB_PROV, PROV_R_INVALID_CONFIG_DATA);
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            PROV_R_INVALID_CONFIG_DATA,
+            "API revision %u.%u is outside supported range %u.%u - %u.%u",
+            ctx->config.api_revision_major,
+            ctx->config.api_revision_minor,
+            AZIHSM_API_REVISION_MIN_MAJOR,
+            AZIHSM_API_REVISION_MIN_MINOR,
+            AZIHSM_API_REVISION_MAX_MAJOR,
+            AZIHSM_API_REVISION_MAX_MINOR
+        );
         CRYPTO_THREAD_lock_free(ctx->unwrapping_key.lock);
         OSSL_LIB_CTX_free(ctx->libctx);
         OPENSSL_free(ctx);

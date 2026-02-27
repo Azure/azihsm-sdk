@@ -221,12 +221,14 @@ static azihsm_status load_credentials_from_file(const char *path, uint8_t *outpu
 
     if (path == NULL || output == NULL)
     {
+        ERR_raise_data(ERR_LIB_PROV, ERR_R_PASSED_NULL_PARAMETER, "credentials path is NULL");
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
 
     file = fopen(path, "rb");
     if (file == NULL)
     {
+        ERR_raise_data(ERR_LIB_PROV, ERR_R_INIT_FAIL, "failed to open credentials file '%s'", path);
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
 
@@ -235,6 +237,13 @@ static azihsm_status load_credentials_from_file(const char *path, uint8_t *outpu
     /* Verify file contains exactly the expected number of bytes */
     if (bytes_read != AZIHSM_CREDENTIALS_SIZE || fgetc(file) != EOF)
     {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            ERR_R_INIT_FAIL,
+            "credentials file '%s' must contain exactly %d bytes",
+            path,
+            AZIHSM_CREDENTIALS_SIZE
+        );
         OPENSSL_cleanse(output, AZIHSM_CREDENTIALS_SIZE);
         fclose(file);
         return AZIHSM_STATUS_INTERNAL_ERROR;
