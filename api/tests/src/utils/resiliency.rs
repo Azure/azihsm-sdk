@@ -196,12 +196,22 @@ pub(crate) fn make_resiliency_config_in(dir: &Path, part: &HsmPartition) -> HsmR
         .open(&lock_path)
         .expect("Failed to open lock file");
 
+    // When TPM is used, the POTA source is Tpm and no callback is needed
+    // (validate_config rejects TPM + callback). When Caller is used, the
+    // callback re-signs the POTA endorsement on retry.
+    let use_tpm = std::env::var("AZIHSM_USE_TPM").is_ok();
+    let pota_callback: Option<Box<dyn PotaEndorsementCallback>> = if use_tpm {
+        None
+    } else {
+        Some(Box::new(TestPotaCallback { part: part.clone() }))
+    };
+
     HsmResiliencyConfig {
         storage: Box::new(FileStorage {
             dir: dir.to_path_buf(),
         }),
         lock: Box::new(FileLock { file: lock_file }),
-        pota_callback: Some(Box::new(TestPotaCallback { part: part.clone() })),
+        pota_callback,
     }
 }
 
@@ -509,8 +519,9 @@ mod tests {
         config.lock.lock().unwrap();
         config.lock.unlock().unwrap();
 
-        // POTA callback should be present
-        assert!(config.pota_callback.is_some());
+        // POTA callback should match the source: present for Caller, absent for TPM.
+        let use_tpm = std::env::var("AZIHSM_USE_TPM").is_ok();
+        assert_eq!(config.pota_callback.is_some(), !use_tpm);
     }
 
     #[test]

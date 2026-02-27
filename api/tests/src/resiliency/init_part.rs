@@ -10,7 +10,9 @@
 //! Unlike `open_partition` (which retries unconditionally),
 //! `init_part` only retries when a resiliency config is provided.
 //!
-//! The DDI operations exercised during init (caller-source path) are:
+//! The DDI operations exercised during init depend on the source:
+//!
+//! **Caller-source path** (default, `AZIHSM_USE_TPM` not set):
 //!
 //! | Step | DDI op                          |
 //! |------|---------------------------------|
@@ -20,13 +22,31 @@
 //! | 4    | `GetEstablishCredEncryptionKey` |
 //! | 5    | `EstablishCredential`           |
 //!
+//! **TPM-source path** (`AZIHSM_USE_TPM` set):
+//!
+//! | Step | DDI op                          |
+//! |------|---------------------------------|
+//! | 1    | `GetSealedBk3` + TPM unseal     |
+//! | 2    | `GetCertChainInfo` + TPM sign    |
+//! | 3    | `GetCertificate` + TPM sign     |
+//! | 4    | `GetEstablishCredEncryptionKey` |
+//! | 5    | `EstablishCredential`           |
+//!
 //! On retries with caller-source POTA, the `PotaEndorsementCallback`
 //! is invoked to re-endorse over the current device's PID public key.
 //!
+//! Tests targeting `InitBk3` and POTA callback are caller-only and
+//! are skipped when `AZIHSM_USE_TPM` is set. Tests targeting
+//! `GetSealedBk3` are TPM-only and are skipped when it is not set.
+//! Tests targeting `GetEstablishCredEncryptionKey` and
+//! `EstablishCredential` run on both paths.
+//!
 //! # Adding a new retryable error
 //!
-//! Append the new [`FaultError`] variant to [`RETRYABLE_ERRORS`] and all
-//! loop-based tests will automatically cover it.
+//! Append the new [`FaultError`] variant to [`INIT_RETRYABLE_ERRORS`]
+//! (and to [`super::ALL_RETRYABLE_ERRORS`] if it's new globally).
+//! All loop-based tests will automatically cover it. To add a
+//! non-retryable error, append to [`super::NON_RETRYABLE_ERRORS`].
 
 use azihsm_res_test_dev::*;
 
@@ -34,8 +54,12 @@ use crate::utils::partition::*;
 use crate::utils::resiliency::*;
 use crate::*;
 
-/// All error codes that trigger `init_part` retry when resiliency is enabled.
-const RETRYABLE_ERRORS: &[FaultError] = &[
+/// All error codes that trigger `init_part` retry when resiliency is
+/// enabled. Includes transient IO-abort conditions (retried by all
+/// resiliency-enabled paths) and credential/provisioning failures
+/// specific to `init_part`.
+const INIT_RETRYABLE_ERRORS: &[FaultError] = &[
+    // IO-abort errors (shared with open_partition, open_session, etc.)
     FaultError::Driver(DriverError::IoAborted),
     FaultError::Driver(DriverError::IoAbortInProgress),
     FaultError::Status(DdiStatus::CredentialsNotEstablished),
@@ -43,6 +67,57 @@ const RETRYABLE_ERRORS: &[FaultError] = &[
     FaultError::Status(DdiStatus::PartitionNotProvisioned),
     FaultError::Status(DdiStatus::EccVerifyFailed),
 ];
+
+/// Returns `true` when `error` is one of the init-retryable error codes.
+fn is_init_retryable(error: &FaultError) -> bool {
+    INIT_RETRYABLE_ERRORS.iter().any(|e| e == error)
+}
+
+/// Returns `true` when a single fault of `error` on `EstablishCredential`
+/// is recoverable.
+///
+/// This is broader than [`is_init_retryable`] because
+/// `try_establish_credential` has an internal one-shot retry for
+/// `MaskedKeyDecodeFailed` (clears the stale BMK and re-attempts with
+/// empty BMK/MUK). A single `MaskedKeyDecodeFailed` fault is therefore
+/// consumed by that internal recovery before the outer retry loop ever
+/// sees it.
+fn is_establish_credential_single_fault_recoverable(error: &FaultError) -> bool {
+    is_init_retryable(error) || *error == FaultError::Status(DdiStatus::MaskedKeyDecodeFailed)
+}
+
+/// Expected number of times `target_op` is invoked in a fault-injection
+/// test.
+///
+/// * Retryable errors: `min(injected_faults + 1, MAX_RETRIES + 1)`.
+///   The `+1` accounts for the successful call after all faults are
+///   consumed, capped by the maximum number of attempts.
+/// * `MaskedKeyDecodeFailed` on `EstablishCredential`: at most 2,
+///   from `try_establish_credential`'s internal one-shot retry.
+/// * All other non-retryable errors: 1 (single failed call).
+fn expected_op_calls(
+    error: &FaultError,
+    target_op: DdiOp,
+    is_retryable: impl Fn(&FaultError) -> bool,
+    injected_faults: u32,
+) -> u32 {
+    if is_retryable(error) {
+        (injected_faults + 1).min(MAX_RETRIES + 1)
+    } else if target_op == DdiOp::EstablishCredential
+        && *error == FaultError::Status(DdiStatus::MaskedKeyDecodeFailed)
+    {
+        // try_establish_credential retries once internally on
+        // MaskedKeyDecodeFailed, consuming at most 2 calls.
+        2.min(injected_faults + 1)
+    } else {
+        1
+    }
+}
+
+/// Returns `true` when the `AZIHSM_USE_TPM` environment variable is set.
+fn use_tpm() -> bool {
+    std::env::var("AZIHSM_USE_TPM").is_ok()
+}
 
 /// Helper: open the first partition and reset it for a fresh init.
 fn open_and_reset() -> HsmPartition {
@@ -69,31 +144,49 @@ fn init_with_resiliency(part: &HsmPartition) -> HsmResult<()> {
     )
 }
 
-/// `init` recovers from a single transient fault on `InitBk3`,
-/// for every retryable error code.
+/// `init` recovers from a single transient fault on `InitBk3` for
+/// retryable error codes, and fails immediately for non-retryable ones.
+/// Caller-source only — skipped when `AZIHSM_USE_TPM` is set.
 #[api_test]
 fn test_init_recovers_from_init_bk3_single_fault() {
-    for error in RETRYABLE_ERRORS {
+    if use_tpm() {
+        return;
+    }
+    for error in &super::all_test_errors() {
         let part = open_and_reset();
+        let before = op_call_count(DdiOp::InitBk3);
 
         inject_fault(FaultRule::fail_nth(DdiOp::InitBk3, 1, *error));
 
         let result = init_with_resiliency(&part);
+        let after = op_call_count(DdiOp::InitBk3);
         clear_faults();
 
-        assert!(
-            result.is_ok(),
-            "init should recover after a single {error:?} on InitBk3, got: {result:?}"
+        super::assert_retryable_outcome(
+            &result,
+            error,
+            is_init_retryable,
+            "single fault on InitBk3",
+        );
+
+        let expected = expected_op_calls(error, DdiOp::InitBk3, is_init_retryable, 1);
+        assert_eq!(
+            after - before,
+            expected,
+            "single fault on InitBk3: expected {expected} calls for {error:?}, got {}",
+            after - before,
         );
     }
 }
 
 /// `init` recovers from a single transient fault on
-/// `GetEstablishCredEncryptionKey`, for every retryable error code.
+/// `GetEstablishCredEncryptionKey` for retryable error codes, and fails
+/// immediately for non-retryable ones.
 #[api_test]
 fn test_init_recovers_from_get_establish_cred_key_single_fault() {
-    for error in RETRYABLE_ERRORS {
+    for error in &super::all_test_errors() {
         let part = open_and_reset();
+        let before = op_call_count(DdiOp::GetEstablishCredEncryptionKey);
 
         inject_fault(FaultRule::fail_nth(
             DdiOp::GetEstablishCredEncryptionKey,
@@ -102,60 +195,114 @@ fn test_init_recovers_from_get_establish_cred_key_single_fault() {
         ));
 
         let result = init_with_resiliency(&part);
+        let after = op_call_count(DdiOp::GetEstablishCredEncryptionKey);
         clear_faults();
 
-        assert!(
-            result.is_ok(),
-            "init should recover after a single {error:?} on GetEstablishCredEncryptionKey, got: {result:?}"
+        super::assert_retryable_outcome(
+            &result,
+            error,
+            is_init_retryable,
+            "single fault on GetEstablishCredEncryptionKey",
+        );
+
+        let expected = expected_op_calls(
+            error,
+            DdiOp::GetEstablishCredEncryptionKey,
+            is_init_retryable,
+            1,
+        );
+        assert_eq!(
+            after - before,
+            expected,
+            "single fault on GetEstablishCredEncryptionKey: expected {expected} calls for \
+             {error:?}, got {}",
+            after - before,
         );
     }
 }
 
 /// `init` recovers from a single transient fault on
-/// `EstablishCredential`, for every retryable error code.
+/// `EstablishCredential` for retryable error codes, and fails
+/// immediately for non-retryable ones.
+///
+/// Note: `MaskedKeyDecodeFailed` is also recoverable here because
+/// `try_establish_credential` handles it internally (clears stale BMK
+/// and retries once), so a single fault is consumed before the outer
+/// retry loop.
 #[api_test]
 fn test_init_recovers_from_establish_credential_single_fault() {
-    for error in RETRYABLE_ERRORS {
+    for error in &super::all_test_errors() {
         let part = open_and_reset();
+        let before = op_call_count(DdiOp::EstablishCredential);
 
         inject_fault(FaultRule::fail_nth(DdiOp::EstablishCredential, 1, *error));
 
         let result = init_with_resiliency(&part);
+        let after = op_call_count(DdiOp::EstablishCredential);
         clear_faults();
 
-        assert!(
-            result.is_ok(),
-            "init should recover after a single {error:?} on EstablishCredential, got: {result:?}"
+        super::assert_retryable_outcome(
+            &result,
+            error,
+            is_establish_credential_single_fault_recoverable,
+            "single fault on EstablishCredential",
+        );
+
+        let expected = expected_op_calls(
+            error,
+            DdiOp::EstablishCredential,
+            is_establish_credential_single_fault_recoverable,
+            1,
+        );
+        assert_eq!(
+            after - before,
+            expected,
+            "single fault on EstablishCredential: expected {expected} calls for {error:?}, got {}",
+            after - before,
         );
     }
 }
 
 /// `init` recovers on the last retry when `InitBk3` fails for the
-/// first `MAX_RETRIES` attempts, for every retryable error code.
+/// first `MAX_RETRIES` attempts (retryable errors), or fails immediately
+/// on the first attempt (non-retryable errors).
+/// Caller-source only — skipped when `AZIHSM_USE_TPM` is set.
 #[api_test]
 fn test_init_recovers_from_init_bk3_last_retry() {
-    for error in RETRYABLE_ERRORS {
+    if use_tpm() {
+        return;
+    }
+    for error in &super::all_test_errors() {
         let part = open_and_reset();
+        let before = op_call_count(DdiOp::InitBk3);
 
         inject_fault(FaultRule::fail_next(DdiOp::InitBk3, MAX_RETRIES, *error));
 
         let result = init_with_resiliency(&part);
+        let after = op_call_count(DdiOp::InitBk3);
         clear_faults();
 
-        assert!(
-            result.is_ok(),
-            "init should recover on the last retry after {MAX_RETRIES} consecutive {error:?} on InitBk3, got: {result:?}"
+        super::assert_retryable_outcome(&result, error, is_init_retryable, "last retry on InitBk3");
+
+        let expected = expected_op_calls(error, DdiOp::InitBk3, is_init_retryable, MAX_RETRIES);
+        assert_eq!(
+            after - before,
+            expected,
+            "last retry on InitBk3: expected {expected} calls for {error:?}, got {}",
+            after - before,
         );
     }
 }
 
 /// `init` recovers on the last retry when
 /// `GetEstablishCredEncryptionKey` fails for the first `MAX_RETRIES`
-/// attempts, for every retryable error code.
+/// attempts (retryable errors), or fails immediately on the first
+/// attempt (non-retryable errors).
 #[api_test]
 fn test_init_recovers_from_get_establish_cred_key_last_retry() {
-    for error in RETRYABLE_ERRORS {
+    for error in &super::all_test_errors() {
         let part = open_and_reset();
+        let before = op_call_count(DdiOp::GetEstablishCredEncryptionKey);
 
         inject_fault(FaultRule::fail_next(
             DdiOp::GetEstablishCredEncryptionKey,
@@ -164,21 +311,40 @@ fn test_init_recovers_from_get_establish_cred_key_last_retry() {
         ));
 
         let result = init_with_resiliency(&part);
+        let after = op_call_count(DdiOp::GetEstablishCredEncryptionKey);
         clear_faults();
 
-        assert!(
-            result.is_ok(),
-            "init should recover on the last retry after {MAX_RETRIES} consecutive {error:?} on GetEstablishCredEncryptionKey, got: {result:?}"
+        super::assert_retryable_outcome(
+            &result,
+            error,
+            is_init_retryable,
+            "last retry on GetEstablishCredEncryptionKey",
+        );
+
+        let expected = expected_op_calls(
+            error,
+            DdiOp::GetEstablishCredEncryptionKey,
+            is_init_retryable,
+            MAX_RETRIES,
+        );
+        assert_eq!(
+            after - before,
+            expected,
+            "last retry on GetEstablishCredEncryptionKey: expected {expected} calls for \
+             {error:?}, got {}",
+            after - before,
         );
     }
 }
 
 /// `init` recovers on the last retry when `EstablishCredential` fails
-/// for the first `MAX_RETRIES` attempts, for every retryable error code.
+/// for the first `MAX_RETRIES` attempts (retryable errors), or fails
+/// immediately on the first attempt (non-retryable errors).
 #[api_test]
 fn test_init_recovers_from_establish_credential_last_retry() {
-    for error in RETRYABLE_ERRORS {
+    for error in &super::all_test_errors() {
         let part = open_and_reset();
+        let before = op_call_count(DdiOp::EstablishCredential);
 
         inject_fault(FaultRule::fail_next(
             DdiOp::EstablishCredential,
@@ -187,11 +353,27 @@ fn test_init_recovers_from_establish_credential_last_retry() {
         ));
 
         let result = init_with_resiliency(&part);
+        let after = op_call_count(DdiOp::EstablishCredential);
         clear_faults();
 
-        assert!(
-            result.is_ok(),
-            "init should recover on the last retry after {MAX_RETRIES} consecutive {error:?} on EstablishCredential, got: {result:?}"
+        super::assert_retryable_outcome(
+            &result,
+            error,
+            is_init_retryable,
+            "last retry on EstablishCredential",
+        );
+
+        let expected = expected_op_calls(
+            error,
+            DdiOp::EstablishCredential,
+            is_init_retryable,
+            MAX_RETRIES,
+        );
+        assert_eq!(
+            after - before,
+            expected,
+            "last retry on EstablishCredential: expected {expected} calls for {error:?}, got {}",
+            after - before,
         );
     }
 }
@@ -204,10 +386,15 @@ fn test_init_recovers_from_establish_credential_last_retry() {
 /// `init` fails when `InitBk3` returns a retryable error for
 /// `MAX_RETRIES + 1` consecutive calls (initial attempt + all retries),
 /// for every retryable error code.
+/// Caller-source only — skipped when `AZIHSM_USE_TPM` is set.
 #[api_test]
 fn test_init_fails_from_init_bk3_exhausted() {
-    for error in RETRYABLE_ERRORS {
+    if use_tpm() {
+        return;
+    }
+    for error in INIT_RETRYABLE_ERRORS {
         let part = open_and_reset();
+        let before = op_call_count(DdiOp::InitBk3);
 
         inject_fault(FaultRule::fail_next(
             DdiOp::InitBk3,
@@ -216,11 +403,20 @@ fn test_init_fails_from_init_bk3_exhausted() {
         ));
 
         let result = init_with_resiliency(&part);
+        let after = op_call_count(DdiOp::InitBk3);
         clear_faults();
 
         assert!(
             result.is_err(),
             "init should fail after exhausting all {MAX_RETRIES} retries with {error:?} on InitBk3, got: {result:?}"
+        );
+
+        let expected = expected_op_calls(error, DdiOp::InitBk3, is_init_retryable, MAX_RETRIES + 1);
+        assert_eq!(
+            after - before,
+            expected,
+            "exhaustion on InitBk3: expected {expected} calls for {error:?}, got {}",
+            after - before,
         );
     }
 }
@@ -230,8 +426,9 @@ fn test_init_fails_from_init_bk3_exhausted() {
 /// error code.
 #[api_test]
 fn test_init_fails_from_get_establish_cred_key_exhausted() {
-    for error in RETRYABLE_ERRORS {
+    for error in INIT_RETRYABLE_ERRORS {
         let part = open_and_reset();
+        let before = op_call_count(DdiOp::GetEstablishCredEncryptionKey);
 
         inject_fault(FaultRule::fail_next(
             DdiOp::GetEstablishCredEncryptionKey,
@@ -240,11 +437,26 @@ fn test_init_fails_from_get_establish_cred_key_exhausted() {
         ));
 
         let result = init_with_resiliency(&part);
+        let after = op_call_count(DdiOp::GetEstablishCredEncryptionKey);
         clear_faults();
 
         assert!(
             result.is_err(),
             "init should fail after exhausting all {MAX_RETRIES} retries with {error:?} on GetEstablishCredEncryptionKey, got: {result:?}"
+        );
+
+        let expected = expected_op_calls(
+            error,
+            DdiOp::GetEstablishCredEncryptionKey,
+            is_init_retryable,
+            MAX_RETRIES + 1,
+        );
+        assert_eq!(
+            after - before,
+            expected,
+            "exhaustion on GetEstablishCredEncryptionKey: expected {expected} calls for \
+             {error:?}, got {}",
+            after - before,
         );
     }
 }
@@ -253,8 +465,9 @@ fn test_init_fails_from_get_establish_cred_key_exhausted() {
 /// `MAX_RETRIES + 1` consecutive calls, for every retryable error code.
 #[api_test]
 fn test_init_fails_from_establish_credential_exhausted() {
-    for error in RETRYABLE_ERRORS {
+    for error in INIT_RETRYABLE_ERRORS {
         let part = open_and_reset();
+        let before = op_call_count(DdiOp::EstablishCredential);
 
         inject_fault(FaultRule::fail_next(
             DdiOp::EstablishCredential,
@@ -263,11 +476,25 @@ fn test_init_fails_from_establish_credential_exhausted() {
         ));
 
         let result = init_with_resiliency(&part);
+        let after = op_call_count(DdiOp::EstablishCredential);
         clear_faults();
 
         assert!(
             result.is_err(),
             "init should fail after exhausting all {MAX_RETRIES} retries with {error:?} on EstablishCredential, got: {result:?}"
+        );
+
+        let expected = expected_op_calls(
+            error,
+            DdiOp::EstablishCredential,
+            is_init_retryable,
+            MAX_RETRIES + 1,
+        );
+        assert_eq!(
+            after - before,
+            expected,
+            "exhaustion on EstablishCredential: expected {expected} calls for {error:?}, got {}",
+            after - before,
         );
     }
 }
@@ -286,8 +513,13 @@ fn test_init_fails_from_establish_credential_exhausted() {
 ///
 /// After recovery, `GetCertChainInfo` should have been called more times
 /// than in a single-attempt init (the callback invoked it on the retry).
+/// Caller-source only — skipped when `AZIHSM_USE_TPM` is set
+/// (TPM source has no `PotaEndorsementCallback`).
 #[api_test]
 fn test_init_pota_callback_invoked_on_retry() {
+    if use_tpm() {
+        return;
+    }
     let part = open_and_reset();
 
     // Force a retry: fail the 1st EstablishCredential.
@@ -334,6 +566,7 @@ fn test_init_pota_callback_invoked_on_retry() {
 #[api_test]
 fn test_init_no_retry_without_resiliency() {
     let part = open_and_reset();
+    let before = op_call_count(DdiOp::EstablishCredential);
 
     inject_fault(FaultRule::fail_nth(
         DdiOp::EstablishCredential,
@@ -346,12 +579,21 @@ fn test_init_no_retry_without_resiliency() {
 
     // No resiliency config → no retry.
     let result = part.init(creds, None, None, obk_info, pota_endorsement, None);
+    let after = op_call_count(DdiOp::EstablishCredential);
     clear_faults();
 
     assert_eq!(
         result.unwrap_err(),
         HsmError::IoAborted,
         "init without resiliency should propagate IoAborted immediately"
+    );
+
+    // Without resiliency, only 1 call to EstablishCredential (the failed one).
+    assert_eq!(
+        after - before,
+        1,
+        "no-retry: expected 1 EstablishCredential call, got {}",
+        after - before,
     );
 }
 
@@ -370,18 +612,32 @@ fn test_init_no_retry_without_resiliency() {
 
 /// A device reset during `InitBk3` triggers a retry that recovers
 /// successfully.
+/// Caller-source only — skipped when `AZIHSM_USE_TPM` is set.
 #[api_test]
 fn test_init_recovers_after_reset_on_init_bk3() {
+    if use_tpm() {
+        return;
+    }
     let part = open_and_reset();
+    let before = op_call_count(DdiOp::InitBk3);
 
     inject_fault(FaultRule::reset_on_next(DdiOp::InitBk3, 1));
 
     let result = init_with_resiliency(&part);
+    let after = op_call_count(DdiOp::InitBk3);
     clear_faults();
 
     assert!(
         result.is_ok(),
         "init should recover after a device reset on InitBk3, got: {result:?}"
+    );
+
+    // 1 failed call (reset) + 1 successful retry = 2 calls.
+    assert_eq!(
+        after - before,
+        2,
+        "reset on InitBk3: expected 2 calls, got {}",
+        after - before,
     );
 }
 
@@ -390,6 +646,7 @@ fn test_init_recovers_after_reset_on_init_bk3() {
 #[api_test]
 fn test_init_recovers_after_reset_on_get_establish_cred_key() {
     let part = open_and_reset();
+    let before = op_call_count(DdiOp::GetEstablishCredEncryptionKey);
 
     inject_fault(FaultRule::reset_on_next(
         DdiOp::GetEstablishCredEncryptionKey,
@@ -397,11 +654,20 @@ fn test_init_recovers_after_reset_on_get_establish_cred_key() {
     ));
 
     let result = init_with_resiliency(&part);
+    let after = op_call_count(DdiOp::GetEstablishCredEncryptionKey);
     clear_faults();
 
     assert!(
         result.is_ok(),
         "init should recover after a device reset on GetEstablishCredEncryptionKey, got: {result:?}"
+    );
+
+    // 1 failed call (reset) + 1 successful retry = 2 calls.
+    assert_eq!(
+        after - before,
+        2,
+        "reset on GetEstablishCredEncryptionKey: expected 2 calls, got {}",
+        after - before,
     );
 }
 
@@ -410,15 +676,25 @@ fn test_init_recovers_after_reset_on_get_establish_cred_key() {
 #[api_test]
 fn test_init_recovers_after_reset_on_establish_credential() {
     let part = open_and_reset();
+    let before = op_call_count(DdiOp::EstablishCredential);
 
     inject_fault(FaultRule::reset_on_next(DdiOp::EstablishCredential, 1));
 
     let result = init_with_resiliency(&part);
+    let after = op_call_count(DdiOp::EstablishCredential);
     clear_faults();
 
     assert!(
         result.is_ok(),
         "init should recover after a device reset on EstablishCredential, got: {result:?}"
+    );
+
+    // 1 failed call (reset) + 1 successful retry = 2 calls.
+    assert_eq!(
+        after - before,
+        2,
+        "reset on EstablishCredential: expected 2 calls, got {}",
+        after - before,
     );
 }
 
@@ -427,6 +703,7 @@ fn test_init_recovers_after_reset_on_establish_credential() {
 #[api_test]
 fn test_init_fails_after_reset_without_resiliency() {
     let part = open_and_reset();
+    let before = op_call_count(DdiOp::EstablishCredential);
 
     inject_fault(FaultRule::reset_on_next(DdiOp::EstablishCredential, 1));
 
@@ -435,11 +712,20 @@ fn test_init_fails_after_reset_without_resiliency() {
 
     // No resiliency config → no retry.
     let result = part.init(creds, None, None, obk_info, pota_endorsement, None);
+    let after = op_call_count(DdiOp::EstablishCredential);
     clear_faults();
 
     assert!(
         result.is_err(),
         "init without resiliency should fail after device reset, got: {result:?}"
+    );
+
+    // Without resiliency, only 1 call to EstablishCredential (the failed one).
+    assert_eq!(
+        after - before,
+        1,
+        "no-retry reset: expected 1 EstablishCredential call, got {}",
+        after - before,
     );
 }
 
@@ -448,16 +734,26 @@ fn test_init_fails_after_reset_without_resiliency() {
 #[api_test]
 fn test_init_recovers_after_consecutive_reset() {
     let part = open_and_reset();
+    let before = op_call_count(DdiOp::EstablishCredential);
 
     // Trigger device reset on the next 2 EstablishCredential calls.
     inject_fault(FaultRule::reset_on_next(DdiOp::EstablishCredential, 2));
 
     let result = init_with_resiliency(&part);
+    let after = op_call_count(DdiOp::EstablishCredential);
     clear_faults();
 
     assert!(
         result.is_ok(),
         "init should recover after 2 consecutive device resets on EstablishCredential, got: {result:?}"
+    );
+
+    // 2 failed calls (resets) + 1 successful retry = 3 calls.
+    assert_eq!(
+        after - before,
+        3,
+        "consecutive resets on EstablishCredential: expected 3 calls, got {}",
+        after - before,
     );
 }
 
@@ -465,8 +761,12 @@ fn test_init_recovers_after_consecutive_reset() {
 /// endorsement callback is invoked to re-sign over the (potentially
 /// new) device's PID public key. Verify by checking that
 /// `GetCertChainInfo` was called by the callback on the retry.
+/// Caller-source only — skipped when `AZIHSM_USE_TPM` is set.
 #[api_test]
 fn test_init_pota_reendorsement_after_reset() {
+    if use_tpm() {
+        return;
+    }
     let part = open_and_reset();
 
     // Trigger device reset on the 1st EstablishCredential — forces a retry.
@@ -491,5 +791,166 @@ fn test_init_pota_reendorsement_after_reset() {
         cert_chain_after > cert_chain_before,
         "GetCertChainInfo should have been called by the POTA callback after device reset \
          (before: {cert_chain_before}, after: {cert_chain_after})"
+    );
+}
+
+// TPM code path tests
+//
+// These tests exercise the TPM-source init path where the BK3 key
+// is retrieved via `GetSealedBk3` + TPM unseal (instead of `InitBk3`)
+// and the POTA endorsement is signed by the TPM (instead of caller-
+// provided data).
+//
+// All tests in this section are gated behind `AZIHSM_USE_TPM` and
+// are skipped when that environment variable is not set.
+
+/// `init` (TPM path) recovers from a single transient fault on
+/// `GetSealedBk3` for retryable error codes, and fails immediately for
+/// non-retryable ones.
+/// TPM-source only — skipped when `AZIHSM_USE_TPM` is not set.
+#[api_test]
+fn test_init_tpm_recovers_from_get_sealed_bk3_single_fault() {
+    if !use_tpm() {
+        return;
+    }
+    for error in &super::all_test_errors() {
+        let part = open_and_reset();
+        let before = op_call_count(DdiOp::GetSealedBk3);
+
+        inject_fault(FaultRule::fail_nth(DdiOp::GetSealedBk3, 1, *error));
+
+        let result = init_with_resiliency(&part);
+        let after = op_call_count(DdiOp::GetSealedBk3);
+        clear_faults();
+
+        super::assert_retryable_outcome(
+            &result,
+            error,
+            is_init_retryable,
+            "single fault on GetSealedBk3 (TPM path)",
+        );
+
+        let expected = expected_op_calls(error, DdiOp::GetSealedBk3, is_init_retryable, 1);
+        assert_eq!(
+            after - before,
+            expected,
+            "single fault on GetSealedBk3 (TPM): expected {expected} calls for {error:?}, got {}",
+            after - before,
+        );
+    }
+}
+
+/// `init` (TPM path) recovers on the last retry when `GetSealedBk3`
+/// fails for the first `MAX_RETRIES` attempts (retryable errors), or
+/// fails immediately on the first attempt (non-retryable errors).
+/// TPM-source only — skipped when `AZIHSM_USE_TPM` is not set.
+#[api_test]
+fn test_init_tpm_recovers_from_get_sealed_bk3_last_retry() {
+    if !use_tpm() {
+        return;
+    }
+    for error in &super::all_test_errors() {
+        let part = open_and_reset();
+        let before = op_call_count(DdiOp::GetSealedBk3);
+
+        inject_fault(FaultRule::fail_next(
+            DdiOp::GetSealedBk3,
+            MAX_RETRIES,
+            *error,
+        ));
+
+        let result = init_with_resiliency(&part);
+        let after = op_call_count(DdiOp::GetSealedBk3);
+        clear_faults();
+
+        super::assert_retryable_outcome(
+            &result,
+            error,
+            is_init_retryable,
+            "last retry on GetSealedBk3 (TPM path)",
+        );
+
+        let expected =
+            expected_op_calls(error, DdiOp::GetSealedBk3, is_init_retryable, MAX_RETRIES);
+        assert_eq!(
+            after - before,
+            expected,
+            "last retry on GetSealedBk3 (TPM): expected {expected} calls for {error:?}, got {}",
+            after - before,
+        );
+    }
+}
+
+/// `init` (TPM path) fails when `GetSealedBk3` returns a retryable error
+/// for `MAX_RETRIES + 1` consecutive calls, for every retryable error
+/// code.
+/// TPM-source only — skipped when `AZIHSM_USE_TPM` is not set.
+#[api_test]
+fn test_init_tpm_fails_from_get_sealed_bk3_exhausted() {
+    if !use_tpm() {
+        return;
+    }
+    for error in INIT_RETRYABLE_ERRORS {
+        let part = open_and_reset();
+        let before = op_call_count(DdiOp::GetSealedBk3);
+
+        inject_fault(FaultRule::fail_next(
+            DdiOp::GetSealedBk3,
+            MAX_RETRIES + 1,
+            *error,
+        ));
+
+        let result = init_with_resiliency(&part);
+        let after = op_call_count(DdiOp::GetSealedBk3);
+        clear_faults();
+
+        assert!(
+            result.is_err(),
+            "init should fail after exhausting all {MAX_RETRIES} retries with {error:?} on GetSealedBk3, got: {result:?}"
+        );
+
+        let expected = expected_op_calls(
+            error,
+            DdiOp::GetSealedBk3,
+            is_init_retryable,
+            MAX_RETRIES + 1,
+        );
+        assert_eq!(
+            after - before,
+            expected,
+            "exhaustion on GetSealedBk3 (TPM): expected {expected} calls for {error:?}, got {}",
+            after - before,
+        );
+    }
+}
+
+/// A device reset during `GetSealedBk3` (TPM path) triggers a retry
+/// that recovers successfully.
+/// TPM-source only — skipped when `AZIHSM_USE_TPM` is not set.
+#[api_test]
+fn test_init_tpm_recovers_after_reset_on_get_sealed_bk3() {
+    if !use_tpm() {
+        return;
+    }
+    let part = open_and_reset();
+    let before = op_call_count(DdiOp::GetSealedBk3);
+
+    inject_fault(FaultRule::reset_on_next(DdiOp::GetSealedBk3, 1));
+
+    let result = init_with_resiliency(&part);
+    let after = op_call_count(DdiOp::GetSealedBk3);
+    clear_faults();
+
+    assert!(
+        result.is_ok(),
+        "init should recover after a device reset on GetSealedBk3 (TPM path), got: {result:?}"
+    );
+
+    // 1 failed call (reset) + 1 successful retry = 2 calls.
+    assert_eq!(
+        after - before,
+        2,
+        "reset on GetSealedBk3 (TPM): expected 2 calls, got {}",
+        after - before,
     );
 }

@@ -44,6 +44,12 @@ fn test_init_reset_init_with_resiliency() {
         )
         .expect("First init with resiliency config failed");
 
+        let bmk_first = part.bmk_vec();
+        assert!(
+            !bmk_first.is_empty(),
+            "BMK should be non-empty after first init"
+        );
+
         // Second cycle: reset → re-init with resiliency
         // The resiliency storage now has a cached BMK from the first init.
         part.reset().expect("Second reset failed");
@@ -60,5 +66,11 @@ fn test_init_reset_init_with_resiliency() {
             Some(resiliency_config2),
         )
         .expect("Second init with resiliency config failed");
+
+        let bmk_second = part.bmk_vec();
+        assert_eq!(
+            bmk_first, bmk_second,
+            "BMK from second init (restored from resiliency storage) must match the first"
+        );
     }
 }

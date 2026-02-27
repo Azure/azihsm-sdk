@@ -29,12 +29,11 @@ cfg_if::cfg_if! {
 }
 
 /// Well-known storage key for the backup masking key.
-#[allow(dead_code)]
 pub(crate) const AZIHSM_STORAGE_BMK: &str = "azihsm_bmk";
 
 /// Well-known storage key for the masked unwrapping key.
 ///
-/// Not yet written during `init_part`. MUK is persisted when the
+/// [TODO] Not yet written during `init_part`. MUK is persisted when the
 /// unwrapping key is fetched during a session operation.
 /// This constant is reserved for that future implementation.
 #[allow(dead_code)]

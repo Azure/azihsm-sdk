@@ -7,6 +7,16 @@ use super::*;
 use crate::utils::partition::*;
 use crate::utils::resiliency::*;
 
+/// No-op POTA callback for validation tests that need `pota_callback = Some`
+/// without exercising the actual signing flow.
+struct DummyPotaCallback;
+
+impl PotaEndorsementCallback for DummyPotaCallback {
+    fn endorse(&self, _pub_key: &[u8]) -> HsmResult<HsmPotaEndorsementData> {
+        Ok(HsmPotaEndorsementData::new(&[0u8; 96], &[0u8; 120]))
+    }
+}
+
 /// Builds a valid caller-source OBK config using the test OBK.
 fn make_valid_obk() -> HsmOwnerBackupKeyConfig {
     HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Caller, Some(&TEST_OBK))
@@ -493,8 +503,12 @@ fn test_init_with_resiliency_tpm_pota_with_callback_fails() {
         let pota_endorsement = HsmPotaEndorsement::new(HsmPotaEndorsementSource::Tpm, None);
 
         // TPM source + callback provided → should fail with InvalidArgument.
-        let (resiliency_config, _ctx) = make_resiliency_config(&part);
-        // resiliency_config already has pota_callback = Some(...) from make_resiliency_config
+        let (mut resiliency_config, _ctx) = make_resiliency_config(&part);
+        // Force pota_callback = Some(...) regardless of USE_TPM — this test
+        // specifically verifies that TPM + callback is rejected by validation.
+        if resiliency_config.pota_callback.is_none() {
+            resiliency_config.pota_callback = Some(Box::new(DummyPotaCallback));
+        }
 
         let result = part.init(
             creds,

@@ -51,7 +51,7 @@ pub enum FaultTrigger {
 ///
 /// Covers both low-level driver errors (e.g., `IoAborted`) and
 /// device-level status codes (e.g., `CredentialsNotEstablished`).
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FaultError {
     /// A driver-level error (maps to [`DdiError::DriverError`]).
     Driver(DriverError),

@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use azihsm_ddi::DdiDev;
 use parking_lot::RwLock;
-use retry_macro::retry_open_part;
+use resiliency_macro::resiliency_open_part;
 use tracing::*;
 
 use super::*;
@@ -302,7 +302,7 @@ impl HsmPartitionManager {
     /// - API revision retrieval fails
     /// - The underlying DDI operation fails
     /// - All retry attempts are exhausted for transient IO-abort errors
-    #[retry_open_part]
+    #[resiliency_open_part]
     #[instrument()]
     pub fn open_partition(path: &str) -> HsmResult<HsmPartition> {
         let dev = ddi::open_dev(path)?;

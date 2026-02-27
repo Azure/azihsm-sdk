@@ -27,11 +27,11 @@
 //!
 //! ```ignore
 //! // Dedicated macro for open_partition (predicate baked in)
-//! #[retry_open_part]
+//! #[resiliency_open_part]
 //! pub fn open_partition(path: &str) -> HsmResult<HsmPartition> { /* ... */ }
 //!
 //! // Dedicated macro for init_part (predicate + condition baked in)
-//! #[retry_init_part]
+//! #[resiliency_init_part]
 //! pub(crate) fn init_part(..., resiliency_config: Option<&HsmResiliencyConfig>) -> HsmResult<InitPartResult> { /* ... */ }
 //!
 //! // Generic macro with explicit predicate
@@ -95,7 +95,7 @@ pub fn retry_with_backoff(attr: TokenStream, item: TokenStream) -> TokenStream {
         .into()
 }
 
-/// Parsed attribute arguments for `#[retry_open_part(...)]`.
+/// Parsed attribute arguments for `#[resiliency_open_part(...)]`.
 ///
 /// Same optional overrides as [`RetryArgs`] but with the predicate
 /// hard-wired to `crate::resiliency::is_io_abort_error`.
@@ -132,11 +132,11 @@ struct OpenPartRetryArgs {
 /// # Example
 ///
 /// ```ignore
-/// #[retry_open_part]
+/// #[resiliency_open_part]
 /// pub fn open_partition(path: &str) -> HsmResult<HsmPartition> { /* ... */ }
 /// ```
 #[proc_macro_attribute]
-pub fn retry_open_part(attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn resiliency_open_part(attr: TokenStream, item: TokenStream) -> TokenStream {
     let item = parse_macro_input!(item as ItemFn);
 
     let args = if attr.is_empty() {
@@ -169,7 +169,7 @@ pub fn retry_open_part(attr: TokenStream, item: TokenStream) -> TokenStream {
         .into()
 }
 
-/// Parsed attribute arguments for `#[retry_init_part(...)]`.
+/// Parsed attribute arguments for `#[resiliency_init_part(...)]`.
 ///
 /// Same optional overrides as [`RetryArgs`] but with the predicate
 /// hard-wired to `crate::resiliency::is_init_retryable_error` and the
@@ -216,7 +216,7 @@ struct InitPartRetryArgs {
 /// # Example
 ///
 /// ```ignore
-/// #[retry_init_part]
+/// #[resiliency_init_part]
 /// pub(crate) fn init_part(
 ///     dev: &HsmDev,
 ///     ...,
@@ -224,7 +224,7 @@ struct InitPartRetryArgs {
 /// ) -> HsmResult<InitPartResult> { /* ... */ }
 /// ```
 #[proc_macro_attribute]
-pub fn retry_init_part(attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn resiliency_init_part(attr: TokenStream, item: TokenStream) -> TokenStream {
     let item = parse_macro_input!(item as ItemFn);
 
     let args = if attr.is_empty() {

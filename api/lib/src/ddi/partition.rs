@@ -10,7 +10,7 @@ use azihsm_cred_encrypt::DeviceCredKey;
 use azihsm_crypto as crypto;
 use azihsm_ddi_mbor::*;
 use crypto::*;
-use retry_macro::retry_init_part;
+use resiliency_macro::resiliency_init_part;
 use x509::*;
 
 use super::*;
@@ -209,7 +209,7 @@ fn get_pota_endorsement(
 /// - The DDI operation returns an error
 /// - TPM unsealing fails (when obk_config source is TPM)
 /// - OBK is missing when obk_config source is Caller
-#[retry_init_part]
+#[resiliency_init_part]
 pub(crate) fn init_part(
     dev: &HsmDev,
     rev: HsmApiRev,
@@ -223,7 +223,7 @@ pub(crate) fn init_part(
     // Acquire the resiliency lock for the current init attempt to prevent
     // races with concurrent init_part / restore_partition calls. The lock
     // is acquired per retry attempt (not across the whole retry sequence)
-    // because `#[retry_init_part]` wraps the function body. The RAII
+    // because `#[resiliency_init_part]` wraps the function body. The RAII
     // guard ensures the lock is released even if we return early.
     let _lock_guard = ResiliencyLockGuard::acquire(resiliency_config)?;
 
