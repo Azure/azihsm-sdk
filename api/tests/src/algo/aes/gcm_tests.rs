@@ -473,8 +473,7 @@ fn test_gcm_wrong_iv_fails(session: HsmSession) {
     let (ciphertext, tag) = gcm_encrypt(&key, &iv, None, &plaintext).unwrap();
 
     let mut wrong_iv = iv;
-    wrong_iv[0] ^= 0xFF;
-
+    wrong_iv[0] = wrong_iv[0].wrapping_add(1);
     let res = gcm_decrypt(&key, &wrong_iv, &tag, None, &ciphertext);
     assert!(res.is_err(), "Wrong IV must fail authentication");
 }
@@ -568,9 +567,9 @@ fn test_gcm_same_inputs_same_ciphertext_and_tag(session: HsmSession) {
 
 #[session_test]
 fn test_gcm_different_ivs_produce_different_ciphertext(session: HsmSession) {
-    let iv1 = [0x09u8; AES_GCM_IV_SIZE];
+    let iv1 = test_iv();
     let mut iv2 = iv1;
-    iv2[0] ^= 0xFF;
+    iv2[0] = iv2[0].wrapping_add(1);
 
     let plaintext = vec![0x66u8; 128];
     let key = aes_gcm_generate_key(&session);
@@ -866,7 +865,7 @@ fn test_gcm_streaming_wrong_iv_fails(session: HsmSession) {
     let (ciphertext, tag) = gcm_encrypt_streaming(&key, &iv, None, &plaintext, &[64]).unwrap();
 
     let mut wrong_iv = iv;
-    wrong_iv[0] ^= 0xFF;
+    wrong_iv[0] = wrong_iv[0].wrapping_add(1);
 
     let res = gcm_decrypt_streaming(&key, &wrong_iv, &tag, None, &ciphertext, &[64]);
 
