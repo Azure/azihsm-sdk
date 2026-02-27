@@ -5,7 +5,7 @@
 //!
 //! These tests exercise the retry-with-backoff machinery on
 //! [`HsmPartitionManager::open_partition`] by injecting transient DDI
-//! faults through the resiliency mock device.
+//! faults through the resiliency test device.
 //!
 //! Unlike `init_part` (which only retries with a resiliency config),
 //! `open_partition` retries unconditionally on IO-abort errors.

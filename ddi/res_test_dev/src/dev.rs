@@ -53,6 +53,9 @@ impl<D: DdiDev> DdiDev for DdiResTestDev<D> {
                 // Trigger device reset — wipes credentials, then let the op proceed
                 // so it fails naturally with CredentialsNotEstablished.
                 self.inner.simulate_nssr_after_lm()?;
+                // Allow time for the HSM to finish processing the
+                // NSSR internally after the IOCTL returns.
+                std::thread::sleep(std::time::Duration::from_millis(500));
             }
             None => {}
         }

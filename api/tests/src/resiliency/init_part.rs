@@ -5,7 +5,7 @@
 //!
 //! These tests exercise the retry-with-backoff machinery on
 //! [`HsmPartition::init`] by injecting transient DDI faults through
-//! the resiliency mock device.
+//! the resiliency test device.
 //!
 //! Unlike `open_partition` (which retries unconditionally),
 //! `init_part` only retries when a resiliency config is provided.
@@ -662,11 +662,13 @@ fn test_init_recovers_after_reset_on_get_establish_cred_key() {
         "init should recover after a device reset on GetEstablishCredEncryptionKey, got: {result:?}"
     );
 
-    // 1 failed call (reset) + 1 successful retry = 2 calls.
-    assert_eq!(
-        after - before,
-        2,
-        "reset on GetEstablishCredEncryptionKey: expected 2 calls, got {}",
+    // Simulator: reset wipes all state → 1 failed + 1 retry = 2 calls.
+    // Real hardware: NSSR only invalidates established credentials;
+    // GetEstablishCredEncryptionKey is a pre-credential op that may
+    // succeed despite the reset → 1 call.
+    assert!(
+        after - before >= 1,
+        "reset on GetEstablishCredEncryptionKey: expected at least 1 call, got {}",
         after - before,
     );
 }
@@ -946,11 +948,13 @@ fn test_init_tpm_recovers_after_reset_on_get_sealed_bk3() {
         "init should recover after a device reset on GetSealedBk3 (TPM path), got: {result:?}"
     );
 
-    // 1 failed call (reset) + 1 successful retry = 2 calls.
-    assert_eq!(
-        after - before,
-        2,
-        "reset on GetSealedBk3 (TPM): expected 2 calls, got {}",
+    // Simulator: reset wipes all state → 1 failed + 1 retry = 2 calls.
+    // Real hardware: NSSR only invalidates established credentials;
+    // GetSealedBk3 is a pre-credential op that may succeed despite
+    // the reset → 1 call.
+    assert!(
+        after - before >= 1,
+        "reset on GetSealedBk3 (TPM): expected at least 1 call, got {}",
         after - before,
     );
 }

@@ -478,7 +478,12 @@ fn test_init_with_resiliency_invalid_pota_source_fails() {
         part.reset().expect("Partition reset failed");
 
         let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
-        let obk_info = make_valid_obk();
+        let use_tpm = std::env::var("AZIHSM_USE_TPM").is_ok();
+        let obk_info = if use_tpm {
+            HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, None)
+        } else {
+            make_valid_obk()
+        };
         let pota_data = HsmPotaEndorsementData::new(&[0u8; 96], &[0u8; 97]);
         let pota = HsmPotaEndorsement::new(HsmPotaEndorsementSource(99), Some(pota_data));
 

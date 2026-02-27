@@ -244,7 +244,7 @@ pub(crate) fn check_faults(opcode: DdiOp) -> Option<FaultAction> {
             op_count,
             ?opcode,
             ?action,
-            "Fault action triggered by resiliency mock"
+            "Fault action triggered by resiliency test"
         );
     }
 
