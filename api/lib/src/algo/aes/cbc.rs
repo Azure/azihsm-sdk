@@ -6,6 +6,8 @@
 //! This module provides AES-CBC (Cipher Block Chaining) mode encryption and
 //! decryption operations for HSM keys.
 
+use resiliency_macro::resiliency_key_op;
+
 use super::*;
 
 /// An algorithm implementation for AES-CBC encryption and decryption.
@@ -111,6 +113,7 @@ impl HsmEncryptOp for HsmAesCbcAlgo {
     ///
     /// - With padding enabled: Output size is `ceil(plaintext.len() / 16) * 16`
     /// - With padding disabled: Plaintext length must be a multiple of 16 bytes
+    #[resiliency_key_op(key = "key")]
     fn encrypt(
         &mut self,
         key: &Self::Key,
@@ -338,6 +341,7 @@ impl HsmDecryptOp for HsmAesCbcAlgo {
     ///
     /// When padding is enabled, this method validates PKCS#7 padding and returns an error
     /// if the padding is incorrect. This helps detect tampering or corruption.
+    #[resiliency_key_op(key = "key")]
     fn decrypt(
         &mut self,
         key: &Self::Key,

@@ -7,6 +7,8 @@
 //! symmetric key (currently [`HsmAesKey`]) from an HSM-managed shared secret
 //! ([`HsmSharedSecretKey`]) using HKDF.
 
+use resiliency_macro::resiliency_key_op;
+
 use super::*;
 
 /// HKDF key-derivation algorithm configuration.
@@ -75,6 +77,7 @@ impl HsmKeyDeriveOp for HsmHkdfAlgo {
     ///
     /// Returns an error if the underlying DDI HKDF operation fails or if the provided properties
     /// are invalid/unsupported.
+    #[resiliency_key_op(key = "base_key")]
     fn derive_key(
         &mut self,
         session: &Self::Session,

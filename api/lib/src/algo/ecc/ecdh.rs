@@ -10,6 +10,7 @@
 
 use azihsm_crypto as crypto;
 use azihsm_crypto::ImportableKey;
+use resiliency_macro::resiliency_key_op;
 
 use super::*;
 
@@ -71,6 +72,7 @@ impl HsmKeyDeriveOp for EcdhAlgo {
     /// - The peer public key DER is invalid.
     /// - The base key does not expose an ECC curve, or the curve does not match the peer key.
     /// - The underlying DDI ECDH operation fails.
+    #[resiliency_key_op(key = "base_key")]
     fn derive_key(
         &mut self,
         session: &Self::Session,

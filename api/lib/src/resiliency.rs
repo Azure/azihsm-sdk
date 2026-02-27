@@ -557,6 +557,182 @@ pub(crate) fn is_open_session_retryable_error<T>(result: &HsmResult<T>) -> bool 
     )
 }
 
+/// Returns `true` when the error is retryable during an in-session key
+/// operation (e.g., sign, encrypt, decrypt, derive, key generation).
+///
+/// - `SessionNeedsRenegotiation` — the session was invalidated by a
+///   resiliency event. The caller must restore the partition,
+///   reopen the session, unmask the key, and retry.
+/// - `PendingKeyGeneration` — the device is still regenerating the
+///   unwrapping key after live migration. Retrying after a backoff
+///   delay allows the operation to succeed once key generation completes.
+/// - `IoAborted` / `IoAbortInProgress` — transient driver-level IO-abort
+///   conditions (e.g., live migration or firmware crash recovery).
+/// - `KeyNotFound` — the key handle may have been invalidated mid-call
+///   by a concurrent NSSR event.
+///
+/// Note: `InvalidPermissions` and `InvalidKeyType` are **not** retried.
+/// The pre-DDI epoch guard prevents the ABA problem where a stale
+/// handle index is reused for a different key.  If these errors occur
+/// they indicate a real bug and must surface immediately.
+pub(crate) fn is_key_op_retryable_error(err: &HsmError) -> bool {
+    matches!(
+        err,
+        HsmError::SessionNeedsRenegotiation
+            | HsmError::PendingKeyGeneration
+            | HsmError::IoAborted
+            | HsmError::IoAbortInProgress
+            | HsmError::KeyNotFound
+    )
+}
+
+/// Returns `true` when the error warrants a backoff delay before retry.
+///
+/// `SessionNeedsRenegotiation` does NOT require backoff — the fix is
+/// restore + reopen, which can proceed immediately.  The remaining
+/// retryable errors indicate the device may still be recovering or that
+/// key handles are stale and benefit from an exponential delay.
+pub(crate) fn needs_backoff(err: &HsmError) -> bool {
+    matches!(
+        err,
+        HsmError::PendingKeyGeneration
+            | HsmError::IoAborted
+            | HsmError::IoAbortInProgress
+            | HsmError::KeyNotFound
+    )
+}
+
+/// Executes a key-generation operation with restore-partition and
+/// session-reopen recovery on transient errors.
+///
+/// This is the runtime support function called by the
+/// `#[resiliency_key_gen]` proc macro.  It differs from
+/// [`execute_with_backoff`] in that each retry iteration:
+/// 1. Applies conditional backoff (only for IO-abort / pending-key-gen).
+/// 2. Calls `partition.restore_partition()` to re-establish credentials.
+/// 3. Calls `partition.reopen_session_if_needed(session)` to reopen the
+///    session if its epoch is stale.
+/// 4. Retries the operation.
+///
+/// No key unmasking is performed because the key does not yet exist.
+#[allow(dead_code)]
+pub(crate) fn execute_key_gen_with_retry<T>(
+    mut operation: impl FnMut() -> HsmResult<T>,
+    session: &crate::HsmSession,
+    partition: &crate::HsmPartition,
+    max_retries: u32,
+    backoff_base_ms: u64,
+) -> HsmResult<T> {
+    let mut result = operation();
+    let mut attempt = 0u32;
+
+    while result.as_ref().is_err_and(is_key_op_retryable_error) && attempt < max_retries {
+        if let Err(ref err) = result {
+            if needs_backoff(err) {
+                let backoff_ms = backoff_base_ms * (1 << attempt);
+                warn!(
+                    ?err,
+                    attempt, backoff_ms, "Key gen: backing off before retry."
+                );
+                std::thread::sleep(Duration::from_millis(backoff_ms));
+            } else {
+                warn!(?err, attempt, "Key gen: retrying immediately (no backoff).");
+            }
+        }
+
+        match partition.restore_partition() {
+            Err(HsmError::RestorePartitionFailed) => {
+                warn!("RestorePartitionFailed during key gen retry.");
+                attempt += 1;
+                continue;
+            }
+            Err(err) => {
+                error!(?err, "restore_partition failed fatally during key gen.");
+                return Err(err);
+            }
+            Ok(()) => {}
+        }
+
+        partition.reopen_session_if_needed(session)?;
+        result = operation();
+        attempt += 1;
+    }
+
+    if let Err(ref err) = result {
+        if attempt > 0 {
+            error!(?err, retries = attempt, "Key gen failed after retries.");
+        }
+    }
+
+    result
+}
+
+/// Executes a key operation with restore-partition, session-reopen, and
+/// key-refresh recovery on transient errors.
+///
+/// This is the runtime support function called by the
+/// `#[resiliency_key_op]` proc macro.  On each retry iteration:
+/// 1. Applies conditional backoff (only for IO-abort / pending-key-gen).
+/// 2. Calls `partition.restore_partition()` to re-establish credentials.
+/// 3. Calls `partition.reopen_session_if_needed(session)` to reopen the
+///    session if its epoch is stale.
+/// 4. Calls `refresh_key()` to unmask the key and refresh the device
+///    handle.
+/// 5. Retries the operation.
+#[allow(dead_code)]
+pub(crate) fn execute_key_op_with_retry<T>(
+    mut operation: impl FnMut() -> HsmResult<T>,
+    session: &crate::HsmSession,
+    partition: &crate::HsmPartition,
+    mut refresh_key: impl FnMut() -> HsmResult<()>,
+    max_retries: u32,
+    backoff_base_ms: u64,
+) -> HsmResult<T> {
+    let mut result = operation();
+    let mut attempt = 0u32;
+
+    while result.as_ref().is_err_and(is_key_op_retryable_error) && attempt < max_retries {
+        if let Err(ref err) = result {
+            if needs_backoff(err) {
+                let backoff_ms = backoff_base_ms * (1 << attempt);
+                warn!(
+                    ?err,
+                    attempt, backoff_ms, "Key op: backing off before retry."
+                );
+                std::thread::sleep(Duration::from_millis(backoff_ms));
+            } else {
+                warn!(?err, attempt, "Key op: retrying immediately (no backoff).");
+            }
+        }
+
+        match partition.restore_partition() {
+            Err(HsmError::RestorePartitionFailed) => {
+                warn!("RestorePartitionFailed during key op retry.");
+                attempt += 1;
+                continue;
+            }
+            Err(err) => {
+                error!(?err, "restore_partition failed fatally during key op.");
+                return Err(err);
+            }
+            Ok(()) => {}
+        }
+
+        partition.reopen_session_if_needed(session)?;
+        refresh_key()?;
+        result = operation();
+        attempt += 1;
+    }
+
+    if let Err(ref err) = result {
+        if attempt > 0 {
+            error!(?err, retries = attempt, "Key op failed after retries.");
+        }
+    }
+
+    result
+}
+
 #[cfg(test)]
 mod retry_tests {
     use std::sync::atomic::AtomicU32;

@@ -584,7 +584,7 @@ impl HsmPartition {
     ///    at `MAX_RETRIES` instead of `MAX_RETRIES²`.
     /// 4. Increment `restore_epoch`.
     #[instrument(skip_all)]
-    fn restore_partition(&self) -> HsmResult<()> {
+    pub(crate) fn restore_partition(&self) -> HsmResult<()> {
         // Snapshot the cached resiliency state under a short-lived read lock.
         let (rev, creds, obk_config, pota_endorsement, bmk_copy) = {
             let inner = self.inner().read();
@@ -847,6 +847,78 @@ impl HsmPartition {
     /// (i.e., a non-`None` [`HsmResiliencyConfig`] was passed to [`init`]).
     pub(crate) fn resiliency_enabled(&self) -> bool {
         self.inner().read().resiliency_state.is_some()
+    }
+
+    /// Returns the current partition restore epoch.
+    ///
+    /// The epoch is incremented each time [`restore_partition`] successfully
+    /// re-establishes credentials after a resiliency event (live migration,
+    /// firmware crash recovery).  Keys and sessions compare their
+    /// last-known epoch against this value to detect staleness.
+    ///
+    /// Returns `0` when resiliency is not enabled.
+    pub(crate) fn restore_epoch(&self) -> u64 {
+        self.inner()
+            .read()
+            .resiliency_state
+            .as_ref()
+            .map_or(0, |rs| rs.restore_epoch)
+    }
+
+    /// Reopens the session if its epoch is behind the partition's
+    /// current restore epoch.
+    ///
+    /// After [`restore_partition`] increments the epoch, any session whose
+    /// `last_restore_epoch` is older must be reopened so its device-side
+    /// state is re-established.  This method:
+    ///
+    /// 1. Compares the session's epoch against the partition's epoch.
+    /// 2. If stale, reads the cached session material (seed, BMK, etc.).
+    /// 3. Calls `ddi::reopen_session` to re-establish the session.
+    /// 4. Updates the cached BMK and the session's epoch.
+    ///
+    /// No-op when resiliency is disabled or the session is already current.
+    pub(crate) fn reopen_session_if_needed(&self, session: &HsmSession) -> HsmResult<()> {
+        let current_epoch = self.restore_epoch();
+        if session.last_restore_epoch() >= current_epoch {
+            return Ok(());
+        }
+
+        // Snapshot cached session material under a short-lived read lock.
+        let (rev, creds, sess_id, seed, bmk_session) = {
+            let inner = self.inner().read();
+            let Some(rs) = inner.resiliency_state.as_ref() else {
+                return Ok(());
+            };
+            let Some(ref cached) = rs.cached_session else {
+                return Ok(());
+            };
+            (
+                cached.rev,
+                rs.cached_credentials,
+                cached.sess_id,
+                cached.seed,
+                cached.bmk_session.clone(),
+            )
+        };
+
+        // Re-establish the session via DDI.
+        let result = self
+            .with_dev(|dev| ddi::reopen_session(dev, rev, sess_id, &creds, &seed, &bmk_session))?;
+
+        // Update the cached BMK with the fresh value from the device.
+        {
+            let mut inner = self.inner().write();
+            if let Some(ref mut rs) = inner.resiliency_state {
+                if let Some(ref mut cached) = rs.cached_session {
+                    cached.bmk_session = result.bmk_session;
+                }
+            }
+        }
+
+        // Mark the session as current.
+        session.set_last_restore_epoch(current_epoch);
+        Ok(())
     }
 
     /// Invokes the POTA endorsement callback to produce a fresh endorsement.

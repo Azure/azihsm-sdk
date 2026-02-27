@@ -7,6 +7,8 @@
 //! HSM sessions. It implements key generation operations that create and manage
 //! AES keys within the hardware security module.
 
+use resiliency_macro::*;
+
 use super::*;
 
 define_hsm_key!(pub HsmAesKey);
@@ -109,6 +111,7 @@ impl HsmKeyGenOp for HsmAesKeyGenAlgo {
     /// - Key properties are invalid or unsupported
     /// - Key generation fails in the HSM
     /// - Resource limits are exceeded
+    #[resiliency_key_gen(session = "session")]
     fn generate_key(
         &mut self,
         session: &Self::Session,
@@ -162,6 +165,7 @@ impl HsmKeyUnwrapOp for HsmAesKeyRsaAesKeyUnwrapAlgo {
     /// # Returns
     ///
     /// Returns the unwrapped AES key on success.
+    #[resiliency_key_op(key = "unwrapping_key")]
     fn unwrap_key(
         &mut self,
         unwrapping_key: &Self::UnwrappingKey,
@@ -196,6 +200,7 @@ impl HsmKeyUnmaskOp for HsmAesKeyUnmaskAlgo {
     /// # Returns
     ///
     /// Returns the unmasked AES key on success.
+    #[resiliency_key_gen(session = "session")]
     fn unmask_key(
         &mut self,
         session: &HsmSession,
@@ -291,6 +296,47 @@ impl HsmAesXtsKey {
 
         Ok(())
     }
+
+    /// Refreshes both device handles by unmasking the key's cached
+    /// masked-key blob.
+    ///
+    /// Used during key-operation resiliency recovery. AES-XTS keys are
+    /// stored as a pair of masked blobs, so this calls
+    /// [`ddi::aes_xts_unmask_key`] which unmasks both halves.
+    ///
+    /// A double-checked epoch guard prevents the thundering-herd problem
+    /// where multiple threads all attempt to refresh the same key after
+    /// NSSR.  Only the first thread to reach the write lock actually
+    /// performs the refresh; latecomers clean up the unused handles they
+    /// created and return immediately.
+    pub(crate) fn refresh_from_masked(&self) -> HsmResult<()> {
+        let session = self.session();
+        let current_epoch = session.partition().restore_epoch();
+
+        // Fast path: another thread already refreshed this key.
+        if self.last_refresh_epoch() >= current_epoch {
+            return Ok(());
+        }
+
+        let masked_key = self
+            .props()
+            .masked_key()
+            .ok_or(HsmError::InternalError)?
+            .to_vec();
+        let (h1, h2, new_props) = ddi::aes_xts_unmask_key(&session, &masked_key)?;
+
+        // Double-check under the write lock: if another thread won the
+        // race and already refreshed, discard our handles.
+        let mut inner = self.inner.write();
+        if inner.last_refresh_epoch() >= current_epoch {
+            let _ = ddi::delete_key(&session, h1);
+            let _ = ddi::delete_key(&session, h2);
+            return Ok(());
+        }
+
+        inner.refresh((h1, h2), new_props);
+        Ok(())
+    }
 }
 impl HsmSecretKey for HsmAesXtsKey {}
 
@@ -328,6 +374,7 @@ impl HsmKeyGenOp for HsmAesXtsKeyGenAlgo {
     /// - Key properties are invalid or unsupported
     /// - Key generation fails in the HSM
     /// - Resource limits are exceeded
+    #[resiliency_key_gen(session = "session")]
     fn generate_key(
         &mut self,
         session: &Self::Session,
@@ -376,6 +423,7 @@ impl HsmKeyUnwrapOp for HsmAesXtsKeyRsaAesKeyUnwrapAlgo {
     /// # Returns
     ///
     /// Returns the unwrapped [`HsmAesXtsKey`] on success.
+    #[resiliency_key_op(key = "unwrapping_key")]
     fn unwrap_key(
         &mut self,
         unwrapping_key: &Self::UnwrappingKey,
@@ -434,6 +482,7 @@ impl HsmKeyUnmaskOp for HsmAesXtsKeyUnmaskAlgo {
     ///
     /// If key property validation fails after unmasking, the allocated handles are
     /// automatically cleaned up before returning the error.
+    #[resiliency_key_gen(session = "session")]
     fn unmask_key(
         &mut self,
         session: &HsmSession,
@@ -553,6 +602,7 @@ impl HsmKeyGenOp for HsmAesGcmKeyGenAlgo {
     /// - The session is invalid or closed
     /// - Key properties are invalid or unsupported
     /// - Key generation fails in the HSM
+    #[resiliency_key_gen(session = "session")]
     fn generate_key(
         &mut self,
         session: &Self::Session,
@@ -605,6 +655,7 @@ impl HsmKeyUnwrapOp for HsmAesGcmKeyRsaAesKeyUnwrapAlgo {
     /// # Returns
     ///
     /// Returns the unwrapped AES-GCM key on success.
+    #[resiliency_key_op(key = "unwrapping_key")]
     fn unwrap_key(
         &mut self,
         unwrapping_key: &Self::UnwrappingKey,
@@ -640,6 +691,7 @@ impl HsmKeyUnmaskOp for HsmAesGcmKeyUnmaskAlgo {
     /// # Returns
     ///
     /// Returns the unmasked AES-GCM key on success.
+    #[resiliency_key_gen(session = "session")]
     fn unmask_key(
         &mut self,
         session: &HsmSession,

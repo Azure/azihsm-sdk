@@ -3,6 +3,7 @@
 
 use azihsm_crypto::HashOpContext;
 use azihsm_crypto::{self as crypto};
+use resiliency_macro::resiliency_key_op;
 
 use super::*;
 
@@ -94,6 +95,7 @@ impl HsmSignOp for HsmHashSignAlgo {
     /// - The hash length is invalid for the configured curve
     /// - Random number generation fails
     /// - The HSM signature operation fails
+    #[resiliency_key_op(key = "key")]
     fn sign(
         &mut self,
         key: &Self::Key,

@@ -8,6 +8,7 @@
 //! that create and manage ECC private/public key pairs within the hardware security module.
 
 use azihsm_crypto as crypto;
+use resiliency_macro::*;
 
 use super::*;
 
@@ -175,6 +176,7 @@ impl HsmKeyPairGenOp for HsmEccKeyGenAlgo {
     ///
     /// A tuple containing `HsmEccPrivateKey` (with handle, masked key, and associated public key)
     /// and `HsmEccPublicKey` on success, or `HsmError` on failure.
+    #[resiliency_key_gen(session = "session")]
     fn generate_key_pair(
         &mut self,
         session: &Self::Session,
@@ -249,6 +251,7 @@ impl HsmKeyPairUnwrapOp for HsmEccKeyRsaAesKeyUnwrapAlgo {
     /// # Returns
     ///
     /// Returns the unwrapped private and public keys on success.
+    #[resiliency_key_op(key = "unwrapping_key")]
     fn unwrap_key_pair(
         &mut self,
         unwrapping_key: &Self::UnwrappingKey,
@@ -319,6 +322,7 @@ impl HsmKeyPairUnmaskOp for HsmEccKeyUnmaskAlgo {
     /// # Returns
     ///
     /// Returns the unmasked ECC key on success.
+    #[resiliency_key_gen(session = "session")]
     fn unmask_key_pair(
         &mut self,
         session: &HsmSession,

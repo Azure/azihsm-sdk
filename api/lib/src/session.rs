@@ -43,6 +43,22 @@ impl HsmSession {
                 F: FnOnce(&ddi::HsmDev) -> HsmResult<R>;
         }
     }
+
+    /// Returns the partition restore epoch at which this session
+    /// was last reopened.
+    pub(crate) fn last_restore_epoch(&self) -> u64 {
+        self.inner.read().last_restore_epoch()
+    }
+
+    /// Updates the restore epoch after a successful `reopen_session`.
+    pub(crate) fn set_last_restore_epoch(&self, epoch: u64) {
+        self.inner.write().set_last_restore_epoch(epoch);
+    }
+
+    /// Returns the partition handle associated with this session.
+    pub(crate) fn partition(&self) -> HsmPartition {
+        self.inner.read().partition().clone()
+    }
 }
 
 /// HSM session handle.
@@ -50,12 +66,20 @@ impl HsmSession {
 /// Represents an active authenticated session with an HSM partition. Each session
 /// is associated with a specific application ID and provides the context for
 /// cryptographic operations within the partition.
+///
+/// The `last_restore_epoch` field tracks the most recent partition restore
+/// epoch that this session has been reopened for, enabling per-session
+/// staleness detection during key operations.
 #[derive(Debug)]
 struct HsmSessionInner {
     id: u16,
     _app_id: u8,
     rev: HsmApiRev,
     partition: HsmPartition,
+    /// The partition restore epoch at which this session was last reopened.
+    /// Compared against `ResiliencyState::restore_epoch` to decide whether
+    /// a `reopen_session` call is needed before retrying a key operation.
+    last_restore_epoch: u64,
 }
 
 impl Drop for HsmSessionInner {
@@ -95,6 +119,7 @@ impl HsmSessionInner {
             _app_id: app_id,
             rev,
             partition,
+            last_restore_epoch: 0,
         }
     }
 
@@ -158,5 +183,16 @@ impl HsmSessionInner {
         let part = self.partition().inner().read();
         let dev = part.dev();
         f(dev)
+    }
+
+    /// Returns the partition restore epoch at which this session was last
+    /// reopened.
+    pub(crate) fn last_restore_epoch(&self) -> u64 {
+        self.last_restore_epoch
+    }
+
+    /// Updates the restore epoch after a successful `reopen_session`.
+    pub(crate) fn set_last_restore_epoch(&mut self, epoch: u64) {
+        self.last_restore_epoch = epoch;
     }
 }

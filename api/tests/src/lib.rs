@@ -6,7 +6,7 @@
 
 mod algo;
 mod partition_tests;
-#[cfg(feature = "res-test")]
+#[cfg(any(feature = "mock", feature = "res-test"))]
 mod resiliency;
 #[cfg(feature = "res-test")]
 mod resiliency_tests;

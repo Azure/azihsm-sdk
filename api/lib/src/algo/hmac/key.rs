@@ -9,6 +9,8 @@
 //! The key material is not exposed to the caller; operations are performed by
 //! delegating to the device via DDI.
 
+use resiliency_macro::resiliency_key_gen;
+
 use super::*;
 
 // HSM-backed HMAC key.
@@ -129,6 +131,7 @@ impl HsmKeyUnmaskOp for HsmHmacKeyUnmaskAlgo {
     /// # Returns
     ///
     /// Returns the unmasked HMAC key on success.
+    #[resiliency_key_gen(session = "session")]
     fn unmask_key(
         &mut self,
         session: &HsmSession,

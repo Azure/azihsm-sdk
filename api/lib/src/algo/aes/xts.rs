@@ -20,6 +20,8 @@
 //! The tweak is stored as internal state and is incremented by one after each
 //! processed data unit.
 
+use resiliency_macro::resiliency_key_op;
+
 use super::*;
 
 /// An algorithm implementation for AES-XTS encryption and decryption.
@@ -235,6 +237,7 @@ impl HsmEncryptOp for HsmAesXtsAlgo {
     /// Returns [`HsmError::InvalidKey`] if the key is not permitted to encrypt.
     /// Returns [`HsmError::InvalidArgument`] if `plaintext` is not DUL-aligned.
     /// Returns [`HsmError::BufferTooSmall`] if the output buffer is too small.
+    #[resiliency_key_op(key = "key")]
     fn encrypt(
         &mut self,
         key: &Self::Key,
@@ -278,6 +281,7 @@ impl HsmDecryptOp for HsmAesXtsAlgo {
     /// Returns [`HsmError::InvalidKey`] if the key is not permitted to decrypt.
     /// Returns [`HsmError::InvalidArgument`] if `ciphertext` is not DUL-aligned.
     /// Returns [`HsmError::BufferTooSmall`] if the output buffer is too small.
+    #[resiliency_key_op(key = "key")]
     fn decrypt(
         &mut self,
         key: &Self::Key,

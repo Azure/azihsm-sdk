@@ -22,6 +22,8 @@
 //! Optional AAD can be provided during encryption and decryption. AAD is
 //! authenticated but not encrypted, and must match during decryption.
 
+use resiliency_macro::resiliency_key_op;
+
 use super::*;
 
 /// Size of the GCM initialization vector in bytes.
@@ -154,6 +156,7 @@ impl HsmEncryptOp for HsmAesGcmAlgo {
     /// * `Ok(usize)` - The number of bytes written to ciphertext, or required buffer size if `ciphertext` is `None`
     /// * `Err(HsmError::InvalidKey)` - If the key cannot be used for encryption
     /// * `Err(HsmError::BufferTooSmall)` - If the provided ciphertext buffer is too small
+    #[resiliency_key_op(key = "key")]
     fn encrypt(
         &mut self,
         key: &Self::Key,
@@ -208,6 +211,7 @@ impl HsmDecryptOp for HsmAesGcmAlgo {
     /// * `Err(HsmError::InvalidKey)` - If the key cannot be used for decryption
     /// * `Err(HsmError::InvalidArgument)` - If the tag was not provided
     /// * `Err(HsmError::BufferTooSmall)` - If the provided plaintext buffer is too small
+    #[resiliency_key_op(key = "key")]
     fn decrypt(
         &mut self,
         key: &Self::Key,

@@ -11,6 +11,8 @@
 //! appropriate usage flags and lifetimes via `HsmKeyProps` when creating/deriving the secret.
 
 // Re-export shared algo/key types from the parent module.
+use resiliency_macro::resiliency_key_gen;
+
 pub use super::*;
 
 // A generic secret key stored in the HSM.
@@ -101,6 +103,7 @@ impl HsmKeyUnmaskOp for HsmGenericSecretKeyUnmaskAlgo {
     /// # Returns
     ///
     /// Returns the unmasked generic secret key on success.
+    #[resiliency_key_gen(session = "session")]
     fn unmask_key(
         &mut self,
         session: &HsmSession,

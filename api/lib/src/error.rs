@@ -53,6 +53,9 @@ pub enum HsmError {
     MaskedKeyDecodeFailed = -26,
     EccVerifyFailed = -27,
     RestorePartitionFailed = -28,
+    SessionNeedsRenegotiation = -29,
+    PendingKeyGeneration = -30,
+    KeyNotFound = -31,
     Panic = i32::MIN,
 }
 

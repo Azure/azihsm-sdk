@@ -36,6 +36,8 @@
 //! not enforce the limit during [`update`](HsmHmacSignContext::update); callers
 //! must ensure the final message fits within the device limit.
 
+use resiliency_macro::resiliency_key_op;
+
 use super::*;
 
 /// HMAC algorithm implementation.
@@ -94,6 +96,7 @@ impl HsmSignOp for HsmHmacAlgo {
     /// - The output buffer is too small.
     /// - The message exceeds the device/serialization limit.
     /// - The underlying DDI operation fails.
+    #[resiliency_key_op(key = "key")]
     fn sign(
         &mut self,
         key: &Self::Key,
@@ -150,6 +153,7 @@ impl HsmVerifyOp for HsmHmacAlgo {
     /// Returns an error if:
     /// - The message exceeds the device/serialization limit.
     /// - The underlying DDI operation fails.
+    #[resiliency_key_op(key = "key")]
     fn verify(
         &mut self,
         key: &Self::Key,

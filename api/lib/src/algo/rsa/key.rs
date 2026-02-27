@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 use azihsm_crypto as crypto;
+use resiliency_macro::*;
 
 use super::*;
 
@@ -191,6 +192,7 @@ impl HsmKeyPairGenOp for HsmRsaKeyUnwrappingKeyGenAlgo {
     /// # Returns
     ///
     /// Returns a tuple containing the generated private and public keys.
+    #[resiliency_key_gen(session = "session")]
     fn generate_key_pair(
         &mut self,
         session: &Self::Session,
@@ -274,6 +276,7 @@ impl HsmKeyPairUnwrapOp for HsmRsaKeyRsaAesKeyUnwrapAlgo {
     /// # Returns
     ///
     /// Returns the unwrapped private and public keys on success.
+    #[resiliency_key_op(key = "unwrapping_key")]
     fn unwrap_key_pair(
         &mut self,
         unwrapping_key: &Self::UnwrappingKey,
@@ -349,6 +352,7 @@ impl HsmKeyPairUnmaskOp for HsmRsaKeyUnmaskAlgo {
     /// # Returns
     ///
     /// Returns the unmasked RSA key pair on success.
+    #[resiliency_key_gen(session = "session")]
     fn unmask_key_pair(
         &mut self,
         session: &HsmSession,

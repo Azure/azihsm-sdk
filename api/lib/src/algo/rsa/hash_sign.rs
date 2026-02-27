@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 use azihsm_crypto::*;
+use resiliency_macro::resiliency_key_op;
 
 use super::*;
 
@@ -123,6 +124,7 @@ impl HsmSignOp for HsmRsaHashSignAlgo {
     ///
     /// Returns the number of bytes written to the signature buffer, or the required
     /// size if `signature` is `None`.
+    #[resiliency_key_op(key = "key")]
     fn sign(
         &mut self,
         key: &Self::Key,

@@ -28,6 +28,21 @@ pub(crate) struct OpenSessionResult {
     pub(crate) bmk_session: Vec<u8>,
 }
 
+/// Result of a successful [`reopen_session`] call.
+///
+/// Contains the confirmed session ID and updated BMK from the device.
+pub(crate) struct ReopenSessionResult {
+    /// Device-confirmed session ID (must match the requested ID).
+    #[allow(dead_code)]
+    pub(crate) sess_id: u16,
+    /// Short application ID returned by the device.
+    #[allow(dead_code)]
+    pub(crate) short_app_id: u8,
+    /// Updated backed-up session masking key from the device.
+    /// Must replace the previously cached `bmk_session`.
+    pub(crate) bmk_session: Vec<u8>,
+}
+
 /// Opens a new session on an HSM partition.
 ///
 /// Creates a new authenticated session with the specified API revision and
@@ -112,6 +127,72 @@ pub(crate) fn close_session(dev: &HsmDev, id: u16, rev: HsmApiRev) -> HsmResult<
     };
     dev.exec_op(&req, &mut None).map_err(HsmError::from)?;
     Ok(())
+}
+
+/// Reopens an existing session after a resiliency event (live migration
+/// or firmware crash recovery).
+///
+/// Re-encrypts the cached credentials using the original seed and sends
+/// them along with the backed-up session masking key to the device. The
+/// device re-establishes the session with the same session ID.
+///
+/// # Arguments
+///
+/// * `dev` - The HSM device handle
+/// * `rev` - The API revision used when the session was originally opened
+/// * `sess_id` - The original device-assigned session ID
+/// * `creds` - Application credentials for re-authentication
+/// * `seed` - The 48-byte seed cached from the original [`open_session`]
+/// * `bmk_session` - The backed-up session masking key from the device
+///
+/// # Returns
+///
+/// Returns a [`ReopenSessionResult`] containing the confirmed session ID
+/// and an updated BMK that should replace the previously cached value.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - Credentials are invalid or re-authentication fails
+/// - The session ID is no longer valid
+/// - The device returns a different session ID than requested
+/// - Device communication fails
+pub(crate) fn reopen_session(
+    dev: &HsmDev,
+    rev: HsmApiRev,
+    sess_id: u16,
+    creds: &HsmCredentials,
+    seed: &[u8; 48],
+    bmk_session: &[u8],
+) -> HsmResult<ReopenSessionResult> {
+    let (ecreds, pub_key) = prepare_session_credentials(dev, rev, creds, *seed)?;
+    let req = DdiReopenSessionCmdReq {
+        hdr: build_ddi_req_hdr(DdiOp::ReopenSession, Some(rev), Some(sess_id)),
+        data: DdiReopenSessionReq {
+            encrypted_credential: ecreds,
+            pub_key,
+            bmk_session: MborByteArray::from_slice(bmk_session)
+                .map_hsm_err(HsmError::InternalError)?,
+        },
+        ext: None,
+    };
+    let resp = dev.exec_op(&req, &mut None).map_err(HsmError::from)?;
+
+    // The device must confirm the same session ID we requested.
+    if resp.data.sess_id != sess_id {
+        tracing::error!(
+            expected = sess_id,
+            actual = resp.data.sess_id,
+            "Reopened session ID mismatch"
+        );
+        return Err(HsmError::InternalError);
+    }
+
+    Ok(ReopenSessionResult {
+        sess_id: resp.data.sess_id,
+        short_app_id: resp.data.short_app_id,
+        bmk_session: resp.data.bmk_session.as_slice().to_vec(),
+    })
 }
 
 /// Prepares encrypted session credentials for open or reopen.

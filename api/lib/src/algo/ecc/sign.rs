@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 use azihsm_crypto as crypto;
+use resiliency_macro::resiliency_key_op;
 
 use super::*;
 
@@ -71,6 +72,7 @@ impl HsmSignOp for HsmEccSignAlgo {
     /// - The key is invalid or incompatible with the configured curve
     /// - The hash length is invalid for the configured curve
     /// - The HSM signature operation fails
+    #[resiliency_key_op(key = "key")]
     fn sign(
         &mut self,
         key: &Self::Key,
