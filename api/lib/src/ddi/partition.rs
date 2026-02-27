@@ -150,11 +150,7 @@ fn get_pota_endorsement(
                         .pota_callback
                         .as_ref()
                         .ok_or(HsmError::InvalidArgument)?;
-                    let caller_pub_key = pota_endorsement
-                        .endorsement()
-                        .map(|d| d.pub_key())
-                        .unwrap_or(&[]);
-                    let data = callback.endorse(caller_pub_key)?;
+                    let data = invoke_pota_callback(callback.as_ref(), pota_endorsement)?;
                     return Ok((data.signature().to_vec(), data.pub_key().to_vec()));
                 }
             }
@@ -178,6 +174,21 @@ fn get_pota_endorsement(
 
         _ => Err(HsmError::InvalidArgument),
     }
+}
+
+/// Invokes a [`PotaEndorsementCallback`] to produce fresh endorsement data.
+///
+/// Passes the caller's original endorsement public key to the callback
+/// for identification.
+pub(crate) fn invoke_pota_callback(
+    callback: &dyn PotaEndorsementCallback,
+    pota_endorsement: &HsmPotaEndorsement,
+) -> HsmResult<HsmPotaEndorsementData> {
+    let caller_pub_key = pota_endorsement
+        .endorsement()
+        .map(|d| d.pub_key())
+        .unwrap_or(&[]);
+    callback.endorse(caller_pub_key)
 }
 
 /// Initializes an HSM partition with credentials and master keys.

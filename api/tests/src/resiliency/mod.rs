@@ -24,6 +24,7 @@ use azihsm_res_test_dev::*;
 
 mod init_part;
 mod open_part;
+mod open_session;
 
 /// Asserts that a retryable error produces `Ok` and a non-retryable
 /// error produces `Err`.

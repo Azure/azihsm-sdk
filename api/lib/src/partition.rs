@@ -15,6 +15,7 @@ use resiliency_macro::resiliency_open_part;
 use tracing::*;
 
 use super::*;
+use crate::resiliency::*;
 
 /// HSM API revision.
 ///
@@ -400,6 +401,11 @@ impl HsmPartition {
             ResiliencyState::validate_config(config, &pota_endorsement)?;
         }
 
+        // Acquire the resiliency lock for the entire init flow to prevent
+        // races with concurrent init_part / restore_partition calls.
+        // When `resiliency_config` is `None` this returns a no-op guard.
+        let _lock_guard = ResiliencyLockGuard::acquire(resiliency_config.as_ref())?;
+
         let result = self.with_dev(|dev| {
             ddi::init_part(
                 dev,
@@ -415,6 +421,9 @@ impl HsmPartition {
         self.inner()
             .write()
             .set_masked_keys(result.bmk, result.mobk);
+
+        // Release the lock before consuming the config.
+        drop(_lock_guard);
 
         // Set up resiliency state — config already validated above.
         // Use the POTA endorsement data that was actually sent to the device
@@ -454,6 +463,19 @@ impl HsmPartition {
     /// - The requested API revision is not supported
     /// - Session creation fails
     /// - Maximum number of sessions is reached
+    ///
+    /// # Resiliency
+    ///
+    /// When resiliency is enabled and the device returns a transient error,
+    /// the operation is retried with `restore_partition` (credential
+    /// re-establishment) and exponential backoff (up to 5 retries).
+    ///
+    /// Retryable errors:
+    /// - [`HsmError::IoAborted`]
+    /// - [`HsmError::IoAbortInProgress`]
+    /// - [`HsmError::CredentialsNotEstablished`]
+    /// - [`HsmError::NonceMismatch`]
+    /// - [`HsmError::PartitionNotProvisioned`]
     #[instrument(skip_all, err, fields(path = self.path().as_str()))]
     pub fn open_session(
         &self,
@@ -461,9 +483,161 @@ impl HsmPartition {
         credentials: &HsmCredentials,
         seed: Option<&[u8]>,
     ) -> HsmResult<HsmSession> {
-        let (id, app_id) =
-            self.with_dev(|dev| ddi::open_session(dev, api_rev, credentials, seed))?;
-        Ok(HsmSession::new(id, app_id, api_rev, self.clone()))
+        let resiliency = self.resiliency_enabled();
+        let result = self.with_dev(|dev| ddi::open_session(dev, api_rev, credentials, seed));
+
+        // Retry with restore when resiliency is enabled and the initial
+        // attempt returned a retryable error.
+        let result = if resiliency && is_open_session_retryable_error(&result) {
+            self.retry_open_session(result, api_rev, credentials, seed)?
+        } else {
+            result?
+        };
+
+        // Cache session state so restore_partition can reopen the session
+        // if a later resiliency event occurs.
+        if resiliency {
+            self.inner().write().cache_session(CachedSessionState {
+                sess_id: result.sess_id,
+                rev: api_rev,
+                seed: result.seed,
+                bmk_session: result.bmk_session.clone(),
+            });
+        }
+
+        Ok(HsmSession::new(
+            result.sess_id,
+            result.short_app_id,
+            api_rev,
+            self.clone(),
+        ))
+    }
+
+    /// Retry loop for `open_session` with restore-partition recovery.
+    ///
+    /// Called when the initial `ddi::open_session` attempt failed with a
+    /// retryable error and resiliency is enabled.  On each iteration:
+    /// 1. Apply exponential backoff for IO-abort errors.
+    /// 2. Call `restore_partition` to re-establish credentials.
+    /// 3. Retry `ddi::open_session`.
+    fn retry_open_session(
+        &self,
+        initial_result: HsmResult<ddi::OpenSessionResult>,
+        api_rev: HsmApiRev,
+        credentials: &HsmCredentials,
+        seed: Option<&[u8]>,
+    ) -> HsmResult<ddi::OpenSessionResult> {
+        use std::time::Duration;
+
+        let mut result = initial_result;
+        let mut iter = 0u32;
+
+        while is_open_session_retryable_error(&result) && iter < MAX_RETRIES {
+            // Exponential backoff for IO-abort conditions
+            if let Err(ref err) = result {
+                if matches!(err, HsmError::IoAborted | HsmError::IoAbortInProgress) {
+                    let backoff_ms = BACKOFF_BASE_MS * (1 << iter);
+                    std::thread::sleep(Duration::from_millis(backoff_ms));
+                }
+            }
+
+            let restore_result = self.restore_partition();
+
+            match restore_result {
+                Err(HsmError::RestorePartitionFailed) => {
+                    // Another LM may have occurred during restore; skip op,
+                    // loop again so the next iteration restores again.
+                    warn!("RestorePartitionFailed during open_session retry.");
+                }
+                Err(err) => {
+                    error!(?err, "restore_partition failed fatally.");
+                    return Err(err);
+                }
+                Ok(()) => {
+                    result =
+                        self.with_dev(|dev| ddi::open_session(dev, api_rev, credentials, seed));
+                }
+            }
+            iter += 1;
+        }
+
+        if let Err(ref err) = result {
+            if iter > 0 {
+                error!(?err, retries = iter, "open_session failed after retries.");
+            }
+        }
+
+        result
+    }
+
+    /// Restores partition state after a resiliency event.
+    ///
+    /// Called from the retry loop when `open_session` (or a future
+    /// operation) encounters a retryable error and resiliency is enabled.
+    ///
+    /// 1. Acquire the cross-process resiliency lock.
+    /// 2. Re-endorse POTA via callback (if source is Caller).
+    /// 3. Re-establish credentials via a **single** `ddi::init_part`
+    ///    call (no resiliency config → no proc-macro retry).  Errors
+    ///    are logged and ignored — the outer `retry_open_session` loop
+    ///    will call us again.  This keeps worst-case `init_part` calls
+    ///    at `MAX_RETRIES` instead of `MAX_RETRIES²`.
+    /// 4. Increment `restore_epoch`.
+    #[instrument(skip_all)]
+    fn restore_partition(&self) -> HsmResult<()> {
+        // Snapshot the cached resiliency state under a short-lived read lock.
+        let (rev, creds, obk_config, pota_endorsement, bmk_copy) = {
+            let inner = self.inner().read();
+            let Some(rs) = inner.resiliency_state.as_ref() else {
+                return Ok(());
+            };
+
+            rs.config.lock.lock()?;
+
+            (
+                inner.api_rev_range().min(),
+                rs.cached_credentials,
+                rs.cached_obk_config.clone(),
+                rs.cached_pota_endorsement.clone(),
+                if inner.bmk().is_empty() {
+                    None
+                } else {
+                    Some(inner.bmk().to_vec())
+                },
+            )
+        };
+
+        // Re-endorse POTA so init_part gets a fresh signature.
+        let pota_endorsement = self.reendorse_pota(pota_endorsement);
+
+        // Single-attempt init_part (no resiliency config disables the
+        // proc-macro retry; POTA was already re-endorsed above).
+        let init_result = self.with_dev(|dev| {
+            ddi::init_part(
+                dev,
+                rev,
+                creds,
+                bmk_copy.as_deref(),
+                None,
+                &obk_config,
+                &pota_endorsement,
+                None,
+            )
+        });
+
+        // Apply results and release the cross-process lock.
+        let mut inner = self.inner().write();
+        match init_result {
+            Ok(result) => inner.set_masked_keys(result.bmk, result.mobk),
+            Err(ref err) => info!(?err, "init_part during restore failed, ignoring."),
+        }
+
+        if let Some(rs) = inner.resiliency_state.as_mut() {
+            rs.restore_epoch += 1;
+            rs.config.lock.unlock().ok();
+        }
+
+        Ok(())
     }
 
     /// Resets the HSM partition state.
@@ -668,6 +842,50 @@ impl HsmPartition {
     pub(crate) fn inner(&self) -> &Arc<RwLock<HsmPartitionInner>> {
         &self.0
     }
+
+    /// Returns `true` if resiliency was configured for this partition
+    /// (i.e., a non-`None` [`HsmResiliencyConfig`] was passed to [`init`]).
+    pub(crate) fn resiliency_enabled(&self) -> bool {
+        self.inner().read().resiliency_state.is_some()
+    }
+
+    /// Invokes the POTA endorsement callback to produce a fresh endorsement.
+    ///
+    /// After NSSR / live migration the device may have regenerated its
+    /// attestation key, making the cached endorsement stale. This helper
+    /// invokes the caller-supplied [`PotaEndorsementCallback`] (if present
+    /// and source is `Caller`) and returns a new [`HsmPotaEndorsement`]
+    /// with the fresh signature and public key.
+    ///
+    /// If the source is not `Caller`, no callback is configured, or the
+    /// callback fails, the original `pota_endorsement` is returned
+    /// unchanged.
+    fn reendorse_pota(&self, pota_endorsement: HsmPotaEndorsement) -> HsmPotaEndorsement {
+        if pota_endorsement.source() != HsmPotaEndorsementSource::Caller {
+            return pota_endorsement;
+        }
+
+        let fresh = {
+            let inner = self.inner().read();
+            inner
+                .resiliency_state
+                .as_ref()
+                .and_then(|rs| rs.config.pota_callback.as_ref())
+                .map(|cb| ddi::invoke_pota_callback(cb.as_ref(), &pota_endorsement))
+        };
+
+        match fresh {
+            Some(Ok(data)) => {
+                info!("Re-endorsed POTA via callback.");
+                HsmPotaEndorsement::new(HsmPotaEndorsementSource::Caller, Some(data))
+            }
+            Some(Err(err)) => {
+                warn!(?err, "POTA re-endorsement callback failed, using cached.");
+                pota_endorsement
+            }
+            None => pota_endorsement,
+        }
+    }
 }
 
 /// HSM partition handle.
@@ -811,6 +1029,21 @@ impl HsmPartitionInner {
 
     pub(crate) fn set_resiliency_state(&mut self, resiliency: ResiliencyState) {
         self.resiliency_state = Some(resiliency);
+    }
+
+    /// Caches session state for `restore_partition`.
+    pub(crate) fn cache_session(&mut self, state: CachedSessionState) {
+        if let Some(ref mut rs) = self.resiliency_state {
+            rs.cache_session(state);
+        }
+    }
+
+    /// Clears cached session state.
+    #[allow(dead_code)]
+    pub(crate) fn clear_session_cache(&mut self) {
+        if let Some(ref mut rs) = self.resiliency_state {
+            rs.clear_session();
+        }
     }
 }
 

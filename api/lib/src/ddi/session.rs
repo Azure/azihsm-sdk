@@ -4,12 +4,29 @@
 //! Session management operations.
 //!
 //! This module provides functionality for managing HSM sessions, including
-//! opening and closing authenticated sessions on partitions.
+//! opening, closing, and reopening authenticated sessions on partitions.
 
 use azihsm_cred_encrypt::DeviceCredKey;
 use azihsm_crypto::Rng;
 
 use super::*;
+
+/// Result of a successful [`open_session`] call.
+///
+/// Carries the session identifiers plus the material needed to reopen the
+/// session after a live migration or firmware crash recovery event.
+pub(crate) struct OpenSessionResult {
+    /// Device-assigned session ID.
+    pub(crate) sess_id: u16,
+    /// Short application ID returned by the device.
+    pub(crate) short_app_id: u8,
+    /// The 48-byte random seed used during credential encryption.
+    /// Needed for [`reopen_session`].
+    pub(crate) seed: [u8; 48],
+    /// Backed-up session masking key returned by the device.
+    /// Needed for [`reopen_session`].
+    pub(crate) bmk_session: Vec<u8>,
+}
 
 /// Opens a new session on an HSM partition.
 ///
@@ -26,7 +43,8 @@ use super::*;
 ///
 /// # Returns
 ///
-/// Returns a tuple containing (session ID, application ID).
+/// Returns an [`OpenSessionResult`] containing the session identifiers
+/// and material needed for later reopening.
 ///
 /// # Errors
 ///
@@ -41,25 +59,16 @@ pub(crate) fn open_session(
     rev: HsmApiRev,
     creds: &HsmCredentials,
     seed: Option<&[u8]>,
-) -> HsmResult<(u16, u8)> {
-    let seed = match seed {
-        Some(s) => s.to_vec(),
+) -> HsmResult<OpenSessionResult> {
+    let seed: [u8; 48] = match seed {
+        Some(s) => s.try_into().map_hsm_err(HsmError::InternalError)?,
         None => {
-            let mut seed = vec![0u8; 48];
+            let mut seed = [0u8; 48];
             Rng::rand_bytes(&mut seed).map_hsm_err(HsmError::RngError)?;
             seed
         }
     };
-    let resp = get_session_encryption_key(dev, rev)?;
-    let nonce = resp.data.nonce;
-    let key = DeviceCredKey::new(&resp.data.pub_key, nonce).map_err(|_| HsmError::InternalError)?;
-    let (priv_key, pub_key) = key
-        .generate_ephemeral_encryption_key()
-        .map_err(|_| HsmError::InternalError)?;
-    let seed = seed.try_into().map_hsm_err(HsmError::InternalError)?;
-    let ecreds = priv_key
-        .encrypt_session_credential(creds.id, creds.pin, seed, nonce)
-        .map_err(|_| HsmError::InternalError)?;
+    let (ecreds, pub_key) = prepare_session_credentials(dev, rev, creds, seed)?;
     let req = DdiOpenSessionCmdReq {
         hdr: build_ddi_req_hdr(DdiOp::OpenSession, Some(rev), None),
         data: DdiOpenSessionReq {
@@ -69,7 +78,12 @@ pub(crate) fn open_session(
         ext: None,
     };
     let resp = dev.exec_op(&req, &mut None).map_err(HsmError::from)?;
-    Ok((resp.data.sess_id, resp.data.short_app_id))
+    Ok(OpenSessionResult {
+        sess_id: resp.data.sess_id,
+        short_app_id: resp.data.short_app_id,
+        seed,
+        bmk_session: resp.data.bmk_session.as_slice().to_vec(),
+    })
 }
 
 /// Closes an active HSM session.
@@ -79,8 +93,9 @@ pub(crate) fn open_session(
 ///
 /// # Arguments
 ///
-/// * `session` - The HSM session handle
-/// * `sess_id` - The session ID to close
+/// * `dev` - The HSM device handle
+/// * `id` - The session ID to close
+/// * `rev` - The API revision to use
 ///
 /// # Errors
 ///
@@ -97,6 +112,29 @@ pub(crate) fn close_session(dev: &HsmDev, id: u16, rev: HsmApiRev) -> HsmResult<
     };
     dev.exec_op(&req, &mut None).map_err(HsmError::from)?;
     Ok(())
+}
+
+/// Prepares encrypted session credentials for open or reopen.
+///
+/// Fetches the session encryption key from the device, generates an
+/// ephemeral ECDH key pair, and encrypts the credentials with the
+/// given seed.
+fn prepare_session_credentials(
+    dev: &HsmDev,
+    rev: HsmApiRev,
+    creds: &HsmCredentials,
+    seed: [u8; 48],
+) -> HsmResult<(DdiEncryptedSessionCredential, DdiDerPublicKey)> {
+    let resp = get_session_encryption_key(dev, rev)?;
+    let nonce = resp.data.nonce;
+    let key = DeviceCredKey::new(&resp.data.pub_key, nonce).map_err(|_| HsmError::InternalError)?;
+    let (priv_key, pub_key) = key
+        .generate_ephemeral_encryption_key()
+        .map_err(|_| HsmError::InternalError)?;
+    let ecreds = priv_key
+        .encrypt_session_credential(creds.id, creds.pin, seed, nonce)
+        .map_err(|_| HsmError::InternalError)?;
+    Ok((ecreds, pub_key))
 }
 
 /// Retrieves the encryption key for session establishment.

@@ -52,6 +52,7 @@ pub enum HsmError {
     PartitionNotProvisioned = -25,
     MaskedKeyDecodeFailed = -26,
     EccVerifyFailed = -27,
+    RestorePartitionFailed = -28,
     Panic = i32::MIN,
 }
 

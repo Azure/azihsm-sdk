@@ -154,14 +154,8 @@ pub struct HsmResiliencyConfig {
 /// Stored inside `HsmPartitionInner` when resiliency is enabled.
 #[allow(dead_code)]
 pub(crate) struct ResiliencyState {
-    /// Persistent storage interface.
-    pub(crate) storage: Box<dyn ResiliencyStorage>,
-
-    /// Cross-process/thread lock interface.
-    pub(crate) lock: Box<dyn ResiliencyLock>,
-
-    /// Optional POTA callback.
-    pub(crate) pota_callback: Option<Box<dyn PotaEndorsementCallback>>,
+    /// Resiliency configuration (storage, lock, POTA callback).
+    pub(crate) config: HsmResiliencyConfig,
 
     /// Cached credentials for re-establishing during restore.
     pub(crate) cached_credentials: HsmCredentials,
@@ -175,14 +169,33 @@ pub(crate) struct ResiliencyState {
     /// Restore epoch — incremented on each restore_partition.
     /// Keys check this to detect staleness before DDI calls.
     pub(crate) restore_epoch: u64,
+
+    /// Cached session state for reopening after restore.
+    /// Populated by `HsmPartition::open_session`, cleared by session drop.
+    pub(crate) cached_session: Option<CachedSessionState>,
+}
+
+/// Session material needed to reopen a session after resiliency event.
+#[allow(dead_code)]
+pub(crate) struct CachedSessionState {
+    /// Device-assigned session ID.
+    pub(crate) sess_id: u16,
+    /// API revision used to open the session.
+    pub(crate) rev: crate::partition::HsmApiRev,
+    /// The 48-byte random seed used for credential encryption.
+    pub(crate) seed: [u8; 48],
+    /// Backed-up session masking key from the device.
+    pub(crate) bmk_session: Vec<u8>,
 }
 
 impl std::fmt::Debug for ResiliencyState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ResiliencyState")
+            .field("has_pota_callback", &self.config.pota_callback.is_some())
             .field("cached_obk_config", &self.cached_obk_config)
             .field("cached_pota_endorsement", &self.cached_pota_endorsement)
             .field("restore_epoch", &self.restore_epoch)
+            .field("has_cached_session", &self.cached_session.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -216,14 +229,23 @@ impl ResiliencyState {
         pota_endorsement: HsmPotaEndorsement,
     ) -> Self {
         Self {
-            storage: config.storage,
-            lock: config.lock,
-            pota_callback: config.pota_callback,
+            config,
             cached_credentials: credentials,
             cached_obk_config: obk_config,
             cached_pota_endorsement: pota_endorsement,
             restore_epoch: 0,
+            cached_session: None,
         }
+    }
+
+    /// Saves session state so [`restore_partition`] can reopen it.
+    pub(crate) fn cache_session(&mut self, state: CachedSessionState) {
+        self.cached_session = Some(state);
+    }
+
+    /// Clears cached session state (e.g. after session close).
+    pub(crate) fn clear_session(&mut self) {
+        self.cached_session = None;
     }
 }
 
@@ -514,6 +536,24 @@ pub(crate) fn is_init_retryable_error<T>(result: &HsmResult<T>) -> bool {
             | Err(HsmError::NonceMismatch)
             | Err(HsmError::PartitionNotProvisioned)
             | Err(HsmError::EccVerifyFailed)
+    )
+}
+
+/// Returns `true` when the error is retryable during session opening.
+///
+/// - `IoAborted` / `IoAbortInProgress` — transient driver-level IO-abort
+///   conditions (e.g., live migration, firmware crash recovery).
+/// - `CredentialsNotEstablished` — credentials were lost (e.g., after migration).
+/// - `NonceMismatch` — nonce mismatch during credential negotiation.
+/// - `PartitionNotProvisioned` — partition state was lost.
+pub(crate) fn is_open_session_retryable_error<T>(result: &HsmResult<T>) -> bool {
+    matches!(
+        result,
+        Err(HsmError::IoAborted)
+            | Err(HsmError::IoAbortInProgress)
+            | Err(HsmError::CredentialsNotEstablished)
+            | Err(HsmError::NonceMismatch)
+            | Err(HsmError::PartitionNotProvisioned)
     )
 }
 

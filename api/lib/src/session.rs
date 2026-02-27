@@ -63,10 +63,15 @@ impl Drop for HsmSessionInner {
     ///
     /// Ensures that HSM resources are properly released by closing the
     /// session connection when the `HsmSession` goes out of scope.
+    /// Also clears any cached session state from the resiliency layer.
     #[instrument(skip_all, fields(session_id = self.id))]
     fn drop(&mut self) {
         // Session cleanup logic can be added here if needed.
         let _ = self.with_dev(|dev| ddi::close_session(dev, self.id, self.rev));
+
+        // Clear cached session so restore_partition won't try to reopen a
+        // session that has been closed.
+        self.partition.inner().write().clear_session_cache();
     }
 }
 
