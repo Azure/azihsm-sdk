@@ -145,18 +145,17 @@ fn get_pota_endorsement(
             // and signing it. We pass the caller's original endorsement
             // public key for identification — the callback may ignore it.
             if reendorse {
-                if let Some(cfg) = resiliency_config {
-                    let callback = cfg
-                        .pota_callback
-                        .as_ref()
-                        .ok_or(HsmError::InvalidArgument)?;
-                    let caller_pub_key = pota_endorsement
-                        .endorsement()
-                        .map(|d| d.pub_key())
-                        .unwrap_or(&[]);
-                    let data = callback.endorse(caller_pub_key)?;
-                    return Ok((data.signature().to_vec(), data.pub_key().to_vec()));
-                }
+                let cfg = resiliency_config.ok_or(HsmError::InvalidArgument)?;
+                let callback = cfg
+                    .pota_callback
+                    .as_ref()
+                    .ok_or(HsmError::InvalidArgument)?;
+                let caller_pub_key = pota_endorsement
+                    .endorsement()
+                    .map(|d| d.pub_key())
+                    .unwrap_or(&[]);
+                let data = callback.endorse(caller_pub_key)?;
+                return Ok((data.signature().to_vec(), data.pub_key().to_vec()));
             }
 
             // Re-endorsement not requested, or no resiliency config —

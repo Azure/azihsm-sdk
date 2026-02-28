@@ -64,6 +64,11 @@ pub(crate) const TEST_POTA_PUBLIC_KEY_DER: [u8; 120] = [
     0x8d, 0xa3, 0xc8, 0x01, 0x4b, 0xa4, 0x0d, 0x98,
 ];
 
+/// Returns `true` when the `AZIHSM_USE_TPM` environment variable is set.
+pub(crate) fn use_tpm() -> bool {
+    std::env::var("AZIHSM_USE_TPM").is_ok()
+}
+
 /// Dynamically generates a POTA endorsement (signature + public key DER) for a partition.
 ///
 /// This function:
@@ -123,7 +128,7 @@ pub(crate) fn generate_pota_endorsement(part: &HsmPartition) -> (Vec<u8>, Vec<u8
 pub(crate) fn make_init_params(
     part: &HsmPartition,
 ) -> (HsmOwnerBackupKeyConfig, HsmPotaEndorsement) {
-    let use_tpm = std::env::var("AZIHSM_USE_TPM").is_ok();
+    let use_tpm = use_tpm();
     if use_tpm {
         (
             HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, None),

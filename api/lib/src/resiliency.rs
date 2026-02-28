@@ -443,7 +443,7 @@ pub(crate) fn execute_with_backoff<T>(
     let mut result = operation(None);
 
     while predicate(&result) && attempt < max_retries {
-        let backoff_ms = backoff_base_ms * (1 << attempt);
+        let backoff_ms = backoff_base_ms.saturating_mul(1u64 << attempt.min(63));
         let jitter_ms = rand::thread_rng().gen_range(0..=backoff_jitter_ms);
         let total_ms = backoff_ms + jitter_ms;
         if let Err(ref err) = result {

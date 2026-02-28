@@ -40,6 +40,8 @@ use azihsm_api::*;
 use azihsm_crypto::*;
 use fs2::FileExt;
 
+use crate::utils::partition::use_tpm;
+
 /// Well-known directory name for resiliency test data.
 const RESILIENCY_DIR_NAME: &str = "azihsm_resiliency_test";
 
@@ -199,8 +201,7 @@ pub(crate) fn make_resiliency_config_in(dir: &Path, part: &HsmPartition) -> HsmR
     // When TPM is used, the POTA source is Tpm and no callback is needed
     // (validate_config rejects TPM + callback). When Caller is used, the
     // callback re-signs the POTA endorsement on retry.
-    let use_tpm = std::env::var("AZIHSM_USE_TPM").is_ok();
-    let pota_callback: Option<Box<dyn PotaEndorsementCallback>> = if use_tpm {
+    let pota_callback: Option<Box<dyn PotaEndorsementCallback>> = if use_tpm() {
         None
     } else {
         Some(Box::new(TestPotaCallback { part: part.clone() }))
@@ -233,6 +234,7 @@ pub(crate) fn make_resiliency_config(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::utils::partition::*;
 
     /// Per-process counter to give every test a unique directory,
     /// avoiding interference when nextest runs tests in parallel
@@ -245,7 +247,10 @@ mod tests {
 
     impl PotaEndorsementCallback for DummyPotaCallback {
         fn endorse(&self, _pub_key: &[u8]) -> HsmResult<HsmPotaEndorsementData> {
-            Ok(HsmPotaEndorsementData::new(&[0u8; 96], &[0u8; 120]))
+            // Use non-trivial byte pattern for signature and the real test
+            // public key so that any endianness or byte-order issues are caught.
+            let sig: [u8; 96] = core::array::from_fn(|i| (i + 1) as u8);
+            Ok(HsmPotaEndorsementData::new(&sig, &TEST_POTA_PUBLIC_KEY_DER))
         }
     }
 
@@ -520,8 +525,7 @@ mod tests {
         config.lock.unlock().unwrap();
 
         // POTA callback should match the source: present for Caller, absent for TPM.
-        let use_tpm = std::env::var("AZIHSM_USE_TPM").is_ok();
-        assert_eq!(config.pota_callback.is_some(), !use_tpm);
+        assert_eq!(config.pota_callback.is_some(), !use_tpm());
     }
 
     #[test]

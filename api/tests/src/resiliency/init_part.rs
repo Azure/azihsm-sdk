@@ -114,11 +114,6 @@ fn expected_op_calls(
     }
 }
 
-/// Returns `true` when the `AZIHSM_USE_TPM` environment variable is set.
-fn use_tpm() -> bool {
-    std::env::var("AZIHSM_USE_TPM").is_ok()
-}
-
 /// Helper: open the first partition and reset it for a fresh init.
 fn open_and_reset() -> HsmPartition {
     let list = HsmPartitionManager::partition_info_list();
@@ -662,13 +657,16 @@ fn test_init_recovers_after_reset_on_get_establish_cred_key() {
         "init should recover after a device reset on GetEstablishCredEncryptionKey, got: {result:?}"
     );
 
-    // Simulator: reset wipes all state → 1 failed + 1 retry = 2 calls.
-    // Real hardware: NSSR only invalidates established credentials;
-    // GetEstablishCredEncryptionKey is a pre-credential op that may
-    // succeed despite the reset → 1 call.
-    assert!(
-        after - before >= 1,
-        "reset on GetEstablishCredEncryptionKey: expected at least 1 call, got {}",
+    // Simulator (mock): Above reset wipes certificate chain so POTA endorsement fails causing a retry → 1 established creds failed + 1 retry = 2 calls.
+    // Hardware: Certificate chain is unaffected by above reset call, so POTA endorsement succeeds on the first established creds = 1 calls.
+    #[cfg(feature = "mock")]
+    let expected = 2;
+    #[cfg(not(feature = "mock"))]
+    let expected = 1;
+    assert_eq!(
+        after - before,
+        expected,
+        "reset on GetEstablishCredEncryptionKey: expected {expected} calls, got {}",
         after - before,
     );
 }
@@ -948,13 +946,17 @@ fn test_init_tpm_recovers_after_reset_on_get_sealed_bk3() {
         "init should recover after a device reset on GetSealedBk3 (TPM path), got: {result:?}"
     );
 
-    // Simulator: reset wipes all state → 1 failed + 1 retry = 2 calls.
-    // Real hardware: NSSR only invalidates established credentials;
-    // GetSealedBk3 is a pre-credential op that may succeed despite
+    // Simulator (mock): Above reset wipes certificate chain so POTA endorsement fails causing a retry → 1 established creds failed + 1 retry = 2 calls.
+    // Hardware: Certificate chain is unaffected by above reset call, so POTA endorsement succeeds on the first established creds = 1 calls.
     // the reset → 1 call.
-    assert!(
-        after - before >= 1,
-        "reset on GetSealedBk3 (TPM): expected at least 1 call, got {}",
+    #[cfg(feature = "mock")]
+    let expected = 2;
+    #[cfg(not(feature = "mock"))]
+    let expected = 1;
+    assert_eq!(
+        after - before,
+        expected,
+        "reset on GetSealedBk3 (TPM): expected {expected} calls, got {}",
         after - before,
     );
 }

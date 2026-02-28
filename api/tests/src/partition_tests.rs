@@ -13,7 +13,10 @@ struct DummyPotaCallback;
 
 impl PotaEndorsementCallback for DummyPotaCallback {
     fn endorse(&self, _pub_key: &[u8]) -> HsmResult<HsmPotaEndorsementData> {
-        Ok(HsmPotaEndorsementData::new(&[0u8; 96], &[0u8; 120]))
+        // Use non-trivial byte pattern for signature and the real test
+        // public key so that any endianness or byte-order issues are caught.
+        let sig: [u8; 96] = core::array::from_fn(|i| (i + 1) as u8);
+        Ok(HsmPotaEndorsementData::new(&sig, &TEST_POTA_PUBLIC_KEY_DER))
     }
 }
 
@@ -395,7 +398,7 @@ fn test_double_init_with_resiliency() {
         part.reset().expect("Partition reset failed");
 
         let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
-        let use_tpm = std::env::var("AZIHSM_USE_TPM").is_ok();
+        let use_tpm = use_tpm();
 
         // First init with resiliency
         let pota_data = if !use_tpm {
@@ -478,7 +481,7 @@ fn test_init_with_resiliency_invalid_pota_source_fails() {
         part.reset().expect("Partition reset failed");
 
         let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
-        let use_tpm = std::env::var("AZIHSM_USE_TPM").is_ok();
+        let use_tpm = use_tpm();
         let obk_info = if use_tpm {
             HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, None)
         } else {
