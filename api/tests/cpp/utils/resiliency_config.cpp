@@ -3,10 +3,12 @@
 
 #include "resiliency_config.hpp"
 
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <string>
 #include <vector>
 
 #ifdef _WIN32
@@ -238,7 +240,16 @@ void make_resiliency_config_in(
 std::unique_ptr<ResiliencyTestCtx> make_resiliency_config(
     azihsm_resiliency_config &config_out)
 {
-    auto tmp = fs::temp_directory_path() / RESILIENCY_DIR_NAME;
+    // Each call gets a unique directory so parallel tests never interfere.
+    static std::atomic<uint32_t> seq{0};
+    auto id = std::to_string(seq.fetch_add(1)) + "_" + std::to_string(
+#ifdef _WIN32
+        GetCurrentProcessId()
+#else
+        getpid()
+#endif
+    );
+    auto tmp = fs::temp_directory_path() / (std::string(RESILIENCY_DIR_NAME) + "_" + id);
 
     // Wipe any stale data from a previous crashed run, then recreate empty.
     std::error_code ec;
