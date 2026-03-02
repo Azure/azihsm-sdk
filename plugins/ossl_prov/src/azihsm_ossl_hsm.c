@@ -42,6 +42,11 @@ static azihsm_status load_file_to_buffer(const char *path, struct azihsm_buffer 
 
     if (path == NULL || buffer == NULL)
     {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            ERR_R_PASSED_NULL_PARAMETER,
+            "load_file_to_buffer: path or buffer is NULL"
+        );
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
 
@@ -56,11 +61,25 @@ static azihsm_status load_file_to_buffer(const char *path, struct azihsm_buffer 
             // File doesn't exist - not an error
             return AZIHSM_STATUS_SUCCESS;
         }
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            ERR_R_INIT_FAIL,
+            "failed to open key file '%s': %s",
+            path,
+            strerror(errno)
+        );
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
 
     if (fseek(file, 0, SEEK_END) != 0)
     {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            ERR_R_INIT_FAIL,
+            "fseek(SEEK_END) failed for '%s': %s",
+            path,
+            strerror(errno)
+        );
         fclose(file);
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
@@ -68,12 +87,26 @@ static azihsm_status load_file_to_buffer(const char *path, struct azihsm_buffer 
     file_size = ftell(file);
     if (file_size < 0)
     {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            ERR_R_INIT_FAIL,
+            "ftell failed for '%s': %s",
+            path,
+            strerror(errno)
+        );
         fclose(file);
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
 
     if (fseek(file, 0, SEEK_SET) != 0)
     {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            ERR_R_INIT_FAIL,
+            "fseek(SEEK_SET) failed for '%s': %s",
+            path,
+            strerror(errno)
+        );
         fclose(file);
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
@@ -87,6 +120,13 @@ static azihsm_status load_file_to_buffer(const char *path, struct azihsm_buffer 
     // Check for maximum file size
     if (file_size > AZIHSM_MAX_KEY_FILE_SIZE)
     {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            ERR_R_INIT_FAIL,
+            "key file '%s' exceeds maximum size of %d bytes",
+            path,
+            AZIHSM_MAX_KEY_FILE_SIZE
+        );
         fclose(file);
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
@@ -94,6 +134,7 @@ static azihsm_status load_file_to_buffer(const char *path, struct azihsm_buffer 
     buffer->ptr = OPENSSL_malloc((size_t)file_size);
     if (buffer->ptr == NULL)
     {
+        ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
         fclose(file);
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
@@ -103,6 +144,14 @@ static azihsm_status load_file_to_buffer(const char *path, struct azihsm_buffer 
 
     if (bytes_read != (size_t)file_size)
     {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            ERR_R_INIT_FAIL,
+            "short read from key file '%s': got %zu of %ld bytes",
+            path,
+            bytes_read,
+            file_size
+        );
         OPENSSL_cleanse(buffer->ptr, (size_t)file_size);
         OPENSSL_free(buffer->ptr);
         buffer->ptr = NULL;
@@ -125,18 +174,37 @@ static azihsm_status write_buffer_to_file(const char *path, const struct azihsm_
 
     if (path == NULL || buffer == NULL || buffer->ptr == NULL || buffer->len == 0)
     {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            ERR_R_PASSED_NULL_PARAMETER,
+            "write_buffer_to_file: invalid arguments"
+        );
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
 
     fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW, S_IRUSR | S_IWUSR);
     if (fd < 0)
     {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            ERR_R_INIT_FAIL,
+            "failed to open '%s' for writing: %s",
+            path,
+            strerror(errno)
+        );
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
 
     file = fdopen(fd, "wb");
     if (file == NULL)
     {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            ERR_R_INIT_FAIL,
+            "fdopen failed for '%s': %s",
+            path,
+            strerror(errno)
+        );
         close(fd);
         unlink(path); // Remove the potentially created empty file
         return AZIHSM_STATUS_INTERNAL_ERROR;
@@ -145,7 +213,19 @@ static azihsm_status write_buffer_to_file(const char *path, const struct azihsm_
     bytes_written = fwrite(buffer->ptr, 1, buffer->len, file);
     fclose(file); // Also closes fd
 
-    return (bytes_written == buffer->len) ? AZIHSM_STATUS_SUCCESS : AZIHSM_STATUS_INTERNAL_ERROR;
+    if (bytes_written != buffer->len)
+    {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            ERR_R_INIT_FAIL,
+            "short write to '%s': wrote %zu of %u bytes",
+            path,
+            bytes_written,
+            buffer->len
+        );
+        return AZIHSM_STATUS_INTERNAL_ERROR;
+    }
+    return AZIHSM_STATUS_SUCCESS;
 }
 
 /*
@@ -180,6 +260,7 @@ static azihsm_status get_part_property(
     buffer->ptr = OPENSSL_malloc(prop.len);
     if (buffer->ptr == NULL)
     {
+        ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
 
@@ -320,12 +401,24 @@ static azihsm_status azihsm_get_device_handle(azihsm_handle *device)
     status = azihsm_part_get_list(&device_list);
     if (status != 0)
     {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            ERR_R_INTERNAL_ERROR,
+            "azihsm_part_get_list() failed with status %d",
+            status
+        );
         return status;
     }
 
     status = azihsm_part_get_count(device_list, &device_count);
     if (status != AZIHSM_STATUS_SUCCESS)
     {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            ERR_R_INTERNAL_ERROR,
+            "azihsm_part_get_count() failed with status %d",
+            status
+        );
         azihsm_part_free_list(device_list);
         return status;
     }
@@ -353,6 +446,12 @@ static azihsm_status azihsm_get_device_handle(azihsm_handle *device)
     }
 
     azihsm_part_free_list(device_list);
+    ERR_raise_data(
+        ERR_LIB_PROV,
+        ERR_R_INTERNAL_ERROR,
+        "no HSM partition could be opened from %u candidates",
+        device_count
+    );
     return AZIHSM_STATUS_INTERNAL_ERROR;
 }
 
@@ -548,11 +647,17 @@ static azihsm_status generate_and_save_pota_keypair(
     int priv_len = i2d_PrivateKey(pkey, NULL);
     if (priv_len <= 0)
     {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            ERR_R_INTERNAL_ERROR,
+            "i2d_PrivateKey failed encoding P-384 private key"
+        );
         goto cleanup;
     }
     priv_out->ptr = OPENSSL_malloc((size_t)priv_len);
     if (priv_out->ptr == NULL)
     {
+        ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
         goto cleanup;
     }
     priv_out->len = (uint32_t)priv_len;
@@ -569,11 +674,17 @@ static azihsm_status generate_and_save_pota_keypair(
     int pub_len = i2d_PUBKEY(pkey, NULL);
     if (pub_len <= 0)
     {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            ERR_R_INTERNAL_ERROR,
+            "i2d_PUBKEY failed encoding P-384 public key"
+        );
         goto cleanup;
     }
     pub_out->ptr = OPENSSL_malloc((size_t)pub_len);
     if (pub_out->ptr == NULL)
     {
+        ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
         goto cleanup;
     }
     pub_out->len = (uint32_t)pub_len;
@@ -594,7 +705,6 @@ cleanup:
         OPENSSL_cleanse(priv_out->ptr, priv_out->len);
         free_buffer(priv_out);
         free_buffer(pub_out);
-        ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
     }
     EVP_PKEY_free(pkey);
     return status;
@@ -610,12 +720,22 @@ azihsm_status azihsm_get_unwrapping_key(
 
     if (provctx == NULL || out_pub == NULL || out_priv == NULL)
     {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            ERR_R_PASSED_NULL_PARAMETER,
+            "azihsm_get_unwrapping_key: NULL argument"
+        );
         return AZIHSM_STATUS_INVALID_ARGUMENT;
     }
 
     /* Fast path: return cached handles if available */
     if (!CRYPTO_THREAD_read_lock(provctx->unwrapping_key.lock))
     {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            ERR_R_INTERNAL_ERROR,
+            "failed to acquire read lock for unwrapping key"
+        );
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
 
@@ -632,6 +752,11 @@ azihsm_status azihsm_get_unwrapping_key(
     /* Slow path: acquire lock and check again */
     if (!CRYPTO_THREAD_write_lock(provctx->unwrapping_key.lock))
     {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            ERR_R_INTERNAL_ERROR,
+            "failed to acquire write lock for unwrapping key"
+        );
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
 
@@ -733,9 +858,23 @@ static azihsm_status get_pid_uncompressed_point(
     BIGNUM *qy = NULL;
 
     status = get_part_property(device, AZIHSM_PART_PROP_ID_PART_PUB_KEY, &pid_pub_key_der);
-    if (status != AZIHSM_STATUS_SUCCESS || pid_pub_key_der.ptr == NULL)
+    if (status != AZIHSM_STATUS_SUCCESS)
     {
-        return status != AZIHSM_STATUS_SUCCESS ? status : AZIHSM_STATUS_INTERNAL_ERROR;
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            ERR_R_INTERNAL_ERROR,
+            "failed to retrieve PID public key property"
+        );
+        return status;
+    }
+    if (pid_pub_key_der.ptr == NULL)
+    {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            ERR_R_INTERNAL_ERROR,
+            "PID public key property returned NULL pointer"
+        );
+        return AZIHSM_STATUS_INTERNAL_ERROR;
     }
 
     der_ptr = pid_pub_key_der.ptr;
@@ -744,6 +883,7 @@ static azihsm_status get_pid_uncompressed_point(
 
     if (pid_pkey == NULL)
     {
+        ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
 
@@ -753,6 +893,7 @@ static azihsm_status get_pid_uncompressed_point(
     if (!EVP_PKEY_get_bn_param(pid_pkey, OSSL_PKEY_PARAM_EC_PUB_X, &qx) ||
         !EVP_PKEY_get_bn_param(pid_pkey, OSSL_PKEY_PARAM_EC_PUB_Y, &qy))
     {
+        ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
         BN_free(qx);
         BN_free(qy);
         EVP_PKEY_free(pid_pkey);
@@ -765,6 +906,11 @@ static azihsm_status get_pid_uncompressed_point(
     if (BN_bn2binpad(qx, point + 1, P384_COORD_SIZE) != P384_COORD_SIZE ||
         BN_bn2binpad(qy, point + 1 + P384_COORD_SIZE, P384_COORD_SIZE) != P384_COORD_SIZE)
     {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            ERR_R_INTERNAL_ERROR,
+            "BN_bn2binpad failed serializing P-384 coordinate"
+        );
         BN_free(qx);
         BN_free(qy);
         return AZIHSM_STATUS_INTERNAL_ERROR;
@@ -805,18 +951,21 @@ static azihsm_status sign_with_pota_key(
     pota_pkey = d2i_AutoPrivateKey(NULL, &der_ptr, (long)priv_key_der_len);
     if (pota_pkey == NULL)
     {
+        ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
 
     md_ctx = EVP_MD_CTX_new();
     if (md_ctx == NULL)
     {
+        ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
         EVP_PKEY_free(pota_pkey);
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
 
     if (EVP_DigestSignInit(md_ctx, NULL, EVP_sha384(), NULL, pota_pkey) != 1)
     {
+        ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
         EVP_MD_CTX_free(md_ctx);
         EVP_PKEY_free(pota_pkey);
         return AZIHSM_STATUS_INTERNAL_ERROR;
@@ -825,6 +974,7 @@ static azihsm_status sign_with_pota_key(
     /* Determine required DER signature buffer size */
     if (EVP_DigestSign(md_ctx, NULL, &der_sig_len, data, data_len) != 1)
     {
+        ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
         EVP_MD_CTX_free(md_ctx);
         EVP_PKEY_free(pota_pkey);
         return AZIHSM_STATUS_INTERNAL_ERROR;
@@ -833,6 +983,7 @@ static azihsm_status sign_with_pota_key(
     der_sig_buf = OPENSSL_malloc(der_sig_len);
     if (der_sig_buf == NULL)
     {
+        ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
         EVP_MD_CTX_free(md_ctx);
         EVP_PKEY_free(pota_pkey);
         return AZIHSM_STATUS_INTERNAL_ERROR;
@@ -840,6 +991,7 @@ static azihsm_status sign_with_pota_key(
 
     if (EVP_DigestSign(md_ctx, der_sig_buf, &der_sig_len, data, data_len) != 1)
     {
+        ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
         OPENSSL_cleanse(der_sig_buf, der_sig_len);
         OPENSSL_free(der_sig_buf);
         EVP_MD_CTX_free(md_ctx);
@@ -858,6 +1010,7 @@ static azihsm_status sign_with_pota_key(
 
     if (ecdsa_sig == NULL)
     {
+        ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
 
@@ -865,6 +1018,11 @@ static azihsm_status sign_with_pota_key(
 
     if (sig_r == NULL || sig_s == NULL)
     {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            ERR_R_INTERNAL_ERROR,
+            "ECDSA_SIG_get0 returned NULL r or s component"
+        );
         ECDSA_SIG_free(ecdsa_sig);
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
@@ -873,6 +1031,7 @@ static azihsm_status sign_with_pota_key(
     sig_out->ptr = OPENSSL_zalloc(P384_RAW_SIG_SIZE);
     if (sig_out->ptr == NULL)
     {
+        ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
         ECDSA_SIG_free(ecdsa_sig);
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
@@ -880,6 +1039,11 @@ static azihsm_status sign_with_pota_key(
     if (BN_bn2binpad(sig_r, sig_out->ptr, P384_COORD_SIZE) != P384_COORD_SIZE ||
         BN_bn2binpad(sig_s, sig_out->ptr + P384_COORD_SIZE, P384_COORD_SIZE) != P384_COORD_SIZE)
     {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            ERR_R_INTERNAL_ERROR,
+            "BN_bn2binpad failed serializing ECDSA r or s component"
+        );
         OPENSSL_cleanse(sig_out->ptr, P384_RAW_SIG_SIZE);
         OPENSSL_free(sig_out->ptr);
         sig_out->ptr = NULL;
@@ -962,6 +1126,11 @@ azihsm_status azihsm_open_device_and_session(
 
     if (config == NULL || device == NULL || session == NULL)
     {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            ERR_R_PASSED_NULL_PARAMETER,
+            "azihsm_open_device_and_session: NULL argument"
+        );
         return AZIHSM_STATUS_INVALID_ARGUMENT;
     }
 

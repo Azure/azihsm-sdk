@@ -646,6 +646,7 @@ OSSL_STATUS OSSL_provider_init(
 
     if (ctx->libctx == NULL)
     {
+        ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
         OPENSSL_free(ctx);
         return OSSL_FAILURE;
     }
@@ -653,6 +654,7 @@ OSSL_STATUS OSSL_provider_init(
     ctx->unwrapping_key.lock = CRYPTO_THREAD_lock_new();
     if (ctx->unwrapping_key.lock == NULL)
     {
+        ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
         OSSL_LIB_CTX_free(ctx->libctx);
         OPENSSL_free(ctx);
         return OSSL_FAILURE;
