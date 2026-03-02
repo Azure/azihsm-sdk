@@ -33,17 +33,22 @@ pub(crate) use tpm::*;
 use super::*;
 
 /// Converts a DDI error into the corresponding `HsmError`.
-///
-/// `DriverError::IoAborted` and `DriverError::IoAbortInProgress` are mapped
-/// to their dedicated `HsmError` variants so that higher layers (e.g., the
-/// `open_partition` retry loop) can distinguish transient IO-abort conditions
-/// from other DDI failures. All remaining `DdiError` variants are collapsed
-/// into `HsmError::DdiCmdFailure`.
 impl From<DdiError> for HsmError {
     fn from(err: DdiError) -> Self {
         match err {
             DdiError::DriverError(DriverError::IoAborted) => HsmError::IoAborted,
             DdiError::DriverError(DriverError::IoAbortInProgress) => HsmError::IoAbortInProgress,
+            DdiError::DdiStatus(DdiStatus::CredentialsNotEstablished) => {
+                HsmError::CredentialsNotEstablished
+            }
+            DdiError::DdiStatus(DdiStatus::NonceMismatch) => HsmError::NonceMismatch,
+            DdiError::DdiStatus(DdiStatus::PartitionNotProvisioned) => {
+                HsmError::PartitionNotProvisioned
+            }
+            DdiError::DdiStatus(DdiStatus::MaskedKeyDecodeFailed) => {
+                HsmError::MaskedKeyDecodeFailed
+            }
+            DdiError::DdiStatus(DdiStatus::EccVerifyFailed) => HsmError::EccVerifyFailed,
             _ => HsmError::DdiCmdFailure,
         }
     }

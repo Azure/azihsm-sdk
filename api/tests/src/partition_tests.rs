@@ -7,6 +7,19 @@ use super::*;
 use crate::utils::partition::*;
 use crate::utils::resiliency::*;
 
+/// No-op POTA callback for validation tests that need `pota_callback = Some`
+/// without exercising the actual signing flow.
+struct DummyPotaCallback;
+
+impl PotaEndorsementCallback for DummyPotaCallback {
+    fn endorse(&self, _pub_key: &[u8]) -> HsmResult<HsmPotaEndorsementData> {
+        // Use non-trivial byte pattern for signature and the real test
+        // public key so that any endianness or byte-order issues are caught.
+        let sig: [u8; 96] = core::array::from_fn(|i| (i + 1) as u8);
+        Ok(HsmPotaEndorsementData::new(&sig, &TEST_POTA_PUBLIC_KEY_DER))
+    }
+}
+
 /// Builds a valid caller-source OBK config using the test OBK.
 fn make_valid_obk() -> HsmOwnerBackupKeyConfig {
     HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Caller, Some(&TEST_OBK))
@@ -91,29 +104,7 @@ fn test_partition_init() {
         part.reset().expect("Partition reset failed");
 
         let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
-        let use_tpm = std::env::var("AZIHSM_USE_TPM").is_ok();
-
-        let pota_data = if !use_tpm {
-            Some(make_valid_pota_parts(&part))
-        } else {
-            None
-        };
-
-        let (obk_info, pota_endorsement) = if use_tpm {
-            (
-                HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, None),
-                HsmPotaEndorsement::new(HsmPotaEndorsementSource::Tpm, None),
-            )
-        } else {
-            let (ref sig, ref pubkey) = *pota_data.as_ref().unwrap();
-            (
-                make_valid_obk(),
-                HsmPotaEndorsement::new(
-                    HsmPotaEndorsementSource::Caller,
-                    Some(HsmPotaEndorsementData::new(sig, pubkey)),
-                ),
-            )
-        };
+        let (obk_info, pota_endorsement) = make_init_params(&part);
         part.init(creds, None, None, obk_info, pota_endorsement, None)
             .expect("Partition init failed");
     }
@@ -347,31 +338,9 @@ fn test_init_with_resiliency_config() {
         part.reset().expect("Partition reset failed");
 
         let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
-        let use_tpm = std::env::var("AZIHSM_USE_TPM").is_ok();
+        let (obk_info, pota_endorsement) = make_init_params(&part);
 
-        let pota_data = if !use_tpm {
-            Some(make_valid_pota_parts(&part))
-        } else {
-            None
-        };
-
-        let (obk_info, pota_endorsement) = if use_tpm {
-            (
-                HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, None),
-                HsmPotaEndorsement::new(HsmPotaEndorsementSource::Tpm, None),
-            )
-        } else {
-            let (ref sig, ref pubkey) = *pota_data.as_ref().unwrap();
-            (
-                make_valid_obk(),
-                HsmPotaEndorsement::new(
-                    HsmPotaEndorsementSource::Caller,
-                    Some(HsmPotaEndorsementData::new(sig, pubkey)),
-                ),
-            )
-        };
-
-        let (resiliency_config, _ctx) = make_resiliency_config();
+        let (resiliency_config, _ctx) = make_resiliency_config(&part);
         part.init(
             creds,
             None,
@@ -404,7 +373,7 @@ fn test_init_with_resiliency_caller_pota_null_callback_fails() {
 
         // Build a resiliency config with pota_callback = None.
         // When POTA source is Caller, this must fail with InvalidArgument.
-        let (mut resiliency_config, _ctx) = make_resiliency_config();
+        let (mut resiliency_config, _ctx) = make_resiliency_config(&part);
         resiliency_config.pota_callback = None;
 
         let result = part.init(
@@ -429,7 +398,7 @@ fn test_double_init_with_resiliency() {
         part.reset().expect("Partition reset failed");
 
         let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
-        let use_tpm = std::env::var("AZIHSM_USE_TPM").is_ok();
+        let use_tpm = use_tpm();
 
         // First init with resiliency
         let pota_data = if !use_tpm {
@@ -454,7 +423,7 @@ fn test_double_init_with_resiliency() {
         };
 
         let ctx = ResiliencyTestCtx::new();
-        let resiliency_config = make_resiliency_config_in(ctx.dir());
+        let resiliency_config = make_resiliency_config_in(ctx.dir(), &part);
         part.init(
             creds,
             None,
@@ -489,7 +458,7 @@ fn test_double_init_with_resiliency() {
             )
         };
 
-        let resiliency_config2 = make_resiliency_config_in(ctx.dir());
+        let resiliency_config2 = make_resiliency_config_in(ctx.dir(), &part);
         part.init(
             creds,
             None,
@@ -512,11 +481,16 @@ fn test_init_with_resiliency_invalid_pota_source_fails() {
         part.reset().expect("Partition reset failed");
 
         let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
-        let obk_info = make_valid_obk();
+        let use_tpm = use_tpm();
+        let obk_info = if use_tpm {
+            HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, None)
+        } else {
+            make_valid_obk()
+        };
         let pota_data = HsmPotaEndorsementData::new(&[0u8; 96], &[0u8; 97]);
         let pota = HsmPotaEndorsement::new(HsmPotaEndorsementSource(99), Some(pota_data));
 
-        let (resiliency_config, _ctx) = make_resiliency_config();
+        let (resiliency_config, _ctx) = make_resiliency_config(&part);
 
         let result = part.init(creds, None, None, obk_info, pota, Some(resiliency_config));
         assert_eq!(result.unwrap_err(), HsmError::InvalidArgument);
@@ -537,8 +511,12 @@ fn test_init_with_resiliency_tpm_pota_with_callback_fails() {
         let pota_endorsement = HsmPotaEndorsement::new(HsmPotaEndorsementSource::Tpm, None);
 
         // TPM source + callback provided → should fail with InvalidArgument.
-        let (resiliency_config, _ctx) = make_resiliency_config();
-        // resiliency_config already has pota_callback = Some(...) from make_resiliency_config
+        let (mut resiliency_config, _ctx) = make_resiliency_config(&part);
+        // Force pota_callback = Some(...) regardless of USE_TPM — this test
+        // specifically verifies that TPM + callback is rejected by validation.
+        if resiliency_config.pota_callback.is_none() {
+            resiliency_config.pota_callback = Some(Box::new(DummyPotaCallback));
+        }
 
         let result = part.init(
             creds,

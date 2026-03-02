@@ -158,7 +158,7 @@ pub struct DdiAesXtsResult {
 }
 
 /// Driver Error Status
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DriverError {
     /// Io abort is in progress
     IoAbortInProgress = 0x04000001,
