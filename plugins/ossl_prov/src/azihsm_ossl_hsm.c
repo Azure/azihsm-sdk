@@ -131,7 +131,13 @@ static azihsm_status load_credentials_from_file(const char *path, uint8_t *outpu
     fd = open(path, O_RDONLY | O_NOFOLLOW);
     if (fd < 0)
     {
-        ERR_raise_data(ERR_LIB_PROV, ERR_R_INIT_FAIL, "failed to open credentials file '%s'", path);
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            ERR_R_INIT_FAIL,
+            "failed to open credentials file '%s': %s",
+            path,
+            strerror(errno)
+        );
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
 
@@ -415,6 +421,7 @@ static azihsm_status generate_and_save_obk(const char *path, struct azihsm_buffe
 
     if (RAND_bytes(obk_bytes, AZIHSM_OBK_SIZE) != 1)
     {
+        OPENSSL_cleanse(obk_bytes, AZIHSM_OBK_SIZE);
         OPENSSL_free(obk_bytes);
         ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
         return AZIHSM_STATUS_INTERNAL_ERROR;
@@ -426,6 +433,7 @@ static azihsm_status generate_and_save_obk(const char *path, struct azihsm_buffe
     azihsm_status status = write_buffer_to_file(path, obk_out);
     if (status != AZIHSM_STATUS_SUCCESS)
     {
+        OPENSSL_cleanse(obk_bytes, AZIHSM_OBK_SIZE);
         OPENSSL_free(obk_bytes);
         obk_out->ptr = NULL;
         obk_out->len = 0;
@@ -481,7 +489,11 @@ static azihsm_status generate_and_save_pota_keypair(
     priv_out->len = (uint32_t)priv_len;
     {
         uint8_t *tmp = priv_out->ptr;
-        i2d_PrivateKey(pkey, &tmp);
+        if (i2d_PrivateKey(pkey, &tmp) != priv_len)
+        {
+            ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
+            goto cleanup;
+        }
     }
     if (write_buffer_to_file(priv_path, priv_out) != AZIHSM_STATUS_SUCCESS)
     {
@@ -508,7 +520,11 @@ static azihsm_status generate_and_save_pota_keypair(
     pub_out->len = (uint32_t)pub_len;
     {
         uint8_t *tmp = pub_out->ptr;
-        i2d_PUBKEY(pkey, &tmp);
+        if (i2d_PUBKEY(pkey, &tmp) != pub_len)
+        {
+            ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
+            goto cleanup;
+        }
     }
     if (write_buffer_to_file(pub_path, pub_out) != AZIHSM_STATUS_SUCCESS)
     {
@@ -520,7 +536,6 @@ static azihsm_status generate_and_save_pota_keypair(
 cleanup:
     if (status != AZIHSM_STATUS_SUCCESS)
     {
-        OPENSSL_cleanse(priv_out->ptr, priv_out->len);
         free_buffer(priv_out);
         free_buffer(pub_out);
     }
@@ -997,7 +1012,8 @@ azihsm_status azihsm_open_device_and_session(
     }
     else
     {
-        // Load custom OBK from file if provided, otherwise use hardcoded default.
+        // Load the OBK from file. If the file is absent (first use), a fresh OBK is
+        // generated and persisted before continuing.
         // Note: the OBK is the raw owner backup key for init_bk3, NOT the masked
         // owner backup key (MOBK) returned by the HSM.
         status = azihsm_file_load(config->obk_path, &obk_buf);
