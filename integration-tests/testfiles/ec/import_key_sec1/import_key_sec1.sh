@@ -13,7 +13,7 @@ curve=P-$1
 sec_one=$2
 cleanup=$3
 keyfile=./ec_"$curve".der
-maskedkeyfile=./masked_"$curve_imported".bin
+maskedkeyfile=./masked_"$curve".bin
 
 
 # Generate SEC1 DER key

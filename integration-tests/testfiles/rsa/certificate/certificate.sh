@@ -19,7 +19,7 @@ cleanup=$3
 
 keyfile=./certificate_rsa_"$keybits"_key.der
 maskedkeyfile=./certificate_masked_rsa_"$keybits"_imported.bin
-certificate=./certtificate_certfile_"$keybits".pem
+certificate=./certificate_certfile_"$keybits"_"$dgst".pem
 
 # Generate external RSA key first (HSM cannot generate RSA keys natively)
 "$OPENSSL_BIN" genpkey \
@@ -61,5 +61,7 @@ if [[ -f $certificate && -s $certificate ]]; then
 fi
 
 if [[ "$cleanup" == "true" ]]; then
+  rm $keyfile
   rm $maskedkeyfile
+  rm $certificate
 fi

@@ -70,17 +70,6 @@ fi
     -in $testdata_hash \
     -sigfile $signature
 
-# CHECK: Signature Verified Successfully
-
-"$OPENSSL_BIN" pkeyutl -verify \
-    -provider-path "$PROVIDER_PATH" \
-    -provider default \
-    -provider azihsm_provider \
-    -propquery "$PROPQUERY" \
-    -inkey "azihsm://$maskedkeyfile;type=ec" \
-    -in $testdata_hash \
-    -sigfile $signature
-
 if [[ "$cleanup" == "true" ]]; then
     rm $keyfile
     rm $testdata

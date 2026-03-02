@@ -138,7 +138,7 @@ jobs:
     - name: Install provider
       run: |
         sudo mkdir -p /usr/lib/ossl-modules /var/lib/azihsm
-        sudo chmod 777 /var/lib/azihsm
+        sudo chown "$USER" /var/lib/azihsm
         sudo cp target/debug/azihsm_provider.so /usr/lib/ossl-modules/
         sudo cp target/debug/libazihsm_api_native.so /usr/lib/
         sudo ldconfig
