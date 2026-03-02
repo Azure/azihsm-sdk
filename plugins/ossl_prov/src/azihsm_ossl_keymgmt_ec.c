@@ -1,7 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-#include <fcntl.h>
 #include <openssl/core_dispatch.h>
 #include <openssl/core_names.h>
 #include <openssl/crypto.h>
@@ -13,13 +12,13 @@
 #include <openssl/store.h>
 #include <openssl/x509.h>
 #include <string.h>
-#include <sys/stat.h>
-#include <unistd.h>
 
 #include "azihsm_ossl_base.h"
 #include "azihsm_ossl_ec.h"
+#include "azihsm_ossl_file_io.h"
 #include "azihsm_ossl_helpers.h"
 #include "azihsm_ossl_hsm.h"
+#include "azihsm_ossl_masked_key.h"
 #include "azihsm_ossl_pkey_param.h"
 
 /*
@@ -346,47 +345,17 @@ static AZIHSM_EC_KEY *azihsm_ossl_keymgmt_gen(
             }
 
             /* Write masked key to file with restricted permissions (owner-only) */
-            int fd = open(
-                genctx->masked_key_file,
-                O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW,
-                S_IRUSR | S_IWUSR
-            );
-            if (fd < 0)
-            {
-                azihsm_key_delete(private);
-                azihsm_key_delete(public);
-
-                OPENSSL_cleanse(masked_key_buffer, masked_key_buffer_size);
-                OPENSSL_free(masked_key_buffer);
-                OPENSSL_free(ec_key);
-                ERR_raise(ERR_LIB_PROV, ERR_R_OPERATION_FAIL);
-                return NULL;
-            }
-
-            FILE *f = fdopen(fd, "wb");
-            if (f == NULL)
-            {
-                close(fd);
-                azihsm_key_delete(private);
-                azihsm_key_delete(public);
-                OPENSSL_cleanse(masked_key_buffer, masked_key_buffer_size);
-                OPENSSL_free(masked_key_buffer);
-                OPENSSL_free(ec_key);
-                ERR_raise(ERR_LIB_PROV, ERR_R_OPERATION_FAIL);
-                return NULL;
-            }
-
-            size_t written = fwrite(masked_key_buffer, 1, prop.len, f);
-            fclose(f);
-
-            if (written != prop.len)
+            if (azihsm_ossl_write_masked_key_to_file(
+                    masked_key_buffer,
+                    prop.len,
+                    genctx->masked_key_file
+                ) != OSSL_SUCCESS)
             {
                 azihsm_key_delete(private);
                 azihsm_key_delete(public);
                 OPENSSL_cleanse(masked_key_buffer, masked_key_buffer_size);
                 OPENSSL_free(masked_key_buffer);
                 OPENSSL_free(ec_key);
-                ERR_raise(ERR_LIB_PROV, ERR_R_OPERATION_FAIL);
                 return NULL;
             }
 
