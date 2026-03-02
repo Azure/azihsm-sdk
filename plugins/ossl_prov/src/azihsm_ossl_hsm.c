@@ -14,6 +14,7 @@
 #include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/proverr.h>
+#include <openssl/rand.h>
 #include <openssl/x509.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -23,6 +24,7 @@
 #include <unistd.h>
 
 #define AZIHSM_MAX_KEY_FILE_SIZE (64 * 1024)
+#define AZIHSM_OBK_SIZE 48
 #define P384_COORD_SIZE 48
 #define P384_RAW_SIG_SIZE 96
 #define P384_UNCOMPRESSED_POINT_SIZE 97
@@ -354,18 +356,6 @@ static azihsm_status azihsm_get_device_handle(azihsm_handle *device)
     return AZIHSM_STATUS_INTERNAL_ERROR;
 }
 
-// clang-format off
-
-/* Fallback owner backup key when no MOBK file is available */
-static const uint8_t DEFAULT_OBK[48] = {
-    0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A,
-    0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14,
-    0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E,
-    0x1F, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28,
-    0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F, 0x30
-};
-
-// clang-format on
 /*
  * Generate RSA unwrapping key pair, extract masked key (MUK), and save to file.
  * This is called when no MUK file exists to bootstrap the unwrapping key.
@@ -493,6 +483,123 @@ static azihsm_status generate_and_save_muk(azihsm_handle session, const char *mu
     return status;
 }
 
+/*
+ * Generates a cryptographically random 48-byte OBK, saves it to path, and
+ * populates obk_out with heap-allocated memory for immediate use by the caller.
+ */
+static azihsm_status generate_and_save_obk(const char *path, struct azihsm_buffer *obk_out)
+{
+    uint8_t *obk_bytes = OPENSSL_malloc(AZIHSM_OBK_SIZE);
+    if (obk_bytes == NULL)
+    {
+        ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
+        return AZIHSM_STATUS_INTERNAL_ERROR;
+    }
+
+    if (RAND_bytes(obk_bytes, AZIHSM_OBK_SIZE) != 1)
+    {
+        OPENSSL_free(obk_bytes);
+        ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
+        return AZIHSM_STATUS_INTERNAL_ERROR;
+    }
+
+    obk_out->ptr = obk_bytes;
+    obk_out->len = AZIHSM_OBK_SIZE;
+
+    azihsm_status status = write_buffer_to_file(path, obk_out);
+    if (status != AZIHSM_STATUS_SUCCESS)
+    {
+        OPENSSL_free(obk_bytes);
+        obk_out->ptr = NULL;
+        obk_out->len = 0;
+        ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
+    }
+    return status;
+}
+
+/*
+ * Generates a fresh P-384 key pair, saves the private key as legacy EC DER to
+ * priv_path and the public key as SubjectPublicKeyInfo DER to pub_path, and
+ * populates both output buffers with heap-allocated memory for immediate use.
+ * The private key can be reloaded by sign_with_pota_key() via d2i_AutoPrivateKey().
+ */
+static azihsm_status generate_and_save_pota_keypair(
+    const char *priv_path,
+    const char *pub_path,
+    struct azihsm_buffer *priv_out,
+    struct azihsm_buffer *pub_out
+)
+{
+    azihsm_status status = AZIHSM_STATUS_INTERNAL_ERROR;
+
+    priv_out->ptr = NULL;
+    priv_out->len = 0;
+    pub_out->ptr = NULL;
+    pub_out->len = 0;
+
+    EVP_PKEY *pkey = EVP_EC_gen("P-384");
+    if (pkey == NULL)
+    {
+        ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
+        return AZIHSM_STATUS_INTERNAL_ERROR;
+    }
+
+    /* Encode private key as legacy EC DER (accepted by d2i_AutoPrivateKey) */
+    int priv_len = i2d_PrivateKey(pkey, NULL);
+    if (priv_len <= 0)
+    {
+        goto cleanup;
+    }
+    priv_out->ptr = OPENSSL_malloc((size_t)priv_len);
+    if (priv_out->ptr == NULL)
+    {
+        goto cleanup;
+    }
+    priv_out->len = (uint32_t)priv_len;
+    {
+        uint8_t *tmp = priv_out->ptr;
+        i2d_PrivateKey(pkey, &tmp);
+    }
+    if (write_buffer_to_file(priv_path, priv_out) != AZIHSM_STATUS_SUCCESS)
+    {
+        goto cleanup;
+    }
+
+    /* Encode public key as SubjectPublicKeyInfo DER */
+    int pub_len = i2d_PUBKEY(pkey, NULL);
+    if (pub_len <= 0)
+    {
+        goto cleanup;
+    }
+    pub_out->ptr = OPENSSL_malloc((size_t)pub_len);
+    if (pub_out->ptr == NULL)
+    {
+        goto cleanup;
+    }
+    pub_out->len = (uint32_t)pub_len;
+    {
+        uint8_t *tmp = pub_out->ptr;
+        i2d_PUBKEY(pkey, &tmp);
+    }
+    if (write_buffer_to_file(pub_path, pub_out) != AZIHSM_STATUS_SUCCESS)
+    {
+        goto cleanup;
+    }
+
+    status = AZIHSM_STATUS_SUCCESS;
+
+cleanup:
+    if (status != AZIHSM_STATUS_SUCCESS)
+    {
+        OPENSSL_cleanse(priv_out->ptr, priv_out->len);
+        free_buffer(priv_out);
+        free_buffer(pub_out);
+        ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
+    }
+    EVP_PKEY_free(pkey);
+    return status;
+}
+
 azihsm_status azihsm_get_unwrapping_key(
     AZIHSM_OSSL_PROV_CTX *provctx,
     azihsm_handle *out_pub,
@@ -602,37 +709,6 @@ azihsm_status azihsm_get_unwrapping_key(
     CRYPTO_THREAD_unlock(provctx->unwrapping_key.lock);
     return AZIHSM_STATUS_SUCCESS;
 }
-
-/* Fixed POTA private key (DER-encoded PKCS#8 ECC P-384, 185 bytes).
- * Matches TEST_POTA_ECC_PRIVATE_KEY / TEST_POTA_PRIVATE_KEY in the Rust test suite. */
-static const uint8_t POTA_PRIVATE_KEY_DER[185] = {
-    0x30, 0x81, 0xb6, 0x02, 0x01, 0x00, 0x30, 0x10, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02,
-    0x01, 0x06, 0x05, 0x2b, 0x81, 0x04, 0x00, 0x22, 0x04, 0x81, 0x9e, 0x30, 0x81, 0x9b, 0x02, 0x01,
-    0x01, 0x04, 0x30, 0x17, 0xe9, 0x1c, 0xac, 0xf7, 0xb7, 0x21, 0xd7, 0x75, 0x20, 0x02, 0x07, 0xbc,
-    0xaa, 0x94, 0x2c, 0xe3, 0xb5, 0x5b, 0x78, 0x13, 0xcc, 0x8b, 0xde, 0x87, 0x65, 0x6b, 0xe1, 0x7b,
-    0xc2, 0xa8, 0xcc, 0x89, 0x33, 0x4e, 0xcd, 0xaa, 0x9d, 0x1d, 0x09, 0xf1, 0xc7, 0x01, 0x1b, 0x64,
-    0xeb, 0x78, 0x5b, 0xa1, 0x64, 0x03, 0x62, 0x00, 0x04, 0x1f, 0x42, 0x0d, 0x73, 0xeb, 0xf0, 0x67,
-    0xc2, 0xf9, 0x77, 0xbd, 0x51, 0xab, 0xfb, 0xe1, 0xf6, 0x53, 0x19, 0xb7, 0x57, 0xe0, 0xa9, 0x20,
-    0xce, 0x4f, 0x21, 0xbb, 0xd4, 0xa7, 0x84, 0x1c, 0x93, 0x45, 0xf1, 0xea, 0xd9, 0x5f, 0xe5, 0x90,
-    0xab, 0x57, 0xe1, 0xea, 0xfc, 0xd2, 0x06, 0xef, 0x21, 0xa2, 0xad, 0x10, 0xd3, 0x17, 0x6e, 0x99,
-    0xc8, 0x22, 0x26, 0x23, 0x08, 0x57, 0xa7, 0x56, 0x08, 0x45, 0xe3, 0xda, 0x12, 0xc7, 0xdc, 0x3a,
-    0xee, 0x01, 0xfc, 0x37, 0xab, 0x1c, 0x8d, 0xc6, 0xd0, 0x64, 0x7a, 0x7d, 0xc2, 0x67, 0xfc, 0x02,
-    0x7d, 0x8d, 0xa3, 0xc8, 0x01, 0x4b, 0xa4, 0x0d, 0x98
-};
-
-/* Fixed POTA public key (DER-encoded SubjectPublicKeyInfo ECC P-384, 120 bytes).
- * Corresponds to POTA_PRIVATE_KEY_DER above.
- * Matches TEST_POTA_ECC_PUB_KEY / TEST_POTA_PUBLIC_KEY_DER in the Rust test suite. */
-static const uint8_t POTA_PUBLIC_KEY_DER[120] = {
-    0x30, 0x76, 0x30, 0x10, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, 0x06, 0x05,
-    0x2b, 0x81, 0x04, 0x00, 0x22, 0x03, 0x62, 0x00, 0x04, 0x1f, 0x42, 0x0d, 0x73, 0xeb, 0xf0,
-    0x67, 0xc2, 0xf9, 0x77, 0xbd, 0x51, 0xab, 0xfb, 0xe1, 0xf6, 0x53, 0x19, 0xb7, 0x57, 0xe0,
-    0xa9, 0x20, 0xce, 0x4f, 0x21, 0xbb, 0xd4, 0xa7, 0x84, 0x1c, 0x93, 0x45, 0xf1, 0xea, 0xd9,
-    0x5f, 0xe5, 0x90, 0xab, 0x57, 0xe1, 0xea, 0xfc, 0xd2, 0x06, 0xef, 0x21, 0xa2, 0xad, 0x10,
-    0xd3, 0x17, 0x6e, 0x99, 0xc8, 0x22, 0x26, 0x23, 0x08, 0x57, 0xa7, 0x56, 0x08, 0x45, 0xe3,
-    0xda, 0x12, 0xc7, 0xdc, 0x3a, 0xee, 0x01, 0xfc, 0x37, 0xab, 0x1c, 0x8d, 0xc6, 0xd0, 0x64,
-    0x7a, 0x7d, 0xc2, 0x67, 0xfc, 0x02, 0x7d, 0x8d, 0xa3, 0xc8, 0x01, 0x4b, 0xa4, 0x0d, 0x98
-};
 
 /*
  * Retrieves the partition's PID public key and builds its uncompressed EC point.
@@ -879,7 +955,6 @@ azihsm_status azihsm_open_device_and_session(
     struct azihsm_buffer obk_buf = { NULL, 0 };
     struct azihsm_buffer retrieved_bmk = { NULL, 0 };
 
-    bool default_obk = false;
     bool muk_was_loaded = false;
 
     struct azihsm_api_rev api_rev = { 0 };
@@ -947,13 +1022,17 @@ azihsm_status azihsm_open_device_and_session(
             return status;
         }
 
-        // Use static default when no OBK file was provided.
-        // default_obk tracks whether obk_buf points to static memory (must not be freed).
+        // Generate and persist a fresh OBK on first use when no file exists.
         if (obk_buf.ptr == NULL)
         {
-            obk_buf.ptr = (uint8_t *)DEFAULT_OBK;
-            obk_buf.len = sizeof(DEFAULT_OBK);
-            default_obk = true;
+            status = generate_and_save_obk(config->obk_path, &obk_buf);
+            if (status != AZIHSM_STATUS_SUCCESS)
+            {
+                free_buffer(&bmk_buf);
+                free_buffer(&muk_buf);
+                OPENSSL_cleanse(&creds, sizeof(creds));
+                return status;
+            }
         }
 
         backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER;
@@ -963,12 +1042,9 @@ azihsm_status azihsm_open_device_and_session(
     status = azihsm_get_device_handle(device);
     if (status != AZIHSM_STATUS_SUCCESS)
     {
+        free_buffer(&obk_buf);
         free_buffer(&bmk_buf);
         free_buffer(&muk_buf);
-        if (!default_obk)
-        {
-            free_buffer(&obk_buf);
-        }
         OPENSSL_cleanse(&creds, sizeof(creds));
         return status;
     }
@@ -981,9 +1057,6 @@ azihsm_status azihsm_open_device_and_session(
 
     struct azihsm_buffer pota_priv_buf = { NULL, 0 };
     struct azihsm_buffer pota_pub_buf = { NULL, 0 };
-    bool default_pota_priv = false;
-    bool default_pota_pub = false;
-
     if (config->use_tpm_pota)
     {
         pota_endorsement.source = AZIHSM_POTA_ENDORSEMENT_SOURCE_TPM;
@@ -991,16 +1064,13 @@ azihsm_status azihsm_open_device_and_session(
     }
     else
     {
-        // Load POTA keys from files; fall back to hardcoded keys if files don't exist
+        // Load POTA keys from files
         status = load_file_to_buffer(config->pota_private_key_path, &pota_priv_buf);
         if (status != AZIHSM_STATUS_SUCCESS)
         {
+            free_buffer(&obk_buf);
             free_buffer(&bmk_buf);
             free_buffer(&muk_buf);
-            if (!default_obk)
-            {
-                free_buffer(&obk_buf);
-            }
             OPENSSL_cleanse(&creds, sizeof(creds));
             azihsm_part_close(*device);
             return status;
@@ -1009,33 +1079,52 @@ azihsm_status azihsm_open_device_and_session(
         status = load_file_to_buffer(config->pota_public_key_path, &pota_pub_buf);
         if (status != AZIHSM_STATUS_SUCCESS)
         {
-            if (!default_pota_priv)
-            {
-                free_buffer(&pota_priv_buf);
-            }
+            free_buffer(&pota_priv_buf);
+            free_buffer(&obk_buf);
             free_buffer(&bmk_buf);
             free_buffer(&muk_buf);
-            if (!default_obk)
-            {
-                free_buffer(&obk_buf);
-            }
             OPENSSL_cleanse(&creds, sizeof(creds));
             azihsm_part_close(*device);
             return status;
         }
 
-        // Fall back to hardcoded keys when files don't exist
-        if (pota_priv_buf.ptr == NULL)
+        // Generate and persist a fresh POTA key pair on first use when no files exist.
+        // If only one file is present the config is inconsistent — fail explicitly.
+        if (pota_priv_buf.ptr == NULL && pota_pub_buf.ptr == NULL)
         {
-            pota_priv_buf.ptr = (uint8_t *)POTA_PRIVATE_KEY_DER;
-            pota_priv_buf.len = sizeof(POTA_PRIVATE_KEY_DER);
-            default_pota_priv = true;
+            status = generate_and_save_pota_keypair(
+                config->pota_private_key_path,
+                config->pota_public_key_path,
+                &pota_priv_buf,
+                &pota_pub_buf
+            );
+            if (status != AZIHSM_STATUS_SUCCESS)
+            {
+                free_buffer(&obk_buf);
+                free_buffer(&bmk_buf);
+                free_buffer(&muk_buf);
+                OPENSSL_cleanse(&creds, sizeof(creds));
+                azihsm_part_close(*device);
+                return status;
+            }
         }
-        if (pota_pub_buf.ptr == NULL)
+        else if (pota_priv_buf.ptr == NULL || pota_pub_buf.ptr == NULL)
         {
-            pota_pub_buf.ptr = (uint8_t *)POTA_PUBLIC_KEY_DER;
-            pota_pub_buf.len = sizeof(POTA_PUBLIC_KEY_DER);
-            default_pota_pub = true;
+            ERR_raise_data(
+                ERR_LIB_PROV,
+                ERR_R_INIT_FAIL,
+                "only one POTA key file is present; both '%s' and '%s' are required",
+                config->pota_private_key_path,
+                config->pota_public_key_path
+            );
+            free_buffer(&pota_priv_buf);
+            free_buffer(&pota_pub_buf);
+            free_buffer(&obk_buf);
+            free_buffer(&bmk_buf);
+            free_buffer(&muk_buf);
+            OPENSSL_cleanse(&creds, sizeof(creds));
+            azihsm_part_close(*device);
+            return AZIHSM_STATUS_INTERNAL_ERROR;
         }
 
         // Compute POTA endorsement: sign PID public key with POTA key
@@ -1048,20 +1137,11 @@ azihsm_status azihsm_open_device_and_session(
         );
         if (status != AZIHSM_STATUS_SUCCESS)
         {
-            if (!default_pota_priv)
-            {
-                free_buffer(&pota_priv_buf);
-            }
-            if (!default_pota_pub)
-            {
-                free_buffer(&pota_pub_buf);
-            }
+            free_buffer(&pota_priv_buf);
+            free_buffer(&pota_pub_buf);
+            free_buffer(&obk_buf);
             free_buffer(&bmk_buf);
             free_buffer(&muk_buf);
-            if (!default_obk)
-            {
-                free_buffer(&obk_buf);
-            }
             OPENSSL_cleanse(&creds, sizeof(creds));
             azihsm_part_close(*device);
             return status;
@@ -1087,18 +1167,9 @@ azihsm_status azihsm_open_device_and_session(
     free_buffer(&bmk_buf);
     free_buffer(&muk_buf);
     free_buffer(&pota_sig_buf);
-    if (!default_pota_priv)
-    {
-        free_buffer(&pota_priv_buf);
-    }
-    if (!default_pota_pub)
-    {
-        free_buffer(&pota_pub_buf);
-    }
-    if (!default_obk)
-    {
-        free_buffer(&obk_buf);
-    }
+    free_buffer(&pota_priv_buf);
+    free_buffer(&pota_pub_buf);
+    free_buffer(&obk_buf);
 
     if (status != AZIHSM_STATUS_SUCCESS)
     {
