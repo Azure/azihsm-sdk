@@ -536,6 +536,58 @@ static OSSL_STATUS parse_provider_config(
         );
     }
 
+    /* Validate key-material paths read from openssl.cnf */
+    if (!azihsm_path_is_safe(config->bmk_path))
+    {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            PROV_R_INVALID_CONFIG_DATA,
+            "unsafe BMK path '%s'",
+            config->bmk_path
+        );
+        return OSSL_FAILURE;
+    }
+    if (!azihsm_path_is_safe(config->muk_path))
+    {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            PROV_R_INVALID_CONFIG_DATA,
+            "unsafe MUK path '%s'",
+            config->muk_path
+        );
+        return OSSL_FAILURE;
+    }
+    if (!azihsm_path_is_safe(config->obk_path))
+    {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            PROV_R_INVALID_CONFIG_DATA,
+            "unsafe OBK path '%s'",
+            config->obk_path
+        );
+        return OSSL_FAILURE;
+    }
+    if (!azihsm_path_is_safe(config->pota_private_key_path))
+    {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            PROV_R_INVALID_CONFIG_DATA,
+            "unsafe POTA private key path '%s'",
+            config->pota_private_key_path
+        );
+        return OSSL_FAILURE;
+    }
+    if (!azihsm_path_is_safe(config->pota_public_key_path))
+    {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            PROV_R_INVALID_CONFIG_DATA,
+            "unsafe POTA public key path '%s'",
+            config->pota_public_key_path
+        );
+        return OSSL_FAILURE;
+    }
+
     /* Parse source selections: "caller" (default) or "tpm" */
     if (obk_source != NULL && OPENSSL_strcasecmp(obk_source, "tpm") == 0)
     {
@@ -564,6 +616,7 @@ static OSSL_STATUS parse_provider_config(
                 "invalid api-revision format '%s', expected 'major.minor' (e.g. '1.0')",
                 api_revision
             );
+            return OSSL_FAILURE;
         }
     }
 
