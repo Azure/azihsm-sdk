@@ -596,6 +596,10 @@ fn test_establish_credential_tamper_signed_pid() {
             );
 
             assert!(resp.is_err(), "resp {:?}", resp);
+            assert!(matches!(
+                resp.unwrap_err(),
+                DdiError::DdiStatus(DdiStatus::EccVerifyFailed)
+            ));
         },
     );
 }

@@ -17,6 +17,7 @@ pub mod fault;
 
 pub use azihsm_ddi_interface::DriverError;
 pub use azihsm_ddi_types::DdiOp;
+pub use azihsm_ddi_types::DdiStatus;
 pub use ddi::DdiResTest;
 pub use dev::DdiResTestDev;
 pub use fault::*;

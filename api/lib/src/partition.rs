@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use azihsm_ddi::DdiDev;
 use parking_lot::RwLock;
-use retry_macro::retry_open_part;
+use resiliency_macro::resiliency_open_part;
 use tracing::*;
 
 use super::*;
@@ -302,7 +302,7 @@ impl HsmPartitionManager {
     /// - API revision retrieval fails
     /// - The underlying DDI operation fails
     /// - All retry attempts are exhausted for transient IO-abort errors
-    #[retry_open_part]
+    #[resiliency_open_part]
     #[instrument()]
     pub fn open_partition(path: &str) -> HsmResult<HsmPartition> {
         let dev = ddi::open_dev(path)?;
@@ -400,8 +400,8 @@ impl HsmPartition {
             ResiliencyState::validate_config(config, &pota_endorsement)?;
         }
 
-        let (bmk, mobk) = self.with_dev(|dev| -> HsmResult<(Vec<u8>, Vec<u8>)> {
-            let (bmk, mobk) = ddi::init_part(
+        let result = self.with_dev(|dev| {
+            ddi::init_part(
                 dev,
                 self.api_rev_range().min(),
                 creds,
@@ -409,15 +409,23 @@ impl HsmPartition {
                 muk,
                 &obk_config,
                 &pota_endorsement,
-            )?;
-            Ok((bmk, mobk))
+                resiliency_config.as_ref(),
+            )
         })?;
-        self.inner().write().set_masked_keys(bmk, mobk);
+        self.inner()
+            .write()
+            .set_masked_keys(result.bmk, result.mobk);
 
         // Set up resiliency state — config already validated above.
+        // Use the POTA endorsement data that was actually sent to the device
+        // (which may differ from the caller's original when the callback
+        // re-signed after a resiliency event).
         if let Some(config) = resiliency_config {
-            let resiliency_state =
-                ResiliencyState::new(config, creds, obk_config, pota_endorsement);
+            let committed_pota = HsmPotaEndorsement::new(
+                pota_endorsement.source(),
+                Some(result.pota_endorsement_data),
+            );
+            let resiliency_state = ResiliencyState::new(config, creds, obk_config, committed_pota);
             self.inner().write().set_resiliency_state(resiliency_state);
         }
         Ok(())
@@ -659,16 +667,6 @@ impl HsmPartition {
     /// A reference to the wrapped partition inner state.
     pub(crate) fn inner(&self) -> &Arc<RwLock<HsmPartitionInner>> {
         &self.0
-    }
-
-    /// Returns `true` if resiliency was configured for this partition
-    /// (i.e., a non-`None` [`HsmResiliencyConfig`] was passed to [`init`]).
-    ///
-    /// Used by `#[retry_with_backoff(condition = "...")]` to gate retry
-    /// logic on whether the caller opted in to resiliency.
-    #[allow(dead_code)]
-    pub(crate) fn resiliency_enabled(&self) -> bool {
-        self.inner().read().resiliency_state.is_some()
     }
 }
 

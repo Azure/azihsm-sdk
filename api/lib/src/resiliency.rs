@@ -29,10 +29,13 @@ cfg_if::cfg_if! {
 }
 
 /// Well-known storage key for the backup masking key.
-#[allow(dead_code)]
 pub(crate) const AZIHSM_STORAGE_BMK: &str = "azihsm_bmk";
 
 /// Well-known storage key for the masked unwrapping key.
+///
+/// [TODO] Not yet written during `init_part`. MUK is persisted when the
+/// unwrapping key is fetched during a session operation.
+/// This constant is reserved for that future implementation.
 #[allow(dead_code)]
 pub(crate) const AZIHSM_STORAGE_MUK: &str = "azihsm_muk";
 
@@ -67,17 +70,61 @@ pub trait ResiliencyLock: Send + Sync {
     fn unlock(&self) -> HsmResult<()>;
 }
 
-/// Callback for re-signing POTA endorsement during restore.
+/// Callback for re-signing POTA endorsement during retry and restore.
 ///
-/// Only required when POTA endorsement source is `Caller` AND resiliency is
-/// enabled. Called during `restore_partition` to re-endorse the partition
-/// identity with the caller's OBK private key.
+/// Required when POTA endorsement source is `Caller` AND resiliency is
+/// enabled. Called during `init_part` (to re-endorse after a
+/// resiliency event).
+///
+/// The callback is responsible for retrieving the current device's PID
+/// certificate public key, signing it, and returning the result.
 pub trait PotaEndorsementCallback: Send + Sync {
-    /// Re-sign the POTA endorsement with the caller's OBK private key.
+    /// Generate a fresh POTA endorsement for the current device.
     ///
-    /// Receives the original public key and returns a new signature and
-    /// (potentially rotated) public key.
+    /// The `pub_key` parameter is the caller's original endorsement public
+    /// key, passed for identification.
+    ///
+    /// The implementation must:
+    /// 1. Retrieve the current device's PID certificate public key
+    /// 2. Sign it with the caller's private key
+    /// 3. Return the signature and the signer's public key
     fn endorse(&self, pub_key: &[u8]) -> HsmResult<HsmPotaEndorsementData>;
+}
+
+/// RAII guard for [`ResiliencyLock`].
+///
+/// Acquires the lock on construction and releases it on drop, ensuring the
+/// lock is always released even when the caller returns early due to an error.
+///
+/// When constructed with `None` (resiliency disabled), the guard is a no-op.
+pub(crate) struct ResiliencyLockGuard<'a> {
+    lock: Option<&'a dyn ResiliencyLock>,
+}
+
+impl<'a> ResiliencyLockGuard<'a> {
+    /// Acquire the resiliency lock and return a guard that releases it on drop.
+    ///
+    /// When `config` is `None`, returns a no-op guard.
+    pub(crate) fn acquire(config: Option<&'a HsmResiliencyConfig>) -> HsmResult<Self> {
+        if let Some(cfg) = config {
+            cfg.lock.lock()?;
+            Ok(Self {
+                lock: Some(cfg.lock.as_ref()),
+            })
+        } else {
+            Ok(Self { lock: None })
+        }
+    }
+}
+
+impl Drop for ResiliencyLockGuard<'_> {
+    fn drop(&mut self) {
+        if let Some(lock) = self.lock {
+            if let Err(e) = lock.unlock() {
+                warn!("Failed to release resiliency lock on drop: {e:?}");
+            }
+        }
+    }
 }
 
 /// Resiliency configuration bundle.
@@ -378,41 +425,48 @@ pub(crate) const BACKOFF_JITTER_MS: u64 = 2;
 ///
 /// # Arguments
 ///
-/// * `operation`        – Closure that performs the fallible work.
+/// * `operation`        – Closure that performs the fallible work. Receives
+///   `None` on the initial call and `Some(&HsmError)` on retries, where
+///   the error is the one that triggered the retry.
 /// * `predicate`        – Returns `true` for errors that are worth retrying.
-/// * `max_retries`      – Maximum number of **additional** attempts after the first failure.
+/// * `max_retries`      – Maximum number of additional attempts after the first failure.
 /// * `backoff_base_ms`  – Base delay in milliseconds; doubled each iteration.
 /// * `backoff_jitter_ms`– Maximum random jitter added to each delay (ms).
 pub(crate) fn execute_with_backoff<T>(
-    mut operation: impl FnMut() -> HsmResult<T>,
+    mut operation: impl FnMut(Option<&HsmError>) -> HsmResult<T>,
     predicate: fn(&HsmResult<T>) -> bool,
     max_retries: u32,
     backoff_base_ms: u64,
     backoff_jitter_ms: u64,
 ) -> HsmResult<T> {
-    let mut result = operation();
-    let mut iter = 0u32;
+    let mut attempt = 0u32;
+    let mut result = operation(None);
 
-    while predicate(&result) && iter < max_retries {
-        let backoff_ms = backoff_base_ms * (1 << iter);
+    while predicate(&result) && attempt < max_retries {
+        let backoff_ms = backoff_base_ms.saturating_mul(1u64 << attempt.min(63));
         let jitter_ms = rand::thread_rng().gen_range(0..=backoff_jitter_ms);
         let total_ms = backoff_ms + jitter_ms;
         if let Err(ref err) = result {
             warn!(
                 ?err,
-                iter, backoff_ms, jitter_ms, total_ms, "Transient error, backing off before retry.",
+                attempt,
+                backoff_ms,
+                jitter_ms,
+                total_ms,
+                "Transient error, backing off before retry.",
             );
         }
         std::thread::sleep(Duration::from_millis(total_ms));
-        result = operation();
-        iter += 1;
+        let prev_err = result.err();
+        attempt += 1;
+        result = operation(prev_err.as_ref());
     }
 
     if let Err(ref err) = result {
-        if iter > 0 {
+        if attempt > 0 {
             error!(
                 ?err,
-                retries = iter,
+                retries = attempt,
                 "Operation failed after retries, giving up.",
             );
         }
@@ -428,6 +482,38 @@ pub(crate) fn is_io_abort_error<T>(result: &HsmResult<T>) -> bool {
     matches!(
         result,
         Err(HsmError::IoAborted) | Err(HsmError::IoAbortInProgress)
+    )
+}
+
+/// Returns `true` when the error is retryable during partition initialization.
+///
+/// - `IoAborted` / `IoAbortInProgress` — transient driver-level IO-abort
+///   conditions (e.g., live migration, firmware crash recovery).
+/// - `CredentialsNotEstablished` — credentials were lost (e.g., after migration).
+/// - `NonceMismatch` — nonce mismatch during credential negotiation.
+/// - `PartitionNotProvisioned` — partition state was lost.
+///
+/// # Note on POTA re-endorsement
+///
+/// When POTA source is `Caller` and resiliency is enabled, the
+/// `PotaEndorsementCallback` is invoked during `init_part` retries
+/// when the previous error was `EccVerifyFailed`, to re-sign the
+/// endorsement over the current device's PID public key.
+///
+/// `EccVerifyFailed` covers the case where a resiliency event
+/// occurs between DDI calls during `init_part`. The device
+/// regenerates its attestation key, so a POTA signature computed against the
+/// old key will fail ECC verification. On retry, `get_pota_endorsement`
+/// re-signs over the new PID public key, resolving the mismatch.
+pub(crate) fn is_init_retryable_error<T>(result: &HsmResult<T>) -> bool {
+    matches!(
+        result,
+        Err(HsmError::IoAborted)
+            | Err(HsmError::IoAbortInProgress)
+            | Err(HsmError::CredentialsNotEstablished)
+            | Err(HsmError::NonceMismatch)
+            | Err(HsmError::PartitionNotProvisioned)
+            | Err(HsmError::EccVerifyFailed)
     )
 }
 
@@ -452,7 +538,11 @@ mod retry_tests {
     fn succeeds_on_first_try_no_retry() {
         let call_count = AtomicU32::new(0);
         let result = execute_with_backoff(
-            || {
+            |prev_err| {
+                assert!(
+                    prev_err.is_none(),
+                    "first call should have no previous error"
+                );
                 call_count.fetch_add(1, Ordering::SeqCst);
                 Ok(42)
             },
@@ -470,7 +560,7 @@ mod retry_tests {
         let call_count = AtomicU32::new(0);
         let max = 3u32;
         let result: HsmResult<()> = execute_with_backoff(
-            || {
+            |_| {
                 call_count.fetch_add(1, Ordering::SeqCst);
                 Err(HsmError::IoAborted)
             },
@@ -488,7 +578,7 @@ mod retry_tests {
     fn recovers_after_transient_failures() {
         let call_count = AtomicU32::new(0);
         let result = execute_with_backoff(
-            || {
+            |_| {
                 let n = call_count.fetch_add(1, Ordering::SeqCst);
                 if n < 2 {
                     Err(HsmError::IoAbortInProgress)
@@ -509,7 +599,7 @@ mod retry_tests {
     fn non_retryable_error_returns_immediately() {
         let call_count = AtomicU32::new(0);
         let result: HsmResult<()> = execute_with_backoff(
-            || {
+            |_| {
                 call_count.fetch_add(1, Ordering::SeqCst);
                 Err(HsmError::InvalidArgument)
             },
@@ -526,7 +616,7 @@ mod retry_tests {
     fn predicate_never_retry_runs_once() {
         let call_count = AtomicU32::new(0);
         let result: HsmResult<()> = execute_with_backoff(
-            || {
+            |_| {
                 call_count.fetch_add(1, Ordering::SeqCst);
                 Err(HsmError::IoAborted)
             },
@@ -543,7 +633,7 @@ mod retry_tests {
     fn zero_max_retries_runs_once() {
         let call_count = AtomicU32::new(0);
         let result: HsmResult<()> = execute_with_backoff(
-            || {
+            |_| {
                 call_count.fetch_add(1, Ordering::SeqCst);
                 Err(HsmError::IoAborted)
             },
@@ -554,5 +644,39 @@ mod retry_tests {
         );
         assert_eq!(result, Err(HsmError::IoAborted));
         assert_eq!(call_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn prev_error_is_passed_on_retry() {
+        let call_count = AtomicU32::new(0);
+        let result = execute_with_backoff(
+            |prev_err| {
+                let n = call_count.fetch_add(1, Ordering::SeqCst);
+                match n {
+                    0 => {
+                        assert!(
+                            prev_err.is_none(),
+                            "first call should have no previous error"
+                        );
+                        Err(HsmError::IoAborted)
+                    }
+                    1 => {
+                        assert_eq!(prev_err, Some(&HsmError::IoAborted));
+                        Err(HsmError::IoAbortInProgress)
+                    }
+                    2 => {
+                        assert_eq!(prev_err, Some(&HsmError::IoAbortInProgress));
+                        Ok(42)
+                    }
+                    _ => panic!("unexpected call"),
+                }
+            },
+            always_retry,
+            5,
+            1,
+            0,
+        );
+        assert_eq!(result, Ok(42));
+        assert_eq!(call_count.load(Ordering::SeqCst), 3);
     }
 }
