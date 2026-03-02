@@ -3,7 +3,7 @@
 
 [package]
 edition = "2021"
-name = "retry_macro"
+name = "resiliency_macro"
 version = "0.1.0"
 
 [lib]
