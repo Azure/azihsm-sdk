@@ -754,12 +754,12 @@ fn test_gcm_streaming_exceeds_max_buffer_fails(session: HsmSession) {
     ctx.update_vec(&chunk).unwrap();
 
     // Overflow by 1 byte
-    let _res = ctx.update_vec(&[0x01]);
+    let res = ctx.update_vec(&[0x01]);
 
-    /*assert!(
+    assert!(
         matches!(res, Err(HsmError::InvalidArgument)),
         "Exceeding max streaming buffer must fail"
-    );*/
+    );
 }
 
 #[session_test]
