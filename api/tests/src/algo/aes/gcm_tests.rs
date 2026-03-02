@@ -5,7 +5,7 @@ use super::*;
 
 const AES_GCM_IV_SIZE: usize = 12;
 const AES_GCM_TAG_SIZE: usize = 16;
-const AES_GCM_MAX_BUFFER_SIZE: usize = 1024 * 1024; // 1MB, arbitrary limit for testing
+const AES_GCM_MAX_BUFFER_SIZE: usize = 10 * 1024 * 1024; // 10MB, arbitrary limit for testing
 
 /// Generate a session-only AES-GCM key.
 fn aes_gcm_generate_key(session: &HsmSession) -> HsmAesGcmKey {
