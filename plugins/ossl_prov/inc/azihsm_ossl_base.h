@@ -7,6 +7,8 @@
 #include <openssl/core_names.h>
 #include <openssl/crypto.h>
 #include <openssl/params.h>
+#include <stdbool.h>
+#include <stdint.h>
 
 #include "azihsm_ossl_helpers.h"
 

@@ -7,6 +7,7 @@
 #include <openssl/evp.h>
 #include <openssl/prov_ssl.h>
 #include <openssl/proverr.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
@@ -29,8 +30,6 @@ extern "C"
     {                                                                                              \
         NULL, NULL, NULL, NULL                                                                     \
     }
-
-static OSSL_FUNC_core_get_params_fn *core_get_params;
 
 // Digest
 extern const OSSL_DISPATCH azihsm_ossl_sha1_functions[];
@@ -387,6 +386,20 @@ static void load_path_from_env_or_default(
     }
 }
 
+/* Returns non-zero if path is safe to use as a credential file path. */
+static int azihsm_path_is_safe(const char *path)
+{
+    if (path == NULL || path[0] == '\0')
+    {
+        return 0;
+    }
+    if (strstr(path, "..") != NULL)
+    {
+        return 0;
+    }
+    return 1;
+}
+
 /*
  * Parses provider configuration from the OpenSSL config file (openssl.cnf)
  * and environment variables into the provider context's config struct.
@@ -394,8 +407,10 @@ static void load_path_from_env_or_default(
  * Key paths (BMK, MUK, OBK) are read from openssl.cnf with fallback to defaults.
  * Credential paths are read from environment variables only (not openssl.cnf) for security.
  * API revision is parsed from openssl.cnf in "major.minor" format.
+ *
+ * Returns OSSL_SUCCESS on success, OSSL_FAILURE if credential paths are unsafe.
  */
-static void parse_provider_config(
+static OSSL_STATUS parse_provider_config(
     AZIHSM_CONFIG *config,
     const OSSL_CORE_HANDLE *handle,
     OSSL_FUNC_core_get_params_fn *get_params_fn
@@ -438,16 +453,37 @@ static void parse_provider_config(
         AZIHSM_ENV_CREDENTIALS_ID_PATH,
         AZIHSM_DEFAULT_CREDENTIALS_ID_PATH
     );
+    if (!azihsm_path_is_safe(config->credentials_id_path))
+    {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            PROV_R_INVALID_CONFIG_DATA,
+            "unsafe credentials ID path '%s'",
+            config->credentials_id_path
+        );
+        return OSSL_FAILURE;
+    }
+
     load_path_from_env_or_default(
         config->credentials_pin_path,
         sizeof(config->credentials_pin_path),
         AZIHSM_ENV_CREDENTIALS_PIN_PATH,
         AZIHSM_DEFAULT_CREDENTIALS_PIN_PATH
     );
+    if (!azihsm_path_is_safe(config->credentials_pin_path))
+    {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            PROV_R_INVALID_CONFIG_DATA,
+            "unsafe credentials PIN path '%s'",
+            config->credentials_pin_path
+        );
+        return OSSL_FAILURE;
+    }
 
     if (get_params_fn == NULL)
     {
-        return;
+        return OSSL_SUCCESS;
     }
 
     /* Query key paths, source selections, and API revision from openssl.cnf */
@@ -465,7 +501,7 @@ static void parse_provider_config(
 
     if (get_params_fn(handle, config_params) != 1)
     {
-        return;
+        return OSSL_SUCCESS;
     }
 
     /* Override defaults with configured values, stripping "file:" prefix */
@@ -530,6 +566,8 @@ static void parse_provider_config(
             );
         }
     }
+
+    return OSSL_SUCCESS;
 }
 
 OSSL_STATUS OSSL_provider_init(
@@ -567,19 +605,24 @@ OSSL_STATUS OSSL_provider_init(
         return OSSL_FAILURE;
     }
 
-    /* Find core_get_params before using it for config parsing */
+    /* Find get_params_fn from the core dispatch table for config parsing */
     for (in_iter = in; in_iter->function_id != 0; in_iter++)
     {
         if (in_iter->function_id == OSSL_FUNC_CORE_GET_PARAMS)
         {
             get_params_fn = OSSL_FUNC_core_get_params(in_iter);
-            core_get_params = get_params_fn;
             break;
         }
     }
 
     /* Parse configuration from openssl.cnf and environment variables */
-    parse_provider_config(&ctx->config, handle, get_params_fn);
+    if (parse_provider_config(&ctx->config, handle, get_params_fn) != OSSL_SUCCESS)
+    {
+        CRYPTO_THREAD_lock_free(ctx->unwrapping_key.lock);
+        OSSL_LIB_CTX_free(ctx->libctx);
+        OPENSSL_free(ctx);
+        return OSSL_FAILURE;
+    }
 
     /* Validate API revision is within supported range */
     if (!azihsm_api_revision_is_valid(&ctx->config))

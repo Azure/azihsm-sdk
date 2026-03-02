@@ -211,13 +211,14 @@ static void free_buffer(struct azihsm_buffer *buffer)
 
 /*
  * Loads a binary credential file (ID or PIN) into a fixed-size output buffer.
- * The file must contain exactly AZIHSM_CREDENTIALS_SIZE bytes.
+ * The file must be a regular file containing exactly AZIHSM_CREDENTIALS_SIZE bytes.
  * Returns AZIHSM_STATUS_SUCCESS on success, AZIHSM_STATUS_INTERNAL_ERROR on error.
  */
 static azihsm_status load_credentials_from_file(const char *path, uint8_t *output)
 {
-    FILE *file = NULL;
-    size_t bytes_read = 0;
+    int fd = -1;
+    struct stat st;
+    ssize_t bytes_read = 0;
 
     if (path == NULL || output == NULL)
     {
@@ -225,31 +226,43 @@ static azihsm_status load_credentials_from_file(const char *path, uint8_t *outpu
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
 
-    file = fopen(path, "rb");
-    if (file == NULL)
+    fd = open(path, O_RDONLY | O_NOFOLLOW);
+    if (fd < 0)
     {
         ERR_raise_data(ERR_LIB_PROV, ERR_R_INIT_FAIL, "failed to open credentials file '%s'", path);
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
 
-    bytes_read = fread(output, 1, AZIHSM_CREDENTIALS_SIZE, file);
-
-    /* Verify file contains exactly the expected number of bytes */
-    if (bytes_read != AZIHSM_CREDENTIALS_SIZE || fgetc(file) != EOF)
+    if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || st.st_size != AZIHSM_CREDENTIALS_SIZE)
     {
         ERR_raise_data(
             ERR_LIB_PROV,
             ERR_R_INIT_FAIL,
-            "credentials file '%s' must contain exactly %d bytes",
+            "credentials file '%s' must be a regular file of exactly %d bytes",
             path,
             AZIHSM_CREDENTIALS_SIZE
         );
-        OPENSSL_cleanse(output, AZIHSM_CREDENTIALS_SIZE);
-        fclose(file);
+        close(fd);
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
 
-    fclose(file);
+    bytes_read = read(fd, output, AZIHSM_CREDENTIALS_SIZE);
+    close(fd);
+
+    if (bytes_read != AZIHSM_CREDENTIALS_SIZE)
+    {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            ERR_R_INIT_FAIL,
+            "short read from credentials file '%s': got %zd of %d bytes",
+            path,
+            bytes_read,
+            AZIHSM_CREDENTIALS_SIZE
+        );
+        OPENSSL_cleanse(output, AZIHSM_CREDENTIALS_SIZE);
+        return AZIHSM_STATUS_INTERNAL_ERROR;
+    }
+
     return AZIHSM_STATUS_SUCCESS;
 }
 
