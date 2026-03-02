@@ -18,8 +18,29 @@
 #define AZIHSM_MAX_KEY_FILE_SIZE (64 * 1024)
 
 /*
- * Load file contents into an azihsm_buffer.
- * See azihsm_ossl_file_io.h for semantics.
+ * azihsm_file_load - read a file into a heap-allocated azihsm_buffer.
+ *
+ * Parameters:
+ *   path   - NUL-terminated path to the file to read.
+ *   buffer - output buffer; always initialised to {NULL, 0} on entry,
+ *            populated on success, left as {NULL, 0} on any error.
+ *
+ * Return values and special cases:
+ *   AZIHSM_STATUS_SUCCESS with buffer->ptr == NULL
+ *     The file does not exist (ENOENT). Callers treat absence as
+ *     "not yet created" rather than a hard error.
+ *   AZIHSM_STATUS_SUCCESS with buffer->ptr != NULL
+ *     The file was read. buffer->ptr is an OPENSSL_malloc'd region of
+ *     buffer->len bytes. The caller is responsible for
+ *     OPENSSL_cleanse(buffer->ptr, buffer->len) + OPENSSL_free(buffer->ptr).
+ *   AZIHSM_STATUS_INTERNAL_ERROR
+ *     Any other failure (permission denied, I/O error, file too large,
+ *     allocation failure). The OpenSSL error stack is populated with a
+ *     descriptive message including the path and strerror(errno) where
+ *     applicable. buffer is left as {NULL, 0}.
+ *
+ * Size limit: files larger than AZIHSM_MAX_KEY_FILE_SIZE (64 KB) are
+ * rejected to prevent runaway allocations on corrupt or malicious paths.
  */
 azihsm_status azihsm_file_load(const char *path, struct azihsm_buffer *buffer)
 {
@@ -27,6 +48,7 @@ azihsm_status azihsm_file_load(const char *path, struct azihsm_buffer *buffer)
     long file_size = 0;
     size_t bytes_read = 0;
 
+    // Both arguments are required; a NULL path or output buffer is a caller bug.
     if (path == NULL || buffer == NULL)
     {
         ERR_raise_data(
@@ -37,15 +59,17 @@ azihsm_status azihsm_file_load(const char *path, struct azihsm_buffer *buffer)
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
 
+    // Guarantee a clean output state before any early return.
     buffer->ptr = NULL;
     buffer->len = 0;
 
     file = fopen(path, "rb");
     if (file == NULL)
     {
+        // ENOENT means the file has not been created yet (first-use path).
+        // All other errors are genuine failures.
         if (errno == ENOENT)
         {
-            // File doesn't exist - not an error
             return AZIHSM_STATUS_SUCCESS;
         }
         ERR_raise_data(
@@ -58,6 +82,7 @@ azihsm_status azihsm_file_load(const char *path, struct azihsm_buffer *buffer)
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
 
+    // Determine file size via seek-to-end / tell / seek-to-start.
     if (fseek(file, 0, SEEK_END) != 0)
     {
         ERR_raise_data(
@@ -98,12 +123,14 @@ azihsm_status azihsm_file_load(const char *path, struct azihsm_buffer *buffer)
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
 
+    // An empty file is valid (buffer stays {NULL, 0}); nothing to read.
     if (file_size == 0)
     {
         fclose(file);
         return AZIHSM_STATUS_SUCCESS;
     }
 
+    // Reject oversized files before allocating to avoid runaway memory use.
     if (file_size > AZIHSM_MAX_KEY_FILE_SIZE)
     {
         ERR_raise_data(
@@ -125,6 +152,7 @@ azihsm_status azihsm_file_load(const char *path, struct azihsm_buffer *buffer)
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
 
+    // Read the entire file in one call; a short read indicates truncation or I/O error.
     bytes_read = fread(buffer->ptr, 1, (size_t)file_size, file);
     fclose(file);
 
@@ -138,6 +166,7 @@ azihsm_status azihsm_file_load(const char *path, struct azihsm_buffer *buffer)
             bytes_read,
             file_size
         );
+        // Wipe any partial data before freeing to avoid leaving key material on the heap.
         OPENSSL_cleanse(buffer->ptr, (size_t)file_size);
         OPENSSL_free(buffer->ptr);
         buffer->ptr = NULL;
