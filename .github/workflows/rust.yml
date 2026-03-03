@@ -158,7 +158,7 @@ jobs:
         OPENSSL_LIB: ""
         PROVIDER_PATH: /usr/lib/ossl-modules
         PROPQUERY: "?provider=azihsm"
-      run: cargo test -p integration-tests
+      run: cargo test -p integration-tests --features integration
 
   build_windows:
 

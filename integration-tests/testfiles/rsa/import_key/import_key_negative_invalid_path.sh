@@ -3,11 +3,7 @@
 
 # RUN: @bash -ea @file @keybits @algorithm @cleanup 
 
-test -z "$OPENSSL_BIN" && OPENSSL_BIN=../../openssl-build/bin/openssl
-test -z "$PROVIDER_PATH" && PROVIDER_PATH=../target/debug
-test -z "$PROPQUERY" && PROPQUERY="?provider=azihsm"
-test -z "$OPENSSL_LIB" && OPENSSL_LIB=../../openssl-build/lib64
-export LD_LIBRARY_PATH="$OPENSSL_LIB"
+source "$(dirname "${BASH_SOURCE[0]}")/../../env.sh"
 
 keybits=$1
 algorithm=$2
@@ -30,6 +26,10 @@ output=$("$OPENSSL_BIN" genpkey \
     -pkeyopt "azihsm.input_key:$keyfile" \
     -pkeyopt "azihsm.masked_key:$maskedkeyfile" 2>&1)
 exit_code=$?
+if [ "$exit_code" -eq 0 ]; then
+    echo "FAIL - expected non-zero exit code but got 0" >&2
+    exit 1
+fi
 set -e
 
 #CHECK: Error generating $$algorithm key

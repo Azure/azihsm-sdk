@@ -23,7 +23,7 @@ impl Xtask for IntegrationTest {
 
         // Run the integration tests in the integration-tests package
         println!("Running integration tests...");
-        cmd!(sh, "cargo test -p integration-tests").run()?;
+        cmd!(sh, "cargo test -p integration-tests --features integration").run()?;
 
         log::trace!("end testing");
         Ok(())

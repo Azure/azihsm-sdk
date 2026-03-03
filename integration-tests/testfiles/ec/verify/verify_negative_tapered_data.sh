@@ -5,11 +5,7 @@
 
 # Checks if tampered data will fail to verify
 
-test -z "$OPENSSL_BIN" && OPENSSL_BIN=../../openssl-build/bin/openssl
-test -z "$PROVIDER_PATH" && PROVIDER_PATH=../target/debug
-test -z "$PROPQUERY" && PROPQUERY="?provider=azihsm"
-test -z "$OPENSSL_LIB" && OPENSSL_LIB=../../openssl-build/lib64
-export LD_LIBRARY_PATH="$OPENSSL_LIB"
+source "$(dirname "${BASH_SOURCE[0]}")/../../env.sh"
 
 curve=P-$1
 dgst=$2

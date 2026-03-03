@@ -3,15 +3,12 @@
 
 # RUN: @bash -ea @file @keybits @dgst @cleanup 
 
-test -z "$OPENSSL_BIN" && OPENSSL_BIN=../../openssl-build/bin/openssl
-test -z "$PROVIDER_PATH" && PROVIDER_PATH=../target/debug
-test -z "$PROPQUERY" && PROPQUERY="?provider=azihsm"
-test -z "$OPENSSL_LIB" && OPENSSL_LIB=../../openssl-build/lib64
+source "$(dirname "${BASH_SOURCE[0]}")/../../env.sh"
+
 # openssl req always tries to load a config file. When using a custom-built
 # OpenSSL (e.g. CI) the default openssl.cnf may not exist. Setting
 # OPENSSL_CONF=/dev/null skips config loading; -subj provides the subject directly.
 test -z "$OPENSSL_CONF" && export OPENSSL_CONF=/dev/null
-export LD_LIBRARY_PATH="$OPENSSL_LIB"
 
 keybits=$1
 dgst=$2

@@ -1,11 +1,21 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-#[cfg(test)]
+#[cfg(all(test, feature = "integration"))]
 mod tests {
+    use std::path::PathBuf;
+
     use serial_test::serial;
 
     const CLEANUP: &str = "true";
+
+    /// Build an absolute path to a testfiles subdirectory anchored at the
+    /// crate manifest directory, independent of the process working directory.
+    fn search_path(relative: &str) -> String {
+        let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        path.push(relative);
+        path.to_str().expect("path is not valid UTF-8").to_owned()
+    }
 
     #[test]
     #[serial]
@@ -18,7 +28,7 @@ mod tests {
             for curve in &curves {
                 for usage in &usages {
                     lit::run::tests(lit::event_handler::Default::default(), |config| {
-                        config.add_search_path("testfiles/ec/create_key");
+                        config.add_search_path(search_path("testfiles/ec/create_key"));
                         config.add_extension("sh");
                         config
                             .constants
@@ -53,7 +63,7 @@ mod tests {
 
         for curve in &curves {
             lit::run::tests(lit::event_handler::Default::default(), |config| {
-                config.add_search_path("testfiles/ec/import_key");
+                config.add_search_path(search_path("testfiles/ec/import_key"));
                 config.add_extension("sh");
                 config
                     .constants
@@ -80,7 +90,7 @@ mod tests {
         for curve in &curves {
             for dgst in &dgst_algos {
                 lit::run::tests(lit::event_handler::Default::default(), |config| {
-                    config.add_search_path("testfiles/ec/certificate");
+                    config.add_search_path(search_path("testfiles/ec/certificate"));
                     config.add_extension("sh");
                     config
                         .constants
@@ -109,7 +119,7 @@ mod tests {
 
         for curve in &curves {
             lit::run::tests(lit::event_handler::Default::default(), |config| {
-                config.add_search_path("testfiles/ec/import_key_sec1");
+                config.add_search_path(search_path("testfiles/ec/import_key_sec1"));
                 config.add_extension("sh");
                 config
                     .constants
@@ -140,7 +150,7 @@ mod tests {
         for curve in &curves {
             for dgst in &dgst_algos {
                 lit::run::tests(lit::event_handler::Default::default(), |config| {
-                    config.add_search_path("testfiles/ec/sign");
+                    config.add_search_path(search_path("testfiles/ec/sign"));
                     config.add_extension("sh");
                     config
                         .constants
@@ -163,7 +173,7 @@ mod tests {
 
         for curve in &curves {
             lit::run::tests(lit::event_handler::Default::default(), |config| {
-                config.add_search_path("testfiles/ec/ecdh_key_exchange");
+                config.add_search_path(search_path("testfiles/ec/ecdh_key_exchange"));
                 config.add_extension("sh");
                 config
                     .constants
@@ -188,7 +198,7 @@ mod tests {
             for dgst in &dgst_algos {
                 for hexsalt_bool in test_hexsalt {
                     lit::run::tests(lit::event_handler::Default::default(), |config| {
-                        config.add_search_path("testfiles/ec/hkdf_key_derivation");
+                        config.add_search_path(search_path("testfiles/ec/hkdf_key_derivation"));
                         config.add_extension("sh");
                         config
                             .constants
@@ -217,7 +227,7 @@ mod tests {
         for curve in &curves {
             for dgst in &dgst_algos {
                 lit::run::tests(lit::event_handler::Default::default(), |config| {
-                    config.add_search_path("testfiles/ec/hmac");
+                    config.add_search_path(search_path("testfiles/ec/hmac"));
                     config.add_extension("sh");
                     config
                         .constants
@@ -242,7 +252,7 @@ mod tests {
         for curve in &curves {
             for dgst in &dgst_algos {
                 lit::run::tests(lit::event_handler::Default::default(), |config| {
-                    config.add_search_path("testfiles/ec/ecdh_hkdf_hmac_roundtrip");
+                    config.add_search_path(search_path("testfiles/ec/ecdh_hkdf_hmac_roundtrip"));
                     config.add_extension("sh");
                     config
                         .constants
@@ -270,7 +280,7 @@ mod tests {
 
         for dgst in &dgst_algos {
             lit::run::tests(lit::event_handler::Default::default(), |config| {
-                config.add_search_path("testfiles/digest");
+                config.add_search_path(search_path("testfiles/digest"));
                 config.add_extension("sh");
                 config
                     .constants
@@ -297,7 +307,7 @@ mod tests {
         for curve in &curves {
             for dgst in &dgst_algos {
                 lit::run::tests(lit::event_handler::Default::default(), |config| {
-                    config.add_search_path("testfiles/ec/verify");
+                    config.add_search_path(search_path("testfiles/ec/verify"));
                     config.add_extension("sh");
                     config
                         .constants
@@ -326,7 +336,7 @@ mod tests {
         for curve in &curves {
             for dgst in &dgst_algos {
                 lit::run::tests(lit::event_handler::Default::default(), |config| {
-                    config.add_search_path("testfiles/ec/round_trip");
+                    config.add_search_path(search_path("testfiles/ec/round_trip"));
                     config.add_extension("sh");
                     config
                         .constants
@@ -351,7 +361,7 @@ mod tests {
         for bits in &key_bits {
             for algo in &algorithms {
                 lit::run::tests(lit::event_handler::Default::default(), |config| {
-                    config.add_search_path("testfiles/rsa/import_key");
+                    config.add_search_path(search_path("testfiles/rsa/import_key"));
                     config.add_extension("sh");
                     config
                         .constants
@@ -382,7 +392,7 @@ mod tests {
         for bits in &key_bits {
             for dgst in &dgst_algos {
                 lit::run::tests(lit::event_handler::Default::default(), |config| {
-                    config.add_search_path("testfiles/rsa/certificate");
+                    config.add_search_path(search_path("testfiles/rsa/certificate"));
                     config.add_extension("sh");
                     config
                         .constants
@@ -413,7 +423,7 @@ mod tests {
             for algo in &algorithms {
                 for dgst in &dgst_algos {
                     lit::run::tests(lit::event_handler::Default::default(), |config| {
-                        config.add_search_path("testfiles/rsa/sign");
+                        config.add_search_path(search_path("testfiles/rsa/sign"));
                         config.add_extension("sh");
                         config
                             .constants
@@ -450,7 +460,7 @@ mod tests {
                 for dgst in &dgst_algos {
                     for explicit_mgf1 in explicit_mgf1_values {
                         lit::run::tests(lit::event_handler::Default::default(), |config| {
-                            config.add_search_path("testfiles/rsa/rsa-pss-specific");
+                            config.add_search_path(search_path("testfiles/rsa/rsa-pss-specific"));
                             config.add_extension("sh");
                             config
                                 .constants
@@ -487,7 +497,7 @@ mod tests {
         for bits in &key_bits {
             for dgst in &dgst_algos {
                 lit::run::tests(lit::event_handler::Default::default(), |config| {
-                    config.add_search_path("testfiles/rsa/default_padding");
+                    config.add_search_path(search_path("testfiles/rsa/default_padding"));
                     config.add_extension("sh");
                     config
                         .constants
@@ -516,7 +526,7 @@ mod tests {
         for bits in &key_bits {
             for dgst in &dgst_algos {
                 lit::run::tests(lit::event_handler::Default::default(), |config| {
-                    config.add_search_path("testfiles/rsa/rsa_pss_default_padding");
+                    config.add_search_path(search_path("testfiles/rsa/rsa_pss_default_padding"));
                     config.add_extension("sh");
                     config
                         .constants
@@ -545,7 +555,7 @@ mod tests {
         for bits in &key_bits {
             for dgst in &dgst_algos {
                 lit::run::tests(lit::event_handler::Default::default(), |config| {
-                    config.add_search_path("testfiles/rsa/oneshot_sign");
+                    config.add_search_path(search_path("testfiles/rsa/oneshot_sign"));
                     config.add_extension("sh");
                     config
                         .constants
@@ -579,7 +589,7 @@ mod tests {
             for algo in &algorithms {
                 for dgst in &dgst_algos {
                     lit::run::tests(lit::event_handler::Default::default(), |config| {
-                        config.add_search_path("testfiles/rsa/verify");
+                        config.add_search_path(search_path("testfiles/rsa/verify"));
                         config.add_extension("sh");
                         config
                             .constants
@@ -612,7 +622,7 @@ mod tests {
         for bits in &key_bits {
             for dgst in &dgst_algos {
                 lit::run::tests(lit::event_handler::Default::default(), |config| {
-                    config.add_search_path("testfiles/rsa/oneshot_verify");
+                    config.add_search_path(search_path("testfiles/rsa/oneshot_verify"));
                     config.add_extension("sh");
                     config
                         .constants
@@ -646,7 +656,7 @@ mod tests {
             for algo in &algorithms {
                 for dgst in &dgst_algos {
                     lit::run::tests(lit::event_handler::Default::default(), |config| {
-                        config.add_search_path("testfiles/rsa/round_trip");
+                        config.add_search_path(search_path("testfiles/rsa/round_trip"));
                         config.add_extension("sh");
                         config
                             .constants
@@ -679,7 +689,7 @@ mod tests {
         for bits in &key_bits {
             for dgst in &dgst_algos {
                 lit::run::tests(lit::event_handler::Default::default(), |config| {
-                    config.add_search_path("testfiles/rsa/oneshot_round_trip");
+                    config.add_search_path(search_path("testfiles/rsa/oneshot_round_trip"));
                     config.add_extension("sh");
                     config
                         .constants
@@ -711,7 +721,7 @@ mod tests {
         for bits in &key_bits {
             for dgst in &dgst_algos {
                 lit::run::tests(lit::event_handler::Default::default(), |config| {
-                    config.add_search_path("testfiles/rsa/oaep_encryption");
+                    config.add_search_path(search_path("testfiles/rsa/oaep_encryption"));
                     config.add_extension("sh");
                     config
                         .constants
@@ -737,7 +747,7 @@ mod tests {
 
         for bits in &key_bits {
             lit::run::tests(lit::event_handler::Default::default(), |config| {
-                config.add_search_path("testfiles/rsa/pkcs1_encryption");
+                config.add_search_path(search_path("testfiles/rsa/pkcs1_encryption"));
                 config.add_extension("sh");
                 config
                     .constants
