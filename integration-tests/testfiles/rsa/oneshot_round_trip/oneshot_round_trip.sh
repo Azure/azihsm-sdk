@@ -62,15 +62,6 @@ fi
     -propquery "$PROPQUERY" \
     "azihsm://$maskedkeyfile;type=$keytype"
 
-# Use appropriate type based on algorithm
-if [[ "$algorithm" == "RSA-PSS" ]]; then
-    keytype="rsa-pss"
-    padding_mode="pss"
-else
-    keytype="rsa"
-    padding_mode="none"
-fi
-
 # Create test data
 dd if=/dev/urandom of="$testdata" bs=1024 count=1
 
