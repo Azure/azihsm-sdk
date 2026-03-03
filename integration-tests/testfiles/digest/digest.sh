@@ -17,13 +17,26 @@ testdata=testdata.bin
 # Create test data
 dd if=/dev/urandom of="$testdata" bs=1024 count=1
 
-# CHECK: SHA$$dgst(testdata.bin)=
-"$OPENSSL_BIN" dgst -"$dgst" \
+# Compute digest via provider
+provider_dgst=$("$OPENSSL_BIN" dgst -"$dgst" \
     -provider-path "$PROVIDER_PATH" \
     -provider default \
     -provider azihsm_provider \
     -propquery "$PROPQUERY" \
-    "$testdata"
+    -r "$testdata" | awk '{print $1}')
+
+# Compute digest via default provider for reference
+default_dgst=$("$OPENSSL_BIN" dgst -"$dgst" -r "$testdata" | awk '{print $1}')
+
+#CHECK: digests match
+if [[ "$provider_dgst" == "$default_dgst" ]]; then
+  echo "digests match"
+else
+  echo "FAIL - digest mismatch"
+  echo "provider: $provider_dgst"
+  echo "default:  $default_dgst"
+  exit 1
+fi
 
 if [[ "$cleanup" == "true" ]]; then
   rm -f "$testdata"
