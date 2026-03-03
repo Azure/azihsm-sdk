@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+use azihsm_crypto::Rng;
+
 use super::*;
 
 const AES_GCM_IV_SIZE: usize = 12;
@@ -129,7 +131,7 @@ fn run_gcm_roundtrip(session: &HsmSession, iv: &[u8], aad: Option<Vec<u8>>, plai
 
 fn test_iv() -> [u8; AES_GCM_IV_SIZE] {
     let mut iv = [0u8; AES_GCM_IV_SIZE];
-    getrandom::getrandom(&mut iv).unwrap();
+    Rng::rand_bytes(&mut iv).expect("RNG failure generating IV");
     iv
 }
 
