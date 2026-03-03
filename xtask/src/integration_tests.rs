@@ -22,7 +22,7 @@ impl Xtask for IntegrationTest {
         let sh = xshell::Shell::new()?;
 
         // Run the integration tests in the integration-tests package
-        println!("Running integration tests...");
+        log::info!("Running integration tests...");
         cmd!(sh, "cargo test -p integration-tests --features integration").run()?;
 
         log::trace!("end testing");
