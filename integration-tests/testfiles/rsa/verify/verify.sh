@@ -21,9 +21,9 @@ signature=testdata_verify.sig."$keybits"_"$algorithm"_"$dgst"
 # Generate external RSA key first (HSM cannot generate RSA keys natively)
 "$OPENSSL_BIN" genpkey \
     -algorithm RSA \
-    -pkeyopt rsa_keygen_bits:$keybits \
+    -pkeyopt "rsa_keygen_bits:$keybits" \
     -outform DER \
-    -out $keyfile
+    -out "$keyfile"
 
 # Import the RSA key into HSM via the provider
 "$OPENSSL_BIN" genpkey \
@@ -31,13 +31,13 @@ signature=testdata_verify.sig."$keybits"_"$algorithm"_"$dgst"
     -provider default \
     -provider azihsm_provider \
     -propquery "$PROPQUERY" \
-    -algorithm $algorithm \
-    -pkeyopt rsa_keygen_bits:$keybits \
+    -algorithm "$algorithm" \
+    -pkeyopt "rsa_keygen_bits:$keybits" \
     -pkeyopt azihsm.session:false \
     -outform DER \
     -pkeyopt azihsm.key_usage:digitalSignature \
-    -pkeyopt azihsm.input_key:$keyfile \
-    -pkeyopt azihsm.masked_key:$maskedkeyfile
+    -pkeyopt "azihsm.input_key:$keyfile" \
+    -pkeyopt "azihsm.masked_key:$maskedkeyfile"
 
 # Use appropriate type based on algorithm
 if [[ "$algorithm" == "RSA-PSS" ]]; then
@@ -47,27 +47,27 @@ else
 fi
 
 # Create test data
-dd if=/dev/urandom of=$testdata bs=1024 count=1
+dd if=/dev/urandom of="$testdata" bs=1024 count=1
 
-"$OPENSSL_BIN" dgst -$dgst \
+"$OPENSSL_BIN" dgst -"$dgst" \
     -provider-path "$PROVIDER_PATH" \
     -provider default \
     -provider azihsm_provider \
     -propquery "$PROPQUERY" \
     -sign "azihsm://$maskedkeyfile;type=$keytype" \
-    -out $signature \
-    $testdata
+    -out "$signature" \
+    "$testdata"
 
 #CHECK: Verified OK
-"$OPENSSL_BIN" dgst -$dgst \
+"$OPENSSL_BIN" dgst -"$dgst" \
     -provider-path "$PROVIDER_PATH" \
     -provider default \
     -provider azihsm_provider \
     -propquery "$PROPQUERY" \
     -verify "azihsm://$maskedkeyfile;type=$keytype" \
-    -signature $signature \
-    $testdata
+    -signature "$signature" \
+    "$testdata"
 
 if [[ "$cleanup" == "true" ]]; then
-  rm -f $testdata $signature $maskedkeyfile $keyfile
+  rm -f "$testdata" "$signature" "$maskedkeyfile" "$keyfile"
 fi

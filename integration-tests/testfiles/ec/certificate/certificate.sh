@@ -26,10 +26,10 @@ maskedkeyfile=./cert_masked_"$curve".bin
     -provider azihsm_provider \
     -propquery "$PROPQUERY" \
     -algorithm EC \
-    -pkeyopt group:$curve \
+    -pkeyopt "group:$curve" \
     -pkeyopt azihsm.session:false \
     -outform DER \
-    -pkeyopt azihsm.masked_key:$maskedkeyfile \
+    -pkeyopt "azihsm.masked_key:$maskedkeyfile" \
     -pkeyopt azihsm.key_usage:digitalSignature \
     -text
 
@@ -47,11 +47,11 @@ maskedkeyfile=./cert_masked_"$curve".bin
 
 
 #CHECK: certificate created
-if [[ -f $certificate && -s $certificate ]]; then
+if [[ -f "$certificate" && -s "$certificate" ]]; then
   echo "certificate created"
 fi
 
 if [[ "$cleanup" == "true" ]]; then
-  rm $maskedkeyfile
-  rm $certificate
+  rm "$maskedkeyfile"
+  rm "$certificate"
 fi

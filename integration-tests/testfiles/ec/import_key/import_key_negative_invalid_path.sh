@@ -22,24 +22,24 @@ output=$("$OPENSSL_BIN" genpkey \
     -provider azihsm_provider \
     -propquery "$PROPQUERY" \
     -algorithm EC \
-    -pkeyopt group:$curve \
+    -pkeyopt "group:$curve" \
     -outform DER \
     -pkeyopt azihsm.input_key:./not_an_actual_file.bin \
-    -pkeyopt azihsm.masked_key:$maskedkeyfile 2>&1)
+    -pkeyopt "azihsm.masked_key:$maskedkeyfile" 2>&1)
 exit_code=$?
 set -e
 
 #CHECK: Error generating EC key
-echo $output
+echo "$output"
 
 #CHECK: PASS - No file created
-if [[ -f $maskedkeyfile ]]; then
+if [[ -f "$maskedkeyfile" ]]; then
     # Key file was unexpectedly created - this should not have occurred
     echo "FAIL"
 
     # remove the file in this case
     if [[ "$cleanup" == "true" ]]; then
-        rm $maskedkeyfile
+        rm "$maskedkeyfile"
     fi
 else 
     # No key file created (expected behaviour)

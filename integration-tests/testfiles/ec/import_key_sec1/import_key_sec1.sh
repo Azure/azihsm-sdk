@@ -18,9 +18,9 @@ maskedkeyfile=./masked_"$curve".bin
 
 # Generate SEC1 DER key
 "$OPENSSL_BIN" ecparam \
-    -genkey -name $sec_one \
+    -genkey -name "$sec_one" \
     -outform DER \
-    -out $keyfile
+    -out "$keyfile"
 
 "$OPENSSL_BIN" genpkey \
     -provider-path "$PROVIDER_PATH" \
@@ -28,13 +28,13 @@ maskedkeyfile=./masked_"$curve".bin
     -provider azihsm_provider \
     -propquery "$PROPQUERY" \
     -algorithm EC \
-    -pkeyopt group:$curve \
+    -pkeyopt "group:$curve" \
     -outform DER \
-    -pkeyopt azihsm.input_key:$keyfile \
-    -pkeyopt azihsm.masked_key:$maskedkeyfile
+    -pkeyopt "azihsm.input_key:$keyfile" \
+    -pkeyopt "azihsm.masked_key:$maskedkeyfile"
 
 #CHECK: keyfile created
-if [[ -f $maskedkeyfile && -s $maskedkeyfile ]]; then
+if [[ -f "$maskedkeyfile" && -s "$maskedkeyfile" ]]; then
   echo "keyfile created"
 fi
 
@@ -46,9 +46,9 @@ fi
     -provider default \
     -provider azihsm_provider \
     -propquery "$PROPQUERY" \
-    "azihsm://"$maskedkeyfile";type=ec"
+    "azihsm://$maskedkeyfile;type=ec"
 
 if [[ "$cleanup" == "true" ]]; then
-    rm $keyfile
-    rm $maskedkeyfile
+    rm "$keyfile"
+    rm "$maskedkeyfile"
 fi

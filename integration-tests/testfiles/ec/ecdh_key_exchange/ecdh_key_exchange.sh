@@ -24,14 +24,14 @@ shared_secret=./ecdh_shared_secret_"$curve".bin
     -algorithm EC \
     -pkeyopt "group:$curve" \
     -pkeyopt azihsm.key_usage:keyAgreement \
-    -pkeyopt "azihsm.masked_key:"$maskedkeyfile""\
+    -pkeyopt "azihsm.masked_key:$maskedkeyfile" \
     -outform DER \
     -out /dev/null
 
 "$OPENSSL_BIN" genpkey \
     -algorithm EC \
-    -pkeyopt ec_paramgen_curve:$curve \
-    -out $keyfile_priv
+    -pkeyopt "ec_paramgen_curve:$curve" \
+    -out "$keyfile_priv"
 
 "$OPENSSL_BIN" pkey -in "$keyfile_priv" \
         -pubout -out "$keyfile_pub" \
@@ -43,19 +43,19 @@ shared_secret=./ecdh_shared_secret_"$curve".bin
     -provider default \
     -provider azihsm_provider \
     -propquery "$PROPQUERY" \
-    -inkey "azihsm://"$maskedkeyfile";type=ec" \
+    -inkey "azihsm://$maskedkeyfile;type=ec" \
     -peerkey "$keyfile_pub" \
     -pkeyopt "output_file:$shared_secret"
 
 
 #CHECK: file created
-if [[ -f $shared_secret && -s $shared_secret ]]; then
+if [[ -f "$shared_secret" && -s "$shared_secret" ]]; then
   echo "file created"
 fi
 
 if [[ "$cleanup" == "true" ]]; then
-    rm $keyfile_priv
-    rm $keyfile_pub
-    rm $maskedkeyfile
-    rm $shared_secret
+    rm "$keyfile_priv"
+    rm "$keyfile_pub"
+    rm "$maskedkeyfile"
+    rm "$shared_secret"
 fi

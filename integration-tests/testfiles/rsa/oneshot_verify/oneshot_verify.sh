@@ -22,9 +22,9 @@ signature=testdata_verify_oneshot.sig."$keybits"_"$algorithm"_"$dgst"
 # Generate external RSA key first (HSM cannot generate RSA keys natively)
 "$OPENSSL_BIN" genpkey \
     -algorithm RSA \
-    -pkeyopt rsa_keygen_bits:$keybits \
+    -pkeyopt "rsa_keygen_bits:$keybits" \
     -outform DER \
-    -out $keyfile
+    -out "$keyfile"
 
 # Import the RSA key into HSM via the provider
 "$OPENSSL_BIN" genpkey \
@@ -32,13 +32,13 @@ signature=testdata_verify_oneshot.sig."$keybits"_"$algorithm"_"$dgst"
     -provider default \
     -provider azihsm_provider \
     -propquery "$PROPQUERY" \
-    -algorithm $algorithm \
-    -pkeyopt rsa_keygen_bits:$keybits \
+    -algorithm "$algorithm" \
+    -pkeyopt "rsa_keygen_bits:$keybits" \
     -pkeyopt azihsm.session:false \
     -outform DER \
     -pkeyopt azihsm.key_usage:digitalSignature \
-    -pkeyopt azihsm.input_key:$keyfile \
-    -pkeyopt azihsm.masked_key:$maskedkeyfile
+    -pkeyopt "azihsm.input_key:$keyfile" \
+    -pkeyopt "azihsm.masked_key:$maskedkeyfile"
 
 # Use appropriate type based on algorithm
 if [[ "$algorithm" == "RSA-PSS" ]]; then
@@ -48,10 +48,10 @@ else
 fi
 
 # Create test data
-dd if=/dev/urandom of=$testdata bs=1024 count=1
+dd if=/dev/urandom of="$testdata" bs=1024 count=1
 
 # Pre-hash the data with different algorithms
-"$OPENSSL_BIN" dgst -$dgst -binary -out $testdata_hash $testdata
+"$OPENSSL_BIN" dgst -"$dgst" -binary -out "$testdata_hash" "$testdata"
 
 # Sign pre-hashed data
 "$OPENSSL_BIN" pkeyutl -sign \
@@ -76,5 +76,5 @@ dd if=/dev/urandom of=$testdata bs=1024 count=1
     -sigfile "$signature"
 
 if [[ "$cleanup" == "true" ]]; then
-  rm -f $testdata $testdata_hash $signature $maskedkeyfile $keyfile
+  rm -f "$testdata" "$testdata_hash" "$signature" "$maskedkeyfile" "$keyfile"
 fi

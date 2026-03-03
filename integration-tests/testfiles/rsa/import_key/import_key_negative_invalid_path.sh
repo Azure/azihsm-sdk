@@ -23,26 +23,26 @@ output=$("$OPENSSL_BIN" genpkey \
     -provider default \
     -provider azihsm_provider \
     -propquery "$PROPQUERY" \
-    -algorithm $algorithm \
-    -pkeyopt rsa_keygen_bits:$keybits \
+    -algorithm "$algorithm" \
+    -pkeyopt "rsa_keygen_bits:$keybits" \
     -pkeyopt azihsm.session:false \
     -pkeyopt azihsm.key_usage:digitalSignature \
-    -pkeyopt azihsm.input_key:$keyfile \
-    -pkeyopt azihsm.masked_key:$maskedkeyfile 2>&1)
+    -pkeyopt "azihsm.input_key:$keyfile" \
+    -pkeyopt "azihsm.masked_key:$maskedkeyfile" 2>&1)
 exit_code=$?
 set -e
 
 #CHECK: Error generating $$algorithm key
-echo $output
+echo "$output"
 
 #CHECK: PASS - No file created
-if [[ -f $maskedkeyfile ]]; then
+if [[ -f "$maskedkeyfile" ]]; then
     # Key file was unexpectedly created - this should not have occurred
     echo "FAIL"
 
     # remove the file in this case
     if [[ "$cleanup" == "true" ]]; then
-        rm $maskedkeyfile
+        rm "$maskedkeyfile"
     fi
 else 
     # No key file created (expected behaviour)

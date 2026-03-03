@@ -15,16 +15,16 @@ cleanup=$2
 testdata=testdata.bin
 
 # Create test data
-dd if=/dev/urandom of=$testdata bs=1024 count=1
+dd if=/dev/urandom of="$testdata" bs=1024 count=1
 
 # CHECK: SHA$$dgst(testdata.bin)=
-"$OPENSSL_BIN" dgst -$dgst \
+"$OPENSSL_BIN" dgst -"$dgst" \
     -provider-path "$PROVIDER_PATH" \
     -provider default \
     -provider azihsm_provider \
     -propquery "$PROPQUERY" \
-    $testdata
+    "$testdata"
 
 if [[ "$cleanup" == "true" ]]; then
-  rm -f $testdata $signature $maskedkeyfile
+  rm -f "$testdata" "$signature" "$maskedkeyfile"
 fi

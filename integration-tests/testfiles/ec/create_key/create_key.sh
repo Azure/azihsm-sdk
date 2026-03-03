@@ -29,15 +29,15 @@ maskedkeyfile=./masked_P-$1.bin
     -provider azihsm_provider \
     -propquery "$PROPQUERY" \
     -algorithm EC \
-    -pkeyopt group:$curve \
-    -pkeyopt azihsm.session:$session_bool \
+    -pkeyopt "group:$curve" \
+    -pkeyopt "azihsm.session:$session_bool" \
     -outform DER \
-    -pkeyopt azihsm.masked_key:$maskedkeyfile \
-    -pkeyopt azihsm.key_usage:$usage -text
+    -pkeyopt "azihsm.masked_key:$maskedkeyfile" \
+    -pkeyopt "azihsm.key_usage:$usage" -text
 
 
 #CHECK: keyfile created
-if [[ -f $maskedkeyfile && -s $maskedkeyfile ]]; then
+if [[ -f "$maskedkeyfile" && -s "$maskedkeyfile" ]]; then
   echo "keyfile created"
 fi
 
@@ -49,7 +49,7 @@ if [[ "$session_bool" == "false" ]]; then
         -provider default \
         -provider azihsm_provider \
         -propquery "$PROPQUERY" \
-        "azihsm://"$maskedkeyfile";type=ec" 2>&1)
+        "azihsm://$maskedkeyfile;type=ec" 2>&1)
 
     if [[ "$output" == *"0: Pkey"* ]] && [[ "$output" == *"Total found: 1"* ]]; then
         echo "PASS"
@@ -63,5 +63,5 @@ fi
 
 
 if [[ "$cleanup" == "true" ]]; then
-  rm $maskedkeyfile
+  rm "$maskedkeyfile"
 fi

@@ -34,14 +34,14 @@ fi
     -algorithm EC \
     -pkeyopt "group:$curve" \
     -pkeyopt azihsm.key_usage:keyAgreement \
-    -pkeyopt "azihsm.masked_key:"$maskedkeyfile""\
+    -pkeyopt "azihsm.masked_key:$maskedkeyfile" \
     -outform DER \
     -out /dev/null
 
 "$OPENSSL_BIN" genpkey \
     -algorithm EC \
-    -pkeyopt ec_paramgen_curve:$curve \
-    -out $keyfile_priv
+    -pkeyopt "ec_paramgen_curve:$curve" \
+    -out "$keyfile_priv"
 
 "$OPENSSL_BIN" pkey -in "$keyfile_priv" \
         -pubout -out "$keyfile_pub" \
@@ -53,7 +53,7 @@ fi
     -provider default \
     -provider azihsm_provider \
     -propquery "$PROPQUERY" \
-    -inkey "azihsm://"$maskedkeyfile";type=ec" \
+    -inkey "azihsm://$maskedkeyfile;type=ec" \
     -peerkey "$keyfile_pub" \
     -pkeyopt "output_file:$shared_secret"
 
@@ -65,7 +65,7 @@ fi
     -keylen 4096 \
     -kdfopt "digest:$dgst" \
     -kdfopt "azihsm.ikm_file:$shared_secret" \
-    -kdfopt "output_file:"$hkdf_output"" \
+    -kdfopt "output_file:$hkdf_output" \
     -kdfopt derived_key_type:aes \
     -kdfopt derived_key_bits:256 \
     $saltopts \
@@ -73,14 +73,14 @@ fi
     HKDF
 
 #CHECK: file created
-if [[ -f $hkdf_output && -s $hkdf_output ]]; then
+if [[ -f "$hkdf_output" && -s "$hkdf_output" ]]; then
   echo "file created"
 fi
 
 if [[ "$cleanup" == "true" ]]; then
-    rm $keyfile_priv
-    rm $keyfile_pub
-    rm $maskedkeyfile
-    rm $shared_secret
-    rm $hkdf_output
+    rm "$keyfile_priv"
+    rm "$keyfile_pub"
+    rm "$maskedkeyfile"
+    rm "$shared_secret"
+    rm "$hkdf_output"
 fi

@@ -25,16 +25,16 @@ signature=testdata.sig."$dgst"_"$curve"
     -provider azihsm_provider \
     -propquery "$PROPQUERY" \
     -algorithm EC \
-    -pkeyopt group:$curve \
+    -pkeyopt "group:$curve" \
     -pkeyopt azihsm.session:false \
     -outform DER \
-    -pkeyopt azihsm.masked_key:$maskedkeyfile \
+    -pkeyopt "azihsm.masked_key:$maskedkeyfile" \
     -pkeyopt azihsm.key_usage:digitalSignature
 
 # Create test data
-dd if=/dev/urandom of=$testdata bs=1024 count=1
+dd if=/dev/urandom of="$testdata" bs=1024 count=1
 
-"$OPENSSL_BIN" dgst -"$dgst" -binary -out "$testdata_hash" $testdata
+"$OPENSSL_BIN" dgst -"$dgst" -binary -out "$testdata_hash" "$testdata"
 
 "$OPENSSL_BIN" pkeyutl -sign \
     -provider-path "$PROVIDER_PATH" \
@@ -43,13 +43,13 @@ dd if=/dev/urandom of=$testdata bs=1024 count=1
     -propquery "$PROPQUERY" \
     -inkey "azihsm://$maskedkeyfile;type=ec" \
     -in "$testdata_hash" \
-    -out $signature
+    -out "$signature"
 
 # CHECK: file signed
-if [[ -f $signature && -s $signature ]]; then
+if [[ -f "$signature" && -s "$signature" ]]; then
   echo "file signed"
 fi
 
 if [[ "$cleanup" == "true" ]]; then
-  rm -f $testdata $testdata_hash $signature $maskedkeyfile
+  rm -f "$testdata" "$testdata_hash" "$signature" "$maskedkeyfile"
 fi

@@ -20,9 +20,9 @@ encrypted_data=encrypted_data_pkcs1_encrypt_"$keybits"_"$algorithm".bin
 # Generate external RSA key first (HSM cannot generate RSA keys natively)
 "$OPENSSL_BIN" genpkey \
     -algorithm RSA \
-    -pkeyopt rsa_keygen_bits:$keybits \
+    -pkeyopt "rsa_keygen_bits:$keybits" \
     -outform DER \
-    -out $keyfile
+    -out "$keyfile"
 
 # Import the RSA key into HSM via the provider
 "$OPENSSL_BIN" genpkey \
@@ -30,13 +30,13 @@ encrypted_data=encrypted_data_pkcs1_encrypt_"$keybits"_"$algorithm".bin
     -provider default \
     -provider azihsm_provider \
     -propquery "$PROPQUERY" \
-    -algorithm $algorithm \
-    -pkeyopt rsa_keygen_bits:$keybits \
+    -algorithm "$algorithm" \
+    -pkeyopt "rsa_keygen_bits:$keybits" \
     -pkeyopt azihsm.session:false \
     -outform DER \
     -pkeyopt azihsm.key_usage:keyEncipherment \
-    -pkeyopt azihsm.input_key:$keyfile \
-    -pkeyopt azihsm.masked_key:$maskedkeyfile
+    -pkeyopt "azihsm.input_key:$keyfile" \
+    -pkeyopt "azihsm.masked_key:$maskedkeyfile"
 
 # Use appropriate type based on algorithm
 if [[ "$algorithm" == "RSA-PSS" ]]; then
@@ -53,10 +53,10 @@ echo -n "Hello PKCS1" | "$OPENSSL_BIN" pkeyutl \
     -encrypt \
     -inkey "azihsm://$maskedkeyfile;type=$keytype" \
     -pkeyopt rsa_padding_mode:pkcs1 \
-    -out $encrypted_data
+    -out "$encrypted_data"
 
 # CHECK: data encrypted
-if [[ -f $encrypted_data && -s $encrypted_data ]]; then
+if [[ -f "$encrypted_data" && -s "$encrypted_data" ]]; then
   echo "data encrypted"
 fi
 
@@ -69,8 +69,8 @@ fi
     -decrypt \
     -inkey "azihsm://$maskedkeyfile;type=$keytype" \
     -pkeyopt rsa_padding_mode:pkcs1 \
-    -in $encrypted_data
+    -in "$encrypted_data"
 
 if [[ "$cleanup" == "true" ]]; then
-  rm -f $encrypted_data $maskedkeyfile $keyfile
+  rm -f "$encrypted_data" "$maskedkeyfile" "$keyfile"
 fi

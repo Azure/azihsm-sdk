@@ -18,9 +18,9 @@ maskedkeyfile=./masked_rsa_"$keybits"_"$algorithm"_imported.bin
 # Generate external RSA key first (HSM cannot generate RSA keys natively)
 "$OPENSSL_BIN" genpkey \
     -algorithm RSA \
-    -pkeyopt rsa_keygen_bits:$keybits \
+    -pkeyopt "rsa_keygen_bits:$keybits" \
     -outform DER \
-    -out $keyfile
+    -out "$keyfile"
 
 # Import the RSA key into HSM via the provider
 "$OPENSSL_BIN" genpkey \
@@ -28,16 +28,16 @@ maskedkeyfile=./masked_rsa_"$keybits"_"$algorithm"_imported.bin
     -provider default \
     -provider azihsm_provider \
     -propquery "$PROPQUERY" \
-    -algorithm $algorithm \
-    -pkeyopt rsa_keygen_bits:$keybits \
+    -algorithm "$algorithm" \
+    -pkeyopt "rsa_keygen_bits:$keybits" \
     -pkeyopt azihsm.session:false \
     -outform DER \
     -pkeyopt azihsm.key_usage:digitalSignature \
-    -pkeyopt azihsm.input_key:$keyfile \
-    -pkeyopt azihsm.masked_key:$maskedkeyfile
+    -pkeyopt "azihsm.input_key:$keyfile" \
+    -pkeyopt "azihsm.masked_key:$maskedkeyfile"
 
 #CHECK: keyfile created
-if [[ -f $maskedkeyfile && -s $maskedkeyfile ]]; then
+if [[ -f "$maskedkeyfile" && -s "$maskedkeyfile" ]]; then
   echo "keyfile created"
 fi
 
@@ -58,9 +58,9 @@ fi
     -provider default \
     -provider azihsm_provider \
     -propquery "$PROPQUERY" \
-    "azihsm://"$maskedkeyfile";type="$keytype
+    "azihsm://$maskedkeyfile;type=$keytype"
 
 if [[ "$cleanup" == "true" ]]; then
-    rm $keyfile
-    rm $maskedkeyfile
+    rm "$keyfile"
+    rm "$maskedkeyfile"
 fi

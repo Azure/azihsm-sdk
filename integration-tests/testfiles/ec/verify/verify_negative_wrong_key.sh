@@ -24,23 +24,23 @@ signature=testdata_verify.sig."$dgst"_"$curve"
     -provider azihsm_provider \
     -propquery "$PROPQUERY" \
     -algorithm EC \
-    -pkeyopt group:$curve \
+    -pkeyopt "group:$curve" \
     -pkeyopt azihsm.session:false \
     -outform DER \
-    -pkeyopt azihsm.masked_key:$maskedkeyfile \
+    -pkeyopt "azihsm.masked_key:$maskedkeyfile" \
     -pkeyopt azihsm.key_usage:digitalSignature
 
 # Create and sign test data
-dd if=/dev/urandom of=$testdata bs=1024 count=1
+dd if=/dev/urandom of="$testdata" bs=1024 count=1
 
-"$OPENSSL_BIN" dgst -$dgst \
+"$OPENSSL_BIN" dgst -"$dgst" \
     -provider-path "$PROVIDER_PATH" \
     -provider default \
     -provider azihsm_provider \
     -propquery "$PROPQUERY" \
     -sign "azihsm://$maskedkeyfile;type=ec" \
-    -out $signature \
-    $testdata
+    -out "$signature" \
+    "$testdata"
 
 # Generate a new key that wont work
 "$OPENSSL_BIN" genpkey \
@@ -49,23 +49,23 @@ dd if=/dev/urandom of=$testdata bs=1024 count=1
     -provider azihsm_provider \
     -propquery "$PROPQUERY" \
     -algorithm EC \
-    -pkeyopt group:$curve \
+    -pkeyopt "group:$curve" \
     -pkeyopt azihsm.session:false \
     -outform DER \
-    -pkeyopt azihsm.masked_key:$wrongkey \
+    -pkeyopt "azihsm.masked_key:$wrongkey" \
     -pkeyopt azihsm.key_usage:digitalSignature
 
 # Verification should fail — use || true so -e doesn't abort the script
 #CHECK: Verification failure
-"$OPENSSL_BIN" dgst -$dgst \
+"$OPENSSL_BIN" dgst -"$dgst" \
     -provider-path "$PROVIDER_PATH" \
     -provider default \
     -provider azihsm_provider \
     -propquery "$PROPQUERY" \
     -verify "azihsm://$wrongkey;type=ec" \
-    -signature $signature \
-    $testdata || true
+    -signature "$signature" \
+    "$testdata" || true
 
 if [[ "$cleanup" == "true" ]]; then
-  rm -f $testdata $signature $maskedkeyfile $wrongkey
+  rm -f "$testdata" "$signature" "$maskedkeyfile" "$wrongkey"
 fi

@@ -24,9 +24,9 @@ certificate=./certificate_certfile_"$keybits"_"$dgst".pem
 # Generate external RSA key first (HSM cannot generate RSA keys natively)
 "$OPENSSL_BIN" genpkey \
     -algorithm RSA \
-    -pkeyopt rsa_keygen_bits:$keybits \
+    -pkeyopt "rsa_keygen_bits:$keybits" \
     -outform DER \
-    -out $keyfile
+    -out "$keyfile"
 
 # Import the RSA key into HSM via the provider
 "$OPENSSL_BIN" genpkey \
@@ -35,12 +35,12 @@ certificate=./certificate_certfile_"$keybits"_"$dgst".pem
     -provider azihsm_provider \
     -propquery "$PROPQUERY" \
     -algorithm RSA \
-    -pkeyopt rsa_keygen_bits:$keybits \
+    -pkeyopt "rsa_keygen_bits:$keybits" \
     -pkeyopt azihsm.session:false \
     -outform DER \
     -pkeyopt azihsm.key_usage:digitalSignature \
-    -pkeyopt azihsm.input_key:$keyfile \
-    -pkeyopt azihsm.masked_key:$maskedkeyfile
+    -pkeyopt "azihsm.input_key:$keyfile" \
+    -pkeyopt "azihsm.masked_key:$maskedkeyfile"
 
 "$OPENSSL_BIN" req \
     -new \
@@ -56,12 +56,12 @@ certificate=./certificate_certfile_"$keybits"_"$dgst".pem
 
 
 #CHECK: certificate created
-if [[ -f $certificate && -s $certificate ]]; then
+if [[ -f "$certificate" && -s "$certificate" ]]; then
   echo "certificate created"
 fi
 
 if [[ "$cleanup" == "true" ]]; then
-  rm $keyfile
-  rm $maskedkeyfile
-  rm $certificate
+  rm "$keyfile"
+  rm "$maskedkeyfile"
+  rm "$certificate"
 fi

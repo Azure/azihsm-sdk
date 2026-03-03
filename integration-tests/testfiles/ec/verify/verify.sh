@@ -23,34 +23,34 @@ signature=testdata_verify.sig."$dgst"_"$curve"
     -provider azihsm_provider \
     -propquery "$PROPQUERY" \
     -algorithm EC \
-    -pkeyopt group:$curve \
+    -pkeyopt "group:$curve" \
     -pkeyopt azihsm.session:false \
     -outform DER \
-    -pkeyopt azihsm.masked_key:$maskedkeyfile \
+    -pkeyopt "azihsm.masked_key:$maskedkeyfile" \
     -pkeyopt azihsm.key_usage:digitalSignature
 
 # Create and sign test data
-dd if=/dev/urandom of=$testdata bs=1024 count=1
+dd if=/dev/urandom of="$testdata" bs=1024 count=1
 
-"$OPENSSL_BIN" dgst -$dgst \
+"$OPENSSL_BIN" dgst -"$dgst" \
     -provider-path "$PROVIDER_PATH" \
     -provider default \
     -provider azihsm_provider \
     -propquery "$PROPQUERY" \
     -sign "azihsm://$maskedkeyfile;type=ec" \
-    -out $signature \
-    $testdata
+    -out "$signature" \
+    "$testdata"
 
 #CHECK: Verified OK
-"$OPENSSL_BIN" dgst -$dgst \
+"$OPENSSL_BIN" dgst -"$dgst" \
     -provider-path "$PROVIDER_PATH" \
     -provider default \
     -provider azihsm_provider \
     -propquery "$PROPQUERY" \
     -verify "azihsm://$maskedkeyfile;type=ec" \
-    -signature $signature \
-    $testdata
+    -signature "$signature" \
+    "$testdata"
 
 if [[ "$cleanup" == "true" ]]; then
-  rm -f $testdata $signature $maskedkeyfile
+  rm -f "$testdata" "$signature" "$maskedkeyfile"
 fi
