@@ -476,6 +476,64 @@ mod tests {
 
     #[test]
     #[serial]
+    fn test_rsa_default_padding() {
+        let key_bits = vec!["2048".to_string(), "3072".to_string(), "4096".to_string()];
+        let dgst_algos = vec![
+            "sha256".to_string(),
+            "sha384".to_string(),
+            "sha512".to_string(),
+        ];
+
+        for bits in &key_bits {
+            for dgst in &dgst_algos {
+                lit::run::tests(lit::event_handler::Default::default(), |config| {
+                    config.add_search_path("testfiles/rsa/default_padding");
+                    config.add_extension("sh");
+                    config
+                        .constants
+                        .insert("bash".to_owned(), "/bin/bash".to_string());
+                    config.constants.insert("keybits".to_owned(), bits.clone());
+                    config.constants.insert("dgst".to_owned(), dgst.clone());
+                    config
+                        .constants
+                        .insert("cleanup".to_owned(), CLEANUP.to_string());
+                })
+                .expect("Lit test failed");
+            }
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_rsa_pss_default_padding() {
+        let key_bits = vec!["2048".to_string(), "3072".to_string(), "4096".to_string()];
+        let dgst_algos = vec![
+            "sha256".to_string(),
+            "sha384".to_string(),
+            "sha512".to_string(),
+        ];
+
+        for bits in &key_bits {
+            for dgst in &dgst_algos {
+                lit::run::tests(lit::event_handler::Default::default(), |config| {
+                    config.add_search_path("testfiles/rsa/rsa_pss_default_padding");
+                    config.add_extension("sh");
+                    config
+                        .constants
+                        .insert("bash".to_owned(), "/bin/bash".to_string());
+                    config.constants.insert("keybits".to_owned(), bits.clone());
+                    config.constants.insert("dgst".to_owned(), dgst.clone());
+                    config
+                        .constants
+                        .insert("cleanup".to_owned(), CLEANUP.to_string());
+                })
+                .expect("Lit test failed");
+            }
+        }
+    }
+
+    #[test]
+    #[serial]
     fn test_rsa_oneshot_sign() {
         let key_bits = vec!["2048".to_string(), "3072".to_string(), "4096".to_string()];
         let dgst_algos = vec![
