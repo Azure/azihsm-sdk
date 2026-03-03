@@ -220,7 +220,8 @@ static int azihsm_ossl_rsa_sign(
         pss_params.mgf_id = azihsm_ossl_evp_md_to_mgf1_id(mgf1_md);
 
         /* Resolve salt length */
-        if (ctx->salt_len == AZIHSM_RSA_PSS_SALTLEN_DIGEST)
+        if (ctx->salt_len == AZIHSM_RSA_PSS_SALTLEN_DIGEST ||
+            ctx->salt_len == AZIHSM_RSA_PSS_SALTLEN_AUTO)
         {
             pss_params.salt_len = (uint32_t)EVP_MD_size(ctx->md);
         }
@@ -499,7 +500,8 @@ static int azihsm_ossl_rsa_digest_sign_init(
         pss_params.mgf_id = azihsm_ossl_evp_md_to_mgf1_id(mgf1_md);
 
         /* Resolve salt length */
-        if (ctx->salt_len == AZIHSM_RSA_PSS_SALTLEN_DIGEST)
+        if (ctx->salt_len == AZIHSM_RSA_PSS_SALTLEN_DIGEST ||
+            ctx->salt_len == AZIHSM_RSA_PSS_SALTLEN_AUTO)
         {
             pss_params.salt_len = (uint32_t)EVP_MD_size(ctx->md);
         }

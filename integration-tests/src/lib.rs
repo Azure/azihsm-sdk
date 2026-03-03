@@ -437,7 +437,7 @@ mod tests {
     #[serial]
     fn test_rsa_pss_specific() {
         let key_bits = vec!["2048".to_string(), "3072".to_string(), "4096".to_string()];
-        let saltlengths = vec!["digest".to_string(), "max".to_string()];
+        let saltlengths = vec!["digest".to_string(), "max".to_string(), "auto".to_string()];
         let dgst_algos = vec![
             "sha256".to_string(),
             "sha384".to_string(),
