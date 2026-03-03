@@ -63,5 +63,5 @@ fi
 
 
 if [[ "$cleanup" == "true" ]]; then
-  rm "$maskedkeyfile"
+  rm -f "$maskedkeyfile"
 fi

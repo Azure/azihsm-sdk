@@ -26,5 +26,5 @@ dd if=/dev/urandom of="$testdata" bs=1024 count=1
     "$testdata"
 
 if [[ "$cleanup" == "true" ]]; then
-  rm -f "$testdata" "$signature" "$maskedkeyfile"
+  rm -f "$testdata"
 fi

@@ -78,9 +78,6 @@ if [[ -f "$hkdf_output" && -s "$hkdf_output" ]]; then
 fi
 
 if [[ "$cleanup" == "true" ]]; then
-    rm "$keyfile_priv"
-    rm "$keyfile_pub"
-    rm "$maskedkeyfile"
-    rm "$shared_secret"
-    rm "$hkdf_output"
+    rm -f "$keyfile_priv" "$keyfile_pub" "$maskedkeyfile" "$shared_secret" \
+        "$hkdf_output"
 fi

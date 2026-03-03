@@ -54,8 +54,5 @@ if [[ -f "$shared_secret" && -s "$shared_secret" ]]; then
 fi
 
 if [[ "$cleanup" == "true" ]]; then
-    rm "$keyfile_priv"
-    rm "$keyfile_pub"
-    rm "$maskedkeyfile"
-    rm "$shared_secret"
+    rm -f "$keyfile_priv" "$keyfile_pub" "$maskedkeyfile" "$shared_secret"
 fi

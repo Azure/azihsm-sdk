@@ -87,11 +87,6 @@ if [[ -f "$hmac_output" && -s "$hmac_output" ]]; then
 fi
 
 if [[ "$cleanup" == "true" ]]; then
-    rm "$keyfile_priv"
-    rm "$keyfile_pub"
-    rm "$maskedkeyfile"
-    rm "$shared_secret"
-    rm "$hmac_derivation_output"
-    rm "$testdata"
-    rm "$hmac_output"
+    rm -f "$keyfile_priv" "$keyfile_pub" "$maskedkeyfile" "$shared_secret" \
+        "$hmac_derivation_output" "$testdata" "$hmac_output"
 fi

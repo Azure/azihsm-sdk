@@ -71,9 +71,6 @@ fi
     -sigfile "$signature"
 
 if [[ "$cleanup" == "true" ]]; then
-    rm "$keyfile"
-    rm "$testdata"
-    rm "$signature"
-    rm "$maskedkeyfile"
-    rm "$testdata_hash"
+    rm -f "$keyfile" "$testdata" "$signature" "$maskedkeyfile" "$testdata_hash"
+    rmdir "$testdata_folder" 2>/dev/null || true
 fi

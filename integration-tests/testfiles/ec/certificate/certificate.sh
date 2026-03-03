@@ -52,6 +52,5 @@ if [[ -f "$certificate" && -s "$certificate" ]]; then
 fi
 
 if [[ "$cleanup" == "true" ]]; then
-  rm "$maskedkeyfile"
-  rm "$certificate"
+  rm -f "$maskedkeyfile" "$certificate"
 fi

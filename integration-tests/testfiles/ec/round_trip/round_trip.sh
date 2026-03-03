@@ -55,7 +55,6 @@ dd if=/dev/urandom of="$testdata" bs=1024 count=1
     "$testdata"
 
 if [[ "$cleanup" == "true" ]]; then
-    rm "$testdata"
-    rm "$maskedkeyfile"
-    rm "$signature"
+    rm -f "$testdata" "$maskedkeyfile" "$signature"
+    rmdir "$parent_folder"/testdata 2>/dev/null || true
 fi

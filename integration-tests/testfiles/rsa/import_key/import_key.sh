@@ -61,6 +61,5 @@ fi
     "azihsm://$maskedkeyfile;type=$keytype"
 
 if [[ "$cleanup" == "true" ]]; then
-    rm "$keyfile"
-    rm "$maskedkeyfile"
+    rm -f "$keyfile" "$maskedkeyfile"
 fi

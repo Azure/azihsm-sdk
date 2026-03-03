@@ -40,7 +40,7 @@ echo "$output"
 
     # remove the file in this case
     if [[ "$cleanup" == "true" ]]; then
-        rm "$maskedkeyfile"
+        rm -f "$maskedkeyfile"
     fi
 else 
     # No key file created (expected behaviour)
