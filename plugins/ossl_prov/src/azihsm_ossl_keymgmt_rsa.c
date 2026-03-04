@@ -159,61 +159,8 @@ static azihsm_status azihsm_ossl_rsa_keymgmt_gen_import(
         input_size = pkcs8_len;
     }
 
-    /* 2. Retrieve the RSA unwrapping key pair from the HSM */
-    {
-        struct azihsm_algo rsa_keygen_algo = {
-            .id = AZIHSM_ALGO_ID_RSA_KEY_UNWRAPPING_KEY_PAIR_GEN,
-            .params = NULL,
-            .len = 0,
-        };
-
-        const uint32_t rsa_bits = 2048;
-        const azihsm_key_class rsa_priv_class = AZIHSM_KEY_CLASS_PRIVATE;
-        const azihsm_key_class rsa_pub_class = AZIHSM_KEY_CLASS_PUBLIC;
-        const azihsm_key_kind rsa_kind = AZIHSM_KEY_KIND_RSA;
-        const bool rsa_enable = true;
-
-        struct azihsm_key_prop rsa_priv_props[] = {
-            { .id = AZIHSM_KEY_PROP_ID_BIT_LEN, .val = (void *)&rsa_bits, .len = sizeof(rsa_bits) },
-            { .id = AZIHSM_KEY_PROP_ID_CLASS,
-              .val = (void *)&rsa_priv_class,
-              .len = sizeof(rsa_priv_class) },
-            { .id = AZIHSM_KEY_PROP_ID_KIND, .val = (void *)&rsa_kind, .len = sizeof(rsa_kind) },
-            { .id = AZIHSM_KEY_PROP_ID_UNWRAP,
-              .val = (void *)&rsa_enable,
-              .len = sizeof(rsa_enable) },
-        };
-
-        struct azihsm_key_prop rsa_pub_props[] = {
-            { .id = AZIHSM_KEY_PROP_ID_BIT_LEN, .val = (void *)&rsa_bits, .len = sizeof(rsa_bits) },
-            { .id = AZIHSM_KEY_PROP_ID_CLASS,
-              .val = (void *)&rsa_pub_class,
-              .len = sizeof(rsa_pub_class) },
-            { .id = AZIHSM_KEY_PROP_ID_KIND, .val = (void *)&rsa_kind, .len = sizeof(rsa_kind) },
-            { .id = AZIHSM_KEY_PROP_ID_WRAP,
-              .val = (void *)&rsa_enable,
-              .len = sizeof(rsa_enable) },
-        };
-
-        struct azihsm_key_prop_list rsa_priv_prop_list = {
-            .props = rsa_priv_props,
-            .count = 4,
-        };
-
-        struct azihsm_key_prop_list rsa_pub_prop_list = {
-            .props = rsa_pub_props,
-            .count = 4,
-        };
-
-        status = azihsm_key_gen_pair(
-            genctx->session,
-            &rsa_keygen_algo,
-            &rsa_priv_prop_list,
-            &rsa_pub_prop_list,
-            &wrapping_priv,
-            &wrapping_pub
-        );
-    }
+    /* 2. Retrieve the RSA unwrapping key pair from the HSM (cached in provctx) */
+    status = azihsm_get_unwrapping_key(genctx->provctx, &wrapping_pub, &wrapping_priv);
     if (status != AZIHSM_STATUS_SUCCESS)
     {
         OPENSSL_cleanse(input_buf, input_size);
@@ -255,8 +202,6 @@ static azihsm_status azihsm_ossl_rsa_keymgmt_gen_import(
     {
         OPENSSL_cleanse(input_buf, (size_t)input_size);
         OPENSSL_free(input_buf);
-        azihsm_key_delete(wrapping_pub);
-        azihsm_key_delete(wrapping_priv);
         return (status == AZIHSM_STATUS_SUCCESS) ? AZIHSM_STATUS_INTERNAL_ERROR : status;
     }
 
@@ -267,8 +212,6 @@ static azihsm_status azihsm_ossl_rsa_keymgmt_gen_import(
     {
         OPENSSL_cleanse(input_buf, (size_t)input_size);
         OPENSSL_free(input_buf);
-        azihsm_key_delete(wrapping_pub);
-        azihsm_key_delete(wrapping_priv);
         return AZIHSM_STATUS_INVALID_ARGUMENT;
     }
 
@@ -284,8 +227,6 @@ static azihsm_status azihsm_ossl_rsa_keymgmt_gen_import(
     {
         OPENSSL_cleanse(wrapped_data, wrapped_size);
         OPENSSL_free(wrapped_data);
-        azihsm_key_delete(wrapping_pub);
-        azihsm_key_delete(wrapping_priv);
         return status;
     }
 
@@ -309,9 +250,6 @@ static azihsm_status azihsm_ossl_rsa_keymgmt_gen_import(
         out_priv,
         out_pub
     );
-    azihsm_key_delete(wrapping_pub);
-    azihsm_key_delete(wrapping_priv);
-
     OPENSSL_cleanse(wrapped_data, wrapped_size);
     OPENSSL_free(wrapped_data);
 
@@ -701,6 +639,7 @@ static AZIHSM_RSA_GEN_CTX *azihsm_ossl_keymgmt_gen_init_common(
         return NULL;
     }
 
+    genctx->provctx = provctx;
     genctx->session = provctx->session;
     genctx->key_type = key_type;
     genctx->pubkey_bits = AIHSM_RSA_PUBKEY_BITS_DEFAULT;

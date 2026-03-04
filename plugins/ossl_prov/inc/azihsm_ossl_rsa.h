@@ -31,6 +31,7 @@ extern "C"
 
 typedef struct
 {
+    AZIHSM_OSSL_PROV_CTX *provctx;
     int key_type;
     uint32_t pubkey_bits;
     AZIHSM_KEY_USAGE_TYPE key_usage;
