@@ -382,8 +382,8 @@ impl HsmPartition {
         obk_config: HsmOwnerBackupKeyConfig<'_>,
         pota_endorsement: HsmPotaEndorsement<'_>,
     ) -> HsmResult<()> {
-        let (bmk, mobk) = self.with_dev(|dev| {
-            let (bmk, mobk) = ddi::init_part(
+        let resp = self.with_dev(|dev| {
+            let result = ddi::init_part(
                 dev,
                 self.api_rev_range().min(),
                 creds,
@@ -391,10 +391,18 @@ impl HsmPartition {
                 muk,
                 obk_config,
                 pota_endorsement,
-            )?;
-            Ok((bmk, mobk))
-        })?;
-        self.inner().write().set_masked_keys(bmk, mobk);
+            );
+            result
+        });
+
+        match resp {
+            Ok((bmk, mobk)) => {
+                self.inner().write().set_masked_keys(bmk, mobk);
+            }
+            Err(e) => {
+                tracing::warn!("Partition initialization failed: {:?}", e);
+            }
+        }
         Ok(())
     }
 
