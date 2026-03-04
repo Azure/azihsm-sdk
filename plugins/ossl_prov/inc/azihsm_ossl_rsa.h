@@ -39,6 +39,7 @@ typedef struct
     bool session_flag;
     char masked_key_file[4096];
     char input_key_file[4096];
+    char wrapped_key_file[4096];
 } AZIHSM_RSA_GEN_CTX;
 
 typedef struct

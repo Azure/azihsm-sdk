@@ -18,6 +18,7 @@ extern "C"
 #define AZIHSM_OSSL_PKEY_PARAM_MASKED_KEY "azihsm.masked_key"
 #define AZIHSM_OSSL_PKEY_PARAM_SESSION "azihsm.session"
 #define AZIHSM_OSSL_PKEY_PARAM_INPUT_KEY "azihsm.input_key"
+#define AZIHSM_OSSL_PKEY_PARAM_WRAPPED_KEY "azihsm.wrapped_key"
 
 /* Key usage types - single usage for the entire key pair */
 typedef enum
