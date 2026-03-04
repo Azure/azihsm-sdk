@@ -11,6 +11,7 @@ An [OpenSSL 3.0 provider](https://docs.openssl.org/3.0/man7/provider/) that dele
 | **Key Exchange** | ECDH |
 | **Asymmetric Encryption** | RSA-OAEP |
 | **Digest** | SHA-1, SHA-256, SHA-384, SHA-512 |
+| **MAC** | HMAC-SHA256, HMAC-SHA384, HMAC-SHA512 |
 | **KDF** | HKDF (RFC 5869) |
 | **Encoder** | DER (SubjectPublicKeyInfo for public keys; PrivateKeyInfo metadata-only — keys are not exportable), Text |
 | **Store** | `azihsm://` URI scheme for masked key loading |
@@ -53,7 +54,7 @@ RSA genpkey (keyEncipherment)  ──> masked_key.bin ──> pkeyutl -encrypt /
 - **RSA Encrypt & Decrypt** require a key imported with `keyEncipherment`. A `digitalSignature` key cannot be used for encryption.
 - **ECDH** requires an EC key generated with `keyAgreement`. A `digitalSignature` EC key cannot be used for ECDH.
 - **HKDF** requires a masked key file as input (`azihsm.ikm_file`). In practice this is the output of an ECDH derive (`shared_masked.bin`). There is no other way to provide the input keying material from the CLI besides using a masked key file.
-- **HMAC** (once merged) will require a masked HMAC key derived via HKDF with `derived_key_type:hmac`. The HKDF `digest` parameter determines the HMAC key kind baked into the masked blob (SHA256 → HMAC-SHA256, SHA384 → HMAC-SHA384, SHA512 → HMAC-SHA512). When using the key, the MAC digest must match — e.g., a key derived with `digest:SHA384` can only be used with `-macopt digest:SHA384`. The `derived_key_bits` should match the hash output size (256, 384, or 512).
+- **HMAC** requires a masked HMAC key derived via HKDF with `derived_key_type:hmac`. The HKDF `digest` parameter determines the HMAC key kind baked into the masked blob (SHA256 → HMAC-SHA256, SHA384 → HMAC-SHA384, SHA512 → HMAC-SHA512). When using the key, the MAC digest must match — e.g., a key derived with `digest:SHA384` can only be used with `-macopt digest:SHA384`. The `derived_key_bits` should match the hash output size (256, 384, or 512).
 
 ## Building
 
@@ -444,6 +445,50 @@ The actual derived key size inside the HSM is determined by `derived_key_bits`. 
 
 Using a mismatched digest when consuming the key (e.g., deriving with `SHA384` but using `-macopt digest:SHA256`) will fail.
 
+### HMAC
+
+Compute an HMAC tag using a masked HMAC key from the HSM. HMAC-SHA256, HMAC-SHA384, and HMAC-SHA512 are supported. HMAC-SHA1 is intentionally unsupported.
+
+**Requires:** A masked HMAC key derived via HKDF with `derived_key_type:hmac`. See [HKDF Key Derivation](#hkdf-key-derivation) for how to produce one.
+
+```bash
+# HMAC-SHA256
+openssl mac -digest SHA256 ${PROV} \
+    -macopt key:./hmac_sha256_key.bin \
+    -in data.bin \
+    HMAC
+
+# HMAC-SHA384
+openssl mac -digest SHA384 ${PROV} \
+    -macopt key:./hmac_sha384_key.bin \
+    -in data.bin \
+    HMAC
+
+# HMAC-SHA512
+openssl mac -digest SHA512 ${PROV} \
+    -macopt key:./hmac_sha512_key.bin \
+    -in data.bin \
+    HMAC
+
+# Write binary HMAC output to file
+openssl mac -digest SHA256 ${PROV} \
+    -macopt key:./hmac_sha256_key.bin \
+    -in data.bin \
+    -binary -out data.hmac \
+    HMAC
+```
+
+**Parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `-digest` | No | Hash algorithm: `SHA256` (default), `SHA384`, `SHA512`. Must match the digest used when deriving the key via HKDF |
+| `-macopt key:<path>` | Yes | Path to the masked HMAC key file |
+| `-in` | Yes | Input file to compute the HMAC over |
+| `-binary -out <path>` | No | Write raw binary MAC to file instead of hex to stdout |
+
+> **Important:** The `-digest` must match the HKDF `digest` used when the key was derived. A key derived with `digest:SHA384` can only be used with `-digest SHA384`. Using a mismatched digest will fail during key unmasking.
+
 ### Digest (Hashing)
 
 The provider implements SHA-1, SHA-256, SHA-384, and SHA-512. These are used internally by signature operations but can also be invoked directly.
@@ -526,4 +571,38 @@ openssl kdf ${PROV} -keylen 4096 \
     -kdfopt output_file:./aes_masked.bin \
     -kdfopt derived_key_type:aes -kdfopt derived_key_bits:256 \
     -binary -out /dev/null HKDF
+```
+
+## Full Chain Example: ECDH to HKDF to HMAC
+
+A complete workflow from key agreement through key derivation to message authentication:
+
+```bash
+# 1. Generate an ECDH key
+openssl genpkey ${PROV} -algorithm EC -pkeyopt group:P-384 \
+    -pkeyopt azihsm.key_usage:keyAgreement \
+    -pkeyopt azihsm.masked_key:./ecdh_masked.bin -outform DER -out /dev/null
+
+# 2. Generate a peer key and perform ECDH
+openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-384 -out peer.pem
+openssl pkey -in peer.pem -pubout -out peer_pub.pem
+
+openssl pkeyutl -derive ${PROV} \
+    -inkey "azihsm://./ecdh_masked.bin;type=ec" \
+    -peerkey peer_pub.pem \
+    -pkeyopt output_file:shared_masked.bin
+
+# 3. Derive an HMAC-SHA256 key via HKDF
+openssl kdf ${PROV} -keylen 4096 \
+    -kdfopt digest:SHA256 \
+    -kdfopt azihsm.ikm_file:./shared_masked.bin \
+    -kdfopt output_file:./hmac_masked.bin \
+    -kdfopt derived_key_type:hmac -kdfopt derived_key_bits:256 \
+    -binary -out /dev/null HKDF
+
+# 4. Compute HMAC over data
+openssl mac -digest SHA256 ${PROV} \
+    -macopt key:./hmac_masked.bin \
+    -in data.bin \
+    HMAC
 ```
