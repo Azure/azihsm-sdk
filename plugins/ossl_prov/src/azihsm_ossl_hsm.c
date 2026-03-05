@@ -406,142 +406,6 @@ static azihsm_status generate_and_save_muk(azihsm_handle session, const char *mu
     return status;
 }
 
-/*
- * Generates a cryptographically random 48-byte OBK, saves it to path, and
- * populates obk_out with heap-allocated memory for immediate use by the caller.
- */
-static azihsm_status generate_and_save_obk(const char *path, struct azihsm_buffer *obk_out)
-{
-    uint8_t *obk_bytes = OPENSSL_malloc(AZIHSM_OBK_SIZE);
-    if (obk_bytes == NULL)
-    {
-        ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
-        return AZIHSM_STATUS_INTERNAL_ERROR;
-    }
-
-    if (RAND_bytes(obk_bytes, AZIHSM_OBK_SIZE) != 1)
-    {
-        OPENSSL_cleanse(obk_bytes, AZIHSM_OBK_SIZE);
-        OPENSSL_free(obk_bytes);
-        ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
-        return AZIHSM_STATUS_INTERNAL_ERROR;
-    }
-
-    obk_out->ptr = obk_bytes;
-    obk_out->len = AZIHSM_OBK_SIZE;
-
-    azihsm_status status = write_buffer_to_file(path, obk_out);
-    if (status != AZIHSM_STATUS_SUCCESS)
-    {
-        OPENSSL_cleanse(obk_bytes, AZIHSM_OBK_SIZE);
-        OPENSSL_free(obk_bytes);
-        obk_out->ptr = NULL;
-        obk_out->len = 0;
-        ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
-    }
-    return status;
-}
-
-/*
- * Generates a fresh P-384 key pair, saves the private key as legacy EC DER to
- * priv_path and the public key as SubjectPublicKeyInfo DER to pub_path, and
- * populates both output buffers with heap-allocated memory for immediate use.
- * The private key can be reloaded by sign_with_pota_key() via d2i_AutoPrivateKey().
- */
-static azihsm_status generate_and_save_pota_keypair(
-    const char *priv_path,
-    const char *pub_path,
-    struct azihsm_buffer *priv_out,
-    struct azihsm_buffer *pub_out
-)
-{
-    azihsm_status status = AZIHSM_STATUS_INTERNAL_ERROR;
-
-    priv_out->ptr = NULL;
-    priv_out->len = 0;
-    pub_out->ptr = NULL;
-    pub_out->len = 0;
-
-    EVP_PKEY *pkey = EVP_EC_gen("P-384");
-    if (pkey == NULL)
-    {
-        ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
-        return AZIHSM_STATUS_INTERNAL_ERROR;
-    }
-
-    /* Encode private key as legacy EC DER (accepted by d2i_AutoPrivateKey) */
-    int priv_len = i2d_PrivateKey(pkey, NULL);
-    if (priv_len <= 0)
-    {
-        ERR_raise_data(
-            ERR_LIB_PROV,
-            ERR_R_INTERNAL_ERROR,
-            "i2d_PrivateKey failed encoding P-384 private key"
-        );
-        goto cleanup;
-    }
-    priv_out->ptr = OPENSSL_malloc((size_t)priv_len);
-    if (priv_out->ptr == NULL)
-    {
-        ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
-        goto cleanup;
-    }
-    priv_out->len = (uint32_t)priv_len;
-    {
-        uint8_t *tmp = priv_out->ptr;
-        if (i2d_PrivateKey(pkey, &tmp) != priv_len)
-        {
-            ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
-            goto cleanup;
-        }
-    }
-    if (write_buffer_to_file(priv_path, priv_out) != AZIHSM_STATUS_SUCCESS)
-    {
-        goto cleanup;
-    }
-
-    /* Encode public key as SubjectPublicKeyInfo DER */
-    int pub_len = i2d_PUBKEY(pkey, NULL);
-    if (pub_len <= 0)
-    {
-        ERR_raise_data(
-            ERR_LIB_PROV,
-            ERR_R_INTERNAL_ERROR,
-            "i2d_PUBKEY failed encoding P-384 public key"
-        );
-        goto cleanup;
-    }
-    pub_out->ptr = OPENSSL_malloc((size_t)pub_len);
-    if (pub_out->ptr == NULL)
-    {
-        ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
-        goto cleanup;
-    }
-    pub_out->len = (uint32_t)pub_len;
-    {
-        uint8_t *tmp = pub_out->ptr;
-        if (i2d_PUBKEY(pkey, &tmp) != pub_len)
-        {
-            ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
-            goto cleanup;
-        }
-    }
-    if (write_buffer_to_file(pub_path, pub_out) != AZIHSM_STATUS_SUCCESS)
-    {
-        goto cleanup;
-    }
-
-    status = AZIHSM_STATUS_SUCCESS;
-
-cleanup:
-    if (status != AZIHSM_STATUS_SUCCESS)
-    {
-        free_buffer(priv_out);
-        free_buffer(pub_out);
-    }
-    EVP_PKEY_free(pkey);
-    return status;
-}
 
 azihsm_status azihsm_get_unwrapping_key(
     AZIHSM_OSSL_PROV_CTX *provctx,
@@ -1012,8 +876,7 @@ azihsm_status azihsm_open_device_and_session(
     }
     else
     {
-        // Load the OBK from file. If the file is absent (first use), a fresh OBK is
-        // generated and persisted before continuing.
+        // Load the OBK from file. The OBK must be provided when using caller source.
         // Note: the OBK is the raw owner backup key for init_bk3, NOT the masked
         // owner backup key (MOBK) returned by the HSM.
         status = azihsm_file_load(config->obk_path, &obk_buf);
@@ -1025,17 +888,24 @@ azihsm_status azihsm_open_device_and_session(
             return status;
         }
 
-        // Generate and persist a fresh OBK on first use when no file exists.
         if (obk_buf.ptr == NULL)
         {
-            status = generate_and_save_obk(config->obk_path, &obk_buf);
-            if (status != AZIHSM_STATUS_SUCCESS)
-            {
-                free_buffer(&bmk_buf);
-                free_buffer(&muk_buf);
-                OPENSSL_cleanse(&creds, sizeof(creds));
-                return status;
-            }
+            ERR_raise_data(
+                ERR_LIB_PROV,
+                ERR_R_INIT_FAIL,
+                "OBK file not found at '%s'. "
+                "The OBK must be a %d-byte random binary file. "
+                "Generate one with: openssl rand -out '%s' %d "
+                "(or set azihsm-obk-source=tpm to retrieve it from the TPM).",
+                config->obk_path,
+                AZIHSM_OBK_SIZE,
+                config->obk_path,
+                AZIHSM_OBK_SIZE
+            );
+            free_buffer(&bmk_buf);
+            free_buffer(&muk_buf);
+            OPENSSL_cleanse(&creds, sizeof(creds));
+            return AZIHSM_STATUS_INTERNAL_ERROR;
         }
 
         backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER;
@@ -1091,32 +961,36 @@ azihsm_status azihsm_open_device_and_session(
             return status;
         }
 
-        // Generate and persist a fresh POTA key pair on first use when no files exist.
-        // If only one file is present the config is inconsistent — fail explicitly.
+        // POTA key files are required when using caller source — both must be present.
         if (pota_priv_buf.ptr == NULL && pota_pub_buf.ptr == NULL)
         {
-            status = generate_and_save_pota_keypair(
+            ERR_raise_data(
+                ERR_LIB_PROV,
+                ERR_R_INIT_FAIL,
+                "POTA key files not found (private: '%s', public: '%s'). "
+                "Provide a P-384 key pair: private key as legacy EC DER (ECPrivateKey/RFC 5915), "
+                "public key as SubjectPublicKeyInfo DER "
+                "(or set azihsm-pota-source=tpm).",
                 config->pota_private_key_path,
-                config->pota_public_key_path,
-                &pota_priv_buf,
-                &pota_pub_buf
+                config->pota_public_key_path
             );
-            if (status != AZIHSM_STATUS_SUCCESS)
-            {
-                free_buffer(&obk_buf);
-                free_buffer(&bmk_buf);
-                free_buffer(&muk_buf);
-                OPENSSL_cleanse(&creds, sizeof(creds));
-                azihsm_part_close(*device);
-                return status;
-            }
+            free_buffer(&obk_buf);
+            free_buffer(&bmk_buf);
+            free_buffer(&muk_buf);
+            OPENSSL_cleanse(&creds, sizeof(creds));
+            azihsm_part_close(*device);
+            return AZIHSM_STATUS_INTERNAL_ERROR;
         }
         else if (pota_priv_buf.ptr == NULL || pota_pub_buf.ptr == NULL)
         {
             ERR_raise_data(
                 ERR_LIB_PROV,
                 ERR_R_INIT_FAIL,
-                "only one POTA key file is present; both '%s' and '%s' are required",
+                "exactly one POTA key file is present — both are required. "
+                "Private key (legacy EC DER / ECPrivateKey): '%s'. "
+                "Public key (SubjectPublicKeyInfo DER): '%s'. "
+                "Regenerate the pair: openssl ecparam -name P-384 -genkey "
+                "| openssl ec -outform DER -out <priv-path>.",
                 config->pota_private_key_path,
                 config->pota_public_key_path
             );

@@ -168,11 +168,11 @@ All configuration parameters and their defaults:
 |-----------|---------|-------------|
 | `azihsm-bmk-path` | `./bmk.bin` | Backup Masking Key |
 | `azihsm-muk-path` | `./muk.bin` | Masked Unwrapping Key |
-| `azihsm-obk-path` | `./obk.bin` | Owner Backup Key |
+| `azihsm-obk-path` | `./obk.bin` | Owner Backup Key — 48-byte random binary file |
 | `azihsm-obk-source` | `caller` | OBK source: `caller` (file) or `tpm` |
 | `azihsm-pota-source` | `caller` | POTA source: `caller` (file) or `tpm` |
-| `azihsm-pota-private-key-path` | `./pota_private_key.der` | POTA P-384 private key (DER) |
-| `azihsm-pota-public-key-path` | `./pota_public_key.der` | POTA P-384 public key (DER) |
+| `azihsm-pota-private-key-path` | `./pota_private_key.der` | POTA P-384 private key — legacy EC DER (ECPrivateKey / RFC 5915) |
+| `azihsm-pota-public-key-path` | `./pota_public_key.der` | POTA P-384 public key — SubjectPublicKeyInfo DER |
 | `azihsm-api-revision` | `1.0` | HSM API revision (`major.minor`) |
 
 | Environment Variable | Default | Description |
@@ -188,7 +188,13 @@ LD_LIBRARY_PATH=/path/to/target/debug \
 openssl genpkey -propquery "?provider=azihsm" ...
 ```
 
-Missing key files (BMK, MUK, OBK, POTA keys) on first run are not errors — the provider generates and persists them automatically.
+**BMK** and **MUK** are generated and persisted automatically on first use — no setup required.
+
+**OBK** (when `azihsm-obk-source = caller`) must be provided as a 48-byte random binary file. The provider returns a descriptive error if it is absent.
+
+**POTA keys** (when `azihsm-pota-source = caller`) must be provided as a P-384 key pair: the private key encoded as legacy EC DER (ECPrivateKey / RFC 5915) and the public key as SubjectPublicKeyInfo DER. Both files must be present — providing only one is an error. The provider returns a descriptive error if either or both are absent.
+
+**Credentials** must always be present at the configured paths.
 
 ## Provider Flags
 
