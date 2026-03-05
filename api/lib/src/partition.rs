@@ -382,8 +382,8 @@ impl HsmPartition {
         obk_config: HsmOwnerBackupKeyConfig<'_>,
         pota_endorsement: HsmPotaEndorsement<'_>,
     ) -> HsmResult<()> {
-        let resp = self.with_dev(|dev| {
-            let result = ddi::init_part(
+        match self.with_dev(|dev| {
+            ddi::init_part(
                 dev,
                 self.api_rev_range().min(),
                 creds,
@@ -391,11 +391,8 @@ impl HsmPartition {
                 muk,
                 obk_config,
                 pota_endorsement,
-            );
-            result
-        });
-
-        match resp {
+            )
+        }) {
             Ok((bmk, mobk)) => {
                 self.inner().write().set_masked_keys(bmk, mobk);
             }

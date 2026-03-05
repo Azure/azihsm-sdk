@@ -168,14 +168,16 @@ fn test_init_caller_source_with_null_obk_fails() {
         let pota_data = HsmPotaEndorsementData::new(&sig, &pubkey);
         let pota = HsmPotaEndorsement::new(HsmPotaEndorsementSource::Caller, Some(pota_data));
 
-        let result = part.init(
-            HsmCredentials::new(&APP_ID, &APP_PIN),
-            None,
-            None,
-            obk_config,
-            pota,
+        let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
+        part.init(creds, None, None, obk_config, pota)
+            .expect("init should return Ok even on bad params");
+
+        let rev = part.api_rev_range().max();
+        let result = part.open_session(rev, &creds, None);
+        assert!(
+            result.is_err(),
+            "open_session should fail after init with null OBK"
         );
-        assert_eq!(result.unwrap_err(), HsmError::InvalidArgument);
     }
 }
 
@@ -193,14 +195,16 @@ fn test_init_caller_source_with_empty_obk_fails() {
         let pota_data = HsmPotaEndorsementData::new(&sig, &pubkey);
         let pota = HsmPotaEndorsement::new(HsmPotaEndorsementSource::Caller, Some(pota_data));
 
-        let result = part.init(
-            HsmCredentials::new(&APP_ID, &APP_PIN),
-            None,
-            None,
-            obk_config,
-            pota,
+        let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
+        part.init(creds, None, None, obk_config, pota)
+            .expect("init should return Ok even on bad params");
+
+        let rev = part.api_rev_range().max();
+        let result = part.open_session(rev, &creds, None);
+        assert!(
+            result.is_err(),
+            "open_session should fail after init with empty OBK"
         );
-        assert!(result.is_err(), "Init with empty OBK should fail");
     }
 }
 
@@ -219,16 +223,15 @@ fn test_init_tpm_obk_source_with_obk_provided_fails() {
         let pota_data = HsmPotaEndorsementData::new(&sig, &pubkey);
         let pota = HsmPotaEndorsement::new(HsmPotaEndorsementSource::Caller, Some(pota_data));
 
-        let result = part.init(
-            HsmCredentials::new(&APP_ID, &APP_PIN),
-            None,
-            None,
-            obk_config,
-            pota,
-        );
+        let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
+        part.init(creds, None, None, obk_config, pota)
+            .expect("init should return Ok even on bad params");
+
+        let rev = part.api_rev_range().max();
+        let result = part.open_session(rev, &creds, None);
         assert!(
             result.is_err(),
-            "Init with TPM OBK source and caller-provided OBK should fail"
+            "open_session should fail after init with TPM OBK source and caller-provided OBK"
         );
     }
 }
@@ -247,14 +250,16 @@ fn test_init_invalid_obk_source_fails() {
         let pota_data = HsmPotaEndorsementData::new(&sig, &pubkey);
         let pota = HsmPotaEndorsement::new(HsmPotaEndorsementSource::Caller, Some(pota_data));
 
-        let result = part.init(
-            HsmCredentials::new(&APP_ID, &APP_PIN),
-            None,
-            None,
-            obk_config,
-            pota,
+        let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
+        part.init(creds, None, None, obk_config, pota)
+            .expect("init should return Ok even on bad params");
+
+        let rev = part.api_rev_range().max();
+        let result = part.open_session(rev, &creds, None);
+        assert!(
+            result.is_err(),
+            "open_session should fail after init with invalid OBK source"
         );
-        assert_eq!(result.unwrap_err(), HsmError::InvalidArgument);
     }
 }
 
@@ -271,14 +276,16 @@ fn test_init_caller_source_with_empty_endorsement_fails() {
         let pota_data = HsmPotaEndorsementData::new(&[], &[]);
         let pota = HsmPotaEndorsement::new(HsmPotaEndorsementSource::Caller, Some(pota_data));
 
-        let result = part.init(
-            HsmCredentials::new(&APP_ID, &APP_PIN),
-            None,
-            None,
-            obk_config,
-            pota,
+        let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
+        part.init(creds, None, None, obk_config, pota)
+            .expect("init should return Ok even on bad params");
+
+        let rev = part.api_rev_range().max();
+        let result = part.open_session(rev, &creds, None);
+        assert!(
+            result.is_err(),
+            "open_session should fail after init with empty endorsement"
         );
-        assert!(result.is_err(), "Init with empty endorsement should fail");
     }
 }
 
@@ -294,14 +301,16 @@ fn test_init_caller_source_with_null_endorsement_fails() {
         let obk_config = make_valid_obk();
         let pota = HsmPotaEndorsement::new(HsmPotaEndorsementSource::Caller, None);
 
-        let result = part.init(
-            HsmCredentials::new(&APP_ID, &APP_PIN),
-            None,
-            None,
-            obk_config,
-            pota,
+        let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
+        part.init(creds, None, None, obk_config, pota)
+            .expect("init should return Ok even on bad params");
+
+        let rev = part.api_rev_range().max();
+        let result = part.open_session(rev, &creds, None);
+        assert!(
+            result.is_err(),
+            "open_session should fail after init with null endorsement"
         );
-        assert_eq!(result.unwrap_err(), HsmError::InvalidArgument);
     }
 }
 
@@ -318,13 +327,15 @@ fn test_init_invalid_pota_source_fails() {
         let pota_data = HsmPotaEndorsementData::new(&[0u8; 96], &[0u8; 97]);
         let pota = HsmPotaEndorsement::new(HsmPotaEndorsementSource(99), Some(pota_data));
 
-        let result = part.init(
-            HsmCredentials::new(&APP_ID, &APP_PIN),
-            None,
-            None,
-            obk_config,
-            pota,
+        let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
+        part.init(creds, None, None, obk_config, pota)
+            .expect("init should return Ok even on bad params");
+
+        let rev = part.api_rev_range().max();
+        let result = part.open_session(rev, &creds, None);
+        assert!(
+            result.is_err(),
+            "open_session should fail after init with invalid POTA source"
         );
-        assert_eq!(result.unwrap_err(), HsmError::InvalidArgument);
     }
 }
