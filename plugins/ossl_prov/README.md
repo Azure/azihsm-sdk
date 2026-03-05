@@ -16,7 +16,7 @@ An [OpenSSL 3.0 provider](https://docs.openssl.org/3.0/man7/provider/) that dele
 | **Encoder** | DER (SubjectPublicKeyInfo for public keys; PrivateKeyInfo metadata-only — keys are not exportable), Text |
 | **Store** | `azihsm://` URI scheme for masked key loading |
 
-> **Note:** EC keys are generated natively inside the HSM. RSA keys must be generated externally and **imported** into the HSM via the `azihsm.input_key` parameter.
+> **Note:** EC keys are generated natively inside the HSM. RSA keys must be generated externally and **imported** into the HSM via the `azihsm.input_key` parameter (plaintext DER) or `azihsm.wrapped_key` parameter (pre-wrapped blob).
 
 ## Key Usage and Operation Dependencies
 
@@ -184,7 +184,7 @@ openssl genpkey ${PROV} \
 
 ### EC Key Import
 
-Import an externally generated EC private key (DER-encoded, SEC1 or PKCS#8) into the HSM.
+Import an externally generated EC private key (DER-encoded, SEC1 or PKCS#8) into the HSM. For pre-wrapped blobs, see [Wrapped Key Import](#wrapped-key-import).
 
 **Requires:** An external DER-encoded EC private key.
 
@@ -203,7 +203,7 @@ openssl genpkey ${PROV} \
 
 ### RSA Key Import
 
-The HSM cannot generate RSA keys natively. RSA keys must be generated externally and imported. The provider wraps the key using RSA-AES-WRAP and unwraps it inside the HSM.
+The HSM cannot generate RSA keys natively. RSA keys must be generated externally and imported. The provider wraps the key using RSA-AES-WRAP and unwraps it inside the HSM. For pre-wrapped blobs, see [Wrapped Key Import](#wrapped-key-import).
 
 **Requires:** An external DER-encoded RSA private key.
 
@@ -234,11 +234,37 @@ openssl genpkey ${PROV} \
 | Parameter | Required | Description |
 |-----------|----------|-------------|
 | `rsa_keygen_bits` | Yes | Key size: `2048`, `3072`, or `4096` |
-| `azihsm.input_key` | Yes | Path to DER-encoded private key (PKCS#1 or PKCS#8) |
+| `azihsm.input_key` | Yes* | Path to DER-encoded private key (PKCS#1 or PKCS#8) |
+| `azihsm.wrapped_key` | Yes* | Path to a pre-wrapped key blob (from `wrap_key` tool) |
 | `azihsm.masked_key` | Yes | Output path for masked key blob |
 | `azihsm.key_usage` | No | `digitalSignature` (default) or `keyEncipherment` |
 
+> \* Exactly one of `azihsm.input_key` or `azihsm.wrapped_key` must be provided. Setting both is an error.
+
 RSA-PSS keys are imported the same way using `-algorithm RSA-PSS`.
+
+### Wrapped Key Import
+
+Import a pre-wrapped key blob into the HSM. This is useful when keys are wrapped offline or by a separate system using the HSM's RSA-AES key wrapping mechanism. The blob must be wrapped using the HSM's RSA-AES-WRAP algorithm with the device's wrapping key pair.
+
+**Requires:** A pre-wrapped key blob (PKCS#8 key wrapped with the HSM's RSA-AES-WRAP mechanism).
+
+```bash
+# Import a wrapped EC key
+openssl genpkey ${PROV} \
+    -algorithm EC -pkeyopt group:P-384 \
+    -pkeyopt azihsm.wrapped_key:./wrapped_ec.bin \
+    -pkeyopt azihsm.masked_key:./ec_from_wrapped.bin \
+    -outform DER -out /dev/null
+
+# Import a wrapped RSA key
+openssl genpkey ${PROV} \
+    -algorithm RSA -pkeyopt rsa_keygen_bits:2048 \
+    -pkeyopt azihsm.wrapped_key:./wrapped_rsa.bin \
+    -pkeyopt azihsm.key_usage:digitalSignature \
+    -pkeyopt azihsm.masked_key:./rsa_from_wrapped.bin \
+    -outform DER -out /dev/null
+```
 
 ### ECDSA Sign and Verify
 
