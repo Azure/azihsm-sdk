@@ -19,8 +19,8 @@ path = "junit.xml"
 # profile for running integration tests
 # test-threads = 1: serial_test uses a per-process mutex; nextest runs each test
 # in its own process, so explicit serialization is required to avoid file collisions.
-[profile.ci-integration]
+[profile.ci-provider-integration]
 test-threads = 1
 
-[profile.ci-integration.junit]
+[profile.ci-provider-integration.junit]
 path = "junit.xml"

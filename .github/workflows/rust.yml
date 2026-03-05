@@ -155,7 +155,7 @@ jobs:
         OPENSSL_LIB: ""
         PROVIDER_PATH: /usr/lib/ossl-modules
         PROPQUERY: "?provider=azihsm"
-      run: cargo xtask precheck --nextest --package integration-tests --features integration --profile ci-integration
+      run: cargo xtask precheck --nextest --package integration-tests --features integration --profile ci-provider-integration
 
   build_windows:
 

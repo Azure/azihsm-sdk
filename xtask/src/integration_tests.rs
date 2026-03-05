@@ -24,7 +24,7 @@ impl Xtask for IntegrationTest {
             package: Some("integration-tests".to_string()),
             no_default_features: false,
             filterset: None,
-            profile: Some("ci-integration".to_string()),
+            profile: Some("ci-provider-integration".to_string()),
         };
         nextest.run(ctx)
     }
