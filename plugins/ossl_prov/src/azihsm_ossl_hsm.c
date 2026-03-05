@@ -406,7 +406,6 @@ static azihsm_status generate_and_save_muk(azihsm_handle session, const char *mu
     return status;
 }
 
-
 azihsm_status azihsm_get_unwrapping_key(
     AZIHSM_OSSL_PROV_CTX *provctx,
     azihsm_handle *out_pub,
