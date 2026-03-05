@@ -43,14 +43,17 @@ typedef struct
 /* Maximum file path length for key and config file paths */
 #define AZIHSM_MAX_FILE_PATH 4096
 
-/* Default file paths for partition keys, credentials, and POTA keys */
-#define AZIHSM_DEFAULT_BMK_PATH "/var/lib/azihsm/bmk.bin"
-#define AZIHSM_DEFAULT_MUK_PATH "/var/lib/azihsm/muk.bin"
-#define AZIHSM_DEFAULT_OBK_PATH "/var/lib/azihsm/obk.bin"
-#define AZIHSM_DEFAULT_CREDENTIALS_ID_PATH "/var/lib/azihsm/credentials_id.bin"
-#define AZIHSM_DEFAULT_CREDENTIALS_PIN_PATH "/var/lib/azihsm/credentials_pin.bin"
-#define AZIHSM_DEFAULT_POTA_PRIVATE_KEY_PATH "/var/lib/azihsm/pota_private_key.der"
-#define AZIHSM_DEFAULT_POTA_PUBLIC_KEY_PATH "/var/lib/azihsm/pota_public_key.der"
+/* Default file paths for partition keys, credentials, and POTA keys.
+ * These are relative to the current working directory so that the provider
+ * works out of the box without any system-wide setup. Override via openssl.cnf
+ * (key material) or environment variables (credentials). */
+#define AZIHSM_DEFAULT_BMK_PATH "./bmk.bin"
+#define AZIHSM_DEFAULT_MUK_PATH "./muk.bin"
+#define AZIHSM_DEFAULT_OBK_PATH "./obk.bin"
+#define AZIHSM_DEFAULT_CREDENTIALS_ID_PATH "./credentials_id.bin"
+#define AZIHSM_DEFAULT_CREDENTIALS_PIN_PATH "./credentials_pin.bin"
+#define AZIHSM_DEFAULT_POTA_PRIVATE_KEY_PATH "./pota_private_key.der"
+#define AZIHSM_DEFAULT_POTA_PUBLIC_KEY_PATH "./pota_public_key.der"
 
 /* Size of binary credential files (ID and PIN) in bytes */
 #define AZIHSM_CREDENTIALS_SIZE 16

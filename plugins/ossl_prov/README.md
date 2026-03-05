@@ -109,15 +109,92 @@ sudo cp target/debug/azihsm_provider.so /usr/lib/x86_64-linux-gnu/ossl-modules/
 sudo cp target/debug/libazihsm_api_native.so /usr/lib/
 sudo ldconfig
 
-# Create the working directory for masked key material
-sudo mkdir -p /var/lib/azihsm
+# (Optional) Create a dedicated directory for masked key material.
+# By default the provider reads and writes key files in the current working
+# directory. Override paths via openssl.cnf — see Configuration below.
 ```
 
 Once installed, the `-provider-path` flag is no longer needed — OpenSSL will find the provider automatically. All command examples below omit `-provider-path` and assume the provider is installed system-wide.
 
+## Configuration
+
+The provider reads its file paths from three sources, in priority order:
+
+1. **`openssl.cnf`** — provider-specific keys in the `[azihsm_sect]` section (key material paths, API revision, OBK/POTA source)
+2. **Environment variables** — credential paths only (`AZIHSM_CREDENTIALS_ID_PATH`, `AZIHSM_CREDENTIALS_PIN_PATH`)
+3. **Defaults** — CWD-relative paths (`./bmk.bin`, `./muk.bin`, etc.) used when neither of the above is set
+
+> Credentials are intentionally **not** readable from `openssl.cnf` — only from environment variables or the defaults — to reduce the risk of them appearing in config files.
+
+### Configuration via `openssl.cnf`
+
+The provider uses the standard OpenSSL 3.x provider configuration mechanism. When OpenSSL loads the provider it passes an `OSSL_FUNC_CORE_GET_PARAMS` callback; the provider uses this to read its named parameters from its own section in `openssl.cnf`. No custom configuration parsing is involved.
+
+OpenSSL locates `openssl.cnf` via (in priority order):
+1. `OPENSSL_CONF` environment variable
+2. Compiled-in default (`OPENSSLDIR`, e.g. `/etc/ssl/openssl.cnf`)
+
+A minimal `openssl.cnf` that loads the provider and sets custom key paths:
+
+```ini
+openssl_conf = openssl_init
+
+[openssl_init]
+providers = provider_sect
+
+[provider_sect]
+default = default_sect
+azihsm = azihsm_sect
+
+[default_sect]
+activate = 1
+
+[azihsm_sect]
+module = /path/to/azihsm_provider.so
+activate = 1
+azihsm-bmk-path = /var/lib/azihsm/bmk.bin
+azihsm-muk-path = /var/lib/azihsm/muk.bin
+azihsm-obk-path = /var/lib/azihsm/obk.bin
+azihsm-obk-source = caller
+azihsm-pota-source = caller
+azihsm-pota-private-key-path = /var/lib/azihsm/pota_private_key.der
+azihsm-pota-public-key-path = /var/lib/azihsm/pota_public_key.der
+azihsm-api-revision = 1.0
+```
+
+All configuration parameters and their defaults:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `azihsm-bmk-path` | `./bmk.bin` | Backup Masking Key |
+| `azihsm-muk-path` | `./muk.bin` | Masked Unwrapping Key |
+| `azihsm-obk-path` | `./obk.bin` | Owner Backup Key |
+| `azihsm-obk-source` | `caller` | OBK source: `caller` (file) or `tpm` |
+| `azihsm-pota-source` | `caller` | POTA source: `caller` (file) or `tpm` |
+| `azihsm-pota-private-key-path` | `./pota_private_key.der` | POTA P-384 private key (DER) |
+| `azihsm-pota-public-key-path` | `./pota_public_key.der` | POTA P-384 public key (DER) |
+| `azihsm-api-revision` | `1.0` | HSM API revision (`major.minor`) |
+
+| Environment Variable | Default | Description |
+|---------------------|---------|-------------|
+| `AZIHSM_CREDENTIALS_ID_PATH` | `./credentials_id.bin` | Path to 16-byte credential ID file |
+| `AZIHSM_CREDENTIALS_PIN_PATH` | `./credentials_pin.bin` | Path to 16-byte credential PIN file |
+
+When using `openssl.cnf`, providers are auto-loaded — no `-provider-path` or `-provider` CLI flags needed:
+
+```bash
+OPENSSL_CONF=/path/to/openssl.cnf \
+LD_LIBRARY_PATH=/path/to/target/debug \
+openssl genpkey -propquery "?provider=azihsm" ...
+```
+
+Missing key files (BMK, MUK, OBK, POTA keys) on first run are not errors — the provider generates and persists them automatically.
+
 ## Provider Flags
 
-Every `openssl` command that uses the provider requires these flags. Define them once in your shell:
+> When using `openssl.cnf`, the provider is auto-loaded and only `-propquery` is needed — the flags below are not required.
+
+When loading the provider via `-provider-path`, every `openssl` command requires these flags. Define them once in your shell:
 
 ```bash
 PROV="-propquery ?provider=azihsm -provider default -provider azihsm_provider"
