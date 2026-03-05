@@ -234,9 +234,19 @@ static int azihsm_ossl_rsa_sign(
         {
             pss_params.salt_len = (uint32_t)ctx->salt_len;
         }
+        else if (ctx->salt_len == AZIHSM_RSA_PSS_SALTLEN_AUTO)
+        {
+            ERR_raise_data(
+                ERR_LIB_PROV,
+                PROV_R_INVALID_SALT_LENGTH,
+                "PSS saltlen \"auto\" is not supported"
+            );
+            return OSSL_FAILURE;
+        }
         else
         {
-            pss_params.salt_len = (uint32_t)EVP_MD_size(ctx->md);
+            ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
+            return OSSL_FAILURE;
         }
 
         algo.id = AZIHSM_ALGO_ID_RSA_PKCS_PSS;
@@ -365,8 +375,7 @@ static int azihsm_ossl_rsa_verify(
         pss_params.mgf_id = azihsm_ossl_evp_md_to_mgf1_id(mgf1_md);
 
         /* Resolve salt length for verify */
-        if (ctx->salt_len == AZIHSM_RSA_PSS_SALTLEN_DIGEST ||
-            ctx->salt_len == AZIHSM_RSA_PSS_SALTLEN_AUTO)
+        if (ctx->salt_len == AZIHSM_RSA_PSS_SALTLEN_DIGEST)
         {
             pss_params.salt_len = (uint32_t)EVP_MD_size(ctx->md);
         }
@@ -380,9 +389,19 @@ static int azihsm_ossl_rsa_verify(
         {
             pss_params.salt_len = (uint32_t)ctx->salt_len;
         }
+        else if (ctx->salt_len == AZIHSM_RSA_PSS_SALTLEN_AUTO)
+        {
+            ERR_raise_data(
+                ERR_LIB_PROV,
+                PROV_R_INVALID_SALT_LENGTH,
+                "PSS saltlen \"auto\" is not supported"
+            );
+            return OSSL_FAILURE;
+        }
         else
         {
-            pss_params.salt_len = (uint32_t)EVP_MD_size(ctx->md);
+            ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
+            return OSSL_FAILURE;
         }
 
         algo.id = AZIHSM_ALGO_ID_RSA_PKCS_PSS;
@@ -495,10 +514,19 @@ static int azihsm_ossl_rsa_digest_sign_init(
         {
             pss_params.salt_len = (uint32_t)ctx->salt_len;
         }
+        else if (ctx->salt_len == AZIHSM_RSA_PSS_SALTLEN_AUTO)
+        {
+            ERR_raise_data(
+                ERR_LIB_PROV,
+                PROV_R_INVALID_SALT_LENGTH,
+                "PSS saltlen \"auto\" is not supported"
+            );
+            return OSSL_FAILURE;
+        }
         else
         {
-            /* Default to hash size for other special values */
-            pss_params.salt_len = (uint32_t)EVP_MD_size(ctx->md);
+            ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
+            return OSSL_FAILURE;
         }
 
         algo.id = azihsm_ossl_evp_md_to_rsa_pss_algo_id(ctx->md);
@@ -683,9 +711,8 @@ static int azihsm_ossl_rsa_digest_verify_init(
         pss_params.hash_algo_id = azihsm_ossl_evp_md_to_algo_id(ctx->md);
         pss_params.mgf_id = azihsm_ossl_evp_md_to_mgf1_id(mgf1_md);
 
-        /* Resolve salt length for verify (auto-detect if SALTLEN_AUTO) */
-        if (ctx->salt_len == AZIHSM_RSA_PSS_SALTLEN_DIGEST ||
-            ctx->salt_len == AZIHSM_RSA_PSS_SALTLEN_AUTO)
+        /* Resolve salt length for verify */
+        if (ctx->salt_len == AZIHSM_RSA_PSS_SALTLEN_DIGEST)
         {
             pss_params.salt_len = (uint32_t)EVP_MD_size(ctx->md);
         }
@@ -699,9 +726,19 @@ static int azihsm_ossl_rsa_digest_verify_init(
         {
             pss_params.salt_len = (uint32_t)ctx->salt_len;
         }
+        else if (ctx->salt_len == AZIHSM_RSA_PSS_SALTLEN_AUTO)
+        {
+            ERR_raise_data(
+                ERR_LIB_PROV,
+                PROV_R_INVALID_SALT_LENGTH,
+                "PSS saltlen \"auto\" is not supported"
+            );
+            return OSSL_FAILURE;
+        }
         else
         {
-            pss_params.salt_len = (uint32_t)EVP_MD_size(ctx->md);
+            ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
+            return OSSL_FAILURE;
         }
 
         algo.id = azihsm_ossl_evp_md_to_rsa_pss_algo_id(ctx->md);
@@ -894,7 +931,13 @@ static int azihsm_ossl_rsa_set_ctx_params(void *sctx, const OSSL_PARAM params[])
             }
             else if (strcmp(saltlen_str, OSSL_PKEY_RSA_PSS_SALT_LEN_AUTO) == 0)
             {
-                ctx->salt_len = AZIHSM_RSA_PSS_SALTLEN_AUTO;
+                ERR_raise_data(
+                    ERR_LIB_PROV,
+                    PROV_R_INVALID_SALT_LENGTH,
+                    "PSS saltlen \"auto\" is not supported; "
+                    "use \"digest\", \"max\", or an explicit integer"
+                );
+                return OSSL_FAILURE;
             }
             else if (strcmp(saltlen_str, OSSL_PKEY_RSA_PSS_SALT_LEN_MAX) == 0)
             {
@@ -924,6 +967,19 @@ static int azihsm_ossl_rsa_set_ctx_params(void *sctx, const OSSL_PARAM params[])
             if (!OSSL_PARAM_get_int(p, &salt_len_int))
             {
                 ERR_raise(ERR_LIB_PROV, ERR_R_OPERATION_FAIL);
+                return OSSL_FAILURE;
+            }
+            if (salt_len_int == AZIHSM_RSA_PSS_SALTLEN_AUTO)
+            {
+                ERR_raise_data(
+                    ERR_LIB_PROV,
+                    PROV_R_INVALID_SALT_LENGTH,
+                    "PSS saltlen \"auto\" (%d) is not supported; "
+                    "use \"digest\" (%d), \"max\" (%d), or an explicit integer",
+                    AZIHSM_RSA_PSS_SALTLEN_AUTO,
+                    AZIHSM_RSA_PSS_SALTLEN_DIGEST,
+                    AZIHSM_RSA_PSS_SALTLEN_MAX
+                );
                 return OSSL_FAILURE;
             }
             ctx->salt_len = salt_len_int;

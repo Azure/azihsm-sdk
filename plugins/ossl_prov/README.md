@@ -308,7 +308,7 @@ openssl dgst -sha256 ${PROV} \
 
 openssl dgst -sha256 ${PROV} \
     -sigopt rsa_padding_mode:pss \
-    -sigopt rsa_pss_saltlen:auto \
+    -sigopt rsa_pss_saltlen:digest \
     -verify "azihsm://./rsa_2048_sign.bin;type=rsa" \
     -signature rsa_pss_sig.bin data.bin
 ```
@@ -318,7 +318,7 @@ openssl dgst -sha256 ${PROV} \
 | Option | Values |
 |--------|--------|
 | `rsa_padding_mode` | `pss` |
-| `rsa_pss_saltlen` | `digest` (hash length), `max` (maximum), `auto` (auto-detect on verify), or an integer |
+| `rsa_pss_saltlen` | `digest` (hash length), `max` (maximum), or an integer (`auto` is not supported) |
 | `rsa_mgf1_md` | Hash for MGF1 (defaults to same as digest) |
 
 ### RSA Encryption and Decryption

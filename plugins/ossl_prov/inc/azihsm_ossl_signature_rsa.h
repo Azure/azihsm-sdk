@@ -15,7 +15,7 @@
 
 /* Special salt length values (matching OpenSSL's RSA_PSS_SALTLEN_* constants) */
 #define AZIHSM_RSA_PSS_SALTLEN_DIGEST -1 /* Salt length equals hash length */
-#define AZIHSM_RSA_PSS_SALTLEN_AUTO -2   /* Auto-detect on verify */
+#define AZIHSM_RSA_PSS_SALTLEN_AUTO -2   /* Not supported; kept for reference only */
 #define AZIHSM_RSA_PSS_SALTLEN_MAX -3    /* Maximum possible salt */
 
 /* Signature context for RSA operations */
