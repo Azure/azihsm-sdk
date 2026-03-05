@@ -4,13 +4,13 @@
 #include <azihsm_api.h>
 #include <cstring>
 #include <gtest/gtest.h>
-#include <scope_guard.hpp>
 #include <vector>
 
 #include "handle/key_handle.hpp"
 #include "handle/part_handle.hpp"
 #include "handle/part_list_handle.hpp"
 #include "handle/session_handle.hpp"
+#include "utils/auto_key.hpp"
 
 // Helper to build XTS wrapped blob header
 // Format: magic (u64 LE) + version (u16 LE) + key1_len (u16 LE) + key2_len (u16 LE) + reserved (u16 LE)
@@ -205,8 +205,8 @@ class azihsm_aes_keygen : public ::testing::Test
 
     static void generate_rsa_wrapping_keypair(
         azihsm_handle session,
-        azihsm_handle &wrapping_priv_key,
-        azihsm_handle &wrapping_pub_key
+        auto_key &wrapping_priv_key,
+        auto_key &wrapping_pub_key
     )
     {
         azihsm_algo rsa_keygen_algo{};
@@ -251,8 +251,8 @@ class azihsm_aes_keygen : public ::testing::Test
             &rsa_keygen_algo,
             &priv_prop_list,
             &pub_prop_list,
-            &wrapping_priv_key,
-            &wrapping_pub_key
+            wrapping_priv_key.get_ptr(),
+            wrapping_pub_key.get_ptr()
         );
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_NE(wrapping_priv_key, 0);
@@ -410,14 +410,10 @@ TEST_F(azihsm_aes_keygen, unmask_aes_128_key)
             .count = static_cast<uint32_t>(props_vec.size())
         };
 
-        azihsm_handle original_key = 0;
-        azihsm_status err = azihsm_key_gen(session, &keygen_algo, &prop_list, &original_key);
+        auto_key original_key;
+        azihsm_status err = azihsm_key_gen(session, &keygen_algo, &prop_list, original_key.get_ptr());
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_NE(original_key, 0);
-
-        auto cleanup_original = scope_guard::make_scope_exit([original_key] {
-            azihsm_key_delete(original_key);
-        });
 
         // Step 2: Get masked key via property
         uint8_t *masked_key_ptr = nullptr;
@@ -443,14 +439,10 @@ TEST_F(azihsm_aes_keygen, unmask_aes_128_key)
         masked_key_buf.ptr = masked_key_data.data();
         masked_key_buf.len = static_cast<uint32_t>(masked_key_data.size());
 
-        azihsm_handle unmasked_key = 0;
-        err = azihsm_key_unmask(session, AZIHSM_KEY_KIND_AES, &masked_key_buf, &unmasked_key);
+        auto_key unmasked_key;
+        err = azihsm_key_unmask(session, AZIHSM_KEY_KIND_AES, &masked_key_buf, unmasked_key.get_ptr());
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_NE(unmasked_key, 0);
-
-        auto cleanup_unmasked = scope_guard::make_scope_exit([unmasked_key] {
-            azihsm_key_delete(unmasked_key);
-        });
 
         // Step 4: Compare key properties
         compare_key_properties(original_key, unmasked_key, 128);
@@ -487,14 +479,10 @@ TEST_F(azihsm_aes_keygen, generate_aes_gcm_256_key)
             .count = static_cast<uint32_t>(props_vec.size())
         };
 
-        azihsm_handle gcm_key = 0;
-        azihsm_status err = azihsm_key_gen(session, &keygen_algo, &prop_list, &gcm_key);
+        auto_key gcm_key;
+        azihsm_status err = azihsm_key_gen(session, &keygen_algo, &prop_list, gcm_key.get_ptr());
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_NE(gcm_key, 0);
-
-        auto cleanup = scope_guard::make_scope_exit([gcm_key] {
-            azihsm_key_delete(gcm_key);
-        });
 
         // Step 2: Verify key properties
         azihsm_key_class actual_class;
@@ -571,14 +559,10 @@ TEST_F(azihsm_aes_keygen, unmask_aes_gcm_256_key)
             .count = static_cast<uint32_t>(props_vec.size())
         };
 
-        azihsm_handle original_key = 0;
-        azihsm_status err = azihsm_key_gen(session, &keygen_algo, &prop_list, &original_key);
+        auto_key original_key;
+        azihsm_status err = azihsm_key_gen(session, &keygen_algo, &prop_list, original_key.get_ptr());
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_NE(original_key, 0);
-
-        auto cleanup_original = scope_guard::make_scope_exit([original_key] {
-            azihsm_key_delete(original_key);
-        });
 
         // Step 2: Get masked key via property
         uint8_t *masked_key_ptr = nullptr;
@@ -604,14 +588,15 @@ TEST_F(azihsm_aes_keygen, unmask_aes_gcm_256_key)
         masked_key_buf.ptr = masked_key_data.data();
         masked_key_buf.len = static_cast<uint32_t>(masked_key_data.size());
 
-        azihsm_handle unmasked_key = 0;
-        err = azihsm_key_unmask(session, AZIHSM_KEY_KIND_AES_GCM, &masked_key_buf, &unmasked_key);
+        auto_key unmasked_key;
+        err = azihsm_key_unmask(
+            session,
+            AZIHSM_KEY_KIND_AES_GCM,
+            &masked_key_buf,
+            unmasked_key.get_ptr()
+        );
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_NE(unmasked_key, 0);
-
-        auto cleanup_unmasked = scope_guard::make_scope_exit([unmasked_key] {
-            azihsm_key_delete(unmasked_key);
-        });
 
         // Step 4: Verify key properties match
         // Note: compare_key_properties checks AZIHSM_KEY_KIND_AES, so we verify AES_GCM kind separately
@@ -705,24 +690,19 @@ TEST_F(azihsm_aes_keygen, unwrap_local_aes_128_key)
             static_cast<uint32_t>(pub_props_vec.size())
         };
 
-        azihsm_handle wrapping_priv_key = 0;
-        azihsm_handle wrapping_pub_key = 0;
+        auto_key wrapping_priv_key;
+        auto_key wrapping_pub_key;
         azihsm_status err = azihsm_key_gen_pair(
             session,
             &rsa_keygen_algo,
             &priv_prop_list,
             &pub_prop_list,
-            &wrapping_priv_key,
-            &wrapping_pub_key
+            wrapping_priv_key.get_ptr(),
+            wrapping_pub_key.get_ptr()
         );
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_NE(wrapping_priv_key, 0);
         ASSERT_NE(wrapping_pub_key, 0);
-
-        auto cleanup_wrapping_keys = scope_guard::make_scope_exit([wrapping_pub_key, wrapping_priv_key] {
-            azihsm_key_delete(wrapping_pub_key);
-            azihsm_key_delete(wrapping_priv_key);
-        });
 
         // Step 2: Generate random AES-128 key locally (16 bytes)
         std::vector<uint8_t> local_aes_key = {
@@ -796,20 +776,16 @@ TEST_F(azihsm_aes_keygen, unwrap_local_aes_128_key)
         wrapped_key_buf.ptr = wrapped_data.data();
         wrapped_key_buf.len = static_cast<uint32_t>(wrapped_data.size());
 
-        azihsm_handle unwrapped_key = 0;
+        auto_key unwrapped_key;
         err = azihsm_key_unwrap(
             &unwrap_algo,
             wrapping_priv_key,
             &wrapped_key_buf,
             &unwrap_prop_list,
-            &unwrapped_key
+            unwrapped_key.get_ptr()
         );
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_NE(unwrapped_key, 0);
-
-        auto cleanup_unwrapped = scope_guard::make_scope_exit([unwrapped_key] {
-            azihsm_key_delete(unwrapped_key);
-        });
 
         // Verify unwrapped key properties
         azihsm_key_kind unwrapped_kind;
@@ -844,14 +820,9 @@ TEST_F(azihsm_aes_keygen, unwrap_local_aes_128_key)
 TEST_F(azihsm_aes_keygen, unwrap_local_aes_gcm_256_key)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        azihsm_handle wrapping_priv_key = 0;
-        azihsm_handle wrapping_pub_key = 0;
+        auto_key wrapping_priv_key;
+        auto_key wrapping_pub_key;
         generate_rsa_wrapping_keypair(session, wrapping_priv_key, wrapping_pub_key);
-
-        auto cleanup_wrapping_keys = scope_guard::make_scope_exit([wrapping_pub_key, wrapping_priv_key] {
-            azihsm_key_delete(wrapping_pub_key);
-            azihsm_key_delete(wrapping_priv_key);
-        });
 
         // Step 2: Generate random AES-GCM-256 key locally (32 bytes)
         std::vector<uint8_t> local_aes_gcm_key = {
@@ -903,20 +874,16 @@ TEST_F(azihsm_aes_keygen, unwrap_local_aes_gcm_256_key)
         wrapped_key_buf.ptr = wrapped_data.data();
         wrapped_key_buf.len = static_cast<uint32_t>(wrapped_data.size());
 
-        azihsm_handle unwrapped_key = 0;
+        auto_key unwrapped_key;
         azihsm_status err = azihsm_key_unwrap(
             &unwrap_algo,
             wrapping_priv_key,
             &wrapped_key_buf,
             &unwrap_prop_list,
-            &unwrapped_key
+            unwrapped_key.get_ptr()
         );
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_NE(unwrapped_key, 0);
-
-        auto cleanup_unwrapped = scope_guard::make_scope_exit([unwrapped_key] {
-            azihsm_key_delete(unwrapped_key);
-        });
 
         // Verify unwrapped key properties
         azihsm_key_kind unwrapped_kind;
@@ -978,14 +945,10 @@ TEST_F(azihsm_aes_keygen, unmask_aes_gcm_wrong_kind_fails)
             .count = static_cast<uint32_t>(props_vec.size())
         };
 
-        azihsm_handle original_key = 0;
-        azihsm_status err = azihsm_key_gen(session, &keygen_algo, &prop_list, &original_key);
+        auto_key original_key;
+        azihsm_status err = azihsm_key_gen(session, &keygen_algo, &prop_list, original_key.get_ptr());
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_NE(original_key, 0);
-
-        auto cleanup_original = scope_guard::make_scope_exit([original_key] {
-            azihsm_key_delete(original_key);
-        });
 
         uint8_t *masked_key_ptr = nullptr;
         uint32_t masked_key_len = 0;
@@ -1019,14 +982,9 @@ TEST_F(azihsm_aes_keygen, unmask_aes_gcm_wrong_kind_fails)
 TEST_F(azihsm_aes_keygen, unwrap_local_aes_gcm_256_key_corrupted_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        azihsm_handle wrapping_priv_key = 0;
-        azihsm_handle wrapping_pub_key = 0;
+        auto_key wrapping_priv_key;
+        auto_key wrapping_pub_key;
         generate_rsa_wrapping_keypair(session, wrapping_priv_key, wrapping_pub_key);
-
-        auto cleanup_wrapping_keys = scope_guard::make_scope_exit([wrapping_pub_key, wrapping_priv_key] {
-            azihsm_key_delete(wrapping_pub_key);
-            azihsm_key_delete(wrapping_priv_key);
-        });
 
         std::vector<uint8_t> local_aes_gcm_key = {
             0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
@@ -1101,14 +1059,9 @@ TEST_F(azihsm_aes_keygen, unwrap_local_aes_gcm_256_key_roundtrip)
 {
     part_list_.for_each_session([](azihsm_handle session) {
         // Generate RSA wrapping key pair in the HSM for secure key transport
-        azihsm_handle wrapping_priv_key = 0;
-        azihsm_handle wrapping_pub_key = 0;
+        auto_key wrapping_priv_key;
+        auto_key wrapping_pub_key;
         generate_rsa_wrapping_keypair(session, wrapping_priv_key, wrapping_pub_key);
-
-        auto cleanup_wrapping_keys = scope_guard::make_scope_exit([wrapping_pub_key, wrapping_priv_key] {
-            azihsm_key_delete(wrapping_pub_key);
-            azihsm_key_delete(wrapping_priv_key);
-        });
 
         // Create a local AES-GCM-256 key (32 bytes) to be imported into the HSM
         std::vector<uint8_t> local_aes_gcm_key = {
@@ -1163,20 +1116,16 @@ TEST_F(azihsm_aes_keygen, unwrap_local_aes_gcm_256_key_roundtrip)
         wrapped_key_buf.len = static_cast<uint32_t>(wrapped_data.size());
 
         // Unwrap the key into the HSM using the RSA private key
-        azihsm_handle unwrapped_key = 0;
+        auto_key unwrapped_key;
         azihsm_status err = azihsm_key_unwrap(
             &unwrap_algo,
             wrapping_priv_key,
             &wrapped_key_buf,
             &unwrap_prop_list,
-            &unwrapped_key
+            unwrapped_key.get_ptr()
         );
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_NE(unwrapped_key, 0);
-
-        auto cleanup_unwrapped = scope_guard::make_scope_exit([unwrapped_key] {
-            azihsm_key_delete(unwrapped_key);
-        });
 
         // Configure AES-GCM encryption parameters (IV and tag)
         uint8_t iv[12] = { 0xA1 };
@@ -1265,14 +1214,10 @@ TEST_F(azihsm_aes_keygen, unmask_aes_xts_512_key)
             static_cast<uint32_t>(props_vec.size())
         };
 
-        azihsm_handle original_key = 0;
-        azihsm_status err = azihsm_key_gen(session, &keygen_algo, &prop_list, &original_key);
+        auto_key original_key;
+        azihsm_status err = azihsm_key_gen(session, &keygen_algo, &prop_list, original_key.get_ptr());
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_NE(original_key, 0);
-
-        auto cleanup_original = scope_guard::make_scope_exit([original_key] {
-            azihsm_key_delete(original_key);
-        });
 
         // Step 2: Get masked key via property
         uint8_t *masked_key_ptr = nullptr;
@@ -1298,14 +1243,15 @@ TEST_F(azihsm_aes_keygen, unmask_aes_xts_512_key)
         masked_key_buf.ptr = masked_key_data.data();
         masked_key_buf.len = static_cast<uint32_t>(masked_key_data.size());
 
-        azihsm_handle unmasked_key = 0;
-        err = azihsm_key_unmask(session, AZIHSM_KEY_KIND_AES_XTS, &masked_key_buf, &unmasked_key);
+        auto_key unmasked_key;
+        err = azihsm_key_unmask(
+            session,
+            AZIHSM_KEY_KIND_AES_XTS,
+            &masked_key_buf,
+            unmasked_key.get_ptr()
+        );
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_NE(unmasked_key, 0);
-
-        auto cleanup_unmasked = scope_guard::make_scope_exit([unmasked_key] {
-            azihsm_key_delete(unmasked_key);
-        });
 
         // Step 4: Compare key properties
         compare_aes_xts_key_properties(original_key, unmasked_key, 512);
@@ -1353,24 +1299,19 @@ TEST_F(azihsm_aes_keygen, unwrap_aes_xts_512_key)
             static_cast<uint32_t>(pub_props_vec.size())
         };
 
-        azihsm_handle wrapping_priv_key = 0;
-        azihsm_handle wrapping_pub_key = 0;
+        auto_key wrapping_priv_key;
+        auto_key wrapping_pub_key;
         azihsm_status err = azihsm_key_gen_pair(
             session,
             &rsa_keygen_algo,
             &priv_prop_list,
             &pub_prop_list,
-            &wrapping_priv_key,
-            &wrapping_pub_key
+            wrapping_priv_key.get_ptr(),
+            wrapping_pub_key.get_ptr()
         );
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_NE(wrapping_priv_key, 0);
         ASSERT_NE(wrapping_pub_key, 0);
-
-        auto cleanup_wrapping_keys = scope_guard::make_scope_exit([wrapping_priv_key, wrapping_pub_key] {
-            azihsm_key_delete(wrapping_priv_key);
-            azihsm_key_delete(wrapping_pub_key);
-        });
 
         // Step 2: Create two AES-256 keys for XTS (32 bytes each = 256 bits)
         std::vector<uint8_t> key1_plain(32, 0x11); // First half of XTS key
@@ -1418,20 +1359,16 @@ TEST_F(azihsm_aes_keygen, unwrap_aes_xts_512_key)
         wrapped_blob_buf.ptr = wrapped_blob.data();
         wrapped_blob_buf.len = static_cast<uint32_t>(wrapped_blob.size());
 
-        azihsm_handle unwrapped_key = 0;
+        auto_key unwrapped_key;
         err = azihsm_key_unwrap(
             &unwrap_algo,
             wrapping_priv_key,
             &wrapped_blob_buf,
             &unwrap_prop_list,
-            &unwrapped_key
+            unwrapped_key.get_ptr()
         );
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_NE(unwrapped_key, 0);
-
-        auto cleanup_unwrapped = scope_guard::make_scope_exit([unwrapped_key] {
-            azihsm_key_delete(unwrapped_key);
-        });
 
         // Step 5: Verify the unwrapped key has correct properties
         azihsm_key_kind unwrapped_kind;

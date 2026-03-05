@@ -39,21 +39,6 @@ struct StreamingRoundtripCase
     const char *test_name;
 };
 
-// Holds hard-coded data for a known-answer test (KAT).
-struct KnownAnswerTestCase
-{
-    uint32_t bits;
-    const uint8_t *key;
-    size_t key_len;
-    const uint8_t *iv;
-    size_t iv_len;
-    const uint8_t *plaintext;
-    size_t plaintext_len;
-    const uint8_t *ciphertext;
-    size_t ciphertext_len;
-    const char *test_name;
-};
-
 azihsm_status crypt_call(
     CryptOperation operation,
     azihsm_algo *algo,
@@ -97,21 +82,23 @@ azihsm_status streaming_update_status_with_sizing(
 
 azihsm_status streaming_finish_status_with_sizing(CryptOperation operation, azihsm_handle ctx);
 
-std::vector<uint8_t> single_shot_crypt(
-    CryptOperation operation,
-    azihsm_handle key_handle,
-    azihsm_algo *algo,
-    const uint8_t *input_data,
-    size_t input_len
-);
-
-std::vector<uint8_t> streaming_crypt(
+azihsm_status single_shot_crypt(
     CryptOperation operation,
     azihsm_handle key_handle,
     azihsm_algo *algo,
     const uint8_t *input_data,
     size_t input_len,
-    size_t chunk_size
+    std::vector<uint8_t> &output
+);
+
+azihsm_status streaming_crypt(
+    CryptOperation operation,
+    azihsm_handle key_handle,
+    azihsm_algo *algo,
+    const uint8_t *input_data,
+    size_t input_len,
+    size_t chunk_size,
+    std::vector<uint8_t> &output
 );
 
 // Builds deterministic incrementing bytes: 0x00, 0x01, 0x02, ...
@@ -144,18 +131,6 @@ void run_streaming_case_list(
 );
 
 // Generate an AES key for testing.
-KeyHandle generate_aes_cbc_key(azihsm_handle session, uint32_t bits);
+KeyHandle generate_aes_key(azihsm_handle session, uint32_t bits);
 KeyHandle generate_aes_gcm_key(azihsm_handle session, uint32_t bits);
 KeyHandle generate_aes_xts_key(azihsm_handle session, uint32_t bits);
-
-// Imports fixed local AES key bytes as an HSM key for deterministic validation.
-//
-// This is test harness setup: KATs require an exact key value, while normal keygen in tests
-// produces random keys. The helper uses the supported RSA-AES wrap/unwrap ingest path.
-auto_key import_local_aes_key_for_kat(
-    azihsm_handle session,
-    const uint8_t *local_key_data,
-    size_t local_key_len,
-    uint32_t aes_key_bits,
-    azihsm_key_kind key_kind
-);

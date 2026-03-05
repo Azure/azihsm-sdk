@@ -4,7 +4,6 @@
 #include <azihsm_api.h>
 #include <cstring>
 #include <gtest/gtest.h>
-#include <scope_guard.hpp>
 #include <vector>
 #include "helpers.hpp"
 #include "handle/key_handle.hpp"
@@ -12,6 +11,7 @@
 #include "handle/part_list_handle.hpp"
 #include "handle/session_handle.hpp"
 #include "utils/auto_ctx.hpp"
+#include "utils/auto_key.hpp"
 #include <functional>
 
 class azihsm_aes_xts : public ::testing::Test
@@ -282,17 +282,11 @@ TEST_F(azihsm_aes_xts, GenerateXtsKey)
             .count = static_cast<uint32_t>(props_vec.size())
         };
 
-        azihsm_handle key_handle = 0;
-        azihsm_status err = azihsm_key_gen(session, &keygen_algo, &prop_list, &key_handle);
+        auto_key key_handle;
+        azihsm_status err = azihsm_key_gen(session, &keygen_algo, &prop_list, key_handle.get_ptr());
         
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS) << "Key generation failed with error: " << err;
         ASSERT_NE(key_handle, 0);
-
-        auto cleanup = scope_guard::make_scope_exit([key_handle] {
-            if (key_handle != 0) {
-                azihsm_key_delete(key_handle);
-            }
-        });
     });
 }
 
