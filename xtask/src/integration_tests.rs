@@ -5,8 +5,8 @@
 #![forbid(unsafe_code)]
 
 use clap::Parser;
-use xshell::cmd;
 
+use crate::nextest;
 use crate::Xtask;
 use crate::XtaskCtx;
 
@@ -16,16 +16,16 @@ use crate::XtaskCtx;
 pub struct IntegrationTest {}
 
 impl Xtask for IntegrationTest {
-    fn run(self, _ctx: XtaskCtx) -> anyhow::Result<()> {
+    fn run(self, ctx: XtaskCtx) -> anyhow::Result<()> {
         log::trace!("start testing");
 
-        let sh = xshell::Shell::new()?;
-
-        // Run the integration tests in the integration-tests package
-        log::info!("Running integration tests...");
-        cmd!(sh, "cargo test -p integration-tests --features integration").run()?;
-
-        log::trace!("end testing");
-        Ok(())
+        let nextest = nextest::Nextest {
+            features: Some("integration".to_string()),
+            package: Some("integration-tests".to_string()),
+            no_default_features: false,
+            filterset: None,
+            profile: Some("ci-integration".to_string()),
+        };
+        nextest.run(ctx)
     }
 }
