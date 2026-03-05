@@ -74,6 +74,9 @@ pub struct Precheck {
     /// Skip specifying toolchain for formatting checks
     #[clap(long)]
     skip_toolchain: bool,
+    /// Crates to exclude from clippy
+    #[clap(long = "exclude")]
+    exclude: Vec<String>,
     /// Package to run tests for
     #[clap(long)]
     package: Option<String>,
@@ -156,7 +159,9 @@ impl Xtask for Precheck {
 
         // Cargo Clippy
         if stage.clippy || stage.all {
-            let clippy = clippy::Clippy {};
+            let clippy = clippy::Clippy {
+                exclude: self.exclude.clone(),
+            };
             clippy.run(ctx.clone())?;
         }
 
@@ -169,6 +174,7 @@ impl Xtask for Precheck {
                     no_default_features: false,
                     filterset: None,
                     profile: self.profile.clone().or(Some("ci-mock".to_string())),
+                    exclude: self.exclude.clone(),
                 };
                 nextest.run(ctx.clone())?;
 
@@ -181,6 +187,7 @@ impl Xtask for Precheck {
                         no_default_features: false,
                         filterset: None,
                         profile: self.profile.clone().or(Some("ci-mock-table-4".to_string())),
+                        exclude: self.exclude.clone(),
                     };
                     nextest.run(ctx.clone())?;
 
@@ -191,6 +198,7 @@ impl Xtask for Precheck {
                         no_default_features: false,
                         filterset: None,
                         profile: self.profile.or(Some("ci-mock-table-64".to_string())),
+                        exclude: self.exclude.clone(),
                     };
                     nextest.run(ctx.clone())?;
                 }
@@ -201,6 +209,7 @@ impl Xtask for Precheck {
                     no_default_features: false,
                     filterset: None,
                     profile: self.profile,
+                    exclude: self.exclude,
                 };
                 nextest.run(ctx.clone())?;
             }

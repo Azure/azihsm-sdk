@@ -8,7 +8,7 @@ version = "0.1.0"
 
 [dependencies]
 
-[build-dependencies]
+[target.'cfg(target_os = "linux")'.build-dependencies]
 azihsm_api_native.workspace = true
 cmake.workspace = true
 

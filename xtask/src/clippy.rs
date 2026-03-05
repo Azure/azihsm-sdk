@@ -15,7 +15,11 @@ use crate::XtaskCtx;
 /// Xtask to run various repo-specific clippy checks
 #[derive(Parser)]
 #[clap(about = "Run various clippy checks")]
-pub struct Clippy {}
+pub struct Clippy {
+    /// Crates to exclude from clippy (e.g. crates with heavyweight build scripts)
+    #[clap(long)]
+    pub exclude: Vec<String>,
+}
 
 impl Xtask for Clippy {
     fn run(self, _ctx: XtaskCtx) -> anyhow::Result<()> {
@@ -30,9 +34,18 @@ impl Xtask for Clippy {
             .quiet()
             .run()?;
 
+        let mut exclude_args: Vec<String> = Vec::new();
+        if !self.exclude.is_empty() {
+            exclude_args.push("--workspace".to_string());
+            for crate_name in &self.exclude {
+                exclude_args.push("--exclude".to_string());
+                exclude_args.push(crate_name.clone());
+            }
+        }
+
         cmd!(
             sh,
-            "cargo {rust_toolchain...} clippy --all-targets -- -D warnings"
+            "cargo {rust_toolchain...} clippy --all-targets {exclude_args...} -- -D warnings"
         )
         .quiet()
         .run()?;
