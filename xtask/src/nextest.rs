@@ -36,6 +36,10 @@ pub struct Nextest {
     /// The nextest profile to use
     #[clap(long)]
     pub profile: Option<String>,
+
+    /// Crates to exclude from nextest (e.g. crates with heavyweight build scripts)
+    #[clap(long)]
+    pub exclude: Vec<String>,
 }
 
 impl Xtask for Nextest {
@@ -80,6 +84,18 @@ impl Xtask for Nextest {
         if self.profile.is_some() {
             command_args.push("--profile");
             command_args.push(&profile_val);
+        }
+        let exclude_vals: Vec<String>;
+        if !self.exclude.is_empty() && self.package.is_none() {
+            command_args.push("--workspace");
+            exclude_vals = self
+                .exclude
+                .iter()
+                .flat_map(|c| ["--exclude".to_string(), c.clone()])
+                .collect();
+            for val in &exclude_vals {
+                command_args.push(val);
+            }
         }
 
         cmd!(

@@ -46,7 +46,7 @@ corrosion_import_crate(
     )
 
 corrosion_experimental_cbindgen(
-    TARGET azihsm_api_native 
+    TARGET azihsm_api_native
     HEADER_NAME "azihsm_api.h"
     )
 

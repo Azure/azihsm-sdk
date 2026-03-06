@@ -20,6 +20,8 @@ const CARGO_NEXTEST_VERSION: &str = "0.9.108";
 const TAPLO_CLI_VERSION: &str = "0.10.0";
 #[cfg(not(target_os = "windows"))]
 const CARGO_FUZZ_VERSION: &str = "0.13.1";
+#[cfg(not(target_os = "windows"))]
+const CARGO_CBINDGEN_VERSION: &str = "0.29.2";
 const CARGO_AUDIT_VERSION: &str = "0.22.0";
 const CARGO_LLVM_COV_VERSION: &str = "0.6.23";
 
@@ -86,6 +88,20 @@ impl Xtask for Setup {
 
             // Check cargo-fuzz version
             cmd!(sh, "cargo fuzz --version").quiet().run()?;
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            // Run install cbindgen
+            let install_cbindgen = install::Install {
+                crate_name: format!("cbindgen@{}", CARGO_CBINDGEN_VERSION),
+                force: self.force,
+                config: self.config.clone(),
+            };
+            install_cbindgen.run(ctx.clone())?;
+
+            // Check cbindgen version
+            cmd!(sh, "cbindgen --version").quiet().run()?;
         }
 
         // Run Install cargo-audit
