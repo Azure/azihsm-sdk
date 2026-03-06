@@ -25,6 +25,7 @@ impl Xtask for IntegrationTest {
             no_default_features: false,
             filterset: None,
             profile: Some("ci-provider-integration".to_string()),
+            exclude: vec![],
         };
         nextest.run(ctx)
     }
