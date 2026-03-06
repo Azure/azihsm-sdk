@@ -21,9 +21,9 @@ maskedkeyfile=./masked_P-$1.bin
 
 "$OPENSSL_BIN" genpkey \
     -provider-path "$PROVIDER_PATH" \
+    -propquery "$PROPQUERY" \
     -provider default \
     -provider azihsm_provider \
-    -propquery "$PROPQUERY" \
     -algorithm EC \
     -pkeyopt "group:$curve" \
     -pkeyopt "azihsm.session:$session_bool" \
@@ -42,9 +42,9 @@ if [[ "$session_bool" == "false" ]]; then
 
     output=$("$OPENSSL_BIN" storeutl \
         -provider-path "$PROVIDER_PATH" \
+        -propquery "$PROPQUERY" \
         -provider default \
         -provider azihsm_provider \
-        -propquery "$PROPQUERY" \
         "azihsm://$maskedkeyfile;type=ec" 2>&1)
 
     if [[ "$output" == *"0: Pkey"* ]] && [[ "$output" == *"Total found: 1"* ]]; then

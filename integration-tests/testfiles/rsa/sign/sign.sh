@@ -24,9 +24,9 @@ signature=testdata_sign.sig."$keybits"_"$algorithm"_"$dgst"
 # Import the RSA key into HSM via the provider
 "$OPENSSL_BIN" genpkey \
     -provider-path "$PROVIDER_PATH" \
+    -propquery "$PROPQUERY" \
     -provider default \
     -provider azihsm_provider \
-    -propquery "$PROPQUERY" \
     -algorithm "$algorithm" \
     -pkeyopt "rsa_keygen_bits:$keybits" \
     -pkeyopt azihsm.session:false \
@@ -47,9 +47,9 @@ dd if=/dev/urandom of="$testdata" bs=1024 count=1
 
 "$OPENSSL_BIN" dgst -"$dgst" \
     -provider-path "$PROVIDER_PATH" \
+    -propquery "$PROPQUERY" \
     -provider default \
     -provider azihsm_provider \
-    -propquery "$PROPQUERY" \
     -sign "azihsm://$maskedkeyfile;type=$keytype" \
     -out "$signature" \
     "$testdata"

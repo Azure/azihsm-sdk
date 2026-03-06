@@ -25,9 +25,9 @@ signature=testdata_oneshot_roundtrip.sig."$keybits"_"$algorithm"_"$dgst"
 # Import the RSA key into HSM via the provider
 "$OPENSSL_BIN" genpkey \
     -provider-path "$PROVIDER_PATH" \
+    -propquery "$PROPQUERY" \
     -provider default \
     -provider azihsm_provider \
-    -propquery "$PROPQUERY" \
     -algorithm "$algorithm" \
     -pkeyopt "rsa_keygen_bits:$keybits" \
     -pkeyopt azihsm.session:false \
@@ -53,9 +53,9 @@ fi
 
 "$OPENSSL_BIN" storeutl \
     -provider-path "$PROVIDER_PATH" \
+    -propquery "$PROPQUERY" \
     -provider default \
     -provider azihsm_provider \
-    -propquery "$PROPQUERY" \
     "azihsm://$maskedkeyfile;type=$keytype"
 
 # Create test data
@@ -67,9 +67,9 @@ dd if=/dev/urandom of="$testdata" bs=1024 count=1
 # Sign pre-hashed data
 "$OPENSSL_BIN" pkeyutl -sign \
     -provider-path "$PROVIDER_PATH" \
+    -propquery "$PROPQUERY" \
     -provider default \
     -provider azihsm_provider \
-    -propquery "$PROPQUERY" \
     -inkey "azihsm://$maskedkeyfile;type=$keytype" \
     -pkeyopt digest:"$dgst" \
     -in "$testdata_hash" \
@@ -83,9 +83,9 @@ fi
 # CHECK: Signature Verified Successfully
 "$OPENSSL_BIN" pkeyutl -verify \
     -provider-path "$PROVIDER_PATH" \
+    -propquery "$PROPQUERY" \
     -provider default \
     -provider azihsm_provider \
-    -propquery "$PROPQUERY" \
     -inkey "azihsm://$maskedkeyfile;type=$keytype" \
     -pkeyopt digest:"$dgst" \
     -in "$testdata_hash" \

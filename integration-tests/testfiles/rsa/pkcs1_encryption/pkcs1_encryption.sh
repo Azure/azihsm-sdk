@@ -23,9 +23,9 @@ encrypted_data=encrypted_data_pkcs1_encrypt_"$keybits"_"$algorithm".bin
 # Import the RSA key into HSM via the provider
 "$OPENSSL_BIN" genpkey \
     -provider-path "$PROVIDER_PATH" \
+    -propquery "$PROPQUERY" \
     -provider default \
     -provider azihsm_provider \
-    -propquery "$PROPQUERY" \
     -algorithm "$algorithm" \
     -pkeyopt "rsa_keygen_bits:$keybits" \
     -pkeyopt azihsm.session:false \
@@ -43,9 +43,9 @@ fi
 
 echo -n "Hello PKCS1" | "$OPENSSL_BIN" pkeyutl \
     -provider-path "$PROVIDER_PATH" \
+    -propquery "$PROPQUERY" \
     -provider default \
     -provider azihsm_provider \
-    -propquery "$PROPQUERY" \
     -encrypt \
     -inkey "azihsm://$maskedkeyfile;type=$keytype" \
     -pkeyopt rsa_padding_mode:pkcs1 \
@@ -59,9 +59,9 @@ fi
 # CHECK: Hello PKCS1
 "$OPENSSL_BIN" pkeyutl \
     -provider-path "$PROVIDER_PATH" \
+    -propquery "$PROPQUERY" \
     -provider default \
     -provider azihsm_provider \
-    -propquery "$PROPQUERY" \
     -decrypt \
     -inkey "azihsm://$maskedkeyfile;type=$keytype" \
     -pkeyopt rsa_padding_mode:pkcs1 \

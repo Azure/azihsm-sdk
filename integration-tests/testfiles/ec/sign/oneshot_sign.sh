@@ -17,9 +17,9 @@ signature=testdata.sig."$dgst"_"$curve"
 # Generate a fresh signing key
 "$OPENSSL_BIN" genpkey \
     -provider-path "$PROVIDER_PATH" \
+    -propquery "$PROPQUERY" \
     -provider default \
     -provider azihsm_provider \
-    -propquery "$PROPQUERY" \
     -algorithm EC \
     -pkeyopt "group:$curve" \
     -pkeyopt azihsm.session:false \
@@ -34,9 +34,9 @@ dd if=/dev/urandom of="$testdata" bs=1024 count=1
 
 "$OPENSSL_BIN" pkeyutl -sign \
     -provider-path "$PROVIDER_PATH" \
+    -propquery "$PROPQUERY" \
     -provider default \
     -provider azihsm_provider \
-    -propquery "$PROPQUERY" \
     -inkey "azihsm://$maskedkeyfile;type=ec" \
     -in "$testdata_hash" \
     -out "$signature"

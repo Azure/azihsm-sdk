@@ -19,9 +19,9 @@ maskedkeyfile=./cert_masked_"$curve".bin
 
 "$OPENSSL_BIN" genpkey \
     -provider-path "$PROVIDER_PATH" \
+    -propquery "$PROPQUERY" \
     -provider default \
     -provider azihsm_provider \
-    -propquery "$PROPQUERY" \
     -algorithm EC \
     -pkeyopt "group:$curve" \
     -pkeyopt azihsm.session:false \
@@ -34,9 +34,9 @@ maskedkeyfile=./cert_masked_"$curve".bin
     -new \
     -x509 \
     -provider-path "$PROVIDER_PATH" \
+    -propquery "$PROPQUERY" \
     -provider default \
     -provider azihsm_provider \
-    -propquery "$PROPQUERY" \
     -key "azihsm://$maskedkeyfile;type=ec" \
     -subj "/CN=test-$curve" \
     -days 365 -"$dgst" \

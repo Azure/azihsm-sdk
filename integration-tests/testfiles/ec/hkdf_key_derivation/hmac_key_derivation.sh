@@ -24,9 +24,9 @@ fi
 
 "$OPENSSL_BIN" genpkey \
     -provider-path "$PROVIDER_PATH" \
+    -propquery "$PROPQUERY" \
     -provider default \
     -provider azihsm_provider \
-    -propquery "$PROPQUERY" \
     -algorithm EC \
     -pkeyopt "group:$curve" \
     -pkeyopt azihsm.key_usage:keyAgreement \
@@ -46,18 +46,18 @@ fi
 "$OPENSSL_BIN" pkeyutl \
     -derive \
     -provider-path "$PROVIDER_PATH" \
+    -propquery "$PROPQUERY" \
     -provider default \
     -provider azihsm_provider \
-    -propquery "$PROPQUERY" \
     -inkey "azihsm://$maskedkeyfile;type=ec" \
     -peerkey "$keyfile_pub" \
     -pkeyopt "output_file:$shared_secret"
 
 "$OPENSSL_BIN" kdf \
     -provider-path "$PROVIDER_PATH" \
+    -propquery "$PROPQUERY" \
     -provider default \
     -provider azihsm_provider \
-    -propquery "$PROPQUERY" \
     -keylen 4096 \
     -kdfopt "digest:$dgst" \
     -kdfopt "azihsm.ikm_file:$shared_secret" \

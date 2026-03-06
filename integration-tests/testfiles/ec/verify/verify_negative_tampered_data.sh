@@ -18,9 +18,9 @@ testdata_tampered=testdata_neg_tampered.bin
 # Generate a fresh key
 "$OPENSSL_BIN" genpkey \
     -provider-path "$PROVIDER_PATH" \
+    -propquery "$PROPQUERY" \
     -provider default \
     -provider azihsm_provider \
-    -propquery "$PROPQUERY" \
     -algorithm EC \
     -pkeyopt "group:$curve" \
     -pkeyopt azihsm.session:false \
@@ -33,9 +33,9 @@ dd if=/dev/urandom of="$testdata" bs=1024 count=1
 
 "$OPENSSL_BIN" dgst -"$dgst" \
     -provider-path "$PROVIDER_PATH" \
+    -propquery "$PROPQUERY" \
     -provider default \
     -provider azihsm_provider \
-    -propquery "$PROPQUERY" \
     -sign "azihsm://$maskedkeyfile;type=ec" \
     -out "$signature" \
     "$testdata"
@@ -48,9 +48,9 @@ echo "tampered" >> "$testdata_tampered"
 #CHECK: Verification failure
 "$OPENSSL_BIN" dgst -"$dgst" \
     -provider-path "$PROVIDER_PATH" \
+    -propquery "$PROPQUERY" \
     -provider default \
     -provider azihsm_provider \
-    -propquery "$PROPQUERY" \
     -verify "azihsm://$maskedkeyfile;type=ec" \
     -signature "$signature" \
     "$testdata_tampered" || true

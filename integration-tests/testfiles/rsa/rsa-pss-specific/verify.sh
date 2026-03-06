@@ -31,9 +31,9 @@ fi
 # Import the RSA key into HSM via the provider
 "$OPENSSL_BIN" genpkey \
     -provider-path "$PROVIDER_PATH" \
+    -propquery "$PROPQUERY" \
     -provider default \
     -provider azihsm_provider \
-    -propquery "$PROPQUERY" \
     -algorithm rsa \
     -pkeyopt "rsa_keygen_bits:$keybits" \
     -pkeyopt azihsm.session:false \
@@ -47,9 +47,9 @@ dd if=/dev/urandom of="$testdata" bs=1024 count=1
 
 "$OPENSSL_BIN" dgst -"$dgst" \
     -provider-path "$PROVIDER_PATH" \
+    -propquery "$PROPQUERY" \
     -provider default \
     -provider azihsm_provider \
-    -propquery "$PROPQUERY" \
     -sigopt rsa_padding_mode:pss \
     -sigopt "rsa_pss_saltlen:$saltlength" \
     $mgf1 \
@@ -60,9 +60,9 @@ dd if=/dev/urandom of="$testdata" bs=1024 count=1
 #CHECK: Verified OK
 "$OPENSSL_BIN" dgst -"$dgst" \
     -provider-path "$PROVIDER_PATH" \
+    -propquery "$PROPQUERY" \
     -provider default \
     -provider azihsm_provider \
-    -propquery "$PROPQUERY" \
     -sigopt rsa_padding_mode:pss \
     -sigopt "rsa_pss_saltlen:$saltlength" \
     $mgf1 \

@@ -27,9 +27,9 @@ mkdir -p "$testdata_folder"
 
 "$OPENSSL_BIN" genpkey \
     -provider-path "$PROVIDER_PATH" \
+    -propquery "$PROPQUERY" \
     -provider default \
     -provider azihsm_provider \
-    -propquery "$PROPQUERY" \
     -algorithm EC \
     -pkeyopt "group:$curve" \
     -outform DER \
@@ -43,9 +43,9 @@ dd if=/dev/urandom of="$testdata" bs=1024 count=1
 
 "$OPENSSL_BIN" pkeyutl -sign \
     -provider-path "$PROVIDER_PATH" \
+    -propquery "$PROPQUERY" \
     -provider default \
     -provider azihsm_provider \
-    -propquery "$PROPQUERY" \
     -inkey "azihsm://$maskedkeyfile;type=ec" \
     -in "$testdata_hash" \
     -out "$signature"
@@ -59,9 +59,9 @@ fi
 
 "$OPENSSL_BIN" pkeyutl -verify \
     -provider-path "$PROVIDER_PATH" \
+    -propquery "$PROPQUERY" \
     -provider default \
     -provider azihsm_provider \
-    -propquery "$PROPQUERY" \
     -inkey "azihsm://$maskedkeyfile;type=ec" \
     -in "$testdata_hash" \
     -sigfile "$signature"

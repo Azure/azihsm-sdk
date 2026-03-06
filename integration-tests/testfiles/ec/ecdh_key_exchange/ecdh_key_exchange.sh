@@ -14,9 +14,9 @@ shared_secret=./ecdh_shared_secret_"$curve".bin
 
 "$OPENSSL_BIN" genpkey \
     -provider-path "$PROVIDER_PATH" \
+    -propquery "$PROPQUERY" \
     -provider default \
     -provider azihsm_provider \
-    -propquery "$PROPQUERY" \
     -algorithm EC \
     -pkeyopt "group:$curve" \
     -pkeyopt azihsm.key_usage:keyAgreement \
@@ -36,9 +36,9 @@ shared_secret=./ecdh_shared_secret_"$curve".bin
 "$OPENSSL_BIN" pkeyutl \
     -derive \
     -provider-path "$PROVIDER_PATH" \
+    -propquery "$PROPQUERY" \
     -provider default \
     -provider azihsm_provider \
-    -propquery "$PROPQUERY" \
     -inkey "azihsm://$maskedkeyfile;type=ec" \
     -peerkey "$keyfile_pub" \
     -pkeyopt "output_file:$shared_secret"
