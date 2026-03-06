@@ -1061,7 +1061,10 @@ TEST_F(azihsm_aes_cbc, decrypt_invalid_padding_fails)
             ciphertext
         ));
 
-        ciphertext.back() ^= 0xFF;
+        // For plaintext length 31, PKCS#7 pad length is 1. Mutating C[n-1][-1]
+        // with XOR 0x01 flips P[n][-1] from 0x01 to 0x00, which is always invalid.
+        // This keeps the test deterministic across chunk boundaries.
+        ciphertext[ciphertext.size() - AES_BLOCK_SIZE - 1] ^= 0x01;
 
         init_cbc_algo(crypt_algo, cbc_params, AZIHSM_ALGO_ID_AES_CBC_PAD, 0x67);
         azihsm_buffer input{ ciphertext.data(), static_cast<uint32_t>(ciphertext.size()) };
@@ -1154,8 +1157,10 @@ TEST_F(azihsm_aes_cbc, streaming_decrypt_invalid_padding_fails_across_chunk_size
             ciphertext
         ));
 
-        // Corrupt terminal padding byte so rejection can happen during update or finish.
-        ciphertext.back() ^= 0xFF;
+        // For plaintext length 31, PKCS#7 pad length is 1. Mutating C[n-1][-1]
+        // with XOR 0x01 flips P[n][-1] from 0x01 to 0x00, which is always invalid.
+        // This keeps the test deterministic across chunk boundaries.
+        ciphertext[ciphertext.size() - AES_BLOCK_SIZE - 1] ^= 0x01;
 
         std::vector<size_t> chunk_sizes = { 1, 7, 16, 31 };
         for (auto chunk_size : chunk_sizes)
