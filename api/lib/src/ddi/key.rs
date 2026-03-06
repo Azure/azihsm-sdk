@@ -16,9 +16,18 @@ use super::*;
 ///
 /// # Behavior
 ///
-/// - **Default:** on drop, calls [`delete_key`] for `key_id`.
+/// - **Default:** on drop, checks the epoch and calls [`delete_key_raw_no_res`]
+///   without acquiring the barrier lock.  This makes the guard safe to use
+///   inside code that already holds the barrier (read or write).
+///   - If the epoch has advanced since the guard was created, the device
+///     was reset and all session keys are already destroyed — the delete
+///     is skipped.
+///   - If the epoch matches, the handle is still valid and the DDI delete
+///     is executed.  A race where a restore starts between the epoch check
+///     and the DDI call is benign: `delete_key_raw_no_res` treats device-reset
+///     errors as success.
 /// - **Released:** does nothing on drop.
-/// - **Best effort:** any error from [`delete_key`] is ignored in `Drop`.
+/// - **Best effort:** any error from [`delete_key_raw_no_res`] is ignored in `Drop`.
 ///
 /// # Typical usage
 ///
@@ -28,16 +37,20 @@ pub(crate) struct HsmKeyIdGuard<'a> {
     session: &'a HsmSession,
     key_id: HsmKeyHandle,
     released: bool,
+    /// Partition restore epoch at the time the guard was created.
+    creation_epoch: u64,
 }
 
 impl<'a> Drop for HsmKeyIdGuard<'a> {
-    /// Attempts to delete the guarded key on drop.
-    ///
-    /// This is intentionally best-effort: `Drop` cannot return an error, and callers
-    /// typically cannot recover meaningfully from a cleanup failure during unwinding.
     fn drop(&mut self) {
         if !self.released {
-            let _ = delete_key(self.session, self.key_id);
+            let partition = self.session.partition();
+            // If a restore happened since this guard was created,
+            // the device already wiped all session keys — skip delete.
+            if partition.resiliency_enabled() && self.creation_epoch < partition.restore_epoch() {
+                return;
+            }
+            let _ = delete_key_raw_no_res(self.session, self.key_id);
         }
     }
 }
@@ -49,6 +62,7 @@ impl<'a> HsmKeyIdGuard<'a> {
             session,
             key_id,
             released: false,
+            creation_epoch: session.partition().restore_epoch(),
         }
     }
 
@@ -68,34 +82,15 @@ impl<'a> HsmKeyIdGuard<'a> {
     }
 }
 
-/// Deletes a key from the HSM.
+/// Raw DDI delete — no resiliency retry, no barrier lock.
+/// Caller must hold the key-ops barrier lock (read or write) or accept
+/// the risk of racing with a concurrent restore.
 ///
-/// Removes the specified key from the HSM partition, making it no longer usable
-/// for cryptographic operations. This is a permanent operation that cannot be undone.
+/// Treats device-reset errors ([`is_device_reset_error`]) as success,
+/// because a device reset already destroyed all session keys.
 ///
-/// # Resiliency
-///
-/// Unlike other DDI operations, `delete_key` does not use the
-/// `#[resiliency_key_op]` retry macro.  Instead it silently treats retryable
-/// errors (those returned by [`is_key_op_retryable_error`]) as success.
-///
-/// Rationale: Every retryable error indicates that the device has been
-/// through a resiliency event. Such events destroy all session keys on the device,
-/// so the key this call intended to delete is already gone. Retrying would be pointless — the
-/// `key_id` handle is stale and would fail again — and the caller's intent
-/// of deleting the key has been satisfied by the reset itself.
-///
-/// # Arguments
-///
-/// * `session` - The HSM session context
-/// * `key_id` - The HSM key handle identifying the key to delete
-///
-/// # Returns
-///
-/// Returns `Ok(())` on successful deletion, or if the device has undergone a
-/// resiliency event that already destroyed the key.
-///
-pub(crate) fn delete_key(session: &HsmSession, key_id: HsmKeyHandle) -> HsmResult<()> {
+/// All other errors are propagated to the caller.
+fn delete_key_raw_no_res(session: &HsmSession, key_id: HsmKeyHandle) -> HsmResult<()> {
     let req = DdiDeleteKeyCmdReq {
         hdr: build_ddi_req_hdr_sess(DdiOp::DeleteKey, session),
         data: DdiDeleteKeyReq {
@@ -108,16 +103,46 @@ pub(crate) fn delete_key(session: &HsmSession, key_id: HsmKeyHandle) -> HsmResul
 
     match result {
         Ok(_) => Ok(()),
-        Err(ref err) if crate::resiliency::is_key_op_retryable_error(err) => {
-            tracing::debug!(
-                ?err,
-                "delete_key: retryable error treated as success — \
-                 the device reset already destroyed all session keys"
-            );
-            Ok(())
-        }
+        // If the delete failed because the device was reset after the key was created,
+        // then the key is already gone and we can treat this as success.
+        Err(ref err) if crate::resiliency::key_needs_restoration(err) => Ok(()),
         Err(err) => Err(err),
     }
+}
+
+/// Epoch-aware key deletion with barrier lock.
+///
+/// Acquires the restore barrier read lock and compares `key_epoch` against
+/// the partition's current restore epoch:
+///
+/// - If `key_epoch < restore_epoch`, the device was reset after the key was
+///   created — the key is already destroyed. Returns `Ok(())`.
+/// - If `key_epoch == restore_epoch`, the key handle is current — calls
+///   [`delete_key_raw_no_res`] under the read lock to prevent any concurrent
+///   restore from reassigning handles mid-delete.
+/// - If `key_epoch > restore_epoch`, this is a logic bug — caught by
+///   `debug_assert!`.
+///
+/// When resiliency is not enabled, delegates directly to [`delete_key_raw_no_res`].
+pub(crate) fn delete_key(
+    session: &HsmSession,
+    key_id: HsmKeyHandle,
+    key_epoch: u64,
+) -> HsmResult<()> {
+    let partition = session.partition();
+    if partition.resiliency_enabled() {
+        let _barrier = partition.key_ops_lock_read();
+        let restore_epoch = partition.restore_epoch();
+        if key_epoch < restore_epoch {
+            // The device was reset after this key was created, so the key is already destroyed.
+            return Ok(());
+        } else if key_epoch > restore_epoch {
+            // The key epoch is ahead of the restore epoch — this indicates a logic bug.
+            return Err(HsmError::InternalError);
+        }
+        return delete_key_raw_no_res(session, key_id);
+    }
+    delete_key_raw_no_res(session, key_id)
 }
 
 /// Executes the unmask key operation.
@@ -158,19 +183,7 @@ pub(crate) fn unmask_key(
     session: &HsmSession,
     masked_key: &[u8],
 ) -> HsmResult<(HsmKeyHandle, HsmKeyProps)> {
-    let resp = unmask_key_exec(session, masked_key)?;
-
-    //create key guard to delete key if error occurs before disarming
-    let key_id = HsmKeyIdGuard::new(
-        session,
-        to_key_handle(resp.data.key_id, resp.data.bulk_key_id),
-    );
-
-    let masked_key = resp.data.masked_key.as_slice();
-
-    let key_props = HsmMaskedKey::to_key_props(masked_key)?;
-
-    Ok((key_id.release(), key_props))
+    unmask_key_raw_no_res(session, masked_key)
 }
 
 /// Unmasks a masked key pair within the HSM.
@@ -190,23 +203,46 @@ pub(crate) fn unmask_key_pair(
     session: &HsmSession,
     masked_key: &[u8],
 ) -> HsmResult<(HsmKeyHandle, HsmKeyProps, HsmKeyProps)> {
+    unmask_key_pair_raw_no_res(session, masked_key)
+}
+
+/// Raw unmask — no resiliency retry.
+///
+/// For use under the barrier write lock (Phase 3 key restoration) or
+/// anywhere the caller manages locking externally. On parse failure
+/// after a successful DDI call, the newly created key is cleaned up
+/// via [`HsmKeyIdGuard`].
+pub(crate) fn unmask_key_raw_no_res(
+    session: &HsmSession,
+    masked_key: &[u8],
+) -> HsmResult<(HsmKeyHandle, HsmKeyProps)> {
     let resp = unmask_key_exec(session, masked_key)?;
+    let key_id = to_key_handle(resp.data.key_id, resp.data.bulk_key_id);
+    let guard = HsmKeyIdGuard::new(session, key_id);
+    let key_props = HsmMaskedKey::to_key_props(resp.data.masked_key.as_slice())?;
+    Ok((guard.release(), key_props))
+}
 
-    let key_id = HsmKeyIdGuard::new(
-        session,
-        to_key_handle(resp.data.key_id, resp.data.bulk_key_id),
-    );
+/// Raw unmask for key pairs — no resiliency retry.
+///
+/// For use under the barrier write lock (Phase 3 key restoration) or
+/// anywhere the caller manages locking externally.
+/// On failure after a successful DDI call, the newly created key is
+/// cleaned up via [`HsmKeyIdGuard`].
+pub(crate) fn unmask_key_pair_raw_no_res(
+    session: &HsmSession,
+    masked_key: &[u8],
+) -> HsmResult<(HsmKeyHandle, HsmKeyProps, HsmKeyProps)> {
+    let resp = unmask_key_exec(session, masked_key)?;
+    let key_id = to_key_handle(resp.data.key_id, resp.data.bulk_key_id);
+    let guard = HsmKeyIdGuard::new(session, key_id);
 
-    let Some(pub_key) = resp.data.pub_key else {
-        return Err(HsmError::InternalError);
-    };
+    let pub_key = resp.data.pub_key.ok_or(HsmError::InternalError)?;
 
     let der = pub_key.der.as_slice();
-
     let masked_key_data = resp.data.masked_key.as_slice();
     let (priv_key_props, pub_key_props) = HsmMaskedKey::to_key_pair_props(masked_key_data, der)?;
-
-    Ok((key_id.release(), priv_key_props, pub_key_props))
+    Ok((guard.release(), priv_key_props, pub_key_props))
 }
 
 /// Generates a key report (attestation) for the specified key.
@@ -256,25 +292,15 @@ pub(crate) fn generate_key_report(
     Ok(dev_report.len())
 }
 
-/// Refreshes a key pair after a resiliency restore.
+/// Raw key-pair refresh — no resiliency retry.
 ///
-/// Session-level keys that were restored from a cached masked-key blob
-/// can simply be unmasked via [`unmask_key_pair`].
-///
-/// RSA unwrapping keys are the exception: they are token-level
-/// (non-session) keys tied to the partition identity. After a resiliency event, the
-/// device key table is rebuilt with a new identity, so [`unmask_key_pair`]
-/// fails with an "App ID mismatch". Instead, the device already knows the
-/// unwrapping key internally (restored via `establish_credential` with the
-/// MUK), so we ask for a fresh handle via [`get_rsa_unwrapping_key`].
-/// The new masked-key blob is persisted to resiliency storage so that
-/// future `establish_credential` calls use the latest MUK.
-pub(crate) fn refresh_key_pair(
+/// For use under the barrier write lock (Phase 3 key restoration).
+/// Calls [`unmask_key_pair_raw_no_res`] instead of the macro-wrapped variant.
+pub(crate) fn refresh_key_pair_raw_no_res(
     session: &HsmSession,
     old_props: &HsmKeyProps,
     masked_key: &[u8],
 ) -> HsmResult<(HsmKeyHandle, HsmKeyProps, HsmKeyProps)> {
-    // RSA unwrapping keys need special handling.
     if old_props.kind() == HsmKeyKind::Rsa && old_props.can_unwrap() {
         let priv_key_props = HsmKeyPropsBuilder::default()
             .class(HsmKeyClass::Private)
@@ -291,9 +317,8 @@ pub(crate) fn refresh_key_pair(
             .build()?;
 
         let (handle, priv_props, pub_props) =
-            get_rsa_unwrapping_key(session, priv_key_props, pub_key_props)?;
+            get_rsa_unwrapping_key_raw_no_res(session, priv_key_props, pub_key_props)?;
 
-        // Persist the fresh MUK so that the next establish_credential uses it.
         if let Some(muk) = priv_props.masked_key() {
             session
                 .partition()
@@ -303,6 +328,5 @@ pub(crate) fn refresh_key_pair(
         return Ok((handle, priv_props, pub_props));
     }
 
-    // All other key pairs — normal unmask path.
-    unmask_key_pair(session, masked_key)
+    unmask_key_pair_raw_no_res(session, masked_key)
 }

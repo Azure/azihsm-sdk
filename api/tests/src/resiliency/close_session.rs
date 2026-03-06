@@ -37,6 +37,7 @@ use azihsm_res_test_dev::clear_faults;
 use azihsm_res_test_dev::inject_fault;
 use azihsm_res_test_dev::op_call_count;
 
+use super::helpers::*;
 use crate::utils::partition::*;
 use crate::utils::resiliency::*;
 use crate::*;
@@ -49,36 +50,6 @@ const RETRYABLE_ERRORS: &[FaultError] = &[
     FaultError::Status(DdiStatus::SessionNeedsRenegotiation),
     FaultError::Status(DdiStatus::PendingKeyGeneration),
 ];
-
-/// Helper: open and init a partition with resiliency enabled, open a
-/// session, and return all handles plus the RAII cleanup context.
-fn init_with_resiliency_and_session() -> (HsmPartition, HsmSession, ResiliencyTestCtx) {
-    let list = HsmPartitionManager::partition_info_list();
-    assert!(!list.is_empty(), "No partitions found.");
-    let part =
-        HsmPartitionManager::open_partition(&list[0].path).expect("Failed to open partition");
-    part.reset().expect("Partition reset failed");
-
-    let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
-    let (obk_info, pota_endorsement) = make_init_params(&part);
-    let (resiliency_config, ctx) = make_resiliency_config(&part);
-    part.init(
-        creds,
-        None,
-        None,
-        obk_info,
-        pota_endorsement,
-        Some(resiliency_config),
-    )
-    .expect("Partition init failed");
-
-    let rev = part.api_rev_range().max();
-    let session = part
-        .open_session(rev, &creds, None)
-        .expect("Failed to open session");
-
-    (part, session, ctx)
-}
 
 // =========================================================================
 // Fault-injection tests

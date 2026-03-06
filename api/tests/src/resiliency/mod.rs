@@ -94,6 +94,21 @@ const ALL_RETRYABLE_ERRORS: &[FaultError] = &[
     FaultError::Status(DdiStatus::KeyNotFound),
 ];
 
+/// Error codes that trigger retry for key-generation (`resiliency_key_gen`)
+/// and key-operation (`resiliency_key_op`) macros.
+///
+/// This is a subset of [`ALL_RETRYABLE_ERRORS`]; `close_session` and
+/// `open_session` have their own narrower / broader lists.
+#[cfg(feature = "res-test")]
+const KEY_OP_RETRYABLE_ERRORS: &[FaultError] = &[
+    FaultError::Driver(DriverError::IoAborted),
+    FaultError::Driver(DriverError::IoAbortInProgress),
+    FaultError::DeviceNotReady,
+    FaultError::Status(DdiStatus::SessionNeedsRenegotiation),
+    FaultError::Status(DdiStatus::PendingKeyGeneration),
+    FaultError::Status(DdiStatus::KeyNotFound),
+];
+
 /// Representative non-retryable errors — no operation should retry these.
 #[cfg(feature = "res-test")]
 const NON_RETRYABLE_ERRORS: &[FaultError] = &[
@@ -101,6 +116,29 @@ const NON_RETRYABLE_ERRORS: &[FaultError] = &[
     FaultError::Status(DdiStatus::InternalError),
     FaultError::Status(DdiStatus::MaskedKeyDecodeFailed),
 ];
+
+/// Returns `true` when `error` is in the given retryable-errors slice.
+#[cfg(feature = "res-test")]
+fn is_retryable(error: &FaultError, retryable_errors: &[FaultError]) -> bool {
+    retryable_errors.iter().any(|e| e == error)
+}
+
+/// Expected number of DDI op invocations for a fault-injection test.
+///
+/// * Retryable errors: `min(injected_faults + 1, MAX_RETRIES + 1)`.
+/// * Non-retryable errors: 1 (single failed call, no retry).
+#[cfg(feature = "res-test")]
+fn expected_op_calls_for(
+    error: &FaultError,
+    injected_faults: u32,
+    retryable_errors: &[FaultError],
+) -> u32 {
+    if is_retryable(error, retryable_errors) {
+        (injected_faults + 1).min(azihsm_api::MAX_RETRIES + 1)
+    } else {
+        1
+    }
+}
 
 /// Combined list of all errors to exercise in parametric tests.
 #[cfg(feature = "res-test")]

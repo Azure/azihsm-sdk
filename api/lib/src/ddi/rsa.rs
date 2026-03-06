@@ -7,15 +7,35 @@ use super::*;
 
 /// Retrieves an RSA unwrapping key pair from the HSM.
 ///
+/// Wraps [`get_rsa_unwrapping_key_raw_no_res`] with `#[resiliency_key_gen]` for
+/// use in the normal (non-Phase-3) path.
+///
 /// # Arguments
 ///
 /// * `session` - The HSM session to use for key retrieval.
+/// * `priv_key_props` - Expected private key properties for validation.
+/// * `pub_key_props` - Expected public key properties for validation.
 ///
 /// # Returns
 ///
 /// Returns a tuple containing the key handle, private key properties, and public key properties.
 #[resiliency_key_gen(session = "session")]
 pub(crate) fn get_rsa_unwrapping_key(
+    session: &HsmSession,
+    priv_key_props: HsmKeyProps,
+    pub_key_props: HsmKeyProps,
+) -> HsmResult<(HsmKeyHandle, HsmKeyProps, HsmKeyProps)> {
+    get_rsa_unwrapping_key_raw_no_res(session, priv_key_props, pub_key_props)
+}
+
+/// Raw RSA unwrapping key retrieval — no resiliency retry.
+///
+/// For use under the barrier write lock (Phase 3 key restoration) or
+/// by the macro-wrapped [`get_rsa_unwrapping_key`].
+///
+/// On failure after a successful DDI call, the newly created key is
+/// cleaned up via [`HsmKeyIdGuard`].
+pub(crate) fn get_rsa_unwrapping_key_raw_no_res(
     session: &HsmSession,
     priv_key_props: HsmKeyProps,
     pub_key_props: HsmKeyProps,
@@ -29,22 +49,20 @@ pub(crate) fn get_rsa_unwrapping_key(
     let resp = session.with_dev(|dev| dev.exec_op(&req, &mut None).map_err(HsmError::from))?;
 
     let handle = to_key_handle(resp.data.key_id, None);
-    let key_guard = HsmKeyIdGuard::new(session, handle);
+    let guard = HsmKeyIdGuard::new(session, handle);
 
     let masked_key = resp.data.masked_key.as_slice();
     let pub_key = resp.data.pub_key;
     let (dev_priv_key_props, dev_pub_key_props) =
         HsmMaskedKey::to_key_pair_props(masked_key, pub_key.der.as_slice())?;
 
-    //check key properties before returning
     if !priv_key_props.validate_dev_props(&dev_priv_key_props)
         || !pub_key_props.validate_dev_props(&dev_pub_key_props)
     {
-        //return error
-        Err(HsmError::InvalidKeyProps)?;
+        return Err(HsmError::InvalidKeyProps);
     }
 
-    Ok((key_guard.release(), dev_priv_key_props, dev_pub_key_props))
+    Ok((guard.release(), dev_priv_key_props, dev_pub_key_props))
 }
 
 /// Performs RSA AES key unwrapping using the specified RSA private key.
@@ -58,8 +76,25 @@ pub(crate) fn get_rsa_unwrapping_key(
 /// # Returns
 ///
 /// Returns a tuple containing the key handle and properties of the unwrapped AES key.
+/// Wraps [`rsa_aes_unwrap_key_raw_no_res`] with `#[resiliency_key_op]` for
+/// use in the normal (non-nested) path.
 #[resiliency_key_op(key = "key")]
 pub(crate) fn rsa_aes_unwrap_key(
+    key: &HsmRsaPrivateKey,
+    wrapped_key: &[u8],
+    hash_algo: HsmHashAlgo,
+    key_props: HsmKeyProps,
+) -> HsmResult<(HsmKeyHandle, HsmKeyProps)> {
+    rsa_aes_unwrap_key_raw_no_res(key, wrapped_key, hash_algo, key_props)
+}
+
+/// Raw RSA AES key unwrap — no resiliency retry.
+///
+/// For use under the barrier lock or by callers already inside a
+/// resiliency retry loop (e.g. [`aes_xts_unwrap_key`] which has its
+/// own `#[resiliency_key_op]`). On failure after a successful DDI
+/// call, the handle is cleaned up via [`HsmKeyIdGuard`].
+pub(crate) fn rsa_aes_unwrap_key_raw_no_res(
     key: &HsmRsaPrivateKey,
     wrapped_key: &[u8],
     hash_algo: HsmHashAlgo,
@@ -84,16 +119,16 @@ pub(crate) fn rsa_aes_unwrap_key(
 
     let handle = ddi::to_key_handle(resp.data.key_id, resp.data.bulk_key_id);
     let session = key.session();
-    let key_guard = HsmKeyIdGuard::new(&session, handle);
+    let guard = HsmKeyIdGuard::new(&session, handle);
 
     let masked_key = resp.data.masked_key.as_slice();
     let dev_key_props = HsmMaskedKey::to_key_props(masked_key)?;
-    // check key properties before returning
+
     if !key_props.validate_dev_props(&dev_key_props) {
-        //return error
-        Err(HsmError::InvalidKeyProps)?;
+        return Err(HsmError::InvalidKeyProps);
     }
-    Ok((key_guard.release(), dev_key_props))
+
+    Ok((guard.release(), dev_key_props))
 }
 
 /// Performs RSA AES key pair unwrapping using the specified RSA private key.

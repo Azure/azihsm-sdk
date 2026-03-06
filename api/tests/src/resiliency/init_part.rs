@@ -74,6 +74,25 @@ fn is_init_retryable(error: &FaultError) -> bool {
     INIT_RETRYABLE_ERRORS.iter().any(|e| e == error)
 }
 
+/// Error codes that `init()` treats as "credentials already established"
+/// and converts into `Ok(())` at the `HsmPartition::init` level, even
+/// though they are not retried by the `#[resiliency_init_part]` macro.
+const CREDENTIALS_ALREADY_ESTABLISHED_ERRORS: &[FaultError] = &[
+    FaultError::Status(DdiStatus::KeyNotFound),
+    FaultError::Status(DdiStatus::PartitionAlreadyProvisioned),
+    FaultError::Status(DdiStatus::VaultAppLimitReached),
+];
+
+/// Returns `true` when `error` produces `Ok` from `HsmPartition::init()`,
+/// either because the macro retries and succeeds, or because `init()`
+/// itself handles it as "credentials already established".
+fn is_init_ok_outcome(error: &FaultError) -> bool {
+    is_init_retryable(error)
+        || CREDENTIALS_ALREADY_ESTABLISHED_ERRORS
+            .iter()
+            .any(|e| e == error)
+}
+
 /// Returns `true` when a single fault of `error` on `EstablishCredential`
 /// is recoverable.
 ///
@@ -84,26 +103,31 @@ fn is_init_retryable(error: &FaultError) -> bool {
 /// consumed by that internal recovery before the outer retry loop ever
 /// sees it.
 fn is_establish_credential_single_fault_recoverable(error: &FaultError) -> bool {
-    is_init_retryable(error) || *error == FaultError::Status(DdiStatus::MaskedKeyDecodeFailed)
+    is_init_ok_outcome(error) || *error == FaultError::Status(DdiStatus::MaskedKeyDecodeFailed)
 }
 
 /// Expected number of times `target_op` is invoked in a fault-injection
 /// test.
 ///
-/// * Retryable errors: `min(injected_faults + 1, MAX_RETRIES + 1)`.
+/// * Retryable errors (macro-level retry): `min(injected_faults + 1, MAX_RETRIES + 1)`.
 ///   The `+1` accounts for the successful call after all faults are
 ///   consumed, capped by the maximum number of attempts.
+/// * "Credentials already established" errors: 1. These are not retried
+///   by the macro but are caught by `init()` at the outer level, so the
+///   DDI op is only called once.
 /// * `MaskedKeyDecodeFailed` on `EstablishCredential`: at most 2,
 ///   from `try_establish_credential`'s internal one-shot retry.
 /// * All other non-retryable errors: 1 (single failed call).
-fn expected_op_calls(
-    error: &FaultError,
-    target_op: DdiOp,
-    is_retryable: impl Fn(&FaultError) -> bool,
-    injected_faults: u32,
-) -> u32 {
-    if is_retryable(error) {
+fn expected_op_calls(error: &FaultError, target_op: DdiOp, injected_faults: u32) -> u32 {
+    if is_init_retryable(error) {
+        // Retried by the `#[resiliency_init_part]` macro.
         (injected_faults + 1).min(MAX_RETRIES + 1)
+    } else if CREDENTIALS_ALREADY_ESTABLISHED_ERRORS
+        .iter()
+        .any(|e| e == error)
+    {
+        // Caught by `init()` at the outer level — no retry, just 1 call.
+        1
     } else if target_op == DdiOp::EstablishCredential
         && *error == FaultError::Status(DdiStatus::MaskedKeyDecodeFailed)
     {
@@ -161,11 +185,11 @@ fn test_init_recovers_from_init_bk3_single_fault() {
         super::assert_retryable_outcome(
             &result,
             error,
-            is_init_retryable,
+            is_init_ok_outcome,
             "single fault on InitBk3",
         );
 
-        let expected = expected_op_calls(error, DdiOp::InitBk3, is_init_retryable, 1);
+        let expected = expected_op_calls(error, DdiOp::InitBk3, 1);
         assert_eq!(
             after - before,
             expected,
@@ -197,16 +221,11 @@ fn test_init_recovers_from_get_establish_cred_key_single_fault() {
         super::assert_retryable_outcome(
             &result,
             error,
-            is_init_retryable,
+            is_init_ok_outcome,
             "single fault on GetEstablishCredEncryptionKey",
         );
 
-        let expected = expected_op_calls(
-            error,
-            DdiOp::GetEstablishCredEncryptionKey,
-            is_init_retryable,
-            1,
-        );
+        let expected = expected_op_calls(error, DdiOp::GetEstablishCredEncryptionKey, 1);
         assert_eq!(
             after - before,
             expected,
@@ -244,12 +263,7 @@ fn test_init_recovers_from_establish_credential_single_fault() {
             "single fault on EstablishCredential",
         );
 
-        let expected = expected_op_calls(
-            error,
-            DdiOp::EstablishCredential,
-            is_establish_credential_single_fault_recoverable,
-            1,
-        );
+        let expected = expected_op_calls(error, DdiOp::EstablishCredential, 1);
         assert_eq!(
             after - before,
             expected,
@@ -278,9 +292,14 @@ fn test_init_recovers_from_init_bk3_last_retry() {
         let after = op_call_count(DdiOp::InitBk3);
         clear_faults();
 
-        super::assert_retryable_outcome(&result, error, is_init_retryable, "last retry on InitBk3");
+        super::assert_retryable_outcome(
+            &result,
+            error,
+            is_init_ok_outcome,
+            "last retry on InitBk3",
+        );
 
-        let expected = expected_op_calls(error, DdiOp::InitBk3, is_init_retryable, MAX_RETRIES);
+        let expected = expected_op_calls(error, DdiOp::InitBk3, MAX_RETRIES);
         assert_eq!(
             after - before,
             expected,
@@ -313,16 +332,11 @@ fn test_init_recovers_from_get_establish_cred_key_last_retry() {
         super::assert_retryable_outcome(
             &result,
             error,
-            is_init_retryable,
+            is_init_ok_outcome,
             "last retry on GetEstablishCredEncryptionKey",
         );
 
-        let expected = expected_op_calls(
-            error,
-            DdiOp::GetEstablishCredEncryptionKey,
-            is_init_retryable,
-            MAX_RETRIES,
-        );
+        let expected = expected_op_calls(error, DdiOp::GetEstablishCredEncryptionKey, MAX_RETRIES);
         assert_eq!(
             after - before,
             expected,
@@ -355,16 +369,11 @@ fn test_init_recovers_from_establish_credential_last_retry() {
         super::assert_retryable_outcome(
             &result,
             error,
-            is_init_retryable,
+            is_init_ok_outcome,
             "last retry on EstablishCredential",
         );
 
-        let expected = expected_op_calls(
-            error,
-            DdiOp::EstablishCredential,
-            is_init_retryable,
-            MAX_RETRIES,
-        );
+        let expected = expected_op_calls(error, DdiOp::EstablishCredential, MAX_RETRIES);
         assert_eq!(
             after - before,
             expected,
@@ -407,7 +416,7 @@ fn test_init_fails_from_init_bk3_exhausted() {
             "init should fail after exhausting all {MAX_RETRIES} retries with {error:?} on InitBk3, got: {result:?}"
         );
 
-        let expected = expected_op_calls(error, DdiOp::InitBk3, is_init_retryable, MAX_RETRIES + 1);
+        let expected = expected_op_calls(error, DdiOp::InitBk3, MAX_RETRIES + 1);
         assert_eq!(
             after - before,
             expected,
@@ -441,12 +450,8 @@ fn test_init_fails_from_get_establish_cred_key_exhausted() {
             "init should fail after exhausting all {MAX_RETRIES} retries with {error:?} on GetEstablishCredEncryptionKey, got: {result:?}"
         );
 
-        let expected = expected_op_calls(
-            error,
-            DdiOp::GetEstablishCredEncryptionKey,
-            is_init_retryable,
-            MAX_RETRIES + 1,
-        );
+        let expected =
+            expected_op_calls(error, DdiOp::GetEstablishCredEncryptionKey, MAX_RETRIES + 1);
         assert_eq!(
             after - before,
             expected,
@@ -480,12 +485,7 @@ fn test_init_fails_from_establish_credential_exhausted() {
             "init should fail after exhausting all {MAX_RETRIES} retries with {error:?} on EstablishCredential, got: {result:?}"
         );
 
-        let expected = expected_op_calls(
-            error,
-            DdiOp::EstablishCredential,
-            is_init_retryable,
-            MAX_RETRIES + 1,
-        );
+        let expected = expected_op_calls(error, DdiOp::EstablishCredential, MAX_RETRIES + 1);
         assert_eq!(
             after - before,
             expected,
@@ -831,7 +831,7 @@ fn test_init_tpm_recovers_from_get_sealed_bk3_single_fault() {
             "single fault on GetSealedBk3 (TPM path)",
         );
 
-        let expected = expected_op_calls(error, DdiOp::GetSealedBk3, is_init_retryable, 1);
+        let expected = expected_op_calls(error, DdiOp::GetSealedBk3, 1);
         assert_eq!(
             after - before,
             expected,
@@ -871,8 +871,7 @@ fn test_init_tpm_recovers_from_get_sealed_bk3_last_retry() {
             "last retry on GetSealedBk3 (TPM path)",
         );
 
-        let expected =
-            expected_op_calls(error, DdiOp::GetSealedBk3, is_init_retryable, MAX_RETRIES);
+        let expected = expected_op_calls(error, DdiOp::GetSealedBk3, MAX_RETRIES);
         assert_eq!(
             after - before,
             expected,
@@ -910,12 +909,7 @@ fn test_init_tpm_fails_from_get_sealed_bk3_exhausted() {
             "init should fail after exhausting all {MAX_RETRIES} retries with {error:?} on GetSealedBk3, got: {result:?}"
         );
 
-        let expected = expected_op_calls(
-            error,
-            DdiOp::GetSealedBk3,
-            is_init_retryable,
-            MAX_RETRIES + 1,
-        );
+        let expected = expected_op_calls(error, DdiOp::GetSealedBk3, MAX_RETRIES + 1);
         assert_eq!(
             after - before,
             expected,

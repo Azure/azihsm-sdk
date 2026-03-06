@@ -32,6 +32,13 @@ cfg_if::cfg_if! {
 /// Well-known storage key for the backup masking key.
 pub(crate) const AZIHSM_STORAGE_BMK: &str = "azihsm_bmk";
 
+/// Well-known storage key for the restore epoch.
+///
+/// Persisted by [`restore_partition`] each time the epoch is bumped so
+/// that other processes can detect a restore even when the BMK does not
+/// change (e.g. device crash-and-restart without key rotation).
+pub(crate) const AZIHSM_STORAGE_EPOCH: &str = "azihsm_epoch";
+
 /// Well-known storage key for the masked unwrapping key.
 ///
 /// Written by [`generate_key_pair`] (RSA unwrapping key generation) so
@@ -202,6 +209,10 @@ impl ResiliencyState {
 
     /// Creates a new resiliency state from the config and init parameters.
     ///
+    /// Seeds `restore_epoch` from persistent storage so that a newly
+    /// initialised process picks up the epoch left by a prior process.
+    /// Falls back to `0` when no stored epoch exists.
+    ///
     /// The caller must have already called [`Self::validate_config`]
     /// before invoking DDI operations. This constructor trusts that the
     /// config has been validated.
@@ -211,13 +222,44 @@ impl ResiliencyState {
         obk_config: HsmOwnerBackupKeyConfig,
         pota_endorsement: HsmPotaEndorsement,
     ) -> Self {
+        let restore_epoch = Self::read_epoch(&*config.storage)
+            .ok()
+            .flatten()
+            .unwrap_or(0);
+
         Self {
             config,
             cached_credentials: credentials,
             cached_obk_config: obk_config,
             cached_pota_endorsement: pota_endorsement,
-            restore_epoch: 0,
+            restore_epoch,
         }
+    }
+
+    /// Reads the persisted restore epoch from resiliency storage.
+    ///
+    /// Returns `None` when the key does not exist (first init, or older
+    /// storage that predates persisted epochs).
+    pub(crate) fn read_epoch(storage: &dyn ResiliencyStorage) -> HsmResult<Option<u64>> {
+        match storage.read(AZIHSM_STORAGE_EPOCH) {
+            Ok(b) => {
+                let bytes: [u8; 8] = b
+                    .as_slice()
+                    .try_into()
+                    .map_err(|_| HsmError::InternalError)?;
+                Ok(Some(u64::from_le_bytes(bytes)))
+            }
+            Err(HsmError::NotFound) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Persists the restore epoch to resiliency storage.
+    ///
+    /// Called after bumping `restore_epoch` so that other processes can
+    /// detect the restore even when the BMK does not change.
+    pub(crate) fn write_epoch(storage: &dyn ResiliencyStorage, epoch: u64) -> HsmResult<()> {
+        storage.write(AZIHSM_STORAGE_EPOCH, &epoch.to_le_bytes())
     }
 }
 
@@ -409,14 +451,11 @@ pub(crate) const BACKOFF_JITTER_MS: u64 = 2;
 
 /// Applies exponential backoff with jitter and sleeps for the computed
 /// duration.
-///
-/// Returns `(backoff_ms, jitter_ms, total_ms)`
-pub(crate) fn apply_backoff(attempt: u32, base_ms: u64, jitter_max_ms: u64) -> (u64, u64, u64) {
+pub(crate) fn apply_backoff(attempt: u32, base_ms: u64, jitter_max_ms: u64) {
     let backoff_ms = base_ms.saturating_mul(1u64 << attempt.min(63));
     let jitter_ms = rand::thread_rng().gen_range(0..=jitter_max_ms);
     let total_ms = backoff_ms + jitter_ms;
     std::thread::sleep(Duration::from_millis(total_ms));
-    (backoff_ms, jitter_ms, total_ms)
 }
 
 /// Executes `operation` with exponential-backoff retry.
@@ -533,6 +572,21 @@ pub(crate) fn is_open_session_retryable_error<T>(result: &HsmResult<T>) -> bool 
     )
 }
 
+/// Returns `true` when the error indicates the key's device handle is
+/// stale and the key needs to be restored (unmasked) before it can be
+/// used again.
+///
+/// These errors occur when a resiliency event (live migration, firmware
+/// crash recovery) has invalidated the device state, making existing
+/// key handles unusable.
+///
+pub(crate) fn key_needs_restoration(err: &HsmError) -> bool {
+    matches!(
+        err,
+        HsmError::IoAborted | HsmError::IoAbortInProgress | HsmError::SessionNeedsRenegotiation
+    )
+}
+
 /// Returns `true` when the error is retryable during an in-session key
 /// operation (e.g., sign, encrypt, decrypt, derive, key generation).
 ///
@@ -565,17 +619,34 @@ pub(crate) fn is_key_op_retryable_error(err: &HsmError) -> bool {
     )
 }
 
+/// Returns `true` for errors that indicate credentials are already
+/// established on the partition (i.e., a prior `init_part` or another
+/// process's restore has already run).
+pub(crate) fn is_credentials_already_established(err: &HsmError) -> bool {
+    matches!(
+        err,
+        HsmError::KeyNotFound
+            | HsmError::PartitionAlreadyProvisioned
+            | HsmError::VaultAppLimitReached
+    )
+}
+
 /// Executes a key-generation operation with restore-partition and
 /// session-reopen recovery on transient errors.
 ///
 /// This is the runtime support function called by the
-/// `#[resiliency_key_gen]` proc macro.  It differs from
-/// [`execute_with_backoff`] in that each retry iteration:
+/// `#[resiliency_key_gen]` proc macro.
+///
+/// The operation runs under the key-ops barrier read lock so that a
+/// concurrent restore cannot reassign device handles between the DDI call
+/// and key-wrapper construction.
+///
+/// On each retry iteration:
 /// 1. Applies exponential backoff.
 /// 2. Calls `partition.restore_partition()` to re-establish credentials.
 /// 3. Calls `partition.reopen_session_if_needed(session)` to reopen the
 ///    session if its epoch is stale.
-/// 4. Retries the operation.
+/// 4. Retries the operation under a fresh read lock.
 pub(crate) fn execute_key_gen_with_retry<T>(
     mut operation: impl FnMut() -> HsmResult<T>,
     session: &crate::HsmSession,
@@ -583,39 +654,28 @@ pub(crate) fn execute_key_gen_with_retry<T>(
     max_retries: u32,
     backoff_base_ms: u64,
 ) -> HsmResult<T> {
-    let mut result = operation();
+    let mut result = {
+        let _barrier = partition.key_ops_lock_read();
+        operation()
+    };
     let mut attempt = 0u32;
 
     while result.as_ref().is_err_and(is_key_op_retryable_error) && attempt < max_retries {
-        // Exponential backoff
         apply_backoff(attempt, backoff_base_ms, BACKOFF_JITTER_MS);
 
-        match partition.restore_partition() {
-            Err(HsmError::RestorePartitionFailed) => {
-                warn!("RestorePartitionFailed during key gen retry.");
-                attempt += 1;
-                continue;
-            }
-            Err(err) => {
-                error!(?err, "restore_partition failed fatally during key gen.");
-                return Err(err);
-            }
-            Ok(()) => {}
+        if let Err(err) = partition.restore_partition() {
+            attempt += 1;
+            continue;
         }
-        if let Err(err) = partition.reopen_session_if_needed(session) {
-            warn!(
-                ?err,
-                "reopen_session failed during key gen retry, continuing."
-            );
+        if partition.reopen_session_if_needed(session).is_err() {
+            attempt += 1;
+            continue;
         }
-        result = operation();
+        result = {
+            let _barrier = partition.key_ops_lock_read();
+            operation()
+        };
         attempt += 1;
-    }
-
-    if let Err(ref err) = result {
-        if attempt > 0 {
-            error!(?err, retries = attempt, "Key gen failed after retries.");
-        }
     }
 
     result
@@ -625,27 +685,30 @@ pub(crate) fn execute_key_gen_with_retry<T>(
 /// key-refresh recovery on transient errors.
 ///
 /// This is the runtime support function called by the
-/// `#[resiliency_key_op]` proc macro.  The function includes a
-/// proactive epoch guard that runs before every DDI call. If the
-/// key's last-refresh epoch is behind the partition's restore epoch
-/// (meaning another thread already restored the partition), the key is
-/// recovered without calling the DDI and without counting against
-/// the retry budget. This prevents the ABA problem where a stale
-/// handle index could silently address a different key.
+/// `#[resiliency_key_op]` proc macro.
 ///
-/// On each retry iteration after a DDI error:
-/// 1. Applies exponential backoff.
-/// 2. Calls `partition.restore_partition()` to re-establish credentials.
-/// 3. Calls `partition.reopen_session_if_needed(session)` to reopen the
-///    session if its epoch is stale.
-/// 4. Calls `refresh_key()` to unmask the key and refresh the device
-///    handle.
-/// 5. Retries the operation.
+/// The function uses a restore barrier (partition-level `RwLock`) to
+/// prevent the ABA problem where a stale handle index could silently
+/// address a different key after a resiliency event:
+///
+/// - Phase 1 (read lock): checks whether the key's epoch is current.
+///   If yes, calls the DDI operation under the read lock so that no
+///   concurrent restore can reassign handles mid-call.  If the epoch is
+///   stale, skips the DDI and falls through to recovery.
+/// - Phase 2 (no lock): evaluates the result — breaks on success,
+///   on non-retryable error, or when the retry budget is exhausted.
+///   Retryable errors apply backoff and count against the budget.
+///   Stale-epoch entry is free (no backoff, no attempt count), but
+///   failed recovery in phase 3 still counts against the budget.
+/// - Phase 3 (write lock): restores the partition, reopens the
+///   session, and refreshes the key.  The write lock blocks until all
+///   in-flight operations (read-lock holders) finish, then prevents any
+///   new operation from starting until recovery is complete.
 pub(crate) fn execute_key_op_with_retry<T>(
     mut operation: impl FnMut() -> HsmResult<T>,
     session: &crate::HsmSession,
     partition: &crate::HsmPartition,
-    mut refresh_key: impl FnMut() -> HsmResult<()>,
+    mut restore_key: impl FnMut() -> HsmResult<()>,
     key_epoch: impl Fn() -> u64,
     max_retries: u32,
     backoff_base_ms: u64,
@@ -653,62 +716,61 @@ pub(crate) fn execute_key_op_with_retry<T>(
     let mut attempt = 0u32;
 
     loop {
-        // Proactive epoch guard: if the key handle is stale (another
-        // thread restored the partition since we last refreshed the key),
-        // recover before calling the DDI. This prevents the ABA problem
-        // where a handle index is reused for a different key after a resiliency event.
-        // This recovery is "free" — it does not count against the retry
-        // budget.
-        let ke = key_epoch();
-        let re = partition.restore_epoch();
-        if ke < re {
-            if partition.restore_partition().is_ok()
-                && partition.reopen_session_if_needed(session).is_ok()
-                && refresh_key().is_ok()
-            {
-                continue;
+        // Phase 1: read lock — epoch check + operation
+        let result = {
+            let _barrier = partition.key_ops_lock_read();
+            if key_epoch() < partition.restore_epoch() {
+                None // stale handle — skip DDI, go to recovery
+            } else if key_epoch() > partition.restore_epoch() {
+                // This should never happen — it would indicate a logic bug
+                // where the epoch was bumped without proper synchronization.
+                debug_assert!(
+                    false,
+                    "execute_key_op_with_retry: key_epoch ({}) > restore_epoch ({}); \
+                     epoch must never go backwards",
+                    key_epoch(),
+                    partition.restore_epoch(),
+                );
+                break Err(HsmError::InternalError);
+            } else {
+                Some(operation())
             }
-            // Recovery failed — fall through to operation() so the normal
-            // retry path (with backoff and attempt budget) handles it.
-        }
+        };
 
-        let result = operation();
-
+        // Phase 2: evaluate result and decide whether to break, retry, or recover
         match result {
-            Err(ref err) if is_key_op_retryable_error(err) && attempt < max_retries => {
-                // Exponential backoff
+            Some(Ok(value)) => {
+                // Key operation succeeded, return the value.
+                break Ok(value);
+            }
+            Some(Err(err)) if is_key_op_retryable_error(&err) && attempt < max_retries => {
                 apply_backoff(attempt, backoff_base_ms, BACKOFF_JITTER_MS);
-
-                match partition.restore_partition() {
-                    Err(HsmError::RestorePartitionFailed) => {
-                        warn!("RestorePartitionFailed during key op retry.");
-                        attempt += 1;
-                        continue;
-                    }
-                    Err(err) => {
-                        error!(?err, "restore_partition failed fatally during key op.");
-                        break Err(err);
-                    }
-                    Ok(()) => {}
-                }
-                if let Err(err) = partition.reopen_session_if_needed(session) {
-                    warn!(
-                        ?err,
-                        "reopen_session failed during key op retry, continuing."
-                    );
-                }
-                if let Err(err) = refresh_key() {
-                    warn!(?err, "refresh_key failed during key op retry, continuing.");
-                }
                 attempt += 1;
             }
-            other => {
-                if let Err(ref err) = other {
-                    if attempt > 0 {
-                        error!(?err, retries = attempt, "Key op failed after retries.");
-                    }
-                }
-                break other;
+            Some(Err(err)) => {
+                // Key operation failed with a non-retryable error. Break and return the error.
+                break Err(err);
+            }
+            None => {
+                // Stale epoch — continue key restoration.
+            }
+        }
+
+        // Phase 3: write lock — key restoration.
+        {
+            let _barrier = partition.key_ops_lock_write();
+            if let Err(_) = partition.restore_partition() {
+                attempt += 1;
+                continue;
+            }
+            if partition.reopen_session_if_needed(session).is_err() {
+                // Session reopen failed, continue to retry.
+                attempt += 1;
+                continue;
+            }
+            if restore_key().is_err() {
+                // Key restoration failed, continue to retry.
+                attempt += 1;
             }
         }
     }

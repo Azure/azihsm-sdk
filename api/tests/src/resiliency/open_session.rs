@@ -71,7 +71,7 @@ const OPEN_SESSION_RETRYABLE_ERRORS: &[FaultError] = &[
 /// Returns `true` when `error` is one of the open-session-retryable
 /// error codes.
 fn is_open_session_retryable(error: &FaultError) -> bool {
-    OPEN_SESSION_RETRYABLE_ERRORS.iter().any(|e| e == error)
+    super::is_retryable(error, &OPEN_SESSION_RETRYABLE_ERRORS)
 }
 
 /// Expected number of times the faulted `target_op` is invoked in a
@@ -82,11 +82,7 @@ fn is_open_session_retryable(error: &FaultError) -> bool {
 ///   consumed, capped by the maximum number of attempts.
 /// * Non-retryable errors: 1 (single failed call, no retry).
 fn expected_op_calls(error: &FaultError, injected_faults: u32) -> u32 {
-    if is_open_session_retryable(error) {
-        (injected_faults + 1).min(MAX_RETRIES + 1)
-    } else {
-        1
-    }
+    super::expected_op_calls_for(error, injected_faults, &OPEN_SESSION_RETRYABLE_ERRORS)
 }
 
 /// Helper: open and init a partition with resiliency enabled, returning

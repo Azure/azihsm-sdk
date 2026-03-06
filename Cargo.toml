@@ -20,6 +20,7 @@ members = [
   "ddi/res_test_dev",
   "ddi/test_helpers",
   "plugins/ossl_prov",
+  "tools/resiliency_stress",
   "xtask",
 ]
 

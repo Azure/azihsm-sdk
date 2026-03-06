@@ -35,7 +35,7 @@
 //!
 //! # Adding a new retryable error
 //!
-//! Append the new [`FaultError`] variant to [`RETRYABLE_ERRORS`] and all
+//! Append the new [`FaultError`] variant to [`super::KEY_OP_RETRYABLE_ERRORS`] and all
 //! loop-based tests will automatically cover it.
 
 use azihsm_res_test_dev::DdiOp;
@@ -47,70 +47,10 @@ use azihsm_res_test_dev::clear_faults;
 use azihsm_res_test_dev::inject_fault;
 use azihsm_res_test_dev::op_call_count;
 
+use super::helpers::*;
 use crate::utils::partition::*;
 use crate::utils::resiliency::*;
 use crate::*;
-
-/// All error codes that trigger `resiliency_key_gen` retry when resiliency is enabled.
-const RETRYABLE_ERRORS: &[FaultError] = &[
-    FaultError::Driver(DriverError::IoAborted),
-    FaultError::Driver(DriverError::IoAbortInProgress),
-    FaultError::DeviceNotReady,
-    FaultError::Status(DdiStatus::SessionNeedsRenegotiation),
-    FaultError::Status(DdiStatus::PendingKeyGeneration),
-    FaultError::Status(DdiStatus::KeyNotFound),
-];
-
-/// Helper: open and init a partition with resiliency enabled, open a
-/// session, and return all handles plus the RAII cleanup context.
-fn init_with_resiliency_and_session() -> (HsmPartition, HsmSession, ResiliencyTestCtx) {
-    let list = HsmPartitionManager::partition_info_list();
-    assert!(!list.is_empty(), "No partitions found.");
-    let part =
-        HsmPartitionManager::open_partition(&list[0].path).expect("Failed to open partition");
-    part.reset().expect("Partition reset failed");
-
-    let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
-    let (obk_info, pota_endorsement) = make_init_params(&part);
-    let (resiliency_config, ctx) = make_resiliency_config(&part);
-    part.init(
-        creds,
-        None,
-        None,
-        obk_info,
-        pota_endorsement,
-        Some(resiliency_config),
-    )
-    .expect("Partition init failed");
-
-    let rev = part.api_rev_range().max();
-    let session = part
-        .open_session(rev, &creds, None)
-        .expect("Failed to open session");
-
-    (part, session, ctx)
-}
-
-/// Helper: open and init a partition without resiliency, open a session.
-fn init_without_resiliency_and_session() -> (HsmPartition, HsmSession) {
-    let list = HsmPartitionManager::partition_info_list();
-    assert!(!list.is_empty(), "No partitions found.");
-    let part =
-        HsmPartitionManager::open_partition(&list[0].path).expect("Failed to open partition");
-    part.reset().expect("Partition reset failed");
-
-    let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
-    let (obk_info, pota_endorsement) = make_init_params(&part);
-    part.init(creds, None, None, obk_info, pota_endorsement, None)
-        .expect("Partition init failed");
-
-    let rev = part.api_rev_range().max();
-    let session = part
-        .open_session(rev, &creds, None)
-        .expect("Failed to open session");
-
-    (part, session)
-}
 
 /// Build AES key properties for test key generation.
 fn aes_key_props() -> HsmKeyProps {
@@ -157,7 +97,7 @@ fn ecc_pub_key_props() -> HsmKeyProps {
 /// `AesGenerateKey`, for every retryable error code.
 #[api_test]
 fn test_aes_generate_key_recovers_from_single_fault() {
-    for error in RETRYABLE_ERRORS {
+    for error in super::KEY_OP_RETRYABLE_ERRORS {
         let (_part, session, _ctx) = init_with_resiliency_and_session();
 
         inject_fault(FaultRule::fail_nth(DdiOp::AesGenerateKey, 1, *error));
@@ -182,7 +122,7 @@ fn test_aes_generate_key_recovers_from_single_fault() {
 /// fails for the first `MAX_RETRIES` attempts.
 #[api_test]
 fn test_aes_generate_key_recovers_on_last_retry() {
-    for error in RETRYABLE_ERRORS {
+    for error in super::KEY_OP_RETRYABLE_ERRORS {
         let (_part, session, _ctx) = init_with_resiliency_and_session();
 
         inject_fault(FaultRule::fail_next(
@@ -211,7 +151,7 @@ fn test_aes_generate_key_recovers_on_last_retry() {
 /// `EccGenerateKeyPair`, for every retryable error code.
 #[api_test]
 fn test_ecc_generate_key_pair_recovers_from_single_fault() {
-    for error in RETRYABLE_ERRORS {
+    for error in super::KEY_OP_RETRYABLE_ERRORS {
         let (_part, session, _ctx) = init_with_resiliency_and_session();
 
         inject_fault(FaultRule::fail_nth(DdiOp::EccGenerateKeyPair, 1, *error));
@@ -241,7 +181,7 @@ fn test_ecc_generate_key_pair_recovers_from_single_fault() {
 /// `EccGenerateKeyPair` fails for the first `MAX_RETRIES` attempts.
 #[api_test]
 fn test_ecc_generate_key_pair_recovers_on_last_retry() {
-    for error in RETRYABLE_ERRORS {
+    for error in super::KEY_OP_RETRYABLE_ERRORS {
         let (_part, session, _ctx) = init_with_resiliency_and_session();
 
         inject_fault(FaultRule::fail_next(
@@ -643,7 +583,7 @@ fn unmask_xts_key(session: &HsmSession, masked_key: &[u8]) -> HsmResult<HsmAesXt
 /// `UnmaskKey`, for every retryable error code.
 #[api_test]
 fn test_aes_xts_unmask_key_recovers_from_single_fault() {
-    for error in RETRYABLE_ERRORS {
+    for error in super::KEY_OP_RETRYABLE_ERRORS {
         let (_part, session, _ctx) = init_with_resiliency_and_session();
         let masked_key = generate_xts_masked_key(&session);
 
@@ -664,7 +604,7 @@ fn test_aes_xts_unmask_key_recovers_from_single_fault() {
 /// fails for the first `MAX_RETRIES` attempts.
 #[api_test]
 fn test_aes_xts_unmask_key_recovers_on_last_retry() {
-    for error in RETRYABLE_ERRORS {
+    for error in super::KEY_OP_RETRYABLE_ERRORS {
         let (_part, session, _ctx) = init_with_resiliency_and_session();
         let masked_key = generate_xts_masked_key(&session);
 
@@ -858,5 +798,272 @@ fn test_aes_xts_unmask_key_recovers_after_consecutive_reset() {
     assert!(
         result2.is_ok(),
         "Second AES-XTS unmask_key should recover after reset"
+    );
+}
+
+// =========================================================================
+// AES-XTS key generation — fault-injection tests
+// =========================================================================
+
+/// Build AES-XTS key properties for test key generation.
+fn aes_xts_key_props() -> HsmKeyProps {
+    HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::AesXts)
+        .bits(512)
+        .can_encrypt(true)
+        .can_decrypt(true)
+        .is_session(true)
+        .build()
+        .expect("Failed to build AES-XTS key props")
+}
+
+/// AES-XTS `generate_key` recovers from a single transient fault on
+/// `AesGenerateKey`, for every retryable error code.
+#[api_test]
+fn test_aes_xts_generate_key_recovers_from_single_fault() {
+    for error in super::KEY_OP_RETRYABLE_ERRORS {
+        let (_part, session, _ctx) = init_with_resiliency_and_session();
+
+        inject_fault(FaultRule::fail_nth(DdiOp::AesGenerateKey, 1, *error));
+
+        let mut algo = HsmAesXtsKeyGenAlgo::default();
+        let result = HsmKeyManager::generate_key(&session, &mut algo, aes_xts_key_props());
+        clear_faults();
+
+        assert!(
+            result.is_ok(),
+            "AES-XTS generate_key should recover after a single {error:?}"
+        );
+    }
+}
+
+/// AES-XTS `generate_key` recovers on the last retry.
+#[api_test]
+fn test_aes_xts_generate_key_recovers_on_last_retry() {
+    for error in super::KEY_OP_RETRYABLE_ERRORS {
+        let (_part, session, _ctx) = init_with_resiliency_and_session();
+
+        inject_fault(FaultRule::fail_next(
+            DdiOp::AesGenerateKey,
+            MAX_RETRIES,
+            *error,
+        ));
+
+        let mut algo = HsmAesXtsKeyGenAlgo::default();
+        let result = HsmKeyManager::generate_key(&session, &mut algo, aes_xts_key_props());
+        clear_faults();
+
+        assert!(
+            result.is_ok(),
+            "AES-XTS generate_key should recover on the last retry after \
+             {MAX_RETRIES} consecutive {error:?}"
+        );
+    }
+}
+
+/// AES-XTS `generate_key` fails when all retries are exhausted.
+#[api_test]
+fn test_aes_xts_generate_key_fails_after_all_retries_exhausted() {
+    for error in super::KEY_OP_RETRYABLE_ERRORS {
+        let (_part, session, _ctx) = init_with_resiliency_and_session();
+
+        inject_fault(FaultRule::fail_next(
+            DdiOp::AesGenerateKey,
+            MAX_RETRIES + 1,
+            *error,
+        ));
+
+        let mut algo = HsmAesXtsKeyGenAlgo::default();
+        let result = HsmKeyManager::generate_key(&session, &mut algo, aes_xts_key_props());
+        clear_faults();
+
+        assert!(
+            result.is_err(),
+            "AES-XTS generate_key should fail after exhausting retries \
+             with {error:?}"
+        );
+    }
+}
+
+/// Without resiliency, AES-XTS `generate_key` does not retry.
+#[api_test]
+fn test_aes_xts_generate_key_no_retry_without_resiliency() {
+    let (_part, session) = init_without_resiliency_and_session();
+
+    inject_fault(FaultRule::fail_next(
+        DdiOp::AesGenerateKey,
+        1,
+        DriverError::IoAborted,
+    ));
+
+    let mut algo = HsmAesXtsKeyGenAlgo::default();
+    let result = HsmKeyManager::generate_key(&session, &mut algo, aes_xts_key_props());
+    clear_faults();
+
+    assert!(
+        result.is_err(),
+        "AES-XTS generate_key without resiliency should fail"
+    );
+}
+
+/// AES-XTS `generate_key` recovers from compound fault on
+/// AesGenerateKey + InitBk3.
+#[api_test]
+fn test_aes_xts_generate_key_recovers_from_compound_fault() {
+    if use_tpm() {
+        return;
+    }
+    let (_part, session, _ctx) = init_with_resiliency_and_session();
+
+    inject_fault(FaultRule::fail_next(
+        DdiOp::AesGenerateKey,
+        1,
+        FaultError::Driver(DriverError::IoAborted),
+    ));
+    inject_fault(FaultRule::fail_next(
+        DdiOp::InitBk3,
+        1,
+        FaultError::Driver(DriverError::IoAborted),
+    ));
+
+    let mut algo = HsmAesXtsKeyGenAlgo::default();
+    let result = HsmKeyManager::generate_key(&session, &mut algo, aes_xts_key_props());
+    clear_faults();
+
+    assert!(
+        result.is_ok(),
+        "AES-XTS generate_key should recover from compound faults"
+    );
+}
+
+// =========================================================================
+// AES-XTS key generation — reset-triggered tests
+// =========================================================================
+
+/// After a reset on `AesGenerateKey`, AES-XTS `generate_key` recovers.
+#[api_test]
+fn test_aes_xts_generate_key_recovers_after_reset() {
+    let (_part, session, _ctx) = init_with_resiliency_and_session();
+
+    inject_fault(FaultRule::reset_on_next(DdiOp::AesGenerateKey, 1));
+
+    let mut algo = HsmAesXtsKeyGenAlgo::default();
+    let result = HsmKeyManager::generate_key(&session, &mut algo, aes_xts_key_props());
+    clear_faults();
+
+    assert!(
+        result.is_ok(),
+        "AES-XTS generate_key should recover after reset"
+    );
+}
+
+/// Without resiliency, AES-XTS `generate_key` does not recover from a reset.
+#[api_test]
+fn test_aes_xts_generate_key_fails_after_reset_without_resiliency() {
+    let (_part, session) = init_without_resiliency_and_session();
+
+    inject_fault(FaultRule::reset_on_next(DdiOp::AesGenerateKey, 1));
+
+    let mut algo = HsmAesXtsKeyGenAlgo::default();
+    let result = HsmKeyManager::generate_key(&session, &mut algo, aes_xts_key_props());
+    clear_faults();
+
+    assert!(
+        result.is_err(),
+        "AES-XTS generate_key without resiliency should fail after reset"
+    );
+}
+
+/// Two consecutive resets on `AesGenerateKey` for AES-XTS are each
+/// followed by a successful recovery.
+#[api_test]
+fn test_aes_xts_generate_key_recovers_after_consecutive_reset() {
+    let (_part, session, _ctx) = init_with_resiliency_and_session();
+
+    inject_fault(FaultRule::reset_on_next(DdiOp::AesGenerateKey, 1));
+    let mut algo = HsmAesXtsKeyGenAlgo::default();
+    let result1 = HsmKeyManager::generate_key(&session, &mut algo, aes_xts_key_props());
+    clear_faults();
+    assert!(
+        result1.is_ok(),
+        "First AES-XTS generate_key should recover after reset"
+    );
+
+    inject_fault(FaultRule::reset_on_next(DdiOp::AesGenerateKey, 1));
+    let mut algo = HsmAesXtsKeyGenAlgo::default();
+    let result2 = HsmKeyManager::generate_key(&session, &mut algo, aes_xts_key_props());
+    clear_faults();
+    assert!(
+        result2.is_ok(),
+        "Second AES-XTS generate_key should recover after reset"
+    );
+}
+
+// =========================================================================
+// ECC key pair generation — missing test patterns
+// =========================================================================
+
+/// ECC `generate_key_pair` fails when all retries are exhausted.
+#[api_test]
+fn test_ecc_generate_key_pair_fails_after_all_retries_exhausted() {
+    for error in super::KEY_OP_RETRYABLE_ERRORS {
+        let (_part, session, _ctx) = init_with_resiliency_and_session();
+
+        inject_fault(FaultRule::fail_next(
+            DdiOp::EccGenerateKeyPair,
+            MAX_RETRIES + 1,
+            *error,
+        ));
+
+        let mut algo = HsmEccKeyGenAlgo::default();
+        let result = HsmKeyManager::generate_key_pair(
+            &session,
+            &mut algo,
+            ecc_priv_key_props(),
+            ecc_pub_key_props(),
+        );
+        clear_faults();
+
+        assert!(
+            result.is_err(),
+            "ECC generate_key_pair should fail after exhausting retries \
+             with {error:?}"
+        );
+    }
+}
+
+/// ECC `generate_key_pair` recovers from compound fault on
+/// EccGenerateKeyPair + InitBk3.
+#[api_test]
+fn test_ecc_generate_key_pair_recovers_from_compound_fault() {
+    if use_tpm() {
+        return;
+    }
+    let (_part, session, _ctx) = init_with_resiliency_and_session();
+
+    inject_fault(FaultRule::fail_next(
+        DdiOp::EccGenerateKeyPair,
+        1,
+        FaultError::Driver(DriverError::IoAborted),
+    ));
+    inject_fault(FaultRule::fail_next(
+        DdiOp::InitBk3,
+        1,
+        FaultError::Driver(DriverError::IoAborted),
+    ));
+
+    let mut algo = HsmEccKeyGenAlgo::default();
+    let result = HsmKeyManager::generate_key_pair(
+        &session,
+        &mut algo,
+        ecc_priv_key_props(),
+        ecc_pub_key_props(),
+    );
+    clear_faults();
+
+    assert!(
+        result.is_ok(),
+        "ECC generate_key_pair should recover from compound faults"
     );
 }

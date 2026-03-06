@@ -14,7 +14,7 @@
 //!    migration event occurring mid-operation) so the DDI returns
 //!    `SessionNeedsRenegotiation` naturally, then verify that
 //!    `restore_partition` + `reopen_session_if_needed` +
-//!    `refresh_from_masked` recovers.
+//!    `restore_from_masked` recovers.
 //!
 //! Key operations retry only when resiliency is enabled (a
 //! [`HsmResiliencyConfig`] was passed to [`HsmPartition::init`]).
@@ -24,7 +24,7 @@
 //!    errors (not for `SessionNeedsRenegotiation`).
 //! 2. Calls `restore_partition` to re-establish credentials.
 //! 3. Calls `reopen_session_if_needed` to reopen the stale session.
-//! 4. Calls `key.refresh_from_masked()` to unmask the key and obtain
+//! 4. Calls `key.restore_from_masked()` to unmask the key and obtain
 //!    a fresh device handle.
 //! 5. Retries the operation.
 //!
@@ -76,20 +76,9 @@ use crate::*;
 
 // Retryable errors & helpers
 
-/// All error codes that trigger `resiliency_key_op` retry when resiliency
-/// is enabled.
-const RETRYABLE_ERRORS: &[FaultError] = &[
-    FaultError::Driver(DriverError::IoAborted),
-    FaultError::Driver(DriverError::IoAbortInProgress),
-    FaultError::DeviceNotReady,
-    FaultError::Status(DdiStatus::SessionNeedsRenegotiation),
-    FaultError::Status(DdiStatus::PendingKeyGeneration),
-    FaultError::Status(DdiStatus::KeyNotFound),
-];
-
 /// Returns `true` when `error` is one of the key-op-retryable error codes.
 fn is_key_op_retryable(error: &FaultError) -> bool {
-    RETRYABLE_ERRORS.iter().any(|e| e == error)
+    super::is_retryable(error, super::KEY_OP_RETRYABLE_ERRORS)
 }
 
 /// Expected number of times the faulted DDI op is invoked in a
@@ -100,65 +89,10 @@ fn is_key_op_retryable(error: &FaultError) -> bool {
 ///   consumed, capped by the maximum number of attempts.
 /// * Non-retryable errors: 1 (single failed call, no retry).
 fn expected_op_calls(error: &FaultError, injected_faults: u32) -> u32 {
-    if is_key_op_retryable(error) {
-        (injected_faults + 1).min(MAX_RETRIES + 1)
-    } else {
-        1
-    }
+    super::expected_op_calls_for(error, injected_faults, super::KEY_OP_RETRYABLE_ERRORS)
 }
 
 // Session helpers
-
-/// Helper: open and init a partition with resiliency enabled, open a
-/// session, and return all handles plus the RAII cleanup context.
-fn init_with_resiliency_and_session() -> (HsmPartition, HsmSession, ResiliencyTestCtx) {
-    let list = HsmPartitionManager::partition_info_list();
-    assert!(!list.is_empty(), "No partitions found.");
-    let part =
-        HsmPartitionManager::open_partition(&list[0].path).expect("Failed to open partition");
-    part.reset().expect("Partition reset failed");
-
-    let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
-    let (obk_info, pota_endorsement) = make_init_params(&part);
-    let (resiliency_config, ctx) = make_resiliency_config(&part);
-    part.init(
-        creds,
-        None,
-        None,
-        obk_info,
-        pota_endorsement,
-        Some(resiliency_config),
-    )
-    .expect("Partition init failed");
-
-    let rev = part.api_rev_range().max();
-    let session = part
-        .open_session(rev, &creds, None)
-        .expect("Failed to open session");
-
-    (part, session, ctx)
-}
-
-/// Helper: open and init a partition without resiliency, open a session.
-fn init_without_resiliency_and_session() -> (HsmPartition, HsmSession) {
-    let list = HsmPartitionManager::partition_info_list();
-    assert!(!list.is_empty(), "No partitions found.");
-    let part =
-        HsmPartitionManager::open_partition(&list[0].path).expect("Failed to open partition");
-    part.reset().expect("Partition reset failed");
-
-    let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
-    let (obk_info, pota_endorsement) = make_init_params(&part);
-    part.init(creds, None, None, obk_info, pota_endorsement, None)
-        .expect("Partition init failed");
-
-    let rev = part.api_rev_range().max();
-    let session = part
-        .open_session(rev, &creds, None)
-        .expect("Failed to open session");
-
-    (part, session)
-}
 
 // Key creation & crypto helpers imported from `crate::utils::key_helpers`.
 
@@ -203,7 +137,8 @@ fn generate_hmac_key(session: &HsmSession) -> HsmHmacKey {
     let (priv_key_a, _pub_key_a) = generate_ecc_derive_key_pair(session, HsmEccCurve::P256);
     let (_priv_key_b, pub_key_b) = generate_ecc_derive_key_pair(session, HsmEccCurve::P256);
 
-    let shared_secret = ecdh_derive(session, &priv_key_a, &pub_key_b);
+    let shared_secret =
+        ecdh_derive(session, &priv_key_a, &pub_key_b).expect("ECDH derivation failed");
     hkdf_derive_hmac_key(session, &shared_secret, HsmKeyKind::HmacSha256, 256)
 }
 
@@ -347,31 +282,6 @@ fn hmac_verify(key: &HsmHmacKey, data: &[u8], signature: &[u8]) -> HsmResult<boo
 
 // ECDH derive helper
 
-/// Perform ECDH key derivation and return the shared secret.
-fn ecdh_derive_secret(
-    session: &HsmSession,
-    priv_key: &HsmEccPrivateKey,
-    peer_pub_key: &HsmEccPublicKey,
-) -> HsmResult<HsmGenericSecretKey> {
-    let pub_key_der = peer_pub_key
-        .pub_key_der_vec()
-        .expect("Failed to get peer public key DER");
-    let mut algo = EcdhAlgo::new(&pub_key_der);
-    let bits = priv_key
-        .ecc_curve()
-        .expect("ECC curve missing")
-        .key_size_bits() as u32;
-    let props = HsmKeyPropsBuilder::default()
-        .class(HsmKeyClass::Secret)
-        .key_kind(HsmKeyKind::SharedSecret)
-        .bits(bits)
-        .can_derive(true)
-        .is_session(true)
-        .build()
-        .expect("Failed to build shared secret props");
-    HsmKeyManager::derive_key(session, &mut algo, priv_key, props)
-}
-
 // HKDF derive helper
 
 /// Derive an AES-256 key from a shared secret via HKDF.
@@ -400,7 +310,7 @@ fn hkdf_derive_aes_key(
 fn setup_shared_secret(session: &HsmSession) -> HsmGenericSecretKey {
     let (priv_a, _pub_a) = generate_ecc_derive_key_pair(session, HsmEccCurve::P256);
     let (_priv_b, pub_b) = generate_ecc_derive_key_pair(session, HsmEccCurve::P256);
-    ecdh_derive(session, &priv_a, &pub_b)
+    ecdh_derive(session, &priv_a, &pub_b).expect("ECDH derivation failed")
 }
 
 // AES key unwrap helpers
@@ -567,7 +477,7 @@ fn test_aes_cbc_encrypt_recovers_on_last_retry() {
 /// error code.
 #[api_test]
 fn test_aes_cbc_encrypt_fails_after_all_retries_exhausted() {
-    for error in RETRYABLE_ERRORS {
+    for error in super::KEY_OP_RETRYABLE_ERRORS {
         let (_part, session, _ctx) = init_with_resiliency_and_session();
         let key = generate_aes_key(&session);
         let iv = [0u8; 16];
@@ -661,7 +571,7 @@ fn test_aes_cbc_encrypt_recovers_from_compound_fault() {
 
 /// After a reset on `AesEncryptDecrypt`, AES-CBC `encrypt` triggers
 /// `restore_partition` + `reopen_session_if_needed` +
-/// `refresh_from_masked` and recovers.
+/// `restore_from_masked` and recovers.
 #[api_test]
 fn test_aes_cbc_encrypt_recovers_after_reset() {
     let (_part, session, _ctx) = init_with_resiliency_and_session();
@@ -821,7 +731,7 @@ fn test_ecc_sign_recovers_on_last_retry() {
 /// `MAX_RETRIES + 1` consecutive calls, for every retryable error code.
 #[api_test]
 fn test_ecc_sign_fails_after_all_retries_exhausted() {
-    for error in RETRYABLE_ERRORS {
+    for error in super::KEY_OP_RETRYABLE_ERRORS {
         let (_part, session, _ctx) = init_with_resiliency_and_session();
         let (priv_key, _pub_key) = generate_ecc_sign_key_pair(&session);
         let hash = hash_data(&session, b"Test data for ECC signing");
@@ -918,7 +828,7 @@ fn test_ecc_sign_recovers_from_compound_fault() {
 
 /// After a reset on `EccSign`, ECC `sign` triggers
 /// `restore_partition` + `reopen_session_if_needed` +
-/// `refresh_from_masked` and recovers.
+/// `restore_from_masked` and recovers.
 #[api_test]
 fn test_ecc_sign_recovers_after_reset() {
     let (_part, session, _ctx) = init_with_resiliency_and_session();
@@ -1068,7 +978,7 @@ fn test_hmac_sign_recovers_on_last_retry() {
 /// `MAX_RETRIES + 1` consecutive calls, for every retryable error code.
 #[api_test]
 fn test_hmac_sign_fails_after_all_retries_exhausted() {
-    for error in RETRYABLE_ERRORS {
+    for error in super::KEY_OP_RETRYABLE_ERRORS {
         let (_part, session, _ctx) = init_with_resiliency_and_session();
         let hmac_key = generate_hmac_key(&session);
 
@@ -1153,7 +1063,7 @@ fn test_hmac_sign_recovers_from_compound_fault() {
 // =========================================================================
 
 /// After a reset on `Hmac`, HMAC `sign` triggers `restore_partition` +
-/// `reopen_session_if_needed` + `refresh_from_masked` and recovers.
+/// `reopen_session_if_needed` + `restore_from_masked` and recovers.
 #[api_test]
 fn test_hmac_sign_recovers_after_reset() {
     let (_part, session, _ctx) = init_with_resiliency_and_session();
@@ -1307,7 +1217,7 @@ fn test_ecc_key_report_recovers_on_last_retry() {
 /// code.
 #[api_test]
 fn test_ecc_key_report_fails_after_all_retries_exhausted() {
-    for error in RETRYABLE_ERRORS {
+    for error in super::KEY_OP_RETRYABLE_ERRORS {
         let (_part, session, _ctx) = init_with_resiliency_and_session();
         let (priv_key, _pub_key) = generate_ecc_sign_key_pair(&session);
 
@@ -1388,7 +1298,7 @@ fn test_ecc_key_report_recovers_from_compound_fault() {
 
 /// After a reset on `AttestKey`, `generate_key_report` triggers
 /// `restore_partition` + `reopen_session_if_needed` +
-/// `refresh_from_masked` and recovers.
+/// `restore_from_masked` and recovers.
 #[api_test]
 fn test_ecc_key_report_recovers_after_reset() {
     let (_part, session, _ctx) = init_with_resiliency_and_session();
@@ -1503,6 +1413,49 @@ fn test_delete_key_pair_succeeds_after_reset() {
     );
 }
 
+/// After a reset, explicit `delete_key` on a non-session (token) ECC key pair succeeds.
+#[api_test]
+fn test_delete_non_session_key_pair_succeeds_after_reset() {
+    let (part, session, _ctx) = init_with_resiliency_and_session();
+
+    let priv_key_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Private)
+        .key_kind(HsmKeyKind::Ecc)
+        .ecc_curve(HsmEccCurve::P256)
+        .can_sign(true)
+        .is_session(false)
+        .build()
+        .expect("Failed to build ECC private key props");
+
+    let pub_key_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Public)
+        .key_kind(HsmKeyKind::Ecc)
+        .ecc_curve(HsmEccCurve::P256)
+        .can_verify(true)
+        .is_session(false)
+        .build()
+        .expect("Failed to build ECC public key props");
+
+    let mut algo = HsmEccKeyGenAlgo::default();
+    let (priv_key, pub_key) =
+        HsmKeyManager::generate_key_pair(&session, &mut algo, priv_key_props, pub_key_props)
+            .expect("Failed to generate non-session ECC key pair");
+
+    part.reset().expect("reset failed");
+
+    let result_priv = HsmKeyManager::delete_key(priv_key);
+    assert!(
+        result_priv.is_ok(),
+        "delete_key (private, non-session) should succeed after reset, got: {result_priv:?}"
+    );
+
+    let result_pub = HsmKeyManager::delete_key(pub_key);
+    assert!(
+        result_pub.is_ok(),
+        "delete_key (public, non-session) should succeed, got: {result_pub:?}"
+    );
+}
+
 /// Drop after a reset does not panic. The best-effort DDI delete may
 /// still be attempted (the epoch only becomes stale once another
 /// operation triggers `restore_partition`), but any retryable error is
@@ -1597,7 +1550,7 @@ fn test_delete_key_after_refresh_calls_ddi() {
     part.reset().expect("reset failed");
 
     // A sign operation triggers the resiliency retry loop which does
-    // restore_partition + reopen_session + refresh_from_masked.
+    // restore_partition + reopen_session + restore_from_masked.
     // After this, the key handle is current (epoch matches).
     let hash = hash_data(&session, b"refresh trigger");
     let mut sign_algo = HsmEccSignAlgo::default();
@@ -1698,7 +1651,7 @@ fn test_rsa_sign_recovers_on_last_retry() {
 /// `MAX_RETRIES + 1` consecutive calls.
 #[api_test]
 fn test_rsa_sign_fails_after_all_retries_exhausted() {
-    for error in RETRYABLE_ERRORS {
+    for error in super::KEY_OP_RETRYABLE_ERRORS {
         let (_part, session, _ctx) = init_with_resiliency_and_session();
         let (priv_key, _pub_key) = import_rsa_sign_key(&session);
 
@@ -1931,7 +1884,7 @@ fn test_rsa_decrypt_recovers_on_last_retry() {
 /// `MAX_RETRIES + 1` consecutive calls.
 #[api_test]
 fn test_rsa_decrypt_fails_after_all_retries_exhausted() {
-    for error in RETRYABLE_ERRORS {
+    for error in super::KEY_OP_RETRYABLE_ERRORS {
         let (_part, session, _ctx) = init_with_resiliency_and_session();
         let (priv_key, pub_key) = import_rsa_enc_key(&session);
 
@@ -2195,7 +2148,7 @@ fn test_hmac_verify_recovers_on_last_retry() {
 /// `MAX_RETRIES + 1` consecutive calls.
 #[api_test]
 fn test_hmac_verify_fails_after_all_retries_exhausted() {
-    for error in RETRYABLE_ERRORS {
+    for error in super::KEY_OP_RETRYABLE_ERRORS {
         let (_part, session, _ctx) = init_with_resiliency_and_session();
         let hmac_key = generate_hmac_key(&session);
         let data = b"test message for HMAC verify";
@@ -2366,7 +2319,7 @@ fn test_ecdh_derive_recovers_from_single_fault() {
 
         inject_fault(FaultRule::fail_nth(DdiOp::EcdhKeyExchange, 1, *error));
 
-        let result = ecdh_derive_secret(&session, &priv_key, &pub_key_b);
+        let result = ecdh_derive(&session, &priv_key, &pub_key_b);
         let after = op_call_count(DdiOp::EcdhKeyExchange);
         clear_faults();
 
@@ -2412,7 +2365,7 @@ fn test_ecdh_derive_recovers_on_last_retry() {
             *error,
         ));
 
-        let result = ecdh_derive_secret(&session, &priv_key, &pub_key_b);
+        let result = ecdh_derive(&session, &priv_key, &pub_key_b);
         let after = op_call_count(DdiOp::EcdhKeyExchange);
         clear_faults();
 
@@ -2445,7 +2398,7 @@ fn test_ecdh_derive_recovers_on_last_retry() {
 /// error for `MAX_RETRIES + 1` consecutive calls.
 #[api_test]
 fn test_ecdh_derive_fails_after_all_retries_exhausted() {
-    for error in RETRYABLE_ERRORS {
+    for error in super::KEY_OP_RETRYABLE_ERRORS {
         let (_part, session, _ctx) = init_with_resiliency_and_session();
         let (priv_key, _pub_key_a) = generate_ecc_derive_key_pair(&session, HsmEccCurve::P256);
         let (_priv_key_b, pub_key_b) = generate_ecc_derive_key_pair(&session, HsmEccCurve::P256);
@@ -2456,7 +2409,7 @@ fn test_ecdh_derive_fails_after_all_retries_exhausted() {
             *error,
         ));
 
-        let result = ecdh_derive_secret(&session, &priv_key, &pub_key_b);
+        let result = ecdh_derive(&session, &priv_key, &pub_key_b);
         clear_faults();
 
         assert!(
@@ -2482,7 +2435,7 @@ fn test_ecdh_derive_no_retry_without_resiliency() {
         DriverError::IoAborted,
     ));
 
-    let result = ecdh_derive_secret(&session, &priv_key, &pub_key_b);
+    let result = ecdh_derive(&session, &priv_key, &pub_key_b);
     let after = op_call_count(DdiOp::EcdhKeyExchange);
     clear_faults();
 
@@ -2516,7 +2469,7 @@ fn test_ecdh_derive_recovers_from_compound_fault() {
         FaultError::Driver(DriverError::IoAborted),
     ));
 
-    let result = ecdh_derive_secret(&session, &priv_key, &pub_key_b);
+    let result = ecdh_derive(&session, &priv_key, &pub_key_b);
     clear_faults();
 
     assert!(
@@ -2543,7 +2496,7 @@ fn test_ecdh_derive_recovers_after_reset() {
 
     inject_fault(FaultRule::reset_on_next(DdiOp::EcdhKeyExchange, 1));
 
-    let result = ecdh_derive_secret(&session, &priv_key, &pub_key_b);
+    let result = ecdh_derive(&session, &priv_key, &pub_key_b);
 
     let bk3_after = op_call_count(op);
     clear_faults();
@@ -2569,7 +2522,7 @@ fn test_ecdh_derive_fails_after_reset_without_resiliency() {
 
     inject_fault(FaultRule::reset_on_next(DdiOp::EcdhKeyExchange, 1));
 
-    let result = ecdh_derive_secret(&session, &priv_key, &pub_key_b);
+    let result = ecdh_derive(&session, &priv_key, &pub_key_b);
     clear_faults();
 
     assert!(
@@ -2586,7 +2539,7 @@ fn test_ecdh_derive_recovers_after_consecutive_reset() {
     let (_priv_key_b, pub_key_b) = generate_ecc_derive_key_pair(&session, HsmEccCurve::P256);
 
     inject_fault(FaultRule::reset_on_next(DdiOp::EcdhKeyExchange, 1));
-    let result1 = ecdh_derive_secret(&session, &priv_key, &pub_key_b);
+    let result1 = ecdh_derive(&session, &priv_key, &pub_key_b);
     clear_faults();
     assert!(
         result1.is_ok(),
@@ -2594,7 +2547,7 @@ fn test_ecdh_derive_recovers_after_consecutive_reset() {
     );
 
     inject_fault(FaultRule::reset_on_next(DdiOp::EcdhKeyExchange, 1));
-    let result2 = ecdh_derive_secret(&session, &priv_key, &pub_key_b);
+    let result2 = ecdh_derive(&session, &priv_key, &pub_key_b);
     clear_faults();
     assert!(
         result2.is_ok(),
@@ -2693,7 +2646,7 @@ fn test_hkdf_derive_recovers_on_last_retry() {
 /// for `MAX_RETRIES + 1` consecutive calls.
 #[api_test]
 fn test_hkdf_derive_fails_after_all_retries_exhausted() {
-    for error in RETRYABLE_ERRORS {
+    for error in super::KEY_OP_RETRYABLE_ERRORS {
         let (_part, session, _ctx) = init_with_resiliency_and_session();
         let shared_secret = setup_shared_secret(&session);
 
@@ -2935,7 +2888,7 @@ fn test_aes_unwrap_recovers_on_last_retry() {
 /// for `MAX_RETRIES + 1` consecutive calls.
 #[api_test]
 fn test_aes_unwrap_fails_after_all_retries_exhausted() {
-    for error in RETRYABLE_ERRORS {
+    for error in super::KEY_OP_RETRYABLE_ERRORS {
         let (_part, session, _ctx) = init_with_resiliency_and_session();
         let (unwrap_key, wrapped) = prepare_wrapped_aes_key(&session);
 
@@ -3173,7 +3126,7 @@ fn test_ecc_unwrap_recovers_on_last_retry() {
 /// error for `MAX_RETRIES + 1` consecutive calls.
 #[api_test]
 fn test_ecc_unwrap_fails_after_all_retries_exhausted() {
-    for error in RETRYABLE_ERRORS {
+    for error in super::KEY_OP_RETRYABLE_ERRORS {
         let (_part, session, _ctx) = init_with_resiliency_and_session();
         let (unwrap_key, wrapped) = prepare_wrapped_ecc_key(&session);
 
@@ -3400,7 +3353,7 @@ fn test_aes_xts_unwrap_recovers_from_single_fault() {
 /// loops, so exhausting all retries requires (MAX_RETRIES + 1)² faults.
 #[api_test]
 fn test_aes_xts_unwrap_fails_after_all_retries_exhausted() {
-    for error in RETRYABLE_ERRORS {
+    for error in super::KEY_OP_RETRYABLE_ERRORS {
         let (_part, session, _ctx) = init_with_resiliency_and_session();
         let (unwrap_key, wrapped) = prepare_wrapped_xts_key(&session);
 
@@ -3543,5 +3496,573 @@ fn test_aes_xts_unwrap_recovers_after_consecutive_reset() {
     assert!(
         result2.is_ok(),
         "Second AES-XTS unwrap should recover after reset"
+    );
+}
+
+// =========================================================================
+// AES-CBC decrypt — fault-injection tests
+// =========================================================================
+
+/// AES-CBC `decrypt` recovers from a single transient fault on
+/// `AesEncryptDecrypt` for retryable error codes, and fails immediately
+/// for non-retryable ones.
+#[api_test]
+fn test_aes_cbc_decrypt_recovers_from_single_fault() {
+    for error in &super::all_test_errors() {
+        let (_part, session, _ctx) = init_with_resiliency_and_session();
+        let key = generate_aes_key(&session);
+        let iv = [0u8; 16];
+        let plaintext = b"test data for encryption!!!!!!!";
+        let ciphertext = cbc_encrypt(&key, &iv, plaintext).expect("encrypt failed");
+
+        let before = op_call_count(DdiOp::AesEncryptDecrypt);
+
+        inject_fault(FaultRule::fail_next(DdiOp::AesEncryptDecrypt, 1, *error));
+
+        let result = cbc_decrypt(&key, &iv, &ciphertext);
+        let after = op_call_count(DdiOp::AesEncryptDecrypt);
+        clear_faults();
+
+        super::assert_retryable_outcome(
+            &result,
+            error,
+            is_key_op_retryable,
+            "single fault on AesEncryptDecrypt (decrypt)",
+        );
+
+        let expected = expected_op_calls(error, 1);
+        assert!(
+            after - before >= expected,
+            "single fault on AesEncryptDecrypt (decrypt): expected >= {expected} calls \
+             for {error:?}, got {}",
+            after - before,
+        );
+    }
+}
+
+/// AES-CBC `decrypt` recovers on the last retry.
+#[api_test]
+fn test_aes_cbc_decrypt_recovers_on_last_retry() {
+    for error in &super::all_test_errors() {
+        let (_part, session, _ctx) = init_with_resiliency_and_session();
+        let key = generate_aes_key(&session);
+        let iv = [0u8; 16];
+        let plaintext = b"test data for encryption!!!!!!!";
+        let ciphertext = cbc_encrypt(&key, &iv, plaintext).expect("encrypt failed");
+
+        inject_fault(FaultRule::fail_next(
+            DdiOp::AesEncryptDecrypt,
+            MAX_RETRIES,
+            *error,
+        ));
+
+        let result = cbc_decrypt(&key, &iv, &ciphertext);
+        clear_faults();
+
+        super::assert_retryable_outcome(
+            &result,
+            error,
+            is_key_op_retryable,
+            "last retry on AesEncryptDecrypt (decrypt)",
+        );
+    }
+}
+
+/// AES-CBC `decrypt` fails when all retries are exhausted.
+#[api_test]
+fn test_aes_cbc_decrypt_fails_after_all_retries_exhausted() {
+    for error in super::KEY_OP_RETRYABLE_ERRORS {
+        let (_part, session, _ctx) = init_with_resiliency_and_session();
+        let key = generate_aes_key(&session);
+        let iv = [0u8; 16];
+        let plaintext = b"test data for encryption!!!!!!!";
+        let ciphertext = cbc_encrypt(&key, &iv, plaintext).expect("encrypt failed");
+
+        inject_fault(FaultRule::fail_next(
+            DdiOp::AesEncryptDecrypt,
+            MAX_RETRIES + 1,
+            *error,
+        ));
+
+        let result = cbc_decrypt(&key, &iv, &ciphertext);
+        clear_faults();
+
+        assert!(
+            result.is_err(),
+            "AES-CBC decrypt should fail after exhausting all {MAX_RETRIES} \
+             retries with {error:?}, got: {result:?}"
+        );
+    }
+}
+
+/// Without resiliency, AES-CBC `decrypt` does not retry.
+#[api_test]
+fn test_aes_cbc_decrypt_no_retry_without_resiliency() {
+    let (_part, session) = init_without_resiliency_and_session();
+    let key = generate_aes_key(&session);
+    let iv = [0u8; 16];
+    let plaintext = b"test data for encryption!!!!!!!";
+    let ciphertext = cbc_encrypt(&key, &iv, plaintext).expect("encrypt failed");
+
+    inject_fault(FaultRule::fail_next(
+        DdiOp::AesEncryptDecrypt,
+        1,
+        DriverError::IoAborted,
+    ));
+
+    let result = cbc_decrypt(&key, &iv, &ciphertext);
+    clear_faults();
+
+    assert!(
+        result.is_err(),
+        "AES-CBC decrypt without resiliency should fail on IoAborted, \
+         got: {result:?}"
+    );
+}
+
+/// AES-CBC `decrypt` recovers from compound fault on
+/// AesEncryptDecrypt + InitBk3.
+#[api_test]
+fn test_aes_cbc_decrypt_recovers_from_compound_fault() {
+    if use_tpm() {
+        return;
+    }
+    let (_part, session, _ctx) = init_with_resiliency_and_session();
+    let key = generate_aes_key(&session);
+    let iv = [0u8; 16];
+    let plaintext = b"test data for encryption!!!!!!!";
+    let ciphertext = cbc_encrypt(&key, &iv, plaintext).expect("encrypt failed");
+
+    inject_fault(FaultRule::fail_next(
+        DdiOp::AesEncryptDecrypt,
+        1,
+        FaultError::Driver(DriverError::IoAborted),
+    ));
+    inject_fault(FaultRule::fail_next(
+        DdiOp::InitBk3,
+        1,
+        FaultError::Driver(DriverError::IoAborted),
+    ));
+
+    let result = cbc_decrypt(&key, &iv, &ciphertext);
+    clear_faults();
+
+    assert!(
+        result.is_ok(),
+        "AES-CBC decrypt should recover from compound faults on \
+         AesEncryptDecrypt + InitBk3, got: {result:?}"
+    );
+}
+
+// =========================================================================
+// AES-CBC decrypt — reset-triggered tests
+// =========================================================================
+
+/// After a reset on `AesEncryptDecrypt`, AES-CBC `decrypt` recovers.
+#[api_test]
+fn test_aes_cbc_decrypt_recovers_after_reset() {
+    let (_part, session, _ctx) = init_with_resiliency_and_session();
+    let key = generate_aes_key(&session);
+    let iv = [0u8; 16];
+    let plaintext = b"test data for encryption!!!!!!!";
+    let ciphertext = cbc_encrypt(&key, &iv, plaintext).expect("encrypt failed");
+
+    inject_fault(FaultRule::reset_on_next(DdiOp::AesEncryptDecrypt, 1));
+
+    let result = cbc_decrypt(&key, &iv, &ciphertext);
+    clear_faults();
+
+    assert!(
+        result.is_ok(),
+        "AES-CBC decrypt should recover after reset, got: {result:?}"
+    );
+}
+
+/// Without resiliency, AES-CBC `decrypt` does not recover from a reset.
+#[api_test]
+fn test_aes_cbc_decrypt_fails_after_reset_without_resiliency() {
+    let (_part, session) = init_without_resiliency_and_session();
+    let key = generate_aes_key(&session);
+    let iv = [0u8; 16];
+    let plaintext = b"test data for encryption!!!!!!!";
+    let ciphertext = cbc_encrypt(&key, &iv, plaintext).expect("encrypt failed");
+
+    inject_fault(FaultRule::reset_on_next(DdiOp::AesEncryptDecrypt, 1));
+
+    let result = cbc_decrypt(&key, &iv, &ciphertext);
+    clear_faults();
+
+    assert!(
+        result.is_err(),
+        "AES-CBC decrypt without resiliency should fail after reset, \
+         got: {result:?}"
+    );
+}
+
+/// Two consecutive resets on `AesEncryptDecrypt` during decrypt
+/// are each followed by a successful recovery.
+#[api_test]
+fn test_aes_cbc_decrypt_recovers_after_consecutive_reset() {
+    let (_part, session, _ctx) = init_with_resiliency_and_session();
+    let key = generate_aes_key(&session);
+    let iv = [0u8; 16];
+    let plaintext = b"test data for encryption!!!!!!!";
+    let ciphertext = cbc_encrypt(&key, &iv, plaintext).expect("encrypt failed");
+
+    inject_fault(FaultRule::reset_on_next(DdiOp::AesEncryptDecrypt, 1));
+    let result1 = cbc_decrypt(&key, &iv, &ciphertext);
+    clear_faults();
+    assert!(
+        result1.is_ok(),
+        "First AES-CBC decrypt should recover after reset"
+    );
+
+    inject_fault(FaultRule::reset_on_next(DdiOp::AesEncryptDecrypt, 1));
+    let result2 = cbc_decrypt(&key, &iv, &ciphertext);
+    clear_faults();
+    assert!(
+        result2.is_ok(),
+        "Second AES-CBC decrypt should recover after reset"
+    );
+}
+
+// =========================================================================
+// RSA key attestation — fault-injection tests
+// =========================================================================
+
+/// Helper to generate an RSA key report (attestation).
+fn generate_rsa_key_report(key: &HsmRsaPrivateKey) -> HsmResult<Vec<u8>> {
+    let report_data = [0u8; 64];
+    let report_size = HsmKeyManager::generate_key_report(key, &report_data, None)?;
+    let mut report_buffer = vec![0u8; report_size];
+    let actual_size =
+        HsmKeyManager::generate_key_report(key, &report_data, Some(&mut report_buffer))?;
+    report_buffer.truncate(actual_size);
+    Ok(report_buffer)
+}
+
+/// RSA key attestation recovers from a single transient fault on
+/// `AttestKey` for retryable error codes, and fails immediately
+/// for non-retryable ones.
+#[api_test]
+fn test_rsa_key_report_recovers_from_single_fault() {
+    for error in &super::all_test_errors() {
+        let (_part, session, _ctx) = init_with_resiliency_and_session();
+        let (priv_key, _pub_key) = import_rsa_sign_key(&session);
+
+        let before = op_call_count(DdiOp::AttestKey);
+
+        inject_fault(FaultRule::fail_next(DdiOp::AttestKey, 1, *error));
+
+        let result = generate_rsa_key_report(&priv_key);
+        let after = op_call_count(DdiOp::AttestKey);
+        clear_faults();
+
+        super::assert_retryable_outcome(
+            &result,
+            error,
+            is_key_op_retryable,
+            "single fault on AttestKey (RSA)",
+        );
+
+        let expected = expected_op_calls(error, 1);
+        assert!(
+            after - before >= expected,
+            "single fault on AttestKey (RSA): expected >= {expected} calls \
+             for {error:?}, got {}",
+            after - before,
+        );
+    }
+}
+
+/// RSA key attestation recovers on the last retry.
+#[api_test]
+fn test_rsa_key_report_recovers_on_last_retry() {
+    for error in &super::all_test_errors() {
+        let (_part, session, _ctx) = init_with_resiliency_and_session();
+        let (priv_key, _pub_key) = import_rsa_sign_key(&session);
+
+        inject_fault(FaultRule::fail_next(DdiOp::AttestKey, MAX_RETRIES, *error));
+
+        let result = generate_rsa_key_report(&priv_key);
+        clear_faults();
+
+        super::assert_retryable_outcome(
+            &result,
+            error,
+            is_key_op_retryable,
+            "last retry on AttestKey (RSA)",
+        );
+    }
+}
+
+/// RSA key attestation fails when all retries are exhausted.
+#[api_test]
+fn test_rsa_key_report_fails_after_all_retries_exhausted() {
+    for error in super::KEY_OP_RETRYABLE_ERRORS {
+        let (_part, session, _ctx) = init_with_resiliency_and_session();
+        let (priv_key, _pub_key) = import_rsa_sign_key(&session);
+
+        inject_fault(FaultRule::fail_next(
+            DdiOp::AttestKey,
+            MAX_RETRIES + 1,
+            *error,
+        ));
+
+        let result = generate_rsa_key_report(&priv_key);
+        clear_faults();
+
+        assert!(
+            result.is_err(),
+            "RSA key attestation should fail after exhausting retries \
+             with {error:?}, got: {result:?}"
+        );
+    }
+}
+
+/// Without resiliency, RSA key attestation does not retry.
+#[api_test]
+fn test_rsa_key_report_no_retry_without_resiliency() {
+    let (_part, session) = init_without_resiliency_and_session();
+    let (priv_key, _pub_key) = import_rsa_sign_key(&session);
+
+    inject_fault(FaultRule::fail_next(
+        DdiOp::AttestKey,
+        1,
+        DriverError::IoAborted,
+    ));
+
+    let result = generate_rsa_key_report(&priv_key);
+    clear_faults();
+
+    assert!(
+        result.is_err(),
+        "RSA key attestation without resiliency should fail on IoAborted, \
+         got: {result:?}"
+    );
+}
+
+/// RSA key attestation recovers from compound fault on
+/// AttestKey + InitBk3.
+#[api_test]
+fn test_rsa_key_report_recovers_from_compound_fault() {
+    if use_tpm() {
+        return;
+    }
+    let (_part, session, _ctx) = init_with_resiliency_and_session();
+    let (priv_key, _pub_key) = import_rsa_sign_key(&session);
+
+    inject_fault(FaultRule::fail_next(
+        DdiOp::AttestKey,
+        1,
+        FaultError::Driver(DriverError::IoAborted),
+    ));
+    inject_fault(FaultRule::fail_next(
+        DdiOp::InitBk3,
+        1,
+        FaultError::Driver(DriverError::IoAborted),
+    ));
+
+    let result = generate_rsa_key_report(&priv_key);
+    clear_faults();
+
+    assert!(
+        result.is_ok(),
+        "RSA key attestation should recover from compound faults, got: {result:?}"
+    );
+}
+
+// =========================================================================
+// RSA key attestation — reset-triggered tests
+// =========================================================================
+
+/// After a reset, RSA key attestation recovers.
+#[api_test]
+fn test_rsa_key_report_recovers_after_reset() {
+    let (_part, session, _ctx) = init_with_resiliency_and_session();
+    let (priv_key, _pub_key) = import_rsa_sign_key(&session);
+
+    inject_fault(FaultRule::reset_on_next(DdiOp::AttestKey, 1));
+
+    let result = generate_rsa_key_report(&priv_key);
+    clear_faults();
+
+    assert!(
+        result.is_ok(),
+        "RSA key attestation should recover after reset, got: {result:?}"
+    );
+}
+
+/// Without resiliency, RSA key attestation does not recover from a reset.
+#[api_test]
+fn test_rsa_key_report_fails_after_reset_without_resiliency() {
+    let (_part, session) = init_without_resiliency_and_session();
+    let (priv_key, _pub_key) = import_rsa_sign_key(&session);
+
+    inject_fault(FaultRule::reset_on_next(DdiOp::AttestKey, 1));
+
+    let result = generate_rsa_key_report(&priv_key);
+    clear_faults();
+
+    assert!(
+        result.is_err(),
+        "RSA key attestation without resiliency should fail after reset, \
+         got: {result:?}"
+    );
+}
+
+/// Two consecutive resets on `AttestKey` for RSA key are each
+/// followed by a successful recovery.
+#[api_test]
+fn test_rsa_key_report_recovers_after_consecutive_reset() {
+    let (_part, session, _ctx) = init_with_resiliency_and_session();
+    let (priv_key, _pub_key) = import_rsa_sign_key(&session);
+
+    inject_fault(FaultRule::reset_on_next(DdiOp::AttestKey, 1));
+    let result1 = generate_rsa_key_report(&priv_key);
+    clear_faults();
+    assert!(
+        result1.is_ok(),
+        "First RSA key attestation should recover after reset"
+    );
+
+    inject_fault(FaultRule::reset_on_next(DdiOp::AttestKey, 1));
+    let result2 = generate_rsa_key_report(&priv_key);
+    clear_faults();
+    assert!(
+        result2.is_ok(),
+        "Second RSA key attestation should recover after reset"
+    );
+}
+
+// =========================================================================
+// AES-CBC streaming encrypt — fault-injection tests
+// =========================================================================
+
+/// AES-CBC streaming encrypt recovers from a single transient fault
+/// on `AesEncryptDecrypt` during a multi-chunk operation.
+#[api_test]
+fn test_aes_cbc_streaming_encrypt_recovers_from_single_fault() {
+    let (_part, session, _ctx) = init_with_resiliency_and_session();
+    let key = generate_aes_key(&session);
+    let iv = [0u8; 16];
+    // Two 16-byte chunks → each triggers a separate DDI call.
+    let chunks: &[&[u8]] = &[b"chunk one 16byte", b"chunk two 16byte"];
+
+    inject_fault(FaultRule::fail_next(
+        DdiOp::AesEncryptDecrypt,
+        1,
+        FaultError::Driver(DriverError::IoAborted),
+    ));
+
+    let result = cbc_streaming_encrypt(&key, &iv, chunks);
+    clear_faults();
+
+    assert!(
+        result.is_ok(),
+        "Streaming AES-CBC encrypt should recover from single fault, \
+         got: {result:?}"
+    );
+}
+
+/// AES-CBC streaming encrypt recovers after a reset during a
+/// multi-chunk operation.
+#[api_test]
+fn test_aes_cbc_streaming_encrypt_recovers_after_reset() {
+    let (_part, session, _ctx) = init_with_resiliency_and_session();
+    let key = generate_aes_key(&session);
+    let iv = [0u8; 16];
+    let chunks: &[&[u8]] = &[b"chunk one 16byte", b"chunk two 16byte"];
+
+    inject_fault(FaultRule::reset_on_next(DdiOp::AesEncryptDecrypt, 1));
+
+    let result = cbc_streaming_encrypt(&key, &iv, chunks);
+    clear_faults();
+
+    assert!(
+        result.is_ok(),
+        "Streaming AES-CBC encrypt should recover after reset, \
+         got: {result:?}"
+    );
+}
+
+/// Without resiliency, streaming AES-CBC encrypt does not retry.
+#[api_test]
+fn test_aes_cbc_streaming_encrypt_no_retry_without_resiliency() {
+    let (_part, session) = init_without_resiliency_and_session();
+    let key = generate_aes_key(&session);
+    let iv = [0u8; 16];
+    let chunks: &[&[u8]] = &[b"chunk one 16byte", b"chunk two 16byte"];
+
+    inject_fault(FaultRule::fail_next(
+        DdiOp::AesEncryptDecrypt,
+        1,
+        DriverError::IoAborted,
+    ));
+
+    let result = cbc_streaming_encrypt(&key, &iv, chunks);
+    clear_faults();
+
+    assert!(
+        result.is_err(),
+        "Streaming AES-CBC encrypt without resiliency should fail, \
+         got: {result:?}"
+    );
+}
+
+// =========================================================================
+// AES-CBC streaming decrypt — fault-injection tests
+// =========================================================================
+
+/// AES-CBC streaming decrypt recovers from a single transient fault.
+#[api_test]
+fn test_aes_cbc_streaming_decrypt_recovers_from_single_fault() {
+    let (_part, session, _ctx) = init_with_resiliency_and_session();
+    let key = generate_aes_key(&session);
+    let iv = [0u8; 16];
+    let plaintext = b"chunk one 16bytechunk two 16byte";
+    let ciphertext = cbc_encrypt(&key, &iv, plaintext).expect("encrypt failed");
+
+    // Split ciphertext into 16-byte chunks for streaming decrypt.
+    let mid = 16;
+    let chunks: &[&[u8]] = &[&ciphertext[..mid], &ciphertext[mid..]];
+
+    inject_fault(FaultRule::fail_next(
+        DdiOp::AesEncryptDecrypt,
+        1,
+        FaultError::Driver(DriverError::IoAborted),
+    ));
+
+    let result = cbc_streaming_decrypt(&key, &iv, chunks);
+    clear_faults();
+
+    assert!(
+        result.is_ok(),
+        "Streaming AES-CBC decrypt should recover from single fault, \
+         got: {result:?}"
+    );
+}
+
+/// AES-CBC streaming decrypt recovers after a reset.
+#[api_test]
+fn test_aes_cbc_streaming_decrypt_recovers_after_reset() {
+    let (_part, session, _ctx) = init_with_resiliency_and_session();
+    let key = generate_aes_key(&session);
+    let iv = [0u8; 16];
+    let plaintext = b"chunk one 16bytechunk two 16byte";
+    let ciphertext = cbc_encrypt(&key, &iv, plaintext).expect("encrypt failed");
+
+    let mid = 16;
+    let chunks: &[&[u8]] = &[&ciphertext[..mid], &ciphertext[mid..]];
+
+    inject_fault(FaultRule::reset_on_next(DdiOp::AesEncryptDecrypt, 1));
+
+    let result = cbc_streaming_decrypt(&key, &iv, chunks);
+    clear_faults();
+
+    assert!(
+        result.is_ok(),
+        "Streaming AES-CBC decrypt should recover after reset, \
+         got: {result:?}"
     );
 }

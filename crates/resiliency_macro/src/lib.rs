@@ -405,6 +405,8 @@ fn expand_retry_key_gen(
     let vis = &item.vis;
     let attrs = &item.attrs;
     let body = &item.block;
+    let fn_name = &item.sig.ident;
+    let inner_name = syn::Ident::new(&format!("__res_{fn_name}"), fn_name.span());
     let session_ident = syn::Ident::new(&args.session, proc_macro2::Span::call_site());
 
     let max_retries =
@@ -414,23 +416,27 @@ fn expand_retry_key_gen(
         quote! { crate::resiliency::BACKOFF_BASE_MS },
     );
 
-    // Analyze parameters to generate reborrowing / cloning inside the
-    // retry closure so that `FnMut` captures work correctly.
+    // Build the inner function with the original params and return type.
+    let inner_generics = &item.sig.generics;
+    let inner_params = &item.sig.inputs;
+    let inner_ret = &item.sig.output;
+
+    // Build call arguments for forwarding to the inner function.
     let skip = [args.session.as_str()];
-    let (mut_sig, reborrow_stmts) = analyze_params_for_retry(&item.sig, &skip);
+    let (mut_sig, call_args, retry_call_args) = build_inner_fn_call_args(&item.sig, &skip);
 
     Ok(quote! {
+        fn #inner_name #inner_generics (#inner_params) #inner_ret
+            #body
+
         #(#attrs)*
         #vis #mut_sig {
             let __partition = #session_ident.partition();
             if !__partition.resiliency_enabled() {
-                #body
+                #inner_name(#call_args)
             } else {
                 crate::resiliency::execute_key_gen_with_retry(
-                    || {
-                        #reborrow_stmts
-                        #body
-                    },
+                    || #inner_name(#retry_call_args),
                     #session_ident,
                     &__partition,
                     #max_retries,
@@ -463,11 +469,11 @@ struct RetryKeyOpArgs {
 /// 1. Restores the partition (re-establishes credentials).
 /// 2. Reopens the session if its epoch is stale.
 /// 3. Unmasks the key to refresh its device handle (via
-///    `key.refresh_from_masked()`).
+///    `key.restore_from_masked()`).
 /// 4. Retries the operation.
 ///
 /// The named `key` parameter must expose `.session()` and
-/// `.refresh_from_masked()` methods (all HSM key types do).
+/// `.restore_from_masked()` methods (all HSM key types do).
 ///
 /// # Attribute parameters
 ///
@@ -512,6 +518,8 @@ fn expand_retry_key_op(
     let vis = &item.vis;
     let attrs = &item.attrs;
     let body = &item.block;
+    let fn_name = &item.sig.ident;
+    let inner_name = syn::Ident::new(&format!("__res_{fn_name}"), fn_name.span());
     let key_ident = syn::Ident::new(&args.key, proc_macro2::Span::call_site());
 
     let max_retries =
@@ -521,28 +529,32 @@ fn expand_retry_key_op(
         quote! { crate::resiliency::BACKOFF_BASE_MS },
     );
 
-    // Analyze parameters to generate reborrowing / cloning inside the
-    // retry closure so that `FnMut` captures work correctly.
+    // Build the inner function with the original params and return type.
+    let inner_generics = &item.sig.generics;
+    let inner_params = &item.sig.inputs;
+    let inner_ret = &item.sig.output;
+
+    // Build call arguments for forwarding to the inner function.
     let skip = [args.key.as_str()];
-    let (mut_sig, reborrow_stmts) = analyze_params_for_retry(&item.sig, &skip);
+    let (mut_sig, call_args, retry_call_args) = build_inner_fn_call_args(&item.sig, &skip);
 
     Ok(quote! {
+        fn #inner_name #inner_generics (#inner_params) #inner_ret
+            #body
+
         #(#attrs)*
         #vis #mut_sig {
             let __session = #key_ident.session();
             let __partition = __session.partition();
             if !__partition.resiliency_enabled() {
-                #body
+                #inner_name(#call_args)
             } else {
                 crate::resiliency::execute_key_op_with_retry(
-                    || {
-                        #reborrow_stmts
-                        #body
-                    },
+                    || #inner_name(#retry_call_args),
                     &__session,
                     &__partition,
-                    || #key_ident.refresh_from_masked(),
-                    || #key_ident.last_refresh_epoch(),
+                    || #key_ident.restore_from_masked(),
+                    || #key_ident.last_restore_epoch(),
                     #max_retries,
                     #backoff_base_ms,
                 )
@@ -554,6 +566,63 @@ fn expand_retry_key_op(
 // -------------------------------------
 // Parameter analysis for retry closures
 // -------------------------------------
+
+/// Builds the call-site argument lists for forwarding to a `__res_<name>`
+/// inner function.
+///
+/// Returns:
+/// 1. The outer function's signature (with `Option<&mut T>` params made
+///    `mut`).
+/// 2. `call_args` — token stream for the non-retry (direct) call.
+/// 3. `retry_call_args` — token stream for calls inside the retry closure.
+///    `Option<&mut T>` params use `.as_deref_mut()` and by-value params use
+///    `.clone()` so the closure can be called multiple times.
+fn build_inner_fn_call_args(
+    sig: &syn::Signature,
+    skip_idents: &[&str],
+) -> (
+    syn::Signature,
+    proc_macro2::TokenStream,
+    proc_macro2::TokenStream,
+) {
+    let mut new_sig = sig.clone();
+    let mut call_args = Vec::<proc_macro2::TokenStream>::new();
+    let mut retry_call_args = Vec::<proc_macro2::TokenStream>::new();
+
+    for input in &mut new_sig.inputs {
+        let syn::FnArg::Typed(pat_type) = input else {
+            continue;
+        };
+
+        let ident = match pat_type.pat.as_ref() {
+            syn::Pat::Ident(pat_ident) => pat_ident.ident.clone(),
+            _ => continue,
+        };
+
+        let ty = &*pat_type.ty;
+
+        if is_option_mut_ref(ty) {
+            // Make the binding `mut` so `.as_deref_mut()` compiles.
+            if let syn::Pat::Ident(ref mut pat_ident) = *pat_type.pat {
+                pat_ident.mutability = Some(syn::token::Mut::default());
+            }
+            call_args.push(quote! { #ident });
+            retry_call_args.push(quote! { #ident.as_deref_mut() });
+        } else if !is_reference_type(ty) && !skip_idents.iter().any(|s| ident == s) {
+            // By-value non-reference parameter — clone for retry.
+            call_args.push(quote! { #ident });
+            retry_call_args.push(quote! { #ident.clone() });
+        } else {
+            // Reference or skipped parameter — pass through directly.
+            call_args.push(quote! { #ident });
+            retry_call_args.push(quote! { #ident });
+        }
+    }
+
+    let call_tokens = quote! { #(#call_args),* };
+    let retry_tokens = quote! { #(#retry_call_args),* };
+    (new_sig, call_tokens, retry_tokens)
+}
 
 /// Returns `true` when the type looks like `Option<&mut T>` in the AST.
 ///
@@ -579,65 +648,6 @@ fn is_option_mut_ref(ty: &syn::Type) -> bool {
 /// Returns `true` when the type is a reference (`&T` or `&mut T`).
 fn is_reference_type(ty: &syn::Type) -> bool {
     matches!(ty, syn::Type::Reference(_))
-}
-
-/// Analyzes the function signature and returns:
-///
-/// 1. A modified signature where `Option<&mut T>` parameters are made `mut`
-///    (needed so the closure can call `.as_deref_mut()` on them).
-/// 2. A token stream of `let` reborrowing / cloning statements to insert
-///    at the top of the retry closure body.
-///
-/// Parameters whose names appear in `skip_idents` (the session or key param)
-/// and `self` receivers are excluded from analysis.
-fn analyze_params_for_retry(
-    sig: &syn::Signature,
-    skip_idents: &[&str],
-) -> (syn::Signature, proc_macro2::TokenStream) {
-    let mut new_sig = sig.clone();
-    let mut stmts = Vec::<proc_macro2::TokenStream>::new();
-
-    for input in &mut new_sig.inputs {
-        let syn::FnArg::Typed(pat_type) = input else {
-            // Receiver (`self`, `&self`, `&mut self`) — skip.
-            continue;
-        };
-
-        // Extract the identifier from the pattern if possible.
-        let ident = match pat_type.pat.as_ref() {
-            syn::Pat::Ident(pat_ident) => pat_ident.ident.clone(),
-            _ => continue,
-        };
-
-        // Skip the session/key parameter that the caller handles separately.
-        if skip_idents.iter().any(|s| ident == s) {
-            continue;
-        }
-
-        let ty = &*pat_type.ty;
-
-        if is_option_mut_ref(ty) {
-            // Make the binding `mut` so `.as_deref_mut()` compiles.
-            if let syn::Pat::Ident(ref mut pat_ident) = *pat_type.pat {
-                pat_ident.mutability = Some(syn::token::Mut::default());
-            }
-            // Inside the closure: shadow with a fresh reborrow.
-            stmts.push(quote! {
-                let #ident = #ident.as_deref_mut();
-            });
-        } else if !is_reference_type(ty) {
-            // By-value non-reference parameter — clone it so the original
-            // stays available for subsequent retry iterations.
-            stmts.push(quote! {
-                let #ident = #ident.clone();
-            });
-        }
-        // Reference parameters (&T / &mut T) are automatically reborrowed
-        // by the closure and need no special handling.
-    }
-
-    let reborrow_block = quote! { #(#stmts)* };
-    (new_sig, reborrow_block)
 }
 
 // -------------------------

@@ -6,6 +6,62 @@
 
 use azihsm_api::*;
 
+use crate::utils::partition::*;
+use crate::utils::resiliency::*;
+
+// Partition-init helpers
+
+/// Open and init a partition with resiliency enabled, open a session,
+/// and return all handles plus the RAII cleanup context.
+pub(super) fn init_with_resiliency_and_session() -> (HsmPartition, HsmSession, ResiliencyTestCtx) {
+    let list = HsmPartitionManager::partition_info_list();
+    assert!(!list.is_empty(), "No partitions found.");
+    let part =
+        HsmPartitionManager::open_partition(&list[0].path).expect("Failed to open partition");
+    part.reset().expect("Partition reset failed");
+
+    let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
+    let (obk_info, pota_endorsement) = make_init_params(&part);
+    let (resiliency_config, ctx) = make_resiliency_config(&part);
+    part.init(
+        creds,
+        None,
+        None,
+        obk_info,
+        pota_endorsement,
+        Some(resiliency_config),
+    )
+    .expect("Partition init failed");
+
+    let rev = part.api_rev_range().max();
+    let session = part
+        .open_session(rev, &creds, None)
+        .expect("Failed to open session");
+
+    (part, session, ctx)
+}
+
+/// Open and init a partition without resiliency, open a session.
+pub(super) fn init_without_resiliency_and_session() -> (HsmPartition, HsmSession) {
+    let list = HsmPartitionManager::partition_info_list();
+    assert!(!list.is_empty(), "No partitions found.");
+    let part =
+        HsmPartitionManager::open_partition(&list[0].path).expect("Failed to open partition");
+    part.reset().expect("Partition reset failed");
+
+    let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
+    let (obk_info, pota_endorsement) = make_init_params(&part);
+    part.init(creds, None, None, obk_info, pota_endorsement, None)
+        .expect("Partition init failed");
+
+    let rev = part.api_rev_range().max();
+    let session = part
+        .open_session(rev, &creds, None)
+        .expect("Failed to open session");
+
+    (part, session)
+}
+
 // Key-generation helpers
 
 /// Generate an AES-256 session key for encryption/decryption tests.
@@ -83,7 +139,7 @@ pub(super) fn ecdh_derive(
     session: &HsmSession,
     priv_key: &HsmEccPrivateKey,
     peer_pub_key: &HsmEccPublicKey,
-) -> HsmGenericSecretKey {
+) -> HsmResult<HsmGenericSecretKey> {
     let pub_key_der = peer_pub_key
         .pub_key_der_vec()
         .expect("Failed to get peer public key DER");
@@ -101,7 +157,6 @@ pub(super) fn ecdh_derive(
         .build()
         .expect("Failed to build secret key props");
     HsmKeyManager::derive_key(session, &mut algo, priv_key, secret_props)
-        .expect("Failed to derive ECDH shared secret")
 }
 
 // Crypto-operation helpers
@@ -145,5 +200,51 @@ pub(super) fn cbc_decrypt(key: &HsmAesKey, iv: &[u8], ciphertext: &[u8]) -> HsmR
         HsmDecrypter::decrypt(&mut algo, key, ciphertext, Some(&mut out))?
     };
     out.truncate(written);
+    Ok(out)
+}
+
+/// AES-CBC streaming encrypt: sends data in multiple chunks.
+pub(super) fn cbc_streaming_encrypt(
+    key: &HsmAesKey,
+    iv: &[u8],
+    chunks: &[&[u8]],
+) -> HsmResult<Vec<u8>> {
+    let algo = HsmAesCbcAlgo::with_padding(iv.to_vec()).expect("Failed to create AES-CBC algo");
+    let mut ctx =
+        HsmEncrypter::encrypt_init(algo, key.clone()).expect("Failed to init streaming encrypt");
+    let mut out = Vec::new();
+    for chunk in chunks {
+        let needed = ctx.update(chunk, None)?;
+        let mut buf = vec![0u8; needed];
+        let written = ctx.update(chunk, Some(&mut buf))?;
+        out.extend_from_slice(&buf[..written]);
+    }
+    let needed = ctx.finish(None)?;
+    let mut buf = vec![0u8; needed];
+    let written = ctx.finish(Some(&mut buf))?;
+    out.extend_from_slice(&buf[..written]);
+    Ok(out)
+}
+
+/// AES-CBC streaming decrypt: sends data in multiple chunks.
+pub(super) fn cbc_streaming_decrypt(
+    key: &HsmAesKey,
+    iv: &[u8],
+    chunks: &[&[u8]],
+) -> HsmResult<Vec<u8>> {
+    let algo = HsmAesCbcAlgo::with_padding(iv.to_vec()).expect("Failed to create AES-CBC algo");
+    let mut ctx =
+        HsmDecrypter::decrypt_init(algo, key.clone()).expect("Failed to init streaming decrypt");
+    let mut out = Vec::new();
+    for chunk in chunks {
+        let needed = ctx.update(chunk, None)?;
+        let mut buf = vec![0u8; needed];
+        let written = ctx.update(chunk, Some(&mut buf))?;
+        out.extend_from_slice(&buf[..written]);
+    }
+    let needed = ctx.finish(None)?;
+    let mut buf = vec![0u8; needed];
+    let written = ctx.finish(Some(&mut buf))?;
+    out.extend_from_slice(&buf[..written]);
     Ok(out)
 }

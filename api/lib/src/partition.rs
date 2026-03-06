@@ -10,7 +10,7 @@
 use std::sync::Arc;
 
 use azihsm_ddi::DdiDev;
-use parking_lot::RwLock;
+use parking_lot::*;
 use resiliency_macro::resiliency_open_part;
 use tracing::*;
 
@@ -327,8 +327,17 @@ impl HsmPartitionManager {
 ///
 /// A thread-safe handle to an open HSM partition. Provides access to partition
 /// operations and metadata through an internal `Arc<RwLock<HsmPartitionInner>>`.
+///
+/// The `key_ops_lock` is a lightweight RwLock that prevents the ABA problem
+/// during resiliency events.  Key operations acquire a read lock around the
+/// epoch-check + DDI call, while restore/refresh paths acquire the write
+/// lock. This guarantees no handle reassignment can occur while any thread is
+/// mid-operation.
 #[derive(Debug, Clone)]
-pub struct HsmPartition(Arc<RwLock<HsmPartitionInner>>);
+pub struct HsmPartition {
+    inner: Arc<RwLock<HsmPartitionInner>>,
+    key_ops_lock: Arc<RwLock<()>>,
+}
 
 impl HsmPartition {
     /// Creates a new HSM partition handle.
@@ -353,16 +362,19 @@ impl HsmPartition {
         hardware_ver: String,
         pci_info: String,
     ) -> Self {
-        Self(Arc::new(RwLock::new(HsmPartitionInner::new(
-            dev,
-            api_rev_range,
-            path,
-            part_type,
-            driver_ver,
-            firmware_ver,
-            hardware_ver,
-            pci_info,
-        ))))
+        Self {
+            inner: Arc::new(RwLock::new(HsmPartitionInner::new(
+                dev,
+                api_rev_range,
+                path,
+                part_type,
+                driver_ver,
+                firmware_ver,
+                hardware_ver,
+                pci_info,
+            ))),
+            key_ops_lock: Arc::new(RwLock::new(())),
+        }
     }
 
     /// Initializes the HSM partition with application credentials and master keys.
@@ -419,19 +431,49 @@ impl HsmPartition {
                 &pota_endorsement,
                 resiliency_config.as_ref(),
             )
-        })?;
+        });
+
+        // Resolve the BMK, MOBK, and POTA endorsement to cache.
+        //
+        // On success: use the values returned by the device.
+        //
+        // On "credentials already established" (another thread or
+        // process already initialized this partition): read the BMK
+        // from resiliency storage (persisted by the successful init),
+        // use empty MOBK (not returned by the device in this case),
+        // and keep the caller's original POTA endorsement (the
+        // callback will re-sign on the next restore anyway).
+        //
+        // On any other error: propagate immediately.
+        let (init_bmk, init_mobk, committed_pota) = match result {
+            // Init success - cache the BMK, MOBK, and POTA endorsement returned by the device.
+            Ok(result) => (
+                result.bmk,
+                result.mobk,
+                HsmPotaEndorsement::new(
+                    pota_endorsement.source(),
+                    Some(result.pota_endorsement_data),
+                ),
+            ),
+            // Credentials are already established when another thread/process beat us to init — read BMK from storage and proceed with restore flow to sync state and refresh credentials.
+            Err(err) if is_credentials_already_established(&err) => {
+                let bmk = resiliency_config
+                    .as_ref()
+                    .map(Self::read_bmk_from_storage)
+                    .unwrap_or_default();
+                (bmk, Vec::new(), pota_endorsement)
+            }
+            // Any other error is propagated to the caller.
+            Err(err) => return Err(err),
+        };
 
         // Atomically set masked keys AND resiliency state in a single
         // WRITE, still under the resiliency lock so no concurrent
         // restore_partition can observe a half-initialized partition.
         let mut inner = self.inner().write();
-        inner.set_masked_keys(result.bmk, result.mobk);
+        inner.set_masked_keys(init_bmk, init_mobk);
 
         if let Some(config) = resiliency_config {
-            let committed_pota = HsmPotaEndorsement::new(
-                pota_endorsement.source(),
-                Some(result.pota_endorsement_data),
-            );
             let resiliency_state = ResiliencyState::new(config, creds, obk_config, committed_pota);
             inner.set_resiliency_state(resiliency_state);
         }
@@ -469,13 +511,6 @@ impl HsmPartition {
     /// the operation is retried with `restore_partition` (credential
     /// re-establishment) and exponential backoff.
     ///
-    /// Retryable errors:
-    /// - [`HsmError::IoAborted`]
-    /// - [`HsmError::IoAbortInProgress`]
-    /// - [`HsmError::DeviceNotReady`]
-    /// - [`HsmError::CredentialsNotEstablished`]
-    /// - [`HsmError::NonceMismatch`]
-    /// - [`HsmError::PartitionNotProvisioned`]
     #[instrument(skip_all, err, fields(path = self.path().as_str()))]
     pub fn open_session(
         &self,
@@ -522,30 +557,19 @@ impl HsmPartition {
         let mut iter = 0u32;
 
         while is_open_session_retryable_error(&result) && iter < MAX_RETRIES {
-            // Exponential backoff.
             apply_backoff(iter, BACKOFF_BASE_MS, BACKOFF_JITTER_MS);
 
             // Re-establish partition credentials before retrying open_session.
             match self.restore_partition() {
-                Err(HsmError::RestorePartitionFailed) => {
-                    warn!("RestorePartitionFailed during open_session retry.");
-                }
-                Err(err) => {
-                    error!(?err, "restore_partition failed fatally.");
-                    return Err(err);
-                }
                 Ok(()) => {
                     result =
                         self.with_dev(|dev| ddi::open_session(dev, api_rev, credentials, seed));
                 }
+                Err(_) => {
+                    // Restore_partition failed during open_session retry.
+                }
             }
             iter += 1;
-        }
-
-        if let Err(ref err) = result {
-            if iter > 0 {
-                error!(?err, retries = iter, "open_session failed after retries.");
-            }
         }
 
         result
@@ -565,28 +589,22 @@ impl HsmPartition {
     /// 5. Re-establish credentials via `ddi::init_part_raw` — the
     ///    bare DDI call without the retry macro.  `resiliency_config`
     ///    is passed so that `init_part_raw` can re-endorse POTA
-    ///    (via callback) when the source is `Caller`. Explicit BMK
+    ///    (via callback) when the source is `Caller`.  Explicit BMK
     ///    and MUK from storage are forwarded so that
     ///    `resolve_cached_bmk/muk` inside `init_part_raw` use them
-    ///    as-is.  If `init_part_raw` returns `KeyNotFound`,
-    ///    `PartitionAlreadyProvisioned`, or `VaultAppLimitReached`,
-    ///    credentials are already
-    ///    established (either from a prior init or from another
-    ///    process).  We compare the BMK read from shared storage
-    ///    against the in-memory BMK: a mismatch means another
-    ///    process restored after a resiliency event, so we adopt the new BMK and
-    ///    bump the epoch; a match means this process already handled
-    ///    the restore, so no epoch bump is needed.
-    ///    On any other failure, returns `Err(RestorePartitionFailed)`
-    ///    without bumping the epoch; the outer retry loop will call
-    ///    us again.
-    /// 6. Persist the new BMK to storage so other processes see it.
-    /// 7. Increment `restore_epoch` on the successful-restore path
-    ///    and on the BMK-mismatch path (another process restored).
+    ///    as-is.
+    /// 6. On success, persist the new BMK, cache the updated POTA
+    ///    endorsement, and bump the epoch so stale keys/sessions
+    ///    refresh.  If `init_part_raw` returns a "credentials
+    ///    already established" error, read the epoch from storage
+    ///    and adopt it if another process advanced it; otherwise
+    ///    our epoch is already current.
+    ///    On any other failure, return the error without bumping
+    ///    the epoch; the outer retry loop will call us again.
     #[instrument(skip_all)]
     pub(crate) fn restore_partition(&self) -> HsmResult<()> {
         // Snapshot epoch and clone the lock Arc BEFORE acquiring the
-        // cross-process lock.
+        // Cross-process resiliency lock.
         let (pre_lock_epoch, lock_ref) = {
             let inner = self.inner().read();
             let Some(rs) = inner.resiliency_state.as_ref() else {
@@ -599,7 +617,7 @@ impl HsmPartition {
 
         // Re-acquire READ to double-check epoch, read storage, and
         // call init_part_raw — all under a single read lock.
-        let (init_result, bmk_from_storage) = {
+        let init_result = {
             let inner = self.inner().read();
             let Some(rs) = inner.resiliency_state.as_ref() else {
                 return Ok(());
@@ -611,8 +629,7 @@ impl HsmPartition {
                 return Ok(());
             }
 
-            // Read BMK and MUK from resiliency storage — the
-            // cross-process source of truth.
+            // Read BMK and MUK from resiliency storage.
             let bmk_from_storage = Self::read_resiliency_storage(
                 &*rs.config.storage,
                 crate::resiliency::AZIHSM_STORAGE_BMK,
@@ -628,7 +645,7 @@ impl HsmPartition {
             // bmk/muk from storage are forwarded so that
             // resolve_cached_bmk/muk inside init_part_raw use them as-is.
             // BMK persistence is handled manually after the call.
-            let result = ddi::init_part_raw(
+            ddi::init_part_raw(
                 inner.dev(),
                 inner.api_rev_range().min(),
                 rs.cached_credentials,
@@ -638,112 +655,30 @@ impl HsmPartition {
                 &rs.cached_pota_endorsement,
                 Some(&rs.config),
                 true, // let init_part_raw re-endorse POTA
-            );
-
-            (result, bmk_from_storage)
+            )
         };
 
-        // Apply results and release the cross-process lock.
+        // Apply results.
         let mut inner = self.inner().write();
         match init_result {
+            // Restore partition success — persist new BMK and MOBK, bump epoch so stale keys/sessions refresh.
             Ok(result) => {
-                // Persist BMK to storage so other processes see the
-                // updated key. try_establish_credential may have
-                // already persisted (resiliency_config is now passed),
-                // but an explicit write here ensures consistency even
-                // if the internal path didn't persist for some reason.
-                if let Some(rs) = inner.resiliency_state.as_ref() {
-                    if let Err(err) = rs
-                        .config
-                        .storage
-                        .write(crate::resiliency::AZIHSM_STORAGE_BMK, &result.bmk)
-                    {
-                        warn!(?err, "Failed to persist BMK to resiliency storage.");
-                    }
-                }
+                inner.persist_bmk(&result.bmk)?;
                 inner.set_masked_keys(result.bmk, result.mobk);
-
-                // Bump epoch only on success so that
-                // `reopen_session_if_needed` detects the session as
-                // stale and attempts a reopen + refresh_key cycle.
-                if let Some(rs) = inner.resiliency_state.as_mut() {
-                    if rs.restore_epoch == pre_lock_epoch {
-                        rs.restore_epoch += 1;
-                    }
-                }
-
+                inner.update_cached_pota(result.pota_endorsement_data);
+                inner.bump_epoch(pre_lock_epoch)?;
                 Ok(())
             }
-            Err(
-                HsmError::KeyNotFound
-                | HsmError::PartitionAlreadyProvisioned
-                | HsmError::VaultAppLimitReached,
-            ) => {
-                // Credentials are already established — either the
-                // ephemeral encryption key was cleared after a prior
-                // establishment (KeyNotFound), another process
-                // already provisioned the partition concurrently
-                // (PartitionAlreadyProvisioned), or the vault's
-                // application slot limit was reached on hardware
-                // (VaultAppLimitReached).
-                //
-                // Compare the BMK we read from shared storage (before
-                // calling init_part_raw) against the in-memory BMK to
-                // decide whether to bump the epoch:
-                //
-                // - Mismatch: another process restored after
-                //   a resiliency event and wrote a new BMK to storage.
-                //   This process must adopt the new BMK and bump the epoch so that
-                //   its sessions are reopened and keys refreshed.
-                //
-                // - Match: this process already handled the restore
-                //   on a prior `restore_partition` call (the in-memory
-                //   BMK was updated then).  No epoch bump is needed —
-                //   sessions and keys were already reopened/refreshed
-                //   for the current epoch.
-                if let Some(storage_bmk) = bmk_from_storage.filter(|b| b.as_slice() != inner.bmk())
-                {
-                    // BMK mismatch: another process restored after a
-                    // resiliency event and wrote a new BMK to storage.
-                    // Adopt the new BMK and bump the epoch so that
-                    // sessions are reopened and keys refreshed.
-                    info!(
-                        "init_part_raw: credentials already established by another \
-                         process; updating in-memory BMK and bumping epoch."
-                    );
-
-                    let mobk = inner.mobk().to_vec();
-                    inner.set_masked_keys(storage_bmk, mobk);
-
-                    if let Some(rs) = inner.resiliency_state.as_mut() {
-                        if rs.restore_epoch == pre_lock_epoch {
-                            rs.restore_epoch += 1;
-                        }
-                        debug!(
-                            pre_lock_epoch,
-                            new_epoch = rs.restore_epoch,
-                            "restore_partition: another process restored, bumped epoch"
-                        );
-                    }
-                } else {
-                    // BMK match (or no BMK in storage): this process
-                    // already handled the restore — no epoch bump.
-                    info!(
-                        "init_part_raw: credentials already established; \
-                         this process already handled the restore, \
-                         no epoch bump needed."
-                    );
-                    debug!(
-                        pre_lock_epoch,
-                        "restore_partition: already established, no epoch bump"
-                    );
-                }
-
+            // Partition is already restored by another thread or process.
+            // Update the epoch so session & stale key(s) refresh.
+            Err(err) if is_credentials_already_established(&err) => {
+                inner.sync_epoch_from_storage()?;
                 Ok(())
             }
             Err(err) => {
-                warn!(?err, "init_part_raw during restore failed.");
-                Err(HsmError::RestorePartitionFailed)
+                // Any other failure is returned to the caller
+                // so the outer retry loop can retry again with backoff.
+                Err(err)
             }
         }
     }
@@ -868,14 +803,15 @@ impl HsmPartition {
     ///
     /// Returns the size of the BMK on success.
     pub fn bmk(&self, bmk: Option<&mut [u8]>) -> HsmResult<usize> {
-        let len = self.inner().read().bmk().len();
+        let inner = self.inner().read();
+        let data = inner.bmk();
         if let Some(buf) = bmk {
-            if buf.len() < len {
+            if buf.len() < data.len() {
                 return Err(HsmError::BufferTooSmall);
             }
-            buf[..len].copy_from_slice(self.inner().read().bmk());
+            buf[..data.len()].copy_from_slice(data);
         }
-        Ok(len)
+        Ok(data.len())
     }
 
     /// Retrieves the backup masking key that was set during partition initialization.
@@ -896,14 +832,15 @@ impl HsmPartition {
     ///
     /// Returns the size of the MOBK on success.
     pub fn mobk(&self, mobk: Option<&mut [u8]>) -> HsmResult<usize> {
-        let len = self.inner().read().mobk().len();
+        let inner = self.inner().read();
+        let data = inner.mobk();
         if let Some(buf) = mobk {
-            if buf.len() < len {
+            if buf.len() < data.len() {
                 return Err(HsmError::BufferTooSmall);
             }
-            buf[..len].copy_from_slice(self.inner().read().mobk());
+            buf[..data.len()].copy_from_slice(data);
         }
-        Ok(len)
+        Ok(data.len())
     }
 
     /// Returns the masked owner backup key (MOBK).
@@ -948,7 +885,7 @@ impl HsmPartition {
     ///
     /// A reference to the wrapped partition inner state.
     pub(crate) fn inner(&self) -> &Arc<RwLock<HsmPartitionInner>> {
-        &self.0
+        &self.inner
     }
 
     /// Returns `true` if resiliency was configured for this partition
@@ -966,6 +903,15 @@ impl HsmPartition {
             rs.config.storage.write(key, data)?;
         }
         Ok(())
+    }
+
+    /// Reads the BMK from resiliency storage, returning an empty Vec
+    /// if the key does not exist or the read fails.
+    fn read_bmk_from_storage(config: &HsmResiliencyConfig) -> Vec<u8> {
+        config
+            .storage
+            .read(crate::resiliency::AZIHSM_STORAGE_BMK)
+            .unwrap_or_default()
     }
 
     /// Reads a value from resiliency storage, returning `None` when the
@@ -1001,6 +947,24 @@ impl HsmPartition {
             .resiliency_state
             .as_ref()
             .map_or(0, |rs| rs.restore_epoch)
+    }
+
+    /// Acquires a read lock on the key ops lock.
+    ///
+    /// Hold this across the epoch-check + DDI call sequence to prevent
+    /// any concurrent restore/refresh from reassigning device handles.
+    /// Multiple threads may hold the read lock simultaneously.
+    pub(crate) fn key_ops_lock_read(&self) -> RwLockReadGuard<'_, ()> {
+        self.key_ops_lock.read()
+    }
+
+    /// Acquires a write lock on the key ops lock.
+    ///
+    /// Hold this during restore-partition + reopen-session + refresh-key
+    /// to ensure no thread is mid-operation while handles are being
+    /// reassigned.  Blocks until all read-lock holders finish.
+    pub(crate) fn key_ops_lock_write(&self) -> RwLockWriteGuard<'_, ()> {
+        self.key_ops_lock.write()
     }
 
     /// Reopens the session if its epoch is behind the partition's
@@ -1202,6 +1166,80 @@ impl HsmPartitionInner {
 
     pub(crate) fn set_resiliency_state(&mut self, resiliency: ResiliencyState) {
         self.resiliency_state = Some(resiliency);
+    }
+
+    /// Persists the BMK to resiliency storage so other processes see
+    /// the updated key.
+    fn persist_bmk(&self, bmk: &[u8]) -> HsmResult<()> {
+        if let Some(rs) = self.resiliency_state.as_ref() {
+            rs.config
+                .storage
+                .write(crate::resiliency::AZIHSM_STORAGE_BMK, bmk)?;
+        }
+        Ok(())
+    }
+
+    /// Updates the cached POTA endorsement data with the latest values
+    /// returned by `init_part_raw`.  The callback may return a new
+    /// public key (e.g., key rotation); caching it ensures the next
+    /// restore passes the updated pub key to `invoke_pota_callback`.
+    fn update_cached_pota(&mut self, pota_data: HsmPotaEndorsementData) {
+        if let Some(rs) = self.resiliency_state.as_mut() {
+            rs.cached_pota_endorsement =
+                HsmPotaEndorsement::new(rs.cached_pota_endorsement.source(), Some(pota_data));
+        }
+    }
+
+    /// Handles the epoch update when credentials are already established.
+    ///
+    /// Reads the epoch from storage and compares it against the in-memory
+    /// `restore_epoch`:
+    /// - If storage epoch > restore epoch, another process restored the
+    ///   partition — adopt the storage epoch so our keys/sessions detect
+    ///   staleness.
+    /// - If storage epoch == restore epoch, we already have the current
+    ///   epoch — no action needed.  Only the thread that actually
+    ///   restores the partition (the `Ok` arm) writes to storage.
+    /// - If storage epoch < restore epoch, storage is corrupted or a
+    ///   logic bug caused the epoch to go backwards — return
+    ///   `InternalError`.
+    fn sync_epoch_from_storage(&mut self) -> HsmResult<()> {
+        let Some(rs) = self.resiliency_state.as_mut() else {
+            return Ok(());
+        };
+        match ResiliencyState::read_epoch(&*rs.config.storage)? {
+            Some(storage_epoch) if storage_epoch > rs.restore_epoch => {
+                // Another process restored the partition; adopt stored epoch.
+                rs.restore_epoch = storage_epoch;
+            }
+            Some(storage_epoch) if storage_epoch < rs.restore_epoch => {
+                // Epoch went backwards — storage corruption or logic bug.
+                return Err(HsmError::InternalError);
+            }
+            _ => {
+                // No stored epoch or storage epoch == restore epoch; keep current epoch.
+            }
+        }
+        Ok(())
+    }
+
+    /// Bumps the restore epoch and persists it to storage.
+    ///
+    /// The caller must hold the cross-process resiliency lock and have
+    /// already verified the epoch hasn't advanced past `pre_lock_epoch`.
+    fn bump_epoch(&mut self, pre_lock_epoch: u64) -> HsmResult<()> {
+        if let Some(rs) = self.resiliency_state.as_mut() {
+            debug_assert!(
+                ResiliencyState::read_epoch(&*rs.config.storage)
+                    .ok()
+                    .flatten()
+                    .is_none_or(|stored| stored == pre_lock_epoch),
+                "stored epoch drifted under resiliency lock"
+            );
+            rs.restore_epoch += 1;
+            ResiliencyState::write_epoch(&*rs.config.storage, rs.restore_epoch)?;
+        }
+        Ok(())
     }
 }
 
