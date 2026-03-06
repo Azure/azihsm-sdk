@@ -84,8 +84,9 @@ cd azihsm-sdk
 OPENSSL_DIR=/opt/openssl-static OPENSSL_STATIC=1 \
     cargo build -p azihsm_api_native --features mock
 
-# 3. Build the provider (links against system libssl-dev)
-cargo build -p azihsm_ossl_provider --features mock
+# 3. Build the provider with static OpenSSL
+OPENSSL_DIR=/opt/openssl-static OPENSSL_STATIC=1 \
+    cargo build -p azihsm_ossl_provider --features mock
 ```
 
 On real hardware, omit `mock` from both build commands.
