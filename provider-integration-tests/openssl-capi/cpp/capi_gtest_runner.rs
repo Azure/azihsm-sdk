@@ -34,8 +34,9 @@ fn main() {
 fn get_tests() -> Vec<Trial> {
     let test_path = get_test_binary_path();
     let provider_path = get_provider_path();
-    let test_list = list_gtests(&test_path);
-    parse_gtest_list(&test_list, test_path, provider_path)
+    let ld_library_path = build_ld_library_path(&provider_path);
+    let test_list = list_gtests(&test_path, &ld_library_path);
+    parse_gtest_list(&test_list, test_path, provider_path, ld_library_path)
 }
 
 /// Resolves the provider search path (absolute) and verifies the provider
@@ -50,8 +51,9 @@ fn get_provider_path() -> PathBuf {
             let manifest_dir =
                 env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
             Path::new(&manifest_dir)
-                .parent()
-                .expect("CARGO_MANIFEST_DIR has no parent")
+                .ancestors()
+                .nth(2)
+                .expect("CARGO_MANIFEST_DIR does not have enough ancestors")
                 .join("target")
                 .join("debug")
         }
@@ -72,6 +74,35 @@ fn get_provider_path() -> PathBuf {
     path
 }
 
+/// Builds a controlled `LD_LIBRARY_PATH` for the gtest subprocess.
+///
+/// The provider `.so` and its dependencies (`libazihsm_api_native.so`,
+/// `libcrypto.so.3`) need a library search path at runtime.  Cargo's
+/// `LD_LIBRARY_PATH` can contain incompatible libraries, so we build our
+/// own from:
+///   1. The OpenSSL lib directory derived from `OPENSSL_DIR`
+///   2. The provider directory (contains `libazihsm_api_native.so`)
+fn build_ld_library_path(provider_path: &Path) -> String {
+    let mut parts: Vec<String> = Vec::new();
+
+    // OpenSSL shared libraries — try lib64 first (RHEL/Fedora), then lib.
+    if let Ok(ossl_dir) = env::var("OPENSSL_DIR") {
+        let base = PathBuf::from(&ossl_dir);
+        let lib64 = base.join("lib64");
+        let lib = base.join("lib");
+        if lib64.is_dir() {
+            parts.push(lib64.to_string_lossy().into_owned());
+        } else if lib.is_dir() {
+            parts.push(lib.to_string_lossy().into_owned());
+        }
+    }
+
+    // Provider directory — contains libazihsm_api_native.so
+    parts.push(provider_path.to_string_lossy().into_owned());
+
+    parts.join(":")
+}
+
 /// Determines the path to the compiled C++ test binary.
 fn get_test_binary_path() -> PathBuf {
     let out_dir = env::var("OUT_DIR").expect("OUT_DIR not set");
@@ -79,17 +110,22 @@ fn get_test_binary_path() -> PathBuf {
 }
 
 /// Lists all tests available in the gtest binary.
-fn list_gtests(path: &Path) -> String {
+fn list_gtests(path: &Path, ld_library_path: &str) -> String {
     let output = Command::new(path)
         .arg("--gtest_list_tests")
-        .env_remove("LD_LIBRARY_PATH")
+        .env("LD_LIBRARY_PATH", ld_library_path)
         .output()
         .expect("Failed to list tests");
     String::from_utf8_lossy(&output.stdout).into_owned()
 }
 
 /// Parses the gtest list output and creates test trials.
-fn parse_gtest_list(output: &str, path: PathBuf, provider_path: PathBuf) -> Vec<Trial> {
+fn parse_gtest_list(
+    output: &str,
+    path: PathBuf,
+    provider_path: PathBuf,
+    ld_library_path: String,
+) -> Vec<Trial> {
     let mut tests = Vec::new();
     let mut current_suite = String::new();
     for line in output.lines().skip(1) {
@@ -99,8 +135,9 @@ fn parse_gtest_list(output: &str, path: PathBuf, provider_path: PathBuf) -> Vec<
             let test_name = format!("{}::{}", current_suite, line.trim());
             let path = path.clone();
             let provider_path = provider_path.clone();
+            let ld_path = ld_library_path.clone();
             tests.push(Trial::test(test_name.clone(), move || {
-                run_gtest(&test_name, &path, &provider_path)
+                run_gtest(&test_name, &path, &provider_path, &ld_path)
             }));
         }
     }
@@ -109,16 +146,21 @@ fn parse_gtest_list(output: &str, path: PathBuf, provider_path: PathBuf) -> Vec<
 
 /// Executes a single gtest test case.
 ///
-/// `LD_LIBRARY_PATH` is removed so that the dynamic linker uses the RUNPATH
-/// entries baked into the gtest binary and the provider `.so` rather than
-/// cargo's library search path, which can contain incompatible libraries.
-fn run_gtest(test_name: &str, path: &Path, provider_path: &Path) -> Result<(), Failed> {
+/// A controlled `LD_LIBRARY_PATH` is set (replacing cargo's, which can
+/// contain incompatible libraries) so that the provider `.so` and its
+/// dependencies can be resolved at runtime.
+fn run_gtest(
+    test_name: &str,
+    path: &Path,
+    provider_path: &Path,
+    ld_library_path: &str,
+) -> Result<(), Failed> {
     let test_name = test_name.replace("::", ".");
 
     let success = Command::new(path)
         .arg(format!("--gtest_filter={}", test_name))
         .env("PROVIDER_PATH", provider_path)
-        .env_remove("LD_LIBRARY_PATH")
+        .env("LD_LIBRARY_PATH", ld_library_path)
         .status()
         .expect("Failed to run test")
         .success();

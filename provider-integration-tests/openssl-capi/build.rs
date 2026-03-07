@@ -12,7 +12,7 @@ fn main() {
         "\n\
          ERROR: OPENSSL_DIR is not set.\n\
          \n\
-         Required environment variables for provider-tests:\n\
+         Required environment variables for provider-integration-tests-capi:\n\
            OPENSSL_DIR    OpenSSL 3.x installation prefix (required at build time)\n\
                           e.g. export OPENSSL_DIR=/opt/openssl-3.0.3\n\
          \n\

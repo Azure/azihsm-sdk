@@ -17,9 +17,9 @@ members = [
   "ddi/interface",
   "ddi/lib",
   "ddi/test_helpers",
-  "integration-tests",
   "plugins/ossl_prov",
-  "provider-tests",
+  "provider-integration-tests/openssl-cli",
+  "provider-integration-tests/openssl-capi",
   "xtask",
 ]
 

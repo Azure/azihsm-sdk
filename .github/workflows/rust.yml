@@ -163,7 +163,7 @@ jobs:
           -algorithm EC -pkeyopt group:P-384 \
           -outform DER -out /dev/null -text
 
-    - name: Run integration tests
+    - name: Run CLI integration tests
       env:
         OPENSSL_BIN: /opt/openssl-3.0.3/bin/openssl
         OPENSSL_LIB: ""
@@ -171,13 +171,15 @@ jobs:
         PROPQUERY: "?provider=azihsm"
         AZIHSM_CREDENTIALS_ID: "70fcf730b8764238b8358010ce8a3f76"
         AZIHSM_CREDENTIALS_PIN: "db3dc77fc22e430080d41b31b6f04800"
-      run: cargo xtask precheck --nextest --package integration-tests --features integration --profile ci-provider-integration
+      run: cargo xtask precheck --nextest --package provider-integration-tests-cli --features integration --profile ci-provider-integration
 
-    - name: Run provider C API tests
+    - name: Run C API integration tests
       env:
         OPENSSL_DIR: /opt/openssl-3.0.3
         PROVIDER_PATH: /usr/lib/ossl-modules
-      run: cargo test -p provider-tests --features integration
+        AZIHSM_CREDENTIALS_ID: "70fcf730b8764238b8358010ce8a3f76"
+        AZIHSM_CREDENTIALS_PIN: "db3dc77fc22e430080d41b31b6f04800"
+      run: cargo xtask precheck --nextest --package provider-integration-tests-capi --features integration --profile ci-provider-integration
 
   build_windows:
 

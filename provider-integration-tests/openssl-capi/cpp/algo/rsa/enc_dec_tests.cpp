@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-/// @file rsa_session_encrypt_decrypt_tests.cpp
+/// @file enc_dec_tests.cpp
 ///
 /// Round-trip encrypt / decrypt tests that use **session-based** RSA keys with
 /// RSA-OAEP padding via the OpenSSL EVP API.  The HSM cannot generate RSA keys
@@ -26,7 +26,7 @@
 // Test fixture
 // ---------------------------------------------------------------------------
 
-class RSA_SessionKeyEncryptDecrypt : public ::testing::Test
+class rsa_enc_dec : public ::testing::Test
 {
   protected:
     ProviderCtx prov_;
@@ -39,7 +39,7 @@ class RSA_SessionKeyEncryptDecrypt : public ::testing::Test
 /// Round-trip: encrypt with public key, decrypt with private key, compare.
 /// Explicitly sets OAEP padding with SHA-256 to match the CLI integration
 /// tests (oaep_encryption.sh).
-TEST_F(RSA_SessionKeyEncryptDecrypt, encrypt_decrypt_oaep)
+TEST_F(rsa_enc_dec, encrypt_decrypt_oaep)
 {
     auto pkey = generate_rsa_session_key(prov_.libctx(), 2048, "keyEncipherment");
     ASSERT_NE(pkey, nullptr) << "RSA encryption session key generation failed";
@@ -120,7 +120,7 @@ TEST_F(RSA_SessionKeyEncryptDecrypt, encrypt_decrypt_oaep)
 }
 
 /// Encrypting with key_a and decrypting with key_b must fail.
-TEST_F(RSA_SessionKeyEncryptDecrypt, decrypt_fails_with_wrong_key)
+TEST_F(rsa_enc_dec, decrypt_fails_with_wrong_key)
 {
     auto key_a = generate_rsa_session_key(prov_.libctx(), 2048, "keyEncipherment");
     auto key_b = generate_rsa_session_key(prov_.libctx(), 2048, "keyEncipherment");

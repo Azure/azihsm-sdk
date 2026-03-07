@@ -47,10 +47,10 @@ enable_testing()
 
 set(SOURCE
     smoke_tests.cpp
-    ec_session_sign_verify_tests.cpp
-    rsa_session_sign_verify_tests.cpp
-    rsa_session_encrypt_decrypt_tests.cpp
-    ecdh_session_keyexch_tests.cpp
+    algo/ec/sign_verify_tests.cpp
+    algo/ec/keyexch_tests.cpp
+    algo/rsa/sign_verify_tests.cpp
+    algo/rsa/enc_dec_tests.cpp
 )
 add_executable(azihsm_ossl_cpp_tests ${SOURCE})
 target_include_directories(azihsm_ossl_cpp_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

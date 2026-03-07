@@ -7,9 +7,10 @@
 #   source "$(dirname "${BASH_SOURCE[0]}")/../../env.sh"  (depth-3 scripts)
 #   source "$(dirname "${BASH_SOURCE[0]}")/../env.sh"     (depth-2 scripts)
 
-# Derive repo root from env.sh location (testfiles/ -> integration-tests/ -> repo root)
+# Derive repo root from env.sh location
+# (testfiles/ -> openssl-cli/ -> provider-integration-tests/ -> repo root)
 TESTFILES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$TESTFILES_DIR/../.." && pwd)"
+REPO_ROOT="$(cd "$TESTFILES_DIR/../../.." && pwd)"
 
 # --- Required environment variables ---
 

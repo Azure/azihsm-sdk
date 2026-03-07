@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-/// @file ecdh_session_keyexch_tests.cpp
+/// @file keyexch_tests.cpp
 ///
 /// ECDH key exchange tests that use **session-based** EC keys via the OpenSSL
 /// EVP API.  The ECDH derive operation returns a masked key blob — not a raw
@@ -28,7 +28,7 @@
 // Test fixture
 // ---------------------------------------------------------------------------
 
-class ECDH_SessionKeyExchange : public ::testing::Test
+class ec_keyexch : public ::testing::Test
 {
   protected:
     ProviderCtx prov_;
@@ -40,7 +40,7 @@ class ECDH_SessionKeyExchange : public ::testing::Test
 
 /// Derive a shared secret into a caller-provided buffer.
 /// Verifies that the derivation succeeds and produces a non-empty masked blob.
-TEST_F(ECDH_SessionKeyExchange, derive_to_buffer)
+TEST_F(ec_keyexch, derive_to_buffer)
 {
     auto our_key = generate_ec_session_key(prov_.libctx(), "P-256", "keyAgreement");
     auto peer_key = generate_ec_default_key(prov_.libctx(), "P-256");
@@ -74,7 +74,7 @@ TEST_F(ECDH_SessionKeyExchange, derive_to_buffer)
 
 /// Derive a shared secret into a file via the output_file context parameter.
 /// Verifies that the file is created and contains data.
-TEST_F(ECDH_SessionKeyExchange, derive_to_file)
+TEST_F(ec_keyexch, derive_to_file)
 {
     auto our_key = generate_ec_session_key(prov_.libctx(), "P-256", "keyAgreement");
     auto peer_key = generate_ec_default_key(prov_.libctx(), "P-256");
@@ -128,7 +128,7 @@ TEST_F(ECDH_SessionKeyExchange, derive_to_file)
 /// ECDH derivation with mismatched curves must fail.
 /// The failure can occur either at set_peer (OpenSSL parameter check) or at
 /// derive time (provider-side validation), depending on OpenSSL version.
-TEST_F(ECDH_SessionKeyExchange, derive_fails_with_mismatched_curves)
+TEST_F(ec_keyexch, derive_fails_with_mismatched_curves)
 {
     auto our_key = generate_ec_session_key(prov_.libctx(), "P-256", "keyAgreement");
     auto peer_key = generate_ec_default_key(prov_.libctx(), "P-384");

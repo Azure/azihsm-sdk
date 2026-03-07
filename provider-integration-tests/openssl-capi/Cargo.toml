@@ -3,7 +3,7 @@
 
 [package]
 edition = "2024"
-name = "provider-tests"
+name = "provider-integration-tests-capi"
 version = "0.0.0"
 
 [features]
@@ -20,5 +20,5 @@ workspace = true
 
 [[test]]
 harness = false
-name = "cpp"
-path = "cpp/tests.rs"
+name = "capi_gtest_runner"
+path = "cpp/capi_gtest_runner.rs"
