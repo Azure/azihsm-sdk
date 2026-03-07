@@ -945,8 +945,6 @@ void azihsm_close_device_and_session(azihsm_handle device, azihsm_handle session
     azihsm_part_close(device);
 }
 
-#define MAX_INPUT_KEY_SIZE (64 * 1024)
-
 /*
  * Wrap a PKCS#8 DER buffer with the HSM's RSA-AES wrapping key, then unwrap
  * into the HSM to produce key handles.
@@ -1045,7 +1043,7 @@ static azihsm_status wrap_and_unwrap_pkcs8(
     return status;
 }
 
-azihsm_status azihsm_import_key(
+azihsm_status azihsm_import_key_pair(
     AZIHSM_OSSL_PROV_CTX *provctx,
     const char *input_key_file,
     const struct azihsm_key_prop_list *priv_key_prop_list,
@@ -1056,9 +1054,7 @@ azihsm_status azihsm_import_key(
 {
     azihsm_status status;
     azihsm_handle wrapping_pub = 0, wrapping_priv = 0;
-    uint8_t *input_buf = NULL;
-    long input_size = 0;
-    FILE *f = NULL;
+    struct azihsm_buffer input_buf = { NULL, 0 };
 
     if (provctx == NULL || input_key_file == NULL || priv_key_prop_list == NULL ||
         pub_key_prop_list == NULL || out_priv == NULL || out_pub == NULL)
@@ -1067,73 +1063,43 @@ azihsm_status azihsm_import_key(
     }
 
     /* 1. Read the input file from disk */
-    f = fopen(input_key_file, "rb");
-    if (f == NULL)
+    status = load_file_to_buffer(input_key_file, &input_buf);
+    if (status != AZIHSM_STATUS_SUCCESS)
+    {
+        return status;
+    }
+    if (input_buf.ptr == NULL || input_buf.len == 0)
     {
         return AZIHSM_STATUS_INVALID_ARGUMENT;
     }
-
-    if (fseek(f, 0, SEEK_END) != 0)
-    {
-        fclose(f);
-        return AZIHSM_STATUS_INVALID_ARGUMENT;
-    }
-
-    input_size = ftell(f);
-    if (input_size <= 0 || input_size > MAX_INPUT_KEY_SIZE)
-    {
-        fclose(f);
-        return AZIHSM_STATUS_INVALID_ARGUMENT;
-    }
-
-    if (fseek(f, 0, SEEK_SET) != 0)
-    {
-        fclose(f);
-        return AZIHSM_STATUS_INVALID_ARGUMENT;
-    }
-
-    input_buf = OPENSSL_malloc((size_t)input_size);
-    if (input_buf == NULL)
-    {
-        fclose(f);
-        return AZIHSM_STATUS_INVALID_ARGUMENT;
-    }
-
-    if (fread(input_buf, 1, (size_t)input_size, f) != (size_t)input_size)
-    {
-        fclose(f);
-        OPENSSL_cleanse(input_buf, (size_t)input_size);
-        OPENSSL_free(input_buf);
-        return AZIHSM_STATUS_INVALID_ARGUMENT;
-    }
-    fclose(f);
 
     /* 2. Get the RSA unwrapping key pair from the HSM */
     status = azihsm_get_unwrapping_key(provctx, &wrapping_pub, &wrapping_priv);
     if (status != AZIHSM_STATUS_SUCCESS)
     {
-        OPENSSL_cleanse(input_buf, (size_t)input_size);
-        OPENSSL_free(input_buf);
+        free_buffer(&input_buf);
         return status;
     }
 
-    /* 3. Try to normalize as DER-encoded private key (PKCS#1 or PKCS#8) */
+    /* 3. Try to normalize as DER-encoded private key (SEC1, PKCS#1, or PKCS#8) */
     uint8_t *pkcs8_buf = NULL;
     int pkcs8_len = 0;
 
-    int norm_rc = azihsm_ossl_normalize_der_to_pkcs8(input_buf, input_size, &pkcs8_buf, &pkcs8_len);
+    int norm_rc = azihsm_ossl_normalize_der_to_pkcs8(
+        input_buf.ptr,
+        (long)input_buf.len,
+        &pkcs8_buf,
+        &pkcs8_len
+    );
+
+    free_buffer(&input_buf);
 
     if (norm_rc != OSSL_SUCCESS)
     {
-        OPENSSL_cleanse(input_buf, (size_t)input_size);
-        OPENSSL_free(input_buf);
         return AZIHSM_STATUS_INVALID_ARGUMENT;
     }
 
     /* Plaintext DER path: wrap then unwrap into HSM */
-    OPENSSL_cleanse(input_buf, (size_t)input_size);
-    OPENSSL_free(input_buf);
-
     status = wrap_and_unwrap_pkcs8(
         wrapping_pub,
         wrapping_priv,
@@ -1150,7 +1116,7 @@ azihsm_status azihsm_import_key(
     return status;
 }
 
-azihsm_status azihsm_unwrap_key(
+azihsm_status azihsm_unwrap_key_pair(
     AZIHSM_OSSL_PROV_CTX *provctx,
     const char *wrapped_key_file,
     const struct azihsm_key_prop_list *priv_key_prop_list,
@@ -1161,9 +1127,7 @@ azihsm_status azihsm_unwrap_key(
 {
     azihsm_status status;
     azihsm_handle wrapping_pub = 0, wrapping_priv = 0;
-    uint8_t *input_buf = NULL;
-    long input_size = 0;
-    FILE *f = NULL;
+    struct azihsm_buffer input_buf = { NULL, 0 };
 
     if (provctx == NULL || wrapped_key_file == NULL || priv_key_prop_list == NULL ||
         pub_key_prop_list == NULL || out_priv == NULL || out_pub == NULL)
@@ -1172,53 +1136,21 @@ azihsm_status azihsm_unwrap_key(
     }
 
     /* 1. Read the wrapped blob from disk */
-    f = fopen(wrapped_key_file, "rb");
-    if (f == NULL)
+    status = load_file_to_buffer(wrapped_key_file, &input_buf);
+    if (status != AZIHSM_STATUS_SUCCESS)
+    {
+        return status;
+    }
+    if (input_buf.ptr == NULL || input_buf.len == 0)
     {
         return AZIHSM_STATUS_INVALID_ARGUMENT;
     }
-
-    if (fseek(f, 0, SEEK_END) != 0)
-    {
-        fclose(f);
-        return AZIHSM_STATUS_INVALID_ARGUMENT;
-    }
-
-    input_size = ftell(f);
-    if (input_size <= 0 || input_size > MAX_INPUT_KEY_SIZE)
-    {
-        fclose(f);
-        return AZIHSM_STATUS_INVALID_ARGUMENT;
-    }
-
-    if (fseek(f, 0, SEEK_SET) != 0)
-    {
-        fclose(f);
-        return AZIHSM_STATUS_INVALID_ARGUMENT;
-    }
-
-    input_buf = OPENSSL_malloc((size_t)input_size);
-    if (input_buf == NULL)
-    {
-        fclose(f);
-        return AZIHSM_STATUS_INTERNAL_ERROR;
-    }
-
-    if (fread(input_buf, 1, (size_t)input_size, f) != (size_t)input_size)
-    {
-        fclose(f);
-        OPENSSL_cleanse(input_buf, (size_t)input_size);
-        OPENSSL_free(input_buf);
-        return AZIHSM_STATUS_INTERNAL_ERROR;
-    }
-    fclose(f);
 
     /* 2. Get the RSA unwrapping key pair from the HSM */
     status = azihsm_get_unwrapping_key(provctx, &wrapping_pub, &wrapping_priv);
     if (status != AZIHSM_STATUS_SUCCESS)
     {
-        OPENSSL_cleanse(input_buf, (size_t)input_size);
-        OPENSSL_free(input_buf);
+        free_buffer(&input_buf);
         return status;
     }
 
@@ -1239,22 +1171,16 @@ azihsm_status azihsm_unwrap_key(
         .len = sizeof(unwrap_params),
     };
 
-    struct azihsm_buffer wrapped_buf = {
-        .ptr = input_buf,
-        .len = (uint32_t)input_size,
-    };
-
     status = azihsm_key_unwrap_pair(
         &unwrap_algo,
         wrapping_priv,
-        &wrapped_buf,
+        &input_buf,
         priv_key_prop_list,
         pub_key_prop_list,
         out_priv,
         out_pub
     );
 
-    OPENSSL_cleanse(input_buf, (size_t)input_size);
-    OPENSSL_free(input_buf);
+    free_buffer(&input_buf);
     return status;
 }

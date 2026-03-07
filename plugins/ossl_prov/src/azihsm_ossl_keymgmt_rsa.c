@@ -80,7 +80,7 @@
 
 /*
  * Import a plaintext DER key file into the HSM.
- * Delegates to the shared azihsm_import_key() helper.
+ * Delegates to the shared azihsm_import_key_pair() helper.
  */
 static azihsm_status azihsm_ossl_rsa_keymgmt_gen_import(
     AZIHSM_RSA_GEN_CTX *genctx,
@@ -90,7 +90,7 @@ static azihsm_status azihsm_ossl_rsa_keymgmt_gen_import(
     azihsm_handle *out_pub
 )
 {
-    return azihsm_import_key(
+    return azihsm_import_key_pair(
         genctx->provctx,
         genctx->input_key_file,
         priv_key_prop_list,
@@ -201,7 +201,7 @@ static AZIHSM_RSA_KEY *azihsm_ossl_keymgmt_gen(
     if (genctx->wrapped_key_file[0] != '\0')
     {
         /* Pre-wrapped blob path: unwrap directly into HSM */
-        status = azihsm_unwrap_key(
+        status = azihsm_unwrap_key_pair(
             genctx->provctx,
             genctx->wrapped_key_file,
             &priv_key_prop_list,
