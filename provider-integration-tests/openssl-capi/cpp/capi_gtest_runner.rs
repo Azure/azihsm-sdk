@@ -123,8 +123,19 @@ mod integration {
             .arg("--gtest_list_tests")
             .env("LD_LIBRARY_PATH", ld_library_path)
             .output()
-            .expect("Failed to list tests");
-        String::from_utf8_lossy(&output.stdout).into_owned()
+            .expect("Failed to run gtest binary for test discovery");
+        assert!(
+            output.status.success(),
+            "gtest --gtest_list_tests failed (exit status: {}):\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr),
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+        assert!(
+            !stdout.trim().is_empty(),
+            "gtest --gtest_list_tests returned no output — binary may be broken",
+        );
+        stdout
     }
 
     /// Parses the gtest list output and creates test trials.

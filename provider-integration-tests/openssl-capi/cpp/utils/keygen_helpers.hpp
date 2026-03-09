@@ -5,6 +5,7 @@
 #define KEYGEN_HELPERS_HPP
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <openssl/core_names.h>
 #include <openssl/evp.h>

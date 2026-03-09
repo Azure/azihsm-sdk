@@ -37,8 +37,8 @@ class rsa_enc_dec : public ::testing::Test
 // ---------------------------------------------------------------------------
 
 /// Round-trip: encrypt with public key, decrypt with private key, compare.
-/// Explicitly sets OAEP padding with SHA-256 to match the CLI integration
-/// tests (oaep_encryption.sh).
+/// Explicitly sets OAEP padding mode; the OAEP digest and MGF1 digest are
+/// left at their OpenSSL defaults.
 TEST_F(rsa_enc_dec, encrypt_decrypt_oaep)
 {
     auto pkey = generate_rsa_session_key(prov_.libctx(), 2048, "keyEncipherment");
