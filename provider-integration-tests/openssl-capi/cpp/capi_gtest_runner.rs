@@ -16,7 +16,8 @@
 #![allow(clippy::unwrap_used)]
 
 use std::env;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::path::PathBuf;
 use std::process::Command;
 
 use libtest_mimic::*;
@@ -48,8 +49,7 @@ fn get_provider_path() -> PathBuf {
     let path = match env::var("PROVIDER_PATH") {
         Ok(p) if !p.is_empty() => PathBuf::from(p),
         _ => {
-            let manifest_dir =
-                env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
+            let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
             Path::new(&manifest_dir)
                 .ancestors()
                 .nth(2)
@@ -106,7 +106,9 @@ fn build_ld_library_path(provider_path: &Path) -> String {
 /// Determines the path to the compiled C++ test binary.
 fn get_test_binary_path() -> PathBuf {
     let out_dir = env::var("OUT_DIR").expect("OUT_DIR not set");
-    PathBuf::from(out_dir).join("build").join("azihsm_ossl_cpp_tests")
+    PathBuf::from(out_dir)
+        .join("build")
+        .join("azihsm_ossl_cpp_tests")
 }
 
 /// Lists all tests available in the gtest binary.
