@@ -115,6 +115,36 @@ static AZIHSM_RSA_KEY *azihsm_ossl_keymgmt_gen(
     const azihsm_key_kind key_kind = AZIHSM_KEY_KIND_RSA;
 
     /*
+     * keyWrapping usage: retrieve the HSM's internal unwrapping key pair.
+     * This key is generated and cached by the HSM — we only expose the public half
+     * so callers can export it for offline key wrapping (RSA-AES Key Wrap).
+     */
+    if (genctx->key_usage == KEY_USAGE_KEY_WRAPPING)
+    {
+        azihsm_handle wrap_pub = 0, wrap_priv = 0;
+        status = azihsm_get_unwrapping_key(genctx->provctx, &wrap_pub, &wrap_priv);
+        if (status != AZIHSM_STATUS_SUCCESS)
+        {
+            ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GENERATE_KEY);
+            return NULL;
+        }
+
+        if ((rsa_key = OPENSSL_zalloc(sizeof(AZIHSM_RSA_KEY))) == NULL)
+        {
+            ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
+            return NULL;
+        }
+
+        rsa_key->genctx = *genctx;
+        rsa_key->key.pub = wrap_pub;
+        rsa_key->has_public = true;
+        rsa_key->key.priv = 0;
+        rsa_key->has_private = false;
+
+        return rsa_key;
+    }
+
+    /*
      * The HSM cannot generate RSA keys natively.
      * RSA keys must be provided externally via azihsm.input_key or azihsm.wrapped_key.
      */

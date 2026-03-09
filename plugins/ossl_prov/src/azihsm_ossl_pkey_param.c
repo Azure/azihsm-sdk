@@ -27,6 +27,7 @@ static const KEY_USAGE_MAPPING_ENTRY key_usage_map[] = {
     { "digitalSignature", KEY_USAGE_DIGITAL_SIGNATURE },
     { "keyAgreement", KEY_USAGE_KEY_AGREEMENT },
     { "keyEncipherment", KEY_USAGE_KEY_ENCIPHERMENT },
+    { "keyWrapping", KEY_USAGE_KEY_WRAPPING },
     { NULL, -1 }
 };
 
@@ -89,6 +90,8 @@ uint32_t azihsm_ossl_get_priv_key_property(AZIHSM_KEY_USAGE_TYPE usage_type)
         return AZIHSM_KEY_PROP_ID_DERIVE;
     case KEY_USAGE_KEY_ENCIPHERMENT:
         return AZIHSM_KEY_PROP_ID_DECRYPT;
+    case KEY_USAGE_KEY_WRAPPING:
+        return AZIHSM_KEY_PROP_ID_UNWRAP;
     default:
         return AZIHSM_KEY_PROP_ID_SIGN; /* Default to SIGN */
     }
@@ -104,6 +107,8 @@ uint32_t azihsm_ossl_get_pub_key_property(AZIHSM_KEY_USAGE_TYPE usage_type)
         return AZIHSM_KEY_PROP_ID_DERIVE;
     case KEY_USAGE_KEY_ENCIPHERMENT:
         return AZIHSM_KEY_PROP_ID_ENCRYPT;
+    case KEY_USAGE_KEY_WRAPPING:
+        return AZIHSM_KEY_PROP_ID_WRAP;
     default:
         return AZIHSM_KEY_PROP_ID_VERIFY; /* Default to VERIFY */
     }
