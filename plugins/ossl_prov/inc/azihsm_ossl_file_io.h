@@ -26,11 +26,12 @@ extern "C"
 azihsm_status azihsm_file_load(const char *path, struct azihsm_buffer *buffer);
 
 /*
- * Write data to a file with restricted permissions (0600, O_NOFOLLOW).
+ * Write data to a file with owner-only (0600) permissions.
  *
- * Uses a write() loop to handle short writes and EINTR. Unlinks the
- * partially written file on failure. Sets the OpenSSL error stack with a
- * descriptive message on failure.
+ * Rejects non-regular files. Permissions are enforced on the open file
+ * descriptor, so pre-existing broader permissions are tightened. Symbolic
+ * links are not followed. The file is removed on any write failure. The
+ * OpenSSL error stack is populated with a descriptive message on failure.
  *
  * Returns AZIHSM_STATUS_SUCCESS on success, AZIHSM_STATUS_INTERNAL_ERROR on error.
  */

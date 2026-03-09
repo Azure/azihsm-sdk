@@ -907,6 +907,26 @@ azihsm_status azihsm_open_device_and_session(
             return AZIHSM_STATUS_INTERNAL_ERROR;
         }
 
+        if (obk_buf.len != AZIHSM_OBK_SIZE)
+        {
+            ERR_raise_data(
+                ERR_LIB_PROV,
+                ERR_R_INIT_FAIL,
+                "OBK file '%s' has wrong size: got %u bytes, expected %d. "
+                "Regenerate with: openssl rand -out '%s' %d",
+                config->obk_path,
+                obk_buf.len,
+                AZIHSM_OBK_SIZE,
+                config->obk_path,
+                AZIHSM_OBK_SIZE
+            );
+            free_buffer(&obk_buf);
+            free_buffer(&bmk_buf);
+            free_buffer(&muk_buf);
+            OPENSSL_cleanse(&creds, sizeof(creds));
+            return AZIHSM_STATUS_INTERNAL_ERROR;
+        }
+
         backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER;
         backup_config.owner_backup_key = &obk_buf;
     }

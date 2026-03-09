@@ -185,6 +185,7 @@ azihsm_status azihsm_file_write(const char *path, const uint8_t *data, uint32_t 
 {
     int fd;
     uint32_t total_written = 0;
+    struct stat st;
 
     if (path == NULL || data == NULL || len == 0)
     {
@@ -206,6 +207,34 @@ azihsm_status azihsm_file_write(const char *path, const uint8_t *data, uint32_t 
             path,
             strerror(errno)
         );
+        return AZIHSM_STATUS_INTERNAL_ERROR;
+    }
+
+    // Reject non-regular files.
+    if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode))
+    {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            ERR_R_INIT_FAIL,
+            "'%s' is not a regular file",
+            path
+        );
+        close(fd);
+        return AZIHSM_STATUS_INTERNAL_ERROR;
+    }
+
+    // Restrict file to owner read/write only.
+    if (fchmod(fd, S_IRUSR | S_IWUSR) != 0)
+    {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            ERR_R_INIT_FAIL,
+            "fchmod failed for '%s': %s",
+            path,
+            strerror(errno)
+        );
+        close(fd);
+        unlink(path);
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
 
