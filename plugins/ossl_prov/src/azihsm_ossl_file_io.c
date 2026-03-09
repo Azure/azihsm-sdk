@@ -213,12 +213,7 @@ azihsm_status azihsm_file_write(const char *path, const uint8_t *data, uint32_t 
     // Reject non-regular files.
     if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode))
     {
-        ERR_raise_data(
-            ERR_LIB_PROV,
-            ERR_R_INIT_FAIL,
-            "'%s' is not a regular file",
-            path
-        );
+        ERR_raise_data(ERR_LIB_PROV, ERR_R_INIT_FAIL, "'%s' is not a regular file", path);
         close(fd);
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
