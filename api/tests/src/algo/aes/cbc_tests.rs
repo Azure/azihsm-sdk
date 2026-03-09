@@ -7,13 +7,13 @@ use super::*;
 
 const AES_CBC_BLOCK_SIZE: usize = 16;
 
-/* ================================
- * Helpers
- * ================================ */
+// ================================
+// Helpers
+// ================================
 
-/* ================================
- * Key  Algorithm Helpers
- * ================================ */
+// ================================
+// Key  Algorithm Helpers
+// ================================
 
 /// Create an AES-CBC algorithm instance configured for PKCS#7 padding (true) or no padding (false).
 fn new_cbc_algo(padding: bool, iv: &[u8]) -> HsmAesCbcAlgo {
@@ -24,9 +24,9 @@ fn new_cbc_algo(padding: bool, iv: &[u8]) -> HsmAesCbcAlgo {
     }
 }
 
-/* ================================
- * Key Generation Helpers
- * ================================ */
+// ================================
+// Key Generation Helpers
+// ================================
 
 /// Generate a session-only AES key of the requested bit length.
 fn aes_generate_key(bit_len: u32, session: &HsmSession) -> HsmAesKey {
@@ -98,9 +98,9 @@ fn aes_generate_key_no_decrypt(bit_len: u32, session: &HsmSession) -> HsmResult<
     HsmKeyManager::generate_key(session, &mut algo, props)
 }
 
-/* ================================
- * Encrypt/Decrypt Helpers
- * ================================ */
+// ================================
+// Encrypt/Decrypt Helpers
+// ================================
 /// Encrypt then decrypt via AES-CBC and assert round-trip equality.
 ///
 /// Notes:
@@ -163,9 +163,9 @@ fn run_cbc_roundtrip(
     assert_eq!(decrypted, plaintext);
 }
 
-/* ================================
- * Streaming  Helpers
- * ================================ */
+// ================================
+// Streaming  Helpers
+// ================================
 
 fn cbc_encrypt_streaming(
     key: &HsmAesKey,
@@ -233,9 +233,9 @@ fn cbc_decrypt_streaming(
     Ok(plaintext)
 }
 
-/* ================================
- * Test Scenario Runners (Negative / Edge Cases)
- * ================================ */
+// ================================
+// Test Scenario Runners (Negative / Edge Cases)
+// ================================
 
 fn run_cbc_invalid_padding_variants(session: &HsmSession, key_bits: u32) {
     let iv = test_iv();
@@ -391,9 +391,9 @@ fn run_cbc_decrypt_empty_ciphertext_fails(session: &HsmSession, key_bits: u32) {
     assert!(matches!(result, Err(HsmError::InvalidArgument)));
 }
 
-/* ================================
- * Coverage / Sweep Helpers
- * ================================ */
+// ================================
+// Coverage / Sweep Helpers
+// ================================
 
 fn run_cbc_padding_boundary(session: &HsmSession, key_bits: u32, streaming: bool) {
     let iv = test_iv();
@@ -462,9 +462,9 @@ fn run_cbc_padding_and_chunk_sweep(session: &HsmSession, key_bits: u32, streamin
     }
 }
 
-/* ================================
- * Misc
- * ================================ */
+// ================================
+// Misc
+// ================================
 
 fn test_iv() -> [u8; AES_CBC_BLOCK_SIZE] {
     Rng::rand_vec(AES_CBC_BLOCK_SIZE)
@@ -472,14 +472,12 @@ fn test_iv() -> [u8; AES_CBC_BLOCK_SIZE] {
         .try_into()
         .expect("IV length mismatch")
 }
-/* ============================================================
- * test cases sections
- * ============================================================ */
-
-/* ============================================================
- * ENCRYPT/DECRYPT ROUNDTRIPS
- * ============================================================ */
-
+// ============================================================
+// test cases sections
+// ============================================================
+// ============================================================
+// ENCRYPT/DECRYPT ROUNDTRIPS
+// ============================================================
 // --- basic roundtrips
 /// Basic AES-CBC no-padding roundtrip with a 128-bit key and 1-block plaintext.
 #[session_test]
@@ -583,7 +581,7 @@ fn test_cbc_crypt_large_pad_256(session: HsmSession) {
 
 // --- padding boundary conditions
 
-// single shot
+/// PKCS#7 padding boundary sweep (single-shot) with AES-128.
 #[session_test]
 fn test_cbc_padding_boundary_single_shot_128(session: HsmSession) {
     run_cbc_padding_boundary(&session, 128, false);
@@ -595,6 +593,7 @@ fn test_cbc_padding_boundary_single_shot_192(session: HsmSession) {
     run_cbc_padding_boundary(&session, 192, false);
 }
 
+/// PKCS#7 padding boundary sweep (single-shot) with AES-128.
 #[session_test]
 fn test_cbc_padding_boundary_single_shot_256(session: HsmSession) {
     run_cbc_padding_boundary(&session, 256, false);
@@ -649,17 +648,19 @@ fn test_cbc_decrypt_tampered_ciphertext_no_pad_128(session: HsmSession) {
     assert_ne!(decrypted, plaintext);
 }
 
-//streaming
+/// PKCS#7 padding boundary streaming with AES-128.
 #[session_test]
 fn test_cbc_padding_boundary_streaming_128(session: HsmSession) {
     run_cbc_padding_boundary(&session, 128, true);
 }
 
+/// PKCS#7 padding boundary streaming with AES-192.
 #[session_test]
 fn test_cbc_padding_boundary_streaming_192(session: HsmSession) {
     run_cbc_padding_boundary(&session, 192, true);
 }
 
+/// PKCS#7 padding boundary streaming with AES-256.
 #[session_test]
 fn test_cbc_padding_boundary_streaming_256(session: HsmSession) {
     run_cbc_padding_boundary(&session, 256, true);
@@ -810,35 +811,43 @@ fn test_cbc_streaming_encrypt_streaming_decrypt_no_pad_128_diff_boundaries(sessi
 /// around AES block boundaries (16 bytes). This covers empty input, block
 /// boundaries, and nearby values up to 128 bytes.
 
+/// Single-shot PKCS#7 padding and chunk sweep using AES-128.
 #[session_test]
 fn test_cbc_single_shot_padding_and_chunk_sweep_128(session: HsmSession) {
     run_cbc_padding_and_chunk_sweep(&session, 128, false);
 }
 
+/// Single-shot PKCS#7 padding and chunk sweep using AES-192.
 #[session_test]
 fn test_cbc_single_shot_padding_and_chunk_sweep_192(session: HsmSession) {
     run_cbc_padding_and_chunk_sweep(&session, 192, false);
 }
+
+/// Single-shot PKCS#7 padding and chunk sweep using AES-256.
 #[session_test]
 fn test_cbc_single_shot_padding_and_chunk_sweep_256(session: HsmSession) {
     run_cbc_padding_and_chunk_sweep(&session, 256, false);
 }
-/// Streaming PKCS#7 padding + chunk sweep (128-bit key).
 
+/// Streaming PKCS#7 padding + chunk sweep (128-bit key).
 #[session_test]
 fn test_cbc_streaming_padding_and_chunk_sweep_128(session: HsmSession) {
     run_cbc_padding_and_chunk_sweep(&session, 128, true);
 }
 
+/// Streaming PKCS#7 padding and chunk sweep using AES-192.
 #[session_test]
 fn test_cbc_streaming_padding_and_chunk_sweep_192(session: HsmSession) {
     run_cbc_padding_and_chunk_sweep(&session, 192, true);
 }
+
+/// Streaming PKCS#7 padding and chunk sweep using AES-256.
 #[session_test]
 fn test_cbc_streaming_padding_and_chunk_sweep_256(session: HsmSession) {
     run_cbc_padding_and_chunk_sweep(&session, 256, true);
 }
 
+/// Same plaintext encrypted with different IVs must produce different ciphertexts.
 #[session_test]
 fn test_cbc_different_ivs_produce_different_ciphertexts(session: HsmSession) {
     let key = aes_generate_key(128, &session);
@@ -853,10 +862,11 @@ fn test_cbc_different_ivs_produce_different_ciphertexts(session: HsmSession) {
     assert_ne!(ct1, ct2);
 }
 
-/* ============================================================
- * ENCRYPT ONLY
- * ============================================================ */
+// ============================================================
+// ENCRYPT ONLY
+// ============================================================
 
+/// Encrypt size query should return the required ciphertext length (AES-128).
 #[session_test]
 fn test_cbc_encrypt_size_query_128(session: HsmSession) {
     let iv = test_iv();
@@ -870,6 +880,7 @@ fn test_cbc_encrypt_size_query_128(session: HsmSession) {
     assert!(size >= pt.len());
 }
 
+/// Encrypt size query should return the required ciphertext length (AES-192).
 #[session_test]
 fn test_cbc_encrypt_size_query_192(session: HsmSession) {
     let iv = test_iv();
@@ -880,6 +891,7 @@ fn test_cbc_encrypt_size_query_192(session: HsmSession) {
     assert!(size.is_multiple_of(AES_CBC_BLOCK_SIZE));
 }
 
+/// Encrypt size query should return the required ciphertext length (AES-256).
 #[session_test]
 fn test_cbc_encrypt_size_query_256(session: HsmSession) {
     let iv = test_iv();
@@ -892,20 +904,24 @@ fn test_cbc_encrypt_size_query_256(session: HsmSession) {
     assert!(size.is_multiple_of(AES_CBC_BLOCK_SIZE));
 }
 
+/// Encryption should fail with BufferTooSmall when output buffer is insufficient (AES-128).
 #[session_test]
 fn test_cbc_encrypt_buffer_too_small_128(session: HsmSession) {
     run_cbc_encrypt_buffer_too_small(&session, 128);
 }
 
+/// Encryption should fail with BufferTooSmall when output buffer is insufficient (AES-192).
 #[session_test]
 fn test_cbc_encrypt_buffer_too_small_192(session: HsmSession) {
     run_cbc_encrypt_buffer_too_small(&session, 192);
 }
 
+/// Encryption should fail with BufferTooSmall when output buffer is insufficient (AES-256).
 #[session_test]
 fn test_cbc_encrypt_buffer_too_small_256(session: HsmSession) {
     run_cbc_encrypt_buffer_too_small(&session, 256);
 }
+
 /// Streaming final-without-update with padding enabled should emit exactly one padding block.
 #[session_test]
 fn test_cbc_streaming_final_without_update_outputs_padding_block(session: HsmSession) {
@@ -917,10 +933,11 @@ fn test_cbc_streaming_final_without_update_outputs_padding_block(session: HsmSes
     assert_eq!(ct.len(), AES_CBC_BLOCK_SIZE);
 }
 
+/// Different IVs must produce different ciphertexts even without padding.
 #[session_test]
 fn test_cbc_different_ivs_no_padding(session: HsmSession) {
     let key = aes_generate_key(128, &session);
-    let pt = vec![0xAB; 64]; // block-aligned
+    let pt = vec![0xAB; 64];
 
     let iv1 = test_iv();
     let iv2 = test_iv();
@@ -930,6 +947,8 @@ fn test_cbc_different_ivs_no_padding(session: HsmSession) {
 
     assert_ne!(ct1, ct2);
 }
+
+/// Streaming encryption must match single-shot ciphertext across chunk patterns.
 #[session_test]
 fn test_cbc_streaming_matches_single_shot_all_chunk_patterns(session: HsmSession) {
     let key = aes_generate_streaming_key(256, &session);
@@ -949,6 +968,7 @@ fn test_cbc_streaming_matches_single_shot_all_chunk_patterns(session: HsmSession
     }
 }
 
+/// Empty plaintext with PKCS#7 padding should round-trip correctly (AES-128).
 #[session_test]
 fn test_cbc_encrypt_empty_plaintext_with_pad_roundtrip_128(session: HsmSession) {
     let iv = test_iv();
@@ -962,6 +982,7 @@ fn test_cbc_encrypt_empty_plaintext_with_pad_roundtrip_128(session: HsmSession) 
     assert!(out.is_empty());
 }
 
+/// Empty plaintext with PKCS#7 padding should round-trip correctly (AES-192).
 #[session_test]
 fn test_cbc_encrypt_empty_plaintext_with_pad_roundtrip_192(session: HsmSession) {
     let iv = test_iv();
@@ -975,6 +996,7 @@ fn test_cbc_encrypt_empty_plaintext_with_pad_roundtrip_192(session: HsmSession) 
     assert!(out.is_empty());
 }
 
+/// Empty plaintext with PKCS#7 padding should round-trip correctly (AES-256).
 #[session_test]
 fn test_cbc_encrypt_empty_plaintext_with_pad_roundtrip_256(session: HsmSession) {
     let iv = test_iv();
@@ -982,15 +1004,15 @@ fn test_cbc_encrypt_empty_plaintext_with_pad_roundtrip_256(session: HsmSession) 
     let pt = vec![];
 
     let ct = cbc_encrypt(&key, true, &iv, &pt).expect("encrypt empty plaintext failed");
-    assert_eq!(ct.len(), AES_CBC_BLOCK_SIZE); // PKCS#7 emits one full block
+    assert_eq!(ct.len(), AES_CBC_BLOCK_SIZE);
 
     let out = cbc_decrypt(&key, true, &iv, &ct).expect("decrypt empty plaintext failed");
     assert!(out.is_empty());
 }
 
-/* ============================================================
- * DECRYPT ONLY
- * ============================================================ */
+// ============================================================
+// DECRYPT ONLY
+// ============================================================
 
 /// Truncating ciphertext should cause decryption to fail because
 /// AES-CBC requires ciphertext length to be a multiple of the block size.
@@ -1000,82 +1022,97 @@ fn test_cbc_decrypt_truncated_pad_128(session: HsmSession) {
     run_cbc_decrypt_truncated_ciphertext(&session, 128, true);
 }
 
-/// Truncated ciphertext should cause decryption to fail (AES-192, both pad/no-pad).
+/// Truncated ciphertext should cause decryption to fail (AES-192, padding enabled).
 #[session_test]
 fn test_cbc_decrypt_truncated_pad_192(session: HsmSession) {
     run_cbc_decrypt_truncated_ciphertext(&session, 192, true);
 }
+
+/// Truncated ciphertext should cause decryption to fail (AES-256, padding enabled).
 #[session_test]
 fn test_cbc_decrypt_truncated_pad_256(session: HsmSession) {
     run_cbc_decrypt_truncated_ciphertext(&session, 256, true);
 }
 
+/// Truncated ciphertext should cause decryption to fail in no-padding mode (AES-128).
 #[session_test]
 fn test_cbc_decrypt_truncated_no_pad_128(session: HsmSession) {
     run_cbc_decrypt_truncated_ciphertext(&session, 128, false);
 }
 
+/// Truncated ciphertext should cause decryption to fail in no-padding mode (AES-192).
 #[session_test]
 fn test_cbc_decrypt_truncated_no_pad_192(session: HsmSession) {
     run_cbc_decrypt_truncated_ciphertext(&session, 192, false);
 }
 
+/// Truncated ciphertext should cause decryption to fail in no-padding mode (AES-256).
 #[session_test]
 fn test_cbc_decrypt_truncated_no_pad_256(session: HsmSession) {
     run_cbc_decrypt_truncated_ciphertext(&session, 256, false);
 }
 
+/// Decryption should fail when output buffer is smaller than required plaintext (AES-128).
 #[session_test]
 fn test_cbc_decrypt_buffer_too_small_128(session: HsmSession) {
     run_cbc_decrypt_buffer_too_small(&session, 128);
 }
 
+/// Decryption should fail when output buffer is smaller than required plaintext (AES-192).
 #[session_test]
 fn test_cbc_decrypt_buffer_too_small_192(session: HsmSession) {
     run_cbc_decrypt_buffer_too_small(&session, 192);
 }
 
+/// Decryption should fail when output buffer is smaller than required plaintext (AES-256).
 #[session_test]
 fn test_cbc_decrypt_buffer_too_small_256(session: HsmSession) {
     run_cbc_decrypt_buffer_too_small(&session, 256);
 }
 
+/// Decrypt length query should match ciphertext length when padding is enabled (AES-128).
 #[session_test]
 fn test_cbc_decrypt_len_query_matches_ciphertext_len_128(session: HsmSession) {
     assert_cbc_decrypt_len_query_matches_ciphertext_len(&session, 128);
 }
 
+/// Decrypt length query should match ciphertext length when padding is enabled (AES-192).
 #[session_test]
 fn test_cbc_decrypt_len_query_matches_ciphertext_len_192(session: HsmSession) {
     assert_cbc_decrypt_len_query_matches_ciphertext_len(&session, 192);
 }
 
+/// Decrypt length query should match ciphertext length when padding is enabled (AES-256).
 #[session_test]
 fn test_cbc_decrypt_len_query_matches_ciphertext_len_256(session: HsmSession) {
     assert_cbc_decrypt_len_query_matches_ciphertext_len(&session, 256);
 }
 
+/// Decrypt size query should return plaintext length when no padding is used (AES-128).
 #[session_test]
 fn test_cbc_decrypt_size_query_no_pad_128(session: HsmSession) {
     run_cbc_decrypt_size_query_no_pad(&session, 128);
 }
 
+/// Decrypt size query should return plaintext length when no padding is used (AES-192).
 #[session_test]
 fn test_cbc_decrypt_size_query_no_pad_192(session: HsmSession) {
     run_cbc_decrypt_size_query_no_pad(&session, 192);
 }
 
+/// Decrypt size query should return plaintext length when no padding is used (AES-256).
 #[session_test]
 fn test_cbc_decrypt_size_query_no_pad_256(session: HsmSession) {
     run_cbc_decrypt_size_query_no_pad(&session, 256);
 }
 
-/* ============================================================
- *  NEGATIVE TESTS
- * ============================================================ */
+// ============================================================
+//  NEGATIVE TESTS
+// ============================================================
 
-//encrypt only
+// encrypt only
 
+/// Encryption should fail when using a key without encrypt permission (AES-128).
 #[session_test]
 fn test_cbc_encrypt_key_without_encrypt_permission_fails_128(session: HsmSession) {
     let iv = test_iv();
@@ -1084,34 +1121,30 @@ fn test_cbc_encrypt_key_without_encrypt_permission_fails_128(session: HsmSession
     let key = match aes_generate_key_no_encrypt(128, &session) {
         Ok(k) => k,
         Err(HsmError::InvalidKeyProps) => {
-            // Backend disallows generating non-encrypt AES keys.
-            // This is acceptable – test passes vacuously.
             return;
         }
         Err(e) => panic!("unexpected keygen error: {e:?}"),
     };
 
     let result = cbc_encrypt(&key, false, &iv, &pt);
-    assert!(
-        matches!(result, Err(HsmError::InvalidKey)),
-        "expected InvalidKey, got {:?}",
-        result.err()
-    );
+    assert!(matches!(result, Err(HsmError::InvalidKey)));
 }
 
+/// Encryption should fail when using a key without encrypt permission (AES-192).
 #[session_test]
 fn test_cbc_encrypt_key_without_encrypt_permission_fails_192(session: HsmSession) {
     let iv = test_iv();
     let pt = vec![0xAA; AES_CBC_BLOCK_SIZE];
     let key = match aes_generate_key_no_encrypt(192, &session) {
         Ok(k) => k,
-        Err(HsmError::InvalidKeyProps) => return, // backend disallows, pass vacuously
+        Err(HsmError::InvalidKeyProps) => return,
         Err(e) => panic!("unexpected keygen error: {e:?}"),
     };
     let result = cbc_encrypt(&key, false, &iv, &pt);
     assert!(matches!(result, Err(HsmError::InvalidKey)));
 }
 
+/// Encryption should fail when using a key without encrypt permission (AES-256).
 #[session_test]
 fn test_cbc_encrypt_key_without_encrypt_permission_fails_256(session: HsmSession) {
     let iv = test_iv();
@@ -1119,38 +1152,33 @@ fn test_cbc_encrypt_key_without_encrypt_permission_fails_256(session: HsmSession
 
     let key = match aes_generate_key_no_encrypt(256, &session) {
         Ok(k) => k,
-        Err(HsmError::InvalidKeyProps) => {
-            // Backend disallows generating non-encrypt AES keys.
-            // This is acceptable – test passes vacuously.
-            return;
-        }
+        Err(HsmError::InvalidKeyProps) => return,
         Err(e) => panic!("unexpected keygen error: {e:?}"),
     };
 
     let result = cbc_encrypt(&key, false, &iv, &pt);
-    assert!(
-        matches!(result, Err(HsmError::InvalidKey)),
-        "expected InvalidKey, got {:?}",
-        result.err()
-    );
+    assert!(matches!(result, Err(HsmError::InvalidKey)));
 }
 
-///  no-padding mode requires block-aligned plaintext; backend should return an error.
+/// No-padding mode requires block-aligned plaintext; backend should return an error.
 #[session_test]
 fn test_cbc_encrypt_non_aligned_no_pad_fails_128(session: HsmSession) {
     assert_cbc_encrypt_non_aligned_no_pad_fails(&session, 128);
 }
 
+/// No-padding mode requires block-aligned plaintext; backend should return an error (AES-192).
 #[session_test]
 fn test_cbc_encrypt_non_aligned_no_pad_fails_192(session: HsmSession) {
     assert_cbc_encrypt_non_aligned_no_pad_fails(&session, 192);
 }
 
+/// No-padding mode requires block-aligned plaintext; backend should return an error (AES-256).
 #[session_test]
 fn test_cbc_encrypt_non_aligned_no_pad_fails_256(session: HsmSession) {
     assert_cbc_encrypt_non_aligned_no_pad_fails(&session, 256);
 }
 
+/// No-padding encryption should reject empty plaintext (AES-128).
 #[session_test]
 fn test_cbc_encrypt_empty_plaintext_no_pad_128_fails(session: HsmSession) {
     let iv = test_iv();
@@ -1161,6 +1189,7 @@ fn test_cbc_encrypt_empty_plaintext_no_pad_128_fails(session: HsmSession) {
     assert!(matches!(result, Err(HsmError::InvalidArgument)));
 }
 
+/// No-padding encryption should reject empty plaintext (AES-256).
 #[session_test]
 fn test_cbc_encrypt_empty_plaintext_no_pad_256_fails(session: HsmSession) {
     let iv = test_iv();
@@ -1177,13 +1206,14 @@ fn test_cbc_streaming_no_padding_partial_block_is_rejected(session: HsmSession) 
     let iv = test_iv();
     let key = aes_generate_streaming_key(256, &session);
 
-    let pt = vec![0u8; AES_CBC_BLOCK_SIZE + 1]; // not block-aligned
+    let pt = vec![0u8; AES_CBC_BLOCK_SIZE + 1];
     let result = cbc_encrypt_streaming(&key, false, &iv, &pt, &[15]);
     assert!(matches!(result, Err(HsmError::InvalidArgument)));
 }
 
-//decrypt only
+// decrypt only
 
+/// Decryption should fail when ciphertext is empty (AES-128).
 #[session_test]
 fn test_cbc_decrypt_empty_ciphertext_fails_128(session: HsmSession) {
     run_cbc_decrypt_empty_ciphertext_fails(&session, 128);
@@ -1195,22 +1225,20 @@ fn test_cbc_decrypt_empty_ciphertext_fails_192(session: HsmSession) {
     run_cbc_decrypt_empty_ciphertext_fails(&session, 192);
 }
 
+/// Decryption should fail when ciphertext is empty (AES-256).
 #[session_test]
 fn test_cbc_decrypt_empty_ciphertext_fails_256(session: HsmSession) {
     run_cbc_decrypt_empty_ciphertext_fails(&session, 256);
 }
 
+/// Decryption should fail when using a key without decrypt permission (AES-128).
 #[session_test]
 fn test_cbc_decrypt_key_without_decrypt_permission_fails_128(session: HsmSession) {
     let iv = test_iv();
 
     let key = match aes_generate_key_no_decrypt(128, &session) {
         Ok(k) => k,
-        Err(HsmError::InvalidKeyProps) => {
-            // Backend disallows generating non-encrypt AES keys.
-            // This is acceptable – test passes vacuously.
-            return;
-        }
+        Err(HsmError::InvalidKeyProps) => return,
         Err(e) => panic!("unexpected keygen error: {e:?}"),
     };
 
@@ -1222,6 +1250,7 @@ fn test_cbc_decrypt_key_without_decrypt_permission_fails_128(session: HsmSession
     assert!(matches!(result, Err(HsmError::InvalidKey)));
 }
 
+/// Decryption should fail when using a key without decrypt permission (AES-192).
 #[session_test]
 fn test_cbc_decrypt_key_without_decrypt_permission_fails_192(session: HsmSession) {
     let iv = test_iv();
@@ -1236,6 +1265,7 @@ fn test_cbc_decrypt_key_without_decrypt_permission_fails_192(session: HsmSession
     assert!(matches!(result, Err(HsmError::InvalidKey)));
 }
 
+/// Decryption should fail when using a key without decrypt permission (AES-256).
 #[session_test]
 fn test_cbc_decrypt_key_without_decrypt_permission_fails_256(session: HsmSession) {
     let iv = test_iv();
@@ -1259,7 +1289,6 @@ fn test_cbc_decrypt_key_without_decrypt_permission_fails_256(session: HsmSession
 }
 
 /// Streaming behavior: CBC encrypt buffers the final block until `finish()` is called.
-///
 #[session_test]
 fn test_cbc_streaming_encrypt_buffers_final_block_until_finish(session: HsmSession) {
     let iv = test_iv();
@@ -1276,7 +1305,7 @@ fn test_cbc_streaming_encrypt_buffers_final_block_until_finish(session: HsmSessi
     let mut out = vec![0u8; AES_CBC_BLOCK_SIZE];
     let written = enc_ctx.update(&pt, Some(&mut out)).unwrap();
     assert_eq!(written, 0);
-    // "Operation mismatch"/no-op: calling update with an empty input should be a no-op.
+    // Calling update with empty input should behave as a no-op.
     let result = enc_ctx.update(&[], None).unwrap();
     assert_eq!(result, 0);
     // The buffered block must be emitted when `finish()` is called.
@@ -1284,6 +1313,7 @@ fn test_cbc_streaming_encrypt_buffers_final_block_until_finish(session: HsmSessi
     assert_eq!(final_written, AES_CBC_BLOCK_SIZE);
 }
 
+/// Invalid PKCS#7 padding variants must be rejected (AES-128).
 #[session_test]
 fn test_cbc_decrypt_invalid_padding_variants_fail_128(session: HsmSession) {
     run_cbc_invalid_padding_variants(&session, 128);
@@ -1295,14 +1325,15 @@ fn test_cbc_decrypt_invalid_padding_variants_fail_192(session: HsmSession) {
     run_cbc_invalid_padding_variants(&session, 192);
 }
 
+/// Invalid PKCS#7 padding variants must be rejected (AES-256).
 #[session_test]
 fn test_cbc_decrypt_invalid_padding_variants_fail_256(session: HsmSession) {
     run_cbc_invalid_padding_variants(&session, 256);
 }
 
-//misc
+// misc
 
-///  AES-CBC requires a 16-byte IV; invalid IV length should be rejected.
+/// AES-CBC requires a 16-byte IV; invalid IV length should be rejected.
 #[session_test]
 fn test_cbc_invalid_iv_fails(mut _session: HsmSession) {
     let iv_too_short = vec![0u8; AES_CBC_BLOCK_SIZE - 1];
@@ -1326,6 +1357,7 @@ fn test_cbc_invalid_iv_fails(mut _session: HsmSession) {
     ));
 }
 
+/// Streaming decrypt should fail when finish() is called without prior update() in no-padding mode.
 #[session_test]
 fn test_cbc_streaming_final_without_update_no_pad_fails(session: HsmSession) {
     let iv = test_iv();
