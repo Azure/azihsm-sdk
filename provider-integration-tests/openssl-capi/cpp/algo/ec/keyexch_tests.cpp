@@ -10,6 +10,7 @@
 /// (ecdh_key_exchange.sh).
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <gtest/gtest.h>
 #include <openssl/core_names.h>
