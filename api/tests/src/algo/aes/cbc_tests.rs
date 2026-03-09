@@ -807,9 +807,9 @@ fn test_cbc_streaming_encrypt_streaming_decrypt_no_pad_128_diff_boundaries(sessi
     assert_eq!(out, plaintext);
 }
 
-/// Runs AES-CBC PKCS#7 padding tests using boundary-focused plaintext sizes
-/// around AES block boundaries (16 bytes). This covers empty input, block
-/// boundaries, and nearby values up to 128 bytes.
+// Runs AES-CBC PKCS#7 padding tests using boundary-focused plaintext sizes
+// around AES block boundaries (16 bytes). This covers empty input, block
+// boundaries, and nearby values up to 128 bytes.
 
 /// Single-shot PKCS#7 padding and chunk sweep using AES-128.
 #[session_test]
