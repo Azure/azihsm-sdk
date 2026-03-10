@@ -442,6 +442,7 @@ fn aes_xts_single_shot_dul_sweep(session: HsmSession) {
     }
 }
 
+/// verifies AES-XTS streaming works correctly for large multi-chunk inputs
 #[session_test]
 fn aes_xts_large_data_streaming(session: HsmSession) {
     let key = aes_xts_generate_key(&session).unwrap();
@@ -457,6 +458,7 @@ fn aes_xts_large_data_streaming(session: HsmSession) {
     assert_eq!(pt, plaintext);
 }
 
+/// verifies decryption with a different tweak does not recover the original plaintext
 #[session_test]
 fn aes_xts_decrypt_with_wrong_tweak_fails_to_recover(session: HsmSession) {
     let key = aes_xts_generate_key(&session).unwrap();
@@ -475,6 +477,7 @@ fn aes_xts_decrypt_with_wrong_tweak_fails_to_recover(session: HsmSession) {
     assert_ne!(decrypted, plaintext);
 }
 
+/// verifies that different tweak values produce different ciphertext for identical plaintext
 #[session_test]
 fn aes_xts_higher_order_tweak_changes_ciphertext(session: HsmSession) {
     let key = aes_xts_generate_key(&session).unwrap();
@@ -494,6 +497,7 @@ fn aes_xts_higher_order_tweak_changes_ciphertext(session: HsmSession) {
     assert_ne!(ct1, ct2);
 }
 
+/// verifies decrypt rejects ciphertext not aligned to the configured data-unit length
 #[session_test]
 fn aes_xts_decrypt_non_dul_aligned_ciphertext_rejected(session: HsmSession) {
     let key = aes_xts_generate_key(&session).unwrap();
@@ -513,6 +517,7 @@ fn aes_xts_decrypt_non_dul_aligned_ciphertext_rejected(session: HsmSession) {
     assert!(matches!(err, HsmError::InvalidArgument));
 }
 
+/// verifies streaming finish with no buffered data produces zero output
 #[session_test]
 fn aes_xts_streaming_finish_zero_output(session: HsmSession) {
     let key = aes_xts_generate_key(&session).unwrap();
@@ -530,6 +535,7 @@ fn aes_xts_streaming_finish_zero_output(session: HsmSession) {
     assert_eq!(written, 0);
 }
 
+/// verifies update size-query returns correct output size and enforces buffer requirements
 #[session_test]
 fn aes_xts_streaming_update_size_query_contract(session: HsmSession) {
     let key = aes_xts_generate_key(&session).unwrap();
@@ -549,8 +555,9 @@ fn aes_xts_streaming_update_size_query_contract(session: HsmSession) {
     assert!(matches!(err, HsmError::BufferTooSmall));
 }
 
+/// verifies finish() on a fresh streaming context returns zero output
 #[session_test]
-fn aes_xts_streaming_operation_mismatch_rejected(session: HsmSession) {
+fn aes_xts_finish_empty_stream_returns_zero(session: HsmSession) {
     let key = aes_xts_generate_key(&session).unwrap();
     let tweak = [0u8; AES_XTS_TEST_TWEAK_SIZE];
     let dul = 128;
@@ -560,11 +567,12 @@ fn aes_xts_streaming_operation_mismatch_rejected(session: HsmSession) {
 
     let mut out = vec![0u8; dul];
 
-    // attempt decrypt-style misuse (should fail internally)
-    let err = enc_ctx.finish(Some(&mut out)).unwrap();
-    assert_eq!(err, 0);
+    // finish without update() should succeed and return 0 bytes
+    let written = enc_ctx.finish(Some(&mut out)).unwrap();
+    assert_eq!(written, 0);
 }
 
+/// verifies decrypting with a different key does not reproduce the original plaintext
 #[session_test]
 fn aes_xts_decrypt_with_wrong_key_fails_to_recover(session: HsmSession) {
     let key1 = aes_xts_generate_key(&session).unwrap();
@@ -581,6 +589,7 @@ fn aes_xts_decrypt_with_wrong_key_fails_to_recover(session: HsmSession) {
     assert_ne!(decrypted, plaintext);
 }
 
+/// verifies encrypt and decrypt operations correctly handle zero-length inputs
 #[session_test]
 fn aes_xts_zero_length_input(session: HsmSession) {
     let key = aes_xts_generate_key(&session).unwrap();
@@ -603,6 +612,7 @@ fn aes_xts_zero_length_input(session: HsmSession) {
     assert_eq!(out_len, 0);
 }
 
+/// verifies streaming update with empty input returns zero output
 #[session_test]
 fn aes_xts_streaming_empty_update(session: HsmSession) {
     let key = aes_xts_generate_key(&session).unwrap();
@@ -617,6 +627,7 @@ fn aes_xts_streaming_empty_update(session: HsmSession) {
     assert_eq!(out_len, 0);
 }
 
+/// verifies size-query operations do not mutate the internal tweak state
 #[session_test]
 fn aes_xts_size_query_does_not_advance_tweak(session: HsmSession) {
     let key = aes_xts_generate_key(&session).unwrap();
@@ -631,6 +642,7 @@ fn aes_xts_size_query_does_not_advance_tweak(session: HsmSession) {
     assert_eq!(algo.tweak(), tweak.to_vec());
 }
 
+/// verifies streaming size-query does not advance the tweak state
 #[session_test]
 fn aes_xts_streaming_size_query_does_not_advance_tweak(session: HsmSession) {
     let key = aes_xts_generate_key(&session).unwrap();
@@ -646,6 +658,7 @@ fn aes_xts_streaming_size_query_does_not_advance_tweak(session: HsmSession) {
     assert_eq!(ctx.algo().tweak(), tweak.to_vec());
 }
 
+/// verifies finish does not modify the tweak state when no data remains
 #[session_test]
 fn aes_xts_finish_does_not_advance_tweak(session: HsmSession) {
     let key = aes_xts_generate_key(&session).unwrap();
@@ -659,6 +672,7 @@ fn aes_xts_finish_does_not_advance_tweak(session: HsmSession) {
     assert_eq!(ctx.algo().tweak(), tweak.to_vec());
 }
 
+/// verifies streaming decrypt rejects updates smaller than a full data unit
 #[session_test]
 fn aes_xts_streaming_decrypt_rejects_partial_data_unit(session: HsmSession) {
     let key = aes_xts_generate_key(&session).unwrap();
@@ -673,6 +687,7 @@ fn aes_xts_streaming_decrypt_rejects_partial_data_unit(session: HsmSession) {
     assert!(matches!(err, HsmError::InvalidArgument));
 }
 
+/// verifies decrypt update enforces minimum output buffer size
 #[session_test]
 fn aes_xts_streaming_decrypt_buffer_too_small(session: HsmSession) {
     let key = aes_xts_generate_key(&session).unwrap();
@@ -689,6 +704,7 @@ fn aes_xts_streaming_decrypt_buffer_too_small(session: HsmSession) {
     assert!(matches!(err, HsmError::BufferTooSmall));
 }
 
+/// verifies tweak overflow during streaming decrypt is rejected
 #[session_test]
 fn aes_xts_streaming_decrypt_tweak_overflow_rejected(session: HsmSession) {
     let key = aes_xts_generate_key(&session).unwrap();
@@ -705,12 +721,14 @@ fn aes_xts_streaming_decrypt_tweak_overflow_rejected(session: HsmSession) {
     assert!(matches!(err, HsmError::InvalidTweak));
 }
 
+/// verifies constructor accepts the maximum supported data-unit length
 #[test]
 fn aes_xts_new_accepts_max_dul() {
     let tweak = [0u8; AES_XTS_TEST_TWEAK_SIZE];
     assert!(HsmAesXtsAlgo::new(&tweak, 8192).is_ok());
 }
 
+/// verifies decrypt streaming update handles empty input without producing output
 #[session_test]
 fn aes_xts_streaming_empty_decrypt_update(session: HsmSession) {
     let key = aes_xts_generate_key(&session).unwrap();
