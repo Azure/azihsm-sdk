@@ -1238,7 +1238,7 @@ azihsm_status azihsm_import_key_pair(
     }
 
     /* 1. Read the input file from disk */
-    status = load_file_to_buffer(input_key_file, &input_buf);
+    status = azihsm_file_load(input_key_file, &input_buf);
     if (status != AZIHSM_STATUS_SUCCESS)
     {
         return status;
@@ -1311,7 +1311,7 @@ azihsm_status azihsm_unwrap_key_pair(
     }
 
     /* 1. Read the wrapped blob from disk */
-    status = load_file_to_buffer(wrapped_key_file, &input_buf);
+    status = azihsm_file_load(wrapped_key_file, &input_buf);
     if (status != AZIHSM_STATUS_SUCCESS)
     {
         return status;
