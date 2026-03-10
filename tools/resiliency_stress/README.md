@@ -30,6 +30,36 @@ cargo run --release -p resiliency_stress -- --duration-secs 0
 cargo run --release -p resiliency_stress -- -w 2 -d 10 -r 500
 ```
 
+### Performance Comparison
+
+```bash
+# Baseline: no resiliency support at all
+cargo run --release -p resiliency_stress -- --no-resiliency -d 60
+
+# Resiliency overhead: resiliency enabled but no resets
+cargo run --release -p resiliency_stress -- --no-reset -d 60
+
+# Full: resiliency enabled with resets (default)
+cargo run --release -p resiliency_stress -- -d 60
+```
+
+### Random DDI Fault Injection
+
+Injects NSSR faults on random DDI operations mid-call, providing much
+better race coverage than timer-based resets. Requires the `res-test`
+feature:
+
+```bash
+# Build with res-test feature
+cargo build --release -p resiliency_stress --features res-test
+
+# Run with random fault injection
+cargo run --release -p resiliency_stress --features res-test -- --random-fault -d 60
+
+# Random faults with faster injection interval
+cargo run --release -p resiliency_stress --features res-test -- --random-fault -r 100 -d 300
+```
+
 ## Command-Line Options
 
 | Flag | Short | Default | Description |
@@ -39,6 +69,10 @@ cargo run --release -p resiliency_stress -- -w 2 -d 10 -r 500
 | `--duration-secs` | `-d` | 60 | Run duration in seconds (0 = infinite) |
 | `--stats-interval-secs` | `-s` | 5 | Seconds between stats printouts |
 | `--ops` | `-o` | all | Comma-separated list of operations |
+| `--stall-timeout-secs` | | 30 | Stall detection timeout (0 = disabled) |
+| `--no-resiliency` | | false | Disable resiliency (baseline perf) |
+| `--no-reset` | | false | Resiliency enabled but no resets |
+| `--random-fault` | | false | Random DDI fault injection (needs `res-test`) |
 
 ## Available Operations
 

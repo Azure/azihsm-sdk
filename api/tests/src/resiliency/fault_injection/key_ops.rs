@@ -146,7 +146,7 @@ fn generate_hmac_key(session: &HsmSession) -> HsmHmacKey {
 
 /// Generate key report for an ECC private key (two-call pattern: size → fill).
 fn generate_ecc_key_report(key: &HsmEccPrivateKey) -> HsmResult<Vec<u8>> {
-    let report_data = [0x42u8; 64];
+    let report_data = [0x42u8; 128];
 
     let report_size = HsmKeyManager::generate_key_report(key, &report_data, None)?;
     let mut report_buffer = vec![0u8; report_size];
@@ -3732,7 +3732,7 @@ fn test_aes_cbc_decrypt_recovers_after_consecutive_reset() {
 
 /// Helper to generate an RSA key report (attestation).
 fn generate_rsa_key_report(key: &HsmRsaPrivateKey) -> HsmResult<Vec<u8>> {
-    let report_data = [0u8; 64];
+    let report_data = [0u8; 128];
     let report_size = HsmKeyManager::generate_key_report(key, &report_data, None)?;
     let mut report_buffer = vec![0u8; report_size];
     let actual_size =

@@ -635,21 +635,23 @@ pub(crate) fn is_credentials_already_established(err: &HsmError) -> bool {
 /// This is the runtime support function called by the
 /// `#[resiliency_key_gen]` proc macro.
 ///
-/// The DDI operation runs under the key-ops barrier read lock so that a
-/// concurrent restore cannot reassign device handles during the DDI call
-/// itself.  Key-wrapper construction (`HsmKeyInner::new`) happens after
-/// the barrier is released and captures the epoch at that point; a
-/// restore that races in between may cause the wrapper to record a newer
-/// epoch than the one under which the handle was created.  This is
-/// benign: the handle is stale, so the first key-op DDI call will fail
-/// with a retryable error and trigger normal recovery.
+/// The first attempt runs the DDI operation under the key-ops barrier
+/// **read lock** so that a concurrent restore cannot reassign device
+/// handles during the DDI call.
+///
+/// On retry, the function acquires the barrier **write lock** around
+/// `restore_partition` + `reopen_session` + the DDI retry.  The write
+/// lock prevents the ABA problem where a newly generated key handle
+/// could collide with a handle that another thread's
+/// `restore_from_masked` just (re)created for a different key.
 ///
 /// On each retry iteration:
 /// 1. Applies exponential backoff.
-/// 2. Calls `partition.restore_partition()` to re-establish credentials.
-/// 3. Calls `partition.reopen_session_if_needed(session)` to reopen the
+/// 2. Acquires the barrier write lock.
+/// 3. Calls `partition.restore_partition()` to re-establish credentials.
+/// 4. Calls `partition.reopen_session_if_needed(session)` to reopen the
 ///    session if its epoch is stale.
-/// 4. Retries the operation under a fresh read lock.
+/// 5. Retries the operation (still under the write lock).
 pub(crate) fn execute_key_gen_with_retry<T>(
     mut operation: impl FnMut() -> HsmResult<T>,
     session: &crate::HsmSession,
@@ -666,6 +668,11 @@ pub(crate) fn execute_key_gen_with_retry<T>(
     while result.as_ref().is_err_and(is_key_op_retryable_error) && attempt < max_retries {
         apply_backoff(attempt, backoff_base_ms, BACKOFF_JITTER_MS);
 
+        // Acquire write lock for the entire recovery + retry sequence
+        // to prevent ABA handle collisions with concurrent
+        // restore_from_masked calls.
+        let _barrier = partition.key_ops_lock_write();
+
         if partition.restore_partition().is_err() {
             attempt += 1;
             continue;
@@ -674,10 +681,7 @@ pub(crate) fn execute_key_gen_with_retry<T>(
             attempt += 1;
             continue;
         }
-        result = {
-            let _barrier = partition.key_ops_lock_read();
-            operation()
-        };
+        result = operation();
         attempt += 1;
     }
 
@@ -727,13 +731,6 @@ pub(crate) fn execute_key_op_with_retry<T>(
             } else if key_epoch() > partition.restore_epoch() {
                 // This should never happen — it would indicate a logic bug
                 // where the epoch was bumped without proper synchronization.
-                debug_assert!(
-                    false,
-                    "execute_key_op_with_retry: key_epoch ({}) > restore_epoch ({}); \
-                     epoch must never go backwards",
-                    key_epoch(),
-                    partition.restore_epoch(),
-                );
                 break Err(HsmError::InternalError);
             } else {
                 Some(operation())

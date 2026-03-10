@@ -67,6 +67,23 @@ struct Args {
     /// Enable verbose logging (shows retry/restore warnings).
     #[arg(short = 'v', long, default_value_t = false)]
     verbose: bool,
+
+    /// Disable resiliency support (no resiliency config, no resets).
+    /// Useful for baseline performance comparison.
+    #[arg(long, default_value_t = false)]
+    no_resiliency: bool,
+
+    /// Keep resiliency enabled but do not trigger resets.
+    /// Useful for measuring resiliency overhead without disruption.
+    #[arg(long, default_value_t = false)]
+    no_reset: bool,
+
+    /// Inject random NSSR faults on DDI operations instead of using
+    /// timer-based resets. Requires the `res-test` feature.
+    /// This provides better race coverage by triggering resets
+    /// mid-DDI-call rather than between operations.
+    #[arg(long, default_value_t = false)]
+    random_fault: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -282,7 +299,7 @@ impl std::fmt::Display for OpKind {
 // Partition + session setup
 // ---------------------------------------------------------------------------
 
-fn open_and_init_partition() -> (HsmPartition, HsmCredentials) {
+fn open_and_init_partition(enable_resiliency: bool) -> (HsmPartition, HsmCredentials) {
     use azihsm_crypto::*;
 
     const TEST_POTA_PRIVATE_KEY: [u8; 185] = [
@@ -401,18 +418,22 @@ fn open_and_init_partition() -> (HsmPartition, HsmCredentials) {
         }
     }
 
-    // Open a separate partition handle for the POTA callback to avoid
-    // re-entering the partition's RwLock during restore.
-    let pota_part = HsmPartitionManager::open_partition(&list[0].path)
-        .expect("Failed to open POTA callback partition");
+    let resiliency_config = if enable_resiliency {
+        // Open a separate partition handle for the POTA callback to avoid
+        // re-entering the partition's RwLock during restore.
+        let pota_part = HsmPartitionManager::open_partition(&list[0].path)
+            .expect("Failed to open POTA callback partition");
 
-    let resiliency_config = HsmResiliencyConfig {
-        storage: Box::new(MemStorage(Mutex::new(HashMap::new()))),
-        lock: Arc::new(MemLock::new()),
-        pota_callback: Some(Box::new(StressPotaCallback { part: pota_part })),
+        Some(HsmResiliencyConfig {
+            storage: Box::new(MemStorage(Mutex::new(HashMap::new()))),
+            lock: Arc::new(MemLock::new()),
+            pota_callback: Some(Box::new(StressPotaCallback { part: pota_part })),
+        })
+    } else {
+        None
     };
 
-    part.init(creds, None, None, obk, pota, Some(resiliency_config))
+    part.init(creds, None, None, obk, pota, resiliency_config)
         .expect("Failed to init partition");
 
     (part, creds)
@@ -1057,10 +1078,24 @@ fn worker_thread(
 // Reset thread
 // ---------------------------------------------------------------------------
 
-fn reset_thread(path: String, interval: Duration, stats: Arc<SharedStats>, barrier: Arc<Barrier>) {
+fn reset_thread(
+    path: String,
+    interval: Duration,
+    stats: Arc<SharedStats>,
+    barrier: Arc<Barrier>,
+    enabled: bool,
+) {
     let partition = HsmPartitionManager::open_partition(&path)
         .expect("Failed to open partition for reset thread");
     barrier.wait();
+
+    if !enabled {
+        // No-op: wait until stop is signalled.
+        while !stats.stop.load(Ordering::Relaxed) {
+            thread::sleep(interval);
+        }
+        return;
+    }
 
     while !stats.stop.load(Ordering::Relaxed) {
         thread::sleep(interval);
@@ -1077,6 +1112,92 @@ fn reset_thread(path: String, interval: Duration, stats: Arc<SharedStats>, barri
                 stats.reset_failures.fetch_add(1, Ordering::Relaxed);
             }
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Random fault injection thread (requires res-test feature)
+// ---------------------------------------------------------------------------
+
+/// Recovery-path DDI operations — always included in the fault target
+/// list because NSSRs can occur during recovery just as they can during
+/// primary operations.
+#[cfg(feature = "res-test")]
+const RECOVERY_DDI_OPS: &[azihsm_res_test_dev::DdiOp] = &[
+    azihsm_res_test_dev::DdiOp::InitBk3,
+    azihsm_res_test_dev::DdiOp::GetEstablishCredEncryptionKey,
+    azihsm_res_test_dev::DdiOp::EstablishCredential,
+    azihsm_res_test_dev::DdiOp::GetSessionEncryptionKey,
+    azihsm_res_test_dev::DdiOp::OpenSession,
+    azihsm_res_test_dev::DdiOp::ReopenSession,
+    azihsm_res_test_dev::DdiOp::UnmaskKey,
+];
+
+/// Builds the list of DDI ops to target with random fault injection,
+/// based on the active worker operations plus recovery-path ops.
+#[cfg(feature = "res-test")]
+fn build_fault_targets(ops: &[OpKind]) -> Vec<azihsm_res_test_dev::DdiOp> {
+    use azihsm_res_test_dev::DdiOp;
+
+    let mut targets: Vec<DdiOp> = Vec::new();
+
+    for op in ops {
+        let ddi_op = match op {
+            OpKind::AesCbcEncrypt | OpKind::AesCbcDecrypt => DdiOp::AesEncryptDecrypt,
+            OpKind::EccSign => DdiOp::EccSign,
+            OpKind::HmacSign => DdiOp::Hmac,
+            OpKind::RsaSign | OpKind::RsaDecrypt => DdiOp::RsaModExp,
+            OpKind::EcdhDerive => DdiOp::EcdhKeyExchange,
+            OpKind::HkdfDerive => DdiOp::HkdfDerive,
+            OpKind::AesKeyGen | OpKind::AesXtsKeyGen => DdiOp::AesGenerateKey,
+            OpKind::EccKeyGen => DdiOp::EccGenerateKeyPair,
+            OpKind::AesUnwrap | OpKind::EccUnwrap | OpKind::XtsUnwrap => DdiOp::RsaUnwrap,
+            OpKind::AesUnmask | OpKind::EccUnmask | OpKind::XtsUnmask => DdiOp::UnmaskKey,
+        };
+        if !targets.contains(&ddi_op) {
+            targets.push(ddi_op);
+        }
+    }
+
+    // Always include recovery-path ops.
+    for &op in RECOVERY_DDI_OPS {
+        if !targets.contains(&op) {
+            targets.push(op);
+        }
+    }
+
+    targets
+}
+
+/// Continuously injects `reset_on_next` faults on random DDI operations.
+///
+/// Each iteration picks a random DDI op from the target list and injects
+/// a fault rule that triggers an NSSR on the next call to that operation.
+/// The target list is built from the active worker operations plus
+/// recovery-path ops, so faults only hit DDI calls that are actually
+/// being made.
+#[cfg(feature = "res-test")]
+fn random_fault_thread(
+    interval: Duration,
+    stats: Arc<SharedStats>,
+    barrier: Arc<Barrier>,
+    fault_targets: Vec<azihsm_res_test_dev::DdiOp>,
+) {
+    use azihsm_res_test_dev::*;
+
+    barrier.wait();
+    let mut rng = rand::thread_rng();
+
+    while !stats.stop.load(Ordering::Relaxed) {
+        thread::sleep(interval);
+        if stats.stop.load(Ordering::Relaxed) {
+            break;
+        }
+
+        // Pick a random DDI op from the target list.
+        let op = fault_targets[rng.gen_range(0..fault_targets.len())];
+        inject_fault(FaultRule::reset_on_next(op, 1));
+        stats.total_resets.fetch_add(1, Ordering::Relaxed);
     }
 }
 
@@ -1372,6 +1493,19 @@ fn main() {
         .init();
 
     eprintln!("=== Resiliency Stress Tool ===");
+
+    // Validate flag combinations.
+    if args.random_fault && args.no_resiliency {
+        eprintln!(
+            "Error: --random-fault requires resiliency (cannot combine with --no-resiliency)"
+        );
+        std::process::exit(1);
+    }
+    if args.random_fault && args.no_reset {
+        eprintln!("Error: --random-fault injects resets (cannot combine with --no-reset)");
+        std::process::exit(1);
+    }
+
     eprintln!("Workers:        {}", args.workers);
     eprintln!("Reset interval: {}ms", args.reset_interval_ms);
     eprintln!(
@@ -1390,6 +1524,18 @@ fn main() {
             format!("{}s", args.stall_timeout_secs)
         }
     );
+    eprintln!(
+        "Mode:           {}",
+        if args.no_resiliency {
+            "no-resiliency (baseline)"
+        } else if args.random_fault {
+            "resiliency enabled + random DDI fault injection"
+        } else if args.no_reset {
+            "resiliency enabled, no resets"
+        } else {
+            "resiliency enabled + resets"
+        }
+    );
 
     let ops = parse_ops(&args.ops);
     eprintln!(
@@ -1402,7 +1548,9 @@ fn main() {
     eprintln!();
 
     // Setup partition + session.
-    let (part, creds) = open_and_init_partition();
+    let enable_resiliency = !args.no_resiliency;
+    let enable_resets = enable_resiliency && !args.no_reset;
+    let (part, creds) = open_and_init_partition(enable_resiliency);
     let path = part.path();
 
     let stats = Arc::new(SharedStats::new());
@@ -1438,12 +1586,36 @@ fn main() {
         stats_thread(stats_clone, stats_interval, start, stall_timeout, ws_clone)
     });
 
-    // Spawn reset thread.
+    // Spawn reset thread (or random fault injection thread).
     let stats_clone = Arc::clone(&stats);
     let barrier_clone = Arc::clone(&barrier);
     let reset_interval = Duration::from_millis(args.reset_interval_ms);
-    let reset_handle =
-        thread::spawn(move || reset_thread(path, reset_interval, stats_clone, barrier_clone));
+    let use_random_fault = args.random_fault;
+    let reset_handle = if use_random_fault {
+        #[cfg(feature = "res-test")]
+        {
+            let fault_targets = build_fault_targets(&ops);
+            thread::spawn(move || {
+                random_fault_thread(reset_interval, stats_clone, barrier_clone, fault_targets)
+            })
+        }
+        #[cfg(not(feature = "res-test"))]
+        {
+            eprintln!("Error: --random-fault requires the `res-test` feature.");
+            eprintln!("Rebuild with: cargo build --features res-test -p resiliency_stress");
+            std::process::exit(1);
+        }
+    } else {
+        thread::spawn(move || {
+            reset_thread(
+                path,
+                reset_interval,
+                stats_clone,
+                barrier_clone,
+                enable_resets,
+            )
+        })
+    };
 
     // Spawn worker threads — all share a single session.
     let session = open_session(&part, &creds);

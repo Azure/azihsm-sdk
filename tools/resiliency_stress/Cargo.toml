@@ -15,6 +15,7 @@ path = "src/main.rs"
 azihsm_api.workspace = true
 azihsm_crypto.workspace = true
 azihsm_ddi_sim.workspace = true
+azihsm_res_test_dev = { optional = true, workspace = true }
 clap = { features = ["derive"], workspace = true }
 parking_lot = { features = ["deadlock_detection"], workspace = true }
 rand.workspace = true
@@ -24,6 +25,7 @@ tracing-subscriber.workspace = true
 [features]
 default = ["mock"]
 mock = ["azihsm_api/mock"]
+res-test = ["azihsm_api/res-test", "azihsm_res_test_dev"]
 
 [lints]
 workspace = true

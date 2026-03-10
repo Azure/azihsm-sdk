@@ -1867,3 +1867,241 @@ fn test_stress_init_part_under_reset() {
         "All init operations should have succeeded"
     );
 }
+
+// =========================================================================
+// ABA safety tests — verify key handle isolation across resets
+// =========================================================================
+
+/// Concurrent key generation and key operations under resets must never
+/// cross-contaminate key material.
+///
+/// Thread A repeatedly generates AES keys and encrypts known plaintext.
+/// Thread B holds a pre-created ECC key and repeatedly signs data.
+/// A Reset thread fires resets continuously.
+///
+/// After reset recovery, Thread A's newly generated key must produce
+/// ciphertext that only that key can decrypt. Thread B's ECC signatures
+/// must verify with Thread B's public key, not with any of Thread A's
+/// keys. If an ABA handle collision occurred, one thread's operation
+/// would silently use another thread's key material, producing output
+/// that doesn't match.
+#[api_test]
+fn test_concurrent_key_gen_and_key_op_no_aba() {
+    let (part, _creds, session, _ctx) = init_partition_and_session();
+
+    // Pre-create an ECC sign key for Thread B.
+    let (ecc_priv, ecc_pub) = generate_ecc_sign_key_pair(&session);
+
+    let stop = Arc::new(AtomicBool::new(false));
+    // 2 workers + 1 reset thread.
+    let barrier = Arc::new(Barrier::new(3));
+
+    let reset_handle = spawn_reset_thread(part.path(), stop.clone(), barrier.clone());
+
+    // Thread A: generate AES keys and verify encrypt/decrypt round-trip.
+    let session_a = session.clone();
+    let barrier_a = barrier.clone();
+    let handle_a = thread::spawn(move || {
+        barrier_a.wait();
+        let mut successes = 0u32;
+        for i in 0..ITERATIONS_PER_WORKER {
+            // Generate a fresh AES key.
+            let props = HsmKeyPropsBuilder::default()
+                .class(HsmKeyClass::Secret)
+                .key_kind(HsmKeyKind::Aes)
+                .bits(256)
+                .can_encrypt(true)
+                .can_decrypt(true)
+                .is_session(true)
+                .build()
+                .expect("AES key props");
+            let mut algo = HsmAesKeyGenAlgo::default();
+            let key = match HsmKeyManager::generate_key(&session_a, &mut algo, props) {
+                Ok(k) => k,
+                Err(e) => {
+                    panic!("Thread A iteration {i}: key gen failed: {e:?}");
+                }
+            };
+
+            // Encrypt and decrypt — verify the round-trip produces the
+            // original plaintext. If an ABA collision occurred, the key
+            // behind this handle would be wrong and decryption would
+            // produce garbage or fail.
+            let iv = [0u8; 16];
+            let plaintext = format!("aba-test-A-iter-{i}!!!!!!!!!!!!!!!");
+            let plaintext_bytes = &plaintext.as_bytes()[..32];
+
+            let ct = match cbc_encrypt(&key, &iv, plaintext_bytes) {
+                Ok(ct) => ct,
+                Err(e) => {
+                    warn!("Thread A iteration {i}: encrypt failed: {e:?}");
+                    continue; // retry error during reset — acceptable
+                }
+            };
+
+            let pt = match cbc_decrypt(&key, &iv, &ct) {
+                Ok(pt) => pt,
+                Err(e) => {
+                    warn!("Thread A iteration {i}: decrypt failed: {e:?}");
+                    continue; // retry error during reset — acceptable
+                }
+            };
+
+            assert_eq!(
+                pt, plaintext_bytes,
+                "Thread A iteration {i}: ABA detected! Decrypted plaintext \
+                 does not match original — key handle may have been reused \
+                 for a different key."
+            );
+            successes += 1;
+            thread::sleep(Duration::from_millis(WORKER_ITER_SLEEP_MS));
+        }
+        successes
+    });
+
+    // Thread B: sign with ECC key and verify the signature.
+    let session_b = session.clone();
+    let barrier_b = barrier.clone();
+    let handle_b = thread::spawn(move || {
+        barrier_b.wait();
+        let mut successes = 0u32;
+        for i in 0..ITERATIONS_PER_WORKER {
+            let data = format!("aba-test-B-iter-{i}");
+            let hash = {
+                let mut hash_algo = HsmHashAlgo::Sha256;
+                match HsmHasher::hash_vec(&session_b, &mut hash_algo, data.as_bytes()) {
+                    Ok(h) => h,
+                    Err(e) => {
+                        warn!("Thread B iteration {i}: hash failed: {e:?}");
+                        continue;
+                    }
+                }
+            };
+
+            let mut sign_algo = HsmEccSignAlgo::default();
+            let sig = match HsmSigner::sign_vec(&mut sign_algo, &ecc_priv, &hash) {
+                Ok(s) => s,
+                Err(e) => {
+                    warn!("Thread B iteration {i}: sign failed: {e:?}");
+                    continue;
+                }
+            };
+
+            // Verify with the original public key. If an ABA collision
+            // occurred, the signature would have been produced with a
+            // different key and verification would fail.
+            let mut verify_algo = HsmEccSignAlgo::default();
+            let valid = match HsmVerifier::verify(&mut verify_algo, &ecc_pub, &hash, &sig) {
+                Ok(v) => v,
+                Err(e) => {
+                    warn!("Thread B iteration {i}: verify failed: {e:?}");
+                    continue;
+                }
+            };
+
+            assert!(
+                valid,
+                "Thread B iteration {i}: ABA detected! Signature produced by \
+                 ECC sign does not verify with the original public key — key \
+                 handle may have been reused for a different key."
+            );
+            successes += 1;
+            thread::sleep(Duration::from_millis(WORKER_ITER_SLEEP_MS));
+        }
+        successes
+    });
+
+    let successes_a = handle_a.join().expect("Thread A panicked");
+    let successes_b = handle_b.join().expect("Thread B panicked");
+    stop.store(true, Ordering::Relaxed);
+    let reset_count = reset_handle.join().expect("Reset thread panicked");
+
+    info!(
+        "ABA test: Thread A {successes_a} key-gen round-trips, \
+         Thread B {successes_b} sign-verify round-trips, \
+         {reset_count} resets"
+    );
+    assert!(
+        reset_count > 0,
+        "Reset thread should have triggered at least one Reset"
+    );
+    assert!(
+        successes_a > 0,
+        "Thread A should have completed at least one round-trip"
+    );
+    assert!(
+        successes_b > 0,
+        "Thread B should have completed at least one round-trip"
+    );
+}
+
+/// After a reset, a restored key's handle must not collide with a
+/// concurrently generated key's handle.
+///
+/// This test verifies the fix to `execute_key_gen_with_retry` that
+/// uses a write lock during retry to prevent ABA collisions.
+///
+/// 1. Generate two AES keys (key_encrypt, key_sign_source).
+/// 2. Reset the device.
+/// 3. On one thread, trigger recovery on key_encrypt (via encrypt).
+///    This calls restore_from_masked → unmask → gets a new handle.
+/// 4. On another thread, generate a new AES key.
+///    This calls AesGenerateKey → gets a new handle.
+/// 5. Verify both keys work independently: key_encrypt decrypts its
+///    own ciphertext, and the new key decrypts its own ciphertext.
+///    If handles collided, one key's decrypt would fail or produce
+///    wrong plaintext.
+#[api_test]
+fn test_key_gen_during_restore_no_handle_collision() {
+    let (part, _creds, session, _ctx) = init_partition_and_session();
+    let key_a = generate_aes_key(&session);
+    let iv = [0u8; 16];
+
+    // Encrypt with key_a before any reset.
+    let plaintext_a = b"key-A-plaintext-for-roundtrip!!!";
+    let ct_a = cbc_encrypt(&key_a, &iv, plaintext_a).expect("pre-reset encrypt failed");
+
+    const ITERATIONS: usize = 10;
+    for i in 0..ITERATIONS {
+        // Reset — invalidates all handles.
+        part.reset()
+            .unwrap_or_else(|e| panic!("Reset {i} failed: {e:?}"));
+        thread::sleep(Duration::from_millis(RESET_INTERVAL_MS));
+
+        // Recover key_a by using it (triggers restore_from_masked).
+        let pt_a = cbc_decrypt(&key_a, &iv, &ct_a);
+        assert!(
+            pt_a.is_ok(),
+            "Iteration {i}: key_a decrypt after reset failed: {:?}",
+            pt_a.err()
+        );
+        assert_eq!(
+            pt_a.unwrap(),
+            plaintext_a.as_slice(),
+            "Iteration {i}: key_a decrypted wrong plaintext after restore"
+        );
+
+        // Generate a new key and verify it works independently.
+        let key_b = generate_aes_key(&session);
+        let plaintext_b = [0x42u8; 32];
+
+        let ct_b = cbc_encrypt(&key_b, &iv, &plaintext_b)
+            .unwrap_or_else(|e| panic!("Iteration {i}: key_b encrypt failed: {e:?}"));
+        let pt_b = cbc_decrypt(&key_b, &iv, &ct_b)
+            .unwrap_or_else(|e| panic!("Iteration {i}: key_b decrypt failed: {e:?}"));
+        assert_eq!(
+            pt_b.as_slice(),
+            &plaintext_b[..],
+            "Iteration {i}: key_b decrypted wrong plaintext — possible ABA collision"
+        );
+
+        // Verify key_a still works after key_b was generated.
+        let pt_a2 = cbc_decrypt(&key_a, &iv, &ct_a)
+            .unwrap_or_else(|e| panic!("Iteration {i}: key_a re-decrypt failed: {e:?}"));
+        assert_eq!(
+            pt_a2,
+            plaintext_a.as_slice(),
+            "Iteration {i}: key_a re-decrypt produced wrong plaintext after key_b gen"
+        );
+    }
+}
