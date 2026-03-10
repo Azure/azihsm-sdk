@@ -71,7 +71,7 @@ impl Xtask for Build {
         command_args.push(target_dir.to_str().unwrap());
 
         // elevate warnings to errors for build
-        std::env::set_var("RUSTFLAGS", "-D warnings");
+        sh.set_var("RUSTFLAGS", "-D warnings");
 
         cmd!(sh, "cargo {rust_toolchain...} build {command_args...}")
             .quiet()
