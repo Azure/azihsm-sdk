@@ -129,95 +129,6 @@ fn run_gcm_roundtrip(session: &HsmSession, iv: &[u8], aad: Option<Vec<u8>>, plai
     assert_eq!(decrypted, plaintext);
 }
 
-fn test_iv() -> [u8; AES_GCM_IV_SIZE] {
-    let mut iv = [0u8; AES_GCM_IV_SIZE];
-    Rng::rand_bytes(&mut iv).expect("RNG failure generating IV");
-    iv
-}
-
-// Key generation tests
-#[session_test]
-fn test_aes_gcm_key_gen_256_session(session: HsmSession) {
-    let key = aes_gcm_generate_key(&session);
-    verify_generated_aes_gcm_key_properties(&key, true);
-}
-
-#[session_test]
-fn test_aes_gcm_key_gen_256_non_session(session: HsmSession) {
-    let key = aes_gcm_generate_streaming_key(&session);
-    verify_generated_aes_gcm_key_properties(&key, false);
-}
-
-// Basic encryption/decryption tests
-#[session_test]
-fn test_gcm_crypt_basic(session: HsmSession) {
-    let iv = test_iv();
-    let plaintext = vec![0x11u8; 16];
-    run_gcm_roundtrip(&session, &iv, None, &plaintext);
-}
-
-#[session_test]
-fn test_gcm_crypt_with_aad(session: HsmSession) {
-    let iv = test_iv();
-    let plaintext = vec![0x22u8; 32];
-    let aad = Some(b"additional authenticated data".to_vec());
-    run_gcm_roundtrip(&session, &iv, aad, &plaintext);
-}
-
-#[session_test]
-fn test_gcm_crypt_large_data(session: HsmSession) {
-    let iv = test_iv();
-    let plaintext = vec![0xAAu8; 4096];
-    run_gcm_roundtrip(&session, &iv, None, &plaintext);
-}
-
-#[session_test]
-fn test_gcm_crypt_large_data_with_aad(session: HsmSession) {
-    let iv = test_iv();
-    let plaintext = vec![0xBBu8; 4096];
-    let aad = Some(vec![0xCCu8; 256]);
-    run_gcm_roundtrip(&session, &iv, aad, &plaintext);
-}
-
-#[session_test]
-fn test_gcm_crypt_small_data(session: HsmSession) {
-    let iv = test_iv();
-    let plaintext = vec![0x55u8; 1];
-    run_gcm_roundtrip(&session, &iv, None, &plaintext);
-}
-
-// Negative tests
-#[session_test]
-fn test_gcm_invalid_iv_fails(mut _session: HsmSession) {
-    let iv_too_short = vec![0u8; AES_GCM_IV_SIZE - 1];
-    let iv_too_long = vec![0u8; AES_GCM_IV_SIZE + 1];
-
-    assert!(matches!(
-        HsmAesGcmAlgo::new_for_encryption(iv_too_short, None),
-        Err(HsmError::InvalidArgument)
-    ));
-    assert!(matches!(
-        HsmAesGcmAlgo::new_for_encryption(iv_too_long, None),
-        Err(HsmError::InvalidArgument)
-    ));
-}
-
-#[session_test]
-fn test_gcm_invalid_tag_fails(mut _session: HsmSession) {
-    let iv = vec![0u8; AES_GCM_IV_SIZE];
-    let tag_too_short = vec![0u8; AES_GCM_TAG_SIZE - 1];
-    let tag_too_long = vec![0u8; AES_GCM_TAG_SIZE + 1];
-
-    assert!(matches!(
-        HsmAesGcmAlgo::new_for_decryption(iv.clone(), tag_too_short, None),
-        Err(HsmError::InvalidArgument)
-    ));
-    assert!(matches!(
-        HsmAesGcmAlgo::new_for_decryption(iv, tag_too_long, None),
-        Err(HsmError::InvalidArgument)
-    ));
-}
-
 // Streaming tests
 fn gcm_encrypt_streaming(
     key: &HsmAesGcmKey,
@@ -289,6 +200,107 @@ fn gcm_decrypt_streaming(
     Ok(plaintext)
 }
 
+fn test_iv() -> [u8; AES_GCM_IV_SIZE] {
+    Rng::rand_vec(AES_GCM_IV_SIZE)
+        .expect("RNG failure generating IV")
+        .try_into()
+        .expect("IV length mismatch")
+}
+
+// Key generation tests
+
+/// Verify AES-GCM session key generation produces a valid 256-bit key with expected properties.
+#[session_test]
+fn test_aes_gcm_key_gen_256_session(session: HsmSession) {
+    let key = aes_gcm_generate_key(&session);
+    verify_generated_aes_gcm_key_properties(&key, true);
+}
+
+/// Verify AES-GCM non-session key generation produces a valid 256-bit persistent key.
+#[session_test]
+fn test_aes_gcm_key_gen_256_non_session(session: HsmSession) {
+    let key = aes_gcm_generate_streaming_key(&session);
+    verify_generated_aes_gcm_key_properties(&key, false);
+}
+
+///Verify AES-GCM encrypt/decrypt roundtrip for a basic single block message.
+#[session_test]
+fn test_gcm_crypt_basic(session: HsmSession) {
+    let iv = test_iv();
+    let plaintext = vec![0x11u8; 16];
+    run_gcm_roundtrip(&session, &iv, None, &plaintext);
+}
+
+/// Verify AES-GCM encrypt/decrypt roundtrip when Additional Authenticated Data (AAD) is present.
+#[session_test]
+fn test_gcm_crypt_with_aad(session: HsmSession) {
+    let iv = test_iv();
+    let plaintext = vec![0x22u8; 32];
+    let aad = Some(b"additional authenticated data".to_vec());
+    run_gcm_roundtrip(&session, &iv, aad, &plaintext);
+}
+
+/// Verify AES-GCM encryption/decryption works for moderately large plaintext.
+#[session_test]
+fn test_gcm_crypt_large_data(session: HsmSession) {
+    let iv = test_iv();
+    let plaintext = vec![0xAAu8; 4096];
+    run_gcm_roundtrip(&session, &iv, None, &plaintext);
+}
+
+/// Verify AES-GCM encryption/decryption works for large plaintext with AAD.
+#[session_test]
+fn test_gcm_crypt_large_data_with_aad(session: HsmSession) {
+    let iv = test_iv();
+    let plaintext = vec![0xBBu8; 4096];
+    let aad = Some(vec![0xCCu8; 256]);
+    run_gcm_roundtrip(&session, &iv, aad, &plaintext);
+}
+
+// Verify AES-GCM encrypt/decrypt roundtrip for minimal (1-byte) plaintext.
+#[session_test]
+fn test_gcm_crypt_small_data(session: HsmSession) {
+    let iv = test_iv();
+    let plaintext = vec![0x55u8; 1];
+    run_gcm_roundtrip(&session, &iv, None, &plaintext);
+}
+
+// Negative tests
+
+/// Ensure AES-GCM encryption initialization fails when IV size is invalid.
+#[session_test]
+fn test_gcm_invalid_iv_fails(mut _session: HsmSession) {
+    let iv_too_short = vec![0u8; AES_GCM_IV_SIZE - 1];
+    let iv_too_long = vec![0u8; AES_GCM_IV_SIZE + 1];
+
+    assert!(matches!(
+        HsmAesGcmAlgo::new_for_encryption(iv_too_short, None),
+        Err(HsmError::InvalidArgument)
+    ));
+    assert!(matches!(
+        HsmAesGcmAlgo::new_for_encryption(iv_too_long, None),
+        Err(HsmError::InvalidArgument)
+    ));
+}
+
+/// Ensure AES-GCM decryption initialization fails when authentication tag size is invalid.
+#[session_test]
+fn test_gcm_invalid_tag_fails(mut _session: HsmSession) {
+    let iv = vec![0u8; AES_GCM_IV_SIZE];
+    let tag_too_short = vec![0u8; AES_GCM_TAG_SIZE - 1];
+    let tag_too_long = vec![0u8; AES_GCM_TAG_SIZE + 1];
+
+    assert!(matches!(
+        HsmAesGcmAlgo::new_for_decryption(iv.clone(), tag_too_short, None),
+        Err(HsmError::InvalidArgument)
+    ));
+    assert!(matches!(
+        HsmAesGcmAlgo::new_for_decryption(iv, tag_too_long, None),
+        Err(HsmError::InvalidArgument)
+    ));
+}
+
+/// Verify streaming AES-GCM encryption produces valid ciphertext and tag.
 #[session_test]
 fn test_gcm_streaming_encrypt(session: HsmSession) {
     let iv = test_iv();
@@ -307,6 +319,7 @@ fn test_gcm_streaming_encrypt(session: HsmSession) {
     assert_eq!(decrypted, plaintext);
 }
 
+/// Verify streaming AES-GCM decryption correctly recovers plaintext.
 #[session_test]
 fn test_gcm_streaming_decrypt(session: HsmSession) {
     let iv = test_iv();
@@ -323,6 +336,7 @@ fn test_gcm_streaming_decrypt(session: HsmSession) {
     assert_eq!(decrypted, plaintext);
 }
 
+/// Verify full streaming AES-GCM roundtrip using irregular chunk sizes.
 #[session_test]
 fn test_gcm_streaming_roundtrip(session: HsmSession) {
     let iv = test_iv();
@@ -338,6 +352,7 @@ fn test_gcm_streaming_roundtrip(session: HsmSession) {
     assert_eq!(decrypted, plaintext);
 }
 
+/// Verify streaming AES-GCM encryption/decryption works correctly when AAD is provided.
 #[session_test]
 fn test_gcm_streaming_with_aad(session: HsmSession) {
     let iv = test_iv();
@@ -354,6 +369,7 @@ fn test_gcm_streaming_with_aad(session: HsmSession) {
     assert_eq!(decrypted, plaintext);
 }
 
+/// Verify streaming AES-GCM correctly handles empty plaintext input.
 #[session_test]
 fn test_gcm_streaming_empty_plaintext_roundtrip(session: HsmSession) {
     let iv = test_iv();
@@ -371,6 +387,7 @@ fn test_gcm_streaming_empty_plaintext_roundtrip(session: HsmSession) {
     assert_eq!(decrypted, plaintext);
 }
 
+/// Ensure streaming AES-GCM decryption fails when authentication tag is corrupted.
 #[session_test]
 fn test_gcm_streaming_wrong_tag_fails(session: HsmSession) {
     let iv = test_iv();
@@ -389,6 +406,7 @@ fn test_gcm_streaming_wrong_tag_fails(session: HsmSession) {
     );
 }
 
+/// Verify streaming AES-GCM decryption works correctly for larger (8KB) ciphertext.
 #[session_test]
 fn test_gcm_streaming_decrypt_8k(session: HsmSession) {
     let iv = test_iv();
@@ -405,6 +423,7 @@ fn test_gcm_streaming_decrypt_8k(session: HsmSession) {
     assert_eq!(decrypted, plaintext);
 }
 
+/// Verify AES-GCM correctly handles roundtrip encryption/decryption of an empty plaintext.
 #[session_test]
 fn test_gcm_empty_plaintext_roundtrip(session: HsmSession) {
     let iv = test_iv();
@@ -420,6 +439,7 @@ fn test_gcm_empty_plaintext_roundtrip(session: HsmSession) {
     assert_eq!(decrypted, plaintext);
 }
 
+/// Verify AES-GCM decrypt fails when authentication tag is modified.
 #[session_test]
 fn test_gcm_wrong_tag_fails(session: HsmSession) {
     let iv = test_iv();
@@ -435,6 +455,7 @@ fn test_gcm_wrong_tag_fails(session: HsmSession) {
     assert!(result.is_err(), "Decryption should fail with wrong tag");
 }
 
+/// Verify AES-GCM decrypt fails when incorrect AAD is supplied.
 #[session_test]
 fn test_gcm_wrong_aad_fails(session: HsmSession) {
     let iv = test_iv();
@@ -450,6 +471,7 @@ fn test_gcm_wrong_aad_fails(session: HsmSession) {
     assert!(result.is_err(), "Decryption should fail with wrong AAD");
 }
 
+/// Verify AES-GCM authentication detects tampered ciphertext.
 #[session_test]
 fn test_gcm_tampered_ciphertext_fails(session: HsmSession) {
     let iv = test_iv();
@@ -466,6 +488,7 @@ fn test_gcm_tampered_ciphertext_fails(session: HsmSession) {
     assert!(res.is_err(), "Tampered ciphertext must fail authentication");
 }
 
+/// Verify AES-GCM decrypt fails when IV used during decryption differs from encryption.
 #[session_test]
 fn test_gcm_wrong_iv_fails(session: HsmSession) {
     let iv = test_iv();
@@ -480,6 +503,7 @@ fn test_gcm_wrong_iv_fails(session: HsmSession) {
     assert!(res.is_err(), "Wrong IV must fail authentication");
 }
 
+/// Verify AES-GCM decrypt fails when using a different key.
 #[session_test]
 fn test_gcm_wrong_key_fails(session: HsmSession) {
     let iv = test_iv();
@@ -494,6 +518,7 @@ fn test_gcm_wrong_key_fails(session: HsmSession) {
     assert!(res.is_err(), "Decrypt with wrong key must fail");
 }
 
+/// Verify AES-GCM authentication fails when ciphertext is truncated.
 #[session_test]
 fn test_gcm_truncated_ciphertext_fails(session: HsmSession) {
     let iv = test_iv();
@@ -508,6 +533,7 @@ fn test_gcm_truncated_ciphertext_fails(session: HsmSession) {
     assert!(res.is_err(), "Truncated ciphertext must fail");
 }
 
+/// Ensure decrypt algorithm creation fails when authentication tag is missing.
 #[session_test]
 fn test_gcm_missing_tag_fails(session: HsmSession) {
     let iv = test_iv();
@@ -525,6 +551,7 @@ fn test_gcm_missing_tag_fails(session: HsmSession) {
     );
 }
 
+/// Verify AES-GCM decrypt fails when expected AAD is omitted.
 #[session_test]
 fn test_gcm_missing_aad_fails(session: HsmSession) {
     let iv = test_iv();
@@ -538,6 +565,7 @@ fn test_gcm_missing_aad_fails(session: HsmSession) {
     assert!(res.is_err(), "Missing AAD must fail authentication");
 }
 
+/// Verify AES-GCM decrypt fails when unexpected AAD is supplied.
 #[session_test]
 fn test_gcm_unexpected_aad_fails(session: HsmSession) {
     let iv = test_iv();
@@ -552,6 +580,7 @@ fn test_gcm_unexpected_aad_fails(session: HsmSession) {
     assert!(res.is_err(), "Unexpected AAD must fail authentication");
 }
 
+/// Verify AES-GCM encryption is deterministic when key, IV, plaintext, and AAD are identical.
 #[session_test]
 fn test_gcm_same_inputs_same_ciphertext_and_tag(session: HsmSession) {
     let iv = test_iv();
@@ -567,6 +596,7 @@ fn test_gcm_same_inputs_same_ciphertext_and_tag(session: HsmSession) {
     assert_eq!(tag1, tag2, "Tag must be deterministic for same inputs");
 }
 
+/// Verify AES-GCM produces different ciphertext when IV changes
 #[session_test]
 fn test_gcm_different_ivs_produce_different_ciphertext(session: HsmSession) {
     let iv1 = test_iv();
@@ -585,6 +615,7 @@ fn test_gcm_different_ivs_produce_different_ciphertext(session: HsmSession) {
     );
 }
 
+/// Verify AES-GCM tag changes when AAD changes while plaintext and IV remain the same.
 #[session_test]
 fn test_gcm_same_plaintext_iv_different_aad_changes_tag(session: HsmSession) {
     let iv = test_iv();
@@ -597,6 +628,8 @@ fn test_gcm_same_plaintext_iv_different_aad_changes_tag(session: HsmSession) {
     assert_eq!(ct1, ct2, "Ciphertext should match for same PT/IV");
     assert_ne!(tag1, tag2, "Tags must differ for different AAD");
 }
+
+/// Verify AES-GCM single-shot encryption works across a range of plaintext sizes.
 #[session_test]
 fn test_gcm_single_shot_size_sweep(session: HsmSession) {
     let iv = test_iv();
@@ -610,6 +643,7 @@ fn test_gcm_single_shot_size_sweep(session: HsmSession) {
     }
 }
 
+/// Verify streaming AES-GCM works across varying plaintext sizes and chunk patterns.
 #[session_test]
 fn test_gcm_streaming_size_and_chunk_sweep(session: HsmSession) {
     let iv = test_iv();
@@ -632,6 +666,8 @@ fn test_gcm_streaming_size_and_chunk_sweep(session: HsmSession) {
         }
     }
 }
+
+/// Ensure streaming AES-GCM produces identical output to single-shot encryption.
 #[session_test]
 fn test_gcm_streaming_matches_single_shot(session: HsmSession) {
     let iv = test_iv();
@@ -645,6 +681,8 @@ fn test_gcm_streaming_matches_single_shot(session: HsmSession) {
     assert_eq!(ct1, ct2, "Streaming ciphertext must match single-shot");
     assert_eq!(tag1, tag2, "Streaming tag must match single-shot");
 }
+
+/// Verify finish() drains the internal buffer and subsequent finish() returns no output.
 #[session_test]
 fn test_gcm_streaming_finish_drains_buffer(session: HsmSession) {
     let iv = test_iv();
@@ -663,6 +701,7 @@ fn test_gcm_streaming_finish_drains_buffer(session: HsmSession) {
     assert!(ct2.is_empty(), "Second finish() should return empty output");
 }
 
+/// Verify update() after finish() performs no operation.
 #[session_test]
 fn test_gcm_streaming_update_after_finish_is_noop(session: HsmSession) {
     let iv = test_iv();
@@ -685,6 +724,7 @@ fn test_gcm_streaming_update_after_finish_is_noop(session: HsmSession) {
 // Additional coverage tests for AES-GCM
 // =======================
 
+/// Ensure encryption fails when output buffer is smaller than required ciphertext size.
 #[session_test]
 fn test_gcm_encrypt_buffer_too_small_fails(session: HsmSession) {
     let iv = test_iv();
@@ -700,6 +740,7 @@ fn test_gcm_encrypt_buffer_too_small_fails(session: HsmSession) {
     assert!(matches!(res, Err(HsmError::BufferTooSmall)));
 }
 
+/// Ensure decryption fails when output buffer is smaller than required plaintext size.
 #[session_test]
 fn test_gcm_decrypt_buffer_too_small_fails(session: HsmSession) {
     let iv = test_iv();
@@ -717,6 +758,7 @@ fn test_gcm_decrypt_buffer_too_small_fails(session: HsmSession) {
     assert!(matches!(res, Err(HsmError::BufferTooSmall)));
 }
 
+/// Verify that performing a new encryption overwrites the previously generated authentication tag.
 #[session_test]
 fn test_gcm_encrypt_overwrites_previous_tag(session: HsmSession) {
     let iv = test_iv();
@@ -743,6 +785,7 @@ fn test_gcm_encrypt_overwrites_previous_tag(session: HsmSession) {
     );
 }
 
+/// Ensure streaming update fails when buffered plaintext exceeds configured maximum.
 #[session_test]
 fn test_gcm_streaming_exceeds_max_buffer_fails(session: HsmSession) {
     let iv = test_iv();
@@ -764,6 +807,7 @@ fn test_gcm_streaming_exceeds_max_buffer_fails(session: HsmSession) {
     );
 }
 
+/// Verify update(None) returns zero output size for streaming GCM mode.
 #[session_test]
 fn test_gcm_streaming_update_size_query_returns_zero(session: HsmSession) {
     let iv = test_iv();
@@ -778,6 +822,7 @@ fn test_gcm_streaming_update_size_query_returns_zero(session: HsmSession) {
     assert_eq!(size, 0, "GCM streaming update(None) must return 0");
 }
 
+/// Verify finish(None) reports correct ciphertext size without writing output.
 #[session_test]
 fn test_gcm_streaming_finish_size_query(session: HsmSession) {
     let iv = test_iv();
@@ -797,6 +842,7 @@ fn test_gcm_streaming_finish_size_query(session: HsmSession) {
     );
 }
 
+/// Verify streaming AES-GCM decryption fails when the output buffer is smaller than required plaintext size.
 #[session_test]
 fn test_gcm_streaming_decrypt_buffer_too_small_fails(session: HsmSession) {
     let iv = test_iv();
@@ -816,6 +862,7 @@ fn test_gcm_streaming_decrypt_buffer_too_small_fails(session: HsmSession) {
     assert!(matches!(res, Err(HsmError::BufferTooSmall)));
 }
 
+/// Verify AES-GCM supports authenticating AAD-only messages (empty plaintext).
 #[session_test]
 fn test_gcm_aad_only_message_roundtrip(session: HsmSession) {
     let iv = test_iv();
@@ -832,6 +879,7 @@ fn test_gcm_aad_only_message_roundtrip(session: HsmSession) {
     assert!(decrypted.is_empty());
 }
 
+/// Ensure streaming AES-GCM decrypt initialization fails when no authentication tag is provided.
 #[session_test]
 fn test_gcm_streaming_decrypt_init_without_tag_fails(session: HsmSession) {
     let iv = test_iv();
@@ -843,6 +891,7 @@ fn test_gcm_streaming_decrypt_init_without_tag_fails(session: HsmSession) {
     assert!(matches!(res, Err(HsmError::InvalidArgument)));
 }
 
+/// Verify streaming AES-GCM decryption fails when using a different key than encryption.
 #[session_test]
 fn test_gcm_streaming_wrong_key_fails(session: HsmSession) {
     let iv = test_iv();
@@ -858,6 +907,7 @@ fn test_gcm_streaming_wrong_key_fails(session: HsmSession) {
     assert!(res.is_err(), "Streaming decrypt with wrong key must fail");
 }
 
+/// Verify streaming AES-GCM decryption fails when the IV differs from the encryption IV.
 #[session_test]
 fn test_gcm_streaming_wrong_iv_fails(session: HsmSession) {
     let iv = test_iv();
@@ -874,6 +924,7 @@ fn test_gcm_streaming_wrong_iv_fails(session: HsmSession) {
     assert!(res.is_err(), "Streaming decrypt with wrong IV must fail");
 }
 
+/// Verify streaming AES-GCM authentication detects tampered ciphertext.
 #[session_test]
 fn test_gcm_streaming_tampered_ciphertext_fails(session: HsmSession) {
     let iv = test_iv();
@@ -889,6 +940,7 @@ fn test_gcm_streaming_tampered_ciphertext_fails(session: HsmSession) {
     assert!(res.is_err(), "Streaming tampered ciphertext must fail");
 }
 
+/// Ensure AES-GCM decryption fails when the algorithm instance does not contain an authentication tag.
 #[session_test]
 fn test_gcm_decrypt_without_tag_in_algo_fails(session: HsmSession) {
     let iv = test_iv();
@@ -903,6 +955,7 @@ fn test_gcm_decrypt_without_tag_in_algo_fails(session: HsmSession) {
     assert!(matches!(res, Err(HsmError::InvalidArgument)));
 }
 
+/// Verify streaming AES-GCM decrypt context allows finish() only once and rejects subsequent calls.
 #[session_test]
 fn test_gcm_streaming_decrypt_finish_is_single_use(session: HsmSession) {
     let iv = test_iv();
@@ -927,6 +980,7 @@ fn test_gcm_streaming_decrypt_finish_is_single_use(session: HsmSession) {
     );
 }
 
+/// Verify streaming AES-GCM correctly authenticates AAD-only messages with empty plaintext.
 #[session_test]
 fn test_gcm_streaming_aad_only_roundtrip(session: HsmSession) {
     let iv = test_iv();
@@ -943,6 +997,7 @@ fn test_gcm_streaming_aad_only_roundtrip(session: HsmSession) {
     assert!(decrypted.is_empty());
 }
 
+/// Verify streaming AES-GCM encryption is deterministic for identical inputs regardless of chunk sizes.
 #[session_test]
 fn test_gcm_streaming_same_inputs_deterministic(session: HsmSession) {
     let iv = test_iv();
@@ -961,6 +1016,7 @@ fn test_gcm_streaming_same_inputs_deterministic(session: HsmSession) {
 // 🔒 Additional High-Value AES-GCM Coverage Tests
 // ========================================================
 
+/// Verify streaming AES-GCM decryption fails when incorrect AAD is supplied.
 #[session_test]
 fn test_gcm_streaming_wrong_aad_fails(session: HsmSession) {
     let iv = test_iv();
@@ -976,6 +1032,7 @@ fn test_gcm_streaming_wrong_aad_fails(session: HsmSession) {
     assert!(res.is_err(), "Streaming decrypt must fail with wrong AAD");
 }
 
+/// Verify streaming AES-GCM authentication fails when ciphertext is truncated.
 #[session_test]
 fn test_gcm_streaming_truncated_ciphertext_fails(session: HsmSession) {
     let iv = test_iv();
@@ -992,6 +1049,7 @@ fn test_gcm_streaming_truncated_ciphertext_fails(session: HsmSession) {
     assert!(res.is_err(), "Streaming truncated ciphertext must fail");
 }
 
+/// Ensure single-shot AES-GCM decryption fails when the algorithm instance does not contain a tag.
 #[session_test]
 fn test_gcm_single_shot_decrypt_without_tag_in_algo_fails(session: HsmSession) {
     let iv = test_iv();
@@ -1005,6 +1063,7 @@ fn test_gcm_single_shot_decrypt_without_tag_in_algo_fails(session: HsmSession) {
     assert!(matches!(res, Err(HsmError::InvalidArgument)));
 }
 
+/// Ensure AES-GCM key generation fails if encrypt capability is disabled.
 #[session_test]
 fn test_gcm_generate_key_with_invalid_encrypt_capability_fails(session: HsmSession) {
     let props = HsmKeyPropsBuilder::default()
@@ -1024,6 +1083,7 @@ fn test_gcm_generate_key_with_invalid_encrypt_capability_fails(session: HsmSessi
     assert!(matches!(res, Err(HsmError::InvalidKeyProps)));
 }
 
+/// Ensure AES-GCM key generation fails if decrypt capability is disabled.
 #[session_test]
 fn test_gcm_generate_key_with_invalid_decrypt_capability_fails(session: HsmSession) {
     let props = HsmKeyPropsBuilder::default()
