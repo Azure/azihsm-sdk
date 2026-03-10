@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 #ifndef AZIHSM_TEST_FLAGS_H
 #define AZIHSM_TEST_FLAGS_H

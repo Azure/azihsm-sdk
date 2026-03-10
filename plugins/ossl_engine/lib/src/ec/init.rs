@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 use openssl_rust::safeapi::ec::method::EcKeyMethod;
 use openssl_rust::safeapi::engine::Engine;

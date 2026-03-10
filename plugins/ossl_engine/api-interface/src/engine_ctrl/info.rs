@@ -1,4 +1,5 @@
-// Copryright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 use std::ffi::c_void;
 

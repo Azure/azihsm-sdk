@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 #ifndef AZIHSM_RSA_HPP
 #define AZIHSM_RSA_HPP

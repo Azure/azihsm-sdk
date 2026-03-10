@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 // Portions of this file derived from OpenSSL
 // References: include/openssl/bn.h, include/openssl/evp.h
 

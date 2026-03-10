@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 #ifndef AZIHSM_API_INTERFACE_H
 #define AZIHSM_API_INTERFACE_H

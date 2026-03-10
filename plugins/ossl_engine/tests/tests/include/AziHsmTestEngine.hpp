@@ -1,4 +1,5 @@
-// Copyright (c) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 #ifndef AZIHSM_TEST_ENGINE_HPP
 #define AZIHSM_TEST_ENGINE_HPP
