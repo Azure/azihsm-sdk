@@ -9,8 +9,6 @@
 use clap::Parser;
 use xshell::Shell;
 
-use crate::Xtask;
-use crate::XtaskCtx;
 use crate::audit::Audit;
 use crate::clippy::Clippy;
 use crate::copyright::Copyright;
@@ -20,6 +18,8 @@ use crate::fmt::Fmt;
 use crate::nextest::Nextest;
 use crate::nextest_report::NextestReport;
 use crate::setup::Setup;
+use crate::Xtask;
+use crate::XtaskCtx;
 
 #[derive(Parser, Debug, Clone, Default)]
 struct Stage {
@@ -101,7 +101,7 @@ impl Xtask for Precheck {
             audit: true,
             fmt: true,
             clippy: true,
-            coverage: false, // coverage is optional
+            coverage: false,        // coverage is optional
             coverage_report: false, // coverage report is optional (intended only for CI)
             nextest: true,
             nextest_report: false, // nextest report is optional (intended only for CI)
@@ -132,10 +132,7 @@ impl Xtask for Precheck {
 
         // Run Copyright
         if stage.copyright || stage.all {
-            Copyright { 
-                fix: false 
-            }
-            .run(ctx.clone())?;
+            Copyright { fix: false }.run(ctx.clone())?;
         }
 
         // Run Audit
