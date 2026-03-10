@@ -43,3 +43,30 @@ if [ -z "${OPENSSL_LIB+x}" ]; then
 fi
 
 export LD_LIBRARY_PATH="$OPENSSL_LIB"
+
+# --- Generate dev key material if not present ---
+# The provider requires credential, OBK, and POTA files in CWD.
+# Generate them on first use so tests work out of the box.
+
+if [ ! -f credentials_id.bin ]; then
+    printf '\x70\xFC\xF7\x30\xB8\x76\x42\x38\xB8\x35\x80\x10\xCE\x8A\x3F\x76' > credentials_id.bin
+    chmod 600 credentials_id.bin
+fi
+
+if [ ! -f credentials_pin.bin ]; then
+    printf '\xDB\x3D\xC7\x7F\xC2\x2E\x43\x00\x80\xD4\x1B\x31\xB6\xF0\x48\x00' > credentials_pin.bin
+    chmod 600 credentials_pin.bin
+fi
+
+if [ ! -f obk.bin ]; then
+    "$OPENSSL_BIN" rand -out obk.bin 48
+    chmod 600 obk.bin
+fi
+
+if [ ! -f pota_private_key.der ]; then
+    "$OPENSSL_BIN" ecparam -name secp384r1 -genkey -noout \
+        | "$OPENSSL_BIN" ec -outform DER -out pota_private_key.der 2>/dev/null
+    "$OPENSSL_BIN" ec -in pota_private_key.der -inform DER \
+        -pubout -outform DER -out pota_public_key.der 2>/dev/null
+    chmod 600 pota_private_key.der pota_public_key.der
+fi
