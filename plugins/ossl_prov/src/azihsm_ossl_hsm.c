@@ -3,6 +3,8 @@
 
 #include "azihsm_ossl_hsm.h"
 
+#include "azihsm_ossl_helpers.h"
+
 #include <errno.h>
 #include <fcntl.h>
 #include <openssl/bn.h>
@@ -941,4 +943,244 @@ void azihsm_close_device_and_session(azihsm_handle device, azihsm_handle session
 
     azihsm_sess_close(session);
     azihsm_part_close(device);
+}
+
+/*
+ * Wrap a PKCS#8 DER buffer with the HSM's RSA-AES wrapping key, then unwrap
+ * into the HSM to produce key handles.
+ */
+static azihsm_status wrap_and_unwrap_pkcs8(
+    azihsm_handle wrapping_pub,
+    azihsm_handle wrapping_priv,
+    uint8_t *pkcs8_buf,
+    int pkcs8_len,
+    const struct azihsm_key_prop_list *priv_key_prop_list,
+    const struct azihsm_key_prop_list *pub_key_prop_list,
+    azihsm_handle *out_priv,
+    azihsm_handle *out_pub
+)
+{
+    azihsm_status status;
+
+    struct azihsm_algo_rsa_pkcs_oaep_params oaep_params = {
+        .hash_algo_id = AZIHSM_ALGO_ID_SHA256,
+        .mgf1_hash_algo_id = AZIHSM_MGF1_ID_SHA256,
+        .label = NULL,
+    };
+
+    struct azihsm_algo_rsa_aes_wrap_params wrap_params = {
+        .oaep_params = &oaep_params,
+        .aes_key_bits = 256,
+    };
+
+    struct azihsm_algo wrap_algo = {
+        .id = AZIHSM_ALGO_ID_RSA_AES_WRAP,
+        .params = &wrap_params,
+        .len = sizeof(wrap_params),
+    };
+
+    struct azihsm_buffer plain_buf = {
+        .ptr = pkcs8_buf,
+        .len = (uint32_t)pkcs8_len,
+    };
+
+    /* Two-call pattern: first query required size */
+    struct azihsm_buffer wrapped_buf = {
+        .ptr = NULL,
+        .len = 0,
+    };
+
+    status = azihsm_crypt_encrypt(&wrap_algo, wrapping_pub, &plain_buf, &wrapped_buf);
+    if (status != AZIHSM_STATUS_BUFFER_TOO_SMALL || wrapped_buf.len == 0)
+    {
+        return (status == AZIHSM_STATUS_SUCCESS) ? AZIHSM_STATUS_INTERNAL_ERROR : status;
+    }
+
+    /* Allocate buffer for wrapped data */
+    uint32_t wrapped_size = wrapped_buf.len;
+    uint8_t *wrapped_data = OPENSSL_malloc(wrapped_size);
+    if (wrapped_data == NULL)
+    {
+        return AZIHSM_STATUS_INTERNAL_ERROR;
+    }
+
+    /* Second call: perform actual wrap */
+    wrapped_buf.ptr = wrapped_data;
+    wrapped_buf.len = wrapped_size;
+
+    status = azihsm_crypt_encrypt(&wrap_algo, wrapping_pub, &plain_buf, &wrapped_buf);
+    if (status != AZIHSM_STATUS_SUCCESS)
+    {
+        OPENSSL_cleanse(wrapped_data, wrapped_size);
+        OPENSSL_free(wrapped_data);
+        return status;
+    }
+
+    /* Unwrap into the HSM */
+    struct azihsm_algo_rsa_aes_key_wrap_params unwrap_params = {
+        .oaep_params = &oaep_params,
+    };
+
+    struct azihsm_algo unwrap_algo = {
+        .id = AZIHSM_ALGO_ID_RSA_AES_KEY_WRAP,
+        .params = &unwrap_params,
+        .len = sizeof(unwrap_params),
+    };
+
+    status = azihsm_key_unwrap_pair(
+        &unwrap_algo,
+        wrapping_priv,
+        &wrapped_buf,
+        priv_key_prop_list,
+        pub_key_prop_list,
+        out_priv,
+        out_pub
+    );
+
+    OPENSSL_cleanse(wrapped_data, wrapped_size);
+    OPENSSL_free(wrapped_data);
+
+    return status;
+}
+
+azihsm_status azihsm_import_key_pair(
+    AZIHSM_OSSL_PROV_CTX *provctx,
+    const char *input_key_file,
+    const struct azihsm_key_prop_list *priv_key_prop_list,
+    const struct azihsm_key_prop_list *pub_key_prop_list,
+    azihsm_handle *out_priv,
+    azihsm_handle *out_pub
+)
+{
+    azihsm_status status;
+    azihsm_handle wrapping_pub = 0, wrapping_priv = 0;
+    struct azihsm_buffer input_buf = { NULL, 0 };
+
+    if (provctx == NULL || input_key_file == NULL || priv_key_prop_list == NULL ||
+        pub_key_prop_list == NULL || out_priv == NULL || out_pub == NULL)
+    {
+        return AZIHSM_STATUS_INVALID_ARGUMENT;
+    }
+
+    /* 1. Read the input file from disk */
+    status = load_file_to_buffer(input_key_file, &input_buf);
+    if (status != AZIHSM_STATUS_SUCCESS)
+    {
+        return status;
+    }
+    if (input_buf.ptr == NULL || input_buf.len == 0)
+    {
+        return AZIHSM_STATUS_INVALID_ARGUMENT;
+    }
+
+    /* 2. Get the RSA unwrapping key pair from the HSM */
+    status = azihsm_get_unwrapping_key(provctx, &wrapping_pub, &wrapping_priv);
+    if (status != AZIHSM_STATUS_SUCCESS)
+    {
+        free_buffer(&input_buf);
+        return status;
+    }
+
+    /* 3. Try to normalize as DER-encoded private key (SEC1, PKCS#1, or PKCS#8) */
+    uint8_t *pkcs8_buf = NULL;
+    int pkcs8_len = 0;
+
+    int norm_rc = azihsm_ossl_normalize_der_to_pkcs8(
+        input_buf.ptr,
+        (long)input_buf.len,
+        &pkcs8_buf,
+        &pkcs8_len
+    );
+
+    free_buffer(&input_buf);
+
+    if (norm_rc != OSSL_SUCCESS)
+    {
+        return AZIHSM_STATUS_INVALID_ARGUMENT;
+    }
+
+    /* Plaintext DER path: wrap then unwrap into HSM */
+    status = wrap_and_unwrap_pkcs8(
+        wrapping_pub,
+        wrapping_priv,
+        pkcs8_buf,
+        pkcs8_len,
+        priv_key_prop_list,
+        pub_key_prop_list,
+        out_priv,
+        out_pub
+    );
+
+    OPENSSL_cleanse(pkcs8_buf, (size_t)pkcs8_len);
+    OPENSSL_free(pkcs8_buf);
+    return status;
+}
+
+azihsm_status azihsm_unwrap_key_pair(
+    AZIHSM_OSSL_PROV_CTX *provctx,
+    const char *wrapped_key_file,
+    const struct azihsm_key_prop_list *priv_key_prop_list,
+    const struct azihsm_key_prop_list *pub_key_prop_list,
+    azihsm_handle *out_priv,
+    azihsm_handle *out_pub
+)
+{
+    azihsm_status status;
+    azihsm_handle wrapping_pub = 0, wrapping_priv = 0;
+    struct azihsm_buffer input_buf = { NULL, 0 };
+
+    if (provctx == NULL || wrapped_key_file == NULL || priv_key_prop_list == NULL ||
+        pub_key_prop_list == NULL || out_priv == NULL || out_pub == NULL)
+    {
+        return AZIHSM_STATUS_INVALID_ARGUMENT;
+    }
+
+    /* 1. Read the wrapped blob from disk */
+    status = load_file_to_buffer(wrapped_key_file, &input_buf);
+    if (status != AZIHSM_STATUS_SUCCESS)
+    {
+        return status;
+    }
+    if (input_buf.ptr == NULL || input_buf.len == 0)
+    {
+        return AZIHSM_STATUS_INVALID_ARGUMENT;
+    }
+
+    /* 2. Get the RSA unwrapping key pair from the HSM */
+    status = azihsm_get_unwrapping_key(provctx, &wrapping_pub, &wrapping_priv);
+    if (status != AZIHSM_STATUS_SUCCESS)
+    {
+        free_buffer(&input_buf);
+        return status;
+    }
+
+    /* 3. Unwrap directly — the blob is already wrapped */
+    struct azihsm_algo_rsa_pkcs_oaep_params oaep_params = {
+        .hash_algo_id = AZIHSM_ALGO_ID_SHA256,
+        .mgf1_hash_algo_id = AZIHSM_MGF1_ID_SHA256,
+        .label = NULL,
+    };
+
+    struct azihsm_algo_rsa_aes_key_wrap_params unwrap_params = {
+        .oaep_params = &oaep_params,
+    };
+
+    struct azihsm_algo unwrap_algo = {
+        .id = AZIHSM_ALGO_ID_RSA_AES_KEY_WRAP,
+        .params = &unwrap_params,
+        .len = sizeof(unwrap_params),
+    };
+
+    status = azihsm_key_unwrap_pair(
+        &unwrap_algo,
+        wrapping_priv,
+        &input_buf,
+        priv_key_prop_list,
+        pub_key_prop_list,
+        out_priv,
+        out_pub
+    );
+
+    free_buffer(&input_buf);
+    return status;
 }

@@ -38,6 +38,9 @@ typedef struct
     azihsm_handle priv;
 } AZIHSM_KEY_PAIR_OBJ;
 
+/* Maximum file path length for key and config file paths */
+#define AZIHSM_MAX_FILE_PATH 4096
+
 /* Default file paths for partition keys */
 #define AZIHSM_DEFAULT_BMK_PATH "/var/lib/azihsm/bmk.bin"
 #define AZIHSM_DEFAULT_MUK_PATH "/var/lib/azihsm/muk.bin"
@@ -45,9 +48,9 @@ typedef struct
 
 typedef struct
 {
-    char bmk_path[4096];
-    char muk_path[4096];
-    char obk_path[4096];
+    char bmk_path[AZIHSM_MAX_FILE_PATH];
+    char muk_path[AZIHSM_MAX_FILE_PATH];
+    char obk_path[AZIHSM_MAX_FILE_PATH];
 } AZIHSM_CONFIG;
 
 typedef struct

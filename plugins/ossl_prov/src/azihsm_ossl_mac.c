@@ -40,7 +40,7 @@ typedef struct
     AZIHSM_OSSL_PROV_CTX *provctx;
 
     /* Key configuration */
-    char key_file[4096];
+    char key_file[AZIHSM_MAX_FILE_PATH];
     azihsm_handle key_handle;
     bool key_loaded;
 

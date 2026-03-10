@@ -27,7 +27,7 @@ typedef struct
     AZIHSM_OSSL_PROV_CTX *provctx;
     const AZIHSM_EC_KEY *our_key; /* Not owned */
     AZIHSM_EC_KEY *peer_key;      /* Owned, deep copy */
-    char output_file[4096];
+    char output_file[AZIHSM_MAX_FILE_PATH];
 } AZIHSM_KEYEXCH_CTX;
 
 static void keyexch_free_peer(AZIHSM_KEYEXCH_CTX *ctx)

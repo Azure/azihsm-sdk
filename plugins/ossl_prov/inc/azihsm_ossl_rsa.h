@@ -37,8 +37,9 @@ typedef struct
     AZIHSM_KEY_USAGE_TYPE key_usage;
     azihsm_handle session;
     bool session_flag;
-    char masked_key_file[4096];
-    char input_key_file[4096];
+    char masked_key_file[AZIHSM_MAX_FILE_PATH];
+    char input_key_file[AZIHSM_MAX_FILE_PATH];
+    char wrapped_key_file[AZIHSM_MAX_FILE_PATH];
 } AZIHSM_RSA_GEN_CTX;
 
 typedef struct

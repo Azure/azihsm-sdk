@@ -53,7 +53,7 @@ typedef struct
     azihsm_algo_id hmac_algo_id;
 
     /* IKM - Input Keying Material (mutually exclusive: file path or raw bytes) */
-    char ikm_file[4096];
+    char ikm_file[AZIHSM_MAX_FILE_PATH];
     unsigned char *ikm_data;
     size_t ikm_data_len;
     azihsm_handle ikm_handle;
@@ -68,7 +68,7 @@ typedef struct
     size_t info_len;
 
     /* Output configuration */
-    char output_file[4096];
+    char output_file[AZIHSM_MAX_FILE_PATH];
     int derived_key_type; /* DERIVED_KEY_TYPE_AES or DERIVED_KEY_TYPE_HMAC */
     uint32_t derived_key_bits;
 } AZIHSM_HKDF_CTX;
