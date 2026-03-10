@@ -13,6 +13,7 @@ cargo xtask <command> [options]
 ## Available Commands
 
 ### precheck
+
 Run a comprehensive set of checks including copyright, formatting, and clippy.
 
 ```bash
@@ -21,6 +22,7 @@ cargo xtask precheck
 ```
 
 ### clippy
+
 Run Clippy linting with strict warnings.
 
 ```bash
@@ -29,6 +31,7 @@ cargo xtask clippy
 ```
 
 ### fmt
+
 Check and fix code formatting.
 
 ```bash
@@ -43,6 +46,7 @@ cargo xtask fmt --toolchain stable
 ```
 
 ### copyright
+
 Verify and fix copyright headers in source files.
 
 ```bash
@@ -53,27 +57,13 @@ cargo xtask copyright
 cargo xtask copyright --fix
 ```
 
-### native-build-and-test (alias: nbt)
-Build and test native C++ components using CMake.
+### coverage
+
+Build and run all tests with code coverage enabled. Generates a cobertura XML, JSON, and HTML report in [reporoot]/target/reports.
 
 ```bash
-# Basic build (Debug configuration)
-cargo xtask nbt
-
-# Clean build
-cargo xtask nbt --clean
-
-# Clean build and run tests
-cargo xtask nbt --clean --test
-
-# Release build
-cargo xtask nbt --config Release
-
-# Clean release build
-cargo xtask nbt --clean --config Release
-
-# Clean release build and run tests
-cargo xtask nbt --clean --config Release --test
+# Build/run tests with code coverage and generate reports
+cargo xtask coverage
 ```
 
 **Requirements:** CMake must be installed and available in PATH.
