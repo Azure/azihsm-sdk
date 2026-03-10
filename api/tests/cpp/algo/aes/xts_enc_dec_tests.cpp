@@ -174,7 +174,7 @@ class azihsm_aes_xts : public ::testing::Test
     static azihsm_status unwrap_xts_blob(
         azihsm_handle wrapping_priv_key,
         std::vector<uint8_t> &wrapped_blob,
-        azihsm_handle &unwrapped_key
+        auto_key &unwrapped_key
     )
     {
         // Unwrap a previously constructed XTS wrapped blob into an HSM key handle.
@@ -227,7 +227,7 @@ class azihsm_aes_xts : public ::testing::Test
             wrapping_priv_key,
             &wrapped_blob_buf,
             &unwrap_prop_list,
-            &unwrapped_key
+            unwrapped_key.get_ptr()
         );
     }
 
@@ -253,50 +253,6 @@ class azihsm_aes_xts : public ::testing::Test
         algo.id = algo_id;
         algo.params = &params;
         algo.len = sizeof(params);
-    }
-
-    // Helper function for single-shot AES XTS encryption/decryption
-    static std::vector<uint8_t> single_shot_xts_crypt(
-        CryptOperation operation,
-        azihsm_handle key_handle,
-        azihsm_algo *algo,
-        const uint8_t *input_data,
-        size_t input_len
-    )
-    {
-        azihsm_buffer input{ const_cast<uint8_t *>(input_data), static_cast<uint32_t>(input_len) };
-        azihsm_buffer output{ nullptr, 0 };
-        azihsm_status err;
-
-        // Query required buffer size
-        if (operation == CryptOperation::Encrypt)
-        {
-            err = azihsm_crypt_encrypt(algo, key_handle, &input, &output);
-        }
-        else
-        {
-            err = azihsm_crypt_decrypt(algo, key_handle, &input, &output);
-        }
-        EXPECT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
-        EXPECT_GT(output.len, 0);
-
-        // Allocate buffer and perform operation
-        std::vector<uint8_t> result(output.len);
-        output.ptr = result.data();
-
-        if (operation == CryptOperation::Encrypt)
-        {
-            err = azihsm_crypt_encrypt(algo, key_handle, &input, &output);
-        }
-        else
-        {
-            err = azihsm_crypt_decrypt(algo, key_handle, &input, &output);
-        }
-        EXPECT_EQ(err, AZIHSM_STATUS_SUCCESS);
-
-        // Resize to actual bytes written
-        result.resize(output.len);
-        return result;
     }
 
     // Helper function for streaming AES XTS encryption/decryption
@@ -473,26 +429,30 @@ class azihsm_aes_xts : public ::testing::Test
         init_xts_algo(crypt_algo, xts_params, algo_id, 0x00, plaintext_len);
 
         // Encrypt
-        auto ciphertext = single_shot_xts_crypt(
+        std::vector<uint8_t> ciphertext;
+        ASSERT_EQ(AZIHSM_STATUS_SUCCESS, ::single_shot_crypt(
             CryptOperation::Encrypt,
             key_handle,
             &crypt_algo,
             plaintext,
-            plaintext_len
-        );
+            plaintext_len,
+            ciphertext
+        ));
         ASSERT_EQ(ciphertext.size(), expected_ciphertext_len);
 
         // Reset tweak for decryption
         init_xts_algo(crypt_algo, xts_params, algo_id, 0x00, plaintext_len);
 
         // Decrypt
-        auto decrypted = single_shot_xts_crypt(
+        std::vector<uint8_t> decrypted;
+        ASSERT_EQ(AZIHSM_STATUS_SUCCESS, ::single_shot_crypt(
             CryptOperation::Decrypt,
             key_handle,
             &crypt_algo,
             ciphertext.data(),
-            ciphertext.size()
-        );
+            ciphertext.size(),
+            decrypted
+        ));
 
         ASSERT_EQ(decrypted.size(), plaintext_len);
         ASSERT_EQ(std::memcmp(decrypted.data(), plaintext, plaintext_len), 0);
@@ -634,13 +594,15 @@ TEST_F(azihsm_aes_xts, single_shot_encrypt_streaming_decrypt)
         azihsm_algo crypt_algo{};
         init_xts_algo(crypt_algo, xts_params, AZIHSM_ALGO_ID_AES_XTS, 0x00, dul);
 
-        auto ciphertext = single_shot_xts_crypt(
+        std::vector<uint8_t> ciphertext;
+        ASSERT_EQ(AZIHSM_STATUS_SUCCESS, ::single_shot_crypt(
             CryptOperation::Encrypt,
             key.get(),
             &crypt_algo,
             plaintext.data(),
-            plaintext_len
-        );
+            plaintext_len,
+            ciphertext
+        ));
         ASSERT_EQ(ciphertext.size(), plaintext_len);
 
         init_xts_algo(crypt_algo, xts_params, AZIHSM_ALGO_ID_AES_XTS, 0x00, dul);
@@ -688,13 +650,15 @@ TEST_F(azihsm_aes_xts, streaming_encrypt_single_shot_decrypt)
 
         init_xts_algo(crypt_algo, xts_params, AZIHSM_ALGO_ID_AES_XTS, 0x00, dul);
 
-        auto decrypted = single_shot_xts_crypt(
+        std::vector<uint8_t> decrypted;
+        ASSERT_EQ(AZIHSM_STATUS_SUCCESS, ::single_shot_crypt(
             CryptOperation::Decrypt,
             key.get(),
             &crypt_algo,
             ciphertext.data(),
-            ciphertext.size()
-        );
+            ciphertext.size(),
+            decrypted
+        ));
 
         ASSERT_EQ(decrypted.size(), plaintext_len);
         ASSERT_EQ(std::memcmp(decrypted.data(), plaintext.data(), plaintext_len), 0);
@@ -721,13 +685,15 @@ TEST_F(azihsm_aes_xts, different_tweaks_different_ciphertexts)
         crypt_algo1.params = &xts_params1;
         crypt_algo1.len = sizeof(xts_params1);
 
-        auto ciphertext1 = single_shot_xts_crypt(
+        std::vector<uint8_t> ciphertext1;
+        ASSERT_EQ(AZIHSM_STATUS_SUCCESS, ::single_shot_crypt(
             CryptOperation::Encrypt,
             key.get(),
             &crypt_algo1,
             plaintext.data(),
-            plaintext_len
-        );
+            plaintext_len,
+            ciphertext1
+        ));
 
         // Encrypt with tweak = 1
         uint8_t sector_num2[16] = { 0x01, 0x00 };
@@ -740,13 +706,15 @@ TEST_F(azihsm_aes_xts, different_tweaks_different_ciphertexts)
         crypt_algo2.params = &xts_params2;
         crypt_algo2.len = sizeof(xts_params2);
 
-        auto ciphertext2 = single_shot_xts_crypt(
+        std::vector<uint8_t> ciphertext2;
+        ASSERT_EQ(AZIHSM_STATUS_SUCCESS, ::single_shot_crypt(
             CryptOperation::Encrypt,
             key.get(),
             &crypt_algo2,
             plaintext.data(),
-            plaintext_len
-        );
+            plaintext_len,
+            ciphertext2
+        ));
 
         // Ciphertexts should be different
         ASSERT_EQ(ciphertext1.size(), ciphertext2.size());
@@ -785,20 +753,24 @@ TEST_F(azihsm_aes_xts, different_tweaks_higher_order_bytes_different_ciphertexts
         crypt_algo2.params = &xts_params2;
         crypt_algo2.len = sizeof(xts_params2);
 
-        auto ciphertext1 = single_shot_xts_crypt(
+        std::vector<uint8_t> ciphertext1;
+        ASSERT_EQ(AZIHSM_STATUS_SUCCESS, ::single_shot_crypt(
             CryptOperation::Encrypt,
             key.get(),
             &crypt_algo1,
             plaintext.data(),
-            plaintext.size()
-        );
-        auto ciphertext2 = single_shot_xts_crypt(
+            plaintext.size(),
+            ciphertext1
+        ));
+        std::vector<uint8_t> ciphertext2;
+        ASSERT_EQ(AZIHSM_STATUS_SUCCESS, ::single_shot_crypt(
             CryptOperation::Encrypt,
             key.get(),
             &crypt_algo2,
             plaintext.data(),
-            plaintext.size()
-        );
+            plaintext.size(),
+            ciphertext2
+        ));
 
         ASSERT_EQ(ciphertext1.size(), ciphertext2.size());
         ASSERT_NE(std::memcmp(ciphertext1.data(), ciphertext2.data(), ciphertext1.size()), 0);
@@ -827,22 +799,26 @@ TEST_F(azihsm_aes_xts, non_trivial_multi_byte_tweak_roundtrip)
         crypt_algo.params = &xts_params;
         crypt_algo.len = sizeof(xts_params);
 
-        auto ciphertext = single_shot_xts_crypt(
+        std::vector<uint8_t> ciphertext;
+        ASSERT_EQ(AZIHSM_STATUS_SUCCESS, ::single_shot_crypt(
             CryptOperation::Encrypt,
             key.get(),
             &crypt_algo,
             plaintext.data(),
-            plaintext.size()
-        );
+            plaintext.size(),
+            ciphertext
+        ));
 
         std::memcpy(xts_params.sector_num, tweak, sizeof(tweak));
-        auto decrypted = single_shot_xts_crypt(
+        std::vector<uint8_t> decrypted;
+        ASSERT_EQ(AZIHSM_STATUS_SUCCESS, ::single_shot_crypt(
             CryptOperation::Decrypt,
             key.get(),
             &crypt_algo,
             ciphertext.data(),
-            ciphertext.size()
-        );
+            ciphertext.size(),
+            decrypted
+        ));
 
         ASSERT_EQ(decrypted.size(), plaintext.size());
         ASSERT_EQ(std::memcmp(decrypted.data(), plaintext.data(), plaintext.size()), 0);
@@ -871,13 +847,15 @@ TEST_F(azihsm_aes_xts, tweak_advances_by_data_unit_count_single_shot)
         crypt_algo.params = &xts_params;
         crypt_algo.len = sizeof(xts_params);
 
-        auto ciphertext = single_shot_xts_crypt(
+        std::vector<uint8_t> ciphertext;
+        ASSERT_EQ(AZIHSM_STATUS_SUCCESS, ::single_shot_crypt(
             CryptOperation::Encrypt,
             key.get(),
             &crypt_algo,
             plaintext.data(),
-            plaintext.size()
-        );
+            plaintext.size(),
+            ciphertext
+        ));
         ASSERT_EQ(ciphertext.size(), plaintext.size());
 
         // Recompute expected tweak locally using little-endian +1 per processed data unit.
@@ -963,26 +941,30 @@ TEST_F(azihsm_aes_xts, decrypt_with_wrong_tweak_does_not_recover_plaintext)
         azihsm_algo enc_algo{};
         init_xts_algo(enc_algo, enc_params, AZIHSM_ALGO_ID_AES_XTS, 0x10, plaintext_len);
 
-        auto ciphertext = single_shot_xts_crypt(
+        std::vector<uint8_t> ciphertext;
+        ASSERT_EQ(AZIHSM_STATUS_SUCCESS, ::single_shot_crypt(
             CryptOperation::Encrypt,
             key.get(),
             &enc_algo,
             plaintext.data(),
-            plaintext.size()
-        );
+            plaintext.size(),
+            ciphertext
+        ));
 
         // Intentionally use a different tweak than encryption.
         azihsm_algo_aes_xts_params dec_params{};
         azihsm_algo dec_algo{};
         init_xts_algo(dec_algo, dec_params, AZIHSM_ALGO_ID_AES_XTS, 0x11, plaintext_len);
 
-        auto decrypted = single_shot_xts_crypt(
+        std::vector<uint8_t> decrypted;
+        ASSERT_EQ(AZIHSM_STATUS_SUCCESS, ::single_shot_crypt(
             CryptOperation::Decrypt,
             key.get(),
             &dec_algo,
             ciphertext.data(),
-            ciphertext.size()
-        );
+            ciphertext.size(),
+            decrypted
+        ));
 
         ASSERT_EQ(decrypted.size(), plaintext.size());
         ASSERT_NE(std::memcmp(decrypted.data(), plaintext.data(), plaintext.size()), 0);
@@ -1020,20 +1002,22 @@ TEST_F(azihsm_aes_xts, tweak_updated_after_encryption)
         uint8_t sector_num[16] = { 0x05, 0x00 };
         azihsm_algo_aes_xts_params xts_params{};
         std::memcpy(xts_params.sector_num, sector_num, sizeof(sector_num));
-       xts_params.data_unit_length = static_cast<uint32_t>(plaintext_len);
+        xts_params.data_unit_length = static_cast<uint32_t>(plaintext_len);
 
         azihsm_algo crypt_algo{};
         crypt_algo.id = AZIHSM_ALGO_ID_AES_XTS;
         crypt_algo.params = &xts_params;
         crypt_algo.len = sizeof(xts_params);
 
-        auto ciphertext = single_shot_xts_crypt(
+        std::vector<uint8_t> ciphertext;
+        ASSERT_EQ(AZIHSM_STATUS_SUCCESS, ::single_shot_crypt(
             CryptOperation::Encrypt,
             key.get(),
             &crypt_algo,
             plaintext.data(),
-            plaintext_len
-        );
+            plaintext_len,
+            ciphertext
+        ));
         (void)ciphertext;
 
         // Verify tweak was incremented (should be 0x06 now)
@@ -1060,23 +1044,27 @@ TEST_F(azihsm_aes_xts, minimum_plaintext_size)
         crypt_algo.params = &xts_params;
         crypt_algo.len = sizeof(xts_params);
 
-        auto ciphertext = single_shot_xts_crypt(
+        std::vector<uint8_t> ciphertext;
+        ASSERT_EQ(AZIHSM_STATUS_SUCCESS, ::single_shot_crypt(
             CryptOperation::Encrypt,
             key.get(),
             &crypt_algo,
             plaintext.data(),
-            plaintext_len
-        );
+            plaintext_len,
+            ciphertext
+        ));
         ASSERT_EQ(ciphertext.size(), plaintext_len);
 
         std::memcpy(xts_params.sector_num, sector_num, sizeof(sector_num));
-        auto decrypted = single_shot_xts_crypt(
+        std::vector<uint8_t> decrypted;
+        ASSERT_EQ(AZIHSM_STATUS_SUCCESS, ::single_shot_crypt(
             CryptOperation::Decrypt,
             key.get(),
             &crypt_algo,
             ciphertext.data(),
-            ciphertext.size()
-        );
+            ciphertext.size(),
+            decrypted
+        ));
 
         ASSERT_EQ(decrypted.size(), plaintext_len);
         ASSERT_EQ(std::memcmp(decrypted.data(), plaintext.data(), plaintext_len), 0);
@@ -1107,23 +1095,27 @@ TEST_F(azihsm_aes_xts, single_shot_size_and_dul_sweep)
                 init_xts_algo(crypt_algo, xts_params, AZIHSM_ALGO_ID_AES_XTS, 0x21, dul);
 
                 // Encrypt/decrypt with identical tweak + DUL to validate roundtrip for each case.
-                auto ciphertext = single_shot_xts_crypt(
+                std::vector<uint8_t> ciphertext;
+                ASSERT_EQ(AZIHSM_STATUS_SUCCESS, ::single_shot_crypt(
                     CryptOperation::Encrypt,
                     key.get(),
                     &crypt_algo,
                     plaintext.data(),
-                    plaintext.size()
-                );
+                    plaintext.size(),
+                    ciphertext
+                ));
                 ASSERT_EQ(ciphertext.size(), plaintext.size());
 
                 init_xts_algo(crypt_algo, xts_params, AZIHSM_ALGO_ID_AES_XTS, 0x21, dul);
-                auto decrypted = single_shot_xts_crypt(
+                std::vector<uint8_t> decrypted;
+                ASSERT_EQ(AZIHSM_STATUS_SUCCESS, ::single_shot_crypt(
                     CryptOperation::Decrypt,
                     key.get(),
                     &crypt_algo,
                     ciphertext.data(),
-                    ciphertext.size()
-                );
+                    ciphertext.size(),
+                    decrypted
+                ));
 
                 ASSERT_EQ(decrypted.size(), plaintext.size());
                 ASSERT_EQ(std::memcmp(decrypted.data(), plaintext.data(), plaintext.size()), 0);
@@ -1212,23 +1204,27 @@ TEST_F(azihsm_aes_xts, large_data_single_shot)
         azihsm_algo crypt_algo{};
         init_xts_algo(crypt_algo, xts_params, AZIHSM_ALGO_ID_AES_XTS, 0x21, dul);
 
-        auto ciphertext = single_shot_xts_crypt(
+        std::vector<uint8_t> ciphertext;
+        ASSERT_EQ(AZIHSM_STATUS_SUCCESS, ::single_shot_crypt(
             CryptOperation::Encrypt,
             key.get(),
             &crypt_algo,
             plaintext.data(),
-            plaintext.size()
-        );
+            plaintext.size(),
+            ciphertext
+        ));
         ASSERT_EQ(ciphertext.size(), plaintext.size());
 
         init_xts_algo(crypt_algo, xts_params, AZIHSM_ALGO_ID_AES_XTS, 0x21, dul);
-        auto decrypted = single_shot_xts_crypt(
+        std::vector<uint8_t> decrypted;
+        ASSERT_EQ(AZIHSM_STATUS_SUCCESS, ::single_shot_crypt(
             CryptOperation::Decrypt,
             key.get(),
             &crypt_algo,
             ciphertext.data(),
-            ciphertext.size()
-        );
+            ciphertext.size(),
+            decrypted
+        ));
 
         ASSERT_EQ(decrypted.size(), plaintext.size());
         ASSERT_EQ(std::memcmp(decrypted.data(), plaintext.data(), plaintext.size()), 0);
@@ -1250,13 +1246,15 @@ TEST_F(azihsm_aes_xts, streaming_consistency_with_single_shot)
         azihsm_algo crypt_algo{};
         init_xts_algo(crypt_algo, xts_params, AZIHSM_ALGO_ID_AES_XTS, 0x42, dul);
 
-        auto single_shot_ciphertext = single_shot_xts_crypt(
+        std::vector<uint8_t> single_shot_ciphertext;
+        ASSERT_EQ(AZIHSM_STATUS_SUCCESS, ::single_shot_crypt(
             CryptOperation::Encrypt,
             key.get(),
             &crypt_algo,
             plaintext.data(),
-            plaintext.size()
-        );
+            plaintext.size(),
+            single_shot_ciphertext
+        ));
 
         // Reinitialize to identical starting tweak so only API shape differs.
         init_xts_algo(crypt_algo, xts_params, AZIHSM_ALGO_ID_AES_XTS, 0x42, dul);
@@ -1380,7 +1378,7 @@ TEST_F(azihsm_aes_xts, single_shot_invalid_key_kind_is_rejected)
 {
     part_list_.for_each_session([&](azihsm_handle session) {
         // CBC key kind intentionally does not match XTS operation requirements.
-        auto non_xts_key = generate_aes_cbc_key(session, 256);
+        auto non_xts_key = generate_aes_key(session, 256);
 
         azihsm_algo_aes_xts_params xts_params{};
         azihsm_algo crypt_algo{};
@@ -1398,7 +1396,7 @@ TEST_F(azihsm_aes_xts, single_shot_invalid_key_kind_is_rejected)
     });
 }
 
-TEST_F(azihsm_aes_xts, single_shot_encrypt_with_non_encrypt_key_is_rejected)
+TEST_F(azihsm_aes_xts, key_gen_with_encrypt_disabled_is_rejected)
 {
     part_list_.for_each_session([&](azihsm_handle session) {
         // XTS key validation requires BOTH encrypt and decrypt permissions.
@@ -1427,14 +1425,14 @@ TEST_F(azihsm_aes_xts, single_shot_encrypt_with_non_encrypt_key_is_rejected)
             .count = static_cast<uint32_t>(props_vec.size())
         };
 
-        azihsm_handle key_handle = 0;
-        auto err = azihsm_key_gen(session, &keygen_algo, &prop_list, &key_handle);
+        auto_key key_handle;
+        auto err = azihsm_key_gen(session, &keygen_algo, &prop_list, key_handle.get_ptr());
         ASSERT_EQ(err, AZIHSM_STATUS_INVALID_KEY_PROPS);
         ASSERT_EQ(key_handle, 0);
     });
 }
 
-TEST_F(azihsm_aes_xts, single_shot_decrypt_with_non_decrypt_key_is_rejected)
+TEST_F(azihsm_aes_xts, key_gen_with_decrypt_disabled_is_rejected)
 {
     part_list_.for_each_session([&](azihsm_handle session) {
         // XTS key validation requires BOTH encrypt and decrypt permissions.
@@ -1463,8 +1461,8 @@ TEST_F(azihsm_aes_xts, single_shot_decrypt_with_non_decrypt_key_is_rejected)
             .count = static_cast<uint32_t>(props_vec.size())
         };
 
-        azihsm_handle key_handle = 0;
-        auto err = azihsm_key_gen(session, &keygen_algo, &prop_list, &key_handle);
+        auto_key key_handle;
+        auto err = azihsm_key_gen(session, &keygen_algo, &prop_list, key_handle.get_ptr());
         ASSERT_EQ(err, AZIHSM_STATUS_INVALID_KEY_PROPS);
         ASSERT_EQ(key_handle, 0);
     });
@@ -1479,14 +1477,14 @@ TEST_F(azihsm_aes_xts, streaming_init_null_pointers_are_rejected)
         azihsm_algo crypt_algo{};
         init_xts_algo(crypt_algo, xts_params, AZIHSM_ALGO_ID_AES_XTS, 0x00, 128);
 
-        azihsm_handle ctx = 0;
-        auto err = azihsm_crypt_encrypt_init(nullptr, key.get(), &ctx);
+        auto_ctx ctx;
+        auto err = azihsm_crypt_encrypt_init(nullptr, key.get(), ctx.get_ptr());
         ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
 
         err = azihsm_crypt_encrypt_init(&crypt_algo, key.get(), nullptr);
         ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
 
-        err = azihsm_crypt_decrypt_init(nullptr, key.get(), &ctx);
+        err = azihsm_crypt_decrypt_init(nullptr, key.get(), ctx.get_ptr());
         ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
 
         err = azihsm_crypt_decrypt_init(&crypt_algo, key.get(), nullptr);
@@ -1503,14 +1501,14 @@ TEST_F(azihsm_aes_xts, streaming_init_invalid_algo_params_are_rejected)
         azihsm_algo crypt_algo{};
         init_xts_algo(crypt_algo, xts_params, AZIHSM_ALGO_ID_AES_XTS, 0x00, 128);
 
-        azihsm_handle ctx = 0;
+        auto_ctx ctx;
         crypt_algo.params = nullptr;
         crypt_algo.len = 0;
 
-        auto err = azihsm_crypt_encrypt_init(&crypt_algo, key.get(), &ctx);
+        auto err = azihsm_crypt_encrypt_init(&crypt_algo, key.get(), ctx.get_ptr());
         ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
 
-        err = azihsm_crypt_decrypt_init(&crypt_algo, key.get(), &ctx);
+        err = azihsm_crypt_decrypt_init(&crypt_algo, key.get(), ctx.get_ptr());
         ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
 }
@@ -1524,20 +1522,20 @@ TEST_F(azihsm_aes_xts, streaming_init_invalid_algo_param_len_is_rejected)
         azihsm_algo crypt_algo{};
         init_xts_algo(crypt_algo, xts_params, AZIHSM_ALGO_ID_AES_XTS, 0x00, 128);
 
-        azihsm_handle ctx = 0;
+        auto_ctx ctx;
 
         crypt_algo.len = sizeof(xts_params) - 1;
-        auto err = azihsm_crypt_encrypt_init(&crypt_algo, key.get(), &ctx);
+        auto err = azihsm_crypt_encrypt_init(&crypt_algo, key.get(), ctx.get_ptr());
         ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
 
-        err = azihsm_crypt_decrypt_init(&crypt_algo, key.get(), &ctx);
+        err = azihsm_crypt_decrypt_init(&crypt_algo, key.get(), ctx.get_ptr());
         ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
 
         crypt_algo.len = sizeof(xts_params) + 1;
-        err = azihsm_crypt_encrypt_init(&crypt_algo, key.get(), &ctx);
+        err = azihsm_crypt_encrypt_init(&crypt_algo, key.get(), ctx.get_ptr());
         ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
 
-        err = azihsm_crypt_decrypt_init(&crypt_algo, key.get(), &ctx);
+        err = azihsm_crypt_decrypt_init(&crypt_algo, key.get(), ctx.get_ptr());
         ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
 }
@@ -1548,82 +1546,12 @@ TEST_F(azihsm_aes_xts, streaming_init_invalid_key_handle_is_rejected)
     azihsm_algo crypt_algo{};
     init_xts_algo(crypt_algo, xts_params, AZIHSM_ALGO_ID_AES_XTS, 0x00, 128);
 
-    azihsm_handle ctx = 0;
-    auto err = azihsm_crypt_encrypt_init(&crypt_algo, 0xDEADBEEF, &ctx);
+    auto_ctx ctx;
+    auto err = azihsm_crypt_encrypt_init(&crypt_algo, 0xDEADBEEF, ctx.get_ptr());
     ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
 
-    err = azihsm_crypt_decrypt_init(&crypt_algo, 0xDEADBEEF, &ctx);
+    err = azihsm_crypt_decrypt_init(&crypt_algo, 0xDEADBEEF, ctx.get_ptr());
     ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
-}
-
-TEST_F(azihsm_aes_xts, streaming_init_encrypt_with_non_encrypt_key_is_rejected)
-{
-    part_list_.for_each_session([&](azihsm_handle session) {
-        // Same contract for streaming path: key generation itself rejects missing encrypt.
-        azihsm_algo keygen_algo{};
-        keygen_algo.id = AZIHSM_ALGO_ID_AES_XTS_KEY_GEN;
-
-        azihsm_key_kind key_kind = AZIHSM_KEY_KIND_AES_XTS;
-        azihsm_key_class key_class = AZIHSM_KEY_CLASS_SECRET;
-        uint32_t bits = 512;
-        uint8_t is_session = 1;
-        uint8_t can_encrypt = 0;
-        uint8_t can_decrypt = 1;
-
-        std::vector<azihsm_key_prop> props_vec = {
-            { .id = AZIHSM_KEY_PROP_ID_KIND, .val = &key_kind, .len = sizeof(key_kind) },
-            { .id = AZIHSM_KEY_PROP_ID_CLASS, .val = &key_class, .len = sizeof(key_class) },
-            { .id = AZIHSM_KEY_PROP_ID_BIT_LEN, .val = &bits, .len = sizeof(bits) },
-            { .id = AZIHSM_KEY_PROP_ID_SESSION, .val = &is_session, .len = sizeof(is_session) },
-            { .id = AZIHSM_KEY_PROP_ID_ENCRYPT, .val = &can_encrypt, .len = sizeof(can_encrypt) },
-            { .id = AZIHSM_KEY_PROP_ID_DECRYPT, .val = &can_decrypt, .len = sizeof(can_decrypt) }
-        };
-
-        azihsm_key_prop_list prop_list{
-            .props = props_vec.data(),
-            .count = static_cast<uint32_t>(props_vec.size())
-        };
-
-        azihsm_handle key_handle = 0;
-        auto err = azihsm_key_gen(session, &keygen_algo, &prop_list, &key_handle);
-        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_KEY_PROPS);
-        ASSERT_EQ(key_handle, 0);
-    });
-}
-
-TEST_F(azihsm_aes_xts, streaming_init_decrypt_with_non_decrypt_key_is_rejected)
-{
-    part_list_.for_each_session([&](azihsm_handle session) {
-        // Same contract for streaming path: key generation itself rejects missing decrypt.
-        azihsm_algo keygen_algo{};
-        keygen_algo.id = AZIHSM_ALGO_ID_AES_XTS_KEY_GEN;
-
-        azihsm_key_kind key_kind = AZIHSM_KEY_KIND_AES_XTS;
-        azihsm_key_class key_class = AZIHSM_KEY_CLASS_SECRET;
-        uint32_t bits = 512;
-        uint8_t is_session = 1;
-        uint8_t can_encrypt = 1;
-        uint8_t can_decrypt = 0;
-
-        std::vector<azihsm_key_prop> props_vec = {
-            { .id = AZIHSM_KEY_PROP_ID_KIND, .val = &key_kind, .len = sizeof(key_kind) },
-            { .id = AZIHSM_KEY_PROP_ID_CLASS, .val = &key_class, .len = sizeof(key_class) },
-            { .id = AZIHSM_KEY_PROP_ID_BIT_LEN, .val = &bits, .len = sizeof(bits) },
-            { .id = AZIHSM_KEY_PROP_ID_SESSION, .val = &is_session, .len = sizeof(is_session) },
-            { .id = AZIHSM_KEY_PROP_ID_ENCRYPT, .val = &can_encrypt, .len = sizeof(can_encrypt) },
-            { .id = AZIHSM_KEY_PROP_ID_DECRYPT, .val = &can_decrypt, .len = sizeof(can_decrypt) }
-        };
-
-        azihsm_key_prop_list prop_list{
-            .props = props_vec.data(),
-            .count = static_cast<uint32_t>(props_vec.size())
-        };
-
-        azihsm_handle key_handle = 0;
-        auto err = azihsm_key_gen(session, &keygen_algo, &prop_list, &key_handle);
-        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_KEY_PROPS);
-        ASSERT_EQ(key_handle, 0);
-    });
 }
 
 TEST_F(azihsm_aes_xts, streaming_update_finish_null_pointers_are_rejected)
@@ -1635,12 +1563,12 @@ TEST_F(azihsm_aes_xts, streaming_update_finish_null_pointers_are_rejected)
         azihsm_algo crypt_algo{};
         init_xts_algo(crypt_algo, xts_params, AZIHSM_ALGO_ID_AES_XTS, 0x00, 128);
 
-        azihsm_handle enc_ctx = 0;
-        auto err = azihsm_crypt_encrypt_init(&crypt_algo, key.get(), &enc_ctx);
+        auto_ctx enc_ctx;
+        auto err = azihsm_crypt_encrypt_init(&crypt_algo, key.get(), enc_ctx.get_ptr());
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
-        azihsm_handle dec_ctx = 0;
-        err = azihsm_crypt_decrypt_init(&crypt_algo, key.get(), &dec_ctx);
+        auto_ctx dec_ctx;
+        err = azihsm_crypt_decrypt_init(&crypt_algo, key.get(), dec_ctx.get_ptr());
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         uint8_t data[128] = { 0xAB };
@@ -1676,12 +1604,12 @@ TEST_F(azihsm_aes_xts, streaming_update_finish_invalid_buffer_shapes_are_rejecte
         azihsm_algo crypt_algo{};
         init_xts_algo(crypt_algo, xts_params, AZIHSM_ALGO_ID_AES_XTS, 0x00, 128);
 
-        azihsm_handle enc_ctx = 0;
-        auto err = azihsm_crypt_encrypt_init(&crypt_algo, key.get(), &enc_ctx);
+        auto_ctx enc_ctx;
+        auto err = azihsm_crypt_encrypt_init(&crypt_algo, key.get(), enc_ctx.get_ptr());
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
-        azihsm_handle dec_ctx = 0;
-        err = azihsm_crypt_decrypt_init(&crypt_algo, key.get(), &dec_ctx);
+        auto_ctx dec_ctx;
+        err = azihsm_crypt_decrypt_init(&crypt_algo, key.get(), dec_ctx.get_ptr());
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         uint8_t byte = 0x01;
@@ -1756,8 +1684,8 @@ TEST_F(azihsm_aes_xts, streaming_update_output_buffer_sizing)
         azihsm_algo crypt_algo{};
         init_xts_algo(crypt_algo, xts_params, AZIHSM_ALGO_ID_AES_XTS, 0x29, 128);
 
-        azihsm_handle ctx = 0;
-        auto err = azihsm_crypt_encrypt_init(&crypt_algo, key.get(), &ctx);
+        auto_ctx ctx;
+        auto err = azihsm_crypt_encrypt_init(&crypt_algo, key.get(), ctx.get_ptr());
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         uint8_t block[128] = { 0x11 };
@@ -1804,8 +1732,8 @@ TEST_F(azihsm_aes_xts, streaming_finish_output_buffer_sizing)
         azihsm_algo crypt_algo{};
         init_xts_algo(crypt_algo, xts_params, AZIHSM_ALGO_ID_AES_XTS, 0x2A, 128);
 
-        azihsm_handle enc_ctx = 0;
-        auto err = azihsm_crypt_encrypt_init(&crypt_algo, key.get(), &enc_ctx);
+        auto_ctx enc_ctx;
+        auto err = azihsm_crypt_encrypt_init(&crypt_algo, key.get(), enc_ctx.get_ptr());
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         // Encrypt finish without pending data should return success with zero output.
@@ -1814,8 +1742,8 @@ TEST_F(azihsm_aes_xts, streaming_finish_output_buffer_sizing)
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_EQ(query_output.len, 0u);
 
-        azihsm_handle dec_ctx = 0;
-        err = azihsm_crypt_decrypt_init(&crypt_algo, key.get(), &dec_ctx);
+        auto_ctx dec_ctx;
+        err = azihsm_crypt_decrypt_init(&crypt_algo, key.get(), dec_ctx.get_ptr());
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         uint8_t dummy = 0;
@@ -1933,13 +1861,15 @@ TEST_F(azihsm_aes_xts, decrypt_non_dul_aligned_ciphertext_fails)
         azihsm_algo crypt_algo{};
         init_xts_algo(crypt_algo, xts_params, AZIHSM_ALGO_ID_AES_XTS, 0x33, dul);
 
-        auto ciphertext = single_shot_xts_crypt(
+        std::vector<uint8_t> ciphertext;
+        ASSERT_EQ(AZIHSM_STATUS_SUCCESS, ::single_shot_crypt(
             CryptOperation::Encrypt,
             key.get(),
             &crypt_algo,
             plaintext.data(),
-            plaintext.size()
-        );
+            plaintext.size(),
+            ciphertext
+        ));
 
         // Non-obvious XTS contract: ciphertext must also be DUL-aligned.
         ciphertext.pop_back();
@@ -2029,18 +1959,14 @@ TEST_F(azihsm_aes_xts, dul_exceeds_max_is_rejected)
 TEST_F(azihsm_aes_xts, unwrap_malformed_xts_blob_header_is_rejected)
 {
     part_list_.for_each_session([&](azihsm_handle session) {
-        azihsm_handle wrapping_priv_key = 0;
-        azihsm_handle wrapping_pub_key = 0;
+        auto_key wrapping_priv_key;
+        auto_key wrapping_pub_key;
         auto err = generate_rsa_unwrapping_keypair(
             session,
-            &wrapping_priv_key,
-            &wrapping_pub_key
+            wrapping_priv_key.get_ptr(),
+            wrapping_pub_key.get_ptr()
         );
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        auto cleanup = scope_guard::make_scope_exit([wrapping_priv_key, wrapping_pub_key] {
-            azihsm_key_delete(wrapping_priv_key);
-            azihsm_key_delete(wrapping_pub_key);
-        });
 
         auto wrapped_blob = build_xts_wrapped_blob(
             wrapping_pub_key,
@@ -2052,7 +1978,7 @@ TEST_F(azihsm_aes_xts, unwrap_malformed_xts_blob_header_is_rejected)
         // Corrupt the magic byte so header validation fails.
         wrapped_blob[0] ^= 0xFF;
 
-        azihsm_handle unwrapped_key = 0;
+        auto_key unwrapped_key;
         err = unwrap_xts_blob(wrapping_priv_key, wrapped_blob, unwrapped_key);
         ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
     });
@@ -2062,18 +1988,14 @@ TEST_F(azihsm_aes_xts, unwrap_malformed_xts_blob_header_is_rejected)
 TEST_F(azihsm_aes_xts, unwrap_xts_blob_length_mismatch_is_rejected)
 {
     part_list_.for_each_session([&](azihsm_handle session) {
-        azihsm_handle wrapping_priv_key = 0;
-        azihsm_handle wrapping_pub_key = 0;
+        auto_key wrapping_priv_key;
+        auto_key wrapping_pub_key;
         auto err = generate_rsa_unwrapping_keypair(
             session,
-            &wrapping_priv_key,
-            &wrapping_pub_key
+            wrapping_priv_key.get_ptr(),
+            wrapping_pub_key.get_ptr()
         );
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        auto cleanup = scope_guard::make_scope_exit([wrapping_priv_key, wrapping_pub_key] {
-            azihsm_key_delete(wrapping_priv_key);
-            azihsm_key_delete(wrapping_pub_key);
-        });
 
         auto wrapped_blob = build_xts_wrapped_blob(
             wrapping_pub_key,
@@ -2085,7 +2007,7 @@ TEST_F(azihsm_aes_xts, unwrap_xts_blob_length_mismatch_is_rejected)
         // Inflate key1 length LSB (header[10]) to force payload-length mismatch.
         wrapped_blob[10] = static_cast<uint8_t>(wrapped_blob[10] + 1);
 
-        azihsm_handle unwrapped_key = 0;
+        auto_key unwrapped_key;
         err = unwrap_xts_blob(wrapping_priv_key, wrapped_blob, unwrapped_key);
         ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
     });
@@ -2095,18 +2017,14 @@ TEST_F(azihsm_aes_xts, unwrap_xts_blob_length_mismatch_is_rejected)
 TEST_F(azihsm_aes_xts, unwrap_xts_blob_missing_second_half_is_rejected)
 {
     part_list_.for_each_session([&](azihsm_handle session) {
-        azihsm_handle wrapping_priv_key = 0;
-        azihsm_handle wrapping_pub_key = 0;
+        auto_key wrapping_priv_key;
+        auto_key wrapping_pub_key;
         auto err = generate_rsa_unwrapping_keypair(
             session,
-            &wrapping_priv_key,
-            &wrapping_pub_key
+            wrapping_priv_key.get_ptr(),
+            wrapping_pub_key.get_ptr()
         );
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        auto cleanup = scope_guard::make_scope_exit([wrapping_priv_key, wrapping_pub_key] {
-            azihsm_key_delete(wrapping_priv_key);
-            azihsm_key_delete(wrapping_pub_key);
-        });
 
         auto wrapped_blob = build_xts_wrapped_blob(
             wrapping_pub_key,
@@ -2119,7 +2037,7 @@ TEST_F(azihsm_aes_xts, unwrap_xts_blob_missing_second_half_is_rejected)
         uint16_t key1_len = static_cast<uint16_t>(wrapped_blob[10] | (wrapped_blob[11] << 8));
         wrapped_blob.resize(XTS_BLOB_HEADER_LEN + key1_len);
 
-        azihsm_handle unwrapped_key = 0;
+        auto_key unwrapped_key;
         err = unwrap_xts_blob(wrapping_priv_key, wrapped_blob, unwrapped_key);
         ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
     });
@@ -2136,12 +2054,12 @@ TEST_F(azihsm_aes_xts, unmask_malformed_xts_blob_header_is_rejected)
         masked_blob[0] ^= 0xFF;
 
         azihsm_buffer masked_key_buf{ masked_blob.data(), static_cast<uint32_t>(masked_blob.size()) };
-        azihsm_handle unmasked_key = 0;
+        auto_key unmasked_key;
         auto err = azihsm_key_unmask(
             session,
             AZIHSM_KEY_KIND_AES_XTS,
             &masked_key_buf,
-            &unmasked_key
+            unmasked_key.get_ptr()
         );
         ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
     });
@@ -2159,12 +2077,12 @@ TEST_F(azihsm_aes_xts, unmask_xts_blob_length_mismatch_is_rejected)
         masked_blob[12] = static_cast<uint8_t>(masked_blob[12] + 1);
 
         azihsm_buffer masked_key_buf{ masked_blob.data(), static_cast<uint32_t>(masked_blob.size()) };
-        azihsm_handle unmasked_key = 0;
+        auto_key unmasked_key;
         auto err = azihsm_key_unmask(
             session,
             AZIHSM_KEY_KIND_AES_XTS,
             &masked_key_buf,
-            &unmasked_key
+            unmasked_key.get_ptr()
         );
         ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
     });
@@ -2183,12 +2101,12 @@ TEST_F(azihsm_aes_xts, unmask_xts_blob_missing_second_half_is_rejected)
         masked_blob.resize(XTS_BLOB_HEADER_LEN + key1_len);
 
         azihsm_buffer masked_key_buf{ masked_blob.data(), static_cast<uint32_t>(masked_blob.size()) };
-        azihsm_handle unmasked_key = 0;
+        auto_key unmasked_key;
         auto err = azihsm_key_unmask(
             session,
             AZIHSM_KEY_KIND_AES_XTS,
             &masked_key_buf,
-            &unmasked_key
+            unmasked_key.get_ptr()
         );
         ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
     });
@@ -2198,18 +2116,14 @@ TEST_F(azihsm_aes_xts, unmask_xts_blob_missing_second_half_is_rejected)
 TEST_F(azihsm_aes_xts, unwrap_xts_blob_mismatched_half_properties_is_rejected)
 {
     part_list_.for_each_session([&](azihsm_handle session) {
-        azihsm_handle wrapping_priv_key = 0;
-        azihsm_handle wrapping_pub_key = 0;
+        auto_key wrapping_priv_key;
+        auto_key wrapping_pub_key;
         auto err = generate_rsa_unwrapping_keypair(
             session,
-            &wrapping_priv_key,
-            &wrapping_pub_key
+            wrapping_priv_key.get_ptr(),
+            wrapping_pub_key.get_ptr()
         );
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        auto cleanup = scope_guard::make_scope_exit([wrapping_priv_key, wrapping_pub_key] {
-            azihsm_key_delete(wrapping_priv_key);
-            azihsm_key_delete(wrapping_pub_key);
-        });
 
         // Deliberately use mismatched half sizes (256-bit and 128-bit).
         auto wrapped_blob = build_xts_wrapped_blob(
@@ -2219,42 +2133,9 @@ TEST_F(azihsm_aes_xts, unwrap_xts_blob_mismatched_half_properties_is_rejected)
         );
         ASSERT_FALSE(wrapped_blob.empty());
 
-        azihsm_handle unwrapped_key = 0;
+        auto_key unwrapped_key;
         err = unwrap_xts_blob(wrapping_priv_key, wrapped_blob, unwrapped_key);
         ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
-    });
-}
-
-// Contract in this SDK: identical halves are rejected at unwrap admission.
-// The unwrap precheck surfaces backend/device XTS-key validation for this case.
-TEST_F(azihsm_aes_xts, unwrap_xts_blob_identical_halves_is_rejected)
-{
-    part_list_.for_each_session([&](azihsm_handle session) {
-        azihsm_handle wrapping_priv_key = 0;
-        azihsm_handle wrapping_pub_key = 0;
-        auto err = generate_rsa_unwrapping_keypair(
-            session,
-            &wrapping_priv_key,
-            &wrapping_pub_key
-        );
-        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        auto cleanup = scope_guard::make_scope_exit([wrapping_priv_key, wrapping_pub_key] {
-            azihsm_key_delete(wrapping_priv_key);
-            azihsm_key_delete(wrapping_pub_key);
-        });
-
-        // Deliberately provide identical half material to validate strict unwrap rejection.
-        auto wrapped_blob = build_xts_wrapped_blob(
-            wrapping_pub_key,
-            std::vector<uint8_t>(32, 0x61),
-            std::vector<uint8_t>(32, 0x61)
-        );
-        ASSERT_FALSE(wrapped_blob.empty());
-
-        azihsm_handle unwrapped_key = 0;
-        err = unwrap_xts_blob(wrapping_priv_key, wrapped_blob, unwrapped_key);
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_EQ(unwrapped_key, 0);
     });
 }
 
@@ -2290,8 +2171,8 @@ TEST_F(azihsm_aes_xts, streaming_operation_mismatch_on_context_is_rejected)
         azihsm_algo crypt_algo{};
         init_xts_algo(crypt_algo, xts_params, AZIHSM_ALGO_ID_AES_XTS, 0x6A, 128);
 
-        azihsm_handle enc_ctx = 0;
-        auto err = azihsm_crypt_encrypt_init(&crypt_algo, key.get(), &enc_ctx);
+        auto_ctx enc_ctx;
+        auto err = azihsm_crypt_encrypt_init(&crypt_algo, key.get(), enc_ctx.get_ptr());
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         uint8_t block[128] = { 0x41 };
@@ -2321,8 +2202,8 @@ TEST_F(azihsm_aes_xts, streaming_finish_without_update_behavior)
         azihsm_algo crypt_algo{};
         init_xts_algo(crypt_algo, xts_params, AZIHSM_ALGO_ID_AES_XTS, 0x6B, 128);
 
-        azihsm_handle enc_ctx = 0;
-        auto err = azihsm_crypt_encrypt_init(&crypt_algo, key.get(), &enc_ctx);
+        auto_ctx enc_ctx;
+        auto err = azihsm_crypt_encrypt_init(&crypt_algo, key.get(), enc_ctx.get_ptr());
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         azihsm_buffer enc_finish{ nullptr, 0 };
@@ -2331,8 +2212,8 @@ TEST_F(azihsm_aes_xts, streaming_finish_without_update_behavior)
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_EQ(enc_finish.len, 0u);
 
-        azihsm_handle dec_ctx = 0;
-        err = azihsm_crypt_decrypt_init(&crypt_algo, key.get(), &dec_ctx);
+        auto_ctx dec_ctx;
+        err = azihsm_crypt_decrypt_init(&crypt_algo, key.get(), dec_ctx.get_ptr());
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         azihsm_buffer dec_finish{ nullptr, 0 };

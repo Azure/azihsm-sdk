@@ -119,11 +119,6 @@ pub(crate) fn aes_xts_unwrap_key(
     //guard to delete key2 if error occurs before disarming
     let key_id2 = ddi::HsmKeyIdGuard::new(&unwrap_key_session, handle2);
 
-    // Ensure the pair is operational as XTS with a minimal one-block precheck.
-    // This catches pairings that are unusable by the device/backend at first
-    // real cryptographic use, even when metadata checks pass.
-    validate_xts_pair_operability(&unwrap_key_session, handle1, handle2)?;
-
     // Build combined AES-XTS key properties.
     let dev_props = build_xts_props(&dev_key_props1, &dev_key_props2)?;
 
@@ -156,9 +151,6 @@ pub(crate) fn aes_xts_unmask_key(
 
     //guard to delete key2 if error occurs before disarming
     let key_id2 = ddi::HsmKeyIdGuard::new(session, handle2);
-
-    // Apply the same minimal XTS pair precheck used by unwrap.
-    validate_xts_pair_operability(session, handle1, handle2)?;
 
     // Build combined AES-XTS key properties.
     let xts_props = build_xts_props(&key1_props, &key2_props)?;
@@ -322,77 +314,6 @@ fn validate_xts_props_pair(key1_props: &HsmKeyProps, key2_props: &HsmKeyProps) -
     }
 
     Ok(())
-}
-
-/// Performs a minimal operational precheck for a candidate AES-XTS key pair.
-///
-/// Why this exists:
-/// - Property matching (`validate_xts_props_pair`) ensures metadata compatibility,
-///   but cannot prove that both halves form a usable XTS pair.
-/// - Certain invalid pairings can look valid structurally and only fail at first use.
-///
-/// Design constraints:
-/// - Keep this check as lightweight as possible for hot paths.
-/// - Use a single one-block XTS encrypt call (`16` bytes, `DUL=16`, zero tweak),
-///   which is the smallest valid XTS operation and sufficient to detect unusable pairs.
-/// - This helper does not compare key material directly; any identical-halves
-///   rejection is enforced by backend/device XTS key validation surfaced here.
-///
-/// Error mapping policy:
-/// - Local handle-shape validation failures return `InvalidKeyProps`.
-/// - Device/transport execution failures return `DdiCmdFailure`.
-///
-/// This keeps pair-validation errors explicit while preserving retry/recovery
-/// signals for operational failures.
-fn validate_xts_pair_operability(
-    session: &HsmSession,
-    handle1: HsmKeyHandle,
-    handle2: HsmKeyHandle,
-) -> HsmResult<()> {
-    let key_id1 = ddi::get_bulk_key_id(handle1).ok_or(HsmError::InvalidKeyProps)? as u32;
-    let key_id2 = ddi::get_bulk_key_id(handle2).ok_or(HsmError::InvalidKeyProps)? as u32;
-
-    let params = DdiAesXtsParams {
-        key_id1,
-        key_id2,
-        data_unit_len: 16,
-        tweak: [0u8; 16],
-        session_id: session.id(),
-        short_app_id: 0,
-    };
-
-    let input = [0u8; 16];
-    let mut output = [0u8; 16];
-    let mut is_fips_approved = false;
-
-    session
-        .with_dev(|dev| {
-            dev.exec_op_fp_xts_slice(
-                DdiAesOp::Encrypt,
-                params,
-                &input,
-                &mut output,
-                &mut is_fips_approved,
-            )
-            .map_err(|err| match err {
-                // This precheck is specifically used during unwrap/unmask admission to reject
-                // unusable XTS key pairs early. In this context, these statuses indicate
-                // key/blob problems and should surface as InvalidKeyProps.
-                DdiError::DdiStatus(
-                    DdiStatus::InvalidKeyType
-                    | DdiStatus::KeyNotFound
-                    | DdiStatus::InvalidPermissions
-                    | DdiStatus::KeyStructuralValidationFailed
-                    | DdiStatus::AesEncryptFailed
-                    | DdiStatus::AesDecryptFailed,
-                )
-                | DdiError::InvalidParameter => HsmError::InvalidKeyProps,
-
-                // Preserve operational/transport failures so higher layers can apply retry/resiliency.
-                _ => HsmError::DdiCmdFailure,
-            })
-        })
-        .map(|_| ())
 }
 
 #[repr(C, packed)]
