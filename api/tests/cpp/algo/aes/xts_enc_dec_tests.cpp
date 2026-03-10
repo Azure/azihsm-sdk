@@ -11,6 +11,7 @@
 #include "handle/part_handle.hpp"
 #include "handle/part_list_handle.hpp"
 #include "handle/session_handle.hpp"
+#include "utils/key_import.hpp"
 #include "utils/auto_ctx.hpp"
 #include "utils/auto_key.hpp"
 #include "utils/rsa_keygen.hpp"
@@ -61,70 +62,34 @@ class azihsm_aes_xts : public ::testing::Test
         const std::vector<uint8_t> &key2_plain
     )
     {
-        // Test helper purpose:
-        // Build a syntactically valid AES-XTS wrapped blob from two local key halves so tests
-        // can mutate one field (header/length/payload) and verify parser/unwrap rejection paths
-        // without depending on existing device-side XTS key material.
-        //
-        // Blob format under test: header || wrapped_key1 || wrapped_key2
-        azihsm_algo_rsa_pkcs_oaep_params oaep_params{};
-        oaep_params.hash_algo_id = AZIHSM_ALGO_ID_SHA256;
-        oaep_params.mgf1_hash_algo_id = AZIHSM_MGF1_ID_SHA256;
-        oaep_params.label = nullptr;
+        // Build a syntactically valid AES-XTS wrapped blob from two local key halves.
+        const auto wrap_half = [&](const std::vector<uint8_t> &plain_half) -> std::vector<uint8_t> {
+            std::vector<uint8_t> wrapped_data;
+            auto wrap_status = rsa_aes_wrap_bytes(
+                wrapping_pub_key,
+                plain_half,
+                static_cast<uint32_t>(plain_half.size() * 8),
+                wrapped_data
+            );
+            if (wrap_status != AZIHSM_STATUS_SUCCESS)
+            {
+                return {};
+            }
 
-        azihsm_algo_rsa_aes_wrap_params wrap_params{};
-        wrap_params.oaep_params = &oaep_params;
-        wrap_params.aes_key_bits = static_cast<uint32_t>(key1_plain.size() * 8);
-
-        azihsm_algo wrap_algo{};
-        wrap_algo.id = AZIHSM_ALGO_ID_RSA_AES_WRAP;
-        wrap_algo.params = &wrap_params;
-        wrap_algo.len = sizeof(wrap_params);
-
-        // Wrap first XTS half (query output size, then perform wrap).
-        azihsm_buffer key1_buf{
-            const_cast<uint8_t *>(key1_plain.data()),
-            static_cast<uint32_t>(key1_plain.size())
+            return wrapped_data;
         };
-        azihsm_buffer key1_wrapped{ nullptr, 0 };
 
-        auto err = azihsm_crypt_encrypt(&wrap_algo, wrapping_pub_key, &key1_buf, &key1_wrapped);
-        if (err != AZIHSM_STATUS_BUFFER_TOO_SMALL)
+        auto key1_wrapped_data = wrap_half(key1_plain);
+        if (key1_wrapped_data.empty())
         {
             return {};
         }
 
-        std::vector<uint8_t> key1_wrapped_data(key1_wrapped.len);
-        key1_wrapped.ptr = key1_wrapped_data.data();
-        err = azihsm_crypt_encrypt(&wrap_algo, wrapping_pub_key, &key1_buf, &key1_wrapped);
-        if (err != AZIHSM_STATUS_SUCCESS)
+        auto key2_wrapped_data = wrap_half(key2_plain);
+        if (key2_wrapped_data.empty())
         {
             return {};
         }
-        key1_wrapped_data.resize(key1_wrapped.len);
-
-        // Wrap second XTS half using the same RSA wrapping key.
-        wrap_params.aes_key_bits = static_cast<uint32_t>(key2_plain.size() * 8);
-        azihsm_buffer key2_buf{
-            const_cast<uint8_t *>(key2_plain.data()),
-            static_cast<uint32_t>(key2_plain.size())
-        };
-        azihsm_buffer key2_wrapped{ nullptr, 0 };
-
-        err = azihsm_crypt_encrypt(&wrap_algo, wrapping_pub_key, &key2_buf, &key2_wrapped);
-        if (err != AZIHSM_STATUS_BUFFER_TOO_SMALL)
-        {
-            return {};
-        }
-
-        std::vector<uint8_t> key2_wrapped_data(key2_wrapped.len);
-        key2_wrapped.ptr = key2_wrapped_data.data();
-        err = azihsm_crypt_encrypt(&wrap_algo, wrapping_pub_key, &key2_buf, &key2_wrapped);
-        if (err != AZIHSM_STATUS_SUCCESS)
-        {
-            return {};
-        }
-        key2_wrapped_data.resize(key2_wrapped.len);
 
         // Encode both wrapped halves into the XTS key-pair blob format.
         auto header = build_xts_blob_header(
