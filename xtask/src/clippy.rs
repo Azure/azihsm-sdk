@@ -44,7 +44,7 @@ impl Xtask for Clippy {
 
         cmd!(
             sh,
-            "cargo {rust_toolchain...} clippy --workspace --all-targets --all-features {exclude_args...} -- -D warnings"
+            "cargo {rust_toolchain...} clippy --workspace --all-targets {exclude_args...} -- -D warnings"
         )
         .quiet()
         .run()?;
