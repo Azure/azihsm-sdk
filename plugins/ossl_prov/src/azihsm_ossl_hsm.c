@@ -1245,6 +1245,12 @@ azihsm_status azihsm_import_key_pair(
     }
     if (input_buf.ptr == NULL || input_buf.len == 0)
     {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            PROV_R_MISSING_KEY,
+            "input key file '%s' is missing or empty",
+            input_key_file
+        );
         return AZIHSM_STATUS_INVALID_ARGUMENT;
     }
 
@@ -1318,6 +1324,12 @@ azihsm_status azihsm_unwrap_key_pair(
     }
     if (input_buf.ptr == NULL || input_buf.len == 0)
     {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            PROV_R_MISSING_KEY,
+            "wrapped key file '%s' is missing or empty",
+            wrapped_key_file
+        );
         return AZIHSM_STATUS_INVALID_ARGUMENT;
     }
 

@@ -4,6 +4,7 @@
 #include <openssl/core_dispatch.h>
 #include <openssl/core_names.h>
 #include <openssl/core_object.h>
+#include <openssl/err.h>
 #include <openssl/params.h>
 #include <openssl/proverr.h>
 #include <openssl/store.h>
@@ -295,6 +296,12 @@ static int load_and_unmask_key(AZIHSM_STORE_CTX *ctx)
     if (azihsm_file_load(ctx->uri_info.file_path, &masked_buf) != AZIHSM_STATUS_SUCCESS ||
         masked_buf.ptr == NULL)
     {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            PROV_R_MISSING_KEY,
+            "failed to load masked key file '%s'",
+            ctx->uri_info.file_path
+        );
         return OSSL_FAILURE;
     }
 

@@ -78,6 +78,12 @@ static int load_and_unmask_key(AZIHSM_HMAC_CTX *ctx)
     if (azihsm_file_load(ctx->key_file, &masked_buf) != AZIHSM_STATUS_SUCCESS ||
         masked_buf.ptr == NULL)
     {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            PROV_R_MISSING_KEY,
+            "failed to load HMAC key file '%s'",
+            ctx->key_file
+        );
         return OSSL_FAILURE;
     }
 
