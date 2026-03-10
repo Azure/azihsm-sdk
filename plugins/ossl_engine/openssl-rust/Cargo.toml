@@ -1,0 +1,20 @@
+# Copyright (C) Microsoft Corporation. All rights reserved.
+
+[package]
+name = "openssl-rust"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+thiserror.workspace = true
+engine-common.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tracing-attributes.workspace = true
+
+[build-dependencies]
+bindgen.workspace = true
+
+[features]
+openssl_111 = []
+openssl_3 = []

@@ -1,0 +1,6 @@
+# Copyright (C) Microsoft Corporation. All rights reserved.
+
+group_imports = "StdExternalCrate"
+imports_granularity = "Item"
+format_macro_bodies = true
+format_macro_matchers = true
