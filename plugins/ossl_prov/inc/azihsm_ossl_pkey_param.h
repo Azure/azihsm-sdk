@@ -31,7 +31,8 @@ typedef enum
 
 /*
  * Parse a key usage string and return the corresponding type
- * @value   string containing key usage ("digitalSignature", "keyAgreement", or "keyEncipherment")
+ * @value   string containing key usage ("digitalSignature", "keyAgreement",
+ *          "keyEncipherment", or "keyWrapping")
  * @usage_type output parameter for the key usage type
  *
  * @returns 0 on success, -1 on failure
@@ -41,8 +42,8 @@ int azihsm_ossl_key_usage_from_str(const char *value, AZIHSM_KEY_USAGE_TYPE *usa
 /*
  * Convert key usage type to string representation
  * @usage_type the key usage type to convert
- * @returns string representation ("digitalSignature", "keyAgreement", or "keyEncipherment"), or
- * "unknown"
+ * @returns string representation ("digitalSignature", "keyAgreement", "keyEncipherment",
+ * or "keyWrapping"), or "unknown"
  * */
 const char *azihsm_ossl_key_usage_to_str(AZIHSM_KEY_USAGE_TYPE usage_type);
 
