@@ -66,18 +66,16 @@ Build and run all tests with code coverage enabled. Generates a cobertura XML, J
 cargo xtask coverage
 ```
 
-**Requirements:** CMake must be installed and available in PATH.
-
 ## Command Details
 
-- **precheck**: Combines copyright, fmt, and clippy checks for comprehensive validation
+- **precheck**: Combines setup, copyright, audit, fmt, clippy, and nextest stages for comprehensive validation
 - **clippy**: Runs `cargo clippy --all-targets` with warnings treated as errors
 - **fmt**: Uses `cargo fmt` to check/fix Rust code formatting
 - **copyright**: Ensures all source files have proper Microsoft copyright headers
-- **build-cpp**: Cross-platform C++ build automation using CMake
+- **coverage**: Build/run all tests with code coverage enabled
 
 ## Dependencies
 
-- CMake (for build-cpp command)
+- CMake
 - Rust toolchain with clippy and rustfmt
 - xshell crate for shell operations
