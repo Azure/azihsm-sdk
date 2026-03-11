@@ -1147,3 +1147,23 @@ fn test_gcm_streaming_empty_aad_roundtrip(session: HsmSession) {
 
     assert_eq!(decrypted, plaintext);
 }
+
+/// Verify streaming AES-GCM supports empty plaintext with explicitly empty AAD.
+#[session_test]
+fn test_gcm_streaming_empty_aad_and_empty_plaintext(session: HsmSession) {
+    let iv = test_iv();
+    let plaintext: Vec<u8> = vec![];
+    let aad = Some(vec![]);
+
+    let key = aes_gcm_generate_streaming_key(&session);
+
+    let (ciphertext, tag) =
+        gcm_encrypt_streaming(&key, &iv, aad.clone(), &plaintext, &[16]).unwrap();
+
+    assert!(ciphertext.is_empty());
+    assert_eq!(tag.len(), AES_GCM_TAG_SIZE);
+
+    let decrypted = gcm_decrypt_streaming(&key, &iv, &tag, aad, &ciphertext, &[16]).unwrap();
+
+    assert!(decrypted.is_empty());
+}
