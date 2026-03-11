@@ -1102,3 +1102,48 @@ fn test_gcm_generate_key_with_invalid_decrypt_capability_fails(session: HsmSessi
 
     assert!(matches!(res, Err(HsmError::InvalidKeyProps)));
 }
+
+/// Verify AES-GCM roundtrip works when AAD is explicitly empty.
+#[session_test]
+fn test_gcm_empty_aad_roundtrip(session: HsmSession) {
+    let iv = test_iv();
+    let plaintext = vec![0x11u8; 64];
+    let aad = Some(vec![]);
+
+    run_gcm_roundtrip(&session, &iv, aad, &plaintext);
+}
+
+/// Verify AES-GCM supports empty plaintext with explicitly empty AAD.
+#[session_test]
+fn test_gcm_empty_aad_and_empty_plaintext(session: HsmSession) {
+    let iv = test_iv();
+    let plaintext: Vec<u8> = vec![];
+    let aad = Some(vec![]);
+
+    let key = aes_gcm_generate_key(&session);
+
+    let (ciphertext, tag) = gcm_encrypt(&key, &iv, aad.clone(), &plaintext).unwrap();
+
+    assert!(ciphertext.is_empty());
+    assert_eq!(tag.len(), AES_GCM_TAG_SIZE);
+
+    let decrypted = gcm_decrypt(&key, &iv, &tag, aad, &ciphertext).unwrap();
+    assert!(decrypted.is_empty());
+}
+
+/// Verify streaming AES-GCM works when AAD is explicitly empty.
+#[session_test]
+fn test_gcm_streaming_empty_aad_roundtrip(session: HsmSession) {
+    let iv = test_iv();
+    let plaintext = vec![0x77u8; 128];
+    let aad = Some(vec![]);
+
+    let key = aes_gcm_generate_streaming_key(&session);
+
+    let (ciphertext, tag) =
+        gcm_encrypt_streaming(&key, &iv, aad.clone(), &plaintext, &[32]).unwrap();
+
+    let decrypted = gcm_decrypt_streaming(&key, &iv, &tag, aad, &ciphertext, &[32]).unwrap();
+
+    assert_eq!(decrypted, plaintext);
+}
