@@ -168,7 +168,7 @@ impl<H: HsmKeyHandleDelOp> HsmKeyInner<H> {
         Ok(())
     }
 
-    /// Replaces the device handle and properties after an unmask operation.
+    /// Replaces the key handle and properties after an unmask operation.
     ///
     /// Called during key-operation resiliency recovery to restore a stale
     /// handle that was invalidated by a resiliency event.

@@ -328,7 +328,7 @@ impl HsmPartitionManager {
 /// A thread-safe handle to an open HSM partition. Provides access to partition
 /// operations and metadata through an internal `Arc<RwLock<HsmPartitionInner>>`.
 ///
-/// The `key_ops_lock` is a lightweight RwLock that prevents the ABA problem
+/// The `key_barrier` is a lightweight RwLock that prevents the ABA problem
 /// during resiliency events.  Key operations acquire a read lock around the
 /// epoch-check + DDI call, while restore/refresh paths acquire the write
 /// lock. This guarantees no handle reassignment can occur while any thread is
@@ -336,7 +336,7 @@ impl HsmPartitionManager {
 #[derive(Debug, Clone)]
 pub struct HsmPartition {
     inner: Arc<RwLock<HsmPartitionInner>>,
-    key_ops_lock: Arc<RwLock<()>>,
+    key_barrier: Arc<RwLock<()>>,
 }
 
 impl HsmPartition {
@@ -373,7 +373,7 @@ impl HsmPartition {
                 hardware_ver,
                 pci_info,
             ))),
-            key_ops_lock: Arc::new(RwLock::new(())),
+            key_barrier: Arc::new(RwLock::new(())),
         }
     }
 
@@ -576,6 +576,36 @@ impl HsmPartition {
         result
     }
 
+    /// Retry loop for `cert_chain` with restore-partition recovery.
+    ///
+    /// Called when the initial `ddi::get_cert_chain` attempt failed with a
+    /// retryable error and resiliency is enabled.  On each iteration:
+    /// 1. Apply exponential backoff.
+    /// 2. Call `restore_partition` to re-establish credentials.
+    /// 3. Retry `ddi::get_cert_chain`.
+    fn retry_cert_chain(&self, initial_result: HsmResult<String>, slot: u8) -> HsmResult<String> {
+        let mut result = initial_result;
+        let mut iter = 0u32;
+
+        while is_cert_chain_retryable_error(&result) && iter < MAX_RETRIES {
+            apply_backoff(iter, BACKOFF_BASE_MS, BACKOFF_JITTER_MS);
+
+            // Re-establish partition credentials before retrying cert_chain.
+            match self.restore_partition() {
+                Ok(()) => {
+                    result = self
+                        .with_dev(|dev| ddi::get_cert_chain(dev, self.api_rev_range().min(), slot));
+                }
+                Err(_) => {
+                    // Restore_partition failed during cert_chain retry.
+                }
+            }
+            iter += 1;
+        }
+
+        result
+    }
+
     /// Restores partition state after a resiliency event.
     ///
     /// Called from the retry loops (`open_session`, `key_gen`, `key_op`)
@@ -587,16 +617,16 @@ impl HsmPartition {
     ///    lock, another thread/process already restored; skip.
     /// 4. Read BMK and MUK from resiliency storage (the cross-process
     ///    source of truth) rather than from in-memory state.
-    /// 5. Re-establish credentials via `ddi::init_part_raw` — the
+    /// 5. Re-establish credentials via `ddi::init_part_raw_no_res` — the
     ///    bare DDI call without the retry macro.  `resiliency_config`
-    ///    is passed so that `init_part_raw` can re-endorse POTA
+    ///    is passed so that `init_part_raw_no_res` can re-endorse POTA
     ///    (via callback) when the source is `Caller`.  Explicit BMK
     ///    and MUK from storage are forwarded so that
-    ///    `resolve_cached_bmk/muk` inside `init_part_raw` use them
+    ///    `resolve_cached_bmk/muk` inside `init_part_raw_no_res` use them
     ///    as-is.
     /// 6. On success, persist the new BMK, cache the updated POTA
     ///    endorsement, and bump the epoch so stale keys/sessions
-    ///    refresh.  If `init_part_raw` returns a "credentials
+    ///    refresh.  If `init_part_raw_no_res` returns a "credentials
     ///    already established" error, read the epoch from storage
     ///    and adopt it if another process advanced it; otherwise
     ///    our epoch is already current.
@@ -617,7 +647,7 @@ impl HsmPartition {
         let _lock_guard = ResiliencyLockGuard::acquire_arc(lock_ref)?;
 
         // Re-acquire READ to double-check epoch, read storage, and
-        // call init_part_raw — all under a single read lock.
+        // call init_part_raw_no_res — all under a single read lock.
         let init_result = {
             let inner = self.inner().read();
             let Some(rs) = inner.resiliency_state.as_ref() else {
@@ -640,13 +670,13 @@ impl HsmPartition {
                 crate::resiliency::AZIHSM_STORAGE_MUK,
             )?;
 
-            // Single-attempt init_part_raw — bypasses the retry macro.
-            // resiliency_config is passed so init_part_raw can re-endorse
+            // Single-attempt init_part_raw_no_res — bypasses the retry macro.
+            // resiliency_config is passed so init_part_raw_no_res can re-endorse
             // POTA internally when the source is Caller.  Explicit
             // bmk/muk from storage are forwarded so that
-            // resolve_cached_bmk/muk inside init_part_raw use them as-is.
+            // resolve_cached_bmk/muk inside init_part_raw_no_res use them as-is.
             // BMK persistence is handled manually after the call.
-            ddi::init_part_raw(
+            ddi::init_part_raw_no_res(
                 inner.dev(),
                 inner.api_rev_range().min(),
                 rs.cached_credentials,
@@ -655,7 +685,7 @@ impl HsmPartition {
                 &rs.cached_obk_config,
                 &rs.cached_pota_endorsement,
                 Some(&rs.config),
-                true, // let init_part_raw re-endorse POTA
+                true, // let init_part_raw_no_res re-endorse POTA
             )
         };
 
@@ -782,7 +812,15 @@ impl HsmPartition {
     ///
     /// Returns the certificate chain as a PEM string.
     pub fn cert_chain(&self, slot: u8) -> HsmResult<String> {
-        self.with_dev(|dev| ddi::get_cert_chain(dev, self.api_rev_range().min(), slot))
+        let resiliency = self.resiliency_enabled();
+        let result =
+            self.with_dev(|dev| ddi::get_cert_chain(dev, self.api_rev_range().min(), slot));
+
+        if resiliency && is_cert_chain_retryable_error(&result) {
+            self.retry_cert_chain(result, slot)
+        } else {
+            result
+        }
     }
 
     /// Retrieves the public key of the partition identity (PID) certificate.
@@ -955,22 +993,22 @@ impl HsmPartition {
             .map_or(0, |rs| rs.restore_epoch)
     }
 
-    /// Acquires a read lock on the key ops lock.
+    /// Acquires a read lock on the key barrier.
     ///
     /// Hold this across the epoch-check + DDI call sequence to prevent
     /// any concurrent restore/refresh from reassigning device handles.
     /// Multiple threads may hold the read lock simultaneously.
-    pub(crate) fn key_ops_lock_read(&self) -> RwLockReadGuard<'_, ()> {
-        self.key_ops_lock.read()
+    pub(crate) fn key_barrier_read(&self) -> RwLockReadGuard<'_, ()> {
+        self.key_barrier.read()
     }
 
-    /// Acquires a write lock on the key ops lock.
+    /// Acquires a write lock on the key barrier.
     ///
     /// Hold this during restore-partition + reopen-session + refresh-key
     /// to ensure no thread is mid-operation while handles are being
     /// reassigned.  Blocks until all read-lock holders finish.
-    pub(crate) fn key_ops_lock_write(&self) -> RwLockWriteGuard<'_, ()> {
-        self.key_ops_lock.write()
+    pub(crate) fn key_barrier_write(&self) -> RwLockWriteGuard<'_, ()> {
+        self.key_barrier.write()
     }
 
     /// Reopens the session if its epoch is behind the partition's
@@ -991,13 +1029,13 @@ impl HsmPartition {
         // Fast path: no lock required.
         let current_epoch = self.restore_epoch();
         let session_epoch = session.last_restore_epoch();
-        if session_epoch >= current_epoch {
+        if session_epoch == current_epoch {
+            // Session is current, no reopen needed.
             return Ok(());
+        } else if session_epoch > current_epoch {
+            // This should never happen — session cannot be newer than the partition's epoch.
+            return Err(HsmError::InternalError);
         }
-        debug!(
-            session_epoch,
-            current_epoch, "reopen_session_if_needed: session is stale, will reopen"
-        );
 
         // Read credentials from the resiliency state.
         let creds = {
@@ -1186,7 +1224,7 @@ impl HsmPartitionInner {
     }
 
     /// Updates the cached POTA endorsement data with the latest values
-    /// returned by `init_part_raw`.  The callback may return a new
+    /// returned by `init_part_raw_no_res`.  The callback may return a new
     /// public key (e.g., key rotation); caching it ensures the next
     /// restore passes the updated pub key to `invoke_pota_callback`.
     fn update_cached_pota(&mut self, pota_data: HsmPotaEndorsementData) {

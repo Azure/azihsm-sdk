@@ -65,24 +65,34 @@ impl HsmSession {
     /// Serializes session-reopen attempts for a given epoch.
     ///
     /// Acquires the session write lock and checks whether the session
-    /// has already been reopened to `target_epoch`.  If so, returns
+    /// has already been reopened to `part_restore_epoch`.  If so, returns
     /// `Ok(None)` without calling `f`.  Otherwise, executes `f` under
     /// the lock and, on success, advances the session epoch to
-    /// `target_epoch` before releasing the lock.
+    /// `part_restore_epoch` before releasing the lock.
     ///
     /// This ensures that only one thread performs the DDI `reopen_session`
     /// call for a given a resiliency event; racing threads block on the write lock
     /// and then observe the updated epoch.
-    pub(crate) fn with_reopen_guard<F, R>(&self, target_epoch: u64, f: F) -> HsmResult<Option<R>>
+    pub(crate) fn with_reopen_guard<F, R>(
+        &self,
+        part_restore_epoch: u64,
+        f: F,
+    ) -> HsmResult<Option<R>>
     where
         F: FnOnce() -> HsmResult<R>,
     {
         let mut inner = self.inner.write();
-        if inner.last_restore_epoch >= target_epoch {
+        if inner.last_restore_epoch == part_restore_epoch {
             return Ok(None);
+        } else if inner.last_restore_epoch > part_restore_epoch {
+            // This should never happen — session cannot be newer than the partition's epoch.
+            return Err(HsmError::InternalError);
         }
+
+        // Session is stale, execute the reopen under the lock.
+        // If it succeeds, update the session's last_restore_epoch.
         let result = f()?;
-        inner.last_restore_epoch = target_epoch;
+        inner.last_restore_epoch = part_restore_epoch;
         Ok(Some(result))
     }
 

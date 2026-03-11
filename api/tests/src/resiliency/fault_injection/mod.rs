@@ -23,6 +23,7 @@
 
 use azihsm_res_test_dev::*;
 
+mod cert_chain;
 mod close_session;
 mod init_part;
 mod key_gen;

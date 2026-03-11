@@ -70,6 +70,7 @@ cargo run --release -p resiliency_stress --features res-test -- --random-fault -
 | `--stats-interval-secs` | `-s` | 5 | Seconds between stats printouts |
 | `--ops` | `-o` | all | Comma-separated list of operations |
 | `--stall-timeout-secs` | | 30 | Stall detection timeout (0 = disabled) |
+| `--verbose` | `-v` | false | Enable verbose logging |
 | `--no-resiliency` | | false | Disable resiliency (baseline perf) |
 | `--no-reset` | | false | Resiliency enabled but no resets |
 | `--random-fault` | | false | Random DDI fault injection (needs `res-test`) |
@@ -90,6 +91,7 @@ cargo run --release -p resiliency_stress --features res-test -- --random-fault -
 | `aes-keygen` | AES-256 key generation |
 | `ecc-keygen` | ECC P-256 key pair generation |
 | `aes-xts-keygen` | AES-XTS-512 key generation |
+| `unwrapping-keygen` | RSA-2048 unwrapping key pair generation |
 | `ecdh` | ECDH shared secret derivation |
 | `hkdf` | HKDF key derivation |
 | `aes-unwrap` | AES key unwrap (RSA-AES) |
@@ -100,45 +102,20 @@ cargo run --release -p resiliency_stress --features res-test -- --random-fault -
 | `ecc-unmask` | ECC key pair unmask |
 | `xts-unmask` | AES-XTS key unmask |
 | `unmask` | All unmask operations |
-
-## Output
-
-Periodic stats are printed to stderr:
-
-```
-=== Resiliency Stress Tool ===
-Workers:        4
-Reset interval: 200ms
-Duration:       60s
-Operations:     AES-CBC encrypt, AES-CBC decrypt, ECC sign, HMAC sign, AES key gen
-
-[00:00:05] ops: 1284 | resets: 24 | ops/s: 257
-[00:00:10] ops: 2847 | resets: 49 | ops/s: 285
-[00:00:15] ops: 4102 | resets: 74 | ops/s: 274
-
-=== Final Stats ===
-Elapsed:    00:01:00
-Total ops:  16542
-Resets:     299
-Ops/sec:    276
-
-All operations completed successfully.
-```
-
-On failure, the tool stops immediately and prints the failing scenario:
-
-```
-=== FAILURE ===
-Thread:     2
-Operation:  AES-CBC encrypt
-Error:      InvalidPermissions
-Ops before: 12847
-```
+| `ecc-key-report` | ECC key attestation report |
+| `rsa-key-report` | RSA key attestation report |
+| `key-report` | All key report operations |
+| `cert-chain` | Partition cert chain retrieval |
+| `aes-keygen-delete` | AES keygen + immediate delete |
+| `ecc-keygen-delete` | ECC keygen + immediate delete |
+| `xts-keygen-delete` | AES-XTS keygen + immediate delete |
+| `keygen-delete` | All keygen-delete operations |
 
 ## How It Works
 
 1. Opens and initializes an HSM partition with resiliency enabled
-2. Spawns N worker threads, each with its own session and pre-created keys
+2. Spawns N worker threads, all sharing a single cloned session with
+   pre-created keys
 3. Spawns a reset thread with a **separate** partition handle (same device)
 4. Workers continuously perform random crypto operations
 5. The reset thread triggers device resets at the configured interval
@@ -148,6 +125,11 @@ Ops before: 12847
    retries the operation
 7. If any operation fails with a non-retryable error (e.g., `InvalidPermissions`
    indicating a potential ABA violation), the tool stops and reports
+8. A deadlock detector thread runs in the background using
+   `parking_lot`'s deadlock detection — if a deadlock is found, it
+   dumps all thread stack traces to stderr and exits
+9. A stall detector monitors progress; if no operations complete within
+   `--stall-timeout-secs`, it dumps diagnostics and exits with code 2
 
 ## Troubleshooting
 

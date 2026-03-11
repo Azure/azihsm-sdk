@@ -683,7 +683,7 @@ impl UserSessionInner {
 
             // Cannot delete internal keys.
             if entry.app_id() == APP_ID_FOR_INTERNAL_KEYS {
-                tracing::error!(error = ?ManticoreError::CannotDeleteInternalKeys, "Cannot delete internal keys");
+                tracing::warn!(error = ?ManticoreError::CannotDeleteInternalKeys, "Cannot delete internal keys");
                 Err(ManticoreError::CannotDeleteInternalKeys)?
             }
         }

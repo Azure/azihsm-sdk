@@ -25,10 +25,9 @@
 //!
 //! # Feature gate
 //!
-//! This module is compiled under `#[cfg(feature = "res-test")]`.
-//! It does not depend on `azihsm_ddi_resiliency_mock` (no fault
-//! injection); Reset is triggered directly via `partition.reset()`.
-
+//! This module does not require the `res-test` feature.
+//! It does not depend on `azihsm_res_test_dev` (no fault
+//! injection); Resets are triggered directly via `partition.reset()`.
 use std::sync::Arc;
 use std::sync::Barrier;
 use std::sync::atomic::AtomicBool;
@@ -1669,7 +1668,7 @@ fn test_stress_ecc_key_report_under_reset() {
             thread::spawn(move || {
                 barrier.wait();
                 for i in 0..ITERATIONS_PER_WORKER {
-                    let report_data = [0x42u8; 64];
+                    let report_data = [0x42u8; 128];
                     let result =
                         HsmKeyManager::generate_key_report_vec(&mut priv_key, &report_data);
                     if let Err(ref e) = result {
@@ -1764,6 +1763,65 @@ fn test_stress_delete_key_under_reset() {
     }
     stop.store(true, Ordering::Relaxed);
     let reset_count = reset_handle.join().expect("Reset thread panicked");
+    assert!(
+        reset_count > 0,
+        "Reset thread should have triggered at least one Reset"
+    );
+}
+
+// =========================================================================
+// Test: cert_chain under continuous Reset
+// =========================================================================
+
+/// Workers repeatedly call `cert_chain(0)` while a dedicated thread
+/// fires Resets. Every `cert_chain` call must eventually succeed
+/// via the retry path.
+#[api_test]
+fn test_stress_cert_chain_under_reset() {
+    let (part, _creds, _session, _ctx) = init_partition_and_session();
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let barrier = Arc::new(Barrier::new(NUM_WORKERS + 1));
+
+    let reset_handle = spawn_reset_thread(part.path(), stop.clone(), barrier.clone());
+
+    let workers: Vec<_> = (0..NUM_WORKERS)
+        .map(|id| {
+            let part = part.clone();
+            let barrier = barrier.clone();
+            thread::spawn(move || {
+                barrier.wait();
+                let mut successes = 0u32;
+                for i in 0..ITERATIONS_PER_WORKER {
+                    let result = part.cert_chain(0);
+                    if let Err(ref e) = result {
+                        warn!("Worker {id} iteration {i}: cert_chain error: {e:?}");
+                    }
+                    assert!(
+                        result.is_ok(),
+                        "Worker {id} iteration {i}: cert_chain failed: {:?}",
+                        result.err()
+                    );
+                    successes += 1;
+                    thread::sleep(Duration::from_millis(WORKER_ITER_SLEEP_MS));
+                }
+                successes
+            })
+        })
+        .collect();
+
+    let mut total_successes = 0u32;
+    for w in workers {
+        total_successes += w.join().expect("Worker thread panicked");
+    }
+    stop.store(true, Ordering::Relaxed);
+    let reset_count = reset_handle.join().expect("Reset thread panicked");
+
+    let expected = (NUM_WORKERS * ITERATIONS_PER_WORKER) as u32;
+    assert_eq!(
+        total_successes, expected,
+        "Expected {expected} total successes, got {total_successes}"
+    );
     assert!(
         reset_count > 0,
         "Reset thread should have triggered at least one Reset"

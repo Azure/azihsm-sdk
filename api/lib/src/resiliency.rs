@@ -43,7 +43,7 @@ pub(crate) const AZIHSM_STORAGE_EPOCH: &str = "azihsm_epoch";
 ///
 /// Written by [`generate_key_pair`] (RSA unwrapping key generation) so
 /// that `establish_credential` can restore the device's unwrapping key
-/// state after a device reset. Read during [`init_part_raw`] and
+/// state after a device reset. Read during [`init_part_raw_no_res`] and
 /// [`restore_partition`] to provide the MUK to the device. Cleared
 /// alongside BMK when `MaskedKeyDecodeFailed` indicates stale keys.
 pub(crate) const AZIHSM_STORAGE_MUK: &str = "azihsm_muk";
@@ -264,163 +264,6 @@ impl ResiliencyState {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::HsmOwnerBackupKeySource;
-
-    // Minimal mock implementations for testing ResiliencyState construction and validation logic.
-    struct MockStorage;
-    impl ResiliencyStorage for MockStorage {
-        fn read(&self, _key: &str) -> HsmResult<Vec<u8>> {
-            Err(HsmError::NotFound)
-        }
-        fn write(&self, _key: &str, _data: &[u8]) -> HsmResult<()> {
-            Ok(())
-        }
-        fn clear(&self, _key: &str) -> HsmResult<()> {
-            Ok(())
-        }
-    }
-
-    struct MockLock;
-    impl ResiliencyLock for MockLock {
-        fn lock(&self) -> HsmResult<()> {
-            Ok(())
-        }
-        fn unlock(&self) -> HsmResult<()> {
-            Ok(())
-        }
-    }
-
-    struct MockPotaCallback;
-    impl PotaEndorsementCallback for MockPotaCallback {
-        fn endorse(&self, _pub_key: &[u8]) -> HsmResult<HsmPotaEndorsementData> {
-            Ok(HsmPotaEndorsementData::new(&[0u8; 96], &[0u8; 120]))
-        }
-    }
-
-    fn mock_config(with_callback: bool) -> HsmResiliencyConfig {
-        HsmResiliencyConfig {
-            storage: Box::new(MockStorage),
-            lock: Arc::new(MockLock),
-            pota_callback: if with_callback {
-                Some(Box::new(MockPotaCallback))
-            } else {
-                None
-            },
-        }
-    }
-
-    fn test_creds() -> HsmCredentials {
-        HsmCredentials::new(&[1u8; 16], &[2u8; 16])
-    }
-
-    fn caller_obk() -> HsmOwnerBackupKeyConfig {
-        HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Caller, Some(&[3u8; 32]))
-    }
-
-    fn caller_pota() -> HsmPotaEndorsement {
-        HsmPotaEndorsement::new(
-            HsmPotaEndorsementSource::Caller,
-            Some(HsmPotaEndorsementData::new(&[4u8; 96], &[5u8; 120])),
-        )
-    }
-
-    fn tpm_pota() -> HsmPotaEndorsement {
-        HsmPotaEndorsement::new(HsmPotaEndorsementSource::Tpm, None)
-    }
-
-    #[test]
-    fn resiliency_state_caller_pota_with_callback_succeeds() {
-        let config = mock_config(true);
-        let pota = caller_pota();
-        ResiliencyState::validate_config(&config, &pota)
-            .expect("caller POTA with callback should be valid");
-        let _state = ResiliencyState::new(config, test_creds(), caller_obk(), pota)
-            .expect("ResiliencyState::new should succeed");
-    }
-
-    #[test]
-    fn resiliency_state_caller_pota_without_callback_fails() {
-        let config = mock_config(false);
-        let pota = caller_pota();
-        let err = ResiliencyState::validate_config(&config, &pota)
-            .expect_err("caller POTA without callback should fail");
-        assert_eq!(err, HsmError::InvalidArgument);
-    }
-
-    #[test]
-    fn resiliency_state_tpm_pota_without_callback_succeeds() {
-        let config = mock_config(false);
-        let pota = tpm_pota();
-        ResiliencyState::validate_config(&config, &pota)
-            .expect("TPM POTA without callback should be valid");
-        let _state = ResiliencyState::new(config, test_creds(), caller_obk(), pota)
-            .expect("ResiliencyState::new should succeed");
-    }
-
-    #[test]
-    fn resiliency_state_tpm_pota_with_callback_fails() {
-        // TPM handles POTA endorsement itself; providing a callback is a config error.
-        let config = mock_config(true);
-        let pota = tpm_pota();
-        let err = ResiliencyState::validate_config(&config, &pota)
-            .expect_err("TPM POTA with callback should fail");
-        assert_eq!(err, HsmError::InvalidArgument);
-    }
-
-    #[test]
-    fn resiliency_state_initial_epoch_is_zero() {
-        let state =
-            ResiliencyState::new(mock_config(true), test_creds(), caller_obk(), caller_pota())
-                .expect("ResiliencyState::new should succeed");
-        assert_eq!(state.restore_epoch, 0);
-    }
-
-    #[test]
-    fn resiliency_state_caches_credentials() {
-        let creds = test_creds();
-        let state = ResiliencyState::new(mock_config(true), creds, caller_obk(), caller_pota())
-            .expect("ResiliencyState::new should succeed");
-        assert_eq!(state.cached_credentials, creds);
-    }
-
-    #[test]
-    fn resiliency_state_caches_obk_config() {
-        let obk = caller_obk();
-        let state =
-            ResiliencyState::new(mock_config(true), test_creds(), obk.clone(), caller_pota())
-                .expect("ResiliencyState::new should succeed");
-        assert_eq!(
-            state.cached_obk_config.key_source(),
-            HsmOwnerBackupKeySource::Caller
-        );
-        assert_eq!(state.cached_obk_config.key(), obk.key());
-    }
-
-    #[test]
-    fn resiliency_state_caches_pota_endorsement() {
-        let pota = caller_pota();
-        let state =
-            ResiliencyState::new(mock_config(true), test_creds(), caller_obk(), pota.clone())
-                .expect("ResiliencyState::new should succeed");
-        assert_eq!(
-            state.cached_pota_endorsement.source(),
-            HsmPotaEndorsementSource::Caller
-        );
-        let cached = state
-            .cached_pota_endorsement
-            .endorsement()
-            .expect("cached POTA endorsement should be present");
-        let orig = pota
-            .endorsement()
-            .expect("original POTA endorsement should be present");
-        assert_eq!(cached.signature(), orig.signature());
-        assert_eq!(cached.pub_key(), orig.pub_key());
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Retry-with-backoff runtime support
 // ---------------------------------------------------------------------------
@@ -573,6 +416,26 @@ pub(crate) fn is_open_session_retryable_error<T>(result: &HsmResult<T>) -> bool 
     )
 }
 
+/// Returns `true` when the error is retryable during certificate chain
+/// retrieval.
+///
+/// - `IoAborted` / `IoAbortInProgress` — transient driver-level IO-abort
+///   conditions (e.g., live migration, firmware crash recovery).
+/// - `CredentialsNotEstablished` — credentials were lost (e.g., after migration).
+/// - `PartitionNotProvisioned` — partition state was lost.
+/// - `CertChainChanged` — a device reset between the two
+///   `GetCertChainInfo` calls invalidated the thumbprint check.
+pub(crate) fn is_cert_chain_retryable_error<T>(result: &HsmResult<T>) -> bool {
+    matches!(
+        result,
+        Err(HsmError::IoAborted)
+            | Err(HsmError::IoAbortInProgress)
+            | Err(HsmError::CredentialsNotEstablished)
+            | Err(HsmError::PartitionNotProvisioned)
+            | Err(HsmError::CertChainChanged)
+    )
+}
+
 /// Returns `true` when the error indicates the key's device handle is
 /// stale and the key needs to be restored (unmasked) before it can be
 /// used again.
@@ -660,7 +523,7 @@ pub(crate) fn execute_key_gen_with_retry<T>(
     backoff_base_ms: u64,
 ) -> HsmResult<T> {
     let mut result = {
-        let _barrier = partition.key_ops_lock_read();
+        let _barrier = partition.key_barrier_read();
         operation()
     };
     let mut attempt = 0u32;
@@ -671,7 +534,7 @@ pub(crate) fn execute_key_gen_with_retry<T>(
         // Acquire write lock for the entire recovery + retry sequence
         // to prevent ABA handle collisions with concurrent
         // restore_from_masked calls.
-        let _barrier = partition.key_ops_lock_write();
+        let _barrier = partition.key_barrier_write();
 
         if partition.restore_partition().is_err() {
             attempt += 1;
@@ -725,7 +588,7 @@ pub(crate) fn execute_key_op_with_retry<T>(
     loop {
         // Phase 1: read lock — epoch check + operation
         let result = {
-            let _barrier = partition.key_ops_lock_read();
+            let _barrier = partition.key_barrier_read();
             if key_epoch() < partition.restore_epoch() {
                 None // stale handle — skip DDI, go to recovery
             } else if key_epoch() > partition.restore_epoch() {
@@ -754,14 +617,14 @@ pub(crate) fn execute_key_op_with_retry<T>(
             None => {
                 // Stale epoch — skip to recovery, but respect the retry budget.
                 if attempt >= max_retries {
-                    break Err(HsmError::SessionNeedsRenegotiation);
+                    break Err(HsmError::RetryExhausted);
                 }
             }
         }
 
         // Phase 3: write lock — key restoration.
         {
-            let _barrier = partition.key_ops_lock_write();
+            let _barrier = partition.key_barrier_write();
             if partition.restore_partition().is_err() {
                 attempt += 1;
                 continue;
@@ -780,11 +643,167 @@ pub(crate) fn execute_key_op_with_retry<T>(
 }
 
 #[cfg(test)]
-mod retry_tests {
+mod tests {
     use std::sync::atomic::AtomicU32;
     use std::sync::atomic::Ordering;
 
     use super::*;
+    use crate::HsmOwnerBackupKeySource;
+
+    // ResiliencyState construction & validation
+
+    // Minimal mock implementations for testing ResiliencyState logic.
+    struct MockStorage;
+    impl ResiliencyStorage for MockStorage {
+        fn read(&self, _key: &str) -> HsmResult<Vec<u8>> {
+            Err(HsmError::NotFound)
+        }
+        fn write(&self, _key: &str, _data: &[u8]) -> HsmResult<()> {
+            Ok(())
+        }
+        fn clear(&self, _key: &str) -> HsmResult<()> {
+            Ok(())
+        }
+    }
+
+    struct MockLock;
+    impl ResiliencyLock for MockLock {
+        fn lock(&self) -> HsmResult<()> {
+            Ok(())
+        }
+        fn unlock(&self) -> HsmResult<()> {
+            Ok(())
+        }
+    }
+
+    struct MockPotaCallback;
+    impl PotaEndorsementCallback for MockPotaCallback {
+        fn endorse(&self, _pub_key: &[u8]) -> HsmResult<HsmPotaEndorsementData> {
+            Ok(HsmPotaEndorsementData::new(&[0u8; 96], &[0u8; 120]))
+        }
+    }
+
+    fn mock_config(with_callback: bool) -> HsmResiliencyConfig {
+        HsmResiliencyConfig {
+            storage: Box::new(MockStorage),
+            lock: Arc::new(MockLock),
+            pota_callback: if with_callback {
+                Some(Box::new(MockPotaCallback))
+            } else {
+                None
+            },
+        }
+    }
+
+    fn test_creds() -> HsmCredentials {
+        HsmCredentials::new(&[1u8; 16], &[2u8; 16])
+    }
+
+    fn caller_obk() -> HsmOwnerBackupKeyConfig {
+        HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Caller, Some(&[3u8; 32]))
+    }
+
+    fn caller_pota() -> HsmPotaEndorsement {
+        HsmPotaEndorsement::new(
+            HsmPotaEndorsementSource::Caller,
+            Some(HsmPotaEndorsementData::new(&[4u8; 96], &[5u8; 120])),
+        )
+    }
+
+    fn tpm_pota() -> HsmPotaEndorsement {
+        HsmPotaEndorsement::new(HsmPotaEndorsementSource::Tpm, None)
+    }
+
+    #[test]
+    fn resiliency_state_caller_pota_with_callback_succeeds() {
+        let config = mock_config(true);
+        let pota = caller_pota();
+        ResiliencyState::validate_config(&config, &pota)
+            .expect("caller POTA with callback should be valid");
+        let _state = ResiliencyState::new(config, test_creds(), caller_obk(), pota)
+            .expect("ResiliencyState::new should succeed");
+    }
+
+    #[test]
+    fn resiliency_state_caller_pota_without_callback_fails() {
+        let config = mock_config(false);
+        let pota = caller_pota();
+        let err = ResiliencyState::validate_config(&config, &pota)
+            .expect_err("caller POTA without callback should fail");
+        assert_eq!(err, HsmError::InvalidArgument);
+    }
+
+    #[test]
+    fn resiliency_state_tpm_pota_without_callback_succeeds() {
+        let config = mock_config(false);
+        let pota = tpm_pota();
+        ResiliencyState::validate_config(&config, &pota)
+            .expect("TPM POTA without callback should be valid");
+        let _state = ResiliencyState::new(config, test_creds(), caller_obk(), pota)
+            .expect("ResiliencyState::new should succeed");
+    }
+
+    #[test]
+    fn resiliency_state_tpm_pota_with_callback_fails() {
+        // TPM handles POTA endorsement itself; providing a callback is a config error.
+        let config = mock_config(true);
+        let pota = tpm_pota();
+        let err = ResiliencyState::validate_config(&config, &pota)
+            .expect_err("TPM POTA with callback should fail");
+        assert_eq!(err, HsmError::InvalidArgument);
+    }
+
+    #[test]
+    fn resiliency_state_initial_epoch_is_zero() {
+        let state =
+            ResiliencyState::new(mock_config(true), test_creds(), caller_obk(), caller_pota())
+                .expect("ResiliencyState::new should succeed");
+        assert_eq!(state.restore_epoch, 0);
+    }
+
+    #[test]
+    fn resiliency_state_caches_credentials() {
+        let creds = test_creds();
+        let state = ResiliencyState::new(mock_config(true), creds, caller_obk(), caller_pota())
+            .expect("ResiliencyState::new should succeed");
+        assert_eq!(state.cached_credentials, creds);
+    }
+
+    #[test]
+    fn resiliency_state_caches_obk_config() {
+        let obk = caller_obk();
+        let state =
+            ResiliencyState::new(mock_config(true), test_creds(), obk.clone(), caller_pota())
+                .expect("ResiliencyState::new should succeed");
+        assert_eq!(
+            state.cached_obk_config.key_source(),
+            HsmOwnerBackupKeySource::Caller
+        );
+        assert_eq!(state.cached_obk_config.key(), obk.key());
+    }
+
+    #[test]
+    fn resiliency_state_caches_pota_endorsement() {
+        let pota = caller_pota();
+        let state =
+            ResiliencyState::new(mock_config(true), test_creds(), caller_obk(), pota.clone())
+                .expect("ResiliencyState::new should succeed");
+        assert_eq!(
+            state.cached_pota_endorsement.source(),
+            HsmPotaEndorsementSource::Caller
+        );
+        let cached = state
+            .cached_pota_endorsement
+            .endorsement()
+            .expect("cached POTA endorsement should be present");
+        let orig = pota
+            .endorsement()
+            .expect("original POTA endorsement should be present");
+        assert_eq!(cached.signature(), orig.signature());
+        assert_eq!(cached.pub_key(), orig.pub_key());
+    }
+
+    // Retry-with-backoff (execute_with_backoff)
 
     /// Helper: always-retryable predicate.
     fn always_retry<T>(result: &HsmResult<T>) -> bool {

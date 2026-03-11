@@ -237,7 +237,7 @@ pub(crate) fn init_part(
     // `EccVerifyFailed`, the device's attestation key changed (e.g.
     // after live migration) and we need to re-sign POTA.
     let reendorse = matches!(__prev_error, Some(HsmError::EccVerifyFailed));
-    init_part_raw(
+    init_part_raw_no_res(
         dev,
         rev,
         creds,
@@ -268,7 +268,7 @@ pub(crate) fn init_part(
 ///   resiliency enabled, the [`PotaEndorsementCallback`] is invoked to
 ///   re-sign over the current device's PID public key.  Set to `true`
 ///   when retrying after `EccVerifyFailed`.
-pub(crate) fn init_part_raw(
+pub(crate) fn init_part_raw_no_res(
     dev: &HsmDev,
     rev: HsmApiRev,
     creds: HsmCredentials,

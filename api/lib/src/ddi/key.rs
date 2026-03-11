@@ -131,7 +131,7 @@ pub(crate) fn delete_key(
 ) -> HsmResult<()> {
     let partition = session.partition();
     if partition.resiliency_enabled() {
-        let _barrier = partition.key_ops_lock_read();
+        let _barrier = partition.key_barrier_read();
         let restore_epoch = partition.restore_epoch();
         if key_epoch < restore_epoch {
             // The device was reset after this key was created, so the key is already destroyed.

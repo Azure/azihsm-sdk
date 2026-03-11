@@ -57,6 +57,7 @@ pub enum HsmError {
     KeyNotFound = -31,
     PartitionAlreadyProvisioned = -33,
     VaultAppLimitReached = -34,
+    RetryExhausted = -35,
     Panic = i32::MIN,
 }
 
