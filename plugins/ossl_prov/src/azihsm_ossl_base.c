@@ -364,26 +364,59 @@ static int azihsm_api_revision_is_valid(const AZIHSM_CONFIG *config)
 }
 
 /*
- * Populates a fixed-size path buffer from an environment variable,
- * falling back to a default if the env var is unset or empty.
+ * Decodes a hex-encoded credential string into a binary output buffer.
+ *
+ * The hex string must be exactly AZIHSM_CREDENTIALS_HEX_SIZE characters long
+ * and contain only valid hex digits (0-9, a-f, A-F).  On any error the output
+ * buffer is cleansed and a descriptive message is pushed to the OpenSSL error
+ * stack including the environment variable name for diagnostics.
+ *
+ * Returns OSSL_SUCCESS on success, OSSL_FAILURE on error.
  */
-static void load_path_from_env_or_default(
-    char *dest,
-    size_t dest_size,
-    const char *env_var,
-    const char *default_path
-)
+static OSSL_STATUS hex_decode_credentials(const char *env_name, const char *hex_str, uint8_t *out)
 {
-    const char *env_val = getenv(env_var);
+    size_t len = strlen(hex_str);
 
-    if (env_val != NULL && env_val[0] != '\0')
+    if (len != AZIHSM_CREDENTIALS_HEX_SIZE)
     {
-        snprintf(dest, dest_size, "%s", env_val);
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            PROV_R_INVALID_CONFIG_DATA,
+            "%s must be exactly %d hex characters, got %zu",
+            env_name,
+            AZIHSM_CREDENTIALS_HEX_SIZE,
+            len
+        );
+        return OSSL_FAILURE;
     }
-    else
+
+    for (size_t i = 0; i < AZIHSM_CREDENTIALS_SIZE; i++)
     {
-        snprintf(dest, dest_size, "%s", default_path);
+        unsigned int byte_val = 0;
+        char pair[3] = { hex_str[i * 2], hex_str[i * 2 + 1], '\0' };
+
+        /* Validate both nibbles are hex digits */
+        if (!((pair[0] >= '0' && pair[0] <= '9') || (pair[0] >= 'a' && pair[0] <= 'f') ||
+              (pair[0] >= 'A' && pair[0] <= 'F')) ||
+            !((pair[1] >= '0' && pair[1] <= '9') || (pair[1] >= 'a' && pair[1] <= 'f') ||
+              (pair[1] >= 'A' && pair[1] <= 'F')))
+        {
+            ERR_raise_data(
+                ERR_LIB_PROV,
+                PROV_R_INVALID_CONFIG_DATA,
+                "%s contains invalid hex character at position %zu",
+                env_name,
+                i * 2
+            );
+            OPENSSL_cleanse(out, AZIHSM_CREDENTIALS_SIZE);
+            return OSSL_FAILURE;
+        }
+
+        sscanf(pair, "%02x", &byte_val);
+        out[i] = (uint8_t)byte_val;
     }
+
+    return OSSL_SUCCESS;
 }
 
 /* Returns non-zero if path is safe to use as a credential file path. */
@@ -445,40 +478,41 @@ static OSSL_STATUS parse_provider_config(
     config->api_revision_minor = AZIHSM_API_REVISION_DEFAULT_MINOR;
     config->use_tpm_obk = false;
     config->use_tpm_pota = false;
+    config->credentials_id_from_env = false;
+    config->credentials_pin_from_env = false;
 
-    /* Credentials: env vars only (security-sensitive, not in openssl.cnf) */
-    load_path_from_env_or_default(
-        config->credentials_id_path,
-        sizeof(config->credentials_id_path),
-        AZIHSM_ENV_CREDENTIALS_ID_PATH,
-        AZIHSM_DEFAULT_CREDENTIALS_ID_PATH
-    );
-    if (!azihsm_path_is_safe(config->credentials_id_path))
+    /* Credentials: hex env var (preferred) or default file in CWD (fallback).
+     * ID and PIN resolve independently — one may come from the env var while
+     * the other falls back to the default file. */
     {
-        ERR_raise_data(
-            ERR_LIB_PROV,
-            PROV_R_INVALID_CONFIG_DATA,
-            "unsafe credentials ID path '%s'",
-            config->credentials_id_path
-        );
-        return OSSL_FAILURE;
+        const char *id_hex = getenv(AZIHSM_ENV_CREDENTIALS_ID);
+
+        if (id_hex != NULL && id_hex[0] != '\0')
+        {
+            if (hex_decode_credentials(AZIHSM_ENV_CREDENTIALS_ID, id_hex, config->credentials_id) !=
+                OSSL_SUCCESS)
+            {
+                return OSSL_FAILURE;
+            }
+            config->credentials_id_from_env = true;
+        }
     }
 
-    load_path_from_env_or_default(
-        config->credentials_pin_path,
-        sizeof(config->credentials_pin_path),
-        AZIHSM_ENV_CREDENTIALS_PIN_PATH,
-        AZIHSM_DEFAULT_CREDENTIALS_PIN_PATH
-    );
-    if (!azihsm_path_is_safe(config->credentials_pin_path))
     {
-        ERR_raise_data(
-            ERR_LIB_PROV,
-            PROV_R_INVALID_CONFIG_DATA,
-            "unsafe credentials PIN path '%s'",
-            config->credentials_pin_path
-        );
-        return OSSL_FAILURE;
+        const char *pin_hex = getenv(AZIHSM_ENV_CREDENTIALS_PIN);
+
+        if (pin_hex != NULL && pin_hex[0] != '\0')
+        {
+            if (hex_decode_credentials(
+                    AZIHSM_ENV_CREDENTIALS_PIN,
+                    pin_hex,
+                    config->credentials_pin
+                ) != OSSL_SUCCESS)
+            {
+                return OSSL_FAILURE;
+            }
+            config->credentials_pin_from_env = true;
+        }
     }
 
     if (get_params_fn == NULL)

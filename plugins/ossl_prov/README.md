@@ -118,13 +118,14 @@ Once installed, the `-provider-path` flag is no longer needed — OpenSSL will f
 
 ## Configuration
 
-The provider reads its file paths from three sources, in priority order:
+The provider reads its configuration from two sources, in priority order:
 
 1. **`openssl.cnf`** — provider-specific keys in the `[azihsm_sect]` section (key material paths, API revision, OBK/POTA source)
-2. **Environment variables** — credential paths only (`AZIHSM_CREDENTIALS_ID_PATH`, `AZIHSM_CREDENTIALS_PIN_PATH`)
-3. **Defaults** — CWD-relative paths (`./bmk.bin`, `./muk.bin`, etc.) used when neither of the above is set
+2. **Defaults** — CWD-relative paths (`./bmk.bin`, `./muk.bin`, etc.) used when the above is not set
 
-> Credentials are intentionally **not** readable from `openssl.cnf` — only from environment variables or the defaults — to reduce the risk of them appearing in config files.
+Credentials (ID and PIN) are handled separately via **environment variables** as hex-encoded strings. If the env vars are unset, the provider falls back to reading default credential files (`./credentials_id.bin`, `./credentials_pin.bin`) from CWD.
+
+> Credentials are intentionally **not** readable from `openssl.cnf` to reduce the risk of them appearing in config files.
 
 ### Configuration via `openssl.cnf`
 
@@ -175,10 +176,10 @@ All configuration parameters and their defaults:
 | `azihsm-pota-public-key-path` | `./pota_public_key.der` | POTA P-384 public key — SubjectPublicKeyInfo DER |
 | `azihsm-api-revision` | `1.0` | HSM API revision (`major.minor`) |
 
-| Environment Variable | Default | Description |
-|---------------------|---------|-------------|
-| `AZIHSM_CREDENTIALS_ID_PATH` | `./credentials_id.bin` | Path to 16-byte credential ID file |
-| `AZIHSM_CREDENTIALS_PIN_PATH` | `./credentials_pin.bin` | Path to 16-byte credential PIN file |
+| Environment Variable | Fallback | Description |
+|---------------------|----------|-------------|
+| `AZIHSM_CREDENTIALS_ID` | `./credentials_id.bin` | Hex-encoded credential ID (32 hex chars = 16 bytes). If unset, reads from the fallback file. |
+| `AZIHSM_CREDENTIALS_PIN` | `./credentials_pin.bin` | Hex-encoded credential PIN (32 hex chars = 16 bytes). If unset, reads from the fallback file. |
 
 When using `openssl.cnf`, providers are auto-loaded — no `-provider-path` or `-provider` CLI flags needed:
 

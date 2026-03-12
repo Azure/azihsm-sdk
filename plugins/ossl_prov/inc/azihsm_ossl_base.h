@@ -55,8 +55,11 @@ typedef struct
 #define AZIHSM_DEFAULT_POTA_PRIVATE_KEY_PATH "./pota_private_key.der"
 #define AZIHSM_DEFAULT_POTA_PUBLIC_KEY_PATH "./pota_public_key.der"
 
-/* Size of binary credential files (ID and PIN) in bytes */
+/* Size of binary credentials (ID and PIN) in bytes */
 #define AZIHSM_CREDENTIALS_SIZE 16
+
+/* Length of hex-encoded credential strings (2 hex chars per byte) */
+#define AZIHSM_CREDENTIALS_HEX_SIZE (AZIHSM_CREDENTIALS_SIZE * 2)
 
 /* Configuration parameter names for openssl.cnf */
 #define AZIHSM_CFG_BMK_PATH "azihsm-bmk-path"
@@ -68,9 +71,11 @@ typedef struct
 #define AZIHSM_CFG_POTA_PUBLIC_KEY_PATH "azihsm-pota-public-key-path"
 #define AZIHSM_CFG_API_REVISION "azihsm-api-revision"
 
-/* Environment variable names for credentials (not in openssl.cnf for security) */
-#define AZIHSM_ENV_CREDENTIALS_ID_PATH "AZIHSM_CREDENTIALS_ID_PATH"
-#define AZIHSM_ENV_CREDENTIALS_PIN_PATH "AZIHSM_CREDENTIALS_PIN_PATH"
+/* Environment variable names for hex-encoded credentials (not in openssl.cnf for security).
+ * Each value must be exactly AZIHSM_CREDENTIALS_HEX_SIZE hex characters (0-9, a-f, A-F).
+ * If unset, the provider falls back to reading the default credential files in CWD. */
+#define AZIHSM_ENV_CREDENTIALS_ID "AZIHSM_CREDENTIALS_ID"
+#define AZIHSM_ENV_CREDENTIALS_PIN "AZIHSM_CREDENTIALS_PIN"
 
 /* Supported API revision range */
 #define AZIHSM_API_REVISION_MIN_MAJOR 1
@@ -85,12 +90,14 @@ typedef struct
     char bmk_path[AZIHSM_MAX_FILE_PATH];
     char muk_path[AZIHSM_MAX_FILE_PATH];
     char obk_path[AZIHSM_MAX_FILE_PATH];
-    char credentials_id_path[AZIHSM_MAX_FILE_PATH];
-    char credentials_pin_path[AZIHSM_MAX_FILE_PATH];
     char pota_private_key_path[AZIHSM_MAX_FILE_PATH];
     char pota_public_key_path[AZIHSM_MAX_FILE_PATH];
+    uint8_t credentials_id[AZIHSM_CREDENTIALS_SIZE];
+    uint8_t credentials_pin[AZIHSM_CREDENTIALS_SIZE];
     uint16_t api_revision_major;
     uint16_t api_revision_minor;
+    bool credentials_id_from_env;
+    bool credentials_pin_from_env;
     bool use_tpm_obk;
     bool use_tpm_pota;
 } AZIHSM_CONFIG;

@@ -44,9 +44,15 @@ fi
 
 export LD_LIBRARY_PATH="$OPENSSL_LIB"
 
+# --- Credentials via hex env vars (preferred) ---
+# The provider reads credentials from these env vars first, falling back to
+# default files in CWD if unset.  Values match the mock HSM's test credentials.
+export AZIHSM_CREDENTIALS_ID="${AZIHSM_CREDENTIALS_ID:-70fcf730b8764238b8358010ce8a3f76}"
+export AZIHSM_CREDENTIALS_PIN="${AZIHSM_CREDENTIALS_PIN:-db3dc77fc22e430080d41b31b6f04800}"
+
 # --- Generate dev key material if not present ---
-# The provider requires credential, OBK, and POTA files in CWD.
-# Generate them on first use so tests work out of the box.
+# Credential files are kept as fallback for any path that unsets the env vars.
+# OBK and POTA files are always required.
 
 if [ ! -f credentials_id.bin ]; then
     printf '\x70\xFC\xF7\x30\xB8\x76\x42\x38\xB8\x35\x80\x10\xCE\x8A\x3F\x76' > credentials_id.bin

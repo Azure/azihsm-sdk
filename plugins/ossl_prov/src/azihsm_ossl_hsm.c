@@ -834,18 +834,33 @@ azihsm_status azihsm_open_device_and_session(
     api_rev.major = config->api_revision_major;
     api_rev.minor = config->api_revision_minor;
 
-    /* Load credentials from files */
-    status = load_credentials_from_file(config->credentials_id_path, creds.id);
-    if (status != AZIHSM_STATUS_SUCCESS)
+    /* Load credentials: prefer hex env var, fall back to default file in CWD.
+     * ID and PIN are resolved independently by parse_provider_config(). */
+    if (config->credentials_id_from_env)
     {
-        return status;
+        memcpy(creds.id, config->credentials_id, AZIHSM_CREDENTIALS_SIZE);
+    }
+    else
+    {
+        status = load_credentials_from_file(AZIHSM_DEFAULT_CREDENTIALS_ID_PATH, creds.id);
+        if (status != AZIHSM_STATUS_SUCCESS)
+        {
+            return status;
+        }
     }
 
-    status = load_credentials_from_file(config->credentials_pin_path, creds.pin);
-    if (status != AZIHSM_STATUS_SUCCESS)
+    if (config->credentials_pin_from_env)
     {
-        OPENSSL_cleanse(&creds, sizeof(creds));
-        return status;
+        memcpy(creds.pin, config->credentials_pin, AZIHSM_CREDENTIALS_SIZE);
+    }
+    else
+    {
+        status = load_credentials_from_file(AZIHSM_DEFAULT_CREDENTIALS_PIN_PATH, creds.pin);
+        if (status != AZIHSM_STATUS_SUCCESS)
+        {
+            OPENSSL_cleanse(&creds, sizeof(creds));
+            return status;
+        }
     }
 
     // Load key files if they exist
