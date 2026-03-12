@@ -58,7 +58,7 @@ mod integration {
                     env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
                 Path::new(&manifest_dir)
                     .ancestors()
-                    .nth(2)
+                    .nth(4)
                     .expect("CARGO_MANIFEST_DIR does not have enough ancestors")
                     .join("target")
                     .join("debug")

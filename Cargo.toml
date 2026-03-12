@@ -18,8 +18,8 @@ members = [
   "ddi/lib",
   "ddi/test_helpers",
   "plugins/ossl_prov",
-  "provider-integration-tests/openssl-capi",
-  "provider-integration-tests/openssl-cli",
+  "plugins/ossl_prov/integration-tests/openssl-capi",
+  "plugins/ossl_prov/integration-tests/openssl-cli",
   "xtask",
 ]
 
