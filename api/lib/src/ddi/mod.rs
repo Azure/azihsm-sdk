@@ -76,9 +76,6 @@ impl From<DdiError> for HsmError {
                 HsmError::PartitionAlreadyProvisioned
             }
             DdiError::DdiStatus(DdiStatus::VaultAppLimitReached) => HsmError::VaultAppLimitReached,
-            // Firmware-internal IO errors that surface after a reset —
-            // treat as transient so the resiliency layer retries.
-            DdiError::DdiStatus(DdiStatus::ProcessedInvalidIoEvent) => HsmError::IoAborted,
             _ => {
                 tracing::debug!(?err, "Unmapped DdiError → DdiCmdFailure");
                 HsmError::DdiCmdFailure

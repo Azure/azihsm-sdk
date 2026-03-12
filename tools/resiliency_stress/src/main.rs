@@ -118,6 +118,7 @@ struct SharedStats {
     xts_unmask: AtomicU64,
     ecc_key_report: AtomicU64,
     rsa_key_report: AtomicU64,
+    unwrapping_key_report: AtomicU64,
     cert_chain: AtomicU64,
     aes_keygen_delete: AtomicU64,
     ecc_keygen_delete: AtomicU64,
@@ -151,6 +152,7 @@ impl SharedStats {
             xts_unmask: AtomicU64::new(0),
             ecc_key_report: AtomicU64::new(0),
             rsa_key_report: AtomicU64::new(0),
+            unwrapping_key_report: AtomicU64::new(0),
             cert_chain: AtomicU64::new(0),
             aes_keygen_delete: AtomicU64::new(0),
             ecc_keygen_delete: AtomicU64::new(0),
@@ -180,6 +182,9 @@ impl SharedStats {
             OpKind::XtsUnmask => self.xts_unmask.fetch_add(1, Ordering::Relaxed),
             OpKind::EccKeyReport => self.ecc_key_report.fetch_add(1, Ordering::Relaxed),
             OpKind::RsaKeyReport => self.rsa_key_report.fetch_add(1, Ordering::Relaxed),
+            OpKind::UnwrappingKeyReport => {
+                self.unwrapping_key_report.fetch_add(1, Ordering::Relaxed)
+            }
             OpKind::CertChain => self.cert_chain.fetch_add(1, Ordering::Relaxed),
             OpKind::AesKeyGenDelete => self.aes_keygen_delete.fetch_add(1, Ordering::Relaxed),
             OpKind::EccKeyGenDelete => self.ecc_keygen_delete.fetch_add(1, Ordering::Relaxed),
@@ -211,6 +216,7 @@ enum OpKind {
     XtsUnmask,
     EccKeyReport,
     RsaKeyReport,
+    UnwrappingKeyReport,
     CertChain,
     AesKeyGenDelete,
     EccKeyGenDelete,
@@ -240,10 +246,11 @@ impl OpKind {
             Self::XtsUnmask => 18,
             Self::EccKeyReport => 19,
             Self::RsaKeyReport => 20,
-            Self::CertChain => 21,
-            Self::AesKeyGenDelete => 22,
-            Self::EccKeyGenDelete => 23,
-            Self::AesXtsKeyGenDelete => 24,
+            Self::UnwrappingKeyReport => 21,
+            Self::CertChain => 22,
+            Self::AesKeyGenDelete => 23,
+            Self::EccKeyGenDelete => 24,
+            Self::AesXtsKeyGenDelete => 25,
         }
     }
 
@@ -269,17 +276,18 @@ impl OpKind {
             18 => Some(Self::XtsUnmask),
             19 => Some(Self::EccKeyReport),
             20 => Some(Self::RsaKeyReport),
-            21 => Some(Self::CertChain),
-            22 => Some(Self::AesKeyGenDelete),
-            23 => Some(Self::EccKeyGenDelete),
-            24 => Some(Self::AesXtsKeyGenDelete),
+            21 => Some(Self::UnwrappingKeyReport),
+            22 => Some(Self::CertChain),
+            23 => Some(Self::AesKeyGenDelete),
+            24 => Some(Self::EccKeyGenDelete),
+            25 => Some(Self::AesXtsKeyGenDelete),
             _ => None,
         }
     }
 }
 
 /// Per-worker state tracking for stall diagnostics.
-/// 0 = setup, 255 = idle between ops, 1..=24 = executing OpKind.
+/// 0 = setup, 255 = idle between ops, 1..=25 = executing OpKind.
 struct WorkerStates {
     states: Vec<AtomicU8>,
 }
@@ -338,6 +346,7 @@ impl std::fmt::Display for OpKind {
             Self::XtsUnmask => write!(f, "XTS unmask"),
             Self::EccKeyReport => write!(f, "ECC key report"),
             Self::RsaKeyReport => write!(f, "RSA key report"),
+            Self::UnwrappingKeyReport => write!(f, "unwrapping key report"),
             Self::CertChain => write!(f, "cert chain"),
             Self::AesKeyGenDelete => write!(f, "AES keygen+delete"),
             Self::EccKeyGenDelete => write!(f, "ECC keygen+delete"),
@@ -1168,6 +1177,7 @@ fn worker_thread(
             OpKind::XtsUnmask => exec_xts_unmask(&session, &xts_masked),
             OpKind::EccKeyReport => exec_ecc_key_report(&ecc_priv, &report_data),
             OpKind::RsaKeyReport => exec_rsa_key_report(&rsa_sign_priv, &report_data),
+            OpKind::UnwrappingKeyReport => exec_rsa_key_report(&aes_unwrap_key, &report_data),
             OpKind::CertChain => exec_cert_chain(&partition),
             OpKind::AesKeyGenDelete => exec_aes_keygen_delete(&session),
             OpKind::EccKeyGenDelete => exec_ecc_keygen_delete(&session),
@@ -1274,7 +1284,9 @@ fn build_fault_targets(ops: &[OpKind]) -> Vec<azihsm_res_test_dev::DdiOp> {
             OpKind::UnwrappingKeyGen => DdiOp::GetUnwrappingKey,
             OpKind::AesUnwrap | OpKind::EccUnwrap | OpKind::XtsUnwrap => DdiOp::RsaUnwrap,
             OpKind::AesUnmask | OpKind::EccUnmask | OpKind::XtsUnmask => DdiOp::UnmaskKey,
-            OpKind::EccKeyReport | OpKind::RsaKeyReport => DdiOp::AttestKey,
+            OpKind::EccKeyReport | OpKind::RsaKeyReport | OpKind::UnwrappingKeyReport => {
+                DdiOp::AttestKey
+            }
             OpKind::CertChain => DdiOp::GetCertChainInfo,
             OpKind::AesKeyGenDelete | OpKind::AesXtsKeyGenDelete => DdiOp::AesGenerateKey,
             OpKind::EccKeyGenDelete => DdiOp::EccGenerateKeyPair,
@@ -1343,7 +1355,7 @@ fn stats_thread(
     let mut last_progress_time = Instant::now();
 
     // Previous snapshot for computing deltas.
-    let mut prev = [0u64; 24];
+    let mut prev = [0u64; 25];
 
     while !stats.stop.load(Ordering::Relaxed) {
         thread::sleep(interval);
@@ -1380,6 +1392,7 @@ fn stats_thread(
             stats.xts_unmask.load(Ordering::Relaxed),
             stats.ecc_key_report.load(Ordering::Relaxed),
             stats.rsa_key_report.load(Ordering::Relaxed),
+            stats.unwrapping_key_report.load(Ordering::Relaxed),
             stats.cert_chain.load(Ordering::Relaxed),
             stats.aes_keygen_delete.load(Ordering::Relaxed),
             stats.ecc_keygen_delete.load(Ordering::Relaxed),
@@ -1395,7 +1408,7 @@ fn stats_thread(
 
         // Move cursor up 21 lines to overwrite (except on first print).
         if !first {
-            write!(buf, "\x1b[25A").ok();
+            write!(buf, "\x1b[26A").ok();
         }
         first = false;
 
@@ -1414,7 +1427,7 @@ fn stats_thread(
         .ok();
 
         // Print per-op breakdown every 12th tick (~1 minute).
-        const LABELS: [&str; 24] = [
+        const LABELS: [&str; 25] = [
             "AES-CBC enc:      ",
             "AES-CBC dec:      ",
             "ECC sign:         ",
@@ -1435,6 +1448,7 @@ fn stats_thread(
             "XTS unmask:       ",
             "ECC key report:   ",
             "RSA key report:   ",
+            "Unwrap key report:",
             "Cert chain:       ",
             "AES keygen+del:   ",
             "ECC keygen+del:   ",
@@ -1551,6 +1565,10 @@ fn stats_thread(
                 stats.rsa_key_report.load(Ordering::Relaxed)
             );
             eprintln!(
+                "  Unwrap report:  {}",
+                stats.unwrapping_key_report.load(Ordering::Relaxed)
+            );
+            eprintln!(
                 "  Cert chain:     {}",
                 stats.cert_chain.load(Ordering::Relaxed)
             );
@@ -1602,6 +1620,7 @@ fn parse_ops(ops_str: &str) -> Vec<OpKind> {
             OpKind::XtsUnmask,
             OpKind::EccKeyReport,
             OpKind::RsaKeyReport,
+            OpKind::UnwrappingKeyReport,
             OpKind::CertChain,
             OpKind::AesKeyGenDelete,
             OpKind::EccKeyGenDelete,
@@ -1649,9 +1668,11 @@ fn parse_ops(ops_str: &str) -> Vec<OpKind> {
             }
             "ecc-key-report" => ops.push(OpKind::EccKeyReport),
             "rsa-key-report" => ops.push(OpKind::RsaKeyReport),
+            "unwrapping-key-report" => ops.push(OpKind::UnwrappingKeyReport),
             "key-report" => {
                 ops.push(OpKind::EccKeyReport);
                 ops.push(OpKind::RsaKeyReport);
+                ops.push(OpKind::UnwrappingKeyReport);
             }
             "cert-chain" => ops.push(OpKind::CertChain),
             "aes-keygen-delete" => ops.push(OpKind::AesKeyGenDelete),
@@ -1957,6 +1978,10 @@ fn main() {
     eprintln!(
         "  RSA key report: {}",
         stats.rsa_key_report.load(Ordering::Relaxed)
+    );
+    eprintln!(
+        "  Unwrap report:  {}",
+        stats.unwrapping_key_report.load(Ordering::Relaxed)
     );
     eprintln!(
         "  Cert chain:     {}",
