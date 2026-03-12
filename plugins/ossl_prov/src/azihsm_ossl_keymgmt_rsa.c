@@ -36,9 +36,12 @@
  *   @azihsm.key_usage
  *   Description: Key usage type for the key pair
  *   Accepted values: digitalSignature (private: sign, public: verify)
+ *                    keyWrapping (export HSM's internal unwrapping public key;
+ *                                rsa_keygen_bits must be 2048 or omitted)
  *   Default value: digitalSignature
  *   Example:
  *      -pkeyopt azihsm.key_usage:digitalSignature
+ *      -pkeyopt azihsm.key_usage:keyWrapping
  *
  *   @azihsm.session
  *   Description: Whether to create a session key or persistent key
@@ -73,6 +76,7 @@
 
 #define AIHSM_RSA_PUBKEY_BITS_MIN 2048
 #define AIHSM_RSA_PUBKEY_BITS_DEFAULT AIHSM_RSA_PUBKEY_BITS_MIN
+#define AIHSM_RSA_WRAPPING_KEY_BITS 2048
 
 #define AIHSM_KEY_USAGE_DEFAULT KEY_USAGE_DIGITAL_SIGNATURE
 
@@ -113,6 +117,52 @@ static AZIHSM_RSA_KEY *azihsm_ossl_keymgmt_gen(
     const azihsm_key_class priv_class = AZIHSM_KEY_CLASS_PRIVATE;
     const azihsm_key_class pub_class = AZIHSM_KEY_CLASS_PUBLIC;
     const azihsm_key_kind key_kind = AZIHSM_KEY_KIND_RSA;
+
+    /*
+     * keyWrapping usage: retrieve the HSM's internal unwrapping key pair.
+     * This key is generated and cached by the HSM — we only expose the public half
+     * so callers can export it for offline key wrapping (RSA-AES Key Wrap).
+     */
+    if (genctx->key_usage == KEY_USAGE_KEY_WRAPPING)
+    {
+        azihsm_handle wrap_pub = 0, wrap_priv = 0;
+
+        /* The HSM's unwrapping key is fixed at 2048 bits. Reject mismatched sizes
+         * so that keymgmt_get_params() reports the correct bit length. */
+        if (genctx->pubkey_bits != AIHSM_RSA_WRAPPING_KEY_BITS)
+        {
+            ERR_raise_data(
+                ERR_LIB_PROV,
+                PROV_R_KEY_SIZE_TOO_SMALL,
+                "keyWrapping usage requires rsa_keygen_bits=%u "
+                "(the HSM unwrapping key is fixed at %u bits)",
+                AIHSM_RSA_WRAPPING_KEY_BITS,
+                AIHSM_RSA_WRAPPING_KEY_BITS
+            );
+            return NULL;
+        }
+
+        status = azihsm_get_unwrapping_key(genctx->provctx, &wrap_pub, &wrap_priv);
+        if (status != AZIHSM_STATUS_SUCCESS)
+        {
+            ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GENERATE_KEY);
+            return NULL;
+        }
+
+        if ((rsa_key = OPENSSL_zalloc(sizeof(AZIHSM_RSA_KEY))) == NULL)
+        {
+            ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
+            return NULL;
+        }
+
+        rsa_key->genctx = *genctx;
+        rsa_key->key.pub = wrap_pub;
+        rsa_key->has_public = true;
+        rsa_key->key.priv = 0;
+        rsa_key->has_private = false;
+
+        return rsa_key;
+    }
 
     /*
      * The HSM cannot generate RSA keys natively.
