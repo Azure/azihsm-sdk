@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+use azihsm_crypto::Rng;
+
 use super::*;
 
 // ================================
@@ -289,6 +291,10 @@ fn tweak_after_units(tweak: &[u8; 16], units: usize) -> [u8; 16] {
         .to_le_bytes()
 }
 
+fn test_iv(size: usize) -> Vec<u8> {
+    Rng::rand_vec(size).expect("RNG failure generating IV")
+}
+
 // ================================
 // AES Key Tests
 // ================================
@@ -505,7 +511,7 @@ fn test_aes_unmasked_key_independent_handle(session: HsmSession) {
     // unmasked key should still work
     let plaintext = vec![0x11u8; 32];
 
-    let mut enc_algo = HsmAesCbcAlgo::with_padding(vec![0u8; 16]).unwrap();
+    let mut enc_algo = HsmAesCbcAlgo::with_padding(test_iv(16)).unwrap();
     let len = HsmEncrypter::encrypt(&mut enc_algo, &unmasked, &plaintext, None).unwrap();
     let mut out = vec![0u8; len];
 
@@ -887,8 +893,11 @@ fn test_aes_cbc_invalid_padding_fails(session: HsmSession) {
 
     let plaintext = vec![0x11u8; 32];
 
+    // Generate IV once
+    let iv = test_iv(16);
+
     // --- Encrypt ---
-    let mut enc_algo = HsmAesCbcAlgo::with_padding(vec![0u8; 16]).unwrap();
+    let mut enc_algo = HsmAesCbcAlgo::with_padding(iv.clone()).unwrap();
 
     let cipher_len = HsmEncrypter::encrypt(&mut enc_algo, &key, &plaintext, None).unwrap();
     let mut ciphertext = vec![0u8; cipher_len];
@@ -904,7 +913,7 @@ fn test_aes_cbc_invalid_padding_fails(session: HsmSession) {
     }
 
     // --- Decrypt ---
-    let mut dec_algo = HsmAesCbcAlgo::with_padding(vec![0u8; 16]).unwrap();
+    let mut dec_algo = HsmAesCbcAlgo::with_padding(iv).unwrap();
 
     let plain_len = HsmDecrypter::decrypt(&mut dec_algo, &key, &ciphertext, None).unwrap();
     let mut out = vec![0u8; plain_len];
@@ -936,14 +945,17 @@ fn test_aes_cbc_wrong_key_fails(session: HsmSession) {
 
     let plaintext = vec![0x11u8; 32];
 
-    let mut enc = HsmAesCbcAlgo::with_padding(vec![0u8; 16]).unwrap();
+    // Generate IV once
+    let iv = test_iv(16);
+
+    let mut enc = HsmAesCbcAlgo::with_padding(iv.clone()).unwrap();
 
     let len = HsmEncrypter::encrypt(&mut enc, &key1, &plaintext, None).unwrap();
     let mut ciphertext = vec![0u8; len];
 
     HsmEncrypter::encrypt(&mut enc, &key1, &plaintext, Some(&mut ciphertext)).unwrap();
 
-    let mut dec = HsmAesCbcAlgo::with_padding(vec![0u8; 16]).unwrap();
+    let mut dec = HsmAesCbcAlgo::with_padding(iv).unwrap();
 
     let plain_len = HsmDecrypter::decrypt(&mut dec, &key2, &ciphertext, None).unwrap();
     let mut out = vec![0u8; plain_len];
@@ -990,8 +1002,11 @@ fn test_aes_unwrapped_key_roundtrip(session: HsmSession) {
 
     let plaintext = b"hello aes cbc".to_vec();
 
+    // Generate IV once
+    let iv = test_iv(16);
+
     // --- Encrypt ---
-    let mut enc = HsmAesCbcAlgo::with_padding(vec![0u8; 16]).unwrap();
+    let mut enc = HsmAesCbcAlgo::with_padding(iv.clone()).unwrap();
 
     let cipher_len = HsmEncrypter::encrypt(&mut enc, &aes_key, &plaintext, None)
         .expect("encrypt size query failed");
@@ -1004,7 +1019,7 @@ fn test_aes_unwrapped_key_roundtrip(session: HsmSession) {
     ciphertext.truncate(written);
 
     // --- Decrypt ---
-    let mut dec = HsmAesCbcAlgo::with_padding(vec![0u8; 16]).unwrap();
+    let mut dec = HsmAesCbcAlgo::with_padding(iv).unwrap();
 
     let plain_len = HsmDecrypter::decrypt(&mut dec, &aes_key, &ciphertext, None)
         .expect("decrypt size query failed");
