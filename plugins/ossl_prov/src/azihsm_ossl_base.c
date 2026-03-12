@@ -363,6 +363,12 @@ static int azihsm_api_revision_is_valid(const AZIHSM_CONFIG *config)
     return (version >= min_version && version <= max_version);
 }
 
+/* Returns non-zero if c is a valid hexadecimal digit (0-9, a-f, A-F). */
+static int is_hex_char(char c)
+{
+    return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+}
+
 /*
  * Decodes a hex-encoded credential string into a binary output buffer.
  *
@@ -395,11 +401,7 @@ static OSSL_STATUS hex_decode_credentials(const char *env_name, const char *hex_
         unsigned int byte_val = 0;
         char pair[3] = { hex_str[i * 2], hex_str[i * 2 + 1], '\0' };
 
-        /* Validate both nibbles are hex digits */
-        if (!((pair[0] >= '0' && pair[0] <= '9') || (pair[0] >= 'a' && pair[0] <= 'f') ||
-              (pair[0] >= 'A' && pair[0] <= 'F')) ||
-            !((pair[1] >= '0' && pair[1] <= '9') || (pair[1] >= 'a' && pair[1] <= 'f') ||
-              (pair[1] >= 'A' && pair[1] <= 'F')))
+        if (!is_hex_char(pair[0]) || !is_hex_char(pair[1]))
         {
             ERR_raise_data(
                 ERR_LIB_PROV,
