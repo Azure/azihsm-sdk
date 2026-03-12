@@ -7,6 +7,8 @@
 //! higher-level HKDF algorithm implementation to derive an HSM-managed symmetric key from an
 //! HSM-managed shared secret.
 
+use resiliency_macro::resiliency_key_op;
+
 use super::*;
 
 /// Derives a new key using HKDF at the DDI layer.
@@ -38,6 +40,7 @@ use super::*;
 /// - `salt` or `info` cannot be encoded as an MBOR byte array.
 /// - The derived key properties cannot be converted to DDI key type/properties.
 /// - The underlying DDI HKDF command fails.
+#[resiliency_key_op(key = "shared_secret")]
 pub(crate) fn hkdf_derive(
     shared_secret: &HsmGenericSecretKey,
     hash_algo: HsmHashAlgo,

@@ -185,6 +185,7 @@ impl Xtask for Precheck {
                     no_default_features: false,
                     filterset: Some("test(resiliency::)".to_string()),
                     profile: self.profile.clone(),
+                    exclude: self.exclude.clone(),
                 };
                 nextest.run(ctx.clone())?;
 
