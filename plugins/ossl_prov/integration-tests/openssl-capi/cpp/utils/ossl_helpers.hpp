@@ -6,6 +6,7 @@
 
 #include <memory>
 #include <openssl/evp.h>
+#include <openssl/kdf.h>
 
 // ---------------------------------------------------------------------------
 // Smart-pointer deleters for OpenSSL C objects
@@ -37,5 +38,50 @@ struct EvpMdCtxDeleter
     }
 };
 using EvpMdCtxPtr = std::unique_ptr<EVP_MD_CTX, EvpMdCtxDeleter>;
+
+struct EvpMdDeleter
+{
+    void operator()(EVP_MD *p) const
+    {
+        EVP_MD_free(p);
+    }
+};
+using EvpMdPtr = std::unique_ptr<EVP_MD, EvpMdDeleter>;
+
+struct EvpMacDeleter
+{
+    void operator()(EVP_MAC *p) const
+    {
+        EVP_MAC_free(p);
+    }
+};
+using EvpMacPtr = std::unique_ptr<EVP_MAC, EvpMacDeleter>;
+
+struct EvpMacCtxDeleter
+{
+    void operator()(EVP_MAC_CTX *p) const
+    {
+        EVP_MAC_CTX_free(p);
+    }
+};
+using EvpMacCtxPtr = std::unique_ptr<EVP_MAC_CTX, EvpMacCtxDeleter>;
+
+struct EvpKdfDeleter
+{
+    void operator()(EVP_KDF *p) const
+    {
+        EVP_KDF_free(p);
+    }
+};
+using EvpKdfPtr = std::unique_ptr<EVP_KDF, EvpKdfDeleter>;
+
+struct EvpKdfCtxDeleter
+{
+    void operator()(EVP_KDF_CTX *p) const
+    {
+        EVP_KDF_CTX_free(p);
+    }
+};
+using EvpKdfCtxPtr = std::unique_ptr<EVP_KDF_CTX, EvpKdfCtxDeleter>;
 
 #endif // OSSL_HELPERS_HPP

@@ -177,3 +177,4 @@ TEST_F(rsa_enc_dec, decrypt_fails_with_wrong_key)
     }
     // rc != 1 means the decrypt call failed, which is the expected outcome
 }
+

@@ -11,6 +11,7 @@
 #include <openssl/evp.h>
 #include <openssl/params.h>
 #include <openssl/rsa.h>
+#include <string>
 #include <unistd.h>
 #include <vector>
 
@@ -238,6 +239,79 @@ inline EvpPkeyPtr generate_rsa_session_key(
     }
 
     return EvpPkeyPtr(hsm_raw);
+}
+
+// ---------------------------------------------------------------------------
+// ECDH masked key derivation helper
+// ---------------------------------------------------------------------------
+//
+// Performs ECDH between two session EC keys and writes the derived masked key
+// blob to a temporary file.  The caller must manage cleanup via TempFileGuard.
+// Returns the temp file path, or an empty string on failure.
+
+inline std::string derive_masked_key_file(
+    OSSL_LIB_CTX *libctx,
+    const char *curve = "P-256"
+)
+{
+    auto our_key = generate_ec_session_key(libctx, curve, "keyAgreement");
+    auto peer_key = generate_ec_default_key(libctx, curve);
+    if (!our_key || !peer_key)
+    {
+        return "";
+    }
+
+    // Create temp file path
+    char tmp_path[] = "/tmp/azihsm_test_derive_XXXXXX";
+    int fd = mkstemp(tmp_path);
+    if (fd < 0)
+    {
+        return "";
+    }
+    ::close(fd);
+    ::unlink(tmp_path);
+
+    // Set up ECDH derive context
+    EvpPkeyCtxPtr derive_ctx(
+        EVP_PKEY_CTX_new_from_pkey(libctx, our_key.get(), ProviderCtx::propquery())
+    );
+    if (!derive_ctx)
+    {
+        return "";
+    }
+    if (EVP_PKEY_derive_init(derive_ctx.get()) != 1)
+    {
+        return "";
+    }
+    if (EVP_PKEY_derive_set_peer(derive_ctx.get(), peer_key.get()) != 1)
+    {
+        return "";
+    }
+
+    // Direct output to file
+    OSSL_PARAM ctx_params[] = {
+        OSSL_PARAM_utf8_string("output_file", tmp_path, 0),
+        OSSL_PARAM_END,
+    };
+    if (EVP_PKEY_CTX_set_params(derive_ctx.get(), ctx_params) != 1)
+    {
+        return "";
+    }
+
+    // Size query + derive
+    size_t out_len = 0;
+    if (EVP_PKEY_derive(derive_ctx.get(), nullptr, &out_len) != 1)
+    {
+        return "";
+    }
+    std::vector<unsigned char> dummy(out_len > 0 ? out_len : 1);
+    if (EVP_PKEY_derive(derive_ctx.get(), dummy.data(), &out_len) != 1)
+    {
+        ::unlink(tmp_path);
+        return "";
+    }
+
+    return std::string(tmp_path);
 }
 
 #endif // KEYGEN_HELPERS_HPP
