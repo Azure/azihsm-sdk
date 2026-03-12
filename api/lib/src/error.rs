@@ -14,6 +14,7 @@ impl<T, E: Debug> HsmErrorMapper<T, E> for Result<T, E> {
         match self {
             Ok(t) => Ok(t),
             Err(err) => {
+                eprintln!("Error: {:?}", err);
                 tracing::error!("Mapping error {:?} to HSM error: {:?}", err, hsm_err);
                 Err(hsm_err)
             }
