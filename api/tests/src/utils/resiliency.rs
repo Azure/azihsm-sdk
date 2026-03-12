@@ -130,6 +130,10 @@ impl FileLock {
 
 impl ResiliencyLock for FileLock {
     fn lock(&self) -> HsmResult<()> {
+        let mut guard = self.active.lock();
+        if guard.is_some() {
+            return Err(HsmError::InternalError);
+        }
         let file = fs::OpenOptions::new()
             .read(true)
             .write(true)
@@ -138,15 +142,19 @@ impl ResiliencyLock for FileLock {
             .open(&self.path)
             .map_err(|_| HsmError::InternalError)?;
         file.lock_exclusive().map_err(|_| HsmError::InternalError)?;
-        *self.active.lock() = Some(file);
+        *guard = Some(file);
         Ok(())
     }
 
     fn unlock(&self) -> HsmResult<()> {
-        if let Some(file) = self.active.lock().take() {
-            file.unlock().map_err(|_| HsmError::InternalError)?;
+        let mut guard = self.active.lock();
+        match guard.take() {
+            Some(file) => {
+                file.unlock().map_err(|_| HsmError::InternalError)?;
+                Ok(())
+            }
+            None => Err(HsmError::InternalError),
         }
-        Ok(())
     }
 }
 

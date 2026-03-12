@@ -178,12 +178,13 @@ impl Xtask for Precheck {
                 };
                 nextest.run(ctx.clone())?;
 
-                // SDK Run resiliency tests (only the resiliency test suite)
+                // SDK Run resiliency fault-injection tests (requires res-test
+                // feature for the fault-injection DDI device)
                 let nextest = nextest::Nextest {
                     features: Some("mock,res-test".to_string()),
                     package: Some("azihsm_api_tests".to_string()),
                     no_default_features: false,
-                    filterset: Some("test(resiliency::)".to_string()),
+                    filterset: Some("test(resiliency::fault_injection::)".to_string()),
                     profile: self.profile.clone(),
                     exclude: self.exclude.clone(),
                 };

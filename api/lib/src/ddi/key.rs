@@ -86,7 +86,7 @@ impl<'a> HsmKeyIdGuard<'a> {
 /// Caller must hold the key-ops barrier lock (read or write) or accept
 /// the risk of racing with a concurrent restore.
 ///
-/// Treats device-reset errors ([`is_device_reset_error`]) as success,
+/// Treats device-reset errors ([`key_needs_restoration`]) as success,
 /// because a device reset already destroyed all session keys.
 ///
 /// All other errors are propagated to the caller.

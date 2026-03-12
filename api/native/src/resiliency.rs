@@ -316,6 +316,17 @@ impl TryFrom<&AzihsmResiliencyConfig> for api::HsmResiliencyConfig {
 
     #[allow(unsafe_code)]
     fn try_from(config: &AzihsmResiliencyConfig) -> Result<Self, Self::Error> {
+        // Validate that all required function pointers are non-null.
+        // The #[repr(C)] structs could have been zero-initialized by a C caller.
+        if (config.storage_ops.read as usize) == 0
+            || (config.storage_ops.write as usize) == 0
+            || (config.storage_ops.clear as usize) == 0
+            || (config.lock_ops.lock as usize) == 0
+            || (config.lock_ops.unlock as usize) == 0
+        {
+            return Err(AzihsmStatus::InvalidArgument);
+        }
+
         let storage = Box::new(ResiliencyStorageAdapter {
             ctx: config.ctx,
             ops: config.storage_ops,
@@ -330,6 +341,9 @@ impl TryFrom<&AzihsmResiliencyConfig> for api::HsmResiliencyConfig {
             None
         } else {
             let ops = *deref_ptr(config.pota_callback_ops)?;
+            if (ops.endorse as usize) == 0 {
+                return Err(AzihsmStatus::InvalidArgument);
+            }
             Some(Box::new(PotaCallbackAdapter {
                 ctx: config.ctx,
                 ops,

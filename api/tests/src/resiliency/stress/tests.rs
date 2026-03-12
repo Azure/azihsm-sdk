@@ -61,15 +61,17 @@ const INIT_ITERATIONS_PER_WORKER: usize = 10;
 
 /// Delay between Reset triggers (ms).
 ///
-/// Mock: the retry backoff base is 400 ms, and
+/// Mock: the retry backoff base is 8 ms (see `BACKOFF_BASE_MS` in
+/// `resiliency.rs` under `cfg(feature = "mock")`), and
 /// `SessionNeedsRenegotiation` retries without backoff.
-/// With 4 workers all serializing through `restore_partition`
-/// recovery takes up to ~500 ms. 3 seconds is high enough that
-/// recovery always completes before the next Reset, but low
-/// enough that workers encounter multiple Resets during their run.
+/// With 4 workers all serializing through `restore_partition`,
+/// recovery completes quickly. 1 second is high enough for
+/// recovery to finish, but low enough that workers encounter
+/// multiple Resets during their run.
 ///
-/// Real hardware: Reset may take up to ~5 seconds to complete.
-/// The interval must be longer than that to avoid spurious `IOAbortInProgress` errors.
+/// Real hardware: `BACKOFF_BASE_MS` is 400 ms, and Reset may take
+/// up to ~5 seconds to complete. The interval must be longer than
+/// that to avoid spurious `IOAbortInProgress` errors.
 #[cfg(feature = "mock")]
 const RESET_INTERVAL_MS: u64 = 1000;
 #[cfg(not(feature = "mock"))]
@@ -167,7 +169,7 @@ fn spawn_reset_thread(
 fn test_stress_aes_cbc_encrypt_under_reset() {
     let (part, _creds, session, _ctx) = init_partition_and_session();
     let key = generate_aes_key(&session);
-    let iv = [0u8; 16];
+    let iv = crypto::Rng::rand_vec(16).expect("IV");
     let plaintext = b"stress test data!!!!!!!!!!!!!!!!"; // 32 bytes
 
     let stop = Arc::new(AtomicBool::new(false));
@@ -183,6 +185,7 @@ fn test_stress_aes_cbc_encrypt_under_reset() {
             let key = key.clone();
             let barrier = barrier.clone();
             let plaintext = plaintext.to_vec();
+            let iv = iv.clone();
             thread::spawn(move || {
                 barrier.wait();
                 let mut successes = 0u32;
@@ -233,7 +236,7 @@ fn test_stress_aes_cbc_encrypt_under_reset() {
 fn test_stress_aes_cbc_round_trip_under_reset() {
     let (part, _creds, session, _ctx) = init_partition_and_session();
     let key = generate_aes_key(&session);
-    let iv = [0u8; 16];
+    let iv = crypto::Rng::rand_vec(16).expect("IV");
 
     let stop = Arc::new(AtomicBool::new(false));
     let barrier = Arc::new(Barrier::new(NUM_WORKERS + 1));
@@ -244,6 +247,7 @@ fn test_stress_aes_cbc_round_trip_under_reset() {
         .map(|id| {
             let key = key.clone();
             let barrier = barrier.clone();
+            let iv = iv.clone();
             thread::spawn(move || {
                 barrier.wait();
                 let mut successes = 0u32;
@@ -430,7 +434,7 @@ fn test_stress_mixed_ops_under_reset() {
     let aes_key_c = aes_key.clone();
     let aes_worker = thread::spawn(move || {
         aes_barrier.wait();
-        let iv = [0u8; 16];
+        let iv = crypto::Rng::rand_vec(16).expect("IV");
         let plaintext = b"mixed test aes data!!!!!!!!!!!!!"; // 32 bytes
         let mut successes = 0u32;
         for _i in 0..ITERATIONS_PER_WORKER {
@@ -597,7 +601,7 @@ fn test_stress_key_gen_under_reset() {
 fn test_stress_rapid_reset_between_ops() {
     let (part, _creds, session, _ctx) = init_partition_and_session();
     let key = generate_aes_key(&session);
-    let iv = [0u8; 16];
+    let iv = crypto::Rng::rand_vec(16).expect("IV");
     let plaintext = b"rapid reset test data!!!!!!!!!!!!"; // 32 bytes
 
     const RAPID_RESET_ITERATIONS: usize = 10;
@@ -2380,7 +2384,8 @@ fn test_stress_ecc_unwrap_under_reset() {
     .expect("generate unwrapping key pair");
 
     // Generate an ECC P-256 key in software and wrap it.
-    let sw_ecc = crypto::EccPrivateKey::generate(32).expect("Failed to generate ECC key");
+    let sw_ecc = crypto::EccPrivateKey::from_curve(crypto::EccCurve::P256)
+        .expect("Failed to generate ECC key");
     let sw_ecc_der = sw_ecc.to_vec().expect("Failed to export ECC key DER");
     let mut wrap_algo = HsmRsaAesWrapAlgo::new(HsmHashAlgo::Sha384, 32);
     let wrapped =
@@ -2683,7 +2688,7 @@ fn test_concurrent_key_gen_and_key_op_no_aba() {
             // original plaintext. If an ABA collision occurred, the key
             // behind this handle would be wrong and decryption would
             // produce garbage or fail.
-            let iv = [0u8; 16];
+            let iv = crypto::Rng::rand_vec(16).expect("IV");
             let plaintext = format!("aba-test-A-iter-{i}!!!!!!!!!!!!!!!");
             let plaintext_bytes = &plaintext.as_bytes()[..32];
 
@@ -2811,7 +2816,7 @@ fn test_concurrent_key_gen_and_key_op_no_aba() {
 fn test_key_gen_during_restore_no_handle_collision() {
     let (part, _creds, session, _ctx) = init_partition_and_session();
     let key_a = generate_aes_key(&session);
-    let iv = [0u8; 16];
+    let iv = crypto::Rng::rand_vec(16).expect("IV");
 
     // Encrypt with key_a before any reset.
     let plaintext_a = b"key-A-plaintext-for-roundtrip!!!";

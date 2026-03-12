@@ -4,6 +4,7 @@
 #include "resiliency_config.hpp"
 
 #include <atomic>
+#include <cassert>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -137,16 +138,47 @@ static azihsm_status lock_acquire(void *ctx)
 {
     auto *test_ctx = static_cast<ResiliencyTestCtx *>(ctx);
 #ifdef _WIN32
+    // Non-reentrant: caller must not call lock() while already held.
+    assert(test_ctx->lock_handle == INVALID_HANDLE_VALUE &&
+           "lock_acquire called while lock is already held (non-reentrant)");
+    // Open a fresh handle per lock attempt so LockFileEx serializes threads
+    // (file locks are per open handle, not per path).
+    HANDLE h = CreateFileA(
+        test_ctx->lock_path.c_str(),
+        GENERIC_READ | GENERIC_WRITE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE,
+        nullptr,
+        OPEN_ALWAYS,
+        FILE_ATTRIBUTE_NORMAL,
+        nullptr);
+    if (h == INVALID_HANDLE_VALUE)
+    {
+        return AZIHSM_STATUS_INTERNAL_ERROR;
+    }
     OVERLAPPED ov = {};
-    if (!LockFileEx(test_ctx->lock_handle, LOCKFILE_EXCLUSIVE_LOCK, 0, 1, 0, &ov))
+    if (!LockFileEx(h, LOCKFILE_EXCLUSIVE_LOCK, 0, 1, 0, &ov))
     {
+        CloseHandle(h);
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
+    test_ctx->lock_handle = h;
 #else
-    if (flock(test_ctx->lock_fd, LOCK_EX) != 0)
+    // Non-reentrant: caller must not call lock() while already held.
+    assert(test_ctx->lock_fd == -1 &&
+           "lock_acquire called while lock is already held (non-reentrant)");
+    // Open a fresh fd per lock attempt so flock() serializes threads
+    // (flock is per open file description, not per path).
+    int fd = open(test_ctx->lock_path.c_str(), O_CREAT | O_RDWR, 0600);
+    if (fd < 0)
     {
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
+    if (flock(fd, LOCK_EX) != 0)
+    {
+        close(fd);
+        return AZIHSM_STATUS_INTERNAL_ERROR;
+    }
+    test_ctx->lock_fd = fd;
 #endif
     return AZIHSM_STATUS_SUCCESS;
 }
@@ -155,16 +187,18 @@ static azihsm_status lock_release(void *ctx)
 {
     auto *test_ctx = static_cast<ResiliencyTestCtx *>(ctx);
 #ifdef _WIN32
+    assert(test_ctx->lock_handle != INVALID_HANDLE_VALUE &&
+           "lock_release called without a held lock");
     OVERLAPPED ov = {};
-    if (!UnlockFileEx(test_ctx->lock_handle, 0, 1, 0, &ov))
-    {
-        return AZIHSM_STATUS_INTERNAL_ERROR;
-    }
+    UnlockFileEx(test_ctx->lock_handle, 0, 1, 0, &ov);
+    CloseHandle(test_ctx->lock_handle);
+    test_ctx->lock_handle = INVALID_HANDLE_VALUE;
 #else
-    if (flock(test_ctx->lock_fd, LOCK_UN) != 0)
-    {
-        return AZIHSM_STATUS_INTERNAL_ERROR;
-    }
+    assert(test_ctx->lock_fd >= 0 &&
+           "lock_release called without a held lock");
+    flock(test_ctx->lock_fd, LOCK_UN);
+    close(test_ctx->lock_fd);
+    test_ctx->lock_fd = -1;
 #endif
     return AZIHSM_STATUS_SUCCESS;
 }
@@ -196,24 +230,11 @@ static azihsm_status pota_endorse(
     return AZIHSM_STATUS_SUCCESS;
 }
 
-// ─── Helper: open lock file into ctx ─────────────────────────────
+// Helper: compute lock file path
 
 static void open_lock_file(ResiliencyTestCtx &ctx)
 {
     ctx.lock_path = (ctx.temp_dir / ".lock").string();
-
-#ifdef _WIN32
-    ctx.lock_handle = CreateFileA(
-        ctx.lock_path.c_str(),
-        GENERIC_READ | GENERIC_WRITE,
-        FILE_SHARE_READ | FILE_SHARE_WRITE,
-        nullptr,
-        OPEN_ALWAYS,
-        FILE_ATTRIBUTE_NORMAL,
-        nullptr);
-#else
-    ctx.lock_fd = open(ctx.lock_path.c_str(), O_CREAT | O_RDWR, 0600);
-#endif
 }
 
 void make_resiliency_config_in(

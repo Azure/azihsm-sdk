@@ -133,8 +133,11 @@ cargo run --release -p resiliency_stress --features res-test -- --random-fault -
 
 ## Troubleshooting
 
-- **No partitions found:** Ensure the HSM simulator is available
-- **All ops fail immediately:** Check that the `mock` and `res-test`
-  features are enabled (they are by default)
+- **No partitions found:** Ensure the HSM simulator is available (build
+  with `--features mock` for simulator mode)
+- **All ops fail immediately:** Check that the `mock` feature is enabled
+  for simulator mode (`--features mock`). The `res-test` feature must be
+  explicitly enabled when using `--random-fault`
+  (`--features mock,res-test`)
 - **Very low ops/sec:** Increase `--reset-interval-ms` to reduce reset
   frequency
