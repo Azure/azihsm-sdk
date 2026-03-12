@@ -182,7 +182,11 @@ inline EvpPkeyPtr generate_rsa_session_key(
 
     std::vector<unsigned char> der_buf(static_cast<size_t>(der_len));
     unsigned char *der_ptr = der_buf.data();
-    i2d_PrivateKey(default_key.get(), &der_ptr);
+    int der_written = i2d_PrivateKey(default_key.get(), &der_ptr);
+    if (der_written != der_len)
+    {
+        return nullptr;
+    }
 
     // 3. Write DER to temp file (RAII guard ensures cleanup on all paths)
     char tmp_path[] = "/tmp/azihsm_test_rsa_XXXXXX";
