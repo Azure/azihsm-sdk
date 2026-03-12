@@ -742,3 +742,70 @@ fn aes_xts_streaming_empty_decrypt_update(session: HsmSession) {
     let out_len = ctx.update(&empty, None).unwrap();
     assert_eq!(out_len, 0);
 }
+
+/// verifies tweak overflow during streaming encrypt is rejected
+#[session_test]
+fn aes_xts_streaming_encrypt_tweak_overflow_rejected(session: HsmSession) {
+    let key = aes_xts_generate_key(&session).unwrap();
+    let dul = 512;
+    let tweak = u128::MAX.to_le_bytes();
+
+    let enc_algo = HsmAesXtsAlgo::new(&tweak, dul).unwrap();
+    let mut enc_ctx = enc_algo.encrypt_init(key).unwrap();
+
+    let chunk = vec![0x11u8; dul];
+    let mut out = vec![0u8; dul];
+
+    let err = enc_ctx.update(&chunk, Some(&mut out)).unwrap_err();
+    assert!(matches!(err, HsmError::InvalidTweak));
+}
+
+/// verifies streaming works correctly when exactly one DUL is processed per update
+#[session_test]
+fn aes_xts_streaming_one_dul_per_update(session: HsmSession) {
+    let key = aes_xts_generate_key(&session).unwrap();
+    let tweak = [0u8; AES_XTS_TEST_TWEAK_SIZE];
+    let dul = 512;
+
+    let units = 6;
+    let plaintext = vec![0x66u8; dul * units];
+
+    // streaming with exactly 1 DUL per update
+    let chunk_sizes = [dul];
+
+    let (single_ct, _) = xts_encrypt(&key, &tweak, dul, &plaintext).unwrap();
+
+    let (stream_ct, stream_tweak_after) =
+        xts_encrypt_streaming(&key, &tweak, dul, &plaintext, &chunk_sizes).unwrap();
+
+    assert_eq!(stream_ct, single_ct);
+
+    let (stream_pt, dec_tweak_after) =
+        xts_decrypt_streaming(&key, &tweak, dul, &stream_ct, &chunk_sizes).unwrap();
+
+    assert_eq!(stream_pt, plaintext);
+
+    assert_eq!(stream_tweak_after, tweak_after_units(&tweak, units));
+
+    assert_eq!(dec_tweak_after, tweak_after_units(&tweak, units));
+}
+
+/// verifies decrypting with a different DUL does not recover the original plaintext
+#[session_test]
+fn aes_xts_decrypt_with_different_dul_fails_to_recover(session: HsmSession) {
+    let key = aes_xts_generate_key(&session).unwrap();
+    let tweak = [0u8; AES_XTS_TEST_TWEAK_SIZE];
+
+    let encrypt_dul = 256;
+    let decrypt_dul = 512;
+
+    let plaintext = vec![0x77; encrypt_dul * 2];
+
+    // Encrypt using one DUL
+    let (ciphertext, _) = xts_encrypt(&key, &tweak, encrypt_dul, &plaintext).unwrap();
+
+    // Decrypt using a different DUL
+    let (decrypted, _) = xts_decrypt(&key, &tweak, decrypt_dul, &ciphertext).unwrap();
+
+    assert_ne!(decrypted, plaintext);
+}
