@@ -59,6 +59,7 @@ pub enum HsmError {
     VaultAppLimitReached = -34,
     RetryExhausted = -35,
     DeviceNotReady = -36,
+    CannotDeleteInternalKeys = -37,
     Panic = i32::MIN,
 }
 

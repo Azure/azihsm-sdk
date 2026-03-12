@@ -122,7 +122,7 @@ class PartitionHandle
             nullptr,
             &init_config.backup_config,
             &init_config.pota_endorsement,
-                nullptr
+            nullptr
         );
         if (err != AZIHSM_STATUS_SUCCESS)
         {

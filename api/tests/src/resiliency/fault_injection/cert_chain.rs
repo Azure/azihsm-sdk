@@ -216,8 +216,7 @@ fn test_cert_chain_fails_after_get_cert_chain_info_exhausted() {
 
         assert!(
             result.is_err(),
-            "cert_chain should fail after exhausting all \
-             {MAX_RETRIES} retries with {error:?}, got: {result:?}"
+            "cert_chain should fail after exhausting all retries"
         );
     }
 }
@@ -313,8 +312,7 @@ fn test_cert_chain_fails_after_get_certificate_exhausted() {
 
         assert!(
             result.is_err(),
-            "cert_chain should fail after exhausting all \
-             {MAX_RETRIES} retries with {error:?}, got: {result:?}"
+            "cert_chain should fail after exhausting all retries"
         );
     }
 }
@@ -341,7 +339,7 @@ fn test_cert_chain_no_retry_without_resiliency() {
     assert!(
         result.is_err(),
         "cert_chain without resiliency should fail on IoAborted, \
-         got: {result:?}"
+         got unexpected success"
     );
 }
 
@@ -365,7 +363,7 @@ fn test_cert_chain_succeeds_after_reset_on_get_cert_chain_info() {
 
     assert!(
         result.is_ok(),
-        "cert_chain should succeed after reset on GetCertChainInfo, got: {result:?}"
+        "cert_chain should succeed after reset on GetCertChainInfo"
     );
 }
 
@@ -383,7 +381,7 @@ fn test_cert_chain_recovers_after_reset_on_get_certificate() {
 
     assert!(
         result.is_ok(),
-        "cert_chain should recover after reset on GetCertificate, got: {result:?}"
+        "cert_chain should recover after reset on GetCertificate"
     );
 }
 
@@ -409,13 +407,13 @@ fn test_cert_chain_fails_after_reset_without_resiliency() {
     #[cfg(feature = "mock")]
     assert!(
         result.is_err(),
-        "cert_chain without resiliency should fail after reset on mock, got: {result:?}"
+        "cert_chain without resiliency should fail after reset on mock"
     );
     #[cfg(not(feature = "mock"))]
     assert!(
         result.is_ok(),
         "cert_chain without resiliency should succeed after reset on hardware \
-         (cert chain preserved across NSSR), got: {result:?}"
+         (cert chain preserved across NSSR)"
     );
 }
 
@@ -431,6 +429,6 @@ fn test_cert_chain_recovers_after_consecutive_resets() {
 
     assert!(
         result.is_ok(),
-        "cert_chain should recover after two consecutive resets, got: {result:?}"
+        "cert_chain should recover after two consecutive resets"
     );
 }

@@ -572,8 +572,7 @@ fn test_restore_pota_callback_invoked_during_init_part_retry() {
     // On attempt 1 (retry), the callback fetches the PID cert.
     assert!(
         cert_chain_after > cert_chain_before,
-        "GetCertChainInfo should have been called by the POTA callback during restore's init_part retry \
-         (before: {cert_chain_before}, after: {cert_chain_after})"
+        "GetCertChainInfo should have been called by the POTA callback during restore's init_part retry"
     );
 }
 
@@ -761,8 +760,7 @@ fn test_open_session_pota_reendorsement_after_reset() {
 
     assert!(
         cert_chain_after > cert_chain_before,
-        "GetCertChainInfo should have been called by the POTA callback after reset \
-         (before: {cert_chain_before}, after: {cert_chain_after})"
+        "GetCertChainInfo should have been called by the POTA callback after reset"
     );
 }
 
@@ -909,7 +907,6 @@ fn test_open_session_pota_reendorsement_after_reset_on_open_session() {
 
     assert!(
         cert_chain_after > cert_chain_before,
-        "GetCertChainInfo should have been called by the POTA callback after reset on OpenSession \
-         (before: {cert_chain_before}, after: {cert_chain_after})"
+        "GetCertChainInfo should have been called by the POTA callback after reset on OpenSession"
     );
 }

@@ -401,7 +401,7 @@ fn test_aes_cbc_encrypt_recovers_from_single_fault() {
     for error in &super::all_test_errors() {
         let (_part, session, _ctx) = init_with_resiliency_and_session();
         let key = generate_aes_key(&session);
-        let iv = [0u8; 16];
+        let iv = crypto::Rng::rand_vec(16).expect("IV");
         let plaintext = b"test data for encryption!!!!!!!"; // 31 bytes
 
         let before = op_call_count(DdiOp::AesEncryptDecrypt);
@@ -440,7 +440,7 @@ fn test_aes_cbc_encrypt_recovers_on_last_retry() {
     for error in &super::all_test_errors() {
         let (_part, session, _ctx) = init_with_resiliency_and_session();
         let key = generate_aes_key(&session);
-        let iv = [0u8; 16];
+        let iv = crypto::Rng::rand_vec(16).expect("IV");
         let plaintext = b"test data for encryption!!!!!!!";
 
         let before = op_call_count(DdiOp::AesEncryptDecrypt);
@@ -480,7 +480,7 @@ fn test_aes_cbc_encrypt_fails_after_all_retries_exhausted() {
     for error in super::KEY_OP_RETRYABLE_ERRORS {
         let (_part, session, _ctx) = init_with_resiliency_and_session();
         let key = generate_aes_key(&session);
-        let iv = [0u8; 16];
+        let iv = crypto::Rng::rand_vec(16).expect("IV");
         let plaintext = b"test data for encryption!!!!!!!";
 
         inject_fault(FaultRule::fail_next(
@@ -506,7 +506,7 @@ fn test_aes_cbc_encrypt_fails_after_all_retries_exhausted() {
 fn test_aes_cbc_encrypt_no_retry_without_resiliency() {
     let (_part, session) = init_without_resiliency_and_session();
     let key = generate_aes_key(&session);
-    let iv = [0u8; 16];
+    let iv = crypto::Rng::rand_vec(16).expect("IV");
     let plaintext = b"test data for encryption!!!!!!!";
 
     inject_fault(FaultRule::fail_next(
@@ -538,7 +538,7 @@ fn test_aes_cbc_encrypt_recovers_from_compound_fault() {
     }
     let (_part, session, _ctx) = init_with_resiliency_and_session();
     let key = generate_aes_key(&session);
-    let iv = [0u8; 16];
+    let iv = crypto::Rng::rand_vec(16).expect("IV");
     let plaintext = b"test data for encryption!!!!!!!";
 
     // AesEncryptDecrypt → IoAborted → triggers retry path.
@@ -576,7 +576,7 @@ fn test_aes_cbc_encrypt_recovers_from_compound_fault() {
 fn test_aes_cbc_encrypt_recovers_after_reset() {
     let (_part, session, _ctx) = init_with_resiliency_and_session();
     let key = generate_aes_key(&session);
-    let iv = [0u8; 16];
+    let iv = crypto::Rng::rand_vec(16).expect("IV");
     let plaintext = b"test data for encryption!!!!!!!";
 
     let op = bk3_op();
@@ -606,7 +606,7 @@ fn test_aes_cbc_encrypt_recovers_after_reset() {
 fn test_aes_cbc_encrypt_fails_after_reset_without_resiliency() {
     let (_part, session) = init_without_resiliency_and_session();
     let key = generate_aes_key(&session);
-    let iv = [0u8; 16];
+    let iv = crypto::Rng::rand_vec(16).expect("IV");
     let plaintext = b"test data for encryption!!!!!!!";
 
     inject_fault(FaultRule::reset_on_next(DdiOp::AesEncryptDecrypt, 1));
@@ -627,7 +627,7 @@ fn test_aes_cbc_encrypt_fails_after_reset_without_resiliency() {
 fn test_aes_cbc_encrypt_recovers_after_consecutive_reset() {
     let (_part, session, _ctx) = init_with_resiliency_and_session();
     let key = generate_aes_key(&session);
-    let iv = [0u8; 16];
+    let iv = crypto::Rng::rand_vec(16).expect("IV");
     let plaintext = b"test data for encryption!!!!!!!";
 
     // First reset → recover.
@@ -1232,8 +1232,7 @@ fn test_ecc_key_report_fails_after_all_retries_exhausted() {
 
         assert!(
             result.is_err(),
-            "generate_key_report should fail after exhausting all \
-             {MAX_RETRIES} retries with {error:?}, got: {result:?}"
+            "generate_key_report should fail after exhausting all retries"
         );
     }
 }
@@ -1256,8 +1255,7 @@ fn test_ecc_key_report_no_retry_without_resiliency() {
 
     assert!(
         result.is_err(),
-        "generate_key_report without resiliency should fail on IoAborted, \
-         got: {result:?}"
+        "generate_key_report without resiliency should fail on IoAborted"
     );
 }
 
@@ -3511,7 +3509,7 @@ fn test_aes_cbc_decrypt_recovers_from_single_fault() {
     for error in &super::all_test_errors() {
         let (_part, session, _ctx) = init_with_resiliency_and_session();
         let key = generate_aes_key(&session);
-        let iv = [0u8; 16];
+        let iv = crypto::Rng::rand_vec(16).expect("IV");
         let plaintext = b"test data for encryption!!!!!!!";
         let ciphertext = cbc_encrypt(&key, &iv, plaintext).expect("encrypt failed");
 
@@ -3546,7 +3544,7 @@ fn test_aes_cbc_decrypt_recovers_on_last_retry() {
     for error in &super::all_test_errors() {
         let (_part, session, _ctx) = init_with_resiliency_and_session();
         let key = generate_aes_key(&session);
-        let iv = [0u8; 16];
+        let iv = crypto::Rng::rand_vec(16).expect("IV");
         let plaintext = b"test data for encryption!!!!!!!";
         let ciphertext = cbc_encrypt(&key, &iv, plaintext).expect("encrypt failed");
 
@@ -3574,7 +3572,7 @@ fn test_aes_cbc_decrypt_fails_after_all_retries_exhausted() {
     for error in super::KEY_OP_RETRYABLE_ERRORS {
         let (_part, session, _ctx) = init_with_resiliency_and_session();
         let key = generate_aes_key(&session);
-        let iv = [0u8; 16];
+        let iv = crypto::Rng::rand_vec(16).expect("IV");
         let plaintext = b"test data for encryption!!!!!!!";
         let ciphertext = cbc_encrypt(&key, &iv, plaintext).expect("encrypt failed");
 
@@ -3600,7 +3598,7 @@ fn test_aes_cbc_decrypt_fails_after_all_retries_exhausted() {
 fn test_aes_cbc_decrypt_no_retry_without_resiliency() {
     let (_part, session) = init_without_resiliency_and_session();
     let key = generate_aes_key(&session);
-    let iv = [0u8; 16];
+    let iv = crypto::Rng::rand_vec(16).expect("IV");
     let plaintext = b"test data for encryption!!!!!!!";
     let ciphertext = cbc_encrypt(&key, &iv, plaintext).expect("encrypt failed");
 
@@ -3629,7 +3627,7 @@ fn test_aes_cbc_decrypt_recovers_from_compound_fault() {
     }
     let (_part, session, _ctx) = init_with_resiliency_and_session();
     let key = generate_aes_key(&session);
-    let iv = [0u8; 16];
+    let iv = crypto::Rng::rand_vec(16).expect("IV");
     let plaintext = b"test data for encryption!!!!!!!";
     let ciphertext = cbc_encrypt(&key, &iv, plaintext).expect("encrypt failed");
 
@@ -3663,7 +3661,7 @@ fn test_aes_cbc_decrypt_recovers_from_compound_fault() {
 fn test_aes_cbc_decrypt_recovers_after_reset() {
     let (_part, session, _ctx) = init_with_resiliency_and_session();
     let key = generate_aes_key(&session);
-    let iv = [0u8; 16];
+    let iv = crypto::Rng::rand_vec(16).expect("IV");
     let plaintext = b"test data for encryption!!!!!!!";
     let ciphertext = cbc_encrypt(&key, &iv, plaintext).expect("encrypt failed");
 
@@ -3683,7 +3681,7 @@ fn test_aes_cbc_decrypt_recovers_after_reset() {
 fn test_aes_cbc_decrypt_fails_after_reset_without_resiliency() {
     let (_part, session) = init_without_resiliency_and_session();
     let key = generate_aes_key(&session);
-    let iv = [0u8; 16];
+    let iv = crypto::Rng::rand_vec(16).expect("IV");
     let plaintext = b"test data for encryption!!!!!!!";
     let ciphertext = cbc_encrypt(&key, &iv, plaintext).expect("encrypt failed");
 
@@ -3705,7 +3703,7 @@ fn test_aes_cbc_decrypt_fails_after_reset_without_resiliency() {
 fn test_aes_cbc_decrypt_recovers_after_consecutive_reset() {
     let (_part, session, _ctx) = init_with_resiliency_and_session();
     let key = generate_aes_key(&session);
-    let iv = [0u8; 16];
+    let iv = crypto::Rng::rand_vec(16).expect("IV");
     let plaintext = b"test data for encryption!!!!!!!";
     let ciphertext = cbc_encrypt(&key, &iv, plaintext).expect("encrypt failed");
 
@@ -3945,7 +3943,7 @@ fn test_rsa_key_report_recovers_after_consecutive_reset() {
 fn test_aes_cbc_streaming_encrypt_recovers_from_single_fault() {
     let (_part, session, _ctx) = init_with_resiliency_and_session();
     let key = generate_aes_key(&session);
-    let iv = [0u8; 16];
+    let iv = crypto::Rng::rand_vec(16).expect("IV");
     // Two 16-byte chunks → each triggers a separate DDI call.
     let chunks: &[&[u8]] = &[b"chunk one 16byte", b"chunk two 16byte"];
 
@@ -3971,7 +3969,7 @@ fn test_aes_cbc_streaming_encrypt_recovers_from_single_fault() {
 fn test_aes_cbc_streaming_encrypt_recovers_after_reset() {
     let (_part, session, _ctx) = init_with_resiliency_and_session();
     let key = generate_aes_key(&session);
-    let iv = [0u8; 16];
+    let iv = crypto::Rng::rand_vec(16).expect("IV");
     let chunks: &[&[u8]] = &[b"chunk one 16byte", b"chunk two 16byte"];
 
     inject_fault(FaultRule::reset_on_next(DdiOp::AesEncryptDecrypt, 1));
@@ -3991,7 +3989,7 @@ fn test_aes_cbc_streaming_encrypt_recovers_after_reset() {
 fn test_aes_cbc_streaming_encrypt_no_retry_without_resiliency() {
     let (_part, session) = init_without_resiliency_and_session();
     let key = generate_aes_key(&session);
-    let iv = [0u8; 16];
+    let iv = crypto::Rng::rand_vec(16).expect("IV");
     let chunks: &[&[u8]] = &[b"chunk one 16byte", b"chunk two 16byte"];
 
     inject_fault(FaultRule::fail_next(
@@ -4019,7 +4017,7 @@ fn test_aes_cbc_streaming_encrypt_no_retry_without_resiliency() {
 fn test_aes_cbc_streaming_decrypt_recovers_from_single_fault() {
     let (_part, session, _ctx) = init_with_resiliency_and_session();
     let key = generate_aes_key(&session);
-    let iv = [0u8; 16];
+    let iv = crypto::Rng::rand_vec(16).expect("IV");
     let plaintext = b"chunk one 16bytechunk two 16byte";
     let ciphertext = cbc_encrypt(&key, &iv, plaintext).expect("encrypt failed");
 
@@ -4048,7 +4046,7 @@ fn test_aes_cbc_streaming_decrypt_recovers_from_single_fault() {
 fn test_aes_cbc_streaming_decrypt_recovers_after_reset() {
     let (_part, session, _ctx) = init_with_resiliency_and_session();
     let key = generate_aes_key(&session);
-    let iv = [0u8; 16];
+    let iv = crypto::Rng::rand_vec(16).expect("IV");
     let plaintext = b"chunk one 16bytechunk two 16byte";
     let ciphertext = cbc_encrypt(&key, &iv, plaintext).expect("encrypt failed");
 

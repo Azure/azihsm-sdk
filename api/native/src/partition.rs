@@ -70,8 +70,9 @@ pub struct AzihsmPotaEndorsement {
 
 /// Convert AzihsmPotaEndorsement to HsmPotaEndorsement
 ///
-/// The returned HsmPotaEndorsement borrows from the original C buffers,
-/// which must remain valid for the lifetime of the returned value.
+/// The conversion copies data from the C buffers into the returned
+/// owned `HsmPotaEndorsement`. The C buffers only need to remain
+/// valid for the duration of the `azihsm_part_init` call.
 impl<'a> TryFrom<&'a AzihsmPotaEndorsement> for api::HsmPotaEndorsement {
     type Error = AzihsmStatus;
 
@@ -307,6 +308,12 @@ pub unsafe extern "C" fn azihsm_part_open(
 /// @param[in] bmk Optional backup masking key buffer (can be null)
 /// @param[in] muk Optional masked unwrapping key buffer (can be null)
 /// @param[in] backup_key_config Configuration for owner backup key
+/// @param[in] pota_endorsement POTA endorsement configuration
+/// @param[in] resiliency_config Optional resiliency configuration (can be null).
+///            When non-null, enables automatic retry/recovery for transient
+///            hardware resets. If POTA source is Caller, `pota_callback_ops`
+///            must be non-null. If POTA source is TPM, `pota_callback_ops`
+///            must be null.
 ///
 /// @return 0 on success, or a negative error code on failure
 ///

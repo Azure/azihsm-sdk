@@ -418,12 +418,25 @@ fn open_and_init_partition(enable_resiliency: bool) -> (HsmPartition, HsmCredent
     part.reset().expect("Failed to reset partition");
 
     let creds = HsmCredentials::new(&[0xAA; 16], &[0xBB; 16]);
-    let (sig, pubkey_der) = generate_pota(&part);
-    let obk = HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Caller, Some(&TEST_OBK));
-    let pota = HsmPotaEndorsement::new(
-        HsmPotaEndorsementSource::Caller,
-        Some(HsmPotaEndorsementData::new(&sig, &pubkey_der)),
-    );
+
+    // Select OBK and POTA source based on AZIHSM_USE_TPM env variable,
+    // matching the test infrastructure convention.
+    let use_tpm = std::env::var("AZIHSM_USE_TPM").is_ok();
+    let (obk, pota) = if use_tpm {
+        (
+            HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, None),
+            HsmPotaEndorsement::new(HsmPotaEndorsementSource::Tpm, None),
+        )
+    } else {
+        let (sig, pubkey_der) = generate_pota(&part);
+        (
+            HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Caller, Some(&TEST_OBK)),
+            HsmPotaEndorsement::new(
+                HsmPotaEndorsementSource::Caller,
+                Some(HsmPotaEndorsementData::new(&sig, &pubkey_der)),
+            ),
+        )
+    };
 
     // In-memory resiliency storage.
     struct MemStorage(Mutex<HashMap<String, Vec<u8>>>);
@@ -479,15 +492,19 @@ fn open_and_init_partition(enable_resiliency: bool) -> (HsmPartition, HsmCredent
     }
 
     let resiliency_config = if enable_resiliency {
-        // Open a separate partition handle for the POTA callback to avoid
-        // re-entering the partition's RwLock during restore.
-        let pota_part = HsmPartitionManager::open_partition(&list[0].path)
-            .expect("Failed to open POTA callback partition");
+        // POTA callback is only needed for Caller source (not TPM).
+        let pota_callback: Option<Box<dyn PotaEndorsementCallback>> = if !use_tpm {
+            let pota_part = HsmPartitionManager::open_partition(&list[0].path)
+                .expect("Failed to open POTA callback partition");
+            Some(Box::new(StressPotaCallback { part: pota_part }))
+        } else {
+            None
+        };
 
         Some(HsmResiliencyConfig {
             storage: Box::new(MemStorage(Mutex::new(HashMap::new()))),
             lock: Arc::new(MemLock::new()),
-            pota_callback: Some(Box::new(StressPotaCallback { part: pota_part })),
+            pota_callback,
         })
     } else {
         None
@@ -1137,13 +1154,33 @@ fn worker_thread(
     // Pre-create wrapped key blobs for unwrap ops.
     let (aes_unwrap_key, aes_wrapped_blob) = prepare_wrapped_aes_key(&session);
     let (ecc_unwrap_key, ecc_wrapped_blob) = prepare_wrapped_ecc_key(&session);
-    let (xts_unwrap_key, xts_wrapped_blob) = prepare_wrapped_xts_key(&session);
+
+    // XTS keys/blobs are only needed when XTS ops are selected.
+    let needs_xts = ops.iter().any(|o| {
+        matches!(
+            o,
+            OpKind::AesXtsKeyGen
+                | OpKind::XtsUnwrap
+                | OpKind::XtsUnmask
+                | OpKind::AesXtsKeyGenDelete
+        )
+    });
+    let (xts_unwrap_key, xts_wrapped_blob) = if needs_xts {
+        let (k, b) = prepare_wrapped_xts_key(&session);
+        (Some(k), Some(b))
+    } else {
+        (None, None)
+    };
 
     // Pre-create masked key blobs for unmask ops.
     let aes_masked = aes_key.masked_key_vec().expect("AES masked key");
     let ecc_masked = ecc_priv.masked_key_vec().expect("ECC masked key");
-    let xts_key = gen_aes_xts_key(&session);
-    let xts_masked = xts_key.masked_key_vec().expect("XTS masked key");
+    let xts_masked = if needs_xts {
+        let xts_key = gen_aes_xts_key(&session);
+        Some(xts_key.masked_key_vec().expect("XTS masked key"))
+    } else {
+        None
+    };
 
     // Report data for key report ops.
     let report_data = [0x42u8; 128];
@@ -1171,10 +1208,20 @@ fn worker_thread(
             OpKind::UnwrappingKeyGen => exec_unwrapping_keygen(&session),
             OpKind::AesUnwrap => exec_aes_unwrap(&aes_unwrap_key, &aes_wrapped_blob),
             OpKind::EccUnwrap => exec_ecc_unwrap(&ecc_unwrap_key, &ecc_wrapped_blob),
-            OpKind::XtsUnwrap => exec_xts_unwrap(&xts_unwrap_key, &xts_wrapped_blob),
+            OpKind::XtsUnwrap => exec_xts_unwrap(
+                xts_unwrap_key
+                    .as_ref()
+                    .expect("XTS unwrap key not initialized"),
+                xts_wrapped_blob
+                    .as_ref()
+                    .expect("XTS wrapped blob not initialized"),
+            ),
             OpKind::AesUnmask => exec_aes_unmask(&session, &aes_masked),
             OpKind::EccUnmask => exec_ecc_unmask(&session, &ecc_masked),
-            OpKind::XtsUnmask => exec_xts_unmask(&session, &xts_masked),
+            OpKind::XtsUnmask => exec_xts_unmask(
+                &session,
+                xts_masked.as_ref().expect("XTS masked key not initialized"),
+            ),
             OpKind::EccKeyReport => exec_ecc_key_report(&ecc_priv, &report_data),
             OpKind::RsaKeyReport => exec_rsa_key_report(&rsa_sign_priv, &report_data),
             OpKind::UnwrappingKeyReport => exec_rsa_key_report(&aes_unwrap_key, &report_data),
@@ -1610,21 +1657,17 @@ fn parse_ops(ops_str: &str) -> Vec<OpKind> {
             OpKind::HkdfDerive,
             OpKind::AesKeyGen,
             OpKind::EccKeyGen,
-            OpKind::AesXtsKeyGen,
             OpKind::UnwrappingKeyGen,
             OpKind::AesUnwrap,
             OpKind::EccUnwrap,
-            OpKind::XtsUnwrap,
             OpKind::AesUnmask,
             OpKind::EccUnmask,
-            OpKind::XtsUnmask,
             OpKind::EccKeyReport,
             OpKind::RsaKeyReport,
             OpKind::UnwrappingKeyReport,
             OpKind::CertChain,
             OpKind::AesKeyGenDelete,
             OpKind::EccKeyGenDelete,
-            OpKind::AesXtsKeyGenDelete,
         ];
     }
     let mut ops = Vec::new();

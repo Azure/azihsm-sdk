@@ -76,10 +76,10 @@ impl From<DdiError> for HsmError {
                 HsmError::PartitionAlreadyProvisioned
             }
             DdiError::DdiStatus(DdiStatus::VaultAppLimitReached) => HsmError::VaultAppLimitReached,
-            _ => {
-                tracing::debug!(?err, "Unmapped DdiError → DdiCmdFailure");
-                HsmError::DdiCmdFailure
+            DdiError::DdiStatus(DdiStatus::CannotDeleteInternalKeys) => {
+                HsmError::CannotDeleteInternalKeys
             }
+            _ => HsmError::DdiCmdFailure,
         }
     }
 }

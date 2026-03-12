@@ -648,6 +648,78 @@ struct azihsm_algo_aes_xts_params {
 | data_unit_length | uint32_t | data unit length                                               &nbsp; |
 
 
+### azihsm_resiliency_storage_ops
+
+Storage callbacks for resiliency.
+
+```cpp
+struct azihsm_resiliency_storage_ops {
+    azihsm_status (*read)(void *ctx, const char *key, azihsm_buffer *value);
+    azihsm_status (*write)(void *ctx, const char *key, const azihsm_buffer *value);
+    azihsm_status (*clear)(void *ctx, const char *key);
+};
+```
+
+| Field | Type             | Description                                                                 |
+| ----- | ---------------- | --------------------------------------------------------------------------- |
+| read  | function pointer | Read data for the given key. Returns `AZIHSM_STATUS_NOT_FOUND` when key does not exist. Uses two-call buffer pattern. |
+| write | function pointer | Write data for the given key (create or overwrite).                         |
+| clear | function pointer | Delete data for the given key. No error if key doesn't exist.               |
+
+### azihsm_resiliency_lock_ops
+
+Lock callbacks for cross-process/thread restore coordination.
+
+```cpp
+struct azihsm_resiliency_lock_ops {
+    azihsm_status (*lock)(void *ctx);
+    azihsm_status (*unlock)(void *ctx);
+};
+```
+
+| Field  | Type             | Description                                              |
+| ------ | ---------------- | -------------------------------------------------------- |
+| lock   | function pointer | Acquire the lock. Blocks until available. Non-reentrant. |
+| unlock | function pointer | Release the lock.                                        |
+
+### azihsm_pota_callback_ops
+
+POTA re-endorsement callback for resiliency.
+
+```cpp
+struct azihsm_pota_callback_ops {
+    azihsm_status (*endorse)(void *ctx, const azihsm_buffer *pub_key,
+                              azihsm_buffer *signature,
+                              azihsm_buffer *endorsement_pub_key);
+};
+```
+
+| Field   | Type             | Description                                                                        |
+| ------- | ---------------- | ---------------------------------------------------------------------------------- |
+| endorse | function pointer | Re-endorse the public key. Uses two-call buffer pattern for signature and pub key.  |
+
+### azihsm_resiliency_config
+
+Resiliency configuration passed to `azihsm_part_init`.
+
+```cpp
+struct azihsm_resiliency_config {
+    void *ctx;
+    azihsm_resiliency_storage_ops storage_ops;
+    azihsm_resiliency_lock_ops lock_ops;
+    const azihsm_pota_callback_ops *pota_callback_ops;
+};
+```
+
+| Field              | Type                                                              | Description                                                                                   |
+| ------------------ | ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| ctx                | void *                                                            | Opaque context pointer passed to every callback. Caller-owned, must outlive the partition.     |
+| storage_ops        | [azihsm_resiliency_storage_ops](#azihsm_resiliency_storage_ops)   | Storage callbacks (required).                                                                 |
+| lock_ops           | [azihsm_resiliency_lock_ops](#azihsm_resiliency_lock_ops)         | Lock callbacks (required).                                                                    |
+| pota_callback_ops  | [azihsm_pota_callback_ops *](#azihsm_pota_callback_ops)           | POTA callback (NULL when POTA source is TPM; required when source is Caller).                 |
+
+All callbacks must be thread-safe — they may be called concurrently from multiple threads.
+
 ### azihsm_algo_hkdf_params
 
 Parameters for HKDF Algorithm
