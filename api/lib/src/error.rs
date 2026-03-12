@@ -58,6 +58,7 @@ pub enum HsmError {
     PartitionAlreadyProvisioned = -33,
     VaultAppLimitReached = -34,
     RetryExhausted = -35,
+    DeviceNotReady = -36,
     Panic = i32::MIN,
 }
 

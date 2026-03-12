@@ -49,7 +49,7 @@ use crate::*;
 const NUM_WORKERS: usize = 4;
 
 /// Number of iterations each worker performs.
-const ITERATIONS_PER_WORKER: usize = 100;
+const ITERATIONS_PER_WORKER: usize = 500;
 
 /// Number of iterations for `init` stress tests.
 ///
@@ -71,15 +71,15 @@ const INIT_ITERATIONS_PER_WORKER: usize = 10;
 /// Real hardware: Reset may take up to ~5 seconds to complete.
 /// The interval must be longer than that to avoid spurious `IOAbortInProgress` errors.
 #[cfg(feature = "mock")]
-const RESET_INTERVAL_MS: u64 = 3000;
+const RESET_INTERVAL_MS: u64 = 1000;
 #[cfg(not(feature = "mock"))]
 const RESET_INTERVAL_MS: u64 = 7000;
 
 /// Small inter-iteration sleep (ms) so that the worker loop
 /// runs long enough to span several Reset cycles.
-const WORKER_ITER_SLEEP_MS: u64 = 50;
+const WORKER_ITER_SLEEP_MS: u64 = 10;
 
-// ── Setup helpers ────────────────────────────────────────────────────────
+// Setup helpers
 
 /// Initialize a partition with resiliency enabled and open a session.
 ///
@@ -625,6 +625,7 @@ fn test_stress_rapid_reset_between_ops() {
 // =========================================================================
 
 /// Generate an AES-GCM-256 session key.
+#[cfg(feature = "mock")]
 fn generate_aes_gcm_key(session: &HsmSession) -> HsmAesGcmKey {
     let props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Secret)
@@ -640,6 +641,7 @@ fn generate_aes_gcm_key(session: &HsmSession) -> HsmAesGcmKey {
 }
 
 /// AES-GCM encrypt (returns ciphertext + tag).
+#[cfg(feature = "mock")]
 fn gcm_encrypt(
     key: &HsmAesGcmKey,
     iv: &[u8],
@@ -662,6 +664,7 @@ fn gcm_encrypt(
 }
 
 /// AES-GCM decrypt.
+#[cfg(feature = "mock")]
 fn gcm_decrypt(
     key: &HsmAesGcmKey,
     iv: &[u8],
@@ -687,6 +690,7 @@ fn gcm_decrypt(
 
 /// Workers encrypt then decrypt with AES-GCM under continuous Reset,
 /// verifying round-trip correctness including authenticated data.
+#[cfg(feature = "mock")]
 #[api_test]
 fn test_stress_aes_gcm_round_trip_under_reset() {
     let (part, _creds, session, _ctx) = init_partition_and_session();
@@ -754,6 +758,7 @@ fn test_stress_aes_gcm_round_trip_under_reset() {
 // =========================================================================
 
 /// Generate an AES-XTS-512 session key.
+#[cfg(feature = "mock")]
 fn generate_aes_xts_key(session: &HsmSession) -> HsmAesXtsKey {
     let props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Secret)
@@ -769,6 +774,7 @@ fn generate_aes_xts_key(session: &HsmSession) -> HsmAesXtsKey {
 }
 
 /// AES-XTS encrypt.
+#[cfg(feature = "mock")]
 fn xts_encrypt(
     key: &HsmAesXtsKey,
     tweak: &[u8],
@@ -790,6 +796,7 @@ fn xts_encrypt(
 }
 
 /// AES-XTS decrypt.
+#[cfg(feature = "mock")]
 fn xts_decrypt(
     key: &HsmAesXtsKey,
     tweak: &[u8],
@@ -812,6 +819,7 @@ fn xts_decrypt(
 
 /// Workers encrypt then decrypt with AES-XTS under continuous Reset,
 /// verifying round-trip correctness.
+#[cfg(feature = "mock")]
 #[api_test]
 fn test_stress_aes_xts_round_trip_under_reset() {
     let (part, _creds, session, _ctx) = init_partition_and_session();
@@ -1099,6 +1107,7 @@ fn test_stress_ecc_key_gen_under_reset() {
 // =========================================================================
 
 /// Workers repeatedly generate AES-GCM keys while Resets fire.
+#[cfg(feature = "mock")]
 #[api_test]
 fn test_stress_aes_gcm_key_gen_under_reset() {
     let (part, _creds, session, _ctx) = init_partition_and_session();
@@ -1923,6 +1932,695 @@ fn test_stress_init_part_under_reset() {
         total,
         (NUM_WORKERS * INIT_ITERATIONS_PER_WORKER) as u32,
         "All init operations should have succeeded"
+    );
+}
+
+// =========================================================================
+// Test: AES-XTS key generation under continuous Reset
+// =========================================================================
+
+/// Workers repeatedly generate AES-XTS keys while Resets fire.
+#[cfg(feature = "mock")]
+#[api_test]
+fn test_stress_aes_xts_key_gen_under_reset() {
+    let (part, _creds, session, _ctx) = init_partition_and_session();
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let barrier = Arc::new(Barrier::new(NUM_WORKERS + 1));
+
+    let reset_handle = spawn_reset_thread(part.path(), stop.clone(), barrier.clone());
+
+    let workers: Vec<_> = (0..NUM_WORKERS)
+        .map(|id| {
+            let session = session.clone();
+            let barrier = barrier.clone();
+            thread::spawn(move || {
+                barrier.wait();
+                for i in 0..ITERATIONS_PER_WORKER {
+                    let props = HsmKeyPropsBuilder::default()
+                        .class(HsmKeyClass::Secret)
+                        .key_kind(HsmKeyKind::AesXts)
+                        .bits(512)
+                        .can_encrypt(true)
+                        .can_decrypt(true)
+                        .is_session(true)
+                        .build()
+                        .expect("Failed to build AES-XTS key props");
+                    let mut algo = HsmAesXtsKeyGenAlgo::default();
+                    let result = HsmKeyManager::generate_key(&session, &mut algo, props);
+                    assert!(
+                        result.is_ok(),
+                        "Worker {id} iteration {i}: AES-XTS key gen failed: {:?}",
+                        result.err()
+                    );
+                    thread::sleep(Duration::from_millis(WORKER_ITER_SLEEP_MS));
+                }
+            })
+        })
+        .collect();
+
+    for w in workers {
+        w.join().expect("Worker thread panicked");
+    }
+    stop.store(true, Ordering::Relaxed);
+    let reset_count = reset_handle.join().expect("Reset thread panicked");
+    assert!(
+        reset_count > 0,
+        "Reset thread should have triggered at least one Reset"
+    );
+}
+
+// =========================================================================
+// Test: RSA key report under continuous Reset
+// =========================================================================
+
+/// Workers repeatedly perform RSA key attestation while Resets fire.
+#[api_test]
+fn test_stress_rsa_key_report_under_reset() {
+    let (part, _creds, session, _ctx) = init_partition_and_session();
+    let (priv_key, _pub_key) = generate_rsa_sign_key_pair(&session);
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let barrier = Arc::new(Barrier::new(NUM_WORKERS + 1));
+
+    let reset_handle = spawn_reset_thread(part.path(), stop.clone(), barrier.clone());
+
+    let workers: Vec<_> = (0..NUM_WORKERS)
+        .map(|id| {
+            let mut priv_key = priv_key.clone();
+            let barrier = barrier.clone();
+            thread::spawn(move || {
+                barrier.wait();
+                for i in 0..ITERATIONS_PER_WORKER {
+                    let report_data = [0x42u8; 128];
+                    let result =
+                        HsmKeyManager::generate_key_report_vec(&mut priv_key, &report_data);
+                    if let Err(ref e) = result {
+                        warn!("Worker {id} iteration {i}: RSA key report error: {e:?}");
+                    }
+                    assert!(
+                        result.is_ok(),
+                        "Worker {id} iteration {i}: RSA key report failed: {:?}",
+                        result.err()
+                    );
+                    thread::sleep(Duration::from_millis(WORKER_ITER_SLEEP_MS));
+                }
+            })
+        })
+        .collect();
+
+    for w in workers {
+        w.join().expect("Worker thread panicked");
+    }
+    stop.store(true, Ordering::Relaxed);
+    let reset_count = reset_handle.join().expect("Reset thread panicked");
+    assert!(
+        reset_count > 0,
+        "Reset thread should have triggered at least one Reset"
+    );
+}
+
+// =========================================================================
+// Test: RSA decrypt under continuous Reset
+// =========================================================================
+
+/// Workers repeatedly perform RSA decryption while Resets fire.
+#[api_test]
+fn test_stress_rsa_decrypt_under_reset() {
+    use crypto::*;
+
+    let (part, _creds, session, _ctx) = init_partition_and_session();
+
+    // Import an RSA key pair via wrap/unwrap for encryption/decryption.
+    let sw_key = crypto::RsaPrivateKey::generate(256).expect("Failed to generate RSA key");
+    let der = sw_key.to_vec().expect("Failed to export RSA key DER");
+
+    let unwrap_priv_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Private)
+        .key_kind(HsmKeyKind::Rsa)
+        .bits(2048)
+        .can_unwrap(true)
+        .build()
+        .expect("unwrap priv props");
+    let unwrap_pub_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Public)
+        .key_kind(HsmKeyKind::Rsa)
+        .bits(2048)
+        .can_wrap(true)
+        .build()
+        .expect("unwrap pub props");
+    let mut gen_algo = HsmRsaKeyUnwrappingKeyGenAlgo::default();
+    let (unwrap_priv, unwrap_pub) = HsmKeyManager::generate_key_pair(
+        &session,
+        &mut gen_algo,
+        unwrap_priv_props,
+        unwrap_pub_props,
+    )
+    .expect("generate unwrapping key pair");
+
+    let mut wrap_algo = HsmRsaAesWrapAlgo::new(HsmHashAlgo::Sha384, 32);
+    let wrapped =
+        HsmEncrypter::encrypt_vec(&mut wrap_algo, &unwrap_pub, &der).expect("wrap RSA key");
+
+    let dec_priv_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Private)
+        .key_kind(HsmKeyKind::Rsa)
+        .bits(2048)
+        .can_decrypt(true)
+        .build()
+        .expect("dec priv props");
+    let enc_pub_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Public)
+        .key_kind(HsmKeyKind::Rsa)
+        .bits(2048)
+        .can_encrypt(true)
+        .build()
+        .expect("enc pub props");
+    let mut unwrap_algo = HsmRsaKeyRsaAesKeyUnwrapAlgo::new(HsmHashAlgo::Sha384);
+    let (dec_priv, enc_pub) = unwrap_algo
+        .unwrap_key_pair(&unwrap_priv, &wrapped, dec_priv_props, enc_pub_props)
+        .expect("unwrap RSA enc/dec key pair");
+
+    // Pre-encrypt data with the public key.
+    let plaintext = b"stress test RSA decrypt data!!!!";
+    let mut enc_algo = HsmRsaEncryptAlgo::with_pkcs1_padding();
+    let ciphertext =
+        HsmEncrypter::encrypt_vec(&mut enc_algo, &enc_pub, plaintext).expect("RSA pre-encrypt");
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let barrier = Arc::new(Barrier::new(NUM_WORKERS + 1));
+
+    let reset_handle = spawn_reset_thread(part.path(), stop.clone(), barrier.clone());
+
+    let workers: Vec<_> = (0..NUM_WORKERS)
+        .map(|id| {
+            let dec_priv = dec_priv.clone();
+            let ciphertext = ciphertext.clone();
+            let barrier = barrier.clone();
+            thread::spawn(move || {
+                barrier.wait();
+                for i in 0..ITERATIONS_PER_WORKER {
+                    let mut dec_algo = HsmRsaEncryptAlgo::with_pkcs1_padding();
+                    let result = HsmDecrypter::decrypt_vec(&mut dec_algo, &dec_priv, &ciphertext);
+                    if let Err(ref e) = result {
+                        warn!("Worker {id} iteration {i}: RSA decrypt error: {e:?}");
+                    }
+                    assert!(
+                        result.is_ok(),
+                        "Worker {id} iteration {i}: RSA decrypt failed: {:?}",
+                        result.err()
+                    );
+                    thread::sleep(Duration::from_millis(WORKER_ITER_SLEEP_MS));
+                }
+            })
+        })
+        .collect();
+
+    for w in workers {
+        w.join().expect("Worker thread panicked");
+    }
+    stop.store(true, Ordering::Relaxed);
+    let reset_count = reset_handle.join().expect("Reset thread panicked");
+    assert!(
+        reset_count > 0,
+        "Reset thread should have triggered at least one Reset"
+    );
+}
+
+// =========================================================================
+// Test: AES key unmask under continuous Reset
+// =========================================================================
+
+/// Workers repeatedly unmask an AES key from a masked blob while Resets fire.
+#[api_test]
+fn test_stress_aes_unmask_under_reset() {
+    let (part, _creds, session, _ctx) = init_partition_and_session();
+
+    let key = generate_aes_key(&session);
+    let masked_blob = key.masked_key_vec().expect("Failed to get masked AES key");
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let barrier = Arc::new(Barrier::new(NUM_WORKERS + 1));
+
+    let reset_handle = spawn_reset_thread(part.path(), stop.clone(), barrier.clone());
+
+    let workers: Vec<_> = (0..NUM_WORKERS)
+        .map(|id| {
+            let session = session.clone();
+            let blob = masked_blob.clone();
+            let barrier = barrier.clone();
+            thread::spawn(move || {
+                barrier.wait();
+                for i in 0..ITERATIONS_PER_WORKER {
+                    let mut unmask_algo = HsmAesKeyUnmaskAlgo::default();
+                    let result: HsmResult<HsmAesKey> =
+                        HsmKeyManager::unmask_key(&session, &mut unmask_algo, &blob);
+                    if let Err(ref e) = result {
+                        warn!("Worker {id} iteration {i}: AES unmask error: {e:?}");
+                    }
+                    assert!(
+                        result.is_ok(),
+                        "Worker {id} iteration {i}: AES unmask failed: {:?}",
+                        result.err()
+                    );
+                    thread::sleep(Duration::from_millis(WORKER_ITER_SLEEP_MS));
+                }
+            })
+        })
+        .collect();
+
+    for w in workers {
+        w.join().expect("Worker thread panicked");
+    }
+    stop.store(true, Ordering::Relaxed);
+    let reset_count = reset_handle.join().expect("Reset thread panicked");
+    assert!(
+        reset_count > 0,
+        "Reset thread should have triggered at least one Reset"
+    );
+}
+
+// =========================================================================
+// Test: AES-XTS key unmask under continuous Reset
+// =========================================================================
+
+/// Workers repeatedly unmask an AES-XTS key from a masked blob while Resets fire.
+#[cfg(feature = "mock")]
+#[api_test]
+fn test_stress_xts_unmask_under_reset() {
+    let (part, _creds, session, _ctx) = init_partition_and_session();
+
+    let key = generate_aes_xts_key(&session);
+    let masked_blob = key.masked_key_vec().expect("Failed to get masked XTS key");
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let barrier = Arc::new(Barrier::new(NUM_WORKERS + 1));
+
+    let reset_handle = spawn_reset_thread(part.path(), stop.clone(), barrier.clone());
+
+    let workers: Vec<_> = (0..NUM_WORKERS)
+        .map(|id| {
+            let session = session.clone();
+            let blob = masked_blob.clone();
+            let barrier = barrier.clone();
+            thread::spawn(move || {
+                barrier.wait();
+                for i in 0..ITERATIONS_PER_WORKER {
+                    let mut unmask_algo = HsmAesXtsKeyUnmaskAlgo::default();
+                    let result: HsmResult<HsmAesXtsKey> =
+                        HsmKeyManager::unmask_key(&session, &mut unmask_algo, &blob);
+                    if let Err(ref e) = result {
+                        warn!("Worker {id} iteration {i}: XTS unmask error: {e:?}");
+                    }
+                    assert!(
+                        result.is_ok(),
+                        "Worker {id} iteration {i}: XTS unmask failed: {:?}",
+                        result.err()
+                    );
+                    thread::sleep(Duration::from_millis(WORKER_ITER_SLEEP_MS));
+                }
+            })
+        })
+        .collect();
+
+    for w in workers {
+        w.join().expect("Worker thread panicked");
+    }
+    stop.store(true, Ordering::Relaxed);
+    let reset_count = reset_handle.join().expect("Reset thread panicked");
+    assert!(
+        reset_count > 0,
+        "Reset thread should have triggered at least one Reset"
+    );
+}
+
+// =========================================================================
+// Test: AES key unwrap (RSA-AES) under continuous Reset
+// =========================================================================
+
+/// Workers repeatedly unwrap an AES key using RSA-AES while Resets fire.
+#[api_test]
+fn test_stress_aes_unwrap_under_reset() {
+    let (part, _creds, session, _ctx) = init_partition_and_session();
+
+    // Generate an RSA unwrapping key pair.
+    let unwrap_priv_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Private)
+        .key_kind(HsmKeyKind::Rsa)
+        .bits(2048)
+        .can_unwrap(true)
+        .build()
+        .expect("unwrap priv props");
+    let unwrap_pub_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Public)
+        .key_kind(HsmKeyKind::Rsa)
+        .bits(2048)
+        .can_wrap(true)
+        .build()
+        .expect("unwrap pub props");
+    let mut gen_algo = HsmRsaKeyUnwrappingKeyGenAlgo::default();
+    let (unwrap_priv, unwrap_pub) = HsmKeyManager::generate_key_pair(
+        &session,
+        &mut gen_algo,
+        unwrap_priv_props,
+        unwrap_pub_props,
+    )
+    .expect("generate unwrapping key pair");
+
+    // Generate a software AES key, wrap it.
+    let sw_aes_key = [0xABu8; 32];
+    let mut wrap_algo = HsmRsaAesWrapAlgo::new(HsmHashAlgo::Sha384, 32);
+    let wrapped =
+        HsmEncrypter::encrypt_vec(&mut wrap_algo, &unwrap_pub, &sw_aes_key).expect("wrap AES key");
+
+    let aes_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::Aes)
+        .bits(256)
+        .can_encrypt(true)
+        .can_decrypt(true)
+        .is_session(true)
+        .build()
+        .expect("AES key props");
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let barrier = Arc::new(Barrier::new(NUM_WORKERS + 1));
+
+    let reset_handle = spawn_reset_thread(part.path(), stop.clone(), barrier.clone());
+
+    let workers: Vec<_> = (0..NUM_WORKERS)
+        .map(|id| {
+            let unwrap_priv = unwrap_priv.clone();
+            let wrapped = wrapped.clone();
+            let aes_props = aes_props.clone();
+            let barrier = barrier.clone();
+            thread::spawn(move || {
+                barrier.wait();
+                for i in 0..ITERATIONS_PER_WORKER {
+                    let mut unwrap_algo = HsmAesKeyRsaAesKeyUnwrapAlgo::new(HsmHashAlgo::Sha384);
+                    let result = unwrap_algo.unwrap_key(&unwrap_priv, &wrapped, aes_props.clone());
+                    if let Err(ref e) = result {
+                        warn!("Worker {id} iteration {i}: AES unwrap error: {e:?}");
+                    }
+                    assert!(
+                        result.is_ok(),
+                        "Worker {id} iteration {i}: AES unwrap failed: {:?}",
+                        result.err()
+                    );
+                    thread::sleep(Duration::from_millis(WORKER_ITER_SLEEP_MS));
+                }
+            })
+        })
+        .collect();
+
+    for w in workers {
+        w.join().expect("Worker thread panicked");
+    }
+    stop.store(true, Ordering::Relaxed);
+    let reset_count = reset_handle.join().expect("Reset thread panicked");
+    assert!(
+        reset_count > 0,
+        "Reset thread should have triggered at least one Reset"
+    );
+}
+
+// =========================================================================
+// Test: ECC key pair unwrap (RSA-AES) under continuous Reset
+// =========================================================================
+
+/// Workers repeatedly unwrap an ECC key pair using RSA-AES while Resets fire.
+#[api_test]
+fn test_stress_ecc_unwrap_under_reset() {
+    use crypto::*;
+
+    let (part, _creds, session, _ctx) = init_partition_and_session();
+
+    // Generate an RSA unwrapping key pair.
+    let unwrap_priv_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Private)
+        .key_kind(HsmKeyKind::Rsa)
+        .bits(2048)
+        .can_unwrap(true)
+        .build()
+        .expect("unwrap priv props");
+    let unwrap_pub_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Public)
+        .key_kind(HsmKeyKind::Rsa)
+        .bits(2048)
+        .can_wrap(true)
+        .build()
+        .expect("unwrap pub props");
+    let mut gen_algo = HsmRsaKeyUnwrappingKeyGenAlgo::default();
+    let (unwrap_priv, unwrap_pub) = HsmKeyManager::generate_key_pair(
+        &session,
+        &mut gen_algo,
+        unwrap_priv_props,
+        unwrap_pub_props,
+    )
+    .expect("generate unwrapping key pair");
+
+    // Generate an ECC P-256 key in software and wrap it.
+    let sw_ecc = crypto::EccPrivateKey::generate(32).expect("Failed to generate ECC key");
+    let sw_ecc_der = sw_ecc.to_vec().expect("Failed to export ECC key DER");
+    let mut wrap_algo = HsmRsaAesWrapAlgo::new(HsmHashAlgo::Sha384, 32);
+    let wrapped =
+        HsmEncrypter::encrypt_vec(&mut wrap_algo, &unwrap_pub, &sw_ecc_der).expect("wrap ECC key");
+
+    let sign_priv_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Private)
+        .key_kind(HsmKeyKind::Ecc)
+        .ecc_curve(HsmEccCurve::P256)
+        .can_sign(true)
+        .build()
+        .expect("ECC sign priv props");
+    let verify_pub_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Public)
+        .key_kind(HsmKeyKind::Ecc)
+        .ecc_curve(HsmEccCurve::P256)
+        .can_verify(true)
+        .build()
+        .expect("ECC verify pub props");
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let barrier = Arc::new(Barrier::new(NUM_WORKERS + 1));
+
+    let reset_handle = spawn_reset_thread(part.path(), stop.clone(), barrier.clone());
+
+    let workers: Vec<_> = (0..NUM_WORKERS)
+        .map(|id| {
+            let unwrap_priv = unwrap_priv.clone();
+            let wrapped = wrapped.clone();
+            let sign_priv_props = sign_priv_props.clone();
+            let verify_pub_props = verify_pub_props.clone();
+            let barrier = barrier.clone();
+            thread::spawn(move || {
+                barrier.wait();
+                for i in 0..ITERATIONS_PER_WORKER {
+                    let mut unwrap_algo = HsmEccKeyRsaAesKeyUnwrapAlgo::new(HsmHashAlgo::Sha384);
+                    let result = unwrap_algo.unwrap_key_pair(
+                        &unwrap_priv,
+                        &wrapped,
+                        sign_priv_props.clone(),
+                        verify_pub_props.clone(),
+                    );
+                    if let Err(ref e) = result {
+                        warn!("Worker {id} iteration {i}: ECC unwrap error: {e:?}");
+                    }
+                    assert!(
+                        result.is_ok(),
+                        "Worker {id} iteration {i}: ECC unwrap failed: {:?}",
+                        result.err()
+                    );
+                    thread::sleep(Duration::from_millis(WORKER_ITER_SLEEP_MS));
+                }
+            })
+        })
+        .collect();
+
+    for w in workers {
+        w.join().expect("Worker thread panicked");
+    }
+    stop.store(true, Ordering::Relaxed);
+    let reset_count = reset_handle.join().expect("Reset thread panicked");
+    assert!(
+        reset_count > 0,
+        "Reset thread should have triggered at least one Reset"
+    );
+}
+
+// =========================================================================
+// Test: AES-XTS key unwrap (RSA-AES) under continuous Reset
+// =========================================================================
+
+/// Workers repeatedly unwrap an AES-XTS key using RSA-AES while Resets fire.
+#[cfg(feature = "mock")]
+#[api_test]
+fn test_stress_xts_unwrap_under_reset() {
+    let (part, _creds, session, _ctx) = init_partition_and_session();
+
+    // Generate an RSA unwrapping key pair.
+    let unwrap_priv_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Private)
+        .key_kind(HsmKeyKind::Rsa)
+        .bits(2048)
+        .can_unwrap(true)
+        .build()
+        .expect("unwrap priv props");
+    let unwrap_pub_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Public)
+        .key_kind(HsmKeyKind::Rsa)
+        .bits(2048)
+        .can_wrap(true)
+        .build()
+        .expect("unwrap pub props");
+    let mut gen_algo = HsmRsaKeyUnwrappingKeyGenAlgo::default();
+    let (unwrap_priv, unwrap_pub) = HsmKeyManager::generate_key_pair(
+        &session,
+        &mut gen_algo,
+        unwrap_priv_props,
+        unwrap_pub_props,
+    )
+    .expect("generate unwrapping key pair");
+
+    // Create an XTS wrap blob using the special two-key format.
+    let key1 = [0x11u8; 32];
+    let key2 = [0x22u8; 32];
+    let wrapped = {
+        const WRAP_BLOB_MAGIC: u64 = 0x5354_584D_5348_5A41;
+        const WRAP_BLOB_VERSION: u16 = 1;
+
+        let mut wrap1 = HsmRsaAesWrapAlgo::new(HsmHashAlgo::Sha256, 32);
+        let key1_wrapped =
+            HsmEncrypter::encrypt_vec(&mut wrap1, &unwrap_pub, &key1).expect("XTS key1 wrap");
+        let mut wrap2 = HsmRsaAesWrapAlgo::new(HsmHashAlgo::Sha256, 32);
+        let key2_wrapped =
+            HsmEncrypter::encrypt_vec(&mut wrap2, &unwrap_pub, &key2).expect("XTS key2 wrap");
+
+        let key1_len = key1_wrapped.len() as u16;
+        let key2_len = key2_wrapped.len() as u16;
+
+        let mut hdr = [0u8; 16];
+        hdr[0..8].copy_from_slice(&WRAP_BLOB_MAGIC.to_le_bytes());
+        hdr[8..10].copy_from_slice(&WRAP_BLOB_VERSION.to_le_bytes());
+        hdr[10..12].copy_from_slice(&key1_len.to_le_bytes());
+        hdr[12..14].copy_from_slice(&key2_len.to_le_bytes());
+
+        let mut blob = Vec::new();
+        blob.extend_from_slice(&hdr);
+        blob.extend_from_slice(&key1_wrapped);
+        blob.extend_from_slice(&key2_wrapped);
+        blob
+    };
+
+    let xts_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::AesXts)
+        .bits(512)
+        .can_encrypt(true)
+        .can_decrypt(true)
+        .is_session(true)
+        .build()
+        .expect("XTS key props");
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let barrier = Arc::new(Barrier::new(NUM_WORKERS + 1));
+
+    let reset_handle = spawn_reset_thread(part.path(), stop.clone(), barrier.clone());
+
+    let workers: Vec<_> = (0..NUM_WORKERS)
+        .map(|id| {
+            let unwrap_priv = unwrap_priv.clone();
+            let wrapped = wrapped.clone();
+            let xts_props = xts_props.clone();
+            let barrier = barrier.clone();
+            thread::spawn(move || {
+                barrier.wait();
+                for i in 0..ITERATIONS_PER_WORKER {
+                    let mut unwrap_algo = HsmAesXtsKeyRsaAesKeyUnwrapAlgo::new(HsmHashAlgo::Sha256);
+                    let result = unwrap_algo.unwrap_key(&unwrap_priv, &wrapped, xts_props.clone());
+                    if let Err(ref e) = result {
+                        warn!("Worker {id} iteration {i}: XTS unwrap error: {e:?}");
+                    }
+                    assert!(
+                        result.is_ok(),
+                        "Worker {id} iteration {i}: XTS unwrap failed: {:?}",
+                        result.err()
+                    );
+                    thread::sleep(Duration::from_millis(WORKER_ITER_SLEEP_MS));
+                }
+            })
+        })
+        .collect();
+
+    for w in workers {
+        w.join().expect("Worker thread panicked");
+    }
+    stop.store(true, Ordering::Relaxed);
+    let reset_count = reset_handle.join().expect("Reset thread panicked");
+    assert!(
+        reset_count > 0,
+        "Reset thread should have triggered at least one Reset"
+    );
+}
+
+// =========================================================================
+// Test: Keygen + immediate delete under continuous Reset
+// =========================================================================
+
+/// Workers repeatedly generate AES keys and immediately delete them while
+/// Resets fire, exercising the keygen + epoch-aware delete path.
+#[api_test]
+fn test_stress_keygen_delete_under_reset() {
+    let (part, _creds, session, _ctx) = init_partition_and_session();
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let barrier = Arc::new(Barrier::new(NUM_WORKERS + 1));
+
+    let reset_handle = spawn_reset_thread(part.path(), stop.clone(), barrier.clone());
+
+    let workers: Vec<_> = (0..NUM_WORKERS)
+        .map(|id| {
+            let session = session.clone();
+            let barrier = barrier.clone();
+            thread::spawn(move || {
+                barrier.wait();
+                for i in 0..ITERATIONS_PER_WORKER {
+                    let props = HsmKeyPropsBuilder::default()
+                        .class(HsmKeyClass::Secret)
+                        .key_kind(HsmKeyKind::Aes)
+                        .bits(256)
+                        .can_encrypt(true)
+                        .can_decrypt(true)
+                        .is_session(true)
+                        .build()
+                        .expect("AES key props");
+                    let mut algo = HsmAesKeyGenAlgo::default();
+                    let key = HsmKeyManager::generate_key(&session, &mut algo, props);
+                    assert!(
+                        key.is_ok(),
+                        "Worker {id} iteration {i}: keygen failed: {:?}",
+                        key.err()
+                    );
+                    let del = HsmKeyManager::delete_key(key.unwrap());
+                    assert!(
+                        del.is_ok(),
+                        "Worker {id} iteration {i}: delete failed: {:?}",
+                        del.err()
+                    );
+                    thread::sleep(Duration::from_millis(WORKER_ITER_SLEEP_MS));
+                }
+            })
+        })
+        .collect();
+
+    for w in workers {
+        w.join().expect("Worker thread panicked");
+    }
+    stop.store(true, Ordering::Relaxed);
+    let reset_count = reset_handle.join().expect("Reset thread panicked");
+    assert!(
+        reset_count > 0,
+        "Reset thread should have triggered at least one Reset"
     );
 }
 

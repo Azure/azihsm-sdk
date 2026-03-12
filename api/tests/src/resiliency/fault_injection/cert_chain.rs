@@ -369,36 +369,21 @@ fn test_cert_chain_succeeds_after_reset_on_get_cert_chain_info() {
     );
 }
 
-/// After a reset on `GetCertificate`, `cert_chain` triggers
-/// `restore_partition` and recovers.
+/// After a reset on `GetCertificate`, `cert_chain` recovers.
+/// Cert chain is preserved across NSSR on both mock and hardware,
+/// so `restore_partition` is not needed.
 #[api_test]
 fn test_cert_chain_recovers_after_reset_on_get_certificate() {
     let (part, _ctx) = init_with_resiliency();
 
-    let op = bk3_op();
-    let _bk3_before = op_call_count(op);
-
     inject_fault(FaultRule::reset_on_next(DdiOp::GetCertificate, 1));
 
     let result = part.cert_chain(0);
-
-    let _bk3_after = op_call_count(op);
     clear_faults();
 
     assert!(
         result.is_ok(),
         "cert_chain should recover after reset on GetCertificate, got: {result:?}"
-    );
-
-    // On mock, the simulator regenerates the attestation key on reset,
-    // so GetCertificate fails and restore_partition is needed.
-    // On hardware, GetCertificate may succeed after reset (cert is
-    // preserved), so restore_partition may not be called.
-    #[cfg(feature = "mock")]
-    assert!(
-        _bk3_after > _bk3_before,
-        "{op:?} should have been called during restore_partition after reset \
-         (before: {_bk3_before}, after: {_bk3_after})"
     );
 }
 

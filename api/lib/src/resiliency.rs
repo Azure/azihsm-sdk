@@ -391,6 +391,7 @@ pub(crate) fn is_init_retryable_error<T>(result: &HsmResult<T>) -> bool {
         result,
         Err(HsmError::IoAborted)
             | Err(HsmError::IoAbortInProgress)
+            | Err(HsmError::DeviceNotReady)
             | Err(HsmError::CredentialsNotEstablished)
             | Err(HsmError::NonceMismatch)
             | Err(HsmError::PartitionNotProvisioned)
@@ -410,6 +411,7 @@ pub(crate) fn is_open_session_retryable_error<T>(result: &HsmResult<T>) -> bool 
         result,
         Err(HsmError::IoAborted)
             | Err(HsmError::IoAbortInProgress)
+            | Err(HsmError::DeviceNotReady)
             | Err(HsmError::CredentialsNotEstablished)
             | Err(HsmError::NonceMismatch)
             | Err(HsmError::PartitionNotProvisioned)
@@ -430,6 +432,7 @@ pub(crate) fn is_cert_chain_retryable_error<T>(result: &HsmResult<T>) -> bool {
         result,
         Err(HsmError::IoAborted)
             | Err(HsmError::IoAbortInProgress)
+            | Err(HsmError::DeviceNotReady)
             | Err(HsmError::CredentialsNotEstablished)
             | Err(HsmError::PartitionNotProvisioned)
             | Err(HsmError::CertChainChanged)
@@ -447,7 +450,10 @@ pub(crate) fn is_cert_chain_retryable_error<T>(result: &HsmResult<T>) -> bool {
 pub(crate) fn key_needs_restoration(err: &HsmError) -> bool {
     matches!(
         err,
-        HsmError::IoAborted | HsmError::IoAbortInProgress | HsmError::SessionNeedsRenegotiation
+        HsmError::IoAborted
+            | HsmError::IoAbortInProgress
+            | HsmError::DeviceNotReady
+            | HsmError::SessionNeedsRenegotiation
     )
 }
 
@@ -476,6 +482,7 @@ pub(crate) fn is_key_op_retryable_error(err: &HsmError) -> bool {
             | HsmError::PendingKeyGeneration
             | HsmError::IoAborted
             | HsmError::IoAbortInProgress
+            | HsmError::DeviceNotReady
             | HsmError::KeyNotFound
     )
 }

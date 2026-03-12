@@ -55,6 +55,7 @@ impl From<DdiError> for HsmError {
         match err {
             DdiError::DriverError(DriverError::IoAborted) => HsmError::IoAborted,
             DdiError::DriverError(DriverError::IoAbortInProgress) => HsmError::IoAbortInProgress,
+            DdiError::DeviceNotReady => HsmError::DeviceNotReady,
             DdiError::DdiStatus(DdiStatus::CredentialsNotEstablished) => {
                 HsmError::CredentialsNotEstablished
             }
@@ -75,6 +76,9 @@ impl From<DdiError> for HsmError {
                 HsmError::PartitionAlreadyProvisioned
             }
             DdiError::DdiStatus(DdiStatus::VaultAppLimitReached) => HsmError::VaultAppLimitReached,
+            // Firmware-internal IO errors that surface after a reset —
+            // treat as transient so the resiliency layer retries.
+            DdiError::DdiStatus(DdiStatus::ProcessedInvalidIoEvent) => HsmError::IoAborted,
             _ => {
                 tracing::debug!(?err, "Unmapped DdiError → DdiCmdFailure");
                 HsmError::DdiCmdFailure

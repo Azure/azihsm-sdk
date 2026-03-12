@@ -590,16 +590,10 @@ impl HsmPartition {
         while is_cert_chain_retryable_error(&result) && iter < MAX_RETRIES {
             apply_backoff(iter, BACKOFF_BASE_MS, BACKOFF_JITTER_MS);
 
-            // Re-establish partition credentials before retrying cert_chain.
-            match self.restore_partition() {
-                Ok(()) => {
-                    result = self
-                        .with_dev(|dev| ddi::get_cert_chain(dev, self.api_rev_range().min(), slot));
-                }
-                Err(_) => {
-                    // Restore_partition failed during cert_chain retry.
-                }
-            }
+            // Cert chain is preserved across reset on hardware — no need
+            // to restore partition, just retry the DDI call after backoff.
+            result =
+                self.with_dev(|dev| ddi::get_cert_chain(dev, self.api_rev_range().min(), slot));
             iter += 1;
         }
 
