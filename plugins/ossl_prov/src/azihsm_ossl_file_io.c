@@ -6,7 +6,6 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -35,18 +34,18 @@
  *     OPENSSL_cleanse(buffer->ptr, buffer->len) + OPENSSL_free(buffer->ptr).
  *   AZIHSM_STATUS_INTERNAL_ERROR
  *     Any other failure (permission denied, I/O error, file too large,
- *     allocation failure). The OpenSSL error stack is populated with a
- *     descriptive message including the path and strerror(errno) where
- *     applicable. buffer is left as {NULL, 0}.
+ *     not a regular file, allocation failure). The OpenSSL error stack is
+ *     populated with a descriptive message including the path and
+ *     strerror(errno) where applicable. buffer is left as {NULL, 0}.
  *
  * Size limit: files larger than AZIHSM_MAX_KEY_FILE_SIZE (64 KB) are
  * rejected to prevent runaway allocations on corrupt or malicious paths.
  */
 azihsm_status azihsm_file_load(const char *path, struct azihsm_buffer *buffer)
 {
-    FILE *file = NULL;
-    long file_size = 0;
-    size_t bytes_read = 0;
+    int fd = -1;
+    struct stat st;
+    size_t total_read = 0;
 
     // Both arguments are required; a NULL path or output buffer is a caller bug.
     if (path == NULL || buffer == NULL)
@@ -63,8 +62,8 @@ azihsm_status azihsm_file_load(const char *path, struct azihsm_buffer *buffer)
     buffer->ptr = NULL;
     buffer->len = 0;
 
-    file = fopen(path, "rb");
-    if (file == NULL)
+    fd = open(path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
+    if (fd < 0)
     {
         // ENOENT means the file has not been created yet (first-use path).
         // All other errors are genuine failures.
@@ -82,56 +81,36 @@ azihsm_status azihsm_file_load(const char *path, struct azihsm_buffer *buffer)
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
 
-    // Determine file size via seek-to-end / tell / seek-to-start.
-    if (fseek(file, 0, SEEK_END) != 0)
+    // Validate that the path refers to a regular file before reading.
+    if (fstat(fd, &st) != 0)
     {
         ERR_raise_data(
             ERR_LIB_PROV,
             ERR_R_INIT_FAIL,
-            "fseek(SEEK_END) failed for '%s': %s",
+            "fstat failed for key file '%s': %s",
             path,
             strerror(errno)
         );
-        fclose(file);
+        close(fd);
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
 
-    file_size = ftell(file);
-    if (file_size < 0)
+    if (!S_ISREG(st.st_mode))
     {
-        ERR_raise_data(
-            ERR_LIB_PROV,
-            ERR_R_INIT_FAIL,
-            "ftell failed for '%s': %s",
-            path,
-            strerror(errno)
-        );
-        fclose(file);
-        return AZIHSM_STATUS_INTERNAL_ERROR;
-    }
-
-    if (fseek(file, 0, SEEK_SET) != 0)
-    {
-        ERR_raise_data(
-            ERR_LIB_PROV,
-            ERR_R_INIT_FAIL,
-            "fseek(SEEK_SET) failed for '%s': %s",
-            path,
-            strerror(errno)
-        );
-        fclose(file);
+        ERR_raise_data(ERR_LIB_PROV, ERR_R_INIT_FAIL, "key file '%s' is not a regular file", path);
+        close(fd);
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
 
     // An empty file is valid (buffer stays {NULL, 0}); nothing to read.
-    if (file_size == 0)
+    if (st.st_size == 0)
     {
-        fclose(file);
+        close(fd);
         return AZIHSM_STATUS_SUCCESS;
     }
 
     // Reject oversized files before allocating to avoid runaway memory use.
-    if (file_size > AZIHSM_MAX_KEY_FILE_SIZE)
+    if (st.st_size > AZIHSM_MAX_KEY_FILE_SIZE)
     {
         ERR_raise_data(
             ERR_LIB_PROV,
@@ -140,40 +119,68 @@ azihsm_status azihsm_file_load(const char *path, struct azihsm_buffer *buffer)
             path,
             AZIHSM_MAX_KEY_FILE_SIZE
         );
-        fclose(file);
+        close(fd);
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
 
-    buffer->ptr = OPENSSL_malloc((size_t)file_size);
+    buffer->ptr = OPENSSL_malloc((size_t)st.st_size);
     if (buffer->ptr == NULL)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
-        fclose(file);
+        close(fd);
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
 
-    // Read the entire file in one call; a short read indicates truncation or I/O error.
-    bytes_read = fread(buffer->ptr, 1, (size_t)file_size, file);
-    fclose(file);
+    // Read in a loop to handle partial reads and EINTR.
+    while (total_read < (size_t)st.st_size)
+    {
+        ssize_t n = read(fd, buffer->ptr + total_read, (size_t)st.st_size - total_read);
+        if (n < 0)
+        {
+            if (errno == EINTR)
+            {
+                continue;
+            }
+            ERR_raise_data(
+                ERR_LIB_PROV,
+                ERR_R_INIT_FAIL,
+                "error reading key file '%s': %s",
+                path,
+                strerror(errno)
+            );
+            OPENSSL_cleanse(buffer->ptr, (size_t)st.st_size);
+            OPENSSL_free(buffer->ptr);
+            buffer->ptr = NULL;
+            close(fd);
+            return AZIHSM_STATUS_INTERNAL_ERROR;
+        }
+        if (n == 0)
+        {
+            break;
+        }
+        total_read += (size_t)n;
+    }
 
-    if (bytes_read != (size_t)file_size)
+    close(fd);
+
+    if (total_read != (size_t)st.st_size)
     {
         ERR_raise_data(
             ERR_LIB_PROV,
             ERR_R_INIT_FAIL,
             "short read from key file '%s': got %zu of %ld bytes",
             path,
-            bytes_read,
-            file_size
+            total_read,
+            (long)st.st_size
         );
         // Wipe any partial data before freeing to avoid leaving key material on the heap.
-        OPENSSL_cleanse(buffer->ptr, (size_t)file_size);
+        OPENSSL_cleanse(buffer->ptr, (size_t)st.st_size);
         OPENSSL_free(buffer->ptr);
         buffer->ptr = NULL;
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
 
-    buffer->len = (uint32_t)file_size;
+    buffer->len = (uint32_t)st.st_size;
     return AZIHSM_STATUS_SUCCESS;
 }
 

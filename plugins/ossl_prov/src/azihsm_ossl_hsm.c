@@ -128,7 +128,7 @@ static azihsm_status load_credentials_from_file(const char *path, uint8_t *outpu
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
 
-    fd = open(path, O_RDONLY | O_NOFOLLOW);
+    fd = open(path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
     if (fd < 0)
     {
         ERR_raise_data(

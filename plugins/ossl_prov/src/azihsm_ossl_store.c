@@ -293,14 +293,24 @@ static int load_and_unmask_key(AZIHSM_STORE_CTX *ctx)
     }
 
     /* Read masked key from file - fail if file doesn't exist or cannot be read */
-    if (azihsm_file_load(ctx->uri_info.file_path, &masked_buf) != AZIHSM_STATUS_SUCCESS ||
-        masked_buf.ptr == NULL)
+    if (azihsm_file_load(ctx->uri_info.file_path, &masked_buf) != AZIHSM_STATUS_SUCCESS)
     {
         ERR_raise_data(
             ERR_LIB_PROV,
             PROV_R_MISSING_KEY,
             "failed to load masked key file '%s'",
             ctx->uri_info.file_path
+        );
+        return OSSL_FAILURE;
+    }
+
+    if (masked_buf.ptr == NULL)
+    {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            PROV_R_MISSING_KEY,
+            "masked key file not found: '%s'",
+            ctx->uri_info.file_path != NULL ? ctx->uri_info.file_path : "<null>"
         );
         return OSSL_FAILURE;
     }

@@ -118,13 +118,23 @@ static int load_and_unmask_ikm(AZIHSM_HKDF_CTX *ctx)
     }
     else if (ctx->ikm_file[0] != '\0')
     {
-        if (azihsm_file_load(ctx->ikm_file, &file_buf) != AZIHSM_STATUS_SUCCESS ||
-            file_buf.ptr == NULL)
+        if (azihsm_file_load(ctx->ikm_file, &file_buf) != AZIHSM_STATUS_SUCCESS)
         {
             ERR_raise_data(
                 ERR_LIB_PROV,
                 PROV_R_MISSING_KEY,
                 "failed to load IKM file '%s'",
+                ctx->ikm_file
+            );
+            return OSSL_FAILURE;
+        }
+
+        if (file_buf.ptr == NULL)
+        {
+            ERR_raise_data(
+                ERR_LIB_PROV,
+                PROV_R_MISSING_KEY,
+                "IKM file not found: '%s'",
                 ctx->ikm_file
             );
             return OSSL_FAILURE;
