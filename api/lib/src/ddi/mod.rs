@@ -33,11 +33,29 @@ pub(crate) use tpm::*;
 use super::*;
 
 /// Converts a DDI error into the corresponding `HsmError`.
+///
+/// `DriverError::IoAborted` and `DriverError::IoAbortInProgress` are mapped
+/// to their dedicated `HsmError` variants so that higher layers (e.g., the
+/// `open_partition` retry loop) can distinguish transient IO-abort conditions
+/// from other DDI failures.
+///
+/// `DdiStatus::CredentialsNotEstablished`, `DdiStatus::NonceMismatch`,
+/// `DdiStatus::PartitionNotProvisioned`, `DdiStatus::MaskedKeyDecodeFailed`,
+/// `DdiStatus::EccVerifyFailed`, `DdiStatus::SessionNeedsRenegotiation`,
+/// `DdiStatus::PendingKeyGeneration`, `DdiStatus::KeyNotFound`,
+/// `DdiStatus::PartitionAlreadyProvisioned`, and
+/// `DdiStatus::VaultAppLimitReached` are surfaced as distinct
+/// `HsmError` variants to enable targeted retry logic during partition
+/// initialization and key operations.
+///
+/// All remaining `DdiError` variants are collapsed into
+/// `HsmError::DdiCmdFailure`.
 impl From<DdiError> for HsmError {
     fn from(err: DdiError) -> Self {
         match err {
             DdiError::DriverError(DriverError::IoAborted) => HsmError::IoAborted,
             DdiError::DriverError(DriverError::IoAbortInProgress) => HsmError::IoAbortInProgress,
+            DdiError::DeviceNotReady => HsmError::DeviceNotReady,
             DdiError::DdiStatus(DdiStatus::CredentialsNotEstablished) => {
                 HsmError::CredentialsNotEstablished
             }
@@ -49,7 +67,19 @@ impl From<DdiError> for HsmError {
                 HsmError::MaskedKeyDecodeFailed
             }
             DdiError::DdiStatus(DdiStatus::EccVerifyFailed) => HsmError::EccVerifyFailed,
-            _ => HsmError::DdiCmdFailure,
+            DdiError::DdiStatus(DdiStatus::SessionNeedsRenegotiation) => {
+                HsmError::SessionNeedsRenegotiation
+            }
+            DdiError::DdiStatus(DdiStatus::PendingKeyGeneration) => HsmError::PendingKeyGeneration,
+            DdiError::DdiStatus(DdiStatus::KeyNotFound) => HsmError::KeyNotFound,
+            DdiError::DdiStatus(DdiStatus::PartitionAlreadyProvisioned) => {
+                HsmError::PartitionAlreadyProvisioned
+            }
+            DdiError::DdiStatus(DdiStatus::VaultAppLimitReached) => HsmError::VaultAppLimitReached,
+            _ => {
+                tracing::debug!(?err, "Unmapped DdiError → DdiCmdFailure");
+                HsmError::DdiCmdFailure
+            }
         }
     }
 }

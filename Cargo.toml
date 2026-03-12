@@ -22,6 +22,7 @@ members = [
   "plugins/ossl_prov",
   "plugins/ossl_prov/integration-tests/openssl-capi",
   "plugins/ossl_prov/integration-tests/openssl-cli",
+  "tools/resiliency_stress",
   "xtask",
 ]
 

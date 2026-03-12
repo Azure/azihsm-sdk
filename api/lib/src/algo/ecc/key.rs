@@ -14,6 +14,18 @@ use super::*;
 // Define HsmEccPrivateKey and HsmEccPublicKey types.
 define_hsm_key_pair!(pub HsmEccPrivateKey, pub HsmEccPublicKey,  crypto::EccPublicKey);
 
+impl HsmKeyReportOp for HsmEccPrivateKey {
+    type Error = HsmError;
+
+    fn generate_key_report(
+        &self,
+        report_data: &[u8],
+        report: Option<&mut [u8]>,
+    ) -> Result<usize, Self::Error> {
+        ddi::ecc_generate_key_report(self, report_data, report)
+    }
+}
+
 impl HsmEccPrivateKey {
     /// Validates key properties for an ECC **private** key.
     ///

@@ -24,10 +24,22 @@ impl Session for HsmSession {}
 
 impl HsmSession {
     #[instrument(skip_all, fields(session_id = id))]
-    pub(crate) fn new(id: u16, app_id: u8, rev: HsmApiRev, partition: HsmPartition) -> Self {
+    pub(crate) fn new(
+        id: u16,
+        app_id: u8,
+        rev: HsmApiRev,
+        partition: HsmPartition,
+        seed: [u8; 48],
+        bmk_session: Vec<u8>,
+    ) -> Self {
         Self {
             inner: Arc::new(RwLock::new(HsmSessionInner::new(
-                id, app_id, rev, partition,
+                id,
+                app_id,
+                rev,
+                partition,
+                seed,
+                bmk_session,
             ))),
         }
     }
@@ -43,6 +55,66 @@ impl HsmSession {
                 F: FnOnce(&ddi::HsmDev) -> HsmResult<R>;
         }
     }
+
+    /// Returns the partition restore epoch at which this session
+    /// was last reopened.
+    pub(crate) fn last_restore_epoch(&self) -> u64 {
+        self.inner.read().last_restore_epoch()
+    }
+
+    /// Serializes session-reopen attempts for a given epoch.
+    ///
+    /// Acquires the session write lock and checks whether the session
+    /// has already been reopened to `part_restore_epoch`.  If so, returns
+    /// `Ok(None)` without calling `f`.  Otherwise, executes `f` under
+    /// the lock and, on success, advances the session epoch to
+    /// `part_restore_epoch` before releasing the lock.
+    ///
+    /// This ensures that only one thread performs the DDI `reopen_session`
+    /// call for a given a resiliency event; racing threads block on the write lock
+    /// and then observe the updated epoch.
+    pub(crate) fn with_reopen_guard<F, R>(
+        &self,
+        part_restore_epoch: u64,
+        f: F,
+    ) -> HsmResult<Option<R>>
+    where
+        F: FnOnce() -> HsmResult<R>,
+    {
+        let mut inner = self.inner.write();
+        if inner.last_restore_epoch == part_restore_epoch {
+            return Ok(None);
+        } else if inner.last_restore_epoch > part_restore_epoch {
+            // This should never happen — session cannot be newer than the partition's epoch.
+            return Err(HsmError::InternalError);
+        }
+
+        // Session is stale, execute the reopen under the lock.
+        // If it succeeds, update the session's last_restore_epoch.
+        let result = f()?;
+        inner.last_restore_epoch = part_restore_epoch;
+        Ok(Some(result))
+    }
+
+    /// Returns the partition handle associated with this session.
+    pub(crate) fn partition(&self) -> HsmPartition {
+        self.inner.read().partition().clone()
+    }
+
+    /// Returns the 48-byte session seed needed for `reopen_session`.
+    pub(crate) fn seed(&self) -> [u8; 48] {
+        self.inner.read().seed
+    }
+
+    /// Returns a clone of the backed-up session masking key.
+    pub(crate) fn bmk_session(&self) -> Vec<u8> {
+        self.inner.read().bmk_session.clone()
+    }
+
+    /// Updates the backed-up session masking key after a successful reopen.
+    pub(crate) fn set_bmk_session(&self, bmk_session: Vec<u8>) {
+        self.inner.write().bmk_session = bmk_session;
+    }
 }
 
 /// HSM session handle.
@@ -50,12 +122,26 @@ impl HsmSession {
 /// Represents an active authenticated session with an HSM partition. Each session
 /// is associated with a specific application ID and provides the context for
 /// cryptographic operations within the partition.
+///
+/// The `last_restore_epoch` field tracks the most recent partition restore
+/// epoch that this session has been reopened for, enabling per-session
+/// staleness detection during key operations.
 #[derive(Debug)]
 struct HsmSessionInner {
     id: u16,
     _app_id: u8,
     rev: HsmApiRev,
     partition: HsmPartition,
+    /// The partition restore epoch at which this session was last reopened.
+    /// Compared against `ResiliencyState::restore_epoch` to decide whether
+    /// a `reopen_session` call is needed before retrying a key operation.
+    last_restore_epoch: u64,
+    /// The 48-byte random seed used for credential encryption during
+    /// `open_session`. Needed by `reopen_session` after a resiliency event.
+    seed: [u8; 48],
+    /// Backed-up session masking key returned by the device.
+    /// Updated after each successful `reopen_session` call.
+    bmk_session: Vec<u8>,
 }
 
 impl Drop for HsmSessionInner {
@@ -65,7 +151,6 @@ impl Drop for HsmSessionInner {
     /// session connection when the `HsmSession` goes out of scope.
     #[instrument(skip_all, fields(session_id = self.id))]
     fn drop(&mut self) {
-        // Session cleanup logic can be added here if needed.
         let _ = self.with_dev(|dev| ddi::close_session(dev, self.id, self.rev));
     }
 }
@@ -84,12 +169,23 @@ impl HsmSessionInner {
     ///
     /// A new `HsmSession` instance.
     #[instrument(skip_all, fields(session_id = id))]
-    pub(crate) fn new(id: u16, app_id: u8, rev: HsmApiRev, partition: HsmPartition) -> Self {
+    pub(crate) fn new(
+        id: u16,
+        app_id: u8,
+        rev: HsmApiRev,
+        partition: HsmPartition,
+        seed: [u8; 48],
+        bmk_session: Vec<u8>,
+    ) -> Self {
+        let epoch = partition.restore_epoch();
         Self {
             id,
             _app_id: app_id,
             rev,
             partition,
+            last_restore_epoch: epoch,
+            seed,
+            bmk_session,
         }
     }
 
@@ -153,5 +249,11 @@ impl HsmSessionInner {
         let part = self.partition().inner().read();
         let dev = part.dev();
         f(dev)
+    }
+
+    /// Returns the partition restore epoch at which this session was last
+    /// reopened.
+    pub(crate) fn last_restore_epoch(&self) -> u64 {
+        self.last_restore_epoch
     }
 }
