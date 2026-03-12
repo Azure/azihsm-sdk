@@ -71,7 +71,7 @@ The provider consists of two shared libraries. `libazihsm_api_native.so` (the Ru
 
 ```bash
 # 1. Build a static OpenSSL
-OPENSSL_VERSION=3.0.16
+OPENSSL_VERSION=3.0.3
 curl -fsSL "https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VERSION}/openssl-${OPENSSL_VERSION}.tar.gz" \
     | tar xz -C /tmp
 cd /tmp/openssl-${OPENSSL_VERSION}
