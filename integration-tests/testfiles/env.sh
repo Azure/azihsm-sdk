@@ -43,3 +43,36 @@ if [ -z "${OPENSSL_LIB+x}" ]; then
 fi
 
 export LD_LIBRARY_PATH="$OPENSSL_LIB"
+
+# --- Credentials via hex env vars (preferred) ---
+# The provider reads credentials from these env vars first, falling back to
+# default files in CWD if unset.  Values match the mock HSM's test credentials.
+export AZIHSM_CREDENTIALS_ID="${AZIHSM_CREDENTIALS_ID:-70fcf730b8764238b8358010ce8a3f76}"
+export AZIHSM_CREDENTIALS_PIN="${AZIHSM_CREDENTIALS_PIN:-db3dc77fc22e430080d41b31b6f04800}"
+
+# --- Generate dev key material if not present ---
+# Credential files are kept as fallback for any path that unsets the env vars.
+# OBK and POTA files are always required.
+
+if [ ! -f credentials_id.bin ]; then
+    printf '\x70\xFC\xF7\x30\xB8\x76\x42\x38\xB8\x35\x80\x10\xCE\x8A\x3F\x76' > credentials_id.bin
+    chmod 600 credentials_id.bin
+fi
+
+if [ ! -f credentials_pin.bin ]; then
+    printf '\xDB\x3D\xC7\x7F\xC2\x2E\x43\x00\x80\xD4\x1B\x31\xB6\xF0\x48\x00' > credentials_pin.bin
+    chmod 600 credentials_pin.bin
+fi
+
+if [ ! -f obk.bin ]; then
+    "$OPENSSL_BIN" rand -out obk.bin 48
+    chmod 600 obk.bin
+fi
+
+if [ ! -f pota_private_key.der ]; then
+    "$OPENSSL_BIN" ecparam -name secp384r1 -genkey -noout \
+        | "$OPENSSL_BIN" ec -outform DER -out pota_private_key.der 2>/dev/null
+    "$OPENSSL_BIN" ec -in pota_private_key.der -inform DER \
+        -pubout -outform DER -out pota_public_key.der 2>/dev/null
+    chmod 600 pota_private_key.der pota_public_key.der
+fi

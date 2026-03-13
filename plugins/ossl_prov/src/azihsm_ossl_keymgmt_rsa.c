@@ -1,19 +1,18 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-#include <fcntl.h>
 #include <openssl/core_dispatch.h>
 #include <openssl/core_names.h>
 #include <openssl/err.h>
 #include <openssl/params.h>
 #include <openssl/proverr.h>
 #include <string.h>
-#include <sys/stat.h>
-#include <unistd.h>
 
 #include "azihsm_ossl_base.h"
+#include "azihsm_ossl_file_io.h"
 #include "azihsm_ossl_helpers.h"
 #include "azihsm_ossl_hsm.h"
+#include "azihsm_ossl_masked_key.h"
 #include "azihsm_ossl_pkey_param.h"
 #include "azihsm_ossl_rsa.h"
 
@@ -36,9 +35,12 @@
  *   @azihsm.key_usage
  *   Description: Key usage type for the key pair
  *   Accepted values: digitalSignature (private: sign, public: verify)
+ *                    keyWrapping (export HSM's internal unwrapping public key;
+ *                                rsa_keygen_bits must be 2048 or omitted)
  *   Default value: digitalSignature
  *   Example:
  *      -pkeyopt azihsm.key_usage:digitalSignature
+ *      -pkeyopt azihsm.key_usage:keyWrapping
  *
  *   @azihsm.session
  *   Description: Whether to create a session key or persistent key
@@ -73,6 +75,7 @@
 
 #define AIHSM_RSA_PUBKEY_BITS_MIN 2048
 #define AIHSM_RSA_PUBKEY_BITS_DEFAULT AIHSM_RSA_PUBKEY_BITS_MIN
+#define AIHSM_RSA_WRAPPING_KEY_BITS 2048
 
 #define AIHSM_KEY_USAGE_DEFAULT KEY_USAGE_DIGITAL_SIGNATURE
 
@@ -113,6 +116,52 @@ static AZIHSM_RSA_KEY *azihsm_ossl_keymgmt_gen(
     const azihsm_key_class priv_class = AZIHSM_KEY_CLASS_PRIVATE;
     const azihsm_key_class pub_class = AZIHSM_KEY_CLASS_PUBLIC;
     const azihsm_key_kind key_kind = AZIHSM_KEY_KIND_RSA;
+
+    /*
+     * keyWrapping usage: retrieve the HSM's internal unwrapping key pair.
+     * This key is generated and cached by the HSM — we only expose the public half
+     * so callers can export it for offline key wrapping (RSA-AES Key Wrap).
+     */
+    if (genctx->key_usage == KEY_USAGE_KEY_WRAPPING)
+    {
+        azihsm_handle wrap_pub = 0, wrap_priv = 0;
+
+        /* The HSM's unwrapping key is fixed at 2048 bits. Reject mismatched sizes
+         * so that keymgmt_get_params() reports the correct bit length. */
+        if (genctx->pubkey_bits != AIHSM_RSA_WRAPPING_KEY_BITS)
+        {
+            ERR_raise_data(
+                ERR_LIB_PROV,
+                PROV_R_KEY_SIZE_TOO_SMALL,
+                "keyWrapping usage requires rsa_keygen_bits=%u "
+                "(the HSM unwrapping key is fixed at %u bits)",
+                AIHSM_RSA_WRAPPING_KEY_BITS,
+                AIHSM_RSA_WRAPPING_KEY_BITS
+            );
+            return NULL;
+        }
+
+        status = azihsm_get_unwrapping_key(genctx->provctx, &wrap_pub, &wrap_priv);
+        if (status != AZIHSM_STATUS_SUCCESS)
+        {
+            ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GENERATE_KEY);
+            return NULL;
+        }
+
+        if ((rsa_key = OPENSSL_zalloc(sizeof(AZIHSM_RSA_KEY))) == NULL)
+        {
+            ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
+            return NULL;
+        }
+
+        rsa_key->genctx = *genctx;
+        rsa_key->key.pub = wrap_pub;
+        rsa_key->has_public = true;
+        rsa_key->key.priv = 0;
+        rsa_key->has_private = false;
+
+        return rsa_key;
+    }
 
     /*
      * The HSM cannot generate RSA keys natively.
@@ -275,46 +324,17 @@ static AZIHSM_RSA_KEY *azihsm_ossl_keymgmt_gen(
             }
 
             /* Write masked key to file with restricted permissions (owner-only) */
-            int fd = open(
-                genctx->masked_key_file,
-                O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW,
-                S_IRUSR | S_IWUSR
-            );
-            if (fd < 0)
+            if (azihsm_ossl_write_masked_key_to_file(
+                    masked_key_buffer,
+                    prop.len,
+                    genctx->masked_key_file
+                ) != OSSL_SUCCESS)
             {
                 azihsm_key_delete(private);
                 azihsm_key_delete(public);
                 OPENSSL_cleanse(masked_key_buffer, masked_key_buffer_size);
                 OPENSSL_free(masked_key_buffer);
                 OPENSSL_free(rsa_key);
-                ERR_raise(ERR_LIB_PROV, ERR_R_OPERATION_FAIL);
-                return NULL;
-            }
-
-            FILE *f = fdopen(fd, "wb");
-            if (f == NULL)
-            {
-                close(fd);
-                azihsm_key_delete(private);
-                azihsm_key_delete(public);
-                OPENSSL_cleanse(masked_key_buffer, masked_key_buffer_size);
-                OPENSSL_free(masked_key_buffer);
-                OPENSSL_free(rsa_key);
-                ERR_raise(ERR_LIB_PROV, ERR_R_OPERATION_FAIL);
-                return NULL;
-            }
-
-            size_t written = fwrite(masked_key_buffer, 1, prop.len, f);
-            fclose(f);
-
-            if (written != prop.len)
-            {
-                azihsm_key_delete(private);
-                azihsm_key_delete(public);
-                OPENSSL_cleanse(masked_key_buffer, masked_key_buffer_size);
-                OPENSSL_free(masked_key_buffer);
-                OPENSSL_free(rsa_key);
-                ERR_raise(ERR_LIB_PROV, ERR_R_OPERATION_FAIL);
                 return NULL;
             }
 

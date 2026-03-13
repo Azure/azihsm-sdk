@@ -1,7 +1,13 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+use azihsm_crypto::Rng;
+
 use super::*;
+
+// ================================
+// Helpers
+// ================================
 
 fn get_rsa_unwrapping_key_pair(session: &HsmSession) -> (HsmRsaPrivateKey, HsmRsaPublicKey) {
     let priv_key_props = HsmKeyPropsBuilder::default()
@@ -276,6 +282,23 @@ fn build_xts_wrapped_blob(
     blob
 }
 
+// Validate the unwrapped key is usable for AES-XTS encryption/decryption.
+
+fn tweak_after_units(tweak: &[u8; 16], units: usize) -> [u8; 16] {
+    u128::from_le_bytes(*tweak)
+        .checked_add(units as u128)
+        .expect("tweak increment overflow")
+        .to_le_bytes()
+}
+
+fn test_iv(size: usize) -> Vec<u8> {
+    Rng::rand_vec(size).expect("RNG failure generating IV")
+}
+
+// ================================
+// AES Key Tests
+// ================================
+
 /// Test AES key generation.
 ///
 /// Verifies that an AES-256  key can be successfully generated within
@@ -318,51 +341,705 @@ fn test_token_aes_key_generation(session: HsmSession) {
     HsmKeyManager::delete_key(key).expect("Failed to delete AES-CBC key");
 }
 
+/// Test AES key generation for key sizes of 128
 #[session_test]
 fn test_session_aes_128_key_generation(session: HsmSession) {
     test_session_aes_key_generation_common(&session, 128);
 }
 
+/// Test AES key generation for key sizes of 192
 #[session_test]
 fn test_session_aes_192_key_generation(session: HsmSession) {
     test_session_aes_key_generation_common(&session, 192);
 }
 
+/// Test AES key generation for key sizes of 256    
 #[session_test]
 fn test_session_aes_256_key_generation(session: HsmSession) {
     test_session_aes_key_generation_common(&session, 256);
 }
 
+/// Test AES key unwrapping for key sizes of 128
 #[session_test]
 fn test_aes_128_key_unwrap(session: HsmSession) {
     test_aes_key_unwrap_common(&session, 128, false);
 }
 
+/// Test AES key unwrapping for key sizes of 192
 #[session_test]
 fn test_aes_192_key_unwrap(session: HsmSession) {
     test_aes_key_unwrap_common(&session, 192, false);
 }
 
+/// Test AES key unwrapping for key sizes of 256
 #[session_test]
 fn test_aes_256_key_unwrap(session: HsmSession) {
     test_aes_key_unwrap_common(&session, 256, true);
 }
 
+/// Test AES key unmasking for key sizes of 128
 #[session_test]
 fn test_aes_128_key_unmask(session: HsmSession) {
     test_aes_key_unmask_common(&session, 128);
 }
 
+/// Test AES key unmasking for key sizes of 192
 #[session_test]
 fn test_aes_192_key_unmask(session: HsmSession) {
     test_aes_key_unmask_common(&session, 192);
 }
 
+/// Test AES key unmasking for key sizes of 256
 #[session_test]
 fn test_aes_256_key_unmask(session: HsmSession) {
     test_aes_key_unmask_common(&session, 256);
 }
 
+/// verifies AES key unwrap fails when wrapped blob is corrupted
+#[session_test]
+fn test_aes_key_unwrap_corrupted_fails(session: HsmSession) {
+    let (priv_key, pub_key) = get_rsa_unwrapping_key_pair(&session);
+
+    let key_bytes = 32;
+    let aes_key = vec![0x55u8; key_bytes];
+
+    let mut wrap_algo = HsmRsaAesWrapAlgo::new(HsmHashAlgo::Sha256, key_bytes);
+
+    let mut wrapped = HsmEncrypter::encrypt_vec(&mut wrap_algo, &pub_key, &aes_key)
+        .expect("Failed to wrap AES key");
+
+    wrapped[0] ^= 0xFF; // corrupt
+
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::Aes)
+        .bits(256)
+        .can_encrypt(true)
+        .can_decrypt(true)
+        .build()
+        .unwrap();
+
+    let mut unwrap_algo = HsmAesKeyRsaAesKeyUnwrapAlgo::new(HsmHashAlgo::Sha256);
+
+    let result = HsmKeyManager::unwrap_key(&mut unwrap_algo, &priv_key, &wrapped, props);
+
+    assert!(result.is_err());
+}
+
+/// verifies AES key unmask fails when unmasking with corrupted masked blob
+#[session_test]
+fn test_aes_unmask_corrupted_blob_fails(session: HsmSession) {
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::Aes)
+        .bits(256)
+        .can_encrypt(true)
+        .can_decrypt(true)
+        .is_session(true)
+        .build()
+        .unwrap();
+
+    let mut gen_algo = HsmAesKeyGenAlgo::default();
+    let key = HsmKeyManager::generate_key(&session, &mut gen_algo, props).unwrap();
+
+    let mut masked = key.masked_key_vec().unwrap();
+    masked[0] ^= 0xFF; // corrupt
+
+    let mut algo = HsmAesKeyUnmaskAlgo::default();
+
+    let result = HsmKeyManager::unmask_key(&session, &mut algo, &masked);
+
+    assert!(result.is_err());
+
+    HsmKeyManager::delete_key(key).unwrap();
+}
+
+/// verifies AES key unwrap fails when unwrapping with wrong algorithm type
+#[session_test]
+fn test_aes_unwrap_wrong_algo_fails(session: HsmSession) {
+    let (priv_key, pub_key) = get_rsa_unwrapping_key_pair(&session);
+
+    let key_bytes = 32;
+    let aes_key = vec![0x11u8; key_bytes];
+
+    let mut wrap_algo = HsmRsaAesWrapAlgo::new(HsmHashAlgo::Sha256, key_bytes);
+    let wrapped = HsmEncrypter::encrypt_vec(&mut wrap_algo, &pub_key, &aes_key).unwrap();
+
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::Aes)
+        .bits(256)
+        .can_encrypt(true)
+        .can_decrypt(true)
+        .build()
+        .unwrap();
+
+    // wrong unwrap algorithm
+    let mut wrong_algo = HsmAesGcmKeyRsaAesKeyUnwrapAlgo::new(HsmHashAlgo::Sha256);
+
+    let result = HsmKeyManager::unwrap_key(&mut wrong_algo, &priv_key, &wrapped, props);
+
+    assert!(result.is_err());
+}
+
+/// verifies AES key unmasking produces a usable key that can encrypt and decrypt,
+/// and that the unmasked key is independent of the original key by deleting the
+/// original key before using the unmasked key
+#[session_test]
+fn test_aes_unmasked_key_independent_handle(session: HsmSession) {
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::Aes)
+        .bits(256)
+        .can_encrypt(true)
+        .can_decrypt(true)
+        .is_session(true)
+        .build()
+        .unwrap();
+
+    let mut gen_algo = HsmAesKeyGenAlgo::default();
+    let original = HsmKeyManager::generate_key(&session, &mut gen_algo, props).unwrap();
+
+    let masked = original.masked_key_vec().unwrap();
+
+    let mut unmask_algo = HsmAesKeyUnmaskAlgo::default();
+    let unmasked = HsmKeyManager::unmask_key(&session, &mut unmask_algo, &masked).unwrap();
+
+    // delete original first
+    HsmKeyManager::delete_key(original).unwrap();
+
+    // unmasked key should still work
+    let plaintext = vec![0x11u8; 32];
+
+    let mut enc_algo = HsmAesCbcAlgo::with_padding(test_iv(16)).unwrap();
+    let len = HsmEncrypter::encrypt(&mut enc_algo, &unmasked, &plaintext, None).unwrap();
+    let mut out = vec![0u8; len];
+
+    let result = HsmEncrypter::encrypt(&mut enc_algo, &unmasked, &plaintext, Some(&mut out));
+
+    assert!(result.is_ok());
+
+    HsmKeyManager::delete_key(unmasked).unwrap();
+}
+
+/// verifies AES key unwrap fails when unwrapping with truncated wrapped blob   
+#[session_test]
+fn test_aes_unwrap_truncated_blob_fails(session: HsmSession) {
+    let (priv_key, pub_key) = get_rsa_unwrapping_key_pair(&session);
+
+    let aes_key = vec![0x11u8; 32];
+
+    let mut wrap_algo = HsmRsaAesWrapAlgo::new(HsmHashAlgo::Sha256, 32);
+
+    let mut wrapped = HsmEncrypter::encrypt_vec(&mut wrap_algo, &pub_key, &aes_key).unwrap();
+
+    // truncate blob
+    wrapped.truncate(wrapped.len() - 8);
+
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::Aes)
+        .bits(256)
+        .can_encrypt(true)
+        .can_decrypt(true)
+        .build()
+        .unwrap();
+
+    let mut unwrap_algo = HsmAesKeyRsaAesKeyUnwrapAlgo::new(HsmHashAlgo::Sha256);
+
+    let result = HsmKeyManager::unwrap_key(&mut unwrap_algo, &priv_key, &wrapped, props);
+
+    assert!(result.is_err());
+}
+
+/// verifies AES key generation fails when unsupported capabilities are set in properties
+#[session_test]
+fn test_aes_key_gen_with_sign_flag_fails(session: HsmSession) {
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::Aes)
+        .bits(256)
+        .can_encrypt(true)
+        .can_decrypt(true)
+        .can_sign(true) // invalid for AES
+        .is_session(true)
+        .build()
+        .unwrap();
+
+    let mut algo = HsmAesKeyGenAlgo::default();
+
+    let result = HsmKeyManager::generate_key(&session, &mut algo, props);
+
+    assert!(
+        matches!(result, Err(HsmError::InvalidKeyProps)),
+        "AES key generation should reject sign capability"
+    );
+}
+
+/// verifies AES key generation fails when unsupported capabilities are set in properties
+#[session_test]
+fn test_aes_key_gen_with_verify_flag_fails(session: HsmSession) {
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::Aes)
+        .bits(256)
+        .can_encrypt(true)
+        .can_decrypt(true)
+        .can_verify(true) // invalid
+        .is_session(true)
+        .build()
+        .unwrap();
+
+    let mut algo = HsmAesKeyGenAlgo::default();
+
+    let result = HsmKeyManager::generate_key(&session, &mut algo, props);
+
+    assert!(
+        matches!(result, Err(HsmError::InvalidKeyProps)),
+        "AES key generation should reject verify capability"
+    );
+}
+
+/// verifies AES key generation fails when unsupported capabilities are set in properties
+#[session_test]
+fn test_aes_key_gen_with_wrap_flag_fails(session: HsmSession) {
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::Aes)
+        .bits(256)
+        .can_encrypt(true)
+        .can_decrypt(true)
+        .can_wrap(true) // invalid
+        .is_session(true)
+        .build()
+        .unwrap();
+
+    let mut algo = HsmAesKeyGenAlgo::default();
+
+    let result = HsmKeyManager::generate_key(&session, &mut algo, props);
+
+    assert!(
+        matches!(result, Err(HsmError::InvalidKeyProps)),
+        "AES key generation should reject wrap capability"
+    );
+}
+
+/// verifies AES key generation fails when unsupported capabilities are set in properties
+#[session_test]
+fn test_aes_key_gen_with_unwrap_flag_fails(session: HsmSession) {
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::Aes)
+        .bits(256)
+        .can_encrypt(true)
+        .can_decrypt(true)
+        .can_unwrap(true) // invalid
+        .is_session(true)
+        .build()
+        .unwrap();
+
+    let mut algo = HsmAesKeyGenAlgo::default();
+
+    let result = HsmKeyManager::generate_key(&session, &mut algo, props);
+
+    assert!(
+        matches!(result, Err(HsmError::InvalidKeyProps)),
+        "AES key generation should reject unwrap capability"
+    );
+}
+
+/// verifies AES key generation fails when unsupported capabilities are set in properties
+#[session_test]
+fn test_aes_key_gen_with_derive_flag_fails(session: HsmSession) {
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::Aes)
+        .bits(256)
+        .can_encrypt(true)
+        .can_decrypt(true)
+        .can_derive(true) // invalid
+        .is_session(true)
+        .build()
+        .unwrap();
+
+    let mut algo = HsmAesKeyGenAlgo::default();
+
+    let result = HsmKeyManager::generate_key(&session, &mut algo, props);
+
+    assert!(
+        matches!(result, Err(HsmError::InvalidKeyProps)),
+        "AES key generation should reject derive capability"
+    );
+}
+
+/// verifies AES key generation fails when multiple unsupported capabilities are set
+/// in properties
+#[session_test]
+fn test_aes_key_gen_multiple_invalid_flags_fail(session: HsmSession) {
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::Aes)
+        .bits(256)
+        .can_encrypt(true)
+        .can_decrypt(true)
+        .can_sign(true)
+        .can_wrap(true)
+        .can_derive(true)
+        .is_session(true)
+        .build()
+        .unwrap();
+
+    let mut algo = HsmAesKeyGenAlgo::default();
+
+    let result = HsmKeyManager::generate_key(&session, &mut algo, props);
+
+    assert!(
+        matches!(result, Err(HsmError::InvalidKeyProps)),
+        "AES key generation should reject unsupported capability combinations"
+    );
+}
+
+/// verifies AES key generation rejects keys with only unsupported capabilities
+#[session_test]
+fn test_aes_key_gen_only_invalid_capabilities(session: HsmSession) {
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::Aes)
+        .bits(256)
+        .can_sign(true)
+        .can_verify(true)
+        .can_wrap(true)
+        .can_unwrap(true)
+        .can_derive(true)
+        .is_session(true)
+        .build()
+        .unwrap();
+
+    let mut algo = HsmAesKeyGenAlgo::default();
+
+    let result = HsmKeyManager::generate_key(&session, &mut algo, props);
+
+    assert!(
+        matches!(result, Err(HsmError::InvalidKeyProps)),
+        "AES key generation should reject unsupported capability-only keys"
+    );
+}
+
+/// verifies invalid flags are rejected even if encrypt/decrypt permissions are missing
+#[session_test]
+fn test_aes_key_gen_invalid_flags_without_crypto_permissions(session: HsmSession) {
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::Aes)
+        .bits(256)
+        .can_sign(true)
+        .can_wrap(true)
+        .is_session(true)
+        .build()
+        .unwrap();
+
+    let mut algo = HsmAesKeyGenAlgo::default();
+
+    let result = HsmKeyManager::generate_key(&session, &mut algo, props);
+
+    assert!(
+        matches!(result, Err(HsmError::InvalidKeyProps)),
+        "AES key generation should reject invalid flags even without encrypt/decrypt"
+    );
+}
+
+/// verifies AES key generation rejects combinations of unsupported capability flags
+#[session_test]
+fn test_aes_key_gen_multiple_invalid_capabilities(session: HsmSession) {
+    let invalid_flag_sets = [
+        (true, false, false, false, false), // sign
+        (false, true, false, false, false), // verify
+        (false, false, true, false, false), // wrap
+        (false, false, false, true, false), // unwrap
+        (false, false, false, false, true), // derive
+        (true, true, false, false, false),
+        (true, false, true, false, false),
+        (true, false, false, true, false),
+        (true, false, false, false, true),
+        (false, true, true, false, false),
+        (false, true, false, true, false),
+        (false, true, false, false, true),
+        (false, false, true, true, false),
+        (false, false, true, false, true),
+        (false, false, false, true, true),
+        (true, true, true, true, true),
+    ];
+
+    for (sign, verify, wrap, unwrap, derive) in invalid_flag_sets {
+        let props = HsmKeyPropsBuilder::default()
+            .class(HsmKeyClass::Secret)
+            .key_kind(HsmKeyKind::Aes)
+            .bits(256)
+            .can_encrypt(true)
+            .can_decrypt(true)
+            .can_sign(sign)
+            .can_verify(verify)
+            .can_wrap(wrap)
+            .can_unwrap(unwrap)
+            .can_derive(derive)
+            .is_session(true)
+            .build()
+            .unwrap();
+
+        let mut algo = HsmAesKeyGenAlgo::default();
+
+        let result = HsmKeyManager::generate_key(&session, &mut algo, props);
+
+        assert!(
+            matches!(result, Err(HsmError::InvalidKeyProps)),
+            "AES key generation should reject invalid capability combination: \
+             sign={sign}, verify={verify}, wrap={wrap}, unwrap={unwrap}, derive={derive}"
+        );
+    }
+}
+
+/// verifies AES key generation fails when unsupported capabilities are set in properties
+#[session_test]
+fn test_aes_key_gen_no_decrypt_flag_fails(session: HsmSession) {
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::Aes)
+        .bits(256)
+        .can_encrypt(true)
+        .can_decrypt(false)
+        .is_session(true)
+        .build()
+        .unwrap();
+
+    let mut algo = HsmAesKeyGenAlgo::default();
+
+    let result = HsmKeyManager::generate_key(&session, &mut algo, props);
+
+    assert!(
+        result.is_err(),
+        "AES key generation should fail without decrypt permission"
+    );
+}
+
+/// verifies AES key unwrap fails when unwrapping with mismatched bits in properties
+#[session_test]
+fn test_aes_unwrap_bits_mismatch_fails(session: HsmSession) {
+    let (priv_key, pub_key) = get_rsa_unwrapping_key_pair(&session);
+
+    let aes_key = vec![0x11u8; 32]; // 256-bit
+
+    let mut wrap_algo = HsmRsaAesWrapAlgo::new(HsmHashAlgo::Sha256, 32);
+
+    let wrapped = HsmEncrypter::encrypt_vec(&mut wrap_algo, &pub_key, &aes_key).unwrap();
+
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::Aes)
+        .bits(128) // wrong size
+        .can_encrypt(true)
+        .can_decrypt(true)
+        .build()
+        .unwrap();
+
+    let mut unwrap_algo = HsmAesKeyRsaAesKeyUnwrapAlgo::new(HsmHashAlgo::Sha256);
+
+    let result = HsmKeyManager::unwrap_key(&mut unwrap_algo, &priv_key, &wrapped, props);
+
+    assert!(result.is_err());
+}
+
+/// verifies AES-GCM unwrap fails when wrapped blob is truncated
+#[session_test]
+fn test_aes_unmask_wrong_kind_fails(session: HsmSession) {
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::Aes)
+        .bits(256)
+        .can_encrypt(true)
+        .can_decrypt(true)
+        .is_session(true)
+        .build()
+        .unwrap();
+
+    let mut gen_algo = HsmAesKeyGenAlgo::default();
+    let key = HsmKeyManager::generate_key(&session, &mut gen_algo, props).unwrap();
+
+    let masked = key.masked_key_vec().unwrap();
+
+    let mut wrong_unmask_algo = HsmAesGcmKeyUnmaskAlgo::default();
+
+    let result = HsmKeyManager::unmask_key(&session, &mut wrong_unmask_algo, &masked);
+
+    assert!(result.is_err());
+
+    HsmKeyManager::delete_key(key).unwrap();
+}
+
+/// verifies AES-CBC decryption fails when ciphertext padding is corrupted
+#[session_test]
+fn test_aes_cbc_invalid_padding_fails(session: HsmSession) {
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::Aes)
+        .bits(256)
+        .can_encrypt(true)
+        .can_decrypt(true)
+        .is_session(true)
+        .build()
+        .unwrap();
+
+    let mut gen_algo = HsmAesKeyGenAlgo::default();
+    let key = HsmKeyManager::generate_key(&session, &mut gen_algo, props).unwrap();
+
+    let plaintext = vec![0x11u8; 32];
+
+    // Generate IV once
+    let iv = test_iv(16);
+
+    // --- Encrypt ---
+    let mut enc_algo = HsmAesCbcAlgo::with_padding(iv.clone()).unwrap();
+
+    let cipher_len = HsmEncrypter::encrypt(&mut enc_algo, &key, &plaintext, None).unwrap();
+    let mut ciphertext = vec![0u8; cipher_len];
+
+    let written =
+        HsmEncrypter::encrypt(&mut enc_algo, &key, &plaintext, Some(&mut ciphertext)).unwrap();
+
+    ciphertext.truncate(written);
+
+    // Corrupt last byte (padding)
+    if let Some(last) = ciphertext.last_mut() {
+        *last ^= 0xFF;
+    }
+
+    // --- Decrypt ---
+    let mut dec_algo = HsmAesCbcAlgo::with_padding(iv).unwrap();
+
+    let plain_len = HsmDecrypter::decrypt(&mut dec_algo, &key, &ciphertext, None).unwrap();
+    let mut out = vec![0u8; plain_len];
+
+    let result = HsmDecrypter::decrypt(&mut dec_algo, &key, &ciphertext, Some(&mut out));
+
+    assert!(result.is_err());
+
+    HsmKeyManager::delete_key(key).unwrap();
+}
+
+/// verifies AES-CBC decryption fails when decrypting with the wrong key
+#[session_test]
+fn test_aes_cbc_wrong_key_fails(session: HsmSession) {
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::Aes)
+        .bits(256)
+        .can_encrypt(true)
+        .can_decrypt(true)
+        .is_session(true)
+        .build()
+        .unwrap();
+
+    let mut algo = HsmAesKeyGenAlgo::default();
+
+    let key1 = HsmKeyManager::generate_key(&session, &mut algo, props.clone()).unwrap();
+    let key2 = HsmKeyManager::generate_key(&session, &mut algo, props).unwrap();
+
+    let plaintext = vec![0x11u8; 32];
+
+    // Generate IV once
+    let iv = test_iv(16);
+
+    let mut enc = HsmAesCbcAlgo::with_padding(iv.clone()).unwrap();
+
+    let len = HsmEncrypter::encrypt(&mut enc, &key1, &plaintext, None).unwrap();
+    let mut ciphertext = vec![0u8; len];
+
+    HsmEncrypter::encrypt(&mut enc, &key1, &plaintext, Some(&mut ciphertext)).unwrap();
+
+    let mut dec = HsmAesCbcAlgo::with_padding(iv).unwrap();
+
+    let plain_len = HsmDecrypter::decrypt(&mut dec, &key2, &ciphertext, None).unwrap();
+    let mut out = vec![0u8; plain_len];
+
+    let result = HsmDecrypter::decrypt(&mut dec, &key2, &ciphertext, Some(&mut out));
+
+    assert!(result.is_err());
+
+    HsmKeyManager::delete_key(key1).unwrap();
+    HsmKeyManager::delete_key(key2).unwrap();
+}
+
+/// verifies AES-CBC encryption and decryption roundtrip using an unwrapped key
+#[session_test]
+fn test_aes_unwrapped_key_roundtrip(session: HsmSession) {
+    // Generate RSA wrapping key pair
+    let (priv_key, pub_key) = get_rsa_unwrapping_key_pair(&session);
+
+    // AES key material
+    let aes_key_material = vec![0x11u8; 32];
+
+    // Wrap AES key
+    let mut wrap_algo = HsmRsaAesWrapAlgo::new(HsmHashAlgo::Sha256, aes_key_material.len());
+
+    let wrapped = HsmEncrypter::encrypt_vec(&mut wrap_algo, &pub_key, &aes_key_material)
+        .expect("AES key wrap failed");
+
+    // AES key properties
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::Aes)
+        .bits(256)
+        .can_encrypt(true)
+        .can_decrypt(true)
+        .is_session(true)
+        .build()
+        .unwrap();
+
+    // Unwrap AES key
+    let mut unwrap_algo = HsmAesKeyRsaAesKeyUnwrapAlgo::new(HsmHashAlgo::Sha256);
+
+    let aes_key = HsmKeyManager::unwrap_key(&mut unwrap_algo, &priv_key, &wrapped, props)
+        .expect("AES key unwrap failed");
+
+    let plaintext = b"hello aes cbc".to_vec();
+
+    // Generate IV once
+    let iv = test_iv(16);
+
+    // --- Encrypt ---
+    let mut enc = HsmAesCbcAlgo::with_padding(iv.clone()).unwrap();
+
+    let cipher_len = HsmEncrypter::encrypt(&mut enc, &aes_key, &plaintext, None)
+        .expect("encrypt size query failed");
+
+    let mut ciphertext = vec![0u8; cipher_len];
+
+    let written = HsmEncrypter::encrypt(&mut enc, &aes_key, &plaintext, Some(&mut ciphertext))
+        .expect("AES-CBC encryption failed");
+
+    ciphertext.truncate(written);
+
+    // --- Decrypt ---
+    let mut dec = HsmAesCbcAlgo::with_padding(iv).unwrap();
+
+    let plain_len = HsmDecrypter::decrypt(&mut dec, &aes_key, &ciphertext, None)
+        .expect("decrypt size query failed");
+
+    let mut decrypted = vec![0u8; plain_len];
+
+    let written = HsmDecrypter::decrypt(&mut dec, &aes_key, &ciphertext, Some(&mut decrypted))
+        .expect("AES-CBC decryption failed");
+
+    decrypted.truncate(written);
+
+    assert_eq!(plaintext, decrypted);
+
+    let _ = HsmKeyManager::delete_key(aes_key);
+}
+
+// ================================
+// AES XTS Tests
+// ================================
+/// verifies AES-XTS 512-bit key generation succeeds with correct properties and capabilities
 #[session_test]
 fn test_aes_xts_512_key_generation(session: HsmSession) {
     let props = HsmKeyPropsBuilder::default()
@@ -384,6 +1061,7 @@ fn test_aes_xts_512_key_generation(session: HsmSession) {
     assert_eq!(key.can_decrypt(), true, "Key should support decryption");
 }
 
+/// verifies AES-XTS key generation rejects invalid key sizes and returns appropriate error
 #[session_test]
 fn test_aes_xts_key_generation_invalid_sizes_rejected(session: HsmSession) {
     // AES-XTS is only supported for 64-byte keys (512 bits).
@@ -407,15 +1085,7 @@ fn test_aes_xts_key_generation_invalid_sizes_rejected(session: HsmSession) {
     }
 }
 
-// Validate the unwrapped key is usable for AES-XTS encryption/decryption.
-
-fn tweak_after_units(tweak: &[u8; 16], units: usize) -> [u8; 16] {
-    u128::from_le_bytes(*tweak)
-        .checked_add(units as u128)
-        .expect("tweak increment overflow")
-        .to_le_bytes()
-}
-
+/// Test AES-XTS key unwrapping, and validate the unwrapped key can be used for encryption and decryption with correct tweak handling. Also validates that the unwrapped key has expected properties and capabilities, and is not local to the session.
 #[session_test]
 fn test_aes_xts_key_unwrap(session: HsmSession) {
     let (unwrapping_priv_key, unwrapping_pub_key) = get_rsa_unwrapping_key_pair(&session);
@@ -531,6 +1201,9 @@ fn test_aes_xts_key_unwrap(session: HsmSession) {
     );
 }
 
+/// Test AES-XTS key unmasking, and validate the unmasked key can be used for encryption
+/// and decryption with correct tweak handling. Also validates that the unmasked key has
+///  expected properties and capabilities, and is not local to the session.
 #[session_test]
 fn test_aes_xts_key_unmask(session: HsmSession) {
     let props = HsmKeyPropsBuilder::default()
@@ -589,4 +1262,751 @@ fn test_aes_xts_key_unmask(session: HsmSession) {
     assert_eq!(decrypted, plaintext, "XTS roundtrip mismatch");
 
     HsmKeyManager::delete_key(unmasked_key).expect("Failed to delete unmasked AES-XTS key");
+}
+
+/// verifies AES-XTS key unwrap fails when wrapped blob is corrupted
+#[session_test]
+fn test_aes_xts_key_unwrap_corrupted_fails(session: HsmSession) {
+    let (priv_key, pub_key) = get_rsa_unwrapping_key_pair(&session);
+
+    let key_bytes = 32;
+    let key1 = vec![0x11u8; key_bytes];
+    let key2 = vec![0x22u8; key_bytes];
+
+    let mut blob = build_xts_wrapped_blob(&pub_key, HsmHashAlgo::Sha256, &key1, &key2);
+
+    blob[0] ^= 0xFF; // corrupt header
+
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::AesXts)
+        .bits(512)
+        .can_encrypt(true)
+        .can_decrypt(true)
+        .build()
+        .unwrap();
+
+    let mut unwrap_algo = HsmAesXtsKeyRsaAesKeyUnwrapAlgo::new(HsmHashAlgo::Sha256);
+
+    let result = HsmKeyManager::unwrap_key(&mut unwrap_algo, &priv_key, &blob, props);
+
+    assert!(result.is_err());
+}
+
+/// verifies AES-XTS key unwrap fails when unwrapping with wrong algorithm type
+#[session_test]
+fn test_aes_xts_unwrap_wrong_algo_fails(session: HsmSession) {
+    let (priv_key, pub_key) = get_rsa_unwrapping_key_pair(&session);
+
+    let key_bytes = 32;
+    let key1 = vec![0x11u8; key_bytes];
+    let key2 = vec![0x22u8; key_bytes];
+
+    let blob = build_xts_wrapped_blob(&pub_key, HsmHashAlgo::Sha256, &key1, &key2);
+
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::AesXts)
+        .bits(512)
+        .can_encrypt(true)
+        .can_decrypt(true)
+        .build()
+        .unwrap();
+
+    // wrong unwrap algorithm
+    let mut wrong_algo = HsmAesKeyRsaAesKeyUnwrapAlgo::new(HsmHashAlgo::Sha256);
+
+    let result = HsmKeyManager::unwrap_key(&mut wrong_algo, &priv_key, &blob, props);
+
+    assert!(result.is_err());
+}
+
+/// verifies AES-XTS key generation fails when decrypt permission is missing, since XTS mode
+#[session_test]
+fn test_aes_xts_key_gen_no_decrypt_flag_fails(session: HsmSession) {
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::AesXts)
+        .bits(512)
+        .can_encrypt(true)
+        .can_decrypt(false)
+        .is_session(true)
+        .build()
+        .unwrap();
+
+    let mut algo = HsmAesXtsKeyGenAlgo::default();
+
+    let result = HsmKeyManager::generate_key(&session, &mut algo, props);
+
+    assert!(
+        result.is_err(),
+        "AES-XTS key generation should fail without decrypt permission"
+    );
+}
+
+/// verifies AES-XTS key unmasking fails when unmasking with corrupted masked blob
+#[session_test]
+fn test_aes_xts_unmask_corrupted_blob_fails(session: HsmSession) {
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::AesXts)
+        .bits(512)
+        .can_encrypt(true)
+        .can_decrypt(true)
+        .is_session(true)
+        .build()
+        .unwrap();
+
+    let mut gen_algo = HsmAesXtsKeyGenAlgo::default();
+
+    let key = HsmKeyManager::generate_key(&session, &mut gen_algo, props).unwrap();
+
+    let mut masked = key.masked_key_vec().unwrap();
+
+    // corrupt masked blob
+    masked[0] ^= 0xFF;
+
+    let mut algo = HsmAesXtsKeyUnmaskAlgo::default();
+
+    let result = HsmKeyManager::unmask_key(&session, &mut algo, &masked);
+
+    assert!(result.is_err());
+
+    HsmKeyManager::delete_key(key).unwrap();
+}
+
+/// verifies AES-XTS key generation fails when encrypt permission is missing
+#[session_test]
+fn test_aes_xts_key_gen_no_encrypt_flag_fails(session: HsmSession) {
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::AesXts)
+        .bits(512)
+        .can_encrypt(false)
+        .can_decrypt(true)
+        .is_session(true)
+        .build()
+        .unwrap();
+
+    let mut algo = HsmAesXtsKeyGenAlgo::default();
+
+    let result = HsmKeyManager::generate_key(&session, &mut algo, props);
+
+    assert!(
+        result.is_err(),
+        "AES-XTS key generation should fail without encrypt permission"
+    );
+}
+
+/// verifies AES key unmask fails when using the wrong unmask algorithm
+#[session_test]
+fn test_aes_xts_unmask_wrong_kind_fails(session: HsmSession) {
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::AesXts)
+        .bits(512)
+        .can_encrypt(true)
+        .can_decrypt(true)
+        .is_session(true)
+        .build()
+        .unwrap();
+
+    let mut gen_algo = HsmAesXtsKeyGenAlgo::default();
+    let key = HsmKeyManager::generate_key(&session, &mut gen_algo, props).unwrap();
+
+    let masked = key.masked_key_vec().unwrap();
+
+    let mut wrong_unmask_algo = HsmAesKeyUnmaskAlgo::default();
+
+    let result = HsmKeyManager::unmask_key(&session, &mut wrong_unmask_algo, &masked);
+
+    assert!(result.is_err());
+
+    HsmKeyManager::delete_key(key).unwrap();
+}
+
+/// verifies AES-XTS unwrap fails when provided key size does not match wrapped key
+#[session_test]
+fn test_aes_xts_unwrap_bits_mismatch_fails(session: HsmSession) {
+    let (priv_key, pub_key) = get_rsa_unwrapping_key_pair(&session);
+
+    let key1 = vec![0x11u8; 32];
+    let key2 = vec![0x22u8; 32];
+
+    let blob = build_xts_wrapped_blob(&pub_key, HsmHashAlgo::Sha256, &key1, &key2);
+
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::AesXts)
+        .bits(256) // wrong size
+        .can_encrypt(true)
+        .can_decrypt(true)
+        .build()
+        .unwrap();
+
+    let mut unwrap_algo = HsmAesXtsKeyRsaAesKeyUnwrapAlgo::new(HsmHashAlgo::Sha256);
+
+    let result = HsmKeyManager::unwrap_key(&mut unwrap_algo, &priv_key, &blob, props);
+
+    assert!(result.is_err());
+}
+
+/// verifies AES-XTS key unwrap fails when the wrapped blob is truncated
+#[session_test]
+fn test_aes_xts_unwrap_truncated_blob_fails(session: HsmSession) {
+    let (priv_key, pub_key) = get_rsa_unwrapping_key_pair(&session);
+
+    let key1 = vec![0x11u8; 32];
+    let key2 = vec![0x22u8; 32];
+
+    let mut blob = build_xts_wrapped_blob(&pub_key, HsmHashAlgo::Sha256, &key1, &key2);
+
+    blob.truncate(blob.len() - 8);
+
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::AesXts)
+        .bits(512)
+        .can_encrypt(true)
+        .can_decrypt(true)
+        .build()
+        .unwrap();
+
+    let mut unwrap_algo = HsmAesXtsKeyRsaAesKeyUnwrapAlgo::new(HsmHashAlgo::Sha256);
+
+    let result = HsmKeyManager::unwrap_key(&mut unwrap_algo, &priv_key, &blob, props);
+
+    assert!(result.is_err());
+}
+
+// ================================
+// AES GCM Tests
+// ================================
+
+/// Test AES-GCM key generation, and validate the generated key has expected properties
+/// and capabilities.
+#[session_test]
+fn test_aes_gcm_256_key_generation(session: HsmSession) {
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::AesGcm)
+        .bits(256)
+        .can_encrypt(true)
+        .can_decrypt(true)
+        .is_session(true)
+        .build()
+        .expect("Failed to build key props");
+
+    let mut algo = HsmAesGcmKeyGenAlgo::default();
+
+    let key = HsmKeyManager::generate_key(&session, &mut algo, props)
+        .expect("Failed to generate AES-GCM key");
+
+    assert_eq!(key.class(), HsmKeyClass::Secret);
+    assert_eq!(key.kind(), HsmKeyKind::AesGcm);
+    assert_eq!(key.bits(), 256);
+    assert!(key.can_encrypt());
+    assert!(key.can_decrypt());
+
+    HsmKeyManager::delete_key(key).expect("Failed to delete AES-GCM key");
+}
+
+/// Test AES-GCM key unmasking for a 256-bit key, and validate the unmasked key has expected
+/// properties and capabilities, and matches the original key's properties.
+#[session_test]
+fn test_aes_gcm_256_key_unmask(session: HsmSession) {
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::AesGcm)
+        .bits(256)
+        .can_encrypt(true)
+        .can_decrypt(true)
+        .is_session(true)
+        .build()
+        .unwrap();
+
+    let mut gen_algo = HsmAesGcmKeyGenAlgo::default();
+    let original_key = HsmKeyManager::generate_key(&session, &mut gen_algo, props)
+        .expect("Failed to generate AES-GCM key");
+
+    let masked = original_key
+        .masked_key_vec()
+        .expect("Failed to get masked key");
+
+    let mut unmask_algo = HsmAesGcmKeyUnmaskAlgo::default();
+    let unmasked_key = HsmKeyManager::unmask_key(&session, &mut unmask_algo, &masked)
+        .expect("Failed to unmask AES-GCM key");
+
+    assert_eq!(original_key.kind(), unmasked_key.kind());
+    assert_eq!(original_key.bits(), unmasked_key.bits());
+    assert_eq!(original_key.class(), unmasked_key.class());
+
+    HsmKeyManager::delete_key(unmasked_key).unwrap();
+    HsmKeyManager::delete_key(original_key).unwrap();
+}
+
+/// verifies AES-GCM key can be unwrapped using RSA-AES wrapping
+#[session_test]
+fn test_aes_gcm_256_key_unwrap(session: HsmSession) {
+    let (priv_key, pub_key) = get_rsa_unwrapping_key_pair(&session);
+
+    let key_bytes = 32;
+    let aes_key = vec![0x11u8; key_bytes];
+
+    let mut wrap_algo = HsmRsaAesWrapAlgo::new(HsmHashAlgo::Sha256, key_bytes);
+
+    let wrapped = HsmEncrypter::encrypt_vec(&mut wrap_algo, &pub_key, &aes_key)
+        .expect("Failed to wrap AES-GCM key");
+
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::AesGcm)
+        .bits(256)
+        .can_encrypt(true)
+        .can_decrypt(true)
+        .is_session(true)
+        .build()
+        .unwrap();
+
+    let mut unwrap_algo = HsmAesGcmKeyRsaAesKeyUnwrapAlgo::new(HsmHashAlgo::Sha256);
+
+    let key = HsmKeyManager::unwrap_key(&mut unwrap_algo, &priv_key, &wrapped, props)
+        .expect("Failed to unwrap AES-GCM key");
+
+    assert_eq!(key.kind(), HsmKeyKind::AesGcm);
+    assert_eq!(key.bits(), 256);
+
+    HsmKeyManager::delete_key(key).unwrap();
+}
+
+/// verifies AES-GCM key unwrap fails when wrapped blob is corrupted
+#[session_test]
+fn test_aes_gcm_256_key_unwrap_corrupted_fails(session: HsmSession) {
+    let (priv_key, pub_key) = get_rsa_unwrapping_key_pair(&session);
+
+    let key_bytes = 32;
+    let aes_key = vec![0x22u8; key_bytes];
+
+    let mut wrap_algo = HsmRsaAesWrapAlgo::new(HsmHashAlgo::Sha256, key_bytes);
+
+    let mut wrapped = HsmEncrypter::encrypt_vec(&mut wrap_algo, &pub_key, &aes_key)
+        .expect("Failed to wrap AES-GCM key");
+
+    // corrupt data
+    wrapped[0] ^= 0xFF;
+
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::AesGcm)
+        .bits(256)
+        .can_encrypt(true)
+        .can_decrypt(true)
+        .build()
+        .unwrap();
+
+    let mut unwrap_algo = HsmAesGcmKeyRsaAesKeyUnwrapAlgo::new(HsmHashAlgo::Sha256);
+
+    let result = HsmKeyManager::unwrap_key(&mut unwrap_algo, &priv_key, &wrapped, props);
+
+    assert!(result.is_err());
+}
+
+/// verifies AES-GCM encryption and decryption roundtrip using an unwrapped key
+#[session_test]
+fn test_aes_gcm_unwrapped_key_roundtrip(session: HsmSession) {
+    const IV_SIZE: usize = 12;
+    const TAG_SIZE: usize = 16;
+
+    // Generate RSA wrapping key pair
+    let (priv_key, pub_key) = get_rsa_unwrapping_key_pair(&session);
+
+    // AES key material
+    let aes_key_material = vec![0x11u8; 32];
+
+    // Wrap AES key
+    let mut wrap_algo = HsmRsaAesWrapAlgo::new(HsmHashAlgo::Sha256, aes_key_material.len());
+
+    let wrapped = HsmEncrypter::encrypt_vec(&mut wrap_algo, &pub_key, &aes_key_material)
+        .expect("AES key wrap failed");
+
+    // Correct AES-GCM key properties
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::AesGcm)
+        .bits(256)
+        .can_encrypt(true)
+        .can_decrypt(true)
+        .is_session(true)
+        .build()
+        .unwrap();
+
+    // Unwrap AES key
+    let mut unwrap_algo = HsmAesGcmKeyRsaAesKeyUnwrapAlgo::new(HsmHashAlgo::Sha256);
+
+    let aes_key = HsmKeyManager::unwrap_key(&mut unwrap_algo, &priv_key, &wrapped, props)
+        .expect("AES key unwrap failed");
+
+    let iv = [1u8; IV_SIZE];
+    let plaintext = b"hello aes gcm".to_vec();
+
+    // --- Encrypt ---
+    let mut enc = HsmAesGcmAlgo::new_for_encryption(iv.to_vec(), None).unwrap();
+
+    let cipher_len = HsmEncrypter::encrypt(&mut enc, &aes_key, &plaintext, None)
+        .expect("encrypt size query failed");
+
+    let mut ciphertext = vec![0u8; cipher_len];
+
+    let written = HsmEncrypter::encrypt(&mut enc, &aes_key, &plaintext, Some(&mut ciphertext))
+        .expect("AES-GCM encryption failed");
+
+    ciphertext.truncate(written);
+
+    let tag = enc.tag().expect("missing tag").to_vec();
+    assert_eq!(tag.len(), TAG_SIZE);
+
+    // --- Decrypt ---
+    let mut dec = HsmAesGcmAlgo::new_for_decryption(iv.to_vec(), tag, None).unwrap();
+
+    let plain_len = HsmDecrypter::decrypt(&mut dec, &aes_key, &ciphertext, None)
+        .expect("decrypt size query failed");
+
+    let mut decrypted = vec![0u8; plain_len];
+
+    let written = HsmDecrypter::decrypt(&mut dec, &aes_key, &ciphertext, Some(&mut decrypted))
+        .expect("AES-GCM decryption failed");
+
+    decrypted.truncate(written);
+
+    assert_eq!(plaintext, decrypted);
+
+    let _ = HsmKeyManager::delete_key(aes_key);
+}
+
+/// verifies AES-GCM key unmask fails when unmasking with wrong algorithm type
+#[session_test]
+fn test_aes_gcm_unmask_wrong_kind_fails(session: HsmSession) {
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::AesGcm)
+        .bits(256)
+        .can_encrypt(true)
+        .can_decrypt(true)
+        .is_session(true)
+        .build()
+        .unwrap();
+
+    let mut gen_algo = HsmAesGcmKeyGenAlgo::default();
+    let key = HsmKeyManager::generate_key(&session, &mut gen_algo, props).unwrap();
+
+    let masked = key.masked_key_vec().unwrap();
+
+    let mut wrong_unmask_algo = HsmAesKeyUnmaskAlgo::default();
+
+    let result = HsmKeyManager::unmask_key(&session, &mut wrong_unmask_algo, &masked);
+
+    assert!(result.is_err());
+
+    HsmKeyManager::delete_key(key).unwrap();
+}
+
+/// verifies AES-GCM key unmask fails when unmasking with wrong algorithm type
+#[session_test]
+fn test_aes_gcm_key_gen_invalid_bits_fails(session: HsmSession) {
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::AesGcm)
+        .bits(128) // invalid for this generator
+        .can_encrypt(true)
+        .can_decrypt(true)
+        .is_session(true)
+        .build()
+        .unwrap();
+
+    let mut algo = HsmAesGcmKeyGenAlgo::default();
+
+    let result = HsmKeyManager::generate_key(&session, &mut algo, props);
+
+    assert!(
+        result.is_err(),
+        "AES-GCM key generation should fail for invalid key size"
+    );
+}
+
+/// verifies AES-GCM key generation fails when encrypt flag is not set
+#[session_test]
+fn test_aes_gcm_key_gen_no_encrypt_flag_fails(session: HsmSession) {
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::AesGcm)
+        .bits(256)
+        .can_encrypt(false)
+        .can_decrypt(true)
+        .is_session(true)
+        .build()
+        .unwrap();
+
+    let mut algo = HsmAesGcmKeyGenAlgo::default();
+
+    let result = HsmKeyManager::generate_key(&session, &mut algo, props);
+
+    assert!(
+        result.is_err(),
+        "AES-GCM key generation should fail without encrypt permission"
+    );
+}
+
+/// verifies AES-GCM key generation fails when decrypt flag is not set
+#[session_test]
+fn test_aes_gcm_key_gen_no_decrypt_flag_fails(session: HsmSession) {
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::AesGcm)
+        .bits(256)
+        .can_encrypt(true)
+        .can_decrypt(false)
+        .is_session(true)
+        .build()
+        .unwrap();
+
+    let mut algo = HsmAesGcmKeyGenAlgo::default();
+
+    let result = HsmKeyManager::generate_key(&session, &mut algo, props);
+
+    assert!(
+        result.is_err(),
+        "AES-GCM key generation should fail without decrypt permission"
+    );
+}
+
+/// verifies AES-GCM key generation with non-session persistence creates a non-session key
+/// and succeeds with correct properties and capabilities
+#[session_test]
+fn test_aes_gcm_key_gen_persistent(session: HsmSession) {
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::AesGcm)
+        .bits(256)
+        .can_encrypt(true)
+        .can_decrypt(true)
+        .is_session(false)
+        .build()
+        .unwrap();
+
+    let mut algo = HsmAesGcmKeyGenAlgo::default();
+
+    let key =
+        HsmKeyManager::generate_key(&session, &mut algo, props).expect("Key generation failed");
+
+    assert!(!key.is_session());
+
+    let _ = HsmKeyManager::delete_key(key);
+}
+
+/// verifies AES-GCM key unwrap fails when unwrapping with wrong algorithm type
+#[session_test]
+fn test_aes_gcm_unwrap_wrong_algo_fails(session: HsmSession) {
+    let (priv_key, pub_key) = get_rsa_unwrapping_key_pair(&session);
+
+    let key_bytes = 32;
+    let aes_key = vec![0x33u8; key_bytes];
+
+    let mut wrap_algo = HsmRsaAesWrapAlgo::new(HsmHashAlgo::Sha256, key_bytes);
+    let wrapped = HsmEncrypter::encrypt_vec(&mut wrap_algo, &pub_key, &aes_key).unwrap();
+
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::AesGcm)
+        .bits(256)
+        .can_encrypt(true)
+        .can_decrypt(true)
+        .build()
+        .unwrap();
+
+    // wrong unwrap algo
+    let mut wrong_algo = HsmAesKeyRsaAesKeyUnwrapAlgo::new(HsmHashAlgo::Sha256);
+
+    let result = HsmKeyManager::unwrap_key(&mut wrong_algo, &priv_key, &wrapped, props);
+
+    assert!(result.is_err());
+}
+
+/// verifies AES-GCM decryption fails when decrypting with wrong tag
+#[session_test]
+fn test_aes_gcm_wrong_tag_fails(session: HsmSession) {
+    const IV_SIZE: usize = 12;
+
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::AesGcm)
+        .bits(256)
+        .can_encrypt(true)
+        .can_decrypt(true)
+        .is_session(true)
+        .build()
+        .unwrap();
+
+    let mut gen_algo = HsmAesGcmKeyGenAlgo::default();
+    let key = HsmKeyManager::generate_key(&session, &mut gen_algo, props).unwrap();
+
+    let iv = [1u8; IV_SIZE];
+    let plaintext = b"hello world".to_vec();
+
+    // encrypt
+    let mut enc = HsmAesGcmAlgo::new_for_encryption(iv.to_vec(), None).unwrap();
+
+    let cipher_len = HsmEncrypter::encrypt(&mut enc, &key, &plaintext, None).unwrap();
+    let mut ciphertext = vec![0u8; cipher_len];
+
+    let written = HsmEncrypter::encrypt(&mut enc, &key, &plaintext, Some(&mut ciphertext)).unwrap();
+    ciphertext.truncate(written);
+
+    let mut tag = enc.tag().unwrap().to_vec();
+    tag[0] ^= 0xFF; // corrupt tag
+
+    // decrypt
+    let mut dec = HsmAesGcmAlgo::new_for_decryption(iv.to_vec(), tag, None).unwrap();
+
+    // size query (always succeeds)
+    let plain_len = HsmDecrypter::decrypt(&mut dec, &key, &ciphertext, None).unwrap();
+
+    // actual decrypt should fail
+    let mut plaintext_out = vec![0u8; plain_len];
+
+    let result = HsmDecrypter::decrypt(&mut dec, &key, &ciphertext, Some(&mut plaintext_out));
+
+    assert!(result.is_err());
+
+    HsmKeyManager::delete_key(key).unwrap();
+}
+
+/// verifies AES-GCM key unwrap fails when unwrapping with mismatched bits in properties
+#[session_test]
+fn test_aes_gcm_unwrap_bits_mismatch_fails(session: HsmSession) {
+    let (priv_key, pub_key) = get_rsa_unwrapping_key_pair(&session);
+
+    let aes_key = vec![0x11u8; 32];
+
+    let mut wrap_algo = HsmRsaAesWrapAlgo::new(HsmHashAlgo::Sha256, 32);
+
+    let wrapped = HsmEncrypter::encrypt_vec(&mut wrap_algo, &pub_key, &aes_key).unwrap();
+
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::AesGcm)
+        .bits(128) // invalid
+        .can_encrypt(true)
+        .can_decrypt(true)
+        .build()
+        .unwrap();
+
+    let mut unwrap_algo = HsmAesGcmKeyRsaAesKeyUnwrapAlgo::new(HsmHashAlgo::Sha256);
+
+    let result = HsmKeyManager::unwrap_key(&mut unwrap_algo, &priv_key, &wrapped, props);
+
+    assert!(result.is_err());
+}
+
+/// verifies AES-GCM decryption fails when decrypting with wrong key
+#[session_test]
+fn test_aes_gcm_wrong_key_fails(session: HsmSession) {
+    const IV_SIZE: usize = 12;
+
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::AesGcm)
+        .bits(256)
+        .can_encrypt(true)
+        .can_decrypt(true)
+        .is_session(true)
+        .build()
+        .unwrap();
+
+    let mut algo = HsmAesGcmKeyGenAlgo::default();
+
+    let key1 = HsmKeyManager::generate_key(&session, &mut algo, props.clone()).unwrap();
+    let key2 = HsmKeyManager::generate_key(&session, &mut algo, props).unwrap();
+
+    let iv = [1u8; IV_SIZE];
+    let plaintext = b"hello world".to_vec();
+
+    let mut enc = HsmAesGcmAlgo::new_for_encryption(iv.to_vec(), None).unwrap();
+
+    let len = HsmEncrypter::encrypt(&mut enc, &key1, &plaintext, None).unwrap();
+    let mut ciphertext = vec![0u8; len];
+
+    HsmEncrypter::encrypt(&mut enc, &key1, &plaintext, Some(&mut ciphertext)).unwrap();
+
+    let tag = enc.tag().unwrap().to_vec();
+
+    let mut dec = HsmAesGcmAlgo::new_for_decryption(iv.to_vec(), tag, None).unwrap();
+
+    let plain_len = HsmDecrypter::decrypt(&mut dec, &key2, &ciphertext, None).unwrap();
+    let mut plaintext_out = vec![0u8; plain_len];
+
+    let result = HsmDecrypter::decrypt(&mut dec, &key2, &ciphertext, Some(&mut plaintext_out));
+
+    assert!(result.is_err());
+
+    HsmKeyManager::delete_key(key1).unwrap();
+    HsmKeyManager::delete_key(key2).unwrap();
+}
+
+/// verifies AES-GCM key unmasking fails when unmasking with corrupted masked blob
+#[session_test]
+fn test_aes_gcm_unmask_corrupted_blob_fails(session: HsmSession) {
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::AesGcm)
+        .bits(256)
+        .can_encrypt(true)
+        .can_decrypt(true)
+        .is_session(true)
+        .build()
+        .unwrap();
+
+    let mut gen_algo = HsmAesGcmKeyGenAlgo::default();
+    let key = HsmKeyManager::generate_key(&session, &mut gen_algo, props).unwrap();
+
+    let mut masked = key.masked_key_vec().unwrap();
+
+    // corrupt masked blob
+    masked[0] ^= 0xFF;
+
+    let mut algo = HsmAesGcmKeyUnmaskAlgo::default();
+
+    let result = HsmKeyManager::unmask_key(&session, &mut algo, &masked);
+
+    assert!(result.is_err());
+
+    HsmKeyManager::delete_key(key).unwrap();
+}
+
+/// verifies AES-GCM unwrap fails when wrapped blob is truncated
+#[session_test]
+fn test_aes_gcm_unwrap_truncated_blob_fails(session: HsmSession) {
+    let (priv_key, pub_key) = get_rsa_unwrapping_key_pair(&session);
+
+    let aes_key = vec![0x11u8; 32];
+
+    let mut wrap_algo = HsmRsaAesWrapAlgo::new(HsmHashAlgo::Sha256, 32);
+
+    let mut wrapped = HsmEncrypter::encrypt_vec(&mut wrap_algo, &pub_key, &aes_key).unwrap();
+
+    wrapped.truncate(wrapped.len() - 8);
+
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::AesGcm)
+        .bits(256)
+        .can_encrypt(true)
+        .can_decrypt(true)
+        .build()
+        .unwrap();
+
+    let mut unwrap_algo = HsmAesGcmKeyRsaAesKeyUnwrapAlgo::new(HsmHashAlgo::Sha256);
+
+    let result = HsmKeyManager::unwrap_key(&mut unwrap_algo, &priv_key, &wrapped, props);
+
+    assert!(result.is_err());
 }

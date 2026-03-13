@@ -79,6 +79,35 @@ mod tests {
 
     #[test]
     #[serial]
+    fn test_ec_import_wrapped_key() {
+        let curves = vec!["256".to_string(), "384".to_string(), "521".to_string()];
+        let dgst_algos = vec![
+            "sha256".to_string(),
+            "sha384".to_string(),
+            "sha512".to_string(),
+        ];
+
+        for curve in &curves {
+            for dgst in &dgst_algos {
+                lit::run::tests(lit::event_handler::Default::default(), |config| {
+                    config.add_search_path(search_path("testfiles/ec/import_wrapped_key"));
+                    config.add_extension("sh");
+                    config
+                        .constants
+                        .insert("bash".to_owned(), "/bin/bash".to_string());
+                    config.constants.insert("curve".to_owned(), curve.clone());
+                    config.constants.insert("dgst".to_owned(), dgst.to_owned());
+                    config
+                        .constants
+                        .insert("cleanup".to_owned(), CLEANUP.to_string());
+                })
+                .expect("Lit test failed");
+            }
+        }
+    }
+
+    #[test]
+    #[serial]
     fn test_ec_certificate() {
         let curves = vec!["256".to_string(), "384".to_string(), "521".to_string()];
         let dgst_algos = vec![
@@ -370,6 +399,35 @@ mod tests {
                     config
                         .constants
                         .insert("algorithm".to_owned(), algo.clone());
+                    config
+                        .constants
+                        .insert("cleanup".to_owned(), CLEANUP.to_string());
+                })
+                .expect("Lit test failed");
+            }
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_rsa_import_wrapped_key() {
+        let key_bits = vec!["2048".to_string(), "3072".to_string(), "4096".to_string()];
+        let dgst_algos = vec![
+            "sha256".to_string(),
+            "sha384".to_string(),
+            "sha512".to_string(),
+        ];
+
+        for bits in &key_bits {
+            for dgst in &dgst_algos {
+                lit::run::tests(lit::event_handler::Default::default(), |config| {
+                    config.add_search_path(search_path("testfiles/rsa/import_wrapped_key"));
+                    config.add_extension("sh");
+                    config
+                        .constants
+                        .insert("bash".to_owned(), "/bin/bash".to_string());
+                    config.constants.insert("keybits".to_owned(), bits.clone());
+                    config.constants.insert("dgst".to_owned(), dgst.to_owned());
                     config
                         .constants
                         .insert("cleanup".to_owned(), CLEANUP.to_string());

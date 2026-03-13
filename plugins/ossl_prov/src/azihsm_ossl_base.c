@@ -7,6 +7,9 @@
 #include <openssl/evp.h>
 #include <openssl/prov_ssl.h>
 #include <openssl/proverr.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <strings.h>
 
 #include "azihsm_ossl_base.h"
@@ -27,8 +30,6 @@ extern "C"
     {                                                                                              \
         NULL, NULL, NULL, NULL                                                                     \
     }
-
-static OSSL_FUNC_core_get_params_fn *core_get_params;
 
 // Digest
 extern const OSSL_DISPATCH azihsm_ossl_sha1_functions[];
@@ -331,6 +332,333 @@ static const OSSL_DISPATCH azihsm_ossl_base_dispatch[] = {
     { 0, NULL },
 };
 
+/*
+ * Strips the "file:" prefix that OpenSSL prepends to config file path values.
+ * Returns a pointer into the original string (no allocation).
+ */
+static const char *strip_file_prefix(const char *path)
+{
+    if (path != NULL && strncmp(path, "file:", 5) == 0)
+    {
+        return path + 5;
+    }
+    return path;
+}
+
+/*
+ * Validates that the configured API revision falls within the supported range.
+ * Combines major.minor into a single 32-bit value for range comparison.
+ * Returns 1 if valid, 0 otherwise.
+ */
+static int azihsm_api_revision_is_valid(const AZIHSM_CONFIG *config)
+{
+    uint32_t version;
+    uint32_t min_version;
+    uint32_t max_version;
+
+    version = ((uint32_t)config->api_revision_major << 16) | config->api_revision_minor;
+    min_version = ((uint32_t)AZIHSM_API_REVISION_MIN_MAJOR << 16) | AZIHSM_API_REVISION_MIN_MINOR;
+    max_version = ((uint32_t)AZIHSM_API_REVISION_MAX_MAJOR << 16) | AZIHSM_API_REVISION_MAX_MINOR;
+
+    return (version >= min_version && version <= max_version);
+}
+
+/* Returns non-zero if c is a valid hexadecimal digit (0-9, a-f, A-F). */
+static int is_hex_char(char c)
+{
+    return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+}
+
+/*
+ * Decodes a hex-encoded credential string into a binary output buffer.
+ *
+ * The hex string must be exactly AZIHSM_CREDENTIALS_HEX_SIZE characters long
+ * and contain only valid hex digits (0-9, a-f, A-F).  On any error the output
+ * buffer is cleansed and a descriptive message is pushed to the OpenSSL error
+ * stack including the environment variable name for diagnostics.
+ *
+ * Returns OSSL_SUCCESS on success, OSSL_FAILURE on error.
+ */
+static OSSL_STATUS hex_decode_credentials(const char *env_name, const char *hex_str, uint8_t *out)
+{
+    size_t len = strlen(hex_str);
+
+    if (len != AZIHSM_CREDENTIALS_HEX_SIZE)
+    {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            PROV_R_INVALID_CONFIG_DATA,
+            "%s must be exactly %d hex characters, got %zu",
+            env_name,
+            AZIHSM_CREDENTIALS_HEX_SIZE,
+            len
+        );
+        return OSSL_FAILURE;
+    }
+
+    for (size_t i = 0; i < AZIHSM_CREDENTIALS_SIZE; i++)
+    {
+        unsigned int byte_val = 0;
+        char pair[3] = { hex_str[i * 2], hex_str[i * 2 + 1], '\0' };
+
+        if (!is_hex_char(pair[0]) || !is_hex_char(pair[1]))
+        {
+            ERR_raise_data(
+                ERR_LIB_PROV,
+                PROV_R_INVALID_CONFIG_DATA,
+                "%s contains invalid hex character at position %zu",
+                env_name,
+                i * 2
+            );
+            OPENSSL_cleanse(out, AZIHSM_CREDENTIALS_SIZE);
+            return OSSL_FAILURE;
+        }
+
+        sscanf(pair, "%02x", &byte_val);
+        out[i] = (uint8_t)byte_val;
+    }
+
+    return OSSL_SUCCESS;
+}
+
+/* Returns non-zero if path is safe to use as a credential file path. */
+static int azihsm_path_is_safe(const char *path)
+{
+    if (path == NULL || path[0] == '\0')
+    {
+        return 0;
+    }
+    if (strstr(path, "..") != NULL)
+    {
+        return 0;
+    }
+    return 1;
+}
+
+/*
+ * Parses provider configuration from the OpenSSL config file (openssl.cnf)
+ * and environment variables into the provider context's config struct.
+ *
+ * Key paths (BMK, MUK, OBK) are read from openssl.cnf with fallback to defaults.
+ * Credential paths are read from environment variables only (not openssl.cnf) for security.
+ * API revision is parsed from openssl.cnf in "major.minor" format.
+ *
+ * Returns OSSL_SUCCESS on success, OSSL_FAILURE if credential paths are unsafe.
+ */
+static OSSL_STATUS parse_provider_config(
+    AZIHSM_CONFIG *config,
+    const OSSL_CORE_HANDLE *handle,
+    OSSL_FUNC_core_get_params_fn *get_params_fn
+)
+{
+    char *bmk_path = NULL;
+    char *muk_path = NULL;
+    char *obk_path = NULL;
+    char *obk_source = NULL;
+    char *pota_source = NULL;
+    char *pota_private_key_path = NULL;
+    char *pota_public_key_path = NULL;
+    char *api_revision = NULL;
+
+    /* Set defaults for all fields */
+    snprintf(config->bmk_path, sizeof(config->bmk_path), "%s", AZIHSM_DEFAULT_BMK_PATH);
+    snprintf(config->muk_path, sizeof(config->muk_path), "%s", AZIHSM_DEFAULT_MUK_PATH);
+    snprintf(config->obk_path, sizeof(config->obk_path), "%s", AZIHSM_DEFAULT_OBK_PATH);
+    snprintf(
+        config->pota_private_key_path,
+        sizeof(config->pota_private_key_path),
+        "%s",
+        AZIHSM_DEFAULT_POTA_PRIVATE_KEY_PATH
+    );
+    snprintf(
+        config->pota_public_key_path,
+        sizeof(config->pota_public_key_path),
+        "%s",
+        AZIHSM_DEFAULT_POTA_PUBLIC_KEY_PATH
+    );
+    config->api_revision_major = AZIHSM_API_REVISION_DEFAULT_MAJOR;
+    config->api_revision_minor = AZIHSM_API_REVISION_DEFAULT_MINOR;
+    config->use_tpm_obk = false;
+    config->use_tpm_pota = false;
+    config->credentials_id_from_env = false;
+    config->credentials_pin_from_env = false;
+
+    /* Credentials: hex env var (preferred) or default file in CWD (fallback).
+     * ID and PIN resolve independently — one may come from the env var while
+     * the other falls back to the default file. */
+    {
+        const char *id_hex = getenv(AZIHSM_ENV_CREDENTIALS_ID);
+
+        if (id_hex != NULL && id_hex[0] != '\0')
+        {
+            if (hex_decode_credentials(AZIHSM_ENV_CREDENTIALS_ID, id_hex, config->credentials_id) !=
+                OSSL_SUCCESS)
+            {
+                return OSSL_FAILURE;
+            }
+            config->credentials_id_from_env = true;
+        }
+    }
+
+    {
+        const char *pin_hex = getenv(AZIHSM_ENV_CREDENTIALS_PIN);
+
+        if (pin_hex != NULL && pin_hex[0] != '\0')
+        {
+            if (hex_decode_credentials(
+                    AZIHSM_ENV_CREDENTIALS_PIN,
+                    pin_hex,
+                    config->credentials_pin
+                ) != OSSL_SUCCESS)
+            {
+                return OSSL_FAILURE;
+            }
+            config->credentials_pin_from_env = true;
+        }
+    }
+
+    if (get_params_fn == NULL)
+    {
+        return OSSL_SUCCESS;
+    }
+
+    /* Query key paths, source selections, and API revision from openssl.cnf */
+    OSSL_PARAM config_params[] = {
+        OSSL_PARAM_utf8_ptr(AZIHSM_CFG_BMK_PATH, &bmk_path, 0),
+        OSSL_PARAM_utf8_ptr(AZIHSM_CFG_MUK_PATH, &muk_path, 0),
+        OSSL_PARAM_utf8_ptr(AZIHSM_CFG_OBK_PATH, &obk_path, 0),
+        OSSL_PARAM_utf8_ptr(AZIHSM_CFG_OBK_SOURCE, &obk_source, 0),
+        OSSL_PARAM_utf8_ptr(AZIHSM_CFG_POTA_SOURCE, &pota_source, 0),
+        OSSL_PARAM_utf8_ptr(AZIHSM_CFG_POTA_PRIVATE_KEY_PATH, &pota_private_key_path, 0),
+        OSSL_PARAM_utf8_ptr(AZIHSM_CFG_POTA_PUBLIC_KEY_PATH, &pota_public_key_path, 0),
+        OSSL_PARAM_utf8_ptr(AZIHSM_CFG_API_REVISION, &api_revision, 0),
+        OSSL_PARAM_END,
+    };
+
+    if (get_params_fn(handle, config_params) != 1)
+    {
+        return OSSL_SUCCESS;
+    }
+
+    /* Override defaults with configured values, stripping "file:" prefix */
+    if (bmk_path != NULL)
+    {
+        snprintf(config->bmk_path, sizeof(config->bmk_path), "%s", strip_file_prefix(bmk_path));
+    }
+    if (muk_path != NULL)
+    {
+        snprintf(config->muk_path, sizeof(config->muk_path), "%s", strip_file_prefix(muk_path));
+    }
+    if (obk_path != NULL)
+    {
+        snprintf(config->obk_path, sizeof(config->obk_path), "%s", strip_file_prefix(obk_path));
+    }
+    if (pota_private_key_path != NULL)
+    {
+        snprintf(
+            config->pota_private_key_path,
+            sizeof(config->pota_private_key_path),
+            "%s",
+            strip_file_prefix(pota_private_key_path)
+        );
+    }
+    if (pota_public_key_path != NULL)
+    {
+        snprintf(
+            config->pota_public_key_path,
+            sizeof(config->pota_public_key_path),
+            "%s",
+            strip_file_prefix(pota_public_key_path)
+        );
+    }
+
+    /* Validate key-material paths read from openssl.cnf */
+    if (!azihsm_path_is_safe(config->bmk_path))
+    {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            PROV_R_INVALID_CONFIG_DATA,
+            "unsafe BMK path '%s'",
+            config->bmk_path
+        );
+        return OSSL_FAILURE;
+    }
+    if (!azihsm_path_is_safe(config->muk_path))
+    {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            PROV_R_INVALID_CONFIG_DATA,
+            "unsafe MUK path '%s'",
+            config->muk_path
+        );
+        return OSSL_FAILURE;
+    }
+    if (!azihsm_path_is_safe(config->obk_path))
+    {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            PROV_R_INVALID_CONFIG_DATA,
+            "unsafe OBK path '%s'",
+            config->obk_path
+        );
+        return OSSL_FAILURE;
+    }
+    if (!azihsm_path_is_safe(config->pota_private_key_path))
+    {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            PROV_R_INVALID_CONFIG_DATA,
+            "unsafe POTA private key path '%s'",
+            config->pota_private_key_path
+        );
+        return OSSL_FAILURE;
+    }
+    if (!azihsm_path_is_safe(config->pota_public_key_path))
+    {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            PROV_R_INVALID_CONFIG_DATA,
+            "unsafe POTA public key path '%s'",
+            config->pota_public_key_path
+        );
+        return OSSL_FAILURE;
+    }
+
+    /* Parse source selections: "caller" (default) or "tpm" */
+    if (obk_source != NULL && OPENSSL_strcasecmp(obk_source, "tpm") == 0)
+    {
+        config->use_tpm_obk = true;
+    }
+    if (pota_source != NULL && OPENSSL_strcasecmp(pota_source, "tpm") == 0)
+    {
+        config->use_tpm_pota = true;
+    }
+
+    /* Parse API revision in "major.minor" format */
+    if (api_revision != NULL)
+    {
+        unsigned int major = 0;
+        unsigned int minor = 0;
+        if (sscanf(api_revision, "%u.%u", &major, &minor) == 2)
+        {
+            config->api_revision_major = (uint16_t)major;
+            config->api_revision_minor = (uint16_t)minor;
+        }
+        else
+        {
+            ERR_raise_data(
+                ERR_LIB_PROV,
+                PROV_R_INVALID_CONFIG_DATA,
+                "invalid api-revision format '%s', expected 'major.minor' (e.g. '1.0')",
+                api_revision
+            );
+            return OSSL_FAILURE;
+        }
+    }
+
+    return OSSL_SUCCESS;
+}
+
 OSSL_STATUS OSSL_provider_init(
     const OSSL_CORE_HANDLE *handle,
     const OSSL_DISPATCH *in,
@@ -340,6 +668,8 @@ OSSL_STATUS OSSL_provider_init(
 {
     AZIHSM_OSSL_PROV_CTX *ctx;
     azihsm_status status;
+    const OSSL_DISPATCH *in_iter;
+    OSSL_FUNC_core_get_params_fn *get_params_fn = NULL;
 
     if ((ctx = OPENSSL_zalloc(sizeof(AZIHSM_OSSL_PROV_CTX))) == NULL)
     {
@@ -352,6 +682,7 @@ OSSL_STATUS OSSL_provider_init(
 
     if (ctx->libctx == NULL)
     {
+        ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
         OPENSSL_free(ctx);
         return OSSL_FAILURE;
     }
@@ -359,15 +690,50 @@ OSSL_STATUS OSSL_provider_init(
     ctx->unwrapping_key.lock = CRYPTO_THREAD_lock_new();
     if (ctx->unwrapping_key.lock == NULL)
     {
+        ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
         OSSL_LIB_CTX_free(ctx->libctx);
         OPENSSL_free(ctx);
         return OSSL_FAILURE;
     }
 
-    /* Initialize config with hardcoded default paths */
-    snprintf(ctx->config.bmk_path, sizeof(ctx->config.bmk_path), "%s", AZIHSM_DEFAULT_BMK_PATH);
-    snprintf(ctx->config.muk_path, sizeof(ctx->config.muk_path), "%s", AZIHSM_DEFAULT_MUK_PATH);
-    snprintf(ctx->config.obk_path, sizeof(ctx->config.obk_path), "%s", AZIHSM_DEFAULT_OBK_PATH);
+    /* Find get_params_fn from the core dispatch table for config parsing */
+    for (in_iter = in; in_iter->function_id != 0; in_iter++)
+    {
+        if (in_iter->function_id == OSSL_FUNC_CORE_GET_PARAMS)
+        {
+            get_params_fn = OSSL_FUNC_core_get_params(in_iter);
+            break;
+        }
+    }
+
+    /* Parse configuration from openssl.cnf and environment variables */
+    if (parse_provider_config(&ctx->config, handle, get_params_fn) != OSSL_SUCCESS)
+    {
+        CRYPTO_THREAD_lock_free(ctx->unwrapping_key.lock);
+        OSSL_LIB_CTX_free(ctx->libctx);
+        OPENSSL_free(ctx);
+        return OSSL_FAILURE;
+    }
+
+    /* Validate API revision is within supported range */
+    if (!azihsm_api_revision_is_valid(&ctx->config))
+    {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            PROV_R_INVALID_CONFIG_DATA,
+            "API revision %u.%u is outside supported range %u.%u - %u.%u",
+            ctx->config.api_revision_major,
+            ctx->config.api_revision_minor,
+            AZIHSM_API_REVISION_MIN_MAJOR,
+            AZIHSM_API_REVISION_MIN_MINOR,
+            AZIHSM_API_REVISION_MAX_MAJOR,
+            AZIHSM_API_REVISION_MAX_MINOR
+        );
+        CRYPTO_THREAD_lock_free(ctx->unwrapping_key.lock);
+        OSSL_LIB_CTX_free(ctx->libctx);
+        OPENSSL_free(ctx);
+        return OSSL_FAILURE;
+    }
 
     status = azihsm_open_device_and_session(&ctx->config, &ctx->device, &ctx->session);
 
@@ -375,18 +741,10 @@ OSSL_STATUS OSSL_provider_init(
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_INIT_FAIL);
 
+        CRYPTO_THREAD_lock_free(ctx->unwrapping_key.lock);
         OSSL_LIB_CTX_free(ctx->libctx);
         OPENSSL_free(ctx);
         return OSSL_FAILURE;
-    }
-
-    for (; in->function_id != 0; in++)
-    {
-
-        if (in->function_id == OSSL_FUNC_CORE_GET_PARAMS)
-        {
-            core_get_params = OSSL_FUNC_core_get_params(in);
-        }
     }
 
     *provctx = ctx;

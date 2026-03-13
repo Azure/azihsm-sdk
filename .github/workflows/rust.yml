@@ -134,13 +134,27 @@ jobs:
 
     - name: Install provider
       run: |
-        sudo mkdir -p /usr/lib/ossl-modules /var/lib/azihsm
-        sudo chown "$USER" /var/lib/azihsm
+        sudo mkdir -p /usr/lib/ossl-modules
         sudo cp target/debug/azihsm_provider.so /usr/lib/ossl-modules/
         sudo cp target/debug/libazihsm_api_native.so /usr/lib/
         sudo ldconfig
 
+    - name: Generate dev key material
+      run: |
+        # Credential files (fallback if env vars are unset)
+        printf '\x70\xFC\xF7\x30\xB8\x76\x42\x38\xB8\x35\x80\x10\xCE\x8A\x3F\x76' > credentials_id.bin
+        printf '\xDB\x3D\xC7\x7F\xC2\x2E\x43\x00\x80\xD4\x1B\x31\xB6\xF0\x48\x00' > credentials_pin.bin
+        # OBK — 48-byte random owner backup key
+        openssl rand -out obk.bin 48
+        # POTA — P-384 key pair (legacy EC DER + SubjectPublicKeyInfo DER)
+        openssl ecparam -name secp384r1 -genkey -noout | openssl ec -outform DER -out pota_private_key.der 2>/dev/null
+        openssl ec -in pota_private_key.der -inform DER -pubout -outform DER -out pota_public_key.der 2>/dev/null
+        chmod 600 credentials_id.bin credentials_pin.bin obk.bin pota_private_key.der pota_public_key.der
+
     - name: Smoke test provider
+      env:
+        AZIHSM_CREDENTIALS_ID: "70fcf730b8764238b8358010ce8a3f76"
+        AZIHSM_CREDENTIALS_PIN: "db3dc77fc22e430080d41b31b6f04800"
       run: |
         /opt/openssl-3.0.3/bin/openssl genpkey \
           -provider-path /usr/lib/ossl-modules \
@@ -155,6 +169,8 @@ jobs:
         OPENSSL_LIB: ""
         PROVIDER_PATH: /usr/lib/ossl-modules
         PROPQUERY: "?provider=azihsm"
+        AZIHSM_CREDENTIALS_ID: "70fcf730b8764238b8358010ce8a3f76"
+        AZIHSM_CREDENTIALS_PIN: "db3dc77fc22e430080d41b31b6f04800"
       run: cargo xtask precheck --nextest --package integration-tests --features integration --profile ci-provider-integration
 
   build_windows:

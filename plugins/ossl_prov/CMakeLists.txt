@@ -101,6 +101,7 @@ configure_file(
 )
 
 set(AZIHSM_OSSL_SOURCES
+    ./src/azihsm_ossl_file_io.c
     ./src/azihsm_ossl_hsm.c
     ./src/azihsm_ossl_base.c
     ./src/azihsm_ossl_store.c

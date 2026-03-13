@@ -11,6 +11,7 @@
 #include <string.h>
 
 #include "azihsm_ossl_base.h"
+#include "azihsm_ossl_file_io.h"
 #include "azihsm_ossl_helpers.h"
 #include "azihsm_ossl_masked_key.h"
 #include "azihsm_ossl_pkey_param.h"
@@ -94,74 +95,14 @@ static azihsm_algo_id evp_md_to_hmac_algo_id(const EVP_MD *md)
     }
 }
 
-/* Maximum file size for read_file (64KB, consistent with keymgmt) */
-#define MAX_FILE_SIZE (64 * 1024)
-
-/* Helper: Read file contents */
-static unsigned char *read_file(const char *path, size_t *out_len)
-{
-    FILE *f = NULL;
-    long size;
-    unsigned char *buf = NULL;
-    size_t bytes_read;
-
-    if (path == NULL || out_len == NULL)
-    {
-        return NULL;
-    }
-
-    f = fopen(path, "rb");
-    if (f == NULL)
-    {
-        return NULL;
-    }
-
-    if (fseek(f, 0, SEEK_END) != 0)
-    {
-        fclose(f);
-        return NULL;
-    }
-
-    size = ftell(f);
-    if (size <= 0 || size > MAX_FILE_SIZE)
-    {
-        fclose(f);
-        return NULL;
-    }
-
-    if (fseek(f, 0, SEEK_SET) != 0)
-    {
-        fclose(f);
-        return NULL;
-    }
-
-    buf = OPENSSL_malloc((size_t)size);
-    if (buf == NULL)
-    {
-        fclose(f);
-        return NULL;
-    }
-
-    bytes_read = fread(buf, 1, (size_t)size, f);
-    fclose(f);
-
-    if (bytes_read != (size_t)size)
-    {
-        OPENSSL_free(buf);
-        return NULL;
-    }
-
-    *out_len = (size_t)size;
-    return buf;
-}
-
 /* Helper: Load and unmask IKM from in-memory bytes or file */
 static int load_and_unmask_ikm(AZIHSM_HKDF_CTX *ctx)
 {
     unsigned char *masked_key_data = NULL;
     size_t masked_key_size = 0;
     bool free_data = false;
-    struct azihsm_buffer masked_buf;
+    struct azihsm_buffer file_buf = { 0 };
+    struct azihsm_buffer masked_buf = { 0 };
     azihsm_status status;
 
     if (ctx->ikm_loaded)
@@ -177,12 +118,29 @@ static int load_and_unmask_ikm(AZIHSM_HKDF_CTX *ctx)
     }
     else if (ctx->ikm_file[0] != '\0')
     {
-        masked_key_data = read_file(ctx->ikm_file, &masked_key_size);
-        if (masked_key_data == NULL)
+        if (azihsm_file_load(ctx->ikm_file, &file_buf) != AZIHSM_STATUS_SUCCESS)
         {
-            ERR_raise(ERR_LIB_PROV, ERR_R_SYS_LIB);
+            ERR_raise_data(
+                ERR_LIB_PROV,
+                PROV_R_MISSING_KEY,
+                "failed to load IKM file '%s'",
+                ctx->ikm_file
+            );
             return OSSL_FAILURE;
         }
+
+        if (file_buf.ptr == NULL)
+        {
+            ERR_raise_data(
+                ERR_LIB_PROV,
+                PROV_R_MISSING_KEY,
+                "IKM file not found: '%s'",
+                ctx->ikm_file
+            );
+            return OSSL_FAILURE;
+        }
+        masked_key_data = file_buf.ptr;
+        masked_key_size = file_buf.len;
         free_data = true;
     }
     else
@@ -191,13 +149,13 @@ static int load_and_unmask_ikm(AZIHSM_HKDF_CTX *ctx)
         return OSSL_FAILURE;
     }
 
-    /* Bounds check to prevent truncation when casting to uint32_t */
+    /* Bounds check to prevent truncation when casting to uint32_t (in-memory path) */
     if (masked_key_size > UINT32_MAX)
     {
         if (free_data)
         {
-            OPENSSL_cleanse(masked_key_data, masked_key_size);
-            OPENSSL_free(masked_key_data);
+            OPENSSL_cleanse(file_buf.ptr, file_buf.len);
+            OPENSSL_free(file_buf.ptr);
         }
         ERR_raise(ERR_LIB_PROV, PROV_R_BAD_LENGTH);
         return OSSL_FAILURE;
@@ -216,8 +174,8 @@ static int load_and_unmask_ikm(AZIHSM_HKDF_CTX *ctx)
 
     if (free_data)
     {
-        OPENSSL_cleanse(masked_key_data, masked_key_size);
-        OPENSSL_free(masked_key_data);
+        OPENSSL_cleanse(file_buf.ptr, file_buf.len);
+        OPENSSL_free(file_buf.ptr);
     }
 
     if (status != AZIHSM_STATUS_SUCCESS)
