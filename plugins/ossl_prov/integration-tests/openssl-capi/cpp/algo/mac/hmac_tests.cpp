@@ -10,6 +10,7 @@
 /// an HMAC key, matching the pattern used by the CLI integration tests.
 
 #include <cstdlib>
+#include <cstring>
 #include <gtest/gtest.h>
 #include <openssl/core_names.h>
 #include <openssl/evp.h>
