@@ -131,12 +131,20 @@ TEST_F(rsa_enc_dec, decrypt_fails_with_wrong_key)
     const auto *pt_ptr = reinterpret_cast<const unsigned char *>(plaintext.data());
     const size_t pt_len = plaintext.size();
 
-    // Encrypt with key_a
+    // Encrypt with key_a (OAEP)
     EvpPkeyCtxPtr enc_ctx(
         EVP_PKEY_CTX_new_from_pkey(prov_.libctx(), key_a.get(), ProviderCtx::propquery())
     );
     ASSERT_NE(enc_ctx, nullptr);
     ASSERT_EQ(EVP_PKEY_encrypt_init(enc_ctx.get()), 1);
+
+    char oaep_enc[] = "oaep";
+    OSSL_PARAM enc_pad_params[] = {
+        OSSL_PARAM_utf8_string(OSSL_ASYM_CIPHER_PARAM_PAD_MODE, oaep_enc, 0),
+        OSSL_PARAM_END,
+    };
+    ASSERT_EQ(EVP_PKEY_CTX_set_params(enc_ctx.get(), enc_pad_params), 1)
+        << "Failed to set OAEP padding for encryption";
 
     size_t ct_len = 0;
     ASSERT_EQ(EVP_PKEY_encrypt(enc_ctx.get(), nullptr, &ct_len, pt_ptr, pt_len), 1);
@@ -144,12 +152,20 @@ TEST_F(rsa_enc_dec, decrypt_fails_with_wrong_key)
     ASSERT_EQ(EVP_PKEY_encrypt(enc_ctx.get(), ciphertext.data(), &ct_len, pt_ptr, pt_len), 1);
     ciphertext.resize(ct_len);
 
-    // Decrypt with key_b — must fail
+    // Decrypt with key_b (OAEP) — must fail
     EvpPkeyCtxPtr dec_ctx(
         EVP_PKEY_CTX_new_from_pkey(prov_.libctx(), key_b.get(), ProviderCtx::propquery())
     );
     ASSERT_NE(dec_ctx, nullptr);
     ASSERT_EQ(EVP_PKEY_decrypt_init(dec_ctx.get()), 1);
+
+    char oaep_dec[] = "oaep";
+    OSSL_PARAM dec_pad_params[] = {
+        OSSL_PARAM_utf8_string(OSSL_ASYM_CIPHER_PARAM_PAD_MODE, oaep_dec, 0),
+        OSSL_PARAM_END,
+    };
+    ASSERT_EQ(EVP_PKEY_CTX_set_params(dec_ctx.get(), dec_pad_params), 1)
+        << "Failed to set OAEP padding for decryption";
 
     size_t dec_len = 0;
     // Size query may succeed even with wrong key
