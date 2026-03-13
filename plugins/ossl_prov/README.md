@@ -716,3 +716,24 @@ openssl mac -digest SHA256 ${PROV} \
     -in data.bin \
     HMAC
 ```
+
+## Running Integration Tests Locally
+
+The integration test suites exercise the provider through both the OpenSSL CLI (shell scripts) and the C EVP API (C++ / GoogleTest). They require a local OpenSSL 3.x build — the same custom build described in the [Building](#building) section (built with `no-shared -fvisibility=hidden` to avoid the circular-dependency problem).
+
+Three environment variables control how the tests find OpenSSL. The CLI and C API test suites consume them differently:
+
+| Variable | CLI tests | C API tests | Purpose |
+|----------|-----------|-------------|---------|
+| `OPENSSL_DIR` | — | **Build + runtime** | OpenSSL 3.x install prefix. At build time, passed to CMake's `FindOpenSSL` to compile the test binary. At runtime, the test runner derives `LD_LIBRARY_PATH` from it (trying `$OPENSSL_DIR/lib64`, then `$OPENSSL_DIR/lib`). |
+| `OPENSSL_BIN` | **Runtime** | — | Full path to the `openssl` binary. Each CLI test script invokes this binary to exercise the provider. |
+| `OPENSSL_LIB` | **Runtime** | — | Colon-separated library directories, set as `LD_LIBRARY_PATH` for the CLI test scripts. Must include the OpenSSL `lib` directory (for `libcrypto.so` / `libssl.so`) and the Cargo build output (for `libazihsm_api_native.so`, which the provider loads at runtime). |
+
+Run from the **workspace root** (the `$(pwd)/target/debug` expansion must resolve to the Cargo build output directory):
+
+```bash
+OPENSSL_DIR=/path/to/openssl-build \
+OPENSSL_BIN=/path/to/openssl-build/bin/openssl \
+OPENSSL_LIB="/path/to/openssl-build/lib64:$(pwd)/target/debug" \
+    cargo xtask integration-tests
+```
