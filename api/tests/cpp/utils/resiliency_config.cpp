@@ -4,7 +4,6 @@
 #include "resiliency_config.hpp"
 
 #include <atomic>
-#include <cassert>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -139,8 +138,10 @@ static azihsm_status lock_acquire(void *ctx)
     auto *test_ctx = static_cast<ResiliencyTestCtx *>(ctx);
 #ifdef _WIN32
     // Non-reentrant: caller must not call lock() while already held.
-    assert(test_ctx->lock_handle == INVALID_HANDLE_VALUE &&
-           "lock_acquire called while lock is already held (non-reentrant)");
+    if (test_ctx->lock_handle != INVALID_HANDLE_VALUE)
+    {
+        return AZIHSM_STATUS_INTERNAL_ERROR;
+    }
     // Open a fresh handle per lock attempt so LockFileEx serializes threads
     // (file locks are per open handle, not per path).
     HANDLE h = CreateFileA(
@@ -164,8 +165,10 @@ static azihsm_status lock_acquire(void *ctx)
     test_ctx->lock_handle = h;
 #else
     // Non-reentrant: caller must not call lock() while already held.
-    assert(test_ctx->lock_fd == -1 &&
-           "lock_acquire called while lock is already held (non-reentrant)");
+    if (test_ctx->lock_fd != -1)
+    {
+        return AZIHSM_STATUS_INTERNAL_ERROR;
+    }
     // Open a fresh fd per lock attempt so flock() serializes threads
     // (flock is per open file description, not per path).
     int fd = open(test_ctx->lock_path.c_str(), O_CREAT | O_RDWR, 0600);
@@ -187,17 +190,39 @@ static azihsm_status lock_release(void *ctx)
 {
     auto *test_ctx = static_cast<ResiliencyTestCtx *>(ctx);
 #ifdef _WIN32
-    assert(test_ctx->lock_handle != INVALID_HANDLE_VALUE &&
-           "lock_release called without a held lock");
+    if (test_ctx->lock_handle == INVALID_HANDLE_VALUE)
+    {
+        return AZIHSM_STATUS_INTERNAL_ERROR;
+    }
     OVERLAPPED ov = {};
-    UnlockFileEx(test_ctx->lock_handle, 0, 1, 0, &ov);
-    CloseHandle(test_ctx->lock_handle);
+    if (!UnlockFileEx(test_ctx->lock_handle, 0, 1, 0, &ov))
+    {
+        CloseHandle(test_ctx->lock_handle);
+        test_ctx->lock_handle = INVALID_HANDLE_VALUE;
+        return AZIHSM_STATUS_INTERNAL_ERROR;
+    }
+    if (!CloseHandle(test_ctx->lock_handle))
+    {
+        test_ctx->lock_handle = INVALID_HANDLE_VALUE;
+        return AZIHSM_STATUS_INTERNAL_ERROR;
+    }
     test_ctx->lock_handle = INVALID_HANDLE_VALUE;
 #else
-    assert(test_ctx->lock_fd >= 0 &&
-           "lock_release called without a held lock");
-    flock(test_ctx->lock_fd, LOCK_UN);
-    close(test_ctx->lock_fd);
+    if (test_ctx->lock_fd < 0)
+    {
+        return AZIHSM_STATUS_INTERNAL_ERROR;
+    }
+    if (flock(test_ctx->lock_fd, LOCK_UN) != 0)
+    {
+        close(test_ctx->lock_fd);
+        test_ctx->lock_fd = -1;
+        return AZIHSM_STATUS_INTERNAL_ERROR;
+    }
+    if (close(test_ctx->lock_fd) != 0)
+    {
+        test_ctx->lock_fd = -1;
+        return AZIHSM_STATUS_INTERNAL_ERROR;
+    }
     test_ctx->lock_fd = -1;
 #endif
     return AZIHSM_STATUS_SUCCESS;

@@ -157,6 +157,7 @@ struct SharedMem {
 
 impl SharedMem {
     /// Total size in bytes.
+    #[cfg(target_os = "linux")]
     fn size() -> usize {
         std::mem::size_of::<Self>()
     }
@@ -175,7 +176,7 @@ impl ProcessStats {
 }
 
 /// Create a shared memory file and return its path and mmap.
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 #[allow(unsafe_code)]
 fn create_shared_mem() -> (String, memmap2::MmapMut) {
     use std::fs::OpenOptions;
@@ -195,6 +196,7 @@ fn create_shared_mem() -> (String, memmap2::MmapMut) {
 
     // SAFETY: The file is freshly created and zero-initialized by set_len.
     // AtomicU64/AtomicBool are valid when zero-initialized.
+    // SAFETY: Shared memory pointer is valid for the lifetime of the process.
     let mmap = unsafe {
         memmap2::MmapOptions::new()
             .len(SharedMem::size())
@@ -205,14 +207,14 @@ fn create_shared_mem() -> (String, memmap2::MmapMut) {
     (path, mmap)
 }
 
-#[cfg(windows)]
+#[cfg(target_os = "windows")]
 fn create_shared_mem() -> (String, memmap2::MmapMut) {
     // TODO: Windows implementation using CreateFileMappingW
     unimplemented!("Multi-process mode is not yet supported on Windows")
 }
 
 /// Open an existing shared memory file (child process).
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 #[allow(unsafe_code)]
 fn open_shared_mem(path: &str) -> memmap2::MmapMut {
     use std::fs::OpenOptions;
@@ -232,7 +234,7 @@ fn open_shared_mem(path: &str) -> memmap2::MmapMut {
     }
 }
 
-#[cfg(windows)]
+#[cfg(target_os = "windows")]
 fn open_shared_mem(_path: &str) -> memmap2::MmapMut {
     unimplemented!("Multi-process mode is not yet supported on Windows")
 }
@@ -244,6 +246,7 @@ fn open_shared_mem(_path: &str) -> memmap2::MmapMut {
 /// zero-initialized (all atomics start at 0/false).
 #[allow(unsafe_code)]
 unsafe fn shmem_ref(mmap: &memmap2::MmapMut) -> &SharedMem {
+    // SAFETY: Shared memory pointer is valid for the lifetime of the process.
     unsafe { &*(mmap.as_ptr() as *const SharedMem) }
 }
 #[derive(Debug, Clone, Copy)]
@@ -467,15 +470,24 @@ fn open_and_init_partition(
     impl ResiliencyStorage for FileStorage {
         fn read(&self, key: &str) -> HsmResult<Vec<u8>> {
             let path = self.dir.join(key);
-            let mut file = fs::File::open(&path).map_err(|_| HsmError::NotFound)?;
+            let mut file = fs::File::open(&path).map_err(|e| {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    HsmError::NotFound
+                } else {
+                    HsmError::InternalError
+                }
+            })?;
             let mut buf = Vec::new();
             std::io::Read::read_to_end(&mut file, &mut buf).map_err(|_| HsmError::InternalError)?;
             Ok(buf)
         }
         fn write(&self, key: &str, data: &[u8]) -> HsmResult<()> {
             let path = self.dir.join(key);
-            let mut file = fs::File::create(&path).map_err(|_| HsmError::InternalError)?;
+            let tmp_path = self.dir.join(format!(".{key}.tmp"));
+            let mut file = fs::File::create(&tmp_path).map_err(|_| HsmError::InternalError)?;
             std::io::Write::write_all(&mut file, data).map_err(|_| HsmError::InternalError)?;
+            file.sync_all().map_err(|_| HsmError::InternalError)?;
+            fs::rename(&tmp_path, &path).map_err(|_| HsmError::InternalError)?;
             Ok(())
         }
         fn clear(&self, key: &str) -> HsmResult<()> {
@@ -1249,15 +1261,18 @@ fn run_as_parent(args: Args) {
     } else {
         let log_path = "resiliency_stress_parent.log";
         let log_file = fs::File::create(log_path).expect("Failed to create log file");
+        // tracing_subscriber requires std::sync::Mutex, not parking_lot::Mutex.
+        #[allow(clippy::disallowed_types)]
+        let writer = std::sync::Mutex::new(log_file);
         tracing_subscriber::fmt()
             .with_max_level(tracing::Level::ERROR)
-            .with_writer(std::sync::Mutex::new(log_file))
+            .with_writer(writer)
             .with_ansi(false)
             .init();
     }
 
     let num_procs = args.processes;
-    assert!(num_procs >= 1 && num_procs <= MAX_PROCS);
+    assert!((1..=MAX_PROCS).contains(&num_procs));
 
     eprintln!("=== Resiliency Stress Tool ===");
     if !args.verbose {
@@ -1302,6 +1317,7 @@ fn run_as_parent(args: Args) {
 
     // Create shared memory.
     let (shmem_path, mmap) = create_shared_mem();
+    // SAFETY: Shared memory pointer is valid for the lifetime of the process.
     let shmem: &SharedMem = unsafe { shmem_ref(&mmap) };
 
     // Create shared resiliency storage directory for all processes.
@@ -1331,7 +1347,11 @@ fn run_as_parent(args: Args) {
         // Forward all relevant args to child.
         cmd.arg("--child-id").arg(i.to_string());
         cmd.arg("--shmem-path").arg(&shmem_path);
-        cmd.arg("--storage-dir").arg(storage_dir.to_str().unwrap());
+        cmd.arg("--storage-dir").arg(
+            storage_dir
+                .to_str()
+                .expect("storage dir path is valid UTF-8"),
+        );
         cmd.arg("-w").arg(args.workers.to_string());
         cmd.arg("-d").arg(args.duration_secs.to_string());
         cmd.arg("-o").arg(&args.ops);
@@ -1371,6 +1391,7 @@ fn run_as_parent(args: Args) {
     // Spawn reset thread using SharedMem atomics.
     let shmem_ptr = shmem as *const SharedMem as usize;
     let reset_handle = thread::spawn(move || {
+        // SAFETY: Shared memory pointer is valid for the lifetime of the process.
         let shmem = unsafe { &*(shmem_ptr as *const SharedMem) };
         let partition = HsmPartitionManager::open_partition(&path)
             .expect("Failed to open partition for reset thread");
@@ -1404,6 +1425,7 @@ fn run_as_parent(args: Args) {
     let start = Instant::now();
     let shmem_ptr2 = shmem as *const SharedMem as usize;
     let stats_handle = thread::spawn(move || {
+        // SAFETY: Shared memory pointer is valid for the lifetime of the process.
         let shmem = unsafe { &*(shmem_ptr2 as *const SharedMem) };
         multiproc_stats_loop(shmem, num_procs, stats_interval, start, stall_timeout)
     });
@@ -1413,6 +1435,7 @@ fn run_as_parent(args: Args) {
         let shmem_ptr3 = shmem as *const SharedMem as usize;
         let dur = Duration::from_secs(args.duration_secs);
         thread::spawn(move || {
+            // SAFETY: Shared memory pointer is valid for the lifetime of the process.
             let shmem = unsafe { &*(shmem_ptr3 as *const SharedMem) };
             thread::sleep(dur);
             shmem.stop.store(true, Ordering::SeqCst);
@@ -1424,12 +1447,13 @@ fn run_as_parent(args: Args) {
     let stalled = stats_handle.join().unwrap_or(false);
 
     // If stalled, send SIGUSR1 to children to dump thread backtraces.
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     if stalled {
         eprintln!();
         eprintln!("Sending SIGUSR1 to child processes for backtrace dump...");
         for child in children.iter() {
             let pid = child.id();
+            // SAFETY: Shared memory pointer is valid for the lifetime of the process.
             unsafe {
                 libc::kill(pid as i32, libc::SIGUSR1);
             }
@@ -1725,7 +1749,8 @@ fn multiproc_stats_loop(
 #[allow(unsafe_code)]
 fn run_as_child(args: Args, child_id: usize) {
     // Register SIGUSR1 handler to dump backtraces on stall detection.
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
+    // SAFETY: Shared memory pointer is valid for the lifetime of the process.
     unsafe {
         extern "C" fn sigusr1_handler(_sig: libc::c_int) {
             // SAFETY: eprintln! is not async-signal-safe, but we're about
@@ -1759,6 +1784,7 @@ fn run_as_child(args: Args, child_id: usize) {
         .expect("Child process requires --shmem-path");
 
     let mmap = open_shared_mem(shmem_path);
+    // SAFETY: Shared memory pointer is valid for the lifetime of the process.
     let shmem: &SharedMem = unsafe { shmem_ref(&mmap) };
     let proc_stats = &shmem.procs[child_id];
 
@@ -1774,7 +1800,7 @@ fn run_as_child(args: Args, child_id: usize) {
     let barrier = Arc::new(Barrier::new(args.workers));
 
     // Collect worker pthread IDs so the stall detector can signal each one.
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     let worker_tids: Arc<parking_lot::Mutex<Vec<libc::pthread_t>>> =
         Arc::new(parking_lot::Mutex::new(Vec::new()));
 
@@ -1786,16 +1812,19 @@ fn run_as_child(args: Args, child_id: usize) {
         let ps_ptr = proc_stats as *const ProcessStats as usize;
         let shmem_ptr = shmem as *const SharedMem as usize;
         let barrier_clone = Arc::clone(&barrier);
-        #[cfg(unix)]
+        #[cfg(target_os = "linux")]
         let tids_clone = Arc::clone(&worker_tids);
         let handle = thread::spawn(move || {
             // Record this thread's pthread_t so stall detector can signal us.
-            #[cfg(unix)]
+            #[cfg(target_os = "linux")]
             {
+                // SAFETY: Shared memory pointer is valid for the lifetime of the process.
                 let tid = unsafe { libc::pthread_self() };
                 tids_clone.lock().push(tid);
             }
+            // SAFETY: Shared memory pointer is valid for the lifetime of the process.
             let ps = unsafe { &*(ps_ptr as *const ProcessStats) };
+            // SAFETY: Shared memory pointer is valid for the lifetime of the process.
             let sm = unsafe { &*(shmem_ptr as *const SharedMem) };
             child_worker_thread(
                 i,
@@ -1815,9 +1844,10 @@ fn run_as_child(args: Args, child_id: usize) {
     // their thread IDs for backtrace signaling.
     {
         let shmem_ptr_dd = shmem as *const SharedMem as usize;
-        #[cfg(unix)]
+        #[cfg(target_os = "linux")]
         let tids_for_dd = Arc::clone(&worker_tids);
         thread::spawn(move || {
+            // SAFETY: Shared memory pointer is valid for the lifetime of the process.
             let shmem = unsafe { &*(shmem_ptr_dd as *const SharedMem) };
 
             loop {
@@ -1844,11 +1874,12 @@ fn run_as_child(args: Args, child_id: usize) {
                         );
                     }
 
-                    #[cfg(unix)]
+                    #[cfg(target_os = "linux")]
                     {
                         let tids = tids_for_dd.lock();
                         for (i, tid) in tids.iter().enumerate() {
                             eprintln!("--- Backtrace for worker thread {i} ---");
+                            // SAFETY: Shared memory pointer is valid for the lifetime of the process.
                             unsafe {
                                 libc::pthread_kill(*tid, libc::SIGUSR1);
                             }
