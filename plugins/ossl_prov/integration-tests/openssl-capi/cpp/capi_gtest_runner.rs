@@ -115,8 +115,8 @@ mod integration {
         let cred_id = workspace_root.join("credentials_id.bin");
         if !cred_id.exists() {
             let data: [u8; 16] = [
-                0x70, 0xFC, 0xF7, 0x30, 0xB8, 0x76, 0x42, 0x38, 0xB8, 0x35, 0x80, 0x10, 0xCE,
-                0x8A, 0x3F, 0x76,
+                0x70, 0xFC, 0xF7, 0x30, 0xB8, 0x76, 0x42, 0x38, 0xB8, 0x35, 0x80, 0x10, 0xCE, 0x8A,
+                0x3F, 0x76,
             ];
             fs::write(&cred_id, data).expect("Failed to write credentials_id.bin");
         }
@@ -124,8 +124,8 @@ mod integration {
         let cred_pin = workspace_root.join("credentials_pin.bin");
         if !cred_pin.exists() {
             let data: [u8; 16] = [
-                0xDB, 0x3D, 0xC7, 0x7F, 0xC2, 0x2E, 0x43, 0x00, 0x80, 0xD4, 0x1B, 0x31, 0xB6,
-                0xF0, 0x48, 0x00,
+                0xDB, 0x3D, 0xC7, 0x7F, 0xC2, 0x2E, 0x43, 0x00, 0x80, 0xD4, 0x1B, 0x31, 0xB6, 0xF0,
+                0x48, 0x00,
             ];
             fs::write(&cred_pin, data).expect("Failed to write credentials_pin.bin");
         }
@@ -172,7 +172,10 @@ mod integration {
                 .write_all(&genkey.stdout)
                 .expect("Failed to write PEM to openssl ec stdin");
             let status = convert.wait().expect("Failed to wait for openssl ec");
-            assert!(status.success(), "Failed to convert POTA private key to DER");
+            assert!(
+                status.success(),
+                "Failed to convert POTA private key to DER"
+            );
 
             // Extract public key
             let pota_pub = workspace_root.join("pota_public_key.der");
