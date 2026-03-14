@@ -28,7 +28,30 @@ cargo run --release -p resiliency_stress -- --duration-secs 0
 
 # Quick smoke test
 cargo run --release -p resiliency_stress -- -w 2 -d 10 -r 500
+
+# Run with unlimited error tolerance (never stop on transient failures)
+cargo run --release -p resiliency_stress -- -w 2 -r 10000 -d 0 -e -1
+
+# Fail-fast on first error (legacy behavior)
+cargo run --release -p resiliency_stress -- -w 2 -d 60 -e 0
 ```
+
+### Multi-Process Mode
+
+Simulate multiple independent clients accessing the same device:
+
+```bash
+# 3 processes, each with 2 workers (6 total threads across 3 partitions)
+cargo run --release -p resiliency_stress -- -p 3 -w 2 -r 10000 -d 0
+
+# Multi-process with unlimited error tolerance
+cargo run --release -p resiliency_stress -- -p 4 -w 4 -r 10000 -d 300 -e -1
+```
+
+In multi-process mode, each child process opens its own partition and
+session. The parent process runs the reset thread and aggregates
+statistics across all children. Per-process columns appear in the live
+stats display.
 
 ### Performance Comparison
 
@@ -74,6 +97,8 @@ cargo run --release -p resiliency_stress --features res-test -- --random-fault -
 | `--no-resiliency` | | false | Disable resiliency (baseline perf) |
 | `--no-reset` | | false | Resiliency enabled but no resets |
 | `--random-fault` | | false | Random DDI fault injection (needs `res-test`) |
+| `--max-errors` | `-e` | 10 | Max operation errors before stopping (0 = fail-fast, -1 = unlimited) |
+| `--processes` | `-p` | 1 | Number of separate OS processes (each with own partition) |
 
 ## Available Operations
 
@@ -114,6 +139,7 @@ cargo run --release -p resiliency_stress --features res-test -- --random-fault -
 ## How It Works
 
 1. Opens and initializes an HSM partition with resiliency enabled
+   (in multi-process mode, each child opens its own partition)
 2. Spawns N worker threads, all sharing a single cloned session with
    pre-created keys
 3. Spawns a reset thread with a **separate** partition handle (same device)
@@ -123,12 +149,17 @@ cargo run --release -p resiliency_stress --features res-test -- --random-fault -
    `#[resiliency_key_gen]` — on a reset error, the SDK automatically
    restores the partition, reopens the session, refreshes the key, and
    retries the operation
-7. If any operation fails with a non-retryable error (e.g., `InvalidPermissions`
-   indicating a potential ABA violation), the tool stops and reports
-8. A deadlock detector thread runs in the background using
+7. If all retries are exhausted, the error is logged and the worker
+   continues. Errors are tracked per-operation and displayed in the
+   live stats with `!!` markers. The tool stops when total errors
+   reach `--max-errors` (default 10). Use `-e 0` for fail-fast or
+   `-e -1` for unlimited tolerance
+8. If any operation fails with a non-retryable error (e.g., `InvalidPermissions`
+   indicating a potential ABA violation), the same error budget applies
+9. A deadlock detector thread runs in the background using
    `parking_lot`'s deadlock detection — if a deadlock is found, it
    dumps all thread stack traces to stderr and exits
-9. A stall detector monitors progress; if no operations complete within
+10. A stall detector monitors progress; if no operations complete within
    `--stall-timeout-secs`, it dumps diagnostics and exits with code 2
 
 ## Troubleshooting

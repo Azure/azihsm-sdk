@@ -343,16 +343,6 @@ pub(crate) fn execute_with_backoff<T>(
         result = operation(prev_err.as_ref());
     }
 
-    if let Err(ref err) = result {
-        if attempt > 0 {
-            error!(
-                ?err,
-                retries = attempt,
-                "Operation failed after retries, giving up.",
-            );
-        }
-    }
-
     result
 }
 
