@@ -79,7 +79,10 @@ impl From<DdiError> for HsmError {
             DdiError::DdiStatus(DdiStatus::CannotDeleteInternalKeys) => {
                 HsmError::CannotDeleteInternalKeys
             }
-            _ => HsmError::DdiCmdFailure,
+            _ => {
+                tracing::error!(?err, "Unmapped DdiError \u{2192} DdiCmdFailure");
+                HsmError::DdiCmdFailure
+            }
         }
     }
 }

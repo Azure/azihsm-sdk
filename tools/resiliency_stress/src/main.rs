@@ -8,10 +8,12 @@
 //! Stops immediately on any unexpected error, printing the failing
 //! scenario and aggregated stats.
 
-use std::collections::HashMap;
+use std::fs;
+use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
+use std::sync::atomic::AtomicI32;
+use std::sync::atomic::AtomicU32;
 use std::sync::atomic::AtomicU64;
-use std::sync::atomic::AtomicU8;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::sync::Barrier;
@@ -86,114 +88,164 @@ struct Args {
     /// mid-DDI-call rather than between operations.
     #[arg(long, default_value_t = false)]
     random_fault: bool,
+
+    /// Maximum number of operation errors before stopping.
+    /// 0 = stop on first error (legacy behavior).
+    /// -1 = never stop on errors (infinite tolerance).
+    /// Default: 10.
+    #[arg(short = 'e', long, default_value_t = 10, allow_hyphen_values = true)]
+    max_errors: i64,
+
+    /// Number of separate OS processes, each with its own partition/session.
+    /// Resets are triggered from the parent process only.
+    /// Default: 1 (single-process, current behavior).
+    #[arg(short = 'p', long, default_value_t = 1)]
+    processes: usize,
+
+    /// (Internal) Child process ID — set automatically by the parent.
+    #[arg(long, hide = true)]
+    child_id: Option<usize>,
+
+    /// (Internal) Path to shared memory file — set automatically by the parent.
+    #[arg(long, hide = true)]
+    shmem_path: Option<String>,
+
+    /// (Internal) Path to shared resiliency storage directory — set automatically by the parent.
+    #[arg(long, hide = true)]
+    storage_dir: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
-// Shared state
+// Cross-process shared memory (multi-process mode)
 // ---------------------------------------------------------------------------
 
-struct SharedStats {
+/// Maximum number of child processes supported.
+const MAX_PROCS: usize = 16;
+
+/// Number of per-op counter slots (must match LABELS array length).
+const NUM_OPS: usize = 25;
+
+/// Per-process stats stored in shared memory.
+///
+/// Uses `repr(C)` to ensure deterministic layout across processes.
+#[repr(C)]
+struct ProcessStats {
     total_ops: AtomicU64,
+    total_errors: AtomicU64,
+    op_counts: [AtomicU64; NUM_OPS],
+    op_errors: [AtomicU64; NUM_OPS],
+    /// Set to 1 when this process hits max errors.
+    failed: AtomicBool,
+    _pad0: [u8; 7], // align next field
+    failed_op: AtomicU32,
+    failed_error: AtomicI32,
+    failed_thread: AtomicU32,
+}
+
+/// Shared memory layout mapped into all processes.
+#[repr(C)]
+struct SharedMem {
+    /// Parent sets this to signal all children to stop.
+    stop: AtomicBool,
+    _pad: [u8; 7],
+    /// Reset counters (parent only).
     total_resets: AtomicU64,
     reset_failures: AtomicU64,
-    stop: AtomicBool,
-    // Per-op counters.
-    aes_cbc_encrypt: AtomicU64,
-    aes_cbc_decrypt: AtomicU64,
-    ecc_sign: AtomicU64,
-    hmac_sign: AtomicU64,
-    rsa_sign: AtomicU64,
-    rsa_decrypt: AtomicU64,
-    ecdh_derive: AtomicU64,
-    hkdf_derive: AtomicU64,
-    aes_keygen: AtomicU64,
-    ecc_keygen: AtomicU64,
-    aes_xts_keygen: AtomicU64,
-    unwrapping_keygen: AtomicU64,
-    aes_unwrap: AtomicU64,
-    ecc_unwrap: AtomicU64,
-    xts_unwrap: AtomicU64,
-    aes_unmask: AtomicU64,
-    ecc_unmask: AtomicU64,
-    xts_unmask: AtomicU64,
-    ecc_key_report: AtomicU64,
-    rsa_key_report: AtomicU64,
-    unwrapping_key_report: AtomicU64,
-    cert_chain: AtomicU64,
-    aes_keygen_delete: AtomicU64,
-    ecc_keygen_delete: AtomicU64,
-    xts_keygen_delete: AtomicU64,
+    /// Per-process stats slots.
+    procs: [ProcessStats; MAX_PROCS],
 }
 
-impl SharedStats {
-    fn new() -> Self {
-        Self {
-            total_ops: AtomicU64::new(0),
-            total_resets: AtomicU64::new(0),
-            reset_failures: AtomicU64::new(0),
-            stop: AtomicBool::new(false),
-            aes_cbc_encrypt: AtomicU64::new(0),
-            aes_cbc_decrypt: AtomicU64::new(0),
-            ecc_sign: AtomicU64::new(0),
-            hmac_sign: AtomicU64::new(0),
-            rsa_sign: AtomicU64::new(0),
-            rsa_decrypt: AtomicU64::new(0),
-            ecdh_derive: AtomicU64::new(0),
-            hkdf_derive: AtomicU64::new(0),
-            aes_keygen: AtomicU64::new(0),
-            ecc_keygen: AtomicU64::new(0),
-            aes_xts_keygen: AtomicU64::new(0),
-            unwrapping_keygen: AtomicU64::new(0),
-            aes_unwrap: AtomicU64::new(0),
-            ecc_unwrap: AtomicU64::new(0),
-            xts_unwrap: AtomicU64::new(0),
-            aes_unmask: AtomicU64::new(0),
-            ecc_unmask: AtomicU64::new(0),
-            xts_unmask: AtomicU64::new(0),
-            ecc_key_report: AtomicU64::new(0),
-            rsa_key_report: AtomicU64::new(0),
-            unwrapping_key_report: AtomicU64::new(0),
-            cert_chain: AtomicU64::new(0),
-            aes_keygen_delete: AtomicU64::new(0),
-            ecc_keygen_delete: AtomicU64::new(0),
-            xts_keygen_delete: AtomicU64::new(0),
-        }
+impl SharedMem {
+    /// Total size in bytes.
+    fn size() -> usize {
+        std::mem::size_of::<Self>()
     }
+}
 
-    fn increment_op(&self, op: OpKind) {
-        match op {
-            OpKind::AesCbcEncrypt => self.aes_cbc_encrypt.fetch_add(1, Ordering::Relaxed),
-            OpKind::AesCbcDecrypt => self.aes_cbc_decrypt.fetch_add(1, Ordering::Relaxed),
-            OpKind::EccSign => self.ecc_sign.fetch_add(1, Ordering::Relaxed),
-            OpKind::HmacSign => self.hmac_sign.fetch_add(1, Ordering::Relaxed),
-            OpKind::RsaSign => self.rsa_sign.fetch_add(1, Ordering::Relaxed),
-            OpKind::RsaDecrypt => self.rsa_decrypt.fetch_add(1, Ordering::Relaxed),
-            OpKind::EcdhDerive => self.ecdh_derive.fetch_add(1, Ordering::Relaxed),
-            OpKind::HkdfDerive => self.hkdf_derive.fetch_add(1, Ordering::Relaxed),
-            OpKind::AesKeyGen => self.aes_keygen.fetch_add(1, Ordering::Relaxed),
-            OpKind::EccKeyGen => self.ecc_keygen.fetch_add(1, Ordering::Relaxed),
-            OpKind::AesXtsKeyGen => self.aes_xts_keygen.fetch_add(1, Ordering::Relaxed),
-            OpKind::UnwrappingKeyGen => self.unwrapping_keygen.fetch_add(1, Ordering::Relaxed),
-            OpKind::AesUnwrap => self.aes_unwrap.fetch_add(1, Ordering::Relaxed),
-            OpKind::EccUnwrap => self.ecc_unwrap.fetch_add(1, Ordering::Relaxed),
-            OpKind::XtsUnwrap => self.xts_unwrap.fetch_add(1, Ordering::Relaxed),
-            OpKind::AesUnmask => self.aes_unmask.fetch_add(1, Ordering::Relaxed),
-            OpKind::EccUnmask => self.ecc_unmask.fetch_add(1, Ordering::Relaxed),
-            OpKind::XtsUnmask => self.xts_unmask.fetch_add(1, Ordering::Relaxed),
-            OpKind::EccKeyReport => self.ecc_key_report.fetch_add(1, Ordering::Relaxed),
-            OpKind::RsaKeyReport => self.rsa_key_report.fetch_add(1, Ordering::Relaxed),
-            OpKind::UnwrappingKeyReport => {
-                self.unwrapping_key_report.fetch_add(1, Ordering::Relaxed)
-            }
-            OpKind::CertChain => self.cert_chain.fetch_add(1, Ordering::Relaxed),
-            OpKind::AesKeyGenDelete => self.aes_keygen_delete.fetch_add(1, Ordering::Relaxed),
-            OpKind::EccKeyGenDelete => self.ecc_keygen_delete.fetch_add(1, Ordering::Relaxed),
-            OpKind::AesXtsKeyGenDelete => self.xts_keygen_delete.fetch_add(1, Ordering::Relaxed),
-        };
+impl ProcessStats {
+    fn increment_op(&self, op_idx: usize) {
+        self.op_counts[op_idx].fetch_add(1, Ordering::Relaxed);
         self.total_ops.fetch_add(1, Ordering::Relaxed);
     }
+
+    fn increment_error(&self, op_idx: usize) {
+        self.op_errors[op_idx].fetch_add(1, Ordering::Relaxed);
+        self.total_errors.fetch_add(1, Ordering::Relaxed);
+    }
 }
 
+/// Create a shared memory file and return its path and mmap.
+#[cfg(unix)]
+#[allow(unsafe_code)]
+fn create_shared_mem() -> (String, memmap2::MmapMut) {
+    use std::fs::OpenOptions;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let path = format!("/dev/shm/azihsm_stress_{}", std::process::id());
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(&path)
+        .expect("Failed to create shared memory file");
+    file.set_len(SharedMem::size() as u64)
+        .expect("Failed to set shared memory size");
+
+    // SAFETY: The file is freshly created and zero-initialized by set_len.
+    // AtomicU64/AtomicBool are valid when zero-initialized.
+    let mmap = unsafe {
+        memmap2::MmapOptions::new()
+            .len(SharedMem::size())
+            .map_mut(&file)
+            .expect("Failed to mmap shared memory")
+    };
+
+    (path, mmap)
+}
+
+#[cfg(windows)]
+fn create_shared_mem() -> (String, memmap2::MmapMut) {
+    // TODO: Windows implementation using CreateFileMappingW
+    unimplemented!("Multi-process mode is not yet supported on Windows")
+}
+
+/// Open an existing shared memory file (child process).
+#[cfg(unix)]
+#[allow(unsafe_code)]
+fn open_shared_mem(path: &str) -> memmap2::MmapMut {
+    use std::fs::OpenOptions;
+
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+        .expect("Failed to open shared memory file");
+
+    // SAFETY: The parent created and zero-initialized this file.
+    unsafe {
+        memmap2::MmapOptions::new()
+            .len(SharedMem::size())
+            .map_mut(&file)
+            .expect("Failed to mmap shared memory")
+    }
+}
+
+#[cfg(windows)]
+fn open_shared_mem(_path: &str) -> memmap2::MmapMut {
+    unimplemented!("Multi-process mode is not yet supported on Windows")
+}
+
+/// Get a reference to `SharedMem` from a mutable mmap.
+///
+/// # Safety
+/// The mmap must be at least `SharedMem::size()` bytes and
+/// zero-initialized (all atomics start at 0/false).
+#[allow(unsafe_code)]
+unsafe fn shmem_ref(mmap: &memmap2::MmapMut) -> &SharedMem {
+    unsafe { &*(mmap.as_ptr() as *const SharedMem) }
+}
 #[derive(Debug, Clone, Copy)]
 enum OpKind {
     AesCbcEncrypt,
@@ -286,43 +338,6 @@ impl OpKind {
     }
 }
 
-/// Per-worker state tracking for stall diagnostics.
-/// 0 = setup, 255 = idle between ops, 1..=25 = executing OpKind.
-struct WorkerStates {
-    states: Vec<AtomicU8>,
-}
-
-impl WorkerStates {
-    fn new(num_workers: usize) -> Self {
-        Self {
-            states: (0..num_workers).map(|_| AtomicU8::new(0)).collect(),
-        }
-    }
-
-    fn set(&self, worker_id: usize, op: OpKind) {
-        self.states[worker_id].store(op.as_u8(), Ordering::Relaxed);
-    }
-
-    fn set_idle(&self, worker_id: usize) {
-        self.states[worker_id].store(255, Ordering::Relaxed);
-    }
-
-    fn dump(&self) {
-        for (i, state) in self.states.iter().enumerate() {
-            let v = state.load(Ordering::Relaxed);
-            let label = match v {
-                0 => "setup/pre-barrier".to_string(),
-                255 => "idle (between ops)".to_string(),
-                _ => match OpKind::from_u8(v) {
-                    Some(op) => format!("executing {op}"),
-                    None => format!("unknown ({v})"),
-                },
-            };
-            eprintln!("  Worker {i:>2}: {label}");
-        }
-    }
-}
-
 impl std::fmt::Display for OpKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -359,7 +374,11 @@ impl std::fmt::Display for OpKind {
 // Partition + session setup
 // ---------------------------------------------------------------------------
 
-fn open_and_init_partition(enable_resiliency: bool) -> (HsmPartition, HsmCredentials) {
+fn open_and_init_partition(
+    enable_resiliency: bool,
+    skip_reset: bool,
+    storage_dir: Option<PathBuf>,
+) -> (HsmPartition, HsmCredentials) {
     use azihsm_crypto::*;
 
     const TEST_POTA_PRIVATE_KEY: [u8; 185] = [
@@ -415,7 +434,9 @@ fn open_and_init_partition(enable_resiliency: bool) -> (HsmPartition, HsmCredent
     assert!(!list.is_empty(), "No HSM partitions found.");
     let part =
         HsmPartitionManager::open_partition(&list[0].path).expect("Failed to open partition");
-    part.reset().expect("Failed to reset partition");
+    if !skip_reset {
+        part.reset().expect("Failed to reset partition");
+    }
 
     let creds = HsmCredentials::new(&[0xAA; 16], &[0xBB; 16]);
 
@@ -438,42 +459,71 @@ fn open_and_init_partition(enable_resiliency: bool) -> (HsmPartition, HsmCredent
         )
     };
 
-    // In-memory resiliency storage.
-    struct MemStorage(Mutex<HashMap<String, Vec<u8>>>);
-    impl ResiliencyStorage for MemStorage {
+    // File-backed resiliency storage: one file per key under a shared directory.
+    // All processes (parent + children) use the same directory.
+    struct FileStorage {
+        dir: PathBuf,
+    }
+    impl ResiliencyStorage for FileStorage {
         fn read(&self, key: &str) -> HsmResult<Vec<u8>> {
-            self.0.lock().get(key).cloned().ok_or(HsmError::NotFound)
+            let path = self.dir.join(key);
+            let mut file = fs::File::open(&path).map_err(|_| HsmError::NotFound)?;
+            let mut buf = Vec::new();
+            std::io::Read::read_to_end(&mut file, &mut buf).map_err(|_| HsmError::InternalError)?;
+            Ok(buf)
         }
         fn write(&self, key: &str, data: &[u8]) -> HsmResult<()> {
-            self.0.lock().insert(key.to_string(), data.to_vec());
+            let path = self.dir.join(key);
+            let mut file = fs::File::create(&path).map_err(|_| HsmError::InternalError)?;
+            std::io::Write::write_all(&mut file, data).map_err(|_| HsmError::InternalError)?;
             Ok(())
         }
         fn clear(&self, key: &str) -> HsmResult<()> {
-            self.0.lock().remove(key);
+            let path = self.dir.join(key);
+            let _ = fs::remove_file(&path);
             Ok(())
         }
     }
 
-    struct MemLock {
-        locked: Mutex<bool>,
+    // File-backed cross-process lock using flock.
+    struct FileLock {
+        path: PathBuf,
+        active: Mutex<Option<fs::File>>,
     }
-    impl MemLock {
-        fn new() -> Self {
+    impl FileLock {
+        fn new(path: PathBuf) -> Self {
             Self {
-                locked: Mutex::new(false),
+                path,
+                active: Mutex::new(None),
             }
         }
     }
-    impl ResiliencyLock for MemLock {
+    impl ResiliencyLock for FileLock {
         fn lock(&self) -> HsmResult<()> {
-            let mut guard = self.locked.lock();
-            *guard = true;
+            let mut guard = self.active.lock();
+            if guard.is_some() {
+                return Err(HsmError::InternalError);
+            }
+            let file = fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .open(&self.path)
+                .map_err(|_| HsmError::InternalError)?;
+            fs2::FileExt::lock_exclusive(&file).map_err(|_| HsmError::InternalError)?;
+            *guard = Some(file);
             Ok(())
         }
         fn unlock(&self) -> HsmResult<()> {
-            let mut guard = self.locked.lock();
-            *guard = false;
-            Ok(())
+            let mut guard = self.active.lock();
+            match guard.take() {
+                Some(file) => {
+                    fs2::FileExt::unlock(&file).map_err(|_| HsmError::InternalError)?;
+                    Ok(())
+                }
+                None => Err(HsmError::InternalError),
+            }
         }
     }
 
@@ -492,6 +542,13 @@ fn open_and_init_partition(enable_resiliency: bool) -> (HsmPartition, HsmCredent
     }
 
     let resiliency_config = if enable_resiliency {
+        let storage_path = storage_dir.unwrap_or_else(|| {
+            let dir = std::env::temp_dir().join(format!("azihsm_stress_{}", std::process::id()));
+            fs::create_dir_all(&dir).expect("Failed to create storage directory");
+            dir
+        });
+        fs::create_dir_all(&storage_path).ok(); // ok if already exists
+
         // POTA callback is only needed for Caller source (not TPM).
         let pota_callback: Option<Box<dyn PotaEndorsementCallback>> = if !use_tpm {
             let pota_part = HsmPartitionManager::open_partition(&list[0].path)
@@ -502,8 +559,10 @@ fn open_and_init_partition(enable_resiliency: bool) -> (HsmPartition, HsmCredent
         };
 
         Some(HsmResiliencyConfig {
-            storage: Box::new(MemStorage(Mutex::new(HashMap::new()))),
-            lock: Arc::new(MemLock::new()),
+            storage: Box::new(FileStorage {
+                dir: storage_path.clone(),
+            }),
+            lock: Arc::new(FileLock::new(storage_path.join(".lock"))),
             pota_callback,
         })
     } else {
@@ -1071,579 +1130,6 @@ fn exec_aes_xts_keygen_delete(session: &HsmSession) -> HsmResult<()> {
     HsmKeyManager::delete_key(key)?;
     Ok(())
 }
-
-// ---------------------------------------------------------------------------
-// Worker thread
-// ---------------------------------------------------------------------------
-
-struct WorkerFailure {
-    thread_id: usize,
-    op: OpKind,
-    error: HsmError,
-    total_ops: u64,
-}
-
-fn worker_thread(
-    thread_id: usize,
-    partition: HsmPartition,
-    session: HsmSession,
-    ops: Vec<OpKind>,
-    stats: Arc<SharedStats>,
-    barrier: Arc<Barrier>,
-    worker_states: Arc<WorkerStates>,
-) -> Option<WorkerFailure> {
-    // Pre-create keys before the barrier so all threads start together.
-    let aes_key = gen_aes_key(&session);
-
-    // Pre-encrypt for decrypt ops.
-    let iv = [0u8; 16];
-    let ciphertext = {
-        let data = b"stress test data for encryption!";
-        let mut algo = HsmAesCbcAlgo::with_padding(iv.to_vec()).expect("AES-CBC algo");
-        let len = HsmEncrypter::encrypt(&mut algo, &aes_key, data, None).expect("pre-encrypt len");
-        let mut out = vec![0u8; len];
-        let mut algo = HsmAesCbcAlgo::with_padding(iv.to_vec()).expect("AES-CBC algo");
-        HsmEncrypter::encrypt(&mut algo, &aes_key, data, Some(&mut out)).expect("pre-encrypt");
-        out
-    };
-
-    let (ecc_priv, _ecc_pub) = gen_ecc_key_pair(&session);
-    let ecc_hash = {
-        let mut h = HsmHashAlgo::Sha256;
-        HsmHasher::hash_vec(&session, &mut h, b"stress data for ECC").expect("hash")
-    };
-
-    let hmac_key = gen_hmac_key(&session);
-
-    // Pre-create ECDH derive key pairs.
-    let (ecdh_priv, _) = gen_ecc_derive_key_pair(&session);
-    let (_, ecdh_peer_pub) = gen_ecc_derive_key_pair(&session);
-
-    // Pre-create shared secret for HKDF.
-    let hkdf_shared_secret = {
-        let pub_der = ecdh_peer_pub.pub_key_der_vec().expect("ECDH peer pub DER");
-        let mut algo = EcdhAlgo::new(&pub_der);
-        let bits = ecdh_priv.ecc_curve().expect("ECC curve").key_size_bits() as u32;
-        let secret_props = HsmKeyPropsBuilder::default()
-            .class(HsmKeyClass::Secret)
-            .key_kind(HsmKeyKind::SharedSecret)
-            .bits(bits)
-            .can_derive(true)
-            .is_session(true)
-            .build()
-            .expect("secret props");
-        HsmKeyManager::derive_key(&session, &mut algo, &ecdh_priv, secret_props)
-            .expect("pre-create shared secret")
-    };
-
-    // RSA sign key + hash.
-    let (rsa_sign_priv, _rsa_sign_pub) = import_rsa_sign_key(&session);
-    let rsa_hash = {
-        let mut h = HsmHashAlgo::Sha256;
-        HsmHasher::hash_vec(&session, &mut h, b"stress data for RSA sign").expect("RSA hash")
-    };
-
-    // RSA encrypt/decrypt key + pre-encrypted ciphertext.
-    let (rsa_dec_priv, rsa_enc_pub) = import_rsa_enc_key(&session);
-    let rsa_ciphertext = {
-        let mut algo = HsmRsaEncryptAlgo::with_pkcs1_padding();
-        HsmEncrypter::encrypt_vec(&mut algo, &rsa_enc_pub, b"stress RSA plaintext")
-            .expect("RSA pre-encrypt")
-    };
-
-    // Pre-create wrapped key blobs for unwrap ops.
-    let (aes_unwrap_key, aes_wrapped_blob) = prepare_wrapped_aes_key(&session);
-    let (ecc_unwrap_key, ecc_wrapped_blob) = prepare_wrapped_ecc_key(&session);
-
-    // XTS keys/blobs are only needed when XTS ops are selected.
-    let needs_xts = ops.iter().any(|o| {
-        matches!(
-            o,
-            OpKind::AesXtsKeyGen
-                | OpKind::XtsUnwrap
-                | OpKind::XtsUnmask
-                | OpKind::AesXtsKeyGenDelete
-        )
-    });
-    let (xts_unwrap_key, xts_wrapped_blob) = if needs_xts {
-        let (k, b) = prepare_wrapped_xts_key(&session);
-        (Some(k), Some(b))
-    } else {
-        (None, None)
-    };
-
-    // Pre-create masked key blobs for unmask ops.
-    let aes_masked = aes_key.masked_key_vec().expect("AES masked key");
-    let ecc_masked = ecc_priv.masked_key_vec().expect("ECC masked key");
-    let xts_masked = if needs_xts {
-        let xts_key = gen_aes_xts_key(&session);
-        Some(xts_key.masked_key_vec().expect("XTS masked key"))
-    } else {
-        None
-    };
-
-    // Report data for key report ops.
-    let report_data = [0x42u8; 128];
-
-    barrier.wait();
-
-    let mut rng = rand::thread_rng();
-
-    while !stats.stop.load(Ordering::Relaxed) {
-        let op = ops[rng.gen_range(0..ops.len())];
-        worker_states.set(thread_id, op);
-
-        let result = match op {
-            OpKind::AesCbcEncrypt => exec_aes_cbc_encrypt(&aes_key),
-            OpKind::AesCbcDecrypt => exec_aes_cbc_decrypt(&aes_key, &ciphertext),
-            OpKind::EccSign => exec_ecc_sign(&ecc_priv, &ecc_hash),
-            OpKind::HmacSign => exec_hmac_sign(&hmac_key),
-            OpKind::RsaSign => exec_rsa_sign(&rsa_sign_priv, &rsa_hash),
-            OpKind::RsaDecrypt => exec_rsa_decrypt(&rsa_dec_priv, &rsa_ciphertext),
-            OpKind::EcdhDerive => exec_ecdh_derive(&session, &ecdh_priv, &ecdh_peer_pub),
-            OpKind::HkdfDerive => exec_hkdf_derive(&session, &hkdf_shared_secret),
-            OpKind::AesKeyGen => exec_aes_keygen(&session),
-            OpKind::EccKeyGen => exec_ecc_keygen(&session),
-            OpKind::AesXtsKeyGen => exec_aes_xts_keygen(&session),
-            OpKind::UnwrappingKeyGen => exec_unwrapping_keygen(&session),
-            OpKind::AesUnwrap => exec_aes_unwrap(&aes_unwrap_key, &aes_wrapped_blob),
-            OpKind::EccUnwrap => exec_ecc_unwrap(&ecc_unwrap_key, &ecc_wrapped_blob),
-            OpKind::XtsUnwrap => exec_xts_unwrap(
-                xts_unwrap_key
-                    .as_ref()
-                    .expect("XTS unwrap key not initialized"),
-                xts_wrapped_blob
-                    .as_ref()
-                    .expect("XTS wrapped blob not initialized"),
-            ),
-            OpKind::AesUnmask => exec_aes_unmask(&session, &aes_masked),
-            OpKind::EccUnmask => exec_ecc_unmask(&session, &ecc_masked),
-            OpKind::XtsUnmask => exec_xts_unmask(
-                &session,
-                xts_masked.as_ref().expect("XTS masked key not initialized"),
-            ),
-            OpKind::EccKeyReport => exec_ecc_key_report(&ecc_priv, &report_data),
-            OpKind::RsaKeyReport => exec_rsa_key_report(&rsa_sign_priv, &report_data),
-            OpKind::UnwrappingKeyReport => exec_rsa_key_report(&aes_unwrap_key, &report_data),
-            OpKind::CertChain => exec_cert_chain(&partition),
-            OpKind::AesKeyGenDelete => exec_aes_keygen_delete(&session),
-            OpKind::EccKeyGenDelete => exec_ecc_keygen_delete(&session),
-            OpKind::AesXtsKeyGenDelete => exec_aes_xts_keygen_delete(&session),
-        };
-
-        match result {
-            Ok(()) => {
-                worker_states.set_idle(thread_id);
-                stats.increment_op(op);
-            }
-            Err(err) => {
-                stats.stop.store(true, Ordering::SeqCst);
-                return Some(WorkerFailure {
-                    thread_id,
-                    op,
-                    error: err,
-                    total_ops: stats.total_ops.load(Ordering::Relaxed),
-                });
-            }
-        }
-    }
-
-    None
-}
-
-// ---------------------------------------------------------------------------
-// Reset thread
-// ---------------------------------------------------------------------------
-
-fn reset_thread(
-    path: String,
-    interval: Duration,
-    stats: Arc<SharedStats>,
-    barrier: Arc<Barrier>,
-    enabled: bool,
-) {
-    let partition = HsmPartitionManager::open_partition(&path)
-        .expect("Failed to open partition for reset thread");
-    barrier.wait();
-
-    if !enabled {
-        // No-op: wait until stop is signalled.
-        while !stats.stop.load(Ordering::Relaxed) {
-            thread::sleep(interval);
-        }
-        return;
-    }
-
-    while !stats.stop.load(Ordering::Relaxed) {
-        thread::sleep(interval);
-        if stats.stop.load(Ordering::Relaxed) {
-            break;
-        }
-        match partition.reset() {
-            Ok(()) => {
-                stats.total_resets.fetch_add(1, Ordering::Relaxed);
-            }
-            Err(_) => {
-                // Reset failures are expected during stress; count
-                // them but don't print to avoid breaking the display.
-                stats.reset_failures.fetch_add(1, Ordering::Relaxed);
-            }
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Random fault injection thread (requires res-test feature)
-// ---------------------------------------------------------------------------
-
-/// Recovery-path DDI operations — always included in the fault target
-/// list because NSSRs can occur during recovery just as they can during
-/// primary operations.
-#[cfg(feature = "res-test")]
-const RECOVERY_DDI_OPS: &[azihsm_res_test_dev::DdiOp] = &[
-    azihsm_res_test_dev::DdiOp::InitBk3,
-    azihsm_res_test_dev::DdiOp::GetEstablishCredEncryptionKey,
-    azihsm_res_test_dev::DdiOp::EstablishCredential,
-    azihsm_res_test_dev::DdiOp::GetSessionEncryptionKey,
-    azihsm_res_test_dev::DdiOp::OpenSession,
-    azihsm_res_test_dev::DdiOp::ReopenSession,
-    azihsm_res_test_dev::DdiOp::UnmaskKey,
-];
-
-/// Builds the list of DDI ops to target with random fault injection,
-/// based on the active worker operations plus recovery-path ops.
-#[cfg(feature = "res-test")]
-fn build_fault_targets(ops: &[OpKind]) -> Vec<azihsm_res_test_dev::DdiOp> {
-    use azihsm_res_test_dev::DdiOp;
-
-    let mut targets: Vec<DdiOp> = Vec::new();
-
-    for op in ops {
-        let ddi_op = match op {
-            OpKind::AesCbcEncrypt | OpKind::AesCbcDecrypt => DdiOp::AesEncryptDecrypt,
-            OpKind::EccSign => DdiOp::EccSign,
-            OpKind::HmacSign => DdiOp::Hmac,
-            OpKind::RsaSign | OpKind::RsaDecrypt => DdiOp::RsaModExp,
-            OpKind::EcdhDerive => DdiOp::EcdhKeyExchange,
-            OpKind::HkdfDerive => DdiOp::HkdfDerive,
-            OpKind::AesKeyGen | OpKind::AesXtsKeyGen => DdiOp::AesGenerateKey,
-            OpKind::EccKeyGen => DdiOp::EccGenerateKeyPair,
-            OpKind::UnwrappingKeyGen => DdiOp::GetUnwrappingKey,
-            OpKind::AesUnwrap | OpKind::EccUnwrap | OpKind::XtsUnwrap => DdiOp::RsaUnwrap,
-            OpKind::AesUnmask | OpKind::EccUnmask | OpKind::XtsUnmask => DdiOp::UnmaskKey,
-            OpKind::EccKeyReport | OpKind::RsaKeyReport | OpKind::UnwrappingKeyReport => {
-                DdiOp::AttestKey
-            }
-            OpKind::CertChain => DdiOp::GetCertChainInfo,
-            OpKind::AesKeyGenDelete | OpKind::AesXtsKeyGenDelete => DdiOp::AesGenerateKey,
-            OpKind::EccKeyGenDelete => DdiOp::EccGenerateKeyPair,
-        };
-        if !targets.contains(&ddi_op) {
-            targets.push(ddi_op);
-        }
-    }
-
-    // Always include recovery-path ops.
-    for &op in RECOVERY_DDI_OPS {
-        if !targets.contains(&op) {
-            targets.push(op);
-        }
-    }
-
-    targets
-}
-
-/// Continuously injects `reset_on_next` faults on random DDI operations.
-///
-/// Each iteration picks a random DDI op from the target list and injects
-/// a fault rule that triggers an NSSR on the next call to that operation.
-/// The target list is built from the active worker operations plus
-/// recovery-path ops, so faults only hit DDI calls that are actually
-/// being made.
-#[cfg(feature = "res-test")]
-fn random_fault_thread(
-    interval: Duration,
-    stats: Arc<SharedStats>,
-    barrier: Arc<Barrier>,
-    fault_targets: Vec<azihsm_res_test_dev::DdiOp>,
-) {
-    use azihsm_res_test_dev::*;
-
-    barrier.wait();
-    let mut rng = rand::thread_rng();
-
-    while !stats.stop.load(Ordering::Relaxed) {
-        thread::sleep(interval);
-        if stats.stop.load(Ordering::Relaxed) {
-            break;
-        }
-
-        // Pick a random DDI op from the target list.
-        let op = fault_targets[rng.gen_range(0..fault_targets.len())];
-        inject_fault(FaultRule::reset_on_next(op, 1));
-        stats.total_resets.fetch_add(1, Ordering::Relaxed);
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Stats printer
-// ---------------------------------------------------------------------------
-
-fn stats_thread(
-    stats: Arc<SharedStats>,
-    interval: Duration,
-    start: Instant,
-    stall_timeout: Duration,
-    worker_states: Arc<WorkerStates>,
-) -> bool {
-    // Use ANSI escape codes to overwrite multiple lines.
-    let mut first = true;
-    let mut last_progress_ops: u64 = 0;
-    let mut last_progress_time = Instant::now();
-
-    // Previous snapshot for computing deltas.
-    let mut prev = [0u64; 25];
-
-    while !stats.stop.load(Ordering::Relaxed) {
-        thread::sleep(interval);
-        let elapsed = start.elapsed();
-        let ops = stats.total_ops.load(Ordering::Relaxed);
-        let resets = stats.total_resets.load(Ordering::Relaxed);
-        let reset_fails = stats.reset_failures.load(Ordering::Relaxed);
-        let elapsed_secs = elapsed.as_secs_f64();
-        let ops_per_sec = if elapsed_secs > 0.0 {
-            ops as f64 / elapsed_secs
-        } else {
-            0.0
-        };
-
-        // Snapshot current per-op counters.
-        let cur = [
-            stats.aes_cbc_encrypt.load(Ordering::Relaxed),
-            stats.aes_cbc_decrypt.load(Ordering::Relaxed),
-            stats.ecc_sign.load(Ordering::Relaxed),
-            stats.hmac_sign.load(Ordering::Relaxed),
-            stats.rsa_sign.load(Ordering::Relaxed),
-            stats.rsa_decrypt.load(Ordering::Relaxed),
-            stats.ecdh_derive.load(Ordering::Relaxed),
-            stats.hkdf_derive.load(Ordering::Relaxed),
-            stats.aes_keygen.load(Ordering::Relaxed),
-            stats.ecc_keygen.load(Ordering::Relaxed),
-            stats.aes_xts_keygen.load(Ordering::Relaxed),
-            stats.unwrapping_keygen.load(Ordering::Relaxed),
-            stats.aes_unwrap.load(Ordering::Relaxed),
-            stats.ecc_unwrap.load(Ordering::Relaxed),
-            stats.xts_unwrap.load(Ordering::Relaxed),
-            stats.aes_unmask.load(Ordering::Relaxed),
-            stats.ecc_unmask.load(Ordering::Relaxed),
-            stats.xts_unmask.load(Ordering::Relaxed),
-            stats.ecc_key_report.load(Ordering::Relaxed),
-            stats.rsa_key_report.load(Ordering::Relaxed),
-            stats.unwrapping_key_report.load(Ordering::Relaxed),
-            stats.cert_chain.load(Ordering::Relaxed),
-            stats.aes_keygen_delete.load(Ordering::Relaxed),
-            stats.ecc_keygen_delete.load(Ordering::Relaxed),
-            stats.xts_keygen_delete.load(Ordering::Relaxed),
-        ];
-
-        // Build the entire stats block into a single string so the
-        // terminal output is atomic and cursor-up works reliably.
-        use std::fmt::Write as _;
-        let mut buf = String::with_capacity(1024);
-
-        let delta_total: u64 = ops.saturating_sub(prev.iter().sum());
-
-        // Move cursor up 21 lines to overwrite (except on first print).
-        if !first {
-            write!(buf, "\x1b[26A").ok();
-        }
-        first = false;
-
-        writeln!(
-            buf,
-            "\x1b[K[{:02}:{:02}:{:02}] total: {} (+{}) | resets: {} (fail: {}) | ops/s: {:.0}",
-            elapsed.as_secs() / 3600,
-            (elapsed.as_secs() % 3600) / 60,
-            elapsed.as_secs() % 60,
-            ops,
-            delta_total,
-            resets,
-            reset_fails,
-            ops_per_sec,
-        )
-        .ok();
-
-        // Print per-op breakdown every 12th tick (~1 minute).
-        const LABELS: [&str; 25] = [
-            "AES-CBC enc:      ",
-            "AES-CBC dec:      ",
-            "ECC sign:         ",
-            "HMAC sign:        ",
-            "RSA sign:         ",
-            "RSA decrypt:      ",
-            "ECDH derive:      ",
-            "HKDF derive:      ",
-            "AES key gen:      ",
-            "ECC key gen:      ",
-            "AES-XTS keygen:   ",
-            "Unwrapping keygen:",
-            "AES unwrap:       ",
-            "ECC unwrap:       ",
-            "XTS unwrap:       ",
-            "AES unmask:       ",
-            "ECC unmask:       ",
-            "XTS unmask:       ",
-            "ECC key report:   ",
-            "RSA key report:   ",
-            "Unwrap key report:",
-            "Cert chain:       ",
-            "AES keygen+del:   ",
-            "ECC keygen+del:   ",
-            "XTS keygen+del:   ",
-        ];
-
-        for (i, label) in LABELS.iter().enumerate() {
-            let delta = cur[i].saturating_sub(prev[i]);
-            writeln!(buf, "\x1b[K  {label} {:<8} (+{delta})", cur[i]).ok();
-        }
-
-        eprint!("{buf}");
-
-        prev = cur;
-
-        // Stall / deadlock detection.
-        if ops > last_progress_ops {
-            last_progress_ops = ops;
-            last_progress_time = Instant::now();
-        } else if !stall_timeout.is_zero() && last_progress_time.elapsed() >= stall_timeout {
-            eprintln!();
-            eprintln!("=== STALL DETECTED ===");
-            eprintln!(
-                "No operations completed for {:.0}s — possible deadlock.",
-                last_progress_time.elapsed().as_secs_f64()
-            );
-            eprintln!("Total ops at stall:  {ops}");
-            eprintln!("Resets at stall:     {resets}");
-            eprintln!(
-                "Elapsed:             {:02}:{:02}:{:02}",
-                elapsed.as_secs() / 3600,
-                (elapsed.as_secs() % 3600) / 60,
-                elapsed.as_secs() % 60,
-            );
-            eprintln!("Per-operation counts at stall:");
-            eprintln!(
-                "  AES-CBC enc:    {}",
-                stats.aes_cbc_encrypt.load(Ordering::Relaxed)
-            );
-            eprintln!(
-                "  AES-CBC dec:    {}",
-                stats.aes_cbc_decrypt.load(Ordering::Relaxed)
-            );
-            eprintln!(
-                "  ECC sign:       {}",
-                stats.ecc_sign.load(Ordering::Relaxed)
-            );
-            eprintln!(
-                "  HMAC sign:      {}",
-                stats.hmac_sign.load(Ordering::Relaxed)
-            );
-            eprintln!(
-                "  RSA sign:       {}",
-                stats.rsa_sign.load(Ordering::Relaxed)
-            );
-            eprintln!(
-                "  RSA decrypt:    {}",
-                stats.rsa_decrypt.load(Ordering::Relaxed)
-            );
-            eprintln!(
-                "  ECDH derive:    {}",
-                stats.ecdh_derive.load(Ordering::Relaxed)
-            );
-            eprintln!(
-                "  HKDF derive:    {}",
-                stats.hkdf_derive.load(Ordering::Relaxed)
-            );
-            eprintln!(
-                "  AES key gen:    {}",
-                stats.aes_keygen.load(Ordering::Relaxed)
-            );
-            eprintln!(
-                "  ECC key gen:    {}",
-                stats.ecc_keygen.load(Ordering::Relaxed)
-            );
-            eprintln!(
-                "  AES-XTS keygen: {}",
-                stats.aes_xts_keygen.load(Ordering::Relaxed)
-            );
-            eprintln!(
-                "  Unwrap keygen:  {}",
-                stats.unwrapping_keygen.load(Ordering::Relaxed)
-            );
-            eprintln!(
-                "  AES unwrap:     {}",
-                stats.aes_unwrap.load(Ordering::Relaxed)
-            );
-            eprintln!(
-                "  ECC unwrap:     {}",
-                stats.ecc_unwrap.load(Ordering::Relaxed)
-            );
-            eprintln!(
-                "  XTS unwrap:     {}",
-                stats.xts_unwrap.load(Ordering::Relaxed)
-            );
-            eprintln!(
-                "  AES unmask:     {}",
-                stats.aes_unmask.load(Ordering::Relaxed)
-            );
-            eprintln!(
-                "  ECC unmask:     {}",
-                stats.ecc_unmask.load(Ordering::Relaxed)
-            );
-            eprintln!(
-                "  XTS unmask:     {}",
-                stats.xts_unmask.load(Ordering::Relaxed)
-            );
-            eprintln!(
-                "  ECC key report: {}",
-                stats.ecc_key_report.load(Ordering::Relaxed)
-            );
-            eprintln!(
-                "  RSA key report: {}",
-                stats.rsa_key_report.load(Ordering::Relaxed)
-            );
-            eprintln!(
-                "  Unwrap report:  {}",
-                stats.unwrapping_key_report.load(Ordering::Relaxed)
-            );
-            eprintln!(
-                "  Cert chain:     {}",
-                stats.cert_chain.load(Ordering::Relaxed)
-            );
-            eprintln!(
-                "  AES keygen+del: {}",
-                stats.aes_keygen_delete.load(Ordering::Relaxed)
-            );
-            eprintln!(
-                "  ECC keygen+del: {}",
-                stats.ecc_keygen_delete.load(Ordering::Relaxed)
-            );
-            eprintln!(
-                "  XTS keygen+del: {}",
-                stats.xts_keygen_delete.load(Ordering::Relaxed)
-            );
-            eprintln!("Worker states at stall:");
-            worker_states.dump();
-            stats.stop.store(true, Ordering::SeqCst);
-            return true;
-        }
-    }
-    false
-}
-
-// ---------------------------------------------------------------------------
-// Main
-// ---------------------------------------------------------------------------
-
 fn parse_ops(ops_str: &str) -> Vec<OpKind> {
     if ops_str == "all" {
         return vec![
@@ -1738,29 +1224,54 @@ fn parse_ops(ops_str: &str) -> Vec<OpKind> {
 fn main() {
     let args = Args::parse();
 
-    tracing_subscriber::fmt()
-        .with_max_level(if args.verbose {
-            tracing::Level::WARN
-        } else {
-            tracing::Level::ERROR
-        })
-        .init();
+    // Child process dispatch: if --child-id is set, we are a child process.
+    if let Some(child_id) = args.child_id {
+        run_as_child(args, child_id);
+        return;
+    }
+
+    // Always run as parent orchestrator (even for -p 1).
+    run_as_parent(args);
+}
+// ---------------------------------------------------------------------------
+// Multi-process: parent orchestrator
+// ---------------------------------------------------------------------------
+
+#[allow(unsafe_code)]
+fn run_as_parent(args: Args) {
+    use std::process::Command;
+
+    if args.verbose {
+        tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::WARN)
+            .with_writer(std::io::stderr)
+            .init();
+    } else {
+        let log_path = "resiliency_stress_parent.log";
+        let log_file = fs::File::create(log_path).expect("Failed to create log file");
+        tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::ERROR)
+            .with_writer(std::sync::Mutex::new(log_file))
+            .with_ansi(false)
+            .init();
+    }
+
+    let num_procs = args.processes;
+    assert!(num_procs >= 1 && num_procs <= MAX_PROCS);
 
     eprintln!("=== Resiliency Stress Tool ===");
-
-    // Validate flag combinations.
-    if args.random_fault && args.no_resiliency {
-        eprintln!(
-            "Error: --random-fault requires resiliency (cannot combine with --no-resiliency)"
-        );
-        std::process::exit(1);
+    if !args.verbose {
+        if num_procs == 1 {
+            eprintln!("Trace log:      resiliency_stress_child_0.log");
+        } else {
+            eprintln!(
+                "Trace log:      resiliency_stress_parent.log (+ child_0..{} logs)",
+                num_procs - 1
+            );
+        }
     }
-    if args.random_fault && args.no_reset {
-        eprintln!("Error: --random-fault injects resets (cannot combine with --no-reset)");
-        std::process::exit(1);
-    }
-
-    eprintln!("Workers:        {}", args.workers);
+    eprintln!("Processes:      {num_procs}");
+    eprintln!("Workers/proc:   {}", args.workers);
     eprintln!("Reset interval: {}ms", args.reset_interval_ms);
     eprintln!(
         "Duration:       {}",
@@ -1771,23 +1282,11 @@ fn main() {
         }
     );
     eprintln!(
-        "Stall timeout:  {}",
-        if args.stall_timeout_secs == 0 {
-            "disabled".to_string()
+        "Max errors:     {}",
+        if args.max_errors < 0 {
+            "unlimited".to_string()
         } else {
-            format!("{}s", args.stall_timeout_secs)
-        }
-    );
-    eprintln!(
-        "Mode:           {}",
-        if args.no_resiliency {
-            "no-resiliency (baseline)"
-        } else if args.random_fault {
-            "resiliency enabled + random DDI fault injection"
-        } else if args.no_reset {
-            "resiliency enabled, no resets"
-        } else {
-            "resiliency enabled + resets"
+            format!("{}", args.max_errors)
         }
     );
 
@@ -1801,262 +1300,733 @@ fn main() {
     );
     eprintln!();
 
-    // Setup partition + session.
+    // Create shared memory.
+    let (shmem_path, mmap) = create_shared_mem();
+    let shmem: &SharedMem = unsafe { shmem_ref(&mmap) };
+
+    // Create shared resiliency storage directory for all processes.
+    let storage_dir = std::env::temp_dir().join(format!("azihsm_stress_{}", std::process::id()));
+    fs::create_dir_all(&storage_dir).expect("Failed to create shared storage directory");
+
+    // Reset the partition once before spawning children.
+    // Children will each call init() — the first succeeds, subsequent ones
+    // get VaultAppLimitReached and read the BMK from shared FileStorage.
+    // The cross-process FileLock serializes children's init calls.
+    {
+        let list = HsmPartitionManager::partition_info_list();
+        assert!(!list.is_empty(), "No partitions found");
+        let part = HsmPartitionManager::open_partition(&list[0].path)
+            .expect("Failed to open partition for reset");
+        part.reset().expect("Failed to reset partition");
+    }
+
+    // Build the self-exe path for child re-exec.
+    let self_exe = std::env::current_exe().expect("Failed to get current executable path");
+
+    // Spawn child processes.
+    let mut children = Vec::new();
+    for i in 0..num_procs {
+        let mut cmd = Command::new(&self_exe);
+
+        // Forward all relevant args to child.
+        cmd.arg("--child-id").arg(i.to_string());
+        cmd.arg("--shmem-path").arg(&shmem_path);
+        cmd.arg("--storage-dir").arg(storage_dir.to_str().unwrap());
+        cmd.arg("-w").arg(args.workers.to_string());
+        cmd.arg("-d").arg(args.duration_secs.to_string());
+        cmd.arg("-o").arg(&args.ops);
+        cmd.arg("-e").arg(args.max_errors.to_string());
+        cmd.arg("--stall-timeout-secs")
+            .arg(args.stall_timeout_secs.to_string());
+        if args.verbose {
+            cmd.arg("-v");
+        }
+        if args.no_resiliency {
+            cmd.arg("--no-resiliency");
+        }
+        if args.no_reset {
+            cmd.arg("--no-reset");
+        }
+
+        // Redirect child stderr to its log file so panics/backtraces
+        // don't pollute the parent's console output.
+        let child_log = fs::File::create(format!("resiliency_stress_child_{i}.log"))
+            .expect("Failed to create child log file");
+        let child = cmd
+            .env("RUST_BACKTRACE", "full")
+            .stderr(std::process::Stdio::from(child_log))
+            .spawn()
+            .unwrap_or_else(|e| panic!("Failed to spawn child process {i}: {e}"));
+        children.push(child);
+    }
+
+    // Setup partition for reset thread (parent only).
     let enable_resiliency = !args.no_resiliency;
     let enable_resets = enable_resiliency && !args.no_reset;
-    let (part, creds) = open_and_init_partition(enable_resiliency);
-    let path = part.path();
+    let list = HsmPartitionManager::partition_info_list();
+    assert!(!list.is_empty(), "No partitions found");
+    let path = list[0].path.clone();
+    let reset_interval = Duration::from_millis(args.reset_interval_ms);
 
-    let stats = Arc::new(SharedStats::new());
-    let worker_states = Arc::new(WorkerStates::new(args.workers));
-    // +1 for reset thread.
-    let barrier = Arc::new(Barrier::new(args.workers + 1));
-    let start = Instant::now();
+    // Spawn reset thread using SharedMem atomics.
+    let shmem_ptr = shmem as *const SharedMem as usize;
+    let reset_handle = thread::spawn(move || {
+        let shmem = unsafe { &*(shmem_ptr as *const SharedMem) };
+        let partition = HsmPartitionManager::open_partition(&path)
+            .expect("Failed to open partition for reset thread");
 
-    // Spawn deadlock detection thread.
-    thread::spawn(move || loop {
-        thread::sleep(Duration::from_secs(5));
-        let deadlocks = deadlock::check_deadlock();
-        if deadlocks.is_empty() {
-            continue;
+        if !enable_resets {
+            while !shmem.stop.load(Ordering::Relaxed) {
+                thread::sleep(Duration::from_millis(100));
+            }
+            return;
         }
-        eprintln!();
-        eprintln!("=== DEADLOCK DETECTED ({} cycles) ===", deadlocks.len());
-        for (i, threads) in deadlocks.iter().enumerate() {
-            eprintln!("--- Cycle {} ({} threads) ---", i + 1, threads.len());
-            for t in threads {
-                eprintln!("Thread {:?} ({:?}):", t.thread_id(), t.thread_id());
-                eprintln!("{:#?}", t.backtrace());
+
+        loop {
+            thread::sleep(reset_interval);
+            if shmem.stop.load(Ordering::Relaxed) {
+                break;
+            }
+            match partition.reset() {
+                Ok(()) => {
+                    shmem.total_resets.fetch_add(1, Ordering::Relaxed);
+                }
+                Err(_) => {
+                    shmem.reset_failures.fetch_add(1, Ordering::Relaxed);
+                }
             }
         }
     });
 
-    // Spawn stats printer.
-    let stats_clone = Arc::clone(&stats);
+    // Stats display thread.
     let stats_interval = Duration::from_secs(args.stats_interval_secs);
     let stall_timeout = Duration::from_secs(args.stall_timeout_secs);
-    let ws_clone = Arc::clone(&worker_states);
+    let start = Instant::now();
+    let shmem_ptr2 = shmem as *const SharedMem as usize;
     let stats_handle = thread::spawn(move || {
-        stats_thread(stats_clone, stats_interval, start, stall_timeout, ws_clone)
+        let shmem = unsafe { &*(shmem_ptr2 as *const SharedMem) };
+        multiproc_stats_loop(shmem, num_procs, stats_interval, start, stall_timeout)
     });
 
-    // Spawn reset thread (or random fault injection thread).
-    let stats_clone = Arc::clone(&stats);
-    let barrier_clone = Arc::clone(&barrier);
-    let reset_interval = Duration::from_millis(args.reset_interval_ms);
-    let use_random_fault = args.random_fault;
-    let reset_handle = if use_random_fault {
-        #[cfg(feature = "res-test")]
-        {
-            let fault_targets = build_fault_targets(&ops);
-            thread::spawn(move || {
-                random_fault_thread(reset_interval, stats_clone, barrier_clone, fault_targets)
-            })
-        }
-        #[cfg(not(feature = "res-test"))]
-        {
-            eprintln!("Error: --random-fault requires the `res-test` feature.");
-            eprintln!("Rebuild with: cargo build --features res-test -p resiliency_stress");
-            std::process::exit(1);
-        }
-    } else {
-        thread::spawn(move || {
-            reset_thread(
-                path,
-                reset_interval,
-                stats_clone,
-                barrier_clone,
-                enable_resets,
-            )
-        })
-    };
-
-    // Spawn worker threads — all share a single session.
-    let session = open_session(&part, &creds);
-    let mut worker_handles = Vec::new();
-    for i in 0..args.workers {
-        let partition = part.clone();
-        let session = session.clone();
-        let ops = ops.clone();
-        let stats_clone = Arc::clone(&stats);
-        let barrier_clone = Arc::clone(&barrier);
-        let ws_clone = Arc::clone(&worker_states);
-        let handle = thread::spawn(move || {
-            worker_thread(
-                i,
-                partition,
-                session,
-                ops,
-                stats_clone,
-                barrier_clone,
-                ws_clone,
-            )
-        });
-        worker_handles.push(handle);
-    }
-
-    // Duration timer (if not infinite).
+    // Duration timer.
     if args.duration_secs > 0 {
-        let stats_clone = Arc::clone(&stats);
+        let shmem_ptr3 = shmem as *const SharedMem as usize;
         let dur = Duration::from_secs(args.duration_secs);
         thread::spawn(move || {
+            let shmem = unsafe { &*(shmem_ptr3 as *const SharedMem) };
             thread::sleep(dur);
-            stats_clone.stop.store(true, Ordering::SeqCst);
+            shmem.stop.store(true, Ordering::SeqCst);
         });
     }
 
-    // Wait for workers.
-    let mut failure: Option<WorkerFailure> = None;
-    for handle in worker_handles {
-        if let Ok(Some(f)) = handle.join() {
-            if failure.is_none() {
-                failure = Some(f);
+    // Wait for all children.
+    let mut any_failed = false;
+    let stalled = stats_handle.join().unwrap_or(false);
+
+    // If stalled, send SIGUSR1 to children to dump thread backtraces.
+    #[cfg(unix)]
+    if stalled {
+        eprintln!();
+        eprintln!("Sending SIGUSR1 to child processes for backtrace dump...");
+        for child in children.iter() {
+            let pid = child.id();
+            unsafe {
+                libc::kill(pid as i32, libc::SIGUSR1);
             }
+        }
+        // Give children time to dump backtraces.
+        thread::sleep(Duration::from_secs(3));
+    }
+
+    for (i, mut child) in children.into_iter().enumerate() {
+        let status = child.wait().expect("Failed to wait for child");
+        if !status.success() && !stalled {
+            eprintln!("Child P{i} exited with {status}");
+            any_failed = true;
         }
     }
 
-    // Stop reset and stats threads.
-    stats.stop.store(true, Ordering::SeqCst);
+    // Stop helper threads.
+    shmem.stop.store(true, Ordering::SeqCst);
     let _ = reset_handle.join();
-    let stalled = stats_handle.join().unwrap_or(false);
 
+    // Final summary.
     let elapsed = start.elapsed();
-    let total_ops = stats.total_ops.load(Ordering::Relaxed);
-    let total_resets = stats.total_resets.load(Ordering::Relaxed);
-    let total_reset_fails = stats.reset_failures.load(Ordering::Relaxed);
+    let total_resets = shmem.total_resets.load(Ordering::Relaxed);
+    let reset_fails = shmem.reset_failures.load(Ordering::Relaxed);
+
+    let mut grand_ops: u64 = 0;
+    let mut grand_errors: u64 = 0;
+    let mut grand_op_counts = [0u64; NUM_OPS];
+    let mut grand_op_errors = [0u64; NUM_OPS];
+
+    for p in 0..num_procs {
+        let ps = &shmem.procs[p];
+        grand_ops += ps.total_ops.load(Ordering::Relaxed);
+        grand_errors += ps.total_errors.load(Ordering::Relaxed);
+        for j in 0..NUM_OPS {
+            grand_op_counts[j] += ps.op_counts[j].load(Ordering::Relaxed);
+            grand_op_errors[j] += ps.op_errors[j].load(Ordering::Relaxed);
+        }
+    }
 
     eprintln!("\n");
-    eprintln!("=== Final Stats ===");
+    eprintln!("=== Final Stats (multi-process) ===");
     eprintln!(
         "Elapsed:        {:02}:{:02}:{:02}",
         elapsed.as_secs() / 3600,
         (elapsed.as_secs() % 3600) / 60,
         elapsed.as_secs() % 60,
     );
-    eprintln!("Total ops:      {total_ops}");
+    eprintln!("Total ops:      {grand_ops}");
+    eprintln!("Op errors:      {grand_errors}");
     eprintln!("Resets:         {total_resets}");
-    eprintln!("Reset failures: {total_reset_fails}");
+    eprintln!("Reset failures: {reset_fails}");
     eprintln!(
         "Ops/sec:        {:.0}",
-        total_ops as f64 / elapsed.as_secs_f64().max(0.001)
-    );
-    eprintln!();
-    eprintln!("Per-operation breakdown:");
-    eprintln!(
-        "  AES-CBC enc:    {}",
-        stats.aes_cbc_encrypt.load(Ordering::Relaxed)
-    );
-    eprintln!(
-        "  AES-CBC dec:    {}",
-        stats.aes_cbc_decrypt.load(Ordering::Relaxed)
-    );
-    eprintln!(
-        "  ECC sign:       {}",
-        stats.ecc_sign.load(Ordering::Relaxed)
-    );
-    eprintln!(
-        "  HMAC sign:      {}",
-        stats.hmac_sign.load(Ordering::Relaxed)
-    );
-    eprintln!(
-        "  RSA sign:       {}",
-        stats.rsa_sign.load(Ordering::Relaxed)
-    );
-    eprintln!(
-        "  RSA decrypt:    {}",
-        stats.rsa_decrypt.load(Ordering::Relaxed)
-    );
-    eprintln!(
-        "  ECDH derive:    {}",
-        stats.ecdh_derive.load(Ordering::Relaxed)
-    );
-    eprintln!(
-        "  HKDF derive:    {}",
-        stats.hkdf_derive.load(Ordering::Relaxed)
-    );
-    eprintln!(
-        "  AES key gen:    {}",
-        stats.aes_keygen.load(Ordering::Relaxed)
-    );
-    eprintln!(
-        "  ECC key gen:    {}",
-        stats.ecc_keygen.load(Ordering::Relaxed)
-    );
-    eprintln!(
-        "  AES-XTS keygen: {}",
-        stats.aes_xts_keygen.load(Ordering::Relaxed)
-    );
-    eprintln!(
-        "  Unwrap keygen:  {}",
-        stats.unwrapping_keygen.load(Ordering::Relaxed)
-    );
-    eprintln!(
-        "  AES unwrap:     {}",
-        stats.aes_unwrap.load(Ordering::Relaxed)
-    );
-    eprintln!(
-        "  ECC unwrap:     {}",
-        stats.ecc_unwrap.load(Ordering::Relaxed)
-    );
-    eprintln!(
-        "  XTS unwrap:     {}",
-        stats.xts_unwrap.load(Ordering::Relaxed)
-    );
-    eprintln!(
-        "  AES unmask:     {}",
-        stats.aes_unmask.load(Ordering::Relaxed)
-    );
-    eprintln!(
-        "  ECC unmask:     {}",
-        stats.ecc_unmask.load(Ordering::Relaxed)
-    );
-    eprintln!(
-        "  XTS unmask:     {}",
-        stats.xts_unmask.load(Ordering::Relaxed)
-    );
-    eprintln!(
-        "  ECC key report: {}",
-        stats.ecc_key_report.load(Ordering::Relaxed)
-    );
-    eprintln!(
-        "  RSA key report: {}",
-        stats.rsa_key_report.load(Ordering::Relaxed)
-    );
-    eprintln!(
-        "  Unwrap report:  {}",
-        stats.unwrapping_key_report.load(Ordering::Relaxed)
-    );
-    eprintln!(
-        "  Cert chain:     {}",
-        stats.cert_chain.load(Ordering::Relaxed)
-    );
-    eprintln!(
-        "  AES keygen+del: {}",
-        stats.aes_keygen_delete.load(Ordering::Relaxed)
-    );
-    eprintln!(
-        "  ECC keygen+del: {}",
-        stats.ecc_keygen_delete.load(Ordering::Relaxed)
-    );
-    eprintln!(
-        "  XTS keygen+del: {}",
-        stats.xts_keygen_delete.load(Ordering::Relaxed)
+        grand_ops as f64 / elapsed.as_secs_f64().max(0.001)
     );
 
-    if let Some(f) = failure {
-        eprintln!();
-        eprintln!("=== FAILURE ===");
-        eprintln!("Thread:     {}", f.thread_id);
-        eprintln!("Operation:  {}", f.op);
-        eprintln!("Error:      {:?}", f.error);
-        eprintln!("Total ops:  {}", f.total_ops);
+    const LABELS: [&str; NUM_OPS] = [
+        "AES-CBC enc:      ",
+        "AES-CBC dec:      ",
+        "ECC sign:         ",
+        "HMAC sign:        ",
+        "RSA sign:         ",
+        "RSA decrypt:      ",
+        "ECDH derive:      ",
+        "HKDF derive:      ",
+        "AES key gen:      ",
+        "ECC key gen:      ",
+        "AES-XTS keygen:   ",
+        "Unwrapping keygen:",
+        "AES unwrap:       ",
+        "ECC unwrap:       ",
+        "XTS unwrap:       ",
+        "AES unmask:       ",
+        "ECC unmask:       ",
+        "XTS unmask:       ",
+        "ECC key report:   ",
+        "RSA key report:   ",
+        "Unwrap key report:",
+        "Cert chain:       ",
+        "AES keygen+del:   ",
+        "ECC keygen+del:   ",
+        "XTS keygen+del:   ",
+    ];
+
+    eprintln!();
+
+    // Header with per-process columns.
+    eprint!("                    ");
+    for p in 0..num_procs {
+        eprint!("{:>8}", format!("P{p}"));
+    }
+    eprintln!("{:>9}", "Total");
+
+    for (i, label) in LABELS.iter().enumerate() {
+        eprint!("  {label}");
+        for p in 0..num_procs {
+            eprint!("{:>8}", shmem.procs[p].op_counts[i].load(Ordering::Relaxed));
+        }
+        let errs = grand_op_errors[i];
+        if errs > 0 {
+            eprintln!("{:>9}  !! {errs} fail", grand_op_counts[i]);
+        } else {
+            eprintln!("{:>9}", grand_op_counts[i]);
+        }
+    }
+
+    // Check for process-level failures.
+    for p in 0..num_procs {
+        let ps = &shmem.procs[p];
+        if ps.failed.load(Ordering::Relaxed) {
+            let op_u8 = ps.failed_op.load(Ordering::Relaxed) as u8;
+            let op = OpKind::from_u8(op_u8)
+                .map(|o| format!("{o}"))
+                .unwrap_or_else(|| format!("unknown({})", op_u8));
+            let err = ps.failed_error.load(Ordering::Relaxed);
+            let tid = ps.failed_thread.load(Ordering::Relaxed);
+            eprintln!();
+            eprintln!("=== FAILURE (P{p}) ===");
+            eprintln!("Thread:    {tid}");
+            eprintln!("Operation: {op}");
+            eprintln!("Error:     {err}");
+        }
+    }
+
+    // Cleanup shared memory file and storage directory.
+    let _ = std::fs::remove_file(&shmem_path);
+    let _ = std::fs::remove_dir_all(&storage_dir);
+
+    if any_failed {
         std::process::exit(1);
     } else if stalled {
         eprintln!();
         eprintln!("Exiting due to stall (possible deadlock).");
         std::process::exit(2);
+    } else if grand_errors > 0 {
+        eprintln!();
+        eprintln!("Completed with {grand_errors} error(s) (within budget).");
     } else {
         eprintln!();
         eprintln!("All operations completed successfully.");
     }
+}
+
+fn multiproc_stats_loop(
+    shmem: &SharedMem,
+    num_procs: usize,
+    interval: Duration,
+    start: Instant,
+    stall_timeout: Duration,
+) -> bool {
+    use std::fmt::Write as _;
+    let mut first = true;
+    let mut prev_total: u64 = 0;
+    let mut last_progress_ops: u64 = 0;
+    let mut last_progress_time = Instant::now();
+    // 1 header + 1 column header + NUM_OPS lines = NUM_OPS + 2 lines to cursor-up.
+    let lines_to_clear = NUM_OPS + 2;
+
+    while !shmem.stop.load(Ordering::Relaxed) {
+        thread::sleep(interval);
+
+        let elapsed = start.elapsed();
+        let resets = shmem.total_resets.load(Ordering::Relaxed);
+        let reset_fails = shmem.reset_failures.load(Ordering::Relaxed);
+
+        let mut total_ops: u64 = 0;
+        let mut total_errors: u64 = 0;
+        let mut agg_counts = [0u64; NUM_OPS];
+        let mut agg_errors = [0u64; NUM_OPS];
+        for p in 0..num_procs {
+            let ps = &shmem.procs[p];
+            total_ops += ps.total_ops.load(Ordering::Relaxed);
+            total_errors += ps.total_errors.load(Ordering::Relaxed);
+            for j in 0..NUM_OPS {
+                agg_counts[j] += ps.op_counts[j].load(Ordering::Relaxed);
+                agg_errors[j] += ps.op_errors[j].load(Ordering::Relaxed);
+            }
+        }
+
+        let delta = total_ops.saturating_sub(prev_total);
+        let ops_per_sec = total_ops as f64 / elapsed.as_secs_f64().max(0.001);
+
+        let mut buf = String::with_capacity(2048);
+        if !first {
+            write!(buf, "\x1b[{}A", lines_to_clear).ok();
+        }
+        first = false;
+
+        let error_suffix = if total_errors > 0 {
+            format!(" | ERRORS: {total_errors}")
+        } else {
+            String::new()
+        };
+
+        writeln!(
+            buf,
+            "\x1b[K[{:02}:{:02}:{:02}] total: {total_ops} (+{delta}) | resets: {resets} (fail: {reset_fails}) | ops/s: {ops_per_sec:.0}{error_suffix}",
+            elapsed.as_secs() / 3600,
+            (elapsed.as_secs() % 3600) / 60,
+            elapsed.as_secs() % 60,
+        )
+        .ok();
+
+        // Column header.
+        write!(buf, "\x1b[K                    ").ok();
+        for p in 0..num_procs {
+            write!(buf, "{:>8}", format!("P{p}")).ok();
+        }
+        writeln!(buf, "{:>9}", "Total").ok();
+
+        const LABELS: [&str; NUM_OPS] = [
+            "AES-CBC enc:      ",
+            "AES-CBC dec:      ",
+            "ECC sign:         ",
+            "HMAC sign:        ",
+            "RSA sign:         ",
+            "RSA decrypt:      ",
+            "ECDH derive:      ",
+            "HKDF derive:      ",
+            "AES key gen:      ",
+            "ECC key gen:      ",
+            "AES-XTS keygen:   ",
+            "Unwrapping keygen:",
+            "AES unwrap:       ",
+            "ECC unwrap:       ",
+            "XTS unwrap:       ",
+            "AES unmask:       ",
+            "ECC unmask:       ",
+            "XTS unmask:       ",
+            "ECC key report:   ",
+            "RSA key report:   ",
+            "Unwrap key report:",
+            "Cert chain:       ",
+            "AES keygen+del:   ",
+            "ECC keygen+del:   ",
+            "XTS keygen+del:   ",
+        ];
+
+        for (i, label) in LABELS.iter().enumerate() {
+            write!(buf, "\x1b[K  {label}").ok();
+            for p in 0..num_procs {
+                write!(
+                    buf,
+                    "{:>8}",
+                    shmem.procs[p].op_counts[i].load(Ordering::Relaxed)
+                )
+                .ok();
+            }
+            let errs = agg_errors[i];
+            if errs > 0 {
+                writeln!(buf, "{:>9}  !! {errs} fail", agg_counts[i]).ok();
+            } else {
+                writeln!(buf, "{:>9}", agg_counts[i]).ok();
+            }
+        }
+
+        eprint!("{buf}");
+        prev_total = total_ops;
+
+        // Stall detection.
+        if total_ops > last_progress_ops {
+            last_progress_ops = total_ops;
+            last_progress_time = Instant::now();
+        } else if !stall_timeout.is_zero() && last_progress_time.elapsed() >= stall_timeout {
+            eprintln!();
+            eprintln!("=== STALL DETECTED ===");
+            eprintln!(
+                "No operations completed for {:.0}s — possible deadlock.",
+                last_progress_time.elapsed().as_secs_f64()
+            );
+            eprintln!("Total ops at stall: {total_ops}");
+            eprintln!(
+                "Resets at stall:    {}",
+                shmem.total_resets.load(Ordering::Relaxed)
+            );
+            eprintln!();
+            eprintln!("Check child deadlock logs for thread backtraces:");
+            for p in 0..num_procs {
+                eprintln!("  resiliency_stress_child_{p}.log");
+            }
+            shmem.stop.store(true, Ordering::SeqCst);
+            return true;
+        }
+    }
+    false
+}
+
+// ---------------------------------------------------------------------------
+// Multi-process: child worker process
+// ---------------------------------------------------------------------------
+
+#[allow(unsafe_code)]
+fn run_as_child(args: Args, child_id: usize) {
+    // Register SIGUSR1 handler to dump backtraces on stall detection.
+    #[cfg(unix)]
+    unsafe {
+        extern "C" fn sigusr1_handler(_sig: libc::c_int) {
+            // SAFETY: eprintln! is not async-signal-safe, but we're about
+            // to exit anyway — this is best-effort diagnostics.
+            let bt = std::backtrace::Backtrace::force_capture();
+            eprintln!("=== SIGUSR1 backtrace (thread interrupted) ===");
+            eprintln!("{bt}");
+            // Don't exit — let all threads get the signal.
+        }
+        libc::signal(
+            libc::SIGUSR1,
+            sigusr1_handler as *const () as libc::sighandler_t,
+        );
+    }
+
+    // Child's stderr is already redirected to its log file by the parent.
+    // Write tracing to stderr so everything goes to one place.
+    tracing_subscriber::fmt()
+        .with_max_level(if args.verbose {
+            tracing::Level::WARN
+        } else {
+            tracing::Level::ERROR
+        })
+        .with_writer(std::io::stderr)
+        .with_ansi(false)
+        .init();
+
+    let shmem_path = args
+        .shmem_path
+        .as_ref()
+        .expect("Child process requires --shmem-path");
+
+    let mmap = open_shared_mem(shmem_path);
+    let shmem: &SharedMem = unsafe { shmem_ref(&mmap) };
+    let proc_stats = &shmem.procs[child_id];
+
+    let ops = parse_ops(&args.ops);
+
+    // Each child opens its own partition + session (no reset — parent handles resets).
+    let enable_resiliency = !args.no_resiliency;
+    let storage_dir = args.storage_dir.map(PathBuf::from);
+    let (part, creds) = open_and_init_partition(enable_resiliency, true, storage_dir);
+    let session = open_session(&part, &creds);
+
+    let max_errors = args.max_errors;
+    let barrier = Arc::new(Barrier::new(args.workers));
+
+    // Collect worker pthread IDs so the stall detector can signal each one.
+    #[cfg(unix)]
+    let worker_tids: Arc<parking_lot::Mutex<Vec<libc::pthread_t>>> =
+        Arc::new(parking_lot::Mutex::new(Vec::new()));
+
+    let mut worker_handles = Vec::new();
+    for i in 0..args.workers {
+        let partition = part.clone();
+        let session = session.clone();
+        let ops = ops.clone();
+        let ps_ptr = proc_stats as *const ProcessStats as usize;
+        let shmem_ptr = shmem as *const SharedMem as usize;
+        let barrier_clone = Arc::clone(&barrier);
+        #[cfg(unix)]
+        let tids_clone = Arc::clone(&worker_tids);
+        let handle = thread::spawn(move || {
+            // Record this thread's pthread_t so stall detector can signal us.
+            #[cfg(unix)]
+            {
+                let tid = unsafe { libc::pthread_self() };
+                tids_clone.lock().push(tid);
+            }
+            let ps = unsafe { &*(ps_ptr as *const ProcessStats) };
+            let sm = unsafe { &*(shmem_ptr as *const SharedMem) };
+            child_worker_thread(
+                i,
+                partition,
+                session,
+                ops,
+                ps,
+                sm,
+                barrier_clone,
+                max_errors,
+            )
+        });
+        worker_handles.push(handle);
+    }
+
+    // Spawn deadlock/stall detection thread AFTER workers so it can access
+    // their thread IDs for backtrace signaling.
+    {
+        let shmem_ptr_dd = shmem as *const SharedMem as usize;
+        #[cfg(unix)]
+        let tids_for_dd = Arc::clone(&worker_tids);
+        thread::spawn(move || {
+            let shmem = unsafe { &*(shmem_ptr_dd as *const SharedMem) };
+
+            loop {
+                thread::sleep(Duration::from_secs(5));
+
+                let deadlocks = deadlock::check_deadlock();
+                if !deadlocks.is_empty() {
+                    tracing::error!("=== DEADLOCK DETECTED ({} cycles) ===", deadlocks.len());
+                    for (i, threads) in deadlocks.iter().enumerate() {
+                        tracing::error!("--- Cycle {} ({} threads) ---", i + 1, threads.len());
+                        for t in threads {
+                            tracing::error!("Thread {:?}: {:#?}", t.thread_id(), t.backtrace());
+                        }
+                    }
+                }
+
+                if shmem.stop.load(Ordering::Relaxed) {
+                    if !deadlocks.is_empty() {
+                        tracing::error!("Stop received with active deadlock(s) — see above.");
+                    } else {
+                        tracing::error!(
+                            "Stop received (possible stall). Signaling worker threads \
+                             for backtrace dump."
+                        );
+                    }
+
+                    #[cfg(unix)]
+                    {
+                        let tids = tids_for_dd.lock();
+                        for (i, tid) in tids.iter().enumerate() {
+                            eprintln!("--- Backtrace for worker thread {i} ---");
+                            unsafe {
+                                libc::pthread_kill(*tid, libc::SIGUSR1);
+                            }
+                            thread::sleep(Duration::from_millis(500));
+                        }
+                    }
+
+                    break;
+                }
+            }
+        });
+    }
+
+    let mut exit_code = 0;
+    for handle in worker_handles {
+        if let Ok(true) = handle.join() {
+            exit_code = 1;
+        }
+    }
+
+    std::process::exit(exit_code);
+}
+
+/// Worker thread for child processes. Writes stats to shared memory.
+/// Returns `true` if the worker triggered a stop due to max errors.
+#[allow(unsafe_code)]
+fn child_worker_thread(
+    thread_id: usize,
+    partition: HsmPartition,
+    session: HsmSession,
+    ops: Vec<OpKind>,
+    proc_stats: &ProcessStats,
+    shmem: &SharedMem,
+    barrier: Arc<Barrier>,
+    max_errors: i64,
+) -> bool {
+    // Pre-create keys (same setup as single-process worker_thread).
+    let aes_key = gen_aes_key(&session);
+    let iv = [0u8; 16];
+    let ciphertext = {
+        let data = b"stress test data for encryption!";
+        let mut algo = HsmAesCbcAlgo::with_padding(iv.to_vec()).expect("AES-CBC algo");
+        let len = HsmEncrypter::encrypt(&mut algo, &aes_key, data, None).expect("pre-encrypt len");
+        let mut out = vec![0u8; len];
+        let mut algo = HsmAesCbcAlgo::with_padding(iv.to_vec()).expect("AES-CBC algo");
+        HsmEncrypter::encrypt(&mut algo, &aes_key, data, Some(&mut out)).expect("pre-encrypt");
+        out
+    };
+    let (ecc_priv, _ecc_pub) = gen_ecc_key_pair(&session);
+    let ecc_hash = {
+        let mut h = HsmHashAlgo::Sha256;
+        HsmHasher::hash_vec(&session, &mut h, b"stress data for ECC").expect("hash")
+    };
+    let hmac_key = gen_hmac_key(&session);
+    let (ecdh_priv, _) = gen_ecc_derive_key_pair(&session);
+    let (_, ecdh_peer_pub) = gen_ecc_derive_key_pair(&session);
+    let hkdf_shared_secret = {
+        let pub_der = ecdh_peer_pub.pub_key_der_vec().expect("ECDH peer pub DER");
+        let mut algo = EcdhAlgo::new(&pub_der);
+        let bits = ecdh_priv.ecc_curve().expect("ECC curve").key_size_bits() as u32;
+        let secret_props = HsmKeyPropsBuilder::default()
+            .class(HsmKeyClass::Secret)
+            .key_kind(HsmKeyKind::SharedSecret)
+            .bits(bits)
+            .can_derive(true)
+            .is_session(true)
+            .build()
+            .expect("secret props");
+        HsmKeyManager::derive_key(&session, &mut algo, &ecdh_priv, secret_props)
+            .expect("pre-create shared secret")
+    };
+    let (rsa_sign_priv, _rsa_sign_pub) = import_rsa_sign_key(&session);
+    let rsa_hash = {
+        let mut h = HsmHashAlgo::Sha256;
+        HsmHasher::hash_vec(&session, &mut h, b"stress data for RSA sign").expect("RSA hash")
+    };
+    let (rsa_dec_priv, rsa_enc_pub) = import_rsa_enc_key(&session);
+    let rsa_ciphertext = {
+        let mut algo = HsmRsaEncryptAlgo::with_pkcs1_padding();
+        HsmEncrypter::encrypt_vec(&mut algo, &rsa_enc_pub, b"stress RSA plaintext")
+            .expect("RSA pre-encrypt")
+    };
+    let (aes_unwrap_key, aes_wrapped_blob) = prepare_wrapped_aes_key(&session);
+    let (ecc_unwrap_key, ecc_wrapped_blob) = prepare_wrapped_ecc_key(&session);
+    let needs_xts = ops.iter().any(|o| {
+        matches!(
+            o,
+            OpKind::AesXtsKeyGen
+                | OpKind::XtsUnwrap
+                | OpKind::XtsUnmask
+                | OpKind::AesXtsKeyGenDelete
+        )
+    });
+    let (xts_unwrap_key, xts_wrapped_blob) = if needs_xts {
+        let (k, b) = prepare_wrapped_xts_key(&session);
+        (Some(k), Some(b))
+    } else {
+        (None, None)
+    };
+    let aes_masked = aes_key.masked_key_vec().expect("AES masked key");
+    let ecc_masked = ecc_priv.masked_key_vec().expect("ECC masked key");
+    let xts_masked = if needs_xts {
+        let xts_key = gen_aes_xts_key(&session);
+        Some(xts_key.masked_key_vec().expect("XTS masked key"))
+    } else {
+        None
+    };
+    let report_data = [0x42u8; 128];
+
+    barrier.wait();
+
+    let mut rng = rand::thread_rng();
+    let mut triggered_stop = false;
+
+    while !shmem.stop.load(Ordering::Relaxed) {
+        let op = ops[rng.gen_range(0..ops.len())];
+
+        let result = match op {
+            OpKind::AesCbcEncrypt => exec_aes_cbc_encrypt(&aes_key),
+            OpKind::AesCbcDecrypt => exec_aes_cbc_decrypt(&aes_key, &ciphertext),
+            OpKind::EccSign => exec_ecc_sign(&ecc_priv, &ecc_hash),
+            OpKind::HmacSign => exec_hmac_sign(&hmac_key),
+            OpKind::RsaSign => exec_rsa_sign(&rsa_sign_priv, &rsa_hash),
+            OpKind::RsaDecrypt => exec_rsa_decrypt(&rsa_dec_priv, &rsa_ciphertext),
+            OpKind::EcdhDerive => exec_ecdh_derive(&session, &ecdh_priv, &ecdh_peer_pub),
+            OpKind::HkdfDerive => exec_hkdf_derive(&session, &hkdf_shared_secret),
+            OpKind::AesKeyGen => exec_aes_keygen(&session),
+            OpKind::EccKeyGen => exec_ecc_keygen(&session),
+            OpKind::AesXtsKeyGen => exec_aes_xts_keygen(&session),
+            OpKind::UnwrappingKeyGen => exec_unwrapping_keygen(&session),
+            OpKind::AesUnwrap => exec_aes_unwrap(&aes_unwrap_key, &aes_wrapped_blob),
+            OpKind::EccUnwrap => exec_ecc_unwrap(&ecc_unwrap_key, &ecc_wrapped_blob),
+            OpKind::XtsUnwrap => exec_xts_unwrap(
+                xts_unwrap_key.as_ref().expect("XTS unwrap key"),
+                xts_wrapped_blob.as_ref().expect("XTS wrapped blob"),
+            ),
+            OpKind::AesUnmask => exec_aes_unmask(&session, &aes_masked),
+            OpKind::EccUnmask => exec_ecc_unmask(&session, &ecc_masked),
+            OpKind::XtsUnmask => {
+                exec_xts_unmask(&session, xts_masked.as_ref().expect("XTS masked key"))
+            }
+            OpKind::EccKeyReport => exec_ecc_key_report(&ecc_priv, &report_data),
+            OpKind::RsaKeyReport => exec_rsa_key_report(&rsa_sign_priv, &report_data),
+            OpKind::UnwrappingKeyReport => exec_rsa_key_report(&aes_unwrap_key, &report_data),
+            OpKind::CertChain => exec_cert_chain(&partition),
+            OpKind::AesKeyGenDelete => exec_aes_keygen_delete(&session),
+            OpKind::EccKeyGenDelete => exec_ecc_keygen_delete(&session),
+            OpKind::AesXtsKeyGenDelete => exec_aes_xts_keygen_delete(&session),
+        };
+
+        let op_idx = (op.as_u8() - 1) as usize;
+        match result {
+            Ok(()) => {
+                proc_stats.increment_op(op_idx);
+            }
+            Err(err) => {
+                proc_stats.increment_error(op_idx);
+                eprintln!("  !! t{thread_id}: {op} failed: {err:?}");
+
+                if max_errors == 0
+                    || (max_errors > 0
+                        && proc_stats.total_errors.load(Ordering::Relaxed) >= max_errors as u64)
+                {
+                    proc_stats.failed.store(true, Ordering::SeqCst);
+                    proc_stats
+                        .failed_op
+                        .store(op.as_u8() as u32, Ordering::Relaxed);
+                    proc_stats.failed_error.store(err as i32, Ordering::Relaxed);
+                    proc_stats
+                        .failed_thread
+                        .store(thread_id as u32, Ordering::Relaxed);
+                    shmem.stop.store(true, Ordering::SeqCst);
+                    triggered_stop = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    triggered_stop
 }
