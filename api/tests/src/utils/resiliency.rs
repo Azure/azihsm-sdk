@@ -77,7 +77,13 @@ impl FileStorage {
 impl ResiliencyStorage for FileStorage {
     fn read(&self, key: &str) -> HsmResult<Vec<u8>> {
         let path = self.key_path(key);
-        let mut file = fs::File::open(&path).map_err(|_| HsmError::NotFound)?;
+        let mut file = fs::File::open(&path).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                HsmError::NotFound
+            } else {
+                HsmError::InternalError
+            }
+        })?;
         let mut buf = Vec::new();
         file.read_to_end(&mut buf)
             .map_err(|_| HsmError::InternalError)?;
@@ -86,8 +92,10 @@ impl ResiliencyStorage for FileStorage {
 
     fn write(&self, key: &str, data: &[u8]) -> HsmResult<()> {
         let path = self.key_path(key);
-        let mut file = fs::File::create(&path).map_err(|_| HsmError::InternalError)?;
+        let tmp_path = self.dir.join(format!(".{key}.tmp"));
+        let mut file = fs::File::create(&tmp_path).map_err(|_| HsmError::InternalError)?;
         file.write_all(data).map_err(|_| HsmError::InternalError)?;
+        fs::rename(&tmp_path, &path).map_err(|_| HsmError::InternalError)?;
         Ok(())
     }
 
