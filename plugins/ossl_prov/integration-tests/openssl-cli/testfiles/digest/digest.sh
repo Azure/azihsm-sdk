@@ -15,10 +15,7 @@ dd if=/dev/urandom of="$testdata" bs=1024 count=1
 
 # Compute digest via provider
 provider_dgst=$("$OPENSSL_BIN" dgst -"$dgst" \
-    -provider-path "$PROVIDER_PATH" \
     -propquery "$PROPQUERY" \
-    -provider default \
-    -provider azihsm_provider \
     -r "$testdata" | awk '{print $1}')
 
 # Compute digest via default provider for reference

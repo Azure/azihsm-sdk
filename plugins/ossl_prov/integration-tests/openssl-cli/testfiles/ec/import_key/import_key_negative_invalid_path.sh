@@ -13,10 +13,7 @@ maskedkeyfile=./masked_P-$1.bin
 set +e
 # Try loading a keyfile that does not exist
 output=$("$OPENSSL_BIN" genpkey \
-    -provider-path "$PROVIDER_PATH" \
     -propquery "$PROPQUERY" \
-    -provider default \
-    -provider azihsm_provider \
     -algorithm EC \
     -pkeyopt "group:$curve" \
     -outform DER \

@@ -24,10 +24,7 @@ signature=testdata_sign_oneshot.sig."$keybits"_"$algorithm"_"$dgst"
 
 # Import the RSA key into HSM via the provider
 "$OPENSSL_BIN" genpkey \
-    -provider-path "$PROVIDER_PATH" \
     -propquery "$PROPQUERY" \
-    -provider default \
-    -provider azihsm_provider \
     -algorithm "$algorithm" \
     -pkeyopt "rsa_keygen_bits:$keybits" \
     -pkeyopt azihsm.session:false \
@@ -51,10 +48,7 @@ dd if=/dev/urandom of="$testdata" bs=1024 count=1
 
 # Sign pre-hashed data
 "$OPENSSL_BIN" pkeyutl -sign \
-    -provider-path "$PROVIDER_PATH" \
     -propquery "$PROPQUERY" \
-    -provider default \
-    -provider azihsm_provider \
     -inkey "azihsm://$maskedkeyfile;type=$keytype" \
     -pkeyopt digest:"$dgst" \
     -in "$testdata_hash" \

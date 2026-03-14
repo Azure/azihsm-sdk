@@ -22,10 +22,7 @@ signature=testdata_defpad.sig."$keybits"_"$dgst"
 
 # Import the RSA key into HSM via the provider
 "$OPENSSL_BIN" genpkey \
-    -provider-path "$PROVIDER_PATH" \
     -propquery "$PROPQUERY" \
-    -provider default \
-    -provider azihsm_provider \
     -algorithm RSA \
     -pkeyopt "rsa_keygen_bits:$keybits" \
     -pkeyopt azihsm.session:false \
@@ -39,10 +36,7 @@ dd if=/dev/urandom of="$testdata" bs=1024 count=1
 
 # Sign without explicit padding options (defaults to PKCS#1 v1.5)
 "$OPENSSL_BIN" dgst -"$dgst" \
-    -provider-path "$PROVIDER_PATH" \
     -propquery "$PROPQUERY" \
-    -provider default \
-    -provider azihsm_provider \
     -sign "azihsm://$maskedkeyfile;type=rsa" \
     -out "$signature" \
     "$testdata"
@@ -54,10 +48,7 @@ fi
 
 #CHECK: Verified OK
 "$OPENSSL_BIN" dgst -"$dgst" \
-    -provider-path "$PROVIDER_PATH" \
     -propquery "$PROPQUERY" \
-    -provider default \
-    -provider azihsm_provider \
     -verify "azihsm://$maskedkeyfile;type=rsa" \
     -signature "$signature" \
     "$testdata"

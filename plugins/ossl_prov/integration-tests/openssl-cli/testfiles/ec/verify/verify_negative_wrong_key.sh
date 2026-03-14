@@ -15,10 +15,7 @@ signature=testdata_verify.sig."$dgst"_"$curve"
 
 # Generate a fresh key
 "$OPENSSL_BIN" genpkey \
-    -provider-path "$PROVIDER_PATH" \
     -propquery "$PROPQUERY" \
-    -provider default \
-    -provider azihsm_provider \
     -algorithm EC \
     -pkeyopt "group:$curve" \
     -pkeyopt azihsm.session:false \
@@ -30,20 +27,14 @@ signature=testdata_verify.sig."$dgst"_"$curve"
 dd if=/dev/urandom of="$testdata" bs=1024 count=1
 
 "$OPENSSL_BIN" dgst -"$dgst" \
-    -provider-path "$PROVIDER_PATH" \
     -propquery "$PROPQUERY" \
-    -provider default \
-    -provider azihsm_provider \
     -sign "azihsm://$maskedkeyfile;type=ec" \
     -out "$signature" \
     "$testdata"
 
 # Generate a new key that wont work
 "$OPENSSL_BIN" genpkey \
-    -provider-path "$PROVIDER_PATH" \
     -propquery "$PROPQUERY" \
-    -provider default \
-    -provider azihsm_provider \
     -algorithm EC \
     -pkeyopt "group:$curve" \
     -pkeyopt azihsm.session:false \
@@ -54,10 +45,7 @@ dd if=/dev/urandom of="$testdata" bs=1024 count=1
 # Verification should fail — use || true so -e doesn't abort the script
 #CHECK: Verification failure
 "$OPENSSL_BIN" dgst -"$dgst" \
-    -provider-path "$PROVIDER_PATH" \
     -propquery "$PROPQUERY" \
-    -provider default \
-    -provider azihsm_provider \
     -verify "azihsm://$wrongkey;type=ec" \
     -signature "$signature" \
     "$testdata" || true

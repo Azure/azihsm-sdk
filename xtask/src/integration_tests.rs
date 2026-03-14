@@ -4,6 +4,8 @@
 #![warn(missing_docs)]
 #![forbid(unsafe_code)]
 
+use std::fs;
+
 use clap::Parser;
 
 use crate::nextest;
@@ -18,6 +20,16 @@ pub struct IntegrationTest {}
 impl Xtask for IntegrationTest {
     fn run(self, ctx: XtaskCtx) -> anyhow::Result<()> {
         log::trace!("start testing");
+
+        // Clean previous test key material for fresh-per-run isolation
+        let keymat_dir = ctx.root.join("target").join("test-keymat");
+        if keymat_dir.exists() {
+            fs::remove_dir_all(&keymat_dir)?;
+            log::trace!(
+                "cleaned previous test key material at {}",
+                keymat_dir.display()
+            );
+        }
 
         // CLI-based integration tests (openssl command-line)
         let cli_tests = nextest::Nextest {

@@ -27,10 +27,7 @@ certificate=./certificate_certfile_"$keybits"_"$dgst".pem
 
 # Import the RSA key into HSM via the provider
 "$OPENSSL_BIN" genpkey \
-    -provider-path "$PROVIDER_PATH" \
     -propquery "$PROPQUERY" \
-    -provider default \
-    -provider azihsm_provider \
     -algorithm RSA \
     -pkeyopt "rsa_keygen_bits:$keybits" \
     -pkeyopt azihsm.session:false \
@@ -42,10 +39,7 @@ certificate=./certificate_certfile_"$keybits"_"$dgst".pem
 "$OPENSSL_BIN" req \
     -new \
     -x509 \
-    -provider-path "$PROVIDER_PATH" \
     -propquery "$PROPQUERY" \
-    -provider default \
-    -provider azihsm_provider \
     -key "azihsm://$maskedkeyfile;type=rsa" \
     -subj "/CN=test-$keybits" \
     -days 365 -"$dgst" \

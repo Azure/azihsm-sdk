@@ -21,10 +21,7 @@ wrapped_payload=./wrapped_payload_ec_"$curve".bin
 
 # Step 1: Export the HSM's RSA wrapping public key
 "$OPENSSL_BIN" genpkey \
-    -provider-path "$PROVIDER_PATH" \
     -propquery "$PROPQUERY" \
-    -provider default \
-    -provider azihsm_provider \
     -algorithm RSA \
     -pkeyopt azihsm.key_usage:keyWrapping \
     -outform PEM \
@@ -76,10 +73,7 @@ fi
 
 # Step 4: Import the wrapped key into HSM
 "$OPENSSL_BIN" genpkey \
-    -provider-path "$PROVIDER_PATH" \
     -propquery "$PROPQUERY" \
-    -provider default \
-    -provider azihsm_provider \
     -algorithm EC \
     -pkeyopt "group:$curve" \
     -pkeyopt "azihsm.wrapped_key:$wrapped_blob" \
@@ -97,20 +91,14 @@ fi
 #CHECK: Total found: 1
 
 "$OPENSSL_BIN" storeutl \
-    -provider-path "$PROVIDER_PATH" \
     -propquery "$PROPQUERY" \
-    -provider default \
-    -provider azihsm_provider \
     "azihsm://$maskedkeyfile;type=ec"
 
 # Step 6: Sign with the imported key
 dd if=/dev/urandom of="$testdata" bs=1024 count=1 2>/dev/null
 
 "$OPENSSL_BIN" dgst -"$dgst" \
-    -provider-path "$PROVIDER_PATH" \
     -propquery "$PROPQUERY" \
-    -provider default \
-    -provider azihsm_provider \
     -sign "azihsm://$maskedkeyfile;type=ec" \
     -out "$signature" \
     "$testdata"
@@ -124,10 +112,7 @@ fi
 #CHECK: Verified OK
 
 "$OPENSSL_BIN" dgst -"$dgst" \
-    -provider-path "$PROVIDER_PATH" \
     -propquery "$PROPQUERY" \
-    -provider default \
-    -provider azihsm_provider \
     -verify "azihsm://$maskedkeyfile;type=ec" \
     -signature "$signature" \
     "$testdata"

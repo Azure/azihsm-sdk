@@ -15,10 +15,7 @@ signature=testdata_oneshot_verify.sig."$dgst"_"$curve"
 
 # Generate a fresh key
 "$OPENSSL_BIN" genpkey \
-    -provider-path "$PROVIDER_PATH" \
     -propquery "$PROPQUERY" \
-    -provider default \
-    -provider azihsm_provider \
     -algorithm EC \
     -pkeyopt "group:$curve" \
     -pkeyopt azihsm.session:false \
@@ -33,20 +30,14 @@ dd if=/dev/urandom of="$testdata" bs=1024 count=1
 
 # Sign with pkeyutl
 "$OPENSSL_BIN" pkeyutl -sign \
-    -provider-path "$PROVIDER_PATH" \
     -propquery "$PROPQUERY" \
-    -provider default \
-    -provider azihsm_provider \
     -inkey "azihsm://$maskedkeyfile;type=ec" \
     -in "$testdata_hash" \
     -out "$signature"
 
 # CHECK: Signature Verified Successfully
 "$OPENSSL_BIN" pkeyutl -verify \
-    -provider-path "$PROVIDER_PATH" \
     -propquery "$PROPQUERY" \
-    -provider default \
-    -provider azihsm_provider \
     -inkey "azihsm://$maskedkeyfile;type=ec" \
     -in "$testdata_hash" \
     -sigfile "$signature"

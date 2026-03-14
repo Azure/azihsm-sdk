@@ -19,10 +19,7 @@ testdata=./hmac_testdata_"$curve"_"$dgst".bin
 hmac_output=./hmac_output_"$curve"_"$dgst".bin
 
 "$OPENSSL_BIN" genpkey \
-    -provider-path "$PROVIDER_PATH" \
     -propquery "$PROPQUERY" \
-    -provider default \
-    -provider azihsm_provider \
     -algorithm EC \
     -pkeyopt "group:$curve" \
     -pkeyopt azihsm.key_usage:keyAgreement \
@@ -41,19 +38,13 @@ hmac_output=./hmac_output_"$curve"_"$dgst".bin
 
 "$OPENSSL_BIN" pkeyutl \
     -derive \
-    -provider-path "$PROVIDER_PATH" \
     -propquery "$PROPQUERY" \
-    -provider default \
-    -provider azihsm_provider \
     -inkey "azihsm://$maskedkeyfile;type=ec" \
     -peerkey "$keyfile_pub" \
     -pkeyopt "output_file:$shared_secret"
 
 "$OPENSSL_BIN" kdf \
-    -provider-path "$PROVIDER_PATH" \
     -propquery "$PROPQUERY" \
-    -provider default \
-    -provider azihsm_provider \
     -keylen 4096 \
     -kdfopt "digest:$dgst" \
     -kdfopt "azihsm.ikm_file:$shared_secret" \
@@ -67,10 +58,7 @@ hmac_output=./hmac_output_"$curve"_"$dgst".bin
 dd if=/dev/urandom of="$testdata" bs=1024 count=1
 
 "$OPENSSL_BIN" mac -digest "$dgst" \
-    -provider-path "$PROVIDER_PATH" \
     -propquery "$PROPQUERY" \
-    -provider default \
-    -provider azihsm_provider \
     -macopt "key:$hmac_derivation_output" \
     -in "$testdata" \
     -binary \

@@ -5,64 +5,72 @@
 #define PROVIDER_CTX_HPP
 
 #include <cstdlib>
+#include <openssl/conf.h>
 #include <openssl/crypto.h>
 #include <openssl/provider.h>
 #include <stdexcept>
 #include <string>
 
-/// RAII wrapper that creates an OpenSSL library context, loads the default
-/// provider and the azihsm provider, and tears everything down on destruction.
+/// RAII wrapper that creates an OpenSSL library context and loads provider
+/// configuration from `OPENSSL_CONF`.
 ///
-/// The provider search path is taken from the `PROVIDER_PATH` environment
-/// variable (defaults to `target/debug` if unset).
+/// The generated `openssl.cnf` (produced by the Rust test runner) auto-
+/// activates the default and azihsm providers with absolute paths to both
+/// the provider module and key material files.
 class ProviderCtx
 {
   public:
     ProviderCtx()
     {
-        const char *env = std::getenv("PROVIDER_PATH");
-        provider_path_ = (env != nullptr && env[0] != '\0') ? env : "target/debug";
-
         libctx_ = OSSL_LIB_CTX_new();
         if (libctx_ == nullptr)
         {
             throw std::runtime_error("OSSL_LIB_CTX_new() failed");
         }
 
-        if (OSSL_PROVIDER_set_default_search_path(libctx_, provider_path_.c_str()) != 1)
+        // We use AZIHSM_OPENSSL_CONF (not OPENSSL_CONF) to pass the config
+        // path.  OPENSSL_CONF is processed automatically by OpenSSL for the
+        // *default* library context during auto-init.  If we set OPENSSL_CONF,
+        // the provider would be loaded twice (once into the default context,
+        // once into ours), and the mock HSM device handle cannot be opened
+        // concurrently — the second load deadlocks.
+        const char *conf = std::getenv("AZIHSM_OPENSSL_CONF");
+        if (conf == nullptr)
         {
-            OSSL_LIB_CTX_free(libctx_);
-            throw std::runtime_error("OSSL_PROVIDER_set_default_search_path() failed");
-        }
-
-        deflt_ = OSSL_PROVIDER_load(libctx_, "default");
-        if (deflt_ == nullptr)
-        {
-            OSSL_LIB_CTX_free(libctx_);
-            throw std::runtime_error("Failed to load default provider");
-        }
-
-        azihsm_ = OSSL_PROVIDER_load(libctx_, "azihsm_provider");
-        if (azihsm_ == nullptr)
-        {
-            OSSL_PROVIDER_unload(deflt_);
             OSSL_LIB_CTX_free(libctx_);
             throw std::runtime_error(
-                "Failed to load azihsm_provider from " + provider_path_
+                "AZIHSM_OPENSSL_CONF environment variable is not set"
+            );
+        }
+
+        if (OSSL_LIB_CTX_load_config(libctx_, conf) != 1)
+        {
+            OSSL_LIB_CTX_free(libctx_);
+            throw std::runtime_error(
+                std::string("OSSL_LIB_CTX_load_config() failed for: ") + conf
+            );
+        }
+
+        // Verify providers were activated by the config.
+        if (!OSSL_PROVIDER_available(libctx_, "default"))
+        {
+            OSSL_LIB_CTX_free(libctx_);
+            throw std::runtime_error(
+                "default provider not available after config load"
+            );
+        }
+
+        if (!OSSL_PROVIDER_available(libctx_, "azihsm"))
+        {
+            OSSL_LIB_CTX_free(libctx_);
+            throw std::runtime_error(
+                "azihsm provider not available after config load"
             );
         }
     }
 
     ~ProviderCtx() noexcept
     {
-        if (azihsm_ != nullptr)
-        {
-            OSSL_PROVIDER_unload(azihsm_);
-        }
-        if (deflt_ != nullptr)
-        {
-            OSSL_PROVIDER_unload(deflt_);
-        }
         if (libctx_ != nullptr)
         {
             OSSL_LIB_CTX_free(libctx_);
@@ -75,33 +83,20 @@ class ProviderCtx
 
     // Movable
     ProviderCtx(ProviderCtx &&other) noexcept
-        : libctx_(other.libctx_), deflt_(other.deflt_), azihsm_(other.azihsm_),
-          provider_path_(std::move(other.provider_path_))
+        : libctx_(other.libctx_)
     {
         other.libctx_ = nullptr;
-        other.deflt_ = nullptr;
-        other.azihsm_ = nullptr;
     }
 
     ProviderCtx &operator=(ProviderCtx &&other) noexcept
     {
         if (this != &other)
         {
-            if (azihsm_ != nullptr)
-                OSSL_PROVIDER_unload(azihsm_);
-            if (deflt_ != nullptr)
-                OSSL_PROVIDER_unload(deflt_);
             if (libctx_ != nullptr)
                 OSSL_LIB_CTX_free(libctx_);
 
             libctx_ = other.libctx_;
-            deflt_ = other.deflt_;
-            azihsm_ = other.azihsm_;
-            provider_path_ = std::move(other.provider_path_);
-
             other.libctx_ = nullptr;
-            other.deflt_ = nullptr;
-            other.azihsm_ = nullptr;
         }
         return *this;
     }
@@ -112,12 +107,6 @@ class ProviderCtx
         return libctx_;
     }
 
-    /// The loaded azihsm provider handle.
-    OSSL_PROVIDER *azihsm() const noexcept
-    {
-        return azihsm_;
-    }
-
     /// Property query string that directs OpenSSL to prefer the azihsm provider.
     static constexpr const char *propquery()
     {
@@ -126,9 +115,6 @@ class ProviderCtx
 
   private:
     OSSL_LIB_CTX *libctx_ = nullptr;
-    OSSL_PROVIDER *deflt_ = nullptr;
-    OSSL_PROVIDER *azihsm_ = nullptr;
-    std::string provider_path_;
 };
 
 #endif // PROVIDER_CTX_HPP

@@ -17,10 +17,7 @@ maskedkeyfile=./masked_"$curve"_imported.bin
     -out "$keyfile"
 
 "$OPENSSL_BIN" genpkey \
-    -provider-path "$PROVIDER_PATH" \
     -propquery "$PROPQUERY" \
-    -provider default \
-    -provider azihsm_provider \
     -algorithm EC \
     -pkeyopt "group:$curve" \
     -outform DER \
@@ -36,10 +33,7 @@ fi
 #CHECK: Total found: 1
 
 "$OPENSSL_BIN" storeutl \
-    -provider-path "$PROVIDER_PATH" \
     -propquery "$PROPQUERY" \
-    -provider default \
-    -provider azihsm_provider \
     "azihsm://$maskedkeyfile;type=ec"
 
 if [[ "$cleanup" == "true" ]]; then

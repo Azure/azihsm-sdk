@@ -23,10 +23,7 @@ encrypted_data=encrypted_data_oaep_encrypt_"$keybits"_"$algorithm".bin
 
 # Import the RSA key into HSM via the provider
 "$OPENSSL_BIN" genpkey \
-    -provider-path "$PROVIDER_PATH" \
     -propquery "$PROPQUERY" \
-    -provider default \
-    -provider azihsm_provider \
     -algorithm "$algorithm" \
     -pkeyopt "rsa_keygen_bits:$keybits" \
     -pkeyopt azihsm.session:false \
@@ -43,10 +40,7 @@ else
 fi
 
 echo -n "Hello OAEP" | "$OPENSSL_BIN" pkeyutl \
-    -provider-path "$PROVIDER_PATH" \
     -propquery "$PROPQUERY" \
-    -provider default \
-    -provider azihsm_provider \
     -encrypt \
     -inkey "azihsm://$maskedkeyfile;type=$keytype" \
     -pkeyopt rsa_padding_mode:oaep \
@@ -61,10 +55,7 @@ fi
 
 # CHECK: Hello OAEP
 "$OPENSSL_BIN" pkeyutl \
-    -provider-path "$PROVIDER_PATH" \
     -propquery "$PROPQUERY" \
-    -provider default \
-    -provider azihsm_provider \
     -decrypt \
     -inkey "azihsm://$maskedkeyfile;type=$keytype" \
     -pkeyopt rsa_padding_mode:oaep \
