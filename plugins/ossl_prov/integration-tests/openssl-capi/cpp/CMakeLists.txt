@@ -46,6 +46,7 @@ message(STATUS "OpenSSL version: ${OPENSSL_VERSION}")
 enable_testing()
 
 set(SOURCE
+    main.cpp
     smoke_tests.cpp
     algo/digest/digest_tests.cpp
     algo/ec/sign_verify_tests.cpp
@@ -62,7 +63,7 @@ target_include_directories(azihsm_ossl_cpp_tests PRIVATE ${CMAKE_CURRENT_SOURCE_
 target_link_libraries(
     azihsm_ossl_cpp_tests
     PUBLIC
-        GTest::gtest_main
+        GTest::gtest
         OpenSSL::Crypto
 )
 

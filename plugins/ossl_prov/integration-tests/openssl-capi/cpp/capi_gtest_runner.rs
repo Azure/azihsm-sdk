@@ -333,7 +333,7 @@ azihsm-api-revision = 1.0
         let output = Command::new(path)
             .arg("--gtest_list_tests")
             .current_dir(keymat_dir)
-            .env("AZIHSM_OPENSSL_CONF", keymat_dir.join("openssl.cnf"))
+            .env("OPENSSL_CONF", keymat_dir.join("openssl.cnf"))
             .env("LD_LIBRARY_PATH", ld_library_path)
             .env("AZIHSM_CREDENTIALS_ID", &credentials.id)
             .env("AZIHSM_CREDENTIALS_PIN", &credentials.pin)
@@ -382,11 +382,11 @@ azihsm-api-revision = 1.0
 
     /// Executes a single gtest test case.
     ///
-    /// The subprocess runs from the key material directory and receives
-    /// `AZIHSM_OPENSSL_CONF` pointing to the generated config file.  We
-    /// use a custom env var (not `OPENSSL_CONF`) to prevent OpenSSL from
-    /// auto-loading the provider into the default library context — the
-    /// C++ test loads it explicitly into a dedicated context.
+    /// The subprocess runs from the key material directory with `OPENSSL_CONF`
+    /// pointing to the generated config file.  The C++ test binary calls
+    /// `OPENSSL_init_crypto(OPENSSL_INIT_NO_LOAD_CONFIG)` in `main()` to
+    /// prevent OpenSSL from auto-loading the config into the default library
+    /// context — each test loads it explicitly into a dedicated context.
     fn run_gtest(
         test_name: &str,
         path: &Path,
@@ -405,7 +405,7 @@ azihsm-api-revision = 1.0
         let success = Command::new(path)
             .arg(format!("--gtest_filter={}", test_name))
             .current_dir(keymat_dir)
-            .env("AZIHSM_OPENSSL_CONF", keymat_dir.join("openssl.cnf"))
+            .env("OPENSSL_CONF", keymat_dir.join("openssl.cnf"))
             .env("LD_LIBRARY_PATH", ld_library_path)
             .env("AZIHSM_CREDENTIALS_ID", &credentials.id)
             .env("AZIHSM_CREDENTIALS_PIN", &credentials.pin)

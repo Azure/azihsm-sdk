@@ -28,18 +28,16 @@ class ProviderCtx
             throw std::runtime_error("OSSL_LIB_CTX_new() failed");
         }
 
-        // We use AZIHSM_OPENSSL_CONF (not OPENSSL_CONF) to pass the config
-        // path.  OPENSSL_CONF is processed automatically by OpenSSL for the
-        // *default* library context during auto-init.  If we set OPENSSL_CONF,
-        // the provider would be loaded twice (once into the default context,
-        // once into ours), and the mock HSM device handle cannot be opened
-        // concurrently — the second load deadlocks.
-        const char *conf = std::getenv("AZIHSM_OPENSSL_CONF");
+        // main() calls OPENSSL_init_crypto(OPENSSL_INIT_NO_LOAD_CONFIG)
+        // to suppress default-context auto-loading from OPENSSL_CONF, so
+        // we can safely use the standard env var here without the provider
+        // being loaded twice (which would deadlock the mock HSM device).
+        const char *conf = std::getenv("OPENSSL_CONF");
         if (conf == nullptr)
         {
             OSSL_LIB_CTX_free(libctx_);
             throw std::runtime_error(
-                "AZIHSM_OPENSSL_CONF environment variable is not set"
+                "OPENSSL_CONF environment variable is not set"
             );
         }
 
