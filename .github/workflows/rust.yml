@@ -93,7 +93,7 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y --no-install-recommends \
-          build-essential cmake pkg-config libssl-dev libbsd-dev
+          build-essential cmake pkg-config libssl-dev libbsd-dev ca-certificates curl gnupg
 
     - name: Restore Cargo cache
       uses: actions/cache/restore@v5
@@ -120,9 +120,11 @@ jobs:
           | tar xz -C /tmp
         cd /tmp/openssl-3.0.3
         ./Configure --prefix=/opt/openssl-3.0.3 --libdir=lib \
-          no-shared -fvisibility=hidden -fPIC
+          no-shared no-dso -fvisibility=hidden -fPIC
         make -j"$(nproc)"
         sudo make install_sw
+        sudo mkdir -p /opt/openssl-3.0.3/ssl
+        sudo touch /opt/openssl-3.0.3/ssl/openssl.cnf
 
     - name: Build azihsm with static OpenSSL
       env:
@@ -134,8 +136,9 @@ jobs:
 
     - name: Install provider
       run: |
-        sudo mkdir -p /usr/lib/ossl-modules
-        sudo cp target/debug/azihsm_provider.so /usr/lib/ossl-modules/
+        sudo mkdir -p /usr/lib/x86_64-linux-gnu/ossl-modules /var/lib/azihsm
+        sudo chown "$USER" /var/lib/azihsm
+        sudo cp target/debug/azihsm_provider.so /usr/lib/x86_64-linux-gnu/ossl-modules/
         sudo cp target/debug/libazihsm_api_native.so /usr/lib/
         sudo ldconfig
 
@@ -151,27 +154,104 @@ jobs:
         openssl ec -in pota_private_key.der -inform DER -pubout -outform DER -out pota_public_key.der 2>/dev/null
         chmod 600 credentials_id.bin credentials_pin.bin obk.bin pota_private_key.der pota_public_key.der
 
+    - name: Install config files
+      run: |
+        sudo mkdir -p /etc/azihsm
+        sudo cp plugins/ossl_prov/nginx-example/openssl-provider.cnf /etc/azihsm/
+        sudo cp plugins/ossl_prov/nginx-example/openssl-cli.cnf /etc/azihsm/
+        sudo cp plugins/ossl_prov/nginx-example/nginx.conf.template /etc/azihsm/
+        sudo chown -R "$USER" /etc/azihsm
+
     - name: Smoke test provider
       env:
         AZIHSM_CREDENTIALS_ID: "70fcf730b8764238b8358010ce8a3f76"
         AZIHSM_CREDENTIALS_PIN: "db3dc77fc22e430080d41b31b6f04800"
       run: |
-        /opt/openssl-3.0.3/bin/openssl genpkey \
-          -provider-path /usr/lib/ossl-modules \
-          -provider default -provider azihsm_provider \
-          -propquery "?provider=azihsm" \
+        OPENSSL_CONF=/etc/azihsm/openssl-cli.cnf \
+          openssl genpkey \
           -algorithm EC -pkeyopt group:P-384 \
           -outform DER -out /dev/null -text
 
     - name: Run integration tests
       env:
-        OPENSSL_BIN: /opt/openssl-3.0.3/bin/openssl
+        OPENSSL_BIN: /usr/bin/openssl
         OPENSSL_LIB: ""
-        PROVIDER_PATH: /usr/lib/ossl-modules
+        PROVIDER_PATH: /usr/lib/x86_64-linux-gnu/ossl-modules
         PROPQUERY: "?provider=azihsm"
         AZIHSM_CREDENTIALS_ID: "70fcf730b8764238b8358010ce8a3f76"
         AZIHSM_CREDENTIALS_PIN: "db3dc77fc22e430080d41b31b6f04800"
       run: cargo xtask precheck --nextest --package integration-tests --features integration --profile ci-provider-integration
+
+    - name: Install nginx mainline
+      run: |
+        curl -fsSL https://nginx.org/keys/nginx_signing.key \
+          | sudo gpg --dearmor -o /usr/share/keyrings/nginx-archive-keyring.gpg
+        echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] \
+          http://nginx.org/packages/mainline/ubuntu noble nginx" \
+          | sudo tee /etc/apt/sources.list.d/nginx.list
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends nginx
+
+    - name: Generate key and certificate
+      env:
+        AZIHSM_CREDENTIALS_ID: "70fcf730b8764238b8358010ce8a3f76"
+        AZIHSM_CREDENTIALS_PIN: "db3dc77fc22e430080d41b31b6f04800"
+      run: |
+        OPENSSL_CONF=/etc/azihsm/openssl-cli.cnf \
+          openssl genpkey \
+          -algorithm EC \
+          -pkeyopt group:P-384 \
+          -pkeyopt "azihsm.masked_key:/etc/azihsm/masked_key_p384.bin" \
+          -outform DER -out /dev/null
+
+        OPENSSL_CONF=/etc/azihsm/openssl-cli.cnf \
+          openssl req -new -x509 \
+          -key "azihsm:///etc/azihsm/masked_key_p384.bin;type=ec" \
+          -subj "/CN=localhost" \
+          -days 365 -sha384 \
+          -out /etc/azihsm/server.crt
+
+    - name: Validate nginx config (provider load test)
+      env:
+        OPENSSL_CONF: /etc/azihsm/openssl-provider.cnf
+        AZIHSM_CREDENTIALS_ID: "70fcf730b8764238b8358010ce8a3f76"
+        AZIHSM_CREDENTIALS_PIN: "db3dc77fc22e430080d41b31b6f04800"
+      run: |
+        sudo cp /etc/azihsm/nginx.conf.template /etc/nginx/nginx.conf
+        sudo -E nginx -t -c /etc/nginx/nginx.conf
+
+    - name: Start nginx
+      env:
+        OPENSSL_CONF: /etc/azihsm/openssl-provider.cnf
+        AZIHSM_CREDENTIALS_ID: "70fcf730b8764238b8358010ce8a3f76"
+        AZIHSM_CREDENTIALS_PIN: "db3dc77fc22e430080d41b31b6f04800"
+      run: |
+        sudo -E nginx -c /etc/nginx/nginx.conf
+        sleep 2
+        ps aux | grep nginx || true
+
+    - name: Verify TLS endpoint
+      run: |
+        curl -fsk https://localhost:8443/ | grep "azihsm"
+        curl -fsk https://localhost:8443/health | grep "healthy"
+
+    - name: Verify certificate properties
+      run: |
+        CERT=$(echo | openssl s_client -connect localhost:8443 -servername localhost 2>/dev/null \
+          | openssl x509 -noout -text)
+        echo "$CERT"
+        echo "$CERT" | grep -q "Signature Algorithm: ecdsa-with-SHA384"
+        echo "$CERT" | grep -q "NIST CURVE: P-384"
+        echo "$CERT" | grep -q "ASN1 OID: secp384r1"
+        echo "$CERT" | grep -q "Subject: CN.*=.*localhost"
+
+    - name: Negative test — provider required
+      run: |
+        sudo nginx -s stop || true
+        sudo rm /usr/lib/x86_64-linux-gnu/ossl-modules/azihsm_provider.so
+        sudo env -u OPENSSL_CONF \
+          nginx -t -c /etc/nginx/nginx.conf 2>&1 \
+          | grep -q "unregistered scheme"
 
   build_windows:
 
