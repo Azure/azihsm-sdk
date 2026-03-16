@@ -1,0 +1,30 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+[package]
+edition = "2021"
+name = "azihsm_ddi_sim_service"
+version = "0.1.0"
+
+[lib]
+doctest = false
+test = false
+
+[[bin]]
+name = "azihsm-sim-service"
+path = "src/main.rs"
+
+[dependencies]
+azihsm_ddi_sim.workspace = true
+azihsm_ddi_types.workspace = true
+parking_lot.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[features]
+default = []
+table-4 = []
+table-64 = []
+
+[lints]
+workspace = true

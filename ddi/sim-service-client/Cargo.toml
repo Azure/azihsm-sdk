@@ -1,0 +1,24 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+[package]
+edition = "2021"
+name = "azihsm_ddi_sim_service_client"
+version = "0.1.0"
+
+[lib]
+doctest = false
+test = false
+
+[dependencies]
+azihsm_ddi_interface.workspace = true
+azihsm_ddi_mbor.workspace = true
+azihsm_ddi_sim.workspace = true
+azihsm_ddi_sim_service.workspace = true
+azihsm_ddi_types.workspace = true
+parking_lot.workspace = true
+rand.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

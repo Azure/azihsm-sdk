@@ -18,6 +18,8 @@ members = [
   "ddi/interface",
   "ddi/lib",
   "ddi/res_test_dev",
+  "ddi/sim-service",
+  "ddi/sim-service-client",
   "ddi/test_helpers",
   "integration-tests",
   "plugins/ossl_prov",
@@ -39,6 +41,8 @@ azihsm_ddi_mbor = { path = "ddi/serde/mbor" }
 azihsm_ddi_mock = { path = "ddi/mock" }
 azihsm_ddi_nix = { path = "ddi/nix" }
 azihsm_ddi_sim = { path = "ddi/sim" }
+azihsm_ddi_sim_service = { path = "ddi/sim-service" }
+azihsm_ddi_sim_service_client = { path = "ddi/sim-service-client" }
 azihsm_ddi_test_helpers = { path = "ddi/test_helpers" }
 azihsm_ddi_types = { features = [
   "array",

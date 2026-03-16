@@ -13,6 +13,7 @@ test = false
 [dependencies]
 azihsm_ddi_interface.workspace = true
 azihsm_ddi_mock = { optional = true, workspace = true }
+azihsm_ddi_sim_service_client = { optional = true, workspace = true }
 cfg-if.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -43,6 +44,7 @@ x509.workspace = true
 [features]
 default = []
 mock = ["azihsm_ddi_mock"]
+sim-service = ["azihsm_ddi_sim_service_client"]
 table-4 = ["azihsm_ddi_mock/table-4"]
 table-64 = ["azihsm_ddi_mock/table-64"]
 
