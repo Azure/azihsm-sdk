@@ -111,7 +111,7 @@ jobs:
       uses: actions/cache@v5
       with:
         path: /opt/openssl-3.0.3
-        key: openssl-3.0.3-linux-x64
+        key: openssl-3.0.3-linux-x64-shared
 
     - name: Build OpenSSL 3.0.3
       if: steps.cache-openssl.outputs.cache-hit != 'true'
@@ -120,14 +120,13 @@ jobs:
           | tar xz -C /tmp
         cd /tmp/openssl-3.0.3
         ./Configure --prefix=/opt/openssl-3.0.3 --libdir=lib \
-          no-shared -fvisibility=hidden -fPIC
+          -fPIC
         make -j"$(nproc)"
         sudo make install_sw
 
-    - name: Build azihsm with static OpenSSL
+    - name: Build azihsm with OpenSSL
       env:
         OPENSSL_DIR: /opt/openssl-3.0.3
-        OPENSSL_STATIC: "1"
       run: |
         cargo build -p azihsm_api_native --features mock
         cargo build -p azihsm_ossl_provider --features mock
@@ -155,6 +154,7 @@ jobs:
       env:
         AZIHSM_CREDENTIALS_ID: "70fcf730b8764238b8358010ce8a3f76"
         AZIHSM_CREDENTIALS_PIN: "db3dc77fc22e430080d41b31b6f04800"
+        LD_LIBRARY_PATH: /opt/openssl-3.0.3/lib
       run: |
         /opt/openssl-3.0.3/bin/openssl genpkey \
           -provider-path /usr/lib/ossl-modules \
@@ -166,7 +166,7 @@ jobs:
     - name: Run CLI integration tests
       env:
         OPENSSL_BIN: /opt/openssl-3.0.3/bin/openssl
-        OPENSSL_LIB: ""
+        OPENSSL_LIB: "/opt/openssl-3.0.3/lib"
         PROVIDER_PATH: /usr/lib/ossl-modules
         PROPQUERY: "?provider=azihsm"
         AZIHSM_CREDENTIALS_ID: "70fcf730b8764238b8358010ce8a3f76"
@@ -176,6 +176,7 @@ jobs:
     - name: Run C API integration tests
       env:
         OPENSSL_DIR: /opt/openssl-3.0.3
+        OPENSSL_LIB: "/opt/openssl-3.0.3/lib"
         PROVIDER_PATH: /usr/lib/ossl-modules
         AZIHSM_CREDENTIALS_ID: "70fcf730b8764238b8358010ce8a3f76"
         AZIHSM_CREDENTIALS_PIN: "db3dc77fc22e430080d41b31b6f04800"
