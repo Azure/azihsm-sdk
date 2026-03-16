@@ -86,6 +86,9 @@ typedef struct
 #define AZIHSM_API_REVISION_DEFAULT_MAJOR 1
 #define AZIHSM_API_REVISION_DEFAULT_MINOR 0
 
+/* Forward declaration — defined in azihsm_ossl_resiliency.c */
+struct azihsm_resiliency_ctx;
+
 typedef struct
 {
     char bmk_path[AZIHSM_MAX_FILE_PATH];
@@ -101,6 +104,8 @@ typedef struct
     bool credentials_pin_from_env;
     bool use_tpm_obk;
     bool use_tpm_pota;
+    bool resiliency_enabled;
+    char resiliency_storage_dir[4096];
 } AZIHSM_CONFIG;
 
 typedef struct
@@ -119,7 +124,8 @@ typedef struct
         CRYPTO_RWLOCK *lock;
         azihsm_handle pub;
         azihsm_handle priv;
-    } unwrapping_key; /* Cached UK handles (thread-safe) */
+    } unwrapping_key;                             /* Cached UK handles (thread-safe) */
+    struct azihsm_resiliency_ctx *resiliency_ctx; /* NULL when resiliency disabled */
 } AZIHSM_OSSL_PROV_CTX;
 
 static const OSSL_PARAM azihsm_ossl_param_types[] = {

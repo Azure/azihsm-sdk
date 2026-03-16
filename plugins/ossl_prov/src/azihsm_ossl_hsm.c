@@ -5,6 +5,7 @@
 #include "azihsm_ossl_file_io.h"
 
 #include "azihsm_ossl_helpers.h"
+#include "azihsm_ossl_resiliency.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -250,7 +251,7 @@ static azihsm_status azihsm_get_device_handle(azihsm_handle *device)
     for (uint32_t i = 0; i < device_count; i++)
     {
 
-        azihsm_char path[64] = { '\0' };
+        azihsm_char path[AZIHSM_DEVICE_PATH_SIZE] = { '\0' };
         struct azihsm_str dev_path = { path, sizeof(path) };
 
         status = azihsm_part_get_path(device_list, i, &dev_path);
@@ -762,7 +763,7 @@ static azihsm_status sign_with_pota_key(
  * On success, caller must free sig_out->ptr with OPENSSL_cleanse + OPENSSL_free.
  * pubkey_out is set to point to pub_key_buf's data (caller manages lifetime).
  */
-static azihsm_status compute_pota_endorsement(
+azihsm_status compute_pota_endorsement(
     azihsm_handle device,
     const struct azihsm_buffer *priv_key_buf,
     const struct azihsm_buffer *pub_key_buf,
@@ -805,7 +806,8 @@ static azihsm_status compute_pota_endorsement(
 azihsm_status azihsm_open_device_and_session(
     const AZIHSM_CONFIG *config,
     azihsm_handle *device,
-    azihsm_handle *session
+    azihsm_handle *session,
+    struct azihsm_resiliency_ctx **resiliency_ctx
 )
 {
     azihsm_status status;
@@ -814,6 +816,9 @@ azihsm_status azihsm_open_device_and_session(
     struct azihsm_buffer muk_buf = { NULL, 0 };
     struct azihsm_buffer obk_buf = { NULL, 0 };
     struct azihsm_buffer retrieved_bmk = { NULL, 0 };
+
+    struct azihsm_resiliency_config resiliency_cfg;
+    struct azihsm_resiliency_ctx *res_ctx = NULL;
 
     bool muk_was_loaded = false;
 
@@ -956,6 +961,33 @@ azihsm_status azihsm_open_device_and_session(
         return status;
     }
 
+    /* Create resiliency config if enabled */
+    if (config->resiliency_enabled)
+    {
+        memset(&resiliency_cfg, 0, sizeof(resiliency_cfg));
+        status = azihsm_resiliency_create(
+            config->resiliency_storage_dir,
+            *device,
+            config->pota_private_key_path,
+            config->pota_public_key_path,
+            config->use_tpm_pota,
+            &resiliency_cfg,
+            &res_ctx
+        );
+        if (status != AZIHSM_STATUS_SUCCESS)
+        {
+            free_buffer(&bmk_buf);
+            free_buffer(&muk_buf);
+            if (!config->use_tpm_obk)
+            {
+                free_buffer(&obk_buf);
+            }
+            OPENSSL_cleanse(&creds, sizeof(creds));
+            azihsm_part_close(*device);
+            return status;
+        }
+    }
+
     // Configure POTA endorsement based on source selection
     struct azihsm_pota_endorsement pota_endorsement = { 0 };
     struct azihsm_buffer pota_sig_buf = { 0 };
@@ -979,6 +1011,7 @@ azihsm_status azihsm_open_device_and_session(
             free_buffer(&bmk_buf);
             free_buffer(&muk_buf);
             OPENSSL_cleanse(&creds, sizeof(creds));
+            azihsm_resiliency_destroy(res_ctx);
             azihsm_part_close(*device);
             return status;
         }
@@ -991,6 +1024,7 @@ azihsm_status azihsm_open_device_and_session(
             free_buffer(&bmk_buf);
             free_buffer(&muk_buf);
             OPENSSL_cleanse(&creds, sizeof(creds));
+            azihsm_resiliency_destroy(res_ctx);
             azihsm_part_close(*device);
             return status;
         }
@@ -1012,6 +1046,7 @@ azihsm_status azihsm_open_device_and_session(
             free_buffer(&bmk_buf);
             free_buffer(&muk_buf);
             OPENSSL_cleanse(&creds, sizeof(creds));
+            azihsm_resiliency_destroy(res_ctx);
             azihsm_part_close(*device);
             return AZIHSM_STATUS_INTERNAL_ERROR;
         }
@@ -1034,6 +1069,7 @@ azihsm_status azihsm_open_device_and_session(
             free_buffer(&bmk_buf);
             free_buffer(&muk_buf);
             OPENSSL_cleanse(&creds, sizeof(creds));
+            azihsm_resiliency_destroy(res_ctx);
             azihsm_part_close(*device);
             return AZIHSM_STATUS_INTERNAL_ERROR;
         }
@@ -1054,6 +1090,7 @@ azihsm_status azihsm_open_device_and_session(
             free_buffer(&bmk_buf);
             free_buffer(&muk_buf);
             OPENSSL_cleanse(&creds, sizeof(creds));
+            azihsm_resiliency_destroy(res_ctx);
             azihsm_part_close(*device);
             return status;
         }
@@ -1072,7 +1109,7 @@ azihsm_status azihsm_open_device_and_session(
         muk_buf.ptr != NULL ? &muk_buf : NULL,
         &backup_config,
         &pota_endorsement,
-        NULL
+        config->resiliency_enabled ? &resiliency_cfg : NULL
     );
 
     // Input buffers no longer needed after part_init
@@ -1086,6 +1123,7 @@ azihsm_status azihsm_open_device_and_session(
     if (status != AZIHSM_STATUS_SUCCESS)
     {
         OPENSSL_cleanse(&creds, sizeof(creds));
+        azihsm_resiliency_destroy(res_ctx);
         azihsm_part_close(*device);
         return status;
     }
@@ -1099,6 +1137,7 @@ azihsm_status azihsm_open_device_and_session(
         {
             free_buffer(&retrieved_bmk);
             OPENSSL_cleanse(&creds, sizeof(creds));
+            azihsm_resiliency_destroy(res_ctx);
             azihsm_part_close(*device);
             return status;
         }
@@ -1110,6 +1149,7 @@ azihsm_status azihsm_open_device_and_session(
     OPENSSL_cleanse(&creds, sizeof(creds));
     if (status != AZIHSM_STATUS_SUCCESS)
     {
+        azihsm_resiliency_destroy(res_ctx);
         azihsm_part_close(*device);
         return status;
     }
@@ -1121,9 +1161,21 @@ azihsm_status azihsm_open_device_and_session(
         if (status != AZIHSM_STATUS_SUCCESS)
         {
             azihsm_sess_close(*session);
+            azihsm_resiliency_destroy(res_ctx);
             azihsm_part_close(*device);
             return status;
         }
+    }
+
+    /* Pass resiliency context back to caller for lifetime management */
+    if (resiliency_ctx != NULL)
+    {
+        *resiliency_ctx = res_ctx;
+    }
+    else if (res_ctx != NULL)
+    {
+        /* Caller did not take ownership; destroy resiliency context to avoid leak */
+        azihsm_resiliency_destroy(res_ctx);
     }
 
     return AZIHSM_STATUS_SUCCESS;
