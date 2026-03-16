@@ -17,6 +17,12 @@ fn main() {
     let openssl_dir = match std::env::var("OPENSSL_DIR") {
         Ok(dir) => dir,
         Err(_) => {
+            if std::env::var("CARGO_FEATURE_INTEGRATION").is_ok() {
+                panic!(
+                    "OPENSSL_DIR must be set when building with the `integration` feature. \
+                     Point it to your OpenSSL 3.x install prefix."
+                );
+            }
             println!(
                 "cargo:warning=OPENSSL_DIR is not set — skipping C++ test build. \
                  Set OPENSSL_DIR to an OpenSSL 3.x installation prefix to build the gtest binary."

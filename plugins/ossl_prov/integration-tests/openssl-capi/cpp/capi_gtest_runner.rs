@@ -363,7 +363,7 @@ azihsm-api-revision = 1.0
     ) -> Vec<Trial> {
         let mut tests = Vec::new();
         let mut current_suite = String::new();
-        for line in output.lines().skip(1) {
+        for line in output.lines() {
             if line.ends_with('.') {
                 current_suite = line.trim_end_matches('.').to_string();
             } else if !line.trim().is_empty() {
