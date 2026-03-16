@@ -8,8 +8,7 @@
 //! Encrypt vectors: 500
 //! Decrypt vectors: 500
 
-use crate::aes::tests::AesXtsTestVector;
-
+use crate::testvectors::aes::AesXtsTestVector;
 pub const AES_XTS_128_NIST_TEST_VECTORS: &[AesXtsTestVector] = &[
     AesXtsTestVector {
         test_count_id: 1,

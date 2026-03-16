@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use super::*;
+use crate::testvectors::aes::AesCbcTestVector;
 
 #[test]
 fn test_gen_key() {

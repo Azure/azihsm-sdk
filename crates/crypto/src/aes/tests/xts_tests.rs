@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 use super::*;
-use crate::aes::tests::testvectors::*;
+use crate::testvectors::aes::*;
 
 fn tweak_as_u64(tweak: &[u8]) -> u64 {
     let bytes: [u8; 8] = tweak

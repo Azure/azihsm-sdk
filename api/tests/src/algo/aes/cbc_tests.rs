@@ -1,7 +1,16 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+use azihsm_api::HsmAesKeyRsaAesKeyUnwrapAlgo;
+use azihsm_api::HsmKeyClass;
+use azihsm_api::HsmKeyKind;
+use azihsm_api::HsmKeyManager;
+use azihsm_api::HsmKeyPropsBuilder;
+use azihsm_api::HsmRsaAesWrapAlgo;
+use azihsm_api::HsmRsaPrivateKey;
+use azihsm_api::HsmRsaPublicKey;
 use azihsm_crypto::Rng;
+use azihsm_crypto::testvectors::aes::AES_CBC_128_GFSBOX_TEST_VECTORS;
 
 use super::*;
 
@@ -1482,4 +1491,180 @@ fn test_cbc_algo_iv_is_consumed_per_operation(session: HsmSession) {
         out1, out2,
         "reusing a single algo instance should not reproduce the same ciphertext; create fresh algos per use"
     );
+}
+
+fn generate_rsa_keypair(session: &HsmSession) -> (HsmRsaPrivateKey, HsmRsaPublicKey) {
+    let mut algo = HsmRsaKeyUnwrappingKeyGenAlgo::default();
+
+    let priv_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Private)
+        .key_kind(HsmKeyKind::Rsa)
+        .bits(2048)
+        .can_unwrap(true)
+        .build()
+        .unwrap();
+
+    let pub_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Public)
+        .key_kind(HsmKeyKind::Rsa)
+        .bits(2048)
+        .can_wrap(true)
+        .build()
+        .unwrap();
+
+    HsmKeyManager::generate_key_pair(session, &mut algo, priv_props, pub_props)
+        .expect("RSA key generation failed")
+}
+
+fn wrap_aes_key_rsa(rsa_pub: &HsmRsaPublicKey, key_bytes: &[u8]) -> Vec<u8> {
+    let mut wrap_algo = HsmRsaAesWrapAlgo::new(HsmHashAlgo::Sha256, key_bytes.len());
+
+    let size = wrap_algo
+        .encrypt(rsa_pub, key_bytes, None)
+        .expect("wrap size failed");
+
+    let mut wrapped = vec![0u8; size];
+
+    wrap_algo
+        .encrypt(rsa_pub, key_bytes, Some(&mut wrapped))
+        .expect("wrap failed");
+
+    wrapped
+}
+
+#[session_test]
+fn test_cbc_nist_vectors_roundtrip_128_worked(session: HsmSession) {
+    let (rsa_priv, rsa_pub) = generate_rsa_keypair(&session);
+
+    for vector in AES_CBC_128_GFSBOX_TEST_VECTORS {
+        let wrapped_key = wrap_aes_key_rsa(&rsa_pub, vector.key);
+
+        let props = HsmKeyPropsBuilder::default()
+            .class(HsmKeyClass::Secret)
+            .key_kind(HsmKeyKind::Aes)
+            .bits(128)
+            .can_encrypt(true)
+            .can_decrypt(true)
+            .is_session(true)
+            .build()
+            .unwrap();
+
+        let mut unwrap_algo = HsmAesKeyRsaAesKeyUnwrapAlgo::new(HsmHashAlgo::Sha256);
+
+        let key = HsmKeyManager::unwrap_key(&mut unwrap_algo, &rsa_priv, &wrapped_key, props)
+            .expect("unwrap failed");
+
+        let ciphertext =
+            cbc_encrypt(&key, false, vector.iv, vector.plaintext).expect("encrypt failed");
+
+        assert_eq!(ciphertext, vector.ciphertext);
+
+        let plaintext =
+            cbc_decrypt(&key, false, vector.iv, vector.ciphertext).expect("decrypt failed");
+
+        assert_eq!(plaintext, vector.plaintext);
+
+        HsmKeyManager::delete_key(key).unwrap();
+    }
+}
+
+#[session_test]
+fn test_cbc_nist_vectors_roundtrip_128(session: HsmSession) {
+    // -------------------------------------------------
+    // Generate RSA wrap/unwrap key pair
+    // -------------------------------------------------
+    let mut rsa_algo = HsmRsaKeyUnwrappingKeyGenAlgo::default();
+
+    let priv_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Private)
+        .key_kind(HsmKeyKind::Rsa)
+        .bits(2048)
+        .can_unwrap(true)
+        .build()
+        .unwrap();
+
+    let pub_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Public)
+        .key_kind(HsmKeyKind::Rsa)
+        .bits(2048)
+        .can_wrap(true)
+        .build()
+        .unwrap();
+
+    let (rsa_priv, rsa_pub) =
+        HsmKeyManager::generate_key_pair(&session, &mut rsa_algo, priv_props, pub_props)
+            .expect("RSA key generation failed");
+
+    // -------------------------------------------------
+    // Loop through NIST vectors
+    // -------------------------------------------------
+    for vector in AES_CBC_128_GFSBOX_TEST_VECTORS {
+        // -------------------------------------------------
+        // Wrap AES key with RSA public key
+        // -------------------------------------------------
+        let mut wrap_algo = HsmRsaAesWrapAlgo::new(HsmHashAlgo::Sha256, vector.key.len());
+
+        let size = wrap_algo
+            .encrypt(&rsa_pub, vector.key, None)
+            .expect("wrap size failed");
+
+        let mut wrapped_key = vec![0u8; size];
+
+        wrap_algo
+            .encrypt(&rsa_pub, vector.key, Some(&mut wrapped_key))
+            .expect("wrap failed");
+
+        // -------------------------------------------------
+        // Unwrap AES key in HSM
+        // -------------------------------------------------
+        let props = HsmKeyPropsBuilder::default()
+            .class(HsmKeyClass::Secret)
+            .key_kind(HsmKeyKind::Aes)
+            .bits(128)
+            .can_encrypt(true)
+            .can_decrypt(true)
+            .is_session(true)
+            .build()
+            .unwrap();
+
+        let mut unwrap_algo = HsmAesKeyRsaAesKeyUnwrapAlgo::new(HsmHashAlgo::Sha256);
+
+        let key = HsmKeyManager::unwrap_key(&mut unwrap_algo, &rsa_priv, &wrapped_key, props)
+            .expect("AES unwrap failed");
+
+        // -------------------------------------------------
+        // Encrypt plaintext
+        // -------------------------------------------------
+        let ciphertext =
+            cbc_encrypt(&key, false, vector.iv, vector.plaintext).expect("encrypt failed");
+
+        // -------------------------------------------------
+        // Compare ciphertext
+        // -------------------------------------------------
+        assert_eq!(
+            ciphertext, vector.ciphertext,
+            "encrypt mismatch vector {}",
+            vector.test_count_id
+        );
+
+        // -------------------------------------------------
+        // Decrypt ciphertext
+        // -------------------------------------------------
+        let plaintext =
+            cbc_decrypt(&key, false, vector.iv, vector.ciphertext).expect("decrypt failed");
+
+        // -------------------------------------------------
+        // Compare plaintext
+        // -------------------------------------------------
+        assert_eq!(
+            plaintext, vector.plaintext,
+            "decrypt mismatch vector {}",
+            vector.test_count_id
+        );
+
+        // -------------------------------------------------
+        // Delete AES key
+        // -------------------------------------------------
+        HsmKeyManager::delete_key(key).expect("delete failed");
+    }
 }

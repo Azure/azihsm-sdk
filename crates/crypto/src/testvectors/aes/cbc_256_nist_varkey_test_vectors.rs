@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use crate::aes::tests::AesCbcTestVector;
+use crate::testvectors::aes::AesCbcTestVector;
 
 /// Auto-generated file. Do not edit manually.
 /// Source: CBCVarKey256.rsp

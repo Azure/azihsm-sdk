@@ -7,10 +7,10 @@ use super::cbc_tests_helper::test_single_shot_decrypt;
 use super::cbc_tests_helper::test_single_shot_encrypt;
 use super::cbc_tests_helper::test_streaming_decrypt;
 use super::cbc_tests_helper::test_streaming_encrypt;
-use super::*;
-use crate::aes::tests::testvectors::AES_CBC_128_GFSBOX_TEST_VECTORS;
-use crate::aes::tests::testvectors::AES_CBC_192_GFSBOX_TEST_VECTORS;
-use crate::aes::tests::testvectors::AES_CBC_256_GFSBOX_TEST_VECTORS;
+use crate::testvectors::aes::AES_CBC_128_GFSBOX_TEST_VECTORS;
+use crate::testvectors::aes::AES_CBC_192_GFSBOX_TEST_VECTORS;
+use crate::testvectors::aes::AES_CBC_256_GFSBOX_TEST_VECTORS;
+use crate::testvectors::aes::AesCbcTestVector;
 
 const STREAMING_CHUNK_LENS: [usize; 6] = [1, 3, 7, 11, 2, 19];
 

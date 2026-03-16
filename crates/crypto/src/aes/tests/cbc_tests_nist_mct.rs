@@ -2,9 +2,10 @@
 // Licensed under the MIT License.
 
 use super::*;
-use crate::aes::tests::testvectors::AES_CBC_128_MCT_TEST_VECTORS;
-use crate::aes::tests::testvectors::AES_CBC_192_MCT_TEST_VECTORS;
-use crate::aes::tests::testvectors::AES_CBC_256_MCT_TEST_VECTORS;
+use crate::testvectors::aes::AES_CBC_128_MCT_TEST_VECTORS;
+use crate::testvectors::aes::AES_CBC_192_MCT_TEST_VECTORS;
+use crate::testvectors::aes::AES_CBC_256_MCT_TEST_VECTORS;
+use crate::testvectors::aes::AesCbcTestVector;
 
 // Monte Carlo test sample vectors (MCT)
 //

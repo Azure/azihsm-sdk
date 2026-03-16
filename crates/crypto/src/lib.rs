@@ -48,6 +48,8 @@ use thiserror::Error;
 pub use traits::*;
 pub use x509::*;
 
+pub mod testvectors;
+
 /// Comprehensive error type for all cryptographic operations.
 ///
 /// This enum covers errors from various cryptographic operations including
