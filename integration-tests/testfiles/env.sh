@@ -44,6 +44,13 @@ fi
 
 export LD_LIBRARY_PATH="$OPENSSL_LIB"
 
+# Suppress the system-wide openssl.cnf.  When the CI installs the azihsm
+# provider config as /etc/ssl/openssl.cnf the provider would be loaded
+# automatically *and* again by the explicit -provider flags each script
+# passes, causing a double-load error.  The tests are self-contained:
+# they supply -provider-path / -provider / -propquery on every command.
+export OPENSSL_CONF=/dev/null
+
 # --- Credentials via hex env vars (preferred) ---
 # The provider reads credentials from these env vars first, falling back to
 # default files in CWD if unset.  Values match the mock HSM's test credentials.

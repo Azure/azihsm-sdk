@@ -161,14 +161,19 @@ jobs:
         sudo cp plugins/ossl_prov/nginx-example/openssl-cli.cnf /etc/azihsm/
         sudo cp plugins/ossl_prov/nginx-example/nginx.conf.template /etc/azihsm/
         sudo chown -R "$USER" /etc/azihsm
+        # Replace the system-wide OpenSSL config so that the provider is
+        # loaded automatically by every process that uses system libcrypto.
+        # This avoids OPENSSL_CONF env-var, which the statically-linked
+        # OpenSSL inside libazihsm_api_native.so would also read – causing
+        # recursive provider loading and a deadlock.
+        sudo cp plugins/ossl_prov/nginx-example/openssl-cli.cnf /etc/ssl/openssl.cnf
 
     - name: Smoke test provider
       env:
         AZIHSM_CREDENTIALS_ID: "70fcf730b8764238b8358010ce8a3f76"
         AZIHSM_CREDENTIALS_PIN: "db3dc77fc22e430080d41b31b6f04800"
       run: |
-        OPENSSL_CONF=/etc/azihsm/openssl-cli.cnf \
-          openssl genpkey \
+        openssl genpkey \
           -algorithm EC -pkeyopt group:P-384 \
           -outform DER -out /dev/null -text
 
@@ -183,6 +188,8 @@ jobs:
       run: cargo xtask precheck --nextest --package integration-tests --features integration --profile ci-provider-integration
 
     - name: Install nginx mainline
+      env:
+        OPENSSL_CONF: /dev/null
       run: |
         curl -fsSL https://nginx.org/keys/nginx_signing.key \
           | sudo gpg --dearmor -o /usr/share/keyrings/nginx-archive-keyring.gpg
@@ -197,15 +204,13 @@ jobs:
         AZIHSM_CREDENTIALS_ID: "70fcf730b8764238b8358010ce8a3f76"
         AZIHSM_CREDENTIALS_PIN: "db3dc77fc22e430080d41b31b6f04800"
       run: |
-        OPENSSL_CONF=/etc/azihsm/openssl-cli.cnf \
-          openssl genpkey \
+        openssl genpkey \
           -algorithm EC \
           -pkeyopt group:P-384 \
           -pkeyopt "azihsm.masked_key:/etc/azihsm/masked_key_p384.bin" \
           -outform DER -out /dev/null
 
-        OPENSSL_CONF=/etc/azihsm/openssl-cli.cnf \
-          openssl req -new -x509 \
+        openssl req -new -x509 \
           -key "azihsm:///etc/azihsm/masked_key_p384.bin;type=ec" \
           -subj "/CN=localhost" \
           -days 365 -sha384 \
@@ -213,16 +218,17 @@ jobs:
 
     - name: Validate nginx config (provider load test)
       env:
-        OPENSSL_CONF: /etc/azihsm/openssl-provider.cnf
         AZIHSM_CREDENTIALS_ID: "70fcf730b8764238b8358010ce8a3f76"
         AZIHSM_CREDENTIALS_PIN: "db3dc77fc22e430080d41b31b6f04800"
       run: |
+        # Switch to the provider-only config (no default_properties) so
+        # nginx's own TLS cipher lookups are not routed through azihsm.
+        sudo cp plugins/ossl_prov/nginx-example/openssl-provider.cnf /etc/ssl/openssl.cnf
         sudo cp /etc/azihsm/nginx.conf.template /etc/nginx/nginx.conf
         sudo -E nginx -t -c /etc/nginx/nginx.conf
 
     - name: Start nginx
       env:
-        OPENSSL_CONF: /etc/azihsm/openssl-provider.cnf
         AZIHSM_CREDENTIALS_ID: "70fcf730b8764238b8358010ce8a3f76"
         AZIHSM_CREDENTIALS_PIN: "db3dc77fc22e430080d41b31b6f04800"
       run: |
@@ -231,11 +237,15 @@ jobs:
         ps aux | grep nginx || true
 
     - name: Verify TLS endpoint
+      env:
+        OPENSSL_CONF: /dev/null
       run: |
         curl -fsk https://localhost:8443/ | grep "azihsm"
         curl -fsk https://localhost:8443/health | grep "healthy"
 
     - name: Verify certificate properties
+      env:
+        OPENSSL_CONF: /dev/null
       run: |
         CERT=$(echo | openssl s_client -connect localhost:8443 -servername localhost 2>/dev/null \
           | openssl x509 -noout -text)
@@ -246,11 +256,12 @@ jobs:
         echo "$CERT" | grep -q "Subject: CN.*=.*localhost"
 
     - name: Negative test — provider required
+      env:
+        OPENSSL_CONF: /dev/null
       run: |
         sudo nginx -s stop || true
         sudo rm /usr/lib/x86_64-linux-gnu/ossl-modules/azihsm_provider.so
-        sudo env -u OPENSSL_CONF \
-          nginx -t -c /etc/nginx/nginx.conf 2>&1 \
+        nginx -t -c /etc/nginx/nginx.conf 2>&1 \
           | grep -q "unregistered scheme"
 
   build_windows:
