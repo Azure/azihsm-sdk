@@ -20,5 +20,5 @@ workspace = true
 
 [[test]]
 harness = false
-name = "capi_gtest_runner"
-path = "cpp/capi_gtest_runner.rs"
+name = "openssl_capi_integration_tests"
+path = "cpp/openssl_capi_integration_tests.rs"
