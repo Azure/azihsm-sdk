@@ -21,7 +21,7 @@ KeyHandle generate_aes_key_of_kind(
     keygen_algo.params = nullptr;
     keygen_algo.len = 0;
 
-    key_props props;
+    key_gen_props props;
     props.key_kind = key_kind;
     props.key_class = AZIHSM_KEY_CLASS_SECRET;
     props.bits = bits;

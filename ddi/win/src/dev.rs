@@ -1001,6 +1001,16 @@ impl DdiDev for DdiWinDev {
         ioctl_in_buffer.user_buffers.dst_length = temp_dest_buf.len() as u32;
         ioctl_in_buffer.user_buffers.dst_buf = temp_dest_buf.as_mut_ptr();
 
+        // Explicitly set src buffer pointer to null if buffer is empty
+        if new_src_buf.is_empty() {
+            ioctl_in_buffer.user_buffers.src_buf = ptr::null();
+        }
+
+        // Explicitly set dst buffer pointer to null if buffer is empty
+        if temp_dest_buf.is_empty() {
+            ioctl_in_buffer.user_buffers.dst_buf = ptr::null_mut();
+        }
+
         // SAFETY: WINAPI call requires unsafe call
         let mut overlapped: OVERLAPPED = unsafe { mem::zeroed() };
         let mut bytes_returned: DWORD = 0;

@@ -1,0 +1,7 @@
+# Test artifacts (created by scripts, cleaned on success)
+*.bin
+*.sig
+*.sig.*
+*.der
+*.pem
+testdata/

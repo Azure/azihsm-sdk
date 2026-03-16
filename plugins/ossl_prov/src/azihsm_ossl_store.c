@@ -4,6 +4,7 @@
 #include <openssl/core_dispatch.h>
 #include <openssl/core_names.h>
 #include <openssl/core_object.h>
+#include <openssl/err.h>
 #include <openssl/params.h>
 #include <openssl/proverr.h>
 #include <openssl/store.h>
@@ -12,6 +13,7 @@
 
 #include "azihsm_ossl_base.h"
 #include "azihsm_ossl_ec.h"
+#include "azihsm_ossl_file_io.h"
 #include "azihsm_ossl_pkey_param.h"
 #include "azihsm_ossl_rsa.h"
 #include "azihsm_ossl_store.h"
@@ -278,66 +280,10 @@ static int parse_azihsm_uri(const char *uri, AZIHSM_URI_INFO *out_info)
     return OSSL_SUCCESS;
 }
 
-static unsigned char *read_key_file(const char *path, size_t *out_len)
-{
-    FILE *f = NULL;
-    long size;
-    unsigned char *buf = NULL;
-    size_t bytes_read;
-
-    if (path == NULL || out_len == NULL)
-        return NULL;
-
-    f = fopen(path, "rb");
-    if (f == NULL)
-        return NULL;
-
-    if (fseek(f, 0, SEEK_END) != 0)
-    {
-        fclose(f);
-        return NULL;
-    }
-
-    size = ftell(f);
-    if (size <= 0)
-    {
-        fclose(f);
-        return NULL;
-    }
-
-    if (fseek(f, 0, SEEK_SET) != 0)
-    {
-        fclose(f);
-        return NULL;
-    }
-
-    buf = OPENSSL_malloc(size);
-    if (buf == NULL)
-    {
-        fclose(f);
-        return NULL;
-    }
-
-    bytes_read = fread(buf, 1, size, f);
-    fclose(f);
-
-    if (bytes_read != (size_t)size)
-    {
-        OPENSSL_cleanse(buf, (size_t)size);
-        OPENSSL_free(buf);
-        return NULL;
-    }
-
-    *out_len = size;
-    return buf;
-}
-
 static int load_and_unmask_key(AZIHSM_STORE_CTX *ctx)
 {
-    unsigned char *masked_key_data = NULL;
-    size_t masked_key_size = 0;
     azihsm_status status;
-    struct azihsm_buffer masked_buf;
+    struct azihsm_buffer masked_buf = { 0 };
     azihsm_key_kind actual_kind;
     struct azihsm_key_prop prop;
 
@@ -347,14 +293,27 @@ static int load_and_unmask_key(AZIHSM_STORE_CTX *ctx)
     }
 
     /* Read masked key from file - fail if file doesn't exist or cannot be read */
-    masked_key_data = read_key_file(ctx->uri_info.file_path, &masked_key_size);
-    if (masked_key_data == NULL)
+    if (azihsm_file_load(ctx->uri_info.file_path, &masked_buf) != AZIHSM_STATUS_SUCCESS)
     {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            PROV_R_MISSING_KEY,
+            "failed to load masked key file '%s'",
+            ctx->uri_info.file_path
+        );
         return OSSL_FAILURE;
     }
 
-    masked_buf.ptr = (void *)masked_key_data;
-    masked_buf.len = (uint32_t)masked_key_size;
+    if (masked_buf.ptr == NULL)
+    {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            PROV_R_MISSING_KEY,
+            "masked key file not found: '%s'",
+            ctx->uri_info.file_path != NULL ? ctx->uri_info.file_path : "<null>"
+        );
+        return OSSL_FAILURE;
+    }
 
     /* Unmask the key - fail if unmask operation fails */
     status = azihsm_key_unmask_pair(
@@ -367,8 +326,8 @@ static int load_and_unmask_key(AZIHSM_STORE_CTX *ctx)
 
     if (status != AZIHSM_STATUS_SUCCESS)
     {
-        OPENSSL_cleanse(masked_key_data, masked_key_size);
-        OPENSSL_free(masked_key_data);
+        OPENSSL_cleanse(masked_buf.ptr, masked_buf.len);
+        OPENSSL_free(masked_buf.ptr);
         return OSSL_FAILURE;
     }
 
@@ -383,8 +342,8 @@ static int load_and_unmask_key(AZIHSM_STORE_CTX *ctx)
     if (status != AZIHSM_STATUS_SUCCESS)
     {
         store_ctx_delete_key_handles(ctx);
-        OPENSSL_cleanse(masked_key_data, masked_key_size);
-        OPENSSL_free(masked_key_data);
+        OPENSSL_cleanse(masked_buf.ptr, masked_buf.len);
+        OPENSSL_free(masked_buf.ptr);
         return OSSL_FAILURE;
     }
 
@@ -445,8 +404,8 @@ static int load_and_unmask_key(AZIHSM_STORE_CTX *ctx)
         }
     }
 
-    OPENSSL_cleanse(masked_key_data, masked_key_size);
-    OPENSSL_free(masked_key_data);
+    OPENSSL_cleanse(masked_buf.ptr, masked_buf.len);
+    OPENSSL_free(masked_buf.ptr);
 
     return OSSL_SUCCESS;
 }

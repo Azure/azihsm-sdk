@@ -15,3 +15,12 @@ path = "junit.xml"
 # profile for running all mock tests w/ table-64
 [profile.ci-mock-table-64.junit]
 path = "junit.xml"
+
+# profile for running integration tests
+# test-threads = 1: serial_test uses a per-process mutex; nextest runs each test
+# in its own process, so explicit serialization is required to avoid file collisions.
+[profile.ci-provider-integration]
+test-threads = 1
+
+[profile.ci-provider-integration.junit]
+path = "junit.xml"

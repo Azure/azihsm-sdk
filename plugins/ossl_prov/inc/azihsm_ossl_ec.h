@@ -47,8 +47,9 @@ typedef struct
     azihsm_handle session;
     AZIHSM_OSSL_PROV_CTX *provctx;
     bool session_flag;
-    char masked_key_file[4096];
-    char input_key_file[4096];
+    char masked_key_file[AZIHSM_MAX_FILE_PATH];
+    char input_key_file[AZIHSM_MAX_FILE_PATH];
+    char wrapped_key_file[AZIHSM_MAX_FILE_PATH];
 } AIHSM_EC_GEN_CTX;
 
 typedef struct

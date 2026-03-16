@@ -1,19 +1,18 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-#include <fcntl.h>
 #include <openssl/core_dispatch.h>
 #include <openssl/core_names.h>
 #include <openssl/err.h>
 #include <openssl/params.h>
 #include <openssl/proverr.h>
 #include <string.h>
-#include <sys/stat.h>
-#include <unistd.h>
 
 #include "azihsm_ossl_base.h"
+#include "azihsm_ossl_file_io.h"
 #include "azihsm_ossl_helpers.h"
 #include "azihsm_ossl_hsm.h"
+#include "azihsm_ossl_masked_key.h"
 #include "azihsm_ossl_pkey_param.h"
 #include "azihsm_ossl_rsa.h"
 
@@ -36,9 +35,12 @@
  *   @azihsm.key_usage
  *   Description: Key usage type for the key pair
  *   Accepted values: digitalSignature (private: sign, public: verify)
+ *                    keyWrapping (export HSM's internal unwrapping public key;
+ *                                rsa_keygen_bits must be 2048 or omitted)
  *   Default value: digitalSignature
  *   Example:
  *      -pkeyopt azihsm.key_usage:digitalSignature
+ *      -pkeyopt azihsm.key_usage:keyWrapping
  *
  *   @azihsm.session
  *   Description: Whether to create a session key or persistent key
@@ -59,6 +61,13 @@
  *   Example:
  *      -pkeyopt azihsm.masked_key:/path/to/masked.bin
  *
+ *   @azihsm.wrapped_key
+ *   Description: Path to a pre-wrapped key blob (produced by the wrap_key tool).
+ *   When set, the blob is unwrapped directly into the HSM without DER normalization.
+ *   Mutually exclusive with azihsm.input_key.
+ *   Example:
+ *      -pkeyopt azihsm.wrapped_key:/path/to/wrapped.bin
+ *
  * */
 
 #define AIHSM_RSA_POSSIBLE_SELECTIONS                                                              \
@@ -66,22 +75,15 @@
 
 #define AIHSM_RSA_PUBKEY_BITS_MIN 2048
 #define AIHSM_RSA_PUBKEY_BITS_DEFAULT AIHSM_RSA_PUBKEY_BITS_MIN
+#define AIHSM_RSA_WRAPPING_KEY_BITS 2048
 
 #define AIHSM_KEY_USAGE_DEFAULT KEY_USAGE_DIGITAL_SIGNATURE
-
-#define MAX_INPUT_KEY_SIZE (64 * 1024)
 
 /* Key Management Functions */
 
 /*
- * Import an external DER-encoded RSA private key into the HSM via wrap-then-unwrap.
- *
- * Flow:
- *   1. Read the DER file from disk
- *   2. Get the RSA wrapping key pair from the HSM
- *   3. Wrap the DER blob with azihsm_crypt_encrypt (RSA-AES-WRAP)
- *   4. Unwrap into the HSM with azihsm_key_unwrap_pair (RSA-AES-KEY-WRAP)
- *   5. Return the resulting key handles
+ * Import a plaintext DER key file into the HSM.
+ * Delegates to the shared azihsm_import_key_pair() helper.
  */
 static azihsm_status azihsm_ossl_rsa_keymgmt_gen_import(
     AZIHSM_RSA_GEN_CTX *genctx,
@@ -91,169 +93,14 @@ static azihsm_status azihsm_ossl_rsa_keymgmt_gen_import(
     azihsm_handle *out_pub
 )
 {
-    azihsm_status status;
-    azihsm_handle wrapping_pub = 0, wrapping_priv = 0;
-    uint8_t *input_buf = NULL;
-    long input_size = 0;
-    FILE *f = NULL;
-
-    /* 1. Read the input DER file */
-    f = fopen(genctx->input_key_file, "rb");
-    if (f == NULL)
-    {
-        return AZIHSM_STATUS_INVALID_ARGUMENT;
-    }
-
-    if (fseek(f, 0, SEEK_END) != 0)
-    {
-        fclose(f);
-        return AZIHSM_STATUS_INVALID_ARGUMENT;
-    }
-
-    input_size = ftell(f);
-    if (input_size <= 0 || input_size > MAX_INPUT_KEY_SIZE)
-    {
-        fclose(f);
-        return AZIHSM_STATUS_INVALID_ARGUMENT;
-    }
-
-    if (fseek(f, 0, SEEK_SET) != 0)
-    {
-        fclose(f);
-        return AZIHSM_STATUS_INVALID_ARGUMENT;
-    }
-
-    input_buf = OPENSSL_malloc((size_t)input_size);
-    if (input_buf == NULL)
-    {
-        fclose(f);
-        return AZIHSM_STATUS_INVALID_ARGUMENT;
-    }
-
-    if (fread(input_buf, 1, (size_t)input_size, f) != (size_t)input_size)
-    {
-        fclose(f);
-        OPENSSL_cleanse(input_buf, (size_t)input_size);
-        OPENSSL_free(input_buf);
-        return AZIHSM_STATUS_INVALID_ARGUMENT;
-    }
-    fclose(f);
-
-    /* Normalize to PKCS#8 DER (handles both PKCS#1 and PKCS#8 input) */
-    {
-        uint8_t *pkcs8_buf = NULL;
-        int pkcs8_len = 0;
-
-        if (azihsm_ossl_normalize_der_to_pkcs8(input_buf, input_size, &pkcs8_buf, &pkcs8_len) !=
-            OSSL_SUCCESS)
-        {
-            OPENSSL_cleanse(input_buf, (size_t)input_size);
-            OPENSSL_free(input_buf);
-            return AZIHSM_STATUS_INVALID_ARGUMENT;
-        }
-
-        /* Replace input buffer with PKCS#8 version */
-        OPENSSL_cleanse(input_buf, (size_t)input_size);
-        OPENSSL_free(input_buf);
-        input_buf = pkcs8_buf;
-        input_size = pkcs8_len;
-    }
-
-    /* 2. Retrieve the RSA unwrapping key pair from the HSM (cached in provctx) */
-    status = azihsm_get_unwrapping_key(genctx->provctx, &wrapping_pub, &wrapping_priv);
-    if (status != AZIHSM_STATUS_SUCCESS)
-    {
-        OPENSSL_cleanse(input_buf, input_size);
-        OPENSSL_free(input_buf);
-        return status;
-    }
-
-    /* 3. Wrap the DER blob */
-    struct azihsm_algo_rsa_pkcs_oaep_params oaep_params = {
-        .hash_algo_id = AZIHSM_ALGO_ID_SHA256,
-        .mgf1_hash_algo_id = AZIHSM_MGF1_ID_SHA256,
-        .label = NULL,
-    };
-
-    struct azihsm_algo_rsa_aes_wrap_params wrap_params = {
-        .oaep_params = &oaep_params,
-        .aes_key_bits = 256,
-    };
-
-    struct azihsm_algo wrap_algo = {
-        .id = AZIHSM_ALGO_ID_RSA_AES_WRAP,
-        .params = &wrap_params,
-        .len = sizeof(wrap_params),
-    };
-
-    struct azihsm_buffer plain_buf = {
-        .ptr = input_buf,
-        .len = (uint32_t)input_size,
-    };
-
-    /* Two-call pattern: first query required size */
-    struct azihsm_buffer wrapped_buf = {
-        .ptr = NULL,
-        .len = 0,
-    };
-
-    status = azihsm_crypt_encrypt(&wrap_algo, wrapping_pub, &plain_buf, &wrapped_buf);
-    if (status != AZIHSM_STATUS_BUFFER_TOO_SMALL || wrapped_buf.len == 0)
-    {
-        OPENSSL_cleanse(input_buf, (size_t)input_size);
-        OPENSSL_free(input_buf);
-        return (status == AZIHSM_STATUS_SUCCESS) ? AZIHSM_STATUS_INTERNAL_ERROR : status;
-    }
-
-    /* Allocate buffer for wrapped data */
-    uint32_t wrapped_size = wrapped_buf.len;
-    uint8_t *wrapped_data = OPENSSL_malloc(wrapped_size);
-    if (wrapped_data == NULL)
-    {
-        OPENSSL_cleanse(input_buf, (size_t)input_size);
-        OPENSSL_free(input_buf);
-        return AZIHSM_STATUS_INVALID_ARGUMENT;
-    }
-
-    /* Second call: perform actual wrap */
-    wrapped_buf.ptr = wrapped_data;
-    wrapped_buf.len = wrapped_size;
-
-    status = azihsm_crypt_encrypt(&wrap_algo, wrapping_pub, &plain_buf, &wrapped_buf);
-    OPENSSL_cleanse(input_buf, (size_t)input_size);
-    OPENSSL_free(input_buf);
-
-    if (status != AZIHSM_STATUS_SUCCESS)
-    {
-        OPENSSL_cleanse(wrapped_data, wrapped_size);
-        OPENSSL_free(wrapped_data);
-        return status;
-    }
-
-    /* 4. Unwrap into the HSM */
-    struct azihsm_algo_rsa_aes_key_wrap_params unwrap_params = {
-        .oaep_params = &oaep_params,
-    };
-
-    struct azihsm_algo unwrap_algo = {
-        .id = AZIHSM_ALGO_ID_RSA_AES_KEY_WRAP,
-        .params = &unwrap_params,
-        .len = sizeof(unwrap_params),
-    };
-
-    status = azihsm_key_unwrap_pair(
-        &unwrap_algo,
-        wrapping_priv,
-        &wrapped_buf,
+    return azihsm_import_key_pair(
+        genctx->provctx,
+        genctx->input_key_file,
         priv_key_prop_list,
         pub_key_prop_list,
         out_priv,
         out_pub
     );
-    OPENSSL_cleanse(wrapped_data, wrapped_size);
-    OPENSSL_free(wrapped_data);
-
-    return status;
 }
 
 static AZIHSM_RSA_KEY *azihsm_ossl_keymgmt_gen(
@@ -271,18 +118,66 @@ static AZIHSM_RSA_KEY *azihsm_ossl_keymgmt_gen(
     const azihsm_key_kind key_kind = AZIHSM_KEY_KIND_RSA;
 
     /*
-     * The HSM cannot generate RSA keys natively.
-     * RSA keys must be provided externally via the azihsm.input_key parameter.
+     * keyWrapping usage: retrieve the HSM's internal unwrapping key pair.
+     * This key is generated and cached by the HSM — we only expose the public half
+     * so callers can export it for offline key wrapping (RSA-AES Key Wrap).
      */
-    if (genctx->input_key_file[0] == '\0')
+    if (genctx->key_usage == KEY_USAGE_KEY_WRAPPING)
+    {
+        azihsm_handle wrap_pub = 0, wrap_priv = 0;
+
+        /* The HSM's unwrapping key is fixed at 2048 bits. Reject mismatched sizes
+         * so that keymgmt_get_params() reports the correct bit length. */
+        if (genctx->pubkey_bits != AIHSM_RSA_WRAPPING_KEY_BITS)
+        {
+            ERR_raise_data(
+                ERR_LIB_PROV,
+                PROV_R_KEY_SIZE_TOO_SMALL,
+                "keyWrapping usage requires rsa_keygen_bits=%u "
+                "(the HSM unwrapping key is fixed at %u bits)",
+                AIHSM_RSA_WRAPPING_KEY_BITS,
+                AIHSM_RSA_WRAPPING_KEY_BITS
+            );
+            return NULL;
+        }
+
+        status = azihsm_get_unwrapping_key(genctx->provctx, &wrap_pub, &wrap_priv);
+        if (status != AZIHSM_STATUS_SUCCESS)
+        {
+            ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GENERATE_KEY);
+            return NULL;
+        }
+
+        if ((rsa_key = OPENSSL_zalloc(sizeof(AZIHSM_RSA_KEY))) == NULL)
+        {
+            ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
+            return NULL;
+        }
+
+        rsa_key->genctx = *genctx;
+        rsa_key->key.pub = wrap_pub;
+        rsa_key->has_public = true;
+        rsa_key->key.priv = 0;
+        rsa_key->has_private = false;
+
+        return rsa_key;
+    }
+
+    /*
+     * The HSM cannot generate RSA keys natively.
+     * RSA keys must be provided externally via azihsm.input_key or azihsm.wrapped_key.
+     */
+    if (genctx->input_key_file[0] == '\0' && genctx->wrapped_key_file[0] == '\0')
     {
         ERR_raise_data(
             ERR_LIB_PROV,
             PROV_R_MISSING_KEY,
-            "azihsm: RSA key generation requires azihsm.input_key parameter. "
+            "azihsm: RSA key generation requires azihsm.input_key or azihsm.wrapped_key parameter. "
             "The HSM cannot generate RSA keys natively. "
             "Please provide an external DER-encoded RSA private key: "
-            "-pkeyopt azihsm.input_key:/path/to/rsa_key.der"
+            "-pkeyopt azihsm.input_key:/path/to/rsa_key.der "
+            "or a pre-wrapped blob: "
+            "-pkeyopt azihsm.wrapped_key:/path/to/wrapped.bin"
         );
         return NULL;
     }
@@ -352,14 +247,29 @@ static AZIHSM_RSA_KEY *azihsm_ossl_keymgmt_gen(
         return NULL;
     }
 
-    /* Import external key via wrap-unwrap */
-    status = azihsm_ossl_rsa_keymgmt_gen_import(
-        genctx,
-        &priv_key_prop_list,
-        &pub_key_prop_list,
-        &private,
-        &public
-    );
+    if (genctx->wrapped_key_file[0] != '\0')
+    {
+        /* Pre-wrapped blob path: unwrap directly into HSM */
+        status = azihsm_unwrap_key_pair(
+            genctx->provctx,
+            genctx->wrapped_key_file,
+            &priv_key_prop_list,
+            &pub_key_prop_list,
+            &private,
+            &public
+        );
+    }
+    else
+    {
+        /* Import external DER key via wrap-unwrap */
+        status = azihsm_ossl_rsa_keymgmt_gen_import(
+            genctx,
+            &priv_key_prop_list,
+            &pub_key_prop_list,
+            &private,
+            &public
+        );
+    }
 
     if (status != AZIHSM_STATUS_SUCCESS)
     {
@@ -414,46 +324,17 @@ static AZIHSM_RSA_KEY *azihsm_ossl_keymgmt_gen(
             }
 
             /* Write masked key to file with restricted permissions (owner-only) */
-            int fd = open(
-                genctx->masked_key_file,
-                O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW,
-                S_IRUSR | S_IWUSR
-            );
-            if (fd < 0)
+            if (azihsm_ossl_write_masked_key_to_file(
+                    masked_key_buffer,
+                    prop.len,
+                    genctx->masked_key_file
+                ) != OSSL_SUCCESS)
             {
                 azihsm_key_delete(private);
                 azihsm_key_delete(public);
                 OPENSSL_cleanse(masked_key_buffer, masked_key_buffer_size);
                 OPENSSL_free(masked_key_buffer);
                 OPENSSL_free(rsa_key);
-                ERR_raise(ERR_LIB_PROV, ERR_R_OPERATION_FAIL);
-                return NULL;
-            }
-
-            FILE *f = fdopen(fd, "wb");
-            if (f == NULL)
-            {
-                close(fd);
-                azihsm_key_delete(private);
-                azihsm_key_delete(public);
-                OPENSSL_cleanse(masked_key_buffer, masked_key_buffer_size);
-                OPENSSL_free(masked_key_buffer);
-                OPENSSL_free(rsa_key);
-                ERR_raise(ERR_LIB_PROV, ERR_R_OPERATION_FAIL);
-                return NULL;
-            }
-
-            size_t written = fwrite(masked_key_buffer, 1, prop.len, f);
-            fclose(f);
-
-            if (written != prop.len)
-            {
-                azihsm_key_delete(private);
-                azihsm_key_delete(public);
-                OPENSSL_cleanse(masked_key_buffer, masked_key_buffer_size);
-                OPENSSL_free(masked_key_buffer);
-                OPENSSL_free(rsa_key);
-                ERR_raise(ERR_LIB_PROV, ERR_R_OPERATION_FAIL);
                 return NULL;
             }
 
@@ -613,6 +494,35 @@ static int azihsm_ossl_keymgmt_gen_set_params(AZIHSM_RSA_GEN_CTX *genctx, const 
         genctx->input_key_file[sizeof(genctx->input_key_file) - 1] = '\0';
     }
 
+    if ((p = OSSL_PARAM_locate_const(params, AZIHSM_OSSL_PKEY_PARAM_WRAPPED_KEY)) != NULL)
+    {
+        if (p->data_type != OSSL_PARAM_UTF8_STRING)
+        {
+            ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
+            return OSSL_FAILURE;
+        }
+
+        if (azihsm_ossl_input_key_filepath_validate(p->data) < 0)
+        {
+            ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
+            return OSSL_FAILURE;
+        }
+
+        strncpy(genctx->wrapped_key_file, p->data, sizeof(genctx->wrapped_key_file) - 1);
+        genctx->wrapped_key_file[sizeof(genctx->wrapped_key_file) - 1] = '\0';
+    }
+
+    /* Reject if both input_key and wrapped_key are set */
+    if (genctx->input_key_file[0] != '\0' && genctx->wrapped_key_file[0] != '\0')
+    {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            PROV_R_INVALID_KEY,
+            "azihsm: azihsm.input_key and azihsm.wrapped_key are mutually exclusive"
+        );
+        return OSSL_FAILURE;
+    }
+
     return OSSL_SUCCESS;
 }
 
@@ -647,6 +557,7 @@ static AZIHSM_RSA_GEN_CTX *azihsm_ossl_keymgmt_gen_init_common(
     genctx->session_flag = false;
     genctx->masked_key_file[0] = '\0';
     genctx->input_key_file[0] = '\0';
+    genctx->wrapped_key_file[0] = '\0';
 
     if (azihsm_ossl_keymgmt_gen_set_params(genctx, params) == 0)
     {
@@ -861,6 +772,7 @@ static const OSSL_PARAM *azihsm_ossl_keymgmt_gen_settable_params(
         OSSL_PARAM_utf8_string(AZIHSM_OSSL_PKEY_PARAM_SESSION, NULL, 0),
         OSSL_PARAM_utf8_string(AZIHSM_OSSL_PKEY_PARAM_MASKED_KEY, NULL, 0),
         OSSL_PARAM_utf8_string(AZIHSM_OSSL_PKEY_PARAM_INPUT_KEY, NULL, 0),
+        OSSL_PARAM_utf8_string(AZIHSM_OSSL_PKEY_PARAM_WRAPPED_KEY, NULL, 0),
         OSSL_PARAM_END
     };
 
