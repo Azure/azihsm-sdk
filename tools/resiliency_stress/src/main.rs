@@ -37,22 +37,36 @@ use rand::Rng;
 #[derive(Parser, Debug)]
 #[command(name = "resiliency_stress", version, about)]
 struct Args {
-    /// Number of worker threads performing crypto operations.
+    // -- Process & thread configuration --
+    /// Number of separate OS processes, each with its own partition/session.
+    /// Resets are triggered from the parent process only.
+    #[arg(short = 'p', long, default_value_t = 1)]
+    processes: usize,
+
+    /// Number of worker threads performing crypto operations (per process).
     #[arg(short = 'w', long, default_value_t = 4)]
     workers: usize,
+
+    // -- Timing --
+    /// Duration to run in seconds (0 = run until Ctrl-C).
+    #[arg(short = 'd', long, default_value_t = 60)]
+    duration_secs: u64,
 
     /// Reset interval in milliseconds.
     #[arg(short = 'r', long, default_value_t = 200)]
     reset_interval_ms: u64,
 
-    /// Duration to run in seconds (0 = run until Ctrl-C).
-    #[arg(short = 'd', long, default_value_t = 60)]
-    duration_secs: u64,
-
     /// Stats reporting interval in seconds.
     #[arg(short = 's', long, default_value_t = 5)]
     stats_interval_secs: u64,
 
+    /// Stall detection timeout in seconds. If no operations complete
+    /// within this duration the tool treats it as a deadlock, dumps
+    /// diagnostics, and exits. 0 disables stall detection.
+    #[arg(long, default_value_t = 30)]
+    stall_timeout_secs: u64,
+
+    // -- Operations --
     /// Comma-separated list of operations to include.
     /// Available: aes-cbc,aes-xts*,aes-gcm*,ecc-sign,hmac-sign,rsa-sign,rsa-decrypt,rsa,ecdh,hkdf,
     /// aes-keygen,ecc-keygen,aes-xts-keygen,unwrapping-keygen,aes-unwrap,ecc-unwrap,
@@ -65,12 +79,14 @@ struct Args {
     #[arg(short = 'o', long, default_value = "all")]
     ops: String,
 
-    /// Stall detection timeout in seconds. If no operations complete
-    /// within this duration the tool treats it as a deadlock, dumps
-    /// diagnostics, and exits. 0 disables stall detection.
-    #[arg(long, default_value_t = 30)]
-    stall_timeout_secs: u64,
+    // -- Error handling --
+    /// Maximum number of operation errors before stopping.
+    /// 0 = stop on first error (legacy behavior).
+    /// -1 = never stop on errors (infinite tolerance).
+    #[arg(short = 'e', long, default_value_t = 10, allow_hyphen_values = true)]
+    max_errors: i64,
 
+    // -- Behavior flags --
     /// Enable verbose logging (shows retry/restore warnings).
     #[arg(short = 'v', long, default_value_t = false)]
     verbose: bool,
@@ -92,19 +108,7 @@ struct Args {
     #[arg(long, default_value_t = false)]
     random_fault: bool,
 
-    /// Maximum number of operation errors before stopping.
-    /// 0 = stop on first error (legacy behavior).
-    /// -1 = never stop on errors (infinite tolerance).
-    /// Default: 10.
-    #[arg(short = 'e', long, default_value_t = 10, allow_hyphen_values = true)]
-    max_errors: i64,
-
-    /// Number of separate OS processes, each with its own partition/session.
-    /// Resets are triggered from the parent process only.
-    /// Default: 1 (single-process, current behavior).
-    #[arg(short = 'p', long, default_value_t = 1)]
-    processes: usize,
-
+    // -- Internal (hidden) --
     /// (Internal) Child process ID — set automatically by the parent.
     #[arg(long, hide = true)]
     child_id: Option<usize>,
