@@ -54,13 +54,14 @@ struct Args {
     stats_interval_secs: u64,
 
     /// Comma-separated list of operations to include.
-    /// Available: aes-cbc,aes-xts,aes-gcm,ecc-sign,hmac-sign,rsa-sign,rsa-decrypt,rsa,ecdh,hkdf,
+    /// Available: aes-cbc,aes-xts*,aes-gcm*,ecc-sign,hmac-sign,rsa-sign,rsa-decrypt,rsa,ecdh,hkdf,
     /// aes-keygen,ecc-keygen,aes-xts-keygen,unwrapping-keygen,aes-unwrap,ecc-unwrap,
     /// xts-unwrap,unwrap,aes-unmask,ecc-unmask,xts-unmask,unmask,
     /// ecc-key-report,rsa-key-report,key-report,cert-chain,
     /// aes-keygen-delete,ecc-keygen-delete,xts-keygen-delete,keygen-delete,all
     /// Note: standalone keygen ops (aes-keygen, ecc-keygen, aes-xts-keygen) are NOT
     /// included in 'all' — use keygen-delete variants instead.
+    /// *aes-xts and aes-gcm enc/dec require mock or sim-service feature.
     #[arg(short = 'o', long, default_value = "all")]
     ops: String,
 
@@ -283,7 +284,9 @@ enum OpKind {
     AesKeyGenDelete,
     EccKeyGenDelete,
     AesXtsKeyGenDelete,
+    #[cfg(any(feature = "mock", feature = "sim-service"))]
     AesXtsEncDec,
+    #[cfg(any(feature = "mock", feature = "sim-service"))]
     AesGcmEncDec,
 }
 
@@ -314,7 +317,9 @@ impl OpKind {
             Self::AesKeyGenDelete => 22,
             Self::EccKeyGenDelete => 23,
             Self::AesXtsKeyGenDelete => 24,
+            #[cfg(any(feature = "mock", feature = "sim-service"))]
             Self::AesXtsEncDec => 25,
+            #[cfg(any(feature = "mock", feature = "sim-service"))]
             Self::AesGcmEncDec => 26,
         }
     }
@@ -345,7 +350,9 @@ impl OpKind {
             22 => Some(Self::AesKeyGenDelete),
             23 => Some(Self::EccKeyGenDelete),
             24 => Some(Self::AesXtsKeyGenDelete),
+            #[cfg(any(feature = "mock", feature = "sim-service"))]
             25 => Some(Self::AesXtsEncDec),
+            #[cfg(any(feature = "mock", feature = "sim-service"))]
             26 => Some(Self::AesGcmEncDec),
             _ => None,
         }
@@ -379,7 +386,9 @@ impl std::fmt::Display for OpKind {
             Self::AesKeyGenDelete => write!(f, "AES keygen+delete"),
             Self::EccKeyGenDelete => write!(f, "ECC keygen+delete"),
             Self::AesXtsKeyGenDelete => write!(f, "AES-XTS keygen+delete"),
+            #[cfg(any(feature = "mock", feature = "sim-service"))]
             Self::AesXtsEncDec => write!(f, "AES-XTS enc+dec"),
+            #[cfg(any(feature = "mock", feature = "sim-service"))]
             Self::AesGcmEncDec => write!(f, "AES-GCM enc+dec"),
         }
     }
@@ -1154,6 +1163,7 @@ fn exec_aes_xts_keygen_delete(session: &HsmSession) -> HsmResult<()> {
     Ok(())
 }
 
+#[cfg(any(feature = "mock", feature = "sim-service"))]
 fn exec_aes_xts_enc_dec(key: &HsmAesXtsKey) -> HsmResult<()> {
     let tweak = [0u8; 16];
     let plaintext = [0x42u8; 512]; // DUL-aligned
@@ -1172,6 +1182,7 @@ fn exec_aes_xts_enc_dec(key: &HsmAesXtsKey) -> HsmResult<()> {
     Ok(())
 }
 
+#[cfg(any(feature = "mock", feature = "sim-service"))]
 fn gen_aes_gcm_key(session: &HsmSession) -> HsmAesGcmKey {
     let props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Secret)
@@ -1186,6 +1197,7 @@ fn gen_aes_gcm_key(session: &HsmSession) -> HsmAesGcmKey {
     HsmKeyManager::generate_key(session, &mut algo, props).expect("AES-GCM key gen")
 }
 
+#[cfg(any(feature = "mock", feature = "sim-service"))]
 fn exec_aes_gcm_enc_dec(key: &HsmAesGcmKey) -> HsmResult<()> {
     let iv = [0u8; 12];
     let plaintext = b"stress test data for GCM!padding";
@@ -1235,7 +1247,9 @@ fn parse_ops(ops_str: &str) -> Vec<OpKind> {
             OpKind::AesKeyGenDelete,
             OpKind::EccKeyGenDelete,
             OpKind::AesXtsKeyGenDelete,
+            #[cfg(any(feature = "mock", feature = "sim-service"))]
             OpKind::AesXtsEncDec,
+            #[cfg(any(feature = "mock", feature = "sim-service"))]
             OpKind::AesGcmEncDec,
         ];
     }
@@ -1243,8 +1257,20 @@ fn parse_ops(ops_str: &str) -> Vec<OpKind> {
     for op in ops_str.split(',') {
         match op.trim() {
             "aes-cbc" => ops.push(OpKind::AesCbcEncDec),
+            #[cfg(any(feature = "mock", feature = "sim-service"))]
             "aes-xts" => ops.push(OpKind::AesXtsEncDec),
+            #[cfg(not(any(feature = "mock", feature = "sim-service")))]
+            "aes-xts" => {
+                eprintln!("aes-xts enc/dec requires mock or sim-service feature.");
+                std::process::exit(1);
+            }
+            #[cfg(any(feature = "mock", feature = "sim-service"))]
             "aes-gcm" => ops.push(OpKind::AesGcmEncDec),
+            #[cfg(not(any(feature = "mock", feature = "sim-service")))]
+            "aes-gcm" => {
+                eprintln!("aes-gcm enc/dec requires mock or sim-service feature.");
+                std::process::exit(1);
+            }
             "ecc-sign" => ops.push(OpKind::EccSign),
             "hmac-sign" => ops.push(OpKind::HmacSign),
             "rsa-sign" => ops.push(OpKind::RsaSign),
@@ -1371,7 +1397,9 @@ fn print_config(args: &Args, ops: &[OpKind]) {
     for op in ops {
         match op {
             OpKind::AesCbcEncDec => enc_dec.push("AES-CBC"),
+            #[cfg(any(feature = "mock", feature = "sim-service"))]
             OpKind::AesXtsEncDec => enc_dec.push("AES-XTS"),
+            #[cfg(any(feature = "mock", feature = "sim-service"))]
             OpKind::AesGcmEncDec => enc_dec.push("AES-GCM"),
             OpKind::EccSign => sign.push("ECC"),
             OpKind::HmacSign => sign.push("HMAC"),
@@ -2336,7 +2364,6 @@ fn child_worker_thread(
                 | OpKind::XtsUnwrap
                 | OpKind::XtsUnmask
                 | OpKind::AesXtsKeyGenDelete
-                | OpKind::AesXtsEncDec
         )
     });
     let xts_wrapped_blob = if needs_xts {
@@ -2352,13 +2379,15 @@ fn child_worker_thread(
     } else {
         None
     };
-    // AES-XTS enc+dec setup: pre-create key.
+    // AES-XTS enc+dec setup: pre-create key (mock/sim-service only).
+    #[cfg(any(feature = "mock", feature = "sim-service"))]
     let xts_enc_key = if ops.iter().any(|o| matches!(o, OpKind::AesXtsEncDec)) {
         Some(gen_aes_xts_key(&session))
     } else {
         None
     };
-    // AES-GCM enc+dec setup: pre-create key.
+    // AES-GCM enc+dec setup: pre-create key (mock/sim-service only).
+    #[cfg(any(feature = "mock", feature = "sim-service"))]
     let gcm_key = if ops.iter().any(|o| matches!(o, OpKind::AesGcmEncDec)) {
         Some(gen_aes_gcm_key(&session))
     } else {
@@ -2410,9 +2439,11 @@ fn child_worker_thread(
             OpKind::AesKeyGenDelete => exec_aes_keygen_delete(&session),
             OpKind::EccKeyGenDelete => exec_ecc_keygen_delete(&session),
             OpKind::AesXtsKeyGenDelete => exec_aes_xts_keygen_delete(&session),
+            #[cfg(any(feature = "mock", feature = "sim-service"))]
             OpKind::AesXtsEncDec => {
                 exec_aes_xts_enc_dec(xts_enc_key.as_ref().expect("XTS enc key"))
             }
+            #[cfg(any(feature = "mock", feature = "sim-service"))]
             OpKind::AesGcmEncDec => exec_aes_gcm_enc_dec(gcm_key.as_ref().expect("GCM key")),
         };
 

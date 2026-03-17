@@ -273,7 +273,10 @@ fn aes_xts_generate_half_key(
         ext: None,
     };
 
-    let resp = session.with_dev(|dev| dev.exec_op(&req, &mut None).map_err(HsmError::from))?;
+    let resp = session.with_dev(|dev| {
+        dev.exec_op(&req, &mut None)
+            .map_err(|e| map_ddi_err(e, req.hdr.op))
+    })?;
 
     let key_id = ddi::HsmKeyIdGuard::new(
         session,

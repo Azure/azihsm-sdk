@@ -53,7 +53,10 @@ pub(crate) fn aes_generate_key(
         ext: None,
     };
 
-    let resp = session.with_dev(|dev| dev.exec_op(&req, &mut None).map_err(HsmError::from))?;
+    let resp = session.with_dev(|dev| {
+        dev.exec_op(&req, &mut None)
+            .map_err(|e| map_ddi_err(e, req.hdr.op))
+    })?;
 
     // Create a key guard to ensure the generated key is deleted if any errors occur before returning.
     let key_id = ddi::HsmKeyIdGuard::new(
@@ -225,7 +228,10 @@ fn aes_cbc_encrypt_decrypt(
         ext: None,
     };
 
-    let resp = key.with_dev(|dev| dev.exec_op(&req, &mut None).map_err(HsmError::from))?;
+    let resp = key.with_dev(|dev| {
+        dev.exec_op(&req, &mut None)
+            .map_err(|e| map_ddi_err(e, req.hdr.op))
+    })?;
 
     // Update IV for chaining
     let resp_iv = resp.data.iv.as_slice();
@@ -359,7 +365,7 @@ fn aes_xts_encrypt_decrypt(
 
     let resp = key.with_dev(|dev| {
         dev.exec_op_fp_xts_slice(op, xts_params, input, output, &mut is_fips_approved)
-            .map_err(HsmError::from)
+            .map_err(|e| map_ddi_err(e, DdiOp::AesEncryptDecrypt))
     })?;
     Ok(resp)
 }
@@ -402,7 +408,10 @@ pub(crate) fn aes_gcm_generate_key(
         ext: None,
     };
 
-    let resp = session.with_dev(|dev| dev.exec_op(&req, &mut None).map_err(HsmError::from))?;
+    let resp = session.with_dev(|dev| {
+        dev.exec_op(&req, &mut None)
+            .map_err(|e| map_ddi_err(e, req.hdr.op))
+    })?;
 
     let key_id = ddi::HsmKeyIdGuard::new(
         session,
@@ -473,7 +482,7 @@ pub(crate) fn aes_gcm_encrypt(
             &mut returned_iv,
             &mut is_fips_approved,
         )
-        .map_err(HsmError::from)
+        .map_err(|e| map_ddi_err(e, DdiOp::AesEncryptDecrypt))
     })?;
 
     Ok((bytes_written, tag.ok_or(HsmError::InternalError)?))
@@ -537,7 +546,7 @@ pub(crate) fn aes_gcm_decrypt(
             &mut returned_iv,
             &mut is_fips_approved,
         )
-        .map_err(HsmError::from)
+        .map_err(|e| map_ddi_err(e, DdiOp::AesEncryptDecrypt))
     })?;
 
     Ok(bytes_written)

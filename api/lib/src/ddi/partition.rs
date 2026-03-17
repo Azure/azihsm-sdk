@@ -450,7 +450,9 @@ fn init_bk3(dev: &HsmDev, rev: HsmApiRev, bk3: &[u8]) -> HsmResult<Vec<u8>> {
         },
         ext: None,
     };
-    let resp = dev.exec_op(&req, &mut None).map_err(HsmError::from)?;
+    let resp = dev
+        .exec_op(&req, &mut None)
+        .map_err(|e| map_ddi_err(e, req.hdr.op))?;
     Ok(resp.data.masked_bk3.as_slice().to_vec())
 }
 
@@ -480,7 +482,8 @@ fn get_establish_cred_encryption_key(
         data: DdiGetEstablishCredEncryptionKeyReq {},
         ext: None,
     };
-    dev.exec_op(&req, &mut None).map_err(HsmError::from)
+    dev.exec_op(&req, &mut None)
+        .map_err(|e| map_ddi_err(e, req.hdr.op))
 }
 
 /// Establishes application credentials on the HSM partition.
@@ -540,7 +543,9 @@ pub fn establish_credential(
         },
         ext: None,
     };
-    let resp = dev.exec_op(&req, &mut None).map_err(HsmError::from)?;
+    let resp = dev
+        .exec_op(&req, &mut None)
+        .map_err(|e| map_ddi_err(e, req.hdr.op))?;
     Ok(resp.data.bmk.as_slice().to_vec())
 }
 
@@ -591,7 +596,9 @@ fn get_cert_chain_info(dev: &HsmDev, rev: HsmApiRev, slot_id: u8) -> HsmResult<(
         ext: None,
     };
 
-    let resp = dev.exec_op(&req, &mut None).map_err(HsmError::from)?;
+    let resp = dev
+        .exec_op(&req, &mut None)
+        .map_err(|e| map_ddi_err(e, req.hdr.op))?;
 
     let count = resp.data.num_certs;
     let thumbprint = resp.data.thumbprint.as_slice().to_vec();
@@ -617,7 +624,9 @@ fn get_cert(dev: &HsmDev, rev: HsmApiRev, slot_id: u8, cert_id: u8) -> HsmResult
         ext: None,
     };
 
-    let resp = dev.exec_op(&req, &mut None).map_err(HsmError::from)?;
+    let resp = dev
+        .exec_op(&req, &mut None)
+        .map_err(|e| map_ddi_err(e, req.hdr.op))?;
 
     Ok(resp.data.certificate.as_slice().to_vec())
 }
@@ -646,7 +655,9 @@ fn get_sealed_bk3(dev: &HsmDev, rev: HsmApiRev) -> HsmResult<Vec<u8>> {
         ext: None,
     };
 
-    let resp = dev.exec_op(&req, &mut None).map_err(HsmError::from)?;
+    let resp = dev
+        .exec_op(&req, &mut None)
+        .map_err(|e| map_ddi_err(e, req.hdr.op))?;
 
     Ok(resp.data.sealed_bk3.as_slice().to_vec())
 }

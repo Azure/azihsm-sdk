@@ -32,58 +32,72 @@ pub(crate) use tpm::*;
 
 use super::*;
 
+/// Maps a `DdiError` to an `HsmError`, logging unmapped errors with the
+/// DDI command that triggered them.
+///
+/// Prefer this over the bare `From<DdiError>` conversion at every
+/// `exec_op` / `exec_op_fp_*` call site so that the tracing output
+/// includes the failing DDI command code.
+pub(crate) fn map_ddi_err(err: DdiError, ddi_op: DdiOp) -> HsmError {
+    match err {
+        DdiError::DriverError(DriverError::IoAborted) => HsmError::IoAborted,
+        DdiError::DriverError(DriverError::IoAbortInProgress) => HsmError::IoAbortInProgress,
+        DdiError::DeviceNotReady => HsmError::DeviceNotReady,
+        DdiError::DdiStatus(DdiStatus::CredentialsNotEstablished) => {
+            HsmError::CredentialsNotEstablished
+        }
+        DdiError::DdiStatus(DdiStatus::NonceMismatch) => HsmError::NonceMismatch,
+        DdiError::DdiStatus(DdiStatus::PartitionNotProvisioned) => {
+            HsmError::PartitionNotProvisioned
+        }
+        DdiError::DdiStatus(DdiStatus::MaskedKeyDecodeFailed) => HsmError::MaskedKeyDecodeFailed,
+        DdiError::DdiStatus(DdiStatus::EccVerifyFailed) => HsmError::EccVerifyFailed,
+        DdiError::DdiStatus(DdiStatus::SessionNeedsRenegotiation) => {
+            HsmError::SessionNeedsRenegotiation
+        }
+        DdiError::DdiStatus(DdiStatus::PendingKeyGeneration) => HsmError::PendingKeyGeneration,
+        DdiError::DdiStatus(DdiStatus::KeyNotFound) => HsmError::KeyNotFound,
+        DdiError::DdiStatus(DdiStatus::PartitionAlreadyProvisioned) => {
+            HsmError::PartitionAlreadyProvisioned
+        }
+        DdiError::DdiStatus(DdiStatus::VaultAppLimitReached) => HsmError::VaultAppLimitReached,
+        DdiError::DdiStatus(DdiStatus::CannotDeleteInternalKeys) => {
+            HsmError::CannotDeleteInternalKeys
+        }
+        _ => {
+            match &err {
+                DdiError::DdiStatus(status) => {
+                    tracing::error!(
+                        ddi_op = ?ddi_op,
+                        ddi_op_code = ddi_op.0,
+                        status = ?status,
+                        status_code = status.0,
+                        "Unmapped DdiStatus \u{2192} DdiCmdFailure"
+                    );
+                }
+                _ => {
+                    tracing::error!(
+                        ddi_op = ?ddi_op,
+                        ddi_op_code = ddi_op.0,
+                        ?err,
+                        "Unmapped DdiError \u{2192} DdiCmdFailure"
+                    );
+                }
+            }
+            HsmError::DdiCmdFailure
+        }
+    }
+}
+
 /// Converts a DDI error into the corresponding `HsmError`.
 ///
-/// `DriverError::IoAborted` and `DriverError::IoAbortInProgress` are mapped
-/// to their dedicated `HsmError` variants so that higher layers (e.g., the
-/// `open_partition` retry loop) can distinguish transient IO-abort conditions
-/// from other DDI failures.
-///
-/// `DdiStatus::CredentialsNotEstablished`, `DdiStatus::NonceMismatch`,
-/// `DdiStatus::PartitionNotProvisioned`, `DdiStatus::MaskedKeyDecodeFailed`,
-/// `DdiStatus::EccVerifyFailed`, `DdiStatus::SessionNeedsRenegotiation`,
-/// `DdiStatus::PendingKeyGeneration`, `DdiStatus::KeyNotFound`,
-/// `DdiStatus::PartitionAlreadyProvisioned`, and
-/// `DdiStatus::VaultAppLimitReached` are surfaced as distinct
-/// `HsmError` variants to enable targeted retry logic during partition
-/// initialization and key operations.
-///
-/// All remaining `DdiError` variants are collapsed into
-/// `HsmError::DdiCmdFailure`.
+/// This is the trait-based conversion used by the `?` operator and
+/// `map_err(HsmError::from)`. It delegates to [`map_ddi_err`] with
+/// `DdiOp::Invalid`. Prefer calling [`map_ddi_err`] directly at
+/// `exec_op` call sites so that the DDI command code is captured.
 impl From<DdiError> for HsmError {
     fn from(err: DdiError) -> Self {
-        match err {
-            DdiError::DriverError(DriverError::IoAborted) => HsmError::IoAborted,
-            DdiError::DriverError(DriverError::IoAbortInProgress) => HsmError::IoAbortInProgress,
-            DdiError::DeviceNotReady => HsmError::DeviceNotReady,
-            DdiError::DdiStatus(DdiStatus::CredentialsNotEstablished) => {
-                HsmError::CredentialsNotEstablished
-            }
-            DdiError::DdiStatus(DdiStatus::NonceMismatch) => HsmError::NonceMismatch,
-            DdiError::DdiStatus(DdiStatus::PartitionNotProvisioned) => {
-                HsmError::PartitionNotProvisioned
-            }
-            DdiError::DdiStatus(DdiStatus::MaskedKeyDecodeFailed) => {
-                HsmError::MaskedKeyDecodeFailed
-            }
-            DdiError::DdiStatus(DdiStatus::EccVerifyFailed) => HsmError::EccVerifyFailed,
-            DdiError::DdiStatus(DdiStatus::SessionNeedsRenegotiation) => {
-                HsmError::SessionNeedsRenegotiation
-            }
-            DdiError::DdiStatus(DdiStatus::PendingKeyGeneration) => HsmError::PendingKeyGeneration,
-            DdiError::DdiStatus(DdiStatus::KeyNotFound) => HsmError::KeyNotFound,
-            DdiError::DdiStatus(DdiStatus::PartitionAlreadyProvisioned) => {
-                HsmError::PartitionAlreadyProvisioned
-            }
-            DdiError::DdiStatus(DdiStatus::VaultAppLimitReached) => HsmError::VaultAppLimitReached,
-            DdiError::DdiStatus(DdiStatus::CannotDeleteInternalKeys) => {
-                HsmError::CannotDeleteInternalKeys
-            }
-            _ => {
-                tracing::error!(?err, "Unmapped DdiError \u{2192} DdiCmdFailure");
-                HsmError::DdiCmdFailure
-            }
-        }
+        map_ddi_err(err, DdiOp::Invalid)
     }
 }
 

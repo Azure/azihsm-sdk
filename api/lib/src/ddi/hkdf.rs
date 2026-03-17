@@ -67,8 +67,10 @@ pub(crate) fn hkdf_derive(
         },
         ext: None,
     };
-    let resp =
-        shared_secret.with_dev(|dev| dev.exec_op(&req, &mut None).map_err(HsmError::from))?;
+    let resp = shared_secret.with_dev(|dev| {
+        dev.exec_op(&req, &mut None)
+            .map_err(|e| map_ddi_err(e, req.hdr.op))
+    })?;
 
     let session = shared_secret.session();
     let key_id = HsmKeyIdGuard::new(
