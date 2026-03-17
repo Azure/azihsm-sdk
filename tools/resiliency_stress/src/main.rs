@@ -581,6 +581,11 @@ fn open_and_init_partition(
             dir
         });
         fs::create_dir_all(&storage_path).ok(); // ok if already exists
+        eprintln!(
+            "[pid={}] Resiliency storage path: {}",
+            std::process::id(),
+            storage_path.display()
+        );
 
         // POTA callback is only needed for Caller source (not TPM).
         let pota_callback: Option<Box<dyn PotaEndorsementCallback>> = if !use_tpm {
@@ -1790,6 +1795,11 @@ fn run_as_parent(args: Args) {
     // Create shared resiliency storage directory for all processes.
     let storage_dir = std::env::temp_dir().join(format!("azihsm_stress_{}", std::process::id()));
     fs::create_dir_all(&storage_dir).expect("Failed to create shared storage directory");
+    eprintln!(
+        "[pid={}] Shared resiliency storage path: {}",
+        std::process::id(),
+        storage_dir.display()
+    );
 
     // Reset the partition once before spawning children.
     // Children will each call init() — the first succeeds, subsequent ones

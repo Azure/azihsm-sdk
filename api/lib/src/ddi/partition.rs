@@ -283,7 +283,26 @@ pub(crate) fn init_part_raw_no_res(
         HsmOwnerBackupKeySource::Caller => {
             // Caller provided the OBK
             let obk = obk_config.key().ok_or(HsmError::InvalidArgument)?;
-            init_bk3(dev, rev, obk)?
+            match init_bk3(dev, rev, obk) {
+                Ok(masked_bk3) => {
+                    // First-time init succeeded — seal the masked BK3 for future use
+                    eprintln!("[init_part] Calling set_sealed_bk3");
+                    let _ = set_sealed_bk3(dev, rev, &masked_bk3);
+                    masked_bk3
+                }
+
+                Err(e) => {
+                    eprintln!("[init_part] init_bk3 failed: {:?}", e);
+                    // BK3 already initialized — retrieve the previously sealed value
+                    eprintln!("[init_part] Calling get_sealed_bk3 as fallback");
+                    let sealed_bk3 = get_sealed_bk3(dev, rev)?;
+                    eprintln!(
+                        "[init_part] get_sealed_bk3 succeeded (len={})",
+                        sealed_bk3.len()
+                    );
+                    sealed_bk3
+                }
+            }
         }
         HsmOwnerBackupKeySource::Tpm => {
             // Retrieve sealed BK3 from device and unseal with TPM
@@ -296,9 +315,11 @@ pub(crate) fn init_part_raw_no_res(
     // Compute POTA endorsement based on source.
     let (pota_signature, pota_public_key) =
         get_pota_endorsement(dev, rev, pota_endorsement, resiliency_config, reendorse)?;
+    eprintln!("[init_part] get_pota_endorsement succeeded");
     let pota_endorsement = HsmPotaEndorsementData::new(&pota_signature, &pota_public_key);
 
     let resp = get_establish_cred_encryption_key(dev, rev)?;
+    eprintln!("[init_part] get_establish_cred_encryption_key succeeded");
 
     let nonce = resp.data.nonce;
     let key = DeviceCredKey::new(&resp.data.pub_key, nonce).map_hsm_err(HsmError::DdiCmdFailure)?;
@@ -336,7 +357,9 @@ pub(crate) fn init_part_raw_no_res(
         &mobk,
         &pota_endorsement,
         resiliency_config,
-    )?;
+    )
+    .inspect_err(|e| eprintln!("[init_part] try_establish_credential failed: {e:?}"))?;
+    eprintln!("[init_part] try_establish_credential succeeded");
 
     Ok(InitPartResult {
         bmk,
@@ -345,6 +368,36 @@ pub(crate) fn init_part_raw_no_res(
     })
 }
 
+/// Persists the masked BK3 on the device as a sealed blob.
+///
+/// After a successful `init_bk3`, the masked BK3 must be stored on the device
+/// via `SetSealedBk3` so that subsequent boots can retrieve it with
+/// `GetSealedBk3` instead of re-initializing.
+///
+/// # Arguments
+///
+/// * `dev` - The HSM device handle
+/// * `rev` - The API revision to use
+/// * `sealed_bk3` - The masked BK3 data to persist
+///
+/// # Errors
+///
+/// Returns an error if the operation fails.
+fn set_sealed_bk3(dev: &HsmDev, rev: HsmApiRev, sealed_bk3: &[u8]) -> HsmResult<()> {
+    let req = DdiSetSealedBk3CmdReq {
+        hdr: build_ddi_req_hdr(DdiOp::SetSealedBk3, Some(rev), None),
+        data: DdiSetSealedBk3Req {
+            sealed_bk3: MborByteArray::from_slice(sealed_bk3)
+                .map_hsm_err(HsmError::InvalidArgument)?,
+        },
+        ext: None,
+    };
+
+    dev.exec_op(&req, &mut None)
+        .map_hsm_err(HsmError::DdiCmdFailure)?;
+
+    Ok(())
+}
 /// Resolves a cached key value (BMK or MUK) for credential establishment.
 ///
 /// When the caller provides a cached value, it is returned directly.
@@ -359,13 +412,31 @@ fn resolve_cached_key(
     storage_key: &str,
 ) -> HsmResult<Vec<u8>> {
     let value = match (cached, resiliency_config) {
-        (Some(v), _) => v.to_vec(),
+        (Some(v), _) => {
+            eprintln!(
+                "[resolve_cached_key] {storage_key}: using caller-provided value (len={})",
+                v.len()
+            );
+            v.to_vec()
+        }
         (None, Some(cfg)) => match cfg.storage.read(storage_key) {
-            Ok(value) => value,
-            Err(HsmError::NotFound) => Vec::new(),
+            Ok(value) => {
+                eprintln!(
+                    "[resolve_cached_key] {storage_key}: read from storage (len={})",
+                    value.len()
+                );
+                value
+            }
+            Err(HsmError::NotFound) => {
+                eprintln!("[resolve_cached_key] {storage_key}: not found in storage, using empty");
+                Vec::new()
+            }
             Err(e) => return Err(e),
         },
-        (None, None) => Vec::new(),
+        (None, None) => {
+            eprintln!("[resolve_cached_key] {storage_key}: no cache, no resiliency, using empty");
+            Vec::new()
+        }
     };
     Ok(value)
 }
