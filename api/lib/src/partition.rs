@@ -1263,19 +1263,19 @@ impl HsmPartitionInner {
 
     /// Bumps the restore epoch and persists it to storage.
     ///
-    /// The caller must hold the cross-process resiliency lock and have
-    /// already verified the epoch hasn't advanced past `pre_lock_epoch`.
-    fn bump_epoch(&mut self, pre_lock_epoch: u64) -> HsmResult<()> {
+    /// The caller must hold the cross-process resiliency lock.
+    /// Reads the current stored epoch (which may have been advanced by
+    /// another process since our `pre_lock_epoch` snapshot) and
+    /// increments from that value, ensuring monotonicity.
+    fn bump_epoch(&mut self, _pre_lock_epoch: u64) -> HsmResult<()> {
         if let Some(rs) = self.resiliency_state.as_mut() {
-            debug_assert!(
-                ResiliencyState::read_epoch(&*rs.config.storage)
-                    .ok()
-                    .flatten()
-                    .is_none_or(|stored| stored == pre_lock_epoch),
-                "stored epoch drifted under resiliency lock"
-            );
-            rs.restore_epoch = rs.restore_epoch.saturating_add(1);
-            ResiliencyState::write_epoch(&*rs.config.storage, rs.restore_epoch)?;
+            // Read the authoritative epoch from shared storage.
+            // Another process may have bumped it between our snapshot
+            // and lock acquisition — that's expected in multi-process.
+            let stored = ResiliencyState::read_epoch(&*rs.config.storage)?.unwrap_or(0);
+            let new_epoch = stored.saturating_add(1);
+            rs.restore_epoch = new_epoch;
+            ResiliencyState::write_epoch(&*rs.config.storage, new_epoch)?;
         }
         Ok(())
     }

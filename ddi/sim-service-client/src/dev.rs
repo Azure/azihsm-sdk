@@ -126,16 +126,14 @@ impl DdiSimServiceDev {
     }
 
     /// Send a request and read the response, handling ManticoreError responses.
-    fn send_and_recv(
-        conn: &mut ServiceConnection,
-    ) -> Result<Response, DdiError> {
+    fn send_and_recv(conn: &mut ServiceConnection) -> Result<Response, DdiError> {
         let resp = read_response(&mut conn.reader).map_err(|e| {
             tracing::error!("Failed to read response from sim-service: {}", e);
             DdiError::IoError(e)
         })?;
 
         if let Response::Error { error, .. } = &resp {
-            return Err(DdiError::DdiError(*error as u32));
+            return Err(DdiError::DdiStatus(DdiStatus::from(*error)));
         }
 
         Ok(resp)
@@ -252,11 +250,10 @@ impl DdiDev for DdiSimServiceDev {
 
         // Send request over UDS
         let mut conn = self.connection.lock();
-        write_slow_path_request(&mut conn.writer, &session_info_request, req_buf)
-            .map_err(|e| {
-                tracing::error!("Failed to send request to sim-service: {}", e);
-                DdiError::IoError(e)
-            })?;
+        write_slow_path_request(&mut conn.writer, &session_info_request, req_buf).map_err(|e| {
+            tracing::error!("Failed to send request to sim-service: {}", e);
+            DdiError::IoError(e)
+        })?;
 
         // Read response
         let resp = Self::send_and_recv(&mut conn)?;
@@ -649,7 +646,7 @@ impl DdiDev for DdiSimServiceDev {
         let resp = Self::send_and_recv(&mut conn)?;
         match resp {
             Response::Ok { .. } => Ok(()),
-            Response::Error { error, .. } => Err(DdiError::DdiError(error as u32)),
+            Response::Error { error, .. } => Err(DdiError::DdiStatus(DdiStatus::from(error))),
             _ => {
                 tracing::error!("Unexpected response type for migration_sim");
                 Err(DdiError::DdiError(0))

@@ -33,6 +33,7 @@ zerocopy = { features = ["derive"], workspace = true }
 [features]
 default = []
 mock = ["azihsm_ddi/mock"]
+sim-service = ["azihsm_ddi/sim-service"]
 res-test = ["azihsm_res_test_dev"]
 
 [lints]

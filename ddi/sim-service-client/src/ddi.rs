@@ -3,20 +3,17 @@
 
 //! DDI Implementation - Simulator Service Client - DDI Module
 
-use azihsm_ddi_interface::Ddi;
-use azihsm_ddi_interface::DdiResult;
-use azihsm_ddi_interface::DevInfo;
-use lazy_static::lazy_static;
-use rand::Rng;
+use azihsm_ddi_interface::*;
+
+use std::sync::LazyLock;
 
 use crate::dev::DdiSimServiceDev;
 
-lazy_static! {
-    static ref G_ENTROPY_DATA: Vec<u8> = {
-        let mut rng = rand::thread_rng();
-        (0..32).map(|_| rng.gen()).collect()
-    };
-}
+static G_ENTROPY_DATA: LazyLock<Vec<u8>> = LazyLock::new(|| {
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+    (0..32).map(|_| rng.gen()).collect()
+});
 
 /// DDI Implementation - Simulator Service Client Interface
 #[derive(Default, Debug)]

@@ -7,14 +7,40 @@ dedicated thread triggers resets at configurable intervals.
 ## Building
 
 ```bash
+# For hardware (no feature flags)
 cargo build --release -p resiliency_stress
+
+# For in-process mock simulator
+cargo build --release -p resiliency_stress --features mock
 ```
 
 ## Usage
 
+### Mock Simulator (single-process, in-process sim)
+
+The mock feature runs everything in a single process — workers and the
+reset thread share the same in-process simulator. Multi-process mode
+(`-p > 1`) is not supported with mock.
+
 ```bash
 # Default: 4 workers, 200ms reset interval, 60s duration, all operations
-cargo run --release -p resiliency_stress
+cargo run --release -p resiliency_stress --features mock -- -d 60
+
+# Run indefinitely with unlimited error tolerance
+cargo run --release -p resiliency_stress --features mock -- -w 4 -d 0 -r 1000 -e -1
+
+# Quick smoke test
+cargo run --release -p resiliency_stress --features mock -- -w 2 -d 10 -r 500
+
+# Specific operations only
+cargo run --release -p resiliency_stress --features mock -- -d 60 -o aes-cbc,aes-xts,aes-gcm
+```
+
+### Hardware
+
+```bash
+# Default: 4 workers, 200ms reset interval, 60s duration
+cargo run --release -p resiliency_stress -- -d 60
 
 # Custom parameters
 cargo run --release -p resiliency_stress -- \
@@ -22,15 +48,6 @@ cargo run --release -p resiliency_stress -- \
     --reset-interval-ms 100 \
     --duration-secs 300 \
     --ops aes-cbc,ecc-sign
-
-# Run indefinitely (Ctrl-C to stop)
-cargo run --release -p resiliency_stress -- --duration-secs 0
-
-# Quick smoke test
-cargo run --release -p resiliency_stress -- -w 2 -d 10 -r 500
-
-# Run with unlimited error tolerance (never stop on transient failures)
-cargo run --release -p resiliency_stress -- -w 2 -r 10000 -d 0 -e -1
 
 # Fail-fast on first error (legacy behavior)
 cargo run --release -p resiliency_stress -- -w 2 -d 60 -e 0
@@ -104,19 +121,19 @@ cargo run --release -p resiliency_stress --features res-test -- --random-fault -
 
 | Name | Description |
 |------|-------------|
-| `all` | All available operations (default) |
-| `aes-cbc` | AES-CBC encrypt + decrypt |
-| `aes-cbc-encrypt` | AES-CBC encrypt only |
-| `aes-cbc-decrypt` | AES-CBC decrypt only |
+| `all` | All operations below (except standalone keygen) |
+| `aes-cbc` | AES-CBC encrypt + decrypt roundtrip |
+| `aes-xts` | AES-XTS encrypt + decrypt roundtrip |
+| `aes-gcm` | AES-GCM encrypt + decrypt roundtrip |
 | `ecc-sign` | ECC P-256 signing |
 | `hmac-sign` | HMAC-SHA256 signing |
 | `rsa-sign` | RSA PKCS#1 signing |
 | `rsa-decrypt` | RSA PKCS#1 decryption |
 | `rsa` | RSA sign + decrypt |
-| `aes-keygen` | AES-256 key generation |
-| `ecc-keygen` | ECC P-256 key pair generation |
-| `aes-xts-keygen` | AES-XTS-512 key generation |
-| `unwrapping-keygen` | RSA-2048 unwrapping key pair generation |
+| `aes-keygen` | AES-256 key generation (not in `all`) |
+| `ecc-keygen` | ECC P-256 key pair generation (not in `all`) |
+| `aes-xts-keygen` | AES-XTS-512 key generation (not in `all`) |
+| `unwrapping-keygen` | RSA-2048 unwrapping key pair generation (not in `all`) |
 | `ecdh` | ECDH shared secret derivation |
 | `hkdf` | HKDF key derivation |
 | `aes-unwrap` | AES key unwrap (RSA-AES) |
@@ -129,6 +146,7 @@ cargo run --release -p resiliency_stress --features res-test -- --random-fault -
 | `unmask` | All unmask operations |
 | `ecc-key-report` | ECC key attestation report |
 | `rsa-key-report` | RSA key attestation report |
+| `unwrapping-key-report` | Unwrapping key attestation report |
 | `key-report` | All key report operations |
 | `cert-chain` | Partition cert chain retrieval |
 | `aes-keygen-delete` | AES keygen + immediate delete |

@@ -28,6 +28,7 @@ tracing-subscriber.workspace = true
 [features]
 default = []
 mock = ["azihsm_api/mock"]
+sim-service = ["azihsm_api/sim-service"]
 res-test = ["azihsm_api/res-test", "azihsm_res_test_dev"]
 
 [lints]
