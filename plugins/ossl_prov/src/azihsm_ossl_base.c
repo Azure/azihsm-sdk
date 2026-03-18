@@ -241,6 +241,14 @@ static void azihsm_ossl_teardown(AZIHSM_OSSL_PROV_CTX *provctx)
     CRYPTO_THREAD_lock_free(provctx->unwrapping_key.lock);
 
     azihsm_close_device_and_session(provctx->device, provctx->session);
+
+    /* Release the default provider reference we acquired in OSSL_provider_init
+     * to keep the NULL library context's default provider active. */
+    if (provctx->default_provider != NULL)
+    {
+        OSSL_PROVIDER_unload(provctx->default_provider);
+    }
+
     OPENSSL_free(provctx);
 }
 
@@ -724,15 +732,32 @@ OSSL_STATUS OSSL_provider_init(
 
     if (ensure_default_provider() != OSSL_SUCCESS)
     {
-        OSSL_LIB_CTX_free(ctx->libctx);
-        OPENSSL_free(ctx);
-        return OSSL_FAILURE;
+        OSSL_PROVIDER *dflt = OSSL_PROVIDER_load(NULL, "default");
+        if (dflt == NULL)
+        {
+            ERR_raise_data(
+                ERR_LIB_PROV,
+                ERR_R_INIT_FAIL,
+                "azihsm: the OpenSSL 'default' provider must be loaded "
+                "alongside the azihsm provider to prevent infinite "
+                "recursion in internal crypto operations"
+            );
+            OSSL_LIB_CTX_free(ctx->libctx);
+            OPENSSL_free(ctx);
+            return OSSL_FAILURE;
+        }
+        /* Keep the reference alive so the default provider stays active in
+         * the NULL (default) library context.  The Rust library's bare EVP
+         * calls (RAND_bytes, EC keygen, etc.) use the default context and
+         * need a provider to service them.  Released in teardown. */
+        ctx->default_provider = dflt;
     }
 
     ctx->unwrapping_key.lock = CRYPTO_THREAD_lock_new();
     if (ctx->unwrapping_key.lock == NULL)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
+        OSSL_PROVIDER_unload(ctx->default_provider);
         OSSL_LIB_CTX_free(ctx->libctx);
         OPENSSL_free(ctx);
         return OSSL_FAILURE;
@@ -752,6 +777,7 @@ OSSL_STATUS OSSL_provider_init(
     if (parse_provider_config(&ctx->config, handle, get_params_fn) != OSSL_SUCCESS)
     {
         CRYPTO_THREAD_lock_free(ctx->unwrapping_key.lock);
+        OSSL_PROVIDER_unload(ctx->default_provider);
         OSSL_LIB_CTX_free(ctx->libctx);
         OPENSSL_free(ctx);
         return OSSL_FAILURE;
@@ -772,6 +798,7 @@ OSSL_STATUS OSSL_provider_init(
             AZIHSM_API_REVISION_MAX_MINOR
         );
         CRYPTO_THREAD_lock_free(ctx->unwrapping_key.lock);
+        OSSL_PROVIDER_unload(ctx->default_provider);
         OSSL_LIB_CTX_free(ctx->libctx);
         OPENSSL_free(ctx);
         return OSSL_FAILURE;
@@ -784,6 +811,7 @@ OSSL_STATUS OSSL_provider_init(
         ERR_raise(ERR_LIB_PROV, ERR_R_INIT_FAIL);
 
         CRYPTO_THREAD_lock_free(ctx->unwrapping_key.lock);
+        OSSL_PROVIDER_unload(ctx->default_provider);
         OSSL_LIB_CTX_free(ctx->libctx);
         OPENSSL_free(ctx);
         return OSSL_FAILURE;

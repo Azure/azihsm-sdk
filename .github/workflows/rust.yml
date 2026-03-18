@@ -163,6 +163,8 @@ jobs:
         sudo ldconfig
 
     - name: Generate dev key material
+      env:
+        LD_LIBRARY_PATH: /opt/openssl-3.0.3/lib
       run: |
         OSSL=/opt/openssl-3.0.3/bin/openssl
         # Credential files (fallback if env vars are unset)
@@ -177,6 +179,7 @@ jobs:
 
     - name: Smoke test provider
       env:
+        LD_LIBRARY_PATH: /opt/openssl-3.0.3/lib
         AZIHSM_CREDENTIALS_ID: "70fcf730b8764238b8358010ce8a3f76"
         AZIHSM_CREDENTIALS_PIN: "db3dc77fc22e430080d41b31b6f04800"
       run: |
@@ -187,7 +190,7 @@ jobs:
           -algorithm EC -pkeyopt group:P-384 \
           -outform DER -out /dev/null -text
 
-    - name: Run integration tests
+    - name: Run CLI integration tests
       env:
         OPENSSL_BIN: /opt/openssl-3.0.3/bin/openssl
         OPENSSL_LIB: /opt/openssl-3.0.3/lib
@@ -195,7 +198,14 @@ jobs:
         PROPQUERY: "?provider=azihsm"
         AZIHSM_CREDENTIALS_ID: "70fcf730b8764238b8358010ce8a3f76"
         AZIHSM_CREDENTIALS_PIN: "db3dc77fc22e430080d41b31b6f04800"
-      run: cargo xtask precheck --nextest --package integration-tests --features integration --profile ci-provider-integration
+      run: cargo xtask precheck --nextest --package provider-integration-tests-cli --features integration --profile ci-provider-integration
+
+    - name: Run C API integration tests
+      env:
+        OPENSSL_DIR: /opt/openssl-3.0.3
+        AZIHSM_CREDENTIALS_ID: "70fcf730b8764238b8358010ce8a3f76"
+        AZIHSM_CREDENTIALS_PIN: "db3dc77fc22e430080d41b31b6f04800"
+      run: cargo xtask precheck --nextest --package provider-integration-tests-capi --features integration --profile ci-provider-integration
 
   build_windows:
 
