@@ -168,6 +168,13 @@ pub(crate) fn init_part(
 ) -> HsmResult<(Vec<u8>, Vec<u8>)> {
     let mobk = match obk_config.key_source() {
         HsmOwnerBackupKeySource::Caller => {
+            // Validate that the OpenSSL default provider is functional.
+            // In production the TPM path exercises libcrypto; this ensures
+            // the caller path does too, catching provider misconfiguration
+            // (e.g. no default provider in the NULL library context) early.
+            let mut probe = [0u8; 1];
+            crypto::Rng::rand_bytes(&mut probe).map_err(|_| HsmError::InternalError)?;
+
             // Caller provided the OBK
             let obk = obk_config.key().ok_or(HsmError::InvalidArgument)?;
             init_bk3(dev, rev, obk)?
