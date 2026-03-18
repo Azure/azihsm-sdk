@@ -1,0 +1,17 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+[package]
+edition = "2024"
+name = "azihsm_api_native_shim"
+version = "0.0.0"
+
+[dependencies]
+azihsm_api_native.workspace = true
+
+[features]
+default = []
+mock = ["azihsm_api_native/mock"]
+
+[lints]
+workspace = true

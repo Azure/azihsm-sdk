@@ -7,6 +7,7 @@ resolver = "2"
 members = [
   "api/lib",
   "api/native",
+  # "api/native_shim",
   "api/tests",
   "api/tests/macro",
   "crates/cred_encrypt",
@@ -22,10 +23,24 @@ members = [
   "xtask",
 ]
 
+[profile.dev]
+opt-level = 0
+lto = "off"
+
+[profile.test]
+opt-level = 0
+lto = "off"
+
+[profile.ci-mock]
+inherits = "dev"
+opt-level = 0
+lto = "off"
+
 [workspace.dependencies]
 # Internal crates
 azihsm_api = { path = "api/lib" }
 azihsm_api_native = { path = "api/native" }
+# azihsm_api_native_shim = { path = "api/native_shim" }
 azihsm_api_tests_macro = { path = "api/tests/macro" }
 azihsm_cred_encrypt = { path = "crates/cred_encrypt" }
 azihsm_crypto = { path = "crates/crypto" }

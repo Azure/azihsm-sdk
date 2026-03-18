@@ -7,7 +7,7 @@ name = "azihsm_api_native"
 version = "0.0.0"
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 azihsm_api.workspace = true

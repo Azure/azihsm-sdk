@@ -79,6 +79,13 @@ set(SOURCE
 )
 add_executable(azihsm_api_cpp_tests ${SOURCE})
 target_include_directories(azihsm_api_cpp_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_options(azihsm_api_cpp_tests PRIVATE /EHsc)
+target_compile_options(azihsm_api_cpp_tests PRIVATE
+    /clang:-fprofile-instr-generate
+    /clang:-fcoverage-mapping
+    /Od
+    /Zi
+)
 
 if(UNIX)
     find_package(OpenSSL REQUIRED)

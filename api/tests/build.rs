@@ -18,5 +18,7 @@ fn main() {
         config.generator("Visual Studio 17 2022");
     }
 
+    config.generator_toolset("ClangCL");
+
     let _dst = config.build();
 }
