@@ -10,16 +10,19 @@ use azihsm_api::HsmRsaAesWrapAlgo;
 use azihsm_api::HsmRsaPrivateKey;
 use azihsm_api::HsmRsaPublicKey;
 use azihsm_crypto::testvectors::aes::AES_CBC_128_GFSBOX_TEST_VECTORS;
+use azihsm_crypto::testvectors::aes::AES_CBC_128_MCT_TEST_VECTORS;
 use azihsm_crypto::testvectors::aes::AES_CBC_128_MMT_TEST_VECTORS;
 use azihsm_crypto::testvectors::aes::AES_CBC_128_SBOX_TEST_VECTORS;
 use azihsm_crypto::testvectors::aes::AES_CBC_128_VAR_KEY_TEST_VECTORS;
 use azihsm_crypto::testvectors::aes::AES_CBC_128_VAR_TXT_TEST_VECTORS;
 use azihsm_crypto::testvectors::aes::AES_CBC_192_GFSBOX_TEST_VECTORS;
+use azihsm_crypto::testvectors::aes::AES_CBC_192_MCT_TEST_VECTORS;
 use azihsm_crypto::testvectors::aes::AES_CBC_192_MMT_TEST_VECTORS;
 use azihsm_crypto::testvectors::aes::AES_CBC_192_SBOX_TEST_VECTORS;
 use azihsm_crypto::testvectors::aes::AES_CBC_192_VAR_KEY_TEST_VECTORS;
 use azihsm_crypto::testvectors::aes::AES_CBC_192_VAR_TXT_TEST_VECTORS;
 use azihsm_crypto::testvectors::aes::AES_CBC_256_GFSBOX_TEST_VECTORS;
+use azihsm_crypto::testvectors::aes::AES_CBC_256_MCT_TEST_VECTORS;
 use azihsm_crypto::testvectors::aes::AES_CBC_256_MMT_TEST_VECTORS;
 use azihsm_crypto::testvectors::aes::AES_CBC_256_SBOX_TEST_VECTORS;
 use azihsm_crypto::testvectors::aes::AES_CBC_256_VAR_KEY_TEST_VECTORS;
@@ -32,6 +35,7 @@ use super::*;
 const CBC_128_VECTORS: &[(&str, &[AesCbcTestVector])] = &[
     ("CBC_128_GFSBOX", AES_CBC_128_GFSBOX_TEST_VECTORS),
     ("CBC_128_MMT", AES_CBC_128_MMT_TEST_VECTORS),
+    ("CBC_128_MCT", AES_CBC_128_MCT_TEST_VECTORS),
     ("CBC_128_SBOX", AES_CBC_128_SBOX_TEST_VECTORS),
     ("CBC_128_VAR_KEY", AES_CBC_128_VAR_KEY_TEST_VECTORS),
     ("CBC_128_VAR_TXT", AES_CBC_128_VAR_TXT_TEST_VECTORS),
@@ -40,6 +44,7 @@ const CBC_128_VECTORS: &[(&str, &[AesCbcTestVector])] = &[
 const CBC_192_VECTORS: &[(&str, &[AesCbcTestVector])] = &[
     ("CBC_192_GFSBOX", AES_CBC_192_GFSBOX_TEST_VECTORS),
     ("CBC_192_MMT", AES_CBC_192_MMT_TEST_VECTORS),
+    ("CBC_192_MCT", AES_CBC_192_MCT_TEST_VECTORS),
     ("CBC_192_SBOX", AES_CBC_192_SBOX_TEST_VECTORS),
     ("CBC_192_VAR_KEY", AES_CBC_192_VAR_KEY_TEST_VECTORS),
     ("CBC_192_VAR_TXT", AES_CBC_192_VAR_TXT_TEST_VECTORS),
@@ -48,6 +53,7 @@ const CBC_192_VECTORS: &[(&str, &[AesCbcTestVector])] = &[
 const CBC_256_VECTORS: &[(&str, &[AesCbcTestVector])] = &[
     ("CBC_256_GFSBOX", AES_CBC_256_GFSBOX_TEST_VECTORS),
     ("CBC_256_MMT", AES_CBC_256_MMT_TEST_VECTORS),
+    ("CBC_256_MCT", AES_CBC_256_MCT_TEST_VECTORS),
     ("CBC_256_SBOX", AES_CBC_256_SBOX_TEST_VECTORS),
     ("CBC_256_VAR_KEY", AES_CBC_256_VAR_KEY_TEST_VECTORS),
     ("CBC_256_VAR_TXT", AES_CBC_256_VAR_TXT_TEST_VECTORS),
@@ -96,33 +102,32 @@ fn wrap_aes_key_rsa(rsa_pub: &HsmRsaPublicKey, key_bytes: &[u8]) -> Vec<u8> {
     wrapped
 }
 
-fn xor_block(a: &[u8], b: &[u8]) -> [u8; 16] {
-    let mut out = [0u8; 16];
-    for i in 0..16 {
-        out[i] = a[i] ^ b[i];
-    }
-    out
-}
-
 fn run_cbc_mct_encrypt(key: &HsmAesKey, iv: &[u8], plaintext: &[u8]) -> Vec<u8> {
     assert_eq!(plaintext.len(), 16);
 
-    let mut chaining_iv = iv.to_vec();
+    let initial_iv = iv.to_vec();
+    let mut chaining_iv = initial_iv.clone();
     let mut input_block = plaintext.to_vec();
+    let mut previous_output = vec![0u8; 16];
     let mut current_output = vec![0u8; 16];
 
-    for _ in 0..1000 {
-        //  manual XOR
-        let x = xor_block(&input_block, &chaining_iv);
-
-        //  encrypt single block (ECB-style)
-        let iv = test_iv();
-        let out = cbc_encrypt(key, false, &iv, &x).expect("encrypt failed");
-
+    // NIST MCT encrypt pseudocode (single-block CBC):
+    // For j = 0..999
+    //   CT[j] = AES_CBC_ENC(Key, IV, PT[j])
+    //   PT[j+1] = (j == 0 ? IV[i] : CT[j-1])
+    // Output is CT[999].
+    for j in 0..1000 {
+        let out = cbc_encrypt(key, false, &chaining_iv, &input_block).expect("encrypt failed");
         current_output.copy_from_slice(&out);
 
-        // update
-        input_block.copy_from_slice(&current_output);
+        if j == 0 {
+            input_block.copy_from_slice(&initial_iv);
+        } else {
+            input_block.copy_from_slice(&previous_output);
+        }
+
+        previous_output.copy_from_slice(&current_output);
+        // For single-block CBC encrypt, next IV = ciphertext output
         chaining_iv.copy_from_slice(&current_output);
     }
 
@@ -132,25 +137,68 @@ fn run_cbc_mct_encrypt(key: &HsmAesKey, iv: &[u8], plaintext: &[u8]) -> Vec<u8> 
 fn run_cbc_mct_decrypt(key: &HsmAesKey, iv: &[u8], ciphertext: &[u8]) -> Vec<u8> {
     assert_eq!(ciphertext.len(), 16);
 
-    let mut chaining_iv = iv.to_vec();
+    let initial_iv = iv.to_vec();
+    let mut chaining_iv = initial_iv.clone();
     let mut input_block = ciphertext.to_vec();
+    let mut previous_output = vec![0u8; 16];
     let mut current_output = vec![0u8; 16];
 
-    for _ in 0..1000 {
-        // decrypt block
-        let iv = test_iv();
-        let out = cbc_decrypt(key, false, &iv, &input_block).expect("decrypt failed");
+    // NIST MCT decrypt pseudocode (single-block CBC):
+    // For j = 0..999
+    //   PT[j] = AES_CBC_DEC(Key, IV, CT[j])
+    //   CT[j+1] = (j == 0 ? IV[i] : PT[j-1])
+    // Output is PT[999].
+    for j in 0..1000 {
+        let out = cbc_decrypt(key, false, &chaining_iv, &input_block).expect("decrypt failed");
+        current_output.copy_from_slice(&out);
 
-        // XOR after decrypt
-        let x = xor_block(&out, &chaining_iv);
+        // Save input before overwriting (CBC decrypt: next IV = ciphertext just decrypted)
+        let prev_input = input_block.clone();
 
-        current_output.copy_from_slice(&x);
+        if j == 0 {
+            input_block.copy_from_slice(&initial_iv);
+        } else {
+            input_block.copy_from_slice(&previous_output);
+        }
 
-        chaining_iv.copy_from_slice(&input_block);
-        input_block.copy_from_slice(&current_output);
+        previous_output.copy_from_slice(&current_output);
+        // For single-block CBC decrypt, next IV = the ciphertext block that was decrypted
+        chaining_iv.copy_from_slice(&prev_input);
     }
 
     current_output
+}
+
+fn assert_encrypt_match(actual: &[u8], vector: &AesCbcTestVector, dataset: &str, key_bits: usize) {
+    assert_eq!(
+        actual,
+        vector.ciphertext,
+        "\n[ENCRYPT FAIL] {dataset} ({key_bits}-bit) vector {id}\n\
+         key: {key:02x?}\n  iv: {iv:02x?}\n  plaintext: {pt:02x?}\n\
+         expected: {exp:02x?}\n  actual: {act:02x?}\n",
+        id = vector.test_count_id,
+        key = vector.key,
+        iv = vector.iv,
+        pt = vector.plaintext,
+        exp = vector.ciphertext,
+        act = actual,
+    );
+}
+
+fn assert_decrypt_match(actual: &[u8], vector: &AesCbcTestVector, dataset: &str, key_bits: usize) {
+    assert_eq!(
+        actual,
+        vector.plaintext,
+        "\n[DECRYPT FAIL] {dataset} ({key_bits}-bit) vector {id}\n\
+         key: {key:02x?}\n  iv: {iv:02x?}\n  ciphertext: {ct:02x?}\n\
+         expected: {exp:02x?}\n  actual: {act:02x?}\n",
+        id = vector.test_count_id,
+        key = vector.key,
+        iv = vector.iv,
+        ct = vector.ciphertext,
+        exp = vector.plaintext,
+        act = actual,
+    );
 }
 
 fn run_cbc_vectors(
@@ -175,14 +223,8 @@ fn run_cbc_vectors(
 
         let is_mct = dataset.contains("MCT");
 
-        // ----------------------------
-        // Wrap AES key
-        // ----------------------------
         let wrapped_key = wrap_aes_key_rsa(rsa_pub, vector.key);
 
-        // ----------------------------
-        // Unwrap AES key
-        // ----------------------------
         let props = HsmKeyPropsBuilder::default()
             .class(HsmKeyClass::Secret)
             .key_kind(HsmKeyKind::Aes)
@@ -198,75 +240,30 @@ fn run_cbc_vectors(
         let key = HsmKeyManager::unwrap_key(&mut unwrap_algo, rsa_priv, &wrapped_key, props)
             .expect("unwrap failed");
 
-        // ----------------------------
-        // Encrypt
-        // ----------------------------
-
         assert!(
             vector.plaintext.len() % 16 == 0,
             "plaintext not block aligned for vector {}",
             vector.test_count_id
         );
 
-        let ciphertext = if is_mct {
-            run_cbc_mct_encrypt(&key, vector.iv, vector.plaintext)
+        // MCT vectors are one-directional: each vector is either encrypt or
+        // decrypt, not both. The MCT loops use different chaining rules so
+        // they are not inverses of each other.
+        if is_mct {
+            if vector.encrypt {
+                let ct = run_cbc_mct_encrypt(&key, vector.iv, vector.plaintext);
+                assert_encrypt_match(&ct, vector, dataset, key_bits);
+            } else {
+                let pt = run_cbc_mct_decrypt(&key, vector.iv, vector.ciphertext);
+                assert_decrypt_match(&pt, vector, dataset, key_bits);
+            }
         } else {
-            cbc_encrypt(&key, false, vector.iv, vector.plaintext).unwrap()
-        };
+            let ct = cbc_encrypt(&key, false, vector.iv, vector.plaintext).unwrap();
+            assert_encrypt_match(&ct, vector, dataset, key_bits);
 
-        assert_eq!(
-            ciphertext,
-            vector.ciphertext,
-            "\n[ENCRYPT FAIL]\n\
-     dataset: {}\n\
-     key_bits: {}\n\
-     vector_id: {}\n\
-     key: {:02x?}\n\
-     iv: {:02x?}\n\
-     plaintext: {:02x?}\n\
-     expected_ciphertext: {:02x?}\n\
-     actual_ciphertext: {:02x?}\n",
-            dataset,
-            key_bits,
-            vector.test_count_id,
-            vector.key,
-            vector.iv,
-            vector.plaintext,
-            vector.ciphertext,
-            ciphertext,
-        );
-
-        // ----------------------------
-        // Decrypt
-        // ----------------------------
-
-        let plaintext = if is_mct {
-            run_cbc_mct_decrypt(&key, vector.iv, vector.ciphertext)
-        } else {
-            cbc_decrypt(&key, false, vector.iv, vector.ciphertext).unwrap()
-        };
-
-        assert_eq!(
-            plaintext,
-            vector.plaintext,
-            "\n[DECRYPT FAIL]\n\
-     dataset: {}\n\
-     key_bits: {}\n\
-     vector_id: {}\n\
-     key: {:02x?}\n\
-     iv: {:02x?}\n\
-     ciphertext: {:02x?}\n\
-     expected_plaintext: {:02x?}\n\
-     actual_plaintext: {:02x?}\n",
-            dataset,
-            key_bits,
-            vector.test_count_id,
-            vector.key,
-            vector.iv,
-            vector.ciphertext,
-            vector.plaintext,
-            plaintext,
-        );
+            let pt = cbc_decrypt(&key, false, vector.iv, vector.ciphertext).unwrap();
+            assert_decrypt_match(&pt, vector, dataset, key_bits);
+        }
 
         HsmKeyManager::delete_key(key).unwrap();
     }
