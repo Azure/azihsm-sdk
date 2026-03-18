@@ -415,8 +415,7 @@ fn try_establish_credential(
     }?;
 
     // Persist the new BMK to resiliency storage so it is available on the
-    // next init retry after a migration (mirrors Martichoras's
-    // set_backup_masking_key after establish_credential).
+    // next init retry after a migration.
     if let Some(cfg) = resiliency_config {
         cfg.storage
             .write(crate::resiliency::AZIHSM_STORAGE_BMK, &new_bmk)?;

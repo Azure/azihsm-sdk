@@ -6,7 +6,7 @@
 ///
 /// Implements the double-checked epoch pattern:
 /// 1. Fast path (no lock): returns if `self.last_restore_epoch() == epoch`.
-/// 2. Slow path: acquires the write lock, re-checks, returns if stale.
+/// 2. Slow path: acquires the write lock, re-checks, returns if already up-to-date.
 ///
 /// On success, binds `$session`, `$restore_epoch`, and `$guard` (write lock)
 /// for the caller to perform the DDI unmask call and

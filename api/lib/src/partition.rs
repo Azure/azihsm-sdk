@@ -631,7 +631,7 @@ impl HsmPartition {
         // Snapshot epoch and clone the lock Arc BEFORE acquiring the
         // Cross-process resiliency lock.
         let (pre_lock_epoch, lock_ref) = {
-            let inner = self.inner().read();
+            let inner = self.inner().read_recursive();
             let Some(rs) = inner.resiliency_state.as_ref() else {
                 return Ok(());
             };
@@ -643,7 +643,7 @@ impl HsmPartition {
         // Re-acquire READ to double-check epoch, read storage, and
         // call init_part_raw_no_res — all under a single read lock.
         let init_result = {
-            let inner = self.inner().read();
+            let inner = self.inner().read_recursive();
             let Some(rs) = inner.resiliency_state.as_ref() else {
                 return Ok(());
             };
@@ -733,7 +733,7 @@ impl HsmPartition {
     ///
     /// The supported API revision range with minimum and maximum versions.
     pub fn api_rev_range(&self) -> HsmApiRevRange {
-        self.inner().read().api_rev_range()
+        self.inner().read_recursive().api_rev_range()
     }
 
     /// Returns the partition type (Virtual or Physical).
@@ -742,7 +742,7 @@ impl HsmPartition {
     ///
     /// The type of partition - either Virtual (simulator/emulated) or Physical (hardware device).
     pub fn part_type(&self) -> HsmPartType {
-        self.inner().read().part_type()
+        self.inner().read_recursive().part_type()
     }
 
     /// Returns the device path.
@@ -751,7 +751,7 @@ impl HsmPartition {
     ///
     /// The operating system device path used to access this partition.
     pub fn path(&self) -> String {
-        self.inner().read().path().to_string()
+        self.inner().read_recursive().path().to_string()
     }
 
     /// Returns the driver version.
@@ -760,7 +760,7 @@ impl HsmPartition {
     ///
     /// The version string of the device driver.
     pub fn driver_ver(&self) -> String {
-        self.inner().read().driver_ver().to_string()
+        self.inner().read_recursive().driver_ver().to_string()
     }
 
     /// Returns the firmware version.
@@ -769,7 +769,7 @@ impl HsmPartition {
     ///
     /// The version string of the device firmware.
     pub fn firmware_ver(&self) -> String {
-        self.inner().read().firmware_ver().to_string()
+        self.inner().read_recursive().firmware_ver().to_string()
     }
 
     /// Returns the hardware version.
@@ -778,7 +778,7 @@ impl HsmPartition {
     ///
     /// The version string of the hardware device.
     pub fn hardware_ver(&self) -> String {
-        self.inner().read().hardware_ver().to_string()
+        self.inner().read_recursive().hardware_ver().to_string()
     }
 
     /// Returns the PCI hardware information.
@@ -787,7 +787,7 @@ impl HsmPartition {
     ///
     /// The PCI hardware identifier in bus:device:function format.
     pub fn pci_info(&self) -> String {
-        self.inner().read().pci_info().to_string()
+        self.inner().read_recursive().pci_info().to_string()
     }
 
     /// Retrieves the certificate chain stored in the partition.
@@ -836,7 +836,7 @@ impl HsmPartition {
     ///
     /// Returns the size of the BMK on success.
     pub fn bmk(&self, bmk: Option<&mut [u8]>) -> HsmResult<usize> {
-        let inner = self.inner().read();
+        let inner = self.inner().read_recursive();
         let data = inner.bmk();
         if let Some(buf) = bmk {
             if buf.len() < data.len() {
@@ -853,7 +853,7 @@ impl HsmPartition {
     ///
     /// A vector containing the BMK bytes.
     pub fn bmk_vec(&self) -> Vec<u8> {
-        self.inner().read().bmk().to_vec()
+        self.inner().read_recursive().bmk().to_vec()
     }
 
     /// Retrieves the masked owner backup key that was set during partition initialization.
@@ -865,7 +865,7 @@ impl HsmPartition {
     ///
     /// Returns the size of the MOBK on success.
     pub fn mobk(&self, mobk: Option<&mut [u8]>) -> HsmResult<usize> {
-        let inner = self.inner().read();
+        let inner = self.inner().read_recursive();
         let data = inner.mobk();
         if let Some(buf) = mobk {
             if buf.len() < data.len() {
@@ -884,7 +884,7 @@ impl HsmPartition {
     ///
     /// A vector containing the MOBK bytes.
     pub fn mobk_vec(&self) -> Vec<u8> {
-        self.inner().read().mobk().to_vec()
+        self.inner().read_recursive().mobk().to_vec()
     }
 
     /// Executes a closure with access to the underlying device handle.
@@ -892,6 +892,18 @@ impl HsmPartition {
     /// Provides thread-safe access to the HSM device for internal operations.
     /// Acquires a read lock on the partition and passes the device handle
     /// to the provided closure.
+    ///
+    /// # Lock behavior
+    ///
+    /// Uses `read_recursive()` instead of `read()` because callers'
+    /// closures frequently access other partition methods (e.g.,
+    /// `api_rev_range()`) that also acquire `read()`.  With
+    /// `parking_lot`'s write-preferring `RwLock`, a non-recursive
+    /// `read()` inside an existing `read()` deadlocks when a writer
+    /// is queued.  `read_recursive()` permits reentrant reads at the
+    /// cost of potentially delaying a queued writer until all recursive
+    /// readers finish — acceptable here since write operations
+    /// (`init`, `restore_partition`, `reset`) are infrequent.
     ///
     /// # Arguments
     ///
@@ -904,7 +916,7 @@ impl HsmPartition {
     where
         F: FnOnce(&ddi::HsmDev) -> T,
     {
-        let part = self.inner().read();
+        let part = self.inner().read_recursive();
         let dev = part.dev();
         f(dev)
     }
@@ -924,14 +936,14 @@ impl HsmPartition {
     /// Returns `true` if resiliency was configured for this partition
     /// (i.e., a non-`None` [`HsmResiliencyConfig`] was passed to [`init`]).
     pub(crate) fn resiliency_enabled(&self) -> bool {
-        self.inner().read().resiliency_state.is_some()
+        self.inner().read_recursive().resiliency_state.is_some()
     }
 
     /// Writes a value to the partition's resiliency storage.
     ///
     /// No-op when resiliency is not enabled.
     pub(crate) fn write_resiliency_storage(&self, key: &str, data: &[u8]) -> HsmResult<()> {
-        let inner = self.inner().read();
+        let inner = self.inner().read_recursive();
         if let Some(rs) = inner.resiliency_state.as_ref() {
             rs.config.storage.write(key, data)?;
         }
@@ -1033,7 +1045,7 @@ impl HsmPartition {
 
         // Read credentials from the resiliency state.
         let creds = {
-            let inner = self.inner().read();
+            let inner = self.inner().read_recursive();
             let Some(rs) = inner.resiliency_state.as_ref() else {
                 return Ok(());
             };
@@ -1263,19 +1275,19 @@ impl HsmPartitionInner {
 
     /// Bumps the restore epoch and persists it to storage.
     ///
-    /// The caller must hold the cross-process resiliency lock and have
-    /// already verified the epoch hasn't advanced past `pre_lock_epoch`.
-    fn bump_epoch(&mut self, pre_lock_epoch: u64) -> HsmResult<()> {
+    /// The caller must hold the cross-process resiliency lock.
+    /// Reads the current stored epoch (which may have been advanced by
+    /// another process since our `pre_lock_epoch` snapshot) and
+    /// increments from that value, ensuring monotonicity.
+    fn bump_epoch(&mut self, _pre_lock_epoch: u64) -> HsmResult<()> {
         if let Some(rs) = self.resiliency_state.as_mut() {
-            debug_assert!(
-                ResiliencyState::read_epoch(&*rs.config.storage)
-                    .ok()
-                    .flatten()
-                    .is_none_or(|stored| stored == pre_lock_epoch),
-                "stored epoch drifted under resiliency lock"
-            );
-            rs.restore_epoch = rs.restore_epoch.saturating_add(1);
-            ResiliencyState::write_epoch(&*rs.config.storage, rs.restore_epoch)?;
+            // Read the authoritative epoch from shared storage.
+            // Another process may have bumped it between our snapshot and lock acquisition.
+            // We must bump from the stored value to ensure we do not go backwards.
+            let stored = ResiliencyState::read_epoch(&*rs.config.storage)?.unwrap_or(0);
+            let new_epoch = stored.saturating_add(1);
+            rs.restore_epoch = new_epoch;
+            ResiliencyState::write_epoch(&*rs.config.storage, new_epoch)?;
         }
         Ok(())
     }

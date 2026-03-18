@@ -37,30 +37,28 @@ use rand::Rng;
 #[derive(Parser, Debug)]
 #[command(name = "resiliency_stress", version, about)]
 struct Args {
-    /// Number of worker threads performing crypto operations.
+    // -- Process & thread configuration --
+    /// Number of separate OS processes, each with its own partition/session.
+    /// Resets are triggered from the parent process only.
+    #[arg(short = 'p', long, default_value_t = 1)]
+    processes: usize,
+
+    /// Number of worker threads performing crypto operations (per process).
     #[arg(short = 'w', long, default_value_t = 4)]
     workers: usize,
+
+    // -- Timing --
+    /// Duration to run in seconds (0 = run until Ctrl-C).
+    #[arg(short = 'd', long, default_value_t = 60)]
+    duration_secs: u64,
 
     /// Reset interval in milliseconds.
     #[arg(short = 'r', long, default_value_t = 200)]
     reset_interval_ms: u64,
 
-    /// Duration to run in seconds (0 = run until Ctrl-C).
-    #[arg(short = 'd', long, default_value_t = 60)]
-    duration_secs: u64,
-
     /// Stats reporting interval in seconds.
     #[arg(short = 's', long, default_value_t = 5)]
     stats_interval_secs: u64,
-
-    /// Comma-separated list of operations to include.
-    /// Available: aes-cbc,ecc-sign,hmac-sign,rsa-sign,rsa-decrypt,rsa,ecdh,hkdf,
-    /// aes-keygen,ecc-keygen,aes-xts-keygen,unwrapping-keygen,aes-unwrap,ecc-unwrap,
-    /// xts-unwrap,unwrap,aes-unmask,ecc-unmask,xts-unmask,unmask,
-    /// ecc-key-report,rsa-key-report,key-report,cert-chain,
-    /// aes-keygen-delete,ecc-keygen-delete,xts-keygen-delete,keygen-delete,all
-    #[arg(short = 'o', long, default_value = "all")]
-    ops: String,
 
     /// Stall detection timeout in seconds. If no operations complete
     /// within this duration the tool treats it as a deadlock, dumps
@@ -68,6 +66,27 @@ struct Args {
     #[arg(long, default_value_t = 30)]
     stall_timeout_secs: u64,
 
+    // -- Operations --
+    /// Comma-separated list of operations to include.
+    /// Available: aes-cbc,aes-xts*,aes-gcm*,ecc-sign,hmac-sign,rsa-sign,rsa-decrypt,rsa,ecdh,hkdf,
+    /// aes-keygen,ecc-keygen,aes-xts-keygen,unwrapping-keygen,aes-unwrap,ecc-unwrap,
+    /// xts-unwrap,unwrap,aes-unmask,ecc-unmask,xts-unmask,unmask,
+    /// ecc-key-report,rsa-key-report,key-report,cert-chain,
+    /// aes-keygen-delete,ecc-keygen-delete,xts-keygen-delete,keygen-delete,all
+    /// Note: standalone keygen ops (aes-keygen, ecc-keygen, aes-xts-keygen) are NOT
+    /// included in 'all' — use keygen-delete variants instead.
+    /// *aes-xts and aes-gcm enc/dec are currently enabled only with mock.
+    #[arg(short = 'o', long, default_value = "all")]
+    ops: String,
+
+    // -- Error handling --
+    /// Maximum number of operation errors before stopping.
+    /// 0 = stop on first error (legacy behavior).
+    /// -1 = never stop on errors (infinite tolerance).
+    #[arg(short = 'e', long, default_value_t = 10, allow_hyphen_values = true)]
+    max_errors: i64,
+
+    // -- Behavior flags --
     /// Enable verbose logging (shows retry/restore warnings).
     #[arg(short = 'v', long, default_value_t = false)]
     verbose: bool,
@@ -89,19 +108,7 @@ struct Args {
     #[arg(long, default_value_t = false)]
     random_fault: bool,
 
-    /// Maximum number of operation errors before stopping.
-    /// 0 = stop on first error (legacy behavior).
-    /// -1 = never stop on errors (infinite tolerance).
-    /// Default: 10.
-    #[arg(short = 'e', long, default_value_t = 10, allow_hyphen_values = true)]
-    max_errors: i64,
-
-    /// Number of separate OS processes, each with its own partition/session.
-    /// Resets are triggered from the parent process only.
-    /// Default: 1 (single-process, current behavior).
-    #[arg(short = 'p', long, default_value_t = 1)]
-    processes: usize,
-
+    // -- Internal (hidden) --
     /// (Internal) Child process ID — set automatically by the parent.
     #[arg(long, hide = true)]
     child_id: Option<usize>,
@@ -123,7 +130,7 @@ struct Args {
 const MAX_PROCS: usize = 16;
 
 /// Number of per-op counter slots (must match LABELS array length).
-const NUM_OPS: usize = 25;
+const NUM_OPS: usize = 26;
 
 /// Per-process stats stored in shared memory.
 ///
@@ -151,13 +158,18 @@ struct SharedMem {
     /// Reset counters (parent only).
     total_resets: AtomicU64,
     reset_failures: AtomicU64,
+    /// Number of child processes that have finished setup and are ready
+    /// for resets. The reset thread waits for this to reach `num_procs`
+    /// before firing the first reset.
+    children_ready: AtomicU32,
+    _pad2: [u8; 4],
     /// Per-process stats slots.
     procs: [ProcessStats; MAX_PROCS],
 }
 
 impl SharedMem {
     /// Total size in bytes.
-    #[cfg(target_os = "linux")]
+    #[cfg(all(target_os = "linux", not(feature = "mock")))]
     fn size() -> usize {
         std::mem::size_of::<Self>()
     }
@@ -176,7 +188,7 @@ impl ProcessStats {
 }
 
 /// Create a shared memory file and return its path and mmap.
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(feature = "mock")))]
 #[allow(unsafe_code)]
 fn create_shared_mem() -> (String, memmap2::MmapMut) {
     use std::fs::OpenOptions;
@@ -207,14 +219,14 @@ fn create_shared_mem() -> (String, memmap2::MmapMut) {
     (path, mmap)
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(all(target_os = "windows", not(feature = "mock")))]
 fn create_shared_mem() -> (String, memmap2::MmapMut) {
     // TODO: Windows implementation using CreateFileMappingW
     unimplemented!("Multi-process mode is not yet supported on Windows")
 }
 
 /// Open an existing shared memory file (child process).
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(feature = "mock")))]
 #[allow(unsafe_code)]
 fn open_shared_mem(path: &str) -> memmap2::MmapMut {
     use std::fs::OpenOptions;
@@ -234,7 +246,7 @@ fn open_shared_mem(path: &str) -> memmap2::MmapMut {
     }
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(all(target_os = "windows", not(feature = "mock")))]
 fn open_shared_mem(_path: &str) -> memmap2::MmapMut {
     unimplemented!("Multi-process mode is not yet supported on Windows")
 }
@@ -244,6 +256,7 @@ fn open_shared_mem(_path: &str) -> memmap2::MmapMut {
 /// # Safety
 /// The mmap must be at least `SharedMem::size()` bytes and
 /// zero-initialized (all atomics start at 0/false).
+#[cfg(not(feature = "mock"))]
 #[allow(unsafe_code)]
 unsafe fn shmem_ref(mmap: &memmap2::MmapMut) -> &SharedMem {
     // SAFETY: Shared memory pointer is valid for the lifetime of the process.
@@ -251,8 +264,7 @@ unsafe fn shmem_ref(mmap: &memmap2::MmapMut) -> &SharedMem {
 }
 #[derive(Debug, Clone, Copy)]
 enum OpKind {
-    AesCbcEncrypt,
-    AesCbcDecrypt,
+    AesCbcEncDec,
     EccSign,
     HmacSign,
     RsaSign,
@@ -276,66 +288,76 @@ enum OpKind {
     AesKeyGenDelete,
     EccKeyGenDelete,
     AesXtsKeyGenDelete,
+    #[cfg(feature = "mock")]
+    AesXtsEncDec,
+    #[cfg(feature = "mock")]
+    AesGcmEncDec,
 }
 
 impl OpKind {
     fn as_u8(self) -> u8 {
         match self {
-            Self::AesCbcEncrypt => 1,
-            Self::AesCbcDecrypt => 2,
-            Self::EccSign => 3,
-            Self::HmacSign => 4,
-            Self::RsaSign => 5,
-            Self::RsaDecrypt => 6,
-            Self::EcdhDerive => 7,
-            Self::HkdfDerive => 8,
-            Self::AesKeyGen => 9,
-            Self::EccKeyGen => 10,
-            Self::AesXtsKeyGen => 11,
-            Self::UnwrappingKeyGen => 12,
-            Self::AesUnwrap => 13,
-            Self::EccUnwrap => 14,
-            Self::XtsUnwrap => 15,
-            Self::AesUnmask => 16,
-            Self::EccUnmask => 17,
-            Self::XtsUnmask => 18,
-            Self::EccKeyReport => 19,
-            Self::RsaKeyReport => 20,
-            Self::UnwrappingKeyReport => 21,
-            Self::CertChain => 22,
-            Self::AesKeyGenDelete => 23,
-            Self::EccKeyGenDelete => 24,
-            Self::AesXtsKeyGenDelete => 25,
+            Self::AesCbcEncDec => 1,
+            Self::EccSign => 2,
+            Self::HmacSign => 3,
+            Self::RsaSign => 4,
+            Self::RsaDecrypt => 5,
+            Self::EcdhDerive => 6,
+            Self::HkdfDerive => 7,
+            Self::AesKeyGen => 8,
+            Self::EccKeyGen => 9,
+            Self::AesXtsKeyGen => 10,
+            Self::UnwrappingKeyGen => 11,
+            Self::AesUnwrap => 12,
+            Self::EccUnwrap => 13,
+            Self::XtsUnwrap => 14,
+            Self::AesUnmask => 15,
+            Self::EccUnmask => 16,
+            Self::XtsUnmask => 17,
+            Self::EccKeyReport => 18,
+            Self::RsaKeyReport => 19,
+            Self::UnwrappingKeyReport => 20,
+            Self::CertChain => 21,
+            Self::AesKeyGenDelete => 22,
+            Self::EccKeyGenDelete => 23,
+            Self::AesXtsKeyGenDelete => 24,
+            #[cfg(feature = "mock")]
+            Self::AesXtsEncDec => 25,
+            #[cfg(feature = "mock")]
+            Self::AesGcmEncDec => 26,
         }
     }
 
     fn from_u8(v: u8) -> Option<Self> {
         match v {
-            1 => Some(Self::AesCbcEncrypt),
-            2 => Some(Self::AesCbcDecrypt),
-            3 => Some(Self::EccSign),
-            4 => Some(Self::HmacSign),
-            5 => Some(Self::RsaSign),
-            6 => Some(Self::RsaDecrypt),
-            7 => Some(Self::EcdhDerive),
-            8 => Some(Self::HkdfDerive),
-            9 => Some(Self::AesKeyGen),
-            10 => Some(Self::EccKeyGen),
-            11 => Some(Self::AesXtsKeyGen),
-            12 => Some(Self::UnwrappingKeyGen),
-            13 => Some(Self::AesUnwrap),
-            14 => Some(Self::EccUnwrap),
-            15 => Some(Self::XtsUnwrap),
-            16 => Some(Self::AesUnmask),
-            17 => Some(Self::EccUnmask),
-            18 => Some(Self::XtsUnmask),
-            19 => Some(Self::EccKeyReport),
-            20 => Some(Self::RsaKeyReport),
-            21 => Some(Self::UnwrappingKeyReport),
-            22 => Some(Self::CertChain),
-            23 => Some(Self::AesKeyGenDelete),
-            24 => Some(Self::EccKeyGenDelete),
-            25 => Some(Self::AesXtsKeyGenDelete),
+            1 => Some(Self::AesCbcEncDec),
+            2 => Some(Self::EccSign),
+            3 => Some(Self::HmacSign),
+            4 => Some(Self::RsaSign),
+            5 => Some(Self::RsaDecrypt),
+            6 => Some(Self::EcdhDerive),
+            7 => Some(Self::HkdfDerive),
+            8 => Some(Self::AesKeyGen),
+            9 => Some(Self::EccKeyGen),
+            10 => Some(Self::AesXtsKeyGen),
+            11 => Some(Self::UnwrappingKeyGen),
+            12 => Some(Self::AesUnwrap),
+            13 => Some(Self::EccUnwrap),
+            14 => Some(Self::XtsUnwrap),
+            15 => Some(Self::AesUnmask),
+            16 => Some(Self::EccUnmask),
+            17 => Some(Self::XtsUnmask),
+            18 => Some(Self::EccKeyReport),
+            19 => Some(Self::RsaKeyReport),
+            20 => Some(Self::UnwrappingKeyReport),
+            21 => Some(Self::CertChain),
+            22 => Some(Self::AesKeyGenDelete),
+            23 => Some(Self::EccKeyGenDelete),
+            24 => Some(Self::AesXtsKeyGenDelete),
+            #[cfg(feature = "mock")]
+            25 => Some(Self::AesXtsEncDec),
+            #[cfg(feature = "mock")]
+            26 => Some(Self::AesGcmEncDec),
             _ => None,
         }
     }
@@ -344,8 +366,7 @@ impl OpKind {
 impl std::fmt::Display for OpKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::AesCbcEncrypt => write!(f, "AES-CBC encrypt"),
-            Self::AesCbcDecrypt => write!(f, "AES-CBC decrypt"),
+            Self::AesCbcEncDec => write!(f, "AES-CBC enc+dec"),
             Self::EccSign => write!(f, "ECC sign"),
             Self::HmacSign => write!(f, "HMAC sign"),
             Self::RsaSign => write!(f, "RSA sign"),
@@ -369,6 +390,10 @@ impl std::fmt::Display for OpKind {
             Self::AesKeyGenDelete => write!(f, "AES keygen+delete"),
             Self::EccKeyGenDelete => write!(f, "ECC keygen+delete"),
             Self::AesXtsKeyGenDelete => write!(f, "AES-XTS keygen+delete"),
+            #[cfg(feature = "mock")]
+            Self::AesXtsEncDec => write!(f, "AES-XTS enc+dec"),
+            #[cfg(feature = "mock")]
+            Self::AesGcmEncDec => write!(f, "AES-GCM enc+dec"),
         }
     }
 }
@@ -540,9 +565,7 @@ fn open_and_init_partition(
     }
 
     /// POTA re-endorsement callback for resiliency restore.
-    /// Uses a **separate** partition handle (its own RwLock) so that
-    /// calling `pub_key()` does not re-enter the read lock held by
-    /// `restore_partition`.
+    /// Uses the same partition handle — reentrant reads are safe.
     struct StressPotaCallback {
         part: HsmPartition,
     }
@@ -560,12 +583,15 @@ fn open_and_init_partition(
             dir
         });
         fs::create_dir_all(&storage_path).ok(); // ok if already exists
+        eprintln!(
+            "[pid={}] Resiliency storage path: {}",
+            std::process::id(),
+            storage_path.display()
+        );
 
         // POTA callback is only needed for Caller source (not TPM).
         let pota_callback: Option<Box<dyn PotaEndorsementCallback>> = if !use_tpm {
-            let pota_part = HsmPartitionManager::open_partition(&list[0].path)
-                .expect("Failed to open POTA callback partition");
-            Some(Box::new(StressPotaCallback { part: pota_part }))
+            Some(Box::new(StressPotaCallback { part: part.clone() }))
         } else {
             None
         };
@@ -707,14 +733,17 @@ fn gen_rsa_unwrapping_key_pair(session: &HsmSession) -> (HsmRsaPrivateKey, HsmRs
         .expect("RSA unwrap keygen")
 }
 
-fn import_rsa_sign_key(session: &HsmSession) -> (HsmRsaPrivateKey, HsmRsaPublicKey) {
+fn import_rsa_sign_key(
+    _session: &HsmSession,
+    unwrap_priv: &HsmRsaPrivateKey,
+    unwrap_pub: &HsmRsaPublicKey,
+) -> (HsmRsaPrivateKey, HsmRsaPublicKey) {
     let sw_key = azihsm_crypto::RsaPrivateKey::generate(256).expect("SW RSA key gen");
     let der = sw_key.to_vec().expect("RSA DER export");
-    let (unwrap_priv, unwrap_pub) = gen_rsa_unwrapping_key_pair(session);
 
     let mut wrap_algo = HsmRsaAesWrapAlgo::new(HsmHashAlgo::Sha256, 32);
     let wrapped =
-        HsmEncrypter::encrypt_vec(&mut wrap_algo, &unwrap_pub, &der).expect("RSA key wrap");
+        HsmEncrypter::encrypt_vec(&mut wrap_algo, unwrap_pub, &der).expect("RSA key wrap");
 
     let priv_props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Private)
@@ -736,7 +765,7 @@ fn import_rsa_sign_key(session: &HsmSession) -> (HsmRsaPrivateKey, HsmRsaPublicK
     let mut unwrap_algo = HsmRsaKeyRsaAesKeyUnwrapAlgo::new(HsmHashAlgo::Sha256);
     HsmKeyManager::unwrap_key_pair(
         &mut unwrap_algo,
-        &unwrap_priv,
+        unwrap_priv,
         &wrapped,
         priv_props,
         pub_props,
@@ -744,14 +773,17 @@ fn import_rsa_sign_key(session: &HsmSession) -> (HsmRsaPrivateKey, HsmRsaPublicK
     .expect("RSA sign key unwrap")
 }
 
-fn import_rsa_enc_key(session: &HsmSession) -> (HsmRsaPrivateKey, HsmRsaPublicKey) {
+fn import_rsa_enc_key(
+    _session: &HsmSession,
+    unwrap_priv: &HsmRsaPrivateKey,
+    unwrap_pub: &HsmRsaPublicKey,
+) -> (HsmRsaPrivateKey, HsmRsaPublicKey) {
     let sw_key = azihsm_crypto::RsaPrivateKey::generate(256).expect("SW RSA key gen");
     let der = sw_key.to_vec().expect("RSA DER export");
-    let (unwrap_priv, unwrap_pub) = gen_rsa_unwrapping_key_pair(session);
 
     let mut wrap_algo = HsmRsaAesWrapAlgo::new(HsmHashAlgo::Sha256, 32);
     let wrapped =
-        HsmEncrypter::encrypt_vec(&mut wrap_algo, &unwrap_pub, &der).expect("RSA key wrap");
+        HsmEncrypter::encrypt_vec(&mut wrap_algo, unwrap_pub, &der).expect("RSA key wrap");
 
     let priv_props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Private)
@@ -773,7 +805,7 @@ fn import_rsa_enc_key(session: &HsmSession) -> (HsmRsaPrivateKey, HsmRsaPublicKe
     let mut unwrap_algo = HsmRsaKeyRsaAesKeyUnwrapAlgo::new(HsmHashAlgo::Sha256);
     HsmKeyManager::unwrap_key_pair(
         &mut unwrap_algo,
-        &unwrap_priv,
+        unwrap_priv,
         &wrapped,
         priv_props,
         pub_props,
@@ -781,25 +813,23 @@ fn import_rsa_enc_key(session: &HsmSession) -> (HsmRsaPrivateKey, HsmRsaPublicKe
     .expect("RSA enc key unwrap")
 }
 
-fn prepare_wrapped_aes_key(session: &HsmSession) -> (HsmRsaPrivateKey, Vec<u8>) {
-    let (unwrap_priv, unwrap_pub) = gen_rsa_unwrapping_key_pair(session);
+fn prepare_wrapped_aes_key(
+    _session: &HsmSession,
+    _unwrap_priv: &HsmRsaPrivateKey,
+    unwrap_pub: &HsmRsaPublicKey,
+) -> Vec<u8> {
     let aes_key_data = vec![0x42u8; 32];
     let mut wrap_algo = HsmRsaAesWrapAlgo::new(HsmHashAlgo::Sha256, 32);
-    let wrapped = HsmEncrypter::encrypt_vec(&mut wrap_algo, &unwrap_pub, &aes_key_data)
-        .expect("AES key wrap");
-    (unwrap_priv, wrapped)
+    HsmEncrypter::encrypt_vec(&mut wrap_algo, unwrap_pub, &aes_key_data).expect("AES key wrap")
 }
 
-fn prepare_wrapped_ecc_key(session: &HsmSession) -> (HsmRsaPrivateKey, Vec<u8>) {
+fn prepare_wrapped_ecc_key(_session: &HsmSession, unwrap_pub: &HsmRsaPublicKey) -> Vec<u8> {
     let sw_key = azihsm_crypto::EccPrivateKey::from_curve(azihsm_crypto::EccCurve::P256)
         .expect("SW ECC key gen");
     let der = sw_key.to_vec().expect("ECC DER export");
-    let (unwrap_priv, unwrap_pub) = gen_rsa_unwrapping_key_pair(session);
 
     let mut wrap_algo = HsmRsaAesWrapAlgo::new(HsmHashAlgo::Sha256, 32);
-    let wrapped =
-        HsmEncrypter::encrypt_vec(&mut wrap_algo, &unwrap_pub, &der).expect("ECC key wrap");
-    (unwrap_priv, wrapped)
+    HsmEncrypter::encrypt_vec(&mut wrap_algo, unwrap_pub, &der).expect("ECC key wrap")
 }
 
 fn build_xts_wrapped_blob(
@@ -834,12 +864,10 @@ fn build_xts_wrapped_blob(
     blob
 }
 
-fn prepare_wrapped_xts_key(session: &HsmSession) -> (HsmRsaPrivateKey, Vec<u8>) {
-    let (unwrap_priv, unwrap_pub) = gen_rsa_unwrapping_key_pair(session);
+fn prepare_wrapped_xts_key(_session: &HsmSession, unwrap_pub: &HsmRsaPublicKey) -> Vec<u8> {
     let key1 = vec![0x11u8; 32];
     let key2 = vec![0x22u8; 32];
-    let blob = build_xts_wrapped_blob(&unwrap_pub, HsmHashAlgo::Sha256, &key1, &key2);
-    (unwrap_priv, blob)
+    build_xts_wrapped_blob(unwrap_pub, HsmHashAlgo::Sha256, &key1, &key2)
 }
 
 fn gen_aes_xts_key(session: &HsmSession) -> HsmAesXtsKey {
@@ -860,24 +888,21 @@ fn gen_aes_xts_key(session: &HsmSession) -> HsmAesXtsKey {
 // Operation executors
 // ---------------------------------------------------------------------------
 
-fn exec_aes_cbc_encrypt(key: &HsmAesKey) -> HsmResult<()> {
+fn exec_aes_cbc_enc_dec(key: &HsmAesKey) -> HsmResult<()> {
     let iv = [0u8; 16];
     let data = b"stress test data for encryption!"; // 32 bytes
+                                                    // Encrypt
     let mut algo = HsmAesCbcAlgo::with_padding(iv.to_vec()).expect("AES-CBC algo");
     let len = HsmEncrypter::encrypt(&mut algo, key, data, None)?;
-    let mut out = vec![0u8; len];
+    let mut ct = vec![0u8; len];
     let mut algo = HsmAesCbcAlgo::with_padding(iv.to_vec()).expect("AES-CBC algo");
-    HsmEncrypter::encrypt(&mut algo, key, data, Some(&mut out))?;
-    Ok(())
-}
-
-fn exec_aes_cbc_decrypt(key: &HsmAesKey, ciphertext: &[u8]) -> HsmResult<()> {
-    let iv = [0u8; 16];
+    HsmEncrypter::encrypt(&mut algo, key, data, Some(&mut ct))?;
+    // Decrypt
     let mut algo = HsmAesCbcAlgo::with_padding(iv.to_vec()).expect("AES-CBC algo");
-    let len = HsmDecrypter::decrypt(&mut algo, key, ciphertext, None)?;
-    let mut out = vec![0u8; len];
+    let len = HsmDecrypter::decrypt(&mut algo, key, &ct, None)?;
+    let mut pt = vec![0u8; len];
     let mut algo = HsmAesCbcAlgo::with_padding(iv.to_vec()).expect("AES-CBC algo");
-    HsmDecrypter::decrypt(&mut algo, key, ciphertext, Some(&mut out))?;
+    HsmDecrypter::decrypt(&mut algo, key, &ct, Some(&mut pt))?;
     Ok(())
 }
 
@@ -1142,41 +1167,115 @@ fn exec_aes_xts_keygen_delete(session: &HsmSession) -> HsmResult<()> {
     HsmKeyManager::delete_key(key)?;
     Ok(())
 }
+
+#[cfg(feature = "mock")]
+fn exec_aes_xts_enc_dec(key: &HsmAesXtsKey) -> HsmResult<()> {
+    let tweak = [0u8; 16];
+    let plaintext = [0x42u8; 512]; // DUL-aligned
+                                   // Encrypt
+    let mut algo = HsmAesXtsAlgo::new(&tweak, 512).map_err(|_| HsmError::InternalError)?;
+    let len = HsmEncrypter::encrypt(&mut algo, key, &plaintext, None)?;
+    let mut ct = vec![0u8; len];
+    let mut algo = HsmAesXtsAlgo::new(&tweak, 512).map_err(|_| HsmError::InternalError)?;
+    HsmEncrypter::encrypt(&mut algo, key, &plaintext, Some(&mut ct))?;
+    // Decrypt
+    let mut algo = HsmAesXtsAlgo::new(&tweak, 512).map_err(|_| HsmError::InternalError)?;
+    let len = HsmDecrypter::decrypt(&mut algo, key, &ct, None)?;
+    let mut pt = vec![0u8; len];
+    let mut algo = HsmAesXtsAlgo::new(&tweak, 512).map_err(|_| HsmError::InternalError)?;
+    HsmDecrypter::decrypt(&mut algo, key, &ct, Some(&mut pt))?;
+    Ok(())
+}
+
+#[cfg(feature = "mock")]
+fn gen_aes_gcm_key(session: &HsmSession) -> HsmAesGcmKey {
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::AesGcm)
+        .bits(256)
+        .can_encrypt(true)
+        .can_decrypt(true)
+        .is_session(true)
+        .build()
+        .expect("AES-GCM key props");
+    let mut algo = HsmAesGcmKeyGenAlgo::default();
+    HsmKeyManager::generate_key(session, &mut algo, props).expect("AES-GCM key gen")
+}
+
+#[cfg(feature = "mock")]
+fn exec_aes_gcm_enc_dec(key: &HsmAesGcmKey) -> HsmResult<()> {
+    let iv = [0u8; 12];
+    let plaintext = b"stress test data for GCM!padding";
+    // Encrypt
+    let mut algo = HsmAesGcmAlgo::new_for_encryption(iv.to_vec(), None)
+        .map_err(|_| HsmError::InternalError)?;
+    let len = HsmEncrypter::encrypt(&mut algo, key, plaintext.as_slice(), None)?;
+    let mut ct = vec![0u8; len];
+    let mut algo = HsmAesGcmAlgo::new_for_encryption(iv.to_vec(), None)
+        .map_err(|_| HsmError::InternalError)?;
+    HsmEncrypter::encrypt(&mut algo, key, plaintext.as_slice(), Some(&mut ct))?;
+    let tag = algo.tag().ok_or(HsmError::InternalError)?;
+    // Decrypt
+    let mut algo = HsmAesGcmAlgo::new_for_decryption(iv.to_vec(), tag.to_vec(), None)
+        .map_err(|_| HsmError::InternalError)?;
+    let len = HsmDecrypter::decrypt(&mut algo, key, &ct, None)?;
+    let mut pt = vec![0u8; len];
+    let mut algo = HsmAesGcmAlgo::new_for_decryption(iv.to_vec(), tag.to_vec(), None)
+        .map_err(|_| HsmError::InternalError)?;
+    HsmDecrypter::decrypt(&mut algo, key, &ct, Some(&mut pt))?;
+    Ok(())
+}
+
 fn parse_ops(ops_str: &str) -> Vec<OpKind> {
     if ops_str == "all" {
         return vec![
-            OpKind::AesCbcEncrypt,
-            OpKind::AesCbcDecrypt,
+            OpKind::AesCbcEncDec,
             OpKind::EccSign,
             OpKind::HmacSign,
             OpKind::RsaSign,
             OpKind::RsaDecrypt,
             OpKind::EcdhDerive,
             OpKind::HkdfDerive,
-            OpKind::AesKeyGen,
-            OpKind::EccKeyGen,
-            OpKind::UnwrappingKeyGen,
+            // Standalone keygen ops (AesKeyGen, EccKeyGen, AesXtsKeyGen) excluded
+            // from 'all' — their keygen+delete variants below exercise the same
+            // code path without leaking session key slots.
             OpKind::AesUnwrap,
             OpKind::EccUnwrap,
+            OpKind::XtsUnwrap,
             OpKind::AesUnmask,
             OpKind::EccUnmask,
+            OpKind::XtsUnmask,
             OpKind::EccKeyReport,
             OpKind::RsaKeyReport,
             OpKind::UnwrappingKeyReport,
             OpKind::CertChain,
             OpKind::AesKeyGenDelete,
             OpKind::EccKeyGenDelete,
+            OpKind::AesXtsKeyGenDelete,
+            #[cfg(feature = "mock")]
+            OpKind::AesXtsEncDec,
+            #[cfg(feature = "mock")]
+            OpKind::AesGcmEncDec,
         ];
     }
     let mut ops = Vec::new();
     for op in ops_str.split(',') {
         match op.trim() {
-            "aes-cbc" => {
-                ops.push(OpKind::AesCbcEncrypt);
-                ops.push(OpKind::AesCbcDecrypt);
+            "aes-cbc" => ops.push(OpKind::AesCbcEncDec),
+            #[cfg(feature = "mock")]
+            "aes-xts" => ops.push(OpKind::AesXtsEncDec),
+            #[cfg(not(feature = "mock"))]
+            "aes-xts" => {
+                eprintln!("aes-xts enc/dec requires mock feature.");
+                std::process::exit(1);
             }
-            "aes-cbc-encrypt" => ops.push(OpKind::AesCbcEncrypt),
-            "aes-cbc-decrypt" => ops.push(OpKind::AesCbcDecrypt),
+            #[cfg(feature = "mock")]
+            "aes-gcm" => ops.push(OpKind::AesGcmEncDec),
+            #[cfg(not(feature = "mock"))]
+            "aes-gcm" => {
+                eprintln!("aes-gcm enc/dec requires mock feature.");
+                std::process::exit(1);
+            }
             "ecc-sign" => ops.push(OpKind::EccSign),
             "hmac-sign" => ops.push(OpKind::HmacSign),
             "rsa-sign" => ops.push(OpKind::RsaSign),
@@ -1237,18 +1336,419 @@ fn main() {
     let args = Args::parse();
 
     // Child process dispatch: if --child-id is set, we are a child process.
+    #[cfg(not(feature = "mock"))]
     if let Some(child_id) = args.child_id {
         run_as_child(args, child_id);
         return;
     }
 
-    // Always run as parent orchestrator (even for -p 1).
+    // Mock builds use single-process mode (in-process sim doesn't support
+    // cross-process resets). Multi-process is supported for sim-service
+    // and hardware.
+    #[cfg(feature = "mock")]
+    {
+        if args.processes > 1 {
+            eprintln!("Multi-process mode (-p > 1) is not supported with mock feature.");
+            eprintln!("Use -p 1 or build with --features sim-service for multi-process testing.");
+            std::process::exit(1);
+        }
+        run_single_process(args);
+        return;
+    }
+
+    #[cfg(not(feature = "mock"))]
     run_as_parent(args);
 }
+
+// ---------------------------------------------------------------------------
+// Shared helpers
+// ---------------------------------------------------------------------------
+
+fn print_config(args: &Args, ops: &[OpKind]) {
+    eprintln!("\u{2554}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2557}");
+    eprintln!("\u{2551}    Resiliency Stress Tool        \u{2551}");
+    eprintln!("\u{255a}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{255d}");
+    eprintln!("Processes:      {}", args.processes);
+    eprintln!("Workers/proc:   {}", args.workers);
+    eprintln!("Reset interval: {}ms", args.reset_interval_ms);
+    eprintln!(
+        "Duration:       {}",
+        if args.duration_secs == 0 {
+            "infinite (Ctrl-C to stop)".to_string()
+        } else {
+            format!("{}s", args.duration_secs)
+        }
+    );
+    eprintln!(
+        "Max errors:     {}",
+        if args.max_errors < 0 {
+            "unlimited".to_string()
+        } else {
+            format!("{}", args.max_errors)
+        }
+    );
+
+    eprintln!("Operations:     {} ops", ops.len());
+    let mut enc_dec = Vec::new();
+    let mut sign = Vec::new();
+    let mut decrypt = Vec::new();
+    let mut derive = Vec::new();
+    let mut unwrap = Vec::new();
+    let mut unmask = Vec::new();
+    let mut key_report = Vec::new();
+    let mut keygen_del = Vec::new();
+    let mut keygen = Vec::new();
+    let mut other = Vec::new();
+    for op in ops {
+        match op {
+            OpKind::AesCbcEncDec => enc_dec.push("AES-CBC"),
+            #[cfg(feature = "mock")]
+            OpKind::AesXtsEncDec => enc_dec.push("AES-XTS"),
+            #[cfg(feature = "mock")]
+            OpKind::AesGcmEncDec => enc_dec.push("AES-GCM"),
+            OpKind::EccSign => sign.push("ECC"),
+            OpKind::HmacSign => sign.push("HMAC"),
+            OpKind::RsaSign => sign.push("RSA"),
+            OpKind::RsaDecrypt => decrypt.push("RSA"),
+            OpKind::EcdhDerive => derive.push("ECDH"),
+            OpKind::HkdfDerive => derive.push("HKDF"),
+            OpKind::AesUnwrap => unwrap.push("AES"),
+            OpKind::EccUnwrap => unwrap.push("ECC"),
+            OpKind::XtsUnwrap => unwrap.push("XTS"),
+            OpKind::AesUnmask => unmask.push("AES"),
+            OpKind::EccUnmask => unmask.push("ECC"),
+            OpKind::XtsUnmask => unmask.push("XTS"),
+            OpKind::EccKeyReport => key_report.push("ECC"),
+            OpKind::RsaKeyReport => key_report.push("RSA"),
+            OpKind::UnwrappingKeyReport => key_report.push("unwrapping"),
+            OpKind::AesKeyGenDelete => keygen_del.push("AES"),
+            OpKind::EccKeyGenDelete => keygen_del.push("ECC"),
+            OpKind::AesXtsKeyGenDelete => keygen_del.push("AES-XTS"),
+            OpKind::AesKeyGen => keygen.push("AES"),
+            OpKind::EccKeyGen => keygen.push("ECC"),
+            OpKind::AesXtsKeyGen => keygen.push("AES-XTS"),
+            OpKind::UnwrappingKeyGen => keygen.push("unwrapping"),
+            OpKind::CertChain => other.push("cert chain"),
+        }
+    }
+    let groups: [(&str, &[&str]); 10] = [
+        ("Encrypt/Decrypt:", &enc_dec),
+        ("Sign:           ", &sign),
+        ("Decrypt:        ", &decrypt),
+        ("Derive:         ", &derive),
+        ("Unwrap:         ", &unwrap),
+        ("Unmask:         ", &unmask),
+        ("Key Report:     ", &key_report),
+        ("KeyGen+Delete:  ", &keygen_del),
+        ("KeyGen:         ", &keygen),
+        ("Other:          ", &other),
+    ];
+    for (label, items) in &groups {
+        if !items.is_empty() {
+            eprintln!("  {label} {}", items.join(", "));
+        }
+    }
+    eprintln!();
+}
+
+fn print_final_stats(shmem: &SharedMem, num_procs: usize, elapsed: Duration) {
+    let total_resets = shmem.total_resets.load(Ordering::Relaxed);
+    let reset_fails = shmem.reset_failures.load(Ordering::Relaxed);
+
+    let mut grand_ops: u64 = 0;
+    let mut grand_errors: u64 = 0;
+    let mut grand_op_counts = [0u64; NUM_OPS];
+    let mut grand_op_errors = [0u64; NUM_OPS];
+
+    for p in 0..num_procs {
+        let ps = &shmem.procs[p];
+        grand_ops += ps.total_ops.load(Ordering::Relaxed);
+        grand_errors += ps.total_errors.load(Ordering::Relaxed);
+        for j in 0..NUM_OPS {
+            grand_op_counts[j] += ps.op_counts[j].load(Ordering::Relaxed);
+            grand_op_errors[j] += ps.op_errors[j].load(Ordering::Relaxed);
+        }
+    }
+
+    eprintln!("\n");
+    eprintln!("=== Final Stats ===");
+    eprintln!(
+        "Elapsed:        {:02}:{:02}:{:02}",
+        elapsed.as_secs() / 3600,
+        (elapsed.as_secs() % 3600) / 60,
+        elapsed.as_secs() % 60,
+    );
+    eprintln!("Total ops:      {grand_ops}");
+    eprintln!("Op errors:      {grand_errors}");
+    eprintln!("Resets:         {total_resets}");
+    eprintln!("Reset failures: {reset_fails}");
+    eprintln!(
+        "Ops/sec:        {:.0}",
+        grand_ops as f64 / elapsed.as_secs_f64().max(0.001)
+    );
+
+    const LABELS: [&str; NUM_OPS] = [
+        "AES-CBC enc+dec:  ",
+        "ECC sign:         ",
+        "HMAC sign:        ",
+        "RSA sign:         ",
+        "RSA decrypt:      ",
+        "ECDH derive:      ",
+        "HKDF derive:      ",
+        "AES key gen:      ",
+        "ECC key gen:      ",
+        "AES-XTS keygen:   ",
+        "Unwrapping keygen:",
+        "AES unwrap:       ",
+        "ECC unwrap:       ",
+        "XTS unwrap:       ",
+        "AES unmask:       ",
+        "ECC unmask:       ",
+        "XTS unmask:       ",
+        "ECC key report:   ",
+        "RSA key report:   ",
+        "Unwrap key report:",
+        "Cert chain:       ",
+        "AES keygen+del:   ",
+        "ECC keygen+del:   ",
+        "XTS keygen+del:   ",
+        "AES-XTS enc+dec:  ",
+        "AES-GCM enc+dec:  ",
+    ];
+
+    eprintln!();
+
+    // Header with per-process columns.
+    eprint!("                    ");
+    for p in 0..num_procs {
+        eprint!("{:>8}", format!("P{p}"));
+    }
+    eprintln!("{:>9}", "Total");
+
+    for (i, label) in LABELS.iter().enumerate() {
+        if grand_op_counts[i] == 0 && grand_op_errors[i] == 0 {
+            continue;
+        }
+        eprint!("  {label}");
+        for p in 0..num_procs {
+            eprint!("{:>8}", shmem.procs[p].op_counts[i].load(Ordering::Relaxed));
+        }
+        let errs = grand_op_errors[i];
+        if errs > 0 {
+            eprintln!("{:>9}  !! {errs} fail", grand_op_counts[i]);
+        } else {
+            eprintln!("{:>9}", grand_op_counts[i]);
+        }
+    }
+
+    for p in 0..num_procs {
+        let ps = &shmem.procs[p];
+        if ps.failed.load(Ordering::Relaxed) {
+            let op_u8 = ps.failed_op.load(Ordering::Relaxed) as u8;
+            let op = OpKind::from_u8(op_u8)
+                .map(|o| format!("{o}"))
+                .unwrap_or_else(|| format!("unknown({})", op_u8));
+            let err = ps.failed_error.load(Ordering::Relaxed);
+            let tid = ps.failed_thread.load(Ordering::Relaxed);
+            eprintln!();
+            eprintln!("=== FAILURE (P{p}) ===");
+            eprintln!("Thread:    {tid}");
+            eprintln!("Operation: {op}");
+            eprintln!("Error:     {err}");
+        }
+    }
+
+    if grand_errors > 0 {
+        eprintln!();
+        eprintln!("Completed with {grand_errors} error(s) (within budget).");
+    } else {
+        eprintln!();
+        eprintln!("All operations completed successfully.");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Single-process mode (mock builds)
+// ---------------------------------------------------------------------------
+
+/// Runs everything in a single process: partition, session, workers, and
+/// reset thread all share the same in-process mock simulator.
+#[cfg(feature = "mock")]
+#[allow(unsafe_code)]
+fn run_single_process(args: Args) {
+    if args.verbose {
+        tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::WARN)
+            .with_writer(std::io::stderr)
+            .init();
+    } else {
+        let log_path = "resiliency_stress.log";
+        let log_file = fs::File::create(log_path).expect("Failed to create log file");
+        #[allow(clippy::disallowed_types)]
+        let writer = std::sync::Mutex::new(log_file);
+        tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::ERROR)
+            .with_writer(writer)
+            .with_ansi(false)
+            .init();
+    }
+
+    let ops = parse_ops(&args.ops);
+    if !args.verbose {
+        eprintln!("Trace log:      resiliency_stress.log");
+    }
+    print_config(&args, &ops);
+
+    // Heap-allocate SharedMem (zero-initialized = all atomics start at 0/false).
+    let shmem: Box<SharedMem> = unsafe { Box::new(std::mem::zeroed()) };
+    let shmem: &'static SharedMem = Box::leak(shmem);
+    let proc_stats = &shmem.procs[0];
+
+    // Open and init partition with resiliency.
+    let enable_resiliency = !args.no_resiliency;
+    let enable_resets = enable_resiliency && !args.no_reset;
+    let (part, creds) = open_and_init_partition(enable_resiliency, false, None);
+    let session = open_session(&part, &creds);
+    let shared_unwrap_keys = Arc::new(gen_rsa_unwrapping_key_pair(&session));
+
+    let max_errors = args.max_errors;
+    let num_workers = args.workers;
+    let barrier = Arc::new(Barrier::new(num_workers));
+    let reset_interval = Duration::from_millis(args.reset_interval_ms);
+
+    // Spawn reset thread (in-process, shares the mock sim).
+    let reset_handle = {
+        let list = HsmPartitionManager::partition_info_list();
+        let path = list[0].path.clone();
+        thread::spawn(move || {
+            let partition = HsmPartitionManager::open_partition(&path)
+                .expect("Failed to open partition for reset thread");
+
+            if !enable_resets {
+                while !shmem.stop.load(Ordering::Relaxed) {
+                    thread::sleep(Duration::from_millis(100));
+                }
+                return;
+            }
+
+            // Wait for workers to finish setup.
+            eprintln!("Reset thread: waiting for workers to be ready...");
+            while shmem.children_ready.load(Ordering::Acquire) < 1 {
+                if shmem.stop.load(Ordering::Relaxed) {
+                    return;
+                }
+                thread::sleep(Duration::from_millis(50));
+            }
+            eprintln!("Reset thread: workers ready, starting resets.");
+
+            loop {
+                thread::sleep(reset_interval);
+                if shmem.stop.load(Ordering::Relaxed) {
+                    break;
+                }
+                match partition.reset() {
+                    Ok(()) => {
+                        shmem.total_resets.fetch_add(1, Ordering::Relaxed);
+                    }
+                    Err(_) => {
+                        shmem.reset_failures.fetch_add(1, Ordering::Relaxed);
+                    }
+                }
+            }
+        })
+    };
+
+    // Stats display thread.
+    let stats_interval = Duration::from_secs(args.stats_interval_secs);
+    let stall_timeout = Duration::from_secs(args.stall_timeout_secs);
+    let start = Instant::now();
+    let stats_handle =
+        thread::spawn(move || multiproc_stats_loop(shmem, 1, stats_interval, start, stall_timeout));
+
+    // Duration timer.
+    if args.duration_secs > 0 {
+        let dur = Duration::from_secs(args.duration_secs);
+        thread::spawn(move || {
+            thread::sleep(dur);
+            shmem.stop.store(true, Ordering::SeqCst);
+        });
+    }
+
+    // Deadlock detection thread.
+    thread::spawn(move || loop {
+        thread::sleep(Duration::from_secs(5));
+        let deadlocks = deadlock::check_deadlock();
+        if !deadlocks.is_empty() {
+            eprintln!("=== DEADLOCK DETECTED ({} cycles) ===", deadlocks.len());
+            for (i, threads) in deadlocks.iter().enumerate() {
+                eprintln!("--- Cycle {} ({} threads) ---", i + 1, threads.len());
+                for t in threads {
+                    eprintln!("Thread {:?}: {:#?}", t.thread_id(), t.backtrace());
+                }
+            }
+            shmem.stop.store(true, Ordering::SeqCst);
+            break;
+        }
+        if shmem.stop.load(Ordering::Relaxed) {
+            break;
+        }
+    });
+
+    // Spawn worker threads.
+    let mut worker_handles = Vec::new();
+    for i in 0..num_workers {
+        let partition = part.clone();
+        let session = session.clone();
+        let ops = ops.clone();
+        let barrier_clone = Arc::clone(&barrier);
+        let unwrap_keys = Arc::clone(&shared_unwrap_keys);
+        let handle = thread::spawn(move || {
+            child_worker_thread(
+                i,
+                partition,
+                session,
+                ops,
+                proc_stats,
+                shmem,
+                barrier_clone,
+                max_errors,
+                unwrap_keys,
+            )
+        });
+        worker_handles.push(handle);
+    }
+
+    // Wait for completion.
+    let stalled = stats_handle.join().unwrap_or(false);
+
+    // Stop everything.
+    shmem.stop.store(true, Ordering::SeqCst);
+    let _ = reset_handle.join();
+
+    let mut any_failed = false;
+    for handle in worker_handles {
+        if let Ok(true) = handle.join() {
+            any_failed = true;
+        }
+    }
+
+    let elapsed = start.elapsed();
+    print_final_stats(shmem, 1, elapsed);
+
+    if any_failed {
+        std::process::exit(1);
+    } else if stalled {
+        eprintln!();
+        eprintln!("Exiting due to stall (possible deadlock).");
+        std::process::exit(2);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Multi-process: parent orchestrator
 // ---------------------------------------------------------------------------
 
+#[cfg(not(feature = "mock"))]
 #[allow(unsafe_code)]
 fn run_as_parent(args: Args) {
     use std::process::Command;
@@ -1274,7 +1774,7 @@ fn run_as_parent(args: Args) {
     let num_procs = args.processes;
     assert!((1..=MAX_PROCS).contains(&num_procs));
 
-    eprintln!("=== Resiliency Stress Tool ===");
+    let ops = parse_ops(&args.ops);
     if !args.verbose {
         if num_procs == 1 {
             eprintln!("Trace log:      resiliency_stress_child_0.log");
@@ -1285,35 +1785,7 @@ fn run_as_parent(args: Args) {
             );
         }
     }
-    eprintln!("Processes:      {num_procs}");
-    eprintln!("Workers/proc:   {}", args.workers);
-    eprintln!("Reset interval: {}ms", args.reset_interval_ms);
-    eprintln!(
-        "Duration:       {}",
-        if args.duration_secs == 0 {
-            "infinite (Ctrl-C to stop)".to_string()
-        } else {
-            format!("{}s", args.duration_secs)
-        }
-    );
-    eprintln!(
-        "Max errors:     {}",
-        if args.max_errors < 0 {
-            "unlimited".to_string()
-        } else {
-            format!("{}", args.max_errors)
-        }
-    );
-
-    let ops = parse_ops(&args.ops);
-    eprintln!(
-        "Operations:     {}",
-        ops.iter()
-            .map(|o| format!("{o}"))
-            .collect::<Vec<_>>()
-            .join(", ")
-    );
-    eprintln!();
+    print_config(&args, &ops);
 
     // Create shared memory.
     let (shmem_path, mmap) = create_shared_mem();
@@ -1323,6 +1795,11 @@ fn run_as_parent(args: Args) {
     // Create shared resiliency storage directory for all processes.
     let storage_dir = std::env::temp_dir().join(format!("azihsm_stress_{}", std::process::id()));
     fs::create_dir_all(&storage_dir).expect("Failed to create shared storage directory");
+    eprintln!(
+        "[pid={}] Shared resiliency storage path: {}",
+        std::process::id(),
+        storage_dir.display()
+    );
 
     // Reset the partition once before spawning children.
     // Children will each call init() — the first succeeds, subsequent ones
@@ -1390,6 +1867,7 @@ fn run_as_parent(args: Args) {
 
     // Spawn reset thread using SharedMem atomics.
     let shmem_ptr = shmem as *const SharedMem as usize;
+    let num_procs_for_reset = num_procs as u32;
     let reset_handle = thread::spawn(move || {
         // SAFETY: Shared memory pointer is valid for the lifetime of the process.
         let shmem = unsafe { &*(shmem_ptr as *const SharedMem) };
@@ -1402,6 +1880,16 @@ fn run_as_parent(args: Args) {
             }
             return;
         }
+
+        // Wait for all children to finish setup before firing resets.
+        eprintln!("Reset thread: waiting for {num_procs_for_reset} child(ren) to be ready...");
+        while shmem.children_ready.load(Ordering::Acquire) < num_procs_for_reset {
+            if shmem.stop.load(Ordering::Relaxed) {
+                return;
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+        eprintln!("Reset thread: all children ready, starting resets.");
 
         loop {
             thread::sleep(reset_interval);
@@ -1460,6 +1948,17 @@ fn run_as_parent(args: Args) {
         }
         // Give children time to dump backtraces.
         thread::sleep(Duration::from_secs(3));
+
+        // Force-kill children that are stuck (e.g., blocked in DDI calls
+        // or sleeping). They won't exit on their own since the worker
+        // threads may never reach the `shmem.stop` check.
+        for child in children.iter() {
+            // SAFETY: child.id() is a valid PID of a process we spawned.
+            // SIGKILL is always safe to send to a known child process.
+            unsafe {
+                libc::kill(child.id() as i32, libc::SIGKILL);
+            }
+        }
     }
 
     for (i, mut child) in children.into_iter().enumerate() {
@@ -1476,108 +1975,7 @@ fn run_as_parent(args: Args) {
 
     // Final summary.
     let elapsed = start.elapsed();
-    let total_resets = shmem.total_resets.load(Ordering::Relaxed);
-    let reset_fails = shmem.reset_failures.load(Ordering::Relaxed);
-
-    let mut grand_ops: u64 = 0;
-    let mut grand_errors: u64 = 0;
-    let mut grand_op_counts = [0u64; NUM_OPS];
-    let mut grand_op_errors = [0u64; NUM_OPS];
-
-    for p in 0..num_procs {
-        let ps = &shmem.procs[p];
-        grand_ops += ps.total_ops.load(Ordering::Relaxed);
-        grand_errors += ps.total_errors.load(Ordering::Relaxed);
-        for j in 0..NUM_OPS {
-            grand_op_counts[j] += ps.op_counts[j].load(Ordering::Relaxed);
-            grand_op_errors[j] += ps.op_errors[j].load(Ordering::Relaxed);
-        }
-    }
-
-    eprintln!("\n");
-    eprintln!("=== Final Stats (multi-process) ===");
-    eprintln!(
-        "Elapsed:        {:02}:{:02}:{:02}",
-        elapsed.as_secs() / 3600,
-        (elapsed.as_secs() % 3600) / 60,
-        elapsed.as_secs() % 60,
-    );
-    eprintln!("Total ops:      {grand_ops}");
-    eprintln!("Op errors:      {grand_errors}");
-    eprintln!("Resets:         {total_resets}");
-    eprintln!("Reset failures: {reset_fails}");
-    eprintln!(
-        "Ops/sec:        {:.0}",
-        grand_ops as f64 / elapsed.as_secs_f64().max(0.001)
-    );
-
-    const LABELS: [&str; NUM_OPS] = [
-        "AES-CBC enc:      ",
-        "AES-CBC dec:      ",
-        "ECC sign:         ",
-        "HMAC sign:        ",
-        "RSA sign:         ",
-        "RSA decrypt:      ",
-        "ECDH derive:      ",
-        "HKDF derive:      ",
-        "AES key gen:      ",
-        "ECC key gen:      ",
-        "AES-XTS keygen:   ",
-        "Unwrapping keygen:",
-        "AES unwrap:       ",
-        "ECC unwrap:       ",
-        "XTS unwrap:       ",
-        "AES unmask:       ",
-        "ECC unmask:       ",
-        "XTS unmask:       ",
-        "ECC key report:   ",
-        "RSA key report:   ",
-        "Unwrap key report:",
-        "Cert chain:       ",
-        "AES keygen+del:   ",
-        "ECC keygen+del:   ",
-        "XTS keygen+del:   ",
-    ];
-
-    eprintln!();
-
-    // Header with per-process columns.
-    eprint!("                    ");
-    for p in 0..num_procs {
-        eprint!("{:>8}", format!("P{p}"));
-    }
-    eprintln!("{:>9}", "Total");
-
-    for (i, label) in LABELS.iter().enumerate() {
-        eprint!("  {label}");
-        for p in 0..num_procs {
-            eprint!("{:>8}", shmem.procs[p].op_counts[i].load(Ordering::Relaxed));
-        }
-        let errs = grand_op_errors[i];
-        if errs > 0 {
-            eprintln!("{:>9}  !! {errs} fail", grand_op_counts[i]);
-        } else {
-            eprintln!("{:>9}", grand_op_counts[i]);
-        }
-    }
-
-    // Check for process-level failures.
-    for p in 0..num_procs {
-        let ps = &shmem.procs[p];
-        if ps.failed.load(Ordering::Relaxed) {
-            let op_u8 = ps.failed_op.load(Ordering::Relaxed) as u8;
-            let op = OpKind::from_u8(op_u8)
-                .map(|o| format!("{o}"))
-                .unwrap_or_else(|| format!("unknown({})", op_u8));
-            let err = ps.failed_error.load(Ordering::Relaxed);
-            let tid = ps.failed_thread.load(Ordering::Relaxed);
-            eprintln!();
-            eprintln!("=== FAILURE (P{p}) ===");
-            eprintln!("Thread:    {tid}");
-            eprintln!("Operation: {op}");
-            eprintln!("Error:     {err}");
-        }
-    }
+    print_final_stats(shmem, num_procs, elapsed);
 
     // Cleanup shared memory file and storage directory.
     let _ = std::fs::remove_file(&shmem_path);
@@ -1589,12 +1987,6 @@ fn run_as_parent(args: Args) {
         eprintln!();
         eprintln!("Exiting due to stall (possible deadlock).");
         std::process::exit(2);
-    } else if grand_errors > 0 {
-        eprintln!();
-        eprintln!("Completed with {grand_errors} error(s) (within budget).");
-    } else {
-        eprintln!();
-        eprintln!("All operations completed successfully.");
     }
 }
 
@@ -1610,8 +2002,8 @@ fn multiproc_stats_loop(
     let mut prev_total: u64 = 0;
     let mut last_progress_ops: u64 = 0;
     let mut last_progress_time = Instant::now();
-    // 1 header + 1 column header + NUM_OPS lines = NUM_OPS + 2 lines to cursor-up.
-    let lines_to_clear = NUM_OPS + 2;
+    // Tracks how many lines were printed last iteration for cursor-up.
+    let mut lines_to_clear: usize = 0;
 
     while !shmem.stop.load(Ordering::Relaxed) {
         thread::sleep(interval);
@@ -1642,6 +2034,8 @@ fn multiproc_stats_loop(
             write!(buf, "\x1b[{}A", lines_to_clear).ok();
         }
         first = false;
+        // Count lines we emit this iteration.
+        let mut emitted_lines: usize = 0;
 
         let error_suffix = if total_errors > 0 {
             format!(" | ERRORS: {total_errors}")
@@ -1657,6 +2051,7 @@ fn multiproc_stats_loop(
             elapsed.as_secs() % 60,
         )
         .ok();
+        emitted_lines += 1;
 
         // Column header.
         write!(buf, "\x1b[K                    ").ok();
@@ -1664,10 +2059,10 @@ fn multiproc_stats_loop(
             write!(buf, "{:>8}", format!("P{p}")).ok();
         }
         writeln!(buf, "{:>9}", "Total").ok();
+        emitted_lines += 1;
 
         const LABELS: [&str; NUM_OPS] = [
-            "AES-CBC enc:      ",
-            "AES-CBC dec:      ",
+            "AES-CBC enc+dec:  ",
             "ECC sign:         ",
             "HMAC sign:        ",
             "RSA sign:         ",
@@ -1691,9 +2086,15 @@ fn multiproc_stats_loop(
             "AES keygen+del:   ",
             "ECC keygen+del:   ",
             "XTS keygen+del:   ",
+            "AES-XTS enc+dec:  ",
+            "AES-GCM enc+dec:  ",
         ];
 
         for (i, label) in LABELS.iter().enumerate() {
+            // Skip ops that were never executed.
+            if agg_counts[i] == 0 && agg_errors[i] == 0 {
+                continue;
+            }
             write!(buf, "\x1b[K  {label}").ok();
             for p in 0..num_procs {
                 write!(
@@ -1709,9 +2110,11 @@ fn multiproc_stats_loop(
             } else {
                 writeln!(buf, "{:>9}", agg_counts[i]).ok();
             }
+            emitted_lines += 1;
         }
 
         eprint!("{buf}");
+        lines_to_clear = emitted_lines;
         prev_total = total_ops;
 
         // Stall detection.
@@ -1746,6 +2149,7 @@ fn multiproc_stats_loop(
 // Multi-process: child worker process
 // ---------------------------------------------------------------------------
 
+#[cfg(not(feature = "mock"))]
 #[allow(unsafe_code)]
 fn run_as_child(args: Args, child_id: usize) {
     // Register SIGUSR1 handler to dump backtraces on stall detection.
@@ -1799,6 +2203,11 @@ fn run_as_child(args: Args, child_id: usize) {
     let max_errors = args.max_errors;
     let barrier = Arc::new(Barrier::new(args.workers));
 
+    // Generate the unwrapping key pair once per process (persistent/app-scoped)
+    // and share across all workers to avoid concurrent RSA key generation and
+    // persistent key slot exhaustion.
+    let shared_unwrap_keys = Arc::new(gen_rsa_unwrapping_key_pair(&session));
+
     // Collect worker pthread IDs so the stall detector can signal each one.
     #[cfg(target_os = "linux")]
     let worker_tids: Arc<parking_lot::Mutex<Vec<libc::pthread_t>>> =
@@ -1812,6 +2221,7 @@ fn run_as_child(args: Args, child_id: usize) {
         let ps_ptr = proc_stats as *const ProcessStats as usize;
         let shmem_ptr = shmem as *const SharedMem as usize;
         let barrier_clone = Arc::clone(&barrier);
+        let unwrap_keys = Arc::clone(&shared_unwrap_keys);
         #[cfg(target_os = "linux")]
         let tids_clone = Arc::clone(&worker_tids);
         let handle = thread::spawn(move || {
@@ -1835,6 +2245,7 @@ fn run_as_child(args: Args, child_id: usize) {
                 sm,
                 barrier_clone,
                 max_errors,
+                unwrap_keys,
             )
         });
         worker_handles.push(handle);
@@ -1915,19 +2326,10 @@ fn child_worker_thread(
     shmem: &SharedMem,
     barrier: Arc<Barrier>,
     max_errors: i64,
+    shared_unwrap_keys: Arc<(HsmRsaPrivateKey, HsmRsaPublicKey)>,
 ) -> bool {
     // Pre-create keys (same setup as single-process worker_thread).
     let aes_key = gen_aes_key(&session);
-    let iv = [0u8; 16];
-    let ciphertext = {
-        let data = b"stress test data for encryption!";
-        let mut algo = HsmAesCbcAlgo::with_padding(iv.to_vec()).expect("AES-CBC algo");
-        let len = HsmEncrypter::encrypt(&mut algo, &aes_key, data, None).expect("pre-encrypt len");
-        let mut out = vec![0u8; len];
-        let mut algo = HsmAesCbcAlgo::with_padding(iv.to_vec()).expect("AES-CBC algo");
-        HsmEncrypter::encrypt(&mut algo, &aes_key, data, Some(&mut out)).expect("pre-encrypt");
-        out
-    };
     let (ecc_priv, _ecc_pub) = gen_ecc_key_pair(&session);
     let ecc_hash = {
         let mut h = HsmHashAlgo::Sha256;
@@ -1951,19 +2353,22 @@ fn child_worker_thread(
         HsmKeyManager::derive_key(&session, &mut algo, &ecdh_priv, secret_props)
             .expect("pre-create shared secret")
     };
-    let (rsa_sign_priv, _rsa_sign_pub) = import_rsa_sign_key(&session);
+    // Use the shared (per-process) unwrapping key pair to avoid concurrent
+    // RSA key generation and persistent key slot exhaustion.
+    let (unwrap_priv, unwrap_pub) = &*shared_unwrap_keys;
+    let (rsa_sign_priv, _rsa_sign_pub) = import_rsa_sign_key(&session, unwrap_priv, unwrap_pub);
     let rsa_hash = {
         let mut h = HsmHashAlgo::Sha256;
         HsmHasher::hash_vec(&session, &mut h, b"stress data for RSA sign").expect("RSA hash")
     };
-    let (rsa_dec_priv, rsa_enc_pub) = import_rsa_enc_key(&session);
+    let (rsa_dec_priv, rsa_enc_pub) = import_rsa_enc_key(&session, unwrap_priv, unwrap_pub);
     let rsa_ciphertext = {
         let mut algo = HsmRsaEncryptAlgo::with_pkcs1_padding();
         HsmEncrypter::encrypt_vec(&mut algo, &rsa_enc_pub, b"stress RSA plaintext")
             .expect("RSA pre-encrypt")
     };
-    let (aes_unwrap_key, aes_wrapped_blob) = prepare_wrapped_aes_key(&session);
-    let (ecc_unwrap_key, ecc_wrapped_blob) = prepare_wrapped_ecc_key(&session);
+    let aes_wrapped_blob = prepare_wrapped_aes_key(&session, unwrap_priv, unwrap_pub);
+    let ecc_wrapped_blob = prepare_wrapped_ecc_key(&session, unwrap_pub);
     let needs_xts = ops.iter().any(|o| {
         matches!(
             o,
@@ -1973,11 +2378,10 @@ fn child_worker_thread(
                 | OpKind::AesXtsKeyGenDelete
         )
     });
-    let (xts_unwrap_key, xts_wrapped_blob) = if needs_xts {
-        let (k, b) = prepare_wrapped_xts_key(&session);
-        (Some(k), Some(b))
+    let xts_wrapped_blob = if needs_xts {
+        Some(prepare_wrapped_xts_key(&session, unwrap_pub))
     } else {
-        (None, None)
+        None
     };
     let aes_masked = aes_key.masked_key_vec().expect("AES masked key");
     let ecc_masked = ecc_priv.masked_key_vec().expect("ECC masked key");
@@ -1987,9 +2391,29 @@ fn child_worker_thread(
     } else {
         None
     };
+    // AES-XTS enc+dec setup: pre-create key (mock only).
+    #[cfg(feature = "mock")]
+    let xts_enc_key = if ops.iter().any(|o| matches!(o, OpKind::AesXtsEncDec)) {
+        Some(gen_aes_xts_key(&session))
+    } else {
+        None
+    };
+    // AES-GCM enc+dec setup: pre-create key (mock only).
+    #[cfg(feature = "mock")]
+    let gcm_key = if ops.iter().any(|o| matches!(o, OpKind::AesGcmEncDec)) {
+        Some(gen_aes_gcm_key(&session))
+    } else {
+        None
+    };
     let report_data = [0x42u8; 128];
 
-    barrier.wait();
+    // All workers in this process wait here until setup is complete.
+    // The barrier leader signals the parent that this child is ready
+    // for resets (via the shared memory counter).
+    let wait_result = barrier.wait();
+    if wait_result.is_leader() {
+        shmem.children_ready.fetch_add(1, Ordering::Release);
+    }
 
     let mut rng = rand::thread_rng();
     let mut triggered_stop = false;
@@ -1998,8 +2422,7 @@ fn child_worker_thread(
         let op = ops[rng.gen_range(0..ops.len())];
 
         let result = match op {
-            OpKind::AesCbcEncrypt => exec_aes_cbc_encrypt(&aes_key),
-            OpKind::AesCbcDecrypt => exec_aes_cbc_decrypt(&aes_key, &ciphertext),
+            OpKind::AesCbcEncDec => exec_aes_cbc_enc_dec(&aes_key),
             OpKind::EccSign => exec_ecc_sign(&ecc_priv, &ecc_hash),
             OpKind::HmacSign => exec_hmac_sign(&hmac_key),
             OpKind::RsaSign => exec_rsa_sign(&rsa_sign_priv, &rsa_hash),
@@ -2010,10 +2433,10 @@ fn child_worker_thread(
             OpKind::EccKeyGen => exec_ecc_keygen(&session),
             OpKind::AesXtsKeyGen => exec_aes_xts_keygen(&session),
             OpKind::UnwrappingKeyGen => exec_unwrapping_keygen(&session),
-            OpKind::AesUnwrap => exec_aes_unwrap(&aes_unwrap_key, &aes_wrapped_blob),
-            OpKind::EccUnwrap => exec_ecc_unwrap(&ecc_unwrap_key, &ecc_wrapped_blob),
+            OpKind::AesUnwrap => exec_aes_unwrap(unwrap_priv, &aes_wrapped_blob),
+            OpKind::EccUnwrap => exec_ecc_unwrap(unwrap_priv, &ecc_wrapped_blob),
             OpKind::XtsUnwrap => exec_xts_unwrap(
-                xts_unwrap_key.as_ref().expect("XTS unwrap key"),
+                unwrap_priv,
                 xts_wrapped_blob.as_ref().expect("XTS wrapped blob"),
             ),
             OpKind::AesUnmask => exec_aes_unmask(&session, &aes_masked),
@@ -2023,11 +2446,17 @@ fn child_worker_thread(
             }
             OpKind::EccKeyReport => exec_ecc_key_report(&ecc_priv, &report_data),
             OpKind::RsaKeyReport => exec_rsa_key_report(&rsa_sign_priv, &report_data),
-            OpKind::UnwrappingKeyReport => exec_rsa_key_report(&aes_unwrap_key, &report_data),
+            OpKind::UnwrappingKeyReport => exec_rsa_key_report(unwrap_priv, &report_data),
             OpKind::CertChain => exec_cert_chain(&partition),
             OpKind::AesKeyGenDelete => exec_aes_keygen_delete(&session),
             OpKind::EccKeyGenDelete => exec_ecc_keygen_delete(&session),
             OpKind::AesXtsKeyGenDelete => exec_aes_xts_keygen_delete(&session),
+            #[cfg(feature = "mock")]
+            OpKind::AesXtsEncDec => {
+                exec_aes_xts_enc_dec(xts_enc_key.as_ref().expect("XTS enc key"))
+            }
+            #[cfg(feature = "mock")]
+            OpKind::AesGcmEncDec => exec_aes_gcm_enc_dec(gcm_key.as_ref().expect("GCM key")),
         };
 
         let op_idx = (op.as_u8() - 1) as usize;

@@ -233,8 +233,7 @@ impl HsmKeyPairGenOp for HsmRsaKeyUnwrappingKeyGenAlgo {
 
         // Persist MUK (masked unwrapping key) to resiliency storage so
         // that `establish_credential` can restore the device's unwrapping
-        // key state after a resiliency event.  Mirrors Martichoras's
-        // `try_get_unwrapping_key` which persists MUK after each fetch.
+        // key state after a resiliency event.
         if let Some(muk) = priv_key_props.masked_key() {
             session
                 .partition()

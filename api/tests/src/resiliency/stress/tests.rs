@@ -46,18 +46,10 @@ use crate::*;
 // Constants
 
 /// Number of worker threads per test.
-const NUM_WORKERS: usize = 4;
+const NUM_WORKERS: usize = 8;
 
 /// Number of iterations each worker performs.
 const ITERATIONS_PER_WORKER: usize = 500;
-
-/// Number of iterations for `init` stress tests.
-///
-/// `init()` is much heavier than a single crypto op (POTA generation +
-/// credential establishment + BMK persistence, all serialized through
-/// the cross-process resiliency lock), so we use fewer iterations to
-/// stay well within the nextest timeout.
-const INIT_ITERATIONS_PER_WORKER: usize = 10;
 
 /// Delay between Reset triggers (ms).
 ///
@@ -1895,7 +1887,7 @@ fn test_stress_init_part_under_reset() {
             thread::spawn(move || {
                 barrier.wait();
                 let mut successes = 0u32;
-                for i in 0..INIT_ITERATIONS_PER_WORKER {
+                for i in 0..ITERATIONS_PER_WORKER {
                     let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
                     let (obk_info, pota_endorsement) = make_init_params(&part);
                     let resiliency_config = make_resiliency_config_in(&dir, &part);
@@ -1934,7 +1926,7 @@ fn test_stress_init_part_under_reset() {
     );
     assert_eq!(
         total,
-        (NUM_WORKERS * INIT_ITERATIONS_PER_WORKER) as u32,
+        (NUM_WORKERS * ITERATIONS_PER_WORKER) as u32,
         "All init operations should have succeeded"
     );
 }
