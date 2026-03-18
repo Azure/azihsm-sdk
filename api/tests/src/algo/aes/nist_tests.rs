@@ -32,33 +32,6 @@ use azihsm_crypto::testvectors::aes::AesCbcTestVector;
 use super::common::*;
 use super::*;
 
-const CBC_128_VECTORS: &[(&str, &[AesCbcTestVector])] = &[
-    ("CBC_128_GFSBOX", AES_CBC_128_GFSBOX_TEST_VECTORS),
-    ("CBC_128_MMT", AES_CBC_128_MMT_TEST_VECTORS),
-    ("CBC_128_MCT", AES_CBC_128_MCT_TEST_VECTORS),
-    ("CBC_128_SBOX", AES_CBC_128_SBOX_TEST_VECTORS),
-    ("CBC_128_VAR_KEY", AES_CBC_128_VAR_KEY_TEST_VECTORS),
-    ("CBC_128_VAR_TXT", AES_CBC_128_VAR_TXT_TEST_VECTORS),
-];
-
-const CBC_192_VECTORS: &[(&str, &[AesCbcTestVector])] = &[
-    ("CBC_192_GFSBOX", AES_CBC_192_GFSBOX_TEST_VECTORS),
-    ("CBC_192_MMT", AES_CBC_192_MMT_TEST_VECTORS),
-    ("CBC_192_MCT", AES_CBC_192_MCT_TEST_VECTORS),
-    ("CBC_192_SBOX", AES_CBC_192_SBOX_TEST_VECTORS),
-    ("CBC_192_VAR_KEY", AES_CBC_192_VAR_KEY_TEST_VECTORS),
-    ("CBC_192_VAR_TXT", AES_CBC_192_VAR_TXT_TEST_VECTORS),
-];
-
-const CBC_256_VECTORS: &[(&str, &[AesCbcTestVector])] = &[
-    ("CBC_256_GFSBOX", AES_CBC_256_GFSBOX_TEST_VECTORS),
-    ("CBC_256_MMT", AES_CBC_256_MMT_TEST_VECTORS),
-    ("CBC_256_MCT", AES_CBC_256_MCT_TEST_VECTORS),
-    ("CBC_256_SBOX", AES_CBC_256_SBOX_TEST_VECTORS),
-    ("CBC_256_VAR_KEY", AES_CBC_256_VAR_KEY_TEST_VECTORS),
-    ("CBC_256_VAR_TXT", AES_CBC_256_VAR_TXT_TEST_VECTORS),
-];
-
 fn generate_rsa_keypair(session: &HsmSession) -> (HsmRsaPrivateKey, HsmRsaPublicKey) {
     let mut algo = HsmRsaKeyUnwrappingKeyGenAlgo::default();
 
@@ -270,16 +243,220 @@ fn run_cbc_vectors(
 }
 
 #[session_test]
-fn test_cbc_all_vectors(session: HsmSession) {
+fn cbc_128_gfsbox(session: HsmSession) {
     let (rsa_priv, rsa_pub) = generate_rsa_keypair(&session);
+    run_cbc_vectors(
+        AES_CBC_128_GFSBOX_TEST_VECTORS,
+        128,
+        "CBC_128_GFSBOX",
+        &rsa_priv,
+        &rsa_pub,
+    );
+}
 
-    for (groups, bits) in [
-        (CBC_128_VECTORS, 128),
-        (CBC_192_VECTORS, 192),
-        (CBC_256_VECTORS, 256),
-    ] {
-        for (name, group) in groups {
-            run_cbc_vectors(group, bits, name, &rsa_priv, &rsa_pub);
-        }
-    }
+#[session_test]
+fn cbc_128_mmt(session: HsmSession) {
+    let (rsa_priv, rsa_pub) = generate_rsa_keypair(&session);
+    run_cbc_vectors(
+        AES_CBC_128_MMT_TEST_VECTORS,
+        128,
+        "CBC_128_MMT",
+        &rsa_priv,
+        &rsa_pub,
+    );
+}
+
+#[ignore]
+#[session_test]
+fn cbc_128_mct(session: HsmSession) {
+    let (rsa_priv, rsa_pub) = generate_rsa_keypair(&session);
+    run_cbc_vectors(
+        AES_CBC_128_MCT_TEST_VECTORS,
+        128,
+        "CBC_128_MCT",
+        &rsa_priv,
+        &rsa_pub,
+    );
+}
+
+#[session_test]
+fn cbc_128_sbox(session: HsmSession) {
+    let (rsa_priv, rsa_pub) = generate_rsa_keypair(&session);
+    run_cbc_vectors(
+        AES_CBC_128_SBOX_TEST_VECTORS,
+        128,
+        "CBC_128_SBOX",
+        &rsa_priv,
+        &rsa_pub,
+    );
+}
+
+#[session_test]
+fn cbc_128_varkey(session: HsmSession) {
+    let (rsa_priv, rsa_pub) = generate_rsa_keypair(&session);
+    run_cbc_vectors(
+        AES_CBC_128_VAR_KEY_TEST_VECTORS,
+        128,
+        "CBC_128_VAR_KEY",
+        &rsa_priv,
+        &rsa_pub,
+    );
+}
+
+#[session_test]
+fn cbc_128_vartxt(session: HsmSession) {
+    let (rsa_priv, rsa_pub) = generate_rsa_keypair(&session);
+    run_cbc_vectors(
+        AES_CBC_128_VAR_TXT_TEST_VECTORS,
+        128,
+        "CBC_128_VAR_TXT",
+        &rsa_priv,
+        &rsa_pub,
+    );
+}
+
+#[session_test]
+fn cbc_192_gfsbox(session: HsmSession) {
+    let (rsa_priv, rsa_pub) = generate_rsa_keypair(&session);
+    run_cbc_vectors(
+        AES_CBC_192_GFSBOX_TEST_VECTORS,
+        192,
+        "CBC_192_GFSBOX",
+        &rsa_priv,
+        &rsa_pub,
+    );
+}
+
+#[session_test]
+fn cbc_192_mmt(session: HsmSession) {
+    let (rsa_priv, rsa_pub) = generate_rsa_keypair(&session);
+    run_cbc_vectors(
+        AES_CBC_192_MMT_TEST_VECTORS,
+        192,
+        "CBC_192_MMT",
+        &rsa_priv,
+        &rsa_pub,
+    );
+}
+
+#[ignore]
+#[session_test]
+fn cbc_192_mct(session: HsmSession) {
+    let (rsa_priv, rsa_pub) = generate_rsa_keypair(&session);
+    run_cbc_vectors(
+        AES_CBC_192_MCT_TEST_VECTORS,
+        192,
+        "CBC_192_MCT",
+        &rsa_priv,
+        &rsa_pub,
+    );
+}
+
+#[session_test]
+fn cbc_192_sbox(session: HsmSession) {
+    let (rsa_priv, rsa_pub) = generate_rsa_keypair(&session);
+    run_cbc_vectors(
+        AES_CBC_192_SBOX_TEST_VECTORS,
+        192,
+        "CBC_192_SBOX",
+        &rsa_priv,
+        &rsa_pub,
+    );
+}
+
+#[session_test]
+fn cbc_192_varkey(session: HsmSession) {
+    let (rsa_priv, rsa_pub) = generate_rsa_keypair(&session);
+    run_cbc_vectors(
+        AES_CBC_192_VAR_KEY_TEST_VECTORS,
+        192,
+        "CBC_192_VAR_KEY",
+        &rsa_priv,
+        &rsa_pub,
+    );
+}
+
+#[session_test]
+fn cbc_192_vartxt(session: HsmSession) {
+    let (rsa_priv, rsa_pub) = generate_rsa_keypair(&session);
+    run_cbc_vectors(
+        AES_CBC_192_VAR_TXT_TEST_VECTORS,
+        192,
+        "CBC_192_VAR_TXT",
+        &rsa_priv,
+        &rsa_pub,
+    );
+}
+
+#[session_test]
+fn cbc_256_gfsbox(session: HsmSession) {
+    let (rsa_priv, rsa_pub) = generate_rsa_keypair(&session);
+    run_cbc_vectors(
+        AES_CBC_256_GFSBOX_TEST_VECTORS,
+        256,
+        "CBC_256_GFSBOX",
+        &rsa_priv,
+        &rsa_pub,
+    );
+}
+
+#[session_test]
+fn cbc_256_mmt(session: HsmSession) {
+    let (rsa_priv, rsa_pub) = generate_rsa_keypair(&session);
+    run_cbc_vectors(
+        AES_CBC_256_MMT_TEST_VECTORS,
+        256,
+        "CBC_256_MMT",
+        &rsa_priv,
+        &rsa_pub,
+    );
+}
+
+#[ignore]
+#[session_test]
+fn cbc_256_mct(session: HsmSession) {
+    let (rsa_priv, rsa_pub) = generate_rsa_keypair(&session);
+    run_cbc_vectors(
+        AES_CBC_256_MCT_TEST_VECTORS,
+        256,
+        "CBC_256_MCT",
+        &rsa_priv,
+        &rsa_pub,
+    );
+}
+
+#[session_test]
+fn cbc_256_sbox(session: HsmSession) {
+    let (rsa_priv, rsa_pub) = generate_rsa_keypair(&session);
+    run_cbc_vectors(
+        AES_CBC_256_SBOX_TEST_VECTORS,
+        256,
+        "CBC_256_SBOX",
+        &rsa_priv,
+        &rsa_pub,
+    );
+}
+
+#[session_test]
+fn cbc_256_varkey(session: HsmSession) {
+    let (rsa_priv, rsa_pub) = generate_rsa_keypair(&session);
+    run_cbc_vectors(
+        AES_CBC_256_VAR_KEY_TEST_VECTORS,
+        256,
+        "CBC_256_VAR_KEY",
+        &rsa_priv,
+        &rsa_pub,
+    );
+}
+
+#[session_test]
+fn cbc_256_vartxt(session: HsmSession) {
+    let (rsa_priv, rsa_pub) = generate_rsa_keypair(&session);
+    run_cbc_vectors(
+        AES_CBC_256_VAR_TXT_TEST_VECTORS,
+        256,
+        "CBC_256_VAR_TXT",
+        &rsa_priv,
+        &rsa_pub,
+    );
 }
