@@ -907,10 +907,15 @@ fn test_aes_cbc_invalid_padding_fails(session: HsmSession) {
 
     ciphertext.truncate(written);
 
-    // Corrupt last byte (padding)
-    if let Some(last) = ciphertext.last_mut() {
-        *last ^= 0xFF;
-    }
+    // Deterministically corrupt padding by mutating C[n-1][-1].
+    // For plaintext length 32, PKCS#7 pad length is 16 (0x10).
+    // Flipping C[n-1][-1] with XOR 0x01 flips P[n][-1] to 0x11 (> block size),
+    // which is always invalid and avoids the flake from mutating C[n][-1].
+    let prev_block_last_index = ciphertext
+        .len()
+        .checked_sub(17)
+        .expect("ciphertext too short for deterministic padding corruption");
+    ciphertext[prev_block_last_index] ^= 0x01;
 
     // --- Decrypt ---
     let mut dec_algo = HsmAesCbcAlgo::with_padding(iv).unwrap();
