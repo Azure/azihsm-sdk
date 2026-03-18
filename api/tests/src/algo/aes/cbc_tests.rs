@@ -10,8 +10,6 @@ use azihsm_crypto::Rng;
 use super::common::*;
 use super::*;
 
-const AES_CBC_BLOCK_SIZE: usize = 16;
-
 // ================================
 // Helpers
 // ================================
@@ -410,16 +408,6 @@ fn run_cbc_padding_and_chunk_sweep(session: &HsmSession, key_bits: u32, streamin
     }
 }
 
-// ================================
-// Misc
-// ================================
-
-fn test_iv() -> [u8; AES_CBC_BLOCK_SIZE] {
-    Rng::rand_vec(AES_CBC_BLOCK_SIZE)
-        .expect("RNG failure generating IV")
-        .try_into()
-        .expect("IV length mismatch")
-}
 // ============================================================
 // test cases sections
 // ============================================================

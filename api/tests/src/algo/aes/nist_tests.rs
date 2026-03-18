@@ -116,7 +116,8 @@ fn run_cbc_mct_encrypt(key: &HsmAesKey, iv: &[u8], plaintext: &[u8]) -> Vec<u8> 
         let x = xor_block(&input_block, &chaining_iv);
 
         //  encrypt single block (ECB-style)
-        let out = cbc_encrypt(key, false, &[0u8; 16], &x).expect("encrypt failed");
+        let iv = test_iv();
+        let out = cbc_encrypt(key, false, &iv, &x).expect("encrypt failed");
 
         current_output.copy_from_slice(&out);
 
@@ -137,7 +138,8 @@ fn run_cbc_mct_decrypt(key: &HsmAesKey, iv: &[u8], ciphertext: &[u8]) -> Vec<u8>
 
     for _ in 0..1000 {
         // decrypt block
-        let out = cbc_decrypt(key, false, &[0u8; 16], &input_block).expect("decrypt failed");
+        let iv = test_iv();
+        let out = cbc_decrypt(key, false, &iv, &input_block).expect("decrypt failed");
 
         // XOR after decrypt
         let x = xor_block(&out, &chaining_iv);

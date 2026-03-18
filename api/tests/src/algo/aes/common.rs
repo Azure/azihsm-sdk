@@ -6,7 +6,20 @@ use azihsm_api::HsmAesKey;
 use azihsm_api::HsmDecrypter;
 use azihsm_api::HsmEncrypter;
 use azihsm_api::HsmResult;
+use azihsm_crypto::Rng;
 
+pub const AES_CBC_BLOCK_SIZE: usize = 16;
+
+// ================================
+// Misc
+// ================================
+
+pub fn test_iv() -> [u8; AES_CBC_BLOCK_SIZE] {
+    Rng::rand_vec(AES_CBC_BLOCK_SIZE)
+        .expect("RNG failure generating IV")
+        .try_into()
+        .expect("IV length mismatch")
+}
 // ================================
 // Key  Algorithm Helpers
 // ================================
