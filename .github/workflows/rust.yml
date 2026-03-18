@@ -22,12 +22,34 @@ jobs:
       run:
         working-directory: .
 
+    env:
+      OPENSSL_DIR: /opt/openssl-3.0.3
+      LD_LIBRARY_PATH: /opt/openssl-3.0.3/lib
+
     steps:
     - uses: actions/checkout@v4
     - name: Install apt packages
       run: |
         sudo apt-get update
-        sudo apt-get install -y pkg-config libssl-dev libbsd-dev
+        sudo apt-get install -y pkg-config libbsd-dev
+
+    - name: Cache OpenSSL 3.0.3
+      id: cache-openssl
+      uses: actions/cache@v5
+      with:
+        path: /opt/openssl-3.0.3
+        key: openssl-3.0.3-shared-linux-x64
+
+    - name: Build OpenSSL 3.0.3 (shared)
+      if: steps.cache-openssl.outputs.cache-hit != 'true'
+      run: |
+        curl -fsSL "https://github.com/openssl/openssl/releases/download/openssl-3.0.3/openssl-3.0.3.tar.gz" \
+          | tar xz -C /tmp
+        cd /tmp/openssl-3.0.3
+        ./Configure --prefix=/opt/openssl-3.0.3 --libdir=lib
+        make -j"$(nproc)"
+        sudo make install_sw
+
     - name: Restore Cargo cache
       id: cargo-cache
       uses: actions/cache/restore@v5
@@ -86,6 +108,9 @@ jobs:
 
     runs-on: ubuntu-24.04
 
+    env:
+      LD_LIBRARY_PATH: /opt/openssl-3.0.3/lib
+
     steps:
     - uses: actions/checkout@v4
 
@@ -93,7 +118,7 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y --no-install-recommends \
-          build-essential cmake pkg-config libssl-dev libbsd-dev
+          build-essential cmake pkg-config libbsd-dev
 
     - name: Restore Cargo cache
       uses: actions/cache/restore@v5
@@ -111,23 +136,21 @@ jobs:
       uses: actions/cache@v5
       with:
         path: /opt/openssl-3.0.3
-        key: openssl-3.0.3-linux-x64
+        key: openssl-3.0.3-shared-linux-x64
 
-    - name: Build OpenSSL 3.0.3
+    - name: Build OpenSSL 3.0.3 (shared)
       if: steps.cache-openssl.outputs.cache-hit != 'true'
       run: |
         curl -fsSL "https://github.com/openssl/openssl/releases/download/openssl-3.0.3/openssl-3.0.3.tar.gz" \
           | tar xz -C /tmp
         cd /tmp/openssl-3.0.3
-        ./Configure --prefix=/opt/openssl-3.0.3 --libdir=lib \
-          no-shared -fvisibility=hidden -fPIC
+        ./Configure --prefix=/opt/openssl-3.0.3 --libdir=lib
         make -j"$(nproc)"
         sudo make install_sw
 
-    - name: Build azihsm with static OpenSSL
+    - name: Build azihsm with OpenSSL 3.0.3
       env:
         OPENSSL_DIR: /opt/openssl-3.0.3
-        OPENSSL_STATIC: "1"
       run: |
         cargo build -p azihsm_api_native --features mock
         cargo build -p azihsm_ossl_provider --features mock
@@ -141,14 +164,15 @@ jobs:
 
     - name: Generate dev key material
       run: |
+        OSSL=/opt/openssl-3.0.3/bin/openssl
         # Credential files (fallback if env vars are unset)
         printf '\x70\xFC\xF7\x30\xB8\x76\x42\x38\xB8\x35\x80\x10\xCE\x8A\x3F\x76' > credentials_id.bin
         printf '\xDB\x3D\xC7\x7F\xC2\x2E\x43\x00\x80\xD4\x1B\x31\xB6\xF0\x48\x00' > credentials_pin.bin
         # OBK — 48-byte random owner backup key
-        openssl rand -out obk.bin 48
+        $OSSL rand -out obk.bin 48
         # POTA — P-384 key pair (legacy EC DER + SubjectPublicKeyInfo DER)
-        openssl ecparam -name secp384r1 -genkey -noout | openssl ec -outform DER -out pota_private_key.der 2>/dev/null
-        openssl ec -in pota_private_key.der -inform DER -pubout -outform DER -out pota_public_key.der 2>/dev/null
+        $OSSL ecparam -name secp384r1 -genkey -noout | $OSSL ec -outform DER -out pota_private_key.der 2>/dev/null
+        $OSSL ec -in pota_private_key.der -inform DER -pubout -outform DER -out pota_public_key.der 2>/dev/null
         chmod 600 credentials_id.bin credentials_pin.bin obk.bin pota_private_key.der pota_public_key.der
 
     - name: Smoke test provider
@@ -166,7 +190,7 @@ jobs:
     - name: Run integration tests
       env:
         OPENSSL_BIN: /opt/openssl-3.0.3/bin/openssl
-        OPENSSL_LIB: ""
+        OPENSSL_LIB: /opt/openssl-3.0.3/lib
         PROVIDER_PATH: /usr/lib/ossl-modules
         PROPQUERY: "?provider=azihsm"
         AZIHSM_CREDENTIALS_ID: "70fcf730b8764238b8358010ce8a3f76"

@@ -67,26 +67,24 @@ RSA genpkey (keyEncipherment)  ──> masked_key.bin ──> pkeyutl -encrypt /
 
 ### Build
 
-The provider consists of two shared libraries. `libazihsm_api_native.so` (the Rust HSM API) **must** be built against a static OpenSSL to avoid a circular dependency — the system `libcrypto.so` loads the provider, so if the HSM library also linked dynamically against `libcrypto.so`, its OpenSSL calls would route back through itself. The static build uses `-fvisibility=hidden` to keep all OpenSSL symbols internal.
+The provider consists of two shared libraries that both link dynamically against the same `libcrypto.so`. Circular dispatch is avoided because the provider registers its algorithms with the property `"provider=azihsm"` and the library's internal OpenSSL calls use bare algorithm names (no property query), which route to the OpenSSL **default** provider.
+
+> **Important:** The default provider **must** be available alongside the azihsm provider. During initialisation the provider force-loads the OpenSSL `default` provider into the process's default library context to prevent infinite recursion; if this fails the provider will refuse to start.
 
 ```bash
-# 1. Build a static OpenSSL
+# 1. Build OpenSSL 3.0.3 (shared)
 OPENSSL_VERSION=3.0.3
 curl -fsSL "https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VERSION}/openssl-${OPENSSL_VERSION}.tar.gz" \
     | tar xz -C /tmp
 cd /tmp/openssl-${OPENSSL_VERSION}
-./Configure --prefix=/opt/openssl-static --libdir=lib \
-    no-shared no-dso -fvisibility=hidden -fPIC
-make -j"$(nproc)" && make install_sw
+./Configure --prefix=/opt/openssl-3.0.3 --libdir=lib
+make -j"$(nproc)" && sudo make install_sw
 
-# 2. Build the Rust native API library with static OpenSSL
+# 2. Build both libraries against OpenSSL 3.0.3
 cd azihsm-sdk
-OPENSSL_DIR=/opt/openssl-static OPENSSL_STATIC=1 \
-    cargo build -p azihsm_api_native --features mock
-
-# 3. Build the provider with static OpenSSL
-OPENSSL_DIR=/opt/openssl-static OPENSSL_STATIC=1 \
-    cargo build -p azihsm_ossl_provider --features mock
+export LD_LIBRARY_PATH=/opt/openssl-3.0.3/lib
+OPENSSL_DIR=/opt/openssl-3.0.3 cargo build -p azihsm_api_native --features mock
+OPENSSL_DIR=/opt/openssl-3.0.3 cargo build -p azihsm_ossl_provider --features mock
 ```
 
 On real hardware, omit `mock` from both build commands.

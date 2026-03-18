@@ -7,6 +7,7 @@
 #include <openssl/evp.h>
 #include <openssl/prov_ssl.h>
 #include <openssl/proverr.h>
+#include <openssl/provider.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -659,6 +660,40 @@ static OSSL_STATUS parse_provider_config(
     return OSSL_SUCCESS;
 }
 
+/*
+ * Ensure the OpenSSL default provider is loaded in the process's default
+ * library context.
+ *
+ * The azihsm provider registers standard algorithm names (SHA-256,
+ * AES-CBC, RSA, EC, etc.) with the property "provider=azihsm".
+ * The Rust HSM library (libazihsm_api_native.so) dynamically links
+ * the same libcrypto.so and makes bare EVP calls (no property query).
+ * OpenSSL routes those calls to the default provider.
+ *
+ * If the default provider is not loaded \u2014 for example because
+ * openssl.cnf only activates azihsm \u2014 the bare EVP calls would be
+ * dispatched to the azihsm provider, creating infinite recursion.
+ */
+static OSSL_STATUS ensure_default_provider(void)
+{
+    OSSL_PROVIDER *dflt = OSSL_PROVIDER_load(NULL, "default");
+    if (dflt == NULL)
+    {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            ERR_R_INIT_FAIL,
+            "azihsm: the OpenSSL 'default' provider must be loaded "
+            "alongside the azihsm provider to prevent infinite "
+            "recursion in internal crypto operations"
+        );
+        return OSSL_FAILURE;
+    }
+    /* Release our reference; the provider stays loaded in the default
+     * library context because OpenSSL ref-counts it. */
+    OSSL_PROVIDER_unload(dflt);
+    return OSSL_SUCCESS;
+}
+
 OSSL_STATUS OSSL_provider_init(
     const OSSL_CORE_HANDLE *handle,
     const OSSL_DISPATCH *in,
@@ -683,6 +718,13 @@ OSSL_STATUS OSSL_provider_init(
     if (ctx->libctx == NULL)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
+        OPENSSL_free(ctx);
+        return OSSL_FAILURE;
+    }
+
+    if (ensure_default_provider() != OSSL_SUCCESS)
+    {
+        OSSL_LIB_CTX_free(ctx->libctx);
         OPENSSL_free(ctx);
         return OSSL_FAILURE;
     }
