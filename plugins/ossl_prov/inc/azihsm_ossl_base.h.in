@@ -7,6 +7,7 @@
 #include <openssl/core_names.h>
 #include <openssl/crypto.h>
 #include <openssl/params.h>
+#include <openssl/provider.h>
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -106,6 +107,10 @@ typedef struct
 {
     OSSL_LIB_CTX *libctx;
     const OSSL_CORE_HANDLE *handle;
+    OSSL_PROVIDER *default_provider; /* Ref to default provider in the NULL ctx;
+                                      * kept alive so the Rust library's bare
+                                      * EVP calls (RAND_bytes, EC keygen, …)
+                                      * always have a provider to service them. */
     azihsm_handle device;
     azihsm_handle session;
     AZIHSM_CONFIG config;

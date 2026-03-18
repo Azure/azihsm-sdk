@@ -56,11 +56,6 @@ jobs:
         make -j"$(nproc)"
         sudo make install_sw
 
-    - name: Configure dynamic linker for OpenSSL 3.0.3
-      run: |
-        echo "/opt/openssl-3.0.3/lib" | sudo tee /etc/ld.so.conf.d/openssl-3.0.3.conf
-        sudo ldconfig
-
     - name: Restore Cargo cache
       id: cargo-cache
       uses: actions/cache/restore@v5

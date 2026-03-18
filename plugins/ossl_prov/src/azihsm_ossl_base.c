@@ -22,15 +22,9 @@ extern "C"
 {
 #endif
 
-#define ALG(names, funcs)                                                                          \
-    {                                                                                              \
-        names, "provider=" AZIHSM_OSSL_NAME ",fips=yes", funcs, NULL                               \
-    }
+#define ALG(names, funcs) { names, "provider=" AZIHSM_OSSL_NAME ",fips=yes", funcs, NULL }
 
-#define ALG_TABLE_END                                                                              \
-    {                                                                                              \
-        NULL, NULL, NULL, NULL                                                                     \
-    }
+#define ALG_TABLE_END { NULL, NULL, NULL, NULL }
 
 // Digest
 extern const OSSL_DISPATCH azihsm_ossl_sha1_functions[];
@@ -241,6 +235,14 @@ static void azihsm_ossl_teardown(AZIHSM_OSSL_PROV_CTX *provctx)
     CRYPTO_THREAD_lock_free(provctx->unwrapping_key.lock);
 
     azihsm_close_device_and_session(provctx->device, provctx->session);
+
+    /* Release the default provider reference we acquired in OSSL_provider_init
+     * to keep the NULL library context's default provider active. */
+    if (provctx->default_provider != NULL)
+    {
+        OSSL_PROVIDER_unload(provctx->default_provider);
+    }
+
     OPENSSL_free(provctx);
 }
 
@@ -716,15 +718,18 @@ OSSL_STATUS OSSL_provider_init(
             OPENSSL_free(ctx);
             return OSSL_FAILURE;
         }
-        /* Release our reference; the provider stays loaded in the default
-         * library context because OpenSSL ref-counts it. */
-        OSSL_PROVIDER_unload(dflt);
+        /* Keep the reference alive so the default provider stays active in
+         * the NULL (default) library context.  The Rust library's bare EVP
+         * calls (RAND_bytes, EC keygen, etc.) use the default context and
+         * need a provider to service them.  Released in teardown. */
+        ctx->default_provider = dflt;
     }
 
     ctx->unwrapping_key.lock = CRYPTO_THREAD_lock_new();
     if (ctx->unwrapping_key.lock == NULL)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
+        OSSL_PROVIDER_unload(ctx->default_provider);
         OSSL_LIB_CTX_free(ctx->libctx);
         OPENSSL_free(ctx);
         return OSSL_FAILURE;
@@ -744,6 +749,7 @@ OSSL_STATUS OSSL_provider_init(
     if (parse_provider_config(&ctx->config, handle, get_params_fn) != OSSL_SUCCESS)
     {
         CRYPTO_THREAD_lock_free(ctx->unwrapping_key.lock);
+        OSSL_PROVIDER_unload(ctx->default_provider);
         OSSL_LIB_CTX_free(ctx->libctx);
         OPENSSL_free(ctx);
         return OSSL_FAILURE;
@@ -764,6 +770,7 @@ OSSL_STATUS OSSL_provider_init(
             AZIHSM_API_REVISION_MAX_MINOR
         );
         CRYPTO_THREAD_lock_free(ctx->unwrapping_key.lock);
+        OSSL_PROVIDER_unload(ctx->default_provider);
         OSSL_LIB_CTX_free(ctx->libctx);
         OPENSSL_free(ctx);
         return OSSL_FAILURE;
@@ -776,6 +783,7 @@ OSSL_STATUS OSSL_provider_init(
         ERR_raise(ERR_LIB_PROV, ERR_R_INIT_FAIL);
 
         CRYPTO_THREAD_lock_free(ctx->unwrapping_key.lock);
+        OSSL_PROVIDER_unload(ctx->default_provider);
         OSSL_LIB_CTX_free(ctx->libctx);
         OPENSSL_free(ctx);
         return OSSL_FAILURE;
