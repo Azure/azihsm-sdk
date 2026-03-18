@@ -27,6 +27,10 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: "1.93"
     - name: Install apt packages
       run: |
         sudo apt-get update
@@ -109,12 +113,16 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: "1.93"
 
     - name: Install apt packages
       run: |
         sudo apt-get update
         sudo apt-get install -y --no-install-recommends \
-          build-essential cmake pkg-config libbsd-dev
+          build-essential cmake pkg-config libbsd-dev xxd
 
     - name: Restore Cargo cache
       uses: actions/cache/restore@v5
@@ -126,6 +134,9 @@ jobs:
           ~/.cargo/git/db/
         key: ${{ runner.os }}-cargo-${{ env.CACHE_KEY_ID }}
         fail-on-cache-miss: false
+
+    - name: Install cargo-nextest
+      uses: taiki-e/install-action@nextest
 
     - name: Cache OpenSSL 3.0.3
       id: cache-openssl
@@ -213,6 +224,10 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: "1.93"
     - name: Restore Cargo cache
       id: cargo-cache
       uses: actions/cache/restore@v5
