@@ -556,7 +556,6 @@ fn ecc_pub_props(curve: HsmEccCurve, can_verify: bool, can_derive: bool) -> HsmK
 
 fn unwrap_ecc(
     session: &HsmSession,
-    _curve: HsmEccCurve,
     hash: HsmHashAlgo,
     priv_props: HsmKeyProps,
     pub_props: HsmKeyProps,
@@ -577,13 +576,12 @@ fn unwrap_ecc(
 
 fn expect_unwrap_err(
     session: &HsmSession,
-    curve: HsmEccCurve,
     hash: HsmHashAlgo,
     priv_props: HsmKeyProps,
     pub_props: HsmKeyProps,
     ciphertext: &[u8],
 ) {
-    let result = unwrap_ecc(session, curve, hash, priv_props, pub_props, ciphertext);
+    let result = unwrap_ecc(session, hash, priv_props, pub_props, ciphertext);
     assert!(result.is_err());
 }
 
@@ -682,8 +680,8 @@ fn run_ecc_key_report_test(session: &HsmSession, curve: HsmEccCurve) {
     );
 
     // cleanup
-    HsmKeyManager::delete_key(priv_key).ok();
-    HsmKeyManager::delete_key(pub_key).ok();
+    HsmKeyManager::delete_key(priv_key).expect("Failed to delete private key after report test");
+    HsmKeyManager::delete_key(pub_key).expect("Failed to delete public key after report test");
 }
 
 fn run_ecc_key_unmask_with_derive_test(session: &HsmSession, curve: HsmEccCurve) {
@@ -868,7 +866,8 @@ fn test_ecc_p521_key_unmask_with_derive(session: HsmSession) {
     run_ecc_key_unmask_with_derive_test(&session, HsmEccCurve::P521);
 }
 
-/// Verifies ECC key P256 generation fails when private key incorrectly uses VERIFY without SIGN.
+/// Verifies ECC key P256 generation fails when public key requests VERIFY
+/// but private key does not have SIGN capability.
 #[session_test]
 fn test_ecc_keygen_reject_private_verify_without_sign_p256(session: HsmSession) {
     let priv_key_props = ecc_priv_props(HsmEccCurve::P256, false, true);
@@ -885,8 +884,8 @@ fn test_ecc_keygen_reject_private_verify_without_sign_p256(session: HsmSession) 
     );
 }
 
-/// Verifies ECC key P384 generation fails when private key incorrectly uses VERIFY without SIGN.
-
+/// Verifies ECC key P384 generation fails when public key requests VERIFY
+/// but private key does not have SIGN capability.
 #[session_test]
 fn test_ecc_keygen_reject_private_verify_without_sign_p384(session: HsmSession) {
     let priv_key_props = ecc_priv_props(HsmEccCurve::P384, false, true);
@@ -900,7 +899,8 @@ fn test_ecc_keygen_reject_private_verify_without_sign_p384(session: HsmSession) 
     );
 }
 
-/// Verifies ECC key P521 generation fails when private key incorrectly uses VERIFY without SIGN.
+/// Verifies ECC key P521 generation fails when public key requests VERIFY
+/// but private key does not have SIGN capability.
 #[session_test]
 fn test_ecc_keygen_reject_private_verify_without_sign_p521(session: HsmSession) {
     let priv_key_props = ecc_priv_props(HsmEccCurve::P521, false, true);
@@ -1140,27 +1140,12 @@ fn test_ecc_unmask_reject_corrupted_data(session: HsmSession) {
 
 /// Verifies ECC Key P256 unwrap operation fails when ciphertext is invalid or malformed.
 #[session_test]
-fn test_ecc_unwrap_reject_invalid_ciphertext_p384(session: HsmSession) {
-    let priv_props = ecc_priv_props(HsmEccCurve::P384, true, false);
-    let pub_props = ecc_pub_props(HsmEccCurve::P384, true, false);
-
-    expect_unwrap_err(
-        &session,
-        HsmEccCurve::P384,
-        HsmHashAlgo::Sha384,
-        priv_props,
-        pub_props,
-        &[0u8; 10],
-    );
-}
-#[session_test]
 fn test_ecc_unwrap_reject_invalid_ciphertext_p256(session: HsmSession) {
     let priv_props = ecc_priv_props(HsmEccCurve::P256, true, false);
     let pub_props = ecc_pub_props(HsmEccCurve::P256, true, false);
 
     expect_unwrap_err(
         &session,
-        HsmEccCurve::P256,
         HsmHashAlgo::Sha256,
         priv_props,
         pub_props,
@@ -1168,6 +1153,22 @@ fn test_ecc_unwrap_reject_invalid_ciphertext_p256(session: HsmSession) {
     );
 }
 
+/// Verifies ECC Key P384 unwrap operation fails when ciphertext is invalid or malformed.
+#[session_test]
+fn test_ecc_unwrap_reject_invalid_ciphertext_p384(session: HsmSession) {
+    let priv_props = ecc_priv_props(HsmEccCurve::P384, true, false);
+    let pub_props = ecc_pub_props(HsmEccCurve::P384, true, false);
+
+    expect_unwrap_err(
+        &session,
+        HsmHashAlgo::Sha384,
+        priv_props,
+        pub_props,
+        &[0u8; 10],
+    );
+}
+
+/// Verifies ECC Key P521 unwrap operation fails when ciphertext is invalid or malformed.
 #[session_test]
 fn test_ecc_unwrap_reject_invalid_ciphertext_p521(session: HsmSession) {
     let priv_props = ecc_priv_props(HsmEccCurve::P521, true, false);
@@ -1175,7 +1176,6 @@ fn test_ecc_unwrap_reject_invalid_ciphertext_p521(session: HsmSession) {
 
     expect_unwrap_err(
         &session,
-        HsmEccCurve::P521,
         HsmHashAlgo::Sha512,
         priv_props,
         pub_props,
@@ -1267,7 +1267,6 @@ fn test_ecc_unwrap_reject_private_sign_and_derive_p256(session: HsmSession) {
 
     expect_unwrap_err(
         &session,
-        HsmEccCurve::P256,
         HsmHashAlgo::Sha256,
         priv_props,
         pub_props,
@@ -1283,7 +1282,6 @@ fn test_ecc_unwrap_reject_private_sign_and_derive_p384(session: HsmSession) {
 
     expect_unwrap_err(
         &session,
-        HsmEccCurve::P384,
         HsmHashAlgo::Sha256,
         priv_props,
         pub_props,
@@ -1299,7 +1297,6 @@ fn test_ecc_unwrap_reject_private_sign_and_derive_p521(session: HsmSession) {
 
     expect_unwrap_err(
         &session,
-        HsmEccCurve::P521,
         HsmHashAlgo::Sha512,
         priv_props,
         pub_props,
@@ -1343,14 +1340,7 @@ fn test_ecc_unwrap_reject_empty_ciphertext_p256(session: HsmSession) {
     let priv_props = ecc_priv_props(HsmEccCurve::P256, true, false);
     let pub_props = ecc_pub_props(HsmEccCurve::P256, true, false);
 
-    expect_unwrap_err(
-        &session,
-        HsmEccCurve::P256,
-        HsmHashAlgo::Sha256,
-        priv_props,
-        pub_props,
-        &[],
-    );
+    expect_unwrap_err(&session, HsmHashAlgo::Sha256, priv_props, pub_props, &[]);
 }
 
 /// Verifies ECC key p384 unwrap fails when ciphertext is empty.
@@ -1359,14 +1349,7 @@ fn test_ecc_unwrap_reject_empty_ciphertext_p384(session: HsmSession) {
     let priv_props = ecc_priv_props(HsmEccCurve::P384, true, false);
     let pub_props = ecc_pub_props(HsmEccCurve::P384, true, false);
 
-    expect_unwrap_err(
-        &session,
-        HsmEccCurve::P384,
-        HsmHashAlgo::Sha256,
-        priv_props,
-        pub_props,
-        &[],
-    );
+    expect_unwrap_err(&session, HsmHashAlgo::Sha256, priv_props, pub_props, &[]);
 }
 /// Verifies ECC key p521 unwrap fails when ciphertext is empty.
 #[session_test]
@@ -1374,14 +1357,7 @@ fn test_ecc_unwrap_reject_empty_ciphertext_p521(session: HsmSession) {
     let priv_props = ecc_priv_props(HsmEccCurve::P521, true, false);
     let pub_props = ecc_pub_props(HsmEccCurve::P521, true, false);
 
-    expect_unwrap_err(
-        &session,
-        HsmEccCurve::P521,
-        HsmHashAlgo::Sha512,
-        priv_props,
-        pub_props,
-        &[],
-    );
+    expect_unwrap_err(&session, HsmHashAlgo::Sha512, priv_props, pub_props, &[]);
 }
 
 /// Verifies ECC Key p256 unwrap fails when ciphertext is too small.
@@ -1392,7 +1368,6 @@ fn test_ecc_unwrap_reject_small_ciphertext_p256(session: HsmSession) {
 
     expect_unwrap_err(
         &session,
-        HsmEccCurve::P256,
         HsmHashAlgo::Sha256,
         priv_props,
         pub_props,
@@ -1408,7 +1383,6 @@ fn test_ecc_unwrap_reject_small_ciphertext_p384(session: HsmSession) {
 
     expect_unwrap_err(
         &session,
-        HsmEccCurve::P384,
         HsmHashAlgo::Sha256,
         priv_props,
         pub_props,
@@ -1424,7 +1398,6 @@ fn test_ecc_unwrap_reject_small_ciphertext_p521(session: HsmSession) {
 
     expect_unwrap_err(
         &session,
-        HsmEccCurve::P521,
         HsmHashAlgo::Sha512,
         priv_props,
         pub_props,
@@ -1539,7 +1512,6 @@ fn test_ecc_unwrap_reject_wrong_key_kind(session: HsmSession) {
 
     expect_unwrap_err(
         &session,
-        HsmEccCurve::P256,
         HsmHashAlgo::Sha256,
         priv_props,
         pub_props,
