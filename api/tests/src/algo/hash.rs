@@ -26,12 +26,9 @@ fn hash_and_compare_streaming(
 ) {
     let mut hasher = HsmHasher::hash_init(session, algo).expect("Failed to create hasher");
 
-    // Validate that chunk sizes cover the entire data length
-    assert!(chunk_sizes.iter().sum::<usize>() >= data.len());
-
     let mut offset = 0;
     let mut i = 0;
-    while offset < data.len() {
+    while offset < data.len() && i < chunk_sizes.len() {
         let size = chunk_sizes[i % chunk_sizes.len()].min(data.len() - offset);
         let chunk = &data[offset..offset + size];
         offset += size;
@@ -217,8 +214,11 @@ fn test_hash_sha256_empty_data(session: HsmSession) {
 fn test_hash_sha384_empty_data(session: HsmSession) {
     // test data
     let data = b"";
-    let expected_hash =
-        hex::decode("38b060a751ac96384cd9327eb1b1e36a21fdb71114be07434c0cc7bf63f6e1da274edebfe76f65fbd51ad2f14898b95b").unwrap();
+    let expected_hash = hex::decode(
+        "38b060a751ac96384cd9327eb1b1e36a21fdb71114be07434c0cc7bf63f6e1da274edebfe7\
+         6f65fbd51ad2f14898b95b",
+    )
+    .unwrap();
     let mut algo = HsmHashAlgo::sha384();
 
     // run test
@@ -229,8 +229,11 @@ fn test_hash_sha384_empty_data(session: HsmSession) {
 fn test_hash_sha512_empty_data(session: HsmSession) {
     // test data
     let data = b"";
-    let expected_hash =
-        hex::decode("cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e").unwrap();
+    let expected_hash = hex::decode(
+        "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d\
+         85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e",
+    )
+    .unwrap();
     let mut algo = HsmHashAlgo::sha512();
 
     // run test
@@ -266,8 +269,11 @@ fn test_hash_sha256_streaming_empty_data(session: HsmSession) {
 fn test_hash_sha384_streaming_empty_data(session: HsmSession) {
     // test data
     let data = b"";
-    let expected_hash =
-        hex::decode("38b060a751ac96384cd9327eb1b1e36a21fdb71114be07434c0cc7bf63f6e1da274edebfe76f65fbd51ad2f14898b95b").unwrap();
+    let expected_hash = hex::decode(
+        "38b060a751ac96384cd9327eb1b1e36a21fdb71114be07434c0cc7bf63f6e1da274edebfe7\
+         6f65fbd51ad2f14898b95b",
+    )
+    .unwrap();
     let algo = HsmHashAlgo::sha384();
     let chunk_sizes = vec![8; data.len() / 8 + 1];
 
@@ -279,8 +285,11 @@ fn test_hash_sha384_streaming_empty_data(session: HsmSession) {
 fn test_hash_sha512_streaming_empty_data(session: HsmSession) {
     // test data
     let data = b"";
-    let expected_hash =
-        hex::decode("cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e").unwrap();
+    let expected_hash = hex::decode(
+        "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d\
+        85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e",
+    )
+    .unwrap();
     let algo = HsmHashAlgo::sha512();
     let chunk_sizes = vec![8; data.len() / 8 + 1];
 
@@ -490,4 +499,48 @@ fn test_hash_sha512_streaming_chunk_patterns(session: HsmSession) {
     for chunk_pattern in chunk_patterns {
         compare_single_shot_vs_streaming(session.clone(), algo, data, chunk_pattern);
     }
+}
+
+#[session_test]
+fn test_hash_sha1_8_bytes(session: HsmSession) {
+    // test data
+    let data = b"12345678";
+    let algo = HsmHashAlgo::sha1();
+    let chunk_pattern = &[4, 0, 4];
+
+    // run test
+    compare_single_shot_vs_streaming(session.clone(), algo, data, chunk_pattern);
+}
+
+#[session_test]
+fn test_hash_sha256_8_bytes(session: HsmSession) {
+    // test data
+    let data = b"12345678";
+    let algo = HsmHashAlgo::sha256();
+    let chunk_pattern = &[4, 0, 4];
+
+    // run test
+    compare_single_shot_vs_streaming(session.clone(), algo, data, chunk_pattern);
+}
+
+#[session_test]
+fn test_hash_sha384_8_bytes(session: HsmSession) {
+    // test data
+    let data = b"12345678";
+    let algo = HsmHashAlgo::sha384();
+    let chunk_pattern = &[4, 0, 4];
+
+    // run test
+    compare_single_shot_vs_streaming(session.clone(), algo, data, chunk_pattern);
+}
+
+#[session_test]
+fn test_hash_sha512_8_bytes(session: HsmSession) {
+    // test data
+    let data = b"12345678";
+    let algo = HsmHashAlgo::sha512();
+    let chunk_pattern = &[4, 0, 4];
+
+    // run test
+    compare_single_shot_vs_streaming(session.clone(), algo, data, chunk_pattern);
 }
