@@ -18,6 +18,8 @@
 #include "utils/utils.hpp"
 #include <filesystem>
 
+// This file focuses on ECC sign/verify behavior for single-shot and streaming
+
 class azihsm_ecc_sign_verify : public ::testing::Test
 {
   protected:
@@ -70,7 +72,6 @@ class azihsm_ecc_sign_verify : public ::testing::Test
         const std::vector<const char *> &data_chunks
     )
     {
-        // Streaming sign
         auto_ctx sign_ctx;
         ASSERT_EQ(
             azihsm_crypt_sign_init(&sign_algo, priv_key, sign_ctx.get_ptr()),
@@ -96,7 +97,6 @@ class azihsm_ecc_sign_verify : public ::testing::Test
         ASSERT_EQ(final_err, AZIHSM_STATUS_SUCCESS);
         ASSERT_GT(sig_buf.len, 0);
 
-        // Streaming verify
         auto_ctx verify_ctx;
         ASSERT_EQ(
             azihsm_crypt_verify_init(&sign_algo, pub_key, verify_ctx.get_ptr()),
@@ -142,6 +142,8 @@ struct EcdsaTestParams
     azihsm_algo_id algo_id;
     const char *test_name;
 };
+
+// ==================== Correctness and Curve Coverage ====================
 
 // ECDSA Pre-hashed Sign/Verify Tests (Pre-hashed Message)
 TEST_F(azihsm_ecc_sign_verify, sign_verify_ecdsa_prehashed_all_curves)
@@ -259,6 +261,109 @@ TEST_F(azihsm_ecc_sign_verify, streaming_sign_verify_ecdsa_all_hash_algorithms)
     }
 }
 
+// Ensures single-shot signing/verifying supports binary payloads (including embedded NUL bytes).
+TEST_F(azihsm_ecc_sign_verify, single_shot_binary_payload)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key.get_ptr(),
+            pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        azihsm_algo algo{ .id = AZIHSM_ALGO_ID_ECDSA_SHA256, .params = nullptr, .len = 0 };
+        const std::vector<uint8_t> payload = {
+            0x00,
+            0x01,
+            0x7F,
+            0x80,
+            0xFF,
+            0x10,
+            0x00,
+            0x20,
+            0xAA,
+            0x55,
+        };
+
+        test_single_shot_sign_verify(priv_key.get(), pub_key.get(), algo, payload);
+    });
+}
+
+// Ensures streaming sign/verify handles binary chunks with explicit lengths.
+TEST_F(azihsm_ecc_sign_verify, streaming_binary_payload)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key.get_ptr(),
+            pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        azihsm_algo algo{};
+        algo.id = AZIHSM_ALGO_ID_ECDSA_SHA256;
+        algo.params = nullptr;
+        algo.len = 0;
+
+        const std::vector<std::vector<uint8_t>> chunks = {
+            { 0x00, 0x01, 0x7F },
+            { 0x80, 0xFF, 0x10, 0x00 },
+            { 0x20, 0xAA, 0x55, 0x00, 0x42 },
+        };
+
+        auto_ctx sign_ctx;
+        ASSERT_EQ(azihsm_crypt_sign_init(&algo, priv_key, sign_ctx.get_ptr()), AZIHSM_STATUS_SUCCESS);
+        for (const auto &chunk : chunks)
+        {
+            azihsm_buffer chunk_buf{ const_cast<uint8_t *>(chunk.data()), static_cast<uint32_t>(chunk.size()) };
+            ASSERT_EQ(azihsm_crypt_sign_update(sign_ctx, &chunk_buf), AZIHSM_STATUS_SUCCESS);
+        }
+
+        azihsm_buffer size_probe{ nullptr, 0 };
+        ASSERT_EQ(azihsm_crypt_sign_finish(sign_ctx, &size_probe), AZIHSM_STATUS_BUFFER_TOO_SMALL);
+        ASSERT_GT(size_probe.len, 0u);
+
+        std::vector<uint8_t> signature(size_probe.len, 0x00);
+        azihsm_buffer sig_buf{ signature.data(), static_cast<uint32_t>(signature.size()) };
+        ASSERT_EQ(azihsm_crypt_sign_finish(sign_ctx, &sig_buf), AZIHSM_STATUS_SUCCESS);
+
+        auto_ctx verify_ctx;
+        ASSERT_EQ(azihsm_crypt_verify_init(&algo, pub_key, verify_ctx.get_ptr()), AZIHSM_STATUS_SUCCESS);
+        for (const auto &chunk : chunks)
+        {
+            azihsm_buffer chunk_buf{ const_cast<uint8_t *>(chunk.data()), static_cast<uint32_t>(chunk.size()) };
+            ASSERT_EQ(azihsm_crypt_verify_update(verify_ctx, &chunk_buf), AZIHSM_STATUS_SUCCESS);
+        }
+        ASSERT_EQ(azihsm_crypt_verify_finish(verify_ctx, &sig_buf), AZIHSM_STATUS_SUCCESS);
+
+        auto_ctx verify_fail_ctx;
+        ASSERT_EQ(azihsm_crypt_verify_init(&algo, pub_key, verify_fail_ctx.get_ptr()), AZIHSM_STATUS_SUCCESS);
+        for (size_t idx = 0; idx < chunks.size(); ++idx)
+        {
+            auto modified = chunks[idx];
+            if (idx == 1 && !modified.empty())
+            {
+                modified[1] ^= 0x01;
+            }
+            azihsm_buffer chunk_buf{ modified.data(), static_cast<uint32_t>(modified.size()) };
+            ASSERT_EQ(azihsm_crypt_verify_update(verify_fail_ctx, &chunk_buf), AZIHSM_STATUS_SUCCESS);
+        }
+        ASSERT_EQ(azihsm_crypt_verify_finish(verify_fail_ctx, &sig_buf), AZIHSM_STATUS_INVALID_SIGNATURE);
+    });
+}
+
+// ==================== Malformed Input and Boundary Coverage ====================
+
+// Ensures verification fails when the signature bytes are tampered.
 TEST_F(azihsm_ecc_sign_verify, verify_fails_with_invalid_signature)
 {
     part_list_.for_each_session([&](azihsm_handle session) {
@@ -286,14 +391,14 @@ TEST_F(azihsm_ecc_sign_verify, verify_fails_with_invalid_signature)
         auto sign_err = azihsm_crypt_sign(&algo, priv_key, &hash_buf, &sig_buf);
         ASSERT_EQ(sign_err, AZIHSM_STATUS_SUCCESS);
 
-        // Corrupt signature
         signature[0] ^= 0xFF;
 
         auto verify_err = azihsm_crypt_verify(&algo, pub_key, &hash_buf, &sig_buf);
-        ASSERT_NE(verify_err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(verify_err, AZIHSM_STATUS_INVALID_SIGNATURE);
     });
 }
 
+// Ensures verification fails when verifying the signature against different input data.
 TEST_F(azihsm_ecc_sign_verify, verify_fails_with_wrong_data)
 {
     part_list_.for_each_session([&](azihsm_handle session) {
@@ -326,10 +431,55 @@ TEST_F(azihsm_ecc_sign_verify, verify_fails_with_wrong_data)
         azihsm_buffer wrong_buf{ wrong_hash.data(), static_cast<uint32_t>(wrong_hash.size()) };
 
         auto verify_err = azihsm_crypt_verify(&algo, pub_key, &wrong_buf, &sig_buf);
-        ASSERT_NE(verify_err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(verify_err, AZIHSM_STATUS_INVALID_SIGNATURE);
     });
 }
 
+// Ensures verification fails when signature is checked with a different ECC public key.
+TEST_F(azihsm_ecc_sign_verify, verify_fails_with_wrong_public_key)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto_key priv_key_a;
+        auto_key pub_key_a;
+        auto err_a = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key_a.get_ptr(),
+            pub_key_a.get_ptr()
+        );
+        ASSERT_EQ(err_a, AZIHSM_STATUS_SUCCESS);
+
+        auto_key priv_key_b;
+        auto_key pub_key_b;
+        auto err_b = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key_b.get_ptr(),
+            pub_key_b.get_ptr()
+        );
+        ASSERT_EQ(err_b, AZIHSM_STATUS_SUCCESS);
+
+        std::vector<uint8_t> hash(32, 0x42);
+        azihsm_algo algo{};
+        algo.id = AZIHSM_ALGO_ID_ECDSA;
+        algo.params = nullptr;
+        algo.len = 0;
+
+        std::vector<uint8_t> signature(64);
+        azihsm_buffer hash_buf{ hash.data(), static_cast<uint32_t>(hash.size()) };
+        azihsm_buffer sig_buf{ signature.data(), static_cast<uint32_t>(signature.size()) };
+
+        auto sign_err = azihsm_crypt_sign(&algo, priv_key_a, &hash_buf, &sig_buf);
+        ASSERT_EQ(sign_err, AZIHSM_STATUS_SUCCESS);
+
+        auto verify_err = azihsm_crypt_verify(&algo, pub_key_b, &hash_buf, &sig_buf);
+        ASSERT_EQ(verify_err, AZIHSM_STATUS_INVALID_SIGNATURE);
+    });
+}
+
+// Ensures sign returns buffer-too-small when output signature buffer is undersized.
 TEST_F(azihsm_ecc_sign_verify, sign_buffer_too_small)
 {
     part_list_.for_each_session([&](azihsm_handle session) {
@@ -359,6 +509,612 @@ TEST_F(azihsm_ecc_sign_verify, sign_buffer_too_small)
     });
 }
 
+// Defines behavior for empty single-shot input across hash-and-sign variants.
+TEST_F(azihsm_ecc_sign_verify, single_shot_empty_input)
+{
+    const std::vector<azihsm_algo_id> algos = {
+        AZIHSM_ALGO_ID_ECDSA_SHA1,
+        AZIHSM_ALGO_ID_ECDSA_SHA256,
+        AZIHSM_ALGO_ID_ECDSA_SHA384,
+        AZIHSM_ALGO_ID_ECDSA_SHA512,
+    };
+
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key.get_ptr(),
+            pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        azihsm_buffer empty_buf{ nullptr, 0 };
+
+        for (auto algo_id : algos)
+        {
+            SCOPED_TRACE("algo=" + std::to_string(static_cast<uint32_t>(algo_id)));
+
+            azihsm_algo algo{};
+            algo.id = algo_id;
+            algo.params = nullptr;
+            algo.len = 0;
+
+            azihsm_buffer size_probe{ nullptr, 0 };
+            ASSERT_EQ(
+                azihsm_crypt_sign(&algo, priv_key, &empty_buf, &size_probe),
+                AZIHSM_STATUS_BUFFER_TOO_SMALL
+            );
+            ASSERT_GT(size_probe.len, 0u);
+
+            std::vector<uint8_t> signature(size_probe.len, 0x00);
+            azihsm_buffer sig_buf{ signature.data(), static_cast<uint32_t>(signature.size()) };
+            ASSERT_EQ(azihsm_crypt_sign(&algo, priv_key, &empty_buf, &sig_buf), AZIHSM_STATUS_SUCCESS);
+
+            azihsm_buffer verify_sig_buf{ signature.data(), sig_buf.len };
+            ASSERT_EQ(azihsm_crypt_verify(&algo, pub_key, &empty_buf, &verify_sig_buf), AZIHSM_STATUS_SUCCESS);
+        }
+    });
+}
+
+// Sweeps output signature sizes to check boundary transitions.
+TEST_F(azihsm_ecc_sign_verify, sig_buf_size_sweep)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto run_case = [&](azihsm_ecc_curve curve, azihsm_algo_id algo_id, const std::vector<uint8_t> &input) {
+            auto_key priv_key;
+            auto_key pub_key;
+            auto err = generate_ecc_keypair(session, curve, true, priv_key.get_ptr(), pub_key.get_ptr());
+            ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+            azihsm_algo algo{ .id = algo_id, .params = nullptr, .len = 0 };
+            azihsm_buffer input_buf{ const_cast<uint8_t *>(input.data()), static_cast<uint32_t>(input.size()) };
+
+            azihsm_buffer size_probe{ nullptr, 0 };
+            ASSERT_EQ(azihsm_crypt_sign(&algo, priv_key, &input_buf, &size_probe), AZIHSM_STATUS_BUFFER_TOO_SMALL);
+            const uint32_t required = size_probe.len;
+            ASSERT_GT(required, 0u);
+
+            std::vector<uint32_t> sizes = { 0u, required > 0 ? required - 1 : 0u, required, required + 8 };
+            for (uint32_t size : sizes)
+            {
+                std::vector<uint8_t> out(size > 0 ? size : 1, 0x00);
+                azihsm_buffer sig_buf{ size > 0 ? out.data() : nullptr, size };
+                auto sign_err = azihsm_crypt_sign(&algo, priv_key, &input_buf, &sig_buf);
+                if (size < required)
+                {
+                    ASSERT_EQ(sign_err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+                }
+                else
+                {
+                    ASSERT_EQ(sign_err, AZIHSM_STATUS_SUCCESS);
+                    ASSERT_GT(sig_buf.len, 0u);
+                    ASSERT_LE(sig_buf.len, size);
+                }
+            }
+        };
+
+        run_case(AZIHSM_ECC_CURVE_P256, AZIHSM_ALGO_ID_ECDSA, std::vector<uint8_t>(32, 0xA1));
+        run_case(AZIHSM_ECC_CURVE_P256, AZIHSM_ALGO_ID_ECDSA_SHA256, std::vector<uint8_t>{ 'a', 'b', 'c' });
+        run_case(AZIHSM_ECC_CURVE_P384, AZIHSM_ALGO_ID_ECDSA_SHA384, std::vector<uint8_t>{ 'd', 'e', 'f' });
+        run_case(AZIHSM_ECC_CURVE_P521, AZIHSM_ALGO_ID_ECDSA_SHA512, std::vector<uint8_t>{ 'g', 'h', 'i' });
+    });
+}
+
+// Checks accepted pre-hash lengths and adjacent rejected lengths.
+TEST_F(azihsm_ecc_sign_verify, prehash_input_len_boundaries)
+{
+    const std::vector<azihsm_ecc_curve> curves = {
+        AZIHSM_ECC_CURVE_P256,
+        AZIHSM_ECC_CURVE_P384,
+        AZIHSM_ECC_CURVE_P521,
+    };
+    const std::vector<uint32_t> valid_lengths = { 20, 32, 48, 64 };
+    const std::vector<uint32_t> invalid_lengths = { 19, 21, 31, 33, 47, 49, 63, 65 };
+
+    part_list_.for_each_session([&](azihsm_handle session) {
+        azihsm_algo algo{ .id = AZIHSM_ALGO_ID_ECDSA, .params = nullptr, .len = 0 };
+
+        for (auto curve : curves)
+        {
+            auto_key priv_key;
+            auto_key pub_key;
+            auto err = generate_ecc_keypair(
+                session,
+                curve,
+                true,
+                priv_key.get_ptr(),
+                pub_key.get_ptr()
+            );
+            ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+            for (uint32_t len : valid_lengths)
+            {
+                SCOPED_TRACE(
+                    "curve=" + std::to_string(static_cast<uint32_t>(curve))
+                    + " valid_prehash_len=" + std::to_string(len)
+                );
+
+                std::vector<uint8_t> digest(len, 0x7A);
+                azihsm_buffer digest_buf{ digest.data(), static_cast<uint32_t>(digest.size()) };
+
+                azihsm_buffer size_probe{ nullptr, 0 };
+                ASSERT_EQ(
+                    azihsm_crypt_sign(&algo, priv_key, &digest_buf, &size_probe),
+                    AZIHSM_STATUS_BUFFER_TOO_SMALL
+                );
+                ASSERT_GT(size_probe.len, 0u);
+
+                std::vector<uint8_t> signature(size_probe.len, 0x00);
+                azihsm_buffer sig_buf{ signature.data(), static_cast<uint32_t>(signature.size()) };
+                ASSERT_EQ(azihsm_crypt_sign(&algo, priv_key, &digest_buf, &sig_buf), AZIHSM_STATUS_SUCCESS);
+
+                azihsm_buffer verify_sig_buf{ signature.data(), sig_buf.len };
+                ASSERT_EQ(azihsm_crypt_verify(&algo, pub_key, &digest_buf, &verify_sig_buf), AZIHSM_STATUS_SUCCESS);
+            }
+
+            for (uint32_t len : invalid_lengths)
+            {
+                SCOPED_TRACE(
+                    "curve=" + std::to_string(static_cast<uint32_t>(curve))
+                    + " prehash_len=" + std::to_string(len)
+                );
+
+                std::vector<uint8_t> digest(len, 0x7A);
+                azihsm_buffer digest_buf{ digest.data(), static_cast<uint32_t>(digest.size()) };
+
+                azihsm_buffer size_probe{ nullptr, 0 };
+                auto probe_err = azihsm_crypt_sign(&algo, priv_key, &digest_buf, &size_probe);
+                if (probe_err == AZIHSM_STATUS_BUFFER_TOO_SMALL)
+                {
+                    ASSERT_GT(size_probe.len, 0u);
+                    std::vector<uint8_t> signature(size_probe.len, 0x00);
+                    azihsm_buffer sig_buf{ signature.data(), static_cast<uint32_t>(signature.size()) };
+                    ASSERT_EQ(
+                        azihsm_crypt_sign(&algo, priv_key, &digest_buf, &sig_buf),
+                        AZIHSM_STATUS_INVALID_ARGUMENT
+                    );
+                }
+                else
+                {
+                    ASSERT_EQ(probe_err, AZIHSM_STATUS_INVALID_ARGUMENT);
+                }
+            }
+        }
+    });
+}
+
+// Runs a broader pre-hash length sweep across many sizes.
+TEST_F(azihsm_ecc_sign_verify, prehash_input_len_sweep)
+{
+    const std::vector<azihsm_ecc_curve> curves = {
+        AZIHSM_ECC_CURVE_P256,
+        AZIHSM_ECC_CURVE_P384,
+        AZIHSM_ECC_CURVE_P521,
+    };
+
+    // Mixes tiny, common digest, boundary-adjacent, and overlong sizes to catch
+    // off-by-one and length-handling regressions in pre-hashed ECDSA paths.
+    const std::vector<uint32_t> lengths = {
+        1,
+        2,
+        7,
+        16,
+        20,
+        28,
+        31,
+        32,
+        33,
+        47,
+        48,
+        49,
+        64,
+        66,
+        80,
+        96,
+        1024,
+        4096,
+    };
+    const auto is_valid_prehash_len = [](uint32_t len) {
+        return len == 20 || len == 32 || len == 48 || len == 64;
+    };
+
+    part_list_.for_each_session([&](azihsm_handle session) {
+        azihsm_algo algo{ .id = AZIHSM_ALGO_ID_ECDSA, .params = nullptr, .len = 0 };
+
+        for (auto curve : curves)
+        {
+            auto_key priv_key;
+            auto_key pub_key;
+            auto err = generate_ecc_keypair(session, curve, true, priv_key.get_ptr(), pub_key.get_ptr());
+            ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+            for (uint32_t len : lengths)
+            {
+                SCOPED_TRACE(
+                    "curve=" + std::to_string(static_cast<uint32_t>(curve))
+                    + " prehash_len=" + std::to_string(len)
+                );
+
+                std::vector<uint8_t> digest(len, static_cast<uint8_t>((len * 13) & 0xFF));
+                azihsm_buffer digest_buf{ digest.data(), static_cast<uint32_t>(digest.size()) };
+
+                azihsm_buffer size_probe{ nullptr, 0 };
+                auto probe_err = azihsm_crypt_sign(&algo, priv_key, &digest_buf, &size_probe);
+
+                if (is_valid_prehash_len(len))
+                {
+                    ASSERT_EQ(probe_err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+                    ASSERT_GT(size_probe.len, 0u);
+
+                    std::vector<uint8_t> signature(size_probe.len, 0x00);
+                    azihsm_buffer sig_buf{ signature.data(), static_cast<uint32_t>(signature.size()) };
+                    ASSERT_EQ(azihsm_crypt_sign(&algo, priv_key, &digest_buf, &sig_buf), AZIHSM_STATUS_SUCCESS);
+
+                    azihsm_buffer verify_sig_buf{ signature.data(), sig_buf.len };
+                    ASSERT_EQ(azihsm_crypt_verify(&algo, pub_key, &digest_buf, &verify_sig_buf), AZIHSM_STATUS_SUCCESS);
+                }
+                else
+                {
+                    if (probe_err == AZIHSM_STATUS_BUFFER_TOO_SMALL)
+                    {
+                        ASSERT_GT(size_probe.len, 0u);
+                        std::vector<uint8_t> signature(size_probe.len, 0x00);
+                        azihsm_buffer sig_buf{ signature.data(), static_cast<uint32_t>(signature.size()) };
+                        ASSERT_EQ(
+                            azihsm_crypt_sign(&algo, priv_key, &digest_buf, &sig_buf),
+                            AZIHSM_STATUS_INVALID_ARGUMENT
+                        );
+                    }
+                    else
+                    {
+                        ASSERT_EQ(probe_err, AZIHSM_STATUS_INVALID_ARGUMENT);
+                    }
+                }
+            }
+        }
+    });
+}
+
+// Defines rejection behavior for zero-length pre-hash input.
+// Keep this separate from the generic length sweep: this case intentionally uses
+// the explicit empty-buffer shape (ptr == nullptr, len == 0).
+TEST_F(azihsm_ecc_sign_verify, prehash_input_len_zero)
+{
+    const std::vector<azihsm_ecc_curve> curves = {
+        AZIHSM_ECC_CURVE_P256,
+        AZIHSM_ECC_CURVE_P384,
+        AZIHSM_ECC_CURVE_P521,
+    };
+
+    part_list_.for_each_session([&](azihsm_handle session) {
+        azihsm_algo algo{ .id = AZIHSM_ALGO_ID_ECDSA, .params = nullptr, .len = 0 };
+        azihsm_buffer empty_digest{ nullptr, 0 };
+
+        for (auto curve : curves)
+        {
+            SCOPED_TRACE("curve=" + std::to_string(static_cast<uint32_t>(curve)));
+
+            auto_key priv_key;
+            auto_key pub_key;
+            auto err = generate_ecc_keypair(session, curve, true, priv_key.get_ptr(), pub_key.get_ptr());
+            ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+            azihsm_buffer size_probe{ nullptr, 0 };
+            auto probe_err = azihsm_crypt_sign(&algo, priv_key, &empty_digest, &size_probe);
+            if (probe_err == AZIHSM_STATUS_BUFFER_TOO_SMALL)
+            {
+                ASSERT_GT(size_probe.len, 0u);
+                std::vector<uint8_t> signature(size_probe.len, 0x00);
+                azihsm_buffer sig_buf{ signature.data(), static_cast<uint32_t>(signature.size()) };
+                ASSERT_EQ(
+                    azihsm_crypt_sign(&algo, priv_key, &empty_digest, &sig_buf),
+                    AZIHSM_STATUS_INVALID_ARGUMENT
+                );
+            }
+            else
+            {
+                ASSERT_EQ(probe_err, AZIHSM_STATUS_INVALID_ARGUMENT);
+            }
+        }
+    });
+}
+
+// Verifies behavior for truncated and oversized signatures.
+TEST_F(azihsm_ecc_sign_verify, signature_len_boundaries)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key.get_ptr(),
+            pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        azihsm_algo algo{};
+        algo.id = AZIHSM_ALGO_ID_ECDSA;
+        algo.params = nullptr;
+        algo.len = 0;
+
+        std::vector<uint8_t> hash(32, 0x99);
+        azihsm_buffer hash_buf{ hash.data(), static_cast<uint32_t>(hash.size()) };
+
+        azihsm_buffer size_probe{ nullptr, 0 };
+        ASSERT_EQ(azihsm_crypt_sign(&algo, priv_key, &hash_buf, &size_probe), AZIHSM_STATUS_BUFFER_TOO_SMALL);
+
+        std::vector<uint8_t> sig(size_probe.len, 0x00);
+        azihsm_buffer sig_buf{ sig.data(), static_cast<uint32_t>(sig.size()) };
+        ASSERT_EQ(azihsm_crypt_sign(&algo, priv_key, &hash_buf, &sig_buf), AZIHSM_STATUS_SUCCESS);
+
+        azihsm_buffer full_sig{ sig.data(), sig_buf.len };
+        ASSERT_EQ(azihsm_crypt_verify(&algo, pub_key, &hash_buf, &full_sig), AZIHSM_STATUS_SUCCESS);
+
+        if (sig_buf.len > 0)
+        {
+            azihsm_buffer truncated_sig{ sig.data(), sig_buf.len - 1 };
+            ASSERT_NE(azihsm_crypt_verify(&algo, pub_key, &hash_buf, &truncated_sig), AZIHSM_STATUS_SUCCESS);
+        }
+
+        std::vector<uint8_t> extended = sig;
+        extended.push_back(0x00);
+        azihsm_buffer extended_sig{ extended.data(), static_cast<uint32_t>(extended.size()) };
+        ASSERT_NE(azihsm_crypt_verify(&algo, pub_key, &hash_buf, &extended_sig), AZIHSM_STATUS_SUCCESS);
+
+        azihsm_buffer empty_sig{ nullptr, 0 };
+        ASSERT_NE(azihsm_crypt_verify(&algo, pub_key, &hash_buf, &empty_sig), AZIHSM_STATUS_SUCCESS);
+    });
+}
+
+// Runs full algorithm/curve compatibility matrix.
+TEST_F(azihsm_ecc_sign_verify, algo_curve_matrix)
+{
+    const std::vector<azihsm_ecc_curve> curves = {
+        AZIHSM_ECC_CURVE_P256,
+        AZIHSM_ECC_CURVE_P384,
+        AZIHSM_ECC_CURVE_P521,
+    };
+    const std::vector<azihsm_algo_id> algos = {
+        AZIHSM_ALGO_ID_ECDSA_SHA1,
+        AZIHSM_ALGO_ID_ECDSA_SHA256,
+        AZIHSM_ALGO_ID_ECDSA_SHA384,
+        AZIHSM_ALGO_ID_ECDSA_SHA512,
+    };
+
+    part_list_.for_each_session([&](azihsm_handle session) {
+        for (auto curve : curves)
+        {
+            auto_key priv_key;
+            auto_key pub_key;
+            auto err = generate_ecc_keypair(session, curve, true, priv_key.get_ptr(), pub_key.get_ptr());
+            ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+            for (auto algo_id : algos)
+            {
+                azihsm_algo algo{ .id = algo_id, .params = nullptr, .len = 0 };
+                const std::vector<uint8_t> data = { 'm', 'a', 't', 'r', 'i', 'x' };
+                test_single_shot_sign_verify(priv_key.get(), pub_key.get(), algo, data);
+            }
+        }
+    });
+}
+
+// Verifies many kinds of signature corruption are rejected.
+TEST_F(azihsm_ecc_sign_verify, sig_mutation_sweep)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key.get_ptr(),
+            pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        azihsm_algo algo{};
+        algo.id = AZIHSM_ALGO_ID_ECDSA;
+        algo.params = nullptr;
+        algo.len = 0;
+
+        std::vector<uint8_t> hash(32, 0xC3);
+        azihsm_buffer hash_buf{ hash.data(), static_cast<uint32_t>(hash.size()) };
+
+        azihsm_buffer size_probe{ nullptr, 0 };
+        ASSERT_EQ(azihsm_crypt_sign(&algo, priv_key, &hash_buf, &size_probe), AZIHSM_STATUS_BUFFER_TOO_SMALL);
+
+        std::vector<uint8_t> sig(size_probe.len, 0x00);
+        azihsm_buffer sig_buf{ sig.data(), static_cast<uint32_t>(sig.size()) };
+        ASSERT_EQ(azihsm_crypt_sign(&algo, priv_key, &hash_buf, &sig_buf), AZIHSM_STATUS_SUCCESS);
+
+        std::vector<size_t> mutate_indices = {
+            0,
+            sig_buf.len / 2,
+            sig_buf.len > 0 ? sig_buf.len - 1 : 0
+        };
+
+        for (size_t idx : mutate_indices)
+        {
+            if (idx >= sig.size())
+            {
+                continue;
+            }
+
+            std::vector<uint8_t> mutated = sig;
+            mutated[idx] ^= 0x5A;
+            azihsm_buffer mutated_buf{ mutated.data(), static_cast<uint32_t>(sig_buf.len) };
+            ASSERT_NE(azihsm_crypt_verify(&algo, pub_key, &hash_buf, &mutated_buf), AZIHSM_STATUS_SUCCESS);
+        }
+    });
+}
+
+// Expands hash-and-sign matrix for single-shot and streaming across all hash algorithms.
+TEST_F(azihsm_ecc_sign_verify, hash_algo_curve_matrix)
+{
+    const std::vector<azihsm_ecc_curve> curves = {
+        AZIHSM_ECC_CURVE_P256,
+        AZIHSM_ECC_CURVE_P384,
+        AZIHSM_ECC_CURVE_P521,
+    };
+    const std::vector<azihsm_algo_id> algos = {
+        AZIHSM_ALGO_ID_ECDSA_SHA1,
+        AZIHSM_ALGO_ID_ECDSA_SHA256,
+        AZIHSM_ALGO_ID_ECDSA_SHA384,
+        AZIHSM_ALGO_ID_ECDSA_SHA512,
+    };
+
+    part_list_.for_each_session([&](azihsm_handle session) {
+        for (auto curve : curves)
+        {
+            auto_key priv_key;
+            auto_key pub_key;
+            auto err = generate_ecc_keypair(session, curve, true, priv_key.get_ptr(), pub_key.get_ptr());
+            ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+            for (auto algo_id : algos)
+            {
+                SCOPED_TRACE(
+                    "curve=" + std::to_string(static_cast<uint32_t>(curve))
+                    + " algo=" + std::to_string(static_cast<uint32_t>(algo_id))
+                );
+
+                azihsm_algo algo{};
+                algo.id = algo_id;
+                algo.params = nullptr;
+                algo.len = 0;
+
+                const std::vector<uint8_t> data = { 'h', 'a', 's', 'h', '-', 'm', 'a', 't', 'r', 'i', 'x' };
+                test_single_shot_sign_verify(priv_key.get(), pub_key.get(), algo, data);
+
+                const std::vector<const char *> chunks = { "hash", "-", "stream" };
+                test_streaming_sign_verify(priv_key.get(), pub_key.get(), algo, chunks);
+            }
+        }
+    });
+}
+
+// Confirms each hash-and-sign ECDSA variant works for both single-shot and streaming.
+TEST_F(azihsm_ecc_sign_verify, hash_algo_happy_paths)
+{
+    const std::vector<azihsm_algo_id> algos = {
+        AZIHSM_ALGO_ID_ECDSA_SHA1,
+        AZIHSM_ALGO_ID_ECDSA_SHA256,
+        AZIHSM_ALGO_ID_ECDSA_SHA384,
+        AZIHSM_ALGO_ID_ECDSA_SHA512,
+    };
+
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key.get_ptr(),
+            pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        for (auto algo_id : algos)
+        {
+            SCOPED_TRACE("algo=" + std::to_string(static_cast<uint32_t>(algo_id)));
+
+            azihsm_algo algo{};
+            algo.id = algo_id;
+            algo.params = nullptr;
+            algo.len = 0;
+
+            std::vector<uint8_t> message = {
+                'E', 'C', 'D', 'S', 'A', '-', 'h', 'a', 's', 'h', '-', 't', 'e', 's', 't'
+            };
+            test_single_shot_sign_verify(priv_key.get(), pub_key.get(), algo, message);
+
+            const std::vector<const char *> chunks = { "ECDSA ", "hash ", "stream" };
+            test_streaming_sign_verify(priv_key.get(), pub_key.get(), algo, chunks);
+        }
+    });
+}
+
+// Confirms all hash-and-sign ECDSA variants return expected errors for bad pointers, handles, and buffers.
+TEST_F(azihsm_ecc_sign_verify, hash_algo_expected_statuses)
+{
+    const std::vector<azihsm_algo_id> algos = {
+        AZIHSM_ALGO_ID_ECDSA_SHA1,
+        AZIHSM_ALGO_ID_ECDSA_SHA256,
+        AZIHSM_ALGO_ID_ECDSA_SHA384,
+        AZIHSM_ALGO_ID_ECDSA_SHA512,
+    };
+
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key.get_ptr(),
+            pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        std::vector<uint8_t> message = { 'S', 'H', 'A', '1' };
+        std::vector<uint8_t> signature(64);
+        azihsm_buffer msg_buf{ message.data(), static_cast<uint32_t>(message.size()) };
+        azihsm_buffer sig_buf{ signature.data(), static_cast<uint32_t>(signature.size()) };
+
+        azihsm_buffer bad_msg_buf{ nullptr, 1 };
+        azihsm_buffer bad_sig_buf{ nullptr, 1 };
+
+        for (auto algo_id : algos)
+        {
+            SCOPED_TRACE("algo=" + std::to_string(static_cast<uint32_t>(algo_id)));
+
+            azihsm_algo algo{};
+            algo.id = algo_id;
+            algo.params = nullptr;
+            algo.len = 0;
+
+            ASSERT_EQ(
+                azihsm_crypt_sign(nullptr, priv_key, &msg_buf, &sig_buf),
+                AZIHSM_STATUS_INVALID_ARGUMENT
+            );
+            ASSERT_EQ(
+                azihsm_crypt_verify(nullptr, pub_key, &msg_buf, &sig_buf),
+                AZIHSM_STATUS_INVALID_ARGUMENT
+            );
+
+            ASSERT_EQ(
+                azihsm_crypt_sign(&algo, 0xDEADBEEF, &msg_buf, &sig_buf),
+                AZIHSM_STATUS_INVALID_HANDLE
+            );
+            ASSERT_EQ(
+                azihsm_crypt_verify(&algo, 0xDEADBEEF, &msg_buf, &sig_buf),
+                AZIHSM_STATUS_INVALID_HANDLE
+            );
+
+            // Invalid buffer shape: null pointer with non-zero length.
+            ASSERT_EQ(
+                azihsm_crypt_sign(&algo, priv_key, &bad_msg_buf, &sig_buf),
+                AZIHSM_STATUS_INVALID_ARGUMENT
+            );
+            ASSERT_EQ(
+                azihsm_crypt_verify(&algo, pub_key, &msg_buf, &bad_sig_buf),
+                AZIHSM_STATUS_INVALID_ARGUMENT
+            );
+        }
+    });
+}
+
+// ==================== Argument Validation and API Behavior ====================
+
+// Ensures sign rejects a null algorithm pointer.
 TEST_F(azihsm_ecc_sign_verify, sign_null_algorithm)
 {
     part_list_.for_each_session([&](azihsm_handle session) {
@@ -383,6 +1139,7 @@ TEST_F(azihsm_ecc_sign_verify, sign_null_algorithm)
     });
 }
 
+// Ensures sign rejects an invalid key handle.
 TEST_F(azihsm_ecc_sign_verify, sign_invalid_key_handle)
 {
     std::vector<uint8_t> hash(32, 0x42);
@@ -400,6 +1157,7 @@ TEST_F(azihsm_ecc_sign_verify, sign_invalid_key_handle)
     ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
 }
 
+// Ensures sign rejects an unsupported algorithm identifier.
 TEST_F(azihsm_ecc_sign_verify, sign_unsupported_algorithm)
 {
     part_list_.for_each_session([&](azihsm_handle session) {
@@ -429,6 +1187,7 @@ TEST_F(azihsm_ecc_sign_verify, sign_unsupported_algorithm)
     });
 }
 
+// Ensures sign fails when a non-ECC key is used with ECDSA.
 TEST_F(azihsm_ecc_sign_verify, wrong_key_type_for_sign)
 {
     part_list_.for_each_session([&](azihsm_handle session) {
@@ -454,6 +1213,7 @@ TEST_F(azihsm_ecc_sign_verify, wrong_key_type_for_sign)
     });
 }
 
+// Ensures verify fails when a non-ECC public key is used.
 TEST_F(azihsm_ecc_sign_verify, wrong_key_type_for_verify)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -481,7 +1241,6 @@ TEST_F(azihsm_ecc_sign_verify, wrong_key_type_for_verify)
         auto sign_err = azihsm_crypt_sign(&algo, priv_key, &hash_buf, &sig_buf);
         ASSERT_EQ(sign_err, AZIHSM_STATUS_SUCCESS);
 
-        // Generate RSA key for verification
         auto_key rsa_priv_key;
         auto_key rsa_pub_key;
         auto rsa_err =
@@ -493,6 +1252,344 @@ TEST_F(azihsm_ecc_sign_verify, wrong_key_type_for_verify)
     });
 }
 
+// Ensures single-shot APIs reject null required pointers.
+TEST_F(azihsm_ecc_sign_verify, single_shot_null_ptrs)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key.get_ptr(),
+            pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        std::vector<uint8_t> hash(32, 0x42);
+        std::vector<uint8_t> signature(64);
+
+        azihsm_algo algo{};
+        algo.id = AZIHSM_ALGO_ID_ECDSA;
+        algo.params = nullptr;
+        algo.len = 0;
+
+        azihsm_buffer hash_buf{ hash.data(), static_cast<uint32_t>(hash.size()) };
+        azihsm_buffer sig_buf{ signature.data(), static_cast<uint32_t>(signature.size()) };
+
+        ASSERT_EQ(
+            azihsm_crypt_sign(&algo, priv_key, nullptr, &sig_buf),
+            AZIHSM_STATUS_INVALID_ARGUMENT
+        );
+        ASSERT_EQ(
+            azihsm_crypt_sign(&algo, priv_key, &hash_buf, nullptr),
+            AZIHSM_STATUS_INVALID_ARGUMENT
+        );
+
+        // Produce a valid signature once so verify() pointer checks are isolated.
+        ASSERT_EQ(azihsm_crypt_sign(&algo, priv_key, &hash_buf, &sig_buf), AZIHSM_STATUS_SUCCESS);
+
+        ASSERT_EQ(
+            azihsm_crypt_verify(&algo, pub_key, nullptr, &sig_buf),
+            AZIHSM_STATUS_INVALID_ARGUMENT
+        );
+        ASSERT_EQ(
+            azihsm_crypt_verify(&algo, pub_key, &hash_buf, nullptr),
+            AZIHSM_STATUS_INVALID_ARGUMENT
+        );
+    });
+}
+
+// Ensures single-shot APIs reject invalid buffer shape (null ptr with non-zero length).
+TEST_F(azihsm_ecc_sign_verify, single_shot_invalid_buffers)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key.get_ptr(),
+            pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        std::vector<uint8_t> hash(32, 0x42);
+        std::vector<uint8_t> signature(64);
+
+        azihsm_algo algo{};
+        algo.id = AZIHSM_ALGO_ID_ECDSA;
+        algo.params = nullptr;
+        algo.len = 0;
+
+        azihsm_buffer hash_buf{ hash.data(), static_cast<uint32_t>(hash.size()) };
+        azihsm_buffer sig_buf{ signature.data(), static_cast<uint32_t>(signature.size()) };
+
+        // Invalid shape means ptr == nullptr while len > 0.
+        azihsm_buffer bad_input{ nullptr, 1 };
+        azihsm_buffer bad_output{ nullptr, 64 };
+
+        ASSERT_EQ(
+            azihsm_crypt_sign(&algo, priv_key, &bad_input, &sig_buf),
+            AZIHSM_STATUS_INVALID_ARGUMENT
+        );
+        ASSERT_EQ(
+            azihsm_crypt_sign(&algo, priv_key, &hash_buf, &bad_output),
+            AZIHSM_STATUS_INVALID_ARGUMENT
+        );
+
+        ASSERT_EQ(azihsm_crypt_sign(&algo, priv_key, &hash_buf, &sig_buf), AZIHSM_STATUS_SUCCESS);
+
+        ASSERT_EQ(
+            azihsm_crypt_verify(&algo, pub_key, &bad_input, &sig_buf),
+            AZIHSM_STATUS_INVALID_ARGUMENT
+        );
+        ASSERT_EQ(
+            azihsm_crypt_verify(&algo, pub_key, &hash_buf, &bad_output),
+            AZIHSM_STATUS_INVALID_ARGUMENT
+        );
+    });
+}
+
+// Ensures verify rejects a null algorithm pointer.
+TEST_F(azihsm_ecc_sign_verify, verify_null_algo)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key.get_ptr(),
+            pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        std::vector<uint8_t> hash(32, 0x42);
+        std::vector<uint8_t> signature(64);
+
+        azihsm_algo algo{};
+        algo.id = AZIHSM_ALGO_ID_ECDSA;
+        algo.params = nullptr;
+        algo.len = 0;
+
+        azihsm_buffer hash_buf{ hash.data(), static_cast<uint32_t>(hash.size()) };
+        azihsm_buffer sig_buf{ signature.data(), static_cast<uint32_t>(signature.size()) };
+        ASSERT_EQ(azihsm_crypt_sign(&algo, priv_key, &hash_buf, &sig_buf), AZIHSM_STATUS_SUCCESS);
+
+        ASSERT_EQ(
+            azihsm_crypt_verify(nullptr, pub_key, &hash_buf, &sig_buf),
+            AZIHSM_STATUS_INVALID_ARGUMENT
+        );
+    });
+}
+
+// Ensures verify rejects an invalid key handle.
+TEST_F(azihsm_ecc_sign_verify, verify_invalid_handle)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key.get_ptr(),
+            pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        std::vector<uint8_t> hash(32, 0x42);
+        std::vector<uint8_t> signature(64);
+
+        azihsm_algo algo{};
+        algo.id = AZIHSM_ALGO_ID_ECDSA;
+        algo.params = nullptr;
+        algo.len = 0;
+
+        azihsm_buffer hash_buf{ hash.data(), static_cast<uint32_t>(hash.size()) };
+        azihsm_buffer sig_buf{ signature.data(), static_cast<uint32_t>(signature.size()) };
+        ASSERT_EQ(azihsm_crypt_sign(&algo, priv_key, &hash_buf, &sig_buf), AZIHSM_STATUS_SUCCESS);
+
+        ASSERT_EQ(
+            azihsm_crypt_verify(&algo, 0xDEADBEEF, &hash_buf, &sig_buf),
+            AZIHSM_STATUS_INVALID_HANDLE
+        );
+    });
+}
+
+// Ensures verify rejects unsupported algorithm identifiers.
+TEST_F(azihsm_ecc_sign_verify, verify_unsupported_algo)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key.get_ptr(),
+            pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        std::vector<uint8_t> hash(32, 0x42);
+
+        azihsm_algo sign_algo{};
+        sign_algo.id = AZIHSM_ALGO_ID_ECDSA;
+        sign_algo.params = nullptr;
+        sign_algo.len = 0;
+
+        std::vector<uint8_t> signature(64);
+        azihsm_buffer hash_buf{ hash.data(), static_cast<uint32_t>(hash.size()) };
+        azihsm_buffer sig_buf{ signature.data(), static_cast<uint32_t>(signature.size()) };
+        ASSERT_EQ(
+            azihsm_crypt_sign(&sign_algo, priv_key, &hash_buf, &sig_buf),
+            AZIHSM_STATUS_SUCCESS
+        );
+
+        azihsm_algo invalid_algo{};
+        invalid_algo.id = static_cast<azihsm_algo_id>(0xFFFFFFFF);
+        invalid_algo.params = nullptr;
+        invalid_algo.len = 0;
+
+        ASSERT_EQ(
+            azihsm_crypt_verify(&invalid_algo, pub_key, &hash_buf, &sig_buf),
+            AZIHSM_STATUS_UNSUPPORTED_ALGORITHM
+        );
+    });
+}
+
+// Checks streaming init accepts only the correct ECC key class for sign vs verify.
+TEST_F(azihsm_ecc_sign_verify, init_key_type_matrix)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key.get_ptr(),
+            pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        auto_key rsa_priv_key;
+        auto_key rsa_pub_key;
+        auto rsa_err =
+            generate_rsa_unwrapping_keypair(session, rsa_priv_key.get_ptr(), rsa_pub_key.get_ptr());
+        ASSERT_EQ(rsa_err, AZIHSM_STATUS_SUCCESS);
+
+        azihsm_algo algo{};
+        algo.id = AZIHSM_ALGO_ID_ECDSA_SHA256;
+        algo.params = nullptr;
+        algo.len = 0;
+
+        azihsm_handle ctx = 0;
+
+        // Correct key classes for streaming operations.
+        ASSERT_EQ(azihsm_crypt_sign_init(&algo, priv_key, &ctx), AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(azihsm_free_ctx_handle(ctx), AZIHSM_STATUS_SUCCESS);
+        ctx = 0;
+        ASSERT_EQ(azihsm_crypt_verify_init(&algo, pub_key, &ctx), AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(azihsm_free_ctx_handle(ctx), AZIHSM_STATUS_SUCCESS);
+
+        // Wrong key classes should be rejected by key-type lookup.
+        ASSERT_EQ(azihsm_crypt_sign_init(&algo, pub_key, &ctx), AZIHSM_STATUS_INVALID_HANDLE);
+        ASSERT_EQ(azihsm_crypt_verify_init(&algo, priv_key, &ctx), AZIHSM_STATUS_INVALID_HANDLE);
+        ASSERT_EQ(azihsm_crypt_sign_init(&algo, rsa_priv_key, &ctx), AZIHSM_STATUS_INVALID_HANDLE);
+        ASSERT_EQ(azihsm_crypt_verify_init(&algo, rsa_pub_key, &ctx), AZIHSM_STATUS_INVALID_HANDLE);
+    });
+}
+
+// Checks that sign() returns the exact expected error code for bad inputs.
+TEST_F(azihsm_ecc_sign_verify, sign_expected_statuses)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key.get_ptr(),
+            pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        azihsm_algo algo{};
+        algo.id = AZIHSM_ALGO_ID_ECDSA;
+        algo.params = nullptr;
+        algo.len = 0;
+
+        std::vector<uint8_t> hash(32, 0x5A);
+        std::vector<uint8_t> sig(64, 0x00);
+        azihsm_buffer hash_buf{ hash.data(), static_cast<uint32_t>(hash.size()) };
+        azihsm_buffer sig_buf{ sig.data(), static_cast<uint32_t>(sig.size()) };
+
+        azihsm_buffer bad_hash{ nullptr, 1 };
+        azihsm_buffer bad_sig{ nullptr, 1 };
+
+        ASSERT_EQ(azihsm_crypt_sign(nullptr, priv_key, &hash_buf, &sig_buf), AZIHSM_STATUS_INVALID_ARGUMENT);
+        ASSERT_EQ(azihsm_crypt_sign(&algo, 0xDEADBEEF, &hash_buf, &sig_buf), AZIHSM_STATUS_INVALID_HANDLE);
+        ASSERT_EQ(azihsm_crypt_sign(&algo, priv_key, &bad_hash, &sig_buf), AZIHSM_STATUS_INVALID_ARGUMENT);
+        ASSERT_EQ(azihsm_crypt_sign(&algo, priv_key, &hash_buf, &bad_sig), AZIHSM_STATUS_INVALID_ARGUMENT);
+
+        std::vector<uint8_t> too_small_sig(8, 0x00);
+        azihsm_buffer too_small_sig_buf{ too_small_sig.data(), static_cast<uint32_t>(too_small_sig.size()) };
+        ASSERT_EQ(azihsm_crypt_sign(&algo, priv_key, &hash_buf, &too_small_sig_buf), AZIHSM_STATUS_BUFFER_TOO_SMALL);
+    });
+}
+
+// Checks that verify() returns the exact expected error code for bad inputs.
+TEST_F(azihsm_ecc_sign_verify, verify_expected_statuses)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key.get_ptr(),
+            pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        azihsm_algo algo{};
+        algo.id = AZIHSM_ALGO_ID_ECDSA;
+        algo.params = nullptr;
+        algo.len = 0;
+
+        std::vector<uint8_t> hash(32, 0x21);
+        std::vector<uint8_t> sig(64, 0x00);
+        azihsm_buffer hash_buf{ hash.data(), static_cast<uint32_t>(hash.size()) };
+        azihsm_buffer sig_buf{ sig.data(), static_cast<uint32_t>(sig.size()) };
+        ASSERT_EQ(azihsm_crypt_sign(&algo, priv_key, &hash_buf, &sig_buf), AZIHSM_STATUS_SUCCESS);
+
+        azihsm_buffer bad_hash{ nullptr, 1 };
+        azihsm_buffer bad_sig{ nullptr, 1 };
+
+        ASSERT_EQ(azihsm_crypt_verify(nullptr, pub_key, &hash_buf, &sig_buf), AZIHSM_STATUS_INVALID_ARGUMENT);
+        ASSERT_EQ(azihsm_crypt_verify(&algo, 0xDEADBEEF, &hash_buf, &sig_buf), AZIHSM_STATUS_INVALID_HANDLE);
+        ASSERT_EQ(azihsm_crypt_verify(&algo, pub_key, &bad_hash, &sig_buf), AZIHSM_STATUS_INVALID_ARGUMENT);
+        ASSERT_EQ(azihsm_crypt_verify(&algo, pub_key, &hash_buf, &bad_sig), AZIHSM_STATUS_INVALID_ARGUMENT);
+
+        azihsm_algo bad_algo{};
+        bad_algo.id = static_cast<azihsm_algo_id>(0xFFFFFFFF);
+        bad_algo.params = nullptr;
+        bad_algo.len = 0;
+        ASSERT_EQ(azihsm_crypt_verify(&bad_algo, pub_key, &hash_buf, &sig_buf), AZIHSM_STATUS_UNSUPPORTED_ALGORITHM);
+    });
+}
+
+// ==================== Streaming Lifecycle and Context Rules ====================
+
+// Ensures streaming verify fails when the final signature is tampered.
 TEST_F(azihsm_ecc_sign_verify, streaming_verify_fails_with_invalid_signature)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -514,7 +1611,6 @@ TEST_F(azihsm_ecc_sign_verify, streaming_verify_fails_with_invalid_signature)
         algo.params = nullptr;
         algo.len = 0;
 
-        // Streaming sign
         auto_ctx sign_ctx;
         ASSERT_EQ(
             azihsm_crypt_sign_init(&algo, priv_key, sign_ctx.get_ptr()),
@@ -529,20 +1625,22 @@ TEST_F(azihsm_ecc_sign_verify, streaming_verify_fails_with_invalid_signature)
         azihsm_buffer sig_buf{ signature.data(), static_cast<uint32_t>(signature.size()) };
         ASSERT_EQ(azihsm_crypt_sign_finish(sign_ctx, &sig_buf), AZIHSM_STATUS_SUCCESS);
 
-        // Corrupt signature
         signature[0] ^= 0xFF;
 
-        // Streaming verify with corrupted signature
         auto_ctx verify_ctx;
         ASSERT_EQ(
             azihsm_crypt_verify_init(&algo, pub_key, verify_ctx.get_ptr()),
             AZIHSM_STATUS_SUCCESS
         );
         ASSERT_EQ(azihsm_crypt_verify_update(verify_ctx, &msg_buf), AZIHSM_STATUS_SUCCESS);
-        ASSERT_NE(azihsm_crypt_verify_finish(verify_ctx, &sig_buf), AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(
+            azihsm_crypt_verify_finish(verify_ctx, &sig_buf),
+            AZIHSM_STATUS_INVALID_SIGNATURE
+        );
     });
 }
 
+// Ensures streaming verify fails when provided data differs from what was signed.
 TEST_F(azihsm_ecc_sign_verify, streaming_verify_fails_with_wrong_data)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -564,7 +1662,6 @@ TEST_F(azihsm_ecc_sign_verify, streaming_verify_fails_with_wrong_data)
         algo.params = nullptr;
         algo.len = 0;
 
-        // Streaming sign
         auto_ctx sign_ctx;
         ASSERT_EQ(
             azihsm_crypt_sign_init(&algo, priv_key, sign_ctx.get_ptr()),
@@ -579,7 +1676,6 @@ TEST_F(azihsm_ecc_sign_verify, streaming_verify_fails_with_wrong_data)
         azihsm_buffer sig_buf{ signature.data(), static_cast<uint32_t>(signature.size()) };
         ASSERT_EQ(azihsm_crypt_sign_finish(sign_ctx, &sig_buf), AZIHSM_STATUS_SUCCESS);
 
-        // Verify with different data
         const char *wrong_message = "Wrong message";
         azihsm_buffer wrong_buf{
             const_cast<uint8_t *>(reinterpret_cast<const uint8_t *>(wrong_message)),
@@ -592,10 +1688,74 @@ TEST_F(azihsm_ecc_sign_verify, streaming_verify_fails_with_wrong_data)
             AZIHSM_STATUS_SUCCESS
         );
         ASSERT_EQ(azihsm_crypt_verify_update(verify_ctx, &wrong_buf), AZIHSM_STATUS_SUCCESS);
-        ASSERT_NE(azihsm_crypt_verify_finish(verify_ctx, &sig_buf), AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(
+            azihsm_crypt_verify_finish(verify_ctx, &sig_buf),
+            AZIHSM_STATUS_INVALID_SIGNATURE
+        );
     });
 }
 
+// Ensures streaming verification fails when signature is checked with another public key.
+TEST_F(azihsm_ecc_sign_verify, streaming_verify_fails_with_wrong_public_key)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        auto_key priv_key_a;
+        auto_key pub_key_a;
+        auto err_a = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key_a.get_ptr(),
+            pub_key_a.get_ptr()
+        );
+        ASSERT_EQ(err_a, AZIHSM_STATUS_SUCCESS);
+
+        auto_key priv_key_b;
+        auto_key pub_key_b;
+        auto err_b = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key_b.get_ptr(),
+            pub_key_b.get_ptr()
+        );
+        ASSERT_EQ(err_b, AZIHSM_STATUS_SUCCESS);
+
+        const char *message = "Test message for streaming ECDSA";
+
+        azihsm_algo algo{};
+        algo.id = AZIHSM_ALGO_ID_ECDSA_SHA256;
+        algo.params = nullptr;
+        algo.len = 0;
+
+        auto_ctx sign_ctx;
+        ASSERT_EQ(
+            azihsm_crypt_sign_init(&algo, priv_key_a, sign_ctx.get_ptr()),
+            AZIHSM_STATUS_SUCCESS
+        );
+
+        azihsm_buffer msg_buf{ const_cast<uint8_t *>(reinterpret_cast<const uint8_t *>(message)),
+                               static_cast<uint32_t>(strlen(message)) };
+        ASSERT_EQ(azihsm_crypt_sign_update(sign_ctx, &msg_buf), AZIHSM_STATUS_SUCCESS);
+
+        std::vector<uint8_t> signature(64);
+        azihsm_buffer sig_buf{ signature.data(), static_cast<uint32_t>(signature.size()) };
+        ASSERT_EQ(azihsm_crypt_sign_finish(sign_ctx, &sig_buf), AZIHSM_STATUS_SUCCESS);
+
+        auto_ctx verify_ctx;
+        ASSERT_EQ(
+            azihsm_crypt_verify_init(&algo, pub_key_b, verify_ctx.get_ptr()),
+            AZIHSM_STATUS_SUCCESS
+        );
+        ASSERT_EQ(azihsm_crypt_verify_update(verify_ctx, &msg_buf), AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(
+            azihsm_crypt_verify_finish(verify_ctx, &sig_buf),
+            AZIHSM_STATUS_INVALID_SIGNATURE
+        );
+    });
+}
+
+// Ensures streaming sign finish reports buffer-too-small for undersized output.
 TEST_F(azihsm_ecc_sign_verify, streaming_sign_finish_buffer_too_small)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -633,6 +1793,7 @@ TEST_F(azihsm_ecc_sign_verify, streaming_sign_finish_buffer_too_small)
     });
 }
 
+// Confirms both single-shot and streaming signatures verify for the same message.
 TEST_F(azihsm_ecc_sign_verify, streaming_sign_consistency_with_single_shot)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -655,7 +1816,6 @@ TEST_F(azihsm_ecc_sign_verify, streaming_sign_consistency_with_single_shot)
         algo.params = nullptr;
         algo.len = 0;
 
-        // Single-shot sign
         std::vector<uint8_t> single_shot_sig(64);
         azihsm_buffer data_buf{ data.data(), static_cast<uint32_t>(data.size()) };
         azihsm_buffer single_sig_buf{ single_shot_sig.data(),
@@ -665,7 +1825,6 @@ TEST_F(azihsm_ecc_sign_verify, streaming_sign_consistency_with_single_shot)
             AZIHSM_STATUS_SUCCESS
         );
 
-        // Streaming sign
         auto_ctx sign_ctx;
         ASSERT_EQ(
             azihsm_crypt_sign_init(&algo, priv_key, sign_ctx.get_ptr()),
@@ -678,7 +1837,6 @@ TEST_F(azihsm_ecc_sign_verify, streaming_sign_consistency_with_single_shot)
                                          static_cast<uint32_t>(streaming_sig.size()) };
         ASSERT_EQ(azihsm_crypt_sign_finish(sign_ctx, &streaming_sig_buf), AZIHSM_STATUS_SUCCESS);
 
-        // Both signatures should verify successfully
         azihsm_buffer verify_single_buf{ single_shot_sig.data(), single_sig_buf.len };
         ASSERT_EQ(
             azihsm_crypt_verify(&algo, pub_key, &data_buf, &verify_single_buf),
@@ -692,6 +1850,465 @@ TEST_F(azihsm_ecc_sign_verify, streaming_sign_consistency_with_single_shot)
         );
     });
 }
+
+// Ensures streaming init rejects null required pointers.
+TEST_F(azihsm_ecc_sign_verify, stream_init_null_ptrs)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key.get_ptr(),
+            pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        azihsm_algo algo{};
+        algo.id = AZIHSM_ALGO_ID_ECDSA_SHA256;
+        algo.params = nullptr;
+        algo.len = 0;
+
+        azihsm_handle ctx = 0;
+        ASSERT_EQ(
+            azihsm_crypt_sign_init(nullptr, priv_key, &ctx),
+            AZIHSM_STATUS_INVALID_ARGUMENT
+        );
+        ASSERT_EQ(
+            azihsm_crypt_verify_init(nullptr, pub_key, &ctx),
+            AZIHSM_STATUS_INVALID_ARGUMENT
+        );
+
+        ASSERT_EQ(
+            azihsm_crypt_sign_init(&algo, priv_key, nullptr),
+            AZIHSM_STATUS_INVALID_ARGUMENT
+        );
+        ASSERT_EQ(
+            azihsm_crypt_verify_init(&algo, pub_key, nullptr),
+            AZIHSM_STATUS_INVALID_ARGUMENT
+        );
+    });
+}
+
+// Ensures streaming update/finish rejects null input/output pointers.
+TEST_F(azihsm_ecc_sign_verify, stream_update_finish_null_ptrs)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key.get_ptr(),
+            pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        azihsm_algo algo{};
+        algo.id = AZIHSM_ALGO_ID_ECDSA_SHA256;
+        algo.params = nullptr;
+        algo.len = 0;
+
+        auto_ctx sign_ctx;
+        auto_ctx verify_ctx;
+        ASSERT_EQ(
+            azihsm_crypt_sign_init(&algo, priv_key, sign_ctx.get_ptr()),
+            AZIHSM_STATUS_SUCCESS
+        );
+        ASSERT_EQ(
+            azihsm_crypt_verify_init(&algo, pub_key, verify_ctx.get_ptr()),
+            AZIHSM_STATUS_SUCCESS
+        );
+
+        ASSERT_EQ(azihsm_crypt_sign_update(sign_ctx, nullptr), AZIHSM_STATUS_INVALID_ARGUMENT);
+        ASSERT_EQ(azihsm_crypt_verify_update(verify_ctx, nullptr), AZIHSM_STATUS_INVALID_ARGUMENT);
+        ASSERT_EQ(azihsm_crypt_sign_finish(sign_ctx, nullptr), AZIHSM_STATUS_INVALID_ARGUMENT);
+        ASSERT_EQ(azihsm_crypt_verify_finish(verify_ctx, nullptr), AZIHSM_STATUS_INVALID_ARGUMENT);
+    });
+}
+
+// Ensures streaming update/finish rejects invalid buffer shapes.
+TEST_F(azihsm_ecc_sign_verify, stream_update_finish_invalid_buffers)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key.get_ptr(),
+            pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        azihsm_algo algo{};
+        algo.id = AZIHSM_ALGO_ID_ECDSA_SHA256;
+        algo.params = nullptr;
+        algo.len = 0;
+
+        auto_ctx sign_ctx;
+        auto_ctx verify_ctx;
+        ASSERT_EQ(
+            azihsm_crypt_sign_init(&algo, priv_key, sign_ctx.get_ptr()),
+            AZIHSM_STATUS_SUCCESS
+        );
+        ASSERT_EQ(
+            azihsm_crypt_verify_init(&algo, pub_key, verify_ctx.get_ptr()),
+            AZIHSM_STATUS_SUCCESS
+        );
+
+        azihsm_buffer bad_input{ nullptr, 1 };
+        azihsm_buffer bad_sig_out{ nullptr, 64 };
+        azihsm_buffer bad_sig_in{ nullptr, 64 };
+
+        ASSERT_EQ(
+            azihsm_crypt_sign_update(sign_ctx, &bad_input),
+            AZIHSM_STATUS_INVALID_ARGUMENT
+        );
+        ASSERT_EQ(
+            azihsm_crypt_verify_update(verify_ctx, &bad_input),
+            AZIHSM_STATUS_INVALID_ARGUMENT
+        );
+        ASSERT_EQ(
+            azihsm_crypt_sign_finish(sign_ctx, &bad_sig_out),
+            AZIHSM_STATUS_INVALID_ARGUMENT
+        );
+        ASSERT_EQ(
+            azihsm_crypt_verify_finish(verify_ctx, &bad_sig_in),
+            AZIHSM_STATUS_INVALID_ARGUMENT
+        );
+    });
+}
+
+// Ensures streaming APIs reject context handles that do not exist.
+TEST_F(azihsm_ecc_sign_verify, stream_invalid_ctx_handles)
+{
+    std::vector<uint8_t> input(8, 0x33);
+    azihsm_buffer input_buf{ input.data(), static_cast<uint32_t>(input.size()) };
+    std::vector<uint8_t> sig(64, 0x00);
+    azihsm_buffer sig_buf{ sig.data(), static_cast<uint32_t>(sig.size()) };
+
+    ASSERT_EQ(
+        azihsm_crypt_sign_update(0xDEADBEEF, &input_buf),
+        AZIHSM_STATUS_INVALID_HANDLE
+    );
+    ASSERT_EQ(
+        azihsm_crypt_verify_update(0xDEADBEEF, &input_buf),
+        AZIHSM_STATUS_INVALID_HANDLE
+    );
+    ASSERT_EQ(
+        azihsm_crypt_sign_finish(0xDEADBEEF, &sig_buf),
+        AZIHSM_STATUS_INVALID_HANDLE
+    );
+    ASSERT_EQ(
+        azihsm_crypt_verify_finish(0xDEADBEEF, &sig_buf),
+        AZIHSM_STATUS_INVALID_HANDLE
+    );
+}
+
+// Ensures sign contexts cannot be used for verify calls (and vice versa).
+TEST_F(azihsm_ecc_sign_verify, stream_op_mismatch)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key.get_ptr(),
+            pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        azihsm_algo algo{};
+        algo.id = AZIHSM_ALGO_ID_ECDSA_SHA256;
+        algo.params = nullptr;
+        algo.len = 0;
+
+        auto_ctx sign_ctx;
+        auto_ctx verify_ctx;
+        ASSERT_EQ(
+            azihsm_crypt_sign_init(&algo, priv_key, sign_ctx.get_ptr()),
+            AZIHSM_STATUS_SUCCESS
+        );
+        ASSERT_EQ(
+            azihsm_crypt_verify_init(&algo, pub_key, verify_ctx.get_ptr()),
+            AZIHSM_STATUS_SUCCESS
+        );
+
+        std::vector<uint8_t> input(8, 0x44);
+        azihsm_buffer input_buf{ input.data(), static_cast<uint32_t>(input.size()) };
+        std::vector<uint8_t> sig(64, 0x00);
+        azihsm_buffer sig_buf{ sig.data(), static_cast<uint32_t>(sig.size()) };
+
+        // Mismatched operation/context pair must not succeed.
+        ASSERT_EQ(
+            azihsm_crypt_sign_update(verify_ctx, &input_buf),
+            AZIHSM_STATUS_INVALID_HANDLE
+        );
+        ASSERT_EQ(
+            azihsm_crypt_verify_update(sign_ctx, &input_buf),
+            AZIHSM_STATUS_INVALID_HANDLE
+        );
+        ASSERT_EQ(
+            azihsm_crypt_sign_finish(verify_ctx, &sig_buf),
+            AZIHSM_STATUS_INVALID_HANDLE
+        );
+        ASSERT_EQ(
+            azihsm_crypt_verify_finish(sign_ctx, &sig_buf),
+            AZIHSM_STATUS_INVALID_HANDLE
+        );
+    });
+}
+
+// Ensures streaming mode rejects pre-hashed ECDSA (AZIHSM_ALGO_ID_ECDSA) and only accepts hash-and-sign variants.
+TEST_F(azihsm_ecc_sign_verify, stream_prehash_rejected)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key.get_ptr(),
+            pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        azihsm_algo prehash_algo{};
+        prehash_algo.id = AZIHSM_ALGO_ID_ECDSA;
+        prehash_algo.params = nullptr;
+        prehash_algo.len = 0;
+
+        azihsm_handle ctx = 0;
+        ASSERT_EQ(
+            azihsm_crypt_sign_init(&prehash_algo, priv_key, &ctx),
+            AZIHSM_STATUS_UNSUPPORTED_ALGORITHM
+        );
+        ASSERT_EQ(
+            azihsm_crypt_verify_init(&prehash_algo, pub_key, &ctx),
+            AZIHSM_STATUS_UNSUPPORTED_ALGORITHM
+        );
+    });
+}
+
+// Compares behavior across many streaming chunk-size splits.
+TEST_F(azihsm_ecc_sign_verify, stream_chunk_sweep)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key.get_ptr(),
+            pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        azihsm_algo algo{};
+        algo.id = AZIHSM_ALGO_ID_ECDSA_SHA256;
+        algo.params = nullptr;
+        algo.len = 0;
+
+        const std::vector<std::vector<const char *>> chunk_patterns = {
+            { "one chunk payload" },
+            { "many ", "small ", "chunks" },
+            { "", "prefix", "", "suffix" },
+            { "a", "b", "c", "d", "e", "f" },
+        };
+
+        for (const auto &chunks : chunk_patterns)
+        {
+            test_streaming_sign_verify(priv_key.get(), pub_key.get(), algo, chunks);
+        }
+    });
+}
+
+// Sweeps streaming signature output buffer sizes.
+TEST_F(azihsm_ecc_sign_verify, stream_sig_buf_sweep)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key.get_ptr(),
+            pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        azihsm_algo algo{};
+        algo.id = AZIHSM_ALGO_ID_ECDSA_SHA256;
+        algo.params = nullptr;
+        algo.len = 0;
+
+        std::vector<uint8_t> message = { 's', 't', 'r', 'e', 'a', 'm', '-', 's', 'i', 'z', 'e' };
+        azihsm_buffer msg_buf{ message.data(), static_cast<uint32_t>(message.size()) };
+
+        auto_ctx probe_ctx;
+        ASSERT_EQ(azihsm_crypt_sign_init(&algo, priv_key, probe_ctx.get_ptr()), AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(azihsm_crypt_sign_update(probe_ctx, &msg_buf), AZIHSM_STATUS_SUCCESS);
+        azihsm_buffer size_probe{ nullptr, 0 };
+        ASSERT_EQ(azihsm_crypt_sign_finish(probe_ctx, &size_probe), AZIHSM_STATUS_BUFFER_TOO_SMALL);
+        const uint32_t required = size_probe.len;
+        ASSERT_GT(required, 0u);
+
+        std::vector<uint32_t> sizes = { 0u, required > 0 ? required - 1 : 0u, required, required + 8 };
+        for (uint32_t size : sizes)
+        {
+            auto_ctx ctx;
+            ASSERT_EQ(azihsm_crypt_sign_init(&algo, priv_key, ctx.get_ptr()), AZIHSM_STATUS_SUCCESS);
+            ASSERT_EQ(azihsm_crypt_sign_update(ctx, &msg_buf), AZIHSM_STATUS_SUCCESS);
+
+            std::vector<uint8_t> out(size > 0 ? size : 1, 0x00);
+            azihsm_buffer sig_buf{ size > 0 ? out.data() : nullptr, size };
+            auto finish_err = azihsm_crypt_sign_finish(ctx, &sig_buf);
+
+            if (size < required)
+            {
+                ASSERT_EQ(finish_err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+            }
+            else
+            {
+                ASSERT_EQ(finish_err, AZIHSM_STATUS_SUCCESS);
+                ASSERT_GT(sig_buf.len, 0u);
+                ASSERT_LE(sig_buf.len, size);
+            }
+        }
+    });
+}
+
+// Zero-length update (ptr=null, len=0) is treated as a valid no-op, so signing
+// and verifying an empty streamed message are both expected to succeed.
+TEST_F(azihsm_ecc_sign_verify, stream_zero_len_update)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key.get_ptr(),
+            pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        azihsm_algo algo{};
+        algo.id = AZIHSM_ALGO_ID_ECDSA_SHA256;
+        algo.params = nullptr;
+        algo.len = 0;
+
+        auto_ctx sign_ctx;
+        auto_ctx verify_ctx;
+        ASSERT_EQ(azihsm_crypt_sign_init(&algo, priv_key, sign_ctx.get_ptr()), AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(azihsm_crypt_verify_init(&algo, pub_key, verify_ctx.get_ptr()), AZIHSM_STATUS_SUCCESS);
+
+        azihsm_buffer empty_buf{ nullptr, 0 };
+        ASSERT_EQ(azihsm_crypt_sign_update(sign_ctx, &empty_buf), AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(azihsm_crypt_verify_update(verify_ctx, &empty_buf), AZIHSM_STATUS_SUCCESS);
+
+        std::vector<uint8_t> signature(64, 0x00);
+        azihsm_buffer sig_buf{ signature.data(), static_cast<uint32_t>(signature.size()) };
+        ASSERT_EQ(azihsm_crypt_sign_finish(sign_ctx, &sig_buf), AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(azihsm_crypt_verify_finish(verify_ctx, &sig_buf), AZIHSM_STATUS_SUCCESS);
+    });
+}
+
+// Verifies exact error codes for streaming misuse (wrong order / wrong context).
+TEST_F(azihsm_ecc_sign_verify, stream_state_expected_statuses)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
+        auto err = generate_ecc_keypair(
+            session,
+            AZIHSM_ECC_CURVE_P256,
+            true,
+            priv_key.get_ptr(),
+            pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        azihsm_algo hash_algo{};
+        hash_algo.id = AZIHSM_ALGO_ID_ECDSA_SHA256;
+        hash_algo.params = nullptr;
+        hash_algo.len = 0;
+
+        azihsm_algo prehash_algo{};
+        prehash_algo.id = AZIHSM_ALGO_ID_ECDSA;
+        prehash_algo.params = nullptr;
+        prehash_algo.len = 0;
+
+        // Streaming APIs only support hash-while-signing variants, not pre-hashed ECDSA.
+        auto_ctx rejected_ctx;
+        ASSERT_EQ(
+            azihsm_crypt_sign_init(&prehash_algo, priv_key, rejected_ctx.get_ptr()),
+            AZIHSM_STATUS_UNSUPPORTED_ALGORITHM
+        );
+        ASSERT_EQ(
+            azihsm_crypt_verify_init(&prehash_algo, pub_key, rejected_ctx.get_ptr()),
+            AZIHSM_STATUS_UNSUPPORTED_ALGORITHM
+        );
+
+        auto_ctx sign_ctx;
+        auto_ctx verify_ctx;
+        ASSERT_EQ(
+            azihsm_crypt_sign_init(&hash_algo, priv_key, sign_ctx.get_ptr()),
+            AZIHSM_STATUS_SUCCESS
+        );
+        ASSERT_EQ(
+            azihsm_crypt_verify_init(&hash_algo, pub_key, verify_ctx.get_ptr()),
+            AZIHSM_STATUS_SUCCESS
+        );
+
+        std::vector<uint8_t> input(8, 0xA5);
+        azihsm_buffer input_buf{ input.data(), static_cast<uint32_t>(input.size()) };
+        std::vector<uint8_t> sig_out(64, 0x00);
+        azihsm_buffer sig_out_buf{ sig_out.data(), static_cast<uint32_t>(sig_out.size()) };
+        std::vector<uint8_t> sig_in(64, 0x00);
+        azihsm_buffer sig_in_buf{ sig_in.data(), static_cast<uint32_t>(sig_in.size()) };
+
+        // Non-obvious but expected: wrong context type maps to INVALID_HANDLE.
+        ASSERT_EQ(
+            azihsm_crypt_sign_update(verify_ctx, &input_buf),
+            AZIHSM_STATUS_INVALID_HANDLE
+        );
+        ASSERT_EQ(
+            azihsm_crypt_verify_update(sign_ctx, &input_buf),
+            AZIHSM_STATUS_INVALID_HANDLE
+        );
+        ASSERT_EQ(
+            azihsm_crypt_sign_finish(verify_ctx, &sig_out_buf),
+            AZIHSM_STATUS_INVALID_HANDLE
+        );
+        ASSERT_EQ(
+            azihsm_crypt_verify_finish(sign_ctx, &sig_in_buf),
+            AZIHSM_STATUS_INVALID_HANDLE
+        );
+
+        ASSERT_EQ(
+            azihsm_crypt_sign_update(0xDEADBEEF, &input_buf),
+            AZIHSM_STATUS_INVALID_HANDLE
+        );
+        ASSERT_EQ(
+            azihsm_crypt_verify_update(0xDEADBEEF, &input_buf),
+            AZIHSM_STATUS_INVALID_HANDLE
+        );
+    });
+}
+
+// ==================== Resiliency and Persistence ====================
 
 //! ECC key persistence tests for resiliency scenarios.
 //!

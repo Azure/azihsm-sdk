@@ -9,13 +9,17 @@ use crate::AzihsmHandle;
 use crate::AzihsmStatus;
 use crate::HANDLE_TABLE;
 use crate::handle_table::HandleType;
+use crate::utils::validate_algo_params_absent;
 use crate::utils::validate_output_buffer;
 
 impl TryFrom<&AzihsmAlgo> for HsmEccKeyGenAlgo {
     type Error = AzihsmStatus;
 
     /// Converts a C FFI algorithm specification to HsmEccKeyGenAlgo.
-    fn try_from(_algo: &AzihsmAlgo) -> Result<Self, Self::Error> {
+    fn try_from(algo: &AzihsmAlgo) -> Result<Self, Self::Error> {
+        // EC key-pair generation has no algorithm-specific parameter struct in the C ABI.
+        // Enforce `params == NULL` and `len == 0` to reject malformed caller input.
+        validate_algo_params_absent(algo)?;
         Ok(HsmEccKeyGenAlgo::default())
     }
 }
