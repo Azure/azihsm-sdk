@@ -682,7 +682,7 @@ static OSSL_STATUS parse_provider_config(
  * openssl.cnf only activates azihsm \u2014 the bare EVP calls would be
  * dispatched to the azihsm provider, creating infinite recursion.
  */
-static OSSL_STATUS ensure_default_provider(void)
+static OSSL_PROVIDER *ensure_default_provider(void)
 {
     OSSL_PROVIDER *dflt = OSSL_PROVIDER_load(NULL, "default");
     if (dflt == NULL)
@@ -694,12 +694,8 @@ static OSSL_STATUS ensure_default_provider(void)
             "alongside the azihsm provider to prevent infinite "
             "recursion in internal crypto operations"
         );
-        return OSSL_FAILURE;
     }
-    /* Release our reference; the provider stays loaded in the default
-     * library context because OpenSSL ref-counts it. */
-    OSSL_PROVIDER_unload(dflt);
-    return OSSL_SUCCESS;
+    return dflt;
 }
 
 OSSL_STATUS OSSL_provider_init(
@@ -730,27 +726,12 @@ OSSL_STATUS OSSL_provider_init(
         return OSSL_FAILURE;
     }
 
-    if (ensure_default_provider() != OSSL_SUCCESS)
+    ctx->default_provider = ensure_default_provider();
+    if (ctx->default_provider == NULL)
     {
-        OSSL_PROVIDER *dflt = OSSL_PROVIDER_load(NULL, "default");
-        if (dflt == NULL)
-        {
-            ERR_raise_data(
-                ERR_LIB_PROV,
-                ERR_R_INIT_FAIL,
-                "azihsm: the OpenSSL 'default' provider must be loaded "
-                "alongside the azihsm provider to prevent infinite "
-                "recursion in internal crypto operations"
-            );
-            OSSL_LIB_CTX_free(ctx->libctx);
-            OPENSSL_free(ctx);
-            return OSSL_FAILURE;
-        }
-        /* Keep the reference alive so the default provider stays active in
-         * the NULL (default) library context.  The Rust library's bare EVP
-         * calls (RAND_bytes, EC keygen, etc.) use the default context and
-         * need a provider to service them.  Released in teardown. */
-        ctx->default_provider = dflt;
+        OSSL_LIB_CTX_free(ctx->libctx);
+        OPENSSL_free(ctx);
+        return OSSL_FAILURE;
     }
 
     ctx->unwrapping_key.lock = CRYPTO_THREAD_lock_new();
