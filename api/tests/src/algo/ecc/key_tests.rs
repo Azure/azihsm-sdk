@@ -5,8 +5,11 @@ use azihsm_api::*;
 use azihsm_api_tests_macro::*;
 use azihsm_crypto as crypto;
 
+// ================================
 // Helper functions
+// ================================
 
+/// Generates an RSA key pair for unwrapping operations.
 pub(crate) fn get_rsa_unwrapping_key_pair(
     session: &HsmSession,
 ) -> (HsmRsaPrivateKey, HsmRsaPublicKey) {
@@ -35,6 +38,7 @@ pub(crate) fn get_rsa_unwrapping_key_pair(
     (priv_key, pub_key)
 }
 
+/// Generates an ECC key pair for the specified curve and verifies all key attributes.
 fn test_ecc_key_pair_generation_for_curve(session: &HsmSession, curve: HsmEccCurve) {
     // Create key properties for the private key
     let priv_key_props = HsmKeyPropsBuilder::default()
@@ -180,6 +184,8 @@ fn test_ecc_key_pair_generation_for_curve(session: &HsmSession, curve: HsmEccCur
     HsmKeyManager::delete_key(pub_key).expect("Failed to delete ECC public key");
 }
 
+/// Unwraps an ECC key for the specified curve using RSA-AES wrapping and verifies
+/// all resulting key properties.
 fn test_unwrap_ecc_key_for_curve(
     session: HsmSession,
     crypto_curve: crypto::EccCurve,
@@ -336,6 +342,7 @@ fn test_unwrap_ecc_key_for_curve(
     HsmKeyManager::delete_key(pub_key).expect("Failed to delete ECC public key");
 }
 
+/// Compares all attributes of two ECC private keys and asserts they are identical.
 fn compare_ecc_private_key_properties(original: &HsmEccPrivateKey, unmasked: &HsmEccPrivateKey) {
     assert_eq!(
         original.class(),
@@ -409,6 +416,7 @@ fn compare_ecc_private_key_properties(original: &HsmEccPrivateKey, unmasked: &Hs
     );
 }
 
+/// Compares all attributes of two ECC public keys and asserts they are identical.
 fn compare_ecc_public_key_properties(original: &HsmEccPublicKey, unmasked: &HsmEccPublicKey) {
     assert_eq!(
         original.class(),
@@ -478,7 +486,7 @@ fn compare_ecc_public_key_properties(original: &HsmEccPublicKey, unmasked: &HsmE
     );
 }
 
-/// Helper function to test ECC key pair unmasking for a specific curve.
+/// Generates, masks, and unmasks an ECC key pair and verifies all properties are preserved.
 fn test_ecc_key_unmask_for_curve(session: &HsmSession, curve: HsmEccCurve) {
     let priv_key_props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Private)
@@ -522,6 +530,7 @@ fn test_ecc_key_unmask_for_curve(session: &HsmSession, curve: HsmEccCurve) {
     HsmKeyManager::delete_key(unmasked_pub_key).expect("Failed to delete unmasked public key");
 }
 
+/// Builds ECC private key properties with configurable SIGN and DERIVE capabilities.
 fn ecc_priv_props(curve: HsmEccCurve, can_sign: bool, can_derive: bool) -> HsmKeyProps {
     HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Private)
@@ -533,6 +542,7 @@ fn ecc_priv_props(curve: HsmEccCurve, can_sign: bool, can_derive: bool) -> HsmKe
         .unwrap()
 }
 
+/// Builds ECC public key properties with configurable VERIFY and DERIVE capabilities.
 fn ecc_pub_props(curve: HsmEccCurve, can_verify: bool, can_derive: bool) -> HsmKeyProps {
     HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Public)
@@ -544,6 +554,7 @@ fn ecc_pub_props(curve: HsmEccCurve, can_verify: bool, can_derive: bool) -> HsmK
         .unwrap()
 }
 
+/// Attempts to unwrap an ECC key pair using the provided properties and ciphertext.
 fn unwrap_ecc(
     session: &HsmSession,
     hash: HsmHashAlgo,
@@ -564,6 +575,7 @@ fn unwrap_ecc(
     )
 }
 
+/// Executes an unwrap operation and asserts that it fails.
 fn expect_unwrap_err(
     session: &HsmSession,
     hash: HsmHashAlgo,
@@ -575,6 +587,7 @@ fn expect_unwrap_err(
     assert!(result.is_err());
 }
 
+/// Verifies unwrap succeeds when both private and public keys use DERIVE capability.
 fn expect_unwrap_ok_with_derive(
     session: &HsmSession,
     crypto_curve: crypto::EccCurve,
@@ -620,8 +633,9 @@ fn expect_unwrap_ok_with_derive(
     assert!(result.is_ok());
 }
 
+/// Generates a key report for an ECC private key and verifies size and content.
 fn run_ecc_key_report_test(session: &HsmSession, curve: HsmEccCurve) {
-    // Build key props (reuse your helpers)
+    // Build key props
     let priv_key_props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Private)
         .key_kind(HsmKeyKind::Ecc)
@@ -646,7 +660,6 @@ fn run_ecc_key_report_test(session: &HsmSession, curve: HsmEccCurve) {
         HsmKeyManager::generate_key_pair(session, &mut algo, priv_key_props, pub_key_props)
             .expect("Failed to generate ECC key pair");
 
-    // Same test logic
     let report_data = [0x42u8; 128];
 
     // First call → size
@@ -674,6 +687,8 @@ fn run_ecc_key_report_test(session: &HsmSession, curve: HsmEccCurve) {
     HsmKeyManager::delete_key(pub_key).expect("Failed to delete public key after report test");
 }
 
+/// Generates, masks, and unmasks an ECC key pair with DERIVE capability and verifies
+/// that all properties are preserved.
 fn run_ecc_key_unmask_with_derive_test(session: &HsmSession, curve: HsmEccCurve) {
     // Build props (derive enabled, no sign)
     let priv_key_props = ecc_priv_props(curve, false, true);
@@ -708,6 +723,7 @@ fn run_ecc_key_unmask_with_derive_test(session: &HsmSession, curve: HsmEccCurve)
     HsmKeyManager::delete_key(unmasked_pub).expect("Failed to delete unmasked public key");
 }
 
+/// Verifies unwrap fails when the public key is configured with both VERIFY and DERIVE.
 fn run_ecc_unwrap_reject_public_verify_and_derive(
     session: &HsmSession,
     curve: HsmEccCurve,
@@ -717,7 +733,7 @@ fn run_ecc_unwrap_reject_public_verify_and_derive(
 
     let mut unwrap_algo = HsmEccKeyRsaAesKeyUnwrapAlgo::new(hash);
 
-    // Use your helpers for consistency
+    // Use helpers for consistency
     let priv_props = ecc_priv_props(curve, true, false); // can_sign = true
     let pub_props = ecc_pub_props(curve, true, true); // can_verify + can_derive (invalid combo)
 
@@ -735,7 +751,99 @@ fn run_ecc_unwrap_reject_public_verify_and_derive(
     );
 }
 
-// Tests
+/// Verifies ECC key unmasking succeeds for SIGN-capable private keys and preserves key properties.
+fn run_ecc_key_unmask_with_sign_test(session: &HsmSession, curve: HsmEccCurve) {
+    let priv_key_props = ecc_priv_props(curve, true, false); // SIGN only
+    let pub_key_props = ecc_pub_props(curve, true, false);
+
+    let mut gen_algo = HsmEccKeyGenAlgo::default();
+
+    let (original_priv, original_pub) =
+        HsmKeyManager::generate_key_pair(session, &mut gen_algo, priv_key_props, pub_key_props)
+            .expect("Failed to generate ECC key pair");
+
+    let masked = original_priv
+        .masked_key_vec()
+        .expect("Failed to get masked key");
+
+    let mut unmask_algo = HsmEccKeyUnmaskAlgo::default();
+
+    let (unmasked_priv, unmasked_pub) =
+        HsmKeyManager::unmask_key_pair(session, &mut unmask_algo, &masked)
+            .expect("Failed to unmask ECC key pair");
+
+    compare_ecc_private_key_properties(&original_priv, &unmasked_priv);
+    compare_ecc_public_key_properties(&original_pub, &unmasked_pub);
+
+    HsmKeyManager::delete_key(original_priv).unwrap();
+    HsmKeyManager::delete_key(original_pub).unwrap();
+    HsmKeyManager::delete_key(unmasked_priv).unwrap();
+    HsmKeyManager::delete_key(unmasked_pub).unwrap();
+}
+
+/// Verifies ECC key wrap and unwrap round-trip succeeds and produces keys with expected properties.
+fn run_ecc_round_trip_test(
+    session: &HsmSession,
+    crypto_curve: crypto::EccCurve,
+    hsm_curve: HsmEccCurve,
+    hash: HsmHashAlgo,
+) {
+    use crypto::*;
+
+    let original = EccPrivateKey::from_curve(crypto_curve).unwrap();
+    let der = original.to_vec().unwrap();
+
+    let (rsa_priv, rsa_pub) = get_rsa_unwrapping_key_pair(session);
+
+    let mut wrap_algo = HsmRsaAesWrapAlgo::new(hash, 32);
+    let wrapped = HsmEncrypter::encrypt_vec(&mut wrap_algo, &rsa_pub, &der).unwrap();
+
+    let priv_props = ecc_priv_props(hsm_curve, true, false);
+    let pub_props = ecc_pub_props(hsm_curve, true, false);
+
+    let mut unwrap_algo = HsmEccKeyRsaAesKeyUnwrapAlgo::new(hash);
+
+    let (priv_key, pub_key) = HsmKeyManager::unwrap_key_pair(
+        &mut unwrap_algo,
+        &rsa_priv,
+        &wrapped,
+        priv_props,
+        pub_props,
+    )
+    .expect("Failed round-trip unwrap");
+
+    // sanity check: key exists + correct curve
+    assert_eq!(priv_key.ecc_curve(), Some(hsm_curve));
+    assert_eq!(pub_key.ecc_curve(), Some(hsm_curve));
+
+    HsmKeyManager::delete_key(priv_key).unwrap();
+    HsmKeyManager::delete_key(pub_key).unwrap();
+}
+
+/// Verifies ECC unwrap fails when private and public key curves do not match,
+/// and that validation occurs before reaching the DDI layer.
+fn run_ecc_unwrap_reject_curve_mismatch_test(
+    session: &HsmSession,
+    priv_curve: HsmEccCurve,
+    pub_curve: HsmEccCurve,
+) {
+    let (rsa_priv, _) = get_rsa_unwrapping_key_pair(session);
+
+    let mut unwrap_algo = HsmEccKeyRsaAesKeyUnwrapAlgo::new(HsmHashAlgo::Sha256);
+
+    let priv_props = ecc_priv_props(priv_curve, true, false);
+    let pub_props = ecc_pub_props(pub_curve, true, false);
+
+    // bogus wrapped blob → ensures validation happens before DDI
+    let result =
+        HsmKeyManager::unwrap_key_pair(&mut unwrap_algo, &rsa_priv, &[], priv_props, pub_props);
+
+    assert!(matches!(result, Err(HsmError::InvalidKeyProps)));
+}
+
+// ============================================================
+// test cases sections
+// ============================================================
 
 /// Test ECC key pair generation.
 ///
@@ -1488,8 +1596,9 @@ fn test_ecc_unwrap_reject_tampered_ciphertext(session: HsmSession) {
     assert!(result.is_err());
 }
 
+/// Verifies ECC key P256 unwrap fails when private key uses incorrect key kind (non-ECC).
 #[session_test]
-fn test_ecc_unwrap_reject_wrong_key_kind(session: HsmSession) {
+fn test_ecc_unwrap_reject_wrong_key_kind_p256(session: HsmSession) {
     let priv_props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Private)
         .key_kind(HsmKeyKind::Rsa) // wrong
@@ -1503,6 +1612,239 @@ fn test_ecc_unwrap_reject_wrong_key_kind(session: HsmSession) {
     expect_unwrap_err(
         &session,
         HsmHashAlgo::Sha256,
+        priv_props,
+        pub_props,
+        &[0u8; 32],
+    );
+}
+
+#[session_test]
+/// Verifies ECC key P384 unwrap fails when private key uses incorrect key kind (non-ECC).
+fn test_ecc_unwrap_reject_wrong_key_kind_p384(session: HsmSession) {
+    let priv_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Private)
+        .key_kind(HsmKeyKind::Rsa) // invalid
+        .ecc_curve(HsmEccCurve::P384)
+        .can_sign(true)
+        .build()
+        .unwrap();
+
+    let pub_props = ecc_pub_props(HsmEccCurve::P384, true, false);
+
+    expect_unwrap_err(
+        &session,
+        HsmHashAlgo::Sha256,
+        priv_props,
+        pub_props,
+        &[0u8; 32],
+    );
+}
+
+#[session_test]
+/// Verifies ECC key P521 unwrap fails when private key uses incorrect key kind (non-ECC).
+fn test_ecc_unwrap_reject_wrong_key_kind_p521(session: HsmSession) {
+    let priv_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Private)
+        .key_kind(HsmKeyKind::Rsa) // invalid
+        .ecc_curve(HsmEccCurve::P521)
+        .can_sign(true)
+        .build()
+        .unwrap();
+
+    let pub_props = ecc_pub_props(HsmEccCurve::P521, true, false);
+
+    expect_unwrap_err(
+        &session,
+        HsmHashAlgo::Sha512,
+        priv_props,
+        pub_props,
+        &[0u8; 32],
+    );
+}
+
+#[session_test]
+/// Verifies ECC key P256 unwrap fails when private key has no usage flags set.
+fn test_ecc_unwrap_reject_no_usage_flags_p256(session: HsmSession) {
+    let priv_props = ecc_priv_props(HsmEccCurve::P256, false, false);
+    let pub_props = ecc_pub_props(HsmEccCurve::P256, true, false);
+
+    expect_unwrap_err(
+        &session,
+        HsmHashAlgo::Sha256,
+        priv_props,
+        pub_props,
+        &[0u8; 32],
+    );
+}
+
+#[session_test]
+/// Verifies ECC key P384 unwrap fails when private key has no usage flags set.
+fn test_ecc_unwrap_reject_no_usage_flags_p384(session: HsmSession) {
+    let priv_props = ecc_priv_props(HsmEccCurve::P384, false, false);
+    let pub_props = ecc_pub_props(HsmEccCurve::P384, true, false);
+
+    expect_unwrap_err(
+        &session,
+        HsmHashAlgo::Sha256,
+        priv_props,
+        pub_props,
+        &[0u8; 32],
+    );
+}
+
+#[session_test]
+/// Verifies ECC key P521 unwrap fails when private key has no usage flags set.
+fn test_ecc_unwrap_reject_no_usage_flags_p521(session: HsmSession) {
+    let priv_props = ecc_priv_props(HsmEccCurve::P521, false, false);
+    let pub_props = ecc_pub_props(HsmEccCurve::P521, true, false);
+
+    expect_unwrap_err(
+        &session,
+        HsmHashAlgo::Sha512,
+        priv_props,
+        pub_props,
+        &[0u8; 32],
+    );
+}
+
+#[session_test]
+/// Verifies ECC P256 key unmasking with SIGN capability preserves all properties.
+fn test_ecc_p256_key_unmask_with_sign(session: HsmSession) {
+    run_ecc_key_unmask_with_sign_test(&session, HsmEccCurve::P256);
+}
+
+#[session_test]
+/// Verifies ECC P384 key unmasking with SIGN capability preserves all properties.
+fn test_ecc_p384_key_unmask_with_sign(session: HsmSession) {
+    run_ecc_key_unmask_with_sign_test(&session, HsmEccCurve::P384);
+}
+
+#[session_test]
+/// Verifies ECC P521 key unmasking with SIGN capability preserves all properties.
+fn test_ecc_p521_key_unmask_with_sign(session: HsmSession) {
+    run_ecc_key_unmask_with_sign_test(&session, HsmEccCurve::P521);
+}
+
+#[session_test]
+/// Verifies ECC P256 round-trip (wrap → unwrap) succeeds.
+fn test_ecc_p256_round_trip(session: HsmSession) {
+    run_ecc_round_trip_test(
+        &session,
+        crypto::EccCurve::P256,
+        HsmEccCurve::P256,
+        HsmHashAlgo::Sha256,
+    );
+}
+
+#[session_test]
+/// Verifies ECC P384 round-trip (wrap → unwrap) succeeds.
+fn test_ecc_p384_round_trip(session: HsmSession) {
+    run_ecc_round_trip_test(
+        &session,
+        crypto::EccCurve::P384,
+        HsmEccCurve::P384,
+        HsmHashAlgo::Sha256,
+    );
+}
+
+#[session_test]
+/// Verifies ECC P521 round-trip (wrap → unwrap) succeeds.
+fn test_ecc_p521_round_trip(session: HsmSession) {
+    run_ecc_round_trip_test(
+        &session,
+        crypto::EccCurve::P521,
+        HsmEccCurve::P521,
+        HsmHashAlgo::Sha512,
+    );
+}
+
+#[session_test]
+/// Verifies ECC unwrap fails when private and public curves do not match (P256 vs P384).
+fn test_ecc_unwrap_reject_curve_mismatch_p256_p384(session: HsmSession) {
+    run_ecc_unwrap_reject_curve_mismatch_test(&session, HsmEccCurve::P256, HsmEccCurve::P384);
+}
+
+#[session_test]
+/// Verifies ECC unwrap fails when private and public curves do not match (P384 vs P521).
+fn test_ecc_unwrap_reject_curve_mismatch_p384_p521(session: HsmSession) {
+    run_ecc_unwrap_reject_curve_mismatch_test(&session, HsmEccCurve::P384, HsmEccCurve::P521);
+}
+
+#[session_test]
+/// Verifies ECC unwrap fails when private and public curves do not match (P521 vs P256).
+fn test_ecc_unwrap_reject_curve_mismatch_p521_p256(session: HsmSession) {
+    run_ecc_unwrap_reject_curve_mismatch_test(&session, HsmEccCurve::P521, HsmEccCurve::P256);
+}
+
+/// Verifies ECC unwrap fails when the public key properties use an invalid class (non-Public).
+#[session_test]
+fn test_ecc_unwrap_reject_public_wrong_class(session: HsmSession) {
+    let priv_props = ecc_priv_props(HsmEccCurve::P256, true, false);
+
+    let pub_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Private) // invalid
+        .key_kind(HsmKeyKind::Ecc)
+        .ecc_curve(HsmEccCurve::P256)
+        .can_verify(true)
+        .build()
+        .unwrap();
+
+    expect_unwrap_err(
+        &session,
+        HsmHashAlgo::Sha256,
+        priv_props,
+        pub_props,
+        &[0u8; 32],
+    );
+}
+
+/// Verifies ECC unwrap fails when the public key properties use an incorrect key kind (non-ECC).
+#[session_test]
+fn test_ecc_unwrap_reject_public_wrong_key_kind(session: HsmSession) {
+    let priv_props = ecc_priv_props(HsmEccCurve::P256, true, false);
+
+    let pub_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Public)
+        .key_kind(HsmKeyKind::Rsa) // invalid
+        .ecc_curve(HsmEccCurve::P256)
+        .can_verify(true)
+        .build()
+        .unwrap();
+
+    expect_unwrap_err(
+        &session,
+        HsmHashAlgo::Sha256,
+        priv_props,
+        pub_props,
+        &[0u8; 32],
+    );
+}
+
+/// Verifies ECC unwrap fails when the public key has no usage flags set.
+#[session_test]
+fn test_ecc_unwrap_reject_public_no_usage_flags(session: HsmSession) {
+    let priv_props = ecc_priv_props(HsmEccCurve::P256, true, false);
+
+    let pub_props = ecc_pub_props(HsmEccCurve::P256, false, false); // invalid
+
+    expect_unwrap_err(
+        &session,
+        HsmHashAlgo::Sha256,
+        priv_props,
+        pub_props,
+        &[0u8; 32],
+    );
+}
+
+/// Verifies ECC unwrap fails when using a hash algorithm incompatible with the curve.
+#[session_test]
+fn test_ecc_unwrap_hash_mismatch_p256(session: HsmSession) {
+    let priv_props = ecc_priv_props(HsmEccCurve::P256, true, false);
+    let pub_props = ecc_pub_props(HsmEccCurve::P256, true, false);
+
+    expect_unwrap_err(
+        &session,
+        HsmHashAlgo::Sha512, // mismatch
         priv_props,
         pub_props,
         &[0u8; 32],
