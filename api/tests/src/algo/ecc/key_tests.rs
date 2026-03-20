@@ -523,35 +523,25 @@ fn test_ecc_key_unmask_for_curve(session: &HsmSession, curve: HsmEccCurve) {
 }
 
 fn ecc_priv_props(curve: HsmEccCurve, can_sign: bool, can_derive: bool) -> HsmKeyProps {
-    let mut builder = HsmKeyPropsBuilder::default()
+    HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Private)
         .key_kind(HsmKeyKind::Ecc)
-        .ecc_curve(curve);
-
-    if can_sign {
-        builder = builder.can_sign(true);
-    }
-    if can_derive {
-        builder = builder.can_derive(true);
-    }
-
-    builder.build().unwrap()
+        .ecc_curve(curve)
+        .can_sign(can_sign)
+        .can_derive(can_derive)
+        .build()
+        .unwrap()
 }
 
 fn ecc_pub_props(curve: HsmEccCurve, can_verify: bool, can_derive: bool) -> HsmKeyProps {
-    let mut builder = HsmKeyPropsBuilder::default()
+    HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Public)
         .key_kind(HsmKeyKind::Ecc)
-        .ecc_curve(curve);
-
-    if can_verify {
-        builder = builder.can_verify(true);
-    }
-    if can_derive {
-        builder = builder.can_derive(true);
-    }
-
-    builder.build().unwrap()
+        .ecc_curve(curve)
+        .can_verify(can_verify)
+        .can_derive(can_derive)
+        .build()
+        .unwrap()
 }
 
 fn unwrap_ecc(
