@@ -144,6 +144,9 @@ jobs:
         ./Configure --prefix=/opt/openssl-3.0.3 --libdir=lib
         make -j"$(nproc)"
         sudo make install_sw
+
+    - name: Ensure OpenSSL default config exists
+      run: |
         sudo mkdir -p /opt/openssl-3.0.3/ssl
         sudo touch /opt/openssl-3.0.3/ssl/openssl.cnf
 
