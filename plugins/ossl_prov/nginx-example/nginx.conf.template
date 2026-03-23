@@ -1,7 +1,10 @@
 worker_processes 1;
 
-# Pass OPENSSL_CONF into the nginx worker so the provider is loaded.
+# Pass environment variables into the nginx worker so the provider is loaded
+# and can authenticate with the HSM.
 env OPENSSL_CONF;
+env AZIHSM_CREDENTIALS_ID;
+env AZIHSM_CREDENTIALS_PIN;
 
 # Docker entrypoint passes -g 'daemon off;' to keep nginx in the foreground.
 
