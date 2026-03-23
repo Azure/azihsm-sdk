@@ -14,6 +14,7 @@ glob = { workspace = true }
 is-terminal = { workspace = true }
 junit-parser.workspace = true
 jzon.workspace = true
+llvm-tools.workspace = true
 log.workspace = true
 similar = { features = ["text"], workspace = true }
 xshell.workspace = true

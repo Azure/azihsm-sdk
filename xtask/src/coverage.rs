@@ -8,6 +8,7 @@
 
 use clap::Parser;
 use xshell::cmd;
+use llvm_tools::LlvmTools;
 
 use crate::Xtask;
 use crate::XtaskCtx;
@@ -29,8 +30,14 @@ impl Xtask for Coverage {
         //sh.set_var("LLVM_PROFDATA", "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\Llvm\\bin\\llvm-profdata.exe");
         //sh.set_var("RUSTFLAGS", "-C link-dead-code");
 
-        sh.set_var("LLVM_COV", "C:\\Users\\v-davidz\\.rustup\\toolchains\\1.93-x86_64-pc-windows-msvc\\lib\\rustlib\\x86_64-pc-windows-msvc\\bin\\llvm-cov.exe");
-        sh.set_var("LLVM_PROFDATA", "C:\\Users\\v-davidz\\.rustup\\toolchains\\1.93-x86_64-pc-windows-msvc\\lib\\rustlib\\x86_64-pc-windows-msvc\\bin\\llvm-profdata.exe");
+        //sh.set_var("LLVM_COV", "C:\\Users\\v-davidz\\.rustup\\toolchains\\1.93-x86_64-pc-windows-msvc\\lib\\rustlib\\x86_64-pc-windows-msvc\\bin\\llvm-cov.exe");
+        //sh.set_var("LLVM_PROFDATA", "C:\\Users\\v-davidz\\.rustup\\toolchains\\1.93-x86_64-pc-windows-msvc\\lib\\rustlib\\x86_64-pc-windows-msvc\\bin\\llvm-profdata.exe");
+
+        let llvm_tools = LlvmTools::new().expect("failed to find llvm-tools");
+        let llvm_cov_path = llvm_tools.tool(&llvm_tools::exe("llvm-cov")).expect("llvm-cov not found in llvm-tools");
+        let llvm_profdata_path = llvm_tools.tool(&llvm_tools::exe("llvm-profdata")).expect("llvm-profdata not found in llvm-tools");
+        sh.set_var("LLVM_COV", &llvm_cov_path);
+        sh.set_var("LLVM_PROFDATA", &llvm_profdata_path);
 
         // sanity check
         cmd!(sh, "cargo llvm-cov show-env").quiet().run()?;
@@ -39,12 +46,24 @@ impl Xtask for Coverage {
         cmd!(sh, "cargo llvm-cov --version").quiet().run()?;
 
         // Run tests with coverage
-        log::info!("Building all tests and running them with coverage");
-        cmd!(
-            sh,
-            "cargo llvm-cov nextest --no-report --include-ffi --no-fail-fast --features mock --profile ci-mock --workspace --exclude integration-tests"
-        )
-        .run()?;
+        // log::info!("Building all tests and running them with coverage");
+        // cmd!(
+        //     sh,
+        //     "cargo llvm-cov nextest --no-report --include-ffi --no-fail-fast --features mock --profile ci-mock --workspace --exclude integration-tests"
+        // )
+        // .run()?;
+
+        // Gather workspace members
+        let json = String::from_utf8(cmd!(sh, "cargo metadata --format-version=1 --no-deps --manifest-path .\\Cargo.toml").output()?.stdout)?;
+
+        let parsed = jzon::parse(&json)?;
+
+        let workspace_members = parsed.get("workspace_members").and_then(|members| members.as_array()).ok_or(anyhow::anyhow!("failed to get workspace members from cargo metadata"))?;
+
+        for member in workspace_members {
+            let member_str = member.as_str().ok_or(anyhow::anyhow!("failed to get workspace member as string"))?;
+            println!("Found workspace member: {}", member_str);
+        }
 
         // Check for/create reports directory
         let reports_dir = ctx.root.join("target").join("reports");
@@ -53,25 +72,85 @@ impl Xtask for Coverage {
             std::fs::create_dir_all(&reports_dir)?;
         }
 
+        // Gather build objects
+        let mut objects = Vec::new();
+        let target_dirs = vec!(ctx.root.join("target").join("llvm-cov-target").join("debug").join("deps"),
+        ctx.root.join("target").join("llvm-cov-target").join("debug").join("build").join("azihsm_api_tests-7ff97b218f6ca9f9").join("out").join("build"));
+        for target_dir in target_dirs {
+            for entry in std::fs::read_dir(&target_dir)? {
+                let entry = entry?;
+                let path = entry.path();
+                if path.extension().and_then(|s| Some(s.to_str() == Some("dll") || s.to_str() == Some("exe"))) == Some(true) {
+                    println!("Found build object: {}", path.display());
+                    objects.push(path);
+                }
+            }
+        }
+
+        // Filter build objects to include only workspace members
+        let filtered_objects: Vec<_> = objects.into_iter().filter(|obj| {
+            let obj_name = obj.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+            let crate_name = obj_name.split('-').next().unwrap_or(""); // Get the crate name part of the object file name
+            workspace_members.iter().any(|member| {
+                let member_str = member.as_str().unwrap_or("");
+                member_str.contains(crate_name)
+            })
+        }).collect();
+
+        // Print filtered build objects
+        for obj in &filtered_objects {
+            println!("Including build object: {}", obj.display());
+        }
+
+        // Build '-object' arguments for 'llvm show' command
+        let mut command_args = Vec::new();
+        for obj in &filtered_objects {
+            command_args.push("-object");
+            command_args.push(obj.as_os_str().to_str().unwrap());
+        }
+
+        // Build rest of arguments
+        command_args.push("-ignore-filename-regex");
+        command_args.push(r"\\rustc\\([0-9a-f]+|[0-9]+\.[0-9]+\.[0-9]+)\\|^C:\\repo\\github\\azihsm\-sdk(\\.*)?\\(tests|examples|benches)\\|^C:\\repo\\github\\azihsm\-sdk(\\.*)?\\(tests\.rs|[0-9a-zA-Z_-]+[_-]tests\.rs)$|^C:\\repo\\github\\azihsm\-sdk\\target\\llvm\-cov\-target($|\\)|^C:\\Users\\v\-davidz\\\.cargo\\(registry|git)\\|^C:\\Users\\v\-davidz\\\.rustup\\toolchains($|\\)");
+        command_args.push("-show-instantiations=false");
+        command_args.push("-show-line-counts-or-regions");
+        command_args.push("-show-expansions");
+        command_args.push("-show-branches=count");
+        command_args.push("-show-mcdc");
+        command_args.push("-Xdemangler=C:\\Users\\v-davidz\\.cargo\\bin\\cargo-llvm-cov.exe");
+        command_args.push("-Xdemangler=llvm-cov");
+        command_args.push("-Xdemangler=demangle");
+        command_args.push("-output-dir=./target/reports/sdk-cov/html`");
+
+        // Run 'llvm-profdata merge -sparse' command
+        cmd!(sh, "{llvm_profdata_path} merge -sparse -f C:\\repo\\github\\azihsm-sdk\\target\\llvm-cov-target\\azihsm-sdk-profraw-list -o C:\\repo\\github\\azihsm-sdk\\target\\llvm-cov-target\\azihsm-sdk.profdata")
+            .quiet()
+            .run()?;
+
+        // Run 'llvm show' command
+        cmd!(sh, "{llvm_cov_path} show -format=html -instr-profile=C:\\repo\\github\\azihsm-sdk\\target\\llvm-cov-target\\azihsm-sdk.profdata {command_args...}")
+            .quiet()
+            .run()?;
+
         // Generate cobertura report
-        log::info!("Generating cobertura report");
-        cmd!(
-            sh,
-            "cargo llvm-cov report --cobertura --output-path ./target/reports/cobertura_sdk.xml --include-ffi"
-        ).run()?;
+        // log::info!("Generating cobertura report");
+        // cmd!(
+        //     sh,
+        //     "cargo llvm-cov -vv report --cobertura --output-path ./target/reports/cobertura_sdk.xml --include-ffi"
+        // ).run()?;
 
-        // Generate json report
-        log::info!("Generating json report");
-        cmd!(
-            sh,
-            "cargo llvm-cov report --json --summary-only --output-path ./target/reports/sdk-cov.json --include-ffi"
-        ).run()?;
+        // // Generate json report
+        // log::info!("Generating json report");
+        // cmd!(
+        //     sh,
+        //     "cargo llvm-cov -vv report --json --summary-only --output-path ./target/reports/sdk-cov.json --include-ffi"
+        // ).run()?;
 
-        // Generate HTML report
-        log::info!("Generating HTML report");
-        cmd!(sh, " cargo llvm-cov report --html --output-dir ./target/reports/sdk-cov/ --include-ffi").run()?;
+        // // Generate HTML report
+        // log::info!("Generating HTML report");
+        // cmd!(sh, " cargo llvm-cov -vv report --html --output-dir ./target/reports/sdk-cov/ --include-ffi").run()?;
 
-        log::info!("Code coverage completed successfully");
+        // log::info!("Code coverage completed successfully");
 
         Ok(())
     }
