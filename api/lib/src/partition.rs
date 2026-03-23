@@ -382,7 +382,7 @@ impl HsmPartition {
         obk_config: HsmOwnerBackupKeyConfig<'_>,
         pota_endorsement: HsmPotaEndorsement<'_>,
     ) -> HsmResult<()> {
-        match self.with_dev(|dev| {
+        let result = self.with_dev(|dev| {
             ddi::init_part(
                 dev,
                 self.api_rev_range().min(),
@@ -392,15 +392,34 @@ impl HsmPartition {
                 obk_config,
                 pota_endorsement,
             )
-        }) {
+        });
+
+        // If initialization fails, attempt to open a session to determine if the failure was due to the partition already being initialized
+        match result {
             Ok((bmk, mobk)) => {
                 self.inner().write().set_masked_keys(bmk, mobk);
+                Ok(())
             }
             Err(e) => {
-                tracing::warn!("Partition initialization failed: {:?}", e);
+                // Try opening a session to determine if failure was due to already initialized partition
+                match self.open_session(self.api_rev_range().min(), &creds, None) {
+                    //drop the session immediately since we were only checking if we could open it
+                    Ok(_session) => {
+                        tracing::info!(
+                            "Partition appears to already be initialized. Opened session successfully after init failure."
+                        );
+                        Ok(())
+                    }
+                    Err(sess_err) => {
+                        tracing::error!(
+                            "Failed to open partition after init failure: {:?}",
+                            sess_err
+                        );
+                        Err(e)
+                    }
+                }
             }
         }
-        Ok(())
     }
 
     /// Opens a new session on the HSM partition.
