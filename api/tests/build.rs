@@ -18,7 +18,13 @@ fn main() {
         config.generator("Visual Studio 17 2022");
     }
 
-    config.generator_toolset("ClangCL");
+    // check if RUSTFLAGS contains "-C instrument-coverage" to check if we are
+    // running coverage build
+    if let Ok(rustflags) = std::env::var("RUSTFLAGS") {
+        if rustflags.contains("-C instrument-coverage") {
+            config.generator_toolset("ClangCL");
+        }
+    }
 
     let _dst = config.build();
 }

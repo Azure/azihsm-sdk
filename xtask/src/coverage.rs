@@ -41,12 +41,12 @@ impl Xtask for Coverage {
         cmd!(sh, "cargo llvm-cov --version").quiet().run()?;
 
         // Run tests with coverage
-        // log::info!("Building all tests and running them with coverage");
-        // cmd!(
-        //     sh,
-        //     "cargo llvm-cov nextest --no-report --include-ffi --no-fail-fast --features mock --profile ci-mock --workspace --exclude integration-tests"
-        // )
-        // .run()?;
+        log::info!("Building all tests and running them with coverage");
+        cmd!(
+            sh,
+            "cargo llvm-cov nextest --no-report --include-ffi --no-fail-fast --features mock --profile ci-mock --workspace --exclude integration-tests"
+        )
+        .run()?;
 
         // Gather workspace members
         let json = String::from_utf8(cmd!(sh, "cargo metadata --format-version=1 --no-deps --manifest-path .\\Cargo.toml").output()?.stdout)?;

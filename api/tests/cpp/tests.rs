@@ -28,10 +28,6 @@ use libtest_mimic::*;
 /// C++ tests, and executes them with the provided configuration. The process
 /// exits with an appropriate status code based on test results.
 fn main() {
-    /*unsafe {
-        env::set_var("LLVM_PROFILE_FILE", "coverage-%p-%m.profraw");
-    }*/
-
     let args = Arguments::from_args();
     libtest_mimic::run(&args, get_tests()).exit();
 }
@@ -169,7 +165,7 @@ fn run_gtest(test_name: &str, path: &PathBuf) -> Result<(), Failed> {
 
     let success = Command::new(path)
         .arg(format!("--gtest_filter={}", test_name))
-        .env("LLVM_PROFILE_FILE", "../../target/llvm-cov-target/azihsm-sdk-%p-%m.profraw")
+        //.env("LLVM_PROFILE_FILE", "../../target/llvm-cov-target/azihsm-sdk-%p-%m.profraw")
         .status()
         .expect("Failed to run test")
         .success();
