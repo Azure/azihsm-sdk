@@ -7,6 +7,7 @@
 //! Xtask to run code coverage
 
 use clap::Parser;
+use dirs::home_dir;
 use xshell::cmd;
 use llvm_tools::LlvmTools;
 
@@ -24,18 +25,12 @@ impl Xtask for Coverage {
 
         let sh = xshell::Shell::new()?;
 
-        // Set environment variable for llvm-cov to generate .profraw files
-        //sh.set_var("LLVM_PROFILE_FILE", "coverage-%p-%m.profraw");
-        //sh.set_var("LLVM_COV", "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\Llvm\\bin\\llvm-cov.exe");
-        //sh.set_var("LLVM_PROFDATA", "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\Llvm\\bin\\llvm-profdata.exe");
-        //sh.set_var("RUSTFLAGS", "-C link-dead-code");
-
-        //sh.set_var("LLVM_COV", "C:\\Users\\v-davidz\\.rustup\\toolchains\\1.93-x86_64-pc-windows-msvc\\lib\\rustlib\\x86_64-pc-windows-msvc\\bin\\llvm-cov.exe");
-        //sh.set_var("LLVM_PROFDATA", "C:\\Users\\v-davidz\\.rustup\\toolchains\\1.93-x86_64-pc-windows-msvc\\lib\\rustlib\\x86_64-pc-windows-msvc\\bin\\llvm-profdata.exe");
-
+        // Find llvm tool paths
         let llvm_tools = LlvmTools::new().expect("failed to find llvm-tools");
         let llvm_cov_path = llvm_tools.tool(&llvm_tools::exe("llvm-cov")).expect("llvm-cov not found in llvm-tools");
         let llvm_profdata_path = llvm_tools.tool(&llvm_tools::exe("llvm-profdata")).expect("llvm-profdata not found in llvm-tools");
+
+        // Set environment variable for llvm-cov to generate .profraw files for native code
         sh.set_var("LLVM_COV", &llvm_cov_path);
         sh.set_var("LLVM_PROFDATA", &llvm_profdata_path);
 
@@ -55,15 +50,8 @@ impl Xtask for Coverage {
 
         // Gather workspace members
         let json = String::from_utf8(cmd!(sh, "cargo metadata --format-version=1 --no-deps --manifest-path .\\Cargo.toml").output()?.stdout)?;
-
         let parsed = jzon::parse(&json)?;
-
         let workspace_members = parsed.get("workspace_members").and_then(|members| members.as_array()).ok_or(anyhow::anyhow!("failed to get workspace members from cargo metadata"))?;
-
-        for member in workspace_members {
-            let member_str = member.as_str().ok_or(anyhow::anyhow!("failed to get workspace member as string"))?;
-            println!("Found workspace member: {}", member_str);
-        }
 
         // Check for/create reports directory
         let reports_dir = ctx.root.join("target").join("reports");
@@ -72,23 +60,43 @@ impl Xtask for Coverage {
             std::fs::create_dir_all(&reports_dir)?;
         }
 
+        // Find cmake build directory
+        let build_dir = ctx.root.join("target").join("llvm-cov-target").join("debug").join("build");
+        let mut cmake_build_dir = None;
+        for entry in std::fs::read_dir(&build_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_dir() && path.file_name().and_then(|s| s.to_str()).map(|s| s.starts_with("azihsm_api_tests-")).unwrap_or(false) {
+                // check if directory contains 'out' subdirectory to see if it's the cmake build directory
+                if path.join("out").is_dir() {
+                    println!("Found cmake build directory: {}", path.display());
+                    cmake_build_dir = Some(path.join("out").join("build"));
+                    break;
+                }
+            }
+        }
+
+        if cmake_build_dir.is_none() {
+            println!("CMake build directory not found, coverage for C++ code will be missing");
+        }
+
         // Gather build objects
-        let mut objects = Vec::new();
-        let target_dirs = vec!(ctx.root.join("target").join("llvm-cov-target").join("debug").join("deps"),
-        ctx.root.join("target").join("llvm-cov-target").join("debug").join("build").join("azihsm_api_tests-7ff97b218f6ca9f9").join("out").join("build"));
+        let mut build_objects = Vec::new();
+        let target_dirs = vec![ctx.root.join("target").join("llvm-cov-target").join("debug").join("deps"),
+        cmake_build_dir.unwrap()];
         for target_dir in target_dirs {
             for entry in std::fs::read_dir(&target_dir)? {
                 let entry = entry?;
                 let path = entry.path();
                 if path.extension().and_then(|s| Some(s.to_str() == Some("dll") || s.to_str() == Some("exe"))) == Some(true) {
-                    println!("Found build object: {}", path.display());
-                    objects.push(path);
+                    log::info!("Found build object: {}", path.display());
+                    build_objects.push(path);
                 }
             }
         }
 
         // Filter build objects to include only workspace members
-        let filtered_objects: Vec<_> = objects.into_iter().filter(|obj| {
+        let filtered_objects: Vec<_> = build_objects.into_iter().filter(|obj| {
             let obj_name = obj.file_stem().and_then(|s| s.to_str()).unwrap_or("");
             let crate_name = obj_name.split('-').next().unwrap_or(""); // Get the crate name part of the object file name
             workspace_members.iter().any(|member| {
@@ -109,9 +117,17 @@ impl Xtask for Coverage {
             command_args.push(obj.as_os_str().to_str().unwrap());
         }
 
+        // get home directory
+        let ctx_root_str = format!("{}", ctx.root.display()).replace("\\", "\\\\").replace(".", "\\.").replace("-", "\\-");
+        let home_dir = home_dir().ok_or(anyhow::anyhow!("failed to get home directory"))?;
+        let cargo_dir = format!("{}", home_dir.join(".cargo").display()).replace("\\", "\\\\").replace(".", "\\.").replace("-", "\\-");
+        let rustup_dir = format!("{}", home_dir.join(".rustup").display()).replace("\\", "\\\\").replace(".", "\\.").replace("-", "\\-");
+        let ignore_regex = format!("\\\\rustc\\\\([0-9a-f]+|[0-9]+\\.[0-9]+\\.[0-9]+)\\\\|^{0}(\\\\.*)?\\\\(tests|examples|benches)\\\\|^{0}(\\\\.*)?\\\\(tests\\.rs|[0-9a-zA-Z_-]+[_-]tests\\.rs)$|^{0}\\\\target\\\\llvm\\-cov\\-target($|\\\\)|^{1}\\\\(registry|git)\\\\|^{2}\\\\toolchains($|\\\\)", ctx_root_str, cargo_dir, rustup_dir);
+        println!("{}", &ignore_regex);
+
         // Build rest of arguments
         command_args.push("-ignore-filename-regex");
-        command_args.push(r"\\rustc\\([0-9a-f]+|[0-9]+\.[0-9]+\.[0-9]+)\\|^C:\\repo\\github\\azihsm\-sdk(\\.*)?\\(tests|examples|benches)\\|^C:\\repo\\github\\azihsm\-sdk(\\.*)?\\(tests\.rs|[0-9a-zA-Z_-]+[_-]tests\.rs)$|^C:\\repo\\github\\azihsm\-sdk\\target\\llvm\-cov\-target($|\\)|^C:\\Users\\v\-davidz\\\.cargo\\(registry|git)\\|^C:\\Users\\v\-davidz\\\.rustup\\toolchains($|\\)");
+        command_args.push(&ignore_regex);
         command_args.push("-show-instantiations=false");
         command_args.push("-show-line-counts-or-regions");
         command_args.push("-show-expansions");
@@ -120,7 +136,7 @@ impl Xtask for Coverage {
         command_args.push("-Xdemangler=C:\\Users\\v-davidz\\.cargo\\bin\\cargo-llvm-cov.exe");
         command_args.push("-Xdemangler=llvm-cov");
         command_args.push("-Xdemangler=demangle");
-        command_args.push("-output-dir=./target/reports/sdk-cov/html`");
+        command_args.push("-output-dir=./target/reports/sdk-cov/html");
 
         // Run 'llvm-profdata merge -sparse' command
         cmd!(sh, "{llvm_profdata_path} merge -sparse -f C:\\repo\\github\\azihsm-sdk\\target\\llvm-cov-target\\azihsm-sdk-profraw-list -o C:\\repo\\github\\azihsm-sdk\\target\\llvm-cov-target\\azihsm-sdk.profdata")

@@ -9,6 +9,7 @@ version = "0.1.0"
 [dependencies]
 anyhow.workspace = true
 clap = { features = ["derive", "env"], workspace = true }
+dirs.workspace = true
 env_logger.workspace = true
 glob = { workspace = true }
 is-terminal = { workspace = true }
