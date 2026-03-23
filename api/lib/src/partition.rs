@@ -382,16 +382,10 @@ impl HsmPartition {
         obk_config: HsmOwnerBackupKeyConfig<'_>,
         pota_endorsement: HsmPotaEndorsement<'_>,
     ) -> HsmResult<()> {
+        let api_rev = self.api_rev_range().min();
         let (bmk, mobk) = self.with_dev(|dev| {
-            let (bmk, mobk) = ddi::init_part(
-                dev,
-                self.api_rev_range().min(),
-                creds,
-                bmk,
-                muk,
-                obk_config,
-                pota_endorsement,
-            )?;
+            let (bmk, mobk) =
+                ddi::init_part(dev, api_rev, creds, bmk, muk, obk_config, pota_endorsement)?;
             Ok((bmk, mobk))
         })?;
         self.inner().write().set_masked_keys(bmk, mobk);
@@ -531,7 +525,8 @@ impl HsmPartition {
     ///
     /// Returns the certificate chain as a PEM string.
     pub fn cert_chain(&self, slot: u8) -> HsmResult<String> {
-        self.with_dev(|dev| ddi::get_cert_chain(dev, self.api_rev_range().min(), slot))
+        let api_rev = self.api_rev_range().min();
+        self.with_dev(|dev| ddi::get_cert_chain(dev, api_rev, slot))
     }
 
     /// Retrieves the public key of the partition identity (PID) certificate.
@@ -540,7 +535,8 @@ impl HsmPartition {
     ///
     /// Returns the DER-encoded public key of the PID certificate.
     pub fn pub_key(&self) -> HsmResult<Vec<u8>> {
-        self.with_dev(|dev| ddi::get_part_pub_key(dev, self.api_rev_range().min()))
+        let api_rev = self.api_rev_range().min();
+        self.with_dev(|dev| ddi::get_part_pub_key(dev, api_rev))
     }
 
     /// Retrieves the backup masking key that was set during partition initialization.
