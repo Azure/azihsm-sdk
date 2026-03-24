@@ -48,7 +48,7 @@ impl Xtask for Coverage {
             .join("llvm-cov-target")
             .join("debug")
             .join("build");
-        let mut native_dll_path = None;
+        let mut native_obj_path = None;
         for entry in std::fs::read_dir(&build_dir)? {
             let entry = entry?;
             let path = entry.path();
@@ -62,24 +62,35 @@ impl Xtask for Coverage {
                 // check if directory contains 'out' subdirectory to see if it's the cmake build directory
                 if path.join("out").is_dir() {
                     println!("Found cmake build directory: {}", path.display());
-                    native_dll_path =
-                        #[cfg(target_os = "windows")]
-                        Some(path.join("out").join("build").join("azihsm_api_native.dll"));
-                        #[cfg(not(target_os = "windows"))]
-                        Some(path.join("out").join("build").join("libazihsm_api_native.so"));
+                    #[cfg(target_os = "windows")]
+                    {
+                        native_obj_path =
+                            Some(path.join("out").join("build").join("azihsm_api_native.dll"));
+                    }
+                    #[cfg(not(target_os = "windows"))]
+                    {
+                        native_obj_path = Some(
+                            path.join("out")
+                                .join("build")
+                                .join("libazihsm_api_native.so"),
+                        );
+                    }
                     break;
                 }
             }
         }
 
-        if let Some(native_dll_path) = native_dll_path {
-            println!("Found native DLL at: {}", native_dll_path.display());
-            sh.set_var(
-                "LLVM_COV_FLAGS",
-                format!("-object {}", native_dll_path.display()),
-            );
+        if let Some(native_obj_path) = native_obj_path {
+            if native_obj_path.exists() {
+                sh.set_var(
+                    "LLVM_COV_FLAGS",
+                    format!("-object {}", native_obj_path.display()),
+                );
+            } else {
+                log::warn!("Could not find azihsm_api_native object at expected path: {}. Coverage reports may be incomplete.", native_obj_path.display());
+            }
         } else {
-            log::warn!("Could not find cmake build directory or native DLL. Coverage reports may be incomplete.");
+            log::warn!("Could not find cmake build directory or azihsm_api_native object. Coverage reports may be incomplete.");
         }
 
         // Generate cobertura report
