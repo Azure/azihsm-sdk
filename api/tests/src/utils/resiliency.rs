@@ -173,14 +173,18 @@ impl ResiliencyLock for FileLock {
 /// The `pub_key` parameter (caller's original endorsement key) is
 /// ignored — this callback always re-derives the endorsement from the
 /// current device's PID cert.
+///
+/// Opens a separate partition handle to avoid deadlocking with the
+/// caller's partition RwLock (held during init / restore).
 struct TestPotaCallback {
-    part: HsmPartition,
+    path: String,
 }
 
 impl PotaEndorsementCallback for TestPotaCallback {
     fn endorse(&self, _pub_key: &[u8]) -> HsmResult<HsmPotaEndorsementData> {
-        // Retrieve the current device's PID cert public key
-        let pid_pub_key_der = self.part.pub_key()?;
+        // Open a separate partition handle.
+        let part = HsmPartitionManager::open_partition(&self.path)?;
+        let pid_pub_key_der = part.pub_key()?;
 
         let pub_key_obj =
             DerEccPublicKey::from_der(&pid_pub_key_der).map_err(|_| HsmError::InternalError)?;
@@ -257,7 +261,7 @@ pub(crate) fn make_resiliency_config_in(dir: &Path, part: &HsmPartition) -> HsmR
     let pota_callback: Option<Box<dyn PotaEndorsementCallback>> = if use_tpm() {
         None
     } else {
-        Some(Box::new(TestPotaCallback { part: part.clone() }))
+        Some(Box::new(TestPotaCallback { path: part.path() }))
     };
 
     HsmResiliencyConfig {

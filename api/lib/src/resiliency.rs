@@ -87,6 +87,14 @@ pub trait ResiliencyLock: Send + Sync {
 ///
 /// The callback is responsible for retrieving the current device's PID
 /// certificate public key, signing it, and returning the result.
+///
+/// # Deadlock hazard
+///
+/// The callback is invoked while the partition's internal `RwLock` is
+/// held. Implementations must not call methods on the same
+/// [`HsmPartition`](crate::HsmPartition) handle that is being
+/// initialized or restored — doing so will deadlock. The callback
+/// must open a separate partition handle using the device path.
 pub trait PotaEndorsementCallback: Send + Sync {
     /// Generate a fresh POTA endorsement for the current device.
     ///
@@ -94,9 +102,10 @@ pub trait PotaEndorsementCallback: Send + Sync {
     /// key, passed for identification.
     ///
     /// The implementation must:
-    /// 1. Retrieve the current device's PID certificate public key
-    /// 2. Sign it with the caller's private key
-    /// 3. Return the signature and the signer's public key
+    /// 1. Open a separate partition handle
+    /// 2. Retrieve the current device's PID certificate public key
+    /// 3. Sign it with the caller's private key
+    /// 4. Return the signature and the signer's public key
     fn endorse(&self, pub_key: &[u8]) -> HsmResult<HsmPotaEndorsementData>;
 }
 

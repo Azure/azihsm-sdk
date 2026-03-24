@@ -565,13 +565,15 @@ fn open_and_init_partition(
     }
 
     /// POTA re-endorsement callback for resiliency restore.
-    /// Uses the same partition handle — reentrant reads are safe.
+    /// Opens a separate partition handle to avoid deadlock — the callback
+    /// is invoked while the caller's partition RwLock is held.
     struct StressPotaCallback {
-        part: HsmPartition,
+        path: String,
     }
     impl PotaEndorsementCallback for StressPotaCallback {
         fn endorse(&self, _pub_key: &[u8]) -> HsmResult<HsmPotaEndorsementData> {
-            let (sig, pubkey_der) = generate_pota(&self.part);
+            let part = HsmPartitionManager::open_partition(&self.path)?;
+            let (sig, pubkey_der) = generate_pota(&part);
             Ok(HsmPotaEndorsementData::new(&sig, &pubkey_der))
         }
     }
@@ -591,7 +593,7 @@ fn open_and_init_partition(
 
         // POTA callback is only needed for Caller source (not TPM).
         let pota_callback: Option<Box<dyn PotaEndorsementCallback>> = if !use_tpm {
-            Some(Box::new(StressPotaCallback { part: part.clone() }))
+            Some(Box::new(StressPotaCallback { path: part.path() }))
         } else {
             None
         };
