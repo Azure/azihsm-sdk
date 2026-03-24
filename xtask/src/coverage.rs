@@ -63,7 +63,10 @@ impl Xtask for Coverage {
                 if path.join("out").is_dir() {
                     println!("Found cmake build directory: {}", path.display());
                     native_dll_path =
+                        #[cfg(target_os = "windows")]
                         Some(path.join("out").join("build").join("azihsm_api_native.dll"));
+                        #[cfg(not(target_os = "windows"))]
+                        Some(path.join("out").join("build").join("libazihsm_api_native.so"));
                     break;
                 }
             }
