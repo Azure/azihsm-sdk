@@ -80,8 +80,10 @@ set(SOURCE
 add_executable(azihsm_api_cpp_tests ${SOURCE})
 target_include_directories(azihsm_api_cpp_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
+message("Configuring CMake Build")
 # Enable code coverage flags if RUSTFLAGS contains "-C instrument-coverage"
 if(DEFINED ENV{RUSTFLAGS} AND "$ENV{RUSTFLAGS}" MATCHES ".*-C instrument-coverage.*")
+    message("Detected instrumented build")
     target_compile_options(azihsm_api_cpp_tests PRIVATE /EHsc)
     target_compile_options(azihsm_api_cpp_tests PRIVATE
         /clang:-fprofile-instr-generate

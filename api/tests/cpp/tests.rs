@@ -165,7 +165,7 @@ fn run_gtest(test_name: &str, path: &PathBuf) -> Result<(), Failed> {
 
     let success = Command::new(path)
         .arg(format!("--gtest_filter={}", test_name))
-        //.env("LLVM_PROFILE_FILE", "../../target/llvm-cov-target/azihsm-sdk-%p-%m.profraw")
+        .env("LLVM_PROFILE_FILE", "../../target/llvm-cov-target/azihsm-sdk-%p-%m.profraw")
         .status()
         .expect("Failed to run test")
         .success();
