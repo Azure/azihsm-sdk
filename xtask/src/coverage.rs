@@ -42,16 +42,28 @@ impl Xtask for Coverage {
         }
 
         // Find cmake build directory
-        let build_dir = ctx.root.join("target").join("llvm-cov-target").join("debug").join("build");
+        let build_dir = ctx
+            .root
+            .join("target")
+            .join("llvm-cov-target")
+            .join("debug")
+            .join("build");
         let mut native_dll_path = None;
         for entry in std::fs::read_dir(&build_dir)? {
             let entry = entry?;
             let path = entry.path();
-            if path.is_dir() && path.file_name().and_then(|s| s.to_str()).map(|s| s.starts_with("azihsm_api_tests-")).unwrap_or(false) {
+            if path.is_dir()
+                && path
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .map(|s| s.starts_with("azihsm_api_tests-"))
+                    .unwrap_or(false)
+            {
                 // check if directory contains 'out' subdirectory to see if it's the cmake build directory
                 if path.join("out").is_dir() {
                     println!("Found cmake build directory: {}", path.display());
-                    native_dll_path = Some(path.join("out").join("build").join("azihsm_api_native.dll"));
+                    native_dll_path =
+                        Some(path.join("out").join("build").join("azihsm_api_native.dll"));
                     break;
                 }
             }
@@ -59,7 +71,10 @@ impl Xtask for Coverage {
 
         if let Some(native_dll_path) = native_dll_path {
             println!("Found native DLL at: {}", native_dll_path.display());
-            sh.set_var("LLVM_COV_FLAGS", format!("-object {}", native_dll_path.display()));
+            sh.set_var(
+                "LLVM_COV_FLAGS",
+                format!("-object {}", native_dll_path.display()),
+            );
         } else {
             log::warn!("Could not find cmake build directory or native DLL. Coverage reports may be incomplete.");
         }
