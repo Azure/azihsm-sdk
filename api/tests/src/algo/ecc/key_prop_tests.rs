@@ -469,7 +469,7 @@ fn test_ecc_priv_props_bits_matches_curve_succeeds(session: HsmSession) {
         .class(HsmKeyClass::Private)
         .key_kind(HsmKeyKind::Ecc)
         .ecc_curve(HsmEccCurve::P256)
-        .bits(256) // ✅ consistent
+        .bits(256) // Bits must match curve size
         .can_sign(true)
         .build()
         .unwrap();
