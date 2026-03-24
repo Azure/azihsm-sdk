@@ -82,8 +82,11 @@ pub struct HsmResiliencyConfig {
 
 **`pota_callback` (`Option<Box<dyn PotaEndorsementCallback>>`):**
 - Must be thread-safe (callable from any thread concurrently).
-- Safe to call `partition.pub_key()` from within `endorse()` —
-  reentrant reads are supported via `read_recursive()`.
+- Must **not** call methods on the same `HsmPartition` that is being
+  initialized or restored — the partition's RwLock is held during the
+  callback.  To retrieve the device's PID public key, open a
+  **separate** `HsmPartition` handle via
+  `HsmPartitionManager::open_partition()` and call `pub_key()` on it.
 - Called under the resiliency lock, so it should not block
   indefinitely.
 
@@ -342,18 +345,20 @@ These are treated as success for `init()` callers (sync epoch from storage).
 5. key inner (RwLock<HsmKeyInner>) — per-key state
 ```
 
-### parking_lot RwLock: read_recursive
+### parking_lot RwLock
 
 The partition's `inner` RwLock uses `parking_lot::RwLock`, which has
 **write-preferring** fairness: new `read()` acquisitions are blocked when
 a `write()` is queued. This prevents writer starvation but makes
 **reentrant reads deadlock** when a writer is waiting.
 
-Methods like `with_dev()` hold `read()` while executing closures that may
-call other methods (e.g., `api_rev_range()`, `path()`) which also
-acquire `read()`. To prevent deadlocks, all read acquisitions use
-`read_recursive()` which permits reentrant reads at the cost of
-potentially delaying a queued writer.
+To avoid deadlocks, the code never nests `read()` acquisitions on the
+same RwLock. Each method either acquires a short-lived read lock that
+returns an owned value (dropping the guard immediately), or acquires
+the lock in a scoped block that drops before the next acquisition.
+DDI delegation methods on `HsmPartitionInner` (e.g., `open_session()`,
+`cert_chain()`) encapsulate the `api_rev_range` access internally,
+so the outer `HsmPartition` method needs only a single `read()` call.
 
 ## Recovery Sequence Diagrams
 
@@ -540,9 +545,13 @@ When POTA source is `Caller` and resiliency is enabled:
    since the device state may have changed.
 
 The callback implementation must:
-1. Retrieve the current device's PID certificate public key
-2. Sign it with the caller's private key
-3. Return the (signature, signer_public_key) pair
+1. Open a **separate** `HsmPartition` handle to the same device path
+   (the callback must not use the partition being initialized/restored,
+   as its RwLock is held)
+2. Retrieve the current device's PID certificate public key via
+   `pub_key()` on the separate handle
+3. Sign it with the caller's private key
+4. Return the (signature, signer_public_key) pair
 
 ## MUK Persistence
 

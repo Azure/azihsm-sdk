@@ -400,12 +400,6 @@ fn try_establish_credential(
     let new_bmk = match (&result, resiliency_config) {
         (Ok(_), _) => result,
         (Err(HsmError::MaskedKeyDecodeFailed), Some(cfg)) => {
-            tracing::warn!(
-                "MaskedKeyDecodeFailed during establish_credential, \
-                 indicating cached BMK/MUK are stale. Clearing both from \
-                 storage and retrying with empty bmk and muk."
-            );
-
             cfg.storage.clear(crate::resiliency::AZIHSM_STORAGE_BMK)?;
             cfg.storage.clear(crate::resiliency::AZIHSM_STORAGE_MUK)?;
 

@@ -324,8 +324,6 @@ pub(crate) fn apply_backoff(attempt: u32, base_ms: u64, jitter_max_ms: u64) {
 /// with exponentially increasing delays (`backoff_base_ms * 2^iter`), plus
 /// random jitter in `0..=backoff_jitter_ms`.
 ///
-/// Emits [`tracing::error!`] when all attempts are exhausted.
-///
 /// # Arguments
 ///
 /// * `operation`        – Closure that performs the fallible work. Receives

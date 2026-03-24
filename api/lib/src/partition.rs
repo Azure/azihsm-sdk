@@ -420,66 +420,14 @@ impl HsmPartition {
             None
         };
 
-        let result = self.with_dev(|dev| {
-            ddi::init_part(
-                dev,
-                self.api_rev_range().min(),
-                creds,
-                bmk,
-                muk,
-                &obk_config,
-                &pota_endorsement,
-                resiliency_config.as_ref(),
-            )
-        });
-
-        // Resolve the BMK, MOBK, and POTA endorsement to cache.
-        //
-        // On success: use the values returned by the device.
-        //
-        // On "credentials already established" (another thread or
-        // process already initialized this partition): read the BMK
-        // from resiliency storage (persisted by the successful init),
-        // use empty MOBK (not returned by the device in this case),
-        // and keep the caller's original POTA endorsement (the
-        // callback will re-sign on the next restore anyway).
-        //
-        // On any other error: propagate immediately.
-        let (init_bmk, init_mobk, committed_pota) = match result {
-            // Init success - cache the BMK, MOBK, and POTA endorsement returned by the device.
-            Ok(result) => (
-                result.bmk,
-                result.mobk,
-                HsmPotaEndorsement::new(
-                    pota_endorsement.source(),
-                    Some(result.pota_endorsement_data),
-                ),
-            ),
-            // Credentials are already established when another thread/process beat us to init — read BMK from storage and proceed with restore flow to sync state and refresh credentials.
-            Err(err) if is_credentials_already_established(&err) => {
-                let bmk = resiliency_config
-                    .as_ref()
-                    .map(Self::read_bmk_from_storage)
-                    .transpose()?
-                    .unwrap_or_default();
-                (bmk, Vec::new(), pota_endorsement)
-            }
-            // Any other error is propagated to the caller.
-            Err(err) => return Err(err),
-        };
-
-        // Atomically set masked keys AND resiliency state in a single
-        // WRITE, still under the resiliency lock so no concurrent
-        // restore_partition can observe a half-initialized partition.
-        let mut inner = self.inner().write();
-        inner.set_masked_keys(init_bmk, init_mobk);
-
-        if let Some(config) = resiliency_config {
-            let resiliency_state = ResiliencyState::new(config, creds, obk_config, committed_pota)?;
-            inner.set_resiliency_state(resiliency_state);
-        }
-
-        Ok(())
+        self.inner().write().init(
+            creds,
+            bmk,
+            muk,
+            obk_config,
+            pota_endorsement,
+            resiliency_config,
+        )
     }
 
     /// Opens a new session on the HSM partition.
@@ -520,7 +468,7 @@ impl HsmPartition {
         seed: Option<&[u8]>,
     ) -> HsmResult<HsmSession> {
         let resiliency = self.resiliency_enabled();
-        let result = self.with_dev(|dev| ddi::open_session(dev, api_rev, credentials, seed));
+        let result = self.inner().read().open_session(api_rev, credentials, seed);
 
         // Retry with restore when resiliency is enabled and the initial
         // attempt returned a retryable error.
@@ -563,8 +511,7 @@ impl HsmPartition {
             // Re-establish partition credentials before retrying open_session.
             match self.restore_partition() {
                 Ok(()) => {
-                    result =
-                        self.with_dev(|dev| ddi::open_session(dev, api_rev, credentials, seed));
+                    result = self.inner().read().open_session(api_rev, credentials, seed);
                 }
                 Err(_) => {
                     // Restore_partition failed during open_session retry.
@@ -592,8 +539,7 @@ impl HsmPartition {
 
             // Cert chain is preserved across reset on hardware — no need
             // to restore partition, just retry the DDI call after backoff.
-            result =
-                self.with_dev(|dev| ddi::get_cert_chain(dev, self.api_rev_range().min(), slot));
+            result = self.inner().read().cert_chain(slot);
             iter += 1;
         }
 
@@ -631,7 +577,7 @@ impl HsmPartition {
         // Snapshot epoch and clone the lock Arc BEFORE acquiring the
         // Cross-process resiliency lock.
         let (pre_lock_epoch, lock_ref) = {
-            let inner = self.inner().read_recursive();
+            let inner = self.inner().read();
             let Some(rs) = inner.resiliency_state.as_ref() else {
                 return Ok(());
             };
@@ -643,7 +589,7 @@ impl HsmPartition {
         // Re-acquire READ to double-check epoch, read storage, and
         // call init_part_raw_no_res — all under a single read lock.
         let init_result = {
-            let inner = self.inner().read_recursive();
+            let inner = self.inner().read();
             let Some(rs) = inner.resiliency_state.as_ref() else {
                 return Ok(());
             };
@@ -718,13 +664,7 @@ impl HsmPartition {
     /// Returns an error if the reset operation fails.
     #[instrument(skip_all, err, fields(path = self.path().as_str()))]
     pub fn reset(&self) -> HsmResult<()> {
-        self.with_dev(|dev| {
-            dev.simulate_nssr_after_lm()
-                .map_err(|_| HsmError::DdiCmdFailure)
-        })?;
-        // Clear cached masked keys after reset
-        self.inner().write().clear_masked_keys();
-        Ok(())
+        self.inner().write().reset()
     }
 
     /// Returns the API revision range supported by this partition.
@@ -733,7 +673,7 @@ impl HsmPartition {
     ///
     /// The supported API revision range with minimum and maximum versions.
     pub fn api_rev_range(&self) -> HsmApiRevRange {
-        self.inner().read_recursive().api_rev_range()
+        self.inner().read().api_rev_range()
     }
 
     /// Returns the partition type (Virtual or Physical).
@@ -742,7 +682,7 @@ impl HsmPartition {
     ///
     /// The type of partition - either Virtual (simulator/emulated) or Physical (hardware device).
     pub fn part_type(&self) -> HsmPartType {
-        self.inner().read_recursive().part_type()
+        self.inner().read().part_type()
     }
 
     /// Returns the device path.
@@ -751,7 +691,7 @@ impl HsmPartition {
     ///
     /// The operating system device path used to access this partition.
     pub fn path(&self) -> String {
-        self.inner().read_recursive().path().to_string()
+        self.inner().read().path().to_string()
     }
 
     /// Returns the driver version.
@@ -760,7 +700,7 @@ impl HsmPartition {
     ///
     /// The version string of the device driver.
     pub fn driver_ver(&self) -> String {
-        self.inner().read_recursive().driver_ver().to_string()
+        self.inner().read().driver_ver().to_string()
     }
 
     /// Returns the firmware version.
@@ -769,7 +709,7 @@ impl HsmPartition {
     ///
     /// The version string of the device firmware.
     pub fn firmware_ver(&self) -> String {
-        self.inner().read_recursive().firmware_ver().to_string()
+        self.inner().read().firmware_ver().to_string()
     }
 
     /// Returns the hardware version.
@@ -778,7 +718,7 @@ impl HsmPartition {
     ///
     /// The version string of the hardware device.
     pub fn hardware_ver(&self) -> String {
-        self.inner().read_recursive().hardware_ver().to_string()
+        self.inner().read().hardware_ver().to_string()
     }
 
     /// Returns the PCI hardware information.
@@ -787,7 +727,7 @@ impl HsmPartition {
     ///
     /// The PCI hardware identifier in bus:device:function format.
     pub fn pci_info(&self) -> String {
-        self.inner().read_recursive().pci_info().to_string()
+        self.inner().read().pci_info().to_string()
     }
 
     /// Retrieves the certificate chain stored in the partition.
@@ -807,8 +747,7 @@ impl HsmPartition {
     /// Returns the certificate chain as a PEM string.
     pub fn cert_chain(&self, slot: u8) -> HsmResult<String> {
         let resiliency = self.resiliency_enabled();
-        let result =
-            self.with_dev(|dev| ddi::get_cert_chain(dev, self.api_rev_range().min(), slot));
+        let result = self.inner().read().cert_chain(slot);
 
         if resiliency && is_cert_chain_retryable_error(&result) {
             self.retry_cert_chain(result, slot)
@@ -823,7 +762,7 @@ impl HsmPartition {
     ///
     /// Returns the DER-encoded public key of the PID certificate.
     pub fn pub_key(&self) -> HsmResult<Vec<u8>> {
-        self.with_dev(|dev| ddi::get_part_pub_key(dev, self.api_rev_range().min()))
+        self.inner().read().pub_key()
     }
 
     /// Retrieves the backup masking key that was set during partition initialization.
@@ -836,7 +775,7 @@ impl HsmPartition {
     ///
     /// Returns the size of the BMK on success.
     pub fn bmk(&self, bmk: Option<&mut [u8]>) -> HsmResult<usize> {
-        let inner = self.inner().read_recursive();
+        let inner = self.inner().read();
         let data = inner.bmk();
         if let Some(buf) = bmk {
             if buf.len() < data.len() {
@@ -853,7 +792,7 @@ impl HsmPartition {
     ///
     /// A vector containing the BMK bytes.
     pub fn bmk_vec(&self) -> Vec<u8> {
-        self.inner().read_recursive().bmk().to_vec()
+        self.inner().read().bmk().to_vec()
     }
 
     /// Retrieves the masked owner backup key that was set during partition initialization.
@@ -865,7 +804,7 @@ impl HsmPartition {
     ///
     /// Returns the size of the MOBK on success.
     pub fn mobk(&self, mobk: Option<&mut [u8]>) -> HsmResult<usize> {
-        let inner = self.inner().read_recursive();
+        let inner = self.inner().read();
         let data = inner.mobk();
         if let Some(buf) = mobk {
             if buf.len() < data.len() {
@@ -884,41 +823,7 @@ impl HsmPartition {
     ///
     /// A vector containing the MOBK bytes.
     pub fn mobk_vec(&self) -> Vec<u8> {
-        self.inner().read_recursive().mobk().to_vec()
-    }
-
-    /// Executes a closure with access to the underlying device handle.
-    ///
-    /// Provides thread-safe access to the HSM device for internal operations.
-    /// Acquires a read lock on the partition and passes the device handle
-    /// to the provided closure.
-    ///
-    /// # Lock behavior
-    ///
-    /// Uses `read_recursive()` instead of `read()` because callers'
-    /// closures frequently access other partition methods (e.g.,
-    /// `api_rev_range()`) that also acquire `read()`.  With
-    /// `parking_lot`'s write-preferring `RwLock`, a non-recursive
-    /// `read()` inside an existing `read()` deadlocks when a writer
-    /// is queued.  `read_recursive()` permits reentrant reads at the
-    /// cost of potentially delaying a queued writer until all recursive
-    /// readers finish — acceptable here since write operations
-    /// (`init`, `restore_partition`, `reset`) are infrequent.
-    ///
-    /// # Arguments
-    ///
-    /// * `f` - Closure that receives the device handle and returns a value
-    ///
-    /// # Returns
-    ///
-    /// Returns the value produced by the closure.
-    pub(crate) fn with_dev<F, T>(&self, f: F) -> T
-    where
-        F: FnOnce(&ddi::HsmDev) -> T,
-    {
-        let part = self.inner().read_recursive();
-        let dev = part.dev();
-        f(dev)
+        self.inner().read().mobk().to_vec()
     }
 
     /// Returns a reference to the internal partition state.
@@ -936,32 +841,18 @@ impl HsmPartition {
     /// Returns `true` if resiliency was configured for this partition
     /// (i.e., a non-`None` [`HsmResiliencyConfig`] was passed to [`init`]).
     pub(crate) fn resiliency_enabled(&self) -> bool {
-        self.inner().read_recursive().resiliency_state.is_some()
+        self.inner().read().resiliency_state.is_some()
     }
 
     /// Writes a value to the partition's resiliency storage.
     ///
     /// No-op when resiliency is not enabled.
     pub(crate) fn write_resiliency_storage(&self, key: &str, data: &[u8]) -> HsmResult<()> {
-        let inner = self.inner().read_recursive();
+        let inner = self.inner().read();
         if let Some(rs) = inner.resiliency_state.as_ref() {
             rs.config.storage.write(key, data)?;
         }
         Ok(())
-    }
-
-    /// Reads the BMK from resiliency storage, returning an empty Vec
-    /// if the key does not exist.
-    ///
-    /// Only `NotFound` is treated as "no BMK yet"; other storage
-    /// errors (IO failure, corruption) are propagated so that init
-    /// fails fast rather than proceeding with an empty BMK.
-    fn read_bmk_from_storage(config: &HsmResiliencyConfig) -> HsmResult<Vec<u8>> {
-        match config.storage.read(crate::resiliency::AZIHSM_STORAGE_BMK) {
-            Ok(v) => Ok(v),
-            Err(HsmError::NotFound) => Ok(Vec::new()),
-            Err(e) => Err(e),
-        }
     }
 
     /// Reads a value from resiliency storage, returning `None` when the
@@ -1045,7 +936,7 @@ impl HsmPartition {
 
         // Read credentials from the resiliency state.
         let creds = {
-            let inner = self.inner().read_recursive();
+            let inner = self.inner().read();
             let Some(rs) = inner.resiliency_state.as_ref() else {
                 return Ok(());
             };
@@ -1058,14 +949,13 @@ impl HsmPartition {
         let seed = session.seed();
         let bmk_session = session.bmk_session();
 
-        tracing::Span::current().record("session_id", sess_id);
-        info!("Reopening stale session after restore.");
-
         // Hold the session write lock across the DDI call so that only
         // one thread performs the reopen for a given epoch.  Racing
         // threads block here and then observe the updated epoch.
         let reopen_result = session.with_reopen_guard(current_epoch, || {
-            self.with_dev(|dev| ddi::reopen_session(dev, rev, sess_id, &creds, &seed, &bmk_session))
+            self.inner()
+                .read()
+                .reopen_session(rev, sess_id, &creds, &seed, &bmk_session)
         })?;
 
         // If we actually performed the reopen, update the BMK on the session.
@@ -1194,6 +1084,131 @@ impl HsmPartitionInner {
     pub(crate) fn clear_masked_keys(&mut self) {
         self.bmk.clear();
         self.mobk.clear();
+    }
+
+    /// Resets the partition and clears cached masked keys.
+    pub(crate) fn reset(&mut self) -> HsmResult<()> {
+        self.dev
+            .simulate_nssr_after_lm()
+            .map_err(|_| HsmError::DdiCmdFailure)?;
+        self.clear_masked_keys();
+        Ok(())
+    }
+
+    /// Opens a new session on the partition.
+    pub(crate) fn open_session(
+        &self,
+        api_rev: HsmApiRev,
+        credentials: &HsmCredentials,
+        seed: Option<&[u8]>,
+    ) -> HsmResult<ddi::OpenSessionResult> {
+        ddi::open_session(&self.dev, api_rev, credentials, seed)
+    }
+
+    /// Reopens a session on the partition.
+    pub(crate) fn reopen_session(
+        &self,
+        api_rev: HsmApiRev,
+        sess_id: u16,
+        credentials: &HsmCredentials,
+        seed: &[u8; 48],
+        bmk_session: &[u8],
+    ) -> HsmResult<ddi::ReopenSessionResult> {
+        ddi::reopen_session(&self.dev, api_rev, sess_id, credentials, seed, bmk_session)
+    }
+
+    /// Retrieves the certificate chain from the partition.
+    pub(crate) fn cert_chain(&self, slot: u8) -> HsmResult<String> {
+        ddi::get_cert_chain(&self.dev, self.api_rev_range.min(), slot)
+    }
+
+    /// Retrieves the public key of the partition identity (PID) certificate.
+    pub(crate) fn pub_key(&self) -> HsmResult<Vec<u8>> {
+        ddi::get_part_pub_key(&self.dev, self.api_rev_range.min())
+    }
+
+    /// Initializes the partition with application credentials and master keys.
+    ///
+    /// Performs the DDI init_part call, resolves BMK/MOBK/POTA results,
+    /// caches masked keys, and sets resiliency state.  Called under a
+    /// write lock from `HsmPartition::init`.
+    pub(crate) fn init(
+        &mut self,
+        creds: HsmCredentials,
+        bmk: Option<&[u8]>,
+        muk: Option<&[u8]>,
+        obk_config: HsmOwnerBackupKeyConfig,
+        pota_endorsement: HsmPotaEndorsement,
+        resiliency_config: Option<HsmResiliencyConfig>,
+    ) -> HsmResult<()> {
+        let result = ddi::init_part(
+            &self.dev,
+            self.api_rev_range.min(),
+            creds,
+            bmk,
+            muk,
+            &obk_config,
+            &pota_endorsement,
+            resiliency_config.as_ref(),
+        );
+
+        // Resolve the BMK, MOBK, and POTA endorsement to cache.
+        //
+        // On success: use the values returned by the device.
+        //
+        // On "credentials already established" (another thread or
+        // process already initialized this partition): read the BMK
+        // from resiliency storage (persisted by the successful init),
+        // use empty MOBK (not returned by the device in this case),
+        // and keep the caller's original POTA endorsement (the
+        // callback will re-sign on the next restore anyway).
+        //
+        // On any other error: propagate immediately.
+        let (init_bmk, init_mobk, committed_pota) = match result {
+            // Init success - cache the BMK, MOBK, and POTA endorsement returned by the device.
+            Ok(result) => (
+                result.bmk,
+                result.mobk,
+                HsmPotaEndorsement::new(
+                    pota_endorsement.source(),
+                    Some(result.pota_endorsement_data),
+                ),
+            ),
+            // Credentials are already established when another thread/process beat us to init — read BMK from storage and proceed with restore flow to sync state and refresh credentials.
+            Err(err) if is_credentials_already_established(&err) => {
+                let bmk = resiliency_config
+                    .as_ref()
+                    .map(Self::read_bmk_from_storage)
+                    .transpose()?
+                    .unwrap_or_default();
+                (bmk, Vec::new(), pota_endorsement)
+            }
+            // Any other error is propagated to the caller.
+            Err(err) => return Err(err),
+        };
+
+        self.set_masked_keys(init_bmk, init_mobk);
+
+        if let Some(config) = resiliency_config {
+            let resiliency_state = ResiliencyState::new(config, creds, obk_config, committed_pota)?;
+            self.set_resiliency_state(resiliency_state);
+        }
+
+        Ok(())
+    }
+
+    /// Reads the BMK from resiliency storage, returning an empty Vec
+    /// if the key does not exist.
+    ///
+    /// Only `NotFound` is treated as "no BMK yet"; other storage
+    /// errors (IO failure, corruption) are propagated so that init
+    /// fails fast rather than proceeding with an empty BMK.
+    fn read_bmk_from_storage(config: &HsmResiliencyConfig) -> HsmResult<Vec<u8>> {
+        match config.storage.read(crate::resiliency::AZIHSM_STORAGE_BMK) {
+            Ok(v) => Ok(v),
+            Err(HsmError::NotFound) => Ok(Vec::new()),
+            Err(e) => Err(e),
+        }
     }
 
     /// Returns the backup masking key (BMK).

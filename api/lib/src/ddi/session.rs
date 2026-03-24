@@ -195,11 +195,6 @@ pub(crate) fn reopen_session(
 
     // The device must confirm the same session ID we requested.
     if resp.data.sess_id != sess_id {
-        tracing::error!(
-            expected = sess_id,
-            actual = resp.data.sess_id,
-            "Reopened session ID mismatch"
-        );
         return Err(HsmError::InternalError);
     }
 

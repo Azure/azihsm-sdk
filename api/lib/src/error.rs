@@ -13,10 +13,7 @@ impl<T, E: Debug> HsmErrorMapper<T, E> for Result<T, E> {
     fn map_hsm_err(self, hsm_err: HsmError) -> Result<T, HsmError> {
         match self {
             Ok(t) => Ok(t),
-            Err(err) => {
-                tracing::error!("Mapping error {:?} to HSM error: {:?}", err, hsm_err);
-                Err(hsm_err)
-            }
+            Err(_) => Err(hsm_err),
         }
     }
 }
