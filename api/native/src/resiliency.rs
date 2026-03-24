@@ -283,8 +283,10 @@ impl api::PotaEndorsementCallback for PotaCallbackAdapter {
         match status {
             api::HsmError::BufferTooSmall => { /* expected — sizes now in len fields */ }
             api::HsmError::Success => {
-                // Zero-length endorsement data — return empty buffers.
-                return Ok(api::HsmPotaEndorsementData::new(&[], &[]));
+                // Protocol violation: the first (size-query) call must return
+                // BufferTooSmall with the required output sizes. Success with
+                // null buffers indicates a misbehaving callback.
+                return Err(api::HsmError::InvalidArgument);
             }
             err => return Err(err),
         }

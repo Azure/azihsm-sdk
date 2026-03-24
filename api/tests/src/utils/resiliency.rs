@@ -95,6 +95,9 @@ impl ResiliencyStorage for FileStorage {
         let tmp_path = self.dir.join(format!(".{key}.tmp"));
         let mut file = fs::File::create(&tmp_path).map_err(|_| HsmError::InternalError)?;
         file.write_all(data).map_err(|_| HsmError::InternalError)?;
+        // Remove existing destination before rename — on Windows,
+        // fs::rename fails if the target already exists.
+        let _ = fs::remove_file(&path);
         fs::rename(&tmp_path, &path).map_err(|_| HsmError::InternalError)?;
         Ok(())
     }
