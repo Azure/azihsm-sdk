@@ -16,3 +16,11 @@ azihsm_status import_keypair(
     azihsm_handle *imported_priv_key,
     azihsm_handle *imported_pub_key
 );
+
+/// Helper to RSA-AES wrap an arbitrary plaintext buffer for later unwrap/import.
+azihsm_status rsa_aes_wrap_bytes(
+    azihsm_handle wrapping_pub_key,
+    const std::vector<uint8_t> &plaintext,
+    uint32_t aes_key_bits,
+    std::vector<uint8_t> &wrapped_out
+);

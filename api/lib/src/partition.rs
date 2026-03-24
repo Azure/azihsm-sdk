@@ -382,20 +382,9 @@ impl HsmPartition {
         obk_config: HsmOwnerBackupKeyConfig<'_>,
         pota_endorsement: HsmPotaEndorsement<'_>,
     ) -> HsmResult<()> {
-        let (bmk, mobk) = self.with_dev(|dev| {
-            let (bmk, mobk) = ddi::init_part(
-                dev,
-                self.api_rev_range().min(),
-                creds,
-                bmk,
-                muk,
-                obk_config,
-                pota_endorsement,
-            )?;
-            Ok((bmk, mobk))
-        })?;
-        self.inner().write().set_masked_keys(bmk, mobk);
-        Ok(())
+        self.inner()
+            .write()
+            .init(creds, bmk, muk, obk_config, pota_endorsement)
     }
 
     /// Opens a new session on the HSM partition.
@@ -428,8 +417,10 @@ impl HsmPartition {
         credentials: &HsmCredentials,
         seed: Option<&[u8]>,
     ) -> HsmResult<HsmSession> {
-        let (id, app_id) =
-            self.with_dev(|dev| ddi::open_session(dev, api_rev, credentials, seed))?;
+        let (id, app_id) = self
+            .inner()
+            .read()
+            .open_session(api_rev, credentials, seed)?;
         Ok(HsmSession::new(id, app_id, api_rev, self.clone()))
     }
 
@@ -443,13 +434,7 @@ impl HsmPartition {
     /// Returns an error if the reset operation fails.
     #[instrument(skip_all, err, fields(path = self.path().as_str()))]
     pub fn reset(&self) -> HsmResult<()> {
-        self.with_dev(|dev| {
-            dev.simulate_nssr_after_lm()
-                .map_err(|_| HsmError::DdiCmdFailure)
-        })?;
-        // Clear cached masked keys after reset
-        self.inner().write().clear_masked_keys();
-        Ok(())
+        self.inner().write().reset()
     }
 
     /// Returns the API revision range supported by this partition.
@@ -531,7 +516,7 @@ impl HsmPartition {
     ///
     /// Returns the certificate chain as a PEM string.
     pub fn cert_chain(&self, slot: u8) -> HsmResult<String> {
-        self.with_dev(|dev| ddi::get_cert_chain(dev, self.api_rev_range().min(), slot))
+        self.inner().read().cert_chain(slot)
     }
 
     /// Retrieves the public key of the partition identity (PID) certificate.
@@ -540,7 +525,7 @@ impl HsmPartition {
     ///
     /// Returns the DER-encoded public key of the PID certificate.
     pub fn pub_key(&self) -> HsmResult<Vec<u8>> {
-        self.with_dev(|dev| ddi::get_part_pub_key(dev, self.api_rev_range().min()))
+        self.inner().read().pub_key()
     }
 
     /// Retrieves the backup masking key that was set during partition initialization.
@@ -600,28 +585,6 @@ impl HsmPartition {
     /// A vector containing the MOBK bytes.
     pub fn mobk_vec(&self) -> Vec<u8> {
         self.inner().read().mobk().to_vec()
-    }
-
-    /// Executes a closure with access to the underlying device handle.
-    ///
-    /// Provides thread-safe access to the HSM device for internal operations.
-    /// Acquires a read lock on the partition and passes the device handle
-    /// to the provided closure.
-    ///
-    /// # Arguments
-    ///
-    /// * `f` - Closure that receives the device handle and returns a value
-    ///
-    /// # Returns
-    ///
-    /// Returns the value produced by the closure.
-    pub(crate) fn with_dev<F, T>(&self, f: F) -> T
-    where
-        F: FnOnce(&ddi::HsmDev) -> T,
-    {
-        let part = self.inner().read();
-        let dev = part.dev();
-        f(dev)
     }
 
     /// Returns a reference to the internal partition state.
@@ -754,6 +717,61 @@ impl HsmPartitionInner {
     pub(crate) fn clear_masked_keys(&mut self) {
         self.bmk.clear();
         self.mobk.clear();
+    }
+
+    /// Resets the partition and clears cached masked keys.
+    pub(crate) fn reset(&mut self) -> HsmResult<()> {
+        self.dev
+            .simulate_nssr_after_lm()
+            .map_err(|_| HsmError::DdiCmdFailure)?;
+        self.clear_masked_keys();
+        Ok(())
+    }
+
+    /// Opens a new session on the partition.
+    ///
+    /// Returns the (session_id, app_id) tuple on success.
+    pub(crate) fn open_session(
+        &self,
+        api_rev: HsmApiRev,
+        credentials: &HsmCredentials,
+        seed: Option<&[u8]>,
+    ) -> HsmResult<(u16, u8)> {
+        ddi::open_session(&self.dev, api_rev, credentials, seed)
+    }
+
+    /// Retrieves the certificate chain from the partition.
+    pub(crate) fn cert_chain(&self, slot: u8) -> HsmResult<String> {
+        ddi::get_cert_chain(&self.dev, self.api_rev_range.min(), slot)
+    }
+
+    /// Retrieves the public key of the partition identity (PID) certificate.
+    pub(crate) fn pub_key(&self) -> HsmResult<Vec<u8>> {
+        ddi::get_part_pub_key(&self.dev, self.api_rev_range.min())
+    }
+
+    /// Initializes the partition with application credentials and master keys.
+    ///
+    /// Performs the DDI init_part call and stores the resulting masked keys.
+    pub(crate) fn init(
+        &mut self,
+        creds: HsmCredentials,
+        bmk: Option<&[u8]>,
+        muk: Option<&[u8]>,
+        obk_config: HsmOwnerBackupKeyConfig<'_>,
+        pota_endorsement: HsmPotaEndorsement<'_>,
+    ) -> HsmResult<()> {
+        let (bmk, mobk) = ddi::init_part(
+            &self.dev,
+            self.api_rev_range.min(),
+            creds,
+            bmk,
+            muk,
+            obk_config,
+            pota_endorsement,
+        )?;
+        self.set_masked_keys(bmk, mobk);
+        Ok(())
     }
 
     /// Returns the backup masking key (BMK).

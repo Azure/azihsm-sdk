@@ -1,28 +1,18 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+use azihsm_api::HsmKeyClass;
+use azihsm_api::HsmKeyKind;
+use azihsm_api::HsmKeyManager;
+use azihsm_api::HsmKeyPropsBuilder;
 use azihsm_crypto::Rng;
 
+use super::common::*;
 use super::*;
-
-const AES_CBC_BLOCK_SIZE: usize = 16;
 
 // ================================
 // Helpers
 // ================================
-
-// ================================
-// Key  Algorithm Helpers
-// ================================
-
-/// Create an AES-CBC algorithm instance configured for PKCS#7 padding (true) or no padding (false).
-fn new_cbc_algo(padding: bool, iv: &[u8]) -> HsmAesCbcAlgo {
-    if padding {
-        HsmAesCbcAlgo::with_padding(iv.to_vec()).expect("Failed to create AES CBC algo")
-    } else {
-        HsmAesCbcAlgo::with_no_padding(iv.to_vec()).expect("Failed to create AES CBC algo")
-    }
-}
 
 // ================================
 // Key Generation Helpers
@@ -96,50 +86,6 @@ fn aes_generate_key_no_decrypt(bit_len: u32, session: &HsmSession) -> HsmResult<
 
     let mut algo = HsmAesKeyGenAlgo::default();
     HsmKeyManager::generate_key(session, &mut algo, props)
-}
-
-// ================================
-// Encrypt/Decrypt Helpers
-// ================================
-/// Encrypt then decrypt via AES-CBC and assert round-trip equality.
-///
-/// Notes:
-/// - CBC mutates IV internally, so this helper always uses fresh algo instances.
-/// - When `padding == false`, plaintext must be block-aligned and ciphertext length must match.
-fn cbc_encrypt(key: &HsmAesKey, padding: bool, iv: &[u8], plaintext: &[u8]) -> HsmResult<Vec<u8>> {
-    // Length query uses the algo and mutates IV, so use a fresh algo instance.
-    let cipher_len = {
-        let mut algo = new_cbc_algo(padding, iv);
-        HsmEncrypter::encrypt(&mut algo, key, plaintext, None)?
-    };
-
-    let mut out = vec![0u8; cipher_len];
-
-    let written = {
-        let mut algo = new_cbc_algo(padding, iv);
-        HsmEncrypter::encrypt(&mut algo, key, plaintext, Some(&mut out))?
-    };
-    out.truncate(written);
-
-    Ok(out)
-}
-
-fn cbc_decrypt(key: &HsmAesKey, padding: bool, iv: &[u8], ciphertext: &[u8]) -> HsmResult<Vec<u8>> {
-    // Length query uses the algo and mutates IV, so use a fresh algo instance.
-    let max_plain_len = {
-        let mut algo = new_cbc_algo(padding, iv);
-        HsmDecrypter::decrypt(&mut algo, key, ciphertext, None)?
-    };
-
-    let mut out = vec![0xCCu8; max_plain_len];
-
-    let written = {
-        let mut algo = new_cbc_algo(padding, iv);
-        HsmDecrypter::decrypt(&mut algo, key, ciphertext, Some(&mut out))?
-    };
-    out.truncate(written);
-
-    Ok(out)
 }
 
 fn run_cbc_roundtrip(
@@ -462,16 +408,6 @@ fn run_cbc_padding_and_chunk_sweep(session: &HsmSession, key_bits: u32, streamin
     }
 }
 
-// ================================
-// Misc
-// ================================
-
-fn test_iv() -> [u8; AES_CBC_BLOCK_SIZE] {
-    Rng::rand_vec(AES_CBC_BLOCK_SIZE)
-        .expect("RNG failure generating IV")
-        .try_into()
-        .expect("IV length mismatch")
-}
 // ============================================================
 // test cases sections
 // ============================================================
