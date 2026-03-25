@@ -41,7 +41,7 @@ impl Xtask for Coverage {
             std::fs::create_dir_all(&reports_dir)?;
         }
 
-        // Find cmake build directory
+        // Find path to azihsm_api_native object file
         let build_dir = ctx
             .root
             .join("target")
@@ -49,7 +49,6 @@ impl Xtask for Coverage {
             .join("debug")
             .join("build");
         let mut native_obj_path = None;
-
         if build_dir.exists() {
             for entry in std::fs::read_dir(&build_dir)? {
                 let entry = entry?;
@@ -85,6 +84,7 @@ impl Xtask for Coverage {
             log::warn!("CMake build directory not found at expected path: {}. Coverage reports may be incomplete.", build_dir.display());
         }
 
+        // set LLVM_COV_FLAGS to include azihsm_api_native object file in coverage reports
         if let Some(native_obj_path) = native_obj_path {
             if native_obj_path.exists() {
                 let path_str = native_obj_path.to_string_lossy();
