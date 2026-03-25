@@ -49,43 +49,51 @@ impl Xtask for Coverage {
             .join("debug")
             .join("build");
         let mut native_obj_path = None;
-        for entry in std::fs::read_dir(&build_dir)? {
-            let entry = entry?;
-            let path = entry.path();
-            if path.is_dir()
-                && path
-                    .file_name()
-                    .and_then(|s| s.to_str())
-                    .map(|s| s.starts_with("azihsm_api_tests-"))
-                    .unwrap_or(false)
-            {
-                // check if directory contains 'out' subdirectory to see if it's the cmake build directory
-                if path.join("out").is_dir() {
-                    println!("Found cmake build directory: {}", path.display());
-                    #[cfg(target_os = "windows")]
-                    {
-                        native_obj_path =
-                            Some(path.join("out").join("build").join("azihsm_api_native.dll"));
+
+        if build_dir.exists() {
+            for entry in std::fs::read_dir(&build_dir)? {
+                let entry = entry?;
+                let path = entry.path();
+                if path.is_dir()
+                    && path
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .map(|s| s.starts_with("azihsm_api_tests-"))
+                        .unwrap_or(false)
+                {
+                    // check if directory contains 'out' subdirectory to see if it's the cmake build directory
+                    if path.join("out").is_dir() {
+                        log::info!("Found cmake build directory at: {}", path.display());
+                        #[cfg(target_os = "windows")]
+                        {
+                            native_obj_path =
+                                Some(path.join("out").join("build").join("azihsm_api_native.dll"));
+                        }
+                        #[cfg(not(target_os = "windows"))]
+                        {
+                            native_obj_path = Some(
+                                path.join("out")
+                                    .join("build")
+                                    .join("libazihsm_api_native.so"),
+                            );
+                        }
+                        break;
                     }
-                    #[cfg(not(target_os = "windows"))]
-                    {
-                        native_obj_path = Some(
-                            path.join("out")
-                                .join("build")
-                                .join("libazihsm_api_native.so"),
-                        );
-                    }
-                    break;
                 }
             }
+        } else {
+            log::warn!("CMake build directory not found at expected path: {}. Coverage reports may be incomplete.", build_dir.display());
         }
 
         if let Some(native_obj_path) = native_obj_path {
             if native_obj_path.exists() {
-                sh.set_var(
-                    "LLVM_COV_FLAGS",
-                    format!("-object {}", native_obj_path.display()),
-                );
+                let new_flags = match std::env::var("LLVM_COV_FLAGS") {
+                    Ok(existing) if !existing.trim().is_empty() => {
+                        format!("{existing} -object {}", native_obj_path.display())
+                    }
+                    _ => format!("-object {}", native_obj_path.display()),
+                };
+                sh.set_var("LLVM_COV_FLAGS", new_flags);
             } else {
                 log::warn!("Could not find azihsm_api_native object at expected path: {}. Coverage reports may be incomplete.", native_obj_path.display());
             }
