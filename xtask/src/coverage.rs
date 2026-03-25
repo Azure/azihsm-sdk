@@ -86,7 +86,7 @@ impl Xtask for Coverage {
 
         // set LLVM_COV_FLAGS to include azihsm_api_native object file in coverage reports
         if let Some(native_obj_path) = native_obj_path {
-            if native_obj_path.exists() {
+            if native_obj_path.is_file() {
                 let path_str = native_obj_path.to_string_lossy();
                 let new_flags = match std::env::var("LLVM_COV_FLAGS") {
                     Ok(existing) if !existing.trim().is_empty() => {
