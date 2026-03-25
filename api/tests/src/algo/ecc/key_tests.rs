@@ -531,7 +531,7 @@ fn test_ecc_key_unmask_for_curve(session: &HsmSession, curve: HsmEccCurve) {
 }
 
 /// Builds ECC private key properties with configurable SIGN and DERIVE capabilities.
-fn ecc_priv_props(curve: HsmEccCurve, can_sign: bool, can_derive: bool) -> HsmKeyProps {
+pub(crate) fn ecc_priv_props(curve: HsmEccCurve, can_sign: bool, can_derive: bool) -> HsmKeyProps {
     HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Private)
         .key_kind(HsmKeyKind::Ecc)
@@ -543,7 +543,7 @@ fn ecc_priv_props(curve: HsmEccCurve, can_sign: bool, can_derive: bool) -> HsmKe
 }
 
 /// Builds ECC public key properties with configurable VERIFY and DERIVE capabilities.
-fn ecc_pub_props(curve: HsmEccCurve, can_verify: bool, can_derive: bool) -> HsmKeyProps {
+pub(crate) fn ecc_pub_props(curve: HsmEccCurve, can_verify: bool, can_derive: bool) -> HsmKeyProps {
     HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Public)
         .key_kind(HsmKeyKind::Ecc)
