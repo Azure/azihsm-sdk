@@ -36,7 +36,7 @@ azihsm_status azihsm_key_gen_pair(
     azihsm_algo *algo,
     const azihsm_key_prop_list *priv_key_props,
     const azihsm_key_prop_list *pub_key_props,
-    azihsm_handle *priv_key_handle
+    azihsm_handle *priv_key_handle,
     azihsm_handle *pub_key_handle
     );
 ```
@@ -51,6 +51,48 @@ azihsm_status azihsm_key_gen_pair(
  | [in] pub_key_props    | [const azihsm_key_prop_list*](#azihsm_key_prop_list) | public key properties                | 
  | [out] priv_key_handle | [azihsm_handle *](#azihsm_handle)                    | key handle for generated private key |
  | [out] pub_key_handle  | [azihsm_handle *](#azihsm_handle)                    | key handle for generated public key  | 
+
+**Notes**
+
+- `priv_key_handle` and `pub_key_handle` must point to distinct output addresses.
+- Passing the same pointer for both outputs returns `AZIHSM_STATUS_INVALID_ARGUMENT`.
+
+**Returns**
+
+`AZIHSM_STATUS_SUCCESS` on success, error code otherwise
+
+## azihsm_key_unwrap_pair
+
+Unwrap a key pair.
+
+```cpp
+azihsm_status azihsm_key_unwrap_pair(
+    azihsm_algo *algo,
+    azihsm_handle unwrapping_key,
+    const azihsm_buffer *wrapped_key,
+    const azihsm_key_prop_list *priv_key_props,
+    const azihsm_key_prop_list *pub_key_props,
+    azihsm_handle *priv_key_handle,
+    azihsm_handle *pub_key_handle
+    );
+```
+
+**Parameters**
+
+ | Parameter             | Name                                                 | Description                          |
+ | --------------------- | ---------------------------------------------------- | ------------------------------------ |
+ | [in] algo             | [azihsm_algo *](#azihsm_algo)                        | algorithm params                     |
+ | [in] unwrapping_key   | [azihsm_handle](#azihsm_handle)                      | unwrapping key handle                |
+ | [in] wrapped_key      | [const azihsm_buffer *](#azihsm_buffer)              | wrapped key pair                     |
+ | [in] priv_key_props   | [const azihsm_key_prop_list*](#azihsm_key_prop_list) | private key properties               |
+ | [in] pub_key_props    | [const azihsm_key_prop_list*](#azihsm_key_prop_list) | public key properties                |
+ | [out] priv_key_handle | [azihsm_handle *](#azihsm_handle)                    | key handle for unwrapped private key |
+ | [out] pub_key_handle  | [azihsm_handle *](#azihsm_handle)                    | key handle for unwrapped public key  |
+
+**Notes**
+
+- `priv_key_handle` and `pub_key_handle` must point to distinct output addresses.
+- Passing the same pointer for both outputs returns `AZIHSM_STATUS_INVALID_ARGUMENT`.
 
 **Returns**
 
@@ -81,6 +123,39 @@ azihsm_status azihsm_key_unwrap(
  | [in] wrapped_key    | [azihsm_buffer *](#azihsm_buffer)                    | wrapped key                  |
  | [in] key_props      | [const azihsm_key_prop_list*](#azihsm_key_prop_list) | key properties               |
  | [out] key_handle    | [azihsm_handle *](#azihsm_handle)                    | key handle for unwrapped key |
+
+**Returns**
+
+`AZIHSM_STATUS_SUCCESS` on success, error code otherwise
+
+## azihsm_key_unmask_pair
+
+Unmask a key pair.
+
+```cpp
+azihsm_status azihsm_key_unmask_pair(
+    azihsm_handle sess_handle,
+    azihsm_key_kind key_kind,
+    const azihsm_buffer *masked_key,
+    azihsm_handle *priv_key_handle,
+    azihsm_handle *pub_key_handle
+    );
+```
+
+**Parameters**
+
+ | Parameter             | Name                                    | Description                        |
+ | --------------------- | --------------------------------------- | ---------------------------------- |
+ | [in] sess_handle      | [azihsm_handle](#azihsm_handle)         | session handle                     |
+ | [in] key_kind         | azihsm_key_kind                         | key kind to unmask (RSA or ECC)    |
+ | [in] masked_key       | [const azihsm_buffer *](#azihsm_buffer) | masked key pair                    |
+ | [out] priv_key_handle | [azihsm_handle *](#azihsm_handle)       | key handle for unmasked private key|
+ | [out] pub_key_handle  | [azihsm_handle *](#azihsm_handle)       | key handle for unmasked public key |
+
+**Notes**
+
+- `priv_key_handle` and `pub_key_handle` must point to distinct output addresses.
+- Passing the same pointer for both outputs returns `AZIHSM_STATUS_INVALID_ARGUMENT`.
 
 **Returns**
 

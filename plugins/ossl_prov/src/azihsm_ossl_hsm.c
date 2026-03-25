@@ -1209,6 +1209,7 @@ static azihsm_status wrap_and_unwrap_pkcs8(
 
     /* Unwrap into the HSM */
     struct azihsm_algo_rsa_aes_key_wrap_params unwrap_params = {
+        .aes_key_bits = 256,
         .oaep_params = &oaep_params,
     };
 
@@ -1365,6 +1366,7 @@ azihsm_status azihsm_unwrap_key_pair(
     };
 
     struct azihsm_algo_rsa_aes_key_wrap_params unwrap_params = {
+        .aes_key_bits = 256,
         .oaep_params = &oaep_params,
     };
 

@@ -20,6 +20,24 @@ pub(crate) fn validate_algo_params<T>(algo: &AzihsmAlgo) -> Result<(), AzihsmSta
     validate_ptr(algo.params)
 }
 
+/// Validates that an algorithm descriptor intentionally carries no parameter payload.
+///
+/// Some algorithm IDs are defined by the C ABI as "parameterless" (there is no
+/// corresponding `struct` to parse). For those algorithms, callers must pass:
+/// - `algo.params == NULL`
+/// - `algo.len == 0`
+///
+/// This is a strict ABI-shape check at the FFI boundary. It ensures malformed
+/// pointer/length combinations are rejected early with `InvalidArgument` instead
+/// of being silently ignored.
+pub(crate) fn validate_algo_params_absent(algo: &AzihsmAlgo) -> Result<(), AzihsmStatus> {
+    if !algo.params.is_null() || algo.len != 0 {
+        Err(AzihsmStatus::InvalidArgument)?;
+    }
+
+    Ok(())
+}
+
 pub(crate) fn validate_and_cast_algo_params<T>(algo: &AzihsmAlgo) -> Result<&T, AzihsmStatus> {
     validate_algo_params::<T>(algo)?;
     cast_ptr::<T>(algo.params)
@@ -70,6 +88,25 @@ pub(crate) fn assign_ptr<T>(ptr: *mut T, value: T) -> Result<(), AzihsmStatus> {
     unsafe {
         *ptr = value;
     }
+    Ok(())
+}
+
+/// Validates that two output handle pointers are non-null and distinct.
+///
+/// Used at the FFI boundary for APIs that return a key pair (private + public).
+/// Rejects null pointers and the case where the caller passes the same pointer
+/// for both outputs, which would silently overwrite the first handle.
+pub(crate) fn validate_output_handle_ptrs(
+    first: *mut AzihsmHandle,
+    second: *mut AzihsmHandle,
+) -> Result<(), AzihsmStatus> {
+    validate_ptr(first)?;
+    validate_ptr(second)?;
+
+    if std::ptr::eq(first, second) {
+        Err(AzihsmStatus::InvalidArgument)?;
+    }
+
     Ok(())
 }
 
