@@ -90,9 +90,9 @@ impl Xtask for Coverage {
                 let path_str = native_obj_path.to_string_lossy();
                 let new_flags = match std::env::var("LLVM_COV_FLAGS") {
                     Ok(existing) if !existing.trim().is_empty() => {
-                        format!(r#"{existing} -object "{path_str}""#)
+                        format!("{existing} -object {path_str}")
                     }
-                    _ => format!(r#"-object "{path_str}""#),
+                    _ => format!("-object {path_str}"),
                 };
                 sh.set_var("LLVM_COV_FLAGS", new_flags);
             } else {
