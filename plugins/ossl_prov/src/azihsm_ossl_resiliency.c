@@ -42,8 +42,8 @@
 /* Maximum data file size we are willing to read (64 KiB). */
 #define MAX_STORAGE_FILE_SIZE (64 * 1024)
 
-/* Absolute path buffer size: storage_dir + '/' + key name + '\0'. */
-#define PATH_BUF_SIZE 4352
+/* Absolute path buffer size: storage_dir (4096) + '/' (1) + key name (256) + '\0' (1). */
+#define PATH_BUF_SIZE 4354
 
 /* POTA signature: P-384 raw r||s (48 + 48). */
 #define POTA_SIGNATURE_SIZE 96
@@ -60,6 +60,7 @@ struct azihsm_resiliency_ctx
     char pota_pub_path[AZIHSM_MAX_FILE_PATH];  /* POTA public key DER file */
     char lock_path[PATH_BUF_SIZE];             /* Path to the lock file */
     int lock_fd;                               /* Held fd during lock (-1 when unlocked) */
+    CRYPTO_RWLOCK *lock_fd_lock;                /* Protects lock_fd from concurrent access */
     struct azihsm_pota_callback_ops pota_ops;  /* POTA ops owned by ctx */
 };
 
@@ -84,19 +85,22 @@ static azihsm_status build_storage_path(
     size_t key_len;
     int written;
 
-    if (key == NULL || key[0] == '\0')
+    if (storage_dir == NULL || key == NULL || key[0] == '\0' ||
+        path_buf == NULL || path_buf_size == 0)
     {
         return AZIHSM_STATUS_INVALID_ARGUMENT;
     }
 
-    key_len = strlen(key);
+    key_len = strnlen(key, MAX_KEY_NAME_LEN + 1);
     if (key_len > MAX_KEY_NAME_LEN)
     {
         return AZIHSM_STATUS_INVALID_ARGUMENT;
     }
 
-    /* Reject path-traversal attempts */
-    if (strchr(key, '/') != NULL || strstr(key, "..") != NULL)
+    /* Reject path-traversal attempts: block '/' and ".." as a path component.
+     * A bare ".." or a substring "../" would allow escaping storage_dir. */
+    if (strchr(key, '/') != NULL || strcmp(key, "..") == 0 ||
+        strstr(key, "../") != NULL)
     {
         return AZIHSM_STATUS_INVALID_ARGUMENT;
     }
@@ -136,7 +140,6 @@ static azihsm_status resiliency_storage_read(
     struct stat st;
     azihsm_status status;
     int fd = -1;
-    FILE *f = NULL;
     size_t bytes_read;
 
     if (ctx == NULL || value == NULL)
@@ -182,20 +185,20 @@ static azihsm_status resiliency_storage_read(
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
 
-    /* Zero-length file: nothing to read */
-    if (st.st_size == 0)
-    {
-        close(fd);
-        value->len = 0;
-        return AZIHSM_STATUS_SUCCESS;
-    }
-
     /* Two-call pattern: if output buffer is NULL, return required size */
     if (value->ptr == NULL)
     {
         close(fd);
         value->len = (uint32_t)st.st_size;
         return AZIHSM_STATUS_BUFFER_TOO_SMALL;
+    }
+
+    /* Zero-length file: nothing to read */
+    if (st.st_size == 0)
+    {
+        close(fd);
+        value->len = 0;
+        return AZIHSM_STATUS_SUCCESS;
     }
 
     /* Output buffer provided but too small */
@@ -206,16 +209,27 @@ static azihsm_status resiliency_storage_read(
         return AZIHSM_STATUS_BUFFER_TOO_SMALL;
     }
 
-    /* Read file contents via fdopen to reuse the already-opened fd */
-    f = fdopen(fd, "rb");
-    if (f == NULL)
+    /* Read file contents using read() with EINTR retry, matching the write path */
+    bytes_read = 0;
+    while (bytes_read < (size_t)st.st_size)
     {
-        close(fd);
-        return AZIHSM_STATUS_INTERNAL_ERROR;
+        ssize_t n = read(fd, (char *)value->ptr + bytes_read, (size_t)st.st_size - bytes_read);
+        if (n < 0)
+        {
+            if (errno == EINTR)
+            {
+                continue;
+            }
+            close(fd);
+            return AZIHSM_STATUS_INTERNAL_ERROR;
+        }
+        if (n == 0)
+        {
+            break; /* unexpected EOF */
+        }
+        bytes_read += (size_t)n;
     }
-
-    bytes_read = fread(value->ptr, 1, (size_t)st.st_size, f);
-    fclose(f); /* also closes fd */
+    close(fd);
 
     if (bytes_read != (size_t)st.st_size)
     {
@@ -393,7 +407,15 @@ static azihsm_status resiliency_lock(void *ctx_ptr)
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
 
+    if (!CRYPTO_THREAD_write_lock(ctx->lock_fd_lock))
+    {
+        flock(fd, LOCK_UN);
+        close(fd);
+        return AZIHSM_STATUS_INTERNAL_ERROR;
+    }
     ctx->lock_fd = fd;
+    CRYPTO_THREAD_unlock(ctx->lock_fd_lock);
+
     return AZIHSM_STATUS_SUCCESS;
 }
 
@@ -403,21 +425,33 @@ static azihsm_status resiliency_lock(void *ctx_ptr)
 static azihsm_status resiliency_unlock(void *ctx_ptr)
 {
     struct azihsm_resiliency_ctx *ctx = (struct azihsm_resiliency_ctx *)ctx_ptr;
+    int fd;
 
-    if (ctx == NULL || ctx->lock_fd < 0)
+    if (ctx == NULL)
     {
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
 
-    if (flock(ctx->lock_fd, LOCK_UN) != 0)
+    if (!CRYPTO_THREAD_write_lock(ctx->lock_fd_lock))
     {
-        close(ctx->lock_fd);
-        ctx->lock_fd = -1;
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
-
-    close(ctx->lock_fd);
+    fd = ctx->lock_fd;
     ctx->lock_fd = -1;
+    CRYPTO_THREAD_unlock(ctx->lock_fd_lock);
+
+    if (fd < 0)
+    {
+        return AZIHSM_STATUS_INTERNAL_ERROR;
+    }
+
+    if (flock(fd, LOCK_UN) != 0)
+    {
+        close(fd);
+        return AZIHSM_STATUS_INTERNAL_ERROR;
+    }
+
+    close(fd);
     return AZIHSM_STATUS_SUCCESS;
 }
 
@@ -451,7 +485,6 @@ static azihsm_status resiliency_pota_endorse(
 {
     struct azihsm_resiliency_ctx *ctx = (struct azihsm_resiliency_ctx *)ctx_ptr;
     struct azihsm_buffer sig_tmp = { NULL, 0 };
-    struct azihsm_buffer pubkey_tmp = { NULL, 0 };
     azihsm_status status;
 
     (void)pub_key; /* identification only; provider uses fixed POTA key */
@@ -505,10 +538,9 @@ static azihsm_status resiliency_pota_endorse(
     }
 
     status =
-        compute_pota_endorsement(ctx->device, &priv_key_buf, &pub_key_buf, &sig_tmp, &pubkey_tmp);
+        compute_pota_endorsement(ctx->device, &priv_key_buf, &pub_key_buf, &sig_tmp);
     OPENSSL_cleanse(priv_key_buf.ptr, priv_key_buf.len);
     OPENSSL_free(priv_key_buf.ptr);
-    /* pub_key_buf.ptr ownership moves to pubkey_tmp; freed below after copy */
     if (status != AZIHSM_STATUS_SUCCESS)
     {
         OPENSSL_free(pub_key_buf.ptr);
@@ -516,12 +548,13 @@ static azihsm_status resiliency_pota_endorse(
     }
 
     /* Validate that caller-provided buffers are large enough */
-    if (signature->len < sig_tmp.len || endorsement_pub_key->len < pubkey_tmp.len)
+    if (signature->len < sig_tmp.len || endorsement_pub_key->len < pub_key_buf.len)
     {
         signature->len = sig_tmp.len;
-        endorsement_pub_key->len = pubkey_tmp.len;
+        endorsement_pub_key->len = pub_key_buf.len;
         OPENSSL_cleanse(sig_tmp.ptr, sig_tmp.len);
         OPENSSL_free(sig_tmp.ptr);
+        OPENSSL_free(pub_key_buf.ptr);
         return AZIHSM_STATUS_BUFFER_TOO_SMALL;
     }
 
@@ -532,8 +565,8 @@ static azihsm_status resiliency_pota_endorse(
     OPENSSL_free(sig_tmp.ptr);
 
     /* Copy POTA public key DER and free the loaded buffer */
-    memcpy(endorsement_pub_key->ptr, pubkey_tmp.ptr, pubkey_tmp.len);
-    endorsement_pub_key->len = pubkey_tmp.len;
+    memcpy(endorsement_pub_key->ptr, pub_key_buf.ptr, pub_key_buf.len);
+    endorsement_pub_key->len = pub_key_buf.len;
     OPENSSL_free(pub_key_buf.ptr);
 
     return AZIHSM_STATUS_SUCCESS;
@@ -557,6 +590,12 @@ azihsm_status azihsm_resiliency_create(
     int written;
 
     if (storage_dir == NULL || device == 0 || out_config == NULL || out_ctx == NULL)
+    {
+        return AZIHSM_STATUS_INVALID_ARGUMENT;
+    }
+
+    // Caller POTA source requires both key paths
+    if (!use_tpm_pota && (pota_priv_path == NULL || pota_pub_path == NULL))
     {
         return AZIHSM_STATUS_INVALID_ARGUMENT;
     }
@@ -599,9 +638,17 @@ azihsm_status azihsm_resiliency_create(
     ctx->lock_fd = -1;
     ctx->device = device;
 
+    ctx->lock_fd_lock = CRYPTO_THREAD_lock_new();
+    if (ctx->lock_fd_lock == NULL)
+    {
+        OPENSSL_free(ctx);
+        return AZIHSM_STATUS_INTERNAL_ERROR;
+    }
+
     written = snprintf(ctx->storage_dir, sizeof(ctx->storage_dir), "%s", storage_dir);
     if (written < 0 || (size_t)written >= sizeof(ctx->storage_dir))
     {
+        CRYPTO_THREAD_lock_free(ctx->lock_fd_lock);
         OPENSSL_free(ctx);
         return AZIHSM_STATUS_INVALID_ARGUMENT;
     }
@@ -611,6 +658,7 @@ azihsm_status azihsm_resiliency_create(
         written = snprintf(ctx->pota_priv_path, sizeof(ctx->pota_priv_path), "%s", pota_priv_path);
         if (written < 0 || (size_t)written >= sizeof(ctx->pota_priv_path))
         {
+            CRYPTO_THREAD_lock_free(ctx->lock_fd_lock);
             OPENSSL_free(ctx);
             return AZIHSM_STATUS_INVALID_ARGUMENT;
         }
@@ -620,6 +668,7 @@ azihsm_status azihsm_resiliency_create(
         written = snprintf(ctx->pota_pub_path, sizeof(ctx->pota_pub_path), "%s", pota_pub_path);
         if (written < 0 || (size_t)written >= sizeof(ctx->pota_pub_path))
         {
+            CRYPTO_THREAD_lock_free(ctx->lock_fd_lock);
             OPENSSL_free(ctx);
             return AZIHSM_STATUS_INVALID_ARGUMENT;
         }
@@ -629,6 +678,7 @@ azihsm_status azihsm_resiliency_create(
     written = snprintf(ctx->lock_path, sizeof(ctx->lock_path), "%s/.lock", storage_dir);
     if (written < 0 || (size_t)written >= sizeof(ctx->lock_path))
     {
+        CRYPTO_THREAD_lock_free(ctx->lock_fd_lock);
         OPENSSL_free(ctx);
         return AZIHSM_STATUS_INVALID_ARGUMENT;
     }
@@ -665,6 +715,8 @@ void azihsm_resiliency_destroy(struct azihsm_resiliency_ctx *ctx)
         close(ctx->lock_fd);
         ctx->lock_fd = -1;
     }
+
+    CRYPTO_THREAD_lock_free(ctx->lock_fd_lock);
 
     OPENSSL_cleanse(ctx, sizeof(*ctx));
     OPENSSL_free(ctx);

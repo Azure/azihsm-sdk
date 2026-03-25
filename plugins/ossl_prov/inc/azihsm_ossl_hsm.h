@@ -33,14 +33,12 @@ azihsm_status azihsm_open_device_and_session(
  * On success:
  *   - sig_out->ptr is allocated with OPENSSL_malloc and must be freed
  *     by the caller with OPENSSL_cleanse + OPENSSL_free.
- *   - pubkey_out->ptr points to pub_key_buf's data (caller manages lifetime).
  */
 azihsm_status compute_pota_endorsement(
     azihsm_handle device,
     const struct azihsm_buffer *priv_key_buf,
     const struct azihsm_buffer *pub_key_buf,
-    struct azihsm_buffer *sig_out,
-    struct azihsm_buffer *pubkey_out
+    struct azihsm_buffer *sig_out
 );
 
 /*

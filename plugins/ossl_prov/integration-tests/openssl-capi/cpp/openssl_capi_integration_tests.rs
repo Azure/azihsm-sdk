@@ -444,8 +444,11 @@ azihsm-api-revision = 1.0
             .env("PROVIDER_PATH", provider_path)
             .env("AZIHSM_RESILIENCY_STORAGE_DIR", resiliency_dir);
 
-        // Forward AZIHSM_RESILIENCY_ENABLED from the parent if set.
-        if let Ok(val) = env::var("AZIHSM_RESILIENCY_ENABLED") {
+        // Automatically enable resiliency for resiliency test suites;
+        // forward the parent's value for all other tests.
+        if test_name.contains("_resiliency.") {
+            cmd.env("AZIHSM_RESILIENCY_ENABLED", "1");
+        } else if let Ok(val) = env::var("AZIHSM_RESILIENCY_ENABLED") {
             cmd.env("AZIHSM_RESILIENCY_ENABLED", val);
         }
 

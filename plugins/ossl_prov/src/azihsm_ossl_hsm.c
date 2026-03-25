@@ -761,14 +761,12 @@ static azihsm_status sign_with_pota_key(
  * signature is returned in raw r||s format.
  *
  * On success, caller must free sig_out->ptr with OPENSSL_cleanse + OPENSSL_free.
- * pubkey_out is set to point to pub_key_buf's data (caller manages lifetime).
  */
 azihsm_status compute_pota_endorsement(
     azihsm_handle device,
     const struct azihsm_buffer *priv_key_buf,
     const struct azihsm_buffer *pub_key_buf,
-    struct azihsm_buffer *sig_out,
-    struct azihsm_buffer *pubkey_out
+    struct azihsm_buffer *sig_out
 )
 {
     azihsm_status status;
@@ -776,8 +774,6 @@ azihsm_status compute_pota_endorsement(
 
     sig_out->ptr = NULL;
     sig_out->len = 0;
-    pubkey_out->ptr = NULL;
-    pubkey_out->len = 0;
 
     status = get_pid_uncompressed_point(device, uncompressed_point);
     if (status != AZIHSM_STATUS_SUCCESS)
@@ -796,9 +792,6 @@ azihsm_status compute_pota_endorsement(
     {
         return status;
     }
-
-    pubkey_out->ptr = pub_key_buf->ptr;
-    pubkey_out->len = pub_key_buf->len;
 
     return AZIHSM_STATUS_SUCCESS;
 }
@@ -991,7 +984,6 @@ azihsm_status azihsm_open_device_and_session(
     // Configure POTA endorsement based on source selection
     struct azihsm_pota_endorsement pota_endorsement = { 0 };
     struct azihsm_buffer pota_sig_buf = { 0 };
-    struct azihsm_buffer pota_pubkey_buf = { 0 };
     struct azihsm_pota_endorsement_data pota_data = { 0 };
 
     struct azihsm_buffer pota_priv_buf = { NULL, 0 };
@@ -1079,8 +1071,7 @@ azihsm_status azihsm_open_device_and_session(
             *device,
             &pota_priv_buf,
             &pota_pub_buf,
-            &pota_sig_buf,
-            &pota_pubkey_buf
+            &pota_sig_buf
         );
         if (status != AZIHSM_STATUS_SUCCESS)
         {
@@ -1096,7 +1087,7 @@ azihsm_status azihsm_open_device_and_session(
         }
 
         pota_data.signature = &pota_sig_buf;
-        pota_data.public_key = &pota_pubkey_buf;
+        pota_data.public_key = &pota_pub_buf;
         pota_endorsement.source = AZIHSM_POTA_ENDORSEMENT_SOURCE_CALLER;
         pota_endorsement.endorsement = &pota_data;
     }
@@ -1167,16 +1158,13 @@ azihsm_status azihsm_open_device_and_session(
         }
     }
 
-    /* Pass resiliency context back to caller for lifetime management */
+    // Pass resiliency context back to caller for lifetime management
     if (resiliency_ctx != NULL)
     {
         *resiliency_ctx = res_ctx;
+        res_ctx = NULL;
     }
-    else if (res_ctx != NULL)
-    {
-        /* Caller did not take ownership; destroy resiliency context to avoid leak */
-        azihsm_resiliency_destroy(res_ctx);
-    }
+    azihsm_resiliency_destroy(res_ctx);
 
     return AZIHSM_STATUS_SUCCESS;
 }

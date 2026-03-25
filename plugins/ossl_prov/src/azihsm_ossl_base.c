@@ -788,49 +788,49 @@ OSSL_STATUS OSSL_provider_init(
     }
 
     /* Check if resiliency is enabled via environment variable */
+    const char *res_env = getenv(AZIHSM_RESILIENCY_ENABLED_ENV);
+    if (res_env != NULL &&
+        (strcmp(res_env, "1") == 0 || OPENSSL_strcasecmp(res_env, "true") == 0))
     {
-        const char *res_env = getenv(AZIHSM_RESILIENCY_ENABLED_ENV);
-        if (res_env != NULL &&
-            (strcmp(res_env, "1") == 0 || OPENSSL_strcasecmp(res_env, "true") == 0))
-        {
-            const char *dir_env;
-            ctx->config.resiliency_enabled = true;
+        const char *dir_env;
+        ctx->config.resiliency_enabled = true;
 
-            dir_env = getenv(AZIHSM_RESILIENCY_STORAGE_DIR_ENV);
-            const char *dir = (dir_env != NULL && dir_env[0] != '\0')
-                                  ? dir_env
-                                  : AZIHSM_DEFAULT_RESILIENCY_STORAGE_DIR;
-            if (!azihsm_path_is_safe(dir))
-            {
-                ERR_raise_data(
-                    ERR_LIB_PROV,
-                    PROV_R_INVALID_CONFIG_DATA,
-                    "unsafe resiliency storage dir '%s'",
-                    dir
-                );
-                CRYPTO_THREAD_lock_free(ctx->unwrapping_key.lock);
-                OSSL_LIB_CTX_free(ctx->libctx);
-                OPENSSL_free(ctx);
-                return OSSL_FAILURE;
-            }
-            int ret = snprintf(
-                ctx->config.resiliency_storage_dir,
-                sizeof(ctx->config.resiliency_storage_dir),
-                "%s",
+        dir_env = getenv(AZIHSM_RESILIENCY_STORAGE_DIR_ENV);
+        const char *dir = (dir_env != NULL && dir_env[0] != '\0')
+                              ? dir_env
+                              : AZIHSM_DEFAULT_RESILIENCY_STORAGE_DIR;
+        if (!azihsm_path_is_safe(dir))
+        {
+            ERR_raise_data(
+                ERR_LIB_PROV,
+                PROV_R_INVALID_CONFIG_DATA,
+                "unsafe resiliency storage dir '%s'",
                 dir
             );
-            if (ret < 0 || (size_t)ret >= sizeof(ctx->config.resiliency_storage_dir))
-            {
-                ERR_raise_data(
-                    ERR_LIB_PROV,
-                    PROV_R_INVALID_CONFIG_DATA,
-                    "Resiliency storage dir path too long"
-                );
-                CRYPTO_THREAD_lock_free(ctx->unwrapping_key.lock);
-                OSSL_LIB_CTX_free(ctx->libctx);
-                OPENSSL_free(ctx);
-                return OSSL_FAILURE;
-            }
+            CRYPTO_THREAD_lock_free(ctx->unwrapping_key.lock);
+            OSSL_PROVIDER_unload(ctx->default_provider);
+            OSSL_LIB_CTX_free(ctx->libctx);
+            OPENSSL_free(ctx);
+            return OSSL_FAILURE;
+        }
+        int ret = snprintf(
+            ctx->config.resiliency_storage_dir,
+            sizeof(ctx->config.resiliency_storage_dir),
+            "%s",
+            dir
+        );
+        if (ret < 0 || (size_t)ret >= sizeof(ctx->config.resiliency_storage_dir))
+        {
+            ERR_raise_data(
+                ERR_LIB_PROV,
+                PROV_R_INVALID_CONFIG_DATA,
+                "Resiliency storage dir path too long"
+            );
+            CRYPTO_THREAD_lock_free(ctx->unwrapping_key.lock);
+            OSSL_PROVIDER_unload(ctx->default_provider);
+            OSSL_LIB_CTX_free(ctx->libctx);
+            OPENSSL_free(ctx);
+            return OSSL_FAILURE;
         }
     }
 
