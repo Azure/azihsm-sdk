@@ -580,5 +580,167 @@ std::vector<uint8_t> make_deterministic_payload(uint8_t seed, uint8_t step, size
     return plaintext_bytes;
 }
 
+// Initializes `ctx` by generating an RSA unwrapping key pair on the given
+// session.  The resulting private/public key handles are stored in
+// ctx.rsa_priv_key and ctx.rsa_pub_key.  No wrapped blob is produced;
+// use create_with_wrapped_blob() when a real ciphertext is needed.
+azihsm_status UnwrapPairContext::create(azihsm_handle session, UnwrapPairContext &ctx)
+{
+    return generate_rsa_unwrapping_keypair(
+        session,
+        ctx.rsa_priv_key.get_ptr(),
+        ctx.rsa_pub_key.get_ptr()
+    );
+}
 
+// Convenience overload that delegates to the full create_with_wrapped_blob()
+// using default wrap configuration (SHA-256, 256-bit AES, no label).
+azihsm_status UnwrapPairContext::create_with_wrapped_blob(
+    azihsm_handle session,
+    azihsm_ecc_curve curve,
+    UnwrapPairContext &ctx
+)
+{
+    return create_with_wrapped_blob(session, curve, RsaAesWrapConfig{}, ctx);
+}
 
+// Initializes `ctx` with an RSA key pair *and* a wrapped ECC PKCS#8 blob.
+// Generates the RSA pair, then wraps a freshly-generated ECC key of the
+// requested `curve` using RSA-AES with `wrap_config`.  After success the
+// caller can immediately call try_unwrap() or try_unwrap_inputs() on ctx.
+azihsm_status UnwrapPairContext::create_with_wrapped_blob(
+    azihsm_handle session,
+    azihsm_ecc_curve curve,
+    const RsaAesWrapConfig &wrap_config,
+    UnwrapPairContext &ctx
+)
+{
+    auto err = create(session, ctx);
+    if (err != AZIHSM_STATUS_SUCCESS)
+    {
+        return err;
+    }
+
+    err = make_wrapped_ecc_pkcs8_blob(
+        ctx.rsa_pub_key.get(),
+        curve,
+        wrap_config,
+        ctx.wrapped_blob
+    );
+    if (err != AZIHSM_STATUS_SUCCESS)
+    {
+        return err;
+    }
+
+    ctx.wrapped_key_buf.ptr = ctx.wrapped_blob.data();
+    ctx.wrapped_key_buf.len = static_cast<uint32_t>(ctx.wrapped_blob.size());
+    ctx.priv_props.ecc_curve = curve;
+    ctx.pub_props.ecc_curve = curve;
+    return AZIHSM_STATUS_SUCCESS;
+}
+
+// Attempts unwrap using the context's own algo and wrapped buffer.
+// Requires a prior create_with_wrapped_blob() call so that
+// unwrap_algo and wrapped_key_buf are populated.
+UnwrapPairResult UnwrapPairContext::try_unwrap()
+{
+    return try_unwrap_with_algo(&unwrap_algo.algo);
+}
+
+// Attempts unwrap with a caller-supplied algorithm descriptor, keeping
+// the context's own RSA key and wrapped buffer.  Useful for testing
+// invalid or mutated algorithm structs against a valid key pair.
+UnwrapPairResult UnwrapPairContext::try_unwrap_with_algo(azihsm_algo *algo)
+{
+    auto priv_prop_list = priv_props.get_prop_list();
+    auto pub_prop_list = pub_props.get_prop_list();
+    return try_unwrap_pair(
+        algo,
+        rsa_priv_key.get(),
+        &wrapped_key_buf,
+        &priv_prop_list,
+        &pub_prop_list
+    );
+}
+
+// Attempts unwrap with a caller-supplied unwrapping key handle, keeping
+// the context's own algorithm and wrapped buffer.  Useful for testing
+// wrong key type, stale handle, or cross-session key scenarios.
+UnwrapPairResult UnwrapPairContext::try_unwrap_with_key(azihsm_handle key)
+{
+    auto priv_prop_list = priv_props.get_prop_list();
+    auto pub_prop_list = pub_props.get_prop_list();
+    return try_unwrap_pair(
+        &unwrap_algo.algo,
+        key,
+        &wrapped_key_buf,
+        &priv_prop_list,
+        &pub_prop_list
+    );
+}
+
+// Most flexible unwrap helper — caller supplies both the algorithm and
+// wrapped-key buffer while the context provides the RSA key and
+// property lists.  Other try_unwrap_* variants delegate here.
+UnwrapPairResult UnwrapPairContext::try_unwrap_with(azihsm_algo *algo, azihsm_buffer *wrapped_key)
+{
+    auto priv_prop_list = priv_props.get_prop_list();
+    auto pub_prop_list = pub_props.get_prop_list();
+    return try_unwrap_pair(
+        algo,
+        rsa_priv_key.get(),
+        wrapped_key,
+        &priv_prop_list,
+        &pub_prop_list
+    );
+}
+
+// Shorthand that extracts the algo and wrapped buffer from an
+// RsaAesUnwrapPairInputs struct and forwards to try_unwrap_with().
+// Ideal for tests that mutate a single field on the inputs struct.
+UnwrapPairResult UnwrapPairContext::try_unwrap_inputs(RsaAesUnwrapPairInputs &inputs)
+{
+    return try_unwrap_with(&inputs.unwrap_algo, &inputs.wrapped_key_buf);
+}
+
+// Calls azihsm_key_unwrap_pair directly, giving the caller full control
+// over the output-handle pointers (which may be null or aliased).
+// Used by tests that validate null/aliased output-handle rejection.
+azihsm_status UnwrapPairContext::raw_unwrap(
+    RsaAesUnwrapPairInputs &inputs,
+    azihsm_handle *priv_out,
+    azihsm_handle *pub_out
+)
+{
+    auto priv_prop_list = priv_props.get_prop_list();
+    auto pub_prop_list = pub_props.get_prop_list();
+    return azihsm_key_unwrap_pair(
+        &inputs.unwrap_algo,
+        rsa_priv_key.get(),
+        &inputs.wrapped_key_buf,
+        &priv_prop_list,
+        &pub_prop_list,
+        priv_out,
+        pub_out
+    );
+}
+
+// Exercises unwrap with a fabricated (invalid) key handle and dummy
+// inputs — no HSM session required.  Verifies that the API rejects
+// bad handle values (zero, non-existent, wrong type) before touching
+// any session state.
+UnwrapPairResult try_unwrap_with_invalid_handle(azihsm_handle key_handle)
+{
+    RsaAesUnwrapPairInputs inputs(0xAB);
+    DefaultEccPrivKeyProps priv_props;
+    DefaultEccPubKeyProps pub_props;
+    auto priv_prop_list = priv_props.get_prop_list();
+    auto pub_prop_list = pub_props.get_prop_list();
+    return try_unwrap_pair(
+        &inputs.unwrap_algo,
+        key_handle,
+        &inputs.wrapped_key_buf,
+        &priv_prop_list,
+        &pub_prop_list
+    );
+}
