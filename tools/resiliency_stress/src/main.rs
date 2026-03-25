@@ -129,8 +129,38 @@ struct Args {
 /// Maximum number of child processes supported.
 const MAX_PROCS: usize = 16;
 
-/// Number of per-op counter slots (must match LABELS array length).
-const NUM_OPS: usize = 26;
+/// Human-readable labels for each operation slot.
+const LABELS: [&str; 26] = [
+    "AES-CBC enc+dec:  ",
+    "ECC sign:         ",
+    "HMAC sign:        ",
+    "RSA sign:         ",
+    "RSA decrypt:      ",
+    "ECDH derive:      ",
+    "HKDF derive:      ",
+    "AES key gen:      ",
+    "ECC key gen:      ",
+    "AES-XTS keygen:   ",
+    "Unwrapping keygen:",
+    "AES unwrap:       ",
+    "ECC unwrap:       ",
+    "XTS unwrap:       ",
+    "AES unmask:       ",
+    "ECC unmask:       ",
+    "XTS unmask:       ",
+    "ECC key report:   ",
+    "RSA key report:   ",
+    "Unwrap key report:",
+    "Cert chain:       ",
+    "AES keygen+del:   ",
+    "ECC keygen+del:   ",
+    "XTS keygen+del:   ",
+    "AES-XTS enc+dec:  ",
+    "AES-GCM enc+dec:  ",
+];
+
+/// Number of per-op counter slots.
+const NUM_OPS: usize = LABELS.len();
 
 /// Per-process stats stored in shared memory.
 ///
@@ -263,71 +293,39 @@ unsafe fn shmem_ref(mmap: &memmap2::MmapMut) -> &SharedMem {
     unsafe { &*(mmap.as_ptr() as *const SharedMem) }
 }
 #[derive(Debug, Clone, Copy)]
+#[repr(u8)]
 enum OpKind {
-    AesCbcEncDec,
-    EccSign,
-    HmacSign,
-    RsaSign,
-    RsaDecrypt,
-    EcdhDerive,
-    HkdfDerive,
-    AesKeyGen,
-    EccKeyGen,
-    AesXtsKeyGen,
-    UnwrappingKeyGen,
-    AesUnwrap,
-    EccUnwrap,
-    XtsUnwrap,
-    AesUnmask,
-    EccUnmask,
-    XtsUnmask,
-    EccKeyReport,
-    RsaKeyReport,
-    UnwrappingKeyReport,
-    CertChain,
-    AesKeyGenDelete,
-    EccKeyGenDelete,
-    AesXtsKeyGenDelete,
+    AesCbcEncDec = 1,
+    EccSign = 2,
+    HmacSign = 3,
+    RsaSign = 4,
+    RsaDecrypt = 5,
+    EcdhDerive = 6,
+    HkdfDerive = 7,
+    AesKeyGen = 8,
+    EccKeyGen = 9,
+    AesXtsKeyGen = 10,
+    UnwrappingKeyGen = 11,
+    AesUnwrap = 12,
+    EccUnwrap = 13,
+    XtsUnwrap = 14,
+    AesUnmask = 15,
+    EccUnmask = 16,
+    XtsUnmask = 17,
+    EccKeyReport = 18,
+    RsaKeyReport = 19,
+    UnwrappingKeyReport = 20,
+    CertChain = 21,
+    AesKeyGenDelete = 22,
+    EccKeyGenDelete = 23,
+    AesXtsKeyGenDelete = 24,
     #[cfg(feature = "mock")]
-    AesXtsEncDec,
+    AesXtsEncDec = 25,
     #[cfg(feature = "mock")]
-    AesGcmEncDec,
+    AesGcmEncDec = 26,
 }
 
 impl OpKind {
-    fn as_u8(self) -> u8 {
-        match self {
-            Self::AesCbcEncDec => 1,
-            Self::EccSign => 2,
-            Self::HmacSign => 3,
-            Self::RsaSign => 4,
-            Self::RsaDecrypt => 5,
-            Self::EcdhDerive => 6,
-            Self::HkdfDerive => 7,
-            Self::AesKeyGen => 8,
-            Self::EccKeyGen => 9,
-            Self::AesXtsKeyGen => 10,
-            Self::UnwrappingKeyGen => 11,
-            Self::AesUnwrap => 12,
-            Self::EccUnwrap => 13,
-            Self::XtsUnwrap => 14,
-            Self::AesUnmask => 15,
-            Self::EccUnmask => 16,
-            Self::XtsUnmask => 17,
-            Self::EccKeyReport => 18,
-            Self::RsaKeyReport => 19,
-            Self::UnwrappingKeyReport => 20,
-            Self::CertChain => 21,
-            Self::AesKeyGenDelete => 22,
-            Self::EccKeyGenDelete => 23,
-            Self::AesXtsKeyGenDelete => 24,
-            #[cfg(feature = "mock")]
-            Self::AesXtsEncDec => 25,
-            #[cfg(feature = "mock")]
-            Self::AesGcmEncDec => 26,
-        }
-    }
-
     fn from_u8(v: u8) -> Option<Self> {
         match v {
             1 => Some(Self::AesCbcEncDec),
@@ -1489,35 +1487,6 @@ fn print_final_stats(shmem: &SharedMem, num_procs: usize, elapsed: Duration) {
         grand_ops as f64 / elapsed.as_secs_f64().max(0.001)
     );
 
-    const LABELS: [&str; NUM_OPS] = [
-        "AES-CBC enc+dec:  ",
-        "ECC sign:         ",
-        "HMAC sign:        ",
-        "RSA sign:         ",
-        "RSA decrypt:      ",
-        "ECDH derive:      ",
-        "HKDF derive:      ",
-        "AES key gen:      ",
-        "ECC key gen:      ",
-        "AES-XTS keygen:   ",
-        "Unwrapping keygen:",
-        "AES unwrap:       ",
-        "ECC unwrap:       ",
-        "XTS unwrap:       ",
-        "AES unmask:       ",
-        "ECC unmask:       ",
-        "XTS unmask:       ",
-        "ECC key report:   ",
-        "RSA key report:   ",
-        "Unwrap key report:",
-        "Cert chain:       ",
-        "AES keygen+del:   ",
-        "ECC keygen+del:   ",
-        "XTS keygen+del:   ",
-        "AES-XTS enc+dec:  ",
-        "AES-GCM enc+dec:  ",
-    ];
-
     eprintln!();
 
     // Header with per-process columns.
@@ -2063,35 +2032,6 @@ fn multiproc_stats_loop(
         writeln!(buf, "{:>9}", "Total").ok();
         emitted_lines += 1;
 
-        const LABELS: [&str; NUM_OPS] = [
-            "AES-CBC enc+dec:  ",
-            "ECC sign:         ",
-            "HMAC sign:        ",
-            "RSA sign:         ",
-            "RSA decrypt:      ",
-            "ECDH derive:      ",
-            "HKDF derive:      ",
-            "AES key gen:      ",
-            "ECC key gen:      ",
-            "AES-XTS keygen:   ",
-            "Unwrapping keygen:",
-            "AES unwrap:       ",
-            "ECC unwrap:       ",
-            "XTS unwrap:       ",
-            "AES unmask:       ",
-            "ECC unmask:       ",
-            "XTS unmask:       ",
-            "ECC key report:   ",
-            "RSA key report:   ",
-            "Unwrap key report:",
-            "Cert chain:       ",
-            "AES keygen+del:   ",
-            "ECC keygen+del:   ",
-            "XTS keygen+del:   ",
-            "AES-XTS enc+dec:  ",
-            "AES-GCM enc+dec:  ",
-        ];
-
         for (i, label) in LABELS.iter().enumerate() {
             // Skip ops that were never executed.
             if agg_counts[i] == 0 && agg_errors[i] == 0 {
@@ -2461,7 +2401,7 @@ fn child_worker_thread(
             OpKind::AesGcmEncDec => exec_aes_gcm_enc_dec(gcm_key.as_ref().expect("GCM key")),
         };
 
-        let op_idx = (op.as_u8() - 1) as usize;
+        let op_idx = (op as u8 - 1) as usize;
         match result {
             Ok(()) => {
                 proc_stats.increment_op(op_idx);
@@ -2477,7 +2417,7 @@ fn child_worker_thread(
                     proc_stats.failed.store(true, Ordering::SeqCst);
                     proc_stats
                         .failed_op
-                        .store(op.as_u8() as u32, Ordering::Relaxed);
+                        .store(op as u8 as u32, Ordering::Relaxed);
                     proc_stats.failed_error.store(err as i32, Ordering::Relaxed);
                     proc_stats
                         .failed_thread

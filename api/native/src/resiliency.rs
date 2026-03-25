@@ -13,6 +13,12 @@
 //! - All function pointers in the ops structs must be valid (non-null).
 //! - The `ctx` pointer must remain valid for the lifetime of the partition
 //!   handle (i.e., until `azihsm_part_close` is called).
+//! - `ctx` **must not** contain or reference the same partition handle
+//!   (`azihsm_handle`) that is being initialized — callbacks are invoked
+//!   while the partition's internal lock is held, so calling back into the
+//!   same partition will deadlock. If a callback needs to query the device
+//!   (e.g., retrieve the PID public key), store the device **path** in
+//!   `ctx` and open a separate partition handle inside the callback.
 //! - All callbacks must be thread-safe — they may be called concurrently
 //!   from multiple threads.
 
@@ -26,6 +32,16 @@ use azihsm_api as api;
 use crate::AzihsmBuffer;
 use crate::AzihsmStatus;
 use crate::utils::deref_ptr;
+
+/// Maximum size (in bytes) for a single resiliency storage value returned
+/// by a C callback. Prevents excessive allocation from a misbehaving caller.
+/// 1 MiB is far beyond any realistic blob (BMK ~350 B, masked key ~2720 B).
+const MAX_STORAGE_READ_SIZE: usize = 1024 * 1024;
+
+/// Maximum size (in bytes) for each POTA endorsement output buffer
+/// (signature or public key). POTA uses P-384: signature is 96 bytes,
+/// public key is 120 bytes DER. 64 KiB is extremely generous.
+const MAX_POTA_BUFFER_SIZE: usize = 64 * 1024;
 
 /// Storage operations for resiliency.
 ///
@@ -86,7 +102,9 @@ pub struct AzihsmPotaCallbackOps {
 /// Resiliency configuration passed to `azihsm_part_init`.
 ///
 /// - `ctx`: Opaque context pointer passed back to every callback. The SDK
-///   never dereferences this — the caller owns and manages it.
+///   never dereferences this — the caller owns and manages it. Must remain
+///   valid until `azihsm_part_close` returns. **Must not** contain or
+///   reference the same partition handle — see module-level safety docs.
 /// - `storage_ops` and `lock_ops` are always required (inline).
 /// - `pota_callback_ops`: Pointer to POTA callback ops. NULL when POTA
 ///   endorsement source is TPM. Must be non-null when source is Caller.
@@ -175,7 +193,11 @@ impl api::ResiliencyStorage for ResiliencyStorageAdapter {
         }
 
         // Second call: read into allocated buffer
-        let mut data = vec![0u8; buf.len as usize];
+        let len = buf.len as usize;
+        if len > MAX_STORAGE_READ_SIZE {
+            return Err(api::HsmError::InvalidArgument);
+        }
+        let mut data = vec![0u8; len];
         buf.ptr = data.as_mut_ptr() as *mut c_void;
 
         // SAFETY: buf.ptr points to a valid allocation of buf.len bytes.
@@ -292,8 +314,13 @@ impl api::PotaEndorsementCallback for PotaCallbackAdapter {
         }
 
         // Second call: fill allocated buffers
-        let mut sig_data = vec![0u8; sig_buf.len as usize];
-        let mut pk_data = vec![0u8; pk_out_buf.len as usize];
+        let sig_len = sig_buf.len as usize;
+        let pk_len = pk_out_buf.len as usize;
+        if sig_len > MAX_POTA_BUFFER_SIZE || pk_len > MAX_POTA_BUFFER_SIZE {
+            return Err(api::HsmError::InvalidArgument);
+        }
+        let mut sig_data = vec![0u8; sig_len];
+        let mut pk_data = vec![0u8; pk_len];
         sig_buf.ptr = sig_data.as_mut_ptr() as *mut c_void;
         pk_out_buf.ptr = pk_data.as_mut_ptr() as *mut c_void;
 

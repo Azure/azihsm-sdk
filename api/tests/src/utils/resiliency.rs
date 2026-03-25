@@ -96,7 +96,11 @@ impl ResiliencyStorage for FileStorage {
         let mut file = fs::File::create(&tmp_path).map_err(|_| HsmError::InternalError)?;
         file.write_all(data).map_err(|_| HsmError::InternalError)?;
         // Remove existing destination before rename — on Windows,
-        // fs::rename fails if the target already exists.
+        // fs::rename fails if the target already exists (Linux rename(2)
+        // atomically replaces, but std::fs::rename is not guaranteed to).
+        // The remove+rename sequence is safe without an additional lock
+        // because all callers hold the cross-process ResiliencyLock
+        // (via ResiliencyLockGuard) before writing to storage.
         let _ = fs::remove_file(&path);
         fs::rename(&tmp_path, &path).map_err(|_| HsmError::InternalError)?;
         Ok(())

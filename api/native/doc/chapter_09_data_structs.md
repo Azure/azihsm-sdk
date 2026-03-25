@@ -698,6 +698,13 @@ struct azihsm_pota_callback_ops {
 | ------- | ---------------- | ---------------------------------------------------------------------------------- |
 | endorse | function pointer | Re-endorse the public key. Uses two-call buffer pattern for signature and pub key.  |
 
+> **Deadlock hazard:** The `endorse` callback is invoked while the
+> partition's internal lock is held. Implementations **must not** use the
+> same partition handle (`azihsm_handle`) that was passed to
+> `azihsm_part_init` — doing so will deadlock. Instead, store the device
+> path and open a **separate** partition handle inside the callback using
+> `azihsm_part_open`, then call `azihsm_part_get_pub_key` on that handle to  retrieve the PID public key for signing.
+
 ### azihsm_resiliency_config
 
 Resiliency configuration passed to `azihsm_part_init`.
@@ -713,7 +720,7 @@ struct azihsm_resiliency_config {
 
 | Field              | Type                                                              | Description                                                                                   |
 | ------------------ | ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| ctx                | void *                                                            | Opaque context pointer passed to every callback. Caller-owned, must outlive the partition.     |
+| ctx                | void *                                                            | Opaque context pointer passed to every callback. Caller-owned; must remain valid until `azihsm_part_close` returns. The SDK never dereferences `ctx` itself — it is passed opaquely to each callback. **Do not** store the partition handle (`azihsm_handle`) in `ctx` — callbacks are invoked while the partition's internal lock is held, so calling back into the same partition will deadlock. Instead, store the device path and open a separate partition handle inside any callback that needs to query the device. |
 | storage_ops        | [azihsm_resiliency_storage_ops](#azihsm_resiliency_storage_ops)   | Storage callbacks (required).                                                                 |
 | lock_ops           | [azihsm_resiliency_lock_ops](#azihsm_resiliency_lock_ops)         | Lock callbacks (required).                                                                    |
 | pota_callback_ops  | [azihsm_pota_callback_ops *](#azihsm_pota_callback_ops)           | POTA callback (NULL when POTA source is TPM; required when source is Caller).                 |

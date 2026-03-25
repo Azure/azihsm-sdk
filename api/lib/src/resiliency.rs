@@ -93,8 +93,26 @@ pub trait ResiliencyLock: Send + Sync {
 /// The callback is invoked while the partition's internal `RwLock` is
 /// held. Implementations must not call methods on the same
 /// [`HsmPartition`](crate::HsmPartition) handle that is being
-/// initialized or restored — doing so will deadlock. The callback
-/// must open a separate partition handle using the device path.
+/// initialized or restored — doing so will deadlock.
+///
+/// Instead, store the device path and open a **separate** partition
+/// handle inside the callback:
+///
+/// ```ignore
+/// struct MyPotaCallback {
+///     path: String,  // Store the device path, not the HsmPartition
+/// }
+///
+/// impl PotaEndorsementCallback for MyPotaCallback {
+///     fn endorse(&self, _pub_key: &[u8]) -> HsmResult<HsmPotaEndorsementData> {
+///         // Open a NEW partition handle — do NOT reuse the caller's handle
+///         let part = HsmPartitionManager::open_partition(&self.path)?;
+///         let pid_pub_key = part.pub_key()?;
+///         let (sig, signer_pub_key) = sign_pid_key(&pid_pub_key);
+///         Ok(HsmPotaEndorsementData::new(&sig, &signer_pub_key))
+///     }
+/// }
+/// ```
 pub trait PotaEndorsementCallback: Send + Sync {
     /// Generate a fresh POTA endorsement for the current device.
     ///

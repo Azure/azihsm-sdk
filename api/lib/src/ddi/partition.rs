@@ -400,6 +400,9 @@ fn try_establish_credential(
     let new_bmk = match (&result, resiliency_config) {
         (Ok(_), _) => result,
         (Err(HsmError::MaskedKeyDecodeFailed), Some(cfg)) => {
+            // Cached BMK/MUK are stale (e.g. from a prior migration epoch).
+            // Clear them from storage and retry with empty values so the
+            // device generates fresh keys.
             cfg.storage.clear(crate::resiliency::AZIHSM_STORAGE_BMK)?;
             cfg.storage.clear(crate::resiliency::AZIHSM_STORAGE_MUK)?;
 
