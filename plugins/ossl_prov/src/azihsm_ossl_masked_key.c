@@ -1,14 +1,11 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-#include <errno.h>
-#include <fcntl.h>
 #include <openssl/crypto.h>
 #include <openssl/err.h>
 #include <openssl/proverr.h>
-#include <sys/stat.h>
-#include <unistd.h>
 
+#include "azihsm_ossl_file_io.h"
 #include "azihsm_ossl_helpers.h"
 #include "azihsm_ossl_masked_key.h"
 
@@ -72,34 +69,9 @@ int azihsm_ossl_write_masked_key_to_file(
     const char *output_file
 )
 {
-    int fd;
-
-    fd = open(output_file, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW, S_IRUSR | S_IWUSR);
-    if (fd < 0)
+    if (azihsm_file_write(output_file, buffer, len) != AZIHSM_STATUS_SUCCESS)
     {
-        ERR_raise(ERR_LIB_PROV, ERR_R_SYS_LIB);
         return OSSL_FAILURE;
     }
-
-    /* Write all bytes, retrying on short writes and EINTR */
-    uint32_t total_written = 0;
-    while (total_written < len)
-    {
-        ssize_t written = write(fd, buffer + total_written, len - total_written);
-        if (written <= 0)
-        {
-            if (written < 0 && errno == EINTR)
-            {
-                continue;
-            }
-            ERR_raise(ERR_LIB_PROV, ERR_R_SYS_LIB);
-            close(fd);
-            unlink(output_file);
-            return OSSL_FAILURE;
-        }
-        total_written += (uint32_t)written;
-    }
-
-    close(fd);
     return OSSL_SUCCESS;
 }

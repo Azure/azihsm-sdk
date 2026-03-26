@@ -4,7 +4,7 @@
 # Ignore advisories for transitive dependencies of `lit` (test-only crate).
 # `lit` depends on `clap 2.x` which pulls in these crates. They are never used
 # in library or production code, only during `cargo test` via the
-# `integration-tests` dev-dependency.
+# `provider-integration-tests-cli` dev-dependency.
 #
 # RUSTSEC-2018-0015, RUSTSEC-2021-0139, RUSTSEC-2024-0375: unmaintained crates.
 # RUSTSEC-2021-0145: atty - potential unaligned read; the unsound code path is

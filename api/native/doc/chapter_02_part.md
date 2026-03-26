@@ -201,7 +201,8 @@ azihsm_status azihsm_part_init(
     const struct azihsm_buffer *bmk,
     const struct azihsm_buffer *muk,
     const struct azihsm_owner_backup_key_config *backup_key_config,
-    const struct azihsm_pota_endorsement *pota_endorsement
+    const struct azihsm_pota_endorsement *pota_endorsement,
+    const struct azihsm_resiliency_config *resiliency_config
     );
 ```
 
@@ -215,6 +216,18 @@ azihsm_status azihsm_part_init(
 | [in] muk                | [struct azihsm_buffer*](#azihsm_buffer)                                   | optional masked unwrapping key (can be NULL)                     |
 | [in] backup_key_config  | [struct azihsm_owner_backup_key_config*](#azihsm_owner_backup_key_config) | owner backup key configuration (must be non-NULL)                |
 | [in] pota_endorsement   | [struct azihsm_pota_endorsement*](#azihsm_pota_endorsement)               | POTA endorsement configuration (must be non-NULL)                |
+| [in] resiliency_config  | [struct azihsm_resiliency_config*](#azihsm_resiliency_config)             | optional resiliency configuration (can be NULL)                  |
+
+When `resiliency_config` is non-NULL, the SDK enables automatic retry and recovery for transient hardware resets. The caller provides storage, lock, and (optionally) POTA re-endorsement callbacks. If POTA endorsement source is `AZIHSM_POTA_ENDORSEMENT_SOURCE_CALLER`, `pota_callback_ops` must be non-NULL. If source is `AZIHSM_POTA_ENDORSEMENT_SOURCE_TPM`, `pota_callback_ops` must be NULL. Passing NULL for `resiliency_config` disables resiliency.
+
+> **POTA callback deadlock hazard:** The POTA `endorse` callback is
+> invoked while the partition's internal lock is held. The callback
+> **must not** use the same `azihsm_handle` that was passed to
+> `azihsm_part_init`. Instead, the caller should store the device path
+> (from `azihsm_part_get_prop`) and open a **separate** partition handle
+> inside the callback to retrieve the device's PID public key for
+> signing. See [`azihsm_pota_callback_ops`](#azihsm_pota_callback_ops)
+> for details.
 
 **Returns**
 

@@ -564,7 +564,10 @@ impl DdiDev for DdiMockDev {
             &mut destination_buffers,
         );
 
-        let result = result.map_err(|err| DdiError::DdiStatus(DdiStatus::from(err)))?;
+        let result = result.map_err(|err| {
+            let ddi_status = DdiStatus::from(err);
+            DdiError::DdiStatus(ddi_status)
+        })?;
 
         let total_size: usize = result.total_size as usize;
 

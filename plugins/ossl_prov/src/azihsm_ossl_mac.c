@@ -10,6 +10,7 @@
 #include <string.h>
 
 #include "azihsm_ossl_base.h"
+#include "azihsm_ossl_file_io.h"
 #include "azihsm_ossl_helpers.h"
 #include "azihsm_ossl_pkey_param.h"
 
@@ -28,9 +29,6 @@
  * - The digest algorithm (SHA256/384/512) is set via OSSL_MAC_PARAM_DIGEST
  * - The key kind for unmasking is derived from the selected digest
  */
-
-/* Maximum file size for masked key files (64KB) */
-#define MAX_FILE_SIZE (64 * 1024)
 
 /* Forward declaration */
 static int azihsm_ossl_mac_set_ctx_params(void *mctx, const OSSL_PARAM params[]);
@@ -54,70 +52,10 @@ typedef struct
     bool ctx_initialized;
 } AZIHSM_HMAC_CTX;
 
-/* Helper: Read file contents */
-static unsigned char *read_file(const char *path, size_t *out_len)
-{
-    FILE *f = NULL;
-    long size;
-    unsigned char *buf = NULL;
-    size_t bytes_read;
-
-    if (path == NULL || out_len == NULL)
-    {
-        return NULL;
-    }
-
-    f = fopen(path, "rb");
-    if (f == NULL)
-    {
-        return NULL;
-    }
-
-    if (fseek(f, 0, SEEK_END) != 0)
-    {
-        fclose(f);
-        return NULL;
-    }
-
-    size = ftell(f);
-    if (size <= 0 || size > MAX_FILE_SIZE)
-    {
-        fclose(f);
-        return NULL;
-    }
-
-    if (fseek(f, 0, SEEK_SET) != 0)
-    {
-        fclose(f);
-        return NULL;
-    }
-
-    buf = OPENSSL_malloc((size_t)size);
-    if (buf == NULL)
-    {
-        fclose(f);
-        return NULL;
-    }
-
-    bytes_read = fread(buf, 1, (size_t)size, f);
-    fclose(f);
-
-    if (bytes_read != (size_t)size)
-    {
-        OPENSSL_free(buf);
-        return NULL;
-    }
-
-    *out_len = (size_t)size;
-    return buf;
-}
-
 /* Helper: Load and unmask HMAC key from file */
 static int load_and_unmask_key(AZIHSM_HMAC_CTX *ctx)
 {
-    unsigned char *masked_key_data = NULL;
-    size_t masked_key_size = 0;
-    struct azihsm_buffer masked_buf;
+    struct azihsm_buffer masked_buf = { 0 };
     azihsm_status status;
 
     if (ctx->key_loaded)
@@ -137,30 +75,33 @@ static int load_and_unmask_key(AZIHSM_HMAC_CTX *ctx)
         return OSSL_FAILURE;
     }
 
-    masked_key_data = read_file(ctx->key_file, &masked_key_size);
-    if (masked_key_data == NULL)
+    if (azihsm_file_load(ctx->key_file, &masked_buf) != AZIHSM_STATUS_SUCCESS)
     {
-        ERR_raise(ERR_LIB_PROV, ERR_R_SYS_LIB);
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            PROV_R_MISSING_KEY,
+            "failed to load HMAC key file '%s'",
+            ctx->key_file
+        );
         return OSSL_FAILURE;
     }
 
-    /* Bounds check to prevent truncation when casting to uint32_t */
-    if (masked_key_size > UINT32_MAX)
+    if (masked_buf.ptr == NULL)
     {
-        OPENSSL_cleanse(masked_key_data, masked_key_size);
-        OPENSSL_free(masked_key_data);
-        ERR_raise(ERR_LIB_PROV, PROV_R_BAD_LENGTH);
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            PROV_R_MISSING_KEY,
+            "HMAC key file not found: '%s'",
+            ctx->key_file
+        );
         return OSSL_FAILURE;
     }
-
-    masked_buf.ptr = masked_key_data;
-    masked_buf.len = (uint32_t)masked_key_size;
 
     /* Unmask the HMAC key */
     status = azihsm_key_unmask(ctx->provctx->session, ctx->key_kind, &masked_buf, &ctx->key_handle);
 
-    OPENSSL_cleanse(masked_key_data, masked_key_size);
-    OPENSSL_free(masked_key_data);
+    OPENSSL_cleanse(masked_buf.ptr, masked_buf.len);
+    OPENSSL_free(masked_buf.ptr);
 
     if (status != AZIHSM_STATUS_SUCCESS)
     {

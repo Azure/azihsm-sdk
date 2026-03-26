@@ -12,6 +12,12 @@ use azihsm_api_tests_macro::*;
 use azihsm_crypto::*;
 use tracing::*;
 
+/// Returns `true` when the `AZIHSM_USE_TPM` environment variable is set,
+/// indicating we are running against real hardware with TPM-sourced keys.
+pub(crate) fn use_tpm() -> bool {
+    std::env::var("AZIHSM_USE_TPM").is_ok()
+}
+
 /// Application identifier used for partition authentication.
 ///
 /// This constant defines a test application ID consisting of 16 bytes,
@@ -36,7 +42,7 @@ pub(crate) const TEST_OBK: [u8; 48] = [
 
 /// Test POTA endorsement private key (DER-encoded ECC P-384, 185 bytes).
 /// This is the same key used by DDI integration tests (TEST_POTA_ECC_PRIVATE_KEY).
-const TEST_POTA_PRIVATE_KEY: [u8; 185] = [
+pub(crate) const TEST_POTA_PRIVATE_KEY: [u8; 185] = [
     0x30, 0x81, 0xb6, 0x02, 0x01, 0x00, 0x30, 0x10, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02,
     0x01, 0x06, 0x05, 0x2b, 0x81, 0x04, 0x00, 0x22, 0x04, 0x81, 0x9e, 0x30, 0x81, 0x9b, 0x02, 0x01,
     0x01, 0x04, 0x30, 0x17, 0xe9, 0x1c, 0xac, 0xf7, 0xb7, 0x21, 0xd7, 0x75, 0x20, 0x02, 0x07, 0xbc,
@@ -53,7 +59,7 @@ const TEST_POTA_PRIVATE_KEY: [u8; 185] = [
 
 /// Test POTA endorsement public key (DER-encoded ECC P-384, 120 bytes).
 /// Corresponds to TEST_POTA_PRIVATE_KEY above.
-const TEST_POTA_PUBLIC_KEY_DER: [u8; 120] = [
+pub(crate) const TEST_POTA_PUBLIC_KEY_DER: [u8; 120] = [
     0x30, 0x76, 0x30, 0x10, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, 0x06, 0x05, 0x2b,
     0x81, 0x04, 0x00, 0x22, 0x03, 0x62, 0x00, 0x04, 0x1f, 0x42, 0x0d, 0x73, 0xeb, 0xf0, 0x67, 0xc2,
     0xf9, 0x77, 0xbd, 0x51, 0xab, 0xfb, 0xe1, 0xf6, 0x53, 0x19, 0xb7, 0x57, 0xe0, 0xa9, 0x20, 0xce,
@@ -115,6 +121,31 @@ pub(crate) fn generate_pota_endorsement(part: &HsmPartition) -> (Vec<u8>, Vec<u8
     (signature, TEST_POTA_PUBLIC_KEY_DER.to_vec())
 }
 
+/// Builds the OBK config and POTA endorsement for partition init.
+///
+/// Automatically selects TPM or Caller source based on the
+/// `AZIHSM_USE_TPM` environment variable.
+#[allow(clippy::expect_used)]
+pub(crate) fn make_init_params(
+    part: &HsmPartition,
+) -> (HsmOwnerBackupKeyConfig, HsmPotaEndorsement) {
+    if use_tpm() {
+        (
+            HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, None),
+            HsmPotaEndorsement::new(HsmPotaEndorsementSource::Tpm, None),
+        )
+    } else {
+        let (sig, pubkey) = generate_pota_endorsement(part);
+        (
+            HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Caller, Some(&TEST_OBK)),
+            HsmPotaEndorsement::new(
+                HsmPotaEndorsementSource::Caller,
+                Some(HsmPotaEndorsementData::new(&sig, &pubkey)),
+            ),
+        )
+    }
+}
+
 /// Executes a test function with an initialized HSM partition.
 ///
 /// This utility function discovers available HSM partitions, opens each one,
@@ -149,28 +180,8 @@ where
 
         //init with test creds
         let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
-        let use_tpm = std::env::var("AZIHSM_USE_TPM").is_ok();
-
-        let pota_owned = if !use_tpm {
-            Some(generate_pota_endorsement(&part))
-        } else {
-            None
-        };
-
-        let (backup_key_info, pota_endorsement) = if use_tpm {
-            (
-                HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, None),
-                HsmPotaEndorsement::new(HsmPotaEndorsementSource::Tpm, None),
-            )
-        } else {
-            let (ref pota_sig, ref pota_pub_key_der) = *pota_owned.as_ref().unwrap();
-            let pota_data = HsmPotaEndorsementData::new(pota_sig, pota_pub_key_der);
-            (
-                HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Caller, Some(&TEST_OBK)),
-                HsmPotaEndorsement::new(HsmPotaEndorsementSource::Caller, Some(pota_data)),
-            )
-        };
-        part.init(creds, None, None, backup_key_info, pota_endorsement)
+        let (obk_info, pota_endorsement) = make_init_params(&part);
+        part.init(creds, None, None, obk_info, pota_endorsement, None)
             .expect("Partition init failed");
         test(part, creds);
     }

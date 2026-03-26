@@ -7,6 +7,18 @@ use super::*;
 
 define_hsm_key_pair!(pub HsmRsaPrivateKey, pub HsmRsaPublicKey, crypto::RsaPublicKey);
 
+impl HsmKeyReportOp for HsmRsaPrivateKey {
+    type Error = HsmError;
+
+    fn generate_key_report(
+        &self,
+        report_data: &[u8],
+        report: Option<&mut [u8]>,
+    ) -> Result<usize, Self::Error> {
+        ddi::rsa_generate_key_report(self, report_data, report)
+    }
+}
+
 /// Validates supported RSA key sizes for this layer.
 ///
 /// The RSA backend/implementation only supports a fixed set of modulus sizes.
@@ -218,6 +230,15 @@ impl HsmKeyPairGenOp for HsmRsaKeyUnwrappingKeyGenAlgo {
 
         let (handle, priv_key_props, pub_key_props) =
             ddi::get_rsa_unwrapping_key(session, priv_key_props, pub_key_props)?;
+
+        // Persist MUK (masked unwrapping key) to resiliency storage so
+        // that `establish_credential` can restore the device's unwrapping
+        // key state after a resiliency event.
+        if let Some(muk) = priv_key_props.masked_key() {
+            session
+                .partition()
+                .write_resiliency_storage(crate::resiliency::AZIHSM_STORAGE_MUK, muk)?;
+        }
 
         // Extract the public key DER from the private key properties.
         let Some(pub_key_der) = pub_key_props.pub_key_der() else {

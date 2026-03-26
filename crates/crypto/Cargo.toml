@@ -22,6 +22,10 @@ openssl-sys.workspace = true
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { features = ["Win32_Security_Cryptography"], workspace = true }
 
+[features]
+default = []
+testvectors = []
+
 [lints]
 workspace = true
 

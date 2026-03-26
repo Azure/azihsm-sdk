@@ -2066,7 +2066,7 @@ impl Dispatcher {
         .map_err(|_| ManticoreError::EccVerifyError)?;
 
         if !verify_result {
-            tracing::error!("POTA public key verification failed in establish_credential.");
+            tracing::warn!("POTA public key verification failed in establish_credential.");
             Err(ManticoreError::EccVerifyError)?
         }
 

@@ -15,6 +15,8 @@
 //! The maximum supported message size is 1024 bytes (see `DdiHmacReq.msg`).
 //! Requests larger than this will fail when building the MBOR payload.
 
+use resiliency_macro::resiliency_key_op;
+
 use super::*;
 
 /// Computes an HMAC tag for the provided message using an HSM-managed key.
@@ -41,6 +43,7 @@ use super::*;
 /// - `data` exceeds the DDI message limit and cannot be encoded to MBOR.
 /// - The device command execution fails.
 /// - The provided `signature` buffer is too small.
+#[resiliency_key_op(key = "key")]
 pub(crate) fn hmac_sign(key: &HsmHmacKey, data: &[u8], signature: &mut [u8]) -> HsmResult<usize> {
     // build hmac sign ddi request
     let req = DdiHmacCmdReq {
@@ -51,10 +54,7 @@ pub(crate) fn hmac_sign(key: &HsmHmacKey, data: &[u8], signature: &mut [u8]) -> 
         },
         ext: None,
     };
-    let resp = key.with_dev(|dev| {
-        dev.exec_op(&req, &mut None)
-            .map_hsm_err(HsmError::DdiCmdFailure)
-    })?;
+    let resp = key.with_dev(|dev| dev.exec_op(&req, &mut None).map_err(HsmError::from))?;
 
     // check if signature buffer is large enough
     if signature.len() < resp.data.tag.len() {

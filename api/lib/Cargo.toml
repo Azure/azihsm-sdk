@@ -12,8 +12,10 @@ azihsm_crypto.workspace = true
 azihsm_ddi.workspace = true
 azihsm_ddi_mbor.workspace = true
 azihsm_ddi_types.workspace = true
+azihsm_res_test_dev = { optional = true, workspace = true }
 azihsm_tpm.workspace = true
 bitflags.workspace = true
+cfg-if.workspace = true
 delegate.workspace = true
 env_logger.workspace = true
 itertools.workspace = true
@@ -21,6 +23,8 @@ log.workspace = true
 open-enum.workspace = true
 parking_lot.workspace = true
 pastey.workspace = true
+rand.workspace = true
+resiliency_macro.workspace = true
 test_with_tracing.workspace = true
 tracing.workspace = true
 x509.workspace = true
@@ -29,6 +33,7 @@ zerocopy = { features = ["derive"], workspace = true }
 [features]
 default = []
 mock = ["azihsm_ddi/mock"]
+res-test = ["azihsm_res_test_dev"]
 
 [lints]
 workspace = true

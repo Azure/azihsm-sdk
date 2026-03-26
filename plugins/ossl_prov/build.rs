@@ -21,13 +21,21 @@ fn main() {
         .and_then(|p| p.parent())
         .expect("Could not determine target directory");
 
-    cmake::Config::new(".")
+    let mut cmake_cfg = cmake::Config::new(".");
+    cmake_cfg
         .define("AZIHSM_CARGO_FEATURES", features.join(" "))
         .define(
             "AZIHSM_TARGET_DIR",
             target_dir.to_string_lossy().to_string(),
-        )
-        .build();
+        );
+
+    // Forward OPENSSL_DIR to CMake so find_package(OpenSSL) discovers the
+    // same OpenSSL that the Rust openssl-sys crate links against.
+    if let Ok(openssl_dir) = env::var("OPENSSL_DIR") {
+        cmake_cfg.define("OPENSSL_ROOT_DIR", &openssl_dir);
+    }
+
+    cmake_cfg.build();
 }
 
 #[cfg(not(target_os = "linux"))]
