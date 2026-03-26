@@ -236,7 +236,7 @@ fn is_excluded(path: &Path, excludes: &[glob::Pattern]) -> bool {
 
     excludes
         .iter()
-        .any(|pattern| pattern.matches(&path_normalized))
+        .any(|pattern| pattern.matches(path_normalized))
 }
 
 /// Process a file with clang-format
