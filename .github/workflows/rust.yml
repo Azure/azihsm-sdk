@@ -233,76 +233,20 @@ jobs:
         sudo mkdir -p /usr/lib/x86_64-linux-gnu/ossl-modules
         sudo cp /usr/lib/ossl-modules/azihsm_provider.so /usr/lib/x86_64-linux-gnu/ossl-modules/
 
-    - name: Generate key and certificate
+    - name: NGINX integration tests
       env:
+        OPENSSL_BIN: /opt/openssl-3.0.3/bin/openssl
+        OPENSSL_LIB: /opt/openssl-3.0.3/lib
         LD_LIBRARY_PATH: /opt/openssl-3.0.3/lib
-        AZIHSM_CREDENTIALS_ID: "70fcf730b8764238b8358010ce8a3f76"
-        AZIHSM_CREDENTIALS_PIN: "db3dc77fc22e430080d41b31b6f04800"
-      run: |
-        OSSL=/opt/openssl-3.0.3/bin/openssl
-        PROV="-provider-path /usr/lib/x86_64-linux-gnu/ossl-modules
-          -provider default -provider azihsm_provider"
-
-        $OSSL genpkey $PROV \
-          -propquery "?provider=azihsm" \
-          -algorithm EC \
-          -pkeyopt group:P-384 \
-          -pkeyopt "azihsm.masked_key:/etc/azihsm/masked_key_p384.bin" \
-          -outform DER -out /dev/null
-
-        $OSSL req -new -x509 $PROV \
-          -propquery "?provider=azihsm" \
-          -key "azihsm:///etc/azihsm/masked_key_p384.bin;type=ec" \
-          -subj "/CN=localhost" \
-          -days 365 -sha384 \
-          -out /etc/azihsm/server.crt
-
-    - name: Install key material to /var/lib/azihsm
-      run: |
-        cp bmk.bin muk.bin obk.bin pota_private_key.der pota_public_key.der /var/lib/azihsm/
-        chmod 600 /var/lib/azihsm/*.bin /var/lib/azihsm/*.der
-
-    - name: Validate nginx config (provider load test)
-      env:
+        PROVIDER_PATH: /usr/lib/x86_64-linux-gnu/ossl-modules
         OPENSSL_CONF: /etc/azihsm/openssl-provider.cnf
         AZIHSM_CREDENTIALS_ID: "70fcf730b8764238b8358010ce8a3f76"
         AZIHSM_CREDENTIALS_PIN: "db3dc77fc22e430080d41b31b6f04800"
       run: |
-        sudo cp /etc/azihsm/nginx.conf.template /etc/nginx/nginx.conf
-        sudo -E nginx -t -c /etc/nginx/nginx.conf
-
-    - name: Start nginx
-      env:
-        OPENSSL_CONF: /etc/azihsm/openssl-provider.cnf
-        AZIHSM_CREDENTIALS_ID: "70fcf730b8764238b8358010ce8a3f76"
-        AZIHSM_CREDENTIALS_PIN: "db3dc77fc22e430080d41b31b6f04800"
-      run: |
-        sudo -E nginx -c /etc/nginx/nginx.conf
-        sleep 2
-        ps aux | grep nginx || true
-
-    - name: Verify TLS endpoint
-      run: |
-        curl -fsk https://localhost:8443/ | grep "azihsm"
-        curl -fsk https://localhost:8443/health | grep "healthy"
-
-    - name: Verify certificate properties
-      run: |
-        CERT=$(echo | openssl s_client -connect localhost:8443 -servername localhost 2>/dev/null \
-          | openssl x509 -noout -text)
-        echo "$CERT"
-        echo "$CERT" | grep -q "Signature Algorithm: ecdsa-with-SHA384"
-        echo "$CERT" | grep -q "NIST CURVE: P-384"
-        echo "$CERT" | grep -q "ASN1 OID: secp384r1"
-        echo "$CERT" | grep -q "Subject: CN.*=.*localhost"
-
-    - name: Negative test — provider required
-      run: |
-        sudo nginx -s stop || true
-        sudo rm /usr/lib/x86_64-linux-gnu/ossl-modules/azihsm_provider.so
-        sudo env -u OPENSSL_CONF \
-          nginx -t -c /etc/nginx/nginx.conf 2>&1 \
-          | grep -q "unregistered scheme"
+        cargo xtask precheck --nextest \
+          --package provider-integration-tests-nginx \
+          --features integration \
+          --profile ci-provider-integration
 
   build_windows:
 
