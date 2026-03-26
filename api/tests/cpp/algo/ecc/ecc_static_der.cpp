@@ -3,8 +3,8 @@
 
 #include "ecc_static_der.hpp"
 
-// Pre-generated ECC PKCS#8 DER blobs (one per curve).  This  makes the
-// tests fully deterministic. do not use these blobs outside of tests, 
+// Pre-generated ECC PKCS#8 DER blobs (one per curve). This makes the
+// tests fully deterministic. Do not use these blobs outside of tests,
 // as they contain hardcoded private key values.
 
 // clang-format off

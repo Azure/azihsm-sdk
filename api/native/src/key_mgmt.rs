@@ -81,7 +81,7 @@ pub unsafe extern "C" fn azihsm_key_gen_pair(
     pub_key_handle: *mut AzihsmHandle,
 ) -> AzihsmStatus {
     abi_boundary(|| {
-        //check that output handle pointers are valid and distinct before doing any work
+        //check that output handle pointers are valid and distinct before proceeding.
         validate_output_handle_ptrs(priv_key_handle, pub_key_handle)?;
 
         let algo = deref_ptr(algo)?;
@@ -301,7 +301,7 @@ pub unsafe extern "C" fn azihsm_key_unwrap_pair(
     pub_key_handle: *mut AzihsmHandle,
 ) -> AzihsmStatus {
     abi_boundary(|| {
-        //check that output handle pointers are valid and distinct before doing any work
+        //check that output handle pointers are valid and distinct before proceeding.
         validate_output_handle_ptrs(priv_key_handle, pub_key_handle)?;
 
         let algo = deref_mut_ptr(algo)?;
@@ -409,7 +409,7 @@ pub unsafe extern "C" fn azihsm_key_unmask_pair(
     pub_key_handle: *mut AzihsmHandle,
 ) -> AzihsmStatus {
     abi_boundary(|| {
-        //check that output handle pointers are valid and distinct before doing any work
+        //check that output handle pointers are valid and distinct before proceeding.
         validate_output_handle_ptrs(priv_key_handle, pub_key_handle)?;
 
         let session = HsmSession::try_from(sess_handle)?;

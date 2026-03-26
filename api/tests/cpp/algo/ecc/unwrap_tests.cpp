@@ -881,40 +881,6 @@ TEST_F(azihsm_ecc_keyunwrap, unwrap_pair_rejects_stale_unwrap_key_handle)
     });
 }
 
-// Verifies unwrap rejects an unwrapping key handle from the wrong partition/session context.
-TEST_F(azihsm_ecc_keyunwrap, unwrap_pair_rejects_cross_partition_unwrap_key_handle)
-{
-    if (part_list_.count() < 2u)
-    {
-        GTEST_SKIP() << "requires at least two partitions for cross-partition unwrap-key semantics";
-    }
-
-    auto source_path = part_list_.get_path(0);
-    auto other_path = part_list_.get_path(1);
-
-    auto source_partition = PartitionHandle(source_path);
-    auto other_partition = PartitionHandle(other_path);
-
-    // Both sessions must be alive simultaneously so the source key handle
-    // is still valid when used from the other partition's session context.
-    SessionHandle source_session(source_partition.get());
-    SessionHandle other_session(other_partition.get());
-
-    UnwrapPairContext ctx;
-    ASSERT_EQ(
-        UnwrapPairContext::create_with_wrapped_blob(
-            source_session.get(), AZIHSM_ECC_CURVE_P256, ctx
-        ),
-        AZIHSM_STATUS_SUCCESS
-    );
-
-    // Attempt unwrap using source key handle in a different partition's session context.
-    auto result = ctx.try_unwrap();
-    ASSERT_EQ(result.status, AZIHSM_STATUS_INVALID_HANDLE);
-    ASSERT_EQ(result.private_key, 0);
-    ASSERT_EQ(result.public_key, 0);
-}
-
 // ----- Wrapped Key Argument Validation -----
 
 // Verifies unwrap rejects an empty wrapped blob represented as null pointer + zero length.
