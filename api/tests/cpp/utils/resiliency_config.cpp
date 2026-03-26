@@ -274,13 +274,29 @@ void make_resiliency_config_in(
     static azihsm_resiliency_lock_ops lock_ops = {
         lock_acquire, lock_release};
 
-    static azihsm_pota_callback_ops pota_ops = {
-        pota_endorse};
-
     config_out.ctx = &ctx;
     config_out.storage_ops = storage_ops;
     config_out.lock_ops = lock_ops;
-    config_out.pota_callback_ops = &pota_ops;
+
+    // When POTA source is TPM, pota_callback_ops must be null.
+#ifdef _WIN32
+    char *use_tpm = nullptr;
+    size_t use_tpm_len = 0;
+    _dupenv_s(&use_tpm, &use_tpm_len, "AZIHSM_USE_TPM");
+    bool is_tpm = (use_tpm != nullptr);
+    free(use_tpm);
+#else
+    bool is_tpm = (std::getenv("AZIHSM_USE_TPM") != nullptr);
+#endif
+    config_out.pota_callback_ops = is_tpm ? nullptr : get_pota_callback_ops();
+}
+
+/// Returns a pointer to the shared POTA callback ops vtable backed by
+/// `pota_endorse`. The returned pointer has static lifetime.
+const azihsm_pota_callback_ops *get_pota_callback_ops()
+{
+    static azihsm_pota_callback_ops pota_ops = {pota_endorse};
+    return &pota_ops;
 }
 
 std::unique_ptr<ResiliencyTestCtx> make_resiliency_config(
