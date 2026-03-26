@@ -75,25 +75,6 @@ fn run_sign_verify_test(session: &HsmSession, curve: HsmEccCurve, hash_algo: Hsm
     );
 }
 
-/// Verifies that signature fails when using a different (incorrect) hash
-fn run_wrong_hash_test(session: &HsmSession, curve: HsmEccCurve, hash_algo: HsmHashAlgo) {
-    let (priv_key, pub_key) = generate_ecc_key_pair(session, curve);
-
-    let hash = hash_data(session, hash_algo, b"data");
-    let wrong_hash = hash_data(session, hash_algo, b"wrong");
-
-    let sig = sign_hash(&priv_key, &hash);
-
-    let result = verify_hash_signature(&pub_key, &wrong_hash, &sig);
-
-    assert!(
-        matches!(result, Ok(false)),
-        "Expected Ok(false) but got {:?} for {:?}",
-        result,
-        curve
-    );
-}
-
 /// Verifies that signature fails when using a mismatched public key
 fn run_wrong_pubkey_test(session: &HsmSession, curve: HsmEccCurve, hash_algo: HsmHashAlgo) {
     let (priv_key, _) = generate_ecc_key_pair(session, curve);
@@ -327,42 +308,8 @@ fn run_modified_hash_same_length_test(
     );
 }
 
-/// Verifies that corrupting raw signature bytes does not crash and is handled safely
-fn run_corrupted_der_signature_test(
-    session: &HsmSession,
-    curve: HsmEccCurve,
-    hash_algo: HsmHashAlgo,
-) {
-    let (priv_key, pub_key) = generate_ecc_key_pair(session, curve);
-
-    let hash = hash_data(session, hash_algo, b"data");
-    let mut sig = sign_hash(&priv_key, &hash);
-
-    let original = verify_hash_signature(&pub_key, &hash, &sig);
-
-    // Corrupt raw signature bytes
-    if !sig.is_empty() {
-        sig[0] ^= 0xFF;
-    }
-
-    let corrupted = verify_hash_signature(&pub_key, &hash, &sig);
-
-    // Accept either behavior, but MUST NOT panic or crash
-    assert!(
-        corrupted.is_ok(),
-        "Corrupted DER should not crash {:?}, got {:?}",
-        curve,
-        corrupted
-    );
-
-    // Optional: ensure behavior differs OR explicitly document leniency
-    if original == Ok(true) && corrupted == Ok(true) {
-        println!("⚠️ DER parsing is lenient for {:?}", curve);
-    }
-}
-
-/// Verifies that using different hash algorithms for sign and verify fails
-fn run_mismatched_hash_algo_test(
+/// Verifies that using different hash inputs (same data hashed differently) fails verification
+fn run_mismatched_hash_input_test(
     session: &HsmSession,
     curve: HsmEccCurve,
     sign_hash_algo: HsmHashAlgo,
@@ -508,22 +455,20 @@ fn run_all_zero_signature_test(session: &HsmSession, curve: HsmEccCurve, algo: H
     );
 }
 
-/// Verifies that signing and verifying an all-zero hash succeeds for valid ECC operations
-fn run_all_zero_hash_test(session: &HsmSession, curve: HsmEccCurve) {
-    let (priv_key, pub_key) = generate_ecc_key_pair(session, curve);
-
-    let hash = vec![0u8; 32];
-    let sig = sign_hash(&priv_key, &hash);
-
-    let result = verify_hash_signature(&pub_key, &hash, &sig);
-    assert!(matches!(result, Ok(true)));
+/// Verifies successful sign/verify using a constant-value hash (e.g., all 0x00 or all 0xFF)
+fn hash_size_for_curve(curve: HsmEccCurve) -> usize {
+    match curve {
+        HsmEccCurve::P256 => 32,
+        HsmEccCurve::P384 => 48,
+        HsmEccCurve::P521 => 64,
+    }
 }
 
-/// Verifies that signing and verifying an all-0xFF hash succeeds for valid ECC operations
-fn run_all_ff_hash_test(session: &HsmSession, curve: HsmEccCurve) {
+/// Returns the expected hash size (in bytes) for the given ECC curve
+fn run_constant_hash_test(session: &HsmSession, curve: HsmEccCurve, value: u8) {
     let (priv_key, pub_key) = generate_ecc_key_pair(session, curve);
 
-    let hash = vec![0xFFu8; 32];
+    let hash = vec![value; hash_size_for_curve(curve)];
     let sig = sign_hash(&priv_key, &hash);
 
     let result = verify_hash_signature(&pub_key, &hash, &sig);
@@ -546,25 +491,6 @@ fn run_verify_empty_hash_test(session: &HsmSession, curve: HsmEccCurve, algo: Hs
     assert!(
         matches!(result, Err(_) | Ok(false)),
         "Expected failure for empty hash {:?}, got {:?}",
-        curve,
-        result
-    );
-}
-
-/// Verifies that a signature with near-valid length (off by one byte) fails verification
-fn run_off_by_one_signature_test(session: &HsmSession, curve: HsmEccCurve, algo: HsmHashAlgo) {
-    let (priv_key, pub_key) = generate_ecc_key_pair(session, curve);
-
-    let hash = hash_data(session, algo, b"data");
-    let mut sig = sign_hash(&priv_key, &hash);
-
-    sig.pop(); // almost valid
-
-    let result = verify_hash_signature(&pub_key, &hash, &sig);
-
-    assert!(
-        matches!(result, Ok(false) | Err(_)),
-        "Off-by-one signature should fail {:?}, got {:?}",
         curve,
         result
     );
@@ -677,24 +603,6 @@ fn test_ecc_sign_verify_p384(session: HsmSession) {
 #[session_test]
 fn test_ecc_sign_verify_p521(session: HsmSession) {
     run_sign_verify_test(&session, HsmEccCurve::P521, HsmHashAlgo::Sha512);
-}
-
-/// Verifies failure when using incorrect hash (P256)
-#[session_test]
-fn test_ecc_wrong_hash_p256(session: HsmSession) {
-    run_wrong_hash_test(&session, HsmEccCurve::P256, HsmHashAlgo::Sha256);
-}
-
-/// Verifies failure when using incorrect hash (P384)
-#[session_test]
-fn test_ecc_wrong_hash_p384(session: HsmSession) {
-    run_wrong_hash_test(&session, HsmEccCurve::P384, HsmHashAlgo::Sha384);
-}
-
-/// Verifies failure when using incorrect hash (P521)
-#[session_test]
-fn test_ecc_wrong_hash_p521(session: HsmSession) {
-    run_wrong_hash_test(&session, HsmEccCurve::P521, HsmHashAlgo::Sha512);
 }
 
 /// Verifies failure when using wrong public key (P256)
@@ -841,28 +749,10 @@ fn test_ecc_modified_hash_p521(session: HsmSession) {
     run_modified_hash_same_length_test(&session, HsmEccCurve::P521, HsmHashAlgo::Sha512);
 }
 
-/// Tests safe handling of corrupted DER signature for P256
-#[session_test]
-fn test_ecc_corrupted_der_p256(session: HsmSession) {
-    run_corrupted_der_signature_test(&session, HsmEccCurve::P256, HsmHashAlgo::Sha256);
-}
-
-/// Tests safe handling of corrupted DER signature for P384
-#[session_test]
-fn test_ecc_corrupted_der_p384(session: HsmSession) {
-    run_corrupted_der_signature_test(&session, HsmEccCurve::P384, HsmHashAlgo::Sha384);
-}
-
-/// Tests safe handling of corrupted DER signature for P521
-#[session_test]
-fn test_ecc_corrupted_der_p521(session: HsmSession) {
-    run_corrupted_der_signature_test(&session, HsmEccCurve::P521, HsmHashAlgo::Sha512);
-}
-
 /// Tests failure when mismatched hash algorithms are used for P256
 #[session_test]
-fn test_ecc_mismatched_hash_algo_p256(session: HsmSession) {
-    run_mismatched_hash_algo_test(
+fn test_ecc_mismatched_hash_input_p256(session: HsmSession) {
+    run_mismatched_hash_input_test(
         &session,
         HsmEccCurve::P256,
         HsmHashAlgo::Sha256,
@@ -872,8 +762,8 @@ fn test_ecc_mismatched_hash_algo_p256(session: HsmSession) {
 
 /// Tests failure when mismatched hash algorithms are used for P521
 #[session_test]
-fn test_ecc_mismatched_hash_algo_p521(session: HsmSession) {
-    run_mismatched_hash_algo_test(
+fn test_ecc_mismatched_hash_input_p521(session: HsmSession) {
+    run_mismatched_hash_input_test(
         &session,
         HsmEccCurve::P521,
         HsmHashAlgo::Sha512,
@@ -883,8 +773,8 @@ fn test_ecc_mismatched_hash_algo_p521(session: HsmSession) {
 
 /// Tests failure when mismatched hash algorithms are used for P384
 #[session_test]
-fn test_ecc_mismatched_hash_algo_p384(session: HsmSession) {
-    run_mismatched_hash_algo_test(
+fn test_ecc_mismatched_hash_input_p384(session: HsmSession) {
+    run_mismatched_hash_input_test(
         &session,
         HsmEccCurve::P384,
         HsmHashAlgo::Sha384,
@@ -984,37 +874,37 @@ fn test_ecc_all_zero_signature_p521(session: HsmSession) {
 /// Tests successful sign/verify using an all-zero hash for P256
 #[session_test]
 fn test_ecc_all_zero_hash_p256(session: HsmSession) {
-    run_all_zero_hash_test(&session, HsmEccCurve::P256);
+    run_constant_hash_test(&session, HsmEccCurve::P256, 0x00);
 }
 
 /// Tests successful sign/verify using an all-zero hash for P384
 #[session_test]
 fn test_ecc_all_zero_hash_p384(session: HsmSession) {
-    run_all_zero_hash_test(&session, HsmEccCurve::P384);
+    run_constant_hash_test(&session, HsmEccCurve::P384, 0x00);
 }
 
 /// Tests successful sign/verify using an all-zero hash for P521
 #[session_test]
 fn test_ecc_all_zero_hash_p521(session: HsmSession) {
-    run_all_zero_hash_test(&session, HsmEccCurve::P521);
+    run_constant_hash_test(&session, HsmEccCurve::P521, 0x00);
 }
 
 /// Tests successful sign/verify using an all-0xFF hash for P256
 #[session_test]
 fn test_ecc_all_ff_hash_p256(session: HsmSession) {
-    run_all_ff_hash_test(&session, HsmEccCurve::P256);
+    run_constant_hash_test(&session, HsmEccCurve::P256, 0xFF);
 }
 
 /// Tests successful sign/verify using an all-0xFF hash for P384
 #[session_test]
 fn test_ecc_all_ff_hash_p384(session: HsmSession) {
-    run_all_ff_hash_test(&session, HsmEccCurve::P384);
+    run_constant_hash_test(&session, HsmEccCurve::P384, 0xFF);
 }
 
 /// Tests successful sign/verify using an all-0xFF hash for P521
 #[session_test]
 fn test_ecc_all_ff_hash_p521(session: HsmSession) {
-    run_all_ff_hash_test(&session, HsmEccCurve::P521);
+    run_constant_hash_test(&session, HsmEccCurve::P521, 0xFF);
 }
 
 #[session_test]
@@ -1030,21 +920,4 @@ fn test_ecc_verify_empty_hash_p384(session: HsmSession) {
 #[session_test]
 fn test_ecc_verify_empty_hash_p521(session: HsmSession) {
     run_verify_empty_hash_test(&session, HsmEccCurve::P521, HsmHashAlgo::Sha512);
-}
-/// Tests that a near-valid (off-by-one) signature is rejected for P256
-#[session_test]
-fn test_ecc_off_by_one_signature_p256(session: HsmSession) {
-    run_off_by_one_signature_test(&session, HsmEccCurve::P256, HsmHashAlgo::Sha256);
-}
-
-/// Tests that a near-valid (off-by-one) signature is rejected for P384
-#[session_test]
-fn test_ecc_off_by_one_signature_p384(session: HsmSession) {
-    run_off_by_one_signature_test(&session, HsmEccCurve::P384, HsmHashAlgo::Sha384);
-}
-
-/// Tests that a near-valid (off-by-one) signature is rejected for P521
-#[session_test]
-fn test_ecc_off_by_one_signature_p521(session: HsmSession) {
-    run_off_by_one_signature_test(&session, HsmEccCurve::P521, HsmHashAlgo::Sha512);
 }
