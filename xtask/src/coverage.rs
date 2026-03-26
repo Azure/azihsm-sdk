@@ -81,7 +81,10 @@ impl Xtask for Coverage {
                 }
             }
         } else {
-            log::warn!("CMake build directory not found at expected path: {}. Coverage reports may be incomplete.", build_dir.display());
+            log::warn!(
+                "Cargo build-script directory not found at expected path: {}. Coverage reports may be incomplete.",
+                build_dir.display()
+            );
         }
 
         // set LLVM_COV_FLAGS to include azihsm_api_native object file in coverage reports
