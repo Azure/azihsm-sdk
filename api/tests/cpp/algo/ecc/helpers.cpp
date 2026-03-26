@@ -2,8 +2,8 @@
 // Licensed under the MIT License.
 
 #include "helpers.hpp"
-#include "../../utils/crypto_test_helpers.hpp"
-#include "../../utils/rsa_keygen.hpp"
+#include "ecc_static_der.hpp"
+#include "utils/rsa_keygen.hpp"
 #include "utils/auto_key.hpp"
 
 #include <algorithm>
@@ -91,7 +91,7 @@ azihsm_status generate_ecc_keypair(
 }
 
 // Builds a valid RSA-AES wrapped blob for ECC key_unwrap_pair tests:
-// 1) Generate runtime PKCS#8 DER plaintext for the requested curve via C++ crypto utility.
+// 1) Look up the precomputed PKCS#8 DER plaintext for the requested curve.
 // 2) Configure RSA-AES wrap params (OAEP hash/MGF1/label + AES key size).
 // 3) Call azihsm_crypt_encrypt to produce wrapped bytes.
 azihsm_status make_wrapped_ecc_pkcs8_blob(
@@ -101,18 +101,13 @@ azihsm_status make_wrapped_ecc_pkcs8_blob(
     std::vector<uint8_t> &wrapped_blob
 )
 {
-    std::vector<uint8_t> runtime_pkcs8_der;
-    auto der_err = crypto_test_helpers::generate_ecc_pkcs8_der(curve, runtime_pkcs8_der);
+    const uint8_t *pkcs8_der = nullptr;
+    size_t pkcs8_der_len = 0;
+    auto der_err = get_static_ecc_pkcs8_der(curve, pkcs8_der, pkcs8_der_len);
     if (der_err != AZIHSM_STATUS_SUCCESS)
     {
         wrapped_blob.clear();
         return der_err;
-    }
-
-    if (runtime_pkcs8_der.empty())
-    {
-        wrapped_blob.clear();
-        return AZIHSM_STATUS_INTERNAL_ERROR;
     }
 
     azihsm_algo_rsa_pkcs_oaep_params oaep_params{};
@@ -130,8 +125,8 @@ azihsm_status make_wrapped_ecc_pkcs8_blob(
     wrap_algo.len = sizeof(wrap_params);
 
     azihsm_buffer in_buf{};
-    in_buf.ptr = runtime_pkcs8_der.data();
-    in_buf.len = static_cast<uint32_t>(runtime_pkcs8_der.size());
+    in_buf.ptr = const_cast<uint8_t *>(pkcs8_der);
+    in_buf.len = static_cast<uint32_t>(pkcs8_der_len);
 
     // Two-pass pattern: query required wrapped size first, then create bytes.
     azihsm_buffer out_buf{};

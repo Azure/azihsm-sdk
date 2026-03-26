@@ -25,81 +25,62 @@ class azihsm_ecc_keyunwrap_semantic : public ::testing::Test
 
 // ----- Cross-Argument Wrapped Payload Semantics -----
 
-// Verifies unwrap rejects malformed wrapped key-pair blob content.
-TEST_F(azihsm_ecc_keyunwrap_semantic, unwrap_pair_rejects_invalid_wrapped_blob_shapes)
+// Verifies unwrap rejects a wrapped-key buffer with null pointer and non-zero length.
+TEST_F(azihsm_ecc_keyunwrap_semantic, unwrap_pair_rejects_wrapped_key_null_ptr_nonzero_len)
 {
     part_list_.for_each_session([](azihsm_handle session) {
         RsaAesUnwrapPairInputs unwrap_inputs(0xA5);
+        UnwrapPairContext ctx;
+        ASSERT_EQ(UnwrapPairContext::create(session, ctx), AZIHSM_STATUS_SUCCESS);
 
-        auto_key rsa_priv_key;
-        auto_key rsa_pub_key;
-        auto err = generate_rsa_unwrapping_keypair(
-            session,
-            rsa_priv_key.get_ptr(),
-            rsa_pub_key.get_ptr()
-        );
-        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        azihsm_buffer wrapped_key_buf{};
+        wrapped_key_buf.ptr = nullptr;
+        wrapped_key_buf.len = 1;
 
-        DefaultEccPrivKeyProps priv_props;
-        DefaultEccPubKeyProps pub_props;
-        auto priv_prop_list = priv_props.get_prop_list();
-        auto pub_prop_list = pub_props.get_prop_list();
+        auto result = ctx.try_unwrap_with(&unwrap_inputs.unwrap_algo, &wrapped_key_buf);
+        ASSERT_EQ(result.status, AZIHSM_STATUS_INVALID_ARGUMENT);
+        ASSERT_EQ(result.private_key, 0);
+        ASSERT_EQ(result.public_key, 0);
+    });
+}
 
-        {
-            SCOPED_TRACE("empty buffer (non-null ptr, zero len)");
-            uint8_t b = 0;
-            azihsm_buffer wrapped_key_buf{};
-            wrapped_key_buf.ptr = &b;
-            wrapped_key_buf.len = 0;
+// Verifies unwrap rejects a wrapped-key buffer with non-null pointer and zero length.
+TEST_F(azihsm_ecc_keyunwrap_semantic, unwrap_pair_rejects_wrapped_key_nonnull_ptr_zero_len)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        RsaAesUnwrapPairInputs unwrap_inputs(0xA5);
+        UnwrapPairContext ctx;
+        ASSERT_EQ(UnwrapPairContext::create(session, ctx), AZIHSM_STATUS_SUCCESS);
 
-            auto result = try_unwrap_pair(
-                &unwrap_inputs.unwrap_algo,
-                rsa_priv_key.get(),
-                &wrapped_key_buf,
-                &priv_prop_list,
-                &pub_prop_list
-            );
-            ASSERT_NE(result.status, AZIHSM_STATUS_SUCCESS);
-            ASSERT_EQ(result.private_key, 0);
-            ASSERT_EQ(result.public_key, 0);
-        }
+        uint8_t byte = 0;
+        azihsm_buffer wrapped_key_buf{};
+        wrapped_key_buf.ptr = &byte;
+        wrapped_key_buf.len = 0;
 
-        {
-            SCOPED_TRACE("minimal one-byte blob");
-            uint8_t b = 0x01;
-            azihsm_buffer wrapped_key_buf{};
-            wrapped_key_buf.ptr = &b;
-            wrapped_key_buf.len = 1;
+        auto result = ctx.try_unwrap_with(&unwrap_inputs.unwrap_algo, &wrapped_key_buf);
+        ASSERT_NE(result.status, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(result.private_key, 0);
+        ASSERT_EQ(result.public_key, 0);
+    });
+}
 
-            auto result = try_unwrap_pair(
-                &unwrap_inputs.unwrap_algo,
-                rsa_priv_key.get(),
-                &wrapped_key_buf,
-                &priv_prop_list,
-                &pub_prop_list
-            );
-            ASSERT_NE(result.status, AZIHSM_STATUS_SUCCESS);
-            ASSERT_EQ(result.private_key, 0);
-            ASSERT_EQ(result.public_key, 0);
-        }
+// Verifies unwrap rejects a minimal one-byte wrapped blob.
+TEST_F(azihsm_ecc_keyunwrap_semantic, unwrap_pair_rejects_minimal_one_byte_blob)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        RsaAesUnwrapPairInputs unwrap_inputs(0xA5);
+        UnwrapPairContext ctx;
+        ASSERT_EQ(UnwrapPairContext::create(session, ctx), AZIHSM_STATUS_SUCCESS);
 
-        {
-            SCOPED_TRACE("null ptr, non-zero len");
-            azihsm_buffer wrapped_key_buf{};
-            wrapped_key_buf.ptr = nullptr;
-            wrapped_key_buf.len = 4;
+        uint8_t byte = 0x01;
+        azihsm_buffer wrapped_key_buf{};
+        wrapped_key_buf.ptr = &byte;
+        wrapped_key_buf.len = 1;
 
-            auto result = try_unwrap_pair(
-                &unwrap_inputs.unwrap_algo,
-                rsa_priv_key.get(),
-                &wrapped_key_buf,
-                &priv_prop_list,
-                &pub_prop_list
-            );
-            ASSERT_EQ(result.status, AZIHSM_STATUS_INVALID_ARGUMENT);
-            ASSERT_EQ(result.private_key, 0);
-            ASSERT_EQ(result.public_key, 0);
-        }
+        auto result = ctx.try_unwrap_with(&unwrap_inputs.unwrap_algo, &wrapped_key_buf);
+        ASSERT_NE(result.status, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(result.private_key, 0);
+        ASSERT_EQ(result.public_key, 0);
     });
 }
 
@@ -258,35 +239,17 @@ TEST_F(azihsm_ecc_keyunwrap_semantic, unwrap_pair_rejects_blob_wrapped_by_differ
 TEST_F(azihsm_ecc_keyunwrap_semantic, unwrap_pair_preserves_input_wrapped_blob_on_failure)
 {
     part_list_.for_each_session([](azihsm_handle session) {
+        UnwrapPairContext ctx;
+        ASSERT_EQ(UnwrapPairContext::create(session, ctx), AZIHSM_STATUS_SUCCESS);
+
         // Deliberately malformed/truncated test payload used only to verify failure-path immutability.
         std::vector<uint8_t> wrapped_data = make_deterministic_payload(0x01, 0x01, 5);
         const auto before = wrapped_data;
 
-        RsaAesUnwrapPairInputs unwrap_inputs(0xA5);
-        unwrap_inputs.wrapped_key_buf.ptr = wrapped_data.data();
-        unwrap_inputs.wrapped_key_buf.len = static_cast<uint32_t>(wrapped_data.size());
+        ctx.wrapped_key_buf.ptr = wrapped_data.data();
+        ctx.wrapped_key_buf.len = static_cast<uint32_t>(wrapped_data.size());
 
-        auto_key rsa_priv_key;
-        auto_key rsa_pub_key;
-        auto err = generate_rsa_unwrapping_keypair(
-            session,
-            rsa_priv_key.get_ptr(),
-            rsa_pub_key.get_ptr()
-        );
-        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-
-        DefaultEccPrivKeyProps priv_props;
-        DefaultEccPubKeyProps pub_props;
-        auto priv_prop_list = priv_props.get_prop_list();
-        auto pub_prop_list = pub_props.get_prop_list();
-
-        auto result = try_unwrap_pair(
-            &unwrap_inputs.unwrap_algo,
-            rsa_priv_key.get(),
-            &unwrap_inputs.wrapped_key_buf,
-            &priv_prop_list,
-            &pub_prop_list
-        );
+        auto result = ctx.try_unwrap();
         ASSERT_NE(result.status, AZIHSM_STATUS_SUCCESS);
         ASSERT_EQ(result.private_key, 0);
         ASSERT_EQ(result.public_key, 0);
@@ -294,76 +257,42 @@ TEST_F(azihsm_ecc_keyunwrap_semantic, unwrap_pair_preserves_input_wrapped_blob_o
     });
 }
 
-// Verifies unwrap rejects requested curve/capability props that mismatch wrapped content.
-TEST_F(azihsm_ecc_keyunwrap_semantic, unwrap_pair_rejects_requested_curve_or_capability_mismatch)
+// Verifies unwrap rejects when requested curve mismatches wrapped ECC key curve.
+TEST_F(azihsm_ecc_keyunwrap_semantic, unwrap_pair_rejects_requested_curve_mismatch)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        auto_key rsa_priv_key;
-        auto_key rsa_pub_key;
-        auto err = generate_rsa_unwrapping_keypair(
-            session,
-            rsa_priv_key.get_ptr(),
-            rsa_pub_key.get_ptr()
+        UnwrapPairContext ctx;
+        ASSERT_EQ(
+            UnwrapPairContext::create_with_wrapped_blob(session, AZIHSM_ECC_CURVE_P256, ctx),
+            AZIHSM_STATUS_SUCCESS
         );
-        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
-        std::vector<uint8_t> wrapped_blob;
-        err = make_wrapped_ecc_pkcs8_blob(
-            rsa_pub_key.get(),
-            AZIHSM_ECC_CURVE_P256,
-            RsaAesWrapConfig{},
-            wrapped_blob
+        ctx.priv_props.ecc_curve = AZIHSM_ECC_CURVE_P384;
+        ctx.pub_props.ecc_curve = AZIHSM_ECC_CURVE_P384;
+
+        auto result = ctx.try_unwrap();
+        ASSERT_NE(result.status, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(result.private_key, 0);
+        ASSERT_EQ(result.public_key, 0);
+    });
+}
+
+// Verifies unwrap rejects when requested capability combination is invalid.
+TEST_F(azihsm_ecc_keyunwrap_semantic, unwrap_pair_rejects_requested_capability_mismatch)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        UnwrapPairContext ctx;
+        ASSERT_EQ(
+            UnwrapPairContext::create_with_wrapped_blob(session, AZIHSM_ECC_CURVE_P256, ctx),
+            AZIHSM_STATUS_SUCCESS
         );
-        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
-        azihsm_buffer wrapped_key_buf{};
-        wrapped_key_buf.ptr = wrapped_blob.data();
-        wrapped_key_buf.len = static_cast<uint32_t>(wrapped_blob.size());
+        ctx.priv_props.can_sign = 0;
 
-        RsaAesUnwrapAlgo unwrap_algo{};
-
-        {
-            SCOPED_TRACE("requested curve mismatches wrapped ECC key curve");
-            DefaultEccPrivKeyProps priv_props;
-            DefaultEccPubKeyProps pub_props;
-            priv_props.ecc_curve = AZIHSM_ECC_CURVE_P384;
-            pub_props.ecc_curve = AZIHSM_ECC_CURVE_P384;
-
-            auto priv_prop_list = priv_props.get_prop_list();
-            auto pub_prop_list = pub_props.get_prop_list();
-
-            auto result = try_unwrap_pair(
-                &unwrap_algo.algo,
-                rsa_priv_key.get(),
-                &wrapped_key_buf,
-                &priv_prop_list,
-                &pub_prop_list
-            );
-            ASSERT_NE(result.status, AZIHSM_STATUS_SUCCESS);
-            ASSERT_EQ(result.private_key, 0);
-            ASSERT_EQ(result.public_key, 0);
-        }
-
-        {
-            SCOPED_TRACE("requested capability mismatch/invalid capability combination");
-            DefaultEccPrivKeyProps priv_props;
-            DefaultEccPubKeyProps pub_props;
-            priv_props.can_sign = 0;
-
-            auto priv_prop_list = priv_props.get_prop_list();
-            auto pub_prop_list = pub_props.get_prop_list();
-
-            auto result = try_unwrap_pair(
-                &unwrap_algo.algo,
-                rsa_priv_key.get(),
-                &wrapped_key_buf,
-                &priv_prop_list,
-                &pub_prop_list
-            );
-            ASSERT_NE(result.status, AZIHSM_STATUS_SUCCESS);
-            ASSERT_EQ(result.private_key, 0);
-            ASSERT_EQ(result.public_key, 0);
-        }
+        auto result = ctx.try_unwrap();
+        ASSERT_NE(result.status, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(result.private_key, 0);
+        ASSERT_EQ(result.public_key, 0);
     });
 }
 
@@ -371,22 +300,15 @@ TEST_F(azihsm_ecc_keyunwrap_semantic, unwrap_pair_rejects_requested_curve_or_cap
 TEST_F(azihsm_ecc_keyunwrap_semantic, unwrap_pair_rejects_wrapped_content_kind_mismatch)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        auto_key rsa_unwrap_priv_key;
-        auto_key rsa_wrap_pub_key;
-        auto err = generate_rsa_unwrapping_keypair(
-            session,
-            rsa_unwrap_priv_key.get_ptr(),
-            rsa_wrap_pub_key.get_ptr()
-        );
-        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        UnwrapPairContext ctx;
+        ASSERT_EQ(UnwrapPairContext::create(session, ctx), AZIHSM_STATUS_SUCCESS);
 
-        // Step 1: Build transport-valid wrapped bytes where plaintext is arbitrary non-ECC key material.
-        // This is the kind-mismatch mechanism: unwrap props request ECC pair, but payload encodes no ECC pair.
+        // Wrap arbitrary non-ECC payload; pair unwrap should reject because content is not ECC-pair shaped.
         const auto non_ecc_payload = make_deterministic_payload(0x01, 0x02, 16);
 
         std::vector<uint8_t> wrapped_blob;
-        err = wrap_plaintext_with_rsa_aes(
-            rsa_wrap_pub_key.get(),
+        auto err = wrap_plaintext_with_rsa_aes(
+            ctx.rsa_pub_key.get(),
             non_ecc_payload,
             RsaAesWrapConfig{},
             wrapped_blob
@@ -394,24 +316,10 @@ TEST_F(azihsm_ecc_keyunwrap_semantic, unwrap_pair_rejects_wrapped_content_kind_m
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_FALSE(wrapped_blob.empty());
 
-        azihsm_buffer wrapped_key_buf{};
-        wrapped_key_buf.ptr = wrapped_blob.data();
-        wrapped_key_buf.len = static_cast<uint32_t>(wrapped_blob.size());
+        ctx.wrapped_key_buf.ptr = wrapped_blob.data();
+        ctx.wrapped_key_buf.len = static_cast<uint32_t>(wrapped_blob.size());
 
-        RsaAesUnwrapAlgo unwrap_algo{};
-        DefaultEccPrivKeyProps priv_props;
-        DefaultEccPubKeyProps pub_props;
-        auto priv_prop_list = priv_props.get_prop_list();
-        auto pub_prop_list = pub_props.get_prop_list();
-
-        // Step 2: pair unwrap rejects because payload content kind does not match requested ECC-pair semantics.
-        auto result = try_unwrap_pair(
-            &unwrap_algo.algo,
-            rsa_unwrap_priv_key.get(),
-            &wrapped_key_buf,
-            &priv_prop_list,
-            &pub_prop_list
-        );
+        auto result = ctx.try_unwrap();
         ASSERT_NE(result.status, AZIHSM_STATUS_SUCCESS);
         ASSERT_EQ(result.private_key, 0);
         ASSERT_EQ(result.public_key, 0);
@@ -422,44 +330,16 @@ TEST_F(azihsm_ecc_keyunwrap_semantic, unwrap_pair_rejects_wrapped_content_kind_m
 TEST_F(azihsm_ecc_keyunwrap_semantic, unwrap_pair_rejects_wrapped_content_curve_mismatch)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        auto_key rsa_priv_key;
-        auto_key rsa_pub_key;
-        auto err = generate_rsa_unwrapping_keypair(
-            session,
-            rsa_priv_key.get_ptr(),
-            rsa_pub_key.get_ptr()
+        UnwrapPairContext ctx;
+        ASSERT_EQ(
+            UnwrapPairContext::create_with_wrapped_blob(session, AZIHSM_ECC_CURVE_P384, ctx),
+            AZIHSM_STATUS_SUCCESS
         );
-        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
-        std::vector<uint8_t> wrapped_blob;
-        err = make_wrapped_ecc_pkcs8_blob(
-            rsa_pub_key.get(),
-            AZIHSM_ECC_CURVE_P384,
-            RsaAesWrapConfig{},
-            wrapped_blob
-        );
-        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ctx.priv_props.ecc_curve = AZIHSM_ECC_CURVE_P521;
+        ctx.pub_props.ecc_curve = AZIHSM_ECC_CURVE_P521;
 
-        azihsm_buffer wrapped_key_buf{};
-        wrapped_key_buf.ptr = wrapped_blob.data();
-        wrapped_key_buf.len = static_cast<uint32_t>(wrapped_blob.size());
-
-        RsaAesUnwrapAlgo unwrap_algo{};
-
-        DefaultEccPrivKeyProps priv_props;
-        DefaultEccPubKeyProps pub_props;
-        priv_props.ecc_curve = AZIHSM_ECC_CURVE_P521;
-        pub_props.ecc_curve = AZIHSM_ECC_CURVE_P521;
-        auto priv_prop_list = priv_props.get_prop_list();
-        auto pub_prop_list = pub_props.get_prop_list();
-
-        auto result = try_unwrap_pair(
-            &unwrap_algo.algo,
-            rsa_priv_key.get(),
-            &wrapped_key_buf,
-            &priv_prop_list,
-            &pub_prop_list
-        );
+        auto result = ctx.try_unwrap();
         ASSERT_NE(result.status, AZIHSM_STATUS_SUCCESS);
         ASSERT_EQ(result.private_key, 0);
         ASSERT_EQ(result.public_key, 0);

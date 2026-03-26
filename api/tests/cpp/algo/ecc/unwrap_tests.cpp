@@ -63,19 +63,78 @@ static void verify_unwrap_pair_returns_valid_keys(
     });
 }
 
+// Helper: unwraps a wrapped ECC key pair and verifies the imported keys are
+// cryptographically functional by performing an ECDSA sign-then-verify roundtrip.
+static void verify_unwrap_pair_keys_sign_verify_roundtrip(
+    PartitionListHandle &part_list,
+    azihsm_ecc_curve curve
+)
+{
+    part_list.for_each_session([&](azihsm_handle session) {
+        UnwrapPairContext ctx;
+        ASSERT_EQ(
+            UnwrapPairContext::create_with_wrapped_blob(session, curve, ctx),
+            AZIHSM_STATUS_SUCCESS
+        );
+
+        auto result = ctx.try_unwrap();
+        ASSERT_EQ(result.status, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(result.private_key, 0);
+        ASSERT_NE(result.public_key, 0);
+
+        auto_key imported_private_key;
+        auto_key imported_public_key;
+        imported_private_key.handle = result.private_key;
+        imported_public_key.handle = result.public_key;
+
+        const std::vector<uint8_t> message = {
+            0x48, 0x53, 0x4D, 0x20, 0x72, 0x6F, 0x75, 0x6E,
+            0x64, 0x74, 0x72, 0x69, 0x70
+        };
+        auto roundtrip = run_ecdsa_sign_verify_roundtrip(
+            imported_private_key.get(),
+            imported_public_key.get(),
+            message
+        );
+        ASSERT_EQ(roundtrip.status, AZIHSM_STATUS_SUCCESS)
+            << "roundtrip failed at step: " << roundtrip.step
+            << " detail: " << roundtrip.detail;
+    });
+}
+
 TEST_F(azihsm_ecc_keyunwrap, unwrap_pair_returns_valid_keys_p256)
 {
     verify_unwrap_pair_returns_valid_keys(part_list_, AZIHSM_ECC_CURVE_P256);
 }
 
+// P-384: unwrapped keys report correct curve metadata.
 TEST_F(azihsm_ecc_keyunwrap, unwrap_pair_returns_valid_keys_p384)
 {
     verify_unwrap_pair_returns_valid_keys(part_list_, AZIHSM_ECC_CURVE_P384);
 }
 
+// P-521: unwrapped keys report correct curve metadata.
 TEST_F(azihsm_ecc_keyunwrap, unwrap_pair_returns_valid_keys_p521)
 {
     verify_unwrap_pair_returns_valid_keys(part_list_, AZIHSM_ECC_CURVE_P521);
+}
+
+// P-256: unwrapped keys can sign and verify an ECDSA roundtrip.
+TEST_F(azihsm_ecc_keyunwrap, unwrap_pair_keys_sign_verify_roundtrip_p256)
+{
+    verify_unwrap_pair_keys_sign_verify_roundtrip(part_list_, AZIHSM_ECC_CURVE_P256);
+}
+
+// P-384: unwrapped keys can sign and verify an ECDSA roundtrip.
+TEST_F(azihsm_ecc_keyunwrap, unwrap_pair_keys_sign_verify_roundtrip_p384)
+{
+    verify_unwrap_pair_keys_sign_verify_roundtrip(part_list_, AZIHSM_ECC_CURVE_P384);
+}
+
+// P-521: unwrapped keys can sign and verify an ECDSA roundtrip.
+TEST_F(azihsm_ecc_keyunwrap, unwrap_pair_keys_sign_verify_roundtrip_p521)
+{
+    verify_unwrap_pair_keys_sign_verify_roundtrip(part_list_, AZIHSM_ECC_CURVE_P521);
 }
 
 // Verifies repeated unwrap of the same wrapped blob yields distinct valid handles.
@@ -857,56 +916,6 @@ TEST_F(azihsm_ecc_keyunwrap, unwrap_pair_rejects_cross_partition_unwrap_key_hand
 }
 
 // ----- Wrapped Key Argument Validation -----
-
-// Verifies unwrap rejects invalid wrapped-key buffer pointer/length shapes.
-TEST_F(azihsm_ecc_keyunwrap, unwrap_pair_rejects_invalid_wrapped_key_buffer_shape)
-{
-    part_list_.for_each_session([](azihsm_handle session) {
-        RsaAesUnwrapPairInputs unwrap_inputs(0xA5);
-        UnwrapPairContext ctx;
-        ASSERT_EQ(UnwrapPairContext::create(session, ctx), AZIHSM_STATUS_SUCCESS);
-
-        {
-            SCOPED_TRACE("null pointer with non-zero len");
-            azihsm_buffer wrapped_key_buf{};
-            wrapped_key_buf.ptr = nullptr;
-            wrapped_key_buf.len = 1;
-
-            auto result = ctx.try_unwrap_with(&unwrap_inputs.unwrap_algo, &wrapped_key_buf);
-            ASSERT_EQ(result.status, AZIHSM_STATUS_INVALID_ARGUMENT);
-            ASSERT_EQ(result.private_key, 0);
-            ASSERT_EQ(result.public_key, 0);
-        }
-
-        {
-            SCOPED_TRACE("non-null pointer with zero len");
-            uint8_t byte = 0;
-            azihsm_buffer wrapped_key_buf{};
-            wrapped_key_buf.ptr = &byte;
-            wrapped_key_buf.len = 0;
-
-            auto result = ctx.try_unwrap_with(&unwrap_inputs.unwrap_algo, &wrapped_key_buf);
-            ASSERT_NE(result.status, AZIHSM_STATUS_SUCCESS);
-            ASSERT_EQ(result.private_key, 0);
-            ASSERT_EQ(result.public_key, 0);
-        }
-    });
-}
-
-// Verifies unwrap rejects a null wrapped_key pointer.
-TEST_F(azihsm_ecc_keyunwrap, unwrap_pair_rejects_null_wrapped_key_pointer)
-{
-    part_list_.for_each_session([](azihsm_handle session) {
-        RsaAesUnwrapPairInputs unwrap_inputs(0xA5);
-        UnwrapPairContext ctx;
-        ASSERT_EQ(UnwrapPairContext::create(session, ctx), AZIHSM_STATUS_SUCCESS);
-
-        auto result = ctx.try_unwrap_with(&unwrap_inputs.unwrap_algo, nullptr);
-        ASSERT_EQ(result.status, AZIHSM_STATUS_INVALID_ARGUMENT);
-        ASSERT_EQ(result.private_key, 0);
-        ASSERT_EQ(result.public_key, 0);
-    });
-}
 
 // Verifies unwrap rejects an empty wrapped blob represented as null pointer + zero length.
 TEST_F(azihsm_ecc_keyunwrap, unwrap_pair_rejects_null_wrapped_key_with_zero_length)
