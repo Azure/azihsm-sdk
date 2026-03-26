@@ -8,6 +8,8 @@
 //! DDI protocol, handling the translation of HSM key properties to DDI-specific
 //! structures and command execution.
 
+use resiliency_macro::*;
+
 use super::*;
 
 /// Generates an ECC key pair in the HSM.
@@ -42,6 +44,7 @@ use super::*;
 /// - The DDI command execution fails
 /// - The response from the HSM is malformed or missing required fields
 /// - Session credentials are invalid or the session has expired
+#[resiliency_key_gen(session = "session")]
 pub(crate) fn ecc_generate_key(
     session: &HsmSession,
     priv_key_props: HsmKeyProps,
@@ -60,10 +63,7 @@ pub(crate) fn ecc_generate_key(
         ext: None,
     };
 
-    let resp = session.with_dev(|dev| {
-        dev.exec_op(&req, &mut None)
-            .map_hsm_err(HsmError::DdiCmdFailure)
-    })?;
+    let resp = session.with_dev(|dev| dev.exec_op(&req, &mut None).map_err(HsmError::from))?;
 
     // Create a key guard to ensure the generated key is deleted if any errors occur before returning.
     let key_id = HsmKeyIdGuard::new(session, to_key_handle(resp.data.private_key_id, None));
@@ -115,6 +115,7 @@ pub(crate) fn ecc_generate_key(
 /// - The hash encoding to MBOR format fails
 /// - The DDI command execution fails
 /// - The HSM signature operation fails
+#[resiliency_key_op(key = "key")]
 pub(crate) fn ecc_sign(
     key: &HsmEccPrivateKey,
     hash: &[u8],
@@ -134,10 +135,7 @@ pub(crate) fn ecc_sign(
         ext: None,
     };
 
-    let resp = key.with_dev(|dev| {
-        dev.exec_op(&req, &mut None)
-            .map_hsm_err(HsmError::DdiCmdFailure)
-    })?;
+    let resp = key.with_dev(|dev| dev.exec_op(&req, &mut None).map_err(HsmError::from))?;
 
     let sig_len = curve.signature_size();
     sig[..sig_len].copy_from_slice(&resp.data.signature.as_slice()[..sig_len]);
@@ -169,6 +167,7 @@ pub(crate) fn ecc_sign(
 /// - The peer public key DER cannot be encoded for the DDI request.
 /// - The provided `derived_key_props` cannot be translated to DDI target key properties.
 /// - The DDI command execution fails.
+#[resiliency_key_op(key = "base_key")]
 pub(crate) fn ecdh_derive(
     base_key: &HsmEccPrivateKey,
     peer_pub_der: &[u8],
@@ -191,10 +190,7 @@ pub(crate) fn ecdh_derive(
         ext: None,
     };
 
-    let resp = base_key.with_dev(|dev| {
-        dev.exec_op(&req, &mut None)
-            .map_hsm_err(HsmError::DdiCmdFailure)
-    })?;
+    let resp = base_key.with_dev(|dev| dev.exec_op(&req, &mut None).map_err(HsmError::from))?;
 
     let session = base_key.session();
     let key_id = HsmKeyIdGuard::new(&session, to_key_handle(resp.data.key_id, None));
@@ -205,6 +201,30 @@ pub(crate) fn ecdh_derive(
     }
 
     Ok((key_id.release(), dev_key_props))
+}
+
+/// Generates a key report (attestation) for the specified ECC private key.
+///
+/// This is a typed wrapper around [`generate_key_report`] that enables the
+/// `#[resiliency_key_op]` proc macro to automatically handle partition restore,
+/// session reopen, and key refresh on retryable errors.
+///
+/// # Arguments
+///
+/// * `key` - The ECC private key to attest.
+/// * `report_data` - Custom data to include in the attestation report.
+/// * `report` - Optional mutable buffer to receive the attestation report.
+///
+/// # Returns
+///
+/// Returns the size of the attestation report on success.
+#[resiliency_key_op(key = "key")]
+pub(crate) fn ecc_generate_key_report(
+    key: &HsmEccPrivateKey,
+    report_data: &[u8],
+    report: Option<&mut [u8]>,
+) -> HsmResult<usize> {
+    generate_key_report(&key.session(), key.handle(), report_data, report)
 }
 
 impl From<HsmEccCurve> for DdiEccCurve {

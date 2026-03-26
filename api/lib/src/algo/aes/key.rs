@@ -291,6 +291,25 @@ impl HsmAesXtsKey {
 
         Ok(())
     }
+
+    /// Restores both device handles by unmasking the key's cached
+    /// masked-key blob.
+    ///
+    /// Used during key-operation resiliency recovery. AES-XTS keys are
+    /// stored as a pair of masked blobs, so this calls
+    /// [`ddi::aes_xts_unmask_key`] which unmasks both halves.
+    pub(crate) fn restore_from_masked(&self) -> HsmResult<()> {
+        acquire_restore_guard!(self => session, part_restore_epoch, inner);
+
+        let masked_key = inner
+            .key_props()
+            .masked_key()
+            .ok_or(HsmError::InternalError)?
+            .to_vec();
+        let (h1, h2, new_props) = ddi::aes_xts_unmask_key_raw_no_res(&session, &masked_key)?;
+        inner.restore((h1, h2), new_props, part_restore_epoch);
+        Ok(())
+    }
 }
 impl HsmSecretKey for HsmAesXtsKey {}
 

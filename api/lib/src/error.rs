@@ -13,10 +13,7 @@ impl<T, E: Debug> HsmErrorMapper<T, E> for Result<T, E> {
     fn map_hsm_err(self, hsm_err: HsmError) -> Result<T, HsmError> {
         match self {
             Ok(t) => Ok(t),
-            Err(err) => {
-                tracing::error!("Mapping error {:?} to HSM error: {:?}", err, hsm_err);
-                Err(hsm_err)
-            }
+            Err(_) => Err(hsm_err),
         }
     }
 }
@@ -44,6 +41,22 @@ pub enum HsmError {
     UnsupportedProperty = -17,
     CertChainChanged = -18,
     InvalidTweak = -19,
+    NotFound = -20,
+    IoAborted = -21,
+    IoAbortInProgress = -22,
+    CredentialsNotEstablished = -23,
+    NonceMismatch = -24,
+    PartitionNotProvisioned = -25,
+    MaskedKeyDecodeFailed = -26,
+    EccVerifyFailed = -27,
+    SessionNeedsRenegotiation = -29,
+    PendingKeyGeneration = -30,
+    KeyNotFound = -31,
+    PartitionAlreadyProvisioned = -33,
+    VaultAppLimitReached = -34,
+    RetryExhausted = -35,
+    DeviceNotReady = -36,
+    CannotDeleteInternalKeys = -37,
     Panic = i32::MIN,
 }
 

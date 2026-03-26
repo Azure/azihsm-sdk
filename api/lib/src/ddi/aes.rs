@@ -9,6 +9,7 @@
 //! cryptographic operations.
 
 use itertools::Itertools;
+use resiliency_macro::*;
 
 use super::*;
 
@@ -37,6 +38,7 @@ use super::*;
 /// - Key properties cannot be converted to DDI format
 /// - The DDI operation fails
 /// - The session is invalid or closed
+#[resiliency_key_gen(session = "session")]
 pub(crate) fn aes_generate_key(
     session: &HsmSession,
     props: HsmKeyProps,
@@ -51,10 +53,7 @@ pub(crate) fn aes_generate_key(
         ext: None,
     };
 
-    let resp = session.with_dev(|dev| {
-        dev.exec_op(&req, &mut None)
-            .map_hsm_err(HsmError::DdiCmdFailure)
-    })?;
+    let resp = session.with_dev(|dev| dev.exec_op(&req, &mut None).map_err(HsmError::from))?;
 
     // Create a key guard to ensure the generated key is deleted if any errors occur before returning.
     let key_id = ddi::HsmKeyIdGuard::new(
@@ -100,6 +99,7 @@ pub(crate) fn aes_generate_key(
 /// - The plaintext size is invalid or not properly aligned
 /// - The ciphertext buffer is too small
 /// - The DDI operation fails
+#[resiliency_key_op(key = "key")]
 pub(crate) fn aes_cbc_encrypt(
     key: &HsmAesKey,
     iv: &mut [u8],
@@ -149,6 +149,7 @@ pub(crate) fn aes_cbc_encrypt(
 /// - The ciphertext size is invalid or not properly aligned
 /// - The plaintext buffer is too small
 /// - The DDI operation fails
+#[resiliency_key_op(key = "key")]
 pub(crate) fn aes_cbc_decrypt(
     key: &HsmAesKey,
     iv: &mut [u8],
@@ -224,10 +225,7 @@ fn aes_cbc_encrypt_decrypt(
         ext: None,
     };
 
-    let resp = key.with_dev(|dev| {
-        dev.exec_op(&req, &mut None)
-            .map_hsm_err(HsmError::DdiCmdFailure)
-    })?;
+    let resp = key.with_dev(|dev| dev.exec_op(&req, &mut None).map_err(HsmError::from))?;
 
     // Update IV for chaining
     let resp_iv = resp.data.iv.as_slice();
@@ -280,6 +278,7 @@ fn key_size_to_ddi(size: usize) -> HsmResult<DdiAesKeySize> {
 /// # Errors
 ///
 /// Returns an error if the underlying DDI operation fails.
+#[resiliency_key_op(key = "key")]
 pub(crate) fn aes_xts_encrypt(
     key: &HsmAesXtsKey,
     tweak: u128,
@@ -307,6 +306,7 @@ pub(crate) fn aes_xts_encrypt(
 /// # Errors
 ///
 /// Returns an error if the underlying DDI operation fails.
+#[resiliency_key_op(key = "key")]
 pub(crate) fn aes_xts_decrypt(
     key: &HsmAesXtsKey,
     tweak: u128,
@@ -359,7 +359,7 @@ fn aes_xts_encrypt_decrypt(
 
     let resp = key.with_dev(|dev| {
         dev.exec_op_fp_xts_slice(op, xts_params, input, output, &mut is_fips_approved)
-            .map_hsm_err(HsmError::DdiCmdFailure)
+            .map_err(HsmError::from)
     })?;
     Ok(resp)
 }
@@ -387,6 +387,7 @@ fn aes_xts_encrypt_decrypt(
 /// - Key properties cannot be converted to DDI format
 /// - The DDI operation fails
 /// - The session is invalid or closed
+#[resiliency_key_gen(session = "session")]
 pub(crate) fn aes_gcm_generate_key(
     session: &HsmSession,
     props: HsmKeyProps,
@@ -401,10 +402,7 @@ pub(crate) fn aes_gcm_generate_key(
         ext: None,
     };
 
-    let resp = session.with_dev(|dev| {
-        dev.exec_op(&req, &mut None)
-            .map_hsm_err(HsmError::DdiCmdFailure)
-    })?;
+    let resp = session.with_dev(|dev| dev.exec_op(&req, &mut None).map_err(HsmError::from))?;
 
     let key_id = ddi::HsmKeyIdGuard::new(
         session,
@@ -444,6 +442,7 @@ pub(crate) fn aes_gcm_generate_key(
 /// - The session is invalid or closed
 /// - The key is invalid or unsuitable for GCM encryption
 /// - The DDI operation fails
+#[resiliency_key_op(key = "key")]
 pub(crate) fn aes_gcm_encrypt(
     key: &HsmAesGcmKey,
     iv: [u8; 12],
@@ -474,7 +473,7 @@ pub(crate) fn aes_gcm_encrypt(
             &mut returned_iv,
             &mut is_fips_approved,
         )
-        .map_hsm_err(HsmError::DdiCmdFailure)
+        .map_err(HsmError::from)
     })?;
 
     Ok((bytes_written, tag.ok_or(HsmError::InternalError)?))
@@ -506,6 +505,7 @@ pub(crate) fn aes_gcm_encrypt(
 /// - The key is invalid or unsuitable for GCM decryption
 /// - Authentication tag verification fails
 /// - The DDI operation fails
+#[resiliency_key_op(key = "key")]
 pub(crate) fn aes_gcm_decrypt(
     key: &HsmAesGcmKey,
     iv: [u8; 12],
@@ -537,7 +537,7 @@ pub(crate) fn aes_gcm_decrypt(
             &mut returned_iv,
             &mut is_fips_approved,
         )
-        .map_hsm_err(HsmError::DdiCmdFailure)
+        .map_err(HsmError::from)
     })?;
 
     Ok(bytes_written)
