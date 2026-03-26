@@ -86,7 +86,7 @@ cargo xtask copyright --fix
 
 It auto fixes copyright issues. This ensures all source code has correct copyright headers.
 
-## Precheckin Steps
+## Precheck Steps
 
 Before running any commands below, ensure you have finished the initial setup steps.
 

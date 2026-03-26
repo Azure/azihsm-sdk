@@ -69,7 +69,7 @@ cargo xtask coverage
 ## Command Details
 
 - **precheck**: Combines setup, copyright, audit, fmt, clippy, and nextest stages for comprehensive validation
-- **clippy**: Runs `cargo clippy --all-targets` with warnings treated as errors
+- **clippy**: Runs `cargo clippy --workspace --all-targets` with warnings treated as errors
 - **fmt**: Uses `cargo fmt` to check/fix Rust code formatting
 - **copyright**: Ensures all source files have proper Microsoft copyright headers
 - **coverage**: Build/run all tests with code coverage enabled
