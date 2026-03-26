@@ -495,7 +495,7 @@ fn run_all_zero_signature_test(session: &HsmSession, curve: HsmEccCurve, algo: H
 
     let hash = hash_data(session, algo, b"data");
 
-    let sig_len = curve.signature_size() as usize;
+    let sig_len = curve.signature_size();
     let sig = vec![0u8; sig_len];
 
     let result = verify_hash_signature(&pub_key, &hash, &sig);
