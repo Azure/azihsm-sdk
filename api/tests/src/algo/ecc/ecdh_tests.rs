@@ -33,6 +33,7 @@ pub(crate) fn generate_ecc_keypair_with_derive(
         .ecc_curve(curve)
         .can_derive(can_derive)
         .can_verify(!can_derive)
+        .is_session(true)
         .build()?;
 
     // Create the ECC key generation algorithm.

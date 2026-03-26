@@ -67,8 +67,8 @@ TEST_F(azihsm_ecc_keygen, generate_keypair_all_curves)
 TEST_F(azihsm_ecc_keygen, null_algorithm)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        DummyEccPrivKeyProps priv_props;
-        DummyEccPubKeyProps pub_props;
+        DefaultEccPrivKeyProps priv_props;
+        DefaultEccPubKeyProps pub_props;
 
         azihsm_handle priv_key_handle = 0;
         azihsm_handle pub_key_handle = 0;
@@ -96,7 +96,7 @@ TEST_F(azihsm_ecc_keygen, null_priv_key_props)
         keygen_algo.params = nullptr;
         keygen_algo.len = 0;
 
-        DummyEccPubKeyProps pub_props;
+        DefaultEccPubKeyProps pub_props;
         auto pub_prop_list = pub_props.get_prop_list();
 
         azihsm_handle priv_key_handle = 0;
@@ -122,7 +122,7 @@ TEST_F(azihsm_ecc_keygen, null_pub_key_props)
         keygen_algo.params = nullptr;
         keygen_algo.len = 0;
 
-        DummyEccPrivKeyProps priv_props;
+        DefaultEccPrivKeyProps priv_props;
         auto priv_prop_list = priv_props.get_prop_list();
 
         azihsm_handle priv_key_handle = 0;
@@ -148,8 +148,8 @@ TEST_F(azihsm_ecc_keygen, null_priv_key_handle_output)
         keygen_algo.params = nullptr;
         keygen_algo.len = 0;
 
-        DummyEccPrivKeyProps priv_props;
-        DummyEccPubKeyProps pub_props;
+        DefaultEccPrivKeyProps priv_props;
+        DefaultEccPubKeyProps pub_props;
         auto priv_prop_list = priv_props.get_prop_list();
         auto pub_prop_list = pub_props.get_prop_list();
 
@@ -175,8 +175,8 @@ TEST_F(azihsm_ecc_keygen, null_pub_key_handle_output)
         keygen_algo.params = nullptr;
         keygen_algo.len = 0;
 
-        DummyEccPrivKeyProps priv_props;
-        DummyEccPubKeyProps pub_props;
+        DefaultEccPrivKeyProps priv_props;
+        DefaultEccPubKeyProps pub_props;
         auto priv_prop_list = priv_props.get_prop_list();
         auto pub_prop_list = pub_props.get_prop_list();
 
@@ -201,8 +201,8 @@ TEST_F(azihsm_ecc_keygen, invalid_session_handle)
     keygen_algo.params = nullptr;
     keygen_algo.len = 0;
 
-    DummyEccPrivKeyProps priv_props;
-    DummyEccPubKeyProps pub_props;
+    DefaultEccPrivKeyProps priv_props;
+    DefaultEccPubKeyProps pub_props;
     auto priv_prop_list = priv_props.get_prop_list();
     auto pub_prop_list = pub_props.get_prop_list();
 
@@ -228,8 +228,8 @@ TEST_F(azihsm_ecc_keygen, unsupported_algorithm)
         keygen_algo.params = nullptr;
         keygen_algo.len = 0;
 
-        DummyEccPrivKeyProps priv_props;
-        DummyEccPubKeyProps pub_props;
+        DefaultEccPrivKeyProps priv_props;
+        DefaultEccPubKeyProps pub_props;
         auto priv_prop_list = priv_props.get_prop_list();
         auto pub_prop_list = pub_props.get_prop_list();
 
