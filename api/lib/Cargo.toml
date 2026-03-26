@@ -34,6 +34,7 @@ zerocopy = { features = ["derive"], workspace = true }
 default = []
 mock = ["azihsm_ddi/mock"]
 res-test = ["azihsm_res_test_dev"]
+res-debug = []
 
 [lints]
 workspace = true

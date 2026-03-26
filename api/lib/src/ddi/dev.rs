@@ -50,7 +50,7 @@ pub(crate) fn get_api_rev(dev: &HsmDev) -> HsmResult<(HsmApiRev, HsmApiRev)> {
     };
 
     let resp: DdiGetApiRevCmdResp = dev.exec_op(&req, &mut None).map_err(HsmError::from)?;
-
+    res_dbg!("[ddi] GetApiRev OK");
     Ok((resp.data.min.into(), resp.data.max.into()))
 }
 
@@ -123,6 +123,27 @@ impl HsmDev {
     /// The device kind that was queried when the device was opened.
     pub(crate) fn device_kind(&self) -> Option<DdiDeviceKind> {
         self.0.device_kind()
+    }
+
+    /// Instrumented `exec_op` wrapper — logs DDI opcode before/after each call.
+    ///
+    /// Shadows the trait method via Deref so all existing `dev.exec_op()`
+    /// call sites pick this up automatically.
+    #[cfg(feature = "res-debug")]
+    pub(crate) fn exec_op<T: DdiOpReq>(
+        &self,
+        req: &T,
+        cookie: &mut Option<DdiCookie>,
+    ) -> DdiResult<T::OpResp> {
+        let op = req.get_opcode();
+        let tid = std::thread::current().id();
+        tracing::warn!("[ddi] {:?} >> {:?}", tid, op);
+        let result = self.0.exec_op(req, cookie);
+        match &result {
+            Ok(_) => tracing::warn!("[ddi] {:?} << {:?} OK", tid, op),
+            Err(e) => tracing::warn!("[ddi] {:?} << {:?} ERR: {:?}", tid, op, e),
+        }
+        result
     }
 }
 
@@ -207,8 +228,9 @@ fn get_device_kind(dev: &HsmDev) -> HsmResult<DdiDeviceKind> {
         ext: None,
     };
 
+    res_dbg!("[ddi] >> GetDeviceInfo");
     let resp = dev.exec_op(&req, &mut None).map_err(HsmError::from)?;
-
+    res_dbg!("[ddi] << GetDeviceInfo OK kind={:?}", resp.data.kind);
     Ok(resp.data.kind)
 }
 

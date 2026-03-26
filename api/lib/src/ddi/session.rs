@@ -180,7 +180,18 @@ pub(crate) fn reopen_session(
     seed: &[u8; 48],
     bmk_session: &[u8],
 ) -> HsmResult<ReopenSessionResult> {
+    //
+    let tid = std::thread::current().id();
+    res_dbg!(
+        "[reopen_ddi] {:?} calling prepare_session_credentials (sess={})...",
+        tid,
+        sess_id
+    );
     let (ecreds, pub_key) = prepare_session_credentials(dev, rev, creds, *seed)?;
+    res_dbg!(
+        "[reopen_ddi] {:?} prepare OK, calling ReopenSession...",
+        tid
+    );
     let req = DdiReopenSessionCmdReq {
         hdr: build_ddi_req_hdr(DdiOp::ReopenSession, Some(rev), Some(sess_id)),
         data: DdiReopenSessionReq {
@@ -191,10 +202,20 @@ pub(crate) fn reopen_session(
         },
         ext: None,
     };
-    let resp = dev.exec_op(&req, &mut None).map_err(HsmError::from)?;
+    let resp = dev.exec_op(&req, &mut None).map_err(|e| {
+        res_dbg!("[reopen_ddi] {:?} ReopenSession FAILED: {:?}", tid, e);
+        HsmError::from(e)
+    })?;
+    res_dbg!("[reopen_ddi] {:?} ReopenSession OK", tid);
 
     // The device must confirm the same session ID we requested.
     if resp.data.sess_id != sess_id {
+        res_dbg!(
+            "[reopen_ddi] {:?} session ID mismatch: expected {}, got {}",
+            tid,
+            sess_id,
+            resp.data.sess_id
+        );
         return Err(HsmError::InternalError);
     }
 

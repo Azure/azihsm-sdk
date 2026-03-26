@@ -26,9 +26,10 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 
 [features]
-default = []
+default = ["res-debug"]
 mock = ["azihsm_api/mock"]
 res-test = ["azihsm_api/res-test", "azihsm_res_test_dev"]
+res-debug = ["azihsm_api/res-debug"]
 
 [lints]
 workspace = true

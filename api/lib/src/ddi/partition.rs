@@ -279,26 +279,70 @@ pub(crate) fn init_part_raw_no_res(
     resiliency_config: Option<&HsmResiliencyConfig>,
     reendorse: bool,
 ) -> HsmResult<InitPartResult> {
+    let tid = std::thread::current().id();
     let mobk = match obk_config.key_source() {
         HsmOwnerBackupKeySource::Caller => {
             // Caller provided the OBK
             let obk = obk_config.key().ok_or(HsmError::InvalidArgument)?;
-            init_bk3(dev, rev, obk)?
+            res_dbg!("[init_part] {:?} calling init_bk3...", tid);
+            match init_bk3(dev, rev, obk) {
+                Ok(masked_bk3) => {
+                    // First-time init succeeded — seal the masked BK3 for future use
+                    res_dbg!(
+                        "[init_part] {:?} init_bk3 OK, calling set_sealed_bk3...",
+                        tid
+                    );
+                    let seal_result = set_sealed_bk3(dev, rev, &masked_bk3);
+                    res_dbg!(
+                        "[init_part] {:?} set_sealed_bk3 result={:?}",
+                        tid,
+                        seal_result.as_ref().err()
+                    );
+                    masked_bk3
+                }
+
+                Err(e) => {
+                    res_dbg!(
+                        "[init_part] {:?} init_bk3 failed: {:?}, calling get_sealed_bk3...",
+                        tid, e
+                    );
+                    // BK3 already initialized — retrieve the previously sealed value
+                    let sealed_bk3 = get_sealed_bk3(dev, rev)?;
+                    res_dbg!(
+                        "[init_part] {:?} get_sealed_bk3 OK (len={})",
+                        tid,
+                        sealed_bk3.len()
+                    );
+                    sealed_bk3
+                }
+            }
         }
         HsmOwnerBackupKeySource::Tpm => {
             // Retrieve sealed BK3 from device and unseal with TPM
+            res_dbg!("[init_part] {:?} TPM: calling get_sealed_bk3...", tid);
             let sealed_bk3 = get_sealed_bk3(dev, rev)?;
+            res_dbg!("[init_part] {:?} get_sealed_bk3 OK, unsealing...", tid);
             unseal_tpm_backup_key(&sealed_bk3)?
         }
         _ => return Err(HsmError::InvalidArgument),
     };
 
     // Compute POTA endorsement based on source.
+    res_dbg!(
+        "[init_part] {:?} calling get_pota_endorsement (reendorse={})...",
+        tid, reendorse
+    );
     let (pota_signature, pota_public_key) =
         get_pota_endorsement(dev, rev, pota_endorsement, resiliency_config, reendorse)?;
+    res_dbg!("[init_part] {:?} get_pota_endorsement OK", tid);
     let pota_endorsement = HsmPotaEndorsementData::new(&pota_signature, &pota_public_key);
 
+    res_dbg!(
+        "[init_part] {:?} calling get_establish_cred_encryption_key...",
+        tid
+    );
     let resp = get_establish_cred_encryption_key(dev, rev)?;
+    res_dbg!("[init_part] {:?} get_establish_cred_encryption_key OK", tid);
 
     let nonce = resp.data.nonce;
     let key = DeviceCredKey::new(&resp.data.pub_key, nonce).map_hsm_err(HsmError::DdiCmdFailure)?;
@@ -326,6 +370,7 @@ pub(crate) fn init_part_raw_no_res(
         crate::resiliency::AZIHSM_STORAGE_MUK,
     )?;
 
+    res_dbg!("[init_part] {:?} calling try_establish_credential...", tid);
     let bmk = try_establish_credential(
         dev,
         rev,
@@ -337,12 +382,44 @@ pub(crate) fn init_part_raw_no_res(
         &pota_endorsement,
         resiliency_config,
     )?;
+    res_dbg!("[init_part] {:?} try_establish_credential OK", tid);
 
     Ok(InitPartResult {
         bmk,
         mobk,
         pota_endorsement_data: pota_endorsement,
     })
+}
+
+/// Persists the masked BK3 on the device as a sealed blob.
+///
+/// After a successful `init_bk3`, the masked BK3 must be stored on the device
+/// via `SetSealedBk3` so that subsequent boots can retrieve it with
+/// `GetSealedBk3` instead of re-initializing.
+///
+/// # Arguments
+///
+/// * `dev` - The HSM device handle
+/// * `rev` - The API revision to use
+/// * `sealed_bk3` - The masked BK3 data to persist
+///
+/// # Errors
+///
+/// Returns an error if the operation fails.
+fn set_sealed_bk3(dev: &HsmDev, rev: HsmApiRev, sealed_bk3: &[u8]) -> HsmResult<()> {
+    let req = DdiSetSealedBk3CmdReq {
+        hdr: build_ddi_req_hdr(DdiOp::SetSealedBk3, Some(rev), None),
+        data: DdiSetSealedBk3Req {
+            sealed_bk3: MborByteArray::from_slice(sealed_bk3)
+                .map_hsm_err(HsmError::InvalidArgument)?,
+        },
+        ext: None,
+    };
+
+    dev.exec_op(&req, &mut None)
+        .map_hsm_err(HsmError::DdiCmdFailure)?;
+
+    Ok(())
 }
 
 /// Resolves a cached key value (BMK or MUK) for credential establishment.
@@ -395,20 +472,44 @@ fn try_establish_credential(
     pota_endorsement: &HsmPotaEndorsementData,
     resiliency_config: Option<&HsmResiliencyConfig>,
 ) -> HsmResult<Vec<u8>> {
+    let tid = std::thread::current().id();
+    res_dbg!(
+        "[establish] {:?} calling establish_credential (bmk_len={}, muk_len={})...",
+        tid,
+        bmk.len(),
+        muk.len()
+    );
     let result = establish_credential(dev, rev, ecreds, pub_key, bmk, muk, mobk, pota_endorsement);
 
     let new_bmk = match (&result, resiliency_config) {
-        (Ok(_), _) => result,
+        (Ok(_), _) => {
+            res_dbg!("[establish] {:?} establish_credential OK", tid);
+            result
+        }
         (Err(HsmError::MaskedKeyDecodeFailed), Some(cfg)) => {
+            res_dbg!(
+                "[establish] {:?} MaskedKeyDecodeFailed, clearing stale keys and retrying...",
+                tid
+            );
             // Cached BMK/MUK are stale (e.g. from a prior migration epoch).
             // Clear them from storage and retry with empty values so the
             // device generates fresh keys.
             cfg.storage.clear(crate::resiliency::AZIHSM_STORAGE_BMK)?;
             cfg.storage.clear(crate::resiliency::AZIHSM_STORAGE_MUK)?;
 
-            establish_credential(dev, rev, ecreds, pub_key, &[], &[], mobk, pota_endorsement)
+            let retry_result =
+                establish_credential(dev, rev, ecreds, pub_key, &[], &[], mobk, pota_endorsement);
+            res_dbg!(
+                "[establish] {:?} retry result={:?}",
+                tid,
+                retry_result.as_ref().err()
+            );
+            retry_result
         }
-        (Err(_), _) => result,
+        (Err(e), _) => {
+            res_dbg!("[establish] {:?} establish_credential FAILED: {:?}", tid, e);
+            result
+        }
     }?;
 
     // Persist the new BMK to resiliency storage so it is available on the

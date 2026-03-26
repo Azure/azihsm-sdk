@@ -225,7 +225,9 @@ fn aes_cbc_encrypt_decrypt(
         ext: None,
     };
 
+    res_dbg!("[ddi] >> AesCbc {:?}", op);
     let resp = key.with_dev(|dev| dev.exec_op(&req, &mut None).map_err(HsmError::from))?;
+    res_dbg!("[ddi] << AesCbc {:?} OK", op);
 
     // Update IV for chaining
     let resp_iv = resp.data.iv.as_slice();
@@ -357,10 +359,12 @@ fn aes_xts_encrypt_decrypt(
     };
     let mut is_fips_approved = false;
 
+    res_dbg!("[ddi] >> AesXts {:?}", op);
     let resp = key.with_dev(|dev| {
         dev.exec_op_fp_xts_slice(op, xts_params, input, output, &mut is_fips_approved)
             .map_err(HsmError::from)
     })?;
+    res_dbg!("[ddi] << AesXts {:?} OK", op);
     Ok(resp)
 }
 
@@ -402,7 +406,9 @@ pub(crate) fn aes_gcm_generate_key(
         ext: None,
     };
 
+    res_dbg!("[ddi] >> AesGcmGenerateKey");
     let resp = session.with_dev(|dev| dev.exec_op(&req, &mut None).map_err(HsmError::from))?;
+    res_dbg!("[ddi] << AesGcmGenerateKey OK");
 
     let key_id = ddi::HsmKeyIdGuard::new(
         session,
@@ -463,6 +469,7 @@ pub(crate) fn aes_gcm_encrypt(
     let mut returned_iv: Option<[u8; 12]> = None;
     let mut is_fips_approved = false;
 
+    res_dbg!("[ddi] >> AesGcmEncrypt");
     let bytes_written = key.with_dev(|dev| {
         dev.exec_op_fp_gcm_slice(
             DdiAesOp::Encrypt,
@@ -475,6 +482,7 @@ pub(crate) fn aes_gcm_encrypt(
         )
         .map_err(HsmError::from)
     })?;
+    res_dbg!("[ddi] << AesGcmEncrypt OK");
 
     Ok((bytes_written, tag.ok_or(HsmError::InternalError)?))
 }
@@ -527,6 +535,7 @@ pub(crate) fn aes_gcm_decrypt(
     let mut returned_iv: Option<[u8; 12]> = None;
     let mut is_fips_approved = false;
 
+    res_dbg!("[ddi] >> AesGcmDecrypt");
     let bytes_written = key.with_dev(|dev| {
         dev.exec_op_fp_gcm_slice(
             DdiAesOp::Decrypt,
@@ -539,6 +548,7 @@ pub(crate) fn aes_gcm_decrypt(
         )
         .map_err(HsmError::from)
     })?;
+    res_dbg!("[ddi] << AesGcmDecrypt OK");
 
     Ok(bytes_written)
 }

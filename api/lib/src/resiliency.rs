@@ -544,6 +544,7 @@ pub(crate) fn execute_key_gen_with_retry<T>(
     max_retries: u32,
     backoff_base_ms: u64,
 ) -> HsmResult<T> {
+    let tid = std::thread::current().id();
     let mut result = {
         let _barrier = partition.key_barrier_read();
         operation()
@@ -551,22 +552,43 @@ pub(crate) fn execute_key_gen_with_retry<T>(
     let mut attempt = 0u32;
 
     while result.as_ref().is_err_and(is_key_op_retryable_error) && attempt < max_retries {
+        res_dbg!(
+            "[key_gen] {:?} retryable err={:?}, attempt={}",
+            tid,
+            result.as_ref().err(),
+            attempt
+        );
         apply_backoff(attempt, backoff_base_ms, BACKOFF_JITTER_MS);
 
         // Acquire write lock for the entire recovery + retry sequence
         // to prevent ABA handle collisions with concurrent
         // restore_from_masked calls.
+        res_dbg!("[key_gen] {:?} acquiring write lock...", tid);
         let _barrier = partition.key_barrier_write();
+        res_dbg!("[key_gen] {:?} write lock acquired", tid);
 
-        if partition.restore_partition().is_err() {
-            attempt += 1;
-            continue;
+        match partition.restore_partition() {
+            Ok(()) => res_dbg!("[key_gen] {:?} restore_partition OK", tid),
+            Err(ref e) => {
+                res_dbg!("[key_gen] {:?} restore_partition FAILED: {:?}", tid, e);
+                attempt += 1;
+                continue;
+            }
         }
-        if partition.reopen_session_if_needed(session).is_err() {
-            attempt += 1;
-            continue;
+        match partition.reopen_session_if_needed(session) {
+            Ok(()) => res_dbg!("[key_gen] {:?} reopen_session OK", tid),
+            Err(ref e) => {
+                res_dbg!("[key_gen] {:?} reopen_session FAILED: {:?}", tid, e);
+                attempt += 1;
+                continue;
+            }
         }
         result = operation();
+        res_dbg!(
+            "[key_gen] {:?} retry result={:?}",
+            tid,
+            result.as_ref().err()
+        );
         attempt += 1;
     }
 
@@ -606,16 +628,27 @@ pub(crate) fn execute_key_op_with_retry<T>(
     backoff_base_ms: u64,
 ) -> HsmResult<T> {
     let mut attempt = 0u32;
+    let tid = std::thread::current().id();
 
     loop {
         // Phase 1: read lock — epoch check + operation
         let result = {
             let _barrier = partition.key_barrier_read();
-            if key_epoch() < partition.restore_epoch() {
+            let ke = key_epoch();
+            let re = partition.restore_epoch();
+            if ke < re {
+                res_dbg!(
+                    "[key_op P1] {:?} stale epoch (key={}, part={})",
+                    tid, ke, re
+                );
                 None // stale handle — skip DDI, go to recovery
-            } else if key_epoch() > partition.restore_epoch() {
+            } else if ke > re {
                 // This should never happen — it would indicate a logic bug
                 // where the epoch was bumped without proper synchronization.
+                res_dbg!(
+                    "[key_op P1] {:?} epoch ahead (key={}, part={}) — bug",
+                    tid, ke, re
+                );
                 break Err(HsmError::InternalError);
             } else {
                 Some(operation())
@@ -628,17 +661,23 @@ pub(crate) fn execute_key_op_with_retry<T>(
                 // Key operation succeeded, return the value.
                 break Ok(value);
             }
-            Some(Err(err)) if is_key_op_retryable_error(&err) && attempt < max_retries => {
+            Some(Err(ref err)) if is_key_op_retryable_error(err) && attempt < max_retries => {
+                res_dbg!(
+                    "[key_op P2] {:?} retryable err={:?}, attempt={}",
+                    tid, err, attempt
+                );
                 apply_backoff(attempt, backoff_base_ms, BACKOFF_JITTER_MS);
                 attempt += 1;
             }
             Some(Err(err)) => {
                 // Key operation failed with a non-retryable error. Break and return the error.
+                res_dbg!("[key_op P2] {:?} non-retryable err={:?}", tid, err);
                 break Err(err);
             }
             None => {
                 // Stale epoch — skip to recovery, but respect the retry budget.
                 if attempt >= max_retries {
+                    res_dbg!("[key_op P2] {:?} stale epoch, retries exhausted", tid);
                     break Err(HsmError::RetryExhausted);
                 }
             }
@@ -646,19 +685,31 @@ pub(crate) fn execute_key_op_with_retry<T>(
 
         // Phase 3: write lock — key restoration.
         {
+            res_dbg!("[key_op P3] {:?} acquiring write lock...", tid);
             let _barrier = partition.key_barrier_write();
-            if partition.restore_partition().is_err() {
-                attempt += 1;
-                continue;
+            res_dbg!("[key_op P3] {:?} write lock acquired", tid);
+            match partition.restore_partition() {
+                Ok(()) => res_dbg!("[key_op P3] {:?} restore_partition OK", tid),
+                Err(ref e) => {
+                    res_dbg!("[key_op P3] {:?} restore_partition FAILED: {:?}", tid, e);
+                    attempt += 1;
+                    continue;
+                }
             }
-            if partition.reopen_session_if_needed(session).is_err() {
-                // Session reopen failed, continue to retry.
-                attempt += 1;
-                continue;
+            match partition.reopen_session_if_needed(session) {
+                Ok(()) => res_dbg!("[key_op P3] {:?} reopen_session OK", tid),
+                Err(ref e) => {
+                    res_dbg!("[key_op P3] {:?} reopen_session FAILED: {:?}", tid, e);
+                    attempt += 1;
+                    continue;
+                }
             }
-            if restore_key().is_err() {
-                // Key restoration failed, continue to retry.
-                attempt += 1;
+            match restore_key() {
+                Ok(()) => res_dbg!("[key_op P3] {:?} restore_key OK", tid),
+                Err(ref e) => {
+                    res_dbg!("[key_op P3] {:?} restore_key FAILED: {:?}", tid, e);
+                    attempt += 1;
+                }
             }
         }
     }

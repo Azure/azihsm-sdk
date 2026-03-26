@@ -216,7 +216,17 @@ pub(crate) fn unmask_key_raw_no_res(
     session: &HsmSession,
     masked_key: &[u8],
 ) -> HsmResult<(HsmKeyHandle, HsmKeyProps)> {
+    let tid = std::thread::current().id();
+    res_dbg!(
+        "[unmask] {:?} calling unmask_key_exec (len={})...",
+        tid,
+        masked_key.len()
+    );
     let resp = unmask_key_exec(session, masked_key)?;
+    res_dbg!(
+        "[unmask] {:?} unmask_key_exec OK (key_id={})",
+        tid, resp.data.key_id
+    );
     let key_id = to_key_handle(resp.data.key_id, resp.data.bulk_key_id);
     let guard = HsmKeyIdGuard::new(session, key_id);
     let key_props = HsmMaskedKey::to_key_props(resp.data.masked_key.as_slice())?;
@@ -233,7 +243,17 @@ pub(crate) fn unmask_key_pair_raw_no_res(
     session: &HsmSession,
     masked_key: &[u8],
 ) -> HsmResult<(HsmKeyHandle, HsmKeyProps, HsmKeyProps)> {
+    let tid = std::thread::current().id();
+    res_dbg!(
+        "[unmask_pair] {:?} calling unmask_key_exec (len={})...",
+        tid,
+        masked_key.len()
+    );
     let resp = unmask_key_exec(session, masked_key)?;
+    res_dbg!(
+        "[unmask_pair] {:?} unmask_key_exec OK (key_id={})",
+        tid, resp.data.key_id
+    );
     let key_id = to_key_handle(resp.data.key_id, resp.data.bulk_key_id);
     let guard = HsmKeyIdGuard::new(session, key_id);
 

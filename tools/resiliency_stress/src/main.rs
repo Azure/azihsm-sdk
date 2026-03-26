@@ -20,6 +20,20 @@ use std::sync::Barrier;
 use std::thread;
 use std::time::Duration;
 use std::time::Instant;
+use std::time::SystemTime;
+
+/// Returns a UTC timestamp string for correlating parent/child logs.
+fn ts() -> String {
+    let now = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default();
+    let secs = now.as_secs();
+    let millis = now.subsec_millis();
+    let h = (secs / 3600) % 24;
+    let m = (secs / 60) % 60;
+    let s = secs % 60;
+    format!("{h:02}:{m:02}:{s:02}.{millis:03}")
+}
 
 use azihsm_api::*;
 use azihsm_crypto::ExportableKey;
@@ -458,10 +472,15 @@ fn open_and_init_partition(
 
     let list = HsmPartitionManager::partition_info_list();
     assert!(!list.is_empty(), "No HSM partitions found.");
+    tracing::warn!("[stress] opening partition: {}", list[0].path);
     let part =
         HsmPartitionManager::open_partition(&list[0].path).expect("Failed to open partition");
     if !skip_reset {
+        tracing::warn!("[stress] resetting partition...");
         part.reset().expect("Failed to reset partition");
+        tracing::warn!("[stress] reset OK");
+    } else {
+        tracing::warn!("[stress] skipping reset (child process)");
     }
 
     let creds = HsmCredentials::new(&[0xAA; 16], &[0xBB; 16]);
@@ -607,8 +626,10 @@ fn open_and_init_partition(
         None
     };
 
+    tracing::warn!("[stress] open_and_init: calling part.init()...");
     part.init(creds, None, None, obk, pota, resiliency_config)
         .expect("Failed to init partition");
+    tracing::warn!("[stress] open_and_init: part.init() OK");
 
     (part, creds)
 }
@@ -1558,7 +1579,7 @@ fn run_single_process(args: Args) {
         #[allow(clippy::disallowed_types)]
         let writer = std::sync::Mutex::new(log_file);
         tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::ERROR)
+            .with_max_level(tracing::Level::WARN)
             .with_writer(writer)
             .with_ansi(false)
             .init();
@@ -1617,11 +1638,14 @@ fn run_single_process(args: Args) {
                 if shmem.stop.load(Ordering::Relaxed) {
                     break;
                 }
+                tracing::warn!("[reset] issuing partition.reset()...");
                 match partition.reset() {
                     Ok(()) => {
+                        tracing::warn!("[reset] partition.reset() OK");
                         shmem.total_resets.fetch_add(1, Ordering::Relaxed);
                     }
-                    Err(_) => {
+                    Err(ref e) => {
+                        tracing::warn!("[reset] partition.reset() FAILED: {:?}", e);
                         shmem.reset_failures.fetch_add(1, Ordering::Relaxed);
                     }
                 }
@@ -1736,7 +1760,7 @@ fn run_as_parent(args: Args) {
         #[allow(clippy::disallowed_types)]
         let writer = std::sync::Mutex::new(log_file);
         tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::ERROR)
+            .with_max_level(tracing::Level::WARN)
             .with_writer(writer)
             .with_ansi(false)
             .init();
@@ -1779,9 +1803,15 @@ fn run_as_parent(args: Args) {
     {
         let list = HsmPartitionManager::partition_info_list();
         assert!(!list.is_empty(), "No partitions found");
+        eprintln!(
+            "[parent] opening partition for initial reset: {}",
+            list[0].path
+        );
         let part = HsmPartitionManager::open_partition(&list[0].path)
             .expect("Failed to open partition for reset");
+        eprintln!("{} [parent] issuing initial partition.reset()...", ts());
         part.reset().expect("Failed to reset partition");
+        eprintln!("{} [parent] initial partition.reset() OK", ts());
     }
 
     // Build the self-exe path for child re-exec.
@@ -1867,11 +1897,14 @@ fn run_as_parent(args: Args) {
             if shmem.stop.load(Ordering::Relaxed) {
                 break;
             }
+            eprintln!("{} [reset] issuing partition.reset()...", ts());
             match partition.reset() {
                 Ok(()) => {
+                    eprintln!("{} [reset] partition.reset() OK", ts());
                     shmem.total_resets.fetch_add(1, Ordering::Relaxed);
                 }
-                Err(_) => {
+                Err(ref e) => {
+                    eprintln!("{} [reset] partition.reset() FAILED: {:?}", ts(), e);
                     shmem.reset_failures.fetch_add(1, Ordering::Relaxed);
                 }
             }
@@ -2115,11 +2148,7 @@ fn run_as_child(args: Args, child_id: usize) {
     // Child's stderr is already redirected to its log file by the parent.
     // Write tracing to stderr so everything goes to one place.
     tracing_subscriber::fmt()
-        .with_max_level(if args.verbose {
-            tracing::Level::WARN
-        } else {
-            tracing::Level::ERROR
-        })
+        .with_max_level(tracing::Level::WARN)
         .with_writer(std::io::stderr)
         .with_ansi(false)
         .init();

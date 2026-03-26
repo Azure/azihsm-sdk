@@ -408,17 +408,23 @@ impl HsmPartition {
         pota_endorsement: HsmPotaEndorsement,
         resiliency_config: Option<HsmResiliencyConfig>,
     ) -> HsmResult<()> {
+        let tid = std::thread::current().id();
         // Validate resiliency config and acquire the resiliency lock
         // for the entire init flow — including the final state write —
         // to fully serialize concurrent init_part / restore_partition
         // calls.  The guard owns an Arc clone, so it does not borrow
         // `resiliency_config` (which we consume below).
+        res_dbg!("[part.init] {:?} acquiring resiliency lock...", tid);
         let _lock_guard = if let Some(ref config) = resiliency_config {
             ResiliencyState::validate_config(config, &pota_endorsement)?;
             Some(ResiliencyLockGuard::acquire(config)?)
         } else {
             None
         };
+        res_dbg!(
+            "[part.init] {:?} resiliency lock acquired, calling inner.init()...",
+            tid
+        );
 
         self.inner().write().init(
             creds,
@@ -502,19 +508,32 @@ impl HsmPartition {
         credentials: &HsmCredentials,
         seed: Option<&[u8]>,
     ) -> HsmResult<ddi::OpenSessionResult> {
+        let tid = std::thread::current().id();
         let mut result = initial_result;
         let mut iter = 0u32;
 
         while is_open_session_retryable_error(&result) && iter < MAX_RETRIES {
+            res_dbg!(
+                "[open_sess] {:?} retryable err={:?}, attempt={}",
+                tid,
+                result.as_ref().err(),
+                iter
+            );
             apply_backoff(iter, BACKOFF_BASE_MS, BACKOFF_JITTER_MS);
 
             // Re-establish partition credentials before retrying open_session.
             match self.restore_partition() {
                 Ok(()) => {
+                    res_dbg!("[open_sess] {:?} restore OK, retrying open_session...", tid);
                     result = self.inner().read().open_session(api_rev, credentials, seed);
+                    res_dbg!(
+                        "[open_sess] {:?} open_session result={:?}",
+                        tid,
+                        result.as_ref().err()
+                    );
                 }
-                Err(_) => {
-                    // Restore_partition failed during open_session retry.
+                Err(ref e) => {
+                    res_dbg!("[open_sess] {:?} restore FAILED: {:?}", tid, e);
                 }
             }
             iter += 1;
@@ -574,6 +593,7 @@ impl HsmPartition {
     ///    the epoch; the outer retry loop will call us again.
     #[instrument(skip_all)]
     pub(crate) fn restore_partition(&self) -> HsmResult<()> {
+        let tid = std::thread::current().id();
         // Snapshot epoch and clone the lock Arc BEFORE acquiring the
         // Cross-process resiliency lock.
         let (pre_lock_epoch, lock_ref) = {
@@ -584,7 +604,13 @@ impl HsmPartition {
             (rs.restore_epoch, Arc::clone(&rs.config.lock))
         };
 
+        res_dbg!(
+            "[restore] {:?} acquiring resiliency lock (epoch={})",
+            tid,
+            pre_lock_epoch
+        );
         let _lock_guard = ResiliencyLockGuard::acquire_arc(lock_ref)?;
+        res_dbg!("[restore] {:?} resiliency lock acquired", tid);
 
         // Re-acquire READ to double-check epoch, read storage, and
         // call init_part_raw_no_res — all under a single read lock.
@@ -597,6 +623,12 @@ impl HsmPartition {
             // If the epoch advanced while waiting for the lock, another
             // thread/process already restored — skip redundant init_part.
             if rs.restore_epoch != pre_lock_epoch {
+                res_dbg!(
+                    "[restore] {:?} epoch advanced ({} -> {}), skipping",
+                    tid,
+                    pre_lock_epoch,
+                    rs.restore_epoch
+                );
                 return Ok(());
             }
 
@@ -611,11 +643,7 @@ impl HsmPartition {
             )?;
 
             // Single-attempt init_part_raw_no_res — bypasses the retry macro.
-            // resiliency_config is passed so init_part_raw_no_res can re-endorse
-            // POTA internally when the source is Caller.  Explicit
-            // bmk/muk from storage are forwarded so that
-            // resolve_cached_bmk/muk inside init_part_raw_no_res use them as-is.
-            // BMK persistence is handled manually after the call.
+            res_dbg!("[restore] {:?} calling init_part_raw_no_res...", tid);
             ddi::init_part_raw_no_res(
                 inner.dev(),
                 inner.api_rev_range().min(),
@@ -634,6 +662,7 @@ impl HsmPartition {
         match init_result {
             // Restore partition success — persist new BMK and MOBK, bump epoch so stale keys/sessions refresh.
             Ok(result) => {
+                res_dbg!("[restore] {:?} init_part_raw_no_res OK, bumping epoch", tid);
                 inner.persist_bmk(&result.bmk)?;
                 inner.set_masked_keys(result.bmk, result.mobk);
                 inner.update_cached_pota(result.pota_endorsement_data);
@@ -642,13 +671,19 @@ impl HsmPartition {
             }
             // Partition is already restored by another thread or process.
             // Update the epoch so session & stale key(s) refresh.
-            Err(err) if is_credentials_already_established(&err) => {
+            Err(ref err) if is_credentials_already_established(err) => {
+                res_dbg!(
+                    "[restore] {:?} creds already established ({:?}), syncing epoch",
+                    tid,
+                    err
+                );
                 inner.sync_epoch_from_storage()?;
                 Ok(())
             }
             Err(err) => {
                 // Any other failure is returned to the caller
                 // so the outer retry loop can retry again with backoff.
+                res_dbg!("[restore] {:?} init_part_raw_no_res FAILED: {:?}", tid, err);
                 Err(err)
             }
         }
@@ -923,6 +958,7 @@ impl HsmPartition {
     /// No-op when resiliency is disabled or the session is already current.
     #[instrument(skip_all, fields(session_id))]
     pub(crate) fn reopen_session_if_needed(&self, session: &HsmSession) -> HsmResult<()> {
+        let tid = std::thread::current().id();
         // Fast path: no lock required.
         let current_epoch = self.restore_epoch();
         let session_epoch = session.last_restore_epoch();
@@ -931,8 +967,21 @@ impl HsmPartition {
             return Ok(());
         } else if session_epoch > current_epoch {
             // This should never happen — session cannot be newer than the partition's epoch.
+            res_dbg!(
+                "[reopen_sess] {:?} session epoch {} > partition epoch {} — bug",
+                tid,
+                session_epoch,
+                current_epoch
+            );
             return Err(HsmError::InternalError);
         }
+
+        res_dbg!(
+            "[reopen_sess] {:?} session stale (sess={}, part={}), reopening...",
+            tid,
+            session_epoch,
+            current_epoch
+        );
 
         // Read credentials from the resiliency state.
         let creds = {
@@ -1088,9 +1137,12 @@ impl HsmPartitionInner {
 
     /// Resets the partition and clears cached masked keys.
     pub(crate) fn reset(&mut self) -> HsmResult<()> {
+        let tid = std::thread::current().id();
+        res_dbg!("[reset_ddi] {:?} calling simulate_nssr_after_lm...", tid);
         self.dev
             .simulate_nssr_after_lm()
             .map_err(|_| HsmError::DdiCmdFailure)?;
+        res_dbg!("[reset_ddi] {:?} simulate_nssr_after_lm OK", tid);
         self.clear_masked_keys();
         Ok(())
     }
