@@ -548,7 +548,7 @@ struct azihsm_algo_rsa_pkcs_pss_params {
 
 RSA OAEP Algorithm parameters.
 
-`hash_algo_id` and `mgf1_hash_algo_id` must use the same hash function.
+`hash_algo_id` and `mgf_id` must use the same hash function.
 
 ```cpp
 struct azihsm_algo_rsa_pkcs_oaep_params {
