@@ -231,10 +231,8 @@ fn list_files(
 /// `true` if the path matches any exclude pattern, `false` otherwise
 fn is_excluded(path: &Path, excludes: &[glob::Pattern]) -> bool {
     let path_str = path.to_string_lossy();
-    let path_normalized = path_str
-        .strip_prefix("./")
-        .unwrap_or(&path_str)
-        .replace('\\', "/");
+    let path_normalized = path_str.replace('\\', "/");
+    let path_normalized = path_normalized.strip_prefix("./").unwrap_or(&path_str);
 
     excludes
         .iter()
