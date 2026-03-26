@@ -26,6 +26,25 @@ pub struct AzihsmAlgoRsaAesKeyWrapParams {
     pub oaep_params: *const AzihsmAlgoRsaPkcsOaepParams,
 }
 
+impl AzihsmAlgoRsaAesKeyWrapParams {
+    /// Validates RSA-AES key wrap parameters at the FFI boundary.
+    ///
+    /// Checks that the AES key size is a supported value (128, 192, or 256 bits),
+    /// dereferences the nested OAEP parameters pointer, and validates the OAEP
+    /// parameters.
+    pub(crate) fn validate(&self) -> Result<(), AzihsmStatus> {
+        // Validate AES key size
+        match self.aes_key_bits {
+            128 | 192 | 256 => {}
+            _ => Err(AzihsmStatus::InvalidArgument)?,
+        }
+
+        // Dereference and validate the nested OAEP parameters
+        let oaep_params = deref_ptr(self.oaep_params)?;
+        oaep_params.validate()
+    }
+}
+
 impl<'a> TryFrom<&'a AzihsmAlgo> for &'a AzihsmAlgoRsaAesKeyWrapParams {
     type Error = AzihsmStatus;
 
@@ -33,8 +52,8 @@ impl<'a> TryFrom<&'a AzihsmAlgo> for &'a AzihsmAlgoRsaAesKeyWrapParams {
     fn try_from(algo: &'a AzihsmAlgo) -> Result<Self, Self::Error> {
         let params = validate_and_cast_algo_params::<AzihsmAlgoRsaAesKeyWrapParams>(algo)?;
 
-        // Validate OAEP parameters pointer
-        validate_ptr(params.oaep_params)?;
+        //validate parameter
+        params.validate()?;
 
         Ok(params)
     }
@@ -47,21 +66,7 @@ impl<'a> TryFrom<&'a AzihsmAlgo> for &'a AzihsmAlgoRsaPkcsOaepParams {
     fn try_from(algo: &'a AzihsmAlgo) -> Result<Self, Self::Error> {
         let params = validate_and_cast_algo_params::<AzihsmAlgoRsaPkcsOaepParams>(algo)?;
 
-        // Validate hash algorithm ID
-        match params.hash_algo_id {
-            AzihsmAlgoId::Sha256 | AzihsmAlgoId::Sha384 | AzihsmAlgoId::Sha512 => {}
-            _ => Err(AzihsmStatus::InvalidArgument)?,
-        }
-
-        // Label is optional - if provided, validate the buffer
-        if !params.label.is_null() {
-            let label_buf = deref_ptr(params.label)?;
-
-            // Validate the buffer has valid data pointer if length > 0
-            if label_buf.len > 0 {
-                validate_ptr(label_buf.ptr)?;
-            }
-        }
+        params.validate()?;
 
         Ok(params)
     }

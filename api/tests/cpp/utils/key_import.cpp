@@ -79,6 +79,7 @@ azihsm_status import_keypair(
   oaep_params.label = nullptr;
 
     azihsm_algo_rsa_aes_key_wrap_params unwrap_params = {};
+    unwrap_params.aes_key_bits = 256;
     unwrap_params.oaep_params = &oaep_params;
 
     azihsm_algo unwrap_algo = {};

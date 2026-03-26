@@ -89,7 +89,7 @@ impl HsmSignOp for HsmEccSignAlgo {
         let Some(signature) = signature else {
             return Ok(expected_len);
         };
-        if signature.len() != expected_len {
+        if signature.len() < expected_len {
             return Err(HsmError::BufferTooSmall);
         }
 

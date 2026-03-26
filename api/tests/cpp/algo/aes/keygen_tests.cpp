@@ -745,6 +745,7 @@ TEST_F(azihsm_aes_keygen, unwrap_local_aes_128_key)
 
         // Step 4: Unwrap the key using the device
         azihsm_algo_rsa_aes_key_wrap_params unwrap_params{};
+        unwrap_params.aes_key_bits = 256;
         unwrap_params.oaep_params = &oaep_params;
 
         azihsm_algo unwrap_algo{};
@@ -843,6 +844,7 @@ TEST_F(azihsm_aes_keygen, unwrap_local_aes_gcm_256_key)
 
         // Step 4: Unwrap the key using the device
         azihsm_algo_rsa_aes_key_wrap_params unwrap_params{};
+        unwrap_params.aes_key_bits = 256;
         unwrap_params.oaep_params = &oaep_params;
 
         azihsm_algo unwrap_algo{};
@@ -1005,6 +1007,7 @@ TEST_F(azihsm_aes_keygen, unwrap_local_aes_gcm_256_key_corrupted_fails)
         wrapped_data[0] ^= 0xFF;
 
         azihsm_algo_rsa_aes_key_wrap_params unwrap_params{};
+        unwrap_params.aes_key_bits = 256;
         unwrap_params.oaep_params = &oaep_params;
 
         azihsm_algo unwrap_algo{};
@@ -1083,6 +1086,7 @@ TEST_F(azihsm_aes_keygen, unwrap_local_aes_gcm_256_key_roundtrip)
 
         // Prepare unwrap algorithm and parameters
         azihsm_algo_rsa_aes_key_wrap_params unwrap_params{};
+        unwrap_params.aes_key_bits = 256;
         unwrap_params.oaep_params = &oaep_params;
 
         azihsm_algo unwrap_algo{};
@@ -1335,6 +1339,7 @@ TEST_F(azihsm_aes_keygen, unwrap_aes_xts_512_key)
         oaep_params.label = nullptr;
 
         azihsm_algo_rsa_aes_key_wrap_params unwrap_params = {};
+        unwrap_params.aes_key_bits = 256;
         unwrap_params.oaep_params = &oaep_params;
 
         azihsm_algo unwrap_algo = {};
