@@ -10,7 +10,7 @@ version = "0.1.0"
 integration = []
 
 [dev-dependencies]
-libtest-mimic = { workspace = true }
+libtest-mimic.workspace = true
 
 [lints]
 workspace = true

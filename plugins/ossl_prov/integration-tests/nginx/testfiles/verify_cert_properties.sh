@@ -11,17 +11,7 @@ CERT=$(echo | openssl s_client -connect localhost:8443 -servername localhost 2>/
     | openssl x509 -noout -text)
 
 echo "$CERT"
-
-echo "Checking signature algorithm..."
 echo "$CERT" | grep -q "Signature Algorithm: ecdsa-with-SHA384"
-
-echo "Checking curve..."
 echo "$CERT" | grep -q "NIST CURVE: P-384"
-
-echo "Checking OID..."
 echo "$CERT" | grep -q "ASN1 OID: secp384r1"
-
-echo "Checking subject..."
 echo "$CERT" | grep -q "Subject: CN.*=.*localhost"
-
-echo "Certificate property verification passed."
