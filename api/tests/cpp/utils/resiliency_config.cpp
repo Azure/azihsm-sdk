@@ -234,7 +234,8 @@ static constexpr uint32_t DUMMY_PUB_SIZE = 120;
 
 static azihsm_status pota_endorse(
     void * /*ctx*/,
-    const azihsm_buffer * /*pub_key*/,
+    const azihsm_buffer * /*pota_pub_key*/,
+    const azihsm_buffer * /*pid_pub_key*/,
     azihsm_buffer *signature,
     azihsm_buffer *endorsement_pub_key)
 {

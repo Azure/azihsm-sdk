@@ -95,7 +95,7 @@ fn init_with_resiliency() -> (HsmPartition, HsmCredentials, ResiliencyTestCtx) {
 
     let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
     let (obk_info, pota_endorsement) = make_init_params(&part);
-    let (resiliency_config, ctx) = make_resiliency_config(&part);
+    let (resiliency_config, ctx) = make_resiliency_config();
     part.init(
         creds,
         None,
@@ -567,9 +567,10 @@ fn test_restore_pota_callback_invoked_during_init_part_retry() {
         "open_session should recover after POTA re-endorsement during restore's init_part retry, got: {result:?}"
     );
 
-    // The POTA callback calls part.pub_key() → GetCertChainInfo + GetCertificate.
+    // The SDK retrieves the PID pub key via GetCertChainInfo + GetCertificate
+    // before invoking the POTA callback.
     // On init_part attempt 0, caller-provided POTA is used (no callback).
-    // On attempt 1 (retry), the callback fetches the PID cert.
+    // On attempt 1 (retry), the SDK fetches the PID cert pub key and passes it to the callback.
     assert!(
         cert_chain_after > cert_chain_before,
         "GetCertChainInfo should have been called by the POTA callback during restore's init_part retry"
