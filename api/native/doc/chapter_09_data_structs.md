@@ -717,7 +717,7 @@ struct azihsm_resiliency_config {
 
 | Field              | Type                                                              | Description                                                                                   |
 | ------------------ | ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| ctx                | void *                                                            | Opaque context pointer passed to every callback. Caller-owned; must remain valid until `azihsm_part_close` returns. The SDK never dereferences `ctx` itself — it is passed opaquely to each callback. |
+| ctx                | void *                                                            | Opaque context pointer passed to every callback. Caller-owned; must remain valid until `azihsm_part_close` returns. The SDK never dereferences `ctx` itself — it is passed opaquely to each callback. **Must not** store or reference the same `azihsm_handle` being initialized — callbacks are invoked while the partition's internal lock is held, so calling back into the same partition will deadlock. |
 | storage_ops        | [azihsm_resiliency_storage_ops](#azihsm_resiliency_storage_ops)   | Storage callbacks (required).                                                                 |
 | lock_ops           | [azihsm_resiliency_lock_ops](#azihsm_resiliency_lock_ops)         | Lock callbacks (required).                                                                    |
 | pota_callback_ops  | [azihsm_pota_callback_ops *](#azihsm_pota_callback_ops)           | POTA callback (NULL when POTA source is TPM; required when source is Caller).                 |

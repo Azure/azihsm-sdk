@@ -87,6 +87,13 @@ pub trait ResiliencyLock: Send + Sync {
 ///
 /// The callback is responsible for endorsing the device's PID certificate
 /// public key and returning the result.
+///
+/// Warning: This callback is invoked while the internal `HsmPartition` lock
+/// is held. Implementations must not call methods on the same
+/// `HsmPartition` handle from inside the callback, or a deadlock will
+/// occur. If additional device queries are truly required, open a
+/// separate `HsmPartition` handle for that purpose.
+///
 /// # Example
 /// ```ignore
 /// struct MyPotaCallback;
