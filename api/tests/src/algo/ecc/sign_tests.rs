@@ -130,11 +130,12 @@ fn expect_verify_internal_error(
 fn expect_verify_false(pub_key: &HsmEccPublicKey, hash: &[u8], signature: &[u8], context: &str) {
     let result = verify_hash_signature(pub_key, hash, signature);
 
-    match result {
-        Ok(false) => {} // expected
-        Ok(true) => panic!("Expected false but got true ({})", context),
-        Err(e) => panic!("Expected Ok(false) but got Err({:?}) ({})", e, context),
-    }
+    assert!(
+        matches!(result, Ok(false)),
+        "Expected Ok(false) but got {:?} ({})",
+        result,
+        context
+    );
 }
 
 /// Verifies that empty signature input results in an internal error
@@ -408,13 +409,11 @@ fn run_verify_without_permission_test(session: &HsmSession, curve: HsmEccCurve) 
     let result =
         HsmKeyManager::generate_key_pair(session, &mut algo, priv_key_props, pub_key_props);
 
-    match result {
-        Err(_) => {} // expected
-        Ok(_) => panic!(
-            "Expected key generation failure (no verify permission) for {:?}",
-            curve
-        ),
-    }
+    assert!(
+        result.is_err(),
+        "Expected key generation failure (no verify permission) for {:?}",
+        curve
+    );
 }
 
 /// Verifies that a valid signature with extra appended bytes is rejected during verification
@@ -455,7 +454,7 @@ fn run_all_zero_signature_test(session: &HsmSession, curve: HsmEccCurve, algo: H
     );
 }
 
-/// Verifies successful sign/verify using a constant-value hash (e.g., all 0x00 or all 0xFF)
+/// Returns the expected hash size (in bytes) for the given ECC curve
 fn hash_size_for_curve(curve: HsmEccCurve) -> usize {
     match curve {
         HsmEccCurve::P256 => 32,
@@ -464,7 +463,7 @@ fn hash_size_for_curve(curve: HsmEccCurve) -> usize {
     }
 }
 
-/// Returns the expected hash size (in bytes) for the given ECC curve
+/// Verifies successful sign/verify using a constant-value hash (e.g., all 0x00 or all 0xFF)
 fn run_constant_hash_test(session: &HsmSession, curve: HsmEccCurve, value: u8) {
     let (priv_key, pub_key) = generate_ecc_key_pair(session, curve);
 
@@ -749,7 +748,7 @@ fn test_ecc_modified_hash_p521(session: HsmSession) {
     run_modified_hash_same_length_test(&session, HsmEccCurve::P521, HsmHashAlgo::Sha512);
 }
 
-/// Tests failure when mismatched hash algorithms are used for P256
+/// Tests failure when mismatched hash input are used for P256
 #[session_test]
 fn test_ecc_mismatched_hash_input_p256(session: HsmSession) {
     run_mismatched_hash_input_test(
@@ -760,7 +759,7 @@ fn test_ecc_mismatched_hash_input_p256(session: HsmSession) {
     );
 }
 
-/// Tests failure when mismatched hash algorithms are used for P521
+/// Tests failure when mismatched hash input are used for P521
 #[session_test]
 fn test_ecc_mismatched_hash_input_p521(session: HsmSession) {
     run_mismatched_hash_input_test(
@@ -771,7 +770,7 @@ fn test_ecc_mismatched_hash_input_p521(session: HsmSession) {
     );
 }
 
-/// Tests failure when mismatched hash algorithms are used for P384
+/// Tests failure when mismatched hash input are used for P384
 #[session_test]
 fn test_ecc_mismatched_hash_input_p384(session: HsmSession) {
     run_mismatched_hash_input_test(
@@ -907,16 +906,19 @@ fn test_ecc_all_ff_hash_p521(session: HsmSession) {
     run_constant_hash_test(&session, HsmEccCurve::P521, 0xFF);
 }
 
+/// Verifies verification fails when using an empty hash for P256
 #[session_test]
 fn test_ecc_verify_empty_hash_p256(session: HsmSession) {
     run_verify_empty_hash_test(&session, HsmEccCurve::P256, HsmHashAlgo::Sha256);
 }
 
+/// Verifies verification fails when using an empty hash for P384
 #[session_test]
 fn test_ecc_verify_empty_hash_p384(session: HsmSession) {
     run_verify_empty_hash_test(&session, HsmEccCurve::P384, HsmHashAlgo::Sha384);
 }
 
+/// Verifies verification fails when using an empty hash for P521
 #[session_test]
 fn test_ecc_verify_empty_hash_p521(session: HsmSession) {
     run_verify_empty_hash_test(&session, HsmEccCurve::P521, HsmHashAlgo::Sha512);
