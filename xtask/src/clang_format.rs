@@ -99,7 +99,7 @@ impl Xtask for ClangFormat {
         let colored = match self.color.as_str() {
             "always" => true,
             "never" => false,
-            _ => std::io::stdout().is_terminal(),
+            _ => stdout().is_terminal(),
         };
 
         // Load excludes from .clang-format-ignore file and command line
@@ -231,7 +231,8 @@ fn list_files(
 /// `true` if the path matches any exclude pattern, `false` otherwise
 fn is_excluded(path: &Path, excludes: &[glob::Pattern]) -> bool {
     let path_str = path.to_string_lossy();
-    let path_normalized = path_str.strip_prefix("./").unwrap_or(&path_str);
+    let path_normalized = path_str.replace('\\', "/");
+    let path_normalized = path_normalized.strip_prefix("./").unwrap_or(&path_str);
 
     excludes
         .iter()
@@ -276,7 +277,13 @@ fn process_file(
     cmd.arg(file);
 
     if in_place {
-        cmd.status().context("Failed to execute clang-format")?;
+        let output = cmd.output().context("Failed to execute clang-format")?;
+        if !output.status.success() {
+            bail!(
+                "clang-format failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
         return Ok(false);
     }
 

@@ -172,7 +172,8 @@ impl Xtask for NextestReport {
             let mut output = String::new();
             output.push_str(&format!("TOTAL_TESTS={}\n", test_suites_total.tests));
             output.push_str(&format!("SKIPPED_TESTS={}\n", test_suites_total.skipped));
-            fs::write(&output_path, &output)?;
+            let mut file = OpenOptions::new().append(true).open(&output_path)?;
+            file.write_all(output.as_bytes())?;
             log::trace!("Output written to GITHUB_OUTPUT");
         }
 
