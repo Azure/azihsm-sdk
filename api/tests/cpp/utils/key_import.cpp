@@ -4,51 +4,52 @@
 #include "key_import.hpp"
 
 azihsm_status rsa_aes_wrap_bytes(
-  azihsm_handle wrapping_pub_key,
-  const std::vector<uint8_t> &plaintext,
-  uint32_t aes_key_bits,
-  std::vector<uint8_t> &wrapped_out
+    azihsm_handle wrapping_pub_key,
+    const std::vector<uint8_t> &plaintext,
+    uint32_t aes_key_bits,
+    std::vector<uint8_t> &wrapped_out
 )
 {
-  azihsm_algo_rsa_pkcs_oaep_params oaep_params = {};
-  oaep_params.hash_algo_id = AZIHSM_ALGO_ID_SHA256;
-  oaep_params.mgf1_hash_algo_id = AZIHSM_MGF1_ID_SHA256;
-  oaep_params.label = nullptr;
+    azihsm_algo_rsa_pkcs_oaep_params oaep_params = {};
+    oaep_params.hash_algo_id = AZIHSM_ALGO_ID_SHA256;
+    oaep_params.mgf1_hash_algo_id = AZIHSM_MGF1_ID_SHA256;
+    oaep_params.label = nullptr;
 
-  azihsm_algo_rsa_aes_wrap_params wrap_params = {};
-  wrap_params.oaep_params = &oaep_params;
-  wrap_params.aes_key_bits = aes_key_bits;
+    azihsm_algo_rsa_aes_wrap_params wrap_params = {};
+    wrap_params.oaep_params = &oaep_params;
+    wrap_params.aes_key_bits = aes_key_bits;
 
-  azihsm_algo wrap_algo = {};
-  wrap_algo.id = AZIHSM_ALGO_ID_RSA_AES_WRAP;
-  wrap_algo.params = &wrap_params;
-  wrap_algo.len = sizeof(wrap_params);
+    azihsm_algo wrap_algo = {};
+    wrap_algo.id = AZIHSM_ALGO_ID_RSA_AES_WRAP;
+    wrap_algo.params = &wrap_params;
+    wrap_algo.len = sizeof(wrap_params);
 
-  azihsm_buffer input_key = {};
-  input_key.ptr = const_cast<uint8_t *>(plaintext.data());
-  input_key.len = static_cast<uint32_t>(plaintext.size());
+    azihsm_buffer input_key = {};
+    input_key.ptr = const_cast<uint8_t *>(plaintext.data());
+    input_key.len = static_cast<uint32_t>(plaintext.size());
 
-  azihsm_buffer wrapped_key_buf = {};
-  wrapped_key_buf.ptr = nullptr;
-  wrapped_key_buf.len = 0;
+    azihsm_buffer wrapped_key_buf = {};
+    wrapped_key_buf.ptr = nullptr;
+    wrapped_key_buf.len = 0;
 
-  auto wrap_err = azihsm_crypt_encrypt(&wrap_algo, wrapping_pub_key, &input_key, &wrapped_key_buf);
-  if (wrap_err != AZIHSM_STATUS_BUFFER_TOO_SMALL || wrapped_key_buf.len == 0)
-  {
-    return wrap_err;
-  }
+    auto wrap_err =
+        azihsm_crypt_encrypt(&wrap_algo, wrapping_pub_key, &input_key, &wrapped_key_buf);
+    if (wrap_err != AZIHSM_STATUS_BUFFER_TOO_SMALL || wrapped_key_buf.len == 0)
+    {
+        return wrap_err;
+    }
 
-  wrapped_out.resize(wrapped_key_buf.len);
-  wrapped_key_buf.ptr = wrapped_out.data();
-  wrap_err = azihsm_crypt_encrypt(&wrap_algo, wrapping_pub_key, &input_key, &wrapped_key_buf);
-  if (wrap_err != AZIHSM_STATUS_SUCCESS)
-  {
-    wrapped_out.clear();
-    return wrap_err;
-  }
+    wrapped_out.resize(wrapped_key_buf.len);
+    wrapped_key_buf.ptr = wrapped_out.data();
+    wrap_err = azihsm_crypt_encrypt(&wrap_algo, wrapping_pub_key, &input_key, &wrapped_key_buf);
+    if (wrap_err != AZIHSM_STATUS_SUCCESS)
+    {
+        wrapped_out.clear();
+        return wrap_err;
+    }
 
-  wrapped_out.resize(wrapped_key_buf.len);
-  return AZIHSM_STATUS_SUCCESS;
+    wrapped_out.resize(wrapped_key_buf.len);
+    return AZIHSM_STATUS_SUCCESS;
 }
 
 azihsm_status import_keypair(
@@ -60,23 +61,23 @@ azihsm_status import_keypair(
     azihsm_handle *imported_pub_key
 )
 {
-  // Step 1: Wrap the DER-encoded key with RSA-AES wrap.
-  std::vector<uint8_t> wrapped_key_data;
-  auto wrap_err = rsa_aes_wrap_bytes(wrapping_pub_key, key_der, 256, wrapped_key_data);
-  if (wrap_err != AZIHSM_STATUS_SUCCESS)
+    // Step 1: Wrap the DER-encoded key with RSA-AES wrap.
+    std::vector<uint8_t> wrapped_key_data;
+    auto wrap_err = rsa_aes_wrap_bytes(wrapping_pub_key, key_der, 256, wrapped_key_data);
+    if (wrap_err != AZIHSM_STATUS_SUCCESS)
     {
         return wrap_err;
     }
 
-  azihsm_buffer wrapped_key_buf = {};
-  wrapped_key_buf.ptr = wrapped_key_data.data();
-  wrapped_key_buf.len = static_cast<uint32_t>(wrapped_key_data.size());
+    azihsm_buffer wrapped_key_buf = {};
+    wrapped_key_buf.ptr = wrapped_key_data.data();
+    wrapped_key_buf.len = static_cast<uint32_t>(wrapped_key_data.size());
 
-  // Step 2: Setup unwrap algorithm
-  azihsm_algo_rsa_pkcs_oaep_params oaep_params = {};
-  oaep_params.hash_algo_id = AZIHSM_ALGO_ID_SHA256;
-  oaep_params.mgf1_hash_algo_id = AZIHSM_MGF1_ID_SHA256;
-  oaep_params.label = nullptr;
+    // Step 2: Setup unwrap algorithm
+    azihsm_algo_rsa_pkcs_oaep_params oaep_params = {};
+    oaep_params.hash_algo_id = AZIHSM_ALGO_ID_SHA256;
+    oaep_params.mgf1_hash_algo_id = AZIHSM_MGF1_ID_SHA256;
+    oaep_params.label = nullptr;
 
     azihsm_algo_rsa_aes_key_wrap_params unwrap_params = {};
     unwrap_params.aes_key_bits = 256;

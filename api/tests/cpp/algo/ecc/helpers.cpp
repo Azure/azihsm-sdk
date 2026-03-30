@@ -3,8 +3,8 @@
 
 #include "helpers.hpp"
 #include "ecc_static_der.hpp"
-#include "utils/rsa_keygen.hpp"
 #include "utils/auto_key.hpp"
+#include "utils/rsa_keygen.hpp"
 
 #include <algorithm>
 
@@ -63,7 +63,8 @@ azihsm_status generate_ecc_keypair(
         { AZIHSM_KEY_PROP_ID_SIGN, &priv_can_sign, sizeof(priv_can_sign) }
     };
 
-    azihsm_key_prop_list priv_prop_list{ priv_props.data(), static_cast<uint32_t>(priv_props.size()) };
+    azihsm_key_prop_list priv_prop_list{ priv_props.data(),
+                                         static_cast<uint32_t>(priv_props.size()) };
 
     uint32_t pub_key_class = AZIHSM_KEY_CLASS_PUBLIC;
     uint32_t pub_key_kind = AZIHSM_KEY_KIND_ECC;
@@ -214,13 +215,8 @@ azihsm_status make_valid_masked_ecc_blob(
     auto_key private_key;
     auto_key public_key;
 
-    auto err = generate_ecc_keypair(
-        session,
-        curve,
-        true,
-        private_key.get_ptr(),
-        public_key.get_ptr()
-    );
+    auto err =
+        generate_ecc_keypair(session, curve, true, private_key.get_ptr(), public_key.get_ptr());
     if (err != AZIHSM_STATUS_SUCCESS)
     {
         return err;
@@ -312,11 +308,9 @@ EcdsaRoundtripResult run_ecdsa_sign_verify_roundtrip(
 {
     if (message.empty())
     {
-        return EcdsaRoundtripResult{
-            AZIHSM_STATUS_INVALID_ARGUMENT,
-            "input_validation",
-            "message is empty"
-        };
+        return EcdsaRoundtripResult{ AZIHSM_STATUS_INVALID_ARGUMENT,
+                                     "input_validation",
+                                     "message is empty" };
     }
 
     azihsm_algo sign_algo = { AZIHSM_ALGO_ID_ECDSA_SHA256, nullptr, 0 };
@@ -331,19 +325,15 @@ EcdsaRoundtripResult run_ecdsa_sign_verify_roundtrip(
     auto err = azihsm_crypt_sign(&sign_algo, private_key, &data_buf, &sig_buf);
     if (err != AZIHSM_STATUS_BUFFER_TOO_SMALL)
     {
-        return EcdsaRoundtripResult{
-            err,
-            "sign_size_probe",
-            "expected BUFFER_TOO_SMALL from sign size probe"
-        };
+        return EcdsaRoundtripResult{ err,
+                                     "sign_size_probe",
+                                     "expected BUFFER_TOO_SMALL from sign size probe" };
     }
     if (sig_buf.len == 0)
     {
-        return EcdsaRoundtripResult{
-            AZIHSM_STATUS_INTERNAL_ERROR,
-            "sign_size_probe",
-            "signature length is zero after size probe"
-        };
+        return EcdsaRoundtripResult{ AZIHSM_STATUS_INTERNAL_ERROR,
+                                     "sign_size_probe",
+                                     "signature length is zero after size probe" };
     }
 
     std::vector<uint8_t> signature(sig_buf.len);
@@ -351,19 +341,15 @@ EcdsaRoundtripResult run_ecdsa_sign_verify_roundtrip(
     err = azihsm_crypt_sign(&sign_algo, private_key, &data_buf, &sig_buf);
     if (err != AZIHSM_STATUS_SUCCESS)
     {
-        return EcdsaRoundtripResult{
-            err,
-            "sign_materialize",
-            "sign failed when materializing signature bytes"
-        };
+        return EcdsaRoundtripResult{ err,
+                                     "sign_materialize",
+                                     "sign failed when materializing signature bytes" };
     }
     if (sig_buf.len == 0)
     {
-        return EcdsaRoundtripResult{
-            AZIHSM_STATUS_INTERNAL_ERROR,
-            "sign_materialize",
-            "signature length is zero after sign"
-        };
+        return EcdsaRoundtripResult{ AZIHSM_STATUS_INTERNAL_ERROR,
+                                     "sign_materialize",
+                                     "signature length is zero after sign" };
     }
 
     azihsm_buffer verify_sig_buf{};
@@ -372,11 +358,9 @@ EcdsaRoundtripResult run_ecdsa_sign_verify_roundtrip(
     err = azihsm_crypt_verify(&sign_algo, public_key, &data_buf, &verify_sig_buf);
     if (err != AZIHSM_STATUS_SUCCESS)
     {
-        return EcdsaRoundtripResult{
-            err,
-            "verify_original_message",
-            "verify failed for original message"
-        };
+        return EcdsaRoundtripResult{ err,
+                                     "verify_original_message",
+                                     "verify failed for original message" };
     }
 
     std::vector<uint8_t> modified_message = message;
@@ -387,11 +371,9 @@ EcdsaRoundtripResult run_ecdsa_sign_verify_roundtrip(
     err = azihsm_crypt_verify(&sign_algo, public_key, &modified_data_buf, &verify_sig_buf);
     if (err == AZIHSM_STATUS_SUCCESS)
     {
-        return EcdsaRoundtripResult{
-            AZIHSM_STATUS_INTERNAL_ERROR,
-            "verify_modified_message",
-            "verify unexpectedly succeeded for modified message"
-        };
+        return EcdsaRoundtripResult{ AZIHSM_STATUS_INTERNAL_ERROR,
+                                     "verify_modified_message",
+                                     "verify unexpectedly succeeded for modified message" };
     }
 
     return EcdsaRoundtripResult{};
@@ -463,11 +445,8 @@ azihsm_status unwrap_wrapped_ecc_pair_with_configs(
 {
     auto_key rsa_priv_key;
     auto_key rsa_pub_key;
-    auto err = generate_rsa_unwrapping_keypair(
-        session,
-        rsa_priv_key.get_ptr(),
-        rsa_pub_key.get_ptr()
-    );
+    auto err =
+        generate_rsa_unwrapping_keypair(session, rsa_priv_key.get_ptr(), rsa_pub_key.get_ptr());
     if (err != AZIHSM_STATUS_SUCCESS)
     {
         return err;
@@ -616,12 +595,7 @@ azihsm_status UnwrapPairContext::create_with_wrapped_blob(
         return err;
     }
 
-    err = make_wrapped_ecc_pkcs8_blob(
-        ctx.rsa_pub_key.get(),
-        curve,
-        wrap_config,
-        ctx.wrapped_blob
-    );
+    err = make_wrapped_ecc_pkcs8_blob(ctx.rsa_pub_key.get(), curve, wrap_config, ctx.wrapped_blob);
     if (err != AZIHSM_STATUS_SUCCESS)
     {
         return err;
@@ -681,13 +655,7 @@ UnwrapPairResult UnwrapPairContext::try_unwrap_with(azihsm_algo *algo, azihsm_bu
 {
     auto priv_prop_list = priv_props.get_prop_list();
     auto pub_prop_list = pub_props.get_prop_list();
-    return try_unwrap_pair(
-        algo,
-        rsa_priv_key.get(),
-        wrapped_key,
-        &priv_prop_list,
-        &pub_prop_list
-    );
+    return try_unwrap_pair(algo, rsa_priv_key.get(), wrapped_key, &priv_prop_list, &pub_prop_list);
 }
 
 // Shorthand that extracts the algo and wrapped buffer from an
