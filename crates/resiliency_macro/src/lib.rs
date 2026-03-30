@@ -551,6 +551,88 @@ fn expand_retry_open_session(
     })
 }
 
+// ---------------------------
+// Cert-chain retry macro
+// ---------------------------
+
+/// Parsed attribute arguments for `#[resiliency_cert_chain(...)]`.
+#[derive(Debug, FromMeta)]
+struct RetryCertChainArgs {
+    /// Name of the partition parameter (e.g., `"partition"`).
+    partition: String,
+
+    /// Maximum number of retry attempts.
+    #[darling(default)]
+    max_retries: Option<u32>,
+
+    /// Base delay in milliseconds for exponential backoff.
+    #[darling(default)]
+    backoff_base_ms: Option<u64>,
+
+    /// Maximum random jitter in milliseconds added to each backoff delay.
+    #[darling(default)]
+    backoff_jitter_ms: Option<u64>,
+}
+
+/// Retry macro for certificate chain retrieval.
+///
+/// Equivalent to:
+/// ```ignore
+/// #[retry_with_backoff(
+///     predicate = crate::resiliency::is_cert_chain_retryable_error,
+///     condition = "partition.resiliency_enabled()",
+/// )]
+/// ```
+///
+/// Cert chains do not need partition credentials established, so no
+/// `restore_partition` is needed — just backoff and retry.
+///
+/// # Attribute parameters
+///
+/// | Parameter          | Required | Default                                | Description                            |
+/// |--------------------|----------|----------------------------------------|----------------------------------------|
+/// | `partition`        | **yes**  | —                                      | Name of the `&HsmPartition` parameter. |
+/// | `max_retries`      | no       | `crate::resiliency::MAX_RETRIES`       | Max additional retries.                |
+/// | `backoff_base_ms`  | no       | `crate::resiliency::BACKOFF_BASE_MS`   | Base delay (ms).                       |
+/// | `backoff_jitter_ms`| no       | `crate::resiliency::BACKOFF_JITTER_MS` | Max random jitter (ms).                |
+///
+/// # Example
+///
+/// ```ignore
+/// #[resiliency_cert_chain(partition = "partition")]
+/// pub(crate) fn get_cert_chain(partition: &HsmPartition, slot_id: u8) -> HsmResult<String> {
+///     // ...
+/// }
+/// ```
+#[proc_macro_attribute]
+pub fn resiliency_cert_chain(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let attr_args = match darling::ast::NestedMeta::parse_meta_list(attr.into()) {
+        Ok(v) => v,
+        Err(e) => return TokenStream::from(darling::Error::from(e).write_errors()),
+    };
+    let item = parse_macro_input!(item as ItemFn);
+
+    let args = match RetryCertChainArgs::from_list(&attr_args) {
+        Ok(v) => v,
+        Err(e) => return e.write_errors().into(),
+    };
+
+    let partition_ident = syn::Ident::new(&args.partition, proc_macro2::Span::call_site());
+
+    let full_args = RetryArgs {
+        predicate: syn::parse_str("crate::resiliency::is_cert_chain_retryable_error")
+            .expect("hardcoded predicate path must parse"),
+        max_retries: args.max_retries,
+        backoff_base_ms: args.backoff_base_ms,
+        backoff_jitter_ms: args.backoff_jitter_ms,
+        condition: Some(format!("{partition_ident}.resiliency_enabled()")),
+    };
+
+    expand_retry(full_args, item)
+        .unwrap_or_else(|err| err.to_compile_error())
+        .into()
+}
+
 /// Parsed attribute arguments for `#[resiliency_key_op(...)]`.
 #[derive(Debug, FromMeta)]
 struct RetryKeyOpArgs {

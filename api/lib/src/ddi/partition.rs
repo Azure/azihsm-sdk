@@ -10,6 +10,7 @@ use azihsm_cred_encrypt::DeviceCredKey;
 use azihsm_crypto as crypto;
 use azihsm_ddi_mbor::*;
 use crypto::*;
+use resiliency_macro::resiliency_cert_chain;
 use resiliency_macro::resiliency_init_part;
 use x509::*;
 
@@ -505,7 +506,7 @@ fn get_establish_cred_encryption_key(
 /// `HsmError::MaskedKeyDecodeFailed` indicates that the provided BMK/MUK
 /// values are stale; callers should use `try_establish_credential`
 /// for automatic retry with empty keys.
-pub fn establish_credential(
+fn establish_credential(
     dev: &HsmDev,
     rev: HsmApiRev,
     enc_creds: &DdiEncryptedEstablishCredential,
@@ -551,7 +552,17 @@ pub fn establish_credential(
 /// # Returns
 ///
 /// Returns the certificate chain in PEM format.
-pub(crate) fn get_cert_chain(dev: &HsmDev, rev: HsmApiRev, slot_id: u8) -> HsmResult<String> {
+///
+/// # Locking
+///
+/// This function acquires `partition.inner().read()` internally.
+/// Callers must not hold `partition.inner().read()` or
+/// `partition.inner().write()` when calling this function.
+#[resiliency_cert_chain(partition = "partition")]
+pub(crate) fn get_cert_chain(partition: &HsmPartition, slot_id: u8) -> HsmResult<String> {
+    let inner = partition.inner().read();
+    let dev = inner.dev();
+    let rev = inner.api_rev_range().min();
     let (count, thumbprint) = get_cert_chain_info(dev, rev, slot_id)?;
 
     let mut cert_chain = String::new();

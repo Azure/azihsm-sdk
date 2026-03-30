@@ -479,29 +479,6 @@ impl HsmPartition {
         ))
     }
 
-    /// Retry loop for `cert_chain` with restore-partition recovery.
-    ///
-    /// Called when the initial `ddi::get_cert_chain` attempt failed with a
-    /// retryable error and resiliency is enabled.  On each iteration:
-    /// 1. Apply exponential backoff.
-    /// 2. Call `restore_partition` to re-establish credentials.
-    /// 3. Retry `ddi::get_cert_chain`.
-    fn retry_cert_chain(&self, initial_result: HsmResult<String>, slot: u8) -> HsmResult<String> {
-        let mut result = initial_result;
-        let mut iter = 0u32;
-
-        while is_cert_chain_retryable_error(&result) && iter < MAX_RETRIES {
-            apply_backoff(iter, BACKOFF_BASE_MS, BACKOFF_JITTER_MS);
-
-            // Cert chain is preserved across reset on hardware — no need
-            // to restore partition, just retry the DDI call after backoff.
-            result = self.inner().read().cert_chain(slot);
-            iter += 1;
-        }
-
-        result
-    }
-
     /// Restores partition state after a resiliency event.
     ///
     /// Called from the retry loops (`open_session`, `key_gen`, `key_op`)
@@ -702,14 +679,7 @@ impl HsmPartition {
     ///
     /// Returns the certificate chain as a PEM string.
     pub fn cert_chain(&self, slot: u8) -> HsmResult<String> {
-        let resiliency = self.resiliency_enabled();
-        let result = self.inner().read().cert_chain(slot);
-
-        if resiliency && is_cert_chain_retryable_error(&result) {
-            self.retry_cert_chain(result, slot)
-        } else {
-            result
-        }
+        ddi::get_cert_chain(self, slot)
     }
 
     /// Retrieves the public key of the partition identity (PID) certificate.
@@ -1061,11 +1031,6 @@ impl HsmPartitionInner {
         bmk_session: &[u8],
     ) -> HsmResult<ddi::ReopenSessionResult> {
         ddi::reopen_session(&self.dev, api_rev, sess_id, credentials, seed, bmk_session)
-    }
-
-    /// Retrieves the certificate chain from the partition.
-    pub(crate) fn cert_chain(&self, slot: u8) -> HsmResult<String> {
-        ddi::get_cert_chain(&self.dev, self.api_rev_range.min(), slot)
     }
 
     /// Retrieves the public key of the partition identity (PID) certificate.
