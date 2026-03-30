@@ -382,10 +382,10 @@ class azihsm_aes_keygen : public ::testing::Test
 };
 
 /// Test AES key generation for key sizes of 128
-TEST_F(azihsm_aes_keygen, test_session_aes_128_key_generation)
+TEST_F(azihsm_aes_keygen, session_aes_128_key_generation)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        test_session_aes_key_generation_common(
+        session_aes_key_generation_common(
             session,
             AZIHSM_ALGO_ID_AES_KEY_GEN,
             AZIHSM_KEY_KIND_AES,
@@ -395,10 +395,10 @@ TEST_F(azihsm_aes_keygen, test_session_aes_128_key_generation)
 }
 
 /// Test AES key generation for key sizes of 192
-TEST_F(azihsm_aes_keygen, test_session_aes_192_key_generation)
+TEST_F(azihsm_aes_keygen, session_aes_192_key_generation)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        test_session_aes_key_generation_common(
+        session_aes_key_generation_common(
             session,
             AZIHSM_ALGO_ID_AES_KEY_GEN,
             AZIHSM_KEY_KIND_AES,
@@ -408,10 +408,10 @@ TEST_F(azihsm_aes_keygen, test_session_aes_192_key_generation)
 }
 
 /// Test AES key generation for key sizes of 256
-TEST_F(azihsm_aes_keygen, test_session_aes_256_key_generation)
+TEST_F(azihsm_aes_keygen, session_aes_256_key_generation)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        test_session_aes_key_generation_common(
+        session_aes_key_generation_common(
             session,
             AZIHSM_ALGO_ID_AES_KEY_GEN,
             AZIHSM_KEY_KIND_AES,
@@ -490,10 +490,10 @@ TEST_F(azihsm_aes_keygen, unmask_aes_128_key)
 }
 
 /// verifies AES-XTS 512-bit key generation succeeds with correct properties and capabilities
-TEST_F(azihsm_aes_keygen, test_aes_xts_512_key_generation) 
+TEST_F(azihsm_aes_keygen, aes_xts_512_key_generation)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        test_session_aes_key_generation_common(
+        session_aes_key_generation_common(
             session,
             AZIHSM_ALGO_ID_AES_XTS_KEY_GEN,
             AZIHSM_KEY_KIND_AES_XTS,
@@ -504,10 +504,10 @@ TEST_F(azihsm_aes_keygen, test_aes_xts_512_key_generation)
 
 /// Test AES-GCM key generation, and validate the generated key has expected properties
 /// and capabilities.
-TEST_F(azihsm_aes_keygen, test_aes_gcm_256_key_generation)
+TEST_F(azihsm_aes_keygen, aes_gcm_256_key_generation)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        test_session_aes_key_generation_common(
+        session_aes_key_generation_common(
             session,
             AZIHSM_ALGO_ID_AES_GCM_KEY_GEN,
             AZIHSM_KEY_KIND_AES_GCM,

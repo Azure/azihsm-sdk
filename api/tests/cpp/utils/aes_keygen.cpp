@@ -1,16 +1,13 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-#include "aes_keygen.hpp"
-
-#include "key_props.hpp"
-
 #include <gtest/gtest.h>
 #include <vector>
 
+#include "aes_keygen.hpp"
 #include "utils/auto_key.hpp"
 
-void test_session_aes_key_generation_common(
+void session_aes_key_generation_common(
     azihsm_handle session,
     azihsm_algo_id algo_id,
     azihsm_key_kind key_kind,
@@ -58,7 +55,7 @@ void test_session_aes_key_generation_common(
 }
 
 template <typename T>
-static void check_key_prop(azihsm_handle key_handle, azihsm_key_prop_id prop_id, T expected)
+void verify_key_property(azihsm_handle key_handle, azihsm_key_prop_id prop_id, T expected)
 {
     T actual{};
     azihsm_key_prop prop{};
@@ -66,23 +63,23 @@ static void check_key_prop(azihsm_handle key_handle, azihsm_key_prop_id prop_id,
     prop.val = &actual;
     prop.len = sizeof(actual);
     azihsm_status err = azihsm_key_get_prop(key_handle, &prop);
-    EXPECT_EQ(err, AZIHSM_STATUS_SUCCESS);
-    EXPECT_EQ(actual, expected);
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+    ASSERT_EQ(actual, expected);
 }
 
 void verify_generated_aes_key_properties(azihsm_handle key_handle, azihsm_key_kind key_kind, uint32_t bits, bool is_session)
 {
-    check_key_prop(key_handle, AZIHSM_KEY_PROP_ID_CLASS,     AZIHSM_KEY_CLASS_SECRET);
-    check_key_prop(key_handle, AZIHSM_KEY_PROP_ID_KIND,      key_kind);
-    check_key_prop(key_handle, AZIHSM_KEY_PROP_ID_BIT_LEN,   bits);
-    check_key_prop(key_handle, AZIHSM_KEY_PROP_ID_LOCAL,     true);
-    check_key_prop(key_handle, AZIHSM_KEY_PROP_ID_SESSION,   is_session);
-    check_key_prop(key_handle, AZIHSM_KEY_PROP_ID_SENSITIVE, true);
-    check_key_prop(key_handle, AZIHSM_KEY_PROP_ID_EXTRACTABLE, true);
-    check_key_prop(key_handle, AZIHSM_KEY_PROP_ID_ENCRYPT,   true);
-    check_key_prop(key_handle, AZIHSM_KEY_PROP_ID_DECRYPT,   true);
-    check_key_prop(key_handle, AZIHSM_KEY_PROP_ID_SIGN,      false);
-    check_key_prop(key_handle, AZIHSM_KEY_PROP_ID_VERIFY,    false);
-    check_key_prop(key_handle, AZIHSM_KEY_PROP_ID_UNWRAP,    false);
-    check_key_prop(key_handle, AZIHSM_KEY_PROP_ID_DERIVE,    false);
+    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_CLASS,     AZIHSM_KEY_CLASS_SECRET);
+    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_KIND,      key_kind);
+    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_BIT_LEN,   bits);
+    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_LOCAL,     true);
+    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_SESSION,   is_session);
+    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_SENSITIVE, true);
+    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_EXTRACTABLE, true);
+    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_ENCRYPT,   true);
+    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_DECRYPT,   true);
+    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_SIGN,      false);
+    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_VERIFY,    false);
+    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_UNWRAP,    false);
+    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_DERIVE,    false);
 }
