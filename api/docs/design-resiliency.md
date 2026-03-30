@@ -84,9 +84,10 @@ pub struct HsmResiliencyConfig {
 - Must be thread-safe (callable from any thread concurrently).
 - Must **not** call methods on the same `HsmPartition` that is being
   initialized or restored — the partition's RwLock is held during the
-  callback. The SDK retrieves the device's PID public key and passes it
-  as the `pid_pub_key` parameter, so the implementation only needs to
-  sign the provided key.
+  callback. The SDK retrieves the device's PID public key and
+  PID certificate chain (PEM-encoded) and passes them as the
+  `pid_pub_key` and `pid_cert_chain` parameters, so the implementation
+  only needs to sign the provided key.
 - Called under the resiliency lock, so it should not block
   indefinitely.
 
