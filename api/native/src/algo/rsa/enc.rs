@@ -35,6 +35,25 @@ pub struct AzihsmAlgoRsaAesWrapParams {
     pub oaep_params: *const AzihsmAlgoRsaPkcsOaepParams,
 }
 
+impl AzihsmAlgoRsaAesWrapParams {
+    /// Validates RSA-AES wrap parameters at the FFI boundary.
+    ///
+    /// Checks that the AES key size is a supported value (128, 192, or 256 bits),
+    /// dereferences the nested OAEP parameters pointer, and validates the OAEP
+    /// parameters.
+    pub(crate) fn validate(&self) -> Result<(), AzihsmStatus> {
+        // Validate that the AES key size is supported (128, 192, or 256 bits)
+        match self.aes_key_bits {
+            128 | 192 | 256 => {}
+            _ => Err(AzihsmStatus::InvalidArgument)?,
+        }
+
+        // Dereference and validate the nested OAEP parameters
+        let oaep_params = deref_ptr(self.oaep_params)?;
+        oaep_params.validate()
+    }
+}
+
 impl<'a> TryFrom<&'a AzihsmAlgo> for &'a AzihsmAlgoRsaAesWrapParams {
     type Error = AzihsmStatus;
 
@@ -42,8 +61,8 @@ impl<'a> TryFrom<&'a AzihsmAlgo> for &'a AzihsmAlgoRsaAesWrapParams {
     fn try_from(algo: &'a AzihsmAlgo) -> Result<Self, Self::Error> {
         let params = validate_and_cast_algo_params::<AzihsmAlgoRsaAesWrapParams>(algo)?;
 
-        // Validate OAEP parameters pointer
-        validate_ptr(params.oaep_params)?;
+        // Validate the parameters (including nested OAEP params)
+        params.validate()?;
 
         Ok(params)
     }
@@ -98,11 +117,41 @@ pub struct AzihsmAlgoRsaPkcsOaepParams {
     /// Hash algorithm identifier used for OAEP padding
     pub hash_algo_id: AzihsmAlgoId,
 
-    /// MGF1 mask generation function identifier
+    /// MGF1 mask generation function identifier.
     pub mgf1_hash_algo_id: AzihsmMgf1Id,
 
     /// Optional label for encryption context (can be null)
     pub label: *const AzihsmBuffer,
+}
+
+impl AzihsmAlgoRsaPkcsOaepParams {
+    /// Validates OAEP parameters at the FFI boundary.
+    ///
+    /// Checks that the hash algorithm and MGF1 hash algorithm form a valid,
+    /// matching pair (SHA-256/256, SHA-384/384, SHA-512/512), and that the
+    /// optional label buffer pointer is well-formed.
+    ///
+    /// Current limitation: OAEP MGF1 is not independently propagated through
+    /// all layers (native -> DDI -> device/sim). Enforce matching values at
+    /// the API boundary so behavior is explicit and deterministic.
+    pub(crate) fn validate(&self) -> Result<(), AzihsmStatus> {
+        // Enforce that hash_algo_id and mgf1_hash_algo_id are a valid, matching pair.
+        let hash_matches_mgf1 = matches!(
+            (self.hash_algo_id, self.mgf1_hash_algo_id),
+            (AzihsmAlgoId::Sha256, AzihsmMgf1Id::Sha256)
+                | (AzihsmAlgoId::Sha384, AzihsmMgf1Id::Sha384)
+                | (AzihsmAlgoId::Sha512, AzihsmMgf1Id::Sha512)
+        );
+
+        //reject mismatched or unsupported hash/MGF1 combinations.
+        if !hash_matches_mgf1 {
+            Err(AzihsmStatus::InvalidArgument)?;
+        }
+
+        // Validate that the label buffer pointer is well-formed (if non-null)
+        buffer_to_optional_slice(self.label)?;
+        Ok(())
+    }
 }
 
 impl TryFrom<AzihsmHandle> for HsmRsaPublicKey {

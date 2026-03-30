@@ -987,14 +987,15 @@ TEST(azihsm_part, init_with_resiliency_tpm_pota_with_callback_fails)
         PartInitConfig init_config{};
         make_part_init_config(part_handle, init_config);
 
-        // Force TPM POTA source — callback is still set by make_resiliency_config.
-        // TPM + callback is now rejected as InvalidArgument.
+        // Force TPM POTA source with a non-null callback.
+        // TPM + callback is rejected as InvalidArgument.
         init_config.pota_endorsement.source = AZIHSM_POTA_ENDORSEMENT_SOURCE_TPM;
         init_config.pota_endorsement.endorsement = nullptr;
 
         azihsm_resiliency_config resiliency_config{};
         auto resiliency_ctx = make_resiliency_config(resiliency_config);
-        // pota_callback_ops is non-null (set by make_resiliency_config)
+        // Force pota_callback_ops non-null so the TPM + callback mismatch triggers.
+        resiliency_config.pota_callback_ops = get_pota_callback_ops();
 
         err = azihsm_part_init(
             part_handle,
