@@ -4,7 +4,7 @@
 #![warn(missing_docs)]
 #![forbid(unsafe_code)]
 
-//! Xtask to generate a markdown coverage report from Cobertura XML.
+//! Xtask to generate a markdown coverage report from JSON output of coverage xtask.
 
 use std::collections::BTreeMap;
 use std::fs;
