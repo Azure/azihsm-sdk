@@ -103,6 +103,7 @@ pub trait ResiliencyLock: Send + Sync {
 ///         &self,
 ///         _pota_pub_key: &[u8],
 ///         pid_pub_key: &[u8],
+///         _pid_cert_chain: &[u8],
 ///     ) -> HsmResult<HsmPotaEndorsementData> {
 ///         let (sig, signer_pub_key) = sign_pid_key(pid_pub_key);
 ///         Ok(HsmPotaEndorsementData::new(&sig, &signer_pub_key))
@@ -118,11 +119,17 @@ pub trait PotaEndorsementCallback: Send + Sync {
     ///   key, passed for identification.
     /// * `pid_pub_key` — the current device's PID certificate public key
     ///   (DER-encoded), retrieved by the SDK.
+    /// * `pid_cert_chain` — the device's PID certificate chain
+    ///   (PEM-encoded), retrieved by the SDK.
     ///
     /// The implementation must sign `pid_pub_key` with the caller's
     /// private key and return the signature and the signer's public key.
-    fn endorse(&self, pota_pub_key: &[u8], pid_pub_key: &[u8])
-    -> HsmResult<HsmPotaEndorsementData>;
+    fn endorse(
+        &self,
+        pota_pub_key: &[u8],
+        pid_pub_key: &[u8],
+        pid_cert_chain: &[u8],
+    ) -> HsmResult<HsmPotaEndorsementData>;
 }
 
 /// RAII guard for [`ResiliencyLock`].
@@ -702,6 +709,7 @@ mod tests {
             &self,
             _pota_pub_key: &[u8],
             _pid_pub_key: &[u8],
+            _pid_cert_chain: &[u8],
         ) -> HsmResult<HsmPotaEndorsementData> {
             Ok(HsmPotaEndorsementData::new(&[0u8; 96], &[0u8; 120]))
         }

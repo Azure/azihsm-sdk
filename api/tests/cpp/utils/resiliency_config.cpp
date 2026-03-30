@@ -236,6 +236,7 @@ static azihsm_status pota_endorse(
     void * /*ctx*/,
     const azihsm_buffer * /*pota_pub_key*/,
     const azihsm_buffer * /*pid_pub_key*/,
+    const azihsm_buffer * /*pid_cert_chain*/,
     azihsm_buffer *signature,
     azihsm_buffer *endorsement_pub_key)
 {

@@ -573,6 +573,7 @@ fn open_and_init_partition(
             &self,
             _pota_pub_key: &[u8],
             pid_pub_key: &[u8],
+            _pid_cert_chain: &[u8],
         ) -> HsmResult<HsmPotaEndorsementData> {
             let (sig, pubkey_der) = generate_pota_endorsement(pid_pub_key);
             Ok(HsmPotaEndorsementData::new(&sig, &pubkey_der))

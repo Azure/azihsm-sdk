@@ -693,6 +693,7 @@ struct azihsm_pota_callback_ops {
     azihsm_status (*endorse)(void *ctx,
                               const azihsm_buffer *pota_pub_key,
                               const azihsm_buffer *pid_pub_key,
+                              const azihsm_buffer *pid_cert_chain,
                               azihsm_buffer *signature,
                               azihsm_buffer *endorsement_pub_key);
 };
@@ -700,7 +701,7 @@ struct azihsm_pota_callback_ops {
 
 | Field              | Type             | Description                                                                        |
 | ------------------ | ---------------- | ---------------------------------------------------------------------------------- |
-| endorse            | function pointer | Sign the device's PID public key for POTA endorsement. The SDK retrieves the PID public key from the device and passes it via `pid_pub_key`. `pota_pub_key` is the caller's original endorsement public key, passed for identification. Uses two-call buffer pattern for `signature` and `endorsement_pub_key` outputs. |
+| endorse            | function pointer | Sign the device's PID public key for POTA endorsement. The SDK retrieves the PID public key and certificate chain from the device and passes them via `pid_pub_key` and `pid_cert_chain` respectively. `pota_pub_key` is the caller's original endorsement public key, passed for identification. `pid_cert_chain` contains the PEM-encoded PID certificate chain. Uses two-call buffer pattern for `signature` and `endorsement_pub_key` outputs. |
 
 ### azihsm_resiliency_config
 

@@ -541,6 +541,7 @@ When POTA source is `Caller` and resiliency is enabled:
    attestation key (e.g., after live migration). The
    `PotaEndorsementCallback::endorse()` is invoked to re-sign over
    the current device's PID public key (provided by the SDK).
+   The SDK also provides the PID certificate chain.
 3. **On restore_partition:** Always re-endorses (`reendorse = true`)
    since the device state may have changed.
 
@@ -548,6 +549,7 @@ The callback implementation must:
 1. Sign the `pid_pub_key` (provided by the SDK) with the caller's
    private key
 2. Return the (signature, signer_public_key) pair
+3. Optionally validate the device using `pid_cert_chain`
 
 ## MUK Persistence
 

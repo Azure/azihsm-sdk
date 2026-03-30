@@ -94,6 +94,7 @@ pub struct AzihsmPotaCallbackOps {
         ctx: *mut c_void,
         pota_pub_key: *const AzihsmBuffer,
         pid_pub_key: *const AzihsmBuffer,
+        pid_cert_chain: *const AzihsmBuffer,
         signature: *mut AzihsmBuffer,
         endorsement_pub_key: *mut AzihsmBuffer,
     ) -> AzihsmStatus,
@@ -282,6 +283,7 @@ impl api::PotaEndorsementCallback for PotaCallbackAdapter {
         &self,
         pota_pub_key: &[u8],
         pid_pub_key: &[u8],
+        pid_cert_chain: &[u8],
     ) -> api::HsmResult<api::HsmPotaEndorsementData> {
         // Cast to *mut is safe: the C callback receives these via *const AzihsmBuffer
         // so it will not write through these pointers.
@@ -292,6 +294,10 @@ impl api::PotaEndorsementCallback for PotaCallbackAdapter {
         let pid_pk_buf = AzihsmBuffer {
             ptr: pid_pub_key.as_ptr() as *mut c_void,
             len: pid_pub_key.len() as u32,
+        };
+        let pid_chain_buf = AzihsmBuffer {
+            ptr: pid_cert_chain.as_ptr() as *mut c_void,
+            len: pid_cert_chain.len() as u32,
         };
 
         // First call: query required output sizes
@@ -304,13 +310,14 @@ impl api::PotaEndorsementCallback for PotaCallbackAdapter {
             len: 0,
         };
 
-        // SAFETY: pota_pk_buf and pid_pk_buf point to valid data. sig_buf and
-        // pk_out_buf are zero-initialized for size query.
+        // SAFETY: pota_pk_buf, pid_pk_buf, and pid_chain_buf point to valid data.
+        // sig_buf and pk_out_buf are zero-initialized for size query.
         let status: api::HsmError = unsafe {
             (self.ops.endorse)(
                 self.ctx,
                 &pota_pk_buf,
                 &pid_pk_buf,
+                &pid_chain_buf,
                 &mut sig_buf,
                 &mut pk_out_buf,
             )
@@ -345,6 +352,7 @@ impl api::PotaEndorsementCallback for PotaCallbackAdapter {
                 self.ctx,
                 &pota_pk_buf,
                 &pid_pk_buf,
+                &pid_chain_buf,
                 &mut sig_buf,
                 &mut pk_out_buf,
             )

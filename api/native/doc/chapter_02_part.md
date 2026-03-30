@@ -222,11 +222,12 @@ When `resiliency_config` is non-NULL, the SDK enables automatic retry and recove
 
 > **POTA callback:** The POTA `endorse` callback is
 > invoked during resiliency recovery. The SDK retrieves the device's
-> PID public key and passes it to the callback, so the implementation
-> only needs to sign the provided key — it does not need to query the
-> device. The callback is invoked while the partition's internal lock
-> is held; its implementation must not call AZIHSM APIs on the same
-> `azihsm_handle` being initialized or restored, to avoid deadlock.
+> PID public key and certificate chain and passes them to the callback,
+> so the implementation only needs to sign the provided key — it does
+> not need to query the device. The callback is invoked while the
+> partition's internal lock is held; its implementation must not call
+> AZIHSM APIs on the same `azihsm_handle` being initialized or
+> restored, to avoid deadlock.
 > See [`azihsm_pota_callback_ops`](#azihsm_pota_callback_ops)
 > for details.
 

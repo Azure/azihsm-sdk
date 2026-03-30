@@ -151,8 +151,13 @@ fn get_pota_endorsement(
                     .as_ref()
                     .ok_or(HsmError::InvalidArgument)?;
                 let pid_pub_key_der = get_part_pub_key(dev, rev)?;
-                let data =
-                    invoke_pota_callback(callback.as_ref(), pota_endorsement, &pid_pub_key_der)?;
+                let pid_cert_chain_pem = get_cert_chain(dev, rev, 0)?;
+                let data = invoke_pota_callback(
+                    callback.as_ref(),
+                    pota_endorsement,
+                    &pid_pub_key_der,
+                    pid_cert_chain_pem.as_bytes(),
+                )?;
                 return Ok((data.signature().to_vec(), data.pub_key().to_vec()));
             }
 
@@ -179,18 +184,19 @@ fn get_pota_endorsement(
 
 /// Invokes a [`PotaEndorsementCallback`] to produce fresh endorsement data.
 ///
-/// Passes the caller's original endorsement public key and the device's
-/// PID certificate public key to the callback.
+/// Passes the caller's original endorsement public key, the device's
+/// PID certificate public key, and the PID certificate chain to the callback.
 pub(crate) fn invoke_pota_callback(
     callback: &dyn PotaEndorsementCallback,
     pota_endorsement: &HsmPotaEndorsement,
     pid_pub_key: &[u8],
+    pid_cert_chain: &[u8],
 ) -> HsmResult<HsmPotaEndorsementData> {
     let pota_pub_key = pota_endorsement
         .endorsement()
         .map(|d| d.pub_key())
         .unwrap_or(&[]);
-    callback.endorse(pota_pub_key, pid_pub_key)
+    callback.endorse(pota_pub_key, pid_pub_key, pid_cert_chain)
 }
 
 /// Initializes an HSM partition with credentials and master keys.

@@ -187,6 +187,7 @@ impl PotaEndorsementCallback for TestPotaCallback {
         &self,
         _pota_pub_key: &[u8],
         pid_pub_key: &[u8],
+        _pid_cert_chain: &[u8],
     ) -> HsmResult<HsmPotaEndorsementData> {
         let pub_key_obj =
             DerEccPublicKey::from_der(pid_pub_key).map_err(|_| HsmError::InternalError)?;
@@ -306,6 +307,7 @@ mod tests {
             &self,
             _pota_pub_key: &[u8],
             _pid_pub_key: &[u8],
+            _pid_cert_chain: &[u8],
         ) -> HsmResult<HsmPotaEndorsementData> {
             // Use non-trivial byte pattern for signature and the real test
             // public key so that any endianness or byte-order issues are caught.
@@ -440,7 +442,7 @@ mod tests {
     #[test]
     fn pota_dummy_callback_returns_expected_sizes() {
         let callback = DummyPotaCallback;
-        let result = callback.endorse(&[0u8; 32], &[]).unwrap();
+        let result = callback.endorse(&[0u8; 32], &[], &[]).unwrap();
         assert_eq!(result.signature().len(), 96);
         assert_eq!(result.pub_key().len(), 120);
     }
@@ -549,9 +551,9 @@ mod tests {
         let callback = DummyPotaCallback;
 
         // Call with different input keys — output should be the same
-        let result1 = callback.endorse(&[0xAAu8; 64], &[]).unwrap();
-        let result2 = callback.endorse(&[0xBBu8; 32], &[]).unwrap();
-        let result3 = callback.endorse(&[], &[]).unwrap();
+        let result1 = callback.endorse(&[0xAAu8; 64], &[], &[]).unwrap();
+        let result2 = callback.endorse(&[0xBBu8; 32], &[], &[]).unwrap();
+        let result3 = callback.endorse(&[], &[], &[]).unwrap();
 
         assert_eq!(result1.signature(), result2.signature());
         assert_eq!(result2.signature(), result3.signature());
