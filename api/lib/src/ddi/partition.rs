@@ -139,11 +139,11 @@ fn get_pota_endorsement(
 ) -> HsmResult<(Vec<u8>, Vec<u8>)> {
     match pota_endorsement.source() {
         HsmPotaEndorsementSource::Caller => {
-            // When re-endorsement is requested, use the callback to
-            // generate a fresh endorsement. The callback is responsible
-            // for retrieving the current device's PID cert public key
-            // and signing it. We pass the caller's original endorsement
-            // public key for identification — the callback may ignore it.
+            // When re-endorsement is requested, the SDK retrieves the
+            // device's PID public key and certificate chain (PEM), then
+            // invokes the callback to sign. We also pass the caller's
+            // original endorsement public key for identification — the
+            // callback may ignore it.
             if reendorse {
                 let cfg = resiliency_config.ok_or(HsmError::InvalidArgument)?;
                 let callback = cfg

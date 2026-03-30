@@ -567,13 +567,14 @@ fn test_restore_pota_callback_invoked_during_init_part_retry() {
         "open_session should recover after POTA re-endorsement during restore's init_part retry, got: {result:?}"
     );
 
-    // The SDK retrieves the PID pub key via GetCertChainInfo + GetCertificate
-    // before invoking the POTA callback.
+    // The SDK retrieves the PID pub key and cert chain via
+    // GetCertChainInfo + GetCertificate before invoking the POTA callback.
     // On init_part attempt 0, caller-provided POTA is used (no callback).
-    // On attempt 1 (retry), the SDK fetches the PID cert pub key and passes it to the callback.
+    // On attempt 1 (retry), the SDK fetches the PID cert and cert chain,
+    // then passes them to the callback.
     assert!(
         cert_chain_after > cert_chain_before,
-        "GetCertChainInfo should have been called by the POTA callback during restore's init_part retry"
+        "GetCertChainInfo should have been called by the SDK's re-endorsement flow during restore's init_part retry"
     );
 }
 

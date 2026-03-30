@@ -539,18 +539,22 @@ fn test_init_pota_callback_invoked_on_retry() {
 
     // The SDK retrieves the PID pub key via get_part_pub_key() which does:
     // GetCertChainInfo (to get cert count) + GetCertificate (to get the last cert).
+    // It also retrieves the PID cert chain via get_cert_chain() which does:
+    // GetCertChainInfo + GetCertificate(s) + GetCertChainInfo (thumbprint check).
     // On attempt 0, caller-provided POTA is used (no cert-chain calls for POTA).
-    // On attempt 1 (retry), the SDK fetches the PID cert and passes it to the callback.
+    // On attempt 1 (retry), the SDK fetches the PID cert and cert chain,
+    // then passes them to the callback.
     //
-    // So we expect at least 1 GetCertChainInfo call from the callback.
+    // So we expect at least 1 GetCertChainInfo call from the SDK's
+    // re-endorsement flow on retry.
     // (There may be additional calls from the establish_credential flow itself.)
     assert!(
         cert_chain_info_calls >= 1,
-        "Expected at least 1 GetCertChainInfo call from the POTA callback on retry, got: {cert_chain_info_calls}"
+        "Expected at least 1 GetCertChainInfo call from the SDK's re-endorsement flow on retry, got: {cert_chain_info_calls}"
     );
     assert!(
         cert_calls >= 1,
-        "Expected at least 1 GetCertificate call from the POTA callback on retry, got: {cert_calls}"
+        "Expected at least 1 GetCertificate call from the SDK's re-endorsement flow on retry, got: {cert_calls}"
     );
 }
 
@@ -784,13 +788,14 @@ fn test_init_pota_reendorsement_after_reset() {
         "init should recover after device reset + POTA re-endorsement, got: {result:?}"
     );
 
-    // The SDK retrieves the PID pub key via GetCertChainInfo + GetCertificate
-    // before invoking the POTA callback.
+    // The SDK retrieves the PID pub key and cert chain via
+    // GetCertChainInfo + GetCertificate before invoking the POTA callback.
     // On attempt 0, caller-provided POTA is used (no callback).
-    // On attempt 1 (retry), the SDK fetches the PID cert and passes it to the callback.
+    // On attempt 1 (retry), the SDK fetches the PID cert and cert chain,
+    // then passes them to the callback.
     assert!(
         cert_chain_after > cert_chain_before,
-        "GetCertChainInfo should have been called by the POTA callback after device reset \
+        "GetCertChainInfo should have been called by the SDK's re-endorsement flow after device reset \
          (before: {cert_chain_before}, after: {cert_chain_after})"
     );
 }
