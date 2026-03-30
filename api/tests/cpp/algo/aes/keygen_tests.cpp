@@ -381,6 +381,9 @@ class azihsm_aes_keygen : public ::testing::Test
     }
 };
 
+// ================================
+// AES Key Tests
+// ================================
 TEST_F(azihsm_aes_keygen, test_session_aes_128_key_generation)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -486,83 +489,107 @@ TEST_F(azihsm_aes_keygen, unmask_aes_128_key)
     });
 }
 
-TEST_F(azihsm_aes_keygen, generate_aes_gcm_256_key)
+// ================================
+// AES XTS Tests
+// ================================
+TEST_F(azihsm_aes_keygen, test_aes_xts_512_key_generation) 
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        // Step 1: Generate AES-GCM-256 key
-        azihsm_algo keygen_algo{};
-        keygen_algo.id = AZIHSM_ALGO_ID_AES_GCM_KEY_GEN;
-        keygen_algo.params = nullptr;
-        keygen_algo.len = 0;
+        test_session_aes_key_generation_common(
+            session,
+            AZIHSM_ALGO_ID_AES_XTS_KEY_GEN,
+            AZIHSM_KEY_KIND_AES_XTS,
+            512
+        );
+    });
+}
 
-        azihsm_key_kind key_kind = AZIHSM_KEY_KIND_AES_GCM;
-        azihsm_key_class key_class = AZIHSM_KEY_CLASS_SECRET;
-        uint32_t bits = 256;
-        bool is_session = true;
-        bool can_encrypt = true;
-        bool can_decrypt = true;
+// ================================
+// AES GCM Tests
+// ================================
+TEST_F(azihsm_aes_keygen, test_aes_gcm_256_key_generation)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        test_session_aes_key_generation_common(
+            session,
+            AZIHSM_ALGO_ID_AES_GCM_KEY_GEN,
+            AZIHSM_KEY_KIND_AES_GCM,
+            256
+        );
+        // // Step 1: Generate AES-GCM-256 key
+        // azihsm_algo keygen_algo{};
+        // keygen_algo.id = AZIHSM_ALGO_ID_AES_GCM_KEY_GEN;
+        // keygen_algo.params = nullptr;
+        // keygen_algo.len = 0;
 
-        std::vector<azihsm_key_prop> props_vec = {
-            { .id = AZIHSM_KEY_PROP_ID_KIND, .val = &key_kind, .len = sizeof(key_kind) },
-            { .id = AZIHSM_KEY_PROP_ID_CLASS, .val = &key_class, .len = sizeof(key_class) },
-            { .id = AZIHSM_KEY_PROP_ID_BIT_LEN, .val = &bits, .len = sizeof(bits) },
-            { .id = AZIHSM_KEY_PROP_ID_SESSION, .val = &is_session, .len = sizeof(is_session) },
-            { .id = AZIHSM_KEY_PROP_ID_ENCRYPT, .val = &can_encrypt, .len = sizeof(can_encrypt) },
-            { .id = AZIHSM_KEY_PROP_ID_DECRYPT, .val = &can_decrypt, .len = sizeof(can_decrypt) }
-        };
+        // azihsm_key_kind key_kind = AZIHSM_KEY_KIND_AES_GCM;
+        // azihsm_key_class key_class = AZIHSM_KEY_CLASS_SECRET;
+        // uint32_t bits = 256;
+        // bool is_session = true;
+        // bool can_encrypt = true;
+        // bool can_decrypt = true;
 
-        azihsm_key_prop_list prop_list{
-            .props = props_vec.data(),
-            .count = static_cast<uint32_t>(props_vec.size())
-        };
+        // std::vector<azihsm_key_prop> props_vec = {
+        //     { .id = AZIHSM_KEY_PROP_ID_KIND, .val = &key_kind, .len = sizeof(key_kind) },
+        //     { .id = AZIHSM_KEY_PROP_ID_CLASS, .val = &key_class, .len = sizeof(key_class) },
+        //     { .id = AZIHSM_KEY_PROP_ID_BIT_LEN, .val = &bits, .len = sizeof(bits) },
+        //     { .id = AZIHSM_KEY_PROP_ID_SESSION, .val = &is_session, .len = sizeof(is_session) },
+        //     { .id = AZIHSM_KEY_PROP_ID_ENCRYPT, .val = &can_encrypt, .len = sizeof(can_encrypt) },
+        //     { .id = AZIHSM_KEY_PROP_ID_DECRYPT, .val = &can_decrypt, .len = sizeof(can_decrypt) }
+        // };
 
-        auto_key gcm_key;
-        azihsm_status err = azihsm_key_gen(session, &keygen_algo, &prop_list, gcm_key.get_ptr());
-        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_NE(gcm_key, 0);
+        // azihsm_key_prop_list prop_list{
+        //     .props = props_vec.data(),
+        //     .count = static_cast<uint32_t>(props_vec.size())
+        // };
 
-        // Step 2: Verify key properties
-        azihsm_key_class actual_class;
-        azihsm_key_prop prop{};
+        // auto_key gcm_key;
+        // azihsm_status err = azihsm_key_gen(session, &keygen_algo, &prop_list, gcm_key.get_ptr());
+        // ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        // ASSERT_NE(gcm_key, 0);
+
+        // // Step 2: Verify key properties
+        // azihsm_key_class actual_class;
+        // azihsm_key_prop prop{};
         
-        prop.id = AZIHSM_KEY_PROP_ID_CLASS;
-        prop.val = &actual_class;
-        prop.len = sizeof(actual_class);
-        err = azihsm_key_get_prop(gcm_key, &prop);
-        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_EQ(actual_class, AZIHSM_KEY_CLASS_SECRET);
+        // prop.id = AZIHSM_KEY_PROP_ID_CLASS;
+        // prop.val = &actual_class;
+        // prop.len = sizeof(actual_class);
+        // err = azihsm_key_get_prop(gcm_key, &prop);
+        // ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        // ASSERT_EQ(actual_class, AZIHSM_KEY_CLASS_SECRET);
 
-        azihsm_key_kind actual_kind;
-        prop.id = AZIHSM_KEY_PROP_ID_KIND;
-        prop.val = &actual_kind;
-        prop.len = sizeof(actual_kind);
-        err = azihsm_key_get_prop(gcm_key, &prop);
-        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_EQ(actual_kind, AZIHSM_KEY_KIND_AES_GCM);
+        // azihsm_key_kind actual_kind;
+        // prop.id = AZIHSM_KEY_PROP_ID_KIND;
+        // prop.val = &actual_kind;
+        // prop.len = sizeof(actual_kind);
+        // err = azihsm_key_get_prop(gcm_key, &prop);
+        // ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        // ASSERT_EQ(actual_kind, AZIHSM_KEY_KIND_AES_GCM);
 
-        uint32_t actual_bits;
-        prop.id = AZIHSM_KEY_PROP_ID_BIT_LEN;
-        prop.val = &actual_bits;
-        prop.len = sizeof(actual_bits);
-        err = azihsm_key_get_prop(gcm_key, &prop);
-        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_EQ(actual_bits, 256u);
+        // uint32_t actual_bits;
+        // prop.id = AZIHSM_KEY_PROP_ID_BIT_LEN;
+        // prop.val = &actual_bits;
+        // prop.len = sizeof(actual_bits);
+        // err = azihsm_key_get_prop(gcm_key, &prop);
+        // ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        // ASSERT_EQ(actual_bits, 256u);
 
-        bool actual_can_encrypt;
-        prop.id = AZIHSM_KEY_PROP_ID_ENCRYPT;
-        prop.val = &actual_can_encrypt;
-        prop.len = sizeof(actual_can_encrypt);
-        err = azihsm_key_get_prop(gcm_key, &prop);
-        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_TRUE(actual_can_encrypt);
+        // bool actual_can_encrypt;
+        // prop.id = AZIHSM_KEY_PROP_ID_ENCRYPT;
+        // prop.val = &actual_can_encrypt;
+        // prop.len = sizeof(actual_can_encrypt);
+        // err = azihsm_key_get_prop(gcm_key, &prop);
+        // ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        // ASSERT_TRUE(actual_can_encrypt);
 
-        bool actual_can_decrypt;
-        prop.id = AZIHSM_KEY_PROP_ID_DECRYPT;
-        prop.val = &actual_can_decrypt;
-        prop.len = sizeof(actual_can_decrypt);
-        err = azihsm_key_get_prop(gcm_key, &prop);
-        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_TRUE(actual_can_decrypt);
+        // bool actual_can_decrypt;
+        // prop.id = AZIHSM_KEY_PROP_ID_DECRYPT;
+        // prop.val = &actual_can_decrypt;
+        // prop.len = sizeof(actual_can_decrypt);
+        // err = azihsm_key_get_prop(gcm_key, &prop);
+        // ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        // ASSERT_TRUE(actual_can_decrypt);
     });
 }
 

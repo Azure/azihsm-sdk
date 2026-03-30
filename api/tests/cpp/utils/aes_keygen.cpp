@@ -48,7 +48,7 @@ void test_session_aes_key_generation_common(
     ASSERT_NE(original_key, 0);
 
     // Step 2: Verify key properties
-    verify_generated_aes_key_properties(original_key, bits, is_session);
+    verify_generated_aes_key_properties(original_key, key_kind, bits, is_session);
     
     // Step 3: Delete the key
     err = azihsm_key_delete(original_key);
@@ -70,10 +70,10 @@ static void check_key_prop(azihsm_handle key_handle, azihsm_key_prop_id prop_id,
     EXPECT_EQ(actual, expected);
 }
 
-void verify_generated_aes_key_properties(azihsm_handle key_handle, uint32_t bits, bool is_session)
+void verify_generated_aes_key_properties(azihsm_handle key_handle, azihsm_key_kind key_kind, uint32_t bits, bool is_session)
 {
     check_key_prop(key_handle, AZIHSM_KEY_PROP_ID_CLASS,     AZIHSM_KEY_CLASS_SECRET);
-    check_key_prop(key_handle, AZIHSM_KEY_PROP_ID_KIND,      AZIHSM_KEY_KIND_AES);
+    check_key_prop(key_handle, AZIHSM_KEY_PROP_ID_KIND,      key_kind);
     check_key_prop(key_handle, AZIHSM_KEY_PROP_ID_BIT_LEN,   bits);
     check_key_prop(key_handle, AZIHSM_KEY_PROP_ID_LOCAL,     true);
     check_key_prop(key_handle, AZIHSM_KEY_PROP_ID_SESSION,   is_session);
