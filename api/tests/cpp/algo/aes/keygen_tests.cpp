@@ -381,9 +381,7 @@ class azihsm_aes_keygen : public ::testing::Test
     }
 };
 
-// ================================
-// AES Key Tests
-// ================================
+/// Test AES key generation for key sizes of 128
 TEST_F(azihsm_aes_keygen, test_session_aes_128_key_generation)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -396,6 +394,7 @@ TEST_F(azihsm_aes_keygen, test_session_aes_128_key_generation)
     });
 }
 
+/// Test AES key generation for key sizes of 192
 TEST_F(azihsm_aes_keygen, test_session_aes_192_key_generation)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -408,6 +407,7 @@ TEST_F(azihsm_aes_keygen, test_session_aes_192_key_generation)
     });
 }
 
+/// Test AES key generation for key sizes of 256
 TEST_F(azihsm_aes_keygen, test_session_aes_256_key_generation)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -489,9 +489,7 @@ TEST_F(azihsm_aes_keygen, unmask_aes_128_key)
     });
 }
 
-// ================================
-// AES XTS Tests
-// ================================
+/// verifies AES-XTS 512-bit key generation succeeds with correct properties and capabilities
 TEST_F(azihsm_aes_keygen, test_aes_xts_512_key_generation) 
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -504,9 +502,8 @@ TEST_F(azihsm_aes_keygen, test_aes_xts_512_key_generation)
     });
 }
 
-// ================================
-// AES GCM Tests
-// ================================
+/// Test AES-GCM key generation, and validate the generated key has expected properties
+/// and capabilities.
 TEST_F(azihsm_aes_keygen, test_aes_gcm_256_key_generation)
 {
     part_list_.for_each_session([](azihsm_handle session) {
