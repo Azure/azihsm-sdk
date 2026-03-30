@@ -621,7 +621,7 @@ impl HsmPartition {
             // BMK persistence is handled manually after the call.
             ddi::init_part_raw_no_res(
                 inner.dev(),
-                inner.api_rev_range().min(),
+                rs.cached_api_rev,
                 rs.cached_credentials,
                 bmk_from_storage.as_deref(),
                 muk_from_storage.as_deref(),
@@ -1199,7 +1199,8 @@ impl HsmPartitionInner {
         self.set_masked_keys(init_bmk, init_mobk);
 
         if let Some(config) = resiliency_config {
-            let resiliency_state = ResiliencyState::new(config, creds, obk_config, committed_pota)?;
+            let resiliency_state =
+                ResiliencyState::new(config, api_rev, creds, obk_config, committed_pota)?;
             self.set_resiliency_state(resiliency_state);
         }
 
