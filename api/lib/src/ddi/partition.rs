@@ -292,27 +292,27 @@ pub(crate) fn init_part_raw_no_res(
                         "[init_part] {:?} init_bk3 OK, calling set_sealed_bk3...",
                         tid
                     );
-                    let seal_result = set_sealed_bk3(dev, rev, &masked_bk3);
-                    res_dbg!(
-                        "[init_part] {:?} set_sealed_bk3 result={:?}",
-                        tid,
-                        seal_result.as_ref().err()
-                    );
+                    let _seal_result = set_sealed_bk3(dev, rev, &masked_bk3);
+                    // res_dbg!(
+                    //     "[init_part] {:?} set_sealed_bk3 result={:?}",
+                    //     tid,
+                    //     seal_result.as_ref().err()
+                    // );
                     masked_bk3
                 }
 
-                Err(e) => {
-                    res_dbg!(
-                        "[init_part] {:?} init_bk3 failed: {:?}, calling get_sealed_bk3...",
-                        tid, e
-                    );
+                Err(_e) => {
+                    // res_dbg!(
+                    //     "[init_part] {:?} init_bk3 failed: {:?}, calling get_sealed_bk3...",
+                    //     tid, e
+                    // );
                     // BK3 already initialized — retrieve the previously sealed value
                     let sealed_bk3 = get_sealed_bk3(dev, rev)?;
-                    res_dbg!(
-                        "[init_part] {:?} get_sealed_bk3 OK (len={})",
-                        tid,
-                        sealed_bk3.len()
-                    );
+                    // res_dbg!(
+                    //     "[init_part] {:?} get_sealed_bk3 OK (len={})",
+                    //     tid,
+                    //     sealed_bk3.len()
+                    // );
                     sealed_bk3
                 }
             }
