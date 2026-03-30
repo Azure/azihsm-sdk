@@ -10,6 +10,7 @@
 #include "handle/part_handle.hpp"
 #include "handle/part_list_handle.hpp"
 #include "handle/session_handle.hpp"
+#include "utils/aes_keygen.hpp"
 #include "utils/auto_key.hpp"
 
 // Helper to build XTS wrapped blob header
@@ -379,6 +380,42 @@ class azihsm_aes_keygen : public ::testing::Test
         EXPECT_EQ(original_can_decrypt, unmasked_can_decrypt);
     }
 };
+
+TEST_F(azihsm_aes_keygen, test_session_aes_128_key_generation)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        test_session_aes_key_generation_common(
+            session,
+            AZIHSM_ALGO_ID_AES_KEY_GEN,
+            AZIHSM_KEY_KIND_AES,
+            128
+        );
+    });
+}
+
+TEST_F(azihsm_aes_keygen, test_session_aes_192_key_generation)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        test_session_aes_key_generation_common(
+            session,
+            AZIHSM_ALGO_ID_AES_KEY_GEN,
+            AZIHSM_KEY_KIND_AES,
+            192
+        );
+    });
+}
+
+TEST_F(azihsm_aes_keygen, test_session_aes_256_key_generation)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        test_session_aes_key_generation_common(
+            session,
+            AZIHSM_ALGO_ID_AES_KEY_GEN,
+            AZIHSM_KEY_KIND_AES,
+            256
+        );
+    });
+}
 
 TEST_F(azihsm_aes_keygen, unmask_aes_128_key)
 {
