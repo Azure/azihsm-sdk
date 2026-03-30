@@ -514,6 +514,36 @@ pub(crate) fn is_credentials_already_established(err: &HsmError) -> bool {
     )
 }
 
+/// Executes an open-session operation with restore-partition recovery
+/// on transient errors.
+///
+/// This is the runtime support function called by the
+/// `#[resiliency_open_session]` proc macro.
+///
+/// Unlike key operations, open-session does not need a key barrier or
+/// session reopen — we are *creating* the session.  On each retry:
+/// 1. Applies exponential backoff.
+/// 2. Calls `partition.restore_partition()` to re-establish credentials.
+/// 3. Retries the operation.
+pub(crate) fn execute_open_session_with_retry<T>(
+    mut operation: impl FnMut() -> HsmResult<T>,
+    partition: &crate::HsmPartition,
+    max_retries: u32,
+    backoff_base_ms: u64,
+) -> HsmResult<T> {
+    let mut result = operation();
+    let mut attempt = 0u32;
+
+    while is_open_session_retryable_error(&result) && attempt < max_retries {
+        apply_backoff(attempt, backoff_base_ms, BACKOFF_JITTER_MS);
+        let _ = partition.restore_partition();
+        result = operation();
+        attempt += 1;
+    }
+
+    result
+}
+
 /// Executes a key-generation operation with restore-partition and
 /// session-reopen recovery on transient errors.
 ///
