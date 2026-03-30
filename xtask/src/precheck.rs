@@ -9,15 +9,15 @@
 use clap::Parser;
 use xshell::Shell;
 
-use crate::audit;
-use crate::clippy;
-use crate::copyright;
-use crate::coverage;
-use crate::coverage_report;
-use crate::fmt;
-use crate::nextest;
-use crate::nextest_report;
-use crate::setup;
+use crate::audit::Audit;
+use crate::clippy::Clippy;
+use crate::copyright::Copyright;
+use crate::coverage::Coverage;
+use crate::coverage_report::CoverageReport;
+use crate::fmt::Fmt;
+use crate::nextest::Nextest;
+use crate::nextest_report::NextestReport;
+use crate::setup::Setup;
 use crate::Xtask;
 use crate::XtaskCtx;
 
@@ -94,17 +94,17 @@ impl Xtask for Precheck {
 
         let sh = Shell::new()?;
 
-        // if no specific stages are requested, run all stages except code coverage
+        // if no specific stages are requested, run all stages except code coverage, nextest report and coverage report
         let stage = self.stage.unwrap_or(Stage {
             setup: true,
             copyright: true,
             audit: true,
             fmt: true,
             clippy: true,
-            coverage: false,
-            coverage_report: false,
+            coverage: false,        // coverage is optional
+            coverage_report: false, // coverage report is optional (intended only for CI)
             nextest: true,
-            nextest_report: false,
+            nextest_report: false, // nextest report is optional (intended only for CI)
             all: false,
         });
 
@@ -121,30 +121,28 @@ impl Xtask for Precheck {
 
             config_path.push_str("/config.toml");
 
-            let setup = setup::Setup {
+            Setup {
                 force: false,
                 config: Some(config_path),
                 skip_taplo: self.skip_taplo,
                 skip_audit: self.skip_audit,
-            };
-            setup.run(ctx.clone())?;
+            }
+            .run(ctx.clone())?;
         }
 
         // Run Copyright
         if stage.copyright || stage.all {
-            let copyright = copyright::Copyright { fix: false };
-            copyright.run(ctx.clone())?;
+            Copyright { fix: false }.run(ctx.clone())?;
         }
 
         // Run Audit
         if (stage.audit || stage.all) && !self.skip_audit {
-            let audit = audit::Audit {};
-            audit.run(ctx.clone())?;
+            Audit {}.run(ctx.clone())?;
         }
 
         // Cargo format
         if stage.fmt || stage.all {
-            let fmt = fmt::Fmt {
+            Fmt {
                 fix: false,                  // Do not fix formatting issues by default
                 skip_taplo: self.skip_taplo, // Pass through skip_taplo flag
                 skip_clang: self.skip_clang, // Pass through skip_clang flag
@@ -153,96 +151,93 @@ impl Xtask for Precheck {
                 } else {
                     Some("nightly".to_string()) // Use nightly toolchain by default
                 },
-            };
-            fmt.run(ctx.clone())?;
+            }
+            .run(ctx.clone())?;
         }
 
         // Cargo Clippy
         if stage.clippy || stage.all {
-            let clippy = clippy::Clippy {
+            Clippy {
                 exclude: self.exclude.clone(),
-            };
-            clippy.run(ctx.clone())?;
+            }
+            .run(ctx.clone())?;
         }
 
         if stage.nextest || stage.all {
             if self.package.is_none() && self.features.is_none() {
                 // SDK Run all mock tests
-                let nextest = nextest::Nextest {
+                Nextest {
                     features: Some("mock".to_string()),
                     package: None,
                     no_default_features: false,
                     filterset: None,
                     profile: self.profile.clone().or(Some("ci-mock".to_string())),
                     exclude: self.exclude.clone(),
-                };
-                nextest.run(ctx.clone())?;
+                }
+                .run(ctx.clone())?;
 
                 // SDK Run resiliency fault-injection tests (requires res-test
                 // feature for the fault-injection DDI device)
-                let nextest = nextest::Nextest {
+                Nextest {
                     features: Some("mock,res-test".to_string()),
                     package: Some("azihsm_api_tests".to_string()),
                     no_default_features: false,
                     filterset: Some("test(resiliency::fault_injection::)".to_string()),
                     profile: self.profile.clone().or(Some("ci-mock".to_string())),
                     exclude: self.exclude.clone(),
-                };
-                nextest.run(ctx.clone())?;
+                }
+                .run(ctx.clone())?;
 
                 #[cfg(not(target_os = "windows"))]
                 {
                     // SDK Run azihsm_ddi mock tests table-4
-                    let nextest = nextest::Nextest {
+                    Nextest {
                         features: Some("mock,table-4".to_string()),
                         package: Some("azihsm_ddi".to_string()),
                         no_default_features: false,
                         filterset: None,
                         profile: self.profile.clone().or(Some("ci-mock-table-4".to_string())),
                         exclude: self.exclude.clone(),
-                    };
-                    nextest.run(ctx.clone())?;
+                    }
+                    .run(ctx.clone())?;
 
                     // SDK Run azihsm_ddi mock tests table-64
-                    let nextest = nextest::Nextest {
+                    Nextest {
                         features: Some("mock,table-64".to_string()),
                         package: Some("azihsm_ddi".to_string()),
                         no_default_features: false,
                         filterset: None,
                         profile: self.profile.or(Some("ci-mock-table-64".to_string())),
                         exclude: self.exclude.clone(),
-                    };
-                    nextest.run(ctx.clone())?;
+                    }
+                    .run(ctx.clone())?;
                 }
             } else {
-                let nextest = nextest::Nextest {
+                Nextest {
                     features: self.features,
                     package: self.package,
                     no_default_features: false,
                     filterset: None,
                     profile: self.profile,
                     exclude: self.exclude,
-                };
-                nextest.run(ctx.clone())?;
+                }
+                .run(ctx.clone())?;
             }
         }
 
         // Run code coverage
         if stage.coverage || stage.all {
-            let coverage = coverage::Coverage {};
-            coverage.run(ctx.clone())?;
+            Coverage {}.run(ctx.clone())?;
         }
 
         // Run nextest report
         if stage.nextest_report || stage.all {
-            let nextest_report = nextest_report::NextestReport {};
-            nextest_report.run(ctx.clone())?;
+            NextestReport {}.run(ctx.clone())?;
         }
 
         // Run code coverage report
         if stage.coverage_report || stage.all {
-            let coverage_report = coverage_report::CoverageReport {};
-            coverage_report.run(ctx)?;
+            CoverageReport {}.run(ctx)?;
         }
 
         log::trace!("done precheck");

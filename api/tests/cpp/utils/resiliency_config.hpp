@@ -58,3 +58,7 @@ void make_resiliency_config_in(
 /// @return Owning pointer to the test context.
 std::unique_ptr<ResiliencyTestCtx> make_resiliency_config(
     azihsm_resiliency_config &config_out);
+
+/// Returns a pointer to the shared POTA callback ops vtable used by
+/// the resiliency test helpers.
+const azihsm_pota_callback_ops *get_pota_callback_ops();
