@@ -384,6 +384,7 @@ impl HsmPartition {
     ///
     /// # Arguments
     ///
+    /// * `api_rev` - API revision to use for initialization
     /// * `creds` - Application credentials (ID and PIN)
     /// * `bmk` - Optional backup masking key
     /// * `muk` - Optional masked unwrapping key
@@ -395,12 +396,13 @@ impl HsmPartition {
     ///
     /// Returns an error if:
     /// - Credentials are invalid
-    /// - API revision retrieval fails
+    /// - API revision is not supported by the partition
     /// - Partition initialization fails
     /// - OBK is missing when obk_info source is Caller
     #[instrument(skip_all,  fields(path = self.path().as_str()), err)]
     pub fn init(
         &self,
+        api_rev: HsmApiRev,
         creds: HsmCredentials,
         bmk: Option<&[u8]>,
         muk: Option<&[u8]>,
@@ -421,6 +423,7 @@ impl HsmPartition {
         };
 
         self.inner().write().init(
+            api_rev,
             creds,
             bmk,
             muk,
@@ -1129,11 +1132,17 @@ impl HsmPartitionInner {
 
     /// Initializes the partition with application credentials and master keys.
     ///
-    /// Performs the DDI init_part call, resolves BMK/MOBK/POTA results,
-    /// caches masked keys, and sets resiliency state.  Called under a
-    /// write lock from `HsmPartition::init`.
+    /// Performs the DDI init_part call with the specified API revision,
+    /// resolves BMK/MOBK/POTA results, caches masked keys, and sets
+    /// resiliency state.  Called under a write lock from
+    /// `HsmPartition::init`.
+    ///
+    /// # Arguments
+    ///
+    /// * `api_rev` - API revision to use for the DDI init_part call
     pub(crate) fn init(
         &mut self,
+        api_rev: HsmApiRev,
         creds: HsmCredentials,
         bmk: Option<&[u8]>,
         muk: Option<&[u8]>,
@@ -1143,7 +1152,7 @@ impl HsmPartitionInner {
     ) -> HsmResult<()> {
         let result = ddi::init_part(
             &self.dev,
-            self.api_rev_range.min(),
+            api_rev,
             creds,
             bmk,
             muk,

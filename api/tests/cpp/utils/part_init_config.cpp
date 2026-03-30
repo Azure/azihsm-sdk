@@ -7,6 +7,7 @@
 #include <cstring>
 #include <stdexcept>
 #include <string>
+#include <gtest/gtest.h>
 
 #ifdef _WIN32
 #define NOMINMAX
@@ -365,4 +366,35 @@ void make_part_init_config(azihsm_handle part_handle, PartInitConfig &config)
         config.pota_endorsement.source = AZIHSM_POTA_ENDORSEMENT_SOURCE_CALLER;
         config.pota_endorsement.endorsement = &config.pota_data;
     }
+}
+
+/// Returns the API revision to use for partition init and session open in tests.
+///
+/// Queries the minimum supported API revision from the partition.
+/// Change this single function to switch all tests between min, max,
+/// or any other supported revision.
+///
+/// @param part_handle An opened partition handle
+/// @return The API revision to use in tests
+azihsm_status get_test_api_rev(azihsm_handle part_handle, azihsm_api_rev &api_rev)
+{
+    //reset api_rev to 0.0 in case the property query fails and doesn't modify it, so the caller can detect failure by checking for 0.0 revision
+    api_rev.major = 0;
+    api_rev.minor = 0;
+
+    azihsm_api_rev local_api_rev = {.major = 0, .minor = 0};
+    azihsm_part_prop prop = { AZIHSM_PART_PROP_ID_MIN_API_REV, &local_api_rev, sizeof(local_api_rev) };
+
+    auto err = azihsm_part_get_prop(part_handle, &prop);
+    if (err != AZIHSM_STATUS_SUCCESS)
+    {
+        ADD_FAILURE() << "get_test_api_rev: failed to query min API revision. Error: " << err;
+        
+    }
+    else {
+        api_rev.major = local_api_rev.major;
+        api_rev.minor = local_api_rev.minor;
+    }
+
+    return err;
 }

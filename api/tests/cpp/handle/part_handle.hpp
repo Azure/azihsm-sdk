@@ -115,9 +115,21 @@ class PartitionHandle
 
         PartInitConfig init_config{};
         make_part_init_config(handle_, init_config);
+        
+        azihsm_api_rev api_rev = {.major = 0, .minor = 0};
+        auto rev_err = get_test_api_rev(handle_, api_rev);
+        if (rev_err != AZIHSM_STATUS_SUCCESS)
+        {
+            azihsm_part_close(handle_);
+            handle_ = 0;
+            throw std::runtime_error(
+                "Failed to get API revision. Error: " + std::to_string(rev_err)
+            );
+        }
 
         err = azihsm_part_init(
             handle_,
+            &api_rev,
             &creds,
             nullptr,
             nullptr,

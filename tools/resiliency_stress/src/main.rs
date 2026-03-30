@@ -611,7 +611,9 @@ fn open_and_init_partition(
         None
     };
 
-    part.init(creds, None, None, obk, pota, resiliency_config)
+    //read api version for part init, use min version.
+    let api_rev = part.api_rev_range().min();
+    part.init(api_rev, creds, None, None, obk, pota, resiliency_config)
         .expect("Failed to init partition");
 
     (part, creds)

@@ -304,6 +304,7 @@ pub unsafe extern "C" fn azihsm_part_open(
 /// Initialize an HSM partition
 ///
 /// @param[in] part_handle Handle to the HSM partition
+/// @param[in] api_rev Pointer to the API revision to use for initialization (must be non-null)
 /// @param[in] creds Pointer to application credentials (ID and PIN)
 /// @param[in] bmk Optional backup masking key buffer (can be null)
 /// @param[in] muk Optional masked unwrapping key buffer (can be null)
@@ -325,6 +326,7 @@ pub unsafe extern "C" fn azihsm_part_open(
 #[allow(unsafe_code)]
 pub unsafe extern "C" fn azihsm_part_init(
     part_handle: AzihsmHandle,
+    api_rev: *const AzihsmApiRev,
     creds: *const AzihsmCredentials,
     bmk: *const AzihsmBuffer,
     muk: *const AzihsmBuffer,
@@ -333,6 +335,7 @@ pub unsafe extern "C" fn azihsm_part_init(
     resiliency_config: *const AzihsmResiliencyConfig,
 ) -> AzihsmStatus {
     abi_boundary(|| {
+        let api_rev = deref_ptr(api_rev)?;
         let creds = deref_ptr(creds)?;
         let obk_config = deref_ptr(backup_key_config)?;
         let pota_endorsement = deref_ptr(pota_endorsement)?;
@@ -354,6 +357,7 @@ pub unsafe extern "C" fn azihsm_part_init(
         let resiliency_config = resiliency_config_from_ptr(resiliency_config)?;
 
         partition.init(
+            api_rev.into(),
             creds.into(),
             bmk_slice,
             muk_slice,

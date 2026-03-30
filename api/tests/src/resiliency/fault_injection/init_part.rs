@@ -153,7 +153,9 @@ fn init_with_resiliency(part: &HsmPartition) -> HsmResult<()> {
     let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
     let (obk_info, pota_endorsement) = make_init_params(part);
     let (resiliency_config, _ctx) = make_resiliency_config();
+    let api_rev = test_api_rev(part);
     part.init(
+        api_rev,
         creds,
         None,
         None,
@@ -577,7 +579,8 @@ fn test_init_no_retry_without_resiliency() {
     let (obk_info, pota_endorsement) = make_init_params(&part);
 
     // No resiliency config → no retry.
-    let result = part.init(creds, None, None, obk_info, pota_endorsement, None);
+    let api_rev = test_api_rev(&part);
+    let result = part.init(api_rev, creds, None, None, obk_info, pota_endorsement, None);
     let after = op_call_count(DdiOp::EstablishCredential);
     clear_faults();
 
@@ -715,7 +718,8 @@ fn test_init_fails_after_reset_without_resiliency() {
     let (obk_info, pota_endorsement) = make_init_params(&part);
 
     // No resiliency config → no retry.
-    let result = part.init(creds, None, None, obk_info, pota_endorsement, None);
+    let api_rev = test_api_rev(&part);
+    let result = part.init(api_rev, creds, None, None, obk_info, pota_endorsement, None);
     let after = op_call_count(DdiOp::EstablishCredential);
     clear_faults();
 

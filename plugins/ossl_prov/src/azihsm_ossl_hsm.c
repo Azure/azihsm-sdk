@@ -1064,9 +1064,25 @@ azihsm_status azihsm_open_device_and_session(
         pota_endorsement.endorsement = &pota_data;
     }
 
+    // Retrieve Partition's minimum API revision requirement and verify compatibility before init
+    struct azihsm_api_rev min_api_rev = { 0 };
+    status = get_part_property(*device, AZIHSM_PART_PROP_ID_MIN_API_REV, &min_api_rev);
+    if (status != AZIHSM_STATUS_SUCCESS)
+    {
+        free_buffer(&pota_sig_buf);
+        free_buffer(&pota_pubkey_buf);
+        free_buffer(&obk_buf);
+        free_buffer(&bmk_buf);
+        free_buffer(&muk_buf);
+        OPENSSL_cleanse(&creds, sizeof(creds));
+        azihsm_part_close(*device);
+        return status;
+    }
+
     // Initialize partition with loaded keys (or NULL if not available)
     status = azihsm_part_init(
         *device,
+        &min_api_rev,
         &creds,
         bmk_buf.ptr != NULL ? &bmk_buf : NULL,
         muk_buf.ptr != NULL ? &muk_buf : NULL,

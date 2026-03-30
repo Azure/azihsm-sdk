@@ -109,8 +109,10 @@ fn test_partition_init() {
         part.reset().expect("Partition reset failed");
 
         let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
+        let api_rev = test_api_rev(&part);
         let (obk_info, pota_endorsement) = make_init_params(&part);
-        part.init(creds, None, None, obk_info, pota_endorsement, None)
+
+        part.init(api_rev, creds, None, None, obk_info, pota_endorsement, None)
             .expect("Partition init failed");
     }
 }
@@ -166,6 +168,7 @@ fn test_init_caller_source_with_null_obk_fails() {
         let pota = HsmPotaEndorsement::new(HsmPotaEndorsementSource::Caller, Some(pota_data));
 
         let result = part.init(
+            test_api_rev(&part),
             HsmCredentials::new(&APP_ID, &APP_PIN),
             None,
             None,
@@ -190,8 +193,10 @@ fn test_init_caller_source_with_empty_obk_fails() {
         let (sig, pubkey) = make_valid_pota_parts(&part);
         let pota_data = HsmPotaEndorsementData::new(&sig, &pubkey);
         let pota = HsmPotaEndorsement::new(HsmPotaEndorsementSource::Caller, Some(pota_data));
+        let api_rev = test_api_rev(&part);
 
         let result = part.init(
+            api_rev,
             HsmCredentials::new(&APP_ID, &APP_PIN),
             None,
             None,
@@ -217,8 +222,10 @@ fn test_init_tpm_obk_source_with_obk_provided_fails() {
         let (sig, pubkey) = make_valid_pota_parts(&part);
         let pota_data = HsmPotaEndorsementData::new(&sig, &pubkey);
         let pota = HsmPotaEndorsement::new(HsmPotaEndorsementSource::Caller, Some(pota_data));
+        let api_rev = test_api_rev(&part);
 
         let result = part.init(
+            api_rev,
             HsmCredentials::new(&APP_ID, &APP_PIN),
             None,
             None,
@@ -246,8 +253,10 @@ fn test_init_invalid_obk_source_fails() {
         let (sig, pubkey) = make_valid_pota_parts(&part);
         let pota_data = HsmPotaEndorsementData::new(&sig, &pubkey);
         let pota = HsmPotaEndorsement::new(HsmPotaEndorsementSource::Caller, Some(pota_data));
+        let api_rev = test_api_rev(&part);
 
         let result = part.init(
+            api_rev,
             HsmCredentials::new(&APP_ID, &APP_PIN),
             None,
             None,
@@ -271,8 +280,10 @@ fn test_init_caller_source_with_empty_endorsement_fails() {
         let obk_config = make_valid_obk();
         let pota_data = HsmPotaEndorsementData::new(&[], &[]);
         let pota = HsmPotaEndorsement::new(HsmPotaEndorsementSource::Caller, Some(pota_data));
+        let api_rev = test_api_rev(&part);
 
         let result = part.init(
+            api_rev,
             HsmCredentials::new(&APP_ID, &APP_PIN),
             None,
             None,
@@ -295,8 +306,10 @@ fn test_init_caller_source_with_null_endorsement_fails() {
 
         let obk_config = make_valid_obk();
         let pota = HsmPotaEndorsement::new(HsmPotaEndorsementSource::Caller, None);
+        let api_rev = test_api_rev(&part);
 
         let result = part.init(
+            api_rev,
             HsmCredentials::new(&APP_ID, &APP_PIN),
             None,
             None,
@@ -320,8 +333,10 @@ fn test_init_invalid_pota_source_fails() {
         let obk_config = make_valid_obk();
         let pota_data = HsmPotaEndorsementData::new(&[0u8; 96], &[0u8; 97]);
         let pota = HsmPotaEndorsement::new(HsmPotaEndorsementSource(99), Some(pota_data));
+        let api_rev = test_api_rev(&part);
 
         let result = part.init(
+            api_rev,
             HsmCredentials::new(&APP_ID, &APP_PIN),
             None,
             None,
@@ -344,9 +359,11 @@ fn test_init_with_resiliency_config() {
 
         let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
         let (obk_info, pota_endorsement) = make_init_params(&part);
+        let api_rev = test_api_rev(&part);
 
         let (resiliency_config, _ctx) = make_resiliency_config();
         part.init(
+            api_rev,
             creds,
             None,
             None,
@@ -375,6 +392,7 @@ fn test_init_with_resiliency_caller_pota_null_callback_fails() {
             HsmPotaEndorsementSource::Caller,
             Some(HsmPotaEndorsementData::new(&sig, &pubkey)),
         );
+        let api_rev = test_api_rev(&part);
 
         // Build a resiliency config with pota_callback = None.
         // When POTA source is Caller, this must fail with InvalidArgument.
@@ -382,6 +400,7 @@ fn test_init_with_resiliency_caller_pota_null_callback_fails() {
         resiliency_config.pota_callback = None;
 
         let result = part.init(
+            api_rev,
             creds,
             None,
             None,
@@ -428,7 +447,10 @@ fn test_double_init_with_resiliency() {
 
         let ctx = ResiliencyTestCtx::new();
         let resiliency_config = make_resiliency_config_in(ctx.dir());
+        let api_rev = test_api_rev(&part);
+
         part.init(
+            api_rev,
             creds,
             None,
             None,
@@ -463,7 +485,10 @@ fn test_double_init_with_resiliency() {
         };
 
         let resiliency_config2 = make_resiliency_config_in(ctx.dir());
+        let api_rev = test_api_rev(&part);
+
         part.init(
+            api_rev,
             creds,
             None,
             None,
@@ -492,10 +517,19 @@ fn test_init_with_resiliency_invalid_pota_source_fails() {
         };
         let pota_data = HsmPotaEndorsementData::new(&[0u8; 96], &[0u8; 97]);
         let pota = HsmPotaEndorsement::new(HsmPotaEndorsementSource(99), Some(pota_data));
+        let api_rev = test_api_rev(&part);
 
         let (resiliency_config, _ctx) = make_resiliency_config();
 
-        let result = part.init(creds, None, None, obk_info, pota, Some(resiliency_config));
+        let result = part.init(
+            api_rev,
+            creds,
+            None,
+            None,
+            obk_info,
+            pota,
+            Some(resiliency_config),
+        );
         assert_eq!(result.unwrap_err(), HsmError::InvalidArgument);
     }
 }
@@ -512,6 +546,7 @@ fn test_init_with_resiliency_tpm_pota_with_callback_fails() {
         let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
         let obk_info = make_valid_obk();
         let pota_endorsement = HsmPotaEndorsement::new(HsmPotaEndorsementSource::Tpm, None);
+        let api_rev = test_api_rev(&part);
 
         // TPM source + callback provided → should fail with InvalidArgument.
         let (mut resiliency_config, _ctx) = make_resiliency_config();
@@ -522,6 +557,7 @@ fn test_init_with_resiliency_tpm_pota_with_callback_fails() {
         }
 
         let result = part.init(
+            api_rev,
             creds,
             None,
             None,
@@ -599,6 +635,73 @@ fn test_pota_endorsement_clone_is_independent() {
     drop(original);
     assert_eq!(cloned.source(), HsmPotaEndorsementSource::Caller);
     assert_eq!(cloned.endorsement().unwrap().signature(), &sig);
+}
+
+#[api_test]
+fn test_init_with_min_api_rev() {
+    let part_mgr = HsmPartitionManager::partition_info_list();
+    assert!(!part_mgr.is_empty(), "No partitions found.");
+    for part_info in part_mgr.iter() {
+        let part = HsmPartitionManager::open_partition(&part_info.path)
+            .expect("Failed to open the partition");
+        part.reset().expect("Partition reset failed");
+
+        let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
+        let api_rev = part.api_rev_range().min();
+        let (obk_info, pota_endorsement) = make_init_params(&part);
+
+        part.init(api_rev, creds, None, None, obk_info, pota_endorsement, None)
+            .expect("Partition init with min api_rev failed");
+    }
+}
+
+#[api_test]
+fn test_init_with_max_api_rev() {
+    let part_mgr = HsmPartitionManager::partition_info_list();
+    assert!(!part_mgr.is_empty(), "No partitions found.");
+    for part_info in part_mgr.iter() {
+        let part = HsmPartitionManager::open_partition(&part_info.path)
+            .expect("Failed to open the partition");
+        part.reset().expect("Partition reset failed");
+
+        let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
+        let api_rev = part.api_rev_range().max();
+        let (obk_info, pota_endorsement) = make_init_params(&part);
+
+        part.init(api_rev, creds, None, None, obk_info, pota_endorsement, None)
+            .expect("Partition init with max api_rev failed");
+    }
+}
+
+#[api_test]
+fn test_init_with_invalid_api_rev_fails() {
+    let part_mgr = HsmPartitionManager::partition_info_list();
+    assert!(!part_mgr.is_empty(), "No partitions found.");
+    for part_info in part_mgr.iter() {
+        let part = HsmPartitionManager::open_partition(&part_info.path)
+            .expect("Failed to open the partition");
+        part.reset().expect("Partition reset failed");
+
+        let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
+        let (obk_info, pota_endorsement) = make_init_params(&part);
+
+        // Use an API revision far above the supported max range
+        let invalid_rev = HsmApiRev {
+            major: u32::MAX,
+            minor: u32::MAX,
+        };
+
+        let result = part.init(
+            invalid_rev,
+            creds,
+            None,
+            None,
+            obk_info,
+            pota_endorsement,
+            None,
+        );
+        assert!(result.is_err(), "Init with invalid api_rev should fail");
+    }
 }
 
 #[test]

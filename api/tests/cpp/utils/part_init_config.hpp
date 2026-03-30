@@ -59,3 +59,13 @@ struct PartInitConfig
 ///               can be passed directly to azihsm_part_init. Must be
 ///               zero-initialized by the caller.
 void make_part_init_config(azihsm_handle part_handle, PartInitConfig &config);
+
+/// Returns the API revision to use for partition init and session open in tests.
+///
+/// Queries the minimum supported API revision from the partition.
+/// Change this single function to switch all tests between min, max,
+/// or any other supported revision.
+///
+/// @param part_handle An opened partition handle
+/// @return The API revision to use in tests
+azihsm_status get_test_api_rev(azihsm_handle part_handle, azihsm_api_rev &api_rev);

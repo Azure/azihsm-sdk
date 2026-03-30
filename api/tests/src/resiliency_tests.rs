@@ -34,7 +34,9 @@ fn test_init_reset_init_with_resiliency() {
         let (obk_info, pota_endorsement) = make_init_params(&part);
 
         let (resiliency_config, _ctx) = make_resiliency_config();
+        let api_rev = test_api_rev(&part);
         part.init(
+            api_rev,
             creds,
             None,
             None,
@@ -57,7 +59,9 @@ fn test_init_reset_init_with_resiliency() {
         let (obk_info2, pota_endorsement2) = make_init_params(&part);
 
         let resiliency_config2 = make_resiliency_config_in(_ctx.dir());
+        let api_rev = test_api_rev(&part);
         part.init(
+            api_rev,
             creds,
             None,
             None,

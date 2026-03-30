@@ -989,9 +989,17 @@ TEST_F(azihsm_ecc_sign_verify, DISABLED_MANUAL_restore_key_and_verify)
 
     PartInitConfig init_config{};
     make_part_init_config(part_handle.get(), init_config);
+    
+    azihsm_api_rev api_rev = { .major = 0, .minor =0};
+    if( get_test_api_rev(part_handle.get(), api_rev) != AZIHSM_STATUS_SUCCESS)
+    {
+        azihsm_part_close(part_handle.get());
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS) << "Failed to get API revision";
+    }
 
     err = azihsm_part_init(
         part_handle.get(),
+        &api_rev,
         &creds,
         &bmk_buf,
         nullptr,

@@ -18,6 +18,14 @@ pub(crate) fn use_tpm() -> bool {
     std::env::var("AZIHSM_USE_TPM").is_ok()
 }
 
+/// Returns the API revision to use for partition init in tests.
+///
+/// Change this single function to switch all tests between min, max,
+/// or any other supported revision.
+pub(crate) fn test_api_rev(part: &HsmPartition) -> HsmApiRev {
+    part.api_rev_range().min()
+}
+
 /// Application identifier used for partition authentication.
 ///
 /// This constant defines a test application ID consisting of 16 bytes,
@@ -180,8 +188,9 @@ where
 
         //init with test creds
         let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
+        let api_rev = test_api_rev(&part);
         let (obk_info, pota_endorsement) = make_init_params(&part);
-        part.init(creds, None, None, obk_info, pota_endorsement, None)
+        part.init(api_rev, creds, None, None, obk_info, pota_endorsement, None)
             .expect("Partition init failed");
         test(part, creds);
     }

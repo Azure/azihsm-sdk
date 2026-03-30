@@ -96,7 +96,9 @@ fn init_with_resiliency() -> (HsmPartition, HsmCredentials, ResiliencyTestCtx) {
     let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
     let (obk_info, pota_endorsement) = make_init_params(&part);
     let (resiliency_config, ctx) = make_resiliency_config();
+    let api_rev = test_api_rev(&part);
     part.init(
+        api_rev,
         creds,
         None,
         None,
@@ -119,7 +121,8 @@ fn init_without_resiliency() -> (HsmPartition, HsmCredentials) {
 
     let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
     let (obk_info, pota_endorsement) = make_init_params(&part);
-    part.init(creds, None, None, obk_info, pota_endorsement, None)
+    let api_rev = test_api_rev(&part);
+    part.init(api_rev, creds, None, None, obk_info, pota_endorsement, None)
         .expect("Partition init failed");
 
     (part, creds)
