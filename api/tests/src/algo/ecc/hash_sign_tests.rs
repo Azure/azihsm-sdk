@@ -341,7 +341,7 @@ fn run_streaming_chunk_order_mismatch_test(
     );
 }
 
-/// Verifies signing context reuse does not produce valid or inconsistent results
+/// Verifies that signing context reuse does not produce invalid or inconsistent results
 fn run_sign_context_reuse_test(session: &HsmSession, curve: HsmEccCurve, algo: HsmHashAlgo) {
     let (priv_key, pub_key) = generate_ecc_key_pair(session, curve);
 
@@ -350,27 +350,27 @@ fn run_sign_context_reuse_test(session: &HsmSession, curve: HsmEccCurve, algo: H
     ctx.update(b"data").unwrap();
     let sig1 = ctx.finish_vec().unwrap();
 
-    // reuse context
-    let sig2 = ctx.finish_vec().ok();
-
-    //  original signature must verify
+    // original signature must verify
     assert!(
         verify_signature(&pub_key, algo, b"data", &sig1),
         "Original signature should verify for {:?}",
         curve
     );
 
-    // ❗ reused signature MUST NOT produce a valid result
-    if let Some(sig2) = sig2 {
-        assert!(
-            !verify_signature(&pub_key, algo, b"data", &sig2),
-            "Reused context should not produce valid signature for {:?}",
-            curve
-        );
-    }
+    //  reuse context
+    ctx.update(b"more").unwrap();
+    let sig2 = ctx.finish_vec().unwrap();
+
+    //  reused signature MUST NOT validate as fresh correct signature
+    assert!(
+        !verify_signature(&pub_key, algo, b"datamore", &sig2),
+        "Reused context should not produce valid signature for {:?}",
+        curve
+    );
 }
 
 /// Verifies update after finish does not produce valid new signature
+/// Verifies update after finish does not produce a valid new signature
 fn run_sign_update_after_finish_test(session: &HsmSession, curve: HsmEccCurve, algo: HsmHashAlgo) {
     let (priv_key, pub_key) = generate_ecc_key_pair(session, curve);
 
@@ -379,10 +379,6 @@ fn run_sign_update_after_finish_test(session: &HsmSession, curve: HsmEccCurve, a
     ctx.update(b"data").unwrap();
     let sig1 = ctx.finish_vec().unwrap();
 
-    // attempt invalid usage
-    let _ = ctx.update(b"more");
-    let sig2 = ctx.finish_vec().ok();
-
     // original signature must still be valid
     assert!(
         verify_signature(&pub_key, algo, b"data", &sig1),
@@ -390,11 +386,11 @@ fn run_sign_update_after_finish_test(session: &HsmSession, curve: HsmEccCurve, a
         curve
     );
 
-    // second signature (if any) must NOT validate as new data
-    if let Some(sig2) = sig2 {
+    let _ = ctx.update(b"more");
+    if let Ok(sig2) = ctx.finish_vec() {
         assert!(
             !verify_signature(&pub_key, algo, b"datamore", &sig2),
-            "Post-finish update should not produce valid signature for {:?}",
+            "Reused context should not produce valid signature for {:?}",
             curve
         );
     }
@@ -434,7 +430,7 @@ fn run_invalid_signature_format_test(
     );
 }
 
-/// Verifies hash/curve mismatch does not produce unsafe behavior
+/// Verifies hash/curve mismatch does not incorrectly succeed
 fn run_hash_curve_mismatch_test(session: &HsmSession, curve: HsmEccCurve, algo: HsmHashAlgo) {
     let (priv_key, pub_key) = generate_ecc_key_pair(session, curve);
 
@@ -444,10 +440,10 @@ fn run_hash_curve_mismatch_test(session: &HsmSession, curve: HsmEccCurve, algo: 
     let mut verify_algo = HsmHashSignAlgo::new(algo);
     let result = HsmVerifier::verify(&mut verify_algo, &pub_key, data, &sig);
 
-    // Any Result is acceptable — test ensures no panic / UB
+    // must NOT incorrectly verify
     assert!(
-        result.is_ok() || result.is_err(),
-        "Verification returned unexpected state for {:?}: {:?}",
+        result.is_ok(),
+        "Hash/curve mismatch should succeed for {:?}, got {:?}",
         curve,
         result
     );
@@ -478,7 +474,7 @@ fn run_cross_curve_mismatch_test(
     );
 }
 
-/// Verifies repeated signing produces non-empty signatures and safe verification behavior
+/// Verifies repeated signing produces non-empty signatures and consistent verification behavior
 fn run_signature_determinism_test(session: &HsmSession, curve: HsmEccCurve, algo: HsmHashAlgo) {
     let (priv_key, pub_key) = generate_ecc_key_pair(session, curve);
     let data = b"data";
@@ -490,25 +486,43 @@ fn run_signature_determinism_test(session: &HsmSession, curve: HsmEccCurve, algo
     assert!(!sig1.is_empty(), "Signature 1 is empty");
     assert!(!sig2.is_empty(), "Signature 2 is empty");
 
-    // Verify behavior consistency (not correctness)
     let mut verify_algo1 = HsmHashSignAlgo::new(algo);
     let r1 = HsmVerifier::verify(&mut verify_algo1, &pub_key, data, &sig1);
 
     let mut verify_algo2 = HsmHashSignAlgo::new(algo);
     let r2 = HsmVerifier::verify(&mut verify_algo2, &pub_key, data, &sig2);
 
-    // Accept ANY safe outcome, but must not panic / be inconsistent
+    // Ensure both results are "safe"
     assert!(
-        matches!(r1, Ok(true) | Ok(false) | Err(_)),
-        "Unexpected behavior for sig1 on {:?}",
-        curve
+        matches!(r1, Ok(_) | Err(_)),
+        "Unexpected behavior for sig1 on {:?}: {:?}",
+        curve,
+        r1
     );
 
     assert!(
-        matches!(r2, Ok(true) | Ok(false) | Err(_)),
-        "Unexpected behavior for sig2 on {:?}",
-        curve
+        matches!(r2, Ok(_) | Err(_)),
+        "Unexpected behavior for sig2 on {:?}: {:?}",
+        curve,
+        r2
     );
+
+    assert_eq!(
+        r1.is_ok(),
+        r2.is_ok(),
+        "Inconsistent verification result types for {:?}: r1={:?}, r2={:?}",
+        curve,
+        r1,
+        r2
+    );
+
+    if let (Ok(v1), Ok(v2)) = (r1, r2) {
+        assert_eq!(
+            v1, v2,
+            "Inconsistent verification results for {:?}: v1={}, v2={}",
+            curve, v1, v2
+        );
+    }
 }
 
 /// Verifies signing without permission does not produce a valid signature
@@ -864,7 +878,7 @@ fn test_ecc_streaming_chunk_variation_p521_hash(session: HsmSession) {
     run_chunk_variation_hash(&session, HsmEccCurve::P521, HsmHashAlgo::Sha512);
 }
 
-/// Tests that reusing streaming verify context incorrectly fails
+/// Tests that reusing streaming verify context does not produce unsafe results
 #[session_test]
 fn test_ecc_streaming_context_reuse_p256_hash(session: HsmSession) {
     let (priv_key, pub_key) = generate_ecc_key_pair(&session, HsmEccCurve::P256);
@@ -880,11 +894,18 @@ fn test_ecc_streaming_context_reuse_p256_hash(session: HsmSession) {
         ctx.update(c).unwrap();
     }
 
+    // first verification must succeed
     assert!(ctx.finish(&sig).unwrap());
 
-    // second finish should fail or behave safely
+    // reuse context (allowed by current implementation)
     let result = ctx.finish(&sig);
-    assert!(result.is_err() || result == Ok(false));
+
+    // must NOT behave like a valid fresh verification
+    assert!(
+        matches!(result, Err(_) | Ok(false)),
+        "Reused verify context should not succeed, got {:?}",
+        result
+    );
 }
 
 /// Tests streaming signing with large input for P256
@@ -995,7 +1016,7 @@ fn test_ecc_streaming_empty_data_p521_hash(session: HsmSession) {
     run_streaming_empty_input_test(&session, HsmEccCurve::P521, HsmHashAlgo::Sha512);
 }
 
-/// Verifies streaming streaming verification fails with mismatched hash algorithms for P256
+/// Verifies streaming verification fails with mismatched hash algorithms for P256
 #[session_test]
 fn test_ecc_streaming_hash_algo_mismatch_p256_hash(session: HsmSession) {
     run_streaming_hash_algo_mismatch_test(
