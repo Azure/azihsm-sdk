@@ -797,26 +797,42 @@ mod tests {
 
     #[test]
     fn resiliency_state_initial_epoch_is_zero() {
-        let state =
-            ResiliencyState::new(mock_config(true), test_api_rev(), test_creds(), caller_obk(), caller_pota())
-                .expect("ResiliencyState::new should succeed");
+        let state = ResiliencyState::new(
+            mock_config(true),
+            test_api_rev(),
+            test_creds(),
+            caller_obk(),
+            caller_pota(),
+        )
+        .expect("ResiliencyState::new should succeed");
         assert_eq!(state.restore_epoch, 0);
     }
 
     #[test]
     fn resiliency_state_caches_credentials() {
         let creds = test_creds();
-        let state = ResiliencyState::new(mock_config(true), test_api_rev(), creds, caller_obk(), caller_pota())
-            .expect("ResiliencyState::new should succeed");
+        let state = ResiliencyState::new(
+            mock_config(true),
+            test_api_rev(),
+            creds,
+            caller_obk(),
+            caller_pota(),
+        )
+        .expect("ResiliencyState::new should succeed");
         assert_eq!(state.cached_credentials, creds);
     }
 
     #[test]
     fn resiliency_state_caches_obk_config() {
         let obk = caller_obk();
-        let state =
-            ResiliencyState::new(mock_config(true), test_api_rev(), test_creds(), obk.clone(), caller_pota())
-                .expect("ResiliencyState::new should succeed");
+        let state = ResiliencyState::new(
+            mock_config(true),
+            test_api_rev(),
+            test_creds(),
+            obk.clone(),
+            caller_pota(),
+        )
+        .expect("ResiliencyState::new should succeed");
         assert_eq!(
             state.cached_obk_config.key_source(),
             HsmOwnerBackupKeySource::Caller
@@ -827,9 +843,14 @@ mod tests {
     #[test]
     fn resiliency_state_caches_pota_endorsement() {
         let pota = caller_pota();
-        let state =
-            ResiliencyState::new(mock_config(true), test_api_rev(), test_creds(), caller_obk(), pota.clone())
-                .expect("ResiliencyState::new should succeed");
+        let state = ResiliencyState::new(
+            mock_config(true),
+            test_api_rev(),
+            test_creds(),
+            caller_obk(),
+            pota.clone(),
+        )
+        .expect("ResiliencyState::new should succeed");
         assert_eq!(
             state.cached_pota_endorsement.source(),
             HsmPotaEndorsementSource::Caller
