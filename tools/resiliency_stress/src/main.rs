@@ -576,6 +576,15 @@ fn open_and_init_partition(
         }
     }
 
+    /// OBK provider callback for resiliency restore.
+    /// Returns the hardcoded test OBK.
+    struct StressObkCallback;
+    impl ObkProviderCallback for StressObkCallback {
+        fn get_obk(&self) -> HsmResult<Vec<u8>> {
+            Ok(TEST_OBK.to_vec())
+        }
+    }
+
     let resiliency_config = if enable_resiliency {
         let storage_path = storage_dir.unwrap_or_else(|| {
             let dir = std::env::temp_dir().join(format!("azihsm_stress_{}", std::process::id()));
@@ -596,12 +605,20 @@ fn open_and_init_partition(
             None
         };
 
+        // OBK callback is only needed for Caller source (not TPM).
+        let obk_callback: Option<Box<dyn ObkProviderCallback>> = if !use_tpm {
+            Some(Box::new(StressObkCallback))
+        } else {
+            None
+        };
+
         Some(HsmResiliencyConfig {
             storage: Box::new(FileStorage {
                 dir: storage_path.clone(),
             }),
             lock: Arc::new(FileLock::new(storage_path.join(".lock"))),
             pota_callback,
+            obk_callback,
         })
     } else {
         None

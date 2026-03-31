@@ -255,6 +255,26 @@ static azihsm_status pota_endorse(
     return AZIHSM_STATUS_SUCCESS;
 }
 
+// Dummy OBK provider callback
+static constexpr uint32_t DUMMY_OBK_SIZE = 32;
+
+static azihsm_status obk_get_obk(
+    void * /*ctx*/,
+    azihsm_buffer *obk)
+{
+    // First call: report required size.
+    if (obk->ptr == nullptr || obk->len < DUMMY_OBK_SIZE)
+    {
+        obk->len = DUMMY_OBK_SIZE;
+        return AZIHSM_STATUS_BUFFER_TOO_SMALL;
+    }
+
+    // Second call: fill buffer with dummy OBK.
+    std::memset(obk->ptr, 0x03, DUMMY_OBK_SIZE);
+    obk->len = DUMMY_OBK_SIZE;
+    return AZIHSM_STATUS_SUCCESS;
+}
+
 // Helper: compute lock file path
 
 static void open_lock_file(ResiliencyTestCtx &ctx)
@@ -289,6 +309,7 @@ void make_resiliency_config_in(
     bool is_tpm = (std::getenv("AZIHSM_USE_TPM") != nullptr);
 #endif
     config_out.pota_callback_ops = is_tpm ? nullptr : get_pota_callback_ops();
+    config_out.obk_callback_ops = is_tpm ? nullptr : get_obk_callback_ops();
 }
 
 /// Returns a pointer to the shared POTA callback ops vtable backed by
@@ -297,6 +318,14 @@ const azihsm_pota_callback_ops *get_pota_callback_ops()
 {
     static azihsm_pota_callback_ops pota_ops = {pota_endorse};
     return &pota_ops;
+}
+
+/// Returns a pointer to the shared OBK callback ops vtable backed by
+/// `obk_get_obk`. The returned pointer has static lifetime.
+const azihsm_obk_callback_ops *get_obk_callback_ops()
+{
+    static azihsm_obk_callback_ops obk_ops = {obk_get_obk};
+    return &obk_ops;
 }
 
 std::unique_ptr<ResiliencyTestCtx> make_resiliency_config(

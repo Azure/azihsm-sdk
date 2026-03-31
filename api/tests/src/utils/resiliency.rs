@@ -46,7 +46,7 @@ use parking_lot::Mutex;
 
 use crate::utils::partition::*;
 
-/// Returns the BK3-related DDI op used by `init_part` / `restore_partition`:
+/// Returns the OBK-related DDI op used by `init_part` / `restore_partition`:
 /// `GetSealedBk3` on the TPM path, `InitBk3` on the Caller path.
 #[cfg(feature = "res-test")]
 pub(crate) fn bk3_op() -> DdiOp {
@@ -213,6 +213,18 @@ impl PotaEndorsementCallback for TestPotaCallback {
     }
 }
 
+/// Test OBK callback that returns the hardcoded test OBK.
+///
+/// Used in integration tests when OBK source is `Caller` to supply
+/// OBK on demand during restore, without caching it in the SDK.
+struct TestObkCallback;
+
+impl ObkProviderCallback for TestObkCallback {
+    fn get_obk(&self) -> HsmResult<Vec<u8>> {
+        Ok(super::partition::TEST_OBK.to_vec())
+    }
+}
+
 /// RAII context that owns the resiliency test directory.
 ///
 /// Create this once in test setup (before spawning threads or
@@ -271,12 +283,21 @@ pub(crate) fn make_resiliency_config_in(dir: &Path, part: &HsmPartition) -> HsmR
         Some(Box::new(TestPotaCallback { path: part.path() }))
     };
 
+    // OBK callback follows the same pattern as POTA: needed for Caller
+    // source, must be None for TPM source.
+    let obk_callback: Option<Box<dyn ObkProviderCallback>> = if use_tpm() {
+        None
+    } else {
+        Some(Box::new(TestObkCallback))
+    };
+
     HsmResiliencyConfig {
         storage: Box::new(FileStorage {
             dir: dir.to_path_buf(),
         }),
         lock: Arc::new(FileLock::new(lock_path)),
         pota_callback,
+        obk_callback,
     }
 }
 
@@ -317,6 +338,13 @@ mod tests {
         }
     }
 
+    struct DummyObkCallback;
+    impl ObkProviderCallback for DummyObkCallback {
+        fn get_obk(&self) -> HsmResult<Vec<u8>> {
+            Ok(vec![3u8; 32])
+        }
+    }
+
     /// Build a resiliency config for unit tests that exercise storage
     /// and locking without interacting with a partition. Uses
     /// [`DummyPotaCallback`] since the POTA callback is not exercised.
@@ -329,6 +357,7 @@ mod tests {
             }),
             lock: Arc::new(FileLock::new(lock_path)),
             pota_callback: Some(Box::new(DummyPotaCallback)),
+            obk_callback: Some(Box::new(DummyObkCallback)),
         }
     }
 
