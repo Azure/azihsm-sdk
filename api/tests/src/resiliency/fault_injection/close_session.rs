@@ -164,8 +164,7 @@ fn test_close_session_does_not_panic_after_reset() {
     )
     .expect("Partition re-init after reset should succeed");
 
-    let rev = part.api_rev_range().max();
-    let result = part.open_session(rev, &creds, None);
+    let result = part.open_session(api_rev, &creds, None);
     assert!(
         result.is_ok(),
         "Partition should be usable after close_session swallows a reset, \

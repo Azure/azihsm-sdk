@@ -162,6 +162,10 @@ const LABELS: [&str; 26] = [
 /// Number of per-op counter slots.
 const NUM_OPS: usize = LABELS.len();
 
+/// Fixed API revision verified for use with the stress tool.
+/// Pinned to avoid hitting unsupported versions on newer firmware.
+const STRESS_AZIHSM_API_REV: HsmApiRev = HsmApiRev { major: 1, minor: 0 };
+
 /// Per-process stats stored in shared memory.
 ///
 /// Uses `repr(C)` to ensure deterministic layout across processes.
@@ -611,16 +615,22 @@ fn open_and_init_partition(
         None
     };
 
-    //read api version for part init, use max version.
-    let api_rev = part.api_rev_range().max();
-    part.init(api_rev, creds, None, None, obk, pota, resiliency_config)
-        .expect("Failed to init partition");
+    part.init(
+        STRESS_AZIHSM_API_REV,
+        creds,
+        None,
+        None,
+        obk,
+        pota,
+        resiliency_config,
+    )
+    .expect("Failed to init partition");
 
     (part, creds)
 }
 
 fn open_session(part: &HsmPartition, creds: &HsmCredentials) -> HsmSession {
-    part.open_session(part.api_rev_range().max(), creds, None)
+    part.open_session(STRESS_AZIHSM_API_REV, creds, None)
         .expect("Failed to open session")
 }
 

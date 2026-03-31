@@ -137,7 +137,7 @@ fn init_without_resiliency() -> (HsmPartition, HsmCredentials) {
 fn test_open_session_recovers_from_get_session_key_single_fault() {
     for error in &super::all_test_errors() {
         let (part, creds, _ctx) = init_with_resiliency();
-        let rev = part.api_rev_range().max();
+        let rev = test_api_rev(&part);
         let before = op_call_count(DdiOp::GetSessionEncryptionKey);
 
         inject_fault(FaultRule::fail_nth(
@@ -176,7 +176,7 @@ fn test_open_session_recovers_from_get_session_key_single_fault() {
 fn test_open_session_recovers_from_open_session_single_fault() {
     for error in &super::all_test_errors() {
         let (part, creds, _ctx) = init_with_resiliency();
-        let rev = part.api_rev_range().max();
+        let rev = test_api_rev(&part);
         let before = op_call_count(DdiOp::OpenSession);
 
         inject_fault(FaultRule::fail_nth(DdiOp::OpenSession, 1, *error));
@@ -211,7 +211,7 @@ fn test_open_session_recovers_from_open_session_single_fault() {
 fn test_open_session_recovers_from_get_session_key_last_retry() {
     for error in &super::all_test_errors() {
         let (part, creds, _ctx) = init_with_resiliency();
-        let rev = part.api_rev_range().max();
+        let rev = test_api_rev(&part);
         let before = op_call_count(DdiOp::GetSessionEncryptionKey);
 
         inject_fault(FaultRule::fail_next(
