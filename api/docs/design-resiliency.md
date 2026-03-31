@@ -86,7 +86,7 @@ pub struct HsmResiliencyConfig {
   initialized or restored — the partition's RwLock is held during the
   callback. The SDK retrieves the device's PID public key and
   PID certificate chain (PEM-encoded) and passes them as the
-  `pid_pub_key` and `pid_cert_chain` parameters, so the implementation
+  `pid_pub_key_der` and `pid_cert_chain_pem` parameters, so the implementation
   only needs to sign the provided key.
 - Called under the resiliency lock, so it should not block
   indefinitely.
@@ -547,10 +547,10 @@ When POTA source is `Caller` and resiliency is enabled:
    since the device state may have changed.
 
 The callback implementation must:
-1. Sign the `pid_pub_key` (provided by the SDK) with the caller's
+1. Sign the `pid_pub_key_der` (provided by the SDK) with the caller's
    private key
 2. Return the (signature, signer_public_key) pair
-3. Optionally validate the device using `pid_cert_chain`
+3. Optionally validate the device using `pid_cert_chain_pem`
 
 ## MUK Persistence
 

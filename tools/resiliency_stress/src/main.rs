@@ -476,8 +476,8 @@ fn open_and_init_partition(
             HsmPotaEndorsement::new(HsmPotaEndorsementSource::Tpm, None),
         )
     } else {
-        let pid_pub_key = part.pub_key().expect("Failed to get PID public key");
-        let (sig, pubkey_der) = generate_pota_endorsement(&pid_pub_key);
+        let pid_pub_key_der = part.pub_key().expect("Failed to get PID public key");
+        let (sig, pubkey_der) = generate_pota_endorsement(&pid_pub_key_der);
         (
             HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Caller, Some(&TEST_OBK)),
             HsmPotaEndorsement::new(
@@ -571,11 +571,11 @@ fn open_and_init_partition(
     impl PotaEndorsementCallback for StressPotaCallback {
         fn endorse(
             &self,
-            _pota_pub_key: &[u8],
-            pid_pub_key: &[u8],
-            _pid_cert_chain: &[u8],
+            _pota_pub_key_der: &[u8],
+            pid_pub_key_der: &[u8],
+            _pid_cert_chain_pem: &[u8],
         ) -> HsmResult<HsmPotaEndorsementData> {
-            let (sig, pubkey_der) = generate_pota_endorsement(pid_pub_key);
+            let (sig, pubkey_der) = generate_pota_endorsement(pid_pub_key_der);
             Ok(HsmPotaEndorsementData::new(&sig, &pubkey_der))
         }
     }

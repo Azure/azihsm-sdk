@@ -14,9 +14,9 @@ struct DummyPotaCallback;
 impl PotaEndorsementCallback for DummyPotaCallback {
     fn endorse(
         &self,
-        _pota_pub_key: &[u8],
-        _pid_pub_key: &[u8],
-        _pid_cert_chain: &[u8],
+        _pota_pub_key_der: &[u8],
+        _pid_pub_key_der: &[u8],
+        _pid_cert_chain_pem: &[u8],
     ) -> HsmResult<HsmPotaEndorsementData> {
         // Use non-trivial byte pattern for signature and the real test
         // public key so that any endianness or byte-order issues are caught.

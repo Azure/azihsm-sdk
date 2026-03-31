@@ -101,11 +101,11 @@ pub trait ResiliencyLock: Send + Sync {
 /// impl PotaEndorsementCallback for MyPotaCallback {
 ///     fn endorse(
 ///         &self,
-///         _pota_pub_key: &[u8],
-///         pid_pub_key: &[u8],
-///         _pid_cert_chain: &[u8],
+///         _pota_pub_key_der: &[u8],
+///         pid_pub_key_der: &[u8],
+///         _pid_cert_chain_pem: &[u8],
 ///     ) -> HsmResult<HsmPotaEndorsementData> {
-///         let (sig, signer_pub_key) = sign_pid_key(pid_pub_key);
+///         let (sig, signer_pub_key) = sign_pid_key(pid_pub_key_der);
 ///         Ok(HsmPotaEndorsementData::new(&sig, &signer_pub_key))
 ///     }
 /// }
@@ -115,20 +115,20 @@ pub trait PotaEndorsementCallback: Send + Sync {
     ///
     /// # Arguments
     ///
-    /// * `pota_pub_key` — the caller's original POTA endorsement public
+    /// * `pota_pub_key_der` — the caller's original POTA endorsement public
     ///   key, passed for identification.
-    /// * `pid_pub_key` — the current device's PID certificate public key
+    /// * `pid_pub_key_der` — the current device's PID certificate public key
     ///   (DER-encoded), retrieved by the SDK.
-    /// * `pid_cert_chain` — the device's PID certificate chain
+    /// * `pid_cert_chain_pem` — the device's PID certificate chain
     ///   (PEM-encoded), retrieved by the SDK.
     ///
-    /// The implementation must sign `pid_pub_key` with the caller's
+    /// The implementation must sign `pid_pub_key_der` with the caller's
     /// private key and return the signature and the signer's public key.
     fn endorse(
         &self,
-        pota_pub_key: &[u8],
-        pid_pub_key: &[u8],
-        pid_cert_chain: &[u8],
+        pota_pub_key_der: &[u8],
+        pid_pub_key_der: &[u8],
+        pid_cert_chain_pem: &[u8],
     ) -> HsmResult<HsmPotaEndorsementData>;
 }
 
@@ -707,9 +707,9 @@ mod tests {
     impl PotaEndorsementCallback for MockPotaCallback {
         fn endorse(
             &self,
-            _pota_pub_key: &[u8],
-            _pid_pub_key: &[u8],
-            _pid_cert_chain: &[u8],
+            _pota_pub_key_der: &[u8],
+            _pid_pub_key_der: &[u8],
+            _pid_cert_chain_pem: &[u8],
         ) -> HsmResult<HsmPotaEndorsementData> {
             Ok(HsmPotaEndorsementData::new(&[0u8; 96], &[0u8; 120]))
         }

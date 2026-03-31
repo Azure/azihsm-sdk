@@ -92,9 +92,9 @@ pub struct AzihsmResiliencyLockOps {
 pub struct AzihsmPotaCallbackOps {
     pub endorse: unsafe extern "C" fn(
         ctx: *mut c_void,
-        pota_pub_key: *const AzihsmBuffer,
-        pid_pub_key: *const AzihsmBuffer,
-        pid_cert_chain: *const AzihsmBuffer,
+        pota_pub_key_der: *const AzihsmBuffer,
+        pid_pub_key_der: *const AzihsmBuffer,
+        pid_cert_chain_pem: *const AzihsmBuffer,
         signature: *mut AzihsmBuffer,
         endorsement_pub_key: *mut AzihsmBuffer,
     ) -> AzihsmStatus,
@@ -281,23 +281,23 @@ impl api::PotaEndorsementCallback for PotaCallbackAdapter {
     #[allow(unsafe_code)]
     fn endorse(
         &self,
-        pota_pub_key: &[u8],
-        pid_pub_key: &[u8],
-        pid_cert_chain: &[u8],
+        pota_pub_key_der: &[u8],
+        pid_pub_key_der: &[u8],
+        pid_cert_chain_pem: &[u8],
     ) -> api::HsmResult<api::HsmPotaEndorsementData> {
         // Cast to *mut is safe: the C callback receives these via *const AzihsmBuffer
         // so it will not write through these pointers.
         let pota_pk_buf = AzihsmBuffer {
-            ptr: pota_pub_key.as_ptr() as *mut c_void,
-            len: pota_pub_key.len() as u32,
+            ptr: pota_pub_key_der.as_ptr() as *mut c_void,
+            len: pota_pub_key_der.len() as u32,
         };
         let pid_pk_buf = AzihsmBuffer {
-            ptr: pid_pub_key.as_ptr() as *mut c_void,
-            len: pid_pub_key.len() as u32,
+            ptr: pid_pub_key_der.as_ptr() as *mut c_void,
+            len: pid_pub_key_der.len() as u32,
         };
         let pid_chain_buf = AzihsmBuffer {
-            ptr: pid_cert_chain.as_ptr() as *mut c_void,
-            len: pid_cert_chain.len() as u32,
+            ptr: pid_cert_chain_pem.as_ptr() as *mut c_void,
+            len: pid_cert_chain_pem.len() as u32,
         };
 
         // First call: query required output sizes

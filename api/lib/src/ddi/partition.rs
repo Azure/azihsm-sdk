@@ -189,14 +189,14 @@ fn get_pota_endorsement(
 pub(crate) fn invoke_pota_callback(
     callback: &dyn PotaEndorsementCallback,
     pota_endorsement: &HsmPotaEndorsement,
-    pid_pub_key: &[u8],
-    pid_cert_chain: &[u8],
+    pid_pub_key_der: &[u8],
+    pid_cert_chain_pem: &[u8],
 ) -> HsmResult<HsmPotaEndorsementData> {
-    let pota_pub_key = pota_endorsement
+    let pota_pub_key_der = pota_endorsement
         .endorsement()
         .map(|d| d.pub_key())
         .unwrap_or(&[]);
-    callback.endorse(pota_pub_key, pid_pub_key, pid_cert_chain)
+    callback.endorse(pota_pub_key_der, pid_pub_key_der, pid_cert_chain_pem)
 }
 
 /// Initializes an HSM partition with credentials and master keys.

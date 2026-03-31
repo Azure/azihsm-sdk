@@ -177,20 +177,20 @@ impl ResiliencyLock for FileLock {
 /// partition's certificate and signs it using the hardcoded test
 /// ECC P-384 key pair (same as [`super::partition::generate_pota_endorsement`]).
 ///
-/// The `pota_pub_key` parameter (caller's original endorsement key) is
+/// The `pota_pub_key_der` parameter (caller's original endorsement key) is
 /// ignored — this callback always re-derives the endorsement from the
-/// provided `pid_pub_key`.
+/// provided `pid_pub_key_der`.
 struct TestPotaCallback;
 
 impl PotaEndorsementCallback for TestPotaCallback {
     fn endorse(
         &self,
-        _pota_pub_key: &[u8],
-        pid_pub_key: &[u8],
-        _pid_cert_chain: &[u8],
+        _pota_pub_key_der: &[u8],
+        pid_pub_key_der: &[u8],
+        _pid_cert_chain_pem: &[u8],
     ) -> HsmResult<HsmPotaEndorsementData> {
         let pub_key_obj =
-            DerEccPublicKey::from_der(pid_pub_key).map_err(|_| HsmError::InternalError)?;
+            DerEccPublicKey::from_der(pid_pub_key_der).map_err(|_| HsmError::InternalError)?;
         let mut uncompressed = vec![0x04u8];
         uncompressed.extend_from_slice(pub_key_obj.x());
         uncompressed.extend_from_slice(pub_key_obj.y());
@@ -305,9 +305,9 @@ mod tests {
     impl PotaEndorsementCallback for DummyPotaCallback {
         fn endorse(
             &self,
-            _pota_pub_key: &[u8],
-            _pid_pub_key: &[u8],
-            _pid_cert_chain: &[u8],
+            _pota_pub_key_der: &[u8],
+            _pid_pub_key_der: &[u8],
+            _pid_cert_chain_pem: &[u8],
         ) -> HsmResult<HsmPotaEndorsementData> {
             // Use non-trivial byte pattern for signature and the real test
             // public key so that any endianness or byte-order issues are caught.
