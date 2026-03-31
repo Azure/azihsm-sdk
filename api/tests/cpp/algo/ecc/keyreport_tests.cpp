@@ -61,7 +61,8 @@ TEST_F(azihsm_ecc_keyattest, attest_key_all_curves)
             std::vector<uint8_t> report;
             azihsm_buffer report_buf{ nullptr, 0 };
 
-            auto attest_err = azihsm_generate_key_report(priv_key.get(), &report_data_buf, &report_buf);
+            auto attest_err =
+                azihsm_generate_key_report(priv_key.get(), &report_data_buf, &report_buf);
             ASSERT_EQ(attest_err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
             ASSERT_GT(report_buf.len, 0);
 

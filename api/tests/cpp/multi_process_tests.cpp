@@ -174,7 +174,7 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_parent)
         azihsm_credentials creds{};
         std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
         std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
-        
+
         // Reset partition before initialization to clear any previous state
         auto reset_err = azihsm_part_reset(part_handle);
         ASSERT_EQ(reset_err, AZIHSM_STATUS_SUCCESS);
@@ -255,8 +255,7 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_parent)
             init_config.backup_config.owner_backup_key->ptr != nullptr &&
             init_config.backup_config.owner_backup_key->len > 0)
         {
-            auto *obk_ptr =
-                static_cast<uint8_t *>(init_config.backup_config.owner_backup_key->ptr);
+            auto *obk_ptr = static_cast<uint8_t *>(init_config.backup_config.owner_backup_key->ptr);
             write_blob(
                 out,
                 std::vector<uint8_t>(

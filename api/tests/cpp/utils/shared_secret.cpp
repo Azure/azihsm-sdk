@@ -39,8 +39,7 @@ azihsm_status generate_ec_key_pair_for_derive(
     pub_props.push_back(
         { .id = AZIHSM_KEY_PROP_ID_CLASS, .val = &pub_key_class, .len = sizeof(pub_key_class) }
     );
-    pub_props.push_back(
-        { .id = AZIHSM_KEY_PROP_ID_KIND, .val = &key_kind, .len = sizeof(key_kind) }
+    pub_props.push_back({ .id = AZIHSM_KEY_PROP_ID_KIND, .val = &key_kind, .len = sizeof(key_kind) }
     );
     pub_props.push_back({ .id = AZIHSM_KEY_PROP_ID_EC_CURVE, .val = &curve, .len = sizeof(curve) });
     pub_props.push_back(
@@ -57,8 +56,7 @@ azihsm_status generate_ec_key_pair_for_derive(
     priv_props.push_back(
         { .id = AZIHSM_KEY_PROP_ID_KIND, .val = &key_kind, .len = sizeof(key_kind) }
     );
-    priv_props.push_back(
-        { .id = AZIHSM_KEY_PROP_ID_EC_CURVE, .val = &curve, .len = sizeof(curve) }
+    priv_props.push_back({ .id = AZIHSM_KEY_PROP_ID_EC_CURVE, .val = &curve, .len = sizeof(curve) }
     );
     priv_props.push_back(
         { .id = AZIHSM_KEY_PROP_ID_DERIVE, .val = &derive_prop, .len = sizeof(derive_prop) }
@@ -140,8 +138,7 @@ azihsm_status derive_shared_secret_via_ecdh(
     );
 
     azihsm_key_prop_list secret_prop_list = { .props = secret_props.data(),
-                                              .count =
-                                                  static_cast<uint32_t>(secret_props.size()) };
+                                              .count = static_cast<uint32_t>(secret_props.size()) };
 
     return azihsm_key_derive(
         session_handle,

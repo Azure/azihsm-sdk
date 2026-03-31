@@ -1,8 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-#include <azihsm_api.h>
 #include <algorithm>
+#include <azihsm_api.h>
 #include <cstring>
 #include <gtest/gtest.h>
 #include <string>
@@ -21,7 +21,8 @@ class azihsm_ecc_keyunwrap_semantic : public ::testing::Test
     PartitionListHandle part_list_ = PartitionListHandle{};
 };
 
-// ==================== key_unwrap_pair: Cross-Argument Wrapped Payload Semantics ====================
+// ==================== key_unwrap_pair: Cross-Argument Wrapped Payload Semantics
+// ====================
 
 // ----- Cross-Argument Wrapped Payload Semantics -----
 
@@ -85,7 +86,10 @@ TEST_F(azihsm_ecc_keyunwrap_semantic, unwrap_pair_rejects_minimal_one_byte_blob)
 }
 
 // Verifies unwrap rejects wrapped payloads that encode a single key instead of a key pair.
-TEST_F(azihsm_ecc_keyunwrap_semantic, unwrap_pair_rejects_wrapped_single_key_payload_for_pair_unwrap)
+TEST_F(
+    azihsm_ecc_keyunwrap_semantic,
+    unwrap_pair_rejects_wrapped_single_key_payload_for_pair_unwrap
+)
 {
     part_list_.for_each_session([](azihsm_handle session) {
         auto_key rsa_unwrap_priv_key;
@@ -128,7 +132,8 @@ TEST_F(azihsm_ecc_keyunwrap_semantic, unwrap_pair_rejects_wrapped_single_key_pay
             { AZIHSM_KEY_PROP_ID_ENCRYPT, &can_encrypt, sizeof(can_encrypt) },
             { AZIHSM_KEY_PROP_ID_DECRYPT, &can_decrypt, sizeof(can_decrypt) }
         };
-        azihsm_key_prop_list aes_prop_list{ aes_props.data(), static_cast<uint32_t>(aes_props.size()) };
+        azihsm_key_prop_list aes_prop_list{ aes_props.data(),
+                                            static_cast<uint32_t>(aes_props.size()) };
 
         azihsm_buffer wrapped_key_buf{};
         wrapped_key_buf.ptr = wrapped_blob.data();
@@ -145,7 +150,8 @@ TEST_F(azihsm_ecc_keyunwrap_semantic, unwrap_pair_rejects_wrapped_single_key_pay
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_NE(single_key.get(), 0);
 
-        // Step 3: key_unwrap_pair should reject the same bytes because pair-shaped content is required.
+        // Step 3: key_unwrap_pair should reject the same bytes because pair-shaped content is
+        // required.
         DefaultEccPrivKeyProps priv_props;
         DefaultEccPubKeyProps pub_props;
         auto priv_prop_list = priv_props.get_prop_list();
@@ -169,7 +175,8 @@ TEST_F(azihsm_ecc_keyunwrap_semantic, unwrap_pair_rejects_blob_wrapped_by_differ
 {
     if (part_list_.count() < 2u)
     {
-        GTEST_SKIP() << "requires at least two partitions to guarantee distinct wrapping-key contexts";
+        GTEST_SKIP(
+        ) << "requires at least two partitions to guarantee distinct wrapping-key contexts";
     }
 
     auto source_path = part_list_.get_path(0);
@@ -242,7 +249,8 @@ TEST_F(azihsm_ecc_keyunwrap_semantic, unwrap_pair_preserves_input_wrapped_blob_o
         UnwrapPairContext ctx;
         ASSERT_EQ(UnwrapPairContext::create(session, ctx), AZIHSM_STATUS_SUCCESS);
 
-        // Deliberately malformed/truncated test payload used only to verify failure-path immutability.
+        // Deliberately malformed/truncated test payload used only to verify failure-path
+        // immutability.
         std::vector<uint8_t> wrapped_data = make_deterministic_payload(0x01, 0x01, 5);
         const auto before = wrapped_data;
 
@@ -303,7 +311,8 @@ TEST_F(azihsm_ecc_keyunwrap_semantic, unwrap_pair_rejects_wrapped_content_kind_m
         UnwrapPairContext ctx;
         ASSERT_EQ(UnwrapPairContext::create(session, ctx), AZIHSM_STATUS_SUCCESS);
 
-        // Wrap arbitrary non-ECC payload; pair unwrap should reject because content is not ECC-pair shaped.
+        // Wrap arbitrary non-ECC payload; pair unwrap should reject because content is not ECC-pair
+        // shaped.
         const auto non_ecc_payload = make_deterministic_payload(0x01, 0x02, 16);
 
         std::vector<uint8_t> wrapped_blob;

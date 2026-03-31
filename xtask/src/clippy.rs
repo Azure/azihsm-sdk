@@ -36,7 +36,6 @@ impl Xtask for Clippy {
 
         let mut exclude_args: Vec<String> = Vec::new();
         if !self.exclude.is_empty() {
-            exclude_args.push("--workspace".to_string());
             for crate_name in &self.exclude {
                 exclude_args.push("--exclude".to_string());
                 exclude_args.push(crate_name.clone());
@@ -45,7 +44,7 @@ impl Xtask for Clippy {
 
         cmd!(
             sh,
-            "cargo {rust_toolchain...} clippy --all-targets {exclude_args...} -- -D warnings"
+            "cargo {rust_toolchain...} clippy --workspace --all-targets {exclude_args...} -- -D warnings"
         )
         .quiet()
         .run()?;

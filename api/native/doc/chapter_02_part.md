@@ -220,13 +220,15 @@ azihsm_status azihsm_part_init(
 
 When `resiliency_config` is non-NULL, the SDK enables automatic retry and recovery for transient hardware resets. The caller provides storage, lock, and (optionally) POTA re-endorsement callbacks. If POTA endorsement source is `AZIHSM_POTA_ENDORSEMENT_SOURCE_CALLER`, `pota_callback_ops` must be non-NULL. If source is `AZIHSM_POTA_ENDORSEMENT_SOURCE_TPM`, `pota_callback_ops` must be NULL. Passing NULL for `resiliency_config` disables resiliency.
 
-> **POTA callback deadlock hazard:** The POTA `endorse` callback is
-> invoked while the partition's internal lock is held. The callback
-> **must not** use the same `azihsm_handle` that was passed to
-> `azihsm_part_init`. Instead, the caller should store the device path
-> (from `azihsm_part_get_prop`) and open a **separate** partition handle
-> inside the callback to retrieve the device's PID public key for
-> signing. See [`azihsm_pota_callback_ops`](#azihsm_pota_callback_ops)
+> **POTA callback:** The POTA `endorse` callback is
+> invoked during resiliency recovery. The SDK retrieves the device's
+> PID public key and certificate chain and passes them to the callback,
+> so the implementation only needs to sign the provided key — it does
+> not need to query the device. The callback is invoked while the
+> partition's internal lock is held; its implementation must not call
+> AZIHSM APIs on the same `azihsm_handle` being initialized or
+> restored, to avoid deadlock.
+> See [`azihsm_pota_callback_ops`](#azihsm_pota_callback_ops)
 > for details.
 
 **Returns**

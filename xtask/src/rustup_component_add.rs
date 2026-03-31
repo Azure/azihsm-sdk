@@ -21,7 +21,7 @@ pub struct RustupComponentAdd {
     #[clap(long)]
     pub component: String,
 
-    /// Override toolchain to use for formatting
+    /// Override toolchain
     #[clap(long)]
     pub toolchain: Option<String>,
 }
