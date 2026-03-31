@@ -536,7 +536,10 @@ pub(crate) fn execute_open_session_with_retry<T>(
 
     while is_open_session_retryable_error(&result) && attempt < max_retries {
         apply_backoff(attempt, backoff_base_ms, BACKOFF_JITTER_MS);
-        let _ = partition.restore_partition();
+        if partition.restore_partition().is_err() {
+            attempt += 1;
+            continue;
+        }
         result = operation();
         attempt += 1;
     }

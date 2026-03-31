@@ -617,20 +617,63 @@ pub fn resiliency_cert_chain(attr: TokenStream, item: TokenStream) -> TokenStrea
         Err(e) => return e.write_errors().into(),
     };
 
-    let partition_ident = syn::Ident::new(&args.partition, proc_macro2::Span::call_site());
-
-    let full_args = RetryArgs {
-        predicate: syn::parse_str("crate::resiliency::is_cert_chain_retryable_error")
-            .expect("hardcoded predicate path must parse"),
-        max_retries: args.max_retries,
-        backoff_base_ms: args.backoff_base_ms,
-        backoff_jitter_ms: args.backoff_jitter_ms,
-        condition: Some(format!("{partition_ident}.resiliency_enabled()")),
-    };
-
-    expand_retry(full_args, item)
+    expand_retry_cert_chain(args, item)
         .unwrap_or_else(|err| err.to_compile_error())
         .into()
+}
+
+fn expand_retry_cert_chain(
+    args: RetryCertChainArgs,
+    item: ItemFn,
+) -> syn::Result<proc_macro2::TokenStream> {
+    validate_retry_fn(&item)?;
+
+    let vis = &item.vis;
+    let attrs = &item.attrs;
+    let body = &item.block;
+    let fn_name = &item.sig.ident;
+    let inner_name = syn::Ident::new(&format!("__res_{fn_name}"), fn_name.span());
+    let partition_ident = syn::Ident::new(&args.partition, proc_macro2::Span::call_site());
+
+    let max_retries =
+        optional_or_default(args.max_retries, quote! { crate::resiliency::MAX_RETRIES });
+    let backoff_base_ms = optional_or_default(
+        args.backoff_base_ms,
+        quote! { crate::resiliency::BACKOFF_BASE_MS },
+    );
+    let backoff_jitter_ms = optional_or_default(
+        args.backoff_jitter_ms,
+        quote! { crate::resiliency::BACKOFF_JITTER_MS },
+    );
+
+    // Build the inner function with the original params and return type.
+    let inner_generics = &item.sig.generics;
+    let inner_params = &item.sig.inputs;
+    let inner_ret = &item.sig.output;
+
+    // Build call arguments for forwarding to the inner function.
+    let skip = [args.partition.as_str()];
+    let (mut_sig, call_args, retry_call_args) = build_inner_fn_call_args(&item.sig, &skip);
+
+    Ok(quote! {
+        fn #inner_name #inner_generics (#inner_params) #inner_ret
+            #body
+
+        #(#attrs)*
+        #vis #mut_sig {
+            if !#partition_ident.resiliency_enabled() {
+                #inner_name(#call_args)
+            } else {
+                crate::resiliency::execute_with_backoff(
+                    |__prev_error: Option<&crate::HsmError>| #inner_name(#retry_call_args),
+                    crate::resiliency::is_cert_chain_retryable_error,
+                    #max_retries,
+                    #backoff_base_ms,
+                    #backoff_jitter_ms,
+                )
+            }
+        }
+    })
 }
 
 /// Parsed attribute arguments for `#[resiliency_key_op(...)]`.
