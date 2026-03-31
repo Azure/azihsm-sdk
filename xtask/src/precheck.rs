@@ -15,6 +15,8 @@ use crate::copyright::Copyright;
 use crate::coverage::Coverage;
 use crate::coverage_report::CoverageReport;
 use crate::fmt::Fmt;
+#[cfg(target_os = "linux")]
+use crate::integration_tests;
 use crate::nextest::Nextest;
 use crate::nextest_report::NextestReport;
 use crate::setup::Setup;
@@ -211,6 +213,10 @@ impl Xtask for Precheck {
                         exclude: self.exclude.clone(),
                     }
                     .run(ctx.clone())?;
+
+                    // OSSL Provider integration tests (CLI + C API, Linux only)
+                    #[cfg(target_os = "linux")]
+                    integration_tests::IntegrationTest {}.run(ctx.clone())?;
                 }
             } else {
                 Nextest {
