@@ -16,9 +16,7 @@
 //! - `ctx` **must not** contain or reference the same partition handle
 //!   (`azihsm_handle`) that is being initialized — callbacks are invoked
 //!   while the partition's internal lock is held, so calling back into the
-//!   same partition will deadlock. If a callback needs to query the device
-//!   (e.g., retrieve the PID public key), store the device **path** in
-//!   `ctx` and open a separate partition handle inside the callback.
+//!   same partition will deadlock.
 //! - All callbacks must be thread-safe — they may be called concurrently
 //!   from multiple threads.
 
@@ -85,15 +83,18 @@ pub struct AzihsmResiliencyLockOps {
 
 /// POTA endorsement callback.
 ///
-/// The `endorse` callback re-endorses the public key with the caller's OBKE
-/// private key. Uses the two-call buffer pattern: first call with null/zero
-/// output buffers to query sizes, second call to fill them.
+/// The `endorse` callback re-endorses the device's PID certificate public
+/// key with the caller's POTA private key. Uses the two-call buffer pattern:
+/// first call with null/zero output buffers to query sizes, second call to
+/// fill them.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct AzihsmPotaCallbackOps {
     pub endorse: unsafe extern "C" fn(
         ctx: *mut c_void,
-        pub_key: *const AzihsmBuffer,
+        pota_pub_key_der: *const AzihsmBuffer,
+        pid_pub_key_der: *const AzihsmBuffer,
+        pid_cert_chain_pem: *const AzihsmBuffer,
         signature: *mut AzihsmBuffer,
         endorsement_pub_key: *mut AzihsmBuffer,
     ) -> AzihsmStatus,
@@ -278,12 +279,25 @@ impl api::ResiliencyLock for ResiliencyLockAdapter {
 
 impl api::PotaEndorsementCallback for PotaCallbackAdapter {
     #[allow(unsafe_code)]
-    fn endorse(&self, pub_key: &[u8]) -> api::HsmResult<api::HsmPotaEndorsementData> {
-        // Cast to *mut is safe: the C callback receives this via *const AzihsmBuffer
-        // so it will not write through this pointer.
-        let pk_input_buf = AzihsmBuffer {
-            ptr: pub_key.as_ptr() as *mut c_void,
-            len: pub_key.len() as u32,
+    fn endorse(
+        &self,
+        pota_pub_key_der: &[u8],
+        pid_pub_key_der: &[u8],
+        pid_cert_chain_pem: &[u8],
+    ) -> api::HsmResult<api::HsmPotaEndorsementData> {
+        // Cast to *mut is safe: the C callback receives these via *const AzihsmBuffer
+        // so it will not write through these pointers.
+        let pota_pk_buf = AzihsmBuffer {
+            ptr: pota_pub_key_der.as_ptr() as *mut c_void,
+            len: pota_pub_key_der.len() as u32,
+        };
+        let pid_pk_buf = AzihsmBuffer {
+            ptr: pid_pub_key_der.as_ptr() as *mut c_void,
+            len: pid_pub_key_der.len() as u32,
+        };
+        let pid_chain_buf = AzihsmBuffer {
+            ptr: pid_cert_chain_pem.as_ptr() as *mut c_void,
+            len: pid_cert_chain_pem.len() as u32,
         };
 
         // First call: query required output sizes
@@ -296,11 +310,19 @@ impl api::PotaEndorsementCallback for PotaCallbackAdapter {
             len: 0,
         };
 
-        // SAFETY: pk_input_buf points to valid pub_key data. sig_buf and
-        // pk_out_buf are zero-initialized for size query.
-        let status: api::HsmError =
-            unsafe { (self.ops.endorse)(self.ctx, &pk_input_buf, &mut sig_buf, &mut pk_out_buf) }
-                .into();
+        // SAFETY: pota_pk_buf, pid_pk_buf, and pid_chain_buf point to valid data.
+        // sig_buf and pk_out_buf are zero-initialized for size query.
+        let status: api::HsmError = unsafe {
+            (self.ops.endorse)(
+                self.ctx,
+                &pota_pk_buf,
+                &pid_pk_buf,
+                &pid_chain_buf,
+                &mut sig_buf,
+                &mut pk_out_buf,
+            )
+        }
+        .into();
 
         match status {
             api::HsmError::BufferTooSmall => { /* expected — sizes now in len fields */ }
@@ -325,9 +347,17 @@ impl api::PotaEndorsementCallback for PotaCallbackAdapter {
         pk_out_buf.ptr = pk_data.as_mut_ptr() as *mut c_void;
 
         // SAFETY: Both buffers point to valid Vec allocations of the queried sizes.
-        let status: api::HsmError =
-            unsafe { (self.ops.endorse)(self.ctx, &pk_input_buf, &mut sig_buf, &mut pk_out_buf) }
-                .into();
+        let status: api::HsmError = unsafe {
+            (self.ops.endorse)(
+                self.ctx,
+                &pota_pk_buf,
+                &pid_pk_buf,
+                &pid_chain_buf,
+                &mut sig_buf,
+                &mut pk_out_buf,
+            )
+        }
+        .into();
 
         if status != api::HsmError::Success {
             return Err(status);

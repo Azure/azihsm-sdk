@@ -1861,7 +1861,7 @@ fn test_stress_init_part_under_reset() {
 
     let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
     let (obk_info, pota_endorsement) = make_init_params(&part);
-    let resiliency_config = make_resiliency_config_in(&shared_dir, &part);
+    let resiliency_config = make_resiliency_config_in(&shared_dir);
     part.init(
         creds,
         None,
@@ -1890,7 +1890,7 @@ fn test_stress_init_part_under_reset() {
                 for i in 0..ITERATIONS_PER_WORKER {
                     let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
                     let (obk_info, pota_endorsement) = make_init_params(&part);
-                    let resiliency_config = make_resiliency_config_in(&dir, &part);
+                    let resiliency_config = make_resiliency_config_in(&dir);
 
                     let result = part.init(
                         creds,

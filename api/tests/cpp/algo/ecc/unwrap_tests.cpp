@@ -1,8 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-#include <azihsm_api.h>
 #include <algorithm>
+#include <azihsm_api.h>
 #include <cstring>
 #include <gtest/gtest.h>
 #include <string>
@@ -87,18 +87,15 @@ static void verify_unwrap_pair_keys_sign_verify_roundtrip(
         imported_private_key.handle = result.private_key;
         imported_public_key.handle = result.public_key;
 
-        const std::vector<uint8_t> message = {
-            0x48, 0x53, 0x4D, 0x20, 0x72, 0x6F, 0x75, 0x6E,
-            0x64, 0x74, 0x72, 0x69, 0x70
-        };
+        const std::vector<uint8_t> message = { 0x48, 0x53, 0x4D, 0x20, 0x72, 0x6F, 0x75,
+                                               0x6E, 0x64, 0x74, 0x72, 0x69, 0x70 };
         auto roundtrip = run_ecdsa_sign_verify_roundtrip(
             imported_private_key.get(),
             imported_public_key.get(),
             message
         );
         ASSERT_EQ(roundtrip.status, AZIHSM_STATUS_SUCCESS)
-            << "roundtrip failed at step: " << roundtrip.step
-            << " detail: " << roundtrip.detail;
+            << "roundtrip failed at step: " << roundtrip.step << " detail: " << roundtrip.detail;
     });
 }
 
@@ -598,10 +595,7 @@ TEST_F(azihsm_ecc_keyunwrap, unwrap_pair_rejects_invalid_oaep_label_shape)
 // Expected contract: non-empty OAEP label mismatch between wrap and unwrap must fail unwrap.
 // Current backend behavior does not enforce OAEP label binding in RSA-AES unwrap path,
 // so this test is intentionally skipped until DDI/HSM support is implemented.
-TEST_F(
-    azihsm_ecc_keyunwrap,
-    DISABLED_unwrap_pair_rejects_oaep_label_mismatch_when_non_empty
-)
+TEST_F(azihsm_ecc_keyunwrap, DISABLED_unwrap_pair_rejects_oaep_label_mismatch_when_non_empty)
 {
     GTEST_SKIP() << "backend gap: RSA-AES unwrap path does not enforce OAEP label matching yet";
 
@@ -1008,9 +1002,9 @@ TEST_F(azihsm_ecc_keyunwrap, unwrap_pair_rejects_multi_byte_blob_corruption_patt
         );
         ASSERT_GT(ctx.wrapped_blob.size(), 3u);
 
-        const std::vector<size_t> offsets = {
-            0, ctx.wrapped_blob.size() / 2, ctx.wrapped_blob.size() - 1
-        };
+        const std::vector<size_t> offsets = { 0,
+                                              ctx.wrapped_blob.size() / 2,
+                                              ctx.wrapped_blob.size() - 1 };
         for (size_t offset : offsets)
         {
             SCOPED_TRACE("offset=" + std::to_string(offset));
@@ -1028,4 +1022,3 @@ TEST_F(azihsm_ecc_keyunwrap, unwrap_pair_rejects_multi_byte_blob_corruption_patt
         }
     });
 }
-

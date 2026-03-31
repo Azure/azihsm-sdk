@@ -439,10 +439,11 @@ fn open_and_init_partition(
         0x2E, 0x2F, 0x30,
     ];
 
-    /// Generate POTA endorsement by signing the device's PID public key.
-    fn generate_pota(part: &HsmPartition) -> (Vec<u8>, Vec<u8>) {
-        let pid_der = part.pub_key().expect("Failed to get PID public key");
-        let pid_pub = DerEccPublicKey::from_der(&pid_der).expect("Failed to parse PID public key");
+    /// Generate POTA endorsement by signing a DER-encoded PID public key with the test POTA private key.
+    /// Returns (signature, signer_public_key_der).
+    fn generate_pota_endorsement(pid_pub_key_der: &[u8]) -> (Vec<u8>, Vec<u8>) {
+        let pid_pub =
+            DerEccPublicKey::from_der(pid_pub_key_der).expect("Failed to parse PID public key");
         let mut uncompressed = vec![0x04u8];
         uncompressed.extend_from_slice(pid_pub.x());
         uncompressed.extend_from_slice(pid_pub.y());
@@ -475,7 +476,8 @@ fn open_and_init_partition(
             HsmPotaEndorsement::new(HsmPotaEndorsementSource::Tpm, None),
         )
     } else {
-        let (sig, pubkey_der) = generate_pota(&part);
+        let pid_pub_key_der = part.pub_key().expect("Failed to get PID public key");
+        let (sig, pubkey_der) = generate_pota_endorsement(&pid_pub_key_der);
         (
             HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Caller, Some(&TEST_OBK)),
             HsmPotaEndorsement::new(
@@ -563,15 +565,17 @@ fn open_and_init_partition(
     }
 
     /// POTA re-endorsement callback for resiliency restore.
-    /// Opens a separate partition handle to avoid deadlock — the callback
-    /// is invoked while the caller's partition RwLock is held.
-    struct StressPotaCallback {
-        path: String,
-    }
+    /// Signs the device's PID public key (provided by SDK) with the
+    /// test POTA private key.
+    struct StressPotaCallback;
     impl PotaEndorsementCallback for StressPotaCallback {
-        fn endorse(&self, _pub_key: &[u8]) -> HsmResult<HsmPotaEndorsementData> {
-            let part = HsmPartitionManager::open_partition(&self.path)?;
-            let (sig, pubkey_der) = generate_pota(&part);
+        fn endorse(
+            &self,
+            _pota_pub_key_der: &[u8],
+            pid_pub_key_der: &[u8],
+            _pid_cert_chain_pem: &[u8],
+        ) -> HsmResult<HsmPotaEndorsementData> {
+            let (sig, pubkey_der) = generate_pota_endorsement(pid_pub_key_der);
             Ok(HsmPotaEndorsementData::new(&sig, &pubkey_der))
         }
     }
@@ -591,7 +595,7 @@ fn open_and_init_partition(
 
         // POTA callback is only needed for Caller source (not TPM).
         let pota_callback: Option<Box<dyn PotaEndorsementCallback>> = if !use_tpm {
-            Some(Box::new(StressPotaCallback { path: part.path() }))
+            Some(Box::new(StressPotaCallback))
         } else {
             None
         };
