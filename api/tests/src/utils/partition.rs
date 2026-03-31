@@ -23,7 +23,7 @@ pub(crate) fn use_tpm() -> bool {
 /// Change this single function to switch all tests between min, max,
 /// or any other supported revision.
 pub(crate) fn test_api_rev(part: &HsmPartition) -> HsmApiRev {
-    part.api_rev_range().min()
+    part.api_rev_range().max()
 }
 
 /// Application identifier used for partition authentication.
