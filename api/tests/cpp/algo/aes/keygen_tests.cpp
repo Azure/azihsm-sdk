@@ -494,7 +494,7 @@ TEST_F(azihsm_aes_keygen, unmask_aes_128_key)
 }
 
 /// verifies AES-XTS 512-bit key generation succeeds with correct properties and capabilities
-TEST_F(azihsm_aes_keygen, aes_xts_512_key_generation)
+TEST_F(azihsm_aes_keygen, session_aes_xts_512_key_generation)
 {
     part_list_.for_each_session([](azihsm_handle session) {
         session_aes_key_generation_common(
@@ -508,7 +508,7 @@ TEST_F(azihsm_aes_keygen, aes_xts_512_key_generation)
 
 /// Test AES-GCM key generation, and validate the generated key has expected properties
 /// and capabilities.
-TEST_F(azihsm_aes_keygen, aes_gcm_256_key_generation)
+TEST_F(azihsm_aes_keygen, session_aes_gcm_256_key_generation)
 {
     part_list_.for_each_session([](azihsm_handle session) {
         session_aes_key_generation_common(
