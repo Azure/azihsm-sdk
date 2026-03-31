@@ -115,8 +115,8 @@ class PartitionHandle
 
         PartInitConfig init_config{};
         make_part_init_config(handle_, init_config);
-        
-        azihsm_api_rev api_rev = {.major = 0, .minor = 0};
+
+        azihsm_api_rev api_rev = { .major = 0, .minor = 0 };
         auto rev_err = get_test_api_rev(handle_, api_rev);
         if (rev_err != AZIHSM_STATUS_SUCCESS)
         {

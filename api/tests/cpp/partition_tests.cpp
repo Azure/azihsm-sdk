@@ -8,8 +8,8 @@
 
 #include "handle/part_handle.hpp"
 #include "handle/part_list_handle.hpp"
-#include "utils/resiliency_config.hpp"
 #include "utils/part_init_config.hpp"
+#include "utils/resiliency_config.hpp"
 
 TEST(azihsm_part, get_list)
 {
@@ -669,9 +669,9 @@ TEST(azihsm_part, init_caller_source_with_empty_endorsement_fails)
             .source = AZIHSM_POTA_ENDORSEMENT_SOURCE_CALLER,
             .endorsement = &empty_endorsement_data
         };
-        //retrieve API revision 
+        // retrieve API revision
         azihsm_api_rev api_rev = {};
-        err =  get_test_api_rev(part_handle, api_rev);
+        err = get_test_api_rev(part_handle, api_rev);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         err = azihsm_part_init(
@@ -720,9 +720,9 @@ TEST(azihsm_part, init_caller_source_with_null_endorsement_fails)
             .endorsement = nullptr
         };
 
-         //retrieve API revision 
+        // retrieve API revision
         azihsm_api_rev api_rev = {};
-        err =  get_test_api_rev(part_handle, api_rev);
+        err = get_test_api_rev(part_handle, api_rev);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         err = azihsm_part_init(
@@ -777,9 +777,9 @@ TEST(azihsm_part, init_tpm_source_with_endorsement_fails)
         struct azihsm_pota_endorsement pota_endorsement = { .source =
                                                                 AZIHSM_POTA_ENDORSEMENT_SOURCE_TPM,
                                                             .endorsement = &endorsement_data };
-        //retrieve API revision 
+        // retrieve API revision
         azihsm_api_rev api_rev = {};
-        err =  get_test_api_rev(part_handle, api_rev);
+        err = get_test_api_rev(part_handle, api_rev);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         err = azihsm_part_init(
@@ -835,10 +835,10 @@ TEST(azihsm_part, init_invalid_source_with_endorsement_fails)
             .source = static_cast<azihsm_pota_endorsement_source>(99),
             .endorsement = &endorsement_data
         };
-        
-        //retrieve API revision 
+
+        // retrieve API revision
         azihsm_api_rev api_rev = {};
-        err =  get_test_api_rev(part_handle, api_rev);
+        err = get_test_api_rev(part_handle, api_rev);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         err = azihsm_part_init(
@@ -883,9 +883,9 @@ TEST(azihsm_part, init_with_resiliency_config)
         azihsm_resiliency_config resiliency_config{};
         auto resiliency_ctx = make_resiliency_config(resiliency_config);
 
-        //retrieve API revision 
+        // retrieve API revision
         azihsm_api_rev api_rev = {};
-        err =  get_test_api_rev(part_handle, api_rev);
+        err = get_test_api_rev(part_handle, api_rev);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         err = azihsm_part_init(
@@ -936,9 +936,9 @@ TEST(azihsm_part, init_with_resiliency_caller_pota_null_callback_fails)
         // Force POTA source to Caller so the validation triggers.
         init_config.pota_endorsement.source = AZIHSM_POTA_ENDORSEMENT_SOURCE_CALLER;
 
-        //retrieve API revision 
+        // retrieve API revision
         azihsm_api_rev api_rev = {};
-        err =  get_test_api_rev(part_handle, api_rev);
+        err = get_test_api_rev(part_handle, api_rev);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         err = azihsm_part_init(
@@ -986,9 +986,9 @@ TEST(azihsm_part, init_with_resiliency_invalid_pota_source_fails)
         azihsm_resiliency_config resiliency_config{};
         auto resiliency_ctx = make_resiliency_config(resiliency_config);
 
-        //retrieve API revision 
+        // retrieve API revision
         azihsm_api_rev api_rev = {};
-        err =  get_test_api_rev(part_handle, api_rev);
+        err = get_test_api_rev(part_handle, api_rev);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         err = azihsm_part_init(
@@ -1040,9 +1040,9 @@ TEST(azihsm_part, init_with_resiliency_tpm_pota_with_callback_fails)
         // Force pota_callback_ops non-null so the TPM + callback mismatch triggers.
         resiliency_config.pota_callback_ops = get_pota_callback_ops();
 
-        //retrieve API revision 
+        // retrieve API revision
         azihsm_api_rev api_rev = {};
-        err =  get_test_api_rev(part_handle, api_rev);
+        err = get_test_api_rev(part_handle, api_rev);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         err = azihsm_part_init(

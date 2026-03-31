@@ -5,9 +5,9 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <gtest/gtest.h>
 #include <stdexcept>
 #include <string>
-#include <gtest/gtest.h>
 
 #ifdef _WIN32
 #define NOMINMAX
@@ -378,20 +378,23 @@ void make_part_init_config(azihsm_handle part_handle, PartInitConfig &config)
 /// @return The API revision to use in tests
 azihsm_status get_test_api_rev(azihsm_handle part_handle, azihsm_api_rev &api_rev)
 {
-    //reset api_rev to 0.0 in case the property query fails and doesn't modify it, so the caller can detect failure by checking for 0.0 revision
+    // reset api_rev to 0.0 in case the property query fails and doesn't modify it, so the caller
+    // can detect failure by checking for 0.0 revision
     api_rev.major = 0;
     api_rev.minor = 0;
 
-    azihsm_api_rev local_api_rev = {.major = 0, .minor = 0};
-    azihsm_part_prop prop = { AZIHSM_PART_PROP_ID_MIN_API_REV, &local_api_rev, sizeof(local_api_rev) };
+    azihsm_api_rev local_api_rev = { .major = 0, .minor = 0 };
+    azihsm_part_prop prop = { AZIHSM_PART_PROP_ID_MIN_API_REV,
+                              &local_api_rev,
+                              sizeof(local_api_rev) };
 
     auto err = azihsm_part_get_prop(part_handle, &prop);
     if (err != AZIHSM_STATUS_SUCCESS)
     {
         ADD_FAILURE() << "get_test_api_rev: failed to query min API revision. Error: " << err;
-        
     }
-    else {
+    else
+    {
         api_rev.major = local_api_rev.major;
         api_rev.minor = local_api_rev.minor;
     }

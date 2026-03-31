@@ -17,13 +17,14 @@ class SessionHandle
   public:
     SessionHandle(azihsm_handle part_handle) : handle_(0)
     {
-        azihsm_api_rev api_rev = {.major = 0, .minor = 0};
+        azihsm_api_rev api_rev = { .major = 0, .minor = 0 };
         auto rev_err = get_test_api_rev(part_handle, api_rev);
         if (rev_err != AZIHSM_STATUS_SUCCESS)
         {
-            throw std::runtime_error("Failed to get API revision. Error: " + std::to_string(rev_err));
+            throw std::runtime_error(
+                "Failed to get API revision. Error: " + std::to_string(rev_err)
+            );
         }
-
 
         azihsm_credentials creds{};
         std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));

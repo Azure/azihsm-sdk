@@ -35,9 +35,8 @@ pub(crate) fn init_with_resiliency_and_session() -> (HsmPartition, HsmSession, R
     )
     .expect("Partition init failed");
 
-    let rev = part.api_rev_range().max();
     let session = part
-        .open_session(rev, &creds, None)
+        .open_session(api_rev, &creds, None)
         .expect("Failed to open session");
 
     (part, session, ctx)

@@ -170,9 +170,9 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_parent)
             ASSERT_EQ(azihsm_part_close(part_handle), AZIHSM_STATUS_SUCCESS);
         });
 
-         //retrieve API revision 
+        // retrieve API revision
         azihsm_api_rev api_rev = {};
-        err =  get_test_api_rev(part_handle, api_rev);
+        err = get_test_api_rev(part_handle, api_rev);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         azihsm_credentials creds{};
@@ -332,10 +332,10 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_child)
     azihsm_credentials creds{};
     std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
     std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
-    
-     //retrieve API revision 
+
+    // retrieve API revision
     azihsm_api_rev api_rev = {};
-    err =  get_test_api_rev(part_handle, api_rev);
+    err = get_test_api_rev(part_handle, api_rev);
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
     // Reset partition before initialization to clear any previous state

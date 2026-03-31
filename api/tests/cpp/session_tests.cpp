@@ -20,7 +20,7 @@ TEST_F(azihsm_sess, open_and_close)
     part_list_.for_each_part([](std::vector<azihsm_char> &path) {
         auto partition = PartitionHandle(path);
 
-        //retrieve API revision 
+        // retrieve API revision
         azihsm_api_rev api_rev = {};
         auto err = get_test_api_rev(partition.get(), api_rev);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
@@ -46,7 +46,7 @@ TEST_F(azihsm_sess, open_null_sess_handle)
     part_list_.for_each_part([](std::vector<azihsm_char> &path) {
         auto partition = PartitionHandle(path);
 
-         //retrieve API revision 
+        // retrieve API revision
         azihsm_api_rev api_rev = {};
         auto err = get_test_api_rev(partition.get(), api_rev);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
@@ -83,7 +83,7 @@ TEST_F(azihsm_sess, open_null_creds)
     part_list_.for_each_part([](std::vector<azihsm_char> &path) {
         auto partition = PartitionHandle(path);
 
-         //retrieve API revision 
+        // retrieve API revision
         azihsm_api_rev api_rev = {};
         auto err = get_test_api_rev(partition.get(), api_rev);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
@@ -101,8 +101,8 @@ TEST_F(azihsm_sess, open_invalid_partition_handle)
     part_list_.for_each_part([](std::vector<azihsm_char> &path) {
         azihsm_handle bad_handle = 0xDEADBEEF;
         auto partition_tmp = PartitionHandle(path);
-        
-        //retrieve API revision 
+
+        // retrieve API revision
         azihsm_api_rev api_rev = {};
         auto err = get_test_api_rev(partition_tmp.get(), api_rev);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
@@ -133,7 +133,7 @@ TEST_F(azihsm_sess, close_double_close)
     part_list_.for_each_part([](std::vector<azihsm_char> &path) {
         auto partition = PartitionHandle(path);
 
-        //retrieve API revision 
+        // retrieve API revision
         azihsm_api_rev api_rev = {};
         auto err = get_test_api_rev(partition.get(), api_rev);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
@@ -163,7 +163,7 @@ TEST_F(azihsm_sess, open_close_multiple)
     part_list_.for_each_part([](std::vector<azihsm_char> &path) {
         auto partition = PartitionHandle(path);
 
-        //retrieve API revision 
+        // retrieve API revision
         azihsm_api_rev api_rev = {};
         auto err = get_test_api_rev(partition.get(), api_rev);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
@@ -194,7 +194,7 @@ TEST_F(azihsm_sess, open_with_wrong_handle_type)
         azihsm_handle list_handle = list_handle_wrapper.get();
 
         auto partition_tmp = PartitionHandle(path);
-        //retrieve API revision 
+        // retrieve API revision
         azihsm_api_rev api_rev = {};
         auto err = get_test_api_rev(partition_tmp.get(), api_rev);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
@@ -215,7 +215,7 @@ TEST_F(azihsm_sess, open_with_corrupt_creds)
     part_list_.for_each_part([](std::vector<azihsm_char> &path) {
         auto partition = PartitionHandle(path);
 
-        //retrieve API revision 
+        // retrieve API revision
         azihsm_api_rev api_rev = {};
         auto err = get_test_api_rev(partition.get(), api_rev);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
@@ -251,7 +251,7 @@ TEST_F(azihsm_sess, get_prop_api_rev)
     part_list_.for_each_part([](std::vector<azihsm_char> &path) {
         auto partition = PartitionHandle(path);
 
-        //retrieve API revision 
+        // retrieve API revision
         azihsm_api_rev api_rev = {};
         auto err = get_test_api_rev(partition.get(), api_rev);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
@@ -286,7 +286,7 @@ TEST_F(azihsm_sess, get_prop_api_rev_buffer_too_small)
     part_list_.for_each_part([](std::vector<azihsm_char> &path) {
         auto partition = PartitionHandle(path);
 
-        //retrieve API revision 
+        // retrieve API revision
         azihsm_api_rev api_rev = {};
         auto err = get_test_api_rev(partition.get(), api_rev);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
@@ -320,7 +320,7 @@ TEST_F(azihsm_sess, get_prop_null_prop_ptr)
     part_list_.for_each_part([](std::vector<azihsm_char> &path) {
         auto partition = PartitionHandle(path);
 
-        //retrieve API revision 
+        // retrieve API revision
         azihsm_api_rev api_rev = {};
         auto err = get_test_api_rev(partition.get(), api_rev);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
@@ -357,7 +357,7 @@ TEST_F(azihsm_sess, get_prop_unsupported_property)
     part_list_.for_each_part([](std::vector<azihsm_char> &path) {
         auto partition = PartitionHandle(path);
 
-        //retrieve API revision 
+        // retrieve API revision
         azihsm_api_rev api_rev = {};
         auto err = get_test_api_rev(partition.get(), api_rev);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
