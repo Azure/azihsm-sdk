@@ -34,10 +34,8 @@ void session_aes_key_generation_common(
         { .id = AZIHSM_KEY_PROP_ID_DECRYPT, .val = &can_decrypt, .len = sizeof(can_decrypt) }
     };
 
-    azihsm_key_prop_list prop_list{
-        .props = props_vec.data(),
-        .count = static_cast<uint32_t>(props_vec.size())
-    };
+    azihsm_key_prop_list prop_list{ .props = props_vec.data(),
+                                    .count = static_cast<uint32_t>(props_vec.size()) };
 
     auto_key original_key;
     azihsm_status err = azihsm_key_gen(session, &keygen_algo, &prop_list, original_key.get_ptr());
@@ -51,7 +49,6 @@ void session_aes_key_generation_common(
     azihsm_handle key_handle = original_key.release();
     err = azihsm_key_delete(key_handle);
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-
 }
 
 template <typename T>
@@ -67,19 +64,24 @@ void verify_key_property(azihsm_handle key_handle, azihsm_key_prop_id prop_id, T
     ASSERT_EQ(actual, expected);
 }
 
-void verify_generated_aes_key_properties(azihsm_handle key_handle, azihsm_key_kind key_kind, uint32_t bits, bool is_session)
+void verify_generated_aes_key_properties(
+    azihsm_handle key_handle,
+    azihsm_key_kind key_kind,
+    uint32_t bits,
+    bool is_session
+)
 {
-    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_CLASS,     AZIHSM_KEY_CLASS_SECRET);
-    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_KIND,      key_kind);
-    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_BIT_LEN,   bits);
-    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_LOCAL,     true);
-    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_SESSION,   is_session);
+    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_CLASS, AZIHSM_KEY_CLASS_SECRET);
+    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_KIND, key_kind);
+    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_BIT_LEN, bits);
+    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_LOCAL, true);
+    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_SESSION, is_session);
     verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_SENSITIVE, true);
     verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_EXTRACTABLE, true);
-    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_ENCRYPT,   true);
-    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_DECRYPT,   true);
-    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_SIGN,      false);
-    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_VERIFY,    false);
-    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_UNWRAP,    false);
-    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_DERIVE,    false);
+    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_ENCRYPT, true);
+    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_DECRYPT, true);
+    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_SIGN, false);
+    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_VERIFY, false);
+    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_UNWRAP, false);
+    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_DERIVE, false);
 }
