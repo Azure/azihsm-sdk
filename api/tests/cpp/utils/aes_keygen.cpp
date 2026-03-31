@@ -46,11 +46,11 @@ void session_aes_key_generation_common(
 
     // Step 2: Verify key properties
     verify_generated_aes_key_properties(original_key, key_kind, bits, is_session);
-    
+
     // Step 3: Delete the key
-    err = azihsm_key_delete(original_key);
+    azihsm_handle key_handle = original_key.release();
+    err = azihsm_key_delete(key_handle);
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-    original_key.release();
 
 }
 
