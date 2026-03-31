@@ -1,0 +1,16 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+[package]
+edition = "2024"
+name = "azihsm_resiliency_test_helpers"
+publish = false
+version = "0.1.0"
+
+[dependencies]
+azihsm_api.workspace = true
+fs2.workspace = true
+parking_lot.workspace = true
+
+[lints]
+workspace = true
