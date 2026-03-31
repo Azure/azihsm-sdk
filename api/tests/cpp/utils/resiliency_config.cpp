@@ -62,8 +62,7 @@ static fs::path key_path(void *ctx, const char *key)
     return test_ctx->temp_dir / key;
 }
 
-static azihsm_status storage_read(
-    void *ctx, const char *key, azihsm_buffer *output)
+static azihsm_status storage_read(void *ctx, const char *key, azihsm_buffer *output)
 {
     auto path = key_path(ctx, key);
 
@@ -99,8 +98,7 @@ static azihsm_status storage_read(
     return AZIHSM_STATUS_SUCCESS;
 }
 
-static azihsm_status storage_write(
-    void *ctx, const char *key, const azihsm_buffer *data)
+static azihsm_status storage_write(void *ctx, const char *key, const azihsm_buffer *data)
 {
     auto path = key_path(ctx, key);
 
@@ -112,8 +110,7 @@ static azihsm_status storage_write(
 
     if (data->len > 0)
     {
-        ofs.write(static_cast<const char *>(data->ptr),
-                  static_cast<std::streamsize>(data->len));
+        ofs.write(static_cast<const char *>(data->ptr), static_cast<std::streamsize>(data->len));
     }
 
     return ofs.good() ? AZIHSM_STATUS_SUCCESS : AZIHSM_STATUS_INTERNAL_ERROR;
@@ -151,7 +148,8 @@ static azihsm_status lock_acquire(void *ctx)
         nullptr,
         OPEN_ALWAYS,
         FILE_ATTRIBUTE_NORMAL,
-        nullptr);
+        nullptr
+    );
     if (h == INVALID_HANDLE_VALUE)
     {
         return AZIHSM_STATUS_INTERNAL_ERROR;
@@ -236,7 +234,8 @@ static azihsm_status pota_endorse(
     void * /*ctx*/,
     const azihsm_buffer * /*pub_key*/,
     azihsm_buffer *signature,
-    azihsm_buffer *endorsement_pub_key)
+    azihsm_buffer *endorsement_pub_key
+)
 {
     // First call: report required sizes.
     if (signature->ptr == nullptr || signature->len < DUMMY_SIG_SIZE ||
@@ -262,17 +261,15 @@ static void open_lock_file(ResiliencyTestCtx &ctx)
     ctx.lock_path = (ctx.temp_dir / ".lock").string();
 }
 
-void make_resiliency_config_in(
-    ResiliencyTestCtx &ctx,
-    azihsm_resiliency_config &config_out)
+void make_resiliency_config_in(ResiliencyTestCtx &ctx, azihsm_resiliency_config &config_out)
 {
     open_lock_file(ctx);
 
-    static azihsm_resiliency_storage_ops storage_ops = {
-        storage_read, storage_write, storage_clear};
+    static azihsm_resiliency_storage_ops storage_ops = { storage_read,
+                                                         storage_write,
+                                                         storage_clear };
 
-    static azihsm_resiliency_lock_ops lock_ops = {
-        lock_acquire, lock_release};
+    static azihsm_resiliency_lock_ops lock_ops = { lock_acquire, lock_release };
 
     config_out.ctx = &ctx;
     config_out.storage_ops = storage_ops;
@@ -295,22 +292,22 @@ void make_resiliency_config_in(
 /// `pota_endorse`. The returned pointer has static lifetime.
 const azihsm_pota_callback_ops *get_pota_callback_ops()
 {
-    static azihsm_pota_callback_ops pota_ops = {pota_endorse};
+    static azihsm_pota_callback_ops pota_ops = { pota_endorse };
     return &pota_ops;
 }
 
-std::unique_ptr<ResiliencyTestCtx> make_resiliency_config(
-    azihsm_resiliency_config &config_out)
+std::unique_ptr<ResiliencyTestCtx> make_resiliency_config(azihsm_resiliency_config &config_out)
 {
     // Each call gets a unique directory so parallel tests never interfere.
-    static std::atomic<uint32_t> seq{0};
-    auto id = std::to_string(seq.fetch_add(1)) + "_" + std::to_string(
+    static std::atomic<uint32_t> seq{ 0 };
+    auto id = std::to_string(seq.fetch_add(1)) + "_" +
+              std::to_string(
 #ifdef _WIN32
-        GetCurrentProcessId()
+                  GetCurrentProcessId()
 #else
-        getpid()
+                  getpid()
 #endif
-    );
+              );
     auto tmp = fs::temp_directory_path() / (std::string(RESILIENCY_DIR_NAME) + "_" + id);
 
     // Wipe any stale data from a previous crashed run, then recreate empty.

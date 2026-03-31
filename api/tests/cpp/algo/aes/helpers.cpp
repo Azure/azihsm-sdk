@@ -5,10 +5,11 @@
 #include "utils/auto_ctx.hpp"
 #include "utils/rsa_keygen.hpp"
 #include <algorithm>
-#include <string>
 #include <gtest/gtest.h>
+#include <string>
 
-namespace {
+namespace
+{
 KeyHandle generate_aes_key_of_kind(
     azihsm_handle session,
     azihsm_algo_id keygen_algo_id,
@@ -31,7 +32,7 @@ KeyHandle generate_aes_key_of_kind(
 
     return KeyHandle(session, &keygen_algo, props);
 }
-}
+} // namespace
 
 azihsm_status crypt_call(
     CryptOperation operation,
@@ -76,11 +77,7 @@ azihsm_status crypt_update_call(
     return azihsm_crypt_decrypt_update(ctx, input, output);
 }
 
-azihsm_status crypt_finish_call(
-    CryptOperation operation,
-    azihsm_handle ctx,
-    azihsm_buffer *output
-)
+azihsm_status crypt_finish_call(CryptOperation operation, azihsm_handle ctx, azihsm_buffer *output)
 {
     if (operation == CryptOperation::Encrypt)
     {
@@ -318,9 +315,7 @@ const std::vector<size_t> &padding_sweep_plaintext_sizes()
 
 const std::vector<size_t> &padding_sweep_chunk_sizes()
 {
-    static const std::vector<size_t> sizes = {
-        1, 2, 3, 5, 7, 8, 15, 16, 17, 31, 32, 33, 64, 256
-    };
+    static const std::vector<size_t> sizes = { 1, 2, 3, 5, 7, 8, 15, 16, 17, 31, 32, 33, 64, 256 };
 
     return sizes;
 }
@@ -330,8 +325,8 @@ void run_single_shot_key_size(
     azihsm_algo_id algo_id,
     const std::vector<DataSizeTestParams> &data_sizes,
     uint8_t plaintext_fill,
-    const std::function<void(azihsm_handle, azihsm_algo_id, const uint8_t *, size_t, size_t)> &
-        roundtrip_runner,
+    const std::function<void(azihsm_handle, azihsm_algo_id, const uint8_t *, size_t, size_t)>
+        &roundtrip_runner,
     const std::function<KeyHandle(azihsm_handle, uint32_t)> &key_generator
 )
 {
@@ -346,8 +341,8 @@ void run_single_shot_key_size(
 
                 std::vector<uint8_t> plaintext(data_param.data_size, plaintext_fill);
                 size_t expected_ciphertext_len = (algo_id == AZIHSM_ALGO_ID_AES_CBC_PAD)
-                    ? data_param.expected_output_size_with_pad
-                    : data_param.expected_output_size_no_pad;
+                                                     ? data_param.expected_output_size_with_pad
+                                                     : data_param.expected_output_size_no_pad;
 
                 roundtrip_runner(
                     key.get(),
@@ -365,8 +360,8 @@ void run_streaming_case_list(
     PartitionListHandle &part_list,
     azihsm_algo_id algo_id,
     const std::function<
-        void(azihsm_handle, azihsm_algo_id, const uint8_t *, size_t, size_t, size_t)> &
-        roundtrip_runner,
+        void(azihsm_handle, azihsm_algo_id, const uint8_t *, size_t, size_t, size_t)>
+        &roundtrip_runner,
     const std::vector<StreamingRoundtripCase> &test_cases,
     const std::function<KeyHandle(azihsm_handle, uint32_t)> &key_generator
 )
@@ -397,12 +392,7 @@ void run_streaming_case_list(
 
 KeyHandle generate_aes_key(azihsm_handle session, uint32_t bits)
 {
-    return generate_aes_key_of_kind(
-        session,
-        AZIHSM_ALGO_ID_AES_KEY_GEN,
-        AZIHSM_KEY_KIND_AES,
-        bits
-    );
+    return generate_aes_key_of_kind(session, AZIHSM_ALGO_ID_AES_KEY_GEN, AZIHSM_KEY_KIND_AES, bits);
 }
 
 KeyHandle generate_aes_gcm_key(azihsm_handle session, uint32_t bits)

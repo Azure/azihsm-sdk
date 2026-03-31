@@ -1,8 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-#include <azihsm_api.h>
 #include <algorithm>
+#include <azihsm_api.h>
 #include <cstring>
 #include <gtest/gtest.h>
 #include <string>
@@ -161,8 +161,14 @@ TEST_F(azihsm_ecc_keyunwrap_property, unwrap_pair_preserves_session_flag_set)
 
         uint8_t private_session = 0;
         uint8_t public_session = 0;
-        ASSERT_EQ(get_key_prop(imported_private_key.get(), AZIHSM_KEY_PROP_ID_SESSION, private_session), AZIHSM_STATUS_SUCCESS);
-        ASSERT_EQ(get_key_prop(imported_public_key.get(), AZIHSM_KEY_PROP_ID_SESSION, public_session), AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(
+            get_key_prop(imported_private_key.get(), AZIHSM_KEY_PROP_ID_SESSION, private_session),
+            AZIHSM_STATUS_SUCCESS
+        );
+        ASSERT_EQ(
+            get_key_prop(imported_public_key.get(), AZIHSM_KEY_PROP_ID_SESSION, public_session),
+            AZIHSM_STATUS_SUCCESS
+        );
         ASSERT_EQ(private_session, 1);
         ASSERT_EQ(public_session, 1);
     });
@@ -193,8 +199,14 @@ TEST_F(azihsm_ecc_keyunwrap_property, unwrap_pair_preserves_session_flag_cleared
 
         uint8_t private_session = 1;
         uint8_t public_session = 1;
-        ASSERT_EQ(get_key_prop(imported_private_key.get(), AZIHSM_KEY_PROP_ID_SESSION, private_session), AZIHSM_STATUS_SUCCESS);
-        ASSERT_EQ(get_key_prop(imported_public_key.get(), AZIHSM_KEY_PROP_ID_SESSION, public_session), AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(
+            get_key_prop(imported_private_key.get(), AZIHSM_KEY_PROP_ID_SESSION, private_session),
+            AZIHSM_STATUS_SUCCESS
+        );
+        ASSERT_EQ(
+            get_key_prop(imported_public_key.get(), AZIHSM_KEY_PROP_ID_SESSION, public_session),
+            AZIHSM_STATUS_SUCCESS
+        );
         ASSERT_EQ(private_session, 0);
         ASSERT_EQ(public_session, 0);
     });
@@ -370,9 +382,9 @@ TEST_F(azihsm_ecc_keyunwrap_property, unwrap_pair_rejects_duplicate_private_prop
         ASSERT_EQ(UnwrapPairContext::create(session, ctx), AZIHSM_STATUS_SUCCESS);
 
         RsaAesUnwrapPairInputs unwrap_inputs(0xA5);
-        ctx.priv_props.props.push_back(
-            { AZIHSM_KEY_PROP_ID_EC_CURVE, &ctx.priv_props.ecc_curve, sizeof(ctx.priv_props.ecc_curve) }
-        );
+        ctx.priv_props.props.push_back({ AZIHSM_KEY_PROP_ID_EC_CURVE,
+                                         &ctx.priv_props.ecc_curve,
+                                         sizeof(ctx.priv_props.ecc_curve) });
 
         auto result = ctx.try_unwrap_inputs(unwrap_inputs);
         ASSERT_NE(result.status, AZIHSM_STATUS_SUCCESS);
@@ -460,11 +472,8 @@ TEST_F(azihsm_ecc_keyunwrap_property, unwrap_pair_rejects_private_missing_requir
     RsaAesUnwrapPairInputs unwrap_inputs(0xA5);
 
     const std::vector<azihsm_key_prop_id> required_private_props = {
-        AZIHSM_KEY_PROP_ID_CLASS,
-        AZIHSM_KEY_PROP_ID_KIND,
-        AZIHSM_KEY_PROP_ID_EC_CURVE,
-        AZIHSM_KEY_PROP_ID_SESSION,
-        AZIHSM_KEY_PROP_ID_SIGN,
+        AZIHSM_KEY_PROP_ID_CLASS,   AZIHSM_KEY_PROP_ID_KIND, AZIHSM_KEY_PROP_ID_EC_CURVE,
+        AZIHSM_KEY_PROP_ID_SESSION, AZIHSM_KEY_PROP_ID_SIGN,
     };
 
     for (const auto missing_prop_id : required_private_props)
@@ -502,11 +511,8 @@ TEST_F(azihsm_ecc_keyunwrap_property, unwrap_pair_rejects_public_missing_require
     RsaAesUnwrapPairInputs unwrap_inputs(0x5A);
 
     const std::vector<azihsm_key_prop_id> required_public_props = {
-        AZIHSM_KEY_PROP_ID_CLASS,
-        AZIHSM_KEY_PROP_ID_KIND,
-        AZIHSM_KEY_PROP_ID_EC_CURVE,
-        AZIHSM_KEY_PROP_ID_SESSION,
-        AZIHSM_KEY_PROP_ID_VERIFY,
+        AZIHSM_KEY_PROP_ID_CLASS,   AZIHSM_KEY_PROP_ID_KIND,   AZIHSM_KEY_PROP_ID_EC_CURVE,
+        AZIHSM_KEY_PROP_ID_SESSION, AZIHSM_KEY_PROP_ID_VERIFY,
     };
 
     for (const auto missing_prop_id : required_public_props)
