@@ -13,7 +13,6 @@
 #include "utils/auto_key.hpp"
 #include "utils/rsa_keygen.hpp"
 
-
 class azihsm_rsa_keyattest : public ::testing::Test
 {
   protected:
@@ -26,8 +25,7 @@ TEST_F(azihsm_rsa_keyattest, attest_rsa_2048_key)
         // Generate an RSA 2048 key pair
         auto_key priv_key;
         auto_key pub_key;
-        auto err =
-            generate_rsa_unwrapping_keypair(session, priv_key.get_ptr(), pub_key.get_ptr());
+        auto err = generate_rsa_unwrapping_keypair(session, priv_key.get_ptr(), pub_key.get_ptr());
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_NE(priv_key.get(), 0);
         ASSERT_NE(pub_key.get(), 0);
@@ -91,8 +89,7 @@ TEST_F(azihsm_rsa_keyattest, attest_public_key_fails)
         // Generate an RSA 2048 key pair
         auto_key priv_key;
         auto_key pub_key;
-        auto err =
-            generate_rsa_unwrapping_keypair(session, priv_key.get_ptr(), pub_key.get_ptr());
+        auto err = generate_rsa_unwrapping_keypair(session, priv_key.get_ptr(), pub_key.get_ptr());
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_NE(priv_key.get(), 0);
         ASSERT_NE(pub_key.get(), 0);

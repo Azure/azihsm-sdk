@@ -30,6 +30,7 @@ mod install;
 mod integration_tests;
 mod nextest;
 mod nextest_report;
+mod openssl_install;
 mod precheck;
 mod rustup_component_add;
 mod setup;
