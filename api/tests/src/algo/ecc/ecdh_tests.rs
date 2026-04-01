@@ -732,7 +732,7 @@ fn test_ecdh_derived_secret_props_session_flag_allowed(session: HsmSession) {
     assert!(derived.is_session());
 }
 
-/// validates ECDH behavior with unrelated public key (P-256).
+/// Vlidates ECDH behavior with unrelated public key (P-256).
 #[session_test]
 fn test_ecdh_wrong_pubkey_p256(session: HsmSession) {
     run_ecdh_wrong_pubkey(&session, HsmEccCurve::P256);
