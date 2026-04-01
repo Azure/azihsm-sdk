@@ -4,15 +4,16 @@
 #
 # Setup script for NGINX integration tests.
 #
-# Unlike the cli/capi test suites (which generate key material under
-# target/test-keymat/), the NGINX suite deploys to system paths
-# (/etc/azihsm/, /var/lib/azihsm/) to mirror a production deployment.
+# Generates all key material (credentials, OBK, POTA, masked TLS key,
+# self-signed certificate) directly into the directory passed as $1.
+# This mirrors the self-contained approach used by the CLI (env.sh) and
+# CAPI (generate_dev_key_material) test suites.
 #
-# Prerequisites (handled by CI before this script runs):
-#   - Provider .so installed at PROVIDER_PATH
-#   - Config files deployed to /etc/azihsm/
-#   - Base key material (OBK, POTA) generated in CWD (workspace root)
-#   - OPENSSL_BIN, LD_LIBRARY_PATH, AZIHSM_CREDENTIALS_ID, AZIHSM_CREDENTIALS_PIN set
+# Prerequisites:
+#   - OPENSSL_BIN set to the OpenSSL 3.x binary
+#   - PROVIDER_PATH set to the directory containing azihsm_provider.so
+#   - LD_LIBRARY_PATH set (if needed) for the OpenSSL binary to find libcrypto
+#   - AZIHSM_CREDENTIALS_ID, AZIHSM_CREDENTIALS_PIN set
 #
 # OPENSSL_CONF is unset because genpkey/req use explicit -provider flags.
 # If OPENSSL_CONF were set, the provider would be loaded twice (from config
@@ -21,49 +22,61 @@
 set -euo pipefail
 unset OPENSSL_CONF
 
+KEYMAT_DIR="${1:?Usage: setup.sh <keymat-directory>}"
+mkdir -p "$KEYMAT_DIR"
+
 OSSL="${OPENSSL_BIN:?OPENSSL_BIN must be set to the OpenSSL 3.x binary}"
 if [[ ! -x "$OSSL" ]]; then
     echo "ERROR: OPENSSL_BIN does not exist or is not executable: $OSSL" >&2
     exit 1
 fi
 
-PROV_PATH="${PROVIDER_PATH:-/usr/lib/x86_64-linux-gnu/ossl-modules}"
+PROV_PATH="${PROVIDER_PATH:?PROVIDER_PATH must be set}"
 PROV="-provider-path $PROV_PATH -provider default -provider azihsm_provider"
 
-# The provider needs credential binary files to enumerate HSM partitions.
-if [[ ! -f credentials_id.bin ]]; then
-    printf '\x70\xFC\xF7\x30\xB8\x76\x42\x38\xB8\x35\x80\x10\xCE\x8A\x3F\x76' > credentials_id.bin
-    chmod 600 credentials_id.bin
+# --- Generate base key material (same as CLI env.sh / CAPI harness) ---
+
+# Credential binary files
+if [[ ! -f "$KEYMAT_DIR/credentials_id.bin" ]]; then
+    printf '\x70\xFC\xF7\x30\xB8\x76\x42\x38\xB8\x35\x80\x10\xCE\x8A\x3F\x76' > "$KEYMAT_DIR/credentials_id.bin"
+    chmod 600 "$KEYMAT_DIR/credentials_id.bin"
 fi
-if [[ ! -f credentials_pin.bin ]]; then
-    printf '\xDB\x3D\xC7\x7F\xC2\x2E\x43\x00\x80\xD4\x1B\x31\xB6\xF0\x48\x00' > credentials_pin.bin
-    chmod 600 credentials_pin.bin
+if [[ ! -f "$KEYMAT_DIR/credentials_pin.bin" ]]; then
+    printf '\xDB\x3D\xC7\x7F\xC2\x2E\x43\x00\x80\xD4\x1B\x31\xB6\xF0\x48\x00' > "$KEYMAT_DIR/credentials_pin.bin"
+    chmod 600 "$KEYMAT_DIR/credentials_pin.bin"
 fi
 
-# nextest may prepend target/debug/deps/ to LD_LIBRARY_PATH, causing the
-# provider to load a stale libazihsm_api_native.so.  Reset to just the
-# custom OpenSSL lib dir needed by $OSSL.
-OPENSSL_LIB_DIR="${OPENSSL_LIB:-/opt/openssl-3.0.3/lib}"
-export LD_LIBRARY_PATH="$OPENSSL_LIB_DIR"
+# OBK — 48-byte random owner backup key
+if [[ ! -f "$KEYMAT_DIR/obk.bin" ]]; then
+    $OSSL rand -out "$KEYMAT_DIR/obk.bin" 48
+    chmod 600 "$KEYMAT_DIR/obk.bin"
+fi
+
+# POTA — P-384 key pair
+if [[ ! -f "$KEYMAT_DIR/pota_private_key.der" ]]; then
+    $OSSL ecparam -name secp384r1 -genkey -noout \
+        | $OSSL ec -outform DER -out "$KEYMAT_DIR/pota_private_key.der" 2>/dev/null
+    $OSSL ec -in "$KEYMAT_DIR/pota_private_key.der" -inform DER \
+        -pubout -outform DER -out "$KEYMAT_DIR/pota_public_key.der" 2>/dev/null
+    chmod 600 "$KEYMAT_DIR/pota_private_key.der" "$KEYMAT_DIR/pota_public_key.der"
+fi
+
+# --- Generate TLS key + certificate ---
 
 echo "Generating P-384 masked key..."
 $OSSL genpkey $PROV \
     -propquery "?provider=azihsm" \
     -algorithm EC \
     -pkeyopt group:P-384 \
-    -pkeyopt "azihsm.masked_key:/etc/azihsm/masked_key_p384.bin" \
+    -pkeyopt "azihsm.masked_key:$KEYMAT_DIR/masked_key_p384.bin" \
     -outform DER -out /dev/null
 
 echo "Generating self-signed certificate..."
 $OSSL req -new -x509 $PROV \
     -propquery "?provider=azihsm" \
-    -key "azihsm:///etc/azihsm/masked_key_p384.bin;type=ec" \
+    -key "azihsm://$KEYMAT_DIR/masked_key_p384.bin;type=ec" \
     -subj "/CN=localhost" \
     -days 365 -sha384 \
-    -out /etc/azihsm/server.crt
+    -out "$KEYMAT_DIR/server.crt"
 
-echo "Installing key material to /var/lib/azihsm/..."
-cp bmk.bin muk.bin obk.bin pota_private_key.der pota_public_key.der /var/lib/azihsm/
-chmod 600 /var/lib/azihsm/*.bin /var/lib/azihsm/*.der
-
-echo "NGINX test setup complete."
+echo "NGINX test setup complete.  Key material in: $KEYMAT_DIR"
