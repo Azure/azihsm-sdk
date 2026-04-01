@@ -27,7 +27,7 @@ jobs:
       LD_LIBRARY_PATH: /opt/openssl-3.0.3/lib
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
     - name: Install apt packages
       run: |
         sudo apt-get update
@@ -88,7 +88,7 @@ jobs:
       run: cargo xtask precheck --coverage
       continue-on-error: true
     - name: Upload coverage report
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: coverage-report-ubuntu
         path: ./target/reports/
@@ -112,7 +112,7 @@ jobs:
       LD_LIBRARY_PATH: /opt/openssl-3.0.3/lib
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
 
     - name: Install apt packages
       run: |
@@ -216,7 +216,7 @@ jobs:
         working-directory: .
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
     - name: Restore Cargo cache
       id: cargo-cache
       uses: actions/cache/restore@v5
@@ -247,7 +247,7 @@ jobs:
       run: cargo xtask precheck --coverage
       continue-on-error: true
     - name: Upload coverage report
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: coverage-report-windows
         path: ./target/reports/
