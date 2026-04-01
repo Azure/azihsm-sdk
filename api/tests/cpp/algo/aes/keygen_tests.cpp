@@ -420,6 +420,123 @@ TEST_F(azihsm_aes_keygen, session_aes_256_key_generation)
     });
 }
 
+/// verifies AES key generation fails when unsupported capabilities are set in properties
+TEST_F(azihsm_aes_keygen, aes_key_gen_with_sign_flag_fails)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        aes_key_gen_invalid_flag_fail_common(session, { AZIHSM_KEY_PROP_ID_ENCRYPT, AZIHSM_KEY_PROP_ID_DECRYPT,AZIHSM_KEY_PROP_ID_SIGN });
+    });
+}
+
+/// verifies AES key generation fails when unsupported capabilities are set in properties
+TEST_F(azihsm_aes_keygen, aes_key_gen_with_verify_flag_fails)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        aes_key_gen_invalid_flag_fail_common(session, { AZIHSM_KEY_PROP_ID_ENCRYPT, AZIHSM_KEY_PROP_ID_DECRYPT, AZIHSM_KEY_PROP_ID_VERIFY });
+    });
+}
+
+/// verifies AES key generation fails when unsupported capabilities are set in properties
+TEST_F(azihsm_aes_keygen, aes_key_gen_with_wrap_flag_fails)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        aes_key_gen_invalid_flag_fail_common(session, { AZIHSM_KEY_PROP_ID_ENCRYPT, AZIHSM_KEY_PROP_ID_DECRYPT, AZIHSM_KEY_PROP_ID_WRAP });
+    });
+}
+
+/// verifies AES key generation fails when unsupported capabilities are set in properties
+TEST_F(azihsm_aes_keygen, aes_key_gen_with_unwrap_flag_fails)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        aes_key_gen_invalid_flag_fail_common(session, { AZIHSM_KEY_PROP_ID_ENCRYPT, AZIHSM_KEY_PROP_ID_DECRYPT, AZIHSM_KEY_PROP_ID_UNWRAP });
+    });
+}
+
+/// verifies AES key generation fails when unsupported capabilities are set in properties
+TEST_F(azihsm_aes_keygen, aes_key_gen_with_derive_flag_fails)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        aes_key_gen_invalid_flag_fail_common(session, { AZIHSM_KEY_PROP_ID_ENCRYPT, AZIHSM_KEY_PROP_ID_DECRYPT, AZIHSM_KEY_PROP_ID_DERIVE });
+    });
+}
+
+/// verifies AES key generation fails when multiple unsupported capabilities are set
+/// in properties
+TEST_F(azihsm_aes_keygen, aes_key_gen_multiple_invalid_flags_fail)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        aes_key_gen_invalid_flag_fail_common(session, { AZIHSM_KEY_PROP_ID_ENCRYPT, AZIHSM_KEY_PROP_ID_DECRYPT, AZIHSM_KEY_PROP_ID_SIGN, AZIHSM_KEY_PROP_ID_WRAP, AZIHSM_KEY_PROP_ID_DERIVE });
+    });
+}
+
+/// verifies AES key generation rejects keys with only unsupported capabilities
+TEST_F(azihsm_aes_keygen, aes_key_gen_only_invalid_capabilities)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        aes_key_gen_invalid_flag_fail_common(session, { AZIHSM_KEY_PROP_ID_SIGN, AZIHSM_KEY_PROP_ID_VERIFY, AZIHSM_KEY_PROP_ID_WRAP, AZIHSM_KEY_PROP_ID_UNWRAP, AZIHSM_KEY_PROP_ID_DERIVE });
+    });
+}
+
+/// verifies invalid flags are rejected even if encrypt/decrypt permissions are missing
+TEST_F(azihsm_aes_keygen, aes_key_gen_invalid_flags_without_crypto_permissions)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        aes_key_gen_invalid_flag_fail_common(session, { AZIHSM_KEY_PROP_ID_SIGN, AZIHSM_KEY_PROP_ID_WRAP });
+    });
+}
+
+/// verifies AES key generation rejects combinations of unsupported capability flags
+TEST_F(azihsm_aes_keygen, aes_key_gen_multiple_invalid_capabilities)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        bool invalid_flag_sets[16][5] = {
+            {true, false, false, false, false}, // sign
+            {false, true, false, false, false}, // verify
+            {false, false, true, false, false}, // wrap
+            {false, false, false, true, false}, // unwrap
+            {false, false, false, false, true}, // derive
+            {true, true, false, false, false},
+            {true, false, true, false, false},
+            {true, false, false, true, false},
+            {true, false, false, false, true},
+            {false, true, true, false, false},
+            {false, true, false, true, false},
+            {false, true, false, false, true},
+            {false, false, true, true, false},
+            {false, false, true, false, true},
+            {false, false, false, true, true},
+            {true, true, true, true, true},
+        };
+        
+        for (bool* flag_set : invalid_flag_sets)
+        {
+            std::vector<azihsm_key_prop_id> invalid_props;
+            invalid_props.push_back(AZIHSM_KEY_PROP_ID_ENCRYPT);
+            invalid_props.push_back(AZIHSM_KEY_PROP_ID_DECRYPT);
+            if (flag_set[0])
+                invalid_props.push_back(AZIHSM_KEY_PROP_ID_SIGN);
+            if (flag_set[1])
+                invalid_props.push_back(AZIHSM_KEY_PROP_ID_VERIFY);
+            if (flag_set[2])
+                invalid_props.push_back(AZIHSM_KEY_PROP_ID_WRAP);
+            if (flag_set[3])
+                invalid_props.push_back(AZIHSM_KEY_PROP_ID_UNWRAP);
+            if (flag_set[4])
+                invalid_props.push_back(AZIHSM_KEY_PROP_ID_DERIVE);
+
+            aes_key_gen_invalid_flag_fail_common(session, invalid_props);
+        }
+    });
+}
+
+/// verifies AES key generation fails when unsupported capabilities are set in properties
+TEST_F(azihsm_aes_keygen, aes_key_gen_no_decrypt_flag_fails)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        aes_key_gen_invalid_flag_fail_common(session, { AZIHSM_KEY_PROP_ID_ENCRYPT });
+    });
+}
+
 TEST_F(azihsm_aes_keygen, unmask_aes_128_key)
 {
     part_list_.for_each_session([](azihsm_handle session) {

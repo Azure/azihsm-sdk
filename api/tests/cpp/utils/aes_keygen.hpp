@@ -20,3 +20,9 @@ void verify_generated_aes_key_properties(
     uint32_t bits,
     bool is_session
 );
+
+/// Helper function to attempt to generate AES key with invalid flags for testing
+void aes_key_gen_invalid_flag_fail_common(
+    azihsm_handle session,
+    std::vector<azihsm_key_prop_id> flag_prop_ids
+);

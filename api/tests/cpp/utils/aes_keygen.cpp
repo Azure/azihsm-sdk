@@ -85,3 +85,43 @@ void verify_generated_aes_key_properties(
     verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_UNWRAP, false);
     verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_DERIVE, false);
 }
+
+void aes_key_gen_invalid_flag_fail_common(
+    azihsm_handle session,
+    std::vector<azihsm_key_prop_id> flag_prop_ids
+)
+{
+    // Step 1: Attempt to generate invalid AES key
+    azihsm_algo keygen_algo{};
+    keygen_algo.id = AZIHSM_ALGO_ID_AES_KEY_GEN;
+    keygen_algo.params = nullptr;
+    keygen_algo.len = 0;
+
+    azihsm_key_class key_class = AZIHSM_KEY_CLASS_SECRET;
+    azihsm_key_kind key_kind = AZIHSM_KEY_KIND_AES;
+    uint32_t bits = 256;
+    bool is_session = true;
+
+    std::vector<azihsm_key_prop> props_vec = {
+        { .id = AZIHSM_KEY_PROP_ID_KIND, .val = &key_kind, .len = sizeof(key_kind) },
+        { .id = AZIHSM_KEY_PROP_ID_CLASS, .val = &key_class, .len = sizeof(key_class) },
+        { .id = AZIHSM_KEY_PROP_ID_BIT_LEN, .val = &bits, .len = sizeof(bits) },
+        { .id = AZIHSM_KEY_PROP_ID_SESSION, .val = &is_session, .len = sizeof(is_session) }
+    };
+
+    // Add flag properties
+    std::vector<uint8_t> flag_values(flag_prop_ids.size(), 1);
+    for (size_t i = 0; i < flag_prop_ids.size(); i++)
+    {
+        props_vec.push_back({ .id = flag_prop_ids[i], .val = &flag_values[i], .len = sizeof(flag_values[i]) });
+    }
+
+
+    azihsm_key_prop_list prop_list{ .props = props_vec.data(),
+                                    .count = static_cast<uint32_t>(props_vec.size()) };
+
+    auto_key original_key;
+    azihsm_status err = azihsm_key_gen(session, &keygen_algo, &prop_list, original_key.get_ptr());
+    ASSERT_EQ(err, AZIHSM_STATUS_INVALID_KEY_PROPS);
+    ASSERT_EQ(original_key, 0);
+}
