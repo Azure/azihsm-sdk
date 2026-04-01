@@ -67,8 +67,8 @@ TEST_F(azihsm_ecc_keygen, generate_keypair_all_curves)
 TEST_F(azihsm_ecc_keygen, null_algorithm)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        DummyEccPrivKeyProps priv_props;
-        DummyEccPubKeyProps pub_props;
+        DefaultEccPrivKeyProps priv_props;
+        DefaultEccPubKeyProps pub_props;
 
         azihsm_handle priv_key_handle = 0;
         azihsm_handle pub_key_handle = 0;
@@ -96,7 +96,7 @@ TEST_F(azihsm_ecc_keygen, null_priv_key_props)
         keygen_algo.params = nullptr;
         keygen_algo.len = 0;
 
-        DummyEccPubKeyProps pub_props;
+        DefaultEccPubKeyProps pub_props;
         auto pub_prop_list = pub_props.get_prop_list();
 
         azihsm_handle priv_key_handle = 0;
@@ -122,7 +122,7 @@ TEST_F(azihsm_ecc_keygen, null_pub_key_props)
         keygen_algo.params = nullptr;
         keygen_algo.len = 0;
 
-        DummyEccPrivKeyProps priv_props;
+        DefaultEccPrivKeyProps priv_props;
         auto priv_prop_list = priv_props.get_prop_list();
 
         azihsm_handle priv_key_handle = 0;
@@ -148,8 +148,8 @@ TEST_F(azihsm_ecc_keygen, null_priv_key_handle_output)
         keygen_algo.params = nullptr;
         keygen_algo.len = 0;
 
-        DummyEccPrivKeyProps priv_props;
-        DummyEccPubKeyProps pub_props;
+        DefaultEccPrivKeyProps priv_props;
+        DefaultEccPubKeyProps pub_props;
         auto priv_prop_list = priv_props.get_prop_list();
         auto pub_prop_list = pub_props.get_prop_list();
 
@@ -175,8 +175,8 @@ TEST_F(azihsm_ecc_keygen, null_pub_key_handle_output)
         keygen_algo.params = nullptr;
         keygen_algo.len = 0;
 
-        DummyEccPrivKeyProps priv_props;
-        DummyEccPubKeyProps pub_props;
+        DefaultEccPrivKeyProps priv_props;
+        DefaultEccPubKeyProps pub_props;
         auto priv_prop_list = priv_props.get_prop_list();
         auto pub_prop_list = pub_props.get_prop_list();
 
@@ -201,8 +201,8 @@ TEST_F(azihsm_ecc_keygen, invalid_session_handle)
     keygen_algo.params = nullptr;
     keygen_algo.len = 0;
 
-    DummyEccPrivKeyProps priv_props;
-    DummyEccPubKeyProps pub_props;
+    DefaultEccPrivKeyProps priv_props;
+    DefaultEccPubKeyProps pub_props;
     auto priv_prop_list = priv_props.get_prop_list();
     auto pub_prop_list = pub_props.get_prop_list();
 
@@ -228,8 +228,8 @@ TEST_F(azihsm_ecc_keygen, unsupported_algorithm)
         keygen_algo.params = nullptr;
         keygen_algo.len = 0;
 
-        DummyEccPrivKeyProps priv_props;
-        DummyEccPubKeyProps pub_props;
+        DefaultEccPrivKeyProps priv_props;
+        DefaultEccPubKeyProps pub_props;
         auto priv_prop_list = priv_props.get_prop_list();
         auto pub_prop_list = pub_props.get_prop_list();
 
@@ -268,19 +268,19 @@ TEST_F(azihsm_ecc_keygen, unmask_ecc_p256_keypair)
         // Step 2: Get masked key from private key
         uint8_t *masked_key_ptr = nullptr;
         uint32_t masked_key_len = 0;
-        
+
         azihsm_key_prop masked_prop{};
         masked_prop.id = AZIHSM_KEY_PROP_ID_MASKED_KEY;
         masked_prop.val = masked_key_ptr;
         masked_prop.len = masked_key_len;
-        
+
         err = azihsm_key_get_prop(original_priv_key.get(), &masked_prop);
         ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
         ASSERT_GT(masked_prop.len, 0);
 
         std::vector<uint8_t> masked_key_data(masked_prop.len);
         masked_prop.val = masked_key_data.data();
-        
+
         err = azihsm_key_get_prop(original_priv_key.get(), &masked_prop);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
@@ -308,13 +308,13 @@ TEST_F(azihsm_ecc_keygen, unmask_ecc_p256_keypair)
             azihsm_key_kind original_kind, unmasked_kind;
             uint32_t len = sizeof(azihsm_key_kind);
             azihsm_key_prop prop{};
-            
+
             prop.id = AZIHSM_KEY_PROP_ID_KIND;
             prop.val = &original_kind;
             prop.len = len;
             err = azihsm_key_get_prop(original_priv_key.get(), &prop);
             ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-            
+
             prop.val = &unmasked_kind;
             err = azihsm_key_get_prop(unmasked_priv_key.get(), &prop);
             ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
@@ -325,11 +325,11 @@ TEST_F(azihsm_ecc_keygen, unmask_ecc_p256_keypair)
             azihsm_ecc_curve original_curve, unmasked_curve;
             prop.id = AZIHSM_KEY_PROP_ID_EC_CURVE;
             prop.len = sizeof(azihsm_ecc_curve);
-            
+
             prop.val = &original_curve;
             err = azihsm_key_get_prop(original_priv_key.get(), &prop);
             ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-            
+
             prop.val = &unmasked_curve;
             err = azihsm_key_get_prop(unmasked_priv_key.get(), &prop);
             ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
@@ -343,13 +343,13 @@ TEST_F(azihsm_ecc_keygen, unmask_ecc_p256_keypair)
             azihsm_key_kind original_kind, unmasked_kind;
             uint32_t len = sizeof(azihsm_key_kind);
             azihsm_key_prop prop{};
-            
+
             prop.id = AZIHSM_KEY_PROP_ID_KIND;
             prop.val = &original_kind;
             prop.len = len;
             err = azihsm_key_get_prop(original_pub_key.get(), &prop);
             ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-            
+
             prop.val = &unmasked_kind;
             err = azihsm_key_get_prop(unmasked_pub_key.get(), &prop);
             ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
@@ -360,11 +360,11 @@ TEST_F(azihsm_ecc_keygen, unmask_ecc_p256_keypair)
             azihsm_ecc_curve original_curve, unmasked_curve;
             prop.id = AZIHSM_KEY_PROP_ID_EC_CURVE;
             prop.len = sizeof(azihsm_ecc_curve);
-            
+
             prop.val = &original_curve;
             err = azihsm_key_get_prop(original_pub_key.get(), &prop);
             ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-            
+
             prop.val = &unmasked_curve;
             err = azihsm_key_get_prop(unmasked_pub_key.get(), &prop);
             ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);

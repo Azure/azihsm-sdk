@@ -64,9 +64,14 @@ set(SOURCE
     algo/aes/cbc_enc_dec_tests.cpp
     algo/aes/gcm_enc_dec_tests.cpp
     algo/aes/xts_enc_dec_tests.cpp
+    algo/ecc/ecc_static_der.cpp
     algo/aes/keygen_tests.cpp
     algo/aes/helpers.cpp
     algo/ecc/keygen_tests.cpp
+    algo/ecc/unwrap_tests.cpp
+    algo/ecc/unwrap_property_tests.cpp
+    algo/ecc/unwrap_semantic_tests.cpp
+    algo/ecc/helpers.cpp
     algo/ecc/sign_verify_tests.cpp
     algo/ecc/keyreport_tests.cpp
     algo/rsa/keygen_tests.cpp
@@ -99,6 +104,7 @@ else()
             GTest::gtest_main
             scope_guard::scope_guard
             bcrypt
+            ncrypt
     )
 endif()
 

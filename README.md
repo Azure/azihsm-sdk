@@ -1,9 +1,11 @@
 # Azure Integrated HSM SDK
 
 ## Project Overview
+
 Azure Integrated HSM (AZIHSM) SDK is a modular, cross-platform software development kit (SDK) written in Rust. This repository is home to AZIHSM SDK, its simulator, and its OpenSSL Provider.
 
 ## Project Structure
+
 - `api/` - Core AZIHSM SDK implementation
 - `crates/` - Shared support libraries
 - `ddi/` - Device Data Interface components for interacting with AZIHSM hardware
@@ -12,9 +14,11 @@ Azure Integrated HSM (AZIHSM) SDK is a modular, cross-platform software developm
 - `xtask/` - Custom build and automation tasks
 
 ## Initial Setup
+
 Before running any commands in this document for the first time, restore required dependencies using these steps:
 
 For Linux systems, first install the following 4 Linux packages with the package manager of the distribution:
+
 ```
 clang-format-18
 libbsd-dev
@@ -23,61 +27,79 @@ pkg-config
 ```
 
 For both Linux and Windows systems, run the following to install all other required dependencies:
+
 ```bash
 cargo xtask precheck --setup
 ```
 
 ## Build Commands
+
 Before running any commands below, ensure you have finished the initial setup steps.
 
 ### Building
+
 Build the project using Cargo xtask:
+
 ```bash
 cargo xtask build
 ```
 
 Build specific packages using:
+
 ```bash
 # Build specific packages you are modifying
 cargo xtask build --package <package-name>
 ```
 
 ## Testing
+
 Before running any commands below, ensure you have finished the initial setup steps.
 
 ### Unit Tests
+
 Use cargo-nextest (recommended):
+
 ```bash
 # Run tests in specific packages you are modifying against simulator
 cargo xtask nextest --features mock --package <package-name>
 ```
 
 ## Linting and Formatting
+
 Before running any commands below, ensure you have finished the initial setup steps.
 
 ### Required Before Each Commit
+
 Always run formatting checks before committing:
+
 ```bash
 cargo +nightly xtask fmt --fix
 ```
+
 It auto fixes formatting issues. This ensures all source code follows rustfmt standards.
 
 Always run copyright checks before committing:
+
 ```bash
 cargo xtask copyright --fix
 ```
+
 It auto fixes copyright issues. This ensures all source code has correct copyright headers.
 
-## Precheckin Steps
+## Precheck Steps
+
 Before running any commands below, ensure you have finished the initial setup steps.
 
 You can run all checks (setup, build, formatting, copyright, linting, tests, code coverage etc.) against simulator with:
+
 ```bash
 cargo xtask precheck --all
 ```
+
 It will run all necessary checks to ensure code quality before committing. It will not auto fix linting, formatting or copyright issues.
 
 ## License
+
 See [LICENSE](./LICENSE) for details.
 
 ## Contributing

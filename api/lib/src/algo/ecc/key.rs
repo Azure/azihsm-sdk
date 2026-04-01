@@ -44,6 +44,11 @@ impl HsmEccPrivateKey {
         // Supported usage flags for ECC private keys in this layer.
         let supported_flag = HsmKeyFlags::SIGN | HsmKeyFlags::DERIVE;
 
+        // VERIFY is a public-key capability and must not be supplied on private-key props.
+        if props.can_verify() {
+            Err(HsmError::InvalidKeyProps)?;
+        }
+
         // ECC private key must be either a signing key or a derivation key (but not both).
         if props.can_sign() == props.can_derive() {
             Err(HsmError::InvalidKeyProps)?;
@@ -101,6 +106,10 @@ impl HsmEccPrivateKey {
             Err(HsmError::InvalidKeyProps)?;
         }
 
+        if priv_props.is_session() != pub_props.is_session() {
+            Err(HsmError::InvalidKeyProps)?;
+        }
+
         // private key must be able to sign if public key can verify
         if pub_props.can_verify() && !priv_props.can_sign() {
             Err(HsmError::InvalidKeyProps)?;
@@ -131,6 +140,11 @@ impl HsmEccPublicKey {
     fn validate_props(props: &HsmKeyProps) -> HsmResult<()> {
         // Supported usage flags for ECC public keys in this layer.
         let supported_flag = HsmKeyFlags::VERIFY | HsmKeyFlags::DERIVE;
+
+        // SIGN is a private-key capability and must not be supplied on public-key props.
+        if props.can_sign() {
+            Err(HsmError::InvalidKeyProps)?;
+        }
 
         //check if public key is verifiable or derivable
         if props.can_verify() == props.can_derive() {
