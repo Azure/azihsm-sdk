@@ -35,7 +35,7 @@ azihsm_status azihsm_open_device_and_session(
  *     by the caller with OPENSSL_cleanse + OPENSSL_free.
  */
 azihsm_status compute_pota_endorsement(
-    azihsm_handle device,
+    const struct azihsm_buffer *pid_pub_key_der,
     const struct azihsm_buffer *priv_key_buf,
     struct azihsm_buffer *sig_out
 );

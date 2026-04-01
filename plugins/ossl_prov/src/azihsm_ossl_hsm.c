@@ -533,71 +533,45 @@ azihsm_status azihsm_get_unwrapping_key(
 }
 
 /*
- * Retrieves the partition's PID public key and builds its uncompressed EC point.
+ * Converts a DER-encoded SubjectPublicKeyInfo EC public key into its
+ * uncompressed point representation (0x04 || x || y).
  *
- * Fetches the PID public key via AZIHSM_PART_PROP_ID_PART_PUB_KEY (works before
- * part_init), parses the DER SubjectPublicKeyInfo, and writes the uncompressed
- * point (0x04 || x || y) into the caller-provided buffer.
- *
- * All OpenSSL calls use NULL libctx (default provider), which is safe during
- * provider init since our provider is not yet registered.
+ * The output buffer must be at least P384_UNCOMPRESSED_POINT_SIZE bytes.
  */
-static azihsm_status get_pid_uncompressed_point(
-    azihsm_handle device,
+static azihsm_status der_to_uncompressed_point(
+    const struct azihsm_buffer *pub_key_der,
     unsigned char point[P384_UNCOMPRESSED_POINT_SIZE]
 )
 {
-    azihsm_status status;
-    struct azihsm_buffer pid_pub_key_der = { NULL, 0 };
     const unsigned char *der_ptr = NULL;
-    EVP_PKEY *pid_pkey = NULL;
+    EVP_PKEY *pkey = NULL;
     BIGNUM *qx = NULL;
     BIGNUM *qy = NULL;
 
-    status = get_part_property(device, AZIHSM_PART_PROP_ID_PART_PUB_KEY, &pid_pub_key_der);
-    if (status != AZIHSM_STATUS_SUCCESS)
+    if (pub_key_der == NULL || pub_key_der->ptr == NULL)
     {
-        ERR_raise_data(
-            ERR_LIB_PROV,
-            ERR_R_INTERNAL_ERROR,
-            "failed to retrieve PID public key property"
-        );
-        return status;
-    }
-    if (pid_pub_key_der.ptr == NULL)
-    {
-        ERR_raise_data(
-            ERR_LIB_PROV,
-            ERR_R_INTERNAL_ERROR,
-            "PID public key property returned NULL pointer"
-        );
-        return AZIHSM_STATUS_INTERNAL_ERROR;
+        return AZIHSM_STATUS_INVALID_ARGUMENT;
     }
 
-    der_ptr = pid_pub_key_der.ptr;
-    pid_pkey = d2i_PUBKEY(NULL, &der_ptr, (long)pid_pub_key_der.len);
-    free_buffer(&pid_pub_key_der);
-
-    if (pid_pkey == NULL)
+    der_ptr = pub_key_der->ptr;
+    pkey = d2i_PUBKEY(NULL, &der_ptr, (long)pub_key_der->len);
+    if (pkey == NULL)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
 
-    qx = NULL;
-    qy = NULL;
-
-    if (!EVP_PKEY_get_bn_param(pid_pkey, OSSL_PKEY_PARAM_EC_PUB_X, &qx) ||
-        !EVP_PKEY_get_bn_param(pid_pkey, OSSL_PKEY_PARAM_EC_PUB_Y, &qy))
+    if (!EVP_PKEY_get_bn_param(pkey, OSSL_PKEY_PARAM_EC_PUB_X, &qx) ||
+        !EVP_PKEY_get_bn_param(pkey, OSSL_PKEY_PARAM_EC_PUB_Y, &qy))
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
         BN_free(qx);
         BN_free(qy);
-        EVP_PKEY_free(pid_pkey);
+        EVP_PKEY_free(pkey);
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
 
-    EVP_PKEY_free(pid_pkey);
+    EVP_PKEY_free(pkey);
 
     point[0] = 0x04;
     if (BN_bn2binpad(qx, point + 1, P384_COORD_SIZE) != P384_COORD_SIZE ||
@@ -756,14 +730,14 @@ static azihsm_status sign_with_pota_key(
 /*
  * Computes POTA endorsement for partition initialization.
  *
- * Retrieves the partition's PID public key, builds its uncompressed EC point,
+ * Converts the PID public key from DER to uncompressed EC point format,
  * and signs it with the provided POTA private key using ECDSA-SHA384. The
  * signature is returned in raw r||s format.
  *
  * On success, caller must free sig_out->ptr with OPENSSL_cleanse + OPENSSL_free.
  */
 azihsm_status compute_pota_endorsement(
-    azihsm_handle device,
+    const struct azihsm_buffer *pid_pub_key_der,
     const struct azihsm_buffer *priv_key_buf,
     struct azihsm_buffer *sig_out
 )
@@ -774,7 +748,7 @@ azihsm_status compute_pota_endorsement(
     sig_out->ptr = NULL;
     sig_out->len = 0;
 
-    status = get_pid_uncompressed_point(device, uncompressed_point);
+    status = der_to_uncompressed_point(pid_pub_key_der, uncompressed_point);
     if (status != AZIHSM_STATUS_SUCCESS)
     {
         return status;
@@ -1066,11 +1040,26 @@ azihsm_status azihsm_open_device_and_session(
         }
 
         // Compute POTA endorsement: sign PID public key with POTA key
+        struct azihsm_buffer pid_pub_key_buf = { NULL, 0 };
+        status = get_part_property(*device, AZIHSM_PART_PROP_ID_PART_PUB_KEY, &pid_pub_key_buf);
+        if (status != AZIHSM_STATUS_SUCCESS)
+        {
+            free_buffer(&pota_priv_buf);
+            free_buffer(&pota_pub_buf);
+            free_buffer(&obk_buf);
+            free_buffer(&bmk_buf);
+            free_buffer(&muk_buf);
+            OPENSSL_cleanse(&creds, sizeof(creds));
+            azihsm_resiliency_destroy(res_ctx);
+            azihsm_part_close(*device);
+            return status;
+        }
         status = compute_pota_endorsement(
-            *device,
+            &pid_pub_key_buf,
             &pota_priv_buf,
             &pota_sig_buf
         );
+        free_buffer(&pid_pub_key_buf);
         if (status != AZIHSM_STATUS_SUCCESS)
         {
             free_buffer(&pota_priv_buf);

@@ -482,13 +482,16 @@ static azihsm_status resiliency_unlock(void *ctx_ptr)
  *   - Second call (buffers allocated): computes the endorsement,
  *     copies signature and POTA public key DER into the output buffers.
  *
- * @param pub_key  The caller's original endorsement verification key
- *                 (passed for identification; ignored by this provider
- *                 because it always uses the same fixed POTA key pair).
+ * @param pota_pub_key_der  The caller's original endorsement verification key
+ *                          (DER-encoded; passed for identification; ignored by
+ *                          this provider because it always uses the same fixed
+ *                          POTA key pair).
  */
 static azihsm_status resiliency_pota_endorse(
     void *ctx_ptr,
-    const struct azihsm_buffer *pub_key,
+    const struct azihsm_buffer *pota_pub_key_der,
+    const struct azihsm_buffer *pid_pub_key_der,
+    const struct azihsm_buffer *pid_cert_chain_pem,
     struct azihsm_buffer *signature,
     struct azihsm_buffer *endorsement_pub_key
 )
@@ -497,7 +500,8 @@ static azihsm_status resiliency_pota_endorse(
     struct azihsm_buffer sig_tmp = { NULL, 0 };
     azihsm_status status;
 
-    (void)pub_key; /* identification only; provider uses fixed POTA key */
+    (void)pota_pub_key_der;   /* identification only; provider uses fixed POTA key */
+    (void)pid_cert_chain_pem; /* not needed by this provider */
 
     if (ctx == NULL || signature == NULL || endorsement_pub_key == NULL)
     {
@@ -548,7 +552,7 @@ static azihsm_status resiliency_pota_endorse(
     }
 
     status =
-        compute_pota_endorsement(ctx->device, &priv_key_buf, &sig_tmp);
+        compute_pota_endorsement(pid_pub_key_der, &priv_key_buf, &sig_tmp);
     OPENSSL_cleanse(priv_key_buf.ptr, priv_key_buf.len);
     OPENSSL_free(priv_key_buf.ptr);
     if (status != AZIHSM_STATUS_SUCCESS)
