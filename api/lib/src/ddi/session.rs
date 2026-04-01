@@ -50,14 +50,6 @@ pub(crate) struct ReopenSessionResult {
 /// application credentials. The session provides a context for performing
 /// cryptographic operations on the device.
 ///
-/// # Locking
-///
-/// This function acquires `partition.inner().read()` internally.
-/// Callers must not hold `partition.inner().read()` or
-/// `partition.inner().write()` when calling this function, as
-/// `parking_lot::RwLock` will deadlock if a writer is queued between
-/// two reader acquisitions on the same thread.
-///
 /// # Arguments
 ///
 /// * `partition` - The HSM partition handle

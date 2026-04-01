@@ -152,7 +152,7 @@ fn get_pota_endorsement(
                     .as_ref()
                     .ok_or(HsmError::InvalidArgument)?;
                 let pid_pub_key_der = get_part_pub_key(dev, rev)?;
-                let pid_cert_chain_pem = get_cert_chain(dev, rev, 0)?;
+                let pid_cert_chain_pem = get_cert_chain_raw_no_res(dev, rev, 0)?;
                 let data = invoke_pota_callback(
                     callback.as_ref(),
                     pota_endorsement,
@@ -568,10 +568,21 @@ fn establish_credential(
 /// Callers must not hold `partition.inner().read()` or
 /// `partition.inner().write()` when calling this function.
 #[resiliency_cert_chain(partition = "partition")]
-pub(crate) fn get_cert_chain(partition: &HsmPartition, slot_id: u8) -> HsmResult<String> {
+pub(crate) fn get_cert_chain(
+    partition: &HsmPartition,
+    rev: HsmApiRev,
+    slot_id: u8,
+) -> HsmResult<String> {
     let inner = partition.inner().read();
     let dev = inner.dev();
-    let rev = inner.api_rev_range().min();
+    get_cert_chain_raw_no_res(dev, rev, slot_id)
+}
+
+/// Raw cert chain retrieval — no resiliency retry, no partition lock.
+///
+/// For use in contexts that already have `dev` and `rev` (e.g.,
+/// `get_pota_endorsement` during `init_part_raw_no_res`).
+fn get_cert_chain_raw_no_res(dev: &HsmDev, rev: HsmApiRev, slot_id: u8) -> HsmResult<String> {
     let (count, thumbprint) = get_cert_chain_info(dev, rev, slot_id)?;
 
     let mut cert_chain = String::new();
