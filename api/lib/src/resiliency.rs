@@ -85,46 +85,51 @@ pub trait ResiliencyLock: Send + Sync {
 /// enabled. Called during `init_part` (to re-endorse after a
 /// resiliency event).
 ///
-/// The callback is responsible for retrieving the current device's PID
-/// certificate public key, signing it, and returning the result.
+/// The callback is responsible for endorsing the device's PID certificate
+/// public key and returning the result.
 ///
-/// # Deadlock hazard
+/// Warning: This callback is invoked while the internal `HsmPartition` lock
+/// is held. Implementations must not call methods on the same
+/// `HsmPartition` handle from inside the callback, or a deadlock will
+/// occur. If additional device queries are truly required, open a
+/// separate `HsmPartition` handle for that purpose.
 ///
-/// The callback is invoked while the partition's internal `RwLock` is
-/// held. Implementations must not call methods on the same
-/// [`HsmPartition`](crate::HsmPartition) handle that is being
-/// initialized or restored — doing so will deadlock.
-///
-/// Instead, store the device path and open a **separate** partition
-/// handle inside the callback:
-///
+/// # Example
 /// ```ignore
-/// struct MyPotaCallback {
-///     path: String,  // Store the device path, not the HsmPartition
-/// }
+/// struct MyPotaCallback;
 ///
 /// impl PotaEndorsementCallback for MyPotaCallback {
-///     fn endorse(&self, _pub_key: &[u8]) -> HsmResult<HsmPotaEndorsementData> {
-///         // Open a NEW partition handle — do NOT reuse the caller's handle
-///         let part = HsmPartitionManager::open_partition(&self.path)?;
-///         let pid_pub_key = part.pub_key()?;
-///         let (sig, signer_pub_key) = sign_pid_key(&pid_pub_key);
+///     fn endorse(
+///         &self,
+///         _pota_pub_key_der: &[u8],
+///         pid_pub_key_der: &[u8],
+///         _pid_cert_chain_pem: &[u8],
+///     ) -> HsmResult<HsmPotaEndorsementData> {
+///         let (sig, signer_pub_key) = sign_pid_key(pid_pub_key_der);
 ///         Ok(HsmPotaEndorsementData::new(&sig, &signer_pub_key))
 ///     }
 /// }
 /// ```
 pub trait PotaEndorsementCallback: Send + Sync {
-    /// Generate a fresh POTA endorsement for the current device.
+    /// Sign the device's PID certificate public key for POTA endorsement.
     ///
-    /// The `pub_key` parameter is the caller's original endorsement public
-    /// key, passed for identification.
+    /// # Arguments
     ///
-    /// The implementation must:
-    /// 1. Open a separate partition handle
-    /// 2. Retrieve the current device's PID certificate public key
-    /// 3. Sign it with the caller's private key
-    /// 4. Return the signature and the signer's public key
-    fn endorse(&self, pub_key: &[u8]) -> HsmResult<HsmPotaEndorsementData>;
+    /// * `pota_pub_key_der` — the caller's original POTA endorsement public
+    ///   key, passed for identification.
+    /// * `pid_pub_key_der` — the current device's PID certificate public key
+    ///   (DER-encoded), retrieved by the SDK.
+    /// * `pid_cert_chain_pem` — the device's PID certificate chain
+    ///   (PEM-encoded), retrieved by the SDK.
+    ///
+    /// The implementation must sign `pid_pub_key_der` with the caller's
+    /// private key and return the signature and the signer's public key.
+    fn endorse(
+        &self,
+        pota_pub_key_der: &[u8],
+        pid_pub_key_der: &[u8],
+        pid_cert_chain_pem: &[u8],
+    ) -> HsmResult<HsmPotaEndorsementData>;
 }
 
 /// RAII guard for [`ResiliencyLock`].
@@ -700,7 +705,12 @@ mod tests {
 
     struct MockPotaCallback;
     impl PotaEndorsementCallback for MockPotaCallback {
-        fn endorse(&self, _pub_key: &[u8]) -> HsmResult<HsmPotaEndorsementData> {
+        fn endorse(
+            &self,
+            _pota_pub_key_der: &[u8],
+            _pid_pub_key_der: &[u8],
+            _pid_cert_chain_pem: &[u8],
+        ) -> HsmResult<HsmPotaEndorsementData> {
             Ok(HsmPotaEndorsementData::new(&[0u8; 96], &[0u8; 120]))
         }
     }

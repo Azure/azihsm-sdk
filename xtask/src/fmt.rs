@@ -106,7 +106,7 @@ impl Xtask for Fmt {
                         exclude: vec![],
                         files: vec![
                             PathBuf::from(&ctx.root)
-                                .join("napi")
+                                .join("api")
                                 .join("tests")
                                 .join("cpp"),
                             #[cfg(target_os = "linux")]

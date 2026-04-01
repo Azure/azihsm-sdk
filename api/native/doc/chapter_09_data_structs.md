@@ -690,22 +690,18 @@ POTA re-endorsement callback for resiliency.
 
 ```cpp
 struct azihsm_pota_callback_ops {
-    azihsm_status (*endorse)(void *ctx, const azihsm_buffer *pub_key,
+    azihsm_status (*endorse)(void *ctx,
+                              const azihsm_buffer *pota_pub_key_der,
+                              const azihsm_buffer *pid_pub_key_der,
+                              const azihsm_buffer *pid_cert_chain_pem,
                               azihsm_buffer *signature,
                               azihsm_buffer *endorsement_pub_key);
 };
 ```
 
-| Field   | Type             | Description                                                                        |
-| ------- | ---------------- | ---------------------------------------------------------------------------------- |
-| endorse | function pointer | Re-endorse the public key. Uses two-call buffer pattern for signature and pub key.  |
-
-> **Deadlock hazard:** The `endorse` callback is invoked while the
-> partition's internal lock is held. Implementations **must not** use the
-> same partition handle (`azihsm_handle`) that was passed to
-> `azihsm_part_init` — doing so will deadlock. Instead, store the device
-> path and open a **separate** partition handle inside the callback using
-> `azihsm_part_open`, then call `azihsm_part_get_pub_key` on that handle to  retrieve the PID public key for signing.
+| Field              | Type             | Description                                                                        |
+| ------------------ | ---------------- | ---------------------------------------------------------------------------------- |
+| endorse            | function pointer | Sign the device's PID public key for POTA endorsement. The SDK retrieves the PID public key and certificate chain from the device and passes them via `pid_pub_key_der` and `pid_cert_chain_pem` respectively. `pota_pub_key_der` is the caller's original endorsement public key, passed for identification. `pid_cert_chain_pem` contains the PEM-encoded PID certificate chain. Uses two-call buffer pattern for `signature` and `endorsement_pub_key` outputs. |
 
 ### azihsm_resiliency_config
 
@@ -722,7 +718,7 @@ struct azihsm_resiliency_config {
 
 | Field              | Type                                                              | Description                                                                                   |
 | ------------------ | ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| ctx                | void *                                                            | Opaque context pointer passed to every callback. Caller-owned; must remain valid until `azihsm_part_close` returns. The SDK never dereferences `ctx` itself — it is passed opaquely to each callback. **Do not** store the partition handle (`azihsm_handle`) in `ctx` — callbacks are invoked while the partition's internal lock is held, so calling back into the same partition will deadlock. Instead, store the device path and open a separate partition handle inside any callback that needs to query the device. |
+| ctx                | void *                                                            | Opaque context pointer passed to every callback. Caller-owned; must remain valid until `azihsm_part_close` returns. The SDK never dereferences `ctx` itself — it is passed opaquely to each callback. **Must not** store or reference the same `azihsm_handle` being initialized — callbacks are invoked while the partition's internal lock is held, so calling back into the same partition will deadlock. |
 | storage_ops        | [azihsm_resiliency_storage_ops](#azihsm_resiliency_storage_ops)   | Storage callbacks (required).                                                                 |
 | lock_ops           | [azihsm_resiliency_lock_ops](#azihsm_resiliency_lock_ops)         | Lock callbacks (required).                                                                    |
 | pota_callback_ops  | [azihsm_pota_callback_ops *](#azihsm_pota_callback_ops)           | POTA callback (NULL when POTA source is TPM; required when source is Caller).                 |
