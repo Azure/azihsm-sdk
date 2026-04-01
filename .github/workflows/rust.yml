@@ -159,8 +159,7 @@ jobs:
 
     - name: Install provider
       run: |
-        sudo mkdir -p /usr/lib/ossl-modules /var/lib/azihsm
-        sudo chown "$USER" /var/lib/azihsm
+        sudo mkdir -p /usr/lib/ossl-modules
         sudo cp target/debug/azihsm_provider.so /usr/lib/ossl-modules/
         sudo cp target/debug/libazihsm_api_native.so /usr/lib/
         sudo ldconfig
@@ -179,14 +178,6 @@ jobs:
         $OSSL ecparam -name secp384r1 -genkey -noout | $OSSL ec -outform DER -out pota_private_key.der 2>/dev/null
         $OSSL ec -in pota_private_key.der -inform DER -pubout -outform DER -out pota_public_key.der 2>/dev/null
         chmod 600 credentials_id.bin credentials_pin.bin obk.bin pota_private_key.der pota_public_key.der
-
-    - name: Install config files
-      run: |
-        sudo mkdir -p /etc/azihsm
-        sudo cp plugins/ossl_prov/nginx-example/openssl-provider.cnf /etc/azihsm/
-        sudo cp plugins/ossl_prov/nginx-example/openssl-cli.cnf /etc/azihsm/
-        sudo cp plugins/ossl_prov/nginx-example/nginx.conf.template /etc/azihsm/
-        sudo chown -R "$USER" /etc/azihsm
 
     - name: Smoke test provider
       env:
@@ -228,18 +219,11 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y --no-install-recommends nginx
 
-    - name: Install provider to system path for nginx
-      run: |
-        sudo mkdir -p /usr/lib/x86_64-linux-gnu/ossl-modules
-        sudo cp /usr/lib/ossl-modules/azihsm_provider.so /usr/lib/x86_64-linux-gnu/ossl-modules/
-
     - name: NGINX integration tests
       env:
         OPENSSL_BIN: /opt/openssl-3.0.3/bin/openssl
         OPENSSL_LIB: /opt/openssl-3.0.3/lib
-        LD_LIBRARY_PATH: /opt/openssl-3.0.3/lib
-        PROVIDER_PATH: /usr/lib/x86_64-linux-gnu/ossl-modules
-        OPENSSL_CONF: /etc/azihsm/openssl-provider.cnf
+        PROVIDER_PATH: /usr/lib/ossl-modules
         AZIHSM_CREDENTIALS_ID: "70fcf730b8764238b8358010ce8a3f76"
         AZIHSM_CREDENTIALS_PIN: "db3dc77fc22e430080d41b31b6f04800"
       run: |
