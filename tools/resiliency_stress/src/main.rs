@@ -2443,7 +2443,21 @@ fn child_worker_thread(
                 proc_stats.increment_error(op_idx);
                 eprintln!("  !! t{thread_id}: {op} failed: {err:?}");
 
-                if max_errors == 0
+                // DdiCmdFailure is always fatal — it covers unrecoverable
+                // device errors that should not be retried or tolerated.
+                // Specific firmware errors get dedicated messages.
+                let fatal = matches!(
+                    err,
+                    HsmError::EccGenerateError
+                        | HsmError::ProcessedInvalidIoEvent
+                        | HsmError::ProcessedIoEventInInvalidState
+                );
+                if fatal {
+                    eprintln!("  ** FATAL firmware error: {err:?} — stopping immediately.");
+                }
+
+                if fatal
+                    || max_errors == 0
                     || (max_errors > 0
                         && proc_stats.total_errors.load(Ordering::Relaxed) >= max_errors as u64)
                 {

@@ -79,6 +79,13 @@ impl From<DdiError> for HsmError {
             DdiError::DdiStatus(DdiStatus::CannotDeleteInternalKeys) => {
                 HsmError::CannotDeleteInternalKeys
             }
+            DdiError::DdiStatus(DdiStatus::EccGenerateError) => HsmError::EccGenerateError,
+            DdiError::DdiStatus(DdiStatus::ProcessedInvalidIoEvent) => {
+                HsmError::ProcessedInvalidIoEvent
+            }
+            DdiError::DdiStatus(DdiStatus::ProcessedIoEventInInvalidState) => {
+                HsmError::ProcessedIoEventInInvalidState
+            }
             _ => HsmError::DdiCmdFailure,
         }
     }

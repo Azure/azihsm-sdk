@@ -57,6 +57,9 @@ pub enum HsmError {
     RetryExhausted = -35,
     DeviceNotReady = -36,
     CannotDeleteInternalKeys = -37,
+    EccGenerateError = -38,
+    ProcessedInvalidIoEvent = -39,
+    ProcessedIoEventInInvalidState = -40,
     Panic = i32::MIN,
 }
 
