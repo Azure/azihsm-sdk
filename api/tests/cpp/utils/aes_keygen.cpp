@@ -113,9 +113,10 @@ void aes_key_gen_invalid_flag_fail_common(
     std::vector<uint8_t> flag_values(flag_prop_ids.size(), 1);
     for (size_t i = 0; i < flag_prop_ids.size(); i++)
     {
-        props_vec.push_back({ .id = flag_prop_ids[i], .val = &flag_values[i], .len = sizeof(flag_values[i]) });
+        props_vec.push_back(
+            { .id = flag_prop_ids[i], .val = &flag_values[i], .len = sizeof(flag_values[i]) }
+        );
     }
-
 
     azihsm_key_prop_list prop_list{ .props = props_vec.data(),
                                     .count = static_cast<uint32_t>(props_vec.size()) };

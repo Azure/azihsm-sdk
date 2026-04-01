@@ -424,7 +424,10 @@ TEST_F(azihsm_aes_keygen, session_aes_256_key_generation)
 TEST_F(azihsm_aes_keygen, aes_key_gen_with_sign_flag_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        aes_key_gen_invalid_flag_fail_common(session, { AZIHSM_KEY_PROP_ID_ENCRYPT, AZIHSM_KEY_PROP_ID_DECRYPT,AZIHSM_KEY_PROP_ID_SIGN });
+        aes_key_gen_invalid_flag_fail_common(
+            session,
+            { AZIHSM_KEY_PROP_ID_ENCRYPT, AZIHSM_KEY_PROP_ID_DECRYPT, AZIHSM_KEY_PROP_ID_SIGN }
+        );
     });
 }
 
@@ -432,7 +435,10 @@ TEST_F(azihsm_aes_keygen, aes_key_gen_with_sign_flag_fails)
 TEST_F(azihsm_aes_keygen, aes_key_gen_with_verify_flag_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        aes_key_gen_invalid_flag_fail_common(session, { AZIHSM_KEY_PROP_ID_ENCRYPT, AZIHSM_KEY_PROP_ID_DECRYPT, AZIHSM_KEY_PROP_ID_VERIFY });
+        aes_key_gen_invalid_flag_fail_common(
+            session,
+            { AZIHSM_KEY_PROP_ID_ENCRYPT, AZIHSM_KEY_PROP_ID_DECRYPT, AZIHSM_KEY_PROP_ID_VERIFY }
+        );
     });
 }
 
@@ -440,7 +446,10 @@ TEST_F(azihsm_aes_keygen, aes_key_gen_with_verify_flag_fails)
 TEST_F(azihsm_aes_keygen, aes_key_gen_with_wrap_flag_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        aes_key_gen_invalid_flag_fail_common(session, { AZIHSM_KEY_PROP_ID_ENCRYPT, AZIHSM_KEY_PROP_ID_DECRYPT, AZIHSM_KEY_PROP_ID_WRAP });
+        aes_key_gen_invalid_flag_fail_common(
+            session,
+            { AZIHSM_KEY_PROP_ID_ENCRYPT, AZIHSM_KEY_PROP_ID_DECRYPT, AZIHSM_KEY_PROP_ID_WRAP }
+        );
     });
 }
 
@@ -448,7 +457,10 @@ TEST_F(azihsm_aes_keygen, aes_key_gen_with_wrap_flag_fails)
 TEST_F(azihsm_aes_keygen, aes_key_gen_with_unwrap_flag_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        aes_key_gen_invalid_flag_fail_common(session, { AZIHSM_KEY_PROP_ID_ENCRYPT, AZIHSM_KEY_PROP_ID_DECRYPT, AZIHSM_KEY_PROP_ID_UNWRAP });
+        aes_key_gen_invalid_flag_fail_common(
+            session,
+            { AZIHSM_KEY_PROP_ID_ENCRYPT, AZIHSM_KEY_PROP_ID_DECRYPT, AZIHSM_KEY_PROP_ID_UNWRAP }
+        );
     });
 }
 
@@ -456,7 +468,10 @@ TEST_F(azihsm_aes_keygen, aes_key_gen_with_unwrap_flag_fails)
 TEST_F(azihsm_aes_keygen, aes_key_gen_with_derive_flag_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        aes_key_gen_invalid_flag_fail_common(session, { AZIHSM_KEY_PROP_ID_ENCRYPT, AZIHSM_KEY_PROP_ID_DECRYPT, AZIHSM_KEY_PROP_ID_DERIVE });
+        aes_key_gen_invalid_flag_fail_common(
+            session,
+            { AZIHSM_KEY_PROP_ID_ENCRYPT, AZIHSM_KEY_PROP_ID_DECRYPT, AZIHSM_KEY_PROP_ID_DERIVE }
+        );
     });
 }
 
@@ -465,7 +480,14 @@ TEST_F(azihsm_aes_keygen, aes_key_gen_with_derive_flag_fails)
 TEST_F(azihsm_aes_keygen, aes_key_gen_multiple_invalid_flags_fail)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        aes_key_gen_invalid_flag_fail_common(session, { AZIHSM_KEY_PROP_ID_ENCRYPT, AZIHSM_KEY_PROP_ID_DECRYPT, AZIHSM_KEY_PROP_ID_SIGN, AZIHSM_KEY_PROP_ID_WRAP, AZIHSM_KEY_PROP_ID_DERIVE });
+        aes_key_gen_invalid_flag_fail_common(
+            session,
+            { AZIHSM_KEY_PROP_ID_ENCRYPT,
+              AZIHSM_KEY_PROP_ID_DECRYPT,
+              AZIHSM_KEY_PROP_ID_SIGN,
+              AZIHSM_KEY_PROP_ID_WRAP,
+              AZIHSM_KEY_PROP_ID_DERIVE }
+        );
     });
 }
 
@@ -473,7 +495,14 @@ TEST_F(azihsm_aes_keygen, aes_key_gen_multiple_invalid_flags_fail)
 TEST_F(azihsm_aes_keygen, aes_key_gen_only_invalid_capabilities)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        aes_key_gen_invalid_flag_fail_common(session, { AZIHSM_KEY_PROP_ID_SIGN, AZIHSM_KEY_PROP_ID_VERIFY, AZIHSM_KEY_PROP_ID_WRAP, AZIHSM_KEY_PROP_ID_UNWRAP, AZIHSM_KEY_PROP_ID_DERIVE });
+        aes_key_gen_invalid_flag_fail_common(
+            session,
+            { AZIHSM_KEY_PROP_ID_SIGN,
+              AZIHSM_KEY_PROP_ID_VERIFY,
+              AZIHSM_KEY_PROP_ID_WRAP,
+              AZIHSM_KEY_PROP_ID_UNWRAP,
+              AZIHSM_KEY_PROP_ID_DERIVE }
+        );
     });
 }
 
@@ -481,7 +510,10 @@ TEST_F(azihsm_aes_keygen, aes_key_gen_only_invalid_capabilities)
 TEST_F(azihsm_aes_keygen, aes_key_gen_invalid_flags_without_crypto_permissions)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        aes_key_gen_invalid_flag_fail_common(session, { AZIHSM_KEY_PROP_ID_SIGN, AZIHSM_KEY_PROP_ID_WRAP });
+        aes_key_gen_invalid_flag_fail_common(
+            session,
+            { AZIHSM_KEY_PROP_ID_SIGN, AZIHSM_KEY_PROP_ID_WRAP }
+        );
     });
 }
 
@@ -490,25 +522,20 @@ TEST_F(azihsm_aes_keygen, aes_key_gen_multiple_invalid_capabilities)
 {
     part_list_.for_each_session([](azihsm_handle session) {
         bool invalid_flag_sets[16][5] = {
-            {true, false, false, false, false}, // sign
-            {false, true, false, false, false}, // verify
-            {false, false, true, false, false}, // wrap
-            {false, false, false, true, false}, // unwrap
-            {false, false, false, false, true}, // derive
-            {true, true, false, false, false},
-            {true, false, true, false, false},
-            {true, false, false, true, false},
-            {true, false, false, false, true},
-            {false, true, true, false, false},
-            {false, true, false, true, false},
-            {false, true, false, false, true},
-            {false, false, true, true, false},
-            {false, false, true, false, true},
-            {false, false, false, true, true},
-            {true, true, true, true, true},
+            { true, false, false, false, false }, // sign
+            { false, true, false, false, false }, // verify
+            { false, false, true, false, false }, // wrap
+            { false, false, false, true, false }, // unwrap
+            { false, false, false, false, true }, // derive
+            { true, true, false, false, false },  { true, false, true, false, false },
+            { true, false, false, true, false },  { true, false, false, false, true },
+            { false, true, true, false, false },  { false, true, false, true, false },
+            { false, true, false, false, true },  { false, false, true, true, false },
+            { false, false, true, false, true },  { false, false, false, true, true },
+            { true, true, true, true, true },
         };
-        
-        for (bool* flag_set : invalid_flag_sets)
+
+        for (bool *flag_set : invalid_flag_sets)
         {
             std::vector<azihsm_key_prop_id> invalid_props;
             invalid_props.push_back(AZIHSM_KEY_PROP_ID_ENCRYPT);
