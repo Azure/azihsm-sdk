@@ -29,7 +29,7 @@ returns a non-transient error.
 │    └─ cert_chain()      retry_cert_chain()           │
 ├──────────────────────────────────────────────────────┤
 │  Retry Runtime (resiliency.rs)                       │
-│    ├─ execute_with_backoff()                         │
+│    ├─ execute_with_retry()                           │
 │    ├─ execute_key_gen_with_retry()                   │
 │    └─ execute_key_op_with_retry()                    │
 ├──────────────────────────────────────────────────────┤

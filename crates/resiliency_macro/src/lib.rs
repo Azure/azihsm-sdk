@@ -291,7 +291,7 @@ fn expand_retry(args: RetryArgs, item: ItemFn) -> syn::Result<proc_macro2::Token
     // (closures capture the receiver), whereas a nested `fn` cannot have a
     // receiver parameter.
     let retry_call = quote! {
-        crate::resiliency::execute_with_backoff(
+        crate::resiliency::execute_with_retry(
             |__prev_error: Option<&crate::HsmError>| #body,
             #predicate,
             #max_retries,
@@ -664,7 +664,7 @@ fn expand_retry_cert_chain(
             if !#partition_ident.resiliency_enabled() {
                 #inner_name(#call_args)
             } else {
-                crate::resiliency::execute_with_backoff(
+                crate::resiliency::execute_with_retry(
                     |__prev_error: Option<&crate::HsmError>| #inner_name(#retry_call_args),
                     crate::resiliency::is_cert_chain_retryable_error,
                     #max_retries,
