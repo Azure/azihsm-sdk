@@ -35,7 +35,7 @@ jobs:
 
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
 
     - name: Install apt packages
       run: |
@@ -81,7 +81,8 @@ jobs:
         build-mode: ${{ matrix.build-mode }}
         queries: security-extended,security-and-quality
       env:
-        CODEQL_EXTRACTOR_RUST_OPTION_CARGO_CFG_OVERRIDES: "-test" 
+        CODEQL_EXTRACTOR_RUST_OPTION_CARGO_CFG_OVERRIDES: "-test"
+        CODEQL_ACTION_FILE_COVERAGE_ON_PRS: "true"
 
     - name: Run manual build steps
       if: matrix.build-mode == 'manual'
