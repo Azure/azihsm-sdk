@@ -26,9 +26,9 @@ azihsm_status azihsm_open_device_and_session(
 /*
  * Compute POTA endorsement for the current device.
  *
- * Retrieves the partition's PID public key, signs its uncompressed point
- * with the fixed POTA private key (ECDSA-SHA384), and returns the raw
- * r||s signature and the POTA public key DER.
+ * Converts the provided PID public key DER to uncompressed EC point format
+ * and signs it with the provided POTA private key using ECDSA-SHA384.
+ * The signature is returned in raw r||s format.
  *
  * On success:
  *   - sig_out->ptr is allocated with OPENSSL_malloc and must be freed

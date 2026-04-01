@@ -55,7 +55,6 @@
 struct azihsm_resiliency_ctx
 {
     char storage_dir[4096];                    /* Base directory for storage files */
-    azihsm_handle device;                      /* Caller's partition handle for POTA callback */
     char pota_priv_path[AZIHSM_MAX_FILE_PATH]; /* POTA private key DER file */
     char pota_pub_path[AZIHSM_MAX_FILE_PATH];  /* POTA public key DER file */
     char lock_path[PATH_BUF_SIZE];             /* Path to the lock file */
@@ -523,13 +522,12 @@ static azihsm_status resiliency_pota_endorse(
     }
 
     /*
-     * Second call: reuse the caller's partition handle to retrieve the
-     * PID public key, sign it with the fixed POTA private key, and
-     * return the signature + POTA public key DER.
-     *
+     * Second call: sign the SDK-provided PID public key (pid_pub_key_der)
+     * with the fixed POTA private key and return the signature + POTA
+     * public key DER. No device handle is used.
      *
      * compute_pota_endorsement() allocates sig_tmp.ptr with
-     * OPENSSL_malloc; pubkey_tmp.ptr points to pub_key_buf's data.
+     * OPENSSL_malloc.
      */
 
     /* Load POTA private and public keys from the configured file paths */
@@ -590,7 +588,6 @@ static azihsm_status resiliency_pota_endorse(
 
 azihsm_status azihsm_resiliency_create(
     const char *storage_dir,
-    azihsm_handle device,
     const char *pota_priv_path,
     const char *pota_pub_path,
     bool use_tpm_pota,
@@ -601,7 +598,7 @@ azihsm_status azihsm_resiliency_create(
     struct azihsm_resiliency_ctx *ctx = NULL;
     int written;
 
-    if (storage_dir == NULL || device == 0 || out_config == NULL || out_ctx == NULL)
+    if (storage_dir == NULL || out_config == NULL || out_ctx == NULL)
     {
         return AZIHSM_STATUS_INVALID_ARGUMENT;
     }
@@ -648,7 +645,6 @@ azihsm_status azihsm_resiliency_create(
     }
 
     ctx->lock_fd = -1;
-    ctx->device = device;
 
     ctx->lock_fd_lock = CRYPTO_THREAD_lock_new();
     if (ctx->lock_fd_lock == NULL)

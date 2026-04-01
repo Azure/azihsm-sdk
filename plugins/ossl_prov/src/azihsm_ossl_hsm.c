@@ -933,7 +933,6 @@ azihsm_status azihsm_open_device_and_session(
         memset(&resiliency_cfg, 0, sizeof(resiliency_cfg));
         status = azihsm_resiliency_create(
             config->resiliency_storage_dir,
-            *device,
             config->pota_private_key_path,
             config->pota_public_key_path,
             config->use_tpm_pota,

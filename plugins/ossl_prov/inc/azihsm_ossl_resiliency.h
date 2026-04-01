@@ -24,8 +24,7 @@ extern "C"
  * Opaque resiliency context.
  *
  * Holds all state needed by the resiliency callbacks (storage directory,
- * lock file descriptor). The POTA callback reuses the caller's partition
- * handle (safe because HsmPartition uses read_recursive on its inner lock).
+ * lock file descriptor, POTA key paths).
  * Defined in azihsm_ossl_resiliency.c.
  */
 struct azihsm_resiliency_ctx;
@@ -41,8 +40,6 @@ struct azihsm_resiliency_ctx;
  *
  * @param[in]  storage_dir  Path to the directory for resiliency key files.
  *                          Created with mode 0700 if it does not exist.
- * @param[in]  device       Partition handle (from azihsm_part_open).
- *                          Stored in the context for POTA re-endorsement.
  * @param[in]  pota_priv_path  Path to POTA private key DER file (NULL for TPM).
  * @param[in]  pota_pub_path   Path to POTA public key DER file (NULL for TPM).
  * @param[in]  use_tpm_pota    True when POTA source is TPM (no callback needed).
@@ -54,7 +51,6 @@ struct azihsm_resiliency_ctx;
  */
 azihsm_status azihsm_resiliency_create(
     const char *storage_dir,
-    azihsm_handle device,
     const char *pota_priv_path,
     const char *pota_pub_path,
     bool use_tpm_pota,
