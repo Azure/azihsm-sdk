@@ -41,7 +41,7 @@ where
     let part_mgr = HsmPartitionManager::partition_info_list();
     assert!(!part_mgr.is_empty(), "No partitions found.");
     for part_info in part_mgr.iter() {
-        let part = HsmPartitionManager::open_partition(&part_info.path)
+        let part = HsmPartitionManager::open_partition(&part_info.path, test_api_rev())
             .expect("Failed to open the partition");
 
         //reset before init

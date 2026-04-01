@@ -89,8 +89,8 @@ fn expected_op_calls(error: &FaultError, injected_faults: u32) -> u32 {
 fn init_with_resiliency() -> (HsmPartition, HsmCredentials, ResiliencyTestCtx) {
     let list = HsmPartitionManager::partition_info_list();
     assert!(!list.is_empty(), "No partitions found.");
-    let part =
-        HsmPartitionManager::open_partition(&list[0].path).expect("Failed to open partition");
+    let part = HsmPartitionManager::open_partition(&list[0].path, test_api_rev())
+        .expect("Failed to open partition");
     part.reset().expect("Partition reset failed");
 
     let creds = HsmCredentials::new(&APP_ID, &APP_PIN);

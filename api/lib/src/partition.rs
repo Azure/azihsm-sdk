@@ -67,10 +67,14 @@ impl HsmApiRevRange {
 /// HSM partition information.
 ///
 /// Contains metadata about an HSM partition, including its device path.
+#[repr(C)]
 #[derive(Debug, Clone)]
 pub struct HsmPartitionInfo {
     /// Device path for accessing the partition.
     pub path: String,
+
+    /// Supported API revision range for this partition.
+    pub api_rev_range: HsmApiRevRange,
 }
 
 /// HSM application credentials.
@@ -270,7 +274,14 @@ impl HsmPartitionManager {
     pub fn partition_info_list() -> Vec<HsmPartitionInfo> {
         let vec = ddi::dev_paths()
             .into_iter()
-            .map(|path| HsmPartitionInfo { path })
+            .filter_map(|path| {
+                let dev = ddi::open_dev(&path).ok()?;
+                let (min, max) = ddi::get_api_rev(&dev).ok()?;
+                Some(HsmPartitionInfo {
+                    path,
+                    api_rev_range: HsmApiRevRange::new(min, max),
+                })
+            })
             .collect::<Vec<HsmPartitionInfo>>();
         debug!("Found {} partition(s)", vec.len());
         vec
@@ -305,7 +316,7 @@ impl HsmPartitionManager {
     /// - All retry attempts are exhausted for transient IO-abort errors
     #[resiliency_open_part]
     #[instrument()]
-    pub fn open_partition(path: &str) -> HsmResult<HsmPartition> {
+    pub fn open_partition(path: &str, api_rev: HsmApiRev) -> HsmResult<HsmPartition> {
         let dev = ddi::open_dev(path)?;
         let dev_info = ddi::dev_info_by_path(path)?;
         let (min, max) = ddi::get_api_rev(&dev)?;
@@ -313,6 +324,7 @@ impl HsmPartitionManager {
         Ok(HsmPartition::new(
             dev,
             HsmApiRevRange::new(min, max),
+            api_rev,
             dev_info.path,
             part_type,
             dev_info.driver_ver,
@@ -355,6 +367,7 @@ impl HsmPartition {
     fn new(
         dev: ddi::HsmDev,
         api_rev_range: HsmApiRevRange,
+        api_rev: HsmApiRev,
         path: String,
         part_type: HsmPartType,
         driver_ver: String,
@@ -366,6 +379,7 @@ impl HsmPartition {
             inner: Arc::new(RwLock::new(HsmPartitionInner::new(
                 dev,
                 api_rev_range,
+                api_rev,
                 path,
                 part_type,
                 driver_ver,
@@ -974,6 +988,7 @@ impl HsmPartition {
 pub(crate) struct HsmPartitionInner {
     dev: ddi::HsmDev,
     api_rev_range: HsmApiRevRange,
+    api_rev_inuse: HsmApiRev,
     bmk: Vec<u8>,
     mobk: Vec<u8>,
     path: String,
@@ -1001,6 +1016,7 @@ impl HsmPartitionInner {
     fn new(
         dev: ddi::HsmDev,
         api_rev_range: HsmApiRevRange,
+        api_rev_inuse: HsmApiRev,
         path: String,
         part_type: HsmPartType,
         driver_ver: String,
@@ -1011,6 +1027,7 @@ impl HsmPartitionInner {
         Self {
             dev,
             api_rev_range,
+            api_rev_inuse,
             path,
             part_type,
             driver_ver,
@@ -1143,7 +1160,7 @@ impl HsmPartitionInner {
     ) -> HsmResult<()> {
         let result = ddi::init_part(
             &self.dev,
-            self.api_rev_range.min(),
+            self.api_rev_inuse,
             creds,
             bmk,
             muk,

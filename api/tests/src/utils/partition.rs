@@ -70,6 +70,16 @@ pub(crate) const TEST_POTA_PUBLIC_KEY_DER: [u8; 120] = [
     0x8d, 0xa3, 0xc8, 0x01, 0x4b, 0xa4, 0x0d, 0x98,
 ];
 
+/// Returns the API revision to use for partition init in tests.
+///
+/// Change this single function to switch all tests between min, max,
+/// or any other supported revision.
+pub(crate) fn test_api_rev() -> HsmApiRev {
+    // Tests should use fixed API revisions to ensure consistent behavior, not accidentally using new revisions with different behavior.
+    //We can change this function to switch all tests between min, max
+    HsmApiRev { major: 1, minor: 0 }
+}
+
 /// Dynamically generates a POTA endorsement (signature + public key DER) for a partition.
 ///
 /// This function:
@@ -172,7 +182,7 @@ where
     let part_mgr = HsmPartitionManager::partition_info_list();
     assert!(!part_mgr.is_empty(), "No partitions found.");
     for part_info in part_mgr.iter() {
-        let part = HsmPartitionManager::open_partition(&part_info.path)
+        let part = HsmPartitionManager::open_partition(&part_info.path, test_api_rev())
             .expect("Failed to open the partition");
 
         //reset before init

@@ -82,7 +82,7 @@ fn test_open_partition_recovers_from_get_api_rev_single_fault() {
 
         inject_fault(FaultRule::fail_nth(DdiOp::GetApiRev, 1, *error));
 
-        let result = HsmPartitionManager::open_partition(&path);
+        let result = HsmPartitionManager::open_partition(&path, test_api_rev());
         let after = op_call_count(DdiOp::GetApiRev);
         clear_faults();
 
@@ -114,7 +114,7 @@ fn test_open_partition_recovers_from_get_device_info_single_fault() {
 
         inject_fault(FaultRule::fail_nth(DdiOp::GetDeviceInfo, 1, *error));
 
-        let result = HsmPartitionManager::open_partition(&path);
+        let result = HsmPartitionManager::open_partition(&path, test_api_rev());
         let after = op_call_count(DdiOp::GetDeviceInfo);
         clear_faults();
 
@@ -146,7 +146,7 @@ fn test_open_partition_recovers_from_get_api_rev_last_retry() {
 
         inject_fault(FaultRule::fail_next(DdiOp::GetApiRev, MAX_RETRIES, *error));
 
-        let result = HsmPartitionManager::open_partition(&path);
+        let result = HsmPartitionManager::open_partition(&path, test_api_rev());
         let after = op_call_count(DdiOp::GetApiRev);
         clear_faults();
 
@@ -182,7 +182,7 @@ fn test_open_partition_recovers_from_get_device_info_last_retry() {
             *error,
         ));
 
-        let result = HsmPartitionManager::open_partition(&path);
+        let result = HsmPartitionManager::open_partition(&path, test_api_rev());
         let after = op_call_count(DdiOp::GetDeviceInfo);
         clear_faults();
 
@@ -222,7 +222,7 @@ fn test_open_partition_fails_from_get_api_rev_exhausted() {
             *error,
         ));
 
-        let result = HsmPartitionManager::open_partition(&path);
+        let result = HsmPartitionManager::open_partition(&path, test_api_rev());
         let after = op_call_count(DdiOp::GetApiRev);
         clear_faults();
 
@@ -256,7 +256,7 @@ fn test_open_partition_fails_from_get_device_info_exhausted() {
             *error,
         ));
 
-        let result = HsmPartitionManager::open_partition(&path);
+        let result = HsmPartitionManager::open_partition(&path, test_api_rev());
         let after = op_call_count(DdiOp::GetDeviceInfo);
         clear_faults();
 

@@ -49,7 +49,7 @@ fn test_open_partition() {
     let part_mgr = HsmPartitionManager::partition_info_list();
     assert!(!part_mgr.is_empty(), "No partitions found.");
     for part_info in part_mgr.iter() {
-        let part = HsmPartitionManager::open_partition(&part_info.path)
+        let part = HsmPartitionManager::open_partition(&part_info.path, test_api_rev())
             .expect("Failed to open the partition");
         assert_eq!(part.path(), part_info.path);
     }
@@ -61,7 +61,7 @@ fn test_partition_properties() {
     assert!(!part_mgr.is_empty(), "No partitions found.");
 
     for part_info in part_mgr.iter() {
-        let part = HsmPartitionManager::open_partition(&part_info.path)
+        let part = HsmPartitionManager::open_partition(&part_info.path, test_api_rev())
             .expect("Failed to open the partition");
 
         // Test path getter
@@ -104,7 +104,7 @@ fn test_partition_init() {
     let part_mgr = HsmPartitionManager::partition_info_list();
     assert!(!part_mgr.is_empty(), "No partitions found.");
     for part_info in part_mgr.iter() {
-        let part = HsmPartitionManager::open_partition(&part_info.path)
+        let part = HsmPartitionManager::open_partition(&part_info.path, test_api_rev())
             .expect("Failed to open the partition");
         part.reset().expect("Partition reset failed");
 
@@ -120,7 +120,7 @@ fn test_cert_chain() {
     let part_mgr = HsmPartitionManager::partition_info_list();
     assert!(!part_mgr.is_empty(), "No partitions found.");
     for part_info in part_mgr.iter() {
-        let part = HsmPartitionManager::open_partition(&part_info.path)
+        let part = HsmPartitionManager::open_partition(&part_info.path, test_api_rev())
             .expect("Failed to open the partition");
 
         let cert_chain = part.cert_chain(0).expect("Failed to retrieve cert chain");
@@ -156,7 +156,7 @@ fn test_init_caller_source_with_null_obk_fails() {
     let part_mgr = HsmPartitionManager::partition_info_list();
     assert!(!part_mgr.is_empty(), "No partitions found.");
     for part_info in part_mgr.iter() {
-        let part = HsmPartitionManager::open_partition(&part_info.path)
+        let part = HsmPartitionManager::open_partition(&part_info.path, test_api_rev())
             .expect("Failed to open the partition");
         part.reset().expect("Partition reset failed");
 
@@ -182,7 +182,7 @@ fn test_init_caller_source_with_empty_obk_fails() {
     let part_mgr = HsmPartitionManager::partition_info_list();
     assert!(!part_mgr.is_empty(), "No partitions found.");
     for part_info in part_mgr.iter() {
-        let part = HsmPartitionManager::open_partition(&part_info.path)
+        let part = HsmPartitionManager::open_partition(&part_info.path, test_api_rev())
             .expect("Failed to open the partition");
         part.reset().expect("Partition reset failed");
 
@@ -208,7 +208,7 @@ fn test_init_tpm_obk_source_with_obk_provided_fails() {
     let part_mgr = HsmPartitionManager::partition_info_list();
     assert!(!part_mgr.is_empty(), "No partitions found.");
     for part_info in part_mgr.iter() {
-        let part = HsmPartitionManager::open_partition(&part_info.path)
+        let part = HsmPartitionManager::open_partition(&part_info.path, test_api_rev())
             .expect("Failed to open the partition");
         part.reset().expect("Partition reset failed");
 
@@ -238,7 +238,7 @@ fn test_init_invalid_obk_source_fails() {
     let part_mgr = HsmPartitionManager::partition_info_list();
     assert!(!part_mgr.is_empty(), "No partitions found.");
     for part_info in part_mgr.iter() {
-        let part = HsmPartitionManager::open_partition(&part_info.path)
+        let part = HsmPartitionManager::open_partition(&part_info.path, test_api_rev())
             .expect("Failed to open the partition");
         part.reset().expect("Partition reset failed");
 
@@ -264,7 +264,7 @@ fn test_init_caller_source_with_empty_endorsement_fails() {
     let part_mgr = HsmPartitionManager::partition_info_list();
     assert!(!part_mgr.is_empty(), "No partitions found.");
     for part_info in part_mgr.iter() {
-        let part = HsmPartitionManager::open_partition(&part_info.path)
+        let part = HsmPartitionManager::open_partition(&part_info.path, test_api_rev())
             .expect("Failed to open the partition");
         part.reset().expect("Partition reset failed");
 
@@ -289,7 +289,7 @@ fn test_init_caller_source_with_null_endorsement_fails() {
     let part_mgr = HsmPartitionManager::partition_info_list();
     assert!(!part_mgr.is_empty(), "No partitions found.");
     for part_info in part_mgr.iter() {
-        let part = HsmPartitionManager::open_partition(&part_info.path)
+        let part = HsmPartitionManager::open_partition(&part_info.path, test_api_rev())
             .expect("Failed to open the partition");
         part.reset().expect("Partition reset failed");
 
@@ -313,7 +313,7 @@ fn test_init_invalid_pota_source_fails() {
     let part_mgr = HsmPartitionManager::partition_info_list();
     assert!(!part_mgr.is_empty(), "No partitions found.");
     for part_info in part_mgr.iter() {
-        let part = HsmPartitionManager::open_partition(&part_info.path)
+        let part = HsmPartitionManager::open_partition(&part_info.path, test_api_rev())
             .expect("Failed to open the partition");
         part.reset().expect("Partition reset failed");
 
@@ -338,7 +338,7 @@ fn test_init_with_resiliency_config() {
     let part_mgr = HsmPartitionManager::partition_info_list();
     assert!(!part_mgr.is_empty(), "No partitions found.");
     for part_info in part_mgr.iter() {
-        let part = HsmPartitionManager::open_partition(&part_info.path)
+        let part = HsmPartitionManager::open_partition(&part_info.path, test_api_rev())
             .expect("Failed to open the partition");
         part.reset().expect("Partition reset failed");
 
@@ -363,7 +363,7 @@ fn test_init_with_resiliency_caller_pota_null_callback_fails() {
     let part_mgr = HsmPartitionManager::partition_info_list();
     assert!(!part_mgr.is_empty(), "No partitions found.");
     for part_info in part_mgr.iter() {
-        let part = HsmPartitionManager::open_partition(&part_info.path)
+        let part = HsmPartitionManager::open_partition(&part_info.path, test_api_rev())
             .expect("Failed to open the partition");
         part.reset().expect("Partition reset failed");
 
@@ -398,7 +398,7 @@ fn test_double_init_with_resiliency() {
     let part_mgr = HsmPartitionManager::partition_info_list();
     assert!(!part_mgr.is_empty(), "No partitions found.");
     for part_info in part_mgr.iter() {
-        let part = HsmPartitionManager::open_partition(&part_info.path)
+        let part = HsmPartitionManager::open_partition(&part_info.path, test_api_rev())
             .expect("Failed to open the partition");
         part.reset().expect("Partition reset failed");
 
@@ -480,7 +480,7 @@ fn test_init_with_resiliency_invalid_pota_source_fails() {
     let part_mgr = HsmPartitionManager::partition_info_list();
     assert!(!part_mgr.is_empty(), "No partitions found.");
     for part_info in part_mgr.iter() {
-        let part = HsmPartitionManager::open_partition(&part_info.path)
+        let part = HsmPartitionManager::open_partition(&part_info.path, test_api_rev())
             .expect("Failed to open the partition");
         part.reset().expect("Partition reset failed");
 
@@ -505,7 +505,7 @@ fn test_init_with_resiliency_tpm_pota_with_callback_fails() {
     let part_mgr = HsmPartitionManager::partition_info_list();
     assert!(!part_mgr.is_empty(), "No partitions found.");
     for part_info in part_mgr.iter() {
-        let part = HsmPartitionManager::open_partition(&part_info.path)
+        let part = HsmPartitionManager::open_partition(&part_info.path, test_api_rev())
             .expect("Failed to open the partition");
         part.reset().expect("Partition reset failed");
 
