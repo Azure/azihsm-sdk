@@ -39,7 +39,11 @@ struct azihsm_resiliency_ctx;
  * azihsm_resiliency_destroy().
  *
  * @param[in]  storage_dir  Path to the directory for resiliency key files.
- *                          Created with mode 0700 if it does not exist.
+ *                          Created with mode 0700 (owner-only access) if it
+ *                          does not exist. If it already exists, ownership
+ *                          and permissions are verified — the directory must
+ *                          be owned by the current user with no group/other
+ *                          access, or the call is rejected.
  * @param[in]  pota_priv_path  Path to POTA private key DER file (NULL for TPM).
  * @param[in]  pota_pub_path   Path to POTA public key DER file (NULL for TPM).
  * @param[in]  use_tpm_pota    True when POTA source is TPM (no callback needed).

@@ -5,8 +5,8 @@
  * Resiliency callbacks for the AZIHSM OpenSSL provider.
  *
  * Implements three callback interfaces required by the AZIHSM resiliency
- * layer so that the HSM partition can transparently recover from live
- * migration, IO aborts, and firmware crash recovery:
+ * layer so that the HSM partition can transparently recover from resiliency events such as
+ * live migration and firmware crash recovery:
  *
  *   1. Storage   – file-backed key-value store under a configurable
  *                  directory (read / write / clear).
@@ -36,16 +36,16 @@
 /*  Internal constants                                                 */
 /* ------------------------------------------------------------------ */
 
-/* Maximum allowed key name length (defensive bound). */
+// Maximum allowed key name length (defensive bound).
 #define MAX_KEY_NAME_LEN 256
 
-/* Maximum data file size we are willing to read (64 KiB). */
+// Maximum data file size we are willing to read (64 KiB).
 #define MAX_STORAGE_FILE_SIZE (64 * 1024)
 
-/* Absolute path buffer size: storage_dir (4096) + '/' (1) + key name (256) + '\0' (1). */
+// Absolute path buffer size: storage_dir (4096) + '/' (1) + key name (256) + '\0' (1).
 #define PATH_BUF_SIZE 4354
 
-/* POTA signature: P-384 raw r||s (48 + 48). */
+// POTA signature: P-384 raw r||s (48 + 48).
 #define POTA_SIGNATURE_SIZE 96
 
 /* ------------------------------------------------------------------ */
@@ -151,7 +151,7 @@ static azihsm_status resiliency_storage_read(
         return status;
     }
 
-    /* Open the file without following symlinks to avoid TOCTOU on the path. */
+    // Open the file without following symlinks to avoid TOCTOU on the path.
     fd = open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
     if (fd < 0)
     {
@@ -162,28 +162,28 @@ static azihsm_status resiliency_storage_read(
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
 
-    /* Get file metadata from the opened descriptor. */
+    // Get file metadata from the opened descriptor.
     if (fstat(fd, &st) != 0)
     {
         close(fd);
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
 
-    /* Reject non-regular files (directories, FIFOs, device nodes, etc.) */
+    // Reject non-regular files (directories, FIFOs, device nodes, etc.)
     if (!S_ISREG(st.st_mode))
     {
         close(fd);
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
 
-    /* Reject unexpectedly large files */
+    // Reject unexpectedly large files
     if (st.st_size < 0 || (unsigned long)st.st_size > MAX_STORAGE_FILE_SIZE)
     {
         close(fd);
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
 
-    /* Two-call pattern: if output buffer is NULL, return required size */
+    // Two-call pattern: if output buffer is NULL, return required size
     if (value->ptr == NULL)
     {
         close(fd);
@@ -191,7 +191,7 @@ static azihsm_status resiliency_storage_read(
         return AZIHSM_STATUS_BUFFER_TOO_SMALL;
     }
 
-    /* Zero-length file: nothing to read */
+    // Zero-length file: nothing to read
     if (st.st_size == 0)
     {
         close(fd);
@@ -199,7 +199,7 @@ static azihsm_status resiliency_storage_read(
         return AZIHSM_STATUS_SUCCESS;
     }
 
-    /* Output buffer provided but too small */
+    // Output buffer provided but too small
     if ((uint32_t)st.st_size > value->len)
     {
         close(fd);
@@ -207,7 +207,7 @@ static azihsm_status resiliency_storage_read(
         return AZIHSM_STATUS_BUFFER_TOO_SMALL;
     }
 
-    /* Read file contents using read() with EINTR retry, matching the write path */
+    // Read file contents using read() with EINTR retry, matching the write path
     bytes_read = 0;
     while (bytes_read < (size_t)st.st_size)
     {
@@ -223,7 +223,7 @@ static azihsm_status resiliency_storage_read(
         }
         if (n == 0)
         {
-            break; /* unexpected EOF */
+            break; // unexpected EOF
         }
         bytes_read += (size_t)n;
     }
@@ -275,13 +275,14 @@ static azihsm_status resiliency_storage_write(
         return status;
     }
 
-    /* Build temp path: "<storage_dir>/.<key>.tmp" */
+    // Build temp path: "<storage_dir>/.<key>.tmp"
     written = snprintf(tmp_path, sizeof(tmp_path), "%s/.%s.tmp", ctx->storage_dir, key);
     if (written < 0 || (size_t)written >= sizeof(tmp_path))
     {
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
 
+    // Open temp file for writing (owner-only, no symlink follow).
     fd = open(tmp_path, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, S_IRUSR | S_IWUSR);
     if (fd < 0)
     {
@@ -305,7 +306,7 @@ static azihsm_status resiliency_storage_write(
         bytes_written += (size_t)n;
     }
 
-    /* Flush file data to disk before rename */
+    // Flush file data to disk before rename
     if (fsync(fd) != 0)
     {
         close(fd);
@@ -315,14 +316,14 @@ static azihsm_status resiliency_storage_write(
 
     close(fd);
 
-    /* Atomic rename: readers see either the old or new value, never partial */
+    // Atomic rename: readers see either the old or new value, never partial
     if (rename(tmp_path, path) != 0)
     {
         unlink(tmp_path);
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
 
-    /* Fsync the directory to ensure the rename is durable across crashes */
+    // Fsync the directory to ensure the rename is durable across crashes
     fd = open(ctx->storage_dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
     if (fd < 0)
     {
@@ -378,7 +379,7 @@ static azihsm_status resiliency_storage_clear(void *ctx_ptr, const char *key)
  * Opens a fresh file descriptor on the lock file and acquires an
  * exclusive flock.  A fresh fd per acquisition is required because
  * flock(2) operates per open-file-description: two threads calling
- * flock on the *same* fd see a single lock and the second call
+ * flock on the same fd see a single lock and the second call
  * silently succeeds.  By opening a new fd each time, each caller
  * gets its own independent lock that serializes both cross-thread
  * and cross-process.
@@ -386,6 +387,7 @@ static azihsm_status resiliency_storage_clear(void *ctx_ptr, const char *key)
 static azihsm_status resiliency_lock(void *ctx_ptr)
 {
     struct azihsm_resiliency_ctx *ctx = (struct azihsm_resiliency_ctx *)ctx_ptr;
+    struct stat lock_st;
     int fd;
 
     if (ctx == NULL)
@@ -393,28 +395,28 @@ static azihsm_status resiliency_lock(void *ctx_ptr)
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
 
+    // Open a fresh fd on the lock file (create if needed, owner-only).
     fd = open(ctx->lock_path, O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, S_IRUSR | S_IWUSR);
     if (fd < 0)
     {
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
 
-    /* Reject non-regular files (e.g., device nodes) */
+    // Verify the opened path is a regular file (not a symlink, FIFO, etc.).
+    if (fstat(fd, &lock_st) != 0 || !S_ISREG(lock_st.st_mode))
     {
-        struct stat lock_st;
-        if (fstat(fd, &lock_st) != 0 || !S_ISREG(lock_st.st_mode))
-        {
-            close(fd);
-            return AZIHSM_STATUS_INTERNAL_ERROR;
-        }
+        close(fd);
+        return AZIHSM_STATUS_INTERNAL_ERROR;
     }
 
+    // Acquire the cross-process exclusive lock (blocks until available).
     if (flock(fd, LOCK_EX) != 0)
     {
         close(fd);
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
 
+    // Store the locked fd in the context under the in-process lock.
     if (!CRYPTO_THREAD_write_lock(ctx->lock_fd_lock))
     {
         flock(fd, LOCK_UN);
@@ -464,7 +466,7 @@ static azihsm_status resiliency_unlock(void *ctx_ptr)
 }
 
 /* ------------------------------------------------------------------ */
-/*  POTA endorsement callback                                          */
+/*  POTA endorsement callback                                         */
 /* ------------------------------------------------------------------ */
 
 /*
@@ -472,7 +474,7 @@ static azihsm_status resiliency_unlock(void *ctx_ptr)
  * POTA private key.
  *
  * Called by the resiliency layer during partition restore when the
- * device may have generated a new attestation key after live migration.
+ * device may have generated a new attestation key after a resiliency event.
  *
  * Implements the two-call buffer pattern:
  *   - First call  (signature->ptr == NULL): returns required output
@@ -498,15 +500,15 @@ static azihsm_status resiliency_pota_endorse(
     struct azihsm_buffer sig_tmp = { NULL, 0 };
     azihsm_status status;
 
-    (void)pota_pub_key_der;   /* identification only; provider uses fixed POTA key */
-    (void)pid_cert_chain_pem; /* not needed by this provider */
+    (void)pota_pub_key_der;   // identification only; provider uses fixed POTA key
+    (void)pid_cert_chain_pem; // not needed by this provider
 
-    if (ctx == NULL || signature == NULL || endorsement_pub_key == NULL)
+    if (ctx == NULL || pid_pub_key_der == NULL || signature == NULL || endorsement_pub_key == NULL)
     {
         return AZIHSM_STATUS_INVALID_ARGUMENT;
     }
 
-    /* Two-call pattern: first call returns required output sizes */
+    // Two-call pattern: first call returns required output sizes
     if (signature->ptr == NULL || endorsement_pub_key->ptr == NULL)
     {
         struct azihsm_buffer pub_key_buf = { NULL, 0 };
@@ -521,16 +523,16 @@ static azihsm_status resiliency_pota_endorse(
         return AZIHSM_STATUS_BUFFER_TOO_SMALL;
     }
 
-    /*
-     * Second call: sign the SDK-provided PID public key (pid_pub_key_der)
-     * with the fixed POTA private key and return the signature + POTA
-     * public key DER. No device handle is used.
-     *
-     * compute_pota_endorsement() allocates sig_tmp.ptr with
-     * OPENSSL_malloc.
-     */
+    //
+    // Second call: sign the SDK-provided PID public key (pid_pub_key_der)
+    // with the fixed POTA private key and return the signature + POTA
+    // public key DER. No device handle is used.
+    //
+    // compute_pota_endorsement() allocates sig_tmp.ptr with
+    // OPENSSL_malloc.
+    //
 
-    /* Load POTA private and public keys from the configured file paths */
+    // Load POTA private and public keys from the configured file paths
     struct azihsm_buffer priv_key_buf = { NULL, 0 };
     struct azihsm_buffer pub_key_buf = { NULL, 0 };
 
@@ -557,7 +559,7 @@ static azihsm_status resiliency_pota_endorse(
         return status;
     }
 
-    /* Validate that caller-provided buffers are large enough */
+    // Validate that caller-provided buffers are large enough
     if (signature->len < sig_tmp.len || endorsement_pub_key->len < pub_key_buf.len)
     {
         signature->len = sig_tmp.len;
@@ -568,13 +570,13 @@ static azihsm_status resiliency_pota_endorse(
         return AZIHSM_STATUS_BUFFER_TOO_SMALL;
     }
 
-    /* Copy signature into caller's buffer */
+    // Copy signature into caller's buffer
     memcpy(signature->ptr, sig_tmp.ptr, sig_tmp.len);
     signature->len = sig_tmp.len;
     OPENSSL_cleanse(sig_tmp.ptr, sig_tmp.len);
     OPENSSL_free(sig_tmp.ptr);
 
-    /* Copy POTA public key DER and free the loaded buffer */
+    // Copy POTA public key DER and free the loaded buffer
     memcpy(endorsement_pub_key->ptr, pub_key_buf.ptr, pub_key_buf.len);
     endorsement_pub_key->len = pub_key_buf.len;
     OPENSSL_free(pub_key_buf.ptr);
@@ -583,7 +585,7 @@ static azihsm_status resiliency_pota_endorse(
 }
 
 /* ------------------------------------------------------------------ */
-/*  Public API: context lifecycle                                      */
+/*  Public API: context lifecycle                                     */
 /* ------------------------------------------------------------------ */
 
 azihsm_status azihsm_resiliency_create(
@@ -609,7 +611,7 @@ azihsm_status azihsm_resiliency_create(
         return AZIHSM_STATUS_INVALID_ARGUMENT;
     }
 
-    /* Create storage directory if it does not exist (mode 0700) */
+    // Create storage directory if it does not exist (mode 0700: owner-only access)
     if (mkdir(storage_dir, S_IRWXU) != 0)
     {
         if (errno != EEXIST)
@@ -617,27 +619,30 @@ azihsm_status azihsm_resiliency_create(
             return AZIHSM_STATUS_INTERNAL_ERROR;
         }
 
-        /* EEXIST: verify the existing path is a directory owned by us with mode 0700 */
+        // Get metadata for the existing path.
         struct stat dir_st;
         if (stat(storage_dir, &dir_st) != 0)
         {
             return AZIHSM_STATUS_INTERNAL_ERROR;
         }
+        // Reject if the path is not a directory (e.g., a regular file or symlink).
         if (!S_ISDIR(dir_st.st_mode))
         {
             return AZIHSM_STATUS_INVALID_ARGUMENT;
         }
+        // Reject directories not owned by the current user.
         if (dir_st.st_uid != getuid())
         {
             return AZIHSM_STATUS_INVALID_ARGUMENT;
         }
+        // Reject directories with group or other permissions set.
         if ((dir_st.st_mode & (S_IRWXG | S_IRWXO)) != 0)
         {
             return AZIHSM_STATUS_INVALID_ARGUMENT;
         }
     }
 
-    /* Allocate and zero-initialize context */
+    // Allocate and zero-initialize context
     ctx = OPENSSL_zalloc(sizeof(*ctx));
     if (ctx == NULL)
     {
@@ -653,6 +658,7 @@ azihsm_status azihsm_resiliency_create(
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
 
+    // Copy storage directory path into context; reject if it would be truncated.
     written = snprintf(ctx->storage_dir, sizeof(ctx->storage_dir), "%s", storage_dir);
     if (written < 0 || (size_t)written >= sizeof(ctx->storage_dir))
     {
@@ -682,7 +688,7 @@ azihsm_status azihsm_resiliency_create(
         }
     }
 
-    /* Build and store the lock file path */
+    // Build and store the lock file path
     written = snprintf(ctx->lock_path, sizeof(ctx->lock_path), "%s/.lock", storage_dir);
     if (written < 0 || (size_t)written >= sizeof(ctx->lock_path))
     {
@@ -691,13 +697,13 @@ azihsm_status azihsm_resiliency_create(
         return AZIHSM_STATUS_INVALID_ARGUMENT;
     }
 
-    /* Wire up POTA callback ops only for Caller source (not TPM) */
+    // Wire up POTA callback ops only for Caller source (not TPM)
     if (!use_tpm_pota)
     {
         ctx->pota_ops.endorse = resiliency_pota_endorse;
     }
 
-    /* Populate the output config struct */
+    // Populate the output config struct
     memset(out_config, 0, sizeof(*out_config));
     out_config->ctx = ctx;
     out_config->storage_ops.read = resiliency_storage_read;
