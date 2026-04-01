@@ -428,7 +428,7 @@ TEST_F(azihsm_aes_keygen, aes_key_gen_with_sign_flag_fails)
             session,
             AZIHSM_ALGO_ID_AES_KEY_GEN,
             AZIHSM_KEY_KIND_AES,
-            256, 
+            256,
             { AZIHSM_KEY_PROP_ID_ENCRYPT, AZIHSM_KEY_PROP_ID_DECRYPT, AZIHSM_KEY_PROP_ID_SIGN }
         );
     });
@@ -442,7 +442,7 @@ TEST_F(azihsm_aes_keygen, aes_key_gen_with_verify_flag_fails)
             session,
             AZIHSM_ALGO_ID_AES_KEY_GEN,
             AZIHSM_KEY_KIND_AES,
-            256, 
+            256,
             { AZIHSM_KEY_PROP_ID_ENCRYPT, AZIHSM_KEY_PROP_ID_DECRYPT, AZIHSM_KEY_PROP_ID_VERIFY }
         );
     });
@@ -456,7 +456,7 @@ TEST_F(azihsm_aes_keygen, aes_key_gen_with_wrap_flag_fails)
             session,
             AZIHSM_ALGO_ID_AES_KEY_GEN,
             AZIHSM_KEY_KIND_AES,
-            256, 
+            256,
             { AZIHSM_KEY_PROP_ID_ENCRYPT, AZIHSM_KEY_PROP_ID_DECRYPT, AZIHSM_KEY_PROP_ID_WRAP }
         );
     });
@@ -470,7 +470,7 @@ TEST_F(azihsm_aes_keygen, aes_key_gen_with_unwrap_flag_fails)
             session,
             AZIHSM_ALGO_ID_AES_KEY_GEN,
             AZIHSM_KEY_KIND_AES,
-            256, 
+            256,
             { AZIHSM_KEY_PROP_ID_ENCRYPT, AZIHSM_KEY_PROP_ID_DECRYPT, AZIHSM_KEY_PROP_ID_UNWRAP }
         );
     });
@@ -484,7 +484,7 @@ TEST_F(azihsm_aes_keygen, aes_key_gen_with_derive_flag_fails)
             session,
             AZIHSM_ALGO_ID_AES_KEY_GEN,
             AZIHSM_KEY_KIND_AES,
-            256, 
+            256,
             { AZIHSM_KEY_PROP_ID_ENCRYPT, AZIHSM_KEY_PROP_ID_DECRYPT, AZIHSM_KEY_PROP_ID_DERIVE }
         );
     });
@@ -499,7 +499,7 @@ TEST_F(azihsm_aes_keygen, aes_key_gen_multiple_invalid_flags_fail)
             session,
             AZIHSM_ALGO_ID_AES_KEY_GEN,
             AZIHSM_KEY_KIND_AES,
-            256, 
+            256,
             { AZIHSM_KEY_PROP_ID_ENCRYPT,
               AZIHSM_KEY_PROP_ID_DECRYPT,
               AZIHSM_KEY_PROP_ID_SIGN,
@@ -517,7 +517,7 @@ TEST_F(azihsm_aes_keygen, aes_key_gen_only_invalid_capabilities)
             session,
             AZIHSM_ALGO_ID_AES_KEY_GEN,
             AZIHSM_KEY_KIND_AES,
-            256, 
+            256,
             { AZIHSM_KEY_PROP_ID_SIGN,
               AZIHSM_KEY_PROP_ID_VERIFY,
               AZIHSM_KEY_PROP_ID_WRAP,
@@ -575,7 +575,13 @@ TEST_F(azihsm_aes_keygen, aes_key_gen_multiple_invalid_capabilities)
             if (flag_set[4])
                 invalid_props.push_back(AZIHSM_KEY_PROP_ID_DERIVE);
 
-            aes_key_gen_invalid_flag_fail_common(session, AZIHSM_ALGO_ID_AES_KEY_GEN, AZIHSM_KEY_KIND_AES, 256, invalid_props);
+            aes_key_gen_invalid_flag_fail_common(
+                session,
+                AZIHSM_ALGO_ID_AES_KEY_GEN,
+                AZIHSM_KEY_KIND_AES,
+                256,
+                invalid_props
+            );
         }
     });
 }
@@ -584,7 +590,13 @@ TEST_F(azihsm_aes_keygen, aes_key_gen_multiple_invalid_capabilities)
 TEST_F(azihsm_aes_keygen, aes_key_gen_no_decrypt_flag_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        aes_key_gen_invalid_flag_fail_common(session, AZIHSM_ALGO_ID_AES_KEY_GEN, AZIHSM_KEY_KIND_AES, 256, { AZIHSM_KEY_PROP_ID_ENCRYPT });
+        aes_key_gen_invalid_flag_fail_common(
+            session,
+            AZIHSM_ALGO_ID_AES_KEY_GEN,
+            AZIHSM_KEY_KIND_AES,
+            256,
+            { AZIHSM_KEY_PROP_ID_ENCRYPT }
+        );
     });
 }
 
@@ -679,8 +691,15 @@ TEST_F(azihsm_aes_keygen, aes_xts_key_generation_invalid_sizes_rejected)
 {
     part_list_.for_each_session([](azihsm_handle session) {
         // AES-XTS is only supported for 64-byte keys (512 bits).
-        for (uint32_t bits : {0u, 1u, 128u, 192u, 256u, 384u, 511u, 513u, 1024u}) {
-            aes_key_gen_invalid_flag_fail_common(session, AZIHSM_ALGO_ID_AES_XTS_KEY_GEN, AZIHSM_KEY_KIND_AES_XTS, bits, { AZIHSM_KEY_PROP_ID_ENCRYPT, AZIHSM_KEY_PROP_ID_DECRYPT });
+        for (uint32_t bits : { 0u, 1u, 128u, 192u, 256u, 384u, 511u, 513u, 1024u })
+        {
+            aes_key_gen_invalid_flag_fail_common(
+                session,
+                AZIHSM_ALGO_ID_AES_XTS_KEY_GEN,
+                AZIHSM_KEY_KIND_AES_XTS,
+                bits,
+                { AZIHSM_KEY_PROP_ID_ENCRYPT, AZIHSM_KEY_PROP_ID_DECRYPT }
+            );
         }
     });
 }
@@ -689,7 +708,13 @@ TEST_F(azihsm_aes_keygen, aes_xts_key_generation_invalid_sizes_rejected)
 TEST_F(azihsm_aes_keygen, aes_xts_key_gen_no_decrypt_flag_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        aes_key_gen_invalid_flag_fail_common(session, AZIHSM_ALGO_ID_AES_XTS_KEY_GEN, AZIHSM_KEY_KIND_AES_XTS, 512, { AZIHSM_KEY_PROP_ID_ENCRYPT });
+        aes_key_gen_invalid_flag_fail_common(
+            session,
+            AZIHSM_ALGO_ID_AES_XTS_KEY_GEN,
+            AZIHSM_KEY_KIND_AES_XTS,
+            512,
+            { AZIHSM_KEY_PROP_ID_ENCRYPT }
+        );
     });
 }
 
@@ -697,7 +722,13 @@ TEST_F(azihsm_aes_keygen, aes_xts_key_gen_no_decrypt_flag_fails)
 TEST_F(azihsm_aes_keygen, aes_xts_key_gen_no_encrypt_flag_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        aes_key_gen_invalid_flag_fail_common(session, AZIHSM_ALGO_ID_AES_XTS_KEY_GEN, AZIHSM_KEY_KIND_AES_XTS, 512, { AZIHSM_KEY_PROP_ID_DECRYPT });
+        aes_key_gen_invalid_flag_fail_common(
+            session,
+            AZIHSM_ALGO_ID_AES_XTS_KEY_GEN,
+            AZIHSM_KEY_KIND_AES_XTS,
+            512,
+            { AZIHSM_KEY_PROP_ID_DECRYPT }
+        );
     });
 }
 
@@ -719,7 +750,13 @@ TEST_F(azihsm_aes_keygen, session_aes_gcm_256_key_generation)
 TEST_F(azihsm_aes_keygen, aes_gcm_key_gen_invalid_bits_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        aes_key_gen_invalid_flag_fail_common(session, AZIHSM_ALGO_ID_AES_GCM_KEY_GEN, AZIHSM_KEY_KIND_AES_GCM, 128, { AZIHSM_KEY_PROP_ID_ENCRYPT, AZIHSM_KEY_PROP_ID_DECRYPT });
+        aes_key_gen_invalid_flag_fail_common(
+            session,
+            AZIHSM_ALGO_ID_AES_GCM_KEY_GEN,
+            AZIHSM_KEY_KIND_AES_GCM,
+            128,
+            { AZIHSM_KEY_PROP_ID_ENCRYPT, AZIHSM_KEY_PROP_ID_DECRYPT }
+        );
     });
 }
 
@@ -727,7 +764,13 @@ TEST_F(azihsm_aes_keygen, aes_gcm_key_gen_invalid_bits_fails)
 TEST_F(azihsm_aes_keygen, aes_gcm_key_gen_no_encrypt_flag_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        aes_key_gen_invalid_flag_fail_common(session, AZIHSM_ALGO_ID_AES_GCM_KEY_GEN, AZIHSM_KEY_KIND_AES_GCM, 256, { AZIHSM_KEY_PROP_ID_DECRYPT });
+        aes_key_gen_invalid_flag_fail_common(
+            session,
+            AZIHSM_ALGO_ID_AES_GCM_KEY_GEN,
+            AZIHSM_KEY_KIND_AES_GCM,
+            256,
+            { AZIHSM_KEY_PROP_ID_DECRYPT }
+        );
     });
 }
 
@@ -735,7 +778,13 @@ TEST_F(azihsm_aes_keygen, aes_gcm_key_gen_no_encrypt_flag_fails)
 TEST_F(azihsm_aes_keygen, aes_gcm_key_gen_no_decrypt_flag_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        aes_key_gen_invalid_flag_fail_common(session, AZIHSM_ALGO_ID_AES_GCM_KEY_GEN, AZIHSM_KEY_KIND_AES_GCM, 256, { AZIHSM_KEY_PROP_ID_ENCRYPT });
+        aes_key_gen_invalid_flag_fail_common(
+            session,
+            AZIHSM_ALGO_ID_AES_GCM_KEY_GEN,
+            AZIHSM_KEY_KIND_AES_GCM,
+            256,
+            { AZIHSM_KEY_PROP_ID_ENCRYPT }
+        );
     });
 }
 
@@ -770,7 +819,8 @@ TEST_F(azihsm_aes_keygen, aes_gcm_key_gen_persistent)
                                         .count = static_cast<uint32_t>(props_vec.size()) };
 
         auto_key original_key;
-        azihsm_status err = azihsm_key_gen(session, &keygen_algo, &prop_list, original_key.get_ptr());
+        azihsm_status err =
+            azihsm_key_gen(session, &keygen_algo, &prop_list, original_key.get_ptr());
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_NE(original_key, 0);
 
