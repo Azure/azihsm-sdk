@@ -619,9 +619,9 @@ azihsm_status azihsm_resiliency_create(
             return AZIHSM_STATUS_INTERNAL_ERROR;
         }
 
-        // Get metadata for the existing path.
+        // Get metadata for the existing path (lstat to reject symlinks).
         struct stat dir_st;
-        if (stat(storage_dir, &dir_st) != 0)
+        if (lstat(storage_dir, &dir_st) != 0)
         {
             return AZIHSM_STATUS_INTERNAL_ERROR;
         }

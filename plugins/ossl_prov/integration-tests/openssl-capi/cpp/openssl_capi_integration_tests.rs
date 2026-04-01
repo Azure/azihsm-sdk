@@ -399,10 +399,29 @@ azihsm-api-revision = 1.0
                 let creds = credentials.clone();
                 let km_dir = keymat_dir.clone();
                 let prov_path = provider_path.clone();
-                let resil_dir = resiliency_dir.clone();
+                let resil_base = resiliency_dir.clone();
                 tests.push(Trial::test(test_name.clone(), move || {
+                    // Each test gets its own resiliency directory to avoid
+                    // contention on the lock file and stale BMK/MUK state
+                    // when tests run in parallel.
+                    let test_resil_dir =
+                        resil_base.join(test_name.replace("::", "_").replace('.', "_"));
+                    let _ = fs::remove_dir_all(&test_resil_dir);
+                    {
+                        use std::os::unix::fs::DirBuilderExt;
+                        fs::DirBuilder::new()
+                            .mode(0o700)
+                            .create(&test_resil_dir)
+                            .expect("Failed to create per-test resiliency dir");
+                    }
                     run_gtest(
-                        &test_name, &path, &ld_path, &creds, &km_dir, &prov_path, &resil_dir,
+                        &test_name,
+                        &path,
+                        &ld_path,
+                        &creds,
+                        &km_dir,
+                        &prov_path,
+                        &test_resil_dir,
                     )
                 }));
             }

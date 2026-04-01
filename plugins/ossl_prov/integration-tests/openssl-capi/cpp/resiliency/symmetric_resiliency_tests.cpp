@@ -6,6 +6,7 @@
 /// Resiliency stress tests for symmetric / hash operations: digest (SHA),
 /// HMAC, and HKDF key derivation — all under concurrent partition resets.
 
+#include <cstdlib>
 #include <openssl/kdf.h>
 #include <unistd.h>
 

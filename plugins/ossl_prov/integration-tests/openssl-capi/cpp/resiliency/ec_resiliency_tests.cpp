@@ -7,6 +7,7 @@
 /// ECDSA, ECDH key exchange, and ECDH+HKDF+HMAC chain — all under concurrent
 /// partition resets.
 
+#include <cstdlib>
 #include <openssl/kdf.h>
 #include <unistd.h>
 

@@ -339,6 +339,7 @@ class resiliency_base : public ::testing::Test
   protected:
     ProviderCtx prov_;
     NativeApi *native_ = nullptr;
+    void *native_handle_ = nullptr;
 
     void SetUp() override
     {
@@ -350,7 +351,7 @@ class resiliency_base : public ::testing::Test
         ASSERT_NE(h, nullptr) << "dlopen(RTLD_NOLOAD) failed: " << dlerror()
                               << " — is the provider loaded?";
 
-        // Wrap the handle in a NativeApi by resolving symbols directly.
+        native_handle_ = h;
         native_ = new NativeApi(h);
     }
 
@@ -358,6 +359,11 @@ class resiliency_base : public ::testing::Test
     {
         delete native_;
         native_ = nullptr;
+        if (native_handle_ != nullptr)
+        {
+            dlclose(native_handle_);
+            native_handle_ = nullptr;
+        }
     }
 
     OSSL_LIB_CTX *libctx()
