@@ -420,7 +420,7 @@ TEST_F(azihsm_aes_keygen, session_aes_256_key_generation)
     });
 }
 
-/// verifies AES key generation fails when unsupported capabilities are set in properties
+/// verifies AES key generation fails when sign flag is set
 TEST_F(azihsm_aes_keygen, aes_key_gen_with_sign_flag_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -434,7 +434,7 @@ TEST_F(azihsm_aes_keygen, aes_key_gen_with_sign_flag_fails)
     });
 }
 
-/// verifies AES key generation fails when unsupported capabilities are set in properties
+/// verifies AES key generation fails when verify flag is set
 TEST_F(azihsm_aes_keygen, aes_key_gen_with_verify_flag_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -448,7 +448,7 @@ TEST_F(azihsm_aes_keygen, aes_key_gen_with_verify_flag_fails)
     });
 }
 
-/// verifies AES key generation fails when unsupported capabilities are set in properties
+/// verifies AES key generation fails when wrap flag is set
 TEST_F(azihsm_aes_keygen, aes_key_gen_with_wrap_flag_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -462,7 +462,7 @@ TEST_F(azihsm_aes_keygen, aes_key_gen_with_wrap_flag_fails)
     });
 }
 
-/// verifies AES key generation fails when unsupported capabilities are set in properties
+/// verifies AES key generation fails when unwrap flag is set
 TEST_F(azihsm_aes_keygen, aes_key_gen_with_unwrap_flag_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -476,7 +476,7 @@ TEST_F(azihsm_aes_keygen, aes_key_gen_with_unwrap_flag_fails)
     });
 }
 
-/// verifies AES key generation fails when unsupported capabilities are set in properties
+/// verifies AES key generation fails when derive flag is set
 TEST_F(azihsm_aes_keygen, aes_key_gen_with_derive_flag_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -580,7 +580,7 @@ TEST_F(azihsm_aes_keygen, aes_key_gen_multiple_invalid_capabilities)
     });
 }
 
-/// verifies AES key generation fails when unsupported capabilities are set in properties
+/// verifies AES key generation fails when decrypt permission is missing
 TEST_F(azihsm_aes_keygen, aes_key_gen_no_decrypt_flag_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -685,7 +685,7 @@ TEST_F(azihsm_aes_keygen, aes_xts_key_generation_invalid_sizes_rejected)
     });
 }
 
-/// verifies AES-XTS key generation fails when decrypt permission is missing, since XTS mode
+/// verifies AES-XTS key generation fails when decrypt permission is missing
 TEST_F(azihsm_aes_keygen, aes_xts_key_gen_no_decrypt_flag_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -715,7 +715,7 @@ TEST_F(azihsm_aes_keygen, session_aes_gcm_256_key_generation)
     });
 }
 
-/// verifies AES-GCM key unmask fails when unmasking with wrong algorithm type
+/// verifies AES-GCM key generation fails when bit length is invalid
 TEST_F(azihsm_aes_keygen, aes_gcm_key_gen_invalid_bits_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -774,7 +774,7 @@ TEST_F(azihsm_aes_keygen, aes_gcm_key_gen_persistent)
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_NE(original_key, 0);
 
-        // Step 2: Validate key has correct AZIHSM_KEY_PROP_ID_SESSION property
+        // Step 2: Verify key has correct AZIHSM_KEY_PROP_ID_SESSION property
         verify_key_property(original_key, AZIHSM_KEY_PROP_ID_SESSION, false);
 
         // Step 3: Delete the key
