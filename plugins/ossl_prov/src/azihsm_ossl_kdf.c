@@ -276,8 +276,7 @@ static void *azihsm_ossl_hkdf_dupctx(void *kctx)
         if (dup->ikm_data == NULL)
         {
             ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
-            OPENSSL_clear_free(dup, sizeof(AZIHSM_HKDF_CTX));
-            return NULL;
+            goto cleanup;
         }
         memcpy(dup->ikm_data, ctx->ikm_data, ctx->ikm_data_len);
     }
@@ -290,13 +289,7 @@ static void *azihsm_ossl_hkdf_dupctx(void *kctx)
         if (dup->salt == NULL)
         {
             ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
-            if (dup->ikm_data != NULL)
-            {
-                OPENSSL_cleanse(dup->ikm_data, dup->ikm_data_len);
-                OPENSSL_free(dup->ikm_data);
-            }
-            OPENSSL_clear_free(dup, sizeof(AZIHSM_HKDF_CTX));
-            return NULL;
+            goto cleanup;
         }
         memcpy(dup->salt, ctx->salt, ctx->salt_len);
     }
@@ -309,15 +302,7 @@ static void *azihsm_ossl_hkdf_dupctx(void *kctx)
         if (dup->info == NULL)
         {
             ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
-            if (dup->ikm_data != NULL)
-            {
-                OPENSSL_cleanse(dup->ikm_data, dup->ikm_data_len);
-                OPENSSL_free(dup->ikm_data);
-            }
-            OPENSSL_cleanse(dup->salt, ctx->salt_len);
-            OPENSSL_free(dup->salt);
-            OPENSSL_clear_free(dup, sizeof(AZIHSM_HKDF_CTX));
-            return NULL;
+            goto cleanup;
         }
         memcpy(dup->info, ctx->info, ctx->info_len);
     }
@@ -327,6 +312,13 @@ static void *azihsm_ossl_hkdf_dupctx(void *kctx)
     dup->ikm_handle = 0;
 
     return dup;
+
+cleanup:
+    OPENSSL_clear_free(dup->ikm_data, dup->ikm_data_len);
+    OPENSSL_clear_free(dup->salt, dup->salt_len);
+    OPENSSL_clear_free(dup->info, dup->info_len);
+    OPENSSL_clear_free(dup, sizeof(AZIHSM_HKDF_CTX));
+    return NULL;
 }
 
 static void azihsm_ossl_hkdf_reset(void *kctx)

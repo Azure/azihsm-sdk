@@ -90,19 +90,19 @@ static int ecdsa_raw_to_der(
     s = BN_bin2bn(raw + half, (int)half, NULL);
     if (r == NULL || s == NULL)
     {
-        goto err;
+        goto cleanup;
     }
 
     esig = ECDSA_SIG_new();
     if (esig == NULL)
     {
-        goto err;
+        goto cleanup;
     }
 
     /* ECDSA_SIG_set0 takes ownership of r and s on success. */
     if (!ECDSA_SIG_set0(esig, r, s))
     {
-        goto err;
+        goto cleanup;
     }
     r = NULL;
     s = NULL;
@@ -110,7 +110,7 @@ static int ecdsa_raw_to_der(
     der_len = i2d_ECDSA_SIG(esig, &der);
     if (der_len <= 0)
     {
-        goto err;
+        goto cleanup;
     }
 
     *out_der = der;
@@ -118,7 +118,7 @@ static int ecdsa_raw_to_der(
     ECDSA_SIG_free(esig);
     return OSSL_SUCCESS;
 
-err:
+cleanup:
     BN_free(r);
     BN_free(s);
     ECDSA_SIG_free(esig);
@@ -140,6 +140,7 @@ static int ecdsa_der_to_raw(
     size_t *out_raw_len
 )
 {
+    int ret = OSSL_FAILURE;
     ECDSA_SIG *esig = NULL;
     const BIGNUM *r = NULL, *s = NULL;
     unsigned char *raw = NULL;
@@ -154,14 +155,13 @@ static int ecdsa_der_to_raw(
     esig = d2i_ECDSA_SIG(NULL, &der, (long)der_len);
     if (esig == NULL)
     {
-        return OSSL_FAILURE;
+        goto cleanup;
     }
 
     ECDSA_SIG_get0(esig, &r, &s);
     if (r == NULL || s == NULL)
     {
-        ECDSA_SIG_free(esig);
-        return OSSL_FAILURE;
+        goto cleanup;
     }
 
     r_len = BN_num_bytes(r);
@@ -169,26 +169,27 @@ static int ecdsa_der_to_raw(
 
     if ((size_t)r_len > coord_size || (size_t)s_len > coord_size)
     {
-        ECDSA_SIG_free(esig);
-        return OSSL_FAILURE;
+        goto cleanup;
     }
 
     raw = OPENSSL_zalloc(raw_len);
     if (raw == NULL)
     {
-        ECDSA_SIG_free(esig);
-        return OSSL_FAILURE;
+        goto cleanup;
     }
 
     /* Write r and s right-aligned (zero-padded on the left) */
     BN_bn2bin(r, raw + (coord_size - (size_t)r_len));
     BN_bn2bin(s, raw + coord_size + (coord_size - (size_t)s_len));
 
-    ECDSA_SIG_free(esig);
-
     *out_raw = raw;
     *out_raw_len = raw_len;
-    return OSSL_SUCCESS;
+    ret = OSSL_SUCCESS;
+
+cleanup:
+    /* OpenSSL free functions are NULL-safe — call unconditionally */
+    ECDSA_SIG_free(esig);
+    return ret;
 }
 
 /*
@@ -344,11 +345,15 @@ static int azihsm_ossl_ecdsa_sign(
     size_t tbslen
 )
 {
+    int ret = OSSL_FAILURE;
     azihsm_ec_sig_ctx *ctx = (azihsm_ec_sig_ctx *)sctx;
     struct azihsm_algo algo = { 0 };
     struct azihsm_buffer data_buf, sig_buf;
     azihsm_status status;
     size_t raw_sig_size;
+    unsigned char *raw_buf = NULL;
+    unsigned char *der = NULL;
+    size_t der_len = 0;
 
     if (ctx == NULL || ctx->key == NULL)
     {
@@ -391,51 +396,45 @@ static int azihsm_ossl_ecdsa_sign(
 
     raw_sig_size = sig_buf.len;
 
-    /* Allocate temporary buffer for the raw signature from the HSM. */
+    /* Allocate temporary buffer for the raw signature from the HSM */
+    raw_buf = OPENSSL_zalloc(raw_sig_size);
+    if (raw_buf == NULL)
     {
-        unsigned char *raw_buf = OPENSSL_zalloc(raw_sig_size);
-        unsigned char *der = NULL;
-        size_t der_len = 0;
-
-        if (raw_buf == NULL)
-        {
-            ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
-            return OSSL_FAILURE;
-        }
-
-        sig_buf.ptr = raw_buf;
-        sig_buf.len = (uint32_t)raw_sig_size;
-
-        status = azihsm_crypt_sign(&algo, ctx->key->key.priv, &data_buf, &sig_buf);
-        if (status != AZIHSM_STATUS_SUCCESS)
-        {
-            OPENSSL_clear_free(raw_buf, raw_sig_size);
-            ERR_raise(ERR_LIB_PROV, ERR_R_OPERATION_FAIL);
-            return OSSL_FAILURE;
-        }
-
-        /* Convert raw (r || s) to DER ECDSA-Sig-Value. */
-        if (ecdsa_raw_to_der(raw_buf, sig_buf.len, &der, &der_len) != OSSL_SUCCESS)
-        {
-            OPENSSL_clear_free(raw_buf, raw_sig_size);
-            ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
-            return OSSL_FAILURE;
-        }
-        OPENSSL_clear_free(raw_buf, raw_sig_size);
-
-        if (der_len > sigsize)
-        {
-            OPENSSL_free(der);
-            ERR_raise(ERR_LIB_PROV, ERR_R_PASSED_INVALID_ARGUMENT);
-            return OSSL_FAILURE;
-        }
-
-        memcpy(sig, der, der_len);
-        *siglen = der_len;
-        OPENSSL_free(der);
+        ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
+        goto cleanup;
     }
 
-    return OSSL_SUCCESS;
+    sig_buf.ptr = raw_buf;
+    sig_buf.len = (uint32_t)raw_sig_size;
+
+    status = azihsm_crypt_sign(&algo, ctx->key->key.priv, &data_buf, &sig_buf);
+    if (status != AZIHSM_STATUS_SUCCESS)
+    {
+        ERR_raise(ERR_LIB_PROV, ERR_R_OPERATION_FAIL);
+        goto cleanup;
+    }
+
+    /* Convert raw (r || s) to DER ECDSA-Sig-Value */
+    if (ecdsa_raw_to_der(raw_buf, sig_buf.len, &der, &der_len) != OSSL_SUCCESS)
+    {
+        ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
+        goto cleanup;
+    }
+
+    if (der_len > sigsize)
+    {
+        ERR_raise(ERR_LIB_PROV, ERR_R_PASSED_INVALID_ARGUMENT);
+        goto cleanup;
+    }
+
+    memcpy(sig, der, der_len);
+    *siglen = der_len;
+    ret = OSSL_SUCCESS;
+
+cleanup:
+    OPENSSL_clear_free(raw_buf, raw_sig_size);
+    OPENSSL_free(der);
+    return ret;
 }
 
 static int azihsm_ossl_ecdsa_verify_init(void *sctx, void *provkey, const OSSL_PARAM params[])

@@ -71,6 +71,7 @@ static int ec_point_to_der_spki(
     int *der_len
 )
 {
+    int ret = OSSL_FAILURE;
     EC_GROUP *group = NULL;
     EC_POINT *point = NULL;
     EC_KEY *ec_key = NULL;
@@ -84,93 +85,53 @@ static int ec_point_to_der_spki(
     if (group == NULL)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_EC_LIB);
-
-        EVP_PKEY_free(pkey);
-        EC_KEY_free(ec_key);
-        EC_POINT_free(point);
-        EC_GROUP_free(group);
-        return OSSL_FAILURE;
+        goto cleanup;
     }
 
     point = EC_POINT_new(group);
     if (point == NULL)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
-
-        EVP_PKEY_free(pkey);
-        EC_KEY_free(ec_key);
-        EC_POINT_free(point);
-        EC_GROUP_free(group);
-        return OSSL_FAILURE;
+        goto cleanup;
     }
 
     /* Decode the uncompressed EC point from its octet-string form */
     if (!EC_POINT_oct2point(group, point, pub_point, pub_point_len, NULL))
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_EC_LIB);
-
-        EVP_PKEY_free(pkey);
-        EC_KEY_free(ec_key);
-        EC_POINT_free(point);
-        EC_GROUP_free(group);
-        return OSSL_FAILURE;
+        goto cleanup;
     }
 
     ec_key = EC_KEY_new();
     if (ec_key == NULL)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
-
-        EVP_PKEY_free(pkey);
-        EC_KEY_free(ec_key);
-        EC_POINT_free(point);
-        EC_GROUP_free(group);
-        return OSSL_FAILURE;
+        goto cleanup;
     }
 
     if (!EC_KEY_set_group(ec_key, group))
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_EC_LIB);
-
-        EVP_PKEY_free(pkey);
-        EC_KEY_free(ec_key);
-        EC_POINT_free(point);
-        EC_GROUP_free(group);
-        return OSSL_FAILURE;
+        goto cleanup;
     }
 
     if (!EC_KEY_set_public_key(ec_key, point))
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_EC_LIB);
-
-        EVP_PKEY_free(pkey);
-        EC_KEY_free(ec_key);
-        EC_POINT_free(point);
-        EC_GROUP_free(group);
-        return OSSL_FAILURE;
+        goto cleanup;
     }
 
     pkey = EVP_PKEY_new();
     if (pkey == NULL)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
-
-        EVP_PKEY_free(pkey);
-        EC_KEY_free(ec_key);
-        EC_POINT_free(point);
-        EC_GROUP_free(group);
-        return OSSL_FAILURE;
+        goto cleanup;
     }
 
     if (!EVP_PKEY_assign_EC_KEY(pkey, ec_key))
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_EVP_LIB);
-
-        EVP_PKEY_free(pkey);
-        EC_KEY_free(ec_key);
-        EC_POINT_free(point);
-        EC_GROUP_free(group);
-        return OSSL_FAILURE;
+        goto cleanup;
     }
     ec_key = NULL; /* Ownership transferred to pkey */
 
@@ -181,20 +142,18 @@ static int ec_point_to_der_spki(
         *der_out = NULL;
         *der_len = 0;
         ERR_raise(ERR_LIB_PROV, ERR_R_ASN1_LIB);
-
-        EVP_PKEY_free(pkey);
-        EC_KEY_free(ec_key);
-        EC_POINT_free(point);
-        EC_GROUP_free(group);
-        return OSSL_FAILURE;
+        goto cleanup;
     }
 
+    ret = OSSL_SUCCESS;
+
+cleanup:
+    /* OpenSSL free functions are NULL-safe — call unconditionally */
     EVP_PKEY_free(pkey);
     EC_KEY_free(ec_key);
     EC_POINT_free(point);
     EC_GROUP_free(group);
-
-    return OSSL_SUCCESS;
+    return ret;
 }
 
 static void *azihsm_ossl_keyexch_newctx(void *provctx)
@@ -250,10 +209,8 @@ static void *azihsm_ossl_keyexch_dupctx(void *kectx)
         dup->peer_key = OPENSSL_zalloc(sizeof(AZIHSM_EC_KEY));
         if (dup->peer_key == NULL)
         {
-            OPENSSL_free(dup);
-
             ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
-            return NULL;
+            goto cleanup;
         }
         memcpy(dup->peer_key, ctx->peer_key, sizeof(AZIHSM_EC_KEY));
         dup->peer_key->pub_key_data = NULL;
@@ -263,11 +220,8 @@ static void *azihsm_ossl_keyexch_dupctx(void *kectx)
             dup->peer_key->pub_key_data = OPENSSL_malloc(ctx->peer_key->pub_key_data_len);
             if (dup->peer_key->pub_key_data == NULL)
             {
-                OPENSSL_free(dup->peer_key);
-                OPENSSL_free(dup);
-
                 ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
-                return NULL;
+                goto cleanup;
             }
             memcpy(
                 dup->peer_key->pub_key_data,
@@ -278,6 +232,15 @@ static void *azihsm_ossl_keyexch_dupctx(void *kectx)
     }
 
     return dup;
+
+cleanup:
+    /* OPENSSL_free is NULL-safe — call unconditionally */
+    if (dup != NULL)
+    {
+        OPENSSL_free(dup->peer_key);
+        OPENSSL_free(dup);
+    }
+    return NULL;
 }
 
 static int azihsm_ossl_keyexch_set_ctx_params(void *kectx, const OSSL_PARAM params[])
@@ -376,8 +339,8 @@ static int azihsm_ossl_keyexch_set_peer(void *kectx, void *provkey)
         copy->pub_key_data = OPENSSL_malloc(key->pub_key_data_len);
         if (copy->pub_key_data == NULL)
         {
-            OPENSSL_free(copy);
             ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
+            OPENSSL_free(copy);
             return OSSL_FAILURE;
         }
         memcpy(copy->pub_key_data, key->pub_key_data, key->pub_key_data_len);
