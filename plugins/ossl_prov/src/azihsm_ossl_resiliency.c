@@ -266,6 +266,11 @@ static azihsm_status resiliency_storage_write(
         return AZIHSM_STATUS_INVALID_ARGUMENT;
     }
 
+    if (value->len > MAX_STORAGE_FILE_SIZE)
+    {
+        return AZIHSM_STATUS_INVALID_ARGUMENT;
+    }
+
     status = build_storage_path(ctx->storage_dir, key, path, sizeof(path));
     if (status != AZIHSM_STATUS_SUCCESS)
     {
@@ -321,11 +326,16 @@ static azihsm_status resiliency_storage_write(
 
     /* Fsync the directory to ensure the rename is durable across crashes */
     fd = open(ctx->storage_dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-    if (fd >= 0)
+    if (fd < 0)
     {
-        fsync(fd);
-        close(fd);
+        return AZIHSM_STATUS_INTERNAL_ERROR;
     }
+    if (fsync(fd) != 0)
+    {
+        close(fd);
+        return AZIHSM_STATUS_INTERNAL_ERROR;
+    }
+    close(fd);
 
     return AZIHSM_STATUS_SUCCESS;
 }
@@ -538,7 +548,7 @@ static azihsm_status resiliency_pota_endorse(
     }
 
     status =
-        compute_pota_endorsement(ctx->device, &priv_key_buf, &pub_key_buf, &sig_tmp);
+        compute_pota_endorsement(ctx->device, &priv_key_buf, &sig_tmp);
     OPENSSL_cleanse(priv_key_buf.ptr, priv_key_buf.len);
     OPENSSL_free(priv_key_buf.ptr);
     if (status != AZIHSM_STATUS_SUCCESS)

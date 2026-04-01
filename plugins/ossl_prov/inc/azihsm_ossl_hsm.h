@@ -37,7 +37,6 @@ azihsm_status azihsm_open_device_and_session(
 azihsm_status compute_pota_endorsement(
     azihsm_handle device,
     const struct azihsm_buffer *priv_key_buf,
-    const struct azihsm_buffer *pub_key_buf,
     struct azihsm_buffer *sig_out
 );
 

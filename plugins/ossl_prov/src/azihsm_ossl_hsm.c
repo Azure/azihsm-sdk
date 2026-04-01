@@ -765,7 +765,6 @@ static azihsm_status sign_with_pota_key(
 azihsm_status compute_pota_endorsement(
     azihsm_handle device,
     const struct azihsm_buffer *priv_key_buf,
-    const struct azihsm_buffer *pub_key_buf,
     struct azihsm_buffer *sig_out
 )
 {
@@ -1070,7 +1069,6 @@ azihsm_status azihsm_open_device_and_session(
         status = compute_pota_endorsement(
             *device,
             &pota_priv_buf,
-            &pota_pub_buf,
             &pota_sig_buf
         );
         if (status != AZIHSM_STATUS_SUCCESS)
