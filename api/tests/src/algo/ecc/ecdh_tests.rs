@@ -375,6 +375,8 @@ fn run_ecdh_masked_key_small_buffer(session: &HsmSession, curve: HsmEccCurve) {
     let secret = ecdh_derive_shared_secret(session, &priv_key, &pub_key).unwrap();
 
     let len = secret.masked_key(None).unwrap();
+    assert!(len > 0, "masked_key(None) must return non-zero length");
+
     let mut buf = vec![0u8; len - 1];
 
     let result = secret.masked_key(Some(&mut buf));
@@ -412,7 +414,10 @@ fn run_ecdh_truncated_der(session: &HsmSession, curve: HsmEccCurve) {
     assert!(matches!(result, Err(HsmError::InvalidKey)));
 }
 
-/// Verifies behavior of derived keys after session closure.
+/// Verifies dropping a cloned session handle does not invalidate a derived key.
+///
+/// `HsmSession` is internally reference-counted (Arc), and derived keys hold
+/// their own session reference. Dropping a local clone must not affect key usability.
 fn run_ecdh_session_close_invalidates_key(session: &HsmSession, curve: HsmEccCurve) {
     let (priv_key, pub_key) =
         generate_ecc_keypair_with_derive(session.clone(), curve, true).unwrap();
@@ -424,7 +429,7 @@ fn run_ecdh_session_close_invalidates_key(session: &HsmSession, curve: HsmEccCur
 
     let result = secret.masked_key(None);
 
-    let len = result.expect("Expected key to remain usable after session close");
+    let len = result.expect("Derived key should remain usable after dropping session clone");
     assert!(len > 0);
 }
 
@@ -477,6 +482,15 @@ fn hash_data(session: &HsmSession, hash_algo: HsmHashAlgo, data: &[u8]) -> Vec<u
     out
 }
 
+/// Returns appropriate hash algorithm for given ECC curve
+fn hash_for_curve(curve: HsmEccCurve) -> HsmHashAlgo {
+    match curve {
+        HsmEccCurve::P256 => HsmHashAlgo::Sha256,
+        HsmEccCurve::P384 => HsmHashAlgo::Sha384,
+        HsmEccCurve::P521 => HsmHashAlgo::Sha512,
+    }
+}
+
 /// Ensures ECDH works correctly and peer identity can be authenticated via signature verification.
 fn run_ecdh_with_signature_verification(session: &HsmSession, curve: HsmEccCurve) {
     // --- ECDH key pairs (derive-only) ---
@@ -505,8 +519,8 @@ fn run_ecdh_with_signature_verification(session: &HsmSession, curve: HsmEccCurve
     // --- Authentication via signature ---
     let message = b"ecdh-auth-test";
 
-    // IMPORTANT: hash first (HSM expects digest, not raw message)
-    let digest = hash_data(session, HsmHashAlgo::Sha256, message);
+    let hash_algo = hash_for_curve(curve);
+    let digest = hash_data(session, hash_algo, message);
 
     // Sign with B's signing key
     let mut sign_algo = HsmEccSignAlgo::default();
@@ -1155,19 +1169,21 @@ fn test_ecdh_repeat_derivation_stability_p521(session: HsmSession) {
     run_ecdh_repeat_derivation_stability(&session, HsmEccCurve::P521);
 }
 
+/// Verifies ECDH works between independently generated keypairs within the same session.
 #[session_test]
-fn test_ecdh_cross_session_pubkey_usage(session: HsmSession) {
+fn test_ecdh_pubkey_interop_same_session(session: HsmSession) {
     let (_, pub1) =
         generate_ecc_keypair_with_derive(session.clone(), HsmEccCurve::P256, true).unwrap();
 
-    let session2 = session.clone(); // simulate separate session
-
     let (priv2, _) =
-        generate_ecc_keypair_with_derive(session2.clone(), HsmEccCurve::P256, true).unwrap();
+        generate_ecc_keypair_with_derive(session.clone(), HsmEccCurve::P256, true).unwrap();
 
-    let result = ecdh_derive_shared_secret(&session2, &priv2, &pub1);
+    let result = ecdh_derive_shared_secret(&session, &priv2, &pub1);
 
-    assert!(result.is_ok(), "cross-session ECDH should work");
+    assert!(
+        result.is_ok(),
+        "ECDH with independent keypairs should succeed"
+    );
 }
 
 /// Ensures repeated ECDH derivation succeeds and produces valid keys.
