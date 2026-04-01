@@ -84,9 +84,10 @@ pub struct HsmResiliencyConfig {
 - Must be thread-safe (callable from any thread concurrently).
 - Must **not** call methods on the same `HsmPartition` that is being
   initialized or restored — the partition's RwLock is held during the
-  callback.  To retrieve the device's PID public key, open a
-  **separate** `HsmPartition` handle via
-  `HsmPartitionManager::open_partition()` and call `pub_key()` on it.
+  callback. The SDK retrieves the device's PID public key and
+  PID certificate chain (PEM-encoded) and passes them as the
+  `pid_pub_key_der` and `pid_cert_chain_pem` parameters, so the implementation
+  only needs to sign the provided key.
 - Called under the resiliency lock, so it should not block
   indefinitely.
 
@@ -540,18 +541,16 @@ When POTA source is `Caller` and resiliency is enabled:
 2. **On retry after `EccVerifyFailed`:** The device regenerated its
    attestation key (e.g., after live migration). The
    `PotaEndorsementCallback::endorse()` is invoked to re-sign over
-   the current device's PID public key.
+   the current device's PID public key (provided by the SDK).
+   The SDK also provides the PID certificate chain.
 3. **On restore_partition:** Always re-endorses (`reendorse = true`)
    since the device state may have changed.
 
 The callback implementation must:
-1. Open a **separate** `HsmPartition` handle to the same device path
-   (the callback must not use the partition being initialized/restored,
-   as its RwLock is held)
-2. Retrieve the current device's PID certificate public key via
-   `pub_key()` on the separate handle
-3. Sign it with the caller's private key
-4. Return the (signature, signer_public_key) pair
+1. Sign the `pid_pub_key_der` (provided by the SDK) with the caller's
+   private key
+2. Return the (signature, signer_public_key) pair
+3. Optionally validate the device using `pid_cert_chain_pem`
 
 ## MUK Persistence
 

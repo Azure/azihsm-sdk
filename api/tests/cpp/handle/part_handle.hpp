@@ -75,7 +75,9 @@ class PartitionHandle
     azihsm_handle handle_;
 
     // Private constructor for wrapping a pre-opened handle
-    explicit PartitionHandle(azihsm_handle handle) : handle_(handle) {}
+    explicit PartitionHandle(azihsm_handle handle) : handle_(handle)
+    {
+    }
 
     static std::mutex &get_init_mutex()
     {
@@ -97,15 +99,14 @@ class PartitionHandle
 
         std::lock_guard<std::mutex> lock(get_init_mutex());
 
-        // Reset before initialization to clear any previous state and ensure clean state for each test
+        // Reset before initialization to clear any previous state and ensure clean state for each
+        // test
         err = azihsm_part_reset(handle_);
         if (err != AZIHSM_STATUS_SUCCESS)
         {
             azihsm_part_close(handle_);
             handle_ = 0;
-            throw std::runtime_error(
-                "Failed to reset partition. Error: " + std::to_string(err)
-            );
+            throw std::runtime_error("Failed to reset partition. Error: " + std::to_string(err));
         }
 
         azihsm_credentials creds{};

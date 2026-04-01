@@ -151,7 +151,7 @@ fn test_close_session_does_not_panic_after_reset() {
     // After the device is reset, re-init and verify usability.
     let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
     let (obk_info, pota_endorsement) = make_init_params(&part);
-    let (resiliency_config, _ctx2) = make_resiliency_config(&part);
+    let (resiliency_config, _ctx2) = make_resiliency_config();
     part.init(
         creds,
         None,

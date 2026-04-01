@@ -14,7 +14,7 @@
 //!
 //! **Single-thread / single-process tests** — use [`make_resiliency_config`]:
 //! ```ignore
-//! let (config, _ctx) = make_resiliency_config(&part);
+//! let (config, _ctx) = make_resiliency_config();
 //! // _ctx cleans up the directory on drop.
 //! ```
 //!
@@ -24,7 +24,7 @@
 //! ```ignore
 //! let ctx = ResiliencyTestCtx::new();
 //! // spawn threads / processes, each calls:
-//! let config = make_resiliency_config_in(ctx.dir(), &part);
+//! let config = make_resiliency_config_in(ctx.dir());
 //! // after all join, ctx drops and cleans up.
 //! ```
 
@@ -177,24 +177,20 @@ impl ResiliencyLock for FileLock {
 /// partition's certificate and signs it using the hardcoded test
 /// ECC P-384 key pair (same as [`super::partition::generate_pota_endorsement`]).
 ///
-/// The `pub_key` parameter (caller's original endorsement key) is
+/// The `pota_pub_key_der` parameter (caller's original endorsement key) is
 /// ignored — this callback always re-derives the endorsement from the
-/// current device's PID cert.
-///
-/// Opens a separate partition handle to avoid deadlocking with the
-/// caller's partition RwLock (held during init / restore).
-struct TestPotaCallback {
-    path: String,
-}
+/// provided `pid_pub_key_der`.
+struct TestPotaCallback;
 
 impl PotaEndorsementCallback for TestPotaCallback {
-    fn endorse(&self, _pub_key: &[u8]) -> HsmResult<HsmPotaEndorsementData> {
-        // Open a separate partition handle.
-        let part = HsmPartitionManager::open_partition(&self.path)?;
-        let pid_pub_key_der = part.pub_key()?;
-
+    fn endorse(
+        &self,
+        _pota_pub_key_der: &[u8],
+        pid_pub_key_der: &[u8],
+        _pid_cert_chain_pem: &[u8],
+    ) -> HsmResult<HsmPotaEndorsementData> {
         let pub_key_obj =
-            DerEccPublicKey::from_der(&pid_pub_key_der).map_err(|_| HsmError::InternalError)?;
+            DerEccPublicKey::from_der(pid_pub_key_der).map_err(|_| HsmError::InternalError)?;
         let mut uncompressed = vec![0x04u8];
         uncompressed.extend_from_slice(pub_key_obj.x());
         uncompressed.extend_from_slice(pub_key_obj.y());
@@ -259,7 +255,7 @@ impl Drop for ResiliencyTestCtx {
 /// The directory must already exist (created by [`ResiliencyTestCtx::new`]).
 /// Each thread or process should call this to get its own config handle
 /// pointing at the shared storage and lock file.
-pub(crate) fn make_resiliency_config_in(dir: &Path, part: &HsmPartition) -> HsmResiliencyConfig {
+pub(crate) fn make_resiliency_config_in(dir: &Path) -> HsmResiliencyConfig {
     let lock_path = dir.join(".lock");
 
     // When TPM is used, the POTA source is Tpm and no callback is needed
@@ -268,7 +264,7 @@ pub(crate) fn make_resiliency_config_in(dir: &Path, part: &HsmPartition) -> HsmR
     let pota_callback: Option<Box<dyn PotaEndorsementCallback>> = if use_tpm() {
         None
     } else {
-        Some(Box::new(TestPotaCallback { path: part.path() }))
+        Some(Box::new(TestPotaCallback))
     };
 
     HsmResiliencyConfig {
@@ -287,11 +283,9 @@ pub(crate) fn make_resiliency_config_in(dir: &Path, part: &HsmPartition) -> HsmR
 /// [`ResiliencyTestCtx::new`] + [`make_resiliency_config_in`] instead.
 ///
 /// The returned `ResiliencyTestCtx` must outlive the config.
-pub(crate) fn make_resiliency_config(
-    part: &HsmPartition,
-) -> (HsmResiliencyConfig, ResiliencyTestCtx) {
+pub(crate) fn make_resiliency_config() -> (HsmResiliencyConfig, ResiliencyTestCtx) {
     let ctx = ResiliencyTestCtx::new();
-    let config = make_resiliency_config_in(ctx.dir(), part);
+    let config = make_resiliency_config_in(ctx.dir());
     (config, ctx)
 }
 
@@ -309,7 +303,12 @@ mod tests {
     struct DummyPotaCallback;
 
     impl PotaEndorsementCallback for DummyPotaCallback {
-        fn endorse(&self, _pub_key: &[u8]) -> HsmResult<HsmPotaEndorsementData> {
+        fn endorse(
+            &self,
+            _pota_pub_key_der: &[u8],
+            _pid_pub_key_der: &[u8],
+            _pid_cert_chain_pem: &[u8],
+        ) -> HsmResult<HsmPotaEndorsementData> {
             // Use non-trivial byte pattern for signature and the real test
             // public key so that any endianness or byte-order issues are caught.
             let sig: [u8; 96] = core::array::from_fn(|i| (i + 1) as u8);
@@ -443,7 +442,7 @@ mod tests {
     #[test]
     fn pota_dummy_callback_returns_expected_sizes() {
         let callback = DummyPotaCallback;
-        let result = callback.endorse(&[0u8; 32]).unwrap();
+        let result = callback.endorse(&[0u8; 32], &[], &[]).unwrap();
         assert_eq!(result.signature().len(), 96);
         assert_eq!(result.pub_key().len(), 120);
     }
@@ -552,9 +551,9 @@ mod tests {
         let callback = DummyPotaCallback;
 
         // Call with different input keys — output should be the same
-        let result1 = callback.endorse(&[0xAAu8; 64]).unwrap();
-        let result2 = callback.endorse(&[0xBBu8; 32]).unwrap();
-        let result3 = callback.endorse(&[]).unwrap();
+        let result1 = callback.endorse(&[0xAAu8; 64], &[], &[]).unwrap();
+        let result2 = callback.endorse(&[0xBBu8; 32], &[], &[]).unwrap();
+        let result3 = callback.endorse(&[], &[], &[]).unwrap();
 
         assert_eq!(result1.signature(), result2.signature());
         assert_eq!(result2.signature(), result3.signature());
@@ -564,12 +563,7 @@ mod tests {
 
     #[test]
     fn make_resiliency_config_convenience_creates_valid_config() {
-        let part_infos = HsmPartitionManager::partition_info_list();
-        assert!(!part_infos.is_empty(), "No partitions found.");
-        let part = HsmPartitionManager::open_partition(&part_infos[0].path)
-            .expect("Failed to open partition");
-
-        let (config, _ctx) = make_resiliency_config(&part);
+        let (config, _ctx) = make_resiliency_config();
 
         // Storage should work
         config.storage.write("conv_test", b"data").unwrap();

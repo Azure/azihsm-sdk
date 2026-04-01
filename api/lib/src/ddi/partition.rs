@@ -139,18 +139,25 @@ fn get_pota_endorsement(
 ) -> HsmResult<(Vec<u8>, Vec<u8>)> {
     match pota_endorsement.source() {
         HsmPotaEndorsementSource::Caller => {
-            // When re-endorsement is requested, use the callback to
-            // generate a fresh endorsement. The callback is responsible
-            // for retrieving the current device's PID cert public key
-            // and signing it. We pass the caller's original endorsement
-            // public key for identification — the callback may ignore it.
+            // When re-endorsement is requested, the SDK retrieves the
+            // device's PID public key and certificate chain (PEM), then
+            // invokes the callback to sign. We also pass the caller's
+            // original endorsement public key for identification — the
+            // callback may ignore it.
             if reendorse {
                 let cfg = resiliency_config.ok_or(HsmError::InvalidArgument)?;
                 let callback = cfg
                     .pota_callback
                     .as_ref()
                     .ok_or(HsmError::InvalidArgument)?;
-                let data = invoke_pota_callback(callback.as_ref(), pota_endorsement)?;
+                let pid_pub_key_der = get_part_pub_key(dev, rev)?;
+                let pid_cert_chain_pem = get_cert_chain(dev, rev, 0)?;
+                let data = invoke_pota_callback(
+                    callback.as_ref(),
+                    pota_endorsement,
+                    &pid_pub_key_der,
+                    pid_cert_chain_pem.as_bytes(),
+                )?;
                 return Ok((data.signature().to_vec(), data.pub_key().to_vec()));
             }
 
@@ -177,17 +184,19 @@ fn get_pota_endorsement(
 
 /// Invokes a [`PotaEndorsementCallback`] to produce fresh endorsement data.
 ///
-/// Passes the caller's original endorsement public key to the callback
-/// for identification.
+/// Passes the caller's original endorsement public key, the device's
+/// PID certificate public key, and the PID certificate chain to the callback.
 pub(crate) fn invoke_pota_callback(
     callback: &dyn PotaEndorsementCallback,
     pota_endorsement: &HsmPotaEndorsement,
+    pid_pub_key_der: &[u8],
+    pid_cert_chain_pem: &[u8],
 ) -> HsmResult<HsmPotaEndorsementData> {
-    let caller_pub_key = pota_endorsement
+    let pota_pub_key_der = pota_endorsement
         .endorsement()
         .map(|d| d.pub_key())
         .unwrap_or(&[]);
-    callback.endorse(caller_pub_key)
+    callback.endorse(pota_pub_key_der, pid_pub_key_der, pid_cert_chain_pem)
 }
 
 /// Initializes an HSM partition with credentials and master keys.
