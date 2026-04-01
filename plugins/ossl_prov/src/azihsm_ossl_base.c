@@ -23,9 +23,15 @@ extern "C"
 {
 #endif
 
-#define ALG(names, funcs) { names, "provider=" AZIHSM_OSSL_NAME ",fips=yes", funcs, NULL }
+#define ALG(names, funcs)                                                                          \
+    {                                                                                              \
+        names, "provider=" AZIHSM_OSSL_NAME ",fips=yes", funcs, NULL                               \
+    }
 
-#define ALG_TABLE_END { NULL, NULL, NULL, NULL }
+#define ALG_TABLE_END                                                                              \
+    {                                                                                              \
+        NULL, NULL, NULL, NULL                                                                     \
+    }
 
 // Digest
 extern const OSSL_DISPATCH azihsm_ossl_sha1_functions[];
@@ -789,8 +795,7 @@ OSSL_STATUS OSSL_provider_init(
 
     /* Check if resiliency is enabled via environment variable */
     const char *res_env = getenv(AZIHSM_RESILIENCY_ENABLED_ENV);
-    if (res_env != NULL &&
-        (strcmp(res_env, "1") == 0 || OPENSSL_strcasecmp(res_env, "true") == 0))
+    if (res_env != NULL && (strcmp(res_env, "1") == 0 || OPENSSL_strcasecmp(res_env, "true") == 0))
     {
         const char *dir_env;
         ctx->config.resiliency_enabled = true;

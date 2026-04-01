@@ -60,7 +60,7 @@ struct azihsm_resiliency_ctx
     char pota_pub_path[AZIHSM_MAX_FILE_PATH];  /* POTA public key DER file */
     char lock_path[PATH_BUF_SIZE];             /* Path to the lock file */
     int lock_fd;                               /* Held fd during lock (-1 when unlocked) */
-    CRYPTO_RWLOCK *lock_fd_lock;                /* Protects lock_fd from concurrent access */
+    CRYPTO_RWLOCK *lock_fd_lock;               /* Protects lock_fd from concurrent access */
     struct azihsm_pota_callback_ops pota_ops;  /* POTA ops owned by ctx */
 };
 
@@ -85,8 +85,8 @@ static azihsm_status build_storage_path(
     size_t key_len;
     int written;
 
-    if (storage_dir == NULL || key == NULL || key[0] == '\0' ||
-        path_buf == NULL || path_buf_size == 0)
+    if (storage_dir == NULL || key == NULL || key[0] == '\0' || path_buf == NULL ||
+        path_buf_size == 0)
     {
         return AZIHSM_STATUS_INVALID_ARGUMENT;
     }
@@ -99,8 +99,7 @@ static azihsm_status build_storage_path(
 
     /* Reject path-traversal attempts: block '/' and ".." as a path component.
      * A bare ".." or a substring "../" would allow escaping storage_dir. */
-    if (strchr(key, '/') != NULL || strcmp(key, "..") == 0 ||
-        strstr(key, "../") != NULL)
+    if (strchr(key, '/') != NULL || strcmp(key, "..") == 0 || strstr(key, "../") != NULL)
     {
         return AZIHSM_STATUS_INVALID_ARGUMENT;
     }
@@ -551,8 +550,7 @@ static azihsm_status resiliency_pota_endorse(
         return (status != AZIHSM_STATUS_SUCCESS) ? status : AZIHSM_STATUS_INTERNAL_ERROR;
     }
 
-    status =
-        compute_pota_endorsement(pid_pub_key_der, &priv_key_buf, &sig_tmp);
+    status = compute_pota_endorsement(pid_pub_key_der, &priv_key_buf, &sig_tmp);
     OPENSSL_cleanse(priv_key_buf.ptr, priv_key_buf.len);
     OPENSSL_free(priv_key_buf.ptr);
     if (status != AZIHSM_STATUS_SUCCESS)
