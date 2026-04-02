@@ -61,11 +61,7 @@ azihsm_status crypt_update_call(
     azihsm_buffer *output
 );
 
-azihsm_status crypt_finish_call(
-    CryptOperation operation,
-    azihsm_handle ctx,
-    azihsm_buffer *output
-);
+azihsm_status crypt_finish_call(CryptOperation operation, azihsm_handle ctx, azihsm_buffer *output);
 
 azihsm_status single_shot_status_with_sizing(
     CryptOperation operation,
@@ -115,8 +111,8 @@ void run_single_shot_key_size(
     azihsm_algo_id algo_id,
     const std::vector<DataSizeTestParams> &data_sizes,
     uint8_t plaintext_fill,
-    const std::function<void(azihsm_handle, azihsm_algo_id, const uint8_t *, size_t, size_t)> &
-        roundtrip_runner,
+    const std::function<void(azihsm_handle, azihsm_algo_id, const uint8_t *, size_t, size_t)>
+        &roundtrip_runner,
     const std::function<KeyHandle(azihsm_handle, uint32_t)> &key_generator
 );
 
@@ -124,8 +120,8 @@ void run_streaming_case_list(
     PartitionListHandle &part_list,
     azihsm_algo_id algo_id,
     const std::function<
-        void(azihsm_handle, azihsm_algo_id, const uint8_t *, size_t, size_t, size_t)> &
-        roundtrip_runner,
+        void(azihsm_handle, azihsm_algo_id, const uint8_t *, size_t, size_t, size_t)>
+        &roundtrip_runner,
     const std::vector<StreamingRoundtripCase> &test_cases,
     const std::function<KeyHandle(azihsm_handle, uint32_t)> &key_generator
 );

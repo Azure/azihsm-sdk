@@ -12,7 +12,12 @@ use crate::utils::resiliency::*;
 struct DummyPotaCallback;
 
 impl PotaEndorsementCallback for DummyPotaCallback {
-    fn endorse(&self, _pub_key: &[u8]) -> HsmResult<HsmPotaEndorsementData> {
+    fn endorse(
+        &self,
+        _pota_pub_key_der: &[u8],
+        _pid_pub_key_der: &[u8],
+        _pid_cert_chain_pem: &[u8],
+    ) -> HsmResult<HsmPotaEndorsementData> {
         // Use non-trivial byte pattern for signature and the real test
         // public key so that any endianness or byte-order issues are caught.
         let sig: [u8; 96] = core::array::from_fn(|i| (i + 1) as u8);
@@ -340,7 +345,7 @@ fn test_init_with_resiliency_config() {
         let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
         let (obk_info, pota_endorsement) = make_init_params(&part);
 
-        let (resiliency_config, _ctx) = make_resiliency_config(&part);
+        let (resiliency_config, _ctx) = make_resiliency_config();
         part.init(
             creds,
             None,
@@ -373,7 +378,7 @@ fn test_init_with_resiliency_caller_pota_null_callback_fails() {
 
         // Build a resiliency config with pota_callback = None.
         // When POTA source is Caller, this must fail with InvalidArgument.
-        let (mut resiliency_config, _ctx) = make_resiliency_config(&part);
+        let (mut resiliency_config, _ctx) = make_resiliency_config();
         resiliency_config.pota_callback = None;
 
         let result = part.init(
@@ -422,7 +427,7 @@ fn test_double_init_with_resiliency() {
         };
 
         let ctx = ResiliencyTestCtx::new();
-        let resiliency_config = make_resiliency_config_in(ctx.dir(), &part);
+        let resiliency_config = make_resiliency_config_in(ctx.dir());
         part.init(
             creds,
             None,
@@ -457,7 +462,7 @@ fn test_double_init_with_resiliency() {
             )
         };
 
-        let resiliency_config2 = make_resiliency_config_in(ctx.dir(), &part);
+        let resiliency_config2 = make_resiliency_config_in(ctx.dir());
         part.init(
             creds,
             None,
@@ -488,7 +493,7 @@ fn test_init_with_resiliency_invalid_pota_source_fails() {
         let pota_data = HsmPotaEndorsementData::new(&[0u8; 96], &[0u8; 97]);
         let pota = HsmPotaEndorsement::new(HsmPotaEndorsementSource(99), Some(pota_data));
 
-        let (resiliency_config, _ctx) = make_resiliency_config(&part);
+        let (resiliency_config, _ctx) = make_resiliency_config();
 
         let result = part.init(creds, None, None, obk_info, pota, Some(resiliency_config));
         assert_eq!(result.unwrap_err(), HsmError::InvalidArgument);
@@ -509,7 +514,7 @@ fn test_init_with_resiliency_tpm_pota_with_callback_fails() {
         let pota_endorsement = HsmPotaEndorsement::new(HsmPotaEndorsementSource::Tpm, None);
 
         // TPM source + callback provided → should fail with InvalidArgument.
-        let (mut resiliency_config, _ctx) = make_resiliency_config(&part);
+        let (mut resiliency_config, _ctx) = make_resiliency_config();
         // Force pota_callback = Some(...) regardless of USE_TPM — this test
         // specifically verifies that TPM + callback is rejected by validation.
         if resiliency_config.pota_callback.is_none() {

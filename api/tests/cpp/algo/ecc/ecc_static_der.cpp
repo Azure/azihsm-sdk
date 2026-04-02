@@ -81,21 +81,21 @@ azihsm_status get_static_ecc_pkcs8_der(
 {
     switch (curve)
     {
-        case AZIHSM_ECC_CURVE_P256:
-            der_ptr = k_p256_pkcs8_der;
-            der_len = sizeof(k_p256_pkcs8_der);
-            return AZIHSM_STATUS_SUCCESS;
-        case AZIHSM_ECC_CURVE_P384:
-            der_ptr = k_p384_pkcs8_der;
-            der_len = sizeof(k_p384_pkcs8_der);
-            return AZIHSM_STATUS_SUCCESS;
-        case AZIHSM_ECC_CURVE_P521:
-            der_ptr = k_p521_pkcs8_der;
-            der_len = sizeof(k_p521_pkcs8_der);
-            return AZIHSM_STATUS_SUCCESS;
-        default:
-            der_ptr = nullptr;
-            der_len = 0;
-            return AZIHSM_STATUS_INVALID_ARGUMENT;
+    case AZIHSM_ECC_CURVE_P256:
+        der_ptr = k_p256_pkcs8_der;
+        der_len = sizeof(k_p256_pkcs8_der);
+        return AZIHSM_STATUS_SUCCESS;
+    case AZIHSM_ECC_CURVE_P384:
+        der_ptr = k_p384_pkcs8_der;
+        der_len = sizeof(k_p384_pkcs8_der);
+        return AZIHSM_STATUS_SUCCESS;
+    case AZIHSM_ECC_CURVE_P521:
+        der_ptr = k_p521_pkcs8_der;
+        der_len = sizeof(k_p521_pkcs8_der);
+        return AZIHSM_STATUS_SUCCESS;
+    default:
+        der_ptr = nullptr;
+        der_len = 0;
+        return AZIHSM_STATUS_INVALID_ARGUMENT;
     }
 }

@@ -92,7 +92,7 @@ fn init_with_resiliency() -> (HsmPartition, ResiliencyTestCtx) {
 
     let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
     let (obk_info, pota_endorsement) = make_init_params(&part);
-    let (resiliency_config, ctx) = make_resiliency_config(&part);
+    let (resiliency_config, ctx) = make_resiliency_config();
     part.init(
         creds,
         None,

@@ -870,7 +870,8 @@ static std::vector<uint8_t> get_part_prop_bytes(azihsm_handle part, azihsm_part_
 // Uses ECDSA_SHA384 which hashes and signs in one operation.
 // Explicitly calls azihsm_part_open, azihsm_part_init, and azihsm_sess_open.
 // Persists BMK and MOBK for proper restoration.
-TEST_F(azihsm_ecc_sign_verify, persist_key_and_signature){
+TEST_F(azihsm_ecc_sign_verify, persist_key_and_signature)
+{
 
     // Clean up any stale file from a previous run
     std::string file_path = get_persistence_file_path();
