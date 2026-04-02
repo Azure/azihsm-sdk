@@ -298,10 +298,11 @@ static azihsm_status azihsm_get_device_handle(azihsm_handle *device, struct azih
     ERR_raise_data(
         ERR_LIB_PROV,
         ERR_R_INTERNAL_ERROR,
-        "no HSM partition could be opened from %u candidates",
-        device_count
+        "no HSM partition could be opened from %u candidates (last status %d)",
+        device_count,
+        status
     );
-    return AZIHSM_STATUS_INTERNAL_ERROR;
+    return status;
 }
 
 /*

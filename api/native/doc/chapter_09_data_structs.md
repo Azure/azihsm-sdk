@@ -424,9 +424,10 @@ struct azihsm_part_info {
  | api_rev_min | [struct azihsm_api_rev](#azihsm_api_rev) | minimum supported API revision                      |
  | api_rev_max | [struct azihsm_api_rev](#azihsm_api_rev) | maximum supported API revision                      |
 
-On input, `path.len` is the size of the caller-allocated buffer pointed to by `path.str`.
-On output, `path.len` is set to the number of bytes written (or the required size when
-`AZIHSM_STATUS_BUFFER_TOO_SMALL` is returned).
+On input, `path.len` is the capacity of the caller-allocated buffer pointed to by `path.str`,
+in `azihsm_char` elements (including the null terminator).
+On output, `path.len` is set to the number of `azihsm_char` elements written
+(or the required count when `AZIHSM_STATUS_BUFFER_TOO_SMALL` is returned).
 
 ### azihsm_api_rev
 
