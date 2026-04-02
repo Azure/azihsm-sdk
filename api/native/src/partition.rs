@@ -7,7 +7,7 @@
 //! HSM partition management operations, exposing them to C callers through
 //! the ABI-compatible interface.
 
-use azihsm_api::{HsmApiRev, HsmPartition};
+use azihsm_api::HsmPartition;
 
 use super::*;
 
@@ -315,6 +315,7 @@ pub unsafe extern "C" fn azihsm_part_get_info(
 pub unsafe extern "C" fn azihsm_part_open(
     path: *const AzihsmStr,
     handle: *mut AzihsmHandle,
+    api_rev: AzihsmApiRev,
 ) -> AzihsmStatus {
     abi_boundary(|| {
         validate_ptr(handle)?;
@@ -331,7 +332,7 @@ pub unsafe extern "C" fn azihsm_part_open(
 
         let partition = Box::new(api::HsmPartitionManager::open_partition(
             &path_str,
-            HsmApiRev { major: 1, minor: 0 },
+            api_rev.into(),
         )?);
 
         // SAFETY: the function ensures that the pointer is valid

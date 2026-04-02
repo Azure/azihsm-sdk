@@ -9,6 +9,7 @@
 #include <stdexcept>
 #include <string>
 
+#include "../utils/utils.hpp"
 #include "test_creds.hpp"
 
 class SessionHandle
@@ -16,7 +17,7 @@ class SessionHandle
   public:
     SessionHandle(azihsm_handle part_handle) : handle_(0)
     {
-        azihsm_api_rev api_rev{ 1, 0 };
+        auto api_rev = test_api_rev();
         azihsm_credentials creds{};
         std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
         std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));

@@ -975,7 +975,8 @@ TEST_F(azihsm_ecc_sign_verify, DISABLED_MANUAL_restore_key_and_verify)
 
     // Step 3: Open partition
     azihsm_handle raw_part = 0;
-    auto err = azihsm_part_open(&path_str, &raw_part);
+    auto api_rev = test_api_rev();
+    auto err = azihsm_part_open(&path_str, &raw_part, api_rev);
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS) << "azihsm_part_open failed";
     ASSERT_NE(raw_part, 0u);
     PartitionHandle part_handle = PartitionHandle::from_raw(raw_part);

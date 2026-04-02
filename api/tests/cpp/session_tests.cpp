@@ -7,6 +7,7 @@
 
 #include "handle/part_handle.hpp"
 #include "handle/part_list_handle.hpp"
+#include "utils/utils.hpp"
 
 class azihsm_sess : public ::testing::Test
 {
@@ -19,7 +20,7 @@ TEST_F(azihsm_sess, open_and_close)
     part_list_.for_each_part([](std::vector<azihsm_char> &path) {
         auto partition = PartitionHandle(path);
 
-        azihsm_api_rev api_rev{ 1, 0 };
+        auto api_rev = test_api_rev();
         azihsm_credentials creds{};
         std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
         std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
@@ -41,7 +42,7 @@ TEST_F(azihsm_sess, open_null_sess_handle)
     part_list_.for_each_part([](std::vector<azihsm_char> &path) {
         auto partition = PartitionHandle(path);
 
-        azihsm_api_rev api_rev{ 1, 0 };
+        auto api_rev = test_api_rev();
         azihsm_credentials creds{};
         std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
         std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
@@ -74,7 +75,7 @@ TEST_F(azihsm_sess, open_null_creds)
     part_list_.for_each_part([](std::vector<azihsm_char> &path) {
         auto partition = PartitionHandle(path);
 
-        azihsm_api_rev api_rev{ 1, 0 };
+        auto api_rev = test_api_rev();
         azihsm_handle sess_handle = 0;
 
         auto err = azihsm_sess_open(partition.get(), &api_rev, nullptr, nullptr, &sess_handle);
@@ -87,7 +88,7 @@ TEST_F(azihsm_sess, open_invalid_partition_handle)
 {
     part_list_.for_each_part([](std::vector<azihsm_char> &path) {
         azihsm_handle bad_handle = 0xDEADBEEF;
-        azihsm_api_rev api_rev{ 1, 0 };
+        auto api_rev = test_api_rev();
         azihsm_credentials creds{};
         std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
         std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
@@ -114,7 +115,7 @@ TEST_F(azihsm_sess, close_double_close)
     part_list_.for_each_part([](std::vector<azihsm_char> &path) {
         auto partition = PartitionHandle(path);
 
-        azihsm_api_rev api_rev{ 1, 0 };
+        auto api_rev = test_api_rev();
         azihsm_credentials creds{};
         std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
         std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
@@ -140,7 +141,7 @@ TEST_F(azihsm_sess, open_close_multiple)
     part_list_.for_each_part([](std::vector<azihsm_char> &path) {
         auto partition = PartitionHandle(path);
 
-        azihsm_api_rev api_rev{ 1, 0 };
+        auto api_rev = test_api_rev();
         azihsm_credentials creds{};
         std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
         std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
@@ -166,7 +167,7 @@ TEST_F(azihsm_sess, open_with_wrong_handle_type)
         auto list_handle_wrapper = PartitionListHandle();
         azihsm_handle list_handle = list_handle_wrapper.get();
 
-        azihsm_api_rev api_rev{ 1, 0 };
+        auto api_rev = test_api_rev();
         azihsm_credentials creds{};
         std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
         std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
@@ -183,7 +184,7 @@ TEST_F(azihsm_sess, open_with_corrupt_creds)
     part_list_.for_each_part([](std::vector<azihsm_char> &path) {
         auto partition = PartitionHandle(path);
 
-        azihsm_api_rev api_rev{ 1, 0 };
+        auto api_rev = test_api_rev();
         azihsm_credentials creds{}; // All zeros - invalid credentials
 
         azihsm_handle sess_handle = 0;
@@ -215,7 +216,7 @@ TEST_F(azihsm_sess, get_prop_api_rev)
     part_list_.for_each_part([](std::vector<azihsm_char> &path) {
         auto partition = PartitionHandle(path);
 
-        azihsm_api_rev api_rev{ 1, 0 };
+        auto api_rev = test_api_rev();
         azihsm_credentials creds{};
         std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
         std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
@@ -246,7 +247,7 @@ TEST_F(azihsm_sess, get_prop_api_rev_buffer_too_small)
     part_list_.for_each_part([](std::vector<azihsm_char> &path) {
         auto partition = PartitionHandle(path);
 
-        azihsm_api_rev api_rev{ 1, 0 };
+        auto api_rev = test_api_rev();
         azihsm_credentials creds{};
         std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
         std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
@@ -276,7 +277,7 @@ TEST_F(azihsm_sess, get_prop_null_prop_ptr)
     part_list_.for_each_part([](std::vector<azihsm_char> &path) {
         auto partition = PartitionHandle(path);
 
-        azihsm_api_rev api_rev{ 1, 0 };
+        auto api_rev = test_api_rev();
         azihsm_credentials creds{};
         std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
         std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
@@ -309,7 +310,7 @@ TEST_F(azihsm_sess, get_prop_unsupported_property)
     part_list_.for_each_part([](std::vector<azihsm_char> &path) {
         auto partition = PartitionHandle(path);
 
-        azihsm_api_rev api_rev{ 1, 0 };
+        auto api_rev = test_api_rev();
         azihsm_credentials creds{};
         std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
         std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));

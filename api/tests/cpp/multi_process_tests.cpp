@@ -164,13 +164,13 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_parent)
     part_list_.for_each_part([](std::vector<azihsm_char> &path) {
         azihsm_str path_str = { path.data(), static_cast<uint32_t>(path.size()) };
         azihsm_handle part_handle = 0;
-        auto err = azihsm_part_open(&path_str, &part_handle);
+        auto api_rev = test_api_rev();
+        auto err = azihsm_part_open(&path_str, &part_handle, api_rev);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         auto part_guard = scope_guard::make_scope_exit([&] {
             ASSERT_EQ(azihsm_part_close(part_handle), AZIHSM_STATUS_SUCCESS);
         });
 
-        azihsm_api_rev api_rev{ 1, 0 };
         azihsm_credentials creds{};
         std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
         std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
@@ -317,7 +317,8 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_child)
     azihsm_str path_str = { path_chars.data(), static_cast<uint32_t>(path_chars.size()) };
 
     azihsm_handle part_handle = 0;
-    auto err = azihsm_part_open(&path_str, &part_handle);
+    auto api_rev = test_api_rev();
+    auto err = azihsm_part_open(&path_str, &part_handle, api_rev);
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
     auto part_guard = scope_guard::make_scope_exit([&] {
@@ -327,7 +328,6 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_child)
     azihsm_credentials creds{};
     std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
     std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
-    azihsm_api_rev api_rev{ 1, 0 };
 
     // Reset partition before initialization to clear any previous state
     auto reset_err = azihsm_part_reset(part_handle);

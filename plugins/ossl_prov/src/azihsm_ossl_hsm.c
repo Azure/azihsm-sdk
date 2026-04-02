@@ -217,7 +217,7 @@ static azihsm_status load_credentials_from_file(const char *path, uint8_t *outpu
 /*
  * picks and opens the first possible HSM device
  * */
-static azihsm_status azihsm_get_device_handle(azihsm_handle *device)
+static azihsm_status azihsm_get_device_handle(azihsm_handle *device, struct azihsm_api_rev api_rev)
 {
     azihsm_status status;
     azihsm_handle device_list;
@@ -250,26 +250,46 @@ static azihsm_status azihsm_get_device_handle(azihsm_handle *device)
 
     for (uint32_t i = 0; i < device_count; i++)
     {
+        struct azihsm_part_info info = { { NULL, 0 }, { 0, 0 }, { 0, 0 } };
 
-        azihsm_char path[AZIHSM_DEVICE_PATH_SIZE] = { '\0' };
-        struct azihsm_str dev_path = { path, sizeof(path) };
-
-        status = azihsm_part_get_path(device_list, i, &dev_path);
-
-        if (status != AZIHSM_STATUS_SUCCESS)
+        // First call to get the required path buffer size
+        status = azihsm_part_get_info(device_list, i, &info);
+        if (status != AZIHSM_STATUS_BUFFER_TOO_SMALL || info.path.len == 0)
         {
+            // Skip this device and try the next one
             continue;
         }
 
-        status = azihsm_part_open(&dev_path, device);
+        azihsm_char *path = calloc(info.path.len, sizeof(azihsm_char));
+        if (path == NULL)
+        {
+            // skip this device and try the next one
+            continue;
+        }
+
+        info.path.str = path;
+
+        // Second call to fill the info
+        status = azihsm_part_get_info(device_list, i, &info);
+        if (status != AZIHSM_STATUS_SUCCESS)
+        {
+            // Skip this device and try the next one
+            free(path);
+            continue;
+        }
+
+        status = azihsm_part_open(&info.path, device, api_rev);
+        free(path);
 
         if (status == AZIHSM_STATUS_SUCCESS)
         {
+            // found a device we can open, return it
             azihsm_part_free_list(device_list);
-            return AZIHSM_STATUS_SUCCESS;
+            return status;
         }
     }
 
+    // No device could be opened successfully, free the list and return error
     azihsm_part_free_list(device_list);
     ERR_raise_data(
         ERR_LIB_PROV,
@@ -917,7 +937,7 @@ azihsm_status azihsm_open_device_and_session(
         backup_config.owner_backup_key = &obk_buf;
     }
 
-    status = azihsm_get_device_handle(device);
+    status = azihsm_get_device_handle(device, api_rev);
     if (status != AZIHSM_STATUS_SUCCESS)
     {
         free_buffer(&obk_buf);
