@@ -777,8 +777,31 @@ fn test_aes_key_gen_no_decrypt_flag_fails(session: HsmSession) {
     let result = HsmKeyManager::generate_key(&session, &mut algo, props);
 
     assert!(
-        result.is_err(),
+        matches!(result, Err(HsmError::InvalidKeyProps)),
         "AES key generation should fail without decrypt permission"
+    );
+}
+
+/// verifies AES key generation fails when encrypt permission is missing
+#[session_test]
+fn test_aes_key_gen_no_encrypt_flag_fails(session: HsmSession) {
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::Aes)
+        .bits(256)
+        .can_encrypt(false)
+        .can_decrypt(true)
+        .is_session(true)
+        .build()
+        .unwrap();
+
+    let mut algo = HsmAesKeyGenAlgo::default();
+
+    let result = HsmKeyManager::generate_key(&session, &mut algo, props);
+
+    assert!(
+        matches!(result, Err(HsmError::InvalidKeyProps)),
+        "AES key generation should fail without encrypt permission"
     );
 }
 
@@ -1717,7 +1740,7 @@ fn test_aes_gcm_key_gen_no_encrypt_flag_fails(session: HsmSession) {
     let result = HsmKeyManager::generate_key(&session, &mut algo, props);
 
     assert!(
-        result.is_err(),
+        matches!(result, Err(HsmError::InvalidKeyProps)),
         "AES-GCM key generation should fail without encrypt permission"
     );
 }
@@ -1740,7 +1763,7 @@ fn test_aes_gcm_key_gen_no_decrypt_flag_fails(session: HsmSession) {
     let result = HsmKeyManager::generate_key(&session, &mut algo, props);
 
     assert!(
-        result.is_err(),
+        matches!(result, Err(HsmError::InvalidKeyProps)),
         "AES-GCM key generation should fail without decrypt permission"
     );
 }
