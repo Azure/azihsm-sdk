@@ -5,6 +5,7 @@
 #include "azihsm_ossl_file_io.h"
 
 #include "azihsm_ossl_helpers.h"
+#include "azihsm_ossl_resiliency.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -250,7 +251,7 @@ static azihsm_status azihsm_get_device_handle(azihsm_handle *device)
     for (uint32_t i = 0; i < device_count; i++)
     {
 
-        azihsm_char path[64] = { '\0' };
+        azihsm_char path[AZIHSM_DEVICE_PATH_SIZE] = { '\0' };
         struct azihsm_str dev_path = { path, sizeof(path) };
 
         status = azihsm_part_get_path(device_list, i, &dev_path);
@@ -532,71 +533,45 @@ azihsm_status azihsm_get_unwrapping_key(
 }
 
 /*
- * Retrieves the partition's PID public key and builds its uncompressed EC point.
+ * Converts a DER-encoded SubjectPublicKeyInfo EC public key into its
+ * uncompressed point representation (0x04 || x || y).
  *
- * Fetches the PID public key via AZIHSM_PART_PROP_ID_PART_PUB_KEY (works before
- * part_init), parses the DER SubjectPublicKeyInfo, and writes the uncompressed
- * point (0x04 || x || y) into the caller-provided buffer.
- *
- * All OpenSSL calls use NULL libctx (default provider), which is safe during
- * provider init since our provider is not yet registered.
+ * The output buffer must be at least P384_UNCOMPRESSED_POINT_SIZE bytes.
  */
-static azihsm_status get_pid_uncompressed_point(
-    azihsm_handle device,
+static azihsm_status der_to_uncompressed_point(
+    const struct azihsm_buffer *pub_key_der,
     unsigned char point[P384_UNCOMPRESSED_POINT_SIZE]
 )
 {
-    azihsm_status status;
-    struct azihsm_buffer pid_pub_key_der = { NULL, 0 };
     const unsigned char *der_ptr = NULL;
-    EVP_PKEY *pid_pkey = NULL;
+    EVP_PKEY *pkey = NULL;
     BIGNUM *qx = NULL;
     BIGNUM *qy = NULL;
 
-    status = get_part_property(device, AZIHSM_PART_PROP_ID_PART_PUB_KEY, &pid_pub_key_der);
-    if (status != AZIHSM_STATUS_SUCCESS)
+    if (pub_key_der == NULL || pub_key_der->ptr == NULL)
     {
-        ERR_raise_data(
-            ERR_LIB_PROV,
-            ERR_R_INTERNAL_ERROR,
-            "failed to retrieve PID public key property"
-        );
-        return status;
-    }
-    if (pid_pub_key_der.ptr == NULL)
-    {
-        ERR_raise_data(
-            ERR_LIB_PROV,
-            ERR_R_INTERNAL_ERROR,
-            "PID public key property returned NULL pointer"
-        );
-        return AZIHSM_STATUS_INTERNAL_ERROR;
+        return AZIHSM_STATUS_INVALID_ARGUMENT;
     }
 
-    der_ptr = pid_pub_key_der.ptr;
-    pid_pkey = d2i_PUBKEY(NULL, &der_ptr, (long)pid_pub_key_der.len);
-    free_buffer(&pid_pub_key_der);
-
-    if (pid_pkey == NULL)
+    der_ptr = pub_key_der->ptr;
+    pkey = d2i_PUBKEY(NULL, &der_ptr, (long)pub_key_der->len);
+    if (pkey == NULL)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
 
-    qx = NULL;
-    qy = NULL;
-
-    if (!EVP_PKEY_get_bn_param(pid_pkey, OSSL_PKEY_PARAM_EC_PUB_X, &qx) ||
-        !EVP_PKEY_get_bn_param(pid_pkey, OSSL_PKEY_PARAM_EC_PUB_Y, &qy))
+    if (!EVP_PKEY_get_bn_param(pkey, OSSL_PKEY_PARAM_EC_PUB_X, &qx) ||
+        !EVP_PKEY_get_bn_param(pkey, OSSL_PKEY_PARAM_EC_PUB_Y, &qy))
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
         BN_free(qx);
         BN_free(qy);
-        EVP_PKEY_free(pid_pkey);
+        EVP_PKEY_free(pkey);
         return AZIHSM_STATUS_INTERNAL_ERROR;
     }
 
-    EVP_PKEY_free(pid_pkey);
+    EVP_PKEY_free(pkey);
 
     point[0] = 0x04;
     if (BN_bn2binpad(qx, point + 1, P384_COORD_SIZE) != P384_COORD_SIZE ||
@@ -755,19 +730,16 @@ static azihsm_status sign_with_pota_key(
 /*
  * Computes POTA endorsement for partition initialization.
  *
- * Retrieves the partition's PID public key, builds its uncompressed EC point,
+ * Converts the PID public key from DER to uncompressed EC point format,
  * and signs it with the provided POTA private key using ECDSA-SHA384. The
  * signature is returned in raw r||s format.
  *
  * On success, caller must free sig_out->ptr with OPENSSL_cleanse + OPENSSL_free.
- * pubkey_out is set to point to pub_key_buf's data (caller manages lifetime).
  */
-static azihsm_status compute_pota_endorsement(
-    azihsm_handle device,
+azihsm_status compute_pota_endorsement(
+    const struct azihsm_buffer *pid_pub_key_der,
     const struct azihsm_buffer *priv_key_buf,
-    const struct azihsm_buffer *pub_key_buf,
-    struct azihsm_buffer *sig_out,
-    struct azihsm_buffer *pubkey_out
+    struct azihsm_buffer *sig_out
 )
 {
     azihsm_status status;
@@ -775,10 +747,8 @@ static azihsm_status compute_pota_endorsement(
 
     sig_out->ptr = NULL;
     sig_out->len = 0;
-    pubkey_out->ptr = NULL;
-    pubkey_out->len = 0;
 
-    status = get_pid_uncompressed_point(device, uncompressed_point);
+    status = der_to_uncompressed_point(pid_pub_key_der, uncompressed_point);
     if (status != AZIHSM_STATUS_SUCCESS)
     {
         return status;
@@ -796,16 +766,14 @@ static azihsm_status compute_pota_endorsement(
         return status;
     }
 
-    pubkey_out->ptr = pub_key_buf->ptr;
-    pubkey_out->len = pub_key_buf->len;
-
     return AZIHSM_STATUS_SUCCESS;
 }
 
 azihsm_status azihsm_open_device_and_session(
     const AZIHSM_CONFIG *config,
     azihsm_handle *device,
-    azihsm_handle *session
+    azihsm_handle *session,
+    struct azihsm_resiliency_ctx **resiliency_ctx
 )
 {
     azihsm_status status;
@@ -814,6 +782,9 @@ azihsm_status azihsm_open_device_and_session(
     struct azihsm_buffer muk_buf = { NULL, 0 };
     struct azihsm_buffer obk_buf = { NULL, 0 };
     struct azihsm_buffer retrieved_bmk = { NULL, 0 };
+
+    struct azihsm_resiliency_config resiliency_cfg;
+    struct azihsm_resiliency_ctx *res_ctx = NULL;
 
     bool muk_was_loaded = false;
 
@@ -956,10 +927,35 @@ azihsm_status azihsm_open_device_and_session(
         return status;
     }
 
+    /* Create resiliency config if enabled */
+    if (config->resiliency_enabled)
+    {
+        memset(&resiliency_cfg, 0, sizeof(resiliency_cfg));
+        status = azihsm_resiliency_create(
+            config->resiliency_storage_dir,
+            config->pota_private_key_path,
+            config->pota_public_key_path,
+            config->use_tpm_pota,
+            &resiliency_cfg,
+            &res_ctx
+        );
+        if (status != AZIHSM_STATUS_SUCCESS)
+        {
+            free_buffer(&bmk_buf);
+            free_buffer(&muk_buf);
+            if (!config->use_tpm_obk)
+            {
+                free_buffer(&obk_buf);
+            }
+            OPENSSL_cleanse(&creds, sizeof(creds));
+            azihsm_part_close(*device);
+            return status;
+        }
+    }
+
     // Configure POTA endorsement based on source selection
     struct azihsm_pota_endorsement pota_endorsement = { 0 };
     struct azihsm_buffer pota_sig_buf = { 0 };
-    struct azihsm_buffer pota_pubkey_buf = { 0 };
     struct azihsm_pota_endorsement_data pota_data = { 0 };
 
     struct azihsm_buffer pota_priv_buf = { NULL, 0 };
@@ -979,6 +975,7 @@ azihsm_status azihsm_open_device_and_session(
             free_buffer(&bmk_buf);
             free_buffer(&muk_buf);
             OPENSSL_cleanse(&creds, sizeof(creds));
+            azihsm_resiliency_destroy(res_ctx);
             azihsm_part_close(*device);
             return status;
         }
@@ -991,6 +988,7 @@ azihsm_status azihsm_open_device_and_session(
             free_buffer(&bmk_buf);
             free_buffer(&muk_buf);
             OPENSSL_cleanse(&creds, sizeof(creds));
+            azihsm_resiliency_destroy(res_ctx);
             azihsm_part_close(*device);
             return status;
         }
@@ -1012,6 +1010,7 @@ azihsm_status azihsm_open_device_and_session(
             free_buffer(&bmk_buf);
             free_buffer(&muk_buf);
             OPENSSL_cleanse(&creds, sizeof(creds));
+            azihsm_resiliency_destroy(res_ctx);
             azihsm_part_close(*device);
             return AZIHSM_STATUS_INTERNAL_ERROR;
         }
@@ -1034,18 +1033,14 @@ azihsm_status azihsm_open_device_and_session(
             free_buffer(&bmk_buf);
             free_buffer(&muk_buf);
             OPENSSL_cleanse(&creds, sizeof(creds));
+            azihsm_resiliency_destroy(res_ctx);
             azihsm_part_close(*device);
             return AZIHSM_STATUS_INTERNAL_ERROR;
         }
 
         // Compute POTA endorsement: sign PID public key with POTA key
-        status = compute_pota_endorsement(
-            *device,
-            &pota_priv_buf,
-            &pota_pub_buf,
-            &pota_sig_buf,
-            &pota_pubkey_buf
-        );
+        struct azihsm_buffer pid_pub_key_buf = { NULL, 0 };
+        status = get_part_property(*device, AZIHSM_PART_PROP_ID_PART_PUB_KEY, &pid_pub_key_buf);
         if (status != AZIHSM_STATUS_SUCCESS)
         {
             free_buffer(&pota_priv_buf);
@@ -1054,12 +1049,27 @@ azihsm_status azihsm_open_device_and_session(
             free_buffer(&bmk_buf);
             free_buffer(&muk_buf);
             OPENSSL_cleanse(&creds, sizeof(creds));
+            azihsm_resiliency_destroy(res_ctx);
+            azihsm_part_close(*device);
+            return status;
+        }
+        status = compute_pota_endorsement(&pid_pub_key_buf, &pota_priv_buf, &pota_sig_buf);
+        free_buffer(&pid_pub_key_buf);
+        if (status != AZIHSM_STATUS_SUCCESS)
+        {
+            free_buffer(&pota_priv_buf);
+            free_buffer(&pota_pub_buf);
+            free_buffer(&obk_buf);
+            free_buffer(&bmk_buf);
+            free_buffer(&muk_buf);
+            OPENSSL_cleanse(&creds, sizeof(creds));
+            azihsm_resiliency_destroy(res_ctx);
             azihsm_part_close(*device);
             return status;
         }
 
         pota_data.signature = &pota_sig_buf;
-        pota_data.public_key = &pota_pubkey_buf;
+        pota_data.public_key = &pota_pub_buf;
         pota_endorsement.source = AZIHSM_POTA_ENDORSEMENT_SOURCE_CALLER;
         pota_endorsement.endorsement = &pota_data;
     }
@@ -1072,7 +1082,7 @@ azihsm_status azihsm_open_device_and_session(
         muk_buf.ptr != NULL ? &muk_buf : NULL,
         &backup_config,
         &pota_endorsement,
-        NULL
+        config->resiliency_enabled ? &resiliency_cfg : NULL
     );
 
     // Input buffers no longer needed after part_init
@@ -1086,6 +1096,7 @@ azihsm_status azihsm_open_device_and_session(
     if (status != AZIHSM_STATUS_SUCCESS)
     {
         OPENSSL_cleanse(&creds, sizeof(creds));
+        azihsm_resiliency_destroy(res_ctx);
         azihsm_part_close(*device);
         return status;
     }
@@ -1099,6 +1110,7 @@ azihsm_status azihsm_open_device_and_session(
         {
             free_buffer(&retrieved_bmk);
             OPENSSL_cleanse(&creds, sizeof(creds));
+            azihsm_resiliency_destroy(res_ctx);
             azihsm_part_close(*device);
             return status;
         }
@@ -1110,6 +1122,7 @@ azihsm_status azihsm_open_device_and_session(
     OPENSSL_cleanse(&creds, sizeof(creds));
     if (status != AZIHSM_STATUS_SUCCESS)
     {
+        azihsm_resiliency_destroy(res_ctx);
         azihsm_part_close(*device);
         return status;
     }
@@ -1121,10 +1134,19 @@ azihsm_status azihsm_open_device_and_session(
         if (status != AZIHSM_STATUS_SUCCESS)
         {
             azihsm_sess_close(*session);
+            azihsm_resiliency_destroy(res_ctx);
             azihsm_part_close(*device);
             return status;
         }
     }
+
+    // Pass resiliency context back to caller for lifetime management
+    if (resiliency_ctx != NULL)
+    {
+        *resiliency_ctx = res_ctx;
+        res_ctx = NULL;
+    }
+    azihsm_resiliency_destroy(res_ctx);
 
     return AZIHSM_STATUS_SUCCESS;
 }
