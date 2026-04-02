@@ -192,7 +192,6 @@ static int parse_uri_attribute(const char *attr_str, char **out_key, char **out_
 
 static int parse_azihsm_uri(const char *uri, AZIHSM_URI_INFO *out_info)
 {
-    int ret = OSSL_FAILURE;
     const char *scheme = "azihsm://";
     size_t scheme_len = 9;
     const char *path_start, *semicolon;
@@ -249,7 +248,8 @@ static int parse_azihsm_uri(const char *uri, AZIHSM_URI_INFO *out_info)
         attr_copy = OPENSSL_strdup(semicolon + 1);
         if (attr_copy == NULL)
         {
-            goto cleanup;
+            /* Caller owns out_info and will free via azihsm_uri_info_free() */
+            return OSSL_FAILURE;
         }
 
         attr_token = strtok_r(attr_copy, ";", &attr_saveptr);
@@ -275,14 +275,11 @@ static int parse_azihsm_uri(const char *uri, AZIHSM_URI_INFO *out_info)
     // Validate that type was provided
     if (out_info->key_type == 0)
     {
-        goto cleanup;
+        /* Caller owns out_info and will free via azihsm_uri_info_free() */
+        return OSSL_FAILURE;
     }
 
     return OSSL_SUCCESS;
-
-cleanup:
-    azihsm_uri_info_free(out_info);
-    return ret;
 }
 
 static int load_and_unmask_key(AZIHSM_STORE_CTX *ctx)
