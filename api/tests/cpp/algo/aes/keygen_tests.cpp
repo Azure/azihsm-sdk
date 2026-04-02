@@ -420,6 +420,24 @@ TEST_F(azihsm_aes_keygen, session_aes_256_key_generation)
     });
 }
 
+/// verifies AES key generation rejects invalid key sizes and returns appropriate error
+TEST_F(azihsm_aes_keygen, aes_key_generation_invalid_sizes_rejected)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        // AES is only supported for 128, 192, and 256 bits.
+        for (uint32_t bits : { 0u, 1u, 127u, 129u, 191u, 193u, 255u, 257u, 384u, 512u, 1024u })
+        {
+            aes_key_gen_invalid_flag_fail_common(
+                session,
+                AZIHSM_ALGO_ID_AES_KEY_GEN,
+                AZIHSM_KEY_KIND_AES,
+                bits,
+                { AZIHSM_KEY_PROP_ID_ENCRYPT, AZIHSM_KEY_PROP_ID_DECRYPT }
+            );
+        }
+    });
+}
+
 /// verifies AES key generation fails when sign flag is set
 TEST_F(azihsm_aes_keygen, aes_key_gen_with_sign_flag_fails)
 {
@@ -551,12 +569,17 @@ TEST_F(azihsm_aes_keygen, aes_key_gen_multiple_invalid_capabilities)
             { false, false, true, false, false }, // wrap
             { false, false, false, true, false }, // unwrap
             { false, false, false, false, true }, // derive
-            { true, true, false, false, false },  { true, false, true, false, false },
-            { true, false, false, true, false },  { true, false, false, false, true },
-            { false, true, true, false, false },  { false, true, false, true, false },
-            { false, true, false, false, true },  { false, false, true, true, false },
-            { false, false, true, false, true },  { false, false, false, true, true },
-            { true, true, true, true, true },
+            { true, true, false, false, false },  // sign + verify
+            { true, false, true, false, false },  // sign + wrap
+            { true, false, false, true, false },  // sign + unwrap
+            { true, false, false, false, true },  // sign + derive
+            { false, true, true, false, false },  // verify + wrap
+            { false, true, false, true, false },  // verify + unwrap
+            { false, true, false, false, true },  // verify + derive
+            { false, false, true, true, false },  // wrap + unwrap
+            { false, false, true, false, true },  // wrap + derive
+            { false, false, false, true, true },  // unwrap + derive
+            { true, true, true, true, true },     // all invalid flags
         };
 
         for (bool *flag_set : invalid_flag_sets)
@@ -596,6 +619,20 @@ TEST_F(azihsm_aes_keygen, aes_key_gen_no_decrypt_flag_fails)
             AZIHSM_KEY_KIND_AES,
             256,
             { AZIHSM_KEY_PROP_ID_ENCRYPT }
+        );
+    });
+}
+
+/// verifies AES key generation with non-session persistence creates a non-session key
+/// and succeeds with correct properties and capabilities
+TEST_F(azihsm_aes_keygen, aes_key_gen_persistent)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        aes_key_gen_persistent_common(
+            session,
+            AZIHSM_ALGO_ID_AES_KEY_GEN,
+            AZIHSM_KEY_KIND_AES,
+            256
         );
     });
 }
@@ -732,6 +769,20 @@ TEST_F(azihsm_aes_keygen, aes_xts_key_gen_no_encrypt_flag_fails)
     });
 }
 
+/// verifies AES-XTS key generation with non-session persistence creates a non-session key
+/// and succeeds with correct properties and capabilities
+TEST_F(azihsm_aes_keygen, aes_xts_key_gen_persistent)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        aes_key_gen_persistent_common(
+            session,
+            AZIHSM_ALGO_ID_AES_XTS_KEY_GEN,
+            AZIHSM_KEY_KIND_AES_XTS,
+            512
+        );
+    });
+}
+
 /// Test AES-GCM key generation, and validate the generated key has expected properties
 /// and capabilities.
 TEST_F(azihsm_aes_keygen, session_aes_gcm_256_key_generation)
@@ -746,17 +797,21 @@ TEST_F(azihsm_aes_keygen, session_aes_gcm_256_key_generation)
     });
 }
 
-/// verifies AES-GCM key generation fails when bit length is invalid
-TEST_F(azihsm_aes_keygen, aes_gcm_key_gen_invalid_bits_fails)
+/// verifies AES-GCM key generation rejects invalid key sizes and returns appropriate error
+TEST_F(azihsm_aes_keygen, aes_gcm_key_generation_invalid_sizes_rejected)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        aes_key_gen_invalid_flag_fail_common(
-            session,
-            AZIHSM_ALGO_ID_AES_GCM_KEY_GEN,
-            AZIHSM_KEY_KIND_AES_GCM,
-            128,
-            { AZIHSM_KEY_PROP_ID_ENCRYPT, AZIHSM_KEY_PROP_ID_DECRYPT }
-        );
+        // AES-GCM is only supported for 256 bits.
+        for (uint32_t bits : { 0u, 1u, 128u, 192u, 255u, 257u, 384u, 512u, 1024u })
+        {
+            aes_key_gen_invalid_flag_fail_common(
+                session,
+                AZIHSM_ALGO_ID_AES_GCM_KEY_GEN,
+                AZIHSM_KEY_KIND_AES_GCM,
+                bits,
+                { AZIHSM_KEY_PROP_ID_ENCRYPT, AZIHSM_KEY_PROP_ID_DECRYPT }
+            );
+        }
     });
 }
 
@@ -793,44 +848,12 @@ TEST_F(azihsm_aes_keygen, aes_gcm_key_gen_no_decrypt_flag_fails)
 TEST_F(azihsm_aes_keygen, aes_gcm_key_gen_persistent)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        // Step 1: Generate AES-GCM key
-        azihsm_algo keygen_algo{};
-        keygen_algo.id = AZIHSM_ALGO_ID_AES_GCM_KEY_GEN;
-        keygen_algo.params = nullptr;
-        keygen_algo.len = 0;
-
-        azihsm_key_class key_class = AZIHSM_KEY_CLASS_SECRET;
-        azihsm_key_kind key_kind = AZIHSM_KEY_KIND_AES_GCM;
-        uint32_t bits = 256;
-        bool is_session = false;
-        bool can_encrypt = true;
-        bool can_decrypt = true;
-
-        std::vector<azihsm_key_prop> props_vec = {
-            { .id = AZIHSM_KEY_PROP_ID_KIND, .val = &key_kind, .len = sizeof(key_kind) },
-            { .id = AZIHSM_KEY_PROP_ID_CLASS, .val = &key_class, .len = sizeof(key_class) },
-            { .id = AZIHSM_KEY_PROP_ID_BIT_LEN, .val = &bits, .len = sizeof(bits) },
-            { .id = AZIHSM_KEY_PROP_ID_SESSION, .val = &is_session, .len = sizeof(is_session) },
-            { .id = AZIHSM_KEY_PROP_ID_ENCRYPT, .val = &can_encrypt, .len = sizeof(can_encrypt) },
-            { .id = AZIHSM_KEY_PROP_ID_DECRYPT, .val = &can_decrypt, .len = sizeof(can_decrypt) }
-        };
-
-        azihsm_key_prop_list prop_list{ .props = props_vec.data(),
-                                        .count = static_cast<uint32_t>(props_vec.size()) };
-
-        auto_key original_key;
-        azihsm_status err =
-            azihsm_key_gen(session, &keygen_algo, &prop_list, original_key.get_ptr());
-        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_NE(original_key, 0);
-
-        // Step 2: Verify key has correct AZIHSM_KEY_PROP_ID_SESSION property
-        verify_key_property(original_key, AZIHSM_KEY_PROP_ID_SESSION, false);
-
-        // Step 3: Delete the key
-        azihsm_handle key_handle = original_key.release();
-        err = azihsm_key_delete(key_handle);
-        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        aes_key_gen_persistent_common(
+            session,
+            AZIHSM_ALGO_ID_AES_GCM_KEY_GEN,
+            AZIHSM_KEY_KIND_AES_GCM,
+            256
+        );
     });
 }
 

@@ -114,3 +114,47 @@ void aes_key_gen_invalid_flag_fail_common(
     ASSERT_EQ(err, AZIHSM_STATUS_INVALID_KEY_PROPS);
     ASSERT_EQ(original_key, 0);
 }
+
+void aes_key_gen_persistent_common(
+    azihsm_handle session,
+    azihsm_algo_id algo_id,
+    azihsm_key_kind key_kind,
+    uint32_t bits
+)
+{
+    // Step 1: Generate AES key with non-session persistence
+    azihsm_algo keygen_algo{};
+    keygen_algo.id = algo_id;
+    keygen_algo.params = nullptr;
+    keygen_algo.len = 0;
+
+    azihsm_key_class key_class = AZIHSM_KEY_CLASS_SECRET;
+    bool is_session = false;
+    bool can_encrypt = true;
+    bool can_decrypt = true;
+
+    std::vector<azihsm_key_prop> props_vec = {
+        { .id = AZIHSM_KEY_PROP_ID_KIND, .val = &key_kind, .len = sizeof(key_kind) },
+        { .id = AZIHSM_KEY_PROP_ID_CLASS, .val = &key_class, .len = sizeof(key_class) },
+        { .id = AZIHSM_KEY_PROP_ID_BIT_LEN, .val = &bits, .len = sizeof(bits) },
+        { .id = AZIHSM_KEY_PROP_ID_SESSION, .val = &is_session, .len = sizeof(is_session) },
+        { .id = AZIHSM_KEY_PROP_ID_ENCRYPT, .val = &can_encrypt, .len = sizeof(can_encrypt) },
+        { .id = AZIHSM_KEY_PROP_ID_DECRYPT, .val = &can_decrypt, .len = sizeof(can_decrypt) }
+    };
+
+    azihsm_key_prop_list prop_list{ .props = props_vec.data(),
+                                    .count = static_cast<uint32_t>(props_vec.size()) };
+
+    auto_key original_key;
+    azihsm_status err = azihsm_key_gen(session, &keygen_algo, &prop_list, original_key.get_ptr());
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+    ASSERT_NE(original_key, 0);
+
+    // Step 2: Verify key has correct AZIHSM_KEY_PROP_ID_SESSION property
+    verify_key_property(original_key, AZIHSM_KEY_PROP_ID_SESSION, false);
+
+    // Step 3: Delete the key
+    azihsm_handle key_handle = original_key.release();
+    err = azihsm_key_delete(key_handle);
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+}

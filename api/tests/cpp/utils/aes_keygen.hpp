@@ -31,6 +31,13 @@ void aes_key_gen_invalid_flag_fail_common(
     std::vector<azihsm_key_prop_id> flag_prop_ids
 );
 
+void aes_key_gen_persistent_common(
+    azihsm_handle session,
+    azihsm_algo_id algo_id,
+    azihsm_key_kind key_kind,
+    uint32_t bits
+);
+
 /// Helper function template to verify one property of a generated AES key
 template <typename T>
 void verify_key_property(azihsm_handle key_handle, azihsm_key_prop_id prop_id, T expected)
