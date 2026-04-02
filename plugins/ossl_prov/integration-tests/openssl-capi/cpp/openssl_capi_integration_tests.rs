@@ -47,6 +47,7 @@ mod integration {
     pub fn get_tests() -> (Vec<Trial>, PathBuf) {
         let workspace_root = get_workspace_root();
         let (credentials, keymat_dir) = generate_dev_key_material(&workspace_root);
+        let resiliency_dir = get_resiliency_storage_dir(&keymat_dir);
         let test_path = get_test_binary_path();
         let provider_path = get_provider_path(&workspace_root);
         generate_openssl_conf(&keymat_dir, &provider_path);
@@ -58,6 +59,8 @@ mod integration {
             ld_library_path,
             credentials,
             keymat_dir.clone(),
+            provider_path,
+            resiliency_dir,
         );
         (tests, keymat_dir)
     }
@@ -197,6 +200,27 @@ mod integration {
         assert!(pubkey.success(), "Failed to extract POTA public key");
 
         (credentials, keymat_dir)
+    }
+
+    /// Returns the resiliency storage directory inside the keymat dir.
+    /// Creates a fresh directory with mode 0700 (required by the provider's
+    /// resiliency init which rejects group/other permissions). Any existing
+    /// directory is removed first to clear stale lock files from prior runs.
+    fn get_resiliency_storage_dir(keymat_dir: &Path) -> PathBuf {
+        use std::os::unix::fs::DirBuilderExt;
+        let dir = keymat_dir.join("resiliency");
+        let _ = fs::remove_dir_all(&dir);
+        match fs::DirBuilder::new().mode(0o700).create(&dir) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                // Directory survived remove_dir_all (e.g., locked files);
+                // fix permissions in place.
+                use std::os::unix::fs::PermissionsExt;
+                let _ = fs::set_permissions(&dir, fs::Permissions::from_mode(0o700));
+            }
+            Err(e) => panic!("Failed to create resiliency storage directory: {e}"),
+        }
+        dir
     }
 
     /// Resolves the provider search path (absolute) and verifies the provider
@@ -360,6 +384,8 @@ azihsm-api-revision = 1.0
         ld_library_path: String,
         credentials: Credentials,
         keymat_dir: PathBuf,
+        provider_path: PathBuf,
+        resiliency_dir: PathBuf,
     ) -> Vec<Trial> {
         let mut tests = Vec::new();
         let mut current_suite = String::new();
@@ -372,8 +398,31 @@ azihsm-api-revision = 1.0
                 let ld_path = ld_library_path.clone();
                 let creds = credentials.clone();
                 let km_dir = keymat_dir.clone();
+                let prov_path = provider_path.clone();
+                let resil_base = resiliency_dir.clone();
                 tests.push(Trial::test(test_name.clone(), move || {
-                    run_gtest(&test_name, &path, &ld_path, &creds, &km_dir)
+                    // Each test gets its own resiliency directory to avoid
+                    // contention on the lock file and stale BMK/MUK state
+                    // when tests run in parallel.
+                    let test_resil_dir =
+                        resil_base.join(test_name.replace("::", "_").replace('.', "_"));
+                    let _ = fs::remove_dir_all(&test_resil_dir);
+                    {
+                        use std::os::unix::fs::DirBuilderExt;
+                        fs::DirBuilder::new()
+                            .mode(0o700)
+                            .create(&test_resil_dir)
+                            .expect("Failed to create per-test resiliency dir");
+                    }
+                    run_gtest(
+                        &test_name,
+                        &path,
+                        &ld_path,
+                        &creds,
+                        &km_dir,
+                        &prov_path,
+                        &test_resil_dir,
+                    )
                 }));
             }
         }
@@ -393,6 +442,8 @@ azihsm-api-revision = 1.0
         ld_library_path: &str,
         credentials: &Credentials,
         keymat_dir: &Path,
+        provider_path: &Path,
+        resiliency_dir: &Path,
     ) -> Result<(), Failed> {
         let test_name = test_name.replace("::", ".");
 
@@ -402,16 +453,25 @@ azihsm-api-revision = 1.0
         let _ = fs::remove_file(keymat_dir.join("bmk.bin"));
         let _ = fs::remove_file(keymat_dir.join("muk.bin"));
 
-        let success = Command::new(path)
-            .arg(format!("--gtest_filter={}", test_name))
+        let mut cmd = Command::new(path);
+        cmd.arg(format!("--gtest_filter={}", test_name))
             .current_dir(keymat_dir)
             .env("OPENSSL_CONF", keymat_dir.join("openssl.cnf"))
             .env("LD_LIBRARY_PATH", ld_library_path)
             .env("AZIHSM_CREDENTIALS_ID", &credentials.id)
             .env("AZIHSM_CREDENTIALS_PIN", &credentials.pin)
-            .status()
-            .expect("Failed to run test")
-            .success();
+            .env("PROVIDER_PATH", provider_path)
+            .env("AZIHSM_RESILIENCY_STORAGE_DIR", resiliency_dir);
+
+        // Automatically enable resiliency for resiliency test suites;
+        // forward the parent's value for all other tests.
+        if test_name.contains("_resiliency.") {
+            cmd.env("AZIHSM_RESILIENCY_ENABLED", "1");
+        } else if let Ok(val) = env::var("AZIHSM_RESILIENCY_ENABLED") {
+            cmd.env("AZIHSM_RESILIENCY_ENABLED", val);
+        }
+
+        let success = cmd.status().expect("Failed to run test").success();
 
         if success {
             Ok(())

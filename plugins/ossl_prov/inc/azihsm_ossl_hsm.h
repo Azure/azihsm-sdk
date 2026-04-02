@@ -12,11 +12,32 @@ extern "C"
 
 #include "azihsm_ossl_base.h"
 
+/* Maximum size of a partition device path buffer (including NUL). */
+#define AZIHSM_DEVICE_PATH_SIZE 64
+
 void azihsm_close_device_and_session(azihsm_handle device, azihsm_handle session);
 azihsm_status azihsm_open_device_and_session(
     const AZIHSM_CONFIG *config,
     azihsm_handle *device,
-    azihsm_handle *session
+    azihsm_handle *session,
+    struct azihsm_resiliency_ctx **resiliency_ctx
+);
+
+/*
+ * Compute POTA endorsement for the current device.
+ *
+ * Converts the provided PID public key DER to uncompressed EC point format
+ * and signs it with the provided POTA private key using ECDSA-SHA384.
+ * The signature is returned in raw r||s format.
+ *
+ * On success:
+ *   - sig_out->ptr is allocated with OPENSSL_malloc and must be freed
+ *     by the caller with OPENSSL_cleanse + OPENSSL_free.
+ */
+azihsm_status compute_pota_endorsement(
+    const struct azihsm_buffer *pid_pub_key_der,
+    const struct azihsm_buffer *priv_key_buf,
+    struct azihsm_buffer *sig_out
 );
 
 /*
