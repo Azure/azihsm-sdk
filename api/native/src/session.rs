@@ -30,7 +30,6 @@ use super::*;
 #[allow(unsafe_code)]
 pub unsafe extern "C" fn azihsm_sess_open(
     dev_handle: AzihsmHandle,
-    api_rev: *const AzihsmApiRev,
     creds: *const AzihsmCredentials,
     seed: *const AzihsmBuffer,
     sess_handle: *mut AzihsmHandle,
@@ -38,15 +37,17 @@ pub unsafe extern "C" fn azihsm_sess_open(
     abi_boundary(|| {
         validate_ptr(sess_handle)?;
 
-        let api_rev = deref_ptr(api_rev)?;
         let credentials = deref_ptr(creds)?;
         let seed_slice = buffer_to_optional_slice(seed)?;
 
         // Get the partition from the handle
         let partition = &api::HsmPartition::try_from(dev_handle)?;
 
-        let session =
-            Box::new(partition.open_session(api_rev.into(), &credentials.into(), seed_slice)?);
+        let session = Box::new(partition.open_session(
+            partition.api_rev_inuse(),
+            &credentials.into(),
+            seed_slice,
+        )?);
 
         let handle = HANDLE_TABLE.alloc_handle(HandleType::Session, session);
 

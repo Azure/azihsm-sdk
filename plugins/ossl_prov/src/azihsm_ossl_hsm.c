@@ -1138,7 +1138,7 @@ azihsm_status azihsm_open_device_and_session(
     free_buffer(&retrieved_bmk);
 
     // Open session (seed=NULL lets the library generate random bytes internally)
-    status = azihsm_sess_open(*device, &api_rev, &creds, NULL, session);
+    status = azihsm_sess_open(*device, &creds, NULL, session);
     OPENSSL_cleanse(&creds, sizeof(creds));
     if (status != AZIHSM_STATUS_SUCCESS)
     {

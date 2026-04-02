@@ -57,6 +57,7 @@ pub enum HsmError {
     RetryExhausted = -35,
     DeviceNotReady = -36,
     CannotDeleteInternalKeys = -37,
+    UnsupportedApiRevision = -38,
     Panic = i32::MIN,
 }
 

@@ -321,6 +321,12 @@ impl HsmPartitionManager {
         let dev_info = ddi::dev_info_by_path(path)?;
         let (min, max) = ddi::get_api_rev(&dev)?;
         let part_type = HsmPartType::from(dev.device_kind().ok_or(HsmError::InternalError)?);
+
+        // Validate that the requested API revision is within the partition's supported range.
+        if api_rev < min || api_rev > max {
+            return Err(HsmError::UnsupportedApiRevision);
+        }
+
         Ok(HsmPartition::new(
             dev,
             HsmApiRevRange::new(min, max),
@@ -690,6 +696,10 @@ impl HsmPartition {
         self.inner().read().api_rev_range()
     }
 
+    pub fn api_rev_inuse(&self) -> HsmApiRev {
+        self.inner().read().api_rev_inuse()
+    }
+
     /// Returns the partition type (Virtual or Physical).
     ///
     /// # Returns
@@ -1047,6 +1057,10 @@ impl HsmPartitionInner {
     /// The supported API revision range with minimum and maximum versions.
     pub fn api_rev_range(&self) -> HsmApiRevRange {
         self.api_rev_range
+    }
+
+    fn api_rev_inuse(&self) -> HsmApiRev {
+        self.api_rev_inuse
     }
 
     /// Returns the partition type (Virtual or Physical).

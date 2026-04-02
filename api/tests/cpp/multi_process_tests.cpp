@@ -203,7 +203,7 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_parent)
         azihsm_buffer seed_buf = { seed.data(), static_cast<uint32_t>(seed.size()) };
 
         azihsm_handle sess_handle = 0;
-        err = azihsm_sess_open(part_handle, &api_rev, &creds, &seed_buf, &sess_handle);
+        err = azihsm_sess_open(part_handle, &creds, &seed_buf, &sess_handle);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         auto sess_guard = scope_guard::make_scope_exit([&sess_handle] {
@@ -359,7 +359,7 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_child)
     azihsm_buffer seed_buf = { seed.data(), static_cast<uint32_t>(seed.size()) };
 
     azihsm_handle sess_handle = 0;
-    err = azihsm_sess_open(part_handle, &api_rev, &creds, &seed_buf, &sess_handle);
+    err = azihsm_sess_open(part_handle, &creds, &seed_buf, &sess_handle);
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
     auto sess_guard = scope_guard::make_scope_exit([&] {

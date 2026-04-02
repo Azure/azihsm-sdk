@@ -26,7 +26,7 @@ TEST_F(azihsm_sess, open_and_close)
         std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
 
         azihsm_handle sess_handle = 0;
-        auto err = azihsm_sess_open(partition.get(), &api_rev, &creds, nullptr, &sess_handle);
+        auto err = azihsm_sess_open(partition.get(), &creds, nullptr, &sess_handle);
 
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_NE(sess_handle, 0);
@@ -47,24 +47,7 @@ TEST_F(azihsm_sess, open_null_sess_handle)
         std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
         std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
 
-        auto err = azihsm_sess_open(partition.get(), &api_rev, &creds, nullptr, nullptr);
-
-        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
-    });
-}
-
-TEST_F(azihsm_sess, open_null_api_rev)
-{
-    part_list_.for_each_part([](std::vector<azihsm_char> &path) {
-        auto partition = PartitionHandle(path);
-
-        azihsm_credentials creds{};
-        std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
-        std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
-
-        azihsm_handle sess_handle = 0;
-
-        auto err = azihsm_sess_open(partition.get(), nullptr, &creds, nullptr, &sess_handle);
+        auto err = azihsm_sess_open(partition.get(), &creds, nullptr, nullptr);
 
         ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
@@ -78,7 +61,7 @@ TEST_F(azihsm_sess, open_null_creds)
         auto api_rev = test_api_rev();
         azihsm_handle sess_handle = 0;
 
-        auto err = azihsm_sess_open(partition.get(), &api_rev, nullptr, nullptr, &sess_handle);
+        auto err = azihsm_sess_open(partition.get(), nullptr, nullptr, &sess_handle);
 
         ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
     });
@@ -95,7 +78,7 @@ TEST_F(azihsm_sess, open_invalid_partition_handle)
 
         azihsm_handle sess_handle = 0;
 
-        auto err = azihsm_sess_open(bad_handle, &api_rev, &creds, nullptr, &sess_handle);
+        auto err = azihsm_sess_open(bad_handle, &creds, nullptr, &sess_handle);
 
         ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
     });
@@ -122,7 +105,7 @@ TEST_F(azihsm_sess, close_double_close)
 
         azihsm_handle sess_handle = 0;
 
-        auto err = azihsm_sess_open(partition.get(), &api_rev, &creds, nullptr, &sess_handle);
+        auto err = azihsm_sess_open(partition.get(), &creds, nullptr, &sess_handle);
 
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
@@ -150,7 +133,7 @@ TEST_F(azihsm_sess, open_close_multiple)
         for (int i = 0; i < 5; ++i)
         {
             azihsm_handle sess_handle = 0;
-            auto err = azihsm_sess_open(partition.get(), &api_rev, &creds, nullptr, &sess_handle);
+            auto err = azihsm_sess_open(partition.get(), &creds, nullptr, &sess_handle);
 
             ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
             ASSERT_NE(sess_handle, 0);
@@ -173,7 +156,7 @@ TEST_F(azihsm_sess, open_with_wrong_handle_type)
         std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
 
         azihsm_handle sess_handle = 0;
-        auto err = azihsm_sess_open(list_handle, &api_rev, &creds, nullptr, &sess_handle);
+        auto err = azihsm_sess_open(list_handle, &creds, nullptr, &sess_handle);
 
         ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
     });
@@ -188,24 +171,7 @@ TEST_F(azihsm_sess, open_with_corrupt_creds)
         azihsm_credentials creds{}; // All zeros - invalid credentials
 
         azihsm_handle sess_handle = 0;
-        auto err = azihsm_sess_open(partition.get(), &api_rev, &creds, nullptr, &sess_handle);
-
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
-    });
-}
-
-TEST_F(azihsm_sess, open_with_unsupported_api_rev)
-{
-    part_list_.for_each_part([](std::vector<azihsm_char> &path) {
-        auto partition = PartitionHandle(path);
-
-        azihsm_api_rev api_rev{ 99, 99 }; // Unsupported version
-        azihsm_credentials creds{};
-        std::memcpy(creds.id, TEST_CRED_ID, sizeof(TEST_CRED_ID));
-        std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
-
-        azihsm_handle sess_handle = 0;
-        auto err = azihsm_sess_open(partition.get(), &api_rev, &creds, nullptr, &sess_handle);
+        auto err = azihsm_sess_open(partition.get(), &creds, nullptr, &sess_handle);
 
         ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
     });
@@ -222,7 +188,7 @@ TEST_F(azihsm_sess, get_prop_api_rev)
         std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
 
         azihsm_handle sess_handle = 0;
-        auto err = azihsm_sess_open(partition.get(), &api_rev, &creds, nullptr, &sess_handle);
+        auto err = azihsm_sess_open(partition.get(), &creds, nullptr, &sess_handle);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         auto guard = scope_guard::make_scope_exit([&sess_handle] {
@@ -253,7 +219,7 @@ TEST_F(azihsm_sess, get_prop_api_rev_buffer_too_small)
         std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
 
         azihsm_handle sess_handle = 0;
-        auto err = azihsm_sess_open(partition.get(), &api_rev, &creds, nullptr, &sess_handle);
+        auto err = azihsm_sess_open(partition.get(), &creds, nullptr, &sess_handle);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         auto guard = scope_guard::make_scope_exit([&sess_handle] {
@@ -283,7 +249,7 @@ TEST_F(azihsm_sess, get_prop_null_prop_ptr)
         std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
 
         azihsm_handle sess_handle = 0;
-        auto err = azihsm_sess_open(partition.get(), &api_rev, &creds, nullptr, &sess_handle);
+        auto err = azihsm_sess_open(partition.get(), &creds, nullptr, &sess_handle);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         auto guard = scope_guard::make_scope_exit([&sess_handle] {
@@ -316,7 +282,7 @@ TEST_F(azihsm_sess, get_prop_unsupported_property)
         std::memcpy(creds.pin, TEST_CRED_PIN, sizeof(TEST_CRED_PIN));
 
         azihsm_handle sess_handle = 0;
-        auto err = azihsm_sess_open(partition.get(), &api_rev, &creds, nullptr, &sess_handle);
+        auto err = azihsm_sess_open(partition.get(), &creds, nullptr, &sess_handle);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         auto guard = scope_guard::make_scope_exit([&sess_handle] {
