@@ -86,11 +86,9 @@ inline azihsm_status derive_hmac_key_via_ecdh_hkdf(
     hmac_key_props.push_back(
         { .id = AZIHSM_KEY_PROP_ID_SIGN, .val = &hmac_sign_prop, .len = sizeof(hmac_sign_prop) }
     );
-    hmac_key_props.push_back(
-        { .id = AZIHSM_KEY_PROP_ID_VERIFY,
-          .val = &hmac_verify_prop,
-          .len = sizeof(hmac_verify_prop) }
-    );
+    hmac_key_props.push_back({ .id = AZIHSM_KEY_PROP_ID_VERIFY,
+                               .val = &hmac_verify_prop,
+                               .len = sizeof(hmac_verify_prop) });
 
     azihsm_key_prop_list hmac_key_prop_list = { .props = hmac_key_props.data(),
                                                 .count =

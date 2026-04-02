@@ -19,7 +19,7 @@ jobs:
         working-directory: .
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
     - name: Run Setup
       run: cargo xtask precheck --setup
     - name: Save Cargo cache
@@ -41,7 +41,7 @@ jobs:
         working-directory: .
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
     - name: Run Setup
       run: cargo xtask precheck --setup
     - name: Save Cargo cache

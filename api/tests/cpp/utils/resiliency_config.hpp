@@ -27,7 +27,10 @@ struct ResiliencyTestCtx
     ~ResiliencyTestCtx();
 
     /// Returns the shared directory path.
-    const std::filesystem::path &dir() const { return temp_dir; }
+    const std::filesystem::path &dir() const
+    {
+        return temp_dir;
+    }
 
     // Non-copyable, non-movable (pointers into this object are handed out).
     ResiliencyTestCtx(const ResiliencyTestCtx &) = delete;
@@ -44,9 +47,7 @@ struct ResiliencyTestCtx
 ///
 /// @param[in]  ctx         The owning test context (provides the dir and lock fd/handle).
 /// @param[out] config_out  Populated with vtable pointers and the context.
-void make_resiliency_config_in(
-    ResiliencyTestCtx &ctx,
-    azihsm_resiliency_config &config_out);
+void make_resiliency_config_in(ResiliencyTestCtx &ctx, azihsm_resiliency_config &config_out);
 
 /// Convenience wrapper: creates (or resets) the shared directory, opens
 /// the lock file, builds an azihsm_resiliency_config, and returns the
@@ -56,8 +57,7 @@ void make_resiliency_config_in(
 ///
 /// @param[out] config_out  Populated with vtable pointers and the context.
 /// @return Owning pointer to the test context.
-std::unique_ptr<ResiliencyTestCtx> make_resiliency_config(
-    azihsm_resiliency_config &config_out);
+std::unique_ptr<ResiliencyTestCtx> make_resiliency_config(azihsm_resiliency_config &config_out);
 
 /// Returns a pointer to the shared POTA callback ops vtable used by
 /// the resiliency test helpers.
