@@ -130,11 +130,13 @@ impl AzihsmPartInfo {
     /// Copies data from `HsmPartitionInfo` into this caller-owned struct.
     ///
     /// The caller must pre-allocate `self.path.str` with at least enough
-    /// space. On entry, `self.path.len` is the buffer capacity.
-    /// On return, `self.path.len` is set to the required/written size.
+    /// space. On entry, `self.path.len` is the buffer capacity in
+    /// `azihsm_char` elements (including the null terminator).
+    /// On return, `self.path.len` is set to the required/written count
+    /// of `azihsm_char` elements.
     ///
     /// Returns `BufferTooSmall` if the path buffer is too small
-    /// (with `self.path.len` updated to the required size).
+    /// (with `self.path.len` updated to the required size in elements).
     #[allow(unsafe_code)]
     fn copy_from(&mut self, src: &api::HsmPartitionInfo) -> Result<(), AzihsmStatus> {
         let path_str = AzihsmStr::from_string(&src.path);
@@ -146,7 +148,7 @@ impl AzihsmPartInfo {
         }
 
         // SAFETY: caller guarantees self.path.str points to a buffer
-        // of at least self.path.len bytes, and we checked it is large enough.
+        // of at least self.path.len azihsm_char elements, and we checked it is large enough.
         unsafe {
             std::ptr::copy_nonoverlapping(path_str.str, self.path.str, path_str.len as usize);
         }
@@ -303,7 +305,9 @@ pub unsafe extern "C" fn azihsm_part_get_info(
 /// `azihsm_part_get_info`. All subsequent operations on this handle
 /// (including sessions opened from it) will use the selected revision.
 ///
-/// @param[in] path Pointer to the partition path (null-terminated UTF-8 string on Linux and UTF-16 string on Windows)
+/// @param[in] path Pointer to an `azihsm_str` containing the partition
+///            device path. The `str` field must point to a valid buffer
+///            of `len` `azihsm_char` elements (not null-terminated).
 /// @param[out] handle Handle to the opened HSM partition
 /// @param[in] api_rev API revision to use for this partition handle
 /// @return 0 on success, AZIHSM_STATUS_UNSUPPORTED_API_REVISION if api_rev is
@@ -312,9 +316,9 @@ pub unsafe extern "C" fn azihsm_part_get_info(
 /// @internal
 /// # Safety
 /// This function is unsafe because it dereferences raw pointers.
-/// The caller must ensure that the `path` pointer is valid and points to a valid `c_void`
-/// that can be interpreted as a null-terminated UTF-8 string on Linux and UTF-16 string on Windows.
-/// The caller must also ensure that the `handle` argument is a valid  `AzihsmHandle` pointer.
+/// The caller must ensure that `path` is a valid pointer to an `AzihsmStr`
+/// whose `str` field points to a buffer of at least `len` `azihsm_char` elements.
+/// The caller must also ensure that the `handle` argument is a valid `AzihsmHandle` pointer.
 ///
 #[unsafe(no_mangle)]
 #[allow(unsafe_code)]

@@ -68,7 +68,6 @@ impl HsmApiRevRange {
 ///
 /// Contains metadata about an HSM partition, including its device path
 /// and supported API revision range.
-#[repr(C)]
 #[derive(Debug, Clone)]
 pub struct HsmPartitionInfo {
     /// Device path for accessing the partition.

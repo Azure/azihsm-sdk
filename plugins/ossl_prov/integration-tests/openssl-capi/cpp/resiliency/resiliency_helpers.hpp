@@ -49,6 +49,11 @@ using hsm_status = int32_t;
 static constexpr hsm_status HSM_OK = 0;
 static constexpr hsm_status HSM_BUF_SMALL = -4;
 
+/// azihsm_char is platform-dependent: uint8_t (UTF-8) on Linux, wchar_t
+/// (UTF-16) on Windows.  This file is Linux-only (dlopen/RTLD_NOLOAD),
+/// so we hardcode uint8_t here.
+using hsm_char = uint8_t;
+
 /// Matches the C layout of azihsm_api_rev { uint32_t major; uint32_t minor; }
 struct hsm_api_rev
 {
@@ -57,10 +62,10 @@ struct hsm_api_rev
 };
 
 /// Matches the C layout of azihsm_str { azihsm_char *str; uint32_t len; }
-/// On 64-bit: sizeof == 16 (8-byte pointer + 4-byte len + 4 padding).
+/// On 64-bit Linux: sizeof == 16 (8-byte pointer + 4-byte len + 4 padding).
 struct hsm_str
 {
-    uint8_t *str;
+    hsm_char *str;
     uint32_t len;
 };
 
@@ -140,7 +145,7 @@ inline hsm_handle open_reset_handle(const NativeApi &api)
     }
 
     /* Second call: fill path and rev range */
-    std::vector<uint8_t> buf(info.path.len, 0);
+    std::vector<hsm_char> buf(info.path.len, 0);
     info.path.str = buf.data();
     auto err = api.get_info(list, 0, &info);
     api.free_list(list);

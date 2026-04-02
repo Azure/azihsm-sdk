@@ -81,14 +81,15 @@ azihsm_status azihsm_part_get_info(
  | [in] index          | [azihsm_u32](#azihsm_u32)                       | index of the partition in list            |
  | [in, out] part_info | [struct azihsm_part_info *](#azihsm_part_info)  | partition info structure           &nbsp; |
 
-On input, `part_info.path.len` is the size of the buffer pointed to by `part_info.path.str`.
-On output, `part_info.path.len` is set to the required/written size,
+On input, `part_info.path.len` is the capacity of the buffer pointed to by `part_info.path.str`,
+expressed as a count of `azihsm_char` elements (including the null terminator).
+On output, `part_info.path.len` is set to the required/written count of `azihsm_char` elements,
 and `part_info.api_rev_min` / `part_info.api_rev_max` are populated.
 
 **Returns**
 
 `AZIHSM_STATUS_SUCCESS` on success, `AZIHSM_STATUS_BUFFER_TOO_SMALL` if the path buffer is too
-small (with `part_info.path.len` updated to the required size), or a negative error code on failure
+small (with `part_info.path.len` updated to the required count of elements), or a negative error code on failure
 
 ## azihsm_part_open
 
