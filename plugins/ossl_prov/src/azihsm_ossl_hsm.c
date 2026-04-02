@@ -215,8 +215,12 @@ static azihsm_status load_credentials_from_file(const char *path, uint8_t *outpu
 }
 
 /*
- * picks and opens the first possible HSM device
- * */
+ * Picks and opens the first available HSM device using the given API revision.
+ *
+ * @param[out] device  Handle to the opened HSM partition
+ * @param[in]  api_rev API revision to request when opening the partition
+ * @return AZIHSM_STATUS_SUCCESS on success, or a negative error code on failure
+ */
 static azihsm_status azihsm_get_device_handle(azihsm_handle *device, struct azihsm_api_rev api_rev)
 {
     azihsm_status status;

@@ -9,10 +9,12 @@
 
 use super::*;
 
-/// @brief Open an HSM partition
+/// @brief Open an HSM session
+///
+/// Opens a session using the API revision that was selected when the
+/// partition was opened with `azihsm_part_open`.
 ///
 /// @param[in] dev_handle Handle to the HSM partition
-/// @param[in] api_rev Pointer to the API revision structure
 /// @param[in] creds Pointer to the application credentials
 /// @param[in] seed Pointer to the optional seed buffer
 /// @param[out] sess_handle Pointer to the session handle to be allocated
@@ -22,7 +24,6 @@ use super::*;
 /// # Safety
 ///
 /// - `dev_handle` must be a valid partition handle.
-/// - `api_rev` must be a valid pointer to an `AzihsmApiRev` structure.
 /// - `creds` must be a valid pointer to an `AzihsmCredentials` structure.
 /// - `sess_handle` must be a valid pointer to memory where the session handle
 ///   will be written.

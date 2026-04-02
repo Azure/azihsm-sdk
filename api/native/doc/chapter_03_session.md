@@ -5,10 +5,12 @@
 Open a session to the device. Session is required to perform
 cryptographic commands.
 
+The session uses the API revision that was selected when the partition
+was opened with [`azihsm_part_open`](#azihsm_part_open).
+
 ```cpp
 azihsm_status azihsm_sess_open(
     azihsm_handle dev_handle,
-    const struct azihsm_api_rev *api_rev,
     const struct azihsm_credentials *creds,
     const struct azihsm_buffer *seed,
     azihsm_handle *sess_handle
@@ -20,7 +22,6 @@ azihsm_status azihsm_sess_open(
  | Parameter         | Name                                              | Description                                      |
  | ----------------- | ------------------------------------------------- | ------------------------------------------------ |
  | [in] dev_handle   | [azihsm_handle](#azihsm_handle)                   | device handle                                    |
- | [in] api_rev      | [struct azihsm_api_rev *](#azihsm_api_rev)        | api revision to open the session with            |
  | [in] creds        | [struct azihsm_credentials*](#azihsm_credentials) | application credential                           |
  | [in] seed         | [struct azihsm_buffer*](#azihsm_buffer)           | optional seed buffer (can be NULL)               |
  | [out] sess_handle | [azihsm_handle *](#azihsm_handle)                 | new session handle                               |

@@ -110,11 +110,14 @@ class PartitionListHandle
     }
 
     /**
-     * @brief Gets the path of a partition at the specified index.
+     * @brief Gets the path of a partition at the specified index via azihsm_part_get_info.
+     *
+     * Uses the two-call pattern: first call retrieves the required buffer size,
+     * second call fills the path and API revision range.
      *
      * @param index The index of the partition (zero-based).
-     * @return The partition path as a string.
-     * @throws std::runtime_error if the path cannot be retrieved.
+     * @return The partition path as a character vector.
+     * @throws std::runtime_error if the partition info cannot be retrieved.
      * @throws std::out_of_range if the index is invalid.
      */
     std::vector<azihsm_char> get_path(uint32_t index) const

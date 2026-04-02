@@ -297,11 +297,17 @@ pub unsafe extern "C" fn azihsm_part_get_info(
     })
 }
 
-/// Open an HSM partition
+/// Open an HSM partition with a specified API revision
+///
+/// The caller selects an API revision within the range reported by
+/// `azihsm_part_get_info`. All subsequent operations on this handle
+/// (including sessions opened from it) will use the selected revision.
 ///
 /// @param[in] path Pointer to the partition path (null-terminated UTF-8 string on Linux and UTF-16 string on Windows)
 /// @param[out] handle Handle to the opened HSM partition
-/// @return 0 on success, or a negative error code on failure
+/// @param[in] api_rev API revision to use for this partition handle
+/// @return 0 on success, AZIHSM_STATUS_UNSUPPORTED_API_REVISION if api_rev is
+///         outside the partition's supported range, or a negative error code on failure
 ///
 /// @internal
 /// # Safety

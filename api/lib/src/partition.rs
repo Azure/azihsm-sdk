@@ -66,7 +66,8 @@ impl HsmApiRevRange {
 
 /// HSM partition information.
 ///
-/// Contains metadata about an HSM partition, including its device path.
+/// Contains metadata about an HSM partition, including its device path
+/// and supported API revision range.
 #[repr(C)]
 #[derive(Debug, Clone)]
 pub struct HsmPartitionInfo {
@@ -265,11 +266,13 @@ impl HsmPartitionManager {
     /// Retrieves a list of all available HSM partitions.
     ///
     /// Queries the system for available HSM devices and returns information
-    /// about each discovered partition.
+    /// about each discovered partition, including its device path and
+    /// supported API revision range. Partitions that cannot be opened or
+    /// whose API revision cannot be retrieved are silently skipped.
     ///
     /// # Returns
     ///
-    /// A vector of partition information structures.
+    /// A vector of [`HsmPartitionInfo`] structures.
     #[instrument]
     pub fn partition_info_list() -> Vec<HsmPartitionInfo> {
         let vec = ddi::dev_paths()
@@ -287,10 +290,13 @@ impl HsmPartitionManager {
         vec
     }
 
-    /// Opens an HSM partition at the specified path.
+    /// Opens an HSM partition at the specified path with the given API revision.
     ///
-    /// Establishes a connection to the HSM partition and retrieves its
-    /// supported API revision range.
+    /// Establishes a connection to the HSM partition, retrieves its
+    /// supported API revision range, and validates that the requested
+    /// `api_rev` falls within that range. The selected revision is
+    /// stored in the partition handle and used by all subsequent
+    /// operations (including sessions opened from it).
     ///
     /// If the device returns a transient IO-abort error
     /// ([`HsmError::IoAborted`] or [`HsmError::IoAbortInProgress`]),
@@ -301,6 +307,7 @@ impl HsmPartitionManager {
     /// # Arguments
     ///
     /// * `path` - Device path of the partition to open
+    /// * `api_rev` - API revision to use for this partition handle
     ///
     /// # Returns
     ///
@@ -312,6 +319,8 @@ impl HsmPartitionManager {
     /// - The device path is invalid or does not exist
     /// - The device cannot be opened or is already in use
     /// - API revision retrieval fails
+    /// - The requested `api_rev` is outside the partition's supported range
+    ///   ([`HsmError::UnsupportedApiRevision`])
     /// - The underlying DDI operation fails
     /// - All retry attempts are exhausted for transient IO-abort errors
     #[resiliency_open_part]
@@ -364,6 +373,7 @@ impl HsmPartition {
     ///
     /// * `dev` - HSM device handle
     /// * `api_rev_range` - Supported API revision range
+    /// * `api_rev` - API revision selected for this partition handle
     /// * `path` - Device path of the partition
     /// * `part_type` - Type of the partition (Virtual or Physical)
     /// * `driver_ver` - Driver version
@@ -696,6 +706,14 @@ impl HsmPartition {
         self.inner().read().api_rev_range()
     }
 
+    /// Returns the API revision currently in use by this partition handle.
+    ///
+    /// This is the revision selected when the partition was opened via
+    /// [`HsmPartitionManager::open_partition`].
+    ///
+    /// # Returns
+    ///
+    /// The [`HsmApiRev`] bound to this partition handle.
     pub fn api_rev_inuse(&self) -> HsmApiRev {
         self.inner().read().api_rev_inuse()
     }
@@ -1017,6 +1035,7 @@ impl HsmPartitionInner {
     ///
     /// * `dev` - HSM device handle
     /// * `api_rev_range` - Supported API revision range
+    /// * `api_rev_inuse` - API revision selected for this partition handle
     /// * `path` - Device path string
     /// * `part_type` - Type of the partition (Virtual or Physical)
     /// * `driver_ver` - Driver version string
@@ -1059,6 +1078,7 @@ impl HsmPartitionInner {
         self.api_rev_range
     }
 
+    /// Returns the API revision in use by this partition.
     fn api_rev_inuse(&self) -> HsmApiRev {
         self.api_rev_inuse
     }
