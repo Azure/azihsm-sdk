@@ -427,7 +427,7 @@ TEST_F(azihsm_aes_keygen, aes_key_generation_invalid_sizes_rejected)
         // AES is only supported for 128, 192, and 256 bits.
         for (uint32_t bits : { 0u, 1u, 127u, 129u, 191u, 193u, 255u, 257u, 384u, 512u, 1024u })
         {
-            aes_key_gen_invalid_flag_fail_common(
+            aes_key_gen_invalid_props_fail_common(
                 session,
                 AZIHSM_ALGO_ID_AES_KEY_GEN,
                 AZIHSM_KEY_KIND_AES,
@@ -442,7 +442,7 @@ TEST_F(azihsm_aes_keygen, aes_key_generation_invalid_sizes_rejected)
 TEST_F(azihsm_aes_keygen, aes_key_gen_with_sign_flag_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        aes_key_gen_invalid_flag_fail_common(
+        aes_key_gen_invalid_props_fail_common(
             session,
             AZIHSM_ALGO_ID_AES_KEY_GEN,
             AZIHSM_KEY_KIND_AES,
@@ -456,7 +456,7 @@ TEST_F(azihsm_aes_keygen, aes_key_gen_with_sign_flag_fails)
 TEST_F(azihsm_aes_keygen, aes_key_gen_with_verify_flag_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        aes_key_gen_invalid_flag_fail_common(
+        aes_key_gen_invalid_props_fail_common(
             session,
             AZIHSM_ALGO_ID_AES_KEY_GEN,
             AZIHSM_KEY_KIND_AES,
@@ -470,7 +470,7 @@ TEST_F(azihsm_aes_keygen, aes_key_gen_with_verify_flag_fails)
 TEST_F(azihsm_aes_keygen, aes_key_gen_with_wrap_flag_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        aes_key_gen_invalid_flag_fail_common(
+        aes_key_gen_invalid_props_fail_common(
             session,
             AZIHSM_ALGO_ID_AES_KEY_GEN,
             AZIHSM_KEY_KIND_AES,
@@ -484,7 +484,7 @@ TEST_F(azihsm_aes_keygen, aes_key_gen_with_wrap_flag_fails)
 TEST_F(azihsm_aes_keygen, aes_key_gen_with_unwrap_flag_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        aes_key_gen_invalid_flag_fail_common(
+        aes_key_gen_invalid_props_fail_common(
             session,
             AZIHSM_ALGO_ID_AES_KEY_GEN,
             AZIHSM_KEY_KIND_AES,
@@ -498,7 +498,7 @@ TEST_F(azihsm_aes_keygen, aes_key_gen_with_unwrap_flag_fails)
 TEST_F(azihsm_aes_keygen, aes_key_gen_with_derive_flag_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        aes_key_gen_invalid_flag_fail_common(
+        aes_key_gen_invalid_props_fail_common(
             session,
             AZIHSM_ALGO_ID_AES_KEY_GEN,
             AZIHSM_KEY_KIND_AES,
@@ -513,7 +513,7 @@ TEST_F(azihsm_aes_keygen, aes_key_gen_with_derive_flag_fails)
 TEST_F(azihsm_aes_keygen, aes_key_gen_multiple_invalid_flags_fail)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        aes_key_gen_invalid_flag_fail_common(
+        aes_key_gen_invalid_props_fail_common(
             session,
             AZIHSM_ALGO_ID_AES_KEY_GEN,
             AZIHSM_KEY_KIND_AES,
@@ -531,7 +531,7 @@ TEST_F(azihsm_aes_keygen, aes_key_gen_multiple_invalid_flags_fail)
 TEST_F(azihsm_aes_keygen, aes_key_gen_only_invalid_capabilities)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        aes_key_gen_invalid_flag_fail_common(
+        aes_key_gen_invalid_props_fail_common(
             session,
             AZIHSM_ALGO_ID_AES_KEY_GEN,
             AZIHSM_KEY_KIND_AES,
@@ -549,7 +549,7 @@ TEST_F(azihsm_aes_keygen, aes_key_gen_only_invalid_capabilities)
 TEST_F(azihsm_aes_keygen, aes_key_gen_invalid_flags_without_crypto_permissions)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        aes_key_gen_invalid_flag_fail_common(
+        aes_key_gen_invalid_props_fail_common(
             session,
             AZIHSM_ALGO_ID_AES_KEY_GEN,
             AZIHSM_KEY_KIND_AES,
@@ -598,7 +598,7 @@ TEST_F(azihsm_aes_keygen, aes_key_gen_multiple_invalid_capabilities)
             if (flag_set[4])
                 invalid_props.push_back(AZIHSM_KEY_PROP_ID_DERIVE);
 
-            aes_key_gen_invalid_flag_fail_common(
+            aes_key_gen_invalid_props_fail_common(
                 session,
                 AZIHSM_ALGO_ID_AES_KEY_GEN,
                 AZIHSM_KEY_KIND_AES,
@@ -613,7 +613,7 @@ TEST_F(azihsm_aes_keygen, aes_key_gen_multiple_invalid_capabilities)
 TEST_F(azihsm_aes_keygen, aes_key_gen_no_decrypt_flag_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        aes_key_gen_invalid_flag_fail_common(
+        aes_key_gen_invalid_props_fail_common(
             session,
             AZIHSM_ALGO_ID_AES_KEY_GEN,
             AZIHSM_KEY_KIND_AES,
@@ -624,7 +624,7 @@ TEST_F(azihsm_aes_keygen, aes_key_gen_no_decrypt_flag_fails)
 }
 
 /// verifies AES key generation with non-session persistence creates a non-session key
-/// and succeeds with correct properties and capabilities
+/// and succeeds with correct AZIHSM_KEY_PROP_ID_SESSION property
 TEST_F(azihsm_aes_keygen, aes_key_gen_persistent)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -730,7 +730,7 @@ TEST_F(azihsm_aes_keygen, aes_xts_key_generation_invalid_sizes_rejected)
         // AES-XTS is only supported for 64-byte keys (512 bits).
         for (uint32_t bits : { 0u, 1u, 128u, 192u, 256u, 384u, 511u, 513u, 1024u })
         {
-            aes_key_gen_invalid_flag_fail_common(
+            aes_key_gen_invalid_props_fail_common(
                 session,
                 AZIHSM_ALGO_ID_AES_XTS_KEY_GEN,
                 AZIHSM_KEY_KIND_AES_XTS,
@@ -745,7 +745,7 @@ TEST_F(azihsm_aes_keygen, aes_xts_key_generation_invalid_sizes_rejected)
 TEST_F(azihsm_aes_keygen, aes_xts_key_gen_no_decrypt_flag_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        aes_key_gen_invalid_flag_fail_common(
+        aes_key_gen_invalid_props_fail_common(
             session,
             AZIHSM_ALGO_ID_AES_XTS_KEY_GEN,
             AZIHSM_KEY_KIND_AES_XTS,
@@ -759,7 +759,7 @@ TEST_F(azihsm_aes_keygen, aes_xts_key_gen_no_decrypt_flag_fails)
 TEST_F(azihsm_aes_keygen, aes_xts_key_gen_no_encrypt_flag_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        aes_key_gen_invalid_flag_fail_common(
+        aes_key_gen_invalid_props_fail_common(
             session,
             AZIHSM_ALGO_ID_AES_XTS_KEY_GEN,
             AZIHSM_KEY_KIND_AES_XTS,
@@ -770,7 +770,7 @@ TEST_F(azihsm_aes_keygen, aes_xts_key_gen_no_encrypt_flag_fails)
 }
 
 /// verifies AES-XTS key generation with non-session persistence creates a non-session key
-/// and succeeds with correct properties and capabilities
+/// and succeeds with correct AZIHSM_KEY_PROP_ID_SESSION property
 TEST_F(azihsm_aes_keygen, aes_xts_key_gen_persistent)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -804,7 +804,7 @@ TEST_F(azihsm_aes_keygen, aes_gcm_key_generation_invalid_sizes_rejected)
         // AES-GCM is only supported for 256 bits.
         for (uint32_t bits : { 0u, 1u, 128u, 192u, 255u, 257u, 384u, 512u, 1024u })
         {
-            aes_key_gen_invalid_flag_fail_common(
+            aes_key_gen_invalid_props_fail_common(
                 session,
                 AZIHSM_ALGO_ID_AES_GCM_KEY_GEN,
                 AZIHSM_KEY_KIND_AES_GCM,
@@ -819,7 +819,7 @@ TEST_F(azihsm_aes_keygen, aes_gcm_key_generation_invalid_sizes_rejected)
 TEST_F(azihsm_aes_keygen, aes_gcm_key_gen_no_encrypt_flag_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        aes_key_gen_invalid_flag_fail_common(
+        aes_key_gen_invalid_props_fail_common(
             session,
             AZIHSM_ALGO_ID_AES_GCM_KEY_GEN,
             AZIHSM_KEY_KIND_AES_GCM,
@@ -833,7 +833,7 @@ TEST_F(azihsm_aes_keygen, aes_gcm_key_gen_no_encrypt_flag_fails)
 TEST_F(azihsm_aes_keygen, aes_gcm_key_gen_no_decrypt_flag_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        aes_key_gen_invalid_flag_fail_common(
+        aes_key_gen_invalid_props_fail_common(
             session,
             AZIHSM_ALGO_ID_AES_GCM_KEY_GEN,
             AZIHSM_KEY_KIND_AES_GCM,
@@ -844,7 +844,7 @@ TEST_F(azihsm_aes_keygen, aes_gcm_key_gen_no_decrypt_flag_fails)
 }
 
 /// verifies AES-GCM key generation with non-session persistence creates a non-session key
-/// and succeeds with correct properties and capabilities
+/// and succeeds with correct AZIHSM_KEY_PROP_ID_SESSION property
 TEST_F(azihsm_aes_keygen, aes_gcm_key_gen_persistent)
 {
     part_list_.for_each_session([](azihsm_handle session) {

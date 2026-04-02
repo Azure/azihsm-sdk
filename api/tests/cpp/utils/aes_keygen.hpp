@@ -4,6 +4,7 @@
 #pragma once
 
 #include <azihsm_api.h>
+#include <gtest/gtest.h>
 #include <vector>
 
 /// Helper function to generate AES key for testing
@@ -22,8 +23,8 @@ void verify_generated_aes_key_properties(
     bool is_session
 );
 
-/// Helper function to attempt to generate AES key with invalid flags for testing
-void aes_key_gen_invalid_flag_fail_common(
+/// Helper function to attempt to generate AES key with invalid properties for testing
+void aes_key_gen_invalid_props_fail_common(
     azihsm_handle session,
     azihsm_algo_id algo_id,
     azihsm_key_kind key_kind,

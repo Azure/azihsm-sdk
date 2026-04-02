@@ -69,11 +69,12 @@ void verify_generated_aes_key_properties(
     verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_DECRYPT, true);
     verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_SIGN, false);
     verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_VERIFY, false);
+    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_WRAP, false);
     verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_UNWRAP, false);
     verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_DERIVE, false);
 }
 
-void aes_key_gen_invalid_flag_fail_common(
+void aes_key_gen_invalid_props_fail_common(
     azihsm_handle session,
     azihsm_algo_id algo_id,
     azihsm_key_kind key_kind,
