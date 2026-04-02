@@ -56,6 +56,10 @@ set(SOURCE
     algo/mac/hmac_tests.cpp
     algo/rsa/sign_verify_tests.cpp
     algo/rsa/enc_dec_tests.cpp
+    resiliency/ec_resiliency_tests.cpp
+    resiliency/rsa_resiliency_tests.cpp
+    resiliency/symmetric_resiliency_tests.cpp
+    resiliency/lifecycle_resiliency_tests.cpp
 )
 add_executable(azihsm_ossl_cpp_tests ${SOURCE})
 target_include_directories(azihsm_ossl_cpp_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
