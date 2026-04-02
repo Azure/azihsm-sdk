@@ -71,14 +71,25 @@ impl ResiliencyStorage for FileStorage {
         if self.sync_on_write {
             file.sync_all().map_err(|_| HsmError::InternalError)?;
         }
-        // Remove existing destination before rename — on Windows,
-        // fs::rename fails if the target already exists (Linux rename(2)
-        // atomically replaces, but std::fs::rename is not guaranteed to).
-        // The remove+rename sequence is safe without an additional lock
-        // because all callers hold the cross-process ResiliencyLock
-        // (via ResiliencyLockGuard) before writing to storage.
-        let _ = fs::remove_file(&path);
-        fs::rename(&tmp_path, &path).map_err(|_| HsmError::InternalError)?;
+        // On Linux, rename(2) atomically replaces an existing target.
+        // On Windows, std::fs::rename fails if the target exists, so
+        // fall back to a remove+rename sequence.  The remove+rename is
+        // safe without an additional lock because all callers hold the
+        // cross-process ResiliencyLock (via ResiliencyLockGuard).
+        if fs::rename(&tmp_path, &path).is_err() {
+            // Rename failed (likely Windows — target exists).
+            // Remove the destination and retry.
+            let _ = fs::remove_file(&path);
+            fs::rename(&tmp_path, &path).map_err(|_| HsmError::InternalError)?;
+        }
+        if self.sync_on_write {
+            // Sync the directory to make the rename durable on POSIX.
+            // Without this, a crash after rename could revert the
+            // directory entry, leaving the old file (or no file).
+            if let Ok(dir) = fs::File::open(&self.dir) {
+                let _ = dir.sync_all();
+            }
+        }
         Ok(())
     }
 
@@ -93,7 +104,7 @@ impl ResiliencyStorage for FileStorage {
 /// Cross-process and cross-thread [`ResiliencyLock`] backed by `fs2`
 /// file locking.
 ///
-/// Opens a **new file descriptor** on each [`lock()`] call and acquires an
+/// Opens a new file descriptor on each [`lock()`] call and acquires an
 /// exclusive `flock` on it.  This is critical because `flock(2)` on Linux
 /// operates per *open file description* (kernel-level fd): two threads
 /// calling `flock(LOCK_EX)` on the **same** fd see a single lock and the
@@ -107,6 +118,13 @@ pub struct FileLock {
     /// Path to the lock file (opened anew on each [`lock()`] call).
     path: PathBuf,
     /// The currently-held file descriptor, if any.
+    ///
+    /// The `Mutex` is required solely for interior mutability: the
+    /// [`ResiliencyLock`] trait methods take `&self`, so a bare
+    /// `Option<File>` cannot be mutated.  It is never contended at
+    /// runtime — `flock(LOCK_EX)` guarantees that only one thread holds
+    /// the OS lock at a time, so writes to this field are inherently
+    /// serialized.
     active: Mutex<Option<fs::File>>,
 }
 
@@ -121,10 +139,9 @@ impl FileLock {
 
 impl ResiliencyLock for FileLock {
     fn lock(&self) -> HsmResult<()> {
-        let mut guard = self.active.lock();
-        if guard.is_some() {
-            return Err(HsmError::InternalError);
-        }
+        // Open a new fd and block on the OS-level exclusive lock
+        // before touching `self.active`.  This ensures concurrent
+        // callers block at `flock(LOCK_EX)` rather than failing.
         let file = fs::OpenOptions::new()
             .read(true)
             .write(true)
@@ -133,13 +150,14 @@ impl ResiliencyLock for FileLock {
             .open(&self.path)
             .map_err(|_| HsmError::InternalError)?;
         file.lock_exclusive().map_err(|_| HsmError::InternalError)?;
-        *guard = Some(file);
+
+        // Only the flock holder reaches here; store the fd for unlock.
+        *self.active.lock() = Some(file);
         Ok(())
     }
 
     fn unlock(&self) -> HsmResult<()> {
-        let mut guard = self.active.lock();
-        match guard.take() {
+        match self.active.lock().take() {
             Some(file) => {
                 file.unlock().map_err(|_| HsmError::InternalError)?;
                 Ok(())
