@@ -624,7 +624,7 @@ fn test_aes_key_prop_no_usage_flags_fails(session: HsmSession) {
     let result = test_aes_key_prop_gen_key(&session, props);
 
     assert!(
-        matches!(result, Err(HsmError::DdiCmdFailure)),
+        matches!(result, Err(HsmError::InvalidKeyProps)),
         "AES key generation should fail when no usage flags are set"
     );
 }
@@ -1107,7 +1107,7 @@ fn test_aes_key_prop_encrypt_and_decrypt_explicitly_false(session: HsmSession) {
     let result = test_aes_key_prop_gen_key(&session, props);
 
     assert!(
-        matches!(result, Err(HsmError::DdiCmdFailure)),
+        matches!(result, Err(HsmError::InvalidKeyProps)),
         "Explicitly disabling both encrypt and decrypt should be rejected"
     );
 }

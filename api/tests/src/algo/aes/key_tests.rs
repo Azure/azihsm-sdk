@@ -782,6 +782,29 @@ fn test_aes_key_gen_no_decrypt_flag_fails(session: HsmSession) {
     );
 }
 
+/// verifies AES key generation fails when encrypt permission is missing
+#[session_test]
+fn test_aes_key_gen_no_encrypt_flag_fails(session: HsmSession) {
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::Aes)
+        .bits(256)
+        .can_encrypt(false)
+        .can_decrypt(true)
+        .is_session(true)
+        .build()
+        .unwrap();
+
+    let mut algo = HsmAesKeyGenAlgo::default();
+
+    let result = HsmKeyManager::generate_key(&session, &mut algo, props);
+
+    assert!(
+        result.is_err(),
+        "AES key generation should fail without encrypt permission"
+    );
+}
+
 /// verifies AES key unwrap fails when unwrapping with mismatched bits in properties
 #[session_test]
 fn test_aes_unwrap_bits_mismatch_fails(session: HsmSession) {
