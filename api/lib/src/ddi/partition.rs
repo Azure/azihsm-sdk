@@ -554,7 +554,7 @@ fn establish_credential(
 ///
 /// # Arguments
 ///
-/// * `dev` - The HSM device handle
+/// * `partition` - The HSM partition; the device handle is obtained from this partition
 /// * `rev` - The API revision to use
 /// * `slot_id` - The certificate slot number
 ///

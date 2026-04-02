@@ -23,13 +23,14 @@ returns a non-transient error.
 ├──────────────────────────────────────────────────────┤
 │  Public API (HsmPartition, HsmSession, HsmKey*)      │
 │    ├─ init()            #[resiliency_init_part]      │
-│    ├─ open_session()    retry_open_session()         │
+│    ├─ open_session()    #[resiliency_open_session]   │
 │    ├─ generate_key()    #[resiliency_key_gen]        │
 │    ├─ sign/encrypt()    #[resiliency_key_op]         │
-│    └─ cert_chain()      retry_cert_chain()           │
+│    └─ cert_chain()      #[resiliency_cert_chain]     │
 ├──────────────────────────────────────────────────────┤
 │  Retry Runtime (resiliency.rs)                       │
 │    ├─ execute_with_retry()                           │
+│    ├─ execute_open_session_with_retry()              │
 │    ├─ execute_key_gen_with_retry()                   │
 │    └─ execute_key_op_with_retry()                    │
 ├──────────────────────────────────────────────────────┤
@@ -131,6 +132,35 @@ Condition: only retries when `resiliency_config.is_some()`.
 
 Retries on `IoAborted` / `IoAbortInProgress` during device open.
 Handles transient driver states during live migration startup.
+
+### `#[resiliency_open_session(partition = "...")]`
+
+**Applied to:** `ddi::open_session()`
+
+Wraps the DDI open-session call with restore-partition recovery.
+Predicate: `is_open_session_retryable_error`.
+
+On transient error:
+1. Applies exponential backoff
+2. Calls `restore_partition()` to re-establish credentials
+3. Retries the operation
+
+No session reopen or key refresh is needed — the session does not
+yet exist.
+
+Condition: only retries when resiliency is enabled on the partition.
+
+### `#[resiliency_cert_chain(partition = "...")]`
+
+**Applied to:** `ddi::get_cert_chain()`
+
+Wraps the DDI cert-chain retrieval with retry-with-backoff.
+Predicate: `is_cert_chain_retryable_error`.
+
+On retry, injects `__prev_error` (same `execute_with_retry` path
+as `#[resiliency_init_part]`).
+
+Condition: only retries when resiliency is enabled on the partition.
 
 ### `#[resiliency_key_gen(session = "...")]`
 
