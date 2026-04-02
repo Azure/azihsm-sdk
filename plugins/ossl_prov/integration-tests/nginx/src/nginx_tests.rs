@@ -85,7 +85,7 @@ mod integration {
         generate_cli_conf(&keymat_dir, &provider_so);
         generate_nginx_conf(&keymat_dir);
 
-        run_setup(testfiles_dir, &keymat_dir, &provider_path)?;
+        run_setup(testfiles_dir, &keymat_dir)?;
 
         // Install nginx.conf and start the daemon with the generated
         // OPENSSL_CONF pointing into the keymat directory.
@@ -329,16 +329,13 @@ http {{
 
     /// Runs `setup.sh` to generate key material into the keymat directory.
     ///
-    /// The script receives the keymat directory as its first argument and
-    /// the provider search path via `PROVIDER_PATH`.  It generates all base
-    /// key material (credentials, OBK, POTA keys) and the TLS masked key
-    /// and certificate directly into the keymat directory — no system paths
-    /// involved.
-    fn run_setup(
-        testfiles_dir: &Path,
-        keymat_dir: &Path,
-        provider_path: &Path,
-    ) -> Result<(), Failed> {
+    /// The script receives the keymat directory as its first argument.
+    /// It generates base key material (credentials, OBK, POTA) without
+    /// the provider, then sets `OPENSSL_CONF` to the generated
+    /// `openssl-provider.cnf` for the `genpkey` and `req` commands that
+    /// need the azihsm provider.  All files are written directly into
+    /// the keymat directory — no system paths involved.
+    fn run_setup(testfiles_dir: &Path, keymat_dir: &Path) -> Result<(), Failed> {
         let setup_script = testfiles_dir.join("setup.sh");
         assert!(
             setup_script.exists(),
@@ -354,10 +351,6 @@ http {{
         if let Ok(val) = env::var("OPENSSL_BIN") {
             cmd.env("OPENSSL_BIN", val);
         }
-        if let Ok(val) = env::var("OPENSSL_LIB") {
-            cmd.env("OPENSSL_LIB", val);
-        }
-        cmd.env("PROVIDER_PATH", provider_path);
 
         // Set LD_LIBRARY_PATH to the OpenSSL lib dir so setup.sh's openssl
         // binary can find libcrypto.so.
