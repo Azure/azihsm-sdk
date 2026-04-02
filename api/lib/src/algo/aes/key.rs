@@ -35,6 +35,7 @@ impl HsmAesKey {
     /// # Enforced invariants
     ///
     /// - Key kind must be AES and class must be Secret.
+    /// - Both encrypt and decrypt permissions must be set.
     /// - AES keys in this layer are restricted to encryption/decryption usage; we
     ///   reject signing/verifying/derivation and key wrap/unwrap usage flags.
     /// - Key material must not be extractable.
@@ -506,6 +507,7 @@ impl HsmAesGcmKey {
     /// # Enforced invariants
     ///
     /// - Key kind must be AesGcm and class must be Secret.
+    /// - Both encrypt and decrypt permissions must be set.
     /// - AES-GCM keys are restricted to encryption/decryption usage.
     /// - Key size must be 256 bits.
     pub(crate) fn validate_props(props: &HsmKeyProps) -> HsmResult<()> {
