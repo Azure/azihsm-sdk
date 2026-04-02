@@ -32,6 +32,8 @@ void aes_key_gen_invalid_props_fail_common(
     std::vector<azihsm_key_prop_id> flag_prop_ids
 );
 
+/// Helper function to generate AES key with non-session persistence and verify
+/// AZIHSM_KEY_PROP_ID_SESSION property is false
 void aes_key_gen_persistent_common(
     azihsm_handle session,
     azihsm_algo_id algo_id,
