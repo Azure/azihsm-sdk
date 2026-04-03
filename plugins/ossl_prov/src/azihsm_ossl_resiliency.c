@@ -54,7 +54,7 @@
 #define OBK_SIZE 48
 
 /* ------------------------------------------------------------------ */
-/*  Resiliency context (opaque to callers)                             */
+/*  Resiliency context (opaque to callers)                            */
 /* ------------------------------------------------------------------ */
 
 struct azihsm_resiliency_ctx
@@ -71,7 +71,7 @@ struct azihsm_resiliency_ctx
 };
 
 /* ------------------------------------------------------------------ */
-/*  Helper: build a storage file path from directory + key             */
+/*  Helper: build a storage file path from directory + key            */
 /* ------------------------------------------------------------------ */
 
 /*
@@ -120,7 +120,7 @@ static azihsm_status build_storage_path(
 }
 
 /* ------------------------------------------------------------------ */
-/*  Storage callbacks                                                  */
+/*  Storage callbacks                                                 */
 /* ------------------------------------------------------------------ */
 
 /*
@@ -377,7 +377,7 @@ static azihsm_status resiliency_storage_clear(void *ctx_ptr, const char *key)
 }
 
 /* ------------------------------------------------------------------ */
-/*  Lock callbacks (flock-based)                                       */
+/*  Lock callbacks (flock-based)                                      */
 /* ------------------------------------------------------------------ */
 
 /*
@@ -654,8 +654,9 @@ azihsm_status azihsm_resiliency_create(
     const char *storage_dir,
     const char *pota_priv_path,
     const char *pota_pub_path,
+    bool use_tpm_pota,
     const char *obk_path,
-    bool use_tpm,
+    bool use_tpm_obk,
     struct azihsm_resiliency_config *out_config,
     struct azihsm_resiliency_ctx **out_ctx
 )
@@ -668,8 +669,14 @@ azihsm_status azihsm_resiliency_create(
         return AZIHSM_STATUS_INVALID_ARGUMENT;
     }
 
-    // Caller source requires POTA key paths and OBK file path
-    if (!use_tpm && (pota_priv_path == NULL || pota_pub_path == NULL || obk_path == NULL))
+    // Caller POTA source requires both key paths
+    if (!use_tpm_pota && (pota_priv_path == NULL || pota_pub_path == NULL))
+    {
+        return AZIHSM_STATUS_INVALID_ARGUMENT;
+    }
+
+    // Caller OBK source requires a file path
+    if (!use_tpm_obk && obk_path == NULL)
     {
         return AZIHSM_STATUS_INVALID_ARGUMENT;
     }
@@ -761,7 +768,7 @@ azihsm_status azihsm_resiliency_create(
     }
 
     // Copy OBK path for Caller source
-    if (!use_tpm && obk_path != NULL)
+    if (!use_tpm_obk && obk_path != NULL)
     {
         written = snprintf(ctx->obk_path, sizeof(ctx->obk_path), "%s", obk_path);
         if (written < 0 || (size_t)written >= sizeof(ctx->obk_path))
@@ -772,10 +779,15 @@ azihsm_status azihsm_resiliency_create(
         }
     }
 
-    // Wire up POTA and OBK callback ops only for Caller source (not TPM)
-    if (!use_tpm)
+    // Wire up POTA callback ops only for Caller source (not TPM)
+    if (!use_tpm_pota)
     {
         ctx->pota_ops.endorse = resiliency_pota_endorse;
+    }
+
+    // Wire up OBK callback ops only for Caller source (not TPM)
+    if (!use_tpm_obk)
+    {
         ctx->obk_ops.get_obk = resiliency_get_obk;
     }
 
@@ -787,8 +799,8 @@ azihsm_status azihsm_resiliency_create(
     out_config->storage_ops.clear = resiliency_storage_clear;
     out_config->lock_ops.lock = resiliency_lock;
     out_config->lock_ops.unlock = resiliency_unlock;
-    out_config->pota_callback_ops = use_tpm ? NULL : &ctx->pota_ops;
-    out_config->obk_callback_ops = use_tpm ? NULL : &ctx->obk_ops;
+    out_config->pota_callback_ops = use_tpm_pota ? NULL : &ctx->pota_ops;
+    out_config->obk_callback_ops = use_tpm_obk ? NULL : &ctx->obk_ops;
 
     *out_ctx = ctx;
     return AZIHSM_STATUS_SUCCESS;

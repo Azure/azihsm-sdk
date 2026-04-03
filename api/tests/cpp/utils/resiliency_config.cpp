@@ -257,11 +257,9 @@ static azihsm_status pota_endorse(
 }
 
 // Dummy OBK provider callback
-static constexpr uint32_t DUMMY_OBK_SIZE = 32;
+static constexpr uint32_t DUMMY_OBK_SIZE = 48;
 
-static azihsm_status obk_get_obk(
-    void * /*ctx*/,
-    azihsm_buffer *obk)
+static azihsm_status obk_get_obk(void * /*ctx*/, azihsm_buffer *obk)
 {
     // First call: report required size.
     if (obk->ptr == nullptr || obk->len < DUMMY_OBK_SIZE)
@@ -323,7 +321,7 @@ const azihsm_pota_callback_ops *get_pota_callback_ops()
 /// `obk_get_obk`. The returned pointer has static lifetime.
 const azihsm_obk_callback_ops *get_obk_callback_ops()
 {
-    static azihsm_obk_callback_ops obk_ops = {obk_get_obk};
+    static azihsm_obk_callback_ops obk_ops = { obk_get_obk };
     return &obk_ops;
 }
 

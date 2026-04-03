@@ -42,7 +42,7 @@ const MAX_STORAGE_READ_SIZE: usize = 1024 * 1024;
 const MAX_POTA_BUFFER_SIZE: usize = 4 * 1024;
 
 /// Maximum size (in bytes) for the OBK output buffer.
-/// OBK is 32 bytes.
+/// OBK is 48 bytes; 4 KiB is a defensive upper bound.
 const MAX_OBK_BUFFER_SIZE: usize = 4 * 1024;
 
 /// Storage operations for resiliency.
@@ -438,7 +438,12 @@ impl api::ObkProviderCallback for ObkCallbackAdapter {
             return Err(status);
         }
 
-        data.truncate(obk_buf.len as usize);
+        let returned_len = obk_buf.len as usize;
+        if returned_len == 0 || returned_len > len {
+            return Err(api::HsmError::InvalidArgument);
+        }
+
+        data.truncate(returned_len);
         Ok(data)
     }
 }

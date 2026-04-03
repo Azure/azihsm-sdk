@@ -615,13 +615,13 @@ impl HsmPartition {
             // plaintext OBK on demand.
             let obk_config = match rs.cached_obk_source {
                 HsmOwnerBackupKeySource::Caller => {
-                    let bk3 = rs
+                    let obk = rs
                         .config
                         .obk_callback
                         .as_ref()
                         .ok_or(HsmError::InternalError)?
                         .get_obk()?;
-                    HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Caller, Some(&bk3))
+                    HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Caller, Some(&obk))
                 }
                 source => HsmOwnerBackupKeyConfig::new(source, None),
             };

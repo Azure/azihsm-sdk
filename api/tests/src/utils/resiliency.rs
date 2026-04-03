@@ -4,8 +4,9 @@
 //! Resiliency test helpers.
 //!
 //! Provides file-backed implementations of [`ResiliencyStorage`],
-//! cross-process [`ResiliencyLock`] (via `fs2` file locking), and a dummy
-//! [`PotaEndorsementCallback`] for use in integration tests.
+//! cross-process [`ResiliencyLock`] (via `fs2` file locking), a dummy
+//! [`PotaEndorsementCallback`], and a dummy [`ObkProviderCallback`] for
+//! use in integration tests.
 //!
 //! All callers share a single well-known directory under the system
 //! temp dir. Storage uses one file per key inside that directory.
@@ -340,7 +341,7 @@ mod tests {
     struct DummyObkCallback;
     impl ObkProviderCallback for DummyObkCallback {
         fn get_obk(&self) -> HsmResult<Vec<u8>> {
-            Ok(vec![3u8; 32])
+            Ok(vec![3u8; 48])
         }
     }
 

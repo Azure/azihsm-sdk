@@ -753,7 +753,7 @@ mod tests {
     struct MockObkCallback;
     impl ObkProviderCallback for MockObkCallback {
         fn get_obk(&self) -> HsmResult<Vec<u8>> {
-            Ok(vec![3u8; 32])
+            Ok(vec![3u8; 48])
         }
     }
 
