@@ -1,0 +1,21 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+[package]
+edition = "2024"
+name = "provider-integration-tests-nginx"
+version = "0.1.0"
+
+[features]
+integration = []
+
+[dev-dependencies]
+libtest-mimic.workspace = true
+
+[lints]
+workspace = true
+
+[[test]]
+harness = false
+name = "nginx_tests"
+path = "src/nginx_tests.rs"

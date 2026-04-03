@@ -513,7 +513,7 @@ fn test_aes_unwrap_truncated_blob_fails(session: HsmSession) {
     assert!(result.is_err());
 }
 
-/// verifies AES key generation fails when unsupported capabilities are set in properties
+/// verifies AES key generation fails when sign flag is set
 #[session_test]
 fn test_aes_key_gen_with_sign_flag_fails(session: HsmSession) {
     let props = HsmKeyPropsBuilder::default()
@@ -537,7 +537,7 @@ fn test_aes_key_gen_with_sign_flag_fails(session: HsmSession) {
     );
 }
 
-/// verifies AES key generation fails when unsupported capabilities are set in properties
+/// verifies AES key generation fails when verify flag is set
 #[session_test]
 fn test_aes_key_gen_with_verify_flag_fails(session: HsmSession) {
     let props = HsmKeyPropsBuilder::default()
@@ -561,7 +561,7 @@ fn test_aes_key_gen_with_verify_flag_fails(session: HsmSession) {
     );
 }
 
-/// verifies AES key generation fails when unsupported capabilities are set in properties
+/// verifies AES key generation fails when wrap flag is set
 #[session_test]
 fn test_aes_key_gen_with_wrap_flag_fails(session: HsmSession) {
     let props = HsmKeyPropsBuilder::default()
@@ -585,7 +585,7 @@ fn test_aes_key_gen_with_wrap_flag_fails(session: HsmSession) {
     );
 }
 
-/// verifies AES key generation fails when unsupported capabilities are set in properties
+/// verifies AES key generation fails when unwrap flag is set
 #[session_test]
 fn test_aes_key_gen_with_unwrap_flag_fails(session: HsmSession) {
     let props = HsmKeyPropsBuilder::default()
@@ -609,7 +609,7 @@ fn test_aes_key_gen_with_unwrap_flag_fails(session: HsmSession) {
     );
 }
 
-/// verifies AES key generation fails when unsupported capabilities are set in properties
+/// verifies AES key generation fails when derive flag is set
 #[session_test]
 fn test_aes_key_gen_with_derive_flag_fails(session: HsmSession) {
     let props = HsmKeyPropsBuilder::default()
@@ -759,7 +759,7 @@ fn test_aes_key_gen_multiple_invalid_capabilities(session: HsmSession) {
     }
 }
 
-/// verifies AES key generation fails when unsupported capabilities are set in properties
+/// verifies AES key generation fails when decrypt permission is missing
 #[session_test]
 fn test_aes_key_gen_no_decrypt_flag_fails(session: HsmSession) {
     let props = HsmKeyPropsBuilder::default()
@@ -1310,7 +1310,7 @@ fn test_aes_xts_unwrap_wrong_algo_fails(session: HsmSession) {
     assert!(result.is_err());
 }
 
-/// verifies AES-XTS key generation fails when decrypt permission is missing, since XTS mode
+/// verifies AES-XTS key generation fails when decrypt permission is missing
 #[session_test]
 fn test_aes_xts_key_gen_no_decrypt_flag_fails(session: HsmSession) {
     let props = HsmKeyPropsBuilder::default()
@@ -1699,7 +1699,7 @@ fn test_aes_gcm_unmask_wrong_kind_fails(session: HsmSession) {
     HsmKeyManager::delete_key(key).unwrap();
 }
 
-/// verifies AES-GCM key unmask fails when unmasking with wrong algorithm type
+/// verifies AES-GCM key generation fails when bit length is invalid
 #[session_test]
 fn test_aes_gcm_key_gen_invalid_bits_fails(session: HsmSession) {
     let props = HsmKeyPropsBuilder::default()
