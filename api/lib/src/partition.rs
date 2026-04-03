@@ -74,7 +74,7 @@ pub struct HsmPartitionInfo {
     pub path: String,
 
     /// Supported API revision range for this partition.
-    pub api_rev_range: HsmApiRevRange,
+    pub api_rev_range: Option<HsmApiRevRange>,
 }
 
 /// HSM application credentials.
@@ -266,8 +266,9 @@ impl HsmPartitionManager {
     ///
     /// Queries the system for available HSM devices and returns information
     /// about each discovered partition, including its device path and
-    /// supported API revision range. Partitions that cannot be opened or
-    /// whose API revision cannot be retrieved are silently skipped.
+    /// supported API revision range. If the device cannot be opened or
+    /// the API revision range cannot be retrieved, `api_rev_range` is
+    /// set to `None` for that partition.
     ///
     /// # Returns
     ///
@@ -276,13 +277,15 @@ impl HsmPartitionManager {
     pub fn partition_info_list() -> Vec<HsmPartitionInfo> {
         let vec = ddi::dev_paths()
             .into_iter()
-            .filter_map(|path| {
-                let dev = ddi::open_dev(&path).ok()?;
-                let (min, max) = ddi::get_api_rev(&dev).ok()?;
-                Some(HsmPartitionInfo {
+            .map(|path| {
+                let api_rev_range = ddi::open_dev(&path)
+                    .and_then(|dev| ddi::get_api_rev(&dev))
+                    .ok()
+                    .map(|(min, max)| HsmApiRevRange::new(min, max));
+                HsmPartitionInfo {
                     path,
-                    api_rev_range: HsmApiRevRange::new(min, max),
-                })
+                    api_rev_range,
+                }
             })
             .collect::<Vec<HsmPartitionInfo>>();
         debug!("Found {} partition(s)", vec.len());

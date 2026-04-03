@@ -154,8 +154,9 @@ impl AzihsmPartInfo {
         }
         self.path.len = path_str.len;
 
-        self.api_rev_min = AzihsmApiRev::from(src.api_rev_range.min());
-        self.api_rev_max = AzihsmApiRev::from(src.api_rev_range.max());
+        let range = src.api_rev_range.ok_or(AzihsmStatus::DeviceNotAccessible)?;
+        self.api_rev_min = AzihsmApiRev::from(range.min());
+        self.api_rev_max = AzihsmApiRev::from(range.max());
 
         Ok(())
     }

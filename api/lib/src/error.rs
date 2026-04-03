@@ -58,6 +58,7 @@ pub enum HsmError {
     DeviceNotReady = -36,
     CannotDeleteInternalKeys = -37,
     UnsupportedApiRevision = -38,
+    DeviceNotAccessible = -39,
     Panic = i32::MIN,
 }
 

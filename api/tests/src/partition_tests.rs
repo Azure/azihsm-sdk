@@ -60,11 +60,14 @@ fn test_open_partition_with_min_api_rev() {
     let part_mgr = HsmPartitionManager::partition_info_list();
     assert!(!part_mgr.is_empty(), "No partitions found.");
     for part_info in part_mgr.iter() {
-        let min_rev = part_info.api_rev_range.min();
+        let range = part_info
+            .api_rev_range
+            .expect("API rev range should be present");
+        let min_rev = range.min();
         let part = HsmPartitionManager::open_partition(&part_info.path, min_rev)
             .expect("Failed to open partition with min API revision");
         assert_eq!(part.api_rev_inuse(), min_rev);
-        assert_eq!(part.api_rev_range(), part_info.api_rev_range);
+        assert_eq!(part.api_rev_range(), range);
     }
 }
 
@@ -73,11 +76,14 @@ fn test_open_partition_with_max_api_rev() {
     let part_mgr = HsmPartitionManager::partition_info_list();
     assert!(!part_mgr.is_empty(), "No partitions found.");
     for part_info in part_mgr.iter() {
-        let max_rev = part_info.api_rev_range.max();
+        let range = part_info
+            .api_rev_range
+            .expect("API rev range should be present");
+        let max_rev = range.max();
         let part = HsmPartitionManager::open_partition(&part_info.path, max_rev)
             .expect("Failed to open partition with max API revision");
         assert_eq!(part.api_rev_inuse(), max_rev);
-        assert_eq!(part.api_rev_range(), part_info.api_rev_range);
+        assert_eq!(part.api_rev_range(), range);
     }
 }
 
@@ -86,7 +92,10 @@ fn test_open_partition_with_unsupported_api_rev_above_max_fails() {
     let part_mgr = HsmPartitionManager::partition_info_list();
     assert!(!part_mgr.is_empty(), "No partitions found.");
     for part_info in part_mgr.iter() {
-        let max_rev = part_info.api_rev_range.max();
+        let range = part_info
+            .api_rev_range
+            .expect("API rev range should be present");
+        let max_rev = range.max();
         let above_max = HsmApiRev {
             major: max_rev.major + 1,
             minor: 0,
@@ -101,7 +110,10 @@ fn test_open_partition_with_unsupported_api_rev_below_min_fails() {
     let part_mgr = HsmPartitionManager::partition_info_list();
     assert!(!part_mgr.is_empty(), "No partitions found.");
     for part_info in part_mgr.iter() {
-        let min_rev = part_info.api_rev_range.min();
+        let min_rev = part_info
+            .api_rev_range
+            .expect("API rev range should be present")
+            .min();
         // Only test if min revision is greater than 0.0, otherwise there's no
         // revision below the minimum.
         if min_rev.major == 0 && min_rev.minor == 0 {
@@ -118,8 +130,11 @@ fn test_partition_info_list_has_valid_api_rev_range() {
     let part_mgr = HsmPartitionManager::partition_info_list();
     assert!(!part_mgr.is_empty(), "No partitions found.");
     for part_info in part_mgr.iter() {
-        let min_rev = part_info.api_rev_range.min();
-        let max_rev = part_info.api_rev_range.max();
+        let range = part_info
+            .api_rev_range
+            .expect("API rev range should be present");
+        let min_rev = range.min();
+        let max_rev = range.max();
         assert!(
             min_rev <= max_rev,
             "API rev range min {:?} should be <= max {:?}",
