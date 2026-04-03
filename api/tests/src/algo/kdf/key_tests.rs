@@ -64,9 +64,6 @@ fn compare_shared_secret_functionality(
     let bits_unmasked = unmasked.bits();
 
     assert_eq!(bits_original, bits_unmasked, "Bits mismatch");
-
-    // If API supports usage (preferred), replace this with real crypto usage:
-    // e.g. derive, encrypt, or HMAC using both keys and compare outputs
 }
 
 /// Test unmask of a shared secret key derived via ECDH.
@@ -175,8 +172,7 @@ fn run_unmask_twice_test(session: &HsmSession, curve: HsmEccCurve) {
 
 /// Verifies unmask fails when using a blob from a different curve/key context.
 fn run_unmask_wrong_context_blob_test(session: &HsmSession) {
-    // Generate a valid shared secret from P-384
-    let key = derive_shared_secret_for_unmask_test(session, HsmEccCurve::P384);
+    let key = derive_shared_secret_for_unmask_test(session, HsmEccCurve::P256);
 
     let blob = key.masked_key_vec().unwrap();
 
@@ -184,13 +180,9 @@ fn run_unmask_wrong_context_blob_test(session: &HsmSession) {
     let mut algo = HsmGenericSecretKeyUnmaskAlgo::default();
     let result = HsmKeyManager::unmask_key(session, &mut algo, &blob);
 
-    // Depending on system behavior:
-    // - Some systems allow it (generic secret)
-    // - Some reject mismatch
     assert!(
         result.is_ok(),
-        //|| result.is_err(),
-        "Behavior should be well-defined"
+        "Generic-secret unmasking should succeed for valid masked blob"
     );
 
     if let Ok(k) = result {
@@ -278,13 +270,15 @@ fn test_shared_secret_unmask_p521(session: HsmSession) {
     test_shared_secret_unmask_common(&session, HsmEccCurve::P521);
 }
 
-/// Verifies unmask fails for empty blob using direct API call.
+/// Verifies unmask fails for malformed blob
 #[session_test]
-fn test_shared_secret_unmask_empty_blob(session: HsmSession) {
+fn test_unmask_malformed_blob(session: HsmSession) {
     let mut algo = HsmGenericSecretKeyUnmaskAlgo::default();
-    let result = HsmKeyManager::unmask_key(&session, &mut algo, &[]);
 
-    assert!(result.is_err(), "Empty blob should fail");
+    let malformed = vec![0xAA; 10]; // invalid format
+    let result = HsmKeyManager::unmask_key(&session, &mut algo, &malformed);
+
+    assert!(result.is_err());
 }
 
 /// Verifies unmask fails for corrupted blob (P-256).
@@ -368,7 +362,7 @@ fn test_derive_shared_secret_curve_mismatch(session: HsmSession) {
     let props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Secret)
         .key_kind(HsmKeyKind::SharedSecret)
-        .bits(256)
+        .bits(384)
         .can_derive(true)
         .is_session(true)
         .build()
@@ -469,7 +463,7 @@ fn test_unmask_after_original_deleted(session: HsmSession) {
 
 /// Verifies unmask behavior for blob from different curve context.
 #[session_test]
-fn test_unmask_wrong_key_type_blob(session: HsmSession) {
+fn test_unmask_wrong_context_blob(session: HsmSession) {
     run_unmask_wrong_context_blob_test(&session);
 }
 
