@@ -56,6 +56,56 @@ pub(crate) fn get_part_pub_key(dev: &HsmDev, rev: HsmApiRev) -> HsmResult<Vec<u8
     Ok(pub_key_der)
 }
 
+/// Fetches the certificate chain and extracts the PID public key from
+/// the last certificate in a single pass.
+///
+/// This avoids the redundant DDI calls that occur when
+/// [`get_part_pub_key`] and [`get_cert_chain`] are called separately —
+/// both internally call `GetCertChainInfo` and fetch the last certificate.
+///
+/// # Arguments
+///
+/// * `dev` - The HSM device handle
+/// * `rev` - The API revision to use
+/// * `slot_id` - The certificate slot number
+///
+/// # Returns
+///
+/// Returns a tuple of (PEM cert chain, DER-encoded PID public key).
+fn get_cert_chain_and_pub_key(
+    dev: &HsmDev,
+    rev: HsmApiRev,
+    slot_id: u8,
+) -> HsmResult<(String, Vec<u8>)> {
+    let (count, thumbprint) = get_cert_chain_info(dev, rev, slot_id)?;
+    if count == 0 {
+        return Err(HsmError::InternalError);
+    }
+
+    let mut cert_chain = String::new();
+    let mut last_cert_der = Vec::new();
+    for cert_id in 0..count {
+        let der = get_cert(dev, rev, slot_id, cert_id)?;
+        let pem = crypto::der_to_pem(&der).map_hsm_err(HsmError::InternalError)?;
+        cert_chain.push_str(&pem);
+        if cert_id == count - 1 {
+            last_cert_der = der;
+        }
+    }
+
+    let (new_count, new_thumbprint) = get_cert_chain_info(dev, rev, slot_id)?;
+    if new_count != count || new_thumbprint != thumbprint {
+        return Err(HsmError::CertChainChanged);
+    }
+
+    let cert = X509Certificate::from_der(&last_cert_der).map_hsm_err(HsmError::InternalError)?;
+    let pub_key_der = cert
+        .get_public_key_der()
+        .map_hsm_err(HsmError::InternalError)?;
+
+    Ok((cert_chain, pub_key_der))
+}
+
 /// Gets the SHA-384 digest of the partition's public key in uncompressed point format.
 ///
 /// Retrieves the public key from the partition certificate, converts it to
@@ -150,8 +200,8 @@ fn get_pota_endorsement(
                     .pota_callback
                     .as_ref()
                     .ok_or(HsmError::InvalidArgument)?;
-                let pid_pub_key_der = get_part_pub_key(dev, rev)?;
-                let pid_cert_chain_pem = get_cert_chain(dev, rev, 0)?;
+                let (pid_cert_chain_pem, pid_pub_key_der) =
+                    get_cert_chain_and_pub_key(dev, rev, 0)?;
                 let data = invoke_pota_callback(
                     callback.as_ref(),
                     pota_endorsement,
