@@ -158,13 +158,7 @@ void aes_key_gen_multiple_invalid_capabilities_common(
         if (flag_set[4])
             invalid_props.push_back(AZIHSM_KEY_PROP_ID_DERIVE);
 
-        aes_key_gen_invalid_props_fail_common(
-            session,
-            algo_id,
-            key_kind,
-            bits,
-            invalid_props
-        );
+        aes_key_gen_invalid_props_fail_common(session, algo_id, key_kind, bits, invalid_props);
     }
 }
 

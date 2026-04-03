@@ -32,7 +32,7 @@ void aes_key_gen_invalid_props_fail_common(
     std::vector<azihsm_key_prop_id> flag_prop_ids
 );
 
-/// Helper function to attempt to generate AES key with multiple invalid capabilities for testing 
+/// Helper function to attempt to generate AES key with multiple invalid capabilities for testing
 void aes_key_gen_multiple_invalid_capabilities_common(
     azihsm_handle session,
     azihsm_algo_id algo_id,
