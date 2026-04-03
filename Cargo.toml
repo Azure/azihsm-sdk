@@ -20,6 +20,7 @@ members = [
   "ddi/res_test_dev",
   "ddi/test_helpers",
   "plugins/ossl_prov",
+  "plugins/ossl_prov/integration-tests/nginx",
   "plugins/ossl_prov/integration-tests/openssl-capi",
   "plugins/ossl_prov/integration-tests/openssl-cli",
   "tools/resiliency_stress",

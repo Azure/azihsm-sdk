@@ -69,6 +69,17 @@ impl Xtask for IntegrationTest {
             profile: Some("ci-provider-integration".to_string()),
             exclude: vec![],
         };
-        capi_tests.run(ctx)
+        capi_tests.run(ctx.clone())?;
+
+        // NGINX integration tests (end-to-end TLS with provider)
+        let nginx_tests = nextest::Nextest {
+            features: Some("integration".to_string()),
+            package: Some("provider-integration-tests-nginx".to_string()),
+            no_default_features: false,
+            filterset: None,
+            profile: Some("ci-provider-integration".to_string()),
+            exclude: vec![],
+        };
+        nginx_tests.run(ctx)
     }
 }

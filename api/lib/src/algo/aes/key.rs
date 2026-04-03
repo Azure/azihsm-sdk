@@ -35,12 +35,18 @@ impl HsmAesKey {
     /// # Enforced invariants
     ///
     /// - Key kind must be AES and class must be Secret.
+    /// - Both encrypt and decrypt permissions must be set.
     /// - AES keys in this layer are restricted to encryption/decryption usage; we
     ///   reject signing/verifying/derivation and key wrap/unwrap usage flags.
     /// - Key material must not be extractable.
     /// - Key size must be one of 128/192/256 bits.
     fn validate_props(props: &HsmKeyProps) -> HsmResult<()> {
         let supported_flags = HsmKeyFlags::ENCRYPT | HsmKeyFlags::DECRYPT; //AES Keys can be used for both encrypt and decrypt
+
+        // AES keys require both encrypt and decrypt permissions.
+        if !props.can_encrypt() || !props.can_decrypt() {
+            Err(HsmError::InvalidKeyProps)?;
+        }
 
         // Kind/class: ensure we're validating an AES *secret* key.
         if props.kind() != HsmKeyKind::Aes {
@@ -501,10 +507,16 @@ impl HsmAesGcmKey {
     /// # Enforced invariants
     ///
     /// - Key kind must be AesGcm and class must be Secret.
+    /// - Both encrypt and decrypt permissions must be set.
     /// - AES-GCM keys are restricted to encryption/decryption usage.
     /// - Key size must be 256 bits.
     pub(crate) fn validate_props(props: &HsmKeyProps) -> HsmResult<()> {
         let supported_flags = HsmKeyFlags::ENCRYPT | HsmKeyFlags::DECRYPT;
+
+        // AES-GCM keys require both encrypt and decrypt permissions.
+        if !props.can_encrypt() || !props.can_decrypt() {
+            Err(HsmError::InvalidKeyProps)?;
+        }
 
         // Kind/class: ensure we're validating an AES-GCM *secret* key.
         if props.kind() != HsmKeyKind::AesGcm {
