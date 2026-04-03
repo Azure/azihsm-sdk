@@ -380,6 +380,30 @@ class azihsm_aes_keygen : public ::testing::Test
     }
 };
 
+/// Test AES key unwrapping for key sizes of 128
+TEST_F(azihsm_aes_keygen, aes_128_key_unwrap)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        aes_key_unwrap_common(&session, 128, false);
+    });
+}
+
+/// Test AES key unwrapping for key sizes of 192
+TEST_F(azihsm_aes_keygen, aes_192_key_unwrap)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        aes_key_unwrap_common(&session, 192, false);
+    });
+}
+
+/// Test AES key unwrapping for key sizes of 256
+TEST_F(azihsm_aes_keygen, aes_256_key_unwrap)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        aes_key_unwrap_common(&session, 256, true);
+    });
+}
+
 TEST_F(azihsm_aes_keygen, unmask_aes_128_key)
 {
     part_list_.for_each_session([](azihsm_handle session) {
