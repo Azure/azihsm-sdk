@@ -563,49 +563,12 @@ TEST_F(azihsm_aes_keygen, aes_key_gen_invalid_flags_without_crypto_permissions)
 TEST_F(azihsm_aes_keygen, aes_key_gen_multiple_invalid_capabilities)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        bool invalid_flag_sets[16][5] = {
-            { true, false, false, false, false }, // sign
-            { false, true, false, false, false }, // verify
-            { false, false, true, false, false }, // wrap
-            { false, false, false, true, false }, // unwrap
-            { false, false, false, false, true }, // derive
-            { true, true, false, false, false },  // sign + verify
-            { true, false, true, false, false },  // sign + wrap
-            { true, false, false, true, false },  // sign + unwrap
-            { true, false, false, false, true },  // sign + derive
-            { false, true, true, false, false },  // verify + wrap
-            { false, true, false, true, false },  // verify + unwrap
-            { false, true, false, false, true },  // verify + derive
-            { false, false, true, true, false },  // wrap + unwrap
-            { false, false, true, false, true },  // wrap + derive
-            { false, false, false, true, true },  // unwrap + derive
-            { true, true, true, true, true },     // all invalid flags
-        };
-
-        for (bool *flag_set : invalid_flag_sets)
-        {
-            std::vector<azihsm_key_prop_id> invalid_props;
-            invalid_props.push_back(AZIHSM_KEY_PROP_ID_ENCRYPT);
-            invalid_props.push_back(AZIHSM_KEY_PROP_ID_DECRYPT);
-            if (flag_set[0])
-                invalid_props.push_back(AZIHSM_KEY_PROP_ID_SIGN);
-            if (flag_set[1])
-                invalid_props.push_back(AZIHSM_KEY_PROP_ID_VERIFY);
-            if (flag_set[2])
-                invalid_props.push_back(AZIHSM_KEY_PROP_ID_WRAP);
-            if (flag_set[3])
-                invalid_props.push_back(AZIHSM_KEY_PROP_ID_UNWRAP);
-            if (flag_set[4])
-                invalid_props.push_back(AZIHSM_KEY_PROP_ID_DERIVE);
-
-            aes_key_gen_invalid_props_fail_common(
-                session,
-                AZIHSM_ALGO_ID_AES_KEY_GEN,
-                AZIHSM_KEY_KIND_AES,
-                256,
-                invalid_props
-            );
-        }
+        aes_key_gen_multiple_invalid_capabilities_common(
+            session,
+            AZIHSM_ALGO_ID_AES_KEY_GEN,
+            AZIHSM_KEY_KIND_AES,
+            256
+        );
     });
 }
 
@@ -619,6 +582,20 @@ TEST_F(azihsm_aes_keygen, aes_key_gen_no_decrypt_flag_fails)
             AZIHSM_KEY_KIND_AES,
             256,
             { AZIHSM_KEY_PROP_ID_ENCRYPT }
+        );
+    });
+}
+
+/// verifies AES key generation fails when encrypt permission is missing
+TEST_F(azihsm_aes_keygen, aes_key_gen_no_encrypt_flag_fails)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        aes_key_gen_invalid_props_fail_common(
+            session,
+            AZIHSM_ALGO_ID_AES_KEY_GEN,
+            AZIHSM_KEY_KIND_AES,
+            256,
+            { AZIHSM_KEY_PROP_ID_DECRYPT }
         );
     });
 }
@@ -741,6 +718,19 @@ TEST_F(azihsm_aes_keygen, aes_xts_key_generation_invalid_sizes_rejected)
     });
 }
 
+/// verifies AES-XTS key generation rejects combinations of unsupported capability flags
+TEST_F(azihsm_aes_keygen, aes_xts_key_gen_multiple_invalid_capabilities)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        aes_key_gen_multiple_invalid_capabilities_common(
+            session,
+            AZIHSM_ALGO_ID_AES_XTS_KEY_GEN,
+            AZIHSM_KEY_KIND_AES_XTS,
+            512
+        );
+    });
+}
+
 /// verifies AES-XTS key generation fails when decrypt permission is missing
 TEST_F(azihsm_aes_keygen, aes_xts_key_gen_no_decrypt_flag_fails)
 {
@@ -812,6 +802,19 @@ TEST_F(azihsm_aes_keygen, aes_gcm_key_generation_invalid_sizes_rejected)
                 { AZIHSM_KEY_PROP_ID_ENCRYPT, AZIHSM_KEY_PROP_ID_DECRYPT }
             );
         }
+    });
+}
+
+/// verifies AES-GCM key generation rejects combinations of unsupported capability flags
+TEST_F(azihsm_aes_keygen, aes_gcm_key_gen_multiple_invalid_capabilities)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        aes_key_gen_multiple_invalid_capabilities_common(
+            session,
+            AZIHSM_ALGO_ID_AES_GCM_KEY_GEN,
+            AZIHSM_KEY_KIND_AES_GCM,
+            256
+        );
     });
 }
 

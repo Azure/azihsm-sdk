@@ -116,6 +116,58 @@ void aes_key_gen_invalid_props_fail_common(
     ASSERT_EQ(original_key, 0);
 }
 
+void aes_key_gen_multiple_invalid_capabilities_common(
+    azihsm_handle session,
+    azihsm_algo_id algo_id,
+    azihsm_key_kind key_kind,
+    uint32_t bits
+)
+{
+    bool invalid_flag_sets[16][5] = {
+        { true, false, false, false, false }, // sign
+        { false, true, false, false, false }, // verify
+        { false, false, true, false, false }, // wrap
+        { false, false, false, true, false }, // unwrap
+        { false, false, false, false, true }, // derive
+        { true, true, false, false, false },  // sign + verify
+        { true, false, true, false, false },  // sign + wrap
+        { true, false, false, true, false },  // sign + unwrap
+        { true, false, false, false, true },  // sign + derive
+        { false, true, true, false, false },  // verify + wrap
+        { false, true, false, true, false },  // verify + unwrap
+        { false, true, false, false, true },  // verify + derive
+        { false, false, true, true, false },  // wrap + unwrap
+        { false, false, true, false, true },  // wrap + derive
+        { false, false, false, true, true },  // unwrap + derive
+        { true, true, true, true, true },     // all invalid flags
+    };
+
+    for (bool *flag_set : invalid_flag_sets)
+    {
+        std::vector<azihsm_key_prop_id> invalid_props;
+        invalid_props.push_back(AZIHSM_KEY_PROP_ID_ENCRYPT);
+        invalid_props.push_back(AZIHSM_KEY_PROP_ID_DECRYPT);
+        if (flag_set[0])
+            invalid_props.push_back(AZIHSM_KEY_PROP_ID_SIGN);
+        if (flag_set[1])
+            invalid_props.push_back(AZIHSM_KEY_PROP_ID_VERIFY);
+        if (flag_set[2])
+            invalid_props.push_back(AZIHSM_KEY_PROP_ID_WRAP);
+        if (flag_set[3])
+            invalid_props.push_back(AZIHSM_KEY_PROP_ID_UNWRAP);
+        if (flag_set[4])
+            invalid_props.push_back(AZIHSM_KEY_PROP_ID_DERIVE);
+
+        aes_key_gen_invalid_props_fail_common(
+            session,
+            algo_id,
+            key_kind,
+            bits,
+            invalid_props
+        );
+    }
+}
+
 void aes_key_gen_persistent_common(
     azihsm_handle session,
     azihsm_algo_id algo_id,
