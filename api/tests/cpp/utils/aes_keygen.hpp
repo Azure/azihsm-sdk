@@ -20,7 +20,8 @@ void verify_generated_aes_key_properties(
     azihsm_handle key_handle,
     azihsm_key_kind key_kind,
     uint32_t bits,
-    bool is_session
+    bool is_session,
+    bool expected_local
 );
 
 /// Helper function to attempt to generate AES key with invalid properties for testing
@@ -50,9 +51,10 @@ void aes_key_gen_persistent_common(
 );
 
 void aes_key_unwrap_common(
-    azihsm_handle *session,
-    uint32_t bits,
-    bool is_gcm
+    azihsm_handle session,
+    azihsm_algo_id algo_id,
+    azihsm_key_kind key_kind,
+    uint32_t bits
 );
 
 /// Helper function template to verify one property of a generated AES key
@@ -66,5 +68,5 @@ void verify_key_property(azihsm_handle key_handle, azihsm_key_prop_id prop_id, T
     prop.len = sizeof(actual);
     azihsm_status err = azihsm_key_get_prop(key_handle, &prop);
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-    ASSERT_EQ(actual, expected);
+    ASSERT_EQ(actual, expected) << " for property ID " << prop_id;
 }

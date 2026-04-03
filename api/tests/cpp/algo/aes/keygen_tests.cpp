@@ -618,7 +618,8 @@ TEST_F(azihsm_aes_keygen, aes_key_gen_persistent)
 TEST_F(azihsm_aes_keygen, aes_128_key_unwrap)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        aes_key_unwrap_common(&session, 128, false);
+        aes_key_unwrap_common(session, AZIHSM_ALGO_ID_AES_KEY_GEN,
+            AZIHSM_KEY_KIND_AES, 128);
     });
 }
 
@@ -626,7 +627,8 @@ TEST_F(azihsm_aes_keygen, aes_128_key_unwrap)
 TEST_F(azihsm_aes_keygen, aes_192_key_unwrap)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        aes_key_unwrap_common(&session, 192, false);
+        aes_key_unwrap_common(session, AZIHSM_ALGO_ID_AES_KEY_GEN,
+            AZIHSM_KEY_KIND_AES, 192);
     });
 }
 
@@ -634,7 +636,8 @@ TEST_F(azihsm_aes_keygen, aes_192_key_unwrap)
 TEST_F(azihsm_aes_keygen, aes_256_key_unwrap)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        aes_key_unwrap_common(&session, 256, true);
+        aes_key_unwrap_common(session, AZIHSM_ALGO_ID_AES_KEY_GEN,
+            AZIHSM_KEY_KIND_AES, 256);
     });
 }
 

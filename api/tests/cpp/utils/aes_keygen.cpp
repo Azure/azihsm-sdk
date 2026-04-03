@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "aes_keygen.hpp"
+#include "rsa_keygen.hpp"
 #include "utils/auto_key.hpp"
 
 void session_aes_key_generation_common(
@@ -43,7 +44,7 @@ void session_aes_key_generation_common(
     ASSERT_NE(original_key, 0);
 
     // Step 2: Verify key properties
-    verify_generated_aes_key_properties(original_key, key_kind, bits, is_session);
+    verify_generated_aes_key_properties(original_key, key_kind, bits, is_session, true);
 
     // Step 3: Delete the key
     azihsm_handle key_handle = original_key.release();
@@ -55,13 +56,14 @@ void verify_generated_aes_key_properties(
     azihsm_handle key_handle,
     azihsm_key_kind key_kind,
     uint32_t bits,
-    bool is_session
+    bool is_session,
+    bool expected_local
 )
 {
     verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_CLASS, AZIHSM_KEY_CLASS_SECRET);
     verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_KIND, key_kind);
     verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_BIT_LEN, bits);
-    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_LOCAL, true);
+    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_LOCAL, expected_local);
     verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_SESSION, is_session);
     verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_SENSITIVE, true);
     verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_EXTRACTABLE, true);
@@ -207,70 +209,109 @@ void aes_key_gen_persistent_common(
 }
 
 void aes_key_unwrap_common(
-    azihsm_handle *session,
-    uint32_t bits,
-    bool is_gcm
+    azihsm_handle session,
+    azihsm_algo_id algo_id,
+    azihsm_key_kind key_kind,
+    uint32_t bits
 )
 {
-    // Step 1: Generate wrapping key
-    azihsm_algo keygen_algo{};
-    keygen_algo.id = is_gcm ? AZIHSM_ALGO_ID_AES_GCM_KEY_GEN : AZIHSM_ALGO_ID_AES_KEY_GEN;
-    keygen_algo.params = nullptr;
-    keygen_algo.len = 0;
+    // Step 1: Generate an RSA key pair for wrapping/unwrapping
+    auto_key wrapping_priv_key;
+    auto_key wrapping_pub_key;
+    auto err = generate_rsa_unwrapping_keypair(
+        session,
+        wrapping_priv_key.get_ptr(),
+        wrapping_pub_key.get_ptr()
+    );
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+    ASSERT_NE(wrapping_priv_key.get(), 0);
+    ASSERT_NE(wrapping_pub_key.get(), 0);
 
-    azihsm_key_kind key_kind = is_gcm ? AZIHSM_KEY_KIND_AES_GCM : AZIHSM_KEY_KIND_AES;
+    // Step 2: Generate key material to wrap
+    std::vector<uint8_t> aes_key_data(bits / 8, 0x00);
+
+    // Step 3: Wrap the key material using the wrapping key
+    azihsm_algo_rsa_pkcs_oaep_params oaep_params{};
+    oaep_params.hash_algo_id = AZIHSM_ALGO_ID_SHA256;
+    oaep_params.mgf1_hash_algo_id = AZIHSM_MGF1_ID_SHA256;
+    oaep_params.label = nullptr;
+
+    azihsm_algo_rsa_aes_wrap_params wrap_params{};
+    wrap_params.oaep_params = &oaep_params;
+    wrap_params.aes_key_bits = bits;
+
+    azihsm_algo wrap_algo{};
+    wrap_algo.id = AZIHSM_ALGO_ID_RSA_AES_WRAP;
+    wrap_algo.params = &wrap_params;
+    wrap_algo.len = sizeof(wrap_params);
+
+    azihsm_buffer local_key_buf{};
+    local_key_buf.ptr = aes_key_data.data();
+    local_key_buf.len = static_cast<uint32_t>(aes_key_data.size());
+
+    azihsm_buffer wrapped_buf{};
+    wrapped_buf.ptr = nullptr;
+    wrapped_buf.len = 0;
+
+    err = azihsm_crypt_encrypt(&wrap_algo, wrapping_pub_key, &local_key_buf, &wrapped_buf);
+    ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+    ASSERT_GT(wrapped_buf.len, 0);
+
+    std::vector<uint8_t> wrapped_data(wrapped_buf.len);
+    wrapped_buf.ptr = wrapped_data.data();
+
+    err = azihsm_crypt_encrypt(&wrap_algo, wrapping_pub_key, &local_key_buf, &wrapped_buf);
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+    // Step 4: Unwrap the wrapped key material into a new key handle
+    azihsm_algo_rsa_aes_key_wrap_params unwrap_params{};
+    unwrap_params.oaep_params = &oaep_params;
+    unwrap_params.aes_key_bits = bits;
+
+    azihsm_algo unwrap_algo{};
+    unwrap_algo.id = AZIHSM_ALGO_ID_RSA_AES_KEY_WRAP;
+    unwrap_algo.params = &unwrap_params;
+    unwrap_algo.len = sizeof(unwrap_params);
+
     azihsm_key_class key_class = AZIHSM_KEY_CLASS_SECRET;
     bool is_session = true;
     bool can_encrypt = true;
     bool can_decrypt = true;
 
-    std::vector<azihsm_key_prop> props_vec = {
-        { .id = AZIHSM_KEY_PROP_ID_KIND, .val = &key_kind, .len = sizeof(key_kind) },
-        { .id = AZIHSM_KEY_PROP_ID_CLASS, .val = &key_class, .len = sizeof(key_class) },
-        { .id = AZIHSM_KEY_PROP_ID_BIT_LEN, .val = &bits, .len = sizeof(bits) },
-        { .id = AZIHSM_KEY_PROP_ID_SESSION, .val = &is_session, .len = sizeof(is_session) },
-        { .id = AZIHSM_KEY_PROP_ID_ENCRYPT, .val = &can_encrypt, .len = sizeof(can_encrypt) },
-        { .id = AZIHSM_KEY_PROP_ID_DECRYPT, .val = &can_decrypt, .len = sizeof(can_decrypt) }
-    };
+    std::vector<azihsm_key_prop> unwrap_props_vec;
+    unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_KIND, &key_kind, sizeof(key_kind) });
+    unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_CLASS, &key_class, sizeof(key_class) });
+    unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_BIT_LEN, &bits, sizeof(bits) });
+    unwrap_props_vec.push_back(
+        { AZIHSM_KEY_PROP_ID_SESSION, &is_session, sizeof(is_session) }
+    );
+    unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_ENCRYPT, &can_encrypt, sizeof(can_encrypt) }
+    );
+    unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_DECRYPT, &can_decrypt, sizeof(can_decrypt) }
+    );
 
-    azihsm_key_prop_list prop_list{ .props = props_vec.data(),
-                                    .count = static_cast<uint32_t>(props_vec.size()) };
+    azihsm_key_prop_list unwrap_prop_list{ unwrap_props_vec.data(),
+                                            static_cast<uint32_t>(unwrap_props_vec.size()) };
 
-    auto_key wrapping_key;
-    azihsm_status err = azihsm_key_gen(*session, &keygen_algo, &prop_list, wrapping_key.get_ptr());
+    azihsm_buffer wrapped_key_buf{};
+    wrapped_key_buf.ptr = wrapped_data.data();
+    wrapped_key_buf.len = static_cast<uint32_t>(wrapped_data.size());
+
+    auto_key unwrapped_key;
+    err = azihsm_key_unwrap(
+        &unwrap_algo,
+        wrapping_priv_key,
+        &wrapped_key_buf,
+        &unwrap_prop_list,
+        unwrapped_key.get_ptr()
+    );
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-    ASSERT_NE(wrapping_key, 0);
-
-    // Step 2: Generate random key material to wrap
-    std::vector<uint8_t> key_material(bits / 8);
-    err = azihsm_rng_get_random(*session, key_material.data(), static_cast<uint32_t>(key_material.size()));
-    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-
-    // Step 3: Wrap the key material using the wrapping key
-    std::vector<uint8_t> wrapped_key(key_material.size() + 16); // Account for potential padding/IV
-    uint32_t wrapped_key_len = static_cast<uint32_t>(wrapped_key.size());
-    err = azihsm_key_wrap(*session, wrapping_key, key_material.data(), static_cast<uint32_t>(key_material.size()), wrapped_key.data(), &wrapped_key_len);
-    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-
-    // Step 4: Unwrap the key material into a new key handle
-    azihsm_handle unwrapped_key_handle = 0;
-    err = azihsm_key_unwrap(*session, wrapping_key, wrapped_key.data(), wrapped_key_len, nullptr, 0, &unwrapped_key_handle);
-    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-    ASSERT_NE(unwrapped_key_handle, 0);
+    ASSERT_NE(unwrapped_key, 0);
 
     // Step 5: Verify unwrapped key properties
-    verify_key_property(unwrapped_key_handle, AZIHSM_KEY_PROP_ID_KIND, key_kind);
-    verify_key_property(unwrapped_key_handle, AZIHSM_KEY_PROP_ID_BIT_LEN, bits);
-    verify_key_property(unwrapped_key_handle, AZIHSM_KEY_PROP_ID_SESSION, true);
-    verify_key_property(unwrapped_key_handle, AZIHSM_KEY_PROP_ID_ENCRYPT, can_encrypt);
-    verify_key_property(unwrapped_key_handle, AZIHSM_KEY_PROP_ID_DECRYPT, can_decrypt);
-    verify_key_property(unwrapped_key_handle, AZIHSM_KEY_PROP_ID_SIGN, false);
-    verify_key_property(unwrapped_key_handle, AZIHSM_KEY_PROP_ID_VERIFY, false);
-    verify_key_property(unwrapped_key_handle, AZIHSM_KEY_PROP_ID_WRAP, false);
-    verify_key_property(unwrapped_key_handle, AZIHSM_KEY_PROP_ID_UNWRAP, false);
-    verify_key_property(unwrapped_key_handle, AZIHSM_KEY_PROP_ID_DERIVE, false);
+    verify_generated_aes_key_properties(unwrapped_key, key_kind, bits, is_session, false);
 
     // Step 6: Clean up unwrapped key
-    err = azihsm_key_delete(unwrapped_key_handle);
+    err = azihsm_key_delete(unwrapped_key.release());
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 }
