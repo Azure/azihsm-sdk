@@ -310,7 +310,8 @@ pub(crate) fn init_part_raw_no_res(
     let resp = get_establish_cred_encryption_key(dev, rev)?;
 
     let nonce = resp.data.nonce;
-    let key = DeviceCredKey::new(&resp.data.pub_key, nonce).map_hsm_err(HsmError::DdiCmdFailure)?;
+    let key =
+        DeviceCredKey::new(&resp.data.pub_key, nonce).map_hsm_err(HsmError::InvalidArgument)?;
 
     let (priv_key, pub_key) = key
         .generate_ephemeral_encryption_key()
