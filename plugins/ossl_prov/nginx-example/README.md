@@ -113,6 +113,8 @@ All key material paths must be absolute. If they are omitted, the provider falls
 
 > The `base` provider is required — NGINX uses it for PEM decoding of `ssl_certificate` files.
 
+> **TPM source:** When POTA and OBK are managed by the TPM (`azihsm-obk-source = tpm` and `azihsm-pota-source = tpm`), the `azihsm-obk-path`, `azihsm-pota-private-key-path`, and `azihsm-pota-public-key-path` settings are not required and can be omitted. The `obk.bin` and POTA key files from Step 2 are also not needed in this case.
+
 ## Step 4 — Generate a TLS Key and Certificate
 
 Use explicit `-provider` flags to generate an EC P-384 key inside the HSM and a self-signed certificate. This approach avoids `OPENSSL_CONF` entirely for key generation, preventing the provider from being loaded twice (once from the config and once from the CLI flags).
