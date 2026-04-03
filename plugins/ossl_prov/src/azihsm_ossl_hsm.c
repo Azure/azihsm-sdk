@@ -854,7 +854,7 @@ azihsm_status azihsm_open_device_and_session(
     // Configure OBK based on source selection
     struct azihsm_owner_backup_key_config backup_config = { 0 };
 
-    if (config->use_tpm_obk)
+    if (config->use_tpm)
     {
         backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_TPM;
         backup_config.owner_backup_key = NULL;
@@ -935,7 +935,8 @@ azihsm_status azihsm_open_device_and_session(
             config->resiliency_storage_dir,
             config->pota_private_key_path,
             config->pota_public_key_path,
-            config->use_tpm_pota,
+            config->obk_path,
+            config->use_tpm,
             &resiliency_cfg,
             &res_ctx
         );
@@ -943,7 +944,7 @@ azihsm_status azihsm_open_device_and_session(
         {
             free_buffer(&bmk_buf);
             free_buffer(&muk_buf);
-            if (!config->use_tpm_obk)
+            if (!config->use_tpm)
             {
                 free_buffer(&obk_buf);
             }
@@ -960,7 +961,7 @@ azihsm_status azihsm_open_device_and_session(
 
     struct azihsm_buffer pota_priv_buf = { NULL, 0 };
     struct azihsm_buffer pota_pub_buf = { NULL, 0 };
-    if (config->use_tpm_pota)
+    if (config->use_tpm)
     {
         pota_endorsement.source = AZIHSM_POTA_ENDORSEMENT_SOURCE_TPM;
         pota_endorsement.endorsement = NULL;

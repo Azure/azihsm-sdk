@@ -102,8 +102,7 @@ typedef struct
     uint16_t api_revision_minor;
     bool credentials_id_from_env;
     bool credentials_pin_from_env;
-    bool use_tpm_obk;
-    bool use_tpm_pota;
+    bool use_tpm;
     bool resiliency_enabled;
     char resiliency_storage_dir[4096];
 } AZIHSM_CONFIG;

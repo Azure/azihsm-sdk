@@ -327,14 +327,6 @@ const azihsm_obk_callback_ops *get_obk_callback_ops()
     return &obk_ops;
 }
 
-/// Returns a pointer to the shared OBK callback ops vtable backed by
-/// `obk_get_obk`. The returned pointer has static lifetime.
-const azihsm_obk_callback_ops *get_obk_callback_ops() 
-{
-    static azihsm_obk_callback_ops obk_ops = {obk_get_obk};
-    return &obk_ops;
-}
-
 std::unique_ptr<ResiliencyTestCtx> make_resiliency_config(azihsm_resiliency_config &config_out)
 {
     // Each call gets a unique directory so parallel tests never interfere.

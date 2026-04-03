@@ -14,6 +14,8 @@
  *                  dedicated lock file.
  *   3. POTA      – re-endorsement of the device's PID public key with
  *                  the provider's fixed POTA private key.
+ *   4. OBK       – re-provision of the caller's Owner Backup Key (OBK)
+ *                  by re-reading it from the configured file path.
  */
 
 #include "azihsm_ossl_resiliency.h"
@@ -33,7 +35,7 @@
 #include "azihsm_ossl_hsm.h"
 
 /* ------------------------------------------------------------------ */
-/*  Internal constants                                                 */
+/*  Internal constants                                                */
 /* ------------------------------------------------------------------ */
 
 // Maximum allowed key name length (defensive bound).
@@ -48,6 +50,9 @@
 // POTA signature: P-384 raw r||s (48 + 48).
 #define POTA_SIGNATURE_SIZE 96
 
+// OBK size in bytes.
+#define OBK_SIZE 48
+
 /* ------------------------------------------------------------------ */
 /*  Resiliency context (opaque to callers)                             */
 /* ------------------------------------------------------------------ */
@@ -57,10 +62,12 @@ struct azihsm_resiliency_ctx
     char storage_dir[4096];                    /* Base directory for storage files */
     char pota_priv_path[AZIHSM_MAX_FILE_PATH]; /* POTA private key DER file */
     char pota_pub_path[AZIHSM_MAX_FILE_PATH];  /* POTA public key DER file */
+    char obk_path[AZIHSM_MAX_FILE_PATH];       /* OBK file path (Caller source) */
     char lock_path[PATH_BUF_SIZE];             /* Path to the lock file */
     int lock_fd;                               /* Held fd during lock (-1 when unlocked) */
     CRYPTO_RWLOCK *lock_fd_lock;               /* Protects lock_fd from concurrent access */
     struct azihsm_pota_callback_ops pota_ops;  /* POTA ops owned by ctx */
+    struct azihsm_obk_callback_ops obk_ops;    /* OBK ops owned by ctx */
 };
 
 /* ------------------------------------------------------------------ */
@@ -585,6 +592,61 @@ static azihsm_status resiliency_pota_endorse(
 }
 
 /* ------------------------------------------------------------------ */
+/*  OBK callback                                                      */
+/* ------------------------------------------------------------------ */
+
+/*
+ * OBK provider callback: re-reads the caller's Owner Backup Key from
+ * the configured file path.
+ *
+ * Uses the two-call buffer pattern:
+ *   - First call  (obk->ptr == NULL): returns required size in obk->len
+ *     and AZIHSM_STATUS_BUFFER_TOO_SMALL.
+ *   - Second call (obk->ptr allocated): reads the OBK file into the buffer.
+ */
+static azihsm_status resiliency_get_obk(void *ctx_ptr, struct azihsm_buffer *obk)
+{
+    struct azihsm_resiliency_ctx *ctx = (struct azihsm_resiliency_ctx *)ctx_ptr;
+    struct azihsm_buffer file_buf = { NULL, 0 };
+    azihsm_status status;
+
+    if (ctx == NULL || obk == NULL)
+    {
+        return AZIHSM_STATUS_INVALID_ARGUMENT;
+    }
+
+    status = azihsm_file_load(ctx->obk_path, &file_buf);
+    if (status != AZIHSM_STATUS_SUCCESS || file_buf.ptr == NULL)
+    {
+        return (status != AZIHSM_STATUS_SUCCESS) ? status : AZIHSM_STATUS_INTERNAL_ERROR;
+    }
+
+    if (file_buf.len != OBK_SIZE)
+    {
+        OPENSSL_cleanse(file_buf.ptr, file_buf.len);
+        OPENSSL_free(file_buf.ptr);
+        return AZIHSM_STATUS_INVALID_ARGUMENT;
+    }
+
+    // First call: report required size
+    if (obk->ptr == NULL || obk->len < file_buf.len)
+    {
+        obk->len = file_buf.len;
+        OPENSSL_cleanse(file_buf.ptr, file_buf.len);
+        OPENSSL_free(file_buf.ptr);
+        return AZIHSM_STATUS_BUFFER_TOO_SMALL;
+    }
+
+    // Second call: copy OBK data into caller's buffer
+    memcpy(obk->ptr, file_buf.ptr, file_buf.len);
+    obk->len = file_buf.len;
+    OPENSSL_cleanse(file_buf.ptr, file_buf.len);
+    OPENSSL_free(file_buf.ptr);
+
+    return AZIHSM_STATUS_SUCCESS;
+}
+
+/* ------------------------------------------------------------------ */
 /*  Public API: context lifecycle                                     */
 /* ------------------------------------------------------------------ */
 
@@ -592,7 +654,8 @@ azihsm_status azihsm_resiliency_create(
     const char *storage_dir,
     const char *pota_priv_path,
     const char *pota_pub_path,
-    bool use_tpm_pota,
+    const char *obk_path,
+    bool use_tpm,
     struct azihsm_resiliency_config *out_config,
     struct azihsm_resiliency_ctx **out_ctx
 )
@@ -605,8 +668,8 @@ azihsm_status azihsm_resiliency_create(
         return AZIHSM_STATUS_INVALID_ARGUMENT;
     }
 
-    // Caller POTA source requires both key paths
-    if (!use_tpm_pota && (pota_priv_path == NULL || pota_pub_path == NULL))
+    // Caller source requires POTA key paths and OBK file path
+    if (!use_tpm && (pota_priv_path == NULL || pota_pub_path == NULL || obk_path == NULL))
     {
         return AZIHSM_STATUS_INVALID_ARGUMENT;
     }
@@ -697,10 +760,23 @@ azihsm_status azihsm_resiliency_create(
         return AZIHSM_STATUS_INVALID_ARGUMENT;
     }
 
-    // Wire up POTA callback ops only for Caller source (not TPM)
-    if (!use_tpm_pota)
+    // Copy OBK path for Caller source
+    if (!use_tpm && obk_path != NULL)
+    {
+        written = snprintf(ctx->obk_path, sizeof(ctx->obk_path), "%s", obk_path);
+        if (written < 0 || (size_t)written >= sizeof(ctx->obk_path))
+        {
+            CRYPTO_THREAD_lock_free(ctx->lock_fd_lock);
+            OPENSSL_free(ctx);
+            return AZIHSM_STATUS_INVALID_ARGUMENT;
+        }
+    }
+
+    // Wire up POTA and OBK callback ops only for Caller source (not TPM)
+    if (!use_tpm)
     {
         ctx->pota_ops.endorse = resiliency_pota_endorse;
+        ctx->obk_ops.get_obk = resiliency_get_obk;
     }
 
     // Populate the output config struct
@@ -711,7 +787,8 @@ azihsm_status azihsm_resiliency_create(
     out_config->storage_ops.clear = resiliency_storage_clear;
     out_config->lock_ops.lock = resiliency_lock;
     out_config->lock_ops.unlock = resiliency_unlock;
-    out_config->pota_callback_ops = use_tpm_pota ? NULL : &ctx->pota_ops;
+    out_config->pota_callback_ops = use_tpm ? NULL : &ctx->pota_ops;
+    out_config->obk_callback_ops = use_tpm ? NULL : &ctx->obk_ops;
 
     *out_ctx = ctx;
     return AZIHSM_STATUS_SUCCESS;

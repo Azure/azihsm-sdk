@@ -23,15 +23,9 @@ extern "C"
 {
 #endif
 
-#define ALG(names, funcs)                                                                          \
-    {                                                                                              \
-        names, "provider=" AZIHSM_OSSL_NAME ",fips=yes", funcs, NULL                               \
-    }
+#define ALG(names, funcs) { names, "provider=" AZIHSM_OSSL_NAME ",fips=yes", funcs, NULL }
 
-#define ALG_TABLE_END                                                                              \
-    {                                                                                              \
-        NULL, NULL, NULL, NULL                                                                     \
-    }
+#define ALG_TABLE_END { NULL, NULL, NULL, NULL }
 
 // Digest
 extern const OSSL_DISPATCH azihsm_ossl_sha1_functions[];
@@ -495,8 +489,7 @@ static OSSL_STATUS parse_provider_config(
     );
     config->api_revision_major = AZIHSM_API_REVISION_DEFAULT_MAJOR;
     config->api_revision_minor = AZIHSM_API_REVISION_DEFAULT_MINOR;
-    config->use_tpm_obk = false;
-    config->use_tpm_pota = false;
+    config->use_tpm = false;
     config->credentials_id_from_env = false;
     config->credentials_pin_from_env = false;
 
@@ -642,13 +635,22 @@ static OSSL_STATUS parse_provider_config(
     }
 
     /* Parse source selections: "caller" (default) or "tpm" */
-    if (obk_source != NULL && OPENSSL_strcasecmp(obk_source, "tpm") == 0)
     {
-        config->use_tpm_obk = true;
-    }
-    if (pota_source != NULL && OPENSSL_strcasecmp(pota_source, "tpm") == 0)
-    {
-        config->use_tpm_pota = true;
+        bool obk_tpm = obk_source != NULL && OPENSSL_strcasecmp(obk_source, "tpm") == 0;
+        bool pota_tpm = pota_source != NULL && OPENSSL_strcasecmp(pota_source, "tpm") == 0;
+
+        if (obk_tpm != pota_tpm)
+        {
+            ERR_raise_data(
+                ERR_LIB_PROV,
+                PROV_R_INVALID_CONFIG_DATA,
+                "azihsm-pota-source and azihsm-obk-source must match: "
+                "both 'tpm' or both 'caller'"
+            );
+            return OSSL_FAILURE;
+        }
+
+        config->use_tpm = obk_tpm;
     }
 
     /* Parse API revision in "major.minor" format */
