@@ -23,9 +23,15 @@ extern "C"
 {
 #endif
 
-#define ALG(names, funcs) { names, "provider=" AZIHSM_OSSL_NAME ",fips=yes", funcs, NULL }
+#define ALG(names, funcs)                                                                          \
+    {                                                                                              \
+        names, "provider=" AZIHSM_OSSL_NAME ",fips=yes", funcs, NULL                               \
+    }
 
-#define ALG_TABLE_END { NULL, NULL, NULL, NULL }
+#define ALG_TABLE_END                                                                              \
+    {                                                                                              \
+        NULL, NULL, NULL, NULL                                                                     \
+    }
 
 // Digest
 extern const OSSL_DISPATCH azihsm_ossl_sha1_functions[];
