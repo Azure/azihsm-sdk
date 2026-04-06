@@ -56,12 +56,14 @@ pub(crate) fn get_part_pub_key(dev: &HsmDev, rev: HsmApiRev) -> HsmResult<Vec<u8
     Ok(pub_key_der)
 }
 
-/// Fetches the certificate chain and extracts the PID public key from
-/// the last certificate in a single pass.
+/// Fetches the certificate chain and extracts the public key from the
+/// last certificate.
 ///
-/// This avoids the redundant DDI calls that occur when
-/// [`get_part_pub_key`] and [`get_cert_chain`] are called separately —
-/// both internally call `GetCertChainInfo` and fetch the last certificate.
+/// This combines the work of [`get_part_pub_key`] and [`get_cert_chain`]
+/// into one function, avoiding redundant `GetCertChainInfo` and
+/// `GetCertificate` DDI calls. A second `GetCertChainInfo` call is made
+/// after fetching all certificates to verify the chain did not change
+/// during retrieval.
 ///
 /// # Arguments
 ///
@@ -71,32 +73,15 @@ pub(crate) fn get_part_pub_key(dev: &HsmDev, rev: HsmApiRev) -> HsmResult<Vec<u8
 ///
 /// # Returns
 ///
-/// Returns a tuple of (PEM cert chain, DER-encoded PID public key).
+/// Returns a tuple of (PEM cert chain, DER-encoded public key from the
+/// last certificate).
 fn get_cert_chain_and_pub_key(
     dev: &HsmDev,
     rev: HsmApiRev,
     slot_id: u8,
 ) -> HsmResult<(String, Vec<u8>)> {
-    let (count, thumbprint) = get_cert_chain_info(dev, rev, slot_id)?;
-    if count == 0 {
-        return Err(HsmError::InternalError);
-    }
-
-    let mut cert_chain = String::new();
-    let mut last_cert_der = Vec::new();
-    for cert_id in 0..count {
-        let der = get_cert(dev, rev, slot_id, cert_id)?;
-        let pem = crypto::der_to_pem(&der).map_hsm_err(HsmError::InternalError)?;
-        cert_chain.push_str(&pem);
-        if cert_id == count - 1 {
-            last_cert_der = der;
-        }
-    }
-
-    let (new_count, new_thumbprint) = get_cert_chain_info(dev, rev, slot_id)?;
-    if new_count != count || new_thumbprint != thumbprint {
-        return Err(HsmError::CertChainChanged);
-    }
+    let (cert_chain, last_cert_der) = fetch_cert_chain_checked(dev, rev, slot_id, true)?;
+    let last_cert_der = last_cert_der.ok_or(HsmError::InternalError)?;
 
     let cert = X509Certificate::from_der(&last_cert_der).map_hsm_err(HsmError::InternalError)?;
     let pub_key_der = cert
@@ -611,13 +596,38 @@ pub fn establish_credential(
 ///
 /// Returns the certificate chain in PEM format.
 pub(crate) fn get_cert_chain(dev: &HsmDev, rev: HsmApiRev, slot_id: u8) -> HsmResult<String> {
+    let (cert_chain, _) = fetch_cert_chain_checked(dev, rev, slot_id, false)?;
+    Ok(cert_chain)
+}
+
+/// Fetches the certificate chain with a thumbprint stability check.
+///
+/// Retrieves `GetCertChainInfo` before and after fetching all certificates
+/// and returns [`HsmError::CertChainChanged`] if the count or thumbprint
+/// changed in between.
+///
+/// When `return_last_der` is `true`, the DER bytes of the last certificate
+/// are captured and returned (and `count == 0` is treated as an error).
+fn fetch_cert_chain_checked(
+    dev: &HsmDev,
+    rev: HsmApiRev,
+    slot_id: u8,
+    return_last_der: bool,
+) -> HsmResult<(String, Option<Vec<u8>>)> {
     let (count, thumbprint) = get_cert_chain_info(dev, rev, slot_id)?;
+    if return_last_der && count == 0 {
+        return Err(HsmError::InternalError);
+    }
 
     let mut cert_chain = String::new();
+    let mut last_cert_der = None;
     for cert_id in 0..count {
         let der = get_cert(dev, rev, slot_id, cert_id)?;
         let pem = crypto::der_to_pem(&der).map_hsm_err(HsmError::InternalError)?;
         cert_chain.push_str(&pem);
+        if return_last_der && cert_id == count - 1 {
+            last_cert_der = Some(der);
+        }
     }
 
     let (new_count, new_thumbprint) = get_cert_chain_info(dev, rev, slot_id)?;
@@ -625,7 +635,7 @@ pub(crate) fn get_cert_chain(dev: &HsmDev, rev: HsmApiRev, slot_id: u8) -> HsmRe
         return Err(HsmError::CertChainChanged);
     }
 
-    Ok(cert_chain)
+    Ok((cert_chain, last_cert_der))
 }
 
 /// Retrieves certificate chain information from the HSM device.
