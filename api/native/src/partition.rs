@@ -113,7 +113,8 @@ impl<'a> TryFrom<&'a AzihsmPotaEndorsement> for api::HsmPotaEndorsement {
 /// FFI-safe partition info structure.
 ///
 /// C-compatible representation of `HsmPartitionInfo` with the path
-/// expressed as an `AzihsmStr` (pointer + length) instead of a Rust `String`.
+/// expressed as an `AzihsmStr` (pointer + length) instead of a Rust `String`,
+/// and the supported API revision range as min/max fields.
 #[repr(C)]
 pub struct AzihsmPartInfo {
     /// Device path (caller-owned buffer, filled by the API)

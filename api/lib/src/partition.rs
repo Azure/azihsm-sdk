@@ -650,7 +650,7 @@ impl HsmPartition {
             // BMK persistence is handled manually after the call.
             ddi::init_part_raw_no_res(
                 inner.dev(),
-                inner.api_rev_range().min(),
+                inner.api_rev(),
                 rs.cached_credentials,
                 bmk_from_storage.as_deref(),
                 muk_from_storage.as_deref(),
@@ -716,8 +716,8 @@ impl HsmPartition {
     /// # Returns
     ///
     /// The [`HsmApiRev`] bound to this partition handle.
-    pub fn api_rev_inuse(&self) -> HsmApiRev {
-        self.inner().read().api_rev_inuse()
+    pub fn api_rev(&self) -> HsmApiRev {
+        self.inner().read().api_rev()
     }
 
     /// Returns the partition type (Virtual or Physical).
@@ -1018,7 +1018,7 @@ impl HsmPartition {
 pub(crate) struct HsmPartitionInner {
     dev: ddi::HsmDev,
     api_rev_range: HsmApiRevRange,
-    api_rev_inuse: HsmApiRev,
+    api_rev: HsmApiRev,
     bmk: Vec<u8>,
     mobk: Vec<u8>,
     path: String,
@@ -1047,7 +1047,7 @@ impl HsmPartitionInner {
     fn new(
         dev: ddi::HsmDev,
         api_rev_range: HsmApiRevRange,
-        api_rev_inuse: HsmApiRev,
+        api_rev: HsmApiRev,
         path: String,
         part_type: HsmPartType,
         driver_ver: String,
@@ -1058,7 +1058,7 @@ impl HsmPartitionInner {
         Self {
             dev,
             api_rev_range,
-            api_rev_inuse,
+            api_rev,
             path,
             part_type,
             driver_ver,
@@ -1081,8 +1081,8 @@ impl HsmPartitionInner {
     }
 
     /// Returns the API revision in use by this partition.
-    fn api_rev_inuse(&self) -> HsmApiRev {
-        self.api_rev_inuse
+    fn api_rev(&self) -> HsmApiRev {
+        self.api_rev
     }
 
     /// Returns the partition type (Virtual or Physical).
@@ -1172,12 +1172,12 @@ impl HsmPartitionInner {
 
     /// Retrieves the certificate chain from the partition.
     pub(crate) fn cert_chain(&self, slot: u8) -> HsmResult<String> {
-        ddi::get_cert_chain(&self.dev, self.api_rev_range.min(), slot)
+        ddi::get_cert_chain(&self.dev, self.api_rev, slot)
     }
 
     /// Retrieves the public key of the partition identity (PID) certificate.
     pub(crate) fn pub_key(&self) -> HsmResult<Vec<u8>> {
-        ddi::get_part_pub_key(&self.dev, self.api_rev_range.min())
+        ddi::get_part_pub_key(&self.dev, self.api_rev)
     }
 
     /// Initializes the partition with application credentials and master keys.
@@ -1196,7 +1196,7 @@ impl HsmPartitionInner {
     ) -> HsmResult<()> {
         let result = ddi::init_part(
             &self.dev,
-            self.api_rev_inuse,
+            self.api_rev,
             creds,
             bmk,
             muk,

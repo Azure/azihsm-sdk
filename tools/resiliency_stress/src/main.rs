@@ -622,7 +622,7 @@ fn open_and_init_partition(
 }
 
 fn open_session(part: &HsmPartition, creds: &HsmCredentials) -> HsmSession {
-    part.open_session(part.api_rev_range().max(), creds, None)
+    part.open_session(part.api_rev(), creds, None)
         .expect("Failed to open session")
 }
 

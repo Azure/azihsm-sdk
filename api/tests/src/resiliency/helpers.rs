@@ -33,7 +33,7 @@ pub(crate) fn init_with_resiliency_and_session() -> (HsmPartition, HsmSession, R
     )
     .expect("Partition init failed");
 
-    let rev = part.api_rev_range().max();
+    let rev = part.api_rev();
     let session = part
         .open_session(rev, &creds, None)
         .expect("Failed to open session");
@@ -55,7 +55,7 @@ pub(crate) fn init_without_resiliency_and_session() -> (HsmPartition, HsmSession
     part.init(creds, None, None, obk_info, pota_endorsement, None)
         .expect("Partition init failed");
 
-    let rev = part.api_rev_range().max();
+    let rev = part.api_rev();
     let session = part
         .open_session(rev, &creds, None)
         .expect("Failed to open session");

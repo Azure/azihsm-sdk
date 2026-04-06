@@ -282,6 +282,14 @@ static azihsm_status azihsm_get_device_handle(azihsm_handle *device, struct azih
             continue;
         }
 
+        // Skip devices with empty path or no supported API revision
+        if (info.path.len == 0 || (info.api_rev_min.major == 0 && info.api_rev_min.minor == 0 &&
+                                   info.api_rev_max.major == 0 && info.api_rev_max.minor == 0))
+        {
+            free(path);
+            continue;
+        }
+
         status = azihsm_part_open(&info.path, device, api_rev);
         free(path);
 
@@ -289,7 +297,7 @@ static azihsm_status azihsm_get_device_handle(azihsm_handle *device, struct azih
         {
             // found a device we can open, return it
             azihsm_part_free_list(device_list);
-            return status;
+            return AZIHSM_STATUS_SUCCESS;
         }
     }
 
@@ -298,11 +306,12 @@ static azihsm_status azihsm_get_device_handle(azihsm_handle *device, struct azih
     ERR_raise_data(
         ERR_LIB_PROV,
         ERR_R_INTERNAL_ERROR,
-        "no HSM partition could be opened from %u candidates (last status %d)",
-        device_count,
-        status
+        "no HSM partition could be opened from %u candidates",
+        device_count
     );
-    return status;
+    // control shouldn't reach here if the API is well-behaved, but return an error just in case
+    // there is no valid device available or all devices fail to open for some reason
+    return AZIHSM_STATUS_INTERNAL_ERROR;
 }
 
 /*

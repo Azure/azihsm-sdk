@@ -66,7 +66,7 @@ fn test_open_partition_with_min_api_rev() {
         let min_rev = range.min();
         let part = HsmPartitionManager::open_partition(&part_info.path, min_rev)
             .expect("Failed to open partition with min API revision");
-        assert_eq!(part.api_rev_inuse(), min_rev);
+        assert_eq!(part.api_rev(), min_rev);
         assert_eq!(part.api_rev_range(), range);
     }
 }
@@ -82,7 +82,7 @@ fn test_open_partition_with_max_api_rev() {
         let max_rev = range.max();
         let part = HsmPartitionManager::open_partition(&part_info.path, max_rev)
             .expect("Failed to open partition with max API revision");
-        assert_eq!(part.api_rev_inuse(), max_rev);
+        assert_eq!(part.api_rev(), max_rev);
         assert_eq!(part.api_rev_range(), range);
     }
 }

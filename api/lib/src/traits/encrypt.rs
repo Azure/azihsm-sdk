@@ -134,7 +134,6 @@ pub trait HsmEncryptContext {
         plaintext: &[u8],
         ciphertext: Option<&mut [u8]>,
     ) -> Result<usize, <Self::Algo as HsmEncryptStreamingOp>::Error>;
-
     /// Encrypts a chunk of plaintext and returns the ciphertext as a vector.
     ///
     /// Convenience method that handles buffer allocation automatically. Queries

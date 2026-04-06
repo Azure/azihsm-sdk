@@ -45,7 +45,7 @@ pub unsafe extern "C" fn azihsm_sess_open(
         let partition = &api::HsmPartition::try_from(dev_handle)?;
 
         let session = Box::new(partition.open_session(
-            partition.api_rev_inuse(),
+            partition.api_rev(),
             &credentials.into(),
             seed_slice,
         )?);

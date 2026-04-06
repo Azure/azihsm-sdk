@@ -49,7 +49,7 @@ where
 
         //init with test creds
         let creds = HsmCredentials::new(&[1u8; 16], &[2u8; 16]);
-        let rev = part.api_rev_range().max();
+        let rev = part.api_rev();
         let (obk_info, pota_endorsement) = make_init_params(&part);
         part.init(creds, None, None, obk_info, pota_endorsement, None)
             .expect("Partition init failed");
