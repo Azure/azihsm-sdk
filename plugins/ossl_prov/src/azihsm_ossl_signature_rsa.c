@@ -479,8 +479,10 @@ static int azihsm_ossl_rsa_digest_sign_init(
 
     ctx->operation = 1; /* Sign */
 
-    /* Get hash algorithm by name */
-    ctx->md = EVP_get_digestbyname(mdname);    // CodeQL [SM02689]  This is passed in externally by customer and must remain in order to keep backward compatibility.
+    /* Use EVP_get_digestbyname with the mdname provided by the OpenSSL core to look up the
+     * digest. This path must be retained alongside the NID-based lookup to preserve backward
+     * compatibility with callers that supply a digest name rather than a NID. */
+    ctx->md = EVP_get_digestbyname(mdname);
     if (ctx->md == NULL)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_OPERATION_FAIL);
