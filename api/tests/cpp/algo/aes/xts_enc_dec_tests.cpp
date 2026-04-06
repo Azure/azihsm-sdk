@@ -2246,3 +2246,187 @@ TEST_F(azihsm_aes_xts, streaming_finish_without_update_behavior)
         ASSERT_EQ(dec_finish.len, 0u);
     });
 }
+
+// ==================== Context Lifecycle After Finish ====================
+
+// After finish succeeds the context is finished; a second finish must fail with
+// INVALID_CONTEXT_STATE, and auto_ctx handles cleanup.
+TEST_F(azihsm_aes_xts, streaming_finish_invalidates_context)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto key = generate_aes_xts_key(session, 512);
+
+        azihsm_algo_aes_xts_params xts_params{};
+        azihsm_algo crypt_algo{};
+        init_xts_algo(crypt_algo, xts_params, AZIHSM_ALGO_ID_AES_XTS, 0x70, 128);
+
+        // Encrypt path
+        auto_ctx enc_ctx;
+        auto err = azihsm_crypt_encrypt_init(&crypt_algo, key.get(), enc_ctx.get_ptr());
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        azihsm_buffer output{ nullptr, 0 };
+        err = azihsm_crypt_encrypt_finish(enc_ctx, &output);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        assert_encrypt_ctx_finished(enc_ctx);
+
+        // Decrypt path
+        init_xts_algo(crypt_algo, xts_params, AZIHSM_ALGO_ID_AES_XTS, 0x70, 128);
+        auto_ctx dec_ctx;
+        err = azihsm_crypt_decrypt_init(&crypt_algo, key.get(), dec_ctx.get_ptr());
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        err = azihsm_crypt_decrypt_finish(dec_ctx, &output);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        assert_decrypt_ctx_finished(dec_ctx);
+    });
+}
+
+// After finish the context is consumed; update on the same handle must fail.
+TEST_F(azihsm_aes_xts, streaming_update_after_finish_is_rejected)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto key = generate_aes_xts_key(session, 512);
+
+        azihsm_algo_aes_xts_params xts_params{};
+        azihsm_algo crypt_algo{};
+        init_xts_algo(crypt_algo, xts_params, AZIHSM_ALGO_ID_AES_XTS, 0x71, 128);
+
+        // Encrypt: init -> finish -> assert consumed
+        auto_ctx enc_ctx;
+        auto err = azihsm_crypt_encrypt_init(&crypt_algo, key.get(), enc_ctx.get_ptr());
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        azihsm_buffer finish_buf{ nullptr, 0 };
+        err = azihsm_crypt_encrypt_finish(enc_ctx, &finish_buf);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        assert_encrypt_ctx_finished(enc_ctx);
+
+        // Decrypt: init -> finish -> assert consumed
+        init_xts_algo(crypt_algo, xts_params, AZIHSM_ALGO_ID_AES_XTS, 0x71, 128);
+        auto_ctx dec_ctx;
+        err = azihsm_crypt_decrypt_init(&crypt_algo, key.get(), dec_ctx.get_ptr());
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        err = azihsm_crypt_decrypt_finish(dec_ctx, &finish_buf);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        assert_decrypt_ctx_finished(dec_ctx);
+    });
+}
+
+// Normal lifecycle: init -> update -> finish succeeds and context is finished.
+TEST_F(azihsm_aes_xts, streaming_init_update_finish_consumes_context)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto key = generate_aes_xts_key(session, 512);
+        const size_t dul = 128;
+
+        azihsm_algo_aes_xts_params xts_params{};
+        azihsm_algo crypt_algo{};
+        init_xts_algo(crypt_algo, xts_params, AZIHSM_ALGO_ID_AES_XTS, 0x72, dul);
+
+        // Encrypt: init -> update -> finish -> verify context is finished.
+        auto_ctx enc_ctx;
+        auto err = azihsm_crypt_encrypt_init(&crypt_algo, key.get(), enc_ctx.get_ptr());
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        uint8_t block[128] = { 0x88 };
+        azihsm_buffer input{ block, sizeof(block) };
+        azihsm_buffer output{ nullptr, 0 };
+
+        err = azihsm_crypt_encrypt_update(enc_ctx, &input, &output);
+        ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+        ASSERT_EQ(output.len, dul);
+
+        std::vector<uint8_t> enc_out(output.len);
+        output.ptr = enc_out.data();
+        err = azihsm_crypt_encrypt_update(enc_ctx, &input, &output);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        azihsm_buffer finish_buf{ nullptr, 0 };
+        err = azihsm_crypt_encrypt_finish(enc_ctx, &finish_buf);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(finish_buf.len, 0u);
+
+        assert_encrypt_ctx_finished(enc_ctx);
+
+        // Decrypt: same lifecycle with roundtrip verification.
+        init_xts_algo(crypt_algo, xts_params, AZIHSM_ALGO_ID_AES_XTS, 0x72, dul);
+        auto_ctx dec_ctx;
+        err = azihsm_crypt_decrypt_init(&crypt_algo, key.get(), dec_ctx.get_ptr());
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        azihsm_buffer dec_input{ enc_out.data(), static_cast<uint32_t>(enc_out.size()) };
+        azihsm_buffer dec_output{ nullptr, 0 };
+
+        err = azihsm_crypt_decrypt_update(dec_ctx, &dec_input, &dec_output);
+        ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+
+        std::vector<uint8_t> dec_out(dec_output.len);
+        dec_output.ptr = dec_out.data();
+        err = azihsm_crypt_decrypt_update(dec_ctx, &dec_input, &dec_output);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        azihsm_buffer dec_finish_buf{ nullptr, 0 };
+        err = azihsm_crypt_decrypt_finish(dec_ctx, &dec_finish_buf);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        assert_decrypt_ctx_finished(dec_ctx);
+
+        // Verify decrypted plaintext matches original.
+        ASSERT_EQ(dec_out.size(), sizeof(block));
+        ASSERT_EQ(std::memcmp(dec_out.data(), block, sizeof(block)), 0);
+    });
+}
+
+// Multiple updates followed by finish; subsequent operations on the finished context fail.
+TEST_F(azihsm_aes_xts, streaming_multiple_updates_then_finish_consumes_context)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto key = generate_aes_xts_key(session, 512);
+        const size_t dul = 128;
+        const size_t num_chunks = 4;
+
+        azihsm_algo_aes_xts_params xts_params{};
+        azihsm_algo crypt_algo{};
+        init_xts_algo(crypt_algo, xts_params, AZIHSM_ALGO_ID_AES_XTS, 0x74, dul);
+
+        auto_ctx enc_ctx;
+        auto err = azihsm_crypt_encrypt_init(&crypt_algo, key.get(), enc_ctx.get_ptr());
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        std::vector<uint8_t> plaintext(dul * num_chunks, 0x99);
+        std::vector<uint8_t> ciphertext;
+
+        // Feed multiple DUL-sized chunks.
+        for (size_t i = 0; i < num_chunks; ++i)
+        {
+            azihsm_buffer input{ plaintext.data() + i * dul, static_cast<uint32_t>(dul) };
+            azihsm_buffer output{ nullptr, 0 };
+
+            err = azihsm_crypt_encrypt_update(enc_ctx, &input, &output);
+            ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+
+            size_t pos = ciphertext.size();
+            ciphertext.resize(pos + output.len);
+            output.ptr = ciphertext.data() + pos;
+
+            err = azihsm_crypt_encrypt_update(enc_ctx, &input, &output);
+            ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+            ciphertext.resize(pos + output.len);
+        }
+
+        azihsm_buffer finish_buf{ nullptr, 0 };
+        err = azihsm_crypt_encrypt_finish(enc_ctx, &finish_buf);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(finish_buf.len, 0u);
+
+        assert_encrypt_ctx_finished(enc_ctx);
+
+        ASSERT_EQ(ciphertext.size(), plaintext.size());
+    });
+}

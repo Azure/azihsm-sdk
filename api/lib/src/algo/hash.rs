@@ -317,7 +317,10 @@ impl HsmHashStreamingOp for HsmHashAlgo {
         let _ = session; // session is unused in this implementation
         let algo = crypto::HashAlgo::from(self);
         let context = crypto::Hasher::hash_init(algo).map_hsm_err(HsmError::InternalError)?;
-        Ok(HsmHashContext { context })
+        Ok(HsmHashContext {
+            context,
+            can_update: true,
+        })
     }
 }
 
@@ -368,6 +371,9 @@ impl HsmHashStreamingOp for HsmHashAlgo {
 pub struct HsmHashContext {
     /// The underlying cryptographic hash context.
     context: crypto::HashAlgoContext,
+
+    // Internal flag to track if finish has been called, to prevent multiple finalizations
+    can_update: bool,
 }
 
 /// Implementation of streaming hash context operations.
@@ -419,6 +425,10 @@ impl HsmHashOpContext for HsmHashContext {
     /// - Many times with small chunks: Suitable for streaming
     /// - Mixed chunk sizes: Works correctly with any pattern
     fn update(&mut self, data: &[u8]) -> Result<(), <Self::Algo as HsmHashStreamingOp>::Error> {
+        // Prevent updates after finish has been called
+        if !self.can_update {
+            return Err(HsmError::InvalidContextState);
+        }
         use crypto::HashOpContext;
         self.context
             .update(data)
@@ -485,10 +495,24 @@ impl HsmHashOpContext for HsmHashContext {
         &mut self,
         output: Option<&mut [u8]>,
     ) -> Result<usize, <Self::Algo as HsmHashStreamingOp>::Error> {
+        //finish can only be called once successfully, subsequent calls should return error
+        if !self.can_update {
+            return Err(HsmError::InvalidContextState);
+        }
+
         use crypto::HashOpContext;
-        self.context
+        let is_data_call = output.is_some();
+        let result = self
+            .context
             .finish(output)
-            .map_hsm_err(HsmError::InternalError)
+            .map_hsm_err(HsmError::InternalError)?;
+
+        // Only mark as finished when actual hashing was performed (not size query)
+        if is_data_call {
+            self.can_update = false;
+        }
+
+        Ok(result)
     }
 }
 

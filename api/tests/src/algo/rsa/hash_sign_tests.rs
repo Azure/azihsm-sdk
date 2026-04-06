@@ -304,3 +304,71 @@ fn test_rsa_4096_pss_streaming_sign_verify(session: HsmSession) {
     let is_valid = streaming_verify_signature(pub_key, verify_algo, &data_chunks, &sig);
     assert!(is_valid, "Streaming signature verification failed");
 }
+
+/// Verifies that RSA sign context rejects update and finish after successful finish.
+#[session_test]
+fn test_rsa_streaming_sign_update_after_finish_fails(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
+    let der = priv_key.to_vec().expect("Failed to export RSA Key");
+    let (priv_key, _pub_key) = import_rsa_key(&session, &der, 2048);
+
+    let sign_algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+    let mut ctx = HsmSigner::sign_init(sign_algo, priv_key).expect("sign_init should succeed");
+
+    ctx.update(b"test data").expect("update should succeed");
+
+    let _sig = ctx.finish_vec().expect("first finish should succeed");
+
+    // update after finish must fail
+    let res = ctx.update(b"more data");
+    assert!(
+        matches!(res, Err(HsmError::InvalidContextState)),
+        "update() after finish() should return InvalidContextState, got {:?}",
+        res
+    );
+
+    // second finish must fail
+    let res = ctx.finish_vec();
+    assert!(
+        matches!(res, Err(HsmError::InvalidContextState)),
+        "finish() after finish() should return InvalidContextState, got {:?}",
+        res
+    );
+}
+
+/// Verifies that RSA verify context rejects update and finish after successful finish.
+#[session_test]
+fn test_rsa_streaming_verify_update_after_finish_fails(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
+    let der = priv_key.to_vec().expect("Failed to export RSA Key");
+    let (priv_key, pub_key) = import_rsa_key(&session, &der, 2048);
+
+    let data = b"test data";
+    let sign_algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+    let sig = streaming_sign_data(priv_key, sign_algo, &[data as &[u8]]);
+
+    let verify_algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+    let mut ctx =
+        HsmVerifier::verify_init(verify_algo, pub_key).expect("verify_init should succeed");
+
+    ctx.update(data).expect("update should succeed");
+
+    let result = ctx.finish(&sig).expect("first finish should succeed");
+    assert!(result, "first verification should succeed");
+
+    // update after finish must fail
+    let res = ctx.update(b"more data");
+    assert!(
+        matches!(res, Err(HsmError::InvalidContextState)),
+        "update() after finish() should return InvalidContextState, got {:?}",
+        res
+    );
+
+    // second finish must fail
+    let res = ctx.finish(&sig);
+    assert!(
+        matches!(res, Err(HsmError::InvalidContextState)),
+        "finish() after finish() should return InvalidContextState, got {:?}",
+        res
+    );
+}

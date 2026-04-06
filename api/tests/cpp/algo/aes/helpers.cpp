@@ -414,3 +414,41 @@ KeyHandle generate_aes_xts_key(azihsm_handle session, uint32_t bits)
         bits
     );
 }
+
+void assert_encrypt_ctx_finished(azihsm_handle ctx)
+{
+    // finish on a finished context must return INVALID_CONTEXT_STATE
+    azihsm_buffer finish_buf{ nullptr, 0 };
+    ASSERT_EQ(
+        crypt_finish_call(CryptOperation::Encrypt, ctx, &finish_buf),
+        AZIHSM_STATUS_INVALID_CONTEXT_STATE
+    );
+
+    // update on a finished context must return INVALID_CONTEXT_STATE
+    uint8_t dummy[16] = { 0 };
+    azihsm_buffer input{ dummy, sizeof(dummy) };
+    azihsm_buffer output{ nullptr, 0 };
+    ASSERT_EQ(
+        crypt_update_call(CryptOperation::Encrypt, ctx, &input, &output),
+        AZIHSM_STATUS_INVALID_CONTEXT_STATE
+    );
+}
+
+void assert_decrypt_ctx_finished(azihsm_handle ctx)
+{
+    // finish on a finished context must return INVALID_CONTEXT_STATE
+    azihsm_buffer finish_buf{ nullptr, 0 };
+    ASSERT_EQ(
+        crypt_finish_call(CryptOperation::Decrypt, ctx, &finish_buf),
+        AZIHSM_STATUS_INVALID_CONTEXT_STATE
+    );
+
+    // update on a finished context must return INVALID_CONTEXT_STATE
+    uint8_t dummy[16] = { 0 };
+    azihsm_buffer input{ dummy, sizeof(dummy) };
+    azihsm_buffer output{ nullptr, 0 };
+    ASSERT_EQ(
+        crypt_update_call(CryptOperation::Decrypt, ctx, &input, &output),
+        AZIHSM_STATUS_INVALID_CONTEXT_STATE
+    );
+}

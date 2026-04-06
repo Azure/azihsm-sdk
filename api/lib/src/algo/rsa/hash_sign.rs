@@ -217,6 +217,7 @@ impl HsmSignStreamingOp for HsmRsaHashSignAlgo {
             algo: self,
             hasher,
             key,
+            can_update: true,
         })
     }
 }
@@ -226,6 +227,9 @@ pub struct HsmRsaSignContext {
     algo: HsmRsaHashSignAlgo,
     hasher: HashAlgoContext,
     key: HsmRsaPrivateKey,
+
+    // Internal flag to track if finish has been called, to prevent multiple finalizations
+    can_update: bool,
 }
 
 impl HsmSignStreamingOpContext for HsmRsaSignContext {
@@ -241,6 +245,10 @@ impl HsmSignStreamingOpContext for HsmRsaSignContext {
     ///
     /// Returns an error if the hash update operation fails.
     fn update(&mut self, data: &[u8]) -> Result<(), <Self::Algo as HsmSignStreamingOp>::Error> {
+        // Prevent updates after finish has been called
+        if !self.can_update {
+            return Err(HsmError::InvalidContextState);
+        }
         self.hasher
             .update(data)
             .map_hsm_err(HsmError::InternalError)
@@ -264,6 +272,11 @@ impl HsmSignStreamingOpContext for HsmRsaSignContext {
         &mut self,
         signature: Option<&mut [u8]>,
     ) -> Result<usize, <Self::Algo as HsmSignStreamingOp>::Error> {
+        //finish can only be called once successfully, subsequent calls should return error
+        if !self.can_update {
+            return Err(HsmError::InvalidContextState);
+        }
+
         let expected_len = self.key.size();
         let Some(signature) = signature else {
             return Ok(expected_len);
@@ -280,7 +293,12 @@ impl HsmSignStreamingOpContext for HsmRsaSignContext {
 
         let data = self.algo.pad(&hash, expected_len)?;
 
-        ddi::rsa_sign(&self.key, &data, signature)
+        let result = ddi::rsa_sign(&self.key, &data, signature)?;
+
+        // Mark context as finished to prevent further updates or finalization
+        self.can_update = false;
+
+        Ok(result)
     }
 }
 
@@ -314,6 +332,7 @@ impl HsmVerifyStreamingOp for HsmRsaHashSignAlgo {
             algo: self,
             hasher,
             key,
+            can_update: true,
         })
     }
 }
@@ -323,6 +342,9 @@ pub struct HsmRsaVerifyContext {
     algo: HsmRsaHashSignAlgo,
     hasher: HashAlgoContext,
     key: HsmRsaPublicKey,
+
+    // Internal flag to track if finish has been called, to prevent multiple finalizations
+    can_update: bool,
 }
 
 impl HsmVerifyStreamingOpContext for HsmRsaVerifyContext {
@@ -338,6 +360,10 @@ impl HsmVerifyStreamingOpContext for HsmRsaVerifyContext {
     ///
     /// Returns an error if the hash update operation fails.
     fn update(&mut self, data: &[u8]) -> Result<(), <Self::Algo as HsmVerifyStreamingOp>::Error> {
+        // Prevent updates after finish has been called
+        if !self.can_update {
+            return Err(HsmError::InvalidContextState);
+        }
         self.hasher
             .update(data)
             .map_hsm_err(HsmError::InternalError)
@@ -360,6 +386,11 @@ impl HsmVerifyStreamingOpContext for HsmRsaVerifyContext {
         &mut self,
         signature: &[u8],
     ) -> Result<bool, <Self::Algo as HsmVerifyStreamingOp>::Error> {
+        //finish can only be called once successfully, subsequent calls should return error
+        if !self.can_update {
+            return Err(HsmError::InvalidContextState);
+        }
+
         let mut algo = self.algo.verify_algo();
 
         let hash = self
@@ -367,9 +398,14 @@ impl HsmVerifyStreamingOpContext for HsmRsaVerifyContext {
             .finish_vec()
             .map_hsm_err(HsmError::InternalError)?;
 
-        self.key.with_crypto_key(|crypto_key| {
+        let result = self.key.with_crypto_key(|crypto_key| {
             algo.verify(crypto_key, &hash, signature)
                 .map_hsm_err(HsmError::InternalError)
-        })
+        })?;
+
+        // Mark context as finished to prevent further updates or finalization
+        self.can_update = false;
+
+        Ok(result)
     }
 }

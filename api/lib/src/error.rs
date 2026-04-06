@@ -62,6 +62,7 @@ pub enum HsmError {
     CannotDeleteInternalKeys = -37,
     UnsupportedApiRevision = -38,
     DeviceNotAccessible = -39,
+    InvalidContextState = -40,
     Panic = i32::MIN,
 }
 

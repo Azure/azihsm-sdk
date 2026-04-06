@@ -130,3 +130,16 @@ void run_streaming_case_list(
 KeyHandle generate_aes_key(azihsm_handle session, uint32_t bits);
 KeyHandle generate_aes_gcm_key(azihsm_handle session, uint32_t bits);
 KeyHandle generate_aes_xts_key(azihsm_handle session, uint32_t bits);
+
+// ==================== Context Lifecycle Assertion Helpers ====================
+//
+// After a successful finish, the context handle is still alive (can be freed),
+// but update/finish must return AZIHSM_STATUS_INVALID_CONTEXT_STATE.
+
+/// Asserts that update and finish on a finished encrypt context both return
+/// AZIHSM_STATUS_INVALID_CONTEXT_STATE.
+void assert_encrypt_ctx_finished(azihsm_handle ctx);
+
+/// Asserts that update and finish on a finished decrypt context both return
+/// AZIHSM_STATUS_INVALID_CONTEXT_STATE.
+void assert_decrypt_ctx_finished(azihsm_handle ctx);
