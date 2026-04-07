@@ -384,6 +384,20 @@ fn test_derive_invalid_props(_session: HsmSession) {
     assert!(props.is_err(), "Builder should reject missing key_kind");
 }
 
+/// Verifies derive fails when key does not have derive capability
+#[session_test]
+fn test_derive_without_can_derive_fails(session: HsmSession) {
+    let (priv_a, _) =
+        generate_ecc_keypair_with_derive(session.clone(), HsmEccCurve::P256, false).unwrap();
+
+    let (_, pub_b) =
+        generate_ecc_keypair_with_derive(session.clone(), HsmEccCurve::P256, true).unwrap();
+
+    let result = ecdh_derive_shared_secret(&session, &priv_a, &pub_b);
+
+    assert!(result.is_err());
+}
+
 /// Verifies ECDH derive determinism for P-256.
 #[session_test]
 fn test_derive_determinism_p256(session: HsmSession) {
