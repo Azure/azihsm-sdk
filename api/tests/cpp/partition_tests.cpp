@@ -9,6 +9,7 @@
 #include "handle/part_handle.hpp"
 #include "handle/part_list_handle.hpp"
 #include "utils/resiliency_config.hpp"
+#include "utils/utils.hpp"
 
 TEST(azihsm_part, get_list)
 {
@@ -82,55 +83,61 @@ TEST(azihsm_part, get_count_invalid_handle_value)
     ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
 }
 
-TEST(azihsm_part, get_path)
+TEST(azihsm_part, get_info)
 {
     auto handle = PartitionListHandle();
     uint32_t count = handle.count();
 
     for (auto i = 0u; i < count; ++i)
     {
-        azihsm_str path = { nullptr, 0 };
-        auto err = azihsm_part_get_path(handle.get(), i, &path);
+        azihsm_part_info info = {};
+        info.path = { nullptr, 0 };
+        auto err = azihsm_part_get_info(handle.get(), i, &info);
         ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
-        ASSERT_GT(path.len, 0);
+        ASSERT_GT(info.path.len, 0);
 
-        std::vector<azihsm_char> buffer(path.len, 0);
-        path.str = buffer.data();
+        std::vector<azihsm_char> buffer(info.path.len, 0);
+        info.path.str = buffer.data();
 
-        uint32_t path_len = path.len;
-        err = azihsm_part_get_path(handle.get(), i, &path);
+        uint32_t path_len = info.path.len;
+        err = azihsm_part_get_info(handle.get(), i, &info);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_EQ(path.len, path_len);
+        ASSERT_EQ(info.path.len, path_len);
+        ASSERT_GT(info.api_rev_min.major, 0);
+        ASSERT_GT(info.api_rev_max.major, 0);
     }
 }
 
-TEST(azihsm_part, get_path_invalid_handle)
+TEST(azihsm_part, get_info_invalid_handle)
 {
     auto bad_handle = 0xDEADBEEF;
-    azihsm_str path = { nullptr, 0 };
-    auto err = azihsm_part_get_path(bad_handle, 0, &path);
+    azihsm_part_info info = {};
+    info.path = { nullptr, 0 };
+    auto err = azihsm_part_get_info(bad_handle, 0, &info);
     ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
 }
 
-TEST(azihsm_part, get_path_null_path_ptr)
+TEST(azihsm_part, get_info_null_path_ptr)
 {
     auto handle = PartitionListHandle();
     for (auto i = 0u; i < handle.count(); ++i)
     {
-        azihsm_str path = { nullptr, 42 };
-        auto err = azihsm_part_get_path(handle.get(), i, &path);
+        azihsm_part_info info = {};
+        info.path = { nullptr, 42 };
+        auto err = azihsm_part_get_info(handle.get(), i, &info);
         ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
     }
 }
 
-TEST(azihsm_part, get_path_invalid_index)
+TEST(azihsm_part, get_info_invalid_index)
 {
     auto handle = PartitionListHandle();
     uint32_t count = handle.count();
     for (auto i = 0u; i < handle.count(); ++i)
     {
-        azihsm_str path = { nullptr, 0 };
-        auto err = azihsm_part_get_path(handle.get(), count, &path);
+        azihsm_part_info info = {};
+        info.path = { nullptr, 0 };
+        auto err = azihsm_part_get_info(handle.get(), count, &info);
         ASSERT_EQ(err, AZIHSM_STATUS_INDEX_OUT_OF_RANGE);
     }
 }
@@ -149,7 +156,8 @@ TEST(azihsm_part, open_close)
         path_str.len = static_cast<uint32_t>(path.size());
 
         azihsm_handle part_handle = 0;
-        auto err = azihsm_part_open(&path_str, &part_handle);
+        auto api_rev = test_api_rev();
+        auto err = azihsm_part_open(&path_str, &part_handle, api_rev);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_NE(part_handle, 0u);
 
@@ -171,10 +179,11 @@ TEST(azihsm_part, open_close_multiple_times)
         path_str.str = path.data();
         path_str.len = static_cast<uint32_t>(path.size());
 
+        auto api_rev = test_api_rev();
         for (int j = 0; j < 5; ++j)
         {
             azihsm_handle part_handle = 0;
-            auto err = azihsm_part_open(&path_str, &part_handle);
+            auto err = azihsm_part_open(&path_str, &part_handle, api_rev);
             ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
             ASSERT_NE(part_handle, 0u);
 
@@ -223,7 +232,8 @@ TEST(azihsm_part, open_double_close)
         path_str.len = static_cast<uint32_t>(path.size());
 
         azihsm_handle part_handle = 0;
-        auto err = azihsm_part_open(&path_str, &part_handle);
+        auto api_rev = test_api_rev();
+        auto err = azihsm_part_open(&path_str, &part_handle, api_rev);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_NE(part_handle, 0u);
 
@@ -642,7 +652,8 @@ TEST(azihsm_part, init_caller_source_with_empty_endorsement_fails)
         path_str.len = static_cast<uint32_t>(path.size());
 
         azihsm_handle part_handle = 0;
-        auto err = azihsm_part_open(&path_str, &part_handle);
+        auto api_rev = test_api_rev();
+        auto err = azihsm_part_open(&path_str, &part_handle, api_rev);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         auto guard =
             scope_guard::make_scope_exit([&part_handle] { azihsm_part_close(part_handle); });
@@ -692,7 +703,8 @@ TEST(azihsm_part, init_caller_source_with_null_endorsement_fails)
         path_str.len = static_cast<uint32_t>(path.size());
 
         azihsm_handle part_handle = 0;
-        auto err = azihsm_part_open(&path_str, &part_handle);
+        auto api_rev = test_api_rev();
+        auto err = azihsm_part_open(&path_str, &part_handle, api_rev);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         auto guard =
             scope_guard::make_scope_exit([&part_handle] { azihsm_part_close(part_handle); });
@@ -737,7 +749,8 @@ TEST(azihsm_part, init_tpm_source_with_endorsement_fails)
         path_str.len = static_cast<uint32_t>(path.size());
 
         azihsm_handle part_handle = 0;
-        auto err = azihsm_part_open(&path_str, &part_handle);
+        auto api_rev = test_api_rev();
+        auto err = azihsm_part_open(&path_str, &part_handle, api_rev);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         auto guard =
             scope_guard::make_scope_exit([&part_handle] { azihsm_part_close(part_handle); });
@@ -788,7 +801,8 @@ TEST(azihsm_part, init_invalid_source_with_endorsement_fails)
         path_str.len = static_cast<uint32_t>(path.size());
 
         azihsm_handle part_handle = 0;
-        auto err = azihsm_part_open(&path_str, &part_handle);
+        auto api_rev = test_api_rev();
+        auto err = azihsm_part_open(&path_str, &part_handle, api_rev);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         auto guard =
             scope_guard::make_scope_exit([&part_handle] { azihsm_part_close(part_handle); });
@@ -840,7 +854,8 @@ TEST(azihsm_part, init_with_resiliency_config)
         path_str.len = static_cast<uint32_t>(path.size());
 
         azihsm_handle part_handle = 0;
-        auto err = azihsm_part_open(&path_str, &part_handle);
+        auto api_rev = test_api_rev();
+        auto err = azihsm_part_open(&path_str, &part_handle, api_rev);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         auto guard =
             scope_guard::make_scope_exit([&part_handle] { azihsm_part_close(part_handle); });
@@ -881,7 +896,8 @@ TEST(azihsm_part, init_with_resiliency_caller_pota_null_callback_fails)
         path_str.len = static_cast<uint32_t>(path.size());
 
         azihsm_handle part_handle = 0;
-        auto err = azihsm_part_open(&path_str, &part_handle);
+        auto api_rev = test_api_rev();
+        auto err = azihsm_part_open(&path_str, &part_handle, api_rev);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         auto guard =
             scope_guard::make_scope_exit([&part_handle] { azihsm_part_close(part_handle); });
@@ -928,7 +944,8 @@ TEST(azihsm_part, init_with_resiliency_invalid_pota_source_fails)
         path_str.len = static_cast<uint32_t>(path.size());
 
         azihsm_handle part_handle = 0;
-        auto err = azihsm_part_open(&path_str, &part_handle);
+        auto api_rev = test_api_rev();
+        auto err = azihsm_part_open(&path_str, &part_handle, api_rev);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         auto guard =
             scope_guard::make_scope_exit([&part_handle] { azihsm_part_close(part_handle); });
@@ -972,7 +989,8 @@ TEST(azihsm_part, init_with_resiliency_tpm_pota_with_callback_fails)
         path_str.len = static_cast<uint32_t>(path.size());
 
         azihsm_handle part_handle = 0;
-        auto err = azihsm_part_open(&path_str, &part_handle);
+        auto api_rev = test_api_rev();
+        auto err = azihsm_part_open(&path_str, &part_handle, api_rev);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         auto guard =
             scope_guard::make_scope_exit([&part_handle] { azihsm_part_close(part_handle); });

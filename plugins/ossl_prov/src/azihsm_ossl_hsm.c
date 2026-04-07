@@ -215,9 +215,13 @@ static azihsm_status load_credentials_from_file(const char *path, uint8_t *outpu
 }
 
 /*
- * picks and opens the first possible HSM device
- * */
-static azihsm_status azihsm_get_device_handle(azihsm_handle *device)
+ * Picks and opens the first available HSM device using the given API revision.
+ *
+ * @param[out] device  Handle to the opened HSM partition
+ * @param[in]  api_rev API revision to request when opening the partition
+ * @return AZIHSM_STATUS_SUCCESS on success, or a negative error code on failure
+ */
+static azihsm_status azihsm_get_device_handle(azihsm_handle *device, struct azihsm_api_rev api_rev)
 {
     azihsm_status status;
     azihsm_handle device_list;
@@ -250,26 +254,54 @@ static azihsm_status azihsm_get_device_handle(azihsm_handle *device)
 
     for (uint32_t i = 0; i < device_count; i++)
     {
+        struct azihsm_part_info info = { { NULL, 0 }, { 0, 0 }, { 0, 0 } };
 
-        azihsm_char path[AZIHSM_DEVICE_PATH_SIZE] = { '\0' };
-        struct azihsm_str dev_path = { path, sizeof(path) };
-
-        status = azihsm_part_get_path(device_list, i, &dev_path);
-
-        if (status != AZIHSM_STATUS_SUCCESS)
+        // First call to get the required path buffer size
+        status = azihsm_part_get_info(device_list, i, &info);
+        if (status != AZIHSM_STATUS_BUFFER_TOO_SMALL || info.path.len == 0)
         {
+            // Skip this device and try the next one
             continue;
         }
 
-        status = azihsm_part_open(&dev_path, device);
+        azihsm_char *path = calloc(info.path.len, sizeof(azihsm_char));
+        if (path == NULL)
+        {
+            // skip this device and try the next one
+            continue;
+        }
+
+        info.path.str = path;
+
+        // Second call to fill the info
+        status = azihsm_part_get_info(device_list, i, &info);
+        if (status != AZIHSM_STATUS_SUCCESS)
+        {
+            // Skip this device and try the next one
+            free(path);
+            continue;
+        }
+
+        // Skip devices with empty path or no supported API revision
+        if (info.path.len == 0 || (info.api_rev_min.major == 0 && info.api_rev_min.minor == 0 &&
+                                   info.api_rev_max.major == 0 && info.api_rev_max.minor == 0))
+        {
+            free(path);
+            continue;
+        }
+
+        status = azihsm_part_open(&info.path, device, api_rev);
+        free(path);
 
         if (status == AZIHSM_STATUS_SUCCESS)
         {
+            // found a device we can open, return it
             azihsm_part_free_list(device_list);
             return AZIHSM_STATUS_SUCCESS;
         }
     }
 
+    // No device could be opened successfully, free the list and return error
     azihsm_part_free_list(device_list);
     ERR_raise_data(
         ERR_LIB_PROV,
@@ -277,6 +309,8 @@ static azihsm_status azihsm_get_device_handle(azihsm_handle *device)
         "no HSM partition could be opened from %u candidates",
         device_count
     );
+    // control shouldn't reach here if the API is well-behaved, but return an error just in case
+    // there is no valid device available or all devices fail to open for some reason
     return AZIHSM_STATUS_INTERNAL_ERROR;
 }
 
@@ -917,7 +951,7 @@ azihsm_status azihsm_open_device_and_session(
         backup_config.owner_backup_key = &obk_buf;
     }
 
-    status = azihsm_get_device_handle(device);
+    status = azihsm_get_device_handle(device, api_rev);
     if (status != AZIHSM_STATUS_SUCCESS)
     {
         free_buffer(&obk_buf);
@@ -1118,7 +1152,7 @@ azihsm_status azihsm_open_device_and_session(
     free_buffer(&retrieved_bmk);
 
     // Open session (seed=NULL lets the library generate random bytes internally)
-    status = azihsm_sess_open(*device, &api_rev, &creds, NULL, session);
+    status = azihsm_sess_open(*device, &creds, NULL, session);
     OPENSSL_cleanse(&creds, sizeof(creds));
     if (status != AZIHSM_STATUS_SUCCESS)
     {

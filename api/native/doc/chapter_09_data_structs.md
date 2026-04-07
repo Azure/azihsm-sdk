@@ -386,6 +386,50 @@ struct azihsm_part_prop {
  | val   | [azihsm_void *](#azihsm_void)               | value of the property.                         |
  | len   | [azihsm_u32](#azihsm_u32)                   | size of the `val` field in bytes               |
 
+### azihsm_str
+
+A sized string buffer.
+
+```cpp
+struct azihsm_str {
+    azihsm_char *str;
+    azihsm_u32 len;
+};
+```
+
+**Fields**
+
+ | Field | Type                            | Description                                        |
+ | ----- | ------------------------------- | -------------------------------------------------- |
+ | str   | [azihsm_char *](#azihsm_char)  | pointer to string buffer                           |
+ | len   | [azihsm_u32](#azihsm_u32)      | length of the string (including null terminator)   |
+
+### azihsm_part_info
+
+Partition information returned by [`azihsm_part_get_info`](#azihsm_part_get_info).
+
+```cpp
+struct azihsm_part_info {
+    struct azihsm_str path;
+    struct azihsm_api_rev api_rev_min;
+    struct azihsm_api_rev api_rev_max;
+};
+```
+
+**Fields**
+
+ | Field       | Type                                     | Description                                         |
+ | ----------- | ---------------------------------------- | --------------------------------------------------- |
+ | path        | [struct azihsm_str](#azihsm_str)         | device path (caller-owned buffer, filled by the API) |
+ | api_rev_min | [struct azihsm_api_rev](#azihsm_api_rev) | minimum supported API revision                      |
+ | api_rev_max | [struct azihsm_api_rev](#azihsm_api_rev) | maximum supported API revision                      |
+
+On input, `path.len` is the capacity of the caller-allocated buffer pointed to by `path.str`,
+in `azihsm_char` elements (including the null terminator).
+On output, `path.len` is set to the number of `azihsm_char` elements written
+(or the required count when `AZIHSM_STATUS_BUFFER_TOO_SMALL` is returned).
+`api_rev_min` and `api_rev_max` are only valid when the return status is `AZIHSM_STATUS_SUCCESS`.
+
 ### azihsm_api_rev
 
 API Revision
@@ -407,7 +451,7 @@ struct azihsm_api_rev {
 
 ### azihsm_uuid
 
-API Revision
+UUID
 
  ```cpp
 struct azihsm_uuid{

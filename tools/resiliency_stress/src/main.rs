@@ -162,6 +162,10 @@ const LABELS: [&str; 26] = [
 /// Number of per-op counter slots.
 const NUM_OPS: usize = LABELS.len();
 
+/// Fixed API revision verified for use with the stress tool.
+/// Pinned to avoid hitting unsupported versions on newer firmware.
+const STRESS_AZIHSM_API_REV: HsmApiRev = HsmApiRev { major: 1, minor: 0 };
+
 /// Per-process stats stored in shared memory.
 ///
 /// Uses `repr(C)` to ensure deterministic layout across processes.
@@ -459,8 +463,8 @@ fn open_and_init_partition(
 
     let list = HsmPartitionManager::partition_info_list();
     assert!(!list.is_empty(), "No HSM partitions found.");
-    let part =
-        HsmPartitionManager::open_partition(&list[0].path).expect("Failed to open partition");
+    let part = HsmPartitionManager::open_partition(&list[0].path, STRESS_AZIHSM_API_REV)
+        .expect("Failed to open partition");
     if !skip_reset {
         part.reset().expect("Failed to reset partition");
     }
@@ -618,7 +622,7 @@ fn open_and_init_partition(
 }
 
 fn open_session(part: &HsmPartition, creds: &HsmCredentials) -> HsmSession {
-    part.open_session(part.api_rev_range().max(), creds, None)
+    part.open_session(part.api_rev(), creds, None)
         .expect("Failed to open session")
 }
 
@@ -1596,7 +1600,7 @@ fn run_single_process(args: Args) {
         let list = HsmPartitionManager::partition_info_list();
         let path = list[0].path.clone();
         thread::spawn(move || {
-            let partition = HsmPartitionManager::open_partition(&path)
+            let partition = HsmPartitionManager::open_partition(&path, STRESS_AZIHSM_API_REV)
                 .expect("Failed to open partition for reset thread");
 
             if !enable_resets {
@@ -1783,7 +1787,7 @@ fn run_as_parent(args: Args) {
     {
         let list = HsmPartitionManager::partition_info_list();
         assert!(!list.is_empty(), "No partitions found");
-        let part = HsmPartitionManager::open_partition(&list[0].path)
+        let part = HsmPartitionManager::open_partition(&list[0].path, STRESS_AZIHSM_API_REV)
             .expect("Failed to open partition for reset");
         part.reset().expect("Failed to reset partition");
     }
@@ -1846,7 +1850,7 @@ fn run_as_parent(args: Args) {
     let reset_handle = thread::spawn(move || {
         // SAFETY: Shared memory pointer is valid for the lifetime of the process.
         let shmem = unsafe { &*(shmem_ptr as *const SharedMem) };
-        let partition = HsmPartitionManager::open_partition(&path)
+        let partition = HsmPartitionManager::open_partition(&path, STRESS_AZIHSM_API_REV)
             .expect("Failed to open partition for reset thread");
 
         if !enable_resets {

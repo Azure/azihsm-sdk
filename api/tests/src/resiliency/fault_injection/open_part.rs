@@ -25,6 +25,7 @@
 
 use azihsm_res_test_dev::*;
 
+use crate::utils::partition::*;
 use crate::*;
 
 /// Error codes that trigger `open_partition` retry. Currently only
@@ -78,11 +79,14 @@ fn first_partition_path() -> String {
 fn test_open_partition_recovers_from_get_api_rev_single_fault() {
     for error in &super::all_test_errors() {
         let path = first_partition_path();
+        // Reset counters so fail_nth targets calls within open_partition,
+        // not calls already made by partition_info_list.
+        clear_faults();
         let before = op_call_count(DdiOp::GetApiRev);
 
         inject_fault(FaultRule::fail_nth(DdiOp::GetApiRev, 1, *error));
 
-        let result = HsmPartitionManager::open_partition(&path);
+        let result = HsmPartitionManager::open_partition(&path, test_api_rev());
         let after = op_call_count(DdiOp::GetApiRev);
         clear_faults();
 
@@ -110,11 +114,14 @@ fn test_open_partition_recovers_from_get_api_rev_single_fault() {
 fn test_open_partition_recovers_from_get_device_info_single_fault() {
     for error in &super::all_test_errors() {
         let path = first_partition_path();
+        // Reset counters so fail_nth targets calls within open_partition,
+        // not calls already made by partition_info_list.
+        clear_faults();
         let before = op_call_count(DdiOp::GetDeviceInfo);
 
         inject_fault(FaultRule::fail_nth(DdiOp::GetDeviceInfo, 1, *error));
 
-        let result = HsmPartitionManager::open_partition(&path);
+        let result = HsmPartitionManager::open_partition(&path, test_api_rev());
         let after = op_call_count(DdiOp::GetDeviceInfo);
         clear_faults();
 
@@ -146,7 +153,7 @@ fn test_open_partition_recovers_from_get_api_rev_last_retry() {
 
         inject_fault(FaultRule::fail_next(DdiOp::GetApiRev, MAX_RETRIES, *error));
 
-        let result = HsmPartitionManager::open_partition(&path);
+        let result = HsmPartitionManager::open_partition(&path, test_api_rev());
         let after = op_call_count(DdiOp::GetApiRev);
         clear_faults();
 
@@ -182,7 +189,7 @@ fn test_open_partition_recovers_from_get_device_info_last_retry() {
             *error,
         ));
 
-        let result = HsmPartitionManager::open_partition(&path);
+        let result = HsmPartitionManager::open_partition(&path, test_api_rev());
         let after = op_call_count(DdiOp::GetDeviceInfo);
         clear_faults();
 
@@ -222,7 +229,7 @@ fn test_open_partition_fails_from_get_api_rev_exhausted() {
             *error,
         ));
 
-        let result = HsmPartitionManager::open_partition(&path);
+        let result = HsmPartitionManager::open_partition(&path, test_api_rev());
         let after = op_call_count(DdiOp::GetApiRev);
         clear_faults();
 
@@ -256,7 +263,7 @@ fn test_open_partition_fails_from_get_device_info_exhausted() {
             *error,
         ));
 
-        let result = HsmPartitionManager::open_partition(&path);
+        let result = HsmPartitionManager::open_partition(&path, test_api_rev());
         let after = op_call_count(DdiOp::GetDeviceInfo);
         clear_faults();
 

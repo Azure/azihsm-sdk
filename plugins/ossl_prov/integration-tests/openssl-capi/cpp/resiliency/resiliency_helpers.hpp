@@ -49,11 +49,40 @@ using hsm_status = int32_t;
 static constexpr hsm_status HSM_OK = 0;
 static constexpr hsm_status HSM_BUF_SMALL = -4;
 
+/// azihsm_char is platform-dependent: uint8_t (UTF-8) on Linux, wchar_t
+/// (UTF-16) on Windows.  This file is Linux-only (dlopen/RTLD_NOLOAD),
+/// so we hardcode uint8_t here.
+using hsm_char = uint8_t;
+
+/// Matches the C layout of azihsm_api_rev { uint32_t major; uint32_t minor; }
+struct hsm_api_rev
+{
+    uint32_t major;
+    uint32_t minor;
+};
+
+/// Matches the C layout of azihsm_str { azihsm_char *str; uint32_t len; }
+/// On 64-bit Linux: sizeof == 16 (8-byte pointer + 4-byte len + 4 padding).
+struct hsm_str
+{
+    hsm_char *str;
+    uint32_t len;
+};
+
+/// Matches the C layout of azihsm_part_info { azihsm_str path; azihsm_api_rev min; azihsm_api_rev
+/// max; }
+struct hsm_part_info
+{
+    hsm_str path;
+    hsm_api_rev api_rev_min;
+    hsm_api_rev api_rev_max;
+};
+
 using fn_get_list = hsm_status (*)(hsm_handle *);
 using fn_free_list = hsm_status (*)(hsm_handle);
 using fn_get_count = hsm_status (*)(hsm_handle, uint32_t *);
-using fn_get_path = hsm_status (*)(hsm_handle, uint32_t, void *);
-using fn_open = hsm_status (*)(const void *, hsm_handle *);
+using fn_get_info = hsm_status (*)(hsm_handle, uint32_t, hsm_part_info *);
+using fn_open = hsm_status (*)(const void *, hsm_handle *, hsm_api_rev);
 using fn_close = hsm_status (*)(hsm_handle);
 using fn_reset = hsm_status (*)(hsm_handle);
 
@@ -62,7 +91,7 @@ struct NativeApi
     fn_get_list get_list;
     fn_free_list free_list;
     fn_get_count get_count;
-    fn_get_path get_path;
+    fn_get_info get_info;
     fn_open open;
     fn_close close;
     fn_reset reset;
@@ -73,12 +102,12 @@ struct NativeApi
         get_list = reinterpret_cast<fn_get_list>(dlsym(h, "azihsm_part_get_list"));
         free_list = reinterpret_cast<fn_free_list>(dlsym(h, "azihsm_part_free_list"));
         get_count = reinterpret_cast<fn_get_count>(dlsym(h, "azihsm_part_get_count"));
-        get_path = reinterpret_cast<fn_get_path>(dlsym(h, "azihsm_part_get_path"));
+        get_info = reinterpret_cast<fn_get_info>(dlsym(h, "azihsm_part_get_info"));
         open = reinterpret_cast<fn_open>(dlsym(h, "azihsm_part_open"));
         close = reinterpret_cast<fn_close>(dlsym(h, "azihsm_part_close"));
         reset = reinterpret_cast<fn_reset>(dlsym(h, "azihsm_part_reset"));
 
-        if (!get_list || !free_list || !get_count || !get_path || !open || !close || !reset)
+        if (!get_list || !free_list || !get_count || !get_info || !open || !close || !reset)
         {
             throw std::runtime_error("Failed to resolve native API symbols via dlsym");
         }
@@ -104,30 +133,30 @@ inline hsm_handle open_reset_handle(const NativeApi &api)
         throw std::runtime_error("get_count failed");
     }
 
-    /* azihsm_str layout: { uint8_t *str; uint32_t len; } */
-    struct
-    {
-        uint8_t *str;
-        uint32_t len;
-    } path = { nullptr, 0 };
+    /* First call: query required path buffer size and API rev range */
+    hsm_part_info info = {};
+    info.path.str = nullptr;
+    info.path.len = 0;
 
-    if (api.get_path(list, 0, &path) != HSM_BUF_SMALL)
+    if (api.get_info(list, 0, &info) != HSM_BUF_SMALL)
     {
         api.free_list(list);
-        throw std::runtime_error("get_path size query failed");
+        throw std::runtime_error("get_info size query failed");
     }
 
-    std::vector<uint8_t> buf(path.len, 0);
-    path.str = buf.data();
-    auto err = api.get_path(list, 0, &path);
+    /* Second call: fill path and rev range */
+    std::vector<hsm_char> buf(info.path.len, 0);
+    info.path.str = buf.data();
+    auto err = api.get_info(list, 0, &info);
     api.free_list(list);
     if (err != HSM_OK)
     {
-        throw std::runtime_error("get_path failed");
+        throw std::runtime_error("get_info failed");
     }
 
+    /* Open partition with the minimum supported API revision */
     hsm_handle part = 0;
-    if (api.open(&path, &part) != HSM_OK)
+    if (api.open(&info.path, &part, info.api_rev_min) != HSM_OK)
     {
         throw std::runtime_error("part_open failed");
     }

@@ -131,7 +131,7 @@ fn spawn_reset_thread(
     barrier: Arc<Barrier>,
 ) -> thread::JoinHandle<u32> {
     thread::spawn(move || {
-        let partition = HsmPartitionManager::open_partition(&path)
+        let partition = HsmPartitionManager::open_partition(&path, test_api_rev())
             .expect("Failed to open partition for reset thread");
         barrier.wait();
         let tid = std::thread::current().id();
@@ -1851,7 +1851,8 @@ fn test_stress_init_part_under_reset() {
     let path = list[0].path.clone();
 
     // Initial setup: open, reset, init once to establish baseline.
-    let part = HsmPartitionManager::open_partition(&path).expect("Failed to open partition");
+    let part = HsmPartitionManager::open_partition(&path, test_api_rev())
+        .expect("Failed to open partition");
     part.reset().expect("Partition reset failed");
 
     // Create a shared resiliency context so all workers use the same
