@@ -162,7 +162,7 @@ fn test_close_session_does_not_panic_after_reset() {
     )
     .expect("Partition re-init after reset should succeed");
 
-    let rev = part.api_rev_range().max();
+    let rev = part.api_rev();
     let result = part.open_session(rev, &creds, None);
     assert!(
         result.is_ok(),
