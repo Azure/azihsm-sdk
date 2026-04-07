@@ -80,7 +80,7 @@ fn get_cert_chain_and_pub_key(
     rev: HsmApiRev,
     slot_id: u8,
 ) -> HsmResult<(String, Vec<u8>)> {
-    let (cert_chain, last_cert_der) = fetch_cert_chain_checked(dev, rev, slot_id, true)?;
+    let (cert_chain, last_cert_der) = fetch_cert_chain_checked(dev, rev, slot_id)?;
     let last_cert_der = last_cert_der.ok_or(HsmError::InternalError)?;
 
     let cert = X509Certificate::from_der(&last_cert_der).map_hsm_err(HsmError::InternalError)?;
@@ -596,7 +596,7 @@ pub fn establish_credential(
 ///
 /// Returns the certificate chain in PEM format.
 pub(crate) fn get_cert_chain(dev: &HsmDev, rev: HsmApiRev, slot_id: u8) -> HsmResult<String> {
-    let (cert_chain, _) = fetch_cert_chain_checked(dev, rev, slot_id, false)?;
+    let (cert_chain, _) = fetch_cert_chain_checked(dev, rev, slot_id)?;
     Ok(cert_chain)
 }
 
@@ -606,16 +606,18 @@ pub(crate) fn get_cert_chain(dev: &HsmDev, rev: HsmApiRev, slot_id: u8) -> HsmRe
 /// and returns [`HsmError::CertChainChanged`] if the count or thumbprint
 /// changed in between.
 ///
-/// When `return_last_der` is `true`, the DER bytes of the last certificate
-/// are captured and returned (and `count == 0` is treated as an error).
+/// Returns `InternalError` if the certificate count is zero (a partition
+/// must always have a provisioned cert chain).
+///
+/// The DER bytes of the last certificate are always captured and returned
+/// so callers can optionally extract the public key.
 fn fetch_cert_chain_checked(
     dev: &HsmDev,
     rev: HsmApiRev,
     slot_id: u8,
-    return_last_der: bool,
 ) -> HsmResult<(String, Option<Vec<u8>>)> {
     let (count, thumbprint) = get_cert_chain_info(dev, rev, slot_id)?;
-    if return_last_der && count == 0 {
+    if count == 0 {
         return Err(HsmError::InternalError);
     }
 
@@ -625,7 +627,7 @@ fn fetch_cert_chain_checked(
         let der = get_cert(dev, rev, slot_id, cert_id)?;
         let pem = crypto::der_to_pem(&der).map_hsm_err(HsmError::InternalError)?;
         cert_chain.push_str(&pem);
-        if return_last_der && cert_id == count - 1 {
+        if cert_id == count - 1 {
             last_cert_der = Some(der);
         }
     }
