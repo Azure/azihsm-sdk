@@ -76,6 +76,27 @@ void verify_generated_aes_key_properties(
     verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_DERIVE, false);
 }
 
+void compare_key_properties(
+    azihsm_handle key_handle1,
+    azihsm_handle key_handle2
+)
+{
+    compare_key_property<uint32_t>(key_handle1, key_handle2, AZIHSM_KEY_PROP_ID_CLASS);
+    compare_key_property<azihsm_key_kind>(key_handle1, key_handle2, AZIHSM_KEY_PROP_ID_KIND);
+    compare_key_property<uint32_t>(key_handle1, key_handle2, AZIHSM_KEY_PROP_ID_BIT_LEN);
+    compare_key_property<bool>(key_handle1, key_handle2, AZIHSM_KEY_PROP_ID_LOCAL);
+    compare_key_property<bool>(key_handle1, key_handle2, AZIHSM_KEY_PROP_ID_SESSION);
+    compare_key_property<bool>(key_handle1, key_handle2, AZIHSM_KEY_PROP_ID_SENSITIVE);
+    compare_key_property<bool>(key_handle1, key_handle2, AZIHSM_KEY_PROP_ID_EXTRACTABLE);
+    compare_key_property<bool>(key_handle1, key_handle2, AZIHSM_KEY_PROP_ID_ENCRYPT);
+    compare_key_property<bool>(key_handle1, key_handle2, AZIHSM_KEY_PROP_ID_DECRYPT);
+    compare_key_property<bool>(key_handle1, key_handle2, AZIHSM_KEY_PROP_ID_SIGN);
+    compare_key_property<bool>(key_handle1, key_handle2, AZIHSM_KEY_PROP_ID_VERIFY);
+    compare_key_property<bool>(key_handle1, key_handle2, AZIHSM_KEY_PROP_ID_WRAP);
+    compare_key_property<bool>(key_handle1, key_handle2, AZIHSM_KEY_PROP_ID_UNWRAP);
+    compare_key_property<bool>(key_handle1, key_handle2, AZIHSM_KEY_PROP_ID_DERIVE);
+}
+
 void aes_key_gen_invalid_props_fail_common(
     azihsm_handle session,
     azihsm_algo_id algo_id,
@@ -313,5 +334,77 @@ void aes_key_unwrap_common(
 
     // Step 6: Clean up unwrapped key
     err = azihsm_key_delete(unwrapped_key.release());
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+}
+
+void aes_key_unmask_common(
+    azihsm_handle session,
+    azihsm_algo_id algo_id,
+    azihsm_key_kind key_kind,
+    uint32_t bits
+)
+{
+    // Step 1: Generate AES key
+    azihsm_algo keygen_algo{};
+    keygen_algo.id = algo_id;
+    keygen_algo.params = nullptr;
+    keygen_algo.len = 0;
+
+    azihsm_key_class key_class = AZIHSM_KEY_CLASS_SECRET;
+    bool is_session = true;
+    bool can_encrypt = true;
+    bool can_decrypt = true;
+
+    std::vector<azihsm_key_prop> props_vec = {
+        { .id = AZIHSM_KEY_PROP_ID_KIND, .val = &key_kind, .len = sizeof(key_kind) },
+        { .id = AZIHSM_KEY_PROP_ID_CLASS, .val = &key_class, .len = sizeof(key_class) },
+        { .id = AZIHSM_KEY_PROP_ID_BIT_LEN, .val = &bits, .len = sizeof(bits) },
+        { .id = AZIHSM_KEY_PROP_ID_SESSION, .val = &is_session, .len = sizeof(is_session) },
+        { .id = AZIHSM_KEY_PROP_ID_ENCRYPT, .val = &can_encrypt, .len = sizeof(can_encrypt) },
+        { .id = AZIHSM_KEY_PROP_ID_DECRYPT, .val = &can_decrypt, .len = sizeof(can_decrypt) }
+    };
+
+    azihsm_key_prop_list prop_list{ .props = props_vec.data(),
+                                    .count = static_cast<uint32_t>(props_vec.size()) };
+
+    auto_key original_key;
+    azihsm_status err = azihsm_key_gen(session, &keygen_algo, &prop_list, original_key.get_ptr());
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+    ASSERT_NE(original_key, 0);
+
+    // Step 2: Get masked key via property (probe-then-fetch)
+    azihsm_key_prop masked_prop{};
+    masked_prop.id = AZIHSM_KEY_PROP_ID_MASKED_KEY;
+    masked_prop.val = nullptr;
+    masked_prop.len = 0;
+
+    err = azihsm_key_get_prop(original_key, &masked_prop);
+    ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+    ASSERT_GT(masked_prop.len, 0);
+
+    std::vector<uint8_t> masked_key_data(masked_prop.len);
+    masked_prop.val = masked_key_data.data();
+
+    err = azihsm_key_get_prop(original_key, &masked_prop);
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+    // Step 3: Unmask the masked key
+    azihsm_buffer masked_key_buf{};
+    masked_key_buf.ptr = masked_key_data.data();
+    masked_key_buf.len = static_cast<uint32_t>(masked_key_data.size());
+
+    auto_key unmasked_key;
+    err = azihsm_key_unmask(session, key_kind, &masked_key_buf, unmasked_key.get_ptr());
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+    ASSERT_NE(unmasked_key, 0);
+
+    // Step 4: Verify unwrapped key properties match original key properties
+    compare_key_properties(original_key, unmasked_key);
+
+    // Step 5: Clean up keys
+    err = azihsm_key_delete(unmasked_key.release());
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+    err = azihsm_key_delete(original_key.release());
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 }

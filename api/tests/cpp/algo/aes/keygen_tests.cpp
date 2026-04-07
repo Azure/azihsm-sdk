@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#include <array>
 #include <azihsm_api.h>
 #include <cstring>
 #include <gtest/gtest.h>
@@ -10,6 +11,7 @@
 #include "handle/part_handle.hpp"
 #include "handle/part_list_handle.hpp"
 #include "handle/session_handle.hpp"
+#include "helpers.hpp"
 #include "utils/aes_keygen.hpp"
 #include "utils/auto_key.hpp"
 
@@ -119,6 +121,25 @@ static std::vector<uint8_t> build_xts_wrapped_blob(
     blob.insert(blob.end(), key2_wrapped.begin(), key2_wrapped.end());
 
     return blob;
+}
+
+// Helper: compute tweak + units as little-endian u128 addition
+std::array<uint8_t, 16> tweak_after_units(const uint8_t tweak[16], size_t units)
+{
+    // Add units to tweak interpreted as a little-endian 128-bit integer
+    uint64_t lo = 0;
+    uint64_t hi = 0;
+    std::memcpy(&lo, tweak, 8);
+    std::memcpy(&hi, tweak + 8, 8);
+
+    uint64_t new_lo = lo + static_cast<uint64_t>(units);
+    uint64_t carry = (new_lo < lo) ? 1 : 0;
+    uint64_t new_hi = hi + carry;
+
+    std::array<uint8_t, 16> out;
+    std::memcpy(out.data(), &new_lo, 8);
+    std::memcpy(out.data() + 8, &new_hi, 8);
+    return out;
 }
 
 class azihsm_aes_keygen : public ::testing::Test
@@ -641,6 +662,33 @@ TEST_F(azihsm_aes_keygen, aes_256_key_unwrap)
     });
 }
 
+/// Test AES key unmasking for key sizes of 128
+TEST_F(azihsm_aes_keygen, aes_128_key_unmask)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        aes_key_unmask_common(session, AZIHSM_ALGO_ID_AES_KEY_GEN,
+            AZIHSM_KEY_KIND_AES, 128);
+    });
+}
+
+/// Test AES key unmasking for key sizes of 192
+TEST_F(azihsm_aes_keygen, aes_192_key_unmask)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        aes_key_unmask_common(session, AZIHSM_ALGO_ID_AES_KEY_GEN,
+            AZIHSM_KEY_KIND_AES, 192);
+    });
+}
+
+/// Test AES key unmasking for key sizes of 256
+TEST_F(azihsm_aes_keygen, aes_256_key_unmask)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        aes_key_unmask_common(session, AZIHSM_ALGO_ID_AES_KEY_GEN,
+            AZIHSM_KEY_KIND_AES, 256);
+    });
+}
+
 TEST_F(azihsm_aes_keygen, unmask_aes_128_key)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -800,6 +848,314 @@ TEST_F(azihsm_aes_keygen, aes_xts_key_gen_persistent)
     });
 }
 
+/// Test AES-XTS key unwrapping, and validate the unwrapped key can be used for encryption 
+/// and decryption with correct tweak handling. Also validates that the unwrapped key has 
+/// expected properties and capabilities, and is not local to the session.
+TEST_F(azihsm_aes_keygen, aes_xts_key_unwrap)
+{
+    part_list_.for_each_session([this](azihsm_handle session) {
+        // Step 1: Generate RSA unwrapping key pair
+        auto_key wrapping_priv_key;
+        auto_key wrapping_pub_key;
+        generate_rsa_wrapping_keypair(session, wrapping_priv_key, wrapping_pub_key);
+
+        // AES-XTS uses two AES-256 keys (total bits=512).
+        constexpr size_t key_bytes = 32;
+        std::vector<uint8_t> key1_plain(key_bytes, 0x11);
+        std::vector<uint8_t> key2_plain(key_bytes, 0x22);
+        auto wrapped_blob = build_xts_wrapped_blob(
+            wrapping_pub_key, key1_plain, key2_plain
+        );
+        ASSERT_FALSE(wrapped_blob.empty());
+
+        // Step 2: Unwrap the XTS wrapped blob
+        azihsm_algo_rsa_pkcs_oaep_params oaep_params{};
+        oaep_params.hash_algo_id = AZIHSM_ALGO_ID_SHA256;
+        oaep_params.mgf1_hash_algo_id = AZIHSM_MGF1_ID_SHA256;
+        oaep_params.label = nullptr;
+
+        azihsm_algo_rsa_aes_key_wrap_params unwrap_params{};
+        unwrap_params.oaep_params = &oaep_params;
+        unwrap_params.aes_key_bits = 256;
+
+        azihsm_algo unwrap_algo{};
+        unwrap_algo.id = AZIHSM_ALGO_ID_RSA_AES_KEY_WRAP;
+        unwrap_algo.params = &unwrap_params;
+        unwrap_algo.len = sizeof(unwrap_params);
+
+        azihsm_key_kind key_kind = AZIHSM_KEY_KIND_AES_XTS;
+        azihsm_key_class key_class = AZIHSM_KEY_CLASS_SECRET;
+        uint32_t bits = 512;
+        bool can_encrypt = true;
+        bool can_decrypt = true;
+
+        std::vector<azihsm_key_prop> unwrap_props_vec;
+        unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_KIND, &key_kind, sizeof(key_kind) });
+        unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_CLASS, &key_class, sizeof(key_class) });
+        unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_BIT_LEN, &bits, sizeof(bits) });
+        unwrap_props_vec.push_back(
+            { AZIHSM_KEY_PROP_ID_ENCRYPT, &can_encrypt, sizeof(can_encrypt) }
+        );
+        unwrap_props_vec.push_back(
+            { AZIHSM_KEY_PROP_ID_DECRYPT, &can_decrypt, sizeof(can_decrypt) }
+        );
+
+        azihsm_key_prop_list unwrap_prop_list{ unwrap_props_vec.data(),
+                                                static_cast<uint32_t>(unwrap_props_vec.size()) };
+
+        azihsm_buffer wrapped_blob_buf{ wrapped_blob.data(),
+                                         static_cast<uint32_t>(wrapped_blob.size()) };
+
+        auto_key xts_key;
+        auto err = azihsm_key_unwrap(
+            &unwrap_algo,
+            wrapping_priv_key,
+            &wrapped_blob_buf,
+            &unwrap_prop_list,
+            xts_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(xts_key, 0);
+
+        // Step 3: Verify unwrapped key properties
+        verify_key_property(xts_key, AZIHSM_KEY_PROP_ID_CLASS, AZIHSM_KEY_CLASS_SECRET);
+        verify_key_property(xts_key, AZIHSM_KEY_PROP_ID_KIND, AZIHSM_KEY_KIND_AES_XTS);
+        verify_key_property(xts_key, AZIHSM_KEY_PROP_ID_BIT_LEN, static_cast<uint32_t>(512));
+        verify_key_property(xts_key, AZIHSM_KEY_PROP_ID_ENCRYPT, true);
+        verify_key_property(xts_key, AZIHSM_KEY_PROP_ID_DECRYPT, true);
+        verify_key_property(xts_key, AZIHSM_KEY_PROP_ID_LOCAL, false);
+
+        // Step 4: Encrypt/decrypt roundtrip with tweak handling
+        constexpr size_t dul = 64;
+        std::vector<uint8_t> plaintext(128, 0x11);
+        ASSERT_EQ(plaintext.size(), dul * 2);
+
+        uint8_t tweak[16] = { 0 };
+
+        // One-shot encrypt of 2 data units.
+        azihsm_algo_aes_xts_params enc_xts_params{};
+        std::memcpy(enc_xts_params.sector_num, tweak, 16);
+        enc_xts_params.data_unit_length = static_cast<uint32_t>(dul);
+
+        azihsm_algo enc_algo{};
+        enc_algo.id = AZIHSM_ALGO_ID_AES_XTS;
+        enc_algo.params = &enc_xts_params;
+        enc_algo.len = sizeof(enc_xts_params);
+
+        std::vector<uint8_t> ciphertext_full;
+        err = single_shot_crypt(
+            CryptOperation::Encrypt,
+            xts_key,
+            &enc_algo,
+            plaintext.data(),
+            plaintext.size(),
+            ciphertext_full
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(ciphertext_full.size(), plaintext.size());
+        ASSERT_NE(ciphertext_full, plaintext) << "Ciphertext should differ from plaintext";
+
+        // Verify tweak was incremented by 2 data units after encrypt
+        std::array<uint8_t, 16> expected_tweak_after_2 = tweak_after_units(tweak, 2);
+        ASSERT_EQ(
+            std::memcmp(enc_xts_params.sector_num, expected_tweak_after_2.data(), 16),
+            0
+        ) << "Encrypt should increment tweak per data unit";
+
+        // Encrypt per-data-unit with tweak and tweak+1; output should match one-shot.
+        const uint8_t *pt0 = plaintext.data();
+        const uint8_t *pt1 = plaintext.data() + dul;
+
+        azihsm_algo_aes_xts_params xts_params0{};
+        std::memcpy(xts_params0.sector_num, tweak, 16);
+        xts_params0.data_unit_length = static_cast<uint32_t>(dul);
+        azihsm_algo algo0{};
+        algo0.id = AZIHSM_ALGO_ID_AES_XTS;
+        algo0.params = &xts_params0;
+        algo0.len = sizeof(xts_params0);
+
+        std::vector<uint8_t> ct0;
+        err = single_shot_crypt(CryptOperation::Encrypt, xts_key, &algo0, pt0, dul, ct0);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        std::array<uint8_t, 16> tweak1 = tweak_after_units(tweak, 1);
+        azihsm_algo_aes_xts_params xts_params1{};
+        std::memcpy(xts_params1.sector_num, tweak1.data(), 16);
+        xts_params1.data_unit_length = static_cast<uint32_t>(dul);
+        azihsm_algo algo1{};
+        algo1.id = AZIHSM_ALGO_ID_AES_XTS;
+        algo1.params = &xts_params1;
+        algo1.len = sizeof(xts_params1);
+
+        std::vector<uint8_t> ct1;
+        err = single_shot_crypt(CryptOperation::Encrypt, xts_key, &algo1, pt1, dul, ct1);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        std::vector<uint8_t> ciphertext_split;
+        ciphertext_split.reserve(ciphertext_full.size());
+        ciphertext_split.insert(ciphertext_split.end(), ct0.begin(), ct0.end());
+        ciphertext_split.insert(ciphertext_split.end(), ct1.begin(), ct1.end());
+        ASSERT_EQ(ciphertext_split, ciphertext_full) << "Tweak increment mismatch";
+
+        // One-shot decrypt should restore plaintext and increment tweak similarly.
+        azihsm_algo_aes_xts_params dec_xts_params{};
+        std::memcpy(dec_xts_params.sector_num, tweak, 16);
+        dec_xts_params.data_unit_length = static_cast<uint32_t>(dul);
+
+        azihsm_algo dec_algo{};
+        dec_algo.id = AZIHSM_ALGO_ID_AES_XTS;
+        dec_algo.params = &dec_xts_params;
+        dec_algo.len = sizeof(dec_xts_params);
+
+        std::vector<uint8_t> decrypted;
+        err = single_shot_crypt(
+            CryptOperation::Decrypt,
+            xts_key,
+            &dec_algo,
+            ciphertext_full.data(),
+            ciphertext_full.size(),
+            decrypted
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(decrypted, plaintext) << "Roundtrip plaintext mismatch";
+        ASSERT_EQ(
+            std::memcmp(dec_xts_params.sector_num, expected_tweak_after_2.data(), 16),
+            0
+        ) << "Decrypt should increment tweak per data unit";
+
+        // Clean up
+        err = azihsm_key_delete(xts_key.release());
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+    });
+}
+
+TEST_F(azihsm_aes_keygen, aes_xts_key_unmask)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        // Step 1: Generate AES-XTS-512 key
+        azihsm_algo keygen_algo{};
+        keygen_algo.id = AZIHSM_ALGO_ID_AES_XTS_KEY_GEN;
+        keygen_algo.params = nullptr;
+        keygen_algo.len = 0;
+
+        azihsm_key_kind key_kind = AZIHSM_KEY_KIND_AES_XTS;
+        azihsm_key_class key_class = AZIHSM_KEY_CLASS_SECRET;
+        uint32_t bits = 512;
+        bool is_session = true;
+        bool can_encrypt = true;
+        bool can_decrypt = true;
+
+        std::vector<azihsm_key_prop> props_vec;
+        props_vec.push_back({ AZIHSM_KEY_PROP_ID_KIND, &key_kind, sizeof(key_kind) });
+        props_vec.push_back({ AZIHSM_KEY_PROP_ID_CLASS, &key_class, sizeof(key_class) });
+        props_vec.push_back({ AZIHSM_KEY_PROP_ID_BIT_LEN, &bits, sizeof(bits) });
+        props_vec.push_back({ AZIHSM_KEY_PROP_ID_SESSION, &is_session, sizeof(is_session) });
+        props_vec.push_back({ AZIHSM_KEY_PROP_ID_ENCRYPT, &can_encrypt, sizeof(can_encrypt) });
+        props_vec.push_back({ AZIHSM_KEY_PROP_ID_DECRYPT, &can_decrypt, sizeof(can_decrypt) });
+
+        azihsm_key_prop_list prop_list{ props_vec.data(), static_cast<uint32_t>(props_vec.size()) };
+
+        auto_key original_key;
+        azihsm_status err =
+            azihsm_key_gen(session, &keygen_algo, &prop_list, original_key.get_ptr());
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(original_key, 0);
+
+        // Step 2: Encrypt with the original generated key
+        constexpr size_t dul = 64;
+        std::vector<uint8_t> plaintext(128, 0x33);
+        uint8_t tweak[16] = { 0 };
+
+        azihsm_algo_aes_xts_params enc_xts_params{};
+        std::memcpy(enc_xts_params.sector_num, tweak, 16);
+        enc_xts_params.data_unit_length = static_cast<uint32_t>(dul);
+
+        azihsm_algo enc_algo{};
+        enc_algo.id = AZIHSM_ALGO_ID_AES_XTS;
+        enc_algo.params = &enc_xts_params;
+        enc_algo.len = sizeof(enc_xts_params);
+
+        std::vector<uint8_t> ciphertext;
+        err = single_shot_crypt(
+            CryptOperation::Encrypt,
+            original_key,
+            &enc_algo,
+            plaintext.data(),
+            plaintext.size(),
+            ciphertext
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        // Step 3: Get masked key via property
+        uint8_t *masked_key_ptr = nullptr;
+        uint32_t masked_key_len = 0;
+
+        azihsm_key_prop masked_prop{};
+        masked_prop.id = AZIHSM_KEY_PROP_ID_MASKED_KEY;
+        masked_prop.val = masked_key_ptr;
+        masked_prop.len = masked_key_len;
+
+        err = azihsm_key_get_prop(original_key, &masked_prop);
+        ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+        ASSERT_GT(masked_prop.len, 0);
+
+        std::vector<uint8_t> masked_key_data(masked_prop.len);
+        masked_prop.val = masked_key_data.data();
+
+        err = azihsm_key_get_prop(original_key, &masked_prop);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        // Step 4: Unmask the masked key
+        azihsm_buffer masked_key_buf{};
+        masked_key_buf.ptr = masked_key_data.data();
+        masked_key_buf.len = static_cast<uint32_t>(masked_key_data.size());
+
+        auto_key unmasked_key;
+        err = azihsm_key_unmask(
+            session,
+            AZIHSM_KEY_KIND_AES_XTS,
+            &masked_key_buf,
+            unmasked_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(unmasked_key, 0);
+
+        // Step 5: Compare key properties
+        compare_aes_xts_key_properties(original_key, unmasked_key, 512);
+
+        // Step 6: Prove the unmasked key is a different key ID by deleting the
+        // original key before using the unmasked key.
+        err = azihsm_key_delete(original_key.release());
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        // Step 7: Decrypt with the unmasked key
+        azihsm_algo_aes_xts_params dec_xts_params{};
+        std::memcpy(dec_xts_params.sector_num, tweak, 16);
+        dec_xts_params.data_unit_length = static_cast<uint32_t>(dul);
+
+        azihsm_algo dec_algo{};
+        dec_algo.id = AZIHSM_ALGO_ID_AES_XTS;
+        dec_algo.params = &dec_xts_params;
+        dec_algo.len = sizeof(dec_xts_params);
+
+        std::vector<uint8_t> decrypted;
+        err = single_shot_crypt(
+            CryptOperation::Decrypt,
+            unmasked_key,
+            &dec_algo,
+            ciphertext.data(),
+            ciphertext.size(),
+            decrypted
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(decrypted, plaintext) << "XTS roundtrip mismatch";
+
+        // Clean up
+        err = azihsm_key_delete(unmasked_key.release());
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+    });
+}
+
 /// Test AES-GCM key generation, and validate the generated key has expected properties
 /// and capabilities.
 TEST_F(azihsm_aes_keygen, session_aes_gcm_256_key_generation)
@@ -884,6 +1240,24 @@ TEST_F(azihsm_aes_keygen, aes_gcm_key_gen_persistent)
             AZIHSM_KEY_KIND_AES_GCM,
             256
         );
+    });
+}
+
+/// verifies AES-GCM key can be unwrapped using RSA-AES wrapping
+TEST_F(azihsm_aes_keygen, aes_gcm_256_key_unwrap)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        aes_key_unwrap_common(session, AZIHSM_ALGO_ID_AES_GCM_KEY_GEN,
+            AZIHSM_KEY_KIND_AES_GCM, 256);
+    });
+}
+
+/// Test AES key unmasking for key sizes of 256
+TEST_F(azihsm_aes_keygen, aes_gcm_256_key_unmask)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        aes_key_unmask_common(session, AZIHSM_ALGO_ID_AES_GCM_KEY_GEN,
+            AZIHSM_KEY_KIND_AES_GCM, 256);
     });
 }
 
@@ -1537,77 +1911,6 @@ TEST_F(azihsm_aes_keygen, unwrap_local_aes_gcm_256_key_roundtrip)
         decrypted.resize(plain_buf.len);
         ASSERT_EQ(decrypted.size(), plaintext.size());
         ASSERT_EQ(std::memcmp(decrypted.data(), plaintext.data(), plaintext.size()), 0);
-    });
-}
-
-TEST_F(azihsm_aes_keygen, unmask_aes_xts_512_key)
-{
-    part_list_.for_each_session([](azihsm_handle session) {
-        // Step 1: Generate AES-XTS-512 key
-        azihsm_algo keygen_algo{};
-        keygen_algo.id = AZIHSM_ALGO_ID_AES_XTS_KEY_GEN;
-        keygen_algo.params = nullptr;
-        keygen_algo.len = 0;
-
-        azihsm_key_kind key_kind = AZIHSM_KEY_KIND_AES_XTS;
-        azihsm_key_class key_class = AZIHSM_KEY_CLASS_SECRET;
-        uint32_t bits = 512;
-        bool is_session = true;
-        bool can_encrypt = true;
-        bool can_decrypt = true;
-
-        std::vector<azihsm_key_prop> props_vec;
-        props_vec.push_back({ AZIHSM_KEY_PROP_ID_KIND, &key_kind, sizeof(key_kind) });
-        props_vec.push_back({ AZIHSM_KEY_PROP_ID_CLASS, &key_class, sizeof(key_class) });
-        props_vec.push_back({ AZIHSM_KEY_PROP_ID_BIT_LEN, &bits, sizeof(bits) });
-        props_vec.push_back({ AZIHSM_KEY_PROP_ID_SESSION, &is_session, sizeof(is_session) });
-        props_vec.push_back({ AZIHSM_KEY_PROP_ID_ENCRYPT, &can_encrypt, sizeof(can_encrypt) });
-        props_vec.push_back({ AZIHSM_KEY_PROP_ID_DECRYPT, &can_decrypt, sizeof(can_decrypt) });
-
-        azihsm_key_prop_list prop_list{ props_vec.data(), static_cast<uint32_t>(props_vec.size()) };
-
-        auto_key original_key;
-        azihsm_status err =
-            azihsm_key_gen(session, &keygen_algo, &prop_list, original_key.get_ptr());
-        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_NE(original_key, 0);
-
-        // Step 2: Get masked key via property
-        uint8_t *masked_key_ptr = nullptr;
-        uint32_t masked_key_len = 0;
-
-        azihsm_key_prop masked_prop{};
-        masked_prop.id = AZIHSM_KEY_PROP_ID_MASKED_KEY;
-        masked_prop.val = masked_key_ptr;
-        masked_prop.len = masked_key_len;
-
-        err = azihsm_key_get_prop(original_key, &masked_prop);
-        ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
-        ASSERT_GT(masked_prop.len, 0);
-
-        std::vector<uint8_t> masked_key_data(masked_prop.len);
-        masked_prop.val = masked_key_data.data();
-
-        err = azihsm_key_get_prop(original_key, &masked_prop);
-        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-
-        // Step 3: Unmask the masked key
-        azihsm_buffer masked_key_buf{};
-        masked_key_buf.ptr = masked_key_data.data();
-        masked_key_buf.len = static_cast<uint32_t>(masked_key_data.size());
-
-        auto_key unmasked_key;
-        err = azihsm_key_unmask(
-            session,
-            AZIHSM_KEY_KIND_AES_XTS,
-            &masked_key_buf,
-            unmasked_key.get_ptr()
-        );
-        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_NE(unmasked_key, 0);
-
-        // Step 4: Compare key properties
-        compare_aes_xts_key_properties(original_key, unmasked_key, 512);
     });
 }
 
