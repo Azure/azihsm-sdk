@@ -277,11 +277,11 @@ impl HsmEncryptContext for HsmAesCbcEncryptContext {
             return Err(HsmError::InvalidContextState);
         }
 
-        let exepected_len = self.block.finish_len(self.algo.pad)?;
+        let expected_len = self.block.finish_len(self.algo.pad)?;
         let Some(ciphertext) = ciphertext else {
-            return Ok(exepected_len);
+            return Ok(expected_len);
         };
-        if ciphertext.len() < exepected_len {
+        if ciphertext.len() < expected_len {
             return Err(HsmError::BufferTooSmall);
         }
         let expected_len = self.block.finish(|input: &[u8]| {
@@ -546,7 +546,6 @@ impl HsmDecryptContext for HsmAesCbcDecryptContext {
     }
 
     /// Returns a reference to the underlying hash algorithm.
-    ///``
     /// # Returns
     ///
     /// A reference to the `OsslHash` algorithm instance.
