@@ -367,21 +367,30 @@ fn run_hkdf_same_params_cross_curve_mismatch(session: &HsmSession) {
     }
 }
 
-/// Verifies HKDF fails when requested output key size exceeds supported limits
+/// Verifies HKDF derive rejects oversized AES output length
 fn run_hkdf_output_length_too_large_test(session: &HsmSession, curve: HsmEccCurve) {
+    // Generate valid shared secret input via ECDH
     let (secret, _) = derive_ecdh_shared_secrets(session, curve);
 
     let mut hkdf = HsmHkdfAlgo::new(HsmHashAlgo::Sha256, None, None).unwrap();
 
+    // Build valid AES key props except for intentionally oversized output length
     let props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Secret)
         .key_kind(HsmKeyKind::Aes)
-        .bits(4096) // clearly invalid
+        .can_encrypt(true)
+        .can_decrypt(true)
+        .bits(4096) // intentionally invalid for AES
         .build()
         .unwrap();
 
+    // Derivation should fail specifically due to oversized output length
     let result = HsmKeyManager::derive_key(session, &mut hkdf, &secret, props);
-    assert!(result.is_err());
+
+    assert!(
+        result.is_err(),
+        "expected HKDF derive to reject an oversized AES output length"
+    );
 }
 
 /// Verifies HKDF-derived keys from unrelated shared secrets cannot interoperate
@@ -465,29 +474,32 @@ fn run_hkdf_strong_determinism_test(session: &HsmSession, curve: HsmEccCurve) {
     assert_eq!(ct1, ct2);
 }
 
-/// Verifies AES-CBC detects padding corruption in ciphertext
+/// Verifies AES-CBC decryption fails on deterministically corrupted padding
 fn run_aes_cbc_padding_tamper_test(session: &HsmSession) {
-    let (secret_a, secret_b) = derive_ecdh_shared_secrets(session, HsmEccCurve::P256);
+    let (secret_a, _) = derive_ecdh_shared_secrets(session, HsmEccCurve::P256);
 
     let mut hkdf = HsmHkdfAlgo::new(HsmHashAlgo::Sha256, None, None).unwrap();
 
-    let key_a = derive_aes_key_from_shared_secret(session, &mut hkdf, &secret_a, 256);
-    let key_b = derive_aes_key_from_shared_secret(session, &mut hkdf, &secret_b, 256);
+    let key = derive_aes_key_from_shared_secret(session, &mut hkdf, &secret_a, 256);
 
     let iv = [0u8; 16];
     let mut enc = HsmAesCbcAlgo::with_padding(iv.to_vec()).unwrap();
 
-    let mut ct = HsmEncrypter::encrypt_vec(&mut enc, &key_a, b"padding test").unwrap();
+    let mut ct = HsmEncrypter::encrypt_vec(&mut enc, &key, b"padding test").unwrap();
 
-    // flip last byte (padding corruption)
-    let last = ct.len() - 1;
-    ct[last] ^= 0xFF;
+    // Deterministically corrupt padding (flip last two bytes)
+    let len = ct.len();
+    ct[len - 1] ^= 0xFF;
+    ct[len - 2] ^= 0xAA;
 
     let mut dec = HsmAesCbcAlgo::with_padding(iv.to_vec()).unwrap();
 
-    if let Ok(pt) = HsmDecrypter::decrypt_vec(&mut dec, &key_b, &ct) {
-        assert_ne!(pt, b"padding test");
-    }
+    let result = HsmDecrypter::decrypt_vec(&mut dec, &key, &ct);
+
+    assert!(
+        result.is_err(),
+        "tampered ciphertext should fail padding validation"
+    );
 }
 
 // ============================================================
