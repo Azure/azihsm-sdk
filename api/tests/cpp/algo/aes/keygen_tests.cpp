@@ -762,6 +762,75 @@ TEST_F(azihsm_aes_keygen, unmask_aes_128_key)
     });
 }
 
+/// verifies AES key unwrap fails when wrapped blob is corrupted
+TEST_F(azihsm_aes_keygen, aes_key_unwrap_corrupted_fails)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        auto_key wrapping_priv_key;
+        auto_key wrapping_pub_key;
+        generate_rsa_wrapping_keypair(session, wrapping_priv_key, wrapping_pub_key);
+
+        std::vector<uint8_t> local_aes_key(32, 0x55);
+
+        azihsm_algo_rsa_pkcs_oaep_params oaep_params{};
+        oaep_params.hash_algo_id = AZIHSM_ALGO_ID_SHA256;
+        oaep_params.mgf1_hash_algo_id = AZIHSM_MGF1_ID_SHA256;
+        oaep_params.label = nullptr;
+
+        std::vector<uint8_t> wrapped_data =
+            wrap_local_aes_key(wrapping_pub_key, local_aes_key, 256, oaep_params);
+
+        // Corrupt wrapped data
+        wrapped_data[0] ^= 0xFF;
+
+        azihsm_algo_rsa_aes_key_wrap_params unwrap_params{};
+        unwrap_params.aes_key_bits = 256;
+        unwrap_params.oaep_params = &oaep_params;
+
+        azihsm_algo unwrap_algo{};
+        unwrap_algo.id = AZIHSM_ALGO_ID_RSA_AES_KEY_WRAP;
+        unwrap_algo.params = &unwrap_params;
+        unwrap_algo.len = sizeof(unwrap_params);
+
+        azihsm_key_kind aes_kind = AZIHSM_KEY_KIND_AES;
+        azihsm_key_class aes_class = AZIHSM_KEY_CLASS_SECRET;
+        uint32_t aes_bits = 256;
+        bool aes_is_session = true;
+        bool can_encrypt = true;
+        bool can_decrypt = true;
+
+        std::vector<azihsm_key_prop> unwrap_props_vec;
+        unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_KIND, &aes_kind, sizeof(aes_kind) });
+        unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_CLASS, &aes_class, sizeof(aes_class) });
+        unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_BIT_LEN, &aes_bits, sizeof(aes_bits) });
+        unwrap_props_vec.push_back(
+            { AZIHSM_KEY_PROP_ID_SESSION, &aes_is_session, sizeof(aes_is_session) }
+        );
+        unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_ENCRYPT, &can_encrypt, sizeof(can_encrypt) }
+        );
+        unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_DECRYPT, &can_decrypt, sizeof(can_decrypt) }
+        );
+
+        azihsm_key_prop_list unwrap_prop_list{ unwrap_props_vec.data(),
+                                               static_cast<uint32_t>(unwrap_props_vec.size()) };
+
+        azihsm_buffer wrapped_key_buf{};
+        wrapped_key_buf.ptr = wrapped_data.data();
+        wrapped_key_buf.len = static_cast<uint32_t>(wrapped_data.size());
+
+        azihsm_handle unwrapped_key = 0;
+        azihsm_status err = azihsm_key_unwrap(
+            &unwrap_algo,
+            wrapping_priv_key,
+            &wrapped_key_buf,
+            &unwrap_prop_list,
+            &unwrapped_key
+        );
+        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(unwrapped_key, 0);
+    });
+}
+
 /// verifies AES-XTS 512-bit key generation succeeds with correct properties and capabilities
 TEST_F(azihsm_aes_keygen, session_aes_xts_512_key_generation)
 {
