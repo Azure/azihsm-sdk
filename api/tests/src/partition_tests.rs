@@ -641,7 +641,12 @@ fn test_init_with_resiliency_tpm_obk_with_callback_fails() {
     let part_mgr = HsmPartitionManager::partition_info_list();
     assert!(!part_mgr.is_empty(), "No partitions found.");
     for part_info in part_mgr.iter() {
-        let part = HsmPartitionManager::open_partition(&part_info.path)
+        let api_rev = part_info
+            .api_rev_range
+            .as_ref()
+            .expect("No API rev range")
+            .max();
+        let part = HsmPartitionManager::open_partition(&part_info.path, api_rev)
             .expect("Failed to open the partition");
         part.reset().expect("Partition reset failed");
 
@@ -675,7 +680,12 @@ fn test_init_with_resiliency_caller_obk_without_callback_fails() {
     let part_mgr = HsmPartitionManager::partition_info_list();
     assert!(!part_mgr.is_empty(), "No partitions found.");
     for part_info in part_mgr.iter() {
-        let part = HsmPartitionManager::open_partition(&part_info.path)
+        let api_rev = part_info
+            .api_rev_range
+            .as_ref()
+            .expect("No API rev range")
+            .max();
+        let part = HsmPartitionManager::open_partition(&part_info.path, api_rev)
             .expect("Failed to open the partition");
         part.reset().expect("Partition reset failed");
 
