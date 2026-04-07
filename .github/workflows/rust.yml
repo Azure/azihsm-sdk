@@ -108,9 +108,6 @@ jobs:
 
     runs-on: ubuntu-24.04
 
-    env:
-      LD_LIBRARY_PATH: /opt/openssl-3.0.3/lib
-
     steps:
     - uses: actions/checkout@v6
 
@@ -118,7 +115,7 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y --no-install-recommends \
-          build-essential cmake pkg-config libbsd-dev
+          build-essential cmake pkg-config libbsd-dev ca-certificates curl gnupg
 
     - name: Restore Cargo cache
       uses: actions/cache/restore@v5
@@ -147,6 +144,11 @@ jobs:
         ./Configure --prefix=/opt/openssl-3.0.3 --libdir=lib
         make -j"$(nproc)"
         sudo make install_sw
+
+    - name: Ensure OpenSSL default config exists
+      run: |
+        sudo mkdir -p /opt/openssl-3.0.3/ssl
+        sudo touch /opt/openssl-3.0.3/ssl/openssl.cnf
 
     - name: Build azihsm with OpenSSL 3.0.3
       env:
@@ -206,6 +208,29 @@ jobs:
         AZIHSM_CREDENTIALS_ID: "70fcf730b8764238b8358010ce8a3f76"
         AZIHSM_CREDENTIALS_PIN: "db3dc77fc22e430080d41b31b6f04800"
       run: cargo xtask precheck --nextest --package provider-integration-tests-capi --features integration --profile ci-provider-integration
+
+    - name: Install nginx mainline
+      run: |
+        curl -fsSL https://nginx.org/keys/nginx_signing.key \
+          | sudo gpg --dearmor -o /usr/share/keyrings/nginx-archive-keyring.gpg
+        echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] \
+          https://nginx.org/packages/mainline/ubuntu noble nginx" \
+          | sudo tee /etc/apt/sources.list.d/nginx.list
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends nginx
+
+    - name: NGINX integration tests
+      env:
+        OPENSSL_BIN: /opt/openssl-3.0.3/bin/openssl
+        OPENSSL_LIB: /opt/openssl-3.0.3/lib
+        PROVIDER_PATH: /usr/lib/ossl-modules
+        AZIHSM_CREDENTIALS_ID: "70fcf730b8764238b8358010ce8a3f76"
+        AZIHSM_CREDENTIALS_PIN: "db3dc77fc22e430080d41b31b6f04800"
+      run: |
+        cargo xtask precheck --nextest \
+          --package provider-integration-tests-nginx \
+          --features integration \
+          --profile ci-provider-integration
 
   build_windows:
 
