@@ -60,50 +60,68 @@ azihsm_u32 azihsm_part_get_count(
 
  Device count on success, 0 on failure or empty list
 
-## azihsm_part_get_path
+## azihsm_part_get_info
 
-Retrieves the OS device path
+Retrieves partition information at the given index, including the OS device path
+and the supported API revision range.
 
 ```cpp
-const azihsm_char *azihsm_part_get_path(
-    azihsm_handle handle, 
-    azihsm_u32 index
+azihsm_status azihsm_part_get_info(
+    azihsm_handle handle,
+    azihsm_u32 index,
+    struct azihsm_part_info *part_info
     );
 ```
 
 **Parameters**
 
- | Parameter   | Name                               | Description                              |
- | ----------- | ---------------------------------- | ---------------------------------------- |
- | [in] handle | [azihsm_handle](#azihsm_handle)    | device list handle                       |
- | [in] index  | [azihsm_u32](#azihsm_u32)          | index of the device in list       &nbsp; |
+ | Parameter           | Name                                            | Description                               |
+ | ------------------- | ----------------------------------------------- | ----------------------------------------- |
+ | [in] handle         | [azihsm_handle](#azihsm_handle)                 | device list handle                        |
+ | [in] index          | [azihsm_u32](#azihsm_u32)                       | index of the partition in list            |
+ | [in, out] part_info | [struct azihsm_part_info *](#azihsm_part_info)  | partition info structure           &nbsp; |
+
+On input, `part_info.path.len` is the capacity of the buffer pointed to by `part_info.path.str`,
+expressed as a count of `azihsm_char` elements (including the null terminator).
+On output, `part_info.path.len` is set to the required/written count of `azihsm_char` elements.
+`part_info.api_rev_min` and `part_info.api_rev_max` are only valid when the
+return status is `AZIHSM_STATUS_SUCCESS`.
 
 **Returns**
 
-Device OS path on success, NULL on failure
+`AZIHSM_STATUS_SUCCESS` on success, `AZIHSM_STATUS_BUFFER_TOO_SMALL` if the path buffer is too
+small (with `part_info.path.len` updated to the required count of elements), or a negative error code on failure
 
 ## azihsm_part_open
 
-Open a handle to the partition
+Open a handle to the partition with a specified API revision.
+
+The caller selects an API revision within the range reported by
+[`azihsm_part_get_info`](#azihsm_part_get_info). All subsequent operations on
+this partition handle (including sessions opened from it) will use the
+selected revision.
 
 ```cpp
 azihsm_status azihsm_part_open(
-    const azihsm_char *path,
-    azihsm_handle *handle
+    const struct azihsm_str *path,
+    azihsm_handle *handle,
+    struct azihsm_api_rev api_rev
     );
 
 ```
 
 **Parameters**
 
- | Parameter    | Name                               | Description                |
- | ------------ | ---------------------------------- | -------------------------- |
- | [in] path    | [const azihsm_char*](#azihsm_char) | OS device path             |
- | [out] handle | [azihsm_handle *](#azihsm_handle)  | device handle       &nbsp; |
+ | Parameter    | Name                                     | Description                                          |
+ | ------------ | ---------------------------------------- | ---------------------------------------------------- |
+ | [in] path    | [const struct azihsm_str*](#azihsm_str)  | OS device path                                       |
+ | [out] handle | [azihsm_handle *](#azihsm_handle)        | device handle                                        |
+ | [in] api_rev | [struct azihsm_api_rev](#azihsm_api_rev) | API revision to use for this partition handle &nbsp; |
 
 **Returns**
 
-`AZIHSM_STATUS_SUCCESS` on success, error code otherwise
+`AZIHSM_STATUS_SUCCESS` on success, `AZIHSM_STATUS_UNSUPPORTED_API_REVISION` if
+`api_rev` is outside the partition's supported range, or a negative error code otherwise
 
 ## azihsm_owner_backup_key_config
 

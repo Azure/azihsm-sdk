@@ -391,7 +391,7 @@ pub(crate) fn apply_backoff(attempt: u32, base_ms: u64, jitter_max_ms: u64) {
 /// * `max_retries`      – Maximum number of additional attempts after the first failure.
 /// * `backoff_base_ms`  – Base delay in milliseconds; doubled each iteration.
 /// * `backoff_jitter_ms`– Maximum random jitter added to each delay (ms).
-pub(crate) fn execute_with_backoff<T>(
+pub(crate) fn execute_with_retry<T>(
     mut operation: impl FnMut(Option<&HsmError>) -> HsmResult<T>,
     predicate: fn(&HsmResult<T>) -> bool,
     max_retries: u32,
@@ -552,6 +552,39 @@ pub(crate) fn is_credentials_already_established(err: &HsmError) -> bool {
             | HsmError::PartitionAlreadyProvisioned
             | HsmError::VaultAppLimitReached
     )
+}
+
+/// Executes an open-session operation with restore-partition recovery
+/// on transient errors.
+///
+/// This is the runtime support function called by the
+/// `#[resiliency_open_session]` proc macro.
+///
+/// Unlike key operations, open-session does not need a key barrier or
+/// session reopen — we are *creating* the session.  On each retry:
+/// 1. Applies exponential backoff.
+/// 2. Calls `partition.restore_partition()` to re-establish credentials.
+/// 3. Retries the operation.
+pub(crate) fn execute_open_session_with_retry<T>(
+    mut operation: impl FnMut() -> HsmResult<T>,
+    partition: &crate::HsmPartition,
+    max_retries: u32,
+    backoff_base_ms: u64,
+) -> HsmResult<T> {
+    let mut result = operation();
+    let mut attempt = 0u32;
+
+    while is_open_session_retryable_error(&result) && attempt < max_retries {
+        apply_backoff(attempt, backoff_base_ms, BACKOFF_JITTER_MS);
+        if partition.restore_partition().is_err() {
+            attempt += 1;
+            continue;
+        }
+        result = operation();
+        attempt += 1;
+    }
+
+    result
 }
 
 /// Executes a key-generation operation with restore-partition and
@@ -919,7 +952,7 @@ mod tests {
         assert_eq!(cached.pub_key(), orig.pub_key());
     }
 
-    // Retry-with-backoff (execute_with_backoff)
+    // Retry-with-backoff (execute_with_retry)
 
     /// Helper: always-retryable predicate.
     fn always_retry<T>(result: &HsmResult<T>) -> bool {
@@ -934,7 +967,7 @@ mod tests {
     #[test]
     fn succeeds_on_first_try_no_retry() {
         let call_count = AtomicU32::new(0);
-        let result = execute_with_backoff(
+        let result = execute_with_retry(
             |prev_err| {
                 assert!(
                     prev_err.is_none(),
@@ -956,7 +989,7 @@ mod tests {
     fn retries_up_to_max_then_returns_error() {
         let call_count = AtomicU32::new(0);
         let max = 3u32;
-        let result: HsmResult<()> = execute_with_backoff(
+        let result: HsmResult<()> = execute_with_retry(
             |_| {
                 call_count.fetch_add(1, Ordering::SeqCst);
                 Err(HsmError::IoAborted)
@@ -974,7 +1007,7 @@ mod tests {
     #[test]
     fn recovers_after_transient_failures() {
         let call_count = AtomicU32::new(0);
-        let result = execute_with_backoff(
+        let result = execute_with_retry(
             |_| {
                 let n = call_count.fetch_add(1, Ordering::SeqCst);
                 if n < 2 {
@@ -995,7 +1028,7 @@ mod tests {
     #[test]
     fn non_retryable_error_returns_immediately() {
         let call_count = AtomicU32::new(0);
-        let result: HsmResult<()> = execute_with_backoff(
+        let result: HsmResult<()> = execute_with_retry(
             |_| {
                 call_count.fetch_add(1, Ordering::SeqCst);
                 Err(HsmError::InvalidArgument)
@@ -1012,7 +1045,7 @@ mod tests {
     #[test]
     fn predicate_never_retry_runs_once() {
         let call_count = AtomicU32::new(0);
-        let result: HsmResult<()> = execute_with_backoff(
+        let result: HsmResult<()> = execute_with_retry(
             |_| {
                 call_count.fetch_add(1, Ordering::SeqCst);
                 Err(HsmError::IoAborted)
@@ -1029,7 +1062,7 @@ mod tests {
     #[test]
     fn zero_max_retries_runs_once() {
         let call_count = AtomicU32::new(0);
-        let result: HsmResult<()> = execute_with_backoff(
+        let result: HsmResult<()> = execute_with_retry(
             |_| {
                 call_count.fetch_add(1, Ordering::SeqCst);
                 Err(HsmError::IoAborted)
@@ -1046,7 +1079,7 @@ mod tests {
     #[test]
     fn prev_error_is_passed_on_retry() {
         let call_count = AtomicU32::new(0);
-        let result = execute_with_backoff(
+        let result = execute_with_retry(
             |prev_err| {
                 let n = call_count.fetch_add(1, Ordering::SeqCst);
                 match n {

@@ -110,19 +110,23 @@ class PartitionListHandle
     }
 
     /**
-     * @brief Gets the path of a partition at the specified index.
+     * @brief Gets the path of a partition at the specified index via azihsm_part_get_info.
+     *
+     * Uses the two-call pattern: first call retrieves the required buffer size,
+     * second call fills the path and API revision range.
      *
      * @param index The index of the partition (zero-based).
-     * @return The partition path as a string.
-     * @throws std::runtime_error if the path cannot be retrieved.
+     * @return The partition path as a character vector.
+     * @throws std::runtime_error if the partition info cannot be retrieved.
      * @throws std::out_of_range if the index is invalid.
      */
     std::vector<azihsm_char> get_path(uint32_t index) const
     {
-        azihsm_str path = { nullptr, 0 };
+        azihsm_part_info info = {};
+        info.path = { nullptr, 0 };
 
         // First call to get the required buffer size
-        auto err = azihsm_part_get_path(handle_, index, &path);
+        auto err = azihsm_part_get_info(handle_, index, &info);
         if (err == AZIHSM_STATUS_INDEX_OUT_OF_RANGE)
         {
             throw std::out_of_range("Partition index out of range: " + std::to_string(index));
@@ -130,18 +134,18 @@ class PartitionListHandle
         if (err != AZIHSM_STATUS_BUFFER_TOO_SMALL)
         {
             throw std::runtime_error(
-                "Failed to get partition path size. Error: " + std::to_string(err)
+                "Failed to get partition info size. Error: " + std::to_string(err)
             );
         }
 
-        // Allocate buffer and retrieve the path
-        std::vector<azihsm_char> buffer(path.len);
-        path.str = buffer.data();
+        // Allocate buffer and retrieve the info
+        std::vector<azihsm_char> buffer(info.path.len);
+        info.path.str = buffer.data();
 
-        err = azihsm_part_get_path(handle_, index, &path);
+        err = azihsm_part_get_info(handle_, index, &info);
         if (err != AZIHSM_STATUS_SUCCESS)
         {
-            throw std::runtime_error("Failed to get partition path. Error: " + std::to_string(err));
+            throw std::runtime_error("Failed to get partition info. Error: " + std::to_string(err));
         }
 
         return buffer;

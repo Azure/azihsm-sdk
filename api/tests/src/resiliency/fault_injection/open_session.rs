@@ -89,8 +89,8 @@ fn expected_op_calls(error: &FaultError, injected_faults: u32) -> u32 {
 fn init_with_resiliency() -> (HsmPartition, HsmCredentials, ResiliencyTestCtx) {
     let list = HsmPartitionManager::partition_info_list();
     assert!(!list.is_empty(), "No partitions found.");
-    let part =
-        HsmPartitionManager::open_partition(&list[0].path).expect("Failed to open partition");
+    let part = HsmPartitionManager::open_partition(&list[0].path, test_api_rev())
+        .expect("Failed to open partition");
     part.reset().expect("Partition reset failed");
 
     let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
@@ -113,8 +113,8 @@ fn init_with_resiliency() -> (HsmPartition, HsmCredentials, ResiliencyTestCtx) {
 fn init_without_resiliency() -> (HsmPartition, HsmCredentials) {
     let list = HsmPartitionManager::partition_info_list();
     assert!(!list.is_empty(), "No partitions found.");
-    let part =
-        HsmPartitionManager::open_partition(&list[0].path).expect("Failed to open partition");
+    let part = HsmPartitionManager::open_partition(&list[0].path, test_api_rev())
+        .expect("Failed to open partition");
     part.reset().expect("Partition reset failed");
 
     let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
@@ -134,7 +134,7 @@ fn init_without_resiliency() -> (HsmPartition, HsmCredentials) {
 fn test_open_session_recovers_from_get_session_key_single_fault() {
     for error in &super::all_test_errors() {
         let (part, creds, _ctx) = init_with_resiliency();
-        let rev = part.api_rev_range().max();
+        let rev = part.api_rev();
         let before = op_call_count(DdiOp::GetSessionEncryptionKey);
 
         inject_fault(FaultRule::fail_nth(
@@ -173,7 +173,7 @@ fn test_open_session_recovers_from_get_session_key_single_fault() {
 fn test_open_session_recovers_from_open_session_single_fault() {
     for error in &super::all_test_errors() {
         let (part, creds, _ctx) = init_with_resiliency();
-        let rev = part.api_rev_range().max();
+        let rev = part.api_rev();
         let before = op_call_count(DdiOp::OpenSession);
 
         inject_fault(FaultRule::fail_nth(DdiOp::OpenSession, 1, *error));
@@ -208,7 +208,7 @@ fn test_open_session_recovers_from_open_session_single_fault() {
 fn test_open_session_recovers_from_get_session_key_last_retry() {
     for error in &super::all_test_errors() {
         let (part, creds, _ctx) = init_with_resiliency();
-        let rev = part.api_rev_range().max();
+        let rev = part.api_rev();
         let before = op_call_count(DdiOp::GetSessionEncryptionKey);
 
         inject_fault(FaultRule::fail_next(
@@ -245,7 +245,7 @@ fn test_open_session_recovers_from_get_session_key_last_retry() {
 fn test_open_session_recovers_from_open_session_last_retry() {
     for error in &super::all_test_errors() {
         let (part, creds, _ctx) = init_with_resiliency();
-        let rev = part.api_rev_range().max();
+        let rev = part.api_rev();
         let before = op_call_count(DdiOp::OpenSession);
 
         inject_fault(FaultRule::fail_next(
@@ -282,7 +282,7 @@ fn test_open_session_recovers_from_open_session_last_retry() {
 #[api_test]
 fn test_open_session_no_retry_without_resiliency() {
     let (part, creds) = init_without_resiliency();
-    let rev = part.api_rev_range().max();
+    let rev = part.api_rev();
 
     inject_fault(FaultRule::fail_nth(
         DdiOp::OpenSession,
@@ -308,7 +308,7 @@ fn test_open_session_no_retry_without_resiliency() {
 #[api_test]
 fn test_open_session_fails_from_get_session_key_exhausted() {
     let (part, creds, _ctx) = init_with_resiliency();
-    let rev = part.api_rev_range().max();
+    let rev = part.api_rev();
     let before = op_call_count(DdiOp::GetSessionEncryptionKey);
 
     // Every call to GetSessionEncryptionKey triggers an NSSR, so the
@@ -343,7 +343,7 @@ fn test_open_session_fails_from_get_session_key_exhausted() {
 #[api_test]
 fn test_open_session_fails_from_open_session_exhausted() {
     let (part, creds, _ctx) = init_with_resiliency();
-    let rev = part.api_rev_range().max();
+    let rev = part.api_rev();
     let before = op_call_count(DdiOp::OpenSession);
 
     // Every call to OpenSession triggers an NSSR, so the DDI op
@@ -382,7 +382,7 @@ fn test_open_session_fails_from_open_session_exhausted() {
 #[api_test]
 fn test_restore_partition_reestablishes_credentials_on_retry() {
     let (part, creds, _ctx) = init_with_resiliency();
-    let rev = part.api_rev_range().max();
+    let rev = part.api_rev();
 
     let op = bk3_op();
     // Record BK3 op count from the init phase.
@@ -419,7 +419,7 @@ fn test_restore_partition_reestablishes_credentials_on_retry() {
 #[api_test]
 fn test_restore_partition_recovers_credentials_not_established() {
     let (part, creds, _ctx) = init_with_resiliency();
-    let rev = part.api_rev_range().max();
+    let rev = part.api_rev();
 
     // Inject CredentialsNotEstablished on OpenSession
     inject_fault(FaultRule::fail_nth(
@@ -461,7 +461,7 @@ fn test_open_session_recovers_when_restore_init_part_faults() {
         return;
     }
     let (part, creds, _ctx) = init_with_resiliency();
-    let rev = part.api_rev_range().max();
+    let rev = part.api_rev();
 
     // 1st OpenSession → IoAborted → triggers retry path.
     inject_fault(FaultRule::fail_nth(
@@ -496,7 +496,7 @@ fn test_open_session_recovers_when_restore_init_part_faults() {
 #[api_test]
 fn test_open_session_recovers_from_compound_fault() {
     let (part, creds, _ctx) = init_with_resiliency();
-    let rev = part.api_rev_range().max();
+    let rev = part.api_rev();
 
     // OpenSession → IoAborted → triggers retry path.
     inject_fault(FaultRule::fail_nth(
@@ -535,7 +535,7 @@ fn test_restore_pota_callback_invoked_during_init_part_retry() {
         return;
     }
     let (part, creds, _ctx) = init_with_resiliency();
-    let rev = part.api_rev_range().max();
+    let rev = part.api_rev();
 
     // OpenSession → IoAborted → triggers retry + restore_partition.
     inject_fault(FaultRule::fail_nth(
@@ -584,7 +584,7 @@ fn test_restore_pota_callback_invoked_during_init_part_retry() {
 #[api_test]
 fn test_open_session_second_session_retries_independently() {
     let (part, creds, _ctx) = init_with_resiliency();
-    let rev = part.api_rev_range().max();
+    let rev = part.api_rev();
 
     // First session opens cleanly.
     let session1 = part
@@ -626,7 +626,7 @@ fn test_open_session_second_session_retries_independently() {
 #[api_test]
 fn test_open_session_recovers_after_reset() {
     let (part, creds, _ctx) = init_with_resiliency();
-    let rev = part.api_rev_range().max();
+    let rev = part.api_rev();
 
     let op = bk3_op();
     let bk3_before = op_call_count(op);
@@ -658,7 +658,7 @@ fn test_open_session_recovers_after_reset() {
 #[api_test]
 fn test_open_session_recovers_after_reset_between_sessions() {
     let (part, creds, _ctx) = init_with_resiliency();
-    let rev = part.api_rev_range().max();
+    let rev = part.api_rev();
 
     let session1 = part
         .open_session(rev, &creds, None)
@@ -685,7 +685,7 @@ fn test_open_session_recovers_after_reset_between_sessions() {
 #[api_test]
 fn test_open_session_fails_after_reset_without_resiliency() {
     let (part, creds) = init_without_resiliency();
-    let rev = part.api_rev_range().max();
+    let rev = part.api_rev();
 
     // Trigger reset when the first DDI op of open_session is entered.
     inject_fault(FaultRule::reset_on_next(DdiOp::GetSessionEncryptionKey, 1));
@@ -705,7 +705,7 @@ fn test_open_session_fails_after_reset_without_resiliency() {
 #[api_test]
 fn test_open_session_recovers_after_consecutive_reset() {
     let (part, creds, _ctx) = init_with_resiliency();
-    let rev = part.api_rev_range().max();
+    let rev = part.api_rev();
 
     // First reset → recover.
     inject_fault(FaultRule::reset_on_next(DdiOp::GetSessionEncryptionKey, 1));
@@ -735,7 +735,7 @@ fn test_open_session_pota_reendorsement_after_reset() {
         return;
     }
     let (part, creds, _ctx) = init_with_resiliency();
-    let rev = part.api_rev_range().max();
+    let rev = part.api_rev();
 
     // Trigger reset when the first DDI op of open_session is entered.
     inject_fault(FaultRule::reset_on_next(DdiOp::GetSessionEncryptionKey, 1));
@@ -779,7 +779,7 @@ fn test_open_session_pota_reendorsement_after_reset() {
 #[api_test]
 fn test_open_session_recovers_after_reset_on_open_session() {
     let (part, creds, _ctx) = init_with_resiliency();
-    let rev = part.api_rev_range().max();
+    let rev = part.api_rev();
 
     let op = bk3_op();
     let bk3_before = op_call_count(op);
@@ -810,7 +810,7 @@ fn test_open_session_recovers_after_reset_on_open_session() {
 #[api_test]
 fn test_open_session_recovers_after_reset_on_open_session_between_sessions() {
     let (part, creds, _ctx) = init_with_resiliency();
-    let rev = part.api_rev_range().max();
+    let rev = part.api_rev();
 
     let session1 = part
         .open_session(rev, &creds, None)
@@ -834,7 +834,7 @@ fn test_open_session_recovers_after_reset_on_open_session_between_sessions() {
 #[api_test]
 fn test_open_session_fails_after_reset_on_open_session_without_resiliency() {
     let (part, creds) = init_without_resiliency();
-    let rev = part.api_rev_range().max();
+    let rev = part.api_rev();
 
     inject_fault(FaultRule::reset_on_next(DdiOp::OpenSession, 1));
 
@@ -852,7 +852,7 @@ fn test_open_session_fails_after_reset_on_open_session_without_resiliency() {
 #[api_test]
 fn test_open_session_recovers_after_consecutive_reset_on_open_session() {
     let (part, creds, _ctx) = init_with_resiliency();
-    let rev = part.api_rev_range().max();
+    let rev = part.api_rev();
 
     // First reset on OpenSession → recover.
     inject_fault(FaultRule::reset_on_next(DdiOp::OpenSession, 1));
@@ -882,7 +882,7 @@ fn test_open_session_pota_reendorsement_after_reset_on_open_session() {
         return;
     }
     let (part, creds, _ctx) = init_with_resiliency();
-    let rev = part.api_rev_range().max();
+    let rev = part.api_rev();
 
     // Trigger reset when the OpenSession DDI op is entered.
     inject_fault(FaultRule::reset_on_next(DdiOp::OpenSession, 1));
