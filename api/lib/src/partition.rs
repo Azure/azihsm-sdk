@@ -723,9 +723,7 @@ impl HsmPartition {
     ///
     /// Returns the certificate chain as a PEM string.
     pub fn cert_chain(&self, slot: u8) -> HsmResult<String> {
-        let rev = self.inner().read().api_rev_range().min();
-
-        ddi::get_cert_chain(self, rev, slot)
+        ddi::get_cert_chain(self, slot)
     }
 
     /// Retrieves the public key of the partition identity (PID) certificate.
@@ -1009,7 +1007,7 @@ impl HsmPartitionInner {
     }
 
     /// Returns the API revision in use by this partition.
-    fn api_rev(&self) -> HsmApiRev {
+    pub(crate) fn api_rev(&self) -> HsmApiRev {
         self.api_rev
     }
 
