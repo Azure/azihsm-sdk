@@ -261,8 +261,9 @@ pub unsafe extern "C" fn azihsm_part_get_count(
 /// @param[in] index Index of the partition
 /// @param[in/out] part_info Pointer to an `AzihsmPartInfo` structure.
 ///                On input, `part_info.path.len` is the size of the buffer pointed to by `part_info.path.str`.
-///                On output, `part_info.path.len` is set to the required/written size,
-///                and `part_info.api_rev_min` / `part_info.api_rev_max` are populated.
+///                On output, `part_info.path.len` is set to the required/written size.
+///                `part_info.api_rev_min` / `part_info.api_rev_max` are only valid on
+///                `AZIHSM_STATUS_SUCCESS`.
 ///
 /// @return 0 on success, AZIHSM_STATUS_BUFFER_TOO_SMALL if the path buffer is too small
 ///         (part_info.path.len is updated to the required size), or a negative error code on failure.

@@ -428,6 +428,7 @@ On input, `path.len` is the capacity of the caller-allocated buffer pointed to b
 in `azihsm_char` elements (including the null terminator).
 On output, `path.len` is set to the number of `azihsm_char` elements written
 (or the required count when `AZIHSM_STATUS_BUFFER_TOO_SMALL` is returned).
+`api_rev_min` and `api_rev_max` are only valid when the return status is `AZIHSM_STATUS_SUCCESS`.
 
 ### azihsm_api_rev
 

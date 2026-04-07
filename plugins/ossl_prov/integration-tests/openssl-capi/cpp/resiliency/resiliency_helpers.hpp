@@ -125,14 +125,14 @@ inline hsm_handle open_reset_handle(const NativeApi &api)
     {
         throw std::runtime_error("get_list failed");
     }
-    fprintf(stderr, "Partition list handle: %u\n", list);
+
     uint32_t count = 0;
     if (api.get_count(list, &count) != HSM_OK || count == 0)
     {
         api.free_list(list);
         throw std::runtime_error("get_count failed");
     }
-    fprintf(stderr, "Partition count: %u\n", count);
+
     /* First call: query required path buffer size and API rev range */
     hsm_part_info info = {};
     info.path.str = nullptr;

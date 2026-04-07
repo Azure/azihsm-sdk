@@ -83,8 +83,9 @@ azihsm_status azihsm_part_get_info(
 
 On input, `part_info.path.len` is the capacity of the buffer pointed to by `part_info.path.str`,
 expressed as a count of `azihsm_char` elements (including the null terminator).
-On output, `part_info.path.len` is set to the required/written count of `azihsm_char` elements,
-and `part_info.api_rev_min` / `part_info.api_rev_max` are populated.
+On output, `part_info.path.len` is set to the required/written count of `azihsm_char` elements.
+`part_info.api_rev_min` and `part_info.api_rev_max` are only valid when the
+return status is `AZIHSM_STATUS_SUCCESS`.
 
 **Returns**
 
