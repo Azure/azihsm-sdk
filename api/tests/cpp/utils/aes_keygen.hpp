@@ -105,3 +105,5 @@ void compare_key_property(
 
     ASSERT_EQ(actual1, actual2);
 }
+
+azihsm_algo_rsa_pkcs_oaep_params build_oaep_sha256_params();

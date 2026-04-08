@@ -503,10 +503,7 @@ TEST_F(azihsm_aes_keygen, aes_key_unwrap_corrupted_fails)
 
         std::vector<uint8_t> local_aes_key(32, 0x55);
 
-        azihsm_algo_rsa_pkcs_oaep_params oaep_params{};
-        oaep_params.hash_algo_id = AZIHSM_ALGO_ID_SHA256;
-        oaep_params.mgf1_hash_algo_id = AZIHSM_MGF1_ID_SHA256;
-        oaep_params.label = nullptr;
+        azihsm_algo_rsa_pkcs_oaep_params oaep_params = build_oaep_sha256_params();
 
         std::vector<uint8_t> wrapped_data =
             wrap_local_aes_key(wrapping_pub_key, local_aes_key, 256, oaep_params);
@@ -633,10 +630,7 @@ TEST_F(azihsm_aes_keygen, aes_unwrap_wrong_algo_fails)
 
         std::vector<uint8_t> local_aes_key(32, 0x11);
 
-        azihsm_algo_rsa_pkcs_oaep_params oaep_params{};
-        oaep_params.hash_algo_id = AZIHSM_ALGO_ID_SHA256;
-        oaep_params.mgf1_hash_algo_id = AZIHSM_MGF1_ID_SHA256;
-        oaep_params.label = nullptr;
+        azihsm_algo_rsa_pkcs_oaep_params oaep_params = build_oaep_sha256_params();
 
         std::vector<uint8_t> wrapped_data =
             wrap_local_aes_key(wrapping_pub_key, local_aes_key, 256, oaep_params);
@@ -799,10 +793,7 @@ TEST_F(azihsm_aes_keygen, aes_unwrap_truncated_blob_fails)
 
         std::vector<uint8_t> local_aes_key(32, 0x11);
 
-        azihsm_algo_rsa_pkcs_oaep_params oaep_params{};
-        oaep_params.hash_algo_id = AZIHSM_ALGO_ID_SHA256;
-        oaep_params.mgf1_hash_algo_id = AZIHSM_MGF1_ID_SHA256;
-        oaep_params.label = nullptr;
+        azihsm_algo_rsa_pkcs_oaep_params oaep_params = build_oaep_sha256_params();
 
         std::vector<uint8_t> wrapped_data =
             wrap_local_aes_key(wrapping_pub_key, local_aes_key, 256, oaep_params);
@@ -1027,10 +1018,7 @@ TEST_F(azihsm_aes_keygen, aes_unwrap_bits_mismatch_fails)
         // 256-bit AES key material
         std::vector<uint8_t> local_aes_key(32, 0x11);
 
-        azihsm_algo_rsa_pkcs_oaep_params oaep_params{};
-        oaep_params.hash_algo_id = AZIHSM_ALGO_ID_SHA256;
-        oaep_params.mgf1_hash_algo_id = AZIHSM_MGF1_ID_SHA256;
-        oaep_params.label = nullptr;
+        azihsm_algo_rsa_pkcs_oaep_params oaep_params = build_oaep_sha256_params();
 
         std::vector<uint8_t> wrapped_data =
             wrap_local_aes_key(wrapping_pub_key, local_aes_key, 256, oaep_params);
@@ -1156,10 +1144,7 @@ TEST_F(azihsm_aes_keygen, aes_unwrapped_key_roundtrip)
         std::vector<uint8_t> local_aes_key(32, 0x11);
 
         // Configure OAEP parameters and wrap the local key
-        azihsm_algo_rsa_pkcs_oaep_params oaep_params{};
-        oaep_params.hash_algo_id = AZIHSM_ALGO_ID_SHA256;
-        oaep_params.mgf1_hash_algo_id = AZIHSM_MGF1_ID_SHA256;
-        oaep_params.label = nullptr;
+        azihsm_algo_rsa_pkcs_oaep_params oaep_params = build_oaep_sha256_params();
 
         std::vector<uint8_t> wrapped_data =
             wrap_local_aes_key(wrapping_pub_key, local_aes_key, 256, oaep_params);
@@ -1355,10 +1340,7 @@ TEST_F(azihsm_aes_keygen, aes_xts_key_unwrap)
         ASSERT_FALSE(wrapped_blob.empty());
 
         // Step 2: Unwrap the XTS wrapped blob
-        azihsm_algo_rsa_pkcs_oaep_params oaep_params{};
-        oaep_params.hash_algo_id = AZIHSM_ALGO_ID_SHA256;
-        oaep_params.mgf1_hash_algo_id = AZIHSM_MGF1_ID_SHA256;
-        oaep_params.label = nullptr;
+        azihsm_algo_rsa_pkcs_oaep_params oaep_params = build_oaep_sha256_params();
 
         azihsm_algo_rsa_aes_key_wrap_params unwrap_params{};
         unwrap_params.oaep_params = &oaep_params;
@@ -1653,10 +1635,7 @@ TEST_F(azihsm_aes_keygen, aes_xts_key_unwrap_corrupted_fails)
         // Corrupt the header
         wrapped_blob[0] ^= 0xFF;
 
-        azihsm_algo_rsa_pkcs_oaep_params oaep_params{};
-        oaep_params.hash_algo_id = AZIHSM_ALGO_ID_SHA256;
-        oaep_params.mgf1_hash_algo_id = AZIHSM_MGF1_ID_SHA256;
-        oaep_params.label = nullptr;
+        azihsm_algo_rsa_pkcs_oaep_params oaep_params = build_oaep_sha256_params();
 
         azihsm_algo_rsa_aes_key_wrap_params unwrap_params{};
         unwrap_params.oaep_params = &oaep_params;
@@ -1718,10 +1697,7 @@ TEST_F(azihsm_aes_keygen, aes_xts_unwrap_wrong_algo_fails)
         ASSERT_FALSE(wrapped_blob.empty());
 
         // Use wrong algo ID: AES_XTS is an encryption algo, not a key-unwrap algo
-        azihsm_algo_rsa_pkcs_oaep_params oaep_params{};
-        oaep_params.hash_algo_id = AZIHSM_ALGO_ID_SHA256;
-        oaep_params.mgf1_hash_algo_id = AZIHSM_MGF1_ID_SHA256;
-        oaep_params.label = nullptr;
+        azihsm_algo_rsa_pkcs_oaep_params oaep_params = build_oaep_sha256_params();
 
         azihsm_algo_rsa_aes_key_wrap_params unwrap_params{};
         unwrap_params.oaep_params = &oaep_params;
@@ -1936,10 +1912,7 @@ TEST_F(azihsm_aes_keygen, aes_xts_unwrap_bits_mismatch_fails)
         auto wrapped_blob = build_xts_wrapped_blob(wrapping_pub_key, key1_plain, key2_plain);
         ASSERT_FALSE(wrapped_blob.empty());
 
-        azihsm_algo_rsa_pkcs_oaep_params oaep_params{};
-        oaep_params.hash_algo_id = AZIHSM_ALGO_ID_SHA256;
-        oaep_params.mgf1_hash_algo_id = AZIHSM_MGF1_ID_SHA256;
-        oaep_params.label = nullptr;
+        azihsm_algo_rsa_pkcs_oaep_params oaep_params = build_oaep_sha256_params();
 
         azihsm_algo_rsa_aes_key_wrap_params unwrap_params{};
         unwrap_params.oaep_params = &oaep_params;
@@ -2001,10 +1974,7 @@ TEST_F(azihsm_aes_keygen, aes_xts_unwrap_truncated_blob_fails)
         // Truncate the wrapped blob
         wrapped_blob.resize(wrapped_blob.size() - 8);
 
-        azihsm_algo_rsa_pkcs_oaep_params oaep_params{};
-        oaep_params.hash_algo_id = AZIHSM_ALGO_ID_SHA256;
-        oaep_params.mgf1_hash_algo_id = AZIHSM_MGF1_ID_SHA256;
-        oaep_params.label = nullptr;
+        azihsm_algo_rsa_pkcs_oaep_params oaep_params = build_oaep_sha256_params();
 
         azihsm_algo_rsa_aes_key_wrap_params unwrap_params{};
         unwrap_params.oaep_params = &oaep_params;
@@ -2133,10 +2103,7 @@ TEST_F(azihsm_aes_keygen, unwrap_local_aes_gcm_256_key_corrupted_fails)
                                                    0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
                                                    0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f };
 
-        azihsm_algo_rsa_pkcs_oaep_params oaep_params{};
-        oaep_params.hash_algo_id = AZIHSM_ALGO_ID_SHA256;
-        oaep_params.mgf1_hash_algo_id = AZIHSM_MGF1_ID_SHA256;
-        oaep_params.label = nullptr;
+        azihsm_algo_rsa_pkcs_oaep_params oaep_params = build_oaep_sha256_params();
 
         std::vector<uint8_t> wrapped_data =
             wrap_local_aes_key(wrapping_pub_key, local_aes_gcm_key, 256, oaep_params);
@@ -2214,10 +2181,7 @@ TEST_F(azihsm_aes_keygen, unwrap_local_aes_gcm_256_key_roundtrip)
                                                    0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f };
 
         // Configure OAEP parameters for RSA-AES wrap operation
-        azihsm_algo_rsa_pkcs_oaep_params oaep_params{};
-        oaep_params.hash_algo_id = AZIHSM_ALGO_ID_SHA256;
-        oaep_params.mgf1_hash_algo_id = AZIHSM_MGF1_ID_SHA256;
-        oaep_params.label = nullptr;
+        azihsm_algo_rsa_pkcs_oaep_params oaep_params = build_oaep_sha256_params();
 
         // Wrap the local AES-GCM key using the RSA public key
         std::vector<uint8_t> wrapped_data =
@@ -2463,10 +2427,7 @@ TEST_F(azihsm_aes_keygen, aes_gcm_unwrap_wrong_algo_fails)
 
         std::vector<uint8_t> local_aes_key(32, 0x33);
 
-        azihsm_algo_rsa_pkcs_oaep_params oaep_params{};
-        oaep_params.hash_algo_id = AZIHSM_ALGO_ID_SHA256;
-        oaep_params.mgf1_hash_algo_id = AZIHSM_MGF1_ID_SHA256;
-        oaep_params.label = nullptr;
+        azihsm_algo_rsa_pkcs_oaep_params oaep_params = build_oaep_sha256_params();
 
         std::vector<uint8_t> wrapped_data =
             wrap_local_aes_key(wrapping_pub_key, local_aes_key, 256, oaep_params);
@@ -2614,10 +2575,7 @@ TEST_F(azihsm_aes_keygen, aes_gcm_unwrap_bits_mismatch_fails)
         // 256-bit AES-GCM key material
         std::vector<uint8_t> local_aes_key(32, 0x11);
 
-        azihsm_algo_rsa_pkcs_oaep_params oaep_params{};
-        oaep_params.hash_algo_id = AZIHSM_ALGO_ID_SHA256;
-        oaep_params.mgf1_hash_algo_id = AZIHSM_MGF1_ID_SHA256;
-        oaep_params.label = nullptr;
+        azihsm_algo_rsa_pkcs_oaep_params oaep_params = build_oaep_sha256_params();
 
         std::vector<uint8_t> wrapped_data =
             wrap_local_aes_key(wrapping_pub_key, local_aes_key, 256, oaep_params);
@@ -2830,10 +2788,7 @@ TEST_F(azihsm_aes_keygen, aes_gcm_unwrap_truncated_blob_fails)
 
         std::vector<uint8_t> local_aes_key(32, 0x11);
 
-        azihsm_algo_rsa_pkcs_oaep_params oaep_params{};
-        oaep_params.hash_algo_id = AZIHSM_ALGO_ID_SHA256;
-        oaep_params.mgf1_hash_algo_id = AZIHSM_MGF1_ID_SHA256;
-        oaep_params.label = nullptr;
+        azihsm_algo_rsa_pkcs_oaep_params oaep_params = build_oaep_sha256_params();
 
         std::vector<uint8_t> wrapped_data =
             wrap_local_aes_key(wrapping_pub_key, local_aes_key, 256, oaep_params);
@@ -3074,10 +3029,7 @@ TEST_F(azihsm_aes_keygen, unwrap_local_aes_128_key)
                                                0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f };
 
         // Step 3: Wrap the local key using RSA-AES key wrap
-        azihsm_algo_rsa_pkcs_oaep_params oaep_params{};
-        oaep_params.hash_algo_id = AZIHSM_ALGO_ID_SHA256;
-        oaep_params.mgf1_hash_algo_id = AZIHSM_MGF1_ID_SHA256;
-        oaep_params.label = nullptr;
+        azihsm_algo_rsa_pkcs_oaep_params oaep_params = build_oaep_sha256_params();
 
         azihsm_algo_rsa_aes_wrap_params wrap_params{};
         wrap_params.oaep_params = &oaep_params;
@@ -3197,10 +3149,7 @@ TEST_F(azihsm_aes_keygen, unwrap_local_aes_gcm_256_key)
                                                    0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f };
 
         // Step 3: Wrap the local key using RSA-AES key wrap
-        azihsm_algo_rsa_pkcs_oaep_params oaep_params{};
-        oaep_params.hash_algo_id = AZIHSM_ALGO_ID_SHA256;
-        oaep_params.mgf1_hash_algo_id = AZIHSM_MGF1_ID_SHA256;
-        oaep_params.label = nullptr;
+        azihsm_algo_rsa_pkcs_oaep_params oaep_params = build_oaep_sha256_params();
 
         std::vector<uint8_t> wrapped_data =
             wrap_local_aes_key(wrapping_pub_key, local_aes_gcm_key, 256, oaep_params);

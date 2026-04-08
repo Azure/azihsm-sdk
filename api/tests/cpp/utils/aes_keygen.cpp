@@ -401,3 +401,12 @@ void aes_key_unmask_common(
     err = azihsm_key_delete(original_key.release());
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 }
+
+azihsm_algo_rsa_pkcs_oaep_params build_oaep_sha256_params()
+{
+    azihsm_algo_rsa_pkcs_oaep_params params{};
+    params.hash_algo_id = AZIHSM_ALGO_ID_SHA256;
+    params.mgf1_hash_algo_id = AZIHSM_MGF1_ID_SHA256;
+    params.label = nullptr;
+    return params;
+}
