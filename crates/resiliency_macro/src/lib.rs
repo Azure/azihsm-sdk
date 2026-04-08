@@ -291,7 +291,7 @@ fn expand_retry(args: RetryArgs, item: ItemFn) -> syn::Result<proc_macro2::Token
     // (closures capture the receiver), whereas a nested `fn` cannot have a
     // receiver parameter.
     let retry_call = quote! {
-        crate::resiliency::execute_with_backoff(
+        crate::resiliency::execute_with_retry(
             |__prev_error: Option<&crate::HsmError>| #body,
             #predicate,
             #max_retries,
@@ -441,6 +441,235 @@ fn expand_retry_key_gen(
                     &__partition,
                     #max_retries,
                     #backoff_base_ms,
+                )
+            }
+        }
+    })
+}
+
+// ---------------------------
+// Open-session retry macro
+// ---------------------------
+
+/// Parsed attribute arguments for `#[resiliency_open_session(...)]`.
+#[derive(Debug, FromMeta)]
+struct RetryOpenSessionArgs {
+    /// Name of the partition parameter (e.g., `"partition"`).
+    partition: String,
+
+    /// Maximum number of retry attempts.
+    #[darling(default)]
+    max_retries: Option<u32>,
+
+    /// Base delay in milliseconds for exponential backoff.
+    #[darling(default)]
+    backoff_base_ms: Option<u64>,
+}
+
+/// Attribute macro that wraps an open-session function with
+/// restore-partition recovery logic.
+///
+/// On a retryable error (as determined by `is_open_session_retryable_error`),
+/// the macro restores the partition and retries the operation.
+/// No session reopen or key refresh is needed because the session
+/// does not yet exist.
+///
+/// The macro is only active when resiliency is enabled on the partition.
+///
+/// # Attribute parameters
+///
+/// | Parameter        | Required | Default                         | Description                              |
+/// |------------------|----------|---------------------------------|------------------------------------------|
+/// | `partition`      | **yes**  | —                               | Name of the `&HsmPartition` parameter.   |
+/// | `max_retries`    | no       | `crate::resiliency::MAX_RETRIES`| Max additional retries.                  |
+/// | `backoff_base_ms`| no       | `crate::resiliency::BACKOFF_BASE_MS`| Base delay (ms).                    |
+///
+#[proc_macro_attribute]
+pub fn resiliency_open_session(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let attr_args = match darling::ast::NestedMeta::parse_meta_list(attr.into()) {
+        Ok(v) => v,
+        Err(e) => return TokenStream::from(darling::Error::from(e).write_errors()),
+    };
+    let item = parse_macro_input!(item as ItemFn);
+
+    let args = match RetryOpenSessionArgs::from_list(&attr_args) {
+        Ok(v) => v,
+        Err(e) => return e.write_errors().into(),
+    };
+
+    expand_retry_open_session(args, item)
+        .unwrap_or_else(|err| err.to_compile_error())
+        .into()
+}
+
+fn expand_retry_open_session(
+    args: RetryOpenSessionArgs,
+    item: ItemFn,
+) -> syn::Result<proc_macro2::TokenStream> {
+    validate_retry_fn(&item)?;
+
+    let vis = &item.vis;
+    let attrs = &item.attrs;
+    let body = &item.block;
+    let fn_name = &item.sig.ident;
+    let inner_name = syn::Ident::new(&format!("__res_{fn_name}"), fn_name.span());
+    let partition_ident = syn::Ident::new(&args.partition, proc_macro2::Span::call_site());
+
+    let max_retries =
+        optional_or_default(args.max_retries, quote! { crate::resiliency::MAX_RETRIES });
+    let backoff_base_ms = optional_or_default(
+        args.backoff_base_ms,
+        quote! { crate::resiliency::BACKOFF_BASE_MS },
+    );
+
+    // Build the inner function with the original params and return type.
+    let inner_generics = &item.sig.generics;
+    let inner_params = &item.sig.inputs;
+    let inner_ret = &item.sig.output;
+
+    // Build call arguments for forwarding to the inner function.
+    let skip = [args.partition.as_str()];
+    let (mut_sig, call_args, retry_call_args) = build_inner_fn_call_args(&item.sig, &skip);
+
+    Ok(quote! {
+        fn #inner_name #inner_generics (#inner_params) #inner_ret
+            #body
+
+        #(#attrs)*
+        #vis #mut_sig {
+            if !#partition_ident.resiliency_enabled() {
+                #inner_name(#call_args)
+            } else {
+                crate::resiliency::execute_open_session_with_retry(
+                    || #inner_name(#retry_call_args),
+                    #partition_ident,
+                    #max_retries,
+                    #backoff_base_ms,
+                )
+            }
+        }
+    })
+}
+
+// ---------------------------
+// Cert-chain retry macro
+// ---------------------------
+
+/// Parsed attribute arguments for `#[resiliency_cert_chain(...)]`.
+#[derive(Debug, FromMeta)]
+struct RetryCertChainArgs {
+    /// Name of the partition parameter (e.g., `"partition"`).
+    partition: String,
+
+    /// Maximum number of retry attempts.
+    #[darling(default)]
+    max_retries: Option<u32>,
+
+    /// Base delay in milliseconds for exponential backoff.
+    #[darling(default)]
+    backoff_base_ms: Option<u64>,
+
+    /// Maximum random jitter in milliseconds added to each backoff delay.
+    #[darling(default)]
+    backoff_jitter_ms: Option<u64>,
+}
+
+/// Retry macro for certificate chain retrieval.
+///
+/// Equivalent to:
+/// ```ignore
+/// #[retry_with_backoff(
+///     predicate = crate::resiliency::is_cert_chain_retryable_error,
+///     condition = "partition.resiliency_enabled()",
+/// )]
+/// ```
+///
+/// Cert chains do not need partition credentials established, so no
+/// `restore_partition` is needed — just backoff and retry.
+///
+/// # Attribute parameters
+///
+/// | Parameter          | Required | Default                                | Description                            |
+/// |--------------------|----------|----------------------------------------|----------------------------------------|
+/// | `partition`        | **yes**  | —                                      | Name of the `&HsmPartition` parameter. |
+/// | `max_retries`      | no       | `crate::resiliency::MAX_RETRIES`       | Max additional retries.                |
+/// | `backoff_base_ms`  | no       | `crate::resiliency::BACKOFF_BASE_MS`   | Base delay (ms).                       |
+/// | `backoff_jitter_ms`| no       | `crate::resiliency::BACKOFF_JITTER_MS` | Max random jitter (ms).                |
+///
+/// # Example
+///
+/// ```ignore
+/// #[resiliency_cert_chain(partition = "partition")]
+/// pub(crate) fn get_cert_chain(partition: &HsmPartition, slot_id: u8) -> HsmResult<String> {
+///     // ...
+/// }
+/// ```
+#[proc_macro_attribute]
+pub fn resiliency_cert_chain(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let attr_args = match darling::ast::NestedMeta::parse_meta_list(attr.into()) {
+        Ok(v) => v,
+        Err(e) => return TokenStream::from(darling::Error::from(e).write_errors()),
+    };
+    let item = parse_macro_input!(item as ItemFn);
+
+    let args = match RetryCertChainArgs::from_list(&attr_args) {
+        Ok(v) => v,
+        Err(e) => return e.write_errors().into(),
+    };
+
+    expand_retry_cert_chain(args, item)
+        .unwrap_or_else(|err| err.to_compile_error())
+        .into()
+}
+
+fn expand_retry_cert_chain(
+    args: RetryCertChainArgs,
+    item: ItemFn,
+) -> syn::Result<proc_macro2::TokenStream> {
+    validate_retry_fn(&item)?;
+
+    let vis = &item.vis;
+    let attrs = &item.attrs;
+    let body = &item.block;
+    let fn_name = &item.sig.ident;
+    let inner_name = syn::Ident::new(&format!("__res_{fn_name}"), fn_name.span());
+    let partition_ident = syn::Ident::new(&args.partition, proc_macro2::Span::call_site());
+
+    let max_retries =
+        optional_or_default(args.max_retries, quote! { crate::resiliency::MAX_RETRIES });
+    let backoff_base_ms = optional_or_default(
+        args.backoff_base_ms,
+        quote! { crate::resiliency::BACKOFF_BASE_MS },
+    );
+    let backoff_jitter_ms = optional_or_default(
+        args.backoff_jitter_ms,
+        quote! { crate::resiliency::BACKOFF_JITTER_MS },
+    );
+
+    // Build the inner function with the original params and return type.
+    let inner_generics = &item.sig.generics;
+    let inner_params = &item.sig.inputs;
+    let inner_ret = &item.sig.output;
+
+    // Build call arguments for forwarding to the inner function.
+    let skip = [args.partition.as_str()];
+    let (mut_sig, call_args, retry_call_args) = build_inner_fn_call_args(&item.sig, &skip);
+
+    Ok(quote! {
+        fn #inner_name #inner_generics (#inner_params) #inner_ret
+            #body
+
+        #(#attrs)*
+        #vis #mut_sig {
+            if !#partition_ident.resiliency_enabled() {
+                #inner_name(#call_args)
+            } else {
+                crate::resiliency::execute_with_retry(
+                    |__prev_error: Option<&crate::HsmError>| #inner_name(#retry_call_args),
+                    crate::resiliency::is_cert_chain_retryable_error,
+                    #max_retries,
+                    #backoff_base_ms,
+                    #backoff_jitter_ms,
                 )
             }
         }

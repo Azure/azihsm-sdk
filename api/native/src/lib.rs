@@ -394,6 +394,15 @@ impl From<&AzihsmApiRev> for api::HsmApiRev {
     }
 }
 
+impl From<api::HsmApiRev> for AzihsmApiRev {
+    fn from(rev: api::HsmApiRev) -> Self {
+        AzihsmApiRev {
+            major: rev.major,
+            minor: rev.minor,
+        }
+    }
+}
+
 impl TryFrom<AzihsmHandle> for api::HsmSession {
     type Error = AzihsmStatus;
 

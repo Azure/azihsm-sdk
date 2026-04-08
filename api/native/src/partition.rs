@@ -110,6 +110,58 @@ impl<'a> TryFrom<&'a AzihsmPotaEndorsement> for api::HsmPotaEndorsement {
     }
 }
 
+/// FFI-safe partition info structure.
+///
+/// C-compatible representation of `HsmPartitionInfo` with the path
+/// expressed as an `AzihsmStr` (pointer + length) instead of a Rust `String`,
+/// and the supported API revision range as min/max fields.
+#[repr(C)]
+pub struct AzihsmPartInfo {
+    /// Device path (caller-owned buffer, filled by the API)
+    pub path: AzihsmStr,
+
+    /// Minimum supported API revision
+    pub api_rev_min: AzihsmApiRev,
+
+    /// Maximum supported API revision
+    pub api_rev_max: AzihsmApiRev,
+}
+
+impl AzihsmPartInfo {
+    /// Copies data from `HsmPartitionInfo` into this caller-owned struct.
+    ///
+    /// The caller must pre-allocate `self.path.str` with at least enough
+    /// space. On entry, `self.path.len` is the buffer capacity in
+    /// `azihsm_char` elements (including the null terminator).
+    /// On return, `self.path.len` is set to the required/written count
+    /// of `azihsm_char` elements.
+    ///
+    /// Returns `BufferTooSmall` if the path buffer is too small
+    /// (with `self.path.len` updated to the required size in elements).
+    #[allow(unsafe_code)]
+    fn copy_from(&mut self, src: &api::HsmPartitionInfo) -> Result<(), AzihsmStatus> {
+        let path_str = AzihsmStr::from_string(&src.path);
+
+        //return error if the provided buffer is too small, with required size in path.len
+        if self.path.len < path_str.len {
+            self.path.len = path_str.len;
+            return Err(AzihsmStatus::BufferTooSmall);
+        }
+
+        // SAFETY: caller guarantees self.path.str points to a buffer
+        // of at least self.path.len azihsm_char elements, and we checked it is large enough.
+        unsafe {
+            std::ptr::copy_nonoverlapping(path_str.str, self.path.str, path_str.len as usize);
+        }
+        self.path.len = path_str.len;
+
+        let range = src.api_rev_range.ok_or(AzihsmStatus::DeviceNotAccessible)?;
+        self.api_rev_min = AzihsmApiRev::from(range.min());
+        self.api_rev_max = AzihsmApiRev::from(range.max());
+
+        Ok(())
+    }
+}
 /// Convert a nullable C resiliency config pointer to an optional Rust config.
 ///
 /// Returns `Ok(None)` when `ptr` is null, `Ok(Some(...))` when valid,
@@ -203,14 +255,18 @@ pub unsafe extern "C" fn azihsm_part_get_count(
     })
 }
 
-/// Get the partition path
+/// Get partition info at the given index
+///
 /// @param[in] handle Handle to the HSM partition list
 /// @param[in] index Index of the partition
-/// @param[in/out] On input, the length of the buffer pointed to by `path` in bytes.
-///                On output, the number of bytes written to the buffer.
-/// @param[out] path Buffer to receive the null-terminated partition path in UTF-8 format on Linux and UTF-16 format on Windows.
+/// @param[in/out] part_info Pointer to an `AzihsmPartInfo` structure.
+///                On input, `part_info.path.len` is the size of the buffer pointed to by `part_info.path.str`.
+///                On output, `part_info.path.len` is set to the required/written size.
+///                `part_info.api_rev_min` / `part_info.api_rev_max` are only valid on
+///                `AZIHSM_STATUS_SUCCESS`.
 ///
-/// @return 0 on success, or a negative error code on failure
+/// @return 0 on success, AZIHSM_STATUS_BUFFER_TOO_SMALL if the path buffer is too small
+///         (part_info.path.len is updated to the required size), or a negative error code on failure.
 ///
 /// @internal
 /// # Safety
@@ -218,66 +274,63 @@ pub unsafe extern "C" fn azihsm_part_get_count(
 ///
 #[unsafe(no_mangle)]
 #[allow(unsafe_code)]
-pub unsafe extern "C" fn azihsm_part_get_path(
+pub unsafe extern "C" fn azihsm_part_get_info(
     handle: AzihsmHandle,
     index: u32,
-    path: *mut AzihsmStr,
+    part_info: *mut AzihsmPartInfo,
 ) -> AzihsmStatus {
     abi_boundary(|| {
-        validate_ptr(path)?;
+        validate_ptr(part_info)?;
 
-        // SAFETY: the function ensures that the pointers are valid
-        let path = unsafe { &mut *path };
-        if path.len != 0 && path.str.is_null() {
+        // SAFETY: the function ensures that the pointer is valid
+        let part_info = unsafe { &mut *part_info };
+        if part_info.path.len != 0 && part_info.path.str.is_null() {
             Err(AzihsmStatus::InvalidArgument)?
         }
 
         let part_list: &Vec<api::HsmPartitionInfo> =
             HANDLE_TABLE.as_ref(handle, HandleType::PartitionList)?;
 
-        // Get the path for the partition at the given index
         let part = match part_list.get(index as usize) {
             Some(part) => part,
             None => Err(AzihsmStatus::IndexOutOfRange)?,
         };
 
-        let path_str = AzihsmStr::from_string(&part.path);
-
-        if path.len < path_str.len {
-            // If the provided buffer is too small, return the required size
-            path.len = path_str.len;
-            Err(AzihsmStatus::BufferTooSmall)?
-        }
-
-        // SAFETY: the function ensures that the pointer is valid
-        unsafe {
-            std::ptr::copy_nonoverlapping(path_str.str, path.str, path_str.len as usize);
-        }
-
-        path.len = path_str.len;
+        part_info.copy_from(part)?;
 
         Ok(())
     })
 }
 
-/// Open an HSM partition
+/// Open an HSM partition with a specified API revision
 ///
-/// @param[in] path Pointer to the partition path (null-terminated UTF-8 string on Linux and UTF-16 string on Windows)
+/// The caller selects an API revision within the range reported by
+/// `azihsm_part_get_info`. All subsequent operations on this handle
+/// (including sessions opened from it) will use the selected revision.
+///
+/// @param[in] path Pointer to an `azihsm_str` containing the partition
+///            device path. The `str` field must point to a valid
+///            null-terminated buffer and `len` must include the null
+///            terminator (i.e. `str[len-1] == 0`).
 /// @param[out] handle Handle to the opened HSM partition
-/// @return 0 on success, or a negative error code on failure
+/// @param[in] api_rev API revision to use for this partition handle
+/// @return 0 on success, AZIHSM_STATUS_UNSUPPORTED_API_REVISION if api_rev is
+///         outside the partition's supported range, or a negative error code on failure
 ///
 /// @internal
 /// # Safety
 /// This function is unsafe because it dereferences raw pointers.
-/// The caller must ensure that the `path` pointer is valid and points to a valid `c_void`
-/// that can be interpreted as a null-terminated UTF-8 string on Linux and UTF-16 string on Windows.
-/// The caller must also ensure that the `handle` argument is a valid  `AzihsmHandle` pointer.
+/// The caller must ensure that `path` is a valid pointer to an `AzihsmStr`
+/// whose `str` field points to a null-terminated buffer of `len`
+/// `azihsm_char` elements (including the terminator).
+/// The caller must also ensure that the `handle` argument is a valid `AzihsmHandle` pointer.
 ///
 #[unsafe(no_mangle)]
 #[allow(unsafe_code)]
 pub unsafe extern "C" fn azihsm_part_open(
     path: *const AzihsmStr,
     handle: *mut AzihsmHandle,
+    api_rev: AzihsmApiRev,
 ) -> AzihsmStatus {
     abi_boundary(|| {
         validate_ptr(handle)?;
@@ -292,7 +345,10 @@ pub unsafe extern "C" fn azihsm_part_open(
         // Convert the AzihsmStr to a Rust String
         let path_str = AzihsmStr::to_string(path);
 
-        let partition = Box::new(api::HsmPartitionManager::open_partition(&path_str)?);
+        let partition = Box::new(api::HsmPartitionManager::open_partition(
+            &path_str,
+            api_rev.into(),
+        )?);
 
         // SAFETY: the function ensures that the pointer is valid
         unsafe { *handle = HANDLE_TABLE.alloc_handle(HandleType::Partition, partition) }

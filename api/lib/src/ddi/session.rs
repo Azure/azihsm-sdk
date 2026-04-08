@@ -8,6 +8,7 @@
 
 use azihsm_cred_encrypt::DeviceCredKey;
 use azihsm_crypto::Rng;
+use resiliency_macro::resiliency_open_session;
 
 use super::*;
 
@@ -51,7 +52,7 @@ pub(crate) struct ReopenSessionResult {
 ///
 /// # Arguments
 ///
-/// * `dev` - The HSM device handle
+/// * `partition` - The HSM partition handle
 /// * `rev` - The API revision to use for the session
 /// * `creds` - Application credentials for authentication
 /// * `seed` - Optional seed value for session initialization
@@ -69,8 +70,9 @@ pub(crate) struct ReopenSessionResult {
 /// - Maximum number of sessions is reached
 /// - Device communication fails
 /// - The DDI operation returns an error
+#[resiliency_open_session(partition = "partition")]
 pub(crate) fn open_session(
-    dev: &HsmDev,
+    partition: &HsmPartition,
     rev: HsmApiRev,
     creds: &HsmCredentials,
     seed: Option<&[u8]>,
@@ -83,6 +85,8 @@ pub(crate) fn open_session(
             seed
         }
     };
+    let inner = partition.inner().read();
+    let dev = inner.dev();
     let (ecreds, pub_key) = prepare_session_credentials(dev, rev, creds, seed)?;
     let req = DdiOpenSessionCmdReq {
         hdr: build_ddi_req_hdr(DdiOp::OpenSession, Some(rev), None),
