@@ -1067,9 +1067,7 @@ impl HsmPartitionInner {
 
     /// Resets the partition and clears cached masked keys.
     pub(crate) fn reset(&mut self) -> HsmResult<()> {
-        self.dev
-            .simulate_nssr_after_lm()
-            .map_err(|_| HsmError::DdiCmdFailure)?;
+        self.dev.simulate_nssr_after_lm().map_err(HsmError::from)?;
         self.clear_masked_keys();
         Ok(())
     }
