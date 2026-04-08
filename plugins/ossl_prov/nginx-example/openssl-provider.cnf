@@ -1,0 +1,39 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+#
+# Used by nginx (via OPENSSL_CONF) to load the provider so that the
+# store:azihsm:// URI in ssl_certificate_key resolves automatically.
+
+openssl_conf = openssl_init
+
+[openssl_init]
+providers = provider_sect
+
+[provider_sect]
+default = default_sect
+base = base_sect
+azihsm_provider = azihsm_provider_sect
+
+[default_sect]
+activate = 1
+
+[base_sect]
+activate = 1
+
+[azihsm_provider_sect]
+module = /usr/lib/x86_64-linux-gnu/ossl-modules/azihsm_provider.so
+activate = 1
+
+# --- Key material paths ---
+# BMK and MUK are auto-generated on first use if absent.
+azihsm-bmk-path = /var/lib/azihsm/bmk.bin
+azihsm-muk-path = /var/lib/azihsm/muk.bin
+
+# OBK — 48-byte random owner backup key (required).
+azihsm-obk-path = /var/lib/azihsm/obk.bin
+azihsm-obk-source = caller
+
+# POTA attestation keys (required when azihsm-pota-source = caller).
+azihsm-pota-source = caller
+azihsm-pota-private-key-path = /var/lib/azihsm/pota_private_key.der
+azihsm-pota-public-key-path = /var/lib/azihsm/pota_public_key.der

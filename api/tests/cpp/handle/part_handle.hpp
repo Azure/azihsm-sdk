@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "../utils/part_init_config.hpp"
+#include "../utils/utils.hpp"
 #include "part_list_handle.hpp"
 #include "test_creds.hpp"
 
@@ -91,7 +92,8 @@ class PartitionHandle
         path_str.str = path.data();
         path_str.len = static_cast<uint32_t>(path.size());
 
-        auto err = azihsm_part_open(&path_str, &handle_);
+        auto api_rev = test_api_rev();
+        auto err = azihsm_part_open(&path_str, &handle_, api_rev);
         if (err != AZIHSM_STATUS_SUCCESS)
         {
             throw std::runtime_error("Failed to open partition. Error: " + std::to_string(err));

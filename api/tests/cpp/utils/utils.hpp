@@ -3,7 +3,15 @@
 
 #pragma once
 
+#include <azihsm_api.h>
 #include <filesystem>
+#include <gtest/gtest.h>
+
+/// Returns the standard test API revision (1.0) used across all C++ tests.
+inline azihsm_api_rev test_api_rev()
+{
+    return azihsm_api_rev{ 1, 0 };
+}
 
 /// Returns the system temporary directory (`/tmp` on Linux, `%TEMP%` on Windows).
 /// Fails the current test if the temp directory cannot be determined.

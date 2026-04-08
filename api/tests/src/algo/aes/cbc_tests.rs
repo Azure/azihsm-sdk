@@ -193,11 +193,19 @@ fn run_cbc_invalid_padding_variants(session: &HsmSession, key_bits: u32) {
 
     let pad_len = AES_CBC_BLOCK_SIZE - (pt.len() % AES_CBC_BLOCK_SIZE);
 
-    // Case 1: corrupt last padding byte (always invalid)
+    // Case 1: corrupt last padding byte (deterministically invalid)
+    //
+    // Flip the last byte of C_{n-1} rather than C_n. In CBC mode,
+    // P_n = D_K(C_n) XOR C_{n-1}, so this changes only the last byte of
+    // P_n (the padding-length indicator). Since the original value is in
+    // 1..=16, XOR with 0xFF yields a value > 16 that can never be valid
+    // PKCS#7 padding.
     {
         let mut bad = ct.clone();
-        let last = bad.len() - 1;
-        bad[last] ^= 0xFF;
+        let blocks = bad.len() / AES_CBC_BLOCK_SIZE;
+        assert!(blocks >= 2, "need at least two blocks");
+        let target = (blocks - 2) * AES_CBC_BLOCK_SIZE + (AES_CBC_BLOCK_SIZE - 1);
+        bad[target] ^= 0xFF;
 
         let result = cbc_decrypt(&key, true, &iv, &bad);
         assert!(

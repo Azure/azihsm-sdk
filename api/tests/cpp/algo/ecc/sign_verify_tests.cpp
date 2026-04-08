@@ -826,17 +826,18 @@ static std::vector<azihsm_char> get_first_partition_path()
     }
 
     // Get path size first
-    azihsm_str path = { nullptr, 0 };
-    err = azihsm_part_get_path(list_handle, 0, &path);
+    azihsm_part_info info = {};
+    info.path = { nullptr, 0 };
+    err = azihsm_part_get_info(list_handle, 0, &info);
     if (err != AZIHSM_STATUS_BUFFER_TOO_SMALL)
     {
         azihsm_part_free_list(list_handle);
-        throw std::runtime_error("Failed to get path size. Error: " + std::to_string(err));
+        throw std::runtime_error("Failed to get info size. Error: " + std::to_string(err));
     }
 
-    std::vector<azihsm_char> buffer(path.len);
-    path.str = buffer.data();
-    err = azihsm_part_get_path(list_handle, 0, &path);
+    std::vector<azihsm_char> buffer(info.path.len);
+    info.path.str = buffer.data();
+    err = azihsm_part_get_info(list_handle, 0, &info);
     azihsm_part_free_list(list_handle);
 
     if (err != AZIHSM_STATUS_SUCCESS)
@@ -974,7 +975,8 @@ TEST_F(azihsm_ecc_sign_verify, DISABLED_MANUAL_restore_key_and_verify)
 
     // Step 3: Open partition
     azihsm_handle raw_part = 0;
-    auto err = azihsm_part_open(&path_str, &raw_part);
+    auto api_rev = test_api_rev();
+    auto err = azihsm_part_open(&path_str, &raw_part, api_rev);
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS) << "azihsm_part_open failed";
     ASSERT_NE(raw_part, 0u);
     PartitionHandle part_handle = PartitionHandle::from_raw(raw_part);

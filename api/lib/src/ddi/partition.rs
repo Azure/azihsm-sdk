@@ -10,6 +10,7 @@ use azihsm_cred_encrypt::DeviceCredKey;
 use azihsm_crypto as crypto;
 use azihsm_ddi_mbor::*;
 use crypto::*;
+use resiliency_macro::resiliency_cert_chain;
 use resiliency_macro::resiliency_init_part;
 use x509::*;
 
@@ -54,6 +55,40 @@ pub(crate) fn get_part_pub_key(dev: &HsmDev, rev: HsmApiRev) -> HsmResult<Vec<u8
         .map_hsm_err(HsmError::InternalError)?;
 
     Ok(pub_key_der)
+}
+
+/// Fetches the certificate chain and extracts the public key from the
+/// last certificate.
+///
+/// This combines the work of [`get_part_pub_key`] and [`get_cert_chain`]
+/// into one function, avoiding redundant `GetCertChainInfo` and
+/// `GetCertificate` DDI calls. A second `GetCertChainInfo` call is made
+/// after fetching all certificates to verify the chain did not change
+/// during retrieval.
+///
+/// # Arguments
+///
+/// * `dev` - The HSM device handle
+/// * `rev` - The API revision to use
+/// * `slot_id` - The certificate slot number
+///
+/// # Returns
+///
+/// Returns a tuple of (PEM cert chain, DER-encoded public key from the
+/// last certificate).
+fn get_cert_chain_and_pub_key(
+    dev: &HsmDev,
+    rev: HsmApiRev,
+    slot_id: u8,
+) -> HsmResult<(String, Vec<u8>)> {
+    let (cert_chain, last_cert_der) = fetch_cert_chain_checked(dev, rev, slot_id)?;
+
+    let cert = X509Certificate::from_der(&last_cert_der).map_hsm_err(HsmError::InternalError)?;
+    let pub_key_der = cert
+        .get_public_key_der()
+        .map_hsm_err(HsmError::InternalError)?;
+
+    Ok((cert_chain, pub_key_der))
 }
 
 /// Gets the SHA-384 digest of the partition's public key in uncompressed point format.
@@ -150,8 +185,8 @@ fn get_pota_endorsement(
                     .pota_callback
                     .as_ref()
                     .ok_or(HsmError::InvalidArgument)?;
-                let pid_pub_key_der = get_part_pub_key(dev, rev)?;
-                let pid_cert_chain_pem = get_cert_chain(dev, rev, 0)?;
+                let (pid_cert_chain_pem, pid_pub_key_der) =
+                    get_cert_chain_and_pub_key(dev, rev, 0)?;
                 let data = invoke_pota_callback(
                     callback.as_ref(),
                     pota_endorsement,
@@ -310,7 +345,7 @@ pub(crate) fn init_part_raw_no_res(
     let resp = get_establish_cred_encryption_key(dev, rev)?;
 
     let nonce = resp.data.nonce;
-    let key = DeviceCredKey::new(&resp.data.pub_key, nonce).map_hsm_err(HsmError::DdiCmdFailure)?;
+    let key = DeviceCredKey::new(&resp.data.pub_key, nonce).map_hsm_err(HsmError::InternalError)?;
 
     let (priv_key, pub_key) = key
         .generate_ephemeral_encryption_key()
@@ -514,7 +549,7 @@ fn get_establish_cred_encryption_key(
 /// `HsmError::MaskedKeyDecodeFailed` indicates that the provided BMK/MUK
 /// values are stale; callers should use `try_establish_credential`
 /// for automatic retry with empty keys.
-pub fn establish_credential(
+fn establish_credential(
     dev: &HsmDev,
     rev: HsmApiRev,
     enc_creds: &DdiEncryptedEstablishCredential,
@@ -553,21 +588,64 @@ pub fn establish_credential(
 ///
 /// # Arguments
 ///
-/// * `dev` - The HSM device handle
-/// * `rev` - The API revision to use
+/// * `partition` - The HSM partition; the device handle is obtained from this partition
 /// * `slot_id` - The certificate slot number
 ///
 /// # Returns
 ///
 /// Returns the certificate chain in PEM format.
-pub(crate) fn get_cert_chain(dev: &HsmDev, rev: HsmApiRev, slot_id: u8) -> HsmResult<String> {
+///
+/// # Locking
+///
+/// This function acquires `partition.inner().read()` internally.
+/// Callers must not hold `partition.inner().read()` or
+/// `partition.inner().write()` when calling this function.
+#[resiliency_cert_chain(partition = "partition")]
+pub(crate) fn get_cert_chain(partition: &HsmPartition, slot_id: u8) -> HsmResult<String> {
+    let inner = partition.inner().read();
+    let dev = inner.dev();
+    get_cert_chain_raw_no_res(dev, inner.api_rev(), slot_id)
+}
+
+/// Raw cert chain retrieval — no resiliency retry, no partition lock.
+///
+/// For use in contexts that already have `dev` and `rev` (e.g.,
+/// `get_pota_endorsement` during `init_part_raw_no_res`).
+fn get_cert_chain_raw_no_res(dev: &HsmDev, rev: HsmApiRev, slot_id: u8) -> HsmResult<String> {
+    let (cert_chain, _) = fetch_cert_chain_checked(dev, rev, slot_id)?;
+    Ok(cert_chain)
+}
+
+/// Fetches the certificate chain with a thumbprint stability check.
+///
+/// Retrieves `GetCertChainInfo` before and after fetching all certificates
+/// and returns [`HsmError::CertChainChanged`] if the count or thumbprint
+/// changed in between.
+///
+/// Returns `InternalError` if the certificate count is zero (a partition
+/// must always have a provisioned cert chain).
+///
+/// Also returns the DER bytes of the last certificate so callers can
+/// extract the public key.
+fn fetch_cert_chain_checked(
+    dev: &HsmDev,
+    rev: HsmApiRev,
+    slot_id: u8,
+) -> HsmResult<(String, Vec<u8>)> {
     let (count, thumbprint) = get_cert_chain_info(dev, rev, slot_id)?;
+    if count == 0 {
+        return Err(HsmError::InternalError);
+    }
 
     let mut cert_chain = String::new();
+    let mut last_cert_der = Vec::new();
     for cert_id in 0..count {
         let der = get_cert(dev, rev, slot_id, cert_id)?;
         let pem = crypto::der_to_pem(&der).map_hsm_err(HsmError::InternalError)?;
         cert_chain.push_str(&pem);
+        if cert_id == count - 1 {
+            last_cert_der = der;
+        }
     }
 
     let (new_count, new_thumbprint) = get_cert_chain_info(dev, rev, slot_id)?;
@@ -575,7 +653,7 @@ pub(crate) fn get_cert_chain(dev: &HsmDev, rev: HsmApiRev, slot_id: u8) -> HsmRe
         return Err(HsmError::CertChainChanged);
     }
 
-    Ok(cert_chain)
+    Ok((cert_chain, last_cert_der))
 }
 
 /// Retrieves certificate chain information from the HSM device.

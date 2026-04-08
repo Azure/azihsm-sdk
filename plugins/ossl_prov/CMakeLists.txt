@@ -104,6 +104,7 @@ set(AZIHSM_OSSL_SOURCES
     ./src/azihsm_ossl_file_io.c
     ./src/azihsm_ossl_hsm.c
     ./src/azihsm_ossl_base.c
+    ./src/azihsm_ossl_resiliency.c
     ./src/azihsm_ossl_store.c
     ./src/azihsm_ossl_digest.c
     ./src/azihsm_ossl_cipher.c

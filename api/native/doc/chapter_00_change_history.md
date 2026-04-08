@@ -15,5 +15,10 @@
 |            | Fixed parameter name for partition get path API                  |
 | 12/09/2025 | Updated algorithm parameter for AES CBC                          |
 |            | Added data unit length param to algorithm parameter for AES XTS  |
+| 04/02/2026 | Replaced `azihsm_part_get_path` with `azihsm_part_get_info`     |
+|            | Added `azihsm_part_info` structure with API revision range       |
+|            | Added `api_rev` parameter to `azihsm_part_open`                 |
+|            | Removed `api_rev` parameter from `azihsm_sess_open`             |
+|            | Added `AZIHSM_STATUS_UNSUPPORTED_API_REVISION` error code       |
 
 \pagebreak

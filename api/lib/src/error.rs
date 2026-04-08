@@ -13,7 +13,10 @@ impl<T, E: Debug> HsmErrorMapper<T, E> for Result<T, E> {
     fn map_hsm_err(self, hsm_err: HsmError) -> Result<T, HsmError> {
         match self {
             Ok(t) => Ok(t),
-            Err(_) => Err(hsm_err),
+            Err(err) => {
+                tracing::debug!("Mapping error {:?} to HSM error: {:?}", err, hsm_err);
+                Err(hsm_err)
+            }
         }
     }
 }
@@ -57,6 +60,8 @@ pub enum HsmError {
     RetryExhausted = -35,
     DeviceNotReady = -36,
     CannotDeleteInternalKeys = -37,
+    UnsupportedApiRevision = -38,
+    DeviceNotAccessible = -39,
     Panic = i32::MIN,
 }
 
