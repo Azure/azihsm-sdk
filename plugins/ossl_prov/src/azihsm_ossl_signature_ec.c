@@ -184,10 +184,12 @@ static int ecdsa_der_to_raw(
 
     *out_raw = raw;
     *out_raw_len = raw_len;
+    raw = NULL; /* Ownership transferred to caller */
     ret = OSSL_SUCCESS;
 
 cleanup:
     /* OpenSSL free functions are NULL-safe — call unconditionally */
+    OPENSSL_free(raw);
     ECDSA_SIG_free(esig);
     return ret;
 }
