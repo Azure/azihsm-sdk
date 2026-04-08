@@ -323,7 +323,7 @@ impl HsmEncryptContext for HsmAesGcmEncryptContext {
     fn update(
         &mut self,
         plaintext: &[u8],
-        _ciphertext: Option<&mut [u8]>,
+        ciphertext: Option<&mut [u8]>,
     ) -> Result<usize, <Self::Algo as HsmEncryptStreamingOp>::Error> {
         // Prevent updates after finish has been called
         if !self.can_update {
@@ -331,7 +331,7 @@ impl HsmEncryptContext for HsmAesGcmEncryptContext {
         }
 
         // For size query (ciphertext is None), return 0 since GCM produces no output until finish()
-        if _ciphertext.is_none() {
+        if ciphertext.is_none() {
             return Ok(0);
         }
 
@@ -429,7 +429,7 @@ pub struct HsmAesGcmDecryptContext {
     /// Internal buffer for accumulating data.
     buffer: Vec<u8>,
 
-    // Internal flag to track if finish has been called, to prevent multiple finalizations
+    /// Internal flag to track if finish has been called, to prevent multiple finalizations
     can_update: bool,
 }
 
@@ -536,7 +536,7 @@ impl HsmDecryptContext for HsmAesGcmDecryptContext {
         &mut self,
         plaintext: Option<&mut [u8]>,
     ) -> Result<usize, <Self::Algo as HsmDecryptStreamingOp>::Error> {
-        //finish can only be called once successfully, subsequent calls should return error
+        // Finish can only be called once successfully, subsequent calls should return error
         if !self.can_update {
             return Err(HsmError::InvalidContextState);
         }
