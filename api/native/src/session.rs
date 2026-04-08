@@ -9,10 +9,12 @@
 
 use super::*;
 
-/// @brief Open an HSM partition
+/// @brief Open an HSM session
+///
+/// Opens a session using the API revision that was selected when the
+/// partition was opened with `azihsm_part_open`.
 ///
 /// @param[in] dev_handle Handle to the HSM partition
-/// @param[in] api_rev Pointer to the API revision structure
 /// @param[in] creds Pointer to the application credentials
 /// @param[in] seed Pointer to the optional seed buffer
 /// @param[out] sess_handle Pointer to the session handle to be allocated
@@ -22,7 +24,6 @@ use super::*;
 /// # Safety
 ///
 /// - `dev_handle` must be a valid partition handle.
-/// - `api_rev` must be a valid pointer to an `AzihsmApiRev` structure.
 /// - `creds` must be a valid pointer to an `AzihsmCredentials` structure.
 /// - `sess_handle` must be a valid pointer to memory where the session handle
 ///   will be written.
@@ -30,7 +31,6 @@ use super::*;
 #[allow(unsafe_code)]
 pub unsafe extern "C" fn azihsm_sess_open(
     dev_handle: AzihsmHandle,
-    api_rev: *const AzihsmApiRev,
     creds: *const AzihsmCredentials,
     seed: *const AzihsmBuffer,
     sess_handle: *mut AzihsmHandle,
@@ -38,15 +38,17 @@ pub unsafe extern "C" fn azihsm_sess_open(
     abi_boundary(|| {
         validate_ptr(sess_handle)?;
 
-        let api_rev = deref_ptr(api_rev)?;
         let credentials = deref_ptr(creds)?;
         let seed_slice = buffer_to_optional_slice(seed)?;
 
         // Get the partition from the handle
         let partition = &api::HsmPartition::try_from(dev_handle)?;
 
-        let session =
-            Box::new(partition.open_session(api_rev.into(), &credentials.into(), seed_slice)?);
+        let session = Box::new(partition.open_session(
+            partition.api_rev(),
+            &credentials.into(),
+            seed_slice,
+        )?);
 
         let handle = HANDLE_TABLE.alloc_handle(HandleType::Session, session);
 

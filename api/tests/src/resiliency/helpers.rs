@@ -16,8 +16,8 @@ use crate::utils::resiliency::*;
 pub(crate) fn init_with_resiliency_and_session() -> (HsmPartition, HsmSession, ResiliencyTestCtx) {
     let list = HsmPartitionManager::partition_info_list();
     assert!(!list.is_empty(), "No partitions found.");
-    let part =
-        HsmPartitionManager::open_partition(&list[0].path).expect("Failed to open partition");
+    let part = HsmPartitionManager::open_partition(&list[0].path, test_api_rev())
+        .expect("Failed to open partition");
     part.reset().expect("Partition reset failed");
 
     let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
@@ -33,7 +33,7 @@ pub(crate) fn init_with_resiliency_and_session() -> (HsmPartition, HsmSession, R
     )
     .expect("Partition init failed");
 
-    let rev = part.api_rev_range().max();
+    let rev = part.api_rev();
     let session = part
         .open_session(rev, &creds, None)
         .expect("Failed to open session");
@@ -46,8 +46,8 @@ pub(crate) fn init_with_resiliency_and_session() -> (HsmPartition, HsmSession, R
 pub(crate) fn init_without_resiliency_and_session() -> (HsmPartition, HsmSession) {
     let list = HsmPartitionManager::partition_info_list();
     assert!(!list.is_empty(), "No partitions found.");
-    let part =
-        HsmPartitionManager::open_partition(&list[0].path).expect("Failed to open partition");
+    let part = HsmPartitionManager::open_partition(&list[0].path, test_api_rev())
+        .expect("Failed to open partition");
     part.reset().expect("Partition reset failed");
 
     let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
@@ -55,7 +55,7 @@ pub(crate) fn init_without_resiliency_and_session() -> (HsmPartition, HsmSession
     part.init(creds, None, None, obk_info, pota_endorsement, None)
         .expect("Partition init failed");
 
-    let rev = part.api_rev_range().max();
+    let rev = part.api_rev();
     let session = part
         .open_session(rev, &creds, None)
         .expect("Failed to open session");
