@@ -58,10 +58,7 @@ static std::vector<uint8_t> build_xts_wrapped_blob(
     azihsm_status err;
 
     // Wrap key1
-    azihsm_algo_rsa_pkcs_oaep_params oaep_params = {};
-    oaep_params.hash_algo_id = AZIHSM_ALGO_ID_SHA256;
-    oaep_params.mgf1_hash_algo_id = AZIHSM_MGF1_ID_SHA256;
-    oaep_params.label = nullptr;
+    azihsm_algo_rsa_pkcs_oaep_params oaep_params = build_oaep_sha256_params();
 
     azihsm_algo_rsa_aes_wrap_params wrap_params = {};
     wrap_params.oaep_params = &oaep_params;
@@ -3300,10 +3297,7 @@ TEST_F(azihsm_aes_keygen, unwrap_aes_xts_512_key)
         bool can_encrypt = true;
         bool can_decrypt = true;
 
-        azihsm_algo_rsa_pkcs_oaep_params oaep_params = {};
-        oaep_params.hash_algo_id = AZIHSM_ALGO_ID_SHA256;
-        oaep_params.mgf1_hash_algo_id = AZIHSM_MGF1_ID_SHA256;
-        oaep_params.label = nullptr;
+        azihsm_algo_rsa_pkcs_oaep_params oaep_params = build_oaep_sha256_params();
 
         azihsm_algo_rsa_aes_key_wrap_params unwrap_params = {};
         unwrap_params.aes_key_bits = 256;
