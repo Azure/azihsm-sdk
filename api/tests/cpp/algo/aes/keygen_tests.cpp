@@ -639,8 +639,7 @@ TEST_F(azihsm_aes_keygen, aes_key_gen_persistent)
 TEST_F(azihsm_aes_keygen, aes_128_key_unwrap)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        aes_key_unwrap_common(session, AZIHSM_ALGO_ID_AES_KEY_GEN,
-            AZIHSM_KEY_KIND_AES, 128);
+        aes_key_unwrap_common(session, AZIHSM_ALGO_ID_AES_KEY_GEN, AZIHSM_KEY_KIND_AES, 128);
     });
 }
 
@@ -648,8 +647,7 @@ TEST_F(azihsm_aes_keygen, aes_128_key_unwrap)
 TEST_F(azihsm_aes_keygen, aes_192_key_unwrap)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        aes_key_unwrap_common(session, AZIHSM_ALGO_ID_AES_KEY_GEN,
-            AZIHSM_KEY_KIND_AES, 192);
+        aes_key_unwrap_common(session, AZIHSM_ALGO_ID_AES_KEY_GEN, AZIHSM_KEY_KIND_AES, 192);
     });
 }
 
@@ -657,8 +655,7 @@ TEST_F(azihsm_aes_keygen, aes_192_key_unwrap)
 TEST_F(azihsm_aes_keygen, aes_256_key_unwrap)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        aes_key_unwrap_common(session, AZIHSM_ALGO_ID_AES_KEY_GEN,
-            AZIHSM_KEY_KIND_AES, 256);
+        aes_key_unwrap_common(session, AZIHSM_ALGO_ID_AES_KEY_GEN, AZIHSM_KEY_KIND_AES, 256);
     });
 }
 
@@ -666,8 +663,7 @@ TEST_F(azihsm_aes_keygen, aes_256_key_unwrap)
 TEST_F(azihsm_aes_keygen, aes_128_key_unmask)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        aes_key_unmask_common(session, AZIHSM_ALGO_ID_AES_KEY_GEN,
-            AZIHSM_KEY_KIND_AES, 128);
+        aes_key_unmask_common(session, AZIHSM_ALGO_ID_AES_KEY_GEN, AZIHSM_KEY_KIND_AES, 128);
     });
 }
 
@@ -675,8 +671,7 @@ TEST_F(azihsm_aes_keygen, aes_128_key_unmask)
 TEST_F(azihsm_aes_keygen, aes_192_key_unmask)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        aes_key_unmask_common(session, AZIHSM_ALGO_ID_AES_KEY_GEN,
-            AZIHSM_KEY_KIND_AES, 192);
+        aes_key_unmask_common(session, AZIHSM_ALGO_ID_AES_KEY_GEN, AZIHSM_KEY_KIND_AES, 192);
     });
 }
 
@@ -684,8 +679,7 @@ TEST_F(azihsm_aes_keygen, aes_192_key_unmask)
 TEST_F(azihsm_aes_keygen, aes_256_key_unmask)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        aes_key_unmask_common(session, AZIHSM_ALGO_ID_AES_KEY_GEN,
-            AZIHSM_KEY_KIND_AES, 256);
+        aes_key_unmask_common(session, AZIHSM_ALGO_ID_AES_KEY_GEN, AZIHSM_KEY_KIND_AES, 256);
     });
 }
 
@@ -930,11 +924,9 @@ TEST_F(azihsm_aes_keygen, aes_unwrap_wrong_algo_fails)
         unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_KIND, &wrong_kind, sizeof(wrong_kind) });
         unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_CLASS, &aes_class, sizeof(aes_class) });
         unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_BIT_LEN, &aes_bits, sizeof(aes_bits) });
-        unwrap_props_vec.push_back(
-            { AZIHSM_KEY_PROP_ID_ENCRYPT, &can_encrypt, sizeof(can_encrypt) }
+        unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_ENCRYPT, &can_encrypt, sizeof(can_encrypt) }
         );
-        unwrap_props_vec.push_back(
-            { AZIHSM_KEY_PROP_ID_DECRYPT, &can_decrypt, sizeof(can_decrypt) }
+        unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_DECRYPT, &can_decrypt, sizeof(can_decrypt) }
         );
 
         azihsm_key_prop_list unwrap_prop_list{ unwrap_props_vec.data(),
@@ -984,8 +976,7 @@ TEST_F(azihsm_aes_keygen, aes_unmasked_key_independent_handle)
         props_vec.push_back({ AZIHSM_KEY_PROP_ID_ENCRYPT, &can_encrypt, sizeof(can_encrypt) });
         props_vec.push_back({ AZIHSM_KEY_PROP_ID_DECRYPT, &can_decrypt, sizeof(can_decrypt) });
 
-        azihsm_key_prop_list prop_list{ props_vec.data(),
-                                        static_cast<uint32_t>(props_vec.size()) };
+        azihsm_key_prop_list prop_list{ props_vec.data(), static_cast<uint32_t>(props_vec.size()) };
 
         auto_key original_key;
         azihsm_status err =
@@ -1163,11 +1154,9 @@ TEST_F(azihsm_aes_keygen, aes_unwrap_bits_mismatch_fails)
         unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_KIND, &aes_kind, sizeof(aes_kind) });
         unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_CLASS, &aes_class, sizeof(aes_class) });
         unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_BIT_LEN, &aes_bits, sizeof(aes_bits) });
-        unwrap_props_vec.push_back(
-            { AZIHSM_KEY_PROP_ID_ENCRYPT, &can_encrypt, sizeof(can_encrypt) }
+        unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_ENCRYPT, &can_encrypt, sizeof(can_encrypt) }
         );
-        unwrap_props_vec.push_back(
-            { AZIHSM_KEY_PROP_ID_DECRYPT, &can_decrypt, sizeof(can_decrypt) }
+        unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_DECRYPT, &can_decrypt, sizeof(can_decrypt) }
         );
 
         azihsm_key_prop_list unwrap_prop_list{ unwrap_props_vec.data(),
@@ -1230,11 +1219,9 @@ TEST_F(azihsm_aes_keygen, aes_unwrap_truncated_blob_fails)
         unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_KIND, &aes_kind, sizeof(aes_kind) });
         unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_CLASS, &aes_class, sizeof(aes_class) });
         unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_BIT_LEN, &aes_bits, sizeof(aes_bits) });
-        unwrap_props_vec.push_back(
-            { AZIHSM_KEY_PROP_ID_ENCRYPT, &can_encrypt, sizeof(can_encrypt) }
+        unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_ENCRYPT, &can_encrypt, sizeof(can_encrypt) }
         );
-        unwrap_props_vec.push_back(
-            { AZIHSM_KEY_PROP_ID_DECRYPT, &can_decrypt, sizeof(can_decrypt) }
+        unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_DECRYPT, &can_decrypt, sizeof(can_decrypt) }
         );
 
         azihsm_key_prop_list unwrap_prop_list{ unwrap_props_vec.data(),
@@ -1302,11 +1289,9 @@ TEST_F(azihsm_aes_keygen, aes_unwrapped_key_roundtrip)
         unwrap_props_vec.push_back(
             { AZIHSM_KEY_PROP_ID_SESSION, &aes_is_session, sizeof(aes_is_session) }
         );
-        unwrap_props_vec.push_back(
-            { AZIHSM_KEY_PROP_ID_ENCRYPT, &can_encrypt, sizeof(can_encrypt) }
+        unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_ENCRYPT, &can_encrypt, sizeof(can_encrypt) }
         );
-        unwrap_props_vec.push_back(
-            { AZIHSM_KEY_PROP_ID_DECRYPT, &can_decrypt, sizeof(can_decrypt) }
+        unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_DECRYPT, &can_decrypt, sizeof(can_decrypt) }
         );
 
         azihsm_key_prop_list unwrap_prop_list{ unwrap_props_vec.data(),
@@ -1328,8 +1313,8 @@ TEST_F(azihsm_aes_keygen, aes_unwrapped_key_roundtrip)
         ASSERT_NE(aes_key, 0);
 
         // Encrypt with AES-CBC with padding
-        std::vector<uint8_t> plaintext = { 'h', 'e', 'l', 'l', 'o', ' ',
-                                           'a', 'e', 's', ' ', 'c', 'b', 'c' };
+        std::vector<uint8_t> plaintext = { 'h', 'e', 'l', 'l', 'o', ' ', 'a',
+                                           'e', 's', ' ', 'c', 'b', 'c' };
 
         uint8_t iv[16] = { 0 };
         azihsm_algo_aes_cbc_params cbc_params{};
@@ -1471,8 +1456,8 @@ TEST_F(azihsm_aes_keygen, aes_xts_key_gen_persistent)
     });
 }
 
-/// Test AES-XTS key unwrapping, and validate the unwrapped key can be used for encryption 
-/// and decryption with correct tweak handling. Also validates that the unwrapped key has 
+/// Test AES-XTS key unwrapping, and validate the unwrapped key can be used for encryption
+/// and decryption with correct tweak handling. Also validates that the unwrapped key has
 /// expected properties and capabilities, and is not local to the session.
 TEST_F(azihsm_aes_keygen, aes_xts_key_unwrap)
 {
@@ -1486,9 +1471,7 @@ TEST_F(azihsm_aes_keygen, aes_xts_key_unwrap)
         constexpr size_t key_bytes = 32;
         std::vector<uint8_t> key1_plain(key_bytes, 0x11);
         std::vector<uint8_t> key2_plain(key_bytes, 0x22);
-        auto wrapped_blob = build_xts_wrapped_blob(
-            wrapping_pub_key, key1_plain, key2_plain
-        );
+        auto wrapped_blob = build_xts_wrapped_blob(wrapping_pub_key, key1_plain, key2_plain);
         ASSERT_FALSE(wrapped_blob.empty());
 
         // Step 2: Unwrap the XTS wrapped blob
@@ -1516,18 +1499,16 @@ TEST_F(azihsm_aes_keygen, aes_xts_key_unwrap)
         unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_KIND, &key_kind, sizeof(key_kind) });
         unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_CLASS, &key_class, sizeof(key_class) });
         unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_BIT_LEN, &bits, sizeof(bits) });
-        unwrap_props_vec.push_back(
-            { AZIHSM_KEY_PROP_ID_ENCRYPT, &can_encrypt, sizeof(can_encrypt) }
+        unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_ENCRYPT, &can_encrypt, sizeof(can_encrypt) }
         );
-        unwrap_props_vec.push_back(
-            { AZIHSM_KEY_PROP_ID_DECRYPT, &can_decrypt, sizeof(can_decrypt) }
+        unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_DECRYPT, &can_decrypt, sizeof(can_decrypt) }
         );
 
         azihsm_key_prop_list unwrap_prop_list{ unwrap_props_vec.data(),
-                                                static_cast<uint32_t>(unwrap_props_vec.size()) };
+                                               static_cast<uint32_t>(unwrap_props_vec.size()) };
 
         azihsm_buffer wrapped_blob_buf{ wrapped_blob.data(),
-                                         static_cast<uint32_t>(wrapped_blob.size()) };
+                                        static_cast<uint32_t>(wrapped_blob.size()) };
 
         auto_key xts_key;
         auto err = azihsm_key_unwrap(
@@ -1580,10 +1561,8 @@ TEST_F(azihsm_aes_keygen, aes_xts_key_unwrap)
 
         // Verify tweak was incremented by 2 data units after encrypt
         std::array<uint8_t, 16> expected_tweak_after_2 = tweak_after_units(tweak, 2);
-        ASSERT_EQ(
-            std::memcmp(enc_xts_params.sector_num, expected_tweak_after_2.data(), 16),
-            0
-        ) << "Encrypt should increment tweak per data unit";
+        ASSERT_EQ(std::memcmp(enc_xts_params.sector_num, expected_tweak_after_2.data(), 16), 0)
+            << "Encrypt should increment tweak per data unit";
 
         // Encrypt per-data-unit with tweak and tweak+1; output should match one-shot.
         const uint8_t *pt0 = plaintext.data();
@@ -1641,10 +1620,8 @@ TEST_F(azihsm_aes_keygen, aes_xts_key_unwrap)
         );
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_EQ(decrypted, plaintext) << "Roundtrip plaintext mismatch";
-        ASSERT_EQ(
-            std::memcmp(dec_xts_params.sector_num, expected_tweak_after_2.data(), 16),
-            0
-        ) << "Decrypt should increment tweak per data unit";
+        ASSERT_EQ(std::memcmp(dec_xts_params.sector_num, expected_tweak_after_2.data(), 16), 0)
+            << "Decrypt should increment tweak per data unit";
 
         // Clean up
         err = azihsm_key_delete(xts_key.release());
@@ -1820,11 +1797,9 @@ TEST_F(azihsm_aes_keygen, aes_xts_key_unwrap_corrupted_fails)
         unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_KIND, &key_kind, sizeof(key_kind) });
         unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_CLASS, &key_class, sizeof(key_class) });
         unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_BIT_LEN, &bits, sizeof(bits) });
-        unwrap_props_vec.push_back(
-            { AZIHSM_KEY_PROP_ID_ENCRYPT, &can_encrypt, sizeof(can_encrypt) }
+        unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_ENCRYPT, &can_encrypt, sizeof(can_encrypt) }
         );
-        unwrap_props_vec.push_back(
-            { AZIHSM_KEY_PROP_ID_DECRYPT, &can_decrypt, sizeof(can_decrypt) }
+        unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_DECRYPT, &can_decrypt, sizeof(can_decrypt) }
         );
 
         azihsm_key_prop_list unwrap_prop_list{ unwrap_props_vec.data(),
@@ -2012,11 +1987,9 @@ TEST_F(azihsm_aes_keygen, aes_xts_unwrap_bits_mismatch_fails)
         unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_KIND, &key_kind, sizeof(key_kind) });
         unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_CLASS, &key_class, sizeof(key_class) });
         unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_BIT_LEN, &bits, sizeof(bits) });
-        unwrap_props_vec.push_back(
-            { AZIHSM_KEY_PROP_ID_ENCRYPT, &can_encrypt, sizeof(can_encrypt) }
+        unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_ENCRYPT, &can_encrypt, sizeof(can_encrypt) }
         );
-        unwrap_props_vec.push_back(
-            { AZIHSM_KEY_PROP_ID_DECRYPT, &can_decrypt, sizeof(can_decrypt) }
+        unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_DECRYPT, &can_decrypt, sizeof(can_decrypt) }
         );
 
         azihsm_key_prop_list unwrap_prop_list{ unwrap_props_vec.data(),
@@ -2079,11 +2052,9 @@ TEST_F(azihsm_aes_keygen, aes_xts_unwrap_truncated_blob_fails)
         unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_KIND, &key_kind, sizeof(key_kind) });
         unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_CLASS, &key_class, sizeof(key_class) });
         unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_BIT_LEN, &bits, sizeof(bits) });
-        unwrap_props_vec.push_back(
-            { AZIHSM_KEY_PROP_ID_ENCRYPT, &can_encrypt, sizeof(can_encrypt) }
+        unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_ENCRYPT, &can_encrypt, sizeof(can_encrypt) }
         );
-        unwrap_props_vec.push_back(
-            { AZIHSM_KEY_PROP_ID_DECRYPT, &can_decrypt, sizeof(can_decrypt) }
+        unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_DECRYPT, &can_decrypt, sizeof(can_decrypt) }
         );
 
         azihsm_key_prop_list unwrap_prop_list{ unwrap_props_vec.data(),
@@ -2146,11 +2117,9 @@ TEST_F(azihsm_aes_keygen, aes_xts_unwrap_wrong_algo_fails)
         unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_KIND, &key_kind, sizeof(key_kind) });
         unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_CLASS, &key_class, sizeof(key_class) });
         unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_BIT_LEN, &bits, sizeof(bits) });
-        unwrap_props_vec.push_back(
-            { AZIHSM_KEY_PROP_ID_ENCRYPT, &can_encrypt, sizeof(can_encrypt) }
+        unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_ENCRYPT, &can_encrypt, sizeof(can_encrypt) }
         );
-        unwrap_props_vec.push_back(
-            { AZIHSM_KEY_PROP_ID_DECRYPT, &can_decrypt, sizeof(can_decrypt) }
+        unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_DECRYPT, &can_decrypt, sizeof(can_decrypt) }
         );
 
         azihsm_key_prop_list unwrap_prop_list{ unwrap_props_vec.data(),
@@ -2263,8 +2232,12 @@ TEST_F(azihsm_aes_keygen, aes_gcm_key_gen_persistent)
 TEST_F(azihsm_aes_keygen, aes_gcm_256_key_unwrap)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        aes_key_unwrap_common(session, AZIHSM_ALGO_ID_AES_GCM_KEY_GEN,
-            AZIHSM_KEY_KIND_AES_GCM, 256);
+        aes_key_unwrap_common(
+            session,
+            AZIHSM_ALGO_ID_AES_GCM_KEY_GEN,
+            AZIHSM_KEY_KIND_AES_GCM,
+            256
+        );
     });
 }
 
@@ -2272,8 +2245,12 @@ TEST_F(azihsm_aes_keygen, aes_gcm_256_key_unwrap)
 TEST_F(azihsm_aes_keygen, aes_gcm_256_key_unmask)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        aes_key_unmask_common(session, AZIHSM_ALGO_ID_AES_GCM_KEY_GEN,
-            AZIHSM_KEY_KIND_AES_GCM, 256);
+        aes_key_unmask_common(
+            session,
+            AZIHSM_ALGO_ID_AES_GCM_KEY_GEN,
+            AZIHSM_KEY_KIND_AES_GCM,
+            256
+        );
     });
 }
 
@@ -2988,9 +2965,7 @@ TEST_F(azihsm_aes_keygen, aes_gcm_unmask_corrupted_blob_fails)
         masked_key_buf.len = static_cast<uint32_t>(masked_key_data.size());
 
         azihsm_handle unmasked_key = 0;
-        err = azihsm_key_unmask(
-            session, AZIHSM_KEY_KIND_AES_GCM, &masked_key_buf, &unmasked_key
-        );
+        err = azihsm_key_unmask(session, AZIHSM_KEY_KIND_AES_GCM, &masked_key_buf, &unmasked_key);
         ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_EQ(unmasked_key, 0);
     });
@@ -3036,11 +3011,9 @@ TEST_F(azihsm_aes_keygen, aes_gcm_unwrap_bits_mismatch_fails)
         unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_KIND, &aes_kind, sizeof(aes_kind) });
         unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_CLASS, &aes_class, sizeof(aes_class) });
         unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_BIT_LEN, &aes_bits, sizeof(aes_bits) });
-        unwrap_props_vec.push_back(
-            { AZIHSM_KEY_PROP_ID_ENCRYPT, &can_encrypt, sizeof(can_encrypt) }
+        unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_ENCRYPT, &can_encrypt, sizeof(can_encrypt) }
         );
-        unwrap_props_vec.push_back(
-            { AZIHSM_KEY_PROP_ID_DECRYPT, &can_decrypt, sizeof(can_decrypt) }
+        unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_DECRYPT, &can_decrypt, sizeof(can_decrypt) }
         );
 
         azihsm_key_prop_list unwrap_prop_list{ unwrap_props_vec.data(),
@@ -3103,11 +3076,9 @@ TEST_F(azihsm_aes_keygen, aes_gcm_unwrap_truncated_blob_fails)
         unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_KIND, &aes_kind, sizeof(aes_kind) });
         unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_CLASS, &aes_class, sizeof(aes_class) });
         unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_BIT_LEN, &aes_bits, sizeof(aes_bits) });
-        unwrap_props_vec.push_back(
-            { AZIHSM_KEY_PROP_ID_ENCRYPT, &can_encrypt, sizeof(can_encrypt) }
+        unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_ENCRYPT, &can_encrypt, sizeof(can_encrypt) }
         );
-        unwrap_props_vec.push_back(
-            { AZIHSM_KEY_PROP_ID_DECRYPT, &can_decrypt, sizeof(can_decrypt) }
+        unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_DECRYPT, &can_decrypt, sizeof(can_decrypt) }
         );
 
         azihsm_key_prop_list unwrap_prop_list{ unwrap_props_vec.data(),
@@ -3168,16 +3139,13 @@ TEST_F(azihsm_aes_keygen, aes_gcm_unwrap_wrong_algo_fails)
         bool can_decrypt = true;
 
         std::vector<azihsm_key_prop> unwrap_props_vec;
-        unwrap_props_vec.push_back(
-            { AZIHSM_KEY_PROP_ID_KIND, &aes_gcm_kind, sizeof(aes_gcm_kind) }
+        unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_KIND, &aes_gcm_kind, sizeof(aes_gcm_kind) }
         );
         unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_CLASS, &aes_class, sizeof(aes_class) });
         unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_BIT_LEN, &aes_bits, sizeof(aes_bits) });
-        unwrap_props_vec.push_back(
-            { AZIHSM_KEY_PROP_ID_ENCRYPT, &can_encrypt, sizeof(can_encrypt) }
+        unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_ENCRYPT, &can_encrypt, sizeof(can_encrypt) }
         );
-        unwrap_props_vec.push_back(
-            { AZIHSM_KEY_PROP_ID_DECRYPT, &can_decrypt, sizeof(can_decrypt) }
+        unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_DECRYPT, &can_decrypt, sizeof(can_decrypt) }
         );
 
         azihsm_key_prop_list unwrap_prop_list{ unwrap_props_vec.data(),
@@ -3246,8 +3214,7 @@ TEST_F(azihsm_aes_keygen, aes_gcm_wrong_tag_fails)
         crypt_algo.params = &gcm_params;
         crypt_algo.len = sizeof(gcm_params);
 
-        std::vector<uint8_t> plaintext = { 'h', 'e', 'l', 'l', 'o', ' ',
-                                           'w', 'o', 'r', 'l', 'd' };
+        std::vector<uint8_t> plaintext = { 'h', 'e', 'l', 'l', 'o', ' ', 'w', 'o', 'r', 'l', 'd' };
         azihsm_buffer input{ plaintext.data(), static_cast<uint32_t>(plaintext.size()) };
         azihsm_buffer output{ nullptr, 0 };
 
@@ -3337,8 +3304,7 @@ TEST_F(azihsm_aes_keygen, aes_gcm_wrong_key_fails)
         crypt_algo.params = &gcm_params;
         crypt_algo.len = sizeof(gcm_params);
 
-        std::vector<uint8_t> plaintext = { 'h', 'e', 'l', 'l', 'o', ' ',
-                                           'w', 'o', 'r', 'l', 'd' };
+        std::vector<uint8_t> plaintext = { 'h', 'e', 'l', 'l', 'o', ' ', 'w', 'o', 'r', 'l', 'd' };
         azihsm_buffer input{ plaintext.data(), static_cast<uint32_t>(plaintext.size()) };
         azihsm_buffer output{ nullptr, 0 };
 

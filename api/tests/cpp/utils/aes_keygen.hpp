@@ -81,7 +81,11 @@ void verify_key_property(azihsm_handle key_handle, azihsm_key_prop_id prop_id, T
 
 /// Helper function template to compare one property of two different keys
 template <typename T>
-void compare_key_property(azihsm_handle key_handle1, azihsm_handle key_handle2, azihsm_key_prop_id prop_id)
+void compare_key_property(
+    azihsm_handle key_handle1,
+    azihsm_handle key_handle2,
+    azihsm_key_prop_id prop_id
+)
 {
     T actual1{};
     azihsm_key_prop prop1{};

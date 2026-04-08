@@ -76,10 +76,7 @@ void verify_generated_aes_key_properties(
     verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_DERIVE, false);
 }
 
-void compare_key_properties(
-    azihsm_handle key_handle1,
-    azihsm_handle key_handle2
-)
+void compare_key_properties(azihsm_handle key_handle1, azihsm_handle key_handle2)
 {
     compare_key_property<uint32_t>(key_handle1, key_handle2, AZIHSM_KEY_PROP_ID_CLASS);
     compare_key_property<azihsm_key_kind>(key_handle1, key_handle2, AZIHSM_KEY_PROP_ID_KIND);
@@ -303,16 +300,12 @@ void aes_key_unwrap_common(
     unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_KIND, &key_kind, sizeof(key_kind) });
     unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_CLASS, &key_class, sizeof(key_class) });
     unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_BIT_LEN, &bits, sizeof(bits) });
-    unwrap_props_vec.push_back(
-        { AZIHSM_KEY_PROP_ID_SESSION, &is_session, sizeof(is_session) }
-    );
-    unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_ENCRYPT, &can_encrypt, sizeof(can_encrypt) }
-    );
-    unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_DECRYPT, &can_decrypt, sizeof(can_decrypt) }
-    );
+    unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_SESSION, &is_session, sizeof(is_session) });
+    unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_ENCRYPT, &can_encrypt, sizeof(can_encrypt) });
+    unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_DECRYPT, &can_decrypt, sizeof(can_decrypt) });
 
     azihsm_key_prop_list unwrap_prop_list{ unwrap_props_vec.data(),
-                                            static_cast<uint32_t>(unwrap_props_vec.size()) };
+                                           static_cast<uint32_t>(unwrap_props_vec.size()) };
 
     azihsm_buffer wrapped_key_buf{};
     wrapped_key_buf.ptr = wrapped_data.data();
