@@ -82,7 +82,6 @@ fn get_cert_chain_and_pub_key(
     slot_id: u8,
 ) -> HsmResult<(String, Vec<u8>)> {
     let (cert_chain, last_cert_der) = fetch_cert_chain_checked(dev, rev, slot_id)?;
-    let last_cert_der = last_cert_der.ok_or(HsmError::InternalError)?;
 
     let cert = X509Certificate::from_der(&last_cert_der).map_hsm_err(HsmError::InternalError)?;
     let pub_key_der = cert
@@ -626,26 +625,26 @@ fn get_cert_chain_raw_no_res(dev: &HsmDev, rev: HsmApiRev, slot_id: u8) -> HsmRe
 /// Returns `InternalError` if the certificate count is zero (a partition
 /// must always have a provisioned cert chain).
 ///
-/// The DER bytes of the last certificate are always captured and returned
-/// so callers can optionally extract the public key.
+/// Also returns the DER bytes of the last certificate so callers can
+/// extract the public key.
 fn fetch_cert_chain_checked(
     dev: &HsmDev,
     rev: HsmApiRev,
     slot_id: u8,
-) -> HsmResult<(String, Option<Vec<u8>>)> {
+) -> HsmResult<(String, Vec<u8>)> {
     let (count, thumbprint) = get_cert_chain_info(dev, rev, slot_id)?;
     if count == 0 {
         return Err(HsmError::InternalError);
     }
 
     let mut cert_chain = String::new();
-    let mut last_cert_der = None;
+    let mut last_cert_der = Vec::new();
     for cert_id in 0..count {
         let der = get_cert(dev, rev, slot_id, cert_id)?;
         let pem = crypto::der_to_pem(&der).map_hsm_err(HsmError::InternalError)?;
         cert_chain.push_str(&pem);
         if cert_id == count - 1 {
-            last_cert_der = Some(der);
+            last_cert_der = der;
         }
     }
 
