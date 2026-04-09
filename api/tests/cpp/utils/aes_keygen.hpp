@@ -165,3 +165,16 @@ void aes_unmasked_key_independent_handle_common(
     azihsm_key_kind key_kind,
     uint32_t bits
 );
+
+void aes_unwrap_truncated_blob_fails_common(
+    azihsm_handle session,
+    azihsm_key_kind key_kind,
+    uint32_t bits
+);
+
+void aes_unwrap_bits_mismatch_fails_common(
+    azihsm_handle session,
+    azihsm_key_kind key_kind,
+    uint32_t bits,
+    uint32_t wrong_bits
+);
