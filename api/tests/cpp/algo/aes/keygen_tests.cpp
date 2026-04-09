@@ -2231,6 +2231,18 @@ TEST_F(azihsm_aes_keygen, aes_gcm_wrong_key_fails)
     });
 }
 
+/// verifies AES-GCM key unwrap fails when wrapped blob is corrupted
+TEST_F(azihsm_aes_keygen, aes_gcm_key_unwrap_corrupted_fails)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        aes_key_unwrap_corrupted_fails_common(
+            session,
+            AZIHSM_KEY_KIND_AES_GCM,
+            256
+        );
+    });
+}
+
 /// verifies AES-GCM key unmask fails when unmasking with corrupted masked blob
 TEST_F(azihsm_aes_keygen, aes_gcm_unmask_corrupted_blob_fails)
 {
