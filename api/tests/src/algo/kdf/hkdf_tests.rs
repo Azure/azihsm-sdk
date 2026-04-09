@@ -1069,3 +1069,22 @@ fn test_hkdf_min_input_p384(session: HsmSession) {
 fn test_hkdf_min_input_p521(session: HsmSession) {
     run_hkdf_min_input_test(&session, HsmEccCurve::P521);
 }
+
+/// Verifies HKDF derive fails when input key cannot be used for derivation (via ECDH constraint)
+#[session_test]
+fn test_hkdf_input_without_can_derive_fails(session: HsmSession) {
+    // Generate ECC keypair WITHOUT derive capability
+    let (priv_a, _) = generate_ecc_keypair_with_derive(session.clone(), HsmEccCurve::P256, false)
+        .expect("failed to generate keypair without derive");
+
+    let (_, pub_b) = generate_ecc_keypair_with_derive(session.clone(), HsmEccCurve::P256, true)
+        .expect("failed to generate peer keypair");
+
+    // Attempt ECDH → should fail due to can_derive = false
+    let result = ecdh_derive_shared_secret(&session, &priv_a, &pub_b);
+
+    assert!(
+        result.is_err(),
+        "expected ECDH derive to fail when can_derive is false"
+    );
+}
