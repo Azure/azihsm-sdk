@@ -151,3 +151,10 @@ void aes_key_unwrap_corrupted_fails_common(
     azihsm_key_kind key_kind,
     uint32_t bits
 );
+
+void aes_unwrap_wrong_algo_fails_common(
+    azihsm_handle session,
+    azihsm_key_kind key_kind,
+    uint32_t bits,
+    azihsm_algo_id wrong_algo_id
+);

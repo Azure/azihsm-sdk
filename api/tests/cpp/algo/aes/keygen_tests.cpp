@@ -376,54 +376,13 @@ TEST_F(azihsm_aes_keygen, aes_unmask_corrupted_blob_fails)
 TEST_F(azihsm_aes_keygen, aes_unwrap_wrong_algo_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        auto_key wrapping_priv_key;
-        auto_key wrapping_pub_key;
-        generate_rsa_wrapping_keypair(session, wrapping_priv_key, wrapping_pub_key);
-
-        std::vector<uint8_t> local_aes_key(32, 0x11);
-
-        azihsm_algo_rsa_pkcs_oaep_params oaep_params = build_oaep_sha256_params();
-
-        std::vector<uint8_t> wrapped_data =
-            wrap_local_aes_key(wrapping_pub_key, local_aes_key, 256, oaep_params);
-
-        azihsm_algo_rsa_aes_key_wrap_params unwrap_params = build_rsa_aes_key_unwrap_params(oaep_params);
-        
-        azihsm_algo unwrap_algo = build_rsa_aes_key_unwrap_algo(unwrap_params);
-
-        // Wrong key kind: use AES_XTS instead of AES to trigger wrong algorithm path
-        azihsm_key_kind wrong_kind = AZIHSM_KEY_KIND_AES_XTS;
-        azihsm_key_class aes_class = AZIHSM_KEY_CLASS_SECRET;
-        uint32_t aes_bits = 256;
-        bool can_encrypt = true;
-        bool can_decrypt = true;
-
-        std::vector<azihsm_key_prop> unwrap_props_vec;
-        unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_KIND, &wrong_kind, sizeof(wrong_kind) });
-        unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_CLASS, &aes_class, sizeof(aes_class) });
-        unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_BIT_LEN, &aes_bits, sizeof(aes_bits) });
-        unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_ENCRYPT, &can_encrypt, sizeof(can_encrypt) }
+        // Use wrong algo ID: AES_CBC is an encryption algo, not a key-unwrap algo
+        aes_unwrap_wrong_algo_fails_common(
+            session,
+            AZIHSM_KEY_KIND_AES,
+            256,
+            AZIHSM_ALGO_ID_AES_CBC
         );
-        unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_DECRYPT, &can_decrypt, sizeof(can_decrypt) }
-        );
-
-        azihsm_key_prop_list unwrap_prop_list{ unwrap_props_vec.data(),
-                                               static_cast<uint32_t>(unwrap_props_vec.size()) };
-
-        azihsm_buffer wrapped_key_buf{};
-        wrapped_key_buf.ptr = wrapped_data.data();
-        wrapped_key_buf.len = static_cast<uint32_t>(wrapped_data.size());
-
-        azihsm_handle unwrapped_key = 0;
-        azihsm_status err = azihsm_key_unwrap(
-            &unwrap_algo,
-            wrapping_priv_key,
-            &wrapped_key_buf,
-            &unwrap_prop_list,
-            &unwrapped_key
-        );
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_EQ(unwrapped_key, 0);
     });
 }
 
@@ -1314,59 +1273,13 @@ TEST_F(azihsm_aes_keygen, aes_xts_key_unwrap_corrupted_fails)
 TEST_F(azihsm_aes_keygen, aes_xts_unwrap_wrong_algo_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        auto_key wrapping_priv_key;
-        auto_key wrapping_pub_key;
-        generate_rsa_wrapping_keypair(session, wrapping_priv_key, wrapping_pub_key);
-
-        constexpr size_t key_bytes = 32;
-        std::vector<uint8_t> key1_plain(key_bytes, 0x11);
-        std::vector<uint8_t> key2_plain(key_bytes, 0x22);
-        auto wrapped_blob = build_xts_wrapped_blob(wrapping_pub_key, key1_plain, key2_plain);
-        ASSERT_FALSE(wrapped_blob.empty());
-
         // Use wrong algo ID: AES_XTS is an encryption algo, not a key-unwrap algo
-        azihsm_algo_rsa_pkcs_oaep_params oaep_params = build_oaep_sha256_params();
-
-        azihsm_algo_rsa_aes_key_wrap_params unwrap_params{};
-        unwrap_params.oaep_params = &oaep_params;
-        unwrap_params.aes_key_bits = 256;
-
-        azihsm_algo wrong_algo{};
-        wrong_algo.id = AZIHSM_ALGO_ID_AES_XTS;
-        wrong_algo.params = &unwrap_params;
-        wrong_algo.len = sizeof(unwrap_params);
-
-        azihsm_key_kind key_kind = AZIHSM_KEY_KIND_AES_XTS;
-        azihsm_key_class key_class = AZIHSM_KEY_CLASS_SECRET;
-        uint32_t bits = 512;
-        bool can_encrypt = true;
-        bool can_decrypt = true;
-
-        std::vector<azihsm_key_prop> unwrap_props_vec;
-        unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_KIND, &key_kind, sizeof(key_kind) });
-        unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_CLASS, &key_class, sizeof(key_class) });
-        unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_BIT_LEN, &bits, sizeof(bits) });
-        unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_ENCRYPT, &can_encrypt, sizeof(can_encrypt) }
+        aes_unwrap_wrong_algo_fails_common(
+            session,
+            AZIHSM_KEY_KIND_AES_XTS,
+            512,
+            AZIHSM_ALGO_ID_AES_XTS
         );
-        unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_DECRYPT, &can_decrypt, sizeof(can_decrypt) }
-        );
-
-        azihsm_key_prop_list unwrap_prop_list{ unwrap_props_vec.data(),
-                                               static_cast<uint32_t>(unwrap_props_vec.size()) };
-
-        azihsm_buffer wrapped_blob_buf{ wrapped_blob.data(),
-                                        static_cast<uint32_t>(wrapped_blob.size()) };
-
-        azihsm_handle unwrapped_key = 0;
-        azihsm_status err = azihsm_key_unwrap(
-            &wrong_algo,
-            wrapping_priv_key,
-            &wrapped_blob_buf,
-            &unwrap_prop_list,
-            &unwrapped_key
-        );
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_EQ(unwrapped_key, 0);
     });
 }
 
@@ -1929,60 +1842,13 @@ TEST_F(azihsm_aes_keygen, aes_gcm_key_gen_persistent)
 TEST_F(azihsm_aes_keygen, aes_gcm_unwrap_wrong_algo_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        auto_key wrapping_priv_key;
-        auto_key wrapping_pub_key;
-        generate_rsa_wrapping_keypair(session, wrapping_priv_key, wrapping_pub_key);
-
-        std::vector<uint8_t> local_aes_key(32, 0x33);
-
-        azihsm_algo_rsa_pkcs_oaep_params oaep_params = build_oaep_sha256_params();
-
-        std::vector<uint8_t> wrapped_data =
-            wrap_local_aes_key(wrapping_pub_key, local_aes_key, 256, oaep_params);
-
         // Use wrong algo ID: AES_GCM is an encryption algo, not a key-unwrap algo
-        azihsm_algo_rsa_aes_key_wrap_params unwrap_params{};
-        unwrap_params.aes_key_bits = 256;
-        unwrap_params.oaep_params = &oaep_params;
-
-        azihsm_algo wrong_algo{};
-        wrong_algo.id = AZIHSM_ALGO_ID_AES_GCM;
-        wrong_algo.params = &unwrap_params;
-        wrong_algo.len = sizeof(unwrap_params);
-
-        azihsm_key_kind aes_gcm_kind = AZIHSM_KEY_KIND_AES_GCM;
-        azihsm_key_class aes_class = AZIHSM_KEY_CLASS_SECRET;
-        uint32_t aes_bits = 256;
-        bool can_encrypt = true;
-        bool can_decrypt = true;
-
-        std::vector<azihsm_key_prop> unwrap_props_vec;
-        unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_KIND, &aes_gcm_kind, sizeof(aes_gcm_kind) }
+        aes_unwrap_wrong_algo_fails_common(
+            session,
+            AZIHSM_KEY_KIND_AES_GCM,
+            256,
+            AZIHSM_ALGO_ID_AES_GCM
         );
-        unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_CLASS, &aes_class, sizeof(aes_class) });
-        unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_BIT_LEN, &aes_bits, sizeof(aes_bits) });
-        unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_ENCRYPT, &can_encrypt, sizeof(can_encrypt) }
-        );
-        unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_DECRYPT, &can_decrypt, sizeof(can_decrypt) }
-        );
-
-        azihsm_key_prop_list unwrap_prop_list{ unwrap_props_vec.data(),
-                                               static_cast<uint32_t>(unwrap_props_vec.size()) };
-
-        azihsm_buffer wrapped_key_buf{};
-        wrapped_key_buf.ptr = wrapped_data.data();
-        wrapped_key_buf.len = static_cast<uint32_t>(wrapped_data.size());
-
-        azihsm_handle unwrapped_key = 0;
-        azihsm_status err = azihsm_key_unwrap(
-            &wrong_algo,
-            wrapping_priv_key,
-            &wrapped_key_buf,
-            &unwrap_prop_list,
-            &unwrapped_key
-        );
-        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_EQ(unwrapped_key, 0);
     });
 }
 
