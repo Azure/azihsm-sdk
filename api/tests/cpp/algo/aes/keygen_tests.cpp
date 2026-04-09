@@ -508,14 +508,9 @@ TEST_F(azihsm_aes_keygen, aes_key_unwrap_corrupted_fails)
         // Corrupt wrapped data
         wrapped_data[0] ^= 0xFF;
 
-        azihsm_algo_rsa_aes_key_wrap_params unwrap_params{};
-        unwrap_params.aes_key_bits = 256;
-        unwrap_params.oaep_params = &oaep_params;
-
-        azihsm_algo unwrap_algo{};
-        unwrap_algo.id = AZIHSM_ALGO_ID_RSA_AES_KEY_WRAP;
-        unwrap_algo.params = &unwrap_params;
-        unwrap_algo.len = sizeof(unwrap_params);
+        azihsm_algo_rsa_aes_key_wrap_params unwrap_params = build_rsa_aes_key_unwrap_params(oaep_params);
+        
+        azihsm_algo unwrap_algo = build_rsa_aes_key_unwrap_algo(unwrap_params);
 
         azihsm_key_kind aes_kind = AZIHSM_KEY_KIND_AES;
         azihsm_key_class aes_class = AZIHSM_KEY_CLASS_SECRET;
@@ -632,14 +627,9 @@ TEST_F(azihsm_aes_keygen, aes_unwrap_wrong_algo_fails)
         std::vector<uint8_t> wrapped_data =
             wrap_local_aes_key(wrapping_pub_key, local_aes_key, 256, oaep_params);
 
-        azihsm_algo_rsa_aes_key_wrap_params unwrap_params{};
-        unwrap_params.aes_key_bits = 256;
-        unwrap_params.oaep_params = &oaep_params;
-
-        azihsm_algo unwrap_algo{};
-        unwrap_algo.id = AZIHSM_ALGO_ID_RSA_AES_KEY_WRAP;
-        unwrap_algo.params = &unwrap_params;
-        unwrap_algo.len = sizeof(unwrap_params);
+        azihsm_algo_rsa_aes_key_wrap_params unwrap_params = build_rsa_aes_key_unwrap_params(oaep_params);
+        
+        azihsm_algo unwrap_algo = build_rsa_aes_key_unwrap_algo(unwrap_params);
 
         // Wrong key kind: use AES_XTS instead of AES to trigger wrong algorithm path
         azihsm_key_kind wrong_kind = AZIHSM_KEY_KIND_AES_XTS;
@@ -798,14 +788,9 @@ TEST_F(azihsm_aes_keygen, aes_unwrap_truncated_blob_fails)
         // Truncate the wrapped blob
         wrapped_data.resize(wrapped_data.size() - 8);
 
-        azihsm_algo_rsa_aes_key_wrap_params unwrap_params{};
-        unwrap_params.aes_key_bits = 256;
-        unwrap_params.oaep_params = &oaep_params;
-
-        azihsm_algo unwrap_algo{};
-        unwrap_algo.id = AZIHSM_ALGO_ID_RSA_AES_KEY_WRAP;
-        unwrap_algo.params = &unwrap_params;
-        unwrap_algo.len = sizeof(unwrap_params);
+        azihsm_algo_rsa_aes_key_wrap_params unwrap_params = build_rsa_aes_key_unwrap_params(oaep_params);
+        
+        azihsm_algo unwrap_algo = build_rsa_aes_key_unwrap_algo(unwrap_params);
 
         azihsm_key_kind aes_kind = AZIHSM_KEY_KIND_AES;
         azihsm_key_class aes_class = AZIHSM_KEY_CLASS_SECRET;
@@ -1021,14 +1006,9 @@ TEST_F(azihsm_aes_keygen, aes_unwrap_bits_mismatch_fails)
             wrap_local_aes_key(wrapping_pub_key, local_aes_key, 256, oaep_params);
 
         // Unwrap with mismatched bit length (128 instead of 256)
-        azihsm_algo_rsa_aes_key_wrap_params unwrap_params{};
-        unwrap_params.aes_key_bits = 256;
-        unwrap_params.oaep_params = &oaep_params;
-
-        azihsm_algo unwrap_algo{};
-        unwrap_algo.id = AZIHSM_ALGO_ID_RSA_AES_KEY_WRAP;
-        unwrap_algo.params = &unwrap_params;
-        unwrap_algo.len = sizeof(unwrap_params);
+        azihsm_algo_rsa_aes_key_wrap_params unwrap_params = build_rsa_aes_key_unwrap_params(oaep_params);
+        
+        azihsm_algo unwrap_algo = build_rsa_aes_key_unwrap_algo(unwrap_params);
 
         azihsm_key_kind aes_kind = AZIHSM_KEY_KIND_AES;
         azihsm_key_class aes_class = AZIHSM_KEY_CLASS_SECRET;
@@ -1147,14 +1127,9 @@ TEST_F(azihsm_aes_keygen, aes_unwrapped_key_roundtrip)
             wrap_local_aes_key(wrapping_pub_key, local_aes_key, 256, oaep_params);
 
         // Unwrap the key into the HSM
-        azihsm_algo_rsa_aes_key_wrap_params unwrap_params{};
-        unwrap_params.aes_key_bits = 256;
-        unwrap_params.oaep_params = &oaep_params;
-
-        azihsm_algo unwrap_algo{};
-        unwrap_algo.id = AZIHSM_ALGO_ID_RSA_AES_KEY_WRAP;
-        unwrap_algo.params = &unwrap_params;
-        unwrap_algo.len = sizeof(unwrap_params);
+        azihsm_algo_rsa_aes_key_wrap_params unwrap_params = build_rsa_aes_key_unwrap_params(oaep_params);
+        
+        azihsm_algo unwrap_algo = build_rsa_aes_key_unwrap_algo(unwrap_params);
 
         azihsm_key_kind aes_kind = AZIHSM_KEY_KIND_AES;
         azihsm_key_class aes_class = AZIHSM_KEY_CLASS_SECRET;
@@ -1339,14 +1314,9 @@ TEST_F(azihsm_aes_keygen, aes_xts_key_unwrap)
         // Step 2: Unwrap the XTS wrapped blob
         azihsm_algo_rsa_pkcs_oaep_params oaep_params = build_oaep_sha256_params();
 
-        azihsm_algo_rsa_aes_key_wrap_params unwrap_params{};
-        unwrap_params.oaep_params = &oaep_params;
-        unwrap_params.aes_key_bits = 256;
-
-        azihsm_algo unwrap_algo{};
-        unwrap_algo.id = AZIHSM_ALGO_ID_RSA_AES_KEY_WRAP;
-        unwrap_algo.params = &unwrap_params;
-        unwrap_algo.len = sizeof(unwrap_params);
+        azihsm_algo_rsa_aes_key_wrap_params unwrap_params = build_rsa_aes_key_unwrap_params(oaep_params);
+        
+        azihsm_algo unwrap_algo = build_rsa_aes_key_unwrap_algo(unwrap_params);
 
         azihsm_key_kind key_kind = AZIHSM_KEY_KIND_AES_XTS;
         azihsm_key_class key_class = AZIHSM_KEY_CLASS_SECRET;
@@ -1634,14 +1604,9 @@ TEST_F(azihsm_aes_keygen, aes_xts_key_unwrap_corrupted_fails)
 
         azihsm_algo_rsa_pkcs_oaep_params oaep_params = build_oaep_sha256_params();
 
-        azihsm_algo_rsa_aes_key_wrap_params unwrap_params{};
-        unwrap_params.oaep_params = &oaep_params;
-        unwrap_params.aes_key_bits = 256;
-
-        azihsm_algo unwrap_algo{};
-        unwrap_algo.id = AZIHSM_ALGO_ID_RSA_AES_KEY_WRAP;
-        unwrap_algo.params = &unwrap_params;
-        unwrap_algo.len = sizeof(unwrap_params);
+        azihsm_algo_rsa_aes_key_wrap_params unwrap_params = build_rsa_aes_key_unwrap_params(oaep_params);
+        
+        azihsm_algo unwrap_algo = build_rsa_aes_key_unwrap_algo(unwrap_params);
 
         azihsm_key_kind key_kind = AZIHSM_KEY_KIND_AES_XTS;
         azihsm_key_class key_class = AZIHSM_KEY_CLASS_SECRET;
@@ -1911,14 +1876,9 @@ TEST_F(azihsm_aes_keygen, aes_xts_unwrap_bits_mismatch_fails)
 
         azihsm_algo_rsa_pkcs_oaep_params oaep_params = build_oaep_sha256_params();
 
-        azihsm_algo_rsa_aes_key_wrap_params unwrap_params{};
-        unwrap_params.oaep_params = &oaep_params;
-        unwrap_params.aes_key_bits = 256;
-
-        azihsm_algo unwrap_algo{};
-        unwrap_algo.id = AZIHSM_ALGO_ID_RSA_AES_KEY_WRAP;
-        unwrap_algo.params = &unwrap_params;
-        unwrap_algo.len = sizeof(unwrap_params);
+        azihsm_algo_rsa_aes_key_wrap_params unwrap_params = build_rsa_aes_key_unwrap_params(oaep_params);
+        
+        azihsm_algo unwrap_algo = build_rsa_aes_key_unwrap_algo(unwrap_params);
 
         azihsm_key_kind key_kind = AZIHSM_KEY_KIND_AES_XTS;
         azihsm_key_class key_class = AZIHSM_KEY_CLASS_SECRET;
@@ -1973,14 +1933,9 @@ TEST_F(azihsm_aes_keygen, aes_xts_unwrap_truncated_blob_fails)
 
         azihsm_algo_rsa_pkcs_oaep_params oaep_params = build_oaep_sha256_params();
 
-        azihsm_algo_rsa_aes_key_wrap_params unwrap_params{};
-        unwrap_params.oaep_params = &oaep_params;
-        unwrap_params.aes_key_bits = 256;
-
-        azihsm_algo unwrap_algo{};
-        unwrap_algo.id = AZIHSM_ALGO_ID_RSA_AES_KEY_WRAP;
-        unwrap_algo.params = &unwrap_params;
-        unwrap_algo.len = sizeof(unwrap_params);
+        azihsm_algo_rsa_aes_key_wrap_params unwrap_params = build_rsa_aes_key_unwrap_params(oaep_params);
+        
+        azihsm_algo unwrap_algo = build_rsa_aes_key_unwrap_algo(unwrap_params);
 
         azihsm_key_kind key_kind = AZIHSM_KEY_KIND_AES_XTS;
         azihsm_key_class key_class = AZIHSM_KEY_CLASS_SECRET;
@@ -2108,14 +2063,9 @@ TEST_F(azihsm_aes_keygen, unwrap_local_aes_gcm_256_key_corrupted_fails)
         // Corrupt wrapped data
         wrapped_data[0] ^= 0xFF;
 
-        azihsm_algo_rsa_aes_key_wrap_params unwrap_params{};
-        unwrap_params.aes_key_bits = 256;
-        unwrap_params.oaep_params = &oaep_params;
-
-        azihsm_algo unwrap_algo{};
-        unwrap_algo.id = AZIHSM_ALGO_ID_RSA_AES_KEY_WRAP;
-        unwrap_algo.params = &unwrap_params;
-        unwrap_algo.len = sizeof(unwrap_params);
+        azihsm_algo_rsa_aes_key_wrap_params unwrap_params = build_rsa_aes_key_unwrap_params(oaep_params);
+        
+        azihsm_algo unwrap_algo = build_rsa_aes_key_unwrap_algo(unwrap_params);
 
         azihsm_key_kind aes_kind = AZIHSM_KEY_KIND_AES_GCM;
         azihsm_key_class aes_class = AZIHSM_KEY_CLASS_SECRET;
@@ -2185,14 +2135,9 @@ TEST_F(azihsm_aes_keygen, unwrap_local_aes_gcm_256_key_roundtrip)
             wrap_local_aes_key(wrapping_pub_key, local_aes_gcm_key, 256, oaep_params);
 
         // Prepare unwrap algorithm and parameters
-        azihsm_algo_rsa_aes_key_wrap_params unwrap_params{};
-        unwrap_params.aes_key_bits = 256;
-        unwrap_params.oaep_params = &oaep_params;
-
-        azihsm_algo unwrap_algo{};
-        unwrap_algo.id = AZIHSM_ALGO_ID_RSA_AES_KEY_WRAP;
-        unwrap_algo.params = &unwrap_params;
-        unwrap_algo.len = sizeof(unwrap_params);
+        azihsm_algo_rsa_aes_key_wrap_params unwrap_params = build_rsa_aes_key_unwrap_params(oaep_params);
+        
+        azihsm_algo unwrap_algo = build_rsa_aes_key_unwrap_algo(unwrap_params);
 
         // Define properties for the unwrapped AES-GCM key
         azihsm_key_kind aes_kind = AZIHSM_KEY_KIND_AES_GCM;
@@ -2578,14 +2523,9 @@ TEST_F(azihsm_aes_keygen, aes_gcm_unwrap_bits_mismatch_fails)
             wrap_local_aes_key(wrapping_pub_key, local_aes_key, 256, oaep_params);
 
         // Unwrap with mismatched bit length (128 instead of 256)
-        azihsm_algo_rsa_aes_key_wrap_params unwrap_params{};
-        unwrap_params.aes_key_bits = 256;
-        unwrap_params.oaep_params = &oaep_params;
-
-        azihsm_algo unwrap_algo{};
-        unwrap_algo.id = AZIHSM_ALGO_ID_RSA_AES_KEY_WRAP;
-        unwrap_algo.params = &unwrap_params;
-        unwrap_algo.len = sizeof(unwrap_params);
+        azihsm_algo_rsa_aes_key_wrap_params unwrap_params = build_rsa_aes_key_unwrap_params(oaep_params);
+        
+        azihsm_algo unwrap_algo = build_rsa_aes_key_unwrap_algo(unwrap_params);
 
         azihsm_key_kind aes_kind = AZIHSM_KEY_KIND_AES_GCM;
         azihsm_key_class aes_class = AZIHSM_KEY_CLASS_SECRET;
@@ -2793,14 +2733,9 @@ TEST_F(azihsm_aes_keygen, aes_gcm_unwrap_truncated_blob_fails)
         // Truncate the wrapped blob
         wrapped_data.resize(wrapped_data.size() - 8);
 
-        azihsm_algo_rsa_aes_key_wrap_params unwrap_params{};
-        unwrap_params.aes_key_bits = 256;
-        unwrap_params.oaep_params = &oaep_params;
-
-        azihsm_algo unwrap_algo{};
-        unwrap_algo.id = AZIHSM_ALGO_ID_RSA_AES_KEY_WRAP;
-        unwrap_algo.params = &unwrap_params;
-        unwrap_algo.len = sizeof(unwrap_params);
+        azihsm_algo_rsa_aes_key_wrap_params unwrap_params = build_rsa_aes_key_unwrap_params(oaep_params);
+        
+        azihsm_algo unwrap_algo = build_rsa_aes_key_unwrap_algo(unwrap_params);
 
         azihsm_key_kind aes_kind = AZIHSM_KEY_KIND_AES_GCM;
         azihsm_key_class aes_class = AZIHSM_KEY_CLASS_SECRET;
@@ -3056,14 +2991,9 @@ TEST_F(azihsm_aes_keygen, unwrap_local_aes_128_key)
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         // Step 4: Unwrap the key using the device
-        azihsm_algo_rsa_aes_key_wrap_params unwrap_params{};
-        unwrap_params.aes_key_bits = 256;
-        unwrap_params.oaep_params = &oaep_params;
-
-        azihsm_algo unwrap_algo{};
-        unwrap_algo.id = AZIHSM_ALGO_ID_RSA_AES_KEY_WRAP;
-        unwrap_algo.params = &unwrap_params;
-        unwrap_algo.len = sizeof(unwrap_params);
+        azihsm_algo_rsa_aes_key_wrap_params unwrap_params = build_rsa_aes_key_unwrap_params(oaep_params);
+        
+        azihsm_algo unwrap_algo = build_rsa_aes_key_unwrap_algo(unwrap_params);
 
         azihsm_key_kind aes_kind = AZIHSM_KEY_KIND_AES;
         azihsm_key_class aes_class = AZIHSM_KEY_CLASS_SECRET;
@@ -3152,14 +3082,9 @@ TEST_F(azihsm_aes_keygen, unwrap_local_aes_gcm_256_key)
             wrap_local_aes_key(wrapping_pub_key, local_aes_gcm_key, 256, oaep_params);
 
         // Step 4: Unwrap the key using the device
-        azihsm_algo_rsa_aes_key_wrap_params unwrap_params{};
-        unwrap_params.aes_key_bits = 256;
-        unwrap_params.oaep_params = &oaep_params;
-
-        azihsm_algo unwrap_algo{};
-        unwrap_algo.id = AZIHSM_ALGO_ID_RSA_AES_KEY_WRAP;
-        unwrap_algo.params = &unwrap_params;
-        unwrap_algo.len = sizeof(unwrap_params);
+        azihsm_algo_rsa_aes_key_wrap_params unwrap_params = build_rsa_aes_key_unwrap_params(oaep_params);
+        
+        azihsm_algo unwrap_algo = build_rsa_aes_key_unwrap_algo(unwrap_params);
 
         azihsm_key_kind aes_kind = AZIHSM_KEY_KIND_AES_GCM;
         azihsm_key_class aes_class = AZIHSM_KEY_CLASS_SECRET;
@@ -3299,14 +3224,9 @@ TEST_F(azihsm_aes_keygen, unwrap_aes_xts_512_key)
 
         azihsm_algo_rsa_pkcs_oaep_params oaep_params = build_oaep_sha256_params();
 
-        azihsm_algo_rsa_aes_key_wrap_params unwrap_params = {};
-        unwrap_params.aes_key_bits = 256;
-        unwrap_params.oaep_params = &oaep_params;
-
-        azihsm_algo unwrap_algo = {};
-        unwrap_algo.id = AZIHSM_ALGO_ID_RSA_AES_KEY_WRAP;
-        unwrap_algo.params = &unwrap_params;
-        unwrap_algo.len = sizeof(unwrap_params);
+        azihsm_algo_rsa_aes_key_wrap_params unwrap_params = build_rsa_aes_key_unwrap_params(oaep_params);
+        
+        azihsm_algo unwrap_algo = build_rsa_aes_key_unwrap_algo(unwrap_params);
 
         std::vector<azihsm_key_prop> unwrap_props_vec;
         unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_KIND, &key_kind, sizeof(key_kind) });

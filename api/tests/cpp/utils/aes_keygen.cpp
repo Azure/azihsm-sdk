@@ -410,3 +410,20 @@ azihsm_algo_rsa_pkcs_oaep_params build_oaep_sha256_params()
     params.label = nullptr;
     return params;
 }
+
+azihsm_algo_rsa_aes_key_wrap_params build_rsa_aes_key_unwrap_params(azihsm_algo_rsa_pkcs_oaep_params &oaep_params)
+{
+    azihsm_algo_rsa_aes_key_wrap_params unwrap_params{};
+    unwrap_params.oaep_params = &oaep_params;
+    unwrap_params.aes_key_bits = 256;
+    return unwrap_params;
+}
+
+azihsm_algo build_rsa_aes_key_unwrap_algo(azihsm_algo_rsa_aes_key_wrap_params &unwrap_params)
+{
+    azihsm_algo algo{};
+    algo.id = AZIHSM_ALGO_ID_RSA_AES_KEY_WRAP;
+    algo.params = &unwrap_params;
+    algo.len = sizeof(unwrap_params);
+    return algo;
+}
