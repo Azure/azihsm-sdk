@@ -76,11 +76,18 @@ impl ResiliencyStorage for FileStorage {
         // fall back to a remove+rename sequence.  The remove+rename is
         // safe without an additional lock because all callers hold the
         // cross-process ResiliencyLock (via ResiliencyLockGuard).
-        if fs::rename(&tmp_path, &path).is_err() {
-            // Rename failed (likely Windows — target exists).
-            // Remove the destination and retry.
-            let _ = fs::remove_file(&path);
-            fs::rename(&tmp_path, &path).map_err(|_| HsmError::InternalError)?;
+        if let Err(e) = fs::rename(&tmp_path, &path) {
+            // Only handle the "destination already exists" case with a
+            // remove+rename fallback. For other errors, avoid deleting
+            // the existing file and return an internal error instead.
+            if e.kind() == std::io::ErrorKind::AlreadyExists {
+                // Rename failed (likely Windows — target exists).
+                // Remove the destination and retry.
+                let _ = fs::remove_file(&path);
+                fs::rename(&tmp_path, &path).map_err(|_| HsmError::InternalError)?;
+            } else {
+                return Err(HsmError::InternalError);
+            }
         }
         if self.sync_on_write {
             // Sync the directory to make the rename durable on POSIX.

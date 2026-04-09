@@ -184,7 +184,13 @@ impl api::ResiliencyStorage for ResiliencyStorageAdapter {
 
         match status {
             api::HsmError::NotFound => return Err(api::HsmError::NotFound),
-            api::HsmError::BufferTooSmall => { /* expected — buf.len now has the required size */
+            api::HsmError::BufferTooSmall => {
+                // Expected — buf.len should now have the required size.
+                // Treat BufferTooSmall with len == 0 as a protocol violation
+                // to avoid calling back with an invalid (zero-length) buffer.
+                if buf.len == 0 {
+                    return Err(api::HsmError::InvalidArgument);
+                }
             }
             api::HsmError::Success if buf.len == 0 => {
                 // Zero-length data exists
