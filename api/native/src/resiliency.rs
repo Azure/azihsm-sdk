@@ -143,11 +143,11 @@ struct ResiliencyLockAdapter {
     ops: AzihsmResiliencyLockOps,
 }
 
-// SAFETY: See ResiliencyStorageBridge safety comment.
+// SAFETY: See ResiliencyStorageAdapter safety comment.
 #[allow(unsafe_code)]
 unsafe impl Send for ResiliencyLockAdapter {}
 
-// SAFETY: See ResiliencyStorageBridge safety comment.
+// SAFETY: See ResiliencyStorageAdapter safety comment.
 #[allow(unsafe_code)]
 unsafe impl Sync for ResiliencyLockAdapter {}
 
@@ -158,11 +158,11 @@ struct PotaCallbackAdapter {
     ops: AzihsmPotaCallbackOps,
 }
 
-// SAFETY: See ResiliencyStorageBridge safety comment.
+// SAFETY: See ResiliencyStorageAdapter safety comment.
 #[allow(unsafe_code)]
 unsafe impl Send for PotaCallbackAdapter {}
 
-// SAFETY: See ResiliencyStorageBridge safety comment.
+// SAFETY: See ResiliencyStorageAdapter safety comment.
 #[allow(unsafe_code)]
 unsafe impl Sync for PotaCallbackAdapter {}
 
