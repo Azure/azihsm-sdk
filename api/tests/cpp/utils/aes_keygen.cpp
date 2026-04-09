@@ -8,6 +8,149 @@
 #include "rsa_keygen.hpp"
 #include "utils/auto_key.hpp"
 
+// Helper to build XTS wrapped blob header
+// Format: magic (u64 LE) + version (u16 LE) + key1_len (u16 LE) + key2_len (u16 LE) + reserved (u16
+// LE)
+std::vector<uint8_t> build_xts_wrapped_blob_header(uint16_t key1_len, uint16_t key2_len)
+{
+    const uint64_t WRAP_BLOB_MAGIC = 0x5354584D'53485A41ULL; // "AZHSMXTS" in little-endian
+    const uint16_t WRAP_BLOB_VERSION = 1;
+
+    std::vector<uint8_t> header(16, 0);
+
+    // Magic (8 bytes, little-endian)
+    for (int i = 0; i < 8; i++)
+    {
+        header[i] = static_cast<uint8_t>((WRAP_BLOB_MAGIC >> (i * 8)) & 0xFF);
+    }
+
+    // Version (2 bytes, little-endian)
+    header[8] = static_cast<uint8_t>(WRAP_BLOB_VERSION & 0xFF);
+    header[9] = static_cast<uint8_t>((WRAP_BLOB_VERSION >> 8) & 0xFF);
+
+    // Key1 length (2 bytes, little-endian)
+    header[10] = static_cast<uint8_t>(key1_len & 0xFF);
+    header[11] = static_cast<uint8_t>((key1_len >> 8) & 0xFF);
+
+    // Key2 length (2 bytes, little-endian)
+    header[12] = static_cast<uint8_t>(key2_len & 0xFF);
+    header[13] = static_cast<uint8_t>((key2_len >> 8) & 0xFF);
+
+    // Reserved (2 bytes) - already zero
+
+    return header;
+}
+
+// Helper to build complete XTS wrapped blob (header + wrapped_key1 + wrapped_key2)
+std::vector<uint8_t> build_xts_wrapped_blob(
+    azihsm_handle wrapping_pub_key,
+    const std::vector<uint8_t> &key1_plain,
+    const std::vector<uint8_t> &key2_plain
+)
+{
+    azihsm_status err;
+
+    // Wrap key1
+    azihsm_algo_rsa_pkcs_oaep_params oaep_params = build_oaep_sha256_params();
+
+    azihsm_algo_rsa_aes_wrap_params wrap_params = {};
+    wrap_params.oaep_params = &oaep_params;
+    wrap_params.aes_key_bits = static_cast<uint32_t>(key1_plain.size() * 8);
+
+    azihsm_algo wrap_algo = {};
+    wrap_algo.id = AZIHSM_ALGO_ID_RSA_AES_WRAP;
+    wrap_algo.params = &wrap_params;
+    wrap_algo.len = sizeof(wrap_params);
+
+    azihsm_buffer key1_buf = {};
+    key1_buf.ptr = const_cast<uint8_t *>(key1_plain.data());
+    key1_buf.len = static_cast<uint32_t>(key1_plain.size());
+
+    std::vector<uint8_t> key1_wrapped(4096);
+    azihsm_buffer key1_wrapped_buf = {};
+    key1_wrapped_buf.ptr = key1_wrapped.data();
+    key1_wrapped_buf.len = static_cast<uint32_t>(key1_wrapped.size());
+
+    err = azihsm_crypt_encrypt(&wrap_algo, wrapping_pub_key, &key1_buf, &key1_wrapped_buf);
+    if (err != AZIHSM_STATUS_SUCCESS)
+    {
+        return {};
+    }
+    key1_wrapped.resize(key1_wrapped_buf.len);
+
+    // Wrap key2
+    wrap_params.aes_key_bits = static_cast<uint32_t>(key2_plain.size() * 8);
+
+    azihsm_buffer key2_buf = {};
+    key2_buf.ptr = const_cast<uint8_t *>(key2_plain.data());
+    key2_buf.len = static_cast<uint32_t>(key2_plain.size());
+
+    std::vector<uint8_t> key2_wrapped(4096);
+    azihsm_buffer key2_wrapped_buf = {};
+    key2_wrapped_buf.ptr = key2_wrapped.data();
+    key2_wrapped_buf.len = static_cast<uint32_t>(key2_wrapped.size());
+
+    err = azihsm_crypt_encrypt(&wrap_algo, wrapping_pub_key, &key2_buf, &key2_wrapped_buf);
+    if (err != AZIHSM_STATUS_SUCCESS)
+    {
+        return {};
+    }
+    key2_wrapped.resize(key2_wrapped_buf.len);
+
+    // Build header
+    auto header = build_xts_wrapped_blob_header(
+        static_cast<uint16_t>(key1_wrapped.size()),
+        static_cast<uint16_t>(key2_wrapped.size())
+    );
+
+    // Combine header + key1_wrapped + key2_wrapped
+    std::vector<uint8_t> blob;
+    blob.reserve(header.size() + key1_wrapped.size() + key2_wrapped.size());
+    blob.insert(blob.end(), header.begin(), header.end());
+    blob.insert(blob.end(), key1_wrapped.begin(), key1_wrapped.end());
+    blob.insert(blob.end(), key2_wrapped.begin(), key2_wrapped.end());
+
+    return blob;
+}
+
+std::vector<uint8_t> wrap_local_aes_key(
+    azihsm_handle wrapping_pub_key,
+    const std::vector<uint8_t> &local_key,
+    uint32_t aes_key_bits,
+    azihsm_algo_rsa_pkcs_oaep_params &oaep_params
+)
+{
+    azihsm_algo_rsa_aes_wrap_params wrap_params{};
+    wrap_params.oaep_params = &oaep_params;
+    wrap_params.aes_key_bits = aes_key_bits;
+
+    azihsm_algo wrap_algo{};
+    wrap_algo.id = AZIHSM_ALGO_ID_RSA_AES_WRAP;
+    wrap_algo.params = &wrap_params;
+    wrap_algo.len = sizeof(wrap_params);
+
+    azihsm_buffer local_key_buf{};
+    local_key_buf.ptr = const_cast<uint8_t *>(local_key.data());
+    local_key_buf.len = static_cast<uint32_t>(local_key.size());
+
+    azihsm_buffer wrapped_buf{};
+    wrapped_buf.ptr = nullptr;
+    wrapped_buf.len = 0;
+
+    azihsm_status err =
+        azihsm_crypt_encrypt(&wrap_algo, wrapping_pub_key, &local_key_buf, &wrapped_buf);
+    EXPECT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+    EXPECT_GT(wrapped_buf.len, 0);
+
+    std::vector<uint8_t> wrapped_data(wrapped_buf.len);
+    wrapped_buf.ptr = wrapped_data.data();
+
+    err = azihsm_crypt_encrypt(&wrap_algo, wrapping_pub_key, &local_key_buf, &wrapped_buf);
+    EXPECT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+    return wrapped_data;
+}
+
 void session_aes_key_generation_common(
     azihsm_handle session,
     azihsm_algo_id algo_id,
@@ -550,9 +693,85 @@ void aes_unmask_corrupted_blob_fails_common(
     azihsm_buffer masked_key_buf{};
     masked_key_buf.ptr = masked_key_data.data();
     masked_key_buf.len = static_cast<uint32_t>(masked_key_data.size());
-    
+
     azihsm_handle unmasked_key = 0;
     err = azihsm_key_unmask(session, key_kind, &masked_key_buf, &unmasked_key);
     ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
     ASSERT_EQ(unmasked_key, 0);
+}
+
+void aes_key_unwrap_corrupted_fails_common(
+    azihsm_handle session,
+    azihsm_key_kind key_kind,
+    uint32_t bits
+)
+{
+    // Step 1: Generate an RSA key pair for wrapping/unwrapping
+    auto_key wrapping_priv_key;
+    auto_key wrapping_pub_key;
+    auto err = generate_rsa_unwrapping_keypair(
+        session,
+        wrapping_priv_key.get_ptr(),
+        wrapping_pub_key.get_ptr()
+    );
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+    ASSERT_NE(wrapping_priv_key.get(), 0);
+    ASSERT_NE(wrapping_pub_key.get(), 0);
+
+    azihsm_algo_rsa_pkcs_oaep_params oaep_params = build_oaep_sha256_params();
+
+    std::vector<uint8_t> wrapped_data;
+
+    if (key_kind == AZIHSM_KEY_KIND_AES_XTS)
+    {
+        constexpr size_t key_bytes = 32;
+        std::vector<uint8_t> key1_plain(key_bytes, 0x11);
+        std::vector<uint8_t> key2_plain(key_bytes, 0x22);
+        wrapped_data = build_xts_wrapped_blob(wrapping_pub_key, key1_plain, key2_plain);
+        ASSERT_FALSE(wrapped_data.empty());
+    }
+    else
+    {
+        std::vector<uint8_t> local_aes_key(32, 0x55);
+
+        wrapped_data = wrap_local_aes_key(wrapping_pub_key, local_aes_key, bits, oaep_params);
+    }
+
+    // Corrupt wrapped data (corrupts header in case of XTS)
+    wrapped_data[0] ^= 0xFF;
+
+    azihsm_algo_rsa_aes_key_wrap_params unwrap_params = build_rsa_aes_key_unwrap_params(oaep_params);
+    
+    azihsm_algo unwrap_algo = build_rsa_aes_key_unwrap_algo(unwrap_params);
+
+    azihsm_key_class key_class = AZIHSM_KEY_CLASS_SECRET;
+    bool can_encrypt = true;
+    bool can_decrypt = true;
+
+    std::vector<azihsm_key_prop> unwrap_props_vec;
+    unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_KIND, &key_kind, sizeof(key_kind) });
+    unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_CLASS, &key_class, sizeof(key_class) });
+    unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_BIT_LEN, &bits, sizeof(bits) });
+    unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_ENCRYPT, &can_encrypt, sizeof(can_encrypt) }
+    );
+    unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_DECRYPT, &can_decrypt, sizeof(can_decrypt) }
+    );
+
+    azihsm_key_prop_list unwrap_prop_list{ unwrap_props_vec.data(),
+                                            static_cast<uint32_t>(unwrap_props_vec.size()) };
+
+    azihsm_buffer wrapped_key_buf{};
+    wrapped_key_buf.ptr = wrapped_data.data();
+    wrapped_key_buf.len = static_cast<uint32_t>(wrapped_data.size());
+
+    azihsm_handle unwrapped_key = 0;
+    err = azihsm_key_unwrap(
+        &unwrap_algo,
+        wrapping_priv_key,
+        &wrapped_key_buf,
+        &unwrap_prop_list,
+        &unwrapped_key
+    );
+    ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+    ASSERT_EQ(unwrapped_key, 0);
 }

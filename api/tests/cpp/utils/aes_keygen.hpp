@@ -7,6 +7,25 @@
 #include <gtest/gtest.h>
 #include <vector>
 
+// Helper to build XTS wrapped blob header
+// Format: magic (u64 LE) + version (u16 LE) + key1_len (u16 LE) + key2_len (u16 LE) + reserved (u16
+// LE)
+std::vector<uint8_t> build_xts_wrapped_blob_header(uint16_t key1_len, uint16_t key2_len);
+
+// Helper to build complete XTS wrapped blob (header + wrapped_key1 + wrapped_key2)
+std::vector<uint8_t> build_xts_wrapped_blob(
+    azihsm_handle wrapping_pub_key,
+    const std::vector<uint8_t> &key1_plain,
+    const std::vector<uint8_t> &key2_plain
+);
+
+std::vector<uint8_t> wrap_local_aes_key(
+    azihsm_handle wrapping_pub_key,
+    const std::vector<uint8_t> &local_key,
+    uint32_t aes_key_bits,
+    azihsm_algo_rsa_pkcs_oaep_params &oaep_params
+);
+
 /// Helper function to generate AES key for testing
 void session_aes_key_generation_common(
     azihsm_handle session,
@@ -123,6 +142,12 @@ void aes_unmask_wrong_kind_fails_common(
 void aes_unmask_corrupted_blob_fails_common(
     azihsm_handle session,
     azihsm_algo_id algo_id,
+    azihsm_key_kind key_kind,
+    uint32_t bits
+);
+
+void aes_key_unwrap_corrupted_fails_common(
+    azihsm_handle session,
     azihsm_key_kind key_kind,
     uint32_t bits
 );
