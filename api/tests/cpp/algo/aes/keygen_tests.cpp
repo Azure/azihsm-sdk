@@ -392,100 +392,12 @@ TEST_F(azihsm_aes_keygen, aes_unwrap_wrong_algo_fails)
 TEST_F(azihsm_aes_keygen, aes_unmasked_key_independent_handle)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        // Step 1: Generate AES-256 key
-        azihsm_algo keygen_algo{};
-        keygen_algo.id = AZIHSM_ALGO_ID_AES_KEY_GEN;
-        keygen_algo.params = nullptr;
-        keygen_algo.len = 0;
-
-        azihsm_key_kind key_kind = AZIHSM_KEY_KIND_AES;
-        azihsm_key_class key_class = AZIHSM_KEY_CLASS_SECRET;
-        uint32_t bits = 256;
-        bool is_session = true;
-        bool can_encrypt = true;
-        bool can_decrypt = true;
-
-        std::vector<azihsm_key_prop> props_vec;
-        props_vec.push_back({ AZIHSM_KEY_PROP_ID_KIND, &key_kind, sizeof(key_kind) });
-        props_vec.push_back({ AZIHSM_KEY_PROP_ID_CLASS, &key_class, sizeof(key_class) });
-        props_vec.push_back({ AZIHSM_KEY_PROP_ID_BIT_LEN, &bits, sizeof(bits) });
-        props_vec.push_back({ AZIHSM_KEY_PROP_ID_SESSION, &is_session, sizeof(is_session) });
-        props_vec.push_back({ AZIHSM_KEY_PROP_ID_ENCRYPT, &can_encrypt, sizeof(can_encrypt) });
-        props_vec.push_back({ AZIHSM_KEY_PROP_ID_DECRYPT, &can_decrypt, sizeof(can_decrypt) });
-
-        azihsm_key_prop_list prop_list{ props_vec.data(), static_cast<uint32_t>(props_vec.size()) };
-
-        auto_key original_key;
-        azihsm_status err =
-            azihsm_key_gen(session, &keygen_algo, &prop_list, original_key.get_ptr());
-        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_NE(original_key, 0);
-
-        // Step 2: Get masked key via property
-        azihsm_key_prop masked_prop{};
-        masked_prop.id = AZIHSM_KEY_PROP_ID_MASKED_KEY;
-        masked_prop.val = nullptr;
-        masked_prop.len = 0;
-
-        err = azihsm_key_get_prop(original_key, &masked_prop);
-        ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
-        ASSERT_GT(masked_prop.len, 0);
-
-        std::vector<uint8_t> masked_key_data(masked_prop.len);
-        masked_prop.val = masked_key_data.data();
-
-        err = azihsm_key_get_prop(original_key, &masked_prop);
-        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-
-        // Step 3: Unmask the masked key
-        azihsm_buffer masked_key_buf{};
-        masked_key_buf.ptr = masked_key_data.data();
-        masked_key_buf.len = static_cast<uint32_t>(masked_key_data.size());
-
-        auto_key unmasked_key;
-        err = azihsm_key_unmask(
+        aes_unmasked_key_independent_handle_common(
             session,
+            AZIHSM_ALGO_ID_AES_KEY_GEN,
             AZIHSM_KEY_KIND_AES,
-            &masked_key_buf,
-            unmasked_key.get_ptr()
+            256
         );
-        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_NE(unmasked_key, 0);
-
-        // Step 4: Delete the original key before using the unmasked key
-        // to prove the unmasked key is independent
-        err = azihsm_key_delete(original_key.release());
-        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-
-        // Step 5: Encrypt with the unmasked key using AES-CBC with padding
-        std::vector<uint8_t> plaintext(32, 0x11);
-
-        uint8_t iv[16] = { 0 };
-        azihsm_algo_aes_cbc_params cbc_params{};
-        std::memcpy(cbc_params.iv, iv, sizeof(iv));
-
-        azihsm_algo enc_algo{};
-        enc_algo.id = AZIHSM_ALGO_ID_AES_CBC_PAD;
-        enc_algo.params = &cbc_params;
-        enc_algo.len = sizeof(cbc_params);
-
-        azihsm_buffer input{ plaintext.data(), static_cast<uint32_t>(plaintext.size()) };
-        azihsm_buffer output{ nullptr, 0 };
-
-        // Query required output buffer size
-        err = azihsm_crypt_encrypt(&enc_algo, unmasked_key, &input, &output);
-        ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
-        ASSERT_GT(output.len, 0);
-
-        // Perform encryption
-        std::vector<uint8_t> ciphertext(output.len);
-        output.ptr = ciphertext.data();
-        err = azihsm_crypt_encrypt(&enc_algo, unmasked_key, &input, &output);
-        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-
-        // Clean up
-        err = azihsm_key_delete(unmasked_key.release());
-        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
     });
 }
 

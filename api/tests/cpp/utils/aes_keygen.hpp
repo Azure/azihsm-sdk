@@ -158,3 +158,10 @@ void aes_unwrap_wrong_algo_fails_common(
     uint32_t bits,
     azihsm_algo_id wrong_algo_id
 );
+
+void aes_unmasked_key_independent_handle_common(
+    azihsm_handle session,
+    azihsm_algo_id algo_id,
+    azihsm_key_kind key_kind,
+    uint32_t bits
+);
