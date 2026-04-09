@@ -163,6 +163,7 @@ impl HsmSignStreamingOp for HsmHashSignAlgo {
             algo: HsmEccSignAlgo::default(),
             hasher,
             key,
+            can_update: true,
         })
     }
 }
@@ -200,6 +201,9 @@ pub struct HsmEccSignContext {
     algo: HsmEccSignAlgo,
     key: HsmEccPrivateKey,
     hasher: crypto::HashAlgoContext,
+
+    // Internal flag to track if finish has been called, to prevent multiple finalizations
+    can_update: bool,
 }
 
 impl HsmSignStreamingOpContext for HsmEccSignContext {
@@ -227,6 +231,10 @@ impl HsmSignStreamingOpContext for HsmEccSignContext {
     /// - The hash accumulation operation fails
     /// - The internal context state is corrupted
     fn update(&mut self, data: &[u8]) -> Result<(), <Self::Algo as HsmSignStreamingOp>::Error> {
+        // Prevent updates after finish has been called
+        if !self.can_update {
+            return Err(HsmError::InvalidContextState);
+        }
         self.hasher
             .update(data)
             .map_err(|_| HsmError::InternalError)
@@ -268,6 +276,11 @@ impl HsmSignStreamingOpContext for HsmEccSignContext {
         &mut self,
         signature: Option<&mut [u8]>,
     ) -> Result<usize, <Self::Algo as HsmSignStreamingOp>::Error> {
+        //finish can only be called once successfully, subsequent calls should return error
+        if !self.can_update {
+            return Err(HsmError::InvalidContextState);
+        }
+
         let Some(curve) = self.key.ecc_curve() else {
             return Err(HsmError::InvalidKey);
         };
@@ -281,7 +294,13 @@ impl HsmSignStreamingOpContext for HsmEccSignContext {
             .hasher
             .finish_vec()
             .map_hsm_err(HsmError::InternalError)?;
-        HsmSigner::sign(&mut self.algo, &self.key, &hash, Some(signature))
+
+        let result = HsmSigner::sign(&mut self.algo, &self.key, &hash, Some(signature))?;
+
+        // Mark context as finished to prevent further updates or finalization
+        self.can_update = false;
+
+        Ok(result)
     }
 }
 
@@ -390,6 +409,7 @@ impl HsmVerifyStreamingOp for HsmHashSignAlgo {
             algo: HsmEccSignAlgo::default(),
             hasher,
             key,
+            can_update: true,
         })
     }
 }
@@ -427,6 +447,9 @@ pub struct HsmEccVerifyContext {
     algo: HsmEccSignAlgo,
     key: HsmEccPublicKey,
     hasher: crypto::HashAlgoContext,
+
+    // Internal flag to track if finish has been called, to prevent multiple finalizations
+    can_update: bool,
 }
 
 impl HsmVerifyStreamingOpContext for HsmEccVerifyContext {
@@ -455,6 +478,10 @@ impl HsmVerifyStreamingOpContext for HsmEccVerifyContext {
     /// - The hash accumulation operation fails
     /// - The internal context state is corrupted
     fn update(&mut self, data: &[u8]) -> Result<(), <Self::Algo as HsmVerifyStreamingOp>::Error> {
+        // Prevent updates after finish has been called
+        if !self.can_update {
+            return Err(HsmError::InvalidContextState);
+        }
         self.hasher
             .update(data)
             .map_hsm_err(HsmError::InternalError)
@@ -499,10 +526,21 @@ impl HsmVerifyStreamingOpContext for HsmEccVerifyContext {
         &mut self,
         signature: &[u8],
     ) -> Result<bool, <Self::Algo as HsmVerifyStreamingOp>::Error> {
+        //finish can only be called once successfully, subsequent calls should return error
+        if !self.can_update {
+            return Err(HsmError::InvalidContextState);
+        }
+
         let hash = self
             .hasher
             .finish_vec()
             .map_hsm_err(HsmError::InternalError)?;
-        HsmVerifier::verify(&mut self.algo, &self.key, &hash, signature)
+
+        let result = HsmVerifier::verify(&mut self.algo, &self.key, &hash, signature)?;
+
+        // Mark context as finished to prevent further updates or finalization
+        self.can_update = false;
+
+        Ok(result)
     }
 }

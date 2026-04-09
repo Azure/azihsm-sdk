@@ -304,6 +304,9 @@ pub struct HsmAesXtsEncryptContext {
 
     /// AES-XTS key used by this context.
     key: HsmAesXtsKey,
+
+    // Internal flag to track if finish has been called, to prevent multiple finalizations
+    can_update: bool,
 }
 
 impl HsmEncryptStreamingOp for HsmAesXtsAlgo {
@@ -334,7 +337,11 @@ impl HsmEncryptStreamingOp for HsmAesXtsAlgo {
         if !key.props().can_encrypt() {
             Err(HsmError::InvalidKey)?;
         }
-        Ok(HsmAesXtsEncryptContext { algo: self, key })
+        Ok(HsmAesXtsEncryptContext {
+            algo: self,
+            key,
+            can_update: true,
+        })
     }
 }
 
@@ -365,6 +372,11 @@ impl HsmEncryptContext for HsmAesXtsEncryptContext {
         plaintext: &[u8],
         ciphertext: Option<&mut [u8]>,
     ) -> Result<usize, <Self::Algo as HsmEncryptStreamingOp>::Error> {
+        // Prevent updates after finish has been called
+        if !self.can_update {
+            return Err(HsmError::InvalidContextState);
+        }
+
         // Accept only full data units
         if !plaintext.len().is_multiple_of(self.algo.dul) {
             Err(HsmError::InvalidArgument)?;
@@ -380,8 +392,18 @@ impl HsmEncryptContext for HsmAesXtsEncryptContext {
     /// Since updates require full data units, there is no buffered data to flush.
     fn finish(
         &mut self,
-        _ciphertext: Option<&mut [u8]>,
+        ciphertext: Option<&mut [u8]>,
     ) -> Result<usize, <Self::Algo as HsmEncryptStreamingOp>::Error> {
+        //finish can only be called once successfully, subsequent calls should return error
+        if !self.can_update {
+            return Err(HsmError::InvalidContextState);
+        }
+
+        // Only mark as finished when actual finish is performed (not size query)
+        if ciphertext.is_some() {
+            self.can_update = false;
+        }
+
         // No additional data to process in finish for AES XTS
         Ok(0)
     }
@@ -422,6 +444,9 @@ pub struct HsmAesXtsDecryptContext {
 
     /// AES-XTS key used by this context.
     key: HsmAesXtsKey,
+
+    // Internal flag to track if finish has been called, to prevent multiple finalizations
+    can_update: bool,
 }
 
 impl HsmDecryptStreamingOp for HsmAesXtsAlgo {
@@ -452,7 +477,11 @@ impl HsmDecryptStreamingOp for HsmAesXtsAlgo {
         if !key.props().can_decrypt() {
             Err(HsmError::InvalidKey)?;
         }
-        Ok(HsmAesXtsDecryptContext { algo: self, key })
+        Ok(HsmAesXtsDecryptContext {
+            algo: self,
+            key,
+            can_update: true,
+        })
     }
 }
 
@@ -483,6 +512,11 @@ impl HsmDecryptContext for HsmAesXtsDecryptContext {
         ciphertext: &[u8],
         plaintext: Option<&mut [u8]>,
     ) -> Result<usize, <Self::Algo as HsmDecryptStreamingOp>::Error> {
+        // Prevent updates after finish has been called
+        if !self.can_update {
+            return Err(HsmError::InvalidContextState);
+        }
+
         // Accept only full data units
         if !ciphertext.len().is_multiple_of(self.algo.dul) {
             Err(HsmError::InvalidArgument)?;
@@ -497,8 +531,18 @@ impl HsmDecryptContext for HsmAesXtsDecryptContext {
     /// Since updates require full data units, there is no buffered data to flush.
     fn finish(
         &mut self,
-        _plaintext: Option<&mut [u8]>,
+        plaintext: Option<&mut [u8]>,
     ) -> Result<usize, <Self::Algo as HsmDecryptStreamingOp>::Error> {
+        //finish can only be called once successfully, subsequent calls should return error
+        if !self.can_update {
+            return Err(HsmError::InvalidContextState);
+        }
+
+        // Only mark as finished when actual finish is performed (not size query)
+        if plaintext.is_some() {
+            self.can_update = false;
+        }
+
         // No additional data to process in finish for AES XTS
         Ok(0)
     }

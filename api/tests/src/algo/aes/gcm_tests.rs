@@ -682,7 +682,7 @@ fn test_gcm_streaming_matches_single_shot(session: HsmSession) {
     assert_eq!(tag1, tag2, "Streaming tag must match single-shot");
 }
 
-/// Verify finish() drains the internal buffer and subsequent finish() returns no output.
+/// Verify finish() drains the internal buffer and subsequent finish() returns InvalidContextState.
 #[session_test]
 fn test_gcm_streaming_finish_drains_buffer(session: HsmSession) {
     let iv = test_iv();
@@ -695,15 +695,19 @@ fn test_gcm_streaming_finish_drains_buffer(session: HsmSession) {
     let _ = ctx.update_vec(&plaintext).unwrap();
 
     let ct1 = ctx.finish_vec().unwrap();
-    let ct2 = ctx.finish_vec().unwrap();
-
     assert!(!ct1.is_empty(), "First finish() should return ciphertext");
-    assert!(ct2.is_empty(), "Second finish() should return empty output");
+
+    // Second finish should fail since context is finished
+    let res = ctx.finish_vec();
+    assert!(
+        matches!(res, Err(HsmError::InvalidContextState)),
+        "Second finish() should return InvalidContextState"
+    );
 }
 
-/// Verify update() after finish() performs no operation.
+/// Verify update() after finish() returns InvalidContextState.
 #[session_test]
-fn test_gcm_streaming_update_after_finish_is_noop(session: HsmSession) {
+fn test_gcm_streaming_update_after_finish_fails(session: HsmSession) {
     let iv = test_iv();
     let plaintext = vec![0x22u8; 64];
 
@@ -713,10 +717,10 @@ fn test_gcm_streaming_update_after_finish_is_noop(session: HsmSession) {
 
     let _ = ctx.finish_vec().unwrap();
 
-    let bytes = ctx.update_vec(&plaintext).unwrap();
+    let res = ctx.update_vec(&plaintext);
     assert!(
-        bytes.is_empty(),
-        "update() after finish() should be a no-op for GCM"
+        matches!(res, Err(HsmError::InvalidContextState)),
+        "update() after finish() should return InvalidContextState"
     );
 }
 

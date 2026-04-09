@@ -420,3 +420,79 @@ fn test_hmac_streaming_update_rejects_oversize_message(session: HsmSession) {
         .expect_err("Oversize streaming update must fail");
     assert_eq!(err, HsmError::IndexOutOfRange);
 }
+
+/// Verifies that HMAC sign context rejects update and finish after successful finish.
+#[session_test]
+fn test_hmac_streaming_sign_update_after_finish_fails(session: HsmSession) {
+    let (key_a, _key_b) = derive_ecdh_hmac_keypair(
+        &session,
+        HsmEccCurve::P256,
+        HsmHashAlgo::Sha256,
+        HsmKeyKind::HmacSha256,
+    );
+
+    let algo = HsmHmacAlgo::new();
+    let mut ctx = HsmSigner::sign_init(algo, key_a).expect("Failed to initialize HMAC sign ctx");
+
+    let msg = b"test message";
+    HsmSignStreamingOpContext::update(&mut ctx, msg).expect("update should succeed");
+
+    let _tag =
+        HsmSignStreamingOpContext::finish_vec(&mut ctx).expect("first finish should succeed");
+
+    // update after finish must fail
+    let res = HsmSignStreamingOpContext::update(&mut ctx, b"more data");
+    assert!(
+        matches!(res, Err(HsmError::InvalidContextState)),
+        "update() after finish() should return InvalidContextState, got {:?}",
+        res
+    );
+
+    // second finish must fail
+    let res = HsmSignStreamingOpContext::finish_vec(&mut ctx);
+    assert!(
+        matches!(res, Err(HsmError::InvalidContextState)),
+        "finish() after finish() should return InvalidContextState, got {:?}",
+        res
+    );
+}
+
+/// Verifies that HMAC verify context rejects update and finish after successful finish.
+#[session_test]
+fn test_hmac_streaming_verify_update_after_finish_fails(session: HsmSession) {
+    let (key_a, _key_b) = derive_ecdh_hmac_keypair(
+        &session,
+        HsmEccCurve::P256,
+        HsmHashAlgo::Sha256,
+        HsmKeyKind::HmacSha256,
+    );
+
+    let msg = b"test message";
+    let tag = streaming_sign(key_a.clone(), msg, &[msg.len()]);
+
+    let algo = HsmHmacAlgo::new();
+    let mut ctx =
+        HsmVerifier::verify_init(algo, key_a).expect("Failed to initialize HMAC verify ctx");
+
+    HsmVerifyStreamingOpContext::update(&mut ctx, msg).expect("update should succeed");
+
+    let result =
+        HsmVerifyStreamingOpContext::finish(&mut ctx, &tag).expect("first finish should succeed");
+    assert!(result, "first verification should succeed");
+
+    // update after finish must fail
+    let res = HsmVerifyStreamingOpContext::update(&mut ctx, b"more data");
+    assert!(
+        matches!(res, Err(HsmError::InvalidContextState)),
+        "update() after finish() should return InvalidContextState, got {:?}",
+        res
+    );
+
+    // second finish must fail
+    let res = HsmVerifyStreamingOpContext::finish(&mut ctx, &tag);
+    assert!(
+        matches!(res, Err(HsmError::InvalidContextState)),
+        "finish() after finish() should return InvalidContextState, got {:?}",
+        res
+    );
+}

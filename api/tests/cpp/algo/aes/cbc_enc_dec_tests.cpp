@@ -1414,3 +1414,141 @@ TEST_F(azihsm_aes_cbc, streaming_encrypt_finish_without_update_with_padding_outp
         ASSERT_EQ(output.len, AES_BLOCK_SIZE);
     });
 }
+
+// ==================== Context Lifecycle After Finish ====================
+
+// After finish succeeds, update/finish must return INVALID_CONTEXT_STATE.
+TEST_F(azihsm_aes_cbc, streaming_finish_invalidates_context)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto key = generate_aes_key(session, 256);
+
+        azihsm_algo_aes_cbc_params cbc_params{};
+        azihsm_algo crypt_algo{};
+        init_cbc_algo(crypt_algo, cbc_params, AZIHSM_ALGO_ID_AES_CBC_PAD, 0xA0);
+
+        // Encrypt path: use streaming_crypt to get complete ciphertext
+        auto_ctx enc_ctx;
+        auto err =
+            crypt_init_call(CryptOperation::Encrypt, &crypt_algo, key.get(), enc_ctx.get_ptr());
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        // CBC-PAD: feed data via streaming_update_status_with_sizing + streaming_finish
+        uint8_t plaintext[32] = { 0xA0 };
+        azihsm_buffer input{ plaintext, sizeof(plaintext) };
+        err = streaming_update_status_with_sizing(CryptOperation::Encrypt, enc_ctx, &input);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        err = streaming_finish_status_with_sizing(CryptOperation::Encrypt, enc_ctx);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        assert_encrypt_ctx_finished(enc_ctx);
+
+        // Decrypt path: use streaming_crypt helper for proper roundtrip,
+        // then test lifecycle on a fresh context
+        init_cbc_algo(crypt_algo, cbc_params, AZIHSM_ALGO_ID_AES_CBC_PAD, 0xA0);
+        auto_ctx dec_ctx;
+        err = crypt_init_call(CryptOperation::Decrypt, &crypt_algo, key.get(), dec_ctx.get_ptr());
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        // Just do finish with padding (no update data) to consume the context
+        err = streaming_finish_status_with_sizing(CryptOperation::Decrypt, dec_ctx);
+        // Decrypt finish with no data on CBC-PAD will produce padding error,
+        // but context should still be finished. Accept any result.
+
+        // Use a fresh context with actual data for lifecycle test
+        init_cbc_algo(crypt_algo, cbc_params, AZIHSM_ALGO_ID_AES_CBC_PAD, 0xA0);
+        auto_ctx dec_ctx2;
+        err = crypt_init_call(CryptOperation::Decrypt, &crypt_algo, key.get(), dec_ctx2.get_ptr());
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        // Encrypt fresh data with single-shot for proper ciphertext
+        std::vector<uint8_t> ciphertext;
+        init_cbc_algo(crypt_algo, cbc_params, AZIHSM_ALGO_ID_AES_CBC_PAD, 0xA0);
+        ASSERT_EQ(
+            AZIHSM_STATUS_SUCCESS,
+            ::single_shot_crypt(
+                CryptOperation::Encrypt,
+                key.get(),
+                &crypt_algo,
+                plaintext,
+                sizeof(plaintext),
+                ciphertext
+            )
+        );
+
+        // Feed the complete ciphertext to decrypt streaming
+        init_cbc_algo(crypt_algo, cbc_params, AZIHSM_ALGO_ID_AES_CBC_PAD, 0xA0);
+        auto_ctx dec_ctx3;
+        err = crypt_init_call(CryptOperation::Decrypt, &crypt_algo, key.get(), dec_ctx3.get_ptr());
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        azihsm_buffer dec_input{ ciphertext.data(), static_cast<uint32_t>(ciphertext.size()) };
+        err = streaming_update_status_with_sizing(CryptOperation::Decrypt, dec_ctx3, &dec_input);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        err = streaming_finish_status_with_sizing(CryptOperation::Decrypt, dec_ctx3);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        assert_decrypt_ctx_finished(dec_ctx3);
+    });
+}
+
+// Normal lifecycle: init -> update -> finish -> context is finished.
+TEST_F(azihsm_aes_cbc, streaming_init_update_finish_consumes_context)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto key = generate_aes_key(session, 256);
+
+        // Use no-padding for simpler roundtrip (block-aligned data)
+        azihsm_algo_aes_cbc_params cbc_params{};
+        azihsm_algo crypt_algo{};
+        init_cbc_algo(crypt_algo, cbc_params, AZIHSM_ALGO_ID_AES_CBC, 0xB0);
+
+        // Encrypt
+        auto_ctx enc_ctx;
+        auto err =
+            crypt_init_call(CryptOperation::Encrypt, &crypt_algo, key.get(), enc_ctx.get_ptr());
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        uint8_t block[16] = { 0x42 };
+        azihsm_buffer input{ block, sizeof(block) };
+
+        err = streaming_update_status_with_sizing(CryptOperation::Encrypt, enc_ctx, &input);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        err = streaming_finish_status_with_sizing(CryptOperation::Encrypt, enc_ctx);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        assert_encrypt_ctx_finished(enc_ctx);
+
+        // Decrypt roundtrip: encrypt with single-shot to get proper ciphertext
+        std::vector<uint8_t> ciphertext;
+        init_cbc_algo(crypt_algo, cbc_params, AZIHSM_ALGO_ID_AES_CBC, 0xB0);
+        ASSERT_EQ(
+            AZIHSM_STATUS_SUCCESS,
+            ::single_shot_crypt(
+                CryptOperation::Encrypt,
+                key.get(),
+                &crypt_algo,
+                block,
+                sizeof(block),
+                ciphertext
+            )
+        );
+
+        init_cbc_algo(crypt_algo, cbc_params, AZIHSM_ALGO_ID_AES_CBC, 0xB0);
+        auto_ctx dec_ctx;
+        err = crypt_init_call(CryptOperation::Decrypt, &crypt_algo, key.get(), dec_ctx.get_ptr());
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        azihsm_buffer dec_input{ ciphertext.data(), static_cast<uint32_t>(ciphertext.size()) };
+        err = streaming_update_status_with_sizing(CryptOperation::Decrypt, dec_ctx, &dec_input);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        err = streaming_finish_status_with_sizing(CryptOperation::Decrypt, dec_ctx);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        assert_decrypt_ctx_finished(dec_ctx);
+    });
+}

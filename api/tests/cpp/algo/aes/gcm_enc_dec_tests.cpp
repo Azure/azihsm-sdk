@@ -3062,3 +3062,226 @@ TEST_F(azihsm_aes_gcm, tampered_tag_fails_across_chunk_sizes)
         }
     });
 }
+
+// ==================== Context Lifecycle After Finish ====================
+
+// After finish succeeds, update/finish must return INVALID_CONTEXT_STATE.
+TEST_F(azihsm_aes_gcm, streaming_finish_invalidates_context)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto key = generate_aes_gcm_key(session, 256);
+
+        uint8_t iv[12] = { 0xF0, 0xF1, 0xF2, 0xF3, 0xF4, 0xF5, 0xF6, 0xF7, 0xF8, 0xF9, 0xFA, 0xFB };
+        azihsm_algo_aes_gcm_params gcm_params{};
+        std::memcpy(gcm_params.iv, iv, sizeof(iv));
+        std::memset(gcm_params.tag, 0, sizeof(gcm_params.tag));
+        gcm_params.aad = nullptr;
+
+        azihsm_algo crypt_algo{};
+        crypt_algo.id = AZIHSM_ALGO_ID_AES_GCM;
+        crypt_algo.params = &gcm_params;
+        crypt_algo.len = sizeof(gcm_params);
+
+        // Encrypt: init -> finish (empty) -> assert finished
+        auto_ctx enc_ctx;
+        auto err =
+            crypt_init_call(CryptOperation::Encrypt, &crypt_algo, key.get(), enc_ctx.get_ptr());
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        err = streaming_finish_status_with_sizing(CryptOperation::Encrypt, enc_ctx);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        assert_encrypt_ctx_finished(enc_ctx);
+
+        // Decrypt: need tag from encryption
+        uint8_t saved_tag[16];
+        std::memcpy(saved_tag, gcm_params.tag, sizeof(saved_tag));
+
+        std::memcpy(gcm_params.iv, iv, sizeof(iv));
+        std::memcpy(gcm_params.tag, saved_tag, sizeof(saved_tag));
+
+        auto_ctx dec_ctx;
+        err = crypt_init_call(CryptOperation::Decrypt, &crypt_algo, key.get(), dec_ctx.get_ptr());
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        err = streaming_finish_status_with_sizing(CryptOperation::Decrypt, dec_ctx);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        assert_decrypt_ctx_finished(dec_ctx);
+    });
+}
+
+// Normal lifecycle: init -> update -> finish -> context is finished.
+TEST_F(azihsm_aes_gcm, streaming_init_update_finish_consumes_context)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto key = generate_aes_gcm_key(session, 256);
+
+        uint8_t iv[12] = { 0xE0, 0xE1, 0xE2, 0xE3, 0xE4, 0xE5, 0xE6, 0xE7, 0xE8, 0xE9, 0xEA, 0xEB };
+        azihsm_algo_aes_gcm_params gcm_params{};
+        std::memcpy(gcm_params.iv, iv, sizeof(iv));
+        std::memset(gcm_params.tag, 0, sizeof(gcm_params.tag));
+        gcm_params.aad = nullptr;
+
+        azihsm_algo crypt_algo{};
+        crypt_algo.id = AZIHSM_ALGO_ID_AES_GCM;
+        crypt_algo.params = &gcm_params;
+        crypt_algo.len = sizeof(gcm_params);
+
+        // Encrypt with data
+        auto_ctx enc_ctx;
+        auto err =
+            crypt_init_call(CryptOperation::Encrypt, &crypt_algo, key.get(), enc_ctx.get_ptr());
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        uint8_t plaintext[32] = { 0xAA };
+        azihsm_buffer input{ plaintext, sizeof(plaintext) };
+        azihsm_buffer output{ nullptr, 0 };
+
+        // GCM update buffers data, returns 0
+        err = crypt_update_call(CryptOperation::Encrypt, enc_ctx, &input, &output);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        // Finish produces the ciphertext
+        err = streaming_finish_status_with_sizing(CryptOperation::Encrypt, enc_ctx);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        assert_encrypt_ctx_finished(enc_ctx);
+    });
+}
+
+// After finish the context is finished; update on the same handle must fail.
+TEST_F(azihsm_aes_gcm, streaming_update_after_finish_is_rejected)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto key = generate_aes_gcm_key(session, 256);
+
+        uint8_t iv[12] = { 0xD0, 0xD1, 0xD2, 0xD3, 0xD4, 0xD5, 0xD6, 0xD7, 0xD8, 0xD9, 0xDA, 0xDB };
+        azihsm_algo_aes_gcm_params gcm_params{};
+        std::memcpy(gcm_params.iv, iv, sizeof(iv));
+        std::memset(gcm_params.tag, 0, sizeof(gcm_params.tag));
+        gcm_params.aad = nullptr;
+
+        azihsm_algo crypt_algo{};
+        crypt_algo.id = AZIHSM_ALGO_ID_AES_GCM;
+        crypt_algo.params = &gcm_params;
+        crypt_algo.len = sizeof(gcm_params);
+
+        // Encrypt: init -> finish -> update must fail
+        auto_ctx enc_ctx;
+        auto err =
+            crypt_init_call(CryptOperation::Encrypt, &crypt_algo, key.get(), enc_ctx.get_ptr());
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        err = streaming_finish_status_with_sizing(CryptOperation::Encrypt, enc_ctx);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        assert_encrypt_ctx_finished(enc_ctx);
+
+        // Decrypt: init -> finish -> update must fail
+        uint8_t saved_tag[16];
+        std::memcpy(saved_tag, gcm_params.tag, sizeof(saved_tag));
+        std::memcpy(gcm_params.iv, iv, sizeof(iv));
+        std::memcpy(gcm_params.tag, saved_tag, sizeof(saved_tag));
+
+        auto_ctx dec_ctx;
+        err = crypt_init_call(CryptOperation::Decrypt, &crypt_algo, key.get(), dec_ctx.get_ptr());
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        err = streaming_finish_status_with_sizing(CryptOperation::Decrypt, dec_ctx);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        assert_decrypt_ctx_finished(dec_ctx);
+    });
+}
+
+// free_ctx_handle on a finished context should still succeed (handle is alive).
+TEST_F(azihsm_aes_gcm, streaming_free_after_finish_succeeds)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto key = generate_aes_gcm_key(session, 256);
+
+        uint8_t iv[12] = { 0xC0, 0xC1, 0xC2, 0xC3, 0xC4, 0xC5, 0xC6, 0xC7, 0xC8, 0xC9, 0xCA, 0xCB };
+        azihsm_algo_aes_gcm_params gcm_params{};
+        std::memcpy(gcm_params.iv, iv, sizeof(iv));
+        std::memset(gcm_params.tag, 0, sizeof(gcm_params.tag));
+        gcm_params.aad = nullptr;
+
+        azihsm_algo crypt_algo{};
+        crypt_algo.id = AZIHSM_ALGO_ID_AES_GCM;
+        crypt_algo.params = &gcm_params;
+        crypt_algo.len = sizeof(gcm_params);
+
+        // Encrypt: init -> finish -> free should succeed
+        auto_ctx enc_ctx;
+        auto err =
+            crypt_init_call(CryptOperation::Encrypt, &crypt_algo, key.get(), enc_ctx.get_ptr());
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        err = streaming_finish_status_with_sizing(CryptOperation::Encrypt, enc_ctx);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        // Explicit free on a finished context should succeed
+        err = azihsm_free_ctx_handle(enc_ctx.release());
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        // Decrypt path
+        uint8_t saved_tag[16];
+        std::memcpy(saved_tag, gcm_params.tag, sizeof(saved_tag));
+        std::memcpy(gcm_params.iv, iv, sizeof(iv));
+        std::memcpy(gcm_params.tag, saved_tag, sizeof(saved_tag));
+
+        auto_ctx dec_ctx;
+        err = crypt_init_call(CryptOperation::Decrypt, &crypt_algo, key.get(), dec_ctx.get_ptr());
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        err = streaming_finish_status_with_sizing(CryptOperation::Decrypt, dec_ctx);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        err = azihsm_free_ctx_handle(dec_ctx.release());
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+    });
+}
+
+// Multiple updates followed by finish; subsequent operations on the finished context fail.
+TEST_F(azihsm_aes_gcm, streaming_multiple_updates_then_finish_consumes_context)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto key = generate_aes_gcm_key(session, 256);
+        const size_t num_chunks = 4;
+        const size_t chunk_size = 32;
+
+        uint8_t iv[12] = { 0xB0, 0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7, 0xB8, 0xB9, 0xBA, 0xBB };
+        azihsm_algo_aes_gcm_params gcm_params{};
+        std::memcpy(gcm_params.iv, iv, sizeof(iv));
+        std::memset(gcm_params.tag, 0, sizeof(gcm_params.tag));
+        gcm_params.aad = nullptr;
+
+        azihsm_algo crypt_algo{};
+        crypt_algo.id = AZIHSM_ALGO_ID_AES_GCM;
+        crypt_algo.params = &gcm_params;
+        crypt_algo.len = sizeof(gcm_params);
+
+        auto_ctx enc_ctx;
+        auto err =
+            crypt_init_call(CryptOperation::Encrypt, &crypt_algo, key.get(), enc_ctx.get_ptr());
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        std::vector<uint8_t> plaintext(chunk_size * num_chunks, 0x99);
+
+        // Feed multiple chunks (GCM buffers all, returns 0 from update)
+        for (size_t i = 0; i < num_chunks; ++i)
+        {
+            azihsm_buffer input{ plaintext.data() + i * chunk_size,
+                                 static_cast<uint32_t>(chunk_size) };
+            azihsm_buffer output{ nullptr, 0 };
+            err = crypt_update_call(CryptOperation::Encrypt, enc_ctx, &input, &output);
+            ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        }
+
+        err = streaming_finish_status_with_sizing(CryptOperation::Encrypt, enc_ctx);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        assert_encrypt_ctx_finished(enc_ctx);
+    });
+}

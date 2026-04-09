@@ -175,6 +175,7 @@ impl HsmEncryptStreamingOp for HsmAesCbcAlgo {
             algo: self,
             key,
             block: AesCbcBlock::default(),
+            can_update: true,
         })
     }
 }
@@ -192,6 +193,9 @@ pub struct HsmAesCbcEncryptContext {
 
     /// Internal block buffer for managing partial blocks during streaming.
     block: AesCbcBlock,
+
+    // Internal flag to track if finish has been called, to prevent multiple finalizations
+    can_update: bool,
 }
 
 impl HsmEncryptContext for HsmAesCbcEncryptContext {
@@ -222,6 +226,10 @@ impl HsmEncryptContext for HsmAesCbcEncryptContext {
         plaintext: &[u8],
         ciphertext: Option<&mut [u8]>,
     ) -> Result<usize, <Self::Algo as HsmEncryptStreamingOp>::Error> {
+        // Prevent updates after finish has been called
+        if !self.can_update {
+            return Err(HsmError::InvalidContextState);
+        }
         let exepected_len = self.block.update_len(plaintext)?;
         let Some(ciphertext) = ciphertext else {
             return Ok(exepected_len);
@@ -264,14 +272,19 @@ impl HsmEncryptContext for HsmAesCbcEncryptContext {
         &mut self,
         ciphertext: Option<&mut [u8]>,
     ) -> Result<usize, <Self::Algo as HsmEncryptStreamingOp>::Error> {
-        let exepected_len = self.block.finish_len(self.algo.pad)?;
+        //finish can only be called once successfully, subsequent calls should return error
+        if !self.can_update {
+            return Err(HsmError::InvalidContextState);
+        }
+
+        let expected_len = self.block.finish_len(self.algo.pad)?;
         let Some(ciphertext) = ciphertext else {
-            return Ok(exepected_len);
+            return Ok(expected_len);
         };
-        if ciphertext.len() < exepected_len {
+        if ciphertext.len() < expected_len {
             return Err(HsmError::BufferTooSmall);
         }
-        self.block.finish(|input: &[u8]| {
+        let expected_len = self.block.finish(|input: &[u8]| {
             let padding = pkcs7_pad(input, self.algo.pad);
             ddi::aes_cbc_encrypt(
                 &self.key,
@@ -279,7 +292,12 @@ impl HsmEncryptContext for HsmAesCbcEncryptContext {
                 &[input, &padding],
                 &mut ciphertext[..input.len() + padding.len()],
             )
-        })
+        })?;
+
+        // Mark context as finished to prevent further updates or finalization
+        self.can_update = false;
+
+        Ok(expected_len)
     }
 
     /// Returns a reference to the underlying hash algorithm.
@@ -400,6 +418,7 @@ impl HsmDecryptStreamingOp for HsmAesCbcAlgo {
             algo: self,
             key,
             block: AesCbcBlock::default(),
+            can_update: true,
         })
     }
 }
@@ -417,6 +436,9 @@ pub struct HsmAesCbcDecryptContext {
 
     /// Internal block buffer for managing partial blocks during streaming.
     block: AesCbcBlock,
+
+    // Internal flag to track if finish has been called, to prevent multiple finalizations
+    can_update: bool,
 }
 
 impl HsmDecryptContext for HsmAesCbcDecryptContext {
@@ -447,6 +469,10 @@ impl HsmDecryptContext for HsmAesCbcDecryptContext {
         ciphertext: &[u8],
         plaintext: Option<&mut [u8]>,
     ) -> Result<usize, <Self::Algo as HsmDecryptStreamingOp>::Error> {
+        // Prevent updates after finish has been called
+        if !self.can_update {
+            return Err(HsmError::InvalidContextState);
+        }
         let expected_len = self.block.update_len(ciphertext)?;
         let Some(plaintext) = plaintext else {
             return Ok(expected_len);
@@ -490,6 +516,11 @@ impl HsmDecryptContext for HsmAesCbcDecryptContext {
         &mut self,
         plaintext: Option<&mut [u8]>,
     ) -> Result<usize, <Self::Algo as HsmDecryptStreamingOp>::Error> {
+        //finish can only be called once successfully, subsequent calls should return error
+        if !self.can_update {
+            return Err(HsmError::InvalidContextState);
+        }
+
         let expected_len = self.block.finish_len(self.algo.pad)?;
         let Some(plaintext) = plaintext else {
             return Ok(expected_len);
@@ -506,11 +537,15 @@ impl HsmDecryptContext for HsmAesCbcDecryptContext {
                 &mut plaintext[..input.len()],
             )
         });
-        pkcs7_unpad(&plaintext[..len?], self.algo.pad)
+        let len = pkcs7_unpad(&plaintext[..len?], self.algo.pad)?;
+
+        // Mark context as finished to prevent further updates or finalization
+        self.can_update = false;
+
+        Ok(len)
     }
 
     /// Returns a reference to the underlying hash algorithm.
-    ///
     /// # Returns
     ///
     /// A reference to the `OsslHash` algorithm instance.
