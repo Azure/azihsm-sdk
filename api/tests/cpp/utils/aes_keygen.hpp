@@ -111,3 +111,18 @@ azihsm_algo_rsa_pkcs_oaep_params build_oaep_sha256_params();
 azihsm_algo_rsa_aes_key_wrap_params build_rsa_aes_key_unwrap_params(azihsm_algo_rsa_pkcs_oaep_params &oaep_params);
 
 azihsm_algo build_rsa_aes_key_unwrap_algo(azihsm_algo_rsa_aes_key_wrap_params &unwrap_params);
+
+void aes_unmask_wrong_kind_fails_common(
+    azihsm_handle session,
+    azihsm_algo_id algo_id,
+    azihsm_key_kind key_kind,
+    uint32_t bits,
+    azihsm_key_kind wrong_kind
+);
+
+void aes_unmask_corrupted_blob_fails_common(
+    azihsm_handle session,
+    azihsm_algo_id algo_id,
+    azihsm_key_kind key_kind,
+    uint32_t bits
+);

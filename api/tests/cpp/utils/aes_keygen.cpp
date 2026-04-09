@@ -427,3 +427,132 @@ azihsm_algo build_rsa_aes_key_unwrap_algo(azihsm_algo_rsa_aes_key_wrap_params &u
     algo.len = sizeof(unwrap_params);
     return algo;
 }
+
+void aes_unmask_wrong_kind_fails_common(
+    azihsm_handle session,
+    azihsm_algo_id algo_id,
+    azihsm_key_kind key_kind,
+    uint32_t bits,
+    azihsm_key_kind wrong_kind
+)
+{
+    // Generate an key
+    azihsm_algo keygen_algo{};
+    keygen_algo.id = algo_id;
+    keygen_algo.params = nullptr;
+    keygen_algo.len = 0;
+
+    azihsm_key_class key_class = AZIHSM_KEY_CLASS_SECRET;
+    bool is_session = true;
+    bool can_encrypt = true;
+    bool can_decrypt = true;
+
+    std::vector<azihsm_key_prop> props_vec = {
+        { .id = AZIHSM_KEY_PROP_ID_KIND, .val = &key_kind, .len = sizeof(key_kind) },
+        { .id = AZIHSM_KEY_PROP_ID_CLASS, .val = &key_class, .len = sizeof(key_class) },
+        { .id = AZIHSM_KEY_PROP_ID_BIT_LEN, .val = &bits, .len = sizeof(bits) },
+        { .id = AZIHSM_KEY_PROP_ID_SESSION, .val = &is_session, .len = sizeof(is_session) },
+        { .id = AZIHSM_KEY_PROP_ID_ENCRYPT, .val = &can_encrypt, .len = sizeof(can_encrypt) },
+        { .id = AZIHSM_KEY_PROP_ID_DECRYPT, .val = &can_decrypt, .len = sizeof(can_decrypt) }
+    };
+
+    azihsm_key_prop_list prop_list{ .props = props_vec.data(),
+                                    .count = static_cast<uint32_t>(props_vec.size()) };
+
+    auto_key original_key;
+    azihsm_status err =
+        azihsm_key_gen(session, &keygen_algo, &prop_list, original_key.get_ptr());
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+    ASSERT_NE(original_key, 0);
+
+    // Get masked key blob
+    azihsm_key_prop masked_prop{};
+    masked_prop.id = AZIHSM_KEY_PROP_ID_MASKED_KEY;
+    masked_prop.val = nullptr;
+    masked_prop.len = 0;
+
+    err = azihsm_key_get_prop(original_key, &masked_prop);
+    ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+    ASSERT_GT(masked_prop.len, 0);
+
+    std::vector<uint8_t> masked_key_data(masked_prop.len);
+    masked_prop.val = masked_key_data.data();
+
+    err = azihsm_key_get_prop(original_key, &masked_prop);
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+    // Try to unmask with wrong key kind
+    azihsm_buffer masked_key_buf{};
+    masked_key_buf.ptr = masked_key_data.data();
+    masked_key_buf.len = static_cast<uint32_t>(masked_key_data.size());
+
+    azihsm_handle unmasked_key = 0;
+    err = azihsm_key_unmask(session, wrong_kind, &masked_key_buf, &unmasked_key);
+    ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+    ASSERT_EQ(unmasked_key, 0);
+}
+
+void aes_unmask_corrupted_blob_fails_common(
+    azihsm_handle session,
+    azihsm_algo_id algo_id,
+    azihsm_key_kind key_kind,
+    uint32_t bits
+){
+    // Generate an key
+    azihsm_algo keygen_algo{};
+    keygen_algo.id = algo_id;
+    keygen_algo.params = nullptr;
+    keygen_algo.len = 0;
+
+    azihsm_key_class key_class = AZIHSM_KEY_CLASS_SECRET;
+    bool is_session = true;
+    bool can_encrypt = true;
+    bool can_decrypt = true;
+
+    std::vector<azihsm_key_prop> props_vec = {
+        { .id = AZIHSM_KEY_PROP_ID_KIND, .val = &key_kind, .len = sizeof(key_kind) },
+        { .id = AZIHSM_KEY_PROP_ID_CLASS, .val = &key_class, .len = sizeof(key_class) },
+        { .id = AZIHSM_KEY_PROP_ID_BIT_LEN, .val = &bits, .len = sizeof(bits) },
+        { .id = AZIHSM_KEY_PROP_ID_SESSION, .val = &is_session, .len = sizeof(is_session) },
+        { .id = AZIHSM_KEY_PROP_ID_ENCRYPT, .val = &can_encrypt, .len = sizeof(can_encrypt) },
+        { .id = AZIHSM_KEY_PROP_ID_DECRYPT, .val = &can_decrypt, .len = sizeof(can_decrypt) }
+    };
+
+    azihsm_key_prop_list prop_list{ .props = props_vec.data(),
+                                    .count = static_cast<uint32_t>(props_vec.size()) };
+
+    auto_key original_key;
+    azihsm_status err =
+        azihsm_key_gen(session, &keygen_algo, &prop_list, original_key.get_ptr());
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+    ASSERT_NE(original_key, 0);
+
+    // Get masked key blob
+    azihsm_key_prop masked_prop{};
+    masked_prop.id = AZIHSM_KEY_PROP_ID_MASKED_KEY;
+    masked_prop.val = nullptr;
+    masked_prop.len = 0;
+
+    err = azihsm_key_get_prop(original_key, &masked_prop);
+    ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+    ASSERT_GT(masked_prop.len, 0);
+
+    std::vector<uint8_t> masked_key_data(masked_prop.len);
+    masked_prop.val = masked_key_data.data();
+
+    err = azihsm_key_get_prop(original_key, &masked_prop);
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+    // Corrupt the masked key blob
+    masked_key_data[0] ^= 0xFF;
+    
+    // Try to unmask the corrupted blob
+    azihsm_buffer masked_key_buf{};
+    masked_key_buf.ptr = masked_key_data.data();
+    masked_key_buf.len = static_cast<uint32_t>(masked_key_data.size());
+    
+    azihsm_handle unmasked_key = 0;
+    err = azihsm_key_unmask(session, key_kind, &masked_key_buf, &unmasked_key);
+    ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+    ASSERT_EQ(unmasked_key, 0);
+}
