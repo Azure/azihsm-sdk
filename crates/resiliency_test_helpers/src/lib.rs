@@ -158,8 +158,18 @@ impl ResiliencyLock for FileLock {
             .map_err(|_| HsmError::InternalError)?;
         file.lock_exclusive().map_err(|_| HsmError::InternalError)?;
 
-        // Only the flock holder reaches here; store the fd for unlock.
-        *self.active.lock() = Some(file);
+        // Detect reentrant lock(): flock(LOCK_EX) operates per open-file-
+        // description, so a second lock() on the same thread opens a new
+        // fd and succeeds immediately instead of blocking. Without this
+        // check the old fd in `active` would be silently dropped (releasing
+        // the first OS lock), breaking mutual exclusion.
+        let mut guard = self.active.lock();
+        if guard.is_some() {
+            // Release the OS lock we just acquired before returning.
+            let _ = file.unlock();
+            return Err(HsmError::InternalError);
+        }
+        *guard = Some(file);
         Ok(())
     }
 
