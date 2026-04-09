@@ -3,12 +3,18 @@
 
 use azihsm_api::*;
 use azihsm_api_tests_macro::*;
+use azihsm_crypto::Rng;
 
 use crate::algo::ecc::*;
 
 // ================================
 // Helper functions
 // ================================
+
+/// Generates a random IV of the given size
+pub fn test_iv(size: usize) -> Vec<u8> {
+    Rng::rand_vec(size).expect("RNG failure generating IV")
+}
 
 /// Returns the set of HKDF hash algorithms supported for testing
 fn supported_hkdf_hash_algos() -> &'static [HsmHashAlgo] {
@@ -67,18 +73,20 @@ fn derive_aes_key_from_shared_secret(
 
 /// Verifies AES-CBC encryption and decryption roundtrip correctness
 fn assert_aes_cbc_roundtrip(enc_key: &HsmAesKey, dec_key: &HsmAesKey, plaintext: &[u8]) {
-    let iv = [0u8; 16];
-    let mut aes_algo_enc =
-        HsmAesCbcAlgo::with_padding(iv.to_vec()).expect("AES CBC algo creation failed");
-    let ciphertext = HsmEncrypter::encrypt_vec(&mut aes_algo_enc, enc_key, plaintext)
-        .expect("Encryption failed");
+    let iv = test_iv(16);
 
-    let mut aes_algo_dec =
-        HsmAesCbcAlgo::with_padding(iv.to_vec()).expect("AES CBC algo creation failed");
-    let decrypted = HsmDecrypter::decrypt_vec(&mut aes_algo_dec, dec_key, &ciphertext)
-        .expect("Decryption failed");
+    let mut enc =
+        HsmAesCbcAlgo::with_padding(iv.clone()).expect("AES-CBC algo creation failed (enc)");
 
-    assert_eq!(decrypted, plaintext);
+    let ciphertext =
+        HsmEncrypter::encrypt_vec(&mut enc, enc_key, plaintext).expect("AES-CBC encryption failed");
+
+    let mut dec = HsmAesCbcAlgo::with_padding(iv).expect("AES-CBC algo creation failed (dec)");
+
+    let decrypted = HsmDecrypter::decrypt_vec(&mut dec, dec_key, &ciphertext)
+        .expect("AES-CBC decryption failed");
+
+    assert_eq!(decrypted, plaintext, "AES-CBC roundtrip mismatch");
 }
 
 /// Runs full HKDF matrix tests across hash algorithms and AES key sizes for a curve
@@ -190,8 +198,19 @@ fn run_hkdf_cross_curve_negative(session: &HsmSession) {
     let ciphertext = HsmEncrypter::encrypt_vec(&mut enc, &key_a, b"cross curve").unwrap();
 
     let mut dec = HsmAesCbcAlgo::with_padding(iv.to_vec()).unwrap();
-    if let Ok(pt) = HsmDecrypter::decrypt_vec(&mut dec, &key_b, &ciphertext) {
-        assert_ne!(pt, b"cross curve");
+    match HsmDecrypter::decrypt_vec(&mut dec, &key_b, &ciphertext) {
+        Ok(pt) => assert_ne!(pt, b"cross curve"),
+
+        Err(e) => {
+            assert!(
+                matches!(
+                    e,
+                    HsmError::InvalidKey | HsmError::InternalError | HsmError::DdiCmdFailure
+                ),
+                "unexpected error: {:?}",
+                e
+            );
+        }
     }
 }
 
@@ -367,30 +386,35 @@ fn run_hkdf_same_params_cross_curve_mismatch(session: &HsmSession) {
     }
 }
 
-/// Verifies HKDF derive rejects oversized AES output length
-fn run_hkdf_output_length_too_large_test(session: &HsmSession, curve: HsmEccCurve) {
+/// Verifies HKDF derive rejects invalid AES key size
+fn run_hkdf_invalid_aes_key_size_test(session: &HsmSession, curve: HsmEccCurve) {
     // Generate valid shared secret input via ECDH
     let (secret, _) = derive_ecdh_shared_secrets(session, curve);
 
     let mut hkdf = HsmHkdfAlgo::new(HsmHashAlgo::Sha256, None, None).unwrap();
 
-    // Build valid AES key props except for intentionally oversized output length
+    // Build AES key props with intentionally invalid size
     let props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Secret)
         .key_kind(HsmKeyKind::Aes)
         .can_encrypt(true)
         .can_decrypt(true)
-        .bits(4096) // intentionally invalid for AES
+        .bits(4096) // invalid for AES
         .build()
         .unwrap();
 
-    // Derivation should fail specifically due to oversized output length
     let result = HsmKeyManager::derive_key(session, &mut hkdf, &secret, props);
 
-    assert!(
-        result.is_err(),
-        "expected HKDF derive to reject an oversized AES output length"
-    );
+    match result {
+        Err(e) => {
+            assert!(
+                matches!(e, HsmError::InvalidArgument),
+                "unexpected error: {:?}",
+                e
+            );
+        }
+        Ok(_) => panic!("expected HKDF derive to fail due to invalid AES key size"),
+    }
 }
 
 /// Verifies HKDF-derived keys from unrelated shared secrets cannot interoperate
@@ -487,10 +511,11 @@ fn run_aes_cbc_padding_tamper_test(session: &HsmSession) {
 
     let mut ct = HsmEncrypter::encrypt_vec(&mut enc, &key, b"padding test").unwrap();
 
-    // Deterministically corrupt padding (flip last two bytes)
+    // Corrupt previous block to reliably break padding
     let len = ct.len();
-    ct[len - 1] ^= 0xFF;
-    ct[len - 2] ^= 0xAA;
+    // Corrupt previous block if possible (best for breaking padding deterministically)
+    let idx = if len >= 32 { len - 16 } else { len / 2 };
+    ct[idx] ^= 0xFF;
 
     let mut dec = HsmAesCbcAlgo::with_padding(iv.to_vec()).unwrap();
 
@@ -503,7 +528,7 @@ fn run_aes_cbc_padding_tamper_test(session: &HsmSession) {
 }
 
 // ============================================================
-// test cases sections
+// test case section
 // ============================================================
 
 /// Verifies HKDF matrix coverage for P256 across hashes, key sizes, and salt/info cases
@@ -957,20 +982,20 @@ fn test_hkdf_same_params_cross_curve_mismatch(session: HsmSession) {
 
 /// Verifies HKDF output size limits are enforced
 #[session_test]
-fn test_hkdf_output_length_too_large_p256(session: HsmSession) {
-    run_hkdf_output_length_too_large_test(&session, HsmEccCurve::P256);
+fn test_hkdf_invalid_aes_key_size_p256(session: HsmSession) {
+    run_hkdf_invalid_aes_key_size_test(&session, HsmEccCurve::P256);
 }
 
 /// Verifies HKDF rejects oversized output for P384
 #[session_test]
-fn test_hkdf_output_length_too_large_p384(session: HsmSession) {
-    run_hkdf_output_length_too_large_test(&session, HsmEccCurve::P384);
+fn test_hkdf_invalid_aes_key_size_p384(session: HsmSession) {
+    run_hkdf_invalid_aes_key_size_test(&session, HsmEccCurve::P384);
 }
 
 /// Verifies HKDF rejects oversized output for P521
 #[session_test]
-fn test_hkdf_output_length_too_large_p521(session: HsmSession) {
-    run_hkdf_output_length_too_large_test(&session, HsmEccCurve::P521);
+fn test_hkdf_invalid_aes_key_size_p521(session: HsmSession) {
+    run_hkdf_invalid_aes_key_size_test(&session, HsmEccCurve::P521);
 }
 
 /// Verifies ECDH fails without derive permission
