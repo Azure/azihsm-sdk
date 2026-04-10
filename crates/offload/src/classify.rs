@@ -52,22 +52,20 @@ pub(crate) fn classify(ty: &Type) -> ParamKind {
     }
 
     // Option<&[T]>, Option<&mut [T]>, or Option<&T>
-    if let Some(inner) = extract_option_inner(ty) {
-        if let Type::Reference(r) = inner {
-            if let Type::Slice(slice) = r.elem.as_ref() {
-                if r.mutability.is_some() {
-                    return ParamKind::OptionMutSliceRef {
-                        elem: slice.elem.clone(),
-                    };
-                }
-                return ParamKind::OptionSliceRef {
+    if let Some(Type::Reference(r)) = extract_option_inner(ty) {
+        if let Type::Slice(slice) = r.elem.as_ref() {
+            if r.mutability.is_some() {
+                return ParamKind::OptionMutSliceRef {
                     elem: slice.elem.clone(),
                 };
             }
-            return ParamKind::OptionRef {
-                inner: r.elem.clone(),
+            return ParamKind::OptionSliceRef {
+                elem: slice.elem.clone(),
             };
         }
+        return ParamKind::OptionRef {
+            inner: r.elem.clone(),
+        };
     }
 
     ParamKind::ByValue

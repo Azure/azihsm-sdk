@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#![allow(clippy::unwrap_used, clippy::disallowed_types)]
+
 //! Integration tests for the `offload` proc macro.
 //!
 //! These tests exercise the macro with various parameter types and verify
@@ -20,7 +22,7 @@ use offload::offload;
 /// `Waker::noop()` means no wake notification, so we yield and re-poll.
 fn block_on<T>(fut: impl Future<Output = T>) -> T {
     let waker = Waker::noop();
-    let mut cx = Context::from_waker(&waker);
+    let mut cx = Context::from_waker(waker);
     let mut fut = pin!(fut);
     loop {
         match fut.as_mut().poll(&mut cx) {
@@ -300,7 +302,7 @@ fn test_drop_shuts_down() {
 #[offload(error = TestError, shutdown_error = TestError::WorkerShutdown)]
 impl BoolWorker {
     pub fn is_even(n: usize) -> Result<bool, TestError> {
-        Ok(n % 2 == 0)
+        Ok(n.is_multiple_of(2))
     }
 }
 
@@ -332,9 +334,9 @@ fn test_future_is_not_immediately_ready() {
     let mut saw_pending = false;
     for _ in 0..10 {
         let waker = Waker::noop();
-        let mut cx = Context::from_waker(&waker);
+        let mut cx = Context::from_waker(waker);
         let mut fut = pin!(w.slow_add_single(1, 2));
-        if let Poll::Pending = fut.as_mut().poll(&mut cx) {
+        if fut.as_mut().poll(&mut cx).is_pending() {
             saw_pending = true;
             // Spin until ready so the worker processes the op before next iteration.
             loop {
@@ -361,7 +363,7 @@ fn test_future_is_not_immediately_ready() {
 fn test_parallel_async_calls() {
     let w = BasicWorker::new();
     let waker = Waker::noop();
-    let mut cx = Context::from_waker(&waker);
+    let mut cx = Context::from_waker(waker);
 
     let mut futs: Vec<_> = (0..20).map(|i| Box::pin(w.add(i, i))).collect();
     let mut results: Vec<Option<Result<usize, TestError>>> = (0..20).map(|_| None).collect();
@@ -383,8 +385,8 @@ fn test_parallel_async_calls() {
         std::thread::yield_now();
     }
 
-    for i in 0..20 {
-        assert_eq!(results[i].as_ref().unwrap().as_ref().unwrap(), &(i * 2));
+    for (i, result) in results.iter().enumerate() {
+        assert_eq!(result.as_ref().unwrap().as_ref().unwrap(), &(i * 2));
     }
     w.shutdown();
 }
@@ -395,8 +397,7 @@ fn test_parallel_async_calls() {
 fn test_use_after_shutdown() {
     let w = BasicWorker::new();
     w.shutdown();
-    // Give the worker thread a moment to process the shutdown.
-    std::thread::sleep(std::time::Duration::from_millis(50));
+    // The shutdown flag is set immediately — no sleep needed.
     let result = block_on(w.add(1, 2));
     assert!(result.is_err());
 }
@@ -416,7 +417,7 @@ fn test_single_worker_sequential_throughput() {
     // With 1 worker and 50ms per op, 4 concurrent ops must take at least 200ms.
     let w = SingleThreadSlowWorker::new();
     let waker = Waker::noop();
-    let mut cx = Context::from_waker(&waker);
+    let mut cx = Context::from_waker(waker);
 
     let mut futs: Vec<_> = (0..4).map(|i| Box::pin(w.slow_add_single(i, i))).collect();
     let mut results: Vec<Option<Result<usize, TestError>>> = (0..4).map(|_| None).collect();
@@ -440,8 +441,8 @@ fn test_single_worker_sequential_throughput() {
     }
     let elapsed = start.elapsed();
 
-    for i in 0..4 {
-        assert_eq!(results[i].as_ref().unwrap().as_ref().unwrap(), &(i * 2));
+    for (i, result) in results.iter().enumerate() {
+        assert_eq!(result.as_ref().unwrap().as_ref().unwrap(), &(i * 2));
     }
     // 4 ops at 50ms each on 1 worker = at least 200ms sequential.
     assert!(
@@ -473,7 +474,7 @@ fn test_multi_thread_parallel_throughput() {
     // roughly 50ms rather than 500ms.
     let w = MultiThreadWorker::new();
     let waker = Waker::noop();
-    let mut cx = Context::from_waker(&waker);
+    let mut cx = Context::from_waker(waker);
 
     let mut futs: Vec<_> = (0..10).map(|i| Box::pin(w.slow_add(i, i))).collect();
     let mut results: Vec<Option<Result<usize, TestError>>> = (0..10).map(|_| None).collect();
@@ -497,8 +498,8 @@ fn test_multi_thread_parallel_throughput() {
     }
     let elapsed = start.elapsed();
 
-    for i in 0..10 {
-        assert_eq!(results[i].as_ref().unwrap().as_ref().unwrap(), &(i * 2));
+    for (i, result) in results.iter().enumerate() {
+        assert_eq!(result.as_ref().unwrap().as_ref().unwrap(), &(i * 2));
     }
     // 10 ops at 50ms each sequentially = 500ms.  With 10 workers should be ~50ms.
     // Use a generous upper bound to avoid flaky tests.
@@ -515,4 +516,37 @@ fn test_multi_thread_drop_shuts_down() {
     let _ = block_on(w.slow_add(1, 1));
     drop(w);
     // If Drop didn't shut down all threads, the test process would hang.
+}
+
+// ── Handler panic returns error instead of hanging ──
+
+#[offload(error = TestError, shutdown_error = TestError::WorkerShutdown)]
+impl PanicWorker {
+    pub fn panicking_op() -> Result<(), TestError> {
+        panic!("intentional panic in handler");
+    }
+
+    pub fn ok_op(x: usize) -> Result<usize, TestError> {
+        Ok(x + 1)
+    }
+}
+
+#[test]
+fn test_handler_panic_returns_error() {
+    let w = PanicWorker::new();
+    let result = block_on(w.panicking_op());
+    assert!(result.is_err());
+    assert!(matches!(result.unwrap_err(), TestError::WorkerShutdown));
+}
+
+#[test]
+fn test_worker_survives_panic() {
+    let w = PanicWorker::new();
+    // Panic should not kill the worker — subsequent ops must still work.
+    let result = block_on(w.panicking_op());
+    assert!(result.is_err());
+    assert!(matches!(result.unwrap_err(), TestError::WorkerShutdown));
+    let result = block_on(w.ok_op(41));
+    assert_eq!(result.unwrap(), 42);
+    w.shutdown();
 }

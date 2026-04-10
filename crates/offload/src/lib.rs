@@ -32,13 +32,13 @@
 //! # Macro attributes
 //!
 //! ```text
-//! #[offload(error = <ErrorType>, shutdown_error = <ErrorExpr>)]
+//! #[offload(error = <ErrorType>, shutdown_error = <ErrorPath>)]
 //! ```
 //!
 //! | Attribute        | Description |
 //! |------------------|-------------|
 //! | `error`          | The error type `E` used in every handler's `Result<T, E>` return type. |
-//! | `shutdown_error` | An expression of type `E` returned when the caller tries to use the worker after it has shut down (i.e., the channel is disconnected). |
+//! | `shutdown_error` | A path of type `E` returned when the caller tries to use the worker after it has shut down (i.e., the channel is disconnected). |
 //! | `workers`        | *(Optional, default `1`)* Number of worker threads to spawn. |
 //!
 //! # Handler rules
@@ -134,7 +134,7 @@ use syn::spanned::Spanned;
 struct OffloadArgs {
     /// Error type used in all `Result` return types.
     error: syn::Path,
-    /// Expression for the error produced when the worker channel disconnects.
+    /// Path for the error produced when the worker channel disconnects.
     shutdown_error: syn::Path,
     /// Number of worker threads to spawn (default: 1).
     workers: Option<usize>,
@@ -321,7 +321,7 @@ fn expand_offload(args: OffloadArgs, item: ItemImpl) -> syn::Result<TokenStream2
 
     let handler_fns = gen_handler_fns(&handlers, error_type);
     let op_enum = gen_op_enum(&enum_name, &handlers, error_type);
-    let worker_fn = gen_worker_fn(&worker_fn_name, &enum_name, &handlers);
+    let worker_fn = gen_worker_fn(&worker_fn_name, &enum_name, &handlers, shutdown_error);
     let struct_def = gen_struct_def(&struct_name, &enum_name, &struct_doc_attrs);
     let impl_block = gen_impl_block(
         &struct_name,
@@ -445,6 +445,7 @@ fn gen_worker_fn(
     worker_fn_name: &syn::Ident,
     enum_name: &syn::Ident,
     handlers: &[HandlerInfo],
+    shutdown_error: &syn::Path,
 ) -> TokenStream2 {
     let arms: Vec<_> = handlers
         .iter()
@@ -502,11 +503,17 @@ fn gen_worker_fn(
             quote! {
                 #(#other_attrs)*
                 #enum_name::#variant { #(#pattern_fields,)* __state } => {
-                    let __result = #handler_fn(#(#unpack_exprs),*);
+                    let __catch = ::std::panic::catch_unwind(
+                        ::std::panic::AssertUnwindSafe(|| #handler_fn(#(#unpack_exprs),*))
+                    );
+                    let __stored = match __catch {
+                        ::std::result::Result::Ok(__result) => #store_result,
+                        ::std::result::Result::Err(_) => ::std::result::Result::Err(#shutdown_error),
+                    };
                     #[allow(clippy::unwrap_used)]
                     let __waker = {
                         let mut __guard = __state.lock().unwrap();
-                        __guard.0 = ::std::option::Option::Some(#store_result);
+                        __guard.0 = ::std::option::Option::Some(__stored);
                         __guard.1.take()
                     };
                     if let ::std::option::Option::Some(__w) = __waker {
@@ -549,6 +556,7 @@ fn gen_struct_def(
         pub struct #struct_name {
             __tx: ::std::sync::mpsc::Sender<#enum_name>,
             __handles: ::std::vec::Vec<::std::thread::JoinHandle<()>>,
+            __shutdown: ::std::sync::atomic::AtomicBool,
         }
     }
 }
@@ -668,6 +676,9 @@ fn gen_impl_block(
                 #(#doc_attrs)*
                 #(#other_attrs)*
                 #vis async fn #name(&self, #(#async_params),*) -> Result<#ok_type, #error_type> {
+                    if self.__shutdown.load(::std::sync::atomic::Ordering::Acquire) {
+                        return ::std::result::Result::Err(#shutdown_error);
+                    }
                     let __state = ::std::sync::Arc::new(
                         ::std::sync::Mutex::new((
                             ::std::option::Option::None,
@@ -727,11 +738,17 @@ fn gen_impl_block(
                 Self {
                     __tx,
                     __handles,
+                    __shutdown: ::std::sync::atomic::AtomicBool::new(false),
                 }
             }
 
-            /// Shut down the worker thread(s).
+            /// Signal the worker thread(s) to shut down after processing any
+            /// already-queued operations. This is non-blocking — it enqueues
+            /// shutdown messages and returns immediately. Operations submitted
+            /// after this call will fail with the `shutdown_error`.
+            /// Worker threads are joined when this instance is dropped.
             pub fn shutdown(&self) {
+                self.__shutdown.store(true, ::std::sync::atomic::Ordering::Release);
                 for _ in 0..#num_workers {
                     let _ = self.__tx.send(#enum_name::__Shutdown);
                 }
@@ -750,6 +767,7 @@ fn gen_drop_impl(
     quote! {
         impl ::std::ops::Drop for #struct_name {
             fn drop(&mut self) {
+                self.__shutdown.store(true, ::std::sync::atomic::Ordering::Release);
                 for _ in 0..#num_workers {
                     let _ = self.__tx.send(#enum_name::__Shutdown);
                 }
@@ -773,6 +791,12 @@ fn extract_type_ident(ty: &Type) -> syn::Result<syn::Ident> {
             "offload requires a simple type name (not a path or generic)",
         ));
     };
+    if type_path.path.leading_colon.is_some() || type_path.path.segments.len() != 1 {
+        return Err(syn::Error::new(
+            ty.span(),
+            "offload requires a simple type name (not a path or generic)",
+        ));
+    }
     let Some(segment) = type_path.path.segments.last() else {
         return Err(syn::Error::new(ty.span(), "empty type path"));
     };
@@ -865,6 +889,7 @@ fn to_snake_case(ident: &syn::Ident) -> String {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use syn::ReturnType;
 
@@ -898,6 +923,18 @@ mod tests {
         let ty: Type = syn::parse_str("MyWorker").unwrap();
         let ident = extract_type_ident(&ty).unwrap();
         assert_eq!(ident, "MyWorker");
+    }
+
+    #[test]
+    fn type_ident_qualified_path() {
+        let ty: Type = syn::parse_str("foo::Bar").unwrap();
+        assert!(extract_type_ident(&ty).is_err());
+    }
+
+    #[test]
+    fn type_ident_leading_colon() {
+        let ty: Type = syn::parse_str("::Bar").unwrap();
+        assert!(extract_type_ident(&ty).is_err());
     }
 
     // -- extract_result_ok_type -------------------------------------------
