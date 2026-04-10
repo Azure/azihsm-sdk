@@ -178,3 +178,9 @@ void aes_unwrap_bits_mismatch_fails_common(
     uint32_t bits,
     uint32_t wrong_bits
 );
+
+void aes_unwrapped_key_roundtrip_common(
+    azihsm_handle session,
+    azihsm_key_kind key_kind,
+    uint32_t bits
+);
