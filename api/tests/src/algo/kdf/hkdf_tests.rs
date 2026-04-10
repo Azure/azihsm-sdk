@@ -1070,21 +1070,29 @@ fn test_hkdf_min_input_p521(session: HsmSession) {
     run_hkdf_min_input_test(&session, HsmEccCurve::P521);
 }
 
-/// Verifies HKDF derive fails when input key cannot be used for derivation (via ECDH constraint)
+/// Verifies ECDH rejects creating a shared secret without can_derive flag
 #[session_test]
-fn test_hkdf_input_without_can_derive_fails(session: HsmSession) {
+fn test_ecdh_rejects_non_derivable_shared_secret(session: HsmSession) {
     // Generate ECC keypair WITHOUT derive capability
-    let (priv_a, _) = generate_ecc_keypair_with_derive(session.clone(), HsmEccCurve::P256, false)
-        .expect("failed to generate keypair without derive");
-
-    let (_, pub_b) = generate_ecc_keypair_with_derive(session.clone(), HsmEccCurve::P256, true)
-        .expect("failed to generate peer keypair");
+    let (priv_a, _) =
+        generate_ecc_keypair_with_derive(session.clone(), HsmEccCurve::P256, true).unwrap();
+    let (_, pub_b) =
+        generate_ecc_keypair_with_derive(session.clone(), HsmEccCurve::P256, true).unwrap();
 
     // Attempt ECDH → should fail due to can_derive = false
-    let result = ecdh_derive_shared_secret(&session, &priv_a, &pub_b);
+    let non_derivable_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::SharedSecret)
+        .bits(256)
+        // intentionally omit .can_derive(true)
+        .build()
+        .expect("Failed to build non-derivable shared secret props");
+
+    let result =
+        ecdh_derive_shared_secret_with_props(&session, &priv_a, &pub_b, non_derivable_props);
 
     assert!(
-        result.is_err(),
-        "expected ECDH derive to fail when can_derive is false"
+        matches!(result, Err(HsmError::DdiCmdFailure)),
+        "ECDH should reject creating a shared secret without can_derive flag"
     );
 }
