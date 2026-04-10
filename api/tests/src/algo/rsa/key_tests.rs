@@ -649,6 +649,25 @@ fn run_rsa_truncated_ciphertext_test(
     );
 }
 
+/// Generates DER-encoded RSA private key of given byte size.
+fn generate_rsa_der(bytes: usize) -> Vec<u8> {
+    use azihsm_crypto::{ExportableKey, KeyGenerationOp};
+
+    let key = crypto::RsaPrivateKey::generate(bytes).expect("Failed to generate RSA key");
+    key.to_vec().expect("Failed to export RSA key")
+}
+
+/// Wraps a DER-encoded RSA key using a freshly generated unwrapping key pair.
+fn wrap_rsa_key(session: &HsmSession, der: &[u8], salt_len: usize) -> (HsmRsaPrivateKey, Vec<u8>) {
+    let (unwrap_priv, unwrap_pub) = get_rsa_unwrapping_key_pair(session);
+
+    let mut wrap_algo = HsmRsaAesWrapAlgo::new(HsmHashAlgo::Sha256, salt_len);
+    let wrapped = HsmEncrypter::encrypt_vec(&mut wrap_algo, &unwrap_pub, der)
+        .expect("Failed to wrap RSA key");
+
+    (unwrap_priv, wrapped)
+}
+
 // ============================================================
 // test case section
 // ============================================================
@@ -1228,4 +1247,84 @@ fn test_unwrap_rsa_missing_pub_capability(session: HsmSession) {
     );
 
     assert!(matches!(result, Err(HsmError::InvalidKeyProps)));
+}
+
+/// Ensures unwrap fails when hash algorithm differs from wrap.
+#[session_test]
+fn test_unwrap_rsa_wrong_hash_algo_fails(session: HsmSession) {
+    let der = generate_rsa_der(256);
+
+    // Wrap with SHA256
+    let (unwrap_priv, wrapped) = wrap_rsa_key(&session, &der, 32);
+
+    let priv_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Private)
+        .key_kind(HsmKeyKind::Rsa)
+        .bits(2048)
+        .can_decrypt(true)
+        .build()
+        .unwrap();
+
+    let pub_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Public)
+        .key_kind(HsmKeyKind::Rsa)
+        .bits(2048)
+        .can_encrypt(true)
+        .build()
+        .unwrap();
+
+    // Unwrap with WRONG hash algo
+    let mut unwrap_algo = HsmRsaKeyRsaAesKeyUnwrapAlgo::new(HsmHashAlgo::Sha384);
+
+    let result = HsmKeyManager::unwrap_key_pair(
+        &mut unwrap_algo,
+        &unwrap_priv,
+        &wrapped,
+        priv_props,
+        pub_props,
+    );
+
+    assert!(result.is_err());
+}
+
+/// Ensures unwrap fails with invalid DER structure.
+#[session_test]
+fn test_unwrap_rsa_invalid_der_fails(session: HsmSession) {
+    let mut der = generate_rsa_der(256);
+
+    // Corrupt DER structure (not just ciphertext)
+    der[10] ^= 0xFF;
+
+    let (unwrap_priv, unwrap_pub) = get_rsa_unwrapping_key_pair(&session);
+
+    let mut wrap_algo = HsmRsaAesWrapAlgo::new(HsmHashAlgo::Sha256, 32);
+    let wrapped = HsmEncrypter::encrypt_vec(&mut wrap_algo, &unwrap_pub, &der).unwrap();
+
+    let priv_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Private)
+        .key_kind(HsmKeyKind::Rsa)
+        .bits(2048)
+        .can_decrypt(true)
+        .build()
+        .unwrap();
+
+    let pub_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Public)
+        .key_kind(HsmKeyKind::Rsa)
+        .bits(2048)
+        .can_encrypt(true)
+        .build()
+        .unwrap();
+
+    let mut unwrap_algo = HsmRsaKeyRsaAesKeyUnwrapAlgo::new(HsmHashAlgo::Sha256);
+
+    let result = HsmKeyManager::unwrap_key_pair(
+        &mut unwrap_algo,
+        &unwrap_priv,
+        &wrapped,
+        priv_props,
+        pub_props,
+    );
+
+    assert!(result.is_err());
 }
