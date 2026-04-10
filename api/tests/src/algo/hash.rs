@@ -544,3 +544,30 @@ fn test_hash_sha512_8_bytes(session: HsmSession) {
     // run test
     compare_single_shot_vs_streaming(session.clone(), algo, data, chunk_pattern);
 }
+
+/// Verifies that hash context rejects update and finish after successful finish.
+#[session_test]
+fn test_hash_streaming_update_after_finish_fails(session: HsmSession) {
+    let algo = HsmHashAlgo::sha256();
+    let mut ctx = algo.hash_init(session).expect("hash_init should succeed");
+
+    ctx.update(b"test data").expect("update should succeed");
+
+    let _hash = ctx.finish_vec().expect("first finish_vec should succeed");
+
+    // update after finish must fail
+    let res = ctx.update(b"more data");
+    assert!(
+        matches!(res, Err(HsmError::InvalidContextState)),
+        "update() after finish() should return InvalidContextState, got {:?}",
+        res
+    );
+
+    // second finish must fail
+    let res = ctx.finish_vec();
+    assert!(
+        matches!(res, Err(HsmError::InvalidContextState)),
+        "finish() after finish() should return InvalidContextState, got {:?}",
+        res
+    );
+}

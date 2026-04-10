@@ -90,9 +90,6 @@ impl HsmKeyDeriveOp for HsmHkdfAlgo {
         // for unsupported key metadata (instead of leaking DDI-specific errors).
         HsmGenericSecretKey::validate_props(&props)?;
 
-        //check if props are valid for generic secret key, AES, HMAC conversion will be done later if needed
-        HsmGenericSecretKey::validate_props(&props)?;
-
         let (handle, props) = ddi::hkdf_derive(
             base_key,
             self.hash_algo,

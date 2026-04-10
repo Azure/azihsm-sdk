@@ -12,6 +12,7 @@ members = [
   "crates/cred_encrypt",
   "crates/crypto",
   "crates/resiliency_macro",
+  "crates/resiliency_test_helpers",
   "crates/test_with_tracing",
   "crates/tpm",
   "crates/x509",
@@ -49,6 +50,7 @@ azihsm_ddi_types = { features = [
 ], path = "ddi/serde/types" }
 azihsm_ddi_win = { path = "ddi/win" }
 azihsm_res_test_dev = { path = "ddi/res_test_dev" }
+azihsm_resiliency_test_helpers = { path = "crates/resiliency_test_helpers" }
 azihsm_tpm = { path = "crates/tpm" }
 resiliency_macro = { path = "crates/resiliency_macro" }
 test_with_tracing = { path = "crates/test_with_tracing" }

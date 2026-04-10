@@ -48,7 +48,7 @@ use super::*;
 /// `HsmError` variants to enable targeted retry logic during partition
 /// initialization and key operations.
 ///
-/// All remaining `DdiError` variants are collapsed into
+/// All remaining `DdiError` variants are logged and collapsed into
 /// `HsmError::DdiCmdFailure`.
 impl From<DdiError> for HsmError {
     fn from(err: DdiError) -> Self {
@@ -79,7 +79,10 @@ impl From<DdiError> for HsmError {
             DdiError::DdiStatus(DdiStatus::CannotDeleteInternalKeys) => {
                 HsmError::CannotDeleteInternalKeys
             }
-            _ => HsmError::DdiCmdFailure,
+            _ => {
+                tracing::error!(?err, hsm_error = ?HsmError::DdiCmdFailure, "Unmapped DDI error");
+                HsmError::DdiCmdFailure
+            }
         }
     }
 }
