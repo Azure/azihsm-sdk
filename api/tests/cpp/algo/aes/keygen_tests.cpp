@@ -709,7 +709,7 @@ TEST_F(azihsm_aes_keygen, aes_xts_key_unwrap_tweak_handling_roundtrip)
         // Step 2: Unwrap the XTS wrapped blob
         azihsm_algo_rsa_pkcs_oaep_params oaep_params = build_oaep_sha256_params();
 
-        azihsm_algo_rsa_aes_key_wrap_params unwrap_params = build_rsa_aes_key_unwrap_params(oaep_params, 256);
+        azihsm_algo_rsa_aes_key_wrap_params unwrap_params = build_rsa_aes_key_unwrap_params(oaep_params, AZIHSM_KEY_KIND_AES_XTS, 256);
         
         azihsm_algo unwrap_algo = build_rsa_aes_key_unwrap_algo(unwrap_params);
 
