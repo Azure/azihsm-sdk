@@ -8,8 +8,8 @@
 #include <vector>
 
 /// Helper to build XTS wrapped blob header
-/// Format: magic (u64 LE) + version (u16 LE) + key1_len (u16 LE) + key2_len (u16 LE) + reserved (u16
-/// LE)
+/// Format: magic (u64 LE) + version (u16 LE) + key1_len (u16 LE) + key2_len (u16 LE) + reserved
+/// (u16 LE)
 std::vector<uint8_t> build_xts_wrapped_blob_header(uint16_t key1_len, uint16_t key2_len);
 
 /// Helper to build complete XTS wrapped blob (header + wrapped_key1 + wrapped_key2)
@@ -128,11 +128,7 @@ void aes_key_gen_persistent_common(
 );
 
 /// Common test function to test AES key unwrapping and verify properties of unwrapped key
-void aes_key_unwrap_common(
-    azihsm_handle session,
-    azihsm_key_kind key_kind,
-    uint32_t bits
-);
+void aes_key_unwrap_common(azihsm_handle session, azihsm_key_kind key_kind, uint32_t bits);
 
 /// Helper function to test AES key unmask: generate, get masked blob, unmask, and verify properties
 void aes_key_unmask_common(
@@ -166,7 +162,8 @@ void aes_key_unwrap_corrupted_fails_common(
     uint32_t bits
 );
 
-/// Common test function to test AES key unwrapping with wrong algorithm parameters and expect failure
+/// Common test function to test AES key unwrapping with wrong algorithm parameters and expect
+/// failure
 void aes_unwrap_wrong_algo_fails_common(
     azihsm_handle session,
     azihsm_key_kind key_kind,
@@ -197,7 +194,8 @@ void aes_unwrap_bits_mismatch_fails_common(
     uint32_t wrong_bits
 );
 
-/// Common test function to test AES key unwrapping with correct parameters and verify the unwrapped key is functional
+/// Common test function to test AES key unwrapping with correct parameters and verify the unwrapped
+/// key is functional
 void aes_unwrapped_key_roundtrip_common(
     azihsm_handle session,
     azihsm_key_kind key_kind,

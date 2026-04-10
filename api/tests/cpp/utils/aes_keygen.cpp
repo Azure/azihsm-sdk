@@ -328,7 +328,8 @@ void aes_key_gen_invalid_props_fail_common(
     ASSERT_EQ(original_key, 0);
 }
 
-// Common test function to test AES key generation with multiple invalid flag combinations and expect failure
+// Common test function to test AES key generation with multiple invalid flag combinations and
+// expect failure
 void aes_key_gen_multiple_invalid_capabilities_common(
     azihsm_handle session,
     azihsm_algo_id algo_id,
@@ -421,11 +422,7 @@ void aes_key_gen_persistent_common(
 }
 
 // Common test function to test AES key unwrapping and verify properties of unwrapped key
-void aes_key_unwrap_common(
-    azihsm_handle session,
-    azihsm_key_kind key_kind,
-    uint32_t bits
-)
+void aes_key_unwrap_common(azihsm_handle session, azihsm_key_kind key_kind, uint32_t bits)
 {
     // Step 1: Generate an RSA key pair for wrapping/unwrapping
     auto_key wrapping_priv_key;
@@ -792,7 +789,8 @@ void aes_key_unwrap_corrupted_fails_common(
     ASSERT_EQ(unwrapped_key, 0);
 }
 
-// Common test function to test AES key unwrapping with wrong algorithm parameters and expect failure
+// Common test function to test AES key unwrapping with wrong algorithm parameters and expect
+// failure
 void aes_unwrap_wrong_algo_fails_common(
     azihsm_handle session,
     azihsm_key_kind key_kind,
@@ -1120,7 +1118,8 @@ void aes_unwrap_bits_mismatch_fails_common(
     ASSERT_EQ(unwrapped_key, 0);
 }
 
-// Common test function to test AES key unwrapping with correct parameters and verify the unwrapped key is functional
+// Common test function to test AES key unwrapping with correct parameters and verify the unwrapped
+// key is functional
 void aes_unwrapped_key_roundtrip_common(
     azihsm_handle session,
     azihsm_key_kind key_kind,

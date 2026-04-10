@@ -484,11 +484,7 @@ TEST_F(azihsm_aes_keygen, aes_xts_key_generation_invalid_sizes_rejected)
 TEST_F(azihsm_aes_keygen, aes_xts_key_unwrap)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        aes_key_unwrap_common(
-            session,
-            AZIHSM_KEY_KIND_AES_XTS,
-            512
-        );
+        aes_key_unwrap_common(session, AZIHSM_KEY_KIND_AES_XTS, 512);
     });
 }
 
@@ -949,11 +945,7 @@ TEST_F(azihsm_aes_keygen, aes_gcm_256_key_unmask)
 TEST_F(azihsm_aes_keygen, aes_gcm_256_key_unwrap)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        aes_key_unwrap_common(
-            session,
-            AZIHSM_KEY_KIND_AES_GCM,
-            256
-        );
+        aes_key_unwrap_common(session, AZIHSM_KEY_KIND_AES_GCM, 256);
     });
 }
 
