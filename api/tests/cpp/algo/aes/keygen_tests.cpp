@@ -14,6 +14,7 @@
 #include "helpers.hpp"
 #include "utils/aes_keygen.hpp"
 #include "utils/auto_key.hpp"
+#include "utils/rsa_keygen.hpp"
 
 // Helper: compute tweak + units as little-endian u128 addition
 std::array<uint8_t, 16> tweak_after_units(const uint8_t tweak[16], size_t units)
@@ -119,58 +120,6 @@ class azihsm_aes_keygen : public ::testing::Test
         err = azihsm_key_get_prop(unmasked_key, &prop);
         EXPECT_EQ(err, AZIHSM_STATUS_SUCCESS);
         EXPECT_EQ(original_can_decrypt, unmasked_can_decrypt);
-    }
-
-    static void generate_rsa_wrapping_keypair(
-        azihsm_handle session,
-        auto_key &wrapping_priv_key,
-        auto_key &wrapping_pub_key
-    )
-    {
-        azihsm_algo rsa_keygen_algo{};
-        rsa_keygen_algo.id = AZIHSM_ALGO_ID_RSA_KEY_UNWRAPPING_KEY_PAIR_GEN;
-        rsa_keygen_algo.params = nullptr;
-        rsa_keygen_algo.len = 0;
-
-        azihsm_key_kind rsa_kind = AZIHSM_KEY_KIND_RSA;
-        azihsm_key_class priv_class = AZIHSM_KEY_CLASS_PRIVATE;
-        azihsm_key_class pub_class = AZIHSM_KEY_CLASS_PUBLIC;
-        uint32_t rsa_bits = 2048;
-        bool is_session = false;
-        bool can_wrap = true;
-        bool can_unwrap = true;
-
-        std::vector<azihsm_key_prop> priv_props_vec;
-        priv_props_vec.push_back({ AZIHSM_KEY_PROP_ID_BIT_LEN, &rsa_bits, sizeof(rsa_bits) });
-        priv_props_vec.push_back({ AZIHSM_KEY_PROP_ID_CLASS, &priv_class, sizeof(priv_class) });
-        priv_props_vec.push_back({ AZIHSM_KEY_PROP_ID_KIND, &rsa_kind, sizeof(rsa_kind) });
-        priv_props_vec.push_back({ AZIHSM_KEY_PROP_ID_SESSION, &is_session, sizeof(is_session) });
-        priv_props_vec.push_back({ AZIHSM_KEY_PROP_ID_UNWRAP, &can_unwrap, sizeof(can_unwrap) });
-
-        std::vector<azihsm_key_prop> pub_props_vec;
-        pub_props_vec.push_back({ AZIHSM_KEY_PROP_ID_BIT_LEN, &rsa_bits, sizeof(rsa_bits) });
-        pub_props_vec.push_back({ AZIHSM_KEY_PROP_ID_CLASS, &pub_class, sizeof(pub_class) });
-        pub_props_vec.push_back({ AZIHSM_KEY_PROP_ID_KIND, &rsa_kind, sizeof(rsa_kind) });
-        pub_props_vec.push_back({ AZIHSM_KEY_PROP_ID_SESSION, &is_session, sizeof(is_session) });
-        pub_props_vec.push_back({ AZIHSM_KEY_PROP_ID_WRAP, &can_wrap, sizeof(can_wrap) });
-
-        azihsm_key_prop_list priv_prop_list{ priv_props_vec.data(),
-                                             static_cast<uint32_t>(priv_props_vec.size()) };
-
-        azihsm_key_prop_list pub_prop_list{ pub_props_vec.data(),
-                                            static_cast<uint32_t>(pub_props_vec.size()) };
-
-        azihsm_status err = azihsm_key_gen_pair(
-            session,
-            &rsa_keygen_algo,
-            &priv_prop_list,
-            &pub_prop_list,
-            wrapping_priv_key.get_ptr(),
-            wrapping_pub_key.get_ptr()
-        );
-        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_NE(wrapping_priv_key, 0);
-        ASSERT_NE(wrapping_pub_key, 0);
     }
 
     // Helper function to compare AES XTS key properties
@@ -684,7 +633,14 @@ TEST_F(azihsm_aes_keygen, aes_xts_key_unwrap_tweak_handling_roundtrip)
         // Step 1: Generate RSA unwrapping key pair
         auto_key wrapping_priv_key;
         auto_key wrapping_pub_key;
-        generate_rsa_wrapping_keypair(session, wrapping_priv_key, wrapping_pub_key);
+        auto err = generate_rsa_unwrapping_keypair(
+            session,
+            wrapping_priv_key.get_ptr(),
+            wrapping_pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(wrapping_priv_key.get(), 0);
+        ASSERT_NE(wrapping_pub_key.get(), 0);
 
         // AES-XTS uses two AES-256 keys (total bits=512).
         constexpr size_t key_bytes = 32;
@@ -723,7 +679,7 @@ TEST_F(azihsm_aes_keygen, aes_xts_key_unwrap_tweak_handling_roundtrip)
                                         static_cast<uint32_t>(wrapped_blob.size()) };
 
         auto_key xts_key;
-        auto err = azihsm_key_unwrap(
+        err = azihsm_key_unwrap(
             &unwrap_algo,
             wrapping_priv_key,
             &wrapped_blob_buf,
