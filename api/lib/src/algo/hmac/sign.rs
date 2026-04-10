@@ -210,6 +210,9 @@ pub struct HsmHmacSignContext {
     /// This is only a capacity hint; callers must still ensure the total message
     /// size is within the device limit.
     data: Vec<u8>,
+
+    // Internal flag to track if finish has been called, to prevent multiple finalizations
+    can_update: bool,
 }
 
 impl HsmSignStreamingOp for HsmHmacAlgo {
@@ -244,6 +247,7 @@ impl HsmSignStreamingOp for HsmHmacAlgo {
             algo: self,
             key,
             data: Vec::with_capacity(Self::MAX_MESSAGE_SIZE),
+            can_update: true,
         })
     }
 }
@@ -266,6 +270,10 @@ impl HsmSignStreamingOpContext for HsmHmacSignContext {
     /// Note: this does not enforce the device's maximum message size; exceeding the
     /// limit will cause `finish()` to fail.
     fn update(&mut self, data: &[u8]) -> Result<(), <Self::Algo as HsmSignStreamingOp>::Error> {
+        // Prevent updates after finish has been called
+        if !self.can_update {
+            return Err(HsmError::InvalidContextState);
+        }
         //check if data length exceeds limit
         if self.data.len() + data.len() > Self::Algo::MAX_MESSAGE_SIZE {
             return Err(HsmError::IndexOutOfRange);
@@ -295,8 +303,21 @@ impl HsmSignStreamingOpContext for HsmHmacSignContext {
         &mut self,
         signature: Option<&mut [u8]>,
     ) -> Result<usize, <Self::Algo as HsmSignStreamingOp>::Error> {
+        //finish can only be called once successfully, subsequent calls should return error
+        if !self.can_update {
+            return Err(HsmError::InvalidContextState);
+        }
+
         // delegate to the underlying sign implementation
-        self.algo.sign(&self.key, &self.data, signature)
+        let is_data_call = signature.is_some();
+        let result = self.algo.sign(&self.key, &self.data, signature)?;
+
+        // Only mark as finished when actual signing was performed (not size query)
+        if is_data_call {
+            self.can_update = false;
+        }
+
+        Ok(result)
     }
 }
 
@@ -352,6 +373,7 @@ impl HsmVerifyStreamingOp for HsmHmacAlgo {
             algo: self,
             key,
             data: Vec::with_capacity(Self::MAX_MESSAGE_SIZE),
+            can_update: true,
         })
     }
 }
@@ -386,6 +408,9 @@ pub struct HsmHmacVerifyContext {
     /// This is only a capacity hint; callers must still ensure the total message
     /// size is within the device limit.
     data: Vec<u8>,
+
+    // Internal flag to track if finish has been called, to prevent multiple finalizations
+    can_update: bool,
 }
 impl HsmVerifyStreamingOpContext for HsmHmacVerifyContext {
     type Algo = HsmHmacAlgo;
@@ -405,6 +430,10 @@ impl HsmVerifyStreamingOpContext for HsmHmacVerifyContext {
     /// Note: this does not enforce the device's maximum message size; exceeding the
     /// limit will cause `finish()` to fail.
     fn update(&mut self, data: &[u8]) -> Result<(), <Self::Algo as HsmVerifyStreamingOp>::Error> {
+        // Prevent updates after finish has been called
+        if !self.can_update {
+            return Err(HsmError::InvalidContextState);
+        }
         //check if data length exceeds limit
         if self.data.len() + data.len() > Self::Algo::MAX_MESSAGE_SIZE {
             return Err(HsmError::IndexOutOfRange);
@@ -440,7 +469,17 @@ impl HsmVerifyStreamingOpContext for HsmHmacVerifyContext {
         &mut self,
         signature: &[u8],
     ) -> Result<bool, <Self::Algo as HsmVerifyStreamingOp>::Error> {
+        //finish can only be called once successfully, subsequent calls should return error
+        if !self.can_update {
+            return Err(HsmError::InvalidContextState);
+        }
+
         // delegate to the underlying verify implementation
-        self.algo.verify(&self.key, &self.data, signature)
+        let result = self.algo.verify(&self.key, &self.data, signature)?;
+
+        // Mark context as finished to prevent further updates or finalization
+        self.can_update = false;
+
+        Ok(result)
     }
 }

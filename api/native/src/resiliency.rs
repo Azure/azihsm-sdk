@@ -143,11 +143,11 @@ struct ResiliencyLockAdapter {
     ops: AzihsmResiliencyLockOps,
 }
 
-// SAFETY: See ResiliencyStorageBridge safety comment.
+// SAFETY: See ResiliencyStorageAdapter safety comment.
 #[allow(unsafe_code)]
 unsafe impl Send for ResiliencyLockAdapter {}
 
-// SAFETY: See ResiliencyStorageBridge safety comment.
+// SAFETY: See ResiliencyStorageAdapter safety comment.
 #[allow(unsafe_code)]
 unsafe impl Sync for ResiliencyLockAdapter {}
 
@@ -158,11 +158,11 @@ struct PotaCallbackAdapter {
     ops: AzihsmPotaCallbackOps,
 }
 
-// SAFETY: See ResiliencyStorageBridge safety comment.
+// SAFETY: See ResiliencyStorageAdapter safety comment.
 #[allow(unsafe_code)]
 unsafe impl Send for PotaCallbackAdapter {}
 
-// SAFETY: See ResiliencyStorageBridge safety comment.
+// SAFETY: See ResiliencyStorageAdapter safety comment.
 #[allow(unsafe_code)]
 unsafe impl Sync for PotaCallbackAdapter {}
 
@@ -184,11 +184,22 @@ impl api::ResiliencyStorage for ResiliencyStorageAdapter {
 
         match status {
             api::HsmError::NotFound => return Err(api::HsmError::NotFound),
-            api::HsmError::BufferTooSmall => { /* expected — buf.len now has the required size */
+            api::HsmError::BufferTooSmall => {
+                // Expected — buf.len should now have the required size.
+                // Treat BufferTooSmall with len == 0 as a protocol violation
+                // to avoid calling back with an invalid (zero-length) buffer.
+                if buf.len == 0 {
+                    return Err(api::HsmError::InvalidArgument);
+                }
             }
-            api::HsmError::Success => {
+            api::HsmError::Success if buf.len == 0 => {
                 // Zero-length data exists
                 return Ok(Vec::new());
+            }
+            api::HsmError::Success => {
+                // Protocol violation: callback returned Success with non-zero
+                // len instead of BufferTooSmall on the size-query call.
+                return Err(api::HsmError::InvalidArgument);
             }
             err => return Err(err),
         }

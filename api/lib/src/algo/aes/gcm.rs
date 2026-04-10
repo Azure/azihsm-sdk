@@ -260,6 +260,9 @@ pub struct HsmAesGcmEncryptContext {
 
     /// Internal buffer for accumulating data.
     buffer: Vec<u8>,
+
+    // Internal flag to track if finish has been called, to prevent multiple finalizations
+    can_update: bool,
 }
 
 impl HsmEncryptStreamingOp for HsmAesGcmAlgo {
@@ -290,6 +293,7 @@ impl HsmEncryptStreamingOp for HsmAesGcmAlgo {
             algo: self,
             key,
             buffer: Vec::with_capacity(AES_GCM_MAX_BUFFER_SIZE),
+            can_update: true,
         })
     }
 }
@@ -319,10 +323,15 @@ impl HsmEncryptContext for HsmAesGcmEncryptContext {
     fn update(
         &mut self,
         plaintext: &[u8],
-        _ciphertext: Option<&mut [u8]>,
+        ciphertext: Option<&mut [u8]>,
     ) -> Result<usize, <Self::Algo as HsmEncryptStreamingOp>::Error> {
+        // Prevent updates after finish has been called
+        if !self.can_update {
+            return Err(HsmError::InvalidContextState);
+        }
+
         // For size query (ciphertext is None), return 0 since GCM produces no output until finish()
-        if _ciphertext.is_none() {
+        if ciphertext.is_none() {
             return Ok(0);
         }
 
@@ -354,6 +363,11 @@ impl HsmEncryptContext for HsmAesGcmEncryptContext {
         &mut self,
         ciphertext: Option<&mut [u8]>,
     ) -> Result<usize, <Self::Algo as HsmEncryptStreamingOp>::Error> {
+        //finish can only be called once successfully, subsequent calls should return error
+        if !self.can_update {
+            return Err(HsmError::InvalidContextState);
+        }
+
         let expected_len = self.buffer.len();
 
         let Some(ciphertext) = ciphertext else {
@@ -375,6 +389,9 @@ impl HsmEncryptContext for HsmAesGcmEncryptContext {
         // Store the tag
         self.algo.tag = Some(tag);
         self.buffer.clear();
+
+        // Mark context as finished to prevent further updates or finalization
+        self.can_update = false;
 
         Ok(bytes_written)
     }
@@ -411,6 +428,9 @@ pub struct HsmAesGcmDecryptContext {
 
     /// Internal buffer for accumulating data.
     buffer: Vec<u8>,
+
+    /// Internal flag to track if finish has been called, to prevent multiple finalizations
+    can_update: bool,
 }
 
 impl HsmDecryptStreamingOp for HsmAesGcmAlgo {
@@ -447,6 +467,7 @@ impl HsmDecryptStreamingOp for HsmAesGcmAlgo {
             algo: self,
             key,
             buffer: Vec::with_capacity(AES_GCM_MAX_BUFFER_SIZE),
+            can_update: true,
         })
     }
 }
@@ -478,6 +499,11 @@ impl HsmDecryptContext for HsmAesGcmDecryptContext {
         ciphertext: &[u8],
         _plaintext: Option<&mut [u8]>,
     ) -> Result<usize, <Self::Algo as HsmDecryptStreamingOp>::Error> {
+        // Prevent updates after finish has been called
+        if !self.can_update {
+            return Err(HsmError::InvalidContextState);
+        }
+
         // For size query (plaintext is None), return 0 since GCM produces no output until finish()
         if _plaintext.is_none() {
             return Ok(0);
@@ -510,6 +536,11 @@ impl HsmDecryptContext for HsmAesGcmDecryptContext {
         &mut self,
         plaintext: Option<&mut [u8]>,
     ) -> Result<usize, <Self::Algo as HsmDecryptStreamingOp>::Error> {
+        // Finish can only be called once successfully, subsequent calls should return error
+        if !self.can_update {
+            return Err(HsmError::InvalidContextState);
+        }
+
         let expected_len = self.buffer.len();
 
         let Some(plaintext) = plaintext else {
@@ -533,6 +564,9 @@ impl HsmDecryptContext for HsmAesGcmDecryptContext {
         )?;
 
         self.buffer.clear();
+
+        // Mark context as finished to prevent further updates or finalization
+        self.can_update = false;
 
         Ok(bytes_written)
     }

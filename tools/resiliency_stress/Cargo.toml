@@ -16,8 +16,8 @@ azihsm_api.workspace = true
 azihsm_crypto.workspace = true
 azihsm_ddi_sim.workspace = true
 azihsm_res_test_dev = { optional = true, workspace = true }
+azihsm_resiliency_test_helpers.workspace = true
 clap = { features = ["derive"], workspace = true }
-fs2.workspace = true
 libc.workspace = true
 memmap2 = "0.9"
 parking_lot = { features = ["deadlock_detection"], workspace = true }

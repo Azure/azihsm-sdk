@@ -29,8 +29,6 @@
 //! ```
 
 use std::fs;
-use std::io::Read;
-use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -41,8 +39,8 @@ use azihsm_api::*;
 use azihsm_crypto::*;
 #[cfg(feature = "res-test")]
 use azihsm_res_test_dev::DdiOp;
-use fs2::FileExt;
-use parking_lot::Mutex;
+use azihsm_resiliency_test_helpers::FileLock;
+use azihsm_resiliency_test_helpers::FileStorage;
 
 use crate::utils::partition::*;
 
@@ -62,116 +60,6 @@ const RESILIENCY_DIR_NAME: &str = "azihsm_resiliency_test";
 
 /// Monotonic counter for unique directory names across all threads.
 static DIR_COUNTER: AtomicU32 = AtomicU32::new(0);
-
-/// File-backed [`ResiliencyStorage`]: one file per key under `dir`.
-struct FileStorage {
-    dir: PathBuf,
-}
-
-impl FileStorage {
-    fn key_path(&self, key: &str) -> PathBuf {
-        self.dir.join(key)
-    }
-}
-
-impl ResiliencyStorage for FileStorage {
-    fn read(&self, key: &str) -> HsmResult<Vec<u8>> {
-        let path = self.key_path(key);
-        let mut file = fs::File::open(&path).map_err(|e| {
-            if e.kind() == std::io::ErrorKind::NotFound {
-                HsmError::NotFound
-            } else {
-                HsmError::InternalError
-            }
-        })?;
-        let mut buf = Vec::new();
-        file.read_to_end(&mut buf)
-            .map_err(|_| HsmError::InternalError)?;
-        Ok(buf)
-    }
-
-    fn write(&self, key: &str, data: &[u8]) -> HsmResult<()> {
-        let path = self.key_path(key);
-        let tmp_path = self.dir.join(format!(".{key}.tmp"));
-        let mut file = fs::File::create(&tmp_path).map_err(|_| HsmError::InternalError)?;
-        file.write_all(data).map_err(|_| HsmError::InternalError)?;
-        // Remove existing destination before rename — on Windows,
-        // fs::rename fails if the target already exists (Linux rename(2)
-        // atomically replaces, but std::fs::rename is not guaranteed to).
-        // The remove+rename sequence is safe without an additional lock
-        // because all callers hold the cross-process ResiliencyLock
-        // (via ResiliencyLockGuard) before writing to storage.
-        let _ = fs::remove_file(&path);
-        fs::rename(&tmp_path, &path).map_err(|_| HsmError::InternalError)?;
-        Ok(())
-    }
-
-    fn clear(&self, key: &str) -> HsmResult<()> {
-        let path = self.key_path(key);
-        // No error if key doesn't exist (matches trait contract).
-        let _ = fs::remove_file(&path);
-        Ok(())
-    }
-}
-
-/// Cross-process and cross-thread [`ResiliencyLock`] backed by `fs2`
-/// file locking.
-///
-/// Opens a **new file descriptor** on each [`lock()`] call and acquires an
-/// exclusive `flock` on it.  This is critical because `flock(2)` on Linux
-/// operates per *open file description* (kernel-level fd): two threads
-/// calling `flock(LOCK_EX)` on the **same** fd see a single lock and the
-/// second call silently succeeds instead of blocking.  By opening a fresh
-/// fd each time, each caller gets its own independent lock that truly
-/// serializes both cross-thread and cross-process.
-///
-/// On Windows the underlying `LockFileEx` has the same per-handle
-/// semantics, so the same approach applies.
-struct FileLock {
-    /// Path to the lock file (opened anew on each [`lock()`] call).
-    path: PathBuf,
-    /// The currently-held file descriptor, if any.
-    active: Mutex<Option<fs::File>>,
-}
-
-impl FileLock {
-    fn new(path: PathBuf) -> Self {
-        Self {
-            path,
-            active: Mutex::new(None),
-        }
-    }
-}
-
-impl ResiliencyLock for FileLock {
-    fn lock(&self) -> HsmResult<()> {
-        let mut guard = self.active.lock();
-        if guard.is_some() {
-            return Err(HsmError::InternalError);
-        }
-        let file = fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(&self.path)
-            .map_err(|_| HsmError::InternalError)?;
-        file.lock_exclusive().map_err(|_| HsmError::InternalError)?;
-        *guard = Some(file);
-        Ok(())
-    }
-
-    fn unlock(&self) -> HsmResult<()> {
-        let mut guard = self.active.lock();
-        match guard.take() {
-            Some(file) => {
-                file.unlock().map_err(|_| HsmError::InternalError)?;
-                Ok(())
-            }
-            None => Err(HsmError::InternalError),
-        }
-    }
-}
 
 /// Test POTA callback that retrieves the PID public key from the
 /// partition's certificate and signs it using the hardcoded test
@@ -268,9 +156,7 @@ pub(crate) fn make_resiliency_config_in(dir: &Path) -> HsmResiliencyConfig {
     };
 
     HsmResiliencyConfig {
-        storage: Box::new(FileStorage {
-            dir: dir.to_path_buf(),
-        }),
+        storage: Box::new(FileStorage::new(dir.to_path_buf())),
         lock: Arc::new(FileLock::new(lock_path)),
         pota_callback,
     }
@@ -323,9 +209,7 @@ mod tests {
         let lock_path = dir.join(".lock");
 
         HsmResiliencyConfig {
-            storage: Box::new(FileStorage {
-                dir: dir.to_path_buf(),
-            }),
+            storage: Box::new(FileStorage::new(dir.to_path_buf())),
             lock: Arc::new(FileLock::new(lock_path)),
             pota_callback: Some(Box::new(DummyPotaCallback)),
         }
@@ -361,9 +245,7 @@ mod tests {
     #[test]
     fn storage_write_then_read() {
         let dir = TestDir::new();
-        let storage = FileStorage {
-            dir: dir.path().to_path_buf(),
-        };
+        let storage = FileStorage::new(dir.path().to_path_buf());
 
         storage.write("key1", b"hello").unwrap();
         let data = storage.read("key1").unwrap();
@@ -373,9 +255,7 @@ mod tests {
     #[test]
     fn storage_read_nonexistent_returns_not_found() {
         let dir = TestDir::new();
-        let storage = FileStorage {
-            dir: dir.path().to_path_buf(),
-        };
+        let storage = FileStorage::new(dir.path().to_path_buf());
 
         let err = storage.read("missing").unwrap_err();
         assert_eq!(err, HsmError::NotFound);
@@ -384,9 +264,7 @@ mod tests {
     #[test]
     fn storage_write_overwrites() {
         let dir = TestDir::new();
-        let storage = FileStorage {
-            dir: dir.path().to_path_buf(),
-        };
+        let storage = FileStorage::new(dir.path().to_path_buf());
 
         storage.write("key1", b"first").unwrap();
         storage.write("key1", b"second").unwrap();
@@ -397,9 +275,7 @@ mod tests {
     #[test]
     fn storage_clear_removes_key() {
         let dir = TestDir::new();
-        let storage = FileStorage {
-            dir: dir.path().to_path_buf(),
-        };
+        let storage = FileStorage::new(dir.path().to_path_buf());
 
         storage.write("key1", b"data").unwrap();
         storage.clear("key1").unwrap();
@@ -410,9 +286,7 @@ mod tests {
     #[test]
     fn storage_clear_nonexistent_succeeds() {
         let dir = TestDir::new();
-        let storage = FileStorage {
-            dir: dir.path().to_path_buf(),
-        };
+        let storage = FileStorage::new(dir.path().to_path_buf());
 
         // Should not error — matches trait contract.
         storage.clear("missing").unwrap();
@@ -421,9 +295,7 @@ mod tests {
     #[test]
     fn storage_write_empty_data() {
         let dir = TestDir::new();
-        let storage = FileStorage {
-            dir: dir.path().to_path_buf(),
-        };
+        let storage = FileStorage::new(dir.path().to_path_buf());
 
         storage.write("empty", b"").unwrap();
         let data = storage.read("empty").unwrap();
@@ -474,9 +346,7 @@ mod tests {
         let increments_per_thread = 50;
 
         // Initialize counter file to "0"
-        let storage = FileStorage {
-            dir: dir_path.clone(),
-        };
+        let storage = FileStorage::new(dir_path.clone());
         storage.write("counter", b"0").unwrap();
 
         let handles: Vec<_> = (0..num_threads)
@@ -484,7 +354,7 @@ mod tests {
                 let dir = dir_path.clone();
                 std::thread::spawn(move || {
                     let config = make_unit_test_config(&dir);
-                    let storage = FileStorage { dir: dir.clone() };
+                    let storage = FileStorage::new(dir.clone());
 
                     for _ in 0..increments_per_thread {
                         config.lock.lock().unwrap();
@@ -513,9 +383,7 @@ mod tests {
     #[test]
     fn storage_large_data() {
         let dir = TestDir::new();
-        let storage = FileStorage {
-            dir: dir.path().to_path_buf(),
-        };
+        let storage = FileStorage::new(dir.path().to_path_buf());
 
         let large = vec![0xABu8; 64 * 1024]; // 64 KiB
         storage.write("large", &large).unwrap();
@@ -527,9 +395,7 @@ mod tests {
     #[test]
     fn storage_multiple_keys_independent() {
         let dir = TestDir::new();
-        let storage = FileStorage {
-            dir: dir.path().to_path_buf(),
-        };
+        let storage = FileStorage::new(dir.path().to_path_buf());
 
         storage.write("key_a", b"alpha").unwrap();
         storage.write("key_b", b"bravo").unwrap();
@@ -589,9 +455,7 @@ mod tests {
             assert!(dir_path.exists());
 
             // Write a file to verify it gets cleaned up
-            let storage = FileStorage {
-                dir: dir_path.clone(),
-            };
+            let storage = FileStorage::new(dir_path.clone());
             storage.write("cleanup_test", b"data").unwrap();
         }
         // After ctx drops, directory should be removed

@@ -357,14 +357,18 @@ fn run_sign_context_reuse_test(session: &HsmSession, curve: HsmEccCurve, algo: H
         curve
     );
 
-    //  reuse context
-    ctx.update(b"more").unwrap();
-    let sig2 = ctx.finish_vec().unwrap();
-
-    //  reused signature MUST NOT validate as fresh correct signature
+    // reuse context after finish must fail with InvalidContextState
+    let res = ctx.update(b"more");
     assert!(
-        !verify_signature(&pub_key, algo, b"datamore", &sig2),
-        "Reused context should not produce valid signature for {:?}",
+        matches!(res, Err(HsmError::InvalidContextState)),
+        "update() after finish() should return InvalidContextState for {:?}",
+        curve
+    );
+
+    let res = ctx.finish_vec();
+    assert!(
+        matches!(res, Err(HsmError::InvalidContextState)),
+        "finish() after finish() should return InvalidContextState for {:?}",
         curve
     );
 }

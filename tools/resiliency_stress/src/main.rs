@@ -24,9 +24,10 @@ use std::time::Instant;
 use azihsm_api::*;
 use azihsm_crypto::ExportableKey;
 use azihsm_crypto::KeyGenerationOp;
+use azihsm_resiliency_test_helpers::FileLock;
+use azihsm_resiliency_test_helpers::FileStorage;
 use clap::Parser;
 use parking_lot::deadlock;
-use parking_lot::Mutex;
 use rand::Rng;
 
 // ---------------------------------------------------------------------------
@@ -491,83 +492,6 @@ fn open_and_init_partition(
         )
     };
 
-    // File-backed resiliency storage: one file per key under a shared directory.
-    // All processes (parent + children) use the same directory.
-    struct FileStorage {
-        dir: PathBuf,
-    }
-    impl ResiliencyStorage for FileStorage {
-        fn read(&self, key: &str) -> HsmResult<Vec<u8>> {
-            let path = self.dir.join(key);
-            let mut file = fs::File::open(&path).map_err(|e| {
-                if e.kind() == std::io::ErrorKind::NotFound {
-                    HsmError::NotFound
-                } else {
-                    HsmError::InternalError
-                }
-            })?;
-            let mut buf = Vec::new();
-            std::io::Read::read_to_end(&mut file, &mut buf).map_err(|_| HsmError::InternalError)?;
-            Ok(buf)
-        }
-        fn write(&self, key: &str, data: &[u8]) -> HsmResult<()> {
-            let path = self.dir.join(key);
-            let tmp_path = self.dir.join(format!(".{key}.tmp"));
-            let mut file = fs::File::create(&tmp_path).map_err(|_| HsmError::InternalError)?;
-            std::io::Write::write_all(&mut file, data).map_err(|_| HsmError::InternalError)?;
-            file.sync_all().map_err(|_| HsmError::InternalError)?;
-            fs::rename(&tmp_path, &path).map_err(|_| HsmError::InternalError)?;
-            Ok(())
-        }
-        fn clear(&self, key: &str) -> HsmResult<()> {
-            let path = self.dir.join(key);
-            let _ = fs::remove_file(&path);
-            Ok(())
-        }
-    }
-
-    // File-backed cross-process lock using flock.
-    struct FileLock {
-        path: PathBuf,
-        active: Mutex<Option<fs::File>>,
-    }
-    impl FileLock {
-        fn new(path: PathBuf) -> Self {
-            Self {
-                path,
-                active: Mutex::new(None),
-            }
-        }
-    }
-    impl ResiliencyLock for FileLock {
-        fn lock(&self) -> HsmResult<()> {
-            let mut guard = self.active.lock();
-            if guard.is_some() {
-                return Err(HsmError::InternalError);
-            }
-            let file = fs::OpenOptions::new()
-                .read(true)
-                .write(true)
-                .create(true)
-                .truncate(false)
-                .open(&self.path)
-                .map_err(|_| HsmError::InternalError)?;
-            fs2::FileExt::lock_exclusive(&file).map_err(|_| HsmError::InternalError)?;
-            *guard = Some(file);
-            Ok(())
-        }
-        fn unlock(&self) -> HsmResult<()> {
-            let mut guard = self.active.lock();
-            match guard.take() {
-                Some(file) => {
-                    fs2::FileExt::unlock(&file).map_err(|_| HsmError::InternalError)?;
-                    Ok(())
-                }
-                None => Err(HsmError::InternalError),
-            }
-        }
-    }
-
     /// POTA re-endorsement callback for resiliency restore.
     /// Signs the device's PID public key (provided by SDK) with the
     /// test POTA private key.
@@ -605,9 +529,7 @@ fn open_and_init_partition(
         };
 
         Some(HsmResiliencyConfig {
-            storage: Box::new(FileStorage {
-                dir: storage_path.clone(),
-            }),
+            storage: Box::new(FileStorage::new_with_sync(storage_path.clone())),
             lock: Arc::new(FileLock::new(storage_path.join(".lock"))),
             pota_callback,
         })
