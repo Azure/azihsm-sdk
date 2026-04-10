@@ -40,88 +40,6 @@ class azihsm_aes_keygen : public ::testing::Test
   protected:
     PartitionListHandle part_list_ = PartitionListHandle{};
 
-    // Helper function to compare key properties
-    static void compare_key_properties(
-        azihsm_handle original_key,
-        azihsm_handle unmasked_key,
-        uint32_t expected_bits
-    )
-    {
-        // Compare key class
-        azihsm_key_class original_class, unmasked_class;
-        uint32_t len = sizeof(azihsm_key_class);
-        azihsm_key_prop prop{};
-
-        prop.id = AZIHSM_KEY_PROP_ID_CLASS;
-        prop.val = &original_class;
-        prop.len = len;
-        azihsm_status err = azihsm_key_get_prop(original_key, &prop);
-        EXPECT_EQ(err, AZIHSM_STATUS_SUCCESS);
-
-        prop.val = &unmasked_class;
-        err = azihsm_key_get_prop(unmasked_key, &prop);
-        EXPECT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        EXPECT_EQ(original_class, unmasked_class);
-
-        // Compare key kind
-        azihsm_key_kind original_kind, unmasked_kind;
-        prop.id = AZIHSM_KEY_PROP_ID_KIND;
-        prop.len = sizeof(azihsm_key_kind);
-
-        prop.val = &original_kind;
-        err = azihsm_key_get_prop(original_key, &prop);
-        EXPECT_EQ(err, AZIHSM_STATUS_SUCCESS);
-
-        prop.val = &unmasked_kind;
-        err = azihsm_key_get_prop(unmasked_key, &prop);
-        EXPECT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        EXPECT_EQ(original_kind, unmasked_kind);
-        EXPECT_EQ(original_kind, AZIHSM_KEY_KIND_AES);
-
-        // Compare key bit length
-        uint32_t original_bits, unmasked_bits;
-        prop.id = AZIHSM_KEY_PROP_ID_BIT_LEN;
-        prop.len = sizeof(uint32_t);
-
-        prop.val = &original_bits;
-        err = azihsm_key_get_prop(original_key, &prop);
-        EXPECT_EQ(err, AZIHSM_STATUS_SUCCESS);
-
-        prop.val = &unmasked_bits;
-        err = azihsm_key_get_prop(unmasked_key, &prop);
-        EXPECT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        EXPECT_EQ(original_bits, unmasked_bits);
-        EXPECT_EQ(original_bits, expected_bits);
-
-        // Compare encrypt capability
-        bool original_can_encrypt, unmasked_can_encrypt;
-        prop.id = AZIHSM_KEY_PROP_ID_ENCRYPT;
-        prop.len = sizeof(bool);
-
-        prop.val = &original_can_encrypt;
-        err = azihsm_key_get_prop(original_key, &prop);
-        EXPECT_EQ(err, AZIHSM_STATUS_SUCCESS);
-
-        prop.val = &unmasked_can_encrypt;
-        err = azihsm_key_get_prop(unmasked_key, &prop);
-        EXPECT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        EXPECT_EQ(original_can_encrypt, unmasked_can_encrypt);
-
-        // Compare decrypt capability
-        bool original_can_decrypt, unmasked_can_decrypt;
-        prop.id = AZIHSM_KEY_PROP_ID_DECRYPT;
-        prop.len = sizeof(bool);
-
-        prop.val = &original_can_decrypt;
-        err = azihsm_key_get_prop(original_key, &prop);
-        EXPECT_EQ(err, AZIHSM_STATUS_SUCCESS);
-
-        prop.val = &unmasked_can_decrypt;
-        err = azihsm_key_get_prop(unmasked_key, &prop);
-        EXPECT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        EXPECT_EQ(original_can_decrypt, unmasked_can_decrypt);
-    }
-
     // Helper function to compare AES XTS key properties
     static void compare_aes_xts_key_properties(
         azihsm_handle original_key,
@@ -129,79 +47,28 @@ class azihsm_aes_keygen : public ::testing::Test
         uint32_t expected_bits
     )
     {
-        // Compare key class
-        azihsm_key_class original_class, unmasked_class;
-        uint32_t len = sizeof(azihsm_key_class);
+        compare_key_properties(original_key, unmasked_key);
+
+        // Validate key kind
+        azihsm_key_kind original_kind;
         azihsm_key_prop prop{};
-
-        prop.id = AZIHSM_KEY_PROP_ID_CLASS;
-        prop.val = &original_class;
-        prop.len = len;
-        azihsm_status err = azihsm_key_get_prop(original_key, &prop);
-        EXPECT_EQ(err, AZIHSM_STATUS_SUCCESS);
-
-        prop.val = &unmasked_class;
-        err = azihsm_key_get_prop(unmasked_key, &prop);
-        EXPECT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        EXPECT_EQ(original_class, unmasked_class);
-
-        // Compare key kind
-        azihsm_key_kind original_kind, unmasked_kind;
         prop.id = AZIHSM_KEY_PROP_ID_KIND;
         prop.len = sizeof(azihsm_key_kind);
 
         prop.val = &original_kind;
-        err = azihsm_key_get_prop(original_key, &prop);
+        azihsm_status err = azihsm_key_get_prop(original_key, &prop);
         EXPECT_EQ(err, AZIHSM_STATUS_SUCCESS);
-
-        prop.val = &unmasked_kind;
-        err = azihsm_key_get_prop(unmasked_key, &prop);
-        EXPECT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        EXPECT_EQ(original_kind, unmasked_kind);
         EXPECT_EQ(original_kind, AZIHSM_KEY_KIND_AES_XTS);
 
-        // Compare key bit length
-        uint32_t original_bits, unmasked_bits;
+        // Validate key bit length
+        uint32_t original_bits;
         prop.id = AZIHSM_KEY_PROP_ID_BIT_LEN;
         prop.len = sizeof(uint32_t);
 
         prop.val = &original_bits;
         err = azihsm_key_get_prop(original_key, &prop);
         EXPECT_EQ(err, AZIHSM_STATUS_SUCCESS);
-
-        prop.val = &unmasked_bits;
-        err = azihsm_key_get_prop(unmasked_key, &prop);
-        EXPECT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        EXPECT_EQ(original_bits, unmasked_bits);
         EXPECT_EQ(original_bits, expected_bits);
-
-        // Compare encrypt capability
-        bool original_can_encrypt, unmasked_can_encrypt;
-        prop.id = AZIHSM_KEY_PROP_ID_ENCRYPT;
-        prop.len = sizeof(bool);
-
-        prop.val = &original_can_encrypt;
-        err = azihsm_key_get_prop(original_key, &prop);
-        EXPECT_EQ(err, AZIHSM_STATUS_SUCCESS);
-
-        prop.val = &unmasked_can_encrypt;
-        err = azihsm_key_get_prop(unmasked_key, &prop);
-        EXPECT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        EXPECT_EQ(original_can_encrypt, unmasked_can_encrypt);
-
-        // Compare decrypt capability
-        bool original_can_decrypt, unmasked_can_decrypt;
-        prop.id = AZIHSM_KEY_PROP_ID_DECRYPT;
-        prop.len = sizeof(bool);
-
-        prop.val = &original_can_decrypt;
-        err = azihsm_key_get_prop(original_key, &prop);
-        EXPECT_EQ(err, AZIHSM_STATUS_SUCCESS);
-
-        prop.val = &unmasked_can_decrypt;
-        err = azihsm_key_get_prop(unmasked_key, &prop);
-        EXPECT_EQ(err, AZIHSM_STATUS_SUCCESS);
-        EXPECT_EQ(original_can_decrypt, unmasked_can_decrypt);
     }
 };
 

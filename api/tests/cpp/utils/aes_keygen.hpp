@@ -49,6 +49,9 @@ void verify_generated_aes_key_properties(
     bool expected_local
 );
 
+// Helper function to compare properties of two keys
+void compare_key_properties(azihsm_handle key_handle1, azihsm_handle key_handle2);
+
 /// Helper function template to verify one property of a generated AES key
 template <typename T>
 void verify_key_property(azihsm_handle key_handle, azihsm_key_prop_id prop_id, T expected)
