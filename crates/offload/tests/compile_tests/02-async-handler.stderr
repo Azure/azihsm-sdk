@@ -1,0 +1,5 @@
+error: offload handler functions must be synchronous; the macro generates async wrappers
+  --> tests/compile_tests/02-async-handler.rs:13:9
+   |
+13 |     pub async fn bad() -> Result<u32, MyError> {
+   |         ^^^^^

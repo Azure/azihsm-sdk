@@ -1,0 +1,5 @@
+error: offload impl block must contain at least one handler function
+  --> tests/compile_tests/04-empty-impl.rs:12:1
+   |
+12 | impl MyWorker {}
+   | ^^^^

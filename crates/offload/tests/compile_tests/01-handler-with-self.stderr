@@ -1,0 +1,5 @@
+error: offload handler functions must not take self
+  --> tests/compile_tests/01-handler-with-self.rs:13:9
+   |
+13 |     pub fn bad(&self) -> Result<u32, MyError> {
+   |         ^^

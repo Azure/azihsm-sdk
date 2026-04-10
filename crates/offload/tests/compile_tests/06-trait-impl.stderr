@@ -1,0 +1,5 @@
+error: offload does not support trait implementations
+  --> tests/compile_tests/06-trait-impl.rs:16:1
+   |
+16 | impl MyTrait for MyWorker {
+   | ^^^^

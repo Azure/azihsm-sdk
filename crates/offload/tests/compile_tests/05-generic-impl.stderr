@@ -1,0 +1,5 @@
+error: offload does not support generic impl blocks
+  --> tests/compile_tests/05-generic-impl.rs:12:5
+   |
+12 | impl<T> MyWorker {
+   |     ^

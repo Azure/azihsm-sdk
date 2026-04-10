@@ -1,0 +1,7 @@
+error: Missing field `error`
+  --> tests/compile_tests/07-missing-error-attr.rs:11:1
+   |
+11 | #[offload(shutdown_error = MyError::WorkerShutdown)]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this error originates in the attribute macro `offload` (in Nightly builds, run with -Z macro-backtrace for more info)

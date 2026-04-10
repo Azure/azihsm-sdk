@@ -1,0 +1,5 @@
+error: offload handlers must return Result<T, E>
+  --> tests/compile_tests/03-no-result-return.rs:13:21
+   |
+13 |     pub fn bad() -> u32 {
+   |                     ^^^
