@@ -613,6 +613,7 @@ TEST_F(azihsm_aes_keygen, aes_xts_key_generation_invalid_sizes_rejected)
     });
 }
 
+/// Test AES-XTS key unwrapping
 TEST_F(azihsm_aes_keygen, aes_xts_key_unwrap)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -797,6 +798,7 @@ TEST_F(azihsm_aes_keygen, aes_xts_key_unwrap_tweak_handling_roundtrip)
     });
 }
 
+/// Test AES-XTS key unmasking
 TEST_F(azihsm_aes_keygen, aes_xts_key_unmask)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -932,9 +934,7 @@ TEST_F(azihsm_aes_keygen, aes_xts_key_unwrap_corrupted_fails)
     });
 }
 
-/// In Rust, this test uses HsmAesKeyRsaAesKeyUnwrapAlgo (wrong) with AesXts properties.
-/// In C API, the key_kind in properties auto-selects the internal unwrap algo, so that
-/// exact mismatch cannot occur. Instead, we test using a wrong algo ID for unwrapping.
+/// verifies AES-XTS key unwrap fails when unwrapping with wrong algorithm type
 TEST_F(azihsm_aes_keygen, aes_xts_unwrap_wrong_algo_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -1164,10 +1164,7 @@ TEST_F(azihsm_aes_keygen, aes_gcm_key_gen_persistent)
     });
 }
 
-/// verifies AES-GCM key unwrap fails when unwrapping with wrong key kind (AES instead of AES-GCM)
-/// In Rust, this test uses HsmAesKeyRsaAesKeyUnwrapAlgo (wrong) with AesGcm properties.
-/// In C API, the key_kind in properties auto-selects the internal unwrap algo, so that
-/// exact mismatch cannot occur. Instead, we test using a wrong algo ID for unwrapping.
+/// verifies AES-GCM key unwrap fails when unwrapping with wrong algorithm type
 TEST_F(azihsm_aes_keygen, aes_gcm_unwrap_wrong_algo_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {
