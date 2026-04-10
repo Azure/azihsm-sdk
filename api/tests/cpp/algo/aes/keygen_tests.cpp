@@ -351,11 +351,7 @@ TEST_F(azihsm_aes_keygen, aes_256_key_unmask)
 TEST_F(azihsm_aes_keygen, aes_key_unwrap_corrupted_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        aes_key_unwrap_corrupted_fails_common(
-            session,
-            AZIHSM_KEY_KIND_AES,
-            256
-        );
+        aes_key_unwrap_corrupted_fails_common(session, AZIHSM_KEY_KIND_AES, 256);
     });
 }
 
@@ -405,11 +401,7 @@ TEST_F(azihsm_aes_keygen, aes_unmasked_key_independent_handle)
 TEST_F(azihsm_aes_keygen, aes_unwrap_truncated_blob_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        aes_unwrap_truncated_blob_fails_common(
-            session,
-            AZIHSM_KEY_KIND_AES,
-            256
-        );
+        aes_unwrap_truncated_blob_fails_common(session, AZIHSM_KEY_KIND_AES, 256);
     });
 }
 
@@ -601,11 +593,7 @@ TEST_F(azihsm_aes_keygen, aes_unmask_wrong_kind_fails)
 TEST_F(azihsm_aes_keygen, aes_unwrapped_key_roundtrip)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        aes_unwrapped_key_roundtrip_common(
-            session,
-            AZIHSM_KEY_KIND_AES,
-            256
-        );
+        aes_unwrapped_key_roundtrip_common(session, AZIHSM_KEY_KIND_AES, 256);
     });
 }
 
@@ -709,8 +697,9 @@ TEST_F(azihsm_aes_keygen, aes_xts_key_unwrap_tweak_handling_roundtrip)
         // Step 2: Unwrap the XTS wrapped blob
         azihsm_algo_rsa_pkcs_oaep_params oaep_params = build_oaep_sha256_params();
 
-        azihsm_algo_rsa_aes_key_wrap_params unwrap_params = build_rsa_aes_key_unwrap_params(oaep_params, AZIHSM_KEY_KIND_AES_XTS, 256);
-        
+        azihsm_algo_rsa_aes_key_wrap_params unwrap_params =
+            build_rsa_aes_key_unwrap_params(oaep_params, AZIHSM_KEY_KIND_AES_XTS, 256);
+
         azihsm_algo unwrap_algo = build_rsa_aes_key_unwrap_algo(unwrap_params);
 
         azihsm_key_kind key_kind = AZIHSM_KEY_KIND_AES_XTS;
@@ -984,11 +973,7 @@ TEST_F(azihsm_aes_keygen, aes_xts_key_unmask)
 TEST_F(azihsm_aes_keygen, aes_xts_key_unwrap_corrupted_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        aes_key_unwrap_corrupted_fails_common(
-            session,
-            AZIHSM_KEY_KIND_AES_XTS,
-            512
-        );
+        aes_key_unwrap_corrupted_fails_common(session, AZIHSM_KEY_KIND_AES_XTS, 512);
     });
 }
 
@@ -1076,11 +1061,7 @@ TEST_F(azihsm_aes_keygen, aes_xts_unwrap_bits_mismatch_fails)
 TEST_F(azihsm_aes_keygen, aes_xts_unwrap_truncated_blob_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        aes_unwrap_truncated_blob_fails_common(
-            session,
-            AZIHSM_KEY_KIND_AES_XTS,
-            512
-        );
+        aes_unwrap_truncated_blob_fails_common(session, AZIHSM_KEY_KIND_AES_XTS, 512);
     });
 }
 
@@ -1165,11 +1146,7 @@ TEST_F(azihsm_aes_keygen, aes_gcm_256_key_unwrap)
 TEST_F(azihsm_aes_keygen, aes_gcm_unwrapped_key_roundtrip)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        aes_unwrapped_key_roundtrip_common(
-            session,
-            AZIHSM_KEY_KIND_AES_GCM,
-            256
-        );
+        aes_unwrapped_key_roundtrip_common(session, AZIHSM_KEY_KIND_AES_GCM, 256);
     });
 }
 
@@ -1451,11 +1428,7 @@ TEST_F(azihsm_aes_keygen, aes_gcm_wrong_key_fails)
 TEST_F(azihsm_aes_keygen, aes_gcm_key_unwrap_corrupted_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        aes_key_unwrap_corrupted_fails_common(
-            session,
-            AZIHSM_KEY_KIND_AES_GCM,
-            256
-        );
+        aes_key_unwrap_corrupted_fails_common(session, AZIHSM_KEY_KIND_AES_GCM, 256);
     });
 }
 
@@ -1476,11 +1449,7 @@ TEST_F(azihsm_aes_keygen, aes_gcm_unmask_corrupted_blob_fails)
 TEST_F(azihsm_aes_keygen, aes_gcm_unwrap_truncated_blob_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        aes_unwrap_truncated_blob_fails_common(
-            session,
-            AZIHSM_KEY_KIND_AES_GCM,
-            256
-        );
+        aes_unwrap_truncated_blob_fails_common(session, AZIHSM_KEY_KIND_AES_GCM, 256);
     });
 }
 

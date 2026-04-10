@@ -409,12 +409,12 @@ void aes_key_unwrap_common(
     }
 
     // Step 3: Unwrap the wrapped key material into a new key handle
-    azihsm_algo_rsa_aes_key_wrap_params unwrap_params = build_rsa_aes_key_unwrap_params(oaep_params, key_kind, bits);
-        
+    azihsm_algo_rsa_aes_key_wrap_params unwrap_params =
+        build_rsa_aes_key_unwrap_params(oaep_params, key_kind, bits);
+
     azihsm_algo unwrap_algo = build_rsa_aes_key_unwrap_algo(unwrap_params);
 
     azihsm_key_class key_class = AZIHSM_KEY_CLASS_SECRET;
-    //bool is_session = true;
     bool can_encrypt = true;
     bool can_decrypt = true;
 
@@ -422,7 +422,6 @@ void aes_key_unwrap_common(
     unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_KIND, &key_kind, sizeof(key_kind) });
     unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_CLASS, &key_class, sizeof(key_class) });
     unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_BIT_LEN, &bits, sizeof(bits) });
-    //unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_SESSION, &is_session, sizeof(is_session) });
     unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_ENCRYPT, &can_encrypt, sizeof(can_encrypt) });
     unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_DECRYPT, &can_decrypt, sizeof(can_decrypt) });
 
@@ -441,17 +440,11 @@ void aes_key_unwrap_common(
         &unwrap_prop_list,
         unwrapped_key.get_ptr()
     );
-    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS) << "wrapped_data.size(): " << wrapped_data.size() << "\n"
-                                               << "Wrapped key blob size: " << wrapped_key_buf.len << " bytes\n"
-                                               << "Unwrap algorithm ID: " << unwrap_algo.id << "\n"
-                                               << "Unwrap algorithm params length: " << unwrap_algo.len
-                                               << " bytes\n"
-                                               << "Unwrap properties count: " << unwrap_prop_list.count
-                                               << "\n";
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
     ASSERT_NE(unwrapped_key, 0);
 
     // Step 4: Verify unwrapped key properties
-    verify_generated_aes_key_properties(unwrapped_key, key_kind, bits, /*is_session*/ false, false);
+    verify_generated_aes_key_properties(unwrapped_key, key_kind, bits, false, false);
 
     // Step 5: Clean up unwrapped key
     err = azihsm_key_delete(unwrapped_key.release());
@@ -539,7 +532,11 @@ azihsm_algo_rsa_pkcs_oaep_params build_oaep_sha256_params()
     return params;
 }
 
-azihsm_algo_rsa_aes_key_wrap_params build_rsa_aes_key_unwrap_params(azihsm_algo_rsa_pkcs_oaep_params &oaep_params, azihsm_key_kind key_kind, uint32_t bits)
+azihsm_algo_rsa_aes_key_wrap_params build_rsa_aes_key_unwrap_params(
+    azihsm_algo_rsa_pkcs_oaep_params &oaep_params,
+    azihsm_key_kind key_kind,
+    uint32_t bits
+)
 {
     azihsm_algo_rsa_aes_key_wrap_params unwrap_params;
     unwrap_params.oaep_params = &oaep_params;
@@ -553,8 +550,7 @@ azihsm_algo_rsa_aes_key_wrap_params build_rsa_aes_key_unwrap_params(azihsm_algo_
     {
         unwrap_params.aes_key_bits = bits;
     }
-    
-    
+
     return unwrap_params;
 }
 
@@ -599,8 +595,7 @@ void aes_unmask_wrong_kind_fails_common(
                                     .count = static_cast<uint32_t>(props_vec.size()) };
 
     auto_key original_key;
-    azihsm_status err =
-        azihsm_key_gen(session, &keygen_algo, &prop_list, original_key.get_ptr());
+    azihsm_status err = azihsm_key_gen(session, &keygen_algo, &prop_list, original_key.get_ptr());
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
     ASSERT_NE(original_key, 0);
 
@@ -636,7 +631,8 @@ void aes_unmask_corrupted_blob_fails_common(
     azihsm_algo_id algo_id,
     azihsm_key_kind key_kind,
     uint32_t bits
-){
+)
+{
     // Generate an key
     azihsm_algo keygen_algo{};
     keygen_algo.id = algo_id;
@@ -661,8 +657,7 @@ void aes_unmask_corrupted_blob_fails_common(
                                     .count = static_cast<uint32_t>(props_vec.size()) };
 
     auto_key original_key;
-    azihsm_status err =
-        azihsm_key_gen(session, &keygen_algo, &prop_list, original_key.get_ptr());
+    azihsm_status err = azihsm_key_gen(session, &keygen_algo, &prop_list, original_key.get_ptr());
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
     ASSERT_NE(original_key, 0);
 
@@ -684,7 +679,7 @@ void aes_unmask_corrupted_blob_fails_common(
 
     // Corrupt the masked key blob
     masked_key_data[0] ^= 0xFF;
-    
+
     // Try to unmask the corrupted blob
     azihsm_buffer masked_key_buf{};
     masked_key_buf.ptr = masked_key_data.data();
@@ -745,8 +740,9 @@ void aes_key_unwrap_corrupted_fails_common(
     // Corrupt wrapped data (corrupts header in case of XTS)
     wrapped_data[0] ^= 0xFF;
 
-    azihsm_algo_rsa_aes_key_wrap_params unwrap_params = build_rsa_aes_key_unwrap_params(oaep_params, key_kind, bits);
-    
+    azihsm_algo_rsa_aes_key_wrap_params unwrap_params =
+        build_rsa_aes_key_unwrap_params(oaep_params, key_kind, bits);
+
     azihsm_algo unwrap_algo = build_rsa_aes_key_unwrap_algo(unwrap_params);
 
     azihsm_key_class key_class = AZIHSM_KEY_CLASS_SECRET;
@@ -757,13 +753,11 @@ void aes_key_unwrap_corrupted_fails_common(
     unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_KIND, &key_kind, sizeof(key_kind) });
     unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_CLASS, &key_class, sizeof(key_class) });
     unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_BIT_LEN, &bits, sizeof(bits) });
-    unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_ENCRYPT, &can_encrypt, sizeof(can_encrypt) }
-    );
-    unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_DECRYPT, &can_decrypt, sizeof(can_decrypt) }
-    );
+    unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_ENCRYPT, &can_encrypt, sizeof(can_encrypt) });
+    unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_DECRYPT, &can_decrypt, sizeof(can_decrypt) });
 
     azihsm_key_prop_list unwrap_prop_list{ unwrap_props_vec.data(),
-                                            static_cast<uint32_t>(unwrap_props_vec.size()) };
+                                           static_cast<uint32_t>(unwrap_props_vec.size()) };
 
     azihsm_buffer wrapped_key_buf{};
     wrapped_key_buf.ptr = wrapped_data.data();
@@ -790,7 +784,11 @@ void aes_unwrap_wrong_algo_fails_common(
 {
     auto_key wrapping_priv_key;
     auto_key wrapping_pub_key;
-    auto err = generate_rsa_unwrapping_keypair(session, wrapping_priv_key.get_ptr(), wrapping_pub_key.get_ptr());
+    auto err = generate_rsa_unwrapping_keypair(
+        session,
+        wrapping_priv_key.get_ptr(),
+        wrapping_pub_key.get_ptr()
+    );
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
     ASSERT_NE(wrapping_priv_key.get(), 0);
     ASSERT_NE(wrapping_pub_key.get(), 0);
@@ -816,7 +814,8 @@ void aes_unwrap_wrong_algo_fails_common(
         wrapped_data = wrap_local_aes_key(wrapping_pub_key, local_aes_key, bits, oaep_params);
     }
 
-    azihsm_algo_rsa_aes_key_wrap_params unwrap_params = build_rsa_aes_key_unwrap_params(oaep_params, key_kind, bits);
+    azihsm_algo_rsa_aes_key_wrap_params unwrap_params =
+        build_rsa_aes_key_unwrap_params(oaep_params, key_kind, bits);
 
     azihsm_algo wrong_algo{};
     wrong_algo.id = wrong_algo_id;
@@ -832,13 +831,11 @@ void aes_unwrap_wrong_algo_fails_common(
     unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_KIND, &key_kind, sizeof(key_kind) });
     unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_CLASS, &key_class, sizeof(key_class) });
     unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_BIT_LEN, &bits, sizeof(bits) });
-    unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_ENCRYPT, &can_encrypt, sizeof(can_encrypt) }
-    );
-    unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_DECRYPT, &can_decrypt, sizeof(can_decrypt) }
-    );
+    unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_ENCRYPT, &can_encrypt, sizeof(can_encrypt) });
+    unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_DECRYPT, &can_decrypt, sizeof(can_decrypt) });
 
     azihsm_key_prop_list unwrap_prop_list{ unwrap_props_vec.data(),
-                                            static_cast<uint32_t>(unwrap_props_vec.size()) };
+                                           static_cast<uint32_t>(unwrap_props_vec.size()) };
 
     azihsm_buffer wrapped_key_buf{};
     wrapped_key_buf.ptr = wrapped_data.data();
@@ -885,8 +882,7 @@ void aes_unmasked_key_independent_handle_common(
     azihsm_key_prop_list prop_list{ props_vec.data(), static_cast<uint32_t>(props_vec.size()) };
 
     auto_key original_key;
-    azihsm_status err =
-        azihsm_key_gen(session, &keygen_algo, &prop_list, original_key.get_ptr());
+    azihsm_status err = azihsm_key_gen(session, &keygen_algo, &prop_list, original_key.get_ptr());
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
     ASSERT_NE(original_key, 0);
 
@@ -912,12 +908,7 @@ void aes_unmasked_key_independent_handle_common(
     masked_key_buf.len = static_cast<uint32_t>(masked_key_data.size());
 
     auto_key unmasked_key;
-    err = azihsm_key_unmask(
-        session,
-        key_kind,
-        &masked_key_buf,
-        unmasked_key.get_ptr()
-    );
+    err = azihsm_key_unmask(session, key_kind, &masked_key_buf, unmasked_key.get_ptr());
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
     ASSERT_NE(unmasked_key, 0);
 
@@ -965,7 +956,11 @@ void aes_unwrap_truncated_blob_fails_common(
 {
     auto_key wrapping_priv_key;
     auto_key wrapping_pub_key;
-    auto err = generate_rsa_unwrapping_keypair(session, wrapping_priv_key.get_ptr(), wrapping_pub_key.get_ptr());
+    auto err = generate_rsa_unwrapping_keypair(
+        session,
+        wrapping_priv_key.get_ptr(),
+        wrapping_pub_key.get_ptr()
+    );
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
     ASSERT_NE(wrapping_priv_key.get(), 0);
     ASSERT_NE(wrapping_pub_key.get(), 0);
@@ -992,8 +987,9 @@ void aes_unwrap_truncated_blob_fails_common(
     // Truncate the wrapped blob
     wrapped_data.resize(wrapped_data.size() - 8);
 
-    azihsm_algo_rsa_aes_key_wrap_params unwrap_params = build_rsa_aes_key_unwrap_params(oaep_params, key_kind, bits);
-    
+    azihsm_algo_rsa_aes_key_wrap_params unwrap_params =
+        build_rsa_aes_key_unwrap_params(oaep_params, key_kind, bits);
+
     azihsm_algo unwrap_algo = build_rsa_aes_key_unwrap_algo(unwrap_params);
 
     azihsm_key_class aes_class = AZIHSM_KEY_CLASS_SECRET;
@@ -1004,13 +1000,11 @@ void aes_unwrap_truncated_blob_fails_common(
     unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_KIND, &key_kind, sizeof(key_kind) });
     unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_CLASS, &aes_class, sizeof(aes_class) });
     unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_BIT_LEN, &bits, sizeof(bits) });
-    unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_ENCRYPT, &can_encrypt, sizeof(can_encrypt) }
-    );
-    unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_DECRYPT, &can_decrypt, sizeof(can_decrypt) }
-    );
+    unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_ENCRYPT, &can_encrypt, sizeof(can_encrypt) });
+    unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_DECRYPT, &can_decrypt, sizeof(can_decrypt) });
 
     azihsm_key_prop_list unwrap_prop_list{ unwrap_props_vec.data(),
-                                            static_cast<uint32_t>(unwrap_props_vec.size()) };
+                                           static_cast<uint32_t>(unwrap_props_vec.size()) };
 
     azihsm_buffer wrapped_key_buf{};
     wrapped_key_buf.ptr = wrapped_data.data();
@@ -1037,7 +1031,11 @@ void aes_unwrap_bits_mismatch_fails_common(
 {
     auto_key wrapping_priv_key;
     auto_key wrapping_pub_key;
-    auto err = generate_rsa_unwrapping_keypair(session, wrapping_priv_key.get_ptr(), wrapping_pub_key.get_ptr());
+    auto err = generate_rsa_unwrapping_keypair(
+        session,
+        wrapping_priv_key.get_ptr(),
+        wrapping_pub_key.get_ptr()
+    );
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
     ASSERT_NE(wrapping_priv_key.get(), 0);
     ASSERT_NE(wrapping_pub_key.get(), 0);
@@ -1062,8 +1060,9 @@ void aes_unwrap_bits_mismatch_fails_common(
     }
 
     // Unwrap with mismatched bit length (128 instead of 256)
-    azihsm_algo_rsa_aes_key_wrap_params unwrap_params = build_rsa_aes_key_unwrap_params(oaep_params, key_kind, bits);
-    
+    azihsm_algo_rsa_aes_key_wrap_params unwrap_params =
+        build_rsa_aes_key_unwrap_params(oaep_params, key_kind, bits);
+
     azihsm_algo unwrap_algo = build_rsa_aes_key_unwrap_algo(unwrap_params);
 
     azihsm_key_class aes_class = AZIHSM_KEY_CLASS_SECRET;
@@ -1073,14 +1072,13 @@ void aes_unwrap_bits_mismatch_fails_common(
     std::vector<azihsm_key_prop> unwrap_props_vec;
     unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_KIND, &key_kind, sizeof(key_kind) });
     unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_CLASS, &aes_class, sizeof(aes_class) });
-    unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_BIT_LEN, &wrong_bits, sizeof(wrong_bits) }); // wrong size
-    unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_ENCRYPT, &can_encrypt, sizeof(can_encrypt) }
-    );
-    unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_DECRYPT, &can_decrypt, sizeof(can_decrypt) }
-    );
+    unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_BIT_LEN, &wrong_bits, sizeof(wrong_bits) }
+    ); // wrong size
+    unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_ENCRYPT, &can_encrypt, sizeof(can_encrypt) });
+    unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_DECRYPT, &can_decrypt, sizeof(can_decrypt) });
 
     azihsm_key_prop_list unwrap_prop_list{ unwrap_props_vec.data(),
-                                            static_cast<uint32_t>(unwrap_props_vec.size()) };
+                                           static_cast<uint32_t>(unwrap_props_vec.size()) };
 
     azihsm_buffer wrapped_key_buf{};
     wrapped_key_buf.ptr = wrapped_data.data();
@@ -1106,7 +1104,11 @@ void aes_unwrapped_key_roundtrip_common(
 {
     auto_key wrapping_priv_key;
     auto_key wrapping_pub_key;
-    auto err = generate_rsa_unwrapping_keypair(session, wrapping_priv_key.get_ptr(), wrapping_pub_key.get_ptr());
+    auto err = generate_rsa_unwrapping_keypair(
+        session,
+        wrapping_priv_key.get_ptr(),
+        wrapping_pub_key.get_ptr()
+    );
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
     ASSERT_NE(wrapping_priv_key.get(), 0);
     ASSERT_NE(wrapping_pub_key.get(), 0);
@@ -1127,14 +1129,13 @@ void aes_unwrapped_key_roundtrip_common(
     else
     {
         std::vector<uint8_t> local_aes_key;
-        
+
         if (key_kind == AZIHSM_KEY_KIND_AES_GCM)
         {
             // Create a local AES-GCM-256 key (32 bytes) to be imported into the HSM
-            local_aes_key = { 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
-                              0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
-                            0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
-                            0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f };
+            local_aes_key = { 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a,
+                              0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15,
+                              0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f };
         }
         else
         {
@@ -1145,8 +1146,9 @@ void aes_unwrapped_key_roundtrip_common(
     }
 
     // Unwrap the key into the HSM
-    azihsm_algo_rsa_aes_key_wrap_params unwrap_params = build_rsa_aes_key_unwrap_params(oaep_params, key_kind, bits);
-    
+    azihsm_algo_rsa_aes_key_wrap_params unwrap_params =
+        build_rsa_aes_key_unwrap_params(oaep_params, key_kind, bits);
+
     azihsm_algo unwrap_algo = build_rsa_aes_key_unwrap_algo(unwrap_params);
 
     azihsm_key_class aes_class = AZIHSM_KEY_CLASS_SECRET;
@@ -1161,13 +1163,11 @@ void aes_unwrapped_key_roundtrip_common(
     unwrap_props_vec.push_back(
         { AZIHSM_KEY_PROP_ID_SESSION, &aes_is_session, sizeof(aes_is_session) }
     );
-    unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_ENCRYPT, &can_encrypt, sizeof(can_encrypt) }
-    );
-    unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_DECRYPT, &can_decrypt, sizeof(can_decrypt) }
-    );
+    unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_ENCRYPT, &can_encrypt, sizeof(can_encrypt) });
+    unwrap_props_vec.push_back({ AZIHSM_KEY_PROP_ID_DECRYPT, &can_decrypt, sizeof(can_decrypt) });
 
     azihsm_key_prop_list unwrap_prop_list{ unwrap_props_vec.data(),
-                                            static_cast<uint32_t>(unwrap_props_vec.size()) };
+                                           static_cast<uint32_t>(unwrap_props_vec.size()) };
 
     azihsm_buffer wrapped_key_buf{};
     wrapped_key_buf.ptr = wrapped_data.data();
@@ -1193,8 +1193,7 @@ void aes_unwrapped_key_roundtrip_common(
     if (key_kind == AZIHSM_KEY_KIND_AES)
     {
         // Encrypt with AES-CBC with padding
-        plaintext = { 'h', 'e', 'l', 'l', 'o', ' ', 'a',
-                                            'e', 's', ' ', 'c', 'b', 'c' };
+        plaintext = { 'h', 'e', 'l', 'l', 'o', ' ', 'a', 'e', 's', ' ', 'c', 'b', 'c' };
 
         iv = std::vector<uint8_t>(16, 0);
         std::memcpy(cbc_params.iv, iv.data(), iv.size());
