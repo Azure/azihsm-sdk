@@ -730,6 +730,15 @@ void aes_key_unwrap_corrupted_fails_common(
         wrapped_data = build_xts_wrapped_blob(wrapping_pub_key, key1_plain, key2_plain);
         ASSERT_FALSE(wrapped_data.empty());
     }
+    else if (key_kind == AZIHSM_KEY_KIND_AES_GCM)
+    {
+        std::vector<uint8_t> local_aes_gcm_key = { 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+                                                   0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
+                                                   0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+                                                   0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f };
+
+        wrapped_data = wrap_local_aes_key(wrapping_pub_key, local_aes_gcm_key, bits, oaep_params);
+    }
     else
     {
         std::vector<uint8_t> local_aes_key(32, 0x55);
