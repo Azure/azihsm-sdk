@@ -114,6 +114,50 @@ std::vector<uint8_t> build_xts_wrapped_blob(
     return blob;
 }
 
+// Helper to build OAEP params with SHA-256 for RSA AES key unwrap
+azihsm_algo_rsa_pkcs_oaep_params build_oaep_sha256_params()
+{
+    azihsm_algo_rsa_pkcs_oaep_params params{};
+    params.hash_algo_id = AZIHSM_ALGO_ID_SHA256;
+    params.mgf1_hash_algo_id = AZIHSM_MGF1_ID_SHA256;
+    params.label = nullptr;
+    return params;
+}
+
+// Helper to build RSA AES key unwrap params for given key kind and bits
+azihsm_algo_rsa_aes_key_wrap_params build_rsa_aes_key_unwrap_params(
+    azihsm_algo_rsa_pkcs_oaep_params &oaep_params,
+    azihsm_key_kind key_kind,
+    uint32_t bits
+)
+{
+    azihsm_algo_rsa_aes_key_wrap_params unwrap_params{};
+    unwrap_params.oaep_params = &oaep_params;
+
+    if (key_kind == AZIHSM_KEY_KIND_AES_XTS)
+    {
+        // For AES_XTS, the unwrap params must specify 256 bits
+        unwrap_params.aes_key_bits = 256;
+    }
+    else
+    {
+        unwrap_params.aes_key_bits = bits;
+    }
+
+    return unwrap_params;
+}
+
+// Helper to build RSA AES key unwrap algo struct
+azihsm_algo build_rsa_aes_key_unwrap_algo(azihsm_algo_rsa_aes_key_wrap_params &unwrap_params)
+{
+    azihsm_algo algo{};
+    algo.id = AZIHSM_ALGO_ID_RSA_AES_KEY_WRAP;
+    algo.params = &unwrap_params;
+    algo.len = sizeof(unwrap_params);
+    return algo;
+}
+
+// Helper function to wrap a local AES key using RSA AES Wrap algo
 std::vector<uint8_t> wrap_local_aes_key(
     azihsm_handle wrapping_pub_key,
     const std::vector<uint8_t> &local_key,
@@ -152,6 +196,51 @@ std::vector<uint8_t> wrap_local_aes_key(
     return wrapped_data;
 }
 
+// Helper function to verify properties of a generated AES key
+void verify_generated_aes_key_properties(
+    azihsm_handle key_handle,
+    azihsm_key_kind key_kind,
+    uint32_t bits,
+    bool is_session,
+    bool expected_local
+)
+{
+    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_CLASS, AZIHSM_KEY_CLASS_SECRET);
+    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_KIND, key_kind);
+    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_BIT_LEN, bits);
+    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_LOCAL, expected_local);
+    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_SESSION, is_session);
+    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_SENSITIVE, true);
+    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_EXTRACTABLE, true);
+    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_ENCRYPT, true);
+    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_DECRYPT, true);
+    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_SIGN, false);
+    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_VERIFY, false);
+    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_WRAP, false);
+    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_UNWRAP, false);
+    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_DERIVE, false);
+}
+
+// Helper function to compare properties of two keys
+void compare_key_properties(azihsm_handle key_handle1, azihsm_handle key_handle2)
+{
+    compare_key_property<uint32_t>(key_handle1, key_handle2, AZIHSM_KEY_PROP_ID_CLASS);
+    compare_key_property<azihsm_key_kind>(key_handle1, key_handle2, AZIHSM_KEY_PROP_ID_KIND);
+    compare_key_property<uint32_t>(key_handle1, key_handle2, AZIHSM_KEY_PROP_ID_BIT_LEN);
+    compare_key_property<bool>(key_handle1, key_handle2, AZIHSM_KEY_PROP_ID_LOCAL);
+    compare_key_property<bool>(key_handle1, key_handle2, AZIHSM_KEY_PROP_ID_SESSION);
+    compare_key_property<bool>(key_handle1, key_handle2, AZIHSM_KEY_PROP_ID_SENSITIVE);
+    compare_key_property<bool>(key_handle1, key_handle2, AZIHSM_KEY_PROP_ID_EXTRACTABLE);
+    compare_key_property<bool>(key_handle1, key_handle2, AZIHSM_KEY_PROP_ID_ENCRYPT);
+    compare_key_property<bool>(key_handle1, key_handle2, AZIHSM_KEY_PROP_ID_DECRYPT);
+    compare_key_property<bool>(key_handle1, key_handle2, AZIHSM_KEY_PROP_ID_SIGN);
+    compare_key_property<bool>(key_handle1, key_handle2, AZIHSM_KEY_PROP_ID_VERIFY);
+    compare_key_property<bool>(key_handle1, key_handle2, AZIHSM_KEY_PROP_ID_WRAP);
+    compare_key_property<bool>(key_handle1, key_handle2, AZIHSM_KEY_PROP_ID_UNWRAP);
+    compare_key_property<bool>(key_handle1, key_handle2, AZIHSM_KEY_PROP_ID_DERIVE);
+}
+
+// Common test function to test AES key generation and verify properties
 void session_aes_key_generation_common(
     azihsm_handle session,
     azihsm_algo_id algo_id,
@@ -196,48 +285,7 @@ void session_aes_key_generation_common(
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 }
 
-void verify_generated_aes_key_properties(
-    azihsm_handle key_handle,
-    azihsm_key_kind key_kind,
-    uint32_t bits,
-    bool is_session,
-    bool expected_local
-)
-{
-    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_CLASS, AZIHSM_KEY_CLASS_SECRET);
-    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_KIND, key_kind);
-    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_BIT_LEN, bits);
-    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_LOCAL, expected_local);
-    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_SESSION, is_session);
-    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_SENSITIVE, true);
-    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_EXTRACTABLE, true);
-    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_ENCRYPT, true);
-    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_DECRYPT, true);
-    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_SIGN, false);
-    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_VERIFY, false);
-    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_WRAP, false);
-    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_UNWRAP, false);
-    verify_key_property(key_handle, AZIHSM_KEY_PROP_ID_DERIVE, false);
-}
-
-void compare_key_properties(azihsm_handle key_handle1, azihsm_handle key_handle2)
-{
-    compare_key_property<uint32_t>(key_handle1, key_handle2, AZIHSM_KEY_PROP_ID_CLASS);
-    compare_key_property<azihsm_key_kind>(key_handle1, key_handle2, AZIHSM_KEY_PROP_ID_KIND);
-    compare_key_property<uint32_t>(key_handle1, key_handle2, AZIHSM_KEY_PROP_ID_BIT_LEN);
-    compare_key_property<bool>(key_handle1, key_handle2, AZIHSM_KEY_PROP_ID_LOCAL);
-    compare_key_property<bool>(key_handle1, key_handle2, AZIHSM_KEY_PROP_ID_SESSION);
-    compare_key_property<bool>(key_handle1, key_handle2, AZIHSM_KEY_PROP_ID_SENSITIVE);
-    compare_key_property<bool>(key_handle1, key_handle2, AZIHSM_KEY_PROP_ID_EXTRACTABLE);
-    compare_key_property<bool>(key_handle1, key_handle2, AZIHSM_KEY_PROP_ID_ENCRYPT);
-    compare_key_property<bool>(key_handle1, key_handle2, AZIHSM_KEY_PROP_ID_DECRYPT);
-    compare_key_property<bool>(key_handle1, key_handle2, AZIHSM_KEY_PROP_ID_SIGN);
-    compare_key_property<bool>(key_handle1, key_handle2, AZIHSM_KEY_PROP_ID_VERIFY);
-    compare_key_property<bool>(key_handle1, key_handle2, AZIHSM_KEY_PROP_ID_WRAP);
-    compare_key_property<bool>(key_handle1, key_handle2, AZIHSM_KEY_PROP_ID_UNWRAP);
-    compare_key_property<bool>(key_handle1, key_handle2, AZIHSM_KEY_PROP_ID_DERIVE);
-}
-
+// Common test function to test AES key generation with invalid properties and expect failure
 void aes_key_gen_invalid_props_fail_common(
     azihsm_handle session,
     azihsm_algo_id algo_id,
@@ -280,6 +328,7 @@ void aes_key_gen_invalid_props_fail_common(
     ASSERT_EQ(original_key, 0);
 }
 
+// Common test function to test AES key generation with multiple invalid flag combinations and expect failure
 void aes_key_gen_multiple_invalid_capabilities_common(
     azihsm_handle session,
     azihsm_algo_id algo_id,
@@ -326,6 +375,7 @@ void aes_key_gen_multiple_invalid_capabilities_common(
     }
 }
 
+// Common test function to test persistent AES key generation and verify properties
 void aes_key_gen_persistent_common(
     azihsm_handle session,
     azihsm_algo_id algo_id,
@@ -370,6 +420,7 @@ void aes_key_gen_persistent_common(
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 }
 
+// Common test function to test AES key unwrapping and verify properties of unwrapped key
 void aes_key_unwrap_common(
     azihsm_handle session,
     azihsm_key_kind key_kind,
@@ -399,7 +450,6 @@ void aes_key_unwrap_common(
         std::vector<uint8_t> key1_plain(key_bytes, 0x11);
         std::vector<uint8_t> key2_plain(key_bytes, 0x22);
         wrapped_data = build_xts_wrapped_blob(wrapping_pub_key, key1_plain, key2_plain);
-        ASSERT_FALSE(wrapped_data.empty());
     }
     else
     {
@@ -407,6 +457,8 @@ void aes_key_unwrap_common(
 
         wrapped_data = wrap_local_aes_key(wrapping_pub_key, local_aes_key, bits, oaep_params);
     }
+
+    ASSERT_FALSE(wrapped_data.empty());
 
     // Step 3: Unwrap the wrapped key material into a new key handle
     azihsm_algo_rsa_aes_key_wrap_params unwrap_params =
@@ -451,6 +503,7 @@ void aes_key_unwrap_common(
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 }
 
+// Common test function to test persistent AES key generation and verify properties
 void aes_key_unmask_common(
     azihsm_handle session,
     azihsm_algo_id algo_id,
@@ -523,46 +576,7 @@ void aes_key_unmask_common(
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 }
 
-azihsm_algo_rsa_pkcs_oaep_params build_oaep_sha256_params()
-{
-    azihsm_algo_rsa_pkcs_oaep_params params{};
-    params.hash_algo_id = AZIHSM_ALGO_ID_SHA256;
-    params.mgf1_hash_algo_id = AZIHSM_MGF1_ID_SHA256;
-    params.label = nullptr;
-    return params;
-}
-
-azihsm_algo_rsa_aes_key_wrap_params build_rsa_aes_key_unwrap_params(
-    azihsm_algo_rsa_pkcs_oaep_params &oaep_params,
-    azihsm_key_kind key_kind,
-    uint32_t bits
-)
-{
-    azihsm_algo_rsa_aes_key_wrap_params unwrap_params;
-    unwrap_params.oaep_params = &oaep_params;
-
-    if (key_kind == AZIHSM_KEY_KIND_AES_XTS)
-    {
-        // For AES_XTS, the unwrap params must specify 256 bits
-        unwrap_params.aes_key_bits = 256;
-    }
-    else
-    {
-        unwrap_params.aes_key_bits = bits;
-    }
-
-    return unwrap_params;
-}
-
-azihsm_algo build_rsa_aes_key_unwrap_algo(azihsm_algo_rsa_aes_key_wrap_params &unwrap_params)
-{
-    azihsm_algo algo{};
-    algo.id = AZIHSM_ALGO_ID_RSA_AES_KEY_WRAP;
-    algo.params = &unwrap_params;
-    algo.len = sizeof(unwrap_params);
-    return algo;
-}
-
+// Common test function to test AES key unmasking with wrong key kind and expect failure
 void aes_unmask_wrong_kind_fails_common(
     azihsm_handle session,
     azihsm_algo_id algo_id,
@@ -626,6 +640,7 @@ void aes_unmask_wrong_kind_fails_common(
     ASSERT_EQ(unmasked_key, 0);
 }
 
+// Common test function to test AES key unmasking with corrupted masked blob and expect failure
 void aes_unmask_corrupted_blob_fails_common(
     azihsm_handle session,
     azihsm_algo_id algo_id,
@@ -691,6 +706,7 @@ void aes_unmask_corrupted_blob_fails_common(
     ASSERT_EQ(unmasked_key, 0);
 }
 
+// Common test function to test AES key unwrapping with corrupted wrapped blob and expect failure
 void aes_key_unwrap_corrupted_fails_common(
     azihsm_handle session,
     azihsm_key_kind key_kind,
@@ -719,7 +735,6 @@ void aes_key_unwrap_corrupted_fails_common(
         std::vector<uint8_t> key1_plain(key_bytes, 0x11);
         std::vector<uint8_t> key2_plain(key_bytes, 0x22);
         wrapped_data = build_xts_wrapped_blob(wrapping_pub_key, key1_plain, key2_plain);
-        ASSERT_FALSE(wrapped_data.empty());
     }
     else if (key_kind == AZIHSM_KEY_KIND_AES_GCM)
     {
@@ -736,6 +751,8 @@ void aes_key_unwrap_corrupted_fails_common(
 
         wrapped_data = wrap_local_aes_key(wrapping_pub_key, local_aes_key, bits, oaep_params);
     }
+
+    ASSERT_FALSE(wrapped_data.empty());
 
     // Corrupt wrapped data (corrupts header in case of XTS)
     wrapped_data[0] ^= 0xFF;
@@ -775,6 +792,7 @@ void aes_key_unwrap_corrupted_fails_common(
     ASSERT_EQ(unwrapped_key, 0);
 }
 
+// Common test function to test AES key unwrapping with wrong algorithm parameters and expect failure
 void aes_unwrap_wrong_algo_fails_common(
     azihsm_handle session,
     azihsm_key_kind key_kind,
@@ -805,7 +823,6 @@ void aes_unwrap_wrong_algo_fails_common(
         std::vector<uint8_t> key1_plain(key_bytes, 0x11);
         std::vector<uint8_t> key2_plain(key_bytes, 0x22);
         wrapped_data = build_xts_wrapped_blob(wrapping_pub_key, key1_plain, key2_plain);
-        ASSERT_FALSE(wrapped_data.empty());
     }
     else
     {
@@ -813,6 +830,8 @@ void aes_unwrap_wrong_algo_fails_common(
 
         wrapped_data = wrap_local_aes_key(wrapping_pub_key, local_aes_key, bits, oaep_params);
     }
+
+    ASSERT_FALSE(wrapped_data.empty());
 
     azihsm_algo_rsa_aes_key_wrap_params unwrap_params =
         build_rsa_aes_key_unwrap_params(oaep_params, key_kind, bits);
@@ -853,6 +872,7 @@ void aes_unwrap_wrong_algo_fails_common(
     ASSERT_EQ(unwrapped_key, 0);
 }
 
+// Common test function to test unmasked key is functional and independent of the original key
 void aes_unmasked_key_independent_handle_common(
     azihsm_handle session,
     azihsm_algo_id algo_id,
@@ -948,6 +968,7 @@ void aes_unmasked_key_independent_handle_common(
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 }
 
+// Common test function to test AES key unwrapping with truncated wrapped blob and expect failure
 void aes_unwrap_truncated_blob_fails_common(
     azihsm_handle session,
     azihsm_key_kind key_kind,
@@ -975,7 +996,6 @@ void aes_unwrap_truncated_blob_fails_common(
         std::vector<uint8_t> key1_plain(key_bytes, 0x11);
         std::vector<uint8_t> key2_plain(key_bytes, 0x22);
         wrapped_data = build_xts_wrapped_blob(wrapping_pub_key, key1_plain, key2_plain);
-        ASSERT_FALSE(wrapped_data.empty());
     }
     else
     {
@@ -983,6 +1003,8 @@ void aes_unwrap_truncated_blob_fails_common(
 
         wrapped_data = wrap_local_aes_key(wrapping_pub_key, local_aes_key, bits, oaep_params);
     }
+
+    ASSERT_FALSE(wrapped_data.empty());
 
     // Truncate the wrapped blob
     wrapped_data.resize(wrapped_data.size() - 8);
@@ -1022,6 +1044,7 @@ void aes_unwrap_truncated_blob_fails_common(
     ASSERT_EQ(unwrapped_key, 0);
 }
 
+// Common test function to test AES key unwrapping with mismatched bit length and expect failure
 void aes_unwrap_bits_mismatch_fails_common(
     azihsm_handle session,
     azihsm_key_kind key_kind,
@@ -1050,7 +1073,6 @@ void aes_unwrap_bits_mismatch_fails_common(
         std::vector<uint8_t> key1_plain(key_bytes, 0x11);
         std::vector<uint8_t> key2_plain(key_bytes, 0x22);
         wrapped_data = build_xts_wrapped_blob(wrapping_pub_key, key1_plain, key2_plain);
-        ASSERT_FALSE(wrapped_data.empty());
     }
     else
     {
@@ -1058,6 +1080,8 @@ void aes_unwrap_bits_mismatch_fails_common(
 
         wrapped_data = wrap_local_aes_key(wrapping_pub_key, local_aes_key, bits, oaep_params);
     }
+
+    ASSERT_FALSE(wrapped_data.empty());
 
     // Unwrap with mismatched bit length (128 instead of 256)
     azihsm_algo_rsa_aes_key_wrap_params unwrap_params =
@@ -1096,6 +1120,7 @@ void aes_unwrap_bits_mismatch_fails_common(
     ASSERT_EQ(unwrapped_key, 0);
 }
 
+// Common test function to test AES key unwrapping with correct parameters and verify the unwrapped key is functional
 void aes_unwrapped_key_roundtrip_common(
     azihsm_handle session,
     azihsm_key_kind key_kind,
@@ -1124,7 +1149,6 @@ void aes_unwrapped_key_roundtrip_common(
         std::vector<uint8_t> key1_plain(key_bytes, 0x11);
         std::vector<uint8_t> key2_plain(key_bytes, 0x22);
         wrapped_data = build_xts_wrapped_blob(wrapping_pub_key, key1_plain, key2_plain);
-        ASSERT_FALSE(wrapped_data.empty());
     }
     else
     {
@@ -1144,6 +1168,8 @@ void aes_unwrapped_key_roundtrip_common(
 
         wrapped_data = wrap_local_aes_key(wrapping_pub_key, local_aes_key, bits, oaep_params);
     }
+
+    ASSERT_FALSE(wrapped_data.empty());
 
     // Unwrap the key into the HSM
     azihsm_algo_rsa_aes_key_wrap_params unwrap_params =
