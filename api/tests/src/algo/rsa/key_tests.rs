@@ -651,7 +651,8 @@ fn run_rsa_truncated_ciphertext_test(
 
 /// Generates DER-encoded RSA private key of given byte size.
 fn generate_rsa_der(bytes: usize) -> Vec<u8> {
-    use azihsm_crypto::{ExportableKey, KeyGenerationOp};
+    use azihsm_crypto::ExportableKey;
+    use azihsm_crypto::KeyGenerationOp;
 
     let key = crypto::RsaPrivateKey::generate(bytes).expect("Failed to generate RSA key");
     key.to_vec().expect("Failed to export RSA key")
