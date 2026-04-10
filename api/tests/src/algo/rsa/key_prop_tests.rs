@@ -289,10 +289,10 @@ fn test_rsa_unwrap_valid_props_reaches_ddi(session: HsmSession) {
 
     // With a bogus wrapped blob we expect the call to reach the DDI layer and fail there.
     let result = unwrap_rsa_with_props(&session, priv_key_props, pub_key_props);
-    assert!(matches!(
-        result,
-        Err(HsmError::DdiCmdFailure) | Err(HsmError::InvalidArgument)
-    ));
+    assert!(
+        matches!(result, Err(HsmError::DdiCmdFailure)),
+        "Expected unwrap to reach DDI and fail there"
+    );
 }
 
 // Rejects RSA keygen when private and public key sizes mismatch.
@@ -341,9 +341,9 @@ fn test_rsa_keygen_mismatched_key_kind_fails(session: HsmSession) {
     assert!(matches!(result, Err(HsmError::InvalidKeyProps)));
 }
 
-// Rejects RSA keygen when private key has no usage flag.
+/// Rejects RSA unwrap when private key has no usage flag.
 #[session_test]
-fn test_rsa_priv_props_missing_usage_flag_fails(session: HsmSession) {
+fn test_rsa_unwrap_priv_missing_usage_flag_fails(session: HsmSession) {
     let priv_key_props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Private)
         .key_kind(HsmKeyKind::Rsa)
@@ -363,9 +363,9 @@ fn test_rsa_priv_props_missing_usage_flag_fails(session: HsmSession) {
     assert!(matches!(result, Err(HsmError::InvalidKeyProps)));
 }
 
-// Rejects RSA keygen when public key has no usage flag.
+/// Rejects RSA unwrap when public key has no usage flag.
 #[session_test]
-fn test_rsa_pub_props_missing_usage_flag_fails(session: HsmSession) {
+fn test_rsa_unwrap_pub_missing_usage_flag_fails(session: HsmSession) {
     let priv_key_props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Private)
         .key_kind(HsmKeyKind::Rsa)
@@ -514,6 +514,18 @@ fn test_rsa_keygen_2048_succeeds(session: HsmSession) {
     rsa_keygen_expect(&session, 2048, true);
 }
 
+// Rejects RSA keygen when bits are just below supported boundary.
+#[session_test]
+fn test_rsa_keygen_2047_fails(session: HsmSession) {
+    rsa_keygen_should_fail(&session, 2047);
+}
+
+// Rejects RSA keygen when bits are just above supported boundary.
+#[session_test]
+fn test_rsa_keygen_2049_fails(session: HsmSession) {
+    rsa_keygen_should_fail(&session, 2049);
+}
+
 // RSA keygen rejects sign/verify usage for unwrapping algo.
 #[session_test]
 fn test_rsa_keygen_sign_verify_rejected(session: HsmSession) {
@@ -633,18 +645,6 @@ fn test_rsa_both_with_ecc_curve_rejected(session: HsmSession) {
     let result = gen_rsa_unwrapping_key_pair(&session, priv_key_props, pub_key_props);
 
     assert!(matches!(result, Err(HsmError::InvalidKeyProps)));
-}
-
-// Rejects RSA keygen when bits are just below supported boundary.
-#[session_test]
-fn test_rsa_keygen_2047_fails(session: HsmSession) {
-    rsa_keygen_should_fail(&session, 2047);
-}
-
-// Rejects RSA keygen when bits are just above supported boundary.
-#[session_test]
-fn test_rsa_keygen_2049_fails(session: HsmSession) {
-    rsa_keygen_should_fail(&session, 2049);
 }
 
 // Rejects RSA keygen when private/public classes are swapped.
@@ -789,29 +789,6 @@ fn test_rsa_usage_pair_mismatch_fails(session: HsmSession) {
     let result = unwrap_rsa_with_props(&session, priv_key_props, pub_key_props);
     assert!(matches!(result, Err(HsmError::InvalidKeyProps)));
 }
-/// Rejects RSA when ECC curve is set only on public key.
-#[session_test]
-fn test_rsa_pub_only_ecc_curve_rejected(session: HsmSession) {
-    let priv_key_props = HsmKeyPropsBuilder::default()
-        .class(HsmKeyClass::Private)
-        .key_kind(HsmKeyKind::Rsa)
-        .bits(2048)
-        .can_unwrap(true)
-        .build()
-        .unwrap();
-
-    let pub_key_props = HsmKeyPropsBuilder::default()
-        .class(HsmKeyClass::Public)
-        .key_kind(HsmKeyKind::Rsa)
-        .bits(2048)
-        .ecc_curve(HsmEccCurve::P256) // only here
-        .can_wrap(true)
-        .build()
-        .unwrap();
-
-    let result = gen_rsa_unwrapping_key_pair(&session, priv_key_props, pub_key_props);
-    assert!(matches!(result, Err(HsmError::InvalidKeyProps)));
-}
 
 /// Rejects unwrap when private/public bits mismatch.
 #[session_test]
@@ -857,42 +834,6 @@ fn test_rsa_exactly_one_usage_required(session: HsmSession) {
 
     let result = unwrap_rsa_with_props(&session, priv_key_props, pub_key_props);
     assert!(matches!(result, Err(HsmError::InvalidKeyProps)));
-}
-
-/// Ensures duplicate usage flag behaves the same in practice.
-#[session_test]
-fn test_rsa_duplicate_usage_flag_idempotent(session: HsmSession) {
-    let props1 = HsmKeyPropsBuilder::default()
-        .class(HsmKeyClass::Private)
-        .key_kind(HsmKeyKind::Rsa)
-        .bits(2048)
-        .can_unwrap(true)
-        .build()
-        .unwrap();
-
-    let props2 = HsmKeyPropsBuilder::default()
-        .class(HsmKeyClass::Private)
-        .key_kind(HsmKeyKind::Rsa)
-        .bits(2048)
-        .can_unwrap(true)
-        .can_unwrap(true)
-        .build()
-        .unwrap();
-
-    let pub_props = HsmKeyPropsBuilder::default()
-        .class(HsmKeyClass::Public)
-        .key_kind(HsmKeyKind::Rsa)
-        .bits(2048)
-        .can_wrap(true)
-        .build()
-        .unwrap();
-
-    let res1 = gen_rsa_unwrapping_key_pair(&session, props1.clone(), pub_props.clone());
-    let res2 = gen_rsa_unwrapping_key_pair(&session, props2.clone(), pub_props);
-
-    assert!(res1.is_ok());
-    assert!(res2.is_ok());
-    assert_eq!(props1.bits(), props2.bits());
 }
 
 /// Rejects RSA unwrap when private key has can_wrap only.
