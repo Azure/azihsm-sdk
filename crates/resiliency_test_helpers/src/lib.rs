@@ -68,9 +68,15 @@ impl ResiliencyStorage for FileStorage {
         let path = self.key_path(key);
         let tmp_path = self.dir.join(format!(".{key}.tmp"));
         let mut file = fs::File::create(&tmp_path).map_err(|_| HsmError::InternalError)?;
-        file.write_all(data).map_err(|_| HsmError::InternalError)?;
-        if self.sync_on_write {
-            file.sync_all().map_err(|_| HsmError::InternalError)?;
+        if file.write_all(data).is_err() {
+            drop(file);
+            let _ = fs::remove_file(&tmp_path);
+            return Err(HsmError::InternalError);
+        }
+        if self.sync_on_write && file.sync_all().is_err() {
+            drop(file);
+            let _ = fs::remove_file(&tmp_path);
+            return Err(HsmError::InternalError);
         }
         // Atomically rename the temp file to the target, replacing it if
         // it already exists.  On Linux rename(2) does this natively; on
