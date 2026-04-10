@@ -114,7 +114,9 @@ fn rename_with_replace(from: &Path, to: &Path) -> std::io::Result<()> {
 
         const MOVEFILE_REPLACE_EXISTING: u32 = 0x1;
 
-        extern "system" {
+        // SAFETY: Declaring a well-known Win32 API with correct signature.
+        #[allow(unsafe_code)]
+        unsafe extern "system" {
             fn MoveFileExW(
                 existing_file_name: *const u16,
                 new_file_name: *const u16,
