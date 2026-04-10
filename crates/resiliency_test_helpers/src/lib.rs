@@ -7,6 +7,7 @@
 use std::fs;
 use std::io::Read;
 use std::io::Write;
+use std::path::Path;
 use std::path::PathBuf;
 
 use azihsm_api::*;
@@ -71,31 +72,20 @@ impl ResiliencyStorage for FileStorage {
         if self.sync_on_write {
             file.sync_all().map_err(|_| HsmError::InternalError)?;
         }
-        // On Linux, rename(2) atomically replaces an existing target.
-        // On Windows, std::fs::rename fails if the target exists, so
-        // fall back to a remove+rename sequence.  The remove+rename is
-        // safe without an additional lock because all callers hold the
-        // cross-process ResiliencyLock (via ResiliencyLockGuard).
-        if let Err(e) = fs::rename(&tmp_path, &path) {
-            // Only handle the "destination already exists" case with a
-            // remove+rename fallback. For other errors, avoid deleting
-            // the existing file and return an internal error instead.
-            if e.kind() == std::io::ErrorKind::AlreadyExists {
-                // Rename failed (likely Windows — target exists).
-                // Remove the destination and retry.
-                let _ = fs::remove_file(&path);
-                fs::rename(&tmp_path, &path).map_err(|_| HsmError::InternalError)?;
-            } else {
-                return Err(HsmError::InternalError);
-            }
-        }
+        // Atomically rename the temp file to the target, replacing it if
+        // it already exists.  On Linux rename(2) does this natively; on
+        // Windows we use MoveFileExW with MOVEFILE_REPLACE_EXISTING to
+        // avoid the non-atomic remove+rename sequence.
+        rename_with_replace(&tmp_path, &path).map_err(|_| {
+            let _ = fs::remove_file(&tmp_path);
+            HsmError::InternalError
+        })?;
         if self.sync_on_write {
             // Sync the directory to make the rename durable on POSIX.
             // Without this, a crash after rename could revert the
             // directory entry, leaving the old file (or no file).
-            if let Ok(dir) = fs::File::open(&self.dir) {
-                let _ = dir.sync_all();
-            }
+            let dir = fs::File::open(&self.dir).map_err(|_| HsmError::InternalError)?;
+            dir.sync_all().map_err(|_| HsmError::InternalError)?;
         }
         Ok(())
     }
@@ -105,6 +95,50 @@ impl ResiliencyStorage for FileStorage {
         // No error if key doesn't exist (matches trait contract).
         let _ = fs::remove_file(&path);
         Ok(())
+    }
+}
+
+/// Atomically rename `from` to `to`, replacing `to` if it exists.
+///
+/// On Unix, `std::fs::rename` already replaces the target atomically.
+/// On Windows, `std::fs::rename` fails when the target exists, so we
+/// call `MoveFileExW` with `MOVEFILE_REPLACE_EXISTING` instead.
+fn rename_with_replace(from: &Path, to: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        fs::rename(from, to)
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+
+        const MOVEFILE_REPLACE_EXISTING: u32 = 0x1;
+
+        extern "system" {
+            fn MoveFileExW(
+                existing_file_name: *const u16,
+                new_file_name: *const u16,
+                flags: u32,
+            ) -> i32;
+        }
+
+        let from_wide: Vec<u16> = from.as_os_str().encode_wide().chain(Some(0)).collect();
+        let to_wide: Vec<u16> = to.as_os_str().encode_wide().chain(Some(0)).collect();
+
+        // SAFETY: Both pointers are valid null-terminated wide strings.
+        #[allow(unsafe_code)]
+        let ret = unsafe {
+            MoveFileExW(
+                from_wide.as_ptr(),
+                to_wide.as_ptr(),
+                MOVEFILE_REPLACE_EXISTING,
+            )
+        };
+        if ret == 0 {
+            Err(std::io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
     }
 }
 
