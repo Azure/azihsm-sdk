@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#include <cstring>
 #include <gtest/gtest.h>
 #include <vector>
 
@@ -371,7 +372,6 @@ void aes_key_gen_persistent_common(
 
 void aes_key_unwrap_common(
     azihsm_handle session,
-    azihsm_algo_id algo_id,
     azihsm_key_kind key_kind,
     uint32_t bits
 )
