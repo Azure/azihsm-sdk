@@ -808,8 +808,6 @@ void aes_unwrap_wrong_algo_fails_common(
     ASSERT_NE(wrapping_priv_key.get(), 0);
     ASSERT_NE(wrapping_pub_key.get(), 0);
 
-    std::vector<uint8_t> local_aes_key(32, 0x11);
-
     azihsm_algo_rsa_pkcs_oaep_params oaep_params = build_oaep_sha256_params();
 
     std::vector<uint8_t> wrapped_data;
@@ -838,7 +836,6 @@ void aes_unwrap_wrong_algo_fails_common(
     wrong_algo.params = &unwrap_params;
     wrong_algo.len = sizeof(unwrap_params);
 
-    // Wrong key kind: use AES_XTS instead of AES to trigger wrong algorithm path
     azihsm_key_class key_class = AZIHSM_KEY_CLASS_SECRET;
     bool can_encrypt = true;
     bool can_decrypt = true;
