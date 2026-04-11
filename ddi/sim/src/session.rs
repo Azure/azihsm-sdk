@@ -1049,6 +1049,10 @@ impl UserSessionInner {
         };
 
         let vault = self.get_vault()?;
+
+        let mut flags = flags;
+        flags.set_local(true); // Mark the key as locally generated.
+
         let key_num = vault.add_key(
             self.app_id,
             key_kind,
@@ -1158,13 +1162,11 @@ impl UserSessionInner {
             }
         };
 
-        let key_num = vault.add_key(
-            self.app_id,
-            target_key_kind,
-            key,
-            target_key_flags,
-            sess_id_or_key_tag,
-        )?;
+        let mut flags = target_key_flags;
+        flags.set_local(true); // Mark the key as locally generated.
+
+        let key_num =
+            vault.add_key(self.app_id, target_key_kind, key, flags, sess_id_or_key_tag)?;
 
         Ok(key_num)
     }
@@ -1274,13 +1276,11 @@ impl UserSessionInner {
             }
         };
 
-        let key_num = vault.add_key(
-            self.app_id,
-            target_key_kind,
-            key,
-            target_key_flags,
-            sess_id_or_key_tag,
-        )?;
+        let mut flags = target_key_flags;
+        flags.set_local(true); // Mark the key as locally generated.
+
+        let key_num =
+            vault.add_key(self.app_id, target_key_kind, key, flags, sess_id_or_key_tag)?;
 
         Ok(key_num)
     }

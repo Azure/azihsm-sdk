@@ -634,12 +634,9 @@ fn test_change_pin_multi_threaded_single_winner() {
             let mut threads_passed = 0;
 
             for thread in thread_list {
-                let result = thread.join();
-
-                if result.is_ok() {
-                    threads_passed += 1;
-                } else {
-                    threads_failed += 1;
+                match thread.join() {
+                    Ok(Ok(())) => threads_passed += 1,
+                    _ => threads_failed += 1,
                 }
             }
 
@@ -675,13 +672,13 @@ fn test_thread_fn(
     session_id: u16,
     new_pin: DdiEncryptedPin,
     pub_key: DdiDerPublicKey,
-) {
+) -> DdiResult<()> {
     helper_change_pin(
         dev,
         Some(session_id),
         Some(DdiApiRev { major: 1, minor: 0 }),
         new_pin,
         pub_key,
-    )
-    .unwrap();
+    )?;
+    Ok(())
 }

@@ -32,6 +32,7 @@ members = [
 # Internal crates
 azihsm_api = { path = "api/lib" }
 azihsm_api_native = { path = "api/native" }
+azihsm_api_tests = { path = "api/tests" }
 azihsm_api_tests_macro = { path = "api/tests/macro" }
 azihsm_cred_encrypt = { path = "crates/cred_encrypt" }
 azihsm_crypto = { path = "crates/crypto" }
