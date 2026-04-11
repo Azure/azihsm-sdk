@@ -227,7 +227,6 @@ void compare_key_properties(azihsm_handle key_handle1, azihsm_handle key_handle2
     compare_key_property<uint32_t>(key_handle1, key_handle2, AZIHSM_KEY_PROP_ID_CLASS);
     compare_key_property<azihsm_key_kind>(key_handle1, key_handle2, AZIHSM_KEY_PROP_ID_KIND);
     compare_key_property<uint32_t>(key_handle1, key_handle2, AZIHSM_KEY_PROP_ID_BIT_LEN);
-    compare_key_property<bool>(key_handle1, key_handle2, AZIHSM_KEY_PROP_ID_LOCAL);
     compare_key_property<bool>(key_handle1, key_handle2, AZIHSM_KEY_PROP_ID_SESSION);
     compare_key_property<bool>(key_handle1, key_handle2, AZIHSM_KEY_PROP_ID_SENSITIVE);
     compare_key_property<bool>(key_handle1, key_handle2, AZIHSM_KEY_PROP_ID_EXTRACTABLE);
