@@ -188,18 +188,19 @@ static void azihsm_ossl_keyexch_freectx(void *kectx)
 static void *azihsm_ossl_keyexch_dupctx(void *kectx)
 {
     AZIHSM_KEYEXCH_CTX *ctx = (AZIHSM_KEYEXCH_CTX *)kectx;
-    AZIHSM_KEYEXCH_CTX *dup;
+    AZIHSM_KEYEXCH_CTX *dup = NULL;
+    bool failed = false;
 
     if (ctx == NULL)
     {
-        return NULL;
+        goto cleanup;
     }
 
     dup = OPENSSL_zalloc(sizeof(AZIHSM_KEYEXCH_CTX));
     if (dup == NULL)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
-        return NULL;
+        goto cleanup;
     }
 
     memcpy(dup, ctx, sizeof(AZIHSM_KEYEXCH_CTX));
@@ -210,6 +211,7 @@ static void *azihsm_ossl_keyexch_dupctx(void *kectx)
         if (dup->peer_key == NULL)
         {
             ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
+            failed = true;
             goto cleanup;
         }
         memcpy(dup->peer_key, ctx->peer_key, sizeof(AZIHSM_EC_KEY));
@@ -221,6 +223,7 @@ static void *azihsm_ossl_keyexch_dupctx(void *kectx)
             if (dup->peer_key->pub_key_data == NULL)
             {
                 ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
+                failed = true;
                 goto cleanup;
             }
             memcpy(
@@ -231,16 +234,15 @@ static void *azihsm_ossl_keyexch_dupctx(void *kectx)
         }
     }
 
-    return dup;
-
 cleanup:
     /* OPENSSL_free is NULL-safe — call unconditionally */
-    if (dup != NULL)
+    if (failed && dup != NULL)
     {
         OPENSSL_free(dup->peer_key);
         OPENSSL_free(dup);
+        dup = NULL;
     }
-    return NULL;
+    return dup;
 }
 
 static int azihsm_ossl_keyexch_set_ctx_params(void *kectx, const OSSL_PARAM params[])

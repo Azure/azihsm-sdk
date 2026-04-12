@@ -252,18 +252,19 @@ static void azihsm_ossl_hkdf_freectx(void *kctx)
 static void *azihsm_ossl_hkdf_dupctx(void *kctx)
 {
     AZIHSM_HKDF_CTX *ctx = (AZIHSM_HKDF_CTX *)kctx;
-    AZIHSM_HKDF_CTX *dup;
+    AZIHSM_HKDF_CTX *dup = NULL;
+    bool failed = false;
 
     if (ctx == NULL)
     {
-        return NULL;
+        goto cleanup;
     }
 
     dup = OPENSSL_zalloc(sizeof(AZIHSM_HKDF_CTX));
     if (dup == NULL)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
-        return NULL;
+        goto cleanup;
     }
 
     memcpy(dup, ctx, sizeof(AZIHSM_HKDF_CTX));
@@ -276,6 +277,7 @@ static void *azihsm_ossl_hkdf_dupctx(void *kctx)
         if (dup->ikm_data == NULL)
         {
             ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
+            failed = true;
             goto cleanup;
         }
         memcpy(dup->ikm_data, ctx->ikm_data, ctx->ikm_data_len);
@@ -289,6 +291,7 @@ static void *azihsm_ossl_hkdf_dupctx(void *kctx)
         if (dup->salt == NULL)
         {
             ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
+            failed = true;
             goto cleanup;
         }
         memcpy(dup->salt, ctx->salt, ctx->salt_len);
@@ -302,6 +305,7 @@ static void *azihsm_ossl_hkdf_dupctx(void *kctx)
         if (dup->info == NULL)
         {
             ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
+            failed = true;
             goto cleanup;
         }
         memcpy(dup->info, ctx->info, ctx->info_len);
@@ -311,14 +315,21 @@ static void *azihsm_ossl_hkdf_dupctx(void *kctx)
     dup->ikm_loaded = false;
     dup->ikm_handle = 0;
 
-    return dup;
-
 cleanup:
-    OPENSSL_clear_free(dup->ikm_data, dup->ikm_data_len);
-    OPENSSL_clear_free(dup->salt, dup->salt_len);
-    OPENSSL_clear_free(dup->info, dup->info_len);
-    OPENSSL_clear_free(dup, sizeof(AZIHSM_HKDF_CTX));
-    return NULL;
+    /* On error (dup allocation succeeded but a deep-copy failed), free partial state.
+     * OPENSSL_clear_free is NULL-safe — safe to call unconditionally. */
+    if (failed)
+    {
+        if (dup != NULL)
+        {
+            OPENSSL_clear_free(dup->ikm_data, dup->ikm_data_len);
+            OPENSSL_clear_free(dup->salt, dup->salt_len);
+            OPENSSL_clear_free(dup->info, dup->info_len);
+            OPENSSL_clear_free(dup, sizeof(AZIHSM_HKDF_CTX));
+        }
+        return NULL;
+    }
+    return dup;
 }
 
 static void azihsm_ossl_hkdf_reset(void *kctx)

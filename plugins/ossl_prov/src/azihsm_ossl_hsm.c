@@ -585,7 +585,8 @@ static azihsm_status der_to_uncompressed_point(
 
     if (pub_key_der == NULL || pub_key_der->ptr == NULL)
     {
-        return AZIHSM_STATUS_INVALID_ARGUMENT;
+        status = AZIHSM_STATUS_INVALID_ARGUMENT;
+        goto cleanup;
     }
 
     der_ptr = pub_key_der->ptr;
@@ -771,9 +772,7 @@ azihsm_status compute_pota_endorsement(
 
     status = der_to_uncompressed_point(pid_pub_key_der, uncompressed_point);
     if (status != AZIHSM_STATUS_SUCCESS)
-    {
-        return status;
-    }
+        goto cleanup;
 
     status = sign_with_pota_key(
         priv_key_buf->ptr,
@@ -782,12 +781,9 @@ azihsm_status compute_pota_endorsement(
         sizeof(uncompressed_point),
         sig_out
     );
-    if (status != AZIHSM_STATUS_SUCCESS)
-    {
-        return status;
-    }
 
-    return AZIHSM_STATUS_SUCCESS;
+cleanup:
+    return status;
 }
 
 azihsm_status azihsm_open_device_and_session(
@@ -828,7 +824,8 @@ azihsm_status azihsm_open_device_and_session(
             ERR_R_PASSED_NULL_PARAMETER,
             "azihsm_open_device_and_session: NULL argument"
         );
-        return AZIHSM_STATUS_INVALID_ARGUMENT;
+        status = AZIHSM_STATUS_INVALID_ARGUMENT;
+        goto cleanup;
     }
 
     /* Use API revision from configuration */
@@ -1206,7 +1203,8 @@ azihsm_status azihsm_import_key_pair(
     if (provctx == NULL || input_key_file == NULL || priv_key_prop_list == NULL ||
         pub_key_prop_list == NULL || out_priv == NULL || out_pub == NULL)
     {
-        return AZIHSM_STATUS_INVALID_ARGUMENT;
+        status = AZIHSM_STATUS_INVALID_ARGUMENT;
+        goto cleanup;
     }
 
     /* 1. Read the input file from disk */
@@ -1277,7 +1275,8 @@ azihsm_status azihsm_unwrap_key_pair(
     if (provctx == NULL || wrapped_key_file == NULL || priv_key_prop_list == NULL ||
         pub_key_prop_list == NULL || out_priv == NULL || out_pub == NULL)
     {
-        return AZIHSM_STATUS_INVALID_ARGUMENT;
+        status = AZIHSM_STATUS_INVALID_ARGUMENT;
+        goto cleanup;
     }
 
     /* 1. Read the wrapped blob from disk */

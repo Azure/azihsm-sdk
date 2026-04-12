@@ -75,6 +75,7 @@ static int ecdsa_raw_to_der(
     size_t *out_der_len
 )
 {
+    int ret = OSSL_FAILURE;
     ECDSA_SIG *esig = NULL;
     BIGNUM *r = NULL, *s = NULL;
     size_t half = raw_len / 2;
@@ -83,7 +84,7 @@ static int ecdsa_raw_to_der(
 
     if (raw_len == 0 || (raw_len & 1) != 0)
     {
-        return OSSL_FAILURE;
+        goto cleanup;
     }
 
     r = BN_bin2bn(raw, (int)half, NULL);
@@ -115,14 +116,14 @@ static int ecdsa_raw_to_der(
 
     *out_der = der;
     *out_der_len = (size_t)der_len;
-    ECDSA_SIG_free(esig);
-    return OSSL_SUCCESS;
+    ret = OSSL_SUCCESS;
 
 cleanup:
+    /* OpenSSL free functions are NULL-safe — call unconditionally */
     BN_free(r);
     BN_free(s);
     ECDSA_SIG_free(esig);
-    return OSSL_FAILURE;
+    return ret;
 }
 
 /*
