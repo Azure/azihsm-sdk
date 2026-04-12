@@ -1411,10 +1411,8 @@ void aes_wrong_key_fails_common(
     }
     else if (key_kind == AZIHSM_KEY_KIND_AES_GCM)
     {
-        // Encrypt with key1
-        uint8_t iv[12] = { 1 };
-        azihsm_algo_aes_gcm_params gcm_params{};
-        std::memcpy(gcm_params.iv, iv, sizeof(iv));
+        iv = std::vector<uint8_t>(12, 1);
+        std::memcpy(gcm_params.iv, iv.data(), iv.size());
         std::memset(gcm_params.tag, 0, sizeof(gcm_params.tag));
         gcm_params.aad = nullptr;
 
@@ -1428,6 +1426,7 @@ void aes_wrong_key_fails_common(
     azihsm_buffer input{ plaintext.data(), static_cast<uint32_t>(plaintext.size()) };
     azihsm_buffer output{ nullptr, 0 };
 
+    // Encrypt with key1
     err = azihsm_crypt_encrypt(&enc_algo, key1, &input, &output);
     ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
     ASSERT_GT(output.len, 0);
