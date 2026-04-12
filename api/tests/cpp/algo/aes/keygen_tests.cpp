@@ -1156,7 +1156,12 @@ TEST_F(azihsm_aes_keygen, aes_gcm_unwrap_bits_mismatch_fails)
 TEST_F(azihsm_aes_keygen, aes_gcm_wrong_key_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        aes_wrong_key_fails_common(session, AZIHSM_ALGO_ID_AES_GCM_KEY_GEN, AZIHSM_KEY_KIND_AES_GCM, 256);
+        aes_wrong_key_fails_common(
+            session,
+            AZIHSM_ALGO_ID_AES_GCM_KEY_GEN,
+            AZIHSM_KEY_KIND_AES_GCM,
+            256
+        );
     });
 }
 
