@@ -201,11 +201,3 @@ void aes_unwrapped_key_roundtrip_common(
     azihsm_key_kind key_kind,
     uint32_t bits
 );
-
-/// Common test function to test decryption with wrong key handle fails for AES keys
-void aes_wrong_key_fails_common(
-    azihsm_handle session,
-    azihsm_algo_id algo_id,
-    azihsm_key_kind key_kind,
-    uint32_t bits
-);

@@ -391,14 +391,6 @@ TEST_F(azihsm_aes_keygen, aes_unwrap_bits_mismatch_fails)
     });
 }
 
-/// verifies AES decryption fails when decrypting with a different key than was used to encrypt
-TEST_F(azihsm_aes_keygen, aes_wrong_key_fails)
-{
-    part_list_.for_each_session([](azihsm_handle session) {
-        aes_wrong_key_fails_common(session, AZIHSM_ALGO_ID_AES_KEY_GEN, AZIHSM_KEY_KIND_AES, 256);
-    });
-}
-
 /// verifies AES unmask fails when unmasking an AES masked blob with the wrong key kind (AES-GCM)
 TEST_F(azihsm_aes_keygen, aes_unmask_wrong_kind_fails)
 {
@@ -1153,15 +1145,102 @@ TEST_F(azihsm_aes_keygen, aes_gcm_unwrap_bits_mismatch_fails)
 }
 
 /// verifies AES-GCM decryption fails when decrypting with a different key than was used to encrypt
+/// note: AES-GCM-specific test since AES-CBC & AES-XTS can still decrypt with wrong key
 TEST_F(azihsm_aes_keygen, aes_gcm_wrong_key_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        aes_wrong_key_fails_common(
-            session,
-            AZIHSM_ALGO_ID_AES_GCM_KEY_GEN,
-            AZIHSM_KEY_KIND_AES_GCM,
-            256
-        );
+        // Generate two keys
+        azihsm_algo keygen_algo{};
+        keygen_algo.id = AZIHSM_ALGO_ID_AES_GCM_KEY_GEN;
+        keygen_algo.params = nullptr;
+        keygen_algo.len = 0;
+
+        azihsm_key_kind key_kind = AZIHSM_KEY_KIND_AES_GCM;
+        azihsm_key_class key_class = AZIHSM_KEY_CLASS_SECRET;
+        uint32_t bits = 256;
+        bool is_session = true;
+        bool can_encrypt = true;
+        bool can_decrypt = true;
+
+        std::vector<azihsm_key_prop> props_vec = {
+            { .id = AZIHSM_KEY_PROP_ID_KIND, .val = &key_kind, .len = sizeof(key_kind) },
+            { .id = AZIHSM_KEY_PROP_ID_CLASS, .val = &key_class, .len = sizeof(key_class) },
+            { .id = AZIHSM_KEY_PROP_ID_BIT_LEN, .val = &bits, .len = sizeof(bits) },
+            { .id = AZIHSM_KEY_PROP_ID_SESSION, .val = &is_session, .len = sizeof(is_session) },
+            { .id = AZIHSM_KEY_PROP_ID_ENCRYPT, .val = &can_encrypt, .len = sizeof(can_encrypt) },
+            { .id = AZIHSM_KEY_PROP_ID_DECRYPT, .val = &can_decrypt, .len = sizeof(can_decrypt) }
+        };
+
+        azihsm_key_prop_list prop_list{ .props = props_vec.data(),
+                                        .count = static_cast<uint32_t>(props_vec.size()) };
+
+        auto_key key1;
+        azihsm_status err = azihsm_key_gen(session, &keygen_algo, &prop_list, key1.get_ptr());
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(key1, 0);
+
+        auto_key key2;
+        err = azihsm_key_gen(session, &keygen_algo, &prop_list, key2.get_ptr());
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_NE(key2, 0);
+
+        std::vector<uint8_t> plaintext;
+        std::vector<uint8_t> iv;
+        azihsm_algo_aes_gcm_params gcm_params{};
+        azihsm_algo enc_algo{};
+
+        iv = std::vector<uint8_t>(12, 1);
+        std::memcpy(gcm_params.iv, iv.data(), iv.size());
+        std::memset(gcm_params.tag, 0, sizeof(gcm_params.tag));
+        gcm_params.aad = nullptr;
+
+        enc_algo.id = AZIHSM_ALGO_ID_AES_GCM;
+        enc_algo.params = &gcm_params;
+        enc_algo.len = sizeof(gcm_params);
+
+        plaintext = { 'h', 'e', 'l', 'l', 'o', ' ', 'w', 'o', 'r', 'l', 'd' };
+
+        azihsm_buffer input{ plaintext.data(), static_cast<uint32_t>(plaintext.size()) };
+        azihsm_buffer output{ nullptr, 0 };
+
+        // Encrypt with key1
+        err = azihsm_crypt_encrypt(&enc_algo, key1, &input, &output);
+        ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+        ASSERT_GT(output.len, 0);
+
+        std::vector<uint8_t> ciphertext(output.len);
+        output.ptr = ciphertext.data();
+        err = azihsm_crypt_encrypt(&enc_algo, key1, &input, &output);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ciphertext.resize(output.len);
+
+        azihsm_algo dec_algo{};
+
+        // Save the tag from encryption
+        uint8_t saved_tag[16];
+        std::memcpy(saved_tag, gcm_params.tag, sizeof(saved_tag));
+
+        // Attempt decryption with key2 (wrong key)
+        std::memcpy(gcm_params.iv, iv.data(), iv.size());
+        std::memcpy(gcm_params.tag, saved_tag, sizeof(saved_tag));
+
+        dec_algo.id = AZIHSM_ALGO_ID_AES_GCM;
+        dec_algo.params = &gcm_params;
+        dec_algo.len = sizeof(gcm_params);
+
+        azihsm_buffer cipher_buf{ ciphertext.data(), static_cast<uint32_t>(ciphertext.size()) };
+        azihsm_buffer plain_buf{ nullptr, 0 };
+
+        // Size query always succeeds
+        err = azihsm_crypt_decrypt(&dec_algo, key2, &cipher_buf, &plain_buf);
+        ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+        ASSERT_GT(plain_buf.len, 0);
+
+        // Actual decrypt should fail due to wrong key
+        std::vector<uint8_t> decrypted(plain_buf.len);
+        plain_buf.ptr = decrypted.data();
+        err = azihsm_crypt_decrypt(&dec_algo, key2, &cipher_buf, &plain_buf);
+        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
     });
 }
 
