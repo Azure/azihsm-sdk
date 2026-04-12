@@ -28,7 +28,7 @@ use azihsm_resiliency_test_helpers::FileLock;
 use azihsm_resiliency_test_helpers::FileStorage;
 use clap::Parser;
 use parking_lot::deadlock;
-use rand::Rng;
+use rand::RngExt;
 
 // ---------------------------------------------------------------------------
 // CLI
@@ -2287,11 +2287,11 @@ fn child_worker_thread(
         shmem.children_ready.fetch_add(1, Ordering::Release);
     }
 
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let mut triggered_stop = false;
 
     while !shmem.stop.load(Ordering::Relaxed) {
-        let op = ops[rng.gen_range(0..ops.len())];
+        let op = ops[rng.random_range(0..ops.len())];
 
         let result = match op {
             OpKind::AesCbcEncDec => exec_aes_cbc_enc_dec(&aes_key),

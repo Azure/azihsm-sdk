@@ -115,22 +115,22 @@ mod tests {
     use alloc::vec;
 
     use azihsm_ddi_mbor::*;
-    use rand::Rng;
+    use rand::RngExt;
 
     #[test]
     fn test_mbor_uint_len() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
 
         let mut acc = MborLenAccumulator::default();
-        rng.gen::<u8>().mbor_len(&mut acc);
+        rng.random::<u8>().mbor_len(&mut acc);
         assert_eq!(2, acc.len());
 
         let mut acc = MborLenAccumulator::default();
-        rng.gen::<u16>().mbor_len(&mut acc);
+        rng.random::<u16>().mbor_len(&mut acc);
         assert_eq!(3, acc.len());
 
         let mut acc = MborLenAccumulator::default();
-        rng.gen::<u32>().mbor_len(&mut acc);
+        rng.random::<u32>().mbor_len(&mut acc);
         assert_eq!(5, acc.len());
     }
     #[test]
@@ -151,8 +151,8 @@ mod tests {
     }
     #[test]
     fn test_mbor_slice_len() {
-        let mut rng = rand::thread_rng();
-        let data = &vec![rng.gen(); rng.gen_range(0..u16::MAX) as usize];
+        let mut rng = rand::rng();
+        let data = &vec![rng.random(); rng.random_range(0..u16::MAX) as usize];
         let slice = MborByteSlice(data);
         let mut acc = MborLenAccumulator::default();
         slice.mbor_len(&mut acc);
