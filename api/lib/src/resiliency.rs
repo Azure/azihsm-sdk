@@ -8,7 +8,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use rand::Rng;
+use rand::RngExt;
 use tracing::*;
 
 use crate::HsmError;
@@ -335,7 +335,7 @@ pub(crate) const BACKOFF_JITTER_MS: u64 = 2;
 /// duration.
 pub(crate) fn apply_backoff(attempt: u32, base_ms: u64, jitter_max_ms: u64) {
     let backoff_ms = base_ms.saturating_mul(1u64 << attempt.min(63));
-    let jitter_ms = rand::thread_rng().gen_range(0..=jitter_max_ms);
+    let jitter_ms = rand::rng().random_range(0..=jitter_max_ms);
     let total_ms = backoff_ms + jitter_ms;
     std::thread::sleep(Duration::from_millis(total_ms));
 }
