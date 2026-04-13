@@ -1171,3 +1171,103 @@ fn test_gcm_streaming_empty_aad_and_empty_plaintext(session: HsmSession) {
 
     assert!(decrypted.is_empty());
 }
+
+// ================================
+// Deleted-key validation tests
+// ================================
+
+/// Encrypt with a deleted AES-GCM key must return InvalidKey.
+#[session_test]
+fn test_gcm_encrypt_deleted_key_fails(session: HsmSession) {
+    let key = aes_gcm_generate_key(&session);
+    let key_clone = key.clone();
+
+    // Key should be valid before deletion.
+    assert!(
+        key.is_valid().is_ok(),
+        "key should be valid before deletion"
+    );
+
+    HsmKeyManager::delete_key(key_clone).expect("delete_key should succeed");
+
+    // Key should be invalid after deletion.
+    assert!(
+        matches!(key.is_valid(), Err(HsmError::InvalidKey)),
+        "key should be invalid after deletion",
+    );
+
+    let iv = test_iv();
+    let mut algo = new_gcm_encrypt_algo(&iv, None);
+    let result = HsmEncrypter::encrypt(&mut algo, &key, b"plaintext", None);
+
+    assert!(
+        matches!(result, Err(HsmError::InvalidKey)),
+        "encrypt with deleted key should return InvalidKey, got: {result:?}",
+    );
+}
+
+/// Decrypt with a deleted AES-GCM key must return InvalidKey.
+#[session_test]
+fn test_gcm_decrypt_deleted_key_fails(session: HsmSession) {
+    let key = aes_gcm_generate_key(&session);
+    let iv = test_iv();
+
+    // Encrypt first while key is still valid.
+    let (ciphertext, tag) = gcm_encrypt(&key, &iv, None, b"plaintext").expect("encrypt failed");
+
+    let key_clone = key.clone();
+    HsmKeyManager::delete_key(key_clone).expect("delete_key should succeed");
+
+    let mut algo = new_gcm_decrypt_algo(&iv, &tag, None);
+    let result = HsmDecrypter::decrypt(&mut algo, &key, &ciphertext, None);
+
+    assert!(
+        matches!(result, Err(HsmError::InvalidKey)),
+        "decrypt with deleted key should return InvalidKey, got: {result:?}",
+    );
+}
+
+/// Streaming encrypt_init with a deleted AES-GCM key must return InvalidKey.
+#[session_test]
+fn test_gcm_streaming_encrypt_init_deleted_key_fails(session: HsmSession) {
+    let key = aes_gcm_generate_streaming_key(&session);
+    let key_clone = key.clone();
+
+    HsmKeyManager::delete_key(key_clone).expect("delete_key should succeed");
+
+    let iv = test_iv();
+    let enc_algo = new_gcm_encrypt_algo(&iv, None);
+    //expect encrypt_init to fail since key is deleted
+    let result = HsmEncrypter::encrypt_init(enc_algo, key).err();
+
+    assert!(
+        matches!(result, Some(HsmError::InvalidKey)),
+        "encrypt_init with deleted key should return InvalidKey, got: {:?}",
+        result,
+    );
+}
+
+/// Streaming decrypt_init with a deleted AES-GCM key must return InvalidKey.
+#[session_test]
+fn test_gcm_streaming_decrypt_init_deleted_key_fails(session: HsmSession) {
+    let key = aes_gcm_generate_streaming_key(&session);
+    let iv = test_iv();
+
+    // Encrypt first while key is valid.
+    let (ciphertext, tag) =
+        gcm_encrypt_streaming(&key, &iv, None, b"streaming test", &[14]).unwrap();
+    let _ = ciphertext;
+
+    let key_clone = key.clone();
+    HsmKeyManager::delete_key(key_clone).expect("delete_key should succeed");
+
+    let dec_algo = new_gcm_decrypt_algo(&iv, &tag, None);
+    //expect decrypt_init to fail since key is deleted
+    let result = HsmDecrypter::decrypt_init(dec_algo, key).err();
+
+    assert!(
+        matches!(result, Some(HsmError::InvalidKey)),
+        "decrypt_init with deleted key should return InvalidKey, got: {:?}",
+        result,
+    );
+}

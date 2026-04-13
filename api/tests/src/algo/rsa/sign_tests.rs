@@ -205,3 +205,80 @@ fn test_rsa_4096_pss_sign_verify(session: HsmSession) {
 
     assert!(is_valid, "Signature verification failed");
 }
+
+// ================================
+// Deleted-key validation tests
+// ================================
+
+/// Sign with a deleted RSA private key must return InvalidKey.
+#[session_test]
+fn test_rsa_sign_deleted_key_fails(session: HsmSession) {
+    use crypto::*;
+
+    let priv_key = crypto::RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
+    let der = priv_key.to_vec().expect("Failed to export RSA Key");
+    let (priv_key, _pub_key) = import_rsa_key(&session, &der, 2048);
+
+    let mut hash_algo = HsmHashAlgo::Sha256;
+    let message = b"Hello, RSA deleted key test!";
+    let hash =
+        HsmHasher::hash_vec(&session, &mut hash_algo, message).expect("Failed to hash message");
+
+    let priv_clone = priv_key.clone();
+
+    assert!(
+        priv_key.is_valid().is_ok(),
+        "key should be valid before deletion"
+    );
+
+    HsmKeyManager::delete_key(priv_clone).expect("delete_key should succeed");
+
+    assert!(
+        matches!(priv_key.is_valid(), Err(HsmError::InvalidKey)),
+        "key should be invalid after deletion",
+    );
+
+    let mut algo = HsmRsaSignAlgo::with_pkcs1_padding(hash_algo);
+    let result = HsmSigner::sign(&mut algo, &priv_key, &hash, None);
+
+    assert!(
+        matches!(result, Err(HsmError::InvalidKey)),
+        "sign with deleted key should return InvalidKey, got: {result:?}",
+    );
+}
+
+/// Verify with a public key after private key deletion should still succeed.
+#[session_test]
+fn test_rsa_verify_with_public_key_after_private_key_deletion(session: HsmSession) {
+    use crypto::*;
+
+    let priv_key = crypto::RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
+    let der = priv_key.to_vec().expect("Failed to export RSA Key");
+    let (priv_key, pub_key) = import_rsa_key(&session, &der, 2048);
+
+    let mut hash_algo = HsmHashAlgo::Sha256;
+    let message = b"Hello, RSA public key test!";
+    let hash =
+        HsmHasher::hash_vec(&session, &mut hash_algo, message).expect("Failed to hash message");
+    let mut algo = HsmRsaSignAlgo::with_pkcs1_padding(hash_algo);
+
+    let signature = HsmSigner::sign_vec(&mut algo, &priv_key, &hash).expect("Failed to sign data");
+
+    // Delete the private key.
+    HsmKeyManager::delete_key(priv_key).expect("delete_key should succeed");
+
+    // Public key should still be valid.
+    assert!(
+        pub_key.is_valid().is_ok(),
+        "public key should remain valid after private key deletion"
+    );
+
+    // Verify should still work with the public key.
+    let is_valid = HsmVerifier::verify(&mut algo, &pub_key, &hash, &signature)
+        .expect("Failed to verify signature");
+
+    assert!(
+        is_valid,
+        "verify with public key after private key deletion should succeed"
+    );
+}

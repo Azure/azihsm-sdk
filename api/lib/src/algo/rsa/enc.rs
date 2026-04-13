@@ -77,6 +77,9 @@ impl HsmEncryptOp for HsmRsaEncryptAlgo {
         plaintext: &[u8],
         ciphertext: Option<&mut [u8]>,
     ) -> Result<usize, Self::Error> {
+        // check if key is valid or otherwise invalid before attempting to encrypt
+        key.is_valid()?;
+
         // check if key can encrypt
         if !key.can_encrypt() {
             return Err(HsmError::InvalidKey);
@@ -130,6 +133,9 @@ impl HsmDecryptOp for HsmRsaEncryptAlgo {
         ciphertext: &[u8],
         plaintext: Option<&mut [u8]>,
     ) -> Result<usize, Self::Error> {
+        // check if key is valid or otherwise invalid before attempting to decrypt
+        key.is_valid()?;
+
         // check if key can decrypt
         if !key.can_decrypt() {
             return Err(HsmError::InvalidKey);

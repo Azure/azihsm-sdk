@@ -160,6 +160,9 @@ impl HsmEncryptOp for HsmAesGcmAlgo {
         plaintext: &[u8],
         ciphertext: Option<&mut [u8]>,
     ) -> Result<usize, Self::Error> {
+        // Check if key is valid before performing encryption
+        key.is_valid()?;
+
         // Check if key can encrypt
         if !key.props().can_encrypt() {
             return Err(HsmError::InvalidKey);
@@ -214,6 +217,9 @@ impl HsmDecryptOp for HsmAesGcmAlgo {
         ciphertext: &[u8],
         plaintext: Option<&mut [u8]>,
     ) -> Result<usize, Self::Error> {
+        // Check if key is valid before performing decryption
+        key.is_valid()?;
+
         // Check if key can decrypt
         if !key.props().can_decrypt() {
             return Err(HsmError::InvalidKey);
@@ -284,6 +290,9 @@ impl HsmEncryptStreamingOp for HsmAesGcmAlgo {
     /// * `Ok(HsmAesGcmEncryptContext)` - An initialized encryption context
     /// * `Err(HsmError::InvalidKey)` - If the key cannot be used for encryption
     fn encrypt_init(self, key: Self::Key) -> Result<Self::Context, Self::Error> {
+        // Check if key is valid before initializing encryption context
+        key.is_valid()?;
+
         // Check if key can encrypt
         if !key.props().can_encrypt() {
             return Err(HsmError::InvalidKey);
@@ -453,6 +462,9 @@ impl HsmDecryptStreamingOp for HsmAesGcmAlgo {
     /// * `Err(HsmError::InvalidKey)` - If the key cannot be used for decryption
     /// * `Err(HsmError::InvalidArgument)` - If the tag was not provided
     fn decrypt_init(self, key: Self::Key) -> Result<Self::Context, Self::Error> {
+        // Check if key is valid before initializing decryption context
+        key.is_valid()?;
+
         // Check if key can decrypt
         if !key.props().can_decrypt() {
             return Err(HsmError::InvalidKey);

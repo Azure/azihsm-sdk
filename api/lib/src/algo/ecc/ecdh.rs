@@ -77,6 +77,9 @@ impl HsmKeyDeriveOp for EcdhAlgo {
         base_key: &Self::BaseKey,
         props: HsmKeyProps,
     ) -> Result<Self::DerivedKey, Self::Error> {
+        // Validate that the base key is valid before attempting derivation
+        base_key.is_valid()?;
+
         // Make sure base key can be used for derivation
         if !base_key.can_derive() {
             Err(HsmError::InvalidKey)?;

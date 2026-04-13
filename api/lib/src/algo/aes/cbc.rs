@@ -117,6 +117,9 @@ impl HsmEncryptOp for HsmAesCbcAlgo {
         plaintext: &[u8],
         ciphertext: Option<&mut [u8]>,
     ) -> Result<usize, Self::Error> {
+        // Check if key is valid before performing encryption
+        key.is_valid()?;
+
         // check if key can encrypt
         if !key.props().can_encrypt() {
             Err(HsmError::InvalidKey)?;
@@ -166,6 +169,9 @@ impl HsmEncryptStreamingOp for HsmAesCbcAlgo {
     /// * `Ok(HsmAesCbcEncryptContext)` - An initialized encryption context
     /// * `Err(HsmError)` - If initialization fails
     fn encrypt_init(self, key: Self::Key) -> Result<Self::Context, Self::Error> {
+        // Check if key is valid before initializing encryption context
+        key.is_valid()?;
+
         // check if key can encrypt
         if !key.props().can_encrypt() {
             Err(HsmError::InvalidKey)?;
@@ -362,6 +368,9 @@ impl HsmDecryptOp for HsmAesCbcAlgo {
         ciphertext: &[u8],
         plaintext: Option<&mut [u8]>,
     ) -> Result<usize, Self::Error> {
+        // Check if key is valid before performing decryption
+        key.is_valid()?;
+
         // check if key can decrypt
         if !key.props().can_decrypt() {
             Err(HsmError::InvalidKey)?;
@@ -409,6 +418,9 @@ impl HsmDecryptStreamingOp for HsmAesCbcAlgo {
     /// * `Ok(HsmAesCbcDecryptContext)` - An initialized decryption context
     /// * `Err(HsmError)` - If initialization fails
     fn decrypt_init(self, key: Self::Key) -> Result<Self::Context, Self::Error> {
+        // Check if key is valid before initializing decryption context
+        key.is_valid()?;
+
         // check if key can decrypt
         if !key.props().can_decrypt() {
             Err(HsmError::InvalidKey)?;

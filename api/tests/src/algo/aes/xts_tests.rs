@@ -809,3 +809,99 @@ fn aes_xts_decrypt_with_different_dul_fails_to_recover(session: HsmSession) {
 
     assert_ne!(decrypted, plaintext);
 }
+
+// ================================
+// Deleted-key validation tests
+// ================================
+
+/// Encrypt with a deleted AES-XTS key must return InvalidKey.
+#[session_test]
+fn aes_xts_encrypt_deleted_key_fails(session: HsmSession) {
+    let key = aes_xts_generate_key(&session).expect("Failed to generate XTS key");
+    let key_clone = key.clone();
+
+    assert!(
+        key.is_valid().is_ok(),
+        "key should be valid before deletion"
+    );
+
+    HsmKeyManager::delete_key(key_clone).expect("delete_key should succeed");
+
+    assert!(
+        matches!(key.is_valid(), Err(HsmError::InvalidKey)),
+        "key should be invalid after deletion",
+    );
+
+    let tweak = [0u8; AES_XTS_TEST_TWEAK_SIZE];
+    let dul = 512;
+    let plaintext = vec![0x77u8; dul];
+    let mut algo = HsmAesXtsAlgo::new(&tweak, dul).unwrap();
+    let result = HsmEncrypter::encrypt(&mut algo, &key, &plaintext, None);
+
+    assert!(
+        matches!(result, Err(HsmError::InvalidKey)),
+        "encrypt with deleted key should return InvalidKey, got: {result:?}",
+    );
+}
+
+/// Decrypt with a deleted AES-XTS key must return InvalidKey.
+#[session_test]
+fn aes_xts_decrypt_deleted_key_fails(session: HsmSession) {
+    let key = aes_xts_generate_key(&session).expect("Failed to generate XTS key");
+    let tweak = [0u8; AES_XTS_TEST_TWEAK_SIZE];
+    let dul = 512;
+    let plaintext = vec![0x77u8; dul];
+
+    let (ciphertext, _) = xts_encrypt(&key, &tweak, dul, &plaintext).unwrap();
+
+    let key_clone = key.clone();
+    HsmKeyManager::delete_key(key_clone).expect("delete_key should succeed");
+
+    let mut algo = HsmAesXtsAlgo::new(&tweak, dul).unwrap();
+    let result = HsmDecrypter::decrypt(&mut algo, &key, &ciphertext, None);
+
+    assert!(
+        matches!(result, Err(HsmError::InvalidKey)),
+        "decrypt with deleted key should return InvalidKey, got: {result:?}",
+    );
+}
+
+/// Streaming encrypt_init with a deleted AES-XTS key must return InvalidKey.
+#[session_test]
+fn aes_xts_streaming_encrypt_init_deleted_key_fails(session: HsmSession) {
+    let key = aes_xts_generate_key(&session).expect("Failed to generate XTS key");
+    let key_clone = key.clone();
+
+    HsmKeyManager::delete_key(key_clone).expect("delete_key should succeed");
+
+    let tweak = [0u8; AES_XTS_TEST_TWEAK_SIZE];
+    let dul = 512;
+    let enc_algo = HsmAesXtsAlgo::new(&tweak, dul).unwrap();
+    let result = HsmEncrypter::encrypt_init(enc_algo, key).err();
+
+    assert!(
+        matches!(result, Some(HsmError::InvalidKey)),
+        "encrypt_init with deleted key should return InvalidKey, got: {:?}",
+        result,
+    );
+}
+
+/// Streaming decrypt_init with a deleted AES-XTS key must return InvalidKey.
+#[session_test]
+fn aes_xts_streaming_decrypt_init_deleted_key_fails(session: HsmSession) {
+    let key = aes_xts_generate_key(&session).expect("Failed to generate XTS key");
+    let key_clone = key.clone();
+
+    HsmKeyManager::delete_key(key_clone).expect("delete_key should succeed");
+
+    let tweak = [0u8; AES_XTS_TEST_TWEAK_SIZE];
+    let dul = 512;
+    let dec_algo = HsmAesXtsAlgo::new(&tweak, dul).unwrap();
+    let result = HsmDecrypter::decrypt_init(dec_algo, key).err();
+
+    assert!(
+        matches!(result, Some(HsmError::InvalidKey)),
+        "decrypt_init with deleted key should return InvalidKey, got: {:?}",
+        result,
+    );
+}

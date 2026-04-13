@@ -372,3 +372,77 @@ fn test_rsa_streaming_verify_update_after_finish_fails(session: HsmSession) {
         res
     );
 }
+
+// ================================
+// Deleted-key validation tests
+// ================================
+
+/// Hash-sign with a deleted RSA private key must return InvalidKey.
+#[session_test]
+fn test_rsa_hash_sign_deleted_key_fails(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
+    let der = priv_key.to_vec().expect("Failed to export RSA Key");
+    let (priv_key, _pub_key) = import_rsa_key(&session, &der, 2048);
+
+    let priv_clone = priv_key.clone();
+
+    assert!(
+        priv_key.is_valid().is_ok(),
+        "key should be valid before deletion"
+    );
+
+    HsmKeyManager::delete_key(priv_clone).expect("delete_key should succeed");
+
+    assert!(
+        matches!(priv_key.is_valid(), Err(HsmError::InvalidKey)),
+        "key should be invalid after deletion",
+    );
+
+    let mut algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+    let result = HsmSigner::sign(&mut algo, &priv_key, b"test message", None);
+
+    assert!(
+        matches!(result, Err(HsmError::InvalidKey)),
+        "sign with deleted key should return InvalidKey, got: {result:?}",
+    );
+}
+
+/// Streaming sign_init with a deleted RSA private key must return InvalidKey.
+#[session_test]
+fn test_rsa_hash_streaming_sign_init_deleted_key_fails(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
+    let der = priv_key.to_vec().expect("Failed to export RSA Key");
+    let (priv_key, _pub_key) = import_rsa_key(&session, &der, 2048);
+
+    let priv_clone = priv_key.clone();
+    HsmKeyManager::delete_key(priv_clone).expect("delete_key should succeed");
+
+    let sign_algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+    let result = HsmSigner::sign_init(sign_algo, priv_key).err();
+
+    assert!(
+        matches!(result, Some(HsmError::InvalidKey)),
+        "sign_init with deleted key should return InvalidKey, got: {:?}",
+        result,
+    );
+}
+
+/// Verify with a public key after private key deletion should still succeed.
+#[session_test]
+fn test_rsa_hash_verify_after_private_key_deletion(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
+    let der = priv_key.to_vec().expect("Failed to export RSA Key");
+    let (priv_key, pub_key) = import_rsa_key(&session, &der, 2048);
+
+    let message = b"test message for verify";
+    let mut algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+    let signature = HsmSigner::sign_vec(&mut algo, &priv_key, message).expect("Failed to sign");
+
+    HsmKeyManager::delete_key(priv_key).expect("delete_key should succeed");
+
+    assert!(pub_key.is_valid().is_ok(), "public key should remain valid");
+
+    let is_valid = HsmVerifier::verify(&mut algo, &pub_key, message, &signature)
+        .expect("Failed to verify signature");
+    assert!(is_valid, "verify should succeed after private key deletion");
+}

@@ -193,3 +193,36 @@ fn test_rsa_4096_oaep_enc_dec(session: HsmSession) {
 
     assert_eq!(decrypted_plaintext, plaintext);
 }
+
+// ================================
+// Deleted-key validation tests
+// ================================
+
+/// Decrypt with a deleted RSA private key must return InvalidKey.
+#[session_test]
+fn test_rsa_decrypt_deleted_key_fails(session: HsmSession) {
+    use crypto::*;
+
+    let priv_key = crypto::RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
+    let der = priv_key.to_vec().expect("Failed to export RSA Key");
+    let (priv_key, pub_key) = import_rsa_key(&session, &der, 2048);
+
+    let plaintext = b"Hello, RSA deleted key test!";
+    let hash_algo = HsmHashAlgo::Sha256;
+    let mut algo = HsmRsaEncryptAlgo::with_oaep_padding(hash_algo, None);
+
+    // Encrypt while key is still valid.
+    let ciphertext =
+        HsmEncrypter::encrypt_vec(&mut algo, &pub_key, plaintext).expect("Failed to encrypt data");
+
+    let priv_clone = priv_key.clone();
+    HsmKeyManager::delete_key(priv_clone).expect("delete_key should succeed");
+
+    let mut algo = HsmRsaEncryptAlgo::with_oaep_padding(hash_algo, None);
+    let result = HsmDecrypter::decrypt(&mut algo, &priv_key, &ciphertext, None);
+
+    assert!(
+        matches!(result, Err(HsmError::InvalidKey)),
+        "decrypt with deleted key should return InvalidKey, got: {result:?}",
+    );
+}

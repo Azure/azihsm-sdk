@@ -241,6 +241,9 @@ impl HsmEncryptOp for HsmAesXtsAlgo {
         plaintext: &[u8],
         ciphertext: Option<&mut [u8]>,
     ) -> Result<usize, Self::Error> {
+        // Check that the key is valid
+        key.is_valid()?;
+
         // Check that the key is suitable for encryption
         if !key.props().can_encrypt() {
             Err(HsmError::InvalidKey)?;
@@ -284,6 +287,9 @@ impl HsmDecryptOp for HsmAesXtsAlgo {
         ciphertext: &[u8],
         plaintext: Option<&mut [u8]>,
     ) -> Result<usize, Self::Error> {
+        // Check if key is valid before performing decryption
+        key.is_valid()?;
+
         // Check that the key is suitable for decryption
         if !key.props().can_decrypt() {
             Err(HsmError::InvalidKey)?;
@@ -333,6 +339,9 @@ impl HsmEncryptStreamingOp for HsmAesXtsAlgo {
     ///
     /// Returns [`HsmError::InvalidKey`] if the key is not permitted to encrypt.
     fn encrypt_init(self, key: Self::Key) -> Result<Self::Context, Self::Error> {
+        // Check if key is valid before initializing encryption context
+        key.is_valid()?;
+
         // check if key can be used for encryption
         if !key.props().can_encrypt() {
             Err(HsmError::InvalidKey)?;
@@ -473,6 +482,9 @@ impl HsmDecryptStreamingOp for HsmAesXtsAlgo {
     ///
     /// Returns [`HsmError::InvalidKey`] if the key is not permitted to decrypt.
     fn decrypt_init(self, key: Self::Key) -> Result<Self::Context, Self::Error> {
+        // Check if key is valid before initializing decryption context
+        key.is_valid()?;
+
         // check if key can be used for decryption
         if !key.props().can_decrypt() {
             Err(HsmError::InvalidKey)?;

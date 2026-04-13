@@ -100,6 +100,9 @@ impl HsmSignOp for HsmHashSignAlgo {
         data: &[u8],
         signature: Option<&mut [u8]>,
     ) -> Result<usize, Self::Error> {
+        // Check if key is valid or otherwise invalid before attempting to sign
+        key.is_valid()?;
+
         // Make sure key is signing key
         if !key.can_sign() {
             Err(HsmError::InvalidKey)?;
@@ -152,6 +155,9 @@ impl HsmSignStreamingOp for HsmHashSignAlgo {
     /// - The HSM fails to initialize the signing context
     /// - Required algorithm parameters are missing or invalid
     fn sign_init(self, key: Self::Key) -> Result<Self::Context, Self::Error> {
+        // Check if key is valid or otherwise invalid before attempting to initialize signing context
+        key.is_valid()?;
+
         // Make sure key is signing key
         if !key.can_sign() {
             Err(HsmError::InvalidKey)?;
@@ -350,6 +356,9 @@ impl HsmVerifyOp for HsmHashSignAlgo {
         data: &[u8],
         signature: &[u8],
     ) -> Result<bool, Self::Error> {
+        // Check if key is valid or otherwise invalid before attempting to verify
+        key.is_valid()?;
+
         // Make sure key is verification key
         if !key.can_verify() {
             Err(HsmError::InvalidKey)?;
@@ -398,6 +407,9 @@ impl HsmVerifyStreamingOp for HsmHashSignAlgo {
     /// - The HSM fails to initialize the verification context
     /// - Required algorithm parameters are missing or invalid
     fn verify_init(self, key: Self::Key) -> Result<Self::Context, Self::Error> {
+        // Check if key is valid or otherwise invalid before attempting to initialize verification context
+        key.is_valid()?;
+
         // Make sure key is verification key
         if !key.can_verify() {
             Err(HsmError::InvalidKey)?;

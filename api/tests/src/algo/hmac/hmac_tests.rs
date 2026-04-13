@@ -496,3 +496,87 @@ fn test_hmac_streaming_verify_update_after_finish_fails(session: HsmSession) {
         res
     );
 }
+
+// ================================
+// Deleted-key validation tests
+// ================================
+
+/// Sign with a deleted HMAC key must return InvalidKey.
+#[session_test]
+fn test_hmac_sign_deleted_key_fails(session: HsmSession) {
+    let (key_a, _key_b) = derive_ecdh_hmac_keypair(
+        &session,
+        HsmEccCurve::P256,
+        HsmHashAlgo::Sha256,
+        HsmKeyKind::HmacSha256,
+    );
+    let key_clone = key_a.clone();
+
+    assert!(
+        key_a.is_valid().is_ok(),
+        "key should be valid before deletion"
+    );
+
+    HsmKeyManager::delete_key(key_clone).expect("delete_key should succeed");
+
+    assert!(
+        matches!(key_a.is_valid(), Err(HsmError::InvalidKey)),
+        "key should be invalid after deletion",
+    );
+
+    let mut algo = HsmHmacAlgo::new();
+    let result = HsmSigner::sign(&mut algo, &key_a, b"test message", None);
+
+    assert!(
+        matches!(result, Err(HsmError::InvalidKey)),
+        "sign with deleted key should return InvalidKey",
+    );
+}
+
+/// Streaming sign_init with a deleted HMAC key must return InvalidKey.
+#[session_test]
+fn test_hmac_streaming_sign_init_deleted_key_fails(session: HsmSession) {
+    let (key_a, _key_b) = derive_ecdh_hmac_keypair(
+        &session,
+        HsmEccCurve::P256,
+        HsmHashAlgo::Sha256,
+        HsmKeyKind::HmacSha256,
+    );
+    let key_clone = key_a.clone();
+
+    HsmKeyManager::delete_key(key_clone).expect("delete_key should succeed");
+
+    let algo = HsmHmacAlgo::new();
+    //expect sign_init to fail since key is deleted
+    let result = HsmSigner::sign_init(algo, key_a).err();
+
+    assert!(
+        matches!(result, Some(HsmError::InvalidKey)),
+        "sign_init with deleted key should return InvalidKey, got: {:?}",
+        result,
+    );
+}
+
+/// Streaming verify_init with a deleted HMAC key must return InvalidKey.
+#[session_test]
+fn test_hmac_streaming_verify_init_deleted_key_fails(session: HsmSession) {
+    let (key_a, _key_b) = derive_ecdh_hmac_keypair(
+        &session,
+        HsmEccCurve::P256,
+        HsmHashAlgo::Sha256,
+        HsmKeyKind::HmacSha256,
+    );
+    let key_clone = key_a.clone();
+
+    HsmKeyManager::delete_key(key_clone).expect("delete_key should succeed");
+
+    let algo = HsmHmacAlgo::new();
+    //expect verify_init to fail since key is deleted
+    let result = HsmVerifier::verify_init(algo, key_a).err();
+
+    assert!(
+        matches!(result, Some(HsmError::InvalidKey)),
+        "verify_init with deleted key should return InvalidKey, got: {:?}",
+        result,
+    );
+}

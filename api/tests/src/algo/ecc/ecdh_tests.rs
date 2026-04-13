@@ -1231,3 +1231,39 @@ fn test_ecdh_minimal_der_rejected(session: HsmSession) {
 
     assert!(result.is_err());
 }
+
+// ================================
+// Deleted-key validation tests
+// ================================
+
+/// ECDH derive with a deleted private key must return InvalidKey.
+#[session_test]
+fn test_ecdh_derive_deleted_key_fails(session: HsmSession) {
+    let (priv_a, _pub_a) =
+        generate_ecc_keypair_with_derive(session.clone(), HsmEccCurve::P256, true).unwrap();
+    let (_priv_b, pub_b) =
+        generate_ecc_keypair_with_derive(session.clone(), HsmEccCurve::P256, true).unwrap();
+
+    let priv_clone = priv_a.clone();
+
+    assert!(
+        priv_a.is_valid().is_ok(),
+        "key should be valid before deletion"
+    );
+
+    HsmKeyManager::delete_key(priv_clone).expect("delete_key should succeed");
+
+    assert!(
+        matches!(priv_a.is_valid(), Err(HsmError::InvalidKey)),
+        "key should be invalid after deletion",
+    );
+
+    let result = ecdh_derive_shared_secret(&session, &priv_a, &pub_b)
+        .err()
+        .expect("derive should fail with deleted key");
+
+    assert!(
+        matches!(result, HsmError::InvalidKey),
+        "derive with deleted key should return InvalidKey, got: {result:?}",
+    );
+}

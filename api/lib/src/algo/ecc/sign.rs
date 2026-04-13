@@ -77,6 +77,9 @@ impl HsmSignOp for HsmEccSignAlgo {
         data: &[u8],
         signature: Option<&mut [u8]>,
     ) -> Result<usize, Self::Error> {
+        // Check if key is valid or otherwise invalid before attempting to sign
+        key.is_valid()?;
+
         if !key.can_sign() {
             return Err(HsmError::InvalidKey);
         }
@@ -136,6 +139,9 @@ impl HsmVerifyOp for HsmEccSignAlgo {
         data: &[u8],
         signature: &[u8],
     ) -> Result<bool, Self::Error> {
+        // Check if key is valid or otherwise invalid before attempting to verify
+        key.is_valid()?;
+
         if !key.can_verify() {
             return Err(HsmError::InvalidKey);
         }

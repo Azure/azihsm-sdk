@@ -129,6 +129,9 @@ impl HsmSignOp for HsmRsaHashSignAlgo {
         data: &[u8],
         signature: Option<&mut [u8]>,
     ) -> Result<usize, Self::Error> {
+        // Check if key is valid or otherwise invalid before attempting to sign
+        key.is_valid()?;
+
         // check if key can sign
         if !key.can_sign() {
             return Err(HsmError::InvalidKey);
@@ -173,6 +176,9 @@ impl HsmVerifyOp for HsmRsaHashSignAlgo {
         data: &[u8],
         signature: &[u8],
     ) -> Result<bool, Self::Error> {
+        // check if key is valid or otherwise invalid before attempting to verify
+        key.is_valid()?;
+
         // check if key can verify
         if !key.can_verify() {
             return Err(HsmError::InvalidKey);
@@ -206,6 +212,9 @@ impl HsmSignStreamingOp for HsmRsaHashSignAlgo {
     ///
     /// Returns an error if the hash algorithm initialization fails.
     fn sign_init(self, key: Self::Key) -> Result<Self::Context, Self::Error> {
+        // check if key is valid or otherwise invalid before attempting to sign
+        key.is_valid()?;
+
         // check if key can sign
         if !key.can_sign() {
             return Err(HsmError::InvalidKey);
@@ -321,6 +330,9 @@ impl HsmVerifyStreamingOp for HsmRsaHashSignAlgo {
     ///
     /// Returns an error if the hash algorithm initialization fails.
     fn verify_init(self, key: Self::Key) -> Result<Self::Context, Self::Error> {
+        // check if key is valid or otherwise invalid before attempting to verify
+        key.is_valid()?;
+
         // check if key can verify
         if !key.can_verify() {
             return Err(HsmError::InvalidKey);

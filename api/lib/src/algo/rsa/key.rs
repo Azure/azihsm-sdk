@@ -308,6 +308,7 @@ impl HsmKeyPairUnwrapOp for HsmRsaKeyRsaAesKeyUnwrapAlgo {
         ),
         Self::Error,
     > {
+        unwrapping_key.is_valid()?;
         // check if unwrapping key can unwrap
         if !unwrapping_key.can_unwrap() {
             return Err(HsmError::InvalidKey);

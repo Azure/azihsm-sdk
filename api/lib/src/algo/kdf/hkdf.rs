@@ -81,6 +81,9 @@ impl HsmKeyDeriveOp for HsmHkdfAlgo {
         base_key: &Self::BaseKey,
         props: HsmKeyProps,
     ) -> Result<Self::DerivedKey, Self::Error> {
+        // Check if base key is valid or otherwise invalid before attempting derivation
+        base_key.is_valid()?;
+
         //check if base key can be used for derivation
         if !base_key.can_derive() {
             Err(HsmError::InvalidKey)?;

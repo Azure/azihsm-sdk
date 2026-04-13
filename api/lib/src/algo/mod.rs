@@ -168,6 +168,10 @@ impl<H: HsmKeyHandleDelOp> HsmKeyInner<H> {
         Ok(())
     }
 
+    fn is_deleted(&self) -> bool {
+        self.deleted
+    }
+
     /// Replaces the key handle and properties after an unmask operation.
     ///
     /// Called during key-operation resiliency recovery to restore a stale
@@ -337,7 +341,15 @@ macro_rules! define_hsm_key {
                 }
             }
 
-            impl HsmKey for $name {}
+            impl HsmKey for $name {
+                fn is_valid(&self) -> HsmResult<()> {
+                    if self.inner.read().is_deleted() {
+                        Err(HsmError::InvalidKey)
+                    } else {
+                        Ok(())
+                    }
+                }
+            }
 
             impl HsmKeyCommonProps for $name {}
 
@@ -431,6 +443,10 @@ impl<H: HsmKeyHandleDelOp, P> HsmKeyPairInner<H, P> {
         H::delete_key(self.session.clone(), self.handle, self.last_restore_epoch)?;
         self.deleted = true;
         Ok(())
+    }
+
+    fn is_deleted(&self) -> bool {
+        self.deleted
     }
 
     /// Replaces the device handle and private-key properties after an
@@ -582,7 +598,15 @@ macro_rules! define_hsm_key_pair {
                 }
             }
 
-            impl HsmKey for [<$priv_name>] {}
+            impl HsmKey for [<$priv_name>] {
+                fn is_valid(&self) -> HsmResult<()> {
+                    if self.inner.read().is_deleted() {
+                        Err(HsmError::InvalidKey)
+                    } else {
+                        Ok(())
+                    }
+                }
+            }
 
             impl HsmPrivateKey for [<$priv_name>] {
                 type PublicKey = $pub_name;
@@ -657,7 +681,12 @@ macro_rules! define_hsm_key_pair {
                 }
             }
 
-            impl HsmKey for [<$pub_name>] {}
+            impl HsmKey for [<$pub_name>] {
+                fn is_valid(&self) -> HsmResult<()> {
+                    // The public key is a software-only object that remains valid across
+                    Ok(())
+                }
+            }
 
             impl HsmPublicKey for [<$pub_name>] {}
 

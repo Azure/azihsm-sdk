@@ -15,7 +15,13 @@ use super::*;
 ///
 /// This trait is implemented by types representing cryptographic keys.
 /// It serves as a base trait that all key types must implement.
-pub trait HsmKey: Clone {}
+pub trait HsmKey: Clone {
+    /// Checks if the key has been deleted.
+    ///
+    /// This method should return an error if the key has been deleted, preventing
+    /// any further operations on it.
+    fn is_valid(&self) -> HsmResult<()>;
+}
 
 /// Marker trait for secret keys.
 ///
@@ -292,7 +298,7 @@ pub trait HsmKeyDeriveOp {
     type DerivedKey: HsmKey;
 
     /// The error type returned by this operation.
-    type Error: Error;
+    type Error: Error + From<HsmError>;
 
     /// Derives a new key from an existing base key.
     ///
@@ -378,7 +384,7 @@ pub trait HsmKeyPairGenOp {
 pub trait HsmKeyUnwrapOp {
     type UnwrappingKey: HsmUnwrappingKey;
     type Key: HsmSecretKey;
-    type Error: Error;
+    type Error: Error + From<HsmError>;
 
     /// Unwraps (decrypts) a wrapped key using this key.
     ///
@@ -403,7 +409,7 @@ pub trait HsmKeyUnwrapOp {
 pub trait HsmKeyPairUnwrapOp {
     type UnwrappingKey: HsmUnwrappingKey;
     type PrivateKey: HsmPrivateKey;
-    type Error: Error;
+    type Error: Error + From<HsmError>;
 
     /// Unwraps (decrypts) a wrapped key pair using this key.
     ///

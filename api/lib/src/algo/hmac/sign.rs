@@ -100,6 +100,9 @@ impl HsmSignOp for HsmHmacAlgo {
         data: &[u8],
         signature: Option<&mut [u8]>,
     ) -> Result<usize, Self::Error> {
+        // Check if key is valid or otherwise invalid before attempting to sign
+        key.is_valid()?;
+
         // check if key can sign
         if !key.can_sign() {
             Err(HsmError::InvalidKey)?;
@@ -156,6 +159,9 @@ impl HsmVerifyOp for HsmHmacAlgo {
         data: &[u8],
         signature: &[u8],
     ) -> Result<bool, Self::Error> {
+        // Check if key is valid or otherwise invalid before attempting to verify
+        key.is_valid()?;
+
         //check key can verify
         if !key.can_verify() {
             Err(HsmError::InvalidKey)?;
@@ -238,6 +244,9 @@ impl HsmSignStreamingOp for HsmHmacAlgo {
     ///
     /// This initializer currently cannot fail.
     fn sign_init(self, key: Self::Key) -> Result<Self::Context, Self::Error> {
+        // check if key is valid or otherwise invalid before attempting to sign
+        key.is_valid()?;
+
         // check if key can sign
         if !key.can_sign() {
             Err(HsmError::InvalidKey)?;
@@ -364,6 +373,9 @@ impl HsmVerifyStreamingOp for HsmHmacAlgo {
     ///
     /// This initializer currently cannot fail.
     fn verify_init(self, key: Self::Key) -> Result<Self::Context, Self::Error> {
+        // Check if key is valid or otherwise invalid before attempting to initialize verification context
+        key.is_valid()?;
+
         // check if key can verify
         if !key.can_verify() {
             Err(HsmError::InvalidKey)?;

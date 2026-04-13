@@ -53,6 +53,9 @@ impl HsmEncryptOp for HsmRsaAesWrapAlgo {
         plaintext: &[u8],
         ciphertext: Option<&mut [u8]>,
     ) -> Result<usize, Self::Error> {
+        //check if key is valid or otherwise invalid before attempting to wrap
+        key.is_valid()?;
+
         // make sure key can wrap keys
         if !key.can_wrap() {
             return Err(HsmError::InvalidKey);

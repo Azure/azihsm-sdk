@@ -923,3 +923,62 @@ fn test_ecc_verify_empty_hash_p384(session: HsmSession) {
 fn test_ecc_verify_empty_hash_p521(session: HsmSession) {
     run_verify_empty_hash_test(&session, HsmEccCurve::P521, HsmHashAlgo::Sha512);
 }
+
+// ================================
+// Deleted-key validation tests
+// ================================
+
+/// Sign with a deleted ECC private key must return InvalidKey.
+#[session_test]
+fn test_ecc_sign_deleted_key_fails(session: HsmSession) {
+    let (priv_key, _pub_key) = generate_ecc_key_pair(&session, HsmEccCurve::P256);
+    let priv_clone = priv_key.clone();
+
+    assert!(
+        priv_key.is_valid().is_ok(),
+        "key should be valid before deletion"
+    );
+
+    HsmKeyManager::delete_key(priv_clone).expect("delete_key should succeed");
+
+    assert!(
+        matches!(priv_key.is_valid(), Err(HsmError::InvalidKey)),
+        "key should be invalid after deletion",
+    );
+
+    let hash = vec![0u8; 32]; // SHA-256 sized hash
+    let mut sign_algo = HsmEccSignAlgo::default();
+    let result = HsmSigner::sign(&mut sign_algo, &priv_key, &hash, None);
+
+    assert!(
+        matches!(result, Err(HsmError::InvalidKey)),
+        "sign with deleted key should return InvalidKey, got: {result:?}",
+    );
+}
+
+/// Verify with a public key derived from a deleted private key should still succeed,
+/// because public keys are software-only and always valid.
+#[session_test]
+fn test_ecc_verify_with_public_key_after_private_key_deletion(session: HsmSession) {
+    let (priv_key, pub_key) = generate_ecc_key_pair(&session, HsmEccCurve::P256);
+
+    let data = b"Test data";
+    let hash = hash_data(&session, HsmHashAlgo::Sha256, data);
+    let sig = sign_hash(&priv_key, &hash);
+
+    // Delete the private key.
+    HsmKeyManager::delete_key(priv_key).expect("delete_key should succeed");
+
+    // Public key should still be valid.
+    assert!(
+        pub_key.is_valid().is_ok(),
+        "public key should remain valid after private key deletion"
+    );
+
+    // Verify should still work with the public key.
+    let result = verify_hash_signature(&pub_key, &hash, &sig);
+    assert!(
+        matches!(result, Ok(true)),
+        "verify with public key after private key deletion should succeed, got: {result:?}",
+    );
+}

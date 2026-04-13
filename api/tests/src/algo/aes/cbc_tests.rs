@@ -1427,3 +1427,92 @@ fn test_cbc_algo_iv_is_consumed_per_operation(session: HsmSession) {
         "reusing a single algo instance should not reproduce the same ciphertext; create fresh algos per use"
     );
 }
+
+// ================================
+// Deleted-key validation tests
+// ================================
+
+/// Encrypt with a deleted AES-CBC key must return InvalidKey.
+#[session_test]
+fn test_cbc_encrypt_deleted_key_fails(session: HsmSession) {
+    let key = aes_generate_key(256, &session);
+    let key_clone = key.clone();
+
+    assert!(
+        key.is_valid().is_ok(),
+        "key should be valid before deletion"
+    );
+
+    HsmKeyManager::delete_key(key_clone).expect("delete_key should succeed");
+
+    assert!(
+        matches!(key.is_valid(), Err(HsmError::InvalidKey)),
+        "key should be invalid after deletion",
+    );
+
+    let iv = test_iv();
+    let result = cbc_encrypt(&key, false, &iv, &[0x42u8; AES_CBC_BLOCK_SIZE]);
+
+    assert!(
+        matches!(result, Err(HsmError::InvalidKey)),
+        "encrypt with deleted key should return InvalidKey, got: {result:?}",
+    );
+}
+
+/// Decrypt with a deleted AES-CBC key must return InvalidKey.
+#[session_test]
+fn test_cbc_decrypt_deleted_key_fails(session: HsmSession) {
+    let key = aes_generate_key(256, &session);
+    let iv = test_iv();
+    let plaintext = vec![0x42u8; AES_CBC_BLOCK_SIZE];
+
+    let ciphertext = cbc_encrypt(&key, false, &iv, &plaintext).expect("encrypt failed");
+
+    let key_clone = key.clone();
+    HsmKeyManager::delete_key(key_clone).expect("delete_key should succeed");
+
+    let result = cbc_decrypt(&key, false, &iv, &ciphertext);
+
+    assert!(
+        matches!(result, Err(HsmError::InvalidKey)),
+        "decrypt with deleted key should return InvalidKey, got: {result:?}",
+    );
+}
+
+/// Streaming encrypt_init with a deleted AES-CBC key must return InvalidKey.
+#[session_test]
+fn test_cbc_streaming_encrypt_init_deleted_key_fails(session: HsmSession) {
+    let key = aes_generate_streaming_key(256, &session);
+    let key_clone = key.clone();
+
+    HsmKeyManager::delete_key(key_clone).expect("delete_key should succeed");
+
+    let iv = test_iv();
+    let enc_algo = new_cbc_algo(false, &iv);
+    let result = HsmEncrypter::encrypt_init(enc_algo, key).err();
+
+    assert!(
+        matches!(result, Some(HsmError::InvalidKey)),
+        "encrypt_init with deleted key should return InvalidKey, got: {:?}",
+        result,
+    );
+}
+
+/// Streaming decrypt_init with a deleted AES-CBC key must return InvalidKey.
+#[session_test]
+fn test_cbc_streaming_decrypt_init_deleted_key_fails(session: HsmSession) {
+    let key = aes_generate_streaming_key(256, &session);
+    let key_clone = key.clone();
+
+    HsmKeyManager::delete_key(key_clone).expect("delete_key should succeed");
+
+    let iv = test_iv();
+    let dec_algo = new_cbc_algo(false, &iv);
+    let result = HsmDecrypter::decrypt_init(dec_algo, key).err();
+
+    assert!(
+        matches!(result, Some(HsmError::InvalidKey)),
+        "decrypt_init with deleted key should return InvalidKey, got: {:?}",
+        result,
+    );
+}

@@ -1434,3 +1434,68 @@ fn test_ecc_streaming_truncated_sig_p384_hash(session: HsmSession) {
 fn test_ecc_streaming_truncated_sig_p521_hash(session: HsmSession) {
     run_streaming_truncated_sig_test(&session, HsmEccCurve::P521, HsmHashAlgo::Sha512);
 }
+
+// ================================
+// Deleted-key validation tests
+// ================================
+
+/// Hash-sign with a deleted ECC private key must return InvalidKey.
+#[session_test]
+fn test_ecc_hash_sign_deleted_key_fails(session: HsmSession) {
+    let (priv_key, _pub_key) = generate_ecc_key_pair(&session, HsmEccCurve::P256);
+    let priv_clone = priv_key.clone();
+
+    assert!(
+        priv_key.is_valid().is_ok(),
+        "key should be valid before deletion"
+    );
+
+    HsmKeyManager::delete_key(priv_clone).expect("delete_key should succeed");
+
+    assert!(
+        matches!(priv_key.is_valid(), Err(HsmError::InvalidKey)),
+        "key should be invalid after deletion",
+    );
+
+    let mut sign_algo = HsmHashSignAlgo::new(HsmHashAlgo::Sha256);
+    let result = HsmSigner::sign(&mut sign_algo, &priv_key, b"test data", None);
+
+    assert!(
+        matches!(result, Err(HsmError::InvalidKey)),
+        "sign with deleted key should return InvalidKey, got: {result:?}",
+    );
+}
+
+/// Streaming sign_init with a deleted ECC private key must return InvalidKey.
+#[session_test]
+fn test_ecc_hash_streaming_sign_init_deleted_key_fails(session: HsmSession) {
+    let (priv_key, _pub_key) = generate_ecc_key_pair(&session, HsmEccCurve::P256);
+    let priv_clone = priv_key.clone();
+
+    HsmKeyManager::delete_key(priv_clone).expect("delete_key should succeed");
+
+    let sign_algo = HsmHashSignAlgo::new(HsmHashAlgo::Sha256);
+    let result = HsmSigner::sign_init(sign_algo, priv_key).err();
+
+    assert!(
+        matches!(result, Some(HsmError::InvalidKey)),
+        "sign_init with deleted key should return InvalidKey, got: {:?}",
+        result,
+    );
+}
+
+/// Verify with a public key after private key deletion should still succeed.
+#[session_test]
+fn test_ecc_hash_verify_after_private_key_deletion(session: HsmSession) {
+    let (priv_key, pub_key) = generate_ecc_key_pair(&session, HsmEccCurve::P256);
+
+    let data = b"test data for verify";
+    let signature = sign_data(&priv_key, HsmHashAlgo::Sha256, data);
+
+    HsmKeyManager::delete_key(priv_key).expect("delete_key should succeed");
+
+    assert!(pub_key.is_valid().is_ok(), "public key should remain valid");
+
+    let is_valid = verify_signature(&pub_key, HsmHashAlgo::Sha256, data, &signature);
+    assert!(is_valid, "verify should succeed after private key deletion");
+}
