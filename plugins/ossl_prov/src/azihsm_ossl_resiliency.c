@@ -615,6 +615,13 @@ static azihsm_status resiliency_get_obk(void *ctx_ptr, struct azihsm_buffer *obk
         return AZIHSM_STATUS_INVALID_ARGUMENT;
     }
 
+    // Size-query call: return the fixed OBK size without loading the file.
+    if (obk->ptr == NULL || obk->len < OBK_SIZE)
+    {
+        obk->len = OBK_SIZE;
+        return AZIHSM_STATUS_BUFFER_TOO_SMALL;
+    }
+
     status = azihsm_file_load(ctx->obk_path, &file_buf);
     if (status != AZIHSM_STATUS_SUCCESS || file_buf.ptr == NULL)
     {
@@ -626,15 +633,6 @@ static azihsm_status resiliency_get_obk(void *ctx_ptr, struct azihsm_buffer *obk
         OPENSSL_cleanse(file_buf.ptr, file_buf.len);
         OPENSSL_free(file_buf.ptr);
         return AZIHSM_STATUS_INVALID_ARGUMENT;
-    }
-
-    // First call: report required size
-    if (obk->ptr == NULL || obk->len < file_buf.len)
-    {
-        obk->len = file_buf.len;
-        OPENSSL_cleanse(file_buf.ptr, file_buf.len);
-        OPENSSL_free(file_buf.ptr);
-        return AZIHSM_STATUS_BUFFER_TOO_SMALL;
     }
 
     // Second call: copy OBK data into caller's buffer

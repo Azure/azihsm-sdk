@@ -167,6 +167,14 @@ impl HsmOwnerBackupKeyConfig {
     }
 }
 
+impl Drop for HsmOwnerBackupKeyConfig {
+    fn drop(&mut self) {
+        if let Some(ref mut k) = self.key {
+            k.fill(0);
+        }
+    }
+}
+
 /// HSM POTA endorsement data containing signature and public key for verification.
 ///
 /// This structure holds the cryptographic proof for partition owner trust anchor
@@ -580,13 +588,16 @@ impl HsmPartition {
             // plaintext OBK on demand.
             let obk_config = match rs.cached_obk_source {
                 HsmOwnerBackupKeySource::Caller => {
-                    let obk = rs
+                    let mut obk = rs
                         .config
                         .obk_callback
                         .as_ref()
                         .ok_or(HsmError::InternalError)?
                         .get_obk()?;
-                    HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Caller, Some(&obk))
+                    let config =
+                        HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Caller, Some(&obk));
+                    obk.fill(0);
+                    config
                 }
                 source => HsmOwnerBackupKeyConfig::new(source, None),
             };

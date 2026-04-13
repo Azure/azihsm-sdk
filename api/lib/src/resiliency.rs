@@ -199,6 +199,10 @@ impl Drop for ResiliencyLockGuard {
 ///   `Some`. Otherwise `init()` returns `HsmError::InvalidArgument`.
 /// - If POTA endorsement source is `Tpm`, `pota_callback` must be
 ///   `None`. Otherwise `init()` returns `HsmError::InvalidArgument`.
+/// - If OBK source is `Caller`, `obk_callback` must be `Some`.
+///   Otherwise `init()` returns `HsmError::InvalidArgument`.
+/// - If OBK source is `Tpm`, `obk_callback` must be `None`.
+///   Otherwise `init()` returns `HsmError::InvalidArgument`.
 pub struct HsmResiliencyConfig {
     /// Persistent storage for BMK, MUK, and masked app keys.
     pub storage: Box<dyn ResiliencyStorage>,

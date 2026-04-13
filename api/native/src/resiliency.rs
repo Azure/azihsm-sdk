@@ -436,7 +436,7 @@ impl api::ObkProviderCallback for ObkCallbackAdapter {
 
         // Second call: fill allocated buffer
         let len = obk_buf.len as usize;
-        if len > MAX_OBK_BUFFER_SIZE {
+        if len == 0 || len > MAX_OBK_BUFFER_SIZE {
             return Err(api::HsmError::InvalidArgument);
         }
         let mut data = vec![0u8; len];
