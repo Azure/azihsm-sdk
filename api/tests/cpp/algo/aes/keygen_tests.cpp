@@ -927,7 +927,7 @@ TEST_F(azihsm_aes_keygen, session_aes_gcm_256_key_generation)
     });
 }
 
-/// Test AES key unmasking for key sizes of 256
+/// Test AES-GCM key unmasking for a 256-bit key
 TEST_F(azihsm_aes_keygen, aes_gcm_256_key_unmask)
 {
     part_list_.for_each_session([](azihsm_handle session) {

@@ -581,7 +581,7 @@ void aes_unmask_wrong_kind_fails_common(
     azihsm_key_kind wrong_kind
 )
 {
-    // Generate an key
+    // Generate a key
     azihsm_algo keygen_algo{};
     keygen_algo.id = algo_id;
     keygen_algo.params = nullptr;
@@ -644,7 +644,7 @@ void aes_unmask_corrupted_blob_fails_common(
     uint32_t bits
 )
 {
-    // Generate an key
+    // Generate a key
     azihsm_algo keygen_algo{};
     keygen_algo.id = algo_id;
     keygen_algo.params = nullptr;
@@ -1223,7 +1223,7 @@ void aes_unwrapped_key_roundtrip_common(
 
         // One-shot encrypt of 2 data units.
         std::memcpy(xts_params.sector_num, tweak, 16);
-        xts_params.data_unit_length = static_cast<uint32_t>(dul); // length of plaintext
+        xts_params.data_unit_length = static_cast<uint32_t>(dul); // per-data-unit length (DUL)
 
         enc_algo.id = AZIHSM_ALGO_ID_AES_XTS;
         enc_algo.params = &xts_params;
