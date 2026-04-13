@@ -561,7 +561,7 @@ void aes_key_unmask_common(
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
     ASSERT_NE(unmasked_key, 0);
 
-    // Step 4: Verify unwrapped key properties match original key properties
+    // Step 4: Verify unmasked key properties match original key properties
     compare_key_properties(original_key, unmasked_key);
 
     // Step 5: Clean up keys
