@@ -658,6 +658,7 @@ TEST_F(azihsm_aes_keygen, aes_xts_key_unwrap_tweak_handling_roundtrip)
         // Clean up
         err = azihsm_key_delete(xts_key);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        xts_key.release();
     });
 }
 
@@ -758,8 +759,9 @@ TEST_F(azihsm_aes_keygen, aes_xts_key_unmask)
 
         // Step 6: Prove the unmasked key is a different key ID by deleting the
         // original key before using the unmasked key.
-        err = azihsm_key_delete(original_key.release());
+        err = azihsm_key_delete(original_key);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        original_key.release();
 
         // Step 7: Decrypt with the unmasked key
         azihsm_algo_aes_xts_params dec_xts_params{};
@@ -784,8 +786,9 @@ TEST_F(azihsm_aes_keygen, aes_xts_key_unmask)
         ASSERT_EQ(decrypted, plaintext) << "XTS roundtrip mismatch";
 
         // Clean up
-        err = azihsm_key_delete(unmasked_key.release());
+        err = azihsm_key_delete(unmasked_key);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        unmasked_key.release();
     });
 }
 

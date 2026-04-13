@@ -281,6 +281,7 @@ void session_aes_key_generation_common(
     // Step 3: Delete the key
     err = azihsm_key_delete(original_key);
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+    original_key.release();
 }
 
 // Common test function to test AES key generation with invalid properties and expect failure
@@ -416,6 +417,7 @@ void aes_key_gen_persistent_common(
     // Step 3: Delete the key
     err = azihsm_key_delete(original_key);
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+    original_key.release();
 }
 
 // Common test function to test AES key unwrapping and verify properties of unwrapped key
@@ -493,8 +495,9 @@ void aes_key_unwrap_common(azihsm_handle session, azihsm_key_kind key_kind, uint
     verify_generated_aes_key_properties(unwrapped_key, key_kind, bits, false, false);
 
     // Step 5: Clean up unwrapped key
-    err = azihsm_key_delete(unwrapped_key.release());
+    err = azihsm_key_delete(unwrapped_key);
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+    unwrapped_key.release();
 }
 
 // Common test function to test AES key unmasking and verify properties of the unmasked key
@@ -563,11 +566,13 @@ void aes_key_unmask_common(
     compare_key_properties(original_key, unmasked_key);
 
     // Step 5: Clean up keys
-    err = azihsm_key_delete(unmasked_key.release());
+    err = azihsm_key_delete(unmasked_key);
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+    unmasked_key.release();
 
-    err = azihsm_key_delete(original_key.release());
+    err = azihsm_key_delete(original_key);
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+    original_key.release();
 }
 
 // Common test function to test AES key unmasking with wrong key kind and expect failure
@@ -926,8 +931,9 @@ void aes_unmasked_key_independent_handle_common(
 
     // Step 4: Delete the original key before using the unmasked key
     // to prove the unmasked key is independent
-    err = azihsm_key_delete(original_key.release());
+    err = azihsm_key_delete(original_key);
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+    original_key.release();
 
     // Step 5: Encrypt with the unmasked key using AES-CBC with padding
     std::vector<uint8_t> plaintext(32, 0x11);
@@ -956,8 +962,9 @@ void aes_unmasked_key_independent_handle_common(
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
     // Clean up
-    err = azihsm_key_delete(unmasked_key.release());
+    err = azihsm_key_delete(unmasked_key);
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+    unmasked_key.release();
 }
 
 // Common test function to test AES key unwrapping with truncated wrapped blob and expect failure
