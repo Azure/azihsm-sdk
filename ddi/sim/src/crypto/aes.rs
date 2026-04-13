@@ -1262,14 +1262,14 @@ mod tests {
     }
 
     fn test_aes_xts(plaintext_size: usize, dul: usize) {
-        use rand::Rng;
+        use rand::RngExt;
         // Generate random keys
-        let key1 = AesKey::from_bytes(&rand::thread_rng().gen::<[u8; 32]>()).unwrap();
-        let key2 = AesKey::from_bytes(&rand::thread_rng().gen::<[u8; 32]>()).unwrap();
+        let key1 = AesKey::from_bytes(&rand::rng().random::<[u8; 32]>()).unwrap();
+        let key2 = AesKey::from_bytes(&rand::rng().random::<[u8; 32]>()).unwrap();
 
         // Generate random plaintext
         let mut plaintext = vec![0u8; plaintext_size];
-        rand::thread_rng().fill(&mut plaintext[..]);
+        rand::rng().fill(&mut plaintext[..]);
 
         // Prepare buffers
         let tweak = [0x01; 16];

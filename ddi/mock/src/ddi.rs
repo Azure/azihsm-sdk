@@ -7,14 +7,14 @@ use azihsm_ddi_interface::Ddi;
 use azihsm_ddi_interface::DdiResult;
 use azihsm_ddi_interface::DevInfo;
 use lazy_static::lazy_static;
-use rand::Rng;
+use rand::RngExt;
 
 use crate::dev::DdiMockDev;
 
 lazy_static! {
     static ref G_ENTROPY_DATA: Vec<u8> = {
-        let mut rng = rand::thread_rng();
-        (0..32).map(|_| rng.gen()).collect()
+        let mut rng = rand::rng();
+        (0..32).map(|_| rng.random()).collect()
     };
 }
 
