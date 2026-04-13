@@ -656,7 +656,7 @@ TEST_F(azihsm_aes_keygen, aes_xts_key_unwrap_tweak_handling_roundtrip)
             << "Decrypt should increment tweak per data unit";
 
         // Clean up
-        err = azihsm_key_delete(xts_key.release());
+        err = azihsm_key_delete(xts_key);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
     });
 }

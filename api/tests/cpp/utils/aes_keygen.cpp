@@ -279,8 +279,7 @@ void session_aes_key_generation_common(
     verify_generated_aes_key_properties(original_key, key_kind, bits, is_session, true);
 
     // Step 3: Delete the key
-    azihsm_handle key_handle = original_key.release();
-    err = azihsm_key_delete(key_handle);
+    err = azihsm_key_delete(original_key);
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 }
 
@@ -415,8 +414,7 @@ void aes_key_gen_persistent_common(
     verify_key_property(original_key, AZIHSM_KEY_PROP_ID_SESSION, false);
 
     // Step 3: Delete the key
-    azihsm_handle key_handle = original_key.release();
-    err = azihsm_key_delete(key_handle);
+    err = azihsm_key_delete(original_key);
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 }
 
@@ -630,8 +628,8 @@ void aes_unmask_wrong_kind_fails_common(
     masked_key_buf.ptr = masked_key_data.data();
     masked_key_buf.len = static_cast<uint32_t>(masked_key_data.size());
 
-    azihsm_handle unmasked_key = 0;
-    err = azihsm_key_unmask(session, wrong_kind, &masked_key_buf, &unmasked_key);
+    auto_key unmasked_key;
+    err = azihsm_key_unmask(session, wrong_kind, &masked_key_buf, unmasked_key.get_ptr());
     ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
     ASSERT_EQ(unmasked_key, 0);
 }
@@ -696,8 +694,8 @@ void aes_unmask_corrupted_blob_fails_common(
     masked_key_buf.ptr = masked_key_data.data();
     masked_key_buf.len = static_cast<uint32_t>(masked_key_data.size());
 
-    azihsm_handle unmasked_key = 0;
-    err = azihsm_key_unmask(session, key_kind, &masked_key_buf, &unmasked_key);
+    auto_key unmasked_key;
+    err = azihsm_key_unmask(session, key_kind, &masked_key_buf, unmasked_key.get_ptr());
     ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
     ASSERT_EQ(unmasked_key, 0);
 }
@@ -776,13 +774,13 @@ void aes_key_unwrap_corrupted_fails_common(
     wrapped_key_buf.ptr = wrapped_data.data();
     wrapped_key_buf.len = static_cast<uint32_t>(wrapped_data.size());
 
-    azihsm_handle unwrapped_key = 0;
+    auto_key unwrapped_key;
     err = azihsm_key_unwrap(
         &unwrap_algo,
         wrapping_priv_key,
         &wrapped_key_buf,
         &unwrap_prop_list,
-        &unwrapped_key
+        unwrapped_key.get_ptr()
     );
     ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
     ASSERT_EQ(unwrapped_key, 0);
@@ -854,13 +852,13 @@ void aes_unwrap_wrong_algo_fails_common(
     wrapped_key_buf.ptr = wrapped_data.data();
     wrapped_key_buf.len = static_cast<uint32_t>(wrapped_data.size());
 
-    azihsm_handle unwrapped_key = 0;
+    auto_key unwrapped_key;
     err = azihsm_key_unwrap(
         &wrong_algo,
         wrapping_priv_key,
         &wrapped_key_buf,
         &unwrap_prop_list,
-        &unwrapped_key
+        unwrapped_key.get_ptr()
     );
     ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
     ASSERT_EQ(unwrapped_key, 0);
@@ -1026,13 +1024,13 @@ void aes_unwrap_truncated_blob_fails_common(
     wrapped_key_buf.ptr = wrapped_data.data();
     wrapped_key_buf.len = static_cast<uint32_t>(wrapped_data.size());
 
-    azihsm_handle unwrapped_key = 0;
+    auto_key unwrapped_key;
     err = azihsm_key_unwrap(
         &unwrap_algo,
         wrapping_priv_key,
         &wrapped_key_buf,
         &unwrap_prop_list,
-        &unwrapped_key
+        unwrapped_key.get_ptr()
     );
     ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
     ASSERT_EQ(unwrapped_key, 0);
@@ -1102,13 +1100,13 @@ void aes_unwrap_bits_mismatch_fails_common(
     wrapped_key_buf.ptr = wrapped_data.data();
     wrapped_key_buf.len = static_cast<uint32_t>(wrapped_data.size());
 
-    azihsm_handle unwrapped_key = 0;
+    auto_key unwrapped_key;
     err = azihsm_key_unwrap(
         &unwrap_algo,
         wrapping_priv_key,
         &wrapped_key_buf,
         &unwrap_prop_list,
-        &unwrapped_key
+        unwrapped_key.get_ptr()
     );
     ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
     ASSERT_EQ(unwrapped_key, 0);
@@ -1256,6 +1254,10 @@ void aes_unwrapped_key_roundtrip_common(
         enc_algo.params = &gcm_params;
         enc_algo.len = sizeof(gcm_params);
     }
+    else
+    {
+        FAIL() << "Unsupported key kind";
+    }
 
     azihsm_buffer input{ plaintext.data(), static_cast<uint32_t>(plaintext.size()) };
     azihsm_buffer output{ nullptr, 0 };
@@ -1310,6 +1312,10 @@ void aes_unwrapped_key_roundtrip_common(
         dec_algo.id = AZIHSM_ALGO_ID_AES_GCM;
         dec_algo.params = &gcm_params;
         dec_algo.len = sizeof(gcm_params);
+    }
+    else
+    {
+        FAIL() << "Unsupported key kind";
     }
 
     azihsm_buffer cipher_buf{ ciphertext.data(), static_cast<uint32_t>(ciphertext.size()) };
