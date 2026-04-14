@@ -701,6 +701,82 @@ fn get_rsa_masked_blob(session: &HsmSession) -> (Vec<u8>, HsmRsaPrivateKey) {
     (masked, priv_key)
 }
 
+/// Verify roundtrip works between original and unmasked key pair
+fn run_rsa_unmask_roundtrip_test(
+    session: &HsmSession,
+    bits: u32,
+    key_size_bytes: usize,
+    salt_len: usize,
+) {
+    use crypto::*;
+
+    // generate RSA key and wrap/unwrap
+    let crypto_priv_key = RsaPrivateKey::generate(key_size_bytes).unwrap();
+    let der = crypto_priv_key.to_vec().unwrap();
+
+    let (unwrap_priv, unwrap_pub) = get_rsa_unwrapping_key_pair(session);
+
+    let mut wrap_algo = HsmRsaAesWrapAlgo::new(HsmHashAlgo::Sha256, salt_len);
+    let wrapped = HsmEncrypter::encrypt_vec(&mut wrap_algo, &unwrap_pub, &der).unwrap();
+
+    let priv_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Private)
+        .key_kind(HsmKeyKind::Rsa)
+        .bits(bits)
+        .can_decrypt(true)
+        .is_session(true)
+        .build()
+        .expect("Failed to build private key props");
+
+    let pub_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Public)
+        .key_kind(HsmKeyKind::Rsa)
+        .bits(bits)
+        .can_encrypt(true)
+        .is_session(true)
+        .build()
+        .expect("Failed to build public key props");
+
+    let mut unwrap_algo = HsmRsaKeyRsaAesKeyUnwrapAlgo::new(HsmHashAlgo::Sha256);
+
+    let (orig_priv, orig_pub) = HsmKeyManager::unwrap_key_pair(
+        &mut unwrap_algo,
+        &unwrap_priv,
+        &wrapped,
+        priv_props,
+        pub_props,
+    )
+    .unwrap();
+
+    //  mask + unmask
+    let masked = orig_priv.masked_key_vec().unwrap();
+
+    let mut unmask_algo = HsmRsaKeyUnmaskAlgo::default();
+    let (unmasked_priv, unmasked_pub) =
+        HsmKeyManager::unmask_key_pair(session, &mut unmask_algo, &masked).unwrap();
+
+    // roundtrip test
+    let msg = b"unmask roundtrip";
+
+    let mut algo = HsmRsaEncryptAlgo::with_oaep_padding(HsmHashAlgo::Sha256, None);
+
+    // Encrypt with ORIGINAL pub → decrypt with UNMASKED priv
+    let ct = HsmEncrypter::encrypt_vec(&mut algo, &orig_pub, msg).unwrap();
+    let pt = HsmDecrypter::decrypt_vec(&mut algo, &unmasked_priv, &ct).unwrap();
+    assert_eq!(pt, msg);
+
+    // Encrypt with UNMASKED pub → decrypt with ORIGINAL priv
+    let ct2 = HsmEncrypter::encrypt_vec(&mut algo, &unmasked_pub, msg).unwrap();
+    let pt2 = HsmDecrypter::decrypt_vec(&mut algo, &orig_priv, &ct2).unwrap();
+    assert_eq!(pt2, msg);
+
+    // Cleanup
+    HsmKeyManager::delete_key(orig_priv).unwrap();
+    HsmKeyManager::delete_key(orig_pub).unwrap();
+    HsmKeyManager::delete_key(unmasked_priv).unwrap();
+    HsmKeyManager::delete_key(unmasked_pub).unwrap();
+}
+
 // ============================================================
 // test case section
 // ============================================================
@@ -1405,4 +1481,19 @@ fn test_rsa_unmask_wrong_key_kind_fails(session: HsmSession) {
     );
 
     HsmKeyManager::delete_key(priv_key).unwrap();
+}
+
+#[session_test]
+fn test_rsa_unmask_roundtrip_2048(session: HsmSession) {
+    run_rsa_unmask_roundtrip_test(&session, 2048, 256, 32);
+}
+
+#[session_test]
+fn test_rsa_unmask_roundtrip_3072(session: HsmSession) {
+    run_rsa_unmask_roundtrip_test(&session, 3072, 384, 24);
+}
+
+#[session_test]
+fn test_rsa_unmask_roundtrip_4096(session: HsmSession) {
+    run_rsa_unmask_roundtrip_test(&session, 4096, 512, 16);
 }
