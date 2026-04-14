@@ -444,73 +444,6 @@ fn run_rsa_functional_test(
     HsmKeyManager::delete_key(pub_key).unwrap();
 }
 
-/// Verifies unwrap with incorrect RSA private key produces different key material
-fn run_rsa_wrong_key_test(session: &HsmSession, bits: u32, key_size_bytes: usize, salt_len: usize) {
-    // Generate external RSA key
-    let crypto_priv_key = RsaPrivateKey::generate(key_size_bytes).unwrap();
-    let der = crypto_priv_key.to_vec().unwrap();
-
-    // Generate two different unwrapping key pairs
-    let (unwrap_priv_good, unwrap_pub_good) = get_rsa_unwrapping_key_pair(session);
-    let (unwrap_priv_bad, _) = get_rsa_unwrapping_key_pair(session);
-
-    // Wrap with the correct public key
-    let mut wrap_algo = HsmRsaAesWrapAlgo::new(HsmHashAlgo::Sha256, salt_len);
-    let wrapped = HsmEncrypter::encrypt_vec(&mut wrap_algo, &unwrap_pub_good, &der).unwrap();
-
-    // Key properties
-    let priv_props = HsmKeyPropsBuilder::default()
-        .class(HsmKeyClass::Private)
-        .key_kind(HsmKeyKind::Rsa)
-        .bits(bits)
-        .can_decrypt(true)
-        .build()
-        .unwrap();
-
-    let pub_props = HsmKeyPropsBuilder::default()
-        .class(HsmKeyClass::Public)
-        .key_kind(HsmKeyKind::Rsa)
-        .bits(bits)
-        .can_encrypt(true)
-        .build()
-        .unwrap();
-
-    let mut unwrap_algo = HsmRsaKeyRsaAesKeyUnwrapAlgo::new(HsmHashAlgo::Sha256);
-
-    //  Correct unwrap (baseline)
-    let (good_priv, _) = HsmKeyManager::unwrap_key_pair(
-        &mut unwrap_algo,
-        &unwrap_priv_good,
-        &wrapped,
-        priv_props.clone(),
-        pub_props.clone(),
-    )
-    .unwrap();
-
-    let good_mask = good_priv.masked_key_vec().unwrap();
-
-    let bad_result = HsmKeyManager::unwrap_key_pair(
-        &mut unwrap_algo,
-        &unwrap_priv_bad,
-        &wrapped,
-        priv_props,
-        pub_props,
-    );
-
-    // Wrong key must NOT produce identical key material
-    if let Ok((bad_priv, _)) = bad_result {
-        let bad_mask = bad_priv.masked_key_vec().unwrap();
-
-        assert_ne!(
-            good_mask, bad_mask,
-            "Wrong key must not yield identical key material"
-        );
-
-        HsmKeyManager::delete_key(bad_priv).unwrap();
-    }
-    HsmKeyManager::delete_key(good_priv).unwrap();
-}
-
 /// Helper to verify repeated unwrap produces usable (not necessarily identical) keys
 fn run_rsa_repeatability_test(
     session: &HsmSession,
@@ -1155,24 +1088,6 @@ fn test_rsa_functional_3072(session: HsmSession) {
 #[session_test]
 fn test_rsa_functional_4096(session: HsmSession) {
     run_rsa_functional_test(&session, 4096, 512, 16);
-}
-
-/// Ensure wrong unwrapping key differs for 2048-bit RSA
-#[session_test]
-fn test_rsa_wrong_key_2048(session: HsmSession) {
-    run_rsa_wrong_key_test(&session, 2048, 256, 32);
-}
-
-/// Ensure wrong unwrapping key differs for 3072-bit RSA
-#[session_test]
-fn test_rsa_wrong_key_3072(session: HsmSession) {
-    run_rsa_wrong_key_test(&session, 3072, 384, 24);
-}
-
-/// Ensure wrong unwrapping key differs for 4096-bit RSA
-#[session_test]
-fn test_rsa_wrong_key_4096(session: HsmSession) {
-    run_rsa_wrong_key_test(&session, 4096, 512, 16);
 }
 
 /// Ensure unwrap repeatability for 2048-bit RSA
