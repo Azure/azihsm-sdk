@@ -16,25 +16,6 @@
 #include "utils/auto_key.hpp"
 #include "utils/rsa_keygen.hpp"
 
-// Helper: compute tweak + units as little-endian u128 addition
-std::array<uint8_t, 16> tweak_after_units(const uint8_t tweak[16], size_t units)
-{
-    // Add units to tweak interpreted as a little-endian 128-bit integer
-    uint64_t lo = 0;
-    uint64_t hi = 0;
-    std::memcpy(&lo, tweak, 8);
-    std::memcpy(&hi, tweak + 8, 8);
-
-    uint64_t new_lo = lo + static_cast<uint64_t>(units);
-    uint64_t carry = (new_lo < lo) ? 1 : 0;
-    uint64_t new_hi = hi + carry;
-
-    std::array<uint8_t, 16> out;
-    std::memcpy(out.data(), &new_lo, 8);
-    std::memcpy(out.data() + 8, &new_hi, 8);
-    return out;
-}
-
 class azihsm_aes_keygen : public ::testing::Test
 {
   protected:
@@ -69,6 +50,25 @@ class azihsm_aes_keygen : public ::testing::Test
         err = azihsm_key_get_prop(original_key, &prop);
         EXPECT_EQ(err, AZIHSM_STATUS_SUCCESS);
         EXPECT_EQ(original_bits, expected_bits);
+    }
+
+    // Helper: compute tweak + units as little-endian u128 addition
+    std::array<uint8_t, 16> tweak_after_units(const uint8_t tweak[16], size_t units)
+    {
+        // Add units to tweak interpreted as a little-endian 128-bit integer
+        uint64_t lo = 0;
+        uint64_t hi = 0;
+        std::memcpy(&lo, tweak, 8);
+        std::memcpy(&hi, tweak + 8, 8);
+
+        uint64_t new_lo = lo + static_cast<uint64_t>(units);
+        uint64_t carry = (new_lo < lo) ? 1 : 0;
+        uint64_t new_hi = hi + carry;
+
+        std::array<uint8_t, 16> out;
+        std::memcpy(out.data(), &new_lo, 8);
+        std::memcpy(out.data() + 8, &new_hi, 8);
+        return out;
     }
 };
 

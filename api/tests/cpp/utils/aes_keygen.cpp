@@ -859,13 +859,10 @@ void aes_unwrap_wrong_algo_fails_common(
 
     ASSERT_FALSE(wrapped_data.empty());
 
-    azihsm_algo_rsa_aes_key_wrap_params unwrap_params =
-        build_rsa_aes_key_unwrap_params(oaep_params, key_kind, bits);
-
     azihsm_algo wrong_algo{};
     wrong_algo.id = wrong_algo_id;
-    wrong_algo.params = &unwrap_params;
-    wrong_algo.len = sizeof(unwrap_params);
+    wrong_algo.params = nullptr;
+    wrong_algo.len = 0;
 
     azihsm_key_class key_class = AZIHSM_KEY_CLASS_SECRET;
     bool can_encrypt = true;
