@@ -632,9 +632,6 @@ fn run_rsa_truncated_ciphertext_test(
 
 /// Generates DER-encoded RSA private key of given byte size.
 fn generate_rsa_der(bytes: usize) -> Vec<u8> {
-    use azihsm_crypto::ExportableKey;
-    use azihsm_crypto::KeyGenerationOp;
-
     let key = crypto::RsaPrivateKey::generate(bytes).expect("Failed to generate RSA key");
     key.to_vec().expect("Failed to export RSA key")
 }
@@ -650,9 +647,8 @@ fn wrap_rsa_key(session: &HsmSession, der: &[u8], salt_len: usize) -> (HsmRsaPri
     (unwrap_priv, wrapped)
 }
 
+/// Generate an RSA key, wrap/unwrap it into the HSM, and return its masked private key blob
 fn get_rsa_masked_blob(session: &HsmSession) -> (Vec<u8>, HsmRsaPrivateKey) {
-    use crypto::*;
-
     // Step 1: generate external RSA key
     let crypto_priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA key");
     let der = crypto_priv_key.to_vec().expect("Failed to export RSA key");
@@ -708,8 +704,6 @@ fn run_rsa_unmask_roundtrip_test(
     key_size_bytes: usize,
     salt_len: usize,
 ) {
-    use crypto::*;
-
     // generate RSA key and wrap/unwrap
     let crypto_priv_key = RsaPrivateKey::generate(key_size_bytes).unwrap();
     let der = crypto_priv_key.to_vec().unwrap();
