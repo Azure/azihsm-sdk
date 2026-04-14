@@ -498,6 +498,15 @@ void aes_key_unwrap_common(azihsm_handle session, azihsm_key_kind key_kind, uint
     err = azihsm_key_delete(unwrapped_key);
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
     unwrapped_key.release();
+
+    // Step 6: Clean up wrapping keys
+    err = azihsm_key_delete(wrapping_priv_key);
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+    wrapping_priv_key.release();
+
+    err = azihsm_key_delete(wrapping_pub_key);
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+    wrapping_pub_key.release();
 }
 
 // Common test function to test AES key unmasking and verify properties of the unmasked key
@@ -637,6 +646,11 @@ void aes_unmask_wrong_kind_fails_common(
     err = azihsm_key_unmask(session, wrong_kind, &masked_key_buf, unmasked_key.get_ptr());
     ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
     ASSERT_EQ(unmasked_key, 0);
+
+    // Clean up
+    err = azihsm_key_delete(original_key);
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+    original_key.release();
 }
 
 // Common test function to test AES key unmasking with corrupted masked blob and expect failure
@@ -703,6 +717,11 @@ void aes_unmask_corrupted_blob_fails_common(
     err = azihsm_key_unmask(session, key_kind, &masked_key_buf, unmasked_key.get_ptr());
     ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
     ASSERT_EQ(unmasked_key, 0);
+
+    // Clean up
+    err = azihsm_key_delete(original_key);
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+    original_key.release();
 }
 
 // Common test function to test AES key unwrapping with corrupted wrapped blob and expect failure
@@ -789,6 +808,15 @@ void aes_key_unwrap_corrupted_fails_common(
     );
     ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
     ASSERT_EQ(unwrapped_key, 0);
+
+    // Clean up
+    err = azihsm_key_delete(wrapping_priv_key);
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+    wrapping_priv_key.release();
+
+    err = azihsm_key_delete(wrapping_pub_key);
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+    wrapping_pub_key.release();
 }
 
 // Common test function to test AES key unwrapping with wrong algorithm parameters and expect
@@ -867,6 +895,15 @@ void aes_unwrap_wrong_algo_fails_common(
     );
     ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
     ASSERT_EQ(unwrapped_key, 0);
+
+    // Clean up
+    err = azihsm_key_delete(wrapping_priv_key);
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+    wrapping_priv_key.release();
+
+    err = azihsm_key_delete(wrapping_pub_key);
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+    wrapping_pub_key.release();
 }
 
 // Common test function to test unmasked key is functional and independent of the original key
@@ -1041,6 +1078,15 @@ void aes_unwrap_truncated_blob_fails_common(
     );
     ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
     ASSERT_EQ(unwrapped_key, 0);
+
+    // Clean up
+    err = azihsm_key_delete(wrapping_priv_key);
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+    wrapping_priv_key.release();
+
+    err = azihsm_key_delete(wrapping_pub_key);
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+    wrapping_pub_key.release();
 }
 
 // Common test function to test AES key unwrapping with mismatched bit length and expect failure
@@ -1117,6 +1163,15 @@ void aes_unwrap_bits_mismatch_fails_common(
     );
     ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
     ASSERT_EQ(unwrapped_key, 0);
+
+    // Clean up
+    err = azihsm_key_delete(wrapping_priv_key);
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+    wrapping_priv_key.release();
+
+    err = azihsm_key_delete(wrapping_pub_key);
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+    wrapping_pub_key.release();
 }
 
 // Common test function to test AES key unwrapping with correct parameters and verify the unwrapped
@@ -1343,4 +1398,17 @@ void aes_unwrapped_key_roundtrip_common(
     // Verify roundtrip
     ASSERT_EQ(decrypted.size(), plaintext.size());
     ASSERT_EQ(std::memcmp(decrypted.data(), plaintext.data(), plaintext.size()), 0);
+
+    // Clean up
+    err = azihsm_key_delete(wrapping_priv_key);
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+    wrapping_priv_key.release();
+
+    err = azihsm_key_delete(wrapping_pub_key);
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+    wrapping_pub_key.release();
+
+    err = azihsm_key_delete(aes_key);
+    ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+    aes_key.release();
 }

@@ -656,6 +656,14 @@ TEST_F(azihsm_aes_keygen, aes_xts_key_unwrap_tweak_handling_roundtrip)
             << "Decrypt should increment tweak per data unit";
 
         // Clean up
+        err = azihsm_key_delete(wrapping_priv_key);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        wrapping_priv_key.release();
+
+        err = azihsm_key_delete(wrapping_pub_key);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        wrapping_pub_key.release();
+
         err = azihsm_key_delete(xts_key);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         xts_key.release();
@@ -1121,6 +1129,11 @@ TEST_F(azihsm_aes_keygen, aes_gcm_wrong_tag_fails)
         plain_buf.ptr = decrypted.data();
         err = azihsm_crypt_decrypt(&crypt_algo, key, &cipher_buf, &plain_buf);
         ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+
+        // Clean up
+        err = azihsm_key_delete(key);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        key.release();
     });
 }
 
@@ -1244,6 +1257,15 @@ TEST_F(azihsm_aes_keygen, aes_gcm_wrong_key_fails)
         plain_buf.ptr = decrypted.data();
         err = azihsm_crypt_decrypt(&dec_algo, key2, &cipher_buf, &plain_buf);
         ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+
+        // Clean up
+        err = azihsm_key_delete(key1);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        key1.release();
+
+        err = azihsm_key_delete(key2);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        key2.release();
     });
 }
 
