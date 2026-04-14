@@ -1107,6 +1107,8 @@ static azihsm_status wrap_and_unwrap_pkcs8(
 )
 {
     azihsm_status status;
+    uint8_t *wrapped_data = NULL;
+    uint32_t wrapped_size = 0;
 
     struct azihsm_algo_rsa_pkcs_oaep_params oaep_params = {
         .hash_algo_id = AZIHSM_ALGO_ID_SHA256,
@@ -1130,35 +1132,6 @@ static azihsm_status wrap_and_unwrap_pkcs8(
         .len = (uint32_t)pkcs8_len,
     };
 
-    /* Two-call pattern: first query required size */
-    struct azihsm_buffer wrapped_buf = {
-        .ptr = NULL,
-        .len = 0,
-    };
-
-    status = azihsm_crypt_encrypt(&wrap_algo, wrapping_pub, &plain_buf, &wrapped_buf);
-    if (status != AZIHSM_STATUS_BUFFER_TOO_SMALL || wrapped_buf.len == 0)
-    {
-        return (status == AZIHSM_STATUS_SUCCESS) ? AZIHSM_STATUS_INTERNAL_ERROR : status;
-    }
-
-    /* Allocate buffer for wrapped data */
-    uint32_t wrapped_size = wrapped_buf.len;
-    uint8_t *wrapped_data = OPENSSL_malloc(wrapped_size);
-    if (wrapped_data == NULL)
-    {
-        return AZIHSM_STATUS_INTERNAL_ERROR;
-    }
-
-    /* Second call: perform actual wrap */
-    wrapped_buf.ptr = wrapped_data;
-    wrapped_buf.len = wrapped_size;
-
-    status = azihsm_crypt_encrypt(&wrap_algo, wrapping_pub, &plain_buf, &wrapped_buf);
-    if (status != AZIHSM_STATUS_SUCCESS)
-        goto cleanup;
-
-    /* Unwrap into the HSM */
     struct azihsm_algo_rsa_aes_key_wrap_params unwrap_params = {
         .aes_key_bits = 256,
         .oaep_params = &oaep_params,
@@ -1170,6 +1143,37 @@ static azihsm_status wrap_and_unwrap_pkcs8(
         .len = sizeof(unwrap_params),
     };
 
+    /* Two-call pattern: first query required size */
+    struct azihsm_buffer wrapped_buf = {
+        .ptr = NULL,
+        .len = 0,
+    };
+
+    status = azihsm_crypt_encrypt(&wrap_algo, wrapping_pub, &plain_buf, &wrapped_buf);
+    if (status != AZIHSM_STATUS_BUFFER_TOO_SMALL || wrapped_buf.len == 0)
+    {
+        status = (status == AZIHSM_STATUS_SUCCESS) ? AZIHSM_STATUS_INTERNAL_ERROR : status;
+        goto cleanup;
+    }
+
+    /* Allocate buffer for wrapped data */
+    wrapped_size = wrapped_buf.len;
+    wrapped_data = OPENSSL_malloc(wrapped_size);
+    if (wrapped_data == NULL)
+    {
+        status = AZIHSM_STATUS_INTERNAL_ERROR;
+        goto cleanup;
+    }
+
+    /* Second call: perform actual wrap */
+    wrapped_buf.ptr = wrapped_data;
+    wrapped_buf.len = wrapped_size;
+
+    status = azihsm_crypt_encrypt(&wrap_algo, wrapping_pub, &plain_buf, &wrapped_buf);
+    if (status != AZIHSM_STATUS_SUCCESS)
+        goto cleanup;
+
+    /* Unwrap into the HSM */
     status = azihsm_key_unwrap_pair(
         &unwrap_algo,
         wrapping_priv,
@@ -1272,6 +1276,23 @@ azihsm_status azihsm_unwrap_key_pair(
     azihsm_handle wrapping_pub = 0, wrapping_priv = 0;
     struct azihsm_buffer input_buf = { NULL, 0 };
 
+    struct azihsm_algo_rsa_pkcs_oaep_params oaep_params = {
+        .hash_algo_id = AZIHSM_ALGO_ID_SHA256,
+        .mgf1_hash_algo_id = AZIHSM_MGF1_ID_SHA256,
+        .label = NULL,
+    };
+
+    struct azihsm_algo_rsa_aes_key_wrap_params unwrap_params = {
+        .aes_key_bits = 256,
+        .oaep_params = &oaep_params,
+    };
+
+    struct azihsm_algo unwrap_algo = {
+        .id = AZIHSM_ALGO_ID_RSA_AES_KEY_WRAP,
+        .params = &unwrap_params,
+        .len = sizeof(unwrap_params),
+    };
+
     if (provctx == NULL || wrapped_key_file == NULL || priv_key_prop_list == NULL ||
         pub_key_prop_list == NULL || out_priv == NULL || out_pub == NULL)
     {
@@ -1302,23 +1323,6 @@ azihsm_status azihsm_unwrap_key_pair(
         goto cleanup;
 
     /* 3. Unwrap directly — the blob is already wrapped */
-    struct azihsm_algo_rsa_pkcs_oaep_params oaep_params = {
-        .hash_algo_id = AZIHSM_ALGO_ID_SHA256,
-        .mgf1_hash_algo_id = AZIHSM_MGF1_ID_SHA256,
-        .label = NULL,
-    };
-
-    struct azihsm_algo_rsa_aes_key_wrap_params unwrap_params = {
-        .aes_key_bits = 256,
-        .oaep_params = &oaep_params,
-    };
-
-    struct azihsm_algo unwrap_algo = {
-        .id = AZIHSM_ALGO_ID_RSA_AES_KEY_WRAP,
-        .params = &unwrap_params,
-        .len = sizeof(unwrap_params),
-    };
-
     status = azihsm_key_unwrap_pair(
         &unwrap_algo,
         wrapping_priv,
