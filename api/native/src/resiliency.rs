@@ -41,9 +41,8 @@ const MAX_STORAGE_READ_SIZE: usize = 1024 * 1024;
 /// public key is 120 bytes DER.
 const MAX_POTA_BUFFER_SIZE: usize = 4 * 1024;
 
-/// Maximum size (in bytes) for the OBK output buffer.
-/// OBK is 48 bytes; 4 KiB is a defensive upper bound.
-const MAX_OBK_BUFFER_SIZE: usize = 4 * 1024;
+/// OBK (Owner Backup Key) size in bytes per the API contract.
+const OBK_SIZE: usize = 48;
 
 /// Storage operations for resiliency.
 ///
@@ -436,7 +435,7 @@ impl api::ObkProviderCallback for ObkCallbackAdapter {
 
         // Second call: fill allocated buffer
         let len = obk_buf.len as usize;
-        if len == 0 || len > MAX_OBK_BUFFER_SIZE {
+        if len != OBK_SIZE {
             return Err(api::HsmError::InvalidArgument);
         }
         let mut data = vec![0u8; len];
@@ -450,7 +449,7 @@ impl api::ObkProviderCallback for ObkCallbackAdapter {
         }
 
         let returned_len = obk_buf.len as usize;
-        if returned_len == 0 || returned_len > len {
+        if returned_len != OBK_SIZE {
             return Err(api::HsmError::InvalidArgument);
         }
 

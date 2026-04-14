@@ -45,8 +45,9 @@ use azihsm_resiliency_test_helpers::FileStorage;
 
 use crate::utils::partition::*;
 
-/// Returns the OBK-related DDI op used by `init_part` / `restore_partition`:
+/// Returns the BK3 DDI op used by `init_part` / `restore_partition`:
 /// `GetSealedBk3` on the TPM path, `InitBk3` on the Caller path.
+/// (BK3 is the DDI-level name for the OBK / Owner Backup Key.)
 #[cfg(feature = "res-test")]
 pub(crate) fn bk3_op() -> DdiOp {
     if use_tpm() {

@@ -622,12 +622,25 @@ static azihsm_status resiliency_get_obk(void *ctx_ptr, struct azihsm_buffer *obk
         return AZIHSM_STATUS_BUFFER_TOO_SMALL;
     }
 
+    // Reject files that are not exactly OBK_SIZE before loading to avoid
+    // reading unexpectedly large files into memory.
+    struct stat st;
+    if (stat(ctx->obk_path, &st) != 0)
+    {
+        return AZIHSM_STATUS_INTERNAL_ERROR;
+    }
+    if (!S_ISREG(st.st_mode) || st.st_size != OBK_SIZE)
+    {
+        return AZIHSM_STATUS_INVALID_ARGUMENT;
+    }
+
     status = azihsm_file_load(ctx->obk_path, &file_buf);
     if (status != AZIHSM_STATUS_SUCCESS || file_buf.ptr == NULL)
     {
         return (status != AZIHSM_STATUS_SUCCESS) ? status : AZIHSM_STATUS_INTERNAL_ERROR;
     }
 
+    // Defense-in-depth: re-check after load (TOCTOU gap between stat and open).
     if (file_buf.len != OBK_SIZE)
     {
         OPENSSL_cleanse(file_buf.ptr, file_buf.len);
