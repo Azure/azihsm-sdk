@@ -167,6 +167,14 @@ impl HsmOwnerBackupKeyConfig {
     }
 }
 
+impl Drop for HsmOwnerBackupKeyConfig {
+    fn drop(&mut self) {
+        if let Some(ref mut k) = self.key {
+            k.fill(0);
+        }
+    }
+}
+
 /// HSM POTA endorsement data containing signature and public key for verification.
 ///
 /// This structure holds the cryptographic proof for partition owner trust anchor
@@ -443,10 +451,10 @@ impl HsmPartition {
         // Validate resiliency config and acquire the resiliency lock
         // for the entire init flow — including the final state write —
         // to fully serialize concurrent init_part / restore_partition
-        // calls.  The guard owns an Arc clone, so it does not borrow
+        // calls. The guard owns an Arc clone, so it does not borrow
         // `resiliency_config` (which we consume below).
         let _lock_guard = if let Some(ref config) = resiliency_config {
-            ResiliencyState::validate_config(config, &pota_endorsement)?;
+            ResiliencyState::validate_config(config, &pota_endorsement, &obk_config)?;
             Some(ResiliencyLockGuard::acquire(config)?)
         } else {
             None
@@ -575,6 +583,25 @@ impl HsmPartition {
                 crate::resiliency::AZIHSM_STORAGE_MUK,
             )?;
 
+            // Build the OBK config for this restore attempt.
+            // When source is Caller, invoke the obk_callback to get the
+            // plaintext OBK on demand.
+            let obk_config = match rs.cached_obk_source {
+                HsmOwnerBackupKeySource::Caller => {
+                    let mut obk = rs
+                        .config
+                        .obk_callback
+                        .as_ref()
+                        .ok_or(HsmError::InternalError)?
+                        .get_obk()?;
+                    let config =
+                        HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Caller, Some(&obk));
+                    obk.fill(0);
+                    config
+                }
+                source => HsmOwnerBackupKeyConfig::new(source, None),
+            };
+
             // Single-attempt init_part_raw_no_res — bypasses the retry macro.
             // resiliency_config is passed so init_part_raw_no_res can re-endorse
             // POTA internally when the source is Caller.  Explicit
@@ -587,7 +614,7 @@ impl HsmPartition {
                 rs.cached_credentials,
                 bmk_from_storage.as_deref(),
                 muk_from_storage.as_deref(),
-                &rs.cached_obk_config,
+                &obk_config,
                 &rs.cached_pota_endorsement,
                 Some(&rs.config),
                 true, // let init_part_raw_no_res re-endorse POTA
@@ -1152,7 +1179,8 @@ impl HsmPartitionInner {
         self.set_masked_keys(init_bmk, init_mobk);
 
         if let Some(config) = resiliency_config {
-            let resiliency_state = ResiliencyState::new(config, creds, obk_config, committed_pota)?;
+            let resiliency_state =
+                ResiliencyState::new(config, creds, obk_config.key_source(), committed_pota)?;
             self.set_resiliency_state(resiliency_state);
         }
 

@@ -62,3 +62,7 @@ std::unique_ptr<ResiliencyTestCtx> make_resiliency_config(azihsm_resiliency_conf
 /// Returns a pointer to the shared POTA callback ops vtable used by
 /// the resiliency test helpers.
 const azihsm_pota_callback_ops *get_pota_callback_ops();
+
+/// Returns a pointer to the shared OBK callback ops vtable used by
+/// the resiliency test helpers.
+const azihsm_obk_callback_ops *get_obk_callback_ops();

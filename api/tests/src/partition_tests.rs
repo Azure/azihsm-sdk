@@ -25,6 +25,16 @@ impl PotaEndorsementCallback for DummyPotaCallback {
     }
 }
 
+/// No-op OBK callback for validation tests that need `obk_callback = Some`
+/// without exercising the actual OBK retrieval flow.
+struct DummyObkCallback;
+
+impl ObkProviderCallback for DummyObkCallback {
+    fn get_obk(&self) -> HsmResult<Vec<u8>> {
+        Ok(TEST_OBK.to_vec())
+    }
+}
+
 /// Builds a valid caller-source OBK config using the test OBK.
 fn make_valid_obk() -> HsmOwnerBackupKeyConfig {
     HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Caller, Some(&TEST_OBK))
@@ -599,13 +609,100 @@ fn test_init_with_resiliency_tpm_pota_with_callback_fails() {
         part.reset().expect("Partition reset failed");
 
         let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
-        let obk_info = make_valid_obk();
+        // Use TPM OBK so obk_callback=None is valid; we're testing
+        // that TPM POTA + pota_callback is rejected.
+        let obk_info = HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, None);
         let pota_endorsement = HsmPotaEndorsement::new(HsmPotaEndorsementSource::Tpm, None);
 
         // TPM source + callback provided → should fail with InvalidArgument.
         let (mut resiliency_config, _ctx) = make_resiliency_config();
         // Force pota_callback = Some(...) regardless of USE_TPM — this test
         // specifically verifies that TPM + callback is rejected by validation.
+        if resiliency_config.pota_callback.is_none() {
+            resiliency_config.pota_callback = Some(Box::new(DummyPotaCallback));
+        }
+        // Ensure obk_callback matches OBK source (TPM → None).
+        resiliency_config.obk_callback = None;
+
+        let result = part.init(
+            creds,
+            None,
+            None,
+            obk_info,
+            pota_endorsement,
+            Some(resiliency_config),
+        );
+        assert_eq!(result.unwrap_err(), HsmError::InvalidArgument);
+    }
+}
+
+#[api_test]
+fn test_init_with_resiliency_tpm_obk_with_callback_fails() {
+    let part_mgr = HsmPartitionManager::partition_info_list();
+    assert!(!part_mgr.is_empty(), "No partitions found.");
+    for part_info in part_mgr.iter() {
+        let api_rev = part_info
+            .api_rev_range
+            .as_ref()
+            .expect("No API rev range")
+            .max();
+        let part = HsmPartitionManager::open_partition(&part_info.path, api_rev)
+            .expect("Failed to open the partition");
+        part.reset().expect("Partition reset failed");
+
+        let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
+        // Use TPM OBK + TPM POTA so pota_callback=None is valid.
+        let obk_info = HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, None);
+        let pota_endorsement = HsmPotaEndorsement::new(HsmPotaEndorsementSource::Tpm, None);
+
+        // TPM OBK source + obk_callback provided → should fail with InvalidArgument.
+        let (mut resiliency_config, _ctx) = make_resiliency_config();
+        // Force obk_callback = Some(...) regardless of USE_TPM — this test
+        // specifically verifies that TPM OBK + obk_callback is rejected.
+        resiliency_config.obk_callback = Some(Box::new(DummyObkCallback));
+        // Ensure pota_callback matches POTA source (TPM → None).
+        resiliency_config.pota_callback = None;
+
+        let result = part.init(
+            creds,
+            None,
+            None,
+            obk_info,
+            pota_endorsement,
+            Some(resiliency_config),
+        );
+        assert_eq!(result.unwrap_err(), HsmError::InvalidArgument);
+    }
+}
+
+#[api_test]
+fn test_init_with_resiliency_caller_obk_without_callback_fails() {
+    let part_mgr = HsmPartitionManager::partition_info_list();
+    assert!(!part_mgr.is_empty(), "No partitions found.");
+    for part_info in part_mgr.iter() {
+        let api_rev = part_info
+            .api_rev_range
+            .as_ref()
+            .expect("No API rev range")
+            .max();
+        let part = HsmPartitionManager::open_partition(&part_info.path, api_rev)
+            .expect("Failed to open the partition");
+        part.reset().expect("Partition reset failed");
+
+        let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
+        // Use Caller OBK + Caller POTA so pota_callback=Some is valid.
+        let obk_info = make_valid_obk();
+        let (sig, pub_key_der) = make_valid_pota_parts(&part);
+        let pota_data = HsmPotaEndorsementData::new(&sig, &pub_key_der);
+        let pota_endorsement =
+            HsmPotaEndorsement::new(HsmPotaEndorsementSource::Caller, Some(pota_data));
+
+        // Caller OBK source + obk_callback=None → should fail with InvalidArgument.
+        let (mut resiliency_config, _ctx) = make_resiliency_config();
+        // Force obk_callback = None — this test verifies that Caller OBK
+        // without obk_callback is rejected by validation.
+        resiliency_config.obk_callback = None;
+        // Ensure pota_callback is present for Caller POTA.
         if resiliency_config.pota_callback.is_none() {
             resiliency_config.pota_callback = Some(Box::new(DummyPotaCallback));
         }
