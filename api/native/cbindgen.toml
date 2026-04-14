@@ -43,6 +43,7 @@ include = [
   "AzihsmAlgoRsaAesWrapParams",
   "AzihsmAlgoRsaPkcsOaepParams",
   "AzihsmAlgoRsaPkcsPssParams",
+  "AzihsmObkCallbackOps",
   "AzihsmPotaCallbackOps",
   "AzihsmResiliencyConfig",
   "AzihsmResiliencyLockOps",
@@ -82,6 +83,7 @@ item_types = ["constants", "enums", "functions", "structs", "typedefs"]
 "AzihsmKeyPropId" = "azihsm_key_prop_id"
 "AzihsmKeyPropList" = "azihsm_key_prop_list"
 "AzihsmMgf1Id" = "azihsm_mgf1_id"
+"AzihsmObkCallbackOps" = "azihsm_obk_callback_ops"
 "AzihsmOwnerBackupKeyConfig" = "azihsm_owner_backup_key_config"
 "AzihsmOwnerBackupKeySource" = "azihsm_owner_backup_key_source"
 "AzihsmPartInfo" = "azihsm_part_info"

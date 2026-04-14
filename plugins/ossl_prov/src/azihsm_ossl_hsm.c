@@ -970,6 +970,8 @@ azihsm_status azihsm_open_device_and_session(
             config->pota_private_key_path,
             config->pota_public_key_path,
             config->use_tpm_pota,
+            config->obk_path,
+            config->use_tpm_obk,
             &resiliency_cfg,
             &res_ctx
         );

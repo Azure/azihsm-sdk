@@ -236,7 +236,7 @@ azihsm_status azihsm_part_init(
 | [in] pota_endorsement   | [struct azihsm_pota_endorsement*](#azihsm_pota_endorsement)               | POTA endorsement configuration (must be non-NULL)                |
 | [in] resiliency_config  | [struct azihsm_resiliency_config*](#azihsm_resiliency_config)             | optional resiliency configuration (can be NULL)                  |
 
-When `resiliency_config` is non-NULL, the SDK enables automatic retry and recovery for transient hardware resets. The caller provides storage, lock, and (optionally) POTA re-endorsement callbacks. If POTA endorsement source is `AZIHSM_POTA_ENDORSEMENT_SOURCE_CALLER`, `pota_callback_ops` must be non-NULL. If source is `AZIHSM_POTA_ENDORSEMENT_SOURCE_TPM`, `pota_callback_ops` must be NULL. Passing NULL for `resiliency_config` disables resiliency.
+When `resiliency_config` is non-NULL, the SDK enables automatic retry and recovery for transient hardware resets. The caller provides storage, lock, and (optionally) POTA re-endorsement and OBK provider callbacks. If POTA endorsement source is `AZIHSM_POTA_ENDORSEMENT_SOURCE_CALLER`, `pota_callback_ops` must be non-NULL. If source is `AZIHSM_POTA_ENDORSEMENT_SOURCE_TPM`, `pota_callback_ops` must be NULL. Similarly, if OBK source is `AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER`, `obk_callback_ops` must be non-NULL. If source is `AZIHSM_OWNER_BACKUP_KEY_SOURCE_TPM`, `obk_callback_ops` must be NULL. Passing NULL for `resiliency_config` disables resiliency.
 
 > **POTA callback:** The POTA `endorse` callback is
 > invoked during resiliency recovery. The SDK retrieves the device's
@@ -247,6 +247,15 @@ When `resiliency_config` is non-NULL, the SDK enables automatic retry and recove
 > AZIHSM APIs on the same `azihsm_handle` being initialized or
 > restored, to avoid deadlock.
 > See [`azihsm_pota_callback_ops`](#azihsm_pota_callback_ops)
+> for details.
+
+> **OBK callback:** The OBK `get_obk` callback is invoked during
+> resiliency recovery to re-provision the caller's Owner Backup Key.
+> The SDK does not cache the plaintext OBK — it calls this callback
+> on demand. The callback is invoked while the partition's internal
+> lock is held; its implementation must not call AZIHSM APIs on the
+> same `azihsm_handle` being initialized or restored, to avoid deadlock.
+> See [`azihsm_obk_callback_ops`](#azihsm_obk_callback_ops)
 > for details.
 
 **Returns**

@@ -46,7 +46,10 @@ struct azihsm_resiliency_ctx;
  *                          access, or the call is rejected.
  * @param[in]  pota_priv_path  Path to POTA private key DER file (NULL for TPM).
  * @param[in]  pota_pub_path   Path to POTA public key DER file (NULL for TPM).
- * @param[in]  use_tpm_pota    True when POTA source is TPM (no callback needed).
+ * @param[in]  use_tpm_pota    True when POTA source is TPM (no POTA callback needed).
+ * @param[in]  obk_path        Path to OBK file (NULL for TPM). Re-read during
+ *                             resiliency restore to re-provision the OBK.
+ * @param[in]  use_tpm_obk     True when OBK source is TPM (no OBK callback needed).
  * @param[out] out_config   Populated with callback function pointers and
  *                          a context pointer referencing the new context.
  * @param[out] out_ctx      Receives the newly allocated context.
@@ -58,6 +61,8 @@ azihsm_status azihsm_resiliency_create(
     const char *pota_priv_path,
     const char *pota_pub_path,
     bool use_tpm_pota,
+    const char *obk_path,
+    bool use_tpm_obk,
     struct azihsm_resiliency_config *out_config,
     struct azihsm_resiliency_ctx **out_ctx
 );

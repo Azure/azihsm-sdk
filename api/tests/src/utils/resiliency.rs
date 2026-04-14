@@ -4,8 +4,9 @@
 //! Resiliency test helpers.
 //!
 //! Provides file-backed implementations of [`ResiliencyStorage`],
-//! cross-process [`ResiliencyLock`] (via `fs2` file locking), and a dummy
-//! [`PotaEndorsementCallback`] for use in integration tests.
+//! cross-process [`ResiliencyLock`] (via `fs2` file locking), a dummy
+//! [`PotaEndorsementCallback`], and a dummy [`ObkProviderCallback`] for
+//! use in integration tests.
 //!
 //! All callers share a single well-known directory under the system
 //! temp dir. Storage uses one file per key inside that directory.
@@ -44,8 +45,9 @@ use azihsm_resiliency_test_helpers::FileStorage;
 
 use crate::utils::partition::*;
 
-/// Returns the BK3-related DDI op used by `init_part` / `restore_partition`:
+/// Returns the BK3 DDI op used by `init_part` / `restore_partition`:
 /// `GetSealedBk3` on the TPM path, `InitBk3` on the Caller path.
+/// (BK3 is the DDI-level name for the OBK / Owner Backup Key.)
 #[cfg(feature = "res-test")]
 pub(crate) fn bk3_op() -> DdiOp {
     if use_tpm() {
@@ -94,6 +96,18 @@ impl PotaEndorsementCallback for TestPotaCallback {
             &signature,
             &super::partition::TEST_POTA_PUBLIC_KEY_DER,
         ))
+    }
+}
+
+/// Test OBK callback that returns the hardcoded test OBK.
+///
+/// Used in integration tests when OBK source is `Caller` to supply
+/// OBK on demand during restore, without caching it in the SDK.
+struct TestObkCallback;
+
+impl ObkProviderCallback for TestObkCallback {
+    fn get_obk(&self) -> HsmResult<Vec<u8>> {
+        Ok(super::partition::TEST_OBK.to_vec())
     }
 }
 
@@ -155,10 +169,19 @@ pub(crate) fn make_resiliency_config_in(dir: &Path) -> HsmResiliencyConfig {
         Some(Box::new(TestPotaCallback))
     };
 
+    // OBK callback follows the same pattern as POTA: needed for Caller
+    // source, must be None for TPM source.
+    let obk_callback: Option<Box<dyn ObkProviderCallback>> = if use_tpm() {
+        None
+    } else {
+        Some(Box::new(TestObkCallback))
+    };
+
     HsmResiliencyConfig {
         storage: Box::new(FileStorage::new(dir.to_path_buf())),
         lock: Arc::new(FileLock::new(lock_path)),
         pota_callback,
+        obk_callback,
     }
 }
 
@@ -202,6 +225,13 @@ mod tests {
         }
     }
 
+    struct DummyObkCallback;
+    impl ObkProviderCallback for DummyObkCallback {
+        fn get_obk(&self) -> HsmResult<Vec<u8>> {
+            Ok(vec![3u8; 48])
+        }
+    }
+
     /// Build a resiliency config for unit tests that exercise storage
     /// and locking without interacting with a partition. Uses
     /// [`DummyPotaCallback`] since the POTA callback is not exercised.
@@ -212,6 +242,7 @@ mod tests {
             storage: Box::new(FileStorage::new(dir.to_path_buf())),
             lock: Arc::new(FileLock::new(lock_path)),
             pota_callback: Some(Box::new(DummyPotaCallback)),
+            obk_callback: Some(Box::new(DummyObkCallback)),
         }
     }
 
