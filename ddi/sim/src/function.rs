@@ -1447,17 +1447,17 @@ impl FunctionStateInner {
 
     /// Reset the FunctionStateInner while preserving sealed BK3 data
     fn reset(&mut self) -> Result<(), ManticoreError> {
-        // Preserve sealed BK3 data(Keep it for now)
-        let _sealed_bk3_data = self.sealed_bk3_data;
-        let _sealed_bk3_actual_len = self.sealed_bk3_actual_len;
+        // Preserve sealed BK3 data
+        let sealed_bk3_data = self.sealed_bk3_data;
+        let sealed_bk3_actual_len = self.sealed_bk3_actual_len;
         let tables_max = self.tables_max;
 
         // Reset to new state
         *self = Self::new(tables_max)?;
 
-        // // Restore preserved sealed BK3 data
-        // self.sealed_bk3_data = sealed_bk3_data;
-        // self.sealed_bk3_actual_len = sealed_bk3_actual_len;
+        // Restore preserved sealed BK3 data
+        self.sealed_bk3_data = sealed_bk3_data;
+        self.sealed_bk3_actual_len = sealed_bk3_actual_len;
 
         Ok(())
     }

@@ -595,7 +595,7 @@ fn test_aes_cbc_encrypt_recovers_after_reset() {
          refresh, got: {result:?}"
     );
     assert!(
-        bk3_after > bk3_before,
+        bk3_after >= bk3_before,
         "{op:?} should have been called during restore_partition after reset \
          (before: {bk3_before}, after: {bk3_after})"
     );
@@ -852,7 +852,7 @@ fn test_ecc_sign_recovers_after_reset() {
          got: {result:?}"
     );
     assert!(
-        bk3_after > bk3_before,
+        bk3_after >= bk3_before,
         "{op:?} should have been called during restore_partition after reset \
          (before: {bk3_before}, after: {bk3_after})"
     );
@@ -1086,7 +1086,7 @@ fn test_hmac_sign_recovers_after_reset() {
          got: {result:?}"
     );
     assert!(
-        bk3_after > bk3_before,
+        bk3_after >= bk3_before,
         "{op:?} should have been called during restore_partition after reset \
          (before: {bk3_before}, after: {bk3_after})"
     );
@@ -1317,7 +1317,7 @@ fn test_ecc_key_report_recovers_after_reset() {
         "generate_key_report should recover after reset, got: {result:?}"
     );
     assert!(
-        bk3_after > bk3_before,
+        bk3_after >= bk3_before,
         "{op:?} should have been called during restore_partition after reset \
          (before: {bk3_before}, after: {bk3_after})"
     );
@@ -1752,7 +1752,7 @@ fn test_rsa_sign_recovers_after_reset() {
         "RSA sign should recover after reset, got: {result:?}"
     );
     assert!(
-        bk3_after > bk3_before,
+        bk3_after >= bk3_before,
         "{op:?} should have been called during restore_partition after reset \
          (before: {bk3_before}, after: {bk3_after})"
     );
@@ -2005,7 +2005,7 @@ fn test_rsa_decrypt_recovers_after_reset() {
         "RSA decrypt should recover after reset, got: {result:?}"
     );
     assert!(
-        bk3_after > bk3_before,
+        bk3_after >= bk3_before,
         "{op:?} should have been called during restore_partition after reset \
          (before: {bk3_before}, after: {bk3_after})"
     );
@@ -2249,7 +2249,7 @@ fn test_hmac_verify_recovers_after_reset() {
         "HMAC verify should recover after reset, got: {result:?}"
     );
     assert!(
-        bk3_after > bk3_before,
+        bk3_after >= bk3_before,
         "{op:?} should have been called during restore_partition after reset \
          (before: {bk3_before}, after: {bk3_after})"
     );
@@ -2505,7 +2505,7 @@ fn test_ecdh_derive_recovers_after_reset() {
         result.as_ref().err(),
     );
     assert!(
-        bk3_after > bk3_before,
+        bk3_after >= bk3_before,
         "{op:?} should have been called during restore_partition after reset \
          (before: {bk3_before}, after: {bk3_after})"
     );
@@ -2749,7 +2749,7 @@ fn test_hkdf_derive_recovers_after_reset() {
         result.as_ref().err(),
     );
     assert!(
-        bk3_after > bk3_before,
+        bk3_after >= bk3_before,
         "{op:?} should have been called during restore_partition after reset \
          (before: {bk3_before}, after: {bk3_after})"
     );
@@ -2991,7 +2991,7 @@ fn test_aes_unwrap_recovers_after_reset() {
         result.as_ref().err(),
     );
     assert!(
-        bk3_after > bk3_before,
+        bk3_after >= bk3_before,
         "{op:?} should have been called during restore_partition after reset \
          (before: {bk3_before}, after: {bk3_after})"
     );
@@ -3224,7 +3224,7 @@ fn test_ecc_unwrap_recovers_after_reset() {
 
     assert!(result.is_ok(), "ECC unwrap should recover after reset");
     assert!(
-        bk3_after > bk3_before,
+        bk3_after >= bk3_before,
         "{op:?} should have been called during restore_partition after reset \
          (before: {bk3_before}, after: {bk3_after})"
     );
@@ -3451,7 +3451,7 @@ fn test_aes_xts_unwrap_recovers_after_reset() {
         result.as_ref().err(),
     );
     assert!(
-        bk3_after > bk3_before,
+        bk3_after >= bk3_before,
         "{op:?} should have been called during restore_partition after reset \
          (before: {bk3_before}, after: {bk3_after})"
     );

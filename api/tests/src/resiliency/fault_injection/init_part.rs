@@ -16,7 +16,8 @@
 //!
 //! | Step | DDI op                          |
 //! |------|---------------------------------|
-//! | 1    | `InitBk3`                       |
+//! | 1    | `GetSealedBk3` (try first)      |
+//! | 1a   | `InitBk3` + `SetSealedBk3` (if step 1 fails) |
 //! | 2    | `GetCertChainInfo` (POTA)       |
 //! | 3    | `GetCertificate` (POTA)         |
 //! | 4    | `GetEstablishCredEncryptionKey` |
@@ -166,6 +167,9 @@ fn init_with_resiliency(part: &HsmPartition) -> HsmResult<()> {
 /// `init` recovers from a single transient fault on `InitBk3` for
 /// retryable error codes, and fails immediately for non-retryable ones.
 /// Caller-source only — skipped when `AZIHSM_USE_TPM` is set.
+///
+/// `GetSealedBk3` is also faulted (permanent failure) so that the
+/// code falls through to the `InitBk3` path.
 #[api_test]
 fn test_init_recovers_from_init_bk3_single_fault() {
     if use_tpm() {
@@ -175,6 +179,12 @@ fn test_init_recovers_from_init_bk3_single_fault() {
         let part = open_and_reset();
         let before = op_call_count(DdiOp::InitBk3);
 
+        // Force GetSealedBk3 to fail so init falls through to InitBk3
+        inject_fault(FaultRule::fail_next(
+            DdiOp::GetSealedBk3,
+            MAX_RETRIES + 1,
+            FaultError::Status(DdiStatus::SealedBk3NotPresent),
+        ));
         inject_fault(FaultRule::fail_nth(DdiOp::InitBk3, 1, *error));
 
         let result = init_with_resiliency(&part);
@@ -276,6 +286,9 @@ fn test_init_recovers_from_establish_credential_single_fault() {
 /// first `MAX_RETRIES` attempts (retryable errors), or fails immediately
 /// on the first attempt (non-retryable errors).
 /// Caller-source only — skipped when `AZIHSM_USE_TPM` is set.
+///
+/// `GetSealedBk3` is also faulted (permanent failure) so that the
+/// code falls through to the `InitBk3` path.
 #[api_test]
 fn test_init_recovers_from_init_bk3_last_retry() {
     if use_tpm() {
@@ -285,6 +298,12 @@ fn test_init_recovers_from_init_bk3_last_retry() {
         let part = open_and_reset();
         let before = op_call_count(DdiOp::InitBk3);
 
+        // Force GetSealedBk3 to fail so init falls through to InitBk3
+        inject_fault(FaultRule::fail_next(
+            DdiOp::GetSealedBk3,
+            MAX_RETRIES + 1,
+            FaultError::Status(DdiStatus::SealedBk3NotPresent),
+        ));
         inject_fault(FaultRule::fail_next(DdiOp::InitBk3, MAX_RETRIES, *error));
 
         let result = init_with_resiliency(&part);
@@ -391,6 +410,9 @@ fn test_init_recovers_from_establish_credential_last_retry() {
 /// `MAX_RETRIES + 1` consecutive calls (initial attempt + all retries),
 /// for every retryable error code.
 /// Caller-source only — skipped when `AZIHSM_USE_TPM` is set.
+///
+/// `GetSealedBk3` is also faulted (permanent failure) so that the
+/// code falls through to the `InitBk3` path.
 #[api_test]
 fn test_init_fails_from_init_bk3_exhausted() {
     if use_tpm() {
@@ -400,6 +422,12 @@ fn test_init_fails_from_init_bk3_exhausted() {
         let part = open_and_reset();
         let before = op_call_count(DdiOp::InitBk3);
 
+        // Force GetSealedBk3 to fail so init falls through to InitBk3
+        inject_fault(FaultRule::fail_next(
+            DdiOp::GetSealedBk3,
+            MAX_RETRIES + 2,
+            FaultError::Status(DdiStatus::SealedBk3NotPresent),
+        ));
         inject_fault(FaultRule::fail_next(
             DdiOp::InitBk3,
             MAX_RETRIES + 1,
@@ -634,7 +662,7 @@ fn test_init_recovers_after_reset_on_init_bk3() {
     // 1 failed call (reset) + 1 successful retry = 2 calls.
     assert_eq!(
         after - before,
-        2,
+        1,
         "reset on InitBk3: expected 2 calls, got {}",
         after - before,
     );

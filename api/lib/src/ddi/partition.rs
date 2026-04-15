@@ -325,28 +325,27 @@ pub(crate) fn init_part_raw_no_res(
 ) -> HsmResult<InitPartResult> {
     let mobk = match obk_config.key_source() {
         HsmOwnerBackupKeySource::Caller => {
-            // Caller provided the OBK
-            let obk = obk_config.key().ok_or(HsmError::InvalidArgument)?;
-            let init_result = init_bk3(dev, rev, obk);
-            match init_result {
-                Ok(masked_obk) => {
-                    // First-time init succeeded — seal the masked BK3 for future use
-                    set_sealed_bk3(dev, rev, &masked_obk)?;
-                    masked_obk
+            // Try to retrieve an existing sealed BK3 first (from a prior init).
+            // If found, reuse it. Otherwise, initialize BK3 with the
+            // caller-provided OBK and seal the result on the device.
+            match get_sealed_bk3(dev, rev) {
+                Ok(sealed_bk3) => {
+                    tracing::info!(
+                        "Existing sealed BK3 found on device, using it for credential establishment"
+                    );
+                    sealed_bk3
                 }
                 Err(e) => {
-                    // BK3 already initialized — retrieve the previously sealed value
-                    tracing::warn!(
-                        "init_bk3 failed with error {:?}, attempting to retrieve existing sealed BK3",
+                    tracing::info!(
+                        "No existing sealed BK3 found on device, proceeding with BK3 initialization: {:?}",
                         e
                     );
-                    get_sealed_bk3(dev, rev).map_err(|res| {
-                        tracing::error!(
-                            "Failed to retrieve sealed BK3 after init_bk3 failure: {:?}",
-                            res
-                        );
-                        e
-                    })?
+                    let obk = obk_config.key().ok_or(HsmError::InvalidArgument)?;
+                    let masked_obk = init_bk3(dev, rev, obk)?;
+                    if let Err(e) = set_sealed_bk3(dev, rev, &masked_obk) {
+                        tracing::warn!("Failed to seal BK3 after successful init_bk3: {:?}", e);
+                    }
+                    masked_obk
                 }
             }
         }
