@@ -332,11 +332,6 @@ pub(crate) fn init_part_raw_no_res(
                 Ok(masked_obk) => {
                     // First-time init succeeded — seal the masked BK3 for future use
                     set_sealed_bk3(dev, rev, &masked_obk)?;
-                    // let set_result = set_sealed_bk3(dev, rev, &masked_obk);
-                    // if let Err(e) = set_result {
-                    //     tracing::error!("Failed to seal BK3 after successful init_bk3: {:?}", e);
-                    //     // Proceed with the unsealed masked OBK, but log the error
-                    // }
                     masked_obk
                 }
                 Err(e) => {
@@ -345,15 +340,13 @@ pub(crate) fn init_part_raw_no_res(
                         "init_bk3 failed with error {:?}, attempting to retrieve existing sealed BK3",
                         e
                     );
-                    get_sealed_bk3(dev, rev)
-                        .map_err(|res| {
-                            tracing::error!(
-                                "Failed to retrieve sealed BK3 after init_bk3 failure: {:?}",
-                                res
-                            );
-                            return e;
-                        })
-                        .unwrap()
+                    get_sealed_bk3(dev, rev).map_err(|res| {
+                        tracing::error!(
+                            "Failed to retrieve sealed BK3 after init_bk3 failure: {:?}",
+                            res
+                        );
+                        e
+                    })?
                 }
             }
         }
