@@ -7,6 +7,7 @@
 //! Xtask to validate that all path dependencies in the workspace are also listed as workspace members
 
 use std::fs;
+use std::path::Path;
 
 use clap::Parser;
 use toml_edit::DocumentMut;
@@ -56,7 +57,10 @@ impl Xtask for ValidateMembers {
         // filter dep_paths to those not in member_paths
         let mut non_member_paths: Vec<&str> = Vec::new();
         for dep_path in &dep_paths {
-            if !member_paths.iter().any(|m| dep_path.starts_with(m)) {
+            if !member_paths
+                .iter()
+                .any(|m| Path::new(dep_path) == Path::new(m))
+            {
                 non_member_paths.push(dep_path);
             }
         }
@@ -64,15 +68,13 @@ impl Xtask for ValidateMembers {
         if self.fix {
             // update workspace members to include any missing paths
             let mut updated = false;
-            for dep_path in &dep_paths {
-                if !member_paths.iter().any(|m| dep_path.starts_with(m)) {
-                    log::trace!("Adding missing workspace member: {}", dep_path);
-                    doc["workspace"]["members"]
-                        .as_array_mut()
-                        .unwrap()
-                        .push(Value::from(*dep_path));
-                    updated = true;
-                }
+            for non_member_path in &non_member_paths {
+                log::trace!("Adding missing workspace member: {}", non_member_path);
+                doc["workspace"]["members"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(Value::from(*non_member_path));
+                updated = true;
             }
 
             if updated {

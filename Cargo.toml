@@ -14,6 +14,7 @@ members = [
   "crates/resiliency_macro",
   "crates/resiliency_test_helpers",
   "crates/test_with_tracing",
+  "crates/test_with_tracing/test_with_tracing_macro",
   "crates/tpm",
   "crates/x509",
   "ddi/interface",
