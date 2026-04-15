@@ -999,7 +999,6 @@ azihsm_status azihsm_open_device_and_session(
             goto cleanup;
 
         status = compute_pota_endorsement(&pid_pub_key_buf, &pota_priv_buf, &pota_sig_buf);
-        free_buffer(&pid_pub_key_buf);
         if (status != AZIHSM_STATUS_SUCCESS)
             goto cleanup;
 
