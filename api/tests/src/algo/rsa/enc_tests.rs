@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 use azihsm_crypto as crypto;
+use crypto::*;
 
 use super::*;
 
@@ -76,8 +77,6 @@ fn import_rsa_key(
 
 #[session_test]
 fn test_rsa_2048_pkcs1_enc_dec(session: HsmSession) {
-    use crypto::*;
-
     let priv_key = crypto::RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
     let der = priv_key.to_vec().expect("Failed to export RSA Key");
     let (priv_key, pub_key) = import_rsa_key(&session, &der, 2048);
@@ -96,8 +95,6 @@ fn test_rsa_2048_pkcs1_enc_dec(session: HsmSession) {
 
 #[session_test]
 fn test_rsa_3072_pkcs1_enc_dec(session: HsmSession) {
-    use crypto::*;
-
     let priv_key = crypto::RsaPrivateKey::generate(384).expect("Failed to generate RSA Key");
     let der = priv_key.to_vec().expect("Failed to export RSA Key");
     let (priv_key, pub_key) = import_rsa_key(&session, &der, 3072);
@@ -116,8 +113,6 @@ fn test_rsa_3072_pkcs1_enc_dec(session: HsmSession) {
 
 #[session_test]
 fn test_rsa_4096_pkcs1_enc_dec(session: HsmSession) {
-    use crypto::*;
-
     let priv_key = crypto::RsaPrivateKey::generate(512).expect("Failed to generate RSA Key");
     let der = priv_key.to_vec().expect("Failed to export RSA Key");
     let (priv_key, pub_key) = import_rsa_key(&session, &der, 4096);
@@ -136,8 +131,6 @@ fn test_rsa_4096_pkcs1_enc_dec(session: HsmSession) {
 
 #[session_test]
 fn test_rsa_2048_oaep_enc_dec(session: HsmSession) {
-    use crypto::*;
-
     let priv_key = crypto::RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
     let der = priv_key.to_vec().expect("Failed to export RSA Key");
     let (priv_key, pub_key) = import_rsa_key(&session, &der, 2048);
@@ -156,8 +149,6 @@ fn test_rsa_2048_oaep_enc_dec(session: HsmSession) {
 
 #[session_test]
 fn test_rsa_3072_oaep_enc_dec(session: HsmSession) {
-    use crypto::*;
-
     let priv_key = crypto::RsaPrivateKey::generate(384).expect("Failed to generate RSA Key");
     let der = priv_key.to_vec().expect("Failed to export RSA Key");
     let (priv_key, pub_key) = import_rsa_key(&session, &der, 3072);
@@ -176,8 +167,6 @@ fn test_rsa_3072_oaep_enc_dec(session: HsmSession) {
 
 #[session_test]
 fn test_rsa_4096_oaep_enc_dec(session: HsmSession) {
-    use crypto::*;
-
     let priv_key = crypto::RsaPrivateKey::generate(512).expect("Failed to generate RSA Key");
     let der = priv_key.to_vec().expect("Failed to export RSA Key");
     let (priv_key, pub_key) = import_rsa_key(&session, &der, 4096);
@@ -197,8 +186,6 @@ fn test_rsa_4096_oaep_enc_dec(session: HsmSession) {
 /// Ensure decrypting with wrong private key fails
 #[session_test]
 fn test_rsa_decrypt_with_wrong_key_fails(session: HsmSession) {
-    use crypto::*;
-
     // Key pair A
     let priv_a = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
     let der_a = priv_a.to_vec().expect("Failed to export RSA Key");
@@ -223,8 +210,6 @@ fn test_rsa_decrypt_with_wrong_key_fails(session: HsmSession) {
 /// Ensure tampered ciphertext fails to decrypt
 #[session_test]
 fn test_rsa_tampered_ciphertext_fails(session: HsmSession) {
-    use crypto::*;
-
     let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
     let der = priv_key.to_vec().expect("Failed to export RSA Key");
     let (priv_key, pub_key) = import_rsa_key(&session, &der, 2048);
@@ -245,8 +230,6 @@ fn test_rsa_tampered_ciphertext_fails(session: HsmSession) {
 /// Ensure empty plaintext encryption works or is handled
 #[session_test]
 fn test_rsa_empty_plaintext(session: HsmSession) {
-    use crypto::*;
-
     let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
     let der = priv_key.to_vec().expect("Failed to export RSA Key");
 
@@ -268,8 +251,6 @@ fn test_rsa_empty_plaintext(session: HsmSession) {
 /// Ensure encryption fails when plaintext exceeds RSA limit
 #[session_test]
 fn test_rsa_plaintext_too_large_fails(session: HsmSession) {
-    use crypto::*;
-
     let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
     let der = priv_key.to_vec().expect("Failed to export RSA Key");
     let (_, pub_key) = import_rsa_key(&session, &der, 2048);
@@ -287,8 +268,6 @@ fn test_rsa_plaintext_too_large_fails(session: HsmSession) {
 /// Ensure OAEP label mismatch fails
 #[session_test]
 fn test_rsa_oaep_label_mismatch(session: HsmSession) {
-    use crypto::*;
-
     let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
     let der = priv_key.to_vec().expect("Failed to export RSA Key");
     let (priv_key, pub_key) = import_rsa_key(&session, &der, 2048);
@@ -312,8 +291,6 @@ fn test_rsa_oaep_label_mismatch(session: HsmSession) {
 /// Ensure decrypt fails when using wrong padding scheme
 #[session_test]
 fn test_rsa_wrong_padding_fails(session: HsmSession) {
-    use crypto::*;
-
     let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
     let der = priv_key.to_vec().expect("Failed to export RSA Key");
     let (priv_key, pub_key) = import_rsa_key(&session, &der, 2048);
@@ -336,8 +313,6 @@ fn test_rsa_wrong_padding_fails(session: HsmSession) {
 /// Ensure decrypting empty ciphertext fails
 #[session_test]
 fn test_rsa_empty_ciphertext_fails(session: HsmSession) {
-    use crypto::*;
-
     let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
     let der = priv_key.to_vec().expect("Failed to export RSA Key");
     let (priv_key, _) = import_rsa_key(&session, &der, 2048);
@@ -351,8 +326,6 @@ fn test_rsa_empty_ciphertext_fails(session: HsmSession) {
 /// Ensure OAEP hash mismatch fails
 #[session_test]
 fn test_rsa_oaep_hash_mismatch_fails(session: HsmSession) {
-    use crypto::*;
-
     let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
     let der = priv_key.to_vec().expect("Failed to export RSA Key");
     let (priv_key, pub_key) = import_rsa_key(&session, &der, 2048);
@@ -373,8 +346,6 @@ fn test_rsa_oaep_hash_mismatch_fails(session: HsmSession) {
 /// Ensure RSA encryption is non-deterministic (same plaintext ≠ same ciphertext)
 #[session_test]
 fn test_rsa_encryption_is_non_deterministic(session: HsmSession) {
-    use crypto::*;
-
     let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
     let der = priv_key.to_vec().expect("Failed to export RSA Key");
     let (_, pub_key) = import_rsa_key(&session, &der, 2048);
@@ -394,8 +365,6 @@ fn test_rsa_encryption_is_non_deterministic(session: HsmSession) {
 /// Ensure truncated ciphertext fails to decrypt
 #[session_test]
 fn test_rsa_truncated_ciphertext_fails(session: HsmSession) {
-    use crypto::*;
-
     let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
     let der = priv_key.to_vec().expect("Failed to export RSA Key");
     let (priv_key, pub_key) = import_rsa_key(&session, &der, 2048);
@@ -416,8 +385,6 @@ fn test_rsa_truncated_ciphertext_fails(session: HsmSession) {
 /// Ensure same key works across different padding schemes independently
 #[session_test]
 fn test_rsa_same_key_multiple_algorithms(session: HsmSession) {
-    use crypto::*;
-
     let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
     let der = priv_key.to_vec().expect("Failed to export RSA Key");
     let (priv_key, pub_key) = import_rsa_key(&session, &der, 2048);
@@ -444,8 +411,6 @@ fn test_rsa_same_key_multiple_algorithms(session: HsmSession) {
 /// Ensure plaintext at exact PKCS1 limit succeeds
 #[session_test]
 fn test_rsa_plaintext_max_size_succeeds(session: HsmSession) {
-    use crypto::*;
-
     let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
     let der = priv_key.to_vec().expect("Failed to export RSA Key");
     let (priv_key, pub_key) = import_rsa_key(&session, &der, 2048);
@@ -466,8 +431,6 @@ fn test_rsa_plaintext_max_size_succeeds(session: HsmSession) {
 /// Ensure unwrap fails when public key lacks can_encrypt permission
 #[session_test]
 fn test_rsa_unwrap_without_encrypt_permission_fails(session: HsmSession) {
-    use crypto::*;
-
     // Generate external RSA key
     let priv_key = RsaPrivateKey::generate(256).expect("gen rsa key");
     let der = priv_key.to_vec().expect("export rsa key");
@@ -507,8 +470,6 @@ fn test_rsa_unwrap_without_encrypt_permission_fails(session: HsmSession) {
 /// Ensure OAEP encryption is non-deterministic
 #[session_test]
 fn test_rsa_oaep_non_deterministic(session: HsmSession) {
-    use crypto::*;
-
     let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
     let der = priv_key.to_vec().expect("Failed to export RSA Key");
     let (_, pub_key) = import_rsa_key(&session, &der, 2048);
@@ -527,8 +488,6 @@ fn test_rsa_oaep_non_deterministic(session: HsmSession) {
 /// Ensure plaintext at exact OAEP limit succeeds
 #[session_test]
 fn test_rsa_oaep_plaintext_max_size_succeeds(session: HsmSession) {
-    use crypto::*;
-
     let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
     let der = priv_key.to_vec().expect("Failed to export RSA Key");
     let (priv_key, pub_key) = import_rsa_key(&session, &der, 2048);
@@ -549,8 +508,6 @@ fn test_rsa_oaep_plaintext_max_size_succeeds(session: HsmSession) {
 /// Ensure decrypt fails when using different key size
 #[session_test]
 fn test_rsa_cross_key_size_fails(session: HsmSession) {
-    use crypto::*;
-
     // 2048 key
     let priv_a = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
     let der_a = priv_a.to_vec().expect("Failed to export RSA Key");
@@ -575,8 +532,6 @@ fn test_rsa_cross_key_size_fails(session: HsmSession) {
 /// Ensure decrypt works with fresh algo instance (stateless behavior)
 #[session_test]
 fn test_rsa_decrypt_with_new_algo_instance(session: HsmSession) {
-    use crypto::*;
-
     let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
     let der = priv_key.to_vec().expect("Failed to export RSA Key");
     let (priv_key, pub_key) = import_rsa_key(&session, &der, 2048);
@@ -599,8 +554,6 @@ fn test_rsa_decrypt_with_new_algo_instance(session: HsmSession) {
 /// Ensure decrypting same ciphertext twice works
 #[session_test]
 fn test_rsa_decrypt_twice(session: HsmSession) {
-    use crypto::*;
-
     let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
     let der = priv_key.to_vec().expect("Failed to export RSA Key");
     let (priv_key, pub_key) = import_rsa_key(&session, &der, 2048);
@@ -623,8 +576,6 @@ fn test_rsa_decrypt_twice(session: HsmSession) {
 /// Ensure OAEP None and empty label are treated equivalently
 #[session_test]
 fn test_rsa_oaep_none_equals_empty_label(session: HsmSession) {
-    use crypto::*;
-
     let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
     let der = priv_key.to_vec().expect("Failed to export RSA Key");
     let (priv_key, pub_key) = import_rsa_key(&session, &der, 2048);
@@ -646,8 +597,6 @@ fn test_rsa_oaep_none_equals_empty_label(session: HsmSession) {
 /// Ensure very small plaintext (1 byte) works
 #[session_test]
 fn test_rsa_single_byte_plaintext(session: HsmSession) {
-    use crypto::*;
-
     let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
     let der = priv_key.to_vec().expect("Failed to export RSA Key");
     let (priv_key, pub_key) = import_rsa_key(&session, &der, 2048);
@@ -668,8 +617,6 @@ fn test_rsa_single_byte_plaintext(session: HsmSession) {
 /// Ensure tampering at end of ciphertext fails
 #[session_test]
 fn test_rsa_tampered_ciphertext_tail_fails(session: HsmSession) {
-    use crypto::*;
-
     let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
     let der = priv_key.to_vec().expect("Failed to export RSA Key");
     let (priv_key, pub_key) = import_rsa_key(&session, &der, 2048);
