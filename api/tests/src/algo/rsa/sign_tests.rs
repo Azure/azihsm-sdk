@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 use azihsm_crypto as crypto;
+use crypto::*;
 
 use super::*;
 
@@ -76,8 +77,6 @@ fn import_rsa_key(
 
 #[session_test]
 fn test_rsa_2048_pkcs1_sign_verify(session: HsmSession) {
-    use crypto::*;
-
     let priv_key = crypto::RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
     let der = priv_key.to_vec().expect("Failed to export RSA Key");
     let (priv_key, pub_key) = import_rsa_key(&session, &der, 2048);
@@ -98,8 +97,6 @@ fn test_rsa_2048_pkcs1_sign_verify(session: HsmSession) {
 
 #[session_test]
 fn test_rsa_3072_pkcs1_sign_verify(session: HsmSession) {
-    use crypto::*;
-
     let priv_key = crypto::RsaPrivateKey::generate(384).expect("Failed to generate RSA Key");
     let der = priv_key.to_vec().expect("Failed to export RSA Key");
     let (priv_key, pub_key) = import_rsa_key(&session, &der, 3072);
@@ -120,8 +117,6 @@ fn test_rsa_3072_pkcs1_sign_verify(session: HsmSession) {
 
 #[session_test]
 fn test_rsa_4096_pkcs1_sign_verify(session: HsmSession) {
-    use crypto::*;
-
     let priv_key = crypto::RsaPrivateKey::generate(512).expect("Failed to generate RSA Key");
     let der = priv_key.to_vec().expect("Failed to export RSA Key");
     let (priv_key, pub_key) = import_rsa_key(&session, &der, 4096);
@@ -142,8 +137,6 @@ fn test_rsa_4096_pkcs1_sign_verify(session: HsmSession) {
 
 #[session_test]
 fn test_rsa_2048_pss_sign_verify(session: HsmSession) {
-    use crypto::*;
-
     let priv_key = crypto::RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
     let der = priv_key.to_vec().expect("Failed to export RSA Key");
     let (priv_key, pub_key) = import_rsa_key(&session, &der, 2048);
@@ -164,8 +157,6 @@ fn test_rsa_2048_pss_sign_verify(session: HsmSession) {
 
 #[session_test]
 fn test_rsa_3072_pss_sign_verify(session: HsmSession) {
-    use crypto::*;
-
     let priv_key = crypto::RsaPrivateKey::generate(384).expect("Failed to generate RSA Key");
     let der = priv_key.to_vec().expect("Failed to export RSA Key");
     let (priv_key, pub_key) = import_rsa_key(&session, &der, 3072);
@@ -186,8 +177,6 @@ fn test_rsa_3072_pss_sign_verify(session: HsmSession) {
 
 #[session_test]
 fn test_rsa_4096_pss_sign_verify(session: HsmSession) {
-    use crypto::*;
-
     let priv_key = crypto::RsaPrivateKey::generate(512).expect("Failed to generate RSA Key");
     let der = priv_key.to_vec().expect("Failed to export RSA Key");
     let (priv_key, pub_key) = import_rsa_key(&session, &der, 4096);
@@ -204,4 +193,474 @@ fn test_rsa_4096_pss_sign_verify(session: HsmSession) {
         .expect("Failed to verify signature");
 
     assert!(is_valid, "Signature verification failed");
+}
+
+/// Ensure verification fails when using a different public key
+#[session_test]
+fn test_rsa_verify_wrong_public_key_fails(session: HsmSession) {
+    let priv1 = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
+    let priv2 = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
+
+    let (priv1, _) = import_rsa_key(
+        &session,
+        &priv1.to_vec().expect("Failed to export RSA Key"),
+        2048,
+    );
+    let (_, pub2) = import_rsa_key(
+        &session,
+        &priv2.to_vec().expect("Failed to export RSA Key"),
+        2048,
+    );
+
+    let mut hash_algo = HsmHashAlgo::Sha256;
+    let hash =
+        HsmHasher::hash_vec(&session, &mut hash_algo, b"hello").expect("Failed to hash message");
+
+    let mut algo = HsmRsaSignAlgo::with_pkcs1_padding(hash_algo);
+    let sig = HsmSigner::sign_vec(&mut algo, &priv1, &hash).expect("Failed to sign message");
+
+    let result = HsmVerifier::verify(&mut algo, &pub2, &hash, &sig);
+
+    assert!(result.is_err());
+}
+/// Ensure verification fails when signature is corrupted
+#[session_test]
+fn test_rsa_verify_modified_signature_fails(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
+    let (priv_key, pub_key) = import_rsa_key(
+        &session,
+        &priv_key.to_vec().expect("Failed to export RSA Key"),
+        2048,
+    );
+
+    let mut hash_algo = HsmHashAlgo::Sha256;
+    let hash =
+        HsmHasher::hash_vec(&session, &mut hash_algo, b"hello").expect("Failed to hash message");
+
+    let mut algo = HsmRsaSignAlgo::with_pkcs1_padding(hash_algo);
+    let mut sig = HsmSigner::sign_vec(&mut algo, &priv_key, &hash).expect("Failed to sign message");
+
+    sig[0] ^= 0xFF; // corrupt signature
+
+    let result = HsmVerifier::verify(&mut algo, &pub_key, &hash, &sig);
+
+    assert!(result.is_err());
+}
+
+/// Ensure verification fails when hash differs
+#[session_test]
+fn test_rsa_verify_wrong_hash_fails(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
+    let (priv_key, pub_key) = import_rsa_key(
+        &session,
+        &priv_key.to_vec().expect("Failed to export RSA Key"),
+        2048,
+    );
+
+    let mut hash_algo = HsmHashAlgo::Sha256;
+
+    let hash1 =
+        HsmHasher::hash_vec(&session, &mut hash_algo, b"msg1").expect("Failed to hash message");
+    let hash2 =
+        HsmHasher::hash_vec(&session, &mut hash_algo, b"msg2").expect("Failed to hash message");
+
+    let mut algo = HsmRsaSignAlgo::with_pkcs1_padding(hash_algo);
+    let sig = HsmSigner::sign_vec(&mut algo, &priv_key, &hash1).expect("Failed to sign message");
+
+    let result = HsmVerifier::verify(&mut algo, &pub_key, &hash2, &sig);
+
+    assert!(result.is_err());
+}
+
+/// Ensure verification fails when using different hash algorithm
+#[session_test]
+fn test_rsa_verify_mismatched_hash_algo_fails(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
+    let (priv_key, pub_key) = import_rsa_key(
+        &session,
+        &priv_key.to_vec().expect("Failed to export RSA Key"),
+        2048,
+    );
+
+    let mut hash_algo1 = HsmHashAlgo::Sha256;
+    let hash_algo2 = HsmHashAlgo::Sha384;
+
+    let hash =
+        HsmHasher::hash_vec(&session, &mut hash_algo1, b"hello").expect("Failed to hash message");
+
+    let mut sign_algo = HsmRsaSignAlgo::with_pkcs1_padding(hash_algo1);
+    let sig =
+        HsmSigner::sign_vec(&mut sign_algo, &priv_key, &hash).expect("Failed to sign message");
+
+    let mut verify_algo = HsmRsaSignAlgo::with_pkcs1_padding(hash_algo2);
+
+    let result = HsmVerifier::verify(&mut verify_algo, &pub_key, &hash, &sig);
+
+    assert!(result.is_err());
+}
+
+/// Ensure PSS verification fails with different salt length
+#[session_test]
+fn test_rsa_pss_salt_len_mismatch_fails(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
+    let (priv_key, pub_key) = import_rsa_key(
+        &session,
+        &priv_key.to_vec().expect("Failed to export RSA Key"),
+        2048,
+    );
+
+    let mut hash_algo = HsmHashAlgo::Sha256;
+    let hash =
+        HsmHasher::hash_vec(&session, &mut hash_algo, b"hello").expect("Failed to hash message");
+
+    let mut sign_algo = HsmRsaSignAlgo::with_pss_padding(hash_algo, 32);
+    let sig =
+        HsmSigner::sign_vec(&mut sign_algo, &priv_key, &hash).expect("Failed to sign message");
+
+    let mut verify_algo = HsmRsaSignAlgo::with_pss_padding(hash_algo, 20);
+
+    let result = HsmVerifier::verify(&mut verify_algo, &pub_key, &hash, &sig);
+
+    assert!(result.is_err());
+}
+
+/// Ensure unwrap fails when private key lacks sign capability
+#[session_test]
+fn test_rsa_sign_without_permission_fails(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
+    let der = priv_key.to_vec().expect("Failed to export RSA Key");
+
+    let (unwrap_priv, unwrap_pub) = get_rsa_unwrapping_key_pair(&session);
+
+    // Missing can_sign(true)
+    let priv_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Private)
+        .key_kind(HsmKeyKind::Rsa)
+        .bits(2048)
+        .build()
+        .unwrap();
+
+    let pub_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Public)
+        .key_kind(HsmKeyKind::Rsa)
+        .bits(2048)
+        .can_verify(true)
+        .build()
+        .unwrap();
+
+    let mut wrap_algo = HsmRsaAesWrapAlgo::new(HsmHashAlgo::Sha256, 32);
+    let wrapped = HsmEncrypter::encrypt_vec(&mut wrap_algo, &unwrap_pub, &der)
+        .expect("Failed to encrypt AES key");
+
+    let mut unwrap_algo = HsmRsaKeyRsaAesKeyUnwrapAlgo::new(HsmHashAlgo::Sha256);
+
+    //  EXPECT FAILURE HERE
+    let result = unwrap_algo.unwrap_key_pair(&unwrap_priv, &wrapped, priv_props, pub_props);
+
+    assert!(matches!(result, Err(HsmError::InvalidKeyProps)));
+}
+
+/// Ensure verification fails when padding schemes differ
+#[session_test]
+fn test_rsa_verify_pkcs1_vs_pss_mismatch_fails(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
+    let (priv_key, pub_key) = import_rsa_key(
+        &session,
+        &priv_key.to_vec().expect("Failed to export RSA Key"),
+        2048,
+    );
+
+    let mut hash_algo = HsmHashAlgo::Sha256;
+    let hash =
+        HsmHasher::hash_vec(&session, &mut hash_algo, b"hello").expect("Failed to hash message");
+
+    // Sign with PKCS1
+    let mut sign_algo = HsmRsaSignAlgo::with_pkcs1_padding(hash_algo);
+    let sig =
+        HsmSigner::sign_vec(&mut sign_algo, &priv_key, &hash).expect("Failed to sign message");
+
+    // Verify with PSS
+    let mut verify_algo = HsmRsaSignAlgo::with_pss_padding(hash_algo, 32);
+
+    let result = HsmVerifier::verify(&mut verify_algo, &pub_key, &hash, &sig);
+
+    assert!(result.is_err());
+}
+
+/// Ensure PKCS1 signatures are deterministic
+#[session_test]
+fn test_rsa_pkcs1_deterministic_signature(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
+    let (priv_key, _) = import_rsa_key(
+        &session,
+        &priv_key.to_vec().expect("Failed to export RSA Key"),
+        2048,
+    );
+
+    let mut hash_algo = HsmHashAlgo::Sha256;
+    let hash =
+        HsmHasher::hash_vec(&session, &mut hash_algo, b"hello").expect("Failed to hash message");
+
+    let mut algo = HsmRsaSignAlgo::with_pkcs1_padding(hash_algo);
+
+    let sig1 = HsmSigner::sign_vec(&mut algo, &priv_key, &hash).expect("Failed to sign message");
+    let sig2 = HsmSigner::sign_vec(&mut algo, &priv_key, &hash).expect("Failed to sign message");
+
+    assert_eq!(sig1, sig2);
+}
+
+/// Ensure verification fails when PSS signature is verified as PKCS1
+#[session_test]
+fn test_rsa_pss_vs_pkcs1_mismatch_fails(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
+    let (priv_key, pub_key) = import_rsa_key(
+        &session,
+        &priv_key.to_vec().expect("Failed to export RSA Key"),
+        2048,
+    );
+
+    let mut hash_algo = HsmHashAlgo::Sha256;
+    let hash =
+        HsmHasher::hash_vec(&session, &mut hash_algo, b"hello").expect("Failed to hash message");
+
+    let mut sign_algo = HsmRsaSignAlgo::with_pss_padding(hash_algo, 32);
+    let sig =
+        HsmSigner::sign_vec(&mut sign_algo, &priv_key, &hash).expect("Failed to sign message");
+
+    let mut verify_algo = HsmRsaSignAlgo::with_pkcs1_padding(hash_algo);
+
+    let result = HsmVerifier::verify(&mut verify_algo, &pub_key, &hash, &sig);
+
+    assert!(result.is_err());
+}
+
+/// Ensure verification fails when signature is truncated
+#[session_test]
+fn test_rsa_verify_truncated_signature_fails(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
+    let (priv_key, pub_key) = import_rsa_key(
+        &session,
+        &priv_key.to_vec().expect("Failed to export RSA Key"),
+        2048,
+    );
+
+    let mut hash_algo = HsmHashAlgo::Sha256;
+    let hash =
+        HsmHasher::hash_vec(&session, &mut hash_algo, b"hello").expect("Failed to hash message");
+
+    let mut algo = HsmRsaSignAlgo::with_pkcs1_padding(hash_algo);
+    let mut sig = HsmSigner::sign_vec(&mut algo, &priv_key, &hash).expect("Failed to sign message");
+
+    sig.truncate(sig.len() / 2);
+
+    let result = HsmVerifier::verify(&mut algo, &pub_key, &hash, &sig);
+
+    assert!(result.is_err());
+}
+
+/// Ensure verification fails when signature is too large
+#[session_test]
+fn test_rsa_verify_oversized_signature_fails(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
+    let (priv_key, pub_key) = import_rsa_key(
+        &session,
+        &priv_key.to_vec().expect("Failed to export RSA Key"),
+        2048,
+    );
+
+    let mut hash_algo = HsmHashAlgo::Sha256;
+    let hash =
+        HsmHasher::hash_vec(&session, &mut hash_algo, b"hello").expect("Failed to hash message");
+
+    let mut algo = HsmRsaSignAlgo::with_pkcs1_padding(hash_algo);
+    let mut sig = HsmSigner::sign_vec(&mut algo, &priv_key, &hash).expect("Failed to sign message");
+
+    sig.extend_from_slice(&[0u8; 10]); // make too large
+
+    let result = HsmVerifier::verify(&mut algo, &pub_key, &hash, &sig);
+
+    assert!(result.is_err());
+}
+
+/// Ensure verification fails when key size differs
+#[session_test]
+fn test_rsa_verify_mismatched_key_size_fails(session: HsmSession) {
+    let priv1 = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key"); // 2048
+    let priv2 = RsaPrivateKey::generate(384).expect("Failed to generate RSA Key"); // 3072
+
+    let (priv1, _) = import_rsa_key(
+        &session,
+        &priv1.to_vec().expect("Failed to export RSA Key"),
+        2048,
+    );
+    let (_, pub2) = import_rsa_key(
+        &session,
+        &priv2.to_vec().expect("Failed to export RSA Key"),
+        3072,
+    );
+
+    let mut hash_algo = HsmHashAlgo::Sha256;
+    let hash =
+        HsmHasher::hash_vec(&session, &mut hash_algo, b"hello").expect("Failed to hash message");
+
+    let mut algo = HsmRsaSignAlgo::with_pkcs1_padding(hash_algo);
+    let sig = HsmSigner::sign_vec(&mut algo, &priv1, &hash).expect("Failed to sign message");
+
+    let result = HsmVerifier::verify(&mut algo, &pub2, &hash, &sig);
+
+    assert!(result.is_err());
+}
+
+/// Ensure PSS signatures are non-deterministic
+#[session_test]
+fn test_rsa_pss_non_deterministic_signature(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
+    let (priv_key, _) = import_rsa_key(
+        &session,
+        &priv_key.to_vec().expect("Failed to export RSA Key"),
+        2048,
+    );
+
+    let mut hash_algo = HsmHashAlgo::Sha256;
+    let hash =
+        HsmHasher::hash_vec(&session, &mut hash_algo, b"hello").expect("Failed to hash message");
+
+    let mut algo = HsmRsaSignAlgo::with_pss_padding(hash_algo, 32);
+
+    let sig1 = HsmSigner::sign_vec(&mut algo, &priv_key, &hash).expect("Failed to sign message");
+    let sig2 = HsmSigner::sign_vec(&mut algo, &priv_key, &hash).expect("Failed to sign message");
+
+    assert_ne!(sig1, sig2); // critical property of PSS
+}
+
+/// Ensure verification fails with empty signature
+#[session_test]
+fn test_rsa_verify_empty_signature_fails(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
+    let (_priv_key, pub_key) = import_rsa_key(
+        &session,
+        &priv_key.to_vec().expect("Failed to export RSA Key"),
+        2048,
+    );
+
+    let mut hash_algo = HsmHashAlgo::Sha256;
+    let hash =
+        HsmHasher::hash_vec(&session, &mut hash_algo, b"hello").expect("Failed to hash message");
+
+    let mut algo = HsmRsaSignAlgo::with_pkcs1_padding(hash_algo);
+
+    let result = HsmVerifier::verify(&mut algo, &pub_key, &hash, &[]);
+
+    assert!(result.is_err());
+}
+
+#[session_test]
+fn test_rsa_verify_empty_hash_fails(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).unwrap();
+    let (priv_key, pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048);
+
+    let mut algo = HsmRsaSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+
+    // valid signature
+    let valid_hash = vec![0xAA; 32];
+    let sig = HsmSigner::sign_vec(&mut algo, &priv_key, &valid_hash).unwrap();
+
+    // ❌ invalid hash
+    let empty_hash = vec![];
+
+    let result = HsmVerifier::verify(&mut algo, &pub_key, &empty_hash, &sig);
+
+    assert!(result.is_err());
+}
+
+/// Ensure PSS works with zero salt length
+#[session_test]
+fn test_rsa_pss_zero_salt_len(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
+    let (priv_key, pub_key) = import_rsa_key(
+        &session,
+        &priv_key.to_vec().expect("Failed to export RSA Key"),
+        2048,
+    );
+
+    let mut hash_algo = HsmHashAlgo::Sha256;
+    let hash =
+        HsmHasher::hash_vec(&session, &mut hash_algo, b"hello").expect("Failed to hash message");
+
+    let mut algo = HsmRsaSignAlgo::with_pss_padding(hash_algo, 0);
+
+    let sig = HsmSigner::sign_vec(&mut algo, &priv_key, &hash).expect("Failed to sign message");
+
+    let result = HsmVerifier::verify(&mut algo, &pub_key, &hash, &sig);
+
+    assert!(result.unwrap());
+}
+
+/// Ensure signing and verifying large message works
+#[session_test]
+fn test_rsa_sign_verify_large_message(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
+    let (priv_key, pub_key) = import_rsa_key(
+        &session,
+        &priv_key.to_vec().expect("Failed to export RSA Key"),
+        2048,
+    );
+
+    let large_msg = vec![0xAB; 10_000];
+
+    let mut hash_algo = HsmHashAlgo::Sha256;
+    let hash =
+        HsmHasher::hash_vec(&session, &mut hash_algo, &large_msg).expect("Failed to hash message");
+
+    let mut algo = HsmRsaSignAlgo::with_pkcs1_padding(hash_algo);
+
+    let sig = HsmSigner::sign_vec(&mut algo, &priv_key, &hash).expect("Failed to sign message");
+
+    let result = HsmVerifier::verify(&mut algo, &pub_key, &hash, &sig);
+
+    assert!(result.unwrap());
+}
+
+#[session_test]
+fn test_rsa_verify_invalid_hash_length_fails(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
+    let (priv_key, pub_key) = import_rsa_key(
+        &session,
+        &priv_key.to_vec().expect("Failed to export RSA Key"),
+        2048,
+    );
+
+    let mut algo = HsmRsaSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+
+    let valid_hash = vec![0xAA; 32];
+    let sig =
+        HsmSigner::sign_vec(&mut algo, &priv_key, &valid_hash).expect("Failed to sign message");
+
+    let bad_hash = vec![0xAA; 10]; // invalid length
+
+    let result = HsmVerifier::verify(&mut algo, &pub_key, &bad_hash, &sig);
+
+    assert!(result.is_err());
+}
+
+#[session_test]
+fn test_rsa_verify_repeatability(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
+    let (priv_key, pub_key) = import_rsa_key(
+        &session,
+        &priv_key.to_vec().expect("Failed to export RSA Key"),
+        2048,
+    );
+
+    let mut hash_algo = HsmHashAlgo::Sha256;
+    let hash =
+        HsmHasher::hash_vec(&session, &mut hash_algo, b"hello").expect("Failed to hash message");
+
+    let mut algo = HsmRsaSignAlgo::with_pkcs1_padding(hash_algo);
+    let sig = HsmSigner::sign_vec(&mut algo, &priv_key, &hash).expect("Failed to sign message");
+
+    for _ in 0..3 {
+        let result = HsmVerifier::verify(&mut algo, &pub_key, &hash, &sig);
+        assert!(result.unwrap());
+    }
 }
