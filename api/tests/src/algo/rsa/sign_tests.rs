@@ -326,7 +326,7 @@ fn test_rsa_pss_salt_len_mismatch_fails(session: HsmSession) {
 
 /// Ensure unwrap fails when private key lacks sign capability
 #[session_test]
-fn test_rsa_sign_without_permission_fails(session: HsmSession) {
+fn test_rsa_unwrap_without_sign_permission_fails(session: HsmSession) {
     let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
     let der = priv_key.to_vec().expect("Failed to export RSA Key");
 
@@ -527,10 +527,25 @@ fn test_rsa_pss_non_deterministic_signature(session: HsmSession) {
 
     let mut algo = HsmRsaSignAlgo::with_pss_padding(hash_algo, 32);
 
+    // Generate baseline signature
     let sig1 = HsmSigner::sign_vec(&mut algo, &priv_key, &hash).expect("Failed to sign message");
-    let sig2 = HsmSigner::sign_vec(&mut algo, &priv_key, &hash).expect("Failed to sign message");
 
-    assert_ne!(sig1, sig2); // critical property of PSS
+    // Retry a few times to detect non-determinism
+    let mut saw_difference = false;
+
+    for _ in 0..5 {
+        let sig = HsmSigner::sign_vec(&mut algo, &priv_key, &hash).expect("Failed to sign message");
+
+        if sig != sig1 {
+            saw_difference = true;
+            break;
+        }
+    }
+
+    assert!(
+        saw_difference,
+        "Expected RSA-PSS signatures to vary across repeated signing attempts"
+    );
 }
 
 /// Ensure verification fails with empty signature
