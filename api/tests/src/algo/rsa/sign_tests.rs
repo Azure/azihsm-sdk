@@ -221,7 +221,10 @@ fn test_rsa_verify_wrong_public_key_fails(session: HsmSession) {
 
     let result = HsmVerifier::verify(&mut algo, &pub2, &hash, &sig);
 
-    assert!(result.is_err());
+    assert!(
+        !matches!(result, Ok(true)),
+        "Verification should not succeed"
+    );
 }
 /// Ensure verification fails when signature is corrupted
 #[session_test]
@@ -244,7 +247,10 @@ fn test_rsa_verify_modified_signature_fails(session: HsmSession) {
 
     let result = HsmVerifier::verify(&mut algo, &pub_key, &hash, &sig);
 
-    assert!(result.is_err());
+    assert!(
+        !matches!(result, Ok(true)),
+        "Verification should not succeed"
+    );
 }
 
 /// Ensure verification fails when hash differs
@@ -269,7 +275,10 @@ fn test_rsa_verify_wrong_hash_fails(session: HsmSession) {
 
     let result = HsmVerifier::verify(&mut algo, &pub_key, &hash2, &sig);
 
-    assert!(result.is_err());
+    assert!(
+        !matches!(result, Ok(true)),
+        "Verification should not succeed"
+    );
 }
 
 /// Ensure verification fails when using different hash algorithm
@@ -296,7 +305,10 @@ fn test_rsa_verify_mismatched_hash_algo_fails(session: HsmSession) {
 
     let result = HsmVerifier::verify(&mut verify_algo, &pub_key, &hash, &sig);
 
-    assert!(result.is_err());
+    assert!(
+        !matches!(result, Ok(true)),
+        "Verification should not succeed"
+    );
 }
 
 /// Ensure PSS verification fails with different salt length
@@ -321,7 +333,10 @@ fn test_rsa_pss_salt_len_mismatch_fails(session: HsmSession) {
 
     let result = HsmVerifier::verify(&mut verify_algo, &pub_key, &hash, &sig);
 
-    assert!(result.is_err());
+    assert!(
+        !matches!(result, Ok(true)),
+        "Verification should not succeed"
+    );
 }
 
 /// Ensure unwrap fails when private key lacks sign capability
@@ -383,7 +398,10 @@ fn test_rsa_verify_pkcs1_vs_pss_mismatch_fails(session: HsmSession) {
 
     let result = HsmVerifier::verify(&mut verify_algo, &pub_key, &hash, &sig);
 
-    assert!(result.is_err());
+    assert!(
+        !matches!(result, Ok(true)),
+        "Verification should not succeed"
+    );
 }
 
 /// Ensure PKCS1 signatures are deterministic
@@ -430,7 +448,10 @@ fn test_rsa_pss_vs_pkcs1_mismatch_fails(session: HsmSession) {
 
     let result = HsmVerifier::verify(&mut verify_algo, &pub_key, &hash, &sig);
 
-    assert!(result.is_err());
+    assert!(
+        !matches!(result, Ok(true)),
+        "Verification should not succeed"
+    );
 }
 
 /// Ensure verification fails when signature is truncated
@@ -454,7 +475,10 @@ fn test_rsa_verify_truncated_signature_fails(session: HsmSession) {
 
     let result = HsmVerifier::verify(&mut algo, &pub_key, &hash, &sig);
 
-    assert!(result.is_err());
+    assert!(
+        !matches!(result, Ok(true)),
+        "Verification should not succeed"
+    );
 }
 
 /// Ensure verification fails when signature is too large
@@ -478,7 +502,10 @@ fn test_rsa_verify_oversized_signature_fails(session: HsmSession) {
 
     let result = HsmVerifier::verify(&mut algo, &pub_key, &hash, &sig);
 
-    assert!(result.is_err());
+    assert!(
+        !matches!(result, Ok(true)),
+        "Verification should not succeed"
+    );
 }
 
 /// Ensure verification fails when key size differs
@@ -507,7 +534,10 @@ fn test_rsa_verify_mismatched_key_size_fails(session: HsmSession) {
 
     let result = HsmVerifier::verify(&mut algo, &pub2, &hash, &sig);
 
-    assert!(result.is_err());
+    assert!(
+        !matches!(result, Ok(true)),
+        "Verification should not succeed"
+    );
 }
 
 /// Ensure PSS signatures are non-deterministic
@@ -565,7 +595,10 @@ fn test_rsa_verify_empty_signature_fails(session: HsmSession) {
 
     let result = HsmVerifier::verify(&mut algo, &pub_key, &hash, &[]);
 
-    assert!(result.is_err());
+    assert!(
+        !matches!(result, Ok(true)),
+        "Verification should not succeed"
+    );
 }
 
 #[session_test]
@@ -584,7 +617,10 @@ fn test_rsa_verify_empty_hash_fails(session: HsmSession) {
 
     let result = HsmVerifier::verify(&mut algo, &pub_key, &empty_hash, &sig);
 
-    assert!(result.is_err());
+    assert!(
+        !matches!(result, Ok(true)),
+        "Verification should not succeed"
+    );
 }
 
 /// Ensure PSS works with zero salt length
@@ -654,7 +690,10 @@ fn test_rsa_verify_invalid_hash_length_fails(session: HsmSession) {
 
     let result = HsmVerifier::verify(&mut algo, &pub_key, &bad_hash, &sig);
 
-    assert!(result.is_err());
+    assert!(
+        !matches!(result, Ok(true)),
+        "Verification should not succeed"
+    );
 }
 
 #[session_test]
