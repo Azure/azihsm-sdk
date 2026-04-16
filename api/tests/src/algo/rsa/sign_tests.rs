@@ -350,8 +350,7 @@ fn test_rsa_unwrap_without_sign_permission_fails(session: HsmSession) {
 
     let mut wrap_algo = HsmRsaAesWrapAlgo::new(HsmHashAlgo::Sha256, 32);
     let wrapped = HsmEncrypter::encrypt_vec(&mut wrap_algo, &unwrap_pub, &der)
-        .expect("Failed to encrypt AES key");
-
+        .expect("Failed to wrap RSA private key DER");
     let mut unwrap_algo = HsmRsaKeyRsaAesKeyUnwrapAlgo::new(HsmHashAlgo::Sha256);
 
     //  EXPECT FAILURE HERE
@@ -580,7 +579,7 @@ fn test_rsa_verify_empty_hash_fails(session: HsmSession) {
     let valid_hash = vec![0xAA; 32];
     let sig = HsmSigner::sign_vec(&mut algo, &priv_key, &valid_hash).unwrap();
 
-    // ❌ invalid hash
+    // invalid hash
     let empty_hash = vec![];
 
     let result = HsmVerifier::verify(&mut algo, &pub_key, &empty_hash, &sig);
