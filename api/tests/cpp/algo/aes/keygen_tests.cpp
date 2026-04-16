@@ -822,6 +822,21 @@ TEST_F(azihsm_aes_keygen, aes_xts_unwrap_wrong_algo_fails)
     });
 }
 
+/// verifies AES-XTS key unmasking produces a usable key that can encrypt and decrypt,
+/// and that the unmasked key is independent of the original key by deleting the
+/// original key before using the unmasked key
+TEST_F(azihsm_aes_keygen, aes_xts_unmasked_key_independent_handle)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        aes_unmasked_key_independent_handle_common(
+            session,
+            AZIHSM_ALGO_ID_AES_XTS_KEY_GEN,
+            AZIHSM_KEY_KIND_AES_XTS,
+            512
+        );
+    });
+}
+
 /// verifies AES-XTS key generation fails when decrypt permission is missing
 TEST_F(azihsm_aes_keygen, aes_xts_key_gen_no_decrypt_flag_fails)
 {
@@ -860,6 +875,15 @@ TEST_F(azihsm_aes_keygen, aes_xts_key_gen_no_encrypt_flag_fails)
             512,
             { AZIHSM_KEY_PROP_ID_DECRYPT }
         );
+    });
+}
+
+/// verifies AES-XTS key unwrap fails when properties specify wrong bit length (256) for a 512-bit
+/// key
+TEST_F(azihsm_aes_keygen, aes_xts_unwrap_bits_mismatch_fails)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        aes_unwrap_bits_mismatch_fails_common(session, AZIHSM_KEY_KIND_AES_XTS, 512, 256);
     });
 }
 
@@ -1047,7 +1071,23 @@ TEST_F(azihsm_aes_keygen, aes_gcm_unwrap_wrong_algo_fails)
     });
 }
 
+/// verifies AES-GCM key unmasking produces a usable key that can encrypt and decrypt,
+/// and that the unmasked key is independent of the original key by deleting the
+/// original key before using the unmasked key
+TEST_F(azihsm_aes_keygen, aes_gcm_unmasked_key_independent_handle)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        aes_unmasked_key_independent_handle_common(
+            session,
+            AZIHSM_ALGO_ID_AES_GCM_KEY_GEN,
+            AZIHSM_KEY_KIND_AES_GCM,
+            256
+        );
+    });
+}
+
 /// verifies AES-GCM decryption fails when decrypting with a corrupted authentication tag
+/// note: AES-GCM-specific test since tag is part of AES-GCM params
 TEST_F(azihsm_aes_keygen, aes_gcm_wrong_tag_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {

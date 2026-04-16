@@ -970,16 +970,55 @@ void aes_unmasked_key_independent_handle_common(
     original_key.release();
 
     // Step 5: Encrypt with the unmasked key using AES-CBC with padding
-    std::vector<uint8_t> plaintext(32, 0x11);
-
-    uint8_t iv[16] = { 0 };
+    std::vector<uint8_t> plaintext(128, 0x11);
+    std::vector<uint8_t> iv;
+    azihsm_algo_aes_xts_params xts_params{};
     azihsm_algo_aes_cbc_params cbc_params{};
-    std::memcpy(cbc_params.iv, iv, sizeof(iv));
-
+    azihsm_algo_aes_gcm_params gcm_params{};
     azihsm_algo enc_algo{};
-    enc_algo.id = AZIHSM_ALGO_ID_AES_CBC_PAD;
-    enc_algo.params = &cbc_params;
-    enc_algo.len = sizeof(cbc_params);
+
+    if (key_kind == AZIHSM_KEY_KIND_AES_XTS)
+    {
+        // Encrypt with AES-XTS (tweak is all zero)
+        constexpr size_t dul = 64;
+        ASSERT_EQ(plaintext.size(), dul * 2);
+
+        uint8_t tweak[16] = { 0 };
+
+        // One-shot encrypt of 2 data units.
+        std::memcpy(xts_params.sector_num, tweak, 16);
+        xts_params.data_unit_length = static_cast<uint32_t>(dul); // per-data-unit length (DUL)
+
+        enc_algo.id = AZIHSM_ALGO_ID_AES_XTS;
+        enc_algo.params = &xts_params;
+        enc_algo.len = sizeof(xts_params);
+    }
+    else if (key_kind == AZIHSM_KEY_KIND_AES)
+    {
+        // Encrypt with AES-CBC with padding
+        iv = std::vector<uint8_t>(16, 0);
+        std::memcpy(cbc_params.iv, iv.data(), iv.size());
+
+        enc_algo.id = AZIHSM_ALGO_ID_AES_CBC_PAD;
+        enc_algo.params = &cbc_params;
+        enc_algo.len = sizeof(cbc_params);
+    }
+    else if (key_kind == AZIHSM_KEY_KIND_AES_GCM)
+    {
+        // Configure AES-GCM encryption parameters (IV and tag)
+        iv = std::vector<uint8_t>(12, 0xA1);
+        std::memcpy(gcm_params.iv, iv.data(), iv.size());
+        std::memset(gcm_params.tag, 0, sizeof(gcm_params.tag));
+        gcm_params.aad = nullptr;
+
+        enc_algo.id = AZIHSM_ALGO_ID_AES_GCM;
+        enc_algo.params = &gcm_params;
+        enc_algo.len = sizeof(gcm_params);
+    }
+    else
+    {
+        FAIL() << "Unsupported key kind";
+    }
 
     azihsm_buffer input{ plaintext.data(), static_cast<uint32_t>(plaintext.size()) };
     azihsm_buffer output{ nullptr, 0 };
@@ -1125,7 +1164,7 @@ void aes_unwrap_bits_mismatch_fails_common(
 
     ASSERT_FALSE(wrapped_data.empty());
 
-    // Unwrap with mismatched bit length (128 instead of 256)
+    // Unwrap with mismatched bit length (wrong size in unwrapped key properties)
     azihsm_algo_rsa_aes_key_wrap_params unwrap_params =
         build_rsa_aes_key_unwrap_params(oaep_params, key_kind, bits);
 
