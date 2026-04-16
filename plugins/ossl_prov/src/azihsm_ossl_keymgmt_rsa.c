@@ -326,6 +326,12 @@ static AZIHSM_RSA_KEY *azihsm_ossl_keymgmt_gen(
                 ) != OSSL_SUCCESS)
             {
                 OPENSSL_clear_free(masked_key_buffer, masked_key_buffer_size);
+                ERR_raise_data(
+                    ERR_LIB_PROV,
+                    ERR_R_OPERATION_FAIL,
+                    "failed to write masked key to '%s'",
+                    genctx->masked_key_file
+                );
                 status = AZIHSM_STATUS_INTERNAL_ERROR;
                 goto cleanup;
             }

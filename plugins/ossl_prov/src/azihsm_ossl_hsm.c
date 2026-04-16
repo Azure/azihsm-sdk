@@ -1061,12 +1061,19 @@ cleanup:
 
     if (status != AZIHSM_STATUS_SUCCESS)
     {
-        /* Tear down device/session/resiliency only on failure */
+        /* Tear down device/session/resiliency only on failure.
+         * Zero handles after closing to prevent stale handle usage by caller. */
         azihsm_resiliency_destroy(res_ctx);
         if (session_opened)
+        {
             azihsm_sess_close(*session);
+            *session = 0;
+        }
         if (device_opened)
+        {
             azihsm_part_close(*device);
+            *device = 0;
+        }
     }
     else
     {
