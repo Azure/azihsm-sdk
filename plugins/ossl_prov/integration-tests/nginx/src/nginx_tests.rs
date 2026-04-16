@@ -90,7 +90,7 @@ mod integration {
         // Start the daemon with the generated OPENSSL_CONF pointing
         // into the keymat directory.
         let nginx_conf = keymat_dir.join("nginx.conf");
-        start_nginx(&keymat_dir, &nginx_conf)?;
+        let _nginx = start_nginx(&keymat_dir, &nginx_conf)?;
 
         let mut first_failure: Option<Failed> = None;
         for script in ASSERTION_SCRIPTS {
@@ -105,8 +105,6 @@ mod integration {
                 }
             }
         }
-
-        stop_nginx(&keymat_dir);
 
         match first_failure {
             Some(e) => Err(e),
@@ -388,11 +386,40 @@ http {{
         }
     }
 
+    /// RAII guard that stops the NGINX daemon when dropped.
+    ///
+    /// Best-effort — the negative test script may have already stopped
+    /// NGINX, so a failed stop is silently ignored.
+    #[must_use = "NginxGuard stops nginx on drop — dropping it immediately defeats the purpose"]
+    struct NginxGuard {
+        keymat_dir: PathBuf,
+    }
+
+    impl Drop for NginxGuard {
+        fn drop(&mut self) {
+            let nginx_conf = self.keymat_dir.join("nginx.conf");
+            let error_log = self.keymat_dir.join("logs").join("error.log");
+            let openssl_conf = self.keymat_dir.join("openssl-provider.cnf");
+            let _ = Command::new("nginx")
+                .args(["-s", "stop"])
+                .arg("-p")
+                .arg(&self.keymat_dir)
+                .arg("-e")
+                .arg(&error_log)
+                .arg("-c")
+                .arg(&nginx_conf)
+                .env_remove("LD_LIBRARY_PATH")
+                .env("OPENSSL_CONF", &openssl_conf)
+                .envs(credential_env())
+                .status();
+        }
+    }
+
     /// Validates the NGINX config and starts the daemon.
     ///
     /// Uses `env -u LD_LIBRARY_PATH` to strip the custom OpenSSL lib
     /// path that nextest inherits — NGINX links against system OpenSSL.
-    fn start_nginx(keymat_dir: &Path, nginx_conf: &Path) -> Result<(), Failed> {
+    fn start_nginx(keymat_dir: &Path, nginx_conf: &Path) -> Result<NginxGuard, Failed> {
         let openssl_conf = keymat_dir.join("openssl-provider.cnf");
         let error_log = keymat_dir.join("logs").join("error.log");
         let creds = credential_env();
@@ -434,22 +461,9 @@ http {{
         }
 
         std::thread::sleep(std::time::Duration::from_secs(2));
-        Ok(())
-    }
-
-    /// Stops NGINX (best-effort — the negative test may have already stopped it).
-    fn stop_nginx(keymat_dir: &Path) {
-        let nginx_conf = keymat_dir.join("nginx.conf");
-        let error_log = keymat_dir.join("logs").join("error.log");
-        let _ = Command::new("nginx")
-            .args(["-s", "stop"])
-            .arg("-p")
-            .arg(keymat_dir)
-            .arg("-e")
-            .arg(&error_log)
-            .arg("-c")
-            .arg(&nginx_conf)
-            .status();
+        Ok(NginxGuard {
+            keymat_dir: keymat_dir.to_path_buf(),
+        })
     }
 
     /// Executes a single test shell script.
