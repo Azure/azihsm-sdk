@@ -248,6 +248,7 @@ static int parse_azihsm_uri(const char *uri, AZIHSM_URI_INFO *out_info)
         attr_copy = OPENSSL_strdup(semicolon + 1);
         if (attr_copy == NULL)
         {
+            /* Caller owns out_info and will free via azihsm_uri_info_free() */
             return OSSL_FAILURE;
         }
 
@@ -274,6 +275,7 @@ static int parse_azihsm_uri(const char *uri, AZIHSM_URI_INFO *out_info)
     // Validate that type was provided
     if (out_info->key_type == 0)
     {
+        /* Caller owns out_info and will free via azihsm_uri_info_free() */
         return OSSL_FAILURE;
     }
 
