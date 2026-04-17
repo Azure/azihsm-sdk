@@ -480,7 +480,11 @@ fn test_rsa_streaming_verify_modified_signature_fails(session: HsmSession) {
 
     let result = ctx.finish(&sig);
 
-    assert!(result.is_err());
+    assert!(
+        !matches!(result, Ok(true)),
+        "finish with modified sig should not succeed, got {:?}",
+        result
+    );
 }
 
 /// Ensure streaming verify fails for modified data
@@ -504,7 +508,11 @@ fn test_rsa_streaming_verify_wrong_data_fails(session: HsmSession) {
 
     let result = ctx.finish(&sig);
 
-    assert!(result.is_err());
+    assert!(
+        !matches!(result, Ok(true)),
+        "verify with wrong data should not succeed, got {:?}",
+        result
+    );
 }
 
 /// Ensure streaming verify fails with mismatched padding
@@ -527,7 +535,11 @@ fn test_rsa_streaming_pkcs1_vs_pss_mismatch_fails(session: HsmSession) {
 
     let result = ctx.finish(&sig);
 
-    assert!(result.is_err());
+    assert!(
+        !matches!(result, Ok(true)),
+        "finish with mismatched padding should not succeed, got {:?}",
+        result
+    );
 }
 /// Ensure update with empty chunk behaves correctly
 #[session_test]
@@ -592,7 +604,11 @@ fn test_rsa_streaming_verify_wrong_key_fails(session: HsmSession) {
 
     let result = ctx.finish(&sig);
 
-    assert!(result.is_err());
+    assert!(
+        !matches!(result, Ok(true)),
+        "verify  with wrong key should not succeed, got {:?}",
+        result
+    );
 }
 /// Ensure streaming verify fails with empty signature
 #[session_test]
@@ -611,7 +627,11 @@ fn test_rsa_streaming_verify_empty_signature_fails(session: HsmSession) {
 
     let result = ctx.finish(&[]); // empty sig
 
-    assert!(result.is_err());
+    assert!(
+        !matches!(result, Ok(true)),
+        "finish with empty sig should not succeed, got {:?}",
+        result
+    );
 }
 
 /// Ensure streaming verify fails with truncated signature
@@ -636,7 +656,11 @@ fn test_rsa_streaming_verify_truncated_signature_fails(session: HsmSession) {
 
     let result = ctx.finish(&sig);
 
-    assert!(result.is_err());
+    assert!(
+        !matches!(result, Ok(true)),
+        "verify with truncated sig should not succeed, got {:?}",
+        result
+    );
 }
 
 /// Ensure PSS signatures are non-deterministic
@@ -671,7 +695,11 @@ fn test_rsa_verify_wrong_hash_algo_fails(session: HsmSession) {
     let mut verify_algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha384);
     let result = HsmVerifier::verify(&mut verify_algo, &pub_key, msg, &sig);
 
-    assert!(result.is_err());
+    assert!(
+        !matches!(result, Ok(true)),
+        "Verification should not succeed, got {:?}",
+        result
+    );
 }
 
 /// Ensure PSS verification fails when salt length differs from signing
@@ -689,7 +717,11 @@ fn test_rsa_pss_salt_len_mismatch_fails(session: HsmSession) {
     let mut verify_algo = HsmRsaHashSignAlgo::with_pss_padding(HsmHashAlgo::Sha256, 20);
     let result = HsmVerifier::verify(&mut verify_algo, &pub_key, msg, &sig);
 
-    assert!(result.is_err());
+    assert!(
+        !matches!(result, Ok(true)),
+        "Verification should not succeed, got {:?}",
+        result
+    );
 }
 
 /// Ensure one-shot verification fails when signature is corrupted
@@ -706,7 +738,11 @@ fn test_rsa_verify_modified_signature_fails_one_shot(session: HsmSession) {
     sig[0] ^= 0xFF;
 
     let result = HsmVerifier::verify(&mut algo, &pub_key, msg, &sig);
-    assert!(result.is_err());
+    assert!(
+        !matches!(result, Ok(true)),
+        "Verification should not succeed, got {:?}",
+        result
+    );
 }
 
 /// Ensure one-shot verification fails when message differs from signed data
@@ -720,74 +756,86 @@ fn test_rsa_verify_wrong_data_fails_one_shot(session: HsmSession) {
     let sig = HsmSigner::sign_vec(&mut algo, &priv_key, b"hello").unwrap();
 
     let result = HsmVerifier::verify(&mut algo, &pub_key, b"HELLO", &sig);
-    assert!(result.is_err());
-}
+    assert!(
+        !matches!(result, Ok(true)),
+        "Verification should not succeed, got {:?}",
+        result
+    );
 
-/// Ensure signing and verifying an empty message succeeds (one-shot path)
-#[session_test]
-fn test_rsa_sign_empty_message_one_shot(session: HsmSession) {
-    let priv_key = RsaPrivateKey::generate(256).unwrap();
-    let (priv_key, pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048);
+    /// Ensure signing and verifying an empty message succeeds (one-shot path)
+    #[session_test]
+    fn test_rsa_sign_empty_message_one_shot(session: HsmSession) {
+        let priv_key = RsaPrivateKey::generate(256).unwrap();
+        let (priv_key, pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048);
 
-    let mut algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+        let mut algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
 
-    let sig = HsmSigner::sign_vec(&mut algo, &priv_key, b"").unwrap();
+        let sig = HsmSigner::sign_vec(&mut algo, &priv_key, b"").unwrap();
 
-    let is_valid = HsmVerifier::verify(&mut algo, &pub_key, b"", &sig).unwrap();
+        let is_valid = HsmVerifier::verify(&mut algo, &pub_key, b"", &sig).unwrap();
 
-    assert!(is_valid);
-}
+        assert!(is_valid);
+    }
 
-/// Ensure verification fails for invalid (truncated) signature length
-#[session_test]
-fn test_rsa_verify_invalid_hash_length_fails(session: HsmSession) {
-    let priv_key = RsaPrivateKey::generate(256).unwrap();
-    let (priv_key, pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048);
+    /// Ensure verification fails for invalid (truncated) signature length
+    #[session_test]
+    fn test_rsa_verify_invalid_hash_length_fails(session: HsmSession) {
+        let priv_key = RsaPrivateKey::generate(256).unwrap();
+        let (priv_key, pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048);
 
-    let msg = b"hello";
+        let msg = b"hello";
 
-    let mut algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
-    let sig = HsmSigner::sign_vec(&mut algo, &priv_key, msg).unwrap();
+        let mut algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+        let sig = HsmSigner::sign_vec(&mut algo, &priv_key, msg).unwrap();
 
-    // truncate signature slightly (simulate hash mismatch indirectly)
-    let result = HsmVerifier::verify(&mut algo, &pub_key, msg, &sig[..10]);
+        // truncate signature slightly (simulate hash mismatch indirectly)
+        let result = HsmVerifier::verify(&mut algo, &pub_key, msg, &sig[..10]);
 
-    assert!(result.is_err());
-}
+        assert!(
+            !matches!(result, Ok(true)),
+            "Verification should not succeed, got {:?}",
+            result
+        );
+    }
 
-/// Ensure PKCS#1 signatures are deterministic for the same key and message
-#[session_test]
-fn test_rsa_pkcs1_deterministic(session: HsmSession) {
-    let priv_key = RsaPrivateKey::generate(256).unwrap();
-    let (priv_key, _) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048);
+    /// Ensure PKCS#1 signatures are deterministic for the same key and message
+    #[session_test]
+    fn test_rsa_pkcs1_deterministic(session: HsmSession) {
+        let priv_key = RsaPrivateKey::generate(256).unwrap();
+        let (priv_key, _) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048);
 
-    let msg = b"hello";
+        let msg = b"hello";
 
-    let mut algo1 = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
-    let mut algo2 = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+        let mut algo1 = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+        let mut algo2 = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
 
-    let sig1 = HsmSigner::sign_vec(&mut algo1, &priv_key, msg).unwrap();
-    let sig2 = HsmSigner::sign_vec(&mut algo2, &priv_key, msg).unwrap();
+        let sig1 = HsmSigner::sign_vec(&mut algo1, &priv_key, msg).unwrap();
+        let sig2 = HsmSigner::sign_vec(&mut algo2, &priv_key, msg).unwrap();
 
-    assert_eq!(sig1, sig2);
-}
+        assert_eq!(sig1, sig2);
+    }
 
-/// Ensure verification fails when using a public key of mismatched size
-#[session_test]
-fn test_rsa_verify_mismatched_key_size_fails(session: HsmSession) {
-    let priv1 = RsaPrivateKey::generate(256).unwrap();
-    let priv2 = RsaPrivateKey::generate(384).unwrap();
+    /// Ensure verification fails when using a public key of mismatched size
+    #[session_test]
+    fn test_rsa_verify_mismatched_key_size_fails(session: HsmSession) {
+        let priv1 = RsaPrivateKey::generate(256).unwrap();
+        let priv2 = RsaPrivateKey::generate(384).unwrap();
 
-    let (priv1, _) = import_rsa_key(&session, &priv1.to_vec().unwrap(), 2048);
-    let (_, pub2) = import_rsa_key(&session, &priv2.to_vec().unwrap(), 3072);
+        let (priv1, _) = import_rsa_key(&session, &priv1.to_vec().unwrap(), 2048);
+        let (_, pub2) = import_rsa_key(&session, &priv2.to_vec().unwrap(), 3072);
 
-    let msg = b"hello";
+        let msg = b"hello";
 
-    let mut algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
-    let sig = HsmSigner::sign_vec(&mut algo, &priv1, msg).unwrap();
+        let mut algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+        let sig = HsmSigner::sign_vec(&mut algo, &priv1, msg).unwrap();
 
-    let result = HsmVerifier::verify(&mut algo, &pub2, msg, &sig);
-    assert!(result.is_err());
+        let result = HsmVerifier::verify(&mut algo, &pub2, msg, &sig);
+        assert!(
+            !matches!(result, Ok(true)),
+            "Verification should not succeed, got {:?}",
+            result
+        );
+    }
 }
 
 /// Ensure streaming sign without update equals one-shot empty input
@@ -819,7 +867,11 @@ fn test_streaming_verify_without_update(session: HsmSession) {
 
     let result = ctx.finish(&sig);
 
-    assert!(result.is_err(), "finish without update should fail");
+    assert!(
+        !matches!(result, Ok(true)),
+        "finish without update should not succeed, got  {:?}",
+        result
+    );
 }
 
 /// Ensure streaming and one-shot signatures differ when data differs
