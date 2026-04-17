@@ -78,6 +78,13 @@ fn test_ecdh_key_exchange(dev: &mut <DdiTest as Ddi>::Dev, session_id: u16, key_
     let key_id = resp.data.key_id;
     let masked_key = resp.data.masked_key;
 
+    assert!(verify_iv_not_default_from_masked_key(masked_key.as_slice()).unwrap_or(false));
+
+    assert!(verify_masked_key_attributes(
+        masked_key.as_slice(),
+        MaskedKeyAttributes::DERIVE | MaskedKeyAttributes::LOCAL
+    ));
+
     let resp = helper_get_new_key_id_from_unmask(
         dev,
         Some(session_id),

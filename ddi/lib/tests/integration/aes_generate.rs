@@ -233,6 +233,15 @@ fn test_aes_generate_and_unmask() {
             let masked_key = data.masked_key;
             assert!(!masked_key.is_empty());
 
+            assert!(verify_iv_not_default_from_masked_key(masked_key.as_slice()).unwrap_or(false));
+
+            assert!(verify_masked_key_attributes(
+                masked_key.as_slice(),
+                MaskedKeyAttributes::ENCRYPT
+                    | MaskedKeyAttributes::DECRYPT
+                    | MaskedKeyAttributes::LOCAL
+            ));
+
             // Import/unmask the key
             let resp = helper_unmask_key(
                 dev,

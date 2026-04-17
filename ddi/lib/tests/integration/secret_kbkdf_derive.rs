@@ -1751,6 +1751,15 @@ fn test_secret_kbkdf_and_unmask() {
             let derived_key_id1 = resp.data.key_id;
             let masked_key = resp.data.masked_key;
 
+            assert!(verify_iv_not_default_from_masked_key(masked_key.as_slice()).unwrap_or(false));
+
+            assert!(verify_masked_key_attributes(
+                masked_key.as_slice(),
+                MaskedKeyAttributes::ENCRYPT
+                    | MaskedKeyAttributes::DECRYPT
+                    | MaskedKeyAttributes::LOCAL
+            ));
+
             // Unmask this key
             let resp = helper_unmask_key(
                 dev,

@@ -480,7 +480,9 @@ static int azihsm_ossl_rsa_digest_sign_init(
     ctx->operation = 1; /* Sign */
 
     /* Get hash algorithm by name */
-    ctx->md = EVP_get_digestbyname(mdname);
+    ctx->md =
+        EVP_get_digestbyname(mdname); // CodeQL [SM02689]  This is passed in externally by customer
+                                      // and must remain in order to keep backward compatibility.
     if (ctx->md == NULL)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_OPERATION_FAIL);

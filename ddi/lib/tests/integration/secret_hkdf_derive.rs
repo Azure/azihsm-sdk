@@ -1628,13 +1628,23 @@ fn test_secret_hkdf_and_unmask() {
             assert!(resp.is_ok(), "resp {:?}", resp);
             let data = resp.unwrap().data;
             let derived_key_id1 = data.key_id;
+            let masked_key = data.masked_key;
+
+            assert!(verify_iv_not_default_from_masked_key(masked_key.as_slice()).unwrap_or(false));
+
+            assert!(verify_masked_key_attributes(
+                masked_key.as_slice(),
+                MaskedKeyAttributes::ENCRYPT
+                    | MaskedKeyAttributes::DECRYPT
+                    | MaskedKeyAttributes::LOCAL
+            ));
 
             // Unmask this key
             let resp = helper_unmask_key(
                 dev,
                 Some(session_id),
                 Some(DdiApiRev { major: 1, minor: 0 }),
-                data.masked_key,
+                masked_key,
             );
             assert!(resp.is_ok(), "resp {:?}", resp);
             let unmasked_derived_key_id1 = resp.unwrap().data.key_id;
@@ -1787,6 +1797,13 @@ fn test_secret_hkdf_and_unmask_ecdh_key() {
             let data = resp.unwrap().data;
             let secret_key_id1 = data.key_id;
             let masked_key = data.masked_key;
+
+            assert!(verify_iv_not_default_from_masked_key(masked_key.as_slice()).unwrap_or(false));
+
+            assert!(verify_masked_key_attributes(
+                masked_key.as_slice(),
+                MaskedKeyAttributes::DERIVE | MaskedKeyAttributes::LOCAL
+            ));
 
             // Unmask this secret key
             let resp = helper_unmask_key(

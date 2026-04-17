@@ -304,6 +304,174 @@ fn test_var_hmac_sha512() {
 }
 
 #[test]
+fn test_hmac_sha256_kbkdf() {
+    ddi_dev_test(
+        common_setup,
+        common_cleanup,
+        |dev, _ddi, _path, session_id| {
+            let hmac_key_id =
+                create_hmac_key_kbkdf(session_id, DdiKeyType::HmacSha256, dev, Default::default());
+
+            // Hmac operation
+            let resp = helper_hmac(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                hmac_key_id,
+                MborByteArray::from_slice(&[0u8; 64]).expect("failed to create byte array"),
+            );
+
+            assert!(resp.is_ok(), "resp {:?}", resp);
+            let resp = resp.unwrap();
+
+            assert_eq!(resp.data.tag.len(), 32)
+        },
+    );
+}
+
+#[test]
+fn test_hmac_sha384_kbkdf() {
+    ddi_dev_test(
+        common_setup,
+        common_cleanup,
+        |dev, _ddi, _path, session_id| {
+            let hmac_key_id =
+                create_hmac_key_kbkdf(session_id, DdiKeyType::HmacSha384, dev, Default::default());
+
+            // Hmac operation
+            let resp = helper_hmac(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                hmac_key_id,
+                MborByteArray::from_slice(&[0u8; 64]).expect("failed to create byte array"),
+            );
+
+            assert!(resp.is_ok(), "resp {:?}", resp);
+            let resp = resp.unwrap();
+
+            assert_eq!(resp.data.tag.len(), 48)
+        },
+    );
+}
+
+#[test]
+fn test_hmac_sha512_kbkdf() {
+    ddi_dev_test(
+        common_setup,
+        common_cleanup,
+        |dev, _ddi, _path, session_id| {
+            let hmac_key_id =
+                create_hmac_key_kbkdf(session_id, DdiKeyType::HmacSha512, dev, Default::default());
+
+            // Hmac operation
+            let resp = helper_hmac(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                hmac_key_id,
+                MborByteArray::from_slice(&[0u8; 64]).expect("failed to create byte array"),
+            );
+
+            assert!(resp.is_ok(), "resp {:?}", resp);
+            let resp = resp.unwrap();
+
+            assert_eq!(resp.data.tag.len(), 64)
+        },
+    );
+}
+
+#[test]
+#[cfg(not(feature = "mock"))]
+fn test_var_hmac_sha256_kbkdf() {
+    ddi_dev_test(
+        common_setup,
+        common_cleanup,
+        |dev, _ddi, _path, session_id| {
+            let mut bytes = [0u8; 1];
+            Rng::rand_bytes(&mut bytes).expect("rand_bytes failure");
+            let key_len = (bytes[0] % 33) + 32; // 32-64
+            let hmac_key_id =
+                create_hmac_key_kbkdf(session_id, DdiKeyType::VarHmac256, dev, Some(key_len));
+
+            // Hmac operation
+            let resp = helper_hmac(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                hmac_key_id,
+                MborByteArray::from_slice(&[0u8; 64]).expect("failed to create byte array"),
+            );
+
+            assert!(resp.is_ok(), "resp {:?}", resp);
+            let resp = resp.unwrap();
+
+            assert_eq!(resp.data.tag.len(), 32)
+        },
+    );
+}
+
+#[test]
+#[cfg(not(feature = "mock"))]
+fn test_var_hmac_sha384_kbkdf() {
+    ddi_dev_test(
+        common_setup,
+        common_cleanup,
+        |dev, _ddi, _path, session_id| {
+            let mut bytes = [0u8; 1];
+            Rng::rand_bytes(&mut bytes).expect("rand_bytes failure");
+            let key_len = (bytes[0] % 81) + 48; // 48-128
+            let hmac_key_id =
+                create_hmac_key_kbkdf(session_id, DdiKeyType::VarHmac384, dev, Some(key_len));
+
+            // Hmac operation
+            let resp = helper_hmac(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                hmac_key_id,
+                MborByteArray::from_slice(&[0u8; 64]).expect("failed to create byte array"),
+            );
+
+            assert!(resp.is_ok(), "resp {:?}", resp);
+            let resp = resp.unwrap();
+
+            assert_eq!(resp.data.tag.len(), 48)
+        },
+    );
+}
+
+#[test]
+#[cfg(not(feature = "mock"))]
+fn test_var_hmac_sha512_kbkdf() {
+    ddi_dev_test(
+        common_setup,
+        common_cleanup,
+        |dev, _ddi, _path, session_id| {
+            let mut bytes = [0u8; 1];
+            Rng::rand_bytes(&mut bytes).expect("rand_bytes failure");
+            let key_len = (bytes[0] % 65) + 64; // 64-128
+            let hmac_key_id =
+                create_hmac_key_kbkdf(session_id, DdiKeyType::VarHmac512, dev, Some(key_len));
+
+            // Hmac operation
+            let resp = helper_hmac(
+                dev,
+                Some(session_id),
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                hmac_key_id,
+                MborByteArray::from_slice(&[0u8; 64]).expect("failed to create byte array"),
+            );
+
+            assert!(resp.is_ok(), "resp {:?}", resp);
+            let resp = resp.unwrap();
+
+            assert_eq!(resp.data.tag.len(), 64)
+        },
+    );
+}
+
+#[test]
 #[cfg(not(feature = "mock"))]
 fn test_invalid_var_hmac_key() {
     ddi_dev_test(

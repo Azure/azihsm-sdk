@@ -538,9 +538,9 @@ fn test_attest_aes_xts_bulk_key() {
             assert_eq!(report_payload.report_data, report_data);
 
             let keyflags: KeyFlags = report_payload.flags.into();
-            assert!(keyflags.is_imported());
+            assert!(!keyflags.is_imported());
             assert!(keyflags.is_session_key());
-            assert!(!keyflags.is_generated());
+            assert!(keyflags.is_generated());
             assert!(keyflags.can_encrypt());
             assert!(keyflags.can_decrypt());
             assert!(!keyflags.can_sign());
@@ -996,6 +996,13 @@ fn test_attest_rsa_der_import(
             Some(1),
         )
     };
+
+    assert!(verify_iv_not_default_from_masked_key(masked_key.as_slice()).unwrap_or(false));
+
+    assert!(verify_masked_key_attributes(
+        masked_key.as_slice(),
+        MaskedKeyAttributes::ENCRYPT | MaskedKeyAttributes::DECRYPT
+    ));
 
     let report_data = [2u8; REPORT_DATA_SIZE];
     let result = helper_attest_key_cmd(

@@ -44,6 +44,13 @@ fn test_masked_key_rsa_unwrap_rsa_key() {
             let masked_key = resp.data.masked_key;
             assert_eq!(resp.data.kind, DdiKeyType::Rsa3kPrivate);
 
+            assert!(verify_iv_not_default_from_masked_key(masked_key.as_slice()).unwrap_or(false));
+
+            assert!(verify_masked_key_attributes(
+                masked_key.as_slice(),
+                MaskedKeyAttributes::ENCRYPT | MaskedKeyAttributes::DECRYPT
+            ));
+
             let resp = helper_get_new_key_id_from_unmask(
                 dev,
                 Some(session_id),
@@ -137,6 +144,13 @@ fn test_masked_key_rsa_unwrap_rsa_crt_key() {
             let unwrapped_key_id = resp.data.key_id;
             let masked_key = resp.data.masked_key;
             assert_eq!(resp.data.kind, DdiKeyType::Rsa3kPrivateCrt);
+
+            assert!(verify_iv_not_default_from_masked_key(masked_key.as_slice()).unwrap_or(false));
+
+            assert!(verify_masked_key_attributes(
+                masked_key.as_slice(),
+                MaskedKeyAttributes::ENCRYPT | MaskedKeyAttributes::DECRYPT
+            ));
 
             let resp = helper_get_new_key_id_from_unmask(
                 dev,
@@ -250,6 +264,15 @@ fn test_masked_key_rsa_unwrap_ecc_key() {
                 let unwrapped_key_id = resp.data.key_id;
                 let masked_key = resp.data.masked_key;
 
+                assert!(
+                    verify_iv_not_default_from_masked_key(masked_key.as_slice()).unwrap_or(false)
+                );
+
+                assert!(verify_masked_key_attributes(
+                    masked_key.as_slice(),
+                    MaskedKeyAttributes::SIGN | MaskedKeyAttributes::VERIFY
+                ));
+
                 let resp = helper_get_new_key_id_from_unmask(
                     dev,
                     Some(session_id),
@@ -314,6 +337,13 @@ fn test_masked_key_rsa_unwrap_aes_key() {
             let unwrapped_key_id = resp.data.key_id;
             assert!(resp.data.pub_key.is_none());
             let masked_key = resp.data.masked_key;
+
+            assert!(verify_iv_not_default_from_masked_key(masked_key.as_slice()).unwrap_or(false));
+
+            assert!(verify_masked_key_attributes(
+                masked_key.as_slice(),
+                MaskedKeyAttributes::ENCRYPT | MaskedKeyAttributes::DECRYPT
+            ));
 
             let resp = helper_get_new_key_id_from_unmask(
                 dev,
@@ -380,6 +410,13 @@ fn test_masked_key_rsa_unwrap_aes_bulk_key() {
             let unwrapped_key_id = resp.data.key_id;
             assert!(resp.data.pub_key.is_none());
             let masked_key = resp.data.masked_key;
+
+            assert!(verify_iv_not_default_from_masked_key(masked_key.as_slice()).unwrap_or(false));
+
+            assert!(verify_masked_key_attributes(
+                masked_key.as_slice(),
+                MaskedKeyAttributes::ENCRYPT | MaskedKeyAttributes::DECRYPT
+            ));
 
             let resp = helper_get_new_key_id_from_unmask(
                 dev,
