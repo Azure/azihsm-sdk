@@ -80,14 +80,12 @@ impl Xtask for ValidateMembers {
             if updated {
                 fs::write("Cargo.toml", doc.to_string())?;
             }
-        } else {
-            if !non_member_paths.is_empty() {
-                // Error
-                Err(anyhow::anyhow!(
-                    "Workspace members missing path dependencies: {:?}",
-                    non_member_paths
-                ))?
-            }
+        } else if !non_member_paths.is_empty() {
+            // Error
+            Err(anyhow::anyhow!(
+                "Workspace members missing path dependencies: {:?}",
+                non_member_paths
+            ))?
         }
 
         log::trace!("done validate_members");
