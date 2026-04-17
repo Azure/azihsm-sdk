@@ -354,6 +354,13 @@ fn test_secret_kbkdf_helper(
     let derived_key_id1 = resp.data.key_id;
     let masked_key = resp.data.masked_key;
 
+    assert!(verify_iv_not_default_from_masked_key(masked_key.as_slice()).unwrap_or(false));
+
+    assert!(verify_masked_key_attributes(
+        masked_key.as_slice(),
+        MaskedKeyAttributes::ENCRYPT | MaskedKeyAttributes::DECRYPT | MaskedKeyAttributes::LOCAL
+    ));
+
     let resp = helper_get_new_key_id_from_unmask(
         dev,
         Some(session_id),
@@ -471,6 +478,13 @@ fn test_secret_kbkdf_aes_gcm_helper(
     let resp = resp.unwrap();
     let derived_key_id1 = resp.data.key_id;
     let masked_key = resp.data.masked_key;
+
+    assert!(verify_iv_not_default_from_masked_key(masked_key.as_slice()).unwrap_or(false));
+
+    assert!(verify_masked_key_attributes(
+        masked_key.as_slice(),
+        MaskedKeyAttributes::ENCRYPT | MaskedKeyAttributes::DECRYPT | MaskedKeyAttributes::LOCAL
+    ));
 
     let resp = helper_get_new_key_id_from_unmask(
         dev,

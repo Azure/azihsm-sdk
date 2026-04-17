@@ -7,8 +7,6 @@
 use azihsm_crypto::Rng;
 use azihsm_ddi::*;
 use azihsm_ddi_mbor::MborByteArray;
-use azihsm_ddi_mbor::MborDecode;
-use azihsm_ddi_mbor::MborDecoder;
 use azihsm_ddi_types::*;
 use test_with_tracing::test;
 
@@ -306,6 +304,16 @@ fn test_masked_key_hmac_sha256() {
             let key_id = res.data.key_id;
             let masked_key = res.data.masked_key;
 
+            assert!(verify_iv_not_default_from_masked_key(masked_key.as_slice()).unwrap_or(false));
+
+            assert!(verify_masked_key_attributes(
+                masked_key.as_slice(),
+                MaskedKeyAttributes::SIGN
+                    | MaskedKeyAttributes::VERIFY
+                    | MaskedKeyAttributes::LOCAL
+                    | MaskedKeyAttributes::SESSION
+            ));
+
             // Delete that key
             let resp = helper_delete_key(
                 dev,
@@ -325,21 +333,6 @@ fn test_masked_key_hmac_sha256() {
             );
 
             assert!(resp.is_ok(), "resp {:?}", resp);
-
-            let masked_key = resp.unwrap().data.masked_key;
-            let metadata = extract_metadata_from_masked_key(masked_key.as_slice());
-            assert!(
-                metadata.is_some(),
-                "failed to extract metadata from masked key"
-            );
-            let metadata = metadata.unwrap();
-            let key_usage = get_key_usage_from_attributes(&metadata.key_attributes);
-            assert!(
-                key_usage.is_some(),
-                "failed to get key usage from masked key attributes"
-            );
-            let key_usage = key_usage.unwrap();
-            assert_eq!(key_usage, DdiKeyUsage::SignVerify);
         },
     );
 }
@@ -357,6 +350,15 @@ fn test_masked_key_hmac_sha384() {
             let key_id = res.data.key_id;
             let masked_key = res.data.masked_key;
 
+            assert!(verify_iv_not_default_from_masked_key(masked_key.as_slice()).unwrap_or(false));
+
+            assert!(verify_masked_key_attributes(
+                masked_key.as_slice(),
+                MaskedKeyAttributes::SIGN
+                    | MaskedKeyAttributes::VERIFY
+                    | MaskedKeyAttributes::LOCAL
+                    | MaskedKeyAttributes::SESSION
+            ));
             // Delete that key
             let resp = helper_delete_key(
                 dev,
@@ -376,21 +378,6 @@ fn test_masked_key_hmac_sha384() {
             );
 
             assert!(resp.is_ok(), "resp {:?}", resp);
-
-            let masked_key = resp.unwrap().data.masked_key;
-            let metadata = extract_metadata_from_masked_key(masked_key.as_slice());
-            assert!(
-                metadata.is_some(),
-                "failed to extract metadata from masked key"
-            );
-            let metadata = metadata.unwrap();
-            let key_usage = get_key_usage_from_attributes(&metadata.key_attributes);
-            assert!(
-                key_usage.is_some(),
-                "failed to get key usage from masked key attributes"
-            );
-            let key_usage = key_usage.unwrap();
-            assert_eq!(key_usage, DdiKeyUsage::SignVerify);
         },
     );
 }
@@ -408,6 +395,15 @@ fn test_masked_key_hmac_sha512() {
             let key_id = res.data.key_id;
             let masked_key = res.data.masked_key;
 
+            assert!(verify_iv_not_default_from_masked_key(masked_key.as_slice()).unwrap_or(false));
+
+            assert!(verify_masked_key_attributes(
+                masked_key.as_slice(),
+                MaskedKeyAttributes::SIGN
+                    | MaskedKeyAttributes::VERIFY
+                    | MaskedKeyAttributes::LOCAL
+                    | MaskedKeyAttributes::SESSION
+            ));
             // Delete that key
             let resp = helper_delete_key(
                 dev,
@@ -427,21 +423,6 @@ fn test_masked_key_hmac_sha512() {
             );
 
             assert!(resp.is_ok(), "resp {:?}", resp);
-
-            let masked_key = resp.unwrap().data.masked_key;
-            let metadata = extract_metadata_from_masked_key(masked_key.as_slice());
-            assert!(
-                metadata.is_some(),
-                "failed to extract metadata from masked key"
-            );
-            let metadata = metadata.unwrap();
-            let key_usage = get_key_usage_from_attributes(&metadata.key_attributes);
-            assert!(
-                key_usage.is_some(),
-                "failed to get key usage from masked key attributes"
-            );
-            let key_usage = key_usage.unwrap();
-            assert_eq!(key_usage, DdiKeyUsage::SignVerify);
         },
     );
 }
@@ -464,6 +445,15 @@ fn test_masked_key_var_hmac_sha256() {
             let key_id = res.data.key_id;
             let masked_key = res.data.masked_key;
 
+            assert!(verify_iv_not_default_from_masked_key(masked_key.as_slice()).unwrap_or(false));
+
+            assert!(verify_masked_key_attributes(
+                masked_key.as_slice(),
+                MaskedKeyAttributes::SIGN
+                    | MaskedKeyAttributes::VERIFY
+                    | MaskedKeyAttributes::LOCAL
+                    | MaskedKeyAttributes::SESSION
+            ));
             // Delete that key
             let resp = helper_delete_key(
                 dev,
@@ -484,20 +474,8 @@ fn test_masked_key_var_hmac_sha256() {
 
             assert!(resp.is_ok(), "resp {:?}", resp);
 
-            let masked_key = resp.unwrap().data.masked_key;
-            let metadata = extract_metadata_from_masked_key(masked_key.as_slice());
-            assert!(
-                metadata.is_some(),
-                "failed to extract metadata from masked key"
-            );
-            let metadata = metadata.unwrap();
-            let key_usage = get_key_usage_from_attributes(&metadata.key_attributes);
-            assert!(
-                key_usage.is_some(),
-                "failed to get key usage from masked key attributes"
-            );
-            let key_usage = key_usage.unwrap();
-            assert_eq!(key_usage, DdiKeyUsage::SignVerify);
+            let metadata = extract_metadata_from_masked_key(masked_key.as_slice())
+                .expect("Fail to extract metadata from masked key");
             assert_eq!(metadata.key_length, key_len.into());
         },
     );
@@ -521,6 +499,15 @@ fn test_masked_key_var_hmac_sha384() {
             let key_id = res.data.key_id;
             let masked_key = res.data.masked_key;
 
+            assert!(verify_iv_not_default_from_masked_key(masked_key.as_slice()).unwrap_or(false));
+
+            assert!(verify_masked_key_attributes(
+                masked_key.as_slice(),
+                MaskedKeyAttributes::SIGN
+                    | MaskedKeyAttributes::VERIFY
+                    | MaskedKeyAttributes::LOCAL
+                    | MaskedKeyAttributes::SESSION
+            ));
             // Delete that key
             let resp = helper_delete_key(
                 dev,
@@ -541,20 +528,8 @@ fn test_masked_key_var_hmac_sha384() {
 
             assert!(resp.is_ok(), "resp {:?}", resp);
 
-            let masked_key = resp.unwrap().data.masked_key;
-            let metadata = extract_metadata_from_masked_key(masked_key.as_slice());
-            assert!(
-                metadata.is_some(),
-                "failed to extract metadata from masked key"
-            );
-            let metadata = metadata.unwrap();
-            let key_usage = get_key_usage_from_attributes(&metadata.key_attributes);
-            assert!(
-                key_usage.is_some(),
-                "failed to get key usage from masked key attributes"
-            );
-            let key_usage = key_usage.unwrap();
-            assert_eq!(key_usage, DdiKeyUsage::SignVerify);
+            let metadata = extract_metadata_from_masked_key(masked_key.as_slice())
+                .expect("Fail to extract metadata from masked key");
             assert_eq!(metadata.key_length, key_len.into());
         },
     );
@@ -578,6 +553,16 @@ fn test_masked_key_var_hmac_sha512() {
             let key_id = res.data.key_id;
             let masked_key = res.data.masked_key;
 
+            assert!(verify_iv_not_default_from_masked_key(masked_key.as_slice()).unwrap_or(false));
+
+            assert!(verify_masked_key_attributes(
+                masked_key.as_slice(),
+                MaskedKeyAttributes::SIGN
+                    | MaskedKeyAttributes::VERIFY
+                    | MaskedKeyAttributes::LOCAL
+                    | MaskedKeyAttributes::SESSION
+            ));
+
             // Delete that key
             let resp = helper_delete_key(
                 dev,
@@ -598,20 +583,8 @@ fn test_masked_key_var_hmac_sha512() {
 
             assert!(resp.is_ok(), "resp {:?}", resp);
 
-            let masked_key = resp.unwrap().data.masked_key;
-            let metadata = extract_metadata_from_masked_key(masked_key.as_slice());
-            assert!(
-                metadata.is_some(),
-                "failed to extract metadata from masked key"
-            );
-            let metadata = metadata.unwrap();
-            let key_usage = get_key_usage_from_attributes(&metadata.key_attributes);
-            assert!(
-                key_usage.is_some(),
-                "failed to get key usage from masked key attributes"
-            );
-            let key_usage = key_usage.unwrap();
-            assert_eq!(key_usage, DdiKeyUsage::SignVerify);
+            let metadata = extract_metadata_from_masked_key(masked_key.as_slice())
+                .expect("Fail to extract metadata from masked key");
             assert_eq!(metadata.key_length, key_len.into());
         },
     );
@@ -681,6 +654,13 @@ fn test_secret_hkdf_helper(
     let resp = resp.unwrap();
     let derived_key_id1 = resp.data.key_id;
     let masked_key = resp.data.masked_key;
+
+    assert!(verify_iv_not_default_from_masked_key(masked_key.as_slice()).unwrap_or(false));
+
+    assert!(verify_masked_key_attributes(
+        masked_key.as_slice(),
+        MaskedKeyAttributes::ENCRYPT | MaskedKeyAttributes::DECRYPT | MaskedKeyAttributes::LOCAL
+    ));
 
     let resp = helper_get_new_key_id_from_unmask(
         dev,
@@ -796,6 +776,13 @@ fn test_secret_hkdf_aes_gcm_helper(
     let derived_key_id1 = resp.data.key_id;
     let masked_key = resp.data.masked_key;
 
+    assert!(verify_iv_not_default_from_masked_key(masked_key.as_slice()).unwrap_or(false));
+
+    assert!(verify_masked_key_attributes(
+        masked_key.as_slice(),
+        MaskedKeyAttributes::ENCRYPT | MaskedKeyAttributes::DECRYPT | MaskedKeyAttributes::LOCAL
+    ));
+
     let resp = helper_get_new_key_id_from_unmask(
         dev,
         Some(session_id),
@@ -873,78 +860,4 @@ fn test_secret_hkdf_aes_gcm_helper(
     assert_eq!(decrypted_resp.data, data);
 
     close_app_session(dev, session_id);
-}
-
-fn extract_metadata_from_masked_key(masked_key: &[u8]) -> Option<DdiMaskedKeyMetadata> {
-    const FORMAT_OFFSET: usize = 2;
-    const ALGORITHM_OFFSET: usize = FORMAT_OFFSET + 2;
-    const IV_LEN_OFFSET: usize = ALGORITHM_OFFSET + 2;
-    const IV_PADDING_OFFSET: usize = IV_LEN_OFFSET + 2;
-    const METADATA_LEN_OFFSET: usize = IV_PADDING_OFFSET + 2;
-    const METADATA_PADDING_OFFSET: usize = METADATA_LEN_OFFSET + 2;
-    const ENCRYPTED_KEY_LEN_OFFSET: usize = METADATA_PADDING_OFFSET + 2;
-    const ENCRYPTED_KEY_PADDING_OFFSET: usize = ENCRYPTED_KEY_LEN_OFFSET + 2;
-    const TAG_LEN_OFFSET: usize = ENCRYPTED_KEY_PADDING_OFFSET + 2;
-    const RESERVED_OFFSET: usize = TAG_LEN_OFFSET + 34;
-
-    if masked_key.len() < RESERVED_OFFSET {
-        return None;
-    }
-
-    let iv_len: usize = u16::from_le_bytes(
-        masked_key[ALGORITHM_OFFSET..IV_LEN_OFFSET]
-            .try_into()
-            .unwrap(),
-    )
-    .into();
-    let iv_padding_len: usize = u16::from_le_bytes(
-        masked_key[IV_LEN_OFFSET..IV_PADDING_OFFSET]
-            .try_into()
-            .unwrap(),
-    )
-    .into();
-    let metadata_len: usize = u16::from_le_bytes(
-        masked_key[IV_PADDING_OFFSET..METADATA_LEN_OFFSET]
-            .try_into()
-            .unwrap(),
-    )
-    .into();
-
-    let metadata_offset = RESERVED_OFFSET + iv_len + iv_padding_len;
-
-    if masked_key.len() < metadata_offset + metadata_len {
-        return None;
-    }
-
-    let metadata = &masked_key[metadata_offset..metadata_offset + metadata_len];
-    let mut decoder = MborDecoder::new(metadata, false);
-
-    let metadata = DdiMaskedKeyMetadata::mbor_decode(&mut decoder);
-    if let Err(e) = &metadata {
-        tracing::error!("mbor_decode error {:?}", e);
-
-        return None;
-    }
-
-    metadata.ok()
-}
-
-fn get_key_usage_from_attributes(attributes: &DdiMaskedKeyAttributes) -> Option<DdiKeyUsage> {
-    let masked_key_attributes = MaskedKeyAttributes::try_from(attributes).ok()?;
-
-    if masked_key_attributes.contains(MaskedKeyAttributes::DERIVE) {
-        Some(DdiKeyUsage::Derive)
-    } else if masked_key_attributes.contains(MaskedKeyAttributes::ENCRYPT)
-        && masked_key_attributes.contains(MaskedKeyAttributes::DECRYPT)
-    {
-        Some(DdiKeyUsage::EncryptDecrypt)
-    } else if masked_key_attributes.contains(MaskedKeyAttributes::SIGN)
-        && masked_key_attributes.contains(MaskedKeyAttributes::VERIFY)
-    {
-        Some(DdiKeyUsage::SignVerify)
-    } else if masked_key_attributes.contains(MaskedKeyAttributes::UNWRAP) {
-        Some(DdiKeyUsage::Unwrap)
-    } else {
-        None
-    }
 }

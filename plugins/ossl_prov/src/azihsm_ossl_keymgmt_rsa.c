@@ -111,7 +111,7 @@ static AZIHSM_RSA_KEY *azihsm_ossl_keymgmt_gen(
 {
     AZIHSM_RSA_KEY *rsa_key;
     azihsm_handle public = 0, private = 0;
-    azihsm_status status;
+    azihsm_status status = AZIHSM_STATUS_INTERNAL_ERROR;
     const bool enable = true;
     const azihsm_key_class priv_class = AZIHSM_KEY_CLASS_PRIVATE;
     const azihsm_key_class pub_class = AZIHSM_KEY_CLASS_PUBLIC;
@@ -241,7 +241,8 @@ static AZIHSM_RSA_KEY *azihsm_ossl_keymgmt_gen(
         .count = priv_key_prop_count,
     };
 
-    if ((rsa_key = OPENSSL_zalloc(sizeof(AZIHSM_RSA_KEY))) == NULL)
+    rsa_key = OPENSSL_zalloc(sizeof(AZIHSM_RSA_KEY));
+    if (rsa_key == NULL)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
         return NULL;
@@ -273,9 +274,8 @@ static AZIHSM_RSA_KEY *azihsm_ossl_keymgmt_gen(
 
     if (status != AZIHSM_STATUS_SUCCESS)
     {
-        OPENSSL_free(rsa_key);
         ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GENERATE_KEY);
-        return NULL;
+        goto cleanup;
     }
 
     rsa_key->genctx = *genctx;
@@ -301,11 +301,9 @@ static AZIHSM_RSA_KEY *azihsm_ossl_keymgmt_gen(
             uint8_t *masked_key_buffer = OPENSSL_malloc(masked_key_buffer_size);
             if (masked_key_buffer == NULL)
             {
-                azihsm_key_delete(private);
-                azihsm_key_delete(public);
-                OPENSSL_free(rsa_key);
                 ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
-                return NULL;
+                status = AZIHSM_STATUS_INTERNAL_ERROR;
+                goto cleanup;
             }
 
             /* Second call to retrieve the masked key */
@@ -314,13 +312,10 @@ static AZIHSM_RSA_KEY *azihsm_ossl_keymgmt_gen(
 
             if (retrieve_status != AZIHSM_STATUS_SUCCESS)
             {
-                azihsm_key_delete(private);
-                azihsm_key_delete(public);
-                OPENSSL_cleanse(masked_key_buffer, masked_key_buffer_size);
-                OPENSSL_free(masked_key_buffer);
-                OPENSSL_free(rsa_key);
+                OPENSSL_clear_free(masked_key_buffer, masked_key_buffer_size);
                 ERR_raise(ERR_LIB_PROV, ERR_R_OPERATION_FAIL);
-                return NULL;
+                status = AZIHSM_STATUS_INTERNAL_ERROR;
+                goto cleanup;
             }
 
             /* Write masked key to file with restricted permissions (owner-only) */
@@ -330,29 +325,43 @@ static AZIHSM_RSA_KEY *azihsm_ossl_keymgmt_gen(
                     genctx->masked_key_file
                 ) != OSSL_SUCCESS)
             {
-                azihsm_key_delete(private);
-                azihsm_key_delete(public);
-                OPENSSL_cleanse(masked_key_buffer, masked_key_buffer_size);
-                OPENSSL_free(masked_key_buffer);
-                OPENSSL_free(rsa_key);
-                return NULL;
+                OPENSSL_clear_free(masked_key_buffer, masked_key_buffer_size);
+                ERR_raise_data(
+                    ERR_LIB_PROV,
+                    ERR_R_OPERATION_FAIL,
+                    "failed to write masked key to '%s'",
+                    genctx->masked_key_file
+                );
+                status = AZIHSM_STATUS_INTERNAL_ERROR;
+                goto cleanup;
             }
 
-            OPENSSL_cleanse(masked_key_buffer, masked_key_buffer_size);
-            OPENSSL_free(masked_key_buffer);
+            OPENSSL_clear_free(masked_key_buffer, masked_key_buffer_size);
         }
         else if (retrieve_status != AZIHSM_STATUS_PROPERTY_NOT_PRESENT)
         {
             /* Unexpected error - not BUFFER_TOO_SMALL and not PROPERTY_NOT_PRESENT */
-            azihsm_key_delete(private);
-            azihsm_key_delete(public);
-            OPENSSL_free(rsa_key);
             ERR_raise(ERR_LIB_PROV, ERR_R_OPERATION_FAIL);
-            return NULL;
+            status = AZIHSM_STATUS_INTERNAL_ERROR;
+            goto cleanup;
         }
         /* If PROPERTY_NOT_PRESENT, continue without masked key */
     }
 
+    /* Success — prevent cleanup from freeing the result */
+    private = 0;
+    public = 0;
+
+cleanup:
+    if (private != 0)
+        azihsm_key_delete(private);
+    if (public != 0)
+        azihsm_key_delete(public);
+    if (status != AZIHSM_STATUS_SUCCESS)
+    {
+        OPENSSL_free(rsa_key);
+        rsa_key = NULL;
+    }
     return rsa_key;
 }
 
