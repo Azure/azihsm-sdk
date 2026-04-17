@@ -53,6 +53,7 @@ corrosion_experimental_cbindgen(
 set(SOURCE 
     handle/part_list_handle.cpp
     utils/aes_keygen.cpp
+    utils/kdf_derive.cpp
     utils/key_import.cpp
     utils/rsa_keygen.cpp
     utils/shared_secret.cpp

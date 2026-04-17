@@ -11,21 +11,15 @@
 #include "handle/part_list_handle.hpp"
 #include "utils/auto_key.hpp"
 #include "utils/shared_secret.hpp"
+#include "utils/kdf_derive.hpp"
 
-// Supported HKDF hash algorithms and their corresponding HMAC algorithm IDs.
-struct HkdfHashAlgo
+static const std::vector<azihsm_algo_id> &supported_hkdf_hash_algos()
 {
-    azihsm_algo_id hmac_algo_id;
-    const char *name;
-};
-
-static const std::vector<HkdfHashAlgo> &supported_hkdf_hash_algos()
-{
-    static const std::vector<HkdfHashAlgo> algos = {
-        { AZIHSM_ALGO_ID_HMAC_SHA1, "SHA1" },
-        { AZIHSM_ALGO_ID_HMAC_SHA256, "SHA256" },
-        { AZIHSM_ALGO_ID_HMAC_SHA384, "SHA384" },
-        { AZIHSM_ALGO_ID_HMAC_SHA512, "SHA512" },
+    static const std::vector<azihsm_algo_id> algos = {
+        AZIHSM_ALGO_ID_HMAC_SHA1,
+        AZIHSM_ALGO_ID_HMAC_SHA256,
+        AZIHSM_ALGO_ID_HMAC_SHA384,
+        AZIHSM_ALGO_ID_HMAC_SHA512,
     };
     return algos;
 }
@@ -214,12 +208,12 @@ static void run_hkdf_matrix_for_curve(azihsm_handle session, azihsm_ecc_curve cu
         for (uint32_t bits : AES_KEY_SIZES)
         {
             SCOPED_TRACE(
-                std::string("hash=") + hash.name + " aes_bits=" + std::to_string(bits)
+                std::string("hash=") + get_hmac_algo_name(hash) + " aes_bits=" + std::to_string(bits)
             );
 
             azihsm_algo_hkdf_params hkdf_params{};
             azihsm_algo hkdf_algo{};
-            build_hkdf_algo(hkdf_params, hkdf_algo, hash.hmac_algo_id, nullptr, nullptr);
+            build_hkdf_algo(hkdf_params, hkdf_algo, hash, nullptr, nullptr);
 
             auto_key derived_key_a;
             derive_aes_key_from_shared_secret(
@@ -239,7 +233,7 @@ static void run_hkdf_matrix_for_curve(azihsm_handle session, azihsm_ecc_curve cu
                 derived_key_b
             );
 
-            std::string pt_str = std::string("HKDF hash=") + hash.name
+            std::string pt_str = std::string("HKDF hash=") + get_hmac_algo_name(hash)
                                  + " aes_bits=" + std::to_string(bits);
             assert_aes_cbc_roundtrip(
                 derived_key_a.get(),
