@@ -6,6 +6,11 @@ use crypto::*;
 
 use super::*;
 
+// ================================
+// Helper functions
+// ================================
+
+/// Generate an RSA key pair configured for wrapping and unwrapping operations
 fn get_rsa_unwrapping_key_pair(session: &HsmSession) -> (HsmRsaPrivateKey, HsmRsaPublicKey) {
     let priv_key_props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Private)
@@ -32,6 +37,7 @@ fn get_rsa_unwrapping_key_pair(session: &HsmSession) -> (HsmRsaPrivateKey, HsmRs
     (priv_key, pub_key)
 }
 
+/// Import an external RSA key into HSM by wrapping with RSA-AES and unwrapping into key objects
 fn import_rsa_key(
     session: &HsmSession,
     der: &[u8],
@@ -75,6 +81,11 @@ fn import_rsa_key(
     (priv_key, pub_key)
 }
 
+// ============================================================
+// test case section
+// ============================================================
+
+/// Ensure RSA-2048 PKCS#1 sign/verify succeeds using pre-hashed input
 #[session_test]
 fn test_rsa_2048_pkcs1_sign_verify(session: HsmSession) {
     let priv_key = crypto::RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
@@ -95,6 +106,7 @@ fn test_rsa_2048_pkcs1_sign_verify(session: HsmSession) {
     assert!(is_valid, "Signature verification failed");
 }
 
+/// Ensure RSA-3072 PKCS#1 sign/verify succeeds using pre-hashed input
 #[session_test]
 fn test_rsa_3072_pkcs1_sign_verify(session: HsmSession) {
     let priv_key = crypto::RsaPrivateKey::generate(384).expect("Failed to generate RSA Key");
@@ -115,6 +127,7 @@ fn test_rsa_3072_pkcs1_sign_verify(session: HsmSession) {
     assert!(is_valid, "Signature verification failed");
 }
 
+/// Ensure RSA-4096 PKCS#1 sign/verify succeeds using pre-hashed input
 #[session_test]
 fn test_rsa_4096_pkcs1_sign_verify(session: HsmSession) {
     let priv_key = crypto::RsaPrivateKey::generate(512).expect("Failed to generate RSA Key");
@@ -135,6 +148,7 @@ fn test_rsa_4096_pkcs1_sign_verify(session: HsmSession) {
     assert!(is_valid, "Signature verification failed");
 }
 
+/// Ensure RSA-2048 PSS sign/verify succeeds using pre-hashed input
 #[session_test]
 fn test_rsa_2048_pss_sign_verify(session: HsmSession) {
     let priv_key = crypto::RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
@@ -155,6 +169,7 @@ fn test_rsa_2048_pss_sign_verify(session: HsmSession) {
     assert!(is_valid, "Signature verification failed");
 }
 
+/// Ensure RSA-3072 PSS sign/verify succeeds using pre-hashed input
 #[session_test]
 fn test_rsa_3072_pss_sign_verify(session: HsmSession) {
     let priv_key = crypto::RsaPrivateKey::generate(384).expect("Failed to generate RSA Key");
@@ -175,6 +190,7 @@ fn test_rsa_3072_pss_sign_verify(session: HsmSession) {
     assert!(is_valid, "Signature verification failed");
 }
 
+/// Ensure RSA-4096 PSS sign/verify succeeds using pre-hashed input
 #[session_test]
 fn test_rsa_4096_pss_sign_verify(session: HsmSession) {
     let priv_key = crypto::RsaPrivateKey::generate(512).expect("Failed to generate RSA Key");
@@ -226,6 +242,7 @@ fn test_rsa_verify_wrong_public_key_fails(session: HsmSession) {
         "Verification should not succeed"
     );
 }
+
 /// Ensure verification fails when signature is corrupted
 #[session_test]
 fn test_rsa_verify_modified_signature_fails(session: HsmSession) {
@@ -601,6 +618,7 @@ fn test_rsa_verify_empty_signature_fails(session: HsmSession) {
     );
 }
 
+/// Ensure verification fails when provided hash is empty
 #[session_test]
 fn test_rsa_verify_empty_hash_fails(session: HsmSession) {
     let priv_key = RsaPrivateKey::generate(256).unwrap();
@@ -671,6 +689,7 @@ fn test_rsa_sign_verify_large_message(session: HsmSession) {
     assert!(result.unwrap());
 }
 
+/// Ensure verification fails when hash length does not match expected digest size
 #[session_test]
 fn test_rsa_verify_invalid_hash_length_fails(session: HsmSession) {
     let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
@@ -696,6 +715,7 @@ fn test_rsa_verify_invalid_hash_length_fails(session: HsmSession) {
     );
 }
 
+/// Ensure repeated verification with same inputs consistently succeeds
 #[session_test]
 fn test_rsa_verify_repeatability(session: HsmSession) {
     let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
