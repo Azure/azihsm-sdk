@@ -111,7 +111,7 @@ static AZIHSM_RSA_KEY *azihsm_ossl_keymgmt_gen(
 {
     AZIHSM_RSA_KEY *rsa_key;
     azihsm_handle public = 0, private = 0;
-    azihsm_status status;
+    azihsm_status status = AZIHSM_STATUS_INTERNAL_ERROR;
     const bool enable = true;
     const azihsm_key_class priv_class = AZIHSM_KEY_CLASS_PRIVATE;
     const azihsm_key_class pub_class = AZIHSM_KEY_CLASS_PUBLIC;

@@ -772,7 +772,9 @@ azihsm_status compute_pota_endorsement(
 
     status = der_to_uncompressed_point(pid_pub_key_der, uncompressed_point);
     if (status != AZIHSM_STATUS_SUCCESS)
+    {
         goto cleanup;
+    }
 
     status = sign_with_pota_key(
         priv_key_buf->ptr,
@@ -842,7 +844,9 @@ azihsm_status azihsm_open_device_and_session(
     {
         status = load_credentials_from_file(AZIHSM_DEFAULT_CREDENTIALS_ID_PATH, creds.id);
         if (status != AZIHSM_STATUS_SUCCESS)
+        {
             goto cleanup;
+        }
     }
 
     if (config->credentials_pin_from_env)
@@ -853,17 +857,23 @@ azihsm_status azihsm_open_device_and_session(
     {
         status = load_credentials_from_file(AZIHSM_DEFAULT_CREDENTIALS_PIN_PATH, creds.pin);
         if (status != AZIHSM_STATUS_SUCCESS)
+        {
             goto cleanup;
+        }
     }
 
     // Load key files if they exist
     status = azihsm_file_load(config->bmk_path, &bmk_buf);
     if (status != AZIHSM_STATUS_SUCCESS)
+    {
         goto cleanup;
+    }
 
     status = azihsm_file_load(config->muk_path, &muk_buf);
     if (status != AZIHSM_STATUS_SUCCESS)
+    {
         goto cleanup;
+    }
     muk_was_loaded = (muk_buf.ptr != NULL);
 
     // Configure OBK based on source selection
@@ -879,7 +889,9 @@ azihsm_status azihsm_open_device_and_session(
         // owner backup key (MOBK) returned by the HSM.
         status = azihsm_file_load(config->obk_path, &obk_buf);
         if (status != AZIHSM_STATUS_SUCCESS)
+        {
             goto cleanup;
+        }
 
         if (obk_buf.ptr == NULL)
         {
@@ -922,7 +934,9 @@ azihsm_status azihsm_open_device_and_session(
 
     status = azihsm_get_device_handle(device, api_rev);
     if (status != AZIHSM_STATUS_SUCCESS)
+    {
         goto cleanup;
+    }
     device_opened = true;
 
     /* Create resiliency config if enabled */
@@ -940,7 +954,9 @@ azihsm_status azihsm_open_device_and_session(
             &res_ctx
         );
         if (status != AZIHSM_STATUS_SUCCESS)
+        {
             goto cleanup;
+        }
     }
 
     // Configure POTA endorsement based on source selection
@@ -954,11 +970,15 @@ azihsm_status azihsm_open_device_and_session(
         // Load POTA keys from files
         status = azihsm_file_load(config->pota_private_key_path, &pota_priv_buf);
         if (status != AZIHSM_STATUS_SUCCESS)
+        {
             goto cleanup;
+        }
 
         status = azihsm_file_load(config->pota_public_key_path, &pota_pub_buf);
         if (status != AZIHSM_STATUS_SUCCESS)
+        {
             goto cleanup;
+        }
 
         // POTA key files are required when using caller source — both must be present.
         if (pota_priv_buf.ptr == NULL && pota_pub_buf.ptr == NULL)
@@ -996,11 +1016,15 @@ azihsm_status azihsm_open_device_and_session(
         // Compute POTA endorsement: sign PID public key with POTA key
         status = get_part_property(*device, AZIHSM_PART_PROP_ID_PART_PUB_KEY, &pid_pub_key_buf);
         if (status != AZIHSM_STATUS_SUCCESS)
+        {
             goto cleanup;
+        }
 
         status = compute_pota_endorsement(&pid_pub_key_buf, &pota_priv_buf, &pota_sig_buf);
         if (status != AZIHSM_STATUS_SUCCESS)
+        {
             goto cleanup;
+        }
 
         pota_data.signature = &pota_sig_buf;
         pota_data.public_key = &pota_pub_buf;
@@ -1019,7 +1043,9 @@ azihsm_status azihsm_open_device_and_session(
         config->resiliency_enabled ? &resiliency_cfg : NULL
     );
     if (status != AZIHSM_STATUS_SUCCESS)
+    {
         goto cleanup;
+    }
 
     // Retrieve and persist BMK property
     status = get_part_property(*device, AZIHSM_PART_PROP_ID_BACKUP_MASKING_KEY, &retrieved_bmk);
@@ -1027,13 +1053,17 @@ azihsm_status azihsm_open_device_and_session(
     {
         status = write_buffer_to_file(config->bmk_path, &retrieved_bmk);
         if (status != AZIHSM_STATUS_SUCCESS)
+        {
             goto cleanup;
+        }
     }
 
     // Open session (seed=NULL lets the library generate random bytes internally)
     status = azihsm_sess_open(*device, &creds, NULL, session);
     if (status != AZIHSM_STATUS_SUCCESS)
+    {
         goto cleanup;
+    }
     session_opened = true;
 
     // If MUK wasn't loaded from file, generate and save it
@@ -1041,7 +1071,9 @@ azihsm_status azihsm_open_device_and_session(
     {
         status = generate_and_save_muk(*session, config->muk_path);
         if (status != AZIHSM_STATUS_SUCCESS)
+        {
             goto cleanup;
+        }
     }
 
     status = AZIHSM_STATUS_SUCCESS;
@@ -1177,7 +1209,9 @@ static azihsm_status wrap_and_unwrap_pkcs8(
 
     status = azihsm_crypt_encrypt(&wrap_algo, wrapping_pub, &plain_buf, &wrapped_buf);
     if (status != AZIHSM_STATUS_SUCCESS)
+    {
         goto cleanup;
+    }
 
     /* Unwrap into the HSM */
     status = azihsm_key_unwrap_pair(
@@ -1220,7 +1254,9 @@ azihsm_status azihsm_import_key_pair(
     /* 1. Read the input file from disk */
     status = azihsm_file_load(input_key_file, &input_buf);
     if (status != AZIHSM_STATUS_SUCCESS)
+    {
         goto cleanup;
+    }
 
     if (input_buf.ptr == NULL || input_buf.len == 0)
     {
@@ -1237,7 +1273,9 @@ azihsm_status azihsm_import_key_pair(
     /* 2. Get the RSA unwrapping key pair from the HSM */
     status = azihsm_get_unwrapping_key(provctx, &wrapping_pub, &wrapping_priv);
     if (status != AZIHSM_STATUS_SUCCESS)
+    {
         goto cleanup;
+    }
 
     /* 3. Try to normalize as DER-encoded private key (SEC1, PKCS#1, or PKCS#8) */
     if (azihsm_ossl_normalize_der_to_pkcs8(
@@ -1309,7 +1347,9 @@ azihsm_status azihsm_unwrap_key_pair(
     /* 1. Read the wrapped blob from disk */
     status = azihsm_file_load(wrapped_key_file, &input_buf);
     if (status != AZIHSM_STATUS_SUCCESS)
+    {
         goto cleanup;
+    }
 
     if (input_buf.ptr == NULL || input_buf.len == 0)
     {
@@ -1326,7 +1366,9 @@ azihsm_status azihsm_unwrap_key_pair(
     /* 2. Get the RSA unwrapping key pair from the HSM */
     status = azihsm_get_unwrapping_key(provctx, &wrapping_pub, &wrapping_priv);
     if (status != AZIHSM_STATUS_SUCCESS)
+    {
         goto cleanup;
+    }
 
     /* 3. Unwrap directly — the blob is already wrapped */
     status = azihsm_key_unwrap_pair(
