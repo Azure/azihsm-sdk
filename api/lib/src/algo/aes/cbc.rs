@@ -853,7 +853,7 @@ fn pkcs7_unpad(data: &[u8], pad: bool) -> HsmResult<usize> {
     // Data must be at least one byte to contain padding information, else
     // below pad_byte access will panic. AES block size is 16 bytes, so valid padding must be at least 1 byte.
     if data.is_empty() {
-        return Err(HsmError::InternalError);
+        return Err(HsmError::InvalidArgument);
     }
 
     let pad_byte = data[data.len() - 1];
