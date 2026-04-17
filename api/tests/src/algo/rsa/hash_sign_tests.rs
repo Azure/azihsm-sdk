@@ -1,10 +1,18 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+use std::panic::AssertUnwindSafe;
+use std::panic::catch_unwind;
+
 use azihsm_crypto::*;
 
 use super::*;
 
+// ================================
+// Helper functions
+// ================================
+
+/// Generate an RSA key pair with wrap/unwrap permissions for key import operations
 fn get_rsa_unwrapping_key_pair(session: &HsmSession) -> (HsmRsaPrivateKey, HsmRsaPublicKey) {
     let priv_key_props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Private)
@@ -31,6 +39,7 @@ fn get_rsa_unwrapping_key_pair(session: &HsmSession) -> (HsmRsaPrivateKey, HsmRs
     (priv_key, pub_key)
 }
 
+/// Import an external RSA key by wrapping with RSA-AES and unwrapping into HSM-managed keys
 fn import_rsa_key(
     session: &HsmSession,
     der: &[u8],
@@ -74,6 +83,7 @@ fn import_rsa_key(
     (priv_key, pub_key)
 }
 
+/// Helper to perform streaming RSA signing over multiple data chunks
 fn streaming_sign_data(
     priv_key: HsmRsaPrivateKey,
     sign_algo: HsmRsaHashSignAlgo,
@@ -89,6 +99,7 @@ fn streaming_sign_data(
     sign_ctx.finish_vec().expect("Failed to finish signature")
 }
 
+/// Helper to perform streaming RSA signature verification over multiple data chunks
 fn streaming_verify_signature(
     pub_key: HsmRsaPublicKey,
     verify_algo: HsmRsaHashSignAlgo,
@@ -107,6 +118,11 @@ fn streaming_verify_signature(
         .expect("Failed to finish verification")
 }
 
+// ============================================================
+// test case section
+// ============================================================
+
+/// Ensure RSA-2048 PKCS#1 signing and verification succeeds
 #[session_test]
 fn test_rsa_2048_pkcs1_sign_verify(session: HsmSession) {
     let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
@@ -125,6 +141,7 @@ fn test_rsa_2048_pkcs1_sign_verify(session: HsmSession) {
     assert!(is_valid, "Signature verification failed");
 }
 
+/// Ensure RSA-3072 PKCS#1 signing and verification succeeds
 #[session_test]
 fn test_rsa_3072_pkcs1_sign_verify(session: HsmSession) {
     let priv_key = RsaPrivateKey::generate(384).expect("Failed to generate RSA Key");
@@ -143,6 +160,7 @@ fn test_rsa_3072_pkcs1_sign_verify(session: HsmSession) {
     assert!(is_valid, "Signature verification failed");
 }
 
+/// Ensure RSA-4096 PKCS#1 signing and verification succeeds
 #[session_test]
 fn test_rsa_4096_pkcs1_sign_verify(session: HsmSession) {
     let priv_key = RsaPrivateKey::generate(512).expect("Failed to generate RSA Key");
@@ -161,6 +179,7 @@ fn test_rsa_4096_pkcs1_sign_verify(session: HsmSession) {
     assert!(is_valid, "Signature verification failed");
 }
 
+/// Ensure RSA-2048 PSS signing and verification succeeds
 #[session_test]
 fn test_rsa_2048_pss_sign_verify(session: HsmSession) {
     let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
@@ -179,6 +198,7 @@ fn test_rsa_2048_pss_sign_verify(session: HsmSession) {
     assert!(is_valid, "Signature verification failed");
 }
 
+/// Ensure RSA-3072 PSS signing and verification succeeds
 #[session_test]
 fn test_rsa_3072_pss_sign_verify(session: HsmSession) {
     let priv_key = RsaPrivateKey::generate(384).expect("Failed to generate RSA Key");
@@ -197,6 +217,7 @@ fn test_rsa_3072_pss_sign_verify(session: HsmSession) {
     assert!(is_valid, "Signature verification failed");
 }
 
+/// Ensure RSA-4096 PSS signing and verification succeeds
 #[session_test]
 fn test_rsa_4096_pss_sign_verify(session: HsmSession) {
     let priv_key = RsaPrivateKey::generate(512).expect("Failed to generate RSA Key");
@@ -215,6 +236,7 @@ fn test_rsa_4096_pss_sign_verify(session: HsmSession) {
     assert!(is_valid, "Signature verification failed");
 }
 
+/// Ensure RSA-2048 PKCS#1 streaming sign and verify succeeds
 #[session_test]
 fn test_rsa_2048_pkcs1_streaming_sign_verify(session: HsmSession) {
     let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
@@ -230,6 +252,7 @@ fn test_rsa_2048_pkcs1_streaming_sign_verify(session: HsmSession) {
     assert!(is_valid, "Streaming signature verification failed");
 }
 
+/// Ensure RSA-3072 PKCS#1 streaming sign and verify succeeds
 #[session_test]
 fn test_rsa_3072_pkcs1_streaming_sign_verify(session: HsmSession) {
     let priv_key = RsaPrivateKey::generate(384).expect("Failed to generate RSA Key");
@@ -245,6 +268,7 @@ fn test_rsa_3072_pkcs1_streaming_sign_verify(session: HsmSession) {
     assert!(is_valid, "Streaming signature verification failed");
 }
 
+/// Ensure RSA-4096 PKCS#1 streaming sign and verify succeeds
 #[session_test]
 fn test_rsa_4096_pkcs1_streaming_sign_verify(session: HsmSession) {
     let priv_key = RsaPrivateKey::generate(512).expect("Failed to generate RSA Key");
@@ -260,6 +284,7 @@ fn test_rsa_4096_pkcs1_streaming_sign_verify(session: HsmSession) {
     assert!(is_valid, "Streaming signature verification failed");
 }
 
+/// Ensure RSA-2048 PSS streaming sign and verify succeeds
 #[session_test]
 fn test_rsa_2048_pss_streaming_sign_verify(session: HsmSession) {
     let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
@@ -275,6 +300,7 @@ fn test_rsa_2048_pss_streaming_sign_verify(session: HsmSession) {
     assert!(is_valid, "Streaming signature verification failed");
 }
 
+/// Ensure RSA-3072 PSS streaming sign and verify succeeds
 #[session_test]
 fn test_rsa_3072_pss_streaming_sign_verify(session: HsmSession) {
     let priv_key = RsaPrivateKey::generate(384).expect("Failed to generate RSA Key");
@@ -290,6 +316,7 @@ fn test_rsa_3072_pss_streaming_sign_verify(session: HsmSession) {
     assert!(is_valid, "Streaming signature verification failed");
 }
 
+/// Ensure RSA-4096 PSS streaming sign and verify succeeds
 #[session_test]
 fn test_rsa_4096_pss_streaming_sign_verify(session: HsmSession) {
     let priv_key = RsaPrivateKey::generate(512).expect("Failed to generate RSA Key");
@@ -370,5 +397,498 @@ fn test_rsa_streaming_verify_update_after_finish_fails(session: HsmSession) {
         matches!(res, Err(HsmError::InvalidContextState)),
         "finish() after finish() should return InvalidContextState, got {:?}",
         res
+    );
+}
+
+/// Ensure streaming and one-shot produce same signature (PKCS1 only)
+#[session_test]
+fn test_rsa_hash_sign_streaming_vs_single_same(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).unwrap();
+    let (priv_key, _) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048);
+
+    let message = b"hello world";
+
+    let mut algo1 = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+    let sig1 = HsmSigner::sign_vec(&mut algo1, &priv_key, message).unwrap();
+
+    let chunks = [b"hello " as &[u8], b"world"];
+    let algo2 = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+    let sig2 = streaming_sign_data(priv_key, algo2, &chunks);
+
+    assert_eq!(sig1, sig2);
+}
+
+/// Ensure different chunk order produces different signature
+#[session_test]
+fn test_rsa_streaming_chunk_order_matters(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).unwrap();
+    let (priv_key, _) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048);
+
+    // Create separate algo instances (no clone needed)
+    let algo1 = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+    let algo2 = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+
+    let sig1 = streaming_sign_data(priv_key.clone(), algo1, &[b"a", b"b"]);
+    let sig2 = streaming_sign_data(priv_key, algo2, &[b"b", b"a"]);
+
+    assert_ne!(sig1, sig2);
+}
+
+/// Ensure empty streaming input produces a valid signature
+#[session_test]
+fn test_rsa_streaming_empty_input_succeeds(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).unwrap();
+    let (priv_key, pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048);
+
+    let algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+
+    let mut sign_ctx = HsmSigner::sign_init(algo, priv_key).unwrap();
+
+    // no update()
+
+    let sig = sign_ctx
+        .finish_vec()
+        .expect("empty input should still produce signature");
+
+    // verify it
+    let verify_algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+    let mut verify_ctx = HsmVerifier::verify_init(verify_algo, pub_key).unwrap();
+
+    let is_valid = verify_ctx.finish(&sig).unwrap();
+
+    assert!(is_valid, "Empty input signature should be valid");
+}
+
+/// Ensure streaming verify fails for corrupted signature
+#[session_test]
+fn test_rsa_streaming_verify_modified_signature_fails(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).unwrap();
+    let (priv_key, pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048);
+
+    let data_chunks = [b"hello " as &[u8], b"world"];
+    let algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+
+    let mut sig = streaming_sign_data(priv_key, algo, &data_chunks);
+    sig[0] ^= 0xFF;
+
+    let verify_algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+
+    let mut ctx = HsmVerifier::verify_init(verify_algo, pub_key).unwrap();
+    for c in data_chunks {
+        ctx.update(c).unwrap();
+    }
+
+    let result = ctx.finish(&sig);
+
+    assert!(result.is_err());
+}
+
+/// Ensure streaming verify fails for modified data
+#[session_test]
+fn test_rsa_streaming_verify_wrong_data_fails(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).unwrap();
+    let (priv_key, pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048);
+
+    let data1 = [b"hello " as &[u8], b"world"];
+    let data2 = [b"hello " as &[u8], b"WORLD"]; // changed
+
+    let algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+    let sig = streaming_sign_data(priv_key, algo, &data1);
+
+    let verify_algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+
+    let mut ctx = HsmVerifier::verify_init(verify_algo, pub_key).unwrap();
+    for c in data2 {
+        ctx.update(c).unwrap();
+    }
+
+    let result = ctx.finish(&sig);
+
+    assert!(result.is_err());
+}
+
+/// Ensure streaming verify fails with mismatched padding
+#[session_test]
+fn test_rsa_streaming_pkcs1_vs_pss_mismatch_fails(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).unwrap();
+    let (priv_key, pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048);
+
+    let chunks = [b"hello " as &[u8], b"world"];
+
+    let sign_algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+    let sig = streaming_sign_data(priv_key, sign_algo, &chunks);
+
+    let verify_algo = HsmRsaHashSignAlgo::with_pss_padding(HsmHashAlgo::Sha256, 32);
+
+    let mut ctx = HsmVerifier::verify_init(verify_algo, pub_key).unwrap();
+    for c in chunks {
+        ctx.update(c).unwrap();
+    }
+
+    let result = ctx.finish(&sig);
+
+    assert!(result.is_err());
+}
+/// Ensure update with empty chunk behaves correctly
+#[session_test]
+fn test_rsa_streaming_empty_chunk_update(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).unwrap();
+    let (priv_key, pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048);
+
+    let algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+
+    let mut ctx = HsmSigner::sign_init(algo, priv_key).unwrap();
+    ctx.update(b"").unwrap(); // empty chunk
+
+    let sig = ctx.finish_vec().unwrap();
+
+    let verify_algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+    let mut vctx = HsmVerifier::verify_init(verify_algo, pub_key).unwrap();
+
+    let is_valid = vctx.finish(&sig).unwrap();
+
+    assert!(is_valid);
+}
+
+/// Ensure large streaming input works
+#[session_test]
+fn test_rsa_streaming_large_input(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).unwrap();
+    let (priv_key, pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048);
+
+    let large_data = vec![0xAB; 10_000];
+
+    // create fresh algo for sign
+    let mut sign_algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+    let sig = HsmSigner::sign_vec(&mut sign_algo, &priv_key, &large_data).unwrap();
+
+    // create fresh algo for verify
+    let mut verify_algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+    let is_valid = HsmVerifier::verify(&mut verify_algo, &pub_key, &large_data, &sig).unwrap();
+
+    assert!(is_valid);
+}
+
+/// Ensure streaming verify fails with wrong public key
+#[session_test]
+fn test_rsa_streaming_verify_wrong_key_fails(session: HsmSession) {
+    let priv1 = RsaPrivateKey::generate(256).unwrap();
+    let priv2 = RsaPrivateKey::generate(256).unwrap();
+
+    let (priv1, _) = import_rsa_key(&session, &priv1.to_vec().unwrap(), 2048);
+    let (_, pub2) = import_rsa_key(&session, &priv2.to_vec().unwrap(), 2048);
+
+    let chunks = [b"hello " as &[u8], b"world"];
+
+    let algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+    let sig = streaming_sign_data(priv1, algo, &chunks);
+
+    let verify_algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+
+    let mut ctx = HsmVerifier::verify_init(verify_algo, pub2).unwrap();
+    for c in chunks {
+        ctx.update(c).unwrap();
+    }
+
+    let result = ctx.finish(&sig);
+
+    assert!(result.is_err());
+}
+/// Ensure streaming verify fails with empty signature
+#[session_test]
+fn test_rsa_streaming_verify_empty_signature_fails(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).unwrap();
+    let (_priv_key, pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048);
+
+    let chunks = [b"hello" as &[u8]];
+
+    let verify_algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+
+    let mut ctx = HsmVerifier::verify_init(verify_algo, pub_key).unwrap();
+    for c in chunks {
+        ctx.update(c).unwrap();
+    }
+
+    let result = ctx.finish(&[]); // empty sig
+
+    assert!(result.is_err());
+}
+
+/// Ensure streaming verify fails with truncated signature
+#[session_test]
+fn test_rsa_streaming_verify_truncated_signature_fails(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).unwrap();
+    let (priv_key, pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048);
+
+    let chunks = [b"hello " as &[u8], b"world"];
+
+    let algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+    let mut sig = streaming_sign_data(priv_key, algo, &chunks);
+
+    sig.truncate(sig.len() / 2);
+
+    let verify_algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+
+    let mut ctx = HsmVerifier::verify_init(verify_algo, pub_key).unwrap();
+    for c in chunks {
+        ctx.update(c).unwrap();
+    }
+
+    let result = ctx.finish(&sig);
+
+    assert!(result.is_err());
+}
+
+/// Ensure PSS signatures are non-deterministic
+#[session_test]
+fn test_rsa_pss_non_deterministic(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).unwrap();
+    let (priv_key, _) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048);
+
+    let msg = b"hello";
+
+    let mut algo1 = HsmRsaHashSignAlgo::with_pss_padding(HsmHashAlgo::Sha256, 32);
+    let mut algo2 = HsmRsaHashSignAlgo::with_pss_padding(HsmHashAlgo::Sha256, 32);
+
+    let sig1 = HsmSigner::sign_vec(&mut algo1, &priv_key, msg).unwrap();
+    let sig2 = HsmSigner::sign_vec(&mut algo2, &priv_key, msg).unwrap();
+
+    assert_ne!(sig1, sig2);
+}
+
+/// Ensure verification fails when signing and verifying use different hash algorithms
+#[session_test]
+fn test_rsa_verify_wrong_hash_algo_fails(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).unwrap();
+    let (priv_key, pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048);
+
+    let msg = b"hello";
+
+    let mut sign_algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+    let sig = HsmSigner::sign_vec(&mut sign_algo, &priv_key, msg).unwrap();
+
+    // verify with different hash
+    let mut verify_algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha384);
+    let result = HsmVerifier::verify(&mut verify_algo, &pub_key, msg, &sig);
+
+    assert!(result.is_err());
+}
+
+/// Ensure PSS verification fails when salt length differs from signing
+#[session_test]
+fn test_rsa_pss_salt_len_mismatch_fails(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).unwrap();
+    let (priv_key, pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048);
+
+    let msg = b"hello";
+
+    let mut sign_algo = HsmRsaHashSignAlgo::with_pss_padding(HsmHashAlgo::Sha256, 32);
+    let sig = HsmSigner::sign_vec(&mut sign_algo, &priv_key, msg).unwrap();
+
+    // verify with different salt len
+    let mut verify_algo = HsmRsaHashSignAlgo::with_pss_padding(HsmHashAlgo::Sha256, 20);
+    let result = HsmVerifier::verify(&mut verify_algo, &pub_key, msg, &sig);
+
+    assert!(result.is_err());
+}
+
+/// Ensure one-shot verification fails when signature is corrupted
+#[session_test]
+fn test_rsa_verify_modified_signature_fails_one_shot(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).unwrap();
+    let (priv_key, pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048);
+
+    let msg = b"hello";
+
+    let mut algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+    let mut sig = HsmSigner::sign_vec(&mut algo, &priv_key, msg).unwrap();
+
+    sig[0] ^= 0xFF;
+
+    let result = HsmVerifier::verify(&mut algo, &pub_key, msg, &sig);
+    assert!(result.is_err());
+}
+
+/// Ensure one-shot verification fails when message differs from signed data
+#[session_test]
+fn test_rsa_verify_wrong_data_fails_one_shot(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).unwrap();
+    let (priv_key, pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048);
+
+    let mut algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+
+    let sig = HsmSigner::sign_vec(&mut algo, &priv_key, b"hello").unwrap();
+
+    let result = HsmVerifier::verify(&mut algo, &pub_key, b"HELLO", &sig);
+    assert!(result.is_err());
+}
+
+/// Ensure signing and verifying an empty message succeeds (one-shot path)
+#[session_test]
+fn test_rsa_sign_empty_message_one_shot(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).unwrap();
+    let (priv_key, pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048);
+
+    let mut algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+
+    let sig = HsmSigner::sign_vec(&mut algo, &priv_key, b"").unwrap();
+
+    let is_valid = HsmVerifier::verify(&mut algo, &pub_key, b"", &sig).unwrap();
+
+    assert!(is_valid);
+}
+
+/// Ensure verification fails for invalid (truncated) signature length
+#[session_test]
+fn test_rsa_verify_invalid_hash_length_fails(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).unwrap();
+    let (priv_key, pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048);
+
+    let msg = b"hello";
+
+    let mut algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+    let sig = HsmSigner::sign_vec(&mut algo, &priv_key, msg).unwrap();
+
+    // truncate signature slightly (simulate hash mismatch indirectly)
+    let result = HsmVerifier::verify(&mut algo, &pub_key, msg, &sig[..10]);
+
+    assert!(result.is_err());
+}
+
+/// Ensure PKCS#1 signatures are deterministic for the same key and message
+#[session_test]
+fn test_rsa_pkcs1_deterministic(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).unwrap();
+    let (priv_key, _) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048);
+
+    let msg = b"hello";
+
+    let mut algo1 = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+    let mut algo2 = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+
+    let sig1 = HsmSigner::sign_vec(&mut algo1, &priv_key, msg).unwrap();
+    let sig2 = HsmSigner::sign_vec(&mut algo2, &priv_key, msg).unwrap();
+
+    assert_eq!(sig1, sig2);
+}
+
+/// Ensure verification fails when using a public key of mismatched size
+#[session_test]
+fn test_rsa_verify_mismatched_key_size_fails(session: HsmSession) {
+    let priv1 = RsaPrivateKey::generate(256).unwrap();
+    let priv2 = RsaPrivateKey::generate(384).unwrap();
+
+    let (priv1, _) = import_rsa_key(&session, &priv1.to_vec().unwrap(), 2048);
+    let (_, pub2) = import_rsa_key(&session, &priv2.to_vec().unwrap(), 3072);
+
+    let msg = b"hello";
+
+    let mut algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+    let sig = HsmSigner::sign_vec(&mut algo, &priv1, msg).unwrap();
+
+    let result = HsmVerifier::verify(&mut algo, &pub2, msg, &sig);
+    assert!(result.is_err());
+}
+
+/// Ensure streaming sign without update equals one-shot empty input
+#[session_test]
+fn test_streaming_no_update_equals_empty_one_shot(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).unwrap();
+    let (priv_key, _) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048);
+
+    let algo1 = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+    let sig1 = streaming_sign_data(priv_key.clone(), algo1, &[]);
+
+    let mut algo2 = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+    let sig2 = HsmSigner::sign_vec(&mut algo2, &priv_key, b"").unwrap();
+
+    assert_eq!(sig1, sig2);
+}
+
+/// Ensure verify fails if finish is called without any update
+#[session_test]
+fn test_streaming_verify_without_update(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).unwrap();
+    let (priv_key, pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048);
+
+    let algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+    let sig = streaming_sign_data(priv_key, algo, &[b"data"]);
+
+    let verify_algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+    let mut ctx = HsmVerifier::verify_init(verify_algo, pub_key).unwrap();
+
+    let result = ctx.finish(&sig);
+
+    assert!(result.is_err(), "finish without update should fail");
+}
+
+/// Ensure streaming and one-shot signatures differ when data differs
+#[session_test]
+fn test_streaming_vs_single_mismatch_fails(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).unwrap();
+    let (priv_key, _pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048);
+
+    let mut algo1 = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+    let sig1 = HsmSigner::sign_vec(&mut algo1, &priv_key, b"hello").unwrap();
+
+    let algo2 = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+    let sig2 = streaming_sign_data(priv_key, algo2, &[b"hell", b"o!"]); // different
+
+    assert_ne!(sig1, sig2);
+}
+
+/// Ensure multiple empty chunks behave same as empty input
+#[session_test]
+fn test_streaming_multiple_empty_chunks(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).unwrap();
+    let (priv_key, pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048);
+
+    let algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+
+    let sig = streaming_sign_data(priv_key, algo, &[b"", b"", b""]);
+
+    let verify_algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+    let is_valid = streaming_verify_signature(pub_key, verify_algo, &[b""], &sig);
+
+    assert!(is_valid);
+}
+
+/// Ensure unwrapping key cannot be used for signing
+#[session_test]
+fn test_unwrapping_key_cannot_sign(session: HsmSession) {
+    let (priv_key, _) = get_rsa_unwrapping_key_pair(&session);
+
+    let mut algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+
+    let result = HsmSigner::sign_vec(&mut algo, &priv_key, b"data");
+
+    assert!(result.is_err(), "Unwrapping key should not allow signing");
+}
+
+/// Ensure RSA import fails when declared key size does not match DER key size
+#[session_test]
+fn test_import_rsa_mismatched_bits_fails(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).unwrap(); // 2048
+    let der = priv_key.to_vec().unwrap();
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        import_rsa_key(&session, &der, 3072);
+    }));
+
+    assert!(result.is_err());
+}
+
+/// Ensure RSA import fails when DER is invalid or corrupted
+#[session_test]
+fn test_import_rsa_invalid_der_fails(session: HsmSession) {
+    let bad_der = vec![0x00, 0x01, 0x02]; // clearly invalid
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        import_rsa_key(&session, &bad_der, 2048);
+    }));
+
+    assert!(
+        result.is_err(),
+        "Invalid DER should cause unwrap/import failure"
     );
 }
