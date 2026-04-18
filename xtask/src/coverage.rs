@@ -38,7 +38,7 @@ impl Xtask for Coverage {
         log::info!("Building resiliency fault-injection tests and running them with coverage");
         cmd!(
             sh,
-            "cargo llvm-cov nextest --no-report --no-fail-fast -E test(resiliency::fault_injection::) --features mock,res-test --package azihsm_api_tests --profile ci-mock"
+            "cargo llvm-cov nextest --no-report --no-fail-fast -E test(resiliency::fault_injection::) --features mock,res-test --package azihsm_api_tests --profile ci-mock-res"
         )
         .run()?;
 
