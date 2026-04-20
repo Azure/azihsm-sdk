@@ -476,6 +476,7 @@ http {{
         nginx_conf: &Path,
     ) -> Result<(), Failed> {
         let error_log = keymat_dir.join("logs").join("error.log");
+        let openssl_conf = keymat_dir.join("openssl-provider.cnf");
         let output = Command::new("bash")
             .arg(script_path)
             .env_remove("LD_LIBRARY_PATH")
@@ -484,6 +485,7 @@ http {{
             .env("NGINX_CONF", nginx_conf)
             .env("NGINX_PREFIX", keymat_dir)
             .env("NGINX_ERROR_LOG", &error_log)
+            .env("OPENSSL_CONF", &openssl_conf)
             .envs(credential_env())
             .output()
             .expect("Failed to run test script");

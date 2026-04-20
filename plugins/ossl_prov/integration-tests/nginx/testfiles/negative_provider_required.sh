@@ -23,7 +23,7 @@ sleep 1
 # back to unsetting OPENSSL_CONF which prevents the provider from loading.
 if mv "$PROVIDER_SO" "${PROVIDER_SO}.disabled" 2>/dev/null; then
     trap 'mv "${PROVIDER_SO}.disabled" "$PROVIDER_SO"' EXIT
-    OUTPUT=$(env -u OPENSSL_CONF nginx -t "${NGINX_FLAGS[@]}" 2>&1 || true)
+    OUTPUT=$(nginx -t "${NGINX_FLAGS[@]}" 2>&1 || true)
 else
     OUTPUT=$(env -u OPENSSL_CONF nginx -t "${NGINX_FLAGS[@]}" 2>&1 || true)
 fi
