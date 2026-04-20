@@ -562,7 +562,7 @@ TEST_F(azihsm_hkdf, hkdf_derive_invalid_hmac_algo_id_fails)
     });
 }
 
-TEST_F(azihsm_hkdf, hkdf_derive_key_fails_with_zero_bit_len)
+TEST_F(azihsm_hkdf, hkdf_derive_zero_bit_len_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {
         auto_key secret_a;
