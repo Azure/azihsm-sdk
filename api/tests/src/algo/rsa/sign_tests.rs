@@ -737,3 +737,91 @@ fn test_rsa_verify_repeatability(session: HsmSession) {
         assert!(result.unwrap());
     }
 }
+
+/// Ensure PSS signing fails when salt length exceeds maximum allowed
+#[session_test]
+fn test_rsa_pss_salt_len_too_large_fails(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
+    let (priv_key, _pub_key) = import_rsa_key(
+        &session,
+        &priv_key.to_vec().expect("Failed to export RSA Key"),
+        2048,
+    );
+
+    let mut hash_algo = HsmHashAlgo::Sha256;
+    let hash =
+        HsmHasher::hash_vec(&session, &mut hash_algo, b"hello").expect("Failed to hash message");
+
+    // deliberately too large
+    let mut algo = HsmRsaSignAlgo::with_pss_padding(hash_algo, 300);
+
+    let result = HsmSigner::sign_vec(&mut algo, &priv_key, &hash);
+
+    assert!(
+        result.is_err(),
+        "Expected failure for excessive salt length, got {:?}",
+        result
+    );
+}
+/// Ensure PSS works with maximum valid salt length
+#[session_test]
+fn test_rsa_pss_max_salt_len(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
+    let (priv_key, pub_key) = import_rsa_key(
+        &session,
+        &priv_key.to_vec().expect("Failed to export RSA Key"),
+        2048,
+    );
+
+    let mut hash_algo = HsmHashAlgo::Sha256;
+    let hash =
+        HsmHasher::hash_vec(&session, &mut hash_algo, b"hello").expect("Failed to hash message");
+
+    // max salt = 256 - 32 - 2 = 222
+    let mut algo = HsmRsaSignAlgo::with_pss_padding(hash_algo, 222);
+
+    let sig = HsmSigner::sign_vec(&mut algo, &priv_key, &hash)
+        .expect("Signing should succeed at max salt length");
+
+    let result = HsmVerifier::verify(&mut algo, &pub_key, &hash, &sig);
+
+    assert!(result.unwrap());
+}
+
+/// Ensure verification fails for all-zero and all-0xFF signatures
+#[session_test]
+fn test_rsa_verify_all_zero_and_all_ff_signature_fails(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
+    let (_priv_key, pub_key) = import_rsa_key(
+        &session,
+        &priv_key.to_vec().expect("Failed to export RSA Key"),
+        2048,
+    );
+
+    let mut hash_algo = HsmHashAlgo::Sha256;
+    let hash =
+        HsmHasher::hash_vec(&session, &mut hash_algo, b"hello").expect("Failed to hash message");
+
+    let mut algo = HsmRsaSignAlgo::with_pkcs1_padding(hash_algo);
+
+    let sig_len = 256; // RSA-2048
+
+    let all_zero_sig = vec![0u8; sig_len];
+    let all_ff_sig = vec![0xFFu8; sig_len];
+
+    let result_zero = HsmVerifier::verify(&mut algo, &pub_key, &hash, &all_zero_sig);
+    let result_ff = HsmVerifier::verify(&mut algo, &pub_key, &hash, &all_ff_sig);
+
+    // Accept both Ok(false) (Windows) and Err (Linux)
+    assert!(
+        matches!(result_zero, Ok(false)) || result_zero.is_err(),
+        "Expected failure for all-zero signature, got {:?}",
+        result_zero
+    );
+
+    assert!(
+        matches!(result_ff, Ok(false)) || result_ff.is_err(),
+        "Expected failure for all-0xFF signature, got {:?}",
+        result_ff
+    );
+}
