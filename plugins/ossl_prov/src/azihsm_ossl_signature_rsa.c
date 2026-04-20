@@ -696,7 +696,13 @@ static int azihsm_ossl_rsa_digest_verify_init(
     ctx->operation = 0; /* Verify */
 
     /* Get hash algorithm by name */
-    ctx->md = EVP_get_digestbyname(mdname); // CodeQL [SM02689]  This is passed in externally by customer
+    /*
+     * CodeQL [SM02689] `mdname` comes from OpenSSL caller params, but
+     * EVP_get_digestbyname() only resolves registered digest algorithms.
+     * Unknown names return NULL here, and unsupported digests are rejected
+     * by the azihsm_ossl_evp_md_to_rsa_*_algo_id mappings below (algo.id == 0).
+     */
+    ctx->md = EVP_get_digestbyname(mdname);
     if (ctx->md == NULL)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_OPERATION_FAIL);
