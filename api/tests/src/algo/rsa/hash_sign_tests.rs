@@ -1,9 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use std::panic::AssertUnwindSafe;
-use std::panic::catch_unwind;
-
 use azihsm_crypto::*;
 
 use super::*;
@@ -44,7 +41,7 @@ fn import_rsa_key(
     session: &HsmSession,
     der: &[u8],
     bits: u32,
-) -> (HsmRsaPrivateKey, HsmRsaPublicKey) {
+) -> Result<(HsmRsaPrivateKey, HsmRsaPublicKey), HsmError> {
     let (unwrapping_priv_key, unwrapping_pub_key) = get_rsa_unwrapping_key_pair(session);
 
     let priv_key_props = HsmKeyPropsBuilder::default()
@@ -67,20 +64,17 @@ fn import_rsa_key(
     let kek_size = 32;
 
     let mut wrap_algo = HsmRsaAesWrapAlgo::new(hash_algo, kek_size);
-    let wrapped_key = HsmEncrypter::encrypt_vec(&mut wrap_algo, &unwrapping_pub_key, der)
-        .expect("Failed to wrap AES Key");
+    let wrapped_key = HsmEncrypter::encrypt_vec(&mut wrap_algo, &unwrapping_pub_key, der)?;
 
     let mut unwrap_algo = HsmRsaKeyRsaAesKeyUnwrapAlgo::new(hash_algo);
-    let (priv_key, pub_key) = unwrap_algo
-        .unwrap_key_pair(
-            &unwrapping_priv_key,
-            &wrapped_key,
-            priv_key_props,
-            pub_key_props,
-        )
-        .expect("Failed to unwrap RSA AES key pair");
+    let (priv_key, pub_key) = unwrap_algo.unwrap_key_pair(
+        &unwrapping_priv_key,
+        &wrapped_key,
+        priv_key_props,
+        pub_key_props,
+    )?;
 
-    (priv_key, pub_key)
+    Ok((priv_key, pub_key))
 }
 
 /// Helper to perform streaming RSA signing over multiple data chunks
@@ -127,7 +121,8 @@ fn streaming_verify_signature(
 fn test_rsa_2048_pkcs1_sign_verify(session: HsmSession) {
     let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
     let der = priv_key.to_vec().expect("Failed to export RSA Key");
-    let (priv_key, pub_key) = import_rsa_key(&session, &der, 2048);
+    let (priv_key, pub_key) =
+        import_rsa_key(&session, &der, 2048).expect("RSA import should succeed");
 
     let message = b"Hello, RSA 2048!";
     let mut algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
@@ -146,7 +141,8 @@ fn test_rsa_2048_pkcs1_sign_verify(session: HsmSession) {
 fn test_rsa_3072_pkcs1_sign_verify(session: HsmSession) {
     let priv_key = RsaPrivateKey::generate(384).expect("Failed to generate RSA Key");
     let der = priv_key.to_vec().expect("Failed to export RSA Key");
-    let (priv_key, pub_key) = import_rsa_key(&session, &der, 3072);
+    let (priv_key, pub_key) =
+        import_rsa_key(&session, &der, 3072).expect("RSA import should succeed");
 
     let message = b"Hello, RSA 3072!";
     let mut algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha384);
@@ -165,7 +161,8 @@ fn test_rsa_3072_pkcs1_sign_verify(session: HsmSession) {
 fn test_rsa_4096_pkcs1_sign_verify(session: HsmSession) {
     let priv_key = RsaPrivateKey::generate(512).expect("Failed to generate RSA Key");
     let der = priv_key.to_vec().expect("Failed to export RSA Key");
-    let (priv_key, pub_key) = import_rsa_key(&session, &der, 4096);
+    let (priv_key, pub_key) =
+        import_rsa_key(&session, &der, 4096).expect("RSA import should succeed");
 
     let message = b"Hello, RSA 4096!";
     let mut algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha512);
@@ -184,7 +181,8 @@ fn test_rsa_4096_pkcs1_sign_verify(session: HsmSession) {
 fn test_rsa_2048_pss_sign_verify(session: HsmSession) {
     let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
     let der = priv_key.to_vec().expect("Failed to export RSA Key");
-    let (priv_key, pub_key) = import_rsa_key(&session, &der, 2048);
+    let (priv_key, pub_key) =
+        import_rsa_key(&session, &der, 2048).expect("RSA import should succeed");
 
     let message = b"Hello, RSA 2048!";
     let mut algo = HsmRsaHashSignAlgo::with_pss_padding(HsmHashAlgo::Sha256, 32);
@@ -203,7 +201,8 @@ fn test_rsa_2048_pss_sign_verify(session: HsmSession) {
 fn test_rsa_3072_pss_sign_verify(session: HsmSession) {
     let priv_key = RsaPrivateKey::generate(384).expect("Failed to generate RSA Key");
     let der = priv_key.to_vec().expect("Failed to export RSA Key");
-    let (priv_key, pub_key) = import_rsa_key(&session, &der, 3072);
+    let (priv_key, pub_key) =
+        import_rsa_key(&session, &der, 3072).expect("RSA import should succeed");
 
     let message = b"Hello, RSA 3072!";
     let mut algo = HsmRsaHashSignAlgo::with_pss_padding(HsmHashAlgo::Sha384, 32);
@@ -222,7 +221,8 @@ fn test_rsa_3072_pss_sign_verify(session: HsmSession) {
 fn test_rsa_4096_pss_sign_verify(session: HsmSession) {
     let priv_key = RsaPrivateKey::generate(512).expect("Failed to generate RSA Key");
     let der = priv_key.to_vec().expect("Failed to export RSA Key");
-    let (priv_key, pub_key) = import_rsa_key(&session, &der, 4096);
+    let (priv_key, pub_key) =
+        import_rsa_key(&session, &der, 4096).expect("RSA import should succeed");
 
     let message = b"Hello, RSA 4096!";
     let mut algo = HsmRsaHashSignAlgo::with_pss_padding(HsmHashAlgo::Sha512, 32);
@@ -241,7 +241,8 @@ fn test_rsa_4096_pss_sign_verify(session: HsmSession) {
 fn test_rsa_2048_pkcs1_streaming_sign_verify(session: HsmSession) {
     let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
     let der = priv_key.to_vec().expect("Failed to export RSA Key");
-    let (priv_key, pub_key) = import_rsa_key(&session, &der, 2048);
+    let (priv_key, pub_key) =
+        import_rsa_key(&session, &der, 2048).expect("RSA import should succeed");
 
     let data_chunks = [b"Test data " as &[u8], b"for streaming ", b"RSA signing"];
     let hash_algo = HsmHashAlgo::Sha256;
@@ -257,7 +258,8 @@ fn test_rsa_2048_pkcs1_streaming_sign_verify(session: HsmSession) {
 fn test_rsa_3072_pkcs1_streaming_sign_verify(session: HsmSession) {
     let priv_key = RsaPrivateKey::generate(384).expect("Failed to generate RSA Key");
     let der = priv_key.to_vec().expect("Failed to export RSA Key");
-    let (priv_key, pub_key) = import_rsa_key(&session, &der, 3072);
+    let (priv_key, pub_key) =
+        import_rsa_key(&session, &der, 3072).expect("RSA import should succeed");
 
     let data_chunks = [b"Test data " as &[u8], b"for streaming ", b"RSA signing"];
     let hash_algo = HsmHashAlgo::Sha384;
@@ -273,7 +275,8 @@ fn test_rsa_3072_pkcs1_streaming_sign_verify(session: HsmSession) {
 fn test_rsa_4096_pkcs1_streaming_sign_verify(session: HsmSession) {
     let priv_key = RsaPrivateKey::generate(512).expect("Failed to generate RSA Key");
     let der = priv_key.to_vec().expect("Failed to export RSA Key");
-    let (priv_key, pub_key) = import_rsa_key(&session, &der, 4096);
+    let (priv_key, pub_key) =
+        import_rsa_key(&session, &der, 4096).expect("RSA import should succeed");
 
     let data_chunks = [b"Test data " as &[u8], b"for streaming ", b"RSA signing"];
     let hash_algo = HsmHashAlgo::Sha512;
@@ -289,7 +292,8 @@ fn test_rsa_4096_pkcs1_streaming_sign_verify(session: HsmSession) {
 fn test_rsa_2048_pss_streaming_sign_verify(session: HsmSession) {
     let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
     let der = priv_key.to_vec().expect("Failed to export RSA Key");
-    let (priv_key, pub_key) = import_rsa_key(&session, &der, 2048);
+    let (priv_key, pub_key) =
+        import_rsa_key(&session, &der, 2048).expect("RSA import should succeed");
 
     let data_chunks = [b"Test data " as &[u8], b"for streaming ", b"RSA signing"];
     let hash_algo = HsmHashAlgo::Sha256;
@@ -305,7 +309,8 @@ fn test_rsa_2048_pss_streaming_sign_verify(session: HsmSession) {
 fn test_rsa_3072_pss_streaming_sign_verify(session: HsmSession) {
     let priv_key = RsaPrivateKey::generate(384).expect("Failed to generate RSA Key");
     let der = priv_key.to_vec().expect("Failed to export RSA Key");
-    let (priv_key, pub_key) = import_rsa_key(&session, &der, 3072);
+    let (priv_key, pub_key) =
+        import_rsa_key(&session, &der, 3072).expect("RSA import should succeed");
 
     let data_chunks = [b"Test data " as &[u8], b"for streaming ", b"RSA signing"];
     let hash_algo = HsmHashAlgo::Sha384;
@@ -321,7 +326,8 @@ fn test_rsa_3072_pss_streaming_sign_verify(session: HsmSession) {
 fn test_rsa_4096_pss_streaming_sign_verify(session: HsmSession) {
     let priv_key = RsaPrivateKey::generate(512).expect("Failed to generate RSA Key");
     let der = priv_key.to_vec().expect("Failed to export RSA Key");
-    let (priv_key, pub_key) = import_rsa_key(&session, &der, 4096);
+    let (priv_key, pub_key) =
+        import_rsa_key(&session, &der, 4096).expect("RSA import should succeed");
 
     let data_chunks = [b"Test data " as &[u8], b"for streaming ", b"RSA signing"];
     let hash_algo = HsmHashAlgo::Sha512;
@@ -337,7 +343,8 @@ fn test_rsa_4096_pss_streaming_sign_verify(session: HsmSession) {
 fn test_rsa_streaming_sign_update_after_finish_fails(session: HsmSession) {
     let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
     let der = priv_key.to_vec().expect("Failed to export RSA Key");
-    let (priv_key, _pub_key) = import_rsa_key(&session, &der, 2048);
+    let (priv_key, _pub_key) =
+        import_rsa_key(&session, &der, 2048).expect("RSA import should succeed");
 
     let sign_algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
     let mut ctx = HsmSigner::sign_init(sign_algo, priv_key).expect("sign_init should succeed");
@@ -368,7 +375,8 @@ fn test_rsa_streaming_sign_update_after_finish_fails(session: HsmSession) {
 fn test_rsa_streaming_verify_update_after_finish_fails(session: HsmSession) {
     let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
     let der = priv_key.to_vec().expect("Failed to export RSA Key");
-    let (priv_key, pub_key) = import_rsa_key(&session, &der, 2048);
+    let (priv_key, pub_key) =
+        import_rsa_key(&session, &der, 2048).expect("RSA import should succeed");
 
     let data = b"test data";
     let sign_algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
@@ -404,7 +412,8 @@ fn test_rsa_streaming_verify_update_after_finish_fails(session: HsmSession) {
 #[session_test]
 fn test_rsa_hash_sign_streaming_vs_single_same(session: HsmSession) {
     let priv_key = RsaPrivateKey::generate(256).unwrap();
-    let (priv_key, _) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048);
+    let (priv_key, _) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048)
+        .expect("RSA import should succeed");
 
     let message = b"hello world";
 
@@ -422,7 +431,8 @@ fn test_rsa_hash_sign_streaming_vs_single_same(session: HsmSession) {
 #[session_test]
 fn test_rsa_streaming_chunk_order_matters(session: HsmSession) {
     let priv_key = RsaPrivateKey::generate(256).unwrap();
-    let (priv_key, _) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048);
+    let (priv_key, _) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048)
+        .expect("RSA import should succeed");
 
     // Create separate algo instances (no clone needed)
     let algo1 = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
@@ -438,7 +448,8 @@ fn test_rsa_streaming_chunk_order_matters(session: HsmSession) {
 #[session_test]
 fn test_rsa_streaming_empty_input_succeeds(session: HsmSession) {
     let priv_key = RsaPrivateKey::generate(256).unwrap();
-    let (priv_key, pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048);
+    let (priv_key, pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048)
+        .expect("RSA import should succeed");
 
     let algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
 
@@ -463,7 +474,8 @@ fn test_rsa_streaming_empty_input_succeeds(session: HsmSession) {
 #[session_test]
 fn test_rsa_streaming_verify_modified_signature_fails(session: HsmSession) {
     let priv_key = RsaPrivateKey::generate(256).unwrap();
-    let (priv_key, pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048);
+    let (priv_key, pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048)
+        .expect("RSA import should succeed");
 
     let data_chunks = [b"hello " as &[u8], b"world"];
     let algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
@@ -491,7 +503,8 @@ fn test_rsa_streaming_verify_modified_signature_fails(session: HsmSession) {
 #[session_test]
 fn test_rsa_streaming_verify_wrong_data_fails(session: HsmSession) {
     let priv_key = RsaPrivateKey::generate(256).unwrap();
-    let (priv_key, pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048);
+    let (priv_key, pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048)
+        .expect("RSA import should succeed");
 
     let data1 = [b"hello " as &[u8], b"world"];
     let data2 = [b"hello " as &[u8], b"WORLD"]; // changed
@@ -519,7 +532,8 @@ fn test_rsa_streaming_verify_wrong_data_fails(session: HsmSession) {
 #[session_test]
 fn test_rsa_streaming_pkcs1_vs_pss_mismatch_fails(session: HsmSession) {
     let priv_key = RsaPrivateKey::generate(256).unwrap();
-    let (priv_key, pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048);
+    let (priv_key, pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048)
+        .expect("RSA import should succeed");
 
     let chunks = [b"hello " as &[u8], b"world"];
 
@@ -545,7 +559,8 @@ fn test_rsa_streaming_pkcs1_vs_pss_mismatch_fails(session: HsmSession) {
 #[session_test]
 fn test_rsa_streaming_empty_chunk_update(session: HsmSession) {
     let priv_key = RsaPrivateKey::generate(256).unwrap();
-    let (priv_key, pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048);
+    let (priv_key, pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048)
+        .expect("RSA import should succeed");
 
     let algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
 
@@ -566,7 +581,8 @@ fn test_rsa_streaming_empty_chunk_update(session: HsmSession) {
 #[session_test]
 fn test_rsa_streaming_large_input(session: HsmSession) {
     let priv_key = RsaPrivateKey::generate(256).unwrap();
-    let (priv_key, pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048);
+    let (priv_key, pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048)
+        .expect("RSA import should succeed");
 
     let large_data = vec![0xAB; 10_000];
 
@@ -587,8 +603,10 @@ fn test_rsa_streaming_verify_wrong_key_fails(session: HsmSession) {
     let priv1 = RsaPrivateKey::generate(256).unwrap();
     let priv2 = RsaPrivateKey::generate(256).unwrap();
 
-    let (priv1, _) = import_rsa_key(&session, &priv1.to_vec().unwrap(), 2048);
-    let (_, pub2) = import_rsa_key(&session, &priv2.to_vec().unwrap(), 2048);
+    let (priv1, _) = import_rsa_key(&session, &priv1.to_vec().unwrap(), 2048)
+        .expect("RSA import should succeed");
+    let (_, pub2) = import_rsa_key(&session, &priv2.to_vec().unwrap(), 2048)
+        .expect("RSA import should succeed");
 
     let chunks = [b"hello " as &[u8], b"world"];
 
@@ -614,7 +632,8 @@ fn test_rsa_streaming_verify_wrong_key_fails(session: HsmSession) {
 #[session_test]
 fn test_rsa_streaming_verify_empty_signature_fails(session: HsmSession) {
     let priv_key = RsaPrivateKey::generate(256).unwrap();
-    let (_priv_key, pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048);
+    let (_priv_key, pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048)
+        .expect("RSA import should succeed");
 
     let chunks = [b"hello" as &[u8]];
 
@@ -638,7 +657,8 @@ fn test_rsa_streaming_verify_empty_signature_fails(session: HsmSession) {
 #[session_test]
 fn test_rsa_streaming_verify_truncated_signature_fails(session: HsmSession) {
     let priv_key = RsaPrivateKey::generate(256).unwrap();
-    let (priv_key, pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048);
+    let (priv_key, pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048)
+        .expect("RSA import should succeed");
 
     let chunks = [b"hello " as &[u8], b"world"];
 
@@ -667,7 +687,8 @@ fn test_rsa_streaming_verify_truncated_signature_fails(session: HsmSession) {
 #[session_test]
 fn test_rsa_pss_non_deterministic(session: HsmSession) {
     let priv_key = RsaPrivateKey::generate(256).unwrap();
-    let (priv_key, _) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048);
+    let (priv_key, _) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048)
+        .expect("RSA import should succeed");
 
     let msg = b"hello";
 
@@ -684,7 +705,8 @@ fn test_rsa_pss_non_deterministic(session: HsmSession) {
 #[session_test]
 fn test_rsa_verify_wrong_hash_algo_fails(session: HsmSession) {
     let priv_key = RsaPrivateKey::generate(256).unwrap();
-    let (priv_key, pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048);
+    let (priv_key, pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048)
+        .expect("RSA import should succeed");
 
     let msg = b"hello";
 
@@ -706,7 +728,8 @@ fn test_rsa_verify_wrong_hash_algo_fails(session: HsmSession) {
 #[session_test]
 fn test_rsa_pss_salt_len_mismatch_fails(session: HsmSession) {
     let priv_key = RsaPrivateKey::generate(256).unwrap();
-    let (priv_key, pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048);
+    let (priv_key, pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048)
+        .expect("RSA import should succeed");
 
     let msg = b"hello";
 
@@ -728,7 +751,8 @@ fn test_rsa_pss_salt_len_mismatch_fails(session: HsmSession) {
 #[session_test]
 fn test_rsa_verify_modified_signature_fails_one_shot(session: HsmSession) {
     let priv_key = RsaPrivateKey::generate(256).unwrap();
-    let (priv_key, pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048);
+    let (priv_key, pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048)
+        .expect("RSA import should succeed");
 
     let msg = b"hello";
 
@@ -749,7 +773,8 @@ fn test_rsa_verify_modified_signature_fails_one_shot(session: HsmSession) {
 #[session_test]
 fn test_rsa_verify_wrong_data_fails_one_shot(session: HsmSession) {
     let priv_key = RsaPrivateKey::generate(256).unwrap();
-    let (priv_key, pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048);
+    let (priv_key, pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048)
+        .expect("RSA import should succeed");
 
     let mut algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
 
@@ -766,7 +791,8 @@ fn test_rsa_verify_wrong_data_fails_one_shot(session: HsmSession) {
     #[session_test]
     fn test_rsa_sign_empty_message_one_shot(session: HsmSession) {
         let priv_key = RsaPrivateKey::generate(256).unwrap();
-        let (priv_key, pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048);
+        let (priv_key, pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048)
+            .expect("RSA import should succeed");
 
         let mut algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
 
@@ -777,11 +803,12 @@ fn test_rsa_verify_wrong_data_fails_one_shot(session: HsmSession) {
         assert!(is_valid);
     }
 
-    /// Ensure verification fails for invalid (truncated) signature length
+    /// Ensure verification fails for truncated signature length
     #[session_test]
-    fn test_rsa_verify_invalid_hash_length_fails(session: HsmSession) {
+    fn test_rsa_verify_truncated_signature_fails(session: HsmSession) {
         let priv_key = RsaPrivateKey::generate(256).unwrap();
-        let (priv_key, pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048);
+        let (priv_key, pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048)
+            .expect("RSA import should succeed");
 
         let msg = b"hello";
 
@@ -802,7 +829,8 @@ fn test_rsa_verify_wrong_data_fails_one_shot(session: HsmSession) {
     #[session_test]
     fn test_rsa_pkcs1_deterministic(session: HsmSession) {
         let priv_key = RsaPrivateKey::generate(256).unwrap();
-        let (priv_key, _) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048);
+        let (priv_key, _) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048)
+            .expect("RSA import should succeed");
 
         let msg = b"hello";
 
@@ -821,8 +849,10 @@ fn test_rsa_verify_wrong_data_fails_one_shot(session: HsmSession) {
         let priv1 = RsaPrivateKey::generate(256).unwrap();
         let priv2 = RsaPrivateKey::generate(384).unwrap();
 
-        let (priv1, _) = import_rsa_key(&session, &priv1.to_vec().unwrap(), 2048);
-        let (_, pub2) = import_rsa_key(&session, &priv2.to_vec().unwrap(), 3072);
+        let (priv1, _) = import_rsa_key(&session, &priv1.to_vec().unwrap(), 2048)
+            .expect("RSA import should succeed");
+        let (_, pub2) = import_rsa_key(&session, &priv2.to_vec().unwrap(), 3072)
+            .expect("RSA import should succeed");
 
         let msg = b"hello";
 
@@ -842,7 +872,8 @@ fn test_rsa_verify_wrong_data_fails_one_shot(session: HsmSession) {
 #[session_test]
 fn test_streaming_no_update_equals_empty_one_shot(session: HsmSession) {
     let priv_key = RsaPrivateKey::generate(256).unwrap();
-    let (priv_key, _) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048);
+    let (priv_key, _) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048)
+        .expect("RSA import should succeed");
 
     let algo1 = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
     let sig1 = streaming_sign_data(priv_key.clone(), algo1, &[]);
@@ -857,7 +888,8 @@ fn test_streaming_no_update_equals_empty_one_shot(session: HsmSession) {
 #[session_test]
 fn test_streaming_verify_without_update(session: HsmSession) {
     let priv_key = RsaPrivateKey::generate(256).unwrap();
-    let (priv_key, pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048);
+    let (priv_key, pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048)
+        .expect("RSA import should succeed");
 
     let algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
     let sig = streaming_sign_data(priv_key, algo, &[b"data"]);
@@ -878,7 +910,8 @@ fn test_streaming_verify_without_update(session: HsmSession) {
 #[session_test]
 fn test_streaming_vs_single_mismatch_fails(session: HsmSession) {
     let priv_key = RsaPrivateKey::generate(256).unwrap();
-    let (priv_key, _pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048);
+    let (priv_key, _pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048)
+        .expect("RSA import should succeed");
 
     let mut algo1 = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
     let sig1 = HsmSigner::sign_vec(&mut algo1, &priv_key, b"hello").unwrap();
@@ -893,7 +926,8 @@ fn test_streaming_vs_single_mismatch_fails(session: HsmSession) {
 #[session_test]
 fn test_streaming_multiple_empty_chunks(session: HsmSession) {
     let priv_key = RsaPrivateKey::generate(256).unwrap();
-    let (priv_key, pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048);
+    let (priv_key, pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048)
+        .expect("RSA import should succeed");
 
     let algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
 
@@ -923,11 +957,12 @@ fn test_import_rsa_mismatched_bits_fails(session: HsmSession) {
     let priv_key = RsaPrivateKey::generate(256).unwrap(); // 2048
     let der = priv_key.to_vec().unwrap();
 
-    let result = catch_unwind(AssertUnwindSafe(|| {
-        import_rsa_key(&session, &der, 3072);
-    }));
+    let result = import_rsa_key(&session, &der, 3072);
 
-    assert!(result.is_err());
+    assert!(
+        result.is_err(),
+        "Import should fail for mismatched key size"
+    );
 }
 
 /// Ensure RSA import fails when DER is invalid or corrupted
@@ -935,9 +970,7 @@ fn test_import_rsa_mismatched_bits_fails(session: HsmSession) {
 fn test_import_rsa_invalid_der_fails(session: HsmSession) {
     let bad_der = vec![0x00, 0x01, 0x02]; // clearly invalid
 
-    let result = catch_unwind(AssertUnwindSafe(|| {
-        import_rsa_key(&session, &bad_der, 2048);
-    }));
+    let result = import_rsa_key(&session, &bad_der, 2048);
 
     assert!(
         result.is_err(),
