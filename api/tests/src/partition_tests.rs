@@ -367,7 +367,11 @@ fn test_init_caller_source_with_empty_endorsement_fails() {
             .expect("Failed to open the partition");
         part.reset().expect("Partition reset failed");
 
-        let obk_config = make_valid_obk();
+        let obk_config = if use_tpm() {
+            HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, None)
+        } else {
+            make_valid_obk()
+        };
         let pota_data = HsmPotaEndorsementData::new(&[], &[]);
         let pota = HsmPotaEndorsement::new(HsmPotaEndorsementSource::Caller, Some(pota_data));
 
@@ -392,7 +396,11 @@ fn test_init_caller_source_with_null_endorsement_fails() {
             .expect("Failed to open the partition");
         part.reset().expect("Partition reset failed");
 
-        let obk_config = make_valid_obk();
+        let obk_config = if use_tpm() {
+            HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, None)
+        } else {
+            make_valid_obk()
+        };
         let pota = HsmPotaEndorsement::new(HsmPotaEndorsementSource::Caller, None);
 
         let result = part.init(
@@ -416,7 +424,11 @@ fn test_init_invalid_pota_source_fails() {
             .expect("Failed to open the partition");
         part.reset().expect("Partition reset failed");
 
-        let obk_config = make_valid_obk();
+        let obk_config = if use_tpm() {
+            HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, None)
+        } else {
+            make_valid_obk()
+        };
         let pota_data = HsmPotaEndorsementData::new(&[0u8; 96], &[0u8; 97]);
         let pota = HsmPotaEndorsement::new(HsmPotaEndorsementSource(99), Some(pota_data));
 
