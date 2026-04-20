@@ -205,7 +205,7 @@ fn get_pota_endorsement(
         }
 
         HsmPotaEndorsementSource::Tpm => {
-            //TPM source must not have caller-provided endorsement data
+            // TPM source must not have caller-provided endorsement data
             if pota_endorsement.endorsement().is_some() {
                 return Err(HsmError::InvalidArgument);
             }

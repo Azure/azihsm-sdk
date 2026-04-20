@@ -333,6 +333,36 @@ fn test_init_tpm_obk_source_with_obk_provided_fails() {
 }
 
 #[api_test]
+fn test_init_tpm_pota_source_with_endorsement_provided_fails() {
+    let part_mgr = HsmPartitionManager::partition_info_list();
+    assert!(!part_mgr.is_empty(), "No partitions found.");
+    for part_info in part_mgr.iter() {
+        let part = HsmPartitionManager::open_partition(&part_info.path, test_api_rev())
+            .expect("Failed to open the partition");
+        part.reset().expect("Partition reset failed");
+
+        let obk_config = if use_tpm() {
+            HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, None)
+        } else {
+            make_valid_obk()
+        };
+        let (sig, pubkey) = make_valid_pota_parts(&part);
+        let pota_data = HsmPotaEndorsementData::new(&sig, &pubkey);
+        let pota = HsmPotaEndorsement::new(HsmPotaEndorsementSource::Tpm, Some(pota_data));
+
+        let result = part.init(
+            HsmCredentials::new(&APP_ID, &APP_PIN),
+            None,
+            None,
+            obk_config,
+            pota,
+            None,
+        );
+        assert_eq!(result.unwrap_err(), HsmError::InvalidArgument);
+    }
+}
+
+#[api_test]
 fn test_init_invalid_obk_source_fails() {
     let part_mgr = HsmPartitionManager::partition_info_list();
     assert!(!part_mgr.is_empty(), "No partitions found.");
