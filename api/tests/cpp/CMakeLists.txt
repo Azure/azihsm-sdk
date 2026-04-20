@@ -110,4 +110,4 @@ else()
 endif()
 
 include(GoogleTest)
-gtest_discover_tests(azihsm_api_cpp_tests)
+gtest_discover_tests(azihsm_api_cpp_tests DISCOVERY_TIMEOUT 30)
