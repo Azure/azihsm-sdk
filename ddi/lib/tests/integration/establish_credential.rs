@@ -15,6 +15,8 @@ use test_with_tracing::test;
 use super::common::*;
 use super::invalid_ecc_pub_key_vectors::*;
 
+const THREAD_STACK_SIZE: usize = 8 * 1024 * 1024; // 8 MiB
+
 pub fn setup(dev: &mut <DdiTest as Ddi>::Dev, ddi: &DdiTest, path: &str) -> u16 {
     common_cleanup(dev, ddi, path, None);
 
@@ -774,14 +776,34 @@ fn test_establish_credential_multi_threaded_single_winner() {
             Rng::rand_bytes(&mut bk3).unwrap();
             let masked_bk3_result = helper_get_or_init_bk3(dev);
 
+            let (encrypted_credential, pub_key) =
+                encrypt_userid_pin_for_establish_cred(dev, TEST_CRED_ID, TEST_CRED_PIN);
+
+            let (signature, pota_pub_key) = helper_get_pota_endorsement(dev);
+
             let mut thread_list = Vec::new();
             for i in 0..thread_count {
                 let thread_id = i as u8;
                 let thread_device_path = path.to_string();
+                let thread_encrypted_credential = encrypted_credential.clone();
+                let thread_pub_key = pub_key.clone();
+                let thread_signature = signature.clone();
+                let thread_pota_pub_key = pota_pub_key.clone();
 
-                let thread = thread::spawn(move || {
-                    test_thread_fn(thread_id, thread_device_path, masked_bk3_result)
-                });
+                let thread = thread::Builder::new()
+                    .stack_size(THREAD_STACK_SIZE)
+                    .spawn(move || {
+                        test_thread_fn(
+                            thread_id,
+                            thread_device_path,
+                            masked_bk3_result,
+                            thread_encrypted_credential,
+                            thread_pub_key,
+                            thread_signature,
+                            thread_pota_pub_key,
+                        )
+                    })
+                    .expect("Failed to spawn thread");
                 thread_list.push(thread);
             }
 
@@ -789,12 +811,9 @@ fn test_establish_credential_multi_threaded_single_winner() {
             let mut threads_passed = 0;
 
             for thread in thread_list {
-                let result = thread.join();
-
-                if result.is_ok() {
-                    threads_passed += 1;
-                } else {
-                    threads_failed += 1;
+                match thread.join() {
+                    Ok(Ok(())) => threads_passed += 1,
+                    _ => threads_failed += 1,
                 }
             }
 
@@ -811,15 +830,18 @@ fn test_establish_credential_multi_threaded_single_winner() {
     );
 }
 
-fn test_thread_fn(_thread_id: u8, device_path: String, masked_bk3: MborByteArray<1024>) {
+fn test_thread_fn(
+    _thread_id: u8,
+    device_path: String,
+    masked_bk3: MborByteArray<1024>,
+    encrypted_credential: DdiEncryptedEstablishCredential,
+    pub_key: DdiDerPublicKey,
+    signature: Vec<u8>,
+    pota_pub_key: Vec<u8>,
+) -> DdiResult<()> {
     let ddi = DdiTest::default();
     let mut dev = ddi.open_dev(device_path.as_str()).unwrap();
     set_device_kind(&mut dev);
-
-    let (encrypted_credential, pub_key) =
-        encrypt_userid_pin_for_establish_cred(&dev, TEST_CRED_ID, TEST_CRED_PIN);
-
-    let (signature, pota_pub_key) = helper_get_pota_endorsement(&dev);
 
     helper_establish_credential(
         &dev,
@@ -836,8 +858,8 @@ fn test_thread_fn(_thread_id: u8, device_path: String, masked_bk3: MborByteArray
                 .expect("Failed to create MborByteArray from TPM ECC public key"),
             key_kind: DdiKeyType::Ecc384Public,
         },
-    )
-    .unwrap();
+    )?;
+    Ok(())
 }
 
 #[test]

@@ -1187,6 +1187,89 @@ pub fn create_hmac_key(
     resp.unwrap().data.key_id
 }
 
+// Uses Ecc generate, ECDH, KDF to create an HMAC key
+#[allow(dead_code)]
+pub fn create_hmac_key_kbkdf(
+    sess_id: u16,
+    target_key_type: DdiKeyType,
+    dev: &mut <DdiTest as Ddi>::Dev,
+    target_key_len: Option<u8>,
+) -> u16 {
+    // Generate ECC Key Pair 1
+
+    let key_props = helper_key_properties(DdiKeyUsage::Derive, DdiKeyAvailability::App);
+
+    let resp = helper_ecc_generate_key_pair(
+        dev,
+        Some(sess_id),
+        Some(DdiApiRev { major: 1, minor: 0 }),
+        DdiEccCurve::P256,
+        None,
+        key_props,
+    );
+
+    assert!(resp.is_ok(), "resp {:?}", resp);
+    let resp = resp.unwrap();
+    let private_key_id1 = resp.data.private_key_id;
+
+    // Generate ECC Key Pair 2
+
+    let key_props = helper_key_properties(DdiKeyUsage::Derive, DdiKeyAvailability::App);
+
+    let resp = helper_ecc_generate_key_pair(
+        dev,
+        Some(sess_id),
+        Some(DdiApiRev { major: 1, minor: 0 }),
+        DdiEccCurve::P256,
+        None,
+        key_props,
+    );
+
+    assert!(resp.is_ok(), "resp {:?}", resp);
+    let resp = resp.unwrap();
+
+    let pub_key2 = resp.data.pub_key;
+    let mut der2 = [0u8; 192];
+    der2[..pub_key2.der.len()].clone_from_slice(&pub_key2.der.data()[..pub_key2.der.len()]);
+
+    // Perform Ecdh exchange for private key 1, public key 2
+
+    let key_props = helper_key_properties(DdiKeyUsage::Derive, DdiKeyAvailability::App);
+    let resp = helper_ecdh_key_exchange(
+        dev,
+        Some(sess_id),
+        Some(DdiApiRev { major: 1, minor: 0 }),
+        private_key_id1,
+        MborByteArray::new(der2, pub_key2.der.len()).expect("failed to create byte array"),
+        None,
+        DdiKeyType::Secret256,
+        key_props,
+    );
+
+    assert!(resp.is_ok(), "resp {:?}", resp);
+    let secret_key_id1 = resp.unwrap().data.key_id;
+
+    // Use KBKDF to derive HMAC key
+    let key_props = helper_key_properties(DdiKeyUsage::SignVerify, DdiKeyAvailability::Session);
+
+    let resp = helper_kbkdf_derive(
+        dev,
+        Some(sess_id),
+        Some(DdiApiRev { major: 1, minor: 0 }),
+        secret_key_id1,
+        DdiHashAlgorithm::Sha256,
+        None,
+        None,
+        target_key_type,
+        None,
+        key_props,
+        target_key_len,
+    );
+
+    assert!(resp.is_ok(), "resp {:?}", resp);
+    resp.unwrap().data.key_id
+}
+
 #[allow(unused)]
 pub fn generate_aes_bulk_256_key(
     dev: &<DdiTest as Ddi>::Dev,

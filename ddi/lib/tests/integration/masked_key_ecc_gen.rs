@@ -116,6 +116,16 @@ fn test_ecc_session_only_key_gen(ddi: &DdiTest, path: &str, curve: DdiEccCurve) 
     let pub_key = resp.data.pub_key;
     let masked_key = resp.data.masked_key;
 
+    assert!(verify_iv_not_default_from_masked_key(masked_key.as_slice()).unwrap_or(false));
+
+    assert!(verify_masked_key_attributes(
+        masked_key.as_slice(),
+        MaskedKeyAttributes::SIGN
+            | MaskedKeyAttributes::VERIFY
+            | MaskedKeyAttributes::LOCAL
+            | MaskedKeyAttributes::SESSION
+    ));
+
     let resp = helper_get_new_key_id_from_unmask(
         &session_only_key_dev,
         session_only_key_session,
@@ -176,6 +186,13 @@ fn test_ecc_key_gen(dev: &mut <DdiTest as Ddi>::Dev, session_id: u16, curve: Ddi
         Some(session_id),
         DdiKeyUsage::SignVerify,
     );
+
+    assert!(verify_iv_not_default_from_masked_key(masked_key.as_slice()).unwrap_or(false));
+
+    assert!(verify_masked_key_attributes(
+        masked_key.as_slice(),
+        MaskedKeyAttributes::SIGN | MaskedKeyAttributes::VERIFY | MaskedKeyAttributes::LOCAL
+    ));
 
     let resp = helper_get_new_key_id_from_unmask(
         dev,

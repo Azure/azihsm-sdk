@@ -457,10 +457,7 @@ impl FunctionInner {
         let (rsa_private_key, _) = crate::crypto::rsa::generate_rsa(2048)?;
 
         // Store key in vault without an associated app session
-        let key_flags = EntryFlags::new()
-            .with_unwrap(true)
-            .with_wrap(true)
-            .with_local(true);
+        let key_flags = EntryFlags::new().with_unwrap(true).with_local(true);
 
         let private_key_id = vault.add_key(
             APP_ID_FOR_INTERNAL_KEYS,

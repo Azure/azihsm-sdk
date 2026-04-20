@@ -40,6 +40,8 @@ fn test_part_prov_test_provisioning() {
         Rng::rand_bytes(&mut bk3).unwrap();
         let masked_bk3 = helper_get_or_init_bk3(&dev);
 
+        assert!(verify_iv_not_default_from_masked_key(masked_bk3.as_slice()).unwrap_or(false));
+
         // This is the initial setup so optional fields are empty
         let _ = helper_common_establish_credential_with_bmk(
             &mut dev,
@@ -77,6 +79,11 @@ fn test_part_prov_test_lm() {
         common_cleanup,
         |dev, ddi, path, _session_id| {
             let setup_res = common_setup_for_lm(dev, ddi, path);
+
+            assert!(
+                verify_iv_not_default_from_masked_key(setup_res.masked_bk3.as_slice())
+                    .unwrap_or(false)
+            );
 
             // simulate LM
             let result = dev.simulate_nssr_after_lm();
@@ -133,6 +140,11 @@ fn test_part_prov_fail_then_succeed() {
             }
 
             let setup_res = common_setup_for_lm(dev, ddi, path);
+
+            assert!(
+                verify_iv_not_default_from_masked_key(setup_res.masked_bk3.as_slice())
+                    .unwrap_or(false)
+            );
 
             // simulate LM
             let result = dev.simulate_nssr_after_lm();

@@ -16,7 +16,7 @@ use crate::Xtask;
 use crate::XtaskCtx;
 
 /// Version constants for installed dependencies
-const CARGO_NEXTEST_VERSION: &str = "0.9.108";
+const CARGO_NEXTEST_VERSION: &str = "0.9.132";
 const TAPLO_CLI_VERSION: &str = "0.10.0";
 #[cfg(not(target_os = "windows"))]
 const CARGO_FUZZ_VERSION: &str = "0.13.1";
@@ -57,6 +57,8 @@ impl Xtask for Setup {
             crate_name: format!("cargo-nextest@{}", CARGO_NEXTEST_VERSION),
             force: self.force,
             config: self.config.clone(),
+            no_default_features: true,
+            features: Some(vec!["default-no-update".to_string()]),
         };
         install_cargo_nextest.run(ctx.clone())?;
 
@@ -69,6 +71,8 @@ impl Xtask for Setup {
                 crate_name: format!("taplo-cli@{}", TAPLO_CLI_VERSION),
                 force: self.force,
                 config: self.config.clone(),
+                no_default_features: false,
+                features: None,
             };
             install_cargo_taplo_cli.run(ctx.clone())?;
 
@@ -83,6 +87,8 @@ impl Xtask for Setup {
                 crate_name: format!("cargo-fuzz@{}", CARGO_FUZZ_VERSION),
                 force: self.force,
                 config: self.config.clone(),
+                no_default_features: false,
+                features: None,
             };
             install_cargo_fuzz.run(ctx.clone())?;
 
@@ -97,6 +103,8 @@ impl Xtask for Setup {
                 crate_name: format!("cbindgen@{}", CARGO_CBINDGEN_VERSION),
                 force: self.force,
                 config: self.config.clone(),
+                no_default_features: false,
+                features: None,
             };
             install_cbindgen.run(ctx.clone())?;
 
@@ -110,6 +118,8 @@ impl Xtask for Setup {
                 crate_name: format!("cargo-audit@{}", CARGO_AUDIT_VERSION),
                 force: self.force,
                 config: self.config.clone(),
+                no_default_features: false,
+                features: None,
             };
             install_cargo_audit.run(ctx.clone())?;
 
@@ -122,6 +132,8 @@ impl Xtask for Setup {
             crate_name: format!("cargo-llvm-cov@{}", CARGO_LLVM_COV_VERSION),
             force: self.force,
             config: self.config.clone(),
+            no_default_features: false,
+            features: None,
         };
         install_cargo_llvm_cov.run(ctx.clone())?;
 

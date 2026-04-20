@@ -14,12 +14,20 @@ members = [
   "crates/resiliency_macro",
   "crates/resiliency_test_helpers",
   "crates/test_with_tracing",
+  "crates/test_with_tracing/test_with_tracing_macro",
   "crates/tpm",
   "crates/x509",
   "ddi/interface",
   "ddi/lib",
+  "ddi/mock",
+  "ddi/nix",
   "ddi/res_test_dev",
+  "ddi/serde/derive",
+  "ddi/serde/mbor",
+  "ddi/serde/types",
+  "ddi/sim",
   "ddi/test_helpers",
+  "ddi/win",
   "plugins/ossl_prov",
   "plugins/ossl_prov/integration-tests/nginx",
   "plugins/ossl_prov/integration-tests/openssl-capi",
@@ -32,6 +40,7 @@ members = [
 # Internal crates
 azihsm_api = { path = "api/lib" }
 azihsm_api_native = { path = "api/native" }
+azihsm_api_tests = { path = "api/tests" }
 azihsm_api_tests_macro = { path = "api/tests/macro" }
 azihsm_cred_encrypt = { path = "crates/cred_encrypt" }
 azihsm_crypto = { path = "crates/crypto" }
@@ -104,6 +113,7 @@ spki = "0.7.3"
 syn = "2"
 test-log = "0.2.8"
 thiserror = "1.0"
+toml_edit = "0.25.11"
 tracing = "0.1"
 tracing-subscriber = "0.3.16"
 tracing-tree = "0.4.1"

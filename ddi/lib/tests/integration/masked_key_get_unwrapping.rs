@@ -18,6 +18,13 @@ fn test_masked_key_get_unwrapping_without_lm() {
         |dev, _ddi, _path, session_id| {
             let (_, _, masked_key) = get_unwrapping_key(dev, session_id);
 
+            assert!(verify_iv_not_default_from_masked_key(masked_key.as_slice()).unwrap_or(false));
+
+            assert!(verify_masked_key_attributes(
+                masked_key.as_slice(),
+                MaskedKeyAttributes::UNWRAP | MaskedKeyAttributes::LOCAL
+            ));
+
             let converted_masked_key: MborByteArray<3072> =
                 MborByteArray::from_slice(masked_key.as_slice())
                     .expect("failed to create byte array");
@@ -47,6 +54,13 @@ fn test_masked_key_get_unwrapping_with_lm() {
             let setup_res = common_setup_for_lm(dev, ddi, path);
 
             let (_, pub_key_der, masked_key) = get_unwrapping_key(dev, setup_res.session_id);
+
+            assert!(verify_iv_not_default_from_masked_key(masked_key.as_slice()).unwrap_or(false));
+
+            assert!(verify_masked_key_attributes(
+                masked_key.as_slice(),
+                MaskedKeyAttributes::UNWRAP | MaskedKeyAttributes::LOCAL
+            ));
 
             let result = dev.simulate_nssr_after_lm();
             assert!(

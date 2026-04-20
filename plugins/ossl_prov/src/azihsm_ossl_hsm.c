@@ -577,6 +577,7 @@ static azihsm_status der_to_uncompressed_point(
     unsigned char point[P384_UNCOMPRESSED_POINT_SIZE]
 )
 {
+    azihsm_status status = AZIHSM_STATUS_INTERNAL_ERROR;
     const unsigned char *der_ptr = NULL;
     EVP_PKEY *pkey = NULL;
     BIGNUM *qx = NULL;
@@ -584,7 +585,8 @@ static azihsm_status der_to_uncompressed_point(
 
     if (pub_key_der == NULL || pub_key_der->ptr == NULL)
     {
-        return AZIHSM_STATUS_INVALID_ARGUMENT;
+        status = AZIHSM_STATUS_INVALID_ARGUMENT;
+        goto cleanup;
     }
 
     der_ptr = pub_key_der->ptr;
@@ -592,20 +594,15 @@ static azihsm_status der_to_uncompressed_point(
     if (pkey == NULL)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
-        return AZIHSM_STATUS_INTERNAL_ERROR;
+        goto cleanup;
     }
 
     if (!EVP_PKEY_get_bn_param(pkey, OSSL_PKEY_PARAM_EC_PUB_X, &qx) ||
         !EVP_PKEY_get_bn_param(pkey, OSSL_PKEY_PARAM_EC_PUB_Y, &qy))
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
-        BN_free(qx);
-        BN_free(qy);
-        EVP_PKEY_free(pkey);
-        return AZIHSM_STATUS_INTERNAL_ERROR;
+        goto cleanup;
     }
-
-    EVP_PKEY_free(pkey);
 
     point[0] = 0x04;
     if (BN_bn2binpad(qx, point + 1, P384_COORD_SIZE) != P384_COORD_SIZE ||
@@ -616,14 +613,17 @@ static azihsm_status der_to_uncompressed_point(
             ERR_R_INTERNAL_ERROR,
             "BN_bn2binpad failed serializing P-384 coordinate"
         );
-        BN_free(qx);
-        BN_free(qy);
-        return AZIHSM_STATUS_INTERNAL_ERROR;
+        goto cleanup;
     }
 
+    status = AZIHSM_STATUS_SUCCESS;
+
+cleanup:
+    /* OpenSSL free functions are NULL-safe — call unconditionally */
     BN_free(qx);
     BN_free(qy);
-    return AZIHSM_STATUS_SUCCESS;
+    EVP_PKEY_free(pkey);
+    return status;
 }
 
 /*
@@ -640,6 +640,7 @@ static azihsm_status sign_with_pota_key(
     struct azihsm_buffer *sig_out
 )
 {
+    azihsm_status status = AZIHSM_STATUS_INTERNAL_ERROR;
     const unsigned char *der_ptr = priv_key_der;
     EVP_PKEY *pota_pkey = NULL;
     EVP_MD_CTX *md_ctx = NULL;
@@ -657,66 +658,49 @@ static azihsm_status sign_with_pota_key(
     if (pota_pkey == NULL)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
-        return AZIHSM_STATUS_INTERNAL_ERROR;
+        goto cleanup;
     }
 
     md_ctx = EVP_MD_CTX_new();
     if (md_ctx == NULL)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
-        EVP_PKEY_free(pota_pkey);
-        return AZIHSM_STATUS_INTERNAL_ERROR;
+        goto cleanup;
     }
 
     if (EVP_DigestSignInit(md_ctx, NULL, EVP_sha384(), NULL, pota_pkey) != 1)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
-        EVP_MD_CTX_free(md_ctx);
-        EVP_PKEY_free(pota_pkey);
-        return AZIHSM_STATUS_INTERNAL_ERROR;
+        goto cleanup;
     }
 
     /* Determine required DER signature buffer size */
     if (EVP_DigestSign(md_ctx, NULL, &der_sig_len, data, data_len) != 1)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
-        EVP_MD_CTX_free(md_ctx);
-        EVP_PKEY_free(pota_pkey);
-        return AZIHSM_STATUS_INTERNAL_ERROR;
+        goto cleanup;
     }
 
     der_sig_buf = OPENSSL_malloc(der_sig_len);
     if (der_sig_buf == NULL)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
-        EVP_MD_CTX_free(md_ctx);
-        EVP_PKEY_free(pota_pkey);
-        return AZIHSM_STATUS_INTERNAL_ERROR;
+        goto cleanup;
     }
 
     if (EVP_DigestSign(md_ctx, der_sig_buf, &der_sig_len, data, data_len) != 1)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
-        OPENSSL_cleanse(der_sig_buf, der_sig_len);
-        OPENSSL_free(der_sig_buf);
-        EVP_MD_CTX_free(md_ctx);
-        EVP_PKEY_free(pota_pkey);
-        return AZIHSM_STATUS_INTERNAL_ERROR;
+        goto cleanup;
     }
-
-    EVP_MD_CTX_free(md_ctx);
-    EVP_PKEY_free(pota_pkey);
 
     /* Convert DER-encoded ECDSA signature to raw r||s format */
     der_ptr = der_sig_buf;
     ecdsa_sig = d2i_ECDSA_SIG(NULL, &der_ptr, (long)der_sig_len);
-    OPENSSL_cleanse(der_sig_buf, der_sig_len);
-    OPENSSL_free(der_sig_buf);
-
     if (ecdsa_sig == NULL)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_INTERNAL_ERROR);
-        return AZIHSM_STATUS_INTERNAL_ERROR;
+        goto cleanup;
     }
 
     ECDSA_SIG_get0(ecdsa_sig, &sig_r, &sig_s);
@@ -728,8 +712,7 @@ static azihsm_status sign_with_pota_key(
             ERR_R_INTERNAL_ERROR,
             "ECDSA_SIG_get0 returned NULL r or s component"
         );
-        ECDSA_SIG_free(ecdsa_sig);
-        return AZIHSM_STATUS_INTERNAL_ERROR;
+        goto cleanup;
     }
 
     /* Serialize r and s components into a fixed-size raw buffer */
@@ -737,8 +720,7 @@ static azihsm_status sign_with_pota_key(
     if (sig_out->ptr == NULL)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
-        ECDSA_SIG_free(ecdsa_sig);
-        return AZIHSM_STATUS_INTERNAL_ERROR;
+        goto cleanup;
     }
 
     if (BN_bn2binpad(sig_r, sig_out->ptr, P384_COORD_SIZE) != P384_COORD_SIZE ||
@@ -752,13 +734,19 @@ static azihsm_status sign_with_pota_key(
         OPENSSL_cleanse(sig_out->ptr, P384_RAW_SIG_SIZE);
         OPENSSL_free(sig_out->ptr);
         sig_out->ptr = NULL;
-        ECDSA_SIG_free(ecdsa_sig);
-        return AZIHSM_STATUS_INTERNAL_ERROR;
+        goto cleanup;
     }
 
     sig_out->len = P384_RAW_SIG_SIZE;
+    status = AZIHSM_STATUS_SUCCESS;
+
+cleanup:
+    /* OpenSSL free functions are NULL-safe — call unconditionally */
     ECDSA_SIG_free(ecdsa_sig);
-    return AZIHSM_STATUS_SUCCESS;
+    OPENSSL_clear_free(der_sig_buf, der_sig_len);
+    EVP_MD_CTX_free(md_ctx);
+    EVP_PKEY_free(pota_pkey);
+    return status;
 }
 
 /*
@@ -785,7 +773,7 @@ azihsm_status compute_pota_endorsement(
     status = der_to_uncompressed_point(pid_pub_key_der, uncompressed_point);
     if (status != AZIHSM_STATUS_SUCCESS)
     {
-        return status;
+        goto cleanup;
     }
 
     status = sign_with_pota_key(
@@ -795,12 +783,9 @@ azihsm_status compute_pota_endorsement(
         sizeof(uncompressed_point),
         sig_out
     );
-    if (status != AZIHSM_STATUS_SUCCESS)
-    {
-        return status;
-    }
 
-    return AZIHSM_STATUS_SUCCESS;
+cleanup:
+    return status;
 }
 
 azihsm_status azihsm_open_device_and_session(
@@ -810,20 +795,29 @@ azihsm_status azihsm_open_device_and_session(
     struct azihsm_resiliency_ctx **resiliency_ctx
 )
 {
-    azihsm_status status;
+    azihsm_status status = AZIHSM_STATUS_INTERNAL_ERROR;
 
     struct azihsm_buffer bmk_buf = { NULL, 0 };
     struct azihsm_buffer muk_buf = { NULL, 0 };
     struct azihsm_buffer obk_buf = { NULL, 0 };
     struct azihsm_buffer retrieved_bmk = { NULL, 0 };
+    struct azihsm_buffer pota_priv_buf = { NULL, 0 };
+    struct azihsm_buffer pota_pub_buf = { NULL, 0 };
+    struct azihsm_buffer pota_sig_buf = { NULL, 0 };
+    struct azihsm_buffer pid_pub_key_buf = { NULL, 0 };
 
     struct azihsm_resiliency_config resiliency_cfg;
     struct azihsm_resiliency_ctx *res_ctx = NULL;
 
+    bool device_opened = false;
+    bool session_opened = false;
     bool muk_was_loaded = false;
 
     struct azihsm_api_rev api_rev = { 0 };
     struct azihsm_credentials creds = { 0 };
+    struct azihsm_owner_backup_key_config backup_config = { 0 };
+    struct azihsm_pota_endorsement pota_endorsement = { 0 };
+    struct azihsm_pota_endorsement_data pota_data = { 0 };
 
     if (config == NULL || device == NULL || session == NULL)
     {
@@ -832,7 +826,8 @@ azihsm_status azihsm_open_device_and_session(
             ERR_R_PASSED_NULL_PARAMETER,
             "azihsm_open_device_and_session: NULL argument"
         );
-        return AZIHSM_STATUS_INVALID_ARGUMENT;
+        status = AZIHSM_STATUS_INVALID_ARGUMENT;
+        goto cleanup;
     }
 
     /* Use API revision from configuration */
@@ -850,7 +845,7 @@ azihsm_status azihsm_open_device_and_session(
         status = load_credentials_from_file(AZIHSM_DEFAULT_CREDENTIALS_ID_PATH, creds.id);
         if (status != AZIHSM_STATUS_SUCCESS)
         {
-            return status;
+            goto cleanup;
         }
     }
 
@@ -863,8 +858,7 @@ azihsm_status azihsm_open_device_and_session(
         status = load_credentials_from_file(AZIHSM_DEFAULT_CREDENTIALS_PIN_PATH, creds.pin);
         if (status != AZIHSM_STATUS_SUCCESS)
         {
-            OPENSSL_cleanse(&creds, sizeof(creds));
-            return status;
+            goto cleanup;
         }
     }
 
@@ -872,22 +866,17 @@ azihsm_status azihsm_open_device_and_session(
     status = azihsm_file_load(config->bmk_path, &bmk_buf);
     if (status != AZIHSM_STATUS_SUCCESS)
     {
-        OPENSSL_cleanse(&creds, sizeof(creds));
-        return status;
+        goto cleanup;
     }
 
     status = azihsm_file_load(config->muk_path, &muk_buf);
     if (status != AZIHSM_STATUS_SUCCESS)
     {
-        free_buffer(&bmk_buf);
-        OPENSSL_cleanse(&creds, sizeof(creds));
-        return status;
+        goto cleanup;
     }
     muk_was_loaded = (muk_buf.ptr != NULL);
 
     // Configure OBK based on source selection
-    struct azihsm_owner_backup_key_config backup_config = { 0 };
-
     if (config->use_tpm_obk)
     {
         backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_TPM;
@@ -901,10 +890,7 @@ azihsm_status azihsm_open_device_and_session(
         status = azihsm_file_load(config->obk_path, &obk_buf);
         if (status != AZIHSM_STATUS_SUCCESS)
         {
-            free_buffer(&bmk_buf);
-            free_buffer(&muk_buf);
-            OPENSSL_cleanse(&creds, sizeof(creds));
-            return status;
+            goto cleanup;
         }
 
         if (obk_buf.ptr == NULL)
@@ -921,10 +907,8 @@ azihsm_status azihsm_open_device_and_session(
                 config->obk_path,
                 AZIHSM_OBK_SIZE
             );
-            free_buffer(&bmk_buf);
-            free_buffer(&muk_buf);
-            OPENSSL_cleanse(&creds, sizeof(creds));
-            return AZIHSM_STATUS_INTERNAL_ERROR;
+            status = AZIHSM_STATUS_INTERNAL_ERROR;
+            goto cleanup;
         }
 
         if (obk_buf.len != AZIHSM_OBK_SIZE)
@@ -940,11 +924,8 @@ azihsm_status azihsm_open_device_and_session(
                 config->obk_path,
                 AZIHSM_OBK_SIZE
             );
-            free_buffer(&obk_buf);
-            free_buffer(&bmk_buf);
-            free_buffer(&muk_buf);
-            OPENSSL_cleanse(&creds, sizeof(creds));
-            return AZIHSM_STATUS_INTERNAL_ERROR;
+            status = AZIHSM_STATUS_INTERNAL_ERROR;
+            goto cleanup;
         }
 
         backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER;
@@ -954,12 +935,9 @@ azihsm_status azihsm_open_device_and_session(
     status = azihsm_get_device_handle(device, api_rev);
     if (status != AZIHSM_STATUS_SUCCESS)
     {
-        free_buffer(&obk_buf);
-        free_buffer(&bmk_buf);
-        free_buffer(&muk_buf);
-        OPENSSL_cleanse(&creds, sizeof(creds));
-        return status;
+        goto cleanup;
     }
+    device_opened = true;
 
     /* Create resiliency config if enabled */
     if (config->resiliency_enabled)
@@ -977,25 +955,11 @@ azihsm_status azihsm_open_device_and_session(
         );
         if (status != AZIHSM_STATUS_SUCCESS)
         {
-            free_buffer(&bmk_buf);
-            free_buffer(&muk_buf);
-            if (!config->use_tpm_obk)
-            {
-                free_buffer(&obk_buf);
-            }
-            OPENSSL_cleanse(&creds, sizeof(creds));
-            azihsm_part_close(*device);
-            return status;
+            goto cleanup;
         }
     }
 
     // Configure POTA endorsement based on source selection
-    struct azihsm_pota_endorsement pota_endorsement = { 0 };
-    struct azihsm_buffer pota_sig_buf = { 0 };
-    struct azihsm_pota_endorsement_data pota_data = { 0 };
-
-    struct azihsm_buffer pota_priv_buf = { NULL, 0 };
-    struct azihsm_buffer pota_pub_buf = { NULL, 0 };
     if (config->use_tpm_pota)
     {
         pota_endorsement.source = AZIHSM_POTA_ENDORSEMENT_SOURCE_TPM;
@@ -1007,26 +971,13 @@ azihsm_status azihsm_open_device_and_session(
         status = azihsm_file_load(config->pota_private_key_path, &pota_priv_buf);
         if (status != AZIHSM_STATUS_SUCCESS)
         {
-            free_buffer(&obk_buf);
-            free_buffer(&bmk_buf);
-            free_buffer(&muk_buf);
-            OPENSSL_cleanse(&creds, sizeof(creds));
-            azihsm_resiliency_destroy(res_ctx);
-            azihsm_part_close(*device);
-            return status;
+            goto cleanup;
         }
 
         status = azihsm_file_load(config->pota_public_key_path, &pota_pub_buf);
         if (status != AZIHSM_STATUS_SUCCESS)
         {
-            free_buffer(&pota_priv_buf);
-            free_buffer(&obk_buf);
-            free_buffer(&bmk_buf);
-            free_buffer(&muk_buf);
-            OPENSSL_cleanse(&creds, sizeof(creds));
-            azihsm_resiliency_destroy(res_ctx);
-            azihsm_part_close(*device);
-            return status;
+            goto cleanup;
         }
 
         // POTA key files are required when using caller source — both must be present.
@@ -1042,13 +993,8 @@ azihsm_status azihsm_open_device_and_session(
                 config->pota_private_key_path,
                 config->pota_public_key_path
             );
-            free_buffer(&obk_buf);
-            free_buffer(&bmk_buf);
-            free_buffer(&muk_buf);
-            OPENSSL_cleanse(&creds, sizeof(creds));
-            azihsm_resiliency_destroy(res_ctx);
-            azihsm_part_close(*device);
-            return AZIHSM_STATUS_INTERNAL_ERROR;
+            status = AZIHSM_STATUS_INTERNAL_ERROR;
+            goto cleanup;
         }
         else if (pota_priv_buf.ptr == NULL || pota_pub_buf.ptr == NULL)
         {
@@ -1063,45 +1009,21 @@ azihsm_status azihsm_open_device_and_session(
                 config->pota_private_key_path,
                 config->pota_public_key_path
             );
-            free_buffer(&pota_priv_buf);
-            free_buffer(&pota_pub_buf);
-            free_buffer(&obk_buf);
-            free_buffer(&bmk_buf);
-            free_buffer(&muk_buf);
-            OPENSSL_cleanse(&creds, sizeof(creds));
-            azihsm_resiliency_destroy(res_ctx);
-            azihsm_part_close(*device);
-            return AZIHSM_STATUS_INTERNAL_ERROR;
+            status = AZIHSM_STATUS_INTERNAL_ERROR;
+            goto cleanup;
         }
 
         // Compute POTA endorsement: sign PID public key with POTA key
-        struct azihsm_buffer pid_pub_key_buf = { NULL, 0 };
         status = get_part_property(*device, AZIHSM_PART_PROP_ID_PART_PUB_KEY, &pid_pub_key_buf);
         if (status != AZIHSM_STATUS_SUCCESS)
         {
-            free_buffer(&pota_priv_buf);
-            free_buffer(&pota_pub_buf);
-            free_buffer(&obk_buf);
-            free_buffer(&bmk_buf);
-            free_buffer(&muk_buf);
-            OPENSSL_cleanse(&creds, sizeof(creds));
-            azihsm_resiliency_destroy(res_ctx);
-            azihsm_part_close(*device);
-            return status;
+            goto cleanup;
         }
+
         status = compute_pota_endorsement(&pid_pub_key_buf, &pota_priv_buf, &pota_sig_buf);
-        free_buffer(&pid_pub_key_buf);
         if (status != AZIHSM_STATUS_SUCCESS)
         {
-            free_buffer(&pota_priv_buf);
-            free_buffer(&pota_pub_buf);
-            free_buffer(&obk_buf);
-            free_buffer(&bmk_buf);
-            free_buffer(&muk_buf);
-            OPENSSL_cleanse(&creds, sizeof(creds));
-            azihsm_resiliency_destroy(res_ctx);
-            azihsm_part_close(*device);
-            return status;
+            goto cleanup;
         }
 
         pota_data.signature = &pota_sig_buf;
@@ -1120,21 +1042,9 @@ azihsm_status azihsm_open_device_and_session(
         &pota_endorsement,
         config->resiliency_enabled ? &resiliency_cfg : NULL
     );
-
-    // Input buffers no longer needed after part_init
-    free_buffer(&bmk_buf);
-    free_buffer(&muk_buf);
-    free_buffer(&pota_sig_buf);
-    free_buffer(&pota_priv_buf);
-    free_buffer(&pota_pub_buf);
-    free_buffer(&obk_buf);
-
     if (status != AZIHSM_STATUS_SUCCESS)
     {
-        OPENSSL_cleanse(&creds, sizeof(creds));
-        azihsm_resiliency_destroy(res_ctx);
-        azihsm_part_close(*device);
-        return status;
+        goto cleanup;
     }
 
     // Retrieve and persist BMK property
@@ -1144,24 +1054,17 @@ azihsm_status azihsm_open_device_and_session(
         status = write_buffer_to_file(config->bmk_path, &retrieved_bmk);
         if (status != AZIHSM_STATUS_SUCCESS)
         {
-            free_buffer(&retrieved_bmk);
-            OPENSSL_cleanse(&creds, sizeof(creds));
-            azihsm_resiliency_destroy(res_ctx);
-            azihsm_part_close(*device);
-            return status;
+            goto cleanup;
         }
     }
-    free_buffer(&retrieved_bmk);
 
     // Open session (seed=NULL lets the library generate random bytes internally)
     status = azihsm_sess_open(*device, &creds, NULL, session);
-    OPENSSL_cleanse(&creds, sizeof(creds));
     if (status != AZIHSM_STATUS_SUCCESS)
     {
-        azihsm_resiliency_destroy(res_ctx);
-        azihsm_part_close(*device);
-        return status;
+        goto cleanup;
     }
+    session_opened = true;
 
     // If MUK wasn't loaded from file, generate and save it
     if (!muk_was_loaded)
@@ -1169,22 +1072,54 @@ azihsm_status azihsm_open_device_and_session(
         status = generate_and_save_muk(*session, config->muk_path);
         if (status != AZIHSM_STATUS_SUCCESS)
         {
-            azihsm_sess_close(*session);
-            azihsm_resiliency_destroy(res_ctx);
-            azihsm_part_close(*device);
-            return status;
+            goto cleanup;
         }
     }
 
-    // Pass resiliency context back to caller for lifetime management
-    if (resiliency_ctx != NULL)
-    {
-        *resiliency_ctx = res_ctx;
-        res_ctx = NULL;
-    }
-    azihsm_resiliency_destroy(res_ctx);
+    status = AZIHSM_STATUS_SUCCESS;
 
-    return AZIHSM_STATUS_SUCCESS;
+cleanup:
+    /* Always free temporary buffers — needed on both success and error.
+     * free_buffer() is NULL-safe (checks ptr before cleanse+free). */
+    free_buffer(&bmk_buf);
+    free_buffer(&muk_buf);
+    free_buffer(&obk_buf);
+    free_buffer(&pota_priv_buf);
+    free_buffer(&pota_pub_buf);
+    free_buffer(&pota_sig_buf);
+    free_buffer(&pid_pub_key_buf);
+    free_buffer(&retrieved_bmk);
+    OPENSSL_cleanse(&creds, sizeof(creds));
+
+    if (status != AZIHSM_STATUS_SUCCESS)
+    {
+        /* Tear down device/session/resiliency only on failure.
+         * Zero handles after closing to prevent stale handle usage by caller. */
+        azihsm_resiliency_destroy(res_ctx);
+        if (session_opened)
+        {
+            azihsm_sess_close(*session);
+            *session = 0;
+        }
+        if (device_opened)
+        {
+            azihsm_part_close(*device);
+            *device = 0;
+        }
+    }
+    else
+    {
+        /* Pass resiliency context to caller for lifetime management */
+        if (resiliency_ctx != NULL)
+        {
+            *resiliency_ctx = res_ctx;
+        }
+        else
+        {
+            azihsm_resiliency_destroy(res_ctx);
+        }
+    }
+    return status;
 }
 
 void azihsm_close_device_and_session(azihsm_handle device, azihsm_handle session)
@@ -1210,6 +1145,8 @@ static azihsm_status wrap_and_unwrap_pkcs8(
 )
 {
     azihsm_status status;
+    uint8_t *wrapped_data = NULL;
+    uint32_t wrapped_size = 0;
 
     struct azihsm_algo_rsa_pkcs_oaep_params oaep_params = {
         .hash_algo_id = AZIHSM_ALGO_ID_SHA256,
@@ -1233,39 +1170,6 @@ static azihsm_status wrap_and_unwrap_pkcs8(
         .len = (uint32_t)pkcs8_len,
     };
 
-    /* Two-call pattern: first query required size */
-    struct azihsm_buffer wrapped_buf = {
-        .ptr = NULL,
-        .len = 0,
-    };
-
-    status = azihsm_crypt_encrypt(&wrap_algo, wrapping_pub, &plain_buf, &wrapped_buf);
-    if (status != AZIHSM_STATUS_BUFFER_TOO_SMALL || wrapped_buf.len == 0)
-    {
-        return (status == AZIHSM_STATUS_SUCCESS) ? AZIHSM_STATUS_INTERNAL_ERROR : status;
-    }
-
-    /* Allocate buffer for wrapped data */
-    uint32_t wrapped_size = wrapped_buf.len;
-    uint8_t *wrapped_data = OPENSSL_malloc(wrapped_size);
-    if (wrapped_data == NULL)
-    {
-        return AZIHSM_STATUS_INTERNAL_ERROR;
-    }
-
-    /* Second call: perform actual wrap */
-    wrapped_buf.ptr = wrapped_data;
-    wrapped_buf.len = wrapped_size;
-
-    status = azihsm_crypt_encrypt(&wrap_algo, wrapping_pub, &plain_buf, &wrapped_buf);
-    if (status != AZIHSM_STATUS_SUCCESS)
-    {
-        OPENSSL_cleanse(wrapped_data, wrapped_size);
-        OPENSSL_free(wrapped_data);
-        return status;
-    }
-
-    /* Unwrap into the HSM */
     struct azihsm_algo_rsa_aes_key_wrap_params unwrap_params = {
         .aes_key_bits = 256,
         .oaep_params = &oaep_params,
@@ -1277,6 +1181,39 @@ static azihsm_status wrap_and_unwrap_pkcs8(
         .len = sizeof(unwrap_params),
     };
 
+    /* Two-call pattern: first query required size */
+    struct azihsm_buffer wrapped_buf = {
+        .ptr = NULL,
+        .len = 0,
+    };
+
+    status = azihsm_crypt_encrypt(&wrap_algo, wrapping_pub, &plain_buf, &wrapped_buf);
+    if (status != AZIHSM_STATUS_BUFFER_TOO_SMALL || wrapped_buf.len == 0)
+    {
+        status = (status == AZIHSM_STATUS_SUCCESS) ? AZIHSM_STATUS_INTERNAL_ERROR : status;
+        goto cleanup;
+    }
+
+    /* Allocate buffer for wrapped data */
+    wrapped_size = wrapped_buf.len;
+    wrapped_data = OPENSSL_malloc(wrapped_size);
+    if (wrapped_data == NULL)
+    {
+        status = AZIHSM_STATUS_INTERNAL_ERROR;
+        goto cleanup;
+    }
+
+    /* Second call: perform actual wrap */
+    wrapped_buf.ptr = wrapped_data;
+    wrapped_buf.len = wrapped_size;
+
+    status = azihsm_crypt_encrypt(&wrap_algo, wrapping_pub, &plain_buf, &wrapped_buf);
+    if (status != AZIHSM_STATUS_SUCCESS)
+    {
+        goto cleanup;
+    }
+
+    /* Unwrap into the HSM */
     status = azihsm_key_unwrap_pair(
         &unwrap_algo,
         wrapping_priv,
@@ -1287,9 +1224,8 @@ static azihsm_status wrap_and_unwrap_pkcs8(
         out_pub
     );
 
-    OPENSSL_cleanse(wrapped_data, wrapped_size);
-    OPENSSL_free(wrapped_data);
-
+cleanup:
+    OPENSSL_clear_free(wrapped_data, wrapped_size);
     return status;
 }
 
@@ -1305,19 +1241,23 @@ azihsm_status azihsm_import_key_pair(
     azihsm_status status;
     azihsm_handle wrapping_pub = 0, wrapping_priv = 0;
     struct azihsm_buffer input_buf = { NULL, 0 };
+    uint8_t *pkcs8_buf = NULL;
+    int pkcs8_len = 0;
 
     if (provctx == NULL || input_key_file == NULL || priv_key_prop_list == NULL ||
         pub_key_prop_list == NULL || out_priv == NULL || out_pub == NULL)
     {
-        return AZIHSM_STATUS_INVALID_ARGUMENT;
+        status = AZIHSM_STATUS_INVALID_ARGUMENT;
+        goto cleanup;
     }
 
     /* 1. Read the input file from disk */
     status = azihsm_file_load(input_key_file, &input_buf);
     if (status != AZIHSM_STATUS_SUCCESS)
     {
-        return status;
+        goto cleanup;
     }
+
     if (input_buf.ptr == NULL || input_buf.len == 0)
     {
         ERR_raise_data(
@@ -1326,33 +1266,27 @@ azihsm_status azihsm_import_key_pair(
             "input key file '%s' is missing or empty",
             input_key_file
         );
-        return AZIHSM_STATUS_INVALID_ARGUMENT;
+        status = AZIHSM_STATUS_INVALID_ARGUMENT;
+        goto cleanup;
     }
 
     /* 2. Get the RSA unwrapping key pair from the HSM */
     status = azihsm_get_unwrapping_key(provctx, &wrapping_pub, &wrapping_priv);
     if (status != AZIHSM_STATUS_SUCCESS)
     {
-        free_buffer(&input_buf);
-        return status;
+        goto cleanup;
     }
 
     /* 3. Try to normalize as DER-encoded private key (SEC1, PKCS#1, or PKCS#8) */
-    uint8_t *pkcs8_buf = NULL;
-    int pkcs8_len = 0;
-
-    int norm_rc = azihsm_ossl_normalize_der_to_pkcs8(
-        input_buf.ptr,
-        (long)input_buf.len,
-        &pkcs8_buf,
-        &pkcs8_len
-    );
-
-    free_buffer(&input_buf);
-
-    if (norm_rc != OSSL_SUCCESS)
+    if (azihsm_ossl_normalize_der_to_pkcs8(
+            input_buf.ptr,
+            (long)input_buf.len,
+            &pkcs8_buf,
+            &pkcs8_len
+        ) != OSSL_SUCCESS)
     {
-        return AZIHSM_STATUS_INVALID_ARGUMENT;
+        status = AZIHSM_STATUS_INVALID_ARGUMENT;
+        goto cleanup;
     }
 
     /* Plaintext DER path: wrap then unwrap into HSM */
@@ -1367,8 +1301,9 @@ azihsm_status azihsm_import_key_pair(
         out_pub
     );
 
-    OPENSSL_cleanse(pkcs8_buf, (size_t)pkcs8_len);
-    OPENSSL_free(pkcs8_buf);
+cleanup:
+    free_buffer(&input_buf);
+    OPENSSL_clear_free(pkcs8_buf, (size_t)pkcs8_len);
     return status;
 }
 
@@ -1385,38 +1320,6 @@ azihsm_status azihsm_unwrap_key_pair(
     azihsm_handle wrapping_pub = 0, wrapping_priv = 0;
     struct azihsm_buffer input_buf = { NULL, 0 };
 
-    if (provctx == NULL || wrapped_key_file == NULL || priv_key_prop_list == NULL ||
-        pub_key_prop_list == NULL || out_priv == NULL || out_pub == NULL)
-    {
-        return AZIHSM_STATUS_INVALID_ARGUMENT;
-    }
-
-    /* 1. Read the wrapped blob from disk */
-    status = azihsm_file_load(wrapped_key_file, &input_buf);
-    if (status != AZIHSM_STATUS_SUCCESS)
-    {
-        return status;
-    }
-    if (input_buf.ptr == NULL || input_buf.len == 0)
-    {
-        ERR_raise_data(
-            ERR_LIB_PROV,
-            PROV_R_MISSING_KEY,
-            "wrapped key file '%s' is missing or empty",
-            wrapped_key_file
-        );
-        return AZIHSM_STATUS_INVALID_ARGUMENT;
-    }
-
-    /* 2. Get the RSA unwrapping key pair from the HSM */
-    status = azihsm_get_unwrapping_key(provctx, &wrapping_pub, &wrapping_priv);
-    if (status != AZIHSM_STATUS_SUCCESS)
-    {
-        free_buffer(&input_buf);
-        return status;
-    }
-
-    /* 3. Unwrap directly — the blob is already wrapped */
     struct azihsm_algo_rsa_pkcs_oaep_params oaep_params = {
         .hash_algo_id = AZIHSM_ALGO_ID_SHA256,
         .mgf1_hash_algo_id = AZIHSM_MGF1_ID_SHA256,
@@ -1434,6 +1337,40 @@ azihsm_status azihsm_unwrap_key_pair(
         .len = sizeof(unwrap_params),
     };
 
+    if (provctx == NULL || wrapped_key_file == NULL || priv_key_prop_list == NULL ||
+        pub_key_prop_list == NULL || out_priv == NULL || out_pub == NULL)
+    {
+        status = AZIHSM_STATUS_INVALID_ARGUMENT;
+        goto cleanup;
+    }
+
+    /* 1. Read the wrapped blob from disk */
+    status = azihsm_file_load(wrapped_key_file, &input_buf);
+    if (status != AZIHSM_STATUS_SUCCESS)
+    {
+        goto cleanup;
+    }
+
+    if (input_buf.ptr == NULL || input_buf.len == 0)
+    {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            PROV_R_MISSING_KEY,
+            "wrapped key file '%s' is missing or empty",
+            wrapped_key_file
+        );
+        status = AZIHSM_STATUS_INVALID_ARGUMENT;
+        goto cleanup;
+    }
+
+    /* 2. Get the RSA unwrapping key pair from the HSM */
+    status = azihsm_get_unwrapping_key(provctx, &wrapping_pub, &wrapping_priv);
+    if (status != AZIHSM_STATUS_SUCCESS)
+    {
+        goto cleanup;
+    }
+
+    /* 3. Unwrap directly — the blob is already wrapped */
     status = azihsm_key_unwrap_pair(
         &unwrap_algo,
         wrapping_priv,
@@ -1444,6 +1381,7 @@ azihsm_status azihsm_unwrap_key_pair(
         out_pub
     );
 
+cleanup:
     free_buffer(&input_buf);
     return status;
 }

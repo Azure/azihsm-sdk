@@ -846,12 +846,9 @@ fn test_open_session_multi_threaded_all_should_open() {
             let mut threads_passed = 0;
 
             for thread in thread_list {
-                let result = thread.join();
-
-                if result.is_ok() {
-                    threads_passed += 1;
-                } else {
-                    threads_failed += 1;
+                match thread.join() {
+                    Ok(Ok(())) => threads_passed += 1,
+                    _ => threads_failed += 1,
                 }
             }
 
@@ -868,7 +865,11 @@ fn test_open_session_multi_threaded_all_should_open() {
     );
 }
 
-fn test_thread_fn(_thread_id: u8, device: Arc<RwLock<<DdiTest as Ddi>::Dev>>, max_attempts: usize) {
+fn test_thread_fn(
+    _thread_id: u8,
+    device: Arc<RwLock<<DdiTest as Ddi>::Dev>>,
+    max_attempts: usize,
+) -> Result<(), DdiError> {
     let dev = device.read();
 
     for _ in 0..max_attempts {
@@ -887,25 +888,18 @@ fn test_thread_fn(_thread_id: u8, device: Arc<RwLock<<DdiTest as Ddi>::Dev>>, ma
             pub_key.clone(),
         );
 
-        if resp.as_ref().is_err() {
-            if matches!(
-                resp.as_ref().unwrap_err(),
-                DdiError::DdiStatus(DdiStatus::NonceMismatch)
-            ) {
-                continue;
+        match resp {
+            Err(DdiError::DdiStatus(DdiStatus::NonceMismatch)) => {}
+            Err(e) => return Err(e),
+            Ok(resp) => {
+                assert!(resp.hdr.sess_id.is_some());
+                assert_eq!(resp.hdr.op, DdiOp::OpenSession);
+                assert_eq!(resp.hdr.status, DdiStatus::Success);
+                break;
             }
         }
-
-        assert!(resp.is_ok(), "resp {:?}", resp);
-
-        let resp = resp.unwrap();
-
-        assert!(resp.hdr.sess_id.is_some());
-        assert_eq!(resp.hdr.op, DdiOp::OpenSession);
-        assert_eq!(resp.hdr.status, DdiStatus::Success);
-
-        break;
     }
+    Ok(())
 }
 
 #[test]
@@ -1216,12 +1210,9 @@ fn test_open_session_multi_threaded_single_winner() {
             let mut threads_passed = 0;
 
             for thread in thread_list {
-                let result = thread.join();
-
-                if result.is_ok() {
-                    threads_passed += 1;
-                } else {
-                    threads_failed += 1;
+                match thread.join() {
+                    Ok(Ok(())) => threads_passed += 1,
+                    _ => threads_failed += 1,
                 }
             }
 
@@ -1243,17 +1234,17 @@ fn test_thread_fn_open_session_single_winner(
     device_path: String,
     encrypted_credential: DdiEncryptedSessionCredential,
     pub_key: DdiDerPublicKey,
-) {
+) -> DdiResult<()> {
     let ddi = DdiTest::default();
     let mut dev = ddi.open_dev(device_path.as_str()).unwrap();
     set_device_kind(&mut dev);
 
-    let _resp = helper_open_session(
+    helper_open_session(
         &dev,
         None,
         Some(DdiApiRev { major: 1, minor: 0 }),
         encrypted_credential.clone(),
         pub_key.clone(),
-    )
-    .unwrap();
+    )?;
+    Ok(())
 }

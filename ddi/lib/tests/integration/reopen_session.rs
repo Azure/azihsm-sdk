@@ -1462,12 +1462,9 @@ fn test_reopen_session_multi_threaded_single_winner() {
             let mut threads_passed = 0;
 
             for thread in thread_list {
-                let result = thread.join();
-
-                if result.is_ok() {
-                    threads_passed += 1;
-                } else {
-                    threads_failed += 1;
+                match thread.join() {
+                    Ok(Ok(())) => threads_passed += 1,
+                    _ => threads_failed += 1,
                 }
             }
 
@@ -1490,16 +1487,16 @@ fn test_thread_fn_open_session_single_winner(
     encrypted_credential: DdiEncryptedSessionCredential,
     pub_key: DdiDerPublicKey,
     bmk: MborByteArray<1024>,
-) {
-    let _resp = helper_reopen_session(
+) -> DdiResult<()> {
+    helper_reopen_session(
         dev,
         session_id,
         Some(DdiApiRev { major: 1, minor: 0 }),
         encrypted_credential,
         pub_key,
         bmk,
-    )
-    .unwrap();
+    )?;
+    Ok(())
 }
 
 // Extract the SVN from the BMK metadata section

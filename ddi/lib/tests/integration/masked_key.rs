@@ -54,6 +54,15 @@ fn test_masked_key_no_session() {
             let resp = resp.unwrap();
             let masked_key = resp.data.masked_key;
 
+            assert!(verify_iv_not_default_from_masked_key(masked_key.as_slice()).unwrap_or(false));
+
+            assert!(verify_masked_key_attributes(
+                masked_key.as_slice(),
+                MaskedKeyAttributes::ENCRYPT
+                    | MaskedKeyAttributes::DECRYPT
+                    | MaskedKeyAttributes::LOCAL
+            ));
+
             let resp = helper_unmask_key(
                 dev,
                 None,
@@ -103,6 +112,15 @@ fn test_masked_key_malformed_mask_key() {
 
             let resp = resp.unwrap();
             let masked_key = resp.data.masked_key;
+
+            assert!(verify_iv_not_default_from_masked_key(masked_key.as_slice()).unwrap_or(false));
+
+            assert!(verify_masked_key_attributes(
+                masked_key.as_slice(),
+                MaskedKeyAttributes::ENCRYPT
+                    | MaskedKeyAttributes::DECRYPT
+                    | MaskedKeyAttributes::LOCAL
+            ));
 
             let iv_len: usize = u16::from_le_bytes(
                 masked_key.as_slice()[ALGORITHM_OFFSET..IV_LEN_OFFSET]

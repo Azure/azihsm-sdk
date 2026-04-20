@@ -320,6 +320,15 @@ fn test_ecc_generate_and_unmask() {
             let original_key_id = data.private_key_id;
             let masked_key = data.masked_key;
 
+            assert!(verify_iv_not_default_from_masked_key(masked_key.as_slice()).unwrap_or(false));
+
+            assert!(verify_masked_key_attributes(
+                masked_key.as_slice(),
+                MaskedKeyAttributes::SIGN
+                    | MaskedKeyAttributes::VERIFY
+                    | MaskedKeyAttributes::LOCAL
+            ));
+
             // Import/unmask the key
             let resp = helper_unmask_key(
                 dev,

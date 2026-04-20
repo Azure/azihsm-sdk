@@ -3,7 +3,6 @@
 
 #define _DEFAULT_SOURCE
 #include <azihsm.h>
-#include <bsd/string.h>
 #include <openssl/bio.h>
 #include <openssl/core_dispatch.h>
 #include <openssl/core_names.h>
