@@ -1,3 +1,5 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 #include "kdf_derive.hpp"
 
 const char *get_hmac_algo_name(azihsm_algo_id hmac_algo_id)
