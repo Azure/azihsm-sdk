@@ -882,7 +882,13 @@ static int azihsm_ossl_rsa_set_ctx_params(void *sctx, const OSSL_PARAM params[])
             return OSSL_FAILURE;
         }
 
-        ctx->md = EVP_get_digestbyname(mdname); // CodeQL [SM02689]  This is passed in externally by customer
+        /*
+         * CodeQL [SM02689] The digest name is provided via OpenSSL params, but
+         * EVP_get_digestbyname() only resolves registered digest algorithms.
+         * Unrecognized or unsupported names return NULL and are rejected by the
+         * check immediately below, so external input does not bypass validation.
+         */
+        ctx->md = EVP_get_digestbyname(mdname);
         if (ctx->md == NULL)
         {
             ERR_raise(ERR_LIB_PROV, ERR_R_OPERATION_FAIL);
