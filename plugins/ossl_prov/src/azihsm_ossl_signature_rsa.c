@@ -480,9 +480,9 @@ static int azihsm_ossl_rsa_digest_sign_init(
     ctx->operation = 1; /* Sign */
 
     /* Get hash algorithm by name */
-    ctx->md =
-        EVP_get_digestbyname(mdname); // CodeQL [SM02689]  This is passed in externally by customer
-                                      // and must remain in order to keep backward compatibility.
+    // CodeQL [SM02689] Parameter is externally passed by the customer and must remain for downward
+    // compatibility.
+    ctx->md = EVP_get_digestbyname(mdname);
     if (ctx->md == NULL)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_OPERATION_FAIL);
@@ -696,12 +696,8 @@ static int azihsm_ossl_rsa_digest_verify_init(
     ctx->operation = 0; /* Verify */
 
     /* Get hash algorithm by name */
-    /*
-     * CodeQL [SM02689] `mdname` comes from OpenSSL caller params, but
-     * EVP_get_digestbyname() only resolves registered digest algorithms.
-     * Unknown names return NULL here, and unsupported digests are rejected
-     * by the azihsm_ossl_evp_md_to_rsa_*_algo_id mappings below (algo.id == 0).
-     */
+    // CodeQL [SM02689] Parameter is externally passed by the customer and must remain for downward
+    // compatibility.
     ctx->md = EVP_get_digestbyname(mdname);
     if (ctx->md == NULL)
     {
@@ -888,12 +884,8 @@ static int azihsm_ossl_rsa_set_ctx_params(void *sctx, const OSSL_PARAM params[])
             return OSSL_FAILURE;
         }
 
-        /*
-         * CodeQL [SM02689] The digest name is provided via OpenSSL params, but
-         * EVP_get_digestbyname() only resolves registered digest algorithms.
-         * Unrecognized or unsupported names return NULL and are rejected by the
-         * check immediately below, so external input does not bypass validation.
-         */
+        // CodeQL [SM02689] Parameter is externally passed by the customer and must remain for
+        // downward compatibility.
         ctx->md = EVP_get_digestbyname(mdname);
         if (ctx->md == NULL)
         {
@@ -1013,10 +1005,8 @@ static int azihsm_ossl_rsa_set_ctx_params(void *sctx, const OSSL_PARAM params[])
             return OSSL_FAILURE;
         }
 
-        // CodeQL [SM02689] `mgf1_mdname` is externally provided, but only
-        // provider-supported MGF1 digests are accepted: unsupported digests
-        // fail resolution here or later validation via
-        // `azihsm_ossl_evp_md_to_mgf1_id`.
+        // CodeQL [SM02689] Parameter is externally passed by the customer and must remain for
+        // downward compatibility.
         ctx->mgf1_md = EVP_get_digestbyname(mgf1_mdname);
         if (ctx->mgf1_md == NULL)
         {
