@@ -194,7 +194,7 @@ fn test_hmac_derived_key_prop_valid_kinds_succeed(session: HsmSession) {
     }
 }
 
-/// HMAC must require at least sign capability
+/// HMAC must require both sign and verify capabilities (missing sign is rejected)
 #[session_test]
 fn test_hmac_derived_key_prop_missing_sign_rejected(session: HsmSession) {
     let base_secret = derive_base_secret_for_hkdf(&session, HsmEccCurve::P256);
@@ -205,13 +205,13 @@ fn test_hmac_derived_key_prop_missing_sign_rejected(session: HsmSession) {
         .bits(256)
         .can_verify(true) // missing sign
         .build()
-        .unwrap();
-
+        .expect("Failed to build HMAC key props");
     let result = derive_hmac_key_with_props(&session, &base_secret, HsmHashAlgo::Sha256, props);
 
     assert!(matches!(result, Err(HsmError::InvalidKeyProps)));
 }
-/// HMAC must require verify capability
+
+/// HMAC must require both sign and verify capabilities (missing verify is rejected)
 #[session_test]
 fn test_hmac_derived_key_prop_missing_verify_rejected(session: HsmSession) {
     let base_secret = derive_base_secret_for_hkdf(&session, HsmEccCurve::P256);
