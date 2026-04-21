@@ -128,8 +128,8 @@ pub struct HsmOwnerBackupKeyConfig {
 
     /// Optional OBK. Required (and must be non-empty) when source is
     /// `Caller`; must be `None` when source is `Tpm` (the device
-    /// retrieves and unseals BK3 itself). Any other combination is
-    /// rejected with [`HsmError::InvalidArgument`].
+    /// provides sealed BK3, which is unsealed via the host TPM path).
+    /// Any other combination is rejected with [`HsmError::InvalidArgument`].
     key: Option<Vec<u8>>,
 }
 
