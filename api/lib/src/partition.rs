@@ -120,6 +120,12 @@ impl HsmCredentials {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct HsmOwnerBackupKey {
+    obk: Option<Vec<u8>>,
+    mobk: Option<Vec<u8>>,
+}
+
 /// Owner backup key config (OBK/BK3) containing source and optional OBK.
 #[derive(Debug, Clone)]
 pub struct HsmOwnerBackupKeyConfig {
@@ -130,7 +136,7 @@ pub struct HsmOwnerBackupKeyConfig {
     /// `Caller`; must be `None` when source is `Tpm` (the device
     /// provides sealed BK3, which is unsealed via the host TPM path).
     /// Any other combination is rejected with [`HsmError::InvalidArgument`].
-    key: Option<Vec<u8>>,
+    key: HsmOwnerBackupKey,
 }
 
 impl HsmOwnerBackupKeyConfig {
@@ -147,7 +153,10 @@ impl HsmOwnerBackupKeyConfig {
     pub fn new(source: HsmOwnerBackupKeySource, obk: Option<&[u8]>) -> Self {
         Self {
             key_source: source,
-            key: obk.map(|b| b.to_vec()),
+            key: HsmOwnerBackupKey {
+                obk: obk.map(|b| b.to_vec()),
+                mobk: None,
+            },
         }
     }
 
@@ -166,13 +175,25 @@ impl HsmOwnerBackupKeyConfig {
     ///
     /// Optional reference to the OBK.
     pub fn key(&self) -> Option<&[u8]> {
-        self.key.as_deref()
+        self.key.obk.as_deref()
+    }
+
+    /// Returns the owner masked backup key (MOBK).
+    ///
+    /// # Returns
+    ///
+    /// Optional reference to the MOBK.
+    pub fn masked_key(&self) -> Option<&[u8]> {
+        self.key.mobk.as_deref()
     }
 }
 
 impl Drop for HsmOwnerBackupKeyConfig {
     fn drop(&mut self) {
-        if let Some(ref mut k) = self.key {
+        if let Some(ref mut k) = self.key.obk {
+            k.fill(0);
+        }
+        if let Some(ref mut k) = self.key.mobk {
             k.fill(0);
         }
     }

@@ -528,6 +528,10 @@ impl FunctionInner {
     fn init_bk3(&mut self, bk3: [u8; BK3_SIZE_BYTES]) -> Result<Vec<u8>, ManticoreError> {
         tracing::debug!(bk3_len = bk3.len(), "Initializing BK3");
 
+        if self.state.is_bk3_initialized() {
+            return Err(ManticoreError::Bk3AlreadyInitialized);
+        }
+
         let metadata = DdiMaskedKeyMetadata {
             svn: Some(0),
             key_type: DdiKeyType::Secret384,
@@ -539,7 +543,9 @@ impl FunctionInner {
             key_length: BK3_SIZE_BYTES as u16,
         };
 
-        encode_masked_key(&bk3, &BK_BOOT, &metadata)
+        let masked = encode_masked_key(&bk3, &BK_BOOT, &metadata)?;
+        self.state.set_bk3_initialized()?;
+        Ok(masked)
     }
 
     fn set_sealed_bk3(&mut self, sealed_bk3: &[u8]) -> Result<(), ManticoreError> {
@@ -849,6 +855,18 @@ impl FunctionState {
         self.inner.read().is_provisioned()
     }
 
+    /// Returns `true` if `init_bk3` has been called since the last
+    /// simulator boot.
+    pub(crate) fn is_bk3_initialized(&self) -> bool {
+        self.inner.read().is_bk3_initialized()
+    }
+
+    /// Marks BK3 as initialized. Returns
+    /// [`ManticoreError::Bk3AlreadyInitialized`] if it was already set.
+    pub(crate) fn set_bk3_initialized(&self) -> Result<(), ManticoreError> {
+        self.inner.write().set_bk3_initialized()
+    }
+
     /// Get backup key for the partition
     ///
     /// # Returns
@@ -1010,6 +1028,11 @@ struct FunctionStateInner {
     sealed_bk3_data: Option<[u8; SEALED_BK3_SIZE]>,
     sealed_bk3_actual_len: Option<usize>,
     bk_partition: Option<[u8; BK_AES_CBC_256_HMAC384_SIZE_BYTES]>,
+    /// Tracks whether `init_bk3` has been called since the last
+    /// simulator boot. The real device permits `init_bk3` only once
+    /// per power cycle; emulate that here so callers exercise the
+    /// same error path.
+    bk3_initialized: bool,
 }
 
 impl Drop for FunctionStateInner {
@@ -1035,6 +1058,7 @@ impl FunctionStateInner {
             sealed_bk3_data: None,
             sealed_bk3_actual_len: None,
             bk_partition: None,
+            bk3_initialized: false,
         })
     }
 
@@ -1140,6 +1164,18 @@ impl FunctionStateInner {
 
     fn is_provisioned(&self) -> bool {
         self.masking_key_num.is_some()
+    }
+
+    fn is_bk3_initialized(&self) -> bool {
+        self.bk3_initialized
+    }
+
+    fn set_bk3_initialized(&mut self) -> Result<(), ManticoreError> {
+        if self.bk3_initialized {
+            return Err(ManticoreError::Bk3AlreadyInitialized);
+        }
+        self.bk3_initialized = true;
+        Ok(())
     }
 
     fn get_vault(&self, vault_id: Uuid) -> Result<Vault, ManticoreError> {
@@ -1448,6 +1484,11 @@ impl FunctionStateInner {
         let sealed_bk3_data = self.sealed_bk3_data;
         let sealed_bk3_actual_len = self.sealed_bk3_actual_len;
         let tables_max = self.tables_max;
+        // Preserve bk3_initialized: real HW treats `init_bk3` as
+        // one-shot per power cycle, and NSSR (live-migration reset)
+        // does not clear that state. The SDK must reuse a cached MOBK
+        // after reset.
+        let bk3_initialized = self.bk3_initialized;
 
         // Reset to new state
         *self = Self::new(tables_max)?;
@@ -1455,6 +1496,7 @@ impl FunctionStateInner {
         // Restore preserved sealed BK3 data
         self.sealed_bk3_data = sealed_bk3_data;
         self.sealed_bk3_actual_len = sealed_bk3_actual_len;
+        self.bk3_initialized = bk3_initialized;
 
         Ok(())
     }

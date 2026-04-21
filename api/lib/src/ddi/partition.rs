@@ -298,6 +298,41 @@ pub(crate) fn init_part(
     )
 }
 
+fn get_mobk_from_config(
+    dev: &HsmDev,
+    rev: HsmApiRev,
+    obk_config: &HsmOwnerBackupKeyConfig,
+) -> HsmResult<Vec<u8>> {
+    match obk_config.key_source() {
+        HsmOwnerBackupKeySource::Caller => {
+            // Caller source must provide either OBK or MOBK;
+            // if OBK is provided, derive MOBK by sending OBK to the device. If MOBK is provided, use it directly.
+            if (obk_config.key().is_none() && obk_config.masked_key().is_none())
+                || (obk_config.key().is_some() && obk_config.masked_key().is_some())
+            {
+                return Err(HsmError::InvalidArgument);
+            }
+            if let Some(mobk) = obk_config.masked_key() {
+                Ok(mobk.to_vec())
+            } else if let Some(obk) = obk_config.key() {
+                init_bk3(dev, rev, obk)
+            } else {
+                Err(HsmError::InvalidArgument)
+            }
+        }
+        HsmOwnerBackupKeySource::Tpm => {
+            // TPM source must not carry a caller-provided OBK.
+            if obk_config.key().is_some() {
+                return Err(HsmError::InvalidArgument);
+            }
+            // Retrieve sealed BK3 from device and unseal with TPM
+            let sealed_bk3 = get_sealed_bk3(dev, rev)?;
+            unseal_tpm_backup_key(&sealed_bk3)
+        }
+        _ => return Err(HsmError::InvalidArgument),
+    }
+}
+
 /// Bare DDI partition initialization — no retry macro, no lock.
 ///
 /// This is the core credential-establishment logic extracted from
@@ -327,26 +362,7 @@ pub(crate) fn init_part_raw_no_res(
     resiliency_config: Option<&HsmResiliencyConfig>,
     reendorse: bool,
 ) -> HsmResult<InitPartResult> {
-    let mobk = match obk_config.key_source() {
-        HsmOwnerBackupKeySource::Caller => {
-            // Caller must provide a non-empty OBK.
-            let obk = obk_config.key().ok_or(HsmError::InvalidArgument)?;
-            if obk.is_empty() {
-                return Err(HsmError::InvalidArgument);
-            }
-            init_bk3(dev, rev, obk)?
-        }
-        HsmOwnerBackupKeySource::Tpm => {
-            // TPM source must not carry a caller-provided OBK.
-            if obk_config.key().is_some() {
-                return Err(HsmError::InvalidArgument);
-            }
-            // Retrieve sealed BK3 from device and unseal with TPM
-            let sealed_bk3 = get_sealed_bk3(dev, rev)?;
-            unseal_tpm_backup_key(&sealed_bk3)?
-        }
-        _ => return Err(HsmError::InvalidArgument),
-    };
+    let mobk = get_mobk_from_config(dev, rev, obk_config)?;
 
     // Compute POTA endorsement based on source.
     let (pota_signature, pota_public_key) =
