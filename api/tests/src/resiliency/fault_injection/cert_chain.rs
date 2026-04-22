@@ -102,6 +102,7 @@ fn init_with_resiliency() -> (HsmPartition, ResiliencyTestCtx) {
         Some(resiliency_config),
     )
     .expect("Partition init failed");
+    save_mobk_after_init(&part);
 
     (part, ctx)
 }
@@ -118,6 +119,7 @@ fn init_without_resiliency() -> HsmPartition {
     let (obk_info, pota_endorsement) = make_init_params(&part);
     part.init(creds, None, None, obk_info, pota_endorsement, None)
         .expect("Partition init failed");
+    save_mobk_after_init(&part);
 
     part
 }

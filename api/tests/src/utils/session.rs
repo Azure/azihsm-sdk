@@ -53,6 +53,7 @@ where
         let (obk_info, pota_endorsement) = make_init_params(&part);
         part.init(creds, None, None, obk_info, pota_endorsement, None)
             .expect("Partition init failed");
+        save_mobk_after_init(&part);
         let mut session = part
             .open_session(rev, &creds, None)
             .expect("Failed to open session");

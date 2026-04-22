@@ -45,16 +45,17 @@ use azihsm_resiliency_test_helpers::FileStorage;
 
 use crate::utils::partition::*;
 
-/// Returns the BK3 DDI op used by `init_part` / `restore_partition`:
-/// `GetSealedBk3` on the TPM path, `InitBk3` on the Caller path.
-/// (BK3 is the DDI-level name for the OBK / Owner Backup Key.)
+/// Returns the DDI op that signals `init_part` / `restore_partition`
+/// executed.
+///
+/// Historically this returned the BK3 op (`InitBk3` / `GetSealedBk3`),
+/// but `restore_partition` now reuses the cached MOBK rather than
+/// re-running the BK3 flow (real-HW `init_bk3` is one-shot per power
+/// cycle). `EstablishCredential` is always invoked by both init and
+/// restore, so it is the reliable signal going forward.
 #[cfg(feature = "res-test")]
 pub(crate) fn bk3_op() -> DdiOp {
-    if use_tpm() {
-        DdiOp::GetSealedBk3
-    } else {
-        DdiOp::InitBk3
-    }
+    DdiOp::EstablishCredential
 }
 
 /// Well-known directory name for resiliency test data.

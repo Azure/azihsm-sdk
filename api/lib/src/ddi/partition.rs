@@ -330,7 +330,7 @@ pub(crate) fn get_mobk_from_config(
             let sealed_bk3 = get_sealed_bk3(dev, rev)?;
             unseal_tpm_backup_key(&sealed_bk3)
         }
-        _ => return Err(HsmError::InvalidArgument),
+        _ => Err(HsmError::InvalidArgument),
     }
 }
 

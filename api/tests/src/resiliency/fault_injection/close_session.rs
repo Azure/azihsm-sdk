@@ -161,6 +161,7 @@ fn test_close_session_does_not_panic_after_reset() {
         Some(resiliency_config),
     )
     .expect("Partition re-init after reset should succeed");
+    save_mobk_after_init(&part);
 
     let rev = part.api_rev();
     let result = part.open_session(rev, &creds, None);

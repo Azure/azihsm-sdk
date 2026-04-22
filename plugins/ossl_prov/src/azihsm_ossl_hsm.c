@@ -800,7 +800,9 @@ azihsm_status azihsm_open_device_and_session(
     struct azihsm_buffer bmk_buf = { NULL, 0 };
     struct azihsm_buffer muk_buf = { NULL, 0 };
     struct azihsm_buffer obk_buf = { NULL, 0 };
+    struct azihsm_buffer mobk_buf = { NULL, 0 };
     struct azihsm_buffer retrieved_bmk = { NULL, 0 };
+    struct azihsm_buffer retrieved_mobk = { NULL, 0 };
     struct azihsm_buffer pota_priv_buf = { NULL, 0 };
     struct azihsm_buffer pota_pub_buf = { NULL, 0 };
     struct azihsm_buffer pota_sig_buf = { NULL, 0 };
@@ -884,52 +886,75 @@ azihsm_status azihsm_open_device_and_session(
     }
     else
     {
-        // Load the OBK from file. The OBK must be provided when using caller source.
-        // Note: the OBK is the raw owner backup key for init_bk3, NOT the masked
-        // owner backup key (MOBK) returned by the HSM.
-        status = azihsm_file_load(config->obk_path, &obk_buf);
+        // Prefer a previously-persisted MOBK over the raw OBK. The device's
+        // `init_bk3` (which derives MOBK from OBK) is one-shot per power
+        // cycle and is preserved across NSSR/reset, so subsequent inits on
+        // the same device must supply the cached MOBK rather than
+        // re-providing the OBK — otherwise init fails with
+        // Bk3AlreadyInitialized.
+        status = azihsm_file_load(config->mobk_path, &mobk_buf);
         if (status != AZIHSM_STATUS_SUCCESS)
         {
             goto cleanup;
         }
 
-        if (obk_buf.ptr == NULL)
+        if (mobk_buf.ptr != NULL)
         {
-            ERR_raise_data(
-                ERR_LIB_PROV,
-                ERR_R_INIT_FAIL,
-                "OBK file not found at '%s'. "
-                "The OBK must be a %d-byte random binary file. "
-                "Generate one with: openssl rand -out '%s' %d "
-                "(or set azihsm-obk-source=tpm to retrieve it from the TPM).",
-                config->obk_path,
-                AZIHSM_OBK_SIZE,
-                config->obk_path,
-                AZIHSM_OBK_SIZE
-            );
-            status = AZIHSM_STATUS_INTERNAL_ERROR;
-            goto cleanup;
+            backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER;
+            backup_config.owner_backup_key = NULL;
+            backup_config.masked_owner_backup_key = &mobk_buf;
         }
-
-        if (obk_buf.len != AZIHSM_OBK_SIZE)
+        else
         {
-            ERR_raise_data(
-                ERR_LIB_PROV,
-                ERR_R_INIT_FAIL,
-                "OBK file '%s' has wrong size: got %u bytes, expected %d. "
-                "Regenerate with: openssl rand -out '%s' %d",
-                config->obk_path,
-                obk_buf.len,
-                AZIHSM_OBK_SIZE,
-                config->obk_path,
-                AZIHSM_OBK_SIZE
-            );
-            status = AZIHSM_STATUS_INTERNAL_ERROR;
-            goto cleanup;
-        }
+            // No cached MOBK — first init after device power-up. Load the
+            // OBK from file so the device can derive (and we can later cache)
+            // the MOBK.
+            // Note: the OBK is the raw owner backup key for init_bk3, NOT the masked
+            // owner backup key (MOBK) returned by the HSM.
+            status = azihsm_file_load(config->obk_path, &obk_buf);
+            if (status != AZIHSM_STATUS_SUCCESS)
+            {
+                goto cleanup;
+            }
 
-        backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER;
-        backup_config.owner_backup_key = &obk_buf;
+            if (obk_buf.ptr == NULL)
+            {
+                ERR_raise_data(
+                    ERR_LIB_PROV,
+                    ERR_R_INIT_FAIL,
+                    "OBK file not found at '%s'. "
+                    "The OBK must be a %d-byte random binary file. "
+                    "Generate one with: openssl rand -out '%s' %d "
+                    "(or set azihsm-obk-source=tpm to retrieve it from the TPM).",
+                    config->obk_path,
+                    AZIHSM_OBK_SIZE,
+                    config->obk_path,
+                    AZIHSM_OBK_SIZE
+                );
+                status = AZIHSM_STATUS_INTERNAL_ERROR;
+                goto cleanup;
+            }
+
+            if (obk_buf.len != AZIHSM_OBK_SIZE)
+            {
+                ERR_raise_data(
+                    ERR_LIB_PROV,
+                    ERR_R_INIT_FAIL,
+                    "OBK file '%s' has wrong size: got %u bytes, expected %d. "
+                    "Regenerate with: openssl rand -out '%s' %d",
+                    config->obk_path,
+                    obk_buf.len,
+                    AZIHSM_OBK_SIZE,
+                    config->obk_path,
+                    AZIHSM_OBK_SIZE
+                );
+                status = AZIHSM_STATUS_INTERNAL_ERROR;
+                goto cleanup;
+            }
+
+            backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER;
+            backup_config.owner_backup_key = &obk_buf;
+        }
     }
 
     status = azihsm_get_device_handle(device, api_rev);
@@ -1058,6 +1083,28 @@ azihsm_status azihsm_open_device_and_session(
         }
     }
 
+    // Retrieve and persist MOBK property so subsequent inits on this
+    // device (after process restart or NSSR) can supply it directly via
+    // `masked_owner_backup_key` instead of re-deriving it from OBK.
+    // Only meaningful for caller-source OBK; TPM source unseals MOBK
+    // on every init.
+    if (!config->use_tpm_obk)
+    {
+        status = get_part_property(
+            *device,
+            AZIHSM_PART_PROP_ID_MASKED_OWNER_BACKUP_KEY,
+            &retrieved_mobk
+        );
+        if (status == AZIHSM_STATUS_SUCCESS && retrieved_mobk.ptr != NULL)
+        {
+            status = write_buffer_to_file(config->mobk_path, &retrieved_mobk);
+            if (status != AZIHSM_STATUS_SUCCESS)
+            {
+                goto cleanup;
+            }
+        }
+    }
+
     // Open session (seed=NULL lets the library generate random bytes internally)
     status = azihsm_sess_open(*device, &creds, NULL, session);
     if (status != AZIHSM_STATUS_SUCCESS)
@@ -1084,11 +1131,13 @@ cleanup:
     free_buffer(&bmk_buf);
     free_buffer(&muk_buf);
     free_buffer(&obk_buf);
+    free_buffer(&mobk_buf);
     free_buffer(&pota_priv_buf);
     free_buffer(&pota_pub_buf);
     free_buffer(&pota_sig_buf);
     free_buffer(&pid_pub_key_buf);
     free_buffer(&retrieved_bmk);
+    free_buffer(&retrieved_mobk);
     OPENSSL_cleanse(&creds, sizeof(creds));
 
     if (status != AZIHSM_STATUS_SUCCESS)

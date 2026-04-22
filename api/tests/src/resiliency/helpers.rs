@@ -32,6 +32,7 @@ pub(crate) fn init_with_resiliency_and_session() -> (HsmPartition, HsmSession, R
         Some(resiliency_config),
     )
     .expect("Partition init failed");
+    save_mobk_after_init(&part);
 
     let rev = part.api_rev();
     let session = part
@@ -54,6 +55,7 @@ pub(crate) fn init_without_resiliency_and_session() -> (HsmPartition, HsmSession
     let (obk_info, pota_endorsement) = make_init_params(&part);
     part.init(creds, None, None, obk_info, pota_endorsement, None)
         .expect("Partition init failed");
+    save_mobk_after_init(&part);
 
     let rev = part.api_rev();
     let session = part

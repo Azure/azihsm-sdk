@@ -477,7 +477,10 @@ fn open_and_init_partition(
     let use_tpm = std::env::var("AZIHSM_USE_TPM").is_ok();
     let (obk, pota) = if use_tpm {
         (
-            HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, HsmOwnerBackupKey::default()),
+            HsmOwnerBackupKeyConfig::new(
+                HsmOwnerBackupKeySource::Tpm,
+                HsmOwnerBackupKey::default(),
+            ),
             HsmPotaEndorsement::new(HsmPotaEndorsementSource::Tpm, None),
         )
     } else {

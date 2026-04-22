@@ -1199,8 +1199,22 @@ impl HsmPartitionInner {
     ) -> HsmResult<()> {
         // Derive MOBK once outside the retry loop. `init_bk3` is
         // one-shot per device power cycle, so it must not run again on
-        // a retry inside `init_part`.
-        let mobk = ddi::get_mobk_from_config(&self.dev, self.api_rev, &obk_config)?;
+        // a retry inside `init_part`. When resiliency is enabled we
+        // still retry the derivation itself on transient driver
+        // errors (the device-side one-shot only commits when the
+        // request actually completes), matching the retry semantics of
+        // every other DDI op invoked during init.
+        let mobk = if resiliency_config.is_some() {
+            crate::resiliency::execute_with_retry(
+                |_prev| ddi::get_mobk_from_config(&self.dev, self.api_rev, &obk_config),
+                crate::resiliency::is_init_retryable_error,
+                crate::resiliency::MAX_RETRIES,
+                crate::resiliency::BACKOFF_BASE_MS,
+                crate::resiliency::BACKOFF_JITTER_MS,
+            )?
+        } else {
+            ddi::get_mobk_from_config(&self.dev, self.api_rev, &obk_config)?
+        };
 
         let result = ddi::init_part(
             &self.dev,

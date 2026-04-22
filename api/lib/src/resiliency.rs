@@ -455,6 +455,7 @@ pub(crate) fn is_init_retryable_error<T>(result: &HsmResult<T>) -> bool {
             | Err(HsmError::NonceMismatch)
             | Err(HsmError::PartitionNotProvisioned)
             | Err(HsmError::EccVerifyFailed)
+            | Err(HsmError::Bk3AlreadyInitialized)
     )
 }
 
@@ -817,7 +818,10 @@ mod tests {
     }
 
     fn caller_obk() -> HsmOwnerBackupKeyConfig {
-        HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Caller, HsmOwnerBackupKey::from_obk(&[3u8; 32]))
+        HsmOwnerBackupKeyConfig::new(
+            HsmOwnerBackupKeySource::Caller,
+            HsmOwnerBackupKey::from_obk(&[3u8; 32]),
+        )
     }
 
     fn caller_pota() -> HsmPotaEndorsement {
@@ -857,7 +861,10 @@ mod tests {
     fn resiliency_state_tpm_pota_without_callback_succeeds() {
         let config = mock_config(false, false);
         let pota = tpm_pota();
-        let obk = HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, HsmOwnerBackupKey::default());
+        let obk = HsmOwnerBackupKeyConfig::new(
+            HsmOwnerBackupKeySource::Tpm,
+            HsmOwnerBackupKey::default(),
+        );
         ResiliencyState::validate_config(&config, &pota, &obk)
             .expect("TPM POTA without callback should be valid");
         let _state = ResiliencyState::new(config, test_creds(), HsmOwnerBackupKeySource::Tpm, pota)
@@ -869,7 +876,10 @@ mod tests {
         // TPM handles POTA endorsement itself; providing a callback is a config error.
         let config = mock_config(true, false);
         let pota = tpm_pota();
-        let obk = HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, HsmOwnerBackupKey::default());
+        let obk = HsmOwnerBackupKeyConfig::new(
+            HsmOwnerBackupKeySource::Tpm,
+            HsmOwnerBackupKey::default(),
+        );
         let err = ResiliencyState::validate_config(&config, &pota, &obk)
             .expect_err("TPM POTA with callback should fail");
         assert_eq!(err, HsmError::InvalidArgument);
@@ -889,7 +899,10 @@ mod tests {
     fn resiliency_state_tpm_obk_with_obk_callback_fails() {
         let config = mock_config(false, true);
         let pota = tpm_pota();
-        let obk = HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, HsmOwnerBackupKey::default());
+        let obk = HsmOwnerBackupKeyConfig::new(
+            HsmOwnerBackupKeySource::Tpm,
+            HsmOwnerBackupKey::default(),
+        );
         let err = ResiliencyState::validate_config(&config, &pota, &obk)
             .expect_err("TPM OBK with obk_callback should fail");
         assert_eq!(err, HsmError::InvalidArgument);

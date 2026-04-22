@@ -43,6 +43,7 @@ fn test_init_reset_init_with_resiliency() {
             Some(resiliency_config),
         )
         .expect("First init with resiliency config failed");
+        save_mobk_after_init(&part);
 
         let bmk_first = part.bmk_vec();
         assert!(
@@ -66,6 +67,7 @@ fn test_init_reset_init_with_resiliency() {
             Some(resiliency_config2),
         )
         .expect("Second init with resiliency config failed");
+        save_mobk_after_init(&part);
 
         let bmk_second = part.bmk_vec();
         assert_eq!(

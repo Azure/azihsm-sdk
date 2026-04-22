@@ -10,8 +10,6 @@
 use azihsm_api::*;
 use azihsm_api_tests_macro::*;
 use azihsm_crypto::*;
-use std::collections::HashMap;
-use std::sync::Mutex;
 use tracing::*;
 
 /// Returns `true` when the `AZIHSM_USE_TPM` environment variable is set,
@@ -148,15 +146,16 @@ pub(crate) fn make_init_params(
 ) -> (HsmOwnerBackupKeyConfig, HsmPotaEndorsement) {
     if use_tpm() {
         (
-            HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, HsmOwnerBackupKey::default()),
+            HsmOwnerBackupKeyConfig::new(
+                HsmOwnerBackupKeySource::Tpm,
+                HsmOwnerBackupKey::default(),
+            ),
             HsmPotaEndorsement::new(HsmPotaEndorsementSource::Tpm, None),
         )
     } else {
         let (sig, pubkey) = generate_pota_endorsement(part);
-        let path = part.path();
-        let cache = mobk_cache().lock().expect("mobk cache poisoned");
-        let backup_key = match cache.get(&path) {
-            Some(mobk) => HsmOwnerBackupKey::from_masked_key(mobk),
+        let backup_key = match read_cached_mobk(&part.path()) {
+            Some(mobk) => HsmOwnerBackupKey::from_masked_key(&mobk),
             None => HsmOwnerBackupKey::from_obk(&TEST_OBK),
         };
         (
@@ -169,21 +168,32 @@ pub(crate) fn make_init_params(
     }
 }
 
-/// Per-partition-path cache of the MOBK derived on the first init in
-/// this process. `init_bk3` (the DDI op that derives MOBK from OBK) is
-/// one-shot per power cycle and is preserved across reset, so all
-/// subsequent inits in the same process must supply the cached MOBK
-/// instead of re-providing the OBK.
-fn mobk_cache() -> &'static Mutex<HashMap<String, Vec<u8>>> {
-    static CACHE: std::sync::OnceLock<Mutex<HashMap<String, Vec<u8>>>> = std::sync::OnceLock::new();
-    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+/// On-disk path used to persist the per-partition MOBK across test
+/// invocations. `init_bk3` (the DDI op that derives MOBK from OBK)
+/// is one-shot per device power cycle and is preserved across reset,
+/// so subsequent inits on the same partition must supply the cached
+/// MOBK rather than re-providing the OBK. Persisting the MOBK to a
+/// file under the OS temp dir lets every process and thread reuse
+/// the value derived by the first init, including separate `cargo
+/// nextest` worker processes.
+fn mobk_cache_file_path(part_path: &str) -> std::path::PathBuf {
+    let sanitized: String = part_path
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
+    std::env::temp_dir().join(format!("azihsm-mobk-{sanitized}.bin"))
+}
+
+/// Reads the previously-persisted MOBK for `part_path`, if any.
+fn read_cached_mobk(part_path: &str) -> Option<Vec<u8>> {
+    let bytes = std::fs::read(mobk_cache_file_path(part_path)).ok()?;
+    if bytes.is_empty() { None } else { Some(bytes) }
 }
 
 /// Records the MOBK derived during a successful init so subsequent
-/// inits on the same partition path can reuse it via
+/// inits on the same partition path (in any process) can reuse it via
 /// [`make_init_params`].
-#[allow(clippy::expect_used)]
-pub(crate) fn cache_mobk_after_init(part: &HsmPartition) {
+pub(crate) fn save_mobk_after_init(part: &HsmPartition) {
     if use_tpm() {
         return;
     }
@@ -191,8 +201,7 @@ pub(crate) fn cache_mobk_after_init(part: &HsmPartition) {
     if mobk.is_empty() {
         return;
     }
-    let mut cache = mobk_cache().lock().expect("mobk cache poisoned");
-    cache.entry(part.path()).or_insert(mobk);
+    let _ = std::fs::write(mobk_cache_file_path(&part.path()), &mobk);
 }
 
 /// Executes a test function with an initialized HSM partition.
@@ -232,7 +241,7 @@ where
         let (obk_info, pota_endorsement) = make_init_params(&part);
         part.init(creds, None, None, obk_info, pota_endorsement, None)
             .expect("Partition init failed");
-        cache_mobk_after_init(&part);
+        save_mobk_after_init(&part);
         test(part, creds);
     }
 }

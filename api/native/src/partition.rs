@@ -54,9 +54,7 @@ impl<'a> TryFrom<&'a AzihsmOwnerBackupKeyConfig> for api::HsmOwnerBackupKeyConfi
                 Ok(api::HsmOwnerBackupKeyConfig::new(source, key))
             }
             api::HsmOwnerBackupKeySource::Tpm => {
-                if !config.owner_backup_key.is_null()
-                    || !config.masked_owner_backup_key.is_null()
-                {
+                if !config.owner_backup_key.is_null() || !config.masked_owner_backup_key.is_null() {
                     Err(AzihsmStatus::InvalidArgument)?;
                 }
                 Ok(api::HsmOwnerBackupKeyConfig::new(
