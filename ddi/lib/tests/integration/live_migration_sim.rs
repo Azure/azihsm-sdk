@@ -295,20 +295,10 @@ fn test_live_migration_sealed_bk3() {
         common_setup,
         common_cleanup,
         |dev, _ddi, _path, _session_id| {
-            let bk3 = [0xAB; 48];
-            let res = helper_init_bk3(dev, bk3.to_vec());
-            assert!(res.is_ok(), "Failed to init sealed BK3: {:?}", res);
-            let sealed_bk3_before = helper_get_sealed_bk3(dev);
-            assert!(
-                sealed_bk3_before.is_ok(),
-                "Failed to get sealed BK3 before migration: {:?}",
-                sealed_bk3_before
-            );
-            let sealed_bk3_data = sealed_bk3_before.unwrap();
-            info!(
-                "Retrieved sealed BK3 data: {} bytes",
-                sealed_bk3_data.data.sealed_bk3.len()
-            );
+            // `init_bk3` is one-shot per power cycle; reuse the existing
+            // sealed BK3 if it has already been provisioned.
+            let sealed_bk3 = helper_get_or_init_bk3(dev);
+            info!("Retrieved sealed BK3 data: {} bytes", sealed_bk3.len());
 
             let migration_result = dev.simulate_nssr_after_lm();
             assert!(
@@ -318,10 +308,7 @@ fn test_live_migration_sealed_bk3() {
             );
             info!("Live migration simulation completed successfully");
 
-            let set_result = helper_set_sealed_bk3(
-                dev,
-                sealed_bk3_data.data.sealed_bk3.clone().as_slice().to_vec(),
-            );
+            let set_result = helper_set_sealed_bk3(dev, sealed_bk3.as_slice().to_vec());
             assert!(
                 set_result.is_err(),
                 "Expected failure when setting sealed BK3 after migration: {:?}",
@@ -346,7 +333,7 @@ fn test_live_migration_sealed_bk3() {
             let sealed_bk3_after_data = sealed_bk3_after.unwrap();
 
             assert_eq!(
-                sealed_bk3_data.data.sealed_bk3, sealed_bk3_after_data.data.sealed_bk3,
+                sealed_bk3, sealed_bk3_after_data.data.sealed_bk3,
                 "Sealed BK3 data should be identical before and after migration"
             );
             info!("Verified sealed BK3 data integrity across migration");

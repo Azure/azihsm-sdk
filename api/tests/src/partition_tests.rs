@@ -37,7 +37,10 @@ impl ObkProviderCallback for DummyObkCallback {
 
 /// Builds a valid caller-source OBK config using the test OBK.
 fn make_valid_obk() -> HsmOwnerBackupKeyConfig {
-    HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Caller, Some(&TEST_OBK))
+    HsmOwnerBackupKeyConfig::new(
+        HsmOwnerBackupKeySource::Caller,
+        HsmOwnerBackupKey::from_obk(&TEST_OBK),
+    )
 }
 
 /// Generates valid POTA endorsement buffers (signature, public key DER) for
@@ -211,6 +214,7 @@ fn test_partition_init() {
         let (obk_info, pota_endorsement) = make_init_params(&part);
         part.init(creds, None, None, obk_info, pota_endorsement, None)
             .expect("Partition init failed");
+        cache_mobk_after_init(&part);
     }
 }
 
@@ -259,7 +263,10 @@ fn test_init_caller_source_with_null_obk_fails() {
             .expect("Failed to open the partition");
         part.reset().expect("Partition reset failed");
 
-        let obk_config = HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Caller, None);
+        let obk_config = HsmOwnerBackupKeyConfig::new(
+            HsmOwnerBackupKeySource::Caller,
+            HsmOwnerBackupKey::default(),
+        );
         let (sig, pubkey) = make_valid_pota_parts(&part);
         let pota_data = HsmPotaEndorsementData::new(&sig, &pubkey);
         let pota = HsmPotaEndorsement::new(HsmPotaEndorsementSource::Caller, Some(pota_data));
@@ -285,7 +292,10 @@ fn test_init_caller_source_with_empty_obk_fails() {
             .expect("Failed to open the partition");
         part.reset().expect("Partition reset failed");
 
-        let obk_config = HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Caller, Some(&[]));
+        let obk_config = HsmOwnerBackupKeyConfig::new(
+            HsmOwnerBackupKeySource::Caller,
+            HsmOwnerBackupKey::from_obk(&[]),
+        );
         let (sig, pubkey) = make_valid_pota_parts(&part);
         let pota_data = HsmPotaEndorsementData::new(&sig, &pubkey);
         let pota = HsmPotaEndorsement::new(HsmPotaEndorsementSource::Caller, Some(pota_data));
@@ -311,8 +321,10 @@ fn test_init_tpm_obk_source_with_obk_provided_fails() {
             .expect("Failed to open the partition");
         part.reset().expect("Partition reset failed");
 
-        let obk_config =
-            HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, Some(&TEST_OBK));
+        let obk_config = HsmOwnerBackupKeyConfig::new(
+            HsmOwnerBackupKeySource::Tpm,
+            HsmOwnerBackupKey::from_obk(&TEST_OBK),
+        );
         let (sig, pubkey) = make_valid_pota_parts(&part);
         let pota_data = HsmPotaEndorsementData::new(&sig, &pubkey);
         let pota = HsmPotaEndorsement::new(HsmPotaEndorsementSource::Caller, Some(pota_data));
@@ -342,7 +354,7 @@ fn test_init_tpm_pota_source_with_endorsement_provided_fails() {
         part.reset().expect("Partition reset failed");
 
         let obk_config = if use_tpm() {
-            HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, None)
+            HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, HsmOwnerBackupKey::default())
         } else {
             make_valid_obk()
         };
@@ -371,7 +383,10 @@ fn test_init_invalid_obk_source_fails() {
             .expect("Failed to open the partition");
         part.reset().expect("Partition reset failed");
 
-        let obk_config = HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource(99), Some(&TEST_OBK));
+        let obk_config = HsmOwnerBackupKeyConfig::new(
+            HsmOwnerBackupKeySource(99),
+            HsmOwnerBackupKey::from_obk(&TEST_OBK),
+        );
         let (sig, pubkey) = make_valid_pota_parts(&part);
         let pota_data = HsmPotaEndorsementData::new(&sig, &pubkey);
         let pota = HsmPotaEndorsement::new(HsmPotaEndorsementSource::Caller, Some(pota_data));
@@ -398,7 +413,7 @@ fn test_init_caller_source_with_empty_endorsement_fails() {
         part.reset().expect("Partition reset failed");
 
         let obk_config = if use_tpm() {
-            HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, None)
+            HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, HsmOwnerBackupKey::default())
         } else {
             make_valid_obk()
         };
@@ -427,7 +442,7 @@ fn test_init_caller_source_with_null_endorsement_fails() {
         part.reset().expect("Partition reset failed");
 
         let obk_config = if use_tpm() {
-            HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, None)
+            HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, HsmOwnerBackupKey::default())
         } else {
             make_valid_obk()
         };
@@ -455,7 +470,7 @@ fn test_init_invalid_pota_source_fails() {
         part.reset().expect("Partition reset failed");
 
         let obk_config = if use_tpm() {
-            HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, None)
+            HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, HsmOwnerBackupKey::default())
         } else {
             make_valid_obk()
         };
@@ -496,6 +511,7 @@ fn test_init_with_resiliency_config() {
             Some(resiliency_config),
         )
         .expect("Partition init with resiliency config failed");
+        cache_mobk_after_init(&part);
     }
 }
 
@@ -553,7 +569,7 @@ fn test_double_init_with_resiliency() {
         };
         let (obk_info, pota_endorsement) = if use_tpm() {
             (
-                HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, None),
+                HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, HsmOwnerBackupKey::default()),
                 HsmPotaEndorsement::new(HsmPotaEndorsementSource::Tpm, None),
             )
         } else {
@@ -579,6 +595,12 @@ fn test_double_init_with_resiliency() {
         )
         .expect("First init with resiliency failed");
 
+        // Capture the cached MOBK before reset so the second init can
+        // supply it directly. `init_bk3` is one-shot per device power
+        // cycle (preserved across reset), so re-deriving MOBK from OBK
+        // would fail; callers must pass the previously-derived MOBK.
+        let cached_mobk = part.mobk_vec();
+
         // Reset and re-init (replaces resiliency state — must not deadlock)
         part.reset().expect("Partition reset failed");
 
@@ -589,13 +611,16 @@ fn test_double_init_with_resiliency() {
         };
         let (obk_info2, pota_endorsement2) = if use_tpm() {
             (
-                HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, None),
+                HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, HsmOwnerBackupKey::default()),
                 HsmPotaEndorsement::new(HsmPotaEndorsementSource::Tpm, None),
             )
         } else {
             let (ref sig, ref pubkey) = *pota_data2.as_ref().unwrap();
             (
-                make_valid_obk(),
+                HsmOwnerBackupKeyConfig::new(
+                    HsmOwnerBackupKeySource::Caller,
+                    HsmOwnerBackupKey::from_masked_key(&cached_mobk),
+                ),
                 HsmPotaEndorsement::new(
                     HsmPotaEndorsementSource::Caller,
                     Some(HsmPotaEndorsementData::new(sig, pubkey)),
@@ -613,6 +638,7 @@ fn test_double_init_with_resiliency() {
             Some(resiliency_config2),
         )
         .expect("Second init with resiliency failed (should replace state without deadlock)");
+        cache_mobk_after_init(&part);
     }
 }
 
@@ -627,7 +653,7 @@ fn test_init_with_resiliency_invalid_pota_source_fails() {
 
         let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
         let obk_info = if use_tpm() {
-            HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, None)
+            HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, HsmOwnerBackupKey::default())
         } else {
             make_valid_obk()
         };
@@ -653,7 +679,7 @@ fn test_init_with_resiliency_tpm_pota_with_callback_fails() {
         let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
         // Use TPM OBK so obk_callback=None is valid; we're testing
         // that TPM POTA + pota_callback is rejected.
-        let obk_info = HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, None);
+        let obk_info = HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, HsmOwnerBackupKey::default());
         let pota_endorsement = HsmPotaEndorsement::new(HsmPotaEndorsementSource::Tpm, None);
 
         // TPM source + callback provided → should fail with InvalidArgument.
@@ -694,7 +720,7 @@ fn test_init_with_resiliency_tpm_obk_with_callback_fails() {
 
         let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
         // Use TPM OBK + TPM POTA so pota_callback=None is valid.
-        let obk_info = HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, None);
+        let obk_info = HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, HsmOwnerBackupKey::default());
         let pota_endorsement = HsmPotaEndorsement::new(HsmPotaEndorsementSource::Tpm, None);
 
         // TPM OBK source + obk_callback provided → should fail with InvalidArgument.
@@ -763,7 +789,7 @@ fn test_init_with_resiliency_caller_obk_without_callback_fails() {
 
 #[test]
 fn test_obk_config_key_returns_none_for_tpm() {
-    let config = HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, None);
+    let config = HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, HsmOwnerBackupKey::default());
     assert!(config.key().is_none());
     assert_eq!(config.key_source(), HsmOwnerBackupKeySource::Tpm);
 }
@@ -771,14 +797,14 @@ fn test_obk_config_key_returns_none_for_tpm() {
 #[test]
 fn test_obk_config_key_returns_data_for_caller() {
     let data = [0xABu8; 48];
-    let config = HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Caller, Some(&data));
+    let config = HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Caller, HsmOwnerBackupKey::from_obk(&data));
     assert_eq!(config.key(), Some(data.as_slice()));
     assert_eq!(config.key_source(), HsmOwnerBackupKeySource::Caller);
 }
 
 #[test]
 fn test_obk_config_clone_is_independent() {
-    let original = HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Caller, Some(&[1u8; 32]));
+    let original = HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Caller, HsmOwnerBackupKey::from_obk(&[1u8; 32]));
     let cloned = original.clone();
 
     // Both have the same values

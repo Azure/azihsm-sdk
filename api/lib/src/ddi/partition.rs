@@ -18,15 +18,13 @@ use super::*;
 
 /// Result of a successful [`init_part`] call.
 ///
-/// Carries the key material plus the POTA endorsement that was actually
-/// sent to the device. When resiliency is enabled and the POTA source is
+/// Carries the BMK plus the POTA endorsement that was actually sent to
+/// the device. When resiliency is enabled and the POTA source is
 /// Caller, this may differ from the original caller-supplied endorsement
 /// because the callback re-signed over the current device's PID cert.
 pub(crate) struct InitPartResult {
     /// Backup masking key returned by the device.
     pub(crate) bmk: Vec<u8>,
-    /// Masked owner backup key.
-    pub(crate) mobk: Vec<u8>,
     /// POTA endorsement data that was actually used.
     pub(crate) pota_endorsement_data: HsmPotaEndorsementData,
 }
@@ -244,6 +242,11 @@ pub(crate) fn invoke_pota_callback(
 /// and optionally providing master key material. This operation must be performed
 /// before the partition can be used for cryptographic operations.
 ///
+/// `mobk` must be derived once by the caller via
+/// [`get_mobk_from_config`] *before* invoking this function. `init_bk3`
+/// (the Caller+OBK derivation path) is one-shot per device power
+/// cycle, so it must not run inside the retry loop.
+///
 /// # Arguments
 ///
 /// * `dev` - The HSM device handle
@@ -251,7 +254,7 @@ pub(crate) fn invoke_pota_callback(
 /// * `creds` - Application credentials (ID and PIN)
 /// * `bmk` - Optional backup masking key
 /// * `muk` - Optional masked unwrapping key
-/// * `obk_config` - Owner backup key (OBK) configuration
+/// * `mobk` - Masked owner backup key derived by the caller
 /// * `pota_endorsement` - The partition owner trust anchor endorsement
 /// * `resiliency_config` - Optional resiliency configuration; when `Some`,
 ///   enables retry with backoff on transient errors and invokes the `PotaEndorsementCallback` on retries.
@@ -267,8 +270,6 @@ pub(crate) fn invoke_pota_callback(
 /// - The API revision is not supported
 /// - Device communication fails
 /// - The DDI operation returns an error
-/// - TPM unsealing fails (when obk_config source is TPM)
-/// - OBK is missing when obk_config source is Caller
 #[resiliency_init_part]
 pub(crate) fn init_part(
     dev: &HsmDev,
@@ -276,7 +277,7 @@ pub(crate) fn init_part(
     creds: HsmCredentials,
     bmk: Option<&[u8]>,
     muk: Option<&[u8]>,
-    obk_config: &HsmOwnerBackupKeyConfig,
+    mobk: &[u8],
     pota_endorsement: &HsmPotaEndorsement,
     resiliency_config: Option<&HsmResiliencyConfig>,
 ) -> HsmResult<InitPartResult> {
@@ -291,14 +292,14 @@ pub(crate) fn init_part(
         creds,
         bmk,
         muk,
-        obk_config,
+        mobk,
         pota_endorsement,
         resiliency_config,
         reendorse,
     )
 }
 
-fn get_mobk_from_config(
+pub(crate) fn get_mobk_from_config(
     dev: &HsmDev,
     rev: HsmApiRev,
     obk_config: &HsmOwnerBackupKeyConfig,
@@ -357,13 +358,11 @@ pub(crate) fn init_part_raw_no_res(
     creds: HsmCredentials,
     bmk: Option<&[u8]>,
     muk: Option<&[u8]>,
-    obk_config: &HsmOwnerBackupKeyConfig,
+    mobk: &[u8],
     pota_endorsement: &HsmPotaEndorsement,
     resiliency_config: Option<&HsmResiliencyConfig>,
     reendorse: bool,
 ) -> HsmResult<InitPartResult> {
-    let mobk = get_mobk_from_config(dev, rev, obk_config)?;
-
     // Compute POTA endorsement based on source.
     let (pota_signature, pota_public_key) =
         get_pota_endorsement(dev, rev, pota_endorsement, resiliency_config, reendorse)?;
@@ -404,14 +403,13 @@ pub(crate) fn init_part_raw_no_res(
         &pub_key,
         &resolved_bmk,
         &resolved_muk,
-        &mobk,
+        mobk,
         &pota_endorsement,
         resiliency_config,
     )?;
 
     Ok(InitPartResult {
         bmk,
-        mobk,
         pota_endorsement_data: pota_endorsement,
     })
 }

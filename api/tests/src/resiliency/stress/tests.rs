@@ -1873,6 +1873,12 @@ fn test_stress_init_part_under_reset() {
     )
     .expect("Initial partition init failed");
 
+    // Capture the cached MOBK so worker re-inits can supply it
+    // directly instead of re-providing OBK. `init_bk3` is one-shot
+    // per device power cycle (preserved across reset), so the SDK
+    // re-derivation path would fail on subsequent inits.
+    let cached_mobk: Arc<Vec<u8>> = Arc::new(part.mobk_vec());
+
     let stop = Arc::new(AtomicBool::new(false));
     let barrier = Arc::new(Barrier::new(NUM_WORKERS + 1));
 
@@ -1885,12 +1891,27 @@ fn test_stress_init_part_under_reset() {
             let barrier = barrier.clone();
             let part = part.clone();
             let dir = shared_dir.clone();
+            let cached_mobk = cached_mobk.clone();
             thread::spawn(move || {
                 barrier.wait();
                 let mut successes = 0u32;
                 for i in 0..ITERATIONS_PER_WORKER {
                     let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
-                    let (obk_info, pota_endorsement) = make_init_params(&part);
+                    let (obk_info, pota_endorsement) = if use_tpm() {
+                        make_init_params(&part)
+                    } else {
+                        let (sig, pubkey) = generate_pota_endorsement(&part);
+                        (
+                            HsmOwnerBackupKeyConfig::new(
+                                HsmOwnerBackupKeySource::Caller,
+                                HsmOwnerBackupKey::from_masked_key(&cached_mobk),
+                            ),
+                            HsmPotaEndorsement::new(
+                                HsmPotaEndorsementSource::Caller,
+                                Some(HsmPotaEndorsementData::new(&sig, &pubkey)),
+                            ),
+                        )
+                    };
                     let resiliency_config = make_resiliency_config_in(&dir);
 
                     let result = part.init(

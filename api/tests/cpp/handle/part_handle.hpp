@@ -10,6 +10,7 @@
 #include <mutex>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -86,6 +87,17 @@ class PartitionHandle
         return mutex;
     }
 
+    // Per-path cache of the MOBK derived on the first init after the
+    // device powers up. `init_bk3` (the DDI operation that derives
+    // MOBK from OBK) is one-shot per power cycle and is preserved
+    // across NSSR/reset, so subsequent inits must supply the cached
+    // MOBK directly instead of re-providing the OBK.
+    static std::unordered_map<std::string, std::vector<uint8_t>> &get_mobk_cache()
+    {
+        static std::unordered_map<std::string, std::vector<uint8_t>> cache;
+        return cache;
+    }
+
     void open_and_init(std::vector<azihsm_char> &path, uint32_t index)
     {
         azihsm_str path_str;
@@ -118,6 +130,22 @@ class PartitionHandle
         PartInitConfig init_config{};
         make_part_init_config(handle_, init_config);
 
+        // If we've previously derived a MOBK for this partition path,
+        // pass it via `masked_owner_backup_key` instead of the OBK.
+        // The device would otherwise reject the second `init_bk3` call.
+        std::string path_key(reinterpret_cast<const char *>(path.data()), path.size());
+        auto &cache = get_mobk_cache();
+        azihsm_buffer mobk_buf{};
+        auto it = cache.find(path_key);
+        if (it != cache.end() &&
+            init_config.backup_config.source == AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER)
+        {
+            mobk_buf.ptr = it->second.data();
+            mobk_buf.len = static_cast<uint32_t>(it->second.size());
+            init_config.backup_config.owner_backup_key = nullptr;
+            init_config.backup_config.masked_owner_backup_key = &mobk_buf;
+        }
+
         err = azihsm_part_init(
             handle_,
             &creds,
@@ -134,6 +162,29 @@ class PartitionHandle
             throw std::runtime_error(
                 "Failed to initialize partition. Error: " + std::to_string(err)
             );
+        }
+
+        // Cache the MOBK for subsequent inits on this partition.
+        if (it == cache.end() &&
+            init_config.backup_config.source == AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER)
+        {
+            // Query required length first.
+            azihsm_part_prop prop{};
+            prop.id = AZIHSM_PART_PROP_ID_MASKED_OWNER_BACKUP_KEY;
+            prop.val = nullptr;
+            prop.len = 0;
+            auto query_err = azihsm_part_get_prop(handle_, &prop);
+            if (query_err == AZIHSM_STATUS_BUFFER_TOO_SMALL && prop.len > 0)
+            {
+                std::vector<uint8_t> mobk(prop.len);
+                prop.val = mobk.data();
+                query_err = azihsm_part_get_prop(handle_, &prop);
+                if (query_err == AZIHSM_STATUS_SUCCESS)
+                {
+                    mobk.resize(prop.len);
+                    cache.emplace(std::move(path_key), std::move(mobk));
+                }
+            }
         }
     }
 };

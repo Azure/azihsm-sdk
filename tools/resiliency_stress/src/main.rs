@@ -477,14 +477,17 @@ fn open_and_init_partition(
     let use_tpm = std::env::var("AZIHSM_USE_TPM").is_ok();
     let (obk, pota) = if use_tpm {
         (
-            HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, None),
+            HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Tpm, HsmOwnerBackupKey::default()),
             HsmPotaEndorsement::new(HsmPotaEndorsementSource::Tpm, None),
         )
     } else {
         let pid_pub_key_der = part.pub_key().expect("Failed to get PID public key");
         let (sig, pubkey_der) = generate_pota_endorsement(&pid_pub_key_der);
         (
-            HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Caller, Some(&TEST_OBK)),
+            HsmOwnerBackupKeyConfig::new(
+                HsmOwnerBackupKeySource::Caller,
+                HsmOwnerBackupKey::from_obk(&TEST_OBK),
+            ),
             HsmPotaEndorsement::new(
                 HsmPotaEndorsementSource::Caller,
                 Some(HsmPotaEndorsementData::new(&sig, &pubkey_der)),
