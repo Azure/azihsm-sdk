@@ -481,7 +481,8 @@ static int azihsm_ossl_rsa_digest_sign_init(
 
     /* Get hash algorithm by name */
     ctx->md =
-        EVP_get_digestbyname(mdname); // CodeQL [SM02689]  This is passed in externally by customer and must remain in order to keep backward compatibility.
+        EVP_get_digestbyname(mdname); // CodeQL [SM02689]  This is passed in externally by customer
+                                      // and must remain in order to keep backward compatibility.
     if (ctx->md == NULL)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_OPERATION_FAIL);
@@ -695,7 +696,8 @@ static int azihsm_ossl_rsa_digest_verify_init(
     ctx->operation = 0; /* Verify */
 
     /* Get hash algorithm by name */
-    ctx->md = EVP_get_digestbyname(mdname); // CodeQL [SM02689]  This is passed in externally by customer and must remain in order to keep backward compatibility.
+    ctx->md = EVP_get_digestbyname(mdname); // CodeQL [SM02689]  This is passed in externally by customer
+                                            // and must remain in order to keep backward compatibility.
     if (ctx->md == NULL)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_OPERATION_FAIL);
@@ -881,7 +883,8 @@ static int azihsm_ossl_rsa_set_ctx_params(void *sctx, const OSSL_PARAM params[])
             return OSSL_FAILURE;
         }
 
-        ctx->md = EVP_get_digestbyname(mdname); // CodeQL [SM02689]  This is passed in externally by customer and must remain in order to keep backward compatibility.
+        ctx->md = EVP_get_digestbyname(mdname); // CodeQL [SM02689]  This is passed in externally by customer
+                                                // and must remain in order to keep backward compatibility.
         if (ctx->md == NULL)
         {
             ERR_raise(ERR_LIB_PROV, ERR_R_OPERATION_FAIL);
@@ -1000,7 +1003,8 @@ static int azihsm_ossl_rsa_set_ctx_params(void *sctx, const OSSL_PARAM params[])
             return OSSL_FAILURE;
         }
 
-        ctx->mgf1_md = EVP_get_digestbyname(mgf1_mdname); // CodeQL [SM02689]  This is passed in externally by customer and must remain in order to keep backward compatibility.
+        ctx->mgf1_md = EVP_get_digestbyname(mgf1_mdname); // CodeQL [SM02689]  This is passed in externally by customer
+                                                          // and must remain in order to keep backward compatibility.
         if (ctx->mgf1_md == NULL)
         {
             ERR_raise(ERR_LIB_PROV, ERR_R_OPERATION_FAIL);
