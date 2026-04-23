@@ -479,10 +479,11 @@ static int azihsm_ossl_rsa_digest_sign_init(
 
     ctx->operation = 1; /* Sign */
 
-    /* Get hash algorithm by name */
-    ctx->md =
-        EVP_get_digestbyname(mdname); // CodeQL [SM02689]  This is passed in externally by customer
-                                      // and must remain in order to keep backward compatibility.
+    /*
+     * Resolve digest name provided by the OpenSSL caller for backward
+     * compatibility. Reject unsupported names below when lookup fails.
+     */
+    ctx->md = EVP_get_digestbyname(mdname);
     if (ctx->md == NULL)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_OPERATION_FAIL);
@@ -695,9 +696,11 @@ static int azihsm_ossl_rsa_digest_verify_init(
     ctx->key = (AZIHSM_RSA_KEY *)provkey;
     ctx->operation = 0; /* Verify */
 
-    /* Get hash algorithm by name */
-    ctx->md = EVP_get_digestbyname(mdname); // CodeQL [SM02689]  This is passed in externally by customer
-                                            // and must remain in order to keep backward compatibility.
+    /*
+     * Resolve digest name provided by the OpenSSL caller for backward
+     * compatibility. Reject unsupported names below when lookup fails.
+     */
+    ctx->md = EVP_get_digestbyname(mdname);
     if (ctx->md == NULL)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_OPERATION_FAIL);
@@ -883,8 +886,11 @@ static int azihsm_ossl_rsa_set_ctx_params(void *sctx, const OSSL_PARAM params[])
             return OSSL_FAILURE;
         }
 
-        ctx->md = EVP_get_digestbyname(mdname); // CodeQL [SM02689]  This is passed in externally by customer
-                                                // and must remain in order to keep backward compatibility.
+        /*
+         * Resolve digest name provided by the OpenSSL caller for backward
+         * compatibility. Reject unsupported names below when lookup fails.
+         */
+        ctx->md = EVP_get_digestbyname(mdname);
         if (ctx->md == NULL)
         {
             ERR_raise(ERR_LIB_PROV, ERR_R_OPERATION_FAIL);
@@ -1003,8 +1009,11 @@ static int azihsm_ossl_rsa_set_ctx_params(void *sctx, const OSSL_PARAM params[])
             return OSSL_FAILURE;
         }
 
-        ctx->mgf1_md = EVP_get_digestbyname(mgf1_mdname); // CodeQL [SM02689]  This is passed in externally by customer
-                                                          // and must remain in order to keep backward compatibility.
+        /*
+         * Resolve MGF1 digest name provided by the OpenSSL caller for backward
+         * compatibility. Reject unsupported names below when lookup fails.
+         */
+        ctx->mgf1_md = EVP_get_digestbyname(mgf1_mdname);
         if (ctx->mgf1_md == NULL)
         {
             ERR_raise(ERR_LIB_PROV, ERR_R_OPERATION_FAIL);
