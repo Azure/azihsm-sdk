@@ -571,10 +571,7 @@ fn test_hmac_verify_fails_with_empty_tag(session: HsmSession) {
     let mut verify_algo = HsmHmacAlgo::new();
     let result = HsmVerifier::verify(&mut verify_algo, &key_b, data, &[]);
 
-    assert!(
-        result.is_err() || matches!(result, Ok(false)),
-        "Empty tag must not verify"
-    );
+    assert_eq!(result, Ok(false), "Empty tag must not verify");
 }
 
 /// Ensures streaming finish works correctly without any update calls (empty message).
@@ -619,9 +616,9 @@ fn test_hmac_streaming_exact_limit(session: HsmSession) {
     assert!(is_valid, "1024-byte streaming should succeed");
 }
 
-/// Ensures verification fails when signing and verifying keys use different hash families.
+/// Ensures verification fails when key kinds differ (including tag length mismatch).
 #[session_test]
-fn test_hmac_verify_fails_with_mismatched_hash_family(session: HsmSession) {
+fn test_hmac_verify_fails_with_mismatched_key_kind_and_tag_length(session: HsmSession) {
     let (key_a, _) = derive_ecdh_hmac_keypair(
         &session,
         HsmEccCurve::P256,
@@ -644,11 +641,42 @@ fn test_hmac_verify_fails_with_mismatched_hash_family(session: HsmSession) {
     let mut verify_algo = HsmHmacAlgo::new();
     let result = HsmVerifier::verify(&mut verify_algo, &key_b, data, &tag);
 
-    let is_valid = result.unwrap_or(false);
+    let is_valid = result.expect("HMAC verify failed unexpectedly");
 
     assert!(
         !is_valid,
         "Verification must fail across different hash families"
+    );
+}
+
+#[session_test]
+fn test_hmac_verify_fails_with_mismatched_derivation_hash(session: HsmSession) {
+    let key_kind = HsmKeyKind::HmacSha256; // same tag length
+
+    let (key_a, _) = derive_ecdh_hmac_keypair(
+        &session,
+        HsmEccCurve::P256,
+        HsmHashAlgo::Sha256, // HKDF hash A
+        key_kind,
+    );
+
+    let (_, key_b) = derive_ecdh_hmac_keypair(
+        &session,
+        HsmEccCurve::P256,
+        HsmHashAlgo::Sha384, // HKDF hash B (DIFFERENT)
+        key_kind,
+    );
+
+    let data = b"hash mismatch test";
+
+    let tag = HsmSigner::sign_vec(&mut HsmHmacAlgo::new(), &key_a, data).unwrap();
+
+    let is_valid =
+        HsmVerifier::verify(&mut HsmHmacAlgo::new(), &key_b, data, &tag).unwrap_or(false);
+
+    assert!(
+        !is_valid,
+        "Verification must fail for mismatched derivation hash"
     );
 }
 
@@ -850,10 +878,11 @@ fn test_hmac_algo_reuse_after_failure(session: HsmSession) {
 
     let mut algo = HsmHmacAlgo::new();
 
-    // trigger failure
-    let _ = HsmVerifier::verify(&mut algo, &key_b, b"msg", &[]);
+    // Empty-tag verification is a normal verification miss, not an operational error.
+    let valid = HsmVerifier::verify(&mut algo, &key_b, b"msg", &[]).unwrap();
+    assert!(!valid, "Empty tag should produce a verification miss");
 
-    // reuse after failure
+    // Reuse after verification miss.
     let tag = HsmSigner::sign_vec(&mut algo, &key_a, b"msg").unwrap();
 
     let valid = HsmVerifier::verify(&mut HsmHmacAlgo::new(), &key_b, b"msg", &tag).unwrap();
@@ -882,9 +911,9 @@ fn test_hmac_tag_length_matches_hash(session: HsmSession) {
     }
 }
 
-/// Ensures streaming context is bound to the original key and cannot be reused with another key.
+/// Ensures a tag produced via streaming with one key does not verify with a different key.
 #[session_test]
-fn test_hmac_streaming_context_key_binding(session: HsmSession) {
+fn test_hmac_verify_fails_with_different_key_after_streaming_sign(session: HsmSession) {
     let (key_a, _) = derive_ecdh_hmac_keypair(
         &session,
         HsmEccCurve::P256,
@@ -922,8 +951,10 @@ fn test_hmac_streaming_state_after_failed_update(session: HsmSession) {
     let mut ctx = HsmSigner::sign_init(HsmHmacAlgo::new(), key_a).unwrap();
 
     // trigger failure
-    let _ = HsmSignStreamingOpContext::update(&mut ctx, &vec![0u8; 1025]);
-
+    assert!(matches!(
+        HsmSignStreamingOpContext::update(&mut ctx, &vec![0u8; 1025]),
+        Err(HsmError::IndexOutOfRange)
+    ));
     // continue using context
     HsmSignStreamingOpContext::update(&mut ctx, b"valid").unwrap();
     let tag = HsmSignStreamingOpContext::finish_vec(&mut ctx).unwrap();
