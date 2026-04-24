@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 use super::*;
+use crate::testvectors::ecc::ECC_P521_TEST_VECTORS;
 
 #[test]
 fn test_ecc_sign_verify_p512() {

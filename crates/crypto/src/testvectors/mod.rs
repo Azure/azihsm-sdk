@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 pub mod aes;
+pub mod ecc;
 pub mod hash;
 pub mod hkdf;
 pub mod hmac;
