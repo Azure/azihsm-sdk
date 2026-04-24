@@ -27,7 +27,9 @@
 #include <atomic>
 #include <chrono>
 #include <cstring>
+#include <functional>
 #include <gtest/gtest.h>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -63,8 +65,8 @@ static constexpr uint32_t NUM_WORKERS = 8;
 ///   2. Resets the partition to a clean state.
 ///   3. Initializes with resiliency enabled (using the existing
 ///      resiliency_config.hpp file-backed storage, flock-based lock,
-///      and dummy POTA/OBK callbacks — the same callback pattern used
-///      by the OSSL CAPI resiliency tests).
+///      and real POTA signing/OBK callbacks — the same callback
+///      infrastructure used by the OSSL CAPI resiliency tests).
 ///   4. Opens a session.
 ///
 /// Derived test fixtures call run_under_reset() to exercise operations

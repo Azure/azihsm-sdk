@@ -235,7 +235,6 @@ static azihsm_status lock_release(void *ctx)
 // key, exactly as generate_pota_endorsement() does for the initial init.
 // This is required for restore_partition() to succeed: the device
 // verifies the POTA endorsement with ECC, so a zeroed signature fails.
-static constexpr uint32_t POTA_SIG_SIZE = 96;
 
 static azihsm_status pota_endorse(
     void * /*ctx*/,

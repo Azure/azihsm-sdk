@@ -23,8 +23,8 @@ class init_resiliency_stress : public resiliency_stress_base
 // Tests
 // ---------------------------------------------------------------------------
 
-/// Multiple threads repeatedly call cert_chain while a dedicated thread
-/// fires resets. Every cert_chain call must eventually succeed.
+/// A single worker thread repeatedly calls cert_chain while a dedicated
+/// thread fires resets. Every cert_chain call must eventually succeed.
 ///
 TEST_F(init_resiliency_stress, cert_chain_under_reset)
 {
@@ -72,7 +72,7 @@ TEST_F(init_resiliency_stress, cert_chain_under_reset)
     });
 }
 
-/// Multiple threads repeatedly call init() with resiliency enabled
+/// A single worker thread repeatedly calls init() with resiliency enabled
 /// while a dedicated thread fires resets. Every init() call must
 /// eventually succeed.
 ///
