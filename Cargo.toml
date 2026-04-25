@@ -28,12 +28,22 @@ members = [
   "ddi/sim",
   "ddi/test_helpers",
   "ddi/win",
+  "fw/core/ddi/derive",
+  "fw/core/ddi/lib",
+  "fw/core/ddi/mbor",
+  "fw/core/ddi/types",
+  "fw/core/lib",
+  "fw/core/tracing",
+  "fw/pal/traits",
+  "fw/plat/std/lib",
+  "fw/plat/std/pal",
   "plugins/ossl_prov",
   "plugins/ossl_prov/integration-tests/nginx",
   "plugins/ossl_prov/integration-tests/openssl-capi",
   "plugins/ossl_prov/integration-tests/openssl-cli",
   "tools/resiliency_stress",
   "xtask",
+
 ]
 
 [workspace.dependencies]
@@ -66,23 +76,44 @@ test_with_tracing = { path = "crates/test_with_tracing" }
 test_with_tracing_macro = { path = "crates/test_with_tracing/test_with_tracing_macro" }
 x509 = { path = "crates/x509" }
 
+# Firmware crates
+azihsm_fw_ddi = { path = "fw/core/ddi/lib" }
+azihsm_fw_ddi_derive = { path = "fw/core/ddi/derive" }
+azihsm_fw_ddi_mbor = { path = "fw/core/ddi/mbor" }
+azihsm_fw_ddi_types = { path = "fw/core/ddi/types" }
+azihsm_fw_hsm_core = { path = "fw/core/lib" }
+azihsm_fw_hsm_core_tracing = { path = "fw/core/tracing" }
+azihsm_fw_hsm_pal_std = { path = "fw/plat/std/pal" }
+azihsm_fw_hsm_pal_traits = { path = "fw/pal/traits" }
+
+# Embassy crates
+embassy-executor = "0.10.0"
+embassy-futures = "0.1.2"
+embassy-sync = "0.8.0"
+embassy-time = "0.5.1"
+embassy-time-driver = "0.2.2"
+embassy-time-queue-utils = "0.3.1"
+
 # Public crates
 anyhow = "1.0"
 arbitrary = "1"
 asn1 = "0.23.0"
+async-channel = "2.0.0"
 bitfield = "0.19.1"
-bitfield-struct = "0.5"
+bitfield-struct = "0.13.0"
 bitflags = "2.10.0"
 cfg-if = "1"
 chrono = "0.4.31"
 clap = "4.2"
 cmake = "0.1.57"
 convert_case = "0.6.0"
+critical-section = "1.2.0"
 darling = "0.20.11"
 delegate = "0.13.3"
 der = "0.7.8"
 env_logger = "0.11.8"
 fs2 = "0.4.3"
+getrandom = "0.2"
 glob = "0.3"
 hex = "0.4.3"
 is-terminal = "0.4"
@@ -92,9 +123,12 @@ jzon = "0.12.5"
 lazy_static = "1.5.0"
 libc = "0.2"
 libtest-mimic = "0.8.1"
+lit = "1.0.4"
 log = "0.4"
+memmap2 = "0.9"
 minicbor = "0.19.1"
 nix = "0.26"
+num-bigint = "0.4"
 open-enum = "0.3.0"
 openssl = "0.10.68"
 openssl-sys = "0.9"
@@ -104,15 +138,18 @@ pastey = "0.2.1"
 pem-rfc7468 = "0.7.0"
 pkcs1 = "0.7.5"
 pkcs8 = "0.10.2"
-proc-macro2 = "1.0.103"
+proc-macro2 = "1.0.106"
 quote = "1.0"
 rand = "0.10.1"
 sec1 = "=0.8.0-rc.10"
+serial_test = "3.3.1"
 similar = "2.4"
 spki = "0.7.3"
+static_cell = "2"
 syn = "2"
 test-log = "0.2.8"
 thiserror = "1.0"
+tokio = "1.0.0"
 toml_edit = "0.25.11"
 tracing = "0.1"
 tracing-subscriber = "0.3.16"

@@ -7,7 +7,8 @@ use crate::*;
 
 /// DDI HKDF Derive Function Request Structure
 #[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
-#[derive(Debug, Ddi, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, Ddi, PartialEq, Eq, Clone)]
+#[cfg_attr(feature = "array", derive(Copy))]
 #[ddi(map)]
 pub struct DdiHkdfDeriveReq {
     /// Key ID
@@ -47,7 +48,8 @@ pub struct DdiHkdfDeriveReq {
 
 /// DDI HKDF Derive Function Response Structure
 #[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
-#[derive(Debug, Ddi, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, Ddi, PartialEq, Eq, Clone)]
+#[cfg_attr(feature = "array", derive(Copy))]
 #[ddi(map)]
 pub struct DdiHkdfDeriveResp {
     /// Derived AES key
@@ -67,7 +69,8 @@ ddi_op_req_resp!(DdiHkdfDerive);
 
 /// DDI KBKDF Counter HMAC Derive Function Request Structure
 #[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
-#[derive(Debug, Ddi, Copy, Clone)]
+#[derive(Debug, Ddi, Clone)]
+#[cfg_attr(feature = "array", derive(Copy))]
 #[ddi(map)]
 pub struct DdiKbkdfCounterHmacDeriveReq {
     /// Key ID
@@ -107,7 +110,8 @@ pub struct DdiKbkdfCounterHmacDeriveReq {
 
 /// DDI KBKDF Counter HMAC Derive Function Response Structure
 #[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
-#[derive(Debug, Ddi, Copy, Clone)]
+#[derive(Debug, Ddi, Clone)]
+#[cfg_attr(feature = "array", derive(Copy))]
 #[ddi(map)]
 pub struct DdiKbkdfCounterHmacDeriveResp {
     /// Derived AES key

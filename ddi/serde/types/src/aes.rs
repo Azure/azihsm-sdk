@@ -117,7 +117,8 @@ pub struct DdiAesGenerateKeyReq {
 
 /// DDI AES Generate Key Response Structure
 #[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
-#[derive(Debug, Ddi, Copy, Clone)]
+#[derive(Debug, Ddi, Clone)]
+#[cfg_attr(feature = "array", derive(Copy))]
 #[ddi(map)]
 pub struct DdiAesGenerateKeyResp {
     /// Key ID

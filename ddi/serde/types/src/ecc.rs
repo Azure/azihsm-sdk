@@ -24,7 +24,8 @@ pub enum DdiEccCurve {
 
 /// DDI ECC Generate Key Pair Request Structure
 #[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
-#[derive(Debug, Ddi, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, Ddi, PartialEq, Eq, Clone)]
+#[cfg_attr(feature = "array", derive(Copy))]
 #[ddi(map)]
 pub struct DdiEccGenerateKeyPairReq {
     /// ECC curve
@@ -197,7 +198,8 @@ impl DdiEcdhKeyExchangeReq {
 
 /// DDI ECDH Key Exchange Response Structure
 #[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
-#[derive(Debug, Ddi, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, Ddi, PartialEq, Eq, Clone)]
+#[cfg_attr(feature = "array", derive(Copy))]
 #[ddi(map)]
 pub struct DdiEcdhKeyExchangeResp {
     /// Derived private ECDH secret

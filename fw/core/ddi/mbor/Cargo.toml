@@ -1,0 +1,17 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+[package]
+edition = "2021"
+name = "azihsm_fw_ddi_mbor"
+version = "0.1.0"
+
+[lib]
+bench = false
+doctest = false
+
+[dev-dependencies]
+azihsm_ddi_mbor = { workspace = true, features = ["array", "post_decode", "pre_encode"] }
+
+[lints]
+workspace = true

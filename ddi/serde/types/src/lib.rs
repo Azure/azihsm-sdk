@@ -1173,7 +1173,8 @@ pub enum DdiKeyAvailability {
 
 /// DDI Key Properties Structure
 #[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
-#[derive(Debug, Ddi, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Ddi, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "array", derive(Copy))]
 #[ddi(map)]
 pub struct DdiTargetKeyProperties {
     /// Key Metadata
@@ -1187,7 +1188,8 @@ pub struct DdiTargetKeyProperties {
 
 /// DDI Key Properties Structure
 #[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
-#[derive(Debug, Ddi, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Ddi, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "array", derive(Copy))]
 #[ddi(map)]
 pub struct DdiKeyProperties {
     /// Key Usage
