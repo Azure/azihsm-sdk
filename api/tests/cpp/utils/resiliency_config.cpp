@@ -283,14 +283,14 @@ static azihsm_status pota_endorse(
 }
 
 // Dummy OBK provider callback
-static constexpr uint32_t DUMMY_OBK_SIZE = 48;
+static constexpr uint32_t TEST_OBK_SIZE = 48;
 
 static azihsm_status obk_get_obk(void * /*ctx*/, azihsm_buffer *obk)
 {
     // First call: report required size.
-    if (obk->ptr == nullptr || obk->len < DUMMY_OBK_SIZE)
+    if (obk->ptr == nullptr || obk->len < TEST_OBK_SIZE)
     {
-        obk->len = DUMMY_OBK_SIZE;
+        obk->len = TEST_OBK_SIZE;
         return AZIHSM_STATUS_BUFFER_TOO_SMALL;
     }
 
@@ -298,8 +298,8 @@ static azihsm_status obk_get_obk(void * /*ctx*/, azihsm_buffer *obk)
     // This must match TEST_OBK from test_creds.hpp — if the values differ,
     // restore_partition() will fail because the OBK won't match what the
     // device was provisioned with.
-    std::memcpy(obk->ptr, TEST_OBK, DUMMY_OBK_SIZE);
-    obk->len = DUMMY_OBK_SIZE;
+    std::memcpy(obk->ptr, TEST_OBK, TEST_OBK_SIZE);
+    obk->len = TEST_OBK_SIZE;
     return AZIHSM_STATUS_SUCCESS;
 }
 
