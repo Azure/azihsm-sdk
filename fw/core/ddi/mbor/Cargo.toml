@@ -11,7 +11,11 @@ bench = false
 doctest = false
 
 [dev-dependencies]
-azihsm_ddi_mbor = { workspace = true, features = ["array", "post_decode", "pre_encode"] }
+azihsm_ddi_mbor = { features = [
+  "array",
+  "post_decode",
+  "pre_encode",
+], workspace = true }
 
 [lints]
 workspace = true

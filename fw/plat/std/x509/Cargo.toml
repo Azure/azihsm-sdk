@@ -1,0 +1,20 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+[package]
+edition = "2021"
+name = "azihsm_fw_hsm_std_x509"
+version = "0.1.0"
+
+[dependencies]
+bitfield-struct.workspace = true
+
+[dev-dependencies]
+azihsm_crypto.workspace = true
+x509.workspace = true
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+openssl.workspace = true
+
+[lints]
+workspace = true

@@ -4,13 +4,13 @@
 pub(crate) mod get_api_rev;
 pub(crate) mod get_device_info;
 
-use azihsm_fw_ddi_types::error::DdiErrResp;
-use azihsm_fw_ddi_types::*;
 use azihsm_fw_ddi_mbor::MborEncode;
 use azihsm_fw_ddi_mbor::MborEncoder;
 use azihsm_fw_ddi_mbor::MborLen;
 use azihsm_fw_ddi_mbor::MborLenAccumulator;
 use azihsm_fw_ddi_mbor::MborMap;
+use azihsm_fw_ddi_types::error::DdiErrResp;
+use azihsm_fw_ddi_types::*;
 pub(crate) use get_api_rev::*;
 pub(crate) use get_device_info::*;
 

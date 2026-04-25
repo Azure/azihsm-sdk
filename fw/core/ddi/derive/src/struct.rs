@@ -3,12 +3,12 @@
 
 use std::vec;
 
+use darling::ast;
 use darling::FromDeriveInput;
 use darling::FromField;
-use darling::ast;
+use syn::spanned::Spanned;
 use syn::GenericArgument;
 use syn::PathArguments::AngleBracketed;
-use syn::spanned::Spanned;
 
 #[derive(Debug, FromField)]
 #[darling(attributes(ddi))]

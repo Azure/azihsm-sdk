@@ -1,9 +1,9 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+use darling::ast;
 use darling::FromDeriveInput;
 use darling::FromField;
-use darling::ast;
 use syn::Ident;
 
 #[derive(Debug, FromField)]

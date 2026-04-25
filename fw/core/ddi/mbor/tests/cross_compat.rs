@@ -5,6 +5,8 @@
 //! and the new `azihsm_fw_ddi_mbor` encoder/decoder. Validates that the wire
 //! format is identical.
 
+#![allow(clippy::unwrap_used)]
+
 use std::vec;
 
 // Old crate (dev-dependency)

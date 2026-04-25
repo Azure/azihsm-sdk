@@ -406,7 +406,9 @@ mod tests {
         let data = [0xAA; 10];
         let mut buf = [0u8; 32];
         let mut enc = crate::MborEncoder::new(&mut buf);
-        crate::MborPaddedByteSlice(&data, 1).mbor_encode(&mut enc).unwrap();
+        crate::MborPaddedByteSlice(&data, 1)
+            .mbor_encode(&mut enc)
+            .unwrap();
         let pos = enc.position();
 
         let mut dec = MborDecoder::new(&buf[..pos]);
@@ -421,7 +423,9 @@ mod tests {
         let data = [0xBB; 8];
         let mut buf = [0u8; 32];
         let mut enc = crate::MborEncoder::new(&mut buf);
-        crate::MborPaddedByteSlice(&data, 2).mbor_encode(&mut enc).unwrap();
+        crate::MborPaddedByteSlice(&data, 2)
+            .mbor_encode(&mut enc)
+            .unwrap();
         let pos = enc.position();
 
         let mut dec = MborDecoder::new(&buf[..pos]);
