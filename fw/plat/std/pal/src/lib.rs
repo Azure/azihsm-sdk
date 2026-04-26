@@ -52,6 +52,7 @@ mod buf_pool;
 mod cert;
 mod drivers;
 mod gdma;
+mod hash;
 mod io;
 mod pal;
 mod part;

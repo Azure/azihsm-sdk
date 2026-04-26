@@ -67,6 +67,22 @@ impl WorkerPool {
             done: Arc::new(AtomicBool::new(false)),
         }
     }
+
+    /// Submit an async task to tokio and await its result.
+    ///
+    /// Like [`submit`](Self::submit) but returns a value from the worker.
+    pub fn submit_with_result<T, F>(&self, work: F) -> SubmitResultFuture<T>
+    where
+        T: Send + 'static,
+        F: Future<Output = T> + Send + 'static,
+    {
+        SubmitResultFuture {
+            handle: self.handle.clone(),
+            work: Some(Box::pin(work)),
+            rx: None,
+            done: Arc::new(AtomicBool::new(false)),
+        }
+    }
 }
 
 /// Future that completes when a tokio-spawned task finishes.
@@ -103,6 +119,52 @@ impl Future for SubmitFuture {
             self.handle.spawn(async move {
                 work.await;
                 // Signal completion before waking so the next poll sees Ready.
+                done.store(true, Ordering::Release);
+                waker.wake();
+            });
+        }
+
+        Poll::Pending
+    }
+}
+
+/// Future that completes with a value when a tokio-spawned task finishes.
+///
+/// Same as [`SubmitFuture`] but captures the task's return value via a
+/// oneshot channel.
+pub struct SubmitResultFuture<T> {
+    handle: Handle,
+    work: Option<Pin<Box<dyn Future<Output = T> + Send>>>,
+    rx: Option<tokio::sync::oneshot::Receiver<T>>,
+    done: Arc<AtomicBool>,
+}
+
+// SAFETY: The only non-Unpin field (`work`) is behind `Pin<Box<...>>`
+// and is consumed on first poll. The remaining fields are all Unpin.
+impl<T> Unpin for SubmitResultFuture<T> {}
+
+impl<T: Send + 'static> Future for SubmitResultFuture<T> {
+    type Output = T;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<T> {
+        // Check if the result is ready.
+        if self.done.load(Ordering::Acquire) {
+            if let Some(mut rx) = self.rx.take() {
+                if let Ok(val) = rx.try_recv() {
+                    return Poll::Ready(val);
+                }
+            }
+        }
+
+        // Spawn work on first poll.
+        if let Some(work) = self.work.take() {
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            self.rx = Some(rx);
+            let waker = cx.waker().clone();
+            let done = Arc::clone(&self.done);
+            self.handle.spawn(async move {
+                let val = work.await;
+                let _ = tx.send(val);
                 done.store(true, Ordering::Release);
                 waker.wake();
             });

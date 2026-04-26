@@ -48,6 +48,7 @@ use tokio::runtime::Runtime;
 
 use crate::cert::SharedCertStore;
 use crate::drivers::gdma::StdGdma;
+use crate::drivers::hash::StdHash;
 use crate::drivers::iic::StdIic;
 use crate::drivers::oic::StdOic;
 use crate::io::HsmIoRequest;
@@ -77,6 +78,9 @@ pub struct StdHsmPal {
 
     /// GDMA controller — memory copy.
     pub(crate) gdma: StdGdma,
+
+    /// Hash driver — SHA digest computation.
+    pub(crate) hash: StdHash,
 
     /// Tokio-backed worker pool for offloading async work.
     #[allow(dead_code)]
@@ -142,6 +146,7 @@ impl StdHsmPal {
             iic: StdIic::new(submit_rx),
             oic: StdOic::new(),
             gdma: StdGdma::new(),
+            hash: StdHash::new(WorkerPool::new(tokio_handle.clone())),
             pool: WorkerPool::new(tokio_handle),
             part_table: UnsafeCell::new(PartitionTable::default()),
             cert_store: Box::new(SharedCertStore::new()),
@@ -168,6 +173,7 @@ impl Default for StdHsmPal {
             iic: StdIic::new(rx),
             oic: StdOic::new(),
             gdma: StdGdma::new(),
+            hash: StdHash::new(WorkerPool::new(handle.clone())),
             pool: WorkerPool::new(handle),
             part_table: UnsafeCell::new(PartitionTable::default()),
             cert_store: Box::new(SharedCertStore::new()),

@@ -33,6 +33,7 @@ mod reopen_session;
 mod rsa;
 mod sessctrl;
 mod set_sealed_bk3;
+mod sha_digest;
 
 pub use aes::*;
 pub use attest_key::*;
@@ -68,6 +69,7 @@ pub use reopen_session::*;
 pub use rsa::*;
 pub use sessctrl::*;
 pub use set_sealed_bk3::*;
+pub use sha_digest::*;
 
 /// Maximum key label length
 pub const DDI_MAX_KEY_LABEL_LENGTH: usize = 128;
@@ -172,6 +174,9 @@ pub enum DdiOp {
 
     /// Set Sealed BK3
     SetSealedBk3 = 1113,
+
+    /// SHA Digest
+    ShaDigest = 2006,
 }
 
 /// DDI status code enumeration
@@ -964,6 +969,7 @@ impl From<DdiOp> for DdiSessionKind {
             | DdiOp::GetDeviceInfo
             | DdiOp::GetCertChainInfo
             | DdiOp::GetCertificate
+            | DdiOp::ShaDigest
             | DdiOp::GetEstablishCredEncryptionKey
             | DdiOp::EstablishCredential
             | DdiOp::GetSessionEncryptionKey

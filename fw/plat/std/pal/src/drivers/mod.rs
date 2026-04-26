@@ -4,5 +4,6 @@
 //! Std driver modules.
 
 pub mod gdma;
+pub mod hash;
 pub mod iic;
 pub mod oic;

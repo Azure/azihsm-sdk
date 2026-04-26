@@ -587,7 +587,8 @@ impl SessionCtrl {
             DdiOp::GetApiRev
             | DdiOp::GetDeviceInfo
             | DdiOp::GetCertChainInfo
-            | DdiOp::GetCertificate => Self::NoSession,
+            | DdiOp::GetCertificate
+            | DdiOp::ShaDigest => Self::NoSession,
             DdiOp::OpenSession => Self::Open,
             DdiOp::CloseSession => Self::Close,
             _ => Self::InSession,

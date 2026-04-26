@@ -39,6 +39,7 @@ pub mod reopen_session;
 pub mod rsa_mod_exp;
 pub mod rsa_unwrap;
 pub mod set_sealed_bk3;
+pub mod sha_digest;
 pub mod unmask_key;
 
 // Re-export codec types.
@@ -92,6 +93,7 @@ pub enum DdiOp {
     InitBk3 = 1111,
     GetSealedBk3 = 1112,
     SetSealedBk3 = 1113,
+    ShaDigest = 2006,
 }
 
 // ── Key and crypto enums ───────────────────────────────────────────────
@@ -254,6 +256,7 @@ impl From<DdiOp> for DdiSessionKind {
             | DdiOp::GetDeviceInfo
             | DdiOp::GetCertChainInfo
             | DdiOp::GetCertificate
+            | DdiOp::ShaDigest
             | DdiOp::GetEstablishCredEncryptionKey
             | DdiOp::EstablishCredential
             | DdiOp::GetSessionEncryptionKey
