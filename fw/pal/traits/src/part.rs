@@ -5,7 +5,7 @@
 //!
 //! Defines the [`PartitionManager`] trait for querying and managing HSM
 //! partitions. Each partition represents a distinct host controller interface
-//! identified by a `u8` index (`part_id`).
+//! identified by a `u8` index (`pid`).
 
 use super::*;
 
@@ -38,44 +38,47 @@ pub enum PartState {
 ///
 /// Provides methods for querying partition status, resource allocation, and
 /// identity credentials. Each partition is addressed by a `u8` index.
-pub trait PartitionManager {
-    /// Returns whether the partition identified by `part_id` is enabled.
+pub trait HsmPartitionManager {
+    /// Returns whether the partition identified by `pid` is enabled.
     ///
     /// # Parameters
-    /// - `part_id` — Partition index.
+    /// - `pid` — Partition index.
     ///
     /// # Returns
-    /// The current [`PartState`] of the partition identified by `part_id`.
-    fn part_state(&self, part_id: u8) -> PartState;
+    /// The current [`PartState`] of the partition identified by `pid`.
+    ///
+    /// # Errors
+    /// Returns [`HsmError`] if the partition index is invalid.
+    fn part_state(&self, pid: u8) -> HsmResult<PartState>;
 
     /// Returns the resource count allocated to the given partition.
     ///
     /// # Parameters
-    /// - `part_id` — Partition index.
+    /// - `pid` — Partition index.
     ///
     /// # Returns
     /// The number of resources allocated to the partition.
     ///
     /// # Errors
     /// Returns [`HsmError`] if the partition index is invalid.
-    fn part_res_count(&self, part_id: u8) -> HsmResult<u8>;
+    fn part_res_count(&self, pid: u8) -> HsmResult<u8>;
 
     /// Returns the opaque identity blob for the given partition.
     ///
     /// # Parameters
-    /// - `part_id` — Partition index.
+    /// - `pid` — Partition index.
     ///
     /// # Returns
     /// A borrowed byte slice ([`PartId`]) containing the partition's identity.
     ///
     /// # Errors
     /// Returns [`HsmError`] if the partition index is invalid.
-    fn part_id(&self, part_id: u8) -> HsmResult<PartId<'_>>;
+    fn part_id(&self, pid: u8) -> HsmResult<PartId<'_>>;
 
     /// Returns the identity key pair (public, private) for the given partition.
     ///
     /// # Parameters
-    /// - `part_id` — Partition index.
+    /// - `pid` — Partition index.
     ///
     /// # Returns
     /// A [`PartIdKey`] tuple of borrowed byte slices for the public and
@@ -83,5 +86,5 @@ pub trait PartitionManager {
     ///
     /// # Errors
     /// Returns [`HsmError`] if the partition index is invalid.
-    fn part_id_key(&self, part_id: u8) -> HsmResult<PartIdKey<'_>>;
+    fn part_id_key(&self, pid: u8) -> HsmResult<PartIdKey<'_>>;
 }

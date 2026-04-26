@@ -14,7 +14,6 @@ use azihsm_fw_hsm_pal_traits::*;
 use tokio::sync::oneshot::Sender as ReplySender;
 
 use crate::buf_pool::BufferPool;
-use crate::pal::HsmIoResponse;
 use crate::StdHsmPal;
 
 /// An IO submit request sent from the user thread to the Embassy thread.
@@ -36,8 +35,8 @@ pub struct HsmIoRequest {
     /// The 64-byte submission queue entry.
     pub sqe: HsmSqe,
 
-    /// Oneshot channel for sending the response back to the submitter.
-    pub tx: ReplySender<HsmIoResponse>,
+    /// Oneshot channel for sending the CQE back to the submitter.
+    pub tx: ReplySender<HsmCqe>,
 }
 
 /// An IO work item backed by a pool-allocated buffer slot.
@@ -67,8 +66,8 @@ pub struct StdHsmIo {
     /// Index into the buffer pool (used to free the slot on completion).
     pub(crate) slot: u16,
 
-    /// Oneshot channel for the response.
-    pub(crate) tx: ReplySender<HsmIoResponse>,
+    /// Oneshot channel for the CQE reply.
+    pub(crate) tx: ReplySender<HsmCqe>,
 
     /// The 64-byte submission queue entry.
     pub(crate) sqe: HsmSqe,
@@ -112,7 +111,7 @@ impl core::fmt::Debug for StdHsmIo {
 }
 
 impl HsmIo for StdHsmIo {
-    fn part_id(&self) -> u8 {
+    fn pid(&self) -> u8 {
         self.pid
     }
 
@@ -163,6 +162,14 @@ impl HsmIoController for StdHsmPal {
     async fn complete_io(&self, io: Self::Io) -> HsmResult<()> {
         let slot = io.slot;
         self.oic.send(io).await;
+        self.iic.free(slot);
+        Ok(())
+    }
+
+    /// Drop an IO without sending a CQE — frees the buffer slot only.
+    async fn drop_io(&self, io: Self::Io) -> HsmResult<()> {
+        let slot = io.slot;
+        drop(io);
         self.iic.free(slot);
         Ok(())
     }

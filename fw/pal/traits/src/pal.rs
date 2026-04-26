@@ -3,15 +3,16 @@
 
 //! HSM platform abstraction layer trait.
 
-use crate::HsmGdmaController;
-use crate::HsmIoController;
+use super::*;
 
 /// The core trait that all HSM platform implementations must implement.
 ///
 /// Defines the lifecycle of the platform: initialization, execution, and
 /// deinitialization. A platform implementation provides hardware-specific
 /// behavior behind this common interface.
-pub trait HsmPal: HsmIoController + HsmGdmaController + Default {
+pub trait HsmPal:
+    HsmIoController + HsmGdmaController + HsmCrypto + HsmPartitionManager + Default
+{
     /// Initializes the platform.
     ///
     /// Must be called before [`run`](Self::run). Performs any one-time hardware

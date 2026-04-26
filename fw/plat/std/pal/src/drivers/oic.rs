@@ -3,31 +3,24 @@
 
 //! Std OIC driver — sends IO completions.
 //!
-//! Sends the response through the per-IO reply channel and broadcasts
-//! on the completion channel.
+//! Sends the response through the per-IO reply channel.
 
-use async_channel::Sender;
 use azihsm_fw_hsm_core_tracing::*;
 
 use crate::io::StdHsmIo;
-use crate::pal::HsmIoResponse;
 
 /// Std OIC driver — outbound IO controller.
 ///
-/// Sends IO completions through the per-IO reply channel and
-/// broadcasts on the completion channel for metrics/logging.
-pub struct StdOic {
-    /// Broadcast channel for completion events (metrics/logging).
-    complete_tx: Sender<HsmIoResponse>,
-}
+/// Sends IO completions through the per-IO reply channel.
+pub struct StdOic;
 
 impl StdOic {
     /// Create a new OIC driver.
-    pub fn new(complete_tx: Sender<HsmIoResponse>) -> Self {
-        Self { complete_tx }
+    pub fn new() -> Self {
+        Self
     }
 
-    /// Send a completion response and broadcast.
+    /// Send a completion response.
     ///
     /// Takes ownership of the IO work item, consuming the reply channel
     /// and CQE.
@@ -37,22 +30,7 @@ impl StdOic {
             "send part={} qid={} qidx={}", io.pid, io.qid, io.qidx
         );
 
-        let response = HsmIoResponse {
-            cqe: io.cqe,
-            pid: io.pid,
-            qid: io.qid,
-            qidx: io.qidx,
-        };
-
-        // Broadcast for metrics/logging
-        let _ = self.complete_tx.try_send(HsmIoResponse {
-            cqe: io.cqe,
-            pid: io.pid,
-            qid: io.qid,
-            qidx: io.qidx,
-        });
-
-        // Reply to submitter.
-        let _ = io.tx.send(response);
+        // Reply to submitter with just the CQE.
+        let _ = io.tx.send(io.cqe);
     }
 }

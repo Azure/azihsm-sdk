@@ -50,6 +50,22 @@ impl Hsm {
     /// Populates CQE header fields, runs the command pipeline, then
     /// writes session fields and status to the CQE before completion.
     pub(crate) async fn handle_io(&self, mut io: Io) {
+        // Gate on partition state — drop IOs for non-enabled partitions.
+        {
+            let pid = io.pid();
+            let enabled = self
+                .pal()
+                .part_state(pid)
+                .is_ok_and(|s| s != PartState::Disabled);
+            if !enabled {
+                debug!("core", "dropping IO for disabled partition {}", pid);
+                if let Err(_e) = self.pal().drop_io(io).await {
+                    error!("core", DROP_IO_FAILURE, "drop_io failed: {:?}", _e);
+                }
+                return;
+            }
+        }
+
         // Populate CQE header fields before dispatch
         {
             let sqe = Sqe::from(io.sqe());
@@ -109,7 +125,7 @@ impl Hsm {
         let sqe = Sqe::from(sqe);
         sqe.validate_generic_op()?;
 
-        let part_id = io.part_id();
+        let part_id = io.pid();
         let src_len = sqe.src_len() as usize;
 
         // ── Phase 1: inbound DMA (yield 1) ─────────────────────────
@@ -148,7 +164,7 @@ impl Hsm {
                 ddi::encode_ddi_err(hdr.op, ddi::ddi_status(e), resp_buf)
                     .op_status("core", HostStatus::INTERNAL_ERROR)?
             } else {
-                match ddi::dispatch(&hdr, &mut decoder, part_id, fmem, resp_buf) {
+                match ddi::dispatch(&hdr, &mut decoder, part_id, self.pal(), fmem, resp_buf) {
                     Ok(len) => len,
                     Err(e) => {
                         error!("core", e, "ddi cmd failed");

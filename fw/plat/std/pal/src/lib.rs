@@ -21,7 +21,7 @@
 //!                                complete_io()
 //!                                  simulate delay (tokio worker)
 //!                                  free buffer slot
-//! HsmIoResponse ◄─ reply_tx ◄── send response
+//! HsmCqe      ◄─ reply_tx ◄── send response
 //! ```
 //!
 //! ## Key components
@@ -34,8 +34,7 @@
 //!   buffers with async bitmap allocation and waker-based backpressure.
 //! - [`WorkerPool`](worker::WorkerPool) — dispatches delay tasks to
 //!   tokio, wakes Embassy tasks on completion via cross-thread `Waker`.
-//! - [`HsmIoRequest`] / [`HsmIoResponse`] — request/response types
-//!   for the submit channel.
+//! - [`HsmIoRequest`] — request type for the submit channel.
 //!
 //! ## Thread model
 //!
@@ -55,10 +54,14 @@ mod error;
 mod gdma;
 mod io;
 mod pal;
+mod part;
+mod rng;
 mod tracing;
 mod worker;
 
+use azihsm_fw_hsm_pal_traits::*;
+use error::*;
 pub use io::HsmIoRequest;
 pub use io::StdHsmIo;
-pub use pal::HsmIoResponse;
 pub use pal::StdHsmPal;
+pub use part::PartCommand;

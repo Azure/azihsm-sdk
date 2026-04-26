@@ -24,7 +24,7 @@ pub type HsmCqe = [u32; CQE_DWORDS];
 /// writes the result into the completion queue entry ([`cqe`](Self::cqe)).
 pub trait HsmIo {
     /// Returns the controller that owns this IO.
-    fn part_id(&self) -> u8;
+    fn pid(&self) -> u8;
 
     /// Returns the queue within the controller that this IO belongs to.
     fn queue_id(&self) -> u16;
@@ -57,4 +57,11 @@ pub trait HsmIoController {
     /// Sends a completed IO back through the completion queue.
     /// Consumes the IO, freeing the underlying slot.
     async fn complete_io(&self, io: Self::Io) -> HsmResult<()>;
+
+    /// Drops an IO without sending a completion.
+    ///
+    /// Frees the underlying buffer slot but does **not** send a CQE
+    /// through the completion queue. Used when the IO must be silently
+    /// discarded (e.g. the partition is not enabled).
+    async fn drop_io(&self, io: Self::Io) -> HsmResult<()>;
 }

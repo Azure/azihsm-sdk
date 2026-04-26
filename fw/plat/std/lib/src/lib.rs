@@ -26,16 +26,59 @@
 use std::thread::JoinHandle;
 
 use azihsm_fw_hsm_pal_std::HsmIoRequest;
-pub use azihsm_fw_hsm_pal_std::HsmIoResponse;
+use azihsm_fw_hsm_pal_std::PartCommand;
 use azihsm_fw_hsm_pal_std::StdHsmPal;
+use azihsm_fw_hsm_pal_traits::HsmCqe;
+use azihsm_fw_hsm_pal_traits::HsmError;
 use azihsm_fw_hsm_pal_traits::HsmSqe;
 
+const ID: u16 = 0x200;
+
+/// IO was dropped by the core (e.g. partition not enabled).
+const IO_DROPPED: HsmError = HsmError::make_pal(ID, 1);
+
+/// Embassy thread stopped — submit channel closed.
+const IO_SUBMIT_FAILURE: HsmError = HsmError::make_pal(ID, 2);
+
+/// Embassy task that runs the HSM core lifecycle.
+///
+/// Lazily initializes the global [`Hsm`] singleton (via `get_or_init`) and
+/// enters the core's `run()` loop, which spawns the IO recv/send task pool
+/// on the provided Embassy spawner. This task never returns under normal
+/// operation — it runs for the lifetime of the Embassy executor thread.
 #[embassy_executor::task]
 async fn run_core(spawner: embassy_executor::Spawner) {
     azihsm_fw_hsm_core::HSM
         .get_or_init(Default::default)
         .run(spawner)
         .await;
+}
+
+/// Embassy task that processes sideband partition commands.
+///
+/// Receives [`PartCommand`]s from the user-facing [`StdHsm`] and
+/// dispatches them to [`StdHsmPal`]'s internal alloc/free methods.
+/// Replies via the per-command oneshot channel.
+#[embassy_executor::task]
+async fn ipc_task(rx: async_channel::Receiver<PartCommand>) {
+    loop {
+        let Ok(cmd) = rx.recv().await else {
+            break;
+        };
+        let pal = azihsm_fw_hsm_core::HSM.get().await.pal();
+        match cmd {
+            PartCommand::Alloc {
+                pid,
+                res_count,
+                reply,
+            } => {
+                let _ = reply.send(pal.part_alloc_internal(pid, res_count));
+            }
+            PartCommand::Free { pid, reply } => {
+                let _ = reply.send(pal.part_free_internal(pid));
+            }
+        }
+    }
 }
 
 /// Maximum concurrent IOs — matches core's `send_task` pool size.
@@ -90,8 +133,8 @@ impl StdHsmBuilder {
             (Some(rt), h)
         };
 
-        let (submit_tx, submit_rx) = async_channel::bounded(MAX_CONCURRENT_IOS - 1);
-        let (complete_tx, complete_rx) = async_channel::bounded(MAX_CONCURRENT_IOS);
+        let (io_tx, io_rx) = async_channel::bounded(MAX_CONCURRENT_IOS - 1);
+        let (ipc_tx, ipc_rx) = async_channel::bounded(4);
 
         let pool_handle = handle.clone();
 
@@ -105,19 +148,22 @@ impl StdHsmBuilder {
                 let executor = EXECUTOR.init(Executor::new());
 
                 executor.run(|spawner| {
-                    let pal = StdHsmPal::new(submit_rx, complete_tx, pool_handle);
+                    let pal = StdHsmPal::new(io_rx, pool_handle);
 
                     let _ = azihsm_fw_hsm_core::HSM.init(azihsm_fw_hsm_core::Hsm::new(pal));
 
                     let token = run_core(spawner).expect("run_core spawn failed");
+                    spawner.spawn(token);
+
+                    let token = ipc_task(ipc_rx).expect("part_cmd_task spawn failed");
                     spawner.spawn(token);
                 });
             })
             .expect("failed to spawn Embassy thread");
 
         StdHsm {
-            submit_tx,
-            complete_rx,
+            io_tx,
+            ipc_tx,
             embassy_thread: Some(embassy_thread),
             tokio_rt: owned_rt,
             tokio_handle: handle,
@@ -140,13 +186,11 @@ impl StdHsmBuilder {
 ///
 /// # Shutdown
 ///
-/// Call [`shutdown`](Self::shutdown) to cleanly stop the Embassy thread
-/// and (if owned) the tokio runtime. Dropping without shutdown will
-/// also clean up, but the Embassy thread may not exit gracefully.
+/// Dropping `StdHsm` cleanly shuts down the Embassy thread and
+/// (if owned) the tokio runtime.
 pub struct StdHsm {
-    submit_tx: async_channel::Sender<HsmIoRequest>,
-    #[allow(dead_code)]
-    complete_rx: async_channel::Receiver<HsmIoResponse>,
+    io_tx: async_channel::Sender<HsmIoRequest>,
+    ipc_tx: async_channel::Sender<PartCommand>,
     embassy_thread: Option<JoinHandle<()>>,
     /// Owned tokio runtime (None if caller provided a handle).
     /// Kept alive for the lifetime of StdHsm; dropped on shutdown.
@@ -154,13 +198,6 @@ pub struct StdHsm {
     tokio_rt: Option<tokio::runtime::Runtime>,
     #[allow(dead_code)]
     tokio_handle: tokio::runtime::Handle,
-}
-
-/// Result returned by [`StdHsm::shutdown`].
-#[derive(Debug)]
-pub struct RunResult {
-    /// Number of IOs submitted.
-    pub total_ios: u64,
 }
 
 impl StdHsm {
@@ -196,11 +233,18 @@ impl StdHsm {
     /// this method blocks asynchronously until a slot opens up — natural
     /// backpressure, no errors.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the Embassy thread has stopped (submit channel closed)
-    /// or if the IO's completion is dropped without sending a reply.
-    pub async fn submit(&self, sqe: HsmSqe, pid: u8, qid: u16, qidx: u16) -> HsmIoResponse {
+    /// Returns `IO_DROPPED` if the core discards the IO (e.g. the
+    /// partition is not enabled). Returns `IO_SUBMIT_FAILURE` if the
+    /// Embassy thread has stopped.
+    pub async fn io(
+        &self,
+        sqe: HsmSqe,
+        pid: u8,
+        qid: u16,
+        qidx: u16,
+    ) -> azihsm_fw_hsm_pal_traits::HsmResult<HsmCqe> {
         let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
         let req = HsmIoRequest {
             pid,
@@ -209,24 +253,78 @@ impl StdHsm {
             sqe,
             tx: reply_tx,
         };
-        self.submit_tx
-            .send(req)
-            .await
-            .expect("Embassy thread stopped");
-        reply_rx.await.expect("IO completion dropped")
+        self.io_tx.send(req).await.map_err(|_| IO_SUBMIT_FAILURE)?;
+        reply_rx.await.map_err(|_| IO_DROPPED)
     }
 
-    /// Shutdown the HSM and return results.
+    /// Allocate a partition on the HSM.
     ///
-    /// Closes the submit channel (causing `recv_task` to exit), then
-    /// joins the Embassy background thread. If `StdHsm` owns the tokio
-    /// runtime, it is shut down on drop.
-    pub fn shutdown(mut self) -> RunResult {
-        self.submit_tx.close();
+    /// Sends a sideband command to the Embassy thread to allocate
+    /// partition `pid` with `res_count` resources. On success the
+    /// partition transitions from `Disabled` → `Uninitialized`, a
+    /// 16-byte random ID is generated, and an ECC-384 key pair is
+    /// created.
+    ///
+    /// # Errors
+    ///
+    /// - `PART_INVALID_PID` — `pid >= 65`
+    /// - `PART_ALREADY_ALLOCATED` — partition is not `Disabled`
+    /// - `PART_RESOURCE_EXHAUSTED` — total resources would exceed 65
+    /// - `PART_KEY_GEN_FAILURE` — ECC key generation failed
+    /// - `RNG_FAILURE` — random ID generation failed
+    pub async fn part_alloc(
+        &self,
+        pid: u8,
+        res_count: u8,
+    ) -> azihsm_fw_hsm_pal_traits::HsmResult<()> {
+        let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
+        let cmd = PartCommand::Alloc {
+            pid,
+            res_count,
+            reply: reply_tx,
+        };
+        self.ipc_tx.send(cmd).await.expect("Embassy thread stopped");
+        reply_rx.await.expect("partition command reply dropped")
+    }
+
+    /// Free a partition on the HSM.
+    ///
+    /// Sends a sideband command to the Embassy thread to free partition
+    /// `pid`. Clears the partition's ID, key pair, and resource count,
+    /// then transitions the state to `Disabled`. The freed resources
+    /// become available for other partitions.
+    ///
+    /// # Errors
+    ///
+    /// - `PART_INVALID_PID` — `pid >= 65`
+    /// - `PART_NOT_ALLOCATED` — partition is already `Disabled`
+    pub async fn part_free(&self, pid: u8) -> azihsm_fw_hsm_pal_traits::HsmResult<()> {
+        let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
+        let cmd = PartCommand::Free {
+            pid,
+            reply: reply_tx,
+        };
+        self.ipc_tx.send(cmd).await.expect("Embassy thread stopped");
+        reply_rx.await.expect("partition command reply dropped")
+    }
+}
+
+/// Cleanly shuts down the HSM.
+///
+/// Closes both the IO submission and partition command channels, which
+/// causes the corresponding Embassy tasks (`run_core` / `part_cmd_task`)
+/// to exit. Then joins the Embassy background thread to ensure all
+/// in-flight work is completed before the `StdHsm` is dropped.
+///
+/// If a tokio runtime is owned (`tokio_rt` is `Some`), it is dropped
+/// after the Embassy thread exits, shutting down the worker pool.
+impl Drop for StdHsm {
+    fn drop(&mut self) {
+        self.io_tx.close();
+        self.ipc_tx.close();
         if let Some(thread) = self.embassy_thread.take() {
             let _ = thread.join();
         }
-        RunResult { total_ios: 0 }
     }
 }
 

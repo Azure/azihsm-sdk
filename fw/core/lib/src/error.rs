@@ -23,6 +23,12 @@ pub const SEND_TASK_FAILURE: HsmError = HsmError::make_core(ID, 0x03);
 /// IO completion failed.
 pub const COMPLETE_IO_FAILURE: HsmError = HsmError::make_core(ID, 0x04);
 
+/// IO dropped because the partition is not enabled.
+pub const PART_NOT_ENABLED: HsmError = HsmError::make_core(ID, 0x05);
+
+/// IO dropped failed to free resources.
+pub const DROP_IO_FAILURE: HsmError = HsmError::make_core(ID, 0x06);
+
 // ── IO handler HsmError codes (logged, paired with HostStatus) ─────
 
 /// SQE has unsupported PSDT value (must be 0 = PRP).

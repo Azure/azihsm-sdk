@@ -21,6 +21,7 @@ pub(crate) fn get_device_info<'a>(
     hdr: &DdiReqHdr,
     decoder: &mut DdiDecoder<'_>,
     part_id: u8,
+    pal: &Pal,
     _fmem: &mut [u8],
     smem: &'a mut [u8],
 ) -> HsmResult<&'a [u8]> {
@@ -36,9 +37,7 @@ pub(crate) fn get_device_info<'a>(
 
     let resp_data = DdiGetDeviceInfoResp {
         kind: DdiDeviceKind::Physical,
-        // `tables` is encoded as a `u8`, so avoid wrapping when `part_id`
-        // is unexpectedly `u8::MAX`.
-        tables: part_id.saturating_add(1),
+        tables: pal.part_res_count(part_id).unwrap_or(0),
         fips_approved: false,
     };
 

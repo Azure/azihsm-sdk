@@ -25,12 +25,13 @@ pub(crate) fn dispatch(
     hdr: &DdiReqHdr,
     decoder: &mut DdiDecoder<'_>,
     part_id: u8,
+    pal: &Pal,
     fmem: &mut [u8],
     smem: &mut [u8],
 ) -> HsmResult<usize> {
     let resp = match hdr.op {
         DdiOp::GetApiRev => get_api_rev(hdr, decoder, fmem, smem)?,
-        DdiOp::GetDeviceInfo => get_device_info(hdr, decoder, part_id, fmem, smem)?,
+        DdiOp::GetDeviceInfo => get_device_info(hdr, decoder, part_id, pal, fmem, smem)?,
         _ => return Err(DDI_UNKNOWN_OP),
     };
     Ok(resp.len())
