@@ -31,12 +31,12 @@ pub(crate) fn get_api_rev<'a>(
 ) -> HsmResult<&'a [u8]> {
     // GetApiRev is the bootstrap command — rev must not be set.
     if hdr.rev.is_some() {
-        return Err(DDI_UNSUPPORTED_REV);
+        return Err(HsmError::UnsupportedRevision);
     }
 
     // Decode the body to ensure it is a valid empty map with no
     // trailing bytes (rejects malformed requests).
-    let _body: DdiGetApiRevReq = decoder.decode_data().map_err(|_| DDI_DECODE_FAILURE)?;
+    let _body: DdiGetApiRevReq = decoder.decode_data()?;
 
     let resp_data = DdiGetApiRevResp {
         min: DdiApiRev { major: 1, minor: 0 },

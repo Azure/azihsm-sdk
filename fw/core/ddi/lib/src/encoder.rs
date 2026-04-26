@@ -1,11 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use azihsm_fw_ddi_mbor::MborEncode;
-use azihsm_fw_ddi_mbor::MborEncoder;
-use azihsm_fw_ddi_mbor::MborMap;
-
-use crate::MborError;
+use azihsm_fw_ddi_mbor::*;
+use azihsm_fw_hsm_pal_traits::*;
 
 /// DDI-level encoder. Wraps a header + data pair into a 2-element MBOR map.
 pub struct DdiEncoder;
@@ -17,21 +14,15 @@ impl DdiEncoder {
         hdr: H,
         data: D,
         out: &mut [u8],
-    ) -> Result<usize, MborError> {
+    ) -> HsmResult<usize> {
         let out_len = out.len();
         let mut encoder = MborEncoder::new(out);
 
-        MborMap(2)
-            .mbor_encode(&mut encoder)
-            .map_err(|_| MborError::EncodeError)?;
-        0u8.mbor_encode(&mut encoder)
-            .map_err(|_| MborError::EncodeError)?;
-        hdr.mbor_encode(&mut encoder)
-            .map_err(|_| MborError::EncodeError)?;
-        1u8.mbor_encode(&mut encoder)
-            .map_err(|_| MborError::EncodeError)?;
-        data.mbor_encode(&mut encoder)
-            .map_err(|_| MborError::EncodeError)?;
+        MborMap(2).mbor_encode(&mut encoder)?;
+        0u8.mbor_encode(&mut encoder)?;
+        hdr.mbor_encode(&mut encoder)?;
+        1u8.mbor_encode(&mut encoder)?;
+        data.mbor_encode(&mut encoder)?;
 
         Ok(out_len - encoder.remaining())
     }

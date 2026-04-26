@@ -7,8 +7,7 @@
 //! interprets the [`HsmDmaAddr`] PRP as a raw host pointer and copies
 //! directly from/to that address.
 
-use azihsm_fw_hsm_pal_traits::HsmDmaAddr;
-use azihsm_fw_hsm_pal_traits::HsmResult;
+use azihsm_fw_hsm_pal_traits::*;
 
 /// Std GDMA driver — memory copy via raw pointers.
 ///
@@ -25,60 +24,33 @@ impl StdGdma {
     /// Copy data between device-local buffers.
     ///
     /// Copies `min(src.len(), dst.len())` bytes from `src` to `dst`.
-    pub fn copy_mem(&self, src: &[u8], dst: &mut [u8]) -> HsmResult<()> {
+    pub fn copy_mem(&self, src: &[u8], dst: &mut [u8]) {
         let len = src.len().min(dst.len());
         dst[..len].copy_from_slice(&src[..len]);
-        Ok(())
     }
 
     /// Copy from host memory into an HSM buffer.
     ///
-    /// Interprets `src` as a raw pointer to caller-owned memory and
-    /// copies `dst.len()` bytes into `dst`.
-    ///
     /// # Safety
     ///
     /// The caller must ensure the PRP address points to a valid,
-    /// readable buffer of at least `dst.len()` bytes for the entire
-    /// duration of the copy. Passing an invalid or misaligned address
-    /// will result in undefined behaviour (incorrect memory reads or
-    /// process termination).
-    ///
-    /// # Platform
-    ///
-    /// This function is intended for 64-bit host platforms only. On a
-    /// 32-bit host, `HsmDmaAddr::hi` would be silently truncated,
-    /// producing an incorrect pointer.
-    pub unsafe fn copy_mem_from_host(&self, src: HsmDmaAddr, dst: &mut [u8]) -> HsmResult<()> {
+    /// readable buffer of at least `dst.len()` bytes.
+    pub unsafe fn copy_mem_from_host(&self, src: HsmDmaAddr, dst: &mut [u8]) {
         let ptr = addr_to_ptr(src);
         let len = dst.len();
         core::ptr::copy_nonoverlapping(ptr, dst.as_mut_ptr(), len);
-        Ok(())
     }
 
     /// Copy from an HSM buffer to host memory.
     ///
-    /// Interprets `dst` as a raw pointer to caller-owned memory and
-    /// copies `src.len()` bytes into it.
-    ///
     /// # Safety
     ///
     /// The caller must ensure the PRP address points to a valid,
-    /// writable buffer of at least `src.len()` bytes for the entire
-    /// duration of the copy. Passing an invalid or misaligned address
-    /// will result in undefined behaviour (incorrect memory writes or
-    /// process termination).
-    ///
-    /// # Platform
-    ///
-    /// This function is intended for 64-bit host platforms only. On a
-    /// 32-bit host, `HsmDmaAddr::hi` would be silently truncated,
-    /// producing an incorrect pointer.
-    pub unsafe fn copy_mem_to_host(&self, src: &[u8], dst: HsmDmaAddr) -> HsmResult<()> {
+    /// writable buffer of at least `src.len()` bytes.
+    pub unsafe fn copy_mem_to_host(&self, src: &[u8], dst: HsmDmaAddr) {
         let ptr = addr_to_ptr(dst);
         let len = src.len();
         core::ptr::copy_nonoverlapping(src.as_ptr(), ptr, len);
-        Ok(())
     }
 }
 

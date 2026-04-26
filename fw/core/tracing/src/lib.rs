@@ -111,7 +111,7 @@ macro_rules! error {
         unsafe {
             $crate::__hsm_trace_emit(
                 b'E', $tgt,
-                format_args!("{} [err:{:08x}]", format_args!($($t)*), $err.raw()),
+                format_args!("{} [err:{:08x}]", format_args!($($t)*), $err.0),
             )
         }
     };

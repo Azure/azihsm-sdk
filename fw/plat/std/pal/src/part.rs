@@ -42,11 +42,7 @@
 //! [`part_alloc_internal`]: StdHsmPal::part_alloc_internal
 //! [`part_free_internal`]: StdHsmPal::part_free_internal
 
-use azihsm_crypto::EccCurve;
-use azihsm_crypto::EccKeyOp;
-use azihsm_crypto::EccPrivateKey;
-use azihsm_crypto::ExportableKey;
-use azihsm_crypto::Rng;
+use azihsm_crypto::*;
 
 use super::*;
 use crate::cert::MAX_CERT_DER_LEN;
@@ -168,77 +164,55 @@ pub enum PartCommand {
 
 impl HsmPartitionManager for StdHsmPal {
     /// Returns the current state of the partition at index `pid`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`PART_INVALID_PID`] if `pid >= NUM_PARTITIONS`.
     fn part_state(&self, pid: u8) -> HsmResult<PartState> {
         // SAFETY: Embassy is single-threaded. This synchronous method
         // completes without yielding, so no concurrent mutation occurs.
         let table = unsafe { &*self.part_table.get() };
         let idx = pid as usize;
         if idx >= NUM_PARTITIONS {
-            return Err(PART_INVALID_PID);
+            return Err(HsmError::InvalidArg);
         }
         Ok(table.entries[idx].state)
     }
 
     /// Returns the resource count allocated to the partition at `pid`.
-    ///
-    /// # Errors
-    ///
-    /// - [`PART_INVALID_PID`] if `pid >= NUM_PARTITIONS`.
-    /// - [`PART_NOT_ALLOCATED`] if the partition is [`Disabled`](PartState::Disabled).
     fn part_res_count(&self, pid: u8) -> HsmResult<u8> {
         let table = unsafe { &*self.part_table.get() };
         let idx = pid as usize;
         if idx >= NUM_PARTITIONS {
-            return Err(PART_INVALID_PID);
+            return Err(HsmError::InvalidArg);
         }
         let entry = &table.entries[idx];
         if entry.state == PartState::Disabled {
-            return Err(PART_NOT_ALLOCATED);
+            return Err(HsmError::InvalidArg);
         }
         Ok(entry.res_count)
     }
 
     /// Returns the 16-byte identity blob for the partition at `pid`.
-    ///
-    /// # Errors
-    ///
-    /// - [`PART_INVALID_PID`] if `pid >= NUM_PARTITIONS`.
-    /// - [`PART_NOT_ALLOCATED`] if the partition is [`Disabled`](PartState::Disabled).
     fn part_id(&self, pid: u8) -> HsmResult<PartId<'_>> {
         let table = unsafe { &*self.part_table.get() };
         let idx = pid as usize;
         if idx >= NUM_PARTITIONS {
-            return Err(PART_INVALID_PID);
+            return Err(HsmError::InvalidArg);
         }
         let entry = &table.entries[idx];
         if entry.state == PartState::Disabled {
-            return Err(PART_NOT_ALLOCATED);
+            return Err(HsmError::InvalidArg);
         }
         Ok(&entry.id)
     }
 
     /// Returns the identity key pair (public, private) for `pid`.
-    ///
-    /// The public key is the raw x ∥ y coordinates (96 bytes for P-384).
-    /// The private key is PKCS#8 DER-encoded.
-    ///
-    /// # Errors
-    ///
-    /// - [`PART_INVALID_PID`] if `pid >= NUM_PARTITIONS`.
-    /// - [`PART_NOT_ALLOCATED`] if the partition is [`Disabled`](PartState::Disabled).
     fn part_id_key(&self, pid: u8) -> HsmResult<PartIdKey<'_>> {
         let table = unsafe { &*self.part_table.get() };
         let idx = pid as usize;
         if idx >= NUM_PARTITIONS {
-            return Err(PART_INVALID_PID);
+            return Err(HsmError::InvalidArg);
         }
         let entry = &table.entries[idx];
         if entry.state == PartState::Disabled {
-            return Err(PART_NOT_ALLOCATED);
+            return Err(HsmError::InvalidArg);
         }
         Ok((&entry.pub_key, &entry.priv_key_der[..entry.priv_key_len]))
     }
@@ -269,35 +243,35 @@ impl StdHsmPal {
         let table = unsafe { &mut *self.part_table.get() };
         let idx = pid as usize;
         if idx >= NUM_PARTITIONS {
-            return Err(PART_INVALID_PID);
+            return Err(HsmError::InvalidArg);
         }
         if table.entries[idx].state != PartState::Disabled {
-            return Err(PART_ALREADY_ALLOCATED);
+            return Err(HsmError::InvalidArg);
         }
 
         // Check resource budget before mutating.
         let total: u16 = table.entries.iter().map(|e| e.res_count as u16).sum();
         if total + res_count as u16 > MAX_RESOURCES as u16 {
-            return Err(PART_RESOURCE_EXHAUSTED);
+            return Err(HsmError::NotEnoughSpace);
         }
 
         let entry = &mut table.entries[idx];
 
         // Generate 16-byte random identity.
-        Rng::rand_bytes(&mut entry.id).map_err(|_| RNG_FAILURE)?;
+        Rng::rand_bytes(&mut entry.id).map_err(|_| HsmError::InternalError)?;
 
         // Generate ECC P-384 key pair.
-        let key = EccPrivateKey::from_curve(EccCurve::P384).map_err(|_| PART_KEY_GEN_FAILURE)?;
+        let key = EccPrivateKey::from_curve(EccCurve::P384).map_err(|_| HsmError::InternalError)?;
 
         // Export public key coordinates (x ∥ y).
         let (x_buf, y_buf) = entry.pub_key.split_at_mut(P384_COORD_SIZE);
         key.coord(Some((x_buf, y_buf)))
-            .map_err(|_| PART_KEY_GEN_FAILURE)?;
+            .map_err(|_| HsmError::InternalError)?;
 
         // Export private key as PKCS#8 DER.
         let len = key
             .to_bytes(Some(&mut entry.priv_key_der))
-            .map_err(|_| PART_KEY_GEN_FAILURE)?;
+            .map_err(|_| HsmError::InternalError)?;
         entry.priv_key_len = len;
 
         entry.res_count = res_count;
@@ -322,10 +296,10 @@ impl StdHsmPal {
         let table = unsafe { &mut *self.part_table.get() };
         let idx = pid as usize;
         if idx >= NUM_PARTITIONS {
-            return Err(PART_INVALID_PID);
+            return Err(HsmError::InvalidArg);
         }
         if table.entries[idx].state == PartState::Disabled {
-            return Err(PART_NOT_ALLOCATED);
+            return Err(HsmError::InvalidArg);
         }
 
         let entry = &mut table.entries[idx];

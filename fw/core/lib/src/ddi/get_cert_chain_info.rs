@@ -17,15 +17,15 @@ use super::*;
 ///
 /// 2. **Response** — Calls `pal.get_cert_chain_info(part_id, slot_id)`,
 ///    encodes `DdiGetCertChainInfoResp { num_certs, thumbprint }`.
-pub(crate) async fn get_cert_chain_info<'a>(
+pub(crate) async fn get_cert_chain_info<'a, P: HsmPal>(
     hdr: &DdiReqHdr,
     decoder: &mut DdiDecoder<'_>,
     part_id: u8,
-    pal: &Pal,
+    pal: &P,
     _fmem: &mut [u8],
     smem: &'a mut [u8],
 ) -> HsmResult<&'a [u8]> {
-    let body: DdiGetCertChainInfoReq = decoder.decode_data().map_err(|_| DDI_DECODE_FAILURE)?;
+    let body: DdiGetCertChainInfoReq = decoder.decode_data()?;
 
     let info = pal.get_cert_chain_info(part_id, body.slot_id).await?;
 

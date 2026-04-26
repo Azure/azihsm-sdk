@@ -23,6 +23,13 @@ pub enum MborDecodeError {
     InvalidParameter,
 }
 
+impl From<MborDecodeError> for azihsm_fw_hsm_pal_traits::HsmError {
+    #[inline]
+    fn from(_: MborDecodeError) -> Self {
+        Self::DdiDecodeFailed
+    }
+}
+
 /// Trait that decodes an object in Manticore Binary Object Representation
 /// (MBOR).
 pub trait MborDecode<'b>: Sized {

@@ -10,10 +10,9 @@ use std::sync::Arc;
 
 use async_channel::Receiver;
 use azihsm_fw_hsm_core_tracing::*;
-use azihsm_fw_hsm_pal_traits::HsmResult;
+use azihsm_fw_hsm_pal_traits::*;
 
 use crate::buf_pool::BufferPool;
-use crate::error::*;
 use crate::io::HsmIoRequest;
 
 /// Std IIC driver — inbound IO controller.
@@ -44,8 +43,8 @@ impl StdIic {
     /// no requests are available or if the buffer pool is exhausted.
     pub async fn recv(&self) -> HsmResult<(HsmIoRequest, u16)> {
         let req = self.submit_rx.recv().await.map_err(|_| {
-            error!("iic", CHANNEL_CLOSED, "submit channel closed");
-            CHANNEL_CLOSED
+            error!("iic", HsmError::InternalError, "submit channel closed");
+            HsmError::InternalError
         })?;
 
         let slot = self.buf_pool.alloc().await;

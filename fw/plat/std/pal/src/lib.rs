@@ -51,7 +51,6 @@
 mod buf_pool;
 mod cert;
 mod drivers;
-mod error;
 mod gdma;
 mod io;
 mod pal;
@@ -61,7 +60,6 @@ mod tracing;
 mod worker;
 
 use azihsm_fw_hsm_pal_traits::*;
-use error::*;
 pub use io::HsmIoRequest;
 pub use io::StdHsmIo;
 pub use pal::StdHsmPal;

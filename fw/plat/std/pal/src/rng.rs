@@ -17,9 +17,9 @@ impl HsmRng for StdHsmPal {
     /// Fill `buf` with cryptographically secure random bytes.
     ///
     /// Delegates to [`azihsm_crypto::Rng::rand_bytes`], which calls
-    /// OpenSSL's `RAND_bytes`. Returns [`RNG_FAILURE`] if the underlying
-    /// CSPRNG fails (e.g., insufficient entropy).
+    /// OpenSSL's `RAND_bytes`. Returns [`HsmError::InternalError`] if
+    /// the underlying CSPRNG fails (e.g., insufficient entropy).
     fn rng_fill_bytes(&mut self, buf: &mut [u8]) -> HsmResult<()> {
-        azihsm_crypto::Rng::rand_bytes(buf).map_err(|_| RNG_FAILURE)
+        azihsm_crypto::Rng::rand_bytes(buf).map_err(|_| HsmError::InternalError)
     }
 }

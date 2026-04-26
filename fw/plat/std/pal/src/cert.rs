@@ -19,25 +19,11 @@
 //!
 //! The Alias CA key pair is retained so it can sign partition leaf certs.
 
-use azihsm_crypto::EccCurve;
-use azihsm_crypto::EccKeyOp;
-use azihsm_crypto::EccPrivateKey;
-use azihsm_crypto::EcdsaAlgo;
-use azihsm_crypto::ExportableKey;
-use azihsm_crypto::HashAlgo;
-use azihsm_crypto::HashOp;
-use azihsm_crypto::HashOpContext;
-use azihsm_crypto::HashStreamingOp;
-use azihsm_crypto::ImportableKey;
-use azihsm_crypto::SignOp;
+use azihsm_crypto::*;
 use azihsm_fw_hsm_std_x509::cert_builder;
-use azihsm_fw_hsm_std_x509::cert_builder::IntermediateCertParams;
-use azihsm_fw_hsm_std_x509::cert_builder::KeyUsage;
-use azihsm_fw_hsm_std_x509::cert_builder::LeafCertParams;
-use azihsm_fw_hsm_std_x509::cert_builder::RootCertParams;
+use azihsm_fw_hsm_std_x509::cert_builder::*;
 
 use super::*;
-use crate::error::*;
 use crate::part::NUM_PARTITIONS;
 use crate::part::P384_PUB_KEY_LEN;
 
@@ -85,8 +71,9 @@ struct KeyPair {
 impl KeyPair {
     /// Generate a new P-384 key pair and compute SKI.
     fn generate() -> HsmResult<Self> {
-        let priv_key = EccPrivateKey::from_curve(EccCurve::P384).map_err(|_| CERT_BUILD_FAILURE)?;
-        let (x, y) = priv_key.coord_vec().map_err(|_| CERT_BUILD_FAILURE)?;
+        let priv_key =
+            EccPrivateKey::from_curve(EccCurve::P384).map_err(|_| HsmError::InternalError)?;
+        let (x, y) = priv_key.coord_vec().map_err(|_| HsmError::InternalError)?;
         let mut uncompressed = [0u8; P384_UNCOMPRESSED_LEN];
         uncompressed[0] = 0x04;
         uncompressed[1..49].copy_from_slice(&x);
@@ -117,7 +104,7 @@ fn compute_ski(uncompressed: &[u8; P384_UNCOMPRESSED_LEN]) -> HsmResult<[u8; 20]
     let mut algo = HashAlgo::sha1();
     let mut result = [0u8; 20];
     algo.hash(uncompressed, Some(&mut result))
-        .map_err(|_| CERT_BUILD_FAILURE)?;
+        .map_err(|_| HsmError::InternalError)?;
     Ok(result)
 }
 
@@ -126,19 +113,19 @@ fn sha256(data: &[u8]) -> HsmResult<[u8; 32]> {
     let mut algo = HashAlgo::sha256();
     let mut result = [0u8; 32];
     algo.hash(data, Some(&mut result))
-        .map_err(|_| CERT_BUILD_FAILURE)?;
+        .map_err(|_| HsmError::InternalError)?;
     Ok(result)
 }
 
 /// Compute SHA-256 hash of two buffers concatenated.
 fn sha256_concat(a: &[u8], b: &[u8]) -> HsmResult<[u8; 32]> {
     let algo = HashAlgo::sha256();
-    let mut ctx = algo.hash_init().map_err(|_| CERT_BUILD_FAILURE)?;
-    ctx.update(a).map_err(|_| CERT_BUILD_FAILURE)?;
-    ctx.update(b).map_err(|_| CERT_BUILD_FAILURE)?;
+    let mut ctx = algo.hash_init().map_err(|_| HsmError::InternalError)?;
+    ctx.update(a).map_err(|_| HsmError::InternalError)?;
+    ctx.update(b).map_err(|_| HsmError::InternalError)?;
     let mut result = [0u8; 32];
     ctx.finish(Some(&mut result))
-        .map_err(|_| CERT_BUILD_FAILURE)?;
+        .map_err(|_| HsmError::InternalError)?;
     Ok(result)
 }
 
@@ -148,10 +135,12 @@ fn sign_with_key(
     tbs: &[u8],
 ) -> HsmResult<([u8; P384_SIG_COMPONENT], [u8; P384_SIG_COMPONENT])> {
     let mut algo = EcdsaAlgo::new(HashAlgo::sha384());
-    let sig_len = algo.sign(key, tbs, None).map_err(|_| CERT_BUILD_FAILURE)?;
+    let sig_len = algo
+        .sign(key, tbs, None)
+        .map_err(|_| HsmError::InternalError)?;
     let mut sig_buf = [0u8; 96];
     algo.sign(key, tbs, Some(&mut sig_buf[..sig_len]))
-        .map_err(|_| CERT_BUILD_FAILURE)?;
+        .map_err(|_| HsmError::InternalError)?;
     let mut r = [0u8; P384_SIG_COMPONENT];
     let mut s = [0u8; P384_SIG_COMPONENT];
     r.copy_from_slice(&sig_buf[..48]);
@@ -300,7 +289,7 @@ impl SharedCertStore {
         patch_tbs_root(&mut tbs, &root_params);
         let (r, s) = root_key.sign_tbs(&tbs)?;
         let root_cert_len = cert_builder::build_root_cert(&root_params, &r, &s, &mut root_cert)
-            .ok_or(CERT_BUILD_FAILURE)?;
+            .ok_or(HsmError::InternalError)?;
 
         // --- DeviceId CA ---
         let deviceid_key = KeyPair::generate()?;
@@ -324,7 +313,7 @@ impl SharedCertStore {
         let (r, s) = root_key.sign_tbs(&tbs)?;
         let deviceid_cert_len =
             cert_builder::build_intermediate_cert(&deviceid_params, &r, &s, &mut deviceid_cert)
-                .ok_or(CERT_BUILD_FAILURE)?;
+                .ok_or(HsmError::InternalError)?;
 
         // --- Alias CA ---
         let alias_key = KeyPair::generate()?;
@@ -348,14 +337,14 @@ impl SharedCertStore {
         let (r, s) = deviceid_key.sign_tbs(&tbs)?;
         let alias_cert_len =
             cert_builder::build_intermediate_cert(&alias_params, &r, &s, &mut alias_cert)
-                .ok_or(CERT_BUILD_FAILURE)?;
+                .ok_or(HsmError::InternalError)?;
 
         // Export alias private key for on-demand leaf signing.
         let mut alias_priv_key_der = [0u8; P384_PRIV_DER_MAX];
         let alias_priv_key_len = alias_key
             .priv_key
             .to_bytes(Some(&mut alias_priv_key_der))
-            .map_err(|_| CERT_BUILD_FAILURE)?;
+            .map_err(|_| HsmError::InternalError)?;
 
         // Precompute SHA-256(root_cert || deviceid_cert).
         let root_deviceid_hash = sha256_concat(
@@ -405,7 +394,7 @@ impl SharedCertStore {
         let subject_ski = compute_ski(&subject_pubkey)?;
         let leaf_serial = make_serial(4_u8.wrapping_add(pid));
         let sn_bytes = make_leaf_sn(pid);
-        let leaf_sn = core::str::from_utf8(&sn_bytes).map_err(|_| CERT_BUILD_FAILURE)?;
+        let leaf_sn = core::str::from_utf8(&sn_bytes).map_err(|_| HsmError::InternalError)?;
 
         let params = LeafCertParams {
             public_key: &subject_pubkey,
@@ -427,10 +416,10 @@ impl SharedCertStore {
 
         let alias_key =
             EccPrivateKey::from_bytes(&self.alias_priv_key_der[..self.alias_priv_key_len])
-                .map_err(|_| CERT_BUILD_FAILURE)?;
+                .map_err(|_| HsmError::InternalError)?;
         let (r, s) = sign_with_key(&alias_key, &tbs)?;
 
-        cert_builder::build_leaf_cert(&params, &r, &s, out).ok_or(CERT_BUILD_FAILURE)
+        cert_builder::build_leaf_cert(&params, &r, &s, out).ok_or(HsmError::InternalError)
     }
 
     /// Compute the thumbprint for a partition's cert chain.
@@ -462,18 +451,18 @@ impl SharedCertStore {
 impl CertificateStore for StdHsmPal {
     async fn get_cert_chain_info(&self, part_id: u8, slot_id: u8) -> HsmResult<CertChainInfo> {
         if slot_id != 0 {
-            return Err(CERT_INVALID_SLOT);
+            return Err(HsmError::InvalidArg);
         }
 
         // SAFETY: Single-threaded Embassy executor, sync method.
         let table = unsafe { &mut *self.part_table.get() };
         let idx = part_id as usize;
         if idx >= NUM_PARTITIONS {
-            return Err(PART_INVALID_PID);
+            return Err(HsmError::InvalidArg);
         }
         let entry = &mut table.entries[idx];
         if entry.state == PartState::Disabled {
-            return Err(PART_NOT_ALLOCATED);
+            return Err(HsmError::InvalidArg);
         }
 
         // Ensure leaf cert is cached for consistent thumbprint.
@@ -504,15 +493,18 @@ impl CertificateStore for StdHsmPal {
         cert: Option<&mut [u8]>,
     ) -> HsmResult<usize> {
         if slot_id != 0 {
-            return Err(CERT_INVALID_SLOT);
+            return Err(HsmError::InvalidArg);
         }
 
         // Shared certs (idx 0–2) — no partition state needed.
         if idx <= 2 {
-            let src = self.cert_store.shared_cert(idx).ok_or(CERT_INVALID_INDEX)?;
+            let src = self
+                .cert_store
+                .shared_cert(idx)
+                .ok_or(HsmError::InvalidArg)?;
             if let Some(buf) = cert {
                 if buf.len() < src.len() {
-                    return Err(CERT_BUFFER_TOO_SMALL);
+                    return Err(HsmError::NotEnoughSpace);
                 }
                 buf[..src.len()].copy_from_slice(src);
             }
@@ -521,18 +513,18 @@ impl CertificateStore for StdHsmPal {
 
         // Partition leaf cert (idx 3).
         if idx != 3 {
-            return Err(CERT_INVALID_INDEX);
+            return Err(HsmError::InvalidArg);
         }
 
         // SAFETY: Single-threaded Embassy executor, no .await with active borrow.
         let table = unsafe { &mut *self.part_table.get() };
         let pidx = part_id as usize;
         if pidx >= NUM_PARTITIONS {
-            return Err(PART_INVALID_PID);
+            return Err(HsmError::InvalidArg);
         }
         let entry = &mut table.entries[pidx];
         if entry.state == PartState::Disabled {
-            return Err(PART_NOT_ALLOCATED);
+            return Err(HsmError::InvalidArg);
         }
 
         // Lazy-generate and cache.
@@ -548,7 +540,7 @@ impl CertificateStore for StdHsmPal {
         let len = entry.leaf_cert_len;
         if let Some(buf) = cert {
             if buf.len() < len {
-                return Err(CERT_BUFFER_TOO_SMALL);
+                return Err(HsmError::NotEnoughSpace);
             }
             buf[..len].copy_from_slice(&entry.leaf_cert[..len]);
         }

@@ -35,21 +35,17 @@
 //! session flags against the decoded DDI header before dispatch.
 //! Session state flows back via [`HsmOpStatus`] → CQE DW0/DW1.
 
-use azihsm_fw_ddi_types::DdiDecoder;
+use azihsm_fw_ddi::DdiDecoder;
 use azihsm_fw_ddi_types::DdiReqHdr;
 
 use super::*;
-use crate::error::HostStatus;
-use crate::error::OpError;
-use crate::error::ResultOpErrExt;
-use crate::error::ResultOpStatusExt;
 
-impl Hsm {
+impl<P: HsmPal> Hsm<P> {
     /// Top-level IO handler invoked by each Embassy send-task.
     ///
     /// Populates CQE header fields, runs the command pipeline, then
     /// writes session fields and status to the CQE before completion.
-    pub(crate) async fn handle_io(&self, mut io: Io) {
+    pub async fn handle_io(&self, mut io: P::Io) {
         // Gate on partition state — drop IOs for non-enabled partitions.
         {
             let pid = io.pid();
@@ -60,7 +56,7 @@ impl Hsm {
             if !enabled {
                 debug!("core", "dropping IO for disabled partition {}", pid);
                 if let Err(_e) = self.pal().drop_io(io).await {
-                    error!("core", DROP_IO_FAILURE, "drop_io failed: {:?}", _e);
+                    error!("core", HsmError::DropIoFailure, "drop_io failed: {:?}", _e);
                 }
                 return;
             }
@@ -94,12 +90,17 @@ impl Hsm {
         }
 
         if let Err(_e) = self.pal().complete_io(io).await {
-            error!("core", COMPLETE_IO_FAILURE, "complete_io failed: {:?}", _e);
+            error!(
+                "core",
+                HsmError::CompleteIoFailure,
+                "complete_io failed: {:?}",
+                _e
+            );
         }
     }
 
     /// Validates common SQE fields and dispatches to the opcode handler.
-    pub(crate) async fn handle_op(&self, io: &mut Io) -> Result<HsmOpStatus, OpError> {
+    async fn handle_op(&self, io: &mut P::Io) -> Result<HsmOpStatus, OpError> {
         let sqe = io.sqe();
         let sqe = Sqe::from(sqe);
         sqe.validate()?;
@@ -107,7 +108,7 @@ impl Hsm {
             OP_GENERIC => self.handle_generic_op(io).await,
             OP_FLUSH => self.handle_flush_op(io).await,
             _ => Err(OpError::new(
-                SQE_UNKNOWN_OP,
+                HsmError::UnsupportedCmd,
                 HostStatus::INVALID_COMMAND_OPCODE,
             )),
         }
@@ -120,7 +121,7 @@ impl Hsm {
     ///
     /// **Phase 2 (post-decode)** — Session validation, DDI dispatch.
     /// Errors → DDI error response DMA'd to host, CQE Success.
-    pub(crate) async fn handle_generic_op(&self, io: &mut Io) -> Result<HsmOpStatus, OpError> {
+    async fn handle_generic_op(&self, io: &mut P::Io) -> Result<HsmOpStatus, OpError> {
         let sqe = io.sqe();
         let sqe = Sqe::from(sqe);
         sqe.validate_generic_op()?;
@@ -150,27 +151,23 @@ impl Hsm {
             let mut decoder = DdiDecoder::new(req);
             let hdr: DdiReqHdr = decoder.decode_hdr().op_err(
                 "core",
-                DDI_DECODE_FAILURE,
+                HsmError::DdiDecodeFailed,
                 HostStatus::REQ_HDR_DECODE_ERR,
             )?;
 
             let session_ctrl = SessionCtrl::from_op(hdr.op);
 
             // Session hijack protection
-            let resp_len = if let Err(e) =
+            let resp_len = if let Err(status) =
                 Self::validate_session(&hdr, session_ctrl, session_flags, sqe_session_id)
             {
-                error!("core", e, "session validation failed");
-                ddi::encode_ddi_err(hdr.op, ddi::ddi_status(e), resp_buf)
+                ddi::encode_ddi_err(hdr.op, status, resp_buf)
                     .op_status("core", HostStatus::INTERNAL_ERROR)?
             } else {
                 match ddi::dispatch(&hdr, &mut decoder, part_id, self.pal(), fmem, resp_buf).await {
                     Ok(len) => len,
-                    Err(e) => {
-                        error!("core", e, "ddi cmd failed");
-                        ddi::encode_ddi_err(hdr.op, ddi::ddi_status(e), resp_buf)
-                            .op_status("core", HostStatus::INTERNAL_ERROR)?
-                    }
+                    Err(status) => ddi::encode_ddi_err(hdr.op, status, resp_buf)
+                        .op_status("core", HostStatus::INTERNAL_ERROR)?,
                 }
             };
 
@@ -201,18 +198,18 @@ impl Hsm {
         expected: SessionCtrl,
         flags: SessionFlags,
         sqe_session_id: u16,
-    ) -> Result<(), HsmError> {
+    ) -> HsmResult<()> {
         // Rule 1: SQE ctrl must match DDI op
         if flags.ctrl() != expected as u8 {
-            return Err(DDI_INVALID_ARGUMENT);
+            return Err(HsmError::InvalidArg);
         }
 
         // Rule 2: ctrl/id_valid combinations
         match (expected, flags.id_valid()) {
-            (SessionCtrl::NoSession, true) => return Err(DDI_INVALID_ARGUMENT),
-            (SessionCtrl::Open, true) => return Err(DDI_SESSION_NOT_EXPECTED),
-            (SessionCtrl::Close, false) => return Err(DDI_INVALID_ARGUMENT),
-            (SessionCtrl::InSession, false) => return Err(DDI_INVALID_ARGUMENT),
+            (SessionCtrl::NoSession, true) => return Err(HsmError::InvalidArg),
+            (SessionCtrl::Open, true) => return Err(HsmError::SessionNotExpected),
+            (SessionCtrl::Close, false) => return Err(HsmError::InvalidArg),
+            (SessionCtrl::InSession, false) => return Err(HsmError::InvalidArg),
             _ => {}
         }
 
@@ -220,10 +217,10 @@ impl Hsm {
         if flags.id_valid() {
             match hdr.sess_id {
                 Some(id) if id == sqe_session_id => {}
-                _ => return Err(DDI_INVALID_ARGUMENT),
+                _ => return Err(HsmError::InvalidArg),
             }
         } else if hdr.sess_id.is_some() {
-            return Err(DDI_INVALID_ARGUMENT);
+            return Err(HsmError::InvalidArg);
         }
 
         Ok(())
@@ -238,7 +235,11 @@ impl Hsm {
         self.pal()
             .copy_mem_from_host(part_id, src_prp, dest, true)
             .await
-            .op_err("core", DMA_IN_FAILURE, HostStatus::DMA_TXN_ERROR)
+            .op_err(
+                "core",
+                HsmError::FailedToStartDmaTransaction,
+                HostStatus::DMA_TXN_ERROR,
+            )
     }
 
     async fn copy_mem_to_host(
@@ -250,13 +251,20 @@ impl Hsm {
         self.pal()
             .copy_mem_to_host(part_id, src, dst_prp, true)
             .await
-            .op_err("core", DMA_OUT_FAILURE, HostStatus::DMA_TXN_ERROR)
+            .op_err(
+                "core",
+                HsmError::FailedToStartDmaTransaction,
+                HostStatus::DMA_TXN_ERROR,
+            )
     }
 
     /// Handles an [`OP_FLUSH`] IO command.
     ///
-    /// Returns [`OP_UNIMPL`] — flush is not yet supported.
-    pub(crate) async fn handle_flush_op(&self, _io: &mut Io) -> Result<HsmOpStatus, OpError> {
-        Err(OpError::new(OP_UNIMPL, HostStatus::INVALID_COMMAND_OPCODE))
+    /// Returns [`HsmError::IoChannelUnknownOp`] — flush is not yet supported.
+    async fn handle_flush_op(&self, _io: &mut P::Io) -> Result<HsmOpStatus, OpError> {
+        Err(OpError::new(
+            HsmError::IoChannelUnknownOp,
+            HostStatus::INVALID_COMMAND_OPCODE,
+        ))
     }
 }

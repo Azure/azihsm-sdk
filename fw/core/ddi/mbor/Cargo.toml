@@ -10,6 +10,9 @@ version = "0.1.0"
 bench = false
 doctest = false
 
+[dependencies]
+azihsm_fw_hsm_pal_traits.workspace = true
+
 [dev-dependencies]
 azihsm_ddi_mbor = { features = [
   "array",

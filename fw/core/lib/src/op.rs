@@ -231,11 +231,14 @@ impl<'a> Sqe<'a> {
         if cmd.psdt() != 0 {
             error!(
                 "core",
-                SQE_INVALID_PSDT,
+                HsmError::SqeInvalidPsdt,
                 "Invalid PSDT value: {}",
                 cmd.psdt()
             );
-            return Err(OpError::new(SQE_INVALID_PSDT, HostStatus::INVALID_PSDT));
+            return Err(OpError::new(
+                HsmError::SqeInvalidPsdt,
+                HostStatus::INVALID_PSDT,
+            ));
         }
 
         Ok(())
@@ -254,12 +257,12 @@ impl<'a> Sqe<'a> {
         if self.src_len() == 0 || self.src_len() > MAX_SRC_LEN {
             error!(
                 "core",
-                SQE_INVALID_SRC_LEN,
+                HsmError::IoChannelInvalidSrcLen,
                 "Invalid source length: {}",
                 self.src_len()
             );
             return Err(OpError::new(
-                SQE_INVALID_SRC_LEN,
+                HsmError::IoChannelInvalidSrcLen,
                 HostStatus::INVALID_SRC_LEN,
             ));
         }
@@ -267,12 +270,12 @@ impl<'a> Sqe<'a> {
         if self.dst_len() == 0 || self.dst_len() > MAX_DST_LEN {
             error!(
                 "core",
-                SQE_INVALID_DST_LEN,
+                HsmError::IoChannelInvalidDstLen,
                 "Invalid destination length: {}",
                 self.dst_len()
             );
             return Err(OpError::new(
-                SQE_INVALID_DST_LEN,
+                HsmError::IoChannelInvalidDstLen,
                 HostStatus::INVALID_DST_LEN,
             ));
         }
@@ -280,12 +283,12 @@ impl<'a> Sqe<'a> {
         if !self.is_aligned_4k(self.src_prp1()) {
             error!(
                 "core",
-                SQE_INVALID_SRC_PRP_ALIGN,
+                HsmError::IoChannelInvalidSrcAlignment,
                 "Invalid source PRP alignment: {:?}",
                 self.src_prp1()
             );
             return Err(OpError::new(
-                SQE_INVALID_SRC_PRP_ALIGN,
+                HsmError::IoChannelInvalidSrcAlignment,
                 HostStatus::INVALID_SRC_PRP,
             ));
         }
@@ -293,12 +296,12 @@ impl<'a> Sqe<'a> {
         if !self.is_aligned_4k(self.dst_prp1()) {
             error!(
                 "core",
-                SQE_INVALID_DST_PRP_ALIGN,
+                HsmError::IoChannelInvalidDstAlignment,
                 "Invalid destination PRP alignment: {:?}",
                 self.dst_prp1()
             );
             return Err(OpError::new(
-                SQE_INVALID_DST_PRP_ALIGN,
+                HsmError::IoChannelInvalidDstAlignment,
                 HostStatus::INVALID_DST_PRP,
             ));
         }

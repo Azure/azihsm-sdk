@@ -15,16 +15,11 @@ azihsm_fw_ddi.workspace = true
 azihsm_fw_ddi_mbor.workspace = true
 azihsm_fw_ddi_types.workspace = true
 azihsm_fw_hsm_core_tracing.workspace = true
-azihsm_fw_hsm_pal_std.workspace = true
 azihsm_fw_hsm_pal_traits.workspace = true
 
 bitfield-struct.workspace = true
-cfg-if.workspace = true
-embassy-executor.workspace = true
-embassy-sync.workspace = true
 
 [features]
-default = ["pal-std"]
-pal-std = ["std", "tracing"]
+default = ["std"]
 std = []
 tracing = []

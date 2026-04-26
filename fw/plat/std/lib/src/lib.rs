@@ -25,33 +25,61 @@
 
 use std::thread::JoinHandle;
 
-use azihsm_fw_hsm_pal_std::HsmIoRequest;
-use azihsm_fw_hsm_pal_std::PartCommand;
-use azihsm_fw_hsm_pal_std::StdHsmPal;
-use azihsm_fw_hsm_pal_traits::HsmCqe;
-use azihsm_fw_hsm_pal_traits::HsmError;
-use azihsm_fw_hsm_pal_traits::HsmSqe;
+use azihsm_fw_hsm_core::Hsm;
+use azihsm_fw_hsm_pal_std::*;
+use azihsm_fw_hsm_pal_traits::*;
+use embassy_sync::once_lock::OnceLock;
 
-const ID: u16 = 0x200;
-
-/// IO was dropped by the core (e.g. partition not enabled).
-const IO_DROPPED: HsmError = HsmError::make_pal(ID, 1);
-
-/// Embassy thread stopped — submit channel closed.
-const IO_SUBMIT_FAILURE: HsmError = HsmError::make_pal(ID, 2);
+/// Global HSM singleton — concrete type with StdHsmPal.
+static HSM: OnceLock<Hsm<StdHsmPal>> = OnceLock::new();
 
 /// Embassy task that runs the HSM core lifecycle.
 ///
-/// Lazily initializes the global [`Hsm`] singleton (via `get_or_init`) and
-/// enters the core's `run()` loop, which spawns the IO recv/send task pool
-/// on the provided Embassy spawner. This task never returns under normal
-/// operation — it runs for the lifetime of the Embassy executor thread.
+/// Initialises the PAL, spawns the IO recv/send task pool, enters the
+/// PAL's main event loop, then deinitialises. This task never returns
+/// under normal operation.
 #[embassy_executor::task]
 async fn run_core(spawner: embassy_executor::Spawner) {
-    azihsm_fw_hsm_core::HSM
-        .get_or_init(Default::default)
-        .run(spawner)
-        .await;
+    let hsm = HSM.get().await;
+    hsm.pal().init();
+
+    if let Ok(token) = poll_io(spawner) {
+        spawner.spawn(token);
+    } else {
+        return;
+    }
+
+    hsm.pal().run().await;
+    hsm.pal().deinit();
+}
+
+/// IO receive loop — runs forever as a single Embassy task.
+///
+/// Awaits the next IO from the PAL submission queue, then spawns a
+/// `handle_io` task from the 32-slot pool. If no pool slots are
+/// available, the IO is silently skipped and the loop continues.
+#[embassy_executor::task]
+async fn poll_io(spawner: embassy_executor::Spawner) -> ! {
+    loop {
+        let Ok(io) = HSM.get().await.pal().poll_io().await else {
+            continue;
+        };
+
+        let Ok(token) = handle_io(io) else {
+            continue;
+        };
+        spawner.spawn(token);
+    }
+}
+
+/// Processes a single IO to completion.
+///
+/// Delegates all parsing, validation, and CQE population to
+/// [`Hsm::handle_io`]. Runs in a 32-task Embassy pool, allowing
+/// up to 32 IOs to be processed concurrently.
+#[embassy_executor::task(pool_size = 32)]
+async fn handle_io(io: StdHsmIo) {
+    HSM.get().await.handle_io(io).await;
 }
 
 /// Embassy task that processes sideband partition commands.
@@ -65,7 +93,7 @@ async fn ipc_task(rx: async_channel::Receiver<PartCommand>) {
         let Ok(cmd) = rx.recv().await else {
             break;
         };
-        let pal = azihsm_fw_hsm_core::HSM.get().await.pal();
+        let pal = HSM.get().await.pal();
         match cmd {
             PartCommand::Alloc {
                 pid,
@@ -150,7 +178,7 @@ impl StdHsmBuilder {
                 executor.run(|spawner| {
                     let pal = StdHsmPal::new(io_rx, pool_handle);
 
-                    let _ = azihsm_fw_hsm_core::HSM.init(azihsm_fw_hsm_core::Hsm::new(pal));
+                    let _ = HSM.init(Hsm::new(pal));
 
                     let token = run_core(spawner).expect("run_core spawn failed");
                     spawner.spawn(token);
@@ -235,16 +263,10 @@ impl StdHsm {
     ///
     /// # Errors
     ///
-    /// Returns `IO_DROPPED` if the core discards the IO (e.g. the
-    /// partition is not enabled). Returns `IO_SUBMIT_FAILURE` if the
+    /// Returns [`HsmError::InternalError`] if the core discards the IO (e.g. the
+    /// partition is not enabled). Returns [`HsmError::InternalError`] if the
     /// Embassy thread has stopped.
-    pub async fn io(
-        &self,
-        sqe: HsmSqe,
-        pid: u8,
-        qid: u16,
-        qidx: u16,
-    ) -> azihsm_fw_hsm_pal_traits::HsmResult<HsmCqe> {
+    pub async fn io(&self, sqe: HsmSqe, pid: u8, qid: u16, qidx: u16) -> HsmResult<HsmCqe> {
         let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
         let req = HsmIoRequest {
             pid,
@@ -253,8 +275,11 @@ impl StdHsm {
             sqe,
             tx: reply_tx,
         };
-        self.io_tx.send(req).await.map_err(|_| IO_SUBMIT_FAILURE)?;
-        reply_rx.await.map_err(|_| IO_DROPPED)
+        self.io_tx
+            .send(req)
+            .await
+            .map_err(|_| HsmError::InternalError)?;
+        reply_rx.await.map_err(|_| HsmError::InternalError)
     }
 
     /// Allocate a partition on the HSM.
@@ -272,11 +297,7 @@ impl StdHsm {
     /// - `PART_RESOURCE_EXHAUSTED` — total resources would exceed 65
     /// - `PART_KEY_GEN_FAILURE` — ECC key generation failed
     /// - `RNG_FAILURE` — random ID generation failed
-    pub async fn part_alloc(
-        &self,
-        pid: u8,
-        res_count: u8,
-    ) -> azihsm_fw_hsm_pal_traits::HsmResult<()> {
+    pub async fn part_alloc(&self, pid: u8, res_count: u8) -> HsmResult<()> {
         let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
         let cmd = PartCommand::Alloc {
             pid,
@@ -298,7 +319,7 @@ impl StdHsm {
     ///
     /// - `PART_INVALID_PID` — `pid >= 65`
     /// - `PART_NOT_ALLOCATED` — partition is already `Disabled`
-    pub async fn part_free(&self, pid: u8) -> azihsm_fw_hsm_pal_traits::HsmResult<()> {
+    pub async fn part_free(&self, pid: u8) -> HsmResult<()> {
         let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
         let cmd = PartCommand::Free {
             pid,
