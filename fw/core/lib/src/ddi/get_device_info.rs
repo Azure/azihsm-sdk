@@ -27,21 +27,13 @@ pub(crate) fn get_device_info<'a>(
 ) -> HsmResult<&'a [u8]> {
     let _body: DdiGetDeviceInfoReq = decoder.decode_data().map_err(|_| DDI_DECODE_FAILURE)?;
 
-    let resp_hdr = DdiRespHdr {
-        rev: hdr.rev,
-        op: DdiOp::GetDeviceInfo,
-        sess_id: None,
-        status: DdiStatus::Success,
-        fips_approved: false,
-    };
-
     let resp_data = DdiGetDeviceInfoResp {
         kind: DdiDeviceKind::Physical,
         tables: pal.part_res_count(part_id).unwrap_or(0),
         fips_approved: false,
     };
 
-    let len = ddi::encode_resp(resp_hdr, resp_data, smem).map_err(|_| DDI_ENCODE_FAILURE)?;
+    let len = ddi::encode_resp(ddi::success_hdr(hdr, DdiOp::GetDeviceInfo), resp_data, smem)?;
 
     Ok(&smem[..len])
 }

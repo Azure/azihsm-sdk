@@ -36,7 +36,7 @@ pub trait CertificateStore {
     /// # Errors
     ///
     /// Returns [`HsmError`] if the partition or slot index is invalid.
-    fn get_cert_chain_info(&self, part_id: u8, slot_id: u8) -> HsmResult<CertChainInfo>;
+    async fn get_cert_chain_info(&self, part_id: u8, slot_id: u8) -> HsmResult<CertChainInfo>;
 
     /// Reads a certificate from the chain into the provided buffer.
     ///
@@ -45,21 +45,23 @@ pub trait CertificateStore {
     /// - `part_id` — Partition index.
     /// - `slot_id` — Slot index.
     /// - `idx` — Zero-based index of the certificate within the chain.
-    /// - `cert` — Output buffer to receive the certificate bytes.
+    /// - `cert` — When `Some`, output buffer to receive the certificate bytes.
+    ///   When `None`, only the certificate length is returned (size query).
     ///
     /// # Returns
     ///
-    /// The number of bytes written to `cert`.
+    /// The number of bytes that were (or would be) written to `cert`.
     ///
     /// # Errors
     ///
     /// Returns [`HsmError`] if the partition index, slot index, or certificate
-    /// index is invalid, or if `cert` is too small for the certificate being read.
+    /// index is invalid, or if `cert` is `Some` but too small for the
+    /// certificate being read.
     async fn get_cert(
         &self,
         part_id: u8,
         slot_id: u8,
         idx: u8,
-        cert: &mut [u8],
+        cert: Option<&mut [u8]>,
     ) -> HsmResult<usize>;
 }

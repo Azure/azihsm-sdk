@@ -38,20 +38,12 @@ pub(crate) fn get_api_rev<'a>(
     // trailing bytes (rejects malformed requests).
     let _body: DdiGetApiRevReq = decoder.decode_data().map_err(|_| DDI_DECODE_FAILURE)?;
 
-    let resp_hdr = DdiRespHdr {
-        rev: None,
-        op: DdiOp::GetApiRev,
-        sess_id: None,
-        status: DdiStatus::Success,
-        fips_approved: false,
-    };
-
     let resp_data = DdiGetApiRevResp {
         min: DdiApiRev { major: 1, minor: 0 },
         max: DdiApiRev { major: 1, minor: 0 },
     };
 
-    let len = ddi::encode_resp(resp_hdr, resp_data, smem).map_err(|_| DDI_ENCODE_FAILURE)?;
+    let len = ddi::encode_resp(ddi::success_hdr(hdr, DdiOp::GetApiRev), resp_data, smem)?;
 
     Ok(&smem[..len])
 }

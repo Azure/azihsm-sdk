@@ -581,7 +581,10 @@ impl SessionCtrl {
     pub fn from_op(op: azihsm_fw_ddi_types::DdiOp) -> Self {
         use azihsm_fw_ddi_types::DdiOp;
         match op {
-            DdiOp::GetApiRev | DdiOp::GetDeviceInfo => Self::NoSession,
+            DdiOp::GetApiRev
+            | DdiOp::GetDeviceInfo
+            | DdiOp::GetCertChainInfo
+            | DdiOp::GetCertificate => Self::NoSession,
             DdiOp::OpenSession => Self::Open,
             DdiOp::CloseSession => Self::Close,
             _ => Self::InSession,

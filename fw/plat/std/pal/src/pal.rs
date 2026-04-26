@@ -46,6 +46,7 @@ use azihsm_fw_hsm_pal_traits::*;
 use tokio::runtime::Handle;
 use tokio::runtime::Runtime;
 
+use crate::cert::SharedCertStore;
 use crate::drivers::gdma::StdGdma;
 use crate::drivers::iic::StdIic;
 use crate::drivers::oic::StdOic;
@@ -98,6 +99,12 @@ pub struct StdHsmPal {
     ///   dropped.
     pub(crate) part_table: UnsafeCell<PartitionTable>,
 
+    /// Shared certificate store — Root CA, DeviceId CA, and Alias CA
+    /// certs plus the Alias key pair for signing partition leaf certs.
+    ///
+    /// Boxed to avoid 6KB+ on the stack. Immutable after construction.
+    pub(crate) cert_store: Box<SharedCertStore>,
+
     /// Tokio runtime owned by this instance when constructed via [`Default`].
     ///
     /// `None` when constructed via [`new`](Self::new) — the caller owns the
@@ -137,6 +144,7 @@ impl StdHsmPal {
             gdma: StdGdma::new(),
             pool: WorkerPool::new(tokio_handle),
             part_table: UnsafeCell::new(PartitionTable::default()),
+            cert_store: Box::new(SharedCertStore::new()),
             _rt: None,
         }
     }
@@ -162,6 +170,7 @@ impl Default for StdHsmPal {
             gdma: StdGdma::new(),
             pool: WorkerPool::new(handle),
             part_table: UnsafeCell::new(PartitionTable::default()),
+            cert_store: Box::new(SharedCertStore::new()),
             // Keep the runtime alive so `handle` remains valid.
             _rt: Some(rt),
         }

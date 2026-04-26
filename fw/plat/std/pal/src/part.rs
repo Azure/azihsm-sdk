@@ -49,6 +49,7 @@ use azihsm_crypto::ExportableKey;
 use azihsm_crypto::Rng;
 
 use super::*;
+use crate::cert::MAX_CERT_DER_LEN;
 
 /// Total number of partitions supported by the HSM.
 pub const NUM_PARTITIONS: usize = 65;
@@ -63,7 +64,7 @@ const PART_ID_LEN: usize = 16;
 const P384_COORD_SIZE: usize = 48;
 
 /// Size of the raw public key (x ∥ y) in bytes.
-const P384_PUB_KEY_LEN: usize = P384_COORD_SIZE * 2;
+pub(crate) const P384_PUB_KEY_LEN: usize = P384_COORD_SIZE * 2;
 
 /// Maximum size of a PKCS#8 DER-encoded P-384 private key.
 const P384_PRIV_KEY_DER_MAX: usize = 256;
@@ -72,9 +73,9 @@ const P384_PRIV_KEY_DER_MAX: usize = 256;
 ///
 /// All fields use fixed-size inline storage to avoid heap allocations
 /// and simplify the lifetime model for borrowed trait returns.
-struct PartitionEntry {
+pub(crate) struct PartitionEntry {
     /// Current lifecycle state.
-    state: PartState,
+    pub(crate) state: PartState,
 
     /// Number of resources allocated to this partition.
     res_count: u8,
@@ -83,13 +84,19 @@ struct PartitionEntry {
     id: [u8; PART_ID_LEN],
 
     /// Raw ECC P-384 public key (x ∥ y coordinates, 96 bytes).
-    pub_key: [u8; P384_PUB_KEY_LEN],
+    pub(crate) pub_key: [u8; P384_PUB_KEY_LEN],
 
     /// PKCS#8 DER-encoded ECC P-384 private key.
     priv_key_der: [u8; P384_PRIV_KEY_DER_MAX],
 
     /// Actual length of valid data in `priv_key_der`.
     priv_key_len: usize,
+
+    /// Cached DER-encoded partition leaf certificate (lazily generated).
+    pub(crate) leaf_cert: [u8; MAX_CERT_DER_LEN],
+
+    /// Length of valid data in `leaf_cert` (0 = not yet generated).
+    pub(crate) leaf_cert_len: usize,
 }
 
 impl Default for PartitionEntry {
@@ -101,6 +108,8 @@ impl Default for PartitionEntry {
             pub_key: [0u8; P384_PUB_KEY_LEN],
             priv_key_der: [0u8; P384_PRIV_KEY_DER_MAX],
             priv_key_len: 0,
+            leaf_cert: [0u8; MAX_CERT_DER_LEN],
+            leaf_cert_len: 0,
         }
     }
 }
@@ -111,13 +120,15 @@ impl Default for PartitionEntry {
 /// methods can return borrowed slices into the entries.
 pub(crate) struct PartitionTable {
     /// Fixed array of partition entries indexed by `pid`.
-    entries: [PartitionEntry; NUM_PARTITIONS],
+    ///
+    /// Boxed to avoid 155KB+ on the stack during construction and moves.
+    pub(crate) entries: Box<[PartitionEntry; NUM_PARTITIONS]>,
 }
 
 impl Default for PartitionTable {
     fn default() -> Self {
         Self {
-            entries: core::array::from_fn(|_| PartitionEntry::default()),
+            entries: Box::new(core::array::from_fn(|_| PartitionEntry::default())),
         }
     }
 }
@@ -324,6 +335,8 @@ impl StdHsmPal {
         entry.pub_key.fill(0);
         entry.priv_key_der[..entry.priv_key_len].fill(0);
         entry.priv_key_len = 0;
+        entry.leaf_cert[..entry.leaf_cert_len].fill(0);
+        entry.leaf_cert_len = 0;
         entry.res_count = 0;
         entry.state = PartState::Disabled;
 

@@ -32,3 +32,15 @@ pub const PART_RESOURCE_EXHAUSTED: HsmError = HsmError::make_pal(ID, 13);
 
 /// ECC-384 key pair generation failed.
 pub const PART_KEY_GEN_FAILURE: HsmError = HsmError::make_pal(ID, 14);
+
+/// Invalid certificate slot (only slot 0 is supported).
+pub const CERT_INVALID_SLOT: HsmError = HsmError::make_pal(ID, 20);
+
+/// Certificate index out of range (0–3 for slot 0).
+pub const CERT_INVALID_INDEX: HsmError = HsmError::make_pal(ID, 21);
+
+/// Output buffer too small for the certificate.
+pub const CERT_BUFFER_TOO_SMALL: HsmError = HsmError::make_pal(ID, 22);
+
+/// Certificate build or signing operation failed.
+pub const CERT_BUILD_FAILURE: HsmError = HsmError::make_pal(ID, 23);

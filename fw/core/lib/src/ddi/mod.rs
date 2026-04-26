@@ -2,6 +2,8 @@
 // Licensed under the MIT License.
 
 pub(crate) mod get_api_rev;
+pub(crate) mod get_cert_chain_info;
+pub(crate) mod get_certificate;
 pub(crate) mod get_device_info;
 
 use azihsm_fw_ddi_mbor::MborEncode;
@@ -12,6 +14,8 @@ use azihsm_fw_ddi_mbor::MborMap;
 use azihsm_fw_ddi_types::error::DdiErrResp;
 use azihsm_fw_ddi_types::*;
 pub(crate) use get_api_rev::*;
+pub(crate) use get_cert_chain_info::*;
+pub(crate) use get_certificate::*;
 pub(crate) use get_device_info::*;
 
 use super::*;
@@ -21,7 +25,10 @@ use crate::error::*;
 ///
 /// Returns the response length on success, or the original [`HsmError`]
 /// on failure. The caller wraps failures in a DDI error response.
-pub(crate) fn dispatch(
+///
+/// This function is `async` because `GetCertificate` calls into
+/// `CertificateStore::get_cert` which is async.
+pub(crate) async fn dispatch(
     hdr: &DdiReqHdr,
     decoder: &mut DdiDecoder<'_>,
     part_id: u8,
@@ -32,6 +39,10 @@ pub(crate) fn dispatch(
     let resp = match hdr.op {
         DdiOp::GetApiRev => get_api_rev(hdr, decoder, fmem, smem)?,
         DdiOp::GetDeviceInfo => get_device_info(hdr, decoder, part_id, pal, fmem, smem)?,
+        DdiOp::GetCertChainInfo => {
+            get_cert_chain_info(hdr, decoder, part_id, pal, fmem, smem).await?
+        }
+        DdiOp::GetCertificate => get_certificate(hdr, decoder, part_id, pal, fmem, smem).await?,
         _ => return Err(DDI_UNKNOWN_OP),
     };
     Ok(resp.len())
@@ -90,6 +101,39 @@ where
         .map_err(|_| DDI_ENCODE_FAILURE)?;
 
     Ok(total)
+}
+
+/// Encode the DDI response header and outer framing, returning the encoder
+/// positioned just before the data map.
+///
+/// Use this with [`DdiGetCertificateResp::frame`] (or similar) to encode the
+/// header first, then reserve in-place slots for variable-length fields.
+pub(crate) fn encode_resp_hdr<'a>(
+    hdr: &DdiRespHdr,
+    smem: &'a mut [u8],
+) -> HsmResult<MborEncoder<'a>> {
+    let mut encoder = MborEncoder::new(smem);
+    MborMap(2)
+        .mbor_encode(&mut encoder)
+        .map_err(|_| DDI_ENCODE_FAILURE)?;
+    0u8.mbor_encode(&mut encoder)
+        .map_err(|_| DDI_ENCODE_FAILURE)?;
+    hdr.mbor_encode(&mut encoder)
+        .map_err(|_| DDI_ENCODE_FAILURE)?;
+    1u8.mbor_encode(&mut encoder)
+        .map_err(|_| DDI_ENCODE_FAILURE)?;
+    Ok(encoder)
+}
+
+/// Build a success [`DdiRespHdr`] echoing the request's `rev` field.
+pub(crate) fn success_hdr(req: &DdiReqHdr, op: DdiOp) -> DdiRespHdr {
+    DdiRespHdr {
+        rev: req.rev,
+        op,
+        sess_id: None,
+        status: DdiStatus::Success,
+        fips_approved: false,
+    }
 }
 
 /// Encode a DDI error response into `smem`.

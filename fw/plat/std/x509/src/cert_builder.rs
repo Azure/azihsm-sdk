@@ -215,7 +215,7 @@ pub struct LeafCertParams<'a> {
 /// # Returns
 /// `Some([u8; CN_LEN])` with the padded result, or `None` if the input is
 /// too long or contains non-ASCII bytes.
-pub(crate) fn pad_cn(cn: &str) -> Option<[u8; CN_LEN]> {
+pub fn pad_cn(cn: &str) -> Option<[u8; CN_LEN]> {
     if cn.len() > CN_LEN || !cn.is_ascii() {
         return None;
     }
@@ -232,7 +232,7 @@ pub(crate) fn pad_cn(cn: &str) -> Option<[u8; CN_LEN]> {
 /// # Returns
 /// `Some([u8; SN_LEN])` with the padded result, or `None` if the input is
 /// too long or contains non-ASCII bytes.
-pub(crate) fn pad_sn(sn: &str) -> Option<[u8; SN_LEN]> {
+pub fn pad_sn(sn: &str) -> Option<[u8; SN_LEN]> {
     if sn.len() > SN_LEN || !sn.is_ascii() {
         return None;
     }

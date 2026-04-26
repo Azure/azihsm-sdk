@@ -553,3 +553,305 @@ async fn ddi_get_device_info() {
     assert_eq!(resp_data.tables, 1);
     assert!(!resp_data.fips_approved);
 }
+
+// ---------------------------------------------------------------------------
+// Certificate chain tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn get_cert_chain_info_slot0() {
+    use azihsm_ddi_types::*;
+
+    ensure_io_part().await;
+    let mut src = AlignedBuf::new(4096);
+    let mut dst = AlignedBuf::new(4096);
+
+    let req_hdr = DdiReqHdr {
+        rev: Some(DdiApiRev { major: 1, minor: 0 }),
+        op: DdiOp::GetCertChainInfo,
+        sess_id: None,
+    };
+    let req_len = DdiEncoder::encode_parts(
+        req_hdr,
+        DdiGetCertChainInfoReq { slot_id: 0 },
+        src.as_mut_slice(),
+        false,
+    )
+    .expect("encode req");
+
+    let c = HSM
+        .io(
+            sqe_with_dma(1108, &src.as_slice()[..req_len], dst.as_mut_slice()),
+            IO_PID,
+            0,
+            0,
+        )
+        .await
+        .expect("io");
+
+    assert_eq!(cqe_status(&c), 0, "expected Success");
+
+    let resp_len = (c[0] & 0xFFFF) as usize;
+    let mut decoder = DdiDecoder::new(&dst.as_slice()[..resp_len], false);
+    let hdr: DdiRespHdr = decoder.decode_hdr().expect("decode hdr");
+    assert_eq!(hdr.op, DdiOp::GetCertChainInfo);
+    assert_eq!(hdr.status, DdiStatus::Success);
+
+    let data: DdiGetCertChainInfoResp = decoder.decode_data().expect("decode data");
+    assert_eq!(data.num_certs, 4, "slot 0 should have 4 certs");
+    assert_eq!(data.thumbprint.len(), 32, "thumbprint should be 32 bytes");
+    // Thumbprint must not be all zeros
+    assert!(
+        data.thumbprint.as_slice().iter().any(|&b| b != 0),
+        "thumbprint must not be all zeros"
+    );
+}
+
+#[tokio::test]
+async fn get_cert_chain_info_invalid_slot() {
+    use azihsm_ddi_types::*;
+
+    ensure_io_part().await;
+    let mut src = AlignedBuf::new(4096);
+    let mut dst = AlignedBuf::new(4096);
+
+    let req_hdr = DdiReqHdr {
+        rev: Some(DdiApiRev { major: 1, minor: 0 }),
+        op: DdiOp::GetCertChainInfo,
+        sess_id: None,
+    };
+    let req_len = DdiEncoder::encode_parts(
+        req_hdr,
+        DdiGetCertChainInfoReq { slot_id: 1 },
+        src.as_mut_slice(),
+        false,
+    )
+    .expect("encode req");
+
+    let c = HSM
+        .io(
+            sqe_with_dma(1108, &src.as_slice()[..req_len], dst.as_mut_slice()),
+            IO_PID,
+            0,
+            0,
+        )
+        .await
+        .expect("io");
+
+    // DDI errors are returned inside the response body with a non-Success status
+    let resp_len = (c[0] & 0xFFFF) as usize;
+    assert!(resp_len > 0, "expected error response body");
+    let mut decoder = DdiDecoder::new(&dst.as_slice()[..resp_len], false);
+    let hdr: DdiRespHdr = decoder.decode_hdr().expect("decode hdr");
+    assert_ne!(hdr.status, DdiStatus::Success, "expected error status");
+}
+
+/// Helper to retrieve a single certificate by index.
+async fn get_cert_der(idx: u8) -> Vec<u8> {
+    use azihsm_ddi_types::*;
+
+    let mut src = AlignedBuf::new(4096);
+    let mut dst = AlignedBuf::new(4096);
+
+    let req_hdr = DdiReqHdr {
+        rev: Some(DdiApiRev { major: 1, minor: 0 }),
+        op: DdiOp::GetCertificate,
+        sess_id: None,
+    };
+    let req_len = DdiEncoder::encode_parts(
+        req_hdr,
+        DdiGetCertificateReq {
+            slot_id: 0,
+            cert_id: idx,
+        },
+        src.as_mut_slice(),
+        false,
+    )
+    .expect("encode req");
+
+    let c = HSM
+        .io(
+            sqe_with_dma(1109, &src.as_slice()[..req_len], dst.as_mut_slice()),
+            IO_PID,
+            0,
+            0,
+        )
+        .await
+        .expect("io");
+
+    assert_eq!(cqe_status(&c), 0, "cert idx {idx}: expected Success");
+
+    let resp_len = (c[0] & 0xFFFF) as usize;
+    let mut decoder = DdiDecoder::new(&dst.as_slice()[..resp_len], false);
+    let hdr: DdiRespHdr = decoder.decode_hdr().expect("decode hdr");
+    assert_eq!(hdr.op, DdiOp::GetCertificate);
+    assert_eq!(hdr.status, DdiStatus::Success);
+
+    let data: DdiGetCertificateResp = decoder.decode_data().expect("decode data");
+    data.certificate.as_slice().to_vec()
+}
+
+#[tokio::test]
+async fn get_certificate_all_indices() {
+    ensure_io_part().await;
+
+    for idx in 0..4u8 {
+        let cert = get_cert_der(idx).await;
+        assert!(
+            cert.len() > 100,
+            "cert idx {idx}: cert too short ({})",
+            cert.len()
+        );
+    }
+}
+
+#[tokio::test]
+async fn get_certificate_invalid_index() {
+    use azihsm_ddi_types::*;
+
+    ensure_io_part().await;
+    let mut src = AlignedBuf::new(4096);
+    let mut dst = AlignedBuf::new(4096);
+
+    let req_hdr = DdiReqHdr {
+        rev: Some(DdiApiRev { major: 1, minor: 0 }),
+        op: DdiOp::GetCertificate,
+        sess_id: None,
+    };
+    let req_len = DdiEncoder::encode_parts(
+        req_hdr,
+        DdiGetCertificateReq {
+            slot_id: 0,
+            cert_id: 4,
+        },
+        src.as_mut_slice(),
+        false,
+    )
+    .expect("encode req");
+
+    let c = HSM
+        .io(
+            sqe_with_dma(1109, &src.as_slice()[..req_len], dst.as_mut_slice()),
+            IO_PID,
+            0,
+            0,
+        )
+        .await
+        .expect("io");
+
+    // DDI errors are returned inside the response body with a non-Success status
+    let resp_len = (c[0] & 0xFFFF) as usize;
+    assert!(resp_len > 0, "expected error response body");
+    let mut decoder = DdiDecoder::new(&dst.as_slice()[..resp_len], false);
+    let hdr: DdiRespHdr = decoder.decode_hdr().expect("decode hdr");
+    assert_ne!(hdr.status, DdiStatus::Success, "expected error status");
+}
+
+#[tokio::test]
+async fn get_certificate_chain_validation() {
+    use x509::X509Certificate;
+    use x509::X509CertificateOp;
+
+    ensure_io_part().await;
+
+    // Retrieve all 4 certs
+    let root_der = get_cert_der(0).await;
+    let deviceid_der = get_cert_der(1).await;
+    let alias_der = get_cert_der(2).await;
+    let leaf_der = get_cert_der(3).await;
+
+    // Parse all certs
+    let root = X509Certificate::from_der(&root_der).expect("parse root");
+    let deviceid = X509Certificate::from_der(&deviceid_der).expect("parse deviceid");
+    let alias = X509Certificate::from_der(&alias_der).expect("parse alias");
+    let leaf = X509Certificate::from_der(&leaf_der).expect("parse leaf");
+
+    // Validate chain: leaf → alias → deviceid → root
+    assert!(
+        leaf.validate_chain(&[alias, deviceid, root])
+            .expect("validate chain"),
+        "cert chain validation failed"
+    );
+}
+
+#[tokio::test]
+async fn get_cert_thumbprint_consistency() {
+    use azihsm_ddi_types::*;
+
+    ensure_io_part().await;
+
+    // Call GetCertChainInfo twice — thumbprint must be identical
+    let get_thumbprint = || async {
+        let mut src = AlignedBuf::new(4096);
+        let mut dst = AlignedBuf::new(4096);
+
+        let req_hdr = DdiReqHdr {
+            rev: Some(DdiApiRev { major: 1, minor: 0 }),
+            op: DdiOp::GetCertChainInfo,
+            sess_id: None,
+        };
+        let req_len = DdiEncoder::encode_parts(
+            req_hdr,
+            DdiGetCertChainInfoReq { slot_id: 0 },
+            src.as_mut_slice(),
+            false,
+        )
+        .expect("encode req");
+
+        let c = HSM
+            .io(
+                sqe_with_dma(1108, &src.as_slice()[..req_len], dst.as_mut_slice()),
+                IO_PID,
+                0,
+                0,
+            )
+            .await
+            .expect("io");
+
+        let resp_len = (c[0] & 0xFFFF) as usize;
+        let mut decoder = DdiDecoder::new(&dst.as_slice()[..resp_len], false);
+        let _: DdiRespHdr = decoder.decode_hdr().expect("hdr");
+        let data: DdiGetCertChainInfoResp = decoder.decode_data().expect("data");
+        data.thumbprint.as_slice().to_vec()
+    };
+
+    let tp1 = get_thumbprint().await;
+    let tp2 = get_thumbprint().await;
+    assert_eq!(tp1, tp2, "thumbprint must be stable across calls");
+}
+
+#[tokio::test]
+async fn dump_cert_chain_openssl() {
+    ensure_io_part().await;
+
+    let names = ["Root CA", "DeviceId CA", "Alias CA", "Partition Leaf"];
+
+    for idx in 0..4u8 {
+        let der = get_cert_der(idx).await;
+
+        // Write DER to a temp file
+        let path = std::env::temp_dir().join(format!("azihsm_cert_{idx}.der"));
+        std::fs::write(&path, &der).expect("write cert");
+
+        // Run openssl x509 to dump cert text
+        let output = std::process::Command::new("openssl")
+            .args(["x509", "-inform", "DER", "-in"])
+            .arg(&path)
+            .args(["-text", "-noout"])
+            .output()
+            .expect("openssl x509");
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "openssl failed for cert {idx} ({}):\n{stderr}",
+            names[idx as usize]
+        );
+
+        eprintln!("=== [{idx}] {} ===\n{stdout}", names[idx as usize]);
+
+        // Clean up
+        let _ = std::fs::remove_file(&path);
+    }
+}

@@ -164,7 +164,7 @@ impl Hsm {
                 ddi::encode_ddi_err(hdr.op, ddi::ddi_status(e), resp_buf)
                     .op_status("core", HostStatus::INTERNAL_ERROR)?
             } else {
-                match ddi::dispatch(&hdr, &mut decoder, part_id, self.pal(), fmem, resp_buf) {
+                match ddi::dispatch(&hdr, &mut decoder, part_id, self.pal(), fmem, resp_buf).await {
                     Ok(len) => len,
                     Err(e) => {
                         error!("core", e, "ddi cmd failed");

@@ -49,6 +49,7 @@
 //! [`HsmIo`]: azihsm_fw_hsm_pal_traits::HsmIo
 
 mod buf_pool;
+mod cert;
 mod drivers;
 mod error;
 mod gdma;
