@@ -878,7 +878,19 @@ azihsm_status azihsm_open_device_and_session(
     }
     muk_was_loaded = (muk_buf.ptr != NULL);
 
-    // Configure OBK based on source selection
+    // Configure OBK based on source selection.
+    //
+    // Caller-source strategy: always attempt init with the raw OBK first.
+    // - On a cold device (post power cycle) the device's one-shot `init_bk3`
+    //   succeeds, derives a fresh MOBK, and any stale cached MOBK on disk is
+    //   harmlessly overwritten after init.
+    // - On a warm device (NSSR/process restart) the device rejects the OBK
+    //   with BK3_ALREADY_INITIALIZED; we then retry with the cached MOBK
+    //   from `mobk_path`. If the cache is missing in this case, the user
+    //   has lost the MOBK without resetting the device — fail cleanly.
+    //
+    // TPM source: the SDK derives MOBK from the TPM on every init, so no
+    // file-based MOBK caching is needed here.
     if (config->use_tpm_obk)
     {
         backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_TPM;
@@ -886,75 +898,51 @@ azihsm_status azihsm_open_device_and_session(
     }
     else
     {
-        // Prefer a previously-persisted MOBK over the raw OBK. The device's
-        // `init_bk3` (which derives MOBK from OBK) is one-shot per power
-        // cycle and is preserved across NSSR/reset, so subsequent inits on
-        // the same device must supply the cached MOBK rather than
-        // re-providing the OBK — otherwise init fails with
-        // Bk3AlreadyInitialized.
-        status = azihsm_file_load(config->mobk_path, &mobk_buf);
+        // Load the OBK from file. The OBK is the raw owner backup key for
+        // init_bk3, NOT the masked owner backup key (MOBK) returned by the HSM.
+        status = azihsm_file_load(config->obk_path, &obk_buf);
         if (status != AZIHSM_STATUS_SUCCESS)
         {
             goto cleanup;
         }
 
-        if (mobk_buf.ptr != NULL)
+        if (obk_buf.ptr == NULL)
         {
-            backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER;
-            backup_config.owner_backup_key = NULL;
-            backup_config.masked_owner_backup_key = &mobk_buf;
+            ERR_raise_data(
+                ERR_LIB_PROV,
+                ERR_R_INIT_FAIL,
+                "OBK file not found at '%s'. "
+                "The OBK must be a %d-byte random binary file. "
+                "Generate one with: openssl rand -out '%s' %d "
+                "(or set azihsm-obk-source=tpm to retrieve it from the TPM).",
+                config->obk_path,
+                AZIHSM_OBK_SIZE,
+                config->obk_path,
+                AZIHSM_OBK_SIZE
+            );
+            status = AZIHSM_STATUS_INTERNAL_ERROR;
+            goto cleanup;
         }
-        else
+
+        if (obk_buf.len != AZIHSM_OBK_SIZE)
         {
-            // No cached MOBK — first init after device power-up. Load the
-            // OBK from file so the device can derive (and we can later cache)
-            // the MOBK.
-            // Note: the OBK is the raw owner backup key for init_bk3, NOT the masked
-            // owner backup key (MOBK) returned by the HSM.
-            status = azihsm_file_load(config->obk_path, &obk_buf);
-            if (status != AZIHSM_STATUS_SUCCESS)
-            {
-                goto cleanup;
-            }
-
-            if (obk_buf.ptr == NULL)
-            {
-                ERR_raise_data(
-                    ERR_LIB_PROV,
-                    ERR_R_INIT_FAIL,
-                    "OBK file not found at '%s'. "
-                    "The OBK must be a %d-byte random binary file. "
-                    "Generate one with: openssl rand -out '%s' %d "
-                    "(or set azihsm-obk-source=tpm to retrieve it from the TPM).",
-                    config->obk_path,
-                    AZIHSM_OBK_SIZE,
-                    config->obk_path,
-                    AZIHSM_OBK_SIZE
-                );
-                status = AZIHSM_STATUS_INTERNAL_ERROR;
-                goto cleanup;
-            }
-
-            if (obk_buf.len != AZIHSM_OBK_SIZE)
-            {
-                ERR_raise_data(
-                    ERR_LIB_PROV,
-                    ERR_R_INIT_FAIL,
-                    "OBK file '%s' has wrong size: got %u bytes, expected %d. "
-                    "Regenerate with: openssl rand -out '%s' %d",
-                    config->obk_path,
-                    obk_buf.len,
-                    AZIHSM_OBK_SIZE,
-                    config->obk_path,
-                    AZIHSM_OBK_SIZE
-                );
-                status = AZIHSM_STATUS_INTERNAL_ERROR;
-                goto cleanup;
-            }
-
-            backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER;
-            backup_config.owner_backup_key = &obk_buf;
+            ERR_raise_data(
+                ERR_LIB_PROV,
+                ERR_R_INIT_FAIL,
+                "OBK file '%s' has wrong size: got %u bytes, expected %d. "
+                "Regenerate with: openssl rand -out '%s' %d",
+                config->obk_path,
+                obk_buf.len,
+                AZIHSM_OBK_SIZE,
+                config->obk_path,
+                AZIHSM_OBK_SIZE
+            );
+            status = AZIHSM_STATUS_INTERNAL_ERROR;
+            goto cleanup;
         }
+
+        backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER;
+        backup_config.owner_backup_key = &obk_buf;
     }
 
     status = azihsm_get_device_handle(device, api_rev);
@@ -1057,7 +1045,7 @@ azihsm_status azihsm_open_device_and_session(
         pota_endorsement.endorsement = &pota_data;
     }
 
-    // Initialize partition with loaded keys (or NULL if not available)
+    // Initialize partition with loaded keys (or NULL if not available).
     status = azihsm_part_init(
         *device,
         &creds,
@@ -1067,6 +1055,54 @@ azihsm_status azihsm_open_device_and_session(
         &pota_endorsement,
         config->resiliency_enabled ? &resiliency_cfg : NULL
     );
+
+    // Caller-source warm-device path: the device's `init_bk3` is one-shot
+    // per power cycle, so a re-init on the same device rejects the raw OBK
+    // with BK3_ALREADY_INITIALIZED. Recover by re-trying with the cached
+    // MOBK from `mobk_path`.
+    if (status == AZIHSM_STATUS_BK3_ALREADY_INITIALIZED && !config->use_tpm_obk)
+    {
+        status = azihsm_file_load(config->mobk_path, &mobk_buf);
+        if (status != AZIHSM_STATUS_SUCCESS)
+        {
+            goto cleanup;
+        }
+
+        if (mobk_buf.ptr == NULL)
+        {
+            // Device reports BK3 initialized but we have no cached MOBK to
+            // re-init with. This is a caller-side state-management failure:
+            // either the MOBK file was deleted/lost without resetting the
+            // device, or this process is running against a device previously
+            // initialized by a different caller.
+            ERR_raise_data(
+                ERR_LIB_PROV,
+                ERR_R_INIT_FAIL,
+                "Cached MOBK file '%s' not found but device reports BK3 "
+                "already initialized. The cached MOBK was lost without "
+                "resetting the device. Recover by either restoring the "
+                "cached MOBK file or power-cycling/resetting the device.",
+                config->mobk_path
+            );
+            status = AZIHSM_STATUS_INTERNAL_ERROR;
+            goto cleanup;
+        }
+
+        backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER;
+        backup_config.owner_backup_key = NULL;
+        backup_config.masked_owner_backup_key = &mobk_buf;
+
+        status = azihsm_part_init(
+            *device,
+            &creds,
+            bmk_buf.ptr != NULL ? &bmk_buf : NULL,
+            muk_buf.ptr != NULL ? &muk_buf : NULL,
+            &backup_config,
+            &pota_endorsement,
+            config->resiliency_enabled ? &resiliency_cfg : NULL
+        );
+    }
+
     if (status != AZIHSM_STATUS_SUCCESS)
     {
         goto cleanup;
@@ -1083,11 +1119,8 @@ azihsm_status azihsm_open_device_and_session(
         }
     }
 
-    // Retrieve and persist MOBK property so subsequent inits on this
-    // device (after process restart or NSSR) can supply it directly via
-    // `masked_owner_backup_key` instead of re-deriving it from OBK.
-    // Only meaningful for caller-source OBK; TPM source unseals MOBK
-    // on every init.
+    // Persist the device's current MOBK to `mobk_path`.
+    // TPM source re-derives MOBK on every init.
     if (!config->use_tpm_obk)
     {
         status = get_part_property(

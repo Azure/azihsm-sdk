@@ -130,13 +130,17 @@ class PartitionHandle
         PartInitConfig init_config{};
         make_part_init_config(handle_, init_config);
 
-        // If we've previously derived a MOBK for this partition path,
-        // pass it via `masked_owner_backup_key` instead of the OBK.
-        // The device would otherwise reject the second `init_bk3` call.
+        // OBK-first / MOBK-fallback strategy.
+        // On cold device: OBK succeeds, MOBK is persisted to file.
+        // On warm device: OBK returns BK3_ALREADY_INITIALIZED, helper
+        // loads cached MOBK from in-memory cache or file and retries.
         std::string path_key(reinterpret_cast<const char *>(path.data()), path.size());
         auto &cache = get_mobk_cache();
-        azihsm_buffer mobk_buf{};
+
+        // Try in-memory cache first (avoids the failed OBK round-trip
+        // within the same process).
         auto it = cache.find(path_key);
+        azihsm_buffer mobk_buf{};
         if (it != cache.end() &&
             init_config.backup_config.source == AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER)
         {
@@ -146,15 +150,7 @@ class PartitionHandle
             init_config.backup_config.masked_owner_backup_key = &mobk_buf;
         }
 
-        err = azihsm_part_init(
-            handle_,
-            &creds,
-            nullptr,
-            nullptr,
-            &init_config.backup_config,
-            &init_config.pota_endorsement,
-            nullptr
-        );
+        err = part_init_with_mobk_fallback(handle_, &creds, init_config, nullptr);
         if (err != AZIHSM_STATUS_SUCCESS)
         {
             azihsm_part_close(handle_);
@@ -164,26 +160,13 @@ class PartitionHandle
             );
         }
 
-        // Cache the MOBK for subsequent inits on this partition.
-        if (it == cache.end() &&
-            init_config.backup_config.source == AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER)
+        // Update the in-memory cache with the current MOBK.
+        if (init_config.backup_config.source == AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER)
         {
-            // Query required length first.
-            azihsm_part_prop prop{};
-            prop.id = AZIHSM_PART_PROP_ID_MASKED_OWNER_BACKUP_KEY;
-            prop.val = nullptr;
-            prop.len = 0;
-            auto query_err = azihsm_part_get_prop(handle_, &prop);
-            if (query_err == AZIHSM_STATUS_BUFFER_TOO_SMALL && prop.len > 0)
+            auto mobk = query_mobk_property(handle_);
+            if (!mobk.empty())
             {
-                std::vector<uint8_t> mobk(prop.len);
-                prop.val = mobk.data();
-                query_err = azihsm_part_get_prop(handle_, &prop);
-                if (query_err == AZIHSM_STATUS_SUCCESS)
-                {
-                    mobk.resize(prop.len);
-                    cache.emplace(std::move(path_key), std::move(mobk));
-                }
+                cache[path_key] = std::move(mobk);
             }
         }
     }

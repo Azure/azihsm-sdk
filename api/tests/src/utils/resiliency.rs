@@ -5,7 +5,7 @@
 //!
 //! Provides file-backed implementations of [`ResiliencyStorage`],
 //! cross-process [`ResiliencyLock`] (via `fs2` file locking), a dummy
-//! [`PotaEndorsementCallback`], and a dummy [`ObkProviderCallback`] for
+//! [`PotaEndorsementCallback`], and a dummy [`MobkProviderCallback`] for
 //! use in integration tests.
 //!
 //! All callers share a single well-known directory under the system
@@ -100,14 +100,14 @@ impl PotaEndorsementCallback for TestPotaCallback {
     }
 }
 
-/// Test OBK callback that returns the hardcoded test OBK.
+/// Test MOBK callback that returns the hardcoded test OBK.
 ///
 /// Used in integration tests when OBK source is `Caller` to supply
 /// OBK on demand during restore, without caching it in the SDK.
-struct TestObkCallback;
+struct TestMobkCallback;
 
-impl ObkProviderCallback for TestObkCallback {
-    fn get_obk(&self) -> HsmResult<Vec<u8>> {
+impl MobkProviderCallback for TestMobkCallback {
+    fn get_mobk(&self) -> HsmResult<Vec<u8>> {
         Ok(super::partition::TEST_OBK.to_vec())
     }
 }
@@ -170,19 +170,19 @@ pub(crate) fn make_resiliency_config_in(dir: &Path) -> HsmResiliencyConfig {
         Some(Box::new(TestPotaCallback))
     };
 
-    // OBK callback follows the same pattern as POTA: needed for Caller
+    // MOBK callback follows the same pattern as POTA: needed for Caller
     // source, must be None for TPM source.
-    let obk_callback: Option<Box<dyn ObkProviderCallback>> = if use_tpm() {
+    let mobk_callback: Option<Box<dyn MobkProviderCallback>> = if use_tpm() {
         None
     } else {
-        Some(Box::new(TestObkCallback))
+        Some(Box::new(TestMobkCallback))
     };
 
     HsmResiliencyConfig {
         storage: Box::new(FileStorage::new(dir.to_path_buf())),
         lock: Arc::new(FileLock::new(lock_path)),
         pota_callback,
-        obk_callback,
+        mobk_callback,
     }
 }
 
@@ -226,9 +226,9 @@ mod tests {
         }
     }
 
-    struct DummyObkCallback;
-    impl ObkProviderCallback for DummyObkCallback {
-        fn get_obk(&self) -> HsmResult<Vec<u8>> {
+    struct DummyMobkCallback;
+    impl MobkProviderCallback for DummyMobkCallback {
+        fn get_mobk(&self) -> HsmResult<Vec<u8>> {
             Ok(vec![3u8; 48])
         }
     }
@@ -243,7 +243,7 @@ mod tests {
             storage: Box::new(FileStorage::new(dir.to_path_buf())),
             lock: Arc::new(FileLock::new(lock_path)),
             pota_callback: Some(Box::new(DummyPotaCallback)),
-            obk_callback: Some(Box::new(DummyObkCallback)),
+            mobk_callback: Some(Box::new(DummyMobkCallback)),
         }
     }
 

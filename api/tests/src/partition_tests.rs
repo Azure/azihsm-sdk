@@ -25,12 +25,12 @@ impl PotaEndorsementCallback for DummyPotaCallback {
     }
 }
 
-/// No-op OBK callback for validation tests that need `obk_callback = Some`
+/// No-op MOBK callback for validation tests that need `mobk_callback = Some`
 /// without exercising the actual OBK retrieval flow.
-struct DummyObkCallback;
+struct DummyMobkCallback;
 
-impl ObkProviderCallback for DummyObkCallback {
-    fn get_obk(&self) -> HsmResult<Vec<u8>> {
+impl MobkProviderCallback for DummyMobkCallback {
+    fn get_mobk(&self) -> HsmResult<Vec<u8>> {
         Ok(TEST_OBK.to_vec())
     }
 }
@@ -692,7 +692,7 @@ fn test_init_with_resiliency_tpm_pota_with_callback_fails() {
         part.reset().expect("Partition reset failed");
 
         let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
-        // Use TPM OBK so obk_callback=None is valid; we're testing
+        // Use TPM OBK so mobk_callback=None is valid; we're testing
         // that TPM POTA + pota_callback is rejected.
         let obk_info = HsmOwnerBackupKeyConfig::new(
             HsmOwnerBackupKeySource::Tpm,
@@ -707,8 +707,8 @@ fn test_init_with_resiliency_tpm_pota_with_callback_fails() {
         if resiliency_config.pota_callback.is_none() {
             resiliency_config.pota_callback = Some(Box::new(DummyPotaCallback));
         }
-        // Ensure obk_callback matches OBK source (TPM → None).
-        resiliency_config.obk_callback = None;
+        // Ensure mobk_callback matches OBK source (TPM → None).
+        resiliency_config.mobk_callback = None;
 
         let result = part.init(
             creds,
@@ -744,11 +744,11 @@ fn test_init_with_resiliency_tpm_obk_with_callback_fails() {
         );
         let pota_endorsement = HsmPotaEndorsement::new(HsmPotaEndorsementSource::Tpm, None);
 
-        // TPM OBK source + obk_callback provided → should fail with InvalidArgument.
+        // TPM OBK source + mobk_callback provided → should fail with InvalidArgument.
         let (mut resiliency_config, _ctx) = make_resiliency_config();
-        // Force obk_callback = Some(...) regardless of USE_TPM — this test
-        // specifically verifies that TPM OBK + obk_callback is rejected.
-        resiliency_config.obk_callback = Some(Box::new(DummyObkCallback));
+        // Force mobk_callback = Some(...) regardless of USE_TPM — this test
+        // specifically verifies that TPM OBK + mobk_callback is rejected.
+        resiliency_config.mobk_callback = Some(Box::new(DummyMobkCallback));
         // Ensure pota_callback matches POTA source (TPM → None).
         resiliency_config.pota_callback = None;
 
@@ -786,11 +786,11 @@ fn test_init_with_resiliency_caller_obk_without_callback_fails() {
         let pota_endorsement =
             HsmPotaEndorsement::new(HsmPotaEndorsementSource::Caller, Some(pota_data));
 
-        // Caller OBK source + obk_callback=None → should fail with InvalidArgument.
+        // Caller OBK source + mobk_callback=None → should fail with InvalidArgument.
         let (mut resiliency_config, _ctx) = make_resiliency_config();
-        // Force obk_callback = None — this test verifies that Caller OBK
-        // without obk_callback is rejected by validation.
-        resiliency_config.obk_callback = None;
+        // Force mobk_callback = None — this test verifies that Caller OBK
+        // without mobk_callback is rejected by validation.
+        resiliency_config.mobk_callback = None;
         // Ensure pota_callback is present for Caller POTA.
         if resiliency_config.pota_callback.is_none() {
             resiliency_config.pota_callback = Some(Box::new(DummyPotaCallback));

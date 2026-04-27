@@ -66,7 +66,6 @@ fn assert_retryable_outcome<T: std::fmt::Debug>(
 const ALL_RETRYABLE_ERRORS: &[FaultError] = &[
     FaultError::Driver(DriverError::IoAborted),
     FaultError::Driver(DriverError::IoAbortInProgress),
-    FaultError::Status(DdiStatus::Bk3AlreadyInitialized),
     FaultError::Status(DdiStatus::CredentialsNotEstablished),
     FaultError::Status(DdiStatus::NonceMismatch),
     FaultError::Status(DdiStatus::PartitionNotProvisioned),

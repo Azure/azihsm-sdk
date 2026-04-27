@@ -645,10 +645,10 @@ impl HsmPartition {
                     } else {
                         let mut obk = rs
                             .config
-                            .obk_callback
+                            .mobk_callback
                             .as_ref()
                             .ok_or(HsmError::InternalError)?
-                            .get_obk()?;
+                            .get_mobk()?;
                         let key = HsmOwnerBackupKey::from_obk(&obk);
                         obk.fill(0);
                         key
@@ -1148,6 +1148,28 @@ impl HsmPartitionInner {
         self.mobk = mobk;
     }
 
+    /// Sets the backup masking key (BMK).
+    ///
+    /// Updates the internal state with the provided key material.
+    ///
+    /// # Arguments
+    ///
+    /// * `bmk` - Backup masking key bytes
+    pub(crate) fn set_bmk(&mut self, bmk: Vec<u8>) {
+        self.bmk = bmk;
+    }
+
+    /// Sets themasked owner backup key (MOBK).
+    ///
+    /// Updates the internal state with the provided key material.
+    ///
+    /// # Arguments
+    ///
+    /// * `mobk` - Masked owner backup key bytes
+    pub(crate) fn set_mobk(&mut self, mobk: Vec<u8>) {
+        self.mobk = mobk;
+    }
+
     /// Clears the cached BMK after partition reset.
     ///
     /// MOBK is intentionally preserved: the device's BK3 (which masks
@@ -1205,16 +1227,19 @@ impl HsmPartitionInner {
         // request actually completes), matching the retry semantics of
         // every other DDI op invoked during init.
         let mobk = if resiliency_config.is_some() {
-            crate::resiliency::execute_with_retry(
+            execute_with_retry(
                 |_prev| ddi::get_mobk_from_config(&self.dev, self.api_rev, &obk_config),
-                crate::resiliency::is_init_retryable_error,
-                crate::resiliency::MAX_RETRIES,
-                crate::resiliency::BACKOFF_BASE_MS,
-                crate::resiliency::BACKOFF_JITTER_MS,
+                is_init_retryable_error,
+                MAX_RETRIES,
+                BACKOFF_BASE_MS,
+                BACKOFF_JITTER_MS,
             )?
         } else {
             ddi::get_mobk_from_config(&self.dev, self.api_rev, &obk_config)?
         };
+
+        //Update mobk , as init_bk3 is successfull and requires the mobk for subsequent init_part calls, even establish credentials fails.
+        self.set_mobk(mobk.clone());
 
         let result = ddi::init_part(
             &self.dev,
@@ -1267,7 +1292,8 @@ impl HsmPartitionInner {
             Err(err) => return Err(err),
         };
 
-        self.set_masked_keys(init_bmk, mobk);
+        //cache the bmk returned by the device
+        self.set_bmk(init_bmk);
 
         if let Some(config) = resiliency_config {
             let resiliency_state =

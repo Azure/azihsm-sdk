@@ -1863,16 +1863,13 @@ fn test_stress_init_part_under_reset() {
     let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
     let (obk_info, pota_endorsement) = make_init_params(&part);
     let resiliency_config = make_resiliency_config_in(&shared_dir);
-    part.init(
+    init_with_mobk_fallback(
+        &part,
         creds,
-        None,
-        None,
         obk_info,
         pota_endorsement,
         Some(resiliency_config),
-    )
-    .expect("Initial partition init failed");
-    save_mobk_after_init(&part);
+    );
 
     // Capture the cached MOBK so worker re-inits can supply it
     // directly instead of re-providing OBK. `init_bk3` is one-shot

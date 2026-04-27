@@ -103,15 +103,15 @@ pub struct AzihsmPotaCallbackOps {
     ) -> AzihsmStatus,
 }
 
-/// OBK provider callback.
+/// MOBK provider callback.
 ///
-/// The `get_obk` callback returns the caller's OBK (owner backup key)
+/// The `get_mobk` callback returns the caller's OBK (owner backup key)
 /// during resiliency restore. Uses the two-call buffer pattern: first call
 /// with null/zero output buffer to query size, second call to fill it.
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct AzihsmObkCallbackOps {
-    pub get_obk: unsafe extern "C" fn(ctx: *mut c_void, obk: *mut AzihsmBuffer) -> AzihsmStatus,
+pub struct AzihsmMobkCallbackOps {
+    pub get_mobk: unsafe extern "C" fn(ctx: *mut c_void, mobk: *mut AzihsmBuffer) -> AzihsmStatus,
 }
 
 /// Resiliency configuration passed to `azihsm_part_init`.
@@ -123,7 +123,7 @@ pub struct AzihsmObkCallbackOps {
 /// - `storage_ops` and `lock_ops` are always required (inline).
 /// - `pota_callback_ops`: Pointer to POTA callback ops. NULL when POTA
 ///   endorsement source is TPM. Must be non-null when source is Caller.
-/// - `obk_callback_ops`: Pointer to OBK callback ops. NULL when OBK
+/// - `mobk_callback_ops`: Pointer to MOBK callback ops. NULL when OBK
 ///   source is TPM. Must be non-null when source is Caller.
 #[repr(C)]
 pub struct AzihsmResiliencyConfig {
@@ -131,7 +131,7 @@ pub struct AzihsmResiliencyConfig {
     pub storage_ops: AzihsmResiliencyStorageOps,
     pub lock_ops: AzihsmResiliencyLockOps,
     pub pota_callback_ops: *const AzihsmPotaCallbackOps,
-    pub obk_callback_ops: *const AzihsmObkCallbackOps,
+    pub mobk_callback_ops: *const AzihsmMobkCallbackOps,
 }
 
 /// Bridge that implements [`api::ResiliencyStorage`] by calling through
@@ -183,20 +183,20 @@ unsafe impl Send for PotaCallbackAdapter {}
 #[allow(unsafe_code)]
 unsafe impl Sync for PotaCallbackAdapter {}
 
-/// Bridge that implements [`api::ObkProviderCallback`] by calling
+/// Bridge that implements [`api::MobkProviderCallback`] by calling
 /// through C function pointers.
-struct ObkCallbackAdapter {
+struct MobkCallbackAdapter {
     ctx: *mut c_void,
-    ops: AzihsmObkCallbackOps,
+    ops: AzihsmMobkCallbackOps,
 }
 
 // SAFETY: See ResiliencyStorageBridge safety comment.
 #[allow(unsafe_code)]
-unsafe impl Send for ObkCallbackAdapter {}
+unsafe impl Send for MobkCallbackAdapter {}
 
 // SAFETY: See ResiliencyStorageBridge safety comment.
 #[allow(unsafe_code)]
-unsafe impl Sync for ObkCallbackAdapter {}
+unsafe impl Sync for MobkCallbackAdapter {}
 
 impl api::ResiliencyStorage for ResiliencyStorageAdapter {
     #[allow(unsafe_code)]
@@ -413,17 +413,17 @@ impl api::PotaEndorsementCallback for PotaCallbackAdapter {
     }
 }
 
-impl api::ObkProviderCallback for ObkCallbackAdapter {
+impl api::MobkProviderCallback for MobkCallbackAdapter {
     #[allow(unsafe_code)]
-    fn get_obk(&self) -> api::HsmResult<Vec<u8>> {
+    fn get_mobk(&self) -> api::HsmResult<Vec<u8>> {
         // First call: query required output size
-        let mut obk_buf = AzihsmBuffer {
+        let mut mobk_buf = AzihsmBuffer {
             ptr: std::ptr::null_mut(),
             len: 0,
         };
 
         // SAFETY: obk_buf is zero-initialized for size query.
-        let status: api::HsmError = unsafe { (self.ops.get_obk)(self.ctx, &mut obk_buf) }.into();
+        let status: api::HsmError = unsafe { (self.ops.get_mobk)(self.ctx, &mut mobk_buf) }.into();
 
         match status {
             api::HsmError::BufferTooSmall => { /* expected — size now in len field */ }
@@ -434,21 +434,21 @@ impl api::ObkProviderCallback for ObkCallbackAdapter {
         }
 
         // Second call: fill allocated buffer
-        let len = obk_buf.len as usize;
+        let len = mobk_buf.len as usize;
         if len != OBK_SIZE {
             return Err(api::HsmError::InvalidArgument);
         }
         let mut data = vec![0u8; len];
-        obk_buf.ptr = data.as_mut_ptr() as *mut c_void;
+        mobk_buf.ptr = data.as_mut_ptr() as *mut c_void;
 
         // SAFETY: obk_buf.ptr points to a valid Vec allocation of obk_buf.len bytes.
-        let status: api::HsmError = unsafe { (self.ops.get_obk)(self.ctx, &mut obk_buf) }.into();
+        let status: api::HsmError = unsafe { (self.ops.get_mobk)(self.ctx, &mut mobk_buf) }.into();
 
         if status != api::HsmError::Success {
             return Err(status);
         }
 
-        let returned_len = obk_buf.len as usize;
+        let returned_len = mobk_buf.len as usize;
         if returned_len != OBK_SIZE {
             return Err(api::HsmError::InvalidArgument);
         }
@@ -497,24 +497,24 @@ impl TryFrom<&AzihsmResiliencyConfig> for api::HsmResiliencyConfig {
             }) as Box<dyn api::PotaEndorsementCallback>)
         };
 
-        let obk_callback = if config.obk_callback_ops.is_null() {
+        let mobk_callback = if config.mobk_callback_ops.is_null() {
             None
         } else {
-            let ops = *deref_ptr(config.obk_callback_ops)?;
-            if (ops.get_obk as usize) == 0 {
+            let ops = *deref_ptr(config.mobk_callback_ops)?;
+            if (ops.get_mobk as usize) == 0 {
                 return Err(AzihsmStatus::InvalidArgument);
             }
-            Some(Box::new(ObkCallbackAdapter {
+            Some(Box::new(MobkCallbackAdapter {
                 ctx: config.ctx,
                 ops,
-            }) as Box<dyn api::ObkProviderCallback>)
+            }) as Box<dyn api::MobkProviderCallback>)
         };
 
         Ok(api::HsmResiliencyConfig {
             storage,
             lock,
             pota_callback,
-            obk_callback,
+            mobk_callback,
         })
     }
 }

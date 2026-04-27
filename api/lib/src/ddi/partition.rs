@@ -299,6 +299,45 @@ pub(crate) fn init_part(
     )
 }
 
+/// Resolves the masked owner backup key (MOBK) from the caller's
+/// [`HsmOwnerBackupKeyConfig`].
+///
+/// This function must be called **once** before [`init_part`] (and is
+/// hoisted outside the `init_part` retry loop in
+/// [`HsmPartitionInner::init`](crate::HsmPartition)) because the
+/// `Caller` + raw OBK path issues `init_bk3`, which is one-shot per
+/// device power cycle. Calling it a second time would fail with
+/// `Bk3AlreadyInitialized`.
+///
+/// Resolution rules by source:
+///
+/// - `Caller`: exactly one of `key` (raw OBK) or `masked_key` (MOBK)
+///   must be provided.
+///   - `masked_key` present → returned as-is (no DDI call).
+///   - `key` present → derived on the device via [`init_bk3`], which
+///     returns the masked BK3 (MOBK).
+/// - `Tpm`: must not carry a caller-supplied raw OBK. The sealed BK3 is
+///   fetched from the device via [`get_sealed_bk3`] and unsealed with
+///   the TPM via [`unseal_tpm_backup_key`].
+///
+/// # Arguments
+///
+/// * `dev` - The HSM device handle
+/// * `rev` - The API revision to use
+/// * `obk_config` - The owner backup key configuration supplied by the
+///   caller
+///
+/// # Returns
+///
+/// Returns the resolved MOBK bytes.
+///
+/// # Errors
+///
+/// Returns `HsmError::InvalidArgument` if `obk_config` violates the
+/// source-specific rules above (e.g. both/neither of `key`/`masked_key`
+/// for `Caller`, or a `key` set for `Tpm`). Propagates DDI errors from
+/// [`init_bk3`] / [`get_sealed_bk3`] and TPM errors from
+/// [`unseal_tpm_backup_key`].
 pub(crate) fn get_mobk_from_config(
     dev: &HsmDev,
     rev: HsmApiRev,

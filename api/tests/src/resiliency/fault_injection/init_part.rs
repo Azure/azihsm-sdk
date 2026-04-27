@@ -66,7 +66,6 @@ const INIT_RETRYABLE_ERRORS: &[FaultError] = &[
     FaultError::Status(DdiStatus::NonceMismatch),
     FaultError::Status(DdiStatus::PartitionNotProvisioned),
     FaultError::Status(DdiStatus::EccVerifyFailed),
-    FaultError::Status(DdiStatus::Bk3AlreadyInitialized),
 ];
 
 /// Returns `true` when `error` is one of the init-retryable error codes.

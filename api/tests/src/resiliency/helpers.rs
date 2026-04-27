@@ -23,16 +23,13 @@ pub(crate) fn init_with_resiliency_and_session() -> (HsmPartition, HsmSession, R
     let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
     let (obk_info, pota_endorsement) = make_init_params(&part);
     let (resiliency_config, ctx) = make_resiliency_config();
-    part.init(
+    init_with_mobk_fallback(
+        &part,
         creds,
-        None,
-        None,
         obk_info,
         pota_endorsement,
         Some(resiliency_config),
-    )
-    .expect("Partition init failed");
-    save_mobk_after_init(&part);
+    );
 
     let rev = part.api_rev();
     let session = part
@@ -53,9 +50,7 @@ pub(crate) fn init_without_resiliency_and_session() -> (HsmPartition, HsmSession
 
     let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
     let (obk_info, pota_endorsement) = make_init_params(&part);
-    part.init(creds, None, None, obk_info, pota_endorsement, None)
-        .expect("Partition init failed");
-    save_mobk_after_init(&part);
+    init_with_mobk_fallback(&part, creds, obk_info, pota_endorsement, None);
 
     let rev = part.api_rev();
     let session = part

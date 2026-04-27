@@ -514,11 +514,11 @@ fn open_and_init_partition(
         }
     }
 
-    /// OBK provider callback for resiliency restore.
+    /// MOBK provider callback for resiliency restore.
     /// Returns the hardcoded test OBK.
-    struct StressObkCallback;
-    impl ObkProviderCallback for StressObkCallback {
-        fn get_obk(&self) -> HsmResult<Vec<u8>> {
+    struct StressMobkCallback;
+    impl MobkProviderCallback for StressMobkCallback {
+        fn get_mobk(&self) -> HsmResult<Vec<u8>> {
             Ok(TEST_OBK.to_vec())
         }
     }
@@ -543,9 +543,9 @@ fn open_and_init_partition(
             None
         };
 
-        // OBK callback is only needed for Caller source (not TPM).
-        let obk_callback: Option<Box<dyn ObkProviderCallback>> = if !use_tpm {
-            Some(Box::new(StressObkCallback))
+        // MOBK callback is only needed for Caller source (not TPM).
+        let mobk_callback: Option<Box<dyn MobkProviderCallback>> = if !use_tpm {
+            Some(Box::new(StressMobkCallback))
         } else {
             None
         };
@@ -554,7 +554,7 @@ fn open_and_init_partition(
             storage: Box::new(FileStorage::new_with_sync(storage_path.clone())),
             lock: Arc::new(FileLock::new(storage_path.join(".lock"))),
             pota_callback,
-            obk_callback,
+            mobk_callback,
         })
     } else {
         None

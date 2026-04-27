@@ -135,11 +135,10 @@ pub(crate) fn generate_pota_endorsement(part: &HsmPartition) -> (Vec<u8>, Vec<u8
 /// Builds the OBK config and POTA endorsement for partition init.
 ///
 /// Automatically selects TPM or Caller source based on the
-/// `AZIHSM_USE_TPM` environment variable. For Caller source, if a
-/// MOBK has been cached for this partition path (from a prior init in
-/// the same process), it is supplied directly via
-/// `HsmOwnerBackupKey::from_masked_key` since the device-side
-/// `init_bk3` is one-shot per power cycle.
+/// `AZIHSM_USE_TPM` environment variable. For Caller source, prefers
+/// a cached MOBK from a prior init (if present on disk) so that
+/// `init_bk3` is not re-attempted on a warm device. Falls back to the
+/// raw OBK when no cache exists (cold device / first-ever init).
 #[allow(clippy::expect_used)]
 pub(crate) fn make_init_params(
     part: &HsmPartition,
@@ -154,9 +153,10 @@ pub(crate) fn make_init_params(
         )
     } else {
         let (sig, pubkey) = generate_pota_endorsement(part);
-        let backup_key = match read_cached_mobk(&part.path()) {
-            Some(mobk) => HsmOwnerBackupKey::from_masked_key(&mobk),
-            None => HsmOwnerBackupKey::from_obk(&TEST_OBK),
+        let backup_key = if let Some(mobk) = read_cached_mobk(&part.path()) {
+            HsmOwnerBackupKey::from_masked_key(&mobk)
+        } else {
+            HsmOwnerBackupKey::from_obk(&TEST_OBK)
         };
         (
             HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Caller, backup_key),
@@ -168,20 +168,45 @@ pub(crate) fn make_init_params(
     }
 }
 
-/// On-disk path used to persist the per-partition MOBK across test
-/// invocations. `init_bk3` (the DDI op that derives MOBK from OBK)
-/// is one-shot per device power cycle and is preserved across reset,
-/// so subsequent inits on the same partition must supply the cached
-/// MOBK rather than re-providing the OBK. Persisting the MOBK to a
-/// file under the OS temp dir lets every process and thread reuse
-/// the value derived by the first init, including separate `cargo
-/// nextest` worker processes.
-fn mobk_cache_file_path(part_path: &str) -> std::path::PathBuf {
-    let sanitized: String = part_path
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
-        .collect();
-    std::env::temp_dir().join(format!("azihsm-mobk-{sanitized}.bin"))
+/// Performs partition init and persists the MOBK on success.
+///
+/// `make_init_params` already selects cached MOBK vs raw OBK, so this
+/// function simply calls `part.init(...)` and saves the resulting MOBK
+/// to disk for subsequent runs.
+#[allow(clippy::expect_used)]
+pub(crate) fn init_with_mobk_fallback(
+    part: &HsmPartition,
+    creds: HsmCredentials,
+    obk_config: HsmOwnerBackupKeyConfig,
+    pota_endorsement: HsmPotaEndorsement,
+    resiliency_config: Option<HsmResiliencyConfig>,
+) {
+    part.init(
+        creds,
+        None,
+        None,
+        obk_config,
+        pota_endorsement,
+        resiliency_config,
+    )
+    .expect("Partition init failed");
+
+    save_mobk_after_init(part);
+}
+
+/// Returns the MOBK cache file path.
+///
+/// Uses `AZIHSM_MOBK_PATH` from the environment if set, otherwise
+/// defaults to `{tmp}/mobk.bin` (system temp directory). The temp
+/// directory is cleared on reboot on most Linux systems, which
+/// naturally aligns with cold-device semantics (power cycle = new
+/// `init_bk3`). On HW where you need persistence across reboots,
+/// set `AZIHSM_MOBK_PATH` to a persistent path.
+fn mobk_cache_file_path(_part_path: &str) -> std::path::PathBuf {
+    match std::env::var("AZIHSM_MOBK_PATH") {
+        Ok(p) if !p.is_empty() => std::path::PathBuf::from(p),
+        _ => std::env::temp_dir().join("mobk.bin"),
+    }
 }
 
 /// Reads the previously-persisted MOBK for `part_path`, if any.
@@ -239,9 +264,7 @@ where
         //init with test creds
         let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
         let (obk_info, pota_endorsement) = make_init_params(&part);
-        part.init(creds, None, None, obk_info, pota_endorsement, None)
-            .expect("Partition init failed");
-        save_mobk_after_init(&part);
+        init_with_mobk_fallback(&part, creds, obk_info, pota_endorsement, None);
         test(part, creds);
     }
 }
