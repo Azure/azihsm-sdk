@@ -48,16 +48,23 @@
 //! [`HsmGdmaController`]: azihsm_fw_hsm_pal_traits::HsmGdmaController
 //! [`HsmIo`]: azihsm_fw_hsm_pal_traits::HsmIo
 
+mod aes;
 mod buf_pool;
 mod cert;
 mod drivers;
+mod ecc;
 mod gdma;
 mod hash;
+mod hmac;
 mod io;
+mod kdf;
 mod pal;
 mod part;
 mod rng;
+mod rsa;
+mod session;
 mod tracing;
+mod vault;
 mod worker;
 
 use azihsm_fw_hsm_pal_traits::*;

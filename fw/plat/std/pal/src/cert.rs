@@ -448,7 +448,7 @@ impl SharedCertStore {
 // CertificateStore trait implementation
 // ---------------------------------------------------------------------------
 
-impl CertificateStore for StdHsmPal {
+impl HsmCertStore for StdHsmPal {
     async fn get_cert_chain_info(&self, part_id: u8, slot_id: u8) -> HsmResult<CertChainInfo> {
         if slot_id != 0 {
             return Err(HsmError::InvalidArg);

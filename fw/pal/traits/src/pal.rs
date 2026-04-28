@@ -11,7 +11,14 @@ use super::*;
 /// deinitialization. A platform implementation provides hardware-specific
 /// behavior behind this common interface.
 pub trait HsmPal:
-    HsmIoController + HsmGdmaController + HsmCrypto + HsmPartitionManager + CertificateStore + Default
+    HsmIoController
+    + HsmGdmaController
+    + HsmPartitionManager
+    + HsmCertStore
+    + HsmSessionManager
+    + HsmVault
+    + HsmCrypto
+    + Default
 {
     /// Initializes the platform.
     ///

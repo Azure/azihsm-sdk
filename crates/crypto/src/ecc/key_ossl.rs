@@ -537,6 +537,37 @@ impl OsslEccPublicKey {
         &self.key
     }
 
+    /// Creates a public key from raw X and Y coordinate bytes.
+    ///
+    /// Reconstructs an ECC public key from its affine coordinates. Each
+    /// coordinate must be exactly `curve.point_size()` bytes in big-endian
+    /// format.
+    ///
+    /// # Arguments
+    ///
+    /// * `curve` - The NIST curve this point belongs to.
+    /// * `x` - The X coordinate as big-endian bytes.
+    /// * `y` - The Y coordinate as big-endian bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns `CryptoError::EccError` if the point is invalid or cannot
+    /// be constructed from the given coordinates.
+    pub fn from_coordinates(curve: EccCurve, x: &[u8], y: &[u8]) -> Result<Self, CryptoError> {
+        let nid: Nid = curve.into();
+        let group = EcGroup::from_curve_name(nid).map_err(|_| CryptoError::EccError)?;
+        let x_bn = BigNum::from_slice(x).map_err(|_| CryptoError::EccError)?;
+        let y_bn = BigNum::from_slice(y).map_err(|_| CryptoError::EccError)?;
+        let mut ctx = BigNumContext::new().map_err(|_| CryptoError::EccError)?;
+        let mut point = EcPoint::new(&group).map_err(|_| CryptoError::EccError)?;
+        point
+            .set_affine_coordinates_gfp(&group, &x_bn, &y_bn, &mut ctx)
+            .map_err(|_| CryptoError::EccError)?;
+        let ec_key = EcKey::from_public_key(&group, &point).map_err(|_| CryptoError::EccError)?;
+        let pkey = PKey::from_ec_key(ec_key).map_err(|_| CryptoError::EccError)?;
+        Ok(Self::new(pkey, curve))
+    }
+
     /// Extracts both X and Y coordinates of the public key point.
     ///
     /// This is an internal helper method that retrieves the affine coordinates

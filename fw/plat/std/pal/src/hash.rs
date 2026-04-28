@@ -3,24 +3,20 @@
 
 //! [`HsmHash`] implementation for the standard (host-native) PAL.
 //!
-//! Bridges the PAL-level [`HsmHashAlgo`] enum to the crypto library's
-//! [`azihsm_crypto::HashAlgo`] and delegates computation to the
+//! Thin delegation layer that maps the PAL-level [`HsmHashAlgo`] enum
+//! to [`azihsm_crypto::HashAlgo`] and forwards the call to the
 //! [`StdHash`](crate::drivers::hash::StdHash) driver.
 //!
 //! ## Data flow
 //!
 //! ```text
-//! Core calls pal.hash(algo, data, digest)
-//!   → to_hash_algo() maps HsmHashAlgo → azihsm_crypto::HashAlgo
-//!   → StdHash::hash() copies data to owned buffer
-//!     → WorkerPool::submit_with_result() spawns on tokio
-//!       → azihsm_crypto::HashOp::hash() (OpenSSL SHA)
-//!     → result copied back into caller's `digest` buffer
+//! Core calls pal.hash(HsmHashAlgo::Sha256, data, digest)
+//!   → to_hash_algo() maps to azihsm_crypto::HashAlgo::sha256()
+//!   → self.hash.hash(algo, data, digest)
+//!     → StdHash copies data, dispatches to WorkerPool
+//!       → OpenSSL EVP_Digest (SHA-256)
+//!     → digest written into caller's buffer
 //! ```
-//!
-//! On real Cortex-M7 hardware, hash computation would be offloaded to a
-//! SHA engine peripheral via DMA with zero-copy into the response buffer.
-//! Here we simulate the async pattern using the tokio worker pool.
 
 use azihsm_crypto::HashAlgo;
 
@@ -41,17 +37,15 @@ fn to_hash_algo(algo: HsmHashAlgo) -> HashAlgo {
 }
 
 impl HsmHash for StdHsmPal {
-    /// Compute a cryptographic hash by delegating to the [`StdHash`]
-    /// driver.
+    /// Compute a cryptographic hash by delegating to the [`StdHash`] driver.
     ///
-    /// The driver copies `data` to an owned buffer, offloads the OpenSSL
-    /// SHA computation to the tokio worker pool, and writes the result
-    /// into `digest`. The caller must ensure `digest` is at least
-    /// [`HsmHashAlgo::digest_len`] bytes.
+    /// # Parameters
+    /// - `algo` — The hash algorithm (SHA-1/256/384/512).
+    /// - `data` — Input message bytes.
+    /// - `digest` — Output buffer (must be ≥ [`HsmHashAlgo::digest_len`] bytes).
     ///
     /// # Errors
-    ///
-    /// Returns [`HsmError::ShaError`] if the OpenSSL hash operation fails.
+    /// Returns [`HsmError::ShaError`] if the underlying OpenSSL operation fails.
     async fn hash(&self, algo: HsmHashAlgo, data: &[u8], digest: &mut [u8]) -> HsmResult<()> {
         self.hash.hash(to_hash_algo(algo), data, digest).await
     }

@@ -26,7 +26,7 @@ use super::*;
 /// failure. The caller wraps failures in a DDI error response.
 ///
 /// This function is `async` because `GetCertificate` calls into
-/// `CertificateStore::get_cert` which is async.
+/// `HsmCertStore::get_cert` which is async.
 pub(crate) async fn dispatch<P: HsmPal>(
     hdr: &DdiReqHdr,
     decoder: &mut DdiDecoder<'_>,

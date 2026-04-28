@@ -47,10 +47,15 @@ use tokio::runtime::Handle;
 use tokio::runtime::Runtime;
 
 use crate::cert::SharedCertStore;
+use crate::drivers::aes::StdAes;
+use crate::drivers::ecc::StdEcc;
 use crate::drivers::gdma::StdGdma;
 use crate::drivers::hash::StdHash;
+use crate::drivers::hmac::StdHmac;
 use crate::drivers::iic::StdIic;
+use crate::drivers::kdf::StdKdf;
 use crate::drivers::oic::StdOic;
+use crate::drivers::rsa::StdRsa;
 use crate::io::HsmIoRequest;
 use crate::part::PartitionTable;
 use crate::worker::WorkerPool;
@@ -81,6 +86,21 @@ pub struct StdHsmPal {
 
     /// Hash driver — SHA digest computation.
     pub(crate) hash: StdHash,
+
+    /// ECC driver — key generation, signing, verification, ECDH.
+    pub(crate) ecc: StdEcc,
+
+    /// AES driver — key generation, CBC, ECB encryption/decryption.
+    pub(crate) aes: StdAes,
+
+    /// HMAC driver — key generation, signing, verification.
+    pub(crate) hmac: StdHmac,
+
+    /// KDF driver — HKDF and KBKDF key derivation.
+    pub(crate) kdf: StdKdf,
+
+    /// RSA driver — key generation, modular exponentiation.
+    pub(crate) rsa: StdRsa,
 
     /// Tokio-backed worker pool for offloading async work.
     #[allow(dead_code)]
@@ -147,6 +167,11 @@ impl StdHsmPal {
             oic: StdOic::new(),
             gdma: StdGdma::new(),
             hash: StdHash::new(WorkerPool::new(tokio_handle.clone())),
+            ecc: StdEcc::new(WorkerPool::new(tokio_handle.clone())),
+            aes: StdAes::new(WorkerPool::new(tokio_handle.clone())),
+            hmac: StdHmac::new(WorkerPool::new(tokio_handle.clone())),
+            kdf: StdKdf::new(WorkerPool::new(tokio_handle.clone())),
+            rsa: StdRsa::new(WorkerPool::new(tokio_handle.clone())),
             pool: WorkerPool::new(tokio_handle),
             part_table: UnsafeCell::new(PartitionTable::default()),
             cert_store: Box::new(SharedCertStore::new()),
@@ -174,6 +199,11 @@ impl Default for StdHsmPal {
             oic: StdOic::new(),
             gdma: StdGdma::new(),
             hash: StdHash::new(WorkerPool::new(handle.clone())),
+            ecc: StdEcc::new(WorkerPool::new(handle.clone())),
+            aes: StdAes::new(WorkerPool::new(handle.clone())),
+            hmac: StdHmac::new(WorkerPool::new(handle.clone())),
+            kdf: StdKdf::new(WorkerPool::new(handle.clone())),
+            rsa: StdRsa::new(WorkerPool::new(handle.clone())),
             pool: WorkerPool::new(handle),
             part_table: UnsafeCell::new(PartitionTable::default()),
             cert_store: Box::new(SharedCertStore::new()),

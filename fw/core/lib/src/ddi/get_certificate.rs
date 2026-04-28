@@ -5,7 +5,7 @@
 //!
 //! Returns a single certificate from a partition's slot chain.
 //! This is a NoSession command. The handler is `async` because
-//! the underlying `CertificateStore::get_cert` is async.
+//! the underlying `HsmCertStore::get_cert` is async.
 //!
 //! Uses encode-frame-then-fill pattern: queries the cert size first,
 //! encodes the response frame (header + byte-array framing), then

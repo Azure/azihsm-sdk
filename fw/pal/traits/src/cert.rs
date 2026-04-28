@@ -21,7 +21,7 @@ pub struct CertChainInfo {
 /// Certificate store interface.
 ///
 /// Provides methods for retrieving certificate chains for partitions.
-pub trait CertificateStore {
+pub trait HsmCertStore {
     /// Returns the certificate chain information for the given partition and slot.
     ///
     /// # Parameters

@@ -11,4 +11,6 @@ doctest = false
 test = false
 
 [dependencies]
+bitfield-struct.workspace = true
 open-enum.workspace = true
+zerocopy = { features = ["derive"], workspace = true }
