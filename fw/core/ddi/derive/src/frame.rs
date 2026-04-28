@@ -1,15 +1,44 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+//! Code generation for the `frame()` encode-then-fill pattern.
+//!
+//! For structs that contain byte-slice fields, this module generates:
+//!
+//! * A companion **`<Struct>Frame<'a>`** struct whose fields are `&'a mut [u8]`
+//!   slices pointing into reserved regions of the output buffer.
+//! * A **`frame()`** associated function on the original struct that encodes
+//!   all MBOR framing (map header, field IDs, padding, primitive values) and
+//!   reserves space for variable-length byte fields via
+//!   [`MborEncoder::encode_reserve`]. The caller can then fill those mutable
+//!   slices in-place (e.g., for hardware DMA writes) without a second copy.
+//!
+//! Structs with only primitive/normal fields produce no frame output.
+
 use quote::format_ident;
 use quote::quote;
 
 use crate::r#struct::DdiStruct;
+use crate::r#struct::DdiStructField;
 use crate::r#struct::DdiStructFieldKind;
 
-/// Generate a `[Struct]Frame<'a>` struct and a `frame()` associated function
-/// for structs that have Slice or Array fields. Structs with only Normal
-/// fields produce no frame output.
+/// Generates a `<Struct>Frame<'a>` companion struct and a `frame()` associated
+/// function for structs that have non-optional byte-slice fields.
+///
+/// The generated `frame()` function accepts primitive field values directly and
+/// byte-slice lengths (as `<field>_len: usize`). It:
+/// 1. Writes the MBOR map header with the non-optional field count.
+/// 2. Encodes primitive and array fields inline.
+/// 3. For each byte-slice field, encodes the field ID and calls
+///    `encode_reserve(len, pad)` to obtain a `&'a mut [u8]` in the output
+///    buffer. Fixed-size slices (`len` attribute) use no padding; variable-size
+///    slices are 4-byte aligned.
+/// 4. Returns a `<Struct>Frame` whose fields are the reserved mutable slices.
+///
+/// If the struct has no non-optional slice fields, no code is generated.
+///
+/// # Parameters
+/// - `ddi`: Parsed struct descriptor from [`crate::r#struct::parse_struct`].
 pub(crate) fn struct_frame(ddi: &DdiStruct) -> syn::Result<proc_macro2::TokenStream> {
     let has_reservable = ddi
         .fields
@@ -60,41 +89,7 @@ pub(crate) fn struct_frame(ddi: &DdiStruct) -> syn::Result<proc_macro2::TokenStr
         .fields
         .iter()
         .filter(|f| !f.opt)
-        .map(|f| {
-            let id = f.id;
-            let name = &f.ident;
-            match f.kind {
-                DdiStructFieldKind::Slice => {
-                    let len_name = format_ident!("{}_len", name);
-                    if f.len.is_some() {
-                        // Fixed-size, no padding (was [u8; N])
-                        quote! {
-                            (#id).mbor_encode(encoder)?;
-                            let #name = encoder.encode_reserve(#len_name, 0)?;
-                        }
-                    } else {
-                        // Variable-size, padded (was MborByteArray<N>)
-                        quote! {
-                            (#id).mbor_encode(encoder)?;
-                            let pad = azihsm_fw_ddi_mbor::pad4(encoder.position() as u32 + 3) as u8;
-                            let #name = encoder.encode_reserve(#len_name, pad)?;
-                        }
-                    }
-                }
-                DdiStructFieldKind::Array => {
-                    quote! {
-                        (#id).mbor_encode(encoder)?;
-                        azihsm_fw_ddi_mbor::MborByteSlice(&#name).mbor_encode(encoder)?;
-                    }
-                }
-                DdiStructFieldKind::Normal => {
-                    quote! {
-                        (#id).mbor_encode(encoder)?;
-                        #name.mbor_encode(encoder)?;
-                    }
-                }
-            }
-        })
+        .map(frame_encode_field)
         .collect::<Vec<_>>();
 
     // ── Frame struct construction ─────────────────────────────────────
@@ -142,4 +137,43 @@ pub(crate) fn struct_frame(ddi: &DdiStruct) -> syn::Result<proc_macro2::TokenStr
             }
         }
     })
+}
+
+/// Generate the frame encode body for a single non-optional field.
+///
+/// - **Slice** fields: encode field ID, then `encode_reserve()` to get
+///   a `&mut [u8]` for hardware to fill. Uses padding for variable-size
+///   fields, no padding for fixed-size (`len`).
+/// - **Array/Normal** fields: encode field ID + value inline.
+fn frame_encode_field(f: &DdiStructField) -> proc_macro2::TokenStream {
+    let id = f.id;
+    let name = &f.ident;
+
+    match f.kind {
+        DdiStructFieldKind::Slice => {
+            let len_name = format_ident!("{}_len", name);
+            let pad_expr = if f.len.is_some() {
+                quote! { 0 }
+            } else {
+                quote! { azihsm_fw_ddi_mbor::pad4(encoder.position() as u32 + 3) as u8 }
+            };
+            quote! {
+                (#id).mbor_encode(encoder)?;
+                let pad = #pad_expr;
+                let #name = encoder.encode_reserve(#len_name, pad)?;
+            }
+        }
+        DdiStructFieldKind::Array => {
+            quote! {
+                (#id).mbor_encode(encoder)?;
+                azihsm_fw_ddi_mbor::MborByteSlice(&#name).mbor_encode(encoder)?;
+            }
+        }
+        DdiStructFieldKind::Normal => {
+            quote! {
+                (#id).mbor_encode(encoder)?;
+                #name.mbor_encode(encoder)?;
+            }
+        }
+    }
 }
