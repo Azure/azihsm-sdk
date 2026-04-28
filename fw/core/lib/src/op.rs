@@ -571,11 +571,11 @@ pub(crate) enum SessionCtrl {
     /// Opens a new session (OpenSession).
     Open = 1,
 
-    /// Command within an existing session.
-    InSession = 2,
-
     /// Closes a session (CloseSession).
-    Close = 3,
+    Close = 2,
+
+    /// Command within an existing session.
+    InSession = 3,
 }
 
 impl SessionCtrl {
