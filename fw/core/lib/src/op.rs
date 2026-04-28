@@ -560,8 +560,7 @@ impl<'a> Cqe<'a> {
 
 /// Session control kind — derived from the DDI opcode.
 ///
-/// Matches mcr-hsm `HsmSessionControlKind`. Values align with CQE DW0
-/// session_ctrl field (2 bits).
+/// Values align with CQE DW0 session_ctrl field (2 bits).
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum SessionCtrl {
@@ -572,11 +571,11 @@ pub(crate) enum SessionCtrl {
     /// Opens a new session (OpenSession).
     Open = 1,
 
-    /// Command within an existing session.
-    InSession = 2,
-
     /// Closes a session (CloseSession).
-    Close = 3,
+    Close = 2,
+
+    /// Command within an existing session.
+    InSession = 3,
 }
 
 impl SessionCtrl {
