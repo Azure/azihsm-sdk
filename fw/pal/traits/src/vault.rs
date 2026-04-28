@@ -44,8 +44,32 @@ use zerocopy::*;
 use super::*;
 
 /// Types of keys that can be managed by the HSM key vault.
+///
+/// Each variant corresponds to a specific cryptographic algorithm and
+/// key size.  The discriminant values (`0..34`) match the firmware's
+/// `EntryKind` enum so that key type information is wire-compatible
+/// across the DDI protocol.
+///
+/// ## Categories
+///
+/// | Range | Category | Examples |
+/// |-------|----------|---------|
+/// | 0 | Free (empty slot) | `Free` |
+/// | 1–3 | RSA public keys | `Rsa2kPublic`, `Rsa3kPublic`, `Rsa4kPublic` |
+/// | 4–6 | RSA private keys | `Rsa2kPrivate` .. `Rsa4kPrivate` |
+/// | 7–9 | RSA private CRT keys | `Rsa2kPrivateCrt` .. `Rsa4kPrivateCrt` |
+/// | 10–12 | ECC public keys | `Ecc256Public`, `Ecc384Public`, `Ecc521Public` |
+/// | 13–15 | ECC private keys | `Ecc256Private` .. `Ecc521Private` |
+/// | 16–18 | AES symmetric keys | `Aes128`, `Aes192`, `Aes256` |
+/// | 19–21 | AES bulk keys | `AesXtsBulk256`, `AesGcmBulk256`, `AesGcmBulk256Unapproved` |
+/// | 22–24 | ECDH shared secrets | `Secret256`, `Secret384`, `Secret521` |
+/// | 25–27 | Internal session keys | `EstablishCred`, `SessionEncryption`, `Session` |
+/// | 28–30 | HMAC fixed-length | `_HmacSha256`, `_HmacSha384`, `_HmacSha512` |
+/// | 31 | Masking key | `MaskingKey` |
+/// | 32–34 | HMAC variable-length | `VarLenHmacSha256` .. `VarLenHmacSha512` |
 #[repr(u8)]
 #[open_enum]
+#[derive(Clone, Copy, Debug)]
 pub enum HsmVaultKeyKind {
     // Available slot
     Free = 0,
@@ -109,59 +133,87 @@ pub enum HsmVaultKeyKind {
     VarLenHmacSha512 = 34,
 }
 
+/// Key attribute bitfield for vault-stored keys.
+///
+/// A 32-bit bitfield encoding PKCS#11-inspired key properties plus
+/// HSM-specific flags.  Set at key creation time and governs which
+/// operations are permitted on the key.
+///
+/// ## Bit layout
+///
+/// | Bit | Field | Description |
+/// |-----|-------|-------------|
+/// | 0 | `internal` | Device-internal, not user-destroyable |
+/// | 1 | `session` | Session-scoped, auto-deleted on close |
+/// | 2 | `private` | Requires authenticated session |
+/// | 3 | `modifiable` | Attributes can change post-creation |
+/// | 4 | `destroyable` | User can delete |
+/// | 5 | `local` | Generated on-device (not imported) |
+/// | 6 | `extractable` | Key material can be exported |
+/// | 7 | `never_extractable` | Has never been extractable |
+/// | 8 | `trusted` | Can wrap other keys |
+/// | 9 | `wrap_with_trusted` | Only wrappable by trusted keys |
+/// | 10 | `encrypt` | Allowed for encryption |
+/// | 11 | `decrypt` | Allowed for decryption |
+/// | 12 | `sign` | Allowed for signing |
+/// | 13 | `verify` | Allowed for verification |
+/// | 14 | `wrap` | Allowed for key wrapping |
+/// | 15 | `unwrap` | Allowed for key unwrapping |
+/// | 16 | `derive` | Allowed for key derivation |
+/// | 17–31 | `rsvd` | Reserved (must be zero) |
 #[bitfield(u32)]
 #[derive(PartialEq, Eq, FromBytes, IntoBytes, Immutable, KnownLayout)]
 pub struct HsmVaultKeyAttrs {
     /// Device-internal key, not user-destroyable.
-    pub(crate) internal: bool,
+    pub internal: bool,
 
     /// Session-scoped key, deleted when session closes.
-    pub(crate) session: bool,
+    pub session: bool,
 
     /// Requires authenticated session to access.
-    pub(crate) private: bool,
+    pub private: bool,
 
     /// Key properties can be changed after creation.
-    pub(crate) modifiable: bool,
+    pub modifiable: bool,
 
     /// Can be deleted by user.
-    pub(crate) destroyable: bool,
+    pub destroyable: bool,
 
     /// Generated locally (not imported). Set by device.
-    pub(crate) local: bool,
+    pub local: bool,
 
     /// Key value can be exported from the device.
-    pub(crate) extractable: bool,
+    pub extractable: bool,
 
     /// Has never been marked extractable.
-    pub(crate) never_extractable: bool,
+    pub never_extractable: bool,
 
     /// Can wrap other keys. Public keys only.
-    pub(crate) trusted: bool,
+    pub trusted: bool,
 
     /// Can only be wrapped by a trusted key. Private & shared keys.
-    pub(crate) wrap_with_trusted: bool,
+    pub wrap_with_trusted: bool,
 
     /// Allowed for encrypt operations. Public & secret keys.
-    pub(crate) encrypt: bool,
+    pub encrypt: bool,
 
     /// Allowed for decrypt operations. Private & secret keys.
-    pub(crate) decrypt: bool,
+    pub decrypt: bool,
 
     /// Allowed for sign operations. Private & secret keys.
-    pub(crate) sign: bool,
+    pub sign: bool,
 
     /// Allowed for verify operations. Public & secret keys.
-    pub(crate) verify: bool,
+    pub verify: bool,
 
     /// Allowed for key wrap operations. Public & secret keys.
-    pub(crate) wrap: bool,
+    pub wrap: bool,
 
     /// Allowed for key unwrap operations. Private & secret keys.
-    pub(crate) unwrap: bool,
+    pub unwrap: bool,
 
     /// Allowed for key derivation. Secret keys.
-    pub(crate) derive: bool,
+    pub derive: bool,
 
     /// Reserved.
     #[bits(15)]

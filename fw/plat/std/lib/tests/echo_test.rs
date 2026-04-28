@@ -81,7 +81,7 @@ const IO_PID: u8 = 10;
 /// Ensure the IO test partition is allocated. Safe to call multiple times.
 async fn ensure_io_part() {
     // Ignore AlreadyAllocated — means another test already set it up.
-    let _ = HSM.part_alloc(IO_PID, 1).await;
+    let _ = HSM.part_alloc(IO_PID, 1u128 << IO_PID).await;
 }
 
 #[tokio::test]
@@ -414,8 +414,8 @@ async fn io_dropped_on_disabled_partition() {
 
 #[tokio::test]
 async fn part_alloc_single() {
-    let result = HSM.part_alloc(0, 1).await;
-    assert!(result.is_ok(), "part_alloc(0, 1) failed: {result:?}");
+    let result = HSM.part_alloc(0, 1u128 << 0).await;
+    assert!(result.is_ok(), "part_alloc(0, mask) failed: {result:?}");
     // Free so subsequent tests see a clean partition 0.
     let _ = HSM.part_free(0).await;
 }
@@ -423,12 +423,12 @@ async fn part_alloc_single() {
 #[tokio::test]
 async fn part_alloc_free_lifecycle() {
     let pid = 1;
-    // Allocate
-    HSM.part_alloc(pid, 2).await.expect("alloc");
+    // Allocate with 2 resources (bits 10,11)
+    HSM.part_alloc(pid, 0b11 << 10).await.expect("alloc");
     // Free
     HSM.part_free(pid).await.expect("free");
-    // Should be able to re-allocate after free
-    HSM.part_alloc(pid, 3).await.expect("re-alloc");
+    // Should be able to re-allocate after free with different mask
+    HSM.part_alloc(pid, 0b111 << 10).await.expect("re-alloc");
     HSM.part_free(pid).await.expect("re-free");
 }
 
@@ -457,26 +457,25 @@ async fn part_free_disabled() {
 #[tokio::test]
 async fn part_double_alloc() {
     let pid = 2;
-    HSM.part_alloc(pid, 1).await.expect("first alloc");
-    let result = HSM.part_alloc(pid, 1).await;
+    HSM.part_alloc(pid, 1u128 << 20).await.expect("first alloc");
+    let result = HSM.part_alloc(pid, 1u128 << 21).await;
     assert!(result.is_err(), "double alloc should fail");
     HSM.part_free(pid).await.expect("cleanup");
 }
 
 #[tokio::test]
 async fn part_resource_exhaustion() {
-    // Allocate partitions using up to 65 total resources.
-    // Use pids 50..55 with res_count=13 each → 5×13 = 65
-    for pid in 50..55u8 {
-        HSM.part_alloc(pid, 13).await.expect("alloc");
+    // Allocate partitions using up to 65 total resources via bitmasks.
+    // pid 50: bits 0..12 (13 bits), pid 51: bits 13..25, etc.
+    for (i, pid) in (50..55u8).enumerate() {
+        let shift = i * 13;
+        let mask = ((1u128 << 13) - 1) << shift;
+        HSM.part_alloc(pid, mask).await.expect("alloc");
     }
 
-    // Next allocation should fail — even res_count=1 exceeds budget
-    let result = HSM.part_alloc(55, 1).await;
-    assert!(
-        result.is_err(),
-        "should fail when total resources would exceed 65"
-    );
+    // All 65 resources allocated (5×13). Next should overlap.
+    let result = HSM.part_alloc(55, 1u128 << 0).await;
+    assert!(result.is_err(), "should fail when resources overlap");
 
     // Cleanup
     for pid in 50..55u8 {
@@ -486,20 +485,24 @@ async fn part_resource_exhaustion() {
 
 #[tokio::test]
 async fn part_resource_accounting_after_free() {
-    // Allocate 3 partitions: 20 + 20 + 20 = 60
-    for pid in 40..43u8 {
-        HSM.part_alloc(pid, 20).await.expect("alloc");
+    // Allocate 3 partitions with non-overlapping masks: 20 bits each.
+    // pid 40: bits 0..19, pid 41: bits 20..39, pid 42: bits 40..59
+    for (i, pid) in (40..43u8).enumerate() {
+        let shift = i * 20;
+        let mask = ((1u128 << 20) - 1) << shift;
+        HSM.part_alloc(pid, mask).await.expect("alloc");
     }
 
-    // Can't alloc 6 more (60 + 6 > 65)
-    let result = HSM.part_alloc(43, 6).await;
-    assert!(result.is_err(), "60+6 > 65 should fail");
+    // Can't alloc overlapping bit (bit 0 already taken by pid 40)
+    let result = HSM.part_alloc(43, 1u128 << 0).await;
+    assert!(result.is_err(), "overlapping resource should fail");
 
-    // Free one (back to 40 used)
+    // Free pid 41 (releases bits 20..39)
     HSM.part_free(41).await.expect("free middle");
 
-    // Now can alloc up to 25 (40 + 25 = 65)
-    HSM.part_alloc(43, 25).await.expect("alloc after free");
+    // Now can alloc bits 20..39 + bits 60..64 = 25 resources
+    let mask = ((1u128 << 20) - 1) << 20 | ((1u128 << 5) - 1) << 60;
+    HSM.part_alloc(43, mask).await.expect("alloc after free");
 
     // Cleanup
     for pid in [40u8, 42, 43] {

@@ -21,6 +21,7 @@
 //! | [`kdf`]     | [`HsmKdf`]           | HKDF (RFC 5869) and KBKDF (NIST SP 800-108) |
 //! | [`rsa`]     | [`HsmRsa`]           | RSA keygen, modular exponentiation |
 //! | [`session`] | [`HsmSessionManager`]| Per-partition session allocation via bitmask |
+//! | [`vault`]   | [`HsmVault`]         | Per-partition key storage with firmware capacity emulation |
 //!
 //! ## Non-crypto drivers
 //!
@@ -37,6 +38,7 @@
 //! [`HsmKdf`]: azihsm_fw_hsm_pal_traits::HsmKdf
 //! [`HsmRsa`]: azihsm_fw_hsm_pal_traits::HsmRsa
 //! [`HsmSessionManager`]: azihsm_fw_hsm_pal_traits::HsmSessionManager
+//! [`HsmVault`]: azihsm_fw_hsm_pal_traits::HsmVault
 
 pub mod aes;
 pub mod ecc;
@@ -48,3 +50,4 @@ pub mod kdf;
 pub mod oic;
 pub mod rsa;
 pub mod session;
+pub mod vault;

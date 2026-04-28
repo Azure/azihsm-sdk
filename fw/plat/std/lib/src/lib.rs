@@ -97,10 +97,10 @@ async fn ipc_task(rx: async_channel::Receiver<PartCommand>) {
         match cmd {
             PartCommand::Alloc {
                 pid,
-                res_count,
+                res_mask,
                 reply,
             } => {
-                let _ = reply.send(pal.part_alloc_internal(pid, res_count));
+                let _ = reply.send(pal.part_alloc_internal(pid, res_mask));
             }
             PartCommand::Free { pid, reply } => {
                 let _ = reply.send(pal.part_free_internal(pid));
@@ -285,23 +285,22 @@ impl StdHsm {
     /// Allocate a partition on the HSM.
     ///
     /// Sends a sideband command to the Embassy thread to allocate
-    /// partition `pid` with `res_count` resources. On success the
-    /// partition transitions from `Disabled` → `Uninitialized`, a
-    /// 16-byte random ID is generated, and an ECC-384 key pair is
-    /// created.
+    /// partition `pid` with the given `res_mask` (each set bit = one
+    /// vault table).  On success the partition transitions from
+    /// `Disabled` → `Uninitialized`, a 16-byte random ID is generated,
+    /// and an ECC-384 key pair is created.
     ///
     /// # Errors
     ///
-    /// - `PART_INVALID_PID` — `pid >= 65`
-    /// - `PART_ALREADY_ALLOCATED` — partition is not `Disabled`
-    /// - `PART_RESOURCE_EXHAUSTED` — total resources would exceed 65
-    /// - `PART_KEY_GEN_FAILURE` — ECC key generation failed
-    /// - `RNG_FAILURE` — random ID generation failed
-    pub async fn part_alloc(&self, pid: u8, res_count: u8) -> HsmResult<()> {
+    /// - [`HsmError::InvalidArg`] — `pid >= 65` or invalid mask bits
+    /// - [`HsmError::InvalidArg`] — partition is not `Disabled`
+    /// - [`HsmError::NotEnoughSpace`] — `res_mask` overlaps already-allocated resources
+    /// - [`HsmError::InternalError`] — ECC key or RNG failure
+    pub async fn part_alloc(&self, pid: u8, res_mask: u128) -> HsmResult<()> {
         let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
         let cmd = PartCommand::Alloc {
             pid,
-            res_count,
+            res_mask,
             reply: reply_tx,
         };
         self.ipc_tx.send(cmd).await.expect("Embassy thread stopped");

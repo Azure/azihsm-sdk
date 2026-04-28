@@ -1,59 +1,90 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Stub [`HsmVault`] implementation for the standard PAL.
+//! [`HsmVault`] implementation for the standard PAL.
 //!
-//! All methods return [`HsmError::InternalError`] — vault key management
-//! is not yet wired into the standard PAL.
+//! Delegates to the per-partition [`KeyVault`] stored inside each
+//! [`PartitionEntry`].  Access to the partition table uses the same
+//! [`UnsafeCell`] pattern as [`HsmPartitionManager`] and
+//! [`HsmSessionManager`].
+//!
+//! # Safety
+//!
+//! All methods are synchronous (no `.await` points) and run on the
+//! single-threaded Embassy executor, so no concurrent access is
+//! possible.  Mutable methods (`vault_key_create`, `vault_key_delete`,
+//! `vault_key_delete_by_session`, `vault_clear`) obtain `&mut` through
+//! the `UnsafeCell` — safe because no other borrows can be alive.
+//!
+//! [`KeyVault`]: crate::drivers::vault::KeyVault
+//! [`PartitionEntry`]: crate::part::PartitionEntry
 
 use super::*;
+use crate::drivers::vault::KeyVault;
 
 impl HsmVault for StdHsmPal {
+    /// Store a new key in the partition's vault.
+    ///
+    /// Delegates to [`KeyVault::create`] which scans tables for the first
+    /// with a free entry slot and enough firmware-equivalent byte budget.
     fn vault_key_create(
         &self,
-        _pid: HsmPartId,
-        _key: &[u8],
-        _kind: HsmVaultKeyKind,
-        _session_id: Option<HsmSessId>,
-        _attrs: HsmVaultKeyAttrs,
-        _meta: &[u8],
+        pid: HsmPartId,
+        key: &[u8],
+        kind: HsmVaultKeyKind,
+        session_id: Option<HsmSessId>,
+        attrs: HsmVaultKeyAttrs,
+        meta: &[u8],
     ) -> HsmResult<HsmKeyId> {
-        Err(HsmError::InternalError)
+        let entry = self.active_part_mut(pid)?;
+        entry.vault.create(key, kind, session_id, attrs, meta)
     }
 
-    fn vault_key_delete(&self, _pid: HsmPartId, _key_id: HsmKeyId) -> HsmResult<()> {
-        Err(HsmError::InternalError)
+    /// Delete a key from the partition's vault.
+    fn vault_key_delete(&self, pid: HsmPartId, key_id: HsmKeyId) -> HsmResult<()> {
+        let entry = self.active_part_mut(pid)?;
+        entry.vault.delete(key_id)
     }
 
-    fn vault_key_delete_by_session(
-        &self,
-        _pid: HsmPartId,
-        _session_id: HsmSessId,
-    ) -> HsmResult<()> {
-        Err(HsmError::InternalError)
+    /// Delete all session-scoped keys for the given session.
+    fn vault_key_delete_by_session(&self, pid: HsmPartId, session_id: HsmSessId) -> HsmResult<()> {
+        let entry = self.active_part_mut(pid)?;
+        entry.vault.delete_by_session(session_id)
     }
 
-    fn vault_clear(&self, _pid: HsmPartId) -> HsmResult<()> {
-        Err(HsmError::InternalError)
+    /// Clear all keys from the partition's vault.
+    fn vault_clear(&self, pid: HsmPartId) -> HsmResult<()> {
+        let entry = self.active_part_mut(pid)?;
+        entry.vault.clear();
+        Ok(())
     }
 
-    fn vault_key(&self, _pid: HsmPartId, _key_id: HsmKeyId) -> HsmResult<&[u8]> {
-        Err(HsmError::InternalError)
+    /// Retrieve key material by ID.
+    fn vault_key(&self, pid: HsmPartId, key_id: HsmKeyId) -> HsmResult<&[u8]> {
+        let entry = self.active_part(pid)?;
+        entry.vault.key(key_id)
     }
 
-    fn vault_key_len(&self, _pid: HsmPartId, _kind: HsmVaultKeyKind) -> HsmResult<u16> {
-        Err(HsmError::InternalError)
+    /// Return the firmware raw key size for a given kind.
+    fn vault_key_len(&self, _pid: HsmPartId, kind: HsmVaultKeyKind) -> HsmResult<u16> {
+        KeyVault::key_len(kind)
     }
 
-    fn vault_key_kind(&self, _pid: HsmPartId, _key_id: HsmKeyId) -> HsmResult<HsmVaultKeyKind> {
-        Err(HsmError::InternalError)
+    /// Query key kind.
+    fn vault_key_kind(&self, pid: HsmPartId, key_id: HsmKeyId) -> HsmResult<HsmVaultKeyKind> {
+        let entry = self.active_part(pid)?;
+        entry.vault.key_kind(key_id)
     }
 
-    fn vault_key_attrs(&self, _pid: HsmPartId, _key_id: HsmKeyId) -> HsmResult<HsmVaultKeyAttrs> {
-        Err(HsmError::InternalError)
+    /// Query key attributes.
+    fn vault_key_attrs(&self, pid: HsmPartId, key_id: HsmKeyId) -> HsmResult<HsmVaultKeyAttrs> {
+        let entry = self.active_part(pid)?;
+        entry.vault.key_attrs(key_id)
     }
 
-    fn vault_key_meta(&self, _pid: HsmPartId, _key_id: HsmKeyId) -> HsmResult<&[u8]> {
-        Err(HsmError::InternalError)
+    /// Query key metadata.
+    fn vault_key_meta(&self, pid: HsmPartId, key_id: HsmKeyId) -> HsmResult<&[u8]> {
+        let entry = self.active_part(pid)?;
+        entry.vault.key_meta(key_id)
     }
 }

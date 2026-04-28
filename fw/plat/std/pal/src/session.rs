@@ -28,7 +28,6 @@
 //! [`PartitionEntry`]: crate::part::PartitionEntry
 
 use super::*;
-use crate::part::NUM_PARTITIONS;
 
 impl HsmSessionManager for StdHsmPal {
     /// Check whether the partition's session table is full.
@@ -37,17 +36,13 @@ impl HsmSessionManager for StdHsmPal {
     /// [`session_create`](Self::session_create) would fail with
     /// [`HsmError::VaultSessionLimitReached`].
     ///
-    /// If `pid` is out of range the method conservatively returns `true`
-    /// (no sessions available for an invalid partition).
+    /// If `pid` is out of range or partition is disabled, conservatively
+    /// returns `true` (no sessions available).
     fn session_limit_reached(&self, pid: HsmPartId) -> bool {
-        // SAFETY: Embassy is single-threaded. This synchronous method
-        // completes without yielding, so no concurrent mutation occurs.
-        let table = unsafe { &*self.part_table.get() };
-        let idx = u8::from(pid) as usize;
-        if idx >= NUM_PARTITIONS {
+        let Ok(entry) = self.active_part(pid) else {
             return true;
-        }
-        table.entries[idx].session_table.limit_reached()
+        };
+        entry.session_table.limit_reached()
     }
 
     /// Allocate a new session in the partition's session table.
@@ -57,7 +52,7 @@ impl HsmSessionManager for StdHsmPal {
     ///
     /// # Parameters
     ///
-    /// - `pid` — Target partition (must be < [`NUM_PARTITIONS`]).
+    /// - `pid` — Target partition (must be < [`NUM_PARTITIONS`](crate::part::NUM_PARTITIONS)).
     /// - `_id` — Reserved for session re-keying (currently unused).
     ///
     /// # Errors
@@ -68,14 +63,8 @@ impl HsmSessionManager for StdHsmPal {
     /// [`SessionTable::create`]: crate::drivers::session::SessionTable::create
     fn session_create(&self, pid: HsmPartId, _id: Option<HsmSessId>) -> HsmResult<HsmSessId> {
         // TODO: handle recreate (re-key of existing session via _id parameter)
-
-        // SAFETY: Single-threaded Embassy — no concurrent readers.
-        let table = unsafe { &mut *self.part_table.get() };
-        let idx = u8::from(pid) as usize;
-        if idx >= NUM_PARTITIONS {
-            return Err(HsmError::InvalidArg);
-        }
-        table.entries[idx].session_table.create()
+        let entry = self.active_part_mut(pid)?;
+        entry.session_table.create()
     }
 
     /// Delete (close) a session, freeing its slot for reuse.
@@ -91,13 +80,8 @@ impl HsmSessionManager for StdHsmPal {
     ///
     /// [`SessionTable::delete`]: crate::drivers::session::SessionTable::delete
     fn session_delete(&self, pid: HsmPartId, id: HsmSessId) -> HsmResult<()> {
-        // SAFETY: Single-threaded Embassy — no concurrent readers.
-        let table = unsafe { &mut *self.part_table.get() };
-        let idx = u8::from(pid) as usize;
-        if idx >= NUM_PARTITIONS {
-            return Err(HsmError::InvalidArg);
-        }
-        table.entries[idx].session_table.delete(id)
+        let entry = self.active_part_mut(pid)?;
+        entry.session_table.delete(id)
     }
 
     /// Query the lifecycle state of a session.
@@ -109,13 +93,9 @@ impl HsmSessionManager for StdHsmPal {
     ///
     /// Out-of-range `pid` values return [`HsmSessionState::Invalid`].
     fn session_state(&self, pid: HsmPartId, id: HsmSessId) -> HsmSessionState {
-        // SAFETY: Embassy is single-threaded. This synchronous method
-        // completes without yielding, so no concurrent mutation occurs.
-        let table = unsafe { &*self.part_table.get() };
-        let idx = u8::from(pid) as usize;
-        if idx >= NUM_PARTITIONS {
+        let Ok(entry) = self.active_part(pid) else {
             return HsmSessionState::Invalid;
-        }
-        table.entries[idx].session_table.state(id)
+        };
+        entry.session_table.state(id)
     }
 }
