@@ -45,32 +45,30 @@ impl Xtask for Install {
         let sh = Shell::new()?;
         let rust_toolchain = sh.var("RUST_TOOLCHAIN").map(|s| format!("+{s}")).ok();
 
-        // convert xtask parameters into cargo command arguments
         let crate_name = self.crate_name;
-        let mut command_args = vec![crate_name.clone(), "--locked".to_string()];
+        let mut command_args = vec!["--locked".to_string()];
         if self.force {
             command_args.push("--force".to_string());
         }
-
         if self.no_default_features {
             command_args.push("--no-default-features".to_string());
         }
-
         if let Some(features) = self.features {
-            let features = features.join(",");
             command_args.push("--features".to_string());
-            command_args.push(features);
+            command_args.push(features.join(","));
         }
-
         if let Some(config) = self.config {
             command_args.push("--config".to_string());
             command_args.push(config);
         }
 
-        let output = cmd!(sh, "cargo {rust_toolchain...} install {command_args...}")
-            .quiet()
-            .ignore_status()
-            .output()?;
+        let output = cmd!(
+            sh,
+            "cargo {rust_toolchain...} install {crate_name} {command_args...}"
+        )
+        .quiet()
+        .ignore_status()
+        .output()?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
