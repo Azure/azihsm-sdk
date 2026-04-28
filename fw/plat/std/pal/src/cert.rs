@@ -412,15 +412,16 @@ impl StdHsmPal {
     }
 
     /// Get mutable reference to cert store (for init).
+    #[allow(clippy::mut_from_ref)]
     fn cert_store_mut(&self) -> &mut SharedCertStore {
         // SAFETY: only called during init, single-threaded.
-        unsafe { &mut **self.cert_store.get() }
+        unsafe { &mut *self.cert_store.get() }
     }
 
     /// Get immutable reference to cert store.
     fn cert_store(&self) -> &SharedCertStore {
         // SAFETY: single-threaded Embassy executor.
-        unsafe { &**self.cert_store.get() }
+        unsafe { &*self.cert_store.get() }
     }
 }
 
@@ -429,15 +430,20 @@ impl StdHsmPal {
 // ---------------------------------------------------------------------------
 
 impl HsmCertStore for StdHsmPal {
-    async fn get_cert_chain_info(&self, part_id: u8, slot_id: u8) -> HsmResult<CertChainInfo> {
+    async fn get_cert_chain_info(
+        &self,
+        part_id: HsmPartId,
+        slot_id: u8,
+    ) -> HsmResult<CertChainInfo> {
+        let pid = u8::from(part_id);
         if slot_id != 0 {
             return Err(HsmError::InvalidArg);
         }
 
-        self.ensure_leaf_cert(part_id).await?;
+        self.ensure_leaf_cert(pid).await?;
 
         let table = unsafe { &*self.part_table.get() };
-        let entry = &table.entries[part_id as usize];
+        let entry = &table.entries[pid as usize];
 
         // Thumbprint = SHA-256(SHA-256(root||devid) || SHA-256(alias) || SHA-256(leaf))
         let mut alias_hash = [0u8; 32];
@@ -473,11 +479,12 @@ impl HsmCertStore for StdHsmPal {
 
     async fn get_cert(
         &self,
-        part_id: u8,
+        part_id: HsmPartId,
         slot_id: u8,
         idx: u8,
         cert: Option<&mut [u8]>,
     ) -> HsmResult<usize> {
+        let pid = u8::from(part_id);
         if slot_id != 0 {
             return Err(HsmError::InvalidArg);
         }
@@ -502,10 +509,10 @@ impl HsmCertStore for StdHsmPal {
             return Err(HsmError::InvalidArg);
         }
 
-        self.ensure_leaf_cert(part_id).await?;
+        self.ensure_leaf_cert(pid).await?;
 
         let table = unsafe { &*self.part_table.get() };
-        let entry = &table.entries[part_id as usize];
+        let entry = &table.entries[pid as usize];
         let len = entry.leaf_cert_len;
         if let Some(buf) = cert {
             if buf.len() < len {

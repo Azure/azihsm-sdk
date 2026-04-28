@@ -303,6 +303,7 @@ impl KeyVault {
 
     /// Number of tables in this vault.
     #[cfg(test)]
+    #[allow(dead_code)]
     pub fn table_count(&self) -> usize {
         self.tables.len()
     }

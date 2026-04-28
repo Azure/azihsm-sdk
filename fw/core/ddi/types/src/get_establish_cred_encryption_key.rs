@@ -12,7 +12,7 @@ pub struct DdiGetEstablishCredEncryptionKeyReq {}
 #[derive(Debug, Ddi)]
 #[ddi(map)]
 pub struct DdiGetEstablishCredEncryptionKeyResp<'a> {
-    #[ddi(id = 1)]
+    #[ddi(id = 1, frame)]
     pub pub_key: DdiPublicKey<'a>,
     #[ddi(id = 2, len = 32)]
     pub nonce: &'a [u8],

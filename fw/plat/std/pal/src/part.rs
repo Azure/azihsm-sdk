@@ -250,11 +250,11 @@ pub enum PartCommand {
 
 impl HsmPartitionManager for StdHsmPal {
     /// Returns the current state of the partition at index `pid`.
-    fn part_state(&self, pid: u8) -> HsmResult<PartState> {
+    fn part_state(&self, pid: HsmPartId) -> HsmResult<PartState> {
         // SAFETY: Embassy is single-threaded. This synchronous method
         // completes without yielding, so no concurrent mutation occurs.
         let table = unsafe { &*self.part_table.get() };
-        let idx = pid as usize;
+        let idx = u8::from(pid) as usize;
         if idx >= NUM_PARTITIONS {
             return Err(HsmError::InvalidArg);
         }
@@ -262,9 +262,9 @@ impl HsmPartitionManager for StdHsmPal {
     }
 
     /// Returns the resource count allocated to the partition at `pid`.
-    fn part_res_count(&self, pid: u8) -> HsmResult<u8> {
+    fn part_res_count(&self, pid: HsmPartId) -> HsmResult<u8> {
         let table = unsafe { &*self.part_table.get() };
-        let idx = pid as usize;
+        let idx = u8::from(pid) as usize;
         if idx >= NUM_PARTITIONS {
             return Err(HsmError::InvalidArg);
         }
@@ -276,9 +276,9 @@ impl HsmPartitionManager for StdHsmPal {
     }
 
     /// Returns the 16-byte identity blob for the partition at `pid`.
-    fn part_id(&self, pid: u8) -> HsmResult<PartId<'_>> {
+    fn part_id(&self, pid: HsmPartId) -> HsmResult<PartId<'_>> {
         let table = unsafe { &*self.part_table.get() };
-        let idx = pid as usize;
+        let idx = u8::from(pid) as usize;
         if idx >= NUM_PARTITIONS {
             return Err(HsmError::InvalidArg);
         }
@@ -289,36 +289,43 @@ impl HsmPartitionManager for StdHsmPal {
         Ok(&entry.id)
     }
 
-    fn part_id_key_id(&self, pid: u8) -> HsmResult<HsmKeyId> {
-        let entry = self.active_part(HsmPartId::from(pid))?;
-        entry.id_key_id.ok_or(HsmError::InternalError)
+    fn part_id_key_id(&self, pid: HsmPartId) -> HsmResult<HsmKeyId> {
+        self.active_part(pid)?
+            .id_key_id
+            .ok_or(HsmError::InternalError)
     }
 
-    fn part_id_pub_key(&self, pid: u8, out: Option<&mut [u8]>) -> HsmResult<usize> {
-        let entry = self.active_part(HsmPartId::from(pid))?;
-        copy_out(&entry.id_pub_key, out)
+    fn part_id_pub_key(&self, pid: HsmPartId, out: Option<&mut [u8]>) -> HsmResult<usize> {
+        copy_out(&self.active_part(pid)?.id_pub_key, out)
     }
 
-    fn part_establish_cred_key_id(&self, pid: u8) -> HsmResult<Option<HsmKeyId>> {
-        Ok(self.enabled_part(pid)?.establish_cred_key_id)
+    fn part_establish_cred_key_id(&self, pid: HsmPartId) -> HsmResult<Option<HsmKeyId>> {
+        Ok(self.enabled_part(u8::from(pid))?.establish_cred_key_id)
     }
 
-    fn part_establish_cred_pub_key(&self, pid: u8, out: Option<&mut [u8]>) -> HsmResult<usize> {
-        copy_out(&self.enabled_part(pid)?.establish_cred_pub_key, out)
+    fn part_establish_cred_pub_key(
+        &self,
+        pid: HsmPartId,
+        out: Option<&mut [u8]>,
+    ) -> HsmResult<usize> {
+        copy_out(
+            &self.enabled_part(u8::from(pid))?.establish_cred_pub_key,
+            out,
+        )
     }
 
-    fn part_session_enc_key_id(&self, pid: u8) -> HsmResult<HsmKeyId> {
-        self.enabled_part(pid)?
+    fn part_session_enc_key_id(&self, pid: HsmPartId) -> HsmResult<HsmKeyId> {
+        self.enabled_part(u8::from(pid))?
             .session_enc_key_id
             .ok_or(HsmError::InternalError)
     }
 
-    fn part_session_enc_pub_key(&self, pid: u8, out: Option<&mut [u8]>) -> HsmResult<usize> {
-        copy_out(&self.enabled_part(pid)?.session_enc_pub_key, out)
+    fn part_session_enc_pub_key(&self, pid: HsmPartId, out: Option<&mut [u8]>) -> HsmResult<usize> {
+        copy_out(&self.enabled_part(u8::from(pid))?.session_enc_pub_key, out)
     }
 
-    fn part_clear_establish_cred_key(&self, pid: u8) -> HsmResult<()> {
-        let entry = self.enabled_part_mut(pid)?;
+    fn part_clear_establish_cred_key(&self, pid: HsmPartId) -> HsmResult<()> {
+        let entry = self.enabled_part_mut(u8::from(pid))?;
         if let Some(kid) = entry.establish_cred_key_id.take() {
             let _ = entry.vault.delete(kid);
         }
@@ -326,12 +333,12 @@ impl HsmPartitionManager for StdHsmPal {
         Ok(())
     }
 
-    fn part_nonce(&self, pid: u8) -> HsmResult<&[u8]> {
-        Ok(&self.enabled_part(pid)?.nonce)
+    fn part_nonce(&self, pid: HsmPartId, out: Option<&mut [u8]>) -> HsmResult<usize> {
+        copy_out(&self.enabled_part(u8::from(pid))?.nonce, out)
     }
 
-    fn part_nonce_refresh(&self, pid: u8) -> HsmResult<()> {
-        let entry = self.enabled_part_mut(pid)?;
+    fn part_nonce_refresh(&self, pid: HsmPartId) -> HsmResult<()> {
+        let entry = self.enabled_part_mut(u8::from(pid))?;
         Rng::rand_bytes(&mut entry.nonce).map_err(|_| HsmError::InternalError)
     }
 }
@@ -546,7 +553,7 @@ impl StdHsmPal {
         }
 
         // Generate 32-byte random nonce.
-        if let Err(_) = Rng::rand_bytes(&mut entry.nonce) {
+        if Rng::rand_bytes(&mut entry.nonce).is_err() {
             // Rollback both keys.
             Self::clear_enabled_state(entry);
             return Err(HsmError::InternalError);

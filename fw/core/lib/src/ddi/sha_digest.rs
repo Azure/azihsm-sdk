@@ -32,7 +32,7 @@ fn to_hsm_hash_algo(ddi: DdiHashAlgorithm) -> HsmResult<HsmHashAlgo> {
 pub(crate) async fn sha_digest<'a, P: HsmPal>(
     hdr: &DdiReqHdr,
     decoder: &mut DdiDecoder<'_>,
-    _part_id: u8,
+    _part_id: HsmPartId,
     pal: &P,
     _fmem: &mut [u8],
     smem: &'a mut [u8],

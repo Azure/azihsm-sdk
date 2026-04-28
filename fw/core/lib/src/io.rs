@@ -54,7 +54,7 @@ impl<P: HsmPal> Hsm<P> {
                 .part_state(pid)
                 .is_ok_and(|s| s == PartState::Enabled);
             if !enabled {
-                debug!("core", "dropping IO for disabled partition {}", pid);
+                debug!("core", "dropping IO for disabled partition {:?}", pid);
                 if let Err(_e) = self.pal().drop_io(io).await {
                     error!("core", HsmError::DropIoFailure, "drop_io failed: {:?}", _e);
                 }
@@ -228,7 +228,7 @@ impl<P: HsmPal> Hsm<P> {
 
     async fn copy_host_to_mem(
         &self,
-        part_id: u8,
+        part_id: HsmPartId,
         src_prp: HsmDmaAddr,
         dest: &mut [u8],
     ) -> Result<(), OpError> {
@@ -244,7 +244,7 @@ impl<P: HsmPal> Hsm<P> {
 
     async fn copy_mem_to_host(
         &self,
-        part_id: u8,
+        part_id: HsmPartId,
         src: &[u8],
         dst_prp: HsmDmaAddr,
     ) -> Result<(), OpError> {

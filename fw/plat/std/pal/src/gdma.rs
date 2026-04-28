@@ -22,7 +22,7 @@ impl HsmGdmaController for StdHsmPal {
     /// Interprets the PRP address as a raw host pointer.
     async fn copy_mem_from_host(
         &self,
-        _part_id: u8,
+        _part_id: HsmPartId,
         src: HsmDmaAddr,
         dst: &mut [u8],
         _prp: bool,
@@ -40,7 +40,7 @@ impl HsmGdmaController for StdHsmPal {
     /// Interprets the PRP address as a raw host pointer.
     async fn copy_mem_to_host(
         &self,
-        _part_id: u8,
+        _part_id: HsmPartId,
         src: &[u8],
         dst: HsmDmaAddr,
         _prp: bool,

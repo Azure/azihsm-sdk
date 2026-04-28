@@ -1048,3 +1048,245 @@ async fn ddi_sha512_digest() {
     .unwrap();
     assert_eq!(resp_data.digest.as_slice(), expected.as_slice());
 }
+
+// ---------------------------------------------------------------------------
+// GetEstablishCredEncryptionKey tests
+// ---------------------------------------------------------------------------
+
+/// Helper: encode a GetEstablishCredEncryptionKey request and submit IO.
+/// Returns (CQE, response bytes).
+async fn submit_get_establish_cred_enc_key(
+    pid: u8,
+    cmd_id: u16,
+    sess_id: Option<u16>,
+) -> ([u32; 4], Vec<u8>) {
+    use azihsm_ddi_types::*;
+
+    let mut src = AlignedBuf::new(4096);
+    let mut dst = AlignedBuf::new(4096);
+
+    let req_hdr = DdiReqHdr {
+        rev: Some(DdiApiRev { major: 1, minor: 0 }),
+        op: DdiOp::GetEstablishCredEncryptionKey,
+        sess_id,
+    };
+    let req_len = DdiEncoder::encode_parts(
+        req_hdr,
+        DdiGetEstablishCredEncryptionKeyReq {},
+        src.as_mut_slice(),
+        false,
+    )
+    .expect("encode req");
+
+    let c = HSM
+        .io(
+            sqe_with_dma(cmd_id, &src.as_slice()[..req_len], dst.as_mut_slice()),
+            pid,
+            0,
+            0,
+        )
+        .await
+        .expect("io");
+
+    let resp_len = (c[0] & 0xFFFF) as usize;
+    let resp_bytes = dst.as_slice()[..resp_len].to_vec();
+    (c, resp_bytes)
+}
+
+#[tokio::test]
+async fn get_establish_cred_encryption_key_basic() {
+    use azihsm_ddi_types::*;
+
+    ensure_io_part().await;
+
+    let (c, resp_bytes) = submit_get_establish_cred_enc_key(IO_PID, 1101, None).await;
+
+    assert_eq!(c[3] & 0xFFFF, 1101, "cmd_id");
+    assert_eq!(cqe_status(&c), 0, "expected CQE Success");
+    assert!(!resp_bytes.is_empty(), "expected non-empty response");
+
+    let mut decoder = DdiDecoder::new(&resp_bytes, false);
+    let resp_hdr: DdiRespHdr = decoder.decode_hdr().expect("decode hdr");
+    assert_eq!(resp_hdr.op, DdiOp::GetEstablishCredEncryptionKey);
+    assert_eq!(resp_hdr.status, DdiStatus::Success);
+
+    let resp_data: DdiGetEstablishCredEncryptionKeyResp =
+        decoder.decode_data().expect("decode data");
+
+    // Public key should be non-zero (96 bytes for P-384 x∥y)
+    let pub_key_bytes = resp_data.pub_key.der.as_slice();
+    assert!(!pub_key_bytes.is_empty(), "expected non-empty public key");
+    assert_eq!(resp_data.pub_key.key_kind, DdiKeyType::Ecc384Public);
+
+    // Nonce must be 32 bytes
+    assert_eq!(resp_data.nonce.len(), 32);
+    assert_ne!(resp_data.nonce, [0u8; 32], "nonce should not be all zeros");
+
+    // Signature must be non-empty (96 bytes for P-384 r∥s)
+    let sig = resp_data.pub_key_signature.as_slice();
+    assert!(!sig.is_empty(), "expected non-empty signature");
+}
+
+#[tokio::test]
+async fn get_establish_cred_encryption_key_idempotent() {
+    use azihsm_ddi_types::*;
+
+    ensure_io_part().await;
+
+    let (_, resp_bytes1) = submit_get_establish_cred_enc_key(IO_PID, 1102, None).await;
+    let (_, resp_bytes2) = submit_get_establish_cred_enc_key(IO_PID, 1103, None).await;
+
+    let mut dec1 = DdiDecoder::new(&resp_bytes1, false);
+    let _: DdiRespHdr = dec1.decode_hdr().expect("hdr1");
+    let data1: DdiGetEstablishCredEncryptionKeyResp = dec1.decode_data().expect("data1");
+
+    let mut dec2 = DdiDecoder::new(&resp_bytes2, false);
+    let _: DdiRespHdr = dec2.decode_hdr().expect("hdr2");
+    let data2: DdiGetEstablishCredEncryptionKeyResp = dec2.decode_data().expect("data2");
+
+    assert_eq!(
+        data1.pub_key.der.as_slice(),
+        data2.pub_key.der.as_slice(),
+        "public key must be stable across calls"
+    );
+    assert_eq!(
+        data1.nonce, data2.nonce,
+        "nonce must be stable across calls"
+    );
+}
+
+#[tokio::test]
+async fn get_establish_cred_encryption_key_session_rejected() {
+    use azihsm_ddi_types::*;
+
+    ensure_io_part().await;
+
+    // Submit with SQE session_ctrl=InSession — should get DDI error
+    let mut src = AlignedBuf::new(4096);
+    let mut dst = AlignedBuf::new(4096);
+
+    let req_hdr = DdiReqHdr {
+        rev: Some(DdiApiRev { major: 1, minor: 0 }),
+        op: DdiOp::GetEstablishCredEncryptionKey,
+        sess_id: None,
+    };
+    let req_len = DdiEncoder::encode_parts(
+        req_hdr,
+        DdiGetEstablishCredEncryptionKeyReq {},
+        src.as_mut_slice(),
+        false,
+    )
+    .expect("encode req");
+
+    // Tamper SQE DW11: set ctrl=InSession (2) — mismatch with NoSession
+    let mut sqe_data = sqe_with_dma(1104, &src.as_slice()[..req_len], dst.as_mut_slice());
+    sqe_data[11] = 2; // ctrl=InSession
+
+    let c = HSM.io(sqe_data, IO_PID, 0, 0).await.expect("io");
+
+    assert_eq!(cqe_status(&c), 0, "expected CQE Success for session error");
+
+    let resp_len = (c[0] & 0xFFFF) as usize;
+    assert!(resp_len > 0, "expected DDI error response body");
+
+    let mut decoder = DdiDecoder::new(&dst.as_slice()[..resp_len], false);
+    let resp_hdr: DdiRespHdr = decoder.decode_hdr().expect("decode hdr");
+    assert_eq!(
+        resp_hdr.status,
+        DdiStatus::InvalidArg,
+        "expected InvalidArg for session ctrl mismatch"
+    );
+}
+
+#[tokio::test]
+async fn get_establish_cred_encryption_key_verify_signature() {
+    use azihsm_crypto::*;
+    use azihsm_ddi_types::*;
+    use x509::X509Certificate;
+    use x509::X509CertificateOp;
+
+    ensure_io_part().await;
+
+    // 1. Get the partition leaf cert (index 3)
+    let leaf_der = get_cert_der(3).await;
+    let leaf = X509Certificate::from_der(&leaf_der).expect("parse leaf cert");
+    let leaf_pub_key_der = leaf
+        .get_public_key_der()
+        .expect("get pub key DER from leaf cert");
+
+    // 2. Parse the leaf cert's public key
+    let verifier_key =
+        EccPublicKey::from_bytes(&leaf_pub_key_der).expect("parse leaf pub key as EccPublicKey");
+
+    // 3. Get the establish-cred encryption key
+    let (c, resp_bytes) = submit_get_establish_cred_enc_key(IO_PID, 1105, None).await;
+    assert_eq!(cqe_status(&c), 0, "expected Success");
+
+    let mut decoder = DdiDecoder::new(&resp_bytes, false);
+    let _: DdiRespHdr = decoder.decode_hdr().expect("hdr");
+    let data: DdiGetEstablishCredEncryptionKeyResp = decoder.decode_data().expect("data");
+
+    let pub_key_raw = data.pub_key.der.as_slice();
+    let signature_raw = data.pub_key_signature.as_slice();
+
+    // 4. Hash the public key with SHA-384
+    let digest = Hasher::hash_vec(&mut HashAlgo::sha384(), pub_key_raw).expect("sha384");
+
+    // 5. Verify signature: raw EC verify (digest, signature) with leaf key
+    let result = Verifier::verify(
+        &mut EccAlgo::default(),
+        &verifier_key,
+        &digest,
+        signature_raw,
+    );
+    assert!(
+        result.is_ok(),
+        "signature verification failed: {:?}",
+        result
+    );
+    assert!(result.unwrap(), "signature over public key is invalid");
+}
+
+#[tokio::test]
+async fn get_establish_cred_encryption_key_changes_after_reenable() {
+    use azihsm_ddi_types::*;
+
+    // Use a dedicated partition for this test to avoid interfering with others
+    let pid: u8 = 15;
+    HSM.part_alloc(pid, 1u128 << pid)
+        .await
+        .expect("alloc pid 15");
+    HSM.part_enable(pid).await.expect("enable pid 15");
+
+    // Get the key before
+    let (c1, resp_bytes1) = submit_get_establish_cred_enc_key(pid, 1106, None).await;
+    assert_eq!(cqe_status(&c1), 0, "expected Success");
+
+    let mut dec1 = DdiDecoder::new(&resp_bytes1, false);
+    let _: DdiRespHdr = dec1.decode_hdr().expect("hdr1");
+    let data1: DdiGetEstablishCredEncryptionKeyResp = dec1.decode_data().expect("data1");
+    let old_pub_key = data1.pub_key.der.data().to_vec();
+    let old_nonce = data1.nonce;
+
+    // Disable and re-enable the partition
+    HSM.part_disable(pid).await.expect("disable pid 15");
+    HSM.part_enable(pid).await.expect("re-enable pid 15");
+
+    // Get the key after
+    let (c2, resp_bytes2) = submit_get_establish_cred_enc_key(pid, 1107, None).await;
+    assert_eq!(cqe_status(&c2), 0, "expected Success");
+
+    let mut dec2 = DdiDecoder::new(&resp_bytes2, false);
+    let _: DdiRespHdr = dec2.decode_hdr().expect("hdr2");
+    let data2: DdiGetEstablishCredEncryptionKeyResp = dec2.decode_data().expect("data2");
+
+    assert_ne!(
+        old_pub_key,
+        data2.pub_key.der.data(),
+        "public key must change after re-enable"
+    );
+    assert_ne!(old_nonce, data2.nonce, "nonce must change after re-enable");
+
+    // Cleanup
+    HSM.part_free(pid).await.expect("free pid 15");
+}

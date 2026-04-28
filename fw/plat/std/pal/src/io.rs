@@ -23,8 +23,8 @@ use crate::StdHsmPal;
 /// the SQE — the caller must keep the source buffer alive until the
 /// response is received.
 pub struct HsmIoRequest {
-    /// Source controller identifier.
-    pub pid: u8,
+    /// Source partition identifier.
+    pub pid: HsmPartId,
 
     /// Source queue identifier.
     pub qid: u16,
@@ -54,8 +54,8 @@ pub struct HsmIoRequest {
 ///
 /// Buffers are pre-allocated in the [`BufferPool`] and reused across IOs.
 pub struct StdHsmIo {
-    /// Source controller identifier.
-    pub(crate) pid: u8,
+    /// Source partition identifier.
+    pub(crate) pid: HsmPartId,
 
     /// Source queue identifier.
     pub(crate) qid: u16,
@@ -111,7 +111,7 @@ impl core::fmt::Debug for StdHsmIo {
 }
 
 impl HsmIo for StdHsmIo {
-    fn pid(&self) -> u8 {
+    fn pid(&self) -> HsmPartId {
         self.pid
     }
 

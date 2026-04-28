@@ -23,6 +23,7 @@ static_cell.workspace = true
 tokio = { features = ["rt-multi-thread", "time"], workspace = true }
 
 [dev-dependencies]
+azihsm_crypto.workspace = true
 azihsm_ddi_mbor.workspace = true
 azihsm_ddi_types.workspace = true
 hex.workspace = true

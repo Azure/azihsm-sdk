@@ -23,8 +23,8 @@ pub type HsmCqe = [u32; CQE_DWORDS];
 /// queue entry ([`sqe`](Self::sqe)) to determine the requested operation and
 /// writes the result into the completion queue entry ([`cqe`](Self::cqe)).
 pub trait HsmIo {
-    /// Returns the controller that owns this IO.
-    fn pid(&self) -> u8;
+    /// Returns the partition that owns this IO.
+    fn pid(&self) -> HsmPartId;
 
     /// Returns the queue within the controller that this IO belongs to.
     fn queue_id(&self) -> u16;

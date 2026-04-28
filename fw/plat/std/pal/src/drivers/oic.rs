@@ -27,7 +27,7 @@ impl StdOic {
     pub async fn send(&self, io: StdHsmIo) {
         debug!(
             "oic",
-            "send part={} qid={} qidx={}", io.pid, io.qid, io.qidx
+            "send part={:?} qid={} qidx={}", io.pid, io.qid, io.qidx
         );
 
         // Reply to submitter with just the CQE.

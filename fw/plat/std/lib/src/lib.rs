@@ -42,7 +42,7 @@ static HSM: OnceLock<Hsm<StdHsmPal>> = OnceLock::new();
 async fn run_core(spawner: embassy_executor::Spawner) {
     let hsm = HSM.get().await;
     hsm.pal().init();
-    if let Err(_) = hsm.pal().init_cert_store().await {
+    if hsm.pal().init_cert_store().await.is_err() {
         return;
     }
 
@@ -278,7 +278,7 @@ impl StdHsm {
     pub async fn io(&self, sqe: HsmSqe, pid: u8, qid: u16, qidx: u16) -> HsmResult<HsmCqe> {
         let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
         let req = HsmIoRequest {
-            pid,
+            pid: HsmPartId::from(pid),
             qid,
             qidx,
             sqe,

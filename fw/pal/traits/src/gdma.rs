@@ -35,7 +35,7 @@ pub trait HsmGdmaController {
     ///   if `false`, interpret it as an SGL descriptor pair.
     async fn copy_mem_from_host(
         &self,
-        part_id: u8,
+        part_id: HsmPartId,
         src: HsmDmaAddr,
         dst: &mut [u8],
         prp: bool,
@@ -43,14 +43,14 @@ pub trait HsmGdmaController {
 
     /// Copies data from the HSM-local buffer `src` to the host at `dst`.
     ///
-    /// * `part_id` — Identifier of the host controller interface.
+    /// * `part_id` — Partition identifier.
     /// * `src` — HSM-local source buffer.
     /// * `dst` — Host-side destination DMA address.
     /// * `prp` — If `true`, interpret `dst` as a PRP address pair;
     ///   if `false`, interpret it as an SGL descriptor pair.
     async fn copy_mem_to_host(
         &self,
-        part_id: u8,
+        part_id: HsmPartId,
         src: &[u8],
         dst: HsmDmaAddr,
         prp: bool,

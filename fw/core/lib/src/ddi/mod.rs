@@ -5,6 +5,7 @@ pub(crate) mod get_api_rev;
 pub(crate) mod get_cert_chain_info;
 pub(crate) mod get_certificate;
 pub(crate) mod get_device_info;
+pub(crate) mod get_establish_cred_encryption_key;
 pub(crate) mod sha_digest;
 
 use azihsm_fw_ddi::DdiDecoder;
@@ -16,6 +17,7 @@ pub(crate) use get_api_rev::*;
 pub(crate) use get_cert_chain_info::*;
 pub(crate) use get_certificate::*;
 pub(crate) use get_device_info::*;
+pub(crate) use get_establish_cred_encryption_key::*;
 pub(crate) use sha_digest::*;
 
 use super::*;
@@ -30,7 +32,7 @@ use super::*;
 pub(crate) async fn dispatch<P: HsmPal>(
     hdr: &DdiReqHdr,
     decoder: &mut DdiDecoder<'_>,
-    part_id: u8,
+    part_id: HsmPartId,
     pal: &P,
     fmem: &mut [u8],
     smem: &mut [u8],
@@ -43,6 +45,9 @@ pub(crate) async fn dispatch<P: HsmPal>(
         }
         DdiOp::GetCertificate => get_certificate(hdr, decoder, part_id, pal, fmem, smem).await?,
         DdiOp::ShaDigest => sha_digest(hdr, decoder, part_id, pal, fmem, smem).await?,
+        DdiOp::GetEstablishCredEncryptionKey => {
+            get_establish_cred_encryption_key(hdr, decoder, part_id, pal, fmem, smem).await?
+        }
         _ => return Err(HsmError::UnsupportedCmd),
     };
     Ok(resp.len())

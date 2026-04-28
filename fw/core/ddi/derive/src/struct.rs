@@ -39,6 +39,10 @@ struct DdiStructFieldAttr {
     len: Option<usize>,
     /// Maximum byte length for variable-size byte-slice fields.
     max_len: Option<usize>,
+    /// Opt-in for nested frame-then-fill encoding. Only valid on
+    /// non-optional `Normal` fields whose type implements `MborFrameable`.
+    #[darling(default)]
+    frame: bool,
 }
 
 /// Darling helper for extracting top-level `#[ddi(…)]` attributes from a
@@ -87,6 +91,8 @@ pub(crate) struct DdiStructField {
     pub len: Option<usize>,
     /// Maximum byte length constraint (`#[ddi(max_len = N)]`), if any.
     pub max_len: Option<usize>,
+    /// Whether this field opts in to nested frame-then-fill encoding.
+    pub frame: bool,
 }
 
 /// Parsed descriptor for a `#[ddi(map)]` named struct.
@@ -170,6 +176,23 @@ fn parse_field(field: &DdiStructFieldAttr) -> syn::Result<DdiStructField> {
         }
     };
 
+    // Validate #[ddi(frame)] constraints.
+    if field.frame {
+        let span = field
+            .ident
+            .as_ref()
+            .map_or_else(|| field.ty.span(), |i| i.span());
+        if opt {
+            let msg = "#[ddi(frame)] is not supported on optional fields.";
+            return Err(syn::Error::new(span, msg));
+        }
+        if kind != DdiStructFieldKind::Normal {
+            let msg = "#[ddi(frame)] is only valid on struct (Normal) fields, \
+                       not on byte slices or arrays.";
+            return Err(syn::Error::new(span, msg));
+        }
+    }
+
     Ok(DdiStructField {
         ident: field.ident.clone().ok_or_else(|| {
             let msg = "Failed to clone field identifier.";
@@ -181,6 +204,7 @@ fn parse_field(field: &DdiStructFieldAttr) -> syn::Result<DdiStructField> {
         kind,
         len: field.len,
         max_len: field.max_len,
+        frame: field.frame,
     })
 }
 

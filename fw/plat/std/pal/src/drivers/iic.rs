@@ -51,7 +51,7 @@ impl StdIic {
 
         debug!(
             "iic",
-            "recv slot={} part={} qid={} qidx={}", slot, req.pid, req.qid, req.qidx
+            "recv slot={} part={:?} qid={} qidx={}", slot, req.pid, req.qid, req.qidx
         );
 
         Ok((req, slot))

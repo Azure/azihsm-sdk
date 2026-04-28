@@ -20,7 +20,7 @@ use super::*;
 pub(crate) async fn get_cert_chain_info<'a, P: HsmPal>(
     hdr: &DdiReqHdr,
     decoder: &mut DdiDecoder<'_>,
-    part_id: u8,
+    part_id: HsmPartId,
     pal: &P,
     _fmem: &mut [u8],
     smem: &'a mut [u8],
