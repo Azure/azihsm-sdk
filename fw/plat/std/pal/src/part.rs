@@ -46,6 +46,7 @@ use azihsm_crypto::*;
 
 use super::*;
 use crate::cert::MAX_CERT_DER_LEN;
+use crate::drivers::session::SessionTable;
 
 /// Total number of partitions supported by the HSM.
 pub const NUM_PARTITIONS: usize = 65;
@@ -67,8 +68,31 @@ const P384_PRIV_KEY_DER_MAX: usize = 256;
 
 /// A single partition's state and cryptographic material.
 ///
-/// All fields use fixed-size inline storage to avoid heap allocations
-/// and simplify the lifetime model for borrowed trait returns.
+/// Each partition entry holds all per-partition data in fixed-size
+/// inline buffers.  This avoids heap allocations, simplifies the
+/// lifetime model for borrowed trait returns, and mirrors the
+/// fixed-slot storage model used by the hardware HSM.
+///
+/// ## Memory layout
+///
+/// | Field | Size | Description |
+/// |-------|------|-------------|
+/// | `state` | 1 B | Lifecycle state (`Disabled` / `Uninitialized`) |
+/// | `res_count` | 1 B | Allocated resource budget |
+/// | `id` | 16 B | Random identity blob |
+/// | `pub_key` | 96 B | Raw P-384 public key (x ∥ y) |
+/// | `priv_key_der` | 256 B | PKCS#8 DER-encoded P-384 private key |
+/// | `leaf_cert` | 2 KB | Cached DER-encoded partition leaf certificate |
+/// | `session_table` | 2 B | Bitmask session allocator |
+///
+/// ## Zeroization
+///
+/// When a partition is freed via [`part_free_internal`], all
+/// cryptographic material (`id`, `pub_key`, `priv_key_der`,
+/// `leaf_cert`) is explicitly zeroed before the state transitions
+/// back to `Disabled`.
+///
+/// [`part_free_internal`]: StdHsmPal::part_free_internal
 pub(crate) struct PartitionEntry {
     /// Current lifecycle state.
     pub(crate) state: PartState,
@@ -93,6 +117,9 @@ pub(crate) struct PartitionEntry {
 
     /// Length of valid data in `leaf_cert` (0 = not yet generated).
     pub(crate) leaf_cert_len: usize,
+
+    /// Per-partition session table for tracking allocated sessions.
+    pub(crate) session_table: SessionTable,
 }
 
 impl Default for PartitionEntry {
@@ -106,6 +133,7 @@ impl Default for PartitionEntry {
             priv_key_len: 0,
             leaf_cert: [0u8; MAX_CERT_DER_LEN],
             leaf_cert_len: 0,
+            session_table: SessionTable::new(),
         }
     }
 }
@@ -113,7 +141,16 @@ impl Default for PartitionEntry {
 /// Table of all partition entries.
 ///
 /// Stored in an [`UnsafeCell`] on [`StdHsmPal`] so that `&self` trait
-/// methods can return borrowed slices into the entries.
+/// methods can return borrowed slices into the entries.  The table is
+/// heap-allocated (boxed) because `NUM_PARTITIONS × sizeof(PartitionEntry)`
+/// exceeds 155 KB — too large for the stack during construction and
+/// moves.
+///
+/// # Thread safety
+///
+/// Not `Sync` — the [`UnsafeCell`] wrapper on `StdHsmPal` prevents
+/// sharing across threads.  All access occurs on the single-threaded
+/// Embassy executor.
 pub(crate) struct PartitionTable {
     /// Fixed array of partition entries indexed by `pid`.
     ///
@@ -312,6 +349,7 @@ impl StdHsmPal {
         entry.leaf_cert[..entry.leaf_cert_len].fill(0);
         entry.leaf_cert_len = 0;
         entry.res_count = 0;
+        entry.session_table = SessionTable::new();
         entry.state = PartState::Disabled;
 
         Ok(())
