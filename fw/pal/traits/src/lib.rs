@@ -21,6 +21,7 @@
 //!  ├── HsmIoController      — I/O submission and completion
 //!  ├── HsmGdmaController    — host↔device memory copies
 //!  ├── HsmPartitionManager  — partition lifecycle
+//!  ├── HsmPartitionLock     — per-partition async mutex
 //!  ├── HsmCertStore         — per-partition certificate chains
 //!  ├── HsmSessionManager    — session allocation and state
 //!  ├── HsmVault             — key storage and metadata
@@ -56,6 +57,7 @@ mod crypto;
 mod error;
 mod gdma;
 mod io;
+mod lock;
 mod pal;
 mod part;
 mod session;
@@ -66,6 +68,7 @@ pub use crypto::*;
 pub use error::*;
 pub use gdma::*;
 pub use io::*;
+pub use lock::*;
 pub use pal::*;
 pub use part::*;
 pub use session::*;

@@ -7,13 +7,27 @@ use super::*;
 
 /// The core trait that all HSM platform implementations must implement.
 ///
-/// Defines the lifecycle of the platform: initialization, execution, and
-/// deinitialization. A platform implementation provides hardware-specific
-/// behavior behind this common interface.
+/// Bundles all PAL sub-traits into a single bound.  A platform
+/// implementation provides hardware-specific behavior behind this
+/// common interface.
+///
+/// ## Supertraits
+///
+/// | Trait | Purpose |
+/// |-------|---------|
+/// | [`HsmIoController`] | I/O submission and completion |
+/// | [`HsmGdmaController`] | Host↔device memory copies |
+/// | [`HsmPartitionManager`] | Partition lifecycle queries |
+/// | [`HsmPartitionLock`] | Per-partition async mutex for DDI handlers |
+/// | [`HsmCertStore`] | Per-partition certificate chains |
+/// | [`HsmSessionManager`] | Session allocation (vault-backed) |
+/// | [`HsmVault`] | Key storage with firmware capacity emulation |
+/// | [`HsmCrypto`] | Cryptographic operations (7 sub-traits) |
 pub trait HsmPal:
     HsmIoController
     + HsmGdmaController
     + HsmPartitionManager
+    + HsmPartitionLock
     + HsmCertStore
     + HsmSessionManager
     + HsmVault

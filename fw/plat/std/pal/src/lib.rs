@@ -60,6 +60,7 @@ mod io;
 mod kdf;
 mod pal;
 mod part;
+mod part_lock;
 mod rng;
 mod rsa;
 mod session;

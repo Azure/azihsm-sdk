@@ -43,6 +43,8 @@ use std::cell::UnsafeCell;
 use async_channel::Receiver;
 use azihsm_fw_hsm_core_tracing::*;
 use azihsm_fw_hsm_pal_traits::*;
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_sync::mutex::Mutex as EmbassyMutex;
 use tokio::runtime::Handle;
 use tokio::runtime::Runtime;
 
@@ -58,7 +60,14 @@ use crate::drivers::oic::StdOic;
 use crate::drivers::rsa::StdRsa;
 use crate::io::HsmIoRequest;
 use crate::part::PartitionTable;
+use crate::part::NUM_PARTITIONS;
 use crate::worker::WorkerPool;
+
+/// Type alias for the per-partition async mutex.
+///
+/// `NoopRawMutex` is correct for single-threaded Embassy — no OS mutex
+/// needed, just async yielding at contention points.
+pub(crate) type PartMutex = EmbassyMutex<NoopRawMutex, ()>;
 
 /// Host-native HSM Platform Abstraction Layer.
 ///
@@ -129,6 +138,12 @@ pub struct StdHsmPal {
     /// Boxed to avoid 6KB+ on the stack. Immutable after construction.
     pub(crate) cert_store: Box<SharedCertStore>,
 
+    /// Per-partition async locks for serializing state-modifying DDI
+    /// handlers.  Stored separately from the partition table so the
+    /// lock can be held across `.await` points without conflicting
+    /// with `UnsafeCell` access to partition data.
+    pub(crate) part_locks: Box<[PartMutex; NUM_PARTITIONS]>,
+
     /// Tokio runtime owned by this instance when constructed via [`Default`].
     ///
     /// `None` when constructed via [`new`](Self::new) — the caller owns the
@@ -175,6 +190,7 @@ impl StdHsmPal {
             pool: WorkerPool::new(tokio_handle),
             part_table: UnsafeCell::new(PartitionTable::default()),
             cert_store: Box::new(SharedCertStore::new()),
+            part_locks: Box::new(core::array::from_fn(|_| PartMutex::new(()))),
             _rt: None,
         }
     }
@@ -207,6 +223,7 @@ impl Default for StdHsmPal {
             pool: WorkerPool::new(handle),
             part_table: UnsafeCell::new(PartitionTable::default()),
             cert_store: Box::new(SharedCertStore::new()),
+            part_locks: Box::new(core::array::from_fn(|_| PartMutex::new(()))),
             // Keep the runtime alive so `handle` remains valid.
             _rt: Some(rt),
         }
