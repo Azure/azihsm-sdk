@@ -78,10 +78,11 @@ static HSM: std::sync::LazyLock<Arc<StdHsm>> = std::sync::LazyLock::new(|| Arc::
 /// Partition used by all IO tests. Allocated once via [`ensure_io_part`].
 const IO_PID: u8 = 10;
 
-/// Ensure the IO test partition is allocated. Safe to call multiple times.
+/// Ensure the IO test partition is allocated and enabled. Safe to call multiple times.
 async fn ensure_io_part() {
-    // Ignore AlreadyAllocated — means another test already set it up.
+    // Ignore errors — means another test already set it up.
     let _ = HSM.part_alloc(IO_PID, 1u128 << IO_PID).await;
+    let _ = HSM.part_enable(IO_PID).await;
 }
 
 #[tokio::test]

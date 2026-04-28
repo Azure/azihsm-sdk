@@ -32,6 +32,7 @@
 //! ```
 
 use azihsm_crypto::EccCurve;
+use azihsm_crypto::EccKeyOp;
 use azihsm_crypto::EccPrivateKey;
 use azihsm_crypto::EccPublicKey;
 use azihsm_crypto::ExportableKey;
@@ -69,29 +70,33 @@ impl HsmEcc for StdHsmPal {
     async fn ecc_gen_keypair(
         &self,
         curve: HsmEccCurve,
-        priv_key: &mut [u8],
+        priv_key: Option<&mut [u8]>,
         pub_key: &mut [u8],
         _pct: HsmEccPct,
-    ) -> HsmResult<()> {
+    ) -> HsmResult<usize> {
         let (pk, pubk) = self.ecc.gen_keypair(to_ecc_curve(curve)).await?;
 
         // Export private key as PKCS#8 DER.
         let priv_len = pk.to_bytes(None).map_err(|_| HsmError::EccToDerError)?;
-        if priv_key.len() < priv_len {
+        if let Some(buf) = priv_key {
+            if buf.len() < priv_len {
+                return Err(HsmError::EccInvalidKeyLength);
+            }
+            pk.to_bytes(Some(&mut buf[..priv_len]))
+                .map_err(|_| HsmError::EccToDerError)?;
+        }
+
+        // Export public key as raw coordinates (x ∥ y).
+        let coord_len = curve.pub_key_len();
+        if pub_key.len() < coord_len {
             return Err(HsmError::EccInvalidKeyLength);
         }
-        pk.to_bytes(Some(&mut priv_key[..priv_len]))
+        let half = coord_len / 2;
+        let (x_buf, y_buf) = pub_key[..coord_len].split_at_mut(half);
+        pubk.coord(Some((x_buf, y_buf)))
             .map_err(|_| HsmError::EccToDerError)?;
 
-        // Export public key as SPKI DER.
-        let pub_len = pubk.to_bytes(None).map_err(|_| HsmError::EccToDerError)?;
-        if pub_key.len() < pub_len {
-            return Err(HsmError::EccInvalidKeyLength);
-        }
-        pubk.to_bytes(Some(&mut pub_key[..pub_len]))
-            .map_err(|_| HsmError::EccToDerError)?;
-
-        Ok(())
+        Ok(priv_len)
     }
 
     /// Raw EC sign over a pre-computed hash digest.

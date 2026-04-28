@@ -461,7 +461,7 @@ impl HsmCertStore for StdHsmPal {
             return Err(HsmError::InvalidArg);
         }
         let entry = &mut table.entries[idx];
-        if entry.state == PartState::Disabled {
+        if entry.state == PartState::Unallocated {
             return Err(HsmError::InvalidArg);
         }
 
@@ -469,7 +469,7 @@ impl HsmCertStore for StdHsmPal {
         if entry.leaf_cert_len == 0 {
             let len = self.cert_store.build_partition_leaf(
                 part_id,
-                &entry.pub_key,
+                &entry.id_pub_key,
                 &mut entry.leaf_cert,
             )?;
             entry.leaf_cert_len = len;
@@ -523,7 +523,7 @@ impl HsmCertStore for StdHsmPal {
             return Err(HsmError::InvalidArg);
         }
         let entry = &mut table.entries[pidx];
-        if entry.state == PartState::Disabled {
+        if entry.state == PartState::Unallocated {
             return Err(HsmError::InvalidArg);
         }
 
@@ -531,7 +531,7 @@ impl HsmCertStore for StdHsmPal {
         if entry.leaf_cert_len == 0 {
             let len = self.cert_store.build_partition_leaf(
                 part_id,
-                &entry.pub_key,
+                &entry.id_pub_key,
                 &mut entry.leaf_cert,
             )?;
             entry.leaf_cert_len = len;

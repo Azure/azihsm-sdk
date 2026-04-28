@@ -100,10 +100,16 @@ async fn ipc_task(rx: async_channel::Receiver<PartCommand>) {
                 res_mask,
                 reply,
             } => {
-                let _ = reply.send(pal.part_alloc_internal(pid, res_mask));
+                let _ = reply.send(pal.part_alloc_internal(pid, res_mask).await);
             }
             PartCommand::Free { pid, reply } => {
                 let _ = reply.send(pal.part_free_internal(pid));
+            }
+            PartCommand::Enable { pid, reply } => {
+                let _ = reply.send(pal.part_enable_internal(pid).await);
+            }
+            PartCommand::Disable { pid, reply } => {
+                let _ = reply.send(pal.part_disable_internal(pid));
             }
         }
     }
@@ -321,6 +327,33 @@ impl StdHsm {
     pub async fn part_free(&self, pid: u8) -> HsmResult<()> {
         let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
         let cmd = PartCommand::Free {
+            pid,
+            reply: reply_tx,
+        };
+        self.ipc_tx.send(cmd).await.expect("Embassy thread stopped");
+        reply_rx.await.expect("partition command reply dropped")
+    }
+
+    /// Enable a partition: create internal ECC-384 key pairs and nonce.
+    ///
+    /// Transitions `Allocated | Disabled → Enabled`.  IO operations
+    /// require the partition to be in `Enabled` state.
+    pub async fn part_enable(&self, pid: u8) -> HsmResult<()> {
+        let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
+        let cmd = PartCommand::Enable {
+            pid,
+            reply: reply_tx,
+        };
+        self.ipc_tx.send(cmd).await.expect("Embassy thread stopped");
+        reply_rx.await.expect("partition command reply dropped")
+    }
+
+    /// Disable a partition: clear internal keys, nonce, vault, sessions.
+    ///
+    /// Transitions `Enabled → Disabled`.
+    pub async fn part_disable(&self, pid: u8) -> HsmResult<()> {
+        let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
+        let cmd = PartCommand::Disable {
             pid,
             reply: reply_tx,
         };

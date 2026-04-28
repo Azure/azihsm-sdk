@@ -58,6 +58,9 @@ pub const NUM_PARTITIONS: usize = 65;
 /// Maximum total resources across all partitions.
 pub const MAX_RESOURCES: u8 = 65;
 
+/// Length of the per-partition random nonce in bytes.
+const NONCE_LEN: usize = 32;
+
 /// Length of a partition's random identity blob in bytes.
 const PART_ID_LEN: usize = 16;
 
@@ -66,9 +69,6 @@ const P384_COORD_SIZE: usize = 48;
 
 /// Size of the raw public key (x ∥ y) in bytes.
 pub(crate) const P384_PUB_KEY_LEN: usize = P384_COORD_SIZE * 2;
-
-/// Maximum size of a PKCS#8 DER-encoded P-384 private key.
-const P384_PRIV_KEY_DER_MAX: usize = 256;
 
 /// A single partition's state and cryptographic material.
 ///
@@ -108,14 +108,11 @@ pub(crate) struct PartitionEntry {
     /// 16-byte random identity blob, generated on allocation.
     id: [u8; PART_ID_LEN],
 
-    /// Raw ECC P-384 public key (x ∥ y coordinates, 96 bytes).
-    pub(crate) pub_key: [u8; P384_PUB_KEY_LEN],
+    /// Vault key ID for the partition's identity ECC-384 private key.
+    id_key_id: Option<HsmKeyId>,
 
-    /// PKCS#8 DER-encoded ECC P-384 private key.
-    priv_key_der: [u8; P384_PRIV_KEY_DER_MAX],
-
-    /// Actual length of valid data in `priv_key_der`.
-    priv_key_len: usize,
+    /// Raw public key coordinates (x ∥ y, 96 bytes) for identity key.
+    pub(crate) id_pub_key: [u8; P384_PUB_KEY_LEN],
 
     /// Cached DER-encoded partition leaf certificate (lazily generated).
     pub(crate) leaf_cert: [u8; MAX_CERT_DER_LEN],
@@ -129,21 +126,42 @@ pub(crate) struct PartitionEntry {
     /// Per-partition key vault — number of tables determined by
     /// `res_mask.count_ones()` at allocation time.
     pub(crate) vault: KeyVault,
+
+    /// Vault key ID for the establish-credential encryption ECC-384 key.
+    /// `None` before enable or after one-time clear.
+    pub(crate) establish_cred_key_id: Option<HsmKeyId>,
+
+    /// DER-encoded public key for establish-credential encryption.
+    establish_cred_pub_key: [u8; P384_PUB_KEY_LEN],
+
+    /// Vault key ID for the session encryption ECC-384 key.
+    /// `None` before enable.
+    pub(crate) session_enc_key_id: Option<HsmKeyId>,
+
+    /// Raw public key coordinates (x ∥ y) for session encryption.
+    session_enc_pub_key: [u8; P384_PUB_KEY_LEN],
+
+    /// 32-byte random nonce, generated on enable and refreshable.
+    pub(crate) nonce: [u8; NONCE_LEN],
 }
 
 impl Default for PartitionEntry {
     fn default() -> Self {
         Self {
-            state: PartState::Disabled,
+            state: PartState::Unallocated,
             res_mask: 0,
             id: [0u8; PART_ID_LEN],
-            pub_key: [0u8; P384_PUB_KEY_LEN],
-            priv_key_der: [0u8; P384_PRIV_KEY_DER_MAX],
-            priv_key_len: 0,
+            id_key_id: None,
+            id_pub_key: [0u8; P384_PUB_KEY_LEN],
             leaf_cert: [0u8; MAX_CERT_DER_LEN],
             leaf_cert_len: 0,
             session_table: SessionTable::new(),
             vault: KeyVault::new(0),
+            establish_cred_key_id: None,
+            establish_cred_pub_key: [0u8; P384_PUB_KEY_LEN],
+            session_enc_key_id: None,
+            session_enc_pub_key: [0u8; P384_PUB_KEY_LEN],
+            nonce: [0u8; NONCE_LEN],
         }
     }
 }
@@ -205,11 +223,23 @@ pub enum PartCommand {
     },
 
     /// Free a partition: zeroize all cryptographic material, release
-    /// resources, and transition back to `Disabled`.
+    /// resources, and transition to `Unallocated`.
     Free {
-        /// Partition index (must be < [`NUM_PARTITIONS`]).
         pid: u8,
-        /// Oneshot channel for the free result.
+        reply: tokio::sync::oneshot::Sender<HsmResult<()>>,
+    },
+
+    /// Enable a partition: create internal ECC-384 key pairs and nonce.
+    /// Transitions `Allocated | Disabled → Enabled`.
+    Enable {
+        pid: u8,
+        reply: tokio::sync::oneshot::Sender<HsmResult<()>>,
+    },
+
+    /// Disable a partition: clear internal keys, nonce, vault, sessions.
+    /// Transitions `Enabled → Disabled`.
+    Disable {
+        pid: u8,
         reply: tokio::sync::oneshot::Sender<HsmResult<()>>,
     },
 }
@@ -239,7 +269,7 @@ impl HsmPartitionManager for StdHsmPal {
             return Err(HsmError::InvalidArg);
         }
         let entry = &table.entries[idx];
-        if entry.state == PartState::Disabled {
+        if entry.state == PartState::Unallocated {
             return Err(HsmError::InvalidArg);
         }
         Ok(entry.res_mask.count_ones() as u8)
@@ -253,24 +283,56 @@ impl HsmPartitionManager for StdHsmPal {
             return Err(HsmError::InvalidArg);
         }
         let entry = &table.entries[idx];
-        if entry.state == PartState::Disabled {
+        if entry.state == PartState::Unallocated {
             return Err(HsmError::InvalidArg);
         }
         Ok(&entry.id)
     }
 
-    /// Returns the identity key pair (public, private) for `pid`.
-    fn part_id_key(&self, pid: u8) -> HsmResult<PartIdKey<'_>> {
-        let table = unsafe { &*self.part_table.get() };
-        let idx = pid as usize;
-        if idx >= NUM_PARTITIONS {
-            return Err(HsmError::InvalidArg);
+    fn part_id_key_id(&self, pid: u8) -> HsmResult<HsmKeyId> {
+        let entry = self.active_part(HsmPartId::from(pid))?;
+        entry.id_key_id.ok_or(HsmError::InternalError)
+    }
+
+    fn part_id_pub_key(&self, pid: u8, out: Option<&mut [u8]>) -> HsmResult<usize> {
+        let entry = self.active_part(HsmPartId::from(pid))?;
+        copy_out(&entry.id_pub_key, out)
+    }
+
+    fn part_establish_cred_key_id(&self, pid: u8) -> HsmResult<Option<HsmKeyId>> {
+        Ok(self.enabled_part(pid)?.establish_cred_key_id)
+    }
+
+    fn part_establish_cred_pub_key(&self, pid: u8, out: Option<&mut [u8]>) -> HsmResult<usize> {
+        copy_out(&self.enabled_part(pid)?.establish_cred_pub_key, out)
+    }
+
+    fn part_session_enc_key_id(&self, pid: u8) -> HsmResult<HsmKeyId> {
+        self.enabled_part(pid)?
+            .session_enc_key_id
+            .ok_or(HsmError::InternalError)
+    }
+
+    fn part_session_enc_pub_key(&self, pid: u8, out: Option<&mut [u8]>) -> HsmResult<usize> {
+        copy_out(&self.enabled_part(pid)?.session_enc_pub_key, out)
+    }
+
+    fn part_clear_establish_cred_key(&self, pid: u8) -> HsmResult<()> {
+        let entry = self.enabled_part_mut(pid)?;
+        if let Some(kid) = entry.establish_cred_key_id.take() {
+            let _ = entry.vault.delete(kid);
         }
-        let entry = &table.entries[idx];
-        if entry.state == PartState::Disabled {
-            return Err(HsmError::InvalidArg);
-        }
-        Ok((&entry.pub_key, &entry.priv_key_der[..entry.priv_key_len]))
+        entry.establish_cred_pub_key.fill(0);
+        Ok(())
+    }
+
+    fn part_nonce(&self, pid: u8) -> HsmResult<&[u8]> {
+        Ok(&self.enabled_part(pid)?.nonce)
+    }
+
+    fn part_nonce_refresh(&self, pid: u8) -> HsmResult<()> {
+        let entry = self.enabled_part_mut(pid)?;
+        Rng::rand_bytes(&mut entry.nonce).map_err(|_| HsmError::InternalError)
     }
 }
 
@@ -279,30 +341,20 @@ impl HsmPartitionManager for StdHsmPal {
 // ---------------------------------------------------------------------------
 
 impl StdHsmPal {
-    /// Borrow an active partition entry immutably.
-    ///
-    /// # Safety
-    ///
-    /// Accesses `UnsafeCell<PartitionTable>` — safe because Embassy is
-    /// single-threaded and this is a synchronous (non-async) method.
+    /// Borrow a partition entry that is not Unallocated.
     pub(crate) fn active_part(&self, pid: HsmPartId) -> HsmResult<&PartitionEntry> {
         let table = unsafe { &*self.part_table.get() };
         let idx = u8::from(pid) as usize;
         if idx >= NUM_PARTITIONS {
             return Err(HsmError::InvalidArg);
         }
-        if table.entries[idx].state == PartState::Disabled {
+        if table.entries[idx].state == PartState::Unallocated {
             return Err(HsmError::InvalidArg);
         }
         Ok(&table.entries[idx])
     }
 
-    /// Borrow an active partition entry mutably.
-    ///
-    /// # Safety
-    ///
-    /// Accesses `UnsafeCell<PartitionTable>` — safe because Embassy is
-    /// single-threaded and this is a synchronous (non-async) method.
+    /// Borrow a partition entry that is not Unallocated (mutable).
     #[allow(clippy::mut_from_ref)]
     pub(crate) fn active_part_mut(&self, pid: HsmPartId) -> HsmResult<&mut PartitionEntry> {
         let table = unsafe { &mut *self.part_table.get() };
@@ -310,129 +362,304 @@ impl StdHsmPal {
         if idx >= NUM_PARTITIONS {
             return Err(HsmError::InvalidArg);
         }
-        if table.entries[idx].state == PartState::Disabled {
+        if table.entries[idx].state == PartState::Unallocated {
+            return Err(HsmError::InvalidArg);
+        }
+        Ok(&mut table.entries[idx])
+    }
+
+    /// Borrow a partition that is in Enabled state.
+    fn enabled_part(&self, pid: u8) -> HsmResult<&PartitionEntry> {
+        let table = unsafe { &*self.part_table.get() };
+        let idx = pid as usize;
+        if idx >= NUM_PARTITIONS {
+            return Err(HsmError::InvalidArg);
+        }
+        if table.entries[idx].state != PartState::Enabled {
+            return Err(HsmError::InvalidArg);
+        }
+        Ok(&table.entries[idx])
+    }
+
+    /// Borrow a partition that is in Enabled state (mutable).
+    #[allow(clippy::mut_from_ref)]
+    fn enabled_part_mut(&self, pid: u8) -> HsmResult<&mut PartitionEntry> {
+        let table = unsafe { &mut *self.part_table.get() };
+        let idx = pid as usize;
+        if idx >= NUM_PARTITIONS {
+            return Err(HsmError::InvalidArg);
+        }
+        if table.entries[idx].state != PartState::Enabled {
             return Err(HsmError::InvalidArg);
         }
         Ok(&mut table.entries[idx])
     }
 }
 
+/// Copy `data` into `out` if provided, return length.
+fn copy_out(data: &[u8], out: Option<&mut [u8]>) -> HsmResult<usize> {
+    if let Some(buf) = out {
+        if buf.len() < data.len() {
+            return Err(HsmError::NotEnoughSpace);
+        }
+        buf[..data.len()].copy_from_slice(data);
+    }
+    Ok(data.len())
+}
+
 // ---------------------------------------------------------------------------
-// Internal partition alloc / free (called by part_cmd_task on Embassy thread)
+// Internal partition lifecycle (called by part_cmd_task on Embassy thread)
 // ---------------------------------------------------------------------------
 
 impl StdHsmPal {
     /// Allocate a partition: generate identity and ECC-384 key pair.
     ///
-    /// # Parameters
-    ///
-    /// - `pid` — partition index (must be < [`NUM_PARTITIONS`]).
-    /// - `res_mask` — bitmask of resources (vault tables) to assign.
-    ///   Each set bit corresponds to one table.  Only bits 0..64 are
-    ///   valid (65 resources total).
-    ///
-    /// # Preconditions
-    ///
-    /// - Partition must be in [`Disabled`](PartState::Disabled) state.
-    /// - `res_mask` must not overlap with the global resource mask
-    ///   (no double-allocation).
-    ///
-    /// On success the partition transitions to [`Uninitialized`](PartState::Uninitialized).
-    ///
-    /// # Safety invariant
-    ///
-    /// Must only be called from the Embassy thread (single-threaded executor).
-    /// No trait read borrows can be alive across the `.await` boundary that
-    /// delivers the [`PartCommand`] to this method.
-    pub fn part_alloc_internal(&self, pid: u8, res_mask: u128) -> HsmResult<()> {
-        // SAFETY: Single-threaded Embassy — no concurrent readers.
+    /// Transitions `Unallocated → Allocated`.
+    pub async fn part_alloc_internal(&self, pid: u8, res_mask: u128) -> HsmResult<()> {
         let table = unsafe { &mut *self.part_table.get() };
         let idx = pid as usize;
         if idx >= NUM_PARTITIONS {
             return Err(HsmError::InvalidArg);
         }
-        if table.entries[idx].state != PartState::Disabled {
+        if table.entries[idx].state != PartState::Unallocated {
             return Err(HsmError::InvalidArg);
         }
 
-        // Validate: only bits 0..64 allowed (65 resources).
+        // Validate before mutating anything.
         let valid_bits: u128 = (1u128 << MAX_RESOURCES) - 1;
         if res_mask & !valid_bits != 0 {
             return Err(HsmError::InvalidArg);
         }
-
-        // Check for double-allocation — no overlap with global mask.
         if res_mask & table.global_res_mask != 0 {
             return Err(HsmError::NotEnoughSpace);
         }
 
+        // Generate identity outside the table borrow — no partial state on failure.
+        let mut id = [0u8; PART_ID_LEN];
+        Rng::rand_bytes(&mut id).map_err(|_| HsmError::InternalError)?;
+
+        // Reserve resources + create vault so keygen has somewhere to store.
         let entry = &mut table.entries[idx];
-
-        // Generate 16-byte random identity.
-        Rng::rand_bytes(&mut entry.id).map_err(|_| HsmError::InternalError)?;
-
-        // Generate ECC P-384 key pair.
-        let key = EccPrivateKey::from_curve(EccCurve::P384).map_err(|_| HsmError::InternalError)?;
-
-        // Export public key coordinates (x ∥ y).
-        let (x_buf, y_buf) = entry.pub_key.split_at_mut(P384_COORD_SIZE);
-        key.coord(Some((x_buf, y_buf)))
-            .map_err(|_| HsmError::InternalError)?;
-
-        // Export private key as PKCS#8 DER.
-        let len = key
-            .to_bytes(Some(&mut entry.priv_key_der))
-            .map_err(|_| HsmError::InternalError)?;
-        entry.priv_key_len = len;
-
         entry.res_mask = res_mask;
         entry.vault = KeyVault::new(res_mask.count_ones() as usize);
         table.global_res_mask |= res_mask;
-        entry.state = PartState::Uninitialized;
+
+        // Generate identity ECC P-384 key pair.
+        let id_attrs = HsmVaultKeyAttrs::new()
+            .with_internal(true)
+            .with_local(true)
+            .with_sign(true);
+        let mut id_pub = [0u8; P384_PUB_KEY_LEN];
+        let id_result = self
+            .create_internal_ecc384_key(
+                idx as u8,
+                HsmVaultKeyKind::Ecc384Private,
+                id_attrs,
+                HsmEccPct::SignVerify,
+                &mut id_pub,
+            )
+            .await;
+
+        // Commit or rollback.
+        let table = unsafe { &mut *self.part_table.get() };
+        let entry = &mut table.entries[idx];
+        match id_result {
+            Ok(id_kid) => {
+                entry.id = id;
+                entry.id_key_id = Some(id_kid);
+                entry.id_pub_key = id_pub;
+                entry.state = PartState::Allocated;
+            }
+            Err(e) => {
+                // Rollback: release resources.
+                table.global_res_mask &= !res_mask;
+                entry.res_mask = 0;
+                entry.vault = KeyVault::new(0);
+                return Err(e);
+            }
+        }
 
         Ok(())
     }
 
-    /// Free a partition: zeroize cryptographic material and release resources.
+    /// Enable a partition: create internal ECC-384 key pairs and nonce.
     ///
-    /// # Preconditions
+    /// Transitions `Allocated | Disabled → Enabled`.
+    pub async fn part_enable_internal(&self, pid: u8) -> HsmResult<()> {
+        let table = unsafe { &mut *self.part_table.get() };
+        let idx = pid as usize;
+        if idx >= NUM_PARTITIONS {
+            return Err(HsmError::InvalidArg);
+        }
+        let state = table.entries[idx].state;
+        if state != PartState::Allocated && state != PartState::Disabled {
+            return Err(HsmError::InvalidArg);
+        }
+
+        let attrs = HsmVaultKeyAttrs::new()
+            .with_internal(true)
+            .with_local(true)
+            .with_derive(true);
+
+        // Generate establish-credential encryption ECC-384 key pair.
+        let mut ec_pub = [0u8; P384_PUB_KEY_LEN];
+        let ec_kid = self
+            .create_internal_ecc384_key(
+                pid,
+                HsmVaultKeyKind::EstablishCred,
+                attrs,
+                HsmEccPct::KeyAgreement,
+                &mut ec_pub,
+            )
+            .await?;
+
+        let table = unsafe { &mut *self.part_table.get() };
+        let entry = &mut table.entries[idx];
+        entry.establish_cred_key_id = Some(ec_kid);
+        entry.establish_cred_pub_key = ec_pub;
+
+        // Generate session encryption ECC-384 key pair.
+        let mut se_pub = [0u8; P384_PUB_KEY_LEN];
+        let se_result = self
+            .create_internal_ecc384_key(
+                pid,
+                HsmVaultKeyKind::SessionEncryption,
+                attrs,
+                HsmEccPct::KeyAgreement,
+                &mut se_pub,
+            )
+            .await;
+
+        let table = unsafe { &mut *self.part_table.get() };
+        let entry = &mut table.entries[idx];
+        match se_result {
+            Ok(se_kid) => {
+                entry.session_enc_key_id = Some(se_kid);
+                entry.session_enc_pub_key = se_pub;
+            }
+            Err(e) => {
+                let _ = entry.vault.delete(ec_kid);
+                entry.establish_cred_key_id = None;
+                entry.establish_cred_pub_key.fill(0);
+                return Err(e);
+            }
+        }
+
+        // Generate 32-byte random nonce.
+        if let Err(_) = Rng::rand_bytes(&mut entry.nonce) {
+            // Rollback both keys.
+            Self::clear_enabled_state(entry);
+            return Err(HsmError::InternalError);
+        }
+
+        entry.state = PartState::Enabled;
+        Ok(())
+    }
+
+    /// Disable a partition: clear internal keys, nonce, vault, sessions.
     ///
-    /// - `pid < NUM_PARTITIONS`
-    /// - Partition must NOT be in [`Disabled`](PartState::Disabled) state.
+    /// Transitions `Enabled → Disabled`.
+    pub fn part_disable_internal(&self, pid: u8) -> HsmResult<()> {
+        let table = unsafe { &mut *self.part_table.get() };
+        let idx = pid as usize;
+        if idx >= NUM_PARTITIONS {
+            return Err(HsmError::InvalidArg);
+        }
+        if table.entries[idx].state != PartState::Enabled {
+            return Err(HsmError::InvalidArg);
+        }
+
+        Self::clear_enabled_state(&mut table.entries[idx]);
+        table.entries[idx].state = PartState::Disabled;
+        Ok(())
+    }
+
+    /// Free a partition: zeroize all material and release resources.
     ///
-    /// On success the partition transitions to [`Disabled`](PartState::Disabled).
-    ///
-    /// # Safety invariant
-    ///
-    /// Must only be called from the Embassy thread (single-threaded executor).
+    /// Accepts `Allocated | Enabled | Disabled → Unallocated`.
+    /// If `Enabled`, implicitly clears internal keys first.
     pub fn part_free_internal(&self, pid: u8) -> HsmResult<()> {
         let table = unsafe { &mut *self.part_table.get() };
         let idx = pid as usize;
         if idx >= NUM_PARTITIONS {
             return Err(HsmError::InvalidArg);
         }
-        if table.entries[idx].state == PartState::Disabled {
+        if table.entries[idx].state == PartState::Unallocated {
             return Err(HsmError::InvalidArg);
         }
 
         let entry = &mut table.entries[idx];
 
-        // Zeroize sensitive material.
+        // If enabled, clear internal keys/nonce/vault/sessions first.
+        if entry.state == PartState::Enabled {
+            Self::clear_enabled_state(entry);
+        }
+
+        // Zeroize identity material.
         entry.id.fill(0);
-        entry.pub_key.fill(0);
-        entry.priv_key_der[..entry.priv_key_len].fill(0);
-        entry.priv_key_len = 0;
+        if let Some(kid) = entry.id_key_id.take() {
+            let _ = entry.vault.delete(kid);
+        }
+        entry.id_pub_key.fill(0);
         entry.leaf_cert[..entry.leaf_cert_len].fill(0);
         entry.leaf_cert_len = 0;
 
-        // Release resources from global mask.
+        // Release resources.
         table.global_res_mask &= !entry.res_mask;
         entry.res_mask = 0;
-
-        entry.session_table = SessionTable::new();
         entry.vault = KeyVault::new(0);
-        entry.state = PartState::Disabled;
+        entry.state = PartState::Unallocated;
 
         Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // Helpers
+    // -----------------------------------------------------------------------
+
+    /// Generate an ECC P-384 key pair via [`HsmEcc::ecc_gen_keypair`],
+    /// store the private key DER in the vault, and write raw public key
+    /// coordinates (x ∥ y) into `pub_key_out`.
+    ///
+    /// Returns the vault key ID.
+    async fn create_internal_ecc384_key(
+        &self,
+        pid: u8,
+        kind: HsmVaultKeyKind,
+        attrs: HsmVaultKeyAttrs,
+        pct: HsmEccPct,
+        pub_key_out: &mut [u8; P384_PUB_KEY_LEN],
+    ) -> HsmResult<HsmKeyId> {
+        let priv_max = HsmEccCurve::P384.priv_key_der_max();
+        let mut priv_buf = vec![0u8; priv_max];
+
+        let priv_len = self
+            .ecc_gen_keypair(HsmEccCurve::P384, Some(&mut priv_buf), pub_key_out, pct)
+            .await?;
+
+        // Store private key DER in vault.
+        let table = unsafe { &mut *self.part_table.get() };
+        let entry = &mut table.entries[pid as usize];
+        entry
+            .vault
+            .create(&priv_buf[..priv_len], kind, None, attrs, &[])
+    }
+
+    /// Clear all state associated with an enabled partition (internal keys,
+    /// nonce, vault keys, sessions).  Does NOT change the state field.
+    fn clear_enabled_state(entry: &mut PartitionEntry) {
+        if let Some(kid) = entry.establish_cred_key_id.take() {
+            let _ = entry.vault.delete(kid);
+        }
+        entry.establish_cred_pub_key.fill(0);
+
+        if let Some(kid) = entry.session_enc_key_id.take() {
+            let _ = entry.vault.delete(kid);
+        }
+        entry.session_enc_pub_key.fill(0);
+
+        entry.nonce.fill(0);
+        entry.vault.clear();
+        entry.session_table = SessionTable::new();
     }
 }

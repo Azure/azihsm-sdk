@@ -30,6 +30,7 @@
 use super::*;
 
 /// Supported NIST elliptic curves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HsmEccCurve {
     /// NIST P-256 (secp256r1) — 32-byte key components.
     P256,
@@ -74,6 +75,20 @@ impl HsmEccCurve {
     pub fn secret_len(&self) -> usize {
         self.priv_key_len()
     }
+
+    /// Maximum PKCS#8 DER size for a private key on this curve.
+    ///
+    /// Callers use this to allocate buffers for
+    /// [`ecc_gen_keypair`](HsmEcc::ecc_gen_keypair).
+    ///
+    /// TODO: Remove this
+    pub fn priv_key_der_max(&self) -> usize {
+        match self {
+            HsmEccCurve::P256 => 138,
+            HsmEccCurve::P384 => 185,
+            HsmEccCurve::P521 => 241,
+        }
+    }
 }
 
 /// ECC Pairwise Consistency Test (PCT) type used to indicate which
@@ -98,24 +113,26 @@ pub enum HsmEccPct {
 pub trait HsmEcc {
     /// Generate an ECC key pair on the specified curve.
     ///
+    /// Writes PKCS#8 DER private key into `priv_key` (pass `None` to
+    /// query size).  Writes raw public key coordinates (x ∥ y) into
+    /// `pub_key` — fixed size per curve: [`HsmEccCurve::pub_key_len`].
+    ///
+    /// # Returns
+    /// The actual private key DER length written.
+    ///
     /// # Parameters
     /// - `curve` — The NIST curve to use for key generation.
-    /// - `priv_key` — Output for the generated private key.
-    /// - `pub_key` — Output for the generated public key.
-    /// - `pct` — Indicates which ECC Pairwise Consistency Test (PCT)
-    ///   operation should be exercised during self-test: none, signing,
-    ///   or key agreement.
-    ///
-    /// # Errors
-    /// Returns [`HsmError`] if key generation fails (e.g., PKA engine
-    /// error, RNG failure).
+    /// - `priv_key` — `None` to query size, `Some(buf)` for PKCS#8 DER output.
+    /// - `pub_key` — Output buffer for raw coordinates (x ∥ y).  Must be
+    ///   at least [`HsmEccCurve::pub_key_len`] bytes.
+    /// - `pct` — Pairwise Consistency Test mode.
     async fn ecc_gen_keypair(
         &self,
         curve: HsmEccCurve,
-        priv_key: &mut [u8],
+        priv_key: Option<&mut [u8]>,
         pub_key: &mut [u8],
         pct: HsmEccPct,
-    ) -> HsmResult<()>;
+    ) -> HsmResult<usize>;
 
     /// Raw EC sign over a pre-computed hash digest.
     ///

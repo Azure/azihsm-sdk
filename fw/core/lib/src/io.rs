@@ -52,7 +52,7 @@ impl<P: HsmPal> Hsm<P> {
             let enabled = self
                 .pal()
                 .part_state(pid)
-                .is_ok_and(|s| s != PartState::Disabled);
+                .is_ok_and(|s| s == PartState::Enabled);
             if !enabled {
                 debug!("core", "dropping IO for disabled partition {}", pid);
                 if let Err(_e) = self.pal().drop_io(io).await {

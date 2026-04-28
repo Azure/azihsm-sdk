@@ -12,25 +12,24 @@ use super::*;
 /// Opaque identity blob for a partition.
 pub type PartId<'a> = &'a [u8];
 
-/// Public key portion of a partition's identity key pair.
-pub type PartIdPubKey<'a> = &'a [u8];
-
-/// Private key portion of a partition's identity key pair.
-pub type PartIdPrivKey<'a> = &'a [u8];
-
-/// A (public, private) key pair for a partition's identity credential.
-pub type PartIdKey<'a> = (PartIdPubKey<'a>, PartIdPrivKey<'a>);
-
 /// Represents the current state of a partition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PartState {
-    /// The partition has not yet been initialized.
-    Uninitialized,
+    /// Partition slot is not allocated. No resources assigned.
+    Unallocated,
 
-    /// The partition has been initialized and is ready for use.
-    Initialized,
+    /// Partition is allocated with resources and identity key pair, but
+    /// internal crypto keys (establish-cred, session-enc) and nonce
+    /// have not been created yet.
+    Allocated,
 
-    /// The partition has been disabled and cannot be used.
+    /// Partition is fully operational. Internal keys and nonce are
+    /// present. DDI operations can proceed.
+    Enabled,
+
+    /// Partition has been disabled. Internal keys, nonce, vault keys,
+    /// and sessions are cleared, but resources and identity remain.
+    /// Can be re-enabled via `part_enable`.
     Disabled,
 }
 
@@ -75,16 +74,58 @@ pub trait HsmPartitionManager {
     /// Returns [`HsmError`] if the partition index is invalid.
     fn part_id(&self, pid: u8) -> HsmResult<PartId<'_>>;
 
-    /// Returns the identity key pair (public, private) for the given partition.
+    /// Returns the vault key ID for the partition's identity ECC-384 key.
     ///
-    /// # Parameters
-    /// - `pid` — Partition index.
+    /// The private key is stored in the vault as `Ecc384Private` with
+    /// `sign + local + internal` attributes.
+    fn part_id_key_id(&self, pid: u8) -> HsmResult<HsmKeyId>;
+
+    /// Returns the DER-encoded public key for the partition's identity key.
     ///
-    /// # Returns
-    /// A [`PartIdKey`] tuple of borrowed byte slices for the public and
-    /// private keys.
+    /// Pass `None` to query the size; pass `Some(buf)` to copy into `buf`.
+    fn part_id_pub_key(&self, pid: u8, out: Option<&mut [u8]>) -> HsmResult<usize>;
+
+    /// Returns the establish-credential encryption key ID.
+    ///
+    /// Returns `None` if the key has been cleared (one-time use pattern)
+    /// or if the partition is not in [`Enabled`](PartState::Enabled) state.
+    fn part_establish_cred_key_id(&self, pid: u8) -> HsmResult<Option<HsmKeyId>>;
+
+    /// Returns the DER-encoded public key for establish-credential encryption.
+    ///
+    /// Pass `None` to query the size; pass `Some(buf)` to copy into `buf`.
+    /// Returns 0 if the key has been cleared.
+    fn part_establish_cred_pub_key(&self, pid: u8, out: Option<&mut [u8]>) -> HsmResult<usize>;
+
+    /// Clear the establish-credential encryption key from the vault.
+    ///
+    /// After clearing, [`part_establish_cred_key_id`](Self::part_establish_cred_key_id)
+    /// returns `None`.  This implements the one-time-use pattern: the
+    /// core calls this after credential establishment completes.
+    ///
+    /// Idempotent — calling on an already-cleared key succeeds silently.
+    fn part_clear_establish_cred_key(&self, pid: u8) -> HsmResult<()>;
+
+    /// Returns the session encryption key ID.
     ///
     /// # Errors
-    /// Returns [`HsmError`] if the partition index is invalid.
-    fn part_id_key(&self, pid: u8) -> HsmResult<PartIdKey<'_>>;
+    /// Returns [`HsmError`] if the partition is not [`Enabled`](PartState::Enabled).
+    fn part_session_enc_key_id(&self, pid: u8) -> HsmResult<HsmKeyId>;
+
+    /// Returns the DER-encoded public key for session encryption.
+    ///
+    /// Pass `None` to query the size; pass `Some(buf)` to copy into `buf`.
+    fn part_session_enc_pub_key(&self, pid: u8, out: Option<&mut [u8]>) -> HsmResult<usize>;
+
+    /// Returns the 32-byte random nonce for the partition.
+    ///
+    /// # Errors
+    /// Returns [`HsmError`] if the partition is not [`Enabled`](PartState::Enabled).
+    fn part_nonce(&self, pid: u8) -> HsmResult<&[u8]>;
+
+    /// Refresh (regenerate) the partition nonce from the RNG.
+    ///
+    /// Called after credential establishment or session open to ensure
+    /// nonce freshness.
+    fn part_nonce_refresh(&self, pid: u8) -> HsmResult<()>;
 }
