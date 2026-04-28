@@ -18,6 +18,20 @@ struct PotaEndorsement
     std::vector<uint8_t> public_key_der;
 };
 
+/// Signs a PID public key with the hardcoded POTA private key.
+///
+/// This is the core signing logic shared by generate_pota_endorsement()
+/// and the resiliency POTA callback. It takes a raw DER-encoded PID public
+/// key (SubjectPublicKeyInfo), extracts the uncompressed point, hashes it
+/// with SHA-384, signs with ECDSA P-384, and returns the raw r||s
+/// signature + the hardcoded POTA public key DER.
+///
+/// @param pid_pub_key_der  DER-encoded PID public key (SubjectPublicKeyInfo).
+/// @param pid_pub_key_der_len  Length of the DER buffer.
+/// @return PotaEndorsement containing signature and public key DER.
+/// @throws std::runtime_error on failure.
+PotaEndorsement sign_pota_endorsement(const uint8_t *pid_pub_key_der, size_t pid_pub_key_der_len);
+
 /// Generates a POTA endorsement dynamically.
 ///
 /// On Windows this uses BCrypt/SymCrypt; on Linux it uses OpenSSL.

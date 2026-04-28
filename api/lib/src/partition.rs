@@ -126,7 +126,10 @@ pub struct HsmOwnerBackupKeyConfig {
     /// Source of the OBK
     key_source: HsmOwnerBackupKeySource,
 
-    /// Optional OBK (required when source is Caller, ignored otherwise)
+    /// Optional OBK. Required (and must be non-empty) when source is
+    /// `Caller`; must be `None` when source is `Tpm` (the device
+    /// provides sealed BK3, which is unsealed via the host TPM path).
+    /// Any other combination is rejected with [`HsmError::InvalidArgument`].
     key: Option<Vec<u8>>,
 }
 
@@ -195,7 +198,10 @@ pub struct HsmPotaEndorsement {
     /// Source of the POTA endorsement
     source: HsmPotaEndorsementSource,
 
-    /// Optional POTA endorsement data (required when source is Caller, ignored otherwise)
+    /// Optional POTA endorsement data. Required when source is
+    /// `Caller`; must be `None` when source is `Tpm` (the SDK signs
+    /// the partition public key digest with the TPM). Any other
+    /// combination is rejected with [`HsmError::InvalidArgument`].
     endorsement: Option<HsmPotaEndorsementData>,
 }
 
@@ -1155,14 +1161,21 @@ impl HsmPartitionInner {
         // On any other error: propagate immediately.
         let (init_bmk, init_mobk, committed_pota) = match result {
             // Init success - cache the BMK, MOBK, and POTA endorsement returned by the device.
-            Ok(result) => (
-                result.bmk,
-                result.mobk,
-                HsmPotaEndorsement::new(
-                    pota_endorsement.source(),
-                    Some(result.pota_endorsement_data),
-                ),
-            ),
+            // Only cache endorsement bytes for the Caller source. For
+            // the Tpm source, the endorsement is freshly signed by the
+            // TPM on each init and must not be passed back to the SDK
+            // (init_part_raw_no_res rejects (Tpm, Some(_))).
+            Ok(result) => {
+                let cached_endorsement = match pota_endorsement.source() {
+                    HsmPotaEndorsementSource::Caller => Some(result.pota_endorsement_data),
+                    _ => None,
+                };
+                (
+                    result.bmk,
+                    result.mobk,
+                    HsmPotaEndorsement::new(pota_endorsement.source(), cached_endorsement),
+                )
+            }
             // Credentials are already established when another thread/process beat us to init — read BMK from storage and proceed with restore flow to sync state and refresh credentials.
             Err(err) if is_credentials_already_established(&err) => {
                 let bmk = resiliency_config
@@ -1240,8 +1253,16 @@ impl HsmPartitionInner {
     /// restore passes the updated pub key to `invoke_pota_callback`.
     fn update_cached_pota(&mut self, pota_data: HsmPotaEndorsementData) {
         if let Some(rs) = self.resiliency_state.as_mut() {
-            rs.cached_pota_endorsement =
-                HsmPotaEndorsement::new(rs.cached_pota_endorsement.source(), Some(pota_data));
+            // Only cache endorsement bytes for the Caller source. For
+            // the Tpm source, the endorsement is freshly signed by the
+            // TPM on each init and must not be passed back to the SDK
+            // (init_part_raw_no_res rejects (Tpm, Some(_))).
+            let source = rs.cached_pota_endorsement.source();
+            let endorsement = match source {
+                HsmPotaEndorsementSource::Caller => Some(pota_data),
+                _ => None,
+            };
+            rs.cached_pota_endorsement = HsmPotaEndorsement::new(source, endorsement);
         }
     }
 

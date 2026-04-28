@@ -9,22 +9,25 @@ set -euo pipefail
 
 PROVIDER_SO="${PROVIDER_SO:?PROVIDER_SO must be set to the path of azihsm_provider.so}"
 NGINX_CONF="${NGINX_CONF:?NGINX_CONF must be set to the path of the generated nginx.conf}"
+NGINX_PREFIX="${NGINX_PREFIX:?NGINX_PREFIX must be set}"
+NGINX_ERROR_LOG="${NGINX_ERROR_LOG:?NGINX_ERROR_LOG must be set}"
+
+NGINX_FLAGS=(-p "$NGINX_PREFIX" -e "$NGINX_ERROR_LOG" -c "$NGINX_CONF")
 
 # Stop nginx (may already be stopped — ignore errors)
-sudo nginx -s stop || true
+nginx -s stop "${NGINX_FLAGS[@]}" || true
 sleep 1
 
-# Temporarily hide the provider by renaming it
-sudo mv "$PROVIDER_SO" "${PROVIDER_SO}.disabled"
+# Try to hide the provider by renaming it.  If the provider lives in a
+# system directory (e.g. /usr/lib/ossl-modules) the mv will fail — fall
+# back to unsetting OPENSSL_CONF which prevents the provider from loading.
+if mv "$PROVIDER_SO" "${PROVIDER_SO}.disabled" 2>/dev/null; then
+    trap 'mv "${PROVIDER_SO}.disabled" "$PROVIDER_SO"' EXIT
+    OUTPUT=$(nginx -t "${NGINX_FLAGS[@]}" 2>&1 || true)
+else
+    OUTPUT=$(env -u OPENSSL_CONF nginx -t "${NGINX_FLAGS[@]}" 2>&1 || true)
+fi
 
-# Ensure we always restore the provider, even if the test fails
-restore_provider() {
-    sudo mv "${PROVIDER_SO}.disabled" "$PROVIDER_SO"
-}
-trap restore_provider EXIT
-
-# Attempt to validate the config without the provider.
-OUTPUT=$(sudo env -u OPENSSL_CONF nginx -t -c /etc/nginx/nginx.conf 2>&1 || true)
 echo "$OUTPUT"
 
 if echo "$OUTPUT" | grep -q "unregistered scheme"; then

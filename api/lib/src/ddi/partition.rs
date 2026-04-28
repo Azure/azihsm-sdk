@@ -205,6 +205,10 @@ fn get_pota_endorsement(
         }
 
         HsmPotaEndorsementSource::Tpm => {
+            // TPM source must not have caller-provided endorsement data
+            if pota_endorsement.endorsement().is_some() {
+                return Err(HsmError::InvalidArgument);
+            }
             let pub_key_digest = get_part_pub_key_digest(dev, rev)?;
 
             // Sign with TPM
@@ -325,11 +329,18 @@ pub(crate) fn init_part_raw_no_res(
 ) -> HsmResult<InitPartResult> {
     let mobk = match obk_config.key_source() {
         HsmOwnerBackupKeySource::Caller => {
-            // Caller provided the OBK
+            // Caller must provide a non-empty OBK.
             let obk = obk_config.key().ok_or(HsmError::InvalidArgument)?;
+            if obk.is_empty() {
+                return Err(HsmError::InvalidArgument);
+            }
             init_bk3(dev, rev, obk)?
         }
         HsmOwnerBackupKeySource::Tpm => {
+            // TPM source must not carry a caller-provided OBK.
+            if obk_config.key().is_some() {
+                return Err(HsmError::InvalidArgument);
+            }
             // Retrieve sealed BK3 from device and unseal with TPM
             let sealed_bk3 = get_sealed_bk3(dev, rev)?;
             unseal_tpm_backup_key(&sealed_bk3)?
