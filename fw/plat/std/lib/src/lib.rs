@@ -42,6 +42,9 @@ static HSM: OnceLock<Hsm<StdHsmPal>> = OnceLock::new();
 async fn run_core(spawner: embassy_executor::Spawner) {
     let hsm = HSM.get().await;
     hsm.pal().init();
+    if let Err(_) = hsm.pal().init_cert_store().await {
+        return;
+    }
 
     if let Ok(token) = poll_io(spawner) {
         spawner.spawn(token);

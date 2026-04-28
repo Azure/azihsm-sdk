@@ -135,8 +135,9 @@ pub struct StdHsmPal {
     /// Shared certificate store — Root CA, DeviceId CA, and Alias CA
     /// certs plus the Alias key pair for signing partition leaf certs.
     ///
-    /// Boxed to avoid 6KB+ on the stack. Immutable after construction.
-    pub(crate) cert_store: Box<SharedCertStore>,
+    /// Uses [`UnsafeCell`] so that `init_cert_store` (async) can
+    /// populate it after construction.  Immutable after initialization.
+    pub(crate) cert_store: UnsafeCell<Box<SharedCertStore>>,
 
     /// Per-partition async locks for serializing state-modifying DDI
     /// handlers.  Stored separately from the partition table so the
@@ -189,7 +190,7 @@ impl StdHsmPal {
             rsa: StdRsa::new(WorkerPool::new(tokio_handle.clone())),
             pool: WorkerPool::new(tokio_handle),
             part_table: UnsafeCell::new(PartitionTable::default()),
-            cert_store: Box::new(SharedCertStore::new()),
+            cert_store: UnsafeCell::new(Box::new(SharedCertStore::new())),
             part_locks: Box::new(core::array::from_fn(|_| PartMutex::new(()))),
             _rt: None,
         }
@@ -222,7 +223,7 @@ impl Default for StdHsmPal {
             rsa: StdRsa::new(WorkerPool::new(handle.clone())),
             pool: WorkerPool::new(handle),
             part_table: UnsafeCell::new(PartitionTable::default()),
-            cert_store: Box::new(SharedCertStore::new()),
+            cert_store: UnsafeCell::new(Box::new(SharedCertStore::new())),
             part_locks: Box::new(core::array::from_fn(|_| PartMutex::new(()))),
             // Keep the runtime alive so `handle` remains valid.
             _rt: Some(rt),

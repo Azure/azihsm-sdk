@@ -12,14 +12,14 @@
 //! | 2 | Alias CA (Intermediate, path_len=0) | Shared |
 //! | 3 | Partition Id Leaf | Per-partition (on-demand) |
 //!
-//! The first 3 certificates are generated once at PAL construction time.
-//! The partition leaf cert is generated on-demand when `get_cert(slot=0,
-//! idx=3)` is first called, then cached in the partition entry for
-//! consistency (ECDSA signatures are non-deterministic).
+//! The first 3 certificates are generated during PAL initialization via
+//! [`StdHsmPal::init_cert_store`].  The leaf cert is generated lazily
+//! on first access per partition.
 //!
-//! The Alias CA key pair is retained so it can sign partition leaf certs.
+//! All cryptographic operations (key generation, hashing, signing) flow
+//! through PAL traits ([`HsmEcc`], [`HsmHash`]) — no direct dependency
+//! on `azihsm_crypto`.
 
-use azihsm_crypto::*;
 use azihsm_fw_hsm_std_x509::cert_builder;
 use azihsm_fw_hsm_std_x509::cert_builder::*;
 
@@ -51,102 +51,12 @@ const P384_SIG_COMPONENT: usize = 48;
 /// Uncompressed P-384 public key length (0x04 || x || y).
 const P384_UNCOMPRESSED_LEN: usize = 97;
 
-/// P-384 private key DER max length.
-const P384_PRIV_DER_MAX: usize = 256;
-
 /// Number of certs in slot 0 chain.
 pub(crate) const SLOT0_CERT_COUNT: u8 = 4;
 
 // ---------------------------------------------------------------------------
-// Helper types
+// Pure helpers (no crypto)
 // ---------------------------------------------------------------------------
-
-/// Temporary key pair used during cert chain construction.
-struct KeyPair {
-    priv_key: EccPrivateKey,
-    uncompressed: [u8; P384_UNCOMPRESSED_LEN],
-    ski: [u8; 20],
-}
-
-impl KeyPair {
-    /// Generate a new P-384 key pair and compute SKI.
-    fn generate() -> HsmResult<Self> {
-        let priv_key =
-            EccPrivateKey::from_curve(EccCurve::P384).map_err(|_| HsmError::InternalError)?;
-        let (x, y) = priv_key.coord_vec().map_err(|_| HsmError::InternalError)?;
-        let mut uncompressed = [0u8; P384_UNCOMPRESSED_LEN];
-        uncompressed[0] = 0x04;
-        uncompressed[1..49].copy_from_slice(&x);
-        uncompressed[49..97].copy_from_slice(&y);
-        let ski = compute_ski(&uncompressed)?;
-        Ok(Self {
-            priv_key,
-            uncompressed,
-            ski,
-        })
-    }
-
-    /// Sign TBS data with this key pair.
-    fn sign_tbs(
-        &self,
-        tbs: &[u8],
-    ) -> HsmResult<([u8; P384_SIG_COMPONENT], [u8; P384_SIG_COMPONENT])> {
-        sign_with_key(&self.priv_key, tbs)
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Crypto helpers
-// ---------------------------------------------------------------------------
-
-/// Compute SHA-1 Subject Key Identifier from uncompressed public key.
-fn compute_ski(uncompressed: &[u8; P384_UNCOMPRESSED_LEN]) -> HsmResult<[u8; 20]> {
-    let mut algo = HashAlgo::sha1();
-    let mut result = [0u8; 20];
-    algo.hash(uncompressed, Some(&mut result))
-        .map_err(|_| HsmError::InternalError)?;
-    Ok(result)
-}
-
-/// Compute SHA-256 hash of a single buffer.
-fn sha256(data: &[u8]) -> HsmResult<[u8; 32]> {
-    let mut algo = HashAlgo::sha256();
-    let mut result = [0u8; 32];
-    algo.hash(data, Some(&mut result))
-        .map_err(|_| HsmError::InternalError)?;
-    Ok(result)
-}
-
-/// Compute SHA-256 hash of two buffers concatenated.
-fn sha256_concat(a: &[u8], b: &[u8]) -> HsmResult<[u8; 32]> {
-    let algo = HashAlgo::sha256();
-    let mut ctx = algo.hash_init().map_err(|_| HsmError::InternalError)?;
-    ctx.update(a).map_err(|_| HsmError::InternalError)?;
-    ctx.update(b).map_err(|_| HsmError::InternalError)?;
-    let mut result = [0u8; 32];
-    ctx.finish(Some(&mut result))
-        .map_err(|_| HsmError::InternalError)?;
-    Ok(result)
-}
-
-/// Sign TBS data with an ECC private key, returning (r, s) components.
-fn sign_with_key(
-    key: &EccPrivateKey,
-    tbs: &[u8],
-) -> HsmResult<([u8; P384_SIG_COMPONENT], [u8; P384_SIG_COMPONENT])> {
-    let mut algo = EcdsaAlgo::new(HashAlgo::sha384());
-    let sig_len = algo
-        .sign(key, tbs, None)
-        .map_err(|_| HsmError::InternalError)?;
-    let mut sig_buf = [0u8; 96];
-    algo.sign(key, tbs, Some(&mut sig_buf[..sig_len]))
-        .map_err(|_| HsmError::InternalError)?;
-    let mut r = [0u8; P384_SIG_COMPONENT];
-    let mut s = [0u8; P384_SIG_COMPONENT];
-    r.copy_from_slice(&sig_buf[..48]);
-    s.copy_from_slice(&sig_buf[48..96]);
-    Ok((r, s))
-}
 
 /// Generate a deterministic serial number for cert at `index` (1-based).
 fn make_serial(index: u8) -> [u8; 20] {
@@ -166,8 +76,16 @@ fn make_leaf_sn(pid: u8) -> [u8; 4] {
     [b'P', b'D', to_hex(hi), to_hex(lo)]
 }
 
+/// Build uncompressed public key (0x04 || x || y) from raw coords.
+fn to_uncompressed(raw: &[u8; P384_PUB_KEY_LEN]) -> [u8; P384_UNCOMPRESSED_LEN] {
+    let mut out = [0u8; P384_UNCOMPRESSED_LEN];
+    out[0] = 0x04;
+    out[1..].copy_from_slice(raw);
+    out
+}
+
 // ---------------------------------------------------------------------------
-// TBS patching helpers (mirrors integration test pattern)
+// TBS patching helpers
 // ---------------------------------------------------------------------------
 
 fn patch_tbs_root(tbs: &mut [u8], params: &RootCertParams<'_>) {
@@ -226,148 +144,44 @@ fn patch_tbs_leaf(tbs: &mut [u8], params: &LeafCertParams<'_>) {
 }
 
 // ---------------------------------------------------------------------------
-// SharedCertStore
+// SharedCertStore — holds generated certs + alias key for leaf signing
 // ---------------------------------------------------------------------------
 
 /// Shared certificate storage for the 3 common certs (Root, DeviceId, Alias)
 /// plus the Alias key material needed for on-demand leaf cert signing.
+///
+/// Initialized lazily via [`StdHsmPal::init_cert_store`] during PAL init.
 pub(crate) struct SharedCertStore {
-    /// Root CA DER-encoded certificate.
     root_cert: [u8; MAX_CERT_DER_LEN],
     root_cert_len: usize,
-
-    /// DeviceId CA DER-encoded certificate.
     deviceid_cert: [u8; MAX_CERT_DER_LEN],
     deviceid_cert_len: usize,
-
-    /// Alias CA DER-encoded certificate.
     alias_cert: [u8; MAX_CERT_DER_LEN],
     alias_cert_len: usize,
-
-    /// Alias CA private key (PKCS#8 DER) — retained for signing leaf certs.
-    alias_priv_key_der: [u8; P384_PRIV_DER_MAX],
-    alias_priv_key_len: usize,
-
-    /// Alias CA uncompressed public key (0x04 || x || y).
-    #[allow(dead_code)]
-    alias_uncompressed: [u8; P384_UNCOMPRESSED_LEN],
-
-    /// Alias CA Subject Key Identifier (SHA-1 of uncompressed pubkey).
-    alias_ski: [u8; 20],
-
-    /// Precomputed SHA-256(root_cert_der || deviceid_cert_der).
+    /// Alias CA private key DER — for signing leaf certs.
+    alias_priv_key_der: Vec<u8>,
+    /// Alias CA Subject Key Identifier.
+    pub(crate) alias_ski: [u8; 20],
+    /// Precomputed SHA-256(root_cert || deviceid_cert).
     root_deviceid_hash: [u8; 32],
 }
 
 impl SharedCertStore {
-    /// Generate all 3 shared certificates and store them.
-    ///
-    /// # Panics
-    ///
-    /// Panics if cryptographic operations fail during initialization.
-    /// This is acceptable for a simulator — if crypto fails at init,
-    /// the entire system is non-functional.
+    /// Create an empty (uninitialized) cert store.
     pub(crate) fn new() -> Self {
-        Self::try_new().expect("shared cert store initialization failed")
+        Self {
+            root_cert: [0u8; MAX_CERT_DER_LEN],
+            root_cert_len: 0,
+            deviceid_cert: [0u8; MAX_CERT_DER_LEN],
+            deviceid_cert_len: 0,
+            alias_cert: [0u8; MAX_CERT_DER_LEN],
+            alias_cert_len: 0,
+            alias_priv_key_der: Vec::new(),
+            alias_ski: [0u8; 20],
+            root_deviceid_hash: [0u8; 32],
+        }
     }
 
-    fn try_new() -> HsmResult<Self> {
-        // --- Root CA ---
-        let root_key = KeyPair::generate()?;
-        let root_serial = make_serial(1);
-        let root_params = RootCertParams {
-            public_key: &root_key.uncompressed,
-            serial_number: &root_serial,
-            not_before: NOT_BEFORE,
-            not_after: NOT_AFTER,
-            subject_cn: ROOT_CN,
-            subject_sn: ROOT_SN,
-            subject_key_id: &root_key.ski,
-        };
-        let mut root_cert = [0u8; MAX_CERT_DER_LEN];
-        let mut tbs = azihsm_fw_hsm_std_x509::root_cert::TBS_TEMPLATE;
-        patch_tbs_root(&mut tbs, &root_params);
-        let (r, s) = root_key.sign_tbs(&tbs)?;
-        let root_cert_len = cert_builder::build_root_cert(&root_params, &r, &s, &mut root_cert)
-            .ok_or(HsmError::InternalError)?;
-
-        // --- DeviceId CA ---
-        let deviceid_key = KeyPair::generate()?;
-        let deviceid_serial = make_serial(2);
-        let deviceid_params = IntermediateCertParams {
-            public_key: &deviceid_key.uncompressed,
-            serial_number: &deviceid_serial,
-            not_before: NOT_BEFORE,
-            not_after: NOT_AFTER,
-            subject_cn: DEVICEID_CN,
-            subject_sn: DEVICEID_SN,
-            issuer_cn: ROOT_CN,
-            issuer_sn: ROOT_SN,
-            subject_key_id: &deviceid_key.ski,
-            authority_key_id: &root_key.ski,
-            path_len: 1,
-        };
-        let mut deviceid_cert = [0u8; MAX_CERT_DER_LEN];
-        let mut tbs = azihsm_fw_hsm_std_x509::intermediate_cert::TBS_TEMPLATE;
-        patch_tbs_intermediate(&mut tbs, &deviceid_params);
-        let (r, s) = root_key.sign_tbs(&tbs)?;
-        let deviceid_cert_len =
-            cert_builder::build_intermediate_cert(&deviceid_params, &r, &s, &mut deviceid_cert)
-                .ok_or(HsmError::InternalError)?;
-
-        // --- Alias CA ---
-        let alias_key = KeyPair::generate()?;
-        let alias_serial = make_serial(3);
-        let alias_params = IntermediateCertParams {
-            public_key: &alias_key.uncompressed,
-            serial_number: &alias_serial,
-            not_before: NOT_BEFORE,
-            not_after: NOT_AFTER,
-            subject_cn: ALIAS_CN,
-            subject_sn: ALIAS_SN,
-            issuer_cn: DEVICEID_CN,
-            issuer_sn: DEVICEID_SN,
-            subject_key_id: &alias_key.ski,
-            authority_key_id: &deviceid_key.ski,
-            path_len: 0,
-        };
-        let mut alias_cert = [0u8; MAX_CERT_DER_LEN];
-        let mut tbs = azihsm_fw_hsm_std_x509::intermediate_cert::TBS_TEMPLATE;
-        patch_tbs_intermediate(&mut tbs, &alias_params);
-        let (r, s) = deviceid_key.sign_tbs(&tbs)?;
-        let alias_cert_len =
-            cert_builder::build_intermediate_cert(&alias_params, &r, &s, &mut alias_cert)
-                .ok_or(HsmError::InternalError)?;
-
-        // Export alias private key for on-demand leaf signing.
-        let mut alias_priv_key_der = [0u8; P384_PRIV_DER_MAX];
-        let alias_priv_key_len = alias_key
-            .priv_key
-            .to_bytes(Some(&mut alias_priv_key_der))
-            .map_err(|_| HsmError::InternalError)?;
-
-        // Precompute SHA-256(root_cert || deviceid_cert).
-        let root_deviceid_hash = sha256_concat(
-            &root_cert[..root_cert_len],
-            &deviceid_cert[..deviceid_cert_len],
-        )?;
-
-        Ok(Self {
-            root_cert,
-            root_cert_len,
-            deviceid_cert,
-            deviceid_cert_len,
-            alias_cert,
-            alias_cert_len,
-            alias_priv_key_der,
-            alias_priv_key_len,
-            alias_uncompressed: alias_key.uncompressed,
-            alias_ski: alias_key.ski,
-            root_deviceid_hash,
-        })
-    }
-
-    /// Returns the shared cert at `idx` (0=Root, 1=DeviceId, 2=Alias).
     pub(crate) fn shared_cert(&self, idx: u8) -> Option<&[u8]> {
         match idx {
             0 => Some(&self.root_cert[..self.root_cert_len]),
@@ -377,27 +191,198 @@ impl SharedCertStore {
         }
     }
 
-    /// Build a partition leaf cert on-demand, signed by the Alias CA key.
-    ///
-    /// `raw_pubkey` is the partition's 96-byte (x || y) public key.
-    pub(crate) fn build_partition_leaf(
-        &self,
-        pid: u8,
-        raw_pubkey: &[u8; P384_PUB_KEY_LEN],
-        out: &mut [u8; MAX_CERT_DER_LEN],
-    ) -> HsmResult<usize> {
-        // Build uncompressed public key (0x04 prefix).
-        let mut subject_pubkey = [0u8; P384_UNCOMPRESSED_LEN];
-        subject_pubkey[0] = 0x04;
-        subject_pubkey[1..].copy_from_slice(raw_pubkey);
+    pub(crate) fn alias_priv_key_der(&self) -> &[u8] {
+        &self.alias_priv_key_der
+    }
+}
 
-        let subject_ski = compute_ski(&subject_pubkey)?;
+// ---------------------------------------------------------------------------
+// Async cert generation on StdHsmPal (uses PAL traits)
+// ---------------------------------------------------------------------------
+
+/// Temporary key pair: raw pub coords + private DER.
+struct CertKeyPair {
+    priv_der: Vec<u8>,
+    uncompressed: [u8; P384_UNCOMPRESSED_LEN],
+    ski: [u8; 20],
+}
+
+impl StdHsmPal {
+    /// Initialize the shared cert store by generating all 3 certs.
+    ///
+    /// Must be called during PAL initialization before any cert access.
+    /// Uses [`HsmEcc::ecc_gen_keypair`] and [`HsmHash`] via PAL traits.
+    pub async fn init_cert_store(&self) -> HsmResult<()> {
+        // --- Generate 3 key pairs ---
+        let root_kp = self.gen_cert_keypair().await?;
+        let deviceid_kp = self.gen_cert_keypair().await?;
+        let alias_kp = self.gen_cert_keypair().await?;
+
+        // --- Root CA ---
+        let root_serial = make_serial(1);
+        let root_params = RootCertParams {
+            public_key: &root_kp.uncompressed,
+            serial_number: &root_serial,
+            not_before: NOT_BEFORE,
+            not_after: NOT_AFTER,
+            subject_cn: ROOT_CN,
+            subject_sn: ROOT_SN,
+            subject_key_id: &root_kp.ski,
+        };
+        let mut tbs = azihsm_fw_hsm_std_x509::root_cert::TBS_TEMPLATE;
+        patch_tbs_root(&mut tbs, &root_params);
+        let (r, s) = self.hash_and_sign(&root_kp.priv_der, &tbs).await?;
+        let mut root_cert = [0u8; MAX_CERT_DER_LEN];
+        let root_cert_len = cert_builder::build_root_cert(&root_params, &r, &s, &mut root_cert)
+            .ok_or(HsmError::InternalError)?;
+
+        // --- DeviceId CA ---
+        let deviceid_serial = make_serial(2);
+        let deviceid_params = IntermediateCertParams {
+            public_key: &deviceid_kp.uncompressed,
+            serial_number: &deviceid_serial,
+            not_before: NOT_BEFORE,
+            not_after: NOT_AFTER,
+            subject_cn: DEVICEID_CN,
+            subject_sn: DEVICEID_SN,
+            issuer_cn: ROOT_CN,
+            issuer_sn: ROOT_SN,
+            subject_key_id: &deviceid_kp.ski,
+            authority_key_id: &root_kp.ski,
+            path_len: 1,
+        };
+        let mut tbs = azihsm_fw_hsm_std_x509::intermediate_cert::TBS_TEMPLATE;
+        patch_tbs_intermediate(&mut tbs, &deviceid_params);
+        let (r, s) = self.hash_and_sign(&root_kp.priv_der, &tbs).await?;
+        let mut deviceid_cert = [0u8; MAX_CERT_DER_LEN];
+        let deviceid_cert_len =
+            cert_builder::build_intermediate_cert(&deviceid_params, &r, &s, &mut deviceid_cert)
+                .ok_or(HsmError::InternalError)?;
+
+        // --- Alias CA ---
+        let alias_serial = make_serial(3);
+        let alias_params = IntermediateCertParams {
+            public_key: &alias_kp.uncompressed,
+            serial_number: &alias_serial,
+            not_before: NOT_BEFORE,
+            not_after: NOT_AFTER,
+            subject_cn: ALIAS_CN,
+            subject_sn: ALIAS_SN,
+            issuer_cn: DEVICEID_CN,
+            issuer_sn: DEVICEID_SN,
+            subject_key_id: &alias_kp.ski,
+            authority_key_id: &deviceid_kp.ski,
+            path_len: 0,
+        };
+        let mut tbs = azihsm_fw_hsm_std_x509::intermediate_cert::TBS_TEMPLATE;
+        patch_tbs_intermediate(&mut tbs, &alias_params);
+        let (r, s) = self.hash_and_sign(&deviceid_kp.priv_der, &tbs).await?;
+        let mut alias_cert = [0u8; MAX_CERT_DER_LEN];
+        let alias_cert_len =
+            cert_builder::build_intermediate_cert(&alias_params, &r, &s, &mut alias_cert)
+                .ok_or(HsmError::InternalError)?;
+
+        // Precompute SHA-256(root_cert || deviceid_cert).
+        let mut rd_concat = vec![0u8; root_cert_len + deviceid_cert_len];
+        rd_concat[..root_cert_len].copy_from_slice(&root_cert[..root_cert_len]);
+        rd_concat[root_cert_len..].copy_from_slice(&deviceid_cert[..deviceid_cert_len]);
+        let mut root_deviceid_hash = [0u8; 32];
+        self.hash(HsmHashAlgo::Sha256, &rd_concat, &mut root_deviceid_hash)
+            .await?;
+
+        // Commit to store.
+        let store = &mut *self.cert_store_mut();
+        store.root_cert = root_cert;
+        store.root_cert_len = root_cert_len;
+        store.deviceid_cert = deviceid_cert;
+        store.deviceid_cert_len = deviceid_cert_len;
+        store.alias_cert = alias_cert;
+        store.alias_cert_len = alias_cert_len;
+        store.alias_priv_key_der = alias_kp.priv_der;
+        store.alias_ski = alias_kp.ski;
+        store.root_deviceid_hash = root_deviceid_hash;
+
+        Ok(())
+    }
+
+    /// Generate a P-384 key pair and compute SKI for cert construction.
+    async fn gen_cert_keypair(&self) -> HsmResult<CertKeyPair> {
+        let priv_max = HsmEccCurve::P384.priv_key_der_max();
+        let mut priv_der = vec![0u8; priv_max];
+        let mut pub_raw = [0u8; P384_PUB_KEY_LEN];
+        let priv_len = self
+            .ecc_gen_keypair(
+                HsmEccCurve::P384,
+                Some(&mut priv_der),
+                &mut pub_raw,
+                HsmEccPct::SignVerify,
+            )
+            .await?;
+        priv_der.truncate(priv_len);
+
+        let uncompressed = to_uncompressed(&pub_raw);
+        let mut ski = [0u8; 20];
+        self.hash(HsmHashAlgo::Sha1, &uncompressed, &mut ski)
+            .await?;
+
+        Ok(CertKeyPair {
+            priv_der,
+            uncompressed,
+            ski,
+        })
+    }
+
+    /// Hash TBS with SHA-384, then sign with ECC P-384. Returns (r, s).
+    async fn hash_and_sign(
+        &self,
+        priv_der: &[u8],
+        tbs: &[u8],
+    ) -> HsmResult<([u8; P384_SIG_COMPONENT], [u8; P384_SIG_COMPONENT])> {
+        let mut tbs_hash = [0u8; 48];
+        self.hash(HsmHashAlgo::Sha384, tbs, &mut tbs_hash).await?;
+
+        let mut sig = [0u8; 96];
+        self.ecc_sign(HsmEccCurve::P384, priv_der, &tbs_hash, &mut sig)
+            .await?;
+
+        let mut r = [0u8; P384_SIG_COMPONENT];
+        let mut s = [0u8; P384_SIG_COMPONENT];
+        r.copy_from_slice(&sig[..48]);
+        s.copy_from_slice(&sig[48..96]);
+        Ok((r, s))
+    }
+
+    /// Ensure the partition's leaf cert is cached.
+    async fn ensure_leaf_cert(&self, pid: u8) -> HsmResult<()> {
+        {
+            let table = unsafe { &*self.part_table.get() };
+            let idx = pid as usize;
+            if idx >= NUM_PARTITIONS {
+                return Err(HsmError::InvalidArg);
+            }
+            if table.entries[idx].state == PartState::Unallocated {
+                return Err(HsmError::InvalidArg);
+            }
+            if table.entries[idx].leaf_cert_len > 0 {
+                return Ok(());
+            }
+        }
+
+        let table = unsafe { &*self.part_table.get() };
+        let entry = &table.entries[pid as usize];
+        let uncompressed = to_uncompressed(&entry.id_pub_key);
+
+        // SKI = SHA-1(uncompressed pubkey).
+        let mut ski = [0u8; 20];
+        self.hash(HsmHashAlgo::Sha1, &uncompressed, &mut ski)
+            .await?;
+
+        // Prepare TBS.
         let leaf_serial = make_serial(4_u8.wrapping_add(pid));
         let sn_bytes = make_leaf_sn(pid);
         let leaf_sn = core::str::from_utf8(&sn_bytes).map_err(|_| HsmError::InternalError)?;
-
         let params = LeafCertParams {
-            public_key: &subject_pubkey,
+            public_key: &uncompressed,
             serial_number: &leaf_serial,
             not_before: NOT_BEFORE,
             not_after: NOT_AFTER,
@@ -405,42 +390,37 @@ impl SharedCertStore {
             subject_sn: leaf_sn,
             issuer_cn: ALIAS_CN,
             issuer_sn: ALIAS_SN,
-            subject_key_id: &subject_ski,
-            authority_key_id: &self.alias_ski,
+            subject_key_id: &ski,
+            authority_key_id: &self.cert_store().alias_ski,
             key_usage: KeyUsage::DIGITAL_SIGNATURE,
         };
-
-        // Patch TBS template and sign with alias key.
         let mut tbs = azihsm_fw_hsm_std_x509::leaf_cert::TBS_TEMPLATE;
         patch_tbs_leaf(&mut tbs, &params);
 
-        let alias_key =
-            EccPrivateKey::from_bytes(&self.alias_priv_key_der[..self.alias_priv_key_len])
-                .map_err(|_| HsmError::InternalError)?;
-        let (r, s) = sign_with_key(&alias_key, &tbs)?;
+        // Sign via PAL.
+        let (r, s) = self
+            .hash_and_sign(self.cert_store().alias_priv_key_der(), &tbs)
+            .await?;
 
-        cert_builder::build_leaf_cert(&params, &r, &s, out).ok_or(HsmError::InternalError)
+        // Build final cert and cache.
+        let table = unsafe { &mut *self.part_table.get() };
+        let entry = &mut table.entries[pid as usize];
+        let len = cert_builder::build_leaf_cert(&params, &r, &s, &mut entry.leaf_cert)
+            .ok_or(HsmError::InternalError)?;
+        entry.leaf_cert_len = len;
+        Ok(())
     }
 
-    /// Compute the thumbprint for a partition's cert chain.
-    ///
-    /// ```text
-    /// thumbprint = SHA-256(
-    ///     SHA-256(root_cert || deviceid_cert)  ||   // precomputed
-    ///     SHA-256(alias_cert)                  ||
-    ///     SHA-256(partition_leaf_cert)
-    /// )
-    /// ```
-    pub(crate) fn compute_thumbprint(&self, leaf_cert: &[u8]) -> HsmResult<[u8; 32]> {
-        let alias_hash = sha256(&self.alias_cert[..self.alias_cert_len])?;
-        let leaf_hash = sha256(leaf_cert)?;
+    /// Get mutable reference to cert store (for init).
+    fn cert_store_mut(&self) -> &mut SharedCertStore {
+        // SAFETY: only called during init, single-threaded.
+        unsafe { &mut **self.cert_store.get() }
+    }
 
-        // Concatenate: root_deviceid_hash || alias_hash || leaf_hash → 96 bytes
-        let mut combined = [0u8; 96];
-        combined[..32].copy_from_slice(&self.root_deviceid_hash);
-        combined[32..64].copy_from_slice(&alias_hash);
-        combined[64..96].copy_from_slice(&leaf_hash);
-        sha256(&combined)
+    /// Get immutable reference to cert store.
+    fn cert_store(&self) -> &SharedCertStore {
+        // SAFETY: single-threaded Embassy executor.
+        unsafe { &**self.cert_store.get() }
     }
 }
 
@@ -454,30 +434,36 @@ impl HsmCertStore for StdHsmPal {
             return Err(HsmError::InvalidArg);
         }
 
-        // SAFETY: Single-threaded Embassy executor, sync method.
-        let table = unsafe { &mut *self.part_table.get() };
-        let idx = part_id as usize;
-        if idx >= NUM_PARTITIONS {
-            return Err(HsmError::InvalidArg);
-        }
-        let entry = &mut table.entries[idx];
-        if entry.state == PartState::Unallocated {
-            return Err(HsmError::InvalidArg);
-        }
+        self.ensure_leaf_cert(part_id).await?;
 
-        // Ensure leaf cert is cached for consistent thumbprint.
-        if entry.leaf_cert_len == 0 {
-            let len = self.cert_store.build_partition_leaf(
-                part_id,
-                &entry.id_pub_key,
-                &mut entry.leaf_cert,
-            )?;
-            entry.leaf_cert_len = len;
-        }
+        let table = unsafe { &*self.part_table.get() };
+        let entry = &table.entries[part_id as usize];
 
-        let thumbprint = self
-            .cert_store
-            .compute_thumbprint(&entry.leaf_cert[..entry.leaf_cert_len])?;
+        // Thumbprint = SHA-256(SHA-256(root||devid) || SHA-256(alias) || SHA-256(leaf))
+        let mut alias_hash = [0u8; 32];
+        self.hash(
+            HsmHashAlgo::Sha256,
+            self.cert_store().shared_cert(2).unwrap(),
+            &mut alias_hash,
+        )
+        .await?;
+
+        let mut leaf_hash = [0u8; 32];
+        self.hash(
+            HsmHashAlgo::Sha256,
+            &entry.leaf_cert[..entry.leaf_cert_len],
+            &mut leaf_hash,
+        )
+        .await?;
+
+        let mut combined = [0u8; 96];
+        combined[..32].copy_from_slice(&self.cert_store().root_deviceid_hash);
+        combined[32..64].copy_from_slice(&alias_hash);
+        combined[64..96].copy_from_slice(&leaf_hash);
+
+        let mut thumbprint = [0u8; 32];
+        self.hash(HsmHashAlgo::Sha256, &combined, &mut thumbprint)
+            .await?;
 
         Ok(CertChainInfo {
             count: SLOT0_CERT_COUNT,
@@ -496,10 +482,10 @@ impl HsmCertStore for StdHsmPal {
             return Err(HsmError::InvalidArg);
         }
 
-        // Shared certs (idx 0–2) — no partition state needed.
+        // Shared certs (idx 0–2).
         if idx <= 2 {
             let src = self
-                .cert_store
+                .cert_store()
                 .shared_cert(idx)
                 .ok_or(HsmError::InvalidArg)?;
             if let Some(buf) = cert {
@@ -516,27 +502,10 @@ impl HsmCertStore for StdHsmPal {
             return Err(HsmError::InvalidArg);
         }
 
-        // SAFETY: Single-threaded Embassy executor, no .await with active borrow.
-        let table = unsafe { &mut *self.part_table.get() };
-        let pidx = part_id as usize;
-        if pidx >= NUM_PARTITIONS {
-            return Err(HsmError::InvalidArg);
-        }
-        let entry = &mut table.entries[pidx];
-        if entry.state == PartState::Unallocated {
-            return Err(HsmError::InvalidArg);
-        }
+        self.ensure_leaf_cert(part_id).await?;
 
-        // Lazy-generate and cache.
-        if entry.leaf_cert_len == 0 {
-            let len = self.cert_store.build_partition_leaf(
-                part_id,
-                &entry.id_pub_key,
-                &mut entry.leaf_cert,
-            )?;
-            entry.leaf_cert_len = len;
-        }
-
+        let table = unsafe { &*self.part_table.get() };
+        let entry = &table.entries[part_id as usize];
         let len = entry.leaf_cert_len;
         if let Some(buf) = cert {
             if buf.len() < len {
