@@ -46,7 +46,8 @@ impl Xtask for Install {
         let rust_toolchain = sh.var("RUST_TOOLCHAIN").map(|s| format!("+{s}")).ok();
 
         // convert xtask parameters into cargo command arguments
-        let mut command_args = vec![self.crate_name, "--locked".to_string()];
+        let crate_name = self.crate_name;
+        let mut command_args = vec![crate_name.clone(), "--locked".to_string()];
         if self.force {
             command_args.push("--force".to_string());
         }
@@ -66,9 +67,22 @@ impl Xtask for Install {
             command_args.push(config);
         }
 
-        cmd!(sh, "cargo {rust_toolchain...} install {command_args...}")
+        let output = cmd!(sh, "cargo {rust_toolchain...} install {command_args...}")
             .quiet()
-            .run()?;
+            .ignore_status()
+            .output()?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if !self.force && stderr.contains("already exists") {
+                log::info!("{crate_name}: already installed, skipping");
+            } else {
+                anyhow::bail!(
+                    "command exited with non-zero code `cargo install {crate_name}`: {}",
+                    output.status
+                );
+            }
+        }
 
         log::trace!("done install");
         Ok(())

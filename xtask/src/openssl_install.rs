@@ -6,6 +6,7 @@
 
 //! Helper to resolve an OpenSSL installation, building one if necessary.
 
+#[cfg(target_os = "linux")]
 use std::path::PathBuf;
 
 #[cfg(target_os = "linux")]
@@ -18,21 +19,6 @@ const OPENSSL_VERSION: &str = "3.0.3";
 
 #[cfg(target_os = "linux")]
 const OPENSSL_INSTALL_DIR: &str = "/opt/openssl-3.0.3";
-
-/// Checks whether an OpenSSL installation is available, without installing.
-///
-/// Resolution order:
-/// 1. `OPENSSL_DIR` env var — if set, checked (must be an existing directory).
-/// 2. `/opt/openssl-3.0.3` — if it already exists.
-///
-/// Returns an error if no installation is found, directing the user to run
-/// `cargo xtask setup`.
-///
-/// Only supported on Linux; returns an error on other platforms.
-#[cfg(not(target_os = "linux"))]
-pub fn check_openssl() -> anyhow::Result<PathBuf> {
-    anyhow::bail!("OpenSSL check is only supported on Linux");
-}
 
 /// Checks whether an OpenSSL installation is available, without installing.
 ///
@@ -74,24 +60,6 @@ pub fn check_openssl() -> anyhow::Result<PathBuf> {
         "OpenSSL installation not found. \
          Run 'cargo xtask setup' first, or set OPENSSL_DIR to an existing OpenSSL 3.x prefix."
     );
-}
-
-/// Resolves an OpenSSL installation, building one if necessary.
-///
-/// Resolution order:
-/// 1. `OPENSSL_DIR` env var — if set, checked (must be an existing directory),
-///    and returned as-is. No deep validation of contents is performed; downstream
-///    build scripts and test harnesses will report specific missing-file errors.
-/// 2. `/opt/openssl-3.0.3` — if it already exists (local equivalent of the CI cache).
-/// 3. Download, build, and install OpenSSL 3.0.3 to `/opt/openssl-3.0.3`,
-///    using the same commands as CI. Requires `curl`, `make`, a C compiler,
-///    and `sudo` (system path). The installation persists across `cargo clean`
-///    and `cargo xtask clean`.
-///
-/// Only supported on Linux; returns an error on other platforms.
-#[cfg(not(target_os = "linux"))]
-pub fn ensure_openssl() -> anyhow::Result<PathBuf> {
-    anyhow::bail!("OpenSSL auto-install is only supported on Linux");
 }
 
 /// Resolves an OpenSSL installation, building one if necessary.

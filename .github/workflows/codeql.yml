@@ -49,16 +49,6 @@ jobs:
         path: /opt/openssl-3.0.3
         key: openssl-3.0.3-shared-linux-x64
 
-    - name: Build OpenSSL 3.0.3 (shared)
-      if: steps.cache-openssl.outputs.cache-hit != 'true'
-      run: |
-        curl -fsSL "https://github.com/openssl/openssl/releases/download/openssl-3.0.3/openssl-3.0.3.tar.gz" \
-          | tar xz -C /tmp
-        cd /tmp/openssl-3.0.3
-        ./Configure --prefix=/opt/openssl-3.0.3 --libdir=lib
-        make -j"$(nproc)"
-        sudo make install_sw
-
     - name: Restore Cargo cache
       id: cargo-cache
       uses: actions/cache/restore@v5
@@ -70,9 +60,9 @@ jobs:
           ~/.cargo/git/db/
         key: ${{ runner.os }}-cargo-${{ env.CACHE_KEY_ID }}
 
-    - name: Setup on cache miss
-      if: steps.cargo-cache.outputs.cache-hit != 'true'
-      run: cargo xtask precheck --setup
+    - name: Setup
+      if: steps.cargo-cache.outputs.cache-hit != 'true' || steps.cache-openssl.outputs.cache-hit != 'true'
+      run: cargo xtask setup
 
     - name: Initialize CodeQL
       uses: github/codeql-action/init@v4
