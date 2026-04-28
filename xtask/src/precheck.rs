@@ -180,9 +180,6 @@ impl Xtask for Precheck {
         }
 
         if stage.nextest || stage.all {
-            #[cfg(target_os = "linux")]
-            crate::openssl_install::check_openssl()?;
-
             if self.package.is_none() && self.features.is_none() {
                 // SDK Run all mock tests
                 Nextest {

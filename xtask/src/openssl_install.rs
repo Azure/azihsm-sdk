@@ -55,6 +55,11 @@ pub fn check_openssl() -> anyhow::Result<PathBuf> {
 /// Resolves an OpenSSL installation, building from source if necessary.
 #[cfg(target_os = "linux")]
 pub fn ensure_openssl() -> anyhow::Result<PathBuf> {
+    // If OPENSSL_DIR is explicitly set, honour it strictly (never fall through to build).
+    if std::env::var("OPENSSL_DIR").is_ok() {
+        return check_openssl();
+    }
+
     if let Ok(path) = check_openssl() {
         return Ok(path);
     }

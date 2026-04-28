@@ -72,12 +72,13 @@ impl Xtask for Install {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            if !self.force && stderr.contains("already exists") {
+            if !self.force && stderr.contains("already exists in destination") {
                 log::info!("{crate_name}: already installed, skipping");
             } else {
                 anyhow::bail!(
-                    "command exited with non-zero code `cargo install {crate_name}`: {}",
-                    output.status
+                    "command exited with non-zero code `cargo install {crate_name}`: {}\n{}",
+                    output.status,
+                    stderr.trim()
                 );
             }
         }
