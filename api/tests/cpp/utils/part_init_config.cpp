@@ -358,9 +358,25 @@ void make_part_init_config(azihsm_handle part_handle, PartInitConfig &config)
     }
     else
     {
-        config.obk_buf = { const_cast<uint8_t *>(TEST_OBK), sizeof(TEST_OBK) };
-        config.backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER;
-        config.backup_config.owner_backup_key = &config.obk_buf;
+        // Prefer a cached MOBK from a prior init (if present on disk) so
+        // that init_bk3 is not re-attempted on a warm device. Fall back to
+        // the raw OBK when no cache exists (cold device / first init).
+        auto cached_mobk = load_mobk_file(get_mobk_path());
+        if (!cached_mobk.empty())
+        {
+            config.mobk_cache = std::move(cached_mobk);
+            config.obk_buf = { config.mobk_cache.data(),
+                               static_cast<uint32_t>(config.mobk_cache.size()) };
+            config.backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER;
+            config.backup_config.owner_backup_key = nullptr;
+            config.backup_config.masked_owner_backup_key = &config.obk_buf;
+        }
+        else
+        {
+            config.obk_buf = { const_cast<uint8_t *>(TEST_OBK), sizeof(TEST_OBK) };
+            config.backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER;
+            config.backup_config.owner_backup_key = &config.obk_buf;
+        }
 
         config.generated = generate_pota_endorsement(part_handle);
         config.sig_buf = { config.generated.signature.data(),

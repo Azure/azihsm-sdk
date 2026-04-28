@@ -60,6 +60,7 @@ struct PartInitConfig
     azihsm_pota_endorsement pota_endorsement;
     azihsm_buffer obk_buf;
     azihsm_owner_backup_key_config backup_config;
+    std::vector<uint8_t> mobk_cache; // holds cached MOBK data for lifetime management
 };
 
 /// Builds the OBK backup config and POTA endorsement for partition init.
