@@ -24,7 +24,7 @@ impl Xtask for IntegrationTest {
             return Ok(());
         }
 
-        let openssl_dir = crate::openssl_install::ensure_openssl()?;
+        let openssl_dir = crate::openssl_install::check_openssl()?;
 
         // Derive OPENSSL_BIN if not set — CLI integration tests (env.sh) hard-require it.
         if std::env::var("OPENSSL_BIN").is_err() {

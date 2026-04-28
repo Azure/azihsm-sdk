@@ -77,6 +77,9 @@ pub struct Precheck {
     /// Skip Clang formatting
     #[clap(long)]
     pub skip_clang: bool,
+    /// Skip OpenSSL installation during setup
+    #[clap(long)]
+    pub skip_openssl: bool,
     /// Skip specifying toolchain for formatting checks
     #[clap(long)]
     skip_toolchain: bool,
@@ -133,6 +136,7 @@ impl Xtask for Precheck {
                 config: Some(config_path),
                 skip_taplo: self.skip_taplo,
                 skip_audit: self.skip_audit,
+                skip_openssl: self.skip_openssl,
             }
             .run(ctx.clone())?;
         }
@@ -176,6 +180,9 @@ impl Xtask for Precheck {
         }
 
         if stage.nextest || stage.all {
+            #[cfg(target_os = "linux")]
+            crate::openssl_install::check_openssl()?;
+
             if self.package.is_none() && self.features.is_none() {
                 // SDK Run all mock tests
                 Nextest {
