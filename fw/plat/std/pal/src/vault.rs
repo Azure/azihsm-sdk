@@ -4,17 +4,10 @@
 //! [`HsmVault`] implementation for the standard PAL.
 //!
 //! Delegates to the per-partition [`KeyVault`] stored inside each
-//! [`PartitionEntry`].  Access to the partition table uses the same
-//! [`UnsafeCell`] pattern as [`HsmPartitionManager`] and
-//! [`HsmSessionManager`].
-//!
-//! # Safety
-//!
-//! All methods are synchronous (no `.await` points) and run on the
-//! single-threaded Embassy executor, so no concurrent access is
-//! possible.  Mutable methods (`vault_key_create`, `vault_key_delete`,
-//! `vault_key_delete_by_session`, `vault_clear`) obtain `&mut` through
-//! the `UnsafeCell` — safe because no other borrows can be alive.
+//! [`PartitionEntry`].  Uses [`active_part`](StdHsmPal::active_part) /
+//! [`active_part_mut`](StdHsmPal::active_part_mut) helpers for partition
+//! access.  All methods are synchronous on the single-threaded Embassy
+//! executor.
 //!
 //! [`KeyVault`]: crate::drivers::vault::KeyVault
 //! [`PartitionEntry`]: crate::part::PartitionEntry
@@ -27,6 +20,9 @@ impl HsmVault for StdHsmPal {
     ///
     /// If `session_id` is `Some`, maps the logical session ID to the
     /// physical vault key ID via the session table before storing.
+    ///
+    /// Returns a [`VaultKeyGuard`] — the key is auto-deleted on drop
+    /// unless the caller calls [`dismiss`](VaultKeyGuard::dismiss).
     fn vault_key_create(
         &self,
         pid: HsmPartId,
@@ -35,12 +31,13 @@ impl HsmVault for StdHsmPal {
         session_id: Option<HsmSessId>,
         attrs: HsmVaultKeyAttrs,
         meta: &[u8],
-    ) -> HsmResult<HsmKeyId> {
+    ) -> HsmResult<VaultKeyGuard<'_, Self>> {
         let entry = self.active_part_mut(pid)?;
         let session_key_id = session_id
             .map(|sid| entry.session_table.physical_id(sid))
             .transpose()?;
-        entry.vault.create(key, kind, session_key_id, attrs, meta)
+        let key_id = entry.vault.create(key, kind, session_key_id, attrs, meta)?;
+        Ok(VaultKeyGuard::new(self, pid, key_id))
     }
 
     /// Delete a key from the partition's vault.

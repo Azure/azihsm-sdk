@@ -48,7 +48,7 @@ impl HsmSessionManager for StdHsmPal {
         api_rev: &[u8],
         masking_key: &[u8],
         id: Option<HsmSessId>,
-    ) -> HsmResult<HsmSessId> {
+    ) -> HsmResult<SessionGuard<'_, Self>> {
         if api_rev.len() != SESSION_API_REV_SIZE || masking_key.len() != SESSION_MASKING_KEY_SIZE {
             return Err(HsmError::InvalidArg);
         }
@@ -81,10 +81,13 @@ impl HsmSessionManager for StdHsmPal {
         };
 
         // Rollback: if session table allocation fails, remove the vault key.
-        if result.is_err() {
-            let _ = entry.vault.delete(physical_id);
+        match result {
+            Ok(sess_id) => Ok(SessionGuard::new(self, pid, sess_id)),
+            Err(e) => {
+                let _ = entry.vault.delete(physical_id);
+                Err(e)
+            }
         }
-        result
     }
 
     /// Delete (close) a session with cascading vault cleanup.

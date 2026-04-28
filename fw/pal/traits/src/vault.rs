@@ -220,6 +220,56 @@ pub struct HsmVaultKeyAttrs {
     rsvd: u32,
 }
 
+/// RAII guard for a newly created vault key.
+///
+/// Returned by [`HsmVault::vault_key_create`].  If dropped without
+/// calling [`dismiss`](Self::dismiss), the key is automatically deleted
+/// from the vault — providing rollback safety for multi-step DDI
+/// operations (e.g., GenerateKeyPair creates private + public keys;
+/// if the second create fails, the first is automatically rolled back).
+///
+/// # Usage
+///
+/// ```text
+/// let guard = pal.vault_key_create(pid, key, kind, ...)?;
+/// // ... more fallible work ...
+/// let key_id = guard.dismiss();  // committed — key persists
+/// ```
+pub struct VaultKeyGuard<'a, P: HsmVault + ?Sized> {
+    pal: &'a P,
+    pid: HsmPartId,
+    key_id: Option<HsmKeyId>,
+}
+
+impl<'a, P: HsmVault + ?Sized> VaultKeyGuard<'a, P> {
+    /// Create a guard wrapping a newly created key.
+    pub fn new(pal: &'a P, pid: HsmPartId, key_id: HsmKeyId) -> Self {
+        Self {
+            pal,
+            pid,
+            key_id: Some(key_id),
+        }
+    }
+
+    /// Peek at the key ID (e.g., to read key material before committing).
+    pub fn key_id(&self) -> HsmKeyId {
+        self.key_id.unwrap()
+    }
+
+    /// Commit — key persists permanently.  Returns the key ID.
+    pub fn dismiss(mut self) -> HsmKeyId {
+        self.key_id.take().unwrap()
+    }
+}
+
+impl<P: HsmVault + ?Sized> Drop for VaultKeyGuard<'_, P> {
+    fn drop(&mut self) {
+        if let Some(kid) = self.key_id.take() {
+            let _ = self.pal.vault_key_delete(self.pid, kid);
+        }
+    }
+}
+
 /// Trait defining the HSM key vault interface.
 ///
 /// Provides creation, deletion, and querying of cryptographic keys stored
@@ -232,6 +282,9 @@ pub struct HsmVaultKeyAttrs {
 pub trait HsmVault {
     /// Store a new key in the vault.
     ///
+    /// Returns a [`VaultKeyGuard`] that auto-deletes the key on drop
+    /// unless [`dismiss`](VaultKeyGuard::dismiss) is called to persist it.
+    ///
     /// # Parameters
     /// - `key` — The key material to store.
     /// - `kind` — The type/algorithm of the key (e.g., `Aes256`, `Ecc384Private`).
@@ -242,7 +295,7 @@ pub trait HsmVault {
     ///   target key metadata).
     ///
     /// # Returns
-    /// A [`HsmVaultKeyId`] that uniquely identifies the stored key.
+    /// A [`VaultKeyGuard`] wrapping the new key ID.
     ///
     /// # Errors
     /// Returns [`HsmError`] if the vault is full or the key kind is invalid.
@@ -254,7 +307,7 @@ pub trait HsmVault {
         session_id: Option<HsmSessId>,
         attrs: HsmVaultKeyAttrs,
         meta: &[u8],
-    ) -> HsmResult<HsmKeyId>;
+    ) -> HsmResult<VaultKeyGuard<'_, Self>>;
 
     /// Delete a key from the vault by ID.
     ///

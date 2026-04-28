@@ -47,6 +47,54 @@ pub enum HsmSessionState {
     Invalid,
 }
 
+/// RAII guard for a newly created session.
+///
+/// Returned by [`HsmSessionManager::session_create`].  If dropped without
+/// calling [`dismiss`](Self::dismiss), the session is automatically deleted
+/// (cascading: session-scoped vault keys, session vault key, logical slot).
+///
+/// # Usage
+///
+/// ```text
+/// let guard = pal.session_create(pid, api_rev, masking_key, None)?;
+/// // ... derive keys, validate credential ...
+/// let sess_id = guard.dismiss();  // committed — session persists
+/// ```
+pub struct SessionGuard<'a, P: HsmSessionManager + ?Sized> {
+    pal: &'a P,
+    pid: HsmPartId,
+    sess_id: Option<HsmSessId>,
+}
+
+impl<'a, P: HsmSessionManager + ?Sized> SessionGuard<'a, P> {
+    /// Create a guard wrapping a newly created session.
+    pub fn new(pal: &'a P, pid: HsmPartId, sess_id: HsmSessId) -> Self {
+        Self {
+            pal,
+            pid,
+            sess_id: Some(sess_id),
+        }
+    }
+
+    /// Peek at the session ID before committing.
+    pub fn sess_id(&self) -> HsmSessId {
+        self.sess_id.unwrap()
+    }
+
+    /// Commit — session persists permanently.  Returns the session ID.
+    pub fn dismiss(mut self) -> HsmSessId {
+        self.sess_id.take().unwrap()
+    }
+}
+
+impl<P: HsmSessionManager + ?Sized> Drop for SessionGuard<'_, P> {
+    fn drop(&mut self) {
+        if let Some(sid) = self.sess_id.take() {
+            let _ = self.pal.session_delete(self.pid, sid);
+        }
+    }
+}
+
 /// Session management interface.
 ///
 /// Sessions are stored as vault keys.  `session_create` builds the
@@ -67,6 +115,9 @@ pub trait HsmSessionManager {
     /// [`HsmVaultKeyKind::Session`], and allocates a logical session
     /// slot pointing to that vault key.
     ///
+    /// Returns a [`SessionGuard`] that auto-deletes the session on drop
+    /// unless [`dismiss`](SessionGuard::dismiss) is called to persist it.
+    ///
     /// # Parameters
     /// - `pid` — Partition to create the session in.
     /// - `api_rev` — 8-byte API revision negotiated during OpenSession.
@@ -75,7 +126,7 @@ pub trait HsmSessionManager {
     ///   `NeedsRenegotiation` state). If `None`, creates a new session.
     ///
     /// # Returns
-    /// The logical [`HsmSessId`] (0–7).
+    /// A [`SessionGuard`] wrapping the logical [`HsmSessId`] (0–7).
     ///
     /// # Errors
     /// - [`HsmError::VaultSessionLimitReached`] — no free slots.
@@ -88,7 +139,7 @@ pub trait HsmSessionManager {
         api_rev: &[u8],
         masking_key: &[u8],
         id: Option<HsmSessId>,
-    ) -> HsmResult<HsmSessId>;
+    ) -> HsmResult<SessionGuard<'_, Self>>;
 
     /// Delete (close) a session.
     ///
