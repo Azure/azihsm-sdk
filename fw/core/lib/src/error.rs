@@ -9,7 +9,7 @@ use azihsm_fw_hsm_pal_traits::*;
 
 // ── Host status codes (CQE DW3 bits 27:17) ─────────────────────────
 //
-// Layout matches mcr-hsm: `(type << 8) | code` where type = GENERIC = 0.
+// Layout: `(type << 8) | code` where type = GENERIC = 0.
 
 /// CQE host status codes written to DW3.
 pub(crate) struct HostStatus;

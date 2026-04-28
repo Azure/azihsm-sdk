@@ -3,7 +3,7 @@
 
 use crate::*;
 
-/// Trait that reports the encoded length of an object in Manticore Binary
+/// Trait that reports the encoded length of an object in AZIHSM Binary
 /// Object Representation (MBOR).
 pub trait MborLen {
     /// Accumulates the encoded length of the object in MBOR.

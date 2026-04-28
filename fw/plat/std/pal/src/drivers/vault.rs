@@ -60,7 +60,7 @@ const BLOB_BLOCK_ALIGNMENT: usize = 8;
 // ---------------------------------------------------------------------------
 
 /// Returns the raw key blob size on the physical device for a given key
-/// kind.  Source: `mcr-hsm EntryKind::raw_key_blob_size()`.
+/// kind.  Source: `EntryKind::raw_key_blob_size()`.
 ///
 /// Returns `None` for `Free` or unknown kinds, and for variable-length
 /// HMAC kinds (whose size depends on the actual key).

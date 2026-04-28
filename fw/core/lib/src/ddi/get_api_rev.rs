@@ -15,11 +15,10 @@ use super::*;
 ///
 /// 1. **Rev check** — `hdr.rev` must be `None`. GetApiRev is the
 ///    bootstrapping command — the caller doesn't know the revision yet.
-///    Mirrors mcr-hsm `validate_req_hdr` (line 1087).
 ///
 /// 2. **Body decode** — Decodes `DdiGetApiRevReq` (empty struct) to
 ///    verify the request body contains no unexpected fields and no
-///    trailing bytes. Mirrors mcr-hsm `decode_buf` (line 67).
+///    trailing bytes.
 ///
 /// 3. **Response** — Encodes `DdiGetApiRevCmdResp` with min/max API
 ///    revision into `smem`.

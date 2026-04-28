@@ -4,7 +4,7 @@
 //! Per-partition session table with logical → physical ID remapping.
 //!
 //! This module implements the session slot allocator for the standard
-//! PAL, mirroring the hardware session table layout from the mcr-hsm
+//! PAL, mirroring the hardware session table layout.
 //! reference firmware.  Each partition has its own independent
 //! [`SessionTable`] with up to [`MAX_SESSIONS`] (8) concurrent sessions.
 //!

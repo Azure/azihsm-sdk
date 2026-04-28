@@ -30,7 +30,7 @@ impl From<MborDecodeError> for azihsm_fw_hsm_pal_traits::HsmError {
     }
 }
 
-/// Trait that decodes an object in Manticore Binary Object Representation
+/// Trait that decodes an object in AZIHSM Binary Object Representation
 /// (MBOR).
 pub trait MborDecode<'b>: Sized {
     /// Decodes the object from the given decoder.
@@ -125,7 +125,7 @@ impl<const N: usize> MborDecode<'_> for [u8; N] {
     }
 }
 
-/// Decoder for Manticore Binary Object Representation (MBOR).
+/// Decoder for AZIHSM Binary Object Representation (MBOR).
 ///
 /// Borrows the input buffer and returns sub-slices on decode, enabling
 /// zero-copy access to byte array fields.

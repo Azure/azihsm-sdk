@@ -19,7 +19,7 @@
 //!
 //! # Error handling
 //!
-//! Two-tier model matching mcr-hsm:
+//! Two-tier model:
 //!
 //! - **Pre-decode** (SQE validation, inbound DMA, header decode):
 //!   Errors return [`OpError`] → CQE gets host status code, no DDI body.
@@ -188,7 +188,7 @@ impl<P: HsmPal> Hsm<P> {
 
     /// Validate SQE session flags against the decoded DDI header.
     ///
-    /// Three rules matching mcr-hsm `validate_session_hijack_protection`:
+    /// Three rules for session hijack protection:
     ///
     /// 1. SQE `session_ctrl` must match the DDI op's expected kind.
     /// 2. `ctrl`/`id_valid` combinations must be consistent.

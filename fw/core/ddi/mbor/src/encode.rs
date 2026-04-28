@@ -18,7 +18,7 @@ impl From<MborEncodeError> for azihsm_fw_hsm_pal_traits::HsmError {
     }
 }
 
-/// Trait that encodes an object in Manticore Binary Object Representation
+/// Trait that encodes an object in AZIHSM Binary Object Representation
 /// (MBOR).
 pub trait MborEncode {
     /// Encodes the object into the given encoder.
@@ -92,7 +92,7 @@ impl MborEncode for MborPaddedByteSlice<'_> {
     }
 }
 
-/// Encoder for Manticore Binary Object Representation (MBOR).
+/// Encoder for AZIHSM Binary Object Representation (MBOR).
 ///
 /// Operates in one of two modes:
 /// - **Checked** (`new`): every `encode()` call validates buffer capacity.

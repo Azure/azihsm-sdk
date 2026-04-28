@@ -560,8 +560,7 @@ impl<'a> Cqe<'a> {
 
 /// Session control kind — derived from the DDI opcode.
 ///
-/// Matches mcr-hsm `HsmSessionControlKind`. Values align with CQE DW0
-/// session_ctrl field (2 bits).
+/// Values align with CQE DW0 session_ctrl field (2 bits).
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum SessionCtrl {
