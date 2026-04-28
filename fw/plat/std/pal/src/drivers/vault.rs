@@ -27,8 +27,8 @@
 //! ## Session scoping
 //!
 //! Keys can optionally be bound to a session via `session_id`.
-//! [`KeyVault::delete_by_session`] removes all keys matching a given
-//! session ID — called during session close.
+//! [`KeyVault::delete_by_session_key`] removes all keys matching a given
+//! session key ID — called during session close.
 
 use azihsm_fw_hsm_pal_traits::*;
 
@@ -143,8 +143,10 @@ struct VaultEntry {
     kind: HsmVaultKeyKind,
     /// PKCS#11-inspired attribute bitfield.
     attrs: HsmVaultKeyAttrs,
-    /// Session binding — `None` for app-scoped keys.
-    session_id: Option<HsmSessId>,
+    /// Physical session key ID — `None` for app-scoped keys, `Some(phys)`
+    /// for session-scoped keys where `phys` is the vault key ID of the
+    /// session blob.
+    session_key_id: Option<HsmKeyId>,
     /// Arbitrary per-key metadata blob.
     meta: Vec<u8>,
     /// Firmware-equivalent storage cost (for capacity tracking).
@@ -197,7 +199,7 @@ impl KeyVault {
         &mut self,
         key: &[u8],
         kind: HsmVaultKeyKind,
-        session_id: Option<HsmSessId>,
+        session_key_id: Option<HsmKeyId>,
         attrs: HsmVaultKeyAttrs,
         meta: &[u8],
     ) -> HsmResult<HsmKeyId> {
@@ -215,7 +217,7 @@ impl KeyVault {
                 key: key.to_vec(),
                 kind,
                 attrs,
-                session_id,
+                session_key_id,
                 meta: meta.to_vec(),
                 cost,
             });
@@ -246,12 +248,12 @@ impl KeyVault {
         Ok(())
     }
 
-    /// Delete all keys bound to the given session.
-    pub fn delete_by_session(&mut self, session_id: HsmSessId) -> HsmResult<()> {
+    /// Delete all keys bound to the given physical session key ID.
+    pub fn delete_by_session_key(&mut self, session_key_id: HsmKeyId) -> HsmResult<()> {
         for table in &mut self.tables {
             for slot in table.entries.iter_mut() {
                 if let Some(entry) = slot {
-                    if entry.session_id == Some(session_id) {
+                    if entry.session_key_id == Some(session_key_id) {
                         table.used_bytes -= entry.cost;
                         *slot = None;
                     }
@@ -394,20 +396,20 @@ mod tests {
     }
 
     #[test]
-    fn delete_by_session() {
+    fn delete_by_session_key() {
         let mut vault = KeyVault::new(1);
         let key = [0u8; 32];
-        let sess = Some(HsmSessId::from(5u16));
+        let sess_key = Some(HsmKeyId::from(5u16));
 
         // 3 session-scoped keys.
         let s0 = vault
-            .create(&key, HsmVaultKeyKind::Aes256, sess, aes256_attrs(), &[])
+            .create(&key, HsmVaultKeyKind::Aes256, sess_key, aes256_attrs(), &[])
             .unwrap();
         let s1 = vault
-            .create(&key, HsmVaultKeyKind::Aes256, sess, aes256_attrs(), &[])
+            .create(&key, HsmVaultKeyKind::Aes256, sess_key, aes256_attrs(), &[])
             .unwrap();
         let s2 = vault
-            .create(&key, HsmVaultKeyKind::Aes256, sess, aes256_attrs(), &[])
+            .create(&key, HsmVaultKeyKind::Aes256, sess_key, aes256_attrs(), &[])
             .unwrap();
 
         // 2 app-scoped keys.
@@ -418,7 +420,7 @@ mod tests {
             .create(&key, HsmVaultKeyKind::Aes256, None, aes256_attrs(), &[])
             .unwrap();
 
-        vault.delete_by_session(HsmSessId::from(5u16)).unwrap();
+        vault.delete_by_session_key(HsmKeyId::from(5u16)).unwrap();
 
         // Session keys gone.
         assert!(vault.key(s0).is_err());
@@ -430,10 +432,10 @@ mod tests {
     }
 
     #[test]
-    fn delete_by_session_no_match() {
+    fn delete_by_session_key_no_match() {
         let mut vault = KeyVault::new(1);
         // No keys at all — should succeed silently.
-        vault.delete_by_session(HsmSessId::from(99u16)).unwrap();
+        vault.delete_by_session_key(HsmKeyId::from(99u16)).unwrap();
     }
 
     #[test]

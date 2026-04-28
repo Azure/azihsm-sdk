@@ -25,8 +25,8 @@ use crate::drivers::vault::KeyVault;
 impl HsmVault for StdHsmPal {
     /// Store a new key in the partition's vault.
     ///
-    /// Delegates to [`KeyVault::create`] which scans tables for the first
-    /// with a free entry slot and enough firmware-equivalent byte budget.
+    /// If `session_id` is `Some`, maps the logical session ID to the
+    /// physical vault key ID via the session table before storing.
     fn vault_key_create(
         &self,
         pid: HsmPartId,
@@ -37,7 +37,10 @@ impl HsmVault for StdHsmPal {
         meta: &[u8],
     ) -> HsmResult<HsmKeyId> {
         let entry = self.active_part_mut(pid)?;
-        entry.vault.create(key, kind, session_id, attrs, meta)
+        let session_key_id = session_id
+            .map(|sid| entry.session_table.physical_id(sid))
+            .transpose()?;
+        entry.vault.create(key, kind, session_key_id, attrs, meta)
     }
 
     /// Delete a key from the partition's vault.
@@ -46,10 +49,14 @@ impl HsmVault for StdHsmPal {
         entry.vault.delete(key_id)
     }
 
-    /// Delete all session-scoped keys for the given session.
+    /// Delete all session-scoped keys for the given logical session.
+    ///
+    /// Maps the logical session ID to the physical vault key ID, then
+    /// removes all vault entries bound to that physical ID.
     fn vault_key_delete_by_session(&self, pid: HsmPartId, session_id: HsmSessId) -> HsmResult<()> {
         let entry = self.active_part_mut(pid)?;
-        entry.vault.delete_by_session(session_id)
+        let physical_id = entry.session_table.physical_id(session_id)?;
+        entry.vault.delete_by_session_key(physical_id)
     }
 
     /// Clear all keys from the partition's vault.
