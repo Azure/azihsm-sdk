@@ -20,6 +20,7 @@ use crate::integration_tests;
 use crate::nextest::Nextest;
 use crate::nextest_report::NextestReport;
 use crate::setup::Setup;
+use crate::validate_members::ValidateMembers;
 use crate::Xtask;
 use crate::XtaskCtx;
 
@@ -31,6 +32,9 @@ struct Stage {
     /// Run copyright checks
     #[clap(long)]
     copyright: bool,
+    /// Run validate members checks
+    #[clap(long)]
+    validate_members: bool,
     /// Run audit checks
     #[clap(long)]
     audit: bool,
@@ -100,6 +104,7 @@ impl Xtask for Precheck {
         let stage = self.stage.unwrap_or(Stage {
             setup: true,
             copyright: true,
+            validate_members: true,
             audit: true,
             fmt: true,
             clippy: true,
@@ -135,6 +140,11 @@ impl Xtask for Precheck {
         // Run Copyright
         if stage.copyright || stage.all {
             Copyright { fix: false }.run(ctx.clone())?;
+        }
+
+        // Run ValidateMembers
+        if stage.validate_members || stage.all {
+            ValidateMembers { fix: false }.run(ctx.clone())?;
         }
 
         // Run Audit

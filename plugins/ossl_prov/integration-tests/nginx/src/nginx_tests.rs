@@ -87,10 +87,10 @@ mod integration {
 
         run_setup(testfiles_dir, &keymat_dir)?;
 
-        // Install nginx.conf and start the daemon with the generated
-        // OPENSSL_CONF pointing into the keymat directory.
+        // Start the daemon with the generated OPENSSL_CONF pointing
+        // into the keymat directory.
         let nginx_conf = keymat_dir.join("nginx.conf");
-        start_nginx(&keymat_dir, &nginx_conf)?;
+        let _nginx = start_nginx(&keymat_dir, &nginx_conf)?;
 
         let mut first_failure: Option<Failed> = None;
         for script in ASSERTION_SCRIPTS {
@@ -105,8 +105,6 @@ mod integration {
                 }
             }
         }
-
-        stop_nginx();
 
         match first_failure {
             Some(e) => Err(e),
@@ -274,12 +272,15 @@ default_properties = ?provider=azihsm
         fs::write(&conf_path, content).expect("Failed to write openssl-cli.cnf");
     }
 
-    /// Generates the NGINX config with absolute paths to key material.
-    ///
-    /// The certificate and masked key paths point into the keymat directory
-    /// instead of the static `/etc/azihsm/` paths used by the production
-    /// `nginx-example/` config.
+    /// Generates the NGINX config with absolute paths into the keymat directory.
     fn generate_nginx_conf(keymat_dir: &Path) {
+        let logs_dir = keymat_dir.join("logs");
+        let tmp_dir = keymat_dir.join("tmp");
+        for sub in ["client_body", "proxy", "fastcgi", "uwsgi", "scgi"] {
+            fs::create_dir_all(tmp_dir.join(sub)).expect("Failed to create nginx temp directories");
+        }
+        fs::create_dir_all(&logs_dir).expect("Failed to create nginx logs directory");
+
         let conf_path = keymat_dir.join("nginx.conf");
         let content = format!(
             "\
@@ -290,14 +291,21 @@ env OPENSSL_CONF;
 env AZIHSM_CREDENTIALS_ID;
 env AZIHSM_CREDENTIALS_PIN;
 
-error_log /var/log/nginx/error.log info;
-pid       /run/nginx.pid;
+error_log {dir}/logs/error.log info;
+pid       {dir}/nginx.pid;
 
 events {{
     worker_connections 1024;
 }}
 
 http {{
+    client_body_temp_path {dir}/tmp/client_body;
+    proxy_temp_path       {dir}/tmp/proxy;
+    fastcgi_temp_path     {dir}/tmp/fastcgi;
+    uwsgi_temp_path       {dir}/tmp/uwsgi;
+    scgi_temp_path        {dir}/tmp/scgi;
+    access_log            {dir}/logs/access.log;
+
     ssl_protocols       TLSv1.2 TLSv1.3;
     ssl_prefer_server_ciphers on;
     ssl_session_cache   shared:SSL:10m;
@@ -378,56 +386,74 @@ http {{
         }
     }
 
+    /// RAII guard that stops the NGINX daemon when dropped.
+    ///
+    /// Best-effort — the negative test script may have already stopped
+    /// NGINX, so a failed stop is silently ignored.
+    #[must_use = "NginxGuard stops nginx on drop — dropping it immediately defeats the purpose"]
+    struct NginxGuard {
+        keymat_dir: PathBuf,
+    }
+
+    impl Drop for NginxGuard {
+        fn drop(&mut self) {
+            let nginx_conf = self.keymat_dir.join("nginx.conf");
+            let error_log = self.keymat_dir.join("logs").join("error.log");
+            let openssl_conf = self.keymat_dir.join("openssl-provider.cnf");
+            let _ = Command::new("nginx")
+                .args(["-s", "stop"])
+                .arg("-p")
+                .arg(&self.keymat_dir)
+                .arg("-e")
+                .arg(&error_log)
+                .arg("-c")
+                .arg(&nginx_conf)
+                .env_remove("LD_LIBRARY_PATH")
+                .env("OPENSSL_CONF", &openssl_conf)
+                .envs(credential_env())
+                .status();
+        }
+    }
+
     /// Validates the NGINX config and starts the daemon.
     ///
-    /// Uses `sudo env -u LD_LIBRARY_PATH` to strip the custom OpenSSL 3.0.3
-    /// lib path that nextest inherits — NGINX links against system OpenSSL.
-    /// Explicit `K=V` args ensure `OPENSSL_CONF` and credentials reach the
-    /// NGINX process regardless of sudo's `env_reset` policy.
-    fn start_nginx(keymat_dir: &Path, nginx_conf: &Path) -> Result<(), Failed> {
+    /// Uses `env -u LD_LIBRARY_PATH` to strip the custom OpenSSL lib
+    /// path that nextest inherits — NGINX links against system OpenSSL.
+    fn start_nginx(keymat_dir: &Path, nginx_conf: &Path) -> Result<NginxGuard, Failed> {
         let openssl_conf = keymat_dir.join("openssl-provider.cnf");
-
-        // Install generated nginx.conf where NGINX can find it
-        let status = Command::new("sudo")
-            .args(["cp"])
-            .arg(nginx_conf)
-            .arg("/etc/nginx/nginx.conf")
-            .status()
-            .expect("Failed to copy nginx.conf");
-        if !status.success() {
-            return Err("Failed to install nginx.conf".into());
-        }
-
+        let error_log = keymat_dir.join("logs").join("error.log");
         let creds = credential_env();
-        let env_args: Vec<String> =
-            std::iter::once(format!("OPENSSL_CONF={}", openssl_conf.display()))
-                .chain(creds.iter().map(|(k, v)| format!("{k}={v}")))
-                .collect();
 
-        let mut validate = vec![
-            "env".to_string(),
-            "-u".to_string(),
-            "LD_LIBRARY_PATH".to_string(),
+        let nginx_flags: Vec<String> = vec![
+            "-p".into(),
+            keymat_dir.display().to_string(),
+            "-e".into(),
+            error_log.display().to_string(),
+            "-c".into(),
+            nginx_conf.display().to_string(),
         ];
-        validate.extend(env_args.clone());
-        validate.extend(["nginx", "-t", "-c", "/etc/nginx/nginx.conf"].map(String::from));
-        let status = Command::new("sudo")
-            .args(&validate)
+
+        let status = Command::new("env")
+            .arg("-u")
+            .arg("LD_LIBRARY_PATH")
+            .arg(format!("OPENSSL_CONF={}", openssl_conf.display()))
+            .args(creds.iter().map(|(k, v)| format!("{k}={v}")))
+            .arg("nginx")
+            .arg("-t")
+            .args(&nginx_flags)
             .status()
             .expect("Failed to run nginx -t");
         if !status.success() {
             return Err("nginx config validation failed (nginx -t)".into());
         }
 
-        let mut start = vec![
-            "env".to_string(),
-            "-u".to_string(),
-            "LD_LIBRARY_PATH".to_string(),
-        ];
-        start.extend(env_args);
-        start.extend(["nginx", "-c", "/etc/nginx/nginx.conf"].map(String::from));
-        let status = Command::new("sudo")
-            .args(&start)
+        let status = Command::new("env")
+            .arg("-u")
+            .arg("LD_LIBRARY_PATH")
+            .arg(format!("OPENSSL_CONF={}", openssl_conf.display()))
+            .args(creds.iter().map(|(k, v)| format!("{k}={v}")))
+            .arg("nginx")
+            .args(&nginx_flags)
             .status()
             .expect("Failed to start nginx");
         if !status.success() {
@@ -435,20 +461,12 @@ http {{
         }
 
         std::thread::sleep(std::time::Duration::from_secs(2));
-        Ok(())
-    }
-
-    /// Stops NGINX (best-effort — the negative test may have already stopped it).
-    fn stop_nginx() {
-        let _ = Command::new("sudo").args(["nginx", "-s", "stop"]).status();
+        Ok(NginxGuard {
+            keymat_dir: keymat_dir.to_path_buf(),
+        })
     }
 
     /// Executes a single test shell script.
-    ///
-    /// Scripts receive useful context via environment variables:
-    /// - `KEYMAT_DIR`: path to the key material directory
-    /// - `PROVIDER_SO`: absolute path to `azihsm_provider.so`
-    /// - `NGINX_CONF`: path to the generated `nginx.conf`
     ///
     /// `LD_LIBRARY_PATH` is stripped so test scripts use system OpenSSL.
     fn run_test_script(
@@ -457,12 +475,17 @@ http {{
         provider_so: &Path,
         nginx_conf: &Path,
     ) -> Result<(), Failed> {
+        let error_log = keymat_dir.join("logs").join("error.log");
+        let openssl_conf = keymat_dir.join("openssl-provider.cnf");
         let output = Command::new("bash")
             .arg(script_path)
             .env_remove("LD_LIBRARY_PATH")
             .env("KEYMAT_DIR", keymat_dir)
             .env("PROVIDER_SO", provider_so)
             .env("NGINX_CONF", nginx_conf)
+            .env("NGINX_PREFIX", keymat_dir)
+            .env("NGINX_ERROR_LOG", &error_log)
+            .env("OPENSSL_CONF", &openssl_conf)
             .envs(credential_env())
             .output()
             .expect("Failed to run test script");

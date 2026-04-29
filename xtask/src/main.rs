@@ -34,6 +34,7 @@ mod openssl_install;
 mod precheck;
 mod rustup_component_add;
 mod setup;
+mod validate_members;
 
 /// Common context passed into every Xtask
 #[derive(Clone)]
@@ -77,6 +78,7 @@ enum Commands {
     Setup(setup::Setup),
     Install(install::Install),
     RustupComponentAdd(rustup_component_add::RustupComponentAdd),
+    ValidateMembers(validate_members::ValidateMembers),
 }
 
 fn main() {
@@ -118,5 +120,6 @@ fn try_main() -> anyhow::Result<()> {
         Commands::Setup(task) => task.run(ctx),
         Commands::Install(task) => task.run(ctx),
         Commands::RustupComponentAdd(task) => task.run(ctx),
+        Commands::ValidateMembers(task) => task.run(ctx),
     }
 }

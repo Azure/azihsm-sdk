@@ -16,6 +16,7 @@ junit-parser.workspace = true
 jzon.workspace = true
 log.workspace = true
 similar = { features = ["text"], workspace = true }
+toml_edit.workspace = true
 xshell.workspace = true
 
 [lints]
