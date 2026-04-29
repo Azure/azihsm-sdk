@@ -18,7 +18,9 @@ use xshell::Shell;
 const OPENSSL_VERSION: &str = "3.0.3";
 
 #[cfg(target_os = "linux")]
-const OPENSSL_INSTALL_DIR: &str = "/opt/openssl-3.0.3";
+fn default_install_dir() -> anyhow::Result<PathBuf> {
+    Ok(std::env::current_dir()?.join("target").join("openssl-3.0.3"))
+}
 
 /// Checks whether an OpenSSL installation is available, without installing.
 #[cfg(target_os = "linux")]
@@ -40,9 +42,9 @@ pub fn check_openssl() -> anyhow::Result<PathBuf> {
         Err(_) => {}
     }
 
-    let install_dir = PathBuf::from(OPENSSL_INSTALL_DIR);
+    let install_dir = default_install_dir()?;
     if install_dir.is_dir() {
-        log::info!("using cached OpenSSL at {OPENSSL_INSTALL_DIR}");
+        log::info!("using cached OpenSSL at {}", install_dir.display());
         return Ok(install_dir);
     }
 
@@ -64,10 +66,11 @@ pub fn ensure_openssl() -> anyhow::Result<PathBuf> {
         return Ok(path);
     }
 
+    let install_dir = default_install_dir()?;
+    let prefix = install_dir.display();
+
     // Download and build (mirrors CI exactly)
-    log::info!(
-        "OPENSSL_DIR not set — building OpenSSL {OPENSSL_VERSION} into {OPENSSL_INSTALL_DIR}"
-    );
+    log::info!("OPENSSL_DIR not set — building OpenSSL {OPENSSL_VERSION} into {prefix}");
 
     // Preflight: check required tools before starting a long build.
     let sh = Shell::new()?;
@@ -78,12 +81,6 @@ pub fn ensure_openssl() -> anyhow::Result<PathBuf> {
                  Install build prerequisites: sudo apt-get install build-essential curl"
             );
         }
-    }
-    if cmd!(sh, "sudo -n true").quiet().run().is_err() {
-        anyhow::bail!(
-            "sudo access required to install OpenSSL into {OPENSSL_INSTALL_DIR}. \
-             Either run with sudo or set OPENSSL_DIR to a user-writable installation."
-        );
     }
 
     let url = format!(
@@ -97,17 +94,13 @@ pub fn ensure_openssl() -> anyhow::Result<PathBuf> {
     cmd!(sh, "tar xz -C /tmp -f {tarball}").run()?;
 
     sh.change_dir(&src_dir);
-    cmd!(
-        sh,
-        "./Configure --prefix={OPENSSL_INSTALL_DIR} --libdir=lib"
-    )
-    .run()?;
+    cmd!(sh, "./Configure --prefix={install_dir} --libdir=lib").run()?;
 
     let nproc = cmd!(sh, "nproc").read()?;
     let nproc = nproc.trim();
     cmd!(sh, "make -j{nproc}").run()?;
-    cmd!(sh, "sudo make install_sw").run()?;
+    cmd!(sh, "make install_sw").run()?;
 
-    log::info!("OpenSSL {OPENSSL_VERSION} installed to {OPENSSL_INSTALL_DIR}");
-    Ok(PathBuf::from(OPENSSL_INSTALL_DIR))
+    log::info!("OpenSSL {OPENSSL_VERSION} installed to {prefix}");
+    Ok(install_dir)
 }

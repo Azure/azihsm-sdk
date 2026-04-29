@@ -31,7 +31,7 @@ jobs:
             build-mode: none
 
     env:
-      LD_LIBRARY_PATH: /opt/openssl-3.0.3/lib
+      LD_LIBRARY_PATH: ${{ github.workspace }}/target/openssl-3.0.3/lib
 
     steps:
     - name: Checkout repository
@@ -46,8 +46,8 @@ jobs:
       id: cache-openssl
       uses: actions/cache@v5
       with:
-        path: /opt/openssl-3.0.3
-        key: openssl-3.0.3-shared-linux-x64
+        path: target/openssl-3.0.3
+        key: openssl-3.0.3-target-linux-x64
 
     - name: Restore Cargo cache
       id: cargo-cache
@@ -78,7 +78,7 @@ jobs:
       if: matrix.build-mode == 'manual'
       shell: bash
       env:
-        OPENSSL_DIR: /opt/openssl-3.0.3
+        OPENSSL_DIR: ${{ github.workspace }}/target/openssl-3.0.3
       run: |
         cargo xtask build --release --package azihsm_ossl_provider
 

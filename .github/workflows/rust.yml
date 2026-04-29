@@ -23,8 +23,8 @@ jobs:
         working-directory: .
 
     env:
-      OPENSSL_DIR: /opt/openssl-3.0.3
-      LD_LIBRARY_PATH: /opt/openssl-3.0.3/lib
+      OPENSSL_DIR: ${{ github.workspace }}/target/openssl-3.0.3
+      LD_LIBRARY_PATH: ${{ github.workspace }}/target/openssl-3.0.3/lib
 
     steps:
     - uses: actions/checkout@v6
@@ -37,8 +37,8 @@ jobs:
       id: cache-openssl
       uses: actions/cache@v5
       with:
-        path: /opt/openssl-3.0.3
-        key: openssl-3.0.3-shared-linux-x64
+        path: target/openssl-3.0.3
+        key: openssl-3.0.3-target-linux-x64
 
     - name: Restore Cargo cache
       id: cargo-cache
@@ -122,20 +122,20 @@ jobs:
       id: cache-openssl
       uses: actions/cache@v5
       with:
-        path: /opt/openssl-3.0.3
-        key: openssl-3.0.3-shared-linux-x64
+        path: target/openssl-3.0.3
+        key: openssl-3.0.3-target-linux-x64
 
     - name: Setup (includes OpenSSL on cache miss)
       run: cargo xtask setup ${{ steps.cache-openssl.outputs.cache-hit == 'true' && '--skip-openssl' || '' }}
 
     - name: Ensure OpenSSL default config exists
       run: |
-        sudo mkdir -p /opt/openssl-3.0.3/ssl
-        sudo touch /opt/openssl-3.0.3/ssl/openssl.cnf
+        mkdir -p target/openssl-3.0.3/ssl
+        touch target/openssl-3.0.3/ssl/openssl.cnf
 
     - name: Build azihsm with OpenSSL 3.0.3
       env:
-        OPENSSL_DIR: /opt/openssl-3.0.3
+        OPENSSL_DIR: ${{ github.workspace }}/target/openssl-3.0.3
       run: |
         cargo build -p azihsm_api_native --features mock
         cargo build -p azihsm_ossl_provider --features mock
@@ -149,9 +149,9 @@ jobs:
 
     - name: Generate dev key material
       env:
-        LD_LIBRARY_PATH: /opt/openssl-3.0.3/lib
+        LD_LIBRARY_PATH: ${{ github.workspace }}/target/openssl-3.0.3/lib
       run: |
-        OSSL=/opt/openssl-3.0.3/bin/openssl
+        OSSL=${{ github.workspace }}/target/openssl-3.0.3/bin/openssl
         # Credential files (fallback if env vars are unset)
         printf '\x70\xFC\xF7\x30\xB8\x76\x42\x38\xB8\x35\x80\x10\xCE\x8A\x3F\x76' > credentials_id.bin
         printf '\xDB\x3D\xC7\x7F\xC2\x2E\x43\x00\x80\xD4\x1B\x31\xB6\xF0\x48\x00' > credentials_pin.bin
@@ -164,11 +164,11 @@ jobs:
 
     - name: Smoke test provider
       env:
-        LD_LIBRARY_PATH: /opt/openssl-3.0.3/lib
+        LD_LIBRARY_PATH: ${{ github.workspace }}/target/openssl-3.0.3/lib
         AZIHSM_CREDENTIALS_ID: "70fcf730b8764238b8358010ce8a3f76"
         AZIHSM_CREDENTIALS_PIN: "db3dc77fc22e430080d41b31b6f04800"
       run: |
-        /opt/openssl-3.0.3/bin/openssl genpkey \
+        ${{ github.workspace }}/target/openssl-3.0.3/bin/openssl genpkey \
           -provider-path /usr/lib/ossl-modules \
           -provider default -provider azihsm_provider \
           -propquery "?provider=azihsm" \
@@ -177,8 +177,8 @@ jobs:
 
     - name: Run CLI integration tests
       env:
-        OPENSSL_BIN: /opt/openssl-3.0.3/bin/openssl
-        OPENSSL_LIB: /opt/openssl-3.0.3/lib
+        OPENSSL_BIN: ${{ github.workspace }}/target/openssl-3.0.3/bin/openssl
+        OPENSSL_LIB: ${{ github.workspace }}/target/openssl-3.0.3/lib
         PROVIDER_PATH: /usr/lib/ossl-modules
         PROPQUERY: "?provider=azihsm"
         AZIHSM_CREDENTIALS_ID: "70fcf730b8764238b8358010ce8a3f76"
@@ -187,7 +187,7 @@ jobs:
 
     - name: Run C API integration tests
       env:
-        OPENSSL_DIR: /opt/openssl-3.0.3
+        OPENSSL_DIR: ${{ github.workspace }}/target/openssl-3.0.3
         AZIHSM_CREDENTIALS_ID: "70fcf730b8764238b8358010ce8a3f76"
         AZIHSM_CREDENTIALS_PIN: "db3dc77fc22e430080d41b31b6f04800"
       run: cargo xtask precheck --nextest --package provider-integration-tests-capi --features integration --profile ci-provider-integration
@@ -204,8 +204,8 @@ jobs:
 
     - name: NGINX integration tests
       env:
-        OPENSSL_BIN: /opt/openssl-3.0.3/bin/openssl
-        OPENSSL_LIB: /opt/openssl-3.0.3/lib
+        OPENSSL_BIN: ${{ github.workspace }}/target/openssl-3.0.3/bin/openssl
+        OPENSSL_LIB: ${{ github.workspace }}/target/openssl-3.0.3/lib
         PROVIDER_PATH: /usr/lib/ossl-modules
         AZIHSM_CREDENTIALS_ID: "70fcf730b8764238b8358010ce8a3f76"
         AZIHSM_CREDENTIALS_PIN: "db3dc77fc22e430080d41b31b6f04800"
