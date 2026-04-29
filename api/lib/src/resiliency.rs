@@ -145,10 +145,10 @@ pub trait PotaEndorsementCallback: Send + Sync {
 /// `HsmPartition` handle from inside the callback, or a deadlock will
 /// occur.
 pub trait MobkProviderCallback: Send + Sync {
-    /// Return the caller's OBK (owner backup key).
+    /// Return the caller's MOBK (masked owner backup key).
     ///
-    /// The returned bytes are the raw OBK key material, identical to what
-    /// was originally passed via `HsmOwnerBackupKeyConfig::new(Caller, Some(&obk))`.
+    /// The returned bytes are the raw MOBK key material, identical to what
+    /// was originally passed via `HsmOwnerBackupKeyConfig::new(Caller, Some(&mobk))`.
     fn get_mobk(&self) -> HsmResult<Vec<u8>>;
 }
 

@@ -1159,7 +1159,7 @@ impl HsmPartitionInner {
         self.bmk = bmk;
     }
 
-    /// Sets themasked owner backup key (MOBK).
+    /// Sets the masked owner backup key (MOBK).
     ///
     /// Updates the internal state with the provided key material.
     ///
@@ -1238,7 +1238,7 @@ impl HsmPartitionInner {
             ddi::get_mobk_from_config(&self.dev, self.api_rev, &obk_config)?
         };
 
-        //Update mobk , as init_bk3 is successfull and requires the mobk for subsequent init_part calls, even establish credentials fails.
+        //Update mobk , as init_bk3 is successful and requires the mobk for subsequent init_part calls, even establish credentials fails.
         self.set_mobk(mobk.clone());
 
         let result = ddi::init_part(
