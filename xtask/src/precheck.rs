@@ -219,7 +219,10 @@ impl Xtask for Precheck {
                         package: Some("azihsm_ddi".to_string()),
                         no_default_features: false,
                         filterset: None,
-                        profile: self.profile.clone().or(Some("ci-mock-table-64".to_string())),
+                        profile: self
+                            .profile
+                            .clone()
+                            .or(Some("ci-mock-table-64".to_string())),
                         exclude: self.exclude.clone(),
                     }
                     .run(ctx.clone())?;
@@ -252,10 +255,11 @@ impl Xtask for Precheck {
                     filterset: None,
                     profile: Some("ci-mock".to_string()),
                     exclude: vec![
-                            "provider-integration-tests-cli".to_string(),
-                            "provider-integration-tests-capi".to_string()
-                        ],
-                }.run(ctx.clone())?;
+                        "provider-integration-tests-cli".to_string(),
+                        "provider-integration-tests-capi".to_string(),
+                    ],
+                }
+                .run(ctx.clone())?;
 
                 // SDK Run resiliency fault-injection tests with coverage (requires res-test feature for the fault-injection DDI device)
                 Coverage {
@@ -265,7 +269,8 @@ impl Xtask for Precheck {
                     filterset: Some("test(resiliency::fault_injection::)".to_string()),
                     profile: None,
                     exclude: Vec::new(),
-                }.run(ctx.clone())?;
+                }
+                .run(ctx.clone())?;
             } else {
                 Coverage {
                     features: self.features.clone(),
@@ -274,7 +279,8 @@ impl Xtask for Precheck {
                     filterset: None,
                     profile: self.profile.clone(),
                     exclude: self.exclude.clone(),
-                }.run(ctx.clone())?;
+                }
+                .run(ctx.clone())?;
             }
         }
 
