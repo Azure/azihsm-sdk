@@ -19,7 +19,9 @@ const OPENSSL_VERSION: &str = "3.0.3";
 
 #[cfg(target_os = "linux")]
 fn default_install_dir() -> anyhow::Result<PathBuf> {
-    Ok(std::env::current_dir()?.join("target").join("openssl-3.0.3"))
+    Ok(std::env::current_dir()?
+        .join("target")
+        .join(format!("openssl-{OPENSSL_VERSION}")))
 }
 
 /// Checks whether an OpenSSL installation is available, without installing.
