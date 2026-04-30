@@ -446,6 +446,8 @@ TEST_F(azihsm_ecc_sign_verify, sign_verify_reject_unsupported_algorithm)
         std::vector<uint8_t> data(32, 0x42);
         azihsm_buffer data_buf{ data.data(), static_cast<uint32_t>(data.size()) };
         azihsm_buffer sig_buf{ nullptr, 0 };
+        std::vector<uint8_t> signature(64, 0x24);
+        azihsm_buffer verify_sig_buf{ signature.data(), static_cast<uint32_t>(signature.size()) };
         azihsm_algo algo{};
         algo.id = AZIHSM_ALGO_ID_SHA256;
         algo.params = nullptr;
@@ -456,7 +458,7 @@ TEST_F(azihsm_ecc_sign_verify, sign_verify_reject_unsupported_algorithm)
             AZIHSM_STATUS_UNSUPPORTED_ALGORITHM
         );
         ASSERT_EQ(
-            azihsm_crypt_verify(&algo, pub_key, &data_buf, &data_buf),
+            azihsm_crypt_verify(&algo, pub_key, &data_buf, &verify_sig_buf),
             AZIHSM_STATUS_UNSUPPORTED_ALGORITHM
         );
 

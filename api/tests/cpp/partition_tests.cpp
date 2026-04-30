@@ -239,6 +239,10 @@ TEST(azihsm_part, open_rejects_null_or_empty_path)
     ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
 
     std::vector<azihsm_char> empty_path(1, 0);
+    azihsm_str empty_string_path{ empty_path.data(), 1 };
+    err = azihsm_part_open(&empty_string_path, &part_handle, test_api_rev());
+    ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
+
     azihsm_str zero_len_path{ empty_path.data(), 0 };
     err = azihsm_part_open(&zero_len_path, &part_handle, test_api_rev());
     ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
