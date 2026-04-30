@@ -17,6 +17,7 @@ members = [
   "crates/test_with_tracing/test_with_tracing_macro",
   "crates/tpm",
   "crates/x509",
+  "ddi/emu",
   "ddi/interface",
   "ddi/lib",
   "ddi/mock",
@@ -58,6 +59,7 @@ azihsm_cred_encrypt = { path = "crates/cred_encrypt" }
 azihsm_crypto = { path = "crates/crypto" }
 azihsm_ddi = { path = "ddi/lib" }
 azihsm_ddi_derive = { path = "ddi/serde/derive" }
+azihsm_ddi_emu = { path = "ddi/emu" }
 azihsm_ddi_interface = { path = "ddi/interface" }
 azihsm_ddi_mbor = { path = "ddi/serde/mbor" }
 azihsm_ddi_mock = { path = "ddi/mock" }
@@ -87,6 +89,7 @@ azihsm_fw_hsm_core = { path = "fw/core/lib" }
 azihsm_fw_hsm_core_tracing = { path = "fw/core/tracing" }
 azihsm_fw_hsm_pal_std = { path = "fw/plat/std/pal" }
 azihsm_fw_hsm_pal_traits = { path = "fw/pal/traits" }
+azihsm_fw_hsm_std = { path = "fw/plat/std/lib" }
 azihsm_fw_hsm_std_x509 = { path = "fw/plat/std/x509" }
 azihsm_fw_hsm_std_x509_gen = { path = "fw/plat/std/x509/gen" }
 
