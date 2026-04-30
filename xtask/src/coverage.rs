@@ -39,6 +39,10 @@ pub struct Coverage {
     /// Crates to exclude from nextest (e.g. crates with heavyweight build scripts)
     #[clap(long)]
     pub exclude: Vec<String>,
+
+    /// Skip report generation (accumulate coverage data for a later combined report)
+    #[clap(long)]
+    pub no_report: bool,
 }
 
 impl Xtask for Coverage {
@@ -174,23 +178,25 @@ impl Xtask for Coverage {
             log::warn!("Could not find cmake build directory or azihsm_api_native object. Coverage reports may be incomplete.");
         }
 
-        // Generate cobertura report
-        log::info!("Generating cobertura report");
-        cmd!(
-            sh,
-            "cargo llvm-cov report --cobertura --output-path ./target/reports/cobertura_sdk.xml --ignore-filename-regex xtask*"
-        ).run()?;
+        if !self.no_report {
+            // Generate cobertura report
+            log::info!("Generating cobertura report");
+            cmd!(
+                sh,
+                "cargo llvm-cov report --cobertura --output-path ./target/reports/cobertura_sdk.xml --ignore-filename-regex xtask*"
+            ).run()?;
 
-        // Generate json report
-        log::info!("Generating json report");
-        cmd!(
-            sh,
-            "cargo llvm-cov report --json --summary-only --output-path ./target/reports/sdk-cov.json --ignore-filename-regex xtask*"
-        ).run()?;
+            // Generate json report
+            log::info!("Generating json report");
+            cmd!(
+                sh,
+                "cargo llvm-cov report --json --summary-only --output-path ./target/reports/sdk-cov.json --ignore-filename-regex xtask*"
+            ).run()?;
 
-        // Generate HTML report
-        log::info!("Generating HTML report");
-        cmd!(sh, " cargo llvm-cov report --html --output-dir ./target/reports/sdk-cov/ --ignore-filename-regex xtask*").run()?;
+            // Generate HTML report
+            log::info!("Generating HTML report");
+            cmd!(sh, "cargo llvm-cov report --html --output-dir ./target/reports/sdk-cov/ --ignore-filename-regex xtask*").run()?;
+        }
 
         log::info!("Code coverage completed successfully");
         Ok(())

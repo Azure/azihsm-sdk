@@ -247,7 +247,7 @@ impl Xtask for Precheck {
         // Run code coverage
         if stage.coverage || stage.all {
             if self.package.is_none() && self.features.is_none() {
-                // SDK Run all mock tests with coverage
+                // SDK Run all mock tests with coverage (no_report: accumulate data for combined report)
                 Coverage {
                     features: Some("mock".to_string()),
                     package: None,
@@ -258,17 +258,20 @@ impl Xtask for Precheck {
                         "provider-integration-tests-cli".to_string(),
                         "provider-integration-tests-capi".to_string(),
                     ],
+                    no_report: true,
                 }
                 .run(ctx.clone())?;
 
                 // SDK Run resiliency fault-injection tests with coverage (requires res-test feature for the fault-injection DDI device)
+                // no_report: false so this run generates the combined report of both test suites
                 Coverage {
                     features: Some("mock,res-test".to_string()),
                     package: Some("azihsm_api_tests".to_string()),
                     no_default_features: false,
                     filterset: Some("test(resiliency::fault_injection::)".to_string()),
-                    profile: None,
+                    profile: self.profile.clone().or(Some("ci-mock".to_string())),
                     exclude: Vec::new(),
+                    no_report: false,
                 }
                 .run(ctx.clone())?;
             } else {
@@ -279,6 +282,7 @@ impl Xtask for Precheck {
                     filterset: None,
                     profile: self.profile.clone(),
                     exclude: self.exclude.clone(),
+                    no_report: false,
                 }
                 .run(ctx.clone())?;
             }
