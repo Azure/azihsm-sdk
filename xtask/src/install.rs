@@ -62,6 +62,9 @@ impl Xtask for Install {
             command_args.push(config);
         }
 
+        let retry_toolchain = rust_toolchain.clone();
+        let retry_args = command_args.clone();
+
         let output = cmd!(
             sh,
             "cargo {rust_toolchain...} install {crate_name} {command_args...}"
@@ -73,7 +76,14 @@ impl Xtask for Install {
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             if !self.force && stderr.contains("already exists in destination") {
-                log::info!("{crate_name}: already installed, skipping");
+                log::warn!("{crate_name}: a different version is already installed — reinstalling");
+                let force = "--force";
+                cmd!(
+                    sh,
+                    "cargo {retry_toolchain...} install {crate_name} {retry_args...} {force}"
+                )
+                .quiet()
+                .run()?;
             } else {
                 anyhow::bail!(
                     "command exited with non-zero code `cargo install {crate_name}`: {}\n{}",
