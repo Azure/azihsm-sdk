@@ -12,7 +12,7 @@ test = false
 
 [dependencies]
 azihsm_fw_ddi.workspace = true
-azihsm_fw_ddi_mbor.workspace = true
+azihsm_fw_ddi_mbor = { features = ["trusted-encode"], workspace = true }
 azihsm_fw_ddi_types.workspace = true
 azihsm_fw_hsm_core_tracing.workspace = true
 azihsm_fw_hsm_pal_traits.workspace = true

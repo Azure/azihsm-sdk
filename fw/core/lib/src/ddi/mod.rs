@@ -99,7 +99,18 @@ pub(crate) fn encode_resp_hdr<'a>(
     hdr: &DdiRespHdr,
     smem: &'a mut [u8],
 ) -> HsmResult<MborEncoder<'a>> {
-    let mut encoder = MborEncoder::new(smem);
+    // Pre-compute header framing length
+    let mut acc = MborLenAccumulator::default();
+    MborMap(2).mbor_len(&mut acc);
+    0u8.mbor_len(&mut acc);
+    hdr.mbor_len(&mut acc);
+    1u8.mbor_len(&mut acc);
+
+    if acc.len() > smem.len() {
+        return Err(HsmError::DdiEncodeFailed);
+    }
+
+    let mut encoder = MborEncoder::new_trusted(smem);
     MborMap(2).mbor_encode(&mut encoder)?;
     0u8.mbor_encode(&mut encoder)?;
     hdr.mbor_encode(&mut encoder)?;

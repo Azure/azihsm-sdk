@@ -39,22 +39,24 @@ impl MborEncode for u8 {
 
 impl MborEncode for u16 {
     fn mbor_encode(&self, encoder: &mut MborEncoder<'_>) -> Result<(), MborEncodeError> {
-        encoder.encode(&[U16_MARKER])?;
-        encoder.encode(&self.to_be_bytes())
+        let be = self.to_be_bytes();
+        encoder.encode(&[U16_MARKER, be[0], be[1]])
     }
 }
 
 impl MborEncode for u32 {
     fn mbor_encode(&self, encoder: &mut MborEncoder<'_>) -> Result<(), MborEncodeError> {
-        encoder.encode(&[U32_MARKER])?;
-        encoder.encode(&self.to_be_bytes())
+        let be = self.to_be_bytes();
+        encoder.encode(&[U32_MARKER, be[0], be[1], be[2], be[3]])
     }
 }
 
 impl MborEncode for u64 {
     fn mbor_encode(&self, encoder: &mut MborEncoder<'_>) -> Result<(), MborEncodeError> {
-        encoder.encode(&[U64_MARKER])?;
-        encoder.encode(&self.to_be_bytes())
+        let be = self.to_be_bytes();
+        encoder.encode(&[
+            U64_MARKER, be[0], be[1], be[2], be[3], be[4], be[5], be[6], be[7],
+        ])
     }
 }
 
@@ -66,8 +68,8 @@ impl MborEncode for bool {
 
 impl MborEncode for MborByteSlice<'_> {
     fn mbor_encode(&self, encoder: &mut MborEncoder<'_>) -> Result<(), MborEncodeError> {
-        encoder.encode(&[BYTES_MARKER])?;
-        encoder.encode(&(self.0.len() as u16).to_be_bytes())?;
+        let len_be = (self.0.len() as u16).to_be_bytes();
+        encoder.encode(&[BYTES_MARKER, len_be[0], len_be[1]])?;
         encoder.encode(self.0)
     }
 }
@@ -75,17 +77,11 @@ impl MborEncode for MborByteSlice<'_> {
 impl MborEncode for MborPaddedByteSlice<'_> {
     fn mbor_encode(&self, encoder: &mut MborEncoder<'_>) -> Result<(), MborEncodeError> {
         let pad = BYTES_PAD_MASK & self.1;
+        let len_be = (self.0.len() as u16).to_be_bytes();
 
-        // Marker with padding bits
-        encoder.encode(&[BYTES_MARKER | pad])?;
-
-        // Length (data only, excludes padding)
-        encoder.encode(&(self.0.len() as u16).to_be_bytes())?;
-
-        // Padding bytes
-        for _ in 0..pad {
-            encoder.encode(&[0])?;
-        }
+        // Fuse marker + length + padding into one write (3–6 bytes).
+        let hdr = [BYTES_MARKER | pad, len_be[0], len_be[1], 0, 0, 0];
+        encoder.encode(&hdr[..3 + pad as usize])?;
 
         // Data
         encoder.encode(self.0)
@@ -100,19 +96,28 @@ impl MborEncode for MborPaddedByteSlice<'_> {
 ///   producing zero branches in release builds. The caller must have
 ///   pre-computed the total encoded length via [`MborLenAccumulator`] and
 ///   verified it fits before constructing a trusted encoder.
+///
+/// When the `trusted-encode` crate feature is enabled, **all** encoders use
+/// `debug_assert!`-only bounds checks regardless of constructor, eliminating
+/// the runtime branch entirely.
 pub struct MborEncoder<'a> {
     buffer: &'a mut [u8],
     pos: usize,
+    #[cfg(not(feature = "trusted-encode"))]
     trusted: bool,
 }
 
 impl<'a> MborEncoder<'a> {
     /// Create a checked encoder. Every `encode()` call validates that the
     /// write fits in the remaining buffer.
+    ///
+    /// When the `trusted-encode` feature is enabled, this behaves identically
+    /// to [`new_trusted`](Self::new_trusted).
     pub fn new(buffer: &'a mut [u8]) -> Self {
         Self {
             buffer,
             pos: 0,
+            #[cfg(not(feature = "trusted-encode"))]
             trusted: false,
         }
     }
@@ -128,6 +133,7 @@ impl<'a> MborEncoder<'a> {
         Self {
             buffer,
             pos: 0,
+            #[cfg(not(feature = "trusted-encode"))]
             trusted: true,
         }
     }
@@ -145,17 +151,28 @@ impl<'a> MborEncoder<'a> {
     /// Write `value` into the output buffer and advance `pos`.
     #[inline(always)]
     pub fn encode(&mut self, value: &[u8]) -> Result<(), MborEncodeError> {
-        if self.trusted {
-            debug_assert!(
-                value.len() + self.pos <= self.buffer.len(),
-                "trusted encode overflow: pos={} len={} cap={}",
-                self.pos,
-                value.len(),
-                self.buffer.len(),
-            );
-        } else if value.len() + self.pos > self.buffer.len() {
-            return Err(MborEncodeError::BufferOverflow);
+        #[cfg(not(feature = "trusted-encode"))]
+        {
+            if self.trusted {
+                debug_assert!(
+                    value.len() + self.pos <= self.buffer.len(),
+                    "trusted encode overflow: pos={} len={} cap={}",
+                    self.pos,
+                    value.len(),
+                    self.buffer.len(),
+                );
+            } else if value.len() + self.pos > self.buffer.len() {
+                return Err(MborEncodeError::BufferOverflow);
+            }
         }
+        #[cfg(feature = "trusted-encode")]
+        debug_assert!(
+            value.len() + self.pos <= self.buffer.len(),
+            "trusted encode overflow: pos={} len={} cap={}",
+            self.pos,
+            value.len(),
+            self.buffer.len(),
+        );
         // SAFETY: bounds are guaranteed by the check above (checked mode) or
         // by the caller's upfront length calculation (trusted mode).
         #[allow(unsafe_code)]
@@ -186,14 +203,22 @@ impl<'a> MborEncoder<'a> {
         let pad = BYTES_PAD_MASK & pad;
         let total = 1 + 2 + pad as usize + data_len; // marker + len + pad + data
 
-        if self.trusted {
-            debug_assert!(
-                total + self.pos <= self.buffer.len(),
-                "trusted encode_reserve overflow",
-            );
-        } else if total + self.pos > self.buffer.len() {
-            return Err(MborEncodeError::BufferOverflow);
+        #[cfg(not(feature = "trusted-encode"))]
+        {
+            if self.trusted {
+                debug_assert!(
+                    total + self.pos <= self.buffer.len(),
+                    "trusted encode_reserve overflow",
+                );
+            } else if total + self.pos > self.buffer.len() {
+                return Err(MborEncodeError::BufferOverflow);
+            }
         }
+        #[cfg(feature = "trusted-encode")]
+        debug_assert!(
+            total + self.pos <= self.buffer.len(),
+            "trusted encode_reserve overflow",
+        );
 
         // Marker with padding bits
         self.buffer[self.pos] = BYTES_MARKER | pad;
@@ -313,6 +338,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "trusted-encode"))]
     fn encode_buffer_overflow() {
         let mut buf = vec![0u8; 1];
         let mut enc = MborEncoder::new(&mut buf);
