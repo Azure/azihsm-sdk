@@ -35,8 +35,8 @@ pub(crate) async fn get_cert_chain_info<'a, P: HsmPal>(
     };
 
     let len = ddi::encode_resp(
-        ddi::success_hdr(hdr, DdiOp::GetCertChainInfo),
-        resp_data,
+        &ddi::success_hdr(hdr, DdiOp::GetCertChainInfo),
+        &resp_data,
         smem,
     )?;
     Ok(&smem[..len])

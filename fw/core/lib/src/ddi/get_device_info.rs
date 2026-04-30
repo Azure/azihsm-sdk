@@ -33,7 +33,11 @@ pub(crate) fn get_device_info<'a, P: HsmPal>(
         fips_approved: false,
     };
 
-    let len = ddi::encode_resp(ddi::success_hdr(hdr, DdiOp::GetDeviceInfo), resp_data, smem)?;
+    let len = ddi::encode_resp(
+        &ddi::success_hdr(hdr, DdiOp::GetDeviceInfo),
+        &resp_data,
+        smem,
+    )?;
 
     Ok(&smem[..len])
 }

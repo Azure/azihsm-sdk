@@ -42,7 +42,7 @@ pub(crate) fn get_api_rev<'a>(
         max: DdiApiRev { major: 1, minor: 0 },
     };
 
-    let len = ddi::encode_resp(ddi::success_hdr(hdr, DdiOp::GetApiRev), resp_data, smem)?;
+    let len = ddi::encode_resp(&ddi::success_hdr(hdr, DdiOp::GetApiRev), &resp_data, smem)?;
 
     Ok(&smem[..len])
 }

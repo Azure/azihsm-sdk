@@ -59,7 +59,7 @@ pub(crate) async fn dispatch<P: HsmPal>(
 /// `smem`, then encodes with no per-field bounds checks. Returns the
 /// encoded length, or [`HsmError::DdiEncodeFailed`] if the buffer is
 /// too small.
-pub(crate) fn encode_resp<H, D>(hdr: H, data: D, smem: &mut [u8]) -> HsmResult<usize>
+pub(crate) fn encode_resp<H, D>(hdr: &H, data: &D, smem: &mut [u8]) -> HsmResult<usize>
 where
     H: MborEncode + MborLen,
     D: MborEncode + MborLen,
