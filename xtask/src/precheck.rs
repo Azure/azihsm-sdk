@@ -219,7 +219,7 @@ impl Xtask for Precheck {
                         package: Some("azihsm_ddi".to_string()),
                         no_default_features: false,
                         filterset: None,
-                        profile: self.profile.or(Some("ci-mock-table-64".to_string())),
+                        profile: self.profile.clone().or(Some("ci-mock-table-64".to_string())),
                         exclude: self.exclude.clone(),
                     }
                     .run(ctx.clone())?;
@@ -230,12 +230,12 @@ impl Xtask for Precheck {
                 }
             } else {
                 Nextest {
-                    features: self.features,
-                    package: self.package,
+                    features: self.features.clone(),
+                    package: self.package.clone(),
                     no_default_features: false,
                     filterset: None,
-                    profile: self.profile,
-                    exclude: self.exclude,
+                    profile: self.profile.clone(),
+                    exclude: self.exclude.clone(),
                 }
                 .run(ctx.clone())?;
             }
@@ -243,7 +243,39 @@ impl Xtask for Precheck {
 
         // Run code coverage
         if stage.coverage || stage.all {
-            Coverage {}.run(ctx.clone())?;
+            if self.package.is_none() && self.features.is_none() {
+                // SDK Run all mock tests with coverage
+                Coverage {
+                    features: Some("mock".to_string()),
+                    package: None,
+                    no_default_features: false,
+                    filterset: None,
+                    profile: Some("ci-mock".to_string()),
+                    exclude: vec![
+                            "provider-integration-tests-cli".to_string(),
+                            "provider-integration-tests-capi".to_string()
+                        ],
+                }.run(ctx.clone())?;
+
+                // SDK Run resiliency fault-injection tests with coverage (requires res-test feature for the fault-injection DDI device)
+                Coverage {
+                    features: Some("mock,res-test".to_string()),
+                    package: Some("azihsm_api_tests".to_string()),
+                    no_default_features: false,
+                    filterset: Some("test(resiliency::fault_injection::)".to_string()),
+                    profile: None,
+                    exclude: Vec::new(),
+                }.run(ctx.clone())?;
+            } else {
+                Coverage {
+                    features: self.features.clone(),
+                    package: self.package.clone(),
+                    no_default_features: false,
+                    filterset: None,
+                    profile: self.profile.clone(),
+                    exclude: self.exclude.clone(),
+                }.run(ctx.clone())?;
+            }
         }
 
         // Run nextest report
