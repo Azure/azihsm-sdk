@@ -524,13 +524,15 @@ TEST_F(azihsm_ecc_sign_verify, streaming_operations_reject_key_handles_as_contex
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         std::vector<uint8_t> data(32, 0x42);
+        std::vector<uint8_t> dummy_signature(64, 0x24);
         azihsm_buffer data_buf{ data.data(), static_cast<uint32_t>(data.size()) };
-        azihsm_buffer sig_buf{ nullptr, 0 };
+        azihsm_buffer sig_buf{ dummy_signature.data(),
+                               static_cast<uint32_t>(dummy_signature.size()) };
 
         ASSERT_EQ(azihsm_crypt_sign_update(priv_key, &data_buf), AZIHSM_STATUS_INVALID_HANDLE);
         ASSERT_EQ(azihsm_crypt_sign_finish(priv_key, &sig_buf), AZIHSM_STATUS_INVALID_HANDLE);
         ASSERT_EQ(azihsm_crypt_verify_update(pub_key, &data_buf), AZIHSM_STATUS_INVALID_HANDLE);
-        ASSERT_EQ(azihsm_crypt_verify_finish(pub_key, &data_buf), AZIHSM_STATUS_INVALID_HANDLE);
+        ASSERT_EQ(azihsm_crypt_verify_finish(pub_key, &sig_buf), AZIHSM_STATUS_INVALID_HANDLE);
     });
 }
 

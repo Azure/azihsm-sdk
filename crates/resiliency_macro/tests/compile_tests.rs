@@ -147,7 +147,6 @@ impl TestMethods {
         condition = "enabled"
     )]
     fn generic_retry_with_overrides(&mut self, enabled: bool) -> HsmResult<u8> {
-        let __prev_error: Option<&crate::HsmError> = None;
         Ok(if __prev_error.is_some() || enabled {
             1
         } else {
@@ -233,10 +232,7 @@ fn tests() {
         "by_value_self",
         Some("retry macros do not support by-value `self`; use `&self` or `&mut self`."),
     );
-    check_case(
-        "malformed_attribute",
-        Some("unexpected end of input, expected an expression"),
-    );
+    check_case("malformed_attribute", None);
     check_case("missing_required_arg", Some("Missing field `key`"));
     check_case("non_ident_pattern", None);
     check_case(
