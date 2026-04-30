@@ -101,3 +101,23 @@ impl Ddi for DdiEmu {
 fn runtime_handle() -> Handle {
     CTX.rt.handle().clone()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dev_info_list_returns_emu_device() {
+        let ddi = DdiEmu::default();
+        let devs = ddi.dev_info_list();
+        assert_eq!(devs.len(), 1);
+        assert_eq!(devs[0].path, EMU_DEVICE_PATH);
+    }
+
+    #[test]
+    fn open_unknown_path_fails() {
+        let ddi = DdiEmu::default();
+        let res = ddi.open_dev("/dev/nonexistent");
+        assert!(res.is_err(), "opening unknown path must fail");
+    }
+}

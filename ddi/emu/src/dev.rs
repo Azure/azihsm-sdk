@@ -33,11 +33,14 @@ use azihsm_ddi_types::DdiRespHdr;
 use azihsm_ddi_types::DdiStatus;
 use azihsm_ddi_types::MborError;
 use azihsm_ddi_types::SessionControlKind;
-use azihsm_fw_hsm_pal_traits::HsmCqe;
-use azihsm_fw_hsm_pal_traits::HsmSqe;
 use azihsm_fw_hsm_std::StdHsm;
 use parking_lot::Mutex;
 use tokio::runtime::Handle;
+
+use crate::op::CmdDword;
+use crate::op::Cqe;
+use crate::op::SessionFlags;
+use crate::op::Sqe;
 
 /// Path returned by [`DdiEmu::dev_info_list`](crate::DdiEmu::dev_info_list).
 ///
@@ -176,22 +179,34 @@ impl DdiDev for DdiEmuDev {
 
         // ── 3. Build SQE and submit on the embedded tokio runtime ─────
         let cmd_id = CMD_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let sqe = build_sqe(cmd_id, req_buf, dst.as_mut_slice(), opcode, req_session_id);
+        let session_ctrl: SessionControlKind = opcode.into();
+        let sqe = Sqe::new()
+            .cmd(CmdDword::new().with_id(cmd_id))
+            .buf_lens(req_len as u32, SCRATCH_LEN as u32)
+            .src_prp1(req_buf.as_ptr() as u64)
+            .dst_prp1(dst.as_mut_slice().as_mut_ptr() as u64)
+            .session_flags(
+                SessionFlags::new()
+                    .with_ctrl(u8::from(session_ctrl))
+                    .with_id_valid(req_session_id.is_some()),
+            )
+            .session_id(req_session_id.unwrap_or(0))
+            .build();
 
-        let cqe: HsmCqe = self
-            .handle
-            .block_on(self.hsm.io(sqe, EMU_PID, 0, 0))
-            .map_err(|_| DdiError::DeviceNotReady)?;
+        let cqe = Cqe::new(
+            self.handle
+                .block_on(self.hsm.io(sqe, EMU_PID, 0, 0))
+                .map_err(|_| DdiError::DeviceNotReady)?,
+        );
 
-        // ── 4. Pre-decode CQE host status (DW3 bits 27:17) ─────────
-        let cqe_status = ((cqe[3] >> 17) & 0x7FF) as u32;
-        if cqe_status != 0 {
-            tracing::warn!(opcode = ?opcode, status = cqe_status, "DdiEmu CQE pre-decode error");
-            return Err(DdiError::DdiError(cqe_status));
+        // ── 4. Pre-decode CQE host status ──────────────────────────
+        if cqe.status() != 0 {
+            tracing::warn!(opcode = ?opcode, status = cqe.status(), "DdiEmu CQE pre-decode error");
+            return Err(DdiError::DdiError(cqe.status() as u32));
         }
 
         // ── 5. Post-decode: read response header, then body ────────
-        let resp_len = (cqe[0] & 0xFFFF) as usize;
+        let resp_len = cqe.resp_len();
         if resp_len == 0 {
             return Err(DdiError::DdiError(0));
         }
@@ -343,81 +358,6 @@ fn validate_session_request(
     }
 }
 
-/// Encode a DDI opcode's session-control kind into the SQE DW11 `ctrl`
-/// field (2 bits).
-///
-/// The host SDK and the firmware now share the same wire encoding (see
-/// [`azihsm_ddi_types::SessionControlKind`] in
-/// `ddi/serde/types/src/sessctrl.rs` and `SessionCtrl` in
-/// `fw/core/lib/src/op.rs`):
-///
-/// | Kind         | Wire value |
-/// |--------------|------------|
-/// | `NoSession`  | 0          |
-/// | `Open`       | 1          |
-/// | `Close`      | 2          |
-/// | `InSession`  | 3          |
-///
-/// We delegate to [`SessionControlKind`]'s existing `From<DdiOp>` and
-/// `From<SessionControlKind> for u8` impls so this layer never needs to
-/// hand-roll the mapping.
-fn sqe_session_ctrl(opcode: DdiOp) -> u8 {
-    let kind: SessionControlKind = opcode.into();
-    u8::from(kind)
-}
-
-/// Build an SQE that points at host-resident `src`/`dst` buffers.
-///
-/// Layout matches `fw/core/lib/src/op.rs`:
-///
-/// * DW0 — `op = OP_GENERIC = 0`, `id = cmd_id`
-/// * DW1 — source length in bytes
-/// * DW2/3 — source PRP1 (low/high)
-/// * DW6 — destination length in bytes
-/// * DW7/8 — destination PRP1 (low/high)
-/// * DW11 — `SessionFlags { ctrl, id_valid, .. }`
-/// * DW12 — session id (low 16 bits)
-fn build_sqe(
-    cmd_id: u16,
-    src: &[u8],
-    dst: &mut [u8],
-    opcode: DdiOp,
-    session_id: Option<u16>,
-) -> HsmSqe {
-    let mut data = [0u32; 16];
-
-    // DW0: opcode in the upper 16 bits, cmd_id in the high half.
-    // SessionFlags packs into DW11 (see below); the SQE Cmd dword
-    // bitfield places `id` in bits 16..32 of DW0.
-    data[0] = (cmd_id as u32) << 16;
-
-    // DW1 / DW6: source / destination lengths.
-    data[1] = src.len() as u32;
-    data[6] = dst.len() as u32;
-
-    // DW2/3 + DW7/8: PRP1 addresses. The simulator interprets these as
-    // raw host pointers because there is no IOMMU translation involved.
-    let s = src.as_ptr() as u64;
-    data[2] = s as u32;
-    data[3] = (s >> 32) as u32;
-
-    let d = dst.as_mut_ptr() as u64;
-    data[7] = d as u32;
-    data[8] = (d >> 32) as u32;
-
-    // DW11: SessionFlags. Bits 0..2 = ctrl, bit 2 = id_valid. Higher bits
-    // stay zero — see `op.rs::SessionFlags`. Host SDK and firmware share
-    // the same `ctrl` encoding (NoSession=0, Open=1, Close=2, InSession=3).
-    let ctrl = sqe_session_ctrl(opcode) as u32;
-    let id_valid_bit: u32 = if session_id.is_some() { 1 << 2 } else { 0 };
-    data[11] = (ctrl & 0x3) | id_valid_bit;
-
-    // DW12: session id in the low 16 bits.
-    data[12] = session_id.map(u32::from).unwrap_or(0);
-
-    data
-}
-
 /// 4-KiB-aligned heap buffer used as DMA scratch space.
 ///
 /// `StdHsmPal` enforces page-aligned source / destination addresses, so
@@ -463,5 +403,54 @@ impl Drop for AlignedBuf {
             .expect("AlignedBuf: invalid layout on drop");
         // SAFETY: `ptr` was returned by `alloc_zeroed` with the same `layout`.
         unsafe { std::alloc::dealloc(self.ptr, layout) };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use azihsm_ddi_interface::Ddi;
+    use azihsm_ddi_interface::DdiDev;
+    use azihsm_ddi_types::DdiApiRev;
+    use azihsm_ddi_types::DdiDeviceKind;
+    use azihsm_ddi_types::DdiGetApiRevCmdReq;
+    use azihsm_ddi_types::DdiGetApiRevReq;
+    use azihsm_ddi_types::DdiOp;
+    use azihsm_ddi_types::DdiReqHdr;
+
+    use crate::DdiEmu;
+    use crate::EMU_DEVICE_PATH;
+
+    #[test]
+    fn get_api_rev_round_trips_through_emulator() {
+        let ddi = DdiEmu::default();
+        let mut dev = ddi.open_dev(EMU_DEVICE_PATH).expect("open emu device");
+        dev.set_device_kind(DdiDeviceKind::Virtual);
+
+        let req = DdiGetApiRevCmdReq {
+            hdr: DdiReqHdr {
+                rev: None,
+                op: DdiOp::GetApiRev,
+                sess_id: None,
+            },
+            data: DdiGetApiRevReq {},
+            ext: None,
+        };
+
+        let mut cookie = None;
+        let resp = dev
+            .exec_op(&req, &mut cookie)
+            .expect("GetApiRev should succeed against the emulator");
+
+        assert_eq!(resp.hdr.op, DdiOp::GetApiRev);
+        assert_eq!(
+            resp.data.min,
+            DdiApiRev { major: 1, minor: 0 },
+            "firmware should report min api rev 1.0",
+        );
+        assert_eq!(
+            resp.data.max,
+            DdiApiRev { major: 1, minor: 0 },
+            "firmware should report max api rev 1.0",
+        );
     }
 }

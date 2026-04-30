@@ -13,6 +13,7 @@
 
 mod ddi;
 mod dev;
+mod op;
 
 pub use ddi::DdiEmu;
 pub use dev::DdiEmuDev;
