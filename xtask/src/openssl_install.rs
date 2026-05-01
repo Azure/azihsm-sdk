@@ -7,10 +7,10 @@
 //! Helper to resolve an OpenSSL installation, building one if necessary.
 
 #[cfg(target_os = "linux")]
-use anyhow::Context as _;
-#[cfg(target_os = "linux")]
 use std::path::PathBuf;
 
+#[cfg(target_os = "linux")]
+use anyhow::Context as _;
 #[cfg(target_os = "linux")]
 use xshell::cmd;
 #[cfg(target_os = "linux")]
