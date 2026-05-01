@@ -29,11 +29,6 @@ pub(crate) fn set_sealed_bk3<'a, P: HsmPal>(
     _fmem: &mut [u8],
     smem: &'a mut [u8],
 ) -> HsmResult<&'a [u8]> {
-    // Check before decode — matches real firmware order.
-    if pal.part_sealed_bk3(part_id, None)? != 0 {
-        return Err(HsmError::SealedBk3AlreadySet);
-    }
-
     let body: DdiSetSealedBk3Req<'_> = decoder.decode_data()?;
     pal.part_set_sealed_bk3(part_id, body.sealed_bk3)?;
 
