@@ -202,12 +202,17 @@ jobs:
         AZIHSM_CREDENTIALS_PIN: "db3dc77fc22e430080d41b31b6f04800"
       run: cargo xtask precheck --coverage --package provider-integration-tests-cli --features integration --profile ci-provider-integration
 
-    - name: Run C API integration tests with code coverage
+    - name: Check for code coverage data
+      run: |
+        cd ./target/llvm-cov-target
+        ls -la
+
+    - name: Run C API integration tests
       env:
         OPENSSL_DIR: /opt/openssl-3.0.3
         AZIHSM_CREDENTIALS_ID: "70fcf730b8764238b8358010ce8a3f76"
         AZIHSM_CREDENTIALS_PIN: "db3dc77fc22e430080d41b31b6f04800"
-      run: cargo xtask precheck --coverage --package provider-integration-tests-capi --features integration --profile ci-provider-integration
+      run: cargo xtask precheck --nextest --package provider-integration-tests-capi --features integration --profile ci-provider-integration
 
     - name: Install nginx mainline
       run: |
