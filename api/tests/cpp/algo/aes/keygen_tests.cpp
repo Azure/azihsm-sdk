@@ -316,6 +316,7 @@ TEST_F(azihsm_aes_keygen, aes_key_gen_with_derive_flag_fails)
     });
 }
 
+/// verifies AES key generation rejects read-only properties
 TEST_F(azihsm_aes_keygen, aes_key_gen_with_readonly_property_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -344,7 +345,7 @@ TEST_F(azihsm_aes_keygen, aes_key_gen_with_readonly_property_fails)
         auto_key key;
         auto err = azihsm_key_gen(session, &keygen_algo, &prop_list, key.get_ptr());
         ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
-        ASSERT_EQ(key, 0);
+        ASSERT_EQ(key.get(), 0u);
     });
 }
 
