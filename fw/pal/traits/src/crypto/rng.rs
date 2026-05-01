@@ -24,5 +24,5 @@ pub trait HsmRng {
     /// # Errors
     /// Returns [`HsmError`] if the CSPRNG fails (e.g., insufficient
     /// entropy, hardware TRNG error).
-    fn rng_fill_bytes(&mut self, buf: &mut [u8]) -> HsmResult<()>;
+    fn rng_fill_bytes(&self, buf: &mut [u8]) -> HsmResult<()>;
 }
