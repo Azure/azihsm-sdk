@@ -23,9 +23,11 @@ const OPENSSL_SHA256: &str = "ee0078adcef1de5f003c62c80cc96527721609c6f3bb42b779
 
 #[cfg(target_os = "linux")]
 fn default_install_dir() -> anyhow::Result<PathBuf> {
-    Ok(std::env::current_dir()?
-        .join("target")
-        .join(format!("openssl-{OPENSSL_VERSION}")))
+    let target_dir = match std::env::var_os("CARGO_TARGET_DIR") {
+        Some(dir) => PathBuf::from(dir),
+        None => std::env::current_dir()?.join("target"),
+    };
+    Ok(target_dir.join(format!("openssl-{OPENSSL_VERSION}")))
 }
 
 /// Checks whether an OpenSSL installation is available, without installing.
