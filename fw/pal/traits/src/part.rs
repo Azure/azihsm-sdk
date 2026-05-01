@@ -134,4 +134,17 @@ pub trait HsmPartitionManager {
     /// Called after credential establishment or session open to ensure
     /// nonce freshness.
     fn part_nonce_refresh(&self, pid: HsmPartId) -> HsmResult<()>;
+
+    /// Returns the sealed BK3 blob for the partition.
+    ///
+    /// Pass `None` to query the size; pass `Some(buf)` to copy into `buf`.
+    /// Returns 0 if no sealed BK3 has been stored yet.
+    fn part_sealed_bk3(&self, pid: HsmPartId, out: Option<&mut [u8]>) -> HsmResult<usize>;
+
+    /// Store the sealed BK3 blob for the partition.
+    ///
+    /// # Errors
+    /// - [`HsmError::SealedBk3AlreadySet`] if already stored.
+    /// - [`HsmError::SealedBk3TooLarge`] if `data` exceeds 1024 bytes.
+    fn part_set_sealed_bk3(&self, pid: HsmPartId, data: &[u8]) -> HsmResult<()>;
 }

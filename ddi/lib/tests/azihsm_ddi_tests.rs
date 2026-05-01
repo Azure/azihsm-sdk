@@ -62,6 +62,7 @@ mod integration {
     pub mod rsa_4k_sign;
     pub mod rsa_mod_exp;
     pub mod rsa_unwrap_generated_key;
+    pub mod sealed_bk3_smoke;
     pub mod secret_hkdf_derive;
     pub mod secret_kbkdf_derive;
 }

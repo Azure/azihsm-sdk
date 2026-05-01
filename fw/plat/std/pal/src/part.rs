@@ -61,6 +61,9 @@ pub const MAX_RESOURCES: u8 = 65;
 /// Length of the per-partition random nonce in bytes.
 const NONCE_LEN: usize = 32;
 
+/// Maximum size of the sealed BK3 blob in bytes.
+const SEALED_BK3_SIZE: usize = 512;
+
 /// Length of a partition's random identity blob in bytes.
 const PART_ID_LEN: usize = 16;
 
@@ -143,6 +146,12 @@ pub(crate) struct PartitionEntry {
 
     /// 32-byte random nonce, generated on enable and refreshable.
     pub(crate) nonce: [u8; NONCE_LEN],
+
+    /// Sealed BK3 blob — up to 512 bytes of opaque data.
+    sealed_bk3: [u8; SEALED_BK3_SIZE],
+
+    /// Length of valid data in `sealed_bk3` (0 = not yet stored).
+    sealed_bk3_len: u32,
 }
 
 impl Default for PartitionEntry {
@@ -162,6 +171,8 @@ impl Default for PartitionEntry {
             session_enc_key_id: None,
             session_enc_pub_key: [0u8; P384_PUB_KEY_LEN],
             nonce: [0u8; NONCE_LEN],
+            sealed_bk3: [0u8; SEALED_BK3_SIZE],
+            sealed_bk3_len: 0,
         }
     }
 }
@@ -340,6 +351,25 @@ impl HsmPartitionManager for StdHsmPal {
     fn part_nonce_refresh(&self, pid: HsmPartId) -> HsmResult<()> {
         let entry = self.enabled_part_mut(u8::from(pid))?;
         Rng::rand_bytes(&mut entry.nonce).map_err(|_| HsmError::InternalError)
+    }
+
+    fn part_sealed_bk3(&self, pid: HsmPartId, out: Option<&mut [u8]>) -> HsmResult<usize> {
+        let entry = self.active_part(pid)?;
+        let len = entry.sealed_bk3_len as usize;
+        copy_out(&entry.sealed_bk3[..len], out)
+    }
+
+    fn part_set_sealed_bk3(&self, pid: HsmPartId, data: &[u8]) -> HsmResult<()> {
+        let entry = self.active_part_mut(pid)?;
+        if entry.sealed_bk3_len != 0 {
+            return Err(HsmError::SealedBk3AlreadySet);
+        }
+        if data.len() > SEALED_BK3_SIZE {
+            return Err(HsmError::SealedBk3TooLarge);
+        }
+        entry.sealed_bk3[..data.len()].copy_from_slice(data);
+        entry.sealed_bk3_len = data.len() as u32;
+        Ok(())
     }
 }
 
@@ -668,5 +698,7 @@ impl StdHsmPal {
         entry.nonce.fill(0);
         entry.vault.clear();
         entry.session_table = SessionTable::new();
+        entry.sealed_bk3[..entry.sealed_bk3_len as usize].fill(0);
+        entry.sealed_bk3_len = 0;
     }
 }
