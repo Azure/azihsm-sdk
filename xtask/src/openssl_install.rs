@@ -7,6 +7,8 @@
 //! Helper to resolve an OpenSSL installation, building one if necessary.
 
 #[cfg(target_os = "linux")]
+use anyhow::Context as _;
+#[cfg(target_os = "linux")]
 use std::path::PathBuf;
 
 #[cfg(target_os = "linux")]
@@ -16,6 +18,8 @@ use xshell::Shell;
 
 #[cfg(target_os = "linux")]
 const OPENSSL_VERSION: &str = "3.0.3";
+#[cfg(target_os = "linux")]
+const OPENSSL_SHA256: &str = "ee0078adcef1de5f003c62c80cc96527721609c6f3bb42b7795df31f8b558c0b";
 
 #[cfg(target_os = "linux")]
 fn default_install_dir() -> anyhow::Result<PathBuf> {
@@ -93,6 +97,17 @@ pub fn ensure_openssl() -> anyhow::Result<PathBuf> {
 
     log::info!("downloading OpenSSL {OPENSSL_VERSION}...");
     cmd!(sh, "curl -fsSL -o {tarball} {url}").run()?;
+
+    let checksum_output = cmd!(sh, "sha256sum {tarball}").read()?;
+    let actual_hash = checksum_output
+        .split_whitespace()
+        .next()
+        .context("failed to parse sha256sum output")?;
+    anyhow::ensure!(
+        actual_hash == OPENSSL_SHA256,
+        "SHA-256 mismatch for {tarball}: expected {OPENSSL_SHA256}, got {actual_hash}"
+    );
+
     cmd!(sh, "tar xz -C /tmp -f {tarball}").run()?;
 
     sh.change_dir(&src_dir);
