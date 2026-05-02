@@ -126,13 +126,14 @@ impl HsmAes for StdHsmPal {
         plaintext: &mut [u8],
     ) -> HsmResult<()> {
         let aad = if aad_len > 0 {
+            plaintext[..aad_len].copy_from_slice(&ciphertext[..aad_len]);
             Some(&ciphertext[..aad_len])
         } else {
             None
         };
         let data = &ciphertext[aad_len..];
         self.aes
-            .gcm_decrypt(key, iv, aad, tag, data, plaintext)
+            .gcm_decrypt(key, iv, aad, tag, data, &mut plaintext[aad_len..])
             .await
     }
 
