@@ -35,8 +35,8 @@
 //! session flags against the decoded DDI header before dispatch.
 //! Session state flows back via [`HsmOpStatus`] → CQE DW0/DW1.
 
-use azihsm_fw_ddi::DdiDecoder;
-use azihsm_fw_ddi_types::DdiReqHdr;
+use azihsm_fw_ddi_mbor_api::DdiDecoder;
+use azihsm_fw_ddi_mbor_types::DdiReqHdr;
 
 use super::*;
 

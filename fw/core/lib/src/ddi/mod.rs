@@ -10,11 +10,11 @@ pub(crate) mod get_sealed_bk3;
 pub(crate) mod set_sealed_bk3;
 pub(crate) mod sha_digest;
 
-use azihsm_fw_ddi::DdiDecoder;
-use azihsm_fw_ddi::DdiEncoder;
 use azihsm_fw_ddi_mbor::*;
-use azihsm_fw_ddi_types::error::DdiErrResp;
-use azihsm_fw_ddi_types::*;
+use azihsm_fw_ddi_mbor_api::DdiDecoder;
+use azihsm_fw_ddi_mbor_api::DdiEncoder;
+use azihsm_fw_ddi_mbor_types::error::DdiErrResp;
+use azihsm_fw_ddi_mbor_types::*;
 pub(crate) use get_api_rev::*;
 pub(crate) use get_cert_chain_info::*;
 pub(crate) use get_certificate::*;

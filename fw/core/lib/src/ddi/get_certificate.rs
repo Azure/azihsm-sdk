@@ -11,8 +11,8 @@
 //! encodes the response frame (header + byte-array framing), then
 //! writes the cert DER directly into the reserved slice.
 
-use azihsm_fw_ddi_types::get_certificate::DdiGetCertificateReq;
-use azihsm_fw_ddi_types::get_certificate::DdiGetCertificateResp;
+use azihsm_fw_ddi_mbor_types::get_certificate::DdiGetCertificateReq;
+use azihsm_fw_ddi_mbor_types::get_certificate::DdiGetCertificateResp;
 
 use super::*;
 

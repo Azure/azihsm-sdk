@@ -11,9 +11,9 @@
 //! filled directly into the encoder-reserved slots — zero intermediate
 //! copies.
 
-use azihsm_fw_ddi_types::get_establish_cred_encryption_key::DdiGetEstablishCredEncryptionKeyReq;
-use azihsm_fw_ddi_types::get_establish_cred_encryption_key::DdiGetEstablishCredEncryptionKeyResp;
-use azihsm_fw_ddi_types::DdiPublicKeyFrameParams;
+use azihsm_fw_ddi_mbor_types::get_establish_cred_encryption_key::DdiGetEstablishCredEncryptionKeyReq;
+use azihsm_fw_ddi_mbor_types::get_establish_cred_encryption_key::DdiGetEstablishCredEncryptionKeyResp;
+use azihsm_fw_ddi_mbor_types::DdiPublicKeyFrameParams;
 
 use super::*;
 

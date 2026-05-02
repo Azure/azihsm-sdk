@@ -6,8 +6,8 @@
 //! Returns the number of certificates and the chain thumbprint for a
 //! partition's slot. This is a NoSession command.
 
-use azihsm_fw_ddi_types::get_cert_chain_info::DdiGetCertChainInfoReq;
-use azihsm_fw_ddi_types::get_cert_chain_info::DdiGetCertChainInfoResp;
+use azihsm_fw_ddi_mbor_types::get_cert_chain_info::DdiGetCertChainInfoReq;
+use azihsm_fw_ddi_mbor_types::get_cert_chain_info::DdiGetCertChainInfoResp;
 
 use super::*;
 

@@ -580,8 +580,8 @@ pub(crate) enum SessionCtrl {
 
 impl SessionCtrl {
     /// Map a DDI opcode to its session control kind.
-    pub fn from_op(op: azihsm_fw_ddi_types::DdiOp) -> Self {
-        use azihsm_fw_ddi_types::DdiOp;
+    pub fn from_op(op: azihsm_fw_ddi_mbor_types::DdiOp) -> Self {
+        use azihsm_fw_ddi_mbor_types::DdiOp;
         match op {
             DdiOp::GetApiRev
             | DdiOp::GetDeviceInfo

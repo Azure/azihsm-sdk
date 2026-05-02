@@ -225,6 +225,7 @@ impl StdHsmBuilder {
 ///
 /// Dropping `StdHsm` cleanly shuts down the Embassy thread and
 /// (if owned) the tokio runtime.
+#[derive(Debug)]
 pub struct StdHsm {
     io_tx: async_channel::Sender<HsmIoRequest>,
     ipc_tx: async_channel::Sender<PartCommand>,

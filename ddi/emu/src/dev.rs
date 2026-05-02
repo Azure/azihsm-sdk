@@ -88,7 +88,7 @@ struct SessionState {
 /// `Clone` matches the sibling backends (`DdiMockDev`, `DdiNixDev`,
 /// `DdiWinDev`); cloning produces another handle to the same `StdHsm`
 /// and shares the same session table.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct DdiEmuDev {
     hsm: Arc<StdHsm>,
     handle: Handle,
@@ -127,6 +127,14 @@ impl DdiEmuDev {
             session: Arc::new(Mutex::new(SessionState::default())),
             device_kind: None,
         })
+    }
+
+    /// Returns the device kind previously set via [`set_device_kind`].
+    ///
+    /// This is used by the host-side MBOR encoder / decoder to select the
+    /// wire-format mode that matches the firmware's expectations.
+    pub fn device_kind(&self) -> Option<DdiDeviceKind> {
+        self.device_kind
     }
 }
 

@@ -10,8 +10,8 @@
 //! filled directly into the encoder-reserved slot — zero intermediate
 //! copies.
 
-use azihsm_fw_ddi_types::get_sealed_bk3::DdiGetSealedBk3Req;
-use azihsm_fw_ddi_types::get_sealed_bk3::DdiGetSealedBk3Resp;
+use azihsm_fw_ddi_mbor_types::get_sealed_bk3::DdiGetSealedBk3Req;
+use azihsm_fw_ddi_mbor_types::get_sealed_bk3::DdiGetSealedBk3Resp;
 
 use super::*;
 
