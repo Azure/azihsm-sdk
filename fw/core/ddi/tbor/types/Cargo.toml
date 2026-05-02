@@ -1,0 +1,17 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+[package]
+description = "DDI types with TBOR encoding — placeholder"
+edition = "2021"
+name = "azihsm_fw_ddi_tbor_types"
+version = "0.1.0"
+
+[lib]
+bench = false
+doctest = false
+
+[dependencies]
+
+[lints]
+workspace = true

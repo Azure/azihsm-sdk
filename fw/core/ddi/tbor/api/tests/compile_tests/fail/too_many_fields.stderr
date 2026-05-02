@@ -1,0 +1,5 @@
+error: too many TOC entries: 33 fields + 0 padding = 33 (max 32)
+ --> tests/compile_tests/fail/too_many_fields.rs:5:12
+  |
+5 | pub struct TooMany {
+  |            ^^^^^^^

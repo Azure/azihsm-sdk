@@ -1,0 +1,19 @@
+error[E0599]: no method named `required_c` found for struct `SkipReqEnc<'_, SkipReqS1>` in the current scope
+  --> tests/compile_tests/fail/skip_required_field.rs:18:10
+   |
+ 6 |   #[tbor(opcode = 0x02)]
+   |   ---------------------- method `required_c` not found for this struct
+...
+16 |       let _ = SkipReq::encode(&mut buf).unwrap()
+   |               -                         -------- method `required_c` is available on `SkipReqEnc<'_, SkipReqS0>`
+   |  _____________|
+   | |
+17 | |         .required_a(1).unwrap()
+18 | |         .required_c(3).unwrap() // ERROR: cannot skip required field required_b
+   | |_________-^^^^^^^^^^
+   |
+help: there is a method `required_b` with a similar name
+   |
+18 -         .required_c(3).unwrap() // ERROR: cannot skip required field required_b
+18 +         .required_b(3).unwrap() // ERROR: cannot skip required field required_b
+   |

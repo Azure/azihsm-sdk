@@ -1,0 +1,5 @@
+error: cannot infer wire type; use #[tbor(uint8)], #[tbor(buffer)], etc.
+ --> tests/compile_tests/fail/unsupported_type.rs:8:12
+  |
+8 |     value: f32,
+  |            ^^^

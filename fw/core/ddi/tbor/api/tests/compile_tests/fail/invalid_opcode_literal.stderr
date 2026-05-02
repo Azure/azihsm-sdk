@@ -1,0 +1,5 @@
+error: opcode must be an integer literal
+ --> tests/compile_tests/fail/invalid_opcode_literal.rs:4:17
+  |
+4 | #[tbor(opcode = "hello")]
+  |                 ^^^^^^^

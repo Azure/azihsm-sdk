@@ -7,8 +7,8 @@
 //! `SealedBk3AlreadySet` if one has already been stored, or
 //! `SealedBk3TooLarge` if the blob exceeds 1024 bytes.
 
-use azihsm_fw_ddi_types::set_sealed_bk3::DdiSetSealedBk3Req;
-use azihsm_fw_ddi_types::set_sealed_bk3::DdiSetSealedBk3Resp;
+use azihsm_fw_ddi_mbor_types::set_sealed_bk3::DdiSetSealedBk3Req;
+use azihsm_fw_ddi_mbor_types::set_sealed_bk3::DdiSetSealedBk3Resp;
 
 use super::*;
 

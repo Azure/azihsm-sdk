@@ -12,8 +12,8 @@
 //!
 //! TODO: Move to InSession when session support is fully wired.
 
-use azihsm_fw_ddi_types::sha_digest::DdiShaDigestReq;
-use azihsm_fw_ddi_types::sha_digest::DdiShaDigestResp;
+use azihsm_fw_ddi_mbor_types::sha_digest::DdiShaDigestReq;
+use azihsm_fw_ddi_mbor_types::sha_digest::DdiShaDigestResp;
 
 use super::*;
 

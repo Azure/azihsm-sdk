@@ -29,10 +29,14 @@ members = [
   "ddi/sim",
   "ddi/test_helpers",
   "ddi/win",
-  "fw/core/ddi/derive",
-  "fw/core/ddi/lib",
-  "fw/core/ddi/mbor",
-  "fw/core/ddi/types",
+  "fw/core/ddi/mbor/api",
+  "fw/core/ddi/mbor/codec",
+  "fw/core/ddi/mbor/derive",
+  "fw/core/ddi/mbor/types",
+  "fw/core/ddi/tbor/api",
+  "fw/core/ddi/tbor/codec",
+  "fw/core/ddi/tbor/derive",
+  "fw/core/ddi/tbor/types",
   "fw/core/lib",
   "fw/core/tracing",
   "fw/pal/traits",
@@ -80,11 +84,19 @@ test_with_tracing = { path = "crates/test_with_tracing" }
 test_with_tracing_macro = { path = "crates/test_with_tracing/test_with_tracing_macro" }
 x509 = { path = "crates/x509" }
 
-# Firmware crates
-azihsm_fw_ddi = { path = "fw/core/ddi/lib" }
-azihsm_fw_ddi_derive = { path = "fw/core/ddi/derive" }
-azihsm_fw_ddi_mbor = { path = "fw/core/ddi/mbor" }
-azihsm_fw_ddi_types = { path = "fw/core/ddi/types" }
+# Firmware crates — MBOR
+azihsm_fw_ddi_mbor = { path = "fw/core/ddi/mbor/codec" }
+azihsm_fw_ddi_mbor_api = { path = "fw/core/ddi/mbor/api" }
+azihsm_fw_ddi_mbor_derive = { path = "fw/core/ddi/mbor/derive" }
+azihsm_fw_ddi_mbor_types = { path = "fw/core/ddi/mbor/types" }
+
+# Firmware crates — TBOR
+azihsm_fw_ddi_tbor = { path = "fw/core/ddi/tbor/codec" }
+azihsm_fw_ddi_tbor_api = { path = "fw/core/ddi/tbor/api" }
+azihsm_fw_ddi_tbor_derive = { path = "fw/core/ddi/tbor/derive" }
+azihsm_fw_ddi_tbor_types = { path = "fw/core/ddi/tbor/types" }
+
+# Firmware crates — common
 azihsm_fw_hsm_core = { path = "fw/core/lib" }
 azihsm_fw_hsm_core_tracing = { path = "fw/core/tracing" }
 azihsm_fw_hsm_pal_std = { path = "fw/plat/std/pal" }
