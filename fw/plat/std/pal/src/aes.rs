@@ -83,6 +83,9 @@ impl HsmAes for StdHsmPal {
         ciphertext: &mut [u8],
         tag: &mut [u8; 16],
     ) -> HsmResult<()> {
+        if aad_len > plaintext.len() || aad_len > ciphertext.len() {
+            return Err(HsmError::AesGcmInvalidBufferSize);
+        }
         let aad = if aad_len > 0 {
             Some(&plaintext[..aad_len])
         } else {
@@ -106,6 +109,9 @@ impl HsmAes for StdHsmPal {
         data: &mut [u8],
         tag: &mut [u8; 16],
     ) -> HsmResult<()> {
+        if aad_len > data.len() {
+            return Err(HsmError::AesGcmInvalidBufferSize);
+        }
         let input = data.to_vec();
         let aad = if aad_len > 0 {
             Some(&input[..aad_len])
@@ -128,6 +134,9 @@ impl HsmAes for StdHsmPal {
         ciphertext: &[u8],
         plaintext: &mut [u8],
     ) -> HsmResult<()> {
+        if aad_len > ciphertext.len() || aad_len > plaintext.len() {
+            return Err(HsmError::AesGcmInvalidBufferSize);
+        }
         let aad = if aad_len > 0 {
             plaintext[..aad_len].copy_from_slice(&ciphertext[..aad_len]);
             Some(&ciphertext[..aad_len])
@@ -149,6 +158,9 @@ impl HsmAes for StdHsmPal {
         tag: &[u8; 16],
         data: &mut [u8],
     ) -> HsmResult<()> {
+        if aad_len > data.len() {
+            return Err(HsmError::AesGcmInvalidBufferSize);
+        }
         let input = data.to_vec();
         let aad = if aad_len > 0 {
             Some(&input[..aad_len])

@@ -619,7 +619,7 @@ mod tests {
         let result = driver
             .gcm_decrypt(&key, &iv, Some(b"wrong header"), &tag, &ct, &mut pt)
             .await;
-        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), HsmError::AesGcmDecryptTagDoesNotMatch);
     }
 
     // ── GCM tag tamper detection ────────────────────────────────
@@ -643,7 +643,7 @@ mod tests {
         let result = driver
             .gcm_decrypt(&key, &iv, None, &tag, &ct, &mut pt)
             .await;
-        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), HsmError::AesGcmDecryptTagDoesNotMatch);
     }
 
     #[tokio::test]
@@ -665,7 +665,7 @@ mod tests {
         let result = driver
             .gcm_decrypt(&key, &iv, None, &tag, &ct, &mut pt)
             .await;
-        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), HsmError::AesGcmDecryptTagDoesNotMatch);
     }
 
     // ── GCM empty plaintext ─────────────────────────────────────
