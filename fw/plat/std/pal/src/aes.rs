@@ -89,8 +89,11 @@ impl HsmAes for StdHsmPal {
             None
         };
         let data = &plaintext[aad_len..];
+        if let Some(aad) = aad {
+            ciphertext[..aad_len].copy_from_slice(aad);
+        }
         self.aes
-            .gcm_encrypt(key, iv, aad, data, ciphertext, tag)
+            .gcm_encrypt(key, iv, aad, data, &mut ciphertext[aad_len..], tag)
             .await
     }
 
