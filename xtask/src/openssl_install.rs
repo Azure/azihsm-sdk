@@ -82,7 +82,7 @@ pub fn ensure_openssl() -> anyhow::Result<PathBuf> {
 
     // Preflight: check required tools before starting a long build.
     let sh = Shell::new()?;
-    for tool in ["curl", "make", "cc", "perl"] {
+    for tool in ["curl", "sha256sum", "make", "cc", "perl"] {
         if cmd!(sh, "which {tool}").quiet().run().is_err() {
             anyhow::bail!(
                 "required tool `{tool}` not found. \
