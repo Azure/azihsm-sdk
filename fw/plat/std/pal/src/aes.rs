@@ -72,4 +72,104 @@ impl HsmAes for StdHsmPal {
         let input = data.to_vec();
         self.aes.ecb_enc_dec(key, encrypt, &input, data).await
     }
+
+    /// AES-GCM encrypt with separate buffers.
+    async fn gcm_encrypt(
+        &self,
+        key: &[u8],
+        iv: &[u8; 12],
+        aad_len: usize,
+        plaintext: &[u8],
+        ciphertext: &mut [u8],
+        tag: &mut [u8; 16],
+    ) -> HsmResult<()> {
+        if aad_len > plaintext.len() || aad_len > ciphertext.len() {
+            return Err(HsmError::AesGcmInvalidBufferSize);
+        }
+        let aad = if aad_len > 0 {
+            Some(&plaintext[..aad_len])
+        } else {
+            None
+        };
+        let data = &plaintext[aad_len..];
+        if let Some(aad) = aad {
+            ciphertext[..aad_len].copy_from_slice(aad);
+        }
+        self.aes
+            .gcm_encrypt(key, iv, aad, data, &mut ciphertext[aad_len..], tag)
+            .await
+    }
+
+    /// AES-GCM encrypt in-place.
+    async fn gcm_encrypt_in_place(
+        &self,
+        key: &[u8],
+        iv: &[u8; 12],
+        aad_len: usize,
+        data: &mut [u8],
+        tag: &mut [u8; 16],
+    ) -> HsmResult<()> {
+        if aad_len > data.len() {
+            return Err(HsmError::AesGcmInvalidBufferSize);
+        }
+        let input = data.to_vec();
+        let aad = if aad_len > 0 {
+            Some(&input[..aad_len])
+        } else {
+            None
+        };
+        let plaintext = &input[aad_len..];
+        self.aes
+            .gcm_encrypt(key, iv, aad, plaintext, &mut data[aad_len..], tag)
+            .await
+    }
+
+    /// AES-GCM decrypt with separate buffers.
+    async fn gcm_decrypt(
+        &self,
+        key: &[u8],
+        iv: &[u8; 12],
+        aad_len: usize,
+        tag: &[u8; 16],
+        ciphertext: &[u8],
+        plaintext: &mut [u8],
+    ) -> HsmResult<()> {
+        if aad_len > ciphertext.len() || aad_len > plaintext.len() {
+            return Err(HsmError::AesGcmInvalidBufferSize);
+        }
+        let aad = if aad_len > 0 {
+            plaintext[..aad_len].copy_from_slice(&ciphertext[..aad_len]);
+            Some(&ciphertext[..aad_len])
+        } else {
+            None
+        };
+        let data = &ciphertext[aad_len..];
+        self.aes
+            .gcm_decrypt(key, iv, aad, tag, data, &mut plaintext[aad_len..])
+            .await
+    }
+
+    /// AES-GCM decrypt in-place.
+    async fn gcm_decrypt_in_place(
+        &self,
+        key: &[u8],
+        iv: &[u8; 12],
+        aad_len: usize,
+        tag: &[u8; 16],
+        data: &mut [u8],
+    ) -> HsmResult<()> {
+        if aad_len > data.len() {
+            return Err(HsmError::AesGcmInvalidBufferSize);
+        }
+        let input = data.to_vec();
+        let aad = if aad_len > 0 {
+            Some(&input[..aad_len])
+        } else {
+            None
+        };
+        let ciphertext = &input[aad_len..];
+        self.aes
+            .gcm_decrypt(key, iv, aad, tag, ciphertext, &mut data[aad_len..])
+            .await
+    }
 }
