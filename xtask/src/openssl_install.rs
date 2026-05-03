@@ -110,6 +110,7 @@ pub fn ensure_openssl() -> anyhow::Result<PathBuf> {
         "SHA-256 mismatch for {tarball}: expected {OPENSSL_SHA256}, got {actual_hash}"
     );
 
+    cmd!(sh, "rm -rf {src_dir}").run()?;
     cmd!(sh, "tar xz -C /tmp -f {tarball}").run()?;
 
     sh.change_dir(&src_dir);
