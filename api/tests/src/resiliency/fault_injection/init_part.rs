@@ -193,11 +193,13 @@ fn init_with_resiliency_force_obk(part: &HsmPartition) -> HsmResult<()> {
     )
 }
 
-/// `init` recovers from a single transient fault on `InitBk3` for
-/// retryable error codes, and fails immediately for non-retryable ones.
+/// `init` does not retry `InitBk3` on any error: the OBK→MOBK derivation
+/// is performed once outside the retry loop, so any fault on `InitBk3`
+/// propagates immediately as the originating error and `InitBk3` is
+/// called exactly once.
+///
 /// Caller-source only — skipped when `AZIHSM_USE_TPM` is set.
 #[api_test]
-#[ignore = "TODO: rework — caller-MOBK cache changes interact with sticky bk3_initialized state across iterations"]
 fn test_init_recovers_from_init_bk3_single_fault() {
     if use_tpm() {
         return;
@@ -212,18 +214,16 @@ fn test_init_recovers_from_init_bk3_single_fault() {
         let after = op_call_count(DdiOp::InitBk3);
         clear_faults();
 
-        super::assert_retryable_outcome(
-            &result,
-            error,
-            is_init_ok_outcome,
-            "single fault on InitBk3",
+        assert!(
+            result.is_err(),
+            "init should fail when InitBk3 faults with {error:?} (no retry), got: {result:?}"
         );
 
-        let expected = expected_op_calls(error, DdiOp::InitBk3, 1);
+        // Exactly one InitBk3 call — no retry, no `is_credentials_already_established`
         assert_eq!(
             after - before,
-            expected,
-            "single fault on InitBk3: expected {expected} calls for {error:?}, got {}",
+            1,
+            "InitBk3 fault: expected exactly 1 call for {error:?}, got {}",
             after - before,
         );
     }
@@ -303,43 +303,6 @@ fn test_init_recovers_from_establish_credential_single_fault() {
     }
 }
 
-/// `init` recovers on the last retry when `InitBk3` fails for the
-/// first `MAX_RETRIES` attempts (retryable errors), or fails immediately
-/// on the first attempt (non-retryable errors).
-/// Caller-source only — skipped when `AZIHSM_USE_TPM` is set.
-#[api_test]
-#[ignore = "TODO: rework — caller-MOBK cache changes interact with sticky bk3_initialized state across iterations"]
-fn test_init_recovers_from_init_bk3_last_retry() {
-    if use_tpm() {
-        return;
-    }
-    for error in &super::all_test_errors() {
-        let part = open_and_reset();
-        let before = op_call_count(DdiOp::InitBk3);
-
-        inject_fault(FaultRule::fail_next(DdiOp::InitBk3, MAX_RETRIES, *error));
-
-        let result = init_with_resiliency_force_obk(&part);
-        let after = op_call_count(DdiOp::InitBk3);
-        clear_faults();
-
-        super::assert_retryable_outcome(
-            &result,
-            error,
-            is_init_ok_outcome,
-            "last retry on InitBk3",
-        );
-
-        let expected = expected_op_calls(error, DdiOp::InitBk3, MAX_RETRIES);
-        assert_eq!(
-            after - before,
-            expected,
-            "last retry on InitBk3: expected {expected} calls for {error:?}, got {}",
-            after - before,
-        );
-    }
-}
-
 /// `init` recovers on the last retry when
 /// `GetEstablishCredEncryptionKey` fails for the first `MAX_RETRIES`
 /// attempts (retryable errors), or fails immediately on the first
@@ -409,49 +372,6 @@ fn test_init_recovers_from_establish_credential_last_retry() {
             after - before,
             expected,
             "last retry on EstablishCredential: expected {expected} calls for {error:?}, got {}",
-            after - before,
-        );
-    }
-}
-
-// Retry Exhaustion tests
-//
-// These tests inject MAX_RETRIES + 1 consecutive faults so that
-// every retry is consumed and the operation ultimately fails.
-
-/// `init` fails when `InitBk3` returns a retryable error for
-/// `MAX_RETRIES + 1` consecutive calls (initial attempt + all retries),
-/// for every retryable error code.
-/// Caller-source only — skipped when `AZIHSM_USE_TPM` is set.
-#[api_test]
-fn test_init_fails_from_init_bk3_exhausted() {
-    if use_tpm() {
-        return;
-    }
-    for error in INIT_RETRYABLE_ERRORS {
-        let part = open_and_reset();
-        let before = op_call_count(DdiOp::InitBk3);
-
-        inject_fault(FaultRule::fail_next(
-            DdiOp::InitBk3,
-            MAX_RETRIES + 1,
-            *error,
-        ));
-
-        let result = init_with_resiliency_force_obk(&part);
-        let after = op_call_count(DdiOp::InitBk3);
-        clear_faults();
-
-        assert!(
-            result.is_err(),
-            "init should fail after exhausting all {MAX_RETRIES} retries with {error:?} on InitBk3, got: {result:?}"
-        );
-
-        let expected = expected_op_calls(error, DdiOp::InitBk3, MAX_RETRIES + 1);
-        assert_eq!(
-            after - before,
-            expected,
-            "exhaustion on InitBk3: expected {expected} calls for {error:?}, got {}",
             after - before,
         );
     }

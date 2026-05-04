@@ -1226,17 +1226,8 @@ impl HsmPartitionInner {
         // errors (the device-side one-shot only commits when the
         // request actually completes), matching the retry semantics of
         // every other DDI op invoked during init.
-        let mobk = if resiliency_config.is_some() {
-            execute_with_retry(
-                |_prev| ddi::get_mobk_from_config(&self.dev, self.api_rev, &obk_config),
-                is_init_retryable_error,
-                MAX_RETRIES,
-                BACKOFF_BASE_MS,
-                BACKOFF_JITTER_MS,
-            )?
-        } else {
-            ddi::get_mobk_from_config(&self.dev, self.api_rev, &obk_config)?
-        };
+
+        let mobk = ddi::get_mobk_from_config(&self.dev, self.api_rev, &obk_config)?;
 
         //Update mobk , as init_bk3 is successful and requires the mobk for subsequent init_part calls, even establish credentials fails.
         self.set_mobk(mobk.clone());
