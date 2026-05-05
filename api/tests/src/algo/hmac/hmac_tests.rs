@@ -671,12 +671,12 @@ fn test_hmac_verify_fails_with_mismatched_derivation_hash(session: HsmSession) {
 
     let tag = HsmSigner::sign_vec(&mut HsmHmacAlgo::new(), &key_a, data).unwrap();
 
-    let is_valid =
-        HsmVerifier::verify(&mut HsmHmacAlgo::new(), &key_b, data, &tag).unwrap_or(false);
+    let result = HsmVerifier::verify(&mut HsmHmacAlgo::new(), &key_b, data, &tag);
 
-    assert!(
-        !is_valid,
-        "Verification must fail for mismatched derivation hash"
+    assert_eq!(
+        result,
+        Ok(false),
+        "Verification must fail cleanly for mismatched derivation hash"
     );
 }
 
@@ -814,10 +814,9 @@ fn test_hmac_verify_fails_with_mismatched_curve(session: HsmSession) {
 
     let result = HsmVerifier::verify(&mut HsmHmacAlgo::new(), &key_b, data, &tag);
 
-    let is_valid = result.unwrap_or(false);
-
-    assert!(
-        !is_valid,
+    assert_eq!(
+        result,
+        Ok(false),
         "Verification must fail when derived from different curves"
     );
 }
@@ -862,8 +861,8 @@ fn test_hmac_streaming_zero_length_update(session: HsmSession) {
     HsmSignStreamingOpContext::update(&mut ctx, msg).unwrap();
     let tag = HsmSignStreamingOpContext::finish_vec(&mut ctx).unwrap();
 
-    let valid = HsmVerifier::verify(&mut HsmHmacAlgo::new(), &key_b, msg, &tag).unwrap_or(false);
-
+    let valid = HsmVerifier::verify(&mut HsmHmacAlgo::new(), &key_b, msg, &tag)
+        .expect("verify should not error after zero-length update");
     assert!(valid, "Zero-length update should not break HMAC");
 }
 
@@ -934,9 +933,9 @@ fn test_hmac_verify_fails_with_different_key_after_streaming_sign(session: HsmSe
     HsmSignStreamingOpContext::update(&mut ctx, b"msg").unwrap();
     let tag = HsmSignStreamingOpContext::finish_vec(&mut ctx).unwrap();
 
-    let valid = HsmVerifier::verify(&mut HsmHmacAlgo::new(), &key_b, b"msg", &tag).unwrap_or(false);
+    let result = HsmVerifier::verify(&mut HsmHmacAlgo::new(), &key_b, b"msg", &tag);
 
-    assert!(!valid, "Context must be bound to original key");
+    assert_eq!(result, Ok(false), "Context must be bound to original key");
 }
 
 #[session_test]
@@ -959,10 +958,13 @@ fn test_hmac_streaming_state_after_failed_update(session: HsmSession) {
     HsmSignStreamingOpContext::update(&mut ctx, b"valid").unwrap();
     let tag = HsmSignStreamingOpContext::finish_vec(&mut ctx).unwrap();
 
-    let valid =
-        HsmVerifier::verify(&mut HsmHmacAlgo::new(), &key_b, b"valid", &tag).unwrap_or(false);
+    let result = HsmVerifier::verify(&mut HsmHmacAlgo::new(), &key_b, b"valid", &tag);
 
-    assert!(valid, "Context should remain usable after failed update");
+    assert_eq!(
+        result,
+        Ok(true),
+        "Context should remain usable after failed update",
+    );
 }
 
 #[session_test]
