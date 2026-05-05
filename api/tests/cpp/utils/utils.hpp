@@ -4,21 +4,8 @@
 #pragma once
 
 #include <azihsm_api.h>
-#include <cstdint>
 #include <filesystem>
 #include <gtest/gtest.h>
-#include <vector>
-
-#ifdef _WIN32
-#define NOMINMAX
-// clang-format off
-#include <windows.h>
-#include <bcrypt.h>
-#include <ntstatus.h>
-// clang-format on
-#else
-#include <fstream>
-#endif
 
 /// Returns the standard test API revision (1.0) used across all C++ tests.
 inline azihsm_api_rev test_api_rev()
@@ -38,39 +25,4 @@ inline std::filesystem::path get_test_tmp_dir()
         return {};
     }
     return dir;
-}
-
-/// Generates a random IV of the given size using the platform's CSPRNG
-/// (Windows CNG's BCryptGenRandom on Windows, `/dev/urandom` elsewhere).
-/// Fails the current test if the RNG call fails.
-inline std::vector<uint8_t> test_iv(size_t size)
-{
-    std::vector<uint8_t> iv(size);
-
-#if defined(_WIN32)
-    NTSTATUS status = BCryptGenRandom(
-        nullptr,
-        iv.data(),
-        static_cast<ULONG>(iv.size()),
-        BCRYPT_USE_SYSTEM_PREFERRED_RNG
-    );
-    if (status != STATUS_SUCCESS)
-    {
-        ADD_FAILURE() << "test_iv: BCryptGenRandom failed with status 0x" << std::hex << status;
-        return iv;
-    }
-#else
-    std::ifstream urandom("/dev/urandom", std::ios::in | std::ios::binary);
-    if (!urandom)
-    {
-        ADD_FAILURE() << "test_iv: failed to open /dev/urandom";
-        return iv;
-    }
-    urandom.read(reinterpret_cast<char *>(iv.data()), static_cast<std::streamsize>(iv.size()));
-    if (!urandom || static_cast<size_t>(urandom.gcount()) != iv.size())
-    {
-        ADD_FAILURE() << "test_iv: short read from /dev/urandom";
-    }
-#endif
-    return iv;
 }

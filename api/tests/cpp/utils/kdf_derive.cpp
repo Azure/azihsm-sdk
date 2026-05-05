@@ -4,7 +4,7 @@
 #include <string>
 
 #include "kdf_derive.hpp"
-#include "utils.hpp"
+#include "rng.hpp"
 
 const uint32_t AES_KEY_SIZES[] = { 128, 192, 256 };
 

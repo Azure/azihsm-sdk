@@ -101,8 +101,6 @@ TEST_F(azihsm_hkdf, hkdf_derive_invalid_hmac_algo_id_fails)
         props.encrypt = 1;
         props.decrypt = 1;
 
-        // Use an algo ID that is not a valid HMAC algorithm to trigger the default branch
-        // of the match on hmac_algo_id at kdf.rs:121
         hkdf_derive_fails_common(
             session,
             AZIHSM_ALGO_ID_SHA256,
