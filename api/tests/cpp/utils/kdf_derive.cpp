@@ -87,25 +87,15 @@ void derive_aes_key_from_shared_secret(
     auto_key &out_key
 )
 {
-    azihsm_key_class key_class = AZIHSM_KEY_CLASS_SECRET;
-    azihsm_key_kind key_kind = AZIHSM_KEY_KIND_AES;
-    uint8_t can_encrypt = 1;
-    uint8_t can_decrypt = 1;
+    key_props props = {};
+    props.key_class = AZIHSM_KEY_CLASS_SECRET;
+    props.key_kind = AZIHSM_KEY_KIND_AES;
+    props.key_size_bits = bits;
+    props.encrypt = 1;
+    props.decrypt = 1;
 
-    std::vector<azihsm_key_prop> props;
-    props.push_back({ .id = AZIHSM_KEY_PROP_ID_CLASS, .val = &key_class, .len = sizeof(key_class) }
-    );
-    props.push_back({ .id = AZIHSM_KEY_PROP_ID_KIND, .val = &key_kind, .len = sizeof(key_kind) });
-    props.push_back({ .id = AZIHSM_KEY_PROP_ID_BIT_LEN, .val = &bits, .len = sizeof(bits) });
-    props.push_back(
-        { .id = AZIHSM_KEY_PROP_ID_ENCRYPT, .val = &can_encrypt, .len = sizeof(can_encrypt) }
-    );
-    props.push_back(
-        { .id = AZIHSM_KEY_PROP_ID_DECRYPT, .val = &can_decrypt, .len = sizeof(can_decrypt) }
-    );
-
-    azihsm_key_prop_list prop_list = { .props = props.data(),
-                                       .count = static_cast<uint32_t>(props.size()) };
+    std::vector<azihsm_key_prop> props_vec;
+    azihsm_key_prop_list prop_list = build_key_prop_list(props, props_vec);
 
     auto err = azihsm_key_derive(session, hkdf_algo, shared_secret, &prop_list, &out_key.handle);
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
@@ -402,14 +392,6 @@ void hkdf_derive_fails_common(
     azihsm_algo_hkdf_params hkdf_params{};
     azihsm_algo hkdf_algo{};
     build_hkdf_algo(hkdf_params, hkdf_algo, hmac_algo_id, nullptr, nullptr);
-
-    // SharedSecret passes GenericSecretKey::validate_props but is not a valid
-    // HKDF output key type in the DDI TryFrom<&HsmKeyProps> for DdiKeyType
-    // (api/lib/src/ddi/hkdf.rs:101-117), which returns InvalidArgument.
-    // azihsm_key_class key_class = AZIHSM_KEY_CLASS_SECRET;
-    // azihsm_key_kind key_kind = AZIHSM_KEY_KIND_SHARED_SECRET;
-    // uint32_t bits = 256;
-    // uint8_t can_derive = 1;
 
     std::vector<azihsm_key_prop> prop_vec;
 
