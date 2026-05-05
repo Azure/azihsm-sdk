@@ -790,9 +790,11 @@ fn test_rsa_verify_wrong_data_fails_one_shot(session: HsmSession) {
     /// Ensure signing and verifying an empty message succeeds (one-shot path)
     #[session_test]
     fn test_rsa_sign_empty_message_one_shot(session: HsmSession) {
-        let priv_key = RsaPrivateKey::generate(256).unwrap();
-        let (priv_key, pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048)
-            .expect("RSA import should succeed");
+        let generated_priv_key = RsaPrivateKey::generate(256).unwrap();
+        let priv_key_der = generated_priv_key.to_vec().unwrap();
+
+        let (priv_key, pub_key) =
+            import_rsa_key(&session, &priv_key_der, 2048).expect("RSA import should succeed");
 
         let mut algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
 
@@ -806,17 +808,20 @@ fn test_rsa_verify_wrong_data_fails_one_shot(session: HsmSession) {
     /// Ensure verification fails for truncated signature length
     #[session_test]
     fn test_rsa_verify_truncated_signature_fails(session: HsmSession) {
-        let priv_key = RsaPrivateKey::generate(256).unwrap();
-        let (priv_key, pub_key) = import_rsa_key(&session, &priv_key.to_vec().unwrap(), 2048)
-            .expect("RSA import should succeed");
+        let generated_priv_key = RsaPrivateKey::generate(256).unwrap();
+        let priv_key_der = generated_priv_key.to_vec().unwrap();
+
+        let (priv_key, pub_key) =
+            import_rsa_key(&session, &priv_key_der, 2048).expect("RSA import should succeed");
 
         let msg = b"hello";
 
         let mut algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
         let sig = HsmSigner::sign_vec(&mut algo, &priv_key, msg).unwrap();
 
-        // truncate signature slightly (simulate hash mismatch indirectly)
-        let result = HsmVerifier::verify(&mut algo, &pub_key, msg, &sig[..10]);
+        // Truncate signature slightly to ensure verification does not succeed.
+        let truncated_sig = &sig[..10];
+        let result = HsmVerifier::verify(&mut algo, &pub_key, msg, truncated_sig);
 
         assert!(
             !matches!(result, Ok(true)),
