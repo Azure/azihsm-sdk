@@ -77,15 +77,14 @@ pub(crate) trait ResultOpErrExt<T> {
 /// Extension trait for `HsmResult<T>` that preserves the original error.
 pub(crate) trait ResultOpStatusExt<T> {
     /// Log and convert to [`OpError`], keeping the original [`HsmError`].
-    fn op_status(self, tag: &str, status: u16) -> Result<T, OpError>;
+    fn op_status(self, status: u16) -> Result<T, OpError>;
 }
 
 impl<T, E: core::fmt::Debug> ResultOpErrExt<T> for Result<T, E> {
     #[inline]
-    #[allow(unused_variables)]
-    fn op_err(self, tag: &str, err: HsmError, status: u16) -> Result<T, OpError> {
-        self.map_err(|e| {
-            error!(tag, err, "{:?}", e);
+    fn op_err(self, _tag: &str, err: HsmError, status: u16) -> Result<T, OpError> {
+        self.map_err(|_e| {
+            error!(_tag, err, "{:?}", _e);
             OpError::new(err, status)
         })
     }
@@ -93,10 +92,9 @@ impl<T, E: core::fmt::Debug> ResultOpErrExt<T> for Result<T, E> {
 
 impl<T> ResultOpStatusExt<T> for HsmResult<T> {
     #[inline]
-    #[allow(unused_variables)]
-    fn op_status(self, tag: &str, status: u16) -> Result<T, OpError> {
+    fn op_status(self, status: u16) -> Result<T, OpError> {
         self.map_err(|e| {
-            error!(tag, e, "failed");
+            error!("op_status", e, "failed");
             OpError::new(e, status)
         })
     }

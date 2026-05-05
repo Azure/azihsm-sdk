@@ -230,8 +230,8 @@ pub enum DdiAesOp {
 
 #[open_enum]
 #[derive(Debug, Ddi, Eq, PartialEq, Clone, Copy)]
-#[repr(u32)]
 #[ddi(enumeration)]
+#[repr(u32)]
 pub enum DdiAesKeySize {
     Aes128 = 1,
     Aes192 = 2,
