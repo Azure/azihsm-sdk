@@ -6,6 +6,7 @@
 
 #include "algo/aes/helpers.hpp"
 #include "utils/auto_key.hpp"
+#include "utils/key_props.hpp"
 #include "utils/shared_secret.hpp"
 
 const char *get_hmac_algo_name(azihsm_algo_id hmac_algo_id);
@@ -44,3 +45,10 @@ void assert_aes_cbc_roundtrip(
 );
 
 void run_hkdf_matrix_for_curve(azihsm_handle session, azihsm_ecc_curve curve);
+
+void hkdf_derive_fails_common(
+    azihsm_handle session,
+    azihsm_algo_id hmac_algo_id,
+    key_props &props,
+    azihsm_status expected_status
+);

@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 #include "kdf_derive.hpp"
+#include "utils.hpp"
 
 const uint32_t AES_KEY_SIZES[] = { 128, 192, 256 };
 
@@ -8,16 +9,16 @@ const char *get_hmac_algo_name(azihsm_algo_id hmac_algo_id)
 {
     switch (hmac_algo_id)
     {
-        case AZIHSM_ALGO_ID_HMAC_SHA1:
-            return "SHA1";
-        case AZIHSM_ALGO_ID_HMAC_SHA256:
-            return "SHA256";
-        case AZIHSM_ALGO_ID_HMAC_SHA384:
-            return "SHA384";
-        case AZIHSM_ALGO_ID_HMAC_SHA512:
-            return "SHA512";
-        default:
-            return "unknown";
+    case AZIHSM_ALGO_ID_HMAC_SHA1:
+        return "SHA1";
+    case AZIHSM_ALGO_ID_HMAC_SHA256:
+        return "SHA256";
+    case AZIHSM_ALGO_ID_HMAC_SHA384:
+        return "SHA384";
+    case AZIHSM_ALGO_ID_HMAC_SHA512:
+        return "SHA512";
+    default:
+        return "unknown";
     }
 }
 
@@ -143,11 +144,10 @@ void assert_aes_cbc_roundtrip(
     size_t plaintext_len
 )
 {
-    // Build AES-CBC-PAD algo with a random-ish IV (using zeros here for simplicity).
+    // Build AES-CBC-PAD algo with a random IV.
     azihsm_algo_aes_cbc_params cbc_params{};
-    std::memset(cbc_params.iv, 0, sizeof(cbc_params.iv));
-    // Put a distinguishing byte so the IV isn't all-zero (mirrors Rust's test_iv behavior).
-    cbc_params.iv[0] = 0xAB;
+    auto iv = test_iv(sizeof(cbc_params.iv));
+    std::memcpy(cbc_params.iv, iv.data(), sizeof(cbc_params.iv));
 
     azihsm_algo enc_algo = { .id = AZIHSM_ALGO_ID_AES_CBC_PAD,
                              .params = &cbc_params,
@@ -167,10 +167,9 @@ void assert_aes_cbc_roundtrip(
         AZIHSM_STATUS_SUCCESS
     );
 
-    // Reset IV for decryption
+    // Reuse the same IV for decryption
     azihsm_algo_aes_cbc_params dec_cbc_params{};
-    std::memset(dec_cbc_params.iv, 0, sizeof(dec_cbc_params.iv));
-    dec_cbc_params.iv[0] = 0xAB;
+    std::memcpy(dec_cbc_params.iv, iv.data(), sizeof(dec_cbc_params.iv));
 
     azihsm_algo dec_algo = { .id = AZIHSM_ALGO_ID_AES_CBC_PAD,
                              .params = &dec_cbc_params,
@@ -214,7 +213,8 @@ void run_hkdf_matrix_for_curve(azihsm_handle session, azihsm_ecc_curve curve)
         for (uint32_t bits : AES_KEY_SIZES)
         {
             SCOPED_TRACE(
-                std::string("hash=") + get_hmac_algo_name(hash) + " aes_bits=" + std::to_string(bits)
+                std::string("hash=") + get_hmac_algo_name(hash) +
+                " aes_bits=" + std::to_string(bits)
             );
 
             azihsm_algo_hkdf_params hkdf_params{};
@@ -239,8 +239,8 @@ void run_hkdf_matrix_for_curve(azihsm_handle session, azihsm_ecc_curve curve)
                 derived_key_b
             );
 
-            std::string pt_str = std::string("HKDF hash=") + get_hmac_algo_name(hash)
-                                 + " aes_bits=" + std::to_string(bits);
+            std::string pt_str = std::string("HKDF hash=") + get_hmac_algo_name(hash) +
+                                 " aes_bits=" + std::to_string(bits);
             assert_aes_cbc_roundtrip(
                 derived_key_a.get(),
                 derived_key_b.get(),
@@ -388,9 +388,43 @@ void run_hkdf_matrix_for_curve(azihsm_handle session, azihsm_ecc_curve curve)
         {
             // If decryption succeeded despite key mismatch, the plaintext must differ.
             size_t msg_len = std::strlen(mismatch_msg);
-            bool content_matches = (decrypted.size() == msg_len)
-                                   && (std::memcmp(decrypted.data(), mismatch_msg, msg_len) == 0);
-            ASSERT_FALSE(content_matches) << "Mismatched info should not produce matching plaintext";
+            bool content_matches = (decrypted.size() == msg_len) &&
+                                   (std::memcmp(decrypted.data(), mismatch_msg, msg_len) == 0);
+            ASSERT_FALSE(content_matches)
+                << "Mismatched info should not produce matching plaintext";
         }
     }
+}
+
+void hkdf_derive_fails_common(
+    azihsm_handle session,
+    azihsm_algo_id hmac_algo_id,
+    key_props &props,
+    azihsm_status expected_status
+)
+{
+    auto_key secret_a;
+    auto_key secret_b;
+    derive_ecdh_shared_secrets(session, AZIHSM_ECC_CURVE_P256, secret_a, secret_b);
+
+    azihsm_algo_hkdf_params hkdf_params{};
+    azihsm_algo hkdf_algo{};
+    build_hkdf_algo(hkdf_params, hkdf_algo, hmac_algo_id, nullptr, nullptr);
+
+    // SharedSecret passes GenericSecretKey::validate_props but is not a valid
+    // HKDF output key type in the DDI TryFrom<&HsmKeyProps> for DdiKeyType
+    // (api/lib/src/ddi/hkdf.rs:101-117), which returns InvalidArgument.
+    // azihsm_key_class key_class = AZIHSM_KEY_CLASS_SECRET;
+    // azihsm_key_kind key_kind = AZIHSM_KEY_KIND_SHARED_SECRET;
+    // uint32_t bits = 256;
+    // uint8_t can_derive = 1;
+
+    std::vector<azihsm_key_prop> prop_vec;
+
+    azihsm_key_prop_list prop_list = build_key_prop_list(props, prop_vec);
+
+    azihsm_handle derived_handle = 0;
+    auto err = azihsm_key_derive(session, &hkdf_algo, secret_a.get(), &prop_list, &derived_handle);
+    ASSERT_EQ(err, expected_status);
+    ASSERT_EQ(derived_handle, 0u);
 }

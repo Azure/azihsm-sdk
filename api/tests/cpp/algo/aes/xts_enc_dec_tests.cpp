@@ -1685,8 +1685,9 @@ TEST_F(azihsm_aes_xts, single_shot_output_buffer_sizing)
         ASSERT_EQ(output.len, plaintext.size());
 
         // One-byte-short buffer should fail while still returning required length.
-        std::vector<uint8_t> small(plaintext.size() - 1);
-        azihsm_buffer too_small{ small.data(), static_cast<uint32_t>(small.size()) };
+        std::vector<uint8_t> too_small_vec(plaintext.size() - 1);
+        azihsm_buffer too_small{ too_small_vec.data(),
+                                 static_cast<uint32_t>(too_small_vec.size()) };
         err = azihsm_crypt_encrypt(&crypt_algo, key.get(), &input, &too_small);
         ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
         ASSERT_EQ(too_small.len, plaintext.size());
