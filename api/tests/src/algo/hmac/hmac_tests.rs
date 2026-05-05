@@ -1115,3 +1115,45 @@ fn test_hmac_derived_key_determinism(session: HsmSession) {
 
     assert_eq!(tag1, tag2, "HKDF derivation must be deterministic");
 }
+
+/// Ensures single-shot HMAC signing returns BufferTooSmall for a short output buffer,
+/// and succeeds when the output buffer is large enough.
+#[session_test]
+fn test_hmac_sign_buffer_too_small_then_success(session: HsmSession) {
+    let (key_a, key_b) = derive_ecdh_hmac_keypair(
+        &session,
+        HsmEccCurve::P256,
+        HsmHashAlgo::Sha256,
+        HsmKeyKind::HmacSha256,
+    );
+
+    let data = b"buffer too small test";
+
+    let mut small_tag_buf = [0u8; 31];
+    let result = HsmSigner::sign(
+        &mut HsmHmacAlgo::new(),
+        &key_a,
+        data,
+        Some(&mut small_tag_buf),
+    );
+
+    assert!(
+        matches!(result, Err(HsmError::BufferTooSmall)),
+        "Expected BufferTooSmall for 31-byte HMAC-SHA256 buffer, got {:?}",
+        result
+    );
+
+    let mut tag_buf = [0u8; 32];
+    let tag_len = HsmSigner::sign(&mut HsmHmacAlgo::new(), &key_a, data, Some(&mut tag_buf))
+        .expect("HMAC signing should succeed with a 32-byte buffer");
+
+    assert_eq!(tag_len, 32, "HMAC-SHA256 tag length should be 32 bytes");
+
+    let is_valid = HsmVerifier::verify(&mut HsmHmacAlgo::new(), &key_b, data, &tag_buf[..tag_len])
+        .expect("HMAC verify failed");
+
+    assert!(
+        is_valid,
+        "Tag produced after BufferTooSmall path should verify"
+    );
+}
