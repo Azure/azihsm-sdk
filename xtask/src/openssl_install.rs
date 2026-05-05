@@ -86,7 +86,7 @@ pub fn ensure_openssl() -> anyhow::Result<PathBuf> {
         if cmd!(sh, "which {tool}").quiet().run().is_err() {
             anyhow::bail!(
                 "required tool `{tool}` not found. \
-                 Install build prerequisites: sudo apt-get install build-essential curl perl"
+                 Install build prerequisites: sudo apt-get install build-essential coreutils curl perl"
             );
         }
     }
