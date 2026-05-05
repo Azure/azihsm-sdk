@@ -147,13 +147,6 @@ jobs:
         cargo build -p azihsm_api_native --features mock
         cargo build -p azihsm_ossl_provider --features mock
 
-    - name: Install provider
-      run: |
-        sudo mkdir -p /usr/lib/ossl-modules
-        sudo cp target/debug/azihsm_provider.so /usr/lib/ossl-modules/
-        sudo cp target/debug/libazihsm_api_native.so /usr/lib/
-        sudo ldconfig
-
     - name: Generate dev key material
       env:
         LD_LIBRARY_PATH: ${{ github.workspace }}/target/openssl-3.0.3/lib
@@ -171,12 +164,12 @@ jobs:
 
     - name: Smoke test provider
       env:
-        LD_LIBRARY_PATH: ${{ github.workspace }}/target/openssl-3.0.3/lib
+        LD_LIBRARY_PATH: ${{ github.workspace }}/target/openssl-3.0.3/lib:${{ github.workspace }}/target/debug
         AZIHSM_CREDENTIALS_ID: "70fcf730b8764238b8358010ce8a3f76"
         AZIHSM_CREDENTIALS_PIN: "db3dc77fc22e430080d41b31b6f04800"
       run: |
         ${{ github.workspace }}/target/openssl-3.0.3/bin/openssl genpkey \
-          -provider-path /usr/lib/ossl-modules \
+          -provider-path ${{ github.workspace }}/target/debug \
           -provider default -provider azihsm_provider \
           -propquery "?provider=azihsm" \
           -algorithm EC -pkeyopt group:P-384 \
@@ -185,8 +178,7 @@ jobs:
     - name: Run CLI integration tests
       env:
         OPENSSL_BIN: ${{ github.workspace }}/target/openssl-3.0.3/bin/openssl
-        OPENSSL_LIB: ${{ github.workspace }}/target/openssl-3.0.3/lib
-        PROVIDER_PATH: /usr/lib/ossl-modules
+        OPENSSL_LIB: ${{ github.workspace }}/target/openssl-3.0.3/lib:${{ github.workspace }}/target/debug
         PROPQUERY: "?provider=azihsm"
         AZIHSM_CREDENTIALS_ID: "70fcf730b8764238b8358010ce8a3f76"
         AZIHSM_CREDENTIALS_PIN: "db3dc77fc22e430080d41b31b6f04800"
@@ -198,6 +190,11 @@ jobs:
         AZIHSM_CREDENTIALS_ID: "70fcf730b8764238b8358010ce8a3f76"
         AZIHSM_CREDENTIALS_PIN: "db3dc77fc22e430080d41b31b6f04800"
       run: cargo xtask precheck --nextest --package provider-integration-tests-capi --features integration --profile ci-provider-integration
+
+    - name: Install libazihsm_api_native for NGINX tests
+      run: |
+        sudo cp target/debug/libazihsm_api_native.so /usr/lib/
+        sudo ldconfig
 
     - name: Install nginx mainline
       run: |
@@ -213,7 +210,6 @@ jobs:
       env:
         OPENSSL_BIN: ${{ github.workspace }}/target/openssl-3.0.3/bin/openssl
         OPENSSL_LIB: ${{ github.workspace }}/target/openssl-3.0.3/lib
-        PROVIDER_PATH: /usr/lib/ossl-modules
         AZIHSM_CREDENTIALS_ID: "70fcf730b8764238b8358010ce8a3f76"
         AZIHSM_CREDENTIALS_PIN: "db3dc77fc22e430080d41b31b6f04800"
       run: |
