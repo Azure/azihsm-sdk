@@ -163,6 +163,31 @@ TEST_F(azihsm_aes_keygen, aes_256_key_unmask)
     });
 }
 
+TEST_F(azihsm_aes_keygen, key_delete_rejects_session_handle)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        ASSERT_EQ(azihsm_key_delete(session), AZIHSM_STATUS_UNSUPPORTED_KEY_KIND);
+    });
+}
+
+TEST_F(azihsm_aes_keygen, key_report_rejects_aes_key)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        auto key = generate_aes_key(session, 128);
+
+        std::array<uint8_t, 16> report_data{};
+        azihsm_buffer report_data_buf{ report_data.data(),
+                                       static_cast<uint32_t>(report_data.size()) };
+        std::array<uint8_t, 128> report{};
+        azihsm_buffer report_buf{ report.data(), static_cast<uint32_t>(report.size()) };
+
+        ASSERT_EQ(
+            azihsm_generate_key_report(key.get(), &report_data_buf, &report_buf),
+            AZIHSM_STATUS_UNSUPPORTED_KEY_KIND
+        );
+    });
+}
+
 /// verifies AES key unwrap fails when wrapped blob is corrupted
 TEST_F(azihsm_aes_keygen, aes_key_unwrap_corrupted_fails)
 {
@@ -442,6 +467,75 @@ TEST_F(azihsm_aes_keygen, aes_key_gen_persistent)
             AZIHSM_KEY_KIND_AES,
             256
         );
+    });
+}
+
+/// verifies AES key generation rejects algorithms that are not key-generation algorithms
+TEST_F(azihsm_aes_keygen, aes_key_gen_rejects_unsupported_algorithm)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        azihsm_algo algo{};
+        algo.id = AZIHSM_ALGO_ID_SHA256;
+        algo.params = nullptr;
+        algo.len = 0;
+
+        azihsm_key_kind key_kind = AZIHSM_KEY_KIND_AES;
+        azihsm_key_class key_class = AZIHSM_KEY_CLASS_SECRET;
+        uint32_t bits = 128;
+        bool is_session = true;
+        bool can_encrypt = true;
+        bool can_decrypt = true;
+
+        std::vector<azihsm_key_prop> props{
+            { AZIHSM_KEY_PROP_ID_KIND, &key_kind, sizeof(key_kind) },
+            { AZIHSM_KEY_PROP_ID_CLASS, &key_class, sizeof(key_class) },
+            { AZIHSM_KEY_PROP_ID_BIT_LEN, &bits, sizeof(bits) },
+            { AZIHSM_KEY_PROP_ID_SESSION, &is_session, sizeof(is_session) },
+            { AZIHSM_KEY_PROP_ID_ENCRYPT, &can_encrypt, sizeof(can_encrypt) },
+            { AZIHSM_KEY_PROP_ID_DECRYPT, &can_decrypt, sizeof(can_decrypt) },
+        };
+        azihsm_key_prop_list prop_list{ props.data(), static_cast<uint32_t>(props.size()) };
+
+        auto_key key;
+        auto err = azihsm_key_gen(session, &algo, &prop_list, key.get_ptr());
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
+        ASSERT_EQ(key.get(), 0u);
+    });
+}
+
+/// verifies key derivation rejects algorithms that are not key-derivation algorithms
+TEST_F(azihsm_aes_keygen, aes_key_derive_rejects_unsupported_algorithm)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        auto base_key = generate_aes_key(session, 128);
+
+        azihsm_algo algo{};
+        algo.id = AZIHSM_ALGO_ID_AES_CBC;
+        algo.params = nullptr;
+        algo.len = 0;
+
+        azihsm_key_kind key_kind = AZIHSM_KEY_KIND_AES;
+        azihsm_key_class key_class = AZIHSM_KEY_CLASS_SECRET;
+        uint32_t bits = 128;
+        bool is_session = true;
+        bool can_encrypt = true;
+        bool can_decrypt = true;
+
+        std::vector<azihsm_key_prop> props{
+            { AZIHSM_KEY_PROP_ID_KIND, &key_kind, sizeof(key_kind) },
+            { AZIHSM_KEY_PROP_ID_CLASS, &key_class, sizeof(key_class) },
+            { AZIHSM_KEY_PROP_ID_BIT_LEN, &bits, sizeof(bits) },
+            { AZIHSM_KEY_PROP_ID_SESSION, &is_session, sizeof(is_session) },
+            { AZIHSM_KEY_PROP_ID_ENCRYPT, &can_encrypt, sizeof(can_encrypt) },
+            { AZIHSM_KEY_PROP_ID_DECRYPT, &can_decrypt, sizeof(can_decrypt) },
+        };
+        azihsm_key_prop_list prop_list{ props.data(), static_cast<uint32_t>(props.size()) };
+
+        auto_key derived_key;
+        auto err =
+            azihsm_key_derive(session, &algo, base_key.get(), &prop_list, derived_key.get_ptr());
+        ASSERT_EQ(err, AZIHSM_STATUS_UNSUPPORTED_ALGORITHM);
+        ASSERT_EQ(derived_key.get(), 0u);
     });
 }
 

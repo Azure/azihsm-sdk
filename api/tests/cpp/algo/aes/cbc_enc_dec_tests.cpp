@@ -682,6 +682,64 @@ TEST_F(azihsm_aes_cbc, single_shot_invalid_key_handle_is_rejected)
     ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
 }
 
+TEST_F(azihsm_aes_cbc, unsupported_algorithm_is_rejected)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto key = generate_aes_key(session, 128);
+
+        uint8_t plaintext[AES_BLOCK_SIZE] = { 0xEE };
+        azihsm_buffer input{ plaintext, sizeof(plaintext) };
+        azihsm_buffer output{ nullptr, 0 };
+        azihsm_algo algo{};
+        algo.id = AZIHSM_ALGO_ID_SHA256;
+        algo.params = nullptr;
+        algo.len = 0;
+
+        ASSERT_EQ(
+            azihsm_crypt_encrypt(&algo, key.get(), &input, &output),
+            AZIHSM_STATUS_UNSUPPORTED_ALGORITHM
+        );
+        ASSERT_EQ(
+            azihsm_crypt_decrypt(&algo, key.get(), &input, &output),
+            AZIHSM_STATUS_UNSUPPORTED_ALGORITHM
+        );
+
+        auto_ctx ctx;
+        ASSERT_EQ(
+            azihsm_crypt_encrypt_init(&algo, key.get(), ctx.get_ptr()),
+            AZIHSM_STATUS_UNSUPPORTED_ALGORITHM
+        );
+        ASSERT_EQ(ctx.get(), 0u);
+        ASSERT_EQ(
+            azihsm_crypt_decrypt_init(&algo, key.get(), ctx.get_ptr()),
+            AZIHSM_STATUS_UNSUPPORTED_ALGORITHM
+        );
+        ASSERT_EQ(ctx.get(), 0u);
+    });
+}
+
+TEST_F(azihsm_aes_cbc, streaming_operations_reject_key_handles_as_contexts)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        auto key = generate_aes_key(session, 128);
+
+        uint8_t plaintext[AES_BLOCK_SIZE] = { 0xEF };
+        azihsm_buffer input{ plaintext, sizeof(plaintext) };
+        azihsm_buffer output{ nullptr, 0 };
+
+        ASSERT_EQ(
+            azihsm_crypt_encrypt_update(key.get(), &input, &output),
+            AZIHSM_STATUS_INVALID_HANDLE
+        );
+        ASSERT_EQ(azihsm_crypt_encrypt_finish(key.get(), &output), AZIHSM_STATUS_INVALID_HANDLE);
+        ASSERT_EQ(
+            azihsm_crypt_decrypt_update(key.get(), &input, &output),
+            AZIHSM_STATUS_INVALID_HANDLE
+        );
+        ASSERT_EQ(azihsm_crypt_decrypt_finish(key.get(), &output), AZIHSM_STATUS_INVALID_HANDLE);
+    });
+}
+
 // Validates streaming init rejects null mandatory pointers.
 TEST_F(azihsm_aes_cbc, streaming_init_null_pointers_are_rejected)
 {
