@@ -154,6 +154,7 @@ jobs:
       env:
         OPENSSL_DIR: /opt/openssl-3.0.3
       run: |
+        source <(cargo llvm-cov show-env)
         cargo build -p azihsm_api_native --features mock
         cargo build -p azihsm_ossl_provider --features mock
 

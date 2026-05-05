@@ -178,6 +178,22 @@ impl Xtask for Coverage {
             log::warn!("Could not find cmake build directory or azihsm_api_native object. Coverage reports may be incomplete.");
         }
 
+        // append /usr/lib/libazihsm_api_native.so & /usr/lib/ossl-modules/azihsm_provider.so to LLVM_COV_FLAGS
+        let additional_libs = ["/usr/lib/libazihsm_api_native.so", "/usr/lib/ossl-modules/azihsm_provider.so"];
+        for lib in &additional_libs {
+            if std::path::Path::new(lib).exists() {
+                let new_flags = match std::env::var("LLVM_COV_FLAGS") {
+                    Ok(existing) if !existing.trim().is_empty() => {
+                        format!("{existing} -object {lib}")
+                    }
+                    _ => format!("-object {lib}"),
+                };
+                sh.set_var("LLVM_COV_FLAGS", new_flags);
+            } else {
+                log::warn!("Could not find library at expected path: {}. Coverage reports may be incomplete.", lib);
+            }
+        }
+
         if !self.no_report {
             // Generate cobertura report
             log::info!("Generating cobertura report");
