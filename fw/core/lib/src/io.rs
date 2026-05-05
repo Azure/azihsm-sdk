@@ -164,12 +164,12 @@ impl<P: HsmPal> Hsm<P> {
                 Self::validate_session(&hdr, session_ctrl, session_flags, sqe_session_id)
             {
                 ddi::encode_ddi_err(hdr.op, status, resp_buf)
-                    .op_status("core", HostStatus::INTERNAL_ERROR)?
+                    .op_status(HostStatus::INTERNAL_ERROR)?
             } else {
                 match ddi::dispatch(&hdr, &mut decoder, part_id, self.pal(), fmem, resp_buf).await {
                     Ok(len) => len,
                     Err(status) => ddi::encode_ddi_err(hdr.op, status, resp_buf)
-                        .op_status("core", HostStatus::INTERNAL_ERROR)?,
+                        .op_status(HostStatus::INTERNAL_ERROR)?,
                 }
             };
 
