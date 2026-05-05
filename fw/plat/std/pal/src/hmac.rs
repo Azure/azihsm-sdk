@@ -4,63 +4,85 @@
 //! [`HsmHmac`] implementation for the standard (host-native) PAL.
 //!
 //! Thin delegation layer to the [`StdHmac`](crate::drivers::hmac::StdHmac)
-//! driver. The PAL impl maps key length to the underlying hash algorithm
-//! and delegates all crypto work to the driver (which offloads to the
-//! worker pool).
-//!
-//! ## Key-length → hash-algorithm mapping
-//!
-//! | Key length | Hash algorithm |
-//! |------------|----------------|
-//! | 32 bytes   | SHA-256        |
-//! | 48 bytes   | SHA-384        |
-//! | 64 bytes   | SHA-512        |
-//! | other      | SHA-256        |
-//!
-//! ## Data flow (sign example)
-//!
-//! ```text
-//! Core calls pal.hmac_sign(key, data, sig)
-//!   → hash_algo_for_key_len(key.len())   // 32 → SHA-256
-//!   → self.hmac.sign(hash_algo, key, data, sig)
-//!     → WorkerPool → OpenSSL HMAC
-//!   → sig written into caller's buffer
-//! ```
+//! driver. One-shot operations are backed by OpenSSL. Multi-step HMAC APIs
+//! are not currently used by the standard PAL and are left as `todo!()`.
 
 use azihsm_crypto::HashAlgo;
 
 use super::*;
 
-/// Map HMAC key length to the corresponding [`HashAlgo`].
-///
-/// Uses the key length as an implicit indicator of the intended hash
-/// algorithm. Falls back to SHA-256 for unrecognized sizes.
-fn hash_algo_for_key_len(len: usize) -> HashAlgo {
-    match len {
-        32 => HashAlgo::sha256(),
-        48 => HashAlgo::sha384(),
-        64 => HashAlgo::sha512(),
-        _ => HashAlgo::sha256(),
+fn to_hash_algo(algo: HsmHashAlgo) -> HashAlgo {
+    match algo {
+        HsmHashAlgo::Sha1 => HashAlgo::sha1(),
+        HsmHashAlgo::Sha256 => HashAlgo::sha256(),
+        HsmHashAlgo::Sha384 => HashAlgo::sha384(),
+        HsmHashAlgo::Sha512 => HashAlgo::sha512(),
     }
 }
 
 impl HsmHmac for StdHsmPal {
-    /// Generate a random HMAC key by delegating to the driver.
-    async fn hmac_gen_key(&self, key: &mut [u8]) -> HsmResult<()> {
+    type HmacCtx<'a>
+        = HsmHashState<'a>
+    where
+        Self: 'a;
+
+    async fn hmac_gen_key(&self, _algo: HsmHashAlgo, key: &mut [u8]) -> HsmResult<()> {
         self.hmac.gen_key(key).await
     }
 
-    /// Compute an HMAC tag by mapping key length to hash algo and
-    /// delegating to the driver.
-    async fn hmac_sign(&self, key: &[u8], data: &[u8], sig: &mut [u8]) -> HsmResult<()> {
-        let hash_algo = hash_algo_for_key_len(key.len());
-        self.hmac.sign(hash_algo, key, data, sig).await
+    async fn hmac_sign<'a>(
+        &self,
+        algo: HsmHashAlgo,
+        key: &[u8],
+        data: &[u8],
+        tag: &mut [u8],
+        _state: HsmHashState<'a>,
+    ) -> HsmResult<()>
+    where
+        Self: 'a,
+    {
+        self.hmac.sign(to_hash_algo(algo), key, data, tag).await
     }
 
-    /// Verify an HMAC tag by mapping key length to hash algo and
-    /// delegating to the driver.
-    async fn hmac_verify(&self, key: &[u8], data: &[u8], sig: &[u8]) -> HsmResult<bool> {
-        let hash_algo = hash_algo_for_key_len(key.len());
-        self.hmac.verify(hash_algo, key, data, sig).await
+    async fn hmac_verify<'a>(
+        &self,
+        algo: HsmHashAlgo,
+        key: &[u8],
+        data: &[u8],
+        tag: &[u8],
+        _state: HsmHashState<'a>,
+    ) -> HsmResult<bool>
+    where
+        Self: 'a,
+    {
+        self.hmac.verify(to_hash_algo(algo), key, data, tag).await
+    }
+
+    async fn hmac_begin<'a>(
+        &self,
+        _algo: HsmHashAlgo,
+        _key: &[u8],
+        _state: HsmHashState<'a>,
+    ) -> HsmResult<Self::HmacCtx<'a>>
+    where
+        Self: 'a,
+    {
+        todo!()
+    }
+
+    async fn hmac_continue(&self, _ctx: &mut Self::HmacCtx<'_>, _data: &[u8]) -> HsmResult<()> {
+        todo!()
+    }
+
+    async fn hmac_finish<'a>(&self, _ctx: Self::HmacCtx<'a>) -> HsmResult<HsmHashState<'a>> {
+        todo!()
+    }
+
+    async fn hmac_finish_into(&self, _ctx: Self::HmacCtx<'_>, _dest: &mut [u8]) -> HsmResult<()> {
+        todo!()
+    }
+
+    async fn hmac_finish_verify(&self, _ctx: Self::HmacCtx<'_>, _tag: &[u8]) -> HsmResult<bool> {
+        todo!()
     }
 }

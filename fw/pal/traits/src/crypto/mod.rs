@@ -13,6 +13,7 @@
 //! | [`HsmHash`] | SHA-1/256/384/512 digest computation |
 //! | [`HsmEcc`] | Elliptic curve key generation, signing, verification, and ECDH |
 //! | [`HsmHmac`] | HMAC computation using SHA-1/256/384/512 |
+//! | [`HsmKdf`] | KDF / MGF: HKDF, KBKDF, MGF1, X9.63, SP 800-56A |
 
 mod aes;
 mod ecc;
