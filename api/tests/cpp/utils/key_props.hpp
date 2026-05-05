@@ -23,7 +23,7 @@ typedef struct _KeyProps
     bool unwrap = false;
 } key_props;
 
-/// Helper method to build a azihsm_key_prop_list from a key_props struct
+/// Helper method to build an azihsm_key_prop_list from a key_props struct
 inline azihsm_key_prop_list build_key_prop_list(
     key_props &props,
     std::vector<azihsm_key_prop> &prop_vec
