@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+use azihsm_api::*;
+use azihsm_api_tests_macro::*;
 use azihsm_crypto::DeriveOp;
 use azihsm_crypto::EccAlgo as CryptoEccAlgo;
 use azihsm_crypto::EccCurve as CryptoEccCurve;
@@ -20,41 +22,11 @@ use azihsm_crypto::testvectors::ecc::ECDH_P384_TEST_VECTORS;
 use azihsm_crypto::testvectors::ecc::ECDH_P521_TEST_VECTORS;
 use azihsm_crypto::testvectors::ecc::EccNistTestVector;
 
-use azihsm_api::*;
-use azihsm_api_tests_macro::*;
+use super::common::*;
 
 // =======================================================
 // API-level helpers
 // =======================================================
-
-/// Generates an API-level ECC key pair with sign/verify permissions.
-fn generate_ecc_key_pair(
-    session: &HsmSession,
-    curve: HsmEccCurve,
-) -> (HsmEccPrivateKey, HsmEccPublicKey) {
-    let priv_key_props = HsmKeyPropsBuilder::default()
-        .class(HsmKeyClass::Private)
-        .key_kind(HsmKeyKind::Ecc)
-        .ecc_curve(curve)
-        .can_sign(true)
-        .is_session(true)
-        .build()
-        .expect("Failed to build private key props");
-
-    let pub_key_props = HsmKeyPropsBuilder::default()
-        .class(HsmKeyClass::Public)
-        .key_kind(HsmKeyKind::Ecc)
-        .ecc_curve(curve)
-        .can_verify(true)
-        .is_session(true)
-        .build()
-        .expect("Failed to build public key props");
-
-    let mut algo = HsmEccKeyGenAlgo::default();
-
-    HsmKeyManager::generate_key_pair(session, &mut algo, priv_key_props, pub_key_props)
-        .expect("Failed to generate ECC key pair")
-}
 
 /// Hashes message data through the API-level hash path.
 fn hsm_hash_vec(session: &HsmSession, mut hash_algo: HsmHashAlgo, data: &[u8]) -> Vec<u8> {
