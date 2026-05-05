@@ -4,29 +4,16 @@
 //! [`HsmHash`] implementation for the standard (host-native) PAL.
 //!
 //! Thin delegation layer that maps the PAL-level [`HsmHashAlgo`] enum
-//! to [`azihsm_crypto::HashAlgo`] and forwards the call to the
+//! to [`azihsm_crypto::HashAlgo`] and forwards one-shot hashing to the
 //! [`StdHash`](crate::drivers::hash::StdHash) driver.
 //!
-//! ## Data flow
-//!
-//! ```text
-//! Core calls pal.hash(HsmHashAlgo::Sha256, data, digest)
-//!   → to_hash_algo() maps to azihsm_crypto::HashAlgo::sha256()
-//!   → self.hash.hash(algo, data, digest)
-//!     → StdHash copies data, dispatches to WorkerPool
-//!       → OpenSSL EVP_Digest (SHA-256)
-//!     → digest written into caller's buffer
-//! ```
+//! Multi-step hashing is not currently needed by the standard PAL, so
+//! those entry points are left as `todo!()` stubs.
 
 use azihsm_crypto::HashAlgo;
 
 use super::*;
 
-/// Map the PAL-level [`HsmHashAlgo`] to the crypto library's
-/// [`azihsm_crypto::HashAlgo`].
-///
-/// Each variant constructs the corresponding OpenSSL message digest
-/// context (e.g., `EVP_sha256`).
 fn to_hash_algo(algo: HsmHashAlgo) -> HashAlgo {
     match algo {
         HsmHashAlgo::Sha1 => HashAlgo::sha1(),
@@ -37,16 +24,41 @@ fn to_hash_algo(algo: HsmHashAlgo) -> HashAlgo {
 }
 
 impl HsmHash for StdHsmPal {
-    /// Compute a cryptographic hash by delegating to the [`StdHash`] driver.
-    ///
-    /// # Parameters
-    /// - `algo` — The hash algorithm (SHA-1/256/384/512).
-    /// - `data` — Input message bytes.
-    /// - `digest` — Output buffer (must be ≥ [`HsmHashAlgo::digest_len`] bytes).
-    ///
-    /// # Errors
-    /// Returns [`HsmError::ShaError`] if the underlying OpenSSL operation fails.
-    async fn hash(&self, algo: HsmHashAlgo, data: &[u8], digest: &mut [u8]) -> HsmResult<()> {
+    type HashCtx<'a>
+        = HsmHashState<'a>
+    where
+        Self: 'a;
+
+    async fn hash(
+        &self,
+        algo: HsmHashAlgo,
+        data: &[u8],
+        digest: &mut [u8],
+        _big_endian: bool,
+    ) -> HsmResult<()> {
         self.hash.hash(to_hash_algo(algo), data, digest).await
+    }
+
+    async fn hash_begin<'a>(
+        &self,
+        _algo: HsmHashAlgo,
+        _state: HsmHashState<'a>,
+    ) -> HsmResult<Self::HashCtx<'a>>
+    where
+        Self: 'a,
+    {
+        todo!()
+    }
+
+    async fn hash_continue(&self, _ctx: &mut Self::HashCtx<'_>, _data: &[u8]) -> HsmResult<()> {
+        todo!()
+    }
+
+    async fn hash_finish<'a>(
+        &self,
+        _ctx: Self::HashCtx<'a>,
+        _big_endian: bool,
+    ) -> HsmResult<HsmHashState<'a>> {
+        todo!()
     }
 }

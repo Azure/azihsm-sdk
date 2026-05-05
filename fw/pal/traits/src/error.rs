@@ -49,6 +49,7 @@ pub enum HsmError {
     EccVerifyFailed = 0x08700024,
     AesEncryptFailed = 0x08700025,
     AesDecryptFailed = 0x08700026,
+
     FunctionNotEnabled = 0x08700027,
     AnotherKeyInUse = 0x08700028,
     KeyNotInUse = 0x08700029,
@@ -221,6 +222,9 @@ pub enum HsmError {
     Bk3AlreadyInitialized = 0x087000D6,
     SealedBk3AlreadySet = 0x087000D7,
     PartitionIdKeyGenerationPctFailed = 0x087000D8,
+
+    // ── AES Key Wrap errors ────────────────────────────────────────
+    AesUnwrapFailed = 0x087000D9,
 
     // ── Core lifecycle / transport diagnostics ─────────────────────
     SqeInvalidPsdt = 0x087000E0,

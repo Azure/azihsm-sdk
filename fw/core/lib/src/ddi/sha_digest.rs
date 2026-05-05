@@ -49,7 +49,7 @@ pub(crate) async fn sha_digest<'a, P: HsmPal>(
     let total = encoder.position();
 
     // Compute hash directly into the reserved slice — zero copy.
-    pal.hash(algo, body.msg, frame.digest).await?;
+    pal.hash(algo, body.msg, frame.digest, true).await?;
 
     Ok(&smem[..total])
 }

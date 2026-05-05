@@ -3,27 +3,18 @@
 
 //! [`HsmKdf`] implementation for the standard (host-native) PAL.
 //!
-//! Thin delegation layer that maps the PAL-level [`HsmHashAlgo`] and
-//! [`HkdfMode`] enums to their [`azihsm_crypto`] counterparts and
-//! forwards calls to the [`StdKdf`](crate::drivers::kdf::StdKdf) driver.
+//! Thin delegation layer that maps the PAL-level [`HsmHashAlgo`] enum to
+//! [`azihsm_crypto::HashAlgo`] and forwards the supported KDF operations to
+//! the [`StdKdf`](crate::drivers::kdf::StdKdf) driver.
 //!
-//! ## Data flow (HKDF example)
-//!
-//! ```text
-//! Core calls pal.hkdf(key, HsmHashAlgo::Sha256, mode, salt, info, output)
-//!   → to_hash_algo() maps to azihsm_crypto::HashAlgo::sha256()
-//!   → to_hkdf_mode() maps to azihsm_crypto::HkdfMode
-//!   → self.kdf.hkdf(key, hash_algo, mode, salt, info, output)
-//!     → WorkerPool → OpenSSL HKDF
-//!   → output written into caller's buffer
-//! ```
+//! HKDF extract/expand and SP 800-108 counter-mode KDF are backed by
+//! OpenSSL. The remaining hash-based KDF helpers are currently left as
+//! `todo!()` stubs.
 
 use azihsm_crypto::HashAlgo;
 
 use super::*;
 
-/// Map the PAL-level [`HsmHashAlgo`] to the crypto library's
-/// [`azihsm_crypto::HashAlgo`].
 fn to_hash_algo(algo: HsmHashAlgo) -> HashAlgo {
     match algo {
         HsmHashAlgo::Sha1 => HashAlgo::sha1(),
@@ -33,50 +24,103 @@ fn to_hash_algo(algo: HsmHashAlgo) -> HashAlgo {
     }
 }
 
-/// Map the PAL-level [`HkdfMode`] to the crypto library's
-/// [`azihsm_crypto::HkdfMode`].
-fn to_hkdf_mode(mode: HkdfMode) -> azihsm_crypto::HkdfMode {
-    match mode {
-        HkdfMode::Extract => azihsm_crypto::HkdfMode::Extract,
-        HkdfMode::Expand => azihsm_crypto::HkdfMode::Expand,
-        HkdfMode::ExtractAndExpand => azihsm_crypto::HkdfMode::ExtractAndExpand,
-    }
-}
-
 impl HsmKdf for StdHsmPal {
-    /// Derive key material using HKDF by delegating to the [`StdKdf`] driver.
-    async fn hkdf(
+    async fn hkdf_extract<'a>(
         &self,
-        key: &[u8],
         algo: HsmHashAlgo,
-        mode: HkdfMode,
         salt: &[u8],
-        info: &[u8],
-        output: &mut [u8],
-    ) -> HsmResult<()> {
+        ikm: &[u8],
+        prk: &mut [u8],
+        state: HsmKdfState<'a>,
+    ) -> HsmResult<HsmKdfState<'a>> {
         self.kdf
             .hkdf(
-                key,
+                ikm,
                 to_hash_algo(algo),
-                to_hkdf_mode(mode),
+                azihsm_crypto::HkdfMode::Extract,
                 salt,
+                &[],
+                prk,
+            )
+            .await?;
+        Ok(state)
+    }
+
+    async fn hkdf_expand<'a>(
+        &self,
+        algo: HsmHashAlgo,
+        prk: &[u8],
+        info: &[u8],
+        output: &mut [u8],
+        state: HsmKdfState<'a>,
+    ) -> HsmResult<HsmKdfState<'a>> {
+        self.kdf
+            .hkdf(
+                prk,
+                to_hash_algo(algo),
+                azihsm_crypto::HkdfMode::Expand,
+                &[],
                 info,
                 output,
             )
-            .await
+            .await?;
+        Ok(state)
     }
 
-    /// Derive key material using KBKDF by delegating to the [`StdKdf`] driver.
-    async fn kbkdf(
+    async fn sp800_108_kdf<'a>(
         &self,
-        key: &[u8],
         algo: HsmHashAlgo,
+        key: &[u8],
         label: &[u8],
         context: &[u8],
         output: &mut [u8],
-    ) -> HsmResult<()> {
+        state: HsmKdfState<'a>,
+    ) -> HsmResult<HsmKdfState<'a>> {
         self.kdf
             .kbkdf(key, to_hash_algo(algo), label, context, output)
-            .await
+            .await?;
+        Ok(state)
+    }
+
+    async fn mgf1(
+        &self,
+        _algo: HsmHashAlgo,
+        _seed: &[u8],
+        _mask: &mut [u8],
+        _state: &mut [u8],
+    ) -> HsmResult<()> {
+        todo!()
+    }
+
+    async fn mgf1_xor(
+        &self,
+        _algo: HsmHashAlgo,
+        _seed: &[u8],
+        _mask: &mut [u8],
+        _state: &mut [u8],
+    ) -> HsmResult<()> {
+        todo!()
+    }
+
+    async fn x963_kdf(
+        &self,
+        _algo: HsmHashAlgo,
+        _z: &[u8],
+        _shared_info: &[u8],
+        _key: &mut [u8],
+        _state: &mut [u8],
+    ) -> HsmResult<()> {
+        todo!()
+    }
+
+    async fn sp800_56a_kdf(
+        &self,
+        _algo: HsmHashAlgo,
+        _z: &[u8],
+        _other_info: &[u8],
+        _key: &mut [u8],
+        _state: &mut [u8],
+    ) -> HsmResult<()> {
+        todo!()
     }
 }

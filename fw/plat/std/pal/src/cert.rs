@@ -287,8 +287,13 @@ impl StdHsmPal {
         rd_concat[..root_cert_len].copy_from_slice(&root_cert[..root_cert_len]);
         rd_concat[root_cert_len..].copy_from_slice(&deviceid_cert[..deviceid_cert_len]);
         let mut root_deviceid_hash = [0u8; 32];
-        self.hash(HsmHashAlgo::Sha256, &rd_concat, &mut root_deviceid_hash)
-            .await?;
+        self.hash(
+            HsmHashAlgo::Sha256,
+            &rd_concat,
+            &mut root_deviceid_hash,
+            true,
+        )
+        .await?;
 
         // Commit to store.
         let store = &mut *self.cert_store_mut();
@@ -322,7 +327,7 @@ impl StdHsmPal {
 
         let uncompressed = to_uncompressed(&pub_raw);
         let mut ski = [0u8; 20];
-        self.hash(HsmHashAlgo::Sha1, &uncompressed, &mut ski)
+        self.hash(HsmHashAlgo::Sha1, &uncompressed, &mut ski, true)
             .await?;
 
         Ok(CertKeyPair {
@@ -339,7 +344,8 @@ impl StdHsmPal {
         tbs: &[u8],
     ) -> HsmResult<([u8; P384_SIG_COMPONENT], [u8; P384_SIG_COMPONENT])> {
         let mut tbs_hash = [0u8; 48];
-        self.hash(HsmHashAlgo::Sha384, tbs, &mut tbs_hash).await?;
+        self.hash(HsmHashAlgo::Sha384, tbs, &mut tbs_hash, true)
+            .await?;
 
         let mut sig = [0u8; 96];
         self.ecc_sign(HsmEccCurve::P384, priv_der, &tbs_hash, &mut sig)
@@ -374,7 +380,7 @@ impl StdHsmPal {
 
         // SKI = SHA-1(uncompressed pubkey).
         let mut ski = [0u8; 20];
-        self.hash(HsmHashAlgo::Sha1, &uncompressed, &mut ski)
+        self.hash(HsmHashAlgo::Sha1, &uncompressed, &mut ski, true)
             .await?;
 
         // Prepare TBS.
@@ -451,6 +457,7 @@ impl HsmCertStore for StdHsmPal {
             HsmHashAlgo::Sha256,
             self.cert_store().shared_cert(2).unwrap(),
             &mut alias_hash,
+            true,
         )
         .await?;
 
@@ -459,6 +466,7 @@ impl HsmCertStore for StdHsmPal {
             HsmHashAlgo::Sha256,
             &entry.leaf_cert[..entry.leaf_cert_len],
             &mut leaf_hash,
+            true,
         )
         .await?;
 
@@ -468,7 +476,7 @@ impl HsmCertStore for StdHsmPal {
         combined[64..96].copy_from_slice(&leaf_hash);
 
         let mut thumbprint = [0u8; 32];
-        self.hash(HsmHashAlgo::Sha256, &combined, &mut thumbprint)
+        self.hash(HsmHashAlgo::Sha256, &combined, &mut thumbprint, true)
             .await?;
 
         Ok(CertChainInfo {
