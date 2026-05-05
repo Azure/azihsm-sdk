@@ -953,7 +953,13 @@ fn test_unwrapping_key_cannot_sign(session: HsmSession) {
 
     let result = HsmSigner::sign_vec(&mut algo, &priv_key, b"data");
 
-    assert!(result.is_err(), "Unwrapping key should not allow signing");
+    let err = result.expect_err("Unwrapping key should not allow signing");
+
+    assert_eq!(
+        err,
+        HsmError::InvalidKey,
+        "Expected unwrapping key signing to fail with InvalidKey"
+    );
 }
 
 /// Ensure RSA import fails when declared key size does not match DER key size
@@ -964,9 +970,14 @@ fn test_import_rsa_mismatched_bits_fails(session: HsmSession) {
 
     let result = import_rsa_key(&session, &der, 3072);
 
+    /*assert!(
+        matches!(result, Err(HsmError::InvalidKey)),
+        "Expected  import to fail with HsmError::InvalidKey"
+    );*/
+
     assert!(
-        result.is_err(),
-        "Import should fail for mismatched key size"
+        matches!(result, Err(HsmError::InvalidKeyProps)),
+        "Expect Rsa Err(HsmError::InvalidKeyProps)",
     );
 }
 
@@ -978,7 +989,7 @@ fn test_import_rsa_invalid_der_fails(session: HsmSession) {
     let result = import_rsa_key(&session, &bad_der, 2048);
 
     assert!(
-        result.is_err(),
-        "Invalid DER should cause unwrap/import failure"
+        matches!(result, Err(HsmError::DdiCmdFailure)),
+        "Expected invalid DER import to fail with HsmError::InvalidKeyProps"
     );
 }
