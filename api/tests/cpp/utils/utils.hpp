@@ -11,9 +11,11 @@
 
 #ifdef _WIN32
 #define NOMINMAX
+// clang-format off
+#include <windows.h>
 #include <bcrypt.h>
 #include <ntstatus.h>
-#include <windows.h>
+// clang-format on
 #else
 #include <fstream>
 #endif
