@@ -11,9 +11,9 @@
 
 #ifdef _WIN32
 #define NOMINMAX
-#include <windows.h>
 #include <bcrypt.h>
 #include <ntstatus.h>
+#include <windows.h>
 #else
 #include <fstream>
 #endif
@@ -50,7 +50,8 @@ inline std::vector<uint8_t> test_iv(size_t size)
         nullptr,
         iv.data(),
         static_cast<ULONG>(iv.size()),
-        BCRYPT_USE_SYSTEM_PREFERRED_RNG);
+        BCRYPT_USE_SYSTEM_PREFERRED_RNG
+    );
     if (status != STATUS_SUCCESS)
     {
         ADD_FAILURE() << "test_iv: BCryptGenRandom failed with status 0x" << std::hex << status;
