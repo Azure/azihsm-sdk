@@ -1,5 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
+#include <cstring>
+#include <string>
+
 #include "kdf_derive.hpp"
 #include "utils.hpp"
 
@@ -20,17 +23,6 @@ const char *get_hmac_algo_name(azihsm_algo_id hmac_algo_id)
     default:
         return "unknown";
     }
-}
-
-const std::vector<azihsm_algo_id> &supported_hkdf_hash_algos()
-{
-    const std::vector<azihsm_algo_id> algos = {
-        AZIHSM_ALGO_ID_HMAC_SHA1,
-        AZIHSM_ALGO_ID_HMAC_SHA256,
-        AZIHSM_ALGO_ID_HMAC_SHA384,
-        AZIHSM_ALGO_ID_HMAC_SHA512,
-    };
-    return algos;
 }
 
 // Builds an azihsm_algo for HKDF with the given HMAC algo ID and optional salt/info.

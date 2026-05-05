@@ -1,5 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
+
+#pragma once
+
 #include <azihsm_api.h>
 #include <gtest/gtest.h>
 #include <vector>
@@ -11,7 +14,16 @@
 
 const char *get_hmac_algo_name(azihsm_algo_id hmac_algo_id);
 
-const std::vector<azihsm_algo_id> &supported_hkdf_hash_algos();
+static const std::vector<azihsm_algo_id> &supported_hkdf_hash_algos()
+{
+    static const std::vector<azihsm_algo_id> algos = {
+        AZIHSM_ALGO_ID_HMAC_SHA1,
+        AZIHSM_ALGO_ID_HMAC_SHA256,
+        AZIHSM_ALGO_ID_HMAC_SHA384,
+        AZIHSM_ALGO_ID_HMAC_SHA512,
+    };
+    return algos;
+}
 
 // Builds an azihsm_algo for HKDF with the given HMAC algo ID and optional salt/info.
 void build_hkdf_algo(
