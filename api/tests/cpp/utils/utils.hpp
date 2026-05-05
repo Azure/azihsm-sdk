@@ -57,6 +57,7 @@ inline std::vector<uint8_t> test_iv(size_t size)
     if (status != STATUS_SUCCESS)
     {
         ADD_FAILURE() << "test_iv: BCryptGenRandom failed with status 0x" << std::hex << status;
+        return iv;
     }
 #else
     std::ifstream urandom("/dev/urandom", std::ios::in | std::ios::binary);
