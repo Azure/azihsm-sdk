@@ -11,7 +11,6 @@
 
 #ifdef _WIN32
 #define NOMINMAX
-// clang-format off
 #include <windows.h>
 #include <bcrypt.h>
 #include <ntstatus.h>
@@ -45,9 +44,6 @@ inline std::filesystem::path get_test_tmp_dir()
 inline std::vector<uint8_t> test_iv(size_t size)
 {
     std::vector<uint8_t> iv(size);
-    // fill IV with all zeros
-    //std::fill(iv.begin(), iv.end(), 0);
-    //return iv;
 
 #if defined(_WIN32)
     NTSTATUS status = BCryptGenRandom(
