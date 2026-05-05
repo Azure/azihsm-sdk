@@ -29,6 +29,7 @@ inline azihsm_key_prop_list build_key_prop_list(
     std::vector<azihsm_key_prop> &prop_vec
 )
 {
+    prop_vec.clear();
     prop_vec.push_back(
         { .id = AZIHSM_KEY_PROP_ID_CLASS, .val = &props.key_class, .len = sizeof(props.key_class) }
     );
