@@ -7,7 +7,7 @@
 #include <cstdint>
 #include <vector>
 
-/// Key properties for importing keys
+/// Key properties
 typedef struct _KeyProps
 {
     azihsm_key_class key_class;

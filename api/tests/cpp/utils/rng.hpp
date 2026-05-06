@@ -2,7 +2,10 @@
 // Licensed under the MIT License.
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
+#include <gtest/gtest.h>
+#include <ios>
 #include <vector>
 
 #ifdef _WIN32
