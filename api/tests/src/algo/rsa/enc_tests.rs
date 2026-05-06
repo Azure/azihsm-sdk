@@ -589,9 +589,10 @@ fn test_rsa_oaep_none_equals_empty_label(session: HsmSession) {
 
     let mut dec_algo = HsmRsaEncryptAlgo::with_oaep_padding(HsmHashAlgo::Sha256, Some(b""));
 
-    let result = HsmDecrypter::decrypt_vec(&mut dec_algo, &priv_key, &ciphertext);
+    let decrypted = HsmDecrypter::decrypt_vec(&mut dec_algo, &priv_key, &ciphertext)
+        .expect("Failed to decrypt OAEP ciphertext with empty label");
 
-    assert!(result.is_ok());
+    assert_eq!(decrypted, plaintext);
 }
 
 /// Ensure very small plaintext (1 byte) works
