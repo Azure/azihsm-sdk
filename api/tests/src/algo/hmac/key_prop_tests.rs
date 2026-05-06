@@ -240,7 +240,7 @@ fn test_hmac_derived_key_prop_invalid_bits_rejected(session: HsmSession) {
         .can_sign(true)
         .can_verify(true)
         .build()
-        .unwrap();
+        .expect("Failed to build HMAC key props");
 
     let result = derive_hmac_key_with_props(&session, &base_secret, HsmHashAlgo::Sha256, props);
 
@@ -266,7 +266,7 @@ fn test_hmac_derived_key_prop_invalid_bits_all_kinds(session: HsmSession) {
             .can_sign(true)
             .can_verify(true)
             .build()
-            .unwrap();
+            .expect("Failed to build HMAC key props");
 
         let result = derive_hmac_key_with_props(&session, &base_secret, hkdf_hash, props);
 
@@ -287,7 +287,7 @@ fn test_hmac_derived_key_prop_decrypt_flag_rejected(session: HsmSession) {
         .can_sign(true)
         .can_verify(true)
         .build()
-        .unwrap();
+        .expect("Failed to build HMAC key props");
 
     let result = derive_hmac_key_with_props(&session, &base_secret, HsmHashAlgo::Sha256, props);
 
@@ -304,7 +304,7 @@ fn test_hmac_derived_key_prop_multiple_invalid_rejected(session: HsmSession) {
         .bits(128) // invalid
         .can_encrypt(true) // invalid
         .build()
-        .unwrap();
+        .expect("Failed to build HMAC key props");
 
     let result = derive_hmac_key_with_props(&session, &base_secret, HsmHashAlgo::Sha256, props);
 
@@ -322,7 +322,7 @@ fn test_hmac_derived_key_prop_hash_mismatch_allowed(session: HsmSession) {
         .can_sign(true)
         .can_verify(true)
         .build()
-        .unwrap();
+        .expect("Failed to build HMAC key props");
 
     let result = derive_hmac_key_with_props(&session, &base_secret, HsmHashAlgo::Sha256, props);
 
@@ -339,7 +339,7 @@ fn test_hmac_derived_key_prop_no_usage_flags_rejected(session: HsmSession) {
         .key_kind(HsmKeyKind::HmacSha256)
         .bits(256)
         .build()
-        .unwrap();
+        .expect("Failed to build HMAC key props");
 
     let result = derive_hmac_key_with_props(&session, &base_secret, HsmHashAlgo::Sha256, props);
     assert!(matches!(result, Err(HsmError::DdiCmdFailure)));
@@ -357,7 +357,7 @@ fn test_hmac_derived_key_prop_minimal_valid(session: HsmSession) {
         .can_sign(true)
         .can_verify(true)
         .build()
-        .unwrap();
+        .expect("Failed to build HMAC key props");
 
     let result = derive_hmac_key_with_props(&session, &base_secret, HsmHashAlgo::Sha256, props);
 
@@ -381,7 +381,7 @@ fn test_hmac_derived_key_prop_explicit_false_flags_allowed(session: HsmSession) 
         .can_sign(true)
         .can_verify(true)
         .build()
-        .unwrap();
+        .expect("Failed to build HMAC key props");
 
     let result = derive_hmac_key_with_props(&session, &base_secret, HsmHashAlgo::Sha256, props);
 
@@ -400,7 +400,7 @@ fn test_hmac_derived_key_prop_oversized_bits_rejected(session: HsmSession) {
         .can_sign(true)
         .can_verify(true)
         .build()
-        .unwrap();
+        .expect("Failed to build HMAC key props");
 
     let result = derive_hmac_key_with_props(&session, &base_secret, HsmHashAlgo::Sha256, props);
 
@@ -419,7 +419,7 @@ fn test_hmac_derived_key_prop_private_class_rejected(session: HsmSession) {
         .can_sign(true)
         .can_verify(true)
         .build()
-        .unwrap();
+        .expect("Failed to build HMAC key props");
 
     let result = derive_hmac_key_with_props(&session, &base_secret, HsmHashAlgo::Sha256, props);
 
@@ -438,7 +438,7 @@ fn test_hmac_derive_rejects_invalid_props_even_with_valid_base(session: HsmSessi
         .bits(256)
         .can_verify(true)
         .build()
-        .unwrap();
+        .expect("Failed to build HMAC key props");
 
     let mut hkdf_algo = HsmHkdfAlgo::new(HsmHashAlgo::Sha256, None, None).unwrap();
 
@@ -460,7 +460,7 @@ fn test_hmac_derived_key_prop_non_session_allowed(session: HsmSession) {
         .can_sign(true)
         .can_verify(true)
         .build()
-        .unwrap();
+        .expect("Failed to build HMAC key props");
 
     let derived = derive_hmac_key_with_props(&session, &base_secret, HsmHashAlgo::Sha256, props)
         .expect("Expected success");
@@ -481,7 +481,7 @@ fn test_hmac_derived_key_prop_wrap_flag_rejected(session: HsmSession) {
         .can_sign(true)
         .can_verify(true)
         .build()
-        .unwrap();
+        .expect("Failed to build HMAC key props");
 
     let result = derive_hmac_key_with_props(&session, &base_secret, HsmHashAlgo::Sha256, props);
 
@@ -511,7 +511,7 @@ fn test_hmac_hash_mismatch_all_kinds_allowed(session: HsmSession) {
             .can_sign(true)
             .can_verify(true)
             .build()
-            .unwrap();
+            .expect("Failed to build HMAC key props");
 
         let result = derive_hmac_key_with_props(&session, &base_secret, HsmHashAlgo::Sha256, props);
 
@@ -532,7 +532,7 @@ fn test_hmac_derived_key_prop_unwrap_flag_rejected(session: HsmSession) {
         .can_sign(true)
         .can_verify(true)
         .build()
-        .unwrap();
+        .expect("Failed to build HMAC key props");
 
     let result = derive_hmac_key_with_props(&session, &base_secret, HsmHashAlgo::Sha256, props);
 
@@ -551,7 +551,7 @@ fn test_hmac_derived_key_properties_correct(session: HsmSession) {
         .can_sign(true)
         .can_verify(true)
         .build()
-        .unwrap();
+        .expect("Failed to build HMAC key props");
 
     let derived = derive_hmac_key_with_props(&session, &base_secret, HsmHashAlgo::Sha256, props)
         .expect("Expected success");
