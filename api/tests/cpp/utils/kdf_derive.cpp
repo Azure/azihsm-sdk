@@ -329,9 +329,9 @@ void run_hkdf_matrix_for_curve(azihsm_handle session, azihsm_ecc_curve curve)
 
         // Encrypt with key_a, attempt decrypt with key_b; if decryption succeeds the plaintext
         // must differ.
-        uint8_t iv[16] = { 0 };
         azihsm_algo_aes_cbc_params enc_params{};
-        std::memcpy(enc_params.iv, iv, sizeof(iv));
+        auto iv = test_iv(sizeof(enc_params.iv));
+        std::memcpy(enc_params.iv, iv.data(), iv.size());
         azihsm_algo enc_algo = { .id = AZIHSM_ALGO_ID_AES_CBC_PAD,
                                  .params = &enc_params,
                                  .len = sizeof(enc_params) };
@@ -350,8 +350,9 @@ void run_hkdf_matrix_for_curve(azihsm_handle session, azihsm_ecc_curve curve)
             AZIHSM_STATUS_SUCCESS
         );
 
+        // reuse the same IV for decryption
         azihsm_algo_aes_cbc_params dec_params{};
-        std::memcpy(dec_params.iv, iv, sizeof(iv));
+        std::memcpy(dec_params.iv, iv.data(), iv.size());
         azihsm_algo dec_algo = { .id = AZIHSM_ALGO_ID_AES_CBC_PAD,
                                  .params = &dec_params,
                                  .len = sizeof(dec_params) };
