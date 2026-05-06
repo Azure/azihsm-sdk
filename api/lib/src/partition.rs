@@ -578,18 +578,22 @@ impl HsmPartition {
     /// 4. Read BMK and MUK from resiliency storage (the cross-process
     ///    source of truth) rather than from in-memory state.
     /// 5. Re-establish credentials via `ddi::init_part_raw_no_res` — the
-    ///    bare DDI call without the retry macro.  `resiliency_config`
+    ///    bare DDI call without the retry macro. `resiliency_config`
     ///    is passed so that `init_part_raw_no_res` can re-endorse POTA
-    ///    (via callback) when the source is `Caller`.  Explicit BMK
+    ///    (via callback) when the source is `Caller`. Explicit BMK
     ///    and MUK from storage are forwarded so that
     ///    `resolve_cached_bmk/muk` inside `init_part_raw_no_res` use them
-    ///    as-is.
-    /// 6. On success, persist the new BMK, cache the updated POTA
-    ///    endorsement, and bump the epoch so stale keys/sessions
-    ///    refresh.  If `init_part_raw_no_res` returns a "credentials
-    ///    already established" error, read the epoch from storage
-    ///    and adopt it if another process advanced it; otherwise
-    ///    our epoch is already current.
+    ///    as-is. A fresh `cached_mobk = None` slot is passed because
+    ///    this is a single-attempt call (no retry macro), so the
+    ///    cross-call MOBK cache is unused here; the MOBK is instead
+    ///    pre-loaded into the `obk_config` from `inner.mobk()` to
+    ///    avoid re-running `init_bk3`.
+    /// 6. On success, persist the new BMK and MOBK on the partition,
+    ///    cache the updated POTA endorsement, and bump the epoch so
+    ///    stale keys/sessions refresh. If `init_part_raw_no_res`
+    ///    returns a "credentials already established" error, read the
+    ///    epoch from storage and adopt it if another process advanced
+    ///    it; otherwise our epoch is already current.
     ///    On any other failure, return the error without bumping
     ///    the epoch; the outer retry loop will call us again.
     #[instrument(skip_all)]
@@ -608,7 +612,7 @@ impl HsmPartition {
 
         // Re-acquire READ to double-check epoch, read storage, and
         // call init_part_raw_no_res — all under a single read lock.
-        let (mobk, init_result) = {
+        let init_result = {
             let inner = self.inner().read();
             let Some(rs) = inner.resiliency_state.as_ref() else {
                 return Ok(());
@@ -658,29 +662,29 @@ impl HsmPartition {
                 source => HsmOwnerBackupKeyConfig::new(source, HsmOwnerBackupKey::default()),
             };
 
-            // Resolve MOBK once (Caller+MOBK is a no-op pass-through;
-            // TPM unseals; Caller+OBK fallback would call init_bk3 but
-            // this branch is unreachable in practice — see above).
-            let mobk = ddi::get_mobk_from_config(inner.dev(), inner.api_rev(), &obk_config)?;
-
             // Single-attempt init_part_raw_no_res — bypasses the retry macro.
+            // No prior MOBK cache (this is a fresh restore call), so
+            // `cached_mobk` starts as `None` and `init_part_raw_no_res`
+            // derives it from `obk_config`. The result is also returned
+            // in `InitPartResult.mobk` for downstream caching.
             // resiliency_config is passed so init_part_raw_no_res can re-endorse
-            // POTA internally when the source is Caller.  Explicit
+            // POTA internally when the source is Caller. Explicit
             // bmk/muk from storage are forwarded so that
             // resolve_cached_bmk/muk inside init_part_raw_no_res use them as-is.
             // BMK persistence is handled manually after the call.
-            let result = ddi::init_part_raw_no_res(
+            let mut cached_mobk: Option<Vec<u8>> = None;
+            ddi::init_part_raw_no_res(
                 inner.dev(),
                 inner.api_rev(),
                 rs.cached_credentials,
                 bmk_from_storage.as_deref(),
                 muk_from_storage.as_deref(),
-                &mobk,
+                &obk_config,
+                &mut cached_mobk,
                 &rs.cached_pota_endorsement,
                 Some(&rs.config),
                 true, // let init_part_raw_no_res re-endorse POTA
-            );
-            (mobk, result)
+            )
         };
 
         // Apply results.
@@ -689,7 +693,7 @@ impl HsmPartition {
             // Restore partition success — persist new BMK and MOBK, bump epoch so stale keys/sessions refresh.
             Ok(result) => {
                 inner.persist_bmk(&result.bmk)?;
-                inner.set_masked_keys(result.bmk, mobk);
+                inner.set_masked_keys(result.bmk, result.mobk);
                 inner.update_cached_pota(result.pota_endorsement_data);
                 inner.bump_epoch(pre_lock_epoch)?;
                 Ok(())
@@ -1219,26 +1223,20 @@ impl HsmPartitionInner {
         pota_endorsement: HsmPotaEndorsement,
         resiliency_config: Option<HsmResiliencyConfig>,
     ) -> HsmResult<()> {
-        // Derive MOBK once outside the retry loop. `init_bk3` is
-        // one-shot per device power cycle, so it must not run again on
-        // a retry inside `init_part`. When resiliency is enabled we
-        // still retry the derivation itself on transient driver
-        // errors (the device-side one-shot only commits when the
-        // request actually completes), matching the retry semantics of
-        // every other DDI op invoked during init.
-
-        let mobk = ddi::get_mobk_from_config(&self.dev, self.api_rev, &obk_config)?;
-
-        //Update mobk , as init_bk3 is successful and requires the mobk for subsequent init_part calls, even establish credentials fails.
-        self.set_mobk(mobk.clone());
-
+        // Retry-safe MOBK cache. Declared here (outside the
+        // `#[resiliency_init_part]` retry loop inside `init_part`) so
+        // that the first successful `init_bk3` derivation is reused
+        // on every subsequent retry attempt; `init_bk3` is one-shot
+        // per device power cycle.
+        let mut cached_mobk: Option<Vec<u8>> = None;
         let result = ddi::init_part(
             &self.dev,
             self.api_rev,
             creds,
             bmk,
             muk,
-            &mobk,
+            &obk_config,
+            &mut cached_mobk,
             &pota_endorsement,
             resiliency_config.as_ref(),
         );
@@ -1265,6 +1263,11 @@ impl HsmPartitionInner {
                     HsmPotaEndorsementSource::Caller => Some(result.pota_endorsement_data),
                     _ => None,
                 };
+
+                //cache the mobk returned by the device
+                self.set_mobk(result.mobk.clone());
+
+                // Return the BMK and the POTA endorsement to cache.
                 (
                     result.bmk,
                     HsmPotaEndorsement::new(pota_endorsement.source(), cached_endorsement),

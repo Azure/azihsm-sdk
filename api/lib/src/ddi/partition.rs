@@ -23,6 +23,9 @@ use super::*;
 /// Caller, this may differ from the original caller-supplied endorsement
 /// because the callback re-signed over the current device's PID cert.
 pub(crate) struct InitPartResult {
+    /// Masked owner backup key (MOBK) derived during initialization, which the caller must persist for future credential establishment calls.
+    /// This is the masked BK3 value returned by the device after successful initialization.
+    pub(crate) mobk: Vec<u8>,
     /// Backup masking key returned by the device.
     pub(crate) bmk: Vec<u8>,
     /// POTA endorsement data that was actually used.
@@ -242,10 +245,14 @@ pub(crate) fn invoke_pota_callback(
 /// and optionally providing master key material. This operation must be performed
 /// before the partition can be used for cryptographic operations.
 ///
-/// `mobk` must be derived once by the caller via
-/// [`get_mobk_from_config`] *before* invoking this function. `init_bk3`
-/// (the Caller+OBK derivation path) is one-shot per device power
-/// cycle, so it must not run inside the retry loop.
+/// MOBK derivation runs once via [`get_mobk_from_config`]. The result
+/// is stashed into the caller-supplied `cached_mobk` slot so that any
+/// subsequent retry of the `#[resiliency_init_part]` loop reuses the
+/// derived value and skips the DDI call. This is required for the
+/// `Caller + raw OBK` path because `init_bk3` is one-shot per device
+/// power cycle. The cache must be declared by the caller (e.g.
+/// `let mut cached_mobk = None;`) because anything `let`-bound inside
+/// the retry loop body resets on each attempt.
 ///
 /// # Arguments
 ///
@@ -254,7 +261,9 @@ pub(crate) fn invoke_pota_callback(
 /// * `creds` - Application credentials (ID and PIN)
 /// * `bmk` - Optional backup masking key
 /// * `muk` - Optional masked unwrapping key
-/// * `mobk` - Masked owner backup key derived by the caller
+/// * `obk_config` - Owner backup key configuration
+/// * `cached_mobk` - Retry cache for the derived MOBK; pass
+///   `&mut None` for a fresh init. Populated on first success.
 /// * `pota_endorsement` - The partition owner trust anchor endorsement
 /// * `resiliency_config` - Optional resiliency configuration; when `Some`,
 ///   enables retry with backoff on transient errors and invokes the `PotaEndorsementCallback` on retries.
@@ -277,7 +286,8 @@ pub(crate) fn init_part(
     creds: HsmCredentials,
     bmk: Option<&[u8]>,
     muk: Option<&[u8]>,
-    mobk: &[u8],
+    obk_config: &HsmOwnerBackupKeyConfig,
+    cached_mobk: &mut Option<Vec<u8>>,
     pota_endorsement: &HsmPotaEndorsement,
     resiliency_config: Option<&HsmResiliencyConfig>,
 ) -> HsmResult<InitPartResult> {
@@ -292,7 +302,8 @@ pub(crate) fn init_part(
         creds,
         bmk,
         muk,
-        mobk,
+        obk_config,
+        cached_mobk,
         pota_endorsement,
         resiliency_config,
         reendorse,
@@ -302,12 +313,13 @@ pub(crate) fn init_part(
 /// Resolves the masked owner backup key (MOBK) from the caller's
 /// [`HsmOwnerBackupKeyConfig`].
 ///
-/// This function must be called **once** before [`init_part`] (and is
-/// hoisted outside the `init_part` retry loop in
-/// [`HsmPartitionInner::init`](crate::HsmPartition)) because the
-/// `Caller` + raw OBK path issues `init_bk3`, which is one-shot per
-/// device power cycle. Calling it a second time would fail with
-/// `Bk3AlreadyInitialized`.
+/// Called by [`init_part_raw_no_res`] on the *first* attempt of an
+/// init. The result is stashed by the caller into the `cached_mobk`
+/// slot it passes to [`init_part`], so retry attempts inside the
+/// `#[resiliency_init_part]` loop reuse the derived MOBK and do not
+/// invoke `init_bk3` a second time. `init_bk3` (the `Caller` + raw
+/// OBK path) is one-shot per device power cycle; a second call
+/// would fail with `Bk3AlreadyInitialized`.
 ///
 /// Resolution rules by source:
 ///
@@ -397,11 +409,27 @@ pub(crate) fn init_part_raw_no_res(
     creds: HsmCredentials,
     bmk: Option<&[u8]>,
     muk: Option<&[u8]>,
-    mobk: &[u8],
+    obk_config: &HsmOwnerBackupKeyConfig,
+    cached_mobk: &mut Option<Vec<u8>>,
     pota_endorsement: &HsmPotaEndorsement,
     resiliency_config: Option<&HsmResiliencyConfig>,
     reendorse: bool,
 ) -> HsmResult<InitPartResult> {
+    // Resolve the MOBK from the cache, or derive it from the OBK
+    // config on first call. Caching the result back into
+    // `cached_mobk` is essential for retry safety: `init_bk3`
+    // (Caller + raw OBK) is one-shot per device power cycle, and
+    // re-running it would fail with `Bk3AlreadyInitialized` even on
+    // an otherwise-recoverable transient.
+    let mobk = match cached_mobk {
+        Some(mobk) => mobk.clone(),
+        None => {
+            let mobk = ddi::get_mobk_from_config(dev, rev, obk_config)?;
+            cached_mobk.replace(mobk.clone());
+            mobk
+        }
+    };
+
     // Compute POTA endorsement based on source.
     let (pota_signature, pota_public_key) =
         get_pota_endorsement(dev, rev, pota_endorsement, resiliency_config, reendorse)?;
@@ -442,12 +470,13 @@ pub(crate) fn init_part_raw_no_res(
         &pub_key,
         &resolved_bmk,
         &resolved_muk,
-        mobk,
+        mobk.as_ref(),
         &pota_endorsement,
         resiliency_config,
     )?;
 
     Ok(InitPartResult {
+        mobk,
         bmk,
         pota_endorsement_data: pota_endorsement,
     })
