@@ -4,7 +4,7 @@
 use super::*;
 
 /// Generates an ECC key pair with signing (private) and verification (public) capabilities
-pub fn generate_ecc_key_pair(
+pub(crate) fn generate_ecc_key_pair(
     session: &HsmSession,
     curve: HsmEccCurve,
 ) -> (HsmEccPrivateKey, HsmEccPublicKey) {

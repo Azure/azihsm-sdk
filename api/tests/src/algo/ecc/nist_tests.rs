@@ -3,6 +3,7 @@
 
 use azihsm_api::*;
 use azihsm_api_tests_macro::*;
+use azihsm_crypto::DerEccSignature;
 use azihsm_crypto::DeriveOp;
 use azihsm_crypto::EccAlgo as CryptoEccAlgo;
 use azihsm_crypto::EccCurve as CryptoEccCurve;
@@ -77,69 +78,17 @@ fn signature_len(curve: CryptoEccCurve) -> usize {
     }
 }
 
-fn sig_der_to_raw(curve: CryptoEccCurve, der: &[u8]) -> Vec<u8> {
-    fn read_len(input: &[u8], offset: &mut usize) -> usize {
-        let first = input[*offset];
-        *offset += 1;
+fn sig_der_to_raw(curve: CryptoEccCurve, sig_der: &[u8]) -> Vec<u8> {
+    let sig =
+        DerEccSignature::from_der(curve, sig_der).expect("Failed to parse DER ECDSA signature");
 
-        if first & 0x80 == 0 {
-            first as usize
-        } else {
-            let num_bytes = (first & 0x7F) as usize;
-            let mut len = 0usize;
+    let point_size = curve.point_size();
+    let mut raw = vec![0u8; point_size * 2];
 
-            for _ in 0..num_bytes {
-                len = (len << 8) | input[*offset] as usize;
-                *offset += 1;
-            }
+    raw[..point_size].copy_from_slice(sig.r());
+    raw[point_size..].copy_from_slice(sig.s());
 
-            len
-        }
-    }
-
-    fn parse_int(input: &[u8], offset: &mut usize) -> Vec<u8> {
-        assert_eq!(input[*offset], 0x02, "Expected INTEGER");
-        *offset += 1;
-
-        let len = read_len(input, offset);
-        assert!(*offset + len <= input.len(), "DER length out of bounds");
-
-        let val = &input[*offset..*offset + len];
-        *offset += len;
-
-        if val.len() > 1 && val[0] == 0 {
-            val[1..].to_vec()
-        } else {
-            val.to_vec()
-        }
-    }
-
-    let mut offset = 0;
-
-    assert_eq!(der[offset], 0x30, "Expected SEQUENCE");
-    offset += 1;
-
-    let _seq_len = read_len(der, &mut offset);
-
-    let r = parse_int(der, &mut offset);
-    let s = parse_int(der, &mut offset);
-
-    let size = match curve {
-        CryptoEccCurve::P256 => 32,
-        CryptoEccCurve::P384 => 48,
-        CryptoEccCurve::P521 => 66,
-    };
-
-    assert!(r.len() <= size, "r too large for curve");
-    assert!(s.len() <= size, "s too large for curve");
-
-    let mut r_pad = vec![0u8; size];
-    let mut s_pad = vec![0u8; size];
-
-    r_pad[size - r.len()..].copy_from_slice(&r);
-    s_pad[size - s.len()..].copy_from_slice(&s);
-
-    [r_pad, s_pad].concat()
+    raw
 }
 
 /// Verifies NIST ECDSA signatures using precomputed digests and `CryptoEccAlgo`.
