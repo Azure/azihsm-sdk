@@ -829,99 +829,98 @@ fn test_rsa_verify_wrong_data_fails_one_shot(session: HsmSession) {
         "Verification should not succeed, got {:?}",
         result
     );
+}
 
-    /// Ensure signing and verifying an empty message succeeds (one-shot path)
-    #[session_test]
-    fn test_rsa_sign_empty_message_one_shot(session: HsmSession) {
-        let generated_priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
-        let priv_key_der = generated_priv_key
-            .to_vec()
-            .expect("Failed to export RSA Key");
+/// Ensure signing and verifying an empty message succeeds (one-shot path)
+#[session_test]
+fn test_rsa_sign_empty_message_one_shot(session: HsmSession) {
+    let generated_priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
+    let priv_key_der = generated_priv_key
+        .to_vec()
+        .expect("Failed to export RSA Key");
 
-        let (priv_key, pub_key) =
-            import_rsa_key(&session, &priv_key_der, 2048).expect("RSA import should succeed");
+    let (priv_key, pub_key) =
+        import_rsa_key(&session, &priv_key_der, 2048).expect("RSA import should succeed");
 
-        let mut algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+    let mut algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
 
-        let sig = HsmSigner::sign_vec(&mut algo, &priv_key, b"").expect("Failed to sign data");
+    let sig = HsmSigner::sign_vec(&mut algo, &priv_key, b"").expect("Failed to sign data");
 
-        let is_valid = HsmVerifier::verify(&mut algo, &pub_key, b"", &sig)
-            .expect("Failed to verify signature");
+    let is_valid =
+        HsmVerifier::verify(&mut algo, &pub_key, b"", &sig).expect("Failed to verify signature");
 
-        assert!(is_valid);
-    }
+    assert!(is_valid);
+}
 
-    /// Ensure verification fails for truncated signature length
-    #[session_test]
-    fn test_rsa_verify_truncated_signature_fails(session: HsmSession) {
-        let generated_priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
-        let priv_key_der = generated_priv_key
-            .to_vec()
-            .expect("Failed to export RSA Key");
+/// Ensure verification fails for truncated signature length
+#[session_test]
+fn test_rsa_verify_truncated_signature_fails(session: HsmSession) {
+    let generated_priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
+    let priv_key_der = generated_priv_key
+        .to_vec()
+        .expect("Failed to export RSA Key");
 
-        let (priv_key, pub_key) =
-            import_rsa_key(&session, &priv_key_der, 2048).expect("RSA import should succeed");
+    let (priv_key, pub_key) =
+        import_rsa_key(&session, &priv_key_der, 2048).expect("RSA import should succeed");
 
-        let msg = b"hello";
+    let msg = b"hello";
 
-        let mut algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
-        let sig = HsmSigner::sign_vec(&mut algo, &priv_key, msg).expect("Failed to sign data");
+    let mut algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+    let sig = HsmSigner::sign_vec(&mut algo, &priv_key, msg).expect("Failed to sign data");
 
-        // Truncate signature slightly to ensure verification does not succeed.
-        let truncated_sig = &sig[..10];
-        let result = HsmVerifier::verify(&mut algo, &pub_key, msg, truncated_sig);
+    // Truncate signature slightly to ensure verification does not succeed.
+    let truncated_sig = &sig[..10];
+    let result = HsmVerifier::verify(&mut algo, &pub_key, msg, truncated_sig);
 
-        assert!(
-            !matches!(result, Ok(true)),
-            "Verification should not succeed, got {:?}",
-            result
-        );
-    }
+    assert!(
+        !matches!(result, Ok(true)),
+        "Verification should not succeed, got {:?}",
+        result
+    );
+}
 
-    /// Ensure PKCS#1 signatures are deterministic for the same key and message
-    #[session_test]
-    fn test_rsa_pkcs1_deterministic(session: HsmSession) {
-        let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
-        let der = priv_key.to_vec().expect("Failed to export RSA Key");
+/// Ensure PKCS#1 signatures are deterministic for the same key and message
+#[session_test]
+fn test_rsa_pkcs1_deterministic(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
+    let der = priv_key.to_vec().expect("Failed to export RSA Key");
 
-        let (priv_key, _) =
-            import_rsa_key(&session, &der, 2048).expect("RSA import should succeed");
+    let (priv_key, _) = import_rsa_key(&session, &der, 2048).expect("RSA import should succeed");
 
-        let msg = b"hello";
+    let msg = b"hello";
 
-        let mut algo1 = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
-        let mut algo2 = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+    let mut algo1 = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+    let mut algo2 = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
 
-        let sig1 = HsmSigner::sign_vec(&mut algo1, &priv_key, msg).expect("Failed to sign data");
-        let sig2 = HsmSigner::sign_vec(&mut algo2, &priv_key, msg).expect("Failed to sign data");
-        assert_eq!(sig1, sig2);
-    }
+    let sig1 = HsmSigner::sign_vec(&mut algo1, &priv_key, msg).expect("Failed to sign data");
+    let sig2 = HsmSigner::sign_vec(&mut algo2, &priv_key, msg).expect("Failed to sign data");
+    assert_eq!(sig1, sig2);
+}
 
-    /// Ensure verification fails when using a public key of mismatched size
-    #[session_test]
-    fn test_rsa_verify_mismatched_key_size_fails(session: HsmSession) {
-        let priv1 = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
-        let priv2 = RsaPrivateKey::generate(384).expect("Failed to generate RSA Key");
+/// Ensure verification fails when using a public key of mismatched size
+#[session_test]
+fn test_rsa_verify_mismatched_key_size_fails(session: HsmSession) {
+    let priv1 = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
+    let priv2 = RsaPrivateKey::generate(384).expect("Failed to generate RSA Key");
 
-        let der1 = priv1.to_vec().expect("Failed to export RSA Key");
+    let der1 = priv1.to_vec().expect("Failed to export RSA Key");
 
-        let der2 = priv2.to_vec().expect("Failed to export RSA Key");
+    let der2 = priv2.to_vec().expect("Failed to export RSA Key");
 
-        let (priv1, _) = import_rsa_key(&session, &der1, 2048).expect("RSA import should succeed");
-        let (_, pub2) = import_rsa_key(&session, &der2, 3072).expect("RSA import should succeed");
+    let (priv1, _) = import_rsa_key(&session, &der1, 2048).expect("RSA import should succeed");
+    let (_, pub2) = import_rsa_key(&session, &der2, 3072).expect("RSA import should succeed");
 
-        let msg = b"hello";
+    let msg = b"hello";
 
-        let mut algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
-        let sig = HsmSigner::sign_vec(&mut algo, &priv1, msg).expect("Failed to sign data");
+    let mut algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
+    let sig = HsmSigner::sign_vec(&mut algo, &priv1, msg).expect("Failed to sign data");
 
-        let result = HsmVerifier::verify(&mut algo, &pub2, msg, &sig);
-        assert!(
-            !matches!(result, Ok(true)),
-            "Verification should not succeed, got {:?}",
-            result
-        );
-    }
+    let result = HsmVerifier::verify(&mut algo, &pub2, msg, &sig);
+    assert!(
+        !matches!(result, Ok(true)),
+        "Verification should not succeed, got {:?}",
+        result
+    );
 }
 
 /// Ensure streaming sign without update equals one-shot empty input
@@ -1029,11 +1028,6 @@ fn test_import_rsa_mismatched_bits_fails(session: HsmSession) {
 
     let result = import_rsa_key(&session, &der, 3072);
 
-    /*assert!(
-        matches!(result, Err(HsmError::InvalidKey)),
-        "Expected  import to fail with HsmError::InvalidKey"
-    );*/
-
     assert!(
         matches!(result, Err(HsmError::InvalidKeyProps)),
         "Expect Rsa Err(HsmError::InvalidKeyProps)",
@@ -1049,6 +1043,6 @@ fn test_import_rsa_invalid_der_fails(session: HsmSession) {
 
     assert!(
         matches!(result, Err(HsmError::DdiCmdFailure)),
-        "Expected invalid DER import to fail with HsmError::InvalidKeyProps"
+        "Expected invalid DER import to fail with HsmError::DdiCmdFailure"
     );
 }
