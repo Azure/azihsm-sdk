@@ -293,6 +293,7 @@ fn test_hmac_derived_key_prop_decrypt_flag_rejected(session: HsmSession) {
 
     assert!(matches!(result, Err(HsmError::InvalidKeyProps)));
 }
+
 /// HMAC must reject when multiple invalid properties are combined
 #[session_test]
 fn test_hmac_derived_key_prop_multiple_invalid_rejected(session: HsmSession) {
@@ -331,6 +332,7 @@ fn test_hmac_derived_key_prop_hash_mismatch_allowed(session: HsmSession) {
     assert!(result.is_ok());
 }
 
+/// Ensure derived HMAC keys are rejected when no signing or verification usage flags are set.
 #[session_test]
 fn test_hmac_derived_key_prop_no_usage_flags_rejected(session: HsmSession) {
     let base_secret = derive_base_secret_for_hkdf(&session, HsmEccCurve::P256);
@@ -491,10 +493,25 @@ fn test_hmac_derived_key_prop_wrap_flag_rejected(session: HsmSession) {
 /// HMAC should allow HKDF hash mismatch across all kinds
 #[session_test]
 fn test_hmac_hash_mismatch_all_kinds_allowed(session: HsmSession) {
-    for key_kind in [
-        HsmKeyKind::HmacSha256,
-        HsmKeyKind::HmacSha384,
-        HsmKeyKind::HmacSha512,
+    for (key_kind, key_bits, hkdf_hash, case_name) in [
+        (
+            HsmKeyKind::HmacSha256,
+            256,
+            HsmHashAlgo::Sha384,
+            "HmacSha256 derived with HKDF-Sha384",
+        ),
+        (
+            HsmKeyKind::HmacSha384,
+            384,
+            HsmHashAlgo::Sha512,
+            "HmacSha384 derived with HKDF-Sha512",
+        ),
+        (
+            HsmKeyKind::HmacSha512,
+            512,
+            HsmHashAlgo::Sha256,
+            "HmacSha512 derived with HKDF-Sha256",
+        ),
     ] {
         let curve = ecc_curve_for_hmac_key_kind(key_kind);
         let base_secret = derive_base_secret_for_hkdf(&session, curve);
@@ -502,20 +519,15 @@ fn test_hmac_hash_mismatch_all_kinds_allowed(session: HsmSession) {
         let props = HsmKeyPropsBuilder::default()
             .class(HsmKeyClass::Secret)
             .key_kind(key_kind)
-            .bits(match key_kind {
-                HsmKeyKind::HmacSha256 => 256,
-                HsmKeyKind::HmacSha384 => 384,
-                HsmKeyKind::HmacSha512 => 512,
-                _ => unreachable!(),
-            })
+            .bits(key_bits)
             .can_sign(true)
             .can_verify(true)
             .build()
             .expect("building HMAC key properties for hash-mismatch test should succeed");
 
-        let result = derive_hmac_key_with_props(&session, &base_secret, HsmHashAlgo::Sha256, props);
+        let result = derive_hmac_key_with_props(&session, &base_secret, hkdf_hash, props);
 
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "{} should be allowed", case_name);
     }
 }
 
