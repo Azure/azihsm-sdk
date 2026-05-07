@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 //! Tests for validating RSA signing and verification with PSS padding.
 use super::*;
+use crate::testvectors::rsa::RSA_PSS_TEST_VECTORS;
 
 fn sign_pss(
     hash_algo: &mut HashAlgo,

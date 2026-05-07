@@ -2,6 +2,8 @@
 // Licensed under the MIT License.
 
 use super::*;
+use crate::testvectors::rsa::OaepTestVector;
+use crate::testvectors::rsa::RSA_OAEP_TEST_VECTORS;
 
 fn rsa_oaep_roundtrip(
     key_size_bytes: usize,

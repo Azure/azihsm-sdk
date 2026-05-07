@@ -6,3 +6,4 @@ pub mod ecc;
 pub mod hash;
 pub mod hkdf;
 pub mod hmac;
+pub mod rsa;
