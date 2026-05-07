@@ -285,7 +285,10 @@ impl Xtask for Precheck {
                         package: Some("azihsm_ddi".to_string()),
                         no_default_features: false,
                         filterset: None,
-                        profile: self.profile.clone().or(Some("ci-mock-table-64".to_string())),
+                        profile: self
+                            .profile
+                            .clone()
+                            .or(Some("ci-mock-table-64".to_string())),
                         exclude: self.exclude.clone(),
                     }
                     .run(ctx.clone())?;
