@@ -50,6 +50,9 @@ struct Stage {
     /// Run code coverage-report
     #[clap(long)]
     coverage_report: bool,
+    /// Run nextest with cli options (features, package, profile, exclude)
+    #[clap(long)]
+    nextest: bool,
     /// Run minimal nextest tests (skips resiliency, openssl, and native/cpp tests)
     #[clap(long)]
     nextest_min: bool,
@@ -75,28 +78,28 @@ pub struct Precheck {
     /// nextest_full). Without this flag, only a minimal set of checks is run (fmt, nextest_min).
     #[clap(long)]
     pub full: bool,
-    /// Skip taplo (TOML formatting)
+    /// Skip taplo (TOML formatting) (used with --fmt)
     #[clap(long)]
     pub skip_taplo: bool,
-    /// Skip audit
+    /// Skip audit (used with --audit/--full)
     #[clap(long)]
     pub skip_audit: bool,
-    /// Skip Clang formatting
+    /// Skip Clang formatting (used with --fmt)
     #[clap(long)]
     pub skip_clang: bool,
-    /// Skip specifying toolchain for formatting checks
+    /// Skip specifying toolchain for formatting checks (used with --fmt)
     #[clap(long)]
     skip_toolchain: bool,
-    /// Crates to exclude from clippy
+    /// Crates to exclude (used with --clippy/--nextest)
     #[clap(long = "exclude")]
     exclude: Vec<String>,
-    /// Package to run tests for
+    /// Package to run tests for (used with --nextest)
     #[clap(long)]
     package: Option<String>,
-    /// Features to enable when running tests
+    /// Features to enable when running tests (used with --nextest)
     #[clap(long)]
     features: Option<String>,
-    /// The nextest profile to use
+    /// The nextest profile to use (used with --nextest)
     #[clap(long)]
     profile: Option<String>,
 }
@@ -120,6 +123,7 @@ impl Xtask for Precheck {
                 clippy: true,
                 coverage: false,        // coverage is optional
                 coverage_report: false, // coverage report is optional (intended only for CI)
+                nextest: false,
                 nextest_min: false,
                 nextest_full: true,
                 nextest_report: false, // nextest report is optional (intended only for CI)
@@ -135,6 +139,7 @@ impl Xtask for Precheck {
                 clippy: false,
                 coverage: false,
                 coverage_report: false,
+                nextest: false,
                 nextest_min: true,
                 nextest_full: false,
                 nextest_report: false,
@@ -202,112 +207,105 @@ impl Xtask for Precheck {
             .run(ctx.clone())?;
         }
 
-        // Minimal nextest: run mock tests, skipping resiliency, openssl, and native/cpp tests
-        if stage.nextest_min || stage.all {
-            if self.package.is_none() && self.features.is_none() {
-                let mut excludes = self.exclude.clone();
-                for pkg in [
-                    "azihsm_api_tests",
-                    "azihsm_ossl_provider",
-                    "resiliency_stress",
-                    "resiliency_macro",
-                ] {
-                    if !excludes.iter().any(|e| e == pkg) {
-                        excludes.push(pkg.to_string());
-                    }
-                }
-
-                Nextest {
-                    features: Some("mock".to_string()),
-                    package: None,
-                    no_default_features: false,
-                    filterset: None,
-                    profile: self.profile.clone().or(Some("ci-mock".to_string())),
-                    exclude: excludes,
-                }
-                .run(ctx.clone())?;
-            } else {
-                Nextest {
-                    features: self.features.clone(),
-                    package: self.package.clone(),
-                    no_default_features: false,
-                    filterset: None,
-                    profile: self.profile.clone(),
-                    exclude: self.exclude.clone(),
-                }
-                .run(ctx.clone())?;
+        if stage.nextest || stage.all {
+            Nextest {
+                features: self.features.clone(),
+                package: self.package.clone(),
+                no_default_features: false,
+                filterset: None,
+                profile: self.profile.clone(),
+                exclude: self.exclude.clone(),
             }
+            .run(ctx.clone())?;
+        }
+
+        // Minimal nextest: run mock tests, skipping resiliency, openssl, and cpp tests
+        if stage.nextest_min || stage.all {
+            let mut excludes = self.exclude.clone();
+            for pkg in [
+                "azihsm_api_tests",
+                "azihsm_ossl_provider",
+                "azihsm_res_test_dev",
+                "azihsm_resiliency_test_helpers",
+                "provider-integration-tests-cli",
+                "provider-integration-tests-capi",
+                "provider-integration-tests-nginx",
+                "resiliency_stress",
+                "resiliency_macro",
+            ] {
+                if !excludes.iter().any(|e| e == pkg) {
+                    excludes.push(pkg.to_string());
+                }
+            }
+
+            Nextest {
+                features: Some("mock".to_string()),
+                package: None,
+                no_default_features: false,
+                filterset: None,
+                profile: self.profile.clone().or(Some("ci-mock".to_string())),
+                exclude: excludes,
+            }
+            .run(ctx.clone())?;
         }
 
         // Full nextest: run the complete set of tests including resiliency, openssl, and native/cpp
         if stage.nextest_full || stage.all {
-            if self.package.is_none() && self.features.is_none() {
-                // SDK Run all mock tests
+            // SDK Run all mock tests
+            Nextest {
+                features: Some("mock".to_string()),
+                package: None,
+                no_default_features: false,
+                filterset: None,
+                profile: self.profile.clone().or(Some("ci-mock".to_string())),
+                exclude: self.exclude.clone(),
+            }
+            .run(ctx.clone())?;
+
+            // SDK Run resiliency fault-injection tests (requires res-test
+            // feature for the fault-injection DDI device)
+            if !self.exclude.iter().any(|e| e == "azihsm_api_tests") {
                 Nextest {
-                    features: Some("mock".to_string()),
-                    package: None,
+                    features: Some("mock,res-test".to_string()),
+                    package: Some("azihsm_api_tests".to_string()),
                     no_default_features: false,
-                    filterset: None,
+                    filterset: Some("test(resiliency::fault_injection::)".to_string()),
                     profile: self.profile.clone().or(Some("ci-mock".to_string())),
                     exclude: self.exclude.clone(),
                 }
                 .run(ctx.clone())?;
+            }
 
-                // SDK Run resiliency fault-injection tests (requires res-test
-                // feature for the fault-injection DDI device)
-                if !self.exclude.iter().any(|e| e == "azihsm_api_tests") {
-                    Nextest {
-                        features: Some("mock,res-test".to_string()),
-                        package: Some("azihsm_api_tests".to_string()),
-                        no_default_features: false,
-                        filterset: Some("test(resiliency::fault_injection::)".to_string()),
-                        profile: self.profile.clone().or(Some("ci-mock".to_string())),
-                        exclude: self.exclude.clone(),
-                    }
-                    .run(ctx.clone())?;
-                }
-
-                #[cfg(not(target_os = "windows"))]
-                {
-                    // SDK Run azihsm_ddi mock tests table-4
-                    Nextest {
-                        features: Some("mock,table-4".to_string()),
-                        package: Some("azihsm_ddi".to_string()),
-                        no_default_features: false,
-                        filterset: None,
-                        profile: self.profile.clone().or(Some("ci-mock-table-4".to_string())),
-                        exclude: self.exclude.clone(),
-                    }
-                    .run(ctx.clone())?;
-
-                    // SDK Run azihsm_ddi mock tests table-64
-                    Nextest {
-                        features: Some("mock,table-64".to_string()),
-                        package: Some("azihsm_ddi".to_string()),
-                        no_default_features: false,
-                        filterset: None,
-                        profile: self
-                            .profile
-                            .clone()
-                            .or(Some("ci-mock-table-64".to_string())),
-                        exclude: self.exclude.clone(),
-                    }
-                    .run(ctx.clone())?;
-
-                    // OSSL Provider integration tests (CLI + C API, Linux only)
-                    #[cfg(target_os = "linux")]
-                    integration_tests::IntegrationTest {}.run(ctx.clone())?;
-                }
-            } else {
+            #[cfg(not(target_os = "windows"))]
+            {
+                // SDK Run azihsm_ddi mock tests table-4
                 Nextest {
-                    features: self.features.clone(),
-                    package: self.package.clone(),
+                    features: Some("mock,table-4".to_string()),
+                    package: Some("azihsm_ddi".to_string()),
                     no_default_features: false,
                     filterset: None,
-                    profile: self.profile.clone(),
+                    profile: self.profile.clone().or(Some("ci-mock-table-4".to_string())),
                     exclude: self.exclude.clone(),
                 }
                 .run(ctx.clone())?;
+
+                // SDK Run azihsm_ddi mock tests table-64
+                Nextest {
+                    features: Some("mock,table-64".to_string()),
+                    package: Some("azihsm_ddi".to_string()),
+                    no_default_features: false,
+                    filterset: None,
+                    profile: self
+                        .profile
+                        .clone()
+                        .or(Some("ci-mock-table-64".to_string())),
+                    exclude: self.exclude.clone(),
+                }
+                .run(ctx.clone())?;
+
+                // OSSL Provider integration tests (CLI + C API, Linux only)
+                #[cfg(target_os = "linux")]
+                integration_tests::IntegrationTest {}.run(ctx.clone())?;
             }
         }
 
