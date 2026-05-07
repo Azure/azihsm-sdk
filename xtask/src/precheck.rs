@@ -50,9 +50,12 @@ struct Stage {
     /// Run code coverage-report
     #[clap(long)]
     coverage_report: bool,
-    /// Run nextest tests
+    /// Run minimal nextest tests (skips resiliency, openssl, and native/cpp tests)
     #[clap(long)]
-    nextest: bool,
+    nextest_min: bool,
+    /// Run the full nextest tests
+    #[clap(long)]
+    nextest_full: bool,
     /// Run nextest-report
     #[clap(long)]
     nextest_report: bool,
@@ -68,6 +71,10 @@ pub struct Precheck {
     /// Specify which checks to run
     #[clap(flatten)]
     stage: Option<Stage>,
+    /// Run the full set of checks (setup, copyright, validate_members, audit, fmt, clippy,
+    /// nextest_full). Without this flag, only a minimal set of checks is run (fmt, nextest_min).
+    #[clap(long)]
+    pub full: bool,
     /// Skip taplo (TOML formatting)
     #[clap(long)]
     pub skip_taplo: bool,
@@ -100,19 +107,39 @@ impl Xtask for Precheck {
 
         let sh = Shell::new()?;
 
-        // if no specific stages are requested, run all stages except code coverage, nextest report and coverage report
-        let stage = self.stage.unwrap_or(Stage {
-            setup: true,
-            copyright: true,
-            validate_members: true,
-            audit: true,
-            fmt: true,
-            clippy: true,
-            coverage: false,        // coverage is optional
-            coverage_report: false, // coverage report is optional (intended only for CI)
-            nextest: true,
-            nextest_report: false, // nextest report is optional (intended only for CI)
-            all: false,
+        // if no specific stages are requested, choose defaults based on --full flag:
+        // --full: run all stages except code coverage, nextest report and coverage report
+        // default: run only fmt and nextest_min for a fast feedback loop
+        let stage = self.stage.unwrap_or(if self.full {
+            Stage {
+                setup: true,
+                copyright: true,
+                validate_members: true,
+                audit: true,
+                fmt: true,
+                clippy: true,
+                coverage: false,        // coverage is optional
+                coverage_report: false, // coverage report is optional (intended only for CI)
+                nextest_min: false,
+                nextest_full: true,
+                nextest_report: false, // nextest report is optional (intended only for CI)
+                all: false,
+            }
+        } else {
+            Stage {
+                setup: false,
+                copyright: false,
+                validate_members: false,
+                audit: false,
+                fmt: true,
+                clippy: false,
+                coverage: false,
+                coverage_report: false,
+                nextest_min: true,
+                nextest_full: false,
+                nextest_report: false,
+                all: false,
+            }
         });
 
         if stage.setup || stage.all {
@@ -175,7 +202,44 @@ impl Xtask for Precheck {
             .run(ctx.clone())?;
         }
 
-        if stage.nextest || stage.all {
+        // Minimal nextest: run mock tests, skipping resiliency, openssl, and native/cpp tests
+        if stage.nextest_min || stage.all {
+            if self.package.is_none() && self.features.is_none() {
+                let mut excludes = self.exclude.clone();
+                for pkg in [
+                    "azihsm_api_tests",
+                    "azihsm_ossl_provider",
+                    "resiliency_stress",
+                ] {
+                    if !excludes.iter().any(|e| e == pkg) {
+                        excludes.push(pkg.to_string());
+                    }
+                }
+
+                Nextest {
+                    features: Some("mock".to_string()),
+                    package: None,
+                    no_default_features: false,
+                    filterset: None,
+                    profile: self.profile.clone().or(Some("ci-mock".to_string())),
+                    exclude: excludes,
+                }
+                .run(ctx.clone())?;
+            } else {
+                Nextest {
+                    features: self.features.clone(),
+                    package: self.package.clone(),
+                    no_default_features: false,
+                    filterset: None,
+                    profile: self.profile.clone(),
+                    exclude: self.exclude.clone(),
+                }
+                .run(ctx.clone())?;
+            }
+        }
+
+        // Full nextest: run the complete set of tests including resiliency, openssl, and native/cpp
+        if stage.nextest_full || stage.all {
             if self.package.is_none() && self.features.is_none() {
                 // SDK Run all mock tests
                 Nextest {
@@ -221,7 +285,7 @@ impl Xtask for Precheck {
                         package: Some("azihsm_ddi".to_string()),
                         no_default_features: false,
                         filterset: None,
-                        profile: self.profile.or(Some("ci-mock-table-64".to_string())),
+                        profile: self.profile.clone().or(Some("ci-mock-table-64".to_string())),
                         exclude: self.exclude.clone(),
                     }
                     .run(ctx.clone())?;
@@ -232,12 +296,12 @@ impl Xtask for Precheck {
                 }
             } else {
                 Nextest {
-                    features: self.features,
-                    package: self.package,
+                    features: self.features.clone(),
+                    package: self.package.clone(),
                     no_default_features: false,
                     filterset: None,
-                    profile: self.profile,
-                    exclude: self.exclude,
+                    profile: self.profile.clone(),
+                    exclude: self.exclude.clone(),
                 }
                 .run(ctx.clone())?;
             }
