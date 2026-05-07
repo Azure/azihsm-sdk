@@ -218,6 +218,36 @@ TEST(azihsm_part, open_same_partition_multiple_times)
     }
 }
 
+TEST(azihsm_part, open_rejects_null_output_handle)
+{
+    auto handle_list = PartitionListHandle();
+    auto path = handle_list.get_path(0);
+    azihsm_str path_str{ path.data(), static_cast<uint32_t>(path.size()) };
+
+    auto err = azihsm_part_open(&path_str, nullptr, test_api_rev());
+    ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
+}
+
+TEST(azihsm_part, open_rejects_null_or_empty_path)
+{
+    azihsm_handle part_handle = 0;
+    auto err = azihsm_part_open(nullptr, &part_handle, test_api_rev());
+    ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
+
+    azihsm_str null_path{ nullptr, 1 };
+    err = azihsm_part_open(&null_path, &part_handle, test_api_rev());
+    ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
+
+    std::vector<azihsm_char> empty_path(1, 0);
+    azihsm_str empty_string_path{ empty_path.data(), 1 };
+    err = azihsm_part_open(&empty_string_path, &part_handle, test_api_rev());
+    ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
+
+    azihsm_str zero_len_path{ empty_path.data(), 0 };
+    err = azihsm_part_open(&zero_len_path, &part_handle, test_api_rev());
+    ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
+}
+
 TEST(azihsm_part, open_double_close)
 {
     auto handle_list = PartitionListHandle();
