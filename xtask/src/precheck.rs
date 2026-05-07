@@ -210,6 +210,7 @@ impl Xtask for Precheck {
                     "azihsm_api_tests",
                     "azihsm_ossl_provider",
                     "resiliency_stress",
+                    "resiliency_macro",
                 ] {
                     if !excludes.iter().any(|e| e == pkg) {
                         excludes.push(pkg.to_string());
