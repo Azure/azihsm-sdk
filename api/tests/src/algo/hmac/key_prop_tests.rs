@@ -312,14 +312,15 @@ fn test_hmac_derived_key_prop_multiple_invalid_rejected(session: HsmSession) {
     assert!(matches!(result, Err(HsmError::InvalidKeyProps)));
 }
 
-/// HMAC currently allows derivation when the HKDF hash and HMAC key kind do not match.
+/// Ensure HMAC derivation allows the HKDF hash algorithm to differ from the HMAC key kind.
 #[session_test]
 fn test_hmac_derived_key_prop_hash_mismatch_allowed(session: HsmSession) {
-    let base_secret = derive_base_secret_for_hkdf(&session, HsmEccCurve::P256);
+    let key_kind = HsmKeyKind::HmacSha512;
+    let base_secret = derive_base_secret_for_hkdf(&session, ecc_curve_for_hmac_key_kind(key_kind));
 
     let props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Secret)
-        .key_kind(HsmKeyKind::HmacSha512)
+        .key_kind(key_kind)
         .bits(512)
         .can_sign(true)
         .can_verify(true)
@@ -328,8 +329,10 @@ fn test_hmac_derived_key_prop_hash_mismatch_allowed(session: HsmSession) {
 
     let result = derive_hmac_key_with_props(&session, &base_secret, HsmHashAlgo::Sha256, props);
 
-    // Implementation allows mismatch
-    assert!(result.is_ok());
+    assert!(
+        result.is_ok(),
+        "HMAC derivation should allow HKDF-Sha256 with HmacSha512 key props"
+    );
 }
 
 /// Ensure derived HMAC keys are rejected when no signing or verification usage flags are set.
