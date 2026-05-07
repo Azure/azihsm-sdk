@@ -222,7 +222,7 @@ fn test_hmac_derived_key_prop_missing_verify_rejected(session: HsmSession) {
         .bits(256)
         .can_sign(true) // missing verify
         .build()
-        .unwrap();
+        .expect("Failed to build HMAC key props");
 
     let result = derive_hmac_key_with_props(&session, &base_secret, HsmHashAlgo::Sha256, props);
 
@@ -249,7 +249,7 @@ fn test_hmac_derived_key_prop_invalid_bits_rejected(session: HsmSession) {
 
 /// HMAC key bits must match each HMAC kind
 #[session_test]
-fn test_hmac_derived_key_prop_invalid_bits_all_kinds(session: HsmSession) {
+fn test_hmac_derived_key_prop_invalid_bits_all_kinds_rejected(session: HsmSession) {
     for (key_kind, bad_bits) in [
         (HsmKeyKind::HmacSha256, 128),
         (HsmKeyKind::HmacSha384, 256),
@@ -311,6 +311,7 @@ fn test_hmac_derived_key_prop_multiple_invalid_rejected(session: HsmSession) {
     assert!(matches!(result, Err(HsmError::InvalidKeyProps)));
 }
 
+/// HMAC currently allows derivation when the HKDF hash and HMAC key kind do not match.
 #[session_test]
 fn test_hmac_derived_key_prop_hash_mismatch_allowed(session: HsmSession) {
     let base_secret = derive_base_secret_for_hkdf(&session, HsmEccCurve::P256);
@@ -440,8 +441,8 @@ fn test_hmac_derive_rejects_invalid_props_even_with_valid_base(session: HsmSessi
         .build()
         .expect("Failed to build HMAC key props");
 
-    let mut hkdf_algo = HsmHkdfAlgo::new(HsmHashAlgo::Sha256, None, None).unwrap();
-
+    let mut hkdf_algo = HsmHkdfAlgo::new(HsmHashAlgo::Sha256, None, None)
+        .expect("Expected HKDF algorithm initialization with SHA-256 to succeed");
     let result = HsmKeyManager::derive_key(&session, &mut hkdf_algo, &base_secret, props);
 
     assert!(matches!(result, Err(HsmError::InvalidKeyProps)));
@@ -460,8 +461,7 @@ fn test_hmac_derived_key_prop_non_session_allowed(session: HsmSession) {
         .can_sign(true)
         .can_verify(true)
         .build()
-       .expect("Expected HMAC key props with non-session, sign, and verify permissions to build successfully");
-
+        .expect("Expected HMAC key props with non-session, sign, and verify permissions to build successfully");
     let derived = derive_hmac_key_with_props(&session, &base_secret, HsmHashAlgo::Sha256, props)
         .expect("Expected success");
 
