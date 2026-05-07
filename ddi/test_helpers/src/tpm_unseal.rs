@@ -16,6 +16,7 @@
 use azihsm_crypto::*;
 use azihsm_tpm::*;
 use thiserror::Error;
+use zerocopy::*;
 
 const MIN_SEALED_BK3_SIZE: usize = 4;
 const RSA_KEY_BITS: u16 = 2048;
@@ -34,65 +35,71 @@ const AZIHSM_KEY_IV_RECORD_VERSION: u8 = 1;
 #[error("TPM unseal failed: {0}")]
 pub struct TpmUnsealError(pub String);
 
-/// Parsed AES key/IV record matching `AZIHSM_KEY_IV_RECORD` from UEFI firmware.
+/// Packed AES key/IV record matching `AZIHSM_KEY_IV_RECORD` from UEFI
+/// firmware. Mirrors `azihsm_api::ddi::tpm::AzihsmKeyIvRecord`.
 ///
-/// Wire layout (little-endian, packed):
+/// Wire layout (little-endian, packed, 53 bytes total):
 /// `[record_size:u16][key_version:u8][key_size:u8][key:32B][iv_size:u8][iv:16B]`.
+#[repr(C, packed)]
+#[derive(Debug, Clone, Copy, TryFromBytes, KnownLayout, Immutable)]
 struct ParsedKeyIvRecord {
-    key: [u8; BK3_AES_KEY_SIZE],
+    /// Record size (does not include the size of this field itself).
+    record_size: [u8; 2],
+    /// Key version.
+    key_version: u8,
+    /// Length of key in bytes.
     key_size: u8,
+    /// AES key (up to AES-256).
+    key: [u8; BK3_AES_KEY_SIZE],
+    /// Length of IV in bytes.
+    iv_size: u8,
+    /// AES IV.
     iv: [u8; AES_BLOCK_SIZE],
 }
 
 impl ParsedKeyIvRecord {
-    /// Total wire size: 2 (record_size) + 1 + 1 + 32 + 1 + 16 = 53 bytes.
-    const WIRE_SIZE: usize = 2 + 1 + 1 + BK3_AES_KEY_SIZE + 1 + AES_BLOCK_SIZE;
-
-    fn parse(data: &[u8]) -> Result<Self, TpmUnsealError> {
-        if data.len() != Self::WIRE_SIZE {
-            return Err(TpmUnsealError(format!(
-                "AES key/IV record wrong size: expected {}, got {}",
-                Self::WIRE_SIZE,
+    /// Parses and validates an AZIHSM_KEY_IV_RECORD from a byte slice.
+    ///
+    /// Uses `try_ref_from_prefix` for the initial parse, then validates
+    /// that `record_size` accounts for the entire input with no
+    /// unexpected trailing bytes.
+    fn from_bytes_validated(data: &[u8]) -> Result<&Self, TpmUnsealError> {
+        let (record, _remaining) = Self::try_ref_from_prefix(data).map_err(|_| {
+            TpmUnsealError(format!(
+                "AES key/IV record too short: got {} bytes",
                 data.len()
+            ))
+        })?;
+
+        if record.key_version != AZIHSM_KEY_IV_RECORD_VERSION {
+            let actual = record.key_version;
+            return Err(TpmUnsealError(format!(
+                "AES key/IV record version mismatch: expected {AZIHSM_KEY_IV_RECORD_VERSION}, got {actual}"
             )));
         }
 
-        let record_size = u16::from_le_bytes([data[0], data[1]]) as usize;
-        // record_size does not include the size of itself.
+        let record_size = u16::from_le_bytes(record.record_size) as usize;
         if record_size + size_of::<u16>() != data.len() {
             return Err(TpmUnsealError(
                 "AES key/IV record self-declared size mismatch".into(),
             ));
         }
 
-        let key_version = data[2];
-        if key_version != AZIHSM_KEY_IV_RECORD_VERSION {
-            return Err(TpmUnsealError(format!(
-                "AES key/IV record version mismatch: expected {AZIHSM_KEY_IV_RECORD_VERSION}, got {key_version}"
-            )));
-        }
-
-        let key_size = data[3];
-        if key_size as usize > BK3_AES_KEY_SIZE {
+        if record.key_size as usize > BK3_AES_KEY_SIZE {
+            let key_size = record.key_size;
             return Err(TpmUnsealError(format!(
                 "AES key/IV record key_size too large: {key_size} > {BK3_AES_KEY_SIZE}"
             )));
         }
 
-        let mut key = [0u8; BK3_AES_KEY_SIZE];
-        key.copy_from_slice(&data[4..4 + BK3_AES_KEY_SIZE]);
-
-        let iv_size = data[4 + BK3_AES_KEY_SIZE];
-        if iv_size as usize != AES_BLOCK_SIZE {
+        if record.iv_size as usize != AES_BLOCK_SIZE {
+            let iv_size = record.iv_size;
             return Err(TpmUnsealError(format!(
                 "AES key/IV record iv_size invalid: expected {AES_BLOCK_SIZE}, got {iv_size}"
             )));
         }
 
-        let mut iv = [0u8; AES_BLOCK_SIZE];
-        iv.copy_from_slice(&data[4 + BK3_AES_KEY_SIZE + 1..]);
-
-        Ok(Self { key, key_size, iv })
+        Ok(record)
     }
 }
 
@@ -148,7 +155,9 @@ impl TpmBk3Unsealer {
         // Unseal the AES key/IV structure via TPM.
         let aes_key_struct = self.unseal_null_hierarchy(sealed_aes_secret)?;
 
-        let record = ParsedKeyIvRecord::parse(&aes_key_struct)?;
+        // Parse AZIHSM_KEY_IV_RECORD via the zero-copy view; the
+        // record fields are validated against the wire layout.
+        let record = ParsedKeyIvRecord::from_bytes_validated(&aes_key_struct)?;
 
         // Decrypt with AES-CBC. Use the actual key_size to slice the key bytes
         // since the key array is fixed at 32 bytes but the actual key may be smaller.

@@ -19,6 +19,7 @@ azihsm_tpm.workspace = true
 bitfield-struct.workspace = true
 minicbor.workspace = true
 thiserror.workspace = true
+zerocopy = { features = ["derive"], workspace = true }
 
 [lints]
 workspace = true
