@@ -6,6 +6,7 @@ use crypto::*;
 
 use super::*;
 
+/// Generate an RSA key pair with wrap/unwrap permissions for importing wrapped RSA keys.
 fn get_rsa_unwrapping_key_pair(session: &HsmSession) -> (HsmRsaPrivateKey, HsmRsaPublicKey) {
     let priv_key_props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Private)
@@ -32,6 +33,7 @@ fn get_rsa_unwrapping_key_pair(session: &HsmSession) -> (HsmRsaPrivateKey, HsmRs
     (priv_key, pub_key)
 }
 
+/// Import an external RSA private key DER blob into the HSM by wrapping and unwrapping it.
 fn import_rsa_key(
     session: &HsmSession,
     der: &[u8],
@@ -75,6 +77,7 @@ fn import_rsa_key(
     (priv_key, pub_key)
 }
 
+/// Ensure RSA-2048 PKCS1 encryption and decryption round-trips successfully.
 #[session_test]
 fn test_rsa_2048_pkcs1_enc_dec(session: HsmSession) {
     let priv_key = crypto::RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
@@ -93,6 +96,7 @@ fn test_rsa_2048_pkcs1_enc_dec(session: HsmSession) {
     assert_eq!(decrypted_plaintext, plaintext);
 }
 
+/// Ensure RSA-3072 PKCS1 encryption and decryption round-trips successfully.
 #[session_test]
 fn test_rsa_3072_pkcs1_enc_dec(session: HsmSession) {
     let priv_key = crypto::RsaPrivateKey::generate(384).expect("Failed to generate RSA Key");
@@ -111,6 +115,7 @@ fn test_rsa_3072_pkcs1_enc_dec(session: HsmSession) {
     assert_eq!(decrypted_plaintext, plaintext);
 }
 
+/// Ensure RSA-4096 PKCS1 encryption and decryption round-trips successfully.
 #[session_test]
 fn test_rsa_4096_pkcs1_enc_dec(session: HsmSession) {
     let priv_key = crypto::RsaPrivateKey::generate(512).expect("Failed to generate RSA Key");
@@ -129,6 +134,7 @@ fn test_rsa_4096_pkcs1_enc_dec(session: HsmSession) {
     assert_eq!(decrypted_plaintext, plaintext);
 }
 
+/// Ensure RSA-2048 OAEP encryption and decryption round-trips successfully.
 #[session_test]
 fn test_rsa_2048_oaep_enc_dec(session: HsmSession) {
     let priv_key = crypto::RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
@@ -147,6 +153,7 @@ fn test_rsa_2048_oaep_enc_dec(session: HsmSession) {
     assert_eq!(decrypted_plaintext, plaintext);
 }
 
+/// Ensure RSA-3072 OAEP encryption and decryption round-trips successfully.
 #[session_test]
 fn test_rsa_3072_oaep_enc_dec(session: HsmSession) {
     let priv_key = crypto::RsaPrivateKey::generate(384).expect("Failed to generate RSA Key");
@@ -165,6 +172,7 @@ fn test_rsa_3072_oaep_enc_dec(session: HsmSession) {
     assert_eq!(decrypted_plaintext, plaintext);
 }
 
+/// Ensure RSA-4096 OAEP encryption and decryption round-trips successfully.
 #[session_test]
 fn test_rsa_4096_oaep_enc_dec(session: HsmSession) {
     let priv_key = crypto::RsaPrivateKey::generate(512).expect("Failed to generate RSA Key");
@@ -323,6 +331,7 @@ fn test_rsa_empty_ciphertext_fails(session: HsmSession) {
 
     assert!(result.is_err());
 }
+
 /// Ensure OAEP hash mismatch fails
 #[session_test]
 fn test_rsa_oaep_hash_mismatch_fails(session: HsmSession) {
@@ -382,6 +391,7 @@ fn test_rsa_truncated_ciphertext_fails(session: HsmSession) {
 
     assert!(result.is_err());
 }
+
 /// Ensure same key works across different padding schemes independently
 #[session_test]
 fn test_rsa_same_key_multiple_algorithms(session: HsmSession) {
@@ -485,6 +495,7 @@ fn test_rsa_oaep_non_deterministic(session: HsmSession) {
 
     assert_ne!(c1, c2);
 }
+
 /// Ensure plaintext at exact OAEP limit succeeds
 #[session_test]
 fn test_rsa_oaep_plaintext_max_size_succeeds(session: HsmSession) {
