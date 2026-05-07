@@ -15,6 +15,7 @@ azihsm_crypto.workspace = true
 azihsm_ddi.workspace = true
 azihsm_ddi_mbor.workspace = true
 azihsm_ddi_types.workspace = true
+azihsm_tpm.workspace = true
 bitfield-struct.workspace = true
 minicbor.workspace = true
 thiserror.workspace = true
