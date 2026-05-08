@@ -32,9 +32,6 @@ jobs:
           - language: rust
             build-mode: none
 
-    env:
-      LD_LIBRARY_PATH: ${{ github.workspace }}/${{ env.OPENSSL_INSTALL }}/lib
-
     steps:
     - name: Checkout repository
       uses: actions/checkout@v6
