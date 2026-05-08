@@ -52,4 +52,4 @@ pub use report::*;
 pub use rsa::*;
 pub use session::*;
 pub use set_sealed_bk3::*;
-pub use tpm_unseal::*;
+use tpm_unseal::*;

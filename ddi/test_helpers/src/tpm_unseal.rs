@@ -33,7 +33,7 @@ const AZIHSM_KEY_IV_RECORD_VERSION: u8 = 1;
 /// from AES) so `{e}` / `.expect(...)` panic messages stay useful.
 #[derive(Debug, Error)]
 #[error("TPM unseal failed: {0}")]
-pub struct TpmUnsealError(pub String);
+pub(crate) struct TpmUnsealError(pub String);
 
 /// Packed AES key/IV record matching `AZIHSM_KEY_IV_RECORD` from UEFI
 /// firmware. Mirrors `azihsm_api::ddi::tpm::AzihsmKeyIvRecord`.
