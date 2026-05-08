@@ -62,9 +62,80 @@ struct Stage {
     /// Run nextest-report
     #[clap(long)]
     nextest_report: bool,
-    /// Run all checks (default if no specific checks are selected)
-    #[clap(long)]
-    all: bool,
+}
+
+impl Stage {
+    /// Merge another `Stage` into this one, returning a new `Stage` with combined settings
+    fn merge(&self, other: &Stage) -> Stage {
+        Stage {
+            setup: self.setup || other.setup,
+            copyright: self.copyright || other.copyright,
+            validate_members: self.validate_members || other.validate_members,
+            audit: self.audit || other.audit,
+            fmt: self.fmt || other.fmt,
+            clippy: self.clippy || other.clippy,
+            coverage: self.coverage || other.coverage,
+            coverage_report: self.coverage_report || other.coverage_report,
+            nextest: self.nextest || other.nextest,
+            nextest_min: self.nextest_min || other.nextest_min,
+            nextest_full: self.nextest_full || other.nextest_full,
+            nextest_report: self.nextest_report || other.nextest_report,
+        }
+    }
+
+    /// Return a Stage instance with minimal checks enabled (fmt and nextest_min)
+    fn min() -> Stage {
+        Stage {
+            setup: false,
+            copyright: false,
+            validate_members: false,
+            audit: false,
+            fmt: true,
+            clippy: false,
+            coverage: false,
+            coverage_report: false,
+            nextest: false,
+            nextest_min: true,
+            nextest_full: false,
+            nextest_report: false,
+        }
+    }
+
+    /// Return a Stage instance with full checks enabled (everything except coverage, coverage_report & nextest_report)
+    fn full() -> Stage {
+        Stage {
+            setup: true,
+            copyright: true,
+            validate_members: true,
+            audit: true,
+            fmt: true,
+            clippy: true,
+            coverage: false,        // coverage is optional
+            coverage_report: false, // coverage report is optional (intended only for CI)
+            nextest: false,
+            nextest_min: false,
+            nextest_full: true,
+            nextest_report: false, // nextest report is optional (intended only for CI)
+        }
+    }
+
+    /// Return a Stage instance with all checks enabled
+    fn all() -> Stage {
+        Stage {
+            setup: true,
+            copyright: true,
+            validate_members: true,
+            audit: true,
+            fmt: true,
+            clippy: true,
+            coverage: true,
+            coverage_report: true,
+            nextest: true,
+            nextest_min: true,
+            nextest_full: true,
+            nextest_report: true,
+        }
+    }
 }
 
 /// Xtask to run various repo-specific checks
@@ -78,6 +149,9 @@ pub struct Precheck {
     /// nextest_full). Without this flag, only a minimal set of checks is run (fmt, nextest_min).
     #[clap(long)]
     pub full: bool,
+    /// Run all checks
+    #[clap(long)]
+    pub all: bool,
     /// Skip taplo (TOML formatting) (used with --fmt)
     #[clap(long)]
     pub skip_taplo: bool,
@@ -90,7 +164,7 @@ pub struct Precheck {
     /// Skip specifying toolchain for formatting checks (used with --fmt)
     #[clap(long)]
     skip_toolchain: bool,
-    /// Crates to exclude (used with --clippy/--nextest)
+    /// Crates to exclude (used with --clippy/--nextest/--nextest-min/--nextest-full)
     #[clap(long = "exclude")]
     exclude: Vec<String>,
     /// Package to run tests for (used with --nextest)
@@ -99,7 +173,7 @@ pub struct Precheck {
     /// Features to enable when running tests (used with --nextest)
     #[clap(long)]
     features: Option<String>,
-    /// The nextest profile to use (used with --nextest)
+    /// The nextest profile to use (used with --nextest/--nextest-min/--nextest-full)
     #[clap(long)]
     profile: Option<String>,
 }
@@ -110,44 +184,21 @@ impl Xtask for Precheck {
 
         let sh = Shell::new()?;
 
-        // if no specific stages are requested, choose defaults based on --full flag:
-        // --full: run all stages except code coverage, nextest report and coverage report
-        // default: run only fmt and nextest_min for a fast feedback loop
-        let stage = self.stage.unwrap_or(if self.full {
-            Stage {
-                setup: true,
-                copyright: true,
-                validate_members: true,
-                audit: true,
-                fmt: true,
-                clippy: true,
-                coverage: false,        // coverage is optional
-                coverage_report: false, // coverage report is optional (intended only for CI)
-                nextest: false,
-                nextest_min: false,
-                nextest_full: true,
-                nextest_report: false, // nextest report is optional (intended only for CI)
-                all: false,
-            }
+        // choose defaults based on --all/--full flags
+        let stage = if self.all {
+            Stage::all()
+        } else if self.full {
+            Stage::full()
         } else {
-            Stage {
-                setup: false,
-                copyright: false,
-                validate_members: false,
-                audit: false,
-                fmt: true,
-                clippy: false,
-                coverage: false,
-                coverage_report: false,
-                nextest: false,
-                nextest_min: true,
-                nextest_full: false,
-                nextest_report: false,
-                all: false,
-            }
-        });
+            Stage::min()
+        };
 
-        if stage.setup || stage.all {
+        if let Some(stage_cli) = self.stage {
+            // merge defaults with CLI-provided stages
+            stage.merge(&stage_cli);
+        }
+
+        if stage.setup {
             // first try path of .cargo inside current directory
             let mut config_path = ".cargo".to_string();
             if !sh.path_exists(&config_path) {
@@ -170,22 +221,22 @@ impl Xtask for Precheck {
         }
 
         // Run Copyright
-        if stage.copyright || stage.all {
+        if stage.copyright {
             Copyright { fix: false }.run(ctx.clone())?;
         }
 
         // Run ValidateMembers
-        if stage.validate_members || stage.all {
+        if stage.validate_members {
             ValidateMembers { fix: false }.run(ctx.clone())?;
         }
 
         // Run Audit
-        if (stage.audit || stage.all) && !self.skip_audit {
+        if stage.audit && !self.skip_audit {
             Audit {}.run(ctx.clone())?;
         }
 
         // Cargo format
-        if stage.fmt || stage.all {
+        if stage.fmt {
             Fmt {
                 fix: false,                  // Do not fix formatting issues by default
                 skip_taplo: self.skip_taplo, // Pass through skip_taplo flag
@@ -200,14 +251,14 @@ impl Xtask for Precheck {
         }
 
         // Cargo Clippy
-        if stage.clippy || stage.all {
+        if stage.clippy {
             Clippy {
                 exclude: self.exclude.clone(),
             }
             .run(ctx.clone())?;
         }
 
-        if stage.nextest || stage.all {
+        if stage.nextest {
             Nextest {
                 features: self.features.clone(),
                 package: self.package.clone(),
@@ -220,7 +271,7 @@ impl Xtask for Precheck {
         }
 
         // Minimal nextest: run mock tests, skipping resiliency, openssl, and cpp tests
-        if stage.nextest_min || stage.all {
+        if stage.nextest_min {
             let mut excludes = self.exclude.clone();
             for pkg in [
                 "azihsm_api_tests",
@@ -250,7 +301,7 @@ impl Xtask for Precheck {
         }
 
         // Full nextest: run the complete set of tests including resiliency, openssl, and native/cpp
-        if stage.nextest_full || stage.all {
+        if stage.nextest_full {
             // SDK Run all mock tests
             Nextest {
                 features: Some("mock".to_string()),
@@ -310,17 +361,17 @@ impl Xtask for Precheck {
         }
 
         // Run code coverage
-        if stage.coverage || stage.all {
+        if stage.coverage {
             Coverage {}.run(ctx.clone())?;
         }
 
         // Run nextest report
-        if stage.nextest_report || stage.all {
+        if stage.nextest_report {
             NextestReport {}.run(ctx.clone())?;
         }
 
         // Run code coverage report
-        if stage.coverage_report || stage.all {
+        if stage.coverage_report {
             CoverageReport {}.run(ctx)?;
         }
 
