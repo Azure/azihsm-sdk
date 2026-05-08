@@ -196,7 +196,7 @@ impl Xtask for Precheck {
                         package: Some("azihsm_api_tests".to_string()),
                         no_default_features: false,
                         filterset: Some("test(resiliency::fault_injection::)".to_string()),
-                        profile: self.profile.clone().or(Some("ci-mock".to_string())),
+                        profile: self.profile.clone().or(Some("ci-mock-res".to_string())),
                         exclude: self.exclude.clone(),
                     }
                     .run(ctx.clone())?;

@@ -8,6 +8,10 @@
 [profile.ci-mock.junit]
 path = "junit.xml"
 
+# profile for running resiliency fault-injection tests
+[profile.ci-mock-res.junit]
+path = "junit.xml"
+
 # profile for running all mock tests w/ table-4
 [profile.ci-mock-table-4.junit]
 path = "junit.xml"
