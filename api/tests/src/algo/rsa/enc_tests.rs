@@ -212,7 +212,10 @@ fn test_rsa_decrypt_with_wrong_key_fails(session: HsmSession) {
 
     let result = HsmDecrypter::decrypt_vec(&mut algo, &priv_b, &ciphertext);
 
-    assert!(result.is_err());
+    assert!(matches!(
+        result,
+        Err(HsmError::DdiCmdFailure | HsmError::InternalError)
+    ));
 }
 
 /// Ensure tampered ciphertext fails to decrypt
@@ -233,8 +236,12 @@ fn test_rsa_tampered_ciphertext_fails(session: HsmSession) {
 
     let result = HsmDecrypter::decrypt_vec(&mut algo, &priv_key, &ciphertext);
 
-    assert!(result.is_err());
+    assert!(matches!(
+        result,
+        Err(HsmError::DdiCmdFailure | HsmError::InternalError)
+    ));
 }
+
 /// Ensure empty plaintext encryption works or is handled
 #[session_test]
 fn test_rsa_empty_plaintext(session: HsmSession) {
@@ -270,7 +277,7 @@ fn test_rsa_plaintext_too_large_fails(session: HsmSession) {
 
     let result = HsmEncrypter::encrypt_vec(&mut algo, &pub_key, &plaintext);
 
-    assert!(result.is_err());
+    assert!(matches!(result, Err(HsmError::InternalError)));
 }
 
 /// Ensure OAEP label mismatch fails
@@ -293,7 +300,7 @@ fn test_rsa_oaep_label_mismatch(session: HsmSession) {
 
     let result = HsmDecrypter::decrypt_vec(&mut dec_algo, &priv_key, &ciphertext);
 
-    assert!(result.is_err());
+    assert!(matches!(result, Err(HsmError::InternalError)));
 }
 
 /// Ensure decrypt fails when using wrong padding scheme
@@ -315,7 +322,7 @@ fn test_rsa_wrong_padding_fails(session: HsmSession) {
 
     let result = HsmDecrypter::decrypt_vec(&mut dec_algo, &priv_key, &ciphertext);
 
-    assert!(result.is_err());
+    assert!(matches!(result, Err(HsmError::InternalError)));
 }
 
 /// Ensure decrypting empty ciphertext fails
@@ -329,7 +336,7 @@ fn test_rsa_empty_ciphertext_fails(session: HsmSession) {
 
     let result = HsmDecrypter::decrypt_vec(&mut algo, &priv_key, &[]);
 
-    assert!(result.is_err());
+    assert!(matches!(result, Err(HsmError::InvalidArgument)));
 }
 
 /// Ensure OAEP hash mismatch fails
@@ -349,7 +356,7 @@ fn test_rsa_oaep_hash_mismatch_fails(session: HsmSession) {
 
     let result = HsmDecrypter::decrypt_vec(&mut dec_algo, &priv_key, &ciphertext);
 
-    assert!(result.is_err());
+    assert!(matches!(result, Err(HsmError::InternalError)));
 }
 
 /// Ensure RSA encryption is non-deterministic (same plaintext ≠ same ciphertext)
@@ -389,7 +396,7 @@ fn test_rsa_truncated_ciphertext_fails(session: HsmSession) {
 
     let result = HsmDecrypter::decrypt_vec(&mut algo, &priv_key, &ciphertext);
 
-    assert!(result.is_err());
+    assert!(matches!(result, Err(HsmError::InvalidArgument)));
 }
 
 /// Ensure same key works across different padding schemes independently
@@ -537,7 +544,7 @@ fn test_rsa_cross_key_size_fails(session: HsmSession) {
 
     let result = HsmDecrypter::decrypt_vec(&mut algo, &priv_b, &ciphertext);
 
-    assert!(result.is_err());
+    assert!(matches!(result, Err(HsmError::InvalidArgument)));
 }
 
 /// Ensure decrypt works with fresh algo instance (stateless behavior)
@@ -644,5 +651,200 @@ fn test_rsa_tampered_ciphertext_tail_fails(session: HsmSession) {
 
     let result = HsmDecrypter::decrypt_vec(&mut algo, &priv_key, &ciphertext);
 
-    assert!(result.is_err());
+    assert!(matches!(result, Err(HsmError::InternalError)));
+}
+
+/// Ensure RSA decryption fails when ciphertext is decrypted with a private key of a different size.
+#[session_test]
+fn test_rsa_decrypt_with_wrong_key_size_fails(session: HsmSession) {
+    // Encrypt with RSA-2048 public key.
+    let priv_a = RsaPrivateKey::generate(256).expect("Failed to generate RSA-2048 key");
+    let der_a = priv_a.to_vec().expect("Failed to export RSA-2048 key");
+    let (_, pub_a) = import_rsa_key(&session, &der_a, 2048);
+
+    // Attempt to decrypt with RSA-3072 private key.
+    let priv_b = RsaPrivateKey::generate(384).expect("Failed to generate RSA-3072 key");
+    let der_b = priv_b.to_vec().expect("Failed to export RSA-3072 key");
+    let (priv_b, _) = import_rsa_key(&session, &der_b, 3072);
+
+    let plaintext = b"wrong key size";
+
+    let mut algo = HsmRsaEncryptAlgo::with_pkcs1_padding();
+    let ciphertext =
+        HsmEncrypter::encrypt_vec(&mut algo, &pub_a, plaintext).expect("Failed to encrypt data");
+
+    let result = HsmDecrypter::decrypt_vec(&mut algo, &priv_b, &ciphertext);
+
+    assert!(matches!(result, Err(HsmError::InvalidArgument)));
+}
+
+/// Ensure RSA OAEP round-trips successfully with SHA1.
+#[session_test]
+fn test_rsa_oaep_sha1_enc_dec(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
+    let der = priv_key.to_vec().expect("Failed to export RSA Key");
+    let (priv_key, pub_key) = import_rsa_key(&session, &der, 2048);
+
+    let plaintext = b"oaep sha1";
+
+    let mut algo = HsmRsaEncryptAlgo::with_oaep_padding(HsmHashAlgo::Sha1, None);
+
+    let ciphertext =
+        HsmEncrypter::encrypt_vec(&mut algo, &pub_key, plaintext).expect("Failed to encrypt data");
+
+    let decrypted = HsmDecrypter::decrypt_vec(&mut algo, &priv_key, &ciphertext)
+        .expect("Failed to decrypt data");
+
+    assert_eq!(decrypted, plaintext);
+}
+
+/// Ensure RSA OAEP round-trips successfully with SHA512.
+#[session_test]
+fn test_rsa_oaep_sha512_enc_dec(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
+    let der = priv_key.to_vec().expect("Failed to export RSA Key");
+    let (priv_key, pub_key) = import_rsa_key(&session, &der, 2048);
+
+    let plaintext = b"oaep sha512";
+
+    let mut algo = HsmRsaEncryptAlgo::with_oaep_padding(HsmHashAlgo::Sha512, None);
+
+    let ciphertext =
+        HsmEncrypter::encrypt_vec(&mut algo, &pub_key, plaintext).expect("Failed to encrypt data");
+
+    let decrypted = HsmDecrypter::decrypt_vec(&mut algo, &priv_key, &ciphertext)
+        .expect("Failed to decrypt data");
+
+    assert_eq!(decrypted, plaintext);
+}
+
+/// Ensure RSA OAEP decryption fails when encrypted with SHA1 and decrypted with SHA512.
+#[session_test]
+fn test_rsa_oaep_sha1_to_sha512_hash_mismatch_fails(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
+    let der = priv_key.to_vec().expect("Failed to export RSA Key");
+    let (priv_key, pub_key) = import_rsa_key(&session, &der, 2048);
+
+    let plaintext = b"oaep sha1 sha512 mismatch";
+
+    let mut enc_algo = HsmRsaEncryptAlgo::with_oaep_padding(HsmHashAlgo::Sha1, None);
+    let ciphertext = HsmEncrypter::encrypt_vec(&mut enc_algo, &pub_key, plaintext)
+        .expect("Failed to encrypt data");
+
+    let mut dec_algo = HsmRsaEncryptAlgo::with_oaep_padding(HsmHashAlgo::Sha512, None);
+    let result = HsmDecrypter::decrypt_vec(&mut dec_algo, &priv_key, &ciphertext);
+
+    assert!(matches!(result, Err(HsmError::InternalError)));
+}
+
+/// Ensure RSA OAEP decryption fails when encrypted with SHA512 and decrypted with SHA1.
+#[session_test]
+fn test_rsa_oaep_sha512_to_sha1_hash_mismatch_fails(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
+    let der = priv_key.to_vec().expect("Failed to export RSA Key");
+    let (priv_key, pub_key) = import_rsa_key(&session, &der, 2048);
+
+    let plaintext = b"oaep sha512 sha1 mismatch";
+
+    let mut enc_algo = HsmRsaEncryptAlgo::with_oaep_padding(HsmHashAlgo::Sha512, None);
+    let ciphertext = HsmEncrypter::encrypt_vec(&mut enc_algo, &pub_key, plaintext)
+        .expect("Failed to encrypt data");
+
+    let mut dec_algo = HsmRsaEncryptAlgo::with_oaep_padding(HsmHashAlgo::Sha1, None);
+    let result = HsmDecrypter::decrypt_vec(&mut dec_algo, &priv_key, &ciphertext);
+
+    assert!(matches!(result, Err(HsmError::InternalError)));
+}
+
+/// Ensure plaintext at exact OAEP SHA1 limit succeeds.
+#[session_test]
+fn test_rsa_oaep_sha1_plaintext_max_size_succeeds(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
+    let der = priv_key.to_vec().expect("Failed to export RSA Key");
+    let (priv_key, pub_key) = import_rsa_key(&session, &der, 2048);
+
+    // OAEP max for RSA-2048 with SHA1: 256 - 2*20 - 2 = 214
+    let plaintext = vec![0u8; 214];
+
+    let mut algo = HsmRsaEncryptAlgo::with_oaep_padding(HsmHashAlgo::Sha1, None);
+
+    let ciphertext =
+        HsmEncrypter::encrypt_vec(&mut algo, &pub_key, &plaintext).expect("Failed to encrypt data");
+
+    let decrypted = HsmDecrypter::decrypt_vec(&mut algo, &priv_key, &ciphertext)
+        .expect("Failed to decrypt data");
+
+    assert_eq!(decrypted, plaintext);
+}
+
+/// Ensure plaintext at exact OAEP SHA512 limit succeeds.
+#[session_test]
+fn test_rsa_oaep_sha512_plaintext_max_size_succeeds(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
+    let der = priv_key.to_vec().expect("Failed to export RSA Key");
+    let (priv_key, pub_key) = import_rsa_key(&session, &der, 2048);
+
+    // OAEP max for RSA-2048 with SHA512: 256 - 2*64 - 2 = 126
+    let plaintext = vec![0u8; 126];
+
+    let mut algo = HsmRsaEncryptAlgo::with_oaep_padding(HsmHashAlgo::Sha512, None);
+
+    let ciphertext =
+        HsmEncrypter::encrypt_vec(&mut algo, &pub_key, &plaintext).expect("Failed to encrypt data");
+
+    let decrypted = HsmDecrypter::decrypt_vec(&mut algo, &priv_key, &ciphertext)
+        .expect("Failed to decrypt data");
+
+    assert_eq!(decrypted, plaintext);
+}
+
+/// Ensure RSA OAEP SHA512 encryption fails when plaintext exceeds the hash-dependent limit.
+#[session_test]
+fn test_rsa_oaep_sha512_plaintext_too_large_fails(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
+    let der = priv_key.to_vec().expect("Failed to export RSA Key");
+    let (_, pub_key) = import_rsa_key(&session, &der, 2048);
+
+    // OAEP SHA512 max for RSA-2048 is 126 bytes, so 127 should fail.
+    let plaintext = vec![0u8; 127];
+
+    let mut algo = HsmRsaEncryptAlgo::with_oaep_padding(HsmHashAlgo::Sha512, None);
+
+    let result = HsmEncrypter::encrypt_vec(&mut algo, &pub_key, &plaintext);
+
+    assert!(matches!(result, Err(HsmError::InternalError)));
+}
+
+/// Ensure RSA OAEP SHA1 encryption fails when plaintext exceeds the hash-dependent limit.
+#[session_test]
+fn test_rsa_oaep_sha1_plaintext_too_large_fails(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
+    let der = priv_key.to_vec().expect("Failed to export RSA Key");
+    let (_, pub_key) = import_rsa_key(&session, &der, 2048);
+
+    // OAEP SHA1 max for RSA-2048 is 214 bytes, so 215 should fail.
+    let plaintext = vec![0u8; 215];
+
+    let mut algo = HsmRsaEncryptAlgo::with_oaep_padding(HsmHashAlgo::Sha1, None);
+
+    let result = HsmEncrypter::encrypt_vec(&mut algo, &pub_key, &plaintext);
+
+    assert!(matches!(result, Err(HsmError::InternalError)));
+}
+
+/// Ensure RSA OAEP SHA256 encryption fails when plaintext exceeds the hash-dependent limit.
+#[session_test]
+fn test_rsa_oaep_sha256_plaintext_too_large_fails(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
+    let der = priv_key.to_vec().expect("Failed to export RSA Key");
+    let (_, pub_key) = import_rsa_key(&session, &der, 2048);
+
+    // OAEP SHA256 max for RSA-2048 is 190 bytes, so 191 should fail.
+    let plaintext = vec![0u8; 191];
+
+    let mut algo = HsmRsaEncryptAlgo::with_oaep_padding(HsmHashAlgo::Sha256, None);
+
+    let result = HsmEncrypter::encrypt_vec(&mut algo, &pub_key, &plaintext);
+
+    assert!(matches!(result, Err(HsmError::InternalError)));
 }
