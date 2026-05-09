@@ -4,34 +4,8 @@
 use azihsm_crypto as crypto;
 use crypto::*;
 
+use super::common::*;
 use super::*;
-
-/// Generate an RSA key pair with wrap/unwrap permissions for importing wrapped RSA keys.
-fn get_rsa_unwrapping_key_pair(session: &HsmSession) -> (HsmRsaPrivateKey, HsmRsaPublicKey) {
-    let priv_key_props = HsmKeyPropsBuilder::default()
-        .class(HsmKeyClass::Private)
-        .key_kind(HsmKeyKind::Rsa)
-        .bits(2048)
-        .can_unwrap(true)
-        .build()
-        .expect("Failed to build unwrapping key props");
-
-    let pub_key_props = HsmKeyPropsBuilder::default()
-        .class(HsmKeyClass::Public)
-        .key_kind(HsmKeyKind::Rsa)
-        .bits(2048)
-        .can_wrap(true)
-        .build()
-        .expect("Failed to build public key props");
-
-    let mut algo = HsmRsaKeyUnwrappingKeyGenAlgo::default();
-
-    let (priv_key, pub_key) =
-        HsmKeyManager::generate_key_pair(session, &mut algo, priv_key_props, pub_key_props)
-            .expect("Failed to generate unwrapping key");
-
-    (priv_key, pub_key)
-}
 
 /// Import an external RSA private key DER blob into the HSM by wrapping and unwrapping it.
 fn import_rsa_key(

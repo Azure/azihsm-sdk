@@ -3,8 +3,6 @@
 
 //! RSA NIST/vector validation using HSM RSA keys.
 
-use super::*;
-
 use azihsm_crypto::testvectors::rsa::OaepTestVector;
 use azihsm_crypto::testvectors::rsa::PkcsTestVector;
 use azihsm_crypto::testvectors::rsa::PssTestVector;
@@ -13,9 +11,19 @@ use azihsm_crypto::testvectors::rsa::RSA_PKCS1_TEST_VECTORS;
 use azihsm_crypto::testvectors::rsa::RSA_PSS_TEST_VECTORS;
 use azihsm_crypto::testvectors::rsa::TestHashAlgo;
 
+use super::common::*;
+use super::*;
+
 // =======================================================
 // Common helpers
 // =======================================================
+
+/// Describes the permitted RSA operations for an imported key pair.
+#[derive(Clone, Copy)]
+enum ImportedRsaKeyUsage {
+    SignVerify,
+    EncryptDecrypt,
+}
 
 /// Converts the RSA test-vector hash enum into the HSM API hash enum.
 fn hsm_hash_from_test(hash: TestHashAlgo) -> HsmHashAlgo {
@@ -32,41 +40,19 @@ fn is_supported_rsa_bits(bits: u32) -> bool {
     matches!(bits, 2048 | 3072 | 4096)
 }
 
-/// Generates an RSA key pair configured for RSA-AES wrapping and unwrapping.
-fn get_rsa_unwrapping_key_pair(session: &HsmSession) -> (HsmRsaPrivateKey, HsmRsaPublicKey) {
-    let priv_key_props = HsmKeyPropsBuilder::default()
-        .class(HsmKeyClass::Private)
-        .key_kind(HsmKeyKind::Rsa)
-        .bits(2048)
-        .can_unwrap(true)
-        .build()
-        .expect("Failed to build RSA unwrapping private key props");
-
-    let pub_key_props = HsmKeyPropsBuilder::default()
-        .class(HsmKeyClass::Public)
-        .key_kind(HsmKeyKind::Rsa)
-        .bits(2048)
-        .can_wrap(true)
-        .build()
-        .expect("Failed to build RSA wrapping public key props");
-
-    let mut algo = HsmRsaKeyUnwrappingKeyGenAlgo::default();
-
-    HsmKeyManager::generate_key_pair(session, &mut algo, priv_key_props, pub_key_props)
-        .expect("Failed to generate RSA unwrapping key pair")
-}
-
 /// Imports RSA private-key DER into HSM RSA key handles through RSA-AES wrap/unwrap.
 fn import_rsa_key_pair(
     session: &HsmSession,
     der: &[u8],
     bits: u32,
-    can_sign: bool,
-    can_verify: bool,
-    can_decrypt: bool,
-    can_encrypt: bool,
+    usage: ImportedRsaKeyUsage,
 ) -> (HsmRsaPrivateKey, HsmRsaPublicKey) {
     let (unwrapping_priv_key, unwrapping_pub_key) = get_rsa_unwrapping_key_pair(session);
+
+    let (can_sign, can_verify, can_decrypt, can_encrypt) = match usage {
+        ImportedRsaKeyUsage::SignVerify => (true, true, false, false),
+        ImportedRsaKeyUsage::EncryptDecrypt => (false, false, true, true),
+    };
 
     let priv_key_props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Private)
@@ -111,7 +97,7 @@ fn import_rsa_sign_verify_key(
     der: &[u8],
     bits: u32,
 ) -> (HsmRsaPrivateKey, HsmRsaPublicKey) {
-    import_rsa_key_pair(session, der, bits, true, true, false, false)
+    import_rsa_key_pair(session, der, bits, ImportedRsaKeyUsage::SignVerify)
 }
 
 /// Imports an RSA key pair configured for encrypt/decrypt operations.
@@ -120,7 +106,7 @@ fn import_rsa_enc_dec_key(
     der: &[u8],
     bits: u32,
 ) -> (HsmRsaPrivateKey, HsmRsaPublicKey) {
-    import_rsa_key_pair(session, der, bits, false, false, true, true)
+    import_rsa_key_pair(session, der, bits, ImportedRsaKeyUsage::EncryptDecrypt)
 }
 
 /// Infers RSA key size from signature length.
@@ -146,6 +132,14 @@ fn should_skip_unsupported_bits(kind: &str, idx: usize, bits: u32) -> bool {
         println!("Skipping {kind} vector {idx}: unsupported RSA key size {bits}");
         true
     }
+}
+
+/// Hashes a message using the hash algorithm specified by the RSA test vector.
+fn hash_test_vector_message(session: &HsmSession, hash_algo: TestHashAlgo, msg: &[u8]) -> Vec<u8> {
+    let mut hash_algo = hsm_hash_from_test(hash_algo);
+
+    HsmHasher::hash_vec(session, &mut hash_algo, msg)
+        .expect("Failed to hash RSA NIST test-vector message")
 }
 
 // =======================================================
@@ -200,6 +194,30 @@ fn verify_pkcs1_vector_streaming(session: &HsmSession, idx: usize, vector: &Pkcs
     );
 }
 
+/// Signs and verifies one PKCS#1 NIST vector message using the imported NIST private key.
+fn sign_verify_pkcs1_vector(session: &HsmSession, idx: usize, vector: &PkcsTestVector) {
+    let bits = rsa_bits_from_signature(vector.s);
+    if should_skip_unsupported_bits("PKCS#1 sign/verify", idx, bits) {
+        return;
+    }
+
+    let (priv_key, pub_key) = import_rsa_sign_verify_key(session, vector.priv_der, bits);
+    let hash = hash_test_vector_message(session, vector.hash_algo, vector.msg);
+
+    let mut algo = HsmRsaSignAlgo::with_pkcs1_padding(hsm_hash_from_test(vector.hash_algo));
+
+    let signature = HsmSigner::sign_vec(&mut algo, &priv_key, &hash)
+        .unwrap_or_else(|_| panic!("vector {idx}: PKCS#1 NIST signing failed"));
+
+    let is_valid = HsmVerifier::verify(&mut algo, &pub_key, &hash, &signature)
+        .unwrap_or_else(|_| panic!("vector {idx}: PKCS#1 NIST generated-signature verify failed"));
+
+    assert!(
+        is_valid,
+        "vector {idx}: PKCS#1 NIST generated signature should verify"
+    );
+}
+
 // =======================================================
 // PSS NIST helpers
 // =======================================================
@@ -248,6 +266,31 @@ fn verify_pss_vector_streaming(session: &HsmSession, idx: usize, vector: &PssTes
     assert!(
         is_valid,
         "vector {idx}: PSS NIST streaming signature should verify"
+    );
+}
+
+/// Signs and verifies one PSS NIST vector message using the imported NIST private key.
+fn sign_verify_pss_vector(session: &HsmSession, idx: usize, vector: &PssTestVector) {
+    let bits = rsa_bits_from_signature(vector.s);
+    if should_skip_unsupported_bits("PSS sign/verify", idx, bits) {
+        return;
+    }
+
+    let (priv_key, pub_key) = import_rsa_sign_verify_key(session, vector.private_der, bits);
+    let hash = hash_test_vector_message(session, vector.hash_algo, vector.msg);
+
+    let mut algo =
+        HsmRsaSignAlgo::with_pss_padding(hsm_hash_from_test(vector.hash_algo), vector.salt_len);
+
+    let signature = HsmSigner::sign_vec(&mut algo, &priv_key, &hash)
+        .unwrap_or_else(|_| panic!("vector {idx}: PSS NIST signing failed"));
+
+    let is_valid = HsmVerifier::verify(&mut algo, &pub_key, &hash, &signature)
+        .unwrap_or_else(|_| panic!("vector {idx}: PSS NIST generated-signature verify failed"));
+
+    assert!(
+        is_valid,
+        "vector {idx}: PSS NIST generated signature should verify"
     );
 }
 
@@ -304,7 +347,7 @@ fn roundtrip_oaep_vector(session: &HsmSession, idx: usize, vector: &OaepTestVect
 // Test cases
 // =======================================================
 
-/// Verifies all supported PKCS#1 NIST vectors using single-shot API verification.
+/// Verifies all supported RSA_PKCS1_TEST_VECTORS NIST vectors using single-shot API verification.
 #[session_test]
 fn test_rsa_pkcs1_nist_vectors_single_shot(session: HsmSession) {
     for (idx, vector) in RSA_PKCS1_TEST_VECTORS.iter().enumerate() {
@@ -317,7 +360,20 @@ fn test_rsa_pkcs1_nist_vectors_single_shot(session: HsmSession) {
     }
 }
 
-/// Verifies all supported PKCS#1 NIST vectors using streaming API verification.
+/// Signs and verifies all supported RSA_PKCS1_TEST_VECTORS NIST messages.
+#[session_test]
+fn test_rsa_pkcs1_nist_vectors_sign_verify(session: HsmSession) {
+    for (idx, vector) in RSA_PKCS1_TEST_VECTORS.iter().enumerate() {
+        if should_skip_known_openssl_vector(idx) {
+            println!("Skipping PKCS#1 sign/verify vector {idx} due to known OpenSSL strictness.");
+            continue;
+        }
+
+        sign_verify_pkcs1_vector(&session, idx, vector);
+    }
+}
+
+/// Verifies all supported RSA_PKCS1_TEST_VECTORS NIST vectors using streaming API verification.
 #[session_test]
 fn test_rsa_pkcs1_nist_vectors_streaming(session: HsmSession) {
     for (idx, vector) in RSA_PKCS1_TEST_VECTORS.iter().enumerate() {
@@ -330,7 +386,7 @@ fn test_rsa_pkcs1_nist_vectors_streaming(session: HsmSession) {
     }
 }
 
-/// Verifies all supported PSS NIST vectors using single-shot API verification.
+/// Verifies all supported RSA_PSS_TEST_VECTORS NIST vectors using single-shot API verification.
 #[session_test]
 fn test_rsa_pss_nist_vectors_single_shot(session: HsmSession) {
     for (idx, vector) in RSA_PSS_TEST_VECTORS.iter().enumerate() {
@@ -343,7 +399,7 @@ fn test_rsa_pss_nist_vectors_single_shot(session: HsmSession) {
     }
 }
 
-/// Verifies all supported PSS NIST vectors using streaming API verification.
+/// Verifies all supported RSA_PSS_TEST_VECTORS NIST vectors using streaming API verification.
 #[session_test]
 fn test_rsa_pss_nist_vectors_streaming(session: HsmSession) {
     for (idx, vector) in RSA_PSS_TEST_VECTORS.iter().enumerate() {
@@ -356,7 +412,20 @@ fn test_rsa_pss_nist_vectors_streaming(session: HsmSession) {
     }
 }
 
-/// Decrypts all supported OAEP NIST ciphertext vectors using API decryption.
+/// Signs and verifies all supported RSA_PSS_TEST_VECTORS NIST messages.
+#[session_test]
+fn test_rsa_pss_nist_vectors_sign_verify(session: HsmSession) {
+    for (idx, vector) in RSA_PSS_TEST_VECTORS.iter().enumerate() {
+        if should_skip_known_openssl_vector(idx) {
+            println!("Skipping PSS sign/verify vector {idx} due to known OpenSSL strictness.");
+            continue;
+        }
+
+        sign_verify_pss_vector(&session, idx, vector);
+    }
+}
+
+/// Decrypts all supported RSA_OAEP_TEST_VECTORS NIST ciphertext vectors using API decryption.
 #[session_test]
 fn test_rsa_oaep_vectors_decrypt(session: HsmSession) {
     for (idx, vector) in RSA_OAEP_TEST_VECTORS.iter().enumerate() {
@@ -364,7 +433,7 @@ fn test_rsa_oaep_vectors_decrypt(session: HsmSession) {
     }
 }
 
-/// Roundtrips all supported OAEP NIST plaintext vectors using API encrypt/decrypt.
+/// Roundtrips all supported RSA_OAEP_TEST_VECTORS NIST plaintext vectors using API encrypt/decrypt.
 #[session_test]
 fn test_rsa_oaep_vectors_encrypt_decrypt_roundtrip(session: HsmSession) {
     for (idx, vector) in RSA_OAEP_TEST_VECTORS.iter().enumerate() {
