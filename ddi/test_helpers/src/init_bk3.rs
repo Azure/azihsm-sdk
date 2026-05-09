@@ -25,6 +25,16 @@ pub fn helper_init_bk3(
 }
 
 pub fn helper_get_or_init_bk3(dev: &<AzihsmDdi as Ddi>::Dev) -> MborByteArray<1024> {
+    if is_tpm_enabled() {
+        // When running against real hardware with TPM-sourced keys, we want to
+        // test the full flow of fetching the sealed BK3 and unsealing it via
+        // the TPM. In this scenario we assume the sealed BK3 is already set up
+        // (e.g. by manual provisioning steps) and we just fetch and unseal it.
+        let mobk = helper_get_mobk_from_tpm(dev).expect("failed to get or unseal BK3 from TPM");
+        return MborByteArray::from_slice(&mobk).expect("failed to create byte array");
+    }
+
+    // TPM is not enabled, use mock bk3
     let mut bk3 = vec![0u8; 48];
     Rng::rand_bytes(&mut bk3).unwrap();
 
