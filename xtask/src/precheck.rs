@@ -65,22 +65,20 @@ struct Stage {
 }
 
 impl Stage {
-    /// Merge another `Stage` into this one, returning a new `Stage` with combined settings
-    fn merge(&self, other: &Stage) -> Stage {
-        Stage {
-            setup: self.setup || other.setup,
-            copyright: self.copyright || other.copyright,
-            validate_members: self.validate_members || other.validate_members,
-            audit: self.audit || other.audit,
-            fmt: self.fmt || other.fmt,
-            clippy: self.clippy || other.clippy,
-            coverage: self.coverage || other.coverage,
-            coverage_report: self.coverage_report || other.coverage_report,
-            nextest: self.nextest || other.nextest,
-            nextest_min: self.nextest_min || other.nextest_min,
-            nextest_full: self.nextest_full || other.nextest_full,
-            nextest_report: self.nextest_report || other.nextest_report,
-        }
+    /// Merge another `Stage` into this one
+    fn merge(&mut self, other: &Stage) {
+        self.setup = self.setup || other.setup;
+        self.copyright = self.copyright || other.copyright;
+        self.validate_members = self.validate_members || other.validate_members;
+        self.audit = self.audit || other.audit;
+        self.fmt = self.fmt || other.fmt;
+        self.clippy = self.clippy || other.clippy;
+        self.coverage = self.coverage || other.coverage;
+        self.coverage_report = self.coverage_report || other.coverage_report;
+        self.nextest = self.nextest || other.nextest;
+        self.nextest_min = self.nextest_min || other.nextest_min;
+        self.nextest_full = self.nextest_full || other.nextest_full;
+        self.nextest_report = self.nextest_report || other.nextest_report;
     }
 
     /// Return a Stage instance with minimal checks enabled (fmt and nextest_min)
@@ -130,8 +128,8 @@ impl Stage {
             clippy: true,
             coverage: true,
             coverage_report: true,
-            nextest: true,
-            nextest_min: true,
+            nextest: false,     // subset of nextest_full
+            nextest_min: false, // subset of nextest_full
             nextest_full: true,
             nextest_report: true,
         }
@@ -184,11 +182,13 @@ impl Xtask for Precheck {
 
         let sh = Shell::new()?;
 
-        // choose defaults based on --all/--full flags
-        let stage = if self.all {
+        // choose defaults based on --all/--full flags & whether CLI-provided stages exist
+        let mut stage = if self.all {
             Stage::all()
         } else if self.full {
             Stage::full()
+        } else if self.stage.is_some() {
+            Stage::default()
         } else {
             Stage::min()
         };
