@@ -704,6 +704,45 @@ fn run_rsa_unmask_roundtrip_test(
     HsmKeyManager::delete_key(unmasked_pub).unwrap();
 }
 
+fn try_import_rsa_key(
+    session: &HsmSession,
+    der: &[u8],
+    bits: u32,
+) -> Result<(HsmRsaPrivateKey, HsmRsaPublicKey), HsmError> {
+    let (unwrapping_priv_key, unwrapping_pub_key) = get_rsa_unwrapping_key_pair(session);
+
+    let priv_key_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Private)
+        .key_kind(HsmKeyKind::Rsa)
+        .bits(bits)
+        .can_sign(true)
+        .build()
+        .expect("Failed to build private key props");
+
+    let pub_key_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Public)
+        .key_kind(HsmKeyKind::Rsa)
+        .bits(bits)
+        .can_verify(true)
+        .build()
+        .expect("Failed to build public key props");
+
+    let hash_algo = HsmHashAlgo::Sha384;
+    let kek_size = 32;
+
+    let mut wrap_algo = HsmRsaAesWrapAlgo::new(hash_algo, kek_size);
+    let wrapped_key = HsmEncrypter::encrypt_vec(&mut wrap_algo, &unwrapping_pub_key, der)?;
+
+    let mut unwrap_algo = HsmRsaKeyRsaAesKeyUnwrapAlgo::new(hash_algo);
+
+    unwrap_algo.unwrap_key_pair(
+        &unwrapping_priv_key,
+        &wrapped_key,
+        priv_key_props,
+        pub_key_props,
+    )
+}
+
 // ============================================================
 // test case section
 // ============================================================
@@ -1405,4 +1444,31 @@ fn test_rsa_unmask_roundtrip_3072(session: HsmSession) {
 #[session_test]
 fn test_rsa_unmask_roundtrip_4096(session: HsmSession) {
     run_rsa_unmask_roundtrip_test(&session, 4096, 512, 16);
+}
+
+/// Verifies RSA import fails when the DER input is invalid.
+#[session_test]
+fn test_import_rsa_invalid_der_fails(session: HsmSession) {
+    let bad_der = [0x00, 0x01, 0x02];
+
+    let result = try_import_rsa_key(&session, &bad_der, 2048);
+
+    assert!(
+        matches!(result, Err(HsmError::DdiCmdFailure)),
+        "Expected RSA import with invalid DER to fail, got success or unexpected error"
+    );
+}
+
+/// Verifies RSA import fails when key material size does not match requested properties.
+#[session_test]
+fn test_import_rsa_mismatched_bits_fails(session: HsmSession) {
+    let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA key");
+    let der = priv_key.to_vec().expect("Failed to export RSA key");
+
+    let result = try_import_rsa_key(&session, &der, 3072);
+
+    assert!(
+        matches!(result, Err(HsmError::InvalidKeyProps)),
+        "Expected RSA import with mismatched bits to fail, got success or unexpected error"
+    );
 }

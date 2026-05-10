@@ -642,28 +642,32 @@ fn test_rsa_streaming_empty_chunk_update(session: HsmSession) {
     assert!(is_valid);
 }
 
-/// Ensure large streaming input works
+/// Verifies RSA hash-sign streaming works for large multi-chunk input.
 #[session_test]
 fn test_rsa_streaming_large_input(session: HsmSession) {
-    let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
-    let der = priv_key.to_vec().expect("Failed to export RSA Key");
-
+    let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA key");
+    let der = priv_key.to_vec().expect("Failed to export RSA key");
     let (priv_key, pub_key) =
         import_rsa_key(&session, &der, 2048).expect("RSA import should succeed");
 
-    let large_data = vec![0xAB; 10_000];
+    let chunk1 = vec![0x11; 4096];
+    let chunk2 = vec![0x22; 4096];
+    let chunk3 = vec![0x33; 4096];
 
-    // create fresh algo for sign
-    let mut sign_algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
-    let sig =
-        HsmSigner::sign_vec(&mut sign_algo, &priv_key, &large_data).expect("Failed to sign data");
+    let data_chunks = [chunk1.as_slice(), chunk2.as_slice(), chunk3.as_slice()];
 
-    // create fresh algo for verify
-    let mut verify_algo = HsmRsaHashSignAlgo::with_pkcs1_padding(HsmHashAlgo::Sha256);
-    let is_valid = HsmVerifier::verify(&mut verify_algo, &pub_key, &large_data, &sig)
-        .expect("Failed to verify signature");
+    let hash_algo = HsmHashAlgo::Sha256;
 
-    assert!(is_valid);
+    let sign_algo = HsmRsaHashSignAlgo::with_pkcs1_padding(hash_algo);
+    let signature = streaming_sign_data(priv_key, sign_algo, &data_chunks);
+
+    let verify_algo = HsmRsaHashSignAlgo::with_pkcs1_padding(hash_algo);
+    let is_valid = streaming_verify_signature(pub_key, verify_algo, &data_chunks, &signature);
+
+    assert!(
+        is_valid,
+        "Streaming verification should succeed for large input"
+    );
 }
 
 /// Ensure streaming verify fails with wrong public key
@@ -1102,33 +1106,6 @@ fn test_unwrapping_key_cannot_sign(session: HsmSession) {
         err,
         HsmError::InvalidKey,
         "Expected unwrapping key signing to fail with InvalidKey"
-    );
-}
-
-/// Ensure RSA import fails when declared key size does not match DER key size
-#[session_test]
-fn test_import_rsa_mismatched_bits_fails(session: HsmSession) {
-    let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key"); // 2048
-    let der = priv_key.to_vec().expect("Failed to export RSA Key");
-
-    let result = import_rsa_key(&session, &der, 3072);
-
-    assert!(
-        matches!(result, Err(HsmError::InvalidKeyProps)),
-        "Expect Rsa Err(HsmError::InvalidKeyProps)",
-    );
-}
-
-/// Ensure RSA import fails when DER is invalid or corrupted
-#[session_test]
-fn test_import_rsa_invalid_der_fails(session: HsmSession) {
-    let bad_der = vec![0x00, 0x01, 0x02]; // clearly invalid
-
-    let result = import_rsa_key(&session, &bad_der, 2048);
-
-    assert!(
-        matches!(result, Err(HsmError::DdiCmdFailure)),
-        "Expected invalid DER import to fail with HsmError::DdiCmdFailure"
     );
 }
 
