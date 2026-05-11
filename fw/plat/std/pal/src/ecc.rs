@@ -55,74 +55,48 @@ impl HsmEcc for StdHsmPal {
     ///
     /// Delegates to [`StdEcc::gen_keypair`] which returns OpenSSL handles,
     /// then exports the private key as PKCS#8 DER and the public key as
-    /// SPKI DER into the caller-provided buffers.
-    ///
-    /// # Parameters
-    /// - `curve` — NIST curve (P-256, P-384, or P-521).
-    /// - `priv_key` — Output buffer for PKCS#8 DER private key.
-    /// - `pub_key` — Output buffer for SPKI DER public key.
-    /// - `_pct` — Pairwise consistency test mode (currently ignored).
-    ///
-    /// # Errors
-    /// - [`HsmError::EccGenerateError`] — key generation failed.
-    /// - [`HsmError::EccToDerError`] — DER export failed.
-    /// - [`HsmError::EccInvalidKeyLength`] — output buffer too small.
-    async fn ecc_gen_keypair(
+    /// raw coordinates into the caller-provided buffer.
+    async fn ecc_gen_keypair<'a>(
         &self,
+        _io: &impl HsmIo,
         curve: HsmEccCurve,
-        priv_key: Option<&mut [u8]>,
-        pub_key: &mut [u8],
+        key_out: &'a mut DmaBuf,
         _pct: HsmEccPct,
-    ) -> HsmResult<usize> {
+    ) -> HsmResult<(&'a DmaBuf, &'a DmaBuf)> {
         let (pk, pubk) = self.ecc.gen_keypair(to_ecc_curve(curve)).await?;
 
         // Export private key as PKCS#8 DER.
         let priv_len = pk.to_bytes(None).map_err(|_| HsmError::EccToDerError)?;
-        if let Some(buf) = priv_key {
-            if buf.len() < priv_len {
-                return Err(HsmError::EccInvalidKeyLength);
-            }
-            pk.to_bytes(Some(&mut buf[..priv_len]))
-                .map_err(|_| HsmError::EccToDerError)?;
-        }
-
-        // Export public key as raw coordinates (x ∥ y).
         let coord_len = curve.pub_key_len();
-        if pub_key.len() < coord_len {
+        if key_out.len() < priv_len + coord_len {
             return Err(HsmError::EccInvalidKeyLength);
         }
-        let half = coord_len / 2;
-        let (x_buf, y_buf) = pub_key[..coord_len].split_at_mut(half);
-        pubk.coord(Some((x_buf, y_buf)))
+
+        let (priv_key, rest) = key_out.split_at_mut(priv_len);
+        pk.to_bytes(Some(&mut priv_key[..priv_len]))
             .map_err(|_| HsmError::EccToDerError)?;
 
-        Ok(priv_len)
+        // Export public key as raw coordinates (x ∥ y).
+        let pub_key = &mut rest[..coord_len];
+        let half = coord_len / 2;
+        let (x_buf, y_buf) = pub_key.split_at_mut(half);
+        pubk.coord(Some((&mut x_buf[..], &mut y_buf[..])))
+            .map_err(|_| HsmError::EccToDerError)?;
+
+        Ok((&*priv_key, &*pub_key))
     }
 
     /// Raw EC sign over a pre-computed hash digest.
-    ///
-    /// Imports the private key from PKCS#8 DER, delegates signing to
-    /// the driver, and copies the raw `r ∥ s` signature into the
-    /// caller's buffer.
-    ///
-    /// # Parameters
-    /// - `_curve` — Curve hint (unused; curve is encoded in the DER key).
-    /// - `priv_key` — PKCS#8 DER private key bytes.
-    /// - `hash` — Pre-computed hash digest to sign.
-    /// - `signature` — Output buffer (must be ≥ [`HsmEccCurve::sig_len`]).
-    ///
-    /// # Errors
-    /// - [`HsmError::InvalidArg`] — DER import failed.
-    /// - [`HsmError::EccSignFailed`] — signing failed or buffer too small.
     async fn ecc_sign(
         &self,
+        _io: &impl HsmIo,
         _curve: HsmEccCurve,
-        priv_key: &[u8],
-        hash: &[u8],
-        signature: &mut [u8],
+        priv_key: &DmaBuf,
+        hash: &DmaBuf,
+        signature: &mut DmaBuf,
     ) -> HsmResult<()> {
-        let key = EccPrivateKey::from_bytes(priv_key).map_err(|_| HsmError::InvalidArg)?;
-        let sig = self.ecc.ecc_sign(&key, hash).await?;
+        let key = EccPrivateKey::from_bytes(&priv_key[..]).map_err(|_| HsmError::InvalidArg)?;
+        let sig = self.ecc.ecc_sign(&key, &hash[..]).await?;
         if signature.len() < sig.len() {
             return Err(HsmError::EccSignFailed);
         }
@@ -131,57 +105,29 @@ impl HsmEcc for StdHsmPal {
     }
 
     /// Raw EC verify a signature over a pre-computed hash digest.
-    ///
-    /// Imports the public key from SPKI DER, delegates verification
-    /// to the driver.
-    ///
-    /// # Parameters
-    /// - `_curve` — Curve hint (unused; curve is encoded in the DER key).
-    /// - `pub_key` — SPKI DER public key bytes.
-    /// - `hash` — Pre-computed hash digest that was signed.
-    /// - `signature` — The raw `r ∥ s` signature to verify.
-    ///
-    /// # Returns
-    /// `true` if valid, `false` otherwise.
-    ///
-    /// # Errors
-    /// - [`HsmError::InvalidArg`] — DER import failed.
-    /// - [`HsmError::EccVerifyFailed`] — OpenSSL verification error.
     async fn ecc_verify(
         &self,
+        _io: &impl HsmIo,
         _curve: HsmEccCurve,
-        pub_key: &[u8],
-        hash: &[u8],
-        signature: &[u8],
+        pub_key: &DmaBuf,
+        hash: &DmaBuf,
+        signature: &DmaBuf,
     ) -> HsmResult<bool> {
-        let key = EccPublicKey::from_bytes(pub_key).map_err(|_| HsmError::InvalidArg)?;
-        self.ecc.ecc_verify(&key, hash, signature).await
+        let key = EccPublicKey::from_bytes(&pub_key[..]).map_err(|_| HsmError::InvalidArg)?;
+        self.ecc.ecc_verify(&key, &hash[..], &signature[..]).await
     }
 
     /// ECDH key agreement — derives a shared secret.
-    ///
-    /// Imports both keys from DER, delegates ECDH to the driver, and
-    /// writes the raw shared secret (x-coordinate) into `secret`.
-    ///
-    /// # Parameters
-    /// - `_curve` — Curve hint (unused; curve is encoded in the DER keys).
-    /// - `priv_key` — PKCS#8 DER local private key bytes.
-    /// - `pub_key` — SPKI DER remote public key bytes.
-    /// - `secret` — Output buffer (must be ≥ [`HsmEccCurve::secret_len`]).
-    ///
-    /// # Errors
-    /// - [`HsmError::InvalidArg`] — DER import failed.
-    /// - [`HsmError::EccDeriveError`] — ECDH computation failed or
-    ///   output buffer too small.
     async fn ecdh_derive(
         &self,
+        _io: &impl HsmIo,
         _curve: HsmEccCurve,
-        priv_key: &[u8],
-        pub_key: &[u8],
-        secret: &mut [u8],
+        priv_key: &DmaBuf,
+        pub_key: &DmaBuf,
+        secret: &mut DmaBuf,
     ) -> HsmResult<()> {
-        let pk = EccPrivateKey::from_bytes(priv_key).map_err(|_| HsmError::InvalidArg)?;
-        let pubk = EccPublicKey::from_bytes(pub_key).map_err(|_| HsmError::InvalidArg)?;
-        self.ecc.ecdh_derive(&pk, &pubk, secret).await
+        let pk = EccPrivateKey::from_bytes(&priv_key[..]).map_err(|_| HsmError::InvalidArg)?;
+        let pubk = EccPublicKey::from_bytes(&pub_key[..]).map_err(|_| HsmError::InvalidArg)?;
+        self.ecc.ecdh_derive(&pk, &pubk, &mut secret[..]).await
     }
 }

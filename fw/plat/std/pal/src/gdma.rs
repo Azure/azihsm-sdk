@@ -12,8 +12,8 @@ use crate::StdHsmPal;
 
 impl HsmGdmaController for StdHsmPal {
     /// Copy data between HSM-local buffers.
-    async fn copy_mem(&self, src: &[u8], dst: &mut [u8]) -> HsmResult<()> {
-        self.gdma.copy_mem(src, dst);
+    async fn copy_mem(&self, _io: &impl HsmIo, src: &DmaBuf, dst: &mut DmaBuf) -> HsmResult<()> {
+        self.gdma.copy_mem(&src[..], &mut dst[..]);
         Ok(())
     }
 
@@ -22,16 +22,16 @@ impl HsmGdmaController for StdHsmPal {
     /// Interprets the PRP address as a raw host pointer.
     async fn copy_mem_from_host(
         &self,
-        _part_id: HsmPartId,
+        _io: &impl HsmIo,
         src: HsmDmaAddr,
-        dst: &mut [u8],
+        dst: &mut DmaBuf,
         _prp: bool,
     ) -> HsmResult<()> {
         // SAFETY: In the std platform, PRP addresses are raw host-process
         // pointers set up by the caller (test harness or integration test).
         // The caller is responsible for ensuring the address is valid and
         // the buffer remains alive for the duration of the copy.
-        unsafe { self.gdma.copy_mem_from_host(src, dst) };
+        unsafe { self.gdma.copy_mem_from_host(src, &mut dst[..]) };
         Ok(())
     }
 
@@ -40,8 +40,8 @@ impl HsmGdmaController for StdHsmPal {
     /// Interprets the PRP address as a raw host pointer.
     async fn copy_mem_to_host(
         &self,
-        _part_id: HsmPartId,
-        src: &[u8],
+        _io: &impl HsmIo,
+        src: &DmaBuf,
         dst: HsmDmaAddr,
         _prp: bool,
     ) -> HsmResult<()> {
@@ -49,7 +49,7 @@ impl HsmGdmaController for StdHsmPal {
         // pointers set up by the caller (test harness or integration test).
         // The caller is responsible for ensuring the address is valid and
         // the buffer remains alive for the duration of the copy.
-        unsafe { self.gdma.copy_mem_to_host(src, dst) };
+        unsafe { self.gdma.copy_mem_to_host(&src[..], dst) };
         Ok(())
     }
 }

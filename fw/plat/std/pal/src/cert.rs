@@ -16,10 +16,19 @@
 //! [`StdHsmPal::init_cert_store`].  The leaf cert is generated lazily
 //! on first access per partition.
 //!
-//! All cryptographic operations (key generation, hashing, signing) flow
-//! through PAL traits ([`HsmEcc`], [`HsmHash`]) — no direct dependency
-//! on `azihsm_crypto`.
+//! Sideband paths (init / leaf-cert generation / chain hashing) call the
+//! underlying [`StdHash`](crate::drivers::hash::StdHash) and
+//! [`StdEcc`](crate::drivers::ecc::StdEcc) drivers directly — they have
+//! no `HsmIo` context to satisfy the new PAL crypto trait surface, so
+//! they bypass it entirely. The trait impl ([`HsmCertStore`]) at the
+//! bottom of this file is the only path the core uses.
 
+use azihsm_crypto::EccCurve;
+use azihsm_crypto::EccKeyOp;
+use azihsm_crypto::EccPrivateKey;
+use azihsm_crypto::ExportableKey;
+use azihsm_crypto::HashAlgo;
+use azihsm_crypto::ImportableKey;
 use azihsm_fw_hsm_std_x509::cert_builder;
 use azihsm_fw_hsm_std_x509::cert_builder::*;
 
@@ -287,13 +296,9 @@ impl StdHsmPal {
         rd_concat[..root_cert_len].copy_from_slice(&root_cert[..root_cert_len]);
         rd_concat[root_cert_len..].copy_from_slice(&deviceid_cert[..deviceid_cert_len]);
         let mut root_deviceid_hash = [0u8; 32];
-        self.hash(
-            HsmHashAlgo::Sha256,
-            &rd_concat,
-            &mut root_deviceid_hash,
-            true,
-        )
-        .await?;
+        self.hash
+            .hash(HashAlgo::sha256(), &rd_concat, &mut root_deviceid_hash)
+            .await?;
 
         // Commit to store.
         let store = &mut *self.cert_store_mut();
@@ -311,23 +316,30 @@ impl StdHsmPal {
     }
 
     /// Generate a P-384 key pair and compute SKI for cert construction.
+    ///
+    /// Bypasses the [`HsmEcc`] trait (which requires an `HsmIo`) and
+    /// drives the [`StdEcc`] driver directly, mirroring what the trait
+    /// impl in `crate::ecc` would do.
     async fn gen_cert_keypair(&self) -> HsmResult<CertKeyPair> {
-        let priv_max = HsmEccCurve::P384.priv_key_der_max();
-        let mut priv_der = vec![0u8; priv_max];
+        let (pk, pubk) = self.ecc.gen_keypair(EccCurve::P384).await?;
+
+        // Export private key as PKCS#8 DER.
+        let priv_len = pk.to_bytes(None).map_err(|_| HsmError::EccToDerError)?;
+        let mut priv_der = vec![0u8; priv_len];
+        pk.to_bytes(Some(&mut priv_der[..priv_len]))
+            .map_err(|_| HsmError::EccToDerError)?;
+
+        // Export raw P-384 public key (x ∥ y).
         let mut pub_raw = [0u8; P384_PUB_KEY_LEN];
-        let priv_len = self
-            .ecc_gen_keypair(
-                HsmEccCurve::P384,
-                Some(&mut priv_der),
-                &mut pub_raw,
-                HsmEccPct::SignVerify,
-            )
-            .await?;
-        priv_der.truncate(priv_len);
+        let half = P384_PUB_KEY_LEN / 2;
+        let (x_buf, y_buf) = pub_raw.split_at_mut(half);
+        pubk.coord(Some((x_buf, y_buf)))
+            .map_err(|_| HsmError::EccToDerError)?;
 
         let uncompressed = to_uncompressed(&pub_raw);
         let mut ski = [0u8; 20];
-        self.hash(HsmHashAlgo::Sha1, &uncompressed, &mut ski, true)
+        self.hash
+            .hash(HashAlgo::sha1(), &uncompressed, &mut ski)
             .await?;
 
         Ok(CertKeyPair {
@@ -338,23 +350,29 @@ impl StdHsmPal {
     }
 
     /// Hash TBS with SHA-384, then sign with ECC P-384. Returns (r, s).
+    ///
+    /// Sideband helper that bypasses the PAL crypto trait surface
+    /// (no `HsmIo` available during cert init / leaf-cert generation).
     async fn hash_and_sign(
         &self,
         priv_der: &[u8],
         tbs: &[u8],
     ) -> HsmResult<([u8; P384_SIG_COMPONENT], [u8; P384_SIG_COMPONENT])> {
         let mut tbs_hash = [0u8; 48];
-        self.hash(HsmHashAlgo::Sha384, tbs, &mut tbs_hash, true)
+        self.hash
+            .hash(HashAlgo::sha384(), tbs, &mut tbs_hash)
             .await?;
 
-        let mut sig = [0u8; 96];
-        self.ecc_sign(HsmEccCurve::P384, priv_der, &tbs_hash, &mut sig)
-            .await?;
+        let key = EccPrivateKey::from_bytes(priv_der).map_err(|_| HsmError::InvalidArg)?;
+        let sig = self.ecc.ecc_sign(&key, &tbs_hash).await?;
+        if sig.len() < 2 * P384_SIG_COMPONENT {
+            return Err(HsmError::EccSignFailed);
+        }
 
         let mut r = [0u8; P384_SIG_COMPONENT];
         let mut s = [0u8; P384_SIG_COMPONENT];
-        r.copy_from_slice(&sig[..48]);
-        s.copy_from_slice(&sig[48..96]);
+        r.copy_from_slice(&sig[..P384_SIG_COMPONENT]);
+        s.copy_from_slice(&sig[P384_SIG_COMPONENT..2 * P384_SIG_COMPONENT]);
         Ok((r, s))
     }
 
@@ -380,7 +398,8 @@ impl StdHsmPal {
 
         // SKI = SHA-1(uncompressed pubkey).
         let mut ski = [0u8; 20];
-        self.hash(HsmHashAlgo::Sha1, &uncompressed, &mut ski, true)
+        self.hash
+            .hash(HashAlgo::sha1(), &uncompressed, &mut ski)
             .await?;
 
         // Prepare TBS.
@@ -438,6 +457,7 @@ impl StdHsmPal {
 impl HsmCertStore for StdHsmPal {
     async fn get_cert_chain_info(
         &self,
+        _io: &impl HsmIo,
         part_id: HsmPartId,
         slot_id: u8,
     ) -> HsmResult<CertChainInfo> {
@@ -453,22 +473,22 @@ impl HsmCertStore for StdHsmPal {
 
         // Thumbprint = SHA-256(SHA-256(root||devid) || SHA-256(alias) || SHA-256(leaf))
         let mut alias_hash = [0u8; 32];
-        self.hash(
-            HsmHashAlgo::Sha256,
-            self.cert_store().shared_cert(2).unwrap(),
-            &mut alias_hash,
-            true,
-        )
-        .await?;
+        self.hash
+            .hash(
+                HashAlgo::sha256(),
+                self.cert_store().shared_cert(2).unwrap(),
+                &mut alias_hash,
+            )
+            .await?;
 
         let mut leaf_hash = [0u8; 32];
-        self.hash(
-            HsmHashAlgo::Sha256,
-            &entry.leaf_cert[..entry.leaf_cert_len],
-            &mut leaf_hash,
-            true,
-        )
-        .await?;
+        self.hash
+            .hash(
+                HashAlgo::sha256(),
+                &entry.leaf_cert[..entry.leaf_cert_len],
+                &mut leaf_hash,
+            )
+            .await?;
 
         let mut combined = [0u8; 96];
         combined[..32].copy_from_slice(&self.cert_store().root_deviceid_hash);
@@ -476,7 +496,8 @@ impl HsmCertStore for StdHsmPal {
         combined[64..96].copy_from_slice(&leaf_hash);
 
         let mut thumbprint = [0u8; 32];
-        self.hash(HsmHashAlgo::Sha256, &combined, &mut thumbprint, true)
+        self.hash
+            .hash(HashAlgo::sha256(), &combined, &mut thumbprint)
             .await?;
 
         Ok(CertChainInfo {
@@ -487,6 +508,7 @@ impl HsmCertStore for StdHsmPal {
 
     async fn get_cert(
         &self,
+        _io: &impl HsmIo,
         part_id: HsmPartId,
         slot_id: u8,
         idx: u8,
@@ -505,7 +527,7 @@ impl HsmCertStore for StdHsmPal {
                 .ok_or(HsmError::InvalidArg)?;
             if let Some(buf) = cert {
                 if buf.len() < src.len() {
-                    return Err(HsmError::NotEnoughSpace);
+                    return Err(HsmError::InvalidArg);
                 }
                 buf[..src.len()].copy_from_slice(src);
             }
@@ -524,7 +546,7 @@ impl HsmCertStore for StdHsmPal {
         let len = entry.leaf_cert_len;
         if let Some(buf) = cert {
             if buf.len() < len {
-                return Err(HsmError::NotEnoughSpace);
+                return Err(HsmError::InvalidArg);
             }
             buf[..len].copy_from_slice(&entry.leaf_cert[..len]);
         }

@@ -25,9 +25,10 @@ fn key_size_bits(key_size: HsmRsaKey) -> usize {
 impl HsmRsa for StdHsmPal {
     async fn ras_gen_keypair(
         &self,
+        _io: &impl HsmIo,
         key_size: HsmRsaKey,
-        priv_key: &mut [u8],
-        pub_key: &mut [u8],
+        priv_key: &mut DmaBuf,
+        pub_key: &mut DmaBuf,
         _pct: HsmRsaPct,
     ) -> Result<(), HsmError> {
         let (pk, pubk) = self.rsa.gen_keypair(key_size_bits(key_size)).await?;
@@ -51,121 +52,155 @@ impl HsmRsa for StdHsmPal {
 
     async fn mod_exp_priv(
         &self,
+        _io: &impl HsmIo,
         _key_size: HsmRsaKey,
-        key: &[u8],
-        y: &[u8],
-        x: &mut [u8],
+        key: &DmaBuf,
+        y: &DmaBuf,
+        x: &mut DmaBuf,
     ) -> Result<(), HsmError> {
-        let priv_key = RsaPrivateKey::from_bytes(key).map_err(|_| HsmError::InvalidArg)?;
-        self.rsa.mod_exp_priv(&priv_key, y, x).await
+        let priv_key = RsaPrivateKey::from_bytes(&key[..]).map_err(|_| HsmError::InvalidArg)?;
+        self.rsa.mod_exp_priv(&priv_key, &y[..], &mut x[..]).await
     }
 
     async fn mod_exp_pub(
         &self,
+        _io: &impl HsmIo,
         _key_size: HsmRsaKey,
-        key: &[u8],
-        x: &[u8],
-        y: &mut [u8],
+        key: &DmaBuf,
+        x: &DmaBuf,
+        y: &mut DmaBuf,
     ) -> Result<(), HsmError> {
-        let pub_key = RsaPublicKey::from_bytes(key).map_err(|_| HsmError::InvalidArg)?;
-        self.rsa.mod_exp_pub(&pub_key, x, y).await
+        let pub_key = RsaPublicKey::from_bytes(&key[..]).map_err(|_| HsmError::InvalidArg)?;
+        self.rsa.mod_exp_pub(&pub_key, &x[..], &mut y[..]).await
     }
 
-    async fn rsa_pkcs1_encrypt(
+    async fn rsa_pkcs1_encrypt<'a>(
         &self,
+        _io: &impl HsmIo,
         _key_size: HsmRsaKey,
-        _pub_key: &[u8],
-        _message: &[u8],
-        _output: &mut [u8],
-        _work: &mut [u8],
-    ) -> HsmResult<()> {
+        _pub_key: &DmaBuf,
+        _message: &DmaBuf,
+        _output: &mut DmaBuf,
+        _alloc: &'a impl HsmScopedAlloc,
+    ) -> HsmResult<()>
+    where
+        Self: 'a,
+    {
         todo!()
     }
 
-    async fn rsa_pkcs1_decrypt(
+    async fn rsa_pkcs1_decrypt<'a>(
         &self,
+        _io: &impl HsmIo,
         _key_size: HsmRsaKey,
-        _priv_key: &[u8],
-        _ciphertext: &[u8],
-        _output: &mut [u8],
-        _work: &mut [u8],
-    ) -> HsmResult<usize> {
+        _priv_key: &DmaBuf,
+        _ciphertext: &DmaBuf,
+        _output: &mut DmaBuf,
+        _alloc: &'a impl HsmScopedAlloc,
+    ) -> HsmResult<usize>
+    where
+        Self: 'a,
+    {
         todo!()
     }
 
-    async fn rsa_pkcs1_sign(
+    async fn rsa_pkcs1_sign<'a>(
         &self,
+        _io: &impl HsmIo,
         _key_size: HsmRsaKey,
         _algo: HsmHashAlgo,
-        _priv_key: &[u8],
-        _message_hash: &[u8],
-        _signature: &mut [u8],
-        _work: &mut [u8],
-    ) -> HsmResult<()> {
+        _priv_key: &DmaBuf,
+        _message_hash: &DmaBuf,
+        _signature: &mut DmaBuf,
+        _alloc: &'a impl HsmScopedAlloc,
+    ) -> HsmResult<()>
+    where
+        Self: 'a,
+    {
         todo!()
     }
 
-    async fn rsa_pkcs1_verify(
+    async fn rsa_pkcs1_verify<'a>(
         &self,
+        _io: &impl HsmIo,
         _key_size: HsmRsaKey,
         _algo: HsmHashAlgo,
-        _pub_key: &[u8],
-        _message_hash: &[u8],
-        _signature: &[u8],
-        _work: &mut [u8],
-    ) -> HsmResult<bool> {
+        _pub_key: &DmaBuf,
+        _message_hash: &DmaBuf,
+        _signature: &DmaBuf,
+        _alloc: &'a impl HsmScopedAlloc,
+    ) -> HsmResult<bool>
+    where
+        Self: 'a,
+    {
         todo!()
     }
 
-    async fn rsa_oaep_encrypt(
+    async fn rsa_oaep_encrypt<'a>(
         &self,
+        _io: &impl HsmIo,
         _key_size: HsmRsaKey,
         _algo: HsmHashAlgo,
-        _pub_key: &[u8],
-        _message: &[u8],
-        _label: &[u8],
-        _output: &mut [u8],
-        _work: &mut [u8],
-    ) -> HsmResult<()> {
+        _pub_key: &DmaBuf,
+        _message: &DmaBuf,
+        _label: &DmaBuf,
+        _output: &mut DmaBuf,
+        _alloc: &'a impl HsmScopedAlloc,
+    ) -> HsmResult<()>
+    where
+        Self: 'a,
+    {
         todo!()
     }
 
-    async fn rsa_oaep_decrypt(
+    async fn rsa_oaep_decrypt<'a>(
         &self,
+        _io: &impl HsmIo,
         _key_size: HsmRsaKey,
         _algo: HsmHashAlgo,
-        _priv_key: &[u8],
-        _ciphertext: &[u8],
-        _label: &[u8],
-        _output: &mut [u8],
-        _work: &mut [u8],
-    ) -> HsmResult<usize> {
+        _priv_key: &DmaBuf,
+        _ciphertext: &DmaBuf,
+        _label: &DmaBuf,
+        _output: &mut DmaBuf,
+        _alloc: &'a impl HsmScopedAlloc,
+    ) -> HsmResult<usize>
+    where
+        Self: 'a,
+    {
         todo!()
     }
 
-    async fn rsa_pss_sign(
+    async fn rsa_pss_sign<'a>(
         &self,
+        _io: &impl HsmIo,
         _key_size: HsmRsaKey,
         _algo: HsmHashAlgo,
-        _priv_key: &[u8],
-        _message_hash: &[u8],
+        _priv_key: &DmaBuf,
+        _message_hash: &DmaBuf,
         _salt_len: usize,
-        _signature: &mut [u8],
-        _work: &mut [u8],
-    ) -> HsmResult<()> {
+        _signature: &mut DmaBuf,
+        _alloc: &'a impl HsmScopedAlloc,
+    ) -> HsmResult<()>
+    where
+        Self: 'a,
+    {
         todo!()
     }
 
-    async fn rsa_pss_verify(
+    async fn rsa_pss_verify<'a>(
         &self,
+        _io: &impl HsmIo,
         _key_size: HsmRsaKey,
         _algo: HsmHashAlgo,
-        _pub_key: &[u8],
-        _message_hash: &[u8],
+        _pub_key: &DmaBuf,
+        _message_hash: &DmaBuf,
         _salt_len: usize,
-        _signature: &[u8],
-        _work: &mut [u8],
-    ) -> HsmResult<bool> {
+        _signature: &DmaBuf,
+        _alloc: &'a impl HsmScopedAlloc,
+    ) -> HsmResult<bool>
+    where
+        Self: 'a,
+    {
         todo!()
     }
 }

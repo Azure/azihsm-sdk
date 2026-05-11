@@ -24,7 +24,7 @@ pub struct StdIic {
     /// Channel receiver for incoming IO requests.
     submit_rx: Receiver<HsmIoRequest>,
 
-    /// Shared buffer pool for fast and large buffers.
+    /// Shared buffer pool for NonDma and Dma buffers.
     buf_pool: Arc<BufferPool>,
 }
 
@@ -41,6 +41,8 @@ impl StdIic {
     ///
     /// Returns the request and its allocated slot index. Suspends if
     /// no requests are available or if the buffer pool is exhausted.
+    /// The pool resets the slot's bump-allocator watermarks before
+    /// returning, so the new IO starts with empty NonDma/Dma heaps.
     pub async fn recv(&self) -> HsmResult<(HsmIoRequest, u16)> {
         let req = self.submit_rx.recv().await.map_err(|_| {
             error!("iic", HsmError::InternalError, "submit channel closed");
@@ -62,8 +64,12 @@ impl StdIic {
         self.buf_pool.free(slot);
     }
 
-    /// Returns a cloned `Arc` reference to the buffer pool.
-    pub fn pool(&self) -> Arc<BufferPool> {
-        Arc::clone(&self.buf_pool)
+    /// Borrows the buffer pool used by this IIC driver.
+    ///
+    /// Used by the [`HsmAlloc`](azihsm_fw_hsm_pal_traits::HsmAlloc)
+    /// implementation on [`crate::StdHsmPal`] to bump-allocate from
+    /// the per-slot NonDma / Dma heaps.
+    pub fn pool(&self) -> &BufferPool {
+        &self.buf_pool
     }
 }

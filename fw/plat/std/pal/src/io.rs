@@ -8,12 +8,9 @@
 //! to [`StdIic`](crate::drivers::iic::StdIic) for receiving and
 //! [`StdOic`](crate::drivers::oic::StdOic) for completing IOs.
 
-use std::sync::Arc;
-
 use azihsm_fw_hsm_pal_traits::*;
 use tokio::sync::oneshot::Sender as ReplySender;
 
-use crate::buf_pool::BufferPool;
 use crate::StdHsmPal;
 
 /// An IO submit request sent from the user thread to the Embassy thread.
@@ -47,12 +44,11 @@ pub struct HsmIoRequest {
 ///
 /// # Buffers
 ///
-/// Each `StdHsmIo` holds an `Arc<BufferPool>` reference, providing safe
-/// access to its slot's buffers without raw pointers:
-/// - [`fast_mem()`](Self::fast_mem) — 2KB fast buffer
-/// - [`mem()`](Self::mem) — 8KB large buffer
-///
-/// Buffers are pre-allocated in the [`BufferPool`] and reused across IOs.
+/// `StdHsmIo` holds the index of its slot in the
+/// [`BufferPool`](crate::buf_pool::BufferPool); the
+/// [`HsmAlloc`](azihsm_fw_hsm_pal_traits::HsmAlloc) implementation on
+/// [`StdHsmPal`] uses [`HsmIo::index`] to address per-slot bump
+/// allocators backed by the pool's pre-allocated NonDma + Dma buffers.
 pub struct StdHsmIo {
     /// Source partition identifier.
     pub(crate) pid: HsmPartId,
@@ -63,7 +59,9 @@ pub struct StdHsmIo {
     /// Index within the source queue.
     pub(crate) qidx: u16,
 
-    /// Index into the buffer pool (used to free the slot on completion).
+    /// Index into the buffer pool (also the [`HsmIo::index`] value
+    /// used by [`HsmAlloc`](azihsm_fw_hsm_pal_traits::HsmAlloc) to
+    /// address per-IO bump heaps).
     pub(crate) slot: u16,
 
     /// Oneshot channel for the CQE reply.
@@ -74,26 +72,20 @@ pub struct StdHsmIo {
 
     /// The 16-byte completion queue entry to be populated by the core.
     pub(crate) cqe: HsmCqe,
-
-    /// Shared reference to the buffer pool.
-    pool: Arc<BufferPool>,
 }
 
 // SAFETY: StdHsmIo is only used on the single-threaded Embassy executor.
-// Arc<BufferPool> is Send+Sync; the UnsafeCell buffers inside are
-// protected by the alloc/free protocol (one owner per slot at a time).
 unsafe impl Send for StdHsmIo {}
 
 impl StdHsmIo {
-    /// Construct a new IO work item from a request, allocated slot, and pool.
-    fn new(req: HsmIoRequest, slot: u16, pool: Arc<BufferPool>) -> Self {
+    /// Construct a new IO work item from a request and an allocated slot.
+    fn new(req: HsmIoRequest, slot: u16) -> Self {
         Self {
             pid: req.pid,
             qid: req.qid,
             qidx: req.qidx,
             sqe: req.sqe,
             slot,
-            pool,
             tx: req.tx,
             cqe: [0; CQE_DWORDS],
         }
@@ -111,6 +103,10 @@ impl core::fmt::Debug for StdHsmIo {
 }
 
 impl HsmIo for StdHsmIo {
+    fn index(&self) -> u16 {
+        self.slot
+    }
+
     fn pid(&self) -> HsmPartId {
         self.pid
     }
@@ -130,13 +126,6 @@ impl HsmIo for StdHsmIo {
     fn cqe(&mut self) -> &mut HsmCqe {
         &mut self.cqe
     }
-
-    fn mem(&mut self) -> (&mut [u8], &mut [u8]) {
-        (
-            self.pool.fast_buf(self.slot),
-            self.pool.large_buf(self.slot),
-        )
-    }
 }
 
 impl HsmIoController for StdHsmPal {
@@ -146,11 +135,14 @@ impl HsmIoController for StdHsmPal {
     ///
     /// Delegates to [`StdIic::recv`](crate::drivers::iic::StdIic::recv)
     /// which receives from the submit channel and allocates a pool slot.
+    /// The pool resets the slot's bump-allocator watermarks before
+    /// returning, so the new IO starts with empty NonDma/Dma heaps.
+    ///
     /// Suspends if no requests are available or if the buffer pool is
     /// exhausted.
     async fn poll_io(&self) -> HsmResult<StdHsmIo> {
         let (req, slot) = self.iic.recv().await?;
-        Ok(StdHsmIo::new(req, slot, self.iic.pool()))
+        Ok(StdHsmIo::new(req, slot))
     }
 
     /// Complete an IO: send response via OIC driver, then free the buffer.

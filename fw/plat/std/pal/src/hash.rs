@@ -23,26 +23,36 @@ fn to_hash_algo(algo: HsmHashAlgo) -> HashAlgo {
     }
 }
 
+#[allow(dead_code)]
+pub struct StdHashCtx<'a> {
+    algo: HsmHashAlgo,
+    state: &'a mut [u8],
+}
+
 impl HsmHash for StdHsmPal {
     type HashCtx<'a>
-        = HsmHashState<'a>
+        = StdHashCtx<'a>
     where
         Self: 'a;
 
     async fn hash(
         &self,
+        _io: &impl HsmIo,
         algo: HsmHashAlgo,
-        data: &[u8],
-        digest: &mut [u8],
+        data: &DmaBuf,
+        digest: &mut DmaBuf,
         _big_endian: bool,
     ) -> HsmResult<()> {
-        self.hash.hash(to_hash_algo(algo), data, digest).await
+        self.hash
+            .hash(to_hash_algo(algo), &data[..], &mut digest[..])
+            .await
     }
 
-    async fn hash_begin<'a>(
+    fn hash_begin<'a>(
         &self,
+        _io: &impl HsmIo,
         _algo: HsmHashAlgo,
-        _state: HsmHashState<'a>,
+        _alloc: &'a impl HsmScopedAlloc,
     ) -> HsmResult<Self::HashCtx<'a>>
     where
         Self: 'a,
@@ -50,15 +60,22 @@ impl HsmHash for StdHsmPal {
         todo!()
     }
 
-    async fn hash_continue(&self, _ctx: &mut Self::HashCtx<'_>, _data: &[u8]) -> HsmResult<()> {
+    async fn hash_continue(
+        &self,
+        _io: &impl HsmIo,
+        _ctx: &mut Self::HashCtx<'_>,
+        _data: &DmaBuf,
+    ) -> HsmResult<()> {
         todo!()
     }
 
-    async fn hash_finish<'a>(
+    async fn hash_finish(
         &self,
-        _ctx: Self::HashCtx<'a>,
+        _io: &impl HsmIo,
+        _ctx: Self::HashCtx<'_>,
+        _digest: &mut DmaBuf,
         _big_endian: bool,
-    ) -> HsmResult<HsmHashState<'a>> {
+    ) -> HsmResult<()> {
         todo!()
     }
 }
