@@ -5,6 +5,12 @@
 # file (saved to target/nextest/<profile>/<path>) during the rust.yml workflow.
 
 # profile for running all mock tests
+# Resiliency stress tests are timing-sensitive; reserve the whole runner so
+# they do not run in parallel with any other test or each other.
+[[profile.ci-mock.overrides]]
+filter = "test(resiliency::stress::) or test(_resiliency_stress::)"
+threads-required = "num-cpus"
+
 [profile.ci-mock.junit]
 path = "junit.xml"
 
