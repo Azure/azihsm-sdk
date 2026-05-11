@@ -166,10 +166,10 @@ pub struct Precheck {
     #[clap(long = "exclude")]
     exclude: Vec<String>,
     /// Package to run tests for (used with --nextest)
-    #[clap(long)]
+    #[clap(long, requires = "nextest")]
     package: Option<String>,
     /// Features to enable when running tests (used with --nextest)
-    #[clap(long)]
+    #[clap(long, requires = "nextest")]
     features: Option<String>,
     /// The nextest profile to use (used with --nextest/--nextest-min/--nextest-full)
     #[clap(long)]
