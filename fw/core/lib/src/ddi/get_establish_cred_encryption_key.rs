@@ -18,51 +18,52 @@ use azihsm_fw_ddi_mbor_types::DdiPublicKeyFrameParams;
 use super::*;
 
 /// Handle DdiGetEstablishCredEncryptionKeyCmd.
-pub(crate) async fn get_establish_cred_encryption_key<'a, P: HsmPal>(
-    hdr: &DdiReqHdr,
+pub(crate) async fn get_establish_cred_encryption_key<'p, P: HsmPal>(
+    pal: &'p P,
+    io: &impl HsmIo,
     decoder: &mut DdiDecoder<'_>,
-    part_id: HsmPartId,
-    pal: &P,
-    fmem: &mut [u8],
-    smem: &'a mut [u8],
-) -> HsmResult<&'a [u8]> {
+    hdr: &DdiReqHdr,
+) -> HsmResult<&'p DmaBuf> {
     let _body: DdiGetEstablishCredEncryptionKeyReq = decoder.decode_data()?;
 
     // Key must exist (not yet consumed by EstablishCredential).
-    pal.part_establish_cred_key_id(part_id)?
+    pal.part_establish_cred_key_id(io)?
         .ok_or(HsmError::KeyNotFound)?;
 
     // Query sizes, then encode header + frame with reserved slots.
-    let pub_key_len = pal.part_establish_cred_pub_key(part_id, None)?;
-    let nonce_len = pal.part_nonce(part_id, None)?;
+    let pub_key_len = pal.part_establish_cred_pub_key(io, None)?;
+    let nonce_len = pal.part_nonce(io, None)?;
 
-    let mut encoder = ddi::encode_resp_hdr(
-        &ddi::success_hdr(hdr, DdiOp::GetEstablishCredEncryptionKey),
-        smem,
-    )?;
-    let frame = DdiGetEstablishCredEncryptionKeyResp::frame(
-        &mut encoder,
-        DdiPublicKeyFrameParams {
-            raw_len: pub_key_len,
-            key_kind: DdiKeyType::Ecc384Public,
-        },
-        nonce_len,
-        HsmEccCurve::P384.sig_len(),
-    )?;
-    let total = encoder.position();
+    let digest = pal.dma_alloc(io, HsmHashAlgo::Sha384.digest_len())?;
+    let id_priv_key = pal.vault_key(io, pal.part_id_key_id(io)?)?;
+
+    let (resp, layout) = pal.dma_alloc_var_with(io, |buf| {
+        let mut encoder = ddi::encode_resp_hdr(
+            &ddi::success_hdr(hdr, DdiOp::GetEstablishCredEncryptionKey),
+            buf,
+        )?;
+        let layout = DdiGetEstablishCredEncryptionKeyResp::reserve(
+            &mut encoder,
+            DdiPublicKeyFrameParams {
+                raw_len: pub_key_len,
+                key_kind: DdiKeyType::Ecc384Public,
+            },
+            nonce_len,
+            HsmEccCurve::P384.sig_len(),
+        )?;
+        Ok((encoder.position(), layout))
+    })?;
+    let frame = DdiGetEstablishCredEncryptionKeyResp::from_layout(resp, &layout);
 
     // Fill public key and nonce in-place.
-    pal.part_establish_cred_pub_key(part_id, Some(frame.pub_key.raw))?;
-    pal.part_nonce(part_id, Some(frame.nonce))?;
+    pal.part_establish_cred_pub_key(io, Some(frame.pub_key.raw))?;
+    pal.part_nonce(io, Some(frame.nonce))?;
 
     // Hash pub key, then sign directly into the signature slot.
-    // Digest goes in fmem to keep the async future small.
-    let id_priv_key = pal.vault_key(part_id, pal.part_id_key_id(part_id)?)?;
-
-    let digest = &mut fmem[..HsmHashAlgo::Sha384.digest_len()];
-    pal.hash(HsmHashAlgo::Sha384, frame.pub_key.raw, digest, true)
+    pal.hash(io, HsmHashAlgo::Sha384, frame.pub_key.raw, digest, true)
         .await?;
     pal.ecc_sign(
+        io,
         HsmEccCurve::P384,
         id_priv_key,
         digest,
@@ -70,5 +71,5 @@ pub(crate) async fn get_establish_cred_encryption_key<'a, P: HsmPal>(
     )
     .await?;
 
-    Ok(&smem[..total])
+    Ok(resp)
 }

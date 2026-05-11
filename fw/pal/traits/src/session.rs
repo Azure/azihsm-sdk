@@ -18,13 +18,13 @@
 //! ## Session lifecycle
 //!
 //! ```text
-//! session_create(pid, api_rev, masking_key, None) → logical HsmSessId
+//! session_create(io, api_rev, masking_key, None) → logical HsmSessId
 //!   ↓
-//! session_state(pid, id)   — verify session is active
+//! session_state(io, id)   — verify session is active
 //!   ↓
-//! session_create(pid, api_rev, masking_key, Some(id)) — re-key after migration
+//! session_create(io, api_rev, masking_key, Some(id)) — re-key after migration
 //!   ↓
-//! session_delete(pid, id)  — close: delete scoped keys + session key + free slot
+//! session_destroy(io, id) — close: delete scoped keys + session key + free slot
 //! ```
 //!
 //! ## Session–key binding
@@ -36,126 +36,186 @@
 use super::*;
 
 /// Lifecycle state of a session.
+///
+/// Returned by [`HsmSessionManager::session_state`].  The state is
+/// derived from the underlying vault entry plus session-table
+/// metadata; there is no separate persistent state field.
 pub enum HsmSessionState {
-    /// The session exists and is active.
+    /// The session slot is allocated and the masking key is valid for
+    /// the current API revision.  The session may be used.
     Active,
 
-    /// The session exists but requires re-negotiation (e.g., after VM migration).
+    /// The session slot is allocated, but the API revision recorded in
+    /// the masking blob does not match the live one (e.g. after a VM
+    /// migration).  The host must call
+    /// [`HsmSessionManager::session_create`] with `id =
+    /// Some(existing)` to re-key before any further operations.
     NeedsRenegotiation,
 
-    /// The session has been deleted or is otherwise invalid.
+    /// The slot is free, the partition does not own such a session, or
+    /// the session was destroyed.  Any operation referencing this ID
+    /// must fail.
     Invalid,
 }
 
 /// RAII guard for a newly created session.
 ///
-/// Returned by [`HsmSessionManager::session_create`].  If dropped without
-/// calling [`dismiss`](Self::dismiss), the session is automatically deleted
-/// (cascading: session-scoped vault keys, session vault key, logical slot).
+/// Returned by [`HsmSessionManager::session_create`].  The guard
+/// implements an explicit commit/rollback discipline: the session is
+/// *provisional* until [`dismiss`](Self::dismiss) is called.  If the
+/// guard is dropped without dismissing — for example because a
+/// downstream encode step or DDI handler returned an error — the
+/// destructor tears the session down (frees the slot, deletes the
+/// session vault key, removes any session-scoped keys), leaving no
+/// half-created session behind.
 ///
-/// # Usage
+/// Typical usage:
 ///
-/// ```text
-/// let guard = pal.session_create(pid, api_rev, masking_key, None)?;
-/// // ... derive keys, validate credential ...
-/// let sess_id = guard.dismiss();  // committed — session persists
+/// ```ignore
+/// let guard = pal.session_create(io, api_rev, masking_key, None)?;
+/// // ... fallible work that uses `guard.sess_id()` ...
+/// let id = guard.dismiss(); // commit; session now permanent
 /// ```
-pub struct SessionGuard<'a, P: HsmSessionManager + ?Sized> {
-    pal: &'a P,
-    pid: HsmPartId,
-    sess_id: Option<HsmSessId>,
-}
+pub trait SessionGuard {
+    /// Returns the session ID assigned to the provisional session.
+    ///
+    /// Safe to call multiple times; does **not** commit the session.
+    ///
+    /// # Returns
+    ///
+    /// The [`HsmSessId`] under which the session is currently
+    /// registered in the partition's session table.
+    fn sess_id(&self) -> HsmSessId;
 
-impl<'a, P: HsmSessionManager + ?Sized> SessionGuard<'a, P> {
-    /// Create a guard wrapping a newly created session.
-    pub fn new(pal: &'a P, pid: HsmPartId, sess_id: HsmSessId) -> Self {
-        Self {
-            pal,
-            pid,
-            sess_id: Some(sess_id),
-        }
-    }
-
-    /// Peek at the session ID before committing.
-    pub fn sess_id(&self) -> HsmSessId {
-        self.sess_id.unwrap()
-    }
-
-    /// Commit — session persists permanently.  Returns the session ID.
-    pub fn dismiss(mut self) -> HsmSessId {
-        self.sess_id.take().unwrap()
-    }
-}
-
-impl<P: HsmSessionManager + ?Sized> Drop for SessionGuard<'_, P> {
-    fn drop(&mut self) {
-        if let Some(sid) = self.sess_id.take() {
-            let _ = self.pal.session_delete(self.pid, sid);
-        }
-    }
+    /// Commits the session.  The session table entry persists past
+    /// the guard's lifetime and the destructor becomes a no-op.
+    ///
+    /// # Returns
+    ///
+    /// The committed [`HsmSessId`].
+    fn dismiss(self) -> HsmSessId;
 }
 
 /// Session management interface.
 ///
-/// Sessions are stored as vault keys.  `session_create` builds the
-/// session blob, stores it in the vault, and allocates a logical slot.
-/// `session_delete` cascades: removes session-scoped keys, deletes the
-/// session vault key, and frees the slot.
-///
-/// All methods are synchronous — session operations are fast table
-/// lookups or vault operations, not hardware-offloaded crypto.
+/// All methods take an [`HsmIo`] handle, which scopes the operation to
+/// the calling partition: a session created by partition A is
+/// invisible to partition B.  The trait is `&self`; PAL
+/// implementations are expected to use interior mutability for the
+/// session table (the firmware is single-core, cooperatively
+/// scheduled, so a plain `Cell`/`RefCell` suffices).
 pub trait HsmSessionManager {
-    /// Check whether the partition has at least one free session slot.
-    fn session_limit_reached(&self, pid: HsmPartId) -> bool;
+    /// RAII guard returned by
+    /// [`session_create`](Self::session_create).
+    ///
+    /// The lifetime parameter ties the guard to the session manager
+    /// so an uncommitted session cannot outlive the manager that
+    /// owns it.
+    type Guard<'a>: SessionGuard
+    where
+        Self: 'a;
 
-    /// Create (or re-key) a session.
+    /// Returns `true` if the calling partition has no free session
+    /// slots.
     ///
-    /// Builds an 88-byte session blob from `api_rev` (8 bytes) and
-    /// `masking_key` (80 bytes), stores it in the vault as
-    /// [`HsmVaultKeyKind::Session`], and allocates a logical session
-    /// slot pointing to that vault key.
-    ///
-    /// Returns a [`SessionGuard`] that auto-deletes the session on drop
-    /// unless [`dismiss`](SessionGuard::dismiss) is called to persist it.
+    /// Used by DDI handlers to short-circuit `OpenSession` requests
+    /// with [`HsmError::VaultSessionLimitReached`] before allocating
+    /// any crypto state.
     ///
     /// # Parameters
-    /// - `pid` — Partition to create the session in.
-    /// - `api_rev` — 8-byte API revision negotiated during OpenSession.
-    /// - `masking_key` — 80-byte session masking key (AES-256 + HMAC-384).
-    /// - `id` — If `Some`, re-keys an existing session (must be in
-    ///   `NeedsRenegotiation` state). If `None`, creates a new session.
+    ///
+    /// - `io` — caller's I/O context (partition scope).
     ///
     /// # Returns
-    /// A [`SessionGuard`] wrapping the logical [`HsmSessId`] (0–7).
     ///
-    /// # Errors
-    /// - [`HsmError::VaultSessionLimitReached`] — no free slots.
-    /// - [`HsmError::NotEnoughSpace`] — vault cannot store session key.
-    /// - [`HsmError::InvalidArg`] — re-key requested but session is not
-    ///   in `NeedsRenegotiation` state.
+    /// - `true` — every session slot for this partition is in use.
+    /// - `false` — at least one slot is free; a subsequent
+    ///   [`session_create`](Self::session_create) with `id == None`
+    ///   may succeed.
+    fn session_limit_reached(&self, io: &impl HsmIo) -> bool;
+
+    /// Creates a new session, or re-keys an existing one in place.
+    ///
+    /// On success, returns a [`Self::Guard`] that holds the session
+    /// in a *provisional* state.  The caller must invoke
+    /// [`SessionGuard::dismiss`] to commit; dropping the guard
+    /// otherwise rolls the session back.
+    ///
+    /// # Parameters
+    ///
+    /// - `io` — caller's I/O context (partition scope).
+    /// - `api_rev` — 8-byte API-revision tag stored alongside the
+    ///   masking key; later compared by
+    ///   [`session_state`](Self::session_state) to detect post-
+    ///   migration drift.
+    /// - `masking_key` — 80-byte masking-key blob to seal into the
+    ///   session vault entry.
+    /// - `id` — `None` to allocate a new slot; `Some(existing)` to
+    ///   re-key an already-open session in place (post-migration
+    ///   renegotiation).  The existing session must currently be in
+    ///   either [`HsmSessionState::Active`] or
+    ///   [`HsmSessionState::NeedsRenegotiation`].
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(guard)` — provisional session; commit with
+    ///   [`SessionGuard::dismiss`].
+    /// - `Err(HsmError::VaultSessionLimitReached)` — `id == None` and
+    ///   no slots are free (see
+    ///   [`session_limit_reached`](Self::session_limit_reached)).
+    /// - `Err(HsmError::InvalidArg)` — `id == Some(_)` and the slot
+    ///   is free, or `api_rev`/`masking_key` is the wrong length.
+    /// - `Err(HsmError::NotEnoughSpace)` — vault is full and cannot
+    ///   store the masking blob.
     fn session_create(
         &self,
-        pid: HsmPartId,
+        io: &impl HsmIo,
         api_rev: &[u8],
         masking_key: &[u8],
         id: Option<HsmSessId>,
-    ) -> HsmResult<SessionGuard<'_, Self>>;
+    ) -> HsmResult<Self::Guard<'_>>;
 
-    /// Delete (close) a session.
+    /// Closes a session.
     ///
-    /// 1. Deletes all session-scoped vault keys bound to this session's
-    ///    physical key ID.
-    /// 2. Deletes the session vault key itself.
-    /// 3. Frees the logical session slot.
+    /// Tears down the session in this order:
     ///
-    /// # Errors
-    /// - [`HsmError::SessionNotFound`] — session ID is invalid.
-    fn session_delete(&self, pid: HsmPartId, id: HsmSessId) -> HsmResult<()>;
+    /// 1. Removes every vault key bound to the session's physical
+    ///    vault key ID (see module-level docs for the
+    ///    session→physical-ID binding).
+    /// 2. Deletes the session vault entry itself.
+    /// 3. Frees the session table slot.
+    ///
+    /// Idempotent only in the sense that a freed slot is safe to
+    /// reuse; calling `session_destroy` on an already-free slot is
+    /// reported as [`HsmError::InvalidArg`].
+    ///
+    /// # Parameters
+    ///
+    /// - `io` — caller's I/O context (partition scope).
+    /// - `id` — session to close.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` on success.
+    /// - `Err(HsmError::InvalidArg)` — `id` does not refer to a live
+    ///   session in the caller's partition.
+    fn session_destroy(&self, io: &impl HsmIo, id: HsmSessId) -> HsmResult<()>;
 
-    /// Query the current state of a session.
+    /// Queries the lifecycle state of a session slot.
     ///
-    /// Returns one of the [`HsmSessionState`] variants indicating whether
-    /// the session is active, requires re-negotiation, or has been
-    /// deleted/invalidated.
-    fn session_state(&self, pid: HsmPartId, id: HsmSessId) -> HsmSessionState;
+    /// This is an infallible probe: an unknown or freed slot is
+    /// reported as [`HsmSessionState::Invalid`] rather than an
+    /// `HsmError`.
+    ///
+    /// # Parameters
+    ///
+    /// - `io` — caller's I/O context (partition scope).
+    /// - `id` — session slot to probe.
+    ///
+    /// # Returns
+    ///
+    /// One of [`HsmSessionState::Active`],
+    /// [`HsmSessionState::NeedsRenegotiation`], or
+    /// [`HsmSessionState::Invalid`].
+    fn session_state(&self, io: &impl HsmIo, id: HsmSessId) -> HsmSessionState;
 }

@@ -20,21 +20,21 @@ use super::*;
 ///
 /// 3. **Store** — Writes the blob via the PAL (validates size internally).
 ///
-/// 4. **Response** — Encodes `DdiSetSealedBk3Resp` (empty) into `smem`.
-pub(crate) fn set_sealed_bk3<'a, P: HsmPal>(
-    hdr: &DdiReqHdr,
+/// 4. **Response** — Encodes `DdiSetSealedBk3Resp` (empty) into a
+///    heap-allocated response buffer.
+pub(crate) fn set_sealed_bk3<'p, P: HsmPal>(
+    pal: &'p P,
+    io: &impl HsmIo,
     decoder: &mut DdiDecoder<'_>,
-    part_id: HsmPartId,
-    pal: &P,
-    _fmem: &mut [u8],
-    smem: &'a mut [u8],
-) -> HsmResult<&'a [u8]> {
+    hdr: &DdiReqHdr,
+) -> HsmResult<&'p DmaBuf> {
     let body: DdiSetSealedBk3Req<'_> = decoder.decode_data()?;
-    pal.part_set_sealed_bk3(part_id, body.sealed_bk3)?;
+    pal.part_set_sealed_bk3(io, body.sealed_bk3)?;
 
     let resp_hdr = ddi::success_hdr(hdr, DdiOp::SetSealedBk3);
     let resp_data = DdiSetSealedBk3Resp {};
 
-    let len = ddi::encode_resp(&resp_hdr, &resp_data, smem)?;
-    Ok(&smem[..len])
+    let resp = pal.dma_alloc_var(io, |buf| ddi::encode_resp(&resp_hdr, &resp_data, buf))?;
+
+    Ok(resp)
 }

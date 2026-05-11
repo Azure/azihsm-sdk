@@ -1,28 +1,39 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Cryptographically secure random number generation trait for the HSM PAL.
+//! Cryptographically secure random number generation trait.
 //!
-//! Defines the [`HsmRng`] trait that PAL implementations use to expose
-//! hardware or software CSPRNG. On Cortex-M7 hardware this would be
-//! backed by a TRNG peripheral; on the standard PAL it uses OpenSSL's
-//! `RAND_bytes`.
+//! Defines the [`HsmRng`] trait used by every PAL sub-component that
+//! needs random bytes — IV/nonce generation, ephemeral keys, PSS salts,
+//! masking blobs, etc.
+//!
+//! Implementations are backed by a hardware TRNG on the Cortex-M7
+//! target and OpenSSL `RAND_bytes` on the standard PAL.
 
 use super::super::*;
 
-/// Synchronous random number generation interface.
+/// Synchronous random-byte source.
 ///
-/// Unlike [`HsmHash`] and [`HsmEcc`], this is a synchronous trait — RNG
-/// fill is fast enough that yielding to the executor is unnecessary.
+/// Unlike [`super::HsmHash`] / [`super::HsmEcc`], this trait is
+/// **synchronous**: an RNG fill is fast enough (well below the
+/// scheduler tick) that there is no benefit to yielding.  Callers can
+/// use it from `async` and non-`async` contexts alike.
 pub trait HsmRng {
-    /// Fill `buf` with cryptographically secure random bytes.
+    /// Fills `buf` with cryptographically secure random bytes.
+    ///
+    /// Every byte of `buf` is overwritten on success; on error the
+    /// contents of `buf` are unspecified and must not be used.
     ///
     /// # Parameters
-    /// - `buf` — Output buffer to fill. All `buf.len()` bytes will be
-    ///   overwritten with random data on success.
     ///
-    /// # Errors
-    /// Returns [`HsmError`] if the CSPRNG fails (e.g., insufficient
-    /// entropy, hardware TRNG error).
-    fn rng_fill_bytes(&self, buf: &mut [u8]) -> HsmResult<()>;
+    /// - `io` — caller's I/O context (per-IO scope).
+    /// - `buf` — output buffer; entire length is filled with random
+    ///   data.  Zero-length is a no-op success.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` — `buf` populated with `buf.len()` random bytes.
+    /// - `Err(HsmError)` — propagated from the CSPRNG (TRNG hardware
+    ///   error, entropy starvation, OpenSSL `RAND_bytes` failure).
+    fn rng_fill_bytes(&self, io: &impl HsmIo, buf: &mut [u8]) -> HsmResult<()>;
 }

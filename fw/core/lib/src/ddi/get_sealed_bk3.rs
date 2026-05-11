@@ -22,26 +22,26 @@ use super::*;
 /// 2. **Presence check** — `sealed_bk3 len == 0` → `SealedBk3NotPresent`.
 ///
 /// 3. **Response** — Encodes header + frame, fills blob in-place.
-pub(crate) fn get_sealed_bk3<'a, P: HsmPal>(
-    hdr: &DdiReqHdr,
+pub(crate) fn get_sealed_bk3<'p, P: HsmPal>(
+    pal: &'p P,
+    io: &impl HsmIo,
     decoder: &mut DdiDecoder<'_>,
-    part_id: HsmPartId,
-    pal: &P,
-    _fmem: &mut [u8],
-    smem: &'a mut [u8],
-) -> HsmResult<&'a [u8]> {
+    hdr: &DdiReqHdr,
+) -> HsmResult<&'p DmaBuf> {
     let _body: DdiGetSealedBk3Req = decoder.decode_data()?;
 
-    let sealed_len = pal.part_sealed_bk3(part_id, None)?;
+    let sealed_len = pal.part_sealed_bk3(io, None)?;
     if sealed_len == 0 {
         return Err(HsmError::SealedBk3NotPresent);
     }
 
-    let mut encoder = ddi::encode_resp_hdr(&ddi::success_hdr(hdr, DdiOp::GetSealedBk3), smem)?;
-    let frame = DdiGetSealedBk3Resp::frame(&mut encoder, sealed_len)?;
-    let total = encoder.position();
+    let resp = pal.dma_alloc_var(io, |buf| {
+        let mut encoder = ddi::encode_resp_hdr(&ddi::success_hdr(hdr, DdiOp::GetSealedBk3), buf)?;
+        let frame = DdiGetSealedBk3Resp::frame(&mut encoder, sealed_len)?;
+        let total = encoder.position();
+        pal.part_sealed_bk3(io, Some(frame.sealed_bk3))?;
+        Ok(total)
+    })?;
 
-    pal.part_sealed_bk3(part_id, Some(frame.sealed_bk3))?;
-
-    Ok(&smem[..total])
+    Ok(resp)
 }

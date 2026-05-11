@@ -34,10 +34,10 @@ use super::*;
 /// # Usage
 ///
 /// ```text
-/// async fn handle_ddi<P: HsmPal>(pal: &P, pid: HsmPartId) {
-///     let _lock = pal.partition_lock(pid).await;
+/// async fn handle_ddi<P: HsmPal>(pal: &P, io: &impl HsmIo) {
+///     let _lock = pal.partition_lock(io).await;
 ///     // Exclusive access to this partition until _lock drops.
-///     let sess = pal.session_create(pid, api_rev, mk, None)?;
+///     let sess = pal.session_create(io, api_rev, mk, None)?;
 ///     sess.dismiss();
 /// }
 /// ```
@@ -58,6 +58,9 @@ pub trait HsmPartitionLock {
     ///
     /// # Errors
     ///
-    /// Returns [`HsmError::InvalidArg`] if `pid` is out of range.
-    async fn partition_lock(&self, pid: HsmPartId) -> HsmResult<Self::PartitionGuard<'_>>;
+    /// Returns [`HsmError::InvalidArg`] if `io.pid()` is out of range.
+    async fn partition_lock(
+        &self,
+        io: &impl HsmIo,
+    ) -> HsmResult<Self::PartitionGuard<'_>>;
 }

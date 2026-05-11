@@ -28,11 +28,11 @@
 //! [`hmac_begin`](HsmHmac::hmac_begin) /
 //! [`hmac_continue`](HsmHmac::hmac_continue) /
 //! [`hmac_finish`](HsmHmac::hmac_finish) (or
-//! [`hmac_finish_verify`](HsmHmac::hmac_finish_verify)). The caller
-//! provides an [`HsmHashState`] buffer of at least
-//! [`HsmHashAlgo::hmac_state_len`] bytes which the PAL uses to persist
-//! intermediate state between calls.
+//! [`hmac_finish_verify`](HsmHmac::hmac_finish_verify)). The PAL allocates
+//! the intermediate HMAC state from an [`HsmScopedAlloc`], matching the
+//! scoped-allocation pattern used by the hash API.
 
+use super::HsmScopedAlloc;
 use super::*;
 
 /// Asynchronous HMAC operations trait.
@@ -62,151 +62,211 @@ pub trait HsmHmac {
     ///
     /// # Parameters
     ///
-    /// - `algo` — hash algorithm that determines the recommended key
-    ///   size, though the actual key length is controlled by `key.len()`.
-    /// - `key` — output buffer filled with random key material. The
-    ///   buffer length determines the key size (e.g., 32 bytes for
-    ///   HMAC-SHA256, 48 for HMAC-SHA384, 64 for HMAC-SHA512).
+    /// - `io` — caller's I/O context (per-IO scope).
+    /// - `algo` — underlying hash algorithm; informational, used by
+    ///   PAL implementations that record key metadata.  The actual
+    ///   key length is determined by `key.len()`.
+    /// - `key` — output buffer; entire length is filled with random
+    ///   bytes.  Typical sizes are `algo.digest_len()`
+    ///   (32 / 48 / 64 bytes for SHA-256 / 384 / 512).
     ///
-    /// # Errors
+    /// # Returns
     ///
-    /// Returns [`HsmError`] if RNG fails or the PCT verification fails.
-    async fn hmac_gen_key(&self, algo: HsmHashAlgo, key: &mut [u8]) -> HsmResult<()>;
+    /// - `Ok(())` — `key` populated with `key.len()` random bytes.
+    /// - `Err(HsmError)` — propagated from the CSPRNG.
+    async fn hmac_gen_key(
+        &self,
+        io: &impl HsmIo,
+        algo: HsmHashAlgo,
+        key: &mut [u8],
+    ) -> HsmResult<()>;
 
     /// Compute an HMAC tag (sign) in a single call.
     ///
     /// # Parameters
     ///
-    /// - `algo` — hash algorithm (e.g. SHA-256, SHA-512).
-    /// - `key` — the HMAC key to use.
-    /// - `data` — input message to authenticate.
-    /// - `tag` — output buffer for the MAC tag. Must be at least
-    ///   [`HsmHashAlgo::digest_len`] bytes for the chosen algorithm.
-    /// - `state` — caller-owned buffer of at least
-    ///   [`HsmHashAlgo::hmac_state_len`] bytes for intermediate state.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`HsmError`] if the HMAC computation fails or `tag` is
-    /// too short.
-    async fn hmac_sign<'a>(
-        &self,
-        algo: HsmHashAlgo,
-        key: &[u8],
-        data: &[u8],
-        tag: &mut [u8],
-        state: HsmHashState<'a>,
-    ) -> HsmResult<()>
-    where
-        Self: 'a;
-
-    /// Verify an HMAC tag in a single call.
-    ///
-    /// # Parameters
-    ///
-    /// - `algo` — hash algorithm (e.g. SHA-256, SHA-512).
-    /// - `key` — the HMAC key to use.
-    /// - `data` — the message that was authenticated.
-    /// - `tag` — the MAC tag to verify against.
-    /// - `state` — caller-owned buffer of at least
-    ///   [`HsmHashAlgo::hmac_state_len`] bytes for intermediate state.
+    /// - `io` — caller's I/O context (per-IO scope).
+    /// - `algo` — underlying hash algorithm.
+    /// - `key` — HMAC key bytes; longer than `algo.block_len()`
+    ///   triggers an internal pre-hash to `algo.digest_len()`.
+    /// - `data` — message to authenticate.  Any length, including
+    ///   zero.
+    /// - `tag` — output buffer; must be at least
+    ///   `algo.digest_len()` bytes.  Only the leading `digest_len`
+    ///   bytes are written.
     ///
     /// # Returns
     ///
-    /// `true` if the tag is valid, `false` if it does not match.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`HsmError`] if the HMAC computation itself fails (distinct
-    /// from a tag mismatch, which returns `Ok(false)`).
-    async fn hmac_verify<'a>(
+    /// - `Ok(())` — `tag[..digest_len]` populated.
+    /// - `Err(HsmError::InvalidArg)` — `tag` shorter than
+    ///   `algo.digest_len()`.
+    /// - `Err(HsmError::NotEnoughSpace)` — internal scoped allocation
+    ///   cannot fit the HMAC state buffer.
+    /// - `Err(HsmError)` — SHA driver failure.
+    async fn hmac_sign(
         &self,
+        io: &impl HsmIo,
         algo: HsmHashAlgo,
-        key: &[u8],
-        data: &[u8],
-        tag: &[u8],
-        state: HsmHashState<'a>,
-    ) -> HsmResult<bool>
-    where
-        Self: 'a;
+        key: &DmaBuf,
+        data: &DmaBuf,
+        tag: &mut DmaBuf,
+    ) -> HsmResult<()>;
+
+    /// Verify an HMAC tag in a single call using constant-time
+    /// comparison.
+    ///
+    /// # Parameters
+    ///
+    /// - `io` — caller's I/O context (per-IO scope).
+    /// - `algo` — underlying hash algorithm.
+    /// - `key` — HMAC key (same key that produced the tag).
+    /// - `data` — message that was authenticated.
+    /// - `tag` — MAC tag to verify against.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(true)` — tag is valid.
+    /// - `Ok(false)` — tag does not match (not an error).
+    /// - `Err(HsmError::NotEnoughSpace)` — internal scoped allocation
+    ///   cannot fit the HMAC state buffer.
+    /// - `Err(HsmError)` — SHA driver failure.
+    async fn hmac_verify(
+        &self,
+        io: &impl HsmIo,
+        algo: HsmHashAlgo,
+        key: &DmaBuf,
+        data: &DmaBuf,
+        tag: &DmaBuf,
+    ) -> HsmResult<bool>;
 
     /// Begin a multi-step HMAC computation.
     ///
     /// Derives the inner (ipad) and outer (opad) keys from `key` per
-    /// RFC 2104 and submits the ipad block as the first SHA input.
+    /// RFC 2104, submits the ipad block as the first SHA input, and
+    /// stores the opad-keyed prefix in the returned context for use
+    /// at finalisation.
     ///
     /// # Parameters
     ///
-    /// - `algo` — hash algorithm.
-    /// - `key` — the HMAC key. Keys longer than `algo.block_len()` are
-    ///   first hashed to `algo.digest_len()` bytes.
-    /// - `state` — caller-owned buffer that must wrap at least
-    ///   [`HsmHashAlgo::hmac_state_len`] bytes. Layout:
-    ///   `[digest(state_len) | pending_block(block_len) | opad(block_len)]`.
+    /// - `io` — caller's I/O context (per-IO scope).
+    /// - `algo` — underlying hash algorithm.
+    /// - `key` — HMAC key bytes; keys longer than
+    ///   `algo.block_len()` are first hashed.
+    /// - `alloc` — scoped allocator backing
+    ///   [`Self::HmacCtx`]; the context borrows from this scope.
     ///
-    /// # Errors
+    /// # Returns
     ///
-    /// Returns [`HsmError`] if `state` is too small.
+    /// - `Ok(ctx)` — fresh HMAC context.
+    /// - `Err(HsmError::NotEnoughSpace)` — `alloc` cannot satisfy
+    ///   `algo.hmac_state_len()` bytes.
+    /// - `Err(HsmError)` — SHA driver failure during the ipad
+    ///   prelude.
     async fn hmac_begin<'a>(
         &self,
+        io: &impl HsmIo,
         algo: HsmHashAlgo,
-        key: &[u8],
-        state: HsmHashState<'a>,
+        key: &DmaBuf,
+        alloc: &'a impl HsmScopedAlloc,
     ) -> HsmResult<Self::HmacCtx<'a>>
     where
         Self: 'a;
 
-    /// Feed arbitrary-length data into the running HMAC computation.
+    /// Feed arbitrary-length data into a running HMAC.
     ///
-    /// May be called zero or more times between [`hmac_begin`](Self::hmac_begin)
-    /// and [`hmac_finish`](Self::hmac_finish). Internally buffers a partial
-    /// block and submits full blocks to the SHA engine.
+    /// May be called any number of times (including zero) between
+    /// [`hmac_begin`](Self::hmac_begin) and the chosen finaliser.
+    /// Implementations buffer a partial trailing block and submit
+    /// full blocks to the SHA engine as soon as they accumulate.
     ///
     /// # Parameters
     ///
-    /// - `ctx` — the HMAC context returned by [`hmac_begin`](Self::hmac_begin).
+    /// - `io` — caller's I/O context (per-IO scope).
+    /// - `ctx` — context returned by
+    ///   [`hmac_begin`](Self::hmac_begin).
     /// - `data` — message bytes to append.
-    async fn hmac_continue(&self, ctx: &mut Self::HmacCtx<'_>, data: &[u8]) -> HsmResult<()>;
-
-    /// Finalize the inner hash and compute the outer hash to produce the
-    /// HMAC tag. Consumes the context.
     ///
     /// # Returns
     ///
-    /// An [`HsmHashState`] whose [`digest()`](HsmHashState::digest) slice
-    /// contains the final MAC tag.
-    async fn hmac_finish<'a>(&self, ctx: Self::HmacCtx<'a>) -> HsmResult<HsmHashState<'a>>;
+    /// - `Ok(())` on success.
+    /// - `Err(HsmError)` — SHA driver failure.
+    async fn hmac_continue(
+        &self,
+        io: &impl HsmIo,
+        ctx: &mut Self::HmacCtx<'_>,
+        data: &DmaBuf,
+    ) -> HsmResult<()>;
 
-    /// Finalize the HMAC and write the tag directly to `dest`.
-    ///
-    /// Like [`hmac_finish`](Self::hmac_finish), but the SHA hardware DMA
-    /// writes the outer hash digest straight into `dest` instead of the
-    /// context's state buffer. This avoids a `copy_from_slice` when the
-    /// caller needs the tag in a separate output buffer (e.g. KDF
-    /// iterations).
+    /// Finalise the inner hash, compute the outer hash, and write
+    /// the resulting tag into `tag`.  Consumes `ctx`.
     ///
     /// # Parameters
     ///
-    /// - `ctx` — the HMAC context to finalize (consumed).
-    /// - `dest` — output buffer of at least
-    ///   [`HsmHashAlgo::digest_len`] bytes.
-    async fn hmac_finish_into(&self, ctx: Self::HmacCtx<'_>, dest: &mut [u8]) -> HsmResult<()>;
-
-    /// Finalize and verify the MAC tag against `tag` using hardware
-    /// constant-time comparison. Consumes the context.
-    ///
-    /// # Parameters
-    ///
-    /// - `ctx` — the HMAC context to finalize.
-    /// - `tag` — the expected MAC tag to compare against.
+    /// - `io` — caller's I/O context (per-IO scope).
+    /// - `ctx` — context to finalise (consumed).
+    /// - `tag` — output buffer; must be at least
+    ///   `algo.digest_len()` bytes.  Only the leading `digest_len`
+    ///   bytes are written.
     ///
     /// # Returns
     ///
-    /// `true` if the computed tag matches, `false` otherwise.
+    /// - `Ok(())` — `tag[..digest_len]` populated.
+    /// - `Err(HsmError::InvalidArg)` — `tag` too short.
+    /// - `Err(HsmError)` — SHA driver failure.
+    async fn hmac_finish(
+        &self,
+        io: &impl HsmIo,
+        ctx: Self::HmacCtx<'_>,
+        tag: &mut DmaBuf,
+    ) -> HsmResult<()>;
+
+    /// Finalise the HMAC and write the tag directly to `dest`.
     ///
-    /// # Errors
+    /// Identical to [`hmac_finish`](Self::hmac_finish) except the
+    /// SHA hardware DMA writes the outer-hash digest straight into
+    /// `dest` rather than into the context's state buffer.  This
+    /// elides a `copy_from_slice` when the caller already has a
+    /// destination in mind (e.g. KDF iterations).
     ///
-    /// Returns [`HsmError`] if the HMAC computation itself fails (distinct
-    /// from a tag mismatch, which returns `Ok(false)`).
-    async fn hmac_finish_verify(&self, ctx: Self::HmacCtx<'_>, tag: &[u8]) -> HsmResult<bool>;
+    /// # Parameters
+    ///
+    /// - `io` — caller's I/O context (per-IO scope).
+    /// - `ctx` — context to finalise (consumed).
+    /// - `dest` — destination buffer; must be at least
+    ///   `algo.digest_len()` bytes.  Only the leading `digest_len`
+    ///   bytes are written.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` — `dest[..digest_len]` populated.
+    /// - `Err(HsmError::InvalidArg)` — `dest` too short.
+    /// - `Err(HsmError)` — SHA driver failure.
+    async fn hmac_finish_into(
+        &self,
+        io: &impl HsmIo,
+        ctx: Self::HmacCtx<'_>,
+        dest: &mut DmaBuf,
+    ) -> HsmResult<()>;
+
+    /// Finalise and verify the running HMAC against an expected
+    /// `tag` using hardware constant-time comparison.  Consumes
+    /// `ctx`.
+    ///
+    /// # Parameters
+    ///
+    /// - `io` — caller's I/O context (per-IO scope).
+    /// - `ctx` — context to finalise (consumed).
+    /// - `tag` — expected MAC tag.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(true)` — tag matches.
+    /// - `Ok(false)` — tag does not match (not an error).
+    /// - `Err(HsmError)` — SHA driver failure.
+    async fn hmac_finish_verify(
+        &self,
+        io: &impl HsmIo,
+        ctx: Self::HmacCtx<'_>,
+        tag: &DmaBuf,
+    ) -> HsmResult<bool>;
 }

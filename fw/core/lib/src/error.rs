@@ -36,6 +36,8 @@ impl HostStatus {
     pub const DMA_TXN_ERROR: u16 = 0x0C6;
 
     pub const REQ_HDR_DECODE_ERR: u16 = 0x0C8;
+
+    pub const ALLOC_ERR: u16 = 0x0C9;
 }
 
 // ── OpError: pairs HsmError (for logging) with host status (for CQE) ─

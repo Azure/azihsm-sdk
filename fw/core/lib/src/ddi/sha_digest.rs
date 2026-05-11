@@ -29,27 +29,26 @@ fn to_hsm_hash_algo(ddi: DdiHashAlgorithm) -> HsmResult<HsmHashAlgo> {
 }
 
 /// Handle DdiShaDigestCmd.
-pub(crate) async fn sha_digest<'a, P: HsmPal>(
-    hdr: &DdiReqHdr,
+pub(crate) async fn sha_digest<'p, P: HsmPal>(
+    pal: &'p P,
+    io: &impl HsmIo,
     decoder: &mut DdiDecoder<'_>,
-    _part_id: HsmPartId,
-    pal: &P,
-    _fmem: &mut [u8],
-    smem: &'a mut [u8],
-) -> HsmResult<&'a [u8]> {
+    hdr: &DdiReqHdr,
+) -> HsmResult<&'p DmaBuf> {
     let body: DdiShaDigestReq<'_> = decoder.decode_data()?;
 
     let algo = to_hsm_hash_algo(body.sha_mode)?;
     let digest_len = algo.digest_len();
 
-    // Encode header + frame, reserving space for the digest.
-    let resp_hdr = ddi::success_hdr(hdr, DdiOp::ShaDigest);
-    let mut encoder = ddi::encode_resp_hdr(&resp_hdr, smem)?;
-    let frame = DdiShaDigestResp::frame(&mut encoder, digest_len)?;
-    let total = encoder.position();
-
-    // Compute hash directly into the reserved slice — zero copy.
-    pal.hash(algo, body.msg, frame.digest, true).await?;
-
-    Ok(&smem[..total])
+    let (resp, layout) = pal.dma_alloc_var_with(io, |buf| {
+        let resp_hdr = ddi::success_hdr(hdr, DdiOp::ShaDigest);
+        let mut encoder = ddi::encode_resp_hdr(&resp_hdr, buf)?;
+        let layout = DdiShaDigestResp::reserve(&mut encoder, digest_len)?;
+        Ok((encoder.position(), layout))
+    })?;
+    let frame = DdiShaDigestResp::from_layout(resp, &layout);
+    let msg_dma = pal.dma_alloc(io, body.msg.len())?;
+    msg_dma.copy_from_slice(body.msg);
+    pal.hash(io, algo, msg_dma, frame.digest, true).await?;
+    Ok(resp)
 }

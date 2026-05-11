@@ -36,8 +36,9 @@
 //! | X9.63 KDF (SEC 1 §3.6.1) | `Z \|\| counter \|\| SharedInfo` |
 //! | SP 800-56A one-step | `counter \|\| Z \|\| OtherInfo` |
 //!
-//! All three accept a caller-owned state buffer sized by
-//! [`HsmHashAlgo::mgf1_state_len`] (or the corresponding KDF variant).
+//! All three allocate their internal working state from an
+//! [`HsmScopedAlloc`] sized by [`HsmHashAlgo::mgf1_state_len`] (or the
+//! corresponding KDF variant).
 //!
 //! ## HKDF (RFC 5869)
 //!
@@ -49,22 +50,20 @@
 //!   from a PRK + info context.
 //!
 //! This split supports protocols (e.g., TLS 1.3) that perform one extract
-//! followed by multiple expands with different info values. Both methods
-//! accept an [`HsmKdfState`] of at least [`HsmHashAlgo::hmac_state_len`]
-//! bytes as working space.
+//! followed by multiple expands with different info values. The HMAC-backed
+//! methods allocate their internal working state from an [`HsmScopedAlloc`].
 
 use super::*;
 
-/// Caller-owned working buffer for KDF operations.
+/// Buffer-backed working state for PAL-internal KDF helpers.
 ///
-/// A zero-cost newtype over `&mut [u8]` that provides type safety —
-/// prevents accidentally passing an unrelated buffer where a KDF
-/// state is expected. Unlike [`HsmHashState`], this carries no
-/// algorithm tag; the algorithm is passed separately to each KDF
-/// method.
+/// A zero-cost newtype over `&mut [u8]` that provides type safety when
+/// a PAL needs to manage concatenation-KDF scratch space explicitly.
+/// Public [`HsmKdf`] methods allocate their working state from an
+/// [`HsmScopedAlloc`], but this wrapper remains available for buffer-
+/// backed helper code.
 ///
 /// Size requirements depend on the KDF:
-/// - HKDF / SP 800-108: [`HsmHashAlgo::hmac_state_len`] bytes.
 /// - MGF1: [`HsmHashAlgo::mgf1_state_len`] bytes.
 /// - X9.63 / SP 800-56A: [`HsmHashAlgo::concat_kdf_state_len`] bytes.
 #[repr(transparent)]
@@ -72,7 +71,7 @@ use super::*;
 pub struct HsmKdfState<'a>(&'a mut [u8]);
 
 impl<'a> HsmKdfState<'a> {
-    /// Wrap a caller-owned byte slice as KDF working state.
+    /// Wrap a caller-owned byte slice as buffer-backed KDF state.
     pub fn new(buf: &'a mut [u8]) -> Self {
         Self(buf)
     }
@@ -100,40 +99,40 @@ impl<'a> HsmKdfState<'a> {
 /// KDF algorithms. The async signatures allow hardware-backed
 /// implementations to yield while the hash/HMAC engine processes data.
 pub trait HsmKdf {
-    /// HKDF-Extract (RFC 5869 §2.2) — condense IKM + salt into a PRK.
+    /// HKDF-Extract (RFC 5869 §2.2): condense `ikm` and `salt` into
+    /// a fixed-length pseudorandom key.
     ///
     /// `PRK = HMAC-Hash(salt, IKM)`
     ///
     /// # Parameters
     ///
-    /// - `algo` — the underlying hash algorithm (e.g. SHA-256).
-    /// - `salt` — optional salt value. Pass `&[]` to use the default
-    ///   salt (a string of zero bytes of hash length).
+    /// - `io` — caller's I/O context (per-IO scope).
+    /// - `algo` — underlying hash algorithm (e.g. SHA-256).
+    /// - `salt` — optional salt; `&[]` selects the RFC 5869 default
+    ///   (a string of zero bytes of `algo.digest_len()`).
     /// - `ikm` — input keying material.
-    /// - `prk` — output buffer for the pseudorandom key. Must be at
-    ///   least [`HsmHashAlgo::digest_len`] bytes.
-    /// - `state` — caller-owned working buffer. Must wrap at least
-    ///   [`HsmHashAlgo::hmac_state_len`] bytes.
+    /// - `prk` — output PRK; must be at least `algo.digest_len()`
+    ///   bytes.  Only the leading `digest_len` bytes are written.
     ///
     /// # Returns
     ///
-    /// The `state` buffer, returned for reuse in subsequent calls
-    /// (e.g. [`hkdf_expand`](Self::hkdf_expand)).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`HsmError`] if `prk` is too short, `state` is too
-    /// small, or the HMAC operation fails.
-    async fn hkdf_extract<'a>(
+    /// - `Ok(())` — `prk[..digest_len]` populated.
+    /// - `Err(HsmError::InvalidArg)` — `prk` shorter than
+    ///   `algo.digest_len()`.
+    /// - `Err(HsmError::NotEnoughSpace)` — internal scoped allocation too
+    ///   small for the HMAC state.
+    /// - `Err(HsmError)` — SHA / HMAC driver failure.
+    async fn hkdf_extract(
         &self,
+        io: &impl HsmIo,
         algo: HsmHashAlgo,
-        salt: &[u8],
-        ikm: &[u8],
-        prk: &mut [u8],
-        state: HsmKdfState<'a>,
-    ) -> HsmResult<HsmKdfState<'a>>;
+        salt: &DmaBuf,
+        ikm: &DmaBuf,
+        prk: &mut DmaBuf,
+    ) -> HsmResult<()>;
 
-    /// HKDF-Expand (RFC 5869 §2.3) — derive OKM from a PRK.
+    /// HKDF-Expand (RFC 5869 §2.3): derive arbitrary-length output
+    /// key material from a PRK.
     ///
     /// ```text
     /// T(0) = empty
@@ -143,174 +142,172 @@ pub trait HsmKdf {
     ///
     /// # Parameters
     ///
-    /// - `algo` — the underlying hash algorithm.
-    /// - `prk` — pseudorandom key from [`hkdf_extract`](Self::hkdf_extract).
-    /// - `info` — context and application-specific info. Pass `&[]` if
-    ///   not needed.
-    /// - `output` — buffer for the derived output key material (OKM).
-    ///   Length must not exceed `255 * digest_len`.
-    /// - `state` — caller-owned working buffer. Must wrap at least
-    ///   [`HsmHashAlgo::hmac_state_len`] bytes.
+    /// - `io` — caller's I/O context (per-IO scope).
+    /// - `algo` — underlying hash algorithm.
+    /// - `prk` — PRK from
+    ///   [`hkdf_extract`](Self::hkdf_extract).
+    /// - `info` — context / application info; `&[]` to omit.
+    /// - `output` — OKM destination; `output.len()` must satisfy
+    ///   `output.len() <= 255 * algo.digest_len()`.
     ///
     /// # Returns
     ///
-    /// The `state` buffer, returned for reuse in subsequent expand calls.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`HsmError`] if `output` exceeds the RFC limit, `state`
-    /// is too small, or the HMAC operation fails.
-    async fn hkdf_expand<'a>(
+    /// - `Ok(())` — `output` filled with `output.len()` bytes of OKM.
+    /// - `Err(HsmError::InvalidArg)` — `output` exceeds the RFC 5869
+    ///   length cap.
+    /// - `Err(HsmError::NotEnoughSpace)` — internal scoped allocation too
+    ///   small.
+    /// - `Err(HsmError)` — SHA / HMAC driver failure.
+    async fn hkdf_expand(
         &self,
+        io: &impl HsmIo,
         algo: HsmHashAlgo,
-        prk: &[u8],
-        info: &[u8],
-        output: &mut [u8],
-        state: HsmKdfState<'a>,
-    ) -> HsmResult<HsmKdfState<'a>>;
+        prk: &DmaBuf,
+        info: &DmaBuf,
+        output: &mut DmaBuf,
+    ) -> HsmResult<()>;
 
-    /// Derive key material using SP 800-108 KDF in Counter Mode with HMAC.
+    /// SP 800-108 Counter Mode KDF with HMAC PRF.
     ///
-    /// Uses HMAC as the PRF with an incrementing counter. The derived
-    /// output is computed as:
     /// `K(i) = HMAC(key, i ‖ label ‖ 0x00 ‖ context ‖ L)` for each
-    /// block `i`, where `L` is the requested output length in bits.
+    /// block `i`, with `L` the requested output length in bits.
     ///
     /// # Parameters
     ///
-    /// - `algo` — the HMAC hash algorithm (e.g. SHA-384).
-    /// - `key` — the key-derivation key (KDK).
-    /// - `label` — a string identifying the purpose of the derived key.
-    ///   Pass `&[]` if not needed.
-    /// - `context` — context information binding the derived key to a
-    ///   specific use. Pass `&[]` if not needed.
-    /// - `output` — buffer for the derived key material. The buffer
-    ///   length determines how many bytes are derived.
-    /// - `state` — caller-owned working buffer. Must wrap at least
-    ///   [`HsmHashAlgo::hmac_state_len`] bytes.
+    /// - `io` — caller's I/O context (per-IO scope).
+    /// - `algo` — HMAC underlying hash (e.g. SHA-384).
+    /// - `key` — key-derivation key (KDK).
+    /// - `label` — purpose string; `&[]` to omit.
+    /// - `context` — binding context; `&[]` to omit.
+    /// - `output` — derived-key destination; `output.len()` bytes
+    ///   are produced.
     ///
     /// # Returns
     ///
-    /// The `state` buffer, returned for reuse.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`HsmError`] if the KDF operation fails (e.g.,
-    /// unsupported algorithm, HMAC computation error).
-    async fn sp800_108_kdf<'a>(
+    /// - `Ok(())` — `output` filled.
+    /// - `Err(HsmError::InvalidArg)` — `output` exceeds the
+    ///   `2^32 - 1` block-counter limit.
+    /// - `Err(HsmError::NotEnoughSpace)` — internal scoped allocation too small.
+    /// - `Err(HsmError)` — SHA / HMAC driver failure.
+    async fn sp800_108_kdf(
         &self,
+        io: &impl HsmIo,
         algo: HsmHashAlgo,
-        key: &[u8],
-        label: &[u8],
-        context: &[u8],
-        output: &mut [u8],
-        state: HsmKdfState<'a>,
-    ) -> HsmResult<HsmKdfState<'a>>;
+        key: &DmaBuf,
+        label: &DmaBuf,
+        context: &DmaBuf,
+        output: &mut DmaBuf,
+    ) -> HsmResult<()>;
 
-    /// Compute MGF1 per [RFC 8017 §B.2.1](https://www.rfc-editor.org/rfc/rfc8017#appendix-B.2.1).
+    /// MGF1 mask generation per
+    /// [RFC 8017 §B.2.1](https://www.rfc-editor.org/rfc/rfc8017#appendix-B.2.1).
     ///
-    /// Expands `seed` into `mask.len()` bytes of mask material using
-    /// the specified hash algorithm:
+    /// Expands `seed` into `mask.len()` mask bytes:
     /// `T(C) = Hash(seed || I2OSP(C, 4))` for `C = 0, 1, …`.
     ///
     /// # Parameters
     ///
-    /// - `algo` — hash algorithm (e.g. SHA-256).
-    /// - `seed` — the MGF1 seed input.
-    /// - `mask` — output buffer; filled with `mask.len()` bytes of mask
-    ///   material.
-    /// - `state` — caller-owned working buffer. Must be at least
-    ///   [`HsmHashAlgo::mgf1_state_len`]`(seed.len())` bytes.
-    ///   Layout: `[hash(digest_len) | input(seed_len + 4)]`.
+    /// - `io` — caller's I/O context (per-IO scope).
+    /// - `algo` — hash algorithm.
+    /// - `seed` — MGF1 seed.
+    /// - `mask` — mask destination; `mask.len()` bytes are written.
     ///
-    /// # Errors
+    /// # Returns
     ///
-    /// Returns [`HsmError`] if `state` is too small or the underlying
-    /// hash operation fails.
+    /// - `Ok(())` — `mask` overwritten with mask material.
+    /// - `Err(HsmError::NotEnoughSpace)` — internal scoped allocation too small.
+    /// - `Err(HsmError)` — SHA driver failure.
     async fn mgf1(
         &self,
+        io: &impl HsmIo,
         algo: HsmHashAlgo,
-        seed: &[u8],
-        mask: &mut [u8],
-        state: &mut [u8],
+        seed: &DmaBuf,
+        mask: &mut DmaBuf,
     ) -> HsmResult<()>;
 
-    /// MGF1 with in-place XOR (RFC 8017 §B.2.1).
+    /// MGF1 with in-place XOR.
     ///
-    /// Like [`mgf1`](Self::mgf1) but instead of overwriting `mask`, each
-    /// generated mask byte is **XOR'd** into the existing content of
-    /// `mask`. This is the primitive needed by OAEP and PSS padding.
+    /// Identical to [`mgf1`](Self::mgf1), but each generated mask
+    /// byte is XOR'd into the existing content of `mask` rather than
+    /// overwriting it.  This is the primitive used by OAEP unmasking
+    /// and PSS encoding/verification.
     ///
     /// # Parameters
     ///
+    /// - `io` — caller's I/O context (per-IO scope).
     /// - `algo` — hash algorithm.
-    /// - `seed` — the MGF1 seed input.
-    /// - `mask` — buffer to XOR the generated mask into (in-place).
-    /// - `state` — caller-owned working buffer. Must be at least
-    ///   [`HsmHashAlgo::mgf1_state_len`]`(seed.len())` bytes.
+    /// - `seed` — MGF1 seed.
+    /// - `mask` — in-place buffer; XOR'd with `mask.len()` bytes of
+    ///   mask material.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` on success.
+    /// - `Err(HsmError::NotEnoughSpace)` — internal scoped allocation too small.
+    /// - `Err(HsmError)` — SHA driver failure.
     async fn mgf1_xor(
         &self,
+        io: &impl HsmIo,
         algo: HsmHashAlgo,
-        seed: &[u8],
-        mask: &mut [u8],
-        state: &mut [u8],
+        seed: &DmaBuf,
+        mask: &mut DmaBuf,
     ) -> HsmResult<()>;
 
-    /// Derive key material using X9.63 KDF (SEC 1 §3.6.1).
+    /// X9.63 KDF (SEC 1 §3.6.1) — the KDF used by ECIES variants
+    /// and CMS ECDH key wrap.
     ///
-    /// Expands shared secret `z` into `key.len()` bytes of key material:
-    /// `T(C) = Hash(Z || I2OSP(C, 4) || SharedInfo)` for `C = 1, 2, …`.
+    /// `T(C) = Hash(Z || I2OSP(C, 4) || SharedInfo)` for `C = 1, 2,
+    /// …`.
     ///
     /// # Parameters
     ///
-    /// - `algo` — hash algorithm (e.g. SHA-256).
-    /// - `z` — the shared secret (e.g. ECDH output).
-    /// - `shared_info` — optional shared info. Pass `&[]` to omit.
-    /// - `key` — output buffer; filled with `key.len()` bytes of derived
-    ///   key material.
-    /// - `state` — caller-owned working buffer. Must be at least
-    ///   [`HsmHashAlgo::concat_kdf_state_len`]`(z.len(), shared_info.len())`
-    ///   bytes. Layout: `[hash(digest_len) | input(z_len + 4 + info_len)]`.
+    /// - `io` — caller's I/O context (per-IO scope).
+    /// - `algo` — hash algorithm.
+    /// - `z` — shared secret (typically an ECDH x-coordinate).
+    /// - `shared_info` — SharedInfo octet string; `&[]` to omit.
+    /// - `key` — derived-key destination; `key.len()` bytes are
+    ///   written.
     ///
-    /// # Errors
+    /// # Returns
     ///
-    /// Returns [`HsmError`] if `state` is too small or the underlying
-    /// hash operation fails.
+    /// - `Ok(())` — `key` filled.
+    /// - `Err(HsmError::NotEnoughSpace)` — internal scoped allocation too small.
+    /// - `Err(HsmError)` — SHA driver failure.
     async fn x963_kdf(
         &self,
+        io: &impl HsmIo,
         algo: HsmHashAlgo,
-        z: &[u8],
-        shared_info: &[u8],
-        key: &mut [u8],
-        state: &mut [u8],
+        z: &DmaBuf,
+        shared_info: &DmaBuf,
+        key: &mut DmaBuf,
     ) -> HsmResult<()>;
 
-    /// Derive key material using SP 800-56A one-step Concatenation KDF.
+    /// SP 800-56A r3 §5.8.2.1 one-step concatenation KDF.
     ///
-    /// Expands shared secret `z` into `key.len()` bytes of key material:
-    /// `T(C) = Hash(I2OSP(C, 4) || Z || OtherInfo)` for `C = 1, 2, …`.
+    /// `T(C) = Hash(I2OSP(C, 4) || Z || OtherInfo)` for `C = 1, 2,
+    /// …`.  Differs from X9.63 only in field ordering (counter
+    /// first).
     ///
     /// # Parameters
     ///
-    /// - `algo` — hash algorithm (e.g. SHA-256).
-    /// - `z` — the shared secret (e.g. ECDH output).
-    /// - `other_info` — context information. Pass `&[]` to omit.
-    /// - `key` — output buffer; filled with `key.len()` bytes of derived
-    ///   key material.
-    /// - `state` — caller-owned working buffer. Must be at least
-    ///   [`HsmHashAlgo::concat_kdf_state_len`]`(z.len(), other_info.len())`
-    ///   bytes. Layout: `[hash(digest_len) | input(4 + z_len + info_len)]`.
+    /// - `io` — caller's I/O context (per-IO scope).
+    /// - `algo` — hash algorithm.
+    /// - `z` — shared secret.
+    /// - `other_info` — OtherInfo octet string; `&[]` to omit.
+    /// - `key` — derived-key destination; `key.len()` bytes are
+    ///   written.
     ///
-    /// # Errors
+    /// # Returns
     ///
-    /// Returns [`HsmError`] if `state` is too small or the underlying
-    /// hash operation fails.
+    /// - `Ok(())` — `key` filled.
+    /// - `Err(HsmError::NotEnoughSpace)` — internal scoped allocation too small.
+    /// - `Err(HsmError)` — SHA driver failure.
     async fn sp800_56a_kdf(
         &self,
+        io: &impl HsmIo,
         algo: HsmHashAlgo,
-        z: &[u8],
-        other_info: &[u8],
-        key: &mut [u8],
-        state: &mut [u8],
+        z: &DmaBuf,
+        other_info: &DmaBuf,
+        key: &mut DmaBuf,
     ) -> HsmResult<()>;
 }

@@ -91,101 +91,147 @@ impl HsmEccCurve {
     }
 }
 
-/// ECC Pairwise Consistency Test (PCT) type used to indicate which
-/// operation should be exercised in a self-test: none, signing, or key
-/// agreement.
+/// ECC Pairwise Consistency Test (PCT) mode for key generation.
+///
+/// FIPS 140-3 requires a PCT after key generation to verify the key
+/// pair is functional.  The variant selects which operation is used
+/// for verification, or skips the test entirely.
 pub enum HsmEccPct {
+    /// No PCT — skip the consistency test.
     None,
+
+    /// Sign / verify round-trip with the freshly generated key pair.
     SignVerify,
+
+    /// ECDH key-agreement self-test against a known public-key
+    /// counterpart.
     KeyAgreement,
 }
 
-/// Asynchronous ECC operations trait.
+/// Asynchronous ECC operations.
 ///
-/// PAL implementations provide this to the core for ECC key generation,
-/// signing, and verification. The async signatures allow hardware-backed
-/// implementations to yield while the PKA engine processes operations.
+/// PAL implementations provide this to core for ECC key generation,
+/// signing, verification, and ECDH.  The `async` signatures let
+/// hardware-backed implementations yield while the PKA engine runs.
 ///
-/// All key parameters are plain `&[u8]` byte slices containing
-/// DER-encoded key material (PKCS#8 for private keys, SPKI for public
-/// keys). Each PAL implementation is responsible for parsing them into
-/// whatever internal representation it needs.
+/// Key parameters are byte slices in raw `priv || pub_x || pub_y`
+/// format — not DER — sized per [`HsmEccCurve::priv_key_len`] /
+/// [`HsmEccCurve::pub_key_len`].
 pub trait HsmEcc {
-    /// Generate an ECC key pair on the specified curve.
+    /// Generates an ECC key pair on the chosen curve and writes
+    /// `priv_key || pub_key` contiguously into `key_out`.
     ///
-    /// Writes PKCS#8 DER private key into `priv_key` (pass `None` to
-    /// query size).  Writes raw public key coordinates (x ∥ y) into
-    /// `pub_key` — fixed size per curve: [`HsmEccCurve::pub_key_len`].
+    /// # Parameters
+    ///
+    /// - `io` — caller's I/O context (per-IO scope).
+    /// - `curve` — NIST curve selector.
+    /// - `key_out` — output buffer; must be at least
+    ///   `curve.priv_key_len() + curve.pub_key_len()` bytes.  On
+    ///   success, `key_out[..nsk]` holds the private scalar and
+    ///   `key_out[nsk..nsk+npk]` holds the uncompressed public point
+    ///   (`x || y`).
+    /// - `pct` — pairwise consistency test selector.
     ///
     /// # Returns
-    /// The actual private key DER length written.
     ///
-    /// # Parameters
-    /// - `curve` — The NIST curve to use for key generation.
-    /// - `priv_key` — `None` to query size, `Some(buf)` for PKCS#8 DER output.
-    /// - `pub_key` — Output buffer for raw coordinates (x ∥ y).  Must be
-    ///   at least [`HsmEccCurve::pub_key_len`] bytes.
-    /// - `pct` — Pairwise Consistency Test mode.
-    async fn ecc_gen_keypair(
+    /// - `Ok((priv_key, pub_key))` — borrowed views into `key_out`.
+    /// - `Err(HsmError::InvalidArg)` — `key_out` too small.
+    /// - `Err(HsmError)` — PKA / RNG / PCT failure.
+    async fn ecc_gen_keypair<'a>(
         &self,
+        io: &impl HsmIo,
         curve: HsmEccCurve,
-        priv_key: Option<&mut [u8]>,
-        pub_key: &mut [u8],
+        key_out: &'a mut DmaBuf,
         pct: HsmEccPct,
-    ) -> HsmResult<usize>;
+    ) -> HsmResult<(&'a DmaBuf, &'a DmaBuf)>;
 
-    /// Raw EC sign over a pre-computed hash digest.
+    /// Raw EC sign over a pre-computed message digest.
+    ///
+    /// The caller is responsible for hashing the message; this method
+    /// performs no hashing itself.
     ///
     /// # Parameters
-    /// - `priv_key` — The signing key.
-    /// - `hash` — Pre-computed hash digest to sign.
-    /// - `signature` — Output buffer for the signature. Must be at least
-    ///   [`HsmEccCurve::sig_len`] bytes.
     ///
-    /// # Errors
-    /// Returns [`HsmError`] if signing fails or the buffer is too small.
+    /// - `io` — caller's I/O context (per-IO scope).
+    /// - `curve` — NIST curve the private key is on.
+    /// - `priv_key` — signing key; must be exactly
+    ///   `curve.priv_key_len()` bytes.
+    /// - `hash` — message digest to sign.  Truncated or zero-padded
+    ///   internally if shorter/longer than the curve's order.
+    /// - `signature` — output buffer; must be at least
+    ///   `curve.sig_len()` bytes (`r || s`).
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` — `signature[..sig_len]` populated.
+    /// - `Err(HsmError::InvalidArg)` — buffer-size mismatch.
+    /// - `Err(HsmError)` — PKA / RNG failure.
     async fn ecc_sign(
         &self,
+        io: &impl HsmIo,
         curve: HsmEccCurve,
-        priv_key: &[u8],
-        hash: &[u8],
-        signature: &mut [u8],
+        priv_key: &DmaBuf,
+        hash: &DmaBuf,
+        signature: &mut DmaBuf,
     ) -> HsmResult<()>;
 
-    /// Raw EC verify a signature over a pre-computed hash digest.
+    /// Raw EC verify of `signature` against a pre-computed message
+    /// digest.
     ///
     /// # Parameters
-    /// - `pub_key` — The verification key.
-    /// - `curve` — The NIST curve that the key was generated on (P-256,
-    ///   P-384, or P-521). Used to determine the expected signature length.
-    /// - `hash` — Pre-computed hash digest that was signed.
-    /// - `signature` — The signature to verify.
+    ///
+    /// - `io` — caller's I/O context (per-IO scope).
+    /// - `curve` — NIST curve the public key is on; determines the
+    ///   expected signature length.
+    /// - `pub_key` — verification key; uncompressed `x || y`,
+    ///   `curve.pub_key_len()` bytes.
+    /// - `hash` — message digest that was signed.
+    /// - `signature` — signature to verify; must be exactly
+    ///   `curve.sig_len()` bytes.
     ///
     /// # Returns
-    /// `true` if the signature is valid, `false` otherwise.
+    ///
+    /// - `Ok(true)` — signature is valid.
+    /// - `Ok(false)` — signature is invalid (not an error).
+    /// - `Err(HsmError::InvalidArg)` — buffer-size mismatch or
+    ///   malformed public key.
+    /// - `Err(HsmError)` — propagated from the PKA driver.
     async fn ecc_verify(
         &self,
+        io: &impl HsmIo,
         curve: HsmEccCurve,
-        pub_key: &[u8],
-        hash: &[u8],
-        signature: &[u8],
+        pub_key: &DmaBuf,
+        hash: &DmaBuf,
+        signature: &DmaBuf,
     ) -> HsmResult<bool>;
 
-    /// Perform ECDH key agreement to derive a shared secret.
+    /// ECDH key agreement: derives a shared secret from a local
+    /// private key and a remote public key.
     ///
     /// # Parameters
-    /// - `priv_key` — The local private key.
-    /// - `pub_key` — The remote party's public key.
-    /// - `secret` — Output for the derived shared secret.
     ///
-    /// # Errors
-    /// Returns [`HsmError`] if the key agreement operation fails (e.g., PKA
-    /// engine error, invalid public key point).
+    /// - `io` — caller's I/O context (per-IO scope).
+    /// - `curve` — NIST curve both keys are on.
+    /// - `priv_key` — local private scalar; must be exactly
+    ///   `curve.priv_key_len()` bytes.
+    /// - `pub_key` — remote uncompressed point; must be exactly
+    ///   `curve.pub_key_len()` bytes.
+    /// - `secret` — output buffer; must be at least
+    ///   `curve.secret_len()` bytes.  On success, holds the
+    ///   x-coordinate of the shared point.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` — `secret[..secret_len]` populated.
+    /// - `Err(HsmError::InvalidArg)` — buffer mismatch or invalid
+    ///   public-key point.
+    /// - `Err(HsmError)` — PKA driver failure.
     async fn ecdh_derive(
         &self,
+        io: &impl HsmIo,
         curve: HsmEccCurve,
-        priv_key: &[u8],
-        pub_key: &[u8],
-        secret: &mut [u8],
+        priv_key: &DmaBuf,
+        pub_key: &DmaBuf,
+        secret: &mut DmaBuf,
     ) -> HsmResult<()>;
 }

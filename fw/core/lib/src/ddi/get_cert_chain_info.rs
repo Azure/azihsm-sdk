@@ -15,29 +15,29 @@ use super::*;
 ///
 /// 1. **Body decode** — Decodes `DdiGetCertChainInfoReq { slot_id }`.
 ///
-/// 2. **Response** — Calls `pal.get_cert_chain_info(part_id, slot_id)`,
+/// 2. **Response** — Calls `pal.get_cert_chain_info(io, io.pid(), slot_id)`,
 ///    encodes `DdiGetCertChainInfoResp { num_certs, thumbprint }`.
-pub(crate) async fn get_cert_chain_info<'a, P: HsmPal>(
-    hdr: &DdiReqHdr,
+pub(crate) async fn get_cert_chain_info<'p, P: HsmPal>(
+    pal: &'p P,
+    io: &impl HsmIo,
     decoder: &mut DdiDecoder<'_>,
-    part_id: HsmPartId,
-    pal: &P,
-    _fmem: &mut [u8],
-    smem: &'a mut [u8],
-) -> HsmResult<&'a [u8]> {
+    hdr: &DdiReqHdr,
+) -> HsmResult<&'p DmaBuf> {
     let body: DdiGetCertChainInfoReq = decoder.decode_data()?;
 
-    let info = pal.get_cert_chain_info(part_id, body.slot_id).await?;
+    let info = pal.get_cert_chain_info(io, io.pid(), body.slot_id).await?;
 
     let resp_data = DdiGetCertChainInfoResp {
         num_certs: info.count,
         thumbprint: &info.thumbprint,
     };
 
-    let len = ddi::encode_resp(
-        &ddi::success_hdr(hdr, DdiOp::GetCertChainInfo),
-        &resp_data,
-        smem,
-    )?;
-    Ok(&smem[..len])
+    let resp = pal.dma_alloc_var(io, |buf| {
+        ddi::encode_resp(
+            &ddi::success_hdr(hdr, DdiOp::GetCertChainInfo),
+            &resp_data,
+            buf,
+        )
+    })?;
+    Ok(resp)
 }

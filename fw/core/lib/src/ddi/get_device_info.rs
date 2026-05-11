@@ -17,27 +17,26 @@ use super::*;
 /// 2. **Response** — Encodes `DdiGetDeviceInfoResp` with device kind,
 ///    table count, and FIPS status. Echoes `hdr.rev` back in the
 ///    response header.
-pub(crate) fn get_device_info<'a, P: HsmPal>(
-    hdr: &DdiReqHdr,
+pub(crate) fn get_device_info<'p, P: HsmPal>(
+    pal: &'p P,
+    io: &impl HsmIo,
     decoder: &mut DdiDecoder<'_>,
-    part_id: HsmPartId,
-    pal: &P,
-    _fmem: &mut [u8],
-    smem: &'a mut [u8],
-) -> HsmResult<&'a [u8]> {
+    hdr: &DdiReqHdr,
+) -> HsmResult<&'p DmaBuf> {
     let _body: DdiGetDeviceInfoReq = decoder.decode_data()?;
 
     let resp_data = DdiGetDeviceInfoResp {
         kind: DdiDeviceKind::Physical,
-        tables: pal.part_res_count(part_id).unwrap_or(0),
+        tables: pal.part_res_count(io).unwrap_or(0),
         fips_approved: false,
     };
 
-    let len = ddi::encode_resp(
-        &ddi::success_hdr(hdr, DdiOp::GetDeviceInfo),
-        &resp_data,
-        smem,
-    )?;
-
-    Ok(&smem[..len])
+    let resp = pal.dma_alloc_var(io, |buf| {
+        ddi::encode_resp(
+            &ddi::success_hdr(hdr, DdiOp::GetDeviceInfo),
+            &resp_data,
+            buf,
+        )
+    })?;
+    Ok(resp)
 }
