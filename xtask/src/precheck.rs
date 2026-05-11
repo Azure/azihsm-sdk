@@ -145,10 +145,18 @@ pub struct Precheck {
     stage: Option<Stage>,
     /// Run the full set of checks:
     /// setup, copyright, validate_members, audit, fmt, clippy, nextest_full
-    #[clap(long, conflicts_with = "all")]
+    #[clap(
+        long,
+        conflicts_with = "all",
+        conflicts_with_all = ["nextest", "nextest_min", "nextest_full"]
+    )]
     pub full: bool,
     /// Run all checks
-    #[clap(long, conflicts_with = "full")]
+    #[clap(
+        long,
+        conflicts_with = "full",
+        conflicts_with_all = ["nextest", "nextest_min", "nextest_full"]
+    )]
     pub all: bool,
     /// Skip taplo (TOML formatting) (used with --fmt)
     #[clap(long)]
