@@ -340,37 +340,42 @@ impl Xtask for Precheck {
 
             #[cfg(not(target_os = "windows"))]
             {
-                // SDK Run azihsm_ddi mock tests table-4
-                Nextest {
-                    features: Some("mock,table-4".to_string()),
-                    package: Some("azihsm_ddi".to_string()),
-                    no_default_features: false,
-                    filterset: None,
-                    profile: self
-                        .profile
-                        .clone()
-                        .or_else(|| Some("ci-mock-table-4".to_string())),
-                    exclude: self.exclude.clone(),
-                }
-                .run(ctx.clone())?;
+                
+                if !self.exclude.iter().any(|e| e == "azihsm_ddi") {
+                    // SDK Run azihsm_ddi mock tests table-4
+                    Nextest {
+                        features: Some("mock,table-4".to_string()),
+                        package: Some("azihsm_ddi".to_string()),
+                        no_default_features: false,
+                        filterset: None,
+                        profile: self
+                            .profile
+                            .clone()
+                            .or_else(|| Some("ci-mock-table-4".to_string())),
+                        exclude: self.exclude.clone(),
+                    }
+                    .run(ctx.clone())?;
 
-                // SDK Run azihsm_ddi mock tests table-64
-                Nextest {
-                    features: Some("mock,table-64".to_string()),
-                    package: Some("azihsm_ddi".to_string()),
-                    no_default_features: false,
-                    filterset: None,
-                    profile: self
-                        .profile
-                        .clone()
-                        .or_else(|| Some("ci-mock-table-64".to_string())),
-                    exclude: self.exclude.clone(),
+                    // SDK Run azihsm_ddi mock tests table-64
+                    Nextest {
+                        features: Some("mock,table-64".to_string()),
+                        package: Some("azihsm_ddi".to_string()),
+                        no_default_features: false,
+                        filterset: None,
+                        profile: self
+                            .profile
+                            .clone()
+                            .or_else(|| Some("ci-mock-table-64".to_string())),
+                        exclude: self.exclude.clone(),
+                    }
+                    .run(ctx.clone())?;
                 }
-                .run(ctx.clone())?;
 
                 // OSSL Provider integration tests (CLI + C API, Linux only)
-                #[cfg(target_os = "linux")]
-                integration_tests::IntegrationTest {}.run(ctx.clone())?;
+                if !self.exclude.iter().any(|e| e.starts_with("provider-integration-tests-")) {
+                    #[cfg(target_os = "linux")]
+                    integration_tests::IntegrationTest {}.run(ctx.clone())?;
+                }
             }
         }
 
