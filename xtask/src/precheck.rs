@@ -51,13 +51,13 @@ struct Stage {
     #[clap(long)]
     coverage_report: bool,
     /// Run nextest with cli options (features, package, profile, exclude)
-    #[clap(long)]
+    #[clap(long, conflicts_with_all = ["nextest_min", "nextest_full"])]
     nextest: bool,
     /// Run minimal nextest tests (skips resiliency, openssl, and native/cpp tests)
-    #[clap(long)]
+    #[clap(long, conflicts_with_all = ["nextest", "nextest_full"])]
     nextest_min: bool,
     /// Run the full nextest tests
-    #[clap(long)]
+    #[clap(long, conflicts_with_all = ["nextest", "nextest_min"])]
     nextest_full: bool,
     /// Run nextest-report
     #[clap(long)]
@@ -145,10 +145,10 @@ pub struct Precheck {
     stage: Option<Stage>,
     /// Run the full set of checks (setup, copyright, validate_members, audit, fmt, clippy,
     /// nextest_full). Without this flag, only a minimal set of checks is run (fmt, nextest_min).
-    #[clap(long)]
+    #[clap(long, conflicts_with = "all")]
     pub full: bool,
     /// Run all checks
-    #[clap(long)]
+    #[clap(long, conflicts_with = "full")]
     pub all: bool,
     /// Skip taplo (TOML formatting) (used with --fmt)
     #[clap(long)]
@@ -294,7 +294,7 @@ impl Xtask for Precheck {
                 package: None,
                 no_default_features: false,
                 filterset: None,
-                profile: self.profile.clone().or(Some("ci-mock".to_string())),
+                profile: self.profile.clone().or_else(|| Some("ci-mock".to_string())),
                 exclude: excludes,
             }
             .run(ctx.clone())?;
