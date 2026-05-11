@@ -8,73 +8,135 @@
 //! the driver. Newly added AES-KW/AES-XTS trait entry points are stubbed
 //! with `todo!()` for now.
 
+use core::convert::TryInto;
+
 use super::*;
 
+fn aes_op_is_encrypt(op: AesOp) -> bool {
+    matches!(op, AesOp::Encrypt)
+}
+
+fn gcm_iv(iv: &DmaBuf) -> HsmResult<&[u8; 12]> {
+    let iv: &[u8] = iv;
+    iv.try_into().map_err(|_| HsmError::AesGcmInvalidBufferSize)
+}
+
+fn gcm_tag(tag: &DmaBuf) -> HsmResult<&[u8; 16]> {
+    let tag: &[u8] = tag;
+    tag.try_into()
+        .map_err(|_| HsmError::AesGcmInvalidBufferSize)
+}
+
+fn gcm_tag_mut(tag: &mut DmaBuf) -> HsmResult<&mut [u8; 16]> {
+    let tag: &mut [u8] = tag;
+    tag.try_into()
+        .map_err(|_| HsmError::AesGcmInvalidBufferSize)
+}
+
 impl HsmAes for StdHsmPal {
-    async fn aes_gen_key(&self, key: &mut [u8]) -> HsmResult<()> {
+    async fn aes_gen_key(&self, _io: &impl HsmIo, key: &mut [u8]) -> HsmResult<()> {
         self.aes.gen_key(key).await
     }
 
     async fn aes_cbc_enc_dec(
         &self,
-        key: &[u8],
-        encrypt: bool,
-        iv: &mut [u8],
-        input: &[u8],
-        output: &mut [u8],
+        _io: &impl HsmIo,
+        op: AesOp,
+        key: &DmaBuf,
+        input: &DmaBuf,
+        iv_in: &DmaBuf,
+        output: &mut DmaBuf,
+        iv_out: Option<&mut DmaBuf>,
     ) -> HsmResult<()> {
-        self.aes.cbc_enc_dec(key, encrypt, iv, input, output).await
+        let mut iv = iv_in.to_vec();
+        self.aes
+            .cbc_enc_dec(
+                &key[..],
+                aes_op_is_encrypt(op),
+                &mut iv,
+                &input[..],
+                &mut output[..],
+            )
+            .await?;
+        if let Some(iv_out) = iv_out {
+            iv_out[..iv.len()].copy_from_slice(&iv);
+        }
+        Ok(())
     }
 
     async fn aes_cbc_enc_dec_in_place(
         &self,
-        key: &[u8],
-        encrypt: bool,
-        iv: &mut [u8],
-        data: &mut [u8],
+        _io: &impl HsmIo,
+        op: AesOp,
+        key: &DmaBuf,
+        data: &mut DmaBuf,
+        iv_in: &DmaBuf,
+        iv_out: Option<&mut DmaBuf>,
     ) -> HsmResult<()> {
+        let mut iv = iv_in.to_vec();
         let input = data.to_vec();
-        self.aes.cbc_enc_dec(key, encrypt, iv, &input, data).await
+        self.aes
+            .cbc_enc_dec(
+                &key[..],
+                aes_op_is_encrypt(op),
+                &mut iv,
+                &input,
+                &mut data[..],
+            )
+            .await?;
+        if let Some(iv_out) = iv_out {
+            iv_out[..iv.len()].copy_from_slice(&iv);
+        }
+        Ok(())
     }
 
     async fn aes_ecb_enc_dec(
         &self,
-        key: &[u8],
-        encrypt: bool,
-        input: &[u8],
-        output: &mut [u8],
+        _io: &impl HsmIo,
+        op: AesOp,
+        key: &DmaBuf,
+        input: &DmaBuf,
+        output: &mut DmaBuf,
     ) -> HsmResult<()> {
-        self.aes.ecb_enc_dec(key, encrypt, input, output).await
+        self.aes
+            .ecb_enc_dec(&key[..], aes_op_is_encrypt(op), &input[..], &mut output[..])
+            .await
     }
 
     async fn aes_ecb_enc_dec_in_place(
         &self,
-        key: &[u8],
-        encrypt: bool,
-        data: &mut [u8],
+        _io: &impl HsmIo,
+        op: AesOp,
+        key: &DmaBuf,
+        data: &mut DmaBuf,
     ) -> HsmResult<()> {
         let input = data.to_vec();
-        self.aes.ecb_enc_dec(key, encrypt, &input, data).await
+        self.aes
+            .ecb_enc_dec(&key[..], aes_op_is_encrypt(op), &input, &mut data[..])
+            .await
     }
 
     async fn gcm_encrypt(
         &self,
-        key: &[u8],
-        iv: &[u8; 12],
+        _io: &impl HsmIo,
+        key: &DmaBuf,
+        iv: &DmaBuf,
         aad_len: usize,
-        plaintext: &[u8],
-        ciphertext: &mut [u8],
-        tag: &mut [u8; 16],
+        plaintext: &DmaBuf,
+        ciphertext: &mut DmaBuf,
+        tag: &mut DmaBuf,
     ) -> HsmResult<()> {
+        let iv = gcm_iv(iv)?;
+        let tag = gcm_tag_mut(tag)?;
         if aad_len > plaintext.len() || aad_len > ciphertext.len() {
             return Err(HsmError::AesGcmInvalidBufferSize);
         }
-        let aad = if aad_len > 0 {
+        let aad: Option<&[u8]> = if aad_len > 0 {
             Some(&plaintext[..aad_len])
         } else {
             None
         };
-        let data = &plaintext[aad_len..];
+        let data: &[u8] = &plaintext[aad_len..];
         if let Some(aad) = aad {
             ciphertext[..aad_len].copy_from_slice(aad);
         }
@@ -85,12 +147,15 @@ impl HsmAes for StdHsmPal {
 
     async fn gcm_encrypt_in_place(
         &self,
-        key: &[u8],
-        iv: &[u8; 12],
+        _io: &impl HsmIo,
+        key: &DmaBuf,
+        iv: &DmaBuf,
         aad_len: usize,
-        data: &mut [u8],
-        tag: &mut [u8; 16],
+        data: &mut DmaBuf,
+        tag: &mut DmaBuf,
     ) -> HsmResult<()> {
+        let iv = gcm_iv(iv)?;
+        let tag = gcm_tag_mut(tag)?;
         if aad_len > data.len() {
             return Err(HsmError::AesGcmInvalidBufferSize);
         }
@@ -108,23 +173,26 @@ impl HsmAes for StdHsmPal {
 
     async fn gcm_decrypt(
         &self,
-        key: &[u8],
-        iv: &[u8; 12],
+        _io: &impl HsmIo,
+        key: &DmaBuf,
+        iv: &DmaBuf,
         aad_len: usize,
-        tag: &[u8; 16],
-        ciphertext: &[u8],
-        plaintext: &mut [u8],
+        tag: &DmaBuf,
+        ciphertext: &DmaBuf,
+        plaintext: &mut DmaBuf,
     ) -> HsmResult<()> {
+        let iv = gcm_iv(iv)?;
+        let tag = gcm_tag(tag)?;
         if aad_len > ciphertext.len() || aad_len > plaintext.len() {
             return Err(HsmError::AesGcmInvalidBufferSize);
         }
-        let aad = if aad_len > 0 {
+        let aad: Option<&[u8]> = if aad_len > 0 {
             plaintext[..aad_len].copy_from_slice(&ciphertext[..aad_len]);
             Some(&ciphertext[..aad_len])
         } else {
             None
         };
-        let data = &ciphertext[aad_len..];
+        let data: &[u8] = &ciphertext[aad_len..];
         self.aes
             .gcm_decrypt(key, iv, aad, tag, data, &mut plaintext[aad_len..])
             .await
@@ -132,12 +200,15 @@ impl HsmAes for StdHsmPal {
 
     async fn gcm_decrypt_in_place(
         &self,
-        key: &[u8],
-        iv: &[u8; 12],
+        _io: &impl HsmIo,
+        key: &DmaBuf,
+        iv: &DmaBuf,
         aad_len: usize,
-        tag: &[u8; 16],
-        data: &mut [u8],
+        tag: &DmaBuf,
+        data: &mut DmaBuf,
     ) -> HsmResult<()> {
+        let iv = gcm_iv(iv)?;
+        let tag = gcm_tag(tag)?;
         if aad_len > data.len() {
             return Err(HsmError::AesGcmInvalidBufferSize);
         }
@@ -153,69 +224,92 @@ impl HsmAes for StdHsmPal {
             .await
     }
 
-    async fn aes_kw_wrap(&self, _key: &[u8], _input: &[u8], _output: &mut [u8]) -> HsmResult<()> {
+    async fn aes_kw_wrap(
+        &self,
+        _io: &impl HsmIo,
+        _key: &DmaBuf,
+        _input: &DmaBuf,
+        _output: &mut DmaBuf,
+    ) -> HsmResult<()> {
         todo!()
     }
 
-    async fn aes_kw_unwrap(&self, _key: &[u8], _input: &[u8], _output: &mut [u8]) -> HsmResult<()> {
+    async fn aes_kw_unwrap(
+        &self,
+        _io: &impl HsmIo,
+        _key: &DmaBuf,
+        _input: &DmaBuf,
+        _output: &mut DmaBuf,
+    ) -> HsmResult<()> {
         todo!()
     }
 
-    async fn aes_kwp_wrap(&self, _key: &[u8], _input: &[u8], _output: &mut [u8]) -> HsmResult<()> {
+    async fn aes_kwp_wrap(
+        &self,
+        _io: &impl HsmIo,
+        _key: &DmaBuf,
+        _input: &DmaBuf,
+        _output: &mut DmaBuf,
+    ) -> HsmResult<()> {
         todo!()
     }
 
     async fn aes_kwp_unwrap(
         &self,
-        _key: &[u8],
-        _input: &[u8],
-        _output: &mut [u8],
+        _io: &impl HsmIo,
+        _key: &DmaBuf,
+        _input: &DmaBuf,
+        _output: &mut DmaBuf,
     ) -> HsmResult<usize> {
         todo!()
     }
 
-    async fn aes_xts_gen_key(&self, _key: &mut [u8]) -> HsmResult<()> {
+    async fn aes_xts_gen_key(&self, _io: &impl HsmIo, _key: &mut [u8]) -> HsmResult<()> {
         todo!()
     }
 
     async fn aes_xts_encrypt(
         &self,
-        _key: &[u8],
-        _tweak: &[u8],
+        _io: &impl HsmIo,
+        _key: &DmaBuf,
+        _tweak: &DmaBuf,
         _dul: XtsDataUnitLen,
-        _input: &[u8],
-        _output: &mut [u8],
+        _input: &DmaBuf,
+        _output: &mut DmaBuf,
     ) -> HsmResult<()> {
         todo!()
     }
 
     async fn aes_xts_decrypt(
         &self,
-        _key: &[u8],
-        _tweak: &[u8],
+        _io: &impl HsmIo,
+        _key: &DmaBuf,
+        _tweak: &DmaBuf,
         _dul: XtsDataUnitLen,
-        _input: &[u8],
-        _output: &mut [u8],
+        _input: &DmaBuf,
+        _output: &mut DmaBuf,
     ) -> HsmResult<()> {
         todo!()
     }
 
     async fn aes_xts_encrypt_in_place(
         &self,
-        _key: &[u8],
-        _tweak: &[u8],
+        _io: &impl HsmIo,
+        _key: &DmaBuf,
+        _tweak: &DmaBuf,
         _dul: XtsDataUnitLen,
-        _data: &mut [u8],
+        _data: &mut DmaBuf,
     ) -> HsmResult<()> {
         todo!()
     }
 
     async fn aes_xts_decrypt_in_place(
         &self,
-        _key: &[u8],
-        _tweak: &[u8],
+        _io: &impl HsmIo,
+        _key: &DmaBuf,
+        _tweak: &DmaBuf,
         _dul: XtsDataUnitLen,
-        _data: &mut [u8],
+        _data: &mut DmaBuf,
     ) -> HsmResult<()> {
         todo!()
     }

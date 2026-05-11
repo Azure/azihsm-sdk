@@ -17,30 +17,33 @@ use azihsm_fw_ddi_mbor_types::get_certificate::DdiGetCertificateResp;
 use super::*;
 
 /// Handle DdiGetCertificateCmd.
-pub(crate) async fn get_certificate<'a, P: HsmPal>(
-    hdr: &DdiReqHdr,
+pub(crate) async fn get_certificate<'p, P: HsmPal>(
+    pal: &'p P,
+    io: &impl HsmIo,
     decoder: &mut DdiDecoder<'_>,
-    part_id: HsmPartId,
-    pal: &P,
-    _fmem: &mut [u8],
-    smem: &'a mut [u8],
-) -> HsmResult<&'a [u8]> {
+    hdr: &DdiReqHdr,
+) -> HsmResult<&'p DmaBuf> {
     let body: DdiGetCertificateReq = decoder.decode_data()?;
 
     // Query cert size (no copy).
     let len = pal
-        .get_cert(part_id, body.slot_id, body.cert_id, None)
+        .get_cert(io, io.pid(), body.slot_id, body.cert_id, None)
         .await?;
 
-    // Encode header + frame, reserving space for cert data.
-    let resp_hdr = ddi::success_hdr(hdr, DdiOp::GetCertificate);
-    let mut encoder = ddi::encode_resp_hdr(&resp_hdr, smem)?;
-    let frame = DdiGetCertificateResp::frame(&mut encoder, len)?;
-    let total = encoder.position();
+    // Reserve the response inside a closure (encoder borrow ends with the
+    // closure), recording where the cert slot landed in a layout returned
+    // as the closure's owned out-value. After the closure, rebind the
+    // layout against the populated buffer to fill the slot.
+    let (resp, layout) = pal.dma_alloc_var_with(io, |buf| {
+        let mut encoder = ddi::encode_resp_hdr(&ddi::success_hdr(hdr, DdiOp::GetCertificate), buf)?;
+        let layout = DdiGetCertificateResp::reserve(&mut encoder, len)?;
+        Ok((encoder.position(), layout))
+    })?;
 
-    // Fill the reserved slice in-place.
-    pal.get_cert(part_id, body.slot_id, body.cert_id, Some(frame.certificate))
+    let frame = DdiGetCertificateResp::from_layout(resp, &layout);
+
+    pal.get_cert(io, io.pid(), body.slot_id, body.cert_id, Some(frame.certificate))
         .await?;
 
-    Ok(&smem[..total])
+    Ok(resp)
 }

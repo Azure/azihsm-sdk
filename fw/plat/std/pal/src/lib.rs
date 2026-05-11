@@ -49,6 +49,7 @@
 //! [`HsmIo`]: azihsm_fw_hsm_pal_traits::HsmIo
 
 mod aes;
+mod alloc;
 mod buf_pool;
 mod cert;
 mod drivers;
@@ -67,6 +68,8 @@ mod session;
 mod tracing;
 mod vault;
 mod worker;
+
+pub use alloc::StdScopedAlloc;
 
 use azihsm_fw_hsm_pal_traits::*;
 pub use io::HsmIoRequest;

@@ -25,9 +25,9 @@
 //!
 //! ## Key identifiers
 //!
-//! Each key is assigned a [`HsmVaultKeyId`] (`u16`) on creation. This
-//! ID is used in all subsequent DDI operations (sign, encrypt, delete,
-//! etc.) to reference the key without exposing key material.
+//! Each key is assigned a [`HsmKeyId`] (`u16` newtype) on creation.
+//! This ID is used in all subsequent DDI operations (sign, encrypt,
+//! delete, etc.) to reference the key without exposing key material.
 //!
 //! ## Key attributes
 //!
@@ -222,156 +222,230 @@ pub struct HsmVaultKeyAttrs {
 
 /// RAII guard for a newly created vault key.
 ///
-/// Returned by [`HsmVault::vault_key_create`].  If dropped without
-/// calling [`dismiss`](Self::dismiss), the key is automatically deleted
-/// from the vault — providing rollback safety for multi-step DDI
-/// operations (e.g., GenerateKeyPair creates private + public keys;
-/// if the second create fails, the first is automatically rolled back).
+/// Returned by [`HsmVault::vault_key_create`]. The guard implements an
+/// explicit commit/rollback discipline: the key is *provisional* until
+/// [`dismiss`](Self::dismiss) is called.  If the guard is dropped
+/// without dismissing — for example because a downstream encode step
+/// or DDI handler returned an error — the destructor deletes the key
+/// from the vault, leaving no half-created entry behind.
 ///
-/// # Usage
+/// Typical usage:
 ///
-/// ```text
-/// let guard = pal.vault_key_create(pid, key, kind, ...)?;
-/// // ... more fallible work ...
-/// let key_id = guard.dismiss();  // committed — key persists
+/// ```ignore
+/// let guard = pal.vault_key_create(io, &key, kind, sess, attrs, meta)?;
+/// // ... fallible work that uses `guard.key_id()` ...
+/// let id = guard.dismiss(); // commit; key now permanent
 /// ```
-pub struct VaultKeyGuard<'a, P: HsmVault + ?Sized> {
-    pal: &'a P,
-    pid: HsmPartId,
-    key_id: Option<HsmKeyId>,
-}
-
-impl<'a, P: HsmVault + ?Sized> VaultKeyGuard<'a, P> {
-    /// Create a guard wrapping a newly created key.
-    pub fn new(pal: &'a P, pid: HsmPartId, key_id: HsmKeyId) -> Self {
-        Self {
-            pal,
-            pid,
-            key_id: Some(key_id),
-        }
-    }
-
-    /// Peek at the key ID (e.g., to read key material before committing).
-    pub fn key_id(&self) -> HsmKeyId {
-        self.key_id.unwrap()
-    }
-
-    /// Commit — key persists permanently.  Returns the key ID.
-    pub fn dismiss(mut self) -> HsmKeyId {
-        self.key_id.take().unwrap()
-    }
-}
-
-impl<P: HsmVault + ?Sized> Drop for VaultKeyGuard<'_, P> {
-    fn drop(&mut self) {
-        if let Some(kid) = self.key_id.take() {
-            let _ = self.pal.vault_key_delete(self.pid, kid);
-        }
-    }
-}
-
-/// Trait defining the HSM key vault interface.
-///
-/// Provides creation, deletion, and querying of cryptographic keys stored
-/// in protected memory. Implementations are platform-specific:
-/// - **Cortex-M7**: keys stored in on-chip SRAM with hardware protection.
-/// - **Standard PAL**: keys stored on the heap for simulation/testing.
-///
-/// All methods are synchronous — vault operations are fast table lookups
-/// or memory copies, not hardware-offloaded crypto.
-pub trait HsmVault {
-    /// Store a new key in the vault.
+pub trait VaultKeyGuard {
+    /// Returns the key ID assigned to the provisional key.
     ///
-    /// Returns a [`VaultKeyGuard`] that auto-deletes the key on drop
-    /// unless [`dismiss`](VaultKeyGuard::dismiss) is called to persist it.
-    ///
-    /// # Parameters
-    /// - `key` — The key material to store.
-    /// - `kind` — The type/algorithm of the key (e.g., `Aes256`, `Ecc384Private`).
-    /// - `session_id` — If `Some(id)`, the key is session-scoped and will be
-    ///   deleted when the session closes. `None` for application-scoped keys.
-    /// - `attrs` — Key attribute bitfield (encrypt, sign, extractable, etc.).
-    /// - `meta` — Arbitrary per-key metadata blob (e.g., key label, DDI
-    ///   target key metadata).
+    /// Safe to call multiple times; does **not** commit the key.
     ///
     /// # Returns
-    /// A [`VaultKeyGuard`] wrapping the new key ID.
     ///
-    /// # Errors
-    /// Returns [`HsmError`] if the vault is full or the key kind is invalid.
+    /// The [`HsmKeyId`] under which the key is currently registered in
+    /// the vault.
+    fn key_id(&self) -> HsmKeyId;
+
+    /// Commits the key. The vault entry persists past the guard's
+    /// lifetime and the destructor becomes a no-op.
+    ///
+    /// # Returns
+    ///
+    /// The committed [`HsmKeyId`].
+    fn dismiss(self) -> HsmKeyId;
+}
+
+/// HSM key vault interface.
+///
+/// All accessor methods take an [`HsmIo`] handle, used to scope the
+/// query to the calling partition — a key created under one partition
+/// is invisible to other partitions.  Methods returning `&[u8]`
+/// borrow directly from vault storage; the borrow lives no longer
+/// than the `&self` borrow on the vault.
+pub trait HsmVault {
+    /// RAII guard returned by [`vault_key_create`](Self::vault_key_create).
+    ///
+    /// The lifetime parameter ties the guard to the vault so an
+    /// uncommitted key cannot outlive the vault that owns it.
+    type KeyGuard<'a>: VaultKeyGuard
+    where
+        Self: 'a;
+
+    /// Stores a new key in the vault under a freshly assigned
+    /// [`HsmKeyId`].
+    ///
+    /// The returned [`Self::KeyGuard`] holds the key in a *provisional*
+    /// state.  The caller must invoke [`VaultKeyGuard::dismiss`] to
+    /// commit the entry; dropping the guard otherwise rolls the key
+    /// back.
+    ///
+    /// # Parameters
+    ///
+    /// - `io` — caller's I/O context, used to bind the key to the
+    ///   active partition.
+    /// - `key` — raw key material. Length must match `kind`'s expected
+    ///   size (see [`vault_key_len`](Self::vault_key_len)).
+    /// - `kind` — algorithm/size tag for the key (see
+    ///   [`HsmVaultKeyKind`]).
+    /// - `session_id` — `Some(id)` to scope the key to a session
+    ///   (auto-deleted on session close), `None` for a partition-wide
+    ///   key.
+    /// - `attrs` — PKCS#11-style permission bitfield (see
+    ///   [`HsmVaultKeyAttrs`]).
+    /// - `meta` — opaque per-key metadata (e.g. label, ECC point
+    ///   encoding); stored verbatim and returned by
+    ///   [`vault_key_meta`](Self::vault_key_meta).
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(guard)` — provisional vault entry; commit with
+    ///   [`VaultKeyGuard::dismiss`].
+    /// - `Err(HsmError::NotEnoughSpace)` — vault is full.
+    /// - `Err(HsmError::InvalidArg)` — `key.len()` does not match
+    ///   `kind`, or `attrs` are inconsistent.
     fn vault_key_create(
         &self,
-        pid: HsmPartId,
+        io: &impl HsmIo,
         key: &[u8],
         kind: HsmVaultKeyKind,
         session_id: Option<HsmSessId>,
         attrs: HsmVaultKeyAttrs,
         meta: &[u8],
-    ) -> HsmResult<VaultKeyGuard<'_, Self>>;
+    ) -> HsmResult<Self::KeyGuard<'_>>;
 
-    /// Delete a key from the vault by ID.
+    /// Deletes a single key by ID.
     ///
-    /// Zeroizes the key material and frees the slot.
+    /// Idempotent in the sense that a deleted slot becomes available
+    /// for the next [`vault_key_create`](Self::vault_key_create), but
+    /// the deletion of an already-deleted ID is reported as
+    /// [`HsmError::InvalidArg`].
     ///
-    /// # Errors
-    /// Returns [`HsmError`] if the key ID is invalid or the key is
-    /// non-destroyable (internal key).
-    fn vault_key_delete(&self, pid: HsmPartId, key_id: HsmKeyId) -> HsmResult<()>;
-
-    /// Delete all keys associated with the given session.
+    /// # Parameters
     ///
-    /// Called during session close to clean up session-scoped keys.
-    ///
-    /// # Errors
-    /// Returns [`HsmError`] if the session ID is invalid.
-    fn vault_key_delete_by_session(&self, pid: HsmPartId, session_id: HsmSessId) -> HsmResult<()>;
-
-    /// Delete all keys from the vault.
-    ///
-    /// Zeroizes all key material and resets the vault to its initial
-    /// empty state. Used during partition deallocation.
-    ///
-    /// # Errors
-    /// Returns [`HsmError`] if the clear operation fails.
-    fn vault_clear(&self, pid: HsmPartId) -> HsmResult<()>;
-
-    /// Retrieve the key material for a given key ID.
+    /// - `io` — caller's I/O context (partition scope).
+    /// - `key_id` — ID returned by a previous successful
+    ///   [`vault_key_create`](Self::vault_key_create).
     ///
     /// # Returns
-    /// A borrowed reference to the key material. The lifetime is tied
-    /// to the vault's internal storage.
     ///
-    /// # Errors
-    /// Returns [`HsmError`] if the key ID is invalid or the slot is free.
-    fn vault_key(&self, pid: HsmPartId, key_id: HsmKeyId) -> HsmResult<&[u8]>;
+    /// - `Ok(())` on success.
+    /// - `Err(HsmError::InvalidArg)` if `key_id` does not refer to a
+    ///   live key in the caller's partition.
+    /// - `Err(HsmError::NotPermitted)` if the key's `destroyable` bit
+    ///   is unset (e.g. internal device keys).
+    fn vault_key_delete(&self, io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<()>;
 
-    /// Return the key material length in bytes for a given key kind.
+    /// Deletes every key whose `session_id` matches `session_id`.
     ///
-    /// This is a static property of the key type (e.g., 32 for AES-256,
-    /// 48 for ECC-384 private key) and does not require a key ID.
+    /// Used during session teardown to reap session-scoped keys in
+    /// bulk.  Keys with no associated session are unaffected.
     ///
-    /// # Errors
-    /// Returns [`HsmError`] if the key kind is unknown.
-    fn vault_key_len(&self, pid: HsmPartId, kind: HsmVaultKeyKind) -> HsmResult<u16>;
-
-    /// Query the key kind for a stored key.
+    /// # Parameters
     ///
-    /// # Errors
-    /// Returns [`HsmError`] if the key ID is invalid.
-    fn vault_key_kind(&self, pid: HsmPartId, key_id: HsmKeyId) -> HsmResult<HsmVaultKeyKind>;
-
-    /// Query the attribute bitfield for a stored key.
-    ///
-    /// # Errors
-    /// Returns [`HsmError`] if the key ID is invalid.
-    fn vault_key_attrs(&self, pid: HsmPartId, key_id: HsmKeyId) -> HsmResult<HsmVaultKeyAttrs>;
-
-    /// Query the metadata blob for a stored key.
+    /// - `io` — caller's I/O context (partition scope).
+    /// - `session_id` — session whose keys must be removed.
     ///
     /// # Returns
-    /// A borrowed reference to the per-key metadata set at creation time.
     ///
-    /// # Errors
-    /// Returns [`HsmError`] if the key ID is invalid.
-    fn vault_key_meta(&self, pid: HsmPartId, key_id: HsmKeyId) -> HsmResult<&[u8]>;
+    /// - `Ok(())` always; deleting zero keys is not an error.
+    fn vault_key_delete_by_session(&self, io: &impl HsmIo, session_id: HsmSessId) -> HsmResult<()>;
+
+    /// Deletes every key owned by the caller's partition, regardless
+    /// of session or attribute flags.
+    ///
+    /// # Parameters
+    ///
+    /// - `io` — caller's I/O context (partition scope).
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` always; an already-empty vault is not an error.
+    fn vault_clear(&self, io: &impl HsmIo) -> HsmResult<()>;
+
+    /// Borrows the raw key material for `key_id`.
+    ///
+    /// The returned slice points into vault storage and is valid for
+    /// the duration of the `&self` borrow.
+    ///
+    /// # Parameters
+    ///
+    /// - `io` — caller's I/O context (partition scope).
+    /// - `key_id` — key to look up.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(&[u8])` — raw key bytes; length matches
+    ///   [`vault_key_len`](Self::vault_key_len) for the key's `kind`.
+    /// - `Err(HsmError::InvalidArg)` — `key_id` does not refer to a
+    ///   live key in the caller's partition.
+    fn vault_key(&self, io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<&DmaBuf>;
+
+    /// Returns the canonical byte length of a key of the given kind.
+    ///
+    /// For variable-length kinds (e.g. `VarLenHmacSha256`) this
+    /// returns the maximum supported length.
+    ///
+    /// # Parameters
+    ///
+    /// - `io` — caller's I/O context (used only for partition policy
+    ///   checks; no key lookup is performed).
+    /// - `kind` — key kind tag.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(len)` — expected `key.len()` for
+    ///   [`vault_key_create`](Self::vault_key_create) calls of this
+    ///   `kind`.
+    /// - `Err(HsmError::InvalidArg)` — `kind` is `Free` or otherwise
+    ///   not a real key type.
+    fn vault_key_len(&self, io: &impl HsmIo, kind: HsmVaultKeyKind) -> HsmResult<u16>;
+
+    /// Returns the [`HsmVaultKeyKind`] tag stored alongside the key.
+    ///
+    /// # Parameters
+    ///
+    /// - `io` — caller's I/O context (partition scope).
+    /// - `key_id` — key to look up.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(kind)` — algorithm/size tag.
+    /// - `Err(HsmError::InvalidArg)` — `key_id` does not refer to a
+    ///   live key in the caller's partition.
+    fn vault_key_kind(&self, io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<HsmVaultKeyKind>;
+
+    /// Returns the attribute bitfield stored alongside the key.
+    ///
+    /// # Parameters
+    ///
+    /// - `io` — caller's I/O context (partition scope).
+    /// - `key_id` — key to look up.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(attrs)` — the [`HsmVaultKeyAttrs`] supplied at creation.
+    /// - `Err(HsmError::InvalidArg)` — `key_id` does not refer to a
+    ///   live key in the caller's partition.
+    fn vault_key_attrs(&self, io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<HsmVaultKeyAttrs>;
+
+    /// Borrows the per-key metadata blob.
+    ///
+    /// The returned slice points into vault storage and is valid for
+    /// the duration of the `&self` borrow.  Content is whatever was
+    /// passed to
+    /// [`vault_key_create`](Self::vault_key_create)'s `meta`
+    /// parameter.
+    ///
+    /// # Parameters
+    ///
+    /// - `io` — caller's I/O context (partition scope).
+    /// - `key_id` — key to look up.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(&[u8])` — metadata bytes (may be empty).
+    /// - `Err(HsmError::InvalidArg)` — `key_id` does not refer to a
+    ///   live key in the caller's partition.
+    fn vault_key_meta(&self, io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<&[u8]>;
 }

@@ -5,7 +5,7 @@
 //!
 //! Validates the request (rev must be None, body must be empty),
 //! builds a response with the supported API revision range, and
-//! MBOR-encodes it into `smem`.
+//! MBOR-encodes it into a heap-allocated response buffer.
 
 use super::*;
 
@@ -21,13 +21,13 @@ use super::*;
 ///    trailing bytes.
 ///
 /// 3. **Response** — Encodes `DdiGetApiRevCmdResp` with min/max API
-///    revision into `smem`.
-pub(crate) fn get_api_rev<'a>(
-    hdr: &DdiReqHdr,
+///    revision into a heap-allocated response buffer.
+pub(crate) fn get_api_rev<'p, P: HsmPal>(
+    pal: &'p P,
+    io: &impl HsmIo,
     decoder: &mut DdiDecoder<'_>,
-    _fmem: &mut [u8],
-    smem: &'a mut [u8],
-) -> HsmResult<&'a [u8]> {
+    hdr: &DdiReqHdr,
+) -> HsmResult<&'p DmaBuf> {
     // GetApiRev is the bootstrap command — rev must not be set.
     if hdr.rev.is_some() {
         return Err(HsmError::UnsupportedRevision);
@@ -42,7 +42,9 @@ pub(crate) fn get_api_rev<'a>(
         max: DdiApiRev { major: 1, minor: 0 },
     };
 
-    let len = ddi::encode_resp(&ddi::success_hdr(hdr, DdiOp::GetApiRev), &resp_data, smem)?;
+    let resp = pal.dma_alloc_var(io, |buf| {
+        ddi::encode_resp(&ddi::success_hdr(hdr, DdiOp::GetApiRev), &resp_data, buf)
+    })?;
 
-    Ok(&smem[..len])
+    Ok(resp)
 }

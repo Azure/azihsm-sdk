@@ -3,7 +3,7 @@
 
 //! Cryptographic hash (digest) trait for the HSM PAL.
 //!
-//! Defines [`HsmHashAlgo`], [`HsmHashState`], and the [`HsmHash`] trait that PAL
+//! Defines [`HsmHashAlgo`] and the [`HsmHash`] trait that PAL
 //! implementations use to expose hardware-accelerated or software-backed hash
 //! computation.
 //!
@@ -64,13 +64,14 @@ impl HsmHashAlgo {
         }
     }
 
-    /// Minimum buffer size for [`HsmHashState`]: state + block.
+    /// Minimum buffer size for a multi-step hash context: state +
+    /// block.
     pub const fn hash_state_len(&self) -> usize {
         self.state_len() + self.block_len()
     }
 
-    /// Buffer size for `HsmHashState` in HMAC multi-step:
-    /// state + block (pending) + block (opad key).
+    /// Buffer size for a multi-step HMAC context: state + block
+    /// (pending) + block (opad key).
     pub const fn hmac_state_len(&self) -> usize {
         self.state_len() + self.block_len() * 2
     }
@@ -90,100 +91,146 @@ impl HsmHashAlgo {
     }
 }
 
-/// Caller-owned hash state buffer tagged with its algorithm.
+/// Asynchronous SHA digest interface.
 ///
-/// The buffer layout is `[state | block]`, where the first
-/// [`HsmHashAlgo::state_len`] bytes hold the SHA working variables and the next
-/// [`HsmHashAlgo::block_len`] bytes hold a partial block buffer.
-#[derive(Debug)]
-pub struct HsmHashState<'a> {
-    buf: &'a mut [u8],
-    algo: HsmHashAlgo,
-}
-
-impl<'a> HsmHashState<'a> {
-    /// Creates a new hash state wrapper.
-    pub fn new(algo: HsmHashAlgo, buf: &'a mut [u8]) -> Self {
-        debug_assert!(buf.len() >= algo.hash_state_len());
-        Self { buf, algo }
-    }
-
-    /// Returns the final digest bytes.
-    pub fn digest(&self) -> &[u8] {
-        &self.buf[..self.algo.digest_len()]
-    }
-
-    /// Returns the working-variable state portion of the buffer.
-    pub fn state(&self) -> &[u8] {
-        &self.buf[..self.algo.state_len()]
-    }
-
-    /// Returns the wrapped algorithm.
-    pub fn algo(&self) -> HsmHashAlgo {
-        self.algo
-    }
-
-    /// Returns the underlying buffer length.
-    pub fn len(&self) -> usize {
-        self.buf.len()
-    }
-
-    /// Returns whether the underlying buffer is empty.
-    pub fn is_empty(&self) -> bool {
-        self.buf.is_empty()
-    }
-
-    /// Consumes the wrapper and returns the underlying mutable buffer.
-    pub fn into_buf(self) -> &'a mut [u8] {
-        self.buf
-    }
-}
-
-/// Asynchronous hash computation trait.
+/// Implementations expose two complementary APIs:
+///
+/// - **One-shot** ([`hash`](Self::hash)) — entire message available up
+///   front; submitted to the engine in a single descriptor.
+/// - **Multi-step** ([`hash_begin`](Self::hash_begin) →
+///   [`hash_continue`](Self::hash_continue) … →
+///   [`hash_finish`](Self::hash_finish)) — message arrives in
+///   fragments; intermediate state lives in a PAL-allocated context.
+///
+/// All output digests can be requested in either NIST big-endian or
+/// byte-swapped little-endian order via the `big_endian` flag, to
+/// match what the next consumer (DDI response framing, KDF input,
+/// etc.) expects.
 pub trait HsmHash {
     /// Platform-specific multi-step hash context.
+    ///
+    /// Created by [`hash_begin`](Self::hash_begin) and consumed by
+    /// [`hash_finish`](Self::hash_finish).  Holds the intermediate
+    /// SHA working state and a single block's worth of pending
+    /// bytes; the underlying buffer is allocated from the
+    /// [`HsmScopedAlloc`] passed to `hash_begin`, so the context's
+    /// lifetime is bounded by that scope.
     type HashCtx<'a>
     where
         Self: 'a;
 
-    /// Compute a one-shot hash.
+    /// Computes a SHA digest in a single call.
     ///
     /// # Parameters
-    /// - `algo` — Hash algorithm.
-    /// - `data` — Input message.
-    /// - `digest` — Output buffer (≥ `algo.digest_len()` bytes).
-    /// - `big_endian` — If true, big-endian (NIST standard). If false, little-endian.
+    ///
+    /// - `io` — caller's I/O context (per-IO scope).
+    /// - `algo` — hash algorithm; selects the digest length and
+    ///   hardware mode.
+    /// - `data` — input message; any length, including zero.
+    /// - `digest` — output buffer; must be at least
+    ///   [`HsmHashAlgo::digest_len`] bytes.  Only the leading
+    ///   `digest_len` bytes are written.
+    /// - `big_endian` — `true` for NIST big-endian output, `false`
+    ///   for byte-swapped little-endian.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` — `digest[..digest_len]` populated.
+    /// - `Err(HsmError::InvalidArg)` — `digest` shorter than
+    ///   `algo.digest_len()` or `data.len()` exceeds the engine's
+    ///   length limit.
+    /// - `Err(HsmError)` — propagated from the SHA driver.
     async fn hash(
         &self,
+        io: &impl HsmIo,
         algo: HsmHashAlgo,
-        data: &[u8],
-        digest: &mut [u8],
+        data: &DmaBuf,
+        digest: &mut DmaBuf,
         big_endian: bool,
     ) -> HsmResult<()>;
 
-    /// Begin a multi-step hash.
+    /// Begins a multi-step hash.
+    ///
+    /// Allocates the working state buffer from `alloc` and returns a
+    /// fresh context with no bytes processed and an empty pending
+    /// region.
     ///
     /// # Parameters
-    /// - `algo` — Hash algorithm.
-    /// - `state` — Working state buffer (≥ `algo.hash_state_len()` bytes).
-    async fn hash_begin<'a>(
+    ///
+    /// - `io` — caller's I/O context (per-IO scope).
+    /// - `algo` — hash algorithm.
+    /// - `alloc` — scoped allocator used to back the
+    ///   [`Self::HashCtx`] state buffer; the returned context
+    ///   borrows from this allocator's scope.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(ctx)` — fresh hash context ready for
+    ///   [`hash_continue`](Self::hash_continue).
+    /// - `Err(HsmError::NotEnoughSpace)` — `alloc` cannot satisfy
+    ///   the state-buffer allocation
+    ///   ([`HsmHashAlgo::hash_state_len`] bytes).
+    fn hash_begin<'a>(
         &self,
+        io: &impl HsmIo,
         algo: HsmHashAlgo,
-        state: HsmHashState<'a>,
+        alloc: &'a impl HsmScopedAlloc,
     ) -> HsmResult<Self::HashCtx<'a>>
     where
         Self: 'a;
 
-    /// Feed arbitrary-length data into a multi-step hash.
+    /// Feeds bytes into the running hash.
     ///
-    /// Data is buffered internally. Full blocks are submitted to
-    /// hardware as they accumulate.
-    async fn hash_continue(&self, ctx: &mut Self::HashCtx<'_>, data: &[u8]) -> HsmResult<()>;
-
-    /// Finalize the hash and return the state buffer containing the digest.
-    async fn hash_finish<'a>(
+    /// Implementations buffer a partial trailing block internally
+    /// and submit full blocks to the engine as soon as they are
+    /// available; callers can pass arbitrary-length fragments,
+    /// including zero-length.
+    ///
+    /// # Parameters
+    ///
+    /// - `io` — caller's I/O context (per-IO scope).
+    /// - `ctx` — context returned by
+    ///   [`hash_begin`](Self::hash_begin).
+    /// - `data` — bytes to append to the running hash.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` on success.
+    /// - `Err(HsmError::InvalidArg)` — cumulative byte count
+    ///   overflows the engine's length field.
+    /// - `Err(HsmError)` — propagated from the SHA driver.
+    async fn hash_continue(
         &self,
-        ctx: Self::HashCtx<'a>,
+        io: &impl HsmIo,
+        ctx: &mut Self::HashCtx<'_>,
+        data: &DmaBuf,
+    ) -> HsmResult<()>;
+
+    /// Finalises the hash and writes the digest into `digest`.
+    ///
+    /// Consumes `ctx`; any pending bytes are flushed with SHA
+    /// auto-padding before the final block is submitted.
+    ///
+    /// # Parameters
+    ///
+    /// - `io` — caller's I/O context (per-IO scope).
+    /// - `ctx` — context to finalise (consumed).
+    /// - `digest` — output buffer; must be at least
+    ///   [`HsmHashAlgo::digest_len`] bytes.
+    /// - `big_endian` — `true` for NIST big-endian output, `false`
+    ///   for byte-swapped little-endian.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` — `digest[..digest_len]` populated.
+    /// - `Err(HsmError::InvalidArg)` — `digest` is shorter than
+    ///   `digest_len`.
+    /// - `Err(HsmError)` — propagated from the SHA driver.
+    async fn hash_finish(
+        &self,
+        io: &impl HsmIo,
+        ctx: Self::HashCtx<'_>,
+        digest: &mut DmaBuf,
         big_endian: bool,
-    ) -> HsmResult<HsmHashState<'a>>;
+    ) -> HsmResult<()>;
 }

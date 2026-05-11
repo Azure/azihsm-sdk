@@ -7,6 +7,7 @@ mod decode;
 mod encode;
 mod len;
 
+pub use azihsm_fw_hsm_pal_traits::DmaBuf;
 pub use decode::MborDecode;
 pub use decode::MborDecodeError;
 pub use decode::MborDecoder;
@@ -69,6 +70,12 @@ pub trait MborFrameable {
     /// reservable byte-slice field (including nested frames).
     type Frame<'a>;
 
+    /// Layout struct mirroring [`Frame`](Self::Frame), but recording each
+    /// reservable region as an offset range within the encoder's buffer
+    /// instead of a borrow. Produced by [`mbor_reserve`](Self::mbor_reserve)
+    /// and consumed by [`mbor_from_layout`](Self::mbor_from_layout).
+    type Layout;
+
     /// Encode MBOR structure (map header, field IDs, inline primitives)
     /// and reserve mutable slots for byte-slice fields.
     ///
@@ -78,6 +85,32 @@ pub trait MborFrameable {
         encoder: &mut MborEncoder<'a>,
         params: Self::FrameParams,
     ) -> Result<Self::Frame<'a>, MborEncodeError>;
+
+    /// Like [`mbor_frame`](Self::mbor_frame), but returns a layout
+    /// recording where each reservable region was written instead of
+    /// borrowing those regions. Used to defer fill across an `await` or
+    /// other point where holding a borrow of the buffer is inconvenient.
+    fn mbor_reserve(
+        encoder: &mut MborEncoder<'_>,
+        params: Self::FrameParams,
+    ) -> Result<Self::Layout, MborEncodeError>;
+
+    /// Materialize a [`Frame`](Self::Frame) from a previously recorded
+    /// [`Layout`](Self::Layout).
+    ///
+    /// # Safety
+    ///
+    /// `buf_ptr` must point to the start of the same buffer that was
+    /// passed to the encoder when [`mbor_reserve`](Self::mbor_reserve)
+    /// produced `layout`, and that buffer must be at least as long as
+    /// the largest `end` recorded in `layout`. The caller must also
+    /// ensure no other live `&mut` references alias any byte covered by
+    /// `layout`'s recorded ranges for the lifetime `'a`.
+    #[allow(unsafe_code)]
+    unsafe fn mbor_from_layout<'a>(
+        buf_ptr: *mut u8,
+        layout: &Self::Layout,
+    ) -> Self::Frame<'a>;
 }
 
 // ── Wire-format constants (identical to `ddi/serde/mbor`) ──────────────

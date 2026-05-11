@@ -6,7 +6,7 @@
 //! For structs that contain byte-slice fields or `#[ddi(frame)]` children,
 //! this module generates:
 //!
-//! * A companion **`<Struct>Frame<'a>`** struct whose fields are `&'a mut [u8]`
+//! * A companion **`<Struct>Frame<'a>`** struct whose fields are `&'a mut DmaBuf`
 //!   slices (for direct byte-slice fields) or nested `<Child>Frame<'a>` structs
 //!   (for `#[ddi(frame)]` children).
 //! * A **`<Struct>FrameParams`** struct that bundles the parameters for
@@ -46,6 +46,7 @@ pub(crate) fn struct_frame(ddi: &DdiStruct) -> syn::Result<proc_macro2::TokenStr
     let ident = &ddi.ident;
     let frame_ident = format_ident!("{}Frame", ident);
     let params_ident = format_ident!("{}FrameParams", ident);
+    let layout_ident = format_ident!("{}Layout", ident);
 
     // FrameParams needs lifetime parameters when Normal (non-frame)
     // fields carry borrowed data (e.g., `DdiTargetKeyProperties<'a>`).
@@ -74,8 +75,26 @@ pub(crate) fn struct_frame(ddi: &DdiStruct) -> syn::Result<proc_macro2::TokenStr
                     pub #name: <#ty as azihsm_fw_ddi_mbor::MborFrameable>::Frame<'a>
                 }
             } else {
-                // Direct slice: &'a mut [u8].
-                quote! { pub #name: &'a mut [u8] }
+                // Direct slice: &'a mut DmaBuf.
+                quote! { pub #name: &'a mut azihsm_fw_ddi_mbor::DmaBuf }
+            }
+        })
+        .collect::<Vec<_>>();
+
+    // ── Layout struct fields ─────────────────────────────────────────
+    let layout_fields = ddi
+        .fields
+        .iter()
+        .filter(|f| is_frameable_field(f))
+        .map(|f| {
+            let name = &f.ident;
+            if f.frame {
+                let ty = strip_lifetime(&f.ty);
+                quote! {
+                    pub #name: <#ty as azihsm_fw_ddi_mbor::MborFrameable>::Layout
+                }
+            } else {
+                quote! { pub #name: core::ops::Range<usize> }
             }
         })
         .collect::<Vec<_>>();
@@ -143,6 +162,15 @@ pub(crate) fn struct_frame(ddi: &DdiStruct) -> syn::Result<proc_macro2::TokenStr
         .map(frame_encode_field)
         .collect::<Vec<_>>();
 
+    // ── reserve() body — mirrors frame_body but uses reserve_offset
+    //    for slice fields and mbor_reserve for nested frames.
+    let reserve_body = ddi
+        .fields
+        .iter()
+        .filter(|f| !f.opt)
+        .map(reserve_encode_field)
+        .collect::<Vec<_>>();
+
     // ── Frame struct construction ─────────────────────────────────────
     let frame_init = ddi
         .fields
@@ -151,6 +179,37 @@ pub(crate) fn struct_frame(ddi: &DdiStruct) -> syn::Result<proc_macro2::TokenStr
         .map(|f| {
             let name = &f.ident;
             quote! { #name }
+        })
+        .collect::<Vec<_>>();
+
+    // ── Layout struct construction (used by reserve()) ────────────────
+    let layout_init = frame_init.clone();
+
+    // ── from_layout() body — rebuild Frame from buf_ptr + Layout.
+    let from_layout_fields = ddi
+        .fields
+        .iter()
+        .filter(|f| is_frameable_field(f))
+        .map(|f| {
+            let name = &f.ident;
+            if f.frame {
+                let ty = strip_lifetime(&f.ty);
+                quote! {
+                    let #name = <#ty as azihsm_fw_ddi_mbor::MborFrameable>::mbor_from_layout(
+                        buf_ptr,
+                        &layout.#name,
+                    );
+                }
+            } else {
+                quote! {
+                    let #name = azihsm_fw_ddi_mbor::DmaBuf::from_raw_mut(
+                        core::slice::from_raw_parts_mut(
+                            buf_ptr.add(layout.#name.start),
+                            layout.#name.end - layout.#name.start,
+                        )
+                    );
+                }
+            }
         })
         .collect::<Vec<_>>();
 
@@ -176,6 +235,7 @@ pub(crate) fn struct_frame(ddi: &DdiStruct) -> syn::Result<proc_macro2::TokenStr
             })
             .collect::<Vec<_>>();
         let frameable_call_args = frameable_destructure.clone();
+        let reserve_call_args = frameable_destructure.clone();
 
         // Use <'_> for structs with lifetimes, bare ident for others.
         let self_ty = if lifetimes.is_empty() {
@@ -188,6 +248,7 @@ pub(crate) fn struct_frame(ddi: &DdiStruct) -> syn::Result<proc_macro2::TokenStr
             impl azihsm_fw_ddi_mbor::MborFrameable for #self_ty {
                 type FrameParams = #params_ident;
                 type Frame<'a> = #frame_ident<'a>;
+                type Layout = #layout_ident;
 
                 fn mbor_frame<'a>(
                     encoder: &mut azihsm_fw_ddi_mbor::MborEncoder<'a>,
@@ -195,6 +256,22 @@ pub(crate) fn struct_frame(ddi: &DdiStruct) -> syn::Result<proc_macro2::TokenStr
                 ) -> Result<Self::Frame<'a>, azihsm_fw_ddi_mbor::MborEncodeError> {
                     let #params_ident { #(#frameable_destructure,)* } = params;
                     #ident::frame(encoder, #(#frameable_call_args,)*)
+                }
+
+                fn mbor_reserve(
+                    encoder: &mut azihsm_fw_ddi_mbor::MborEncoder<'_>,
+                    params: Self::FrameParams,
+                ) -> Result<Self::Layout, azihsm_fw_ddi_mbor::MborEncodeError> {
+                    let #params_ident { #(#frameable_destructure,)* } = params;
+                    #ident::reserve(encoder, #(#reserve_call_args,)*)
+                }
+
+                #[allow(unsafe_code)]
+                unsafe fn mbor_from_layout<'a>(
+                    buf_ptr: *mut u8,
+                    layout: &Self::Layout,
+                ) -> Self::Frame<'a> {
+                    #ident::from_layout_raw(buf_ptr, layout)
                 }
             }
         }
@@ -218,6 +295,17 @@ pub(crate) fn struct_frame(ddi: &DdiStruct) -> syn::Result<proc_macro2::TokenStr
             #(#params_fields,)*
         }
 
+        /// Layout describing where each reservable field of
+        /// [`#frame_ident`] sits inside the encoder's output buffer.
+        ///
+        /// Produced by [`reserve()`](#ident::reserve) and consumed by
+        /// [`from_layout()`](#ident::from_layout) to materialize a
+        /// [`#frame_ident`] without holding the encoder borrow alive
+        /// across an `await`.
+        pub struct #layout_ident {
+            #(#layout_fields,)*
+        }
+
         impl #ident<'_> {
             /// Write MBOR structure and return mutable slices / nested
             /// frames for in-place fill.
@@ -235,6 +323,68 @@ pub(crate) fn struct_frame(ddi: &DdiStruct) -> syn::Result<proc_macro2::TokenStr
                 Ok(#frame_ident {
                     #(#frame_init,)*
                 })
+            }
+
+            /// Like [`frame()`](Self::frame), but records each reservable
+            /// region's offset range in a [`#layout_ident`] instead of
+            /// returning borrows. Pair with [`from_layout()`](Self::from_layout)
+            /// to materialize the frame later.
+            pub fn reserve<'a>(
+                encoder: &mut azihsm_fw_ddi_mbor::MborEncoder<'_>,
+                #(#frame_params,)*
+            ) -> Result<#layout_ident, azihsm_fw_ddi_mbor::MborEncodeError> {
+                use azihsm_fw_ddi_mbor::MborEncode;
+
+                let cnt = #field_cnt as azihsm_fw_ddi_mbor::MborId;
+                azihsm_fw_ddi_mbor::MborMap(cnt).mbor_encode(encoder)?;
+
+                #(#reserve_body)*
+
+                Ok(#layout_ident {
+                    #(#layout_init,)*
+                })
+            }
+
+            /// Materialize a [`#frame_ident`] from a buffer and a layout
+            /// produced by [`reserve()`](Self::reserve).
+            ///
+            /// `buf` must be the same buffer (or the encoder's underlying
+            /// buffer) used when `layout` was produced. Otherwise the
+            /// returned frame's slices will alias unrelated memory.
+            #[allow(unsafe_code)]
+            pub fn from_layout<'a>(
+                buf: &'a mut azihsm_fw_ddi_mbor::DmaBuf,
+                layout: &#layout_ident,
+            ) -> #frame_ident<'a> {
+                // SAFETY: `layout` was produced by `reserve()` writing into
+                // a buffer of which `buf` is the same buffer (or a longer
+                // prefix). `reserve()` only ever advances the encoder
+                // cursor, so all recorded ranges are non-overlapping and
+                // within the buffer's bounds.
+                unsafe { Self::from_layout_raw(buf.as_mut_ptr(), layout) }
+            }
+
+            /// Raw-pointer variant of [`from_layout()`](Self::from_layout)
+            /// used by the [`MborFrameable`] impl to recurse into nested
+            /// frames without re-borrowing the parent buffer.
+            ///
+            /// # Safety
+            ///
+            /// `buf_ptr` must point to the start of the same buffer used
+            /// when `layout` was produced, the buffer must be at least
+            /// as long as the largest `end` recorded in `layout`, and no
+            /// other live `&mut` references may alias any byte covered by
+            /// `layout`'s recorded ranges for the lifetime `'a`.
+            #[doc(hidden)]
+            #[allow(unsafe_code)]
+            pub unsafe fn from_layout_raw<'a>(
+                buf_ptr: *mut u8,
+                layout: &#layout_ident,
+            ) -> #frame_ident<'a> {
+                #(#from_layout_fields)*
+                #frame_ident {
+                    #(#frame_init,)*
+                }
             }
         }
 
@@ -270,6 +420,57 @@ fn frame_encode_field(f: &DdiStructField) -> proc_macro2::TokenStream {
                 (#id).mbor_encode(encoder)?;
                 let pad = #pad_expr;
                 let #name = encoder.encode_reserve(#len_name, pad)?;
+                // SAFETY: `encoder` was constructed from a `&mut DmaBuf`, so
+                // the slice it returned is itself DMA-accessible.
+                let #name = unsafe { azihsm_fw_ddi_mbor::DmaBuf::from_raw_mut(#name) };
+            }
+        }
+        DdiStructFieldKind::Array => {
+            quote! {
+                (#id).mbor_encode(encoder)?;
+                azihsm_fw_ddi_mbor::MborByteSlice(&#name).mbor_encode(encoder)?;
+            }
+        }
+        DdiStructFieldKind::Normal => {
+            quote! {
+                (#id).mbor_encode(encoder)?;
+                #name.mbor_encode(encoder)?;
+            }
+        }
+    }
+}
+
+/// Generate the reserve encode body for a single non-optional field.
+///
+/// Mirrors [`frame_encode_field`] but uses [`reserve_offset`] for slice
+/// fields (returning a byte range) and [`mbor_reserve`] for nested
+/// frames (returning the child's [`Layout`]).
+fn reserve_encode_field(f: &DdiStructField) -> proc_macro2::TokenStream {
+    let id = f.id;
+    let name = &f.ident;
+
+    if f.frame {
+        let ty = strip_lifetime(&f.ty);
+        return quote! {
+            (#id).mbor_encode(encoder)?;
+            let #name = <#ty as azihsm_fw_ddi_mbor::MborFrameable>::mbor_reserve(
+                encoder, #name,
+            )?;
+        };
+    }
+
+    match f.kind {
+        DdiStructFieldKind::Slice => {
+            let len_name = format_ident!("{}_len", name);
+            let pad_expr = if f.len.is_some() {
+                quote! { 0 }
+            } else {
+                quote! { azihsm_fw_ddi_mbor::pad4(encoder.position() as u32 + 3) as u8 }
+            };
+            quote! {
+                (#id).mbor_encode(encoder)?;
+                let pad = #pad_expr;
+                let #name = encoder.reserve_offset(#len_name, pad)?;
             }
         }
         DdiStructFieldKind::Array => {

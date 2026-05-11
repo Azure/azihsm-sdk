@@ -241,7 +241,7 @@ fn gen_validation(schema: &Schema) -> TokenStream {
 
     let type_checks = gen_type_checks(schema, &layout);
     let padding_checks = gen_padding_checks(&layout);
-    let len_checks = gen_len_checks(schema, &layout, &header_len_val);
+    let len_checks = gen_len_checks(schema, &layout);
 
     quote! {
         let raw = #parse_call;
@@ -329,8 +329,12 @@ fn gen_padding_checks(layout: &TocLayout) -> Vec<TokenStream> {
 fn gen_len_checks(
     schema: &Schema,
     layout: &TocLayout,
-    header_len_val: &TokenStream,
 ) -> Vec<TokenStream> {
+    let header_len_val = match schema.kind {
+        MessageKind::Request { .. } => quote! { azihsm_fw_ddi_tbor::REQ_HEADER_LEN },
+        MessageKind::Response => quote! { azihsm_fw_ddi_tbor::RESP_HEADER_LEN },
+        MessageKind::Fields => unreachable!(),
+    };
     schema
         .fields
         .iter()

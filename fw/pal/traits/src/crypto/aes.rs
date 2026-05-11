@@ -11,21 +11,21 @@
 //!
 //! ## Key representation
 //!
-//! All key parameters are plain `&[u8]` byte slices containing the raw
-//! AES key material. Each PAL implementation is responsible for parsing
-//! them into whatever internal representation it needs.
+//! DMA-facing AES operations take [`DmaBuf`] inputs/outputs for any bytes
+//! touched directly by the hardware engine (keys, IVs, payloads, tags,
+//! tweaks). Random key-generation outputs remain plain `&mut [u8]` so
+//! callers can write into either slices or DMA buffers via deref.
 //!
 //! ## Encrypt / decrypt unification
 //!
-//! CBC and ECB methods take a `encrypt: bool` flag instead of having
-//! separate `_encrypt` / `_decrypt` methods. `true` = encrypt,
-//! `false` = decrypt. This reduces trait surface and matches the
-//! hardware register model where a single direction bit selects the
-//! operation.
+//! CBC and ECB methods take an [`AesOp`] selector instead of having
+//! separate `_encrypt` / `_decrypt` methods. This reduces trait
+//! surface while keeping the operation direction explicit at the call
+//! site.
 //!
 //! ## In-place variants
 //!
-//! Methods suffixed `_in_place` operate on a single `&mut [u8]` buffer,
+//! Methods suffixed `_in_place` operate on a single `&mut DmaBuf` buffer,
 //! reading input and writing output to the same memory. This avoids an
 //! extra buffer allocation and is the natural model for hardware engines
 //! that operate directly on DMA buffers.
@@ -54,106 +54,155 @@ pub enum XtsDataUnitLen {
     Block8K,
 }
 
+/// AES encrypt/decrypt operation selector.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AesOp {
+    /// Encrypt the input.
+    Encrypt,
+
+    /// Decrypt the input.
+    Decrypt,
+}
+
 /// Asynchronous AES operations trait.
 ///
 /// PAL implementations provide this to the core for AES key generation
 /// and block cipher operations. The async signatures allow hardware-backed
 /// implementations to yield while the AES engine processes data.
+///
+/// All methods take `io` as their second parameter so callers can forward
+/// the operation-scoped [`HsmIo`] context through the PAL crypto stack.
 pub trait HsmAes {
     /// Generate a random AES key.
     ///
     /// # Parameters
-    /// - `key` — Output buffer filled with random key material. The
-    ///   buffer length determines the key size:
-    ///   - 16 bytes → AES-128
-    ///   - 24 bytes → AES-192
-    ///   - 32 bytes → AES-256
     ///
-    /// # Errors
-    /// Returns [`HsmError`] if the RNG fails.
-    async fn aes_gen_key(&self, key: &mut [u8]) -> HsmResult<()>;
+    /// - `io` — caller's I/O context (per-IO scope).
+    /// - `key` — output buffer; entirely filled with random bytes.
+    ///   Buffer length determines key size: 16 / 24 / 32 bytes for
+    ///   AES-128 / 192 / 256 respectively.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` — `key` populated.
+    /// - `Err(HsmError::InvalidArg)` — `key.len()` is not 16, 24, or 32.
+    /// - `Err(HsmError)` — propagated from the CSPRNG.
+    async fn aes_gen_key(&self, io: &impl HsmIo, key: &mut [u8]) -> HsmResult<()>;
 
-    /// AES-CBC encrypt or decrypt with separate input/output buffers.
+    /// AES-CBC encrypt or decrypt with separate input / output buffers.
     ///
     /// # Parameters
-    /// - `key` — The AES key.
-    /// - `encrypt` — `true` for encryption, `false` for decryption.
-    /// - `iv` — 16-byte initialization vector. Updated in-place to the
-    ///   last ciphertext block after the operation, enabling chaining
-    ///   across multiple calls.
-    /// - `input` — Source data. Must be a multiple of 16 bytes.
-    /// - `output` — Destination buffer. Must be at least `input.len()`
-    ///   bytes.
     ///
-    /// # Errors
-    /// Returns [`HsmError`] if the cipher operation fails.
+    /// - `io` — caller's I/O context (per-IO scope).
+    /// - `op` — [`AesOp::Encrypt`] or [`AesOp::Decrypt`].
+    /// - `key` — AES key (16 / 24 / 32 bytes).
+    /// - `input` — source bytes; length must be a multiple of 16.
+    /// - `iv_in` — 16-byte IV used for this request.
+    /// - `output` — destination; must be at least `input.len()` bytes.
+    /// - `iv_out` — optional destination for the updated chaining IV.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` — `output[..input.len()]` populated and `iv_out`
+    ///   updated when provided.
+    /// - `Err(HsmError::InvalidArg)` — buffer-size or alignment
+    ///   violation.
+    /// - `Err(HsmError)` — AES driver failure.
     async fn aes_cbc_enc_dec(
         &self,
-        key: &[u8],
-        encrypt: bool,
-        iv: &mut [u8],
-        input: &[u8],
-        output: &mut [u8],
+        io: &impl HsmIo,
+        op: AesOp,
+        key: &DmaBuf,
+        input: &DmaBuf,
+        iv_in: &DmaBuf,
+        output: &mut DmaBuf,
+        iv_out: Option<&mut DmaBuf>,
     ) -> HsmResult<()>;
 
     /// AES-CBC encrypt or decrypt in-place.
     ///
-    /// Reads from and writes to the same `data` buffer. The IV is
-    /// updated in-place for chaining.
+    /// Identical to [`aes_cbc_enc_dec`](Self::aes_cbc_enc_dec) but the
+    /// transform is applied to a single buffer.  This avoids a second
+    /// allocation and is the natural shape for hardware engines that
+    /// operate directly on DMA buffers.
     ///
     /// # Parameters
-    /// - `key` — The AES key.
-    /// - `encrypt` — `true` for encryption, `false` for decryption.
-    /// - `iv` — 16-byte initialization vector (updated in-place).
-    /// - `data` — Buffer holding the input; overwritten with the output.
-    ///   Must be a multiple of 16 bytes.
     ///
-    /// # Errors
-    /// Returns [`HsmError`] if the cipher operation fails.
+    /// - `io` — caller's I/O context (per-IO scope).
+    /// - `op` — [`AesOp::Encrypt`] or [`AesOp::Decrypt`].
+    /// - `key` — AES key (16 / 24 / 32 bytes).
+    /// - `data` — input on entry, output on return; length must
+    ///   be a multiple of 16.
+    /// - `iv_in` — 16-byte IV used for this request.
+    /// - `iv_out` — optional destination for the updated chaining IV.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` — `data` overwritten with the result and `iv_out`
+    ///   updated when provided.
+    /// - `Err(HsmError::InvalidArg)` — buffer-size or alignment
+    ///   violation.
+    /// - `Err(HsmError)` — AES driver failure.
     async fn aes_cbc_enc_dec_in_place(
         &self,
-        key: &[u8],
-        encrypt: bool,
-        iv: &mut [u8],
-        data: &mut [u8],
+        io: &impl HsmIo,
+        op: AesOp,
+        key: &DmaBuf,
+        data: &mut DmaBuf,
+        iv_in: &DmaBuf,
+        iv_out: Option<&mut DmaBuf>,
     ) -> HsmResult<()>;
 
-    /// AES-ECB encrypt or decrypt with separate input/output buffers.
+    /// AES-ECB encrypt or decrypt with separate input / output
+    /// buffers.
     ///
     /// # Parameters
-    /// - `key` — The AES key.
-    /// - `encrypt` — `true` for encryption, `false` for decryption.
-    /// - `input` — Source block(s). Must be a multiple of 16 bytes.
-    /// - `output` — Destination buffer. Must be at least `input.len()`
+    ///
+    /// - `io` — caller's I/O context (per-IO scope).
+    /// - `op` — [`AesOp::Encrypt`] or [`AesOp::Decrypt`].
+    /// - `key` — AES key (16 / 24 / 32 bytes).
+    /// - `input` — source block(s); length must be a multiple of
+    ///   16.
+    /// - `output` — destination; must be at least `input.len()`
     ///   bytes.
     ///
-    /// # Errors
-    /// Returns [`HsmError`] if the cipher operation fails.
+    /// # Returns
+    ///
+    /// - `Ok(())` — `output[..input.len()]` populated.
+    /// - `Err(HsmError::InvalidArg)` — buffer-size or alignment
+    ///   violation.
+    /// - `Err(HsmError)` — AES driver failure.
     async fn aes_ecb_enc_dec(
         &self,
-        key: &[u8],
-        encrypt: bool,
-        input: &[u8],
-        output: &mut [u8],
+        io: &impl HsmIo,
+        op: AesOp,
+        key: &DmaBuf,
+        input: &DmaBuf,
+        output: &mut DmaBuf,
     ) -> HsmResult<()>;
 
     /// AES-ECB encrypt or decrypt in-place.
     ///
-    /// Reads from and writes to the same `data` buffer.
-    ///
     /// # Parameters
-    /// - `key` — The AES key.
-    /// - `encrypt` — `true` for encryption, `false` for decryption.
-    /// - `data` — Buffer holding the input; overwritten with the output.
-    ///   Must be a multiple of 16 bytes.
     ///
-    /// # Errors
-    /// Returns [`HsmError`] if the cipher operation fails.
+    /// - `io` — caller's I/O context (per-IO scope).
+    /// - `op` — [`AesOp::Encrypt`] or [`AesOp::Decrypt`].
+    /// - `key` — AES key (16 / 24 / 32 bytes).
+    /// - `data` — input on entry, output on return; length must
+    ///   be a multiple of 16.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` — `data` overwritten with the result.
+    /// - `Err(HsmError::InvalidArg)` — buffer-size or alignment
+    ///   violation.
+    /// - `Err(HsmError)` — AES driver failure.
     async fn aes_ecb_enc_dec_in_place(
         &self,
-        key: &[u8],
-        encrypt: bool,
-        data: &mut [u8],
+        io: &impl HsmIo,
+        op: AesOp,
+        key: &DmaBuf,
+        data: &mut DmaBuf,
     ) -> HsmResult<()>;
 
     /// AES-GCM encrypt with separate input/output buffers.
@@ -186,6 +235,7 @@ pub trait HsmAes {
     ///
     /// # Parameters
     ///
+    /// - `io` — caller's I/O context (per-IO scope).
     /// - `key` — AES key (16, 24, or 32 bytes for AES-128/192/256).
     /// - `iv` — 12-byte (96-bit) nonce. Must be unique per encryption
     ///   with the same key.
@@ -195,17 +245,22 @@ pub trait HsmAes {
     /// - `ciphertext` — Destination. Must be at least `plaintext.len()`.
     /// - `tag` — Output buffer for the 16-byte authentication tag.
     ///
-    /// # Errors
+    /// # Returns
     ///
-    /// Returns [`HsmError`] if the encryption operation fails.
+    /// - `Ok(())` — `ciphertext[..plaintext.len()]` populated, `tag`
+    ///   set.
+    /// - `Err(HsmError::InvalidArg)` — buffer-size violation, IV not
+    ///   12 bytes, or AAD layout malformed.
+    /// - `Err(HsmError)` — AES driver failure.
     async fn gcm_encrypt(
         &self,
-        key: &[u8],
-        iv: &[u8; 12],
+        io: &impl HsmIo,
+        key: &DmaBuf,
+        iv: &DmaBuf,
         aad_len: usize,
-        plaintext: &[u8],
-        ciphertext: &mut [u8],
-        tag: &mut [u8; 16],
+        plaintext: &DmaBuf,
+        ciphertext: &mut DmaBuf,
+        tag: &mut DmaBuf,
     ) -> HsmResult<()>;
 
     /// AES-GCM encrypt in-place.
@@ -225,6 +280,7 @@ pub trait HsmAes {
     ///
     /// # Parameters
     ///
+    /// - `io` — caller's I/O context (per-IO scope).
     /// - `key` — AES key (16, 24, or 32 bytes for AES-128/192/256).
     /// - `iv` — 12-byte (96-bit) nonce. Must be unique per encryption
     ///   with the same key.
@@ -233,16 +289,20 @@ pub trait HsmAes {
     ///   overwritten with ciphertext.
     /// - `tag` — Output buffer for the 16-byte authentication tag.
     ///
-    /// # Errors
+    /// # Returns
     ///
-    /// Returns [`HsmError`] if the encryption operation fails.
+    /// - `Ok(())` — `data` text portion overwritten, `tag` set.
+    /// - `Err(HsmError::InvalidArg)` — buffer-size violation, IV not
+    ///   12 bytes, or AAD layout malformed.
+    /// - `Err(HsmError)` — AES driver failure.
     async fn gcm_encrypt_in_place(
         &self,
-        key: &[u8],
-        iv: &[u8; 12],
+        io: &impl HsmIo,
+        key: &DmaBuf,
+        iv: &DmaBuf,
         aad_len: usize,
-        data: &mut [u8],
-        tag: &mut [u8; 16],
+        data: &mut DmaBuf,
+        tag: &mut DmaBuf,
     ) -> HsmResult<()>;
 
     /// AES-GCM decrypt with separate input/output buffers.
@@ -259,6 +319,7 @@ pub trait HsmAes {
     ///
     /// # Parameters
     ///
+    /// - `io` — caller's I/O context (per-IO scope).
     /// - `key` — AES key (16, 24, or 32 bytes for AES-128/192/256).
     /// - `iv` — 12-byte (96-bit) nonce used during encryption.
     /// - `aad_len` — **Unpadded** AAD length in bytes. Must match the
@@ -267,17 +328,24 @@ pub trait HsmAes {
     /// - `ciphertext` — `[padded_AAD | ciphertext_bytes]`.
     /// - `plaintext` — Destination. Must be at least `ciphertext.len()`.
     ///
-    /// # Errors
+    /// # Returns
     ///
-    /// Returns [`HsmError`] if the tag verification or decryption fails.
+    /// - `Ok(())` — tag verified and `plaintext[..ciphertext.len()]`
+    ///   populated.
+    /// - `Err(HsmError::InvalidArg)` — buffer-size violation or AAD
+    ///   layout malformed.
+    /// - `Err(HsmError::AesGcmTagMismatch)` — authentication tag
+    ///   does not match.
+    /// - `Err(HsmError)` — AES driver failure.
     async fn gcm_decrypt(
         &self,
-        key: &[u8],
-        iv: &[u8; 12],
+        io: &impl HsmIo,
+        key: &DmaBuf,
+        iv: &DmaBuf,
         aad_len: usize,
-        tag: &[u8; 16],
-        ciphertext: &[u8],
-        plaintext: &mut [u8],
+        tag: &DmaBuf,
+        ciphertext: &DmaBuf,
+        plaintext: &mut DmaBuf,
     ) -> HsmResult<()>;
 
     /// AES-GCM decrypt in-place.
@@ -297,6 +365,7 @@ pub trait HsmAes {
     ///
     /// # Parameters
     ///
+    /// - `io` — caller's I/O context (per-IO scope).
     /// - `key` — AES key (16, 24, or 32 bytes for AES-128/192/256).
     /// - `iv` — 12-byte (96-bit) nonce used during encryption.
     /// - `aad_len` — **Unpadded** AAD length in bytes. Must match the
@@ -305,175 +374,255 @@ pub trait HsmAes {
     /// - `data` — `[padded_AAD | ciphertext]`; the text portion is
     ///   overwritten with plaintext.
     ///
-    /// # Errors
+    /// # Returns
     ///
-    /// Returns [`HsmError`] if the tag verification or decryption fails.
+    /// - `Ok(())` — tag verified, `data` text portion overwritten
+    ///   with plaintext.
+    /// - `Err(HsmError::InvalidArg)` — buffer-size violation or AAD
+    ///   layout malformed.
+    /// - `Err(HsmError::AesGcmTagMismatch)` — authentication tag
+    ///   does not match (`data` is left in an unspecified state).
+    /// - `Err(HsmError)` — AES driver failure.
     async fn gcm_decrypt_in_place(
         &self,
-        key: &[u8],
-        iv: &[u8; 12],
+        io: &impl HsmIo,
+        key: &DmaBuf,
+        iv: &DmaBuf,
         aad_len: usize,
-        tag: &[u8; 16],
-        data: &mut [u8],
+        tag: &DmaBuf,
+        data: &mut DmaBuf,
     ) -> HsmResult<()>;
 
     // ── AES Key Wrap (RFC 3394) ────────────────────────────────────
 
     /// AES Key Wrap (RFC 3394) — wrap key data.
     ///
-    /// Wraps `input` using the KEK `key`. The output includes an 8-byte
-    /// integrity check value (IV) prepended to the wrapped semiblocks.
+    /// Wraps `input` under the KEK `key`.  The output prepends the
+    /// 8-byte default integrity check value
+    /// `0xA6A6A6A6A6A6A6A6` to the wrapped semiblocks.
     ///
     /// # Parameters
     ///
-    /// - `key` — Key Encryption Key (16, 24, or 32 bytes).
-    /// - `input` — Key data to wrap. Must be ≥ 16 bytes, a multiple of 8,
-    ///   and at most 3072 bytes.
-    /// - `output` — Destination buffer. Must be at least `input.len() + 8`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`HsmError::InvalidArg`] if input constraints are violated.
-    async fn aes_kw_wrap(&self, key: &[u8], input: &[u8], output: &mut [u8]) -> HsmResult<()>;
-
-    /// AES Key Wrap (RFC 3394) — unwrap key data.
-    ///
-    /// Unwraps `input` using the KEK `key` and verifies the integrity
-    /// check value. Returns an error if the IV does not match the
-    /// default 0xA6A6A6A6A6A6A6A6 (wrong key or tampered data).
-    ///
-    /// # Parameters
-    ///
-    /// - `key` — Key Encryption Key (16, 24, or 32 bytes).
-    /// - `input` — Wrapped key data. Must be ≥ 24 bytes, a multiple of 8,
-    ///   and at most 3080 bytes.
-    /// - `output` — Destination buffer. Must be at least `input.len() - 8`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`HsmError::InvalidArg`] on bad input sizes.
-    /// Returns [`HsmError::AesUnwrapFailed`] on IV mismatch.
-    async fn aes_kw_unwrap(&self, key: &[u8], input: &[u8], output: &mut [u8]) -> HsmResult<()>;
-
-    // ── AES Key Wrap with Padding (RFC 5649) ───────────────────────
-
-    /// AES Key Wrap with Padding (RFC 5649) — wrap key data.
-    ///
-    /// Wraps `input` of any length (≥ 1 byte, ≤ 3072 bytes) using the
-    /// KEK `key`. Pads to an 8-byte boundary and uses an Alternative
-    /// Initial Value (AIV) that encodes the plaintext length.
-    ///
-    /// For padded input ≤ 8 bytes (1 semiblock), a single AES-ECB
-    /// encryption is used. Otherwise, delegates to AES-KW with the AIV.
-    ///
-    /// # Parameters
-    ///
-    /// - `key` — Key Encryption Key (16, 24, or 32 bytes).
-    /// - `input` — Key data to wrap (1..=3072 bytes, any alignment).
-    /// - `output` — Destination buffer. Must be at least
-    ///   `round_up_8(input.len()) + 8` bytes.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`HsmError::InvalidArg`] if input constraints are violated.
-    async fn aes_kwp_wrap(&self, key: &[u8], input: &[u8], output: &mut [u8]) -> HsmResult<()>;
-
-    /// AES Key Wrap with Padding (RFC 5649) — unwrap key data.
-    ///
-    /// Unwraps `input` and verifies the AIV (constant prefix + MLI).
-    /// Validates that padding bytes are all zero.
-    ///
-    /// # Parameters
-    ///
-    /// - `key` — Key Encryption Key (16, 24, or 32 bytes).
-    /// - `input` — Wrapped key data. Must be ≥ 16 bytes, a multiple of 8,
-    ///   and at most 3080 bytes.
-    /// - `output` — Destination buffer. Must be at least `input.len() - 8`.
+    /// - `io` — caller's I/O context (per-IO scope).
+    /// - `key` — Key Encryption Key (16 / 24 / 32 bytes).
+    /// - `input` — plaintext key material.  Must be ≥ 16 bytes,
+    ///   a multiple of 8, and at most 3072 bytes.
+    /// - `output` — destination; must be at least
+    ///   `input.len() + 8` bytes.
     ///
     /// # Returns
     ///
-    /// The actual plaintext length (MLI), which may be shorter than
-    /// `output.len()`.
+    /// - `Ok(())` — `output[..input.len() + 8]` populated.
+    /// - `Err(HsmError::InvalidArg)` — size or alignment
+    ///   constraints violated.
+    /// - `Err(HsmError)` — AES driver failure.
+    async fn aes_kw_wrap(
+        &self,
+        io: &impl HsmIo,
+        key: &DmaBuf,
+        input: &DmaBuf,
+        output: &mut DmaBuf,
+    ) -> HsmResult<()>;
+
+    /// AES Key Wrap (RFC 3394) — unwrap key data.
     ///
-    /// # Errors
+    /// Unwraps `input` under the KEK `key` and verifies the
+    /// integrity check value matches the default `0xA6A6…`.
     ///
-    /// Returns [`HsmError::InvalidArg`] on bad input sizes.
-    /// Returns [`HsmError::AesUnwrapFailed`] on AIV mismatch or bad padding.
-    async fn aes_kwp_unwrap(&self, key: &[u8], input: &[u8], output: &mut [u8])
-    -> HsmResult<usize>;
+    /// # Parameters
+    ///
+    /// - `io` — caller's I/O context (per-IO scope).
+    /// - `key` — Key Encryption Key (16 / 24 / 32 bytes).
+    /// - `input` — wrapped key data.  Must be ≥ 24 bytes,
+    ///   a multiple of 8, and at most 3080 bytes.
+    /// - `output` — destination; must be at least
+    ///   `input.len() - 8` bytes.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` — `output[..input.len() - 8]` populated.
+    /// - `Err(HsmError::InvalidArg)` — size or alignment
+    ///   constraints violated.
+    /// - `Err(HsmError::AesUnwrapFailed)` — IV mismatch (wrong
+    ///   key or tampered ciphertext).
+    /// - `Err(HsmError)` — AES driver failure.
+    async fn aes_kw_unwrap(
+        &self,
+        io: &impl HsmIo,
+        key: &DmaBuf,
+        input: &DmaBuf,
+        output: &mut DmaBuf,
+    ) -> HsmResult<()>;
+
+    // ── AES Key Wrap with Padding (RFC 5649) ───────────────────────
+
+    /// AES Key Wrap with Padding (RFC 5649) — wrap key data of any
+    /// length.
+    ///
+    /// Pads `input` to an 8-byte boundary and uses an Alternative
+    /// Initial Value (AIV) that encodes the plaintext length.
+    /// Padded payloads of one semiblock use a single AES-ECB pass;
+    /// longer payloads delegate to AES-KW with the AIV.
+    ///
+    /// # Parameters
+    ///
+    /// - `io` — caller's I/O context (per-IO scope).
+    /// - `key` — Key Encryption Key (16 / 24 / 32 bytes).
+    /// - `input` — plaintext (1..=3072 bytes, any alignment).
+    /// - `output` — destination; must be at least
+    ///   `round_up_8(input.len()) + 8` bytes.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` — wrapped output populated.
+    /// - `Err(HsmError::InvalidArg)` — size constraints violated.
+    /// - `Err(HsmError)` — AES driver failure.
+    async fn aes_kwp_wrap(
+        &self,
+        io: &impl HsmIo,
+        key: &DmaBuf,
+        input: &DmaBuf,
+        output: &mut DmaBuf,
+    ) -> HsmResult<()>;
+
+    /// AES Key Wrap with Padding (RFC 5649) — unwrap key data.
+    ///
+    /// Verifies the AIV (constant prefix + Message Length
+    /// Indicator) and that all trailing pad bytes are zero.
+    ///
+    /// # Parameters
+    ///
+    /// - `io` — caller's I/O context (per-IO scope).
+    /// - `key` — Key Encryption Key (16 / 24 / 32 bytes).
+    /// - `input` — wrapped key data.  Must be ≥ 16 bytes, a
+    ///   multiple of 8, and at most 3080 bytes.
+    /// - `output` — destination; must be at least
+    ///   `input.len() - 8` bytes.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(mli)` — the recovered plaintext length (the MLI from
+    ///   the AIV); `output[..mli]` is valid plaintext.
+    /// - `Err(HsmError::InvalidArg)` — size constraints violated.
+    /// - `Err(HsmError::AesUnwrapFailed)` — AIV mismatch or
+    ///   non-zero pad bytes.
+    /// - `Err(HsmError)` — AES driver failure.
+    async fn aes_kwp_unwrap(
+        &self,
+        io: &impl HsmIo,
+        key: &DmaBuf,
+        input: &DmaBuf,
+        output: &mut DmaBuf,
+    ) -> HsmResult<usize>;
 
     // ── AES-XTS (IEEE 1619 / NIST SP 800-38E) ─────────────────────
 
-    /// Generate a random AES-256-XTS key pair (K1 || K2).
+    /// Generate a random AES-256-XTS key (`K1 || K2`).
     ///
-    /// Fills `key` with 64 random bytes and verifies K1 ≠ K2.
+    /// Fills `key` with 64 random bytes and ensures `K1 ≠ K2` (XTS
+    /// requires distinct halves; the standard prohibits a tweak
+    /// degenerate case).
     ///
     /// # Parameters
-    /// - `key` — Output buffer. Must be exactly 64 bytes.
     ///
-    /// # Errors
-    /// Returns [`HsmError::InvalidArg`] if `key.len() != 64`.
-    async fn aes_xts_gen_key(&self, key: &mut [u8]) -> HsmResult<()>;
+    /// - `io` — caller's I/O context (per-IO scope).
+    /// - `key` — output buffer; must be exactly 64 bytes.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` — `key` populated, `K1 ≠ K2`.
+    /// - `Err(HsmError::InvalidArg)` — `key.len() != 64`.
+    /// - `Err(HsmError)` — propagated from the CSPRNG.
+    async fn aes_xts_gen_key(&self, io: &impl HsmIo, key: &mut [u8]) -> HsmResult<()>;
 
-    /// AES-XTS encrypt with separate input/output buffers.
+    /// AES-XTS encrypt with separate input / output buffers
+    /// (IEEE 1619 / NIST SP 800-38E).
     ///
     /// # Parameters
-    /// - `key` — XTS key (64 bytes: K1\[32\] || K2\[32\]).
-    /// - `tweak` — 8-byte tweak (sector number, little-endian).
-    /// - `dul` — Data unit length mode.
-    /// - `input` — Plaintext. Must be ≥ 16 bytes, a multiple of 16,
-    ///   and a multiple of `dul` (when not [`XtsDataUnitLen::Full`]).
-    /// - `output` — Ciphertext buffer. Must be at least `input.len()`.
     ///
-    /// # Errors
-    /// Returns [`HsmError::InvalidArg`] on invalid key/tweak/input sizes.
+    /// - `io` — caller's I/O context (per-IO scope).
+    /// - `key` — XTS key, exactly 64 bytes (`K1[32] || K2[32]`).
+    /// - `tweak` — 8-byte tweak (typically a little-endian sector
+    ///   number).
+    /// - `dul` — data-unit length selector; controls how the
+    ///   tweak is incremented.
+    /// - `input` — plaintext.  Must be ≥ 16 bytes, a multiple of
+    ///   16, and a multiple of `dul.bytes()` when `dul` is not
+    ///   [`XtsDataUnitLen::Full`].
+    /// - `output` — destination; must be at least
+    ///   `input.len()` bytes.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` — `output[..input.len()]` populated.
+    /// - `Err(HsmError::InvalidArg)` — size or alignment
+    ///   violation, or `K1 == K2`.
+    /// - `Err(HsmError)` — AES driver failure.
     async fn aes_xts_encrypt(
         &self,
-        key: &[u8],
-        tweak: &[u8],
+        io: &impl HsmIo,
+        key: &DmaBuf,
+        tweak: &DmaBuf,
         dul: XtsDataUnitLen,
-        input: &[u8],
-        output: &mut [u8],
+        input: &DmaBuf,
+        output: &mut DmaBuf,
     ) -> HsmResult<()>;
 
-    /// AES-XTS decrypt with separate input/output buffers.
+    /// AES-XTS decrypt with separate input / output buffers.
     ///
-    /// Same parameters and constraints as
-    /// [`aes_xts_encrypt`](Self::aes_xts_encrypt).
+    /// Parameter and return semantics match
+    /// [`aes_xts_encrypt`](Self::aes_xts_encrypt) with the
+    /// direction reversed; `input` is ciphertext and `output`
+    /// receives plaintext.
     async fn aes_xts_decrypt(
         &self,
-        key: &[u8],
-        tweak: &[u8],
+        io: &impl HsmIo,
+        key: &DmaBuf,
+        tweak: &DmaBuf,
         dul: XtsDataUnitLen,
-        input: &[u8],
-        output: &mut [u8],
+        input: &DmaBuf,
+        output: &mut DmaBuf,
     ) -> HsmResult<()>;
 
     /// AES-XTS encrypt in-place.
     ///
     /// # Parameters
-    /// - `key` — XTS key (64 bytes: K1\[32\] || K2\[32\]).
-    /// - `tweak` — 8-byte tweak (sector number, little-endian).
-    /// - `dul` — Data unit length mode.
-    /// - `data` — Buffer holding plaintext; overwritten with ciphertext.
-    ///   Must be ≥ 16 bytes, a multiple of 16, and a multiple of `dul`.
+    ///
+    /// - `io` — caller's I/O context (per-IO scope).
+    /// - `key` — XTS key, exactly 64 bytes (`K1[32] || K2[32]`).
+    /// - `tweak` — 8-byte tweak.
+    /// - `dul` — data-unit length selector.
+    /// - `data` — plaintext on entry, ciphertext on return; must
+    ///   be ≥ 16 bytes, a multiple of 16, and a multiple of
+    ///   `dul.bytes()` when `dul` is not [`XtsDataUnitLen::Full`].
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` — `data` overwritten with ciphertext.
+    /// - `Err(HsmError::InvalidArg)` — size or alignment
+    ///   violation, or `K1 == K2`.
+    /// - `Err(HsmError)` — AES driver failure.
     async fn aes_xts_encrypt_in_place(
         &self,
-        key: &[u8],
-        tweak: &[u8],
+        io: &impl HsmIo,
+        key: &DmaBuf,
+        tweak: &DmaBuf,
         dul: XtsDataUnitLen,
-        data: &mut [u8],
+        data: &mut DmaBuf,
     ) -> HsmResult<()>;
 
     /// AES-XTS decrypt in-place.
     ///
-    /// Same parameters and constraints as
-    /// [`aes_xts_encrypt_in_place`](Self::aes_xts_encrypt_in_place).
+    /// Parameter and return semantics match
+    /// [`aes_xts_encrypt_in_place`](Self::aes_xts_encrypt_in_place)
+    /// with the direction reversed; `data` holds ciphertext on
+    /// entry and plaintext on return.
     async fn aes_xts_decrypt_in_place(
         &self,
-        key: &[u8],
-        tweak: &[u8],
+        io: &impl HsmIo,
+        key: &DmaBuf,
+        tweak: &DmaBuf,
         dul: XtsDataUnitLen,
-        data: &mut [u8],
+        data: &mut DmaBuf,
     ) -> HsmResult<()>;
 }

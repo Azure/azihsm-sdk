@@ -25,101 +25,104 @@ fn to_hash_algo(algo: HsmHashAlgo) -> HashAlgo {
 }
 
 impl HsmKdf for StdHsmPal {
-    async fn hkdf_extract<'a>(
+    async fn hkdf_extract(
         &self,
+        _io: &impl HsmIo,
         algo: HsmHashAlgo,
-        salt: &[u8],
-        ikm: &[u8],
-        prk: &mut [u8],
-        state: HsmKdfState<'a>,
-    ) -> HsmResult<HsmKdfState<'a>> {
+        salt: &DmaBuf,
+        ikm: &DmaBuf,
+        prk: &mut DmaBuf,
+    ) -> HsmResult<()> {
         self.kdf
             .hkdf(
-                ikm,
+                &ikm[..],
                 to_hash_algo(algo),
                 azihsm_crypto::HkdfMode::Extract,
-                salt,
+                &salt[..],
                 &[],
-                prk,
+                &mut prk[..],
             )
-            .await?;
-        Ok(state)
+            .await
     }
 
-    async fn hkdf_expand<'a>(
+    async fn hkdf_expand(
         &self,
+        _io: &impl HsmIo,
         algo: HsmHashAlgo,
-        prk: &[u8],
-        info: &[u8],
-        output: &mut [u8],
-        state: HsmKdfState<'a>,
-    ) -> HsmResult<HsmKdfState<'a>> {
+        prk: &DmaBuf,
+        info: &DmaBuf,
+        output: &mut DmaBuf,
+    ) -> HsmResult<()> {
         self.kdf
             .hkdf(
-                prk,
+                &prk[..],
                 to_hash_algo(algo),
                 azihsm_crypto::HkdfMode::Expand,
                 &[],
-                info,
-                output,
+                &info[..],
+                &mut output[..],
             )
-            .await?;
-        Ok(state)
+            .await
     }
 
-    async fn sp800_108_kdf<'a>(
+    async fn sp800_108_kdf(
         &self,
+        _io: &impl HsmIo,
         algo: HsmHashAlgo,
-        key: &[u8],
-        label: &[u8],
-        context: &[u8],
-        output: &mut [u8],
-        state: HsmKdfState<'a>,
-    ) -> HsmResult<HsmKdfState<'a>> {
+        key: &DmaBuf,
+        label: &DmaBuf,
+        context: &DmaBuf,
+        output: &mut DmaBuf,
+    ) -> HsmResult<()> {
         self.kdf
-            .kbkdf(key, to_hash_algo(algo), label, context, output)
-            .await?;
-        Ok(state)
+            .kbkdf(
+                &key[..],
+                to_hash_algo(algo),
+                &label[..],
+                &context[..],
+                &mut output[..],
+            )
+            .await
     }
 
     async fn mgf1(
         &self,
+        _io: &impl HsmIo,
         _algo: HsmHashAlgo,
-        _seed: &[u8],
-        _mask: &mut [u8],
-        _state: &mut [u8],
+        _seed: &DmaBuf,
+        _mask: &mut DmaBuf,
     ) -> HsmResult<()> {
         todo!()
     }
 
     async fn mgf1_xor(
         &self,
+        _io: &impl HsmIo,
         _algo: HsmHashAlgo,
-        _seed: &[u8],
-        _mask: &mut [u8],
-        _state: &mut [u8],
+        _seed: &DmaBuf,
+        _mask: &mut DmaBuf,
     ) -> HsmResult<()> {
         todo!()
     }
 
     async fn x963_kdf(
         &self,
+        _io: &impl HsmIo,
         _algo: HsmHashAlgo,
-        _z: &[u8],
-        _shared_info: &[u8],
-        _key: &mut [u8],
-        _state: &mut [u8],
+        _z: &DmaBuf,
+        _shared_info: &DmaBuf,
+        _key: &mut DmaBuf,
     ) -> HsmResult<()> {
         todo!()
     }
 
     async fn sp800_56a_kdf(
         &self,
+        _io: &impl HsmIo,
         _algo: HsmHashAlgo,
-        _z: &[u8],
-        _other_info: &[u8],
-        _key: &mut [u8],
-        _state: &mut [u8],
+        _z: &DmaBuf,
+        _other_info: &DmaBuf,
+        _key: &mut DmaBuf,
     ) -> HsmResult<()> {
         todo!()
     }

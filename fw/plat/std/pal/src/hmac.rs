@@ -20,49 +20,59 @@ fn to_hash_algo(algo: HsmHashAlgo) -> HashAlgo {
     }
 }
 
+#[allow(dead_code)]
+pub struct StdHmacCtx<'a> {
+    algo: HsmHashAlgo,
+    state: &'a mut [u8],
+}
+
 impl HsmHmac for StdHsmPal {
     type HmacCtx<'a>
-        = HsmHashState<'a>
+        = StdHmacCtx<'a>
     where
         Self: 'a;
 
-    async fn hmac_gen_key(&self, _algo: HsmHashAlgo, key: &mut [u8]) -> HsmResult<()> {
+    async fn hmac_gen_key(
+        &self,
+        _io: &impl HsmIo,
+        _algo: HsmHashAlgo,
+        key: &mut [u8],
+    ) -> HsmResult<()> {
         self.hmac.gen_key(key).await
     }
 
-    async fn hmac_sign<'a>(
+    async fn hmac_sign(
         &self,
+        _io: &impl HsmIo,
         algo: HsmHashAlgo,
-        key: &[u8],
-        data: &[u8],
-        tag: &mut [u8],
-        _state: HsmHashState<'a>,
-    ) -> HsmResult<()>
-    where
-        Self: 'a,
-    {
-        self.hmac.sign(to_hash_algo(algo), key, data, tag).await
+        key: &DmaBuf,
+        data: &DmaBuf,
+        tag: &mut DmaBuf,
+    ) -> HsmResult<()> {
+        self.hmac
+            .sign(to_hash_algo(algo), &key[..], &data[..], &mut tag[..])
+            .await
     }
 
-    async fn hmac_verify<'a>(
+    async fn hmac_verify(
         &self,
+        _io: &impl HsmIo,
         algo: HsmHashAlgo,
-        key: &[u8],
-        data: &[u8],
-        tag: &[u8],
-        _state: HsmHashState<'a>,
-    ) -> HsmResult<bool>
-    where
-        Self: 'a,
-    {
-        self.hmac.verify(to_hash_algo(algo), key, data, tag).await
+        key: &DmaBuf,
+        data: &DmaBuf,
+        tag: &DmaBuf,
+    ) -> HsmResult<bool> {
+        self.hmac
+            .verify(to_hash_algo(algo), &key[..], &data[..], &tag[..])
+            .await
     }
 
     async fn hmac_begin<'a>(
         &self,
+        _io: &impl HsmIo,
         _algo: HsmHashAlgo,
-        _key: &[u8],
-        _state: HsmHashState<'a>,
+        _key: &DmaBuf,
+        _alloc: &'a impl HsmScopedAlloc,
     ) -> HsmResult<Self::HmacCtx<'a>>
     where
         Self: 'a,
@@ -70,19 +80,39 @@ impl HsmHmac for StdHsmPal {
         todo!()
     }
 
-    async fn hmac_continue(&self, _ctx: &mut Self::HmacCtx<'_>, _data: &[u8]) -> HsmResult<()> {
+    async fn hmac_continue(
+        &self,
+        _io: &impl HsmIo,
+        _ctx: &mut Self::HmacCtx<'_>,
+        _data: &DmaBuf,
+    ) -> HsmResult<()> {
         todo!()
     }
 
-    async fn hmac_finish<'a>(&self, _ctx: Self::HmacCtx<'a>) -> HsmResult<HsmHashState<'a>> {
+    async fn hmac_finish(
+        &self,
+        _io: &impl HsmIo,
+        _ctx: Self::HmacCtx<'_>,
+        _tag: &mut DmaBuf,
+    ) -> HsmResult<()> {
         todo!()
     }
 
-    async fn hmac_finish_into(&self, _ctx: Self::HmacCtx<'_>, _dest: &mut [u8]) -> HsmResult<()> {
+    async fn hmac_finish_into(
+        &self,
+        _io: &impl HsmIo,
+        _ctx: Self::HmacCtx<'_>,
+        _dest: &mut DmaBuf,
+    ) -> HsmResult<()> {
         todo!()
     }
 
-    async fn hmac_finish_verify(&self, _ctx: Self::HmacCtx<'_>, _tag: &[u8]) -> HsmResult<bool> {
+    async fn hmac_finish_verify(
+        &self,
+        _io: &impl HsmIo,
+        _ctx: Self::HmacCtx<'_>,
+        _tag: &DmaBuf,
+    ) -> HsmResult<bool> {
         todo!()
     }
 }

@@ -30,6 +30,7 @@
 //! responsible for providing buffers of the correct size (key size in
 //! bytes for RSA operations).
 
+use super::HsmScopedAlloc;
 use super::*;
 
 // ── RSA key size ───────────────────────────────────────────────────
@@ -141,7 +142,7 @@ impl HsmRsaKey {
     pub const fn pss_work_len(&self, algo: HsmHashAlgo) -> usize {
         let k = self.modulus_len();
         let h_len = algo.digest_len();
-        k + algo.hash_state_len() + algo.mgf1_state_len(h_len)
+        k + algo.mgf1_state_len(h_len)
     }
 }
 
@@ -172,254 +173,380 @@ pub trait HsmRsa {
     /// Generate an RSA key pair.
     ///
     /// # Parameters
-    /// - `key_size` — RSA modulus size in bits (2048, 3072, or 4096).
-    /// - `priv_key` — Output buffer for the serialized private key.
-    /// - `pub_key` — Output buffer for the serialized public key.
-    /// - `pct` — Pairwise Consistency Test mode. When not [`HsmRsaPct::None`],
-    ///   a sign/verify or encrypt/decrypt round-trip is performed to
-    ///   validate the generated key pair (FIPS 140-3 requirement).
     ///
-    /// # Errors
-    /// Returns [`HsmError`] if key generation fails, or if the PCT
-    /// verification fails.
+    /// - `io` — caller's I/O context (per-IO scope).
+    /// - `key_size` — modulus size selector (2048 / 3072 / 4096).
+    /// - `priv_key` — destination for the serialized private key;
+    ///   length depends on `key_size` and CRT vs non-CRT layout.
+    /// - `pub_key` — destination for the serialized public key;
+    ///   length is `key_size.modulus_len()` plus the encoded
+    ///   exponent.
+    /// - `pct` — Pairwise Consistency Test selector.  When not
+    ///   [`HsmRsaPct::None`], a sign / verify or encrypt / decrypt
+    ///   round-trip is performed (FIPS 140-3 requirement).
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` — both buffers populated.
+    /// - `Err(HsmError::InvalidArg)` — buffer-size mismatch.
+    /// - `Err(HsmError)` — PKA / RNG failure or PCT failed (the key
+    ///   pair is rejected).
     async fn ras_gen_keypair(
         &self,
+        io: &impl HsmIo,
         key_size: HsmRsaKey,
-        priv_key: &mut [u8],
-        pub_key: &mut [u8],
+        priv_key: &mut DmaBuf,
+        pub_key: &mut DmaBuf,
         pct: HsmRsaPct,
     ) -> Result<(), HsmError>;
 
     /// Private-key modular exponentiation: `x = y^d mod n`.
     ///
-    /// Used for RSA decryption and signing.
+    /// Used by RSA decryption and signing primitives.
     ///
     /// # Parameters
-    /// - `key` — The RSA private key.
-    /// - `y` — Input data (ciphertext for decryption, message hash for
-    ///   signing). Must be exactly the key size in bytes.
-    /// - `x` — Output buffer for the result. Must be exactly the key
-    ///   size in bytes.
     ///
-    /// # Errors
-    /// Returns [`HsmError`] if the exponentiation fails (e.g., PKA
-    /// engine error, invalid key).
+    /// - `io` — caller's I/O context (per-IO scope).
+    /// - `key_size` — modulus size selector.
+    /// - `key` — RSA private key in PAL-defined serialization
+    ///   matching `key_size.is_crt()`.
+    /// - `y` — input integer; must be exactly
+    ///   `key_size.modulus_len()` bytes.
+    /// - `x` — output integer; must be exactly
+    ///   `key_size.modulus_len()` bytes.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` — `x` populated.
+    /// - `Err(HsmError::InvalidArg)` — buffer-size mismatch.
+    /// - `Err(HsmError)` — PKA driver failure.
     async fn mod_exp_priv(
         &self,
+        io: &impl HsmIo,
         key_size: HsmRsaKey,
-        key: &[u8],
-        y: &[u8],
-        x: &mut [u8],
+        key: &DmaBuf,
+        y: &DmaBuf,
+        x: &mut DmaBuf,
     ) -> Result<(), HsmError>;
 
     /// Public-key modular exponentiation: `y = x^e mod n`.
     ///
-    /// Used for RSA encryption and signature verification.
+    /// Used by RSA encryption and signature-verification primitives.
     ///
     /// # Parameters
-    /// - `key` — The RSA public key.
-    /// - `x` — Input data (plaintext for encryption, signature for
-    ///   verification). Must be exactly the key size in bytes.
-    /// - `y` — Output buffer for the result. Must be exactly the key
-    ///   size in bytes.
     ///
-    /// # Errors
-    /// Returns [`HsmError`] if the exponentiation fails (e.g., PKA
-    /// engine error, invalid key).
+    /// - `io` — caller's I/O context (per-IO scope).
+    /// - `key_size` — modulus size selector.
+    /// - `key` — RSA public key.
+    /// - `x` — input integer; must be exactly
+    ///   `key_size.modulus_len()` bytes.
+    /// - `y` — output integer; must be exactly
+    ///   `key_size.modulus_len()` bytes.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` — `y` populated.
+    /// - `Err(HsmError::InvalidArg)` — buffer-size mismatch.
+    /// - `Err(HsmError)` — PKA driver failure.
     async fn mod_exp_pub(
         &self,
+        io: &impl HsmIo,
         key_size: HsmRsaKey,
-        key: &[u8],
-        x: &[u8],
-        y: &mut [u8],
+        key: &DmaBuf,
+        x: &DmaBuf,
+        y: &mut DmaBuf,
     ) -> Result<(), HsmError>;
 
     /// PKCS#1 v1.5 encrypt (EME-PKCS1-v1_5).
     ///
-    /// Pads `message` with random non-zero bytes per RFC 8017 §7.2.1, then
-    /// encrypts with the public key.
+    /// Pads `message` with random non-zero bytes per RFC 8017 §7.2.1
+    /// and encrypts under `pub_key`.
     ///
     /// # Parameters
     ///
+    /// - `io` — caller's I/O context (per-IO scope).
+    /// - `key_size` — modulus size selector.
     /// - `pub_key` — RSA public key.
-    /// - `message` — plaintext. Must satisfy `message.len() <= k - 11`.
-    /// - `output` — ciphertext output buffer. Must be at least `rsa_pkcs1_work_len(k)` bytes.
-    /// - `work` — scratch buffer. Must be at least `rsa_pkcs1_work_len(k)` bytes.
-    async fn rsa_pkcs1_encrypt(
+    /// - `message` — plaintext; must satisfy
+    ///   `message.len() <= key_size.max_pkcs1_message()`.
+    /// - `output` — ciphertext destination; must be at least
+    ///   `key_size.pkcs1_work_len()` bytes.
+    /// - `alloc` — scoped allocator for RSA scratch.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` — `output[..modulus_len]` populated.
+    /// - `Err(HsmError::InvalidArg)` — message too long or buffer
+    ///   too small.
+    /// - `Err(HsmError::NotEnoughSpace)` — allocator scope too
+    ///   small.
+    /// - `Err(HsmError)` — RNG / PKA failure.
+    async fn rsa_pkcs1_encrypt<'a>(
         &self,
+        io: &impl HsmIo,
         key_size: HsmRsaKey,
-        pub_key: &[u8],
-        message: &[u8],
-        output: &mut [u8],
-        work: &mut [u8],
-    ) -> HsmResult<()>;
+        pub_key: &DmaBuf,
+        message: &DmaBuf,
+        output: &mut DmaBuf,
+        alloc: &'a impl HsmScopedAlloc,
+    ) -> HsmResult<()>
+    where
+        Self: 'a;
 
     /// PKCS#1 v1.5 decrypt (EME-PKCS1-v1_5).
     ///
-    /// Decrypts `ciphertext` with the private key and removes padding.
+    /// Decrypts `ciphertext` under `priv_key` and strips PKCS#1 v1.5
+    /// padding.
     ///
     /// # Parameters
     ///
+    /// - `io` — caller's I/O context (per-IO scope).
+    /// - `key_size` — modulus size selector.
     /// - `priv_key` — RSA private key.
-    /// - `ciphertext` — encrypted data. Must be exactly `k` bytes.
-    /// - `output` — plaintext output buffer. Must be at least `k - 11` bytes.
-    /// - `work` — scratch buffer. Must be at least `rsa_pkcs1_work_len(k)` bytes.
+    /// - `ciphertext` — must be exactly
+    ///   `key_size.modulus_len()` bytes.
+    /// - `output` — plaintext destination; must be at least
+    ///   `key_size.max_pkcs1_message()` bytes.
+    /// - `alloc` — scoped allocator for RSA scratch.
     ///
     /// # Returns
     ///
-    /// The length of the recovered plaintext.
-    async fn rsa_pkcs1_decrypt(
+    /// - `Ok(len)` — length of recovered plaintext;
+    ///   `output[..len]` is valid.
+    /// - `Err(HsmError::InvalidArg)` — buffer-size mismatch.
+    /// - `Err(HsmError::RsaPkcs1DecryptFailed)` — padding check
+    ///   failed (likely wrong key or tampered ciphertext).
+    /// - `Err(HsmError::NotEnoughSpace)` — allocator scope too small.
+    /// - `Err(HsmError)` — PKA failure.
+    async fn rsa_pkcs1_decrypt<'a>(
         &self,
+        io: &impl HsmIo,
         key_size: HsmRsaKey,
-        priv_key: &[u8],
-        ciphertext: &[u8],
-        output: &mut [u8],
-        work: &mut [u8],
-    ) -> HsmResult<usize>;
+        priv_key: &DmaBuf,
+        ciphertext: &DmaBuf,
+        output: &mut DmaBuf,
+        alloc: &'a impl HsmScopedAlloc,
+    ) -> HsmResult<usize>
+    where
+        Self: 'a;
 
     /// PKCS#1 v1.5 sign (EMSA-PKCS1-v1_5, pre-hashed).
     ///
-    /// Builds DigestInfo from `message_hash`, pads, and signs.
+    /// Builds DigestInfo from `message_hash`, applies EMSA padding,
+    /// and signs.
     ///
     /// # Parameters
     ///
-    /// - `algo` — hash algorithm for DigestInfo OID.
+    /// - `io` — caller's I/O context (per-IO scope).
+    /// - `key_size` — modulus size selector.
+    /// - `algo` — hash algorithm whose OID is embedded in
+    ///   DigestInfo.
     /// - `priv_key` — RSA private key.
-    /// - `message_hash` — pre-computed message digest (`algo.digest_len()`
-    ///   bytes).
-    /// - `signature` — output buffer. Must be at least `rsa_pkcs1_work_len(k)` bytes.
-    /// - `work` — scratch buffer. Must be at least
-    ///   `rsa_pkcs1_work_len(k)` bytes.
-    async fn rsa_pkcs1_sign(
-        &self,
-        key_size: HsmRsaKey,
-        algo: HsmHashAlgo,
-        priv_key: &[u8],
-        message_hash: &[u8],
-        signature: &mut [u8],
-        work: &mut [u8],
-    ) -> HsmResult<()>;
-
-    /// PKCS#1 v1.5 verify (EMSA-PKCS1-v1_5, pre-hashed).
-    ///
-    /// Verifies `signature` against `message_hash` using the public key.
-    ///
-    /// # Parameters
-    ///
-    /// - `algo` — hash algorithm for DigestInfo OID.
-    /// - `pub_key` — RSA public key.
-    /// - `message_hash` — pre-computed message digest.
-    /// - `signature` — signature to verify.
-    /// - `work` — scratch buffer. Must be at least
-    ///   `rsa_pkcs1_work_len(k)` bytes.
-    async fn rsa_pkcs1_verify(
-        &self,
-        key_size: HsmRsaKey,
-        algo: HsmHashAlgo,
-        pub_key: &[u8],
-        message_hash: &[u8],
-        signature: &[u8],
-        work: &mut [u8],
-    ) -> HsmResult<bool>;
-
-    /// OAEP encrypt (EME-OAEP).
-    ///
-    /// Pads `message` with OAEP per RFC 8017 §7.1.1 and encrypts.
-    ///
-    /// # Parameters
-    ///
-    /// - `algo` — hash algorithm for OAEP (label hash + MGF1).
-    /// - `pub_key` — RSA public key.
-    /// - `message` — plaintext. Must satisfy `message.len() <= k - 2*hLen - 2`.
-    /// - `label` — optional label (pass `&[]` for default empty label).
-    /// - `output` — ciphertext output buffer. Must be at least `rsa_pkcs1_work_len(k)` bytes.
-    /// - `work` — scratch buffer. Must be at least
-    ///   `k + mgf1_state_len(k - hLen - 1)` bytes.
-    async fn rsa_oaep_encrypt(
-        &self,
-        key_size: HsmRsaKey,
-        algo: HsmHashAlgo,
-        pub_key: &[u8],
-        message: &[u8],
-        label: &[u8],
-        output: &mut [u8],
-        work: &mut [u8],
-    ) -> HsmResult<()>;
-
-    /// OAEP decrypt (EME-OAEP).
-    ///
-    /// Decrypts `ciphertext` with OAEP unpadding per RFC 8017 §7.1.2.
-    ///
-    /// # Parameters
-    ///
-    /// - `algo` — hash algorithm for OAEP.
-    /// - `priv_key` — RSA private key.
-    /// - `ciphertext` — encrypted data. Must be exactly `k` bytes.
-    /// - `label` — optional label (must match encryption label).
-    /// - `output` — plaintext output buffer. Must be at least
-    ///   `k - 2*hLen - 2` bytes (max recoverable plaintext).
-    /// - `work` — scratch buffer. Must be at least
-    ///   `rsa_oaep_work_len(algo, k)` bytes.
+    /// - `message_hash` — pre-computed digest;
+    ///   `algo.digest_len()` bytes.
+    /// - `signature` — destination; must be at least
+    ///   `key_size.pkcs1_work_len()` bytes.
+    /// - `alloc` — scoped allocator for RSA scratch.
     ///
     /// # Returns
     ///
-    /// The length of the recovered plaintext.
-    async fn rsa_oaep_decrypt(
+    /// - `Ok(())` — `signature[..modulus_len]` populated.
+    /// - `Err(HsmError::InvalidArg)` — buffer-size mismatch.
+    /// - `Err(HsmError::NotEnoughSpace)` — allocator scope too small.
+    /// - `Err(HsmError)` — PKA failure.
+    async fn rsa_pkcs1_sign<'a>(
         &self,
+        io: &impl HsmIo,
         key_size: HsmRsaKey,
         algo: HsmHashAlgo,
-        priv_key: &[u8],
-        ciphertext: &[u8],
-        label: &[u8],
-        output: &mut [u8],
-        work: &mut [u8],
-    ) -> HsmResult<usize>;
+        priv_key: &DmaBuf,
+        message_hash: &DmaBuf,
+        signature: &mut DmaBuf,
+        alloc: &'a impl HsmScopedAlloc,
+    ) -> HsmResult<()>
+    where
+        Self: 'a;
 
-    /// PSS sign (EMSA-PSS, pre-hashed).
+    /// PKCS#1 v1.5 verify (EMSA-PKCS1-v1_5, pre-hashed).
     ///
-    /// Pads `message_hash` with PSS per RFC 8017 §9.1.1 and signs.
+    /// Verifies `signature` against `message_hash` under `pub_key`.
     ///
     /// # Parameters
     ///
-    /// - `algo` — hash algorithm for PSS (H and MGF1).
-    /// - `priv_key` — RSA private key.
-    /// - `message_hash` — pre-computed message digest (`hLen` bytes).
-    /// - `salt_len` — PSS salt length in bytes.
-    /// - `signature` — output buffer. Must be at least `rsa_pkcs1_work_len(k)` bytes.
-    /// - `work` — scratch buffer. Must be at least
-    ///   `k + hash_state_len + mgf1_state_len(hLen)` bytes.
-    async fn rsa_pss_sign(
-        &self,
-        key_size: HsmRsaKey,
-        algo: HsmHashAlgo,
-        priv_key: &[u8],
-        message_hash: &[u8],
-        salt_len: usize,
-        signature: &mut [u8],
-        work: &mut [u8],
-    ) -> HsmResult<()>;
-
-    /// PSS verify (EMSA-PSS, pre-hashed).
-    ///
-    /// Verifies `signature` against `message_hash` using PSS per RFC 8017 §9.1.2.
-    ///
-    /// # Parameters
-    ///
-    /// - `algo` — hash algorithm for PSS.
+    /// - `io` — caller's I/O context (per-IO scope).
+    /// - `key_size` — modulus size selector.
+    /// - `algo` — hash algorithm whose OID is expected in
+    ///   DigestInfo.
     /// - `pub_key` — RSA public key.
-    /// - `message_hash` — pre-computed message digest (`hLen` bytes).
-    /// - `salt_len` — PSS salt length in bytes.
-    /// - `signature` — signature to verify.
-    /// - `work` — scratch buffer. Must be at least
-    ///   `k + hash_state_len + mgf1_state_len(hLen)` bytes.
-    async fn rsa_pss_verify(
+    /// - `message_hash` — pre-computed digest.
+    /// - `signature` — signature to verify;
+    ///   `key_size.modulus_len()` bytes.
+    /// - `alloc` — scoped allocator for RSA scratch.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(true)` — signature valid.
+    /// - `Ok(false)` — signature does not verify.
+    /// - `Err(HsmError::InvalidArg)` — buffer-size mismatch.
+    /// - `Err(HsmError::NotEnoughSpace)` — allocator scope too small.
+    /// - `Err(HsmError)` — PKA failure.
+    async fn rsa_pkcs1_verify<'a>(
         &self,
+        io: &impl HsmIo,
         key_size: HsmRsaKey,
         algo: HsmHashAlgo,
-        pub_key: &[u8],
-        message_hash: &[u8],
+        pub_key: &DmaBuf,
+        message_hash: &DmaBuf,
+        signature: &DmaBuf,
+        alloc: &'a impl HsmScopedAlloc,
+    ) -> HsmResult<bool>
+    where
+        Self: 'a;
+
+    /// OAEP encrypt (EME-OAEP, RFC 8017 §7.1.1).
+    ///
+    /// # Parameters
+    ///
+    /// - `io` — caller's I/O context (per-IO scope).
+    /// - `key_size` — modulus size selector.
+    /// - `algo` — OAEP hash (label hash + MGF1).
+    /// - `pub_key` — RSA public key.
+    /// - `message` — plaintext; must satisfy `message.len() <=
+    ///   key_size.max_oaep_message(algo)`.
+    /// - `label` — OAEP label; `&[]` for the default empty label.
+    /// - `output` — ciphertext destination; must be at least
+    ///   `key_size.oaep_work_len(algo)` bytes.
+    /// - `alloc` — scoped allocator for RSA scratch.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` — `output[..modulus_len]` populated.
+    /// - `Err(HsmError::InvalidArg)` — message too long or buffer
+    ///   too small.
+    /// - `Err(HsmError::NotEnoughSpace)` — allocator scope too small.
+    /// - `Err(HsmError)` — RNG / SHA / PKA failure.
+    async fn rsa_oaep_encrypt<'a>(
+        &self,
+        io: &impl HsmIo,
+        key_size: HsmRsaKey,
+        algo: HsmHashAlgo,
+        pub_key: &DmaBuf,
+        message: &DmaBuf,
+        label: &DmaBuf,
+        output: &mut DmaBuf,
+        alloc: &'a impl HsmScopedAlloc,
+    ) -> HsmResult<()>
+    where
+        Self: 'a;
+
+    /// OAEP decrypt (EME-OAEP, RFC 8017 §7.1.2).
+    ///
+    /// # Parameters
+    ///
+    /// - `io` — caller's I/O context (per-IO scope).
+    /// - `key_size` — modulus size selector.
+    /// - `algo` — OAEP hash.
+    /// - `priv_key` — RSA private key.
+    /// - `ciphertext` — must be exactly
+    ///   `key_size.modulus_len()` bytes.
+    /// - `label` — OAEP label; must equal the encryption-time
+    ///   label.
+    /// - `output` — plaintext destination; must be at least
+    ///   `key_size.max_oaep_message(algo)` bytes.
+    /// - `alloc` — scoped allocator for RSA scratch.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(len)` — length of recovered plaintext;
+    ///   `output[..len]` is valid.
+    /// - `Err(HsmError::InvalidArg)` — buffer-size mismatch.
+    /// - `Err(HsmError::RsaOaepDecryptFailed)` — OAEP unmasking
+    ///   detected tampering or label mismatch.
+    /// - `Err(HsmError::NotEnoughSpace)` — allocator scope too small.
+    /// - `Err(HsmError)` — SHA / PKA failure.
+    async fn rsa_oaep_decrypt<'a>(
+        &self,
+        io: &impl HsmIo,
+        key_size: HsmRsaKey,
+        algo: HsmHashAlgo,
+        priv_key: &DmaBuf,
+        ciphertext: &DmaBuf,
+        label: &DmaBuf,
+        output: &mut DmaBuf,
+        alloc: &'a impl HsmScopedAlloc,
+    ) -> HsmResult<usize>
+    where
+        Self: 'a;
+
+    /// PSS sign (EMSA-PSS, RFC 8017 §9.1.1, pre-hashed).
+    ///
+    /// # Parameters
+    ///
+    /// - `io` — caller's I/O context (per-IO scope).
+    /// - `key_size` — modulus size selector.
+    /// - `algo` — PSS hash (H and MGF1).
+    /// - `priv_key` — RSA private key.
+    /// - `message_hash` — pre-computed digest;
+    ///   `algo.digest_len()` bytes.
+    /// - `salt_len` — PSS salt length in bytes.
+    /// - `signature` — destination; must be at least
+    ///   `key_size.pss_work_len(algo)` bytes.
+    /// - `alloc` — scoped allocator for RSA scratch.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` — `signature[..modulus_len]` populated.
+    /// - `Err(HsmError::InvalidArg)` — buffer-size mismatch or
+    ///   `salt_len` exceeds the EMSA-PSS limit.
+    /// - `Err(HsmError::NotEnoughSpace)` — allocator scope too small.
+    /// - `Err(HsmError)` — RNG / SHA / PKA failure.
+    async fn rsa_pss_sign<'a>(
+        &self,
+        io: &impl HsmIo,
+        key_size: HsmRsaKey,
+        algo: HsmHashAlgo,
+        priv_key: &DmaBuf,
+        message_hash: &DmaBuf,
         salt_len: usize,
-        signature: &[u8],
-        work: &mut [u8],
-    ) -> HsmResult<bool>;
+        signature: &mut DmaBuf,
+        alloc: &'a impl HsmScopedAlloc,
+    ) -> HsmResult<()>
+    where
+        Self: 'a;
+
+    /// PSS verify (EMSA-PSS, RFC 8017 §9.1.2, pre-hashed).
+    ///
+    /// # Parameters
+    ///
+    /// - `io` — caller's I/O context (per-IO scope).
+    /// - `key_size` — modulus size selector.
+    /// - `algo` — PSS hash.
+    /// - `pub_key` — RSA public key.
+    /// - `message_hash` — pre-computed digest;
+    ///   `algo.digest_len()` bytes.
+    /// - `salt_len` — expected PSS salt length in bytes.
+    /// - `signature` — signature to verify;
+    ///   `key_size.modulus_len()` bytes.
+    /// - `alloc` — scoped allocator for RSA scratch.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(true)` — signature valid.
+    /// - `Ok(false)` — signature does not verify.
+    /// - `Err(HsmError::InvalidArg)` — buffer-size mismatch.
+    /// - `Err(HsmError::NotEnoughSpace)` — allocator scope too small.
+    /// - `Err(HsmError)` — SHA / PKA failure.
+    async fn rsa_pss_verify<'a>(
+        &self,
+        io: &impl HsmIo,
+        key_size: HsmRsaKey,
+        algo: HsmHashAlgo,
+        pub_key: &DmaBuf,
+        message_hash: &DmaBuf,
+        salt_len: usize,
+        signature: &DmaBuf,
+        alloc: &'a impl HsmScopedAlloc,
+    ) -> HsmResult<bool>
+    where
+        Self: 'a;
 }

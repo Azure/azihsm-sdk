@@ -33,7 +33,7 @@ pub fn gen_encoder_and_frame(schema: &Schema) -> TokenStream {
     let layout = TocLayout::compute(&schema.fields);
 
     let toc_count_expr = build_toc_count_expr(&layout, &schema.fields);
-    let (marker_defs, state_markers) = gen_state_markers(schema, vis);
+    let (marker_defs, state_markers) = gen_state_markers(schema);
     let s0 = &state_markers[0];
     let encoder_alias = format_ident!("{}Encoder", schema.name);
 
@@ -99,8 +99,8 @@ fn build_toc_count_expr(layout: &TocLayout, fields: &[SchemaField]) -> TokenStre
 /// (`FooS0`, `FooS1`, …, `FooSN`).
 fn gen_state_markers(
     schema: &Schema,
-    vis: &syn::Visibility,
 ) -> (Vec<TokenStream>, Vec<syn::Ident>) {
+    let vis = &schema.vis;
     let n_fields = schema.fields.len();
     let state_markers: Vec<_> = (0..=n_fields)
         .map(|i| format_ident!("{}S{}", schema.name, i))

@@ -250,6 +250,58 @@ impl<'a> MborEncoder<'a> {
 
         Ok(slice)
     }
+
+    /// Like [`encode_reserve`](Self::encode_reserve), but returns the byte
+    /// range of the reserved data region inside the encoder's buffer
+    /// instead of a mutable slice into it.
+    ///
+    /// Used by the `reserve()` codegen to record per-field offsets in a
+    /// layout struct without producing a borrow that would alias the
+    /// encoder. Combined with a later `from_layout(buf, &layout)` call,
+    /// this lets a caller fill the reserved regions across an `await`
+    /// without keeping the encoder alive.
+    pub fn reserve_offset(
+        &mut self,
+        data_len: usize,
+        pad: u8,
+    ) -> Result<core::ops::Range<usize>, MborEncodeError> {
+        let pad = BYTES_PAD_MASK & pad;
+        let total = 1 + 2 + pad as usize + data_len;
+
+        #[cfg(not(feature = "trusted-encode"))]
+        {
+            if self.trusted {
+                debug_assert!(
+                    total + self.pos <= self.buffer.len(),
+                    "trusted reserve_offset overflow",
+                );
+            } else if total + self.pos > self.buffer.len() {
+                return Err(MborEncodeError::BufferOverflow);
+            }
+        }
+        #[cfg(feature = "trusted-encode")]
+        debug_assert!(
+            total + self.pos <= self.buffer.len(),
+            "trusted reserve_offset overflow",
+        );
+
+        self.buffer[self.pos] = BYTES_MARKER | pad;
+        self.pos += 1;
+
+        let len_be = (data_len as u16).to_be_bytes();
+        self.buffer[self.pos] = len_be[0];
+        self.buffer[self.pos + 1] = len_be[1];
+        self.pos += 2;
+
+        for _ in 0..pad {
+            self.buffer[self.pos] = 0;
+            self.pos += 1;
+        }
+
+        let start = self.pos;
+        self.pos += data_len;
+        Ok(start..start + data_len)
+    }
 }
 
 #[cfg(test)]

@@ -85,12 +85,22 @@ pub(crate) const P384_PUB_KEY_LEN: usize = P384_COORD_SIZE * 2;
 /// | Field | Size | Description |
 /// |-------|------|-------------|
 /// | `state` | 1 B | Lifecycle state (`Disabled` / `Uninitialized`) |
+/// | `gen` | 4 B | Incarnation counter (bumped on alloc / free) |
 /// | `res_mask` | 16 B | Resource bitmask (each bit = one vault table) |
 /// | `id` | 16 B | Random identity blob |
 /// | `pub_key` | 96 B | Raw P-384 public key (x ∥ y) |
 /// | `priv_key_der` | 256 B | PKCS#8 DER-encoded P-384 private key |
 /// | `leaf_cert` | 2 KB | Cached DER-encoded partition leaf certificate |
 /// | `session_table` | 2 B | Bitmask session allocator |
+///
+/// ## Generation counter
+///
+/// `gen` increments on every `part_alloc_internal` and
+/// `part_free_internal` call.  RAII guards (`StdVaultKeyGuard`,
+/// `StdSessionGuard`) capture the value at create time and refuse to
+/// roll back if the partition has since been freed and reallocated —
+/// otherwise a stale guard could delete unrelated state from a
+/// re-incarnated partition.
 ///
 /// ## Zeroization
 ///
@@ -103,6 +113,9 @@ pub(crate) const P384_PUB_KEY_LEN: usize = P384_COORD_SIZE * 2;
 pub(crate) struct PartitionEntry {
     /// Current lifecycle state.
     pub(crate) state: PartState,
+
+    /// Partition incarnation counter.  Bumped on every alloc and free.
+    pub(crate) gen: u32,
 
     /// Resource bitmask — each set bit corresponds to one vault table
     /// assigned to this partition.  `count_ones()` gives the table count.
@@ -158,6 +171,7 @@ impl Default for PartitionEntry {
     fn default() -> Self {
         Self {
             state: PartState::Unallocated,
+            gen: 0,
             res_mask: 0,
             id: [0u8; PART_ID_LEN],
             id_key_id: None,
@@ -260,22 +274,22 @@ pub enum PartCommand {
 // ---------------------------------------------------------------------------
 
 impl HsmPartitionManager for StdHsmPal {
-    /// Returns the current state of the partition at index `pid`.
-    fn part_state(&self, pid: HsmPartId) -> HsmResult<PartState> {
+    /// Returns the current state of the calling partition (`io.pid()`).
+    fn part_state(&self, io: &impl HsmIo) -> HsmResult<PartState> {
         // SAFETY: Embassy is single-threaded. This synchronous method
         // completes without yielding, so no concurrent mutation occurs.
         let table = unsafe { &*self.part_table.get() };
-        let idx = u8::from(pid) as usize;
+        let idx = u8::from(io.pid()) as usize;
         if idx >= NUM_PARTITIONS {
             return Err(HsmError::InvalidArg);
         }
         Ok(table.entries[idx].state)
     }
 
-    /// Returns the resource count allocated to the partition at `pid`.
-    fn part_res_count(&self, pid: HsmPartId) -> HsmResult<u8> {
+    /// Returns the resource count allocated to the calling partition.
+    fn part_res_count(&self, io: &impl HsmIo) -> HsmResult<u8> {
         let table = unsafe { &*self.part_table.get() };
-        let idx = u8::from(pid) as usize;
+        let idx = u8::from(io.pid()) as usize;
         if idx >= NUM_PARTITIONS {
             return Err(HsmError::InvalidArg);
         }
@@ -286,10 +300,10 @@ impl HsmPartitionManager for StdHsmPal {
         Ok(entry.res_mask.count_ones() as u8)
     }
 
-    /// Returns the 16-byte identity blob for the partition at `pid`.
-    fn part_id(&self, pid: HsmPartId) -> HsmResult<PartId<'_>> {
+    /// Returns the 16-byte identity blob for the calling partition.
+    fn part_id(&self, io: &impl HsmIo) -> HsmResult<PartId<'_>> {
         let table = unsafe { &*self.part_table.get() };
-        let idx = u8::from(pid) as usize;
+        let idx = u8::from(io.pid()) as usize;
         if idx >= NUM_PARTITIONS {
             return Err(HsmError::InvalidArg);
         }
@@ -300,43 +314,52 @@ impl HsmPartitionManager for StdHsmPal {
         Ok(&entry.id)
     }
 
-    fn part_id_key_id(&self, pid: HsmPartId) -> HsmResult<HsmKeyId> {
-        self.active_part(pid)?
+    fn part_id_key_id(&self, io: &impl HsmIo) -> HsmResult<HsmKeyId> {
+        self.active_part(io.pid())?
             .id_key_id
             .ok_or(HsmError::InternalError)
     }
 
-    fn part_id_pub_key(&self, pid: HsmPartId, out: Option<&mut [u8]>) -> HsmResult<usize> {
-        copy_out(&self.active_part(pid)?.id_pub_key, out)
+    fn part_id_pub_key(&self, io: &impl HsmIo, out: Option<&mut [u8]>) -> HsmResult<usize> {
+        copy_out(&self.active_part(io.pid())?.id_pub_key, out)
     }
 
-    fn part_establish_cred_key_id(&self, pid: HsmPartId) -> HsmResult<Option<HsmKeyId>> {
-        Ok(self.enabled_part(u8::from(pid))?.establish_cred_key_id)
+    fn part_establish_cred_key_id(&self, io: &impl HsmIo) -> HsmResult<Option<HsmKeyId>> {
+        Ok(self.enabled_part(u8::from(io.pid()))?.establish_cred_key_id)
     }
 
     fn part_establish_cred_pub_key(
         &self,
-        pid: HsmPartId,
+        io: &impl HsmIo,
         out: Option<&mut [u8]>,
     ) -> HsmResult<usize> {
         copy_out(
-            &self.enabled_part(u8::from(pid))?.establish_cred_pub_key,
+            &self
+                .enabled_part(u8::from(io.pid()))?
+                .establish_cred_pub_key,
             out,
         )
     }
 
-    fn part_session_enc_key_id(&self, pid: HsmPartId) -> HsmResult<HsmKeyId> {
-        self.enabled_part(u8::from(pid))?
+    fn part_session_enc_key_id(&self, io: &impl HsmIo) -> HsmResult<HsmKeyId> {
+        self.enabled_part(u8::from(io.pid()))?
             .session_enc_key_id
             .ok_or(HsmError::InternalError)
     }
 
-    fn part_session_enc_pub_key(&self, pid: HsmPartId, out: Option<&mut [u8]>) -> HsmResult<usize> {
-        copy_out(&self.enabled_part(u8::from(pid))?.session_enc_pub_key, out)
+    fn part_session_enc_pub_key(
+        &self,
+        io: &impl HsmIo,
+        out: Option<&mut [u8]>,
+    ) -> HsmResult<usize> {
+        copy_out(
+            &self.enabled_part(u8::from(io.pid()))?.session_enc_pub_key,
+            out,
+        )
     }
 
-    fn part_clear_establish_cred_key(&self, pid: HsmPartId) -> HsmResult<()> {
-        let entry = self.enabled_part_mut(u8::from(pid))?;
+    fn part_clear_establish_cred_key(&self, io: &impl HsmIo) -> HsmResult<()> {
+        let entry = self.enabled_part_mut(u8::from(io.pid()))?;
         if let Some(kid) = entry.establish_cred_key_id.take() {
             let _ = entry.vault.delete(kid);
         }
@@ -344,23 +367,23 @@ impl HsmPartitionManager for StdHsmPal {
         Ok(())
     }
 
-    fn part_nonce(&self, pid: HsmPartId, out: Option<&mut [u8]>) -> HsmResult<usize> {
-        copy_out(&self.enabled_part(u8::from(pid))?.nonce, out)
+    fn part_nonce(&self, io: &impl HsmIo, out: Option<&mut [u8]>) -> HsmResult<usize> {
+        copy_out(&self.enabled_part(u8::from(io.pid()))?.nonce, out)
     }
 
-    fn part_nonce_refresh(&self, pid: HsmPartId) -> HsmResult<()> {
-        let entry = self.enabled_part_mut(u8::from(pid))?;
+    fn part_nonce_refresh(&self, io: &impl HsmIo) -> HsmResult<()> {
+        let entry = self.enabled_part_mut(u8::from(io.pid()))?;
         Rng::rand_bytes(&mut entry.nonce).map_err(|_| HsmError::InternalError)
     }
 
-    fn part_sealed_bk3(&self, pid: HsmPartId, out: Option<&mut [u8]>) -> HsmResult<usize> {
-        let entry = self.active_part(pid)?;
+    fn part_sealed_bk3(&self, io: &impl HsmIo, out: Option<&mut [u8]>) -> HsmResult<usize> {
+        let entry = self.active_part(io.pid())?;
         let len = entry.sealed_bk3_len as usize;
         copy_out(&entry.sealed_bk3[..len], out)
     }
 
-    fn part_set_sealed_bk3(&self, pid: HsmPartId, data: &[u8]) -> HsmResult<()> {
-        let entry = self.active_part_mut(pid)?;
+    fn part_set_sealed_bk3(&self, io: &impl HsmIo, data: &[u8]) -> HsmResult<()> {
+        let entry = self.active_part_mut(io.pid())?;
         if entry.sealed_bk3_len != 0 {
             return Err(HsmError::SealedBk3AlreadySet);
         }
@@ -378,6 +401,21 @@ impl HsmPartitionManager for StdHsmPal {
 // ---------------------------------------------------------------------------
 
 impl StdHsmPal {
+    /// Returns the partition incarnation counter.
+    ///
+    /// Captured by RAII guards (`StdVaultKeyGuard`, `StdSessionGuard`)
+    /// at create time; if the value differs at drop time, the guard
+    /// has outlived its partition incarnation and skips rollback to
+    /// avoid corrupting a re-allocated partition.
+    pub(crate) fn partition_gen(&self, pid: HsmPartId) -> u32 {
+        let table = unsafe { &*self.part_table.get() };
+        let idx = u8::from(pid) as usize;
+        if idx >= NUM_PARTITIONS {
+            return 0;
+        }
+        table.entries[idx].gen
+    }
+
     /// Borrow a partition entry that is not Unallocated.
     pub(crate) fn active_part(&self, pid: HsmPartId) -> HsmResult<&PartitionEntry> {
         let table = unsafe { &*self.part_table.get() };
@@ -434,10 +472,13 @@ impl StdHsmPal {
 }
 
 /// Copy `data` into `out` if provided, return length.
+///
+/// Returns [`HsmError::InvalidArg`] (per the new partition trait
+/// docs) when the caller-supplied buffer is too small.
 fn copy_out(data: &[u8], out: Option<&mut [u8]>) -> HsmResult<usize> {
     if let Some(buf) = out {
         if buf.len() < data.len() {
-            return Err(HsmError::NotEnoughSpace);
+            return Err(HsmError::InvalidArg);
         }
         buf[..data.len()].copy_from_slice(data);
     }
@@ -477,6 +518,9 @@ impl StdHsmPal {
 
         // Reserve resources + create vault so keygen has somewhere to store.
         let entry = &mut table.entries[idx];
+        // Bump the partition incarnation counter so RAII guards captured
+        // against the prior incarnation refuse to roll back.
+        entry.gen = entry.gen.wrapping_add(1);
         entry.res_mask = res_mask;
         entry.vault = KeyVault::new(res_mask.count_ones() as usize);
         table.global_res_mask |= res_mask;
@@ -627,6 +671,10 @@ impl StdHsmPal {
 
         let entry = &mut table.entries[idx];
 
+        // Bump the partition incarnation counter so RAII guards captured
+        // before this free refuse to roll back into the next incarnation.
+        entry.gen = entry.gen.wrapping_add(1);
+
         // If enabled, clear internal keys/nonce/vault/sessions first.
         if entry.state == PartState::Enabled {
             Self::clear_enabled_state(entry);
@@ -654,9 +702,14 @@ impl StdHsmPal {
     // Helpers
     // -----------------------------------------------------------------------
 
-    /// Generate an ECC P-384 key pair via [`HsmEcc::ecc_gen_keypair`],
-    /// store the private key DER in the vault, and write raw public key
-    /// coordinates (x ∥ y) into `pub_key_out`.
+    /// Generate an ECC P-384 key pair, store the PKCS#8 DER private
+    /// key in the vault, and write raw public key coordinates (x ∥ y)
+    /// into `pub_key_out`.
+    ///
+    /// Bypasses [`HsmEcc::ecc_gen_keypair`] (which now requires an
+    /// `HsmIo`) and drives the [`StdEcc`](crate::drivers::ecc::StdEcc)
+    /// driver directly — this helper runs from the partition lifecycle
+    /// task where no IO context exists.
     ///
     /// Returns the vault key ID.
     async fn create_internal_ecc384_key(
@@ -664,15 +717,22 @@ impl StdHsmPal {
         pid: u8,
         kind: HsmVaultKeyKind,
         attrs: HsmVaultKeyAttrs,
-        pct: HsmEccPct,
+        _pct: HsmEccPct,
         pub_key_out: &mut [u8; P384_PUB_KEY_LEN],
     ) -> HsmResult<HsmKeyId> {
-        let priv_max = HsmEccCurve::P384.priv_key_der_max();
-        let mut priv_buf = vec![0u8; priv_max];
+        let (pk, pubk) = self.ecc.gen_keypair(EccCurve::P384).await?;
 
-        let priv_len = self
-            .ecc_gen_keypair(HsmEccCurve::P384, Some(&mut priv_buf), pub_key_out, pct)
-            .await?;
+        // Export private key as PKCS#8 DER.
+        let priv_len = pk.to_bytes(None).map_err(|_| HsmError::EccToDerError)?;
+        let mut priv_buf = vec![0u8; priv_len];
+        pk.to_bytes(Some(&mut priv_buf[..priv_len]))
+            .map_err(|_| HsmError::EccToDerError)?;
+
+        // Export raw P-384 public key coordinates (x ∥ y).
+        let half = P384_PUB_KEY_LEN / 2;
+        let (x_buf, y_buf) = pub_key_out.split_at_mut(half);
+        pubk.coord(Some((x_buf, y_buf)))
+            .map_err(|_| HsmError::EccToDerError)?;
 
         // Store private key DER in vault.
         let table = unsafe { &mut *self.part_table.get() };
