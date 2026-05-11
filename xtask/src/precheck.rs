@@ -161,7 +161,7 @@ pub struct Precheck {
     /// Skip taplo (TOML formatting) (used with --fmt)
     #[clap(long)]
     pub skip_taplo: bool,
-    /// Skip audit (used with --audit/--full)
+    /// Skip audit (used with --audit/--full/--all)
     #[clap(long)]
     pub skip_audit: bool,
     /// Skip Clang formatting (used with --fmt)
