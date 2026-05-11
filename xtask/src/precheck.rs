@@ -340,7 +340,6 @@ impl Xtask for Precheck {
 
             #[cfg(not(target_os = "windows"))]
             {
-                
                 if !self.exclude.iter().any(|e| e == "azihsm_ddi") {
                     // SDK Run azihsm_ddi mock tests table-4
                     Nextest {
@@ -372,7 +371,11 @@ impl Xtask for Precheck {
                 }
 
                 // OSSL Provider integration tests (CLI + C API, Linux only)
-                if !self.exclude.iter().any(|e| e.starts_with("provider-integration-tests-")) {
+                if !self
+                    .exclude
+                    .iter()
+                    .any(|e| e.starts_with("provider-integration-tests-"))
+                {
                     #[cfg(target_os = "linux")]
                     integration_tests::IntegrationTest {}.run(ctx.clone())?;
                 }
