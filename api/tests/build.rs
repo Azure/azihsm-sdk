@@ -9,9 +9,7 @@ fn main() {
     let mut config = cmake::Config::new("cpp");
     config.define("TEST_FEATURES", features.join(" "));
 
-    // The cmake crate auto-detects the generator, but does not support
-    // newer toolsets (e.g. "Visual Studio 18 2026"). On Windows, force the
-    // VS 2026 generator unless CMAKE_GENERATOR is explicitly set.
+    // On Windows, force the VS 2026 generator unless CMAKE_GENERATOR is set.
     // Tried Ninja but it was producing invalid paths on Windows.
     #[cfg(target_os = "windows")]
     if std::env::var("CMAKE_GENERATOR").is_err() {
