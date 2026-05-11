@@ -509,13 +509,17 @@ fn run_aes_cbc_padding_tamper_test(session: &HsmSession) {
     let iv = [0u8; 16];
     let mut enc = HsmAesCbcAlgo::with_padding(iv.to_vec()).unwrap();
 
-    let mut ct = HsmEncrypter::encrypt_vec(&mut enc, &key, b"padding test").unwrap();
+    let mut ct =
+        HsmEncrypter::encrypt_vec(&mut enc, &key, b"CBC padding with HKDF Derived Key").unwrap();
 
-    // Corrupt previous block to reliably break padding
+    // Flip C_prev[15] (= ct[len-17]) — CBC: P_last[15] = AES_dec(C_last)[15] XOR C_prev[15],
+    // so this deterministically inverts the PKCS#7 pad-length byte.
     let len = ct.len();
-    // Corrupt previous block if possible (best for breaking padding deterministically)
-    let idx = if len >= 32 { len - 16 } else { len / 2 };
-    ct[idx] ^= 0xFF;
+    assert!(
+        len >= 32,
+        "ciphertext too short to tamper with padding without risking non-determinism"
+    );
+    ct[len - 17] ^= 0xFF;
 
     let mut dec = HsmAesCbcAlgo::with_padding(iv.to_vec()).unwrap();
 
