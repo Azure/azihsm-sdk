@@ -143,8 +143,8 @@ pub struct Precheck {
     /// Specify which checks to run
     #[clap(flatten)]
     stage: Option<Stage>,
-    /// Run the full set of checks (setup, copyright, validate_members, audit, fmt, clippy,
-    /// nextest_full). Without this flag, only a minimal set of checks is run (fmt, nextest_min).
+    /// Run the full set of checks:
+    /// setup, copyright, validate_members, audit, fmt, clippy, nextest_full
     #[clap(long, conflicts_with = "all")]
     pub full: bool,
     /// Run all checks
