@@ -2,9 +2,11 @@
 // Licensed under the MIT License.
 
 use super::*;
-use crate::hash::tests::testvectors::SHA256_LONG_MSG_TEST_VECTORS;
-use crate::hash::tests::testvectors::SHA256_MONTE_TEST_VECTORS;
-use crate::hash::tests::testvectors::SHA256_SHORT_MSG_TEST_VECTORS;
+use crate::testvectors::hash::SHA256_LONG_MSG_TEST_VECTORS;
+use crate::testvectors::hash::SHA256_MONTE_TEST_VECTORS;
+use crate::testvectors::hash::SHA256_SHORT_MSG_TEST_VECTORS;
+use crate::testvectors::hash::ShaMonteTestVector;
+use crate::testvectors::hash::ShaTestVector;
 
 #[test]
 fn test_sha256_hash() {

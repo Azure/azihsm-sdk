@@ -7,16 +7,16 @@ mod kbkdf_hmac_sha384_test_vectors;
 mod kbkdf_hmac_sha512_test_vectors;
 mod rfc_test_vectors;
 
-pub(crate) use kbkdf_hmac_sha1_test_vectors::*;
-pub(crate) use kbkdf_hmac_sha256_test_vectors::*;
-pub(crate) use kbkdf_hmac_sha384_test_vectors::*;
-pub(crate) use kbkdf_hmac_sha512_test_vectors::*;
-pub(crate) use rfc_test_vectors::*;
+pub use kbkdf_hmac_sha1_test_vectors::*;
+pub use kbkdf_hmac_sha256_test_vectors::*;
+pub use kbkdf_hmac_sha384_test_vectors::*;
+pub use kbkdf_hmac_sha512_test_vectors::*;
+pub use rfc_test_vectors::*;
 
 /// Hash algorithm enum used in test vectors.
 #[allow(unused)]
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum TestHashAlgo {
+pub enum TestHashAlgo {
     /// SHA-1
     Sha1,
     /// SHA-256
