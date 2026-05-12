@@ -94,7 +94,8 @@ pub struct Precheck {
     /// The nextest profile to use
     #[clap(long)]
     profile: Option<String>,
-    /// Override a configuration value in install::Install subtasks
+    /// Pass through to `cargo install --config`; accepts either `KEY=VALUE`
+    /// or a path to a Cargo `config.toml` file.
     #[clap(long)]
     pub config: Option<String>,
 }
