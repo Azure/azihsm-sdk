@@ -235,12 +235,10 @@ fn test_rsa_verify_wrong_public_key_fails(session: HsmSession) {
     let mut algo = HsmRsaSignAlgo::with_pkcs1_padding(hash_algo);
     let sig = HsmSigner::sign_vec(&mut algo, &priv1, &hash).expect("Failed to sign message");
 
-    let result = HsmVerifier::verify(&mut algo, &pub2, &hash, &sig);
-
-    assert!(
-        !matches!(result, Ok(true)),
-        "Verification should not succeed"
-    );
+    let result =
+        HsmVerifier::verify(&mut algo, &pub2, &hash, &sig).expect("Failed to verify signature");
+    // Expect failure here, but if it succeeds, it should not validate the signature
+    assert!(!result, "Verification should not succeed");
 }
 
 /// Ensure verification fails when signature is corrupted
@@ -262,12 +260,10 @@ fn test_rsa_verify_modified_signature_fails(session: HsmSession) {
 
     sig[0] ^= 0xFF; // corrupt signature
 
-    let result = HsmVerifier::verify(&mut algo, &pub_key, &hash, &sig);
+    let valid =
+        HsmVerifier::verify(&mut algo, &pub_key, &hash, &sig).expect("Verification call failed");
 
-    assert!(
-        !matches!(result, Ok(true)),
-        "Verification should not succeed"
-    );
+    assert!(!valid, "Verification should report invalid signature");
 }
 
 /// Ensure verification fails when hash differs
@@ -290,12 +286,10 @@ fn test_rsa_verify_wrong_hash_fails(session: HsmSession) {
     let mut algo = HsmRsaSignAlgo::with_pkcs1_padding(hash_algo);
     let sig = HsmSigner::sign_vec(&mut algo, &priv_key, &hash1).expect("Failed to sign message");
 
-    let result = HsmVerifier::verify(&mut algo, &pub_key, &hash2, &sig);
+    let valid =
+        HsmVerifier::verify(&mut algo, &pub_key, &hash2, &sig).expect("Verification call failed");
 
-    assert!(
-        !matches!(result, Ok(true)),
-        "Verification should not succeed"
-    );
+    assert!(!valid, "Verification should report invalid signature");
 }
 
 /// Ensure verification fails when using different hash algorithm
@@ -320,12 +314,10 @@ fn test_rsa_verify_mismatched_hash_algo_fails(session: HsmSession) {
 
     let mut verify_algo = HsmRsaSignAlgo::with_pkcs1_padding(hash_algo2);
 
-    let result = HsmVerifier::verify(&mut verify_algo, &pub_key, &hash, &sig);
+    let valid = HsmVerifier::verify(&mut verify_algo, &pub_key, &hash, &sig)
+        .expect("Verification call failed");
 
-    assert!(
-        !matches!(result, Ok(true)),
-        "Verification should not succeed"
-    );
+    assert!(!valid, "Verification should report invalid signature");
 }
 
 /// Ensure PSS verification fails with different salt length
@@ -348,12 +340,10 @@ fn test_rsa_pss_salt_len_mismatch_fails(session: HsmSession) {
 
     let mut verify_algo = HsmRsaSignAlgo::with_pss_padding(hash_algo, 20);
 
-    let result = HsmVerifier::verify(&mut verify_algo, &pub_key, &hash, &sig);
+    let valid = HsmVerifier::verify(&mut verify_algo, &pub_key, &hash, &sig)
+        .expect("Verification call failed");
 
-    assert!(
-        !matches!(result, Ok(true)),
-        "Verification should not succeed"
-    );
+    assert!(!valid, "Verification should report invalid signature");
 }
 
 /// Ensure unwrap fails when private key lacks sign capability
@@ -413,12 +403,10 @@ fn test_rsa_verify_pkcs1_vs_pss_mismatch_fails(session: HsmSession) {
     // Verify with PSS
     let mut verify_algo = HsmRsaSignAlgo::with_pss_padding(hash_algo, 32);
 
-    let result = HsmVerifier::verify(&mut verify_algo, &pub_key, &hash, &sig);
+    let valid = HsmVerifier::verify(&mut verify_algo, &pub_key, &hash, &sig)
+        .expect("Verification call failed");
 
-    assert!(
-        !matches!(result, Ok(true)),
-        "Verification should not succeed"
-    );
+    assert!(!valid, "Verification should report invalid signature");
 }
 
 /// Ensure PKCS1 signatures are deterministic
@@ -463,12 +451,10 @@ fn test_rsa_pss_vs_pkcs1_mismatch_fails(session: HsmSession) {
 
     let mut verify_algo = HsmRsaSignAlgo::with_pkcs1_padding(hash_algo);
 
-    let result = HsmVerifier::verify(&mut verify_algo, &pub_key, &hash, &sig);
+    let valid = HsmVerifier::verify(&mut verify_algo, &pub_key, &hash, &sig)
+        .expect("Verification call failed");
 
-    assert!(
-        !matches!(result, Ok(true)),
-        "Verification should not succeed"
-    );
+    assert!(!valid, "Verification should report invalid signature");
 }
 
 /// Ensure verification fails when signature is truncated
@@ -490,12 +476,10 @@ fn test_rsa_verify_truncated_signature_fails(session: HsmSession) {
 
     sig.truncate(sig.len() / 2);
 
-    let result = HsmVerifier::verify(&mut algo, &pub_key, &hash, &sig);
+    let valid =
+        HsmVerifier::verify(&mut algo, &pub_key, &hash, &sig).expect("Verification call failed");
 
-    assert!(
-        !matches!(result, Ok(true)),
-        "Verification should not succeed"
-    );
+    assert!(!valid, "Verification should report invalid signature");
 }
 
 /// Ensure verification fails when signature is too large
@@ -517,12 +501,10 @@ fn test_rsa_verify_oversized_signature_fails(session: HsmSession) {
 
     sig.extend_from_slice(&[0u8; 10]); // make too large
 
-    let result = HsmVerifier::verify(&mut algo, &pub_key, &hash, &sig);
+    let valid =
+        HsmVerifier::verify(&mut algo, &pub_key, &hash, &sig).expect("Verification call failed");
 
-    assert!(
-        !matches!(result, Ok(true)),
-        "Verification should not succeed"
-    );
+    assert!(!valid, "Verification should report invalid signature");
 }
 
 /// Ensure verification fails when key size differs
@@ -549,12 +531,10 @@ fn test_rsa_verify_mismatched_key_size_fails(session: HsmSession) {
     let mut algo = HsmRsaSignAlgo::with_pkcs1_padding(hash_algo);
     let sig = HsmSigner::sign_vec(&mut algo, &priv1, &hash).expect("Failed to sign message");
 
-    let result = HsmVerifier::verify(&mut algo, &pub2, &hash, &sig);
+    let valid =
+        HsmVerifier::verify(&mut algo, &pub2, &hash, &sig).expect("Verification call failed");
 
-    assert!(
-        !matches!(result, Ok(true)),
-        "Verification should not succeed"
-    );
+    assert!(!valid, "Verification should report invalid signature");
 }
 
 /// Ensure PSS signatures are non-deterministic
@@ -610,12 +590,10 @@ fn test_rsa_verify_empty_signature_fails(session: HsmSession) {
 
     let mut algo = HsmRsaSignAlgo::with_pkcs1_padding(hash_algo);
 
-    let result = HsmVerifier::verify(&mut algo, &pub_key, &hash, &[]);
+    let valid =
+        HsmVerifier::verify(&mut algo, &pub_key, &hash, &[]).expect("Verification call failed");
 
-    assert!(
-        !matches!(result, Ok(true)),
-        "Verification should not succeed"
-    );
+    assert!(!valid, "Verification should report invalid signature");
 }
 
 /// Ensure verification fails when provided hash is empty
@@ -633,12 +611,10 @@ fn test_rsa_verify_empty_hash_fails(session: HsmSession) {
     // invalid hash
     let empty_hash = vec![];
 
-    let result = HsmVerifier::verify(&mut algo, &pub_key, &empty_hash, &sig);
+    let valid = HsmVerifier::verify(&mut algo, &pub_key, &empty_hash, &sig)
+        .expect("Verification call failed");
 
-    assert!(
-        !matches!(result, Ok(true)),
-        "Verification should not succeed"
-    );
+    assert!(!valid, "Verification should report invalid signature");
 }
 
 /// Ensure PSS works with zero salt length
@@ -707,12 +683,10 @@ fn test_rsa_verify_invalid_hash_length_fails(session: HsmSession) {
 
     let bad_hash = vec![0xAA; 10]; // invalid length
 
-    let result = HsmVerifier::verify(&mut algo, &pub_key, &bad_hash, &sig);
+    let valid = HsmVerifier::verify(&mut algo, &pub_key, &bad_hash, &sig)
+        .expect("Verification call failed");
 
-    assert!(
-        !matches!(result, Ok(true)),
-        "Verification should not succeed"
-    );
+    assert!(!valid, "Verification should report invalid signature");
 }
 
 /// Ensure repeated verification with same inputs consistently succeeds

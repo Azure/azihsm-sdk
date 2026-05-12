@@ -135,9 +135,15 @@ impl VerifyOp for OsslRsaSignAlgo {
             .verify_init()
             .map_err(|_| CryptoError::RsaVerifyError)?;
         self.configure_pkey_ctx(&mut pkey_ctx)?;
-        pkey_ctx
-            .verify(data, signature)
-            .map_err(|_| CryptoError::RsaVerifyError)
+        // After successful setup, OpenSSL signals an invalid RSA signature by
+        // pushing an error onto its stack rather than returning Ok(false).
+        // All operational failure modes (allocation, init, configuration) have
+        // already been handled above, so treat any error from the final verify
+        // step as an invalid signature (fail-closed).
+        match pkey_ctx.verify(data, signature) {
+            Ok(valid) => Ok(valid),
+            Err(_) => Ok(false),
+        }
     }
 }
 
