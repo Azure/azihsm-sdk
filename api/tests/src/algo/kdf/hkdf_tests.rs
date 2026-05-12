@@ -557,7 +557,7 @@ fn run_aes_cbc_iv_tamper_single_block_test(session: &HsmSession) {
         "test invariant: sub-block plaintext must produce a single ciphertext block"
     );
 
-    //make sure the original ciphertext decrypts correctly before tampering
+    // Make sure the original ciphertext decrypts correctly before tampering
     let mut dec_orig = HsmAesCbcAlgo::with_padding(iv.to_vec()).unwrap();
     let pt_orig = HsmDecrypter::decrypt_vec(&mut dec_orig, &key, &ct)
         .expect("untampered ciphertext must decrypt");
