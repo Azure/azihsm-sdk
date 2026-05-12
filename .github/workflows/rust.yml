@@ -12,6 +12,8 @@ on:
 env:
   CARGO_TERM_COLOR: always
   CACHE_KEY_ID: 84f8acac52412db91407ab9f85776987da17d42f
+  OPENSSL_VERSION: "3.0.3"
+  OPENSSL_INSTALL: target/openssl-3.0.3
 
 jobs:
   build_ubuntu:
@@ -22,10 +24,6 @@ jobs:
       run:
         working-directory: .
 
-    env:
-      OPENSSL_DIR: /opt/openssl-3.0.3
-      LD_LIBRARY_PATH: /opt/openssl-3.0.3/lib
-
     steps:
     - uses: actions/checkout@v6
     - name: Install apt packages
@@ -33,22 +31,12 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y pkg-config libbsd-dev
 
-    - name: Cache OpenSSL 3.0.3
+    - name: Cache OpenSSL ${{ env.OPENSSL_VERSION }}
       id: cache-openssl
       uses: actions/cache@v5
       with:
-        path: /opt/openssl-3.0.3
-        key: openssl-3.0.3-shared-linux-x64
-
-    - name: Build OpenSSL 3.0.3 (shared)
-      if: steps.cache-openssl.outputs.cache-hit != 'true'
-      run: |
-        curl -fsSL "https://github.com/openssl/openssl/releases/download/openssl-3.0.3/openssl-3.0.3.tar.gz" \
-          | tar xz -C /tmp
-        cd /tmp/openssl-3.0.3
-        ./Configure --prefix=/opt/openssl-3.0.3 --libdir=lib
-        make -j"$(nproc)"
-        sudo make install_sw
+        path: ${{ env.OPENSSL_INSTALL }}
+        key: openssl-${{ env.OPENSSL_VERSION }}-target-linux-x64
 
     - name: Restore Cargo cache
       id: cargo-cache
@@ -60,9 +48,9 @@ jobs:
           ~/.cargo/registry/cache/
           ~/.cargo/git/db/
         key: ${{ runner.os }}-cargo-${{ env.CACHE_KEY_ID }}
-    - name: Setup on cache miss
-      if: steps.cargo-cache.outputs.cache-hit != 'true'
-      run: cargo xtask precheck --setup
+    - name: Setup
+      if: steps.cargo-cache.outputs.cache-hit != 'true' || steps.cache-openssl.outputs.cache-hit != 'true'
+      run: cargo xtask setup
     - name: Install nightly rustfmt
       run: cargo xtask rustup-component-add --component rustfmt --toolchain nightly
     - name: Install clippy
@@ -74,17 +62,28 @@ jobs:
     - name: Cargo format
       run: cargo xtask precheck --fmt
     - name: Cargo Clippy
+      env:
+        OPENSSL_DIR: ${{ github.workspace }}/${{ env.OPENSSL_INSTALL }}
       run: cargo xtask precheck --clippy
     - name: SDK Run all mock tests table-4
       id: test-mock-table-4
+      env:
+        OPENSSL_DIR: ${{ github.workspace }}/${{ env.OPENSSL_INSTALL }}
+        LD_LIBRARY_PATH: ${{ github.workspace }}/${{ env.OPENSSL_INSTALL }}/lib
       run: cargo xtask precheck --nextest --package azihsm_ddi --features mock,table-4 --profile ci-mock-table-4
       continue-on-error: true
     - name: SDK Run all mock tests table-64
       id: test-mock-table-64
+      env:
+        OPENSSL_DIR: ${{ github.workspace }}/${{ env.OPENSSL_INSTALL }}
+        LD_LIBRARY_PATH: ${{ github.workspace }}/${{ env.OPENSSL_INSTALL }}/lib
       run: cargo xtask precheck --nextest --package azihsm_ddi --features mock,table-64 --profile ci-mock-table-64
       continue-on-error: true
     - name: Run all mock tests with code coverage
       id: test-mock-coverage
+      env:
+        OPENSSL_DIR: ${{ github.workspace }}/${{ env.OPENSSL_INSTALL }}
+        LD_LIBRARY_PATH: ${{ github.workspace }}/${{ env.OPENSSL_INSTALL }}/lib
       run: cargo xtask precheck --coverage
       continue-on-error: true
     - name: Upload coverage report
@@ -128,47 +127,33 @@ jobs:
         key: ${{ runner.os }}-cargo-${{ env.CACHE_KEY_ID }}
         fail-on-cache-miss: false
 
-    - name: Cache OpenSSL 3.0.3
+    - name: Cache OpenSSL ${{ env.OPENSSL_VERSION }}
       id: cache-openssl
       uses: actions/cache@v5
       with:
-        path: /opt/openssl-3.0.3
-        key: openssl-3.0.3-shared-linux-x64
+        path: ${{ env.OPENSSL_INSTALL }}
+        key: openssl-${{ env.OPENSSL_VERSION }}-target-linux-x64
 
-    - name: Build OpenSSL 3.0.3 (shared)
-      if: steps.cache-openssl.outputs.cache-hit != 'true'
-      run: |
-        curl -fsSL "https://github.com/openssl/openssl/releases/download/openssl-3.0.3/openssl-3.0.3.tar.gz" \
-          | tar xz -C /tmp
-        cd /tmp/openssl-3.0.3
-        ./Configure --prefix=/opt/openssl-3.0.3 --libdir=lib
-        make -j"$(nproc)"
-        sudo make install_sw
+    - name: Setup (includes OpenSSL on cache miss)
+      run: cargo xtask setup ${{ steps.cache-openssl.outputs.cache-hit == 'true' && '--skip-openssl' || '' }}
 
     - name: Ensure OpenSSL default config exists
       run: |
-        sudo mkdir -p /opt/openssl-3.0.3/ssl
-        sudo touch /opt/openssl-3.0.3/ssl/openssl.cnf
+        mkdir -p ${{ env.OPENSSL_INSTALL }}/ssl
+        touch ${{ env.OPENSSL_INSTALL }}/ssl/openssl.cnf
 
-    - name: Build azihsm with OpenSSL 3.0.3
+    - name: Build azihsm with OpenSSL ${{ env.OPENSSL_VERSION }}
       env:
-        OPENSSL_DIR: /opt/openssl-3.0.3
+        OPENSSL_DIR: ${{ github.workspace }}/${{ env.OPENSSL_INSTALL }}
       run: |
         cargo build -p azihsm_api_native --features mock
         cargo build -p azihsm_ossl_provider --features mock
 
-    - name: Install provider
-      run: |
-        sudo mkdir -p /usr/lib/ossl-modules
-        sudo cp target/debug/azihsm_provider.so /usr/lib/ossl-modules/
-        sudo cp target/debug/libazihsm_api_native.so /usr/lib/
-        sudo ldconfig
-
     - name: Generate dev key material
       env:
-        LD_LIBRARY_PATH: /opt/openssl-3.0.3/lib
+        LD_LIBRARY_PATH: ${{ github.workspace }}/${{ env.OPENSSL_INSTALL }}/lib
       run: |
-        OSSL=/opt/openssl-3.0.3/bin/openssl
+        OSSL=${{ github.workspace }}/${{ env.OPENSSL_INSTALL }}/bin/openssl
         # Credential files (fallback if env vars are unset)
         printf '\x70\xFC\xF7\x30\xB8\x76\x42\x38\xB8\x35\x80\x10\xCE\x8A\x3F\x76' > credentials_id.bin
         printf '\xDB\x3D\xC7\x7F\xC2\x2E\x43\x00\x80\xD4\x1B\x31\xB6\xF0\x48\x00' > credentials_pin.bin
@@ -181,12 +166,12 @@ jobs:
 
     - name: Smoke test provider
       env:
-        LD_LIBRARY_PATH: /opt/openssl-3.0.3/lib
+        LD_LIBRARY_PATH: ${{ github.workspace }}/${{ env.OPENSSL_INSTALL }}/lib:${{ github.workspace }}/target/debug
         AZIHSM_CREDENTIALS_ID: "70fcf730b8764238b8358010ce8a3f76"
         AZIHSM_CREDENTIALS_PIN: "db3dc77fc22e430080d41b31b6f04800"
       run: |
-        /opt/openssl-3.0.3/bin/openssl genpkey \
-          -provider-path /usr/lib/ossl-modules \
+        ${{ github.workspace }}/${{ env.OPENSSL_INSTALL }}/bin/openssl genpkey \
+          -provider-path ${{ github.workspace }}/target/debug \
           -provider default -provider azihsm_provider \
           -propquery "?provider=azihsm" \
           -algorithm EC -pkeyopt group:P-384 \
@@ -194,9 +179,8 @@ jobs:
 
     - name: Run CLI integration tests
       env:
-        OPENSSL_BIN: /opt/openssl-3.0.3/bin/openssl
-        OPENSSL_LIB: /opt/openssl-3.0.3/lib
-        PROVIDER_PATH: /usr/lib/ossl-modules
+        OPENSSL_BIN: ${{ github.workspace }}/${{ env.OPENSSL_INSTALL }}/bin/openssl
+        OPENSSL_LIB: ${{ github.workspace }}/${{ env.OPENSSL_INSTALL }}/lib:${{ github.workspace }}/target/debug
         PROPQUERY: "?provider=azihsm"
         AZIHSM_CREDENTIALS_ID: "70fcf730b8764238b8358010ce8a3f76"
         AZIHSM_CREDENTIALS_PIN: "db3dc77fc22e430080d41b31b6f04800"
@@ -204,10 +188,15 @@ jobs:
 
     - name: Run C API integration tests
       env:
-        OPENSSL_DIR: /opt/openssl-3.0.3
+        OPENSSL_DIR: ${{ github.workspace }}/${{ env.OPENSSL_INSTALL }}
         AZIHSM_CREDENTIALS_ID: "70fcf730b8764238b8358010ce8a3f76"
         AZIHSM_CREDENTIALS_PIN: "db3dc77fc22e430080d41b31b6f04800"
       run: cargo xtask precheck --nextest --package provider-integration-tests-capi --features integration --profile ci-provider-integration
+
+    - name: Install libazihsm_api_native for NGINX tests
+      run: |
+        sudo cp target/debug/libazihsm_api_native.so /usr/lib/
+        sudo ldconfig
 
     - name: Install nginx mainline
       run: |
@@ -221,9 +210,8 @@ jobs:
 
     - name: NGINX integration tests
       env:
-        OPENSSL_BIN: /opt/openssl-3.0.3/bin/openssl
-        OPENSSL_LIB: /opt/openssl-3.0.3/lib
-        PROVIDER_PATH: /usr/lib/ossl-modules
+        OPENSSL_BIN: ${{ github.workspace }}/${{ env.OPENSSL_INSTALL }}/bin/openssl
+        OPENSSL_LIB: ${{ github.workspace }}/${{ env.OPENSSL_INSTALL }}/lib
         AZIHSM_CREDENTIALS_ID: "70fcf730b8764238b8358010ce8a3f76"
         AZIHSM_CREDENTIALS_PIN: "db3dc77fc22e430080d41b31b6f04800"
       run: |
