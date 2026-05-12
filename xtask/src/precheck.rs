@@ -127,6 +127,7 @@ impl Xtask for Precheck {
                 skip_taplo: self.skip_taplo,
                 skip_audit: self.skip_audit,
                 skip_openssl: self.skip_openssl,
+                openssl_version: "3.0.3".to_string(),
             }
             .run(ctx.clone())?;
         }
@@ -222,7 +223,8 @@ impl Xtask for Precheck {
 
                     // OSSL Provider integration tests (CLI + C API, Linux only)
                     #[cfg(target_os = "linux")]
-                    integration_tests::IntegrationTest {}.run(ctx.clone())?;
+                    integration_tests::IntegrationTest::parse_from::<[&str; 0], &str>([])
+                        .run(ctx.clone())?;
                 }
             } else {
                 Nextest {

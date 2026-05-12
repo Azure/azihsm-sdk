@@ -66,8 +66,25 @@ Build and run all tests with code coverage enabled. Generates a cobertura XML, J
 cargo xtask coverage
 ```
 
+### integration-tests
+
+Run provider integration tests (CLI, C API, NGINX). Requires a custom OpenSSL build.
+
+```bash
+# Run against default OpenSSL version (3.0.3)
+cargo xtask integration-tests
+
+# Run against a specific version
+cargo xtask integration-tests --openssl-version 3.5.0
+```
+
+When `OPENSSL_DIR` is set, the `--openssl-version` flag is ignored and the
+existing installation is used as-is. See `plugins/ossl_prov/README.md` for
+environment variable details.
+
 ## Command Details
 
+- **integration-tests**: Runs CLI, C API, and NGINX provider integration tests. Resolves OpenSSL via `OPENSSL_DIR` or `--openssl-version`
 - **precheck**: Combines setup, copyright, audit, fmt, clippy, and nextest stages for comprehensive validation
 - **clippy**: Runs `cargo clippy --workspace --all-targets` with warnings treated as errors
 - **fmt**: Uses `cargo fmt` to check/fix Rust code formatting

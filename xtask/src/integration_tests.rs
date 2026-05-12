@@ -12,7 +12,13 @@ use crate::XtaskCtx;
 /// Xtask to run integration tests
 #[derive(Parser)]
 #[clap(about = "Run Integration Tests")]
-pub struct IntegrationTest {}
+pub struct IntegrationTest {
+    /// OpenSSL version to use (e.g., "3.0.3", "3.5.0").
+    /// When OPENSSL_DIR is set, this flag is ignored and the
+    /// existing installation is used as-is.
+    #[clap(long, default_value = "3.0.3")]
+    pub openssl_version: String,
+}
 
 impl Xtask for IntegrationTest {
     fn run(self, _ctx: XtaskCtx) -> anyhow::Result<()> {
@@ -26,13 +32,26 @@ impl Xtask for IntegrationTest {
 
         #[cfg(target_os = "linux")]
         {
-            let openssl_dir = crate::openssl_install::check_openssl()?;
+            let openssl_dir = crate::openssl_install::check_openssl(&self.openssl_version)?;
 
             if std::env::var("OPENSSL_BIN").is_err() {
                 std::env::set_var("OPENSSL_BIN", openssl_dir.join("bin/openssl"));
             }
+            // Probe lib64 first (common on 64-bit distros), then fall back to lib.
             if std::env::var("OPENSSL_LIB").is_err() {
-                std::env::set_var("OPENSSL_LIB", openssl_dir.join("lib"));
+                let lib64 = openssl_dir.join("lib64");
+                let lib = openssl_dir.join("lib");
+                if lib64.is_dir() {
+                    std::env::set_var("OPENSSL_LIB", lib64);
+                } else if lib.is_dir() {
+                    std::env::set_var("OPENSSL_LIB", lib);
+                } else {
+                    log::warn!(
+                        "neither {} nor {} exists — OPENSSL_LIB not set",
+                        lib64.display(),
+                        lib.display()
+                    );
+                }
             }
             if std::env::var("OPENSSL_DIR").is_err() {
                 std::env::set_var("OPENSSL_DIR", &openssl_dir);

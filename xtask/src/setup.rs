@@ -48,6 +48,11 @@ pub struct Setup {
     /// Skip installing OpenSSL
     #[clap(long)]
     pub skip_openssl: bool,
+
+    /// OpenSSL version to install (e.g., "3.0.3", "3.5.0").
+    /// Ignored when `--skip-openssl` is set or `OPENSSL_DIR` is already populated.
+    #[clap(long, default_value = "3.0.3")]
+    pub openssl_version: String,
 }
 
 impl Xtask for Setup {
@@ -169,7 +174,7 @@ impl Xtask for Setup {
         // Install OpenSSL (Linux only)
         #[cfg(target_os = "linux")]
         if !self.skip_openssl {
-            crate::openssl_install::ensure_openssl()?;
+            crate::openssl_install::ensure_openssl_version(&self.openssl_version)?;
         }
 
         log::trace!("done setup");

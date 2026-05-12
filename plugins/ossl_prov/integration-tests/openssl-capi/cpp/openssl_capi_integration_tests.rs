@@ -94,6 +94,50 @@ mod integration {
         panic!("Neither OPENSSL_BIN nor OPENSSL_DIR is set — cannot generate dev key material");
     }
 
+    /// Resolves the OpenSSL shared library directory from `OPENSSL_LIB` or
+    /// `OPENSSL_DIR`.  When set, this is passed as `LD_LIBRARY_PATH` to
+    /// openssl subprocesses so they find the correct `libcrypto.so.3` instead
+    /// of falling back to the system libraries (which may be a different
+    /// version).  Returns `None` when the directory cannot be determined,
+    /// in which case the subprocess inherits the parent's library path.
+    fn find_openssl_lib_dir() -> Option<String> {
+        if let Ok(lib) = env::var("OPENSSL_LIB") {
+            if !lib.is_empty() {
+                assert!(
+                    PathBuf::from(&lib).is_dir(),
+                    "OPENSSL_LIB={lib:?} does not point to an existing directory"
+                );
+                return Some(lib);
+            }
+        }
+        if let Ok(dir) = env::var("OPENSSL_DIR") {
+            let lib64 = PathBuf::from(&dir).join("lib64");
+            if lib64.is_dir() {
+                return Some(lib64.to_string_lossy().into_owned());
+            }
+            let lib = PathBuf::from(&dir).join("lib");
+            if lib.is_dir() {
+                return Some(lib.to_string_lossy().into_owned());
+            }
+        }
+        None
+    }
+
+    /// Applies `LD_LIBRARY_PATH` to a `Command` if the OpenSSL lib directory
+    /// is known.  Prepends to any existing value so that other library paths
+    /// (e.g., for `libazihsm_api_native.so`) are preserved.  When `None`,
+    /// the subprocess inherits the parent's value unchanged.
+    fn set_openssl_lib_path(cmd: &mut Command, lib_dir: &Option<String>) {
+        if let Some(dir) = lib_dir {
+            let existing = env::var("LD_LIBRARY_PATH").unwrap_or_default();
+            if existing.is_empty() {
+                cmd.env("LD_LIBRARY_PATH", dir);
+            } else {
+                cmd.env("LD_LIBRARY_PATH", format!("{dir}:{existing}"));
+            }
+        }
+    }
+
     /// Default credential ID (hex-encoded UUID, matching `env.sh`).
     const DEFAULT_CREDENTIALS_ID: &str = "70fcf730b8764238b8358010ce8a3f76";
     /// Default credential PIN (hex-encoded UUID, matching `env.sh`).
@@ -144,23 +188,22 @@ mod integration {
 
         // OBK (48-byte random)
         let openssl = find_openssl_bin();
+        let openssl_lib = find_openssl_lib_dir();
         let obk_path = keymat_dir.join("obk.bin");
-        let status = Command::new(&openssl)
-            .args(["rand", "-out"])
-            .arg(&obk_path)
-            .arg("48")
-            .status()
-            .expect("Failed to run openssl rand");
+        let mut cmd = Command::new(&openssl);
+        cmd.args(["rand", "-out"]).arg(&obk_path).arg("48");
+        set_openssl_lib_path(&mut cmd, &openssl_lib);
+        let status = cmd.status().expect("Failed to run openssl rand");
         assert!(status.success(), "Failed to generate obk.bin");
 
         // POTA P-384 key pair
         let pota_priv = keymat_dir.join("pota_private_key.der");
 
         // Generate EC P-384 key in PEM
-        let genkey = Command::new(&openssl)
-            .args(["ecparam", "-name", "secp384r1", "-genkey", "-noout"])
-            .output()
-            .expect("Failed to run openssl ecparam");
+        let mut cmd = Command::new(&openssl);
+        cmd.args(["ecparam", "-name", "secp384r1", "-genkey", "-noout"]);
+        set_openssl_lib_path(&mut cmd, &openssl_lib);
+        let genkey = cmd.output().expect("Failed to run openssl ecparam");
         assert!(
             genkey.status.success(),
             "Failed to generate POTA EC key: {}",
@@ -168,13 +211,13 @@ mod integration {
         );
 
         // Convert to DER
-        let mut convert = Command::new(&openssl)
-            .args(["ec", "-outform", "DER", "-out"])
+        let mut cmd = Command::new(&openssl);
+        cmd.args(["ec", "-outform", "DER", "-out"])
             .arg(&pota_priv)
             .stdin(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("Failed to spawn openssl ec");
+            .stderr(Stdio::null());
+        set_openssl_lib_path(&mut cmd, &openssl_lib);
+        let mut convert = cmd.spawn().expect("Failed to spawn openssl ec");
         convert
             .stdin
             .as_mut()
@@ -189,14 +232,14 @@ mod integration {
 
         // Extract public key
         let pota_pub = keymat_dir.join("pota_public_key.der");
-        let pubkey = Command::new(&openssl)
-            .args(["ec", "-in"])
+        let mut cmd = Command::new(&openssl);
+        cmd.args(["ec", "-in"])
             .arg(&pota_priv)
             .args(["-inform", "DER", "-pubout", "-outform", "DER", "-out"])
             .arg(&pota_pub)
-            .stderr(Stdio::null())
-            .status()
-            .expect("Failed to run openssl ec -pubout");
+            .stderr(Stdio::null());
+        set_openssl_lib_path(&mut cmd, &openssl_lib);
+        let pubkey = cmd.status().expect("Failed to run openssl ec -pubout");
         assert!(pubkey.success(), "Failed to extract POTA public key");
 
         (credentials, keymat_dir)

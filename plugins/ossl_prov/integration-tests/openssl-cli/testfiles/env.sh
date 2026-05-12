@@ -45,6 +45,26 @@ fi
 
 export LD_LIBRARY_PATH="$OPENSSL_LIB"
 
+# --- Version gating helpers ---
+# Generic: skip test if OpenSSL version is below the given major.minor.
+#   require_ossl_version 3 5
+require_ossl_version() {
+    local req_major=$1 req_minor=$2
+    local ver
+    ver=$("$OPENSSL_BIN" version | awk '{print $2}')
+    local cur_major cur_minor
+    cur_major=$(echo "$ver" | cut -d. -f1)
+    cur_minor=$(echo "$ver" | cut -d. -f2)
+    if [ "$cur_major" -lt "$req_major" ] || \
+       { [ "$cur_major" -eq "$req_major" ] && [ "$cur_minor" -lt "$req_minor" ]; }; then
+        echo "SKIP: requires OpenSSL >= $req_major.$req_minor (have $ver)"
+        exit 0
+    fi
+}
+
+# Convenience: skip test unless OpenSSL >= 3.5.
+skip_below_ossl_3_5() { require_ossl_version 3 5; }
+
 # --- Credentials via hex env vars (preferred) ---
 # The provider reads credentials from these env vars first, falling back to
 # default files in CWD if unset.  Values match the mock HSM's test credentials.

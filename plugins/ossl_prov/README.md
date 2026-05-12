@@ -65,6 +65,12 @@ RSA genpkey (keyEncipherment)  ──> masked_key.bin ──> pkeyutl -encrypt /
 - CMake, GCC/Clang, pkg-config, curl
 - `libbsd-dev`, `libssl-dev` (system OpenSSL 3.x headers)
 
+### Supported OpenSSL versions
+
+The provider builds against **OpenSSL 3.0.3** and **OpenSSL 3.5.0**. The CI runs
+integration tests against both versions. The version is selected at build time
+via the `OPENSSL_DIR` environment variable.
+
 ### Build
 
 The provider consists of two shared libraries that both link dynamically against the same `libcrypto.so`. Circular dispatch is avoided because the provider registers its algorithms with the property `"provider=azihsm"` and the library's internal OpenSSL calls use bare algorithm names (no property query), which route to the OpenSSL **default** provider.
@@ -72,22 +78,20 @@ The provider consists of two shared libraries that both link dynamically against
 > **Important:** The default provider **must** be available alongside the azihsm provider. During initialisation the provider force-loads the OpenSSL `default` provider into the process's default library context to prevent infinite recursion; if this fails the provider will refuse to start.
 
 ```bash
-# 1. Build OpenSSL 3.0.3 (shared)
-OPENSSL_VERSION=3.0.3
+# 1. Build OpenSSL (shared) — use any supported 3.x version
+OPENSSL_VERSION=3.0.3   # or 3.5.0
 curl -fsSL "https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VERSION}/openssl-${OPENSSL_VERSION}.tar.gz" \
     | tar xz -C /tmp
 cd /tmp/openssl-${OPENSSL_VERSION}
-./Configure --prefix=/opt/openssl-3.0.3 --libdir=lib
-make -j"$(nproc)" && sudo make install_sw
+./Configure --prefix=<your-openssl-install-prefix> --libdir=lib
+make -j"$(nproc)" && make install_sw
 
-# 2. Build both libraries against OpenSSL 3.0.3
+# 2. Build both libraries against your OpenSSL installation
 cd azihsm-sdk
-export LD_LIBRARY_PATH=/opt/openssl-3.0.3/lib
-OPENSSL_DIR=/opt/openssl-3.0.3 cargo build -p azihsm_api_native --features mock
-OPENSSL_DIR=/opt/openssl-3.0.3 cargo build -p azihsm_ossl_provider --features mock
+OPENSSL_DIR=<your-openssl-install-prefix> cargo build -p azihsm_ossl_provider --features mock
 ```
 
-On real hardware, omit `mock` from both build commands.
+On real hardware, omit `mock` from the build command.
 
 This produces two shared libraries in `target/debug/`:
 - `azihsm_provider.so` — the OpenSSL provider
@@ -219,6 +223,76 @@ PROV="-propquery ?provider=azihsm -provider default -provider azihsm_provider"
 > **Note:** On physical hardware, provider commands require `sudo` to access TPM operations.
 
 All examples below use `${PROV}` as shorthand for these three flags.
+
+## Testing
+
+### Integration test suites
+
+| Suite | Package | What it tests |
+|-------|---------|---------------|
+| **CLI** | `provider-integration-tests-cli` | OpenSSL CLI operations (key gen, import, sign, verify, certs, ECDH, HKDF, HMAC) |
+| **C API** | `provider-integration-tests-capi` | OpenSSL EVP C API (digest, sign/verify, encrypt/decrypt, key exchange, resiliency) |
+| **NGINX** | `provider-integration-tests-nginx` | End-to-end TLS with NGINX (requires nginx installed) |
+
+### Environment variables
+
+All paths are controlled via environment variables.
+
+| Variable | Required by | Description |
+|----------|-------------|-------------|
+| `OPENSSL_DIR` | Build, CAPI | OpenSSL installation prefix (forwarded to CMake) |
+| `OPENSSL_BIN` | CLI, NGINX | Path to the `openssl` binary |
+| `OPENSSL_LIB` | CAPI | Directory containing `libcrypto.so` / `libssl.so` |
+| `AZIHSM_CREDENTIALS_ID` | All (optional) | Mock HSM credential ID (defaults to test value) |
+| `AZIHSM_CREDENTIALS_PIN` | All (optional) | Mock HSM credential PIN (defaults to test value) |
+
+### Running integration tests locally
+
+```bash
+# Point to your OpenSSL installation
+export OPENSSL_DIR=<your-openssl-install-prefix>
+export OPENSSL_BIN=$OPENSSL_DIR/bin/openssl
+export OPENSSL_LIB=$OPENSSL_DIR/lib    # or lib64, depending on your build
+
+# Build the provider
+cargo build -p azihsm_ossl_provider --features mock
+
+# Run individual suites
+cargo nextest run -p provider-integration-tests-cli  --features integration --profile ci-provider-integration
+cargo nextest run -p provider-integration-tests-capi --features integration --profile ci-provider-integration
+
+# Or run all suites via xtask
+cargo xtask integration-tests --openssl-version 3.0.3
+```
+
+Tests generate their own key material in `target/test-keymat/` (cleaned
+between runs). No system-wide provider installation is needed — tests
+locate the provider via `PROVIDER_PATH` (defaults to `target/debug`).
+
+### Switching OpenSSL versions
+
+The provider and C++ test binary are compiled against a specific OpenSSL
+version's headers. Switching versions requires a clean build:
+
+```bash
+cargo clean
+export OPENSSL_DIR=<path-to-other-openssl-version>
+cargo build -p azihsm_ossl_provider --features mock
+# Re-run tests as above
+```
+
+### Version gating for 3.5-only tests
+
+Tests that require OpenSSL 3.5 use version gating to skip gracefully on 3.0:
+
+- **C++ tests**: `#if OPENSSL_VERSION_MINOR >= 5` (compile-time, from headers)
+- **Shell tests**: `skip_below_ossl_3_5` helper (runtime, from `env.sh`)
+
+### CI
+
+The GitHub Actions workflow (`.github/workflows/rust.yml`) runs integration
+tests against both OpenSSL 3.0.3 and 3.5.0 via a matrix strategy on the
+`provider_integration` job.
 
 ## Commands
 

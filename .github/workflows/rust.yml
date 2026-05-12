@@ -102,10 +102,22 @@ jobs:
       run: |
         echo "One or more tests failed."
         exit 1
-  
+
   provider_integration:
 
     runs-on: ubuntu-24.04
+
+    strategy:
+      fail-fast: false
+      matrix:
+        openssl-version: ['3.0.3', '3.5.0']
+
+    # Allow 3.5.0 failures while stabilising support
+    continue-on-error: ${{ matrix.openssl-version == '3.5.0' }}
+
+    env:
+      OPENSSL_VERSION: ${{ matrix.openssl-version }}
+      OPENSSL_INSTALL: target/openssl-${{ matrix.openssl-version }}
 
     steps:
     - uses: actions/checkout@v6
@@ -127,22 +139,22 @@ jobs:
         key: ${{ runner.os }}-cargo-${{ env.CACHE_KEY_ID }}
         fail-on-cache-miss: false
 
-    - name: Cache OpenSSL ${{ env.OPENSSL_VERSION }}
+    - name: Cache OpenSSL ${{ matrix.openssl-version }}
       id: cache-openssl
       uses: actions/cache@v5
       with:
         path: ${{ env.OPENSSL_INSTALL }}
-        key: openssl-${{ env.OPENSSL_VERSION }}-target-linux-x64
+        key: openssl-${{ matrix.openssl-version }}-target-linux-x64
 
     - name: Setup (includes OpenSSL on cache miss)
-      run: cargo xtask setup ${{ steps.cache-openssl.outputs.cache-hit == 'true' && '--skip-openssl' || '' }}
+      run: cargo xtask setup --openssl-version ${{ matrix.openssl-version }} ${{ steps.cache-openssl.outputs.cache-hit == 'true' && '--skip-openssl' || '' }}
 
     - name: Ensure OpenSSL default config exists
       run: |
         mkdir -p ${{ env.OPENSSL_INSTALL }}/ssl
         touch ${{ env.OPENSSL_INSTALL }}/ssl/openssl.cnf
 
-    - name: Build azihsm with OpenSSL ${{ env.OPENSSL_VERSION }}
+    - name: Build azihsm with OpenSSL ${{ matrix.openssl-version }}
       env:
         OPENSSL_DIR: ${{ github.workspace }}/${{ env.OPENSSL_INSTALL }}
       run: |
@@ -189,6 +201,7 @@ jobs:
     - name: Run C API integration tests
       env:
         OPENSSL_DIR: ${{ github.workspace }}/${{ env.OPENSSL_INSTALL }}
+        OPENSSL_LIB: ${{ github.workspace }}/${{ env.OPENSSL_INSTALL }}/lib
         AZIHSM_CREDENTIALS_ID: "70fcf730b8764238b8358010ce8a3f76"
         AZIHSM_CREDENTIALS_PIN: "db3dc77fc22e430080d41b31b6f04800"
       run: cargo xtask precheck --nextest --package provider-integration-tests-capi --features integration --profile ci-provider-integration
