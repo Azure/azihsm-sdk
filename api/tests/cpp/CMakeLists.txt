@@ -1,12 +1,20 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-cmake_minimum_required(VERSION 4.2)
+cmake_minimum_required(VERSION 3.14)
+
+# Platform-specific minimums (hard enforcement)
+if(WIN32 AND CMAKE_VERSION VERSION_LESS "4.2")
+  message(FATAL_ERROR "On Windows this project requires CMake >= 4.2 (you have ${CMAKE_VERSION}).")
+endif()
+
 project(azihsm_api_cpp_tests VERSION 0.1.0)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-cmake_policy(SET CMP0135 NEW)
+if (CMAKE_VERSION VERSION_GREATER_EQUAL "3.24.0")
+    cmake_policy(SET CMP0135 NEW)
+endif()
 
 SET(TEST_FEATURES "" CACHE STRING "Test features to enable")
 
