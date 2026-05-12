@@ -531,6 +531,54 @@ fn run_aes_cbc_padding_tamper_test(session: &HsmSession) {
     );
 }
 
+/// Verifies AES-CBC decryption fails on deterministically tampered IV for a
+/// sub-block plaintext (single-block ciphertext, where no `C_prev` exists).
+fn run_aes_cbc_iv_tamper_single_block_test(session: &HsmSession) {
+    let (secret_a, _) = derive_ecdh_shared_secrets(session, HsmEccCurve::P256);
+
+    let mut hkdf = HsmHkdfAlgo::new(HsmHashAlgo::Sha256, None, None).unwrap();
+
+    let key = derive_aes_key_from_shared_secret(session, &mut hkdf, &secret_a, 256);
+
+    let iv = [0u8; 16];
+    let mut enc = HsmAesCbcAlgo::with_padding(iv.to_vec()).unwrap();
+
+    // Plaintext < 16 bytes → single 16-byte ciphertext block after PKCS#7 padding.
+    let plaintext: &[u8] = b"short msg";
+    assert!(
+        plaintext.len() < 16,
+        "test invariant: plaintext must be sub-block"
+    );
+
+    let ct = HsmEncrypter::encrypt_vec(&mut enc, &key, plaintext).unwrap();
+    assert_eq!(
+        ct.len(),
+        16,
+        "test invariant: sub-block plaintext must produce a single ciphertext block"
+    );
+
+    // Make sure the original ciphertext decrypts correctly before tampering
+    let mut dec_orig = HsmAesCbcAlgo::with_padding(iv.to_vec()).unwrap();
+    let pt_orig = HsmDecrypter::decrypt_vec(&mut dec_orig, &key, &ct)
+        .expect("untampered ciphertext must decrypt");
+    assert_eq!(pt_orig, plaintext);
+
+    // Tamper: flip IV[15]. Deterministically inverts the pad-length byte.
+    // CBC: `P_0 = AES_dec(C_0) XOR IV`. Flipping `IV[15]` deterministically
+    // inverts `P_0[15]` — the PKCS#7 pad-length byte — turning e.g. `0x0B`
+    // into `0xF4` (> 0x10), guaranteeing PKCS#7 unpadder rejection.
+    let mut tampered_iv = iv;
+    tampered_iv[15] ^= 0xFF;
+
+    let mut dec_tampered = HsmAesCbcAlgo::with_padding(tampered_iv.to_vec()).unwrap();
+    let result = HsmDecrypter::decrypt_vec(&mut dec_tampered, &key, &ct);
+
+    assert!(
+        result.is_err(),
+        "decrypting with tampered IV[15] should fail padding validation, got: {result:?}"
+    );
+}
+
 // ============================================================
 // test case section
 // ============================================================
@@ -1036,6 +1084,13 @@ fn test_hkdf_strong_determinism_p521(session: HsmSession) {
 #[session_test]
 fn test_aes_cbc_padding_tamper(session: HsmSession) {
     run_aes_cbc_padding_tamper_test(&session);
+}
+
+/// Verifies AES-CBC IV tampering is detected for a single-block ciphertext
+/// (sub-block plaintext path).
+#[session_test]
+fn test_aes_cbc_iv_tamper_single_block(session: HsmSession) {
+    run_aes_cbc_iv_tamper_single_block_test(&session);
 }
 
 /// Verifies unrelated shared secrets do not interoperate for P256
