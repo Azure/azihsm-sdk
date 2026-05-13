@@ -3,40 +3,13 @@
 
 use azihsm_crypto::*;
 
+use super::common::*;
 use super::*;
 
 // ================================
 // Helper functions
 // ================================
 
-/// Generate an RSA key pair with wrap/unwrap permissions for key import operations
-fn get_rsa_unwrapping_key_pair(session: &HsmSession) -> (HsmRsaPrivateKey, HsmRsaPublicKey) {
-    let priv_key_props = HsmKeyPropsBuilder::default()
-        .class(HsmKeyClass::Private)
-        .key_kind(HsmKeyKind::Rsa)
-        .bits(2048)
-        .can_unwrap(true)
-        .build()
-        .expect("Failed to build unwrapping key props");
-
-    let pub_key_props = HsmKeyPropsBuilder::default()
-        .class(HsmKeyClass::Public)
-        .key_kind(HsmKeyKind::Rsa)
-        .bits(2048)
-        .can_wrap(true)
-        .build()
-        .expect("Failed to build public key props");
-
-    let mut algo = HsmRsaKeyUnwrappingKeyGenAlgo::default();
-
-    let (priv_key, pub_key) =
-        HsmKeyManager::generate_key_pair(session, &mut algo, priv_key_props, pub_key_props)
-            .expect("Failed to generate unwrapping key");
-
-    (priv_key, pub_key)
-}
-
-/// Import an external RSA key by wrapping with RSA-AES and unwrapping into HSM-managed session keys.
 fn import_rsa_key(
     session: &HsmSession,
     der: &[u8],

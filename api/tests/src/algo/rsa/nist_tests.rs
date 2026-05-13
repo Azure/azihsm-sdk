@@ -120,6 +120,11 @@ fn rsa_bits_from_ciphertext(ciphertext: &[u8]) -> u32 {
 }
 
 /// Returns whether a vector should be skipped due to known OpenSSL strictness.
+///
+/// Vector 29 contains a PKCS#1 v1.5 signature whose encoded DigestInfo does not
+/// satisfy OpenSSL's stricter DER validation rules. The HSM/OpenSSL-backed API
+/// rejects that vector during verification even though the vector is kept in the
+/// shared test-vector set for compatibility with other implementations.
 fn should_skip_known_openssl_vector(idx: usize) -> bool {
     idx == 29
 }
@@ -209,12 +214,18 @@ fn sign_verify_pkcs1_vector(session: &HsmSession, idx: usize, vector: &PkcsTestV
     let signature = HsmSigner::sign_vec(&mut algo, &priv_key, &hash)
         .unwrap_or_else(|_| panic!("vector {idx}: PKCS#1 NIST signing failed"));
 
-    let is_valid = HsmVerifier::verify(&mut algo, &pub_key, &hash, &signature)
-        .unwrap_or_else(|_| panic!("vector {idx}: PKCS#1 NIST generated-signature verify failed"));
+    assert_eq!(
+        signature.as_slice(),
+        vector.s,
+        "vector {idx}: PKCS#1 generated signature should match NIST vector signature"
+    );
+
+    let is_valid = HsmVerifier::verify(&mut algo, &pub_key, &hash, vector.s)
+        .unwrap_or_else(|_| panic!("vector {idx}: PKCS#1 NIST vector-signature verify failed"));
 
     assert!(
         is_valid,
-        "vector {idx}: PKCS#1 NIST generated signature should verify"
+        "vector {idx}: PKCS#1 NIST vector signature should verify"
     );
 }
 
