@@ -11,6 +11,9 @@ env:
 
 jobs:
   create_new_cache_ubuntu:
+    permissions:
+      contents: read
+      actions: write
 
     runs-on: ubuntu-24.04
 
@@ -33,6 +36,9 @@ jobs:
         key: ${{ runner.os }}-cargo-${{ github.sha }}
 
   create_new_cache_windows:
+    permissions:
+      contents: read
+      actions: write
 
     runs-on: windows-latest
 
