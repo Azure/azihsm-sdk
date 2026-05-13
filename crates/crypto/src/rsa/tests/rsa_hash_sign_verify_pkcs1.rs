@@ -3,7 +3,6 @@
 //! Tests for validating RSA signing and verification with PKCS#1 v1.5 padding.
 use super::*;
 use crate::testvectors::rsa::RSA_PKCS1_TEST_VECTORS;
-//use crate::testvectors::rsa::RsaPkcs1TestVector;
 
 fn sign_pkcs1_v15(hash_algo: &HashAlgo, private_key: &RsaPrivateKey, message: &[u8]) -> Vec<u8> {
     let mut algo = RsaHashSignAlgo::with_pkcs1_padding(hash_algo.clone());
