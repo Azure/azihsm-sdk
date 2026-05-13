@@ -783,19 +783,17 @@ fn test_rsa_verify_all_zero_and_all_ff_signature_fails(session: HsmSession) {
     let all_zero_sig = vec![0u8; sig_len];
     let all_ff_sig = vec![0xFFu8; sig_len];
 
-    let result_zero = HsmVerifier::verify(&mut algo, &pub_key, &hash, &all_zero_sig);
-    let result_ff = HsmVerifier::verify(&mut algo, &pub_key, &hash, &all_ff_sig);
+    let valid_zero = HsmVerifier::verify(&mut algo, &pub_key, &hash, &all_zero_sig)
+        .expect("Verification call failed");
+    let valid_ff = HsmVerifier::verify(&mut algo, &pub_key, &hash, &all_ff_sig)
+        .expect("Verification call failed");
 
-    // Accept both Ok(false) (Windows) and Err (Linux)
     assert!(
-        matches!(result_zero, Ok(false)) || result_zero.is_err(),
-        "Expected failure for all-zero signature, got {:?}",
-        result_zero
+        !valid_zero,
+        "Verification should report invalid signature for all-zero signature"
     );
-
     assert!(
-        matches!(result_ff, Ok(false)) || result_ff.is_err(),
-        "Expected failure for all-0xFF signature, got {:?}",
-        result_ff
+        !valid_ff,
+        "Verification should report invalid signature for all-0xFF signature"
     );
 }
