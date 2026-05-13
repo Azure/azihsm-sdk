@@ -121,10 +121,14 @@ fn rsa_bits_from_ciphertext(ciphertext: &[u8]) -> u32 {
 
 /// Returns whether a vector should be skipped due to known OpenSSL strictness.
 ///
-/// Vector 29 contains a PKCS#1 v1.5 signature whose encoded DigestInfo does not
-/// satisfy OpenSSL's stricter DER validation rules. The HSM/OpenSSL-backed API
-/// rejects that vector during verification even though the vector is kept in the
-/// shared test-vector set for compatibility with other implementations.
+/// Vector 29 is skipped for RSA NIST signature-vector tests because it is known
+/// to be rejected by the HSM/OpenSSL-backed verification path.
+///
+/// For PKCS#1 v1.5, vector 29 contains an encoded DigestInfo that does not
+/// satisfy OpenSSL's stricter DER validation rules.
+///
+/// For PSS, vector 29 is also skipped only to preserve the existing OpenSSL-backed
+/// test behavior for this shared vector index.
 fn should_skip_known_openssl_vector(idx: usize) -> bool {
     idx == 29
 }
@@ -162,8 +166,7 @@ fn verify_pkcs1_vector(session: &HsmSession, idx: usize, vector: &PkcsTestVector
     let mut algo = HsmRsaHashSignAlgo::with_pkcs1_padding(hsm_hash_from_test(vector.hash_algo));
 
     let is_valid = HsmVerifier::verify(&mut algo, &pub_key, vector.msg, vector.s)
-        .unwrap_or_else(|_| panic!("vector {idx}: PKCS#1 NIST verify failed"));
-
+        .unwrap_or_else(|err| panic!("vector {idx}: PKCS#1 NIST verify failed: {err:?}"));
     assert!(
         is_valid,
         "vector {idx}: PKCS#1 NIST signature should verify"
@@ -181,17 +184,17 @@ fn verify_pkcs1_vector_streaming(session: &HsmSession, idx: usize, vector: &Pkcs
     let algo = HsmRsaHashSignAlgo::with_pkcs1_padding(hsm_hash_from_test(vector.hash_algo));
 
     let mut verify_ctx = HsmVerifier::verify_init(algo, pub_key)
-        .unwrap_or_else(|_| panic!("vector {idx}: PKCS#1 verify_init failed"));
+        .unwrap_or_else(|err| panic!("vector {idx}: PKCS#1 verify_init failed: {err:?}"));
 
     for chunk in vector.msg.chunks(32) {
         verify_ctx
             .update(chunk)
-            .unwrap_or_else(|_| panic!("vector {idx}: PKCS#1 verify update failed"));
+            .unwrap_or_else(|err| panic!("vector {idx}: PKCS#1 verify update failed: {err:?}"));
     }
 
     let is_valid = verify_ctx
         .finish(vector.s)
-        .unwrap_or_else(|_| panic!("vector {idx}: PKCS#1 streaming verify failed"));
+        .unwrap_or_else(|err| panic!("vector {idx}: PKCS#1 streaming verify failed: {err:?}"));
 
     assert!(
         is_valid,
@@ -212,7 +215,7 @@ fn sign_verify_pkcs1_vector(session: &HsmSession, idx: usize, vector: &PkcsTestV
     let mut algo = HsmRsaSignAlgo::with_pkcs1_padding(hsm_hash_from_test(vector.hash_algo));
 
     let signature = HsmSigner::sign_vec(&mut algo, &priv_key, &hash)
-        .unwrap_or_else(|_| panic!("vector {idx}: PKCS#1 NIST signing failed"));
+        .unwrap_or_else(|err| panic!("vector {idx}: PKCS#1 NIST signing failed: {err:?}"));
 
     assert_eq!(
         signature.as_slice(),
@@ -220,8 +223,10 @@ fn sign_verify_pkcs1_vector(session: &HsmSession, idx: usize, vector: &PkcsTestV
         "vector {idx}: PKCS#1 generated signature should match NIST vector signature"
     );
 
-    let is_valid = HsmVerifier::verify(&mut algo, &pub_key, &hash, vector.s)
-        .unwrap_or_else(|_| panic!("vector {idx}: PKCS#1 NIST vector-signature verify failed"));
+    let is_valid =
+        HsmVerifier::verify(&mut algo, &pub_key, &hash, vector.s).unwrap_or_else(|err| {
+            panic!("vector {idx}: PKCS#1 NIST vector-signature verify failed: {err:?}")
+        });
 
     assert!(
         is_valid,
@@ -245,7 +250,7 @@ fn verify_pss_vector(session: &HsmSession, idx: usize, vector: &PssTestVector) {
         HsmRsaHashSignAlgo::with_pss_padding(hsm_hash_from_test(vector.hash_algo), vector.salt_len);
 
     let is_valid = HsmVerifier::verify(&mut algo, &pub_key, vector.msg, vector.s)
-        .unwrap_or_else(|_| panic!("vector {idx}: PSS NIST verify failed"));
+        .unwrap_or_else(|err| panic!("vector {idx}: PSS NIST verify failed: {err:?}"));
 
     assert!(is_valid, "vector {idx}: PSS NIST signature should verify");
 }
@@ -262,17 +267,17 @@ fn verify_pss_vector_streaming(session: &HsmSession, idx: usize, vector: &PssTes
         HsmRsaHashSignAlgo::with_pss_padding(hsm_hash_from_test(vector.hash_algo), vector.salt_len);
 
     let mut verify_ctx = HsmVerifier::verify_init(algo, pub_key)
-        .unwrap_or_else(|_| panic!("vector {idx}: PSS verify_init failed"));
+        .unwrap_or_else(|err| panic!("vector {idx}: PSS verify_init failed: {err:?}"));
 
     for chunk in vector.msg.chunks(32) {
         verify_ctx
             .update(chunk)
-            .unwrap_or_else(|_| panic!("vector {idx}: PSS verify update failed"));
+            .unwrap_or_else(|err| panic!("vector {idx}: PSS verify update failed: {err:?}"));
     }
 
     let is_valid = verify_ctx
         .finish(vector.s)
-        .unwrap_or_else(|_| panic!("vector {idx}: PSS streaming verify failed"));
+        .unwrap_or_else(|err| panic!("vector {idx}: PSS streaming verify failed: {err:?}"));
 
     assert!(
         is_valid,
@@ -294,10 +299,12 @@ fn sign_verify_pss_vector(session: &HsmSession, idx: usize, vector: &PssTestVect
         HsmRsaSignAlgo::with_pss_padding(hsm_hash_from_test(vector.hash_algo), vector.salt_len);
 
     let signature = HsmSigner::sign_vec(&mut algo, &priv_key, &hash)
-        .unwrap_or_else(|_| panic!("vector {idx}: PSS NIST signing failed"));
+        .unwrap_or_else(|err| panic!("vector {idx}: PSS NIST signing failed: {err:?}"));
 
-    let is_valid = HsmVerifier::verify(&mut algo, &pub_key, &hash, &signature)
-        .unwrap_or_else(|_| panic!("vector {idx}: PSS NIST generated-signature verify failed"));
+    let is_valid =
+        HsmVerifier::verify(&mut algo, &pub_key, &hash, &signature).unwrap_or_else(|err| {
+            panic!("vector {idx}: PSS NIST generated-signature verify failed: {err:?}")
+        });
 
     assert!(
         is_valid,
@@ -321,7 +328,7 @@ fn decrypt_oaep_vector(session: &HsmSession, idx: usize, vector: &OaepTestVector
         HsmRsaEncryptAlgo::with_oaep_padding(hsm_hash_from_test(vector.hash_algo), vector.label);
 
     let decrypted = HsmDecrypter::decrypt_vec(&mut algo, &priv_key, vector.ciphertext)
-        .unwrap_or_else(|_| panic!("vector {idx}: OAEP decrypt failed"));
+        .unwrap_or_else(|err| panic!("vector {idx}: OAEP decrypt failed: {err:?}"));
 
     assert_eq!(
         decrypted.as_slice(),
@@ -342,10 +349,10 @@ fn roundtrip_oaep_vector(session: &HsmSession, idx: usize, vector: &OaepTestVect
         HsmRsaEncryptAlgo::with_oaep_padding(hsm_hash_from_test(vector.hash_algo), vector.label);
 
     let ciphertext = HsmEncrypter::encrypt_vec(&mut algo, &pub_key, vector.plaintext)
-        .unwrap_or_else(|_| panic!("vector {idx}: OAEP encrypt failed"));
+        .unwrap_or_else(|err| panic!("vector {idx}: OAEP encrypt failed: {err:?}"));
 
     let decrypted = HsmDecrypter::decrypt_vec(&mut algo, &priv_key, &ciphertext)
-        .unwrap_or_else(|_| panic!("vector {idx}: OAEP roundtrip decrypt failed"));
+        .unwrap_or_else(|err| panic!("vector {idx}: OAEP roundtrip decrypt failed: {err:?}"));
 
     assert_eq!(
         decrypted.as_slice(),
