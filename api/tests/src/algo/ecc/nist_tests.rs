@@ -208,7 +208,10 @@ fn run_api_ecdsa_modified_digest_fails(
         let result = api_verify_hash_signature(&pub_key, &modified_digest, &signature);
 
         assert!(
-            matches!(result, Ok(false) | Err(_)),
+            matches!(
+                result,
+                Ok(false) | Err(HsmError::DdiCmdFailure) | Err(HsmError::InternalError)
+            ),
             "[{label}] API ECDSA verification should fail for modified digest at vector {i}, got {:?}",
             result
         );
@@ -233,7 +236,10 @@ fn run_api_ecdsa_tampered_signature_fails(
         let result = api_verify_hash_signature(&pub_key, &digest, &signature);
 
         assert!(
-            matches!(result, Ok(false) | Err(_)),
+            matches!(
+                result,
+                Ok(false) | Err(HsmError::DdiCmdFailure) | Err(HsmError::InternalError)
+            ),
             "[{label}] API ECDSA verification should fail for tampered signature at vector {i}, got {:?}",
             result
         );
