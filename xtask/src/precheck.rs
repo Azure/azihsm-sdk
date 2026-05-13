@@ -96,6 +96,7 @@ pub struct Precheck {
     profile: Option<String>,
     /// Pass through to `cargo install --config`; accepts either `KEY=VALUE`
     /// or a path to a Cargo `config.toml` file.
+    /// Only used for --setup ignored otherwise.
     #[clap(long)]
     pub config: Option<String>,
 }
