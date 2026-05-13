@@ -237,8 +237,8 @@ fn test_rsa_verify_wrong_public_key_fails(session: HsmSession) {
 
     let result =
         HsmVerifier::verify(&mut algo, &pub2, &hash, &sig).expect("Failed to verify signature");
-    // Expect failure here, but if it succeeds, it should not validate the signature
-    assert!(!result, "Verification should not succeed");
+    // Verification should return false when using the wrong public key.
+    assert!(!result, "Verification should return false with the wrong public key");
 }
 
 /// Ensure verification fails when signature is corrupted
