@@ -36,7 +36,7 @@ fn get_rsa_unwrapping_key_pair(session: &HsmSession) -> (HsmRsaPrivateKey, HsmRs
     (priv_key, pub_key)
 }
 
-/// Import an external RSA key by wrapping with RSA-AES and unwrapping into HSM-managed keys
+/// Import an external RSA key by wrapping with RSA-AES and unwrapping into HSM-managed session keys.
 fn import_rsa_key(
     session: &HsmSession,
     der: &[u8],
@@ -49,6 +49,7 @@ fn import_rsa_key(
         .key_kind(HsmKeyKind::Rsa)
         .bits(bits)
         .can_sign(true)
+        .is_session(true)
         .build()
         .expect("Failed to build private key props");
 
@@ -57,6 +58,7 @@ fn import_rsa_key(
         .key_kind(HsmKeyKind::Rsa)
         .bits(bits)
         .can_verify(true)
+        .is_session(true)
         .build()
         .expect("Failed to build public key props");
 
@@ -65,8 +67,8 @@ fn import_rsa_key(
 
     let mut wrap_algo = HsmRsaAesWrapAlgo::new(hash_algo, salt_size);
 
-    let result = match HsmEncrypter::encrypt_vec(&mut wrap_algo, &unwrapping_pub_key, der) {
-        Ok(wrapped_key) => {
+    let result = HsmEncrypter::encrypt_vec(&mut wrap_algo, &unwrapping_pub_key, der).and_then(
+        |wrapped_key| {
             let mut unwrap_algo = HsmRsaKeyRsaAesKeyUnwrapAlgo::new(hash_algo);
 
             unwrap_algo.unwrap_key_pair(
@@ -75,9 +77,8 @@ fn import_rsa_key(
                 priv_key_props,
                 pub_key_props,
             )
-        }
-        Err(err) => Err(err),
-    };
+        },
+    );
 
     let _ = HsmKeyManager::delete_key(unwrapping_priv_key);
     let _ = HsmKeyManager::delete_key(unwrapping_pub_key);
