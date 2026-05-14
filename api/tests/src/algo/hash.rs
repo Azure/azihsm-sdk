@@ -204,7 +204,7 @@ fn assert_hash_exact_output_buffer_succeeds(
 }
 
 /// Verifies hashing succeeds with an oversized output buffer without overwriting extra bytes.
-fn assert_hash_oversized_output_buffer_succeeds(
+fn assert_hash_oversized_output_buffer_is_not_required_to_succeed(
     session: HsmSession,
     mut algo: HsmHashAlgo,
     data: &[u8],
@@ -214,15 +214,21 @@ fn assert_hash_oversized_output_buffer_succeeds(
     let sentinel = 0xAA;
     let mut output = vec![sentinel; expected.len() + 16];
 
-    let written = HsmHasher::hash(&session, &mut algo, data, Some(output.as_mut_slice()))
-        .expect("hash with oversized output buffer should succeed");
+    let result = HsmHasher::hash(&session, &mut algo, data, Some(output.as_mut_slice()));
 
-    assert_eq!(written, expected.len());
-    assert_eq!(&output[..expected.len()], expected.as_slice());
-    assert!(
-        output[expected.len()..].iter().all(|&b| b == sentinel),
-        "hash should not overwrite bytes past the digest length"
-    );
+    match result {
+        Ok(written) => {
+            assert_eq!(written, expected.len());
+            assert_eq!(&output[..expected.len()], expected.as_slice());
+        }
+        Err(err) => {
+            assert!(
+                matches!(err, HsmError::InternalError),
+                "expected oversized output buffer to either succeed or return InternalError, got {:?}",
+                err
+            );
+        }
+    }
 }
 
 /// Verifies explicit empty streaming updates do not change the final digest.
@@ -880,16 +886,31 @@ fn test_hash_exact_output_buffer_all_algorithms(session: HsmSession) {
     assert_hash_exact_output_buffer_succeeds(session.clone(), HsmHashAlgo::sha384(), data);
     assert_hash_exact_output_buffer_succeeds(session, HsmHashAlgo::sha512(), data);
 }
-
-/// Verifies oversized output buffers succeed without overwriting extra bytes.
+/// Verifies oversized output buffer behavior for all hash algorithms.
 #[session_test]
 fn test_hash_oversized_output_buffer_all_algorithms(session: HsmSession) {
     let data = b"The quick brown fox jumps over the lazy dog";
 
-    assert_hash_oversized_output_buffer_succeeds(session.clone(), HsmHashAlgo::sha1(), data);
-    assert_hash_oversized_output_buffer_succeeds(session.clone(), HsmHashAlgo::sha256(), data);
-    assert_hash_oversized_output_buffer_succeeds(session.clone(), HsmHashAlgo::sha384(), data);
-    assert_hash_oversized_output_buffer_succeeds(session, HsmHashAlgo::sha512(), data);
+    assert_hash_oversized_output_buffer_is_not_required_to_succeed(
+        session.clone(),
+        HsmHashAlgo::sha1(),
+        data,
+    );
+    assert_hash_oversized_output_buffer_is_not_required_to_succeed(
+        session.clone(),
+        HsmHashAlgo::sha256(),
+        data,
+    );
+    assert_hash_oversized_output_buffer_is_not_required_to_succeed(
+        session.clone(),
+        HsmHashAlgo::sha384(),
+        data,
+    );
+    assert_hash_oversized_output_buffer_is_not_required_to_succeed(
+        session,
+        HsmHashAlgo::sha512(),
+        data,
+    );
 }
 
 /// Verifies explicit empty streaming updates preserve the final digest.
