@@ -731,16 +731,25 @@ fn try_import_rsa_key(
     let kek_size = 32;
 
     let mut wrap_algo = HsmRsaAesWrapAlgo::new(hash_algo, kek_size);
-    let wrapped_key = HsmEncrypter::encrypt_vec(&mut wrap_algo, &unwrapping_pub_key, der)?;
 
-    let mut unwrap_algo = HsmRsaKeyRsaAesKeyUnwrapAlgo::new(hash_algo);
+    let result = match HsmEncrypter::encrypt_vec(&mut wrap_algo, &unwrapping_pub_key, der) {
+        Ok(wrapped_key) => {
+            let mut unwrap_algo = HsmRsaKeyRsaAesKeyUnwrapAlgo::new(hash_algo);
 
-    unwrap_algo.unwrap_key_pair(
-        &unwrapping_priv_key,
-        &wrapped_key,
-        priv_key_props,
-        pub_key_props,
-    )
+            unwrap_algo.unwrap_key_pair(
+                &unwrapping_priv_key,
+                &wrapped_key,
+                priv_key_props,
+                pub_key_props,
+            )
+        }
+        Err(err) => Err(err),
+    };
+
+    let _ = HsmKeyManager::delete_key(unwrapping_priv_key);
+    let _ = HsmKeyManager::delete_key(unwrapping_pub_key);
+
+    result
 }
 
 // ============================================================
@@ -1453,9 +1462,20 @@ fn test_import_rsa_invalid_der_fails(session: HsmSession) {
 
     let result = try_import_rsa_key(&session, &bad_der, 2048);
 
+    let unexpected_error = match result {
+        Err(HsmError::DdiCmdFailure) => None,
+        Err(err) => Some(format!("{err:?}")),
+        Ok((priv_key, pub_key)) => {
+            let _ = HsmKeyManager::delete_key(priv_key);
+            let _ = HsmKeyManager::delete_key(pub_key);
+            Some("Ok((priv_key, pub_key))".to_string())
+        }
+    };
+
     assert!(
-        matches!(result, Err(HsmError::DdiCmdFailure)),
-        "Expected RSA import with invalid DER to fail, got success or unexpected error"
+        unexpected_error.is_none(),
+        "Expected RSA import with invalid DER to fail with DdiCmdFailure, got {:?}",
+        unexpected_error
     );
 }
 
@@ -1467,8 +1487,20 @@ fn test_import_rsa_mismatched_bits_fails(session: HsmSession) {
 
     let result = try_import_rsa_key(&session, &der, 3072);
 
+    let unexpected_result = match result {
+        Err(HsmError::InvalidKeyProps) => None,
+        Err(err) => Some(format!("{err:?}")),
+        Ok((priv_key, pub_key)) => {
+            let _ = HsmKeyManager::delete_key(priv_key);
+            let _ = HsmKeyManager::delete_key(pub_key);
+
+            Some("Ok((priv_key, pub_key))".to_string())
+        }
+    };
+
     assert!(
-        matches!(result, Err(HsmError::InvalidKeyProps)),
-        "Expected RSA import with mismatched bits to fail, got success or unexpected error"
+        unexpected_result.is_none(),
+        "Expected RSA import with mismatched bits to fail with InvalidKeyProps, got {:?}",
+        unexpected_result
     );
 }

@@ -61,20 +61,28 @@ fn import_rsa_key(
         .expect("Failed to build public key props");
 
     let hash_algo = HsmHashAlgo::Sha384;
-    let kek_size = 32;
+    let salt_size = 32;
 
-    let mut wrap_algo = HsmRsaAesWrapAlgo::new(hash_algo, kek_size);
-    let wrapped_key = HsmEncrypter::encrypt_vec(&mut wrap_algo, &unwrapping_pub_key, der)?;
+    let mut wrap_algo = HsmRsaAesWrapAlgo::new(hash_algo, salt_size);
 
-    let mut unwrap_algo = HsmRsaKeyRsaAesKeyUnwrapAlgo::new(hash_algo);
-    let (priv_key, pub_key) = unwrap_algo.unwrap_key_pair(
-        &unwrapping_priv_key,
-        &wrapped_key,
-        priv_key_props,
-        pub_key_props,
-    )?;
+    let result = match HsmEncrypter::encrypt_vec(&mut wrap_algo, &unwrapping_pub_key, der) {
+        Ok(wrapped_key) => {
+            let mut unwrap_algo = HsmRsaKeyRsaAesKeyUnwrapAlgo::new(hash_algo);
 
-    Ok((priv_key, pub_key))
+            unwrap_algo.unwrap_key_pair(
+                &unwrapping_priv_key,
+                &wrapped_key,
+                priv_key_props,
+                pub_key_props,
+            )
+        }
+        Err(err) => Err(err),
+    };
+
+    let _ = HsmKeyManager::delete_key(unwrapping_priv_key);
+    let _ = HsmKeyManager::delete_key(unwrapping_pub_key);
+
+    result
 }
 
 /// Helper to perform streaming RSA signing over multiple data chunks
@@ -539,7 +547,7 @@ fn test_rsa_streaming_verify_modified_signature_fails(session: HsmSession) {
     let result = ctx.finish(&corrupted_sig);
 
     assert!(
-        !matches!(result, Ok(true)),
+        matches!(result, Ok(false)),
         "finish with modified sig should not succeed, got {:?}",
         result
     );
@@ -574,7 +582,7 @@ fn test_rsa_streaming_verify_wrong_data_fails(session: HsmSession) {
     let result = ctx.finish(&sig);
 
     assert!(
-        !matches!(result, Ok(true)),
+        matches!(result, Ok(false)),
         "verify with wrong data should not succeed, got {:?}",
         result
     );
@@ -609,7 +617,7 @@ fn test_rsa_streaming_pkcs1_vs_pss_mismatch_fails(session: HsmSession) {
     let result = ctx.finish(&sig);
 
     assert!(
-        !matches!(result, Ok(true)),
+        matches!(result, Ok(false)),
         "finish with mismatched padding should not succeed, got {:?}",
         result
     );
@@ -700,7 +708,7 @@ fn test_rsa_streaming_verify_wrong_key_fails(session: HsmSession) {
     let result = ctx.finish(&sig);
 
     assert!(
-        !matches!(result, Ok(true)),
+        matches!(result, Ok(false)),
         "verify with wrong key should not succeed, got {:?}",
         result
     );
@@ -728,7 +736,7 @@ fn test_rsa_streaming_verify_empty_signature_fails(session: HsmSession) {
     let result = ctx.finish(&[]); // empty sig
 
     assert!(
-        !matches!(result, Ok(true)),
+        matches!(result, Ok(false)),
         "finish with empty sig should not succeed, got {:?}",
         result
     );
@@ -765,7 +773,7 @@ fn test_rsa_streaming_verify_truncated_signature_fails(session: HsmSession) {
     let result = ctx.finish(&truncated_sig);
 
     assert!(
-        !matches!(result, Ok(true)),
+        matches!(result, Ok(false)),
         "verify with truncated sig should not succeed, got {:?}",
         result
     );
@@ -811,7 +819,7 @@ fn test_rsa_verify_wrong_hash_algo_fails(session: HsmSession) {
     let result = HsmVerifier::verify(&mut wrong_verify_algo, &pub_key, msg, &sig);
 
     assert!(
-        !matches!(result, Ok(true)),
+        matches!(result, Ok(false)),
         "Verification should not succeed, got {:?}",
         result
     );
@@ -838,7 +846,7 @@ fn test_rsa_pss_salt_len_mismatch_fails(session: HsmSession) {
     let result = HsmVerifier::verify(&mut wrong_verify_algo, &pub_key, msg, &sig);
 
     assert!(
-        !matches!(result, Ok(true)),
+        matches!(result, Ok(false)),
         "Verification should not succeed, got {:?}",
         result
     );
@@ -868,7 +876,7 @@ fn test_rsa_verify_modified_signature_fails_one_shot(session: HsmSession) {
     let result = HsmVerifier::verify(&mut verify_algo, &pub_key, msg, &corrupted_sig);
 
     assert!(
-        !matches!(result, Ok(true)),
+        matches!(result, Ok(false)),
         "Verification should not succeed, got {:?}",
         result
     );
@@ -897,7 +905,7 @@ fn test_rsa_verify_wrong_data_fails_one_shot(session: HsmSession) {
     let result = HsmVerifier::verify(&mut verify_algo, &pub_key, wrong_msg, &sig);
 
     assert!(
-        !matches!(result, Ok(true)),
+        matches!(result, Ok(false)),
         "Verification should not succeed, got {:?}",
         result
     );
@@ -949,7 +957,7 @@ fn test_rsa_verify_truncated_signature_fails(session: HsmSession) {
     let result = HsmVerifier::verify(&mut verify_algo, &pub_key, msg, truncated_sig);
 
     assert!(
-        !matches!(result, Ok(true)),
+        matches!(result, Ok(false)),
         "Verification should not succeed, got {:?}",
         result
     );
@@ -997,7 +1005,7 @@ fn test_rsa_verify_mismatched_key_size_fails(session: HsmSession) {
     let result = HsmVerifier::verify(&mut verify_algo, &pub2, msg, &sig);
 
     assert!(
-        !matches!(result, Ok(true)),
+        matches!(result, Ok(false)),
         "Verification should not succeed, got {:?}",
         result
     );
@@ -1048,7 +1056,7 @@ fn test_rsa_streaming_non_empty_signature_empty_data_fails(session: HsmSession) 
     let result = ctx.finish(&sig);
 
     assert!(
-        !matches!(result, Ok(true)),
+        matches!(result, Ok(false)),
         "non-empty-input signature should not verify empty streaming input, got {:?}",
         result
     );
@@ -1123,7 +1131,7 @@ fn test_rsa_verify_empty_signature_empty_message_fails_one_shot(session: HsmSess
     let result = HsmVerifier::verify(&mut verify_algo, &pub_key, b"", &[]);
 
     assert!(
-        !matches!(result, Ok(true)),
+        matches!(result, Ok(false)),
         "verify with empty signature should not succeed, got {:?}",
         result
     );
@@ -1152,7 +1160,7 @@ fn test_rsa_empty_message_signature_wrong_data_fails_one_shot(session: HsmSessio
     let result = HsmVerifier::verify(&mut verify_algo, &pub_key, wrong_msg, &sig);
 
     assert!(
-        !matches!(result, Ok(true)),
+        matches!(result, Ok(false)),
         "empty-message signature should not verify non-empty data, got {:?}",
         result
     );
@@ -1180,7 +1188,7 @@ fn test_rsa_non_empty_message_signature_empty_data_fails_one_shot(session: HsmSe
     let result = HsmVerifier::verify(&mut verify_algo, &pub_key, empty_msg, &sig);
 
     assert!(
-        !matches!(result, Ok(true)),
+        matches!(result, Ok(false)),
         "non-empty-message signature should not verify empty data, got {:?}",
         result
     );
@@ -1214,7 +1222,7 @@ fn test_rsa_streaming_empty_input_signature_wrong_data_fails(session: HsmSession
     let result = ctx.finish(&sig);
 
     assert!(
-        !matches!(result, Ok(true)),
+        matches!(result, Ok(false)),
         "empty-input signature should not verify non-empty chunks, got {:?}",
         result
     );
