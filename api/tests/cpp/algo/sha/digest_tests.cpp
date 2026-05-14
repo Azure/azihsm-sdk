@@ -337,6 +337,21 @@ TEST_F(azihsm_sha_digest, unsupported_algorithm)
     });
 }
 
+TEST_F(azihsm_sha_digest, streaming_init_unsupported_algorithm)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        azihsm_algo algo{};
+        algo.id = AZIHSM_ALGO_ID_AES_CBC;
+        algo.params = nullptr;
+        algo.len = 0;
+
+        auto_ctx ctx;
+        auto err = azihsm_crypt_digest_init(session, &algo, ctx.get_ptr());
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
+        ASSERT_EQ(ctx.get(), 0u);
+    });
+}
+
 TEST_F(azihsm_sha_digest, streaming_empty_data)
 {
     part_list_.for_each_session([&](azihsm_handle session) {
@@ -411,6 +426,24 @@ TEST_F(azihsm_sha_digest, streaming_invalid_context_handle)
 
     err = azihsm_crypt_digest_finish(0xDEADBEEF, &digest_buf);
     ASSERT_EQ(err, AZIHSM_STATUS_INVALID_HANDLE);
+}
+
+TEST_F(azihsm_sha_digest, streaming_operations_reject_session_handles_as_contexts)
+{
+    part_list_.for_each_session([&](azihsm_handle session) {
+        azihsm_buffer data_buf{};
+        data_buf.ptr = const_cast<uint8_t *>(TEST_DATA_1K.data());
+        data_buf.len = static_cast<uint32_t>(TEST_DATA_1K.size());
+
+        ASSERT_EQ(azihsm_crypt_digest_update(session, &data_buf), AZIHSM_STATUS_INVALID_HANDLE);
+
+        std::array<uint8_t, 32> digest;
+        azihsm_buffer digest_buf{};
+        digest_buf.ptr = digest.data();
+        digest_buf.len = static_cast<uint32_t>(digest.size());
+
+        ASSERT_EQ(azihsm_crypt_digest_finish(session, &digest_buf), AZIHSM_STATUS_INVALID_HANDLE);
+    });
 }
 
 TEST_F(azihsm_sha_digest, streaming_null_context_handle)

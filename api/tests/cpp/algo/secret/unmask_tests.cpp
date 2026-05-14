@@ -6,6 +6,7 @@
 #include "handle/part_list_handle.hpp"
 #include "utils/auto_key.hpp"
 #include "utils/shared_secret.hpp"
+#include <array>
 #include <azihsm_api.h>
 #include <vector>
 
@@ -164,5 +165,19 @@ TEST_F(azihsm_secret_unmask, unmask_shared_secret_p521)
 {
     part_list_.for_each_session([](azihsm_handle session) {
         test_shared_secret_unmask(session, AZIHSM_ECC_CURVE_P521);
+    });
+}
+
+TEST_F(azihsm_secret_unmask, unmask_rejects_unsupported_key_kind)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        std::array<uint8_t, 16> masked_data{};
+        azihsm_buffer masked_key{ masked_data.data(), static_cast<uint32_t>(masked_data.size()) };
+
+        auto_key unmasked_key;
+        auto err =
+            azihsm_key_unmask(session, AZIHSM_KEY_KIND_RSA, &masked_key, unmasked_key.get_ptr());
+        ASSERT_EQ(err, AZIHSM_STATUS_UNSUPPORTED_KEY_KIND);
+        ASSERT_EQ(unmasked_key.get(), 0u);
     });
 }

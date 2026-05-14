@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use crate::hash::tests::ShaMonteTestVector;
+use crate::testvectors::hash::ShaMonteTestVector;
 
 // Auto-generated file. Do not edit manually.
 // Source: SHA512Monte.rsp
