@@ -728,9 +728,9 @@ fn try_import_rsa_key(
         .expect("Failed to build public key props");
 
     let hash_algo = HsmHashAlgo::Sha384;
-    let kek_size = 32;
+    let salt_size = 32;
 
-    let mut wrap_algo = HsmRsaAesWrapAlgo::new(hash_algo, kek_size);
+    let mut wrap_algo = HsmRsaAesWrapAlgo::new(hash_algo, salt_size);
 
     let result = match HsmEncrypter::encrypt_vec(&mut wrap_algo, &unwrapping_pub_key, der) {
         Ok(wrapped_key) => {
@@ -746,6 +746,8 @@ fn try_import_rsa_key(
         Err(err) => Err(err),
     };
 
+    // Best-effort cleanup only. Session-scoped/internal keys may be cleaned up by session close
+    // and may reject explicit deletion with CannotDeleteInternalKeys.
     let _ = HsmKeyManager::delete_key(unwrapping_priv_key);
     let _ = HsmKeyManager::delete_key(unwrapping_pub_key);
 
