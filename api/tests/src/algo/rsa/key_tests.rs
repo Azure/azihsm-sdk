@@ -746,11 +746,6 @@ fn try_import_rsa_key(
         Err(err) => Err(err),
     };
 
-    // Best-effort cleanup only. Session-scoped/internal keys may be cleaned up by session close
-    // and may reject explicit deletion with CannotDeleteInternalKeys.
-    let _ = HsmKeyManager::delete_key(unwrapping_priv_key);
-    let _ = HsmKeyManager::delete_key(unwrapping_pub_key);
-
     result
 }
 

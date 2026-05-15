@@ -67,21 +67,17 @@ fn import_rsa_key(
 
     let mut wrap_algo = HsmRsaAesWrapAlgo::new(hash_algo, salt_size);
 
-    let result = HsmEncrypter::encrypt_vec(&mut wrap_algo, &unwrapping_pub_key, der).and_then(
-        |wrapped_key| {
-            let mut unwrap_algo = HsmRsaKeyRsaAesKeyUnwrapAlgo::new(hash_algo);
+    let wrapped_key = HsmEncrypter::encrypt_vec(&mut wrap_algo, &unwrapping_pub_key, der)
+        .expect("Failed to wrap RSA key material with RSA-AES");
 
-            unwrap_algo.unwrap_key_pair(
-                &unwrapping_priv_key,
-                &wrapped_key,
-                priv_key_props,
-                pub_key_props,
-            )
-        },
+    let mut unwrap_algo = HsmRsaKeyRsaAesKeyUnwrapAlgo::new(hash_algo);
+
+    let result = unwrap_algo.unwrap_key_pair(
+        &unwrapping_priv_key,
+        &wrapped_key,
+        priv_key_props,
+        pub_key_props,
     );
-
-    let _ = HsmKeyManager::delete_key(unwrapping_priv_key);
-    let _ = HsmKeyManager::delete_key(unwrapping_pub_key);
 
     result
 }
