@@ -303,6 +303,10 @@ fn assert_streaming_failed_small_buffer_does_not_poison_context(
     algo: HsmHashAlgo,
     data: &[u8],
 ) {
+    let mut algo_for_expected = algo;
+    let expected = HsmHasher::hash_vec(&session, &mut algo_for_expected, data)
+        .expect("single-shot hash should succeed");
+
     let mut hasher = HsmHasher::hash_init(session, algo).expect("hash_init should succeed");
 
     for part in data.chunks(8) {
@@ -312,6 +316,12 @@ fn assert_streaming_failed_small_buffer_does_not_poison_context(
     let output_size = hasher
         .finish(None)
         .expect("finish size query should succeed");
+
+    assert_eq!(
+        output_size,
+        expected.len(),
+        "streaming size query should match expected digest length"
+    );
 
     let mut too_small = vec![0u8; output_size - 1];
     let result = hasher.finish(Some(too_small.as_mut_slice()));
@@ -327,7 +337,11 @@ fn assert_streaming_failed_small_buffer_does_not_poison_context(
         .finish(Some(output.as_mut_slice()))
         .expect("context should remain usable after failed small-buffer finish");
 
-    assert_eq!(written, output_size);
+    assert_eq!(written, expected.len());
+    assert_eq!(
+        output, expected,
+        "recovered streaming digest should match single-shot digest"
+    );
 }
 
 // ============================================================
