@@ -23,7 +23,7 @@ use azihsm_crypto::testvectors::ecc::ECDH_P384_TEST_VECTORS;
 use azihsm_crypto::testvectors::ecc::ECDH_P521_TEST_VECTORS;
 use azihsm_crypto::testvectors::ecc::EccNistTestVector;
 
-use super::common::*;
+use super::*;
 
 // =======================================================
 // API-level common helpers
