@@ -169,7 +169,9 @@ fn init_with_resiliency(part: &HsmPartition) -> HsmResult<()> {
         pota_endorsement,
         Some(resiliency_config),
     );
-    save_mobk_after_init(part);
+    if result.is_ok() {
+        save_mobk_after_init(part);
+    }
     result
 }
 

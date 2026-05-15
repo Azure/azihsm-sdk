@@ -78,7 +78,7 @@ void make_part_init_config(azihsm_handle part_handle, PartInitConfig &config);
 
 /// Returns the MOBK file path for cross-process caching.
 /// Uses AZIHSM_MOBK_PATH from the environment if set, otherwise
-/// defaults to "./mobk.bin" in the current working directory.
+/// defaults to "mobk.bin" in the system temporary directory.
 std::string get_mobk_path();
 
 /// Load a cached MOBK from the on-disk file, if it exists.

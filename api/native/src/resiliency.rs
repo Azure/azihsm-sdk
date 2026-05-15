@@ -105,9 +105,11 @@ pub struct AzihsmPotaCallbackOps {
 
 /// MOBK provider callback.
 ///
-/// The `get_mobk` callback returns the caller's OBK (owner backup key)
-/// during resiliency restore. Uses the two-call buffer pattern: first call
-/// with null/zero output buffer to query size, second call to fill it.
+/// The `get_mobk` callback returns the caller's MOBK (masked owner backup
+/// key) during resiliency restore, allowing the SDK to re-provision the
+/// partition without re-running `init_bk3` (which is one-shot per device
+/// power cycle). Uses the two-call buffer pattern: first call with
+/// null/zero output buffer to query size, second call to fill it.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct AzihsmMobkCallbackOps {
@@ -435,7 +437,8 @@ impl api::MobkProviderCallback for MobkCallbackAdapter {
 
         // Second call: fill allocated buffer
         let len = mobk_buf.len as usize;
-        if len != OBK_SIZE {
+        // length of MOBK must be minimum OBK_SIZE bytes as per the API contract.
+        if len < OBK_SIZE {
             return Err(api::HsmError::InvalidArgument);
         }
         let mut data = vec![0u8; len];
@@ -449,7 +452,7 @@ impl api::MobkProviderCallback for MobkCallbackAdapter {
         }
 
         let returned_len = mobk_buf.len as usize;
-        if returned_len != OBK_SIZE {
+        if returned_len != len {
             return Err(api::HsmError::InvalidArgument);
         }
 

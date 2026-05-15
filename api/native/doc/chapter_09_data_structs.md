@@ -759,7 +759,7 @@ struct azihsm_mobk_callback_ops {
 
 | Field    | Type             | Description                                                                                                      |
 | -------- | ---------------- | ---------------------------------------------------------------------------------------------------------------- |
-| get_mobk | function pointer | Return the caller's OBK (48-byte raw key material). Uses the two-call buffer pattern: first call with `mobk->ptr == NULL` returns the required size in `mobk->len` and `AZIHSM_STATUS_BUFFER_TOO_SMALL`; second call fills the buffer. Called during resiliency restore to re-provision the OBK without the SDK caching the plaintext key material. |
+| get_mobk | function pointer | Return the caller's MOBK. Uses the two-call buffer pattern for `mobk`: first call with `mobk->ptr == NULL` returns the required size in `mobk->len` and `AZIHSM_STATUS_BUFFER_TOO_SMALL`; second call fills the buffer. Called during resiliency restore so the SDK can retrieve the MOBK without caching the key material. |
 
 ### azihsm_resiliency_config
 

@@ -147,8 +147,15 @@ pub trait PotaEndorsementCallback: Send + Sync {
 pub trait MobkProviderCallback: Send + Sync {
     /// Return the caller's MOBK (masked owner backup key).
     ///
-    /// The returned bytes are the raw MOBK key material, identical to what
-    /// was originally passed via `HsmOwnerBackupKeyConfig::new(Caller, Some(&mobk))`.
+    /// The returned bytes are the device-derived MOBK blob, identical to
+    /// what would be wrapped via `HsmOwnerBackupKey::from_masked_key(&mobk)`
+    /// when constructing an [`HsmOwnerBackupKeyConfig`] for `init`. The
+    /// SDK does not cache the plaintext OBK; the caller is expected to
+    /// persist the MOBK (e.g., retrieved via the
+    /// `MASKED_OWNER_BACKUP_KEY` partition property after a successful
+    /// init) and return it here so the SDK can re-provision the
+    /// partition without re-running `init_bk3` (which is one-shot per
+    /// device power cycle).
     fn get_mobk(&self) -> HsmResult<Vec<u8>>;
 }
 

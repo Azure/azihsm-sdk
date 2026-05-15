@@ -126,7 +126,7 @@ impl HsmCredentials {
 /// init, before `init_bk3` has been consumed) or the previously
 /// derived MOBK (used on every subsequent init, since `init_bk3`
 /// is one-shot per device power cycle).
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct HsmOwnerBackupKey {
     obk: Option<Vec<u8>>,
     mobk: Option<Vec<u8>>,
@@ -173,7 +173,7 @@ impl Drop for HsmOwnerBackupKey {
 }
 
 /// Owner backup key config (OBK/BK3) containing source and optional key material.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct HsmOwnerBackupKeyConfig {
     /// Source of the OBK
     key_source: HsmOwnerBackupKeySource,
@@ -647,14 +647,14 @@ impl HsmPartition {
                     let key = if !cached_mobk.is_empty() {
                         HsmOwnerBackupKey::from_masked_key(cached_mobk)
                     } else {
-                        let mut obk = rs
+                        let mut mobk = rs
                             .config
                             .mobk_callback
                             .as_ref()
                             .ok_or(HsmError::InternalError)?
                             .get_mobk()?;
-                        let key = HsmOwnerBackupKey::from_obk(&obk);
-                        obk.fill(0);
+                        let key = HsmOwnerBackupKey::from_masked_key(&mobk);
+                        mobk.fill(0);
                         key
                     };
                     HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Caller, key)
@@ -1265,7 +1265,7 @@ impl HsmPartitionInner {
                 };
 
                 //cache the mobk returned by the device
-                self.set_mobk(result.mobk.clone());
+                self.set_mobk(result.mobk);
 
                 // Return the BMK and the POTA endorsement to cache.
                 (

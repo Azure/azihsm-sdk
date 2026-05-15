@@ -1128,13 +1128,25 @@ azihsm_status azihsm_open_device_and_session(
             AZIHSM_PART_PROP_ID_MASKED_OWNER_BACKUP_KEY,
             &retrieved_mobk
         );
-        if (status == AZIHSM_STATUS_SUCCESS && retrieved_mobk.ptr != NULL)
+
+        if ((status != AZIHSM_STATUS_SUCCESS) || (retrieved_mobk.ptr == NULL))
         {
-            status = write_buffer_to_file(config->mobk_path, &retrieved_mobk);
-            if (status != AZIHSM_STATUS_SUCCESS)
-            {
-                goto cleanup;
-            }
+            ERR_raise_data(
+                ERR_LIB_PROV,
+                ERR_R_INIT_FAIL,
+                "failed to retrieve MOBK from device after init "
+                "(status=%d). MOBK persistence is required for re-init "
+                "after warm reset.",
+                status
+            );
+            status = (status == AZIHSM_STATUS_SUCCESS) ? AZIHSM_STATUS_INTERNAL_ERROR : status;
+            goto cleanup;
+        }
+
+        status = write_buffer_to_file(config->mobk_path, &retrieved_mobk);
+        if (status != AZIHSM_STATUS_SUCCESS)
+        {
+            goto cleanup;
         }
     }
 
