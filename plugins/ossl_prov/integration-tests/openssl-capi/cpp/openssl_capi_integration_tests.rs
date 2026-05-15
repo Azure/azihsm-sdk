@@ -103,9 +103,13 @@ mod integration {
     fn find_openssl_lib_dir() -> Option<String> {
         if let Ok(lib) = env::var("OPENSSL_LIB") {
             if !lib.is_empty() {
+                // OPENSSL_LIB may be a single dir or a `:`-separated path
+                // list (e.g., openssl/lib:target/<abi>/debug).  Verify that
+                // at least one entry exists.
+                let any_exists = lib.split(':').any(|p| PathBuf::from(p).is_dir());
                 assert!(
-                    PathBuf::from(&lib).is_dir(),
-                    "OPENSSL_LIB={lib:?} does not point to an existing directory"
+                    any_exists,
+                    "OPENSSL_LIB={lib:?} contains no existing directories"
                 );
                 return Some(lib);
             }
@@ -269,9 +273,10 @@ mod integration {
     /// Resolves the provider search path (absolute) and verifies the provider
     /// `.so` exists there.
     ///
-    /// Uses `PROVIDER_PATH` if set, otherwise defaults to `target/debug` under
-    /// the workspace root.  Relative paths are resolved against the workspace
-    /// root to ensure correctness regardless of subprocess CWD.
+    /// Uses `PROVIDER_PATH` if set, otherwise honours `CARGO_TARGET_DIR` and
+    /// falls back to `target/debug` under the workspace root.  Relative paths
+    /// are resolved against the workspace root to ensure correctness
+    /// regardless of subprocess CWD.
     fn get_provider_path(workspace_root: &Path) -> PathBuf {
         let path = match env::var("PROVIDER_PATH") {
             Ok(p) if !p.is_empty() => {
@@ -282,7 +287,17 @@ mod integration {
                     p
                 }
             }
-            _ => workspace_root.join("target").join("debug"),
+            _ => match env::var("CARGO_TARGET_DIR") {
+                Ok(t) if !t.is_empty() => {
+                    let p = PathBuf::from(t).join("debug");
+                    if p.is_relative() {
+                        workspace_root.join(p)
+                    } else {
+                        p
+                    }
+                }
+                _ => workspace_root.join("target").join("debug"),
+            },
         };
 
         let provider_so = path.join("azihsm_provider.so");

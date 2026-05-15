@@ -171,9 +171,16 @@ impl Xtask for Setup {
             let _ = cmd!(sh, "cargo +nightly fmt --version").quiet().run();
         }
 
-        // Install OpenSSL (Linux only)
+        // Install OpenSSL (Linux only).  Set CARGO_TARGET_DIR so that the
+        // OpenSSL install lands inside the ABI-versioned target tree.
         #[cfg(target_os = "linux")]
         if !self.skip_openssl {
+            let abi_leaf = crate::openssl_install::abi_leaf_for(&self.openssl_version)?;
+            // Resolve current working directory relative to ctx.root for an absolute path.
+            let target_dir = ctx.root.join("target").join(&abi_leaf);
+            std::env::set_var("CARGO_TARGET_DIR", &target_dir);
+            log::info!("CARGO_TARGET_DIR set to {}", target_dir.display());
+
             crate::openssl_install::ensure_openssl_version(&self.openssl_version)?;
         }
 

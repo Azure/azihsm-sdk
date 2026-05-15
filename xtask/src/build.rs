@@ -7,6 +7,7 @@
 use clap::Parser;
 use xshell::cmd;
 
+#[cfg(not(target_os = "linux"))]
 use crate::common;
 use crate::Xtask;
 use crate::XtaskCtx;
@@ -38,6 +39,13 @@ pub struct Build {
     /// Target triple to build for (e.g., aarch64-pc-windows-msvc)
     #[clap(long, value_name = "TRIPLE")]
     pub target: Option<String>,
+
+    /// OpenSSL version the provider should be built against (e.g., "3.0.3", "3.5.0").
+    /// Routes artifacts to `target/ossl-abi-<major>-<minor>/`, matching the
+    /// path-encoding convention enforced by the provider's build.rs.
+    /// Linux-only; ignored on other platforms.
+    #[clap(long, default_value = "3.0.3")]
+    pub openssl_version: String,
 }
 
 impl Xtask for Build {
@@ -46,6 +54,18 @@ impl Xtask for Build {
 
         let sh = xshell::Shell::new()?;
         let rust_toolchain = sh.var("RUST_TOOLCHAIN").map(|s| format!("+{s}")).ok();
+
+        // On Linux, route the build to the ABI-versioned target tree so that
+        // artifacts compiled against different OpenSSL ABI versions stay
+        // separate.  The provider's build.rs requires this layout.
+        // On other platforms (Windows), the provider isn't built, so fall
+        // back to the legacy target/xtask sub-dir to avoid self-overwrite.
+        #[cfg(target_os = "linux")]
+        let target_dir = {
+            let abi_leaf = crate::openssl_install::abi_leaf_for(&self.openssl_version)?;
+            std::path::PathBuf::from("target").join(abi_leaf)
+        };
+        #[cfg(not(target_os = "linux"))]
         let target_dir = common::target_dir()?;
 
         // Convert xtask parameters into cargo command arguments

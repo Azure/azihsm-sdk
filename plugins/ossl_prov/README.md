@@ -68,8 +68,10 @@ RSA genpkey (keyEncipherment)  ──> masked_key.bin ──> pkeyutl -encrypt /
 ### Supported OpenSSL versions
 
 The provider builds against **OpenSSL 3.0.3** and **OpenSSL 3.5.0**. The CI runs
-integration tests against both versions. The version is selected at build time
-via the `OPENSSL_DIR` environment variable.
+integration tests against both versions. The version is selected via the
+`--openssl-version` flag on the xtask commands; the build is routed to an
+ABI-versioned target tree (`target/ossl-abi-<major>-<minor>/`) so multiple
+versions can coexist without `cargo clean` between switches.
 
 ### Build
 
@@ -77,23 +79,29 @@ The provider consists of two shared libraries that both link dynamically against
 
 > **Important:** The default provider **must** be available alongside the azihsm provider. During initialisation the provider force-loads the OpenSSL `default` provider into the process's default library context to prevent infinite recursion; if this fails the provider will refuse to start.
 
-```bash
-# 1. Build OpenSSL (shared) — use any supported 3.x version
-OPENSSL_VERSION=3.0.3   # or 3.5.0
-curl -fsSL "https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VERSION}/openssl-${OPENSSL_VERSION}.tar.gz" \
-    | tar xz -C /tmp
-cd /tmp/openssl-${OPENSSL_VERSION}
-./Configure --prefix=<your-openssl-install-prefix> --libdir=lib
-make -j"$(nproc)" && make install_sw
+Recommended (via xtask, no env vars needed):
 
-# 2. Build both libraries against your OpenSSL installation
-cd azihsm-sdk
-OPENSSL_DIR=<your-openssl-install-prefix> cargo build -p azihsm_ossl_provider --features mock
+```bash
+# 1. Install OpenSSL into the ABI tree.  Skips if already installed or if
+#    target/ossl-abi-<major>-<minor>/openssl/ already exists.
+cargo xtask setup --openssl-version 3.0.3   # or 3.5.0
+
+# 2. Build the whole workspace for the chosen ABI.  Covers both
+#    azihsm_ossl_provider and azihsm_api_native automatically.
+cargo xtask build --openssl-version 3.0.3 --features mock
 ```
 
-On real hardware, omit `mock` from the build command.
+Or via plain cargo. The `.cargo/config.toml` defaults `target-dir` to
+`target/ossl-abi-3-0`, so the basic case needs no env vars:
 
-This produces two shared libraries in `target/debug/`:
+```bash
+cargo build --features mock                                            # 3.0.3 (default)
+CARGO_TARGET_DIR=target/ossl-abi-3-5 cargo build --features mock       # 3.5.0
+```
+
+On real hardware, omit `--features mock`.
+
+This produces two shared libraries in `target/ossl-abi-<major>-<minor>/debug/`:
 - `azihsm_provider.so` — the OpenSSL provider
 - `libazihsm_api_native.so` — the Rust HSM API (runtime dependency of the provider)
 
@@ -105,11 +113,13 @@ Install the provider and its runtime dependency:
 # Find the system modules directory
 openssl version -m
 
+ABI_DIR=target/ossl-abi-3-0   # or target/ossl-abi-3-5
+
 # Install the provider
-sudo cp target/debug/azihsm_provider.so /usr/lib/x86_64-linux-gnu/ossl-modules/
+sudo cp $ABI_DIR/debug/azihsm_provider.so /usr/lib/x86_64-linux-gnu/ossl-modules/
 
 # Install the Rust HSM API library
-sudo cp target/debug/libazihsm_api_native.so /usr/lib/
+sudo cp $ABI_DIR/debug/libazihsm_api_native.so /usr/lib/
 sudo ldconfig
 
 # (Optional) Create a dedicated directory for masked key material.
@@ -188,7 +198,7 @@ When using `openssl.cnf`, providers are auto-loaded — no `-provider-path` or `
 
 ```bash
 OPENSSL_CONF=/path/to/openssl.cnf \
-LD_LIBRARY_PATH=/path/to/target/debug \
+LD_LIBRARY_PATH=/path/to/target/ossl-abi-<major>-<minor>/debug \
 openssl genpkey -propquery "?provider=azihsm" ...
 ```
 
@@ -218,7 +228,7 @@ PROV="-propquery ?provider=azihsm -provider default -provider azihsm_provider"
 
 > **Important:** `-propquery` **must** come before the `-provider` flags. OpenSSL processes CLI arguments left to right. Loading the provider triggers an HSM session that instantiates the DRBG (random number generator). If `-propquery` is applied afterwards, `RAND_set_DRBG_type` fails because the DRBG is already running. The error message from OpenSSL 3.0.x is misleading — it reports "odd number of digits" due to an upstream error code collision (`RAND_R_ALREADY_INSTANTIATED` and `CRYPTO_R_ODD_NUMBER_OF_DIGITS` are both 103, and the code uses `ERR_LIB_CRYPTO` instead of `ERR_LIB_RAND`).
 
-> **Note:** If the provider is not installed system-wide, add `-provider-path /path/to/directory` pointing to the directory containing `azihsm_provider.so`. If `libazihsm_api_native.so` is also not in a system library path, set `LD_LIBRARY_PATH` to include its directory (e.g., `export LD_LIBRARY_PATH=/path/to/target/debug:$LD_LIBRARY_PATH`).
+> **Note:** If the provider is not installed system-wide, add `-provider-path /path/to/target/ossl-abi-<major>-<minor>/debug` pointing to the directory containing `azihsm_provider.so`. If `libazihsm_api_native.so` is also not in a system library path, set `LD_LIBRARY_PATH` to include its directory (e.g., `export LD_LIBRARY_PATH=/path/to/target/ossl-abi-<major>-<minor>/debug:$LD_LIBRARY_PATH`).
 
 > **Note:** On physical hardware, provider commands require `sudo` to access TPM operations.
 
@@ -234,52 +244,50 @@ All examples below use `${PROV}` as shorthand for these three flags.
 | **C API** | `provider-integration-tests-capi` | OpenSSL EVP C API (digest, sign/verify, encrypt/decrypt, key exchange, resiliency) |
 | **NGINX** | `provider-integration-tests-nginx` | End-to-end TLS with NGINX (requires nginx installed) |
 
-### Environment variables
+### Running integration tests locally
 
-All paths are controlled via environment variables.
+The recommended way is via the xtask — it sets all required env vars and
+builds the provider on demand:
+
+```bash
+cargo xtask integration-tests --openssl-version 3.0.3   # or 3.5.0
+```
+
+Or bypass the xtask if you need finer control (one env var, plus credentials):
+
+```bash
+ABI_DIR=$PWD/target/ossl-abi-3-0   # or target/ossl-abi-3-5
+export CARGO_TARGET_DIR=$ABI_DIR
+export OPENSSL_BIN=$ABI_DIR/openssl/bin/openssl
+export OPENSSL_LIB=$ABI_DIR/openssl/lib:$ABI_DIR/debug   # lib or lib64
+export AZIHSM_CREDENTIALS_ID="70fcf730b8764238b8358010ce8a3f76"
+export AZIHSM_CREDENTIALS_PIN="db3dc77fc22e430080d41b31b6f04800"
+
+cargo nextest run -p provider-integration-tests-cli  --features integration --profile ci-provider-integration
+cargo nextest run -p provider-integration-tests-capi --features integration --profile ci-provider-integration
+```
+
+### Environment variables (when bypassing the xtask)
 
 | Variable | Required by | Description |
 |----------|-------------|-------------|
-| `OPENSSL_DIR` | Build, CAPI | OpenSSL installation prefix (forwarded to CMake) |
+| `CARGO_TARGET_DIR` | All | Must end in `/ossl-abi-<major>-<minor>` for the provider build.rs to accept it |
+| `OPENSSL_DIR` | CAPI build (optional) | Defaults to `$CARGO_TARGET_DIR/openssl` if unset |
 | `OPENSSL_BIN` | CLI, NGINX | Path to the `openssl` binary |
-| `OPENSSL_LIB` | CAPI | Directory containing `libcrypto.so` / `libssl.so` |
+| `OPENSSL_LIB` | CAPI, CLI | `:`-separated list including the OpenSSL lib dir and the provider's cargo `debug` dir |
 | `AZIHSM_CREDENTIALS_ID` | All (optional) | Mock HSM credential ID (defaults to test value) |
 | `AZIHSM_CREDENTIALS_PIN` | All (optional) | Mock HSM credential PIN (defaults to test value) |
 
-### Running integration tests locally
-
-```bash
-# Point to your OpenSSL installation
-export OPENSSL_DIR=<your-openssl-install-prefix>
-export OPENSSL_BIN=$OPENSSL_DIR/bin/openssl
-export OPENSSL_LIB=$OPENSSL_DIR/lib    # or lib64, depending on your build
-
-# Build the provider
-cargo build -p azihsm_ossl_provider --features mock
-
-# Run individual suites
-cargo nextest run -p provider-integration-tests-cli  --features integration --profile ci-provider-integration
-cargo nextest run -p provider-integration-tests-capi --features integration --profile ci-provider-integration
-
-# Or run all suites via xtask
-cargo xtask integration-tests --openssl-version 3.0.3
-```
-
 Tests generate their own key material in `target/test-keymat/` (cleaned
 between runs). No system-wide provider installation is needed — tests
-locate the provider via `PROVIDER_PATH` (defaults to `target/debug`).
+locate the provider via `PROVIDER_PATH` (defaults to `$CARGO_TARGET_DIR/debug`).
 
 ### Switching OpenSSL versions
 
-The provider and C++ test binary are compiled against a specific OpenSSL
-version's headers. Switching versions requires a clean build:
-
-```bash
-cargo clean
-export OPENSSL_DIR=<path-to-other-openssl-version>
-cargo build -p azihsm_ossl_provider --features mock
-# Re-run tests as above
-```
+No `cargo clean` needed. Each version's artifacts live in a separate ABI tree
+under `target/ossl-abi-<major>-<minor>/`. Switching is just running the xtask
+with a different `--openssl-version` flag (or pointing `CARGO_TARGET_DIR` at a
+different ABI tree for plain cargo invocations).
 
 ### Version gating for 3.5-only tests
 

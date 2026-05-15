@@ -35,7 +35,15 @@ fi
 
 # --- Optional environment variables (sensible defaults) ---
 
-test -z "$PROVIDER_PATH" && PROVIDER_PATH="$REPO_ROOT/target/debug"
+# Honour CARGO_TARGET_DIR so the provider .so is found in the ABI-versioned
+# build tree (e.g., target/ossl-abi-3-0/debug/).
+if [ -z "$PROVIDER_PATH" ]; then
+    if [ -n "$CARGO_TARGET_DIR" ]; then
+        PROVIDER_PATH="$CARGO_TARGET_DIR/debug"
+    else
+        PROVIDER_PATH="$REPO_ROOT/target/debug"
+    fi
+fi
 test -z "$PROPQUERY" && PROPQUERY="?provider=azihsm"
 
 # OPENSSL_LIB: distinguish "unset" from "set to empty" (CI sets OPENSSL_LIB="")

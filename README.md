@@ -38,10 +38,15 @@ Before running any commands below, ensure you have finished the initial setup st
 
 ### Building
 
-Build the project using Cargo xtask:
+The recommended way is via xtask, which selects the OpenSSL ABI version
+explicitly and routes artifacts to `target/ossl-abi-<major>-<minor>/`:
 
 ```bash
+# Default: OpenSSL 3.0.3
 cargo xtask build
+
+# Pin a specific OpenSSL version
+cargo xtask build --openssl-version 3.5.0
 ```
 
 Build specific packages using:
@@ -49,7 +54,22 @@ Build specific packages using:
 ```bash
 # Build specific packages you are modifying
 cargo xtask build --package <package-name>
+cargo xtask build --openssl-version 3.5.0 --package <package-name>
 ```
+
+Plain `cargo build` also works — `.cargo/config.toml` sets a default
+`target-dir = "target/ossl-abi-3-0"`, so the basic case needs no env vars:
+
+```bash
+cargo build --features mock                                       # default 3.0.3
+CARGO_TARGET_DIR=target/ossl-abi-3-5 cargo build --features mock  # 3.5.0
+```
+
+**Use `cargo xtask build --openssl-version <ver>` when you want to be explicit
+about the ABI version** — the plain form silently uses the config default,
+which makes accidental wrong-version builds easier than they would be with
+the explicit flag. xtask is also the only way to switch between versions
+without remembering to set `CARGO_TARGET_DIR`.
 
 ## Testing
 

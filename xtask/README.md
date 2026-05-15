@@ -66,15 +66,54 @@ Build and run all tests with code coverage enabled. Generates a cobertura XML, J
 cargo xtask coverage
 ```
 
-### integration-tests
+### setup
 
-Run provider integration tests (CLI, C API, NGINX). Requires a custom OpenSSL build.
+Install build dependencies. On Linux, also installs OpenSSL into the ABI tree
+(`target/ossl-abi-<major>-<minor>/openssl/`).
 
 ```bash
-# Run against default OpenSSL version (3.0.3)
+# Install OpenSSL 3.0.3 (default version)
+cargo xtask setup
+
+# Install OpenSSL 3.5.0
+cargo xtask setup --openssl-version 3.5.0
+
+# Skip OpenSSL install (e.g., when bringing your own via OPENSSL_DIR)
+cargo xtask setup --skip-openssl
+```
+
+### build
+
+Build the workspace. On Linux, routes artifacts to the ABI-versioned target tree
+(`target/ossl-abi-<major>-<minor>/`) so multiple OpenSSL ABI versions can be
+cached side by side. No env vars needed.
+
+```bash
+# Build the whole workspace for OpenSSL 3.0.3 (default)
+cargo xtask build --features mock
+
+# Build for OpenSSL 3.5.0
+cargo xtask build --openssl-version 3.5.0 --features mock
+
+# Build only the provider crates (faster than full workspace)
+cargo xtask build --openssl-version 3.0.3 --package azihsm_ossl_provider --features mock
+cargo xtask build --openssl-version 3.0.3 --package azihsm_api_native   --features mock
+```
+
+The whole workspace covers both `azihsm_api_native` and `azihsm_ossl_provider`
+automatically — naming the package is only useful for targeted/faster builds.
+Omit `--features mock` to build against real hardware.
+
+### integration-tests
+
+Run provider integration tests (CLI, C API, NGINX). Builds the provider on
+demand into the ABI tree before running tests.
+
+```bash
+# Run against OpenSSL 3.0.3 (default)
 cargo xtask integration-tests
 
-# Run against a specific version
+# Run against OpenSSL 3.5.0
 cargo xtask integration-tests --openssl-version 3.5.0
 ```
 
@@ -84,7 +123,9 @@ environment variable details.
 
 ## Command Details
 
-- **integration-tests**: Runs CLI, C API, and NGINX provider integration tests. Resolves OpenSSL via `OPENSSL_DIR` or `--openssl-version`
+- **setup**: Installs build deps and (Linux) OpenSSL.  Honours `--openssl-version`.
+- **build**: Wraps `cargo build` with the right `CARGO_TARGET_DIR` for the chosen OpenSSL ABI version.
+- **integration-tests**: Runs CLI, C API, and NGINX provider integration tests. Builds the provider on demand.
 - **precheck**: Combines setup, copyright, audit, fmt, clippy, and nextest stages for comprehensive validation
 - **clippy**: Runs `cargo clippy --workspace --all-targets` with warnings treated as errors
 - **fmt**: Uses `cargo fmt` to check/fix Rust code formatting

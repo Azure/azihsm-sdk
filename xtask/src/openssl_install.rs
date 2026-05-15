@@ -50,22 +50,54 @@ fn sha256_for(version: &str) -> anyhow::Result<&'static str> {
         })
 }
 
-/// Returns the default install directory for a given version, rooted in the
-/// Cargo target directory (or `./target` when `CARGO_TARGET_DIR` is unset).
+/// Returns the ABI directory leaf for a version, e.g. "3.0.3" -> "ossl-abi-3-0".
+/// OpenSSL guarantees ABI stability per minor version, so we ignore the patch.
+#[cfg(target_os = "linux")]
+pub fn abi_leaf_for(version: &str) -> anyhow::Result<String> {
+    let parts: Vec<&str> = version.split('.').collect();
+    anyhow::ensure!(
+        parts.len() >= 2 && parts.iter().take(2).all(|p| !p.is_empty()),
+        "Invalid OpenSSL version: {version}"
+    );
+    Ok(format!("ossl-abi-{}-{}", parts[0], parts[1]))
+}
+
+/// Returns the default install directory for a given version: the OpenSSL
+/// install lives at `<CARGO_TARGET_DIR>/openssl/`.  The version is encoded in
+/// `CARGO_TARGET_DIR` itself (e.g., `target/ossl-abi-3-0/`), so this function
+/// also verifies that the current `CARGO_TARGET_DIR` matches the version
+/// being installed — preventing accidental cross-version installs.
 #[cfg(target_os = "linux")]
 fn default_install_dir(version: &str) -> anyhow::Result<PathBuf> {
+    let expected_leaf = abi_leaf_for(version)?;
+
     let target_dir = match std::env::var_os("CARGO_TARGET_DIR") {
         Some(dir) => PathBuf::from(dir),
         None => std::env::current_dir()?.join("target"),
     };
-    Ok(target_dir.join(format!("openssl-{version}")))
+
+    let actual_leaf = target_dir
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or_default();
+
+    anyhow::ensure!(
+        actual_leaf == expected_leaf,
+        "CARGO_TARGET_DIR mismatch: leaf is {actual_leaf:?}, but OpenSSL {version} \
+         requires {expected_leaf:?}. Use `cargo xtask <cmd> --openssl-version {version}` \
+         (recommended) or set CARGO_TARGET_DIR=target/{expected_leaf} explicitly."
+    );
+
+    Ok(target_dir.join("openssl"))
 }
 
 /// Checks whether an OpenSSL installation is available, without installing.
 ///
 /// Resolution order:
 /// 1. `OPENSSL_DIR` env var — if set, returned as-is.
-/// 2. `target/openssl-{version}` — if it already exists.
+/// 2. `<CARGO_TARGET_DIR>/openssl/` — if it already exists.  `CARGO_TARGET_DIR`
+///    must match the ABI directory for the requested version
+///    (e.g., `target/ossl-abi-3-0/` for version `3.0.3`).
 ///
 /// Returns an error if neither is available. The caller must then run
 /// `ensure_openssl_version` (or `cargo xtask setup`) to install.
@@ -104,7 +136,8 @@ pub fn check_openssl(version: &str) -> anyhow::Result<PathBuf> {
 /// Resolves an OpenSSL installation, building from source if necessary.
 ///
 /// Honours `OPENSSL_DIR` strictly when set. Otherwise installs to
-/// `target/openssl-{version}` if not already present.
+/// `<CARGO_TARGET_DIR>/openssl/` if not already present.  Requires
+/// `CARGO_TARGET_DIR` to match the ABI dir for the requested version.
 #[cfg(target_os = "linux")]
 pub fn ensure_openssl_version(version: &str) -> anyhow::Result<PathBuf> {
     let expected_hash = sha256_for(version)?;

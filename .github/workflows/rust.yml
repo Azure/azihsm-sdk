@@ -13,7 +13,9 @@ env:
   CARGO_TERM_COLOR: always
   CACHE_KEY_ID: 84f8acac52412db91407ab9f85776987da17d42f
   OPENSSL_VERSION: "3.0.3"
-  OPENSSL_INSTALL: target/openssl-3.0.3
+  # ABI-versioned target dir.  Provider build.rs enforces this layout.
+  OPENSSL_ABI_DIR: target/ossl-abi-3-0
+  OPENSSL_INSTALL: target/ossl-abi-3-0/openssl
 
 jobs:
   build_ubuntu:
@@ -23,6 +25,10 @@ jobs:
     defaults:
       run:
         working-directory: .
+
+    # build.rs requires the target dir leaf to be ossl-abi-<major>-<minor>.
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target/ossl-abi-3-0
 
     steps:
     - uses: actions/checkout@v6
@@ -110,14 +116,21 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        openssl-version: ['3.0.3', '3.5.0']
+        include:
+          - openssl-version: '3.0.3'
+            openssl-abi: '3-0'
+          - openssl-version: '3.5.0'
+            openssl-abi: '3-5'
 
     # Allow 3.5.0 failures while stabilising support
     continue-on-error: ${{ matrix.openssl-version == '3.5.0' }}
 
     env:
       OPENSSL_VERSION: ${{ matrix.openssl-version }}
-      OPENSSL_INSTALL: target/openssl-${{ matrix.openssl-version }}
+      OPENSSL_ABI_DIR: target/ossl-abi-${{ matrix.openssl-abi }}
+      OPENSSL_INSTALL: target/ossl-abi-${{ matrix.openssl-abi }}/openssl
+      # build.rs requires the target dir leaf to be ossl-abi-<major>-<minor>.
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target/ossl-abi-${{ matrix.openssl-abi }}
 
     steps:
     - uses: actions/checkout@v6
@@ -178,12 +191,12 @@ jobs:
 
     - name: Smoke test provider
       env:
-        LD_LIBRARY_PATH: ${{ github.workspace }}/${{ env.OPENSSL_INSTALL }}/lib:${{ github.workspace }}/target/debug
+        LD_LIBRARY_PATH: ${{ github.workspace }}/${{ env.OPENSSL_INSTALL }}/lib:${{ env.CARGO_TARGET_DIR }}/debug
         AZIHSM_CREDENTIALS_ID: "70fcf730b8764238b8358010ce8a3f76"
         AZIHSM_CREDENTIALS_PIN: "db3dc77fc22e430080d41b31b6f04800"
       run: |
         ${{ github.workspace }}/${{ env.OPENSSL_INSTALL }}/bin/openssl genpkey \
-          -provider-path ${{ github.workspace }}/target/debug \
+          -provider-path ${{ env.CARGO_TARGET_DIR }}/debug \
           -provider default -provider azihsm_provider \
           -propquery "?provider=azihsm" \
           -algorithm EC -pkeyopt group:P-384 \
@@ -192,7 +205,7 @@ jobs:
     - name: Run CLI integration tests
       env:
         OPENSSL_BIN: ${{ github.workspace }}/${{ env.OPENSSL_INSTALL }}/bin/openssl
-        OPENSSL_LIB: ${{ github.workspace }}/${{ env.OPENSSL_INSTALL }}/lib:${{ github.workspace }}/target/debug
+        OPENSSL_LIB: ${{ github.workspace }}/${{ env.OPENSSL_INSTALL }}/lib:${{ env.CARGO_TARGET_DIR }}/debug
         PROPQUERY: "?provider=azihsm"
         AZIHSM_CREDENTIALS_ID: "70fcf730b8764238b8358010ce8a3f76"
         AZIHSM_CREDENTIALS_PIN: "db3dc77fc22e430080d41b31b6f04800"
@@ -208,7 +221,7 @@ jobs:
 
     - name: Install libazihsm_api_native for NGINX tests
       run: |
-        sudo cp target/debug/libazihsm_api_native.so /usr/lib/
+        sudo cp ${{ env.CARGO_TARGET_DIR }}/debug/libazihsm_api_native.so /usr/lib/
         sudo ldconfig
 
     - name: Install nginx mainline

@@ -32,24 +32,51 @@ impl Xtask for IntegrationTest {
 
         #[cfg(target_os = "linux")]
         {
+            // Set CARGO_TARGET_DIR so the provider build (and all artifacts)
+            // land in the ABI-versioned tree.  build.rs enforces this convention.
+            let abi_leaf = crate::openssl_install::abi_leaf_for(&self.openssl_version)?;
+            let target_dir = _ctx.root.join("target").join(&abi_leaf);
+            std::env::set_var("CARGO_TARGET_DIR", &target_dir);
+            log::info!("CARGO_TARGET_DIR set to {}", target_dir.display());
+
             let openssl_dir = crate::openssl_install::check_openssl(&self.openssl_version)?;
+
+            // Build the provider and its native FFI dep before running tests.
+            // The provider's build.rs isolates CMake/Corrosion's nested cargo
+            // into a separate target dir (see corrosion-target in build.rs)
+            // so this no longer deadlocks the outer `cargo xtask` invocation.
+            let sh = xshell::Shell::new()?;
+            xshell::cmd!(sh, "cargo build -p azihsm_api_native --features mock").run()?;
+            xshell::cmd!(sh, "cargo build -p azihsm_ossl_provider --features mock").run()?;
 
             if std::env::var("OPENSSL_BIN").is_err() {
                 std::env::set_var("OPENSSL_BIN", openssl_dir.join("bin/openssl"));
             }
             // Probe lib64 first (common on 64-bit distros), then fall back to lib.
+            // Also include the cargo debug dir so libazihsm_api_native.so is
+            // resolved from Cargo's build (not the parallel one Corrosion
+            // creates under target/<abi>/debug/build/.../out/build/, which has
+            // a different code path baked in).
             if std::env::var("OPENSSL_LIB").is_err() {
                 let lib64 = openssl_dir.join("lib64");
                 let lib = openssl_dir.join("lib");
-                if lib64.is_dir() {
-                    std::env::set_var("OPENSSL_LIB", lib64);
+                let cargo_debug = target_dir.join("debug");
+                let openssl_lib = if lib64.is_dir() {
+                    Some(lib64)
                 } else if lib.is_dir() {
-                    std::env::set_var("OPENSSL_LIB", lib);
+                    Some(lib)
                 } else {
                     log::warn!(
-                        "neither {} nor {} exists — OPENSSL_LIB not set",
-                        lib64.display(),
-                        lib.display()
+                        "neither {}/lib64 nor {}/lib exists",
+                        openssl_dir.display(),
+                        openssl_dir.display()
+                    );
+                    None
+                };
+                if let Some(p) = openssl_lib {
+                    std::env::set_var(
+                        "OPENSSL_LIB",
+                        format!("{}:{}", p.display(), cargo_debug.display()),
                     );
                 }
             }
@@ -57,6 +84,8 @@ impl Xtask for IntegrationTest {
                 std::env::set_var("OPENSSL_DIR", &openssl_dir);
             }
 
+            // Test key material is shared across versions (regenerated per run).
+            // Keep it at the top of target/, not inside the ABI tree.
             let keymat_dir = _ctx.root.join("target").join("test-keymat");
             if keymat_dir.exists() {
                 std::fs::remove_dir_all(&keymat_dir)?;

@@ -3,3 +3,17 @@
 
 [alias]
 xtask = "run --package xtask --"
+
+# Default target directory matches the OpenSSL ABI convention enforced by the
+# provider's build.rs.  This makes plain `cargo build` and IDE/rust-analyzer
+# work out of the box for the default OpenSSL ABI version.
+#
+# To build against a different ABI (e.g., 3.5), override:
+#   - via xtask:  cargo xtask <cmd> --openssl-version 3.5.0
+#   - or env:     CARGO_TARGET_DIR=target/ossl-abi-3-5 cargo build ...
+#
+# Note: build.rs redirects CMake/Corrosion's nested cargo to a separate target
+# dir under <OUT_DIR>/corrosion-target/ so the inner probe does not deadlock
+# on the outer cargo's target-dir lock.
+[build]
+target-dir = "target/ossl-abi-3-0"
