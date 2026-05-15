@@ -835,11 +835,11 @@ mod tests {
         }
     }
 
-    fn obk_adapter(ctx: *mut c_void) -> ObkCallbackAdapter {
-        ObkCallbackAdapter {
+    fn obk_adapter(ctx: *mut c_void) -> MobkCallbackAdapter {
+        MobkCallbackAdapter {
             ctx,
-            ops: AzihsmObkCallbackOps {
-                get_obk: obk_callback,
+            ops: AzihsmMobkCallbackOps {
+                get_mobk: obk_callback,
             },
         }
     }
@@ -850,8 +850,8 @@ mod tests {
             let mut ctx = ObkCtx { mode, calls: 0 };
             let adapter = obk_adapter(&mut ctx as *mut _ as *mut c_void);
 
-            let err = api::ObkProviderCallback::get_obk(&adapter)
-                .expect_err("get_obk should reject invalid callback protocol");
+            let err = api::MobkProviderCallback::get_mobk(&adapter)
+                .expect_err("get_mobk should reject invalid callback protocol");
             assert_eq!(err, api::HsmError::InvalidArgument);
         }
 
@@ -860,8 +860,8 @@ mod tests {
             calls: 0,
         };
         let adapter = obk_adapter(&mut second_call_ctx as *mut _ as *mut c_void);
-        let err = api::ObkProviderCallback::get_obk(&adapter)
-            .expect_err("get_obk should propagate callback failure");
+        let err = api::MobkProviderCallback::get_mobk(&adapter)
+            .expect_err("get_mobk should propagate callback failure");
         assert_eq!(err, api::HsmError::InternalError);
         assert_eq!(second_call_ctx.calls, 2);
 
@@ -870,8 +870,8 @@ mod tests {
             calls: 0,
         };
         let adapter = obk_adapter(&mut wrong_len_ctx as *mut _ as *mut c_void);
-        let err = api::ObkProviderCallback::get_obk(&adapter)
-            .expect_err("get_obk should reject the returned length");
+        let err = api::MobkProviderCallback::get_mobk(&adapter)
+            .expect_err("get_mobk should reject the returned length");
         assert_eq!(err, api::HsmError::InvalidArgument);
         assert_eq!(wrong_len_ctx.calls, 2);
     }
@@ -893,12 +893,12 @@ mod tests {
                 unlock: lock_callback,
             },
             pota_callback_ops: ptr::null(),
-            obk_callback_ops: ptr::null(),
+            mobk_callback_ops: ptr::null(),
         };
 
         let resiliency_config = api::HsmResiliencyConfig::try_from(&config)
             .expect("config should accept null optional callbacks");
         assert!(resiliency_config.pota_callback.is_none());
-        assert!(resiliency_config.obk_callback.is_none());
+        assert!(resiliency_config.mobk_callback.is_none());
     }
 }
