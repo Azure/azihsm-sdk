@@ -732,7 +732,7 @@ fn try_import_rsa_key(
 
     let mut wrap_algo = HsmRsaAesWrapAlgo::new(hash_algo, salt_size);
 
-    let result = match HsmEncrypter::encrypt_vec(&mut wrap_algo, &unwrapping_pub_key, der) {
+    match HsmEncrypter::encrypt_vec(&mut wrap_algo, &unwrapping_pub_key, der) {
         Ok(wrapped_key) => {
             let mut unwrap_algo = HsmRsaKeyRsaAesKeyUnwrapAlgo::new(hash_algo);
 
@@ -744,9 +744,7 @@ fn try_import_rsa_key(
             )
         }
         Err(err) => Err(err),
-    };
-
-    result
+    }
 }
 
 // ============================================================

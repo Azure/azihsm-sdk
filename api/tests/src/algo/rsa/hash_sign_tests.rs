@@ -72,14 +72,12 @@ fn import_rsa_key(
 
     let mut unwrap_algo = HsmRsaKeyRsaAesKeyUnwrapAlgo::new(hash_algo);
 
-    let result = unwrap_algo.unwrap_key_pair(
+    unwrap_algo.unwrap_key_pair(
         &unwrapping_priv_key,
         &wrapped_key,
         priv_key_props,
         pub_key_props,
-    );
-
-    result
+    )
 }
 
 /// Helper to perform streaming RSA signing over multiple data chunks
