@@ -11,19 +11,11 @@ use azihsm_crypto::testvectors::rsa::RSA_PKCS1_TEST_VECTORS;
 use azihsm_crypto::testvectors::rsa::RSA_PSS_TEST_VECTORS;
 use azihsm_crypto::testvectors::rsa::TestHashAlgo;
 
-use super::common::*;
 use super::*;
 
 // =======================================================
 // Common helpers
 // =======================================================
-
-/// Describes the permitted RSA operations for an imported key pair.
-#[derive(Clone, Copy)]
-enum ImportedRsaKeyUsage {
-    SignVerify,
-    EncryptDecrypt,
-}
 
 /// Converts the RSA test-vector hash enum into the HSM API hash enum.
 fn hsm_hash_from_test(hash: TestHashAlgo) -> HsmHashAlgo {
@@ -41,54 +33,15 @@ fn is_supported_rsa_bits(bits: u32) -> bool {
 }
 
 /// Imports RSA private-key DER into HSM RSA key handles through RSA-AES wrap/unwrap.
+/// Imports RSA private-key DER into HSM RSA session key handles through RSA-AES wrap/unwrap.
 fn import_rsa_key_pair(
     session: &HsmSession,
     der: &[u8],
     bits: u32,
     usage: ImportedRsaKeyUsage,
 ) -> (HsmRsaPrivateKey, HsmRsaPublicKey) {
-    let (unwrapping_priv_key, unwrapping_pub_key) = get_rsa_unwrapping_key_pair(session);
-
-    let (can_sign, can_verify, can_decrypt, can_encrypt) = match usage {
-        ImportedRsaKeyUsage::SignVerify => (true, true, false, false),
-        ImportedRsaKeyUsage::EncryptDecrypt => (false, false, true, true),
-    };
-
-    let priv_key_props = HsmKeyPropsBuilder::default()
-        .class(HsmKeyClass::Private)
-        .key_kind(HsmKeyKind::Rsa)
-        .bits(bits)
-        .can_sign(can_sign)
-        .can_decrypt(can_decrypt)
-        .build()
-        .expect("Failed to build imported RSA private key props");
-
-    let pub_key_props = HsmKeyPropsBuilder::default()
-        .class(HsmKeyClass::Public)
-        .key_kind(HsmKeyKind::Rsa)
-        .bits(bits)
-        .can_verify(can_verify)
-        .can_encrypt(can_encrypt)
-        .build()
-        .expect("Failed to build imported RSA public key props");
-
-    let hash_algo = HsmHashAlgo::Sha384;
-    let kek_size = 32;
-
-    let mut wrap_algo = HsmRsaAesWrapAlgo::new(hash_algo, kek_size);
-    let wrapped_key = HsmEncrypter::encrypt_vec(&mut wrap_algo, &unwrapping_pub_key, der)
-        .expect("Failed to RSA-AES wrap RSA DER key");
-
-    let mut unwrap_algo = HsmRsaKeyRsaAesKeyUnwrapAlgo::new(hash_algo);
-
-    HsmKeyManager::unwrap_key_pair(
-        &mut unwrap_algo,
-        &unwrapping_priv_key,
-        &wrapped_key,
-        priv_key_props,
-        pub_key_props,
-    )
-    .expect("Failed to RSA-AES unwrap RSA key pair")
+    try_import_rsa_key_pair(session, der, bits, usage, true)
+        .expect("Failed to RSA-AES unwrap RSA session key pair")
 }
 
 /// Imports an RSA key pair configured for sign/verify operations.

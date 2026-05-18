@@ -4,7 +4,6 @@
 use azihsm_crypto as crypto;
 use crypto::*;
 
-use super::common::*;
 use super::*;
 // ================================
 // Helper functions

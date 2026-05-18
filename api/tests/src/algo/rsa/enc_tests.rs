@@ -4,7 +4,6 @@
 use azihsm_crypto as crypto;
 use crypto::*;
 
-use super::common::*;
 use super::*;
 
 /// Import an external RSA private key DER blob into the HSM by wrapping and unwrapping it.
@@ -13,42 +12,14 @@ fn import_rsa_key(
     der: &[u8],
     bits: u32,
 ) -> (HsmRsaPrivateKey, HsmRsaPublicKey) {
-    let (unwrapping_priv_key, unwrapping_pub_key) = get_rsa_unwrapping_key_pair(session);
-
-    let priv_key_props = HsmKeyPropsBuilder::default()
-        .class(HsmKeyClass::Private)
-        .key_kind(HsmKeyKind::Rsa)
-        .bits(bits)
-        .can_decrypt(true)
-        .build()
-        .expect("Failed to build private key props");
-
-    let pub_key_props = HsmKeyPropsBuilder::default()
-        .class(HsmKeyClass::Public)
-        .key_kind(HsmKeyKind::Rsa)
-        .bits(bits)
-        .can_encrypt(true)
-        .build()
-        .expect("Failed to build public key props");
-
-    let hash_algo = HsmHashAlgo::Sha384;
-    let kek_size = 32;
-
-    let mut wrap_algo = HsmRsaAesWrapAlgo::new(hash_algo, kek_size);
-    let wrapped_key = HsmEncrypter::encrypt_vec(&mut wrap_algo, &unwrapping_pub_key, der)
-        .expect("Failed to wrap AES Key");
-
-    let mut unwrap_algo = HsmRsaKeyRsaAesKeyUnwrapAlgo::new(hash_algo);
-    let (priv_key, pub_key) = unwrap_algo
-        .unwrap_key_pair(
-            &unwrapping_priv_key,
-            &wrapped_key,
-            priv_key_props,
-            pub_key_props,
-        )
-        .expect("Failed to unwrap RSA AES key pair");
-
-    (priv_key, pub_key)
+    try_import_rsa_key_pair(
+        session,
+        der,
+        bits,
+        ImportedRsaKeyUsage::EncryptDecrypt,
+        false,
+    )
+    .expect("Failed to import RSA encrypt/decrypt key pair")
 }
 
 /// Ensure RSA-2048 PKCS1 encryption and decryption round-trips successfully.

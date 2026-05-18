@@ -9,4 +9,6 @@ mod key_tests;
 mod nist_tests;
 mod sign_tests;
 
+pub(crate) use common::*;
+
 use super::*;
