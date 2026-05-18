@@ -32,7 +32,6 @@ fn is_supported_rsa_bits(bits: u32) -> bool {
     matches!(bits, 2048 | 3072 | 4096)
 }
 
-/// Imports RSA private-key DER into HSM RSA key handles through RSA-AES wrap/unwrap.
 /// Imports RSA private-key DER into HSM RSA session key handles through RSA-AES wrap/unwrap.
 fn import_rsa_key_pair(
     session: &HsmSession,
@@ -41,7 +40,7 @@ fn import_rsa_key_pair(
     usage: ImportedRsaKeyUsage,
 ) -> (HsmRsaPrivateKey, HsmRsaPublicKey) {
     try_import_rsa_key_pair(session, der, bits, usage, true)
-        .expect("Failed to RSA-AES unwrap RSA session key pair")
+        .expect("Failed to unwrap RSA session key pair via RSA-AES")
 }
 
 /// Imports an RSA key pair configured for sign/verify operations.
@@ -98,9 +97,9 @@ fn should_skip_unsupported_bits(kind: &str, idx: usize, bits: u32) -> bool {
 
 /// Hashes a message using the hash algorithm specified by the RSA test vector.
 fn hash_test_vector_message(session: &HsmSession, hash_algo: TestHashAlgo, msg: &[u8]) -> Vec<u8> {
-    let mut hash_algo = hsm_hash_from_test(hash_algo);
+    let mut hsm_hash_algo = hsm_hash_from_test(hash_algo);
 
-    HsmHasher::hash_vec(session, &mut hash_algo, msg)
+    HsmHasher::hash_vec(session, &mut hsm_hash_algo, msg)
         .expect("Failed to hash RSA NIST test-vector message")
 }
 
