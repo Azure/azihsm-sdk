@@ -7,35 +7,6 @@ use super::*;
 // Helper functions
 // ================================
 
-/// Generates an ECC key pair with signing (private) and verification (public) capabilities
-fn generate_ecc_key_pair(
-    session: &HsmSession,
-    curve: HsmEccCurve,
-) -> (HsmEccPrivateKey, HsmEccPublicKey) {
-    let priv_key_props = HsmKeyPropsBuilder::default()
-        .class(HsmKeyClass::Private)
-        .key_kind(HsmKeyKind::Ecc)
-        .ecc_curve(curve)
-        .can_sign(true)
-        .is_session(true)
-        .build()
-        .expect("Failed to build private key props");
-
-    let pub_key_props = HsmKeyPropsBuilder::default()
-        .class(HsmKeyClass::Public)
-        .key_kind(HsmKeyKind::Ecc)
-        .ecc_curve(curve)
-        .can_verify(true)
-        .is_session(true)
-        .build()
-        .expect("Failed to build public key props");
-
-    let mut algo = HsmEccKeyGenAlgo::default();
-
-    HsmKeyManager::generate_key_pair(session, &mut algo, priv_key_props, pub_key_props)
-        .expect("Failed to generate ECC key pair")
-}
-
 /// Signs input data using the specified hash algorithm and ECC private key
 fn sign_data(priv_key: &HsmEccPrivateKey, hash_algo: HsmHashAlgo, data: &[u8]) -> Vec<u8> {
     let mut sign_algo = HsmHashSignAlgo::new(hash_algo);

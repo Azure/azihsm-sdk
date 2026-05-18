@@ -13,9 +13,6 @@ mod ecdsa_p256;
 mod ecdsa_p384;
 mod ecdsa_p521;
 
-mod testvectors;
-
 pub(crate) use ecc_helpers::*;
-pub(crate) use testvectors::*;
 
 use super::*;

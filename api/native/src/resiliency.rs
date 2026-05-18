@@ -518,3 +518,387 @@ impl TryFrom<&AzihsmResiliencyConfig> for api::HsmResiliencyConfig {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::missing_safety_doc, clippy::undocumented_unsafe_blocks)]
+
+    use std::ptr;
+
+    use super::*;
+
+    #[derive(Clone, Copy)]
+    enum StorageReadMode {
+        EmptySuccess,
+        ZeroLenBufferTooSmall,
+        NonZeroLenSuccess,
+        OversizedBufferTooSmall,
+        SecondCallFailure,
+    }
+
+    struct StorageReadCtx {
+        mode: StorageReadMode,
+        calls: u32,
+    }
+
+    struct StatusCtx {
+        status: AzihsmStatus,
+    }
+
+    #[allow(unsafe_code)]
+    unsafe extern "C" fn storage_read_callback(
+        ctx: *mut c_void,
+        _key: *const c_char,
+        value: *mut AzihsmBuffer,
+    ) -> AzihsmStatus {
+        let ctx = unsafe { &mut *(ctx as *mut StorageReadCtx) };
+        let value = unsafe { &mut *value };
+        ctx.calls += 1;
+
+        match ctx.mode {
+            StorageReadMode::EmptySuccess => {
+                value.len = 0;
+                AzihsmStatus::Success
+            }
+            StorageReadMode::ZeroLenBufferTooSmall => {
+                value.len = 0;
+                AzihsmStatus::BufferTooSmall
+            }
+            StorageReadMode::NonZeroLenSuccess => {
+                value.len = 1;
+                AzihsmStatus::Success
+            }
+            StorageReadMode::OversizedBufferTooSmall => {
+                value.len = (MAX_STORAGE_READ_SIZE + 1) as u32;
+                AzihsmStatus::BufferTooSmall
+            }
+            StorageReadMode::SecondCallFailure => {
+                if ctx.calls == 1 {
+                    value.len = 3;
+                    AzihsmStatus::BufferTooSmall
+                } else {
+                    AzihsmStatus::InternalError
+                }
+            }
+        }
+    }
+
+    #[allow(unsafe_code)]
+    unsafe extern "C" fn storage_write_callback(
+        ctx: *mut c_void,
+        _key: *const c_char,
+        _value: *const AzihsmBuffer,
+    ) -> AzihsmStatus {
+        let ctx = unsafe { &*(ctx as *const StatusCtx) };
+        ctx.status
+    }
+
+    #[allow(unsafe_code)]
+    unsafe extern "C" fn storage_clear_callback(
+        ctx: *mut c_void,
+        _key: *const c_char,
+    ) -> AzihsmStatus {
+        let ctx = unsafe { &*(ctx as *const StatusCtx) };
+        ctx.status
+    }
+
+    #[allow(unsafe_code)]
+    unsafe extern "C" fn lock_callback(ctx: *mut c_void) -> AzihsmStatus {
+        let ctx = unsafe { &*(ctx as *const StatusCtx) };
+        ctx.status
+    }
+
+    fn storage_adapter(ctx: *mut c_void) -> ResiliencyStorageAdapter {
+        ResiliencyStorageAdapter {
+            ctx,
+            ops: AzihsmResiliencyStorageOps {
+                read: storage_read_callback,
+                write: storage_write_callback,
+                clear: storage_clear_callback,
+            },
+        }
+    }
+
+    fn lock_adapter(ctx: *mut c_void) -> ResiliencyLockAdapter {
+        ResiliencyLockAdapter {
+            ctx,
+            ops: AzihsmResiliencyLockOps {
+                lock: lock_callback,
+                unlock: lock_callback,
+            },
+        }
+    }
+
+    #[test]
+    fn storage_read_accepts_empty_value() {
+        let mut ctx = StorageReadCtx {
+            mode: StorageReadMode::EmptySuccess,
+            calls: 0,
+        };
+        let adapter = storage_adapter(&mut ctx as *mut _ as *mut c_void);
+
+        let data = api::ResiliencyStorage::read(&adapter, "key").expect("read should succeed");
+        assert!(data.is_empty());
+        assert_eq!(ctx.calls, 1);
+    }
+
+    #[test]
+    fn storage_read_rejects_invalid_size_query_protocols() {
+        for mode in [
+            StorageReadMode::ZeroLenBufferTooSmall,
+            StorageReadMode::NonZeroLenSuccess,
+            StorageReadMode::OversizedBufferTooSmall,
+        ] {
+            let mut ctx = StorageReadCtx { mode, calls: 0 };
+            let adapter = storage_adapter(&mut ctx as *mut _ as *mut c_void);
+
+            let err = api::ResiliencyStorage::read(&adapter, "key")
+                .expect_err("read should reject invalid callback protocol");
+            assert_eq!(err, api::HsmError::InvalidArgument);
+        }
+    }
+
+    #[test]
+    fn storage_read_propagates_second_call_failure() {
+        let mut ctx = StorageReadCtx {
+            mode: StorageReadMode::SecondCallFailure,
+            calls: 0,
+        };
+        let adapter = storage_adapter(&mut ctx as *mut _ as *mut c_void);
+
+        let err = api::ResiliencyStorage::read(&adapter, "key")
+            .expect_err("read should propagate callback failure");
+        assert_eq!(err, api::HsmError::InternalError);
+        assert_eq!(ctx.calls, 2);
+    }
+
+    #[test]
+    fn storage_write_and_clear_reject_interior_nul_keys() {
+        let mut ctx = StatusCtx {
+            status: AzihsmStatus::Success,
+        };
+        let adapter = storage_adapter(&mut ctx as *mut _ as *mut c_void);
+
+        let write_err = api::ResiliencyStorage::write(&adapter, "a\0b", b"data")
+            .expect_err("write should reject interior nul key");
+        assert_eq!(write_err, api::HsmError::InvalidArgument);
+
+        let clear_err = api::ResiliencyStorage::clear(&adapter, "a\0b")
+            .expect_err("clear should reject interior nul key");
+        assert_eq!(clear_err, api::HsmError::InvalidArgument);
+    }
+
+    #[test]
+    fn storage_write_clear_and_lock_propagate_callback_failures() {
+        let mut ctx = StatusCtx {
+            status: AzihsmStatus::InternalError,
+        };
+        let adapter = storage_adapter(&mut ctx as *mut _ as *mut c_void);
+
+        let write_err = api::ResiliencyStorage::write(&adapter, "key", b"data")
+            .expect_err("write should propagate callback failure");
+        assert_eq!(write_err, api::HsmError::InternalError);
+
+        let clear_err = api::ResiliencyStorage::clear(&adapter, "key")
+            .expect_err("clear should propagate callback failure");
+        assert_eq!(clear_err, api::HsmError::InternalError);
+
+        let lock = lock_adapter(&mut ctx as *mut _ as *mut c_void);
+        let lock_err =
+            api::ResiliencyLock::lock(&lock).expect_err("lock should propagate callback failure");
+        assert_eq!(lock_err, api::HsmError::InternalError);
+
+        let unlock_err = api::ResiliencyLock::unlock(&lock)
+            .expect_err("unlock should propagate callback failure");
+        assert_eq!(unlock_err, api::HsmError::InternalError);
+    }
+
+    #[derive(Clone, Copy)]
+    enum PotaMode {
+        QuerySuccess,
+        OversizedQuery,
+        SecondCallFailure,
+    }
+
+    struct PotaCtx {
+        mode: PotaMode,
+        calls: u32,
+    }
+
+    #[allow(unsafe_code)]
+    unsafe extern "C" fn pota_callback(
+        ctx: *mut c_void,
+        _pota_pub_key_der: *const AzihsmBuffer,
+        _pid_pub_key_der: *const AzihsmBuffer,
+        _pid_cert_chain_pem: *const AzihsmBuffer,
+        signature: *mut AzihsmBuffer,
+        endorsement_pub_key: *mut AzihsmBuffer,
+    ) -> AzihsmStatus {
+        let ctx = unsafe { &mut *(ctx as *mut PotaCtx) };
+        let signature = unsafe { &mut *signature };
+        let endorsement_pub_key = unsafe { &mut *endorsement_pub_key };
+        ctx.calls += 1;
+
+        match ctx.mode {
+            PotaMode::QuerySuccess => AzihsmStatus::Success,
+            PotaMode::OversizedQuery => {
+                signature.len = (MAX_POTA_BUFFER_SIZE + 1) as u32;
+                endorsement_pub_key.len = 1;
+                AzihsmStatus::BufferTooSmall
+            }
+            PotaMode::SecondCallFailure => {
+                if ctx.calls == 1 {
+                    signature.len = 1;
+                    endorsement_pub_key.len = 1;
+                    AzihsmStatus::BufferTooSmall
+                } else {
+                    AzihsmStatus::InternalError
+                }
+            }
+        }
+    }
+
+    fn pota_adapter(ctx: *mut c_void) -> PotaCallbackAdapter {
+        PotaCallbackAdapter {
+            ctx,
+            ops: AzihsmPotaCallbackOps {
+                endorse: pota_callback,
+            },
+        }
+    }
+
+    #[test]
+    fn pota_callback_rejects_invalid_protocols_and_propagates_failure() {
+        for mode in [PotaMode::QuerySuccess, PotaMode::OversizedQuery] {
+            let mut ctx = PotaCtx { mode, calls: 0 };
+            let adapter = pota_adapter(&mut ctx as *mut _ as *mut c_void);
+
+            let err = api::PotaEndorsementCallback::endorse(&adapter, b"pota", b"pid", b"chain")
+                .expect_err("endorse should reject invalid callback protocol");
+            assert_eq!(err, api::HsmError::InvalidArgument);
+        }
+
+        let mut ctx = PotaCtx {
+            mode: PotaMode::SecondCallFailure,
+            calls: 0,
+        };
+        let adapter = pota_adapter(&mut ctx as *mut _ as *mut c_void);
+
+        let err = api::PotaEndorsementCallback::endorse(&adapter, b"pota", b"pid", b"chain")
+            .expect_err("endorse should propagate callback failure");
+        assert_eq!(err, api::HsmError::InternalError);
+        assert_eq!(ctx.calls, 2);
+    }
+
+    #[derive(Clone, Copy)]
+    enum ObkMode {
+        QuerySuccess,
+        WrongQueryLen,
+        SecondCallFailure,
+        WrongReturnedLen,
+    }
+
+    struct ObkCtx {
+        mode: ObkMode,
+        calls: u32,
+    }
+
+    #[allow(unsafe_code)]
+    unsafe extern "C" fn obk_callback(ctx: *mut c_void, obk: *mut AzihsmBuffer) -> AzihsmStatus {
+        let ctx = unsafe { &mut *(ctx as *mut ObkCtx) };
+        let obk = unsafe { &mut *obk };
+        ctx.calls += 1;
+
+        match ctx.mode {
+            ObkMode::QuerySuccess => AzihsmStatus::Success,
+            ObkMode::WrongQueryLen => {
+                obk.len = (OBK_SIZE - 1) as u32;
+                AzihsmStatus::BufferTooSmall
+            }
+            ObkMode::SecondCallFailure => {
+                if ctx.calls == 1 {
+                    obk.len = OBK_SIZE as u32;
+                    AzihsmStatus::BufferTooSmall
+                } else {
+                    AzihsmStatus::InternalError
+                }
+            }
+            ObkMode::WrongReturnedLen => {
+                if ctx.calls == 1 {
+                    obk.len = OBK_SIZE as u32;
+                    AzihsmStatus::BufferTooSmall
+                } else {
+                    obk.len = (OBK_SIZE - 1) as u32;
+                    AzihsmStatus::Success
+                }
+            }
+        }
+    }
+
+    fn obk_adapter(ctx: *mut c_void) -> ObkCallbackAdapter {
+        ObkCallbackAdapter {
+            ctx,
+            ops: AzihsmObkCallbackOps {
+                get_obk: obk_callback,
+            },
+        }
+    }
+
+    #[test]
+    fn obk_callback_rejects_invalid_protocols_and_propagates_failure() {
+        for mode in [ObkMode::QuerySuccess, ObkMode::WrongQueryLen] {
+            let mut ctx = ObkCtx { mode, calls: 0 };
+            let adapter = obk_adapter(&mut ctx as *mut _ as *mut c_void);
+
+            let err = api::ObkProviderCallback::get_obk(&adapter)
+                .expect_err("get_obk should reject invalid callback protocol");
+            assert_eq!(err, api::HsmError::InvalidArgument);
+        }
+
+        let mut second_call_ctx = ObkCtx {
+            mode: ObkMode::SecondCallFailure,
+            calls: 0,
+        };
+        let adapter = obk_adapter(&mut second_call_ctx as *mut _ as *mut c_void);
+        let err = api::ObkProviderCallback::get_obk(&adapter)
+            .expect_err("get_obk should propagate callback failure");
+        assert_eq!(err, api::HsmError::InternalError);
+        assert_eq!(second_call_ctx.calls, 2);
+
+        let mut wrong_len_ctx = ObkCtx {
+            mode: ObkMode::WrongReturnedLen,
+            calls: 0,
+        };
+        let adapter = obk_adapter(&mut wrong_len_ctx as *mut _ as *mut c_void);
+        let err = api::ObkProviderCallback::get_obk(&adapter)
+            .expect_err("get_obk should reject the returned length");
+        assert_eq!(err, api::HsmError::InvalidArgument);
+        assert_eq!(wrong_len_ctx.calls, 2);
+    }
+
+    #[test]
+    fn config_allows_null_optional_callbacks() {
+        let mut ctx = StatusCtx {
+            status: AzihsmStatus::Success,
+        };
+        let config = AzihsmResiliencyConfig {
+            ctx: &mut ctx as *mut _ as *mut c_void,
+            storage_ops: AzihsmResiliencyStorageOps {
+                read: storage_read_callback,
+                write: storage_write_callback,
+                clear: storage_clear_callback,
+            },
+            lock_ops: AzihsmResiliencyLockOps {
+                lock: lock_callback,
+                unlock: lock_callback,
+            },
+            pota_callback_ops: ptr::null(),
+            obk_callback_ops: ptr::null(),
+        };
+
+        let resiliency_config = api::HsmResiliencyConfig::try_from(&config)
+            .expect("config should accept null optional callbacks");
+        assert!(resiliency_config.pota_callback.is_none());
+        assert!(resiliency_config.obk_callback.is_none());
+    }
+}

@@ -8,12 +8,12 @@ mod ecdh_p256_test_vectors;
 mod ecdh_p384_test_vectors;
 mod ecdh_p521_test_vectors;
 
-pub(crate) use ecc_p256_test_vectors::ECC_P256_TEST_VECTORS;
-pub(crate) use ecc_p384_test_vectors::ECC_P384_TEST_VECTORS;
-pub(crate) use ecc_p521_test_vectors::ECC_P521_TEST_VECTORS;
-pub(crate) use ecdh_p256_test_vectors::ECDH_P256_TEST_VECTORS;
-pub(crate) use ecdh_p384_test_vectors::ECDH_P384_TEST_VECTORS;
-pub(crate) use ecdh_p521_test_vectors::ECDH_P521_TEST_VECTORS;
+pub use ecc_p256_test_vectors::ECC_P256_TEST_VECTORS;
+pub use ecc_p384_test_vectors::ECC_P384_TEST_VECTORS;
+pub use ecc_p521_test_vectors::ECC_P521_TEST_VECTORS;
+pub use ecdh_p256_test_vectors::ECDH_P256_TEST_VECTORS;
+pub use ecdh_p384_test_vectors::ECDH_P384_TEST_VECTORS;
+pub use ecdh_p521_test_vectors::ECDH_P521_TEST_VECTORS;
 
 #[derive(Debug, Clone)]
 /// Represents a test vector for NIST-recommended elliptic curve cryptography (ECC) operations.
