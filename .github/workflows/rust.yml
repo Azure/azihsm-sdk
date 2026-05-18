@@ -86,17 +86,19 @@ jobs:
         LD_LIBRARY_PATH: ${{ github.workspace }}/${{ env.OPENSSL_INSTALL }}/lib
       run: cargo xtask precheck --coverage
       continue-on-error: true
-    - name: Upload coverage report
-      uses: actions/upload-artifact@v7
-      with:
-        name: coverage-report-ubuntu
-        path: ./target/reports/
     - name: Generate nextest report
       id: nextest-report
       run: cargo xtask precheck --nextest-report
     - name: Code Coverage Summary Report
+      id: coverage-report
       if: ${{ steps.test-mock-coverage.outcome == 'success' }}
       run: cargo xtask precheck --coverage-report
+    - name: Upload coverage report
+      if: ${{ steps.coverage-report.outcome == 'success' }}
+      uses: actions/upload-artifact@v7
+      with:
+        name: coverage-report-ubuntu
+        path: ./target/reports/
     - name: Fail if any tests failed
       if: ${{ steps.test-mock-coverage.outcome == 'failure' || steps.test-mock-table-4.outcome == 'failure' || steps.test-mock-table-64.outcome == 'failure' }}
       run: |
@@ -237,14 +239,14 @@ jobs:
         cd ./target/llvm-cov-target
         ls -la
 
+    - name: Code Coverage Summary Report
+      run: cargo xtask precheck --coverage-report
+
     - name: Upload coverage report
       uses: actions/upload-artifact@v7
       with:
         name: coverage-report-provider-integration
         path: ./target/reports/
-
-    - name: Code Coverage Summary Report
-      run: cargo xtask precheck --coverage-report
 
   build_windows:
 
@@ -285,17 +287,19 @@ jobs:
       id: test-mock-coverage
       run: cargo xtask precheck --coverage
       continue-on-error: true
-    - name: Upload coverage report
-      uses: actions/upload-artifact@v7
-      with:
-        name: coverage-report-windows
-        path: ./target/reports/
     - name: Generate nextest report
       id: nextest-report
       run: cargo xtask precheck --nextest-report
     - name: Code Coverage Summary Report
+      id: coverage-report
       if: ${{ steps.test-mock-coverage.outcome == 'success' }}
       run: cargo xtask precheck --coverage-report
+    - name: Upload coverage report
+      if: ${{ steps.coverage-report.outcome == 'success' }}
+      uses: actions/upload-artifact@v7
+      with:
+        name: coverage-report-windows
+        path: ./target/reports/
     - name: Fail if any tests failed
       if: ${{ steps.test-mock-coverage.outcome == 'failure' }}
       run: |
