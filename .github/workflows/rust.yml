@@ -145,8 +145,9 @@ jobs:
     - name: Build azihsm with OpenSSL ${{ env.OPENSSL_VERSION }}
       env:
         OPENSSL_DIR: ${{ github.workspace }}/${{ env.OPENSSL_INSTALL }}
+        RUSTFLAGS: -C instrument-coverage
+        LLVM_PROFILE_FILE: ${{ github.workspace }}/target/llvm-cov-target/azihsm-sdk-%p-%14m.profraw
       run: |
-        source <(cargo llvm-cov show-env)
         cargo build -p azihsm_api_native --features mock
         cargo build -p azihsm_ossl_provider --features mock
 
