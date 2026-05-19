@@ -260,10 +260,7 @@ impl Xtask for Precheck {
                     no_default_features: false,
                     filterset: None,
                     profile: self.profile.clone().or(Some("ci-mock".to_string())),
-                    exclude: vec![
-                        "provider-integration-tests-cli".to_string(),
-                        "provider-integration-tests-capi".to_string(),
-                    ],
+                    exclude: self.exclude.clone(),
                 }
                 .run(ctx.clone())?;
 
@@ -274,7 +271,7 @@ impl Xtask for Precheck {
                     no_default_features: false,
                     filterset: Some("test(resiliency::fault_injection::)".to_string()),
                     profile: self.profile.clone().or(Some("ci-mock-res".to_string())),
-                    exclude: Vec::new(),
+                    exclude: self.exclude.clone(),
                 }
                 .run(ctx.clone())?;
             } else {

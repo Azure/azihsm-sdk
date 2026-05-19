@@ -111,19 +111,22 @@ impl Xtask for CoverageReport {
             log::warn!("Could not find cmake build directory or azihsm_api_native object. Coverage reports may be incomplete.");
         }
 
-        // append /target/debug/libazihsm_api_native.so to LLVM_COV_FLAGS
-        let additional_libs = ["./target/debug/libazihsm_api_native.so"];
-        for lib in &additional_libs {
-            if std::path::Path::new(lib).exists() {
-                let new_flags = match std::env::var("LLVM_COV_FLAGS") {
-                    Ok(existing) if !existing.trim().is_empty() => {
-                        format!("{existing} -object {lib}")
-                    }
-                    _ => format!("-object {lib}"),
-                };
-                sh.set_var("LLVM_COV_FLAGS", new_flags);
-            } else {
-                log::warn!("Could not find library at expected path: {}. Coverage reports may be incomplete.", lib);
+        #[cfg(not(target_os = "windows"))]
+        {
+            // append /target/debug/libazihsm_api_native.so to LLVM_COV_FLAGS
+            let additional_libs = ["./target/debug/libazihsm_api_native.so"];
+            for lib in &additional_libs {
+                if std::path::Path::new(lib).exists() {
+                    let new_flags = match std::env::var("LLVM_COV_FLAGS") {
+                        Ok(existing) if !existing.trim().is_empty() => {
+                            format!("{existing} -object {lib}")
+                        }
+                        _ => format!("-object {lib}"),
+                    };
+                    sh.set_var("LLVM_COV_FLAGS", new_flags);
+                } else {
+                    log::warn!("Could not find library at expected path: {}. Coverage reports may be incomplete.", lib);
+                }
             }
         }
 
@@ -218,8 +221,6 @@ impl Xtask for CoverageReport {
 
         let table = render_markdown_table(line_summaries);
 
-        println!("{}", table);
-
         // Write to GITHUB_STEP_SUMMARY environment variable
         if let Ok(summary_path) = std::env::var("GITHUB_STEP_SUMMARY") {
             let mut file = OpenOptions::new().append(true).open(&summary_path)?;
@@ -227,7 +228,7 @@ impl Xtask for CoverageReport {
             log::trace!("Report written to GITHUB_STEP_SUMMARY");
         } else {
             // If not in GitHub Actions, just print to stdout
-            //println!("{}", table);
+            println!("{}", table);
         }
 
         Ok(())
