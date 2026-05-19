@@ -6,14 +6,14 @@ mod rsa_oaep_test_vectors;
 mod rsa_pkcs1_test_vectors;
 mod rsa_pss_test_vectors;
 
-pub(crate) use rsa_enc_test_vectors::RSA_NO_PADDING_TEST_VECTORS;
-pub(crate) use rsa_oaep_test_vectors::RSA_OAEP_TEST_VECTORS;
-pub(crate) use rsa_pkcs1_test_vectors::RSA_PKCS1_TEST_VECTORS;
-pub(crate) use rsa_pss_test_vectors::RSA_PSS_TEST_VECTORS;
+pub use rsa_enc_test_vectors::RSA_NO_PADDING_TEST_VECTORS;
+pub use rsa_oaep_test_vectors::RSA_OAEP_TEST_VECTORS;
+pub use rsa_pkcs1_test_vectors::RSA_PKCS1_TEST_VECTORS;
+pub use rsa_pss_test_vectors::RSA_PSS_TEST_VECTORS;
 
 /// Hash algorithm enum used in test vectors.
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum TestHashAlgo {
+pub enum TestHashAlgo {
     /// SHA-1
     Sha1,
     /// SHA-256
