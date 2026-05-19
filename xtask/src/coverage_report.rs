@@ -4,7 +4,7 @@
 #![warn(missing_docs)]
 #![forbid(unsafe_code)]
 
-//! Xtask to generate a markdown coverage report from JSON output of coverage xtask.
+//! Xtask to generate a cobertura XML, JSON, HTML, and markdown coverage report from output of coverage xtask.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -21,12 +21,20 @@ use xshell::cmd;
 use crate::Xtask;
 use crate::XtaskCtx;
 
-/// (Intended for use in Github Actions CI) Xtask to generate markdown coverage report from JSON output of coverage xtask
+/// (Intended for use in Github Actions CI) Xtask to generate a cobertura XML, JSON, HTML, and markdown coverage report from output of coverage xtask
 #[derive(Parser)]
 #[clap(
-    about = "(Intended for use in Github Actions CI) Generate a markdown coverage report from JSON output of coverage xtask"
+    about = "(Intended for use in Github Actions CI) Generate a cobertura XML, JSON, HTML, and markdown coverage report from output of coverage xtask"
 )]
-pub struct CoverageReport {}
+pub struct CoverageReport {
+    /// Whether to append default build location of azihsm_api_native object file to LLVM_COV_FLAGS
+    #[clap(long)]
+    pub no_default_native: bool,
+
+    /// Additional paths to object files to append to LLVM_COV_FLAGS
+    #[clap(long)]
+    pub additional_obj_paths: Vec<String>,
+}
 
 #[derive(Default, Debug, Clone)]
 struct LineSummary {
@@ -47,7 +55,6 @@ impl Xtask for CoverageReport {
             std::fs::create_dir_all(&reports_dir)?;
         }
 
-        // Find path to azihsm_api_native object file
         let build_dir = ctx
             .root
             .join("target")
@@ -55,79 +62,30 @@ impl Xtask for CoverageReport {
             .join("debug")
             .join("build");
         let mut native_obj_path = None;
-        if build_dir.exists() {
-            for entry in std::fs::read_dir(&build_dir)? {
-                let entry = entry?;
-                let path = entry.path();
-                if path.is_dir()
-                    && path
-                        .file_name()
-                        .and_then(|s| s.to_str())
-                        .map(|s| s.starts_with("azihsm_api_tests-"))
-                        .unwrap_or(false)
-                {
-                    // check if directory contains 'out' subdirectory to see if it's the cmake build directory
-                    if path.join("out").is_dir() {
-                        log::info!("Found cmake build directory at: {}", path.display());
-                        #[cfg(target_os = "windows")]
-                        {
-                            native_obj_path =
-                                Some(path.join("out").join("build").join("azihsm_api_native.dll"));
-                        }
-                        #[cfg(not(target_os = "windows"))]
-                        {
-                            native_obj_path = Some(
-                                path.join("out")
-                                    .join("build")
-                                    .join("libazihsm_api_native.so"),
-                            );
-                        }
-                        break;
-                    }
-                }
-            }
-        } else {
-            log::warn!(
-                "Cargo build-script directory not found at expected path: {}. Coverage reports may be incomplete.",
-                build_dir.display()
-            );
+
+        if !self.no_default_native {
+            find_native_obj_path(build_dir, &mut native_obj_path)?;
         }
 
-        // set LLVM_COV_FLAGS to include azihsm_api_native object file in coverage reports
-        if let Some(native_obj_path) = native_obj_path {
-            if native_obj_path.is_file() {
-                let path_str = native_obj_path.to_string_lossy();
-                let new_flags = match std::env::var("LLVM_COV_FLAGS") {
-                    Ok(existing) if !existing.trim().is_empty() => {
-                        format!("{existing} -object {path_str}")
-                    }
-                    _ => format!("-object {path_str}"),
-                };
-                sh.set_var("LLVM_COV_FLAGS", new_flags);
-            } else {
-                log::warn!("Could not find azihsm_api_native object at expected path: {}. Coverage reports may be incomplete.", native_obj_path.display());
-            }
-        } else {
-            log::warn!("Could not find cmake build directory or azihsm_api_native object. Coverage reports may be incomplete.");
+        // collect all object paths to append to LLVM_COV_FLAGS
+        let mut all_obj_paths = self.additional_obj_paths.clone();
+        if let Some(native_obj_path) = &native_obj_path {
+            all_obj_paths.push(native_obj_path.to_string_lossy().to_string());
         }
 
-        #[cfg(not(target_os = "windows"))]
-        {
-            // append /target/debug/libazihsm_api_native.so to LLVM_COV_FLAGS
-            let additional_libs = ["./target/debug/libazihsm_api_native.so"];
-            for lib in &additional_libs {
-                if std::path::Path::new(lib).exists() {
-                    let new_flags = match std::env::var("LLVM_COV_FLAGS") {
-                        Ok(existing) if !existing.trim().is_empty() => {
-                            format!("{existing} -object {lib}")
-                        }
-                        _ => format!("-object {lib}"),
-                    };
-                    sh.set_var("LLVM_COV_FLAGS", new_flags);
-                } else {
-                    log::warn!("Could not find library at expected path: {}. Coverage reports may be incomplete.", lib);
-                }
-            }
+        // generate string to append to LLVM_COV_FLAGS
+        let mut new_flags = String::new();
+        for obj_path in &all_obj_paths {
+            new_flags.push_str(&format!("-object {obj_path} "));
+        }
+
+        // append string to LLVM_COV_FLAGS env var
+        if !new_flags.trim().is_empty() {
+            let new_flags = match std::env::var("LLVM_COV_FLAGS") {
+                Ok(existing) if !existing.trim().is_empty() => format!("{} {}", existing, new_flags),
+                _ => new_flags,
+            };
+            sh.set_var("LLVM_COV_FLAGS", new_flags);
         }
 
         // Generate cobertura report
@@ -272,4 +230,47 @@ fn format_ratio(covered: u64, total: u64) -> String {
     }
     let pct = (covered as f64) * 100.0 / (total as f64);
     format!("{:.2}% ({}/{})", pct, covered, total)
+}
+
+fn find_native_obj_path(build_dir: path::PathBuf, native_obj_path: &mut Option<path::PathBuf>) -> anyhow::Result<()> {
+    // Find path to azihsm_api_native object file
+    *native_obj_path = None;
+    if build_dir.exists() {
+        for entry in std::fs::read_dir(&build_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_dir()
+                && path
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .map(|s| s.starts_with("azihsm_api_tests-"))
+                    .unwrap_or(false)
+            {
+                // check if directory contains 'out' subdirectory to see if it's the cmake build directory
+                if path.join("out").is_dir() {
+                    log::info!("Found cmake build directory at: {}", path.display());
+                    #[cfg(target_os = "windows")]
+                    {
+                        *native_obj_path = Some(path.join("out").join("build").join("azihsm_api_native.dll"));
+                    }
+                    #[cfg(not(target_os = "windows"))]
+                    {
+                        *native_obj_path = Some(
+                            path.join("out")
+                                .join("build")
+                                .join("libazihsm_api_native.so"),
+                        );
+                    }
+                    break;
+                }
+            }
+        }
+    } else {
+        log::warn!(
+            "Cargo build-script directory not found at expected path: {}. Coverage reports may be incomplete.",
+            build_dir.display()
+        );
+    }
+
+    Ok(())
 }

@@ -95,6 +95,12 @@ pub struct Precheck {
     /// The nextest profile to use
     #[clap(long)]
     profile: Option<String>,
+    /// Whether to append default build location of azihsm_api_native object file to LLVM_COV_FLAGS (used with --coverage-report)
+    #[clap(long)]
+    pub no_default_native: bool,
+    /// Additional paths to object files to append to LLVM_COV_FLAGS (used with --coverage-report)
+    #[clap(long)]
+    pub additional_obj_paths: Vec<String>,
 }
 
 impl Xtask for Precheck {
@@ -265,15 +271,17 @@ impl Xtask for Precheck {
                 .run(ctx.clone())?;
 
                 // Run resiliency fault-injection tests with coverage
-                Coverage {
-                    features: Some("mock,res-test".to_string()),
-                    package: Some("azihsm_api_tests".to_string()),
-                    no_default_features: false,
-                    filterset: Some("test(resiliency::fault_injection::)".to_string()),
-                    profile: self.profile.clone().or(Some("ci-mock-res".to_string())),
-                    exclude: self.exclude.clone(),
+                if !self.exclude.iter().any(|e| e == "azihsm_api_tests") {
+                    Coverage {
+                        features: Some("mock,res-test".to_string()),
+                        package: Some("azihsm_api_tests".to_string()),
+                        no_default_features: false,
+                        filterset: Some("test(resiliency::fault_injection::)".to_string()),
+                        profile: self.profile.clone().or(Some("ci-mock-res".to_string())),
+                        exclude: self.exclude.clone(),
+                    }
+                    .run(ctx.clone())?;
                 }
-                .run(ctx.clone())?;
             } else {
                 Coverage {
                     features: self.features.clone(),
@@ -294,7 +302,10 @@ impl Xtask for Precheck {
 
         // Run code coverage report
         if stage.coverage_report || stage.all {
-            CoverageReport {}.run(ctx)?;
+            CoverageReport {
+                no_default_native: self.no_default_native,
+                additional_obj_paths: self.additional_obj_paths.clone(),
+            }.run(ctx)?;
         }
 
         log::trace!("done precheck");

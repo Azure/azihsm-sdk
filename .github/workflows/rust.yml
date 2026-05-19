@@ -225,7 +225,7 @@ jobs:
           --profile ci-provider-integration
 
     - name: Code Coverage Summary Report
-      run: cargo xtask precheck --coverage-report
+      run: cargo xtask precheck --coverage-report --no-default-native --additional-obj-paths ${{ github.workspace }}/target/debug/libazihsm_api_native.so --additional-obj-paths /usr/lib/libazihsm_api_native.so
 
     - name: Upload coverage report
       uses: actions/upload-artifact@v7
