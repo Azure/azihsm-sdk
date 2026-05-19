@@ -30,11 +30,11 @@ impl Xtask for Coverage {
         // Check cargo-llvm-cov version
         cmd!(sh, "cargo llvm-cov --version").quiet().run()?;
 
-        if self.skip_clean {
-            log::info!("Skipping llvm-cov cleanup");
-        } else {
+        if !self.skip_clean {
             log::info!("Cleaning existing llvm-cov artifacts");
             cmd!(sh, "cargo llvm-cov clean --workspace").run()?;
+        } else {
+            log::info!("Skipping llvm-cov cleanup");
         }
 
         // Run tests with coverage
