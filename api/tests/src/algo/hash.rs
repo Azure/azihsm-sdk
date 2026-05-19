@@ -211,9 +211,9 @@ fn assert_hash_exact_output_buffer_succeeds(
     assert_eq!(output, expected);
 }
 
-/// Verifies hashing with an oversized output buffer either succeeds without overwriting
-/// extra bytes, or returns the backend-specific InternalError.
-fn assert_hash_oversized_output_buffer_is_not_required_to_succeed(
+/// Verifies hashing with an oversized output buffer either succeeds without
+/// overwriting extra bytes, or returns the backend-specific InternalError.
+fn assert_hash_oversized_output_buffer_succeeds_or_returns_internal_error(
     session: HsmSession,
     mut algo: HsmHashAlgo,
     data: &[u8],
@@ -919,22 +919,22 @@ fn test_hash_exact_output_buffer_all_algorithms(session: HsmSession) {
 fn test_hash_oversized_output_buffer_all_algorithms(session: HsmSession) {
     let data = b"The quick brown fox jumps over the lazy dog";
 
-    assert_hash_oversized_output_buffer_is_not_required_to_succeed(
+    assert_hash_oversized_output_buffer_succeeds_or_returns_internal_error(
         session.clone(),
         HsmHashAlgo::sha1(),
         data,
     );
-    assert_hash_oversized_output_buffer_is_not_required_to_succeed(
+    assert_hash_oversized_output_buffer_succeeds_or_returns_internal_error(
         session.clone(),
         HsmHashAlgo::sha256(),
         data,
     );
-    assert_hash_oversized_output_buffer_is_not_required_to_succeed(
+    assert_hash_oversized_output_buffer_succeeds_or_returns_internal_error(
         session.clone(),
         HsmHashAlgo::sha384(),
         data,
     );
-    assert_hash_oversized_output_buffer_is_not_required_to_succeed(
+    assert_hash_oversized_output_buffer_succeeds_or_returns_internal_error(
         session,
         HsmHashAlgo::sha512(),
         data,
