@@ -8,7 +8,7 @@ use crate::*;
 #[derive(Debug, Ddi)]
 #[ddi(map)]
 pub struct DdiInitBk3Req<'a> {
-    #[ddi(id = 1, max_len = 48)]
+    #[ddi(id = 1, len = 48)]
     pub bk3: &'a [u8],
 }
 

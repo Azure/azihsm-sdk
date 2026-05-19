@@ -85,7 +85,8 @@ impl<P: HsmPal> Hsm<P> {
     /// Returns `true` if the partition for this IO is enabled.
     #[inline]
     fn partition_enabled(&self, io: &P::Io) -> bool {
-        self.pal().part_state(io)
+        self.pal()
+            .part_state(io)
             .is_ok_and(|s| s == PartState::Enabled)
     }
 
@@ -138,12 +139,7 @@ impl<P: HsmPal> Hsm<P> {
 
         // ── Phase 1: inbound DMA (yield 1) ─────────────────────────
         self.pal()
-            .copy_mem_from_host(
-                &*io,
-                params.src_addr,
-                &mut req_buf[..params.src_len],
-                true,
-            )
+            .copy_mem_from_host(&*io, params.src_addr, &mut req_buf[..params.src_len], true)
             .await
             .op_err(
                 "core",

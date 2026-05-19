@@ -1,4 +1,5 @@
 // Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 //! HPKE AEAD seal / open — dispatches to AES-256-GCM or
 //! AES-256-CBC + HMAC depending on the chosen [`HpkeSuite`].

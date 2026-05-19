@@ -1,4 +1,5 @@
 // Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 //! HPKE LabeledExtract and LabeledExpand (RFC 9180 §4).
 //!

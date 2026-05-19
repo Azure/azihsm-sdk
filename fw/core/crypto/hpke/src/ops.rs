@@ -1,4 +1,5 @@
 // Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 //! HPKE single-shot seal / open / export operations (RFC 9180 §6).
 //!

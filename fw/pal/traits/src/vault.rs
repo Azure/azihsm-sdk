@@ -31,7 +31,7 @@
 //!
 //! ## Key attributes
 //!
-//! [`HsmVaultKeyAttrs`] is a 32-bit bitfield encoding PKCS#11-inspired
+//! [`HsmVaultKeyAttrs`] is a 64-bit bitfield encoding PKCS#11-inspired
 //! properties (encrypt, decrypt, sign, verify, wrap, unwrap, derive)
 //! plus HSM-specific flags (internal, session-scoped, extractable).
 //! These are set at creation time and govern which operations are
@@ -135,9 +135,15 @@ pub enum HsmVaultKeyKind {
 
 /// Key attribute bitfield for vault-stored keys.
 ///
-/// A 32-bit bitfield encoding PKCS#11-inspired key properties plus
+/// A 64-bit bitfield encoding PKCS#11-inspired key properties plus
 /// HSM-specific flags.  Set at key creation time and governs which
 /// operations are permitted on the key.
+///
+/// The bit positions and overall width match the prior reference
+/// firmware's `EntryAttributeFlags` so a little-endian serialization
+/// of this value into the leading 8 bytes of a masked-key attribute
+/// blob is byte-compatible with host tooling that parses either
+/// firmware's output.
 ///
 /// ## Bit layout
 ///
@@ -160,8 +166,8 @@ pub enum HsmVaultKeyKind {
 /// | 14 | `wrap` | Allowed for key wrapping |
 /// | 15 | `unwrap` | Allowed for key unwrapping |
 /// | 16 | `derive` | Allowed for key derivation |
-/// | 17–31 | `rsvd` | Reserved (must be zero) |
-#[bitfield(u32)]
+/// | 17–63 | `rsvd` | Reserved (must be zero) |
+#[bitfield(u64)]
 #[derive(PartialEq, Eq, FromBytes, IntoBytes, Immutable, KnownLayout)]
 pub struct HsmVaultKeyAttrs {
     /// Device-internal key, not user-destroyable.
@@ -216,8 +222,8 @@ pub struct HsmVaultKeyAttrs {
     pub derive: bool,
 
     /// Reserved.
-    #[bits(15)]
-    rsvd: u32,
+    #[bits(47)]
+    rsvd: u64,
 }
 
 /// RAII guard for a newly created vault key.

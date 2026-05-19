@@ -34,6 +34,7 @@ mod integration {
     pub mod get_session_encryption_key;
     pub mod get_unwrapping_key;
     pub mod hmac;
+    pub mod init_bk3_smoke;
     pub mod invalid_ecc_pub_key_vectors;
     pub mod live_migration_expected_errors;
     pub mod live_migration_sim;

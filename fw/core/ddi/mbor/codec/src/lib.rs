@@ -107,10 +107,7 @@ pub trait MborFrameable {
     /// ensure no other live `&mut` references alias any byte covered by
     /// `layout`'s recorded ranges for the lifetime `'a`.
     #[allow(unsafe_code)]
-    unsafe fn mbor_from_layout<'a>(
-        buf_ptr: *mut u8,
-        layout: &Self::Layout,
-    ) -> Self::Frame<'a>;
+    unsafe fn mbor_from_layout<'a>(buf_ptr: *mut u8, layout: &Self::Layout) -> Self::Frame<'a>;
 }
 
 // ── Wire-format constants (identical to `ddi/serde/mbor`) ──────────────
