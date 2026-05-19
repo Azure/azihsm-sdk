@@ -358,6 +358,32 @@ fn assert_streaming_failed_small_buffer_does_not_poison_context(
     );
 }
 
+/// Verifies failed single-shot hashing does not modify a too-small output buffer.
+fn assert_hash_single_shot_small_buffer_not_modified_on_failure(
+    session: HsmSession,
+    mut algo: HsmHashAlgo,
+    data: &[u8],
+) {
+    let output_size =
+        HsmHasher::hash(&session, &mut algo, data, None).expect("hash size query should succeed");
+
+    let sentinel = 0xAA;
+    let mut too_small = vec![sentinel; output_size - 1];
+
+    let result = HsmHasher::hash(&session, &mut algo, data, Some(too_small.as_mut_slice()));
+
+    assert!(
+        matches!(result, Err(HsmError::InternalError)),
+        "expected InternalError for too-small output buffer, got {:?}",
+        result
+    );
+
+    assert!(
+        too_small.iter().all(|&b| b == sentinel),
+        "too-small output buffer should not be modified on failure"
+    );
+}
+
 // ============================================================
 // Test Cases
 // ============================================================
@@ -1409,29 +1435,51 @@ fn test_hash_streaming_update_after_finish_size_query_succeeds(session: HsmSessi
     );
 }
 
-/// Verifies failed single-shot hashing does not modify a too-small output buffer.
+/// Verifies failed single-shot SHA256 hashing does not modify a too-small output buffer.
 #[session_test]
-fn test_hash_single_shot_small_buffer_not_modified_on_failure(session: HsmSession) {
+fn test_hash_sha256_single_shot_small_buffer_not_modified_on_failure(session: HsmSession) {
     let data = b"The quick brown fox jumps over the lazy dog";
-    let mut algo = HsmHashAlgo::sha256();
 
-    let output_size =
-        HsmHasher::hash(&session, &mut algo, data, None).expect("hash size query should succeed");
-
-    let sentinel = 0xAA;
-    let mut too_small = vec![sentinel; output_size - 1];
-
-    let result = HsmHasher::hash(&session, &mut algo, data, Some(too_small.as_mut_slice()));
-
-    assert!(
-        matches!(result, Err(HsmError::InternalError)),
-        "expected InternalError for too-small output buffer, got {:?}",
-        result
+    assert_hash_single_shot_small_buffer_not_modified_on_failure(
+        session,
+        HsmHashAlgo::sha256(),
+        data,
     );
+}
 
-    assert!(
-        too_small.iter().all(|&b| b == sentinel),
-        "too-small output buffer should not be modified on failure"
+/// Verifies failed single-shot SHA1 hashing does not modify a too-small output buffer.
+#[session_test]
+fn test_hash_sha1_single_shot_small_buffer_not_modified_on_failure(session: HsmSession) {
+    let data = b"The quick brown fox jumps over the lazy dog";
+
+    assert_hash_single_shot_small_buffer_not_modified_on_failure(
+        session,
+        HsmHashAlgo::sha1(),
+        data,
+    );
+}
+
+/// Verifies failed single-shot SHA384 hashing does not modify a too-small output buffer.
+#[session_test]
+fn test_hash_sha384_single_shot_small_buffer_not_modified_on_failure(session: HsmSession) {
+    let data = b"The quick brown fox jumps over the lazy dog";
+
+    assert_hash_single_shot_small_buffer_not_modified_on_failure(
+        session,
+        HsmHashAlgo::sha384(),
+        data,
+    );
+}
+
+/// Verifies failed single-shot SHA512 hashing does not modify a too-small output buffer.
+#[session_test]
+fn test_hash_sha512_single_shot_small_buffer_not_modified_on_failure(session: HsmSession) {
+    let data = b"The quick brown fox jumps over the lazy dog";
+
+    assert_hash_single_shot_small_buffer_not_modified_on_failure(
+        session,
+        HsmHashAlgo::sha512(),
+        data,
     );
 }
 
