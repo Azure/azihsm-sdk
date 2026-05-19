@@ -131,9 +131,9 @@ mod integration {
     /// Resolves the provider search path (absolute) and verifies the provider
     /// `.so` exists there.
     ///
-    /// Uses `PROVIDER_PATH` if set, otherwise defaults to `target/debug` under
-    /// the workspace root.  Matches the convention used by CLI (`env.sh`) and
-    /// CAPI (`get_provider_path()`).
+    /// Uses `PROVIDER_PATH` if set, otherwise honours `CARGO_TARGET_DIR` and
+    /// falls back to `target/debug` under the workspace root.  Matches the
+    /// convention used by CLI (`env.sh`) and CAPI (`get_provider_path()`).
     fn get_provider_path(workspace_root: &Path) -> PathBuf {
         let path = match env::var("PROVIDER_PATH") {
             Ok(p) if !p.is_empty() => {
@@ -144,7 +144,17 @@ mod integration {
                     p
                 }
             }
-            _ => workspace_root.join("target").join("debug"),
+            _ => match env::var("CARGO_TARGET_DIR") {
+                Ok(t) if !t.is_empty() => {
+                    let p = PathBuf::from(t).join("debug");
+                    if p.is_relative() {
+                        workspace_root.join(p)
+                    } else {
+                        p
+                    }
+                }
+                _ => workspace_root.join("target").join("debug"),
+            },
         };
 
         let provider_so = path.join("azihsm_provider.so");
@@ -153,9 +163,9 @@ mod integration {
             "\n\
              azihsm_provider.so not found at {}\n\
              \n\
-             Build the provider first:\n\
+             Build the provider first (matching the OpenSSL ABI used by tests):\n\
              \n\
-                 cargo build -p azihsm_ossl_provider --features mock,provider\n",
+                 cargo xtask build --openssl-version <ver> --features mock\n",
             provider_so.display(),
         );
 

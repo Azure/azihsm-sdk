@@ -306,9 +306,9 @@ mod integration {
             "\n\
              azihsm_provider.so not found at {}\n\
              \n\
-             Build the provider first:\n\
+             Build the provider first (matching the OpenSSL ABI used by tests):\n\
              \n\
-                 cargo build -p azihsm_ossl_provider --features mock,provider\n",
+                 cargo xtask build --openssl-version <ver> --features mock\n",
             provider_so.display(),
         );
 
