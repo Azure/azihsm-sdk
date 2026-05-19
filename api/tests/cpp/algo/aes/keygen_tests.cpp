@@ -316,6 +316,39 @@ TEST_F(azihsm_aes_keygen, aes_key_gen_with_derive_flag_fails)
     });
 }
 
+/// verifies AES key generation rejects read-only properties
+TEST_F(azihsm_aes_keygen, aes_key_gen_with_readonly_property_fails)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        azihsm_algo keygen_algo{};
+        keygen_algo.id = AZIHSM_ALGO_ID_AES_KEY_GEN;
+        keygen_algo.params = nullptr;
+        keygen_algo.len = 0;
+
+        azihsm_key_kind key_kind = AZIHSM_KEY_KIND_AES;
+        azihsm_key_class key_class = AZIHSM_KEY_CLASS_SECRET;
+        uint32_t bits = 256;
+        bool is_session = true;
+        bool is_local = true;
+
+        std::vector<azihsm_key_prop> props_vec = {
+            { .id = AZIHSM_KEY_PROP_ID_KIND, .val = &key_kind, .len = sizeof(key_kind) },
+            { .id = AZIHSM_KEY_PROP_ID_CLASS, .val = &key_class, .len = sizeof(key_class) },
+            { .id = AZIHSM_KEY_PROP_ID_BIT_LEN, .val = &bits, .len = sizeof(bits) },
+            { .id = AZIHSM_KEY_PROP_ID_SESSION, .val = &is_session, .len = sizeof(is_session) },
+            { .id = AZIHSM_KEY_PROP_ID_LOCAL, .val = &is_local, .len = sizeof(is_local) }
+        };
+
+        azihsm_key_prop_list prop_list{ .props = props_vec.data(),
+                                        .count = static_cast<uint32_t>(props_vec.size()) };
+
+        auto_key key;
+        auto err = azihsm_key_gen(session, &keygen_algo, &prop_list, key.get_ptr());
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
+        ASSERT_EQ(key.get(), 0u);
+    });
+}
+
 /// verifies AES key generation fails when multiple unsupported capabilities are set
 /// in properties
 TEST_F(azihsm_aes_keygen, aes_key_gen_multiple_invalid_flags_fail)

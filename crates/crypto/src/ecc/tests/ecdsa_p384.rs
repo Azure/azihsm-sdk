@@ -3,6 +3,7 @@
 
 //! Tests for ECDSA P-384 operations using NIST test vectors.
 use super::*;
+use crate::testvectors::ecc::ECC_P384_TEST_VECTORS;
 
 //implement ECDSA P-384 signature test using sha384
 

@@ -4,7 +4,7 @@
 use azihsm_api::*;
 use azihsm_api_tests_macro::*;
 
-use super::key_tests::*;
+use super::*;
 
 // ================================
 // Helper functions

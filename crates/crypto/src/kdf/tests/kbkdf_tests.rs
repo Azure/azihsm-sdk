@@ -5,6 +5,11 @@
 //! Validates correctness against official NIST SP 800-108 test vectors
 
 use super::*;
+use crate::testvectors::hkdf::KBKDF_HMAC_SHA1_TEST_VECTORS;
+use crate::testvectors::hkdf::KBKDF_HMAC_SHA256_TEST_VECTORS;
+use crate::testvectors::hkdf::KBKDF_HMAC_SHA384_TEST_VECTORS;
+use crate::testvectors::hkdf::KBKDF_HMAC_SHA512_TEST_VECTORS;
+use crate::testvectors::hkdf::KbkdfTestVector;
 
 /// Helper function to create a GenericSecretKey from a byte pattern.
 fn create_key(pattern: u8, size: usize) -> GenericSecretKey {
