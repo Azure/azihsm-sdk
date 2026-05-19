@@ -15,7 +15,11 @@ use crate::XtaskCtx;
 /// Xtask to run code coverage
 #[derive(Parser)]
 #[clap(about = "Run code coverage using cargo llvm-cov")]
-pub struct Coverage {}
+pub struct Coverage {
+    /// Skip cleaning existing llvm-cov artifacts before running coverage
+    #[clap(long)]
+    pub skip_clean: bool,
+}
 
 impl Xtask for Coverage {
     fn run(self, ctx: XtaskCtx) -> anyhow::Result<()> {
@@ -25,6 +29,13 @@ impl Xtask for Coverage {
 
         // Check cargo-llvm-cov version
         cmd!(sh, "cargo llvm-cov --version").quiet().run()?;
+
+        if self.skip_clean {
+            log::info!("Skipping llvm-cov cleanup");
+        } else {
+            log::info!("Cleaning existing llvm-cov artifacts");
+            cmd!(sh, "cargo llvm-cov clean --workspace").run()?;
+        }
 
         // Run tests with coverage
         log::info!("Building all tests and running them with coverage");
@@ -133,5 +144,25 @@ impl Xtask for Coverage {
 
         log::info!("Code coverage completed successfully");
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    use super::Coverage;
+
+    #[test]
+    fn coverage_skip_clean_defaults_to_false() {
+        let coverage = Coverage::try_parse_from(["coverage"]).expect("parse coverage args");
+        assert!(!coverage.skip_clean);
+    }
+
+    #[test]
+    fn coverage_skip_clean_flag_sets_true() {
+        let coverage =
+            Coverage::try_parse_from(["coverage", "--skip-clean"]).expect("parse coverage args");
+        assert!(coverage.skip_clean);
     }
 }
