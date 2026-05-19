@@ -10,6 +10,20 @@ fn main() {
     // switching OpenSSL versions correctly invalidates the build.
     println!("cargo:rerun-if-env-changed=CARGO_TARGET_DIR");
     println!("cargo:rerun-if-env-changed=OPENSSL_DIR");
+    println!("cargo:rerun-if-env-changed=RUSTC_WORKSPACE_WRAPPER");
+
+    // Skip the heavy CMake/Corrosion build when running under `cargo clippy`
+    // or `cargo check` — they only need the Rust source to lint/check, not
+    // the linked artifacts.  Building the C provider here would compile
+    // azihsm_api_native and its full dep tree into a Corrosion-private
+    // target dir, doubling the clippy job time on slow runners.
+    //
+    // Cargo sets RUSTC_WORKSPACE_WRAPPER to clippy-driver when running
+    // clippy.  We still validate CARGO_TARGET_DIR below so misconfigurations
+    // get surfaced even in clippy mode.
+    let is_clippy = env::var("RUSTC_WORKSPACE_WRAPPER")
+        .map(|w| w.contains("clippy"))
+        .unwrap_or(false);
 
     let mut features = Vec::new();
 
@@ -83,6 +97,17 @@ fn main() {
         Ok(dir) => PathBuf::from(dir),
         Err(_) => target_dir.join("openssl"),
     };
+
+    // Skip the C/CMake build when running under clippy/check — see comment
+    // at top of main().  Clippy still gets accurate CARGO_TARGET_DIR
+    // validation above; it just doesn't pay for the linked artifact.
+    if is_clippy {
+        println!(
+            "cargo:warning=skipping CMake build for clippy ({})",
+            target_dir.display()
+        );
+        return;
+    }
 
     // AZIHSM_TARGET_DIR is used by CMake to copy the .so into the cargo
     // profile dir (e.g., target/ossl-abi-3-0/debug/), so pass profile_dir.
