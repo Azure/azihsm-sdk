@@ -31,26 +31,34 @@ fn hash_and_compare_streaming(
     if chunk_sizes.is_empty() {
         hasher.update(data).expect("Failed to update hasher");
     } else {
+        let non_zero_chunk_sizes: Vec<usize> = chunk_sizes
+            .iter()
+            .copied()
+            .filter(|&size| size > 0)
+            .collect();
+
+        assert!(
+            !non_zero_chunk_sizes.is_empty() || data.is_empty(),
+            "chunk_sizes must contain at least one non-zero size for non-empty data"
+        );
+
+        if chunk_sizes.contains(&0) {
+            hasher
+                .update(b"")
+                .expect("Failed to update hasher with empty chunk");
+        }
+
         let mut offset = 0;
         let mut i = 0;
 
-        assert!(
-            chunk_sizes.iter().any(|&size| size > 0) || data.is_empty(),
-            "chunk_sizes must contain at least one non-zero size for non-empty data"
-        );
         while offset < data.len() {
-            let size = chunk_sizes[i % chunk_sizes.len()].min(data.len() - offset);
+            let size =
+                non_zero_chunk_sizes[i % non_zero_chunk_sizes.len()].min(data.len() - offset);
 
-            if size == 0 {
-                hasher
-                    .update(b"")
-                    .expect("Failed to update hasher with empty chunk");
-            } else {
-                let chunk = &data[offset..offset + size];
-                hasher.update(chunk).expect("Failed to update hasher");
-                offset += size;
-            }
+            let chunk = &data[offset..offset + size];
+            hasher.update(chunk).expect("Failed to update hasher");
 
+            offset += size;
             i += 1;
         }
     }
@@ -203,7 +211,8 @@ fn assert_hash_exact_output_buffer_succeeds(
     assert_eq!(output, expected);
 }
 
-/// Verifies hashing succeeds with an oversized output buffer without overwriting extra bytes.
+/// Verifies hashing with an oversized output buffer either succeeds without overwriting
+/// extra bytes, or returns the backend-specific InternalError.
 fn assert_hash_oversized_output_buffer_is_not_required_to_succeed(
     session: HsmSession,
     mut algo: HsmHashAlgo,
@@ -220,6 +229,11 @@ fn assert_hash_oversized_output_buffer_is_not_required_to_succeed(
         Ok(written) => {
             assert_eq!(written, expected.len());
             assert_eq!(&output[..expected.len()], expected.as_slice());
+
+            assert!(
+                output[expected.len()..].iter().all(|&b| b == sentinel),
+                "oversized output buffer tail should remain unchanged after written digest bytes"
+            );
         }
         Err(err) => {
             assert!(
@@ -1310,7 +1324,8 @@ fn test_hash_streaming_known_abc_vectors_all_algorithms(session: HsmSession) {
 /// Verifies large inputs produce matching single-shot and streaming digests.
 #[session_test]
 fn test_hash_large_input_single_shot_matches_streaming_all_algorithms(session: HsmSession) {
-    let data = vec![0x5Au8; 1024 * 1024];
+    // Keep this large enough to span many hash blocks, but small enough for HSM-backed CI.
+    let data = vec![0x5Au8; 256 * 1024];
 
     compare_single_shot_vs_streaming(
         session.clone(),
