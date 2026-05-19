@@ -1,8 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use super::*;
 use crate::hash::HashAlgo;
+use crate::testvectors::rsa::TestHashAlgo;
 
 /// Checks if the given RSA modulus size in bytes is supported.
 pub(crate) fn is_supported_rsa_modulus_size_bytes(size: usize) -> bool {
