@@ -11,7 +11,7 @@ pub struct DdiRsaModExpReq<'a> {
     #[ddi(id = 1)]
     pub key_id: u16,
     #[ddi(id = 2, max_len = 512)]
-    pub y: &'a [u8],
+    pub y: &'a DmaBuf,
     #[ddi(id = 3)]
     pub op_type: DdiRsaOpType,
 }

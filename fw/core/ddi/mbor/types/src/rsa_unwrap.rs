@@ -11,7 +11,7 @@ pub struct DdiRsaUnwrapReq<'a> {
     #[ddi(id = 1)]
     pub key_id: u16,
     #[ddi(id = 2, max_len = 3072)]
-    pub wrapped_blob: &'a [u8],
+    pub wrapped_blob: &'a DmaBuf,
     #[ddi(id = 3)]
     pub wrapped_blob_key_class: DdiKeyClass,
     #[ddi(id = 4)]

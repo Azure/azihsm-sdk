@@ -9,7 +9,7 @@ use crate::*;
 #[ddi(map)]
 pub struct DdiSetSealedBk3Req<'a> {
     #[ddi(id = 1, max_len = 1024)]
-    pub sealed_bk3: &'a [u8],
+    pub sealed_bk3: &'a DmaBuf,
 }
 
 #[derive(Debug, Ddi)]

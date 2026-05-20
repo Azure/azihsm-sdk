@@ -5,7 +5,7 @@
 //! and the new `azihsm_fw_ddi_mbor` encoder/decoder. Validates that the wire
 //! format is identical.
 
-#![allow(clippy::unwrap_used)]
+#![allow(clippy::unwrap_used, unsafe_code)]
 
 use std::vec;
 
@@ -13,6 +13,12 @@ use std::vec;
 use azihsm_ddi_mbor as old;
 // New crate (this crate)
 use azihsm_fw_ddi_mbor as new;
+use azihsm_fw_hsm_pal_traits::DmaBuf;
+
+/// Test helper: brand a `&[u8]` as `&DmaBuf`. Safe in tests — no real DMA hw.
+fn dma(buf: &[u8]) -> &DmaBuf {
+    unsafe { DmaBuf::from_raw(buf) }
+}
 
 /// Helper to create an old MborEncoder, supplying the extra `pre_encode` flag
 /// that was added to the old crate's API.
@@ -40,7 +46,7 @@ fn old_encode_bool_new_decode() {
     let mut enc = old_encoder(&mut buf);
     old::MborEncode::mbor_encode(&true, &mut enc).unwrap();
 
-    let mut dec = new::MborDecoder::new(&buf);
+    let mut dec = new::MborDecoder::new(dma(&buf));
     assert!(<bool as new::MborDecode>::mbor_decode(&mut dec).unwrap());
 }
 
@@ -50,7 +56,7 @@ fn old_encode_u8_new_decode() {
     let mut enc = old_encoder(&mut buf);
     old::MborEncode::mbor_encode(&42u8, &mut enc).unwrap();
 
-    let mut dec = new::MborDecoder::new(&buf);
+    let mut dec = new::MborDecoder::new(dma(&buf));
     assert_eq!(<u8 as new::MborDecode>::mbor_decode(&mut dec).unwrap(), 42);
 }
 
@@ -60,7 +66,7 @@ fn old_encode_u16_new_decode() {
     let mut enc = old_encoder(&mut buf);
     old::MborEncode::mbor_encode(&0x1234u16, &mut enc).unwrap();
 
-    let mut dec = new::MborDecoder::new(&buf);
+    let mut dec = new::MborDecoder::new(dma(&buf));
     assert_eq!(
         <u16 as new::MborDecode>::mbor_decode(&mut dec).unwrap(),
         0x1234
@@ -73,7 +79,7 @@ fn old_encode_u32_new_decode() {
     let mut enc = old_encoder(&mut buf);
     old::MborEncode::mbor_encode(&0xDEADBEEFu32, &mut enc).unwrap();
 
-    let mut dec = new::MborDecoder::new(&buf);
+    let mut dec = new::MborDecoder::new(dma(&buf));
     assert_eq!(
         <u32 as new::MborDecode>::mbor_decode(&mut dec).unwrap(),
         0xDEADBEEF
@@ -86,7 +92,7 @@ fn old_encode_u64_new_decode() {
     let mut enc = old_encoder(&mut buf);
     old::MborEncode::mbor_encode(&0x0102030405060708u64, &mut enc).unwrap();
 
-    let mut dec = new::MborDecoder::new(&buf);
+    let mut dec = new::MborDecoder::new(dma(&buf));
     assert_eq!(
         <u64 as new::MborDecode>::mbor_decode(&mut dec).unwrap(),
         0x0102030405060708
@@ -99,7 +105,7 @@ fn old_encode_map_new_decode() {
     let mut enc = old_encoder(&mut buf);
     old::MborEncode::mbor_encode(&old::MborMap(7), &mut enc).unwrap();
 
-    let mut dec = new::MborDecoder::new(&buf);
+    let mut dec = new::MborDecoder::new(dma(&buf));
     let m = <new::MborMap as new::MborDecode>::mbor_decode(&mut dec).unwrap();
     assert_eq!(m.0, 7);
 }
@@ -140,7 +146,7 @@ fn old_byte_slice_new_decode_exact() {
     let pos = enc.position();
 
     // New exact decode (no padding expected)
-    let mut dec = new::MborDecoder::new(&buf[..pos]);
+    let mut dec = new::MborDecoder::new(&dma(&buf)[..pos]);
     let slice = dec.decode_byte_slice_exact(4).unwrap();
     assert_eq!(slice, &data);
 }
@@ -154,7 +160,7 @@ fn old_byte_slice_new_decode_variable() {
     let pos = enc.position();
 
     // New variable decode also works (pad=0)
-    let mut dec = new::MborDecoder::new(&buf[..pos]);
+    let mut dec = new::MborDecoder::new(&dma(&buf)[..pos]);
     let (pad, slice) = dec.decode_byte_slice().unwrap();
     assert_eq!(pad, 0);
     assert_eq!(slice, &data);
@@ -177,7 +183,7 @@ fn old_padded_array_new_decode_variable() {
     let pos = enc.position();
 
     // New variable decode handles padding
-    let mut dec = new::MborDecoder::new(&buf[..pos]);
+    let mut dec = new::MborDecoder::new(&dma(&buf)[..pos]);
     let (pad, slice) = dec.decode_byte_slice().unwrap();
     assert_eq!(pad, 1);
     assert_eq!(slice, &[0x55; 10]);
@@ -198,7 +204,7 @@ fn old_padded_array_new_exact_decode_rejects() {
     let pos = enc.position();
 
     // Exact decode rejects padding — correct behavior
-    let mut dec = new::MborDecoder::new(&buf[..pos]);
+    let mut dec = new::MborDecoder::new(&dma(&buf)[..pos]);
     assert!(dec.decode_byte_slice_exact(8).is_err());
 }
 
@@ -247,7 +253,7 @@ fn old_encode_struct_new_decode() {
     let pos = enc.position();
 
     // Decode with new
-    let mut dec = new::MborDecoder::new(&buf[..pos]);
+    let mut dec = new::MborDecoder::new(&dma(&buf)[..pos]);
     let m = <new::MborMap as new::MborDecode>::mbor_decode(&mut dec).unwrap();
     assert_eq!(m.0, 2);
     assert_eq!(<u8 as new::MborDecode>::mbor_decode(&mut dec).unwrap(), 0);

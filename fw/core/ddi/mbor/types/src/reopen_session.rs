@@ -14,7 +14,7 @@ pub struct DdiReopenSessionReq<'a> {
     #[ddi(id = 2)]
     pub pub_key: DdiPublicKey<'a>,
     #[ddi(id = 3, max_len = 1024)]
-    pub bmk_session: &'a [u8],
+    pub bmk_session: &'a DmaBuf,
 }
 
 #[derive(Debug, Ddi)]
