@@ -305,7 +305,8 @@ impl Xtask for Precheck {
             CoverageReport {
                 no_default_native: self.no_default_native,
                 additional_obj_paths: self.additional_obj_paths.clone(),
-            }.run(ctx)?;
+            }
+            .run(ctx)?;
         }
 
         log::trace!("done precheck");

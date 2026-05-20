@@ -82,7 +82,9 @@ impl Xtask for CoverageReport {
         // append string to LLVM_COV_FLAGS env var
         if !new_flags.trim().is_empty() {
             let new_flags = match std::env::var("LLVM_COV_FLAGS") {
-                Ok(existing) if !existing.trim().is_empty() => format!("{} {}", existing, new_flags),
+                Ok(existing) if !existing.trim().is_empty() => {
+                    format!("{} {}", existing, new_flags)
+                }
                 _ => new_flags,
             };
             sh.set_var("LLVM_COV_FLAGS", new_flags);
@@ -232,7 +234,10 @@ fn format_ratio(covered: u64, total: u64) -> String {
     format!("{:.2}% ({}/{})", pct, covered, total)
 }
 
-fn find_native_obj_path(build_dir: path::PathBuf, native_obj_path: &mut Option<path::PathBuf>) -> anyhow::Result<()> {
+fn find_native_obj_path(
+    build_dir: path::PathBuf,
+    native_obj_path: &mut Option<path::PathBuf>,
+) -> anyhow::Result<()> {
     // Find path to azihsm_api_native object file
     *native_obj_path = None;
     if build_dir.exists() {
@@ -251,7 +256,8 @@ fn find_native_obj_path(build_dir: path::PathBuf, native_obj_path: &mut Option<p
                     log::info!("Found cmake build directory at: {}", path.display());
                     #[cfg(target_os = "windows")]
                     {
-                        *native_obj_path = Some(path.join("out").join("build").join("azihsm_api_native.dll"));
+                        *native_obj_path =
+                            Some(path.join("out").join("build").join("azihsm_api_native.dll"));
                     }
                     #[cfg(not(target_os = "windows"))]
                     {
