@@ -62,7 +62,7 @@ cargo xtask copyright --fix
 Build and run all tests with code coverage enabled.
 
 ```bash
-# Build/run tests with code coverage and generate reports
+# Build/run tests with code coverage
 cargo xtask coverage
 ```
 
@@ -72,7 +72,7 @@ Using coverage data created in coverage xtask, generates a cobertura XML, JSON, 
 Also outputs a markdown line coverage summary to stdout if run locally or GITHUB_STEP_SUMMARY if run in Github Actions.
 
 ```bash
-# Build/run tests with code coverage and generate reports
+# Generate code coverage reports
 cargo xtask coverage-report
 ```
 

@@ -27,7 +27,7 @@ use crate::XtaskCtx;
     about = "(Intended for use in Github Actions CI) Generate a cobertura XML, JSON, HTML, and markdown coverage report from output of coverage xtask"
 )]
 pub struct CoverageReport {
-    /// Whether to append default build location of azihsm_api_native object file to LLVM_COV_FLAGS
+    /// Do not append default build location of azihsm_api_native object file to LLVM_COV_FLAGS
     #[clap(long)]
     pub no_default_native: bool,
 
