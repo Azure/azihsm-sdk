@@ -14,13 +14,13 @@ pub struct DdiEstablishCredentialReq<'a> {
     #[ddi(id = 2)]
     pub pub_key: DdiPublicKey<'a>,
     #[ddi(id = 3, max_len = 1024)]
-    pub masked_bk3: &'a [u8],
+    pub masked_bk3: &'a DmaBuf,
     #[ddi(id = 4, max_len = 1024)]
-    pub bmk: &'a [u8],
+    pub bmk: &'a DmaBuf,
     #[ddi(id = 5, max_len = 1024)]
-    pub masked_unwrapping_key: &'a [u8],
+    pub masked_unwrapping_key: &'a DmaBuf,
     #[ddi(id = 6, max_len = 1024)]
-    pub pota_sig: &'a [u8],
+    pub pota_sig: &'a DmaBuf,
     #[ddi(id = 7)]
     pub pota_pub_key: DdiPublicKey<'a>,
 }

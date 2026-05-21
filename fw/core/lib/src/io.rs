@@ -134,12 +134,12 @@ impl<P: HsmPal> Hsm<P> {
         let split = params.src_len.next_multiple_of(4);
         let req_buf = self
             .pal()
-            .dma_alloc(&*io, split)
+            .dma_alloc(io, split)
             .op_status(HostStatus::ALLOC_ERR)?;
 
         // ── Phase 1: inbound DMA (yield 1) ─────────────────────────
         self.pal()
-            .copy_mem_from_host(&*io, params.src_addr, &mut req_buf[..params.src_len], true)
+            .copy_mem_from_host(io, params.src_addr, &mut req_buf[..params.src_len], true)
             .await
             .op_err(
                 "core",
@@ -165,13 +165,13 @@ impl<P: HsmPal> Hsm<P> {
                 params.session_flags,
                 params.sqe_session_id,
             ) {
-                Ok(()) => ddi::dispatch(self.pal(), &*io, &mut decoder, &hdr).await,
+                Ok(()) => ddi::dispatch(self.pal(), io, &mut decoder, &hdr).await,
                 Err(e) => Err(e),
             };
 
             let resp: &DmaBuf = dispatch_result.or_else(|status| {
                 self.pal()
-                    .dma_alloc_var(&*io, |buf| ddi::encode_ddi_err(hdr.op, status, buf))
+                    .dma_alloc_var(io, |buf| ddi::encode_ddi_err(hdr.op, status, buf))
                     .op_status(HostStatus::INTERNAL_ERROR)
                     .map(|b| &*b)
             })?;
@@ -183,7 +183,7 @@ impl<P: HsmPal> Hsm<P> {
 
         // ── Outbound DMA (yield 2) ─────────────────────────────────
         self.pal()
-            .copy_mem_to_host(&*io, resp, params.dst_addr, true)
+            .copy_mem_to_host(io, resp, params.dst_addr, true)
             .await
             .op_err(
                 "core",

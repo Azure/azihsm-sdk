@@ -11,7 +11,7 @@ pub struct DdiHmacReq<'a> {
     #[ddi(id = 1)]
     pub key_id: u16,
     #[ddi(id = 2, max_len = 1024)]
-    pub msg: &'a [u8],
+    pub msg: &'a DmaBuf,
 }
 
 #[derive(Debug, Ddi)]

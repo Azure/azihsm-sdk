@@ -13,9 +13,9 @@ pub struct DdiAesEncryptDecryptReq<'a> {
     #[ddi(id = 2)]
     pub op: DdiAesOp,
     #[ddi(id = 3, max_len = 1024)]
-    pub msg: &'a [u8],
+    pub msg: &'a DmaBuf,
     #[ddi(id = 4, max_len = 16)]
-    pub iv: &'a [u8],
+    pub iv: &'a DmaBuf,
 }
 
 impl DdiAesEncryptDecryptReq<'_> {

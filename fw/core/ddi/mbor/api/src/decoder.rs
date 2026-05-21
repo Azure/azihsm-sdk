@@ -12,7 +12,7 @@ pub struct DdiDecoder<'b> {
 }
 
 impl<'b> DdiDecoder<'b> {
-    pub fn new(buf: &'b [u8]) -> Self {
+    pub fn new(buf: &'b DmaBuf) -> Self {
         Self {
             in_len: buf.len(),
             decoder: MborDecoder::new(buf),
