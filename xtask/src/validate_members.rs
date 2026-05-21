@@ -12,6 +12,7 @@ use std::path::Path;
 use clap::Parser;
 use toml_edit::DocumentMut;
 use toml_edit::Value;
+use xshell::cmd;
 
 use crate::Xtask;
 use crate::XtaskCtx;
@@ -79,6 +80,10 @@ impl Xtask for ValidateMembers {
 
             if updated {
                 fs::write("Cargo.toml", doc.to_string())?;
+
+                // Format the modified Cargo.toml with taplo
+                let sh = xshell::Shell::new()?;
+                cmd!(sh, "taplo fmt Cargo.toml").run()?;
             }
         } else if !non_member_paths.is_empty() {
             // Error
