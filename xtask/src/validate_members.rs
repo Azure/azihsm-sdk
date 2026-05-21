@@ -83,7 +83,8 @@ impl Xtask for ValidateMembers {
 
                 // Format the modified Cargo.toml with taplo
                 let sh = xshell::Shell::new()?;
-                cmd!(sh, "taplo fmt Cargo.toml").run()?;
+                log::trace!("running taplo fmt Cargo.toml");
+                cmd!(sh, "taplo fmt Cargo.toml").quiet().run()?;
             }
         } else if !non_member_paths.is_empty() {
             // Error
