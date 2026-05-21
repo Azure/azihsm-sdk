@@ -50,25 +50,35 @@ fn main() {
     // build tree.  This avoids silent version mismatches between the linked
     // libcrypto and the openssl binary used at test time.
     //
-    // Expected target dir name: ossl-abi-<major>-<minor>  (e.g., ossl-abi-3-0)
+    // Expected path: contains a segment named ossl-abi-<major>-<minor>
+    //   - target/ossl-abi-3-0/                       (plain cargo build)
+    //   - target/ossl-abi-3-0/llvm-cov-target/       (cargo llvm-cov wraps the dir)
     //
     // The default is set in .cargo/config.toml; override via:
     //   - cargo xtask <cmd> --openssl-version <ver>
     //   - CARGO_TARGET_DIR=target/ossl-abi-<major>-<minor> cargo ...
-    let leaf = target_dir
+    let abi_dir = target_dir
+        .ancestors()
+        .find(|p| {
+            p.file_name()
+                .and_then(|s| s.to_str())
+                .is_some_and(|leaf| leaf.starts_with("ossl-abi-"))
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "azihsm_ossl_provider must be built in an OpenSSL ABI-versioned target dir.\n\
+                 Expected path to contain a segment named ossl-abi-<major>-<minor>, got: {}\n\
+                 Use `cargo xtask <cmd> --openssl-version <ver>` (recommended), or set \
+                 CARGO_TARGET_DIR=target/ossl-abi-<major>-<minor> explicitly.",
+                target_dir.display()
+            );
+        });
+
+    let abi = abi_dir
         .file_name()
         .and_then(|s| s.to_str())
-        .expect("target directory has no name");
-
-    let abi = leaf.strip_prefix("ossl-abi-").unwrap_or_else(|| {
-        panic!(
-            "azihsm_ossl_provider must be built in an OpenSSL ABI-versioned target dir.\n\
-             Expected CARGO_TARGET_DIR to end with /ossl-abi-<major>-<minor>/, got: {}\n\
-             Use `cargo xtask <cmd> --openssl-version <ver>` (recommended), or set \
-             CARGO_TARGET_DIR=target/ossl-abi-<major>-<minor> explicitly.",
-            target_dir.display()
-        );
-    });
+        .and_then(|leaf| leaf.strip_prefix("ossl-abi-"))
+        .expect("checked above");
 
     // Validate the format: <major>-<minor> with numeric components.
     let parts: Vec<&str> = abi.split('-').collect();
@@ -78,7 +88,7 @@ fn main() {
             .any(|p| p.is_empty() || !p.chars().all(|c| c.is_ascii_digit()))
     {
         panic!(
-            "CARGO_TARGET_DIR leaf must follow pattern ossl-abi-<major>-<minor> with numeric \
+            "ABI directory must follow pattern ossl-abi-<major>-<minor> with numeric \
              components, got: ossl-abi-{abi}"
         );
     }
@@ -91,11 +101,13 @@ fn main() {
         );
     }
 
-    // Derive OPENSSL_DIR from the target dir unless explicitly overridden.
-    // The xtask installs OpenSSL to <target_dir>/openssl by convention.
+    // Derive OPENSSL_DIR from the ABI dir unless explicitly overridden.
+    // The xtask installs OpenSSL to <abi_dir>/openssl by convention; this
+    // works regardless of whether the build sits directly in abi_dir or
+    // inside a sub-tree like llvm-cov-target.
     let openssl_dir = match env::var("OPENSSL_DIR") {
         Ok(dir) => PathBuf::from(dir),
-        Err(_) => target_dir.join("openssl"),
+        Err(_) => abi_dir.join("openssl"),
     };
 
     // Skip the C/CMake build when running under clippy/check — see comment
@@ -103,7 +115,7 @@ fn main() {
     // validation above; it just doesn't pay for the linked artifact.
     if is_clippy {
         println!(
-            "cargo:warning=skipping CMake build for clippy ({})",
+            "cargo:warning=skipping CMake build for clippy (ABI {abi}, target {})",
             target_dir.display()
         );
         return;
