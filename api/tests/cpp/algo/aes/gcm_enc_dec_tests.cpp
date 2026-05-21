@@ -3310,7 +3310,7 @@ TEST_F(azihsm_aes_gcm, unwrapped_key_streaming_with_aad_roundtrip)
 TEST_F(azihsm_aes_gcm, unwrapped_key_wrong_tag_fails_decryption)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        with_unwrapped_aes_gcm_key(session, [&](azihsm_handle key_handle) {
+        azihsm_aes_gcm::with_unwrapped_aes_gcm_key(session, [&](azihsm_handle key_handle) {
             uint8_t iv[12] = { 0x1B, 0x2B, 0x3B, 0x4B, 0x5B, 0x6B,
                                0x7B, 0x8B, 0x9B, 0xAB, 0xBB, 0xCB };
 
@@ -3659,8 +3659,8 @@ TEST_F(azihsm_aes_gcm, non_session_key_roundtrip)
     });
 }
 
-// Decrypt should fail when the AES-GCM params do not contain the authentication tag.
-TEST_F(azihsm_aes_gcm, single_shot_decrypt_without_tag_in_algo_fails)
+// Decrypt should fail when the AES-GCM params contain an invalid all-zero authentication tag.
+TEST_F(azihsm_aes_gcm, single_shot_decrypt_with_invalid_tag_in_algo_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {
         auto key = generate_aes_gcm_key(session, 256);
