@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+use azihsm_fw_hsm_pal_traits::DmaBuf;
+
 use crate::*;
 
 /// Error type for MBOR decoding.
@@ -57,7 +59,7 @@ impl MborDecode<'_> for u8 {
 
 impl MborDecode<'_> for u16 {
     fn mbor_decode(decoder: &mut MborDecoder<'_>) -> Result<Self, MborDecodeError> {
-        let bytes = decoder.bytes(3)?;
+        let bytes: &[u8] = &decoder.bytes(3)?;
         // Skipping the first byte check (marker) for performance reasons.
         Ok(u16::from_be_bytes(
             bytes[1..].try_into().or(Err(MborDecodeError::DecodeU16))?,
@@ -67,7 +69,7 @@ impl MborDecode<'_> for u16 {
 
 impl MborDecode<'_> for u32 {
     fn mbor_decode(decoder: &mut MborDecoder<'_>) -> Result<Self, MborDecodeError> {
-        let bytes = decoder.bytes(5)?;
+        let bytes: &[u8] = &decoder.bytes(5)?;
         // Skipping the first byte check (marker) for performance reasons.
         Ok(u32::from_be_bytes(
             bytes[1..].try_into().or(Err(MborDecodeError::DecodeU32))?,
@@ -77,7 +79,7 @@ impl MborDecode<'_> for u32 {
 
 impl MborDecode<'_> for u64 {
     fn mbor_decode(decoder: &mut MborDecoder<'_>) -> Result<Self, MborDecodeError> {
-        let bytes = decoder.bytes(9)?;
+        let bytes: &[u8] = &decoder.bytes(9)?;
         // Skipping the first byte check (marker) for performance reasons.
         Ok(u64::from_be_bytes(
             bytes[1..].try_into().or(Err(MborDecodeError::DecodeU64))?,
@@ -108,18 +110,14 @@ impl<const N: usize> MborDecode<'_> for [u8; N] {
             return Err(MborDecodeError::InvalidPadding);
         }
 
-        let len = u16::from_be_bytes(
-            decoder
-                .bytes(core::mem::size_of::<u16>())?
-                .try_into()
-                .or(Err(MborDecodeError::DecodeU16))?,
-        );
+        let len_bytes: &[u8] = &decoder.bytes(core::mem::size_of::<u16>())?;
+        let len = u16::from_be_bytes(len_bytes.try_into().or(Err(MborDecodeError::DecodeU16))?);
 
         if len != N as u16 {
             return Err(MborDecodeError::InvalidLen);
         }
 
-        let data = decoder.bytes(len as usize)?;
+        let data: &[u8] = &decoder.bytes(len as usize)?;
 
         data.try_into().or(Err(MborDecodeError::DecodeU8N))
     }
@@ -130,13 +128,13 @@ impl<const N: usize> MborDecode<'_> for [u8; N] {
 /// Borrows the input buffer and returns sub-slices on decode, enabling
 /// zero-copy access to byte array fields.
 pub struct MborDecoder<'a> {
-    buffer: &'a [u8],
+    buffer: &'a DmaBuf,
     pos: usize,
 }
 
 impl<'a> MborDecoder<'a> {
     /// Create a new decoder over `buf`.
-    pub fn new(buf: &'a [u8]) -> Self {
+    pub fn new(buf: &'a DmaBuf) -> Self {
         Self {
             buffer: buf,
             pos: 0,
@@ -175,7 +173,7 @@ impl<'a> MborDecoder<'a> {
     /// of the input buffer (zero-copy). Accepts and skips padding.
     ///
     /// Returns `(padding, data_slice)`.
-    pub fn decode_byte_slice(&mut self) -> Result<(u8, &'a [u8]), MborDecodeError> {
+    pub fn decode_byte_slice(&mut self) -> Result<(u8, &'a DmaBuf), MborDecodeError> {
         let marker = self.byte()?;
         if marker & BYTES_MARKER != BYTES_MARKER {
             return Err(MborDecodeError::ExpectedU8);
@@ -183,11 +181,8 @@ impl<'a> MborDecoder<'a> {
 
         let pad = marker & BYTES_PAD_MASK;
 
-        let len = u16::from_be_bytes(
-            self.bytes(core::mem::size_of::<u16>())?
-                .try_into()
-                .or(Err(MborDecodeError::DecodeU16))?,
-        );
+        let len_bytes: &[u8] = &self.bytes(core::mem::size_of::<u16>())?;
+        let len = u16::from_be_bytes(len_bytes.try_into().or(Err(MborDecodeError::DecodeU16))?);
 
         // Skip padding bytes
         self.skip(pad as usize)?;
@@ -205,7 +200,7 @@ impl<'a> MborDecoder<'a> {
     pub fn decode_byte_slice_exact(
         &mut self,
         expected_len: usize,
-    ) -> Result<&'a [u8], MborDecodeError> {
+    ) -> Result<&'a DmaBuf, MborDecodeError> {
         let marker = self.byte()?;
         if marker & BYTES_MARKER != BYTES_MARKER {
             return Err(MborDecodeError::ExpectedU8);
@@ -216,11 +211,8 @@ impl<'a> MborDecoder<'a> {
             return Err(MborDecodeError::InvalidPadding);
         }
 
-        let len = u16::from_be_bytes(
-            self.bytes(core::mem::size_of::<u16>())?
-                .try_into()
-                .or(Err(MborDecodeError::DecodeU16))?,
-        );
+        let len_bytes: &[u8] = &self.bytes(core::mem::size_of::<u16>())?;
+        let len = u16::from_be_bytes(len_bytes.try_into().or(Err(MborDecodeError::DecodeU16))?);
 
         if len as usize != expected_len {
             return Err(MborDecodeError::InvalidLen);
@@ -237,7 +229,7 @@ impl<'a> MborDecoder<'a> {
     }
 
     #[inline(always)]
-    pub(crate) fn bytes(&mut self, len: usize) -> Result<&'a [u8], MborDecodeError> {
+    pub(crate) fn bytes(&mut self, len: usize) -> Result<&'a DmaBuf, MborDecodeError> {
         if len + self.pos > self.buffer.len() {
             return Err(MborDecodeError::BufferUnderFlow);
         }
@@ -256,55 +248,63 @@ impl<'a> MborDecoder<'a> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
+#[allow(clippy::unwrap_used, unsafe_code)]
 mod tests {
     extern crate std;
 
+    use core::ops::Deref;
+
     use super::*;
+
+    /// In tests, local arrays aren't DMA memory, but we need `&DmaBuf`
+    /// to construct a decoder. This is safe in tests — no real DMA hw.
+    fn dma(buf: &[u8]) -> &DmaBuf {
+        unsafe { DmaBuf::from_raw(buf) }
+    }
 
     #[test]
     fn decode_bool() {
         let buf = [0x15]; // true
-        let mut dec = MborDecoder::new(&buf);
+        let mut dec = MborDecoder::new(dma(&buf));
         assert!(bool::mbor_decode(&mut dec).unwrap());
 
         let buf = [0x14]; // false
-        let mut dec = MborDecoder::new(&buf);
+        let mut dec = MborDecoder::new(dma(&buf));
         assert!(!bool::mbor_decode(&mut dec).unwrap());
     }
 
     #[test]
     fn decode_u8() {
         let buf = [U8_MARKER, 42];
-        let mut dec = MborDecoder::new(&buf);
+        let mut dec = MborDecoder::new(dma(&buf));
         assert_eq!(u8::mbor_decode(&mut dec).unwrap(), 42);
     }
 
     #[test]
     fn decode_u16() {
         let buf = [U16_MARKER, 0x12, 0x34];
-        let mut dec = MborDecoder::new(&buf);
+        let mut dec = MborDecoder::new(dma(&buf));
         assert_eq!(u16::mbor_decode(&mut dec).unwrap(), 0x1234);
     }
 
     #[test]
     fn decode_u32() {
         let buf = [U32_MARKER, 0xDE, 0xAD, 0xBE, 0xEF];
-        let mut dec = MborDecoder::new(&buf);
+        let mut dec = MborDecoder::new(dma(&buf));
         assert_eq!(u32::mbor_decode(&mut dec).unwrap(), 0xDEADBEEF);
     }
 
     #[test]
     fn decode_u64() {
         let buf = [U64_MARKER, 0, 0, 0, 0, 0, 0, 0, 1];
-        let mut dec = MborDecoder::new(&buf);
+        let mut dec = MborDecoder::new(dma(&buf));
         assert_eq!(u64::mbor_decode(&mut dec).unwrap(), 1);
     }
 
     #[test]
     fn decode_map() {
         let buf = [MAP_MARKER | 5];
-        let mut dec = MborDecoder::new(&buf);
+        let mut dec = MborDecoder::new(dma(&buf));
         let m = MborMap::mbor_decode(&mut dec).unwrap();
         assert_eq!(m.0, 5);
     }
@@ -312,7 +312,7 @@ mod tests {
     #[test]
     fn decode_fixed_array() {
         let buf = [BYTES_MARKER, 0, 3, 0xAA, 0xBB, 0xCC];
-        let mut dec = MborDecoder::new(&buf);
+        let mut dec = MborDecoder::new(dma(&buf));
         let arr: [u8; 3] = MborDecode::mbor_decode(&mut dec).unwrap();
         assert_eq!(arr, [0xAA, 0xBB, 0xCC]);
     }
@@ -320,11 +320,10 @@ mod tests {
     #[test]
     fn decode_byte_slice_zero_copy() {
         let buf = [BYTES_MARKER, 0, 4, 1, 2, 3, 4];
-        let mut dec = MborDecoder::new(&buf);
+        let mut dec = MborDecoder::new(dma(&buf));
         let (pad, slice) = dec.decode_byte_slice().unwrap();
         assert_eq!(pad, 0);
-        assert_eq!(slice, &[1, 2, 3, 4]);
-        // Verify it's a true sub-slice of the input buffer
+        assert_eq!(slice.deref(), &[1, 2, 3, 4]);
         assert_eq!(slice.as_ptr(), buf[3..].as_ptr());
     }
 
@@ -332,23 +331,23 @@ mod tests {
     fn decode_byte_slice_with_padding() {
         // marker=0x81 (pad=1), len=3, pad_byte=0, data=[0xAA, 0xBB, 0xCC]
         let buf = [BYTES_MARKER | 1, 0, 3, 0, 0xAA, 0xBB, 0xCC];
-        let mut dec = MborDecoder::new(&buf);
+        let mut dec = MborDecoder::new(dma(&buf));
         let (pad, slice) = dec.decode_byte_slice().unwrap();
         assert_eq!(pad, 1);
-        assert_eq!(slice, &[0xAA, 0xBB, 0xCC]);
+        assert_eq!(slice.deref(), &[0xAA, 0xBB, 0xCC]);
     }
 
     #[test]
     fn decode_buffer_underflow() {
         let buf = [U32_MARKER, 0xDE]; // too short for u32
-        let mut dec = MborDecoder::new(&buf);
+        let mut dec = MborDecoder::new(dma(&buf));
         assert!(u32::mbor_decode(&mut dec).is_err());
     }
 
     #[test]
     fn peek_u8_does_not_consume() {
         let buf = [U8_MARKER, 99];
-        let mut dec = MborDecoder::new(&buf);
+        let mut dec = MborDecoder::new(dma(&buf));
         assert_eq!(dec.peek_u8(), Some(99));
         assert_eq!(dec.position(), 0);
         assert_eq!(u8::mbor_decode(&mut dec).unwrap(), 99);
@@ -357,7 +356,7 @@ mod tests {
     #[test]
     fn peek_byte_does_not_consume() {
         let buf = [MAP_MARKER | 2];
-        let mut dec = MborDecoder::new(&buf);
+        let mut dec = MborDecoder::new(dma(&buf));
         assert_eq!(dec.peek_byte(), Some(MAP_MARKER | 2));
         assert_eq!(dec.position(), 0);
     }
@@ -368,10 +367,9 @@ mod tests {
     fn decode_byte_slice_exact_ok() {
         // No padding, len=4, data=[1,2,3,4]
         let buf = [BYTES_MARKER, 0, 4, 1, 2, 3, 4];
-        let mut dec = MborDecoder::new(&buf);
+        let mut dec = MborDecoder::new(dma(&buf));
         let slice = dec.decode_byte_slice_exact(4).unwrap();
-        assert_eq!(slice, &[1, 2, 3, 4]);
-        // Zero-copy: points into input buffer
+        assert_eq!(slice.deref(), &[1, 2, 3, 4]);
         assert_eq!(slice.as_ptr(), buf[3..].as_ptr());
     }
 
@@ -379,7 +377,7 @@ mod tests {
     fn decode_byte_slice_exact_wrong_len() {
         // Data is 4 bytes but we expect 3
         let buf = [BYTES_MARKER, 0, 4, 1, 2, 3, 4];
-        let mut dec = MborDecoder::new(&buf);
+        let mut dec = MborDecoder::new(dma(&buf));
         assert!(dec.decode_byte_slice_exact(3).is_err());
     }
 
@@ -387,7 +385,7 @@ mod tests {
     fn decode_byte_slice_exact_rejects_padding() {
         // marker=0x81 (pad=1) — exact decode rejects padding
         let buf = [BYTES_MARKER | 1, 0, 3, 0, 0xAA, 0xBB, 0xCC];
-        let mut dec = MborDecoder::new(&buf);
+        let mut dec = MborDecoder::new(dma(&buf));
         assert!(dec.decode_byte_slice_exact(3).is_err());
     }
 
@@ -395,21 +393,19 @@ mod tests {
 
     #[test]
     fn roundtrip_byte_slice_no_padding() {
-        // Encode with MborByteSlice (no padding) → decode with exact
         let data = [0xDE, 0xAD, 0xBE, 0xEF];
         let mut buf = [0u8; 16];
         let mut enc = crate::MborEncoder::new(&mut buf);
         crate::MborByteSlice(&data).mbor_encode(&mut enc).unwrap();
         let pos = enc.position();
 
-        let mut dec = MborDecoder::new(&buf[..pos]);
+        let mut dec = MborDecoder::new(dma(&buf[..pos]));
         let slice = dec.decode_byte_slice_exact(4).unwrap();
-        assert_eq!(slice, &data);
+        assert_eq!(slice.deref(), &data);
     }
 
     #[test]
     fn roundtrip_byte_slice_with_padding() {
-        // Encode with MborPaddedByteSlice (pad=1) → decode with decode_byte_slice
         let data = [0xAA; 10];
         let mut buf = [0u8; 32];
         let mut enc = crate::MborEncoder::new(&mut buf);
@@ -418,15 +414,14 @@ mod tests {
             .unwrap();
         let pos = enc.position();
 
-        let mut dec = MborDecoder::new(&buf[..pos]);
+        let mut dec = MborDecoder::new(dma(&buf[..pos]));
         let (pad, slice) = dec.decode_byte_slice().unwrap();
         assert_eq!(pad, 1);
-        assert_eq!(slice, &data);
+        assert_eq!(slice.deref(), &data);
     }
 
     #[test]
     fn padded_encode_rejected_by_exact_decode() {
-        // Encode with padding → exact decode must reject
         let data = [0xBB; 8];
         let mut buf = [0u8; 32];
         let mut enc = crate::MborEncoder::new(&mut buf);
@@ -435,22 +430,21 @@ mod tests {
             .unwrap();
         let pos = enc.position();
 
-        let mut dec = MborDecoder::new(&buf[..pos]);
+        let mut dec = MborDecoder::new(dma(&buf[..pos]));
         assert!(dec.decode_byte_slice_exact(8).is_err());
     }
 
     #[test]
     fn unpadded_encode_accepted_by_variable_decode() {
-        // Encode without padding → variable decode accepts (pad=0)
         let data = [0xCC; 6];
         let mut buf = [0u8; 16];
         let mut enc = crate::MborEncoder::new(&mut buf);
         crate::MborByteSlice(&data).mbor_encode(&mut enc).unwrap();
         let pos = enc.position();
 
-        let mut dec = MborDecoder::new(&buf[..pos]);
+        let mut dec = MborDecoder::new(dma(&buf[..pos]));
         let (pad, slice) = dec.decode_byte_slice().unwrap();
         assert_eq!(pad, 0);
-        assert_eq!(slice, &data);
+        assert_eq!(slice.deref(), &data);
     }
 }

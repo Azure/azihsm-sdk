@@ -326,10 +326,7 @@ fn gen_padding_checks(layout: &TocLayout) -> Vec<TokenStream> {
 
 /// Generate length-constraint checks for buffer/sealed_key fields that
 /// have `fixed_len`, `min_len`, or `max_len` constraints.
-fn gen_len_checks(
-    schema: &Schema,
-    layout: &TocLayout,
-) -> Vec<TokenStream> {
+fn gen_len_checks(schema: &Schema, layout: &TocLayout) -> Vec<TokenStream> {
     let header_len_val = match schema.kind {
         MessageKind::Request { .. } => quote! { azihsm_fw_ddi_tbor::REQ_HEADER_LEN },
         MessageKind::Response => quote! { azihsm_fw_ddi_tbor::RESP_HEADER_LEN },

@@ -42,8 +42,14 @@ pub(crate) async fn get_certificate<'p, P: HsmPal>(
 
     let frame = DdiGetCertificateResp::from_layout(resp, &layout);
 
-    pal.get_cert(io, io.pid(), body.slot_id, body.cert_id, Some(frame.certificate))
-        .await?;
+    pal.get_cert(
+        io,
+        io.pid(),
+        body.slot_id,
+        body.cert_id,
+        Some(frame.certificate),
+    )
+    .await?;
 
     Ok(resp)
 }

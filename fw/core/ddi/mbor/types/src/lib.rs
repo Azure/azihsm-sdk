@@ -4,6 +4,7 @@
 #![no_std]
 
 use azihsm_fw_ddi_mbor_derive::Ddi;
+use azihsm_fw_hsm_pal_traits::DmaBuf;
 use open_enum::open_enum;
 use pastey::paste;
 
@@ -329,7 +330,7 @@ pub struct DdiRespExt {}
 #[ddi(map)]
 pub struct DdiPublicKey<'a> {
     #[ddi(id = 1, max_len = 768)]
-    pub raw: &'a [u8],
+    pub raw: &'a DmaBuf,
     #[ddi(id = 2)]
     pub key_kind: DdiKeyType,
 }
@@ -343,7 +344,7 @@ pub struct DdiKeyProperties<'a> {
     #[ddi(id = 2)]
     pub key_availability: DdiKeyAvailability,
     #[ddi(id = 3, max_len = 128)]
-    pub key_label: &'a [u8],
+    pub key_label: &'a DmaBuf,
 }
 
 /// Target key metadata (16-byte bitflag blob).
@@ -361,7 +362,7 @@ pub struct DdiTargetKeyProperties<'a> {
     #[ddi(id = 1)]
     pub key_metadata: DdiTargetKeyMetadata,
     #[ddi(id = 2, max_len = 128)]
-    pub key_label: &'a [u8],
+    pub key_label: &'a DmaBuf,
 }
 
 // ── ddi_op_req_resp! macro ─────────────────────────────────────────────

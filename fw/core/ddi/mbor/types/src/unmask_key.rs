@@ -9,7 +9,7 @@ use crate::*;
 #[ddi(map)]
 pub struct DdiUnmaskKeyReq<'a> {
     #[ddi(id = 1, max_len = 3072)]
-    pub masked_key: &'a [u8],
+    pub masked_key: &'a DmaBuf,
 }
 
 #[derive(Debug, Ddi)]

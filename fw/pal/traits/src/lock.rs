@@ -59,8 +59,5 @@ pub trait HsmPartitionLock {
     /// # Errors
     ///
     /// Returns [`HsmError::InvalidArg`] if `io.pid()` is out of range.
-    async fn partition_lock(
-        &self,
-        io: &impl HsmIo,
-    ) -> HsmResult<Self::PartitionGuard<'_>>;
+    async fn partition_lock(&self, io: &impl HsmIo) -> HsmResult<Self::PartitionGuard<'_>>;
 }

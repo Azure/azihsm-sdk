@@ -97,9 +97,7 @@ fn build_toc_count_expr(layout: &TocLayout, fields: &[SchemaField]) -> TokenStre
 
 /// Generate the `#[doc(hidden)]` marker enums used as typestate tags
 /// (`FooS0`, `FooS1`, …, `FooSN`).
-fn gen_state_markers(
-    schema: &Schema,
-) -> (Vec<TokenStream>, Vec<syn::Ident>) {
+fn gen_state_markers(schema: &Schema) -> (Vec<TokenStream>, Vec<syn::Ident>) {
     let vis = &schema.vis;
     let n_fields = schema.fields.len();
     let state_markers: Vec<_> = (0..=n_fields)

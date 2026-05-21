@@ -1,4 +1,5 @@
 // Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 //! HPKE ciphersuite definitions and per-suite size constants.
 //!

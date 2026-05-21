@@ -13,9 +13,9 @@ pub struct DdiHkdfDeriveReq<'a> {
     #[ddi(id = 2)]
     pub hash_algorithm: DdiHashAlgorithm,
     #[ddi(id = 3, max_len = 256)]
-    pub salt: Option<&'a [u8]>,
+    pub salt: Option<&'a DmaBuf>,
     #[ddi(id = 4, max_len = 256)]
-    pub info: Option<&'a [u8]>,
+    pub info: Option<&'a DmaBuf>,
     #[ddi(id = 5)]
     pub key_type: DdiKeyType,
     #[ddi(id = 6)]

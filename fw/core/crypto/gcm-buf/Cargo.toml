@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 [package]
 edition = "2021"
 name = "azihsm_fw_core_crypto_gcm_buf"
