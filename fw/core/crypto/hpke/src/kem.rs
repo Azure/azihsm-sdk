@@ -1,4 +1,5 @@
 // Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 //! DHKEM (RFC 9180 §4.1) — Encap / Decap and their Auth variants.
 //!

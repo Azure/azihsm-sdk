@@ -1,4 +1,5 @@
 // Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 #![no_std]
 #![allow(clippy::too_many_arguments)]

@@ -252,6 +252,8 @@ impl<'a> MborDecoder<'a> {
 mod tests {
     extern crate std;
 
+    use core::ops::Deref;
+
     use super::*;
 
     /// In tests, local arrays aren't DMA memory, but we need `&DmaBuf`
@@ -321,7 +323,7 @@ mod tests {
         let mut dec = MborDecoder::new(dma(&buf));
         let (pad, slice) = dec.decode_byte_slice().unwrap();
         assert_eq!(pad, 0);
-        assert_eq!(slice, &[1, 2, 3, 4]);
+        assert_eq!(slice.deref(), &[1, 2, 3, 4]);
         assert_eq!(slice.as_ptr(), buf[3..].as_ptr());
     }
 
@@ -332,7 +334,7 @@ mod tests {
         let mut dec = MborDecoder::new(dma(&buf));
         let (pad, slice) = dec.decode_byte_slice().unwrap();
         assert_eq!(pad, 1);
-        assert_eq!(slice, &[0xAA, 0xBB, 0xCC]);
+        assert_eq!(slice.deref(), &[0xAA, 0xBB, 0xCC]);
     }
 
     #[test]
@@ -367,7 +369,7 @@ mod tests {
         let buf = [BYTES_MARKER, 0, 4, 1, 2, 3, 4];
         let mut dec = MborDecoder::new(dma(&buf));
         let slice = dec.decode_byte_slice_exact(4).unwrap();
-        assert_eq!(slice, &[1, 2, 3, 4]);
+        assert_eq!(slice.deref(), &[1, 2, 3, 4]);
         assert_eq!(slice.as_ptr(), buf[3..].as_ptr());
     }
 
@@ -399,7 +401,7 @@ mod tests {
 
         let mut dec = MborDecoder::new(dma(&buf[..pos]));
         let slice = dec.decode_byte_slice_exact(4).unwrap();
-        assert_eq!(slice, &data);
+        assert_eq!(slice.deref(), &data);
     }
 
     #[test]
@@ -415,7 +417,7 @@ mod tests {
         let mut dec = MborDecoder::new(dma(&buf[..pos]));
         let (pad, slice) = dec.decode_byte_slice().unwrap();
         assert_eq!(pad, 1);
-        assert_eq!(slice, &data);
+        assert_eq!(slice.deref(), &data);
     }
 
     #[test]
@@ -443,6 +445,6 @@ mod tests {
         let mut dec = MborDecoder::new(dma(&buf[..pos]));
         let (pad, slice) = dec.decode_byte_slice().unwrap();
         assert_eq!(pad, 0);
-        assert_eq!(slice, &data);
+        assert_eq!(slice.deref(), &data);
     }
 }

@@ -7,6 +7,7 @@
 
 #![allow(clippy::unwrap_used, unsafe_code)]
 
+use core::ops::Deref;
 use std::vec;
 
 // Old crate (dev-dependency)
@@ -148,7 +149,7 @@ fn old_byte_slice_new_decode_exact() {
     // New exact decode (no padding expected)
     let mut dec = new::MborDecoder::new(&dma(&buf)[..pos]);
     let slice = dec.decode_byte_slice_exact(4).unwrap();
-    assert_eq!(slice, &data);
+    assert_eq!(slice.deref(), &data);
 }
 
 #[test]
@@ -163,7 +164,7 @@ fn old_byte_slice_new_decode_variable() {
     let mut dec = new::MborDecoder::new(&dma(&buf)[..pos]);
     let (pad, slice) = dec.decode_byte_slice().unwrap();
     assert_eq!(pad, 0);
-    assert_eq!(slice, &data);
+    assert_eq!(slice.deref(), &data);
 }
 
 // ── Byte arrays: old encode (MborPaddedByteArray, with padding) → new decode ──
@@ -186,7 +187,7 @@ fn old_padded_array_new_decode_variable() {
     let mut dec = new::MborDecoder::new(&dma(&buf)[..pos]);
     let (pad, slice) = dec.decode_byte_slice().unwrap();
     assert_eq!(pad, 1);
-    assert_eq!(slice, &[0x55; 10]);
+    assert_eq!(slice.deref(), &[0x55; 10]);
 }
 
 #[test]

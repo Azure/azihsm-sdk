@@ -167,26 +167,6 @@ impl core::fmt::Debug for DmaBuf {
     }
 }
 
-impl PartialEq for DmaBuf {
-    fn eq(&self, other: &Self) -> bool {
-        self.inner == other.inner
-    }
-}
-
-impl PartialEq<[u8]> for DmaBuf {
-    fn eq(&self, other: &[u8]) -> bool {
-        &self.inner == other
-    }
-}
-
-impl<const N: usize> PartialEq<[u8; N]> for DmaBuf {
-    fn eq(&self, other: &[u8; N]) -> bool {
-        &self.inner == other
-    }
-}
-
-impl Eq for DmaBuf {}
-
 impl core::ops::Index<usize> for DmaBuf {
     type Output = u8;
     #[inline(always)]

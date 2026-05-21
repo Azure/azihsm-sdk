@@ -1,4 +1,5 @@
 // Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 //! HPKE key schedule (RFC 9180 §5.1).
 //!
