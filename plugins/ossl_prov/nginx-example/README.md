@@ -103,6 +103,7 @@ activate = 1
 azihsm-bmk-path  = /var/lib/azihsm/bmk.bin
 azihsm-muk-path  = /var/lib/azihsm/muk.bin
 azihsm-obk-path  = /var/lib/azihsm/obk.bin
+azihsm-mobk-path = /var/lib/azihsm/mobk.bin
 azihsm-obk-source = caller
 azihsm-pota-source = caller
 azihsm-pota-private-key-path = /var/lib/azihsm/pota_private_key.der

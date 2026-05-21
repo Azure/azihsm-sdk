@@ -5,6 +5,9 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <stdexcept>
 #include <string>
 
@@ -355,9 +358,25 @@ void make_part_init_config(azihsm_handle part_handle, PartInitConfig &config)
     }
     else
     {
-        config.obk_buf = { const_cast<uint8_t *>(TEST_OBK), sizeof(TEST_OBK) };
-        config.backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER;
-        config.backup_config.owner_backup_key = &config.obk_buf;
+        // Prefer a cached MOBK from a prior init (if present on disk) so
+        // that init_bk3 is not re-attempted on a warm device. Fall back to
+        // the raw OBK when no cache exists (cold device / first init).
+        auto cached_mobk = load_mobk_file(get_mobk_path());
+        if (!cached_mobk.empty())
+        {
+            config.mobk_cache = std::move(cached_mobk);
+            config.obk_buf = { config.mobk_cache.data(),
+                               static_cast<uint32_t>(config.mobk_cache.size()) };
+            config.backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER;
+            config.backup_config.owner_backup_key = nullptr;
+            config.backup_config.masked_owner_backup_key = &config.obk_buf;
+        }
+        else
+        {
+            config.obk_buf = { const_cast<uint8_t *>(TEST_OBK), sizeof(TEST_OBK) };
+            config.backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER;
+            config.backup_config.owner_backup_key = &config.obk_buf;
+        }
 
         config.generated = generate_pota_endorsement(part_handle);
         config.sig_buf = { config.generated.signature.data(),
@@ -368,4 +387,132 @@ void make_part_init_config(azihsm_handle part_handle, PartInitConfig &config)
         config.pota_endorsement.source = AZIHSM_POTA_ENDORSEMENT_SOURCE_CALLER;
         config.pota_endorsement.endorsement = &config.pota_data;
     }
+}
+
+std::string get_mobk_path()
+{
+#ifdef _WIN32
+    char *val = nullptr;
+    size_t len = 0;
+    _dupenv_s(&val, &len, "AZIHSM_MOBK_PATH");
+    if (val != nullptr)
+    {
+        std::string result(val);
+        free(val);
+        return result;
+    }
+    free(val);
+    return (std::filesystem::temp_directory_path() / "mobk.bin").string();
+#else
+    const char *val = std::getenv("AZIHSM_MOBK_PATH");
+    if (val != nullptr)
+    {
+        return std::string(val);
+    }
+    return (std::filesystem::temp_directory_path() / "mobk.bin").string();
+#endif
+}
+
+std::vector<uint8_t> load_mobk_file(const std::string &path)
+{
+    std::ifstream f(path, std::ios::binary);
+    if (!f)
+    {
+        return {};
+    }
+    return std::vector<uint8_t>(
+        std::istreambuf_iterator<char>(f),
+        std::istreambuf_iterator<char>()
+    );
+}
+
+void save_mobk_file(const std::string &path, const std::vector<uint8_t> &mobk)
+{
+    std::ofstream f(path, std::ios::binary | std::ios::trunc);
+    if (f)
+    {
+        f.write(reinterpret_cast<const char *>(mobk.data()), mobk.size());
+    }
+}
+
+std::vector<uint8_t> query_mobk_property(azihsm_handle part_handle)
+{
+    azihsm_part_prop prop{};
+    prop.id = AZIHSM_PART_PROP_ID_MASKED_OWNER_BACKUP_KEY;
+    prop.val = nullptr;
+    prop.len = 0;
+    auto err = azihsm_part_get_prop(part_handle, &prop);
+    if (err != AZIHSM_STATUS_BUFFER_TOO_SMALL || prop.len == 0)
+    {
+        return {};
+    }
+    std::vector<uint8_t> mobk(prop.len);
+    prop.val = mobk.data();
+    err = azihsm_part_get_prop(part_handle, &prop);
+    if (err != AZIHSM_STATUS_SUCCESS)
+    {
+        return {};
+    }
+    mobk.resize(prop.len);
+    return mobk;
+}
+
+azihsm_status part_init_with_mobk_fallback(
+    azihsm_handle part_handle,
+    azihsm_credentials *creds,
+    PartInitConfig &init_config,
+    azihsm_resiliency_config *resiliency_config
+)
+{
+    auto err = azihsm_part_init(
+        part_handle,
+        creds,
+        nullptr,
+        nullptr,
+        &init_config.backup_config,
+        &init_config.pota_endorsement,
+        resiliency_config
+    );
+
+    // Warm-device fallback: load cached MOBK from file and retry.
+    std::vector<uint8_t> mobk_data;
+    azihsm_buffer mobk_buf{};
+    if (err == AZIHSM_STATUS_BK3_ALREADY_INITIALIZED &&
+        init_config.backup_config.source == AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER)
+    {
+        auto mobk_path = get_mobk_path();
+        mobk_data = load_mobk_file(mobk_path);
+        if (mobk_data.empty())
+        {
+            return err; // no cached MOBK, propagate original error
+        }
+
+        mobk_buf.ptr = mobk_data.data();
+        mobk_buf.len = static_cast<uint32_t>(mobk_data.size());
+        init_config.backup_config.owner_backup_key = nullptr;
+        init_config.backup_config.masked_owner_backup_key = &mobk_buf;
+
+        err = azihsm_part_init(
+            part_handle,
+            creds,
+            nullptr,
+            nullptr,
+            &init_config.backup_config,
+            &init_config.pota_endorsement,
+            resiliency_config
+        );
+    }
+
+    // Persist MOBK on success so subsequent runs can use it.
+    if (err == AZIHSM_STATUS_SUCCESS &&
+        init_config.backup_config.source == AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER)
+    {
+        auto mobk = query_mobk_property(part_handle);
+        if (!mobk.empty())
+        {
+            save_mobk_file(get_mobk_path(), mobk);
+        }
+    }
+
+    return err;
 }

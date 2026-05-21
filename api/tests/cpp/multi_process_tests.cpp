@@ -181,15 +181,7 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_parent)
 
         PartInitConfig init_config{};
         make_part_init_config(part_handle, init_config);
-        err = azihsm_part_init(
-            part_handle,
-            &creds,
-            nullptr,
-            nullptr,
-            &init_config.backup_config,
-            &init_config.pota_endorsement,
-            nullptr
-        );
+        err = part_init_with_mobk_fallback(part_handle, &creds, init_config, nullptr);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
         auto bmk = get_part_prop_bytes(part_handle, AZIHSM_PART_PROP_ID_BACKUP_MASKING_KEY);
@@ -345,6 +337,10 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_child)
         init_config.backup_config.owner_backup_key = &obk_buf;
     }
 
+    // Child process re-init: the device may have BK3 already initialized
+    // from the parent's init. Use the fallback helper which handles this.
+    // Note: bmk_buf is passed via the raw call since the helper doesn't
+    // take explicit BMK/MUK.
     auto init_err = azihsm_part_init(
         part_handle,
         &creds,
@@ -354,6 +350,32 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_child)
         &init_config.pota_endorsement,
         nullptr
     );
+
+    // Warm-device fallback for the child process.
+    std::vector<uint8_t> mobk_data;
+    azihsm_buffer mobk_fb{};
+    if (init_err == AZIHSM_STATUS_BK3_ALREADY_INITIALIZED &&
+        init_config.backup_config.source == AZIHSM_OWNER_BACKUP_KEY_SOURCE_CALLER)
+    {
+        mobk_data = load_mobk_file(get_mobk_path());
+        if (!mobk_data.empty())
+        {
+            mobk_fb.ptr = mobk_data.data();
+            mobk_fb.len = static_cast<uint32_t>(mobk_data.size());
+            init_config.backup_config.owner_backup_key = nullptr;
+            init_config.backup_config.masked_owner_backup_key = &mobk_fb;
+
+            init_err = azihsm_part_init(
+                part_handle,
+                &creds,
+                &bmk_buf,
+                nullptr,
+                &init_config.backup_config,
+                &init_config.pota_endorsement,
+                nullptr
+            );
+        }
+    }
     ASSERT_EQ(init_err, AZIHSM_STATUS_SUCCESS);
 
     azihsm_buffer seed_buf = { seed.data(), static_cast<uint32_t>(seed.size()) };
