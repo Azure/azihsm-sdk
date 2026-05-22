@@ -296,6 +296,7 @@ fn default_tests(exclude: &[String], profile: Option<String>) -> Vec<Nextest> {
 }
 
 // Helper function to define test parameters for Linux-specific azihsm_ddi mock tests
+#[cfg(not(target_os = "windows"))]
 fn ddi_mock_tests(exclude: &[String], profile: Option<String>) -> Vec<Nextest> {
     let mut tests = Vec::new();
 
