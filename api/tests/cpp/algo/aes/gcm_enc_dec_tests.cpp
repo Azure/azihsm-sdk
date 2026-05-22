@@ -3827,8 +3827,7 @@ TEST_F(azihsm_aes_gcm, streaming_encrypt_single_shot_decrypt_roundtrip)
     part_list_.for_each_session([](azihsm_handle session) {
         auto key = generate_aes_gcm_key(session, 256);
 
-        uint8_t iv[12] = { 0x25, 0x35, 0x45, 0x55, 0x65, 0x75,
-                           0x85, 0x95, 0xA5, 0xB5, 0xC5, 0xD5 };
+        uint8_t iv[12] = { 0x25, 0x35, 0x45, 0x55, 0x65, 0x75, 0x85, 0x95, 0xA5, 0xB5, 0xC5, 0xD5 };
 
         std::vector<uint8_t> plaintext = make_incrementing_bytes(257);
         std::vector<uint8_t> aad = { 0x10, 0x20, 0x30, 0x40, 0x50 };
@@ -3891,8 +3890,7 @@ TEST_F(azihsm_aes_gcm, streaming_decrypt_finish_size_query_returns_plaintext_siz
     part_list_.for_each_session([](azihsm_handle session) {
         auto key = generate_aes_gcm_key(session, 256);
 
-        uint8_t iv[12] = { 0x62, 0x72, 0x82, 0x92, 0xA2, 0xB2,
-                           0xC2, 0xD2, 0xE2, 0xF2, 0x12, 0x22 };
+        uint8_t iv[12] = { 0x62, 0x72, 0x82, 0x92, 0xA2, 0xB2, 0xC2, 0xD2, 0xE2, 0xF2, 0x12, 0x22 };
 
         std::vector<uint8_t> plaintext = make_incrementing_bytes(73);
         std::vector<uint8_t> aad = { 0x01, 0x03, 0x05, 0x07, 0x09 };
@@ -3939,10 +3937,7 @@ TEST_F(azihsm_aes_gcm, streaming_decrypt_finish_size_query_returns_plaintext_siz
         auto err = azihsm_crypt_decrypt_init(&dec_algo, key.get(), dec_ctx.get_ptr());
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
 
-        azihsm_buffer cipher_input{
-            ciphertext.data(),
-            static_cast<uint32_t>(ciphertext.size())
-        };
+        azihsm_buffer cipher_input{ ciphertext.data(), static_cast<uint32_t>(ciphertext.size()) };
 
         // For AES-GCM streaming decrypt, update accepts the ciphertext but does
         // not emit plaintext until finish verifies the authentication tag.
@@ -3959,10 +3954,7 @@ TEST_F(azihsm_aes_gcm, streaming_decrypt_finish_size_query_returns_plaintext_siz
         ASSERT_EQ(finish_query_output.len, plaintext.size());
 
         std::vector<uint8_t> decrypted(finish_query_output.len);
-        azihsm_buffer finish_output{
-            decrypted.data(),
-            static_cast<uint32_t>(decrypted.size())
-        };
+        azihsm_buffer finish_output{ decrypted.data(), static_cast<uint32_t>(decrypted.size()) };
 
         err = azihsm_crypt_decrypt_finish(dec_ctx, &finish_output);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
@@ -4042,8 +4034,7 @@ TEST_F(azihsm_aes_gcm, single_shot_encrypt_streaming_decrypt_roundtrip)
     part_list_.for_each_session([](azihsm_handle session) {
         auto key = generate_aes_gcm_key(session, 256);
 
-        uint8_t iv[12] = { 0x13, 0x23, 0x33, 0x43, 0x53, 0x63,
-                           0x73, 0x83, 0x93, 0xA3, 0xB3, 0xC3 };
+        uint8_t iv[12] = { 0x13, 0x23, 0x33, 0x43, 0x53, 0x63, 0x73, 0x83, 0x93, 0xA3, 0xB3, 0xC3 };
 
         std::vector<uint8_t> plaintext = make_incrementing_bytes(257);
         std::vector<uint8_t> aad = { 0x10, 0x20, 0x30, 0x40, 0x50 };
@@ -4098,4 +4089,3 @@ TEST_F(azihsm_aes_gcm, single_shot_encrypt_streaming_decrypt_roundtrip)
         ASSERT_EQ(std::memcmp(decrypted.data(), plaintext.data(), plaintext.size()), 0);
     });
 }
-
