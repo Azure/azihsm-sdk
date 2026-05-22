@@ -747,19 +747,19 @@ struct azihsm_pota_callback_ops {
 | ------------------ | ---------------- | ---------------------------------------------------------------------------------- |
 | endorse            | function pointer | Sign the device's PID public key for POTA endorsement. The SDK retrieves the PID public key and certificate chain from the device and passes them via `pid_pub_key_der` and `pid_cert_chain_pem` respectively. `pota_pub_key_der` is the caller's original endorsement public key, passed for identification. `pid_cert_chain_pem` contains the PEM-encoded PID certificate chain. Uses two-call buffer pattern for `signature` and `endorsement_pub_key` outputs. |
 
-### azihsm_obk_callback_ops
+### azihsm_mobk_callback_ops
 
-OBK (Owner Backup Key) provider callback for resiliency.
+MOBK (Masked Owner Backup Key) provider callback for resiliency.
 
 ```cpp
-struct azihsm_obk_callback_ops {
-    azihsm_status (*get_obk)(void *ctx, azihsm_buffer *obk);
+struct azihsm_mobk_callback_ops {
+    azihsm_status (*get_mobk)(void *ctx, azihsm_buffer *mobk);
 };
 ```
 
-| Field   | Type             | Description                                                                                                      |
-| ------- | ---------------- | ---------------------------------------------------------------------------------------------------------------- |
-| get_obk | function pointer | Return the caller's OBK (48-byte raw key material). Uses the two-call buffer pattern: first call with `obk->ptr == NULL` returns the required size in `obk->len` and `AZIHSM_STATUS_BUFFER_TOO_SMALL`; second call fills the buffer. Called during resiliency restore to re-provision the OBK without the SDK caching the plaintext key material. |
+| Field    | Type             | Description                                                                                                      |
+| -------- | ---------------- | ---------------------------------------------------------------------------------------------------------------- |
+| get_mobk | function pointer | Return the caller's MOBK. Uses the two-call buffer pattern for `mobk`: first call with `mobk->ptr == NULL` returns the required size in `mobk->len` and `AZIHSM_STATUS_BUFFER_TOO_SMALL`; second call fills the buffer. Called during resiliency restore so the SDK can retrieve the MOBK without caching the key material. |
 
 ### azihsm_resiliency_config
 
@@ -771,7 +771,7 @@ struct azihsm_resiliency_config {
     azihsm_resiliency_storage_ops storage_ops;
     azihsm_resiliency_lock_ops lock_ops;
     const azihsm_pota_callback_ops *pota_callback_ops;
-    const azihsm_obk_callback_ops *obk_callback_ops;
+    const azihsm_mobk_callback_ops *mobk_callback_ops;
 };
 ```
 
@@ -781,7 +781,7 @@ struct azihsm_resiliency_config {
 | storage_ops        | [azihsm_resiliency_storage_ops](#azihsm_resiliency_storage_ops)   | Storage callbacks (required).                                                                 |
 | lock_ops           | [azihsm_resiliency_lock_ops](#azihsm_resiliency_lock_ops)         | Lock callbacks (required).                                                                    |
 | pota_callback_ops  | [azihsm_pota_callback_ops *](#azihsm_pota_callback_ops)           | POTA callback (NULL when POTA source is TPM; required when source is Caller).                 |
-| obk_callback_ops   | [azihsm_obk_callback_ops *](#azihsm_obk_callback_ops)             | OBK callback (NULL when OBK source is TPM; required when source is Caller).                   |
+| mobk_callback_ops  | [azihsm_mobk_callback_ops *](#azihsm_mobk_callback_ops)           | MOBK callback (NULL when OBK source is TPM; required when source is Caller).                  |
 
 All callbacks must be thread-safe — they may be called concurrently from multiple threads.
 

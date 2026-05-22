@@ -471,6 +471,7 @@ static OSSL_STATUS parse_provider_config(
     char *bmk_path = NULL;
     char *muk_path = NULL;
     char *obk_path = NULL;
+    char *mobk_path = NULL;
     char *obk_source = NULL;
     char *pota_source = NULL;
     char *pota_private_key_path = NULL;
@@ -481,6 +482,7 @@ static OSSL_STATUS parse_provider_config(
     snprintf(config->bmk_path, sizeof(config->bmk_path), "%s", AZIHSM_DEFAULT_BMK_PATH);
     snprintf(config->muk_path, sizeof(config->muk_path), "%s", AZIHSM_DEFAULT_MUK_PATH);
     snprintf(config->obk_path, sizeof(config->obk_path), "%s", AZIHSM_DEFAULT_OBK_PATH);
+    snprintf(config->mobk_path, sizeof(config->mobk_path), "%s", AZIHSM_DEFAULT_MOBK_PATH);
     snprintf(
         config->pota_private_key_path,
         sizeof(config->pota_private_key_path),
@@ -544,6 +546,7 @@ static OSSL_STATUS parse_provider_config(
         OSSL_PARAM_utf8_ptr(AZIHSM_CFG_BMK_PATH, &bmk_path, 0),
         OSSL_PARAM_utf8_ptr(AZIHSM_CFG_MUK_PATH, &muk_path, 0),
         OSSL_PARAM_utf8_ptr(AZIHSM_CFG_OBK_PATH, &obk_path, 0),
+        OSSL_PARAM_utf8_ptr(AZIHSM_CFG_MOBK_PATH, &mobk_path, 0),
         OSSL_PARAM_utf8_ptr(AZIHSM_CFG_OBK_SOURCE, &obk_source, 0),
         OSSL_PARAM_utf8_ptr(AZIHSM_CFG_POTA_SOURCE, &pota_source, 0),
         OSSL_PARAM_utf8_ptr(AZIHSM_CFG_POTA_PRIVATE_KEY_PATH, &pota_private_key_path, 0),
@@ -569,6 +572,10 @@ static OSSL_STATUS parse_provider_config(
     if (obk_path != NULL)
     {
         snprintf(config->obk_path, sizeof(config->obk_path), "%s", strip_file_prefix(obk_path));
+    }
+    if (mobk_path != NULL)
+    {
+        snprintf(config->mobk_path, sizeof(config->mobk_path), "%s", strip_file_prefix(mobk_path));
     }
     if (pota_private_key_path != NULL)
     {
@@ -617,6 +624,16 @@ static OSSL_STATUS parse_provider_config(
             PROV_R_INVALID_CONFIG_DATA,
             "unsafe OBK path '%s'",
             config->obk_path
+        );
+        return OSSL_FAILURE;
+    }
+    if (!azihsm_path_is_safe(config->mobk_path))
+    {
+        ERR_raise_data(
+            ERR_LIB_PROV,
+            PROV_R_INVALID_CONFIG_DATA,
+            "unsafe MOBK path '%s'",
+            config->mobk_path
         );
         return OSSL_FAILURE;
     }

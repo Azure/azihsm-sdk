@@ -286,6 +286,7 @@ activate = 1
 azihsm-bmk-path = {dir}/bmk.bin
 azihsm-muk-path = {dir}/muk.bin
 azihsm-obk-path = {dir}/obk.bin
+azihsm-mobk-path = {dir}/mobk.bin
 azihsm-obk-source = caller
 azihsm-pota-source = caller
 azihsm-pota-private-key-path = {dir}/pota_private_key.der

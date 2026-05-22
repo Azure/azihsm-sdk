@@ -67,7 +67,7 @@ struct azihsm_resiliency_ctx
     int lock_fd;                               /* Held fd during lock (-1 when unlocked) */
     CRYPTO_RWLOCK *lock_fd_lock;               /* Protects lock_fd from concurrent access */
     struct azihsm_pota_callback_ops pota_ops;  /* POTA ops owned by ctx */
-    struct azihsm_obk_callback_ops obk_ops;    /* OBK ops owned by ctx */
+    struct azihsm_mobk_callback_ops mobk_ops;  /* MOBK ops owned by ctx */
 };
 
 /* ------------------------------------------------------------------ */
@@ -604,7 +604,7 @@ static azihsm_status resiliency_pota_endorse(
  *     and AZIHSM_STATUS_BUFFER_TOO_SMALL.
  *   - Second call (obk->ptr allocated): reads the OBK file into the buffer.
  */
-static azihsm_status resiliency_get_obk(void *ctx_ptr, struct azihsm_buffer *obk)
+static azihsm_status resiliency_get_mobk(void *ctx_ptr, struct azihsm_buffer *obk)
 {
     struct azihsm_resiliency_ctx *ctx = (struct azihsm_resiliency_ctx *)ctx_ptr;
     struct azihsm_buffer file_buf = { NULL, 0 };
@@ -799,7 +799,7 @@ azihsm_status azihsm_resiliency_create(
     // Wire up OBK callback ops only for Caller source (not TPM)
     if (!use_tpm_obk)
     {
-        ctx->obk_ops.get_obk = resiliency_get_obk;
+        ctx->mobk_ops.get_mobk = resiliency_get_mobk;
     }
 
     // Populate the output config struct
@@ -811,7 +811,7 @@ azihsm_status azihsm_resiliency_create(
     out_config->lock_ops.lock = resiliency_lock;
     out_config->lock_ops.unlock = resiliency_unlock;
     out_config->pota_callback_ops = use_tpm_pota ? NULL : &ctx->pota_ops;
-    out_config->obk_callback_ops = use_tpm_obk ? NULL : &ctx->obk_ops;
+    out_config->mobk_callback_ops = use_tpm_obk ? NULL : &ctx->mobk_ops;
 
     *out_ctx = ctx;
     return AZIHSM_STATUS_SUCCESS;

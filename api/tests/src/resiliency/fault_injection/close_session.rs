@@ -152,15 +152,13 @@ fn test_close_session_does_not_panic_after_reset() {
     let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
     let (obk_info, pota_endorsement) = make_init_params(&part);
     let (resiliency_config, _ctx2) = make_resiliency_config();
-    part.init(
+    init_with_mobk_fallback(
+        &part,
         creds,
-        None,
-        None,
         obk_info,
         pota_endorsement,
         Some(resiliency_config),
-    )
-    .expect("Partition re-init after reset should succeed");
+    );
 
     let rev = part.api_rev();
     let result = part.open_session(rev, &creds, None);

@@ -903,15 +903,7 @@ TEST(azihsm_part, init_with_resiliency_config)
         azihsm_resiliency_config resiliency_config{};
         auto resiliency_ctx = make_resiliency_config(resiliency_config);
 
-        err = azihsm_part_init(
-            part_handle,
-            &creds,
-            nullptr,
-            nullptr,
-            &init_config.backup_config,
-            &init_config.pota_endorsement,
-            &resiliency_config
-        );
+        err = part_init_with_mobk_fallback(part_handle, &creds, init_config, &resiliency_config);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
     });
 }
@@ -1039,7 +1031,7 @@ TEST(azihsm_part, init_with_resiliency_tpm_pota_with_callback_fails)
         // TPM + callback is rejected as InvalidArgument.
         init_config.pota_endorsement.source = AZIHSM_POTA_ENDORSEMENT_SOURCE_TPM;
         init_config.pota_endorsement.endorsement = nullptr;
-        // Use TPM OBK so obk_callback_ops=null is valid; we're testing
+        // Use TPM OBK so mobk_callback_ops=null is valid; we're testing
         // that TPM POTA + pota_callback is rejected.
         init_config.backup_config.source = AZIHSM_OWNER_BACKUP_KEY_SOURCE_TPM;
         init_config.backup_config.owner_backup_key = nullptr;
@@ -1048,8 +1040,8 @@ TEST(azihsm_part, init_with_resiliency_tpm_pota_with_callback_fails)
         auto resiliency_ctx = make_resiliency_config(resiliency_config);
         // Force pota_callback_ops non-null so the TPM + callback mismatch triggers.
         resiliency_config.pota_callback_ops = get_pota_callback_ops();
-        // Ensure obk_callback_ops matches OBK source (TPM → null).
-        resiliency_config.obk_callback_ops = nullptr;
+        // Ensure mobk_callback_ops matches OBK source (TPM → null).
+        resiliency_config.mobk_callback_ops = nullptr;
 
         err = azihsm_part_init(
             part_handle,
