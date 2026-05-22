@@ -7,7 +7,6 @@
 //! Xtask to run various repo-specific checks
 
 use clap::Parser;
-use xshell::Shell;
 
 use crate::audit::Audit;
 use crate::clippy::Clippy;
@@ -95,13 +94,16 @@ pub struct Precheck {
     /// The nextest profile to use
     #[clap(long)]
     profile: Option<String>,
+    /// Pass through to `cargo install --config`; accepts either `KEY=VALUE`
+    /// or a path to a Cargo `config.toml` file.
+    /// Only used for --setup ignored otherwise.
+    #[clap(long)]
+    pub config: Option<String>,
 }
 
 impl Xtask for Precheck {
     fn run(self, ctx: XtaskCtx) -> anyhow::Result<()> {
         log::trace!("running precheck");
-
-        let sh = Shell::new()?;
 
         // if no specific stages are requested, run all stages except code coverage, nextest report and coverage report
         let stage = self.stage.unwrap_or(Stage {
@@ -119,21 +121,9 @@ impl Xtask for Precheck {
         });
 
         if stage.setup || stage.all {
-            // first try path of .cargo inside current directory
-            let mut config_path = ".cargo".to_string();
-            if !sh.path_exists(&config_path) {
-                // next try path of .cargo inside parent directory
-                config_path = "../.cargo".to_string();
-                if !sh.path_exists(&config_path) {
-                    anyhow::bail!("Could not find .cargo directory at {}", config_path);
-                }
-            }
-
-            config_path.push_str("/config.toml");
-
             Setup {
                 force: false,
-                config: Some(config_path),
+                config: self.config,
                 skip_taplo: self.skip_taplo,
                 skip_audit: self.skip_audit,
                 skip_openssl: self.skip_openssl,
