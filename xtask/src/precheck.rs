@@ -148,7 +148,11 @@ impl Xtask for Precheck {
 
         // Run ValidateMembers
         if stage.validate_members || stage.all {
-            ValidateMembers { fix: false, skip_taplo: self.skip_taplo }.run(ctx.clone())?;
+            ValidateMembers {
+                fix: false,
+                skip_taplo: self.skip_taplo,
+            }
+            .run(ctx.clone())?;
         }
 
         // Run Audit
