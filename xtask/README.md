@@ -117,9 +117,11 @@ cargo xtask integration-tests
 cargo xtask integration-tests --openssl-version 3.5.0
 ```
 
-When `OPENSSL_DIR` is set, the `--openssl-version` flag is ignored and the
-existing installation is used as-is. See `plugins/ossl_prov/README.md` for
-environment variable details.
+When `OPENSSL_DIR` is set, the OpenSSL install step is skipped and the
+existing installation at that path is used as-is.  `--openssl-version`
+still selects the ABI target tree (`target/ossl-abi-<major>-<minor>/`) so
+provider artifacts stay correctly isolated per ABI version.  See
+`plugins/ossl_prov/README.md` for environment variable details.
 
 ## Command Details
 

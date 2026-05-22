@@ -49,10 +49,24 @@ impl Xtask for Coverage {
             std::fs::create_dir_all(&reports_dir)?;
         }
 
-        // Find path to azihsm_api_native object file
-        let build_dir = ctx
-            .root
-            .join("target")
+        // Find path to azihsm_api_native object file.  `cargo llvm-cov` writes
+        // its instrumented build to `$CARGO_TARGET_DIR/llvm-cov-target/...`, so
+        // we must honour CARGO_TARGET_DIR here — otherwise, with the ABI-
+        // versioned target tree (e.g. CARGO_TARGET_DIR=target/ossl-abi-3-0),
+        // the CMake/Corrosion output gets silently dropped from the coverage
+        // report.
+        let target_root = match std::env::var("CARGO_TARGET_DIR") {
+            Ok(t) if !t.is_empty() => {
+                let p = std::path::PathBuf::from(t);
+                if p.is_relative() {
+                    ctx.root.join(p)
+                } else {
+                    p
+                }
+            }
+            _ => ctx.root.join("target"),
+        };
+        let build_dir = target_root
             .join("llvm-cov-target")
             .join("debug")
             .join("build");
