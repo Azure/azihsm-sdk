@@ -120,61 +120,102 @@ impl HsmCredentials {
     }
 }
 
-/// Owner backup key config (OBK/BK3) containing source and optional OBK.
-#[derive(Debug, Clone)]
+/// Owner backup key material.
+///
+/// Carries either the plaintext OBK (used on the first partition
+/// init, before `init_bk3` has been consumed) or the previously
+/// derived MOBK (used on every subsequent init, since `init_bk3`
+/// is one-shot per device power cycle).
+#[derive(Clone, Default)]
+pub struct HsmOwnerBackupKey {
+    obk: Option<Vec<u8>>,
+    mobk: Option<Vec<u8>>,
+}
+
+impl HsmOwnerBackupKey {
+    /// Construct from a plaintext OBK supplied by the caller.
+    pub fn from_obk(obk: &[u8]) -> Self {
+        Self {
+            obk: Some(obk.to_vec()),
+            mobk: None,
+        }
+    }
+
+    /// Construct from a previously derived MOBK (typically obtained
+    /// from [`HsmPartition::mobk_vec`] after the first init).
+    pub fn from_masked_key(mobk: &[u8]) -> Self {
+        Self {
+            obk: None,
+            mobk: Some(mobk.to_vec()),
+        }
+    }
+
+    /// Returns the plaintext OBK, if present.
+    pub fn obk(&self) -> Option<&[u8]> {
+        self.obk.as_deref()
+    }
+
+    /// Returns the masked owner backup key (MOBK), if present.
+    pub fn masked_key(&self) -> Option<&[u8]> {
+        self.mobk.as_deref()
+    }
+}
+
+impl Drop for HsmOwnerBackupKey {
+    fn drop(&mut self) {
+        if let Some(ref mut k) = self.obk {
+            k.fill(0);
+        }
+        if let Some(ref mut k) = self.mobk {
+            k.fill(0);
+        }
+    }
+}
+
+/// Owner backup key config (OBK/BK3) containing source and optional key material.
+#[derive(Clone)]
 pub struct HsmOwnerBackupKeyConfig {
     /// Source of the OBK
     key_source: HsmOwnerBackupKeySource,
 
-    /// Optional OBK. Required (and must be non-empty) when source is
-    /// `Caller`; must be `None` when source is `Tpm` (the device
-    /// provides sealed BK3, which is unsealed via the host TPM path).
-    /// Any other combination is rejected with [`HsmError::InvalidArgument`].
-    key: Option<Vec<u8>>,
+    /// Key material (OBK and/or MOBK). Required (non-empty) when
+    /// source is `Caller`; must be empty when source is `Tpm` (the
+    /// device provides sealed BK3, which is unsealed via the host
+    /// TPM path). Any other combination is rejected with
+    /// [`HsmError::InvalidArgument`].
+    key: HsmOwnerBackupKey,
 }
 
 impl HsmOwnerBackupKeyConfig {
-    /// Creates a new owner backup key config instance.
+    /// Creates a new owner backup key config.
     ///
     /// # Arguments
     ///
     /// * `source` - Source of the OBK
-    /// * `obk` - OBK data provided by the caller
-    ///
-    /// # Returns
-    ///
-    /// A new `HsmOwnerBackupKeyConfig` instance with the specified source and optional key.
-    pub fn new(source: HsmOwnerBackupKeySource, obk: Option<&[u8]>) -> Self {
+    /// * `key` - Key material. For `Caller` source, supply either OBK
+    ///   (first init) via [`HsmOwnerBackupKey::from_obk`] or MOBK
+    ///   (subsequent inits) via [`HsmOwnerBackupKey::from_masked_key`].
+    ///   For `Tpm` source, pass [`HsmOwnerBackupKey::default`] (empty).
+    pub fn new(source: HsmOwnerBackupKeySource, key: HsmOwnerBackupKey) -> Self {
         Self {
             key_source: source,
-            key: obk.map(|b| b.to_vec()),
+            key,
         }
     }
 
     /// Returns the owner backup key source.
-    ///
-    /// # Returns
-    ///
-    /// The source of the owner backup key.
     pub fn key_source(&self) -> HsmOwnerBackupKeySource {
         self.key_source
     }
 
-    /// Returns the owner backup key.
-    ///
-    /// # Returns
-    ///
-    /// Optional reference to the OBK.
+    /// Returns the plaintext OBK, if present.
     pub fn key(&self) -> Option<&[u8]> {
-        self.key.as_deref()
+        self.key.obk()
     }
-}
 
-impl Drop for HsmOwnerBackupKeyConfig {
-    fn drop(&mut self) {
-        if let Some(ref mut k) = self.key {
-            k.fill(0);
-        }
+    /// Returns the masked owner backup key (MOBK), if present.
+    pub fn masked_key(&self) -> Option<&[u8]> {
+        self.key.masked_key()
     }
 }
 
@@ -537,18 +578,22 @@ impl HsmPartition {
     /// 4. Read BMK and MUK from resiliency storage (the cross-process
     ///    source of truth) rather than from in-memory state.
     /// 5. Re-establish credentials via `ddi::init_part_raw_no_res` — the
-    ///    bare DDI call without the retry macro.  `resiliency_config`
+    ///    bare DDI call without the retry macro. `resiliency_config`
     ///    is passed so that `init_part_raw_no_res` can re-endorse POTA
-    ///    (via callback) when the source is `Caller`.  Explicit BMK
+    ///    (via callback) when the source is `Caller`. Explicit BMK
     ///    and MUK from storage are forwarded so that
     ///    `resolve_cached_bmk/muk` inside `init_part_raw_no_res` use them
-    ///    as-is.
-    /// 6. On success, persist the new BMK, cache the updated POTA
-    ///    endorsement, and bump the epoch so stale keys/sessions
-    ///    refresh.  If `init_part_raw_no_res` returns a "credentials
-    ///    already established" error, read the epoch from storage
-    ///    and adopt it if another process advanced it; otherwise
-    ///    our epoch is already current.
+    ///    as-is. A fresh `cached_mobk = None` slot is passed because
+    ///    this is a single-attempt call (no retry macro), so the
+    ///    cross-call MOBK cache is unused here; the MOBK is instead
+    ///    pre-loaded into the `obk_config` from `inner.mobk()` to
+    ///    avoid re-running `init_bk3`.
+    /// 6. On success, persist the new BMK and MOBK on the partition,
+    ///    cache the updated POTA endorsement, and bump the epoch so
+    ///    stale keys/sessions refresh. If `init_part_raw_no_res`
+    ///    returns a "credentials already established" error, read the
+    ///    epoch from storage and adopt it if another process advanced
+    ///    it; otherwise our epoch is already current.
     ///    On any other failure, return the error without bumping
     ///    the epoch; the outer retry loop will call us again.
     #[instrument(skip_all)]
@@ -590,30 +635,44 @@ impl HsmPartition {
             )?;
 
             // Build the OBK config for this restore attempt.
-            // When source is Caller, invoke the obk_callback to get the
-            // plaintext OBK on demand.
+            // Prefer the cached MOBK (derived during the first init):
+            // `init_bk3` is one-shot per device power cycle, so on
+            // restore we must reuse the MOBK rather than re-deriving
+            // it. Fall back to the OBK callback only when MOBK is not
+            // yet cached (should not happen in practice — init must
+            // have run before restore).
             let obk_config = match rs.cached_obk_source {
                 HsmOwnerBackupKeySource::Caller => {
-                    let mut obk = rs
-                        .config
-                        .obk_callback
-                        .as_ref()
-                        .ok_or(HsmError::InternalError)?
-                        .get_obk()?;
-                    let config =
-                        HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Caller, Some(&obk));
-                    obk.fill(0);
-                    config
+                    let cached_mobk = inner.mobk();
+                    let key = if !cached_mobk.is_empty() {
+                        HsmOwnerBackupKey::from_masked_key(cached_mobk)
+                    } else {
+                        let mut mobk = rs
+                            .config
+                            .mobk_callback
+                            .as_ref()
+                            .ok_or(HsmError::InternalError)?
+                            .get_mobk()?;
+                        let key = HsmOwnerBackupKey::from_masked_key(&mobk);
+                        mobk.fill(0);
+                        key
+                    };
+                    HsmOwnerBackupKeyConfig::new(HsmOwnerBackupKeySource::Caller, key)
                 }
-                source => HsmOwnerBackupKeyConfig::new(source, None),
+                source => HsmOwnerBackupKeyConfig::new(source, HsmOwnerBackupKey::default()),
             };
 
             // Single-attempt init_part_raw_no_res — bypasses the retry macro.
+            // No prior MOBK cache (this is a fresh restore call), so
+            // `cached_mobk` starts as `None` and `init_part_raw_no_res`
+            // derives it from `obk_config`. The result is also returned
+            // in `InitPartResult.mobk` for downstream caching.
             // resiliency_config is passed so init_part_raw_no_res can re-endorse
-            // POTA internally when the source is Caller.  Explicit
+            // POTA internally when the source is Caller. Explicit
             // bmk/muk from storage are forwarded so that
             // resolve_cached_bmk/muk inside init_part_raw_no_res use them as-is.
             // BMK persistence is handled manually after the call.
+            let mut cached_mobk: Option<Vec<u8>> = None;
             ddi::init_part_raw_no_res(
                 inner.dev(),
                 inner.api_rev(),
@@ -621,6 +680,7 @@ impl HsmPartition {
                 bmk_from_storage.as_deref(),
                 muk_from_storage.as_deref(),
                 &obk_config,
+                &mut cached_mobk,
                 &rs.cached_pota_endorsement,
                 Some(&rs.config),
                 true, // let init_part_raw_no_res re-endorse POTA
@@ -1092,10 +1152,37 @@ impl HsmPartitionInner {
         self.mobk = mobk;
     }
 
-    /// Clears the cached masked keys after partition reset.
+    /// Sets the backup masking key (BMK).
+    ///
+    /// Updates the internal state with the provided key material.
+    ///
+    /// # Arguments
+    ///
+    /// * `bmk` - Backup masking key bytes
+    pub(crate) fn set_bmk(&mut self, bmk: Vec<u8>) {
+        self.bmk = bmk;
+    }
+
+    /// Sets the masked owner backup key (MOBK).
+    ///
+    /// Updates the internal state with the provided key material.
+    ///
+    /// # Arguments
+    ///
+    /// * `mobk` - Masked owner backup key bytes
+    pub(crate) fn set_mobk(&mut self, mobk: Vec<u8>) {
+        self.mobk = mobk;
+    }
+
+    /// Clears the cached BMK after partition reset.
+    ///
+    /// MOBK is intentionally preserved: the device's BK3 (which masks
+    /// the OBK to produce MOBK) is one-shot per power cycle and is
+    /// preserved across NSSR. The cached MOBK therefore remains valid
+    /// across reset and must be reused on restore — re-deriving it
+    /// would require calling `init_bk3` again, which the device rejects.
     pub(crate) fn clear_masked_keys(&mut self) {
         self.bmk.clear();
-        self.mobk.clear();
     }
 
     /// Resets the partition and clears cached masked keys.
@@ -1136,6 +1223,12 @@ impl HsmPartitionInner {
         pota_endorsement: HsmPotaEndorsement,
         resiliency_config: Option<HsmResiliencyConfig>,
     ) -> HsmResult<()> {
+        // Retry-safe MOBK cache. Declared here (outside the
+        // `#[resiliency_init_part]` retry loop inside `init_part`) so
+        // that the first successful `init_bk3` derivation is reused
+        // on every subsequent retry attempt; `init_bk3` is one-shot
+        // per device power cycle.
+        let mut cached_mobk: Option<Vec<u8>> = None;
         let result = ddi::init_part(
             &self.dev,
             self.api_rev,
@@ -1143,24 +1236,24 @@ impl HsmPartitionInner {
             bmk,
             muk,
             &obk_config,
+            &mut cached_mobk,
             &pota_endorsement,
             resiliency_config.as_ref(),
         );
 
-        // Resolve the BMK, MOBK, and POTA endorsement to cache.
+        // Resolve the BMK and POTA endorsement to cache.
         //
         // On success: use the values returned by the device.
         //
         // On "credentials already established" (another thread or
         // process already initialized this partition): read the BMK
-        // from resiliency storage (persisted by the successful init),
-        // use empty MOBK (not returned by the device in this case),
+        // from resiliency storage (persisted by the successful init)
         // and keep the caller's original POTA endorsement (the
         // callback will re-sign on the next restore anyway).
         //
         // On any other error: propagate immediately.
-        let (init_bmk, init_mobk, committed_pota) = match result {
-            // Init success - cache the BMK, MOBK, and POTA endorsement returned by the device.
+        let (init_bmk, committed_pota) = match result {
+            // Init success - cache the BMK and POTA endorsement returned by the device.
             // Only cache endorsement bytes for the Caller source. For
             // the Tpm source, the endorsement is freshly signed by the
             // TPM on each init and must not be passed back to the SDK
@@ -1170,9 +1263,13 @@ impl HsmPartitionInner {
                     HsmPotaEndorsementSource::Caller => Some(result.pota_endorsement_data),
                     _ => None,
                 };
+
+                //cache the mobk returned by the device
+                self.set_mobk(result.mobk);
+
+                // Return the BMK and the POTA endorsement to cache.
                 (
                     result.bmk,
-                    result.mobk,
                     HsmPotaEndorsement::new(pota_endorsement.source(), cached_endorsement),
                 )
             }
@@ -1183,13 +1280,14 @@ impl HsmPartitionInner {
                     .map(Self::read_bmk_from_storage)
                     .transpose()?
                     .unwrap_or_default();
-                (bmk, Vec::new(), pota_endorsement)
+                (bmk, pota_endorsement)
             }
             // Any other error is propagated to the caller.
             Err(err) => return Err(err),
         };
 
-        self.set_masked_keys(init_bmk, init_mobk);
+        //cache the bmk returned by the device
+        self.set_bmk(init_bmk);
 
         if let Some(config) = resiliency_config {
             let resiliency_state =
