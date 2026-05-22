@@ -53,7 +53,7 @@ impl Xtask for IntegrationTest {
             let mut tests = Vec::new();
 
             // define test parameters
-            for package in vec![
+            for package in [
                 "provider-integration-tests-cli",
                 "provider-integration-tests-capi",
                 "provider-integration-tests-nginx",
