@@ -26,6 +26,10 @@ pub struct ValidateMembers {
     /// Attempt to fix any missing workspace members
     #[clap(long)]
     pub fix: bool,
+
+    /// Skip taplo (TOML formatting)
+    #[clap(long)]
+    pub skip_taplo: bool,
 }
 
 impl Xtask for ValidateMembers {
@@ -82,8 +86,10 @@ impl Xtask for ValidateMembers {
                 fs::write("Cargo.toml", doc.to_string())?;
 
                 // Format the modified Cargo.toml with taplo
-                let sh = xshell::Shell::new()?;
-                cmd!(sh, "taplo fmt Cargo.toml").run()?;
+                if !self.skip_taplo {
+                    let sh = xshell::Shell::new()?;
+                    cmd!(sh, "taplo fmt Cargo.toml").run()?;
+                }
             }
         } else if !non_member_paths.is_empty() {
             // Error
