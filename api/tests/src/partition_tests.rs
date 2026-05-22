@@ -766,6 +766,12 @@ fn test_init_with_resiliency_tpm_obk_with_callback_fails() {
 
 #[api_test]
 fn test_init_with_resiliency_caller_obk_without_callback_fails() {
+    // This test verifies that when using Caller OBK, validation fails if mobk_callback is not provided,
+    // should be skipped for TPM since Caller OBK is not applicable and mobk_callback is allowed to be None in that case.
+    if use_tpm() {
+        return;
+    }
+
     let part_mgr = HsmPartitionManager::partition_info_list();
     assert!(!part_mgr.is_empty(), "No partitions found.");
     for part_info in part_mgr.iter() {
