@@ -5,11 +5,13 @@ fn main() {
     println!("cargo:rerun-if-env-changed=CARGO_TARGET_DIR");
     println!("cargo:rerun-if-env-changed=RUSTC_WORKSPACE_WRAPPER");
 
-    // Skip the CMake/Corrosion build when running under clippy/check.
-    // They only need to type-check Rust source — they don't link, so the
-    // C++ test binary isn't needed.  Building it via Corrosion would
-    // recompile the FFI crate + transitive deps into a separate target
-    // dir, doubling lint-job time on slow runners.
+    // Skip the CMake/Corrosion build when running under clippy.  Clippy
+    // only needs to type-check Rust source — it doesn't link, so the C++
+    // test binary isn't needed.  Building it via Corrosion would recompile
+    // the FFI crate + transitive deps into a separate target dir, doubling
+    // lint-job time on slow runners.  Detection relies on
+    // RUSTC_WORKSPACE_WRAPPER which cargo sets to clippy-driver; bare
+    // `cargo check` is not detected.
     let is_clippy = std::env::var("RUSTC_WORKSPACE_WRAPPER")
         .map(|w| w.contains("clippy"))
         .unwrap_or(false);

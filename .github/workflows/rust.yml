@@ -214,7 +214,7 @@ jobs:
     - name: Run C API integration tests
       env:
         OPENSSL_DIR: ${{ github.workspace }}/${{ env.OPENSSL_INSTALL }}
-        OPENSSL_LIB: ${{ github.workspace }}/${{ env.OPENSSL_INSTALL }}/lib
+        OPENSSL_LIB: ${{ github.workspace }}/${{ env.OPENSSL_INSTALL }}/lib:${{ env.CARGO_TARGET_DIR }}/debug
         AZIHSM_CREDENTIALS_ID: "70fcf730b8764238b8358010ce8a3f76"
         AZIHSM_CREDENTIALS_PIN: "db3dc77fc22e430080d41b31b6f04800"
       run: cargo xtask precheck --nextest --package provider-integration-tests-capi --features integration --profile ci-provider-integration
@@ -237,7 +237,7 @@ jobs:
     - name: NGINX integration tests
       env:
         OPENSSL_BIN: ${{ github.workspace }}/${{ env.OPENSSL_INSTALL }}/bin/openssl
-        OPENSSL_LIB: ${{ github.workspace }}/${{ env.OPENSSL_INSTALL }}/lib
+        OPENSSL_LIB: ${{ github.workspace }}/${{ env.OPENSSL_INSTALL }}/lib:${{ env.CARGO_TARGET_DIR }}/debug
         AZIHSM_CREDENTIALS_ID: "70fcf730b8764238b8358010ce8a3f76"
         AZIHSM_CREDENTIALS_PIN: "db3dc77fc22e430080d41b31b6f04800"
       run: |

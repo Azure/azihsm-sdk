@@ -50,7 +50,11 @@ pub struct Setup {
     pub skip_openssl: bool,
 
     /// OpenSSL version to install (e.g., "3.0.3", "3.5.0").
-    /// Ignored when `--skip-openssl` is set or `OPENSSL_DIR` is already populated.
+    /// Selects the ABI target tree (target/ossl-abi-<major>-<minor>/) where
+    /// OpenSSL gets installed under `openssl/`.  When `OPENSSL_DIR` is set or
+    /// `--skip-openssl` is given, the install step is skipped but the flag
+    /// still routes any later cargo invocation in this process to the
+    /// matching ABI tree.
     #[clap(long, default_value = "3.0.3")]
     pub openssl_version: String,
 }

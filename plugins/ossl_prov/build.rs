@@ -12,15 +12,20 @@ fn main() {
     println!("cargo:rerun-if-env-changed=OPENSSL_DIR");
     println!("cargo:rerun-if-env-changed=RUSTC_WORKSPACE_WRAPPER");
 
-    // Skip the heavy CMake/Corrosion build when running under `cargo clippy`
-    // or `cargo check` — they only need the Rust source to lint/check, not
-    // the linked artifacts.  Building the C provider here would compile
-    // azihsm_api_native and its full dep tree into a Corrosion-private
-    // target dir, doubling the clippy job time on slow runners.
+    // Skip the heavy CMake/Corrosion build when running under `cargo clippy`.
+    // Clippy only needs the Rust source to lint, not the linked artifacts.
+    // Building the C provider here would compile azihsm_api_native and its
+    // full dep tree into a Corrosion-private target dir, doubling the clippy
+    // job time on slow runners.
     //
     // Cargo sets RUSTC_WORKSPACE_WRAPPER to clippy-driver when running
-    // clippy.  We still validate CARGO_TARGET_DIR below so misconfigurations
-    // get surfaced even in clippy mode.
+    // clippy; we detect that as the only reliable signal.  `cargo check`
+    // alone is not detected — there's no clean env-var indicator for it —
+    // but the cost there is the same as a real build, so it's an explicit
+    // user action (no scheduled CI step uses bare `cargo check`).
+    //
+    // We still validate CARGO_TARGET_DIR below so misconfigurations get
+    // surfaced even in clippy mode.
     let is_clippy = env::var("RUSTC_WORKSPACE_WRAPPER")
         .map(|w| w.contains("clippy"))
         .unwrap_or(false);

@@ -14,8 +14,10 @@ use crate::XtaskCtx;
 #[clap(about = "Run Integration Tests")]
 pub struct IntegrationTest {
     /// OpenSSL version to use (e.g., "3.0.3", "3.5.0").
-    /// When OPENSSL_DIR is set, this flag is ignored and the
-    /// existing installation is used as-is.
+    /// Selects the ABI target tree (target/ossl-abi-<major>-<minor>/) where
+    /// artifacts are built.  When OPENSSL_DIR is set, that location overrides
+    /// the install step's path, but the flag still controls the build's
+    /// target dir, so artifacts are correctly ABI-isolated.
     #[clap(long, default_value = "3.0.3")]
     pub openssl_version: String,
 }

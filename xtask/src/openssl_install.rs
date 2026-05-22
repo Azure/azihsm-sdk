@@ -56,8 +56,12 @@ fn sha256_for(version: &str) -> anyhow::Result<&'static str> {
 pub fn abi_leaf_for(version: &str) -> anyhow::Result<String> {
     let parts: Vec<&str> = version.split('.').collect();
     anyhow::ensure!(
-        parts.len() >= 2 && parts.iter().take(2).all(|p| !p.is_empty()),
-        "Invalid OpenSSL version: {version}"
+        parts.len() >= 2
+            && parts
+                .iter()
+                .take(2)
+                .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit())),
+        "Invalid OpenSSL version {version:?}: major.minor must be numeric"
     );
     Ok(format!("ossl-abi-{}-{}", parts[0], parts[1]))
 }
@@ -140,9 +144,9 @@ pub fn check_openssl(version: &str) -> anyhow::Result<PathBuf> {
 /// `CARGO_TARGET_DIR` to match the ABI dir for the requested version.
 #[cfg(target_os = "linux")]
 pub fn ensure_openssl_version(version: &str) -> anyhow::Result<PathBuf> {
-    let expected_hash = sha256_for(version)?;
-
-    // If OPENSSL_DIR is explicitly set, honour it strictly (never fall through to build).
+    // If OPENSSL_DIR is explicitly set, honour it strictly (never fall through
+    // to build).  Do this BEFORE the sha256_for / allowlist check so users
+    // with a custom OpenSSL build aren't constrained to the install allowlist.
     if std::env::var("OPENSSL_DIR").is_ok() {
         return check_openssl(version);
     }
@@ -150,6 +154,9 @@ pub fn ensure_openssl_version(version: &str) -> anyhow::Result<PathBuf> {
     if let Ok(path) = check_openssl(version) {
         return Ok(path);
     }
+
+    // The allowlist applies only to the install path (download URL + hash).
+    let expected_hash = sha256_for(version)?;
 
     let install_dir = default_install_dir(version)?;
     let prefix = install_dir.display();

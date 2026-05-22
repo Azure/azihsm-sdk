@@ -60,10 +60,13 @@ impl Xtask for Build {
         // separate.  The provider's build.rs requires this layout.
         // On other platforms (Windows), the provider isn't built, so fall
         // back to the legacy target/xtask sub-dir to avoid self-overwrite.
+        //
+        // Use ctx.root.join(...) so the path is absolute and independent of
+        // the process CWD — matches setup.rs and integration_tests.rs.
         #[cfg(target_os = "linux")]
         let target_dir = {
             let abi_leaf = crate::openssl_install::abi_leaf_for(&self.openssl_version)?;
-            std::path::PathBuf::from("target").join(abi_leaf)
+            _ctx.root.join("target").join(abi_leaf)
         };
         #[cfg(not(target_os = "linux"))]
         let target_dir = common::target_dir()?;

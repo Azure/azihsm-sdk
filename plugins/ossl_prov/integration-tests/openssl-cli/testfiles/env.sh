@@ -51,7 +51,15 @@ if [ -z "${OPENSSL_LIB+x}" ]; then
     OPENSSL_LIB=""
 fi
 
-export LD_LIBRARY_PATH="$OPENSSL_LIB"
+# Prepend OPENSSL_LIB to any existing LD_LIBRARY_PATH so we don't drop entries
+# the caller's environment relies on.  Matches the CAPI harness behaviour.
+if [ -n "$OPENSSL_LIB" ]; then
+    if [ -n "${LD_LIBRARY_PATH:-}" ]; then
+        export LD_LIBRARY_PATH="$OPENSSL_LIB:$LD_LIBRARY_PATH"
+    else
+        export LD_LIBRARY_PATH="$OPENSSL_LIB"
+    fi
+fi
 
 # --- Version gating helpers ---
 # Generic: skip test if OpenSSL version is below the given major.minor.

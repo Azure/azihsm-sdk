@@ -79,6 +79,10 @@ pub struct Precheck {
     /// Skip OpenSSL installation during setup
     #[clap(long)]
     pub skip_openssl: bool,
+    /// OpenSSL version to use (e.g., "3.0.3", "3.5.0").  Forwarded to the
+    /// setup and integration-test sub-tasks; selects the ABI target tree.
+    #[clap(long, default_value = "3.0.3")]
+    pub openssl_version: String,
     /// Skip specifying toolchain for formatting checks
     #[clap(long)]
     skip_toolchain: bool,
@@ -127,7 +131,7 @@ impl Xtask for Precheck {
                 skip_taplo: self.skip_taplo,
                 skip_audit: self.skip_audit,
                 skip_openssl: self.skip_openssl,
-                openssl_version: "3.0.3".to_string(),
+                openssl_version: self.openssl_version.clone(),
             }
             .run(ctx.clone())?;
         }
@@ -223,8 +227,10 @@ impl Xtask for Precheck {
 
                     // OSSL Provider integration tests (CLI + C API, Linux only)
                     #[cfg(target_os = "linux")]
-                    integration_tests::IntegrationTest::parse_from::<[&str; 0], &str>([])
-                        .run(ctx.clone())?;
+                    integration_tests::IntegrationTest {
+                        openssl_version: self.openssl_version.clone(),
+                    }
+                    .run(ctx.clone())?;
                 }
             } else {
                 Nextest {

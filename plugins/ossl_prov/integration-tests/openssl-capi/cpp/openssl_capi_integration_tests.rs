@@ -105,8 +105,13 @@ mod integration {
             if !lib.is_empty() {
                 // OPENSSL_LIB may be a single dir or a `:`-separated path
                 // list (e.g., openssl/lib:target/<abi>/debug).  Verify that
-                // at least one entry exists.
-                let any_exists = lib.split(':').any(|p| PathBuf::from(p).is_dir());
+                // at least one non-empty entry exists.  Empty segments
+                // (e.g., a trailing `:`) would otherwise resolve to the
+                // current directory and silently false-positive.
+                let any_exists = lib
+                    .split(':')
+                    .filter(|p| !p.trim().is_empty())
+                    .any(|p| PathBuf::from(p).is_dir());
                 assert!(
                     any_exists,
                     "OPENSSL_LIB={lib:?} contains no existing directories"

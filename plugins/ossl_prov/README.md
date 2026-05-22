@@ -274,7 +274,7 @@ cargo nextest run -p provider-integration-tests-capi --features integration --pr
 | `CARGO_TARGET_DIR` | All | Must end in `/ossl-abi-<major>-<minor>` for the provider build.rs to accept it |
 | `OPENSSL_DIR` | CAPI build (optional) | Defaults to `$CARGO_TARGET_DIR/openssl` if unset |
 | `OPENSSL_BIN` | CLI, NGINX | Path to the `openssl` binary |
-| `OPENSSL_LIB` | CAPI, CLI | `:`-separated list including the OpenSSL lib dir and the provider's cargo `debug` dir |
+| `OPENSSL_LIB` | CAPI, CLI (override) | `:`-separated list of dirs. Optional: the CAPI harness derives the OpenSSL lib dir from `OPENSSL_DIR/{lib,lib64}` when unset. Set explicitly to include the provider's cargo `debug` dir if your tests need it on `LD_LIBRARY_PATH`. |
 | `AZIHSM_CREDENTIALS_ID` | All (optional) | Mock HSM credential ID (defaults to test value) |
 | `AZIHSM_CREDENTIALS_PIN` | All (optional) | Mock HSM credential PIN (defaults to test value) |
 
