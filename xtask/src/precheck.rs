@@ -190,17 +190,17 @@ impl Xtask for Precheck {
             if self.package.is_none() && self.features.is_none() {
                 // run default tests
                 let tests = default_tests(&self.exclude, self.profile.clone());
-                run_tests(tests, self.coverage, ctx.clone())?;
+                run_tests(tests, false, ctx.clone())?;
 
                 #[cfg(not(target_os = "windows"))]
                 {
                     // Run azihsm_ddi mock tests
                     let ddi_tests = ddi_mock_tests(&self.exclude, self.profile.clone());
-                    run_tests(ddi_tests, self.coverage, ctx.clone())?;
+                    run_tests(ddi_tests, false, ctx.clone())?;
 
                     // OSSL Provider integration tests (CLI + C API, Linux only)
                     #[cfg(target_os = "linux")]
-                    integration_tests::IntegrationTest {}.run(ctx.clone())?;
+                    integration_tests::IntegrationTest { coverage: false }.run(ctx.clone())?;
                 }
             } else {
                 Nextest {
