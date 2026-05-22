@@ -3787,16 +3787,22 @@ TEST_F(azihsm_aes_gcm, streaming_encrypt_finish_size_query_returns_plaintext_siz
     });
 }
 
-// Streaming decrypt init should reject AES-GCM params without a valid authentication tag.
-TEST_F(azihsm_aes_gcm, streaming_decrypt_init_without_tag_fails)
+// Streaming decrypt with an all-zero authentication tag should initialize,
+// but fail when finish verifies the tag.
+TEST_F(azihsm_aes_gcm, streaming_decrypt_with_zero_tag_fails_at_finish)
 {
     part_list_.for_each_session([](azihsm_handle session) {
         auto key = generate_aes_gcm_key(session, 256);
 
         uint8_t iv[12] = { 0x26, 0x36, 0x46, 0x56, 0x66, 0x76, 0x86, 0x96, 0xA6, 0xB6, 0xC6, 0xD6 };
 
+        std::vector<uint8_t> ciphertext = make_incrementing_bytes(32);
+
         azihsm_algo_aes_gcm_params gcm_params{};
         std::memcpy(gcm_params.iv, iv, sizeof(iv));
+
+        // Leave tag as all zeroes. This represents an invalid/unspecified
+        // authentication tag for the ciphertext.
         std::memset(gcm_params.tag, 0, sizeof(gcm_params.tag));
         gcm_params.aad = nullptr;
 
@@ -3805,19 +3811,24 @@ TEST_F(azihsm_aes_gcm, streaming_decrypt_init_without_tag_fails)
         crypt_algo.params = &gcm_params;
         crypt_algo.len = sizeof(gcm_params);
 
-        auto_ctx ctx;
-        auto err = azihsm_crypt_decrypt_init(&crypt_algo, key.get(), ctx.get_ptr());
+        auto_ctx dec_ctx;
+        auto err = azihsm_crypt_decrypt_init(&crypt_algo, key.get(), dec_ctx.get_ptr());
 
-        // Some implementations may allow init and fail at finish, so accept either behavior.
-        if (err == AZIHSM_STATUS_SUCCESS)
-        {
-            err = streaming_finish_status_with_sizing(CryptOperation::Decrypt, ctx);
-            ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
-        }
-        else
-        {
-            ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
-        }
+        // Init only records the decrypt parameters. Tag authentication happens
+        // when decrypt_finish is called.
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        azihsm_buffer cipher_input{ ciphertext.data(), static_cast<uint32_t>(ciphertext.size()) };
+
+        azihsm_buffer update_output{ nullptr, 0 };
+
+        err = azihsm_crypt_decrypt_update(dec_ctx, &cipher_input, &update_output);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        azihsm_buffer finish_output{ nullptr, 0 };
+
+        err = azihsm_crypt_decrypt_finish(dec_ctx, &finish_output);
+        ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
     });
 }
 
@@ -3970,7 +3981,7 @@ TEST_F(azihsm_aes_gcm, streaming_decrypt_finish_size_query_returns_plaintext_siz
 TEST_F(azihsm_aes_gcm, unwrapped_key_aad_mismatch_fails_decryption)
 {
     part_list_.for_each_session([](azihsm_handle session) {
-        with_unwrapped_aes_gcm_key(session, [&](azihsm_handle key_handle) {
+        azihsm_aes_gcm::with_unwrapped_aes_gcm_key(session, [&](azihsm_handle key_handle) {
             uint8_t iv[12] = { 0x52, 0x62, 0x72, 0x82, 0x92, 0xA2,
                                0xB2, 0xC2, 0xD2, 0xE2, 0xF2, 0x02 };
 
