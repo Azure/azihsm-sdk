@@ -101,6 +101,8 @@ pub struct Precheck {
     /// Additional paths to object files to append to LLVM_COV_FLAGS (used with --coverage-report)
     #[clap(long)]
     pub additional_obj_paths: Vec<String>,
+    #[clap(long)]
+    skip_integration: bool,
 }
 
 impl Xtask for Precheck {
@@ -200,7 +202,9 @@ impl Xtask for Precheck {
 
                     // OSSL Provider integration tests (CLI + C API, Linux only)
                     #[cfg(target_os = "linux")]
-                    integration_tests::IntegrationTest { coverage: false }.run(ctx.clone())?;
+                    if !self.skip_integration {
+                        integration_tests::IntegrationTest { coverage: false }.run(ctx.clone())?;
+                    }
                 }
             } else {
                 Nextest {
@@ -225,7 +229,9 @@ impl Xtask for Precheck {
                 // Run OSSL Provider integration tests with coverage (CLI + C API, Linux only)
                 #[cfg(target_os = "linux")]
                 {
-                    integration_tests::IntegrationTest { coverage: true }.run(ctx.clone())?;
+                    if !self.skip_integration {
+                        integration_tests::IntegrationTest { coverage: true }.run(ctx.clone())?;
+                    }
                 }
             } else {
                 Coverage {
@@ -260,7 +266,7 @@ impl Xtask for Precheck {
 }
 
 // Helper function to define default test parameters for --nextest and --coverage
-fn default_tests(exclude: &Vec<String>, profile: Option<String>) -> Vec<Nextest> {
+fn default_tests(exclude: &[String], profile: Option<String>) -> Vec<Nextest> {
     let mut tests = Vec::new();
 
     // SDK Run all mock tests
@@ -270,7 +276,7 @@ fn default_tests(exclude: &Vec<String>, profile: Option<String>) -> Vec<Nextest>
         no_default_features: false,
         filterset: None,
         profile: profile.clone().or(Some("ci-mock".to_string())),
-        exclude: exclude.clone(),
+        exclude: exclude.to_owned(),
     });
 
     // SDK Run resiliency fault-injection tests (requires res-test
@@ -282,7 +288,7 @@ fn default_tests(exclude: &Vec<String>, profile: Option<String>) -> Vec<Nextest>
             no_default_features: false,
             filterset: Some("test(resiliency::fault_injection::)".to_string()),
             profile: profile.clone().or(Some("ci-mock-res".to_string())),
-            exclude: exclude.clone(),
+            exclude: exclude.to_owned(),
         });
     }
 
@@ -290,7 +296,7 @@ fn default_tests(exclude: &Vec<String>, profile: Option<String>) -> Vec<Nextest>
 }
 
 // Helper function to define test parameters for Linux-specific azihsm_ddi mock tests
-fn ddi_mock_tests(exclude: &Vec<String>, profile: Option<String>) -> Vec<Nextest> {
+fn ddi_mock_tests(exclude: &[String], profile: Option<String>) -> Vec<Nextest> {
     let mut tests = Vec::new();
 
     if !exclude.iter().any(|e| e == "azihsm_ddi") {
@@ -301,7 +307,7 @@ fn ddi_mock_tests(exclude: &Vec<String>, profile: Option<String>) -> Vec<Nextest
             no_default_features: false,
             filterset: None,
             profile: profile.clone().or(Some("ci-mock-table-4".to_string())),
-            exclude: exclude.clone(),
+            exclude: exclude.to_owned(),
         });
 
         // SDK Run azihsm_ddi mock tests table-64
@@ -311,7 +317,7 @@ fn ddi_mock_tests(exclude: &Vec<String>, profile: Option<String>) -> Vec<Nextest
             no_default_features: false,
             filterset: None,
             profile: profile.clone().or(Some("ci-mock-table-64".to_string())),
-            exclude: exclude.clone(),
+            exclude: exclude.to_owned(),
         });
     }
 
