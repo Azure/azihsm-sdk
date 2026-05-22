@@ -69,7 +69,7 @@ cargo xtask coverage
 ### coverage-report
 
 Using coverage data created in coverage xtask, generates a cobertura XML, JSON, and HTML report in [reporoot]/target/reports. 
-Also outputs a markdown line coverage summary to stdout if run locally or GITHUB_STEP_SUMMARY if run in Github Actions.
+Also outputs a markdown line coverage summary to stdout if run locally or GITHUB_STEP_SUMMARY if run in GitHub Actions.
 
 ```bash
 # Generate code coverage reports

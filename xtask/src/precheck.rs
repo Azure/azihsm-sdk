@@ -95,12 +95,13 @@ pub struct Precheck {
     /// The nextest profile to use
     #[clap(long)]
     profile: Option<String>,
-    /// Whether to append default build location of azihsm_api_native object file to LLVM_COV_FLAGS (used with --coverage-report)
+    /// Do not append the default build location of the azihsm_api_native object file to LLVM_COV_FLAGS (used with --coverage-report)
     #[clap(long)]
     pub no_default_native: bool,
     /// Additional paths to object files to append to LLVM_COV_FLAGS (used with --coverage-report)
     #[clap(long)]
     pub additional_obj_paths: Vec<String>,
+    /// Skip provider integration tests when running test stages that include them
     #[clap(long)]
     skip_integration: bool,
 }
