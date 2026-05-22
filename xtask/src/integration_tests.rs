@@ -12,16 +12,19 @@ use crate::XtaskCtx;
 /// Xtask to run integration tests
 #[derive(Parser)]
 #[clap(about = "Run Integration Tests")]
-pub struct IntegrationTest {}
+pub struct IntegrationTest {
+    /// Whether to run tests with code coverage enabled
+    #[clap(long)]
+    pub coverage: bool,
+}
 
 impl Xtask for IntegrationTest {
     fn run(self, _ctx: XtaskCtx) -> anyhow::Result<()> {
-        log::trace!("start testing");
+        log::trace!("start integration tests");
 
         #[cfg(not(target_os = "linux"))]
         {
             log::warn!("skipping provider integration tests: only supported on Linux");
-            Ok(())
         }
 
         #[cfg(target_os = "linux")]
@@ -47,35 +50,36 @@ impl Xtask for IntegrationTest {
                 );
             }
 
-            crate::nextest::Nextest {
-                features: Some("integration".to_string()),
-                package: Some("provider-integration-tests-cli".to_string()),
-                no_default_features: false,
-                filterset: None,
-                profile: Some("ci-provider-integration".to_string()),
-                exclude: vec![],
-            }
-            .run(_ctx.clone())?;
+            let mut tests = Vec::new();
 
-            crate::nextest::Nextest {
-                features: Some("integration".to_string()),
-                package: Some("provider-integration-tests-capi".to_string()),
-                no_default_features: false,
-                filterset: None,
-                profile: Some("ci-provider-integration".to_string()),
-                exclude: vec![],
+            // define test parameters
+            for package in vec![
+                "provider-integration-tests-cli",
+                "provider-integration-tests-capi",
+                "provider-integration-tests-nginx",
+            ] {
+                let test = crate::nextest::Nextest {
+                    features: Some("integration".to_string()),
+                    package: Some(package.to_string()),
+                    no_default_features: false,
+                    filterset: None,
+                    profile: Some("ci-provider-integration".to_string()),
+                    exclude: vec![],
+                };
+                tests.push(test);
             }
-            .run(_ctx.clone())?;
 
-            crate::nextest::Nextest {
-                features: Some("integration".to_string()),
-                package: Some("provider-integration-tests-nginx".to_string()),
-                no_default_features: false,
-                filterset: None,
-                profile: Some("ci-provider-integration".to_string()),
-                exclude: vec![],
+            // run tests
+            for test in tests {
+                if self.coverage {
+                    crate::coverage::Coverage::from(test).run(_ctx.clone())?;
+                } else {
+                    test.run(_ctx.clone())?;
+                }
             }
-            .run(_ctx)
         }
+
+        log::trace!("finished integration tests");
+        Ok(())
     }
 }

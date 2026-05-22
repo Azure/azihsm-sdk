@@ -185,59 +185,18 @@ impl Xtask for Precheck {
             .run(ctx.clone())?;
         }
 
+        // Run nextest tests
         if stage.nextest || stage.all {
             if self.package.is_none() && self.features.is_none() {
-                // SDK Run all mock tests
-                Nextest {
-                    features: Some("mock".to_string()),
-                    package: None,
-                    no_default_features: false,
-                    filterset: None,
-                    profile: self.profile.clone().or(Some("ci-mock".to_string())),
-                    exclude: self.exclude.clone(),
-                }
-                .run(ctx.clone())?;
-
-                // SDK Run resiliency fault-injection tests (requires res-test
-                // feature for the fault-injection DDI device)
-                if !self.exclude.iter().any(|e| e == "azihsm_api_tests") {
-                    Nextest {
-                        features: Some("mock,res-test".to_string()),
-                        package: Some("azihsm_api_tests".to_string()),
-                        no_default_features: false,
-                        filterset: Some("test(resiliency::fault_injection::)".to_string()),
-                        profile: self.profile.clone().or(Some("ci-mock-res".to_string())),
-                        exclude: self.exclude.clone(),
-                    }
-                    .run(ctx.clone())?;
-                }
+                // run default tests
+                let tests = default_tests(&self.exclude, self.profile.clone());
+                run_tests(tests, self.coverage, ctx.clone())?;
 
                 #[cfg(not(target_os = "windows"))]
                 {
-                    // SDK Run azihsm_ddi mock tests table-4
-                    Nextest {
-                        features: Some("mock,table-4".to_string()),
-                        package: Some("azihsm_ddi".to_string()),
-                        no_default_features: false,
-                        filterset: None,
-                        profile: self.profile.clone().or(Some("ci-mock-table-4".to_string())),
-                        exclude: self.exclude.clone(),
-                    }
-                    .run(ctx.clone())?;
-
-                    // SDK Run azihsm_ddi mock tests table-64
-                    Nextest {
-                        features: Some("mock,table-64".to_string()),
-                        package: Some("azihsm_ddi".to_string()),
-                        no_default_features: false,
-                        filterset: None,
-                        profile: self
-                            .profile
-                            .clone()
-                            .or(Some("ci-mock-table-64".to_string())),
-                        exclude: self.exclude.clone(),
-                    }
-                    .run(ctx.clone())?;
+                    // Run azihsm_ddi mock tests
+                    let ddi_tests = ddi_mock_tests(&self.exclude, self.profile.clone());
+                    run_tests(ddi_tests, self.coverage, ctx.clone())?;
 
                     // OSSL Provider integration tests (CLI + C API, Linux only)
                     #[cfg(target_os = "linux")]
@@ -259,28 +218,14 @@ impl Xtask for Precheck {
         // Run code coverage
         if stage.coverage || stage.all {
             if self.package.is_none() && self.features.is_none() {
-                // SDK Run all mock tests with coverage
-                Coverage {
-                    features: Some("mock".to_string()),
-                    package: None,
-                    no_default_features: false,
-                    filterset: None,
-                    profile: self.profile.clone().or(Some("ci-mock".to_string())),
-                    exclude: self.exclude.clone(),
-                }
-                .run(ctx.clone())?;
+                // Run default tests with coverage
+                let tests = default_tests(&self.exclude, self.profile.clone());
+                run_tests(tests, true, ctx.clone())?;
 
-                // Run resiliency fault-injection tests with coverage
-                if !self.exclude.iter().any(|e| e == "azihsm_api_tests") {
-                    Coverage {
-                        features: Some("mock,res-test".to_string()),
-                        package: Some("azihsm_api_tests".to_string()),
-                        no_default_features: false,
-                        filterset: Some("test(resiliency::fault_injection::)".to_string()),
-                        profile: self.profile.clone().or(Some("ci-mock-res".to_string())),
-                        exclude: self.exclude.clone(),
-                    }
-                    .run(ctx.clone())?;
+                // Run OSSL Provider integration tests with coverage (CLI + C API, Linux only)
+                #[cfg(target_os = "linux")]
+                {
+                    integration_tests::IntegrationTest { coverage: true }.run(ctx.clone())?;
                 }
             } else {
                 Coverage {
@@ -312,4 +257,75 @@ impl Xtask for Precheck {
         log::trace!("done precheck");
         Ok(())
     }
+}
+
+// Helper function to define default test parameters for --nextest and --coverage
+fn default_tests(exclude: &Vec<String>, profile: Option<String>) -> Vec<Nextest> {
+    let mut tests = Vec::new();
+
+    // SDK Run all mock tests
+    tests.push(Nextest {
+        features: Some("mock".to_string()),
+        package: None,
+        no_default_features: false,
+        filterset: None,
+        profile: profile.clone().or(Some("ci-mock".to_string())),
+        exclude: exclude.clone(),
+    });
+
+    // SDK Run resiliency fault-injection tests (requires res-test
+    // feature for the fault-injection DDI device)
+    if !exclude.iter().any(|e| e == "azihsm_api_tests") {
+        tests.push(Nextest {
+            features: Some("mock,res-test".to_string()),
+            package: Some("azihsm_api_tests".to_string()),
+            no_default_features: false,
+            filterset: Some("test(resiliency::fault_injection::)".to_string()),
+            profile: profile.clone().or(Some("ci-mock-res".to_string())),
+            exclude: exclude.clone(),
+        });
+    }
+
+    tests
+}
+
+// Helper function to define test parameters for Linux-specific azihsm_ddi mock tests
+fn ddi_mock_tests(exclude: &Vec<String>, profile: Option<String>) -> Vec<Nextest> {
+    let mut tests = Vec::new();
+
+    if !exclude.iter().any(|e| e == "azihsm_ddi") {
+        // SDK Run azihsm_ddi mock tests table-4
+        tests.push(Nextest {
+            features: Some("mock,table-4".to_string()),
+            package: Some("azihsm_ddi".to_string()),
+            no_default_features: false,
+            filterset: None,
+            profile: profile.clone().or(Some("ci-mock-table-4".to_string())),
+            exclude: exclude.clone(),
+        });
+
+        // SDK Run azihsm_ddi mock tests table-64
+        tests.push(Nextest {
+            features: Some("mock,table-64".to_string()),
+            package: Some("azihsm_ddi".to_string()),
+            no_default_features: false,
+            filterset: None,
+            profile: profile.clone().or(Some("ci-mock-table-64".to_string())),
+            exclude: exclude.clone(),
+        });
+    }
+
+    tests
+}
+
+// Helper function to run tests defined by other helper functions
+fn run_tests(tests: Vec<Nextest>, coverage: bool, ctx: XtaskCtx) -> anyhow::Result<()> {
+    for test in tests {
+        if coverage {
+            Coverage::from(test).run(ctx.clone())?;
+        } else {
+            test.run(ctx.clone())?;
+        }
+    }
+    Ok(())
 }

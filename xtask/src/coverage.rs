@@ -107,3 +107,16 @@ impl Xtask for Coverage {
         Ok(())
     }
 }
+
+impl From<crate::nextest::Nextest> for Coverage {
+    fn from(nextest: crate::nextest::Nextest) -> Self {
+        Self {
+            features: nextest.features,
+            package: nextest.package,
+            no_default_features: nextest.no_default_features,
+            filterset: nextest.filterset,
+            profile: nextest.profile,
+            exclude: nextest.exclude,
+        }
+    }
+}
