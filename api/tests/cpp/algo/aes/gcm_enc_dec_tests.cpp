@@ -3824,8 +3824,13 @@ TEST_F(azihsm_aes_gcm, streaming_decrypt_with_zero_tag_fails_at_finish)
 
         err = azihsm_crypt_decrypt_update(dec_ctx, &cipher_input, &update_output);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(update_output.len, 0u);
 
-        azihsm_buffer finish_output{ nullptr, 0 };
+        // Provide real storage so finish can perform tag verification instead of
+        // failing early due to a missing/zero-sized output buffer.
+        std::vector<uint8_t> finish_plaintext(ciphertext.size());
+        azihsm_buffer finish_output{ finish_plaintext.data(),
+                                     static_cast<uint32_t>(finish_plaintext.size()) };
 
         err = azihsm_crypt_decrypt_finish(dec_ctx, &finish_output);
         ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
