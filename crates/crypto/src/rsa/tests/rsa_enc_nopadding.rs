@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 use super::*;
+use crate::testvectors::rsa::RSA_NO_PADDING_TEST_VECTORS;
+use crate::testvectors::rsa::RsaEncTestVector;
 
 fn roundtrip(key_size_bytes: usize, plaintext_prefix: &[u8]) {
     let private_key =
