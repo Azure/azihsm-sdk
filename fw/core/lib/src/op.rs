@@ -59,8 +59,9 @@ const PAGE_4K: u32 = 4096;
 /// Maximum source buffer length (one 4K page).
 const MAX_SRC_LEN: u32 = PAGE_4K;
 
-/// Maximum destination buffer length (one 4K page).
-const MAX_DST_LEN: u32 = PAGE_4K;
+/// Maximum destination buffer length (two 4K pages — host driver
+/// allocates 8K for response buffers).
+const MAX_DST_LEN: u32 = 2 * PAGE_4K;
 
 /// Command dword (DW0) bitfield.
 #[bitfield(u32)]
@@ -248,7 +249,7 @@ impl<'a> Sqe<'a> {
     ///
     /// Checks:
     /// - Source length must be 1..=4096
-    /// - Destination length must be 1..=4096
+    /// - Destination length must be 1..=8192
     /// - Source PRP1 must be 4K-aligned
     /// - Destination PRP1 must be 4K-aligned
     ///
