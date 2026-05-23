@@ -39,6 +39,9 @@ pub mod reopen_session;
 pub mod rsa_mod_exp;
 pub mod rsa_unwrap;
 pub mod set_sealed_bk3;
+pub mod ecc_verify_test;
+pub mod ecdh_derive_test;
+pub mod rsa_mod_exp_test;
 pub mod sha_digest;
 pub mod unmask_key;
 
@@ -94,6 +97,9 @@ pub enum DdiOp {
     GetSealedBk3 = 1112,
     SetSealedBk3 = 1113,
     ShaDigest = 2006,
+    EccVerifyTest = 2011,
+    EcdhDeriveTest = 2012,
+    RsaModExpTest = 2013,
 }
 
 // ── Key and crypto enums ───────────────────────────────────────────────
@@ -215,6 +221,25 @@ pub enum DdiRsaOpType {
 #[derive(Debug, Ddi, Eq, PartialEq, Clone, Copy)]
 #[repr(u32)]
 #[ddi(enumeration)]
+pub enum DdiRsaSize {
+    Rsa2k = 2,
+    Rsa3k = 3,
+    Rsa4k = 4,
+}
+
+#[open_enum]
+#[derive(Debug, Ddi, Eq, PartialEq, Clone, Copy)]
+#[repr(u32)]
+#[ddi(enumeration)]
+pub enum DdiRsaOpKind {
+    Pub = 1,
+    Priv = 2,
+}
+
+#[open_enum]
+#[derive(Debug, Ddi, Eq, PartialEq, Clone, Copy)]
+#[repr(u32)]
+#[ddi(enumeration)]
 pub enum DdiRsaCryptoPadding {
     Oaep = 1,
 }
@@ -263,7 +288,11 @@ impl From<DdiOp> for DdiSessionKind {
             | DdiOp::OpenSession
             | DdiOp::InitBk3
             | DdiOp::GetSealedBk3
-            | DdiOp::SetSealedBk3 => DdiSessionKind::None,
+            | DdiOp::SetSealedBk3
+            | DdiOp::EccSign
+            | DdiOp::EccVerifyTest
+            | DdiOp::EcdhDeriveTest
+            | DdiOp::RsaModExpTest => DdiSessionKind::None,
             _ => DdiSessionKind::User,
         }
     }
