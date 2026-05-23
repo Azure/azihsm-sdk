@@ -253,6 +253,7 @@ impl core::ops::IndexMut<core::ops::RangeFull> for DmaBuf {
 /// captured implicitly by the scope.  All buffers handed out by a
 /// scoped handle are freed atomically when the enclosing closure
 /// returns.
+#[allow(clippy::mut_from_ref)]
 pub trait HsmScopedAlloc {
     /// Allocates `size` bytes of uninitialised memory from the
     /// NonDma (DTCM) pool.
@@ -366,6 +367,7 @@ pub trait HsmScopedAlloc {
 /// |--------|-------------|
 /// | [`alloc_scoped`](Self::alloc_scoped) | Synchronous scope; all scope allocations freed on return |
 /// | [`alloc_scoped_async`](Self::alloc_scoped_async) | Async scope; same lifetime semantics across awaits |
+#[allow(clippy::mut_from_ref)]
 pub trait HsmAlloc {
     /// PAL-specific scoped allocator handle.
     ///

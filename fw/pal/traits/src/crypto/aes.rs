@@ -108,6 +108,7 @@ pub trait HsmAes {
     /// - `Err(HsmError::InvalidArg)` — buffer-size or alignment
     ///   violation.
     /// - `Err(HsmError)` — AES driver failure.
+    #[allow(clippy::too_many_arguments)]
     async fn aes_cbc_enc_dec(
         &self,
         io: &impl HsmIo,
@@ -252,6 +253,7 @@ pub trait HsmAes {
     /// - `Err(HsmError::InvalidArg)` — buffer-size violation, IV not
     ///   12 bytes, or AAD layout malformed.
     /// - `Err(HsmError)` — AES driver failure.
+    #[allow(clippy::too_many_arguments)]
     async fn gcm_encrypt(
         &self,
         io: &impl HsmIo,
@@ -337,6 +339,7 @@ pub trait HsmAes {
     /// - `Err(HsmError::AesGcmTagMismatch)` — authentication tag
     ///   does not match.
     /// - `Err(HsmError)` — AES driver failure.
+    #[allow(clippy::too_many_arguments)]
     async fn gcm_decrypt(
         &self,
         io: &impl HsmIo,

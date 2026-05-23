@@ -43,9 +43,7 @@ impl HsmHash for StdHsmPal {
         digest: &mut DmaBuf,
         _big_endian: bool,
     ) -> HsmResult<()> {
-        self.hash
-            .hash(to_hash_algo(algo), &data[..], &mut digest[..])
-            .await
+        self.hash.hash(to_hash_algo(algo), data, digest).await
     }
 
     fn hash_begin<'a>(

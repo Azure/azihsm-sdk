@@ -72,6 +72,17 @@ impl Xtask for Build {
             args.push(pkg);
         }
 
+        // Exclude Linux-only crates when building on non-Linux platforms
+        #[cfg(not(target_os = "linux"))]
+        let _exclude_x509_gen;
+        #[cfg(not(target_os = "linux"))]
+        if self.package.is_none() {
+            args.push("--workspace");
+            _exclude_x509_gen = "azihsm_fw_hsm_std_x509_gen".to_string();
+            args.push("--exclude");
+            args.push(&_exclude_x509_gen);
+        }
+
         // Always pass target-dir
         args.push("--target-dir");
         let td = target_dir.to_str().expect("target_dir to str");

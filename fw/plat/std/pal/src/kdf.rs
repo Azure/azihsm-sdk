@@ -35,12 +35,12 @@ impl HsmKdf for StdHsmPal {
     ) -> HsmResult<()> {
         self.kdf
             .hkdf(
-                &ikm[..],
+                ikm,
                 to_hash_algo(algo),
                 azihsm_crypto::HkdfMode::Extract,
-                &salt[..],
+                salt,
                 &[],
-                &mut prk[..],
+                prk,
             )
             .await
     }
@@ -55,12 +55,12 @@ impl HsmKdf for StdHsmPal {
     ) -> HsmResult<()> {
         self.kdf
             .hkdf(
-                &prk[..],
+                prk,
                 to_hash_algo(algo),
                 azihsm_crypto::HkdfMode::Expand,
                 &[],
-                &info[..],
-                &mut output[..],
+                info,
+                output,
             )
             .await
     }
@@ -75,13 +75,7 @@ impl HsmKdf for StdHsmPal {
         output: &mut DmaBuf,
     ) -> HsmResult<()> {
         self.kdf
-            .kbkdf(
-                &key[..],
-                to_hash_algo(algo),
-                &label[..],
-                &context[..],
-                &mut output[..],
-            )
+            .kbkdf(key, to_hash_algo(algo), label, context, output)
             .await
     }
 
