@@ -248,6 +248,29 @@ TEST_F(azihsm_ecc_keygen, unsupported_algorithm)
     });
 }
 
+TEST_F(azihsm_ecc_keygen, unmask_pair_rejects_unsupported_key_kind)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        std::vector<uint8_t> masked_key_data(16, 0x42);
+        azihsm_buffer masked_key_buf{};
+        masked_key_buf.ptr = masked_key_data.data();
+        masked_key_buf.len = static_cast<uint32_t>(masked_key_data.size());
+
+        auto_key priv_key;
+        auto_key pub_key;
+        auto err = azihsm_key_unmask_pair(
+            session,
+            AZIHSM_KEY_KIND_AES,
+            &masked_key_buf,
+            priv_key.get_ptr(),
+            pub_key.get_ptr()
+        );
+        ASSERT_EQ(err, AZIHSM_STATUS_UNSUPPORTED_KEY_KIND);
+        ASSERT_EQ(priv_key.get(), 0u);
+        ASSERT_EQ(pub_key.get(), 0u);
+    });
+}
+
 TEST_F(azihsm_ecc_keygen, unmask_ecc_p256_keypair)
 {
     part_list_.for_each_session([](azihsm_handle session) {

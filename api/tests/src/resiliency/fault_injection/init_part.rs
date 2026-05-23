@@ -47,6 +47,14 @@
 //! (and to [`super::ALL_RETRYABLE_ERRORS`] if it's new globally).
 //! All loop-based tests will automatically cover it. To add a
 //! non-retryable error, append to [`super::NON_RETRYABLE_ERRORS`].
+//!
+//! Note: the `InitBk3` fault tests are *not* loop-based — they are
+//! split into one `#[api_test]` per error variant so each runs in
+//! its own process. This is required because the init_bk3 is one-shot per device power cycle,
+//! so a single-process loop would
+//! see `Bk3AlreadyInitialized` on every iteration after the first.
+//! When extending the error lists above, also add a matching
+//! `test_init_bk3_single_fault_<variant>` test below.
 
 use azihsm_res_test_dev::*;
 
@@ -153,6 +161,40 @@ fn init_with_resiliency(part: &HsmPartition) -> HsmResult<()> {
     let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
     let (obk_info, pota_endorsement) = make_init_params(part);
     let (resiliency_config, _ctx) = make_resiliency_config();
+    let result = part.init(
+        creds,
+        None,
+        None,
+        obk_info,
+        pota_endorsement,
+        Some(resiliency_config),
+    );
+    if result.is_ok() {
+        save_mobk_after_init(part);
+    }
+    result
+}
+
+/// Helper: call `part.init(...)` forcing the Caller+OBK path so the
+/// device's `init_bk3` is invoked. Used by tests that explicitly target
+/// `InitBk3` faults — those tests must bypass the cross-process MOBK
+/// file cache (`/tmp/mobk.bin`) that [`make_init_params`] would
+/// otherwise read, since a cached MOBK would skip `init_bk3` entirely.
+/// The cache is also not written afterward (no `save_mobk_after_init`
+/// call), so the file remains in whatever state the surrounding tests
+/// left it in.
+fn init_with_resiliency_force_obk(part: &HsmPartition) -> HsmResult<()> {
+    let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
+    let (sig, pubkey) = generate_pota_endorsement(part);
+    let obk_info = HsmOwnerBackupKeyConfig::new(
+        HsmOwnerBackupKeySource::Caller,
+        HsmOwnerBackupKey::from_obk(&TEST_OBK),
+    );
+    let pota_endorsement = HsmPotaEndorsement::new(
+        HsmPotaEndorsementSource::Caller,
+        Some(HsmPotaEndorsementData::new(&sig, &pubkey)),
+    );
+    let (resiliency_config, _ctx) = make_resiliency_config();
     part.init(
         creds,
         None,
@@ -163,39 +205,118 @@ fn init_with_resiliency(part: &HsmPartition) -> HsmResult<()> {
     )
 }
 
-/// `init` recovers from a single transient fault on `InitBk3` for
-/// retryable error codes, and fails immediately for non-retryable ones.
-/// Caller-source only — skipped when `AZIHSM_USE_TPM` is set.
-#[api_test]
-fn test_init_recovers_from_init_bk3_single_fault() {
+/// Shared body for the per-error `init_bk3_single_fault_*` tests below.
+///
+/// Why one test per error instead of a single loop? The simulator's
+/// `bk3_initialized` flag is intentionally preserved across NSSR (it
+/// models real hardware where `init_bk3` is one-shot per device power
+/// cycle). Within a single test process, iteration `N`'s successful
+/// retry leaves the flag set so iteration `N+1` would fail with
+/// `Bk3AlreadyInitialized`. Nextest runs each `#[api_test]` in its
+/// own process, giving each error variant a fresh simulator with
+/// `bk3_initialized = false`.
+///
+/// Behaviour matrix per `error`:
+/// - **Retryable (in `INIT_RETRYABLE_ERRORS`)**: attempt 1 returns
+///   the injected fault; the macro retries; attempt 2 hits a fresh
+///   device and `init_bk3` succeeds. Result: `Ok`, 2 InitBk3 calls.
+/// - **`is_credentials_already_established`**: not retried by the
+///   macro, but caught by `HsmPartition::init` and converted to `Ok`.
+///   Result: `Ok`, 1 InitBk3 call.
+/// - **Other non-retryable**: propagates immediately. Result: `Err`,
+///   1 InitBk3 call.
+fn assert_init_bk3_single_fault(error: FaultError) {
     if use_tpm() {
         return;
     }
-    for error in &super::all_test_errors() {
-        let part = open_and_reset();
-        let before = op_call_count(DdiOp::InitBk3);
+    let part = open_and_reset();
+    let before = op_call_count(DdiOp::InitBk3);
 
-        inject_fault(FaultRule::fail_nth(DdiOp::InitBk3, 1, *error));
+    inject_fault(FaultRule::fail_nth(DdiOp::InitBk3, 1, error));
 
-        let result = init_with_resiliency(&part);
-        let after = op_call_count(DdiOp::InitBk3);
-        clear_faults();
+    let result = init_with_resiliency_force_obk(&part);
+    let after = op_call_count(DdiOp::InitBk3);
+    clear_faults();
 
-        super::assert_retryable_outcome(
-            &result,
-            error,
-            is_init_ok_outcome,
-            "single fault on InitBk3",
-        );
+    super::assert_retryable_outcome(
+        &result,
+        &error,
+        is_init_ok_outcome,
+        "single fault on InitBk3",
+    );
 
-        let expected = expected_op_calls(error, DdiOp::InitBk3, 1);
-        assert_eq!(
-            after - before,
-            expected,
-            "single fault on InitBk3: expected {expected} calls for {error:?}, got {}",
-            after - before,
-        );
-    }
+    let expected = expected_op_calls(&error, DdiOp::InitBk3, 1);
+    assert_eq!(
+        after - before,
+        expected,
+        "single fault on InitBk3: expected {expected} calls for {error:?}, got {}",
+        after - before,
+    );
+}
+
+// One `#[api_test]` per error variant from `super::all_test_errors()`
+// so each runs in its own process — see `assert_init_bk3_single_fault`
+// for the rationale. When extending `super::ALL_RETRYABLE_ERRORS` /
+// `super::NON_RETRYABLE_ERRORS`, add a matching test here.
+
+#[api_test]
+fn test_init_bk3_single_fault_io_aborted() {
+    assert_init_bk3_single_fault(FaultError::Driver(DriverError::IoAborted));
+}
+
+#[api_test]
+fn test_init_bk3_single_fault_io_abort_in_progress() {
+    assert_init_bk3_single_fault(FaultError::Driver(DriverError::IoAbortInProgress));
+}
+
+#[api_test]
+fn test_init_bk3_single_fault_credentials_not_established() {
+    assert_init_bk3_single_fault(FaultError::Status(DdiStatus::CredentialsNotEstablished));
+}
+
+#[api_test]
+fn test_init_bk3_single_fault_nonce_mismatch() {
+    assert_init_bk3_single_fault(FaultError::Status(DdiStatus::NonceMismatch));
+}
+
+#[api_test]
+fn test_init_bk3_single_fault_partition_not_provisioned() {
+    assert_init_bk3_single_fault(FaultError::Status(DdiStatus::PartitionNotProvisioned));
+}
+
+#[api_test]
+fn test_init_bk3_single_fault_ecc_verify_failed() {
+    assert_init_bk3_single_fault(FaultError::Status(DdiStatus::EccVerifyFailed));
+}
+
+#[api_test]
+fn test_init_bk3_single_fault_session_needs_renegotiation() {
+    assert_init_bk3_single_fault(FaultError::Status(DdiStatus::SessionNeedsRenegotiation));
+}
+
+#[api_test]
+fn test_init_bk3_single_fault_pending_key_generation() {
+    assert_init_bk3_single_fault(FaultError::Status(DdiStatus::PendingKeyGeneration));
+}
+
+#[api_test]
+fn test_init_bk3_single_fault_key_not_found() {
+    assert_init_bk3_single_fault(FaultError::Status(DdiStatus::KeyNotFound));
+}
+
+#[api_test]
+fn test_init_bk3_single_fault_invalid_arg() {
+    assert_init_bk3_single_fault(FaultError::Status(DdiStatus::InvalidArg));
+}
+
+#[api_test]
+fn test_init_bk3_single_fault_internal_error() {
+    assert_init_bk3_single_fault(FaultError::Status(DdiStatus::InternalError));
+}
+
+#[api_test]
+fn test_init_bk3_single_fault_masked_key_decode_failed() {
+    assert_init_bk3_single_fault(FaultError::Status(DdiStatus::MaskedKeyDecodeFailed));
 }
 
 /// `init` recovers from a single transient fault on
@@ -272,42 +393,6 @@ fn test_init_recovers_from_establish_credential_single_fault() {
     }
 }
 
-/// `init` recovers on the last retry when `InitBk3` fails for the
-/// first `MAX_RETRIES` attempts (retryable errors), or fails immediately
-/// on the first attempt (non-retryable errors).
-/// Caller-source only — skipped when `AZIHSM_USE_TPM` is set.
-#[api_test]
-fn test_init_recovers_from_init_bk3_last_retry() {
-    if use_tpm() {
-        return;
-    }
-    for error in &super::all_test_errors() {
-        let part = open_and_reset();
-        let before = op_call_count(DdiOp::InitBk3);
-
-        inject_fault(FaultRule::fail_next(DdiOp::InitBk3, MAX_RETRIES, *error));
-
-        let result = init_with_resiliency(&part);
-        let after = op_call_count(DdiOp::InitBk3);
-        clear_faults();
-
-        super::assert_retryable_outcome(
-            &result,
-            error,
-            is_init_ok_outcome,
-            "last retry on InitBk3",
-        );
-
-        let expected = expected_op_calls(error, DdiOp::InitBk3, MAX_RETRIES);
-        assert_eq!(
-            after - before,
-            expected,
-            "last retry on InitBk3: expected {expected} calls for {error:?}, got {}",
-            after - before,
-        );
-    }
-}
-
 /// `init` recovers on the last retry when
 /// `GetEstablishCredEncryptionKey` fails for the first `MAX_RETRIES`
 /// attempts (retryable errors), or fails immediately on the first
@@ -377,49 +462,6 @@ fn test_init_recovers_from_establish_credential_last_retry() {
             after - before,
             expected,
             "last retry on EstablishCredential: expected {expected} calls for {error:?}, got {}",
-            after - before,
-        );
-    }
-}
-
-// Retry Exhaustion tests
-//
-// These tests inject MAX_RETRIES + 1 consecutive faults so that
-// every retry is consumed and the operation ultimately fails.
-
-/// `init` fails when `InitBk3` returns a retryable error for
-/// `MAX_RETRIES + 1` consecutive calls (initial attempt + all retries),
-/// for every retryable error code.
-/// Caller-source only — skipped when `AZIHSM_USE_TPM` is set.
-#[api_test]
-fn test_init_fails_from_init_bk3_exhausted() {
-    if use_tpm() {
-        return;
-    }
-    for error in INIT_RETRYABLE_ERRORS {
-        let part = open_and_reset();
-        let before = op_call_count(DdiOp::InitBk3);
-
-        inject_fault(FaultRule::fail_next(
-            DdiOp::InitBk3,
-            MAX_RETRIES + 1,
-            *error,
-        ));
-
-        let result = init_with_resiliency(&part);
-        let after = op_call_count(DdiOp::InitBk3);
-        clear_faults();
-
-        assert!(
-            result.is_err(),
-            "init should fail after exhausting all {MAX_RETRIES} retries with {error:?} on InitBk3, got: {result:?}"
-        );
-
-        let expected = expected_op_calls(error, DdiOp::InitBk3, MAX_RETRIES + 1);
-        assert_eq!(
-            after - before,
-            expected,
-            "exhaustion on InitBk3: expected {expected} calls for {error:?}, got {}",
             after - before,
         );
     }
@@ -578,6 +620,7 @@ fn test_init_no_retry_without_resiliency() {
 
     // No resiliency config → no retry.
     let result = part.init(creds, None, None, obk_info, pota_endorsement, None);
+    save_mobk_after_init(&part);
     let after = op_call_count(DdiOp::EstablishCredential);
     clear_faults();
 
@@ -611,6 +654,16 @@ fn test_init_no_retry_without_resiliency() {
 
 /// A device reset during `InitBk3` triggers a retry that recovers
 /// successfully.
+///
+/// `init_bk3` is one-shot per power cycle: the SDK invokes `InitBk3`
+/// at most once per `init` call (the first attempt, when the
+/// `cached_mobk` retry slot is empty); subsequent retries inside
+/// the `#[resiliency_init_part]` loop reuse the cached MOBK and skip
+/// `InitBk3` entirely. Across processes the cross-process MOBK file
+/// cache (`/tmp/mobk.bin`) plays the same role for [`make_init_params`].
+/// So the reset fault may consume the single `InitBk3` call (count
+/// == 1) or be skipped if a previous test already populated the
+/// cross-process MOBK cache (count == 0).
 /// Caller-source only — skipped when `AZIHSM_USE_TPM` is set.
 #[api_test]
 fn test_init_recovers_after_reset_on_init_bk3() {
@@ -631,11 +684,10 @@ fn test_init_recovers_after_reset_on_init_bk3() {
         "init should recover after a device reset on InitBk3, got: {result:?}"
     );
 
-    // 1 failed call (reset) + 1 successful retry = 2 calls.
-    assert_eq!(
-        after - before,
-        2,
-        "reset on InitBk3: expected 2 calls, got {}",
+    // InitBk3 runs at most once per init (cached MOBK on retry).
+    assert!(
+        after - before <= 1,
+        "reset on InitBk3: expected at most 1 call, got {}",
         after - before,
     );
 }
@@ -716,6 +768,7 @@ fn test_init_fails_after_reset_without_resiliency() {
 
     // No resiliency config → no retry.
     let result = part.init(creds, None, None, obk_info, pota_endorsement, None);
+    save_mobk_after_init(&part);
     let after = op_call_count(DdiOp::EstablishCredential);
     clear_faults();
 

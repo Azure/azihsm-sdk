@@ -25,6 +25,7 @@ mod report;
 mod rsa;
 mod session;
 mod set_sealed_bk3;
+mod tpm_unseal;
 
 pub use aes::*;
 pub use api_rev::*;
@@ -51,3 +52,4 @@ pub use report::*;
 pub use rsa::*;
 pub use session::*;
 pub use set_sealed_bk3::*;
+use tpm_unseal::*;

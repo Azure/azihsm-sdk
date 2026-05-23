@@ -39,7 +39,7 @@ use tracing_tree::*;
 #[allow(clippy::expect_used)]
 pub fn init() {
     static ONCE: std::sync::Once = std::sync::Once::new();
-    let rust_log = "debug";
+    let rust_log = std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string());
     let filter: Targets = rust_log.parse().expect("failed to parse the log");
     ONCE.call_once(|| {
         let layer = HierarchicalLayer::default()

@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 use super::*;
+use crate::testvectors::ecc::ECC_P521_TEST_VECTORS;
 
 //implement ECDSA P-521 signature test using sha512
 

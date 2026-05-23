@@ -3,6 +3,7 @@
 
 //implement ECDSA P-256 signature test using sha256
 use super::*;
+use crate::testvectors::ecc::ECC_P256_TEST_VECTORS;
 
 #[test]
 fn test_ecdsa_p256_sign_verify() {
