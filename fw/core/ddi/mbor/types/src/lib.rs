@@ -11,6 +11,8 @@ pub mod error;
 pub mod sessctrl;
 
 // ── Per-command modules ────────────────────────────────────────────────
+pub mod aes_cbc_test;
+pub mod aes_ecb_test;
 pub mod aes_encrypt_decrypt;
 pub mod aes_generate_key;
 pub mod attest_key;
@@ -100,6 +102,8 @@ pub enum DdiOp {
     EccVerifyTest = 2011,
     EcdhDeriveTest = 2012,
     RsaModExpTest = 2013,
+    AesCbcTest = 2014,
+    AesEcbTest = 2015,
 }
 
 // ── Key and crypto enums ───────────────────────────────────────────────
@@ -292,7 +296,9 @@ impl From<DdiOp> for DdiSessionKind {
             | DdiOp::EccSign
             | DdiOp::EccVerifyTest
             | DdiOp::EcdhDeriveTest
-            | DdiOp::RsaModExpTest => DdiSessionKind::None,
+            | DdiOp::RsaModExpTest
+            | DdiOp::AesCbcTest
+            | DdiOp::AesEcbTest => DdiSessionKind::None,
             _ => DdiSessionKind::User,
         }
     }

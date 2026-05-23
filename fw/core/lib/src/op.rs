@@ -596,7 +596,9 @@ impl SessionCtrl {
             | DdiOp::EccSign
             | DdiOp::EccVerifyTest
             | DdiOp::EcdhDeriveTest
-            | DdiOp::RsaModExpTest => Self::NoSession,
+            | DdiOp::RsaModExpTest
+            | DdiOp::AesCbcTest
+            | DdiOp::AesEcbTest => Self::NoSession,
             DdiOp::OpenSession => Self::Open,
             DdiOp::CloseSession => Self::Close,
             _ => Self::InSession,

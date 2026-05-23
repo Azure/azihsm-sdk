@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+pub(crate) mod aes_cbc_test;
+pub(crate) mod aes_ecb_test;
 pub(crate) mod get_api_rev;
 pub(crate) mod get_cert_chain_info;
 pub(crate) mod get_certificate;
@@ -21,6 +23,8 @@ use azihsm_fw_ddi_mbor_api::DdiDecoder;
 use azihsm_fw_ddi_mbor_api::DdiEncoder;
 use azihsm_fw_ddi_mbor_types::error::DdiErrResp;
 use azihsm_fw_ddi_mbor_types::*;
+pub(crate) use aes_cbc_test::*;
+pub(crate) use aes_ecb_test::*;
 pub(crate) use get_api_rev::*;
 pub(crate) use get_cert_chain_info::*;
 pub(crate) use get_certificate::*;
@@ -66,6 +70,8 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
         DdiOp::EccVerifyTest => ecc_verify_test(pal, io, decoder, hdr).await,
         DdiOp::EcdhDeriveTest => ecdh_derive_test(pal, io, decoder, hdr).await,
         DdiOp::RsaModExpTest => rsa_mod_exp_test(pal, io, decoder, hdr).await,
+        DdiOp::AesCbcTest => aes_cbc_test(pal, io, decoder, hdr).await,
+        DdiOp::AesEcbTest => aes_ecb_test(pal, io, decoder, hdr).await,
         _ => Err(HsmError::UnsupportedCmd),
     }
 }
