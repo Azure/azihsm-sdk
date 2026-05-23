@@ -590,7 +590,12 @@ impl SessionCtrl {
             | DdiOp::GetEstablishCredEncryptionKey
             | DdiOp::GetSealedBk3
             | DdiOp::SetSealedBk3
-            | DdiOp::ShaDigest => Self::NoSession,
+            | DdiOp::ShaDigest
+            // D-series bringup relaxation: NoSession test ops
+            | DdiOp::EccSign
+            | DdiOp::EccVerifyTest
+            | DdiOp::EcdhDeriveTest
+            | DdiOp::RsaModExpTest => Self::NoSession,
             DdiOp::OpenSession => Self::Open,
             DdiOp::CloseSession => Self::Close,
             _ => Self::InSession,

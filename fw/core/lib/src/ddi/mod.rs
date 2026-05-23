@@ -10,6 +10,12 @@ pub(crate) mod get_sealed_bk3;
 pub(crate) mod set_sealed_bk3;
 pub(crate) mod sha_digest;
 
+// D-series bringup handlers
+pub(crate) mod ecc_sign;
+pub(crate) mod ecc_verify_test;
+pub(crate) mod ecdh_derive_test;
+pub(crate) mod rsa_mod_exp_test;
+
 use azihsm_fw_ddi_mbor::*;
 use azihsm_fw_ddi_mbor_api::DdiDecoder;
 use azihsm_fw_ddi_mbor_api::DdiEncoder;
@@ -23,6 +29,10 @@ pub(crate) use get_establish_cred_encryption_key::*;
 pub(crate) use get_sealed_bk3::*;
 pub(crate) use set_sealed_bk3::*;
 pub(crate) use sha_digest::*;
+pub(crate) use ecc_sign::*;
+pub(crate) use ecc_verify_test::*;
+pub(crate) use ecdh_derive_test::*;
+pub(crate) use rsa_mod_exp_test::*;
 
 use super::*;
 
@@ -51,6 +61,11 @@ pub(crate) async fn dispatch<'p, P: HsmPal>(
         }
         DdiOp::GetSealedBk3 => get_sealed_bk3(pal, io, decoder, hdr),
         DdiOp::SetSealedBk3 => set_sealed_bk3(pal, io, decoder, hdr),
+        // D-series bringup ops (NoSession)
+        DdiOp::EccSign => ecc_sign(pal, io, decoder, hdr).await,
+        DdiOp::EccVerifyTest => ecc_verify_test(pal, io, decoder, hdr).await,
+        DdiOp::EcdhDeriveTest => ecdh_derive_test(pal, io, decoder, hdr).await,
+        DdiOp::RsaModExpTest => rsa_mod_exp_test(pal, io, decoder, hdr).await,
         _ => Err(HsmError::UnsupportedCmd),
     }
 }
